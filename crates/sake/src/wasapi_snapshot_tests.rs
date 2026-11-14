@@ -157,7 +157,11 @@ fn wasapi_api_snapshot() {
     let ig = mem::heap_alloc(16, true);
     let fmt = mem::heap_alloc(64, true);
     let sg = mem::heap_alloc(16, true);
+    // (sessions are global: the process's default one may come from a test before; shown as
+    // "default" or by the order this test made them in)
+    let default_session = with(|e| session_of(e, [0; 4]));
     let first_session = with(|e| e.sessions.len());
+    let sess_name = |i: usize| if i == default_session { "default".to_string() } else { i.wrapping_sub(first_session).to_string() };
     let mut clients: Vec<u32> = Vec::new();
     let mut svcs: Vec<(Svc, u32)> = Vec::new();
     let iids: [Iid; 14] = [IID_CLIENT, IID_RENDER, IID_CLOCK, IID_CLOCK_ADJUST, IID_SIMPLE_VOLUME, IID_STREAM_VOLUME, IID_CHANNEL_VOLUME, IID_SESSION, IID_SESSION2, IID_MANAGER, IID_MANAGER2, IID_ENUMERATOR, IID_ENDPOINT_VOLUME, (0, 0, 0)];
@@ -211,7 +215,7 @@ fn wasapi_api_snapshot() {
                 let d_lo = u32::try_from(d & 0xffff_ffff).unwrap_or(0);
                 let d_hi = u32::try_from(d >> 32).unwrap_or(0);
                 let hr = call(ac_initialize, &[cl, mode, flags, d_lo, d_hi, 0, 0, f, guid]);
-                let sess = with(|e| e.clients.get(&cl).map(|c| c.session.wrapping_sub(first_session)));
+                let sess = with(|e| e.clients.get(&cl).map(|c| sess_name(c.session)));
                 format!("initialize {} mode={mode} flags={flags:#x} d={d} guid={}: {hr:#x} session={sess:?}", wave_text(&w), guid != 0)
             }
             5 => format!("buffer size: {:#x} {}", call(ac_buffer_size, &[cl, o]), r32(po)),
