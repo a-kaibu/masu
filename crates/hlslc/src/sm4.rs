@@ -25,12 +25,68 @@ pub enum RegF {
     G(u32),
 }
 
+/// One component of a four-component register: no value outside x..w can be named.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Lane {
+    X,
+    Y,
+    Z,
+    W,
+}
+
+impl Lane {
+    pub const ALL: [Lane; 4] = [Lane::X, Lane::Y, Lane::Z, Lane::W];
+
+    /// the lane of a component counted across registers (4 per register)
+    pub fn of(k: usize) -> Lane {
+        match k % 4 {
+            0 => Lane::X,
+            1 => Lane::Y,
+            2 => Lane::Z,
+            _ => Lane::W,
+        }
+    }
+
+    /// x, y, .. for the first `n` (at most 4) components
+    pub fn first(n: usize) -> impl Iterator<Item = Lane> {
+        Lane::ALL.into_iter().take(n)
+    }
+
+    /// the write mask of the first `n` (at most 4) components
+    pub fn mask(n: usize) -> u8 {
+        Lane::first(n).fold(0, |m, l| m | 1 << u8::from(l))
+    }
+}
+
+impl From<Lane> for u8 {
+    fn from(l: Lane) -> u8 {
+        match l {
+            Lane::X => 0,
+            Lane::Y => 1,
+            Lane::Z => 2,
+            Lane::W => 3,
+        }
+    }
+}
+
+impl From<Lane> for u32 {
+    fn from(l: Lane) -> u32 {
+        u32::from(u8::from(l))
+    }
+}
+
+impl From<Lane> for usize {
+    fn from(l: Lane) -> usize {
+        usize::from(u8::from(l))
+    }
+}
+
 /// A register operand with an optional relative index (a temp's component) added to the last
 /// index.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct Reg {
     pub f: RegF,
-    pub rel: Option<(u32, u8)>,
+    pub rel: Option<(u32, Lane)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -385,7 +385,7 @@ impl Gen<'_> {
                     // clip(): any component below 0
                     let d = self.scr_d(0, 0xf)?;
                     self.op(D9::Mov, false, &d, &[&s])?;
-                    let m = self.scr_d(0, ((1u16 << n) - 1) as u8)?;
+                    let m = self.scr_d(0, Lane::mask(n))?;
                     self.line(format!("texkill {m}"));
                     return Ok(());
                 }

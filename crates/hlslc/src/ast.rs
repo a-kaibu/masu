@@ -167,10 +167,13 @@ pub enum Interp {
     Sample,
 }
 
+/// A declared variable. `T` is its type: `()` while the parser holds only the modifiers and
+/// declarator parts read before the type (a [`Mods`]), [`Ty`] once [`Mods::typed`] gave it one,
+/// so no later pass can meet a variable without a type.
 #[derive(Clone, Debug, Default)]
-pub struct Var {
+pub struct Var<T = Ty> {
     pub name: String,
-    pub ty: Option<Ty>,
+    pub ty: T,
     pub init: Option<Expr>,
     pub sem: Option<String>,
     /// register(t3) -> ('t', 3)
@@ -239,9 +242,19 @@ pub struct Technique {
     pub passes: Vec<Pass>,
 }
 
+/// A variable before its type is parsed.
+pub type Mods = Var<()>;
+
 impl Var {
     pub fn ty(&self) -> &Ty {
-        self.ty.as_ref().unwrap()
+        &self.ty
+    }
+}
+
+impl Mods {
+    pub fn typed(self, ty: Ty) -> Var {
+        let Var { name, ty: (), init, sem, reg, packoffset, is_static, is_const, shared, uniform, row_major, interp, is_in, is_out, line, annos, states, fx } = self;
+        Var { name, ty, init, sem, reg, packoffset, is_static, is_const, shared, uniform, row_major, interp, is_in, is_out, line, annos, states, fx }
     }
 }
 

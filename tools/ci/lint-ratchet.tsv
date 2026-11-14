@@ -116,7 +116,6 @@ file	crates/glwgsl/src/lib.rs	string_slice	5
 file	crates/hlslc/src/ast.rs	arithmetic_side_effects	1
 file	crates/hlslc/src/ast.rs	as_conversions	1
 file	crates/hlslc/src/ast.rs	cast_possible_truncation	1
-file	crates/hlslc/src/ast.rs	unwrap_used	1
 file	crates/hlslc/src/d3d9asm.rs	arithmetic_side_effects	12
 file	crates/hlslc/src/d3d9asm.rs	as_conversions	3
 file	crates/hlslc/src/d3d9asm.rs	cast_possible_truncation	1
@@ -131,9 +130,9 @@ file	crates/hlslc/src/fx.rs	cast_precision_loss	4
 file	crates/hlslc/src/fx.rs	cast_sign_loss	2
 file	crates/hlslc/src/fx.rs	indexing_slicing	9
 file	crates/hlslc/src/fx.rs	unwrap_used	1
-file	crates/hlslc/src/intrinsics.rs	arithmetic_side_effects	15
-file	crates/hlslc/src/intrinsics.rs	as_conversions	15
-file	crates/hlslc/src/intrinsics.rs	cast_possible_truncation	9
+file	crates/hlslc/src/intrinsics.rs	arithmetic_side_effects	14
+file	crates/hlslc/src/intrinsics.rs	as_conversions	9
+file	crates/hlslc/src/intrinsics.rs	cast_possible_truncation	3
 file	crates/hlslc/src/intrinsics.rs	cast_possible_wrap	1
 file	crates/hlslc/src/intrinsics.rs	cast_sign_loss	1
 file	crates/hlslc/src/intrinsics.rs	indexing_slicing	123
@@ -141,9 +140,9 @@ file	crates/hlslc/src/intrinsics.rs	string_slice	1
 file	crates/hlslc/src/intrinsics.rs	unreachable	2
 file	crates/hlslc/src/lib.rs	indexing_slicing	5
 file	crates/hlslc/src/lib.rs	map_err_ignore	1
-file	crates/hlslc/src/lower.rs	arithmetic_side_effects	99
-file	crates/hlslc/src/lower.rs	as_conversions	64
-file	crates/hlslc/src/lower.rs	cast_possible_truncation	37
+file	crates/hlslc/src/lower.rs	arithmetic_side_effects	93
+file	crates/hlslc/src/lower.rs	as_conversions	47
+file	crates/hlslc/src/lower.rs	cast_possible_truncation	21
 file	crates/hlslc/src/lower.rs	cast_possible_wrap	9
 file	crates/hlslc/src/lower.rs	cast_precision_loss	4
 file	crates/hlslc/src/lower.rs	cast_sign_loss	11
@@ -171,9 +170,9 @@ file	crates/hlslc/src/pp.rs	indexing_slicing	32
 file	crates/hlslc/src/pp.rs	let_underscore_must_use	1
 file	crates/hlslc/src/pp.rs	map_err_ignore	3
 file	crates/hlslc/src/pp.rs	string_slice	14
-file	crates/hlslc/src/sm3.rs	arithmetic_side_effects	28
-file	crates/hlslc/src/sm3.rs	as_conversions	5
-file	crates/hlslc/src/sm3.rs	cast_possible_truncation	5
+file	crates/hlslc/src/sm3.rs	arithmetic_side_effects	27
+file	crates/hlslc/src/sm3.rs	as_conversions	4
+file	crates/hlslc/src/sm3.rs	cast_possible_truncation	4
 file	crates/hlslc/src/sm3.rs	indexing_slicing	16
 file	crates/hlslc/src/sm3.rs	string_slice	2
 file	crates/hlslc/src/sm3.rs	unwrap_in_result	1

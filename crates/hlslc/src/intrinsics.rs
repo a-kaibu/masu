@@ -1,7 +1,7 @@
 //! Intrinsic functions and texture methods (the ones written in HLSL are in prelude.rs).
 
 use super::ast::*;
-use super::lower::{Obj, Val, C, L};
+use super::lower::{Lane, Obj, Val, C, L};
 use super::sm4::{self, Dst, Reg, RegF, Src};
 
 type R<T> = Result<T, String>;
@@ -73,7 +73,7 @@ impl L<'_> {
             let sa = self.x_opnd(a);
             let sb = self.x_opnd(b);
             self.x_emit(op, vec![Dst { r: temp(t), mask: 1 }], vec![sa, sb]);
-            return C::R(temp(t), 0);
+            return C::R(temp(t), Lane::X);
         }
         let p = self.x_alu2(sm4::IMUL, &[a, b], true);
         let mut s = p[0];
@@ -203,7 +203,7 @@ impl L<'_> {
         let comps = if swz_x { 1 } else { el.comps().max(1) };
         self.x_emit(op, vec![Dst { r: temp(dst), mask: if swz_x { 1 } else { 0xf } }], src).offset = offset;
         let ty = if swz_x { Ty::Scalar(B::Float) } else { el.clone() };
-        Ok(Val::num(ty, (0..comps).map(|k| C::R(temp(dst), k as u8)).collect()))
+        Ok(Val::num(ty, Lane::first(comps).map(|k| C::R(temp(dst), k)).collect()))
     }
 
     /// Texture2DMS[Array].Load(coord, sample[, offset]): ld2dms (the array index in z).
@@ -225,7 +225,7 @@ impl L<'_> {
         let si = self.x_opnd(&sample.c[..1]);
         self.x_emit(sm4::LD_MS, vec![Dst { r: temp(dst), mask: 0xf }], vec![a, Src::Tex(t, [0, 1, 2, 3]), si]).offset = offset;
         let comps = el.comps().max(1);
-        Ok(Val::num(el, (0..comps).map(|k| C::R(temp(dst), k as u8)).collect()))
+        Ok(Val::num(el, Lane::first(comps).map(|k| C::R(temp(dst), k)).collect()))
     }
 
     pub(super) fn load(&mut self, t: u32, coord: Val, offset: [i32; 3], has_mip: bool) -> R<Val> {
@@ -250,7 +250,7 @@ impl L<'_> {
         let a = self.x_opnd(&addr);
         self.x_emit(sm4::LD, vec![Dst { r: temp(dst), mask: 0xf }], vec![a, Src::Tex(t, [0, 1, 2, 3])]).offset = offset;
         let comps = el.comps().max(1);
-        Ok(Val::num(el, (0..comps).map(|k| C::R(temp(dst), k as u8)).collect()))
+        Ok(Val::num(el, Lane::first(comps).map(|k| C::R(temp(dst), k)).collect()))
     }
 
     fn legacy(&mut self, name: &str, args: &[Expr]) -> R<Option<Val>> {
@@ -402,11 +402,11 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
             for ch in v.c.chunks(4) {
                 let t = l.x_tmp();
                 let s = l.x_opnd(ch);
-                let d = Dst { r: temp(t), mask: (1u8 << ch.len()) - 1 };
+                let d = Dst { r: temp(t), mask: Lane::mask(ch.len()) };
                 let null = Dst { r: Reg { f: RegF::Null, rel: None }, mask: 0 };
                 let dst = if name == "sin" { vec![d, null] } else { vec![null, d] };
                 l.x_emit(SINCOS, dst, vec![s]);
-                out.extend((0..ch.len()).map(|k| C::R(temp(t), k as u8)));
+                out.extend(Lane::first(ch.len()).map(|k| C::R(temp(t), k)));
             }
             Val::num(v.ty, out)
         }
@@ -448,7 +448,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
             let mut out = Vec::new();
             for ch in v.c.chunks(4) {
                 let t = l.x_tmp();
-                let d: Vec<C> = (0..ch.len()).map(|k| C::R(temp(t), k as u8)).collect();
+                let d: Vec<C> = Lane::first(ch.len()).map(|k| C::R(temp(t), k)).collect();
                 l.x_assign_sat(&d, ch);
                 out.extend(d);
             }
@@ -793,7 +793,7 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
             }
             v.ty = Ty::Vec(B::Float, 4);
             let C::R(r, _) = v.c[0] else { unreachable!() };
-            v.c = (0..4).map(|k| C::R(r, k)).collect();
+            v.c = Lane::ALL.map(|k| C::R(r, k)).to_vec();
             v
         }
         "Load" if matches!(dim, Dim::T2DMS | Dim::T2DMSArray) => {
@@ -814,7 +814,7 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
             let si = l.x_opnd(&s.c[..1]);
             let dst = l.x_tmp();
             l.x_emit(SAMPLE_POS, vec![Dst { r: temp(dst), mask: 0x3 }], vec![Src::Tex(t, [0, 1, 2, 3]), si]);
-            Val::num(Ty::Vec(B::Float, 2), vec![C::R(temp(dst), 0), C::R(temp(dst), 1)])
+            Val::num(Ty::Vec(B::Float, 2), vec![C::R(temp(dst), Lane::X), C::R(temp(dst), Lane::Y)])
         }
         "GetDimensions" if matches!(dim, Dim::T2DMS | Dim::T2DMSArray) => {
             // (width, height[, elements], samples): resinfo (level 0) and sampleinfo
@@ -830,7 +830,7 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
             l.x_emit(SAMPLE_INFO, vec![Dst { r: temp(sdst), mask: 0x1 }], vec![Src::Tex(t, [0, 0, 0, 0])]).ctl = 1;
             for (k, e) in outs.iter().enumerate() {
                 let p = l.x_place(e)?;
-                let c = if k + 1 == want { C::R(temp(sdst), 0) } else { C::R(temp(dst), k as u8) };
+                let c = if k + 1 == want { C::R(temp(sdst), Lane::X) } else { C::R(temp(dst), Lane::of(k)) };
                 let v = Val::num(Ty::Scalar(B::Uint), vec![c]);
                 let v = l.x_cast(v, &p.ty)?;
                 l.x_assign(&p.c, &v.c);
@@ -858,17 +858,17 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
                 ins_ctl = 0;
             }
             l.x_emit(RESINFO, vec![Dst { r: temp(dst), mask: 0xf }], vec![ms, Src::Tex(t, [0, 1, 2, 3])]).ctl = ins_ctl;
-            let comps: Vec<u8> = match outs.len() {
-                1 => vec![0],
-                2 => vec![0, 1],
-                3 if dim.array() || dim == Dim::T3D || dim == Dim::T1DArray => vec![0, 1, 2],
-                3 => vec![0, 1, 3],
-                _ => vec![0, 1, 2, 3],
+            let comps: Vec<Lane> = match outs.len() {
+                1 => vec![Lane::X],
+                2 => vec![Lane::X, Lane::Y],
+                3 if dim.array() || dim == Dim::T3D || dim == Dim::T1DArray => vec![Lane::X, Lane::Y, Lane::Z],
+                3 => vec![Lane::X, Lane::Y, Lane::W],
+                _ => Lane::ALL.to_vec(),
             };
             let rb = if ins_ctl == 2 { B::Uint } else { B::Float };
             for (k, e) in outs.iter().enumerate() {
                 let p = l.x_place(e)?;
-                let c = *comps.get(k).unwrap_or(&3);
+                let c = *comps.get(k).unwrap_or(&Lane::W);
                 let v = Val::num(Ty::Scalar(rb), vec![C::R(temp(dst), c)]);
                 let v = l.x_cast(v, &p.ty)?;
                 l.x_assign(&p.c, &v.c);

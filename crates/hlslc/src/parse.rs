@@ -301,7 +301,7 @@ impl Parser {
             loop {
                 let fname = self.ident()?;
                 let ty = self.array_suffix(base.clone())?;
-                let mut v = Var { name: fname, ..Default::default() };
+                let mut v = Mods { name: fname, ..Default::default() };
                 self.post_decl(&mut v)?;
                 fields.push(Field { name: v.name, ty, sem: v.sem, interp: m.interp, row_major: m.row_major.or(self.pack) });
                 if !self.eat(",") {
@@ -355,8 +355,8 @@ impl Parser {
     }
 
     /// storage and interpolation modifiers into a Var's fields
-    fn modifiers(&mut self) -> R<Var> {
-        let mut v = Var { is_in: true, ..Default::default() };
+    fn modifiers(&mut self) -> R<Mods> {
+        let mut v = Mods { is_in: true, ..Default::default() };
         let mut explicit_in = false;
         while let Some(Tok::Ident(s)) = self.peek() {
             if !MODIFIERS.contains(&s.as_str()) {
@@ -392,7 +392,7 @@ impl Parser {
     }
 
     /// : SEMANTIC, : register(..), : packoffset(..), <annotations>, after a declared name
-    fn post_decl(&mut self, v: &mut Var) -> R<()> {
+    fn post_decl<T>(&mut self, v: &mut Var<T>) -> R<()> {
         loop {
             if self.is("<") {
                 v.annos = self.annotations()?;
@@ -664,7 +664,7 @@ impl Parser {
                     let letter = if s == "cbuffer" { 'b' } else { 't' };
                     self.p += 1;
                     let name = self.ident()?;
-                    let mut v = Var::default();
+                    let mut v = Mods::default();
                     self.post_decl(&mut v)?;
                     if v.reg.is_some_and(|r| r.0 != letter) {
                         return self.err("a cbuffer's register is a b register (a tbuffer's t)");
@@ -690,7 +690,7 @@ impl Parser {
                         return Ok(());
                     }
                     // struct S {..} var;
-                    let names = self.declarators(Ty::Struct(i), Var { is_in: true, ..Default::default() }, line)?;
+                    let names = self.declarators(Ty::Struct(i), Mods { is_in: true, ..Default::default() }, line)?;
                     self.prog.globals.extend(names);
                     return Ok(());
                 }
@@ -710,7 +710,7 @@ impl Parser {
                     let vertex = s.to_ascii_lowercase() == "vertexshader";
                     self.p += 1;
                     let name = self.ident()?;
-                    let mut v = Var::default();
+                    let mut v = Mods::default();
                     let ty = self.array_suffix(Ty::Void)?;
                     if ty != Ty::Void {
                         return self.err("arrays of shaders are not supported");
@@ -755,14 +755,15 @@ impl Parser {
                 self.p += 2;
             } else {
                 loop {
-                    let mut v = self.modifiers()?;
+                    let m = self.modifiers()?;
                     // (geometry shader primitive types)
                     if matches!(self.peek(), Some(Tok::Ident(s)) if matches!(s.as_str(), "point" | "line" | "triangle" | "lineadj" | "triangleadj")) {
                         return self.err("geometry shaders are not supported");
                     }
                     let t = self.ty()?;
-                    v.name = self.ident()?;
-                    v.ty = Some(self.array_suffix(t)?);
+                    let name = self.ident()?;
+                    let mut v = m.typed(self.array_suffix(t)?);
+                    v.name = name;
                     v.line = self.line();
                     self.post_decl(&mut v)?;
                     if self.eat("=") {
@@ -779,7 +780,7 @@ impl Parser {
                 self.expect(")")?;
             }
         }
-        let mut rv = Var::default();
+        let mut rv = Mods::default();
         self.post_decl(&mut rv)?;
         let body = if self.eat(";") { None } else { Some(self.block()?) };
         if body.is_none() && self.prog.funcs.iter().any(|f| f.name == name && f.params.len() == params.len()) {
@@ -793,13 +794,13 @@ impl Parser {
     }
 
     /// name[n] : SEM = init, name2 ... ;
-    fn declarators(&mut self, base: Ty, m: Var, line: u32) -> R<Vec<Var>> {
+    fn declarators(&mut self, base: Ty, m: Mods, line: u32) -> R<Vec<Var>> {
         let mut out = Vec::new();
         loop {
-            let mut v = m.clone();
+            let name = self.ident()?;
+            let mut v = m.clone().typed(self.array_suffix(base.clone())?);
             v.line = line;
-            v.name = self.ident()?;
-            v.ty = Some(self.array_suffix(base.clone())?);
+            v.name = name;
             self.post_decl(&mut v)?;
             if v.row_major.is_none() {
                 v.row_major = self.pack;
@@ -984,7 +985,7 @@ impl Parser {
                     if self.eat(";") {
                         return Ok(Stmt::Block(Vec::new()));
                     }
-                    return Ok(Stmt::Decl(self.declarators(Ty::Struct(i), Var { is_in: true, ..Default::default() }, line)?));
+                    return Ok(Stmt::Decl(self.declarators(Ty::Struct(i), Mods { is_in: true, ..Default::default() }, line)?));
                 }
                 _ => {}
             }

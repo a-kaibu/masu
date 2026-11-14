@@ -5,13 +5,14 @@
 use std::collections::HashMap;
 
 use super::ast::*;
+pub use super::sm4::Lane;
 use super::sm4::{self, Dst, Ins, Reg, RegF, SigEl, Src};
 
 type R<T> = Result<T, String>;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum C {
-    R(Reg, u8),
+    R(Reg, Lane),
     I(u32),
 }
 
@@ -552,7 +553,7 @@ impl<'a> L<'a> {
     fn scalar_src(&mut self, c: C) -> Src {
         match c {
             C::I(v) => Src::Imm([v; 4], true),
-            C::R(r, k) => Src::R { r, swz: [k; 4], neg: false, abs: false, one: true },
+            C::R(r, k) => Src::R { r, swz: [k.into(); 4], neg: false, abs: false, one: true },
         }
     }
 
@@ -574,14 +575,14 @@ impl<'a> L<'a> {
                 let mut swz = [0u8; 4];
                 for (k, s) in swz.iter_mut().enumerate() {
                     if let C::R(_, c) = cs[k.min(n - 1)] {
-                        *s = c;
+                        *s = c.into();
                     }
                 }
                 return Src::R { r: r0, swz, neg: false, abs: false, one: false };
             }
         }
         let t = self.tmp();
-        let dst: Vec<C> = (0..n).map(|k| C::R(temp(t), k as u8)).collect();
+        let dst: Vec<C> = Lane::first(n).map(|k| C::R(temp(t), k)).collect();
         self.assign_raw(&dst, cs);
         Src::R { r: temp(t), swz: [0, 1.min(n as u8 - 1), 2.min(n as u8 - 1), 3.min(n as u8 - 1)], neg: false, abs: false, one: false }
     }
@@ -597,8 +598,8 @@ impl<'a> L<'a> {
         for (d, s) in dst.iter().zip(src) {
             let C::R(r, c) = *d else { continue };
             match groups.iter_mut().find(|g| g.0 == r) {
-                Some(g) => g.1.push((c, *s)),
-                None => groups.push((r, vec![(c, *s)])),
+                Some(g) => g.1.push((c.into(), *s)),
+                None => groups.push((r, vec![(c.into(), *s)])),
             }
         }
         for (r, comps) in groups {
@@ -630,7 +631,7 @@ impl<'a> L<'a> {
                         let mut swz = [0u8; 4];
                         for (dc, s) in &items {
                             if let C::R(_, c) = s {
-                                swz[usize::from(*dc)] = *c;
+                                swz[usize::from(*dc)] = (*c).into();
                             }
                         }
                         Src::R { r: sr, swz, neg: false, abs: false, one: false }
@@ -658,7 +659,7 @@ impl<'a> L<'a> {
         let mut out = Vec::new();
         for ch in src.chunks(4) {
             let t = self.tmp();
-            let d: Vec<C> = (0..ch.len()).map(|k| C::R(temp(t), k as u8)).collect();
+            let d: Vec<C> = Lane::first(ch.len()).map(|k| C::R(temp(t), k)).collect();
             self.assign_raw(&d, ch);
             out.extend(d);
         }
@@ -785,8 +786,8 @@ impl<'a> L<'a> {
                 }
                 srcs.push(s);
             }
-            self.emit(op, vec![Dst { r: temp(t), mask: (1u8 << m) - 1 }], srcs);
-            out.extend((0..m).map(|k| C::R(temp(t), k as u8)));
+            self.emit(op, vec![Dst { r: temp(t), mask: Lane::mask(m) }], srcs);
+            out.extend(Lane::first(m).map(|k| C::R(temp(t), k)));
         }
         out
     }
@@ -855,11 +856,11 @@ impl<'a> L<'a> {
             let m = (n - st).min(4);
             let t = self.tmp();
             let srcs: Vec<Src> = args.iter().map(|a| self.opnd(&a[st..st + m])).collect();
-            let d = Dst { r: temp(t), mask: (1u8 << m) - 1 };
+            let d = Dst { r: temp(t), mask: Lane::mask(m) };
             let null = Dst { r: Reg { f: RegF::Null, rel: None }, mask: 0 };
             let dst = if second { vec![null, d] } else { vec![d, null] };
             self.emit(op, dst, srcs);
-            out.extend((0..m).map(|k| C::R(temp(t), k as u8)));
+            out.extend(Lane::first(m).map(|k| C::R(temp(t), k)));
         }
         out
     }
@@ -981,8 +982,8 @@ impl<'a> L<'a> {
                 self.xs.push(u.len().max(1) as u32);
                 let mut out = Vec::new();
                 for (k, n) in u.iter().enumerate() {
-                    for c in 0..*n {
-                        out.push(C::R(Reg { f: RegF::X(id, crate::u32_of(k)), rel: None }, c as u8));
+                    for c in Lane::first(*n) {
+                        out.push(C::R(Reg { f: RegF::X(id, crate::u32_of(k)), rel: None }, c));
                     }
                 }
                 out
@@ -1000,7 +1001,7 @@ impl<'a> L<'a> {
                 for _ in 0..*r {
                     let t = self.tmp();
                     self.marks.push((t, self.code.len()));
-                    out.extend((0..*c).map(|k| C::R(temp(t), k)));
+                    out.extend(Lane::first(usize::from(*c)).map(|k| C::R(temp(t), k)));
                 }
                 out
             }
@@ -1012,7 +1013,7 @@ impl<'a> L<'a> {
                 }
                 let t = self.tmp();
                 self.marks.push((t, self.code.len()));
-                (0..n).map(|k| C::R(temp(t), k as u8)).collect()
+                Lane::first(n).map(|k| C::R(temp(t), k)).collect()
             }
         }
     }
@@ -1065,7 +1066,7 @@ impl<'a> L<'a> {
                 }
                 for k in 0..n {
                     let o = at + 4 * k;
-                    out.push(C::R(reg(o / 16), ((o % 16) / 4) as u8));
+                    out.push(C::R(reg(o / 16), Lane::of(crate::us(o / 4))));
                 }
                 if self.sm3() {
                     at + 16
@@ -1079,7 +1080,7 @@ impl<'a> L<'a> {
                 for i in 0..r {
                     for j in 0..c {
                         let (rr, cc) = if row_major { (i, j) } else { (j, i) };
-                        out.push(C::R(reg(at / 16 + rr), cc as u8));
+                        out.push(C::R(reg(at / 16 + rr), Lane::of(crate::us(cc))));
                     }
                 }
                 let end = if row_major { at + (r - 1) * 16 + c * 4 } else { at + (c - 1) * 16 + r * 4 };
@@ -1383,7 +1384,7 @@ impl<'a> L<'a> {
                             if let C::I(x) = val.c[k] {
                                 *r = x;
                             }
-                            comps.push(C::R(Reg { f: RegF::Icb(base + crate::u32_of(n)), rel: None }, c as u8));
+                            comps.push(C::R(Reg { f: RegF::Icb(base + crate::u32_of(n)), rel: None }, Lane::of(c)));
                             k += 1;
                         }
                         self.icb.push(row);
@@ -1437,13 +1438,13 @@ impl<'a> L<'a> {
             if n == 0 || n > if ty == 35 { 1 } else { 3 } || t.base() == B::Float || !t.numeric() {
                 return Err(format!("{sem} of type {t:?}"));
             }
-            let mask = ((1u16 << n) - 1) as u8;
+            let mask = Lane::mask(n);
             match self.sys_inputs.iter_mut().find(|s| s.0 == ty) {
                 Some(s) => s.1 |= mask,
                 None => self.sys_inputs.push((ty, mask)),
             }
-            for c in 0..n {
-                out.push(C::R(Reg { f: RegF::Sys(ty), rel: None }, c as u8));
+            for c in Lane::first(n) {
+                out.push(C::R(Reg { f: RegF::Sys(ty), rel: None }, c));
             }
             let _ = &mut index;
             return Ok(());
@@ -1518,7 +1519,7 @@ impl<'a> L<'a> {
                 }
             };
             let ct = if sysval == 9 { 1 } else { ctype(b) };
-            list.push(SigEl { name: name.clone(), index, sysval, ctype: ct, reg, mask: ((1u16 << n) - 1) as u8, interp, depth });
+            list.push(SigEl { name: name.clone(), index, sysval, ctype: ct, reg, mask: Lane::mask(n), interp, depth });
             let f = if depth {
                 RegF::Depth
             } else if output {
@@ -1526,8 +1527,8 @@ impl<'a> L<'a> {
             } else {
                 RegF::Input(reg)
             };
-            for c in 0..n {
-                out.push(C::R(Reg { f, rel: None }, c as u8));
+            for c in Lane::first(n) {
+                out.push(C::R(Reg { f, rel: None }, c));
             }
             k += n;
             index += 1;
@@ -1607,7 +1608,7 @@ impl<'a> L<'a> {
             let flag = if early {
                 let t = self.tmp();
                 self.marks.push((t, self.code.len()));
-                self.assign(&[C::R(temp(t), 0)], &[C::I(0)]);
+                self.assign(&[C::R(temp(t), Lane::X)], &[C::I(0)]);
                 Some(t)
             } else {
                 None
@@ -1787,7 +1788,7 @@ impl<'a> L<'a> {
             self.stmt(s)?;
             if let Some(f) = self.fctx()?.flag {
                 if has_return(s) && i + 1 < ss.len() {
-                    self.cond_op(sm4::IF, C::R(temp(f), 0), false);
+                    self.cond_op(sm4::IF, C::R(temp(f), Lane::X), false);
                     self.stmts(&ss[i + 1..])?;
                     self.flow(sm4::ENDIF);
                     return Ok(());
@@ -1822,7 +1823,7 @@ impl<'a> L<'a> {
         let f = self.fctx()?;
         if let (Some(flag), true) = (f.flag, body_returns) {
             if f.loops > 0 {
-                self.cond_op(sm4::BREAKC, C::R(temp(flag), 0), true);
+                self.cond_op(sm4::BREAKC, C::R(temp(flag), Lane::X), true);
             }
         }
         Ok(())
@@ -1908,7 +1909,7 @@ impl<'a> L<'a> {
                 let first = if cont && step.is_some() {
                     let f = self.tmp();
                     self.marks.push((f, self.code.len()));
-                    self.assign(&[C::R(temp(f), 0)], &[C::I(self.tru())]);
+                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
                     Some(f)
                 } else {
                     None
@@ -1916,10 +1917,10 @@ impl<'a> L<'a> {
                 self.flow(LOOP);
                 self.fctx()?.loops += 1;
                 if let (Some(f), Some(st)) = (first, step) {
-                    self.cond_op(IF, C::R(temp(f), 0), false);
+                    self.cond_op(IF, C::R(temp(f), Lane::X), false);
                     self.expr(st)?;
                     self.flow(ENDIF);
-                    self.assign(&[C::R(temp(f), 0)], &[C::I(0)]);
+                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(0)]);
                 }
                 if let Some(c) = cond {
                     let cv = self.expr(c)?;
@@ -1951,7 +1952,7 @@ impl<'a> L<'a> {
                 let first = if cont {
                     let f = self.tmp();
                     self.marks.push((f, self.code.len()));
-                    self.assign(&[C::R(temp(f), 0)], &[C::I(self.tru())]);
+                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
                     Some(f)
                 } else {
                     None
@@ -1959,12 +1960,12 @@ impl<'a> L<'a> {
                 self.flow(LOOP);
                 self.fctx()?.loops += 1;
                 if let Some(f) = first {
-                    self.cond_op(IF, C::R(temp(f), 0), false);
+                    self.cond_op(IF, C::R(temp(f), Lane::X), false);
                     let cv = self.expr(c)?;
                     let t = self.truth(cv)?;
                     self.cond_op(BREAKC, t, false);
                     self.flow(ENDIF);
-                    self.assign(&[C::R(temp(f), 0)], &[C::I(0)]);
+                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(0)]);
                 }
                 self.scoped(body)?;
                 if first.is_none() {
@@ -2044,7 +2045,7 @@ impl<'a> L<'a> {
                     self.assign(&r, &v.c);
                 }
                 if let Some(f) = self.fctx()?.flag {
-                    self.assign(&[C::R(temp(f), 0)], &[C::I(self.tru())]);
+                    self.assign(&[C::R(temp(f), Lane::X)], &[C::I(self.tru())]);
                     if self.fctx()?.loops > 0 {
                         self.flow(BREAK);
                     }
@@ -2409,8 +2410,8 @@ impl<'a> L<'a> {
             let a = self.shared_addr(off, crate::u32_of(k));
             let a = self.scalar_src(a);
             let t = self.tmp();
-            self.emit(sm4::LD_RAW, vec![Dst { r: temp(t), mask: ((1u16 << m) - 1) as u8 }], vec![a, Src::G(g, [0, 1, 2, 3])]);
-            out.extend((0..m).map(|c| C::R(temp(t), c as u8)));
+            self.emit(sm4::LD_RAW, vec![Dst { r: temp(t), mask: Lane::mask(m) }], vec![a, Src::G(g, [0, 1, 2, 3])]);
+            out.extend(Lane::first(m).map(|c| C::R(temp(t), c)));
         }
         out
     }
@@ -2420,7 +2421,7 @@ impl<'a> L<'a> {
             let a = self.shared_addr(off, 4 * crate::u32_of(k));
             let a = self.scalar_src(a);
             let s = self.opnd(ch);
-            self.emit(sm4::STORE_RAW, vec![Dst { r: Reg { f: RegF::G(g), rel: None }, mask: ((1u16 << ch.len()) - 1) as u8 }], vec![a, s]);
+            self.emit(sm4::STORE_RAW, vec![Dst { r: Reg { f: RegF::G(g), rel: None }, mask: Lane::mask(ch.len()) }], vec![a, s]);
         }
     }
 
@@ -2456,7 +2457,7 @@ impl<'a> L<'a> {
         let t = self.tmp();
         self.emit(sm4::LD_UAV_TYPED, vec![Dst { r: temp(t), mask: 0xf }], vec![a, Src::Uav(u, [0, 1, 2, 3])]);
         let n = el.comps().max(1);
-        Val::num(el, (0..n).map(|k| C::R(temp(t), k as u8)).collect())
+        Val::num(el, Lane::first(n).map(|k| C::R(temp(t), k)).collect())
     }
 
     fn member(&mut self, v: Val, name: &str) -> R<Val> {
@@ -2499,7 +2500,7 @@ impl<'a> L<'a> {
     }
 
     /// An index value as an int comp in a temp register.
-    fn index_reg(&mut self, iv: Val, stride: u32) -> R<(u32, u8)> {
+    fn index_reg(&mut self, iv: Val, stride: u32) -> R<(u32, Lane)> {
         let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
         let mut c = iv.c[0];
         if stride > 1 && self.sm3() {
@@ -2848,7 +2849,7 @@ impl<'a> L<'a> {
         let flag = if early {
             let t = self.tmp();
             self.marks.push((t, self.code.len()));
-            self.assign(&[C::R(temp(t), 0)], &[C::I(0)]);
+            self.assign(&[C::R(temp(t), Lane::X)], &[C::I(0)]);
             Some(t)
         } else {
             None
