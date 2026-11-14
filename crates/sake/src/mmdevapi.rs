@@ -12,15 +12,64 @@ use std::sync::{Mutex, OnceLock};
 use crate::api::{Ctx, Handler};
 use crate::mem::{self, ps, putp, r16, r32, w16, w32, wp};
 
+use crate::wasapi::Iid;
+
 const S_OK: u32 = 0;
-const E_POINTER: u32 = 0x8000_4003;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_INVALIDARG: u32 = 0x8007_0057;
-/// HRESULT_FROM_WIN32(ERROR_NOT_FOUND)
-const E_NOTFOUND: u32 = 0x8007_0490;
-const E_RENDER: u32 = 0;
-const E_ALL: u32 = 2;
+
+/// The failures the objects answer
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hr {
+    Pointer,
+    NoInterface,
+    InvalidArg,
+    /// HRESULT_FROM_WIN32(ERROR_NOT_FOUND)
+    NotFound,
+    /// STG_E_ACCESSDENIED
+    AccessDenied,
+}
+impl Hr {
+    const fn code(self) -> u32 {
+        match self {
+            Hr::Pointer => 0x8000_4003,
+            Hr::NoInterface => 0x8000_4002,
+            Hr::InvalidArg => 0x8007_0057,
+            Hr::NotFound => 0x8007_0490,
+            Hr::AccessDenied => 0x8003_0005,
+        }
+    }
+}
+fn hr(r: Result<(), Hr>) -> u32 {
+    r.err().map_or(S_OK, Hr::code)
+}
+
+/// EDataFlow
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Flow {
+    Render,
+    Capture,
+    All,
+}
+impl Flow {
+    const fn code(self) -> u32 {
+        match self {
+            Flow::Render => 0,
+            Flow::Capture => 1,
+            Flow::All => 2,
+        }
+    }
+    fn of(v: u32) -> Option<Flow> {
+        [Flow::Render, Flow::Capture, Flow::All].into_iter().find(|f| f.code() == v)
+    }
+}
+
+/// ERole: eConsole, eMultimedia, eCommunications (each the one device)
+fn role_ok(v: u32) -> bool {
+    v <= 2
+}
+
 const DEVICE_STATE_ACTIVE: u32 = 1;
+/// DEVICE_STATE_ACTIVE | DISABLED | NOTPRESENT | UNPLUGGED
+const DEVICE_STATEMASK_ALL: u32 = 0xf;
 /// The endpoint's id (as Windows forms them: flow.{endpoint guid})
 pub(crate) const DEVICE_ID: &str = "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}";
 const FRIENDLY_NAME: &str = "スピーカー (sake Audio)";
@@ -37,36 +86,43 @@ fn singleton(name: &str, methods: &[(Handler, u32)], cell: &OnceLock<u32>) -> u3
         o
     })
 }
-fn guid_is(p: u32, d1: u32, d2: u16, d3: u16) -> bool {
-    p != 0 && r32(p) == d1 && r16(p + 4) == d2 && r16(p + 6) == d3
+/// IID `g` at `p` (its first three fields: the interfaces sake answers differ there)
+fn guid_is(p: u32, g: Iid) -> bool {
+    p != 0 && r32(p) == g.0 && r16(p + 4) == g.1 && r16(p + 6) == g.2
 }
+const IID_UNKNOWN: [u8; 16] = guid(0, 0, 0, [0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
 fn is_unknown(iid: u32) -> bool {
-    iid != 0 && (0..4).all(|i| r32(iid + 4 * i) == [0, 0, 0xc0, 0x4600_0000][i as usize])
+    iid != 0 && mem::slice(iid, 16) == IID_UNKNOWN
 }
+const IID_ENUMERATOR: Iid = (0xa956_64d2, 0x9614, 0x4f35);
+const IID_COLLECTION: Iid = (0x0bd7_a1be, 0x7a1a, 0x44db);
+const IID_DEVICE: Iid = (0xd666_063f, 0x1587, 0x4e43);
+const IID_PROPERTY_STORE: Iid = (0x886d_8eeb, 0x8cf2, 0x4446);
+const IID_DIRECTSOUND: Iid = (0x279a_fa83, 0x4981, 0x11ce);
+const IID_DIRECTSOUND8: Iid = (0xc50a_7e93, 0xf395, 0x4834);
+const CLSID_ENUMERATOR: Iid = (0xbcde_0395, 0xe52f, 0x467c);
 fn one(_: &mut Ctx) -> u32 {
     1
 }
 /// QueryInterface answering IUnknown and the object's own interface
-fn qi(c: &mut Ctx, own: (u32, u16, u16)) -> u32 {
+fn qi(c: &mut Ctx, own: Iid) -> u32 {
     let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    if is_unknown(iid) || guid_is(iid, own.0, own.1, own.2) {
+    if is_unknown(iid) || guid_is(iid, own) {
         putp(out, this);
         S_OK
     } else {
         putp(out, 0);
-        E_NOINTERFACE
+        Hr::NoInterface.code()
     }
 }
 /// A CoTaskMemAlloc'd copy of `s` (UTF-16, NUL-terminated)
 fn task_wstr(s: &str) -> u32 {
-    let w: Vec<u16> = s.encode_utf16().chain([0]).collect();
-    let p = mem::heap_alloc(2 * w.len() as u32, false);
-    for (i, v) in w.iter().enumerate() {
-        w16(p + 2 * i as u32, *v);
-    }
+    let w: Vec<u8> = s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+    let p = mem::heap_alloc(u32::try_from(w.len()).unwrap_or(0), false);
+    mem::write(p, &w);
     p
 }
 
@@ -74,52 +130,54 @@ fn task_wstr(s: &str) -> u32 {
 // IMMDeviceEnumerator {a95664d2-9614-4f35-a746-de8db63617e6}
 
 fn en_qi(c: &mut Ctx) -> u32 {
-    qi(c, (0xa956_64d2, 0x9614, 0x4f35))
+    qi(c, IID_ENUMERATOR)
 }
 /// EnumAudioEndpoints(flow, state mask, IMMDeviceCollection**)
 fn en_enum(c: &mut Ctx) -> u32 {
     let (flow, mask, out) = (c.a(1), c.a(2), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    if flow > E_ALL || mask & !0xf != 0 {
+    let Some(flow) = Flow::of(flow).filter(|_| mask & !DEVICE_STATEMASK_ALL == 0) else {
         putp(out, 0);
-        return E_INVALIDARG;
-    }
-    let has = (flow == E_RENDER || flow == E_ALL) && mask & DEVICE_STATE_ACTIVE != 0;
-    putp(out, collection(has));
+        return Hr::InvalidArg.code();
+    };
+    let renders = match flow {
+        Flow::Render | Flow::All => true,
+        Flow::Capture => false,
+    };
+    putp(out, collection(renders && mask & DEVICE_STATE_ACTIVE != 0));
     S_OK
 }
 /// GetDefaultAudioEndpoint(flow, role, IMMDevice**): the render endpoint; no capture one
 fn en_default(c: &mut Ctx) -> u32 {
     let (flow, role, out) = (c.a(1), c.a(2), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
-    if flow > E_ALL || role > 2 {
-        return E_INVALIDARG;
+    let Some(flow) = Flow::of(flow).filter(|_| role_ok(role)) else { return Hr::InvalidArg.code() };
+    match flow {
+        Flow::Render => {
+            putp(out, device());
+            S_OK
+        }
+        Flow::Capture | Flow::All => Hr::NotFound.code(),
     }
-    if flow != E_RENDER {
-        return E_NOTFOUND;
-    }
-    putp(out, device());
-    S_OK
 }
 /// GetDevice(id, IMMDevice**): an id that names no endpoint is E_INVALIDARG (Windows, Wine's
 /// mmdevenum test)
 fn en_get(c: &mut Ctx) -> u32 {
     let (id, out) = (c.a(1), c.a(2));
     if id == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let want: Vec<u16> = DEVICE_ID.encode_utf16().collect();
-    if mem::wstr(id) == want {
+    if mem::wstr(id).into_iter().eq(DEVICE_ID.encode_utf16()) {
         putp(out, device());
         S_OK
     } else {
         putp(out, 0);
-        E_INVALIDARG
+        Hr::InvalidArg.code()
     }
 }
 /// The registered IMMNotificationClient pointers (one entry per registration; the one device
@@ -128,7 +186,7 @@ static CLIENTS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 /// RegisterEndpointNotificationCallback(IMMNotificationClient*)
 fn en_register(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     CLIENTS.lock().unwrap_or_else(|e| e.into_inner()).push(c.a(1));
     S_OK
@@ -136,7 +194,7 @@ fn en_register(c: &mut Ctx) -> u32 {
 /// UnregisterEndpointNotificationCallback(IMMNotificationClient*): one registration of it
 fn en_unregister(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let mut l = CLIENTS.lock().unwrap_or_else(|e| e.into_inner());
     match l.iter().position(|&p| p == c.a(1)) {
@@ -144,13 +202,13 @@ fn en_unregister(c: &mut Ctx) -> u32 {
             l.remove(i);
             S_OK
         }
-        None => E_NOTFOUND,
+        None => Hr::NotFound.code(),
     }
 }
 /// The enumerator's references: its own one plus its users'; it is never freed
 static ENUM_REFS: AtomicU32 = AtomicU32::new(1);
 fn en_addref(_: &mut Ctx) -> u32 {
-    ENUM_REFS.fetch_add(1, Ordering::Relaxed) + 1
+    ENUM_REFS.fetch_add(1, Ordering::Relaxed).wrapping_add(1)
 }
 // (fetch_update is try_update on newer toolchains, as in mem.rs)
 #[allow(deprecated)]
@@ -181,19 +239,23 @@ pub fn enumerator() -> u32 {
 // object is [vtable, has, references] and takes no reference on the enumerator
 
 fn col_qi(c: &mut Ctx) -> u32 {
-    let r = qi(c, (0x0bd7_a1be, 0x7a1a, 0x44db));
+    let r = qi(c, IID_COLLECTION);
     if r == S_OK {
         col_addref(c);
     }
     r
 }
+/// A collection's [vtable, has, references]
+fn col_refs(this: u32) -> u32 {
+    this.wrapping_add(2 * ps())
+}
 fn col_addref(c: &mut Ctx) -> u32 {
-    let p = c.a(0) + 2 * ps();
-    w32(p, r32(p) + 1);
+    let p = col_refs(c.a(0));
+    w32(p, r32(p).wrapping_add(1));
     r32(p)
 }
 fn col_release(c: &mut Ctx) -> u32 {
-    let p = c.a(0) + 2 * ps();
+    let p = col_refs(c.a(0));
     let r = r32(p).saturating_sub(1);
     w32(p, r);
     if r == 0 {
@@ -206,22 +268,22 @@ fn col_has(this: u32) -> bool {
 }
 fn col_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    w32(c.a(1), col_has(c.a(0)) as u32);
+    w32(c.a(1), u32::from(col_has(c.a(0))));
     S_OK
 }
 fn col_item(c: &mut Ctx) -> u32 {
     let (this, i, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if i == 0 && col_has(this) {
         putp(out, device());
         S_OK
     } else {
         putp(out, 0);
-        E_INVALIDARG
+        Hr::InvalidArg.code()
     }
 }
 fn collection(has: bool) -> u32 {
@@ -229,7 +291,7 @@ fn collection(has: bool) -> u32 {
     let v = *V.get_or_init(|| crate::api::vtable("IMMDeviceCollection", &[(col_qi, b(3)), (col_addref, b(1)), (col_release, b(1)), (col_count, b(2)), (col_item, b(3))]));
     let o = mem::heap_alloc(3 * ps(), true);
     wp(o, v);
-    w32(o + ps(), has as u32);
+    w32(o + ps(), u32::from(has));
     w32(o + 2 * ps(), 1);
     o
 }
@@ -241,26 +303,26 @@ fn collection(has: bool) -> u32 {
 /// and uses the pointer without checking the result)
 fn dev_qi(c: &mut Ctx) -> u32 {
     let (iid, out) = (c.a(1), c.a(2));
-    if out != 0 && guid_is(iid, ENDPOINT.0, ENDPOINT.1, ENDPOINT.2) {
+    if out != 0 && guid_is(iid, ENDPOINT) {
         putp(out, endpoint());
         return S_OK;
     }
-    qi(c, (0xd666_063f, 0x1587, 0x4e43))
+    qi(c, IID_DEVICE)
 }
 /// Activate(iid, clsctx, params, void**): WASAPI's IAudioClient, IAudioSessionManager(2) and
 /// IAudioEndpointVolume (wasapi.rs), or the property store
 fn dev_activate(c: &mut Ctx) -> u32 {
     let (iid, out) = (c.a(1), c.a(4));
     if iid == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    if guid_is(iid, 0x886d_8eeb, 0x8cf2, 0x4446) {
+    if guid_is(iid, IID_PROPERTY_STORE) {
         putp(out, store());
         return S_OK;
     }
     // IDirectSound(8) {279afa83-4981-11ce-a521-0020af0be560}, {c50a7e93-f395-4834-9ef6-7fa99de50966}:
     // a DirectSound device on this endpoint, dsound.dll loaded as Windows' does
-    if guid_is(iid, 0x279a_fa83, 0x4981, 0x11ce) || guid_is(iid, 0xc50a_7e93, 0xf395, 0x4834) {
+    if guid_is(iid, IID_DIRECTSOUND) || guid_is(iid, IID_DIRECTSOUND8) {
         crate::pe::load_library(c.cpu, "dsound.dll");
         if let Some(o) = crate::sound::device() {
             putp(out, o);
@@ -269,7 +331,7 @@ fn dev_activate(c: &mut Ctx) -> u32 {
     }
     // WASAPI (wasapi.rs): a stream, the session manager, the endpoint's volume
     use crate::wasapi::{IID_CLIENT, IID_ENDPOINT_VOLUME, IID_MANAGER, IID_MANAGER2};
-    let is = |g: (u32, u16, u16)| guid_is(iid, g.0, g.1, g.2);
+    let is = |g: Iid| guid_is(iid, g);
     let o = if is(IID_CLIENT) {
         crate::wasapi::new_client()
     } else if is(IID_MANAGER) || is(IID_MANAGER2) {
@@ -285,16 +347,17 @@ fn dev_activate(c: &mut Ctx) -> u32 {
     }
     crate::com::warn_once(&format!("IMMDevice::Activate {:08x}: not available", r32(iid)));
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 /// OpenPropertyStore(access, IPropertyStore**): STGM_READ, _WRITE or _READWRITE; another
 /// access is E_INVALIDARG with the pointer left as it was (Wine's propstore test)
 fn dev_store(c: &mut Ctx) -> u32 {
+    // STGM_READ 0, STGM_WRITE 1, STGM_READWRITE 2
     if c.a(1) > 2 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(2), store());
     S_OK
@@ -302,14 +365,14 @@ fn dev_store(c: &mut Ctx) -> u32 {
 /// GetId(LPWSTR*)
 fn dev_id(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), task_wstr(DEVICE_ID));
     S_OK
 }
 fn dev_state(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), DEVICE_STATE_ACTIVE);
     S_OK
@@ -323,19 +386,19 @@ fn device() -> u32 {
 // IMMEndpoint {1be09788-6894-4089-8586-9a2a6c265ac5}: the device's second interface (IUnknown
 // and IMMDevice through it are the device, as COM's identity rule wants)
 
-const ENDPOINT: (u32, u16, u16) = (0x1be0_9788, 0x6894, 0x4089);
+const ENDPOINT: Iid = (0x1be0_9788, 0x6894, 0x4089);
 fn ep_qi(c: &mut Ctx) -> u32 {
     let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let to = if guid_is(iid, ENDPOINT.0, ENDPOINT.1, ENDPOINT.2) {
+    let to = if guid_is(iid, ENDPOINT) {
         this
-    } else if is_unknown(iid) || guid_is(iid, 0xd666_063f, 0x1587, 0x4e43) {
+    } else if is_unknown(iid) || guid_is(iid, IID_DEVICE) {
         device()
     } else {
         putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     };
     putp(out, to);
     S_OK
@@ -343,9 +406,9 @@ fn ep_qi(c: &mut Ctx) -> u32 {
 /// GetDataFlow(EDataFlow*): the one endpoint renders
 fn ep_flow(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    w32(c.a(1), E_RENDER);
+    w32(c.a(1), Flow::Render.code());
     S_OK
 }
 fn endpoint() -> u32 {
@@ -389,38 +452,41 @@ const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] {
 /// The device format Windows reports for a typical stereo output: 16-bit PCM, 44.1 kHz
 /// (the engine mixes in float, wasapi.rs's mix format)
 fn device_format() -> [u8; 40] {
-    let mut f = [0u8; 40];
-    let put = |f: &mut [u8; 40], o: usize, v: &[u8]| f[o..o + v.len()].copy_from_slice(v);
-    put(&mut f, 0, &0xfffeu16.to_le_bytes());
-    put(&mut f, 2, &2u16.to_le_bytes());
-    put(&mut f, 4, &44100u32.to_le_bytes());
-    put(&mut f, 8, &(44100u32 * 4).to_le_bytes());
-    put(&mut f, 12, &4u16.to_le_bytes());
-    put(&mut f, 14, &16u16.to_le_bytes());
-    put(&mut f, 16, &22u16.to_le_bytes());
-    put(&mut f, 18, &16u16.to_le_bytes());
-    put(&mut f, 20, &3u32.to_le_bytes());
-    // KSDATAFORMAT_SUBTYPE_PCM {00000001-0000-0010-8000-00aa00389b71}
-    put(&mut f, 24, &guid(1, 0, 0x10, [0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]));
-    f
+    // wFormatTag EXTENSIBLE, 2 channels, 44100 Hz, avg, block 4, 16 bits, cbSize 22,
+    // wValidBitsPerSample 16, dwChannelMask FL|FR, KSDATAFORMAT_SUBTYPE_PCM
+    // {00000001-0000-0010-8000-00aa00389b71}
+    let mut f = Vec::with_capacity(40);
+    f.extend_from_slice(&0xfffeu16.to_le_bytes());
+    f.extend_from_slice(&2u16.to_le_bytes());
+    f.extend_from_slice(&44100u32.to_le_bytes());
+    f.extend_from_slice(&(44100u32 * 4).to_le_bytes());
+    f.extend_from_slice(&4u16.to_le_bytes());
+    f.extend_from_slice(&16u16.to_le_bytes());
+    f.extend_from_slice(&22u16.to_le_bytes());
+    f.extend_from_slice(&16u16.to_le_bytes());
+    f.extend_from_slice(&3u32.to_le_bytes());
+    f.extend_from_slice(&guid(1, 0, 0x10, [0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]));
+    f.try_into().unwrap_or([0; 40])
 }
 fn ps_qi(c: &mut Ctx) -> u32 {
-    qi(c, (0x886d_8eeb, 0x8cf2, 0x4446))
+    qi(c, IID_PROPERTY_STORE)
 }
+const KEY_COUNT: u32 = 7;
+const _: () = assert!(KEYS.len() == 7);
 fn ps_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    w32(c.a(1), KEYS.len() as u32);
+    w32(c.a(1), KEY_COUNT);
     S_OK
 }
 /// GetAt(i, PROPERTYKEY*)
 fn ps_at(c: &mut Ctx) -> u32 {
-    let (i, key) = (c.a(1) as usize, c.a(2));
+    let (i, key) = (c.a(1), c.a(2));
     if key == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some((g, pid, _)) = KEYS.get(i) else { return E_INVALIDARG };
+    let Some((g, pid, _)) = usize::try_from(i).ok().and_then(|i| KEYS.get(i)) else { return Hr::InvalidArg.code() };
     mem::write(key, g);
     w32(key + 16, *pid);
     S_OK
@@ -429,7 +495,7 @@ fn ps_at(c: &mut Ctx) -> u32 {
 fn ps_get(c: &mut Ctx) -> u32 {
     let (key, v) = (c.a(1), c.a(2));
     if key == 0 || v == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::fill(v, 8 + 2 * ps(), 0);
     let k = mem::slice(key, 16);
@@ -444,11 +510,12 @@ fn ps_get(c: &mut Ctx) -> u32 {
             w32(v + 8, *n);
         }
         Some(Val::DeviceFormat) => {
-            let f = device_format();
-            let p = mem::heap_alloc(f.len() as u32, false);
+            const N: u32 = 40;
+            let f: [u8; 40] = device_format();
+            let p = mem::heap_alloc(N, false);
             mem::write(p, &f);
             w16(v, 65);
-            w32(v + 8, f.len() as u32);
+            w32(v + 8, N);
             putp(v + 8 + ps(), p);
         }
         None => {}
@@ -457,7 +524,7 @@ fn ps_get(c: &mut Ctx) -> u32 {
 }
 /// SetValue / Commit: STGM_READ stores
 fn ps_denied(_: &mut Ctx) -> u32 {
-    0x8003_0005
+    hr(Err(Hr::AccessDenied))
 }
 fn store() -> u32 {
     static O: OnceLock<u32> = OnceLock::new();
@@ -466,7 +533,7 @@ fn store() -> u32 {
 
 /// CoCreateInstance of CLSID_MMDeviceEnumerator {bcde0395-e52f-467c-8e3d-c4579291692e}
 pub fn create_instance(clsid: u32) -> Option<u32> {
-    guid_is(clsid, 0xbcde_0395, 0xe52f, 0x467c).then(enumerator)
+    guid_is(clsid, CLSID_ENUMERATOR).then(enumerator)
 }
 
 

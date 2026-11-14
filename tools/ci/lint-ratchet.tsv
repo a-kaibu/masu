@@ -1768,10 +1768,7 @@ file	crates/sake/src/mixer.rs	arithmetic_side_effects	51
 file	crates/sake/src/mixer.rs	as_conversions	5
 file	crates/sake/src/mixer.rs	cast_possible_truncation	2
 file	crates/sake/src/mixer.rs	cast_sign_loss	1
-file	crates/sake/src/mmdevapi.rs	arithmetic_side_effects	23
-file	crates/sake/src/mmdevapi.rs	as_conversions	9
-file	crates/sake/src/mmdevapi.rs	cast_possible_truncation	5
-file	crates/sake/src/mmdevapi.rs	indexing_slicing	2
+file	crates/sake/src/mmdevapi.rs	arithmetic_side_effects	16
 file	crates/sake/src/mmdevapi.rs	wildcard_enum_match_arm	1
 file	crates/sake/src/mmio.rs	arithmetic_side_effects	84
 file	crates/sake/src/mmio.rs	as_conversions	64
