@@ -265,7 +265,7 @@ fn holds_bits(t: &Texture) -> bool {
         return false;
     }
     match format::info(t.fmt) {
-        Some(f) => f.bpp == format::page_bpp(t.page) && f.block == 1 && f.conv == 0 && !f.no_alpha,
+        Some(f) => f.bpp == format::page_bpp(t.page) && f.block == 1 && f.conv == format::Conv::Copy && !f.no_alpha,
         None => format::page_bpp(t.page) == 4,
     }
 }
@@ -2640,7 +2640,7 @@ unsafe fn create_view(d: &mut D11, m: u32, res: u32, desc: u32, out: u32) -> u32
 unsafe fn create_buffer_srv(d: &mut D11, rid: u32, bv: check::BufView, out: u32) -> u32 {
     let fmt = if matches!(bv.fmt, 0 | 39) { 42 } else { bv.fmt };
     // (the 96-bit formats have no texels on the page: a view of nothing, as Windows takes it)
-    let f = format::info(fmt).filter(|f| f.block == 1).unwrap_or(format::Format { page: format::P_R32UI, bpp: 4, block: 1, conv: 0, no_alpha: false });
+    let f = format::info(fmt).filter(|f| f.block == 1).unwrap_or(format::Format { page: format::P_R32UI, bpp: 4, block: 1, conv: format::Conv::Copy, no_alpha: false });
     let n = (bv.bytes / f.bpp.max(1)).clamp(1, 8192);
     let tex = new_texture(d, 2, n, 1, 1, 1, fmt, 0, 8, false, 1);
     let tid = d.id_of(tex);

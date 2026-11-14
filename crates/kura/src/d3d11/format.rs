@@ -1,32 +1,75 @@
 //! DXGI formats: what the page keeps them as, and how texels get there.
 
-/// page texture formats (d3d9.ts TEX_FORMATS)
-/// Format::conv for 32-bit float texels stored as halves (d3d9's converters copy those as they are)
-pub const F32_TO_F16: u32 = 0xf32;
+use crate::d3d9::format::Format as F9;
 
-/// Format::conv codes of texels converted here (to 32-bit floats): 16-bit UNORM/SNORM channels
-/// (WebGPU has no 16-bit normalized formats) and BC4/BC5 blocks (decoded as the hardware does,
-/// in floats)
-pub const U16N: u32 = 0x1601;
-pub const S16N: u32 = 0x1602;
-pub const BC4U: u32 = 0xbc41;
-pub const BC4S: u32 = 0xbc42;
-pub const BC5U: u32 = 0xbc51;
-pub const BC5S: u32 = 0xbc52;
-/// Format::conv codes of BC6H (to RGBA halves) and BC7 (to RGBA8) blocks: WebGPU's BC formats
-/// are optional (most phones lack them), so the page gets their texels
-pub const BC6U: u32 = 0xbc61;
-pub const BC6S: u32 = 0xbc62;
-pub const BC7: u32 = 0xbc70;
+/// How a format's texels get to the page (Format::conv).
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Conv {
+    /// copied as they are
+    Copy,
+    /// with the Direct3D 9 converter (d3d9::format::convert) as this D3DFORMAT
+    D3d9(Via),
+    /// converted here to 32-bit floats: 16-bit UNORM/SNORM channels (WebGPU has no 16-bit
+    /// normalized formats) and BC4/BC5 blocks (decoded as the hardware does, in floats)
+    U16N,
+    S16N,
+    BC4U,
+    BC4S,
+    BC5U,
+    BC5S,
+    /// BC6H (to RGBA halves) and BC7 (to RGBA8) blocks: WebGPU's BC formats are optional (most
+    /// phones lack them), so the page gets their texels
+    BC6U,
+    BC6S,
+    BC7,
+    /// the formats the page has no format of its own for, widened on upload: R32G32B32 FLOAT
+    /// (and TYPELESS) / UINT / SINT to four channels (alpha 1.0 / 1), the packed 4:2:2
+    /// R8G8_B8G8 / G8R8_G8B8 to RGBA8 (each pair of texels shares R and B), and
+    /// R10G10B10_XR_BIAS_A2 to RGBA halves ((n - 0x180) / 510, alpha a / 3)
+    RGB32F,
+    RGB32I,
+    RGBG,
+    GRGB,
+    XR_BIAS,
+}
+pub use Conv::{BC4S, BC4U, BC5S, BC5U, BC6S, BC6U, BC7, GRGB, RGB32F, RGB32I, RGBG, S16N, U16N, XR_BIAS};
+
+/// The D3DFORMATs DXGI formats are converted as (Conv::D3d9).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Via {
+    A8,
+    DXT1,
+    DXT3,
+    DXT5,
+    R5G6B5,
+    A1R5G5B5,
+    A4R4G4B4,
+}
+
+impl Via {
+    pub const fn d3d9(self) -> F9 {
+        match self {
+            Via::A8 => F9::A8,
+            Via::DXT1 => F9::DXT1,
+            Via::DXT3 => F9::DXT3,
+            Via::DXT5 => F9::DXT5,
+            Via::R5G6B5 => F9::R5G6B5,
+            Via::A1R5G5B5 => F9::A1R5G5B5,
+            Via::A4R4G4B4 => F9::A4R4G4B4,
+        }
+    }
+}
 
 /// BC6H / BC7 blocks of a w x h box (rows of 4x4 blocks `pitch` apart) as the page's texels:
 /// RGBA halves (alpha 1.0) for BC6H, RGBA8 for BC7. None: not one of them.
 ///
 /// # Safety
 /// `src` must hold the box.
-pub unsafe fn bc67_texels(conv: u32, src: *const u8, pitch: usize, w: u32, h: u32) -> Option<Vec<u8>> {
-    if !matches!(conv, BC6U | BC6S | BC7) {
-        return None;
+pub unsafe fn bc67_texels(conv: Conv, src: *const u8, pitch: usize, w: u32, h: u32) -> Option<Vec<u8>> {
+    match conv {
+        BC6U | BC6S | BC7 => {}
+        Conv::Copy | Conv::D3d9(_) | U16N | S16N | BC4U | BC4S | BC5U | BC5S | RGB32F | RGB32I | RGBG | GRGB | XR_BIAS => return None,
     }
     let (w, h) = (w as usize, h as usize);
     let texel = if conv == BC7 { 4 } else { 8 };
@@ -62,29 +105,20 @@ pub unsafe fn bc67_texels(conv: u32, src: *const u8, pitch: usize, w: u32, h: u3
     Some(out)
 }
 
-/// Format::conv codes of the formats the page has no format of its own for, widened on upload:
-/// R32G32B32 FLOAT (and TYPELESS) / UINT / SINT to four channels (alpha 1.0 / 1), the packed
-/// 4:2:2 R8G8_B8G8 / G8R8_G8B8 to RGBA8 (each pair of texels shares R and B), and
-/// R10G10B10_XR_BIAS_A2 to RGBA halves ((n - 0x180) / 510, alpha a / 3)
-pub const RGB32F: u32 = 0x9601;
-pub const RGB32I: u32 = 0x9602;
-pub const RGBG: u32 = 0x6801;
-pub const GRGB: u32 = 0x6901;
-pub const XR_BIAS: u32 = 0x8901;
-
 /// The texels of a w x h box (rows `pitch` apart) of those formats as the page keeps them.
 /// None: not one of them.
 ///
 /// # Safety
 /// `src` must hold the box.
-pub unsafe fn widened_texels(conv: u32, src: *const u8, pitch: usize, w: u32, h: u32) -> Option<Vec<u8>> {
+pub unsafe fn widened_texels(conv: Conv, src: *const u8, pitch: usize, w: u32, h: u32) -> Option<Vec<u8>> {
     let (w, h) = (w as usize, h as usize);
     let rd = |y: usize, at: usize| u32::from_le_bytes(std::slice::from_raw_parts(src.add(y * pitch + at), 4).try_into().unwrap());
     // (sized once: RGB32 widens to 16 bytes a texel, 4:2:2 to 4, XR_BIAS to 8)
     let texel = match conv {
         RGB32F | RGB32I => 16,
         XR_BIAS => 8,
-        _ => 4,
+        RGBG | GRGB => 4,
+        Conv::Copy | Conv::D3d9(_) | U16N | S16N | BC4U | BC4S | BC5U | BC5S | BC6U | BC6S | BC7 => return None,
     };
     let mut out = Vec::with_capacity(w * h * texel);
     match conv {
@@ -126,7 +160,7 @@ pub unsafe fn widened_texels(conv: u32, src: *const u8, pitch: usize, w: u32, h:
                 }
             }
         }
-        _ => return None,
+        Conv::Copy | Conv::D3d9(_) | U16N | S16N | BC4U | BC4S | BC5U | BC5S | BC6U | BC6S | BC7 => return None,
     }
     Some(out)
 }
@@ -136,7 +170,7 @@ pub unsafe fn widened_texels(conv: u32, src: *const u8, pitch: usize, w: u32, h:
 ///
 /// # Safety
 /// `src` must hold the box.
-pub unsafe fn to_floats(conv: u32, n: u32, src: *const u8, pitch: usize, w: u32, h: u32) -> Option<Vec<u8>> {
+pub unsafe fn to_floats(conv: Conv, n: u32, src: *const u8, pitch: usize, w: u32, h: u32) -> Option<Vec<u8>> {
     let (w, h) = (w as usize, h as usize);
     let n = n as usize;
     let mut out = vec![0f32; w * h * n];
@@ -169,7 +203,7 @@ pub unsafe fn to_floats(conv: u32, n: u32, src: *const u8, pitch: usize, w: u32,
                 }
             }
         }
-        _ => return None,
+        Conv::Copy | Conv::D3d9(_) | BC6U | BC6S | BC7 | RGB32F | RGB32I | RGBG | GRGB | XR_BIAS => return None,
     }
     // (one pre-sized copy, not a byte iterator growing its Vec)
     let mut bytes = Vec::with_capacity(out.len() * 4);
@@ -185,11 +219,11 @@ pub fn packs_back(fmt: u32) -> bool {
     let pb = page_bpp(f.page);
     f.block == 1
         && match f.conv {
-            0 => f.bpp == pb,
+            Conv::Copy => f.bpp == pb,
             U16N | S16N => pb == 2 * f.bpp,
             RGB32F | RGB32I => pb == 16,
-            23 | 25 | 26 | 28 => pb == 4,
-            _ => false,
+            Conv::D3d9(Via::R5G6B5 | Via::A1R5G5B5 | Via::A4R4G4B4 | Via::A8) => pb == 4,
+            Conv::D3d9(Via::DXT1 | Via::DXT3 | Via::DXT5) | BC4U | BC4S | BC5U | BC5S | BC6U | BC6S | BC7 | RGBG | GRGB | XR_BIAS => false,
         }
 }
 
@@ -211,7 +245,7 @@ pub fn from_page(fmt: u32, page: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
     let mut out = vec![0u8; n * f.bpp as usize];
     let fl = |t: usize, c: usize| f32::from_le_bytes(page[t * pb + 4 * c..t * pb + 4 * c + 4].try_into().unwrap());
     match f.conv {
-        0 if f.bpp as usize == pb => out.copy_from_slice(&page[..n * pb]),
+        Conv::Copy if f.bpp as usize == pb => out.copy_from_slice(&page[..n * pb]),
         U16N | S16N => {
             let ch = f.bpp as usize / 2;
             for t in 0..n {
@@ -234,17 +268,17 @@ pub fn from_page(fmt: u32, page: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
             }
         }
         // (D3D9 formats on the page as B, G, R, A bytes: packed as a GPU writes them)
-        c @ (23 | 25 | 26 | 28) if pb == 4 => {
+        Conv::D3d9(c @ (Via::R5G6B5 | Via::A1R5G5B5 | Via::A4R4G4B4 | Via::A8)) if pb == 4 => {
             let b = f.bpp as usize;
             for t in 0..n {
                 let px = &page[t * 4..t * 4 + 4];
                 let v = [px[2], px[1], px[0], px[3]].map(|x| x as f32 / 255.0);
-                if !crate::d3d9::format::pack(c, v, &mut out[t * b..t * b + b]) {
+                if !crate::d3d9::format::pack(c.d3d9().raw(), v, &mut out[t * b..t * b + b]) {
                     return None;
                 }
             }
         }
-        _ => return None,
+        Conv::Copy | Conv::D3d9(_) | BC4U | BC4S | BC5U | BC5S | BC6U | BC6S | BC7 | RGBG | GRGB | XR_BIAS => return None,
     }
     Some(out)
 }
@@ -375,22 +409,21 @@ pub struct Format {
     pub bpp: u32,
     /// block size (1, or 4 for BC formats)
     pub block: u32,
-    /// converted on upload with the Direct3D 9 converter as this D3DFORMAT (0: copied as is)
-    pub conv: u32,
+    /// how its texels get to the page
+    pub conv: Conv,
     /// B8G8R8X8: alpha set to 1 on upload
     pub no_alpha: bool,
 }
 
 const fn f(page: u32, bpp: u32) -> Format {
-    Format { page, bpp, block: 1, conv: 0, no_alpha: false }
+    Format { page, bpp, block: 1, conv: Conv::Copy, no_alpha: false }
 }
 
-const fn c(bpp: u32, block: u32, conv: u32) -> Format {
-    Format { page: P_BGRA8, bpp, block, conv, no_alpha: false }
+const fn c(bpp: u32, block: u32, via: Via) -> Format {
+    Format { page: P_BGRA8, bpp, block, conv: Conv::D3d9(via), no_alpha: false }
 }
 
 pub fn info(dxgi: u32) -> Option<Format> {
-    use crate::d3d9::format as f9;
     Some(match dxgi {
         // (the page keeps them as halves without float32-filterable: render/d3d.rs halved)
         1 | 2 => f(P_RGBA32F, 16),
@@ -460,22 +493,22 @@ pub fn info(dxgi: u32) -> Option<Format> {
         103 => f(P_R8, 1),
         63 => f(P_R8SN, 1),
         67 => f(P_RGB9E5, 4),
-        65 => c(1, 1, f9::A8),
-        70 | 71 => c(8, 4, f9::DXT1),
-        73 | 74 => c(16, 4, f9::DXT3),
-        76 | 77 => c(16, 4, f9::DXT5),
+        65 => c(1, 1, Via::A8),
+        70 | 71 => c(8, 4, Via::DXT1),
+        73 | 74 => c(16, 4, Via::DXT3),
+        76 | 77 => c(16, 4, Via::DXT5),
         // (the _SRGB ones: decoded the same, sampled through sRGB)
-        72 => Format { page: P_BGRA8_SRGB, ..c(8, 4, f9::DXT1) },
-        75 => Format { page: P_BGRA8_SRGB, ..c(16, 4, f9::DXT3) },
-        78 => Format { page: P_BGRA8_SRGB, ..c(16, 4, f9::DXT5) },
-        85 => c(2, 1, f9::R5G6B5),
-        86 => c(2, 1, f9::A1R5G5B5),
+        72 => Format { page: P_BGRA8_SRGB, ..c(8, 4, Via::DXT1) },
+        75 => Format { page: P_BGRA8_SRGB, ..c(16, 4, Via::DXT3) },
+        78 => Format { page: P_BGRA8_SRGB, ..c(16, 4, Via::DXT5) },
+        85 => c(2, 1, Via::R5G6B5),
+        86 => c(2, 1, Via::A1R5G5B5),
         87 | 90 => f(P_BGRA8, 4),
-        88 | 92 => Format { page: P_BGRA8, bpp: 4, block: 1, conv: 0, no_alpha: true },
+        88 | 92 => Format { page: P_BGRA8, bpp: 4, block: 1, conv: Conv::Copy, no_alpha: true },
         91 => f(P_BGRA8_SRGB, 4),
         // (the X of B8G8R8X8 sampled as 1, sRGB or not)
-        93 => Format { page: P_BGRA8_SRGB, bpp: 4, block: 1, conv: 0, no_alpha: true },
-        115 => c(2, 1, f9::A4R4G4B4),
+        93 => Format { page: P_BGRA8_SRGB, bpp: 4, block: 1, conv: Conv::Copy, no_alpha: true },
+        115 => c(2, 1, Via::A4R4G4B4),
         // AYUV, Y410, Y416 (as the views of them Windows takes: R8G8B8A8 / R10G10B10A2 /
         // R16G16B16A16 UNORM), P8, A8P8 (indexes, R8 / R8G8)
         100 => f(P_RGBA8, 4),
@@ -516,7 +549,7 @@ pub fn support(dxgi: u32) -> u32 {
         s |= SAMPLE | 0x80_0000; // (and SHADER_GATHER)
     }
     // (what the page draws to: not block-compressed, converted, SNORM or shared-exponent texels)
-    let renderable = f.block == 1 && f.conv == 0 && !matches!(f.page, P_RGBA8SN | P_R8SN | P_RG8SN | P_RGB9E5);
+    let renderable = f.block == 1 && f.conv == Conv::Copy && !matches!(f.page, P_RGBA8SN | P_R8SN | P_RG8SN | P_RGB9E5);
     if renderable {
         s |= RT;
         if !int {
@@ -653,42 +686,33 @@ pub fn vertex_format(dxgi: u32) -> Option<u32> {
 /// # Safety
 /// `src` must hold the box.
 pub unsafe fn to_page(f: &Format, page: u32, src: *const u8, pitch: u32, w: u32, h: u32) -> (Vec<u8>, u32) {
-    let mut out = Vec::new();
-    let bpr;
-    if f.conv == F32_TO_F16 {
-        for y in 0..h {
-            let p = src.add((y * pitch) as usize) as *const f32;
-            for x in 0..(w * 4) as usize {
-                out.extend_from_slice(&f16_bits(p.add(x).read_unaligned()).to_le_bytes());
-            }
+    let pb = page_bpp(page);
+    let converted = match f.conv {
+        Conv::Copy => None,
+        U16N | S16N | BC4U | BC4S | BC5U | BC5S => to_floats(f.conv, pb / 4, src, pitch as usize, w, h),
+        BC6U | BC6S | BC7 => bc67_texels(f.conv, src, pitch as usize, w, h),
+        RGB32F | RGB32I | RGBG | GRGB | XR_BIAS => widened_texels(f.conv, src, pitch as usize, w, h),
+        Conv::D3d9(via) => {
+            let mut out = Vec::new();
+            crate::d3d9::format::convert(via.d3d9().raw(), src, pitch as usize, w, h, &mut out);
+            Some(out)
         }
-        bpr = w * 8;
-    } else if let Some(v) = to_floats(f.conv, page_bpp(page) / 4, src, pitch as usize, w, h) {
-        out = v;
-        bpr = w * page_bpp(page);
-    } else if let Some(v) = bc67_texels(f.conv, src, pitch as usize, w, h) {
-        out = v;
-        bpr = w * page_bpp(page);
-    } else if let Some(v) = widened_texels(f.conv, src, pitch as usize, w, h) {
-        out = v;
-        bpr = w * page_bpp(page);
-    } else if f.conv != 0 {
-        crate::d3d9::format::convert(f.conv, src, pitch as usize, w, h, &mut out);
-        bpr = w * page_bpp(page);
-    } else {
-        let row = w.div_ceil(f.block) * f.bpp;
-        for y in 0..h.div_ceil(f.block) {
-            let p = src.add((y * pitch) as usize);
-            out.extend_from_slice(std::slice::from_raw_parts(p, row as usize));
-        }
-        if f.no_alpha {
-            for px in out.chunks_exact_mut(4) {
-                px[3] = 255;
-            }
-        }
-        bpr = row;
+    };
+    if let Some(out) = converted {
+        return (out, w * pb);
     }
-    (out, bpr)
+    let mut out = Vec::new();
+    let row = w.div_ceil(f.block) * f.bpp;
+    for y in 0..h.div_ceil(f.block) {
+        let p = src.add((y * pitch) as usize);
+        out.extend_from_slice(std::slice::from_raw_parts(p, row as usize));
+    }
+    if f.no_alpha {
+        for px in out.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+    }
+    (out, row)
 }
 
 #[cfg(test)]
@@ -782,7 +806,7 @@ mod proofs {
             assert!(f.block == 1 || f.block == 4);
             assert!(pitch == w.div_ceil(f.block) * f.bpp && rows == h.div_ceil(f.block));
             assert!(pitch as u64 * rows as u64 <= 16384 * 16384 * 16);
-            if f.conv == 0 && !(19..=22).contains(&dxgi) {
+            if f.conv == Conv::Copy && !(19..=22).contains(&dxgi) {
                 // copied as is: the page format has the guest's texel size (but D32_FLOAT_S8X24,
                 // a depth buffer the page keeps as D24S8: never uploaded)
                 assert!(f.block == 1 && page_bpp(f.page) == f.bpp);
@@ -910,8 +934,8 @@ mod bc67_tests {
 
     /// Random 16-byte blocks, every mode equally (BC7: mode m is the lowest set bit m of byte 0,
     /// 0 none (reserved); BC6H: the 2 or 5 mode bits, reserved ones included)
-    fn blocks(conv: u32, per_mode: usize) -> Vec<(u32, [u8; 16])> {
-        let mut x = 0x9e37_79b9_7f4a_7c15u64 ^ conv as u64;
+    fn blocks(conv: Conv, per_mode: usize) -> Vec<(u32, [u8; 16])> {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64 ^ [(BC6U, 0xbc61), (BC6S, 0xbc62), (BC7, 0xbc70)].iter().find(|c| c.0 == conv).map_or(0, |c| c.1);
         let mut rnd = move || {
             x ^= x << 13;
             x ^= x >> 7;
@@ -1003,7 +1027,7 @@ mod bc67_tests {
 mod widened_tests {
     use super::*;
 
-    fn run(conv: u32, src: &[u32], pitch: usize, w: u32, h: u32) -> Vec<u8> {
+    fn run(conv: Conv, src: &[u32], pitch: usize, w: u32, h: u32) -> Vec<u8> {
         unsafe { widened_texels(conv, src.as_ptr() as *const u8, pitch, w, h) }.unwrap()
     }
 

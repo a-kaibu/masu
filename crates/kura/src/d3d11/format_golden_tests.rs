@@ -26,13 +26,36 @@ impl Rng {
     }
 }
 
+/// Conv as the u32 code Format::conv was (a D3DFORMAT or format.rs's own codes), so the golden
+/// reads the same.
+fn code(c: Conv) -> u32 {
+    match c {
+        Conv::Copy => 0,
+        Conv::D3d9(v) => v.d3d9().raw(),
+        U16N => 0x1601,
+        S16N => 0x1602,
+        BC4U => 0xbc41,
+        BC4S => 0xbc42,
+        BC5U => 0xbc51,
+        BC5S => 0xbc52,
+        BC6U => 0xbc61,
+        BC6S => 0xbc62,
+        BC7 => 0xbc70,
+        RGB32F => 0x9601,
+        RGB32I => 0x9602,
+        RGBG => 0x6801,
+        GRGB => 0x6901,
+        XR_BIAS => 0x8901,
+    }
+}
+
 const SEED: u64 = 0xcbf2_9ce4_8422_2325;
 
 fn line(dxgi: u32, all: &[u32]) -> String {
     let mut rng = Rng(0x5eed_0000_0000_0011 ^ u64::from(dxgi).wrapping_mul(0x9e37_79b9_7f4a_7c15));
     let mut s = format!("{dxgi}");
     match info(dxgi) {
-        Some(f) => s += &format!(" page={} bpp={} block={} conv={:#x} noalpha={}", f.page, f.bpp, f.block, f.conv, u8::from(f.no_alpha)),
+        Some(f) => s += &format!(" page={} bpp={} block={} conv={:#x} noalpha={}", f.page, f.bpp, f.block, code(f.conv), u8::from(f.no_alpha)),
         None => s += " none",
     }
     s += &format!(" support={:#x} page={:?}", support(dxgi), [0, 8, 0x20, 0x40, 0x48].map(|b| page(dxgi, b)));
