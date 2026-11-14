@@ -16,16 +16,37 @@ use crate::mem;
 use crate::sound::Fmt;
 use std::sync::Mutex;
 
-const S_FALSE: u32 = 1;
-const E_POINTER: u32 = 0x8000_4003;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const CLASS_E_NOAGGREGATION: u32 = 0x8004_0110;
-/// dmerror.h (MAKE_DMHRESULTERROR(n): 0x88780000 | 0x1000 + n)
-const DMUS_E_LOADER_FAILEDOPEN: u32 = 0x8878_1182;
-const DMUS_E_LOADER_NOFILENAME: u32 = 0x8878_1186;
-const DMUS_E_NOT_FOUND: u32 = 0x8878_1161;
-const DMUS_E_TYPE_UNSUPPORTED: u32 = 0x8878_1164;
+/// What the objects answer besides S_OK (made an HRESULT at a handler's edge)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hr {
+    False,
+    Pointer,
+    NoInterface,
+    InvalidArg,
+    NotImpl,
+    NoAggregation,
+    // dmerror.h (MAKE_DMHRESULTERROR(n): 0x88780000 | 0x1000 + n)
+    LoaderFailedOpen,
+    LoaderNoFilename,
+    NotFound,
+    TypeUnsupported,
+}
+impl Hr {
+    const fn code(self) -> u32 {
+        match self {
+            Hr::False => 1,
+            Hr::Pointer => 0x8000_4003,
+            Hr::NoInterface => 0x8000_4002,
+            Hr::InvalidArg => 0x8007_0057,
+            Hr::NotImpl => 0x8000_4001,
+            Hr::NoAggregation => 0x8004_0110,
+            Hr::LoaderFailedOpen => 0x8878_1182,
+            Hr::LoaderNoFilename => 0x8878_1186,
+            Hr::NotFound => 0x8878_1161,
+            Hr::TypeUnsupported => 0x8878_1164,
+        }
+    }
+}
 
 /// DMUS_SEGF_SECONDARY
 const SEGF_SECONDARY: u32 = 0x80;
@@ -33,6 +54,12 @@ const SEGF_SECONDARY: u32 = 0x80;
 pub const REPEAT_INFINITE: u32 = 0xffff_ffff;
 /// MUSIC_TIME ticks a second at the default tempo (DMUS_PPQ 768 a quarter note, 120 a minute)
 pub const TICKS_PER_SECOND: u64 = 1536;
+/// MUSIC_TIME's largest (a signed 32-bit time)
+const MT_MAX: u64 = 0x7fff_ffff;
+/// The low 32 bits (a 32-bit field of a wider value, as a C cast stores it)
+fn low32(x: u64) -> u32 {
+    u32::try_from(x & 0xffff_ffff).unwrap_or(0)
+}
 
 const fn guid(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u8; 16] {
     let a = a.to_le_bytes();
@@ -68,7 +95,7 @@ const STATE_IIDS: [[u8; 16]; 2] = [
 ];
 const AUDIOPATH_IIDS: [[u8; 16]; 1] = [guid(0xc876_31f5, 0x23be, 0x4986, [0x88, 0x36, 0x05, 0x83, 0x2f, 0xcc, 0x48, 0xf9])];
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     Performance,
     Loader,
@@ -76,6 +103,24 @@ pub enum Kind {
     State,
     AudioPath,
 }
+impl Kind {
+    /// The word an object block keeps its kind in
+    const fn word(self) -> u32 {
+        match self {
+            Kind::Performance => 0,
+            Kind::Loader => 1,
+            Kind::Segment => 2,
+            Kind::State => 3,
+            Kind::AudioPath => 4,
+        }
+    }
+    fn of_word(w: u32) -> Option<Kind> {
+        [Kind::Performance, Kind::Loader, Kind::Segment, Kind::State, Kind::AudioPath].into_iter().find(|k| k.word() == w)
+    }
+}
+/// The word of a retired object (no kind)
+const RETIRED: u32 = 0xff;
+const _: () = assert!(RETIRED > Kind::AudioPath.word());
 
 /// Whether an object of `kind` answers QueryInterface for `iid`.
 pub fn answers(kind: Kind, iid: &[u8; 16]) -> bool {
@@ -106,14 +151,14 @@ pub struct Sound {
 impl Sound {
     pub fn frames(&self) -> u64 {
         let block = (self.channels * self.bits / 8).max(1);
-        (self.size / block) as u64
+        u64::from(self.size / block)
     }
     /// The segment's length in MUSIC_TIME (at the default tempo)
     pub fn length(&self) -> u32 {
         if self.rate == 0 {
             return 0;
         }
-        (self.frames() * TICKS_PER_SECOND / self.rate as u64).min(i32::MAX as u64) as u32
+        low32((self.frames() * TICKS_PER_SECOND / u64::from(self.rate)).min(MT_MAX))
     }
 }
 
@@ -124,8 +169,9 @@ pub fn wave_pcm(b: &[u8]) -> Option<(u32, u32, u32, u32, u32, bool)> {
     let crate::audiofile::Codec::Pcm { bits, float } = t.codec else { return None };
     let first = t.packets.first()?;
     let last = t.packets.last()?;
-    let end = last.0 + last.1 as u64;
-    Some((first.0 as u32, (end - first.0) as u32, t.rate, t.channels, bits as u32, float))
+    let end = last.0 + u64::from(last.1);
+    // (offsets in a file in memory: 32-bit, as the guest's)
+    Some((low32(first.0), low32(end - first.0), t.rate, t.channels, u32::from(bits), float))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -228,7 +274,7 @@ fn new_object(vt: u32, kind: Kind) -> u32 {
     let o = mem::heap_alloc(4 * k, true);
     mem::wp(o, vt);
     mem::w32(o + k, 1);
-    mem::w32(o + 2 * k, kind as u32);
+    mem::w32(o + 2 * k, kind.word());
     o
 }
 
@@ -236,38 +282,43 @@ fn kind_of(o: u32) -> Option<Kind> {
     if o == 0 {
         return None;
     }
-    Some(match mem::r32(o + 2 * mem::ps()) {
-        0 => Kind::Performance,
-        1 => Kind::Loader,
-        2 => Kind::Segment,
-        3 => Kind::State,
-        4 => Kind::AudioPath,
-        _ => return None,
-    })
+    Kind::of_word(mem::r32(o + 2 * mem::ps()))
 }
 
 /// CoCreateInstance / CoGetClassObject of the performance or the loader: None for another class.
 pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: u32) -> Option<u32> {
-    let kind = match read16(clsid) {
-        CLSID_PERFORMANCE => Kind::Performance,
-        CLSID_LOADER => Kind::Loader,
-        CLSID_SEGMENT => Kind::Segment,
+    /// the classes made here
+    #[derive(Clone, Copy)]
+    enum Class {
+        Performance,
+        Loader,
+        Segment,
+    }
+    let class = match read16(clsid) {
+        CLSID_PERFORMANCE => Class::Performance,
+        CLSID_LOADER => Class::Loader,
+        CLSID_SEGMENT => Class::Segment,
         _ => return None,
     };
+    let kind = match class {
+        Class::Performance => Kind::Performance,
+        Class::Loader => Kind::Loader,
+        Class::Segment => Kind::Segment,
+    };
     if out == 0 {
-        return Some(E_POINTER);
+        return Some(Hr::Pointer.code());
     }
     mem::putp(out, 0);
     if outer != 0 {
-        return Some(CLASS_E_NOAGGREGATION);
+        return Some(Hr::NoAggregation.code());
     }
     if iid == 0 || !answers(kind, &read16(iid)) {
-        return Some(E_NOINTERFACE);
+        return Some(Hr::NoInterface.code());
     }
-    let o = match kind {
-        Kind::Performance => new_perf(),
-        Kind::Loader => new_loader(),
-        _ => new_segment(None, 0),
+    let o = match class {
+        Class::Performance => new_perf(),
+        Class::Loader => new_loader(),
+        Class::Segment => new_segment(None, 0),
     };
     mem::putp(out, o);
     Some(0)
@@ -276,12 +327,12 @@ pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: u32) -> Option<u32
 fn qi(c: &mut Ctx) -> u32 {
     let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let ok = iid != 0 && kind_of(this).is_some_and(|k| answers(k, &read16(iid)));
     if !ok {
         mem::putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     add_ref_obj(this);
     mem::putp(out, this);
@@ -311,7 +362,7 @@ pub fn release_count(refs: u32) -> (u32, bool) {
 /// The object block of `o` goes: its kind word is spoiled first (a call through a stale pointer
 /// finds no object), and the block is freed after com.rs's quarantine of recent frees.
 fn retire(o: u32) {
-    mem::w32(o + 2 * mem::ps(), 0xff);
+    mem::w32(o + 2 * mem::ps(), RETIRED);
     crate::com::free_later(o);
 }
 
@@ -384,7 +435,7 @@ fn ok(_: &mut Ctx) -> u32 {
     0
 }
 fn not_impl(_: &mut Ctx) -> u32 {
-    0x8000_4001
+    Hr::NotImpl.code()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -461,30 +512,30 @@ fn new_perf() -> u32 {
 }
 
 fn not_found(_: &mut Ctx) -> u32 {
-    DMUS_E_NOT_FOUND
+    Hr::NotFound.code()
 }
 fn not_found_out(c: &mut Ctx) -> u32 {
     if c.a(1) != 0 {
         mem::putp(c.a(1), 0);
     }
-    DMUS_E_NOT_FOUND
+    Hr::NotFound.code()
 }
 fn s_false_out(c: &mut Ctx) -> u32 {
     if c.a(1) != 0 {
         mem::putp(c.a(1), 0);
     }
-    S_FALSE
+    Hr::False.code()
 }
 fn p_get_dword_1000(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w32(c.a(1), 1000);
     0
 }
 fn p_get_dword_50(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w32(c.a(1), 50);
     0
@@ -528,7 +579,7 @@ fn new_path(perf: u32) -> u32 {
 fn p_create_audio_path(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::putp(out, new_path(this));
     0
@@ -536,7 +587,7 @@ fn p_create_audio_path(c: &mut Ctx) -> u32 {
 fn p_create_std_path(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(4));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::putp(out, new_path(this));
     0
@@ -553,12 +604,12 @@ fn p_set_default_path(c: &mut Ctx) -> u32 {
 fn p_get_default_path(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let p = with(|w| w.perfs.get(&this).map_or(0, |p| p.path));
     mem::putp(out, p);
     if p == 0 {
-        return DMUS_E_NOT_FOUND;
+        return Hr::NotFound.code();
     }
     add_ref_obj(p);
     0
@@ -567,7 +618,7 @@ fn p_get_default_path(c: &mut Ctx) -> u32 {
 /// Starts state(s) of `seg` on `perf` (flags DMUS_SEGF_*), on `path` (0: the default one).
 fn play(perf: u32, seg: u32, flags: u32, path: u32, out: u32) -> u32 {
     if kind_of(seg) != Some(Kind::Segment) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let state = new_object(state_vtbl(), Kind::State);
     let r = with(|w| {
@@ -587,7 +638,7 @@ fn play(perf: u32, seg: u32, flags: u32, path: u32, out: u32) -> u32 {
     });
     let Some((stop, gone, sound, repeats, volume)) = r else {
         release_obj(state);
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     };
     // (a state the performance lets go of: its reference goes, the block with the last one)
     for s in stop.into_iter().chain(gone) {
@@ -651,7 +702,7 @@ fn p_stop_ex(c: &mut Ctx) -> u32 {
 fn p_is_playing(c: &mut Ctx) -> u32 {
     let (this, seg, state) = (c.a(0), c.a(1), c.a(2));
     if seg == 0 && state == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let keys = with(|w| {
         w.perfs.get(&this).map_or(Vec::new(), |p| if state != 0 { p.plays.states.iter().filter(|s| s.0 == state).map(|s| s.0).collect() } else { p.plays.of_segment(seg) })
@@ -659,14 +710,14 @@ fn p_is_playing(c: &mut Ctx) -> u32 {
     if keys.iter().any(|&k| crate::sound::music_playing(k)) {
         0
     } else {
-        S_FALSE
+        Hr::False.code()
     }
 }
 
 fn p_get_segment_state(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let s = with(|w| w.perfs.get(&this).and_then(|p| p.plays.states.iter().rev().find(|s| s.1.primary && crate::sound::music_playing(s.0)).map(|s| s.0)));
     match s {
@@ -677,13 +728,13 @@ fn p_get_segment_state(c: &mut Ctx) -> u32 {
         }
         None => {
             mem::putp(out, 0);
-            DMUS_E_NOT_FOUND
+            Hr::NotFound.code()
         }
     }
 }
 
 fn now_rt(perf: u32) -> u64 {
-    with(|w| w.perfs.get(&perf).map_or(0, |p| p.t0.elapsed().as_nanos() as u64 / 100))
+    with(|w| w.perfs.get(&perf).map_or(0, |p| u64::try_from(p.t0.elapsed().as_nanos() / 100).unwrap_or(u64::MAX)))
 }
 fn p_get_time(c: &mut Ctx) -> u32 {
     let (this, rt, mt) = (c.a(0), c.a(1), c.a(2));
@@ -692,35 +743,35 @@ fn p_get_time(c: &mut Ctx) -> u32 {
         mem::w64(rt, t);
     }
     if mt != 0 {
-        mem::w32(mt, (t * TICKS_PER_SECOND / 10_000_000) as u32);
+        mem::w32(mt, low32(t * TICKS_PER_SECOND / 10_000_000));
     }
     0
 }
 fn p_get_rt_now(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w64(c.a(1), now_rt(c.a(0)));
     0
 }
 fn p_music_to_ref(c: &mut Ctx) -> u32 {
-    let (mt, out) = (c.a(1) as i32, c.a(2));
+    let (mt, out) = (c.a(1).cast_signed(), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    mem::w64(out, (mt as i64 * 10_000_000 / TICKS_PER_SECOND as i64) as u64);
+    mem::w64(out, (i64::from(mt) * 10_000_000 / TICKS_PER_SECOND.cast_signed()).cast_unsigned());
     0
 }
 fn p_ref_to_music(c: &mut Ctx) -> u32 {
-    let (rt, out) = if mem::x64() { (c.a64(1), c.a(2)) } else { (c.a(1) as u64 | (c.a(2) as u64) << 32, c.a(3)) };
+    let (rt, out) = if mem::x64() { (c.a64(1), c.a(2)) } else { (u64::from(c.a(1)) | u64::from(c.a(2)) << 32, c.a(3)) };
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    mem::w32(out, (rt as i64 * TICKS_PER_SECOND as i64 / 10_000_000) as u32);
+    mem::w32(out, low32((rt.cast_signed() * TICKS_PER_SECOND.cast_signed() / 10_000_000).cast_unsigned()));
     0
 }
 fn p_resolved(c: &mut Ctx) -> u32 {
-    let (rt, out) = if mem::x64() { (c.a64(1), c.a(2)) } else { (c.a(1) as u64 | (c.a(2) as u64) << 32, c.a(3)) };
+    let (rt, out) = if mem::x64() { (c.a64(1), c.a(2)) } else { (u64::from(c.a(1)) | u64::from(c.a(2)) << 32, c.a(3)) };
     if out != 0 {
         mem::w64(out, rt);
     }
@@ -730,27 +781,27 @@ fn p_resolved(c: &mut Ctx) -> u32 {
 fn p_get_global(c: &mut Ctx) -> u32 {
     let (this, g, p, size) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if g == 0 || p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match read16(g) {
         GUID_PERF_MASTER_VOLUME if size >= 4 => {
-            mem::w32(p, with(|w| w.perfs.get(&this).map_or(0, |x| x.master)) as u32);
+            mem::w32(p, with(|w| w.perfs.get(&this).map_or(0, |x| x.master)).cast_unsigned());
             0
         }
         GUID_PERF_MASTER_TEMPO if size >= 4 => {
             mem::w32(p, 1f32.to_bits());
             0
         }
-        _ => DMUS_E_TYPE_UNSUPPORTED,
+        _ => Hr::TypeUnsupported.code(),
     }
 }
 fn p_set_global(c: &mut Ctx) -> u32 {
     let (this, g, p, size) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if g == 0 || p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if read16(g) == GUID_PERF_MASTER_VOLUME && size >= 4 {
-        let v = mem::r32(p) as i32;
+        let v = mem::r32(p).cast_signed();
         let upd = with(|w| {
             let Some(perf) = w.perfs.get_mut(&this) else { return Vec::new() };
             perf.master = v;
@@ -795,19 +846,19 @@ fn path_object(c: &mut Ctx) -> u32 {
     if c.a(7) != 0 {
         mem::putp(c.a(7), 0);
     }
-    DMUS_E_NOT_FOUND
+    Hr::NotFound.code()
 }
 fn path_convert(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w32(c.a(2), c.a(1));
     0
 }
 fn path_volume(c: &mut Ctx) -> u32 {
-    let (this, v) = (c.a(0), c.a(1) as i32);
+    let (this, v) = (c.a(0), c.a(1).cast_signed());
     if !(-9600..=0).contains(&v) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let upd = with(|w| {
         let Some(e) = w.paths.get_mut(&this) else { return Vec::new() };
@@ -878,7 +929,7 @@ fn seg_field<R>(o: u32, f: impl FnOnce(&mut Segment) -> R) -> Option<R> {
 
 fn seg_get_length(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w32(c.a(1), seg_field(c.a(0), |s| s.length).unwrap_or(0));
     0
@@ -890,7 +941,7 @@ fn seg_set_length(c: &mut Ctx) -> u32 {
 }
 fn seg_get_repeats(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w32(c.a(1), seg_field(c.a(0), |s| s.repeats).unwrap_or(0));
     0
@@ -902,7 +953,7 @@ fn seg_set_repeats(c: &mut Ctx) -> u32 {
 }
 fn seg_get_zero(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w32(c.a(1), 0);
     0
@@ -914,7 +965,7 @@ fn seg_set_start(c: &mut Ctx) -> u32 {
 }
 fn seg_get_start(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w32(c.a(1), seg_field(c.a(0), |s| s.start).unwrap_or(0));
     0
@@ -927,7 +978,7 @@ fn seg_set_loop(c: &mut Ctx) -> u32 {
 fn seg_get_loop(c: &mut Ctx) -> u32 {
     let (pa, pb) = (c.a(1), c.a(2));
     if pa == 0 || pb == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let (a, b) = seg_field(c.a(0), |s| s.loop_points).unwrap_or((0, 0));
     mem::w32(pa, a);
@@ -937,11 +988,11 @@ fn seg_get_loop(c: &mut Ctx) -> u32 {
 fn seg_clone(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // (the clone shares the file: the original keeps it alive, so the clone holds a reference)
     let sound = seg_field(this, |s| (s.sound, s.repeats));
-    let Some((sound, repeats)) = sound else { return E_INVALIDARG };
+    let Some((sound, repeats)) = sound else { return Hr::InvalidArg.code() };
     let o = new_segment(sound, 0);
     add_ref_obj(this);
     seg_field(o, |s| {
@@ -976,7 +1027,7 @@ fn state_info(o: u32) -> Option<StateInfo> {
 }
 fn st_get_repeats(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let seg = state_info(c.a(0)).map_or(0, |s| s.segment);
     mem::w32(c.a(1), seg_field(seg, |s| s.repeats).unwrap_or(0));
@@ -984,7 +1035,7 @@ fn st_get_repeats(c: &mut Ctx) -> u32 {
 }
 fn st_get_segment(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match state_info(c.a(0)) {
         Some(s) => {
@@ -994,13 +1045,13 @@ fn st_get_segment(c: &mut Ctx) -> u32 {
         }
         None => {
             mem::putp(c.a(1), 0);
-            DMUS_E_NOT_FOUND
+            Hr::NotFound.code()
         }
     }
 }
 fn st_get_start(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::w32(c.a(1), state_info(c.a(0)).map_or(0, |s| s.start));
     0
@@ -1008,11 +1059,11 @@ fn st_get_start(c: &mut Ctx) -> u32 {
 fn st_get_seek(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let rate = state_info(this).and_then(|s| seg_field(s.segment, |g| g.sound.map_or(0, |x| x.rate))).unwrap_or(0);
     let pos = crate::sound::music_pos(this).unwrap_or(0.0);
-    mem::w32(out, if rate == 0 { 0 } else { (pos * TICKS_PER_SECOND as f64 / rate as f64) as u32 });
+    mem::w32(out, if rate == 0 { 0 } else { (pos * TICKS_PER_SECOND as f64 / f64::from(rate)) as u32 });
     0
 }
 
@@ -1050,7 +1101,7 @@ fn new_loader() -> u32 {
 }
 
 fn s_false3(_: &mut Ctx) -> u32 {
-    S_FALSE
+    Hr::False.code()
 }
 
 fn wide(p: u32) -> String {
@@ -1070,7 +1121,7 @@ pub fn join(dir: &str, name: &str, full: bool) -> String {
 fn l_set_search_dir(c: &mut Ctx) -> u32 {
     let (this, path) = (c.a(0), c.a(2));
     if path == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let d = wide(path);
     with(|w| {
@@ -1109,7 +1160,7 @@ fn l_release_object(c: &mut Ctx) -> u32 {
             release_obj(s);
             0
         }
-        None => S_FALSE,
+        None => Hr::False.code(),
     }
 }
 
@@ -1128,7 +1179,9 @@ fn segment_of_pcm(b: &[u8], pcm: Option<(u32, u32, u32, u32, u32, bool)>) -> u32
                 eprintln!("sake: dmime: no guest memory for a wave of {size} bytes (a silent segment)");
                 return new_segment(None, 0);
             }
-            mem::write(file, &b[off as usize..(off + size) as usize]);
+            let from = usize::try_from(off).unwrap_or(usize::MAX);
+            let to = from.saturating_add(usize::try_from(size).unwrap_or(usize::MAX));
+            mem::write(file, b.get(from..to).unwrap_or_default());
             new_segment(Some(Sound { data: file, size, rate, channels, bits, float }), file)
         }
         None => new_segment(None, 0),
@@ -1137,15 +1190,15 @@ fn segment_of_pcm(b: &[u8], pcm: Option<(u32, u32, u32, u32, u32, bool)>) -> u32
 
 /// Loads (or finds in the cache) `path` for loader `this`: the segment with a reference for
 /// the caller.
-fn load_file(this: u32, path: &str) -> Result<u32, u32> {
+fn load_file(this: u32, path: &str) -> Result<u32, Hr> {
     let key = crate::files::full_path(path).to_lowercase();
     let cached = with(|w| w.loaders.get(&this).and_then(|l| if l.1 { l.2.get(&key).copied() } else { None }));
     if let Some(s) = cached {
         add_ref_obj(s);
         return Ok(s);
     }
-    let f = crate::files::open(path, 0x8000_0000, 3).map_err(|_| DMUS_E_LOADER_FAILEDOPEN)?;
-    let bytes = f.read_vec(f.size() as usize);
+    let f = crate::files::open(path, 0x8000_0000, 3).ok().ok_or(Hr::LoaderFailedOpen)?;
+    let bytes = f.read_vec(usize::try_from(f.size()).unwrap_or(usize::MAX));
     // (parsed once: the log line and the segment)
     let pcm = wave_pcm(&bytes);
     if pcm.is_none() {
@@ -1166,7 +1219,7 @@ fn hand_out(seg: u32, iid: u32, out: u32) -> u32 {
     if iid != 0 && !answers(Kind::Segment, &read16(iid)) {
         release_obj(seg);
         mem::putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     mem::putp(out, seg);
     0
@@ -1175,19 +1228,19 @@ fn hand_out(seg: u32, iid: u32, out: u32) -> u32 {
 fn l_load_from_file(c: &mut Ctx) -> u32 {
     let (this, clsid, iid, path, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::putp(out, 0);
     if path == 0 {
-        return DMUS_E_LOADER_NOFILENAME;
+        return Hr::LoaderNoFilename.code();
     }
     if clsid != 0 && read16(clsid) != CLSID_SEGMENT {
-        return DMUS_E_LOADER_FAILEDOPEN;
+        return Hr::LoaderFailedOpen.code();
     }
     let dir = with(|w| w.loaders.get(&this).map(|l| l.0.clone())).unwrap_or_default();
     match load_file(this, &join(&dir, &wide(path), false)) {
         Ok(s) => hand_out(s, iid, out),
-        Err(e) => e,
+        Err(e) => e.code(),
     }
 }
 
@@ -1196,30 +1249,30 @@ fn l_load_from_file(c: &mut Ctx) -> u32 {
 fn l_get_object(c: &mut Ctx) -> u32 {
     let (this, desc, iid, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if desc == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::putp(out, 0);
     let valid = mem::r32(desc + 4);
     if valid & 2 != 0 && read16(desc + 24) != CLSID_SEGMENT && read16(desc + 24) != GUID_ALL_TYPES {
-        return DMUS_E_LOADER_FAILEDOPEN;
+        return Hr::LoaderFailedOpen.code();
     }
     if valid & 0x400 != 0 {
         // DMUS_OBJ_MEMORY
-        let (len, data) = (mem::r64(desc + 832) as u32, mem::r32(desc + 840));
+        let (len, data) = (low32(mem::r64(desc + 832)), mem::r32(desc + 840));
         if data == 0 || len == 0 {
-            return E_POINTER;
+            return Hr::Pointer.code();
         }
         let bytes = mem::slice(data, len).to_vec();
         return hand_out(segment_of_bytes(&bytes), iid, out);
     }
     if valid & 0x10 == 0 {
-        return DMUS_E_LOADER_NOFILENAME;
+        return Hr::LoaderNoFilename.code();
     }
     let name = String::from_utf16_lossy(&mem::wstrn(desc + 312, 260));
     let dir = with(|w| w.loaders.get(&this).map(|l| l.0.clone())).unwrap_or_default();
     match load_file(this, &join(&dir, &name, valid & 0x20 != 0)) {
         Ok(s) => hand_out(s, iid, out),
-        Err(e) => e,
+        Err(e) => e.code(),
     }
 }
 
@@ -1406,8 +1459,8 @@ mod tests {
         assert_eq!(create_instance(g(&CLSID_LOADER), 0, g(&LOADER_IIDS[1]), out), Some(0));
         let loader = mem::r32(out);
         // aggregation and other interfaces refused
-        assert_eq!(create_instance(g(&CLSID_LOADER), 1, g(&LOADER_IIDS[1]), out), Some(CLASS_E_NOAGGREGATION));
-        assert_eq!(create_instance(g(&CLSID_LOADER), 0, g(&PERF_IIDS[2]), out), Some(E_NOINTERFACE));
+        assert_eq!(create_instance(g(&CLSID_LOADER), 1, g(&LOADER_IIDS[1]), out), Some(Hr::NoAggregation.code()));
+        assert_eq!(create_instance(g(&CLSID_LOADER), 0, g(&PERF_IIDS[2]), out), Some(Hr::NoInterface.code()));
         assert_eq!(create_instance(g(&IID_UNKNOWN), 0, g(&PERF_IIDS[2]), out), None);
 
         // InitAudio(&dm, &ds, hwnd, DMUS_APATH_SHARED_STEREOPLUSREVERB, 64, DMUS_AUDIOF_ALL, NULL)
@@ -1453,11 +1506,11 @@ mod tests {
         assert_eq!(call(p_is_playing, &[perf, b, 0]), 0);
         // a primary b replaces a, the secondary state stays
         assert_eq!(call(p_play_segment_ex, &[perf, b, 0, 0, 0, 0, 0, st, 0, 0]), 0);
-        assert_eq!(call(p_is_playing, &[perf, a, 0]), S_FALSE);
+        assert_eq!(call(p_is_playing, &[perf, a, 0]), Hr::False.code());
         assert_eq!(call(p_is_playing, &[perf, 0, sb]), 0);
         // the path's volume and the master volume reach what plays
         assert_eq!(call(path_volume, &[path, (-600i32) as u32, 0]), 0);
-        assert_eq!(call(path_volume, &[path, (-20000i32) as u32, 0]), E_INVALIDARG);
+        assert_eq!(call(path_volume, &[path, (-20000i32) as u32, 0]), Hr::InvalidArg.code());
         let v = mem::heap_alloc(4, true);
         mem::w32(v, (-300i32) as u32);
         assert_eq!(call(p_set_global, &[perf, g(&GUID_PERF_MASTER_VOLUME), v, 4]), 0);
@@ -1466,11 +1519,11 @@ mod tests {
         assert_eq!(mem::r32(v) as i32, -300);
         // StopEx(b) stops both of b's states; StopEx(NULL) everything
         assert_eq!(call(p_stop_ex, &[perf, b, 0, 0, 0]), 0);
-        assert_eq!(call(p_is_playing, &[perf, b, 0]), S_FALSE);
+        assert_eq!(call(p_is_playing, &[perf, b, 0]), Hr::False.code());
         assert_eq!(call(p_play_segment_ex, &[perf, a, 0, 0, 0, 0, 0, 0, 0, 0]), 0);
         assert_eq!(call(p_stop_ex, &[perf, 0, 0, 0, 0]), 0);
-        assert_eq!(call(p_is_playing, &[perf, a, 0]), S_FALSE);
-        assert_eq!(call(p_is_playing, &[perf, 0, 0]), E_POINTER);
+        assert_eq!(call(p_is_playing, &[perf, a, 0]), Hr::False.code());
+        assert_eq!(call(p_is_playing, &[perf, 0, 0]), Hr::Pointer.code());
         // a MIDI file is a silent segment, not an error
         let midi = b"MThd\0\0\0\x06\0\x01\0\x01\x01\xe0";
         let data = mem::heap_alloc(midi.len() as u32, false);
@@ -1483,11 +1536,11 @@ mod tests {
         assert_eq!(call(l_get_object, &[loader, desc, g(&SEGMENT_IIDS[2]), out]), 0);
         let m = mem::r32(out);
         assert_eq!(call(p_play_segment_ex, &[perf, m, 0, 0, 0, 0, 0, 0, 0, 0]), 0);
-        assert_eq!(call(p_is_playing, &[perf, m, 0]), S_FALSE);
+        assert_eq!(call(p_is_playing, &[perf, m, 0]), Hr::False.code());
         // no file name, no memory: refused
         mem::w32(desc + 4, 2);
         mem::write(desc + 24, &CLSID_SEGMENT);
-        assert_eq!(call(l_get_object, &[loader, desc, 0, out]), DMUS_E_LOADER_NOFILENAME);
+        assert_eq!(call(l_get_object, &[loader, desc, 0, out]), Hr::LoaderNoFilename.code());
         for o in [a, b, m, perf, loader] {
             call(release, &[o]);
         }
