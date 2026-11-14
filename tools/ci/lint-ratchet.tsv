@@ -1321,8 +1321,7 @@ file	crates/sake/src/dmime.rs	indexing_slicing	1
 file	crates/sake/src/dmime.rs	iter_over_hash_type	2
 file	crates/sake/src/dmime.rs	map_err_ignore	1
 file	crates/sake/src/dmime.rs	wildcard_enum_match_arm	1
-file	crates/sake/src/dmusic.rs	arithmetic_side_effects	5
-file	crates/sake/src/dmusic.rs	as_conversions	1
+file	crates/sake/src/dmusic.rs	arithmetic_side_effects	3
 file	crates/sake/src/dnsrec.rs	arithmetic_side_effects	77
 file	crates/sake/src/dnsrec.rs	as_conversions	32
 file	crates/sake/src/dnsrec.rs	cast_possible_truncation	16

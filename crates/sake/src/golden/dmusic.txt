@@ -1,0 +1,726 @@
+create cls#0 iid#0 outer=0x0 iid=true out=true: Some(0) refs=1
+create cls#0 iid#0 outer=0x0 iid=false out=true: Some(80004002) 0
+create cls#0 iid#0 outer=0x0 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#0 outer=0x1234 iid=true out=true: Some(80040110) 0
+create cls#0 iid#0 outer=0x1234 iid=false out=true: Some(80040110) 0
+create cls#0 iid#0 outer=0x1234 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#1 outer=0x0 iid=true out=true: Some(0) refs=1
+create cls#0 iid#1 outer=0x0 iid=false out=true: Some(80004002) 0
+create cls#0 iid#1 outer=0x0 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#1 outer=0x1234 iid=true out=true: Some(80040110) 0
+create cls#0 iid#1 outer=0x1234 iid=false out=true: Some(80040110) 0
+create cls#0 iid#1 outer=0x1234 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#2 outer=0x0 iid=true out=true: Some(0) refs=1
+create cls#0 iid#2 outer=0x0 iid=false out=true: Some(80004002) 0
+create cls#0 iid#2 outer=0x0 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#2 outer=0x1234 iid=true out=true: Some(80040110) 0
+create cls#0 iid#2 outer=0x1234 iid=false out=true: Some(80040110) 0
+create cls#0 iid#2 outer=0x1234 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#3 outer=0x0 iid=true out=true: Some(0) refs=1
+create cls#0 iid#3 outer=0x0 iid=false out=true: Some(80004002) 0
+create cls#0 iid#3 outer=0x0 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#3 outer=0x1234 iid=true out=true: Some(80040110) 0
+create cls#0 iid#3 outer=0x1234 iid=false out=true: Some(80040110) 0
+create cls#0 iid#3 outer=0x1234 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#4 outer=0x0 iid=true out=true: Some(80004002) 0
+create cls#0 iid#4 outer=0x0 iid=false out=true: Some(80004002) 0
+create cls#0 iid#4 outer=0x0 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#4 outer=0x1234 iid=true out=true: Some(80040110) 0
+create cls#0 iid#4 outer=0x1234 iid=false out=true: Some(80040110) 0
+create cls#0 iid#4 outer=0x1234 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#5 outer=0x0 iid=true out=true: Some(80004002) 0
+create cls#0 iid#5 outer=0x0 iid=false out=true: Some(80004002) 0
+create cls#0 iid#5 outer=0x0 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#5 outer=0x1234 iid=true out=true: Some(80040110) 0
+create cls#0 iid#5 outer=0x1234 iid=false out=true: Some(80040110) 0
+create cls#0 iid#5 outer=0x1234 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#6 outer=0x0 iid=true out=true: Some(80004002) 0
+create cls#0 iid#6 outer=0x0 iid=false out=true: Some(80004002) 0
+create cls#0 iid#6 outer=0x0 iid=true out=false: Some(80004003) untouched
+create cls#0 iid#6 outer=0x1234 iid=true out=true: Some(80040110) 0
+create cls#0 iid#6 outer=0x1234 iid=false out=true: Some(80040110) 0
+create cls#0 iid#6 outer=0x1234 iid=true out=false: Some(80004003) untouched
+create cls#1 iid#0 outer=0x0 iid=true out=true: None untouched
+create cls#1 iid#0 outer=0x0 iid=false out=true: None untouched
+create cls#1 iid#0 outer=0x0 iid=true out=false: None untouched
+create cls#1 iid#0 outer=0x1234 iid=true out=true: None untouched
+create cls#1 iid#0 outer=0x1234 iid=false out=true: None untouched
+create cls#1 iid#0 outer=0x1234 iid=true out=false: None untouched
+create cls#1 iid#1 outer=0x0 iid=true out=true: None untouched
+create cls#1 iid#1 outer=0x0 iid=false out=true: None untouched
+create cls#1 iid#1 outer=0x0 iid=true out=false: None untouched
+create cls#1 iid#1 outer=0x1234 iid=true out=true: None untouched
+create cls#1 iid#1 outer=0x1234 iid=false out=true: None untouched
+create cls#1 iid#1 outer=0x1234 iid=true out=false: None untouched
+create cls#1 iid#2 outer=0x0 iid=true out=true: None untouched
+create cls#1 iid#2 outer=0x0 iid=false out=true: None untouched
+create cls#1 iid#2 outer=0x0 iid=true out=false: None untouched
+create cls#1 iid#2 outer=0x1234 iid=true out=true: None untouched
+create cls#1 iid#2 outer=0x1234 iid=false out=true: None untouched
+create cls#1 iid#2 outer=0x1234 iid=true out=false: None untouched
+create cls#1 iid#3 outer=0x0 iid=true out=true: None untouched
+create cls#1 iid#3 outer=0x0 iid=false out=true: None untouched
+create cls#1 iid#3 outer=0x0 iid=true out=false: None untouched
+create cls#1 iid#3 outer=0x1234 iid=true out=true: None untouched
+create cls#1 iid#3 outer=0x1234 iid=false out=true: None untouched
+create cls#1 iid#3 outer=0x1234 iid=true out=false: None untouched
+create cls#1 iid#4 outer=0x0 iid=true out=true: None untouched
+create cls#1 iid#4 outer=0x0 iid=false out=true: None untouched
+create cls#1 iid#4 outer=0x0 iid=true out=false: None untouched
+create cls#1 iid#4 outer=0x1234 iid=true out=true: None untouched
+create cls#1 iid#4 outer=0x1234 iid=false out=true: None untouched
+create cls#1 iid#4 outer=0x1234 iid=true out=false: None untouched
+create cls#1 iid#5 outer=0x0 iid=true out=true: None untouched
+create cls#1 iid#5 outer=0x0 iid=false out=true: None untouched
+create cls#1 iid#5 outer=0x0 iid=true out=false: None untouched
+create cls#1 iid#5 outer=0x1234 iid=true out=true: None untouched
+create cls#1 iid#5 outer=0x1234 iid=false out=true: None untouched
+create cls#1 iid#5 outer=0x1234 iid=true out=false: None untouched
+create cls#1 iid#6 outer=0x0 iid=true out=true: None untouched
+create cls#1 iid#6 outer=0x0 iid=false out=true: None untouched
+create cls#1 iid#6 outer=0x0 iid=true out=false: None untouched
+create cls#1 iid#6 outer=0x1234 iid=true out=true: None untouched
+create cls#1 iid#6 outer=0x1234 iid=false out=true: None untouched
+create cls#1 iid#6 outer=0x1234 iid=true out=false: None untouched
+create cls#2 iid#0 outer=0x0 iid=true out=true: None untouched
+create cls#2 iid#0 outer=0x0 iid=false out=true: None untouched
+create cls#2 iid#0 outer=0x0 iid=true out=false: None untouched
+create cls#2 iid#0 outer=0x1234 iid=true out=true: None untouched
+create cls#2 iid#0 outer=0x1234 iid=false out=true: None untouched
+create cls#2 iid#0 outer=0x1234 iid=true out=false: None untouched
+create cls#2 iid#1 outer=0x0 iid=true out=true: None untouched
+create cls#2 iid#1 outer=0x0 iid=false out=true: None untouched
+create cls#2 iid#1 outer=0x0 iid=true out=false: None untouched
+create cls#2 iid#1 outer=0x1234 iid=true out=true: None untouched
+create cls#2 iid#1 outer=0x1234 iid=false out=true: None untouched
+create cls#2 iid#1 outer=0x1234 iid=true out=false: None untouched
+create cls#2 iid#2 outer=0x0 iid=true out=true: None untouched
+create cls#2 iid#2 outer=0x0 iid=false out=true: None untouched
+create cls#2 iid#2 outer=0x0 iid=true out=false: None untouched
+create cls#2 iid#2 outer=0x1234 iid=true out=true: None untouched
+create cls#2 iid#2 outer=0x1234 iid=false out=true: None untouched
+create cls#2 iid#2 outer=0x1234 iid=true out=false: None untouched
+create cls#2 iid#3 outer=0x0 iid=true out=true: None untouched
+create cls#2 iid#3 outer=0x0 iid=false out=true: None untouched
+create cls#2 iid#3 outer=0x0 iid=true out=false: None untouched
+create cls#2 iid#3 outer=0x1234 iid=true out=true: None untouched
+create cls#2 iid#3 outer=0x1234 iid=false out=true: None untouched
+create cls#2 iid#3 outer=0x1234 iid=true out=false: None untouched
+create cls#2 iid#4 outer=0x0 iid=true out=true: None untouched
+create cls#2 iid#4 outer=0x0 iid=false out=true: None untouched
+create cls#2 iid#4 outer=0x0 iid=true out=false: None untouched
+create cls#2 iid#4 outer=0x1234 iid=true out=true: None untouched
+create cls#2 iid#4 outer=0x1234 iid=false out=true: None untouched
+create cls#2 iid#4 outer=0x1234 iid=true out=false: None untouched
+create cls#2 iid#5 outer=0x0 iid=true out=true: None untouched
+create cls#2 iid#5 outer=0x0 iid=false out=true: None untouched
+create cls#2 iid#5 outer=0x0 iid=true out=false: None untouched
+create cls#2 iid#5 outer=0x1234 iid=true out=true: None untouched
+create cls#2 iid#5 outer=0x1234 iid=false out=true: None untouched
+create cls#2 iid#5 outer=0x1234 iid=true out=false: None untouched
+create cls#2 iid#6 outer=0x0 iid=true out=true: None untouched
+create cls#2 iid#6 outer=0x0 iid=false out=true: None untouched
+create cls#2 iid#6 outer=0x0 iid=true out=false: None untouched
+create cls#2 iid#6 outer=0x1234 iid=true out=true: None untouched
+create cls#2 iid#6 outer=0x1234 iid=false out=true: None untouched
+create cls#2 iid#6 outer=0x1234 iid=true out=false: None untouched
+0 method 7 p=false: 0x80004001 out=0xdeadbeef refs=1
+1 method 3 p=true: 0x1 out=0xdeadbeef refs=1
+2 method 12 p=true: 0x80004001 out=0xdeadbeef refs=1
+3 method 3 p=true: 0x1 out=0xdeadbeef refs=1
+4 method 11 p=true: 0x0 out=0xdeadbeef refs=1
+5 method 6 p=true: 0x1 out=0xdeadbeef refs=1
+6 method 0 p=true: 0x0 out=0x1 refs=2
+7 method 7 p=true: 0x80004001 out=0x0 refs=2
+8 method 11 p=true: 0x0 out=0xdeadbeef refs=2
+9 method 5 p=false: 0x88781161 out=0xdeadbeef refs=2
+10 method 5 p=true: 0x88781161 out=0x0 refs=2
+11 method 4 p=false: 0x80004001 out=0xdeadbeef refs=2
+12 method 10 p=true: 0x88781161 out=0xdeadbeef refs=2
+13 method 12 p=true: 0x80004001 out=0xdeadbeef refs=2
+14 method 4 p=true: 0x80004001 out=0xdeadbeef refs=2
+15 method 7 p=true: 0x80004001 out=0x0 refs=2
+16 method 0 p=true: 0x0 out=0x1 refs=3
+17 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+18 method 3 p=false: 0x80004003 out=0xdeadbeef refs=3
+19 method 9 p=true: 0x0 out=0xdeadbeef refs=3
+20 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+21 method 11 p=false: 0x0 out=0xdeadbeef refs=3
+22 method 3 p=true: 0x1 out=0xdeadbeef refs=3
+23 method 3 p=true: 0x1 out=0xdeadbeef refs=3
+24 method 8 p=false: 0x0 out=0xdeadbeef refs=3
+25 method 2 p=false: 0x2 out=0xdeadbeef refs=2
+26 method 3 p=true: 0x1 out=0xdeadbeef refs=2
+27 method 2 p=false: 0x1 out=0xdeadbeef refs=1
+28 method 2 p=true: 0x0 out=0xdeadbeef refs=0
+29 method 11 p=true: 0x0 out=0xdeadbeef refs=0
+30 method 12 p=true: 0x80004001 out=0xdeadbeef refs=0
+31 method 2 p=false: 0x0 out=0xdeadbeef refs=0
+32 method 10 p=true: 0x88781161 out=0xdeadbeef refs=0
+33 method 0 p=false: 0x80004003 out=0xdeadbeef refs=0
+34 method 2 p=true: 0x0 out=0xdeadbeef refs=0
+35 method 8 p=false: 0x0 out=0xdeadbeef refs=0
+36 method 4 p=false: 0x80004001 out=0xdeadbeef refs=0
+37 method 6 p=true: 0x1 out=0xdeadbeef refs=0
+38 method 7 p=true: 0x80004001 out=0x0 refs=0
+39 method 1 p=true: 0x1 out=0xdeadbeef refs=1
+40 method 1 p=true: 0x2 out=0xdeadbeef refs=2
+41 method 2 p=true: 0x1 out=0xdeadbeef refs=1
+42 method 11 p=true: 0x0 out=0xdeadbeef refs=1
+43 method 9 p=true: 0x0 out=0xdeadbeef refs=1
+44 method 4 p=false: 0x80004001 out=0xdeadbeef refs=1
+45 method 8 p=true: 0x0 out=0xdeadbeef refs=1
+46 method 7 p=true: 0x80004001 out=0x0 refs=1
+47 method 5 p=true: 0x88781161 out=0x0 refs=1
+48 method 11 p=true: 0x0 out=0xdeadbeef refs=1
+49 method 11 p=false: 0x0 out=0xdeadbeef refs=1
+50 method 10 p=false: 0x88781161 out=0xdeadbeef refs=1
+51 method 4 p=false: 0x80004001 out=0xdeadbeef refs=1
+52 method 9 p=true: 0x0 out=0xdeadbeef refs=1
+53 method 1 p=true: 0x2 out=0xdeadbeef refs=2
+54 method 2 p=true: 0x1 out=0xdeadbeef refs=1
+55 method 1 p=true: 0x2 out=0xdeadbeef refs=2
+56 method 2 p=true: 0x1 out=0xdeadbeef refs=1
+57 method 7 p=false: 0x80004001 out=0xdeadbeef refs=1
+58 method 1 p=true: 0x2 out=0xdeadbeef refs=2
+59 method 12 p=false: 0x80004001 out=0xdeadbeef refs=2
+60 method 10 p=true: 0x88781161 out=0xdeadbeef refs=2
+61 method 1 p=true: 0x3 out=0xdeadbeef refs=3
+62 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+63 method 7 p=false: 0x80004001 out=0xdeadbeef refs=3
+64 method 10 p=false: 0x88781161 out=0xdeadbeef refs=3
+65 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+66 method 11 p=true: 0x0 out=0xdeadbeef refs=3
+67 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+68 method 5 p=true: 0x88781161 out=0x0 refs=3
+69 method 12 p=true: 0x80004001 out=0xdeadbeef refs=3
+70 method 12 p=true: 0x80004001 out=0xdeadbeef refs=3
+71 method 5 p=false: 0x88781161 out=0xdeadbeef refs=3
+72 method 3 p=true: 0x1 out=0xdeadbeef refs=3
+73 method 9 p=false: 0x0 out=0xdeadbeef refs=3
+74 method 0 p=true: 0x0 out=0x1 refs=4
+75 method 2 p=true: 0x3 out=0xdeadbeef refs=3
+76 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+77 method 3 p=true: 0x1 out=0xdeadbeef refs=3
+78 method 11 p=true: 0x0 out=0xdeadbeef refs=3
+79 method 9 p=false: 0x0 out=0xdeadbeef refs=3
+80 method 4 p=true: 0x80004001 out=0xdeadbeef refs=3
+81 method 12 p=true: 0x80004001 out=0xdeadbeef refs=3
+82 method 3 p=true: 0x1 out=0xdeadbeef refs=3
+83 method 9 p=true: 0x0 out=0xdeadbeef refs=3
+84 method 11 p=false: 0x0 out=0xdeadbeef refs=3
+85 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+86 method 11 p=false: 0x0 out=0xdeadbeef refs=3
+87 method 6 p=false: 0x80004003 out=0xdeadbeef refs=3
+88 method 3 p=true: 0x1 out=0xdeadbeef refs=3
+89 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+90 method 8 p=true: 0x0 out=0xdeadbeef refs=3
+91 method 12 p=true: 0x80004001 out=0xdeadbeef refs=3
+92 method 8 p=false: 0x0 out=0xdeadbeef refs=3
+93 method 5 p=true: 0x88781161 out=0x0 refs=3
+94 method 6 p=true: 0x1 out=0xdeadbeef refs=3
+95 method 0 p=false: 0x80004003 out=0xdeadbeef refs=3
+96 method 7 p=true: 0x80004001 out=0x0 refs=3
+97 method 2 p=true: 0x2 out=0xdeadbeef refs=2
+98 method 11 p=true: 0x0 out=0xdeadbeef refs=2
+99 method 0 p=true: 0x80004002 out=0x0 refs=2
+100 method 4 p=false: 0x80004001 out=0xdeadbeef refs=2
+101 method 8 p=false: 0x0 out=0xdeadbeef refs=2
+102 method 3 p=true: 0x1 out=0xdeadbeef refs=2
+103 method 3 p=true: 0x1 out=0xdeadbeef refs=2
+104 method 8 p=true: 0x0 out=0xdeadbeef refs=2
+105 method 1 p=false: 0x3 out=0xdeadbeef refs=3
+106 method 0 p=true: 0x80004002 out=0x0 refs=3
+107 method 1 p=true: 0x4 out=0xdeadbeef refs=4
+108 method 8 p=true: 0x0 out=0xdeadbeef refs=4
+109 method 3 p=false: 0x80004003 out=0xdeadbeef refs=4
+110 method 5 p=false: 0x88781161 out=0xdeadbeef refs=4
+111 method 11 p=true: 0x0 out=0xdeadbeef refs=4
+112 method 12 p=true: 0x80004001 out=0xdeadbeef refs=4
+113 method 7 p=true: 0x80004001 out=0x0 refs=4
+114 method 0 p=false: 0x80004003 out=0xdeadbeef refs=4
+115 method 12 p=true: 0x80004001 out=0xdeadbeef refs=4
+116 method 6 p=true: 0x1 out=0xdeadbeef refs=4
+117 method 8 p=true: 0x0 out=0xdeadbeef refs=4
+118 method 10 p=true: 0x88781161 out=0xdeadbeef refs=4
+119 method 9 p=false: 0x0 out=0xdeadbeef refs=4
+120 method 9 p=true: 0x0 out=0xdeadbeef refs=4
+121 method 11 p=true: 0x0 out=0xdeadbeef refs=4
+122 method 10 p=true: 0x88781161 out=0xdeadbeef refs=4
+123 method 1 p=true: 0x5 out=0xdeadbeef refs=5
+124 method 12 p=true: 0x80004001 out=0xdeadbeef refs=5
+125 method 10 p=true: 0x88781161 out=0xdeadbeef refs=5
+126 method 9 p=true: 0x0 out=0xdeadbeef refs=5
+127 method 1 p=true: 0x6 out=0xdeadbeef refs=6
+128 method 9 p=true: 0x0 out=0xdeadbeef refs=6
+129 method 11 p=true: 0x0 out=0xdeadbeef refs=6
+130 method 12 p=true: 0x80004001 out=0xdeadbeef refs=6
+131 method 8 p=true: 0x0 out=0xdeadbeef refs=6
+132 method 12 p=true: 0x80004001 out=0xdeadbeef refs=6
+133 method 12 p=true: 0x80004001 out=0xdeadbeef refs=6
+134 method 2 p=true: 0x5 out=0xdeadbeef refs=5
+135 method 11 p=true: 0x0 out=0xdeadbeef refs=5
+136 method 2 p=false: 0x4 out=0xdeadbeef refs=4
+137 method 0 p=true: 0x0 out=0x1 refs=5
+138 method 2 p=true: 0x4 out=0xdeadbeef refs=4
+139 method 4 p=true: 0x80004001 out=0xdeadbeef refs=4
+140 method 8 p=true: 0x0 out=0xdeadbeef refs=4
+141 method 4 p=false: 0x80004001 out=0xdeadbeef refs=4
+142 method 9 p=true: 0x0 out=0xdeadbeef refs=4
+143 method 12 p=true: 0x80004001 out=0xdeadbeef refs=4
+144 method 0 p=true: 0x80004002 out=0x0 refs=4
+145 method 0 p=true: 0x0 out=0x1 refs=5
+146 method 5 p=true: 0x88781161 out=0x0 refs=5
+147 method 3 p=true: 0x1 out=0xdeadbeef refs=5
+148 method 10 p=true: 0x88781161 out=0xdeadbeef refs=5
+149 method 3 p=false: 0x80004003 out=0xdeadbeef refs=5
+150 method 12 p=false: 0x80004001 out=0xdeadbeef refs=5
+151 method 12 p=true: 0x80004001 out=0xdeadbeef refs=5
+152 method 9 p=true: 0x0 out=0xdeadbeef refs=5
+153 method 0 p=false: 0x80004003 out=0xdeadbeef refs=5
+154 method 2 p=true: 0x4 out=0xdeadbeef refs=4
+155 method 10 p=false: 0x88781161 out=0xdeadbeef refs=4
+156 method 0 p=true: 0x0 out=0x1 refs=5
+157 method 2 p=true: 0x4 out=0xdeadbeef refs=4
+158 method 6 p=true: 0x1 out=0xdeadbeef refs=4
+159 method 7 p=false: 0x80004001 out=0xdeadbeef refs=4
+160 method 5 p=true: 0x88781161 out=0x0 refs=4
+161 method 10 p=true: 0x88781161 out=0xdeadbeef refs=4
+162 method 0 p=false: 0x80004003 out=0xdeadbeef refs=4
+163 method 12 p=true: 0x80004001 out=0xdeadbeef refs=4
+164 method 12 p=false: 0x80004001 out=0xdeadbeef refs=4
+165 method 8 p=true: 0x0 out=0xdeadbeef refs=4
+166 method 12 p=false: 0x80004001 out=0xdeadbeef refs=4
+167 method 0 p=true: 0x80004002 out=0x0 refs=4
+168 method 10 p=true: 0x88781161 out=0xdeadbeef refs=4
+169 method 7 p=false: 0x80004001 out=0xdeadbeef refs=4
+170 method 6 p=true: 0x1 out=0xdeadbeef refs=4
+171 method 4 p=false: 0x80004001 out=0xdeadbeef refs=4
+172 method 5 p=true: 0x88781161 out=0x0 refs=4
+173 method 0 p=true: 0x0 out=0x1 refs=5
+174 method 6 p=true: 0x1 out=0xdeadbeef refs=5
+175 method 8 p=true: 0x0 out=0xdeadbeef refs=5
+176 method 4 p=true: 0x80004001 out=0xdeadbeef refs=5
+177 method 5 p=false: 0x88781161 out=0xdeadbeef refs=5
+178 method 2 p=false: 0x4 out=0xdeadbeef refs=4
+179 method 6 p=true: 0x1 out=0xdeadbeef refs=4
+180 method 8 p=true: 0x0 out=0xdeadbeef refs=4
+181 method 0 p=false: 0x80004003 out=0xdeadbeef refs=4
+182 method 0 p=true: 0x80004002 out=0x0 refs=4
+183 method 3 p=false: 0x80004003 out=0xdeadbeef refs=4
+184 method 3 p=true: 0x1 out=0xdeadbeef refs=4
+185 method 10 p=true: 0x88781161 out=0xdeadbeef refs=4
+186 method 3 p=true: 0x1 out=0xdeadbeef refs=4
+187 method 7 p=false: 0x80004001 out=0xdeadbeef refs=4
+188 method 10 p=true: 0x88781161 out=0xdeadbeef refs=4
+189 method 12 p=false: 0x80004001 out=0xdeadbeef refs=4
+190 method 7 p=false: 0x80004001 out=0xdeadbeef refs=4
+191 method 6 p=true: 0x1 out=0xdeadbeef refs=4
+192 method 12 p=true: 0x80004001 out=0xdeadbeef refs=4
+193 method 3 p=false: 0x80004003 out=0xdeadbeef refs=4
+194 method 6 p=true: 0x1 out=0xdeadbeef refs=4
+195 method 10 p=true: 0x88781161 out=0xdeadbeef refs=4
+196 method 1 p=true: 0x5 out=0xdeadbeef refs=5
+197 method 11 p=true: 0x0 out=0xdeadbeef refs=5
+198 method 8 p=false: 0x0 out=0xdeadbeef refs=5
+199 method 4 p=true: 0x80004001 out=0xdeadbeef refs=5
+200 method 7 p=true: 0x80004001 out=0x0 refs=5
+201 method 10 p=true: 0x88781161 out=0xdeadbeef refs=5
+202 method 7 p=true: 0x80004001 out=0x0 refs=5
+203 method 5 p=true: 0x88781161 out=0x0 refs=5
+204 method 6 p=true: 0x1 out=0xdeadbeef refs=5
+205 method 7 p=true: 0x80004001 out=0x0 refs=5
+206 method 7 p=false: 0x80004001 out=0xdeadbeef refs=5
+207 method 6 p=false: 0x80004003 out=0xdeadbeef refs=5
+208 method 11 p=true: 0x0 out=0xdeadbeef refs=5
+209 method 7 p=true: 0x80004001 out=0x0 refs=5
+210 method 8 p=true: 0x0 out=0xdeadbeef refs=5
+211 method 1 p=true: 0x6 out=0xdeadbeef refs=6
+212 method 8 p=true: 0x0 out=0xdeadbeef refs=6
+213 method 4 p=true: 0x80004001 out=0xdeadbeef refs=6
+214 method 3 p=true: 0x1 out=0xdeadbeef refs=6
+215 method 1 p=true: 0x7 out=0xdeadbeef refs=7
+216 method 4 p=false: 0x80004001 out=0xdeadbeef refs=7
+217 method 10 p=true: 0x88781161 out=0xdeadbeef refs=7
+218 method 2 p=true: 0x6 out=0xdeadbeef refs=6
+219 method 10 p=true: 0x88781161 out=0xdeadbeef refs=6
+220 method 12 p=true: 0x80004001 out=0xdeadbeef refs=6
+221 method 12 p=true: 0x80004001 out=0xdeadbeef refs=6
+222 method 9 p=true: 0x0 out=0xdeadbeef refs=6
+223 method 4 p=true: 0x80004001 out=0xdeadbeef refs=6
+224 method 5 p=false: 0x88781161 out=0xdeadbeef refs=6
+225 method 12 p=true: 0x80004001 out=0xdeadbeef refs=6
+226 method 8 p=true: 0x0 out=0xdeadbeef refs=6
+227 method 5 p=true: 0x88781161 out=0x0 refs=6
+228 method 4 p=true: 0x80004001 out=0xdeadbeef refs=6
+229 method 3 p=true: 0x1 out=0xdeadbeef refs=6
+230 method 2 p=true: 0x5 out=0xdeadbeef refs=5
+231 method 7 p=false: 0x80004001 out=0xdeadbeef refs=5
+232 method 0 p=false: 0x80004003 out=0xdeadbeef refs=5
+233 method 8 p=false: 0x0 out=0xdeadbeef refs=5
+234 method 3 p=true: 0x1 out=0xdeadbeef refs=5
+235 method 9 p=true: 0x0 out=0xdeadbeef refs=5
+236 method 3 p=false: 0x80004003 out=0xdeadbeef refs=5
+237 method 6 p=false: 0x80004003 out=0xdeadbeef refs=5
+238 method 6 p=true: 0x1 out=0xdeadbeef refs=5
+239 method 0 p=true: 0x80004002 out=0x0 refs=5
+240 method 10 p=true: 0x88781161 out=0xdeadbeef refs=5
+241 method 8 p=true: 0x0 out=0xdeadbeef refs=5
+242 method 6 p=true: 0x1 out=0xdeadbeef refs=5
+243 method 12 p=true: 0x80004001 out=0xdeadbeef refs=5
+244 method 0 p=true: 0x80004002 out=0x0 refs=5
+245 method 10 p=true: 0x88781161 out=0xdeadbeef refs=5
+246 method 7 p=true: 0x80004001 out=0x0 refs=5
+247 method 7 p=false: 0x80004001 out=0xdeadbeef refs=5
+248 method 6 p=true: 0x1 out=0xdeadbeef refs=5
+249 method 11 p=true: 0x0 out=0xdeadbeef refs=5
+250 method 0 p=true: 0x80004002 out=0x0 refs=5
+251 method 0 p=true: 0x80004002 out=0x0 refs=5
+252 method 9 p=true: 0x0 out=0xdeadbeef refs=5
+253 method 10 p=true: 0x88781161 out=0xdeadbeef refs=5
+254 method 1 p=true: 0x6 out=0xdeadbeef refs=6
+255 method 7 p=false: 0x80004001 out=0xdeadbeef refs=6
+256 method 4 p=false: 0x80004001 out=0xdeadbeef refs=6
+257 method 1 p=false: 0x7 out=0xdeadbeef refs=7
+258 method 0 p=false: 0x80004003 out=0xdeadbeef refs=7
+259 method 1 p=true: 0x8 out=0xdeadbeef refs=8
+260 method 10 p=true: 0x88781161 out=0xdeadbeef refs=8
+261 method 12 p=true: 0x80004001 out=0xdeadbeef refs=8
+262 method 4 p=true: 0x80004001 out=0xdeadbeef refs=8
+263 method 3 p=true: 0x1 out=0xdeadbeef refs=8
+264 method 1 p=true: 0x9 out=0xdeadbeef refs=9
+265 method 5 p=true: 0x88781161 out=0x0 refs=9
+266 method 2 p=true: 0x8 out=0xdeadbeef refs=8
+267 method 2 p=true: 0x7 out=0xdeadbeef refs=7
+268 method 11 p=false: 0x0 out=0xdeadbeef refs=7
+269 method 2 p=true: 0x6 out=0xdeadbeef refs=6
+270 method 11 p=true: 0x0 out=0xdeadbeef refs=6
+271 method 6 p=true: 0x1 out=0xdeadbeef refs=6
+272 method 6 p=false: 0x80004003 out=0xdeadbeef refs=6
+273 method 9 p=true: 0x0 out=0xdeadbeef refs=6
+274 method 1 p=true: 0x7 out=0xdeadbeef refs=7
+275 method 1 p=true: 0x8 out=0xdeadbeef refs=8
+276 method 8 p=false: 0x0 out=0xdeadbeef refs=8
+277 method 2 p=true: 0x7 out=0xdeadbeef refs=7
+278 method 2 p=false: 0x6 out=0xdeadbeef refs=6
+279 method 6 p=false: 0x80004003 out=0xdeadbeef refs=6
+280 method 5 p=false: 0x88781161 out=0xdeadbeef refs=6
+281 method 7 p=true: 0x80004001 out=0x0 refs=6
+282 method 5 p=true: 0x88781161 out=0x0 refs=6
+283 method 7 p=true: 0x80004001 out=0x0 refs=6
+284 method 9 p=true: 0x0 out=0xdeadbeef refs=6
+285 method 6 p=true: 0x1 out=0xdeadbeef refs=6
+286 method 2 p=false: 0x5 out=0xdeadbeef refs=5
+287 method 5 p=true: 0x88781161 out=0x0 refs=5
+288 method 1 p=true: 0x6 out=0xdeadbeef refs=6
+289 method 1 p=true: 0x7 out=0xdeadbeef refs=7
+290 method 11 p=true: 0x0 out=0xdeadbeef refs=7
+291 method 3 p=true: 0x1 out=0xdeadbeef refs=7
+292 method 12 p=true: 0x80004001 out=0xdeadbeef refs=7
+293 method 10 p=true: 0x88781161 out=0xdeadbeef refs=7
+294 method 12 p=true: 0x80004001 out=0xdeadbeef refs=7
+295 method 9 p=true: 0x0 out=0xdeadbeef refs=7
+296 method 0 p=true: 0x80004002 out=0x0 refs=7
+297 method 9 p=false: 0x0 out=0xdeadbeef refs=7
+298 method 4 p=false: 0x80004001 out=0xdeadbeef refs=7
+299 method 5 p=true: 0x88781161 out=0x0 refs=7
+300 method 6 p=true: 0x1 out=0xdeadbeef refs=7
+301 method 10 p=true: 0x88781161 out=0xdeadbeef refs=7
+302 method 7 p=true: 0x80004001 out=0x0 refs=7
+303 method 10 p=true: 0x88781161 out=0xdeadbeef refs=7
+304 method 9 p=true: 0x0 out=0xdeadbeef refs=7
+305 method 10 p=true: 0x88781161 out=0xdeadbeef refs=7
+306 method 6 p=true: 0x1 out=0xdeadbeef refs=7
+307 method 10 p=true: 0x88781161 out=0xdeadbeef refs=7
+308 method 0 p=false: 0x80004003 out=0xdeadbeef refs=7
+309 method 8 p=true: 0x0 out=0xdeadbeef refs=7
+310 method 9 p=false: 0x0 out=0xdeadbeef refs=7
+311 method 10 p=false: 0x88781161 out=0xdeadbeef refs=7
+312 method 7 p=false: 0x80004001 out=0xdeadbeef refs=7
+313 method 11 p=true: 0x0 out=0xdeadbeef refs=7
+314 method 4 p=false: 0x80004001 out=0xdeadbeef refs=7
+315 method 1 p=true: 0x8 out=0xdeadbeef refs=8
+316 method 11 p=true: 0x0 out=0xdeadbeef refs=8
+317 method 4 p=true: 0x80004001 out=0xdeadbeef refs=8
+318 method 9 p=true: 0x0 out=0xdeadbeef refs=8
+319 method 8 p=true: 0x0 out=0xdeadbeef refs=8
+320 method 11 p=true: 0x0 out=0xdeadbeef refs=8
+321 method 9 p=false: 0x0 out=0xdeadbeef refs=8
+322 method 7 p=true: 0x80004001 out=0x0 refs=8
+323 method 4 p=true: 0x80004001 out=0xdeadbeef refs=8
+324 method 1 p=true: 0x9 out=0xdeadbeef refs=9
+325 method 11 p=true: 0x0 out=0xdeadbeef refs=9
+326 method 0 p=true: 0x80004002 out=0x0 refs=9
+327 method 4 p=true: 0x80004001 out=0xdeadbeef refs=9
+328 method 2 p=true: 0x8 out=0xdeadbeef refs=8
+329 method 12 p=true: 0x80004001 out=0xdeadbeef refs=8
+330 method 5 p=true: 0x88781161 out=0x0 refs=8
+331 method 10 p=false: 0x88781161 out=0xdeadbeef refs=8
+332 method 5 p=true: 0x88781161 out=0x0 refs=8
+333 method 2 p=true: 0x7 out=0xdeadbeef refs=7
+334 method 10 p=false: 0x88781161 out=0xdeadbeef refs=7
+335 method 11 p=true: 0x0 out=0xdeadbeef refs=7
+336 method 1 p=false: 0x8 out=0xdeadbeef refs=8
+337 method 8 p=true: 0x0 out=0xdeadbeef refs=8
+338 method 11 p=false: 0x0 out=0xdeadbeef refs=8
+339 method 4 p=true: 0x80004001 out=0xdeadbeef refs=8
+340 method 0 p=true: 0x0 out=0x1 refs=9
+341 method 11 p=false: 0x0 out=0xdeadbeef refs=9
+342 method 6 p=true: 0x1 out=0xdeadbeef refs=9
+343 method 9 p=false: 0x0 out=0xdeadbeef refs=9
+344 method 4 p=true: 0x80004001 out=0xdeadbeef refs=9
+345 method 5 p=false: 0x88781161 out=0xdeadbeef refs=9
+346 method 12 p=true: 0x80004001 out=0xdeadbeef refs=9
+347 method 2 p=true: 0x8 out=0xdeadbeef refs=8
+348 method 7 p=true: 0x80004001 out=0x0 refs=8
+349 method 6 p=true: 0x1 out=0xdeadbeef refs=8
+350 method 12 p=true: 0x80004001 out=0xdeadbeef refs=8
+351 method 5 p=false: 0x88781161 out=0xdeadbeef refs=8
+352 method 3 p=true: 0x1 out=0xdeadbeef refs=8
+353 method 10 p=true: 0x88781161 out=0xdeadbeef refs=8
+354 method 2 p=false: 0x7 out=0xdeadbeef refs=7
+355 method 12 p=true: 0x80004001 out=0xdeadbeef refs=7
+356 method 11 p=true: 0x0 out=0xdeadbeef refs=7
+357 method 4 p=false: 0x80004001 out=0xdeadbeef refs=7
+358 method 3 p=true: 0x1 out=0xdeadbeef refs=7
+359 method 3 p=false: 0x80004003 out=0xdeadbeef refs=7
+360 method 1 p=true: 0x8 out=0xdeadbeef refs=8
+361 method 4 p=true: 0x80004001 out=0xdeadbeef refs=8
+362 method 3 p=true: 0x1 out=0xdeadbeef refs=8
+363 method 1 p=false: 0x9 out=0xdeadbeef refs=9
+364 method 10 p=false: 0x88781161 out=0xdeadbeef refs=9
+365 method 4 p=false: 0x80004001 out=0xdeadbeef refs=9
+366 method 3 p=false: 0x80004003 out=0xdeadbeef refs=9
+367 method 2 p=true: 0x8 out=0xdeadbeef refs=8
+368 method 0 p=true: 0x0 out=0x1 refs=9
+369 method 5 p=true: 0x88781161 out=0x0 refs=9
+370 method 3 p=true: 0x1 out=0xdeadbeef refs=9
+371 method 5 p=true: 0x88781161 out=0x0 refs=9
+372 method 9 p=true: 0x0 out=0xdeadbeef refs=9
+373 method 1 p=true: 0xa out=0xdeadbeef refs=10
+374 method 2 p=true: 0x9 out=0xdeadbeef refs=9
+375 method 7 p=true: 0x80004001 out=0x0 refs=9
+376 method 4 p=false: 0x80004001 out=0xdeadbeef refs=9
+377 method 2 p=true: 0x8 out=0xdeadbeef refs=8
+378 method 6 p=false: 0x80004003 out=0xdeadbeef refs=8
+379 method 3 p=false: 0x80004003 out=0xdeadbeef refs=8
+380 method 2 p=false: 0x7 out=0xdeadbeef refs=7
+381 method 11 p=true: 0x0 out=0xdeadbeef refs=7
+382 method 1 p=true: 0x8 out=0xdeadbeef refs=8
+383 method 7 p=true: 0x80004001 out=0x0 refs=8
+384 method 8 p=true: 0x0 out=0xdeadbeef refs=8
+385 method 9 p=false: 0x0 out=0xdeadbeef refs=8
+386 method 7 p=true: 0x80004001 out=0x0 refs=8
+387 method 4 p=true: 0x80004001 out=0xdeadbeef refs=8
+388 method 5 p=true: 0x88781161 out=0x0 refs=8
+389 method 1 p=true: 0x9 out=0xdeadbeef refs=9
+390 method 1 p=false: 0xa out=0xdeadbeef refs=10
+391 method 0 p=true: 0x80004002 out=0x0 refs=10
+392 method 8 p=true: 0x0 out=0xdeadbeef refs=10
+393 method 0 p=false: 0x80004003 out=0xdeadbeef refs=10
+394 method 10 p=false: 0x88781161 out=0xdeadbeef refs=10
+395 method 12 p=true: 0x80004001 out=0xdeadbeef refs=10
+396 method 0 p=true: 0x0 out=0x1 refs=11
+397 method 11 p=true: 0x0 out=0xdeadbeef refs=11
+398 method 2 p=true: 0xa out=0xdeadbeef refs=10
+399 method 6 p=true: 0x1 out=0xdeadbeef refs=10
+400 method 11 p=false: 0x0 out=0xdeadbeef refs=10
+401 method 12 p=true: 0x80004001 out=0xdeadbeef refs=10
+402 method 7 p=false: 0x80004001 out=0xdeadbeef refs=10
+403 method 11 p=true: 0x0 out=0xdeadbeef refs=10
+404 method 3 p=true: 0x1 out=0xdeadbeef refs=10
+405 method 9 p=true: 0x0 out=0xdeadbeef refs=10
+406 method 9 p=false: 0x0 out=0xdeadbeef refs=10
+407 method 11 p=true: 0x0 out=0xdeadbeef refs=10
+408 method 4 p=true: 0x80004001 out=0xdeadbeef refs=10
+409 method 1 p=true: 0xb out=0xdeadbeef refs=11
+410 method 1 p=true: 0xc out=0xdeadbeef refs=12
+411 method 3 p=true: 0x1 out=0xdeadbeef refs=12
+412 method 9 p=true: 0x0 out=0xdeadbeef refs=12
+413 method 8 p=true: 0x0 out=0xdeadbeef refs=12
+414 method 8 p=true: 0x0 out=0xdeadbeef refs=12
+415 method 11 p=true: 0x0 out=0xdeadbeef refs=12
+416 method 12 p=false: 0x80004001 out=0xdeadbeef refs=12
+417 method 9 p=false: 0x0 out=0xdeadbeef refs=12
+418 method 3 p=true: 0x1 out=0xdeadbeef refs=12
+419 method 6 p=true: 0x1 out=0xdeadbeef refs=12
+420 method 10 p=true: 0x88781161 out=0xdeadbeef refs=12
+421 method 9 p=true: 0x0 out=0xdeadbeef refs=12
+422 method 6 p=false: 0x80004003 out=0xdeadbeef refs=12
+423 method 3 p=true: 0x1 out=0xdeadbeef refs=12
+424 method 3 p=true: 0x1 out=0xdeadbeef refs=12
+425 method 0 p=true: 0x80004002 out=0x0 refs=12
+426 method 5 p=true: 0x88781161 out=0x0 refs=12
+427 method 5 p=true: 0x88781161 out=0x0 refs=12
+428 method 1 p=true: 0xd out=0xdeadbeef refs=13
+429 method 3 p=true: 0x1 out=0xdeadbeef refs=13
+430 method 7 p=true: 0x80004001 out=0x0 refs=13
+431 method 5 p=true: 0x88781161 out=0x0 refs=13
+432 method 0 p=true: 0x0 out=0x1 refs=14
+433 method 9 p=false: 0x0 out=0xdeadbeef refs=14
+434 method 2 p=true: 0xd out=0xdeadbeef refs=13
+435 method 4 p=true: 0x80004001 out=0xdeadbeef refs=13
+436 method 6 p=true: 0x1 out=0xdeadbeef refs=13
+437 method 6 p=true: 0x1 out=0xdeadbeef refs=13
+438 method 11 p=false: 0x0 out=0xdeadbeef refs=13
+439 method 7 p=true: 0x80004001 out=0x0 refs=13
+440 method 5 p=true: 0x88781161 out=0x0 refs=13
+441 method 1 p=true: 0xe out=0xdeadbeef refs=14
+442 method 12 p=false: 0x80004001 out=0xdeadbeef refs=14
+443 method 6 p=true: 0x1 out=0xdeadbeef refs=14
+444 method 6 p=true: 0x1 out=0xdeadbeef refs=14
+445 method 9 p=true: 0x0 out=0xdeadbeef refs=14
+446 method 6 p=false: 0x80004003 out=0xdeadbeef refs=14
+447 method 10 p=true: 0x88781161 out=0xdeadbeef refs=14
+448 method 2 p=true: 0xd out=0xdeadbeef refs=13
+449 method 10 p=false: 0x88781161 out=0xdeadbeef refs=13
+450 method 4 p=true: 0x80004001 out=0xdeadbeef refs=13
+451 method 7 p=false: 0x80004001 out=0xdeadbeef refs=13
+452 method 7 p=true: 0x80004001 out=0x0 refs=13
+453 method 6 p=true: 0x1 out=0xdeadbeef refs=13
+454 method 10 p=true: 0x88781161 out=0xdeadbeef refs=13
+455 method 12 p=true: 0x80004001 out=0xdeadbeef refs=13
+456 method 2 p=true: 0xc out=0xdeadbeef refs=12
+457 method 4 p=false: 0x80004001 out=0xdeadbeef refs=12
+458 method 4 p=false: 0x80004001 out=0xdeadbeef refs=12
+459 method 6 p=true: 0x1 out=0xdeadbeef refs=12
+460 method 0 p=true: 0x0 out=0x1 refs=13
+461 method 7 p=false: 0x80004001 out=0xdeadbeef refs=13
+462 method 5 p=false: 0x88781161 out=0xdeadbeef refs=13
+463 method 3 p=true: 0x1 out=0xdeadbeef refs=13
+464 method 1 p=false: 0xe out=0xdeadbeef refs=14
+465 method 7 p=true: 0x80004001 out=0x0 refs=14
+466 method 12 p=true: 0x80004001 out=0xdeadbeef refs=14
+467 method 2 p=true: 0xd out=0xdeadbeef refs=13
+468 method 9 p=true: 0x0 out=0xdeadbeef refs=13
+469 method 9 p=false: 0x0 out=0xdeadbeef refs=13
+470 method 5 p=false: 0x88781161 out=0xdeadbeef refs=13
+471 method 10 p=true: 0x88781161 out=0xdeadbeef refs=13
+472 method 7 p=true: 0x80004001 out=0x0 refs=13
+473 method 11 p=true: 0x0 out=0xdeadbeef refs=13
+474 method 5 p=true: 0x88781161 out=0x0 refs=13
+475 method 12 p=true: 0x80004001 out=0xdeadbeef refs=13
+476 method 8 p=true: 0x0 out=0xdeadbeef refs=13
+477 method 5 p=true: 0x88781161 out=0x0 refs=13
+478 method 12 p=true: 0x80004001 out=0xdeadbeef refs=13
+479 method 3 p=false: 0x80004003 out=0xdeadbeef refs=13
+480 method 0 p=true: 0x80004002 out=0x0 refs=13
+481 method 10 p=true: 0x88781161 out=0xdeadbeef refs=13
+482 method 1 p=true: 0xe out=0xdeadbeef refs=14
+483 method 10 p=true: 0x88781161 out=0xdeadbeef refs=14
+484 method 5 p=false: 0x88781161 out=0xdeadbeef refs=14
+485 method 10 p=true: 0x88781161 out=0xdeadbeef refs=14
+486 method 0 p=true: 0x80004002 out=0x0 refs=14
+487 method 2 p=true: 0xd out=0xdeadbeef refs=13
+488 method 3 p=true: 0x1 out=0xdeadbeef refs=13
+489 method 0 p=true: 0x80004002 out=0x0 refs=13
+490 method 8 p=true: 0x0 out=0xdeadbeef refs=13
+491 method 4 p=true: 0x80004001 out=0xdeadbeef refs=13
+492 method 6 p=true: 0x1 out=0xdeadbeef refs=13
+493 method 2 p=true: 0xc out=0xdeadbeef refs=12
+494 method 5 p=true: 0x88781161 out=0x0 refs=12
+495 method 0 p=true: 0x0 out=0x1 refs=13
+496 method 1 p=true: 0xe out=0xdeadbeef refs=14
+497 method 2 p=false: 0xd out=0xdeadbeef refs=13
+498 method 1 p=true: 0xe out=0xdeadbeef refs=14
+499 method 2 p=false: 0xd out=0xdeadbeef refs=13
+500 method 3 p=true: 0x1 out=0xdeadbeef refs=13
+501 method 8 p=true: 0x0 out=0xdeadbeef refs=13
+502 method 6 p=true: 0x1 out=0xdeadbeef refs=13
+503 method 7 p=true: 0x80004001 out=0x0 refs=13
+504 method 7 p=true: 0x80004001 out=0x0 refs=13
+505 method 7 p=true: 0x80004001 out=0x0 refs=13
+506 method 8 p=false: 0x0 out=0xdeadbeef refs=13
+507 method 3 p=false: 0x80004003 out=0xdeadbeef refs=13
+508 method 3 p=true: 0x1 out=0xdeadbeef refs=13
+509 method 4 p=true: 0x80004001 out=0xdeadbeef refs=13
+510 method 9 p=true: 0x0 out=0xdeadbeef refs=13
+511 method 8 p=true: 0x0 out=0xdeadbeef refs=13
+512 method 11 p=true: 0x0 out=0xdeadbeef refs=13
+513 method 9 p=true: 0x0 out=0xdeadbeef refs=13
+514 method 8 p=true: 0x0 out=0xdeadbeef refs=13
+515 method 9 p=true: 0x0 out=0xdeadbeef refs=13
+516 method 7 p=true: 0x80004001 out=0x0 refs=13
+517 method 11 p=true: 0x0 out=0xdeadbeef refs=13
+518 method 1 p=true: 0xe out=0xdeadbeef refs=14
+519 method 12 p=true: 0x80004001 out=0xdeadbeef refs=14
+520 method 4 p=true: 0x80004001 out=0xdeadbeef refs=14
+521 method 4 p=true: 0x80004001 out=0xdeadbeef refs=14
+522 method 8 p=true: 0x0 out=0xdeadbeef refs=14
+523 method 0 p=true: 0x80004002 out=0x0 refs=14
+524 method 11 p=true: 0x0 out=0xdeadbeef refs=14
+525 method 6 p=true: 0x1 out=0xdeadbeef refs=14
+526 method 9 p=true: 0x0 out=0xdeadbeef refs=14
+527 method 3 p=true: 0x1 out=0xdeadbeef refs=14
+528 method 9 p=true: 0x0 out=0xdeadbeef refs=14
+529 method 1 p=true: 0xf out=0xdeadbeef refs=15
+530 method 8 p=false: 0x0 out=0xdeadbeef refs=15
+531 method 8 p=true: 0x0 out=0xdeadbeef refs=15
+532 method 10 p=false: 0x88781161 out=0xdeadbeef refs=15
+533 method 11 p=true: 0x0 out=0xdeadbeef refs=15
+534 method 12 p=true: 0x80004001 out=0xdeadbeef refs=15
+535 method 4 p=false: 0x80004001 out=0xdeadbeef refs=15
+536 method 7 p=false: 0x80004001 out=0xdeadbeef refs=15
+537 method 1 p=true: 0x10 out=0xdeadbeef refs=16
+538 method 2 p=false: 0xf out=0xdeadbeef refs=15
+539 method 9 p=false: 0x0 out=0xdeadbeef refs=15
+540 method 11 p=true: 0x0 out=0xdeadbeef refs=15
+541 method 11 p=true: 0x0 out=0xdeadbeef refs=15
+542 method 1 p=true: 0x10 out=0xdeadbeef refs=16
+543 method 5 p=true: 0x88781161 out=0x0 refs=16
+544 method 3 p=false: 0x80004003 out=0xdeadbeef refs=16
+545 method 10 p=true: 0x88781161 out=0xdeadbeef refs=16
+546 method 1 p=true: 0x11 out=0xdeadbeef refs=17
+547 method 1 p=true: 0x12 out=0xdeadbeef refs=18
+548 method 2 p=false: 0x11 out=0xdeadbeef refs=17
+549 method 3 p=true: 0x1 out=0xdeadbeef refs=17
+550 method 4 p=false: 0x80004001 out=0xdeadbeef refs=17
+551 method 7 p=true: 0x80004001 out=0x0 refs=17
+552 method 12 p=true: 0x80004001 out=0xdeadbeef refs=17
+553 method 0 p=true: 0x80004002 out=0x0 refs=17
+554 method 5 p=true: 0x88781161 out=0x0 refs=17
+555 method 7 p=true: 0x80004001 out=0x0 refs=17
+556 method 12 p=true: 0x80004001 out=0xdeadbeef refs=17
+557 method 11 p=true: 0x0 out=0xdeadbeef refs=17
+558 method 12 p=false: 0x80004001 out=0xdeadbeef refs=17
+559 method 5 p=true: 0x88781161 out=0x0 refs=17
+560 method 4 p=true: 0x80004001 out=0xdeadbeef refs=17
+561 method 3 p=true: 0x1 out=0xdeadbeef refs=17
+562 method 10 p=true: 0x88781161 out=0xdeadbeef refs=17
+563 method 7 p=false: 0x80004001 out=0xdeadbeef refs=17
+564 method 8 p=false: 0x0 out=0xdeadbeef refs=17
+565 method 6 p=true: 0x1 out=0xdeadbeef refs=17
+566 method 3 p=true: 0x1 out=0xdeadbeef refs=17
+567 method 0 p=true: 0x0 out=0x1 refs=18
+568 method 12 p=true: 0x80004001 out=0xdeadbeef refs=18
+569 method 3 p=false: 0x80004003 out=0xdeadbeef refs=18
+570 method 5 p=true: 0x88781161 out=0x0 refs=18
+571 method 8 p=true: 0x0 out=0xdeadbeef refs=18
+572 method 4 p=true: 0x80004001 out=0xdeadbeef refs=18
+573 method 12 p=false: 0x80004001 out=0xdeadbeef refs=18
+574 method 2 p=true: 0x11 out=0xdeadbeef refs=17
+575 method 8 p=false: 0x0 out=0xdeadbeef refs=17
+576 method 6 p=true: 0x1 out=0xdeadbeef refs=17
+577 method 7 p=true: 0x80004001 out=0x0 refs=17
+578 method 1 p=true: 0x12 out=0xdeadbeef refs=18
+579 method 11 p=true: 0x0 out=0xdeadbeef refs=18
+580 method 0 p=true: 0x0 out=0x1 refs=19
+581 method 2 p=true: 0x12 out=0xdeadbeef refs=18
+582 method 11 p=true: 0x0 out=0xdeadbeef refs=18
+583 method 2 p=true: 0x11 out=0xdeadbeef refs=17
+584 method 5 p=true: 0x88781161 out=0x0 refs=17
+585 method 3 p=true: 0x1 out=0xdeadbeef refs=17
+586 method 12 p=false: 0x80004001 out=0xdeadbeef refs=17
+587 method 1 p=false: 0x12 out=0xdeadbeef refs=18
+588 method 8 p=true: 0x0 out=0xdeadbeef refs=18
+589 method 1 p=true: 0x13 out=0xdeadbeef refs=19
+590 method 8 p=true: 0x0 out=0xdeadbeef refs=19
+591 method 3 p=true: 0x1 out=0xdeadbeef refs=19
+592 method 1 p=true: 0x14 out=0xdeadbeef refs=20
+593 method 9 p=true: 0x0 out=0xdeadbeef refs=20
+594 method 6 p=false: 0x80004003 out=0xdeadbeef refs=20
+595 method 11 p=true: 0x0 out=0xdeadbeef refs=20
+596 method 8 p=true: 0x0 out=0xdeadbeef refs=20
+597 method 2 p=true: 0x13 out=0xdeadbeef refs=19
+598 method 10 p=true: 0x88781161 out=0xdeadbeef refs=19
+599 method 9 p=true: 0x0 out=0xdeadbeef refs=19

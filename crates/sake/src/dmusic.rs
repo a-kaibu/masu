@@ -8,13 +8,33 @@
 use crate::api::{Ctx, Handler};
 use crate::mem;
 
-const S_FALSE: u32 = 1;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_POINTER: u32 = 0x8000_4003;
-/// dmerror.h DMUS_E_NOT_FOUND ("the requested item was not found"): CreatePort and
-/// GetDefaultPort with no port in the system
-const DMUS_E_NOT_FOUND: u32 = 0x8878_1161;
+/// What the object answers (made an HRESULT at a handler's edge)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hr {
+    Ok,
+    /// S_FALSE: an enumeration past its end
+    False,
+    NotImpl,
+    NoInterface,
+    Pointer,
+    NoAggregation,
+    /// dmerror.h DMUS_E_NOT_FOUND ("the requested item was not found"): CreatePort and
+    /// GetDefaultPort with no port in the system
+    NotFound,
+}
+impl Hr {
+    const fn code(self) -> u32 {
+        match self {
+            Hr::Ok => 0,
+            Hr::False => 1,
+            Hr::NotImpl => 0x8000_4001,
+            Hr::NoInterface => 0x8000_4002,
+            Hr::Pointer => 0x8000_4003,
+            Hr::NoAggregation => 0x8004_0110,
+            Hr::NotFound => 0x8878_1161,
+        }
+    }
+}
 
 /// CLSID_DirectMusic {636B9F10-0C7D-11D1-95B2-0020AFDC7421}
 pub const CLSID_DIRECTMUSIC: [u8; 16] = guid(0x636b_9f10, 0x0c7d, 0x11d1, [0x95, 0xb2, 0x00, 0x20, 0xaf, 0xdc, 0x74, 0x21]);
@@ -56,22 +76,22 @@ fn read16(p: u32) -> [u8; 16] {
 
 /// CoCreateInstance(CLSID_DirectMusic, outer, context, iid, &out): None for another class.
 pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: u32) -> Option<u32> {
-    if read16(clsid) != CLSID_DIRECTMUSIC {
-        return None;
-    }
+    (read16(clsid) == CLSID_DIRECTMUSIC).then(|| create(outer, iid, out).code())
+}
+fn create(outer: u32, iid: u32, out: u32) -> Hr {
     if out == 0 {
-        return Some(E_POINTER);
+        return Hr::Pointer;
     }
     mem::putp(out, 0);
     // (dmusic does not aggregate)
     if outer != 0 {
-        return Some(0x8004_0110); // CLASS_E_NOAGGREGATION
+        return Hr::NoAggregation;
     }
     if iid == 0 || !answers(&read16(iid)) {
-        return Some(E_NOINTERFACE);
+        return Hr::NoInterface;
     }
     mem::putp(out, new_object());
-    Some(0)
+    Hr::Ok
 }
 
 /// Layout: vtable, references.
@@ -105,52 +125,52 @@ pub(crate) fn new_object() -> u32 {
 fn qi(c: &mut Ctx) -> u32 {
     let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if iid == 0 || !answers(&read16(iid)) {
         mem::putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     add_ref(c);
     mem::putp(out, this);
-    0
+    Hr::Ok.code()
 }
 fn add_ref(c: &mut Ctx) -> u32 {
-    let r = c.a(0) + mem::ps();
+    let r = c.a(0).wrapping_add(mem::ps());
     let n = mem::r32(r).saturating_add(1);
     mem::w32(r, n);
     n
 }
 fn release(c: &mut Ctx) -> u32 {
-    let r = c.a(0) + mem::ps();
+    let r = c.a(0).wrapping_add(mem::ps());
     let (n, _freed) = released(mem::r32(r));
     // (the memory stays: a stale pointer still finds a vtable)
     mem::w32(r, n);
     n
 }
 fn enum_none(c: &mut Ctx) -> u32 {
-    if c.a(2) == 0 { E_POINTER } else { S_FALSE }
+    if c.a(2) == 0 { Hr::Pointer } else { Hr::False }.code()
 }
 fn create_port(c: &mut Ctx) -> u32 {
     if c.a(3) != 0 {
         mem::putp(c.a(3), 0);
     }
-    DMUS_E_NOT_FOUND
+    Hr::NotFound.code()
 }
 fn get_clock(c: &mut Ctx) -> u32 {
     if c.a(2) != 0 {
         mem::putp(c.a(2), 0);
     }
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 fn not_found(_: &mut Ctx) -> u32 {
-    DMUS_E_NOT_FOUND
+    Hr::NotFound.code()
 }
 fn not_impl(_: &mut Ctx) -> u32 {
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 fn ok(_: &mut Ctx) -> u32 {
-    0
+    Hr::Ok.code()
 }
 
 #[cfg(test)]
@@ -195,7 +215,7 @@ mod tests {
             for k in 0..=n {
                 let (r, freed) = released(refs);
                 refs = r;
-                frees += freed as u32;
+                frees += u32::from(freed);
                 prop_assert_eq!(freed, k == n);
             }
             prop_assert_eq!((refs, frees), (0, 1));
@@ -203,3 +223,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "dmusic_snapshot_tests.rs"]
+mod snapshot_tests;
