@@ -45,7 +45,7 @@ const SIG_SET: u32 = 1 << 31;
 const RET_STR: u32 = 1 << 16;
 
 fn gl_tag(name: &str, sig: u16) -> u32 {
-    SIG_SET | sig as u32 | if matches!(name, "glGetString" | "glGetStringi") { RET_STR } else { 0 }
+    SIG_SET | u32::from(sig) | if matches!(name, "glGetString" | "glGetStringi") { RET_STR } else { 0 }
 }
 
 fn dispatch(c: &mut Ctx) -> u32 {
@@ -179,7 +179,7 @@ fn proc_trap(name: &str) -> u32 {
             }
             // one kura does not have: does nothing (as on Wine's winebrowser.drv)
             None => match gl_sigs::STUBS.binary_search_by(|(n, _)| n.cmp(&name)) {
-                Ok(i) => host_fn(name, nothing, gl_sigs::STUBS[i].1 as u32),
+                Ok(i) => host_fn(name, nothing, u32::from(gl_sigs::STUBS[i].1)),
                 Err(_) => return 0,
             },
         },
@@ -408,7 +408,7 @@ mod tag_tests {
             let t = proc_trap(name);
             assert_ne!(t, 0, "{name}");
             let (tag, data) = crate::api::tag_of(t);
-            assert_eq!(tag & !RET_STR, SIG_SET | sig as u32, "{name}");
+            assert_eq!(tag & !RET_STR, SIG_SET | u32::from(sig), "{name}");
             assert_eq!(tag & RET_STR != 0, name.starts_with("glGetString"), "{name}");
             assert_eq!(data, f, "{name}");
             assert_eq!(crate::api::args_of(t), (false, stack_bytes(sig)));

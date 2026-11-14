@@ -77,7 +77,7 @@ impl Drawing {
     }
     pub fn push(&mut self) -> bool {
         let ok = self.draw();
-        self.clips += ok as u32;
+        self.clips += u32::from(ok);
         ok
     }
     /// Whether a clip comes off.
@@ -659,7 +659,7 @@ fn SetOpacity(c: &mut Ctx) -> u32 {
     0
 }
 fn GetOpacity(c: &mut Ctx) -> u32 {
-    c.st0 = Some(st(|s| s.brushes.get(&c.a(0)).map_or(1.0, |b| b.opacity)) as f64);
+    c.st0 = Some(f64::from(st(|s| s.brushes.get(&c.a(0)).map_or(1.0, |b| b.opacity))));
     0
 }
 fn GetIdentity(c: &mut Ctx) -> u32 {
@@ -733,8 +733,8 @@ pub fn pixels<'a>(data: u32, pitch: u32, w: u32, h: u32) -> Option<&'a [u8]> {
     if h == 0 {
         return None;
     }
-    let len = pitch as u64 * (h as u64 - 1) + w as u64 * 4;
-    if (pitch as u64) < w as u64 * 4 || len > u32::MAX as u64 || mem::accessible(data, len as u32, false, false) < len as u32 {
+    let len = u64::from(pitch) * (u64::from(h) - 1) + u64::from(w) * 4;
+    if u64::from(pitch) < u64::from(w) * 4 || len > u64::from(u32::MAX) || mem::accessible(data, len as u32, false, false) < len as u32 {
         return None;
     }
     Some(mem::slice(data, len as u32))
@@ -927,7 +927,7 @@ fn DrawBitmap(c: &mut Ctx) -> u32 {
     if st(|s| s.dcs.get(&dc).is_some_and(|d| d.bitmap.is_some_and(|g| g != im.gpu))) {
         flush(dc);
     }
-    let paint = [opacity.min(1.0), (interp != 0) as u32 as f32, im.opaque as u32 as f32, 0.0];
+    let paint = [opacity.min(1.0), u32::from(interp != 0) as f32, u32::from(im.opaque) as f32, 0.0];
     st(|s| {
         if let Some(d) = s.dcs.get_mut(&dc) {
             d.bitmap = Some(im.gpu);
@@ -1273,7 +1273,7 @@ fn ellipse(dc: u32, c: [f32; 2], r: [f32; 2], paint: &Paint, ring: Option<f32>) 
         return;
     }
     let aliased = st(|s| s.dcs.get(&dc).is_some_and(|d| d.aliased));
-    push(dc, gpu2d::ELLIPSE, rr, [c[0], c[1], ox, oy], [ix, iy, ring.is_some() as u32 as f32, aliased as u32 as f32], paint);
+    push(dc, gpu2d::ELLIPSE, rr, [c[0], c[1], ox, oy], [ix, iy, u32::from(ring.is_some()) as f32, u32::from(aliased) as f32], paint);
 }
 
 fn SetAntialiasMode(c: &mut Ctx) -> u32 {
@@ -1282,7 +1282,7 @@ fn SetAntialiasMode(c: &mut Ctx) -> u32 {
     0
 }
 fn GetAntialiasMode(c: &mut Ctx) -> u32 {
-    st(|s| s.dcs.get(&c.a(0)).is_some_and(|d| d.aliased)) as u32
+    u32::from(st(|s| s.dcs.get(&c.a(0)).is_some_and(|d| d.aliased)))
 }
 
 /// Fills rectangle `r` (l, t, r, b) under the target's transform as a QUAD item (rotated or
@@ -1304,7 +1304,7 @@ fn quad(dc: u32, r: [f32; 4], circle: bool, paint: &Paint) -> bool {
     let bbox = [xs.iter().copied().fold(f32::MAX, f32::min), ys.iter().copied().fold(f32::MAX, f32::min), xs.iter().copied().fold(f32::MIN, f32::max), ys.iter().copied().fold(f32::MIN, f32::max)];
     let Some(rr) = st(|s| s.dcs.get(&dc).map(|d| clip_rect(d, bbox))) else { return true };
     if rr[2] > rr[0] && rr[3] > rr[1] {
-        push(dc, gpu2d::QUAD, rr, [ia, ib, ic, id], [ie, iff, aliased as u32 as f32, circle as u32 as f32], paint);
+        push(dc, gpu2d::QUAD, rr, [ia, ib, ic, id], [ie, iff, u32::from(aliased) as f32, u32::from(circle) as f32], paint);
     }
     true
 }
@@ -1449,7 +1449,7 @@ fn DrawGlyphRun(c: &mut Ctx) -> u32 {
     }
     let ((x, y), o) = c.pt_f(1);
     let desc = com::method_dwords(c.trap) == Some(7);
-    let (dc, run, b) = (c.a(0), c.a(o), c.a(o + 1 + desc as u32));
+    let (dc, run, b) = (c.a(0), c.a(o), c.a(o + 1 + u32::from(desc)));
     let ps = mem::ps();
     let face = dwrite::face_index(mem::rp(run));
     let em = f32::from_bits(r32(run + ps));
@@ -1490,7 +1490,7 @@ fn draw_glyphs(dc: u32, face: usize, em: f32, glyphs: &[(u16, f32, f32)], b: u32
             if x1 <= x0 || y1 <= y0 {
                 return;
             }
-            let key = font.index_key(gi) ^ (r.to_bits() as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+            let key = font.index_key(gi) ^ u64::from(r.to_bits()).wrapping_mul(0x9e37_79b9_7f4a_7c15);
             let at = room(dc, || gpu2d::glyph(key, gw as u32, gh as u32, || if r > 0.0 { dilate(cov, gw0, gh0, r).2 } else { cov.to_vec() }));
             let shape = [at[0] as f32 - ox as f32, at[1] as f32 - oy as f32, 0.0, 0.0];
             push(dc, gpu2d::GLYPH, [x0 as f32, y0 as f32, x1 as f32, y1 as f32], shape, [0.0; 4], &paint);
@@ -1533,7 +1533,7 @@ pub fn dilate(cov: &[u8], w: i32, h: i32, r: f32) -> (i32, i32, Vec<u8>) {
             }
             for &(dx, dy, wgt) in &ker {
                 let o = ((y + k + dy) * w2 + x + k + dx) as usize;
-                let nv = (v as f32 * wgt).round() as u8;
+                let nv = (f32::from(v) * wgt).round() as u8;
                 if nv > out[o] {
                     out[o] = nv;
                 }
@@ -1777,7 +1777,7 @@ fn det(m: u32) -> f32 {
     rf(m, 0) * rf(m, 3) - rf(m, 1) * rf(m, 2)
 }
 fn D2D1IsMatrixInvertible(c: &mut Ctx) -> u32 {
-    (det(c.a(0)) != 0.0) as u32
+    u32::from(det(c.a(0)) != 0.0)
 }
 fn D2D1InvertMatrix(c: &mut Ctx) -> u32 {
     let m = c.a(0);
@@ -1797,7 +1797,7 @@ fn D2D1SinCos(c: &mut Ctx) -> u32 {
     0
 }
 fn D2D1Tan(c: &mut Ctx) -> u32 {
-    c.st0 = Some(fl(c, 0).tan() as f64);
+    c.st0 = Some(f64::from(fl(c, 0).tan()));
     0
 }
 
@@ -1998,16 +1998,16 @@ mod guest_size_tests {
             let _g = crate::test_guest::enter();
             let pitch = if small { pitch % (w * 4 + 64) } else { pitch };
             let data = mem::heap_alloc(64, true);
-            let len = pitch as u64 * (h.max(1) as u64 - 1) + w as u64 * 4;
+            let len = u64::from(pitch) * (u64::from(h.max(1)) - 1) + u64::from(w) * 4;
             match pixels(data, pitch, w, h) {
                 // (the 64-byte block is not the end of what is readable: the guest memory after it
                 // is mapped too, so the bound is what mem::accessible answers)
                 Some(s) => {
                     prop_assert!(h > 0 && pitch >= w * 4);
                     prop_assert_eq!(s.len() as u64, len);
-                    prop_assert!(len <= 64 || mem::accessible(data, len as u32, false, false) as u64 >= len);
+                    prop_assert!(len <= 64 || u64::from(mem::accessible(data, len as u32, false, false)) >= len);
                 }
-                None => prop_assert!(h == 0 || (pitch as u64) < w as u64 * 4 || len > u32::MAX as u64 || (mem::accessible(data, len as u32, false, false) as u64) < len),
+                None => prop_assert!(h == 0 || u64::from(pitch) < u64::from(w) * 4 || len > u64::from(u32::MAX) || u64::from(mem::accessible(data, len as u32, false, false)) < len),
             }
             mem::heap_free(data);
         }

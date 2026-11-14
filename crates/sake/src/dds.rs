@@ -108,7 +108,7 @@ pub fn parse(data: &[u8]) -> Option<Dds> {
         return None;
     }
     let d = Dds { w, h, depth, levels, fmt, faces };
-    let end = HEADER as u64 + d.face_size() * d.face_count() as u64;
+    let end = HEADER as u64 + d.face_size() * u64::from(d.face_count());
     (end <= data.len() as u64).then_some(d)
 }
 
@@ -121,7 +121,7 @@ impl Dds {
     }
     fn level_size(&self, level: u32) -> u64 {
         let (row, rows) = self.level_rows(level);
-        row as u64 * rows as u64 * (self.depth >> level).max(1) as u64
+        u64::from(row) * u64::from(rows) * u64::from((self.depth >> level).max(1))
     }
     fn face_size(&self) -> u64 {
         (0..self.levels).map(|l| self.level_size(l)).sum()
@@ -144,7 +144,7 @@ impl Dds {
             }
             (self.faces & ((1 << face) - 1)).count_ones()
         };
-        let at = HEADER as u64 + k as u64 * self.face_size() + (0..level).map(|l| self.level_size(l)).sum::<u64>();
+        let at = HEADER as u64 + u64::from(k) * self.face_size() + (0..level).map(|l| self.level_size(l)).sum::<u64>();
         Some((at as usize, self.level_size(level) as usize))
     }
 }
@@ -253,7 +253,7 @@ mod tests {
                         let Some((o, n)) = d.level_at(face, l) else { continue };
                         prop_assert_eq!(o, at);
                         let (row, rows) = d.level_rows(l);
-                        prop_assert_eq!(n as u64, row as u64 * rows as u64 * (d.depth >> l).max(1) as u64);
+                        prop_assert_eq!(n as u64, u64::from(row) * u64::from(rows) * u64::from((d.depth >> l).max(1)));
                         at += n;
                     }
                 }

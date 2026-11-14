@@ -164,9 +164,9 @@ fn logfont_of(family: u32, em: f32, style: u32, charset: u8) -> LogFont {
         esc: 0,
         orient: 0,
         weight: if style & 1 != 0 { 700 } else { 400 },
-        italic: (style & 2 != 0) as u8,
-        underline: (style & 4 != 0) as u8,
-        strike: (style & 8 != 0) as u8,
+        italic: u8::from(style & 2 != 0),
+        underline: u8::from(style & 4 != 0),
+        strike: u8::from(style & 8 != 0),
         charset,
         out_prec: 0,
         clip_prec: 0,
@@ -201,7 +201,7 @@ fn font_from_logfont(c: &mut Ctx, wide: bool) -> u32 {
     let Some(fam) = crate::gdiplus_font::family(family) else { return NOT_TRUETYPE_FONT };
     let h = if lf.height == 0 { 16 } else { lf.height };
     let em = em_for_height(h, crate::gdiplus_font::design_metrics(fam.face));
-    let style = (lf.weight >= 600) as u32 | (lf.italic != 0) as u32 * 2 | (lf.underline != 0) as u32 * 4 | (lf.strike != 0) as u32 * 8;
+    let style = u32::from(lf.weight >= 600) | u32::from(lf.italic != 0) * 2 | u32::from(lf.underline != 0) * 4 | u32::from(lf.strike != 0) * 8;
     let charset = if lf.charset == 1 { charset_of(family) } else { lf.charset };
     let lf = logfont_of(family, em, style, charset);
     new_obj(Obj::Font { lf, em, family, size: em, unit: 0, style }, out)
@@ -320,7 +320,7 @@ fn line_spacing_at(f: u32, dpi: f32) -> Option<f32> {
 /// (pixel and world sizes ignore the dpi)
 fn spacing_px(size: f32, unit: u32, dpi: f32, m: [u16; 4]) -> f32 {
     let px = size * px_per_unit(unit, 1.0) * if matches!(unit, 3..=6) { dpi / 96.0 } else { 1.0 };
-    px * m[3] as f32 / m[0].max(1) as f32
+    px * f32::from(m[3]) / f32::from(m[0].max(1))
 }
 /// the em size a positive LOGFONT height (a cell height) asks for: the height scaled by
 /// em / (win ascent + win descent), rounded; a negative height is the em itself
@@ -328,7 +328,7 @@ fn em_for_height(h: i32, m: [u16; 4]) -> f32 {
     if h < 0 {
         -h as f32
     } else {
-        (h as f32 * m[0] as f32 / (m[1] as f32 + m[2] as f32).max(1.0)).round()
+        (h as f32 * f32::from(m[0]) / (f32::from(m[1]) + f32::from(m[2])).max(1.0)).round()
     }
 }
 /// GdipGetFontHeight(font, graphics, &height): the line spacing in the graphics' units (no
@@ -421,7 +421,7 @@ static GENERIC_FORMATS: Mutex<[u32; 2]> = Mutex::new([0; 2]);
 fn generic_format(out: u32, typographic: bool) -> u32 {
     if out == 0 { return INVALID_PARAMETER; }
     let mut handles = GENERIC_FORMATS.lock().unwrap();
-    let h = &mut handles[typographic as usize];
+    let h = &mut handles[usize::from(typographic)];
     if *h == 0 {
         let mut v = StringFormat::new(if typographic { 0x6004 } else { 0 });
         v.generic = true;
@@ -534,7 +534,7 @@ fn region(g: u32) -> Option<[f32; 4]> {
 /// GdipIsEmptyRegion(region, graphics, &BOOL)
 fn GdipIsEmptyRegion(c: &mut Ctx) -> u32 {
     let Some(r) = region(c.a(0)) else { return INVALID_PARAMETER };
-    put32(c.a(2), (r[2] <= 0.0 || r[3] <= 0.0) as u32);
+    put32(c.a(2), u32::from(r[2] <= 0.0 || r[3] <= 0.0));
     OK
 }
 /// GdipGetRegionBounds(region, graphics, RectF*) / ..I(.., Rect*)
@@ -579,8 +579,8 @@ pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: boo
     let mut i = 0;
     while i < s.len() {
         let ch = s[i];
-        if ch == b'\n' as u16 || ch == b'\r' as u16 {
-            if ch == b'\r' as u16 && s.get(i + 1) == Some(&(b'\n' as u16)) {
+        if ch == u16::from(b'\n') || ch == u16::from(b'\r') {
+            if ch == u16::from(b'\r') && s.get(i + 1) == Some(&u16::from(b'\n')) {
                 i += 1;
             }
             lines.push(Vec::new());
@@ -592,7 +592,7 @@ pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: boo
         if !no_wrap && width > 0.0 && x > 0.0 && pad * 2.0 + x + a > width {
             // (wrap at the last space of the line when there is one, else before this character)
             let cur = lines.last_mut().unwrap();
-            let cut = cur.iter().rposition(|&(k, _)| s[k] == b' ' as u16).map(|p| p + 1).filter(|&p| p < cur.len());
+            let cut = cur.iter().rposition(|&(k, _)| s[k] == u16::from(b' ')).map(|p| p + 1).filter(|&p| p < cur.len());
             let moved: Vec<(usize, f32)> = match cut {
                 Some(p) => cur.split_off(p),
                 None => Vec::new(),
@@ -646,7 +646,7 @@ fn lay(g: u32, sp: u32, len: u32, f: u32, rp: u32, fmt: u32) -> Option<(Vec<Cell
     let (flags, align) = format(fmt);
     let r = rectf(rp).map(|v| v * k);
     let lh = line_height(&tf);
-    let cells = layout(&s, r, em, lh, flags & 0x1000 != 0, align, |ch| tf.advance(ch as u32));
+    let cells = layout(&s, r, em, lh, flags & 0x1000 != 0, align, |ch| tf.advance(u32::from(ch)));
     Some((cells, s, tf, em, lh, k))
 }
 
@@ -712,7 +712,7 @@ fn GdipDrawString(c: &mut Ctx) -> u32 {
         for cell in &cells {
             let base_x = cell.x.round() as i32;
             let base_y = (cell.y + asc).round() as i32;
-            tf.glyph(s[cell.i] as u32, |gx, top, gw, gh, cov| {
+            tf.glyph(u32::from(s[cell.i]), |gx, top, gw, gh, cov| {
                 for yy in 0..gh {
                     for xx in 0..gw {
                         let (x, y) = (base_x + gx + xx, base_y - top + yy);
@@ -733,17 +733,17 @@ fn GdipDrawString(c: &mut Ctx) -> u32 {
 
 /// Source-over of `argb` at coverage `cov` onto a non-premultiplied BGRA pixel.
 pub(crate) fn blend(px: &mut [u8], i: usize, argb: u32, cov: u8) {
-    let sa = ((argb >> 24) as u32 * cov as u32 + 127) / 255;
+    let sa = ((argb >> 24) as u32 * u32::from(cov) + 127) / 255;
     if sa == 0 {
         return;
     }
     let src = [argb as u8, (argb >> 8) as u8, (argb >> 16) as u8];
-    let da = px[i + 3] as u32;
+    let da = u32::from(px[i + 3]);
     // out alpha = sa + da (1 - sa), in 0..255
     let oa = sa + (da * (255 - sa) + 127) / 255;
     for k in 0..3 {
-        let d = px[i + k] as u32;
-        let v = (src[k] as u32 * sa * 255 + d * da * (255 - sa)) / (oa * 255).max(1);
+        let d = u32::from(px[i + k]);
+        let v = (u32::from(src[k]) * sa * 255 + d * da * (255 - sa)) / (oa * 255).max(1);
         px[i + k] = v.min(255) as u8;
     }
     px[i + 3] = oa.min(255) as u8;
@@ -845,7 +845,7 @@ fn line_steps(p: [f32; 4], n: i32, pad: f32, (w, h): (f32, f32)) -> Option<(i32,
     let (dx, dy) = (p[2] - p[0], p[3] - p[1]);
     let (mut t0, mut t1) = (0f64, 1f64);
     for (q, d) in [(p[0] + pad, -dx), (w + pad - p[0], dx), (p[1] + pad, -dy), (h + pad - p[1], dy)] {
-        let (q, d) = (q as f64, d as f64);
+        let (q, d) = (f64::from(q), f64::from(d));
         if d == 0.0 {
             if q < 0.0 {
                 return None;
@@ -862,8 +862,8 @@ fn line_steps(p: [f32; 4], n: i32, pad: f32, (w, h): (f32, f32)) -> Option<(i32,
     if !(t0 <= t1) {
         return None;
     }
-    let ta = ((t0 * n as f64).floor() as i64 - 1).clamp(0, n as i64) as i32;
-    let tb = ((t1 * n as f64).ceil() as i64 + 1).clamp(0, n as i64) as i32;
+    let ta = ((t0 * f64::from(n)).floor() as i64 - 1).clamp(0, i64::from(n)) as i32;
+    let tb = ((t1 * f64::from(n)).ceil() as i64 + 1).clamp(0, i64::from(n)) as i32;
     Some((ta, tb))
 }
 
@@ -1035,7 +1035,7 @@ mod tests {
         fn layout_covers_all(s in "[a-c \\n]{0,40}", width in 0.0f32..80.0, adv in 1.0f32..9.0) {
             let w: Vec<u16> = ws(&s);
             let cells = layout(&w, [0.0, 0.0, width, 0.0], 6.0, 10.0, false, 0, |_| adv);
-            let printable: Vec<usize> = (0..w.len()).filter(|&i| w[i] != b'\n' as u16).collect();
+            let printable: Vec<usize> = (0..w.len()).filter(|&i| w[i] != u16::from(b'\n')).collect();
             prop_assert_eq!(cells.iter().map(|c| c.i).collect::<Vec<_>>(), printable);
             if width > 2.0 + adv {
                 for c in &cells {

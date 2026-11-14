@@ -31,18 +31,18 @@ const MAX_IMAGE: u64 = 1 << 30;
 
 /// The bytes of a w x h BGRA image, None past MAX_IMAGE.
 fn image_bytes(w: u32, h: u32) -> Option<usize> {
-    let n = w as u64 * h as u64 * 4;
+    let n = u64::from(w) * u64::from(h) * 4;
     (n <= MAX_IMAGE).then_some(n as usize)
 }
 
 /// Whether `w x h` at (x, y) lies in a `iw x ih` image (no wrapping).
 fn inside(x: u32, y: u32, w: u32, h: u32, iw: u32, ih: u32) -> bool {
-    x as u64 + w as u64 <= iw as u64 && y as u64 + h as u64 <= ih as u64
+    u64::from(x) + u64::from(w) <= u64::from(iw) && u64::from(y) + u64::from(h) <= u64::from(ih)
 }
 
 /// The bytes CreateBitmapFromMemory needs: every row but the last at `stride`, the last whole.
 fn memory_needed(stride: u32, h: u32, row: u64) -> u64 {
-    if h == 0 { 0 } else { stride as u64 * (h as u64 - 1) + row }
+    if h == 0 { 0 } else { u64::from(stride) * (u64::from(h) - 1) + row }
 }
 
 use crate::picture::{self, Fmt};
@@ -199,13 +199,13 @@ fn lock_into_raw(owner: u32, fmt: Fmt, (x, y, w, h): (u32, u32, u32, u32), strid
     with(|m| {
         let Some(Obj::Bitmap { raw, .. }) = m.get_mut(&owner) else { return };
         let Some(fr) = raw.as_mut() else { return };
-        let bits = fmt.bits() as u64;
-        if (x as u64 * bits) % 8 != 0 || (w as u64 * bits) % 8 != 0 {
+        let bits = u64::from(fmt.bits());
+        if (u64::from(x) * bits) % 8 != 0 || (u64::from(w) * bits) % 8 != 0 {
             *raw = None;
             return;
         }
         let fr = Arc::make_mut(fr);
-        let (row, at, n) = (fr.stride() as usize, (x as u64 * bits / 8) as usize, (w as u64 * bits / 8) as usize);
+        let (row, at, n) = (fr.stride() as usize, (u64::from(x) * bits / 8) as usize, (u64::from(w) * bits / 8) as usize);
         for r in 0..h as usize {
             let d = (y as usize + r) * row + at;
             let s = r * stride as usize;
@@ -257,14 +257,14 @@ fn s_read(c: &mut Ctx) -> u32 {
     if got != 0 {
         mem::w32(got, n);
     }
-    (n < cb) as u32
+    u32::from(n < cb)
 }
 
 fn s_write(c: &mut Ctx) -> u32 {
     let (this, pv, cb, done) = (c.a(0), c.a(1), c.a(2), c.a(3));
     // (a position past MAX_IMAGE after a Seek: the medium is full, as for SetSize; it used
     // to wrap on wasm32 or grow the stream to 4 GB)
-    if stream(this, |_, pos| pos.saturating_add(cb as u64) > MAX_IMAGE) != Some(false) {
+    if stream(this, |_, pos| pos.saturating_add(u64::from(cb)) > MAX_IMAGE) != Some(false) {
         if done != 0 {
             mem::w32(done, 0);
         }
@@ -287,7 +287,7 @@ fn s_write(c: &mut Ctx) -> u32 {
 
 fn s_seek(c: &mut Ctx) -> u32 {
     // (this, LARGE_INTEGER move, origin, ULARGE_INTEGER* new); x64: move is one register
-    let (mv, origin, out) = if mem::x64() { (c.a64(1) as i64, c.a(2), c.a(3)) } else { ((c.a(1) as u64 | (c.a(2) as u64) << 32) as i64, c.a(3), c.a(4)) };
+    let (mv, origin, out) = if mem::x64() { (c.a64(1) as i64, c.a(2), c.a(3)) } else { ((u64::from(c.a(1)) | u64::from(c.a(2)) << 32) as i64, c.a(3), c.a(4)) };
     let this = c.a(0);
     let p = stream(this, |d, pos| {
         let base = match origin {
@@ -311,7 +311,7 @@ fn s_seek(c: &mut Ctx) -> u32 {
 
 fn s_set_size(c: &mut Ctx) -> u32 {
     let (this, n, high) = (c.a(0), c.a(1), c.a(2));
-    if high != 0 || n as u64 > MAX_IMAGE {
+    if high != 0 || u64::from(n) > MAX_IMAGE {
         return STG_E_MEDIUMFULL;
     }
     stream(this, |d, _| d.resize(n as usize, 0));
@@ -544,7 +544,7 @@ fn src_copy(c: &mut Ctx) -> u32 {
         return 0;
     }
     let row = f.row_bytes(r.2);
-    if stride < row || (size as u64) < stride as u64 * (r.3 - 1) as u64 + row as u64 {
+    if stride < row || u64::from(size) < u64::from(stride) * u64::from(r.3 - 1) + u64::from(row) {
         return WINCODEC_ERR_INSUFFICIENTBUFFER;
     }
     let mut out = mem::slice(buf, stride * (r.3 - 1) + row).to_vec();
@@ -721,7 +721,7 @@ fn reader_location(c: &mut Ctx) -> u32 {
         if max < 2 {
             return WINCODEC_ERR_INSUFFICIENTBUFFER;
         }
-        mem::w16(buf, b'/' as u16);
+        mem::w16(buf, u16::from(b'/'));
         mem::w16(buf + 2, 0);
     }
     0
@@ -1041,11 +1041,11 @@ fn pal_from_bitmap(c: &mut Ctx) -> u32 {
     // (Fx: one insert per pixel, SipHash's cost was most of it)
     let mut counts: crate::HashMap<u32, u32> = crate::HashMap::default();
     for p in img.px.chunks_exact(4) {
-        *counts.entry(0xff00_0000 | (p[2] as u32) << 16 | (p[1] as u32) << 8 | p[0] as u32).or_default() += 1;
+        *counts.entry(0xff00_0000 | u32::from(p[2]) << 16 | u32::from(p[1]) << 8 | u32::from(p[0])).or_default() += 1;
     }
     let mut v: Vec<(u32, u32)> = counts.into_iter().collect();
     v.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    let keep = n as usize - (transparent != 0) as usize;
+    let keep = n as usize - usize::from(transparent != 0);
     let mut colors: Vec<u32> = v.into_iter().take(keep).map(|(c, _)| c).collect();
     if transparent != 0 {
         colors.push(0);
@@ -1098,23 +1098,22 @@ fn pal_colors(c: &mut Ctx) -> u32 {
 }
 
 fn pal_is_bw(c: &mut Ctx) -> u32 {
-    pal_out(c.a(0), c.a(1), |v, k| (k == 2 || v == [0xff00_0000, 0xffff_ffff]) as u32)
+    pal_out(c.a(0), c.a(1), |v, k| u32::from(k == 2 || v == [0xff00_0000, 0xffff_ffff]))
 }
 
 fn pal_is_gray(c: &mut Ctx) -> u32 {
     pal_out(c.a(0), c.a(1), |v, k| {
-        (matches!(k, 2 | 10 | 11 | 12)
-            || k == 0
+        u32::from(matches!(k, 2 | 10 | 11 | 12) || k == 0
                 && !v.is_empty()
                 && v.iter().all(|c| {
                     let b = c.to_le_bytes();
                     b[0] == b[1] && b[1] == b[2]
-                })) as u32
+                }))
     })
 }
 
 fn pal_has_alpha(c: &mut Ctx) -> u32 {
-    pal_out(c.a(0), c.a(1), |v, _| v.iter().any(|c| c >> 24 != 255) as u32)
+    pal_out(c.a(0), c.a(1), |v, _| u32::from(v.iter().any(|c| c >> 24 != 255)))
 }
 
 fn conv_init(c: &mut Ctx) -> u32 {
@@ -1148,7 +1147,7 @@ fn conv_init(c: &mut Ctx) -> u32 {
 fn conv_can(c: &mut Ctx) -> u32 {
     let (from, to, out) = (c.a(1), c.a(2), c.a(3));
     let yes = fmt_of(read_guid(from)).is_some() && fmt_of(read_guid(to)).is_some();
-    mem::w32(out, yes as u32);
+    mem::w32(out, u32::from(yes));
     0
 }
 
@@ -1184,7 +1183,7 @@ fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
         .map(|i| {
             let mut t: Vec<(u32, f32)> = Vec::new();
             let mut add = |j: i64, w: f32| {
-                let j = j.clamp(0, s as i64 - 1) as u32;
+                let j = j.clamp(0, i64::from(s) - 1) as u32;
                 match t.iter_mut().find(|e| e.0 == j) {
                     Some(e) => e.1 += w,
                     None => t.push((j, w)),
@@ -1195,8 +1194,8 @@ fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
                 // partial source pixel is interpolated at that start, rather than
                 // taking its constant color. Use integer positions to keep exact
                 // pixel boundaries (including integral shrink ratios).
-                let (s, d) = (s as u64, d as u64);
-                let (lo, hi) = (i as u64 * s, (i as u64 + 1) * s);
+                let (s, d) = (u64::from(s), u64::from(d));
+                let (lo, hi) = (u64::from(i) * s, (u64::from(i) + 1) * s);
                 for j in lo / d..hi.div_ceil(d) {
                     let start = lo.max(j * d);
                     let width = hi.min((j + 1) * d) - start;
@@ -1211,8 +1210,8 @@ fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
             }
             if mode == 1 {
                 // Windows' bilinear: 16.16 positions, weights in 256ths (each pass floors)
-                let step = ((s as u64) << 16) / d as u64;
-                let p = (step / 2 + i as u64 * step).saturating_sub(0x8000);
+                let step = (u64::from(s) << 16) / u64::from(d);
+                let p = (step / 2 + u64::from(i) * step).saturating_sub(0x8000);
                 let x = ((p & 0xffff) >> 8) as f32;
                 add((p >> 16) as i64, (256.0 - x) / 256.0);
                 add((p >> 16) as i64 + 1, x / 256.0);
@@ -1222,8 +1221,8 @@ fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
                 // Windows advances in 16.16, then indexes 64 cubic phases.
                 // Keep negative edge positions: clamp the taps, not the center,
                 // so the negative outer lobe still contributes at the border.
-                let step = ((s as u64) << 16) / d as u64;
-                let pos = (step / 2 + i as u64 * step) as i64 - 0x8000;
+                let step = (u64::from(s) << 16) / u64::from(d);
+                let pos = (step / 2 + u64::from(i) * step) as i64 - 0x8000;
                 (pos >> 10) as f32 / 64.0
             } else {
                 ((i as f32 + 0.5) * ratio - 0.5).max(0.0)
@@ -1263,7 +1262,7 @@ fn filter<const MODE: u32>(pm: &[u8], sw: u32, sh: u32, w: u32, h: u32,
             let mut value = [0.0f32; 4];
             for &(j, weight) in taps {
                 let source = ((y * sw + j) * 4) as usize;
-                for k in 0..4 { value[k] += weight * pm[source + k] as f32; }
+                for k in 0..4 { value[k] += weight * f32::from(pm[source + k]); }
             }
             let dest = ((y * w + x as u32) * 4) as usize;
             for k in 0..4 {
@@ -1307,7 +1306,7 @@ fn filter_cubic(pm: &[u8], sw: u32, sh: u32, w: u32, h: u32,
             let mut value = [0i32; 4];
             for &(j, weight) in taps {
                 let source = (y * sw + j) * 4;
-                for k in 0..4 { value[k] += weight * pm[source + k] as i32; }
+                for k in 0..4 { value[k] += weight * i32::from(pm[source + k]); }
             }
             for k in 0..4 { mid[(y * w + x) * 4 + k] = (value[k] >> 19).clamp(0, 255) as u8; }
         }
@@ -1317,7 +1316,7 @@ fn filter_cubic(pm: &[u8], sw: u32, sh: u32, w: u32, h: u32,
             let mut value = [0i32; 4];
             for &(j, weight) in taps {
                 let source = (j * w + x) * 4;
-                for k in 0..4 { value[k] += weight * mid[source + k] as i32; }
+                for k in 0..4 { value[k] += weight * i32::from(mid[source + k]); }
             }
             let dest = (y * w + x) * 4;
             for k in 0..4 { px[dest + k] = (value[k] >> 19).clamp(0, 255) as u8; }
@@ -1484,11 +1483,11 @@ fn f_bitmap_from_memory(c: &mut Ctx) -> u32 {
     }
     // (rows of the format at `stride`: a buffer too short for them, as Windows and Wine
     // refuse it, instead of a picture read past the copy)
-    let row = (w as u64 * f.bits() as u64).div_ceil(8);
-    if (stride as u64) < row {
+    let row = (u64::from(w) * u64::from(f.bits())).div_ceil(8);
+    if u64::from(stride) < row {
         return E_INVALIDARG;
     }
-    if (size as u64) < memory_needed(stride, h, row) {
+    if u64::from(size) < memory_needed(stride, h, row) {
         return WINCODEC_ERR_INSUFFICIENTBUFFER;
     }
     let data = mem::slice(buf, size).to_vec();
@@ -1496,7 +1495,7 @@ fn f_bitmap_from_memory(c: &mut Ctx) -> u32 {
     // (and the bytes as they are, rows packed: Lock and CopyPixels in its own format, a converter to it
     // and an indexed bitmap's SetPalette read them; Windows copies them unchanged, kikizake
     // WIC.SAME, golden wic-32/-64)
-    let mut bits = vec![0u8; (row * h as u64) as usize];
+    let mut bits = vec![0u8; (row * u64::from(h)) as usize];
     for (y, r) in bits.chunks_exact_mut(row as usize).enumerate() {
         let at = y * stride as usize;
         r.copy_from_slice(&data[at..at + row as usize]);
@@ -1670,7 +1669,7 @@ fn numeric(f: Fmt) -> u32 {
 /// Windows (a palette entry's alpha does not count: winref wicconv)
 fn transparency(f: Fmt) -> u32 {
     use Fmt::*;
-    matches!(f, Bgra | Pbgra | Rgba | Prgba | Rgba64 | Alpha8) as u32
+    u32::from(matches!(f, Bgra | Pbgra | Rgba | Prgba | Rgba64 | Alpha8))
 }
 
 /// CreateComponentInfo(clsid, out): pixel formats only (IWICPixelFormatInfo2); other components

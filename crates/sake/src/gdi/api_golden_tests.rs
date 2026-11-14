@@ -53,7 +53,7 @@ impl Rng {
 
 fn fnv(h: &mut u64, b: &[u8]) {
     for &x in b {
-        *h = (*h ^ x as u64).wrapping_mul(0x100_0000_01b3);
+        *h = (*h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3);
     }
 }
 
@@ -192,7 +192,7 @@ impl World {
             let bmp = call(CreateDIBSection, &[screen, info, 0, pbits, 0, 0]);
             assert_ne!(bmp, 0, "{bpp}");
             let bits = mem::r32(pbits);
-            for i in 0..(((W * bpp as i32 + 31) / 32 * 4 * H) as u32) {
+            for i in 0..(((W * i32::from(bpp) + 31) / 32 * 4 * H) as u32) {
                 w8(bits + i, self.rng.next() as u8);
             }
             heap_free(pbits);
@@ -517,7 +517,7 @@ impl World {
                 let v = call(GetDIBits, &[dc, bmp, start, lines, self.buf, info, usage]);
                 let mut e = slice(self.buf, (W as u32 * 4) * H as u32).to_vec();
                 e.extend_from_slice(slice(info, 40 + 4 * 256));
-                self.log("GetDIBits", &[dc, bmp, start, lines, bpp as u32, usage], v, &e);
+                self.log("GetDIBits", &[dc, bmp, start, lines, u32::from(bpp), usage], v, &e);
                 heap_free(info);
             }
             37 | 38 => {

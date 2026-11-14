@@ -222,7 +222,7 @@ fn GetFontWeight(c: &mut Ctx) -> u32 {
     format_of(c.a(0)).map_or(400, |f| f.weight as u32)
 }
 fn GetFontSize(c: &mut Ctx) -> u32 {
-    c.st0 = Some(format_of(c.a(0)).map_or(0.0, |f| f.size) as f64);
+    c.st0 = Some(f64::from(format_of(c.a(0)).map_or(0.0, |f| f.size)));
     0
 }
 fn GetFontFamilyNameLength(c: &mut Ctx) -> u32 {
@@ -316,11 +316,11 @@ fn SetMaxHeight(c: &mut Ctx) -> u32 {
     0
 }
 fn GetMaxWidth(c: &mut Ctx) -> u32 {
-    c.st0 = Some(layouts(|m| m.get(&c.a(0)).map_or(0.0, |l| l.max_w)) as f64);
+    c.st0 = Some(f64::from(layouts(|m| m.get(&c.a(0)).map_or(0.0, |l| l.max_w))));
     0
 }
 fn GetMaxHeight(c: &mut Ctx) -> u32 {
-    c.st0 = Some(layouts(|m| m.get(&c.a(0)).map_or(0.0, |l| l.max_h)) as f64);
+    c.st0 = Some(f64::from(layouts(|m| m.get(&c.a(0)).map_or(0.0, |l| l.max_h))));
     0
 }
 // (the range-based setters apply to the whole layout)
@@ -439,7 +439,7 @@ fn GetClusterMetrics(c: &mut Ctx) -> u32 {
         mem::w16(p + 4, units(k) as u16);
         // canWrapLineAfter 1, isWhitespace 2, isNewline 4
         let (wrap_after, space, nl) = cluster_flags(&ch, i);
-        mem::w16(p + 6, wrap_after as u16 | (space as u16) << 1 | (nl as u16) << 2);
+        mem::w16(p + 6, u16::from(wrap_after) | u16::from(space) << 1 | u16::from(nl) << 2);
     }
     0
 }
@@ -746,7 +746,7 @@ fn FindFamilyName(c: &mut Ctx) -> u32 {
     let name = String::from_utf16_lossy(&wstr(c.a(1), None));
     let i = find_family(&name);
     w32(c.a(2), i.map_or(u32::MAX, |i| i as u32));
-    w32(c.a(3), i.is_some() as u32);
+    w32(c.a(3), u32::from(i.is_some()));
     0
 }
 fn GetFontFromFontFace(c: &mut Ctx) -> u32 {
@@ -802,7 +802,7 @@ fn GetInformationalStrings(c: &mut Ctx) -> u32 {
 }
 fn HasCharacter(c: &mut Ctx) -> u32 {
     let has = crate::gdi::sys_face_has(value(c.a(0)) as usize, c.a(1));
-    w32(c.a(2), has as u32);
+    w32(c.a(2), u32::from(has));
     0
 }
 fn CreateFontFace(c: &mut Ctx) -> u32 {
@@ -965,7 +965,7 @@ fn FindLocaleName(c: &mut Ctx) -> u32 {
     let want = String::from_utf16_lossy(&wstr(c.a(1), None));
     let i = strings_of(c.a(0)).iter().position(|(l, _)| l.eq_ignore_ascii_case(&want));
     w32(c.a(2), i.map_or(u32::MAX, |i| i as u32));
-    w32(c.a(3), i.is_some() as u32);
+    w32(c.a(3), u32::from(i.is_some()));
     0
 }
 /// (this, index, out length) / (this, index, buffer, size): the locale (`name` false) or the
@@ -1103,7 +1103,7 @@ pub struct Laid {
 }
 
 fn is_space(ch: u16) -> bool {
-    ch == b' ' as u16 || ch == 0x3000 || ch == b'\t' as u16
+    ch == u16::from(b' ') || ch == 0x3000 || ch == u16::from(b'\t')
 }
 
 /// Lays `text` out in a `w` x `h` box (0 width: no wrapping).

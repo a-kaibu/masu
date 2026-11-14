@@ -23,7 +23,7 @@ pub fn line_pts(a: (i32, i32), b: (i32, i32), last: bool) -> Vec<(i32, i32)> {
 /// x = 0x3fffffff) asked for gigabytes of pixels before any were clipped; the pixels kept are
 /// the very ones line_pts gives at those steps (a dash pattern goes on counting the others).
 pub fn line_pts_in(a: (i32, i32), b: (i32, i32), last: bool, win: Option<Rect>) -> (i64, Vec<(i32, i32)>, i64) {
-    let (dx, dy) = (b.0 as i64 - a.0 as i64, b.1 as i64 - a.1 as i64);
+    let (dx, dy) = (i64::from(b.0) - i64::from(a.0), i64::from(b.1) - i64::from(a.1));
     let n = dx.abs().max(dy.abs());
     let steps = if last { n + 1 } else { n };
     let xmajor = dx.abs() >= dy.abs();
@@ -31,7 +31,7 @@ pub fn line_pts_in(a: (i32, i32), b: (i32, i32), last: bool, win: Option<Rect>) 
         None => (0, steps),
         Some(w) => {
             // the major coordinate a + k * sign within lo..hi
-            let (from, sign, lo, hi) = if xmajor { (a.0 as i64, dx.signum(), w.l as i64, w.r as i64) } else { (a.1 as i64, dy.signum(), w.t as i64, w.b as i64) };
+            let (from, sign, lo, hi) = if xmajor { (i64::from(a.0), dx.signum(), i64::from(w.l), i64::from(w.r)) } else { (i64::from(a.1), dy.signum(), i64::from(w.t), i64::from(w.b)) };
             let (k0, k1) = match sign {
                 0 => if (lo..hi).contains(&from) { (0, steps) } else { (0, 0) },
                 1 => (lo - from, hi - from),
@@ -44,9 +44,9 @@ pub fn line_pts_in(a: (i32, i32), b: (i32, i32), last: bool, win: Option<Rect>) 
     for k in k0..k1 {
         let minor = |d: i64| a_minor(k, d, n);
         if xmajor {
-            v.push(((a.0 as i64 + k * dx.signum()) as i32, (a.1 as i64 + minor(dy)) as i32));
+            v.push(((i64::from(a.0) + k * dx.signum()) as i32, (i64::from(a.1) + minor(dy)) as i32));
         } else {
-            v.push(((a.0 as i64 + minor(dx)) as i32, (a.1 as i64 + k * dy.signum()) as i32));
+            v.push(((i64::from(a.0) + minor(dx)) as i32, (i64::from(a.1) + k * dy.signum()) as i32));
         }
     }
     (k0.min(k1), v, steps)
@@ -58,7 +58,7 @@ fn a_minor(k: i64, d: i64, n: i64) -> i64 {
     }
     // round(k * d / n), halves down: ceil(k * d / n - 1/2) (in i128: k * d of a line across
     // the whole coordinate range is past i64)
-    let (num, den) = (2 * k as i128 * d as i128 - n as i128, 2 * n as i128);
+    let (num, den) = (2 * i128::from(k) * i128::from(d) - i128::from(n), 2 * i128::from(n));
     -((-num).div_euclid(den)) as i64
 }
 
@@ -122,10 +122,10 @@ pub fn poly_spans_rows(polys: &[Vec<(i32, i32)>], winding: bool, rows: (i32, i32
                 continue;
             }
             // x = top.x + (y - top.y) * (bot.x - top.x) / (bot.y - top.y), as a fraction
-            let num = top.0 as i64 * (bot.1 - top.1) as i64 + (y - top.1) as i64 * (bot.0 - top.0) as i64;
-            xs.push((num, (bot.1 - top.1) as i64, dir));
+            let num = i64::from(top.0) * i64::from(bot.1 - top.1) + i64::from(y - top.1) * i64::from(bot.0 - top.0);
+            xs.push((num, i64::from(bot.1 - top.1), dir));
         }
-        xs.sort_by(|p, q| (p.0 as i128 * q.1 as i128).cmp(&(q.0 as i128 * p.1 as i128)));
+        xs.sort_by(|p, q| (i128::from(p.0) * i128::from(q.1)).cmp(&(i128::from(q.0) * i128::from(p.1))));
         let mut wind = 0;
         for i in 0..xs.len() {
             let inside_before = if winding { wind != 0 } else { wind & 1 != 0 };
@@ -158,15 +158,15 @@ pub fn ellipse_spans(l: i32, t: i32, r: i32, b: i32) -> Vec<Span> {
 }
 /// ellipse_spans of the rows `rows.0..rows.1` only.
 pub fn ellipse_spans_rows(l: i32, t: i32, r: i32, b: i32, rows: (i32, i32)) -> Vec<Span> {
-    let (w, h) = ((r as f64 - l as f64), (b as f64 - t as f64));
+    let (w, h) = ((f64::from(r) - f64::from(l)), (f64::from(b) - f64::from(t)));
     if w <= 0.0 || h <= 0.0 {
         return Vec::new();
     }
-    let (cx, cy) = (l as f64 + w / 2.0, t as f64 + h / 2.0);
+    let (cx, cy) = (f64::from(l) + w / 2.0, f64::from(t) + h / 2.0);
     let (a, bb) = (w / 2.0, h / 2.0);
     let mut out = Vec::new();
     for y in t.max(rows.0)..b.min(rows.1) {
-        let dy = (y as f64 + 0.5 - cy) / bb;
+        let dy = (f64::from(y) + 0.5 - cy) / bb;
         let q = 1.0 - dy * dy;
         if q < 0.0 {
             continue;
@@ -354,7 +354,7 @@ pub fn bezier(p: [(i32, i32); 4]) -> Vec<(i32, i32)> {
     for i in 0..=n {
         let t = i as f64 / n as f64;
         let u = 1.0 - t;
-        let f = |a: i32, b: i32, c: i32, d: i32| u * u * u * a as f64 + 3.0 * u * u * t * b as f64 + 3.0 * u * t * t * c as f64 + t * t * t * d as f64;
+        let f = |a: i32, b: i32, c: i32, d: i32| u * u * u * f64::from(a) + 3.0 * u * u * t * f64::from(b) + 3.0 * u * t * t * f64::from(c) + t * t * t * f64::from(d);
         let q = (f(p[0].0, p[1].0, p[2].0, p[3].0).round() as i32, f(p[0].1, p[1].1, p[2].1, p[3].1).round() as i32);
         if v.last() != Some(&q) {
             v.push(q);
@@ -487,7 +487,7 @@ mod tests {
         let steps = if last { n + 1 } else { n };
         (0..steps)
             .map(|k| {
-                let minor = |d: i32| a_minor(k as i64, d as i64, n as i64) as i32;
+                let minor = |d: i32| a_minor(i64::from(k), i64::from(d), i64::from(n)) as i32;
                 if dx.abs() >= dy.abs() { (a.0 + k * dx.signum(), a.1 + minor(dy)) } else { (a.0 + minor(dx), a.1 + k * dy.signum()) }
             })
             .collect()

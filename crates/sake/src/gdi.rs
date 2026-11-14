@@ -295,16 +295,16 @@ pub fn image_size(w: i32, h: i32, bpp: u32, align: u32) -> Option<(u32, u32)> {
     if w <= 0 || h <= 0 || bpp == 0 || align == 0 {
         return None;
     }
-    let row = (w as u64 * bpp as u64).div_ceil(8 * align as u64) * align as u64;
+    let row = (w as u64 * u64::from(bpp)).div_ceil(8 * u64::from(align)) * u64::from(align);
     // (a 2^31 wide 64-bit row times 2^31 rows is past u64: it does not fit either)
     let size = row.checked_mul(h as u64)?;
-    (size < mem::GUEST_TOP as u64).then_some((row as u32, size as u32))
+    (size < u64::from(mem::GUEST_TOP)).then_some((row as u32, size as u32))
 }
 
 /// A bitmap with fresh (zeroed) bits on the guest heap; DDB rows are WORD-aligned. None when
 /// the size does not fit or the heap has no room (Windows: the Create* call fails).
 fn new_bitmap_raw(w: i32, h: i32, bpp: u16, init: u32) -> Option<Bitmap> {
-    let (stride, size) = image_size(w, h, bpp as u32, 2)?;
+    let (stride, size) = image_size(w, h, u32::from(bpp), 2)?;
     let size = size.max(4);
     let bits = mem::heap_alloc(size, true);
     if bits == 0 {
@@ -1002,7 +1002,7 @@ fn draw(dc: u32, mut f: impl FnMut(&Objs, &DcState, &mut Canvas) -> Rect) -> boo
                 // (a source on this same surface reads it from here: locking it again from
                 // the blit, as a window DC copying from another DC of its own top-level does,
                 // hung this thread with the GDI lock held)
-                let _held = Held::set(std::sync::Arc::as_ptr(&surf) as *const () as usize, v.clone());
+                let _held = Held::set(std::sync::Arc::as_ptr(&surf).cast::<()>() as usize, v.clone());
                 let (ox, oy) = (org.0 + x, org.1 + y);
                 let clips = canvas_clips(d, &v, ox, oy, clip);
                 let mut c = Canvas { v, ox, oy, clip: Rect::default() };
@@ -1063,7 +1063,7 @@ fn source(t: &Objs, dc: u32) -> Option<(View, i32, i32, DcState)> {
         Tgt::Bmp(v) => Some((v, org.0, org.1, s)),
         Tgt::Win { surf, x, y, .. } => {
             // (the surface this thread's draw holds: read from its view, not locked again)
-            let p = std::sync::Arc::as_ptr(&surf) as *const () as usize;
+            let p = std::sync::Arc::as_ptr(&surf).cast::<()>() as usize;
             let held = HELD.with(|h| h.borrow().as_ref().filter(|x| x.0 == p).map(|x| x.1.clone()));
             /// what the pixels are read from: the surface, locked, or the view this thread holds
             enum Pixels<G> {
@@ -1240,7 +1240,7 @@ fn pat_blt(c: &mut Canvas, r: Rect, pat: &Pat, op: u8) -> Rect {
     }
     if let (Pat::Solid(col), 0xf0, Depth::D32) = (pat, op, c.v.bpp) {
         for y in r.t..r.b {
-            let row = c.v.row(y) as *mut u32;
+            let row = c.v.row(y).cast::<u32>();
             for x in r.l..r.r {
                 unsafe { row.add(x as usize).write_unaligned(*col) };
             }
@@ -1277,7 +1277,7 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
     let (mut dx, mut dy, mut dw, mut dh) = dst;
     let mut flip = (false, false);
     // a mirrored stretch covers x+w+1..=x (pixel x is drawn), PatBlt covers x+w..x-1
-    let one = (src.is_some() && uses_src(op)) as i32;
+    let one = i32::from(src.is_some() && uses_src(op));
     if dw < 0 {
         dx += dw + one;
         dw = -dw;
@@ -1313,7 +1313,7 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
     let map_x = |x: i32| -> i32 {
         let i = x - dx;
         // pixel centres: Windows samples at (i + 0.5) * sw / dw
-        let k = if sw == dw { i } else if s.half { ((i as i64 * sw as i64) / dw as i64) as i32 } else { (((2 * i as i64 + 1) * sw as i64) / (2 * dw as i64)) as i32 };
+        let k = if sw == dw { i } else if s.half { ((i64::from(i) * i64::from(sw)) / i64::from(dw)) as i32 } else { (((2 * i64::from(i) + 1) * i64::from(sw)) / (2 * i64::from(dw))) as i32 };
         if flip.0 {
             sx + sw - 1 - k
         } else {
@@ -1322,7 +1322,7 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
     };
     let map_y = |y: i32| -> i32 {
         let i = y - dy;
-        let k = if sh == dh { i } else if s.half { ((i as i64 * sh as i64) / dh as i64) as i32 } else { (((2 * i as i64 + 1) * sh as i64) / (2 * dh as i64)) as i32 };
+        let k = if sh == dh { i } else if s.half { ((i64::from(i) * i64::from(sh)) / i64::from(dh)) as i32 } else { (((2 * i64::from(i) + 1) * i64::from(sh)) / (2 * i64::from(dh))) as i32 };
         if flip.1 {
             sy + sh - 1 - k
         } else {
@@ -1347,7 +1347,7 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
             }
             unsafe {
                 let sp = (sv.row(syy) as *const u32).add((sx + (x0 - dx)) as usize);
-                let dp = (d.row(y) as *mut u32).add(x0 as usize);
+                let dp = d.row(y).cast::<u32>().add(x0 as usize);
                 std::ptr::copy(sp, dp, (x1 - x0) as usize);
             }
         }
@@ -1381,7 +1381,7 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
                 if mono_to_color {
                     if sc == 0 { text_px } else { bk_px }
                 } else if color_to_mono {
-                    (sc != s.bk) as u32 ^ 1
+                    u32::from(sc != s.bk) ^ 1
                 } else if d.bpp.indexed() {
                     d.index_of(sc & 0xf8f8f8 | 0x040404)
                 } else {
@@ -1437,7 +1437,7 @@ fn blit_fast(d: &View, sv: &View, r: Rect, xs: &[i32], map_y: &dyn Fn(i32) -> i3
             if syy < 0 || syy >= sv.h {
                 continue;
             }
-            f(sv.row(syy), unsafe { (d.row(y) as *mut u32).add(x0 as usize) });
+            f(sv.row(syy), unsafe { d.row(y).cast::<u32>().add(x0 as usize) });
         }
     };
     #[inline(always)]
@@ -1449,12 +1449,12 @@ fn blit_fast(d: &View, sv: &View, r: Rect, xs: &[i32], map_y: &dyn Fn(i32) -> i3
             }
         }
     }
-    let p32 = |s: *const u8, x: usize| unsafe { (s as *const u32).add(x).read_unaligned() };
+    let p32 = |s: *const u8, x: usize| unsafe { s.cast::<u32>().add(x).read_unaligned() };
     if same {
         // (no stretch: whole rows; the overlapping case of a DC onto itself is ptr::copy's)
         let straight = xs.windows(2).all(|w| w[1] == w[0] + 1);
         match op {
-            0xcc if straight => rows(&mut |s, dp| unsafe { std::ptr::copy((s as *const u32).add(xs[0] as usize), dp, xs.len()) }),
+            0xcc if straight => rows(&mut |s, dp| unsafe { std::ptr::copy(s.cast::<u32>().add(xs[0] as usize), dp, xs.len()) }),
             0xcc => rows(&mut |s, dp| span(s, dp, xs, p32, |s, _| s)),
             0x88 => rows(&mut |s, dp| span(s, dp, xs, p32, |s, d| s & d)),
             0xee => rows(&mut |s, dp| span(s, dp, xs, p32, |s, d| s | d)),
@@ -1565,7 +1565,7 @@ struct DibInfo {
 fn dib_info(bmi: u32, usage: u32, dc_pal: &[u32]) -> Option<DibInfo> {
     let size = r32(bmi);
     let (w, h, bpp, comp, clr_used, ctab, entry) = if size == 12 {
-        (r16(bmi + 4) as i32, r16(bmi + 6) as i16 as i32, r16(bmi + 10), 0, 0, bmi + 12, 3)
+        (i32::from(r16(bmi + 4)), i32::from(r16(bmi + 6) as i16), r16(bmi + 10), 0, 0, bmi + 12, 3)
     } else {
         (r32(bmi + 4) as i32, r32(bmi + 8) as i32, r16(bmi + 14), r32(bmi + 16), r32(bmi + 32), bmi + size, 4)
     };
@@ -1582,7 +1582,7 @@ fn dib_info(bmi: u32, usage: u32, dc_pal: &[u32]) -> Option<DibInfo> {
                 pal.push(dc_pal.get(k).copied().unwrap_or(0));
             } else {
                 let p = ctab + entry * i;
-                pal.push((r8(p + 2) as u32) << 16 | (r8(p + 1) as u32) << 8 | r8(p) as u32);
+                pal.push(u32::from(r8(p + 2)) << 16 | u32::from(r8(p + 1)) << 8 | u32::from(r8(p)));
             }
         }
     } else if comp == 3 && bpp == 16 {
@@ -1590,7 +1590,7 @@ fn dib_info(bmi: u32, usage: u32, dc_pal: &[u32]) -> Option<DibInfo> {
         r565 = gmask == 0x7e0;
     }
     // (the whole image must fit: the size is stride * height everywhere it is used)
-    let (stride, _) = image_size(w, h.saturating_abs(), bpp as u32, 4)?;
+    let (stride, _) = image_size(w, h.saturating_abs(), u32::from(bpp), 4)?;
     Some(DibInfo { w, h: h.saturating_abs(), bpp, compression: comp, stride, pal, r565, top_down: h < 0 })
 }
 
@@ -1901,19 +1901,19 @@ fn font_metrics(face: usize, font: &FontVec) -> FontMetrics {
     let mut m = FontMetrics { upem, win_asc: asc, win_desc: desc, hhea_asc: asc, hhea_desc: desc, line_gap: font.line_gap_unscaled(), avg: upem / 2.0, max_adv: upem };
     if let Ok(t) = ttf_parser::Face::parse(font.as_slice(), 0) {
         let hhea = t.tables().hhea;
-        (m.hhea_asc, m.hhea_desc, m.line_gap) = (hhea.ascender as f32, -(hhea.descender as f32), hhea.line_gap as f32);
+        (m.hhea_asc, m.hhea_desc, m.line_gap) = (f32::from(hhea.ascender), -f32::from(hhea.descender), f32::from(hhea.line_gap));
         let raw = |tag: &[u8; 4]| t.raw_face().table(ttf_parser::Tag::from_bytes(tag));
         if let Some(h) = raw(b"hhea").filter(|h| h.len() >= 12) {
-            m.max_adv = u16::from_be_bytes([h[10], h[11]]) as f32;
+            m.max_adv = f32::from(u16::from_be_bytes([h[10], h[11]]));
         }
         let avg = raw(b"OS/2").filter(|o| o.len() >= 4).map_or(0, |o| i16::from_be_bytes([o[2], o[3]]));
         if let Some(os2) = t.tables().os2 {
-            let (wa, wd) = (os2.windows_ascender() as f32, os2.windows_descender().unsigned_abs() as f32);
+            let (wa, wd) = (f32::from(os2.windows_ascender()), f32::from(os2.windows_descender().unsigned_abs()));
             if wa + wd > 0.0 {
                 (m.win_asc, m.win_desc) = (wa, wd);
             }
             if avg > 0 {
-                m.avg = avg as f32;
+                m.avg = f32::from(avg);
             }
         }
     }
@@ -2104,7 +2104,7 @@ fn raster(r: &Real, ch: u32) -> Glyph {
         let (w, h) = (b.width() as i32, b.height() as i32);
         // (a glyph bigger than any screen, from a font of a height no one draws with — a
         // LOGFONT left uninitialized: none, as no pixels of it could show)
-        if w > 0 && h > 0 && (w as i64) * (h as i64) <= MAX_GLYPH_PIXELS {
+        if w > 0 && h > 0 && i64::from(w) * i64::from(h) <= MAX_GLYPH_PIXELS {
             let mut cov = vec![0u8; (w * h) as usize];
             o.draw(|x, y, v| {
                 let i = (y as i32 * w + x as i32) as usize;
@@ -2205,13 +2205,13 @@ impl TextFont {
     }
     /// glyph and glyph_key of a glyph index
     pub fn index_glyph(&self, gi: u16, f: impl FnMut(i32, i32, i32, i32, &[u8])) {
-        self.glyph(gi as u32 | GLYPH_INDEX, f)
+        self.glyph(u32::from(gi) | GLYPH_INDEX, f)
     }
     pub fn index_advance(&self, gi: u16) -> f32 {
-        glyph(&self.r, gi as u32 | GLYPH_INDEX).adv as f32
+        glyph(&self.r, u32::from(gi) | GLYPH_INDEX).adv as f32
     }
     pub fn index_key(&self, gi: u16) -> u64 {
-        self.glyph_key(gi as u32 | GLYPH_INDEX)
+        self.glyph_key(u32::from(gi) | GLYPH_INDEX)
     }
     /// Calls `f(left, top above the baseline, w, h, coverage)` with the glyph's black box.
     pub fn glyph(&self, ch: u32, mut f: impl FnMut(i32, i32, i32, i32, &[u8])) {
@@ -2233,7 +2233,7 @@ pub fn dc_font_handle(dc: u32) -> u32 {
 /// DC's when 0).
 pub fn font_glyphs(dc: u32, hfont: u32, s: &[u16]) -> Option<Vec<u16>> {
     let r = font_real(dc, hfont)?;
-    Some(s.iter().map(|&c| r.font.glyph_id(char::from_u32(c as u32).unwrap_or('?')).0).collect())
+    Some(s.iter().map(|&c| r.font.glyph_id(char::from_u32(u32::from(c)).unwrap_or('?')).0).collect())
 }
 pub fn font_abc(dc: u32, hfont: u32, glyphs: &[u16]) -> Option<Vec<(i32, i32, i32)>> {
     let r = font_real(dc, hfont)?;
@@ -2241,7 +2241,7 @@ pub fn font_abc(dc: u32, hfont: u32, glyphs: &[u16]) -> Option<Vec<(i32, i32, i3
         glyphs
             .iter()
             .map(|&gi| {
-                let g = glyph(&r, gi as u32 | GLYPH_INDEX);
+                let g = glyph(&r, u32::from(gi) | GLYPH_INDEX);
                 (g.x0, g.w.max(0), g.adv - g.x0 - g.w.max(0))
             })
             .collect(),
@@ -2323,7 +2323,7 @@ fn write_tm(p: u32, r: &Real, lf: &LogFont, wide: bool) {
     }
     let fixed = f.is_some_and(|f| f.fixed);
     let family = if f.is_some_and(|f| f.roman) { 0x10 } else { 0x30 };
-    let pitch = family | 6 | (!fixed) as u8;
+    let pitch = family | 6 | u8::from(!fixed);
     if wide {
         w16(p + 44, 0x20);
         w16(p + 46, 0xfffc);
@@ -2340,7 +2340,7 @@ fn write_tm(p: u32, r: &Real, lf: &LogFont, wide: bool) {
 }
 
 fn text_width(r: &Real, s: &[u16], extra: i32) -> i32 {
-    s.iter().map(|&c| glyph(r, c as u32).adv + extra).sum()
+    s.iter().map(|&c| glyph(r, u32::from(c)).adv + extra).sum()
 }
 
 /// Draws text with the DC's font: `x`,`y` logical, `dx` explicit advances.
@@ -2348,7 +2348,7 @@ fn text_out(dc: u32, x: i32, y: i32, opts: u32, rect: Option<Rect>, s: &[u16], d
     let Some((r, lf, st)) = real_of(dc) else { return false };
     // (ETO_GLYPH_INDEX: glyph indices, not characters)
     let gi = if opts & 0x10 != 0 { GLYPH_INDEX } else { 0 };
-    let glyphs: Vec<Arc<Glyph>> = s.iter().map(|&c| glyph(&r, c as u32 | gi)).collect();
+    let glyphs: Vec<Arc<Glyph>> = s.iter().map(|&c| glyph(&r, u32::from(c) | gi)).collect();
     let advs: Vec<i32> = match &dx {
         Some(d) => d.clone(),
         None => glyphs.iter().map(|g| g.adv + st.char_extra).collect(),
@@ -2397,7 +2397,7 @@ fn text_out(dc: u32, x: i32, y: i32, opts: u32, rect: Option<Rect>, s: &[u16], d
             let gr = Rect { l: gx, t: gy, r: gx + g.w, b: gy + g.h }.and(&c.clip);
             for yy in gr.t..gr.b {
                 for xx in gr.l..gr.r {
-                    let a = g.cov[((yy - gy) * g.w + (xx - gx)) as usize] as u32;
+                    let a = u32::from(g.cov[((yy - gy) * g.w + (xx - gx)) as usize]);
                     if a == 0 {
                         continue;
                     }
@@ -2466,7 +2466,7 @@ pub(crate) fn line_ranges(chars: &[u16], flags: u32, maxw: i32, adv: impl Fn(u16
 /// font: ranges of `s` (line_ranges). An edit control's lines (user.rs).
 pub fn text_line_ranges(dc: u32, s: &[u16], w: i32, flags: u32) -> Vec<(usize, usize)> {
     let Some((r, _, st)) = real_of(dc) else { return line_ranges(s, flags, 0, |_| 0) };
-    line_ranges(s, flags, w, |ch| glyph(&r, ch as u32).adv + st.char_extra)
+    line_ranges(s, flags, w, |ch| glyph(&r, u32::from(ch)).adv + st.char_extra)
 }
 
 /// DrawText (user32): returns the text height.
@@ -2478,13 +2478,13 @@ pub fn draw_text(dc: u32, s: &[u16], rp: u32, flags: u32) -> u32 {
     let mut chars: Vec<u16> = Vec::with_capacity(s.len());
     let mut i = 0;
     while i < s.len() {
-        if prefix && s[i] == b'&' as u16 && i + 1 < s.len() {
+        if prefix && s[i] == u16::from(b'&') && i + 1 < s.len() {
             i += 1;
         }
         chars.push(s[i]);
         i += 1;
     }
-    let lines: Vec<Vec<u16>> = line_ranges(&chars, flags, rc.w(), |ch| glyph(&r, ch as u32).adv + st.char_extra)
+    let lines: Vec<Vec<u16>> = line_ranges(&chars, flags, rc.w(), |ch| glyph(&r, u32::from(ch)).adv + st.char_extra)
         .into_iter()
         .map(|(a, b)| chars[a..b].iter().copied().filter(|&c| c != 10 && c != 13).collect())
         .collect();
@@ -2681,7 +2681,7 @@ fn CreateICW(_: &mut Ctx) -> u32 {
 }
 fn DeleteDC(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    with(|t| match t.m.remove(&h) {
+    u32::from(with(|t| match t.m.remove(&h) {
         Some(G::Dc(d)) => {
             // (its GetDCEx region and its place among the window DCs go with it)
             drop_region(t, d.rgn);
@@ -2695,7 +2695,7 @@ fn DeleteDC(c: &mut Ctx) -> u32 {
             false
         }
         None => false,
-    }) as u32
+    }))
 }
 
 /// Whether `h` is a GDI object or DC.
@@ -3025,17 +3025,17 @@ fn GetWindowOrgEx(c: &mut Ctx) -> u32 {
 }
 fn SetBrushOrgEx(c: &mut Ctx) -> u32 {
     let (dc, x, y, p) = (c.a(0), c.i(1), c.i(2), c.a(3));
-    with_dc(dc, |d| put_pt(p, std::mem::replace(&mut d.s.brush_org, (x, y)))).is_some() as u32
+    u32::from(with_dc(dc, |d| put_pt(p, std::mem::replace(&mut d.s.brush_org, (x, y)))).is_some())
 }
 fn GetBrushOrgEx(c: &mut Ctx) -> u32 {
-    dc_state(c.a(0)).map(|s| put_pt(c.a(1), s.brush_org)).is_some() as u32
+    u32::from(dc_state(c.a(0)).map(|s| put_pt(c.a(1), s.brush_org)).is_some())
 }
 fn GetCurrentPositionEx(c: &mut Ctx) -> u32 {
-    dc_state(c.a(0)).map(|s| put_pt(c.a(1), s.pos)).is_some() as u32
+    u32::from(dc_state(c.a(0)).map(|s| put_pt(c.a(1), s.pos)).is_some())
 }
 fn MoveToEx(c: &mut Ctx) -> u32 {
     let (dc, x, y, p) = (c.a(0), c.i(1), c.i(2), c.a(3));
-    with_dc(dc, |d| put_pt(p, std::mem::replace(&mut d.s.pos, (x, y)))).is_some() as u32
+    u32::from(with_dc(dc, |d| put_pt(p, std::mem::replace(&mut d.s.pos, (x, y)))).is_some())
 }
 fn GetDCOrgEx(c: &mut Ctx) -> u32 {
     let h = dc_window(c.a(0));
@@ -3310,7 +3310,7 @@ fn GetDIBits(c: &mut Ctx) -> u32 {
         w16(bmi + 12, 1);
         w16(bmi + 14, b.bpp);
         w32(bmi + 16, if b.bpp == 16 { 3 } else { 0 });
-        w32(bmi + 20, ((b.w as u32 * b.bpp as u32 + 31) / 32) * 4 * b.h as u32);
+        w32(bmi + 20, ((b.w as u32 * u32::from(b.bpp) + 31) / 32) * 4 * b.h as u32);
         w32(bmi + 32, 0);
         if b.bpp == 16 {
             let m = if b.r565 { [0xf800, 0x7e0, 0x1f] } else { [0x7c00, 0x3e0, 0x1f] };
@@ -3346,7 +3346,7 @@ fn GetDIBits(c: &mut Ctx) -> u32 {
         }
     }
     let height = r32(bmi + 8) as i32;
-    let stride = ((r32(bmi + 4) * bpp as u32 + 31) / 32) * 4;
+    let stride = ((r32(bmi + 4) * u32::from(bpp) + 31) / 32) * 4;
     w32(bmi + 20, stride * height.unsigned_abs());
     if bits == 0 {
         return b.h as u32;
@@ -3426,7 +3426,7 @@ fn SetDIBits(c: &mut Ctx) -> u32 {
 
 fn CreateDIBitmap(c: &mut Ctx) -> u32 {
     let (dc, bih, init, bits, bmi, usage) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
-    let (w, h) = if r32(bih) == 12 { (r16(bih + 4) as i32, r16(bih + 6) as i16 as i32) } else { (r32(bih + 4) as i32, r32(bih + 8) as i32) };
+    let (w, h) = if r32(bih) == 12 { (i32::from(r16(bih + 4)), i32::from(r16(bih + 6) as i16)) } else { (r32(bih + 4) as i32, r32(bih + 8) as i32) };
     if w <= 0 || h == 0 {
         return 0;
     }
@@ -3486,7 +3486,7 @@ fn dib_color_table(c: &mut Ctx, set: bool) -> u32 {
         for i in start..(start + n).min(b.pal.len() as u32) {
             let a = p + 4 * (i - start);
             if set {
-                b.pal[i as usize] = (r8(a + 2) as u32) << 16 | (r8(a + 1) as u32) << 8 | r8(a) as u32;
+                b.pal[i as usize] = u32::from(r8(a + 2)) << 16 | u32::from(r8(a + 1)) << 8 | u32::from(r8(a));
             } else {
                 let v = b.pal[i as usize];
                 w32(a, v & 0xffffff);
@@ -3508,7 +3508,7 @@ fn SetDIBColorTable(c: &mut Ctx) -> u32 {
 fn bit_blt(dst: u32, d: (i32, i32, i32, i32), src: u32, s: (i32, i32, i32, i32), rop: u32) -> u32 {
     let op = (rop >> 16) as u8;
     let has_src = uses_src(op) && src != 0;
-    draw(dst, |t, ds, c| {
+    u32::from(draw(dst, |t, ds, c| {
         let pat = pattern(t, ds, ds.brush);
         let dr = c.dev(d.0, d.1);
         let dst_r = (dr.0, dr.1, d.2, d.3);
@@ -3524,7 +3524,7 @@ fn bit_blt(dst: u32, d: (i32, i32, i32, i32), src: u32, s: (i32, i32, i32, i32),
         };
         let src_ = Src { v: &sv, x: s.0 + sox, y: s.1 + soy, w: s.2, h: s.3, bk: rgb(ss.bk), half: ds.stretch == 4 };
         blit(c, dst_r, Some(src_), op, &pat, rgb(ds.text), rgb(ds.bk))
-    }) as u32
+    }))
 }
 
 /// A copy of a view's pixels (blits within one bitmap).
@@ -3557,7 +3557,7 @@ fn TransparentBlt(c: &mut Ctx) -> u32 {
     let (dst, src, key) = (c.a(0), c.a(5), rgb(c.a(10)));
     let d = (c.i(1), c.i(2), c.i(3), c.i(4));
     let s = (c.i(6), c.i(7), c.i(8), c.i(9));
-    draw(dst, |t, _, cv| {
+    u32::from(draw(dst, |t, _, cv| {
         let Some((sv, sox, soy, _)) = source(t, src) else { return Rect::default() };
         let (dx, dy) = cv.dev(d.0, d.1);
         let r = Rect { l: dx, t: dy, r: dx + d.2, b: dy + d.3 }.and(&cv.clip);
@@ -3576,7 +3576,7 @@ fn TransparentBlt(c: &mut Ctx) -> u32 {
             }
         }
         r
-    }) as u32
+    }))
 }
 fn GdiTransparentBlt(c: &mut Ctx) -> u32 {
     TransparentBlt(c)
@@ -3587,7 +3587,7 @@ fn AlphaBlend(c: &mut Ctx) -> u32 {
     let d = (c.i(1), c.i(2), c.i(3), c.i(4));
     let s = (c.i(6), c.i(7), c.i(8), c.i(9));
     let (k, per_pixel) = (bf >> 16 & 255, bf >> 24 & 1 != 0);
-    draw(dst, |t, _, cv| {
+    u32::from(draw(dst, |t, _, cv| {
         let Some((sv, sox, soy, _)) = source(t, src) else { return Rect::default() };
         let (dx, dy) = cv.dev(d.0, d.1);
         let r = Rect { l: dx, t: dy, r: dx + d.2, b: dy + d.3 }.and(&cv.clip);
@@ -3614,7 +3614,7 @@ fn AlphaBlend(c: &mut Ctx) -> u32 {
             }
         }
         r
-    }) as u32
+    }))
 }
 /// x / 255 rounded down, for x up to 255 * 255.
 #[inline(always)]
@@ -3632,7 +3632,7 @@ fn alpha_rows(sv: &View, dv: &View, r: &Rect, o: (i32, i32), k: u32, per_pixel: 
     }
     for y in r.t.max(-o.1)..r.b.min(sv.h - o.1) {
         let sp = unsafe { (sv.row(y + o.1) as *const u32).add((l + o.0) as usize) };
-        let dp = unsafe { (dv.row(y) as *mut u32).add(l as usize) };
+        let dp = unsafe { dv.row(y).cast::<u32>().add(l as usize) };
         for i in 0..(rr - l) as usize {
             let (ps, pd) = unsafe { (sp.add(i), dp.add(i)) };
             let p = unsafe { ps.read_unaligned() };
@@ -3725,10 +3725,10 @@ fn GradientFill(c: &mut Ctx) -> u32 {
             return None;
         }
         let a = pv + 16 * i;
-        Some(((r32(a) as i32, r32(a + 4) as i32), [r16(a + 8) as f64, r16(a + 10) as f64, r16(a + 12) as f64]))
+        Some(((r32(a) as i32, r32(a + 4) as i32), [f64::from(r16(a + 8)), f64::from(r16(a + 10)), f64::from(r16(a + 12))]))
     };
     let pack = |c: [f64; 3]| -> u32 { c.iter().fold(0, |acc, &v| acc << 8 | ((v / 256.0) as u32).min(255)) };
-    draw(dc, |_, _, cv| {
+    u32::from(draw(dc, |_, _, cv| {
         let mut d = Rect::default();
         for m in 0..nm {
             if mode < 2 {
@@ -3739,7 +3739,7 @@ fn GradientFill(c: &mut Ctx) -> u32 {
                 for y in rr.t..rr.b {
                     for x in rr.l..rr.r {
                         let (k, n) = if mode == 0 { (x - cv.ox - l, r - l) } else { (y - cv.oy - t, bo - t) };
-                        let f = k as f64 / n.max(1) as f64;
+                        let f = f64::from(k) / f64::from(n.max(1));
                         let col = [0, 1, 2].map(|i| c0[i] + (c1[i] - c0[i]) * f);
                         cv.v.put(x, y, pack(col));
                     }
@@ -3751,7 +3751,7 @@ fn GradientFill(c: &mut Ctx) -> u32 {
                     continue;
                 }
                 let p: Vec<(i32, i32)> = vs.iter().map(|v| cv.dev(v.0 .0, v.0 .1)).collect();
-                let det = ((p[1].1 - p[2].1) * (p[0].0 - p[2].0) + (p[2].0 - p[1].0) * (p[0].1 - p[2].1)) as f64;
+                let det = f64::from((p[1].1 - p[2].1) * (p[0].0 - p[2].0) + (p[2].0 - p[1].0) * (p[0].1 - p[2].1));
                 if det == 0.0 {
                     continue;
                 }
@@ -3760,8 +3760,8 @@ fn GradientFill(c: &mut Ctx) -> u32 {
                         if !cv.clip.has(x, y) {
                             continue;
                         }
-                        let w0 = ((p[1].1 - p[2].1) * (x - p[2].0) + (p[2].0 - p[1].0) * (y - p[2].1)) as f64 / det;
-                        let w1 = ((p[2].1 - p[0].1) * (x - p[2].0) + (p[0].0 - p[2].0) * (y - p[2].1)) as f64 / det;
+                        let w0 = f64::from((p[1].1 - p[2].1) * (x - p[2].0) + (p[2].0 - p[1].0) * (y - p[2].1)) / det;
+                        let w1 = f64::from((p[2].1 - p[0].1) * (x - p[2].0) + (p[0].0 - p[2].0) * (y - p[2].1)) / det;
                         let w2 = 1.0 - w0 - w1;
                         let col = [0, 1, 2].map(|i| (vs[0].1[i] * w0 + vs[1].1[i] * w1 + vs[2].1[i] * w2).clamp(0.0, 65535.0));
                         cv.v.put(x, y, pack(col));
@@ -3771,7 +3771,7 @@ fn GradientFill(c: &mut Ctx) -> u32 {
             }
         }
         d
-    }) as u32
+    }))
 }
 fn GdiGradientFill(c: &mut Ctx) -> u32 {
     GradientFill(c)
@@ -3966,7 +3966,7 @@ fn stroke(c: &mut Canvas, s: &DcState, pen: PenInfo, paths: &[Vec<(i32, i32)>], 
         4 => &[9, 3, 3, 3, 3, 3],
         _ => &[],
     };
-    let period: u64 = dashes.iter().map(|&d| d as u64).sum();
+    let period: u64 = dashes.iter().map(|&d| u64::from(d)).sum();
     let mut pos = 0u64;
     for p in paths {
         let mut q: Vec<(i32, i32)> = p.iter().map(|&(x, y)| c.dev(x, y)).collect();
@@ -3983,11 +3983,11 @@ fn stroke(c: &mut Canvas, s: &DcState, pen: PenInfo, paths: &[Vec<(i32, i32)>], 
                 if period > 0 {
                     let mut k = pos % period;
                     for (i, &d) in dashes.iter().enumerate() {
-                        if k < d as u64 {
+                        if k < u64::from(d) {
                             on = i % 2 == 0;
                             break;
                         }
-                        k -= d as u64;
+                        k -= u64::from(d);
                     }
                 }
                 pos += 1;
@@ -4052,10 +4052,10 @@ fn read_pts(p: u32, n: u32) -> Vec<(i32, i32)> {
     (0..n.min(MAX_COUNT)).map(|i| (r32(p + 8 * i) as i32, r32(p + 8 * i + 4) as i32)).collect()
 }
 fn polyline(dc: u32, pts: Vec<(i32, i32)>) -> u32 {
-    draw(dc, |t, s, cv| match pen_of(t, s) {
+    u32::from(draw(dc, |t, s, cv| match pen_of(t, s) {
         Some(pen) => stroke(cv, s, pen, &[pts.clone()], false),
         None => Rect::default(),
-    }) as u32
+    }))
 }
 fn Polyline(c: &mut Ctx) -> u32 {
     polyline(c.a(0), read_pts(c.a(1), c.a(2)))
@@ -4079,10 +4079,10 @@ fn PolyPolyline(c: &mut Ctx) -> u32 {
         paths.push(read_pts(at, k));
         at += 8 * k;
     }
-    draw(dc, |t, s, cv| match pen_of(t, s) {
+    u32::from(draw(dc, |t, s, cv| match pen_of(t, s) {
         Some(pen) => stroke(cv, s, pen, &paths, false),
         None => Rect::default(),
-    }) as u32
+    }))
 }
 fn bezier_path(pts: &[(i32, i32)]) -> Vec<(i32, i32)> {
     let mut v = vec![];
@@ -4124,7 +4124,7 @@ fn shape(dc: u32, b: (i32, i32, i32, i32), area: Area) -> u32 {
     if t > bo {
         std::mem::swap(&mut t, &mut bo);
     }
-    draw(dc, |tt, s, cv| {
+    u32::from(draw(dc, |tt, s, cv| {
         let pen = pen_of(tt, s);
         let pat = pattern(tt, s, s.brush);
         let pad = pen.map_or(0, |p| p.width.clamp(1, 1 << 16)) + 1;
@@ -4157,7 +4157,7 @@ fn shape(dc: u32, b: (i32, i32, i32, i32), area: Area) -> u32 {
                 d
             }
         }
-    }) as u32
+    }))
 }
 fn Rectangle(c: &mut Ctx) -> u32 {
     shape(c.a(0), (c.i(1), c.i(2), c.i(3), c.i(4)), &|l, t, r, b, w| (t.max(w.t)..b.min(w.b)).filter(|_| r > l).map(|y| (y, l.max(w.l), r.min(w.r))).filter(|s| s.2 > s.1).collect())
@@ -4175,17 +4175,17 @@ fn clip_x(v: Vec<gdi_geom::Span>, w: Rect) -> Vec<gdi_geom::Span> {
     v.into_iter().map(|(y, a, b)| (y, a.max(w.l), b.min(w.r))).filter(|s| s.2 > s.1).collect()
 }
 fn arc_area(l: i32, t: i32, r: i32, b: i32, s: (i32, i32), e: (i32, i32), pie: bool, w: Rect) -> Vec<gdi_geom::Span> {
-    let (cx, cy) = ((l + r) as f64 / 2.0, (t + b) as f64 / 2.0);
-    let (a0, a1) = (gdi_geom::angle(cx, cy, s.0 as f64, s.1 as f64), gdi_geom::angle(cx, cy, e.0 as f64, e.1 as f64));
+    let (cx, cy) = (f64::from(l + r) / 2.0, f64::from(t + b) / 2.0);
+    let (a0, a1) = (gdi_geom::angle(cx, cy, f64::from(s.0), f64::from(s.1)), gdi_geom::angle(cx, cy, f64::from(e.0), f64::from(e.1)));
     // the chord's end points on the ellipse
-    let (rx, ry) = ((r - l) as f64 / 2.0, (b - t) as f64 / 2.0);
+    let (rx, ry) = (f64::from(r - l) / 2.0, f64::from(b - t) / 2.0);
     let on = |a: f64| (cx + rx * a.cos(), cy - ry * a.sin());
     let (p0, p1) = (on(a0), on(a1));
     let mut out = Vec::new();
     for (y, x0, x1) in clip_x(gdi_geom::ellipse_spans_rows(l, t, r, b, (w.t, w.b)), w) {
         let mut run: Option<i32> = None;
         for x in x0..=x1 {
-            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+            let (px, py) = (f64::from(x) + 0.5, f64::from(y) + 0.5);
             let inside = x < x1
                 && if pie {
                     gdi_geom::on_arc(gdi_geom::angle(cx, cy, px, py), a0, a1)
@@ -4215,16 +4215,16 @@ fn Chord(c: &mut Ctx) -> u32 {
 }
 fn arc(dc: u32, b: (i32, i32, i32, i32), s: (i32, i32), e: (i32, i32)) -> u32 {
     let (l, t, r, bo) = b;
-    draw(dc, |tt, st, cv| {
+    u32::from(draw(dc, |tt, st, cv| {
         let Some(pen) = pen_of(tt, st) else { return Rect::default() };
-        let (cx, cy) = ((l + r) as f64 / 2.0, (t + bo) as f64 / 2.0);
-        let (a0, a1) = (gdi_geom::angle(cx, cy, s.0 as f64, s.1 as f64), gdi_geom::angle(cx, cy, e.0 as f64, e.1 as f64));
+        let (cx, cy) = (f64::from(l + r) / 2.0, f64::from(t + bo) / 2.0);
+        let (a0, a1) = (gdi_geom::angle(cx, cy, f64::from(s.0), f64::from(s.1)), gdi_geom::angle(cx, cy, f64::from(e.0), f64::from(e.1)));
         // (in the clip's window, logical, as shape's)
         let pad = pen.width.clamp(1, 1 << 16) + 1;
         let ow = Rect { l: cv.clip.l.saturating_sub(pad), t: cv.clip.t.saturating_sub(pad), r: cv.clip.r.saturating_add(pad), b: cv.clip.b.saturating_add(pad) }.off(-cv.ox, -cv.oy);
         let aw = Rect { l: ow.l.saturating_sub(1), t: ow.t.saturating_sub(1), r: ow.r.saturating_add(1), b: ow.b.saturating_add(1) };
         let (edge, _) = gdi_geom::outline_in(&clip_x(gdi_geom::ellipse_spans_rows(l, t, r, bo, (aw.t, aw.b)), aw), Some(ow));
-        let pts: Vec<(i32, i32)> = edge.into_iter().filter(|&(x, y)| gdi_geom::on_arc(gdi_geom::angle(cx, cy, x as f64 + 0.5, y as f64 + 0.5), a0, a1)).collect();
+        let pts: Vec<(i32, i32)> = edge.into_iter().filter(|&(x, y)| gdi_geom::on_arc(gdi_geom::angle(cx, cy, f64::from(x) + 0.5, f64::from(y) + 0.5), a0, a1)).collect();
         let paths: Vec<Vec<(i32, i32)>> = pts.iter().map(|&p| vec![p]).collect();
         if pen.width > 1 {
             return stroke(cv, st, pen, &paths, false);
@@ -4237,7 +4237,7 @@ fn arc(dc: u32, b: (i32, i32, i32, i32), s: (i32, i32), e: (i32, i32)) -> u32 {
             }
         }
         pts_rect(&d)
-    }) as u32
+    }))
 }
 fn Arc(c: &mut Ctx) -> u32 {
     arc(c.a(0), (c.i(1), c.i(2), c.i(3), c.i(4)), (c.i(5), c.i(6)), (c.i(7), c.i(8)))
@@ -4249,7 +4249,7 @@ fn ArcTo(c: &mut Ctx) -> u32 {
     r
 }
 fn polygons(dc: u32, polys: Vec<Vec<(i32, i32)>>) -> u32 {
-    draw(dc, |t, s, cv| {
+    u32::from(draw(dc, |t, s, cv| {
         let pat = pattern(t, s, s.brush);
         let dev: Vec<Vec<(i32, i32)>> = polys.iter().map(|p| p.iter().map(|&(x, y)| cv.dev(x, y)).collect()).collect();
         let sp = gdi_geom::poly_spans_rows(&dev, s.fill_mode == 2, (cv.clip.t, cv.clip.b));
@@ -4258,7 +4258,7 @@ fn polygons(dc: u32, polys: Vec<Vec<(i32, i32)>>) -> u32 {
             d = d.or(&stroke(cv, s, pen, &polys, true));
         }
         d
-    }) as u32
+    }))
 }
 fn Polygon(c: &mut Ctx) -> u32 {
     polygons(c.a(0), vec![read_pts(c.a(1), c.a(2))])
@@ -4374,15 +4374,15 @@ fn GetRgnBox(c: &mut Ctx) -> u32 {
     region_kind(&r)
 }
 fn PtInRegion(c: &mut Ctx) -> u32 {
-    region(c.a(0)).is_some_and(|r| r.iter().any(|q| q.has(c.i(1), c.i(2)))) as u32
+    u32::from(region(c.a(0)).is_some_and(|r| r.iter().any(|q| q.has(c.i(1), c.i(2)))))
 }
 fn RectInRegion(c: &mut Ctx) -> u32 {
     let q = Rect::read(c.a(1));
-    region(c.a(0)).is_some_and(|r| r.iter().any(|x| !x.and(&q).empty())) as u32
+    u32::from(region(c.a(0)).is_some_and(|r| r.iter().any(|x| !x.and(&q).empty())))
 }
 fn EqualRgn(c: &mut Ctx) -> u32 {
     match (region(c.a(0)), region(c.a(1))) {
-        (Some(a), Some(b)) => (gdi_geom::normalize(&a) == gdi_geom::normalize(&b)) as u32,
+        (Some(a), Some(b)) => u32::from(gdi_geom::normalize(&a) == gdi_geom::normalize(&b)),
         _ => 0,
     }
 }
@@ -4448,13 +4448,13 @@ fn FrameRgn(c: &mut Ctx) -> u32 {
 fn InvertRgn(c: &mut Ctx) -> u32 {
     let (dc, h) = (c.a(0), c.a(1));
     let Some(r) = region(h) else { return 0 };
-    draw(dc, |_, _, cv| {
+    u32::from(draw(dc, |_, _, cv| {
         let mut d = Rect::default();
         for q in &r {
             d = d.or(&pat_blt(cv, cv.rect(*q), &Pat::Solid(0), 0x55));
         }
         d
-    }) as u32
+    }))
 }
 
 /// The DC's clip as rectangles (device coordinates); None: no clip.
@@ -4602,11 +4602,11 @@ fn GetClipRgn(c: &mut Ctx) -> u32 {
 }
 /// Whether any of the clip (no clip: all of it) passes `hit` (device coordinates).
 fn clip_any(dc: u32, hit: impl Fn(&Rect, (i32, i32)) -> bool) -> u32 {
-    with_dc(dc, |d| {
+    u32::from(with_dc(dc, |d| {
         let org = (d.s.vp.0 - d.s.win.0, d.s.vp.1 - d.s.win.1);
         clip_rects(d).is_none_or(|rs| rs.iter().any(|q| hit(q, org)))
     })
-    .unwrap_or(false) as u32
+    .unwrap_or(false))
 }
 fn RectVisible(c: &mut Ctx) -> u32 {
     let r = Rect::read(c.a(1));
@@ -4621,10 +4621,10 @@ fn PtVisible(c: &mut Ctx) -> u32 {
 
 fn CreatePalette(c: &mut Ctx) -> u32 {
     let p = c.a(0);
-    let n = r16(p + 2) as u32;
+    let n = u32::from(r16(p + 2));
     add(G::Palette((0..n).map(|i| {
         let a = p + 4 + 4 * i;
-        (r8(a) as u32) << 16 | (r8(a + 1) as u32) << 8 | r8(a + 2) as u32
+        u32::from(r8(a)) << 16 | u32::from(r8(a + 1)) << 8 | u32::from(r8(a + 2))
     }).collect()))
 }
 fn CreateHalftonePalette(_: &mut Ctx) -> u32 {
@@ -4648,7 +4648,7 @@ fn pal_entries(c: &mut Ctx, set: bool) -> u32 {
         for i in start..(start + n).min(pl.len() as u32) {
             let a = p + 4 * (i - start);
             if set {
-                pl[i as usize] = (r8(a) as u32) << 16 | (r8(a + 1) as u32) << 8 | r8(a + 2) as u32;
+                pl[i as usize] = u32::from(r8(a)) << 16 | u32::from(r8(a + 1)) << 8 | u32::from(r8(a + 2));
             } else {
                 let v = pl[i as usize];
                 w8(a, (v >> 16) as u8);
@@ -4914,7 +4914,7 @@ fn ext_ex(c: &mut Ctx, s: &[u16]) -> u32 {
     let mut x = 0;
     let mut k = 0;
     for (i, &ch) in s.iter().enumerate() {
-        x += glyph(&r, ch as u32).adv + st.char_extra;
+        x += glyph(&r, u32::from(ch)).adv + st.char_extra;
         if fit == 0 || x <= max {
             k = i + 1;
         }
@@ -5009,7 +5009,7 @@ fn GetCharWidthFloatW(c: &mut Ctx) -> u32 {
 /// A code from the A functions (one byte, or lead<<8|trail) as a UTF-16 unit.
 fn mbcs_char(code: u32) -> u32 {
     let b: Vec<u8> = if code > 0xff { vec![(code >> 8) as u8, code as u8] } else { vec![code as u8] };
-    mb2w(0, &b).first().copied().unwrap_or(b'?' as u16) as u32
+    u32::from(mb2w(0, &b).first().copied().unwrap_or(u16::from(b'?')))
 }
 
 fn glyph_outline(c: &mut Ctx, wide: bool) -> u32 {
@@ -5064,7 +5064,7 @@ fn glyph_outline(c: &mut Ctx, wide: bool) -> u32 {
     out.fill(0);
     for y in 0..g.h {
         for x in 0..g.w {
-            let v = g.cov[(y * g.w + x) as usize] as u32;
+            let v = u32::from(g.cov[(y * g.w + x) as usize]);
             let o = (y as u32 * stride) as usize;
             if f == 1 {
                 if v >= 128 {
@@ -5091,7 +5091,7 @@ fn widths_i(c: &mut Ctx, abc: bool) -> u32 {
     }
     let Some((r, _, _)) = real_of(dc) else { return 0 };
     for i in 0..n {
-        let gi = if pgi != 0 { r16(pgi + 2 * i) as u32 } else { first + i };
+        let gi = if pgi != 0 { u32::from(r16(pgi + 2 * i)) } else { first + i };
         let g = glyph(&r, gi & 0xffff | GLYPH_INDEX);
         if abc {
             let a = out + 12 * i;
@@ -5130,7 +5130,7 @@ fn GetGlyphIndicesW(c: &mut Ctx) -> u32 {
     }
     let Some((r, _, _)) = real_of(dc) else { return 0xffff_ffff };
     for i in 0..n {
-        let ch = char::from_u32(r16(s + 2 * i) as u32).unwrap_or('?');
+        let ch = char::from_u32(u32::from(r16(s + 2 * i))).unwrap_or('?');
         w16(out + 2 * i, r.font.glyph_id(ch).0);
     }
     n
@@ -5228,7 +5228,7 @@ fn outline_metrics(c: &mut Ctx, wide: bool) -> u32 {
     for (i, n) in names.iter().enumerate() {
         if x64 {
             let at = 200 + 8 * i;
-            buf[at..at + 8].copy_from_slice(&(off as u64).to_le_bytes());
+            buf[at..at + 8].copy_from_slice(&u64::from(off).to_le_bytes());
         } else {
             put(&mut buf, 200 + 4 * i as u32, off as i32);
         }
@@ -5293,11 +5293,11 @@ fn RemoveFontMemResourceEx(_: &mut Ctx) -> u32 {
 
 fn TextOutA(c: &mut Ctx) -> u32 {
     let s = ansi_chars(c.a(3), c.a(4));
-    text_out(c.a(0), c.i(1), c.i(2), 0, None, &s, None) as u32
+    u32::from(text_out(c.a(0), c.i(1), c.i(2), 0, None, &s, None))
 }
 fn TextOutW(c: &mut Ctx) -> u32 {
     let s = wide_chars(c.a(3), c.a(4));
-    text_out(c.a(0), c.i(1), c.i(2), 0, None, &s, None) as u32
+    u32::from(text_out(c.a(0), c.i(1), c.i(2), 0, None, &s, None))
 }
 fn ext_text_out(c: &mut Ctx, wide: bool) -> u32 {
     let (dc, x, y, opts, rp, sp, n, dxp) = (c.a(0), c.i(1), c.i(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
@@ -5340,7 +5340,7 @@ fn ext_text_out(c: &mut Ctx, wide: bool) -> u32 {
         }
         return 1;
     }
-    text_out(dc, x, y, opts, rect, &s, dx) as u32
+    u32::from(text_out(dc, x, y, opts, rect, &s, dx))
 }
 fn ExtTextOutA(c: &mut Ctx) -> u32 {
     ext_text_out(c, false)
@@ -5510,7 +5510,7 @@ fn DrawDibDraw(c: &mut Ctx) -> u32 {
     }
     if bits == 0 {
         let n = r32(bi + 32);
-        let bpp = r16(bi + 14) as u32;
+        let bpp = u32::from(r16(bi + 14));
         let ncol = if bpp <= 8 { if n != 0 { n } else { 1 << bpp } } else if r32(bi + 16) == 3 { 3 } else { 0 };
         bits = bi + r32(bi) + 4 * ncol;
     }
@@ -5696,7 +5696,7 @@ mod clip_tests {
         for y in 0..32 {
             for x in 0..32 {
                 let want = (4..28).contains(&x) && (6..26).contains(&y) && !(12..16).contains(&x);
-                assert_eq!(n[(y * 32 + x) as usize], want as u8, "{x},{y}");
+                assert_eq!(n[(y * 32 + x) as usize], u8::from(want), "{x},{y}");
             }
         }
         // (excluding all of it: an empty clip, NULLREGION)
@@ -5743,7 +5743,7 @@ mod clip_tests {
                 }
                 let n = reached(&d);
                 for i in 0..32 * 32 {
-                    prop_assert_eq!(n[i], m[i] as u8, "pixel {},{}", i % 32, i / 32);
+                    prop_assert_eq!(n[i], u8::from(m[i]), "pixel {},{}", i % 32, i / 32);
                 }
                 if let Some(c) = d.s.clip {
                     prop_assert!(m.iter().enumerate().all(|(i, &on)| !on || c.has(i as i32 % 32, i as i32 / 32)));
@@ -5845,7 +5845,7 @@ mod load_tests {
         // the nearest entry is never farther than another, and the first of equals
         #[test]
         fn nearest_entry_is_nearest(c in 0u32..0x1000000, pal in proptest::collection::vec(0u32..0x1000000, 1..20)) {
-            let d = |p: u32| (0..3).map(|k| ((c >> (8 * k) & 255) as i64 - (p >> (8 * k) & 255) as i64).pow(2)).sum::<i64>();
+            let d = |p: u32| (0..3).map(|k| (i64::from(c >> (8 * k) & 255) - i64::from(p >> (8 * k) & 255)).pow(2)).sum::<i64>();
             let i = nearest_entry(&pal, c) as usize;
             for (j, &p) in pal.iter().enumerate() {
                 proptest::prop_assert!(d(pal[i]) < d(p) || (d(pal[i]) == d(p) && i >= j));
@@ -5915,8 +5915,8 @@ mod raster_tests {
                 return Ok(());
             };
             let g = raster(&r, ch as u32);
-            prop_assert!((g.w as i64) * (g.h as i64) <= MAX_GLYPH_PIXELS);
-            prop_assert_eq!(g.cov.len() as i64, (g.w as i64) * (g.h as i64));
+            prop_assert!(i64::from(g.w) * i64::from(g.h) <= MAX_GLYPH_PIXELS);
+            prop_assert_eq!(g.cov.len() as i64, i64::from(g.w) * i64::from(g.h));
         }
     }
 }
@@ -5982,7 +5982,7 @@ mod line_breaks {
             let r = line_ranges(&chars, if wrap { 0x10 } else { 0 }, maxw, |_| 7);
             prop_assert!(!r.is_empty());
             prop_assert_eq!(r[0].0, 0);
-            prop_assert_eq!(r.last().unwrap().1, chars.len() - (chars.ends_with(&[13]) as usize));
+            prop_assert_eq!(r.last().unwrap().1, chars.len() - usize::from(chars.ends_with(&[13])));
             for (k, &(a, b)) in r.iter().enumerate() {
                 prop_assert!(a <= b && b <= chars.len());
                 prop_assert!(!chars[a..b].contains(&10));
@@ -6123,11 +6123,11 @@ mod size_tests {
         /// a size is given only when stride * height fits below 2 GB
         #[test]
         fn image_size_matches_gdi(w in 1i32..=40000, h in 1i32..=40000, bpp in prop_oneof![Just(1u32), Just(4), Just(8), Just(16), Just(24), Just(32)]) {
-            let ddb = ((w as u64 * bpp as u64 + 15) / 16) * 2;
-            let dib = ((w as u64 * bpp as u64 + 31) / 32) * 4;
+            let ddb = ((w as u64 * u64::from(bpp) + 15) / 16) * 2;
+            let dib = ((w as u64 * u64::from(bpp) + 31) / 32) * 4;
             for (align, row) in [(2, ddb), (4, dib)] {
                 let got = image_size(w, h, bpp, align);
-                if row * h as u64 >= mem::GUEST_TOP as u64 {
+                if row * h as u64 >= u64::from(mem::GUEST_TOP) {
                     prop_assert_eq!(got, None);
                 } else {
                     prop_assert_eq!(got, Some((row as u32, (row * h as u64) as u32)));
@@ -6139,8 +6139,8 @@ mod size_tests {
         fn image_size_never_wraps(w in any::<i32>(), h in any::<i32>(), bpp in 0u32..=64, align in 0u32..=8) {
             if let Some((row, size)) = image_size(w, h, bpp, align) {
                 prop_assert!(w > 0 && h > 0);
-                prop_assert!(row as u64 * 8 >= w as u64 * bpp as u64);
-                prop_assert_eq!(size as u64, row as u64 * h as u64);
+                prop_assert!(u64::from(row) * 8 >= w as u64 * u64::from(bpp));
+                prop_assert_eq!(u64::from(size), u64::from(row) * h as u64);
                 prop_assert!(size < mem::GUEST_TOP);
             }
         }

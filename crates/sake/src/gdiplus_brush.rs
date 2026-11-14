@@ -60,7 +60,7 @@ pub(crate) fn apply(m: &M, x: f32, y: f32) -> (f32, f32) {
     (x * m[0] + y * m[2] + m[4], x * m[1] + y * m[3] + m[5])
 }
 fn rotation(deg: f32) -> M {
-    let r = (deg as f64).to_radians();
+    let r = f64::from(deg).to_radians();
     let (s, c) = (r.sin() as f32, r.cos() as f32);
     [c, s, -s, c, 0.0, 0.0]
 }
@@ -163,21 +163,21 @@ pub(crate) fn mix_premul(a: u32, b: u32, k: u32) -> u32 {
     let alpha = premul(aa, 255 - k) + premul(ba, k);
     let ch = |s: u32| {
         let v = premul(pm(a, s, aa), 255 - k) + premul(pm(b, s, ba), k);
-        (unpremul(v, alpha) as u32) << s
+        u32::from(unpremul(v, alpha)) << s
     };
-    (alpha as u32) << 24 | ch(16) | ch(8) | ch(0)
+    u32::from(alpha) << 24 | ch(16) | ch(8) | ch(0)
 }
 
 pub(crate) fn premul_argb(c: u32) -> u32 {
     let a = (c >> 24) as u8;
-    let ch = |s: u32| (crate::gdiplus::premul((c >> s) as u8, a) as u32) << s;
+    let ch = |s: u32| u32::from(crate::gdiplus::premul((c >> s) as u8, a)) << s;
     c & 0xff00_0000 | ch(16) | ch(8) | ch(0)
 }
 /// premultiplied back to straight with GDI+'s reciprocal (winref gdipbrush grad_alpha: a 0 to
 /// white gradient's 112/112 is 254)
 pub(crate) fn straight_argb(c: u32) -> u32 {
     let a = (c >> 24) as u8;
-    let ch = |s: u32| (crate::gdiplus::unpremul((c >> s) as u8, a) as u32) << s;
+    let ch = |s: u32| u32::from(crate::gdiplus::unpremul((c >> s) as u8, a)) << s;
     c & 0xff00_0000 | ch(16) | ch(8) | ch(0)
 }
 
@@ -402,7 +402,7 @@ fn GdipIsMatrixInvertible(c: &mut Ctx) -> u32 {
     if out == 0 {
         return INVALID_PARAMETER;
     }
-    w32(out, invert(&m).is_some() as u32);
+    w32(out, u32::from(invert(&m).is_some()));
     OK
 }
 fn GdipIsMatrixIdentity(c: &mut Ctx) -> u32 {
@@ -410,7 +410,7 @@ fn GdipIsMatrixIdentity(c: &mut Ctx) -> u32 {
     if out == 0 {
         return INVALID_PARAMETER;
     }
-    w32(out, (m == IDENTITY) as u32);
+    w32(out, u32::from(m == IDENTITY));
     OK
 }
 fn GdipIsMatrixEqual(c: &mut Ctx) -> u32 {
@@ -418,7 +418,7 @@ fn GdipIsMatrixEqual(c: &mut Ctx) -> u32 {
     if out == 0 {
         return INVALID_PARAMETER;
     }
-    w32(out, (a == b) as u32);
+    w32(out, u32::from(a == b));
     OK
 }
 /// GdipTransformMatrixPoints / ..I / GdipVectorTransformMatrixPoints(..I)(m, pts, count)
@@ -740,7 +740,7 @@ fn new_texture(img: u32, wrap: u32, crop: Option<[f32; 4]>, out: u32) -> u32 {
         None => (0, 0, w, h),
         Some(r) => {
             let [x, y, cw, ch] = r.map(|v| v.round() as i64);
-            if x < 0 || y < 0 || cw <= 0 || ch <= 0 || x + cw > w as i64 || y + ch > h as i64 {
+            if x < 0 || y < 0 || cw <= 0 || ch <= 0 || x + cw > i64::from(w) || y + ch > i64::from(h) {
                 return OUT_OF_MEMORY;
             }
             (x as u32, y as u32, cw as u32, ch as u32)
@@ -915,7 +915,7 @@ fn GdipSetTextureWrapMode(c: &mut Ctx) -> u32 {
 /// rectangle's projection on that direction, about the rectangle's center (winref
 /// gdipbrush; Wine's tests: (1,1)-(100,100) gives 1 1 -1 1 50.5 -50.5)
 pub(crate) fn line_transform(rect: [f32; 4], deg: f64) -> M {
-    let (w, h) = (rect[2].abs() as f64, rect[3].abs() as f64);
+    let (w, h) = (f64::from(rect[2].abs()), f64::from(rect[3].abs()));
     let r = deg.to_radians();
     let (s, c) = (r.sin(), r.cos());
     // (round off what is 0 at right angles)
@@ -925,7 +925,7 @@ pub(crate) fn line_transform(rect: [f32; 4], deg: f64) -> M {
     let q = w * s.abs() + h * c.abs();
     let (m11, m12) = (p / w * c, p / w * s);
     let (m21, m22) = (-q / h * s, q / h * c);
-    let (cx, cy) = (rect[0] as f64 + rect[2] as f64 / 2.0, rect[1] as f64 + rect[3] as f64 / 2.0);
+    let (cx, cy) = (f64::from(rect[0]) + f64::from(rect[2]) / 2.0, f64::from(rect[1]) + f64::from(rect[3]) / 2.0);
     [m11, m12, m21, m22, cx - (cx * m11 + cy * m21), cy - (cx * m12 + cy * m22)].map(|v| v as f32)
 }
 
@@ -962,7 +962,7 @@ pub(crate) fn line_geometry(p: [f32; 2], q: [f32; 2]) -> Option<([f32; 4], f64)>
         h = w;
         ry = p[1] - h / 2.0;
     }
-    Some(([rx, ry, w, h], (dy as f64).atan2(dx as f64).to_degrees()))
+    Some(([rx, ry, w, h], f64::from(dy).atan2(f64::from(dx)).to_degrees()))
 }
 fn GdipCreateLineBrush(c: &mut Ctx) -> u32 {
     line_brush(c, false)
@@ -1021,7 +1021,7 @@ fn with_angle(c: &mut Ctx, int: bool) -> u32 {
     if rp == 0 || out == 0 || wrap == CLAMP {
         return INVALID_PARAMETER;
     }
-    rect_brush(read_rect(rp, int), c1, c2, deg as f64, scalable, wrap, out)
+    rect_brush(read_rect(rp, int), c1, c2, f64::from(deg), scalable, wrap, out)
 }
 fn GdipCreateLineBrushFromRectWithAngle(c: &mut Ctx) -> u32 {
     with_angle(c, false)
@@ -1091,7 +1091,7 @@ fn GdipGetLineGammaCorrection(c: &mut Ctx) -> u32 {
         if out == 0 {
             return INVALID_PARAMETER;
         }
-        w32(out, *g as u32);
+        w32(out, u32::from(*g));
         OK
     })
 }
@@ -1267,8 +1267,8 @@ pub(crate) fn sigma_blend(focus: f32, scale: f32) -> Vec<(f32, f32)> {
     let s = |u: f64| (erf(std::f64::consts::SQRT_2 * (2.0 * u - 1.0)) + erf(std::f64::consts::SQRT_2)) / (2.0 * erf(std::f64::consts::SQRT_2));
     (0..n)
         .map(|i| {
-            let p = i as f64 / (n - 1) as f64;
-            let f = focus as f64;
+            let p = f64::from(i) / f64::from(n - 1);
+            let f = f64::from(focus);
             let v = if f > 0.0 && p <= f {
                 s(p / f)
             } else if f < 1.0 {
@@ -1515,7 +1515,7 @@ fn GdipGetPathGradientGammaCorrection(c: &mut Ctx) -> u32 {
         if out == 0 {
             return INVALID_PARAMETER;
         }
-        w32(out, *g as u32);
+        w32(out, u32::from(*g));
         OK
     })
 }
@@ -1617,7 +1617,7 @@ impl Painter {
                     if f < 1e-3 { (k as i64, 0.0) } else if f > 1.0 - 1e-3 { (k as i64 + 1, 0.0) } else { (k as i64, f) }
                 };
                 let ((u0, fu), (v0, fv)) = (split(u), split(v));
-                let (w, h) = (*w as i64, *h as i64);
+                let (w, h) = (i64::from(*w), i64::from(*h));
                 let texel = |u: i64, v: i64| -> u32 {
                     if *wrap == CLAMP && (u < 0 || v < 0 || u >= w || v >= h) {
                         return 0;
@@ -1741,7 +1741,7 @@ fn GdipCloneCustomLineCap(c: &mut Ctx) -> u32 {
 }
 /// CustomLineCapTypeDefault 0, CustomLineCapTypeAdjustableArrow 1
 fn GdipGetCustomLineCapType(c: &mut Ctx) -> u32 {
-    cap_get(c.a(0), c.a(1), |x| x.arrow.is_some() as u32)
+    cap_get(c.a(0), c.a(1), |x| u32::from(x.arrow.is_some()))
 }
 fn GdipGetCustomLineCapBaseCap(c: &mut Ctx) -> u32 {
     cap_get(c.a(0), c.a(1), |x| x.base)
@@ -1838,7 +1838,7 @@ fn GdipGetAdjustableArrowCapMiddleInset(c: &mut Ctx) -> u32 {
     arrow_get(c.a(0), c.a(1), |a| a.2.to_bits())
 }
 fn GdipGetAdjustableArrowCapFillState(c: &mut Ctx) -> u32 {
-    arrow_get(c.a(0), c.a(1), |a| a.3 as u32)
+    arrow_get(c.a(0), c.a(1), |a| u32::from(a.3))
 }
 fn GdipSetAdjustableArrowCapHeight(c: &mut Ctx) -> u32 {
     let v = c.f(1);

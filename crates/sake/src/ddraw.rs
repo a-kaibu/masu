@@ -201,7 +201,7 @@ fn plain_pf(bpp: u16, r565: bool) -> [u32; 5] {
 /// DDPIXELFORMAT
 /// The bit count a pixel format says: a depth buffer of a 24-bit mask kept in 32 bits says 24
 fn pf_bits(bpp: u16, pf: [u32; 5]) -> u32 {
-    if pf[0] & 0x400 != 0 && bpp == 32 && pf[2] == 0xff_ffff { 24 } else { bpp as u32 }
+    if pf[0] & 0x400 != 0 && bpp == 32 && pf[2] == 0xff_ffff { 24 } else { u32::from(bpp) }
 }
 fn write_pf(p: u32, bpp: u16, pf: [u32; 5]) {
     mem::fill(p, 32, 0);
@@ -352,7 +352,7 @@ fn chain_len(s: &Surf) -> u32 {
 
 /// (0 for a size that does not fit: new_surface_pf refuses it)
 fn stride(w: i32, bpp: u16) -> u32 {
-    crate::gdi::image_size(w, 1, bpp as u32, 4).map_or(0, |(s, _)| s)
+    crate::gdi::image_size(w, 1, u32::from(bpp), 4).map_or(0, |(s, _)| s)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -363,7 +363,7 @@ fn new_surface(w: i32, h: i32, bpp: u16, r565: bool, caps: u32) -> Option<u32> {
 }
 fn new_surface_pf(w: i32, h: i32, bpp: u16, r565: bool, pf: [u32; 5], caps: u32) -> Option<u32> {
     // (review 2026-11-14: a guest DDSURFACEDESC of 65536 x 65536 wrapped to a 4-byte surface)
-    let (pitch, size) = crate::gdi::image_size(w, h, bpp as u32, 4)?;
+    let (pitch, size) = crate::gdi::image_size(w, h, u32::from(bpp), 4)?;
     let bits = mem::alloc(size.max(4))?;
     let hbm = crate::gdi::bitmap_over(w, h, bpp, bits, pitch, r565);
     Some(with(|s| {
@@ -1019,7 +1019,7 @@ fn S_Lock(c: &mut Ctx) -> u32 {
     let r = if rp == 0 { Rect { l: 0, t: 0, r: s.w, b: s.h } } else { Rect::read(rp) };
     write_desc(desc, Some(&s));
     w32(desc + 4, r32(desc + 4) | 0x800);
-    let bpp = s.bpp as u32 / 8;
+    let bpp = u32::from(s.bpp) / 8;
     let bits = s.bits + r.t.max(0) as u32 * s.pitch + r.l.max(0) as u32 * bpp;
     // (lpSurface: a pointer, 8 bytes at 40 in a 64-bit program)
     w32(desc + wide(36), bits);
@@ -1166,10 +1166,10 @@ fn clip_rect(r: Rect, w: i32, h: i32) -> Rect {
 fn read_px(p: *const u8, bpp: u32) -> u32 {
     unsafe {
         match bpp {
-            1 => *p as u32,
-            2 => (p as *const u16).read_unaligned() as u32,
-            3 => *p as u32 | (*p.add(1) as u32) << 8 | (*p.add(2) as u32) << 16,
-            _ => (p as *const u32).read_unaligned(),
+            1 => u32::from(*p),
+            2 => u32::from(p.cast::<u16>().read_unaligned()),
+            3 => u32::from(*p) | u32::from(*p.add(1)) << 8 | u32::from(*p.add(2)) << 16,
+            _ => p.cast::<u32>().read_unaligned(),
         }
     }
 }
@@ -1177,13 +1177,13 @@ fn write_px(p: *mut u8, bpp: u32, v: u32) {
     unsafe {
         match bpp {
             1 => *p = v as u8,
-            2 => (p as *mut u16).write_unaligned(v as u16),
+            2 => p.cast::<u16>().write_unaligned(v as u16),
             3 => {
                 *p = v as u8;
                 *p.add(1) = (v >> 8) as u8;
                 *p.add(2) = (v >> 16) as u8;
             }
-            _ => (p as *mut u32).write_unaligned(v),
+            _ => p.cast::<u32>().write_unaligned(v),
         }
     }
 }
@@ -1195,15 +1195,15 @@ fn px_mask(bpp: u32) -> u32 {
 /// The source pixel of destination pixel `i` of `d` stretched from `s`, as Windows' HEL steps:
 /// a 16.16 step rounded up, starting half a step in (but at 0 when widening a row).
 fn stretch_pick(i: i32, s: i32, d: i32, row: bool) -> i32 {
-    let step = (((s as i64) << 16) + d as i64 - 1) / d as i64;
+    let step = ((i64::from(s) << 16) + i64::from(d) - 1) / i64::from(d);
     let start = if row && d > s { 0 } else { step / 2 };
-    ((i as i64 * step + start) >> 16) as i32
+    ((i64::from(i) * step + start) >> 16) as i32
 }
 
 /// Copies `sr` of `src` to `dr` of `dst` (same format), stretching with the nearest pixel,
 /// mirrored left-right / up-down if asked, skipping source pixels in the key range.
 fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mirror: (bool, bool)) {
-    let bpp = dst.bpp as u32 / 8;
+    let bpp = u32::from(dst.bpp) / 8;
     let (dw, dh, sw, sh) = (dr.r - dr.l, dr.b - dr.t, sr.r - sr.l, sr.b - sr.t);
     if dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 {
         return;
@@ -1312,7 +1312,7 @@ fn surf_bytes(s: &Surf) -> Option<&'static mut [u8]> {
 
 fn fill(dst: &Surf, r: Rect, color: u32) {
     let r = clip_rect(r, dst.w, dst.h);
-    let bpp = dst.bpp as u32 / 8;
+    let bpp = u32::from(dst.bpp) / 8;
     let Some(all) = surf_bytes(dst) else { return };
     let base = all.as_mut_ptr();
     for y in r.t..r.b {
@@ -1772,7 +1772,7 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
             bpp = r32(pf + 12) as u16;
             r565 = bpp == 16 && r32(pf + 20) == 0x07e0;
             let a = if pff & 1 != 0 { r32(pf + 28) } else { 0 };
-            pfv = Some([0x40 | (a != 0) as u32, r32(pf + 16), r32(pf + 20), r32(pf + 24), a]);
+            pfv = Some([0x40 | u32::from(a != 0), r32(pf + 16), r32(pf + 20), r32(pf + 24), a]);
         }
     } else if caps & CAPS_ZBUFFER != 0 {
         bpp = 16;
@@ -1892,7 +1892,7 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
     with(|s| s.surfs.get_mut(&id).map(|x| x.faces = tops[1..].iter().rev().copied().collect()));
     let mut prev = id;
     for i in 0..backs {
-        let bc = (caps & !(CAPS_PRIMARY | CAPS_FRONTBUFFER)) | CAPS_BACKBUFFER * (i == 0) as u32 | CAPS_FLIP | CAPS_COMPLEX;
+        let bc = (caps & !(CAPS_PRIMARY | CAPS_FRONTBUFFER)) | CAPS_BACKBUFFER * u32::from(i == 0) | CAPS_FLIP | CAPS_COMPLEX;
         let Some(b) = new_surface(w, h, bpp, r565, bc) else { return undo_create(c, &made) };
         made.push(b);
         with(|s| {
@@ -2049,7 +2049,7 @@ fn D_GetScanLine(c: &mut Ctx) -> u32 {
     DD_OK
 }
 fn D_GetVerticalBlankStatus(c: &mut Ctx) -> u32 {
-    put32(c.a(1), in_vblank(beam_clock()) as u32);
+    put32(c.a(1), u32::from(in_vblank(beam_clock())));
     DD_OK
 }
 
@@ -2072,10 +2072,10 @@ fn ms_to_next_frame(t: f64) -> u32 {
     let frame = (t * HZ).floor();
     let mut ms = (((frame + 1.0) / HZ - t) * 1000.0).ceil().max(1.0) as u32;
     // (rounding: never short of the start, never past the one after)
-    while ((t + ms as f64 / 1000.0) * HZ).floor() <= frame {
+    while ((t + f64::from(ms) / 1000.0) * HZ).floor() <= frame {
         ms += 1;
     }
-    while ms > 1 && ((t + ms as f64 / 1000.0) * HZ).floor() > frame + 1.0 {
+    while ms > 1 && ((t + f64::from(ms) / 1000.0) * HZ).floor() > frame + 1.0 {
         ms -= 1;
     }
     ms
@@ -2482,7 +2482,7 @@ mod tests {
         fn a_vblank_wait_crosses_one_frame_start(t in 0.0f64..100_000.0) {
             let ms = ms_to_next_frame(t);
             prop_assert!((1..=17).contains(&ms), "{ms}");
-            let (a, b) = ((t * HZ).floor(), ((t + ms as f64 / 1000.0) * HZ).floor());
+            let (a, b) = ((t * HZ).floor(), ((t + f64::from(ms) / 1000.0) * HZ).floor());
             prop_assert_eq!(b, a + 1.0);
         }
 
@@ -2490,8 +2490,8 @@ mod tests {
         /// across two waits is a rate in 55..=65, never a division by 0
         #[test]
         fn two_vblank_waits_measure_about_60_hz(t in 0.0f64..100_000.0) {
-            let t1 = t + ms_to_next_frame(t) as f64 / 1000.0;
-            let t2 = t1 + ms_to_next_frame(t1) as f64 / 1000.0;
+            let t1 = t + f64::from(ms_to_next_frame(t)) / 1000.0;
+            let t2 = t1 + f64::from(ms_to_next_frame(t1)) / 1000.0;
             // (the counter at 10 MHz, as kernel32's QueryPerformanceFrequency)
             let ticks = ((t2 - t1) * 1e7) as u64;
             prop_assert!(ticks > 0);
@@ -2592,7 +2592,7 @@ mod blit_tests {
     use proptest::prelude::*;
 
     fn blit_ref(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mirror: (bool, bool)) {
-        let bpp = dst.bpp as u32 / 8;
+        let bpp = u32::from(dst.bpp) / 8;
         let (dw, dh, sw, sh) = (dr.r - dr.l, dr.b - dr.t, sr.r - sr.l, sr.b - sr.t);
         if dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 {
             return;
@@ -2659,7 +2659,7 @@ mod blit_tests {
 
     fn surf_at(bits: u32, w: i32, h: i32, bpp: u16) -> Surf {
         Surf {
-            w, h, bpp, pf: [0; 5], pitch: ((w as u32 * bpp as u32 / 8) + 3) & !3, bits, hbm: 0, caps: 0, ck_src: None, ck_dst: None, next: 0,
+            w, h, bpp, pf: [0; 5], pitch: ((w as u32 * u32::from(bpp) / 8) + 3) & !3, bits, hbm: 0, caps: 0, ck_src: None, ck_dst: None, next: 0,
             clipper: 0, palette: 0, dc: 0, refs: 1, blocks: [0; 5], lock: None, zbuf: 0, dd: 0, v7: false, dd_held: 0, mip: 0, mips: 0,
             sub: false, implicit: false, parent: 0, added: 0, caps2: 0, faces: Vec::new(), private: Vec::new(),
         }
@@ -2745,7 +2745,7 @@ mod blit_tests {
             let rect_ok_ = |r: Rect, w: i32, h: i32| r.l < r.r && r.t < r.b && r.l >= 0 && r.t >= 0 && r.r <= w && r.b <= h;
             let before = mem::slice(DST, dn).to_vec();
             let (got, want) = if k.fast {
-                let trans = k.flags[0] as u32 | (k.flags[1] as u32) << 1 | 0x10;
+                let trans = u32::from(k.flags[0]) | u32::from(k.flags[1]) << 1 | 0x10;
                 let (x0, y0) = (k.dr.l, k.dr.t);
                 let dr = Rect { l: x0, t: y0, r: x0 + k.sr.r - k.sr.l, b: y0 + k.sr.b - k.sr.t };
                 let want = if !rect_ok_(dr, dw, dh) || !rect_ok_(k.sr, s_w, s_h) {

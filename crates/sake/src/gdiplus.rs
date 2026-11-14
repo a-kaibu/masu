@@ -31,8 +31,8 @@ fn bytes_per_pixel(fmt: u32) -> u32 {
 
 /// BGRA -> 16-bit pixel and back (5-bit channels widened by bit replication)
 fn pack16(fmt: u32, [b, g, r]: [u8; 3]) -> u16 {
-    let (b, r) = ((b >> 3) as u16, (r >> 3) as u16);
-    if fmt == FMT_16RGB565 { r << 11 | ((g >> 2) as u16) << 5 | b } else { r << 10 | ((g >> 3) as u16) << 5 | b }
+    let (b, r) = (u16::from(b >> 3), u16::from(r >> 3));
+    if fmt == FMT_16RGB565 { r << 11 | u16::from(g >> 2) << 5 | b } else { r << 10 | u16::from(g >> 3) << 5 | b }
 }
 fn unpack16(fmt: u32, v: u16) -> [u8; 3] {
     let x5 = |c: u16| ((c << 3) | (c >> 2)) as u8;
@@ -134,14 +134,14 @@ fn indexed(fmt: u32) -> bool {
 
 /// GDI+'s premultiplication (winref gdip, every case of the probe): c * a / 255 rounded
 pub(crate) fn premul(c: u8, a: u8) -> u8 {
-    ((c as u32 * a as u32 + 127) / 255) as u8
+    ((u32::from(c) * u32::from(a) + 127) / 255) as u8
 }
 /// and its inverse: c times the reciprocal 0xff00 / a, truncated (a = 127: 127 -> 254)
 pub(crate) fn unpremul(c: u8, a: u8) -> u8 {
     if a == 0 {
         return 0;
     }
-    ((c as u32 * (0xff00 / a as u32)) >> 8).min(255) as u8
+    ((u32::from(c) * (0xff00 / u32::from(a))) >> 8).min(255) as u8
 }
 
 static IMAGES: Mutex<Option<HashMap<u32, Bitmap>>> = Mutex::new(None);
@@ -227,7 +227,7 @@ fn new_image(data: &[u8], out: u32, bad: u32) -> u32 {
 
 fn get_bits(row: &[u8], x: u32, bits: u32) -> u32 {
     let bit = x * bits;
-    let b = row.get((bit / 8) as usize).copied().unwrap_or(0) as u32;
+    let b = u32::from(row.get((bit / 8) as usize).copied().unwrap_or(0));
     (b >> (8 - bits - bit % 8)) & ((1 << bits) - 1)
 }
 
@@ -366,7 +366,7 @@ fn GdipGetImageDecodersSize(c: &mut Ctx) -> u32 {
 }
 fn GdipGetImageDecoders(c: &mut Ctx) -> u32 {
     let (n, size, out) = (c.a(0), c.a(1), c.a(2));
-    let blob = decoders_blob(out as u64, mem::ps());
+    let blob = decoders_blob(u64::from(out), mem::ps());
     if n != DECODERS.len() as u32 || size != blob.len() as u32 || out == 0 {
         return INVALID_PARAMETER;
     }
@@ -420,7 +420,7 @@ impl Bitmap {
     fn nearest(&self, [b, g, r, a]: [u8; 4]) -> u8 {
         let d = |c: u32| {
             let [cb, cg, cr, ca] = c.to_le_bytes();
-            let e = |x: u8, y: u8| (x as i32 - y as i32).pow(2);
+            let e = |x: u8, y: u8| (i32::from(x) - i32::from(y)).pow(2);
             e(cb, b) + e(cg, g) + e(cr, r) + e(ca, a)
         };
         (0..self.palette.len()).min_by_key(|&k| d(self.palette[k])).unwrap_or(0) as u8
@@ -483,7 +483,7 @@ fn GdipBitmapLockBits(c: &mut Ctx) -> u32 {
         let bits = lock_bits(fmt);
         let stride = ((w * bits).div_ceil(8) + 3) & !3;
         // (no room on the guest heap: OutOfMemory, not rows written from address 0)
-        let size = (stride as u64 * h.max(1) as u64).min(u32::MAX as u64) as u32;
+        let size = (u64::from(stride) * u64::from(h.max(1))).min(u64::from(u32::MAX)) as u32;
         let buf = mem::heap_alloc(size, true);
         if buf == 0 {
             return Err(3);
@@ -494,7 +494,7 @@ fn GdipBitmapLockBits(c: &mut Ctx) -> u32 {
             for i in 0..w {
                 let s = ((y + j) * b.w + x + i) as usize;
                 if own_index {
-                    let v = b.idx[s] as u32;
+                    let v = u32::from(b.idx[s]);
                     let bit = i * bits;
                     row[(bit / 8) as usize] |= (v << (8 - bits - bit % 8)) as u8;
                     continue;
@@ -785,7 +785,7 @@ mod decoder_tests {
         #[test]
         fn pointers_stay_inside(base in 0u64..0xffff_0000, x64 in any::<bool>()) {
             let ps = if x64 { 8 } else { 4 };
-            let base = base & !(ps as u64 - 1);
+            let base = base & !(u64::from(ps) - 1);
             let b = decoders_blob(base, ps);
             prop_assert_eq!(b.len(), decoders_blob(0, ps).len());
             let one = (32 + 7 * ps + 16) as usize;

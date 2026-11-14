@@ -36,7 +36,7 @@ fn method(c: &mut Ctx) -> u32 {
     if mem::x64() {
         // (the host reads 8-byte slots: the method's arguments, the rest 0)
         let a: [u64; 16] = std::array::from_fn(|i| if i < nargs { c.a64(i as u32) } else { 0 });
-        return unsafe { kura::d3d11::call(id, a.as_ptr() as *const u32, calls()) };
+        return unsafe { kura::d3d11::call(id, a.as_ptr().cast::<u32>(), calls()) };
     }
     unsafe { kura::d3d11::call(id, (c.esp + 4) as usize as *const u32, calls()) }
 }
@@ -46,9 +46,9 @@ fn host(id: u32, args: &[u32]) -> u32 {
     if mem::x64() {
         let mut a = [0u64; 16];
         for (d, &s) in a.iter_mut().zip(args) {
-            *d = s as u64;
+            *d = u64::from(s);
         }
-        return unsafe { kura::d3d11::call(id, a.as_ptr() as *const u32, calls()) };
+        return unsafe { kura::d3d11::call(id, a.as_ptr().cast::<u32>(), calls()) };
     }
     unsafe { kura::d3d11::call(id, args.as_ptr(), calls()) }
 }
@@ -65,7 +65,7 @@ fn init() {
             let v = mem::heap_alloc(ps * m.len() as u32, true);
             for (j, &args) in m.iter().enumerate() {
                 let float = args == 0;
-                let bytes = if float { 8 } else { 4 * args as u32 };
+                let bytes = if float { 8 } else { 4 * u32::from(args) };
                 let a = host_fn(&format!("d3d11:{i}:{j}"), method, bytes);
                 crate::api::set_tag(a, i << 8 | j as u32 | if float { FLOAT } else { 0 }, args as usize);
                 mem::wp(v + ps * j as u32, a);
@@ -88,7 +88,7 @@ fn D3D11CreateDevice(c: &mut Ctx) -> u32 {
 }
 /// (factory, adapter, flags, levels, count, device)
 fn D3D11CoreCreateDevice(c: &mut Ctx) -> u32 {
-    let a = [c.a(1), (c.a(1) == 0) as u32, 0, c.a(2), c.a(3), c.a(4), 7, 0, 0, c.a(5), 0, 0];
+    let a = [c.a(1), u32::from(c.a(1) == 0), 0, c.a(2), c.a(3), c.a(4), 7, 0, 0, c.a(5), 0, 0];
     host(CREATE_DEVICE, &a)
 }
 /// d3d10.dll / d3d10_1.dll: the D3D11 device's D3D10 face (crates/kura/src/d3d11/d3d10.rs)

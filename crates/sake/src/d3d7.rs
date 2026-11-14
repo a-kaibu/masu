@@ -118,7 +118,7 @@ impl Dev {
         let mut rs = vec![0u32; 256];
         for (k, v) in [
             (4, 1),
-            (RS_ZENABLE, z as u32),
+            (RS_ZENABLE, u32::from(z)),
             (8, 3),
             (RS_SHADEMODE, 2),
             (RS_ZWRITEENABLE, 1),
@@ -681,7 +681,7 @@ fn process(c: &mut Ctx, src: Option<Src>, src_index: u32, src_fvf: u32) -> u32 {
     // (lit only with D3DVOP_LIGHT; a Direct3D 6 device has no D3DRENDERSTATE_LIGHTING: a material
     // and normals light)
     let lit = if r32(devb) == dev3_vtbl() { dev3_lights(&d, src_fvf) } else { d.rs[RS_LIGHTING] != 0 };
-    d.rs[RS_LIGHTING] = (lit && op & D3DVOP_LIGHT != 0) as u32;
+    d.rs[RS_LIGHTING] = u32::from(lit && op & D3DVOP_LIGHT != 0);
     let dl = Layout::of(dfvf);
     let t = Xform::new(&d);
     for i in 0..count.min(dn.saturating_sub(dst_index)) {
@@ -1959,8 +1959,8 @@ impl Raster {
                         let dst = unsafe { row.add(x0 as usize * 4) };
                         for k in 0..(x1 - x0 + 1) as usize {
                             unsafe {
-                                let v = (src.add(4 * k) as *const u32).read_unaligned();
-                                (dst.add(4 * k) as *mut u32).write_unaligned(v & cp.mask);
+                                let v = src.add(4 * k).cast::<u32>().read_unaligned();
+                                dst.add(4 * k).cast::<u32>().write_unaligned(v & cp.mask);
                             }
                         }
                         continue;
@@ -2084,7 +2084,7 @@ fn draw(c: &mut Ctx, prim: u32, src: Src, idx: Option<(u32, u32)>, start: u32, c
     let mut cache: HashMap<u32, Vtx> = HashMap::default();
     let mut get = |k: u32| -> Vtx {
         let i = match idx {
-            Some((p, _)) => mem::r16(p + 2 * k) as u32 + start,
+            Some((p, _)) => u32::from(mem::r16(p + 2 * k)) + start,
             None => start + k,
         };
         *cache.entry(i).or_insert_with(|| src.fetch(i, &d, &t))
@@ -2466,7 +2466,7 @@ fn dev3_lights(d: &Dev, fvf: u32) -> bool {
 }
 /// D3DRENDERSTATE_LIGHTING for a Direct3D 6 draw of `fvf` with `flags` (D3DDP_DONOTLIGHT)
 fn lit3(c: &mut Ctx, fvf: u32, flags: u32) {
-    dev(c, |d| d.rs[RS_LIGHTING] = (dev3_lights(d, fvf) && flags & D3DDP_DONOTLIGHT == 0) as u32);
+    dev(c, |d| d.rs[RS_LIGHTING] = u32::from(dev3_lights(d, fvf) && flags & D3DDP_DONOTLIGHT == 0));
 }
 fn E_DrawPrimitive(c: &mut Ctx) -> u32 {
     lit3(c, c.a(2), c.a(5));
@@ -2950,7 +2950,7 @@ fn P_GetBackground(c: &mut Ctx) -> u32 {
     }
     let bg = vp_of(c).map_or(0, |x| x.bg);
     put32(h, bg);
-    put32(valid, (bg != 0) as u32);
+    put32(valid, u32::from(bg != 0));
     D3D_OK
 }
 fn P_SetBackgroundDepth(c: &mut Ctx) -> u32 {
@@ -3415,7 +3415,7 @@ mod tests {
 
     fn raster(buf: &mut [u32], w: i32, h: i32) -> Raster {
         Raster {
-            rt: buf.as_mut_ptr() as *mut u8,
+            rt: buf.as_mut_ptr().cast::<u8>(),
             pitch: w as usize * 4,
             bpp: 4,
             fmt: ARGB,
@@ -3462,7 +3462,7 @@ mod tests {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
-            (seed % n as u64) as u32
+            (seed % u64::from(n)) as u32
         };
         for _ in 0..300 {
             let (w, h) = (24, 20);
@@ -3496,7 +3496,7 @@ mod tests {
         for y in 0..h {
             for x in 0..w {
                 let inside = (3..=9).contains(&x) && (4..=7).contains(&y);
-                assert_eq!(buf[(y * w + x) as usize] >> 16 & 0xff, inside as u32, "({x}, {y})");
+                assert_eq!(buf[(y * w + x) as usize] >> 16 & 0xff, u32::from(inside), "({x}, {y})");
             }
         }
     }
@@ -3516,7 +3516,7 @@ mod tests {
                 ca: [2, 1],
                 aop: 2,
                 aa: [2, 1],
-                tex: Some(Tex { bits: texels.as_ptr() as *const u8, w: tw, h: th, pitch: tw as usize * 4, bpp: 4, fmt: ARGB, pal: None, key: None }),
+                tex: Some(Tex { bits: texels.as_ptr().cast::<u8>(), w: tw, h: th, pitch: tw as usize * 4, bpp: 4, fmt: ARGB, pal: None, key: None }),
                 tci: 0,
                 addr: [3, 3],
                 border: [0.; 4],
@@ -3661,8 +3661,8 @@ mod tests {
         assert_eq!(vb_size(FVF_DIFFUSE, 3), Some(48), "no position: sized as XYZ");
         for fvf in (2..0x1000u32).step_by(2).filter(|f| f & 0xe != 0) {
             for n in [1u32, 7, 0x0010_0000, 0x7fff_ffff, u32::MAX] {
-                let want = Layout::of(fvf).size as u64 * n as u64;
-                assert_eq!(vb_size(fvf, n), (want <= MAX_VB as u64).then_some(want as u32), "{fvf:#x} x {n}");
+                let want = u64::from(Layout::of(fvf).size) * u64::from(n);
+                assert_eq!(vb_size(fvf, n), (want <= u64::from(MAX_VB)).then_some(want as u32), "{fvf:#x} x {n}");
             }
         }
     }
@@ -3814,7 +3814,7 @@ mod tests {
                 for x in 0..a.w {
                     let (p, q) = (a.at(x, y), b.at(x, y));
                     let bad = (p & !mask) != (q & !mask)
-                        || a.fmt.ch.iter().any(|&(sh, mx)| ((p >> sh & mx) as i64 - (q >> sh & mx) as i64).unsigned_abs() as u32 > tol);
+                        || a.fmt.ch.iter().any(|&(sh, mx)| (i64::from(p >> sh & mx) - i64::from(q >> sh & mx)).unsigned_abs() as u32 > tol);
                     if bad {
                         return Some((x, y, p, q));
                     }

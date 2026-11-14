@@ -93,10 +93,10 @@ pub fn pick(x: f64, y: f64, dx: f64, dy: f64, vp: [i32; 4]) -> Option<M4> {
         return None;
     }
     let mut m = identity();
-    m[0] = vp[2] as f64 / dx;
-    m[5] = vp[3] as f64 / dy;
-    m[12] = (vp[2] as f64 - 2.0 * (x - vp[0] as f64)) / dx;
-    m[13] = (vp[3] as f64 - 2.0 * (y - vp[1] as f64)) / dy;
+    m[0] = f64::from(vp[2]) / dx;
+    m[5] = f64::from(vp[3]) / dy;
+    m[12] = (f64::from(vp[2]) - 2.0 * (x - f64::from(vp[0]))) / dx;
+    m[13] = (f64::from(vp[3]) - 2.0 * (y - f64::from(vp[1]))) / dy;
     Some(m)
 }
 
@@ -154,8 +154,8 @@ pub fn project(obj: [f64; 3], model: &M4, proj: &M4, vp: [i32; 4]) -> Option<[f6
     }
     let n = [c[0] / c[3], c[1] / c[3], c[2] / c[3]];
     Some([
-        vp[0] as f64 + (n[0] * 0.5 + 0.5) * vp[2] as f64,
-        vp[1] as f64 + (n[1] * 0.5 + 0.5) * vp[3] as f64,
+        f64::from(vp[0]) + (n[0] * 0.5 + 0.5) * f64::from(vp[2]),
+        f64::from(vp[1]) + (n[1] * 0.5 + 0.5) * f64::from(vp[3]),
         n[2] * 0.5 + 0.5,
     ])
 }
@@ -167,8 +167,8 @@ pub fn unproject(win: [f64; 3], model: &M4, proj: &M4, vp: [i32; 4]) -> Option<[
         return None;
     }
     let n = [
-        (win[0] - vp[0] as f64) / vp[2] as f64 * 2.0 - 1.0,
-        (win[1] - vp[1] as f64) / vp[3] as f64 * 2.0 - 1.0,
+        (win[0] - f64::from(vp[0])) / f64::from(vp[2]) * 2.0 - 1.0,
+        (win[1] - f64::from(vp[1])) / f64::from(vp[3]) * 2.0 - 1.0,
         win[2] * 2.0 - 1.0,
         1.0,
     ];
@@ -223,7 +223,7 @@ pub fn scale_image(comps: usize, wi: usize, hi: usize, src: &[u8], wo: usize, ho
     if wi == 0 || hi == 0 || wo == 0 || ho == 0 {
         return out;
     }
-    let px = |x: usize, y: usize, k: usize| src.get(y * si + x * comps + k).copied().unwrap_or(0) as u32 * 257;
+    let px = |x: usize, y: usize, k: usize| u32::from(src.get(y * si + x * comps + k).copied().unwrap_or(0)) * 257;
     if wi == wo * 2 && hi == ho * 2 {
         for y in 0..ho {
             for x in 0..wo {
@@ -296,7 +296,7 @@ pub fn nearest_pot(n: usize, max: usize) -> usize {
 /// libGLU's halveImage_ubyte: each 2x2 block's rounded mean; a single row or column (1D) halves
 /// pairs, truncating. `si` is the input's row size in bytes; the output is tightly packed.
 pub fn halve_ubyte(comps: usize, w: usize, h: usize, src: &[u8], si: usize) -> Vec<u8> {
-    let at = |o: usize| src.get(o).copied().unwrap_or(0) as u32;
+    let at = |o: usize| u32::from(src.get(o).copied().unwrap_or(0));
     let mut out = Vec::new();
     if w == 1 || h == 1 {
         if h == 1 {
@@ -333,7 +333,7 @@ pub fn scale_ubyte(comps: usize, wi: usize, hi: usize, src: &[u8], si: usize, wo
     if wi == wo * 2 && hi == ho * 2 {
         return halve_ubyte(comps, wi, hi, src, si);
     }
-    let at = |o: isize| if o < 0 { 0.0 } else { src.get(o as usize).copied().unwrap_or(0) as f32 };
+    let at = |o: isize| if o < 0 { 0.0 } else { f32::from(src.get(o as usize).copied().unwrap_or(0)) };
     let g = comps as isize;
     let ys = si as isize;
     let convy = hi as f32 / ho as f32;
@@ -555,7 +555,7 @@ fn darg(c: &Ctx, slot: u32, pos: u32) -> f64 {
     if mem::x64() {
         f64::from_bits(c.xmm(pos))
     } else {
-        f64::from_bits(c.a(slot) as u64 | (c.a(slot + 1) as u64) << 32)
+        f64::from_bits(u64::from(c.a(slot)) | u64::from(c.a(slot + 1)) << 32)
     }
 }
 fn read_m4(p: u32) -> M4 {
@@ -770,7 +770,7 @@ fn gluCheckExtension(c: &mut Ctx) -> u32 {
     if n == 0 || l == 0 {
         return 0;
     }
-    has_extension(&mem::cstr(n), &mem::cstr(l)) as u32
+    u32::from(has_extension(&mem::cstr(n), &mem::cstr(l)))
 }
 
 // ---- quadrics: { draw style, normals, orientation, texture } -----------------------------------
@@ -847,16 +847,16 @@ fn gluCylinder(c: &mut Ctx) -> u32 {
     let (slices, stacks) = (slices.min(CACHE_SIZE - 1), stacks.min(CACHE_SIZE - 1));
     let nz = (base - top) / height.max(f64::MIN_POSITIVE);
     for j in 0..stacks {
-        let (z0, z1) = (height * j as f64 / stacks as f64, height * (j + 1) as f64 / stacks as f64);
-        let (r0, r1) = (base + (top - base) * j as f64 / stacks as f64, base + (top - base) * (j + 1) as f64 / stacks as f64);
+        let (z0, z1) = (height * f64::from(j) / f64::from(stacks), height * f64::from(j + 1) / f64::from(stacks));
+        let (r0, r1) = (base + (top - base) * f64::from(j) / f64::from(stacks), base + (top - base) * f64::from(j + 1) / f64::from(stacks));
         gl!("glBegin", &[strip_mode(q[0])]);
         for i in 0..=slices {
-            let a = 2.0 * PI * i as f64 / slices as f64;
+            let a = 2.0 * PI * f64::from(i) / f64::from(slices);
             let (s, co) = (a.sin(), a.cos());
             let n = norm([s, co, nz]);
-            let u = i as f64 / slices as f64;
-            vtx(q, n, (u, j as f64 / stacks as f64), [r0 * s, r0 * co, z0]);
-            vtx(q, n, (u, (j + 1) as f64 / stacks as f64), [r1 * s, r1 * co, z1]);
+            let u = f64::from(i) / f64::from(slices);
+            vtx(q, n, (u, f64::from(j) / f64::from(stacks)), [r0 * s, r0 * co, z0]);
+            vtx(q, n, (u, f64::from(j + 1) / f64::from(stacks)), [r1 * s, r1 * co, z1]);
         }
         gl!("glEnd", &[]);
     }
@@ -876,11 +876,11 @@ fn gluSphere(c: &mut Ctx) -> u32 {
     }
     let (slices, stacks) = (slices.min(CACHE_SIZE - 1), stacks.min(CACHE_SIZE - 1));
     for j in 0..stacks {
-        let (p0, p1) = (PI * j as f64 / stacks as f64, PI * (j + 1) as f64 / stacks as f64);
+        let (p0, p1) = (PI * f64::from(j) / f64::from(stacks), PI * f64::from(j + 1) / f64::from(stacks));
         gl!("glBegin", &[strip_mode(q[0])]);
         for i in 0..=slices {
-            let a = 2.0 * PI * i as f64 / slices as f64;
-            let u = 1.0 - i as f64 / slices as f64;
+            let a = 2.0 * PI * f64::from(i) / f64::from(slices);
+            let u = 1.0 - f64::from(i) / f64::from(slices);
             for p in [p0, p1] {
                 let n = [-a.sin() * p.sin(), a.cos() * p.sin(), p.cos()];
                 vtx(q, n, (u, 1.0 - p / PI), [n[0] * r, n[1] * r, n[2] * r]);
@@ -899,10 +899,10 @@ fn partial_disk(q: [u32; 4], inner: f64, outer: f64, slices: i32, loops: i32, st
     let (slices, loops) = (slices.min(CACHE_SIZE - 1), loops.min(MAX_LOOPS));
     let sweep = sweep.clamp(-360.0, 360.0);
     for l in 0..loops {
-        let (r0, r1) = (inner + (outer - inner) * l as f64 / loops as f64, inner + (outer - inner) * (l + 1) as f64 / loops as f64);
+        let (r0, r1) = (inner + (outer - inner) * f64::from(l) / f64::from(loops), inner + (outer - inner) * f64::from(l + 1) / f64::from(loops));
         gl!("glBegin", &[strip_mode(q[0])]);
         for i in 0..=slices {
-            let a = (start + sweep * i as f64 / slices as f64) * PI / 180.0;
+            let a = (start + sweep * f64::from(i) / f64::from(slices)) * PI / 180.0;
             let (s, co) = (a.sin(), a.cos());
             for r in [r1, r0] {
                 vtx(q, [0.0, 0.0, 1.0], (0.5 + s * r / outer / 2.0, 0.5 + co * r / outer / 2.0), [r * s, r * co, 0.0]);

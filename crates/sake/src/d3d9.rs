@@ -214,7 +214,7 @@ fn method(c: &mut Ctx) -> u32 {
         // a float in ST0 (x64: XMM0)
         GETNPATCHMODE => {
             let bits = d3d_call(id, &[c.a(0)]);
-            c.st0 = Some(if mem::x64() { f64::from_bits(bits as u64) } else { f32::from_bits(bits) as f64 });
+            c.st0 = Some(if mem::x64() { f64::from_bits(u64::from(bits)) } else { f64::from(f32::from_bits(bits)) });
             0
         }
         SURFACE_GETDC => surface_get_dc(c),
@@ -235,7 +235,7 @@ fn method(c: &mut Ctx) -> u32 {
             for (i, s) in slots.iter_mut().enumerate().take(n) {
                 *s = if FLOAT_ARGS.contains(&(id, i as u32)) && i < 4 { c.xmm(i as u32) & 0xffff_ffff } else { c.a64(i as u32) };
             }
-            unsafe { kura::d3d9::vnhost_d3d9_call(id, slots.as_ptr() as *const u32, &CALLS) }
+            unsafe { kura::d3d9::vnhost_d3d9_call(id, slots.as_ptr().cast::<u32>(), &CALLS) }
         }
         _ => unsafe { kura::d3d9::vnhost_d3d9_call(id, (c.esp + 4) as usize as *const u32, &CALLS) },
     }
@@ -261,9 +261,9 @@ fn d3d_call(id: u32, args: &[u32]) -> u32 {
         let mut wide = [0u64; 16];
         assert!(args.len() <= wide.len());
         for (w, &a) in wide.iter_mut().zip(args) {
-            *w = a as u64;
+            *w = u64::from(a);
         }
-        return unsafe { kura::d3d9::vnhost_d3d9_call(id, wide.as_ptr() as *const u32, &CALLS) };
+        return unsafe { kura::d3d9::vnhost_d3d9_call(id, wide.as_ptr().cast::<u32>(), &CALLS) };
     }
     unsafe { kura::d3d9::vnhost_d3d9_call(id, args.as_ptr(), &CALLS) }
 }
@@ -302,7 +302,7 @@ pub(crate) fn read_bgra(obj: u32, surface: bool) -> Option<(u32, u32, Vec<u8>)> 
 /// One row of a D3DFMT_A8R8G8B8 / X8R8G8B8 / R5G6B5 / X1R5G5B5 / A1R5G5B5 surface as BGRA
 /// (X formats opaque).
 pub(crate) fn widen_bgra(row: &[u8], fmt: u32) -> Vec<u8> {
-    let x5 = |v: u16, s: u32| ((v >> s & 31) as u32 * 255 / 31) as u8;
+    let x5 = |v: u16, s: u32| (u32::from(v >> s & 31) * 255 / 31) as u8;
     match fmt {
         21 => row.to_vec(),
         22 => row.chunks(4).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
@@ -310,7 +310,7 @@ pub(crate) fn widen_bgra(row: &[u8], fmt: u32) -> Vec<u8> {
             .chunks(2)
             .flat_map(|p| {
                 let v = u16::from_le_bytes([p[0], p[1]]);
-                [x5(v, 0), ((v >> 5 & 63) as u32 * 255 / 63) as u8, x5(v, 11), 255]
+                [x5(v, 0), (u32::from(v >> 5 & 63) * 255 / 63) as u8, x5(v, 11), 255]
             })
             .collect(),
         _ => row

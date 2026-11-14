@@ -11,7 +11,7 @@ const OPS: [&str; 6] = ["Begin", "Draw", "Push", "Pop", "Flush", "End"];
 
 /// (an HRESULT as the spec writes it: less 0x88990000)
 fn code(hr: u32) -> i64 {
-    if hr == 0 { 0 } else { (hr - 0x8899_0000) as i64 }
+    if hr == 0 { 0 } else { i64::from(hr - 0x8899_0000) }
 }
 
 fn run(seed: u64) -> Vec<(usize, i64)> {
@@ -39,9 +39,9 @@ fn run(seed: u64) -> Vec<(usize, i64)> {
                     d.begin();
                     0
                 }
-                1 => d.draw() as i64,
-                2 => d.push() as i64,
-                3 => d.pop() as i64,
+                1 => i64::from(d.draw()),
+                2 => i64::from(d.push()),
+                3 => i64::from(d.pop()),
                 4 => code(d.flush()),
                 _ => code(d.end()),
             };
@@ -74,7 +74,7 @@ fn check(steps: &[(usize, i64)], seed: u64) {
                     fail(1);
                     0
                 } else {
-                    clips += (OPS[op] == "Push") as i64;
+                    clips += i64::from(OPS[op] == "Push");
                     1
                 }
             }
