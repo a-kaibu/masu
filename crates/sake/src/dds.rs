@@ -29,8 +29,34 @@ pub struct Dds {
     pub depth: u32,
     pub levels: u32,
     pub fmt: u32,
-    /// bits of the cube faces present (bit k: face k of D3DCUBEMAP_FACES); 0: not a cube map
-    pub faces: u32,
+    /// the cube faces present; None: not a cube map
+    pub faces: Option<CubeFaces>,
+}
+
+/// The faces a cube map file has: a non-empty subset of the six (bit k: face k of
+/// D3DCUBEMAP_FACES), so a cube map without faces can't be made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CubeFaces(u8);
+
+impl CubeFaces {
+    /// The faces caps2's bits name (FACES), None for none.
+    fn of_caps2(caps2: u32) -> Option<Self> {
+        let bits = FACES.iter().zip(0u8..).filter(|&(&b, _)| caps2 & b != 0).fold(0u8, |m, (_, k)| m | 1 << k);
+        (bits != 0).then_some(Self(bits))
+    }
+    /// bit k: face k
+    pub fn bits(self) -> u8 {
+        self.0
+    }
+    /// how many faces the file has
+    pub fn count(self) -> u32 {
+        self.0.count_ones()
+    }
+    /// `face`'s place in the file (0..6 face numbers), None for one it doesn't have
+    pub fn rank(self, face: u32) -> Option<u32> {
+        let bit = 1u8.checked_shl(face).filter(|&b| face < 6 && self.0 & b != 0)?;
+        Some((self.0 & (bit - 1)).count_ones())
+    }
 }
 
 /// The D3DFORMAT of a DDS pixel format (the 32 bytes at 76), None for one not handled.
@@ -100,11 +126,12 @@ pub fn parse(data: &[u8]) -> Option<Dds> {
     let max = 32 - w.max(h).max(depth).leading_zeros();
     let levels = g(28).clamp(1, max.max(1));
     let faces = if caps2 & CUBEMAP != 0 {
-        FACES.iter().enumerate().filter(|(_, &b)| caps2 & b != 0).fold(0, |m, (k, _)| m | 1 << k)
+        // (a cube map that names no face, or isn't square: not one)
+        Some(CubeFaces::of_caps2(caps2).filter(|_| w == h)?)
     } else {
-        0
+        None
     };
-    if w == 0 || h == 0 || w > 16384 || h > 16384 || depth > 2048 || caps2 & CUBEMAP != 0 && (faces == 0 || w != h) {
+    if w == 0 || h == 0 || w > 16384 || h > 16384 || depth > 2048 {
         return None;
     }
     let d = Dds { w, h, depth, levels, fmt, faces };
@@ -128,7 +155,7 @@ impl Dds {
     }
     /// The faces in the file (1 for a 2D or volume texture).
     pub fn face_count(&self) -> u32 {
-        if self.faces == 0 { 1 } else { self.faces.count_ones() }
+        self.faces.map_or(1, CubeFaces::count)
     }
     /// Where level `level` of face `face` (0..6; 0 for a 2D texture) starts in the file and its
     /// length; None for a face the file doesn't have.
@@ -136,13 +163,9 @@ impl Dds {
         if level >= self.levels {
             return None;
         }
-        let k = if self.faces == 0 {
-            (face == 0).then_some(0)?
-        } else {
-            if face >= 6 || self.faces & 1 << face == 0 {
-                return None;
-            }
-            (self.faces & ((1 << face) - 1)).count_ones()
+        let k = match self.faces {
+            None => (face == 0).then_some(0)?,
+            Some(f) => f.rank(face)?,
         };
         let at = HEADER as u64 + u64::from(k) * self.face_size() + (0..level).map(|l| self.level_size(l)).sum::<u64>();
         Some((at as usize, self.level_size(level) as usize))
@@ -184,7 +207,7 @@ mod tests {
         // 4x4 A8R8G8B8, 3 levels (64 + 16 + 4 bytes per face), all faces
         let caps2 = CUBEMAP | FACES.iter().fold(0, |m, b| m | b);
         let d = parse(&file(4, 4, 0, 3, ARGB, caps2, 6 * 84)).unwrap();
-        assert_eq!(d, Dds { w: 4, h: 4, depth: 1, levels: 3, fmt: f::A8R8G8B8, faces: 0x3f });
+        assert_eq!(d, Dds { w: 4, h: 4, depth: 1, levels: 3, fmt: f::A8R8G8B8, faces: Some(CubeFaces(0x3f)) });
         assert_eq!(d.level_at(0, 0), Some((128, 64)));
         assert_eq!(d.level_at(0, 2), Some((128 + 80, 4)));
         assert_eq!(d.level_at(5, 1), Some((128 + 5 * 84 + 64, 16)));
@@ -199,14 +222,14 @@ mod tests {
         // +Y and -Z only: -Z is the second in the file; DXT1 8x8 (4 blocks of 8 bytes, then
         // 1 block for 4x4, 2x2 and 1x1)
         let d = parse(&file(8, 8, 0, 4, DXT1, CUBEMAP | 0x1000 | 0x8000, 2 * 56)).unwrap();
-        assert_eq!(d.faces, 1 << 2 | 1 << 5);
+        assert_eq!(d.faces, Some(CubeFaces(1 << 2 | 1 << 5)));
         assert_eq!(d.level_at(2, 0), Some((128, 32)));
         assert_eq!(d.level_at(5, 0), Some((128 + 56, 32)));
         assert_eq!(d.level_at(5, 3), Some((128 + 56 + 48, 8)));
         assert_eq!(d.level_at(0, 0), None);
         // (DXT5: 16-byte blocks; a 2D file has face 0 only; mip count 0 is one level)
         let d = parse(&file(5, 3, 0, 0, DXT5, 0, 32)).unwrap();
-        assert_eq!((d.levels, d.faces, d.level_at(0, 0), d.level_at(1, 0)), (1, 0, Some((128, 32)), None));
+        assert_eq!((d.levels, d.faces, d.level_at(0, 0), d.level_at(1, 0)), (1, None, Some((128, 32)), None));
     }
 
     #[test]
@@ -285,3 +308,8 @@ mod tests {
         }
     }
 }
+
+/// DDS headers against the code before the cube faces became a type
+#[cfg(test)]
+#[path = "dds_faces_tests.rs"]
+mod faces_tests;

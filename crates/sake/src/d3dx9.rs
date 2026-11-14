@@ -853,7 +853,7 @@ fn ms_top(c: &mut Ctx) -> u32 {
 /// volume), D3DXIFF_DDS.
 fn dds_info(p: u32, d: &crate::dds::Dds) {
     if p != 0 {
-        let ty = if d.faces != 0 { 5 } else if d.depth > 1 { 4 } else { 3 };
+        let ty = if d.faces.is_some() { 5 } else if d.depth > 1 { 4 } else { 3 };
         for (k, v) in [d.w, d.h, d.depth, d.levels, d.fmt, ty, 4].iter().enumerate() {
             w32(p + 4 * k as u32, *v);
         }
@@ -893,7 +893,7 @@ fn dds_fill(c: &mut Ctx, tex: u32, data: &[u8], d: &crate::dds::Dds, cube: bool)
 /// as many as asked, up to the file's), in `pool` with `usage`.
 fn texture_from_dds(c: &mut Ctx, dev: u32, data: &[u8], d: &crate::dds::Dds, mips: u32, usage: u32, pool: u32, info: u32, out: u32) -> u32 {
     dds_info(info, d);
-    if d.faces != 0 || d.depth > 1 {
+    if d.faces.is_some() || d.depth > 1 {
         return 0x88760b59;
     }
     let levels = if mips == 0 || mips >= 0xffff_fffd { d.levels } else { mips.min(d.levels) };
@@ -1056,7 +1056,7 @@ fn cube_from(c: &mut Ctx, dev: u32, data: &[u8], a: [u32; 11]) -> u32 {
     };
     if let Some(d) = crate::dds::parse(data) {
         dds_info(info, &d);
-        if d.faces == 0 {
+        if d.faces.is_none() {
             mem::heap_free(pt);
             return 0x88760b59;
         }
