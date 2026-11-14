@@ -1806,7 +1806,7 @@ impl Disk {
         let tmp = p.with_extension(format!("{}.tmp", Uuid::new_v4().simple()));
         // (kept already: replaced, counted once)
         let old = std::fs::metadata(&p).map_or(0, |m| m.len());
-        let ok = std::fs::create_dir_all(p.parent().unwrap())
+        let ok = p.parent().ok_or_else(|| std::io::Error::other("a chunk path with no folder")).and_then(std::fs::create_dir_all)
             .and_then(|_| std::fs::write(&tmp, bytes))
             .and_then(|_| std::fs::rename(&tmp, &p));
         if let Err(e) = ok {
@@ -2067,7 +2067,7 @@ impl Storage {
                 .get(&logical)
                 .await?
                 .context("catalog object missing")?;
-            tokio::fs::create_dir_all(path.parent().unwrap()).await?;
+            tokio::fs::create_dir_all(path.parent().context("a catalog path with no folder")?).await?;
             let temp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
             tokio::fs::write(&temp, data).await?;
             tokio::fs::rename(temp, path).await?;

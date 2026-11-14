@@ -858,7 +858,6 @@ file	crates/masu/src/pack.rs	let_underscore_must_use	7
 file	crates/masu/src/pack.rs	map_err_ignore	1
 file	crates/masu/src/pack.rs	masu-wire_tree	5
 file	crates/masu/src/pack.rs	string_slice	2
-file	crates/masu/src/pack.rs	unwrap_used	3
 file	crates/masu/src/portable.rs	arithmetic_side_effects	2
 file	crates/masu/src/portable.rs	as_conversions	1
 file	crates/masu/src/portable.rs	indexing_slicing	5
@@ -867,7 +866,6 @@ file	crates/masu/src/rtp.rs	arithmetic_side_effects	11
 file	crates/masu/src/rtp.rs	indexing_slicing	6
 file	crates/masu/src/rtp.rs	let_underscore_must_use	4
 file	crates/masu/src/rtp.rs	string_slice	1
-file	crates/masu/src/rtp.rs	unwrap_used	3
 file	crates/masu/src/saves.rs	arithmetic_side_effects	5
 file	crates/masu/src/saves.rs	as_conversions	4
 file	crates/masu/src/saves.rs	cast_possible_truncation	4
@@ -881,7 +879,7 @@ file	crates/masu/src/serve.rs	fn_to_numeric_cast_any	1
 file	crates/masu/src/serve.rs	indexing_slicing	19
 file	crates/masu/src/serve.rs	let_underscore_must_use	22
 file	crates/masu/src/serve.rs	undocumented_unsafe_blocks	6
-file	crates/masu/src/serve.rs	unwrap_used	3
+file	crates/masu/src/serve.rs	unwrap_used	2
 file	crates/masu/src/storage.rs	arithmetic_side_effects	35
 file	crates/masu/src/storage.rs	as_conversions	74
 file	crates/masu/src/storage.rs	cast_possible_truncation	30
@@ -896,7 +894,6 @@ file	crates/masu/src/storage.rs	map_err_ignore	2
 file	crates/masu/src/storage.rs	masu-wire_tree	1
 file	crates/masu/src/storage.rs	string_slice	4
 file	crates/masu/src/storage.rs	unreachable	1
-file	crates/masu/src/storage.rs	unwrap_used	2
 file	crates/masu/src/store_api.rs	arithmetic_side_effects	8
 file	crates/masu/src/store_api.rs	as_conversions	24
 file	crates/masu/src/store_api.rs	cast_possible_truncation	13
@@ -932,7 +929,7 @@ file	crates/masu/src/unpack.rs	indexing_slicing	29
 file	crates/masu/src/unpack.rs	let_underscore_must_use	5
 file	crates/masu/src/unpack.rs	octal_escapes	1
 file	crates/masu/src/unpack.rs	unwrap_in_result	2
-file	crates/masu/src/unpack.rs	unwrap_used	10
+file	crates/masu/src/unpack.rs	unwrap_used	4
 file	crates/masu/src/unpack.rs	wildcard_enum_match_arm	1
 file	crates/masu/src/update.rs	arithmetic_side_effects	1
 file	crates/masu/src/update.rs	as_conversions	4
@@ -944,7 +941,7 @@ file	crates/masu/src/update.rs	result_large_err	1
 file	crates/masu/src/webassets.rs	let_underscore_must_use	4
 file	crates/masu/src/webassets.rs	same_name_method	1
 file	crates/masu/src/webassets.rs	string_slice	1
-file	crates/masu/src/webassets.rs	unwrap_used	3
+file	crates/masu/src/webassets.rs	unwrap_used	2
 file	crates/mpeg1/examples/dump.rs	unwrap_used	6
 file	crates/mpeg1/src/audio.rs	arithmetic_side_effects	98
 file	crates/mpeg1/src/audio.rs	as_conversions	1

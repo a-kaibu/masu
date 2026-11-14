@@ -120,7 +120,7 @@ fn download(p: &Package, cache: &Path) -> Result<PathBuf> {
         }
     }
     let _ = fs::remove_file(&tmp);
-    Err(last.unwrap())
+    Err(last.unwrap_or_else(|| anyhow::anyhow!("no download tried")))
 }
 
 fn sha256_file(p: &Path) -> Result<String> {
@@ -164,7 +164,7 @@ fn unzip(zip: &Path, dir: &Path) -> Result<Vec<PathBuf>> {
 /// Writes `data` at `root`/`rel` (a drive_c path).
 fn put(root: &Path, rel: &str, data: &[u8]) -> Result<()> {
     let p = root.join(rel);
-    fs::create_dir_all(p.parent().unwrap())?;
+    fs::create_dir_all(p.parent().context("a path with no folder")?)?;
     fs::write(p, data)?;
     Ok(())
 }
@@ -246,7 +246,7 @@ fn below<'a>(dir: &'a str, from: &str) -> Option<&'a str> {
 fn patch_2000(zip: &Path, drive_c: &Path, work: &Path) -> Result<()> {
     let rtp = "Program Files/ASCII/RPG2000/RTP";
     for f in unzip(zip, work)? {
-        let name = f.file_name().unwrap().to_string_lossy().into_owned();
+        let name = f.file_name().context("an unzipped file with no name")?.to_string_lossy().into_owned();
         let folder = match name.as_str() {
             "モンスター.png" => "FaceSet",
             "主人公3.png" => "CharSet",

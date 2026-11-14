@@ -827,13 +827,13 @@ pub fn ensure_prefix(store: &Path, fonts: &Path, rtp: Option<&Path>) -> Result<b
             fs::create_dir_all(root.join("drive_c/windows/temp"))?;
             // (the license goes along with the fonts)
             for f in &files {
-                fs::copy(f, dir.join(f.file_name().unwrap()))?;
+                fs::copy(f, dir.join(f.file_name().context("a font with no name")?))?;
             }
         }
         if let (Some(rtp), Some(s)) = (rtp, &stamp) {
             copy_rtp(&rtp.join("drive_c"), &root.join("drive_c"), "drive_c")?;
             let p = root.join(stamp_path(s));
-            fs::create_dir_all(p.parent().unwrap())?;
+            fs::create_dir_all(p.parent().context("the stamp's folder")?)?;
             fs::write(p, b"")?;
         }
         let list = pack_tree(store, &root, PREFIX_TREE, false, chunking(DEFAULT_CHUNK_KIB))?;
@@ -1108,11 +1108,14 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
                 let resolved = fs::canonicalize(&disk).ok();
                 let inside = resolved.as_ref().is_some_and(|r| r.starts_with(&root));
                 let round = resolved.as_ref().is_some_and(|r| chain.iter().any(|c| c.starts_with(r)));
-                if !follow || inside || round || target == Path::new("/") || resolved.is_none() {
-                    lines.push(Line { mode: Mode::LINK, mtime: mtime(&meta), path, kind: Kind::Link(target.to_string_lossy().into_owned()) }.to_string());
-                    continue;
-                }
-                disk = resolved.unwrap();
+                let resolved = match resolved {
+                    Some(r) if follow && !inside && !round && target != Path::new("/") => r,
+                    Some(_) | None => {
+                        lines.push(Line { mode: Mode::LINK, mtime: mtime(&meta), path, kind: Kind::Link(target.to_string_lossy().into_owned()) }.to_string());
+                        continue;
+                    }
+                };
+                disk = resolved;
                 meta = fs::metadata(&disk)?;
             }
             let mode = Mode::of(mode(&meta));

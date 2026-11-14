@@ -35,7 +35,7 @@ pub fn unpack(cache: &Path) -> Result<PathBuf> {
         let _ = std::fs::remove_dir_all(&tmp);
         for n in &names {
             let p = tmp.join(n.as_ref());
-            std::fs::create_dir_all(p.parent().unwrap())?;
+            std::fs::create_dir_all(p.parent().context("an asset with no folder")?)?;
             std::fs::write(&p, Web::get(n).unwrap().data).with_context(|| p.display().to_string())?;
         }
         std::fs::write(tmp.join(".done"), "")?;

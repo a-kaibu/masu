@@ -720,7 +720,7 @@ fn zsfx(job: &Job, src: &Path, out: &Path) -> Result<bool> {
         if *size > job.lim.file_bytes {
             return Err(over(format!("{name}: {size} bytes, more than {}", job.lim.file_bytes)).into());
         }
-        fs::create_dir_all(p.parent().unwrap())?;
+        fs::create_dir_all(p.parent().context("a member with no folder")?)?;
         loop {
             let Some(i) = scan.next_stream(&mut f, pos)? else { bail!("{name}: no stream left") };
             let m = job.mark();
@@ -1043,7 +1043,7 @@ fn msi(job: &Job, src: &Path, out: &Path) -> Result<bool> {
         let Some((comp, name)) = e.file_name().to_str().and_then(|k| files.get(k)) else { continue };
         let rel = path(comps.get(comp).map_or("", |s| s), &dirs, 0, &long);
         let Some(dst) = safe_path(out, &if rel.is_empty() { name.clone() } else { format!("{rel}/{name}") }) else { continue };
-        fs::create_dir_all(dst.parent().unwrap())?;
+        fs::create_dir_all(dst.parent().context("a destination with no folder")?)?;
         fs::rename(e.path(), dst)?;
         n += 1;
     }
@@ -1083,11 +1083,13 @@ fn sdrs(job: &Job, root: &Path) -> Result<()> {
         // Reserve space for the new executable and copies of patched data before SDK writes.
         // These copies coexist with the originals during transactional installation.
         let mut outputs = vec![];
-        for patch in program.stub().unwrap().patches() {
+        let stub = program.stub().with_context(|| format!("{}: SDRS loaded without its stub", exe.display()))?;
+        let dir = exe.parent().context("an exe with no folder")?;
+        for patch in stub.patches() {
             if patch.mode == sdrs_core::sdrs::structs::SdrsPatchMode::File
-                && patch.file_name != program.stub().unwrap().executable_file_name()
+                && patch.file_name != stub.executable_file_name()
             {
-                let path = safe_path(exe.parent().unwrap(), &patch.file_name).context("invalid SDRS data path")?;
+                let path = safe_path(dir, &patch.file_name).context("invalid SDRS data path")?;
                 if path != exe && !outputs.contains(&path) {
                     outputs.push(path);
                 }
@@ -1175,7 +1177,7 @@ fn nested(job: &Job, root: &Path) -> Result<()> {
         // BGI install media: a 16-byte "0123456789ABCDEF" file next to BGIForInstalling.exe
         // marks the media, and the game run from there quits at once
         if s.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("BGIForInstalling.exe")) {
-            for e in fs::read_dir(s.parent().unwrap())?.flatten() {
+            for e in fs::read_dir(s.parent().context("the installer's folder")?)?.flatten() {
                 let p = e.path();
                 if p.is_file() && fs::read(&p).is_ok_and(|b| b.strip_suffix(b"\n").unwrap_or(&b).strip_suffix(b"\r").map_or(b.as_slice() == b"0123456789ABCDEF", |x| x == b"0123456789ABCDEF")) && e.metadata().is_ok_and(|m| m.len() == 16) {
                     eprintln!("{}: the install media's marker, removed", p.display());

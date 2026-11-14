@@ -1168,7 +1168,8 @@ fn precompress(dir: &std::path::Path, write: bool) {
         if !matches!(ext, "wasm" | "js" | "mjs" | "html" | "css" | "json" | "txt" | "svg") || meta.len() < 1024 {
             continue;
         }
-        let zst = p.with_file_name(format!("{}.zst", p.file_name().unwrap().to_string_lossy()));
+        let Some(name) = p.file_name() else { continue };
+        let zst = p.with_file_name(format!("{}.zst", name.to_string_lossy()));
         let fresh = std::fs::metadata(&zst).and_then(|z| Ok(z.modified()? >= meta.modified()?)).unwrap_or(false);
         if fresh {
             continue;
