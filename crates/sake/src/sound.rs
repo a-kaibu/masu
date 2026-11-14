@@ -905,6 +905,19 @@ fn start_mixer() {
     });
 }
 
+/// Tests that look at buffers' positions hold the mixer thread (it mixes nothing meanwhile:
+/// the test mixes its own buffers by hand)
+#[cfg(test)]
+pub(crate) static MIXER_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+fn mixer_held() -> bool {
+    MIXER_HELD.load(std::sync::atomic::Ordering::SeqCst)
+}
+#[cfg(not(test))]
+fn mixer_held() -> bool {
+    false
+}
+
 fn spawn_mixer(id: i32) {
         std::thread::Builder::new()
             .name("dsound mixer".into())
@@ -929,7 +942,7 @@ fn spawn_mixer(id: i32) {
                         }
                         let t0 = std::time::Instant::now();
                         out.iter_mut().for_each(|x| *x = 0.0);
-                        let ev = with(|d| mix(d, &mut out));
+                        let ev = with(|d| if mixer_held() { Vec::new() } else { mix(d, &mut out) });
                         for e in ev {
                             crate::k32::set_event(e);
                         }
@@ -2507,3 +2520,7 @@ mod review_b09_tests {
         mem::heap_free(data);
     }
 }
+
+#[cfg(test)]
+#[path = "sound_snapshot_tests.rs"]
+mod snapshot_tests;
