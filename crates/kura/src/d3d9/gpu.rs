@@ -584,7 +584,9 @@ fn pace_window(next: &mut HashMap<u32, f64>, hwnd: u32, t: f64, frame: f64) -> f
 }
 
 fn pace_wait(next: &mut f64, t: f64, frame: f64) -> f64 {
-    let at = if *next + frame < t || *next > t + frame { t } else { next.max(t) };
+    // (late: `next` is behind `t`, and max takes `t`; a `next` more than a frame ahead is a clock
+    // stepped back)
+    let at = if *next > t + frame { t } else { next.max(t) };
     *next = at + frame;
     at - t
 }
@@ -594,7 +596,10 @@ mod pace_tests {
     use proptest::prelude::*;
     proptest! {
         /// Any clock, stepped back or forward: every wait is between 0 and a frame, and with a
-        /// steady clock presents a frame apart do not wait at all.
+        /// steady clock presents a frame apart do not wait at all. (The wait is slept: the clock
+        /// moves on by it, as the caller's does. Without that, two presents at one time left
+        /// `next` a frame ahead of a clock that never caught up, and every later present
+        /// "waited".)
         #[test]
         fn a_wait_is_a_frame_at_most(steps in proptest::collection::vec(-100_000.0f64..100_000.0, 1..200)) {
             let (mut next, mut t) = (0.0, 1e12);
@@ -602,11 +607,30 @@ mod pace_tests {
                 t += d;
                 let w = super::pace_wait(&mut next, t, 16.0);
                 prop_assert!((0.0..=16.0).contains(&w), "{}", w);
+                t += w;
             }
             for _ in 0..10 {
                 t += 16.0;
                 prop_assert_eq!(super::pace_wait(&mut next, t, 16.0), 0.0);
             }
+        }
+
+        /// A game whose frames take any time up to a frame (a burst of presents at once among
+        /// them), sleeping each wait: it presents about once a frame, never at half the rate
+        /// (a pacer a frame ahead of the clock makes every present wait a whole frame), never
+        /// faster than one a frame.
+        #[test]
+        fn a_game_presents_once_a_frame(work in proptest::collection::vec(prop_oneof![Just(0.0f64), 0.0f64..16.0], 50..300)) {
+            let (mut next, start) = (0.0, 1e9);
+            let mut t = start;
+            for &w in &work {
+                t += w;
+                t += super::pace_wait(&mut next, t, 16.0);
+            }
+            let frames = (t - start) / 16.0;
+            let n = f64::from(u32::try_from(work.len()).unwrap());
+            prop_assert!(frames <= n + 1.0, "{} presents took {} frames", n, frames);
+            prop_assert!(frames >= n - 1.0, "{} presents in {} frames: faster than the frame", n, frames);
         }
 
         /// Windows are paced apart: `n` windows each presenting once a frame, each at its own
@@ -631,6 +655,24 @@ mod pace_tests {
                 super::pace_window(&mut next, w, t + k as f64 * 100.0, 16.0);
                 prop_assert!(next.len() <= 16 + 1, "{} windows kept", next.len());
             }
+        }
+
+        /// The table forgets only windows not presented to for a second: a window presented
+        /// just now keeps its pace while many others come (its second present in the frame
+        /// still waits), however long ago the others were.
+        #[test]
+        fn recent_windows_are_kept(others in proptest::collection::vec((1000u32..100_000, 0.0f64..5000.0), 16..60), gap in 0.0f64..15.0) {
+            let mut next = std::collections::HashMap::new();
+            let t = 1e9;
+            for &(w, ago) in &others {
+                super::pace_window(&mut next, w, t - ago, 16.0);
+            }
+            super::pace_window(&mut next, 1, t, 16.0);
+            for (k, &(w, _)) in others.iter().enumerate() {
+                super::pace_window(&mut next, w + 100_000 + u32::try_from(k).unwrap(), t, 16.0);
+            }
+            prop_assert!(super::pace_window(&mut next, 1, t + gap, 16.0) > 0.0, "window 1 forgotten");
+            prop_assert!(next.values().all(|&n| n + 1000.0 > t - 16.0), "a window idle for a second kept");
         }
     }
 }

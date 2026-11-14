@@ -31,3 +31,6 @@ crates/hlslc/src/pp.rs: replace == with != in paste
 # render/d3d.rs: draw_depth submits when its uniform slot is the batch's last (64 per batch); a
 # submit sooner changes no texel
 crates/kura/src/render/d3d.rs: replace == with != in D3d::draw_depth
+# d3d9/gpu.rs: pace_window forgets a window idle for more than a second; at exactly 1000 ms
+# either way is right
+crates/kura/src/d3d9/gpu.rs: replace > with >= in pace_window
