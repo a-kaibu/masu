@@ -1019,8 +1019,7 @@ fn S_Lock(c: &mut Ctx) -> u32 {
     let r = if rp == 0 { Rect { l: 0, t: 0, r: s.w, b: s.h } } else { Rect::read(rp) };
     write_desc(desc, Some(&s));
     w32(desc + 4, r32(desc + 4) | 0x800);
-    let bpp = u32::from(s.bpp) / 8;
-    let bits = s.bits + r.t.max(0) as u32 * s.pitch + r.l.max(0) as u32 * bpp;
+    let bits = s.bits + r.t.max(0).unsigned_abs() * s.pitch + PxBytes::of(s.bpp).at(r.l.max(0));
     // (lpSurface: a pointer, 8 bytes at 40 in a 64-bit program)
     w32(desc + wide(36), bits);
     if mem::x64() {
@@ -1163,33 +1162,73 @@ fn clip_rect(r: Rect, w: i32, h: i32) -> Rect {
     Rect { l: r.l.max(0), t: r.t.max(0), r: r.r.min(w), b: r.b.min(h) }
 }
 
-fn read_px(p: *const u8, bpp: u32) -> u32 {
-    unsafe {
-        match bpp {
-            1 => u32::from(*p),
-            2 => u32::from(p.cast::<u16>().read_unaligned()),
-            3 => u32::from(*p) | u32::from(*p.add(1)) << 8 | u32::from(*p.add(2)) << 16,
-            _ => p.cast::<u32>().read_unaligned(),
-        }
-    }
+/// The bytes a pixel takes (a surface's bit count / 8), a type of its own so that it is never
+/// taken for the bit count (`Surf::bpp`) or a column
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct PxBytes(u32);
+
+/// How a pixel is loaded and stored: one, two, three bytes, or four (also what a surface of a
+/// bit count other than 8, 16, 24 or 32 gets, as before)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Access {
+    U8,
+    U16,
+    U24,
+    U32,
 }
-fn write_px(p: *mut u8, bpp: u32, v: u32) {
-    unsafe {
-        match bpp {
-            1 => *p = v as u8,
-            2 => p.cast::<u16>().write_unaligned(v as u16),
-            3 => {
-                *p = v as u8;
-                *p.add(1) = (v >> 8) as u8;
-                *p.add(2) = (v >> 16) as u8;
-            }
-            _ => p.cast::<u32>().write_unaligned(v),
+
+impl Access {
+    /// the access for pixels of `n` bytes (d3d7's render targets, textures and depth buffers)
+    fn of_bytes(n: usize) -> Access {
+        match n {
+            1 => Access::U8,
+            2 => Access::U16,
+            3 => Access::U24,
+            _ => Access::U32,
         }
     }
 }
 
-fn px_mask(bpp: u32) -> u32 {
-    if bpp >= 4 { 0x00ff_ffff } else { (1u32 << (bpp * 8)) - 1 }
+impl PxBytes {
+    fn of(bpp: u16) -> PxBytes {
+        PxBytes(u32::from(bpp) / 8)
+    }
+    fn access(self) -> Access {
+        Access::of_bytes(usize::try_from(self.0).unwrap_or(usize::MAX))
+    }
+    /// The byte offset of column `x` (inside the surface: not negative)
+    fn at(self, x: i32) -> u32 {
+        x.unsigned_abs() * self.0
+    }
+    /// The bits of a pixel a color key compares
+    fn mask(self) -> u32 {
+        if self.0 >= 4 { 0x00ff_ffff } else { (1u32 << (self.0 * 8)) - 1 }
+    }
+}
+
+fn read_px(p: *const u8, a: Access) -> u32 {
+    unsafe {
+        match a {
+            Access::U8 => u32::from(*p),
+            Access::U16 => u32::from(p.cast::<u16>().read_unaligned()),
+            Access::U24 => {
+                let [b0, b1, b2] = p.cast::<[u8; 3]>().read_unaligned();
+                u32::from_le_bytes([b0, b1, b2, 0])
+            }
+            Access::U32 => p.cast::<u32>().read_unaligned(),
+        }
+    }
+}
+fn write_px(p: *mut u8, a: Access, v: u32) {
+    let [b0, b1, b2, _] = v.to_le_bytes();
+    unsafe {
+        match a {
+            Access::U8 => *p = b0,
+            Access::U16 => p.cast::<u16>().write_unaligned(u16::from_le_bytes([b0, b1])),
+            Access::U24 => p.cast::<[u8; 3]>().write_unaligned([b0, b1, b2]),
+            Access::U32 => p.cast::<u32>().write_unaligned(v),
+        }
+    }
 }
 
 /// The source pixel of destination pixel `i` of `d` stretched from `s`, as Windows' HEL steps:
@@ -1203,7 +1242,7 @@ fn stretch_pick(i: i32, s: i32, d: i32, row: bool) -> i32 {
 /// Copies `sr` of `src` to `dr` of `dst` (same format), stretching with the nearest pixel,
 /// mirrored left-right / up-down if asked, skipping source pixels in the key range.
 fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mirror: (bool, bool)) {
-    let bpp = u32::from(dst.bpp) / 8;
+    let bpp = PxBytes::of(dst.bpp);
     let (dw, dh, sw, sh) = (dr.r - dr.l, dr.b - dr.t, sr.r - sr.l, sr.b - sr.t);
     if dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 {
         return;
@@ -1214,7 +1253,7 @@ fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mir
         return;
     }
     let base_s = src.bits as usize as *const u8;
-    let mask = px_mask(bpp);
+    let mask = bpp.mask();
     let same = dw == sw && dh == sh && !mirror.0 && !mirror.1;
     // overlapping copies within one surface go bottom-up / right-to-left as needed
     let overlap = dst.bits == src.bits;
@@ -1233,7 +1272,7 @@ fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mir
                     let k = if dw == sw { x } else { stretch_pick(x, sw, dw, true) };
                     if mirror.0 { sr.r - 1 - k } else { sr.l + k }
                 };
-                (dx >= 0 && dx < dst.w && sx >= 0 && sx < src.w).then(|| (dx as u32 * bpp, sx as u32 * bpp))
+                (dx >= 0 && dx < dst.w && sx >= 0 && sx < src.w).then(|| (bpp.at(dx), bpp.at(sx)))
             })
             .collect()
     };
@@ -1266,16 +1305,16 @@ fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mir
             n = n.min(dst.w - x0).min(src.w - sx0);
             if n > 0 {
                 unsafe {
-                    std::ptr::copy(srow.add((sx0 as u32 * bpp) as usize), drow.add((x0 as u32 * bpp) as usize), (n as u32 * bpp) as usize);
+                    std::ptr::copy(srow.add(bpp.at(sx0) as usize), drow.add(bpp.at(x0) as usize), bpp.at(n) as usize);
                 }
             }
             continue;
         }
-        match bpp {
-            1 => blit_row::<1>(drow, srow, &cols, key, mask),
-            2 => blit_row::<2>(drow, srow, &cols, key, mask),
-            3 => blit_row::<3>(drow, srow, &cols, key, mask),
-            _ => blit_row::<4>(drow, srow, &cols, key, mask),
+        match bpp.access() {
+            Access::U8 => blit_row::<1>(drow, srow, &cols, key, mask),
+            Access::U16 => blit_row::<2>(drow, srow, &cols, key, mask),
+            Access::U24 => blit_row::<3>(drow, srow, &cols, key, mask),
+            Access::U32 => blit_row::<4>(drow, srow, &cols, key, mask),
         }
     }
 }
@@ -1285,20 +1324,21 @@ fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mir
 /// skipped. The depth is a constant here, so each pixel is one load and one store.
 #[inline(always)]
 fn blit_row<const B: u32>(drow: *mut u8, srow: *const u8, cols: &[(u32, u32)], key: Option<(u32, u32)>, mask: u32) {
+    let a = PxBytes(B).access();
     match key {
         None => {
             for &(d, s) in cols {
-                unsafe { write_px(drow.add(d as usize), B, read_px(srow.add(s as usize), B)) };
+                unsafe { write_px(drow.add(d as usize), a, read_px(srow.add(s as usize), a)) };
             }
         }
         Some((lo, hi)) => {
             for &(d, s) in cols {
-                let v = read_px(unsafe { srow.add(s as usize) }, B);
+                let v = read_px(unsafe { srow.add(s as usize) }, a);
                 let m = v & mask;
                 if m >= lo && m <= hi {
                     continue;
                 }
-                unsafe { write_px(drow.add(d as usize), B, v) };
+                unsafe { write_px(drow.add(d as usize), a, v) };
             }
         }
     }
@@ -1312,13 +1352,13 @@ fn surf_bytes(s: &Surf) -> Option<&'static mut [u8]> {
 
 fn fill(dst: &Surf, r: Rect, color: u32) {
     let r = clip_rect(r, dst.w, dst.h);
-    let bpp = u32::from(dst.bpp) / 8;
+    let bpp = PxBytes::of(dst.bpp);
     let Some(all) = surf_bytes(dst) else { return };
     let base = all.as_mut_ptr();
     for y in r.t..r.b {
         let p = unsafe { base.add((y as u32 * dst.pitch) as usize) };
         for x in r.l..r.r {
-            write_px(unsafe { p.add((x as u32 * bpp) as usize) }, bpp, color);
+            write_px(unsafe { p.add(bpp.at(x) as usize) }, bpp.access(), color);
         }
     }
 }
@@ -2592,14 +2632,14 @@ mod blit_tests {
     use proptest::prelude::*;
 
     fn blit_ref(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mirror: (bool, bool)) {
-        let bpp = u32::from(dst.bpp) / 8;
+        let bpp = PxBytes::of(dst.bpp);
         let (dw, dh, sw, sh) = (dr.r - dr.l, dr.b - dr.t, sr.r - sr.l, sr.b - sr.t);
         if dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 {
             return;
         }
         let base_d = dst.bits as usize as *mut u8;
         let base_s = src.bits as usize as *const u8;
-        let mask = px_mask(bpp);
+        let mask = bpp.mask();
         let same = dw == sw && dh == sh && !mirror.0 && !mirror.1;
         let overlap = dst.bits == src.bits;
         let rows: Box<dyn Iterator<Item = i32>> = if overlap && dr.t > sr.t { Box::new((0..dh).rev()) } else { Box::new(0..dh) };
@@ -2630,7 +2670,7 @@ mod blit_tests {
                 }
                 n = n.min(dst.w - x0).min(src.w - sx0);
                 if n > 0 {
-                    unsafe { std::ptr::copy(srow.add((sx0 as u32 * bpp) as usize), drow.add((x0 as u32 * bpp) as usize), (n as u32 * bpp) as usize) };
+                    unsafe { std::ptr::copy(srow.add(bpp.at(sx0) as usize), drow.add(bpp.at(x0) as usize), bpp.at(n) as usize) };
                 }
                 continue;
             }
@@ -2645,14 +2685,14 @@ mod blit_tests {
                 if dx < 0 || dx >= dst.w || sx < 0 || sx >= src.w {
                     continue;
                 }
-                let v = read_px(unsafe { srow.add((sx as u32 * bpp) as usize) }, bpp);
+                let v = read_px(unsafe { srow.add(bpp.at(sx) as usize) }, bpp.access());
                 if let Some((lo, hi)) = key {
                     let m = v & mask;
                     if m >= lo & mask && m <= hi.max(lo) & mask {
                         continue;
                     }
                 }
-                write_px(unsafe { drow.add((dx as u32 * bpp) as usize) }, bpp, v);
+                write_px(unsafe { drow.add(bpp.at(dx) as usize) }, bpp.access(), v);
             }
         }
     }

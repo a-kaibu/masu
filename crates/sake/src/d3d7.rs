@@ -1467,7 +1467,7 @@ struct Tex {
 impl Tex {
     #[inline]
     fn raw(&self, x: i32, y: i32) -> u32 {
-        read_px(unsafe { self.bits.add(y as usize * self.pitch + x as usize * self.bpp) }, self.bpp as u32)
+        read_px(unsafe { self.bits.add(y as usize * self.pitch + x as usize * self.bpp) }, Access::of_bytes(self.bpp))
     }
     #[inline]
     fn texel(&self, x: i32, y: i32, ck: bool) -> C4 {
@@ -1810,7 +1810,7 @@ impl Raster {
         let zp = self.z.map(|(p, pitch, bytes, max)| (unsafe { p.add(y as usize * pitch + x as usize * bytes) }, bytes, max));
         let zv = zp.map(|(_, _, max)| (z.clamp(0., 1.) * max) as u32);
         if let (Some(f), Some((p, bytes, _)), Some(zv)) = (self.ztest, zp, zv) {
-            let old = if bytes == 2 { read_px(p, 2) } else { read_px(p, 4) & if bytes == 3 { 0xff_ffff } else { !0 } };
+            let old = if bytes == 2 { read_px(p, Access::U16) } else { read_px(p, Access::U32) & if bytes == 3 { 0xff_ffff } else { !0 } };
             if !cmp(f, zv as f32, old as f32) {
                 return;
             }
@@ -1820,7 +1820,7 @@ impl Raster {
         let out = match self.blend {
             None => c,
             Some((sb, db)) => {
-                let d = self.fmt.unpack(read_px(p, self.bpp as u32));
+                let d = self.fmt.unpack(read_px(p, Access::of_bytes(self.bpp)));
                 let f = |b: u32, src: bool| -> C4 {
                     match b {
                         1 => [0.; 4],
@@ -1846,10 +1846,10 @@ impl Raster {
                 std::array::from_fn(|i| (c[i] * fs[i] + d[i] * fd[i]).clamp(0., 1.))
             }
         };
-        write_px(p, self.bpp as u32, self.fmt.pack(out));
+        write_px(p, Access::of_bytes(self.bpp), self.fmt.pack(out));
         if self.zwrite {
             if let (Some((p, bytes, _)), Some(zv)) = (zp, zv) {
-                write_px(p, bytes.min(4) as u32, zv);
+                write_px(p, Access::of_bytes(bytes.min(4)), zv);
             }
         }
     }
@@ -1968,7 +1968,7 @@ impl Raster {
                     for x in x0..=x1 {
                         let v = cp.tex.raw(x + cp.dx, y + cp.dy);
                         let v = if cp.same { v & cp.mask } else { self.fmt.pack(cp.tex.fmt.unpack(v)) };
-                        write_px(unsafe { row.add(x as usize * self.bpp) }, self.bpp as u32, v);
+                        write_px(unsafe { row.add(x as usize * self.bpp) }, Access::of_bytes(self.bpp), v);
                     }
                 }
                 return;
@@ -1985,7 +1985,7 @@ impl Raster {
                     }) {
                         let v = cp.tex.raw(x + cp.dx, y + cp.dy);
                         let v = if cp.same { v & cp.mask } else { self.fmt.pack(cp.tex.fmt.unpack(v)) };
-                        write_px(unsafe { row.add(x as usize * self.bpp) }, self.bpp as u32, v);
+                        write_px(unsafe { row.add(x as usize * self.bpp) }, Access::of_bytes(self.bpp), v);
                     }
                 }
             }
@@ -3724,7 +3724,7 @@ mod tests {
                 Pic { px, w, h, bpp, fmt: fmt_of(m) }
             }
             fn at(&self, x: i32, y: i32) -> u32 {
-                read_px(self.px[(y * self.w) as usize * self.bpp + x as usize * self.bpp..].as_ptr(), self.bpp as u32)
+                read_px(self.px[(y * self.w) as usize * self.bpp + x as usize * self.bpp..].as_ptr(), Access::of_bytes(self.bpp))
             }
             fn tex(&self) -> Tex {
                 Tex { bits: self.px.as_ptr(), w: self.w, h: self.h, pitch: self.w as usize * self.bpp, bpp: self.bpp, fmt: self.fmt, pal: None, key: None }
