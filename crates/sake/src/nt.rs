@@ -1,6 +1,7 @@
 //! ntdll's native file API (Nt*/Zw*File), for programs that call it directly (Enigma
 //! Protector's loader does). Each one goes through the kernel32 function that does the same.
 
+use crate::locks::{Lock as _, Rw as _};
 use crate::api::{export, implement, Ctx};
 use crate::mem::{self, put32, r16, r32, w32};
 
@@ -131,7 +132,7 @@ fn relative_under(path: &str, full: &str, dir: &str) -> Option<String> {
 fn cwd_handle() -> Option<(String, u32)> {
     static H: std::sync::Mutex<Option<(String, u32)>> = std::sync::Mutex::new(None);
     let dir = crate::files::cwd();
-    let mut g = H.lock().unwrap();
+    let mut g = H.locked();
     if let Some((d, h)) = &*g {
         if *d == dir {
             return Some((dir, *h));
@@ -1031,16 +1032,16 @@ fn nt_set_information_thread(c: &mut Ctx) -> u32 {
 /// Thread descriptions (SetThreadDescription, ThreadNameInformation), by thread id
 static NAMES: std::sync::Mutex<Option<crate::HashMap<u32, Vec<u16>>>> = std::sync::Mutex::new(None);
 pub fn thread_name(tid: u32) -> Vec<u16> {
-    NAMES.lock().unwrap().get_or_insert_with(Default::default).get(&tid).cloned().unwrap_or_default()
+    NAMES.locked().get_or_insert_with(Default::default).get(&tid).cloned().unwrap_or_default()
 }
 /// A thread ended: its description goes (a later thread with its id starts without one).
 pub fn thread_gone(tid: u32) {
-    if let Some(m) = NAMES.lock().unwrap().as_mut() {
+    if let Some(m) = NAMES.locked().as_mut() {
         m.remove(&tid);
     }
 }
 pub fn set_thread_name(tid: u32, name: Vec<u16>) {
-    let mut g = NAMES.lock().unwrap();
+    let mut g = NAMES.locked();
     let m = g.get_or_insert_with(Default::default);
     if name.is_empty() {
         m.remove(&tid);
@@ -1428,7 +1429,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
     if len < (fixed + 2 + 7) & !7 {
         return 0xc000_0004; // STATUS_INFO_LENGTH_MISMATCH
     }
-    let mut scan = f.scan.lock().unwrap();
+    let mut scan = f.scan.locked();
     let first = scan.is_none();
     if first || restart {
         // a new mask on the first call or a restart (Windows 8 on); none (NULL or empty) keeps

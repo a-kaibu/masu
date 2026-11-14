@@ -2,6 +2,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::locks::{Lock as _, Rw as _};
 use crate::xmem;
 use crate::HashMap;
 use std::io::SeekFrom;
@@ -117,19 +118,19 @@ pub fn set_command_line_raw(s: &str) {
     mem::write(pa, &a);
     let pw = mem::heap_alloc(2 * w.len() as u32 + 2, true);
     put_wstr(pw, w.len() as u32 + 1, &w);
-    *CMDLINE.lock().unwrap() = (pa, pw);
+    *CMDLINE.locked() = (pa, pw);
 }
 
 /// (ANSI, UTF-16) command line
 pub fn cmdline() -> (u32, u32) {
-    *CMDLINE.lock().unwrap()
+    *CMDLINE.locked()
 }
 
 fn GetCommandLineA(_: &mut Ctx) -> u32 {
-    CMDLINE.lock().unwrap().0
+    CMDLINE.locked().0
 }
 fn GetCommandLineW(_: &mut Ctx) -> u32 {
-    CMDLINE.lock().unwrap().1
+    CMDLINE.locked().1
 }
 
 /// The process environment, in the order Windows keeps it (sorted, case-insensitively).
@@ -138,7 +139,7 @@ fn GetCommandLineW(_: &mut Ctx) -> u32 {
 static ENV: Mutex<Option<Vec<(String, String)>>> = Mutex::new(None);
 
 fn with_env<R>(f: impl FnOnce(&mut Vec<(String, String)>) -> R) -> R {
-    let mut g = ENV.lock().unwrap();
+    let mut g = ENV.locked();
     let e = g.get_or_insert_with(|| {
         let mut e: Vec<(String, String)> = [
             ("PATH", "C:\\windows\\system32;C:\\windows"),
@@ -259,7 +260,7 @@ pub(crate) fn env_set(name: &str, value: Option<&str>) {
 /// The whole environment replaced (a child's, from its parent), kept in Windows' order.
 pub(crate) fn env_replace(mut vars: Vec<(String, String)>) {
     vars.sort_by_key(|(k, _)| k.to_ascii_uppercase());
-    *ENV.lock().unwrap() = Some(vars);
+    *ENV.locked() = Some(vars);
 }
 pub(crate) fn env_vars() -> Vec<(String, String)> {
     with_env(|e| e.clone())
@@ -419,17 +420,17 @@ pub fn exit_thread(code: u32) -> ! {
     crate::obj::HANDOFF.worked(crate::cur().tid);
     crate::uni::leave();
     // (a CRT thread's reference to its DLL: FreeLibrary once its code is done)
-    let held = CRT_DLLS.lock().unwrap().remove(&crate::cur().tid);
+    let held = CRT_DLLS.locked().remove(&crate::cur().tid);
     if let Some(m) = held {
         crate::pe::free_library(unsafe { &mut *crate::cur().cpu }, m);
     }
     crate::dbg::thread_exiting(code);
     crate::dbg::thread_port_closes();
     // (what was kept for it by handle or id: nobody asks an ended thread)
-    if let Some(m) = PRIORITY.lock().unwrap().as_mut() {
+    if let Some(m) = PRIORITY.locked().as_mut() {
         m.remove(&crate::cur().obj);
     }
-    if let Some((_, m)) = BOOST_OFF.lock().unwrap().as_mut() {
+    if let Some((_, m)) = BOOST_OFF.locked().as_mut() {
         m.remove(&crate::cur().tid);
     }
     kura::snap::unregister();
@@ -524,7 +525,7 @@ pub fn crt_start(start: u32, param: u32) -> (u32, u32) {
     crate::pe::add_reference(m, false);
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
     let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    CRT_STARTS.lock().unwrap().insert(id, (start, param, m));
+    CRT_STARTS.locked().insert(id, (start, param, m));
     static ENTRY: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     (*ENTRY.get_or_init(|| crate::api::host_fn("crt_thread", crt_thread, 4)), id)
 }
@@ -532,8 +533,8 @@ static CRT_STARTS: Mutex<std::collections::BTreeMap<u32, (u32, u32, u32)>> = Mut
 /// thread id -> the DLL its CRT thread holds
 static CRT_DLLS: Mutex<std::collections::BTreeMap<u32, u32>> = Mutex::new(std::collections::BTreeMap::new());
 fn crt_thread(c: &mut Ctx) -> u32 {
-    let Some((start, param, m)) = CRT_STARTS.lock().unwrap().remove(&c.a(0)) else { return 0 };
-    CRT_DLLS.lock().unwrap().insert(crate::cur().tid, m);
+    let Some((start, param, m)) = CRT_STARTS.locked().remove(&c.a(0)) else { return 0 };
+    CRT_DLLS.locked().insert(crate::cur().tid, m);
     c.call(start, &[param])
 }
 /// _beginthread(start, stack, arg): no start routine is EINVAL and -1
@@ -650,7 +651,7 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
     // past what was checked)
     let (tids, handles) = counts();
     let tids = if tids.is_empty() { vec![crate::cur().tid] } else { tids };
-    let name: Vec<u16> = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.rsplit('\\').next().unwrap_or("").to_string()).unwrap_or_default().encode_utf16().collect();
+    let name: Vec<u16> = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.rsplit('\\').next().unwrap_or("").to_string()).unwrap_or_default().encode_utf16().collect();
     let (need, exact) = match class {
         2 => (312, false),
         5 => {
@@ -707,7 +708,7 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
 /// kernel32 and kernelbase (always there on Windows), then every DLL loaded (mono finds a
 /// P/Invoke into "__Internal" or an unmapped DLL by GetProcAddress on each)
 fn process_modules() -> Vec<u32> {
-    let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.base);
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.base);
     let mut v: Vec<u32> = exe.into_iter().collect();
     for d in ["ntdll", "kernel32", "kernelbase"] {
         let b = crate::pe::hle_module(d);
@@ -715,7 +716,7 @@ fn process_modules() -> Vec<u32> {
             v.push(b);
         }
     }
-    for m in crate::pe::MODULES.read().unwrap().iter() {
+    for m in crate::pe::MODULES.r().iter() {
         if !v.contains(&m.base) {
             v.push(m.base);
         }
@@ -769,7 +770,7 @@ fn psapi_module(process: u32, h: u32) -> Option<u32> {
     if !psapi_access(process, true) {
         return None;
     }
-    let base = if h == 0 { crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.base) } else { crate::pe::by_base(h).map(|_| h) };
+    let base = if h == 0 { crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.base) } else { crate::pe::by_base(h).map(|_| h) };
     if base.is_none() {
         last_error(6);
     }
@@ -886,7 +887,7 @@ fn create_thread(start: u32, param: u32, stack: u32, flags: u32, inherit: bool) 
     // a suspended thread is started by its first ResumeThread
     let stack = thread_stack(stack, flags);
     if suspended {
-        GATE.lock().unwrap().push((h, 1));
+        GATE.locked().push((h, 1));
     }
     if inherit {
         crate::actctx::inherit(h);
@@ -895,7 +896,7 @@ fn create_thread(start: u32, param: u32, stack: u32, flags: u32, inherit: bool) 
     if tid == 0 {
         // no TEB and stack, or no host thread: NULL and ERROR_NOT_ENOUGH_MEMORY, as Windows
         // (review A-13: this was an abort)
-        GATE.lock().unwrap().retain(|g| g.0 != h);
+        GATE.locked().retain(|g| g.0 != h);
         crate::actctx::forget(h);
         obj::close(h);
         last_error(8);
@@ -968,7 +969,7 @@ pub(crate) fn suspend_for_other(tid: u32, suspend: bool) -> Result<u32, u32> {
 pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
     let h = obj::with(|t| t.objs.iter().find(|(_, (o, _))| matches!(o, Obj::Thread { tid: x, .. } if *x == tid)).map(|(&k, _)| k.first_handle()));
     if let Some(h) = h {
-        let mut g = GATE.lock().unwrap();
+        let mut g = GATE.locked();
         if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == h && *n > 0) {
             let old = *n;
             if suspend {
@@ -986,7 +987,7 @@ pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
 
 /// Blocks a new thread created suspended until ResumeThread.
 pub fn wait_gate(h: u32) {
-    let mut g = GATE.lock().unwrap();
+    let mut g = GATE.locked();
     while g.iter().any(|&(x, n)| x == h && n > 0) {
         g = GATE_CV.wait(g).unwrap();
     }
@@ -996,12 +997,12 @@ pub fn wait_gate(h: u32) {
 /// wait_gate for a new thread that will run `start(param)`: it may stand still for a save
 /// state meanwhile (snap.rs START).
 pub fn wait_gate_start(h: u32, start: u32, param: u32) {
-    let mut g = GATE.lock().unwrap();
+    let mut g = GATE.locked();
     while g.iter().any(|&(x, n)| x == h && n > 0) {
         if kura::snap::pausing() {
             drop(g);
             crate::snap::point_start(start, param);
-            g = GATE.lock().unwrap();
+            g = GATE.locked();
             continue;
         }
         g = GATE_CV.wait(g).unwrap();
@@ -1148,7 +1149,7 @@ fn ResumeThread(c: &mut Ctx) -> u32 {
     }
     // a thread created suspended that has not started yet
     {
-        let mut g = GATE.lock().unwrap();
+        let mut g = GATE.locked();
         if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == h && *n > 0) {
             let old = *n;
             *n -= 1;
@@ -1215,7 +1216,7 @@ fn SuspendThread(c: &mut Ctx) -> u32 {
     }) {
         return remote_thread_count(h, pid, true);
     }
-    if let Some((_, n)) = GATE.lock().unwrap().iter_mut().find(|(x, n)| *x == h && *n > 0) {
+    if let Some((_, n)) = GATE.locked().iter_mut().find(|(x, n)| *x == h && *n > 0) {
         if *n >= waits::suspend::MAX_COUNT {
             last_error(ERROR_SIGNAL_REFUSED);
             return u32::MAX;
@@ -1285,7 +1286,7 @@ pub fn terminating() -> bool {
 
 /// Whether TerminateThread ended the calling thread (check_terminate ends it then).
 pub fn terminated_here() -> bool {
-    ANY_TERMINATE.load(std::sync::atomic::Ordering::Relaxed) && crate::on_guest_thread() && TERMINATE.lock().unwrap().iter().any(|x| x.0 == crate::cur().tid)
+    ANY_TERMINATE.load(std::sync::atomic::Ordering::Relaxed) && crate::on_guest_thread() && TERMINATE.locked().iter().any(|x| x.0 == crate::cur().tid)
 }
 
 /// Ends the calling thread here when TerminateThread ended it.
@@ -1295,7 +1296,7 @@ pub fn check_terminate() {
     }
     let me = crate::cur().tid;
     let code = {
-        let mut v = TERMINATE.lock().unwrap();
+        let mut v = TERMINATE.locked();
         let Some(i) = v.iter().position(|x| x.0 == me) else { return };
         let code = v.remove(i).1;
         if v.is_empty() {
@@ -1329,10 +1330,10 @@ fn TerminateThread(c: &mut Ctx) -> u32 {
     if tid == crate::cur().tid {
         exit_thread(code);
     }
-    TERMINATE.lock().unwrap().push((tid, code));
+    TERMINATE.locked().push((tid, code));
     ANY_TERMINATE.store(true, std::sync::atomic::Ordering::Relaxed);
     let gated = {
-        let mut g = GATE.lock().unwrap();
+        let mut g = GATE.locked();
         let had = g.iter().any(|&(x, n)| x == h && n > 0);
         g.retain(|&(x, _)| x != h);
         had
@@ -1359,7 +1360,7 @@ static PRIORITY: Mutex<Option<HashMap<u32, i32>>> = Mutex::new(None);
 /// sets it for every thread too, and a thread started later takes the process's)
 static BOOST_OFF: Mutex<Option<(bool, HashMap<u32, bool>)>> = Mutex::new(None);
 pub(crate) fn boost_off(tid: u32) -> bool {
-    let mut g = BOOST_OFF.lock().unwrap();
+    let mut g = BOOST_OFF.locked();
     let (proc, m) = g.get_or_insert_with(Default::default);
     m.get(&tid).copied().unwrap_or(*proc)
 }
@@ -1408,7 +1409,7 @@ fn GetThreadPriorityBoost(c: &mut Ctx) -> u32 {
         return 0;
     }
     let Some(tid) = thread_with(c.a(0), 0) else { return 0 };
-    let mut g = BOOST_OFF.lock().unwrap();
+    let mut g = BOOST_OFF.locked();
     let (proc, m) = g.get_or_insert_with(Default::default);
     let off = m.get(&tid).copied().unwrap_or(*proc);
     put32(c.a(1), off as u32);
@@ -1419,16 +1420,16 @@ fn SetThreadPriorityBoost(c: &mut Ctx) -> u32 {
         return 0;
     }
     let Some(tid) = thread_with(c.a(0), 0) else { return 0 };
-    BOOST_OFF.lock().unwrap().get_or_insert_with(Default::default).1.insert(tid, c.a(1) != 0);
+    BOOST_OFF.locked().get_or_insert_with(Default::default).1.insert(tid, c.a(1) != 0);
     1
 }
 fn GetProcessPriorityBoost(c: &mut Ctx) -> u32 {
-    let off = BOOST_OFF.lock().unwrap().get_or_insert_with(Default::default).0;
+    let off = BOOST_OFF.locked().get_or_insert_with(Default::default).0;
     put32(c.a(1), off as u32);
     1
 }
 fn SetProcessPriorityBoost(c: &mut Ctx) -> u32 {
-    let mut g = BOOST_OFF.lock().unwrap();
+    let mut g = BOOST_OFF.locked();
     let (proc, m) = g.get_or_insert_with(Default::default);
     *proc = c.a(1) != 0;
     m.values_mut().for_each(|v| *v = *proc);
@@ -1441,7 +1442,7 @@ fn GetThreadPriority(c: &mut Ctx) -> u32 {
     if thread_denied(c.a(0), THREAD_QUERY_ANY) {
         return 0x7fff_ffff; // THREAD_PRIORITY_ERROR_RETURN
     }
-    PRIORITY.lock().unwrap().get_or_insert_with(HashMap::default).get(&thread_key(c.a(0))).copied().unwrap_or(0) as u32
+    PRIORITY.locked().get_or_insert_with(HashMap::default).get(&thread_key(c.a(0))).copied().unwrap_or(0) as u32
 }
 fn SetThreadPriority(c: &mut Ctx) -> u32 {
     if thread_denied(c.a(0), THREAD_SET_ANY) {
@@ -1452,7 +1453,7 @@ fn SetThreadPriority(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    PRIORITY.lock().unwrap().get_or_insert_with(HashMap::default).insert(thread_key(c.a(0)), p);
+    PRIORITY.locked().get_or_insert_with(HashMap::default).insert(thread_key(c.a(0)), p);
     1
 }
 fn SetPriorityClass(_: &mut Ctx) -> u32 {
@@ -1829,7 +1830,7 @@ static PORTS: Mutex<Option<HashMap<u32, std::collections::VecDeque<(u32, u32, u3
 fn CreateIoCompletionPort(c: &mut Ctx) -> u32 {
     let (file, port) = (c.a(0), c.a(1));
     if port != 0 {
-        if !PORTS.lock().unwrap().get_or_insert_with(HashMap::default).contains_key(&port) {
+        if !PORTS.locked().get_or_insert_with(HashMap::default).contains_key(&port) {
             last_error(87);
             return 0;
         }
@@ -1837,12 +1838,12 @@ fn CreateIoCompletionPort(c: &mut Ctx) -> u32 {
     }
     let _ = file;
     let h = obj::add(Obj::Event { manual: true, set: false });
-    PORTS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, Default::default());
+    PORTS.locked().get_or_insert_with(HashMap::default).insert(h, Default::default());
     h
 }
 fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
     let (port, bytes, key, ov) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    let ok = PORTS.lock().unwrap().get_or_insert_with(HashMap::default).get_mut(&port).map(|q| q.push_back((bytes, key, ov))).is_some();
+    let ok = PORTS.locked().get_or_insert_with(HashMap::default).get_mut(&port).map(|q| q.push_back((bytes, key, ov))).is_some();
     if !ok {
         last_error(6);
         return 0;
@@ -1857,7 +1858,7 @@ fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
     let deadline = (ms != 0xffff_ffff).then(|| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64));
     loop {
         let got = {
-            let mut g = PORTS.lock().unwrap();
+            let mut g = PORTS.locked();
             let Some(q) = g.get_or_insert_with(HashMap::default).get_mut(&port) else {
                 drop(g);
                 last_error(6);
@@ -2621,7 +2622,7 @@ fn tls_slot_of(teb: u32, i: u32, make: bool) -> u32 {
 }
 /// (slot 0 is never given out, as on XP SP2 and later: kernel32:thread test_reserved_tls)
 fn TlsAlloc(_: &mut Ctx) -> u32 {
-    let mut u = TLS_USED.lock().unwrap();
+    let mut u = TLS_USED.locked();
     if u.is_empty() {
         u.resize(1088, false);
         u[0] = true;
@@ -2638,7 +2639,7 @@ fn TlsAlloc(_: &mut Ctx) -> u32 {
 /// allocated (twice, say) is ERROR_INVALID_PARAMETER.
 fn TlsFree(c: &mut Ctx) -> u32 {
     let i = c.a(0);
-    match TLS_USED.lock().unwrap().get_mut(i as usize) {
+    match TLS_USED.locked().get_mut(i as usize) {
         Some(x) if *x && i != 0 => {
             *x = false;
             for &(_, teb, _) in TEBS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
@@ -3656,13 +3657,13 @@ static HEAP_MAX: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
 static HEAPS: Mutex<Option<std::collections::HashSet<u32>>> = Mutex::new(None);
 /// heap_alloc_in's tag for heap handle `h`: its own for a HeapCreate heap, else 0
 fn heap_tag(h: u32) -> u32 {
-    if h != PROCESS_HEAP && HEAPS.lock().unwrap().get_or_insert_with(Default::default).contains(&h) { h } else { 0 }
+    if h != PROCESS_HEAP && HEAPS.locked().get_or_insert_with(Default::default).contains(&h) { h } else { 0 }
 }
 fn HeapCreate(c: &mut Ctx) -> u32 {
     let h = NEXT_HEAP.fetch_add(0x10000, Ordering::Relaxed);
-    HEAPS.lock().unwrap().get_or_insert_with(Default::default).insert(h);
+    HEAPS.locked().get_or_insert_with(Default::default).insert(h);
     if c.a(2) != 0 {
-        HEAP_MAX.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, c.a(2));
+        HEAP_MAX.locked().get_or_insert_with(HashMap::default).insert(h, c.a(2));
     }
     h
 }
@@ -3670,11 +3671,11 @@ fn HeapCreate(c: &mut Ctx) -> u32 {
 /// good); the process heap and handles HeapCreate never gave fail with ERROR_INVALID_HANDLE
 fn HeapDestroy(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    if !HEAPS.lock().unwrap().get_or_insert_with(Default::default).remove(&h) {
+    if !HEAPS.locked().get_or_insert_with(Default::default).remove(&h) {
         last_error(6);
         return 0;
     }
-    HEAP_MAX.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h);
+    HEAP_MAX.locked().get_or_insert_with(HashMap::default).remove(&h);
     mem::heap_destroy(h);
     1
 }
@@ -3682,7 +3683,7 @@ fn HeapDestroy(c: &mut Ctx) -> u32 {
 /// maximum size, and no block reaches the top of the address space
 fn heap_refuses(h: u32, size: u32) -> bool {
     let max = if mem::x64() { 0x7fff_0000 } else { 0x7ffd_ffff };
-    size > max || HEAP_MAX.lock().unwrap().get_or_insert_with(HashMap::default).get(&h).is_some_and(|&m| size > m)
+    size > max || HEAP_MAX.locked().get_or_insert_with(HashMap::default).get(&h).is_some_and(|&m| size > m)
 }
 fn HeapAlloc(c: &mut Ctx) -> u32 {
     let p = if heap_refuses(c.a(0), c.a(2)) { 0 } else { mem::heap_alloc_in(heap_tag(c.a(0)), c.a(2), c.a(1) & 8 != 0) };
@@ -3774,7 +3775,7 @@ mod handles {
     }
     static T: Mutex<Option<Table>> = Mutex::new(None);
     fn with<R>(f: impl FnOnce(&mut Table) -> R) -> R {
-        f(T.lock().unwrap().get_or_insert_with(Table::default))
+        f(T.locked().get_or_insert_with(Table::default))
     }
     fn size() -> u32 {
         2 * mem::ps()
@@ -4487,9 +4488,9 @@ fn rw_arm(h: u32, gen: u32, obj_h: u32, ms: u32, flags: u32) {
             }
             let run = move |c: &mut Ctx| {
                 let Some((cb, ctx)) = tp_with(|m| m.get(&h).filter(|t| t.gen == gen).map(|t| (t.cb, t.ctx))) else { return };
-                WAIT_RUNNING.lock().unwrap().push((h, crate::cur().tid));
+                WAIT_RUNNING.locked().push((h, crate::cur().tid));
                 c.call(cb, &[ctx, (r != 0) as u32]);
-                WAIT_RUNNING.lock().unwrap().retain(|x| x.0 != h);
+                WAIT_RUNNING.locked().retain(|x| x.0 != h);
                 if flags & 8 == 0 && tp_current(h, gen) {
                     rw_arm(h, gen, obj_h, ms, flags);
                 }
@@ -4587,7 +4588,7 @@ fn UnregisterWait(c: &mut Ctx) -> u32 {
     }
     rw_forget(h);
     let me = crate::cur().tid;
-    if WAIT_RUNNING.lock().unwrap().iter().any(|&(x, t)| x == h && t != me) {
+    if WAIT_RUNNING.locked().iter().any(|&(x, t)| x == h && t != me) {
         last_error(997);
         return 0;
     }
@@ -4608,7 +4609,7 @@ fn UnregisterWaitEx(c: &mut Ctx) -> u32 {
     }
     rw_forget(h);
     let me = crate::cur().tid;
-    let busy = || WAIT_RUNNING.lock().unwrap().iter().any(|&(x, t)| x == h && t != me);
+    let busy = || WAIT_RUNNING.locked().iter().any(|&(x, t)| x == h && t != me);
     if ev == u32::MAX {
         while busy() {
             sleep_ms(1);
@@ -6159,7 +6160,7 @@ impl Atoms {
     }
 }
 fn atoms(global: bool) -> std::sync::MutexGuard<'static, Atoms> {
-    if global { GLOBAL_ATOMS.lock().unwrap() } else { LOCAL_ATOMS.lock().unwrap() }
+    if global { GLOBAL_ATOMS.locked() } else { LOCAL_ATOMS.locked() }
 }
 fn add_atom(c: &mut Ctx, wide: bool, global: bool) -> u32 {
     match atom_arg(c.a(0), wide) {
@@ -6601,7 +6602,7 @@ fn GetThreadTimes(c: &mut Ctx) -> u32 {
 // modules, resources
 
 fn module_name(h: u32, wide: bool, dst: u32, cap: u32) -> u32 {
-    let base = if h == 0 { crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.base).unwrap_or(0) } else { h };
+    let base = if h == 0 { crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.base).unwrap_or(0) } else { h };
     let Some(path) = crate::pe::with(base, |m| m.path.clone()) else {
         last_error(126);
         return 0;
@@ -6628,7 +6629,7 @@ fn GetModuleFileNameW(c: &mut Ctx) -> u32 {
 }
 pub fn module_handle(name: u32, wide: bool) -> u32 {
     if name == 0 {
-        return crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.base).unwrap_or(0);
+        return crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.base).unwrap_or(0);
     }
     let n = arg_str(name, wide);
     if let Some((b, _)) = crate::pe::sxs_module(&n) {
@@ -6718,7 +6719,7 @@ fn load_library_ex(c: &mut Ctx, wide: bool) -> u32 {
     }
     let full = files::full_path(&n);
     if flags & 0x40 == 0 {
-        let loaded = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.name.is_empty() && m.path.eq_ignore_ascii_case(&full)).map(|m| m.base);
+        let loaded = crate::pe::MODULES.r().iter().find(|m| !m.name.is_empty() && m.path.eq_ignore_ascii_case(&full)).map(|m| m.base);
         if let Some(b) = loaded {
             // (a reference of the code module's: its FreeLibrary is this one's)
             crate::pe::add_reference(b, false);
@@ -6746,7 +6747,7 @@ fn LoadLibraryExA(c: &mut Ctx) -> u32 {
 }
 /// SetDllDirectory(path): one folder searched after the exe's (NULL or "": none again)
 fn set_dll_directory(c: &mut Ctx, wide: bool) -> u32 {
-    let mut dirs = crate::pe::DLL_DIRS.lock().unwrap();
+    let mut dirs = crate::pe::DLL_DIRS.locked();
     dirs.clear();
     if c.a(0) != 0 {
         let d = crate::files::full_path(arg_str(c.a(0), wide).trim_end_matches(['\\', '/']));
@@ -7292,7 +7293,7 @@ fn _lwrite(c: &mut Ctx) -> u32 {
     }
     if n == 0 {
         let p = f.seek(SeekFrom::Current(0)).unwrap_or(0);
-        return if f.f.lock().unwrap().set_len(p).is_ok() { 0 } else { 0xffff_ffff };
+        return if f.f.locked().set_len(p).is_ok() { 0 } else { 0xffff_ffff };
     }
     match f.write_from(buf, n) {
         w if w == n => n,
@@ -7442,7 +7443,7 @@ fn WriteFile(c: &mut Ctx) -> u32 {
 /// log a character at a time)
 pub(crate) fn console_write(t: &str) {
     static PENDING: Mutex<String> = Mutex::new(String::new());
-    let mut p = PENDING.lock().unwrap();
+    let mut p = PENDING.locked();
     p.push_str(t);
     while let Some(i) = p.find('\n') {
         let line: String = p.drain(..=i).collect();
@@ -7562,7 +7563,7 @@ fn GetFileSizeEx(c: &mut Ctx) -> u32 {
 fn SetEndOfFile(c: &mut Ctx) -> u32 {
     let Some(f) = obj::file(c.a(0)) else { return 0 };
     let p = f.seek(SeekFrom::Current(0)).unwrap_or(0);
-    let r = f.f.lock().unwrap().set_len(p);
+    let r = f.f.locked().set_len(p);
     // (no room for it: ERROR_DISK_FULL, as Windows says of a file past the free space)
     if r.as_ref().is_err_and(|e| matches!(e.raw_os_error(), Some(libc::ENOSPC | libc::EFBIG))) {
         last_error(112);
@@ -7615,7 +7616,7 @@ fn lock_file(h: u32, off: u64, len: u64, excl: bool, now: bool) -> u32 {
     };
     let (key, me) = (f.lock_key(), f.lock_owner());
     loop {
-        if files::LOCKS.lock().unwrap().lock(&key, me, off, len, excl) {
+        if files::LOCKS.locked().lock(&key, me, off, len, excl) {
             return 1;
         }
         if now {
@@ -7631,7 +7632,7 @@ fn unlock_file(h: u32, off: u64, len: u64) -> u32 {
         last_error(6);
         return 0;
     };
-    if files::LOCKS.lock().unwrap().unlock(&f.lock_key(), f.lock_owner(), off, len) {
+    if files::LOCKS.locked().unlock(&f.lock_key(), f.lock_owner(), off, len) {
         return 1;
     }
     last_error(158); // ERROR_NOT_LOCKED
@@ -7639,7 +7640,7 @@ fn unlock_file(h: u32, off: u64, len: u64) -> u32 {
 }
 fn GetFileTime(c: &mut Ctx) -> u32 {
     let Some(f) = obj::file(c.a(0)) else { return 0 };
-    let m = f.f.lock().unwrap().metadata().ok();
+    let m = f.f.locked().metadata().ok();
     let t = m.map_or(0, |m| files::write_time(&f.path, &m));
     for i in 1..4 {
         if c.a(i) != 0 {
@@ -7666,7 +7667,7 @@ fn SetFileTime(c: &mut Ctx) -> u32 {
 }
 fn GetFileInformationByHandle(c: &mut Ctx) -> u32 {
     let Some(f) = obj::file(c.a(0)) else { return 0 };
-    let Ok(m) = f.f.lock().unwrap().metadata() else { return 0 };
+    let Ok(m) = f.f.locked().metadata() else { return 0 };
     let p = c.a(1);
     mem::fill(p, 52, 0);
     w32(p, files::attrs(&m));
@@ -7693,7 +7694,7 @@ fn GetFileInformationByHandleEx(c: &mut Ctx) -> u32 {
         last_error(6);
         return 0;
     };
-    let Ok(m) = f.f.lock().unwrap().metadata() else { return 0 };
+    let Ok(m) = f.f.locked().metadata() else { return 0 };
     let (class, p, size) = (c.a(1), c.a(2), c.a(3));
     let need = match class {
         0 => 40,
@@ -7836,7 +7837,7 @@ fn find_next(c: &mut Ctx, wide: bool) -> u32 {
         _ => None,
     });
     let Some(f) = f else { return 0 };
-    let mut f = f.lock().unwrap();
+    let mut f = f.locked();
     if f.at >= f.entries.len() {
         last_error(18);
         return 0;
@@ -8633,7 +8634,7 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
 /// Where a bare file name is looked for (SearchPath with no path, OpenFile): the exe's folder,
 /// the current one, system32, windows, then PATH
 fn search_dirs() -> Vec<String> {
-    let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
     let exe_dir = exe.rfind('\\').map_or(String::new(), |i| exe[..i].to_string());
     let mut v = vec![exe_dir, files::cwd(), "C:\\windows\\system32".into(), "C:\\windows".into()];
     v.extend(env_get("PATH").unwrap_or_default().split(';').filter(|d| !d.is_empty()).map(String::from));
@@ -8655,7 +8656,7 @@ fn create_file_mapping(c: &mut Ctx, wide: bool) -> u32 {
     let want = c.a(4) as u64 | (c.a(3) as u64) << 32;
     if let (Some(f), true) = (&f, write) {
         if want > f.size() {
-            let _ = f.f.lock().unwrap().set_len(want);
+            let _ = f.f.locked().set_len(want);
         }
     }
     sa_inherit(c.a(1), create_named(named(c.a(5), wide), Obj::Mapping { file: f, size, view: 0, write }))
@@ -8714,7 +8715,7 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
             return 0;
         };
         mem::commit(b, 4);
-        VIEWS.lock().unwrap().push((b, size.max(1), None));
+        VIEWS.locked().push((b, size.max(1), None));
         section_views(|m| m.insert(b, Section { size: size.max(1), views: 1, open: true }));
         obj::with(|t| {
             if let Some((Obj::Mapping { view, .. }, _)) = t.objs.get_mut(&h) {
@@ -8746,7 +8747,7 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
     let shared = access & 3 == 0;
     let key = (f.path.clone(), off, n, len);
     if shared {
-        if let Some(b) = READ_VIEWS.lock().unwrap().iter_mut().find(|v| v.0 == key).map(|v| {
+        if let Some(b) = READ_VIEWS.locked().iter_mut().find(|v| v.0 == key).map(|v| {
             v.2 += 1;
             v.1
         }) {
@@ -8758,18 +8759,18 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
         return 0;
     };
     mem::commit(b, 4);
-    VIEWS.lock().unwrap().push((b, n.max(1), Some(path)));
+    VIEWS.locked().push((b, n.max(1), Some(path)));
     let pos = f.seek(SeekFrom::Current(0)).unwrap_or(0);
     f.seek(SeekFrom::Start(off));
     f.read_into(b, have);
     f.seek(SeekFrom::Start(pos));
     if shared {
-        READ_VIEWS.lock().unwrap().push((key, b, 1));
+        READ_VIEWS.locked().push((key, b, 1));
     }
     // (FILE_MAP_WRITE on a writable mapping: what the program writes there reaches the file
     // when the view is flushed or unmapped; FILE_MAP_COPY alone is copy-on-write)
     if write && access & 2 != 0 {
-        WRITE_BACK.lock().unwrap().push((b, have, f.clone(), off));
+        WRITE_BACK.locked().push((b, have, f.clone(), off));
     }
     b
 }
@@ -8784,7 +8785,7 @@ struct Section {
 }
 static SECTIONS: Mutex<Option<HashMap<u32, Section>>> = Mutex::new(None);
 fn section_views<R>(f: impl FnOnce(&mut HashMap<u32, Section>) -> R) -> R {
-    f(SECTIONS.lock().unwrap().get_or_insert_with(HashMap::default))
+    f(SECTIONS.locked().get_or_insert_with(HashMap::default))
 }
 /// The block of a pagefile section whose last handle closed (obj::gone_object): freed now if
 /// no view shows it, else at its last UnmapViewOfFile
@@ -8795,7 +8796,7 @@ pub(crate) fn section_closed(view: u32) {
         (s.views == 0).then(|| m.remove(&view))
     });
     if free.is_some() {
-        VIEWS.lock().unwrap().retain(|v| v.0 != view);
+        VIEWS.locked().retain(|v| v.0 != view);
         mem::release(view);
     }
 }
@@ -8817,18 +8818,18 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
     });
     if let Some((b, last)) = section {
         if last {
-            VIEWS.lock().unwrap().retain(|v| v.0 != b);
+            VIEWS.locked().retain(|v| v.0 != b);
             mem::release(b);
         }
         return 1;
     }
     // (an address that is no view's base: nothing to do, as before)
-    if !VIEWS.lock().unwrap().iter().any(|v| v.0 == a) {
+    if !VIEWS.locked().iter().any(|v| v.0 == a) {
         return 1;
     }
     // (a shared read-only copy: freed with its last view)
     let more = {
-        let mut r = READ_VIEWS.lock().unwrap();
+        let mut r = READ_VIEWS.locked();
         match r.iter().position(|v| v.1 == a) {
             Some(i) if r[i].2 > 1 => {
                 r[i].2 -= 1;
@@ -8843,7 +8844,7 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
     };
     if !more {
         write_back(a, true);
-        VIEWS.lock().unwrap().retain(|v| v.0 != a);
+        VIEWS.locked().retain(|v| v.0 != a);
         mem::release(a);
     }
     1
@@ -8851,7 +8852,7 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
 /// Writes a writable file view back to its file (the bytes the view covers, at its offset;
 /// the file position stays); `remove`: the view goes away
 fn write_back(a: u32, remove: bool) {
-    let mut l = WRITE_BACK.lock().unwrap();
+    let mut l = WRITE_BACK.locked();
     let Some(i) = l.iter().position(|v| a >= v.0 && a - v.0 < v.1.max(1)) else { return };
     let (b, n, f, off) = if remove { l.remove(i) } else { l[i].clone() };
     drop(l);
@@ -8882,7 +8883,7 @@ pub(crate) fn mapped_file(a: u32) -> Result<String, u32> {
     if let Some(b) = crate::pe::containing(a) {
         return Ok(crate::pe::with(b, |m| m.path.clone()).unwrap());
     }
-    match VIEWS.lock().unwrap().iter().find(|v| a >= v.0 && a - v.0 < v.1) {
+    match VIEWS.locked().iter().find(|v| a >= v.0 && a - v.0 < v.1) {
         Some((_, _, Some(p))) => Ok(p.clone()),
         Some(_) => Err(1006),
         None => {
@@ -8942,7 +8943,7 @@ fn image_file_name(c: &mut Ctx, wide: bool) -> u32 {
     if !psapi_access(h, false) {
         return 0;
     }
-    let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
     let p = device_path(&exe);
     let n = if wide { p.encode_utf16().count() } else { crate::text::s2a(&p).len() } as u32;
     if n >= cap || dst == 0 {
@@ -8953,7 +8954,7 @@ fn image_file_name(c: &mut Ctx, wide: bool) -> u32 {
 }
 /// The exe's path: its Windows path, or (`native`) the NT device path
 pub(crate) fn exe_path(native: bool) -> String {
-    let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
     if native { device_path(&exe) } else { exe }
 }
 /// QueryFullProcessImageName(process, flags, buffer, size in/out): flags 0 the Windows path,
@@ -9220,7 +9221,7 @@ fn PdhOpenQuery(c: &mut Ctx) -> u32 {
     if q == 0 {
         return 0xc000_07d1; // PDH_MEMORY_ALLOCATION_FAILURE
     }
-    PDH.lock().unwrap().get_or_insert_with(HashMap::default).insert(q, Vec::new());
+    PDH.locked().get_or_insert_with(HashMap::default).insert(q, Vec::new());
     mem::putp(c.a(2), q);
     0
 }
@@ -9229,7 +9230,7 @@ static PDH: Mutex<Option<HashMap<u32, Vec<u32>>>> = Mutex::new(None);
 /// PdhAddCounter(query, path, user, &counter)
 fn PdhAddCounter(c: &mut Ctx) -> u32 {
     let q = c.a(0);
-    let mut g = PDH.lock().unwrap();
+    let mut g = PDH.locked();
     let Some(list) = g.get_or_insert_with(HashMap::default).get_mut(&q) else { return 0xc000_0bbc }; // PDH_INVALID_HANDLE
     let k = mem::heap_alloc(16, true);
     if k == 0 {
@@ -9243,7 +9244,7 @@ fn PdhAddCounter(c: &mut Ctx) -> u32 {
 /// PdhRemoveCounter(counter)
 fn PdhRemoveCounter(c: &mut Ctx) -> u32 {
     let k = c.a(0);
-    let mut g = PDH.lock().unwrap();
+    let mut g = PDH.locked();
     let Some(list) = g.as_mut().and_then(|m| m.values_mut().find(|l| l.contains(&k))) else { return 0xc000_0bbc };
     list.retain(|&x| x != k);
     mem::heap_free(k);
@@ -9252,7 +9253,7 @@ fn PdhRemoveCounter(c: &mut Ctx) -> u32 {
 /// PdhCloseQuery(query): it and its counters
 fn PdhCloseQuery(c: &mut Ctx) -> u32 {
     let q = c.a(0);
-    let Some(list) = PDH.lock().unwrap().as_mut().and_then(|m| m.remove(&q)) else { return 0xc000_0bbc };
+    let Some(list) = PDH.locked().as_mut().and_then(|m| m.remove(&q)) else { return 0xc000_0bbc };
     for k in list {
         mem::heap_free(k);
     }
@@ -9311,7 +9312,7 @@ fn slist_set(h: u32, next: u32, depth: u32) {
 }
 fn InterlockedPushEntrySList(c: &mut Ctx) -> u32 {
     let (h, e) = (c.a(0), c.a(1));
-    let _g = SLIST.lock().unwrap();
+    let _g = SLIST.locked();
     let (old, n) = slist_get(h);
     mem::wp(e, old);
     slist_set(h, e, n + 1);
@@ -9319,7 +9320,7 @@ fn InterlockedPushEntrySList(c: &mut Ctx) -> u32 {
 }
 fn InterlockedPopEntrySList(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    let _g = SLIST.lock().unwrap();
+    let _g = SLIST.locked();
     let (e, n) = slist_get(h);
     if e != 0 {
         slist_set(h, mem::rp(e), n.saturating_sub(1));
@@ -9328,7 +9329,7 @@ fn InterlockedPopEntrySList(c: &mut Ctx) -> u32 {
 }
 fn InterlockedFlushSList(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    let _g = SLIST.lock().unwrap();
+    let _g = SLIST.locked();
     let (e, _) = slist_get(h);
     if e != 0 {
         slist_set(h, 0, 0);
@@ -9339,7 +9340,7 @@ fn QueryDepthSList(c: &mut Ctx) -> u32 {
     slist_get(c.a(0)).1
 }
 fn push_list(h: u32, first: u32, last: u32, n: u32) -> u32 {
-    let _g = SLIST.lock().unwrap();
+    let _g = SLIST.locked();
     let (old, d) = slist_get(h);
     mem::wp(last, old);
     slist_set(h, first, d + n);
@@ -9375,7 +9376,7 @@ pub static SNAPSHOTS: Mutex<Option<HashMap<u32, Snapshot>>> = Mutex::new(None);
 
 /// A snapshot's list goes with its handle (obj::gone_object)
 pub(crate) fn snapshot_closed(h: u32) {
-    if let Some(m) = SNAPSHOTS.lock().unwrap().as_mut() {
+    if let Some(m) = SNAPSHOTS.locked().as_mut() {
         m.remove(&h);
     }
 }
@@ -9392,7 +9393,7 @@ fn CreateToolhelp32Snapshot(c: &mut Ctx) -> u32 {
     }
     let modules = if flags & TH32CS_MODULES != 0 { snapshot_modules() } else { vec![] };
     let h = obj::add(Obj::Other(crate::obj::Other::Snapshot));
-    SNAPSHOTS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, Snapshot { modules, next_module: 0 });
+    SNAPSHOTS.locked().get_or_insert_with(HashMap::default).insert(h, Snapshot { modules, next_module: 0 });
     h
 }
 
@@ -9403,7 +9404,7 @@ pub fn snapshot_modules() -> Vec<(u32, u32, String, String)> {
     for k in ["ntdll", "kernel32"] {
         crate::pe::hle_module(k);
     }
-    let mods = crate::pe::MODULES.read().unwrap();
+    let mods = crate::pe::MODULES.r();
     let mut v: Vec<_> = mods.iter().filter(|m| !m.dll).chain(mods.iter().filter(|m| m.dll)).map(|m| (m.base, m.size, m.name.clone(), m.path.clone())).collect();
     v.dedup_by_key(|m| m.0);
     v
@@ -9422,7 +9423,7 @@ fn module_entry(c: &mut Ctx, wide: bool, first: bool) -> u32 {
     };
     // (a closed snapshot's handle: gone, though its list is kept until the handle is reused)
     let open = obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other(crate::obj::Other::Snapshot), _))));
-    let mut snaps = SNAPSHOTS.lock().unwrap();
+    let mut snaps = SNAPSHOTS.locked();
     let Some(s) = snaps.as_mut().filter(|_| open).and_then(|m| m.get_mut(&h)) else {
         last_error(6);
         return 0;
@@ -9470,7 +9471,7 @@ fn Module32NextW(c: &mut Ctx) -> u32 {
 }
 fn process_entry(c: &mut Ctx, wide: bool) -> u32 {
     let p = c.a(1);
-    let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.name.clone()).unwrap_or_default();
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.name.clone()).unwrap_or_default();
     let size = if wide { 36 + 520 } else { 36 + 260 };
     mem::fill(p + 4, size - 4, 0);
     w32(p + 8, crate::pid());
