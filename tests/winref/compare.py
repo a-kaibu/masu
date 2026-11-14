@@ -181,6 +181,7 @@ def main():
         import golden
         stale = {p for p in os.listdir(ref) if os.path.isdir(os.path.join(ref, p))
                  and open(os.path.join(ref, p, "src")).read().strip() != golden.src_hash(p)}
+        stale |= {p for p, g in golden.kikizake_golden().items() if open(os.path.join(g, "src")).read().strip() != golden.src_hash(p)}
         tmp = tempfile.TemporaryDirectory()
         golden.GOLDEN = os.path.abspath(ref)
         golden.expand(tmp.name)

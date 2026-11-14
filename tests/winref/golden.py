@@ -27,6 +27,18 @@ GOLDEN = os.path.join(HERE, "golden")
 COMMON = ["probe.h", "fpu53.c", "ja.manifest", "ja.rc", "build.sh"]
 
 
+def kikizake():
+    """kikizake's checkout (kikizake.sh): its suites are answered by its own Windows runs, in its
+    golden/<suite>-<arch>/, which are read here as kikizake_<suite>-<arch>"""
+    import subprocess
+    return subprocess.run([os.path.join(HERE, "kikizake.sh")], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def kikizake_golden():
+    g = os.path.join(kikizake(), "golden")
+    return {"kikizake_" + n: os.path.join(g, n) for n in sorted(os.listdir(g)) if re.match(r".*-(32|64)$", n)}
+
+
 def sources(probe):
     base = re.sub(r"-(32|64)$", "", probe)
     if base.startswith("host_"):
@@ -41,10 +53,11 @@ def sources(probe):
             if "// msstl" in open(cpp).read():
                 extra += [os.path.join(shim, f) for f in sorted(os.listdir(shim))]
             return [cpp] + extra
-    elif base.startswith("wingfx_"):
-        # (a wingfx suite: its case file compiled into the executor, wingfx/runner)
-        wx = os.path.join(ROOT, "wingfx")
-        return [os.path.join(wx, "cases", base[7:] + ".txt"), os.path.join(wx, "runner", "wingfx.c"), os.path.join(wx, "runner", "build.sh")]
+    elif base.startswith("kikizake_"):
+        # (a kikizake suite: its case file compiled into the executor; hashed as kikizake's
+        # runner/golden.py does)
+        k = kikizake()
+        return [os.path.join(k, "cases", base[9:] + ".txt"), os.path.join(k, "runner", "kikizake.c"), os.path.join(k, "runner", "build.sh")]
     elif base.startswith("replay_"):
         # (a recorded D3D trace played back: tests/replay; the converter is part of it)
         rep = os.path.join(ROOT, "tests", "replay")
@@ -117,7 +130,7 @@ def flaky(run, out, probe):
 def import_(src, only):
     for probe in sorted(os.listdir(src)):
         d = os.path.join(src, probe)
-        if not os.path.isdir(d) or (only and probe not in only):
+        if not os.path.isdir(d) or (only and probe not in only) or probe.startswith("kikizake_"):
             continue
         out = os.path.join(GOLDEN, probe)
         if flaky(d, out, probe):
@@ -145,8 +158,9 @@ def import_(src, only):
 
 
 def expand(dst):
-    for probe in sorted(os.listdir(GOLDEN)):
-        g = os.path.join(GOLDEN, probe)
+    dirs = {p: os.path.join(GOLDEN, p) for p in sorted(os.listdir(GOLDEN))}
+    dirs.update(kikizake_golden())
+    for probe, g in dirs.items():
         if not os.path.isdir(g):
             continue
         o = os.path.join(dst, probe)
@@ -168,6 +182,9 @@ def stale(exe_dir):
     else:
         probes = sorted(os.listdir(GOLDEN))
     for p in probes:
+        # (kikizake's own Windows runs answer its suites)
+        if p.startswith("kikizake_"):
+            continue
         f = os.path.join(GOLDEN, p, "src")
         if not os.path.exists(f) or open(f).read().strip() != src_hash(p):
             print(p)
