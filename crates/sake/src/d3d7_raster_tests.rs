@@ -83,7 +83,7 @@ fn draw(rng: &mut Rng, out: &mut Vec<String>) {
             aa: [rng.state(6) | rng.pick(&[0, 0, 0x10]), rng.state(6)],
             tex: (rng.below(8) != 0).then(|| Tex { bits: px.as_ptr(), w: *tw, h: *th, pitch: *tw as usize * b, bpp: *b, fmt: *f, pal: None, key: *key }),
             tci: rng.below(2) as usize,
-            addr: [rng.state(6), rng.state(6)],
+            addr: [Addr::of(rng.state(6)), Addr::of(rng.state(6))],
             border: rng.c4(),
             linear: rng.below(2) == 0,
         })
@@ -97,10 +97,10 @@ fn draw(rng: &mut Rng, out: &mut Vec<String>) {
         fmt: fmt_of(rm),
         z: use_z.then(|| (zb.as_mut_ptr(), W as usize * zbytes, zbytes, zmax as f32)),
         clip: [rng.below(4) as i32, rng.below(4) as i32, W - rng.below(4) as i32, H - rng.below(4) as i32],
-        ztest: use_z.then(|| rng.state(10)),
+        ztest: use_z.then(|| Cmp::of(rng.state(10))),
         zwrite: use_z && rng.below(2) == 0,
-        blend: (rng.below(2) == 0).then(|| (rng.state(15), rng.state(15))),
-        atest: (rng.below(3) == 0).then(|| { let any = rng.below(256); (rng.state(10), rng.pick(&[0, 255, 128, any]) as f32 / 255.) }),
+        blend: (rng.below(2) == 0).then(|| (Blend::of(rng.state(15)), Blend::of(rng.state(15)))),
+        atest: (rng.below(3) == 0).then(|| { let any = rng.below(256); (Cmp::of(rng.state(10)), rng.pick(&[0, 255, 128, any]) as f32 / 255.) }),
         ck: rng.below(3) == 0,
         flat: rng.below(4) == 0,
         spec: rng.below(3) == 0,
@@ -157,5 +157,56 @@ fn raster_draws_as_before() {
         let (w, o): (Vec<&str>, Vec<&str>) = (want.lines().collect(), out.lines().collect());
         let i = w.iter().zip(&o).position(|(a, b)| a != b).unwrap_or(w.len().min(o.len()));
         panic!("d3d7: d3d7_raster_golden.txt differs at line {} (MASU_UPDATE_GOLDEN=1 rewrites it):\n  want {:?}\n  got  {:?}", i + 1, w.get(i), o.get(i));
+    }
+}
+
+/// SRCBLEND/DESTBLEND as Raster::new read them before Blend (the pair, then each factor by its
+/// number), for every value up to past the defined ones and a few far ones
+#[test]
+fn blend_pair_as_before() {
+    fn old(b: u32, c: C4, d: C4) -> C4 {
+        match b {
+            1 => [0.; 4],
+            3 => c,
+            4 => c.map(|x| 1. - x),
+            5 => [c[3]; 4],
+            6 => [1. - c[3]; 4],
+            7 => [d[3]; 4],
+            8 => [1. - d[3]; 4],
+            9 => d,
+            10 => d.map(|x| 1. - x),
+            11 => {
+                let s = c[3].min(1. - d[3]);
+                [s, s, s, 1.]
+            }
+            _ => [1.; 4],
+        }
+    }
+    let (c, d) = ([0.1, 0.4, 0.7, 0.3], [0.9, 0.2, 0.6, 0.8]);
+    for s in (0..20).chain([u32::MAX, 0x8000_0000, 255]) {
+        for t in (0..20).chain([u32::MAX, 256]) {
+            let (os, od) = match s {
+                12 => (5, 6),
+                13 => (6, 5),
+                s => (s, t),
+            };
+            let (ns, nd) = Blend::pair(s, t);
+            assert_eq!((ns.factor(c, d), nd.factor(c, d)), (old(os, c, d), old(od, c, d)), "{s} {t}");
+        }
+    }
+    for v in (0..20).chain([u32::MAX]) {
+        let old_cmp = |a: f32, b: f32| match v {
+            1 => false,
+            2 => a < b,
+            3 => a == b,
+            4 => a <= b,
+            5 => a > b,
+            6 => a != b,
+            7 => a >= b,
+            _ => true,
+        };
+        for (a, b) in [(0., 0.), (0., 1.), (1., 0.), (0.5, 0.5)] {
+            assert_eq!(Cmp::of(v).test(a, b), old_cmp(a, b), "{v}");
+        }
     }
 }

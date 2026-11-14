@@ -1497,7 +1497,7 @@ struct Stage {
     aa: [u32; 2],
     tex: Option<Tex>,
     tci: usize,
-    addr: [u32; 2],
+    addr: [Addr; 2],
     border: C4,
     linear: bool,
 }
@@ -1558,10 +1558,10 @@ struct Raster {
     fmt: Fmt,
     z: Option<(*mut u8, usize, usize, f32)>,
     clip: [i32; 4],
-    ztest: Option<u32>,
+    ztest: Option<Cmp>,
     zwrite: bool,
-    blend: Option<(u32, u32)>,
-    atest: Option<(u32, f32)>,
+    blend: Option<(Blend, Blend)>,
+    atest: Option<(Cmp, f32)>,
     ck: bool,
     flat: bool,
     spec: bool,
@@ -1583,28 +1583,136 @@ fn raster_box(vp: [i32; 4], rt: (i32, i32), z: Option<(i32, i32)>) -> [i32; 4] {
     [vp[0].max(0), vp[1].max(0), vp[0].saturating_add(vp[2]).min(rt.0).min(zw), vp[1].saturating_add(vp[3]).min(rt.1).min(zh)]
 }
 
-fn cmp(f: u32, a: f32, b: f32) -> bool {
-    match f {
-        1 => false,
-        2 => a < b,
-        3 => a == b,
-        4 => a <= b,
-        5 => a > b,
-        6 => a != b,
-        7 => a >= b,
-        _ => true,
+/// D3DCMPFUNC, read from the state once (a value past them: ALWAYS, as before)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Cmp {
+    Never,
+    Less,
+    Equal,
+    LessEqual,
+    Greater,
+    NotEqual,
+    GreaterEqual,
+    Always,
+}
+
+impl Cmp {
+    fn of(v: u32) -> Cmp {
+        match v {
+            1 => Cmp::Never,
+            2 => Cmp::Less,
+            3 => Cmp::Equal,
+            4 => Cmp::LessEqual,
+            5 => Cmp::Greater,
+            6 => Cmp::NotEqual,
+            7 => Cmp::GreaterEqual,
+            _ => Cmp::Always,
+        }
+    }
+    fn test(self, a: f32, b: f32) -> bool {
+        match self {
+            Cmp::Never => false,
+            Cmp::Less => a < b,
+            Cmp::Equal => a == b,
+            Cmp::LessEqual => a <= b,
+            Cmp::Greater => a > b,
+            Cmp::NotEqual => a != b,
+            Cmp::GreaterEqual => a >= b,
+            Cmp::Always => true,
+        }
     }
 }
 
-fn wrap(i: i32, n: i32, mode: u32) -> Option<i32> {
+/// D3DTEXTUREADDRESS (a value past them: WRAP, as before)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Addr {
+    Wrap,
+    Mirror,
+    Clamp,
+    Border,
+}
+
+impl Addr {
+    fn of(v: u32) -> Addr {
+        match v {
+            2 => Addr::Mirror,
+            3 => Addr::Clamp,
+            4 => Addr::Border,
+            _ => Addr::Wrap,
+        }
+    }
+}
+
+fn wrap(i: i32, n: i32, mode: Addr) -> Option<i32> {
     match mode {
-        2 => {
+        Addr::Mirror => {
             let p = i.rem_euclid(2 * n);
             Some(if p >= n { 2 * n - 1 - p } else { p })
         }
-        3 => Some(i.clamp(0, n - 1)),
-        4 => (0..n).contains(&i).then_some(i),
-        _ => Some(i.rem_euclid(n)),
+        Addr::Clamp => Some(i.clamp(0, n - 1)),
+        Addr::Border => (0..n).contains(&i).then_some(i),
+        Addr::Wrap => Some(i.rem_euclid(n)),
+    }
+}
+
+/// D3DBLEND as the rasterizer uses it (BOTHSRCALPHA and BOTHINVSRCALPHA set both factors;
+/// a value past them: ONE, as before)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Blend {
+    Zero,
+    One,
+    SrcColor,
+    InvSrcColor,
+    SrcAlpha,
+    InvSrcAlpha,
+    DestAlpha,
+    InvDestAlpha,
+    DestColor,
+    InvDestColor,
+    SrcAlphaSat,
+}
+
+impl Blend {
+    fn of(v: u32) -> Blend {
+        match v {
+            1 => Blend::Zero,
+            3 => Blend::SrcColor,
+            4 => Blend::InvSrcColor,
+            5 => Blend::SrcAlpha,
+            6 => Blend::InvSrcAlpha,
+            7 => Blend::DestAlpha,
+            8 => Blend::InvDestAlpha,
+            9 => Blend::DestColor,
+            10 => Blend::InvDestColor,
+            11 => Blend::SrcAlphaSat,
+            _ => Blend::One,
+        }
+    }
+    /// The (source, destination) factors of SRCBLEND and DESTBLEND
+    fn pair(src: u32, dst: u32) -> (Blend, Blend) {
+        match src {
+            12 => (Blend::SrcAlpha, Blend::InvSrcAlpha),
+            13 => (Blend::InvSrcAlpha, Blend::SrcAlpha),
+            s => (Blend::of(s), Blend::of(dst)),
+        }
+    }
+    fn factor(self, c: C4, d: C4) -> C4 {
+        match self {
+            Blend::Zero => [0.; 4],
+            Blend::One => [1.; 4],
+            Blend::SrcColor => c,
+            Blend::InvSrcColor => c.map(|x| 1. - x),
+            Blend::SrcAlpha => [c[3]; 4],
+            Blend::InvSrcAlpha => [1. - c[3]; 4],
+            Blend::DestAlpha => [d[3]; 4],
+            Blend::InvDestAlpha => [1. - d[3]; 4],
+            Blend::DestColor => d,
+            Blend::InvDestColor => d.map(|x| 1. - x),
+            Blend::SrcAlphaSat => {
+                let s = c[3].min(1. - d[3]);
+                [s, s, s, 1.]
+            }
+        }
     }
 }
 
@@ -1721,7 +1829,7 @@ impl Raster {
                 aa: [t[TSS_ALPHAARG1], t[TSS_ALPHAARG2]],
                 tex,
                 tci,
-                addr: [t[TSS_ADDRESSU], t[TSS_ADDRESSV]],
+                addr: [Addr::of(t[TSS_ADDRESSU]), Addr::of(t[TSS_ADDRESSV])],
                 border: unpack_argb(t[TSS_BORDERCOLOR]),
                 linear: t[TSS_MAGFILTER] >= 2,
             });
@@ -1731,16 +1839,12 @@ impl Raster {
             pitch: rt.pitch as usize,
             bpp: rt.bpp as usize / 8,
             fmt: Fmt::of(&rt),
-            ztest: z.map(|_| d.rs[RS_ZFUNC]),
+            ztest: z.map(|_| Cmp::of(d.rs[RS_ZFUNC])),
             zwrite: z.is_some() && d.rs[RS_ZWRITEENABLE] != 0,
             z,
             clip: vp,
-            blend: (d.rs[RS_ALPHABLENDENABLE] != 0).then(|| match d.rs[RS_SRCBLEND] {
-                12 => (5, 6),
-                13 => (6, 5),
-                s => (s, d.rs[RS_DESTBLEND]),
-            }),
-            atest: (d.rs[RS_ALPHATESTENABLE] != 0).then(|| (d.rs[RS_ALPHAFUNC], (d.rs[RS_ALPHAREF] & 0xff) as f32 / 255.)),
+            blend: (d.rs[RS_ALPHABLENDENABLE] != 0).then(|| Blend::pair(d.rs[RS_SRCBLEND], d.rs[RS_DESTBLEND])),
+            atest: (d.rs[RS_ALPHATESTENABLE] != 0).then(|| (Cmp::of(d.rs[RS_ALPHAFUNC]), f32::from(d.rs[RS_ALPHAREF].to_le_bytes()[0]) / 255.)),
             ck: d.rs[RS_COLORKEYENABLE] != 0,
             flat: d.rs[RS_SHADEMODE] == 1,
             spec: d.rs[RS_SPECULARENABLE] != 0,
@@ -1798,7 +1902,7 @@ impl Raster {
             }
         }
         if let Some((f, r)) = self.atest {
-            if !cmp(f, cur[3], r) {
+            if !f.test(cur[3], r) {
                 return None;
             }
         }
@@ -1811,7 +1915,7 @@ impl Raster {
         let zv = zp.map(|(_, _, max)| (z.clamp(0., 1.) * max) as u32);
         if let (Some(f), Some((p, bytes, _)), Some(zv)) = (self.ztest, zp, zv) {
             let old = if bytes == 2 { read_px(p, Access::U16) } else { read_px(p, Access::U32) & if bytes == 3 { 0xff_ffff } else { !0 } };
-            if !cmp(f, zv as f32, old as f32) {
+            if !f.test(zv as f32, old as f32) {
                 return;
             }
         }
@@ -1821,28 +1925,7 @@ impl Raster {
             None => c,
             Some((sb, db)) => {
                 let d = self.fmt.unpack(read_px(p, Access::of_bytes(self.bpp)));
-                let f = |b: u32, src: bool| -> C4 {
-                    match b {
-                        1 => [0.; 4],
-                        3 => c,
-                        4 => c.map(|x| 1. - x),
-                        5 => [c[3]; 4],
-                        6 => [1. - c[3]; 4],
-                        7 => [d[3]; 4],
-                        8 => [1. - d[3]; 4],
-                        9 => d,
-                        10 => d.map(|x| 1. - x),
-                        11 => {
-                            let s = c[3].min(1. - d[3]);
-                            [s, s, s, 1.]
-                        }
-                        _ => {
-                            let _ = src;
-                            [1.; 4]
-                        }
-                    }
-                };
-                let (fs, fd) = (f(sb, true), f(db, false));
+                let (fs, fd) = (sb.factor(c, d), db.factor(c, d));
                 std::array::from_fn(|i| (c[i] * fs[i] + d[i] * fd[i]).clamp(0., 1.))
             }
         };
@@ -3468,7 +3551,7 @@ mod tests {
             let (w, h) = (24, 20);
             let mut buf = vec![0u32; (w * h) as usize];
             let mut r = raster(&mut buf, w, h);
-            r.blend = Some((2, 2));
+            r.blend = Some((Blend::One, Blend::One));
             let one = [1. / 255., 0., 0., 0.];
             // a fan around a random center: its triangles share edges
             let cx = rnd(w as u32 * 8) as f32 / 8.;
@@ -3491,7 +3574,7 @@ mod tests {
         let (w, h) = (16, 16);
         let mut buf = vec![0u32; 256];
         let mut r = raster(&mut buf, w, h);
-        r.blend = Some((2, 2));
+        r.blend = Some((Blend::One, Blend::One));
         quad(&r, 2.5, 3.5, 9.5, 7.5, [1. / 255., 0., 0., 0.]);
         for y in 0..h {
             for x in 0..w {
@@ -3518,7 +3601,7 @@ mod tests {
                 aa: [2, 1],
                 tex: Some(Tex { bits: texels.as_ptr().cast::<u8>(), w: tw, h: th, pitch: tw as usize * 4, bpp: 4, fmt: ARGB, pal: None, key: None }),
                 tci: 0,
-                addr: [3, 3],
+                addr: [Addr::Clamp; 2],
                 border: [0.; 4],
                 linear,
             });
@@ -3762,7 +3845,7 @@ mod tests {
                 spec: false,
                 fog: None,
                 cull: 1,
-                stages: vec![Stage { cop: s.cop, ca: s.ca, aop: s.aop, aa: s.aa, tex: Some(tex.tex()), tci: 0, addr: [s.addr; 2], border: [0.; 4], linear: s.linear }],
+                stages: vec![Stage { cop: s.cop, ca: s.ca, aop: s.aop, aa: s.aa, tex: Some(tex.tex()), tci: 0, addr: [Addr::of(s.addr); 2], border: [0.; 4], linear: s.linear }],
                 tfactor: s.tfactor,
                 ntc: 1,
                 copy,
@@ -3863,7 +3946,7 @@ mod tests {
             assert!(!plan(&r, &aligned(&tex, 4, 4, 20, 20, 2, 3, 0., [1.; 4], [1., 0.5, 1., 1.]), [4, 4, 19, 19]));
             assert!(!plan(&r, &aligned(&tex, 4, 4, 20, 20, 20, 0, 0., [1.; 4], [1.; 4]), [4, 4, 19, 19]));
             let mut r = raster(&mut rt, &tex, &KIRIKIRI, true);
-            r.blend = Some((5, 6));
+            r.blend = Some((Blend::SrcAlpha, Blend::InvSrcAlpha));
             assert!(!plan(&r, &aligned(&tex, 4, 4, 20, 20, 2, 3, 0., [1.; 4], [1.; 4]), [4, 4, 19, 19]));
             let mut r = raster(&mut rt, &tex, &KIRIKIRI, true);
             r.stages.push(r.stages[0].clone());
