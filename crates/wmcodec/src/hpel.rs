@@ -1,7 +1,7 @@
 //! Motion compensation pixel operations (FFmpeg's hpeldsp put / put_no_rnd and wmv2dsp's
 //! mspel filters). Sources are blocks with the pixels around them (see `window`).
 
-use crate::num::{ix, lo8};
+use crate::num::{i32z, ix, lo8};
 
 /// A `w` x `h` block of `plane` (stride `stride`, `pw` x `ph` pixels) at (x, y), pixels
 /// outside repeated from the edge (emulated_edge_mc).
@@ -27,7 +27,7 @@ pub fn window(plane: &[u8], stride: usize, pw: i32, ph: i32, x: i32, y: i32, w: 
 /// The `w` x `h` block at (x, y) as (pixels, stride): straight from `plane` when it is all
 /// inside, else `window`ed into `buf` (what FFmpeg does with emulated_edge_mc).
 pub fn source<'a>(plane: &'a [u8], stride: usize, pw: i32, ph: i32, x: i32, y: i32, w: usize, h: usize, buf: &'a mut [u8]) -> (&'a [u8], usize) {
-    let inside = |p: i32, n: usize, max: i32| p >= 0 && i32::try_from(n).is_ok_and(|n| p + n <= max);
+    let inside = |p: i32, n: usize, max: i32| p >= 0 && p + i32z(n) <= max;
     if inside(x, w, pw) && inside(y, h, ph) {
         (&plane[ix(y) * stride + ix(x)..], stride)
     } else {

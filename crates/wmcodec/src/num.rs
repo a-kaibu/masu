@@ -16,11 +16,12 @@ pub fn ix(x: i32) -> usize {
     us(x.cast_unsigned())
 }
 
-/// A picture dimension or count (up to a few thousand) as i32: saturates, which no caller's
-/// value reaches.
+/// A picture dimension or count (up to a few thousand) as i32: its low 31 bits, which is all
+/// of any caller's value (and one AND, where a checked conversion costs a compare per call in
+/// the motion compensation).
 #[inline(always)]
 pub fn i32z(n: usize) -> i32 {
-    i32::try_from(n).unwrap_or(i32::MAX)
+    i32::try_from(n & 0x7fff_ffff).unwrap_or(0)
 }
 
 /// The low 8 bits (wrapping).
@@ -69,6 +70,8 @@ mod tests {
             prop_assert_eq!(lo8(x.cast_unsigned()), u8::try_from(x & 0xff).unwrap());
             prop_assert_eq!(lo16(x), i16::try_from(((x & 0xffff) ^ 0x8000) - 0x8000).unwrap());
             prop_assert_eq!(lo32(u), u32::try_from(u & 0xffff_ffff).unwrap());
+            let n = usize::try_from(u & 0x7fff_ffff).unwrap();
+            prop_assert_eq!(i64::from(i32z(n)), i64::try_from(n).unwrap());
             prop_assert_eq!(lo16u(lo32(u)), u16::try_from(u & 0xffff).unwrap());
             prop_assert_eq!(lo8z(usize::try_from(u & 0xffff_ffff).unwrap()), u8::try_from(u & 0xff).unwrap());
         }

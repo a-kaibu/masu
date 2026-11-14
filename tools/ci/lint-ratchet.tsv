@@ -2443,10 +2443,6 @@ file	crates/wmcodec/src/mdct.rs	indexing_slicing	30
 file	crates/wmcodec/src/msmpeg4.rs	arithmetic_side_effects	240
 file	crates/wmcodec/src/msmpeg4.rs	indexing_slicing	140
 file	crates/wmcodec/src/vc1.rs	arithmetic_side_effects	753
-file	crates/wmcodec/src/vc1.rs	as_conversions	387
-file	crates/wmcodec/src/vc1.rs	cast_possible_truncation	119
-file	crates/wmcodec/src/vc1.rs	cast_possible_wrap	107
-file	crates/wmcodec/src/vc1.rs	cast_sign_loss	68
 file	crates/wmcodec/src/vc1.rs	indexing_slicing	408
 file	crates/wmcodec/src/vc1.rs	match_wildcard_for_single_variants	1
 file	crates/wmcodec/src/vc1.rs	unwrap_used	2

@@ -15,6 +15,7 @@ use crate::intrax8::{IntraX8, Plane};
 use crate::msmpeg4::{dc_vlc, mb_i_vlc, Error, Picture};
 use crate::msmpeg4_tables as m4;
 use crate::vc1_tables as t;
+use crate::num::{i32z, ix, lo16, lo8, us};
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
@@ -123,13 +124,13 @@ fn tables() -> &'static Tables {
     static T: OnceLock<Tables> = OnceLock::new();
     T.get_or_init(|| {
         let codes = |bits: u32, lens: &[u8], codes: &[u32]| Vlc::from_codes(bits, lens, codes);
-        let u = |a: &[u8]| a.iter().map(|&x| x as u32).collect::<Vec<u32>>();
-        let w = |a: &[u16]| a.iter().map(|&x| x as u32).collect::<Vec<u32>>();
+        let u = |a: &[u8]| a.iter().map(|&x| u32::from(x)).collect::<Vec<u32>>();
+        let w = |a: &[u16]| a.iter().map(|&x| u32::from(x)).collect::<Vec<u32>>();
         let ac = |k: usize| {
-            let n = t::FF_VC1_AC_SIZES[k] as usize;
+            let n = ix(t::FF_VC1_AC_SIZES[k]);
             let row = &t::VC1_AC_TABLES[k * 372..k * 372 + 2 * n];
             let c: Vec<u32> = (0..n).map(|i| row[2 * i]).collect();
-            let l: Vec<u8> = (0..n).map(|i| row[2 * i + 1] as u8).collect();
+            let l: Vec<u8> = (0..n).map(|i| lo8(row[2 * i + 1])).collect();
             Vlc::from_codes(9, &l, &c)
         };
         let mut zz = [[0u8; 64]; 4];
@@ -159,11 +160,11 @@ fn tables() -> &'static Tables {
 
 #[inline]
 fn decode012(r: &mut Bits) -> u32 {
-    if r.get1() == 0 { 0 } else { r.get1() + 1 }
+    if !r.bit() { 0 } else { r.get1() + 1 }
 }
 #[inline]
 fn decode210(r: &mut Bits) -> u32 {
-    if r.get1() != 0 { 0 } else { 2 - r.get1() }
+    if r.bit() { 0 } else { 2 - r.get1() }
 }
 #[inline]
 fn mid_pred(a: i32, b: i32, c: i32) -> i32 {
@@ -180,7 +181,7 @@ fn median4(a: i32, b: i32, c: i32, d: i32) -> i32 {
 }
 #[inline]
 fn clip8(v: i32) -> u8 {
-    v.clamp(0, 255) as u8
+    lo8(i32::cast_unsigned(v.clamp(0, 255)))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -198,7 +199,7 @@ pub fn inv_trans_8x8(b: &mut [i16; 64]) {
 pub(crate) fn inv_trans_8x8_c(b: &mut [i16; 64]) {
     let mut tmp = [0i16; 64];
     for i in 0..8 {
-        let s = |k: usize| b[i + k] as i32;
+        let s = |k: usize| i32::from(b[i + k]);
         let t1 = 12 * (s(0) + s(32)) + 4;
         let t2 = 12 * (s(0) - s(32)) + 4;
         let t3 = 16 * s(16) + 6 * s(48);
@@ -209,17 +210,17 @@ pub(crate) fn inv_trans_8x8_c(b: &mut [i16; 64]) {
         let t3 = 9 * s(8) - 16 * s(24) + 4 * s(40) + 15 * s(56);
         let t4 = 4 * s(8) - 9 * s(24) + 15 * s(40) - 16 * s(56);
         let d = &mut tmp[i * 8..i * 8 + 8];
-        d[0] = ((t5 + t1) >> 3) as i16;
-        d[1] = ((t6 + t2) >> 3) as i16;
-        d[2] = ((t7 + t3) >> 3) as i16;
-        d[3] = ((t8 + t4) >> 3) as i16;
-        d[4] = ((t8 - t4) >> 3) as i16;
-        d[5] = ((t7 - t3) >> 3) as i16;
-        d[6] = ((t6 - t2) >> 3) as i16;
-        d[7] = ((t5 - t1) >> 3) as i16;
+        d[0] = lo16((t5 + t1) >> 3);
+        d[1] = lo16((t6 + t2) >> 3);
+        d[2] = lo16((t7 + t3) >> 3);
+        d[3] = lo16((t8 + t4) >> 3);
+        d[4] = lo16((t8 - t4) >> 3);
+        d[5] = lo16((t7 - t3) >> 3);
+        d[6] = lo16((t6 - t2) >> 3);
+        d[7] = lo16((t5 - t1) >> 3);
     }
     for i in 0..8 {
-        let s = |k: usize| tmp[i + k] as i32;
+        let s = |k: usize| i32::from(tmp[i + k]);
         let t1 = 12 * (s(0) + s(32)) + 64;
         let t2 = 12 * (s(0) - s(32)) + 64;
         let t3 = 16 * s(16) + 6 * s(48);
@@ -229,14 +230,14 @@ pub(crate) fn inv_trans_8x8_c(b: &mut [i16; 64]) {
         let t2 = 15 * s(8) - 4 * s(24) - 16 * s(40) - 9 * s(56);
         let t3 = 9 * s(8) - 16 * s(24) + 4 * s(40) + 15 * s(56);
         let t4 = 4 * s(8) - 9 * s(24) + 15 * s(40) - 16 * s(56);
-        b[i] = ((t5 + t1) >> 7) as i16;
-        b[i + 8] = ((t6 + t2) >> 7) as i16;
-        b[i + 16] = ((t7 + t3) >> 7) as i16;
-        b[i + 24] = ((t8 + t4) >> 7) as i16;
-        b[i + 32] = ((t8 - t4 + 1) >> 7) as i16;
-        b[i + 40] = ((t7 - t3 + 1) >> 7) as i16;
-        b[i + 48] = ((t6 - t2 + 1) >> 7) as i16;
-        b[i + 56] = ((t5 - t1 + 1) >> 7) as i16;
+        b[i] = lo16((t5 + t1) >> 7);
+        b[i + 8] = lo16((t6 + t2) >> 7);
+        b[i + 16] = lo16((t7 + t3) >> 7);
+        b[i + 24] = lo16((t8 + t4) >> 7);
+        b[i + 32] = lo16((t8 - t4 + 1) >> 7);
+        b[i + 40] = lo16((t7 - t3 + 1) >> 7);
+        b[i + 48] = lo16((t6 - t2 + 1) >> 7);
+        b[i + 56] = lo16((t5 - t1 + 1) >> 7);
     }
 }
 
@@ -244,32 +245,32 @@ fn add_dc(dst: &mut [u8], off: usize, stride: usize, w: usize, h: usize, dc: i32
     for y in 0..h {
         for x in 0..w {
             let p = &mut dst[off + y * stride + x];
-            *p = clip8(*p as i32 + dc);
+            *p = clip8(i32::from(*p) + dc);
         }
     }
 }
 
 /// vc1_inv_trans_8x8_dc_c
 pub fn inv_trans_8x8_dc(dst: &mut [u8], off: usize, stride: usize, b: &[i16]) {
-    let dc = (3 * b[0] as i32 + 1) >> 1;
+    let dc = (3 * i32::from(b[0]) + 1) >> 1;
     let dc = (3 * dc + 16) >> 5;
     add_dc(dst, off, stride, 8, 8, dc);
 }
 /// vc1_inv_trans_8x4_dc_c
 pub fn inv_trans_8x4_dc(dst: &mut [u8], off: usize, stride: usize, b: &[i16]) {
-    let dc = (3 * b[0] as i32 + 1) >> 1;
+    let dc = (3 * i32::from(b[0]) + 1) >> 1;
     let dc = (17 * dc + 64) >> 7;
     add_dc(dst, off, stride, 8, 4, dc);
 }
 /// vc1_inv_trans_4x8_dc_c
 pub fn inv_trans_4x8_dc(dst: &mut [u8], off: usize, stride: usize, b: &[i16]) {
-    let dc = (17 * b[0] as i32 + 4) >> 3;
+    let dc = (17 * i32::from(b[0]) + 4) >> 3;
     let dc = (12 * dc + 64) >> 7;
     add_dc(dst, off, stride, 4, 8, dc);
 }
 /// vc1_inv_trans_4x4_dc_c
 pub fn inv_trans_4x4_dc(dst: &mut [u8], off: usize, stride: usize, b: &[i16]) {
-    let dc = (17 * b[0] as i32 + 4) >> 3;
+    let dc = (17 * i32::from(b[0]) + 4) >> 3;
     let dc = (17 * dc + 64) >> 7;
     add_dc(dst, off, stride, 4, 4, dc);
 }
@@ -277,7 +278,7 @@ pub fn inv_trans_4x4_dc(dst: &mut [u8], off: usize, stride: usize, b: &[i16]) {
 /// vc1_inv_trans_8x4_c: rows 0..4 of 8 of `b` (stride 8), added to `dst`
 pub fn inv_trans_8x4(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
     for i in 0..4 {
-        let s = |k: usize| b[i * 8 + k] as i32;
+        let s = |k: usize| i32::from(b[i * 8 + k]);
         let t1 = 12 * (s(0) + s(4)) + 4;
         let t2 = 12 * (s(0) - s(4)) + 4;
         let t3 = 16 * s(2) + 6 * s(6);
@@ -288,23 +289,23 @@ pub fn inv_trans_8x4(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
         let t3 = 9 * s(1) - 16 * s(3) + 4 * s(5) + 15 * s(7);
         let t4 = 4 * s(1) - 9 * s(3) + 15 * s(5) - 16 * s(7);
         let d = &mut b[i * 8..i * 8 + 8];
-        d[0] = ((t5 + t1) >> 3) as i16;
-        d[1] = ((t6 + t2) >> 3) as i16;
-        d[2] = ((t7 + t3) >> 3) as i16;
-        d[3] = ((t8 + t4) >> 3) as i16;
-        d[4] = ((t8 - t4) >> 3) as i16;
-        d[5] = ((t7 - t3) >> 3) as i16;
-        d[6] = ((t6 - t2) >> 3) as i16;
-        d[7] = ((t5 - t1) >> 3) as i16;
+        d[0] = lo16((t5 + t1) >> 3);
+        d[1] = lo16((t6 + t2) >> 3);
+        d[2] = lo16((t7 + t3) >> 3);
+        d[3] = lo16((t8 + t4) >> 3);
+        d[4] = lo16((t8 - t4) >> 3);
+        d[5] = lo16((t7 - t3) >> 3);
+        d[6] = lo16((t6 - t2) >> 3);
+        d[7] = lo16((t5 - t1) >> 3);
     }
     for i in 0..8 {
-        let s = |k: usize| b[i + k] as i32;
+        let s = |k: usize| i32::from(b[i + k]);
         let t1 = 17 * (s(0) + s(16)) + 64;
         let t2 = 17 * (s(0) - s(16)) + 64;
         let t3 = 22 * s(8) + 10 * s(24);
         let t4 = 22 * s(24) - 10 * s(8);
         let o = off + i;
-        let add = |d: &mut [u8], k: usize, v: i32| d[o + k * stride] = clip8(d[o + k * stride] as i32 + v);
+        let add = |d: &mut [u8], k: usize, v: i32| d[o + k * stride] = clip8(i32::from(d[o + k * stride]) + v);
         add(dst, 0, (t1 + t3) >> 7);
         add(dst, 1, (t2 - t4) >> 7);
         add(dst, 2, (t2 + t4) >> 7);
@@ -315,19 +316,19 @@ pub fn inv_trans_8x4(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
 /// vc1_inv_trans_4x8_c: columns 0..4 of `b` (stride 8), added to `dst`
 pub fn inv_trans_4x8(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
     for i in 0..8 {
-        let s = |k: usize| b[i * 8 + k] as i32;
+        let s = |k: usize| i32::from(b[i * 8 + k]);
         let t1 = 17 * (s(0) + s(2)) + 4;
         let t2 = 17 * (s(0) - s(2)) + 4;
         let t3 = 22 * s(1) + 10 * s(3);
         let t4 = 22 * s(3) - 10 * s(1);
         let d = &mut b[i * 8..i * 8 + 4];
-        d[0] = ((t1 + t3) >> 3) as i16;
-        d[1] = ((t2 - t4) >> 3) as i16;
-        d[2] = ((t2 + t4) >> 3) as i16;
-        d[3] = ((t1 - t3) >> 3) as i16;
+        d[0] = lo16((t1 + t3) >> 3);
+        d[1] = lo16((t2 - t4) >> 3);
+        d[2] = lo16((t2 + t4) >> 3);
+        d[3] = lo16((t1 - t3) >> 3);
     }
     for i in 0..4 {
-        let s = |k: usize| b[i + k] as i32;
+        let s = |k: usize| i32::from(b[i + k]);
         let t1 = 12 * (s(0) + s(32)) + 64;
         let t2 = 12 * (s(0) - s(32)) + 64;
         let t3 = 16 * s(16) + 6 * s(48);
@@ -338,7 +339,7 @@ pub fn inv_trans_4x8(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
         let t3 = 9 * s(8) - 16 * s(24) + 4 * s(40) + 15 * s(56);
         let t4 = 4 * s(8) - 9 * s(24) + 15 * s(40) - 16 * s(56);
         let o = off + i;
-        let add = |d: &mut [u8], k: usize, v: i32| d[o + k * stride] = clip8(d[o + k * stride] as i32 + v);
+        let add = |d: &mut [u8], k: usize, v: i32| d[o + k * stride] = clip8(i32::from(d[o + k * stride]) + v);
         add(dst, 0, (t5 + t1) >> 7);
         add(dst, 1, (t6 + t2) >> 7);
         add(dst, 2, (t7 + t3) >> 7);
@@ -353,25 +354,25 @@ pub fn inv_trans_4x8(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
 /// vc1_inv_trans_4x4_c
 pub fn inv_trans_4x4(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
     for i in 0..4 {
-        let s = |k: usize| b[i * 8 + k] as i32;
+        let s = |k: usize| i32::from(b[i * 8 + k]);
         let t1 = 17 * (s(0) + s(2)) + 4;
         let t2 = 17 * (s(0) - s(2)) + 4;
         let t3 = 22 * s(1) + 10 * s(3);
         let t4 = 22 * s(3) - 10 * s(1);
         let d = &mut b[i * 8..i * 8 + 4];
-        d[0] = ((t1 + t3) >> 3) as i16;
-        d[1] = ((t2 - t4) >> 3) as i16;
-        d[2] = ((t2 + t4) >> 3) as i16;
-        d[3] = ((t1 - t3) >> 3) as i16;
+        d[0] = lo16((t1 + t3) >> 3);
+        d[1] = lo16((t2 - t4) >> 3);
+        d[2] = lo16((t2 + t4) >> 3);
+        d[3] = lo16((t1 - t3) >> 3);
     }
     for i in 0..4 {
-        let s = |k: usize| b[i + k] as i32;
+        let s = |k: usize| i32::from(b[i + k]);
         let t1 = 17 * (s(0) + s(16)) + 64;
         let t2 = 17 * (s(0) - s(16)) + 64;
         let t3 = 22 * s(8) + 10 * s(24);
         let t4 = 22 * s(24) - 10 * s(8);
         let o = off + i;
-        let add = |d: &mut [u8], k: usize, v: i32| d[o + k * stride] = clip8(d[o + k * stride] as i32 + v);
+        let add = |d: &mut [u8], k: usize, v: i32| d[o + k * stride] = clip8(i32::from(d[o + k * stride]) + v);
         add(dst, 0, (t1 + t3) >> 7);
         add(dst, 1, (t2 - t4) >> 7);
         add(dst, 2, (t2 + t4) >> 7);
@@ -384,7 +385,7 @@ fn add_pixels(dst: &mut [u8], off: usize, stride: usize, b: &[i16; 64]) {
     for y in 0..8 {
         for x in 0..8 {
             let p = &mut dst[off + y * stride + x];
-            *p = clip8(*p as i32 + b[y * 8 + x] as i32);
+            *p = clip8(i32::from(*p) + i32::from(b[y * 8 + x]));
         }
     }
 }
@@ -395,16 +396,16 @@ fn h_s_overlap(blk: &mut [[[i16; 64]; 6]], l: (usize, usize, usize), r: (usize, 
     let mut rnd2 = 7 - rnd1;
     let (mut lo, mut ro) = (l.2, r.2);
     for _ in 0..8 {
-        let a = blk[l.0][l.1][lo + 6] as i32;
-        let b = blk[l.0][l.1][lo + 7] as i32;
-        let c = blk[r.0][r.1][ro] as i32;
-        let d = blk[r.0][r.1][ro + 1] as i32;
+        let a = i32::from(blk[l.0][l.1][lo + 6]);
+        let b = i32::from(blk[l.0][l.1][lo + 7]);
+        let c = i32::from(blk[r.0][r.1][ro]);
+        let d = i32::from(blk[r.0][r.1][ro + 1]);
         let d1 = a - d;
         let d2 = a - d + b - c;
-        blk[l.0][l.1][lo + 6] = ((a * 8 - d1 + rnd1) >> 3) as i16;
-        blk[l.0][l.1][lo + 7] = ((b * 8 - d2 + rnd2) >> 3) as i16;
-        blk[r.0][r.1][ro] = ((c * 8 + d2 + rnd1) >> 3) as i16;
-        blk[r.0][r.1][ro + 1] = ((d * 8 + d1 + rnd2) >> 3) as i16;
+        blk[l.0][l.1][lo + 6] = lo16((a * 8 - d1 + rnd1) >> 3);
+        blk[l.0][l.1][lo + 7] = lo16((b * 8 - d2 + rnd2) >> 3);
+        blk[r.0][r.1][ro] = lo16((c * 8 + d2 + rnd1) >> 3);
+        blk[r.0][r.1][ro + 1] = lo16((d * 8 + d1 + rnd2) >> 3);
         lo += ls;
         ro += rs;
         if flags & 1 != 0 {
@@ -418,16 +419,16 @@ fn h_s_overlap(blk: &mut [[[i16; 64]; 6]], l: (usize, usize, usize), r: (usize, 
 fn v_s_overlap(blk: &mut [[[i16; 64]; 6]], tp: (usize, usize), bt: (usize, usize)) {
     let (mut rnd1, mut rnd2) = (4, 3);
     for i in 0..8 {
-        let a = blk[tp.0][tp.1][48 + i] as i32;
-        let b = blk[tp.0][tp.1][56 + i] as i32;
-        let c = blk[bt.0][bt.1][i] as i32;
-        let d = blk[bt.0][bt.1][8 + i] as i32;
+        let a = i32::from(blk[tp.0][tp.1][48 + i]);
+        let b = i32::from(blk[tp.0][tp.1][56 + i]);
+        let c = i32::from(blk[bt.0][bt.1][i]);
+        let d = i32::from(blk[bt.0][bt.1][8 + i]);
         let d1 = a - d;
         let d2 = a - d + b - c;
-        blk[tp.0][tp.1][48 + i] = ((a * 8 - d1 + rnd1) >> 3) as i16;
-        blk[tp.0][tp.1][56 + i] = ((b * 8 - d2 + rnd2) >> 3) as i16;
-        blk[bt.0][bt.1][i] = ((c * 8 + d2 + rnd1) >> 3) as i16;
-        blk[bt.0][bt.1][8 + i] = ((d * 8 + d1 + rnd2) >> 3) as i16;
+        blk[tp.0][tp.1][48 + i] = lo16((a * 8 - d1 + rnd1) >> 3);
+        blk[tp.0][tp.1][56 + i] = lo16((b * 8 - d2 + rnd2) >> 3);
+        blk[bt.0][bt.1][i] = lo16((c * 8 + d2 + rnd1) >> 3);
+        blk[bt.0][bt.1][8 + i] = lo16((d * 8 + d1 + rnd2) >> 3);
         rnd2 = 7 - rnd2;
         rnd1 = 7 - rnd1;
     }
@@ -436,7 +437,7 @@ fn v_s_overlap(blk: &mut [[[i16; 64]; 6]], tp: (usize, usize), bt: (usize, usize
 /// vc1_filter_line: one line across an edge at `p` (pixels `stride` apart); true: filter the
 /// other three
 fn filter_line(d: &mut [u8], p: isize, stride: isize, pq: i32) -> bool {
-    let g = |d: &[u8], k: isize| d[(p + k * stride) as usize] as i32;
+    let g = |d: &[u8], k: isize| i32::from(d[isize::cast_unsigned(p + k * stride)]);
     let a0 = (2 * (g(d, -2) - g(d, 1)) - 5 * (g(d, -1) - g(d, 0)) + 4) >> 3;
     let a0_sign = a0 >> 31;
     let a0 = (a0 ^ a0_sign) - a0_sign;
@@ -456,9 +457,9 @@ fn filter_line(d: &mut [u8], p: isize, stride: isize, pq: i32) -> bool {
                 if d_sign ^ clip_sign == 0 {
                     let dd = dd.min(clip);
                     let dd = (dd ^ d_sign) - d_sign;
-                    let i1 = (p - stride) as usize;
-                    d[i1] = clip8(d[i1] as i32 - dd);
-                    d[p as usize] = clip8(d[p as usize] as i32 + dd);
+                    let i1 = isize::cast_unsigned(p - stride);
+                    d[i1] = clip8(i32::from(d[i1]) - dd);
+                    d[isize::cast_unsigned(p)] = clip8(i32::from(d[isize::cast_unsigned(p)]) + dd);
                 }
                 return true;
             }
@@ -480,17 +481,17 @@ fn loop_filter(d: &mut [u8], mut p: isize, step: isize, stride: isize, len: usiz
 }
 /// v_loop_filterN: the horizontal edge above `p`, N pixels wide
 fn v_lf(d: &mut [u8], p: isize, stride: usize, n: usize, pq: i32) {
-    loop_filter(d, p, 1, stride as isize, n, pq);
+    loop_filter(d, p, 1, usize::cast_signed(stride), n, pq);
 }
 /// h_loop_filterN: the vertical edge left of `p`, N pixels high
 fn h_lf(d: &mut [u8], p: isize, stride: usize, n: usize, pq: i32) {
-    loop_filter(d, p, stride as isize, 1, n, pq);
+    loop_filter(d, p, usize::cast_signed(stride), 1, n, pq);
 }
 
 /// vc1_mspel_filter: one pixel of a 1-D bicubic filter
 #[inline]
 fn mspel_filter(s: &[u8], p: usize, stride: usize, mode: usize, r: i32) -> i32 {
-    let g = |k: isize| s[(p as isize + k * stride as isize) as usize] as i32;
+    let g = |k: isize| i32::from(s[isize::cast_unsigned(usize::cast_signed(p) + k * usize::cast_signed(stride))]);
     match mode {
         1 => (-4 * g(-1) + 53 * g(0) + 18 * g(1) - 3 * g(2) + 32 - r) >> 6,
         2 => (-g(-1) + 9 * g(0) + 9 * g(1) - g(2) + 8 - r) >> 4,
@@ -535,15 +536,15 @@ pub(crate) fn mspel_mc_c(dst: &mut [u8], doff: usize, ds: usize, src: &[u8], so:
             for j in 0..n {
                 for i in 0..w {
                     let p = so - 1 + j * ss + i;
-                    let v = mspel16(|k| src[(p as isize + k * ss as isize) as usize] as i32, vmode);
-                    tmp[j * w + i] = ((v + r) >> shift) as i16;
+                    let v = mspel16(|k| i32::from(src[isize::cast_unsigned(usize::cast_signed(p) + k * usize::cast_signed(ss))]), vmode);
+                    tmp[j * w + i] = lo16((v + r) >> shift);
                 }
             }
             let r = 64 - rnd;
             for j in 0..n {
                 for i in 0..n {
                     let p = j * w + 1 + i;
-                    let v = mspel16(|k| tmp[(p as isize + k) as usize] as i32, hmode);
+                    let v = mspel16(|k| i32::from(tmp[isize::cast_unsigned(usize::cast_signed(p) + k)]), hmode);
                     dst[doff + j * ds + i] = clip8((v + r) >> 7);
                 }
             }
@@ -578,8 +579,8 @@ pub(crate) fn chroma_mc8_c(dst: &mut [u8], doff: usize, ds: usize, src: &[u8], s
     let r = if no_rnd { 28 } else { 32 };
     for j in 0..8 {
         for i in 0..8 {
-            let s = |k: usize| src[j * ss + i + k] as i32;
-            dst[doff + j * ds + i] = ((a * s(0) + b * s(1) + c * s(ss) + d * s(ss + 1) + r) >> 6) as u8;
+            let s = |k: usize| i32::from(src[j * ss + i + k]);
+            dst[doff + j * ds + i] = lo8(i32::cast_unsigned((a * s(0) + b * s(1) + c * s(ss) + d * s(ss + 1) + r) >> 6));
         }
     }
 }
@@ -746,40 +747,40 @@ impl Decoder {
         if profile == 3 {
             return Err(Error::Unsupported("VC-1 Advanced profile"));
         }
-        let res_y411 = r.get1() != 0;
-        let res_sprite = r.get1() != 0;
+        let res_y411 = r.bit();
+        let res_sprite = r.bit();
         if res_y411 {
             return Err(Error::Unsupported("old interlaced mode"));
         }
         let _frmrtq = r.get(3);
         let _bitrtq = r.get(5);
-        let loop_filter = r.get1() != 0;
-        let res_x8 = r.get1() != 0;
-        let multires = r.get1() != 0;
-        let res_fasttx = r.get1() != 0;
-        let fastuvmc = r.get1() != 0;
+        let loop_filter = r.bit();
+        let res_x8 = r.bit();
+        let multires = r.bit();
+        let res_fasttx = r.bit();
+        let fastuvmc = r.bit();
         if profile == 0 && !fastuvmc {
             return Err(Error::Params("FASTUVMC unavailable in Simple Profile"));
         }
-        let extended_mv = r.get1() != 0;
+        let extended_mv = r.bit();
         if profile == 0 && extended_mv {
             return Err(Error::Params("extended MVs unavailable in Simple Profile"));
         }
         let dquant = r.get(2);
-        let vstransform = r.get1() != 0;
-        if r.get1() != 0 {
+        let vstransform = r.bit();
+        if r.bit() {
             return Err(Error::Params("RES_TRANSTAB"));
         }
-        let overlap = r.get1() != 0;
-        let _resync_marker = r.get1() != 0;
-        let rangered = r.get1() != 0;
+        let overlap = r.bit();
+        let _resync_marker = r.bit();
+        let rangered = r.bit();
         let max_b_frames = r.get(3);
         let quantizer_mode = r.get(2);
-        let finterpflag = r.get1() != 0;
+        let finterpflag = r.bit();
         if res_sprite {
             return Err(Error::Unsupported("WMV3 sprites"));
         }
-        let res_rtm_flag = r.get1() != 0;
+        let res_rtm_flag = r.bit();
         let mb_w = width.div_ceil(16);
         let mb_h = height.div_ceil(16);
         let mbs = mb_w + 1;
@@ -887,9 +888,9 @@ impl Decoder {
     /// s->dest[k] of the MB
     fn dest(&self, k: usize) -> isize {
         if k == 0 {
-            (self.mb_y * 16 * self.ls + self.mb_x * 16) as isize
+            usize::cast_signed(self.mb_y * 16 * self.ls + self.mb_x * 16)
         } else {
-            (self.mb_y * 8 * self.uvls + self.mb_x * 8) as isize
+            usize::cast_signed(self.mb_y * 8 * self.uvls + self.mb_x * 8)
         }
     }
     fn plane(&mut self, k: usize) -> &mut Vec<u8> {
@@ -914,40 +915,40 @@ impl Decoder {
             _ => &mut self.direct_plane,
         };
         let tb = tables();
-        let invert = r.get1() as u8;
+        let invert = lo8(r.get1());
         let imode = tb.imode.read(r);
         let rowskip = |p: &mut [u8], base: usize, w: usize, h: usize, r: &mut Bits| {
             for y in 0..h {
-                if r.get1() == 0 {
+                if !r.bit() {
                     p[base + y * stride..base + y * stride + w].fill(0);
                 } else {
                     for x in 0..w {
-                        p[base + y * stride + x] = r.get1() as u8;
+                        p[base + y * stride + x] = lo8(r.get1());
                     }
                 }
             }
         };
         let colskip = |p: &mut [u8], base: usize, w: usize, h: usize, r: &mut Bits| {
             for x in 0..w {
-                if r.get1() == 0 {
+                if !r.bit() {
                     for y in 0..h {
                         p[base + y * stride + x] = 0;
                     }
                 } else {
                     for y in 0..h {
-                        p[base + y * stride + x] = r.get1() as u8;
+                        p[base + y * stride + x] = lo8(r.get1());
                     }
                 }
             }
         };
         match imode {
-            IMODE_RAW => return Ok((true, invert as i32)),
+            IMODE_RAW => return Ok((true, i32::from(invert))),
             IMODE_DIFF2 | IMODE_NORM2 => {
                 let mut pp = 0usize;
                 let mut y;
                 let mut offset;
                 if (height * width) & 1 != 0 {
-                    plane[pp] = r.get1() as u8;
+                    plane[pp] = lo8(r.get1());
                     pp += 1;
                     y = 1;
                     offset = 1;
@@ -961,14 +962,14 @@ impl Decoder {
                 }
                 while y < height * width {
                     let code = tb.norm2.read(r);
-                    plane[pp] = (code & 1) as u8;
+                    plane[pp] = lo8(i32::cast_unsigned(code & 1));
                     pp += 1;
                     offset += 1;
                     if offset == width {
                         offset = 0;
                         pp += stride - width;
                     }
-                    plane[pp] = ((code >> 1) & 1) as u8;
+                    plane[pp] = lo8(i32::cast_unsigned((code >> 1) & 1));
                     pp += 1;
                     offset += 1;
                     if offset == width {
@@ -988,12 +989,12 @@ impl Decoder {
                             if code < 0 {
                                 return Err(Error::Data("NORM-6 VLC"));
                             }
-                            plane[pp + x] = (code & 1) as u8;
-                            plane[pp + x + 1] = ((code >> 1) & 1) as u8;
-                            plane[pp + x + stride] = ((code >> 2) & 1) as u8;
-                            plane[pp + x + 1 + stride] = ((code >> 3) & 1) as u8;
-                            plane[pp + x + stride * 2] = ((code >> 4) & 1) as u8;
-                            plane[pp + x + 1 + stride * 2] = ((code >> 5) & 1) as u8;
+                            plane[pp + x] = lo8(i32::cast_unsigned(code & 1));
+                            plane[pp + x + 1] = lo8(i32::cast_unsigned((code >> 1) & 1));
+                            plane[pp + x + stride] = lo8(i32::cast_unsigned((code >> 2) & 1));
+                            plane[pp + x + 1 + stride] = lo8(i32::cast_unsigned((code >> 3) & 1));
+                            plane[pp + x + stride * 2] = lo8(i32::cast_unsigned((code >> 4) & 1));
+                            plane[pp + x + 1 + stride * 2] = lo8(i32::cast_unsigned((code >> 5) & 1));
                         }
                         pp += stride * 3;
                     }
@@ -1009,12 +1010,12 @@ impl Decoder {
                             if code < 0 {
                                 return Err(Error::Data("NORM-6 VLC"));
                             }
-                            plane[pp + x] = (code & 1) as u8;
-                            plane[pp + x + 1] = ((code >> 1) & 1) as u8;
-                            plane[pp + x + 2] = ((code >> 2) & 1) as u8;
-                            plane[pp + x + stride] = ((code >> 3) & 1) as u8;
-                            plane[pp + x + 1 + stride] = ((code >> 4) & 1) as u8;
-                            plane[pp + x + 2 + stride] = ((code >> 5) & 1) as u8;
+                            plane[pp + x] = lo8(i32::cast_unsigned(code & 1));
+                            plane[pp + x + 1] = lo8(i32::cast_unsigned((code >> 1) & 1));
+                            plane[pp + x + 2] = lo8(i32::cast_unsigned((code >> 2) & 1));
+                            plane[pp + x + stride] = lo8(i32::cast_unsigned((code >> 3) & 1));
+                            plane[pp + x + 1 + stride] = lo8(i32::cast_unsigned((code >> 4) & 1));
+                            plane[pp + x + 2 + stride] = lo8(i32::cast_unsigned((code >> 5) & 1));
                         }
                         pp += stride * 2;
                     }
@@ -1049,15 +1050,15 @@ impl Decoder {
             }
         } else if invert != 0 {
             for v in plane[..stride * height].iter_mut() {
-                *v = (*v == 0) as u8;
+                *v = u8::from(*v == 0);
             }
         }
-        Ok((false, (imode << 1) + invert as i32))
+        Ok((false, (imode << 1) + i32::from(invert)))
     }
 
     fn vop_dquant(&mut self, r: &mut Bits) {
         if self.dquant != 2 {
-            self.dquantfrm = r.get1() != 0;
+            self.dquantfrm = r.bit();
             if !self.dquantfrm {
                 return;
             }
@@ -1065,7 +1066,7 @@ impl Decoder {
             match self.dqprofile {
                 DQPROFILE_SINGLE_EDGE | DQPROFILE_DOUBLE_EDGES => self.dqsbedge = r.get(2),
                 DQPROFILE_ALL_MBS => {
-                    self.dqbilevel = r.get1() != 0;
+                    self.dqbilevel = r.bit();
                     if !self.dqbilevel {
                         self.halfpq = 0;
                         return;
@@ -1074,8 +1075,8 @@ impl Decoder {
                 _ => {}
             }
         }
-        let pqdiff = r.get(3) as i32;
-        self.altpq = if pqdiff == 7 { r.get(5) as i32 } else { self.pq + pqdiff + 1 };
+        let pqdiff = u32::cast_signed(r.get(3));
+        self.altpq = if pqdiff == 7 { u32::cast_signed(r.get(5)) } else { self.pq + pqdiff + 1 };
     }
 
     /// ff_vc1_parse_frame_header (Simple / Main)
@@ -1084,10 +1085,10 @@ impl Decoder {
             let _interpfrm = r.get1();
         }
         r.skip(2);
-        self.rangeredfrm = self.rangered && r.get1() != 0;
-        self.pict = if r.get1() != 0 {
+        self.rangeredfrm = self.rangered && r.bit();
+        self.pict = if r.bit() {
             Type::P
-        } else if !self.low_delay && r.get1() == 0 {
+        } else if !self.low_delay && !r.bit() {
             Type::B
         } else {
             Type::I
@@ -1095,9 +1096,9 @@ impl Decoder {
         // read_bfraction: a B picture of fraction 0 is a BI one
         let mut bi = false;
         if self.pict == Type::B {
-            let mut k = r.get(3) as usize;
+            let mut k = us(r.get(3));
             if k == 7 {
-                k = 7 + r.get(4) as usize;
+                k = 7 + us(r.get(4));
             }
             if k == 21 {
                 return Err(Error::Data("BFRACTION"));
@@ -1115,20 +1116,20 @@ impl Decoder {
         if self.pict == Type::P {
             self.rnd ^= 1;
         }
-        if r.left() < 5 {
+        if r.remaining() < 5 {
             return Err(Error::Data("picture header"));
         }
         let pqindex = r.get(5);
         if pqindex == 0 {
             return Err(Error::Data("PQINDEX 0"));
         }
-        self.pq = t::VC1_PQUANT_TABLE[if self.quantizer_mode == QUANT_FRAME_IMPLICIT { 0 } else { 32 } + pqindex as usize] as i32;
+        self.pq = i32::from(t::VC1_PQUANT_TABLE[if self.quantizer_mode == QUANT_FRAME_IMPLICIT { 0 } else { 32 } + us(pqindex)]);
         self.pqindex = pqindex;
-        self.halfpq = if pqindex < 9 { r.get1() as i32 } else { 0 };
+        self.halfpq = if pqindex < 9 { u32::cast_signed(r.get1()) } else { 0 };
         self.pquantizer = match self.quantizer_mode {
             QUANT_FRAME_IMPLICIT => pqindex < 9,
             QUANT_NON_UNIFORM => false,
-            QUANT_FRAME_EXPLICIT => r.get1() != 0,
+            QUANT_FRAME_EXPLICIT => r.bit(),
             _ => true,
         };
         self.dquantfrm = false;
@@ -1142,29 +1143,29 @@ impl Decoder {
         if self.multires && self.pict != Type::B {
             let _respic = r.get(2);
         }
-        self.x8_type = self.res_x8 && intra && r.get1() != 0;
+        self.x8_type = self.res_x8 && intra && r.bit();
         // rotate_luts: no intensity compensation unless this P picture asks for it (a B picture's
         // forward MC keeps that of the newest P one)
         if self.pict != Type::B {
             self.use_ic = false;
         }
         if self.pict == Type::P {
-            self.tt_index = ((self.pq > 4) as usize) + ((self.pq > 12) as usize);
-            let lowquant = (self.pq <= 12) as usize;
-            self.mv_mode = PMODE[lowquant][r.unary(1, 4) as usize];
+            self.tt_index = (usize::from(self.pq > 4)) + (usize::from(self.pq > 12));
+            let lowquant = usize::from(self.pq <= 12);
+            self.mv_mode = PMODE[lowquant][us(r.unary(1, 4))];
             if self.mv_mode == MV_INTENSITY_COMP {
-                self.mv_mode2 = PMODE2[lowquant][r.unary(1, 3) as usize];
-                let lumscale = r.get(6) as i32;
-                let lumshift = r.get(6) as i32;
+                self.mv_mode2 = PMODE2[lowquant][us(r.unary(1, 3))];
+                let lumscale = u32::cast_signed(r.get(6));
+                let lumshift = u32::cast_signed(r.get(6));
                 self.use_ic = true;
                 let (scale, shift) = if lumscale == 0 {
                     (-64, (255 - lumshift * 2) * 64 + if lumshift > 31 { 128 << 6 } else { 0 })
                 } else {
                     (lumscale + 32, if lumshift > 31 { (lumshift - 64) * 64 } else { lumshift << 6 })
                 };
-                for i in 0..256 {
-                    self.luty[i] = clip8((scale * i as i32 + shift + 32) >> 6);
-                    self.lutuv[i] = clip8((scale * (i as i32 - 128) + 128 * 64 + 32) >> 6);
+                for (i, v) in (0..256).zip(0i32..) {
+                    self.luty[i] = clip8((scale * v + shift + 32) >> 6);
+                    self.lutuv[i] = clip8((scale * (v - 128) + 128 * 64 + 32) >> 6);
                 }
             }
             let m = if self.mv_mode == MV_INTENSITY_COMP { self.mv_mode2 } else { self.mv_mode };
@@ -1179,39 +1180,39 @@ impl Decoder {
             }
             let (raw, _) = self.bitplane(r, 1)?;
             self.skip_is_raw = raw;
-            if r.left() < 4 {
+            if r.remaining() < 4 {
                 return Err(Error::Data("picture header"));
             }
-            self.mv_table_index = r.get(2) as usize;
-            self.cbptab = r.get(2) as usize;
+            self.mv_table_index = us(r.get(2));
+            self.cbptab = us(r.get(2));
             if self.dquant != 0 {
                 self.vop_dquant(r);
             }
             if self.vstransform {
-                self.ttmbf = r.get1() != 0;
-                self.ttfrm = if self.ttmbf { TTFRM_TO_TT[r.get(2) as usize] } else { 0 };
+                self.ttmbf = r.bit();
+                self.ttfrm = if self.ttmbf { TTFRM_TO_TT[us(r.get(2))] } else { 0 };
             } else {
                 self.ttmbf = true;
                 self.ttfrm = TT_8X8;
             }
         }
         if self.pict == Type::B && !bi {
-            self.tt_index = ((self.pq > 4) as usize) + ((self.pq > 12) as usize);
-            self.mv_mode = if r.get1() != 0 { MV_1MV } else { MV_1MV_HPEL_BILIN };
+            self.tt_index = (usize::from(self.pq > 4)) + (usize::from(self.pq > 12));
+            self.mv_mode = if r.bit() { MV_1MV } else { MV_1MV_HPEL_BILIN };
             self.quarter_sample = self.mv_mode == MV_1MV;
             self.mspel = self.quarter_sample;
             let (raw, _) = self.bitplane(r, 2)?;
             self.dmb_is_raw = raw;
             let (raw, _) = self.bitplane(r, 1)?;
             self.skip_is_raw = raw;
-            self.mv_table_index = r.get(2) as usize;
-            self.cbptab = r.get(2) as usize;
+            self.mv_table_index = us(r.get(2));
+            self.cbptab = us(r.get(2));
             if self.dquant != 0 {
                 self.vop_dquant(r);
             }
             if self.vstransform {
-                self.ttmbf = r.get1() != 0;
-                self.ttfrm = if self.ttmbf { TTFRM_TO_TT[r.get(2) as usize] } else { 0 };
+                self.ttmbf = r.bit();
+                self.ttfrm = if self.ttmbf { TTFRM_TO_TT[us(r.get(2))] } else { 0 };
             } else {
                 self.ttmbf = true;
                 self.ttfrm = TT_8X8;
@@ -1222,7 +1223,7 @@ impl Decoder {
             if intra {
                 self.y_ac_table_index = decode012(r);
             }
-            self.dc_table_index = r.get1() as usize;
+            self.dc_table_index = us(r.get1());
         }
         self.bi_type = bi;
         Ok(())
@@ -1354,7 +1355,7 @@ impl Decoder {
             1 => CS_HIGH_MOT_INTER,
             _ => CS_MID_RATE_INTER,
         };
-        self.y_dc_scale = t::WMV3_DC_SCALE_TABLE[self.pq as usize] as i32;
+        self.y_dc_scale = i32::from(t::WMV3_DC_SCALE_TABLE[ix(self.pq)]);
         self.c_dc_scale = self.y_dc_scale;
         self.mb_intra = true;
         self.first_slice_line = true;
@@ -1365,7 +1366,7 @@ impl Decoder {
                 self.init_block_index();
                 self.blocks[self.cur_blk] = [[0; 64]; 6];
                 let mut cbp = mb_i_vlc().read(r);
-                self.ac_pred = r.get1() != 0;
+                self.ac_pred = r.bit();
                 for k in 0..6 {
                     let d = self.dci(k);
                     self.mb_type[d] = 1;
@@ -1376,8 +1377,8 @@ impl Decoder {
                         let w = self.b8;
                         let (a, b, c) = (self.coded_block[xy - 1], self.coded_block[xy - 1 - w], self.coded_block[xy - w]);
                         let pred = if b == c { a } else { c };
-                        val ^= pred as i32;
-                        self.coded_block[xy] = val as u8;
+                        val ^= i32::from(pred);
+                        self.coded_block[xy] = lo8(i32::cast_unsigned(val));
                     }
                     cbp |= val << (5 - k);
                     let cs = if k < 4 { self.codingset } else { self.codingset2 };
@@ -1410,7 +1411,7 @@ impl Decoder {
                 if self.loop_filter {
                     self.i_loop_filter();
                 }
-                if r.left() < 0 {
+                if r.overread() {
                     return Err(Error::Data("bits overconsumption"));
                 }
                 self.next_blk();
@@ -1442,14 +1443,14 @@ impl Decoder {
                 self.init_block_index();
                 // FFmpeg gives up here (and conceals the rest) with one bit left, even where the
                 // last MB's skip bit is all there is; we decode it, as Windows does
-                if (self.mv_type_is_raw || self.skip_is_raw) && r.left() <= 1 {
+                if (self.mv_type_is_raw || self.skip_is_raw) && r.remaining() <= 1 {
                     self.ffmpeg_conceals = true;
                 }
                 self.p_mb(r)?;
                 if self.loop_filter {
                     self.p_loop_filter();
                 }
-                if r.left() < 0 {
+                if r.overread() {
                     return Err(Error::Data("bits overconsumption"));
                 }
                 self.next_blk();
@@ -1472,17 +1473,18 @@ impl Decoder {
     fn ac_coeff(&mut self, r: &mut Bits, cs: usize) -> Result<(bool, i32, i32), Error> {
         let tb = tables();
         let size = t::FF_VC1_AC_SIZES[cs];
-        let idx = |i: i32| (cs * 185 + i as usize) * 2;
+        // (i: a code index, not negative here)
+        let idx = |i: i32| (cs * 185 + ix(i)) * 2;
         let index = tb.ac[cs].read(r);
         if index < 0 {
             return Err(Error::Data("AC VLC"));
         }
         let (lst, run, level, sign);
         if index != size - 1 {
-            run = t::VC1_INDEX_DECODE_TABLE[idx(index)] as i32;
-            level = t::VC1_INDEX_DECODE_TABLE[idx(index) + 1] as i32;
-            lst = index >= t::VC1_LAST_DECODE_TABLE[cs] || r.left() < 0;
-            sign = r.get1() as i32;
+            run = i32::from(t::VC1_INDEX_DECODE_TABLE[idx(index)]);
+            level = i32::from(t::VC1_INDEX_DECODE_TABLE[idx(index) + 1]);
+            lst = index >= t::VC1_LAST_DECODE_TABLE[cs] || r.overread();
+            sign = u32::cast_signed(r.get1());
         } else {
             let escape = decode210(r);
             if escape != 2 {
@@ -1490,10 +1492,10 @@ impl Decoder {
                 if index < 0 || index >= size - 1 {
                     return Err(Error::Data("AC escape"));
                 }
-                let mut ru = t::VC1_INDEX_DECODE_TABLE[idx(index)] as i32;
-                let mut le = t::VC1_INDEX_DECODE_TABLE[idx(index) + 1] as i32;
+                let mut ru = i32::from(t::VC1_INDEX_DECODE_TABLE[idx(index)]);
+                let mut le = i32::from(t::VC1_INDEX_DECODE_TABLE[idx(index) + 1]);
                 lst = index >= t::VC1_LAST_DECODE_TABLE[cs];
-                let at = |tab: &[u8], w: usize, k: i32| tab.get(cs * w + k as usize).copied().unwrap_or(0) as i32;
+                let at = |tab: &[u8], w: usize, k: i32| i32::from(tab.get(cs * w + ix(k)).copied().unwrap_or(0));
                 if escape == 0 {
                     le += if lst { at(&t::VC1_LAST_DELTA_LEVEL_TABLE, 44, ru) } else { at(&t::VC1_DELTA_LEVEL_TABLE, 31, ru) };
                 } else {
@@ -1501,9 +1503,9 @@ impl Decoder {
                 }
                 run = ru;
                 level = le;
-                sign = r.get1() as i32;
+                sign = u32::cast_signed(r.get1());
             } else {
-                lst = r.get1() != 0;
+                lst = r.bit();
                 if self.esc3_level_length == 0 {
                     if self.pq < 8 || self.dquantfrm {
                         self.esc3_level_length = r.get(3);
@@ -1515,9 +1517,9 @@ impl Decoder {
                     }
                     self.esc3_run_length = 3 + r.get(2);
                 }
-                run = r.get(self.esc3_run_length) as i32;
-                sign = r.get1() as i32;
-                level = r.get(self.esc3_level_length) as i32;
+                run = u32::cast_signed(r.get(self.esc3_run_length));
+                sign = u32::cast_signed(r.get1());
+                level = u32::cast_signed(r.get(self.esc3_level_length));
             }
         }
         Ok((lst, run, (level ^ -sign) + sign))
@@ -1529,11 +1531,11 @@ impl Decoder {
         if dcdiff != 0 {
             let m = if q == 1 || q == 2 { 3 - q } else { 0 };
             if dcdiff == 119 {
-                dcdiff = r.get((8 + m) as u32) as i32;
+                dcdiff = u32::cast_signed(r.get(i32::cast_unsigned(8 + m)));
             } else if m != 0 {
-                dcdiff = (dcdiff << m) + r.get(m as u32) as i32 - ((1 << m) - 1);
+                dcdiff = (dcdiff << m) + u32::cast_signed(r.get(i32::cast_unsigned(m))) - ((1 << m) - 1);
             }
-            if r.get1() != 0 {
+            if r.bit() {
                 dcdiff = -dcdiff;
             }
         }
@@ -1545,10 +1547,10 @@ impl Decoder {
         let scale = if n < 4 { self.y_dc_scale } else { self.c_dc_scale };
         let wrap = self.wrap(n);
         let i = self.dci(n);
-        let mut c = self.dc_val[i - 1] as i32;
-        let mut b = self.dc_val[i - 1 - wrap] as i32;
-        let mut a = self.dc_val[i - wrap] as i32;
-        let edge = if self.pq < 9 || !self.overlap { DCPRED[scale as usize] } else { 0 };
+        let mut c = i32::from(self.dc_val[i - 1]);
+        let mut b = i32::from(self.dc_val[i - 1 - wrap]);
+        let mut a = i32::from(self.dc_val[i - wrap]);
+        let edge = if self.pq < 9 || !self.overlap { DCPRED[ix(scale)] } else { 0 };
         if self.first_slice_line && n != 2 && n != 3 {
             b = edge;
             a = edge;
@@ -1566,9 +1568,9 @@ impl Decoder {
         let (pred, left) = self.i_pred_dc(n);
         dcdiff += pred;
         let di = self.dci(n);
-        self.dc_val[di] = dcdiff as i16;
+        self.dc_val[di] = lo16(dcdiff);
         let scale = if n < 4 { self.y_dc_scale } else { self.c_dc_scale };
-        block[0] = (dcdiff * scale) as i16;
+        block[0] = lo16(dcdiff * scale);
         let ac2 = di;
         let ac = if left { di - 1 } else { di - self.wrap(n) };
         let scale = self.pq * 2 + self.halfpq;
@@ -1578,11 +1580,11 @@ impl Decoder {
             let mut i = 1usize;
             loop {
                 let (last, skip, value) = self.ac_coeff(r, cs)?;
-                i += skip as usize;
+                i += ix(skip);
                 if i > 63 {
                     break;
                 }
-                block[zz[i] as usize] = value as i16;
+                block[usize::from(zz[i])] = lo16(value);
                 i += 1;
                 if last {
                     break;
@@ -1602,11 +1604,11 @@ impl Decoder {
             }
             for k in 1..64 {
                 if block[k] != 0 {
-                    let mut v = block[k] as i32 * scale;
+                    let mut v = i32::from(block[k]) * scale;
                     if !self.pquantizer {
-                        v += if (v as i16) < 0 { -self.pq } else { self.pq };
+                        v += if (lo16(v)) < 0 { -self.pq } else { self.pq };
                     }
-                    block[k] = v as i16;
+                    block[k] = lo16(v);
                 }
             }
         } else {
@@ -1616,9 +1618,9 @@ impl Decoder {
                 let src = self.ac_val[ac];
                 self.ac_val[ac2][o..o + 8].copy_from_slice(&src[o..o + 8]);
                 for k in 1..8 {
-                    let mut v = (src[k + o] as i32 * scale) as i16;
+                    let mut v = lo16(i32::from(src[k + o]) * scale);
                     if !self.pquantizer && v != 0 {
-                        v = (v as i32 + if v < 0 { -self.pq } else { self.pq }) as i16;
+                        v = lo16(i32::from(v) + if v < 0 { -self.pq } else { self.pq });
                     }
                     block[k << sh] = v;
                 }
@@ -1630,18 +1632,18 @@ impl Decoder {
     /// ff_vc1_pred_dc (P pictures' intra blocks)
     fn pred_dc(&self, n: usize, a_avail: bool, c_avail: bool) -> (i32, bool) {
         let mb_pos = self.mb_x + self.mb_y * self.mbs;
-        let dq = |q: i32| t::WMV3_DC_SCALE_TABLE[q as usize] as u32;
+        let dq = |q: i32| u32::from(t::WMV3_DC_SCALE_TABLE[ix(q)]);
         let q1 = self.qscale[mb_pos].abs();
-        let dqi = dq(q1) as i32 - 1;
+        let dqi = u32::cast_signed(dq(q1)) - 1;
         if dqi < 0 {
             return (0, false);
         }
         let wrap = self.wrap(n);
         let i = self.dci(n);
-        let mut c = self.dc_val[i - 1] as i32;
-        let mut b = self.dc_val[i - 1 - wrap] as i32;
-        let mut a = self.dc_val[i - wrap] as i32;
-        let scale = |v: i32, q2: i32| ((v as u32).wrapping_mul(dq(q2)).wrapping_mul(t::VC1_DQSCALE[dqi as usize] as u32).wrapping_add(0x20000) as i32) >> 18;
+        let mut c = i32::from(self.dc_val[i - 1]);
+        let mut b = i32::from(self.dc_val[i - 1 - wrap]);
+        let mut a = i32::from(self.dc_val[i - wrap]);
+        let scale = |v: i32, q2: i32| (u32::cast_signed((i32::cast_unsigned(v)).wrapping_mul(dq(q2)).wrapping_mul(i32::cast_unsigned(t::VC1_DQSCALE[ix(dqi)])).wrapping_add(0x20000))) >> 18;
         if c_avail && n != 1 && n != 3 {
             let q2 = self.qscale[mb_pos - 1].abs();
             if q2 != 0 && q2 != q1 {
@@ -1683,14 +1685,14 @@ impl Decoder {
         let mut use_pred = self.ac_pred;
         *block = [0; 64];
         let quant = mquant.abs().clamp(0, 31);
-        self.y_dc_scale = t::WMV3_DC_SCALE_TABLE[quant as usize] as i32;
+        self.y_dc_scale = i32::from(t::WMV3_DC_SCALE_TABLE[ix(quant)]);
         self.c_dc_scale = self.y_dc_scale;
         let mut dcdiff = self.dc_diff(r, n, quant);
         let (pred, mut left) = self.pred_dc(n, a_avail, c_avail);
         dcdiff += pred;
         let di = self.dci(n);
-        self.dc_val[di] = dcdiff as i16;
-        block[0] = (dcdiff * if n < 4 { self.y_dc_scale } else { self.c_dc_scale }) as i16;
+        self.dc_val[di] = lo16(dcdiff);
+        block[0] = lo16(dcdiff * if n < 4 { self.y_dc_scale } else { self.c_dc_scale });
         if !a_avail {
             left = true;
         }
@@ -1717,16 +1719,16 @@ impl Decoder {
         let (lsh, tsh) = self.blk_sh();
         let halfpq = self.halfpq;
         let qq = |q: i32| q.abs() * 2 + if q < 0 { 0 } else { halfpq } - 1;
-        let rescale = |v: i16, q2: i32, q1: i32| ((v as i32 * q2) as u32).wrapping_mul(t::VC1_DQSCALE[(q1 - 1) as usize] as u32).wrapping_add(0x20000) as i32 >> 18;
+        let rescale = |v: i16, q2: i32, q1: i32| u32::cast_signed((i32::cast_unsigned(i32::from(v) * q2)).wrapping_mul(i32::cast_unsigned(t::VC1_DQSCALE[ix(q1 - 1)])).wrapping_add(0x20000)) >> 18;
         if coded {
             let mut i = 1usize;
             loop {
                 let (last, skip, value) = self.ac_coeff(r, cs)?;
-                i += skip as usize;
+                i += ix(skip);
                 if i > 63 {
                     break;
                 }
-                block[self.zz()[0][i] as usize] = value as i16;
+                block[usize::from(self.zz()[0][i])] = lo16(value);
                 i += 1;
                 if last {
                     break;
@@ -1741,8 +1743,8 @@ impl Decoder {
                 let src = self.ac_val[ac];
                 let (sh, o) = if left { (lsh, 0) } else { (tsh, 8) };
                 for k in 1..8 {
-                    let p = if q2 != 0 && q1 != q2 { rescale(src[k + o], q2, q1) } else { src[k + o] as i32 };
-                    block[k << sh] = (block[k << sh] as i32 + p) as i16;
+                    let p = if q2 != 0 && q1 != q2 { rescale(src[k + o], q2, q1) } else { i32::from(src[k + o]) };
+                    block[k << sh] = lo16(i32::from(block[k << sh]) + p);
                 }
             }
             let a2 = &mut self.ac_val[ac2];
@@ -1752,11 +1754,11 @@ impl Decoder {
             }
             for k in 1..64 {
                 if block[k] != 0 {
-                    let mut v = block[k] as i32 * scale;
+                    let mut v = i32::from(block[k]) * scale;
                     if !self.pquantizer {
-                        v += if (v as i16) < 0 { -quant } else { quant };
+                        v += if (lo16(v)) < 0 { -quant } else { quant };
                     }
-                    block[k] = v as i16;
+                    block[k] = lo16(v);
                 }
             }
         } else {
@@ -1772,14 +1774,14 @@ impl Decoder {
                 let q2 = if q2 != 0 { qq(q2) } else { 0 };
                 if q2 != 0 && q1 != q2 {
                     for k in 1..8 {
-                        self.ac_val[ac2][k + o] = rescale(self.ac_val[ac2][k + o], q2, q1) as i16;
+                        self.ac_val[ac2][k + o] = lo16(rescale(self.ac_val[ac2][k + o], q2, q1));
                     }
                 }
                 let sh = if left { lsh } else { tsh };
                 for k in 1..8 {
-                    let mut v = (self.ac_val[ac2][k + o] as i32 * scale) as i16;
+                    let mut v = lo16(i32::from(self.ac_val[ac2][k + o]) * scale);
                     if !self.pquantizer && v != 0 {
-                        v = (v as i32 + if v < 0 { -quant } else { quant }) as i16;
+                        v = lo16(i32::from(v) + if v < 0 { -quant } else { quant });
                     }
                     block[k << sh] = v;
                 }
@@ -1801,13 +1803,13 @@ impl Decoder {
             if k < 0 {
                 return Err(Error::Data("TTBLK VLC"));
             }
-            ttblk = TTBLK_TO_TT[self.tt_index][k as usize];
+            ttblk = TTBLK_TO_TT[self.tt_index][ix(k)];
         }
         if ttblk == TT_4X4 {
             subblkpat = !(tb.subblkpat[self.tt_index].read(r) + 1);
         }
         if ttblk != TT_8X8 && ttblk != TT_4X4 && ((self.ttmbf || (ttmb != -1 && ttmb & 8 != 0 && !first_block)) || (!self.res_rtm_flag && !first_block)) {
-            subblkpat = decode012(r) as i32;
+            subblkpat = u32::cast_signed(decode012(r));
             if subblkpat != 0 {
                 subblkpat ^= 3;
             }
@@ -1820,20 +1822,20 @@ impl Decoder {
         }
         let scale = quant * 2 + if mquant < 0 { 0 } else { self.halfpq };
         if ttblk == TT_8X4_TOP || ttblk == TT_8X4_BOTTOM {
-            subblkpat = 2 - (ttblk == TT_8X4_TOP) as i32;
+            subblkpat = 2 - i32::from(ttblk == TT_8X4_TOP);
             ttblk = TT_8X4;
         }
         if ttblk == TT_4X8_RIGHT || ttblk == TT_4X8_LEFT {
-            subblkpat = 2 - (ttblk == TT_4X8_LEFT) as i32;
+            subblkpat = 2 - i32::from(ttblk == TT_4X8_LEFT);
             ttblk = TT_4X8;
         }
         let cs = self.codingset2;
         let put = |block: &mut [i16; 64], idx: usize, value: i32, pq: bool| {
             let mut v = value * scale;
             if !pq {
-                v += if (v as i16) < 0 { -quant } else { quant };
+                v += if (lo16(v)) < 0 { -quant } else { quant };
             }
-            block[idx] = v as i16;
+            block[idx] = lo16(v);
         };
         let pquant = self.pquantizer;
         let mut pat = 0;
@@ -1843,11 +1845,11 @@ impl Decoder {
                 let mut i = 0usize;
                 loop {
                     let (last, skip, value) = self.ac_coeff(r, cs)?;
-                    i += skip as usize;
+                    i += ix(skip);
                     if i > 63 {
                         break;
                     }
-                    put(block, self.zz()[0][i] as usize, value, pquant);
+                    put(block, usize::from(self.zz()[0][i]), value, pquant);
                     i += 1;
                     if last {
                         break;
@@ -1877,11 +1879,11 @@ impl Decoder {
                     while !last {
                         let (l, skip, value) = self.ac_coeff(r, cs)?;
                         last = l;
-                        i += skip as usize;
+                        i += ix(skip);
                         if i > 15 {
                             break;
                         }
-                        put(block, t::VC1_SIMPLE_PROGRESSIVE_4X4_ZZ[i] as usize + off, value, pquant);
+                        put(block, usize::from(t::VC1_SIMPLE_PROGRESSIVE_4X4_ZZ[i]) + off, value, pquant);
                         i += 1;
                     }
                     if subblkpat & (1 << (3 - j)) == 0 {
@@ -1907,11 +1909,11 @@ impl Decoder {
                     while !last {
                         let (l, skip, value) = self.ac_coeff(r, cs)?;
                         last = l;
-                        i += skip as usize;
+                        i += ix(skip);
                         if i > 31 {
                             break;
                         }
-                        put(block, tb.zz_8x4[i] as usize + off, value, pquant);
+                        put(block, usize::from(tb.zz_8x4[i]) + off, value, pquant);
                         i += 1;
                     }
                     if subblkpat & (1 << (1 - j)) == 0 {
@@ -1937,11 +1939,11 @@ impl Decoder {
                     while !last {
                         let (l, skip, value) = self.ac_coeff(r, cs)?;
                         last = l;
-                        i += skip as usize;
+                        i += ix(skip);
                         if i > 31 {
                             break;
                         }
-                        put(block, tb.zz_4x8[i] as usize + off, value, pquant);
+                        put(block, usize::from(tb.zz_4x8[i]) + off, value, pquant);
                         i += 1;
                     }
                     if subblkpat & (1 << (1 - j)) == 0 {
@@ -1972,10 +1974,10 @@ impl Decoder {
         let mut edges = 0;
         if self.dqprofile == DQPROFILE_ALL_MBS {
             if self.dqbilevel {
-                mquant = if r.get1() != 0 { -self.altpq } else { self.pq };
+                mquant = if r.bit() { -self.altpq } else { self.pq };
             } else {
-                let mqdiff = r.get(3) as i32;
-                mquant = if mqdiff != 7 { -self.pq - mqdiff } else { -(r.get(5) as i32) };
+                let mqdiff = u32::cast_signed(r.get(3));
+                mquant = if mqdiff != 7 { -self.pq - mqdiff } else { -(u32::cast_signed(r.get(5))) };
             }
         }
         if self.dqprofile == DQPROFILE_SINGLE_EDGE {
@@ -2015,8 +2017,8 @@ impl Decoder {
         match index {
             0 => (0, 0, has),
             35 => {
-                let x = r.get(self.k_x - 1 + q as u32) as i32;
-                let y = r.get(self.k_y - 1 + q as u32) as i32;
+                let x = u32::cast_signed(r.get(self.k_x - 1 + u32::from(q)));
+                let y = u32::cast_signed(r.get(self.k_y - 1 + u32::from(q)));
                 (x, y, has)
             }
             36 => {
@@ -2026,15 +2028,15 @@ impl Decoder {
             _ => {
                 let comp = |r: &mut Bits, i1: usize| {
                     let mut d = OFFSET_TABLE1[i1];
-                    let val = SIZE_TABLE[i1] as i32 - (!q && i1 == 5) as i32;
+                    let val = u32::cast_signed(SIZE_TABLE[i1]) - i32::from(!q && i1 == 5);
                     if val > 0 {
-                        let v = r.get(val as u32) as i32;
+                        let v = u32::cast_signed(r.get(i32::cast_unsigned(val)));
                         let sign = -(v & 1);
                         d = (sign ^ ((v >> 1) + d)) - sign;
                     }
                     d
                 };
-                let index = index.max(0) as usize;
+                let index = ix(index.max(0));
                 let x = comp(r, index % 6);
                 let y = comp(r, index / 6);
                 (x, y, has)
@@ -2049,8 +2051,8 @@ impl Decoder {
         let mut first_block = true;
         let (mut block_cbp, mut block_tt, mut block_intra) = (0u32, 0i32, 0u32);
         let mut mquant = self.pq;
-        let fourmv = if self.mv_type_is_raw { r.get1() != 0 } else { self.mv_type_plane[mb_pos] != 0 };
-        let skipped = if self.skip_is_raw { r.get1() != 0 } else { self.skip_plane[mb_pos] != 0 };
+        let fourmv = if self.mv_type_is_raw { r.bit() } else { self.mv_type_plane[mb_pos] != 0 };
+        let skipped = if self.skip_is_raw { r.bit() } else { self.skip_plane[mb_pos] != 0 };
         let ls = self.ls;
         let tb = tables();
         'end: {
@@ -2061,11 +2063,11 @@ impl Decoder {
                     let cbp;
                     if self.mb_intra && !has {
                         mquant = self.mquant(r, mquant);
-                        self.ac_pred = r.get1() != 0;
+                        self.ac_pred = r.bit();
                         cbp = 0;
                     } else if has {
                         if self.mb_intra {
-                            self.ac_pred = r.get1() != 0;
+                            self.ac_pred = r.bit();
                         }
                         cbp = tb.cbpcy[self.cbptab].read(r);
                         mquant = self.mquant(r, mquant);
@@ -2084,7 +2086,7 @@ impl Decoder {
                         let d = self.dci(i);
                         self.dc_val[d] = 0;
                         let val = (cbp >> (5 - i)) & 1 != 0;
-                        self.mb_type[d] = self.mb_intra as u8;
+                        self.mb_type[d] = u8::from(self.mb_intra);
                         if self.mb_intra {
                             self.avail(i);
                             let cs = if i & 4 != 0 { self.codingset2 } else { self.codingset };
@@ -2105,7 +2107,7 @@ impl Decoder {
                             let mut blk = [0i16; 64];
                             let pat = self.p_block(r, &mut blk, i, mquant, ttmb, first_block, plane, dst, stride, &mut block_tt)?;
                             self.blocks[self.cur_blk][BLOCK_MAP[i]] = blk;
-                            block_cbp |= (pat as u32) << (i << 2);
+                            block_cbp |= (i32::cast_unsigned(pat)) << (i << 2);
                             if !self.ttmbf && ttmb < 8 {
                                 ttmb = -1;
                             }
@@ -2142,7 +2144,7 @@ impl Decoder {
                         if !self.mb_intra {
                             self.mc_4mv_luma(i);
                         }
-                        intra_count += self.mb_intra as i32;
+                        intra_count += i32::from(self.mb_intra);
                         is_intra[i] = self.mb_intra;
                         is_coded[i] = has;
                     }
@@ -2153,7 +2155,7 @@ impl Decoder {
                     if i == 4 {
                         self.mc_4mv_chroma();
                     }
-                    self.mb_type[d] = is_intra[i] as u8;
+                    self.mb_type[d] = u8::from(is_intra[i]);
                     if !coded_inter {
                         coded_inter = !is_intra[i] && is_coded[i];
                     }
@@ -2173,7 +2175,7 @@ impl Decoder {
                         }
                     }
                 }
-                self.ac_pred = intrapred && r.get1() != 0;
+                self.ac_pred = intrapred && r.bit();
                 if !self.ttmbf && coded_inter {
                     ttmb = tb.ttmb[self.tt_index].read(r);
                 }
@@ -2199,7 +2201,7 @@ impl Decoder {
                         let mut blk = [0i16; 64];
                         let pat = self.p_block(r, &mut blk, i, mquant, ttmb, first_block, plane, dst, stride, &mut block_tt)?;
                         self.blocks[self.cur_blk][BLOCK_MAP[i]] = blk;
-                        block_cbp |= (pat as u32) << (i << 2);
+                        block_cbp |= (i32::cast_unsigned(pat)) << (i << 2);
                         if !self.ttmbf && ttmb < 8 {
                             ttmb = -1;
                         }
@@ -2230,7 +2232,7 @@ impl Decoder {
         let k = 2 * self.mbs + self.mb_x;
         self.cbp[k] = block_cbp;
         self.ttblk[k] = block_tt;
-        self.is_intra[k] = block_intra as u8;
+        self.is_intra[k] = lo8(block_intra);
         Ok(())
     }
 
@@ -2252,14 +2254,14 @@ impl Decoder {
             for mb_x in 0..self.mb_w {
                 self.mb_x = mb_x;
                 self.init_block_index();
-                if (self.skip_is_raw || self.dmb_is_raw) && r.left() <= 1 {
+                if (self.skip_is_raw || self.dmb_is_raw) && r.remaining() <= 1 {
                     self.ffmpeg_conceals = true;
                 }
                 self.b_mb(r)?;
                 if self.loop_filter {
                     self.i_loop_filter();
                 }
-                if r.left() < 0 {
+                if r.overread() {
                     return Err(Error::Data("bits overconsumption"));
                 }
             }
@@ -2277,7 +2279,7 @@ impl Decoder {
             self.mc_1mv(0);
             self.interp_mc();
         } else {
-            self.mc_1mv((mode == BMV_BACKWARD) as usize);
+            self.mc_1mv(usize::from(mode == BMV_BACKWARD));
         }
     }
 
@@ -2291,8 +2293,8 @@ impl Decoder {
         let mut bmvtype = BMV_BACKWARD;
         let tb = tables();
         self.mb_intra = false;
-        let direct = if self.dmb_is_raw { r.get1() != 0 } else { self.direct_plane[mb_pos] != 0 };
-        let skipped = if self.skip_is_raw { r.get1() != 0 } else { self.skip_plane[mb_pos] != 0 };
+        let direct = if self.dmb_is_raw { r.bit() } else { self.direct_plane[mb_pos] != 0 };
+        let skipped = if self.skip_is_raw { r.bit() } else { self.skip_plane[mb_pos] != 0 };
         let (mut dmv_x, mut dmv_y) = ([0i32; 2], [0i32; 2]);
         for i in 0..6 {
             let d = self.dci(i);
@@ -2322,7 +2324,7 @@ impl Decoder {
         }
         for i in 0..6 {
             let d = self.dci(i);
-            self.mb_type[d] = self.mb_intra as u8;
+            self.mb_type[d] = u8::from(self.mb_intra);
         }
         if skipped {
             if direct {
@@ -2353,7 +2355,7 @@ impl Decoder {
             if self.mb_intra && !has {
                 mquant = self.mquant(r, mquant);
                 self.qscale[mb_pos] = mquant;
-                self.ac_pred = r.get1() != 0;
+                self.ac_pred = r.bit();
                 cbp = 0;
                 self.pred_b_mv(dmv_x, dmv_y, direct, bmvtype);
             } else {
@@ -2374,7 +2376,7 @@ impl Decoder {
                     self.b_mc(direct, bmvtype);
                 }
                 if self.mb_intra {
-                    self.ac_pred = r.get1() != 0;
+                    self.ac_pred = r.bit();
                 }
                 cbp = tb.cbpcy[self.cbptab].read(r);
                 mquant = self.mquant(r, mquant);
@@ -2389,7 +2391,7 @@ impl Decoder {
             let d = self.dci(i);
             self.dc_val[d] = 0;
             let val = (cbp >> (5 - i)) & 1 != 0;
-            self.mb_type[d] = self.mb_intra as u8;
+            self.mb_type[d] = u8::from(self.mb_intra);
             let (plane, dst, stride) = self.block_dst(i);
             if self.mb_intra {
                 self.avail(i);
@@ -2406,7 +2408,7 @@ impl Decoder {
                 let p = self.plane(plane);
                 for y in 0..8 {
                     for x in 0..8 {
-                        p[dst + y * stride + x] = clip8(blk[y * 8 + x] as i32 + 128);
+                        p[dst + y * stride + x] = clip8(i32::from(blk[y * 8 + x]) + 128);
                     }
                 }
             } else if val {
@@ -2440,12 +2442,12 @@ impl Decoder {
         let qs = self.quarter_sample;
         let bf = self.bfraction;
         let n = self.next_motion[xy];
-        let (bx, by) = (self.mb_x as i32, self.mb_y as i32);
-        let (mw, mh) = (self.mb_w as i32, self.mb_h as i32);
-        let px0 = (scale_mv(n[0] as i32, bf, false, qs)).clamp(-60 - (bx << 6), (mw << 6) - 4 - (bx << 6));
-        let py0 = (scale_mv(n[1] as i32, bf, false, qs)).clamp(-60 - (by << 6), (mh << 6) - 4 - (by << 6));
-        let px1 = (scale_mv(n[0] as i32, bf, true, qs)).clamp(-60 - (bx << 6), (mw << 6) - 4 - (bx << 6));
-        let py1 = (scale_mv(n[1] as i32, bf, true, qs)).clamp(-60 - (by << 6), (mh << 6) - 4 - (by << 6));
+        let (bx, by) = (i32z(self.mb_x), i32z(self.mb_y));
+        let (mw, mh) = (i32z(self.mb_w), i32z(self.mb_h));
+        let px0 = (scale_mv(i32::from(n[0]), bf, false, qs)).clamp(-60 - (bx << 6), (mw << 6) - 4 - (bx << 6));
+        let py0 = (scale_mv(i32::from(n[1]), bf, false, qs)).clamp(-60 - (by << 6), (mh << 6) - 4 - (by << 6));
+        let px1 = (scale_mv(i32::from(n[0]), bf, true, qs)).clamp(-60 - (bx << 6), (mw << 6) - 4 - (bx << 6));
+        let py1 = (scale_mv(i32::from(n[1]), bf, true, qs)).clamp(-60 - (by << 6), (mh << 6) - 4 - (by << 6));
         self.mv[0] = [px0, py0];
         self.mv_b = [px1, py1];
         if !direct {
@@ -2457,11 +2459,11 @@ impl Decoder {
                 if self.mb_x == 0 {
                     mv[xy - 2] = [0, 0];
                 }
-                let c = mv[xy - 2].map(|v| v as i32);
+                let c = mv[xy - 2].map(|v| i32::from(v));
                 let (mut px, mut py) = if !self.first_slice_line {
-                    let a = mv[xy - wrap * 2].map(|v| v as i32);
+                    let a = mv[xy - wrap * 2].map(|v| i32::from(v));
                     let off: isize = if self.mb_x == self.mb_w - 1 { -2 } else { 2 };
-                    let b = mv[(xy as isize - wrap as isize * 2 + off) as usize].map(|v| v as i32);
+                    let b = mv[isize::cast_unsigned(usize::cast_signed(xy) - usize::cast_signed(wrap) * 2 + off)].map(|v| i32::from(v));
                     if self.mb_w == 1 { (a[0], a[1]) } else { (mid_pred(a[0], b[0], c[0]), mid_pred(a[1], b[1], c[1])) }
                 } else if self.mb_x != 0 {
                     (c[0], c[1])
@@ -2492,8 +2494,8 @@ impl Decoder {
                 }
             }
         }
-        self.motion[xy] = [self.mv[0][0] as i16, self.mv[0][1] as i16];
-        self.motion1[xy] = [self.mv_b[0] as i16, self.mv_b[1] as i16];
+        self.motion[xy] = [lo16(self.mv[0][0]), lo16(self.mv[0][1])];
+        self.motion1[xy] = [lo16(self.mv_b[0]), lo16(self.mv_b[1])];
     }
 
     /// a_avail / c_avail of an intra block
@@ -2506,25 +2508,25 @@ impl Decoder {
     /// (plane, offset, stride) of block `i` of the MB
     fn block_dst(&self, i: usize) -> (usize, usize, usize) {
         if i < 4 {
-            (0, self.dest(0) as usize + (i & 1) * 8 + (i & 2) * 4 * self.ls, self.ls)
+            (0, isize::cast_unsigned(self.dest(0)) + (i & 1) * 8 + (i & 2) * 4 * self.ls, self.ls)
         } else {
-            (i - 3, self.dest(1) as usize, self.uvls)
+            (i - 3, isize::cast_unsigned(self.dest(1)), self.uvls)
         }
     }
 
     /// vc1_put_blocks_clamped: the intra blocks of the MB up and left (once overlap smoothed)
     fn put_blocks_clamped(&mut self, signed: bool) {
-        let (ls, uvls, b8, mbs) = (self.ls as isize, self.uvls as isize, self.b8, self.mbs);
+        let (ls, uvls, b8, mbs) = (usize::cast_signed(self.ls), usize::cast_signed(self.uvls), self.b8, self.mbs);
         let d0 = self.dest(0);
         let dc = self.dest(1);
         let put = |this: &mut Self, blk: usize, i: usize, at: isize| {
-            let stride = if i > 3 { uvls } else { ls } as usize;
+            let stride = isize::cast_unsigned(if i > 3 { uvls } else { ls });
             let b = this.blocks[blk][BLOCK_MAP[i]];
             let p = this.plane(if i > 3 { i - 3 } else { 0 });
             for y in 0..8 {
                 for x in 0..8 {
-                    let v = b[y * 8 + x] as i32;
-                    p[at as usize + y * stride + x] = if signed { clip8(v + 128) } else { clip8(v) };
+                    let v = i32::from(b[y * 8 + x]);
+                    p[isize::cast_unsigned(at) + y * stride + x] = if signed { clip8(v + 128) } else { clip8(v) };
                 }
             }
         };
@@ -2535,7 +2537,7 @@ impl Decoder {
                     let d = self.dci(i);
                     let k = if i > 3 { d - wrap(i) - 1 } else { d - 2 * wrap(i) - 2 };
                     if self.mb_type[k] != 0 {
-                        let at = if i > 3 { dc - 8 * uvls - 8 } else { d0 + ((i as isize & 2) - 4) * 4 * ls + ((i as isize & 1) - 2) * 8 };
+                        let at = if i > 3 { dc - 8 * uvls - 8 } else { d0 + (usize::cast_signed(i & 2) - 4) * 4 * ls + (usize::cast_signed(i & 1) - 2) * 8 };
                         put(self, self.topleft_blk, i, at);
                     }
                 }
@@ -2545,7 +2547,7 @@ impl Decoder {
                     let d = self.dci(i);
                     let k = if i > 3 { d - wrap(i) } else { d - 2 * wrap(i) };
                     if self.mb_type[k] != 0 {
-                        let at = if i > 3 { dc - 8 * uvls } else { d0 + ((i as isize & 2) - 4) * 4 * ls + (i as isize & 1) * 8 };
+                        let at = if i > 3 { dc - 8 * uvls } else { d0 + (usize::cast_signed(i & 2) - 4) * 4 * ls + usize::cast_signed(i & 1) * 8 };
                         put(self, self.top_blk, i, at);
                     }
                 }
@@ -2557,7 +2559,7 @@ impl Decoder {
                     let d = self.dci(i);
                     let k = if i > 3 { d - 1 } else { d - 2 };
                     if self.mb_type[k] != 0 {
-                        let at = if i > 3 { dc - 8 } else { d0 + (i as isize & 2) * 4 * ls + ((i as isize & 1) - 2) * 8 };
+                        let at = if i > 3 { dc - 8 } else { d0 + usize::cast_signed(i & 2) * 4 * ls + (usize::cast_signed(i & 1) - 2) * 8 };
                         put(self, self.left_blk, i, at);
                     }
                 }
@@ -2565,7 +2567,7 @@ impl Decoder {
             if self.mb_x == self.mb_w - 1 {
                 for i in 0..6 {
                     if self.mb_type[self.dci(i)] != 0 {
-                        let at = if i > 3 { dc } else { d0 + (i as isize & 2) * 4 * ls + (i as isize & 1) * 8 };
+                        let at = if i > 3 { dc } else { d0 + usize::cast_signed(i & 2) * 4 * ls + usize::cast_signed(i & 1) * 8 };
                         put(self, self.cur_blk, i, at);
                     }
                 }
@@ -2639,7 +2641,7 @@ impl Decoder {
             }
             let d = self.dci(i);
             let w = self.wrap(i);
-            let x = (i > 3) as usize;
+            let x = usize::from(i > 3);
             if self.mb_x != 0 && self.mb_type[d - 2 + x] != 0 && self.mb_type[d - w - 2 + x] != 0 {
                 self.v_overlap(if self.first_slice_line { l } else { tl }, l, i);
             }
@@ -2654,7 +2656,7 @@ impl Decoder {
         if i > 3 {
             (i - 3, cdest, self.uvls)
         } else {
-            (0, dest + (i as isize & 2) * 4 * self.ls as isize + (i as isize & 1) * 8, self.ls)
+            (0, dest + usize::cast_signed(i & 2) * 4 * usize::cast_signed(self.ls) + usize::cast_signed(i & 1) * 8, self.ls)
         }
     }
 
@@ -2681,7 +2683,7 @@ impl Decoder {
 
     /// ff_vc1_i_loop_filter
     fn i_loop_filter(&mut self) {
-        let (ls, uvls) = (self.ls as isize, self.uvls as isize);
+        let (ls, uvls) = (usize::cast_signed(self.ls), usize::cast_signed(self.uvls));
         let (d0, dc) = (self.dest(0), self.dest(1));
         let last_x = self.mb_x == self.mb_w - 1;
         if !self.first_slice_line {
@@ -2763,11 +2765,11 @@ impl Decoder {
     /// vector index: (cbp at, motion index, its stride to the next block right / below).
     fn p_lf_mv(&self, i: usize, dx: isize, dy: isize, right: bool) -> ([i16; 2], [i16; 2]) {
         if i > 3 {
-            let k = (2 * self.mbs as isize + self.mb_x as isize + dx + dy * self.mbs as isize) as usize;
+            let k = isize::cast_unsigned(2 * usize::cast_signed(self.mbs) + usize::cast_signed(self.mb_x) + dx + dy * usize::cast_signed(self.mbs));
             let n = if right { k + 1 } else { k + self.mbs };
             (self.luma_mv[k], self.luma_mv[n])
         } else {
-            let k = (self.mvi(i) as isize + 2 * dy * self.b8 as isize + 2 * dx) as usize;
+            let k = isize::cast_unsigned(usize::cast_signed(self.mvi(i)) + 2 * dy * usize::cast_signed(self.b8) + 2 * dx);
             let n = if right { k + 1 } else { k + self.b8 };
             (self.motion[k], self.motion[n])
         }
@@ -2776,7 +2778,7 @@ impl Decoder {
     /// vc1_p_h_loop_filter of block `i` of the MB at (dx, dy) MBs from this one
     fn p_h_lf(&mut self, dest: isize, cdest: isize, dx: isize, dy: isize, flags: u32, i: usize) {
         let (k, dst, ls) = self.lf_dst(dest, cdest, i);
-        let m = (2 * self.mbs as isize + self.mb_x as isize + dx + dy * self.mbs as isize) as usize;
+        let m = isize::cast_unsigned(2 * usize::cast_signed(self.mbs) + usize::cast_signed(self.mb_x) + dx + dy * usize::cast_signed(self.mbs));
         let pq = self.pq;
         let left_cbp = self.cbp[m] >> (i * 4);
         if flags & RIGHT_EDGE == 0 || i & 5 == 0 {
@@ -2795,7 +2797,7 @@ impl Decoder {
             } else {
                 let idx = (left_cbp | (right_cbp >> 1)) & 5;
                 if idx & 1 != 0 {
-                    h_lf(p, dst + 4 * ls as isize + 8, ls, 4, pq);
+                    h_lf(p, dst + 4 * usize::cast_signed(ls) + 8, ls, 4, pq);
                 }
                 if idx & 4 != 0 {
                     h_lf(p, dst + 8, ls, 4, pq);
@@ -2806,7 +2808,7 @@ impl Decoder {
         if tt == TT_4X4 || tt == TT_4X8 {
             let p = self.plane(k);
             if left_cbp & 3 != 0 {
-                h_lf(p, dst + 4 * ls as isize + 4, ls, 4, pq);
+                h_lf(p, dst + 4 * usize::cast_signed(ls) + 4, ls, 4, pq);
             }
             if left_cbp & 12 != 0 {
                 h_lf(p, dst + 4, ls, 4, pq);
@@ -2818,7 +2820,7 @@ impl Decoder {
     fn p_v_lf(&mut self, dest: isize, cdest: isize, dx: isize, dy: isize, flags: u32, i: usize) {
         let (k, dst, ls) = self.lf_dst(dest, cdest, i);
         let mbs = self.mbs;
-        let m = (2 * mbs as isize + self.mb_x as isize + dx + dy * mbs as isize) as usize;
+        let m = isize::cast_unsigned(2 * usize::cast_signed(mbs) + usize::cast_signed(self.mb_x) + dx + dy * usize::cast_signed(mbs));
         let pq = self.pq;
         let top_cbp = self.cbp[m] >> (i * 4);
         if flags & BOTTOM_EDGE == 0 || i < 2 {
@@ -2833,14 +2835,14 @@ impl Decoder {
             let (mv0, mv1) = self.p_lf_mv(i, dx, dy, false);
             let p = self.plane(k);
             if top_is_intra || bottom_is_intra || mv0 != mv1 {
-                v_lf(p, dst + 8 * ls as isize, ls, 8, pq);
+                v_lf(p, dst + 8 * usize::cast_signed(ls), ls, 8, pq);
             } else {
                 let idx = (top_cbp | (bottom_cbp >> 2)) & 3;
                 if idx & 1 != 0 {
-                    v_lf(p, dst + 8 * ls as isize + 4, ls, 4, pq);
+                    v_lf(p, dst + 8 * usize::cast_signed(ls) + 4, ls, 4, pq);
                 }
                 if idx & 2 != 0 {
-                    v_lf(p, dst + 8 * ls as isize, ls, 4, pq);
+                    v_lf(p, dst + 8 * usize::cast_signed(ls), ls, 4, pq);
                 }
             }
         }
@@ -2848,17 +2850,17 @@ impl Decoder {
         if tt == TT_4X4 || tt == TT_8X4 {
             let p = self.plane(k);
             if top_cbp & 5 != 0 {
-                v_lf(p, dst + 4 * ls as isize + 4, ls, 4, pq);
+                v_lf(p, dst + 4 * usize::cast_signed(ls) + 4, ls, 4, pq);
             }
             if top_cbp & 10 != 0 {
-                v_lf(p, dst + 4 * ls as isize, ls, 4, pq);
+                v_lf(p, dst + 4 * usize::cast_signed(ls), ls, 4, pq);
             }
         }
     }
 
     /// ff_vc1_p_loop_filter
     fn p_loop_filter(&mut self) {
-        let (ls, uvls) = (self.ls as isize, self.uvls as isize);
+        let (ls, uvls) = (usize::cast_signed(self.ls), usize::cast_signed(self.uvls));
         let (d0, dc) = (self.dest(0), self.dest(1));
         let (x, y) = (self.mb_x, self.mb_y);
         let last_x = x == self.mb_w - 1;
@@ -2978,7 +2980,7 @@ impl Decoder {
         let a_valid = !self.first_slice_line || n == 2 || n == 3;
         let mut b_valid = a_valid;
         let c_valid = self.mb_x != 0 || n == 1 || n == 3;
-        let mw = self.mb_w as isize;
+        let mw = usize::cast_signed(self.mb_w);
         let off: isize = if mv1 {
             b_valid = b_valid && self.mb_w > 1;
             if self.mb_x == self.mb_w - 1 { -1 } else { 2 }
@@ -2990,7 +2992,7 @@ impl Decoder {
                     } else if self.mb_x != 0 {
                         -1
                     } else {
-                        2 * mw - wrap as isize - 1
+                        2 * mw - usize::cast_signed(wrap) - 1
                     }
                 }
                 1 => if self.mb_x == self.mb_w - 1 { -1 } else { 1 },
@@ -2998,12 +3000,12 @@ impl Decoder {
                 _ => -1,
             }
         };
-        let get = |s: &Self, k: isize| s.motion[k as usize].map(|v| v as i32);
-        let xyi = xy as isize;
-        let a = if a_valid { get(self, xyi - wrap as isize) } else { [0, 0] };
-        let b = if b_valid { get(self, xyi - wrap as isize + off) } else { [0, 0] };
+        let get = |s: &Self, k: isize| s.motion[isize::cast_unsigned(k)].map(|v| i32::from(v));
+        let xyi = usize::cast_signed(xy);
+        let a = if a_valid { get(self, xyi - usize::cast_signed(wrap)) } else { [0, 0] };
+        let b = if b_valid { get(self, xyi - usize::cast_signed(wrap) + off) } else { [0, 0] };
         let c = if c_valid { get(self, xyi - 1) } else { [0, 0] };
-        let count = a_valid as i32 + b_valid as i32 + c_valid as i32;
+        let count = i32::from(a_valid) + i32::from(b_valid) + i32::from(c_valid);
         let (mut px, mut py) = if a_valid {
             (a[0], a[1])
         } else if c_valid {
@@ -3018,10 +3020,10 @@ impl Decoder {
             py = mid_pred(a[1], b[1], c[1]);
         }
         // pullback
-        let qx = ((self.mb_x as i32) << 6) + if n == 1 || n == 3 { 32 } else { 0 };
-        let qy = ((self.mb_y as i32) << 6) + if n == 2 || n == 3 { 32 } else { 0 };
-        let xm = ((self.mb_w as i32) << 6) - 4;
-        let ym = ((self.mb_h as i32) << 6) - 4;
+        let qx = (i32z(self.mb_x) << 6) + if n == 1 || n == 3 { 32 } else { 0 };
+        let qy = (i32z(self.mb_y) << 6) + if n == 2 || n == 3 { 32 } else { 0 };
+        let xm = (i32z(self.mb_w) << 6) - 4;
+        let ym = (i32z(self.mb_h) << 6) - 4;
         let mvmin = if mv1 { -60 } else { -28 };
         if qx + px < mvmin {
             px = mvmin - qx;
@@ -3039,11 +3041,11 @@ impl Decoder {
         if a_valid && c_valid {
             let sum = if ti(self, xy - wrap) { px.abs() + py.abs() } else { (px - a[0]).abs() + (py - a[1]).abs() };
             if sum > 32 {
-                (px, py) = if r.get1() != 0 { (a[0], a[1]) } else { (c[0], c[1]) };
+                (px, py) = if r.bit() { (a[0], a[1]) } else { (c[0], c[1]) };
             } else {
                 let sum = if ti(self, xy - 1) { px.abs() + py.abs() } else { (px - c[0]).abs() + (py - c[1]).abs() };
                 if sum > 32 {
-                    (px, py) = if r.get1() != 0 { (a[0], a[1]) } else { (c[0], c[1]) };
+                    (px, py) = if r.bit() { (a[0], a[1]) } else { (c[0], c[1]) };
                 }
             }
         }
@@ -3051,7 +3053,7 @@ impl Decoder {
         let mx = ((px + dmv_x + rx) & ((rx << 1) - 1)) - rx;
         let my = ((py + dmv_y + ry) & ((ry << 1) - 1)) - ry;
         self.mv[n] = [mx, my];
-        let m = [mx as i16, my as i16];
+        let m = [lo16(mx), lo16(my)];
         self.motion[xy] = m;
         if mv1 {
             self.motion[xy + 1] = m;
@@ -3073,9 +3075,9 @@ impl Decoder {
             return (buf, w);
         };
         let (p, stride, pw, ph) = match k {
-            0 => (&last.y, self.ls, self.ls as i32, (self.mb_h * 16) as i32),
-            1 => (&last.u, self.uvls, self.uvls as i32, (self.mb_h * 8) as i32),
-            _ => (&last.v, self.uvls, self.uvls as i32, (self.mb_h * 8) as i32),
+            0 => (&last.y, self.ls, i32z(self.ls), i32z(self.mb_h * 16)),
+            1 => (&last.u, self.uvls, i32z(self.uvls), i32z(self.mb_h * 8)),
+            _ => (&last.v, self.uvls, i32z(self.uvls), i32z(self.mb_h * 8)),
         };
         let ic = self.use_ic && dir == 0;
         if !self.rangeredfrm && !ic {
@@ -3084,13 +3086,13 @@ impl Decoder {
         hpel::window(p, stride, pw, ph, x, y, w, h, buf);
         if self.rangeredfrm {
             for v in buf[..w * h].iter_mut() {
-                *v = (((*v as i32 - 128) >> 1) + 128) as u8;
+                *v = lo8(i32::cast_unsigned(((i32::from(*v) - 128) >> 1) + 128));
             }
         }
         if ic {
             let lut = if k == 0 { &self.luty } else { &self.lutuv };
             for v in buf[..w * h].iter_mut() {
-                *v = lut[*v as usize];
+                *v = lut[usize::from(*v)];
             }
         }
         (buf, w)
@@ -3109,9 +3111,9 @@ impl Decoder {
         let mut tmp = [0u8; 256];
         let (d, o, ds) = if avg { (&mut tmp[..], 0, n) } else { (&mut cur[..], doff, ls) };
         if mspel {
-            mspel_mc(d, o, ds, s, ss + 1, ss, n, (mx & 3) as usize, (my & 3) as usize, rnd);
+            mspel_mc(d, o, ds, s, ss + 1, ss, n, ix(mx & 3), ix(my & 3), rnd);
         } else {
-            let dxy = ((my & 2) | ((mx & 2) >> 1)) as usize;
+            let dxy = ix((my & 2) | ((mx & 2) >> 1));
             hpel::hpel(d, o, ds, &s[ss + 1..], ss, n, n, dxy, rnd == 0);
         }
         if avg {
@@ -3122,7 +3124,7 @@ impl Decoder {
 
     /// Chroma 8x8 from the eighth-pel-ish (uvmx, uvmy) at (uvsrc_x, uvsrc_y) of reference `dir`
     fn chroma_mc(&mut self, dir: usize, uvsrc_x: i32, uvsrc_y: i32, uvmx: i32, uvmy: i32, avg: bool) {
-        let doff = self.dest(1) as usize;
+        let doff = isize::cast_unsigned(self.dest(1));
         let (x, y) = ((uvmx & 3) << 1, (uvmy & 3) << 1);
         let no_rnd = self.rnd != 0;
         let uvls = self.uvls;
@@ -3152,22 +3154,22 @@ impl Decoder {
         if self.pict == Type::P {
             for i in 0..4 {
                 let k = self.mvi(i);
-                self.motion1[k] = [mx as i16, my as i16];
+                self.motion1[k] = [lo16(mx), lo16(my)];
             }
         }
-        let mut uvmx = (mx + ((mx & 3) == 3) as i32) >> 1;
-        let mut uvmy = (my + ((my & 3) == 3) as i32) >> 1;
+        let mut uvmx = (mx + i32::from((mx & 3) == 3)) >> 1;
+        let mut uvmy = (my + i32::from((my & 3) == 3)) >> 1;
         let k = 2 * self.mbs + self.mb_x;
-        self.luma_mv[k] = [uvmx as i16, uvmy as i16];
+        self.luma_mv[k] = [lo16(uvmx), lo16(uvmy)];
         uvmx = self.fast_uv(uvmx);
         uvmy = self.fast_uv(uvmy);
-        let (bx, by) = (self.mb_x as i32, self.mb_y as i32);
-        let (mw, mh) = (self.mb_w as i32, self.mb_h as i32);
+        let (bx, by) = (i32z(self.mb_x), i32z(self.mb_y));
+        let (mw, mh) = (i32z(self.mb_w), i32z(self.mb_h));
         let src_x = (bx * 16 + (mx >> 2)).clamp(-16, mw * 16);
         let src_y = (by * 16 + (my >> 2)).clamp(-16, mh * 16);
         let uvsrc_x = (bx * 8 + (uvmx >> 2)).clamp(-8, mw * 8);
         let uvsrc_y = (by * 8 + (uvmy >> 2)).clamp(-8, mh * 8);
-        let doff = self.dest(0) as usize;
+        let doff = isize::cast_unsigned(self.dest(0));
         self.luma_mc(dir, doff, src_x, src_y, mx, my, 16, false);
         self.chroma_mc(dir, uvsrc_x, uvsrc_y, uvmx, uvmy, false);
     }
@@ -3175,20 +3177,20 @@ impl Decoder {
     /// ff_vc1_interp_mc: the backward prediction averaged into the forward one
     fn interp_mc(&mut self) {
         let [mx, my] = self.mv_b;
-        let mut uvmx = (mx + ((mx & 3) == 3) as i32) >> 1;
-        let mut uvmy = (my + ((my & 3) == 3) as i32) >> 1;
+        let mut uvmx = (mx + i32::from((mx & 3) == 3)) >> 1;
+        let mut uvmy = (my + i32::from((my & 3) == 3)) >> 1;
         // (FFmpeg rounds these away from 0 where ff_vc1_mc_1mv rounds towards it)
         if self.fastuvmc {
             uvmx += if uvmx < 0 { -(uvmx & 1) } else { uvmx & 1 };
             uvmy += if uvmy < 0 { -(uvmy & 1) } else { uvmy & 1 };
         }
-        let (bx, by) = (self.mb_x as i32, self.mb_y as i32);
-        let (mw, mh) = (self.mb_w as i32, self.mb_h as i32);
+        let (bx, by) = (i32z(self.mb_x), i32z(self.mb_y));
+        let (mw, mh) = (i32z(self.mb_w), i32z(self.mb_h));
         let src_x = (bx * 16 + (mx >> 2)).clamp(-16, mw * 16);
         let src_y = (by * 16 + (my >> 2)).clamp(-16, mh * 16);
         let uvsrc_x = (bx * 8 + (uvmx >> 2)).clamp(-8, mw * 8);
         let uvsrc_y = (by * 8 + (uvmy >> 2)).clamp(-8, mh * 8);
-        let doff = self.dest(0) as usize;
+        let doff = isize::cast_unsigned(self.dest(0));
         self.luma_mc(1, doff, src_x, src_y, mx, my, 16, true);
         self.chroma_mc(1, uvsrc_x, uvsrc_y, uvmx, uvmy, true);
     }
@@ -3197,11 +3199,11 @@ impl Decoder {
     fn mc_4mv_luma(&mut self, n: usize) {
         let [mx, my] = self.mv[n];
         let off = self.ls * 4 * (n & 2) + (n & 1) * 8;
-        let (bx, by) = (self.mb_x as i32, self.mb_y as i32);
-        let (mw, mh) = (self.mb_w as i32, self.mb_h as i32);
-        let src_x = (bx * 16 + (n as i32 & 1) * 8 + (mx >> 2)).clamp(-16, mw * 16);
-        let src_y = (by * 16 + (n as i32 & 2) * 4 + (my >> 2)).clamp(-16, mh * 16);
-        let doff = self.dest(0) as usize + off;
+        let (bx, by) = (i32z(self.mb_x), i32z(self.mb_y));
+        let (mw, mh) = (i32z(self.mb_w), i32z(self.mb_h));
+        let src_x = (bx * 16 + i32z(n & 1) * 8 + (mx >> 2)).clamp(-16, mw * 16);
+        let src_y = (by * 16 + i32z(n & 2) * 4 + (my >> 2)).clamp(-16, mh * 16);
+        let doff = isize::cast_unsigned(self.dest(0)) + off;
         self.luma_mc(0, doff, src_x, src_y, mx, my, 8, false);
     }
 
@@ -3218,11 +3220,11 @@ impl Decoder {
         let (tx, ty) = match POPCOUNT4[idx] {
             4 => (median4(mv[0][0], mv[1][0], mv[2][0], mv[3][0]), median4(mv[0][1], mv[1][1], mv[2][1], mv[3][1])),
             3 => {
-                let (a, b, c) = ((idx > 0xd) as usize, 1 + (idx > 0xb) as usize, 2 + (idx > 0x7) as usize);
+                let (a, b, c) = (usize::from(idx > 0xd), 1 + usize::from(idx > 0xb), 2 + usize::from(idx > 0x7));
                 (mid_pred(mv[a][0], mv[b][0], mv[c][0]), mid_pred(mv[a][1], mv[b][1], mv[c][1]))
             }
             2 => {
-                let (a, b) = ((INDEX2[idx] >> 4) as usize, (INDEX2[idx] & 0xf) as usize);
+                let (a, b) = (usize::from(INDEX2[idx] >> 4), usize::from(INDEX2[idx] & 0xf));
                 ((mv[a][0] + mv[b][0]) / 2, (mv[a][1] + mv[b][1]) / 2)
             }
             _ => {
@@ -3233,17 +3235,17 @@ impl Decoder {
                 return;
             }
         };
-        let (tx, ty) = (tx as i16 as i32, ty as i16 as i32);
+        let (tx, ty) = (i32::from(lo16(tx)), i32::from(lo16(ty)));
         let k = self.mvi(0);
-        self.motion1[k] = [tx as i16, ty as i16];
-        let mut uvmx = (tx + ((tx & 3) == 3) as i32) >> 1;
-        let mut uvmy = (ty + ((ty & 3) == 3) as i32) >> 1;
+        self.motion1[k] = [lo16(tx), lo16(ty)];
+        let mut uvmx = (tx + i32::from((tx & 3) == 3)) >> 1;
+        let mut uvmy = (ty + i32::from((ty & 3) == 3)) >> 1;
         let k = 2 * self.mbs + self.mb_x;
-        self.luma_mv[k] = [uvmx as i16, uvmy as i16];
+        self.luma_mv[k] = [lo16(uvmx), lo16(uvmy)];
         uvmx = self.fast_uv(uvmx);
         uvmy = self.fast_uv(uvmy);
-        let (bx, by) = (self.mb_x as i32, self.mb_y as i32);
-        let (mw, mh) = (self.mb_w as i32, self.mb_h as i32);
+        let (bx, by) = (i32z(self.mb_x), i32z(self.mb_y));
+        let (mw, mh) = (i32z(self.mb_w), i32z(self.mb_h));
         let uvsrc_x = (bx * 8 + (uvmx >> 2)).clamp(-8, mw * 8);
         let uvsrc_y = (by * 8 + (uvmy >> 2)).clamp(-8, mh * 8);
         self.chroma_mc(0, uvsrc_x, uvsrc_y, uvmx, uvmy, false);
@@ -3255,7 +3257,7 @@ fn avg_into(dst: &mut [u8], doff: usize, ds: usize, src: &[u8], w: usize, h: usi
     for y in 0..h {
         for x in 0..w {
             let d = &mut dst[doff + y * ds + x];
-            *d = ((*d as u32 + src[y * w + x] as u32 + 1) >> 1) as u8;
+            *d = lo8((u32::from(*d) + u32::from(src[y * w + x]) + 1) >> 1);
         }
     }
 }
@@ -3272,7 +3274,7 @@ pub mod synth {
                     self.0.push(0);
                 }
                 let b = (v >> k) & 1;
-                *self.0.last_mut().unwrap() |= (b as u8) << (7 - self.1 % 8);
+                *self.0.last_mut().unwrap() |= crate::num::lo8(b) << (7 - self.1 % 8);
                 self.1 += 1;
             }
         }
@@ -3293,11 +3295,11 @@ pub mod synth {
         let mut w = W(Vec::new(), 0);
         // profile, y411, sprite, frmrtq, bitrtq, loop filter, x8, multires, fasttx, fastuvmc,
         // extended mv, dquant, vstransform, transtab, overlap, resync, rangered
-        for (v, n) in [(1, 2), (0, 1), (0, 1), (0, 3), (0, 5), (0, 1), (x8 as u32, 1), (0, 1), (1, 1), (0, 1), (0, 1), (0, 2), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1)] {
+        for (v, n) in [(1, 2), (0, 1), (0, 1), (0, 3), (0, 5), (0, 1), (u32::from(x8), 1), (0, 1), (1, 1), (0, 1), (0, 1), (0, 2), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1)] {
             w.put(v, n);
         }
         // max B pictures, quantizer, finterp, rtm
-        for (v, n) in [(b as u32, 3), (0, 2), (0, 1), (1, 1)] {
+        for (v, n) in [(u32::from(b), 3), (0, 2), (0, 1), (1, 1)] {
             w.put(v, n);
         }
         w.0.try_into().unwrap()
@@ -3395,9 +3397,9 @@ mod tests {
             mspel_mc(&mut d, 0, 16, &src, 20, 19, 16, 2, 0, rnd);
             for y in 0..16 {
                 for x in 0..16 {
-                    let g = |k: usize| src[20 + y * 19 + x + k - 1] as i32;
+                    let g = |k: usize| i32::from(src[20 + y * 19 + x + k - 1]);
                     let want = ((-g(0) + 9 * g(1) + 9 * g(2) - g(3) + 8 - rnd) >> 4).clamp(0, 255);
-                    prop_assert_eq!(d[y * 16 + x] as i32, want);
+                    prop_assert_eq!(i32::from(d[y * 16 + x]), want);
                 }
             }
         }
