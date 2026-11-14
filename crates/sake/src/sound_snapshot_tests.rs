@@ -172,7 +172,7 @@ fn sound_pure_snapshot() {
     }
     // the header flags
     for f in 0..64u32 {
-        writeln!(out, "hdr flags {f:#x}: prepared {:#x} unprepared {:?}", prepared_flags(f), unprepared_flags(f)).unwrap();
+        writeln!(out, "hdr flags {f:#x}: prepared {:#x} unprepared {:?}", prepared_flags(f), unprepared_flags(f).map_err(WaveErr::code)).unwrap();
     }
     // WAVE images
     for i in 0..400 {
@@ -190,7 +190,7 @@ fn sound_pure_snapshot() {
     ids.push(other);
     for (k, g) in ids.iter().enumerate() {
         for sound in [false, true] {
-            writeln!(out, "device_id #{k} sound={sound}: {:x?} text {}", device_id(*g, sound), guid_text(g)).unwrap();
+            writeln!(out, "device_id #{k} sound={sound}: {:x?} text {}", device_id(*g, sound).map_err(Hr::code), guid_text(g)).unwrap();
         }
     }
     let list = mem::heap_alloc(256, true);

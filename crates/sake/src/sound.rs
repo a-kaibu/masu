@@ -19,8 +19,60 @@ pub(crate) const STEP: usize = 441;
 /// frames kept queued in the output stream (the play cursor's lead over what is heard)
 pub(crate) const AHEAD: u32 = 3 * STEP as u32;
 
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const DSERR_INVALIDPARAM: u32 = 0x8007_0057;
+/// The failures sake's DirectSound returns (made an HRESULT at a handler's edge)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hr {
+    NoInterface,
+    NotImpl,
+    /// Hr::InvalidParam.code() (E_INVALIDARG)
+    InvalidParam,
+    NoDriver,
+    AlreadyInitialized,
+}
+impl Hr {
+    const fn code(self) -> u32 {
+        match self {
+            Hr::NoInterface => 0x8000_4002,
+            Hr::NotImpl => 0x8000_4001,
+            Hr::InvalidParam => 0x8007_0057,
+            Hr::NoDriver => 0x8878_0078,
+            Hr::AlreadyInitialized => 0x8878_0082,
+        }
+    }
+}
+
+/// The MMRESULTs sake's waveOut returns
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WaveErr {
+    Error,
+    BadDeviceId,
+    InvalHandle,
+    NoMem,
+    NotSupported,
+    InvalParam,
+    BadFormat,
+    StillPlaying,
+    Unprepared,
+}
+impl WaveErr {
+    pub(crate) const fn code(self) -> u32 {
+        match self {
+            WaveErr::Error => 1,
+            WaveErr::BadDeviceId => 2,
+            WaveErr::InvalHandle => 5,
+            WaveErr::NoMem => 7,
+            WaveErr::NotSupported => 8,
+            WaveErr::InvalParam => 11,
+            WaveErr::BadFormat => 32,
+            WaveErr::StillPlaying => 33,
+            WaveErr::Unprepared => 34,
+        }
+    }
+}
+/// An MMRESULT: 0 or the failure's code
+fn mm(r: Result<(), WaveErr>) -> u32 {
+    r.map_or_else(WaveErr::code, |()| 0)
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct Fmt {
@@ -145,12 +197,15 @@ pub(crate) fn g711(code: u8, alaw: bool) -> i16 {
 /// channels; extensible ones need cbSize 22, nAvgBytesPerSec = nBlockAlign * rate and the
 /// valid bits to fit.
 pub(crate) fn wave_format_check(tag: u16, ch: u16, rate: u32, avg: u32, align: u16, bits: u16, ext: Option<(u16, u16, [u8; 16])>, direct: bool) -> u32 {
-    const BAD: u32 = 32;
-    let soft = if direct { 11 } else { BAD };
+    mm(wave_format_rule(tag, ch, rate, avg, align, bits, ext, direct))
+}
+fn wave_format_rule(tag: u16, ch: u16, rate: u32, avg: u32, align: u16, bits: u16, ext: Option<(u16, u16, [u8; 16])>, direct: bool) -> Result<(), WaveErr> {
+    const BAD: Result<(), WaveErr> = Err(WaveErr::BadFormat);
+    let soft = Err(if direct { WaveErr::InvalParam } else { WaveErr::BadFormat });
     let (sub, valid) = match ext {
         None => {
             let sub = match tag {
-                1 | 3 | 6 | 7 => tag as u32,
+                1 | 3 | 6 | 7 => u32::from(tag),
                 _ => return BAD,
             };
             if ch > 2 {
@@ -159,33 +214,34 @@ pub(crate) fn wave_format_check(tag: u16, ch: u16, rate: u32, avg: u32, align: u
             (sub, bits)
         }
         Some((cb, valid, guid)) => {
-            if cb < 22 || guid[4..] != [0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71] {
+            let [a, b, c, d, rest @ ..] = guid;
+            if cb < 22 || rest != [0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71] {
                 return BAD;
             }
-            (u32::from_le_bytes(guid[..4].try_into().unwrap()), valid)
+            (u32::from_le_bytes([a, b, c, d]), valid)
         }
     };
-    if ch == 0 || rate == 0 || align as u32 != ch as u32 * bits as u32 / 8 {
+    if ch == 0 || rate == 0 || u32::from(align) != u32::from(ch) * u32::from(bits) / 8 {
         return BAD;
     }
-    if ext.is_some() && avg != align as u32 * rate {
+    if ext.is_some() && avg != u32::from(align).wrapping_mul(rate) {
         return soft;
     }
     let ok_bits = bits % 8 == 0 && bits != 0;
     match sub {
         1 if !ok_bits || (bits == 32 && (valid == 0 || valid > 32)) => BAD,
         1 if !matches!(bits, 8 | 16 | 24 | 32) => soft,
-        1 if bits == 32 && valid == 24 => 0,
-        1 => if valid == bits { 0 } else { BAD },
+        1 if bits == 32 && valid == 24 => Ok(()),
+        1 => if valid == bits { Ok(()) } else { BAD },
         3 if !ok_bits || valid == 0 || valid > bits => BAD,
         3 if !matches!(bits, 32 | 64) => soft,
-        3 => if bits == 32 && valid == 32 { 0 } else { BAD },
-        6 | 7 => if !direct && ext.is_none() && bits == 8 { 0 } else { BAD },
+        3 => if bits == 32 && valid == 32 { Ok(()) } else { BAD },
+        6 | 7 => if !direct && ext.is_none() && bits == 8 { Ok(()) } else { BAD },
         _ => BAD,
     }
 }
 
-fn read_format_check(p: u32, direct: bool) -> u32 {
+fn read_format_check(p: u32, direct: bool) -> Result<(), WaveErr> {
     let tag = r16(p);
     let ext = (tag == 0xfffe).then(|| {
         let cb = r16(p + 16);
@@ -195,7 +251,7 @@ fn read_format_check(p: u32, direct: bool) -> u32 {
         }
         (cb, r16(p + 18), g)
     });
-    wave_format_check(tag, r16(p + 2), r32(p + 4), r32(p + 8), r16(p + 12), r16(p + 14), ext, direct)
+    wave_format_rule(tag, r16(p + 2), r32(p + 4), r32(p + 8), r16(p + 12), r16(p + 14), ext, direct)
 }
 
 /// Mixes STEP frames of every playing buffer into `out`; fires notifications.
@@ -434,7 +490,7 @@ struct Wave {
     closing: bool,
     /// bytes played since open/reset (waveOutGetPosition)
     played: u64,
-    cb: (u32, u32, u32),
+    cb: WaveCb,
     volume: u32,
     /// the device id it was opened on (WAVE_MAPPER -1)
     device: u32,
@@ -512,17 +568,42 @@ fn mix_waves(d: &mut Dev, out: &mut [f32]) -> bool {
     finished
 }
 
-fn wave_notify(c: &mut Ctx, hwo: u32, (kind, cb, inst): (u32, u32, u32), msg: u32, p1: u32) {
-    match kind {
-        0x30000 if cb != 0 => {
-            c.call(cb, &[hwo, msg, inst, p1, 0]);
+/// How a waveOut device tells its program (waveOutOpen's CALLBACK_* flag and dwCallback; a
+/// zero dwCallback is none)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WaveCb {
+    Null,
+    Window(u32),
+    Thread(u32),
+    /// waveOutProc and its instance data
+    Function(u32, u32),
+    Event(u32),
+}
+impl WaveCb {
+    fn of(flags: u32, cb: u32, inst: u32) -> WaveCb {
+        if cb == 0 {
+            return WaveCb::Null;
         }
-        0x10000 if cb != 0 => {
-            crate::user::post(cb, msg, hwo, p1);
+        match flags & 0x70000 {
+            0x10000 => WaveCb::Window(cb),
+            0x20000 => WaveCb::Thread(cb),
+            0x30000 => WaveCb::Function(cb, inst),
+            0x50000 => WaveCb::Event(cb),
+            _ => WaveCb::Null,
         }
-        0x20000 if cb != 0 => crate::user::post_thread_msg(cb, msg, hwo, p1),
-        0x50000 if cb != 0 => crate::k32::set_event(cb),
-        _ => {}
+    }
+}
+fn wave_notify(c: &mut Ctx, hwo: u32, cb: WaveCb, msg: u32, p1: u32) {
+    match cb {
+        WaveCb::Function(f, inst) => {
+            c.call(f, &[hwo, msg, inst, p1, 0]);
+        }
+        WaveCb::Window(w) => {
+            crate::user::post(w, msg, hwo, p1);
+        }
+        WaveCb::Thread(t) => crate::user::post_thread_msg(t, msg, hwo, p1),
+        WaveCb::Event(e) => crate::k32::set_event(e),
+        WaveCb::Null => {}
     }
 }
 
@@ -601,12 +682,12 @@ fn wave_device(id: u32) -> Option<u32> {
 }
 /// waveOutGetDevCaps(device or handle, caps, size): the first `size` bytes of WAVEOUTCAPS
 fn wave_caps(c: &mut Ctx, wide: bool) -> u32 {
-    let (p, size) = (c.a(1), c.a(2));
-    if wave_device(c.a(0)).is_none() {
-        return 2; // MMSYSERR_BADDEVICEID
-    }
+    mm(wave_caps_at(c.a(0), c.a(1), c.a(2), wide))
+}
+fn wave_caps_at(id: u32, p: u32, size: u32, wide: bool) -> Result<(), WaveErr> {
+    wave_device(id).ok_or(WaveErr::BadDeviceId)?;
     if p == 0 {
-        return 11; // MMSYSERR_INVALPARAM
+        return Err(WaveErr::InvalParam);
     }
     let name = "sake WebAudio";
     let o = if wide { 8 + 64 } else { 8 + 32 };
@@ -620,56 +701,64 @@ fn wave_caps(c: &mut Ctx, wide: bool) -> u32 {
     b[o..o + 4].copy_from_slice(&0xfffu32.to_le_bytes());
     b[o + 4] = 2;
     b[o + 8] = 0xc;
-    mem::write(p, &b[..(size as usize).min(b.len())]);
-    0
+    mem::write(p, b.get(..usize::try_from(size).unwrap_or(usize::MAX).min(b.len())).unwrap_or_default());
+    Ok(())
 }
 /// waveOutGetID(handle, &id)
 fn waveOutGetID(c: &mut Ctx) -> u32 {
-    let Some(dev) = with(|d| d.waves.get(&c.a(0)).map(|w| w.device)) else { return 5 };
-    if c.a(1) == 0 {
-        return 11;
-    }
-    put32(c.a(1), dev);
-    0
+    let (hwo, p) = (c.a(0), c.a(1));
+    mm((|| {
+        let dev = with(|d| d.waves.get(&hwo).map(|w| w.device)).ok_or(WaveErr::InvalHandle)?;
+        if p == 0 {
+            return Err(WaveErr::InvalParam);
+        }
+        put32(p, dev);
+        Ok(())
+    })())
 }
 /// waveOutMessage(device or handle, message, p1, p2): the driver queries programs make
 fn waveOutMessage(c: &mut Ctx) -> u32 {
-    let (msg, p1, p2) = (c.a(1), c.a(2), c.a(3));
+    mm(wave_message(c.a(1), c.a(2), c.a(3)))
+}
+fn wave_message(msg: u32, p1: u32, p2: u32) -> Result<(), WaveErr> {
     // the device interface path (DRV_QUERYDEVICEINTERFACE*)
     let path: Vec<u16> = r"\\?\SWD#MMDEVAPI#{0.0.0.00000000}.{sake}#{e6327cad-dcec-4949-ae8a-991e976a79d2}".encode_utf16().chain([0]).collect();
+    let bytes = 2 * u32::try_from(path.len()).unwrap_or(u32::MAX / 2);
     match msg {
         // DRVM_MAPPER_PREFERRED_GET, DRVM_MAPPER_CONSOLEVOICECOM_GET: device 0, no flags
         0x2015 | 0x2017 => {
             if p1 == 0 || p2 == 0 {
-                return 11;
+                return Err(WaveErr::InvalParam);
             }
             put32(p1, 0);
             put32(p2, 0);
-            0
+            Ok(())
         }
-        0x805 => 0, // DRV_QUERYMAPPABLE
+        0x805 => Ok(()), // DRV_QUERYMAPPABLE
         0x80c => {
             if p1 == 0 {
-                return 11;
+                return Err(WaveErr::InvalParam);
             }
-            put32(p1, 2 * path.len() as u32);
-            0
+            put32(p1, bytes);
+            Ok(())
         }
         0x80d => {
-            if p1 == 0 || p2 < 2 * path.len() as u32 {
-                return 11;
+            if p1 == 0 || p2 < bytes {
+                return Err(WaveErr::InvalParam);
             }
-            for (i, u) in path.iter().enumerate() {
-                w16(p1 + 2 * i as u32, *u);
+            for (at, u) in (p1..).step_by(2).zip(&path) {
+                w16(at, *u);
             }
-            0
+            Ok(())
         }
-        _ => 8, // MMSYSERR_NOTSUPPORTED
+        _ => Err(WaveErr::NotSupported),
     }
 }
 /// waveOutGetErrorText(error, text, size)
 fn wave_error_text(c: &mut Ctx, wide: bool) -> u32 {
-    let (e, p, n) = (c.a(0), c.a(1), c.a(2));
+    mm(error_text(c.a(0), c.a(1), c.a(2), wide))
+}
+fn error_text(e: u32, p: u32, n: u32, wide: bool) -> Result<(), WaveErr> {
     let text = match e {
         0 => "The specified command was carried out.",
         1 => "Undefined external error.",
@@ -680,10 +769,10 @@ fn wave_error_text(c: &mut Ctx, wide: bool) -> u32 {
         32 => "The specified format is not supported or cannot be translated. Use the Capabilities function to determine the supported formats.",
         33 => "Cannot perform this operation while media data is still playing. Reset the device, or wait until the data is finished playing.",
         34 => "The wave header was not prepared. Use the Prepare function to prepare the header, and then try again.",
-        _ => return 11,
+        _ => return Err(WaveErr::InvalParam),
     };
     if p == 0 || n == 0 {
-        return 11;
+        return Err(WaveErr::InvalParam);
     }
     if wide {
         let w: Vec<u16> = text.encode_utf16().collect();
@@ -691,7 +780,7 @@ fn wave_error_text(c: &mut Ctx, wide: bool) -> u32 {
     } else {
         mem::put_cstr(p, n, text.as_bytes());
     }
-    0
+    Ok(())
 }
 fn waveOutGetDevCapsA(c: &mut Ctx) -> u32 {
     wave_caps(c, false)
@@ -702,31 +791,32 @@ fn waveOutGetDevCapsW(c: &mut Ctx) -> u32 {
 /// waveOutOpen(phwo, device, format, callback, instance, flags)
 fn waveOutOpen(c: &mut Ctx) -> u32 {
     let (ph, device, fmtp, cb, inst, flags) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    mm(wave_open(c, ph, device, fmtp, WaveCb::of(flags, cb, inst), flags))
+}
+fn wave_open(c: &mut Ctx, ph: u32, device: u32, fmtp: u32, cbk: WaveCb, flags: u32) -> Result<(), WaveErr> {
     // a device id (not an open handle)
     if !matches!(device, 0 | WAVE_MAPPER) {
-        return 2; // MMSYSERR_BADDEVICEID
+        return Err(WaveErr::BadDeviceId);
     }
     if fmtp == 0 {
-        return 11; // MMSYSERR_INVALPARAM
+        return Err(WaveErr::InvalParam);
     }
-    let e = read_format_check(fmtp, flags & 8 != 0);
-    if e != 0 {
+    if let Err(e) = read_format_check(fmtp, flags & 8 != 0) {
         // a failed open (not a query) leaves NULL
         if flags & 1 == 0 && ph != 0 {
             put32(ph, 0);
         }
-        return e;
+        return Err(e);
     }
     let fmt = Fmt::read(fmtp);
     if flags & 1 != 0 {
-        return 0; // WAVE_FORMAT_QUERY
+        return Ok(()); // WAVE_FORMAT_QUERY
     }
     if ph == 0 {
-        return 11;
+        return Err(WaveErr::InvalParam);
     }
     start_mixer();
     let hwo = NEXT_WAVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let cbk = (flags & 0x70000, cb, inst);
     with(|d| {
         d.waves.insert(hwo, Wave { fmt, queue: Default::default(), pos: 0.0, done: Vec::new(), paused: false, closing: false, played: 0, cb: cbk, volume: 0xffff_ffff, device, w16: None })
     });
@@ -739,26 +829,27 @@ fn waveOutOpen(c: &mut Ctx) -> u32 {
             STARTED.store(false, std::sync::atomic::Ordering::SeqCst);
             with(|d| d.waves.remove(&hwo));
             put32(ph, 0);
-            return 7; // MMSYSERR_NOMEM
+            return Err(WaveErr::NoMem);
         }
     }
     wave_notify(c, hwo, cbk, WOM_OPEN, 0);
-    0
+    Ok(())
 }
 fn waveOutClose(c: &mut Ctx) -> u32 {
     let hwo = c.a(0);
     // (headers still queued: WAVERR_STILLPLAYING and the device stays, as Windows; it closed,
     // and the mixer went on writing WHDR_DONE into headers the program had freed)
-    let Some(cb) = with(|d| d.waves.get_mut(&hwo).map(|w| {
+    let closed = with(|d| {
+        let w = d.waves.get_mut(&hwo).ok_or(WaveErr::InvalHandle)?;
         if !w.queue.is_empty() {
-            return Err(33);
+            return Err(WaveErr::StillPlaying);
         }
         w.closing = true;
         Ok(w.cb)
-    })) else { return 5 };
-    let cb = match cb {
+    });
+    let cb = match closed {
         Ok(cb) => cb,
-        Err(e) => return e,
+        Err(e) => return e.code(),
     };
     wave_wake();
     wave_notify(c, hwo, cb, WOM_CLOSE, 0);
@@ -772,17 +863,17 @@ pub(crate) fn prepared_flags(f: u32) -> u32 {
 }
 /// waveOutUnprepareHeader: Err(WAVERR_STILLPLAYING) for a queued prepared header; an
 /// unprepared one is left alone.
-pub(crate) fn unprepared_flags(f: u32) -> Result<u32, u32> {
+pub(crate) fn unprepared_flags(f: u32) -> Result<u32, WaveErr> {
     match f {
         f if f & WHDR_PREPARED == 0 => Ok(f),
-        f if f & WHDR_INQUEUE != 0 => Err(33),
+        f if f & WHDR_INQUEUE != 0 => Err(WaveErr::StillPlaying),
         f => Ok(f & !WHDR_PREPARED),
     }
 }
 fn waveOutPrepareHeader(c: &mut Ctx) -> u32 {
     let h = c.a(1);
     if h == 0 {
-        return 11;
+        return WaveErr::InvalParam.code();
     }
     set_hflags(h, prepared_flags(hflags(h)));
     0
@@ -790,34 +881,29 @@ fn waveOutPrepareHeader(c: &mut Ctx) -> u32 {
 fn waveOutUnprepareHeader(c: &mut Ctx) -> u32 {
     let h = c.a(1);
     if h == 0 {
-        return 11;
+        return WaveErr::InvalParam.code();
     }
-    match unprepared_flags(hflags(h)) {
-        Ok(f) => set_hflags(h, f),
-        Err(e) => return e,
-    }
-    0
+    mm(unprepared_flags(hflags(h)).map(|f| set_hflags(h, f)))
 }
 fn waveOutWrite(c: &mut Ctx) -> u32 {
-    let (hwo, h) = (c.a(0), c.a(1));
+    mm(wave_write(c.a(0), c.a(1)))
+}
+fn wave_write(hwo: u32, h: u32) -> Result<(), WaveErr> {
     if h == 0 {
-        return 11;
+        return Err(WaveErr::InvalParam);
     }
     let f = hflags(h);
     if f & WHDR_PREPARED == 0 {
-        return 34; // WAVERR_UNPREPARED
+        return Err(WaveErr::Unprepared);
     }
     if f & WHDR_INQUEUE != 0 {
-        return 33; // WAVERR_STILLPLAYING
+        return Err(WaveErr::StillPlaying);
     }
     if !with(|d| d.waves.contains_key(&hwo)) {
-        return 5;
+        return Err(WaveErr::InvalHandle);
     }
     set_hflags(h, (f & !WHDR_DONE) | WHDR_INQUEUE);
-    if with(|d| d.waves.get_mut(&hwo).map(|w| w.queue.push_back(h))).is_none() {
-        return 5; // MMSYSERR_INVALHANDLE
-    }
-    0
+    with(|d| d.waves.get_mut(&hwo).map(|w| w.queue.push_back(h))).ok_or(WaveErr::InvalHandle)
 }
 fn waveOutReset(c: &mut Ctx) -> u32 {
     let hwo = c.a(0);
@@ -845,21 +931,25 @@ fn waveOutRestart(c: &mut Ctx) -> u32 {
 }
 /// waveOutGetPosition(hwo, MMTIME*, size): bytes, samples or ms
 fn waveOutGetPosition(c: &mut Ctx) -> u32 {
-    let (hwo, t, size) = (c.a(0), c.a(1), c.a(2));
+    mm(wave_position(c.a(0), c.a(1), c.a(2)))
+}
+fn wave_position(hwo: u32, t: u32, size: u32) -> Result<(), WaveErr> {
     if t == 0 || size < 12 {
-        return 1; // MMSYSERR_ERROR (an MMTIME is 12 bytes)
+        return Err(WaveErr::Error); // (an MMTIME is 12 bytes)
     }
-    let Some((bytes, fmt)) = with(|d| d.waves.get(&hwo).map(|w| (w.played + (w.pos as u64) * w.fmt.block() as u64, w.fmt))) else { return 5 };
-    let frames = bytes / fmt.block().max(1) as u64;
+    let (bytes, fmt) = with(|d| d.waves.get(&hwo).map(|w| (w.played + (w.pos as u64) * u64::from(w.fmt.block()), w.fmt))).ok_or(WaveErr::InvalHandle)?;
+    let frames = bytes / u64::from(fmt.block().max(1));
+    // (MMTIME's 32-bit fields: the counts wrap, as Windows')
+    let low = |x: u64| u32::try_from(x & u64::from(u32::MAX)).unwrap_or(0);
     match r32(t) {
-        2 => w32(t + 4, frames as u32),
+        2 => w32(t + 4, low(frames)),
         // (TIME_MS and the rest: bytes, as Windows answers)
         _ => {
             w32(t, 4);
-            w32(t + 4, bytes as u32)
+            w32(t + 4, low(bytes))
         }
     }
-    0
+    Ok(())
 }
 fn waveOutSetVolume(c: &mut Ctx) -> u32 {
     let (hwo, v) = (c.a(0), c.a(1));
@@ -872,7 +962,7 @@ fn waveOutSetVolume(c: &mut Ctx) -> u32 {
 }
 fn waveOutGetVolume(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return 11;
+        return WaveErr::InvalParam.code();
     }
     let v = with(|d| d.waves.get(&c.a(0)).map_or(0xffff_ffff, |w| w.volume));
     put32(c.a(1), v);
@@ -1043,11 +1133,14 @@ fn new_object(vtbl: u32, extra: u32) -> u32 {
 }
 
 static DS_REFS: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
+fn ds_refs() -> std::sync::MutexGuard<'static, Option<HashMap<u32, u32>>> {
+    DS_REFS.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 fn create_device() -> u32 {
     start_mixer();
     let o = new_object(ds_vtbl(), 0);
-    DS_REFS.lock().unwrap().get_or_insert_with(HashMap::default).insert(o, 1);
+    ds_refs().get_or_insert_with(HashMap::default).insert(o, 1);
     o
 }
 
@@ -1063,7 +1156,7 @@ fn no_sound() -> bool {
 fn DirectSoundCreate(c: &mut Ctx) -> u32 {
     if no_sound() {
         crate::mem::putp(c.a(1), 0);
-        return 0x8878_0078;
+        return Hr::NoDriver.code();
     }
     crate::mem::putp(c.a(1), create_device());
     0
@@ -1071,7 +1164,7 @@ fn DirectSoundCreate(c: &mut Ctx) -> u32 {
 fn DirectSoundCreate8(c: &mut Ctx) -> u32 {
     if no_sound() {
         crate::mem::putp(c.a(1), 0);
-        return 0x8878_0078;
+        return Hr::NoDriver.code();
     }
     crate::mem::putp(c.a(1), create_device());
     0
@@ -1105,7 +1198,7 @@ fn guid_text(g: &[u8; 16]) -> String {
 fn enumerate(c: &mut Ctx, wide: bool) -> u32 {
     let (cb, ctx) = (c.a(0), c.a(1));
     if cb == 0 {
-        return 0x8007_0057;
+        return Hr::InvalidParam.code();
     }
     let buf = mem::heap_alloc(16 + 2 * 128 + 2 * 128, true);
     let (guid, desc, module) = (buf, buf + 16, buf + 16 + 256);
@@ -1131,35 +1224,35 @@ fn enumerate(c: &mut Ctx, wide: bool) -> u32 {
 /// DSDEVID_DefaultPlayback {DEF00000-9C6D-47ED-AAF1-4DDA8F2B5C03}; DefaultCapture, its voice
 /// forms differ only in the first byte (01, 02, 03)
 const DSDEVID_DEFAULT: [u8; 16] = [0x00, 0x00, 0xf0, 0xde, 0x6d, 0x9c, 0xed, 0x47, 0xaa, 0xf1, 0x4d, 0xda, 0x8f, 0x2b, 0x5c, 0x03];
-const DSERR_NODRIVER: u32 = 0x8878_0078;
 /// GetDeviceID(source, dest)'s answer, as Wine's: GUID_NULL and the default (voice) playback
 /// ids are the output device; the default capture ids have no device (sake records nothing);
 /// any other GUID is given back as it is. cmvs64.exe (リアライブ 体験版) compares the default
 /// playback device every frame with the one it opened on: the function was missing, the answer
 /// was whatever the stack held, and the game restarted its sound and warned
 /// 「再生デバイスが変更されました」 every frame.
-fn device_id(src: [u8; 16], sound: bool) -> Result<[u8; 16], u32> {
+fn device_id(src: [u8; 16], sound: bool) -> Result<[u8; 16], Hr> {
     let default = src[1..] == DSDEVID_DEFAULT[1..] && src[0] <= 3;
     if src == [0; 16] || (default && src[0] & 1 == 0) {
-        return if sound { Ok(DEVICE_GUID) } else { Err(DSERR_NODRIVER) };
+        return if sound { Ok(DEVICE_GUID) } else { Err(Hr::NoDriver) };
     }
     if default {
-        return Err(DSERR_NODRIVER);
+        return Err(Hr::NoDriver);
     }
     Ok(src)
 }
 fn GetDeviceID(c: &mut Ctx) -> u32 {
     let (src, dst) = (c.a(0), c.a(1));
     if src == 0 || dst == 0 {
-        return 0x8007_0057;
+        return Hr::InvalidParam.code();
     }
-    let g: [u8; 16] = mem::slice(src, 16).try_into().unwrap();
+    let mut g = [0u8; 16];
+    g.copy_from_slice(mem::slice(src, 16));
     match device_id(g, !no_sound()) {
         Ok(d) => {
             mem::write(dst, &d);
             0
         }
-        Err(e) => e,
+        Err(e) => e.code(),
     }
 }
 fn DirectSoundEnumerateA(c: &mut Ctx) -> u32 {
@@ -1187,12 +1280,12 @@ fn DS_QueryInterface(c: &mut Ctx) -> u32 {
         }
         _ => {
             put32(out, 0);
-            E_NOINTERFACE
+            Hr::NoInterface.code()
         }
     }
 }
 fn DS_AddRef(c: &mut Ctx) -> u32 {
-    let mut g = DS_REFS.lock().unwrap();
+    let mut g = ds_refs();
     let r = g.get_or_insert_with(HashMap::default).entry(c.a(0)).or_insert(1);
     *r += 1;
     *r
@@ -1200,7 +1293,7 @@ fn DS_AddRef(c: &mut Ctx) -> u32 {
 fn DS_Release(c: &mut Ctx) -> u32 {
     let o = c.a(0);
     let left = {
-        let mut g = DS_REFS.lock().unwrap();
+        let mut g = ds_refs();
         let m = g.get_or_insert_with(HashMap::default);
         let Some(r) = m.get_mut(&o) else { return 0 };
         *r = r.saturating_sub(1);
@@ -1219,7 +1312,7 @@ fn DS_Release(c: &mut Ctx) -> u32 {
 fn DS_CreateSoundBuffer(c: &mut Ctx) -> u32 {
     let (desc, out) = (c.a(1), c.a(2));
     if desc == 0 || out == 0 {
-        return DSERR_INVALIDPARAM;
+        return Hr::InvalidParam.code();
     }
     let flags = r32(desc + 4);
     let primary = flags & 1 != 0;
@@ -1298,7 +1391,7 @@ fn DS_DuplicateSoundBuffer(c: &mut Ctx) -> u32 {
         true
     });
     if !ok {
-        return DSERR_INVALIDPARAM;
+        return Hr::InvalidParam.code();
     }
     put32(out, o);
     0
@@ -1352,7 +1445,7 @@ fn B_QueryInterface(c: &mut Ctx) -> u32 {
         }
         _ => {
             put32(out, 0);
-            E_NOINTERFACE
+            Hr::NoInterface.code()
         }
     }
 }
@@ -1406,7 +1499,7 @@ fn buf_release(this: u32) -> u32 {
         if b.refs > 0 {
             return Some(Err(b.refs));
         }
-        let b = d.bufs.remove(&this).unwrap();
+        let b = d.bufs.remove(&this)?;
         // the data goes once neither the buffer nor a duplicate of it is left
         let shared = d.bufs.values().any(|x| x.owner == b.owner);
         Some(Ok((!shared && b.data != 0).then_some(b.data)))
@@ -1471,7 +1564,7 @@ fn B_GetStatus(c: &mut Ctx) -> u32 {
     0
 }
 fn B_Initialize(_: &mut Ctx) -> u32 {
-    0x8878_0082
+    Hr::AlreadyInitialized.code()
 }
 fn B_Lock(c: &mut Ctx) -> u32 {
     let (this, off, bytes, p1, n1, p2, n2, flags) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
@@ -1498,7 +1591,7 @@ fn B_Lock(c: &mut Ctx) -> u32 {
             put32(n2, l2);
             0
         }
-        None => DSERR_INVALIDPARAM,
+        None => Hr::InvalidParam.code(),
     }
 }
 fn B_Play(c: &mut Ctx) -> u32 {
@@ -1511,10 +1604,10 @@ fn B_Play(c: &mut Ctx) -> u32 {
 }
 fn B_SetCurrentPosition(c: &mut Ctx) -> u32 {
     let (this, p) = (c.a(0), c.a(1));
-    // (past the end: DSERR_INVALIDPARAM, as Windows; the mixer read past the buffer)
+    // (past the end: Hr::InvalidParam.code(), as Windows; the mixer read past the buffer)
     with_buf(this, |b| {
         if p >= b.size && b.size != 0 {
-            return DSERR_INVALIDPARAM;
+            return Hr::InvalidParam.code();
         }
         b.pos = (p / b.fmt.block().max(1)) as f64;
         0
@@ -1576,13 +1669,13 @@ fn B_Restore(_: &mut Ctx) -> u32 {
     0
 }
 fn B_SetFX(_: &mut Ctx) -> u32 {
-    0x8000_4001
+    Hr::NotImpl.code()
 }
 fn B_AcquireResources(_: &mut Ctx) -> u32 {
     0
 }
 fn B_GetObjectInPath(_: &mut Ctx) -> u32 {
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 
 fn N_QueryInterface(c: &mut Ctx) -> u32 {
@@ -1595,7 +1688,7 @@ fn N_QueryInterface(c: &mut Ctx) -> u32 {
     }
     let _ = buf;
     put32(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 /// An interface object of buffer `buf` (IDirectSoundNotify, IDirectSound3DBuffer/Listener):
 /// {vtable, buffer, references}; it holds a reference on the buffer until its last Release.
@@ -1637,7 +1730,7 @@ fn N_SetNotificationPositions(c: &mut Ctx) -> u32 {
     let (this, n, p) = (c.a(0), c.a(1), c.a(2));
     // (DSERR_INVALIDPARAM: positions but no array, or more than any buffer could hold)
     if (n != 0 && p == 0) || n > 0x10_0000 {
-        return 0x8007_0057;
+        return Hr::InvalidParam.code();
     }
     let buf = r32(this + 4);
     let list = notify_list(n, p, crate::mem::x64(), r32);
@@ -1940,7 +2033,7 @@ mod wave_tests {
         assert_eq!(unprepared_flags(WHDR_DONE), Ok(WHDR_DONE));
         assert_eq!(prepared_flags(WHDR_DONE | WHDR_INQUEUE), WHDR_PREPARED);
         assert_eq!(prepared_flags(WHDR_PREPARED | WHDR_INQUEUE), WHDR_PREPARED | WHDR_INQUEUE);
-        assert_eq!(unprepared_flags(WHDR_PREPARED | WHDR_INQUEUE), Err(33));
+        assert_eq!(unprepared_flags(WHDR_PREPARED | WHDR_INQUEUE), Err(WaveErr::StillPlaying));
         assert_eq!(unprepared_flags(WHDR_PREPARED | WHDR_DONE), Ok(WHDR_DONE));
     }
 
@@ -2138,7 +2231,7 @@ mod music_tests {
 
 #[cfg(test)]
 mod enumerate_tests {
-    use super::{device_id, ds_devices, guid_text, DEVICE_GUID, DSDEVID_DEFAULT, DSERR_NODRIVER};
+    use super::{device_id, ds_devices, guid_text, Hr, DEVICE_GUID, DSDEVID_DEFAULT};
     use proptest::prelude::*;
 
     #[test]
@@ -2150,10 +2243,10 @@ mod enumerate_tests {
         assert_eq!(device_id([0; 16], true), Ok(DEVICE_GUID));
         assert_eq!(ds_devices(true)[1].0, Some(DEVICE_GUID));
         // capture: none
-        assert_eq!(device_id(id(1), true), Err(DSERR_NODRIVER));
-        assert_eq!(device_id(id(3), true), Err(DSERR_NODRIVER));
+        assert_eq!(device_id(id(1), true), Err(Hr::NoDriver));
+        assert_eq!(device_id(id(3), true), Err(Hr::NoDriver));
         // without sound no playback device either
-        assert_eq!(device_id(id(0), false), Err(DSERR_NODRIVER));
+        assert_eq!(device_id(id(0), false), Err(Hr::NoDriver));
         // the device's own GUID, and the id the default stays: asked twice, the same answer
         assert_eq!(device_id(DEVICE_GUID, true), Ok(DEVICE_GUID));
         assert_eq!(device_id(id(0), true), device_id(device_id(id(0), true).unwrap(), true));
@@ -2389,7 +2482,7 @@ mod review_b09_tests {
         h
     }
     fn wave(rate: u32, queue: &[u32]) -> Wave {
-        Wave { fmt: Fmt { rate, channels: 1, bits: 16, float: false, law: 0 }, queue: queue.iter().copied().collect(), pos: 0.0, done: Vec::new(), paused: false, closing: false, played: 0, cb: (0, 0, 0), volume: 0xffff_ffff, device: 0, w16: None }
+        Wave { fmt: Fmt { rate, channels: 1, bits: 16, float: false, law: 0 }, queue: queue.iter().copied().collect(), pos: 0.0, done: Vec::new(), paused: false, closing: false, played: 0, cb: WaveCb::Null, volume: 0xffff_ffff, device: 0, w16: None }
     }
 
     proptest! {
@@ -2502,7 +2595,7 @@ mod review_b09_tests {
         mem::heap_free(p);
     }
 
-    /// SetCurrentPosition past the buffer: DSERR_INVALIDPARAM, the position unchanged.
+    /// SetCurrentPosition past the buffer: Hr::InvalidParam.code(), the position unchanged.
     #[test]
     fn position_past_the_end_is_refused() {
         let _g = enter();
@@ -2512,7 +2605,7 @@ mod review_b09_tests {
         with(|d| d.bufs.insert(key, music_buf(key, data, 400, fmt, 0, 0)));
         assert_eq!(call(B_SetCurrentPosition, &[key, 396]), 0);
         assert_eq!(with(|d| d.bufs[&key].pos), 99.0);
-        assert_eq!(call(B_SetCurrentPosition, &[key, 400]), DSERR_INVALIDPARAM);
+        assert_eq!(call(B_SetCurrentPosition, &[key, 400]), Hr::InvalidParam.code());
         assert_eq!(with(|d| d.bufs[&key].pos), 99.0);
         music_set(key, Some(1e9), None);
         assert_eq!(with(|d| d.bufs[&key].pos), 99.0);
