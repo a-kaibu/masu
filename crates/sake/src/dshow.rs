@@ -19,7 +19,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 
 use crate::api::{Ctx, Handler};
-use crate::dshow_play::{self as play, now, Place, Play, SEC};
+use crate::dshow_play::{self as play, now, Place, Play, R, SEC};
 use crate::mem::{self, ps, put32, put64, putp, r32, rp, w32, w64, wp};
 
 /// The HRESULTs the graph and its renderers answer (besides S_OK).
@@ -185,6 +185,15 @@ impl State {
     }
 }
 
+/// A picture's side as the i32 its rectangles are in (none is past i32::MAX).
+fn side(n: u32) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+/// A guest count as a host one.
+fn us(n: u32) -> usize {
+    usize::try_from(n).unwrap_or(usize::MAX)
+}
+
 fn slot_of(iid: u32) -> Option<Slot> {
     Some(match r32(iid) {
         0 | 0x56a8_68a9 | 0x56a8_689f | 0x36b7_3882 => GB,
@@ -229,14 +238,14 @@ struct Graph {
     owner: u32,
     style: u32,
     style_ex: u32,
-    window: (i32, i32, i32, i32),
+    window: R,
     visible: bool,
     auto_show: bool,
     drain: u32,
     full_screen: u32,
     /// IBasicVideo's rectangles (None: the default, all of it)
-    src: Option<(i32, i32, i32, i32)>,
-    dst: Option<(i32, i32, i32, i32)>,
+    src: Option<R>,
+    dst: Option<R>,
     volume: i32,
     balance: i32,
     /// the EVR added to it (its picture goes where the EVR says)
@@ -271,7 +280,7 @@ fn with<R>(b: u32, f: impl FnOnce(&mut Graph) -> R) -> Option<R> {
 /// the graph is gone): on CHANGED, in slices that let a save state or TerminateThread stop
 /// the thread (snap.rs) outside the lock; None at the timeout.
 fn wait_graph<R>(b: u32, ms: u32, mut f: impl FnMut(Option<&mut Graph>) -> Option<R>) -> Option<R> {
-    let until = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64));
+    let until = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms)));
     loop {
         if kura::snap::pausing() {
             crate::snap::point();
@@ -437,7 +446,7 @@ fn enum_filters(c: &mut Ctx) -> u32 {
         fn next(c: &mut Ctx) -> u32 {
             let (e, n) = (c.a(0), c.a(1));
             let (f, at) = (r32(e + ps()), r32(e + 2 * ps()));
-            let got = (n > 0 && f != 0 && at == 0) as u32;
+            let got = u32::from(n > 0 && f != 0 && at == 0);
             if got == 1 {
                 call(c, f, Unknown::AddRef, &[]);
                 putp(c.a(2), f);
@@ -451,7 +460,7 @@ fn enum_filters(c: &mut Ctx) -> u32 {
         /// Skip(n)
         fn skip(c: &mut Ctx) -> u32 {
             let e = c.a(0);
-            let left = (r32(e + ps()) != 0 && r32(e + 2 * ps()) == 0) as u32;
+            let left = u32::from(r32(e + ps()) != 0 && r32(e + 2 * ps()) == 0);
             if c.a(1) > 0 {
                 w32(e + 2 * ps(), 1);
             }
@@ -702,12 +711,12 @@ fn load(b: u32, w: &str) -> Result<(), u32> {
     with(b, |g| {
         g.done = false;
         g.playing = true;
-        g.video = (movie.w as i32, movie.h as i32);
+        g.video = (side(movie.w), side(movie.h));
         g.duration = movie.duration;
         g.rate = movie.rate;
         // (the video renderer's own window: its client area is at least 120 wide, Windows'
         // smallest overlapped window)
-        g.window = (0, 0, (movie.w as i32).max(120), movie.h as i32);
+        g.window = R::sized(side(movie.w).max(120), side(movie.h));
         g.ended = false;
         g.src = None;
         g.dst = None;
@@ -810,11 +819,11 @@ fn to_renderer(c: &mut Ctx, b: u32) {
     }
     let (video, rate) = with(b, |g| (g.video, g.rate)).unwrap_or(((1280, 720), (30, 1)));
     let rate = if rate.0 == 0 || rate.1 == 0 { (30, 1) } else { rate };
-    let v = crate::dshow_mpeg::vnv_new(b, video.0.max(1) as u32, video.1.max(1) as u32, rate);
+    let v = crate::dshow_mpeg::vnv_new(b, video.0.max(1).cast_unsigned(), video.1.max(1).cast_unsigned(), rate);
     let name: Vec<u16> = "WMVideo Decoder DMO".encode_utf16().chain([0]).collect();
-    let n = mem::heap_alloc(2 * name.len() as u32, false);
-    for (i, w) in name.iter().enumerate() {
-        mem::w16(n + 2 * i as u32, *w);
+    let n = mem::heap_alloc(2 * u32::try_from(name.len()).unwrap_or(0), false);
+    for (i, w) in (0u32..).zip(&name) {
+        mem::w16(n + 2 * i, *w);
     }
     add_filter_at(c, b, v, n);
     mem::heap_free(n);
@@ -938,7 +947,7 @@ fn end_in(b: u32, n: u32, after: std::time::Duration) {
     ENDS_WAKE.notify_all();
     static T: OnceLock<()> = OnceLock::new();
     T.get_or_init(|| {
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("movie ends".into())
             .spawn(|| {
                 let mut v = ENDS.lock().unwrap_or_else(|e| e.into_inner());
@@ -959,8 +968,10 @@ fn end_in(b: u32, n: u32, after: std::time::Duration) {
                         v = ENDS_WAKE.wait_timeout(v, wait).unwrap_or_else(|e| e.into_inner()).0;
                     }
                 }
-            })
-            .expect("movie ends thread");
+            });
+        if let Err(e) = spawned {
+            eprintln!("sake: the movie ends thread could not start: {e}");
+        }
     });
 }
 /// Queues EC_PAUSED; S_FALSE from stopped, as Run.
@@ -1139,13 +1150,13 @@ fn get_notify_flags(c: &mut Ctx) -> u32 {
 fn timeline<R>(b: u32, f: impl FnOnce(&mut play::Timeline, u64) -> R) -> Option<R> {
     let t = now();
     let mut f = Some(f);
-    if let Some(r) = sounds(|m| m.get_mut(&b).map(|s| (f.take().unwrap())(&mut s.tl, t))) {
+    if let Some(r) = sounds(|m| m.get_mut(&b).and_then(|s| f.take().map(|f| f(&mut s.tl, t)))) {
         // (a seek, a new stop or rate moves its end: checked anew)
         sound_sync(b);
         sound_end_check(b);
         return Some(r);
     }
-    play::timeline(b, t, |tl, t| (f.take().unwrap())(tl, t)).or_else(|| crate::dshow_mpeg::timeline(b, f.take()?))
+    play::timeline(b, t, |tl, t| f.take().map(|f| f(tl, t))).flatten().or_else(|| crate::dshow_mpeg::timeline(b, f.take()?))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1173,7 +1184,7 @@ fn sound_open(b: u32, w: &str, bytes: Vec<u8>) -> bool {
         crate::sound::music_set(b, Some(0.0), Some(false));
         data
     });
-    eprintln!("sake: movie {w}: sound only, {:.1} s{}", duration as f64 / SEC as f64, if data.is_none() { " (not decoded here: silent)" } else { "" });
+    eprintln!("sake: movie {w}: sound only, {:.1} s{}", play::float(duration) / play::float(SEC), if data.is_none() { " (not decoded here: silent)" } else { "" });
     sounds(|m| m.insert(b, SoundGraph { tl: play::Timeline::new(duration), pcm: data, rate }));
     with(b, |g| {
         g.done = false;
@@ -1206,7 +1217,7 @@ fn sound_sync(b: u32) {
     let Some((frames, on)) = sounds(|m| {
         let s = m.get(&b)?;
         let pos = s.tl.position(t);
-        Some((pos as f64 * s.rate as f64 / SEC as f64, s.tl.running() && pos < s.tl.stop))
+        Some((play::float(pos) * f64::from(s.rate) / play::float(SEC), s.tl.running() && pos < s.tl.stop))
     }) else {
         return;
     };
@@ -1239,8 +1250,8 @@ fn media_time(p: u32) -> bool {
     p != 0 && r32(p) == 0x7b78_5574 && r32(p + 4) == 0x11cf_8c82 && r32(p + 8) == 0xaa00_0cbc && r32(p + 12) == 0xf674_ac00
 }
 fn write_media_time(p: u32) {
-    for (i, v) in [0x7b78_5574u32, 0x11cf_8c82, 0xaa00_0cbc, 0xf674_ac00].into_iter().enumerate() {
-        w32(p + 4 * i as u32, v);
+    for (i, v) in (0u32..).zip([0x7b78_5574u32, 0x11cf_8c82, 0xaa00_0cbc, 0xf674_ac00]) {
+        w32(p + 4 * i, v);
     }
 }
 /// AM_SEEKING_CanSeekAbsolute | Forwards | Backwards | CanGetStopPos | CanGetDuration (not
@@ -1290,13 +1301,13 @@ fn ms_set_format(c: &mut Ctx) -> u32 {
 /// A graph's movie's duration (its `.vnv`'s, or the MPEG-1 stream's of dshow_mpeg.rs).
 fn duration(b: u32) -> u64 {
     match crate::dshow_mpeg::movie(b) {
-        Some(i) => (i.duration.max(0.0) * SEC as f64) as u64,
+        Some(i) => play::time(i.duration.max(0.0) * play::float(SEC)),
         None => with(b, |g| g.duration).unwrap_or(0),
     }
 }
 /// The picture size and rate (pictures, seconds) of a graph's MPEG-1 stream, if it has one.
 fn mpeg_video(b: u32) -> Option<((i32, i32), (u32, u32))> {
-    crate::dshow_mpeg::movie(b).map(|i| ((i.width as i32, i.height as i32), ((i.rate * 1000.0).round() as u32, 1000)))
+    crate::dshow_mpeg::movie(b).map(|i| ((i32::try_from(i.width).unwrap_or(i32::MAX), i32::try_from(i.height).unwrap_or(i32::MAX)), (u32::try_from(play::time((i.rate * 1000.0).round())).unwrap_or(u32::MAX), 1000)))
 }
 /// The volume IBasicAudio set on graph `b` (hundredths of a dB).
 pub(crate) fn volume(b: u32) -> i32 {
@@ -1326,7 +1337,7 @@ fn ms_cur_pos(c: &mut Ctx) -> u32 {
 /// ConvertTimeFormat(target, target format, source (by value), source format): one format
 fn ms_convert(c: &mut Ctx) -> u32 {
     let (out, tf) = (c.a(1), c.a(2));
-    let (v, sf) = if mem::x64() { (c.a64(3), c.a(4)) } else { (c.a(3) as u64 | (c.a(4) as u64) << 32, c.a(5)) };
+    let (v, sf) = if mem::x64() { (c.a64(3), c.a(4)) } else { (u64::from(c.a(3)) | u64::from(c.a(4)) << 32, c.a(5)) };
     if out == 0 {
         return Hr::Pointer.code();
     }
@@ -1343,23 +1354,23 @@ fn ms_set_positions(c: &mut Ctx) -> u32 {
     let (pc, fc, pst, fst) = (c.a(1), c.a(2), c.a(3), c.a(4));
     let r = timeline(b, |tl, t| {
         let cur = tl.position(t);
-        let rd = |a: u32| if a == 0 { 0 } else { mem::r64(a) as i64 };
+        let rd = |a: u32| if a == 0 { 0 } else { mem::r64(a).cast_signed() };
         let to = match fc & 3 {
             1 => Some(rd(pc)),
-            2 => Some(cur as i64 + rd(pc)),
+            2 => Some(cur.cast_signed() + rd(pc)),
             _ => None,
         };
         let stop = match fst & 3 {
             1 => Some(rd(pst)),
-            2 => Some(cur as i64 + rd(pst)),
-            3 => Some(to.unwrap_or(cur as i64) + rd(pst)),
+            2 => Some(cur.cast_signed() + rd(pst)),
+            3 => Some(to.unwrap_or(cur.cast_signed()) + rd(pst)),
             _ => None,
         };
         if let Some(s) = stop {
-            tl.set_stop(t, s.max(0) as u64);
+            tl.set_stop(t, s.max(0).cast_unsigned());
         }
         if let Some(to) = to {
-            tl.seek(t, to.max(0) as u64);
+            tl.seek(t, to.max(0).cast_unsigned());
         }
         (tl.position(t), tl.stop)
     });
@@ -1417,10 +1428,10 @@ fn ms_get_rate(c: &mut Ctx) -> u32 {
 // IMediaPosition (seconds as doubles)
 
 fn secs(v: u64) -> f64 {
-    v as f64 / SEC as f64
+    play::float(v) / play::float(SEC)
 }
 fn from_secs(s: f64) -> u64 {
-    (s.max(0.0) * SEC as f64).round() as u64
+    play::time((s.max(0.0) * play::float(SEC)).round())
 }
 fn mp_duration(c: &mut Ctx) -> u32 {
     put_dbl(c.a(1), secs(with(base(c, MP), |g| g.duration).unwrap_or(0)))
@@ -1483,7 +1494,7 @@ fn ba_get_volume(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    put32(c.a(1), with(base(c, BA), |g| g.volume).unwrap_or(0) as u32);
+    put32(c.a(1), with(base(c, BA), |g| g.volume).unwrap_or(0).cast_unsigned());
     0
 }
 fn ba_put_balance(c: &mut Ctx) -> u32 {
@@ -1498,7 +1509,7 @@ fn ba_get_balance(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    put32(c.a(1), with(base(c, BA), |g| g.balance).unwrap_or(0) as u32);
+    put32(c.a(1), with(base(c, BA), |g| g.balance).unwrap_or(0).cast_unsigned());
     0
 }
 
@@ -1509,19 +1520,18 @@ fn ba_get_balance(c: &mut Ctx) -> u32 {
 fn sync(b: u32) {
     let Some((place, volume)) = with(b, |g| {
         let video = g.video;
-        let src = g.src.unwrap_or((0, 0, video.0, video.1));
+        let src = g.src.unwrap_or(R::sized(video.0, video.1));
         if g.evr != 0 {
             if let Some(e) = evr_with(g.evr, |e| *e).filter(|e| e.windowless) {
                 return (place_of(&e, video, g.state != State::Stopped || g.visible), g.volume);
             }
         }
         // the window's place (in its owner's client area, or on the screen), the picture in it
-        let (x, y, w, h) = g.window;
-        let d = g.dst.unwrap_or((0, 0, w, h));
-        let dst = (x + d.0, y + d.1, d.2, d.3);
-        let dst = play::clip(play::R::of(dst), play::R::new(x, y, w, h));
+        let win = g.window;
+        let d = g.dst.unwrap_or(R::sized(win.w, win.h));
+        let dst = play::clip(R::new(win.x + d.x, win.y + d.y, d.w, d.h), win);
         // (the game's renderer draws the pictures itself)
-        (Place { hwnd: g.owner, dst, src: play::R::of(src), letterbox: false, visible: g.visible && g.renderer == 0 }, g.volume)
+        (Place { hwnd: g.owner, dst, src, letterbox: false, visible: g.visible && g.renderer == 0 }, g.volume)
     }) else {
         return;
     };
@@ -1580,7 +1590,7 @@ fn vw_prop(c: &mut Ctx, i: u32) -> u32 {
                 if put {
                     g.visible = v != 0;
                 } else {
-                    put32(v, g.visible as u32);
+                    put32(v, u32::from(g.visible));
                 }
             }
             6 => {
@@ -1592,15 +1602,15 @@ fn vw_prop(c: &mut Ctx, i: u32) -> u32 {
             }
             7..=10 => {
                 let f = match prop {
-                    7 => &mut g.window.0,
-                    8 => &mut g.window.2,
-                    9 => &mut g.window.1,
-                    _ => &mut g.window.3,
+                    7 => &mut g.window.x,
+                    8 => &mut g.window.w,
+                    9 => &mut g.window.y,
+                    _ => &mut g.window.h,
                 };
                 if put {
-                    *f = v as i32;
+                    *f = v.cast_signed();
                 } else {
-                    put32(v, *f as u32);
+                    put32(v, f.cast_unsigned());
                 }
             }
             // BackgroundPalette, BorderColor
@@ -1620,21 +1630,21 @@ fn vw_prop(c: &mut Ctx, i: u32) -> u32 {
 fn vw_set_pos(c: &mut Ctx) -> u32 {
     let b = base(c, VW);
     let r = (c.i(1), c.i(2), c.i(3), c.i(4));
-    with(b, |g| g.window = r);
+    with(b, |g| g.window = R::new(r.0, r.1, r.2, r.3));
     sync(b);
     0
 }
 fn vw_get_pos(c: &mut Ctx) -> u32 {
     let r = with(base(c, VW), |g| g.window).unwrap_or_default();
-    for (i, v) in [r.0, r.1, r.2, r.3].into_iter().enumerate() {
-        put32(c.a(1 + i as u32), v as u32);
+    for (i, v) in (0u32..).zip([r.x, r.y, r.w, r.h]) {
+        put32(c.a(1 + i), v.cast_unsigned());
     }
     0
 }
 fn vw_ideal(c: &mut Ctx) -> u32 {
     let v = with(base(c, VW), |g| g.video).unwrap_or_default();
-    put32(c.a(1), v.0 as u32);
-    put32(c.a(2), v.1 as u32);
+    put32(c.a(1), v.0.cast_unsigned());
+    put32(c.a(2), v.1.cast_unsigned());
     0
 }
 fn vw_owner_msg(_: &mut Ctx) -> u32 {
@@ -1646,16 +1656,16 @@ fn vw_owner_msg(_: &mut Ctx) -> u32 {
 fn bv_avg_time(c: &mut Ctx) -> u32 {
     let b = base(c, BV);
     let r = mpeg_video(b).map(|v| v.1).or_else(|| with(b, |g| if g.playing { g.rate } else { (0, 1) })).unwrap_or((0, 1));
-    put_dbl(c.a(1), if r.0 == 0 { 0.0 } else { r.1 as f64 / r.0 as f64 })
+    put_dbl(c.a(1), if r.0 == 0 { 0.0 } else { f64::from(r.1) / f64::from(r.0) })
 }
 fn bv_width(c: &mut Ctx) -> u32 {
     let b = base(c, BV);
-    put32(c.a(1), mpeg_video(b).map(|v| v.0).or_else(|| with(b, |g| g.video)).unwrap_or((0, 0)).0 as u32);
+    put32(c.a(1), mpeg_video(b).map(|v| v.0).or_else(|| with(b, |g| g.video)).unwrap_or((0, 0)).0.cast_unsigned());
     0
 }
 fn bv_height(c: &mut Ctx) -> u32 {
     let b = base(c, BV);
-    put32(c.a(1), mpeg_video(b).map(|v| v.0).or_else(|| with(b, |g| g.video)).unwrap_or((0, 0)).1 as u32);
+    put32(c.a(1), mpeg_video(b).map(|v| v.0).or_else(|| with(b, |g| g.video)).unwrap_or((0, 0)).1.cast_unsigned());
     0
 }
 /// put/get Source / Destination Left, Width, Top, Height (index 0..16)
@@ -1667,20 +1677,20 @@ fn bv_prop(c: &mut Ctx, i: u32) -> u32 {
         return Hr::Pointer.code();
     }
     with(b, |g| {
-        let full = if dest { (0, 0, g.window.2, g.window.3) } else { (0, 0, g.video.0, g.video.1) };
+        let full = if dest { R::sized(g.window.w, g.window.h) } else { R::sized(g.video.0, g.video.1) };
         let r = if dest { &mut g.dst } else { &mut g.src };
         let mut cur = r.unwrap_or(full);
         let field = match f {
-            0 => &mut cur.0,
-            1 => &mut cur.2,
-            2 => &mut cur.1,
-            _ => &mut cur.3,
+            0 => &mut cur.x,
+            1 => &mut cur.w,
+            2 => &mut cur.y,
+            _ => &mut cur.h,
         };
         if put {
-            *field = v as i32;
+            *field = v.cast_signed();
             *r = Some(cur);
         } else {
-            put32(v, *field as u32);
+            put32(v, field.cast_unsigned());
         }
     });
     if put {
@@ -1690,8 +1700,8 @@ fn bv_prop(c: &mut Ctx, i: u32) -> u32 {
 }
 fn bv_set_rect(c: &mut Ctx, dest: bool) -> u32 {
     let b = base(c, BV);
-    let r = (c.i(1), c.i(2), c.i(3), c.i(4));
-    if r.2 <= 0 || r.3 <= 0 {
+    let r = R::new(c.i(1), c.i(2), c.i(3), c.i(4));
+    if r.empty() {
         return Hr::InvalidArg.code();
     }
     with(b, |g| if dest { g.dst = Some(r) } else { g.src = Some(r) });
@@ -1699,9 +1709,9 @@ fn bv_set_rect(c: &mut Ctx, dest: bool) -> u32 {
     0
 }
 fn bv_get_rect(c: &mut Ctx, dest: bool) -> u32 {
-    let r = with(base(c, BV), |g| if dest { g.dst.unwrap_or((0, 0, g.window.2, g.window.3)) } else { g.src.unwrap_or((0, 0, g.video.0, g.video.1)) }).unwrap_or_default();
-    for (i, v) in [r.0, r.1, r.2, r.3].into_iter().enumerate() {
-        put32(c.a(1 + i as u32), v as u32);
+    let r = with(base(c, BV), |g| if dest { g.dst.unwrap_or(R::sized(g.window.w, g.window.h)) } else { g.src.unwrap_or(R::sized(g.video.0, g.video.1)) }).unwrap_or_default();
+    for (i, v) in (0u32..).zip([r.x, r.y, r.w, r.h]) {
+        put32(c.a(1 + i), v.cast_unsigned());
     }
     0
 }
@@ -1717,14 +1727,14 @@ fn bv_is_default(c: &mut Ctx, dest: bool) -> u32 {
 }
 fn bv_size(c: &mut Ctx) -> u32 {
     let v = with(base(c, BV), |g| g.video).unwrap_or_default();
-    put32(c.a(1), v.0 as u32);
-    put32(c.a(2), v.1 as u32);
+    put32(c.a(1), v.0.cast_unsigned());
+    put32(c.a(2), v.1.cast_unsigned());
     0
 }
 fn bv_aspect(c: &mut Ctx) -> u32 {
     let v = with(base(c, BV), |g| g.video).unwrap_or_default();
-    put32(c.a(1), v.0 as u32);
-    put32(c.a(2), v.1 as u32);
+    put32(c.a(1), v.0.cast_unsigned());
+    put32(c.a(2), v.1.cast_unsigned());
     0
 }
 /// GetCurrentImage(size, image): a BITMAPINFOHEADER and the frame shown, 32-bit bottom-up
@@ -1755,8 +1765,8 @@ fn bv_image(c: &mut Ctx) -> u32 {
 /// The bytes of a 32-bit DIB of w x h with its BITMAPINFOHEADER (None: over 1 GiB, or a size
 /// that is none)
 fn dib_bytes(w: u32, h: u32) -> Option<u32> {
-    let n = (w as u64).checked_mul(h as u64)?.checked_mul(4)?.checked_add(40)?;
-    (n <= 1 << 30).then_some(n as u32)
+    let n = u64::from(w).checked_mul(u64::from(h))?.checked_mul(4)?.checked_add(40)?;
+    u32::try_from(n).ok().filter(|&n| n <= 1 << 30)
 }
 /// The frame graph `b` shows as a 32-bit bottom-up DIB at `img` (a BITMAPINFOHEADER, then
 /// 4 * w * h bytes), if that fits in the `cap` bytes there.
@@ -1768,8 +1778,8 @@ fn put_dib(b: u32, img: u32, cap: u32) -> bool {
     if dib_bytes(w, h).is_none_or(|need| need > cap) {
         return false;
     }
-    let mut px = vec![0u8; (4 * w * h) as usize];
-    if !unsafe { play::frame(stream, n as i32, px.as_mut_ptr(), 4 * w as usize, w, h) } {
+    let mut px = vec![0u8; us(4 * w * h)];
+    if !unsafe { play::frame(stream, i32::try_from(n).unwrap_or(i32::MAX), px.as_mut_ptr(), us(4 * w), w, h) } {
         return false;
     }
     mem::fill(img, 40, 0);
@@ -1780,7 +1790,7 @@ fn put_dib(b: u32, img: u32, cap: u32) -> bool {
     mem::w16(img + 14, 32);
     w32(img + 20, 4 * w * h);
     for y in 0..h {
-        let row = &px[(4 * w * (h - 1 - y)) as usize..][..(4 * w) as usize];
+        let row = &px[us(4 * w * (h - 1 - y))..][..us(4 * w)];
         mem::write(img + 40 + 4 * w * y, row);
     }
     true
@@ -2044,7 +2054,7 @@ impl Graph {
         owner: 0,
         style: DEFAULT_STYLE,
         style_ex: 0,
-        window: (0, 0, 1280, 720),
+        window: R::sized(1280, 720),
         visible: false,
         auto_show: true,
         drain: 0,
@@ -2065,15 +2075,15 @@ impl Graph {
 /// Where renderer `e`'s settings put a `video` picture (`shown`: it is drawn at all).
 fn place_of(e: &Evr, video: (i32, i32), shown: bool) -> Place {
     // (a VMR-9 shows nothing until it is given a destination; the EVR fills the window)
-    let dst = if (e.dst.2 > 0 && e.dst.3 > 0) || e.vmr { e.dst } else { crate::user::client_rect_screen(e.hwnd).map_or((0, 0, 0, 0), |r| (0, 0, r.r - r.l, r.b - r.t)) };
+    let dst = if !e.dst.empty() || e.vmr { e.dst } else { crate::user::client_rect_screen(e.hwnd).map_or(R::default(), |r| R::sized(r.r - r.l, r.b - r.t)) };
     // (the EVR's source as fractions of the picture)
     let s = e.src;
     let src = if e.vmr {
-        e.src_px.unwrap_or((0, 0, video.0, video.1))
+        e.src_px.unwrap_or(R::sized(video.0, video.1))
     } else {
-        ((s[0] * video.0 as f32) as i32, (s[1] * video.1 as f32) as i32, ((s[2] - s[0]) * video.0 as f32) as i32, ((s[3] - s[1]) * video.1 as f32) as i32)
+        R::new((s[0] * video.0 as f32) as i32, (s[1] * video.1 as f32) as i32, ((s[2] - s[0]) * video.0 as f32) as i32, ((s[3] - s[1]) * video.1 as f32) as i32)
     };
-    Place { hwnd: e.hwnd, dst: play::R::of(dst), src: play::R::of(src), letterbox: e.mode & 1 != 0, visible: e.hwnd != 0 && shown }
+    Place { hwnd: e.hwnd, dst, src, letterbox: e.mode & 1 != 0, visible: e.hwnd != 0 && shown }
 }
 
 /// A Media Session's EVR (mf/session.rs), drawing into `hwnd`: its block (one reference, the
@@ -2126,12 +2136,12 @@ struct Evr {
     hwnd: u32,
     /// the source as fractions (left top right bottom), the destination in the window
     src: [f32; 4],
-    dst: (i32, i32, i32, i32),
+    dst: R,
     /// MFVideoARMode / VMR9AspectRatioMode (1: keep the picture's shape)
     mode: u32,
     /// a VMR-9 (not an EVR): its source rectangle is in pixels (`src_px`, None: all of it)
     vmr: bool,
-    src_px: Option<(i32, i32, i32, i32)>,
+    src_px: Option<R>,
     /// it draws into `hwnd` itself (the EVR always; a VMR-9 once in VMR9Mode_Windowless): the
     /// graph's video window is not used
     windowless: bool,
@@ -2163,7 +2173,7 @@ pub(crate) fn evr_changed(e: u32) {
 pub(crate) fn vmr_evr(key: u32, windowless: Option<bool>) {
     let mut g = EVRS.lock().unwrap_or_else(|e| e.into_inner());
     let m = g.get_or_insert_with(HashMap::new);
-    let e = m.entry(key).or_insert(Evr { hwnd: 0, src: [0.0, 0.0, 1.0, 1.0], dst: (0, 0, 0, 0), mode: 0, vmr: true, src_px: None, windowless: false, border: 0, key: 0, graph: 0, refs: None });
+    let e = m.entry(key).or_insert(Evr { hwnd: 0, src: [0.0, 0.0, 1.0, 1.0], dst: R::default(), mode: 0, vmr: true, src_px: None, windowless: false, border: 0, key: 0, graph: 0, refs: None });
     if let Some(w) = windowless {
         e.windowless = w;
     }
@@ -2283,8 +2293,8 @@ fn dc_native(c: &mut Ctx) -> u32 {
     let v = native(dc_block(c));
     for p in [c.a(1), c.a(2)] {
         if p != 0 {
-            w32(p, v.0 as u32);
-            w32(p + 4, v.1 as u32);
+            w32(p, v.0.cast_unsigned());
+            w32(p + 4, v.1.cast_unsigned());
         }
     }
     0
@@ -2301,8 +2311,7 @@ fn dc_set_pos(c: &mut Ctx) -> u32 {
             v.src = [0, 1, 2, 3].map(|i| f32::from_bits(r32(s + 4 * i)));
         }
         if d != 0 {
-            let (l, t, r, b) = (r32(d) as i32, r32(d + 4) as i32, r32(d + 8) as i32, r32(d + 12) as i32);
-            v.dst = (l, t, r - l, b - t);
+            v.dst = rect_at(d);
         }
     });
     evr_changed(e);
@@ -2313,14 +2322,12 @@ fn dc_get_pos(c: &mut Ctx) -> u32 {
     let Some(e) = e else { return Hr::Pointer.code() };
     let (s, d) = (c.a(1), c.a(2));
     if s != 0 {
-        for (i, v) in e.src.iter().enumerate() {
-            w32(s + 4 * i as u32, v.to_bits());
+        for (i, v) in (0u32..).zip(&e.src) {
+            w32(s + 4 * i, v.to_bits());
         }
     }
     if d != 0 {
-        for (i, v) in [e.dst.0, e.dst.1, e.dst.0 + e.dst.2, e.dst.1 + e.dst.3].into_iter().enumerate() {
-            w32(d + 4 * i as u32, v as u32);
-        }
+        put_rect(d, e.dst);
     }
     0
 }
@@ -2394,10 +2401,10 @@ fn evr(iid: u32) -> Option<u32> {
         [vtable("EVR::IBaseFilter", &bf), vtable("EVR::IMFGetService", &gs), vtable("EVR::IMFVideoDisplayControl", &dc)]
     });
     let b = mem::heap_alloc(8 * 3, true);
-    for (k, t) in v.iter().enumerate() {
-        wp(b + ps() * k as u32, *t);
+    for (k, t) in (0u32..).zip(v) {
+        wp(b + ps() * k, *t);
     }
-    EVRS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Evr { hwnd: 0, src: [0.0, 0.0, 1.0, 1.0], dst: (0, 0, 0, 0), mode: 1, vmr: false, src_px: None, windowless: true, border: 0, key: 0, graph: 0, refs: Some(1) });
+    EVRS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Evr { hwnd: 0, src: [0.0, 0.0, 1.0, 1.0], dst: R::default(), mode: 1, vmr: false, src_px: None, windowless: true, border: 0, key: 0, graph: 0, refs: Some(1) });
     Some(b + ps() * s)
 }
 
@@ -2467,9 +2474,9 @@ fn wl_block(c: &Ctx) -> u32 {
 /// GetNativeVideoSize(w, h, aspect w, aspect h)
 pub(crate) fn wl_native(c: &mut Ctx) -> u32 {
     let v = native(wl_block(c));
-    for (i, x) in [v.0, v.1, v.0, v.1].into_iter().enumerate() {
-        if c.a(1 + i as u32) != 0 {
-            put32(c.a(1 + i as u32), x as u32);
+    for (i, x) in (0u32..).zip([v.0, v.1, v.0, v.1]) {
+        if c.a(1 + i) != 0 {
+            put32(c.a(1 + i), x.cast_unsigned());
         }
     }
     0
@@ -2484,17 +2491,19 @@ pub(crate) fn wl_min_ideal(c: &mut Ctx) -> u32 {
 /// 1025x769)
 pub(crate) fn wl_max_ideal(c: &mut Ctx) -> u32 {
     let (w, h) = crate::user::screen();
-    put32(c.a(1), (w + 1) as u32);
-    put32(c.a(2), (h + 1) as u32);
+    put32(c.a(1), (w + 1).cast_unsigned());
+    put32(c.a(2), (h + 1).cast_unsigned());
     0
 }
-fn rect_at(p: u32) -> (i32, i32, i32, i32) {
-    let (l, t, r, b) = (r32(p) as i32, r32(p + 4) as i32, r32(p + 8) as i32, r32(p + 12) as i32);
-    (l, t, r - l, b - t)
+/// The RECT at `p`.
+fn rect_at(p: u32) -> R {
+    let [l, t, r, b] = [0, 4, 8, 12].map(|o| r32(p + o).cast_signed());
+    R::from_ltrb(l, t, r, b)
 }
-fn put_rect(p: u32, r: (i32, i32, i32, i32)) {
-    for (i, v) in [r.0, r.1, r.0 + r.2, r.1 + r.3].into_iter().enumerate() {
-        w32(p + 4 * i as u32, v as u32);
+/// `r` as a RECT at `p`.
+fn put_rect(p: u32, r: R) {
+    for (i, v) in (0u32..).zip(r.ltrb()) {
+        w32(p + 4 * i, v.cast_unsigned());
     }
 }
 /// SetVideoPosition(const RECT *src, const RECT *dst)
@@ -2507,7 +2516,7 @@ pub(crate) fn wl_set_pos(c: &mut Ctx) -> u32 {
     if s != 0 {
         let r = rect_at(s);
         let v = native(e);
-        if r.0 < 0 || r.1 < 0 || r.2 <= 0 || r.3 <= 0 || r.0 + r.2 > v.0 || r.1 + r.3 > v.1 {
+        if r.x < 0 || r.y < 0 || r.empty() || r.x + r.w > v.0 || r.y + r.h > v.1 {
             return Hr::InvalidArg.code();
         }
     }
@@ -2527,7 +2536,7 @@ pub(crate) fn wl_get_pos(c: &mut Ctx) -> u32 {
     let Some(e) = evr_with(b, |v| *v) else { return Hr::Pointer.code() };
     let v = native(b);
     if c.a(1) != 0 {
-        put_rect(c.a(1), e.src_px.unwrap_or((0, 0, v.0, v.1)));
+        put_rect(c.a(1), e.src_px.unwrap_or(R::sized(v.0, v.1)));
     }
     if c.a(2) != 0 {
         put_rect(c.a(2), e.dst);
@@ -2651,10 +2660,10 @@ fn vmr(iid: u32) -> Option<u32> {
         _ => return None,
     };
     let b = mem::heap_alloc(8 * 3, true);
-    for (k, t) in v.iter().enumerate() {
-        wp(b + ps() * k as u32, *t);
+    for (k, t) in (0u32..).zip(v) {
+        wp(b + ps() * k, *t);
     }
-    EVRS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Evr { hwnd: 0, src: [0.0, 0.0, 1.0, 1.0], dst: (0, 0, 0, 0), mode: 0, vmr: true, src_px: None, windowless: false, border: 0, key: 0, graph: 0, refs: Some(1) });
+    EVRS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Evr { hwnd: 0, src: [0.0, 0.0, 1.0, 1.0], dst: R::default(), mode: 0, vmr: true, src_px: None, windowless: false, border: 0, key: 0, graph: 0, refs: Some(1) });
     Some(b + ps() * s)
 }
 

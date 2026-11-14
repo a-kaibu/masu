@@ -17,11 +17,11 @@ use kura::video;
 pub const SEC: u64 = 10_000_000;
 
 /// `t` as a float (times past 2^53 lose their last bits: none a movie reaches).
-fn float(t: u64) -> f64 {
+pub(crate) fn float(t: u64) -> f64 {
     t as f64
 }
 /// `x` as a time, saturating (NaN: 0, negative: 0, past the end: u64::MAX).
-fn time(x: f64) -> u64 {
+pub(crate) fn time(x: f64) -> u64 {
     x as u64
 }
 
@@ -173,9 +173,13 @@ impl R {
     pub const fn bottom(self) -> i32 {
         self.y.saturating_add(self.h)
     }
-    /// Its corners as a RECT's: left, top, right, bottom.
+    /// Its corners as a RECT's: left, top, right, bottom (wrapping, as the guest's arithmetic).
     pub const fn ltrb(self) -> [i32; 4] {
-        [self.x, self.y, self.right(), self.bottom()]
+        [self.x, self.y, self.x.wrapping_add(self.w), self.y.wrapping_add(self.h)]
+    }
+    /// Of a RECT's corners.
+    pub const fn from_ltrb(l: i32, t: i32, r: i32, b: i32) -> R {
+        R { x: l, y: t, w: r.wrapping_sub(l), h: b.wrapping_sub(t) }
     }
 }
 
