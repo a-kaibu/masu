@@ -112,3 +112,12 @@ fn every_format_answers_as_pinned() {
         panic!("d3d11 format answers differ from format_golden.txt (MASU_UPDATE_FORMATS=1 rewrites it):\n{}", diff.join("\n"));
     }
 }
+
+/// D3D11_BLEND (0..=20 and far past them) to the pipeline key's blend factor, as a color factor
+/// and as an alpha factor (render::d3d BLEND2 codes).
+#[test]
+fn blend_factors_as_pinned() {
+    let codes: Vec<u32> = (0..=20).chain([0x8001, u32::MAX]).collect();
+    let got = [false, true].map(|alpha| codes.iter().map(|&b| super::blend_factor(b, alpha).to_string()).collect::<Vec<_>>().join(" "));
+    assert_eq!(got, ["1 0 1 2 3 4 5 6 7 8 9 10 1 1 11 12 1 1 1 1 1 1 1", "1 0 1 4 5 4 5 6 7 6 7 10 1 1 11 12 1 1 1 1 1 1 1"]);
+}
