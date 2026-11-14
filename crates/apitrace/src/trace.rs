@@ -391,8 +391,47 @@ impl<'a> Parser<'a> {
         v
     }
 
+    /// One value; only what holds values (enums' values, arrays, structs, reprs) recurses here,
+    /// the rest is read by the leaf and signature readers below, out of line: a nested value
+    /// costs one small frame of this function and one of [`Parser::value`] (a debug build's
+    /// frame of the whole match was big enough that MAX_DEPTH levels overflowed a 256 KiB
+    /// stack, review: values_nested_too_deep_are_an_error).
     fn value_in(&mut self) -> R<Value> {
         let t = self.byte()?;
+        Ok(match t {
+            9 => {
+                let sig = self.enum_sig()?;
+                let v = self.value()?.int().ok_or("trace: enum value is not an integer")?;
+                Value::Enum(sig, v)
+            }
+            11 => {
+                let n = self.count()?;
+                let mut v = Vec::with_capacity(n.min(1 << 16));
+                for _ in 0..n {
+                    v.push(self.value()?);
+                }
+                Value::Array(v)
+            }
+            12 => {
+                let sig = self.struct_sig()?;
+                let mut m = Vec::with_capacity(sig.members.len());
+                for _ in 0..sig.members.len() {
+                    m.push(self.value()?);
+                }
+                Value::Struct(sig, m)
+            }
+            14 => {
+                let human = Box::new(self.value()?);
+                let machine = Box::new(self.value()?);
+                Value::Repr(human, machine)
+            }
+            t => self.leaf(t)?,
+        })
+    }
+
+    /// A value of type `t` that holds no values.
+    #[inline(never)]
+    fn leaf(&mut self, t: u8) -> R<Value> {
         Ok(match t {
             0 => Value::Null,
             1 => Value::Bool(false),
@@ -403,26 +442,6 @@ impl<'a> Parser<'a> {
             6 => Value::Double(f64::from_le_bytes(self.array()?)),
             7 => Value::Str(self.string()?),
             8 => Value::Blob(self.string()?),
-            9 => {
-                let id = self.uint()?;
-                let sig = match self.enums.get(&id) {
-                    Some(s) => s.clone(),
-                    None => {
-                        let n = self.count()?;
-                        let mut values = Vec::with_capacity(n);
-                        for _ in 0..n {
-                            let name = String::from_utf8_lossy(&self.string()?).into_owned();
-                            let v = self.value()?.int().ok_or("trace: enum value is not an integer")?;
-                            values.push((name, v));
-                        }
-                        let s = Rc::new(EnumSig { values });
-                        self.enums.insert(id, s.clone());
-                        s
-                    }
-                };
-                let v = self.value()?.int().ok_or("trace: enum value is not an integer")?;
-                Value::Enum(sig, v)
-            }
             10 => {
                 let id = self.uint()?;
                 let sig = match self.bitmasks.get(&id) {
@@ -441,38 +460,47 @@ impl<'a> Parser<'a> {
                 };
                 Value::Bitmask(sig, self.uint()?)
             }
-            11 => {
-                let n = self.count()?;
-                Value::Array((0..n).map(|_| self.value()).collect::<R<_>>()?)
-            }
-            12 => {
-                let id = self.uint()?;
-                let sig = match self.structs.get(&id) {
-                    Some(s) => s.clone(),
-                    None => {
-                        let name = String::from_utf8_lossy(&self.string()?).into_owned();
-                        let n = self.count()?;
-                        let members = (0..n).map(|_| self.string().map(|s| String::from_utf8_lossy(&s).into_owned())).collect::<R<_>>()?;
-                        let s = Rc::new(StructSig { name, members });
-                        self.structs.insert(id, s.clone());
-                        s
-                    }
-                };
-                let m = (0..sig.members.len()).map(|_| self.value()).collect::<R<_>>()?;
-                Value::Struct(sig, m)
-            }
             13 => Value::Opaque(self.uint()?),
-            14 => {
-                let human = self.value()?;
-                let machine = self.value()?;
-                Value::Repr(Box::new(human), Box::new(machine))
-            }
             15 => {
                 let n = self.count()?;
                 Value::WStr((0..n).map(|_| self.uint().map(|c| c as u32)).collect::<R<_>>()?)
             }
             t => return Err(format!("trace: unknown value type {t} at byte {}", self.i - 1)),
         })
+    }
+
+    /// An enum's signature: by id, read the first time (its values are values, so this recurses
+    /// through [`Parser::value`] too, counted against MAX_DEPTH).
+    #[inline(never)]
+    fn enum_sig(&mut self) -> R<Rc<EnumSig>> {
+        let id = self.uint()?;
+        if let Some(s) = self.enums.get(&id) {
+            return Ok(s.clone());
+        }
+        let n = self.count()?;
+        let mut values = Vec::with_capacity(n);
+        for _ in 0..n {
+            let name = String::from_utf8_lossy(&self.string()?).into_owned();
+            let v = self.value()?.int().ok_or("trace: enum value is not an integer")?;
+            values.push((name, v));
+        }
+        let s = Rc::new(EnumSig { values });
+        self.enums.insert(id, s.clone());
+        Ok(s)
+    }
+
+    #[inline(never)]
+    fn struct_sig(&mut self) -> R<Rc<StructSig>> {
+        let id = self.uint()?;
+        if let Some(s) = self.structs.get(&id) {
+            return Ok(s.clone());
+        }
+        let name = String::from_utf8_lossy(&self.string()?).into_owned();
+        let n = self.count()?;
+        let members = (0..n).map(|_| self.string().map(|s| String::from_utf8_lossy(&s).into_owned())).collect::<R<_>>()?;
+        let s = Rc::new(StructSig { name, members });
+        self.structs.insert(id, s.clone());
+        Ok(s)
     }
 
     fn byte(&mut self) -> R<u8> {
