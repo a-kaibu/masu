@@ -540,10 +540,10 @@ impl Parser {
                 }
                 Tok::Ident(_) | Tok::Int(..) | Tok::Float(_) | Tok::Str(_) | Tok::Punct(_) | Tok::PackMatrix(_) => {}
             }
-            if lines.last().is_none_or(|l| l.0 != t.line) {
-                lines.push((t.line, Vec::new()));
+            match lines.last_mut() {
+                Some(l) if l.0 == t.line => l.1.push(super::pp::text(&t)),
+                Some(_) | None => lines.push((t.line, vec![super::pp::text(&t)])),
             }
-            lines.last_mut().unwrap().1.push(super::pp::text(&t));
         }
         let mut out = String::new();
         for (_, toks) in lines {

@@ -787,7 +787,9 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
             };
             if ch != 0 {
                 // (the channel: the sampler operand's component select)
-                l.x_last().src[2] = Src::SampC(s, ch);
+                if let Some(x) = l.x_last().and_then(|i| i.src.get_mut(2)) {
+                    *x = Src::SampC(s, ch);
+                }
             }
             v.ty = Ty::Vec(B::Float, 4);
             let C::R(r, _) = v.c[0] else { unreachable!() };

@@ -338,7 +338,8 @@ pub fn assemble(src: &str) -> Result<Vec<u32>, String> {
             }
             return Err(format!("no shader version before {line}"));
         }
-        let v = ver.as_ref().unwrap();
+        // (set above: the version line comes first)
+        let Some(v) = ver.as_ref() else { continue };
         let _ = v.minor;
         let (coissue, mnem_l) = match mnem_l.strip_prefix('+') {
             Some(m) => (true, m.to_string()),

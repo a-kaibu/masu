@@ -162,7 +162,7 @@ fn clean(src: &str) -> Vec<String> {
             }
             if in_str {
                 if b[i] == b'\\' && i + 1 < b.len() {
-                    let ch = raw[i + 1..].chars().next().unwrap();
+                    let Some(ch) = raw[i + 1..].chars().next() else { break };
                     cur.push('\\');
                     cur.push(ch);
                     i += 1 + ch.len_utf8();
@@ -180,7 +180,7 @@ fn clean(src: &str) -> Vec<String> {
             } else if b[i] == b'"' {
                 in_str = true;
             }
-            let ch = raw[i..].chars().next().unwrap();
+            let Some(ch) = raw[i..].chars().next() else { break };
             cur.push(ch);
             i += ch.len_utf8();
         }
@@ -269,7 +269,9 @@ impl Pp<'_> {
                     "elif" => {
                         let Some(&(_, taken, outer)) = conds.last() else { return Err(format!("line {line}: #elif without #if")) };
                         let v = !taken && outer && self.eval_if(rest, line)? != 0;
-                        *conds.last_mut().unwrap() = (v, taken || v, outer);
+                        if let Some(c) = conds.last_mut() {
+                            *c = (v, taken || v, outer);
+                        }
                     }
                     "else" => {
                         let Some(c) = conds.last_mut() else { return Err(format!("line {line}: #else without #if")) };
@@ -410,7 +412,9 @@ impl Pp<'_> {
                             }
                             Tok::Ident(_) | Tok::Int(..) | Tok::Float(_) | Tok::Str(_) | Tok::Punct(_) | Tok::PackMatrix(_) => {}
                         }
-                        args.last_mut().unwrap().push(t.clone());
+                        if let Some(a) = args.last_mut() {
+                            a.push(t.clone());
+                        }
                         j += 1;
                     }
                     if params.is_empty() && args.len() == 1 && args[0].is_empty() {
@@ -512,14 +516,15 @@ fn paste(toks: Vec<Token>) -> Vec<Token> {
     let mut out: Vec<Token> = Vec::new();
     let mut i = 0;
     while i < toks.len() {
-        if toks[i].t == Tok::Punct("##") && !out.is_empty() && i + 1 < toks.len() {
-            let a = out.pop().unwrap();
-            let s = text(&a) + &text(&toks[i + 1]);
-            let mut v = Vec::new();
-            let _ = lex_line(&s, a.line, &mut v);
-            out.extend(v);
-            i += 2;
-            continue;
+        if toks[i].t == Tok::Punct("##") && i + 1 < toks.len() {
+            if let Some(a) = out.pop() {
+                let s = text(&a) + &text(&toks[i + 1]);
+                let mut v = Vec::new();
+                let _ = lex_line(&s, a.line, &mut v);
+                out.extend(v);
+                i += 2;
+                continue;
+            }
         }
         out.push(toks[i].clone());
         i += 1;

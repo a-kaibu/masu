@@ -117,7 +117,7 @@ pub struct L<'a> {
     xs: Vec<u32>,
     icb: Vec<[u32; 4]>,
     marks: Vec<(u32, usize)>,
-    scopes: Vec<HashMap<String, Val>>,
+    scopes: Scopes,
     globals: HashMap<String, Val>,
     /// global name -> (cbuffer, variable)
     cbvar: HashMap<String, (usize, usize)>,
@@ -158,6 +158,37 @@ fn no_size(t: &Ty) -> bool {
 /// The most instructions a shader may lower to (D3D11 has no limit, fxc gives up near a million
 /// and a real shader is a few thousand)
 pub const MAX_INS: usize = 1 << 20;
+
+/// The local variable scopes: never empty (a declaration always has a scope to go to, so no
+/// unwrap of the innermost one), innermost `top`.
+#[derive(Default)]
+pub struct Scopes {
+    top: HashMap<String, Val>,
+    outer: Vec<HashMap<String, Val>>,
+}
+
+impl Scopes {
+    fn with(top: HashMap<String, Val>) -> Scopes {
+        Scopes { top, outer: Vec::new() }
+    }
+
+    fn open(&mut self) {
+        self.outer.push(std::mem::take(&mut self.top));
+    }
+
+    /// Closes the innermost scope (the outermost one stays, empty).
+    fn close(&mut self) {
+        self.top = self.outer.pop().unwrap_or_default();
+    }
+
+    fn declare(&mut self, name: String, v: Val) -> Option<Val> {
+        self.top.insert(name, v)
+    }
+
+    fn innermost_first(&self) -> impl Iterator<Item = &HashMap<String, Val>> {
+        std::iter::once(&self.top).chain(self.outer.iter().rev())
+    }
+}
 
 pub fn ncomp(prog: &Program, t: &Ty) -> usize {
     match t {
@@ -451,7 +482,7 @@ impl<'a> L<'a> {
             icb: Vec::new(),
             marks: Vec::new(),
             wbs: Vec::new(),
-            scopes: Vec::new(),
+            scopes: Scopes::default(),
             globals: HashMap::new(),
             cbvar: HashMap::new(),
             texs: Vec::new(),
@@ -505,8 +536,7 @@ impl<'a> L<'a> {
     }
 
     fn emit(&mut self, op: sm4::Opcode, dst: Vec<Dst>, src: Vec<Src>) -> &mut Ins {
-        self.code.push(Ins { op, sat: false, nz: false, ctl: 0, dst, src, offset: [0; 3] });
-        self.code.last_mut().unwrap()
+        self.code.push_mut(Ins { op, sat: false, nz: false, ctl: 0, dst, src, offset: [0; 3] })
     }
 
     fn flow(&mut self, op: sm4::Opcode) {
@@ -988,7 +1018,7 @@ impl<'a> L<'a> {
     }
 
     fn lookup(&mut self, name: &str, line: u32) -> R<Val> {
-        for s in self.scopes.iter().rev() {
+        for s in self.scopes.innermost_first() {
             if let Some(v) = s.get(name) {
                 return Ok(v.clone());
             }
@@ -1337,9 +1367,9 @@ impl<'a> L<'a> {
                 Some(e) => Some(self.init_value(&t, e)?),
                 None => None,
             };
-            let all_imm = val.as_ref().is_some_and(|x| x.c.iter().all(|c| matches!(c, C::I(_))));
-            if v.is_const && all_imm {
-                let val = val.unwrap();
+            let imm = val.as_ref().filter(|x| x.c.iter().all(|c| matches!(c, C::I(_))));
+            if let (true, Some(val)) = (v.is_const, imm) {
+                let val = val.clone();
                 if let Ty::Array(..) = t {
                     // an immediate constant buffer
                     let mut u = Vec::new();
@@ -1531,14 +1561,14 @@ impl<'a> L<'a> {
             }
             self.threads = Some([x as u32, y as u32, z as u32]);
         }
-        self.scopes.push(HashMap::new());
+        self.scopes.open();
         self.setup_globals(&uniforms)?;
         for (p, a) in bound.iter().zip(args) {
             let v = self.expr(a)?;
             let v = self.cast(v, p.ty())?;
-            self.scopes.last_mut().unwrap().insert(p.name.clone(), v);
+            self.scopes.declare(p.name.clone(), v);
         }
-        let body = f.body.as_ref().unwrap();
+        let Some(body) = f.body.as_ref() else { return Err(format!("{} has no body", f.name)) };
         let mut outs = Vec::new();
         for p in f.params.iter().filter(|p| !p.uniform && !is_bound(p)) {
             let t = p.ty().clone();
@@ -1552,7 +1582,7 @@ impl<'a> L<'a> {
                     self.assign(&s, &iregs);
                 }
                 outs.push((s.clone(), regs));
-                self.scopes.last_mut().unwrap().insert(p.name.clone(), Val::num(t, s));
+                self.scopes.declare(p.name.clone(), Val::num(t, s));
             } else {
                 let mut regs = Vec::new();
                 self.sig(&t, p.sem.as_deref(), p.interp, false, &mut regs)?;
@@ -1563,7 +1593,7 @@ impl<'a> L<'a> {
                 } else {
                     regs
                 };
-                self.scopes.last_mut().unwrap().insert(p.name.clone(), Val::num(t, v));
+                self.scopes.declare(p.name.clone(), Val::num(t, v));
             }
         }
         let mut ret_regs = Vec::new();
@@ -1600,7 +1630,7 @@ impl<'a> L<'a> {
     }
 
     fn write_outputs(&mut self) -> R<()> {
-        let (outs, _) = self.fns.last().unwrap().entry.clone().unwrap();
+        let Some((outs, _)) = self.fns.last().and_then(|f| f.entry.clone()) else { return Err("outputs written outside the entry point".into()) };
         for (s, regs) in outs {
             self.assign(&regs, &s);
         }
@@ -1747,14 +1777,15 @@ impl<'a> L<'a> {
 
     // ---- statements ----
 
-    fn fctx(&mut self) -> &mut FnCtx {
-        self.fns.last_mut().unwrap()
+    /// The function being lowered (statements are lowered only inside one)
+    fn fctx(&mut self) -> R<&mut FnCtx> {
+        self.fns.last_mut().ok_or_else(|| "a statement outside a function".to_string())
     }
 
     fn stmts(&mut self, ss: &[Stmt]) -> R<()> {
         for (i, s) in ss.iter().enumerate() {
             self.stmt(s)?;
-            if let Some(f) = self.fctx().flag {
+            if let Some(f) = self.fctx()?.flag {
                 if has_return(s) && i + 1 < ss.len() {
                     self.cond_op(sm4::IF, C::R(temp(f), 0), false);
                     self.stmts(&ss[i + 1..])?;
@@ -1767,9 +1798,9 @@ impl<'a> L<'a> {
     }
 
     fn scoped(&mut self, s: &Stmt) -> R<()> {
-        self.scopes.push(HashMap::new());
+        self.scopes.open();
         let r = self.stmt(s);
-        self.scopes.pop();
+        self.scopes.close();
         r
     }
 
@@ -1787,13 +1818,14 @@ impl<'a> L<'a> {
 
     /// after a loop or switch whose body returned (inlined function with a flag): leave the
     /// enclosing loop too
-    fn after_breakable(&mut self, body_returns: bool) {
-        let f = self.fctx();
+    fn after_breakable(&mut self, body_returns: bool) -> R<()> {
+        let f = self.fctx()?;
         if let (Some(flag), true) = (f.flag, body_returns) {
             if f.loops > 0 {
                 self.cond_op(sm4::BREAKC, C::R(temp(flag), 0), true);
             }
         }
+        Ok(())
     }
 
     fn stmt(&mut self, s: &Stmt) -> R<()> {
@@ -1810,7 +1842,7 @@ impl<'a> L<'a> {
                             Some(e) => self.expr(e)?,
                             None => return Err(format!("line {}: local texture or sampler without a value", v.line)),
                         };
-                        self.scopes.last_mut().unwrap().insert(v.name.clone(), val);
+                        self.scopes.declare(v.name.clone(), val);
                         continue;
                     }
                     if v.is_static {
@@ -1829,7 +1861,7 @@ impl<'a> L<'a> {
                     if v.is_const && !matches!(t, Ty::Array(..)) {
                         if let Some(i) = &init {
                             if i.c.iter().all(|c| matches!(c, C::I(_))) {
-                                self.scopes.last_mut().unwrap().insert(v.name.clone(), i.clone());
+                                self.scopes.declare(v.name.clone(), i.clone());
                                 continue;
                             }
                         }
@@ -1838,13 +1870,13 @@ impl<'a> L<'a> {
                     if let Some(i) = init {
                         self.assign(&st, &i.c);
                     }
-                    self.scopes.last_mut().unwrap().insert(v.name.clone(), Val::num(t, st));
+                    self.scopes.declare(v.name.clone(), Val::num(t, st));
                 }
             }
             Stmt::Block(v) => {
-                self.scopes.push(HashMap::new());
+                self.scopes.open();
                 let r = self.stmts(v);
-                self.scopes.pop();
+                self.scopes.close();
                 r?;
             }
             Stmt::If(c, a, b) => {
@@ -1868,7 +1900,7 @@ impl<'a> L<'a> {
                 self.flow(ENDIF);
             }
             Stmt::For(init, cond, step, body) => {
-                self.scopes.push(HashMap::new());
+                self.scopes.open();
                 if let Some(i) = init {
                     self.stmt(i)?;
                 }
@@ -1882,7 +1914,7 @@ impl<'a> L<'a> {
                     None
                 };
                 self.flow(LOOP);
-                self.fctx().loops += 1;
+                self.fctx()?.loops += 1;
                 if let (Some(f), Some(st)) = (first, step) {
                     self.cond_op(IF, C::R(temp(f), 0), false);
                     self.expr(st)?;
@@ -1898,21 +1930,21 @@ impl<'a> L<'a> {
                 if let (None, Some(st)) = (first, step) {
                     self.expr(st)?;
                 }
-                self.fctx().loops -= 1;
+                self.fctx()?.loops -= 1;
                 self.flow(ENDLOOP);
-                self.scopes.pop();
-                self.after_breakable(has_return(body));
+                self.scopes.close();
+                self.after_breakable(has_return(body))?;
             }
             Stmt::While(c, body) => {
                 self.flow(LOOP);
-                self.fctx().loops += 1;
+                self.fctx()?.loops += 1;
                 let cv = self.expr(c)?;
                 let t = self.truth(cv)?;
                 self.cond_op(BREAKC, t, false);
                 self.scoped(body)?;
-                self.fctx().loops -= 1;
+                self.fctx()?.loops -= 1;
                 self.flow(ENDLOOP);
-                self.after_breakable(has_return(body));
+                self.after_breakable(has_return(body))?;
             }
             Stmt::Do(body, c) => {
                 let cont = has_continue(body);
@@ -1925,7 +1957,7 @@ impl<'a> L<'a> {
                     None
                 };
                 self.flow(LOOP);
-                self.fctx().loops += 1;
+                self.fctx()?.loops += 1;
                 if let Some(f) = first {
                     self.cond_op(IF, C::R(temp(f), 0), false);
                     let cv = self.expr(c)?;
@@ -1940,9 +1972,9 @@ impl<'a> L<'a> {
                     let t = self.truth(cv)?;
                     self.cond_op(BREAKC, t, false);
                 }
-                self.fctx().loops -= 1;
+                self.fctx()?.loops -= 1;
                 self.flow(ENDLOOP);
-                self.after_breakable(has_return(body));
+                self.after_breakable(has_return(body))?;
             }
             Stmt::Switch(v, cases) => {
                 let val = self.expr(v)?;
@@ -1956,7 +1988,7 @@ impl<'a> L<'a> {
                     s @ (Src::R { .. } | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s,
                 };
                 self.emit(SWITCH, vec![], vec![s]);
-                self.fctx().loops += 1;
+                self.fctx()?.loops += 1;
                 let mut returns = false;
                 for (labels, body) in cases {
                     for l in labels {
@@ -1968,18 +2000,18 @@ impl<'a> L<'a> {
                             None => self.flow(DEFAULT),
                         }
                     }
-                    self.scopes.push(HashMap::new());
+                    self.scopes.open();
                     self.stmts(body)?;
-                    self.scopes.pop();
+                    self.scopes.close();
                     returns |= body.iter().any(has_return);
                     // (a case falling through to the end of the switch)
                     if !matches!(self.code.last().map(|i| i.op), Some(BREAK | RET | CONTINUE)) {
                         self.flow(BREAK);
                     }
                 }
-                self.fctx().loops -= 1;
+                self.fctx()?.loops -= 1;
                 self.flow(ENDSWITCH);
-                self.after_breakable(returns);
+                self.after_breakable(returns)?;
             }
             Stmt::Break => self.flow(BREAK),
             Stmt::Continue => self.flow(CONTINUE),
@@ -1987,7 +2019,7 @@ impl<'a> L<'a> {
                 self.emit(DISCARD, vec![], vec![Src::Imm([TRUE; 4], true)]).nz = true;
             }
             Stmt::Return(e, line) => {
-                let rt = self.fctx().ret_ty.clone();
+                let rt = self.fctx()?.ret_ty.clone();
                 let val = match e {
                     Some(e) if rt != Ty::Void => {
                         let v = self.expr(e)?;
@@ -1999,8 +2031,7 @@ impl<'a> L<'a> {
                     }
                     None => None,
                 };
-                if self.fctx().entry.is_some() && !self.sm3() {
-                    let (_, ret_regs) = self.fctx().entry.clone().unwrap();
+                if let (Some((_, ret_regs)), false) = (self.fctx()?.entry.clone(), self.sm3()) {
                     if let Some(v) = val {
                         self.assign(&ret_regs, &v.c);
                     }
@@ -2009,12 +2040,12 @@ impl<'a> L<'a> {
                     return Ok(());
                 }
                 if let Some(v) = val {
-                    let r = self.fctx().ret.clone();
+                    let r = self.fctx()?.ret.clone();
                     self.assign(&r, &v.c);
                 }
-                if let Some(f) = self.fctx().flag {
+                if let Some(f) = self.fctx()?.flag {
                     self.assign(&[C::R(temp(f), 0)], &[C::I(self.tru())]);
-                    if self.fctx().loops > 0 {
+                    if self.fctx()?.loops > 0 {
                         self.flow(BREAK);
                     }
                 }
@@ -2053,9 +2084,11 @@ impl<'a> L<'a> {
                 let mut tb = Vec::new();
                 leaf_bases(self.prog, t, &mut tb);
                 let n: usize = flat.iter().map(|v| v.c.len()).sum();
+                // (float4(x): every component x)
                 if n == 1 && tb.len() > 1 {
-                    // float4(x): every component x
-                    return self.cast(flat.pop().unwrap(), t);
+                    if let Some(x) = flat.pop() {
+                        return self.cast(x, t);
+                    }
                 }
                 if n != tb.len() {
                     return Err(format!("constructor of {t:?} with {n} components"));
@@ -2312,8 +2345,8 @@ impl<'a> L<'a> {
     /// Stores the places picked by a run-time index since `mark` back (innermost first):
     /// element k = index == k ? the copy : element k.
     fn write_back(&mut self, mark: usize) {
-        while self.wbs.len() > mark {
-            match self.wbs.pop().unwrap() {
+        while let Some(wb) = (self.wbs.len() > mark).then(|| self.wbs.pop()).flatten() {
+            match wb {
                 Wb::Sel(elems, iv, cp, b) => {
                     for (k, e) in elems.iter().enumerate() {
                         let m = self.alu(sm4::IEQ, B::Bool, &[&[iv], &[C::I(self.ival(k as i64))]])[0];
@@ -2780,7 +2813,7 @@ impl<'a> L<'a> {
         if self.code.len() > MAX_INS {
             return Err(format!("line {line}: shader past {MAX_INS} instructions"));
         }
-        let body = f.body.as_ref().unwrap();
+        let Some(body) = f.body.as_ref() else { return Err(format!("line {line}: {} has no body", f.name)) };
         let mut scope = HashMap::new();
         let mut copy_back = Vec::new();
         for (p, a) in f.params.iter().zip(args) {
@@ -2821,8 +2854,7 @@ impl<'a> L<'a> {
             None
         };
         // (the callee sees globals and its parameters only)
-        let saved = std::mem::take(&mut self.scopes);
-        self.scopes.push(scope);
+        let saved = std::mem::replace(&mut self.scopes, Scopes::with(scope));
         self.fns.push(FnCtx { ret: ret.clone(), ret_ty: f.ret.clone(), flag, loops: 0, entry: None });
         let r = self.stmts(body);
         self.fns.pop();
@@ -2873,8 +2905,8 @@ impl<'a> L<'a> {
     pub(super) fn x_opnd(&mut self, cs: &[C]) -> Src {
         self.opnd(cs)
     }
-    pub(super) fn x_last(&mut self) -> &mut Ins {
-        self.code.last_mut().unwrap()
+    pub(super) fn x_last(&mut self) -> Option<&mut Ins> {
+        self.code.last_mut()
     }
     pub(super) fn x_emit(&mut self, op: sm4::Opcode, dst: Vec<Dst>, src: Vec<Src>) -> &mut Ins {
         self.emit(op, dst, src)
