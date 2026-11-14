@@ -1,0 +1,604 @@
+create_instance 0xb44392da 0x4d645ace: Some(true)
+create_instance 0xb44392da 0x0: Some(true)
+create_instance 0xb44392da 0x1234: Some(false)
+create_instance 0x1234 0x4d645ace: None
+0 create: 0x0 #0
+1 #0 open: 0xc00d36b6 0xcccccccc | dev refs=1
+2 #0 reset dev=true good=false: 0x80070057 | dev refs=1
+3 #0 release: 0 | dev refs=1
+4 create: 0x0 #1
+5 create: 0x0 #2
+6 #1 methods: 10 | dev refs=1
+7 create: 0x0 #3
+8 #3 open: 0xc00d36b6 0xcccccccc | dev refs=1
+9 #2 open: 0xc00d36b6 0xcccccccc | dev refs=1
+10 #1 reset dev=true good=true: 0x0 | dev refs=2
+11 #2 release: 0 | dev refs=2
+12 #3 open: 0xc00d36b6 0xcccccccc | dev refs=2
+13 #3 open: 0xc00d36b6 0xcccccccc | dev refs=2
+14 #1 lock: 0x80004002 0x0 | dev refs=2
+15 #3 reset dev=false good=true: 0x80070057 | dev refs=2
+16 #3 methods: 10 | dev refs=2
+17 #1 addref: 2 | dev refs=2
+18 #1 qi 0xeb533d5d: 0x0 self=true | dev refs=2
+19 create: 0x0 #4
+20 #3 open: 0xc00d36b6 0xcccccccc | dev refs=2
+21 #1 release: 2 | dev refs=2
+22 #3 addref: 2 | dev refs=2
+23 #4 reset dev=true good=true: 0x0 | dev refs=3
+24 #3 release: 1 | dev refs=3
+25 #4 reset dev=true good=false: 0x80070057 | dev refs=3
+26 #3 lock: 0xc00d36b6 0x0 | dev refs=3
+27 #1 qi 0x77: 0x80004002 self=false | dev refs=3
+28 #1 qi 0xeb533d5d: 0x0 self=true | dev refs=3
+29 create: 0x0 #5
+30 #3 open: 0xc00d36b6 0xcccccccc | dev refs=3
+31 #1 methods: 10 | dev refs=3
+32 #3 lock: 0xc00d36b6 0x0 | dev refs=3
+33 create: 0x0 #6
+34 #6 methods: 10 | dev refs=3
+35 create: 0x0 #7
+36 #5 reset dev=true good=true: 0x0 | dev refs=4
+37 #6 qi 0x77: 0x80004002 self=false | dev refs=4
+38 #1 reset dev=true good=true: 0x0 | dev refs=4
+39 create t=true p=false: 0x80004003
+40 #1 reset dev=true good=true: 0x0 | dev refs=4
+41 #1 lock: 0x80004002 0x0 | dev refs=4
+42 #6 lock: 0xc00d36b6 0x0 | dev refs=4
+43 #6 reset dev=true good=true: 0x0 | dev refs=5
+44 #6 open: 0x0 0x1 | dev refs=5
+45 #6 release: 0 | dev refs=4
+46 #3 reset dev=false good=true: 0x80070057 | dev refs=4
+47 #7 open: 0x80004003 0xcccccccc | dev refs=4
+48 #5 reset dev=true good=true: 0x0 | dev refs=4
+49 #3 lock: 0xc00d36b6 0x0 | dev refs=4
+50 #4 addref: 2 | dev refs=4
+51 #5 qi 0x77: 0x80004002 self=false | dev refs=4
+52 create: 0x0 #8
+53 #5 qi 0x0: 0x0 self=true | dev refs=4
+54 #5 addref: 3 | dev refs=4
+55 #3 lock: 0xc00d36b6 0x0 | dev refs=4
+56 #5 reset dev=true good=false: 0x80070057 | dev refs=4
+57 #4 methods: 10 | dev refs=4
+58 #5 lock: 0x80004002 0x0 | dev refs=4
+59 create: 0x0 #9
+60 #8 reset dev=true good=true: 0x0 | dev refs=5
+61 #5 qi 0xeb533d5d: 0x0 self=true | dev refs=5
+62 #4 addref: 3 | dev refs=5
+63 #5 addref: 5 | dev refs=5
+64 #5 addref: 6 | dev refs=5
+65 #4 methods: 10 | dev refs=5
+66 #1 release: 2 | dev refs=5
+67 #3 methods: 10 | dev refs=5
+68 #3 open: 0xc00d36b6 0xcccccccc | dev refs=5
+69 #4 reset dev=true good=true: 0x0 | dev refs=5
+70 #1 methods: 10 | dev refs=5
+71 #5 qi 0x0: 0x0 self=true | dev refs=5
+72 #5 methods: 10 | dev refs=5
+73 create: 0x0 #10
+74 #10 lock: 0xc00d36b6 0x0 | dev refs=5
+75 #5 methods: 10 | dev refs=5
+76 #7 qi 0xeb533d5d: 0x0 self=true | dev refs=5
+77 #1 methods: 10 | dev refs=5
+78 create: 0x0 #11
+79 #4 qi 0xeb533d5d: 0x0 self=true | dev refs=5
+80 create: 0x0 #12
+81 #11 reset dev=true good=true: 0x0 | dev refs=6
+82 #9 open: 0xc00d36b6 0xcccccccc | dev refs=6
+83 #5 release: 6 | dev refs=6
+84 #1 lock: 0x80004002 0x0 | dev refs=6
+85 #5 release: 5 | dev refs=6
+86 #10 release: 0 | dev refs=6
+87 #7 addref: 3 | dev refs=6
+88 create: 0x0 #13
+89 #11 release: 0 | dev refs=5
+90 #13 addref: 2 | dev refs=5
+91 #12 release: 0 | dev refs=5
+92 #13 release: 1 | dev refs=5
+93 create t=true p=false: 0x80004003
+94 #8 methods: 10 | dev refs=5
+95 #7 addref: 4 | dev refs=5
+96 #5 release: 4 | dev refs=5
+97 #7 lock: 0xc00d36b6 0x0 | dev refs=5
+98 #3 addref: 2 | dev refs=5
+99 #8 release: 0 | dev refs=4
+100 #9 qi 0x0: 0x0 self=true | dev refs=4
+101 #13 methods: 10 | dev refs=4
+102 #1 methods: 10 | dev refs=4
+103 #13 qi 0x0: 0x0 self=true | dev refs=4
+104 #5 release: 3 | dev refs=4
+105 #9 release: 1 | dev refs=4
+106 create: 0x0 #14
+107 #9 methods: 10 | dev refs=4
+108 create: 0x0 #15
+109 #1 methods: 10 | dev refs=4
+110 #15 lock: 0xc00d36b6 0x0 | dev refs=4
+111 #5 lock: 0x80004002 0x0 | dev refs=4
+112 #14 open: 0xc00d36b6 0xcccccccc | dev refs=4
+113 #9 release: 0 | dev refs=4
+114 #4 methods: 10 | dev refs=4
+115 #14 lock: 0xc00d36b6 0x0 | dev refs=4
+116 #4 methods: 10 | dev refs=4
+117 #15 qi 0x0: 0x0 self=true | dev refs=4
+118 #1 addref: 3 | dev refs=4
+119 #13 qi 0xeb533d5d: 0x0 self=true | dev refs=4
+120 #14 reset dev=true good=true: 0x0 | dev refs=5
+121 #15 qi 0x0: 0x0 self=true | dev refs=5
+122 #5 lock: 0x80004002 0x0 | dev refs=5
+123 #13 methods: 10 | dev refs=5
+124 #13 reset dev=true good=true: 0x0 | dev refs=6
+125 #14 addref: 2 | dev refs=6
+126 create: 0x0 #16
+127 #1 release: 2 | dev refs=6
+128 #16 release: 0 | dev refs=6
+129 #5 lock: 0x80004002 0x0 | dev refs=6
+130 #7 addref: 5 | dev refs=6
+131 #13 methods: 10 | dev refs=6
+132 #1 methods: 10 | dev refs=6
+133 #4 qi 0x0: 0x0 self=true | dev refs=6
+134 #5 lock: 0x80004002 0x0 | dev refs=6
+135 #4 release: 4 | dev refs=6
+136 #14 release: 1 | dev refs=6
+137 #5 reset dev=true good=true: 0x0 | dev refs=6
+138 #5 reset dev=false good=false: 0x80070057 | dev refs=6
+139 create: 0x0 #17
+140 #15 reset dev=true good=true: 0x0 | dev refs=7
+141 #17 qi 0x0: 0x0 self=true | dev refs=7
+142 #3 qi 0x0: 0x0 self=true | dev refs=7
+143 #4 methods: 10 | dev refs=7
+144 create t=true p=false: 0x80004003
+145 #13 qi 0x0: 0x0 self=true | dev refs=7
+146 #3 release: 2 | dev refs=7
+147 #17 lock: 0xc00d36b6 0x0 | dev refs=7
+148 #3 qi 0xeb533d5d: 0x0 self=true | dev refs=7
+149 create: 0x0 #18
+150 #18 reset dev=false good=false: 0x80070057 | dev refs=7
+151 create: 0x0 #19
+152 #4 addref: 5 | dev refs=7
+153 #14 reset dev=true good=true: 0x0 | dev refs=7
+154 #5 reset dev=true good=false: 0x80070057 | dev refs=7
+155 create: 0x0 #20
+156 #19 lock: 0xc00d36b6 0x0 | dev refs=7
+157 #14 qi 0x0: 0x0 self=true | dev refs=7
+158 #13 lock: 0x80004002 0x0 | dev refs=7
+159 #15 release: 2 | dev refs=7
+160 #14 lock: 0x80004002 0x0 | dev refs=7
+161 #19 release: 0 | dev refs=7
+162 #13 release: 3 | dev refs=7
+163 #20 open: 0xc00d36b6 0xcccccccc | dev refs=7
+164 #20 reset dev=false good=false: 0x80070057 | dev refs=7
+165 #15 lock: 0x80004002 0x0 | dev refs=7
+166 create: 0x0 #21
+167 #21 methods: 10 | dev refs=7
+168 #3 methods: 10 | dev refs=7
+169 #13 methods: 10 | dev refs=7
+170 #7 addref: 6 | dev refs=7
+171 #7 methods: 10 | dev refs=7
+172 #3 open: 0xc00d36b6 0xcccccccc | dev refs=7
+173 #20 methods: 10 | dev refs=7
+174 #17 lock: 0xc00d36b6 0x0 | dev refs=7
+175 create: 0x0 #22
+176 #14 open: 0x0 0x1 | dev refs=7
+177 #17 release: 1 | dev refs=7
+178 #7 release: 5 | dev refs=7
+179 #20 open: 0xc00d36b6 0xcccccccc | dev refs=7
+180 #1 release: 1 | dev refs=7
+181 create: 0x0 #23
+182 #14 qi 0xeb533d5d: 0x0 self=true | dev refs=7
+183 #3 addref: 4 | dev refs=7
+184 #7 lock: 0xc00d36b6 0x0 | dev refs=7
+185 create: 0x0 #24
+186 #18 reset dev=true good=false: 0x80070057 | dev refs=7
+187 create: 0x0 #25
+188 #17 open: 0x80004003 0xcccccccc | dev refs=7
+189 #3 open: 0xc00d36b6 0xcccccccc | dev refs=7
+190 #21 reset dev=true good=true: 0x0 | dev refs=8
+191 create: 0x0 #26
+192 #3 reset dev=true good=true: 0x0 | dev refs=9
+193 #1 release: 0 | dev refs=8
+194 #15 addref: 3 | dev refs=8
+195 #21 addref: 2 | dev refs=8
+196 create: 0x0 #27
+197 #5 release: 2 | dev refs=8
+198 #21 reset dev=true good=false: 0x80070057 | dev refs=8
+199 #13 addref: 4 | dev refs=8
+200 create t=false p=true: 0x80004003
+201 #22 release: 0 | dev refs=8
+202 #5 methods: 10 | dev refs=8
+203 #4 methods: 10 | dev refs=8
+204 #27 qi 0x0: 0x0 self=true | dev refs=8
+205 #7 open: 0xc00d36b6 0xcccccccc | dev refs=8
+206 #7 addref: 6 | dev refs=8
+207 #18 methods: 10 | dev refs=8
+208 #13 lock: 0x80004002 0x0 | dev refs=8
+209 #7 addref: 7 | dev refs=8
+210 create t=true p=false: 0x80004003
+211 #23 lock: 0xc00d36b6 0x0 | dev refs=8
+212 #18 qi 0x77: 0x80004002 self=false | dev refs=8
+213 #7 release: 6 | dev refs=8
+214 #27 release: 1 | dev refs=8
+215 create: 0x0 #28
+216 create: 0x0 #29
+217 create: 0x0 #30
+218 create: 0x0 #31
+219 #13 qi 0x77: 0x80004002 self=false | dev refs=8
+220 create: 0x0 #32
+221 #28 release: 0 | dev refs=8
+222 #30 open: 0xc00d36b6 0xcccccccc | dev refs=8
+223 #5 addref: 3 | dev refs=8
+224 #23 open: 0xc00d36b6 0xcccccccc | dev refs=8
+225 #32 addref: 2 | dev refs=8
+226 #25 qi 0x77: 0x80004002 self=false | dev refs=8
+227 create: 0x0 #33
+228 #17 methods: 10 | dev refs=8
+229 #31 release: 0 | dev refs=8
+230 #23 open: 0xc00d36b6 0xcccccccc | dev refs=8
+231 #18 reset dev=true good=false: 0x80070057 | dev refs=8
+232 #33 lock: 0xc00d36b6 0x0 | dev refs=8
+233 #4 addref: 6 | dev refs=8
+234 #17 lock: 0xc00d36b6 0x0 | dev refs=8
+235 #21 lock: 0x80004002 0x0 | dev refs=8
+236 #25 lock: 0xc00d36b6 0x0 | dev refs=8
+237 #30 reset dev=true good=false: 0x80070057 | dev refs=8
+238 #23 release: 0 | dev refs=8
+239 create: 0x0 #34
+240 #24 addref: 2 | dev refs=8
+241 #34 release: 0 | dev refs=8
+242 #25 reset dev=true good=true: 0x0 | dev refs=9
+243 #18 addref: 2 | dev refs=9
+244 #3 reset dev=true good=true: 0x0 | dev refs=9
+245 #15 qi 0x77: 0x80004002 self=false | dev refs=9
+246 #18 qi 0x0: 0x0 self=true | dev refs=9
+247 #15 addref: 4 | dev refs=9
+248 #17 lock: 0xc00d36b6 0x0 | dev refs=9
+249 create: 0x0 #35
+250 #5 methods: 10 | dev refs=9
+251 #27 release: 0 | dev refs=9
+252 #5 qi 0xeb533d5d: 0x0 self=true | dev refs=9
+253 #7 release: 5 | dev refs=9
+254 #14 addref: 4 | dev refs=9
+255 #24 addref: 3 | dev refs=9
+256 #33 reset dev=true good=true: 0x0 | dev refs=10
+257 create: 0x0 #36
+258 #15 addref: 5 | dev refs=10
+259 #15 addref: 6 | dev refs=10
+260 #17 methods: 10 | dev refs=10
+261 #26 release: 0 | dev refs=10
+262 #21 addref: 3 | dev refs=10
+263 #32 reset dev=true good=false: 0x80070057 | dev refs=10
+264 #32 reset dev=true good=false: 0x80070057 | dev refs=10
+265 #24 qi 0x77: 0x80004002 self=false | dev refs=10
+266 create: 0x0 #37
+267 #35 methods: 10 | dev refs=10
+268 #36 release: 0 | dev refs=10
+269 #35 methods: 10 | dev refs=10
+270 #15 addref: 7 | dev refs=10
+271 #35 lock: 0xc00d36b6 0x0 | dev refs=10
+272 #13 lock: 0x80004002 0x0 | dev refs=10
+273 #15 addref: 8 | dev refs=10
+274 create: 0x0 #38
+275 #3 release: 3 | dev refs=10
+276 #20 lock: 0xc00d36b6 0x0 | dev refs=10
+277 #17 open: 0xc00d36b6 0xcccccccc | dev refs=10
+278 #35 addref: 2 | dev refs=10
+279 #33 qi 0x77: 0x80004002 self=false | dev refs=10
+280 #30 open: 0xc00d36b6 0xcccccccc | dev refs=10
+281 #38 methods: 10 | dev refs=10
+282 #13 lock: 0x80004002 0x0 | dev refs=10
+283 create t=true p=false: 0x80004003
+284 #15 open: 0x80004003 0xcccccccc | dev refs=10
+285 #7 open: 0xc00d36b6 0xcccccccc | dev refs=10
+286 #30 lock: 0xc00d36b6 0x0 | dev refs=10
+287 #35 release: 1 | dev refs=10
+288 #33 addref: 2 | dev refs=10
+289 #17 qi 0x0: 0x0 self=true | dev refs=10
+290 #7 lock: 0xc00d36b6 0x0 | dev refs=10
+291 #33 qi 0x77: 0x80004002 self=false | dev refs=10
+292 #21 open: 0x0 0x1 | dev refs=10
+293 #5 reset dev=true good=true: 0x0 | dev refs=10
+294 #33 methods: 10 | dev refs=10
+295 #4 lock: 0x80004002 0x0 | dev refs=10
+296 #4 release: 5 | dev refs=10
+297 create: 0x0 #39
+298 #33 addref: 3 | dev refs=10
+299 #37 addref: 2 | dev refs=10
+300 #20 qi 0x0: 0x0 self=true | dev refs=10
+301 #20 methods: 10 | dev refs=10
+302 #29 open: 0xc00d36b6 0xcccccccc | dev refs=10
+303 #17 reset dev=true good=true: 0x0 | dev refs=11
+304 #21 reset dev=false good=true: 0x80070057 | dev refs=11
+305 #5 open: 0x0 0x1 | dev refs=11
+306 #35 lock: 0xc00d36b6 0x0 | dev refs=11
+307 create: 0x0 #40
+308 #40 release: 0 | dev refs=11
+309 #33 lock: 0x80004002 0x0 | dev refs=11
+310 create: 0x0 #41
+311 #41 reset dev=true good=true: 0x0 | dev refs=12
+312 #3 lock: 0x80004002 0x0 | dev refs=12
+313 #32 release: 1 | dev refs=12
+314 #18 release: 2 | dev refs=12
+315 #15 release: 7 | dev refs=12
+316 #35 methods: 10 | dev refs=12
+317 create: 0x0 #42
+318 #17 addref: 3 | dev refs=12
+319 #15 reset dev=false good=true: 0x80070057 | dev refs=12
+320 #18 reset dev=true good=false: 0x80070057 | dev refs=12
+321 #32 release: 0 | dev refs=12
+322 create: 0x0 #43
+323 #17 qi 0x0: 0x0 self=true | dev refs=12
+324 #29 qi 0xeb533d5d: 0x0 self=true | dev refs=12
+325 create: 0x0 #44
+326 #41 lock: 0x80004002 0x0 | dev refs=12
+327 create: 0x0 #45
+328 #38 methods: 10 | dev refs=12
+329 #17 open: 0x0 0x1 | dev refs=12
+330 #35 release: 0 | dev refs=12
+331 #4 open: 0x0 0x1 | dev refs=12
+332 #25 lock: 0x80004002 0x0 | dev refs=12
+333 #18 qi 0xeb533d5d: 0x0 self=true | dev refs=12
+334 #18 lock: 0xc00d36b6 0x0 | dev refs=12
+335 #25 qi 0x77: 0x80004002 self=false | dev refs=12
+336 #21 addref: 4 | dev refs=12
+337 #4 open: 0x80004003 0xcccccccc | dev refs=12
+338 #42 open: 0x80004003 0xcccccccc | dev refs=12
+339 #42 release: 0 | dev refs=12
+340 #7 open: 0xc00d36b6 0xcccccccc | dev refs=12
+341 #14 methods: 10 | dev refs=12
+342 #21 release: 3 | dev refs=12
+343 #18 qi 0xeb533d5d: 0x0 self=true | dev refs=12
+344 #39 addref: 2 | dev refs=12
+345 #25 open: 0x0 0x1 | dev refs=12
+346 #44 reset dev=true good=true: 0x0 | dev refs=13
+347 #41 methods: 10 | dev refs=13
+348 #45 addref: 2 | dev refs=13
+349 create t=false p=true: 0x80004003
+350 #38 release: 0 | dev refs=13
+351 #3 addref: 4 | dev refs=13
+352 #37 addref: 3 | dev refs=13
+353 #21 open: 0x80004003 0xcccccccc | dev refs=13
+354 #3 release: 3 | dev refs=13
+355 create: 0x0 #46
+356 #44 open: 0x0 0x1 | dev refs=13
+357 #7 reset dev=true good=true: 0x0 | dev refs=14
+358 create: 0x0 #47
+359 #25 qi 0x77: 0x80004002 self=false | dev refs=14
+360 #7 methods: 10 | dev refs=14
+361 #33 release: 2 | dev refs=14
+362 #43 lock: 0xc00d36b6 0x0 | dev refs=14
+363 create: 0x0 #48
+364 #21 methods: 10 | dev refs=14
+365 #25 reset dev=true good=true: 0x0 | dev refs=14
+366 #15 qi 0x77: 0x80004002 self=false | dev refs=14
+367 #43 open: 0xc00d36b6 0xcccccccc | dev refs=14
+368 create t=true p=false: 0x80004003
+369 #5 lock: 0x80004002 0x0 | dev refs=14
+370 #3 reset dev=true good=true: 0x0 | dev refs=14
+371 #7 lock: 0x80004002 0x0 | dev refs=14
+372 #13 lock: 0x80004002 0x0 | dev refs=14
+373 #14 methods: 10 | dev refs=14
+374 #18 methods: 10 | dev refs=14
+375 create t=false p=true: 0x80004003
+376 #20 release: 1 | dev refs=14
+377 #14 lock: 0x80004002 0x0 | dev refs=14
+378 #47 lock: 0xc00d36b6 0x0 | dev refs=14
+379 #48 lock: 0xc00d36b6 0x0 | dev refs=14
+380 #48 open: 0xc00d36b6 0xcccccccc | dev refs=14
+381 #41 release: 0 | dev refs=13
+382 create t=true p=false: 0x80004003
+383 #17 lock: 0x80004002 0x0 | dev refs=13
+384 #4 addref: 6 | dev refs=13
+385 #15 qi 0x0: 0x0 self=true | dev refs=13
+386 #5 addref: 5 | dev refs=13
+387 #39 lock: 0xc00d36b6 0x0 | dev refs=13
+388 #48 reset dev=true good=true: 0x0 | dev refs=14
+389 create: 0x0 #49
+390 #13 lock: 0x80004002 0x0 | dev refs=14
+391 #24 release: 2 | dev refs=14
+392 #48 release: 0 | dev refs=13
+393 #3 methods: 10 | dev refs=13
+394 create: 0x0 #50
+395 #29 lock: 0xc00d36b6 0x0 | dev refs=13
+396 #24 qi 0xeb533d5d: 0x0 self=true | dev refs=13
+397 #43 open: 0x80004003 0xcccccccc | dev refs=13
+398 #46 lock: 0xc00d36b6 0x0 | dev refs=13
+399 #49 lock: 0xc00d36b6 0x0 | dev refs=13
+400 #5 lock: 0x80004002 0x0 | dev refs=13
+401 #29 lock: 0xc00d36b6 0x0 | dev refs=13
+402 #5 reset dev=true good=true: 0x0 | dev refs=13
+403 #30 qi 0x77: 0x80004002 self=false | dev refs=13
+404 #45 release: 1 | dev refs=13
+405 #20 lock: 0xc00d36b6 0x0 | dev refs=13
+406 #20 lock: 0xc00d36b6 0x0 | dev refs=13
+407 #49 open: 0xc00d36b6 0xcccccccc | dev refs=13
+408 #43 release: 0 | dev refs=13
+409 #47 qi 0x0: 0x0 self=true | dev refs=13
+410 create t=true p=false: 0x80004003
+411 #14 methods: 10 | dev refs=13
+412 #46 open: 0xc00d36b6 0xcccccccc | dev refs=13
+413 #29 release: 1 | dev refs=13
+414 #4 open: 0x0 0x1 | dev refs=13
+415 #7 addref: 6 | dev refs=13
+416 #15 reset dev=true good=true: 0x0 | dev refs=13
+417 #5 open: 0x0 0x1 | dev refs=13
+418 #7 methods: 10 | dev refs=13
+419 create t=false p=true: 0x80004003
+420 #14 reset dev=false good=true: 0x80070057 | dev refs=13
+421 #7 reset dev=true good=true: 0x0 | dev refs=13
+422 #7 qi 0x0: 0x0 self=true | dev refs=13
+423 #21 methods: 10 | dev refs=13
+424 #18 addref: 5 | dev refs=13
+425 #25 methods: 10 | dev refs=13
+426 #15 qi 0xeb533d5d: 0x0 self=true | dev refs=13
+427 #15 methods: 10 | dev refs=13
+428 #39 release: 1 | dev refs=13
+429 create: 0x0 #51
+430 create: 0x0 #52
+431 #13 qi 0xeb533d5d: 0x0 self=true | dev refs=13
+432 #33 lock: 0x80004002 0x0 | dev refs=13
+433 #17 addref: 5 | dev refs=13
+434 #37 release: 2 | dev refs=13
+435 #15 reset dev=true good=true: 0x0 | dev refs=13
+436 #3 qi 0x0: 0x0 self=true | dev refs=13
+437 #50 addref: 2 | dev refs=13
+438 #50 open: 0x80004003 0xcccccccc | dev refs=13
+439 #14 methods: 10 | dev refs=13
+440 #13 lock: 0x80004002 0x0 | dev refs=13
+441 create: 0x0 #53
+442 #29 open: 0xc00d36b6 0xcccccccc | dev refs=13
+443 #14 addref: 5 | dev refs=13
+444 #51 release: 0 | dev refs=13
+445 #21 reset dev=false good=true: 0x80070057 | dev refs=13
+446 #25 open: 0x0 0x1 | dev refs=13
+447 create: 0x0 #54
+448 create t=true p=false: 0x80004003
+449 #50 qi 0x0: 0x0 self=true | dev refs=13
+450 create: 0x0 #55
+451 create: 0x0 #56
+452 #47 methods: 10 | dev refs=13
+453 #7 open: 0x0 0x1 | dev refs=13
+454 #56 qi 0x0: 0x0 self=true | dev refs=13
+455 #20 open: 0xc00d36b6 0xcccccccc | dev refs=13
+456 #56 release: 1 | dev refs=13
+457 #53 reset dev=true good=true: 0x0 | dev refs=14
+458 #13 methods: 10 | dev refs=14
+459 #3 lock: 0x80004002 0x0 | dev refs=14
+460 #25 qi 0x77: 0x80004002 self=false | dev refs=14
+461 #50 methods: 10 | dev refs=14
+462 #53 lock: 0x80004002 0x0 | dev refs=14
+463 #20 addref: 2 | dev refs=14
+464 #29 lock: 0xc00d36b6 0x0 | dev refs=14
+465 create: 0x0 #57
+466 create: 0x0 #58
+467 #5 reset dev=true good=true: 0x0 | dev refs=14
+468 create t=true p=false: 0x80004003
+469 #39 release: 0 | dev refs=14
+470 #49 reset dev=true good=true: 0x0 | dev refs=15
+471 #3 open: 0x0 0x1 | dev refs=15
+472 #33 qi 0x0: 0x0 self=true | dev refs=15
+473 #57 addref: 2 | dev refs=15
+474 #30 open: 0xc00d36b6 0xcccccccc | dev refs=15
+475 #17 reset dev=true good=true: 0x0 | dev refs=15
+476 #49 qi 0x77: 0x80004002 self=false | dev refs=15
+477 #17 methods: 10 | dev refs=15
+478 create: 0x0 #59
+479 #52 open: 0x80004003 0xcccccccc | dev refs=15
+480 #33 open: 0x0 0x1 | dev refs=15
+481 #5 lock: 0x80004002 0x0 | dev refs=15
+482 #13 lock: 0x80004002 0x0 | dev refs=15
+483 #59 open: 0xc00d36b6 0xcccccccc | dev refs=15
+484 #50 qi 0x0: 0x0 self=true | dev refs=15
+485 #20 open: 0xc00d36b6 0xcccccccc | dev refs=15
+486 #59 open: 0xc00d36b6 0xcccccccc | dev refs=15
+487 #20 open: 0xc00d36b6 0xcccccccc | dev refs=15
+488 #50 release: 3 | dev refs=15
+489 #29 open: 0xc00d36b6 0xcccccccc | dev refs=15
+490 #25 methods: 10 | dev refs=15
+491 #44 reset dev=true good=false: 0x80070057 | dev refs=15
+492 #56 reset dev=true good=true: 0x0 | dev refs=16
+493 #44 lock: 0x80004002 0x0 | dev refs=16
+494 #47 qi 0xeb533d5d: 0x0 self=true | dev refs=16
+495 #46 methods: 10 | dev refs=16
+496 #25 release: 0 | dev refs=15
+497 #37 addref: 3 | dev refs=15
+498 #58 qi 0xeb533d5d: 0x0 self=true | dev refs=15
+499 #13 methods: 10 | dev refs=15
+500 #7 release: 6 | dev refs=15
+501 #30 methods: 10 | dev refs=15
+502 create t=true p=false: 0x80004003
+503 #37 qi 0xeb533d5d: 0x0 self=true | dev refs=15
+504 #3 addref: 5 | dev refs=15
+505 #13 addref: 6 | dev refs=15
+506 #47 qi 0x0: 0x0 self=true | dev refs=15
+507 #57 addref: 3 | dev refs=15
+508 #52 open: 0xc00d36b6 0xcccccccc | dev refs=15
+509 #52 lock: 0xc00d36b6 0x0 | dev refs=15
+510 #49 methods: 10 | dev refs=15
+511 #47 reset dev=false good=true: 0x80070057 | dev refs=15
+512 create: 0x0 #60
+513 #52 addref: 2 | dev refs=15
+514 #5 methods: 10 | dev refs=15
+515 #59 release: 0 | dev refs=15
+516 create: 0x0 #61
+517 #24 reset dev=true good=false: 0x80070057 | dev refs=15
+518 #53 release: 0 | dev refs=14
+519 #47 qi 0xeb533d5d: 0x0 self=true | dev refs=14
+520 #13 open: 0x0 0x1 | dev refs=14
+521 #60 qi 0x0: 0x0 self=true | dev refs=14
+522 #44 lock: 0x80004002 0x0 | dev refs=14
+523 #54 open: 0xc00d36b6 0xcccccccc | dev refs=14
+524 #57 qi 0x77: 0x80004002 self=false | dev refs=14
+525 #47 reset dev=true good=true: 0x0 | dev refs=15
+526 #13 methods: 10 | dev refs=15
+527 #13 methods: 10 | dev refs=15
+528 #54 reset dev=true good=true: 0x0 | dev refs=16
+529 #57 reset dev=false good=true: 0x80070057 | dev refs=16
+530 #61 reset dev=true good=true: 0x0 | dev refs=17
+531 #21 reset dev=true good=false: 0x80070057 | dev refs=17
+532 #30 qi 0x77: 0x80004002 self=false | dev refs=17
+533 #46 addref: 2 | dev refs=17
+534 #33 reset dev=true good=false: 0x80070057 | dev refs=17
+535 create: 0x0 #62
+536 #50 methods: 10 | dev refs=17
+537 #49 qi 0x0: 0x0 self=true | dev refs=17
+538 #47 addref: 6 | dev refs=17
+539 #44 open: 0x0 0x1 | dev refs=17
+540 #29 addref: 2 | dev refs=17
+541 #20 addref: 3 | dev refs=17
+542 #17 open: 0x0 0x1 | dev refs=17
+543 #56 lock: 0x80004002 0x0 | dev refs=17
+544 #57 open: 0x80004003 0xcccccccc | dev refs=17
+545 #33 qi 0x77: 0x80004002 self=false | dev refs=17
+546 #61 qi 0x0: 0x0 self=true | dev refs=17
+547 #20 qi 0x77: 0x80004002 self=false | dev refs=17
+548 #5 release: 4 | dev refs=17
+549 #30 addref: 2 | dev refs=17
+550 #20 methods: 10 | dev refs=17
+551 create: 0x0 #63
+552 #15 reset dev=true good=true: 0x0 | dev refs=17
+553 #13 release: 5 | dev refs=17
+554 #52 open: 0xc00d36b6 0xcccccccc | dev refs=17
+555 #29 qi 0x77: 0x80004002 self=false | dev refs=17
+556 #60 methods: 10 | dev refs=17
+557 #30 open: 0x80004003 0xcccccccc | dev refs=17
+558 #61 methods: 10 | dev refs=17
+559 #15 methods: 10 | dev refs=17
+560 #20 reset dev=true good=true: 0x0 | dev refs=18
+561 #56 release: 0 | dev refs=17
+562 #61 addref: 3 | dev refs=17
+563 #63 methods: 10 | dev refs=17
+564 #30 addref: 3 | dev refs=17
+565 #37 lock: 0xc00d36b6 0x0 | dev refs=17
+566 #21 qi 0x77: 0x80004002 self=false | dev refs=17
+567 #15 release: 8 | dev refs=17
+568 #61 qi 0x77: 0x80004002 self=false | dev refs=17
+569 #20 lock: 0x80004002 0x0 | dev refs=17
+570 #60 lock: 0xc00d36b6 0x0 | dev refs=17
+571 #4 open: 0x0 0x1 | dev refs=17
+572 create t=false p=false: 0x80004003
+573 #5 lock: 0x80004002 0x0 | dev refs=17
+574 #61 reset dev=true good=false: 0x80070057 | dev refs=17
+575 #13 methods: 10 | dev refs=17
+576 create: 0x0 #64
+577 #24 open: 0x80004003 0xcccccccc | dev refs=17
+578 #47 addref: 7 | dev refs=17
+579 #18 qi 0x0: 0x0 self=true | dev refs=17
+580 #18 methods: 10 | dev refs=17
+581 #61 reset dev=false good=true: 0x80070057 | dev refs=17
+582 #5 qi 0x77: 0x80004002 self=false | dev refs=17
+583 #55 reset dev=true good=true: 0x0 | dev refs=18
+584 #21 lock: 0x80004002 0x0 | dev refs=18
+585 create t=false p=true: 0x80004003
+586 #54 addref: 2 | dev refs=18
+587 #64 qi 0x0: 0x0 self=true | dev refs=18
+588 #21 release: 2 | dev refs=18
+589 #7 reset dev=true good=true: 0x0 | dev refs=18
+590 #47 release: 6 | dev refs=18
+591 #62 methods: 10 | dev refs=18
+592 #13 open: 0x0 0x1 | dev refs=18
+593 #64 release: 1 | dev refs=18
+594 #4 lock: 0x80004002 0x0 | dev refs=18
+595 #30 lock: 0xc00d36b6 0x0 | dev refs=18
+596 #37 open: 0xc00d36b6 0xcccccccc | dev refs=18
+597 #37 open: 0xc00d36b6 0xcccccccc | dev refs=18
+598 #7 release: 5 | dev refs=18
+599 #33 release: 2 | dev refs=18

@@ -1975,3 +1975,6 @@ mod reader;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "mf_snapshot_tests.rs"]
+mod snapshot_tests;

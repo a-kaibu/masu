@@ -82,6 +82,20 @@ pub fn call_stacked(f: Handler, args: &[u32]) -> u32 {
     mem::heap_free(stack);
     result
 }
+/// `call_stacked`, and the double the handler returns in st0 (None: it set none).
+pub fn call_st0(f: Handler, args: &[u32]) -> (u32, Option<f64>) {
+    let stack = mem::heap_alloc(0x10000, true);
+    let sp = mem::heap_alloc(4 + 4 * u32::try_from(args.len()).unwrap_or(0), true);
+    for (i, &a) in (0u32..).zip(args) { mem::w32(sp + 4 + 4 * i, a); }
+    let cpu = unsafe { &mut *kura::cpu::create(crate::api::TRAP_LO, crate::api::TRAP_HI) };
+    cpu.regs[koji::ESP] = stack + 0xfff0;
+    let mut c = Ctx { cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None };
+    let result = f(&mut c);
+    let st0 = c.st0;
+    mem::heap_free(sp);
+    mem::heap_free(stack);
+    (result, st0)
+}
 
 /// Guest memory a test owns: reserved and committed while it lives, released (and so zeroed)
 /// when it is dropped. Borrowing the guard of `enter` it cannot outlive the test's hold on the
