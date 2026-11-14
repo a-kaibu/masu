@@ -27,9 +27,28 @@ use crate::mem::{self, ps, put32, putp, r16, r32, rp, w16, w32};
 use crate::sound::{sample_at, vtable, Fmt, AHEAD, RATE, STEP};
 use crate::HashMap;
 
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const XAUDIO2_E_INVALID_CALL: u32 = 0x8896_0001;
+/// The failures sake's XAudio2 returns (made an HRESULT at a handler's edge)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hr {
+    NoInterface,
+    InvalidArg,
+    /// XAUDIO2_E_INVALID_CALL
+    InvalidCall,
+}
+impl Hr {
+    const fn code(self) -> u32 {
+        match self {
+            Hr::NoInterface => 0x8000_4002,
+            Hr::InvalidArg => 0x8007_0057,
+            Hr::InvalidCall => 0x8896_0001,
+        }
+    }
+}
+/// STEP as the u32 guest structures hold
+const STEP_U32: u32 = {
+    assert!(STEP <= u32::MAX as usize);
+    STEP as u32
+};
 const END_OF_STREAM: u32 = 0x40;
 const LOOP_INFINITE: u32 = 255;
 
@@ -45,7 +64,7 @@ struct XBuf {
     ctx: u32,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Source,
     Submix,
@@ -67,7 +86,7 @@ struct Voice {
     ratio: f32,
     played: f64,
     /// callbacks to deliver on the next pass (buffers flushed)
-    pending: Vec<(u32, u32, u32)>,
+    pending: Vec<(u32, OnCb, u32)>,
     chain: Vec<Fx>,
     /// creation order
     seq: u64,
@@ -180,8 +199,8 @@ pub(crate) fn drain_wait(queued: u32) -> Duration {
     if queued < AHEAD {
         return Duration::ZERO;
     }
-    let frames = (queued - AHEAD + 1) as u64;
-    Duration::from_micros((frames * 1_000_000).div_ceil(RATE as u64)).max(Duration::from_millis(1))
+    let frames = u64::from(queued - AHEAD + 1);
+    Duration::from_micros((frames * 1_000_000).div_ceil(u64::from(RATE))).max(Duration::from_millis(1))
 }
 
 /// The most buffers a source voice queues (XAUDIO2_MAX_QUEUED_BUFFERS)
@@ -209,7 +228,12 @@ fn with_voice<R>(this: u32, f: impl FnOnce(&mut Voice) -> R) -> Option<R> {
 
 /// Float argument `i` (x64: its XMM register)
 fn farg(c: &Ctx, i: u32) -> f32 {
-    f32::from_bits(if mem::x64() { c.xmm(i) as u32 } else { c.a(i) })
+    if mem::x64() {
+        let [a, b, c, d, ..] = c.xmm(i).to_le_bytes();
+        f32::from_le_bytes([a, b, c, d])
+    } else {
+        f32::from_bits(c.a(i))
+    }
 }
 
 /// The reference count, after the vtable pointer
@@ -220,16 +244,49 @@ fn refs(this: u32) -> u32 {
 // ---------------------------------------------------------------------------------------------
 // the engine thread
 
-/// Callback method indices (IXAudio2VoiceCallback).
-const ON_PASS_START: u32 = 0;
-const ON_PASS_END: u32 = 1;
-const ON_STREAM_END: u32 = 2;
-const ON_BUFFER_START: u32 = 3;
-const ON_BUFFER_END: u32 = 4;
-const ON_LOOP_END: u32 = 5;
+/// The IXAudio2VoiceCallback methods sake calls
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OnCb {
+    PassStart,
+    PassEnd,
+    StreamEnd,
+    BufferStart,
+    BufferEnd,
+    LoopEnd,
+}
+/// The IXAudio2EngineCallback methods sake calls
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OnEngine {
+    PassStart,
+    PassEnd,
+}
+/// A callback interface's method: its vtable slot
+trait Slot: Copy {
+    fn slot(self) -> u32;
+}
+impl Slot for OnEngine {
+    fn slot(self) -> u32 {
+        match self {
+            OnEngine::PassStart => 0,
+            OnEngine::PassEnd => 1,
+        }
+    }
+}
+impl Slot for OnCb {
+    fn slot(self) -> u32 {
+        match self {
+            OnCb::PassStart => 0,
+            OnCb::PassEnd => 1,
+            OnCb::StreamEnd => 2,
+            OnCb::BufferStart => 3,
+            OnCb::BufferEnd => 4,
+            OnCb::LoopEnd => 5,
+        }
+    }
+}
 
-fn callback(c: &mut Ctx, obj: u32, method: u32, arg: Option<u32>) {
-    let fp = rp(rp(obj) + ps() * method);
+fn callback(c: &mut Ctx, obj: u32, method: impl Slot, arg: Option<u32>) {
+    let fp = rp(rp(obj) + ps() * method.slot());
     match arg {
         Some(a) => c.call(fp, &[obj, a]),
         None => c.call(fp, &[obj]),
@@ -238,29 +295,30 @@ fn callback(c: &mut Ctx, obj: u32, method: u32, arg: Option<u32>) {
 
 /// Renders one pass of source voice `v` into `out` (stereo); the callbacks it produced
 /// (object, method, argument)
-fn render(v: &mut Voice, out: &mut [f32]) -> Vec<(u32, u32, u32)> {
+fn render(v: &mut Voice, out: &mut [f32]) -> Vec<(u32, OnCb, u32)> {
     let mut ev = std::mem::take(&mut v.pending);
     if v.kind != Kind::Source || !v.started {
         return ev;
     }
-    let step = v.fmt.rate as f64 * v.ratio as f64 / RATE as f64;
+    let step = f64::from(v.fmt.rate) * f64::from(v.ratio) / f64::from(RATE);
     for o in out.chunks_exact_mut(2) {
         let Some(b) = v.queue.front_mut() else { break };
         if !v.began {
             v.began = true;
-            v.pos = b.begin as f64;
+            v.pos = f64::from(b.begin);
             if v.cb != 0 {
-                ev.push((v.cb, ON_BUFFER_START, b.ctx));
+                ev.push((v.cb, OnCb::BufferStart, b.ctx));
             }
         }
         let i = v.pos as u32;
-        let t = (v.pos - i as f64) as f32;
+        let t = (v.pos - f64::from(i)) as f32;
         // (only frames of the buffer: AudioBytes bounds both regions; review 2026-11-14: a
         // zero-length buffer still read its first frame, or address 0)
         let last = if b.looping() { b.end.max(b.loop_end) } else { b.end };
         if i < last && b.data != 0 {
-            let (l0, r0) = sample_at(b.data, &v.fmt, i as usize);
-            let (l1, r1) = if i + 1 < last { sample_at(b.data, &v.fmt, i as usize + 1) } else { (l0, r0) };
+            let at = usize::try_from(i).unwrap_or(usize::MAX);
+            let (l0, r0) = sample_at(b.data, &v.fmt, at);
+            let (l1, r1) = if i + 1 < last { sample_at(b.data, &v.fmt, at + 1) } else { (l0, r0) };
             o[0] += l0 + (l1 - l0) * t;
             o[1] += r0 + (r1 - r0) * t;
         }
@@ -271,50 +329,50 @@ fn render(v: &mut Voice, out: &mut [f32]) -> Vec<(u32, u32, u32)> {
         // begins is never taken. A step longer than the loop turns back as many times as it
         // passes the loop's end (review 2026-11-14: once per sample, so the position ran on
         // past the buffer into whatever memory follows it)
-        if b.looping() && v.pos >= b.loop_end as f64 {
-            let len = (b.loop_end - b.loop_begin) as f64;
-            let mut wraps = ((v.pos - b.loop_begin as f64) / len).floor().max(1.0);
+        if b.looping() && v.pos >= f64::from(b.loop_end) {
+            let len = f64::from(b.loop_end - b.loop_begin);
+            let mut wraps = ((v.pos - f64::from(b.loop_begin)) / len).floor().max(1.0);
             if b.loops != LOOP_INFINITE {
-                wraps = wraps.min(b.loops as f64);
+                wraps = wraps.min(f64::from(b.loops));
                 b.loops -= wraps as u32;
             }
             v.pos -= wraps * len;
             if !v.pos.is_finite() {
-                v.pos = b.loop_begin as f64;
+                v.pos = f64::from(b.loop_begin);
             }
             // (one OnLoopEnd a turn; more than a few a sample is a broken format, not music)
             if v.cb != 0 {
                 for _ in 0..(wraps as u32).min(4) {
-                    ev.push((v.cb, ON_LOOP_END, b.ctx));
+                    ev.push((v.cb, OnCb::LoopEnd, b.ctx));
                 }
             }
         }
-        if !b.looping() && v.pos >= b.end as f64 {
+        if !b.looping() && v.pos >= f64::from(b.end) {
             // the buffer is done, and so is any next one the step passes over whole
-            let mut over = v.pos - b.end as f64;
+            let mut over = v.pos - f64::from(b.end);
             loop {
-                let b = v.queue.pop_front().unwrap();
+                let Some(b) = v.queue.pop_front() else { break };
                 if v.cb != 0 {
-                    ev.push((v.cb, ON_BUFFER_END, b.ctx));
+                    ev.push((v.cb, OnCb::BufferEnd, b.ctx));
                 }
                 if b.flags & END_OF_STREAM != 0 {
                     // (SamplesPlayed starts over after the end of a stream)
                     v.played = 0.0;
                     if v.cb != 0 {
-                        ev.push((v.cb, ON_STREAM_END, u32::MAX));
+                        ev.push((v.cb, OnCb::StreamEnd, u32::MAX));
                     }
                 }
                 v.began = false;
                 let Some(n) = v.queue.front() else { break };
                 v.began = true;
-                v.pos = n.begin as f64 + over;
+                v.pos = f64::from(n.begin) + over;
                 if v.cb != 0 {
-                    ev.push((v.cb, ON_BUFFER_START, n.ctx));
+                    ev.push((v.cb, OnCb::BufferStart, n.ctx));
                 }
-                if n.looping() || v.pos < n.end as f64 {
+                if n.looping() || v.pos < f64::from(n.end) {
                     break;
                 }
-                over = v.pos - n.end as f64;
+                over = v.pos - f64::from(n.end);
             }
         }
     }
@@ -364,7 +422,7 @@ fn pass(c: &mut Ctx, out: &mut [f32]) {
         let Some((cb, started, need)) = with_voice(id, |v| (v.cb, v.started, bytes_required(v))) else { continue };
         let cbs = started && cb != 0;
         if cbs {
-            callback(c, cb, ON_PASS_START, Some(need));
+            callback(c, cb, OnCb::PassStart, Some(need));
         }
         let Some((b, ev)) = with_voice(id, |v| {
             let mut b = vec![0f32; n];
@@ -377,7 +435,7 @@ fn pass(c: &mut Ctx, out: &mut [f32]) {
             callback(c, o, m, (a != u32::MAX).then_some(a));
         }
         if cbs {
-            callback(c, cb, ON_PASS_END, None);
+            callback(c, cb, OnCb::PassEnd, None);
         }
         if started {
             bufs.insert(id, b);
@@ -414,7 +472,7 @@ fn pass(c: &mut Ctx, out: &mut [f32]) {
 /// Runs voice `id`'s effect chain on `buf` (stereo frames at the engine's rate)
 fn run_chain(c: &mut Ctx, id: u32, buf: &mut [f32]) {
     let chain = with_voice(id, |v| v.chain.clone()).unwrap_or_default();
-    let frames = (buf.len() / 2) as u32;
+    let frames = u32::try_from(buf.len() / 2).unwrap_or(u32::MAX);
     let k = ps();
     for fx in chain {
         if fx.builtin {
@@ -426,15 +484,15 @@ fn run_chain(c: &mut Ctx, id: u32, buf: &mut [f32]) {
         // a game's XAPO: in place in its buffer
         let bytes: Vec<u8> = buf.iter().flat_map(|x| x.to_le_bytes()).collect();
         mem::write(fx.buf, &bytes);
-        let pp = fx.buf + 8 * STEP as u32;
+        let pp = fx.buf + 8 * STEP_U32;
         mem::wp(pp, fx.buf);
         w32(pp + k, 1); // XAPO_BUFFER_VALID
         w32(pp + k + 4, frames);
         let f = rp(rp(fx.xapo) + 10 * k);
-        c.call(f, &[fx.xapo, 1, pp, 1, pp, fx.enabled as u32]);
+        c.call(f, &[fx.xapo, 1, pp, 1, pp, u32::from(fx.enabled)]);
         if r32(pp + k) == 1 {
-            for (i, x) in buf.iter_mut().enumerate() {
-                *x = f32::from_bits(r32(fx.buf + 4 * i as u32));
+            for (at, x) in (fx.buf..).step_by(4).zip(buf.iter_mut()) {
+                *x = f32::from_bits(r32(at));
             }
         } else {
             // XAPO_BUFFER_SILENT
@@ -445,12 +503,12 @@ fn run_chain(c: &mut Ctx, id: u32, buf: &mut [f32]) {
 
 /// bytes the voice still needs for the next pass (OnVoiceProcessingPassStart)
 fn bytes_required(v: &Voice) -> u32 {
-    let block = v.fmt.block().max(1) as f64;
-    let need = STEP as f64 * v.fmt.rate as f64 * v.ratio as f64 / RATE as f64;
+    let block = f64::from(v.fmt.block().max(1));
+    let need = f64::from(STEP_U32) * f64::from(v.fmt.rate) * f64::from(v.ratio) / f64::from(RATE);
     let mut have = 0.0;
     for (i, b) in v.queue.iter().enumerate() {
-        let from = if i == 0 && v.began { v.pos } else { b.begin as f64 };
-        have += (b.end as f64 - from).max(0.0);
+        let from = if i == 0 && v.began { v.pos } else { f64::from(b.begin) };
+        have += (f64::from(b.end) - from).max(0.0);
         if b.loops > 0 {
             return 0;
         }
@@ -490,12 +548,12 @@ fn engine_thread(c: &mut Ctx) -> u32 {
         PASS.begin();
         let engine_cbs = with(|e| e.callbacks.clone());
         for &cb in &engine_cbs {
-            callback(c, cb, 0, None);
+            callback(c, cb, OnEngine::PassStart, None);
         }
         out.iter_mut().for_each(|x| *x = 0.0);
         pass(c, &mut out);
         for &cb in &engine_cbs {
-            callback(c, cb, 1, None);
+            callback(c, cb, OnEngine::PassEnd, None);
         }
         PASS.end();
         kura::audio::write(stream, &out);
@@ -577,7 +635,7 @@ fn xa28_vtbl() -> u32 {
 fn XAudio2Create(c: &mut Ctx) -> u32 {
     let pp = c.a(0);
     if pp == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     with(|e| e.v28 = true);
     let o = mem::heap_alloc(16, true);
@@ -616,7 +674,7 @@ fn X_QueryInterface(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn X_AddRef(c: &mut Ctx) -> u32 {
     let this = c.a(0);
@@ -652,7 +710,7 @@ fn X_GetDeviceCount(c: &mut Ctx) -> u32 {
 fn X_GetDeviceDetails(c: &mut Ctx) -> u32 {
     let (index, p) = (c.a(1), c.a(2));
     if index != 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     for i in 0..1068 {
         mem::w8(p + i, 0);
@@ -673,9 +731,7 @@ fn X_GetDeviceDetails(c: &mut Ctx) -> u32 {
     w16(f + 18, 16);
     w32(f + 20, 3); // SPEAKER_FRONT_LEFT | RIGHT
     // KSDATAFORMAT_SUBTYPE_PCM {00000001-0000-0010-8000-00aa00389b71}
-    for (i, b) in [1u8, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71].iter().enumerate() {
-        mem::w8(f + 24 + i as u32, *b);
-    }
+    mem::write(f + 24, &[1u8, 0, 0, 0, 0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]);
     0
 }
 fn X_Initialize(_: &mut Ctx) -> u32 {
@@ -712,7 +768,7 @@ fn new_voice(kind: Kind, fmt: Fmt, dest: u32, cb: u32) -> u32 {
         Kind::Source if v28 => src28_vtbl(),
         Kind::Source => src_vtbl(),
         Kind::Master if v28 => master28_vtbl(),
-        _ => voice_vtbl(),
+        Kind::Master | Kind::Submix => voice_vtbl(),
     };
     let o = mem::heap_alloc(8, true);
     mem::wp(o, vt);
@@ -734,18 +790,18 @@ fn X_CreateSourceVoice(c: &mut Ctx) -> u32 {
         Ok(ch) => ch,
         Err(e) => {
             putp(pp, 0);
-            return e;
+            return e.code();
         }
     };
     let tag = r16(wf);
-    let sub = if tag == 0xfffe { r32(wf + 24) } else { tag as u32 };
-    let bits = r16(wf + 14) as u32;
+    let sub = if tag == 0xfffe { r32(wf + 24) } else { u32::from(tag) };
+    let bits = u32::from(r16(wf + 14));
     if !matches!(sub, 1 | 3) || !matches!(bits, 8 | 16 | 24 | 32) || r32(wf + 4) == 0 {
         eprintln!("sake: XAudio2 source format {tag:#x} ({bits} bits) not supported");
         putp(pp, 0);
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let fmt = Fmt { rate: r32(wf + 4), channels: (r16(wf + 2) as u32).max(1), bits, float: sub == 3, law: 0 };
+    let fmt = Fmt { rate: r32(wf + 4), channels: u32::from(r16(wf + 2)).max(1), bits, float: sub == 3, law: 0 };
     let o = new_voice(Kind::Source, fmt, first_send(sends), cb);
     with_voice(o, |v| v.chain = chain);
     putp(pp, o);
@@ -758,7 +814,7 @@ fn X_CreateSubmixVoice(c: &mut Ctx) -> u32 {
         Ok(ch) => ch,
         Err(e) => {
             putp(pp, 0);
-            return e;
+            return e.code();
         }
     };
     let fmt = Fmt { rate: if rate == 0 { RATE } else { rate }, channels: ch.max(1), bits: 32, float: true, law: 0 };
@@ -772,13 +828,13 @@ fn X_CreateMasteringVoice(c: &mut Ctx) -> u32 {
     let (pp, ch, rate, fx) = (c.a(1), c.a(2), c.a(3), c.a(6));
     if with(|e| e.master != 0) {
         putp(pp, 0);
-        return XAUDIO2_E_INVALID_CALL;
+        return Hr::InvalidCall.code();
     }
     let chain = match read_chain(c, fx) {
         Ok(ch) => ch,
         Err(e) => {
             putp(pp, 0);
-            return e;
+            return e.code();
         }
     };
     let fmt = Fmt { rate: if rate == 0 { RATE } else { rate }, channels: if ch == 0 { 2 } else { ch }, bits: 32, float: true, law: 0 };
@@ -905,7 +961,7 @@ fn M_GetChannelMask(c: &mut Ctx) -> u32 {
         n => (1u32 << n.min(18)) - 1,
     };
     if c.a(1) == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     put32(c.a(1), mask);
     0
@@ -977,7 +1033,7 @@ fn fx_format() -> u32 {
 /// XAUDIO2_EFFECT_CHAIN { EffectCount, pEffectDescriptors } of XAUDIO2_EFFECT_DESCRIPTOR
 /// { pEffect, InitialState, OutputChannels }: each effect's IXAPO, locked for processing (a
 /// missing effect, or one that is no IXAPO of this version, is XAUDIO2_E_INVALID_CALL)
-fn read_chain(c: &mut Ctx, chain: u32) -> Result<Vec<Fx>, u32> {
+fn read_chain(c: &mut Ctx, chain: u32) -> Result<Vec<Fx>, Hr> {
     if chain == 0 || r32(chain) == 0 {
         return Ok(Vec::new());
     }
@@ -992,21 +1048,21 @@ fn read_chain(c: &mut Ctx, chain: u32) -> Result<Vec<Fx>, u32> {
         let x = if unk == 0 { 0 } else { query(c, unk, &iid) };
         if x == 0 {
             release_chain(c, v);
-            return Err(XAUDIO2_E_INVALID_CALL);
+            return Err(Hr::InvalidCall);
         }
         let builtin = crate::xapo::builtin(x).is_some();
         // XAPO_LOCKFORPROCESS_BUFFER_PARAMETERS { pFormat, MaxFrameCount }, in and out
         let lp = mem::heap_alloc(2 * k, true);
         mem::wp(lp, fx_format());
-        w32(lp + k, STEP as u32);
+        w32(lp + k, STEP_U32);
         let hr = method(c, x, 8, &[1, lp, 1, lp]);
         mem::heap_free(lp);
         if hr != 0 {
             method(c, x, 2, &[]);
             release_chain(c, v);
-            return Err(XAUDIO2_E_INVALID_CALL);
+            return Err(Hr::InvalidCall);
         }
-        let buf = if builtin { 0 } else { mem::heap_alloc(8 * STEP as u32 + 4 * k, true) };
+        let buf = if builtin { 0 } else { mem::heap_alloc(8 * STEP_U32 + 4 * k, true) };
         v.push(Fx { xapo: x, enabled: on, builtin, buf });
     }
     Ok(v)
@@ -1027,7 +1083,7 @@ fn V_SetEffectChain(c: &mut Ctx) -> u32 {
     let (this, p) = (c.a(0), c.a(1));
     let chain = match read_chain(c, p) {
         Ok(ch) => ch,
-        Err(e) => return e,
+        Err(e) => return e.code(),
     };
     let old = with_voice(this, |v| std::mem::replace(&mut v.chain, chain));
     if let Some(old) = old {
@@ -1038,15 +1094,15 @@ fn V_SetEffectChain(c: &mut Ctx) -> u32 {
 }
 /// EnableEffect / DisableEffect(EffectIndex, OperationSet)
 fn set_enabled(c: &mut Ctx, on: bool) -> u32 {
-    let (this, i) = (c.a(0), c.a(1) as usize);
+    let (this, i) = (c.a(0), usize::try_from(c.a(1)).unwrap_or(usize::MAX));
     with_voice(this, |v| match v.chain.get_mut(i) {
         Some(fx) => {
             fx.enabled = on;
             0
         }
-        None => E_INVALIDARG,
+        None => Hr::InvalidArg.code(),
     })
-    .unwrap_or(E_INVALIDARG)
+    .unwrap_or(Hr::InvalidArg.code())
 }
 fn V_EnableEffect(c: &mut Ctx) -> u32 {
     set_enabled(c, true)
@@ -1056,9 +1112,9 @@ fn V_DisableEffect(c: &mut Ctx) -> u32 {
 }
 /// GetEffectState(EffectIndex, pEffectState): XAUDIO2_EFFECT_STATE { bEnabled }
 fn V_GetEffectState(c: &mut Ctx) -> u32 {
-    let (this, i, p) = (c.a(0), c.a(1) as usize, c.a(2));
+    let (this, i, p) = (c.a(0), usize::try_from(c.a(1)).unwrap_or(usize::MAX), c.a(2));
     if let Some(Some(on)) = with_voice(this, |v| v.chain.get(i).map(|f| f.enabled)) {
-        put32(p, on as u32);
+        put32(p, u32::from(on));
     }
     0
 }
@@ -1071,10 +1127,10 @@ fn fx_params(c: &mut Ctx, this: u32, i: usize) -> u32 {
 /// SetEffectParameters(EffectIndex, pParameters, ParametersByteSize, OperationSet): the
 /// effect's IXAPOParameters::SetParameters
 fn V_SetEffectParameters(c: &mut Ctx) -> u32 {
-    let (this, i, p, n) = (c.a(0), c.a(1) as usize, c.a(2), c.a(3));
+    let (this, i, p, n) = (c.a(0), usize::try_from(c.a(1)).unwrap_or(usize::MAX), c.a(2), c.a(3));
     let ip = fx_params(c, this, i);
     if ip == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     method(c, ip, 3, &[p, n]);
     method(c, ip, 2, &[]);
@@ -1082,10 +1138,10 @@ fn V_SetEffectParameters(c: &mut Ctx) -> u32 {
 }
 /// GetEffectParameters(EffectIndex, pParameters, ParametersByteSize)
 fn V_GetEffectParameters(c: &mut Ctx) -> u32 {
-    let (this, i, p, n) = (c.a(0), c.a(1) as usize, c.a(2), c.a(3));
+    let (this, i, p, n) = (c.a(0), usize::try_from(c.a(1)).unwrap_or(usize::MAX), c.a(2), c.a(3));
     let ip = fx_params(c, this, i);
     if ip == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     method(c, ip, 4, &[p, n]);
     method(c, ip, 2, &[]);
@@ -1185,13 +1241,13 @@ fn S_SubmitSourceBuffer(c: &mut Ctx) -> u32 {
     let k = ps() - 4;
     let r = |o: u32| if o == 8 || o == 32 { rp(p + o + if o == 32 { k } else { 0 }) } else { r32(p + if o <= 8 { o } else { o + k }) };
     if p == 0 || (r(8) == 0 && r(4) != 0) {
-        return XAUDIO2_E_INVALID_CALL;
+        return Hr::InvalidCall.code();
     }
     with_voice(this, |v| {
         // (XAUDIO2_MAX_QUEUED_BUFFERS: a game that submits without waiting grew the queue
         // without bound)
         if v.queue.len() >= MAX_QUEUED {
-            return XAUDIO2_E_INVALID_CALL;
+            return Hr::InvalidCall.code();
         }
         let frames = r(4) / v.fmt.block().max(1);
         let loops = r(28);
@@ -1199,16 +1255,16 @@ fn S_SubmitSourceBuffer(c: &mut Ctx) -> u32 {
         v.queue.push_back(XBuf { flags: r(0), data: r(8), begin, end, loop_begin, loop_end, loops, ctx: r(32) });
         0
     })
-    .unwrap_or(E_INVALIDARG)
+    .unwrap_or(Hr::InvalidArg.code())
 }
 /// drops the queued buffers (but the one playing, while started); each gets OnBufferEnd
 fn S_FlushSourceBuffers(c: &mut Ctx) -> u32 {
     with_voice(c.a(0), |v| {
-        let keep = (v.started && v.began) as usize;
+        let keep = usize::from(v.started && v.began);
         let cb = v.cb;
         for b in v.queue.drain(keep.min(v.queue.len())..) {
             if cb != 0 {
-                v.pending.push((cb, ON_BUFFER_END, b.ctx));
+                v.pending.push((cb, OnCb::BufferEnd, b.ctx));
             }
         }
         if keep == 0 {
@@ -1232,7 +1288,7 @@ fn S_ExitLoop(c: &mut Ctx) -> u32 {
 fn S_GetState28(c: &mut Ctx) -> u32 {
     let p = c.a(1);
     if c.a(2) & 0x100 != 0 {
-        let (ctx, n) = with_voice(c.a(0), |v| (v.queue.front().map_or(0, |b| b.ctx), v.queue.len() as u32)).unwrap_or((0, 0));
+        let (ctx, n) = with_voice(c.a(0), |v| (v.queue.front().map_or(0, |b| b.ctx), u32::try_from(v.queue.len()).unwrap_or(u32::MAX))).unwrap_or((0, 0));
         mem::wp(p, ctx);
         w32(p + ps(), n);
         return 0;
@@ -1242,7 +1298,7 @@ fn S_GetState28(c: &mut Ctx) -> u32 {
 /// XAUDIO2_VOICE_STATE (pack(1)): pCurrentBufferContext, BuffersQueued, SamplesPlayed (u64)
 fn S_GetState(c: &mut Ctx) -> u32 {
     let p = c.a(1);
-    let (ctx, n, played) = with_voice(c.a(0), |v| (v.queue.front().map_or(0, |b| b.ctx), v.queue.len() as u32, v.played as u64)).unwrap_or((0, 0, 0));
+    let (ctx, n, played) = with_voice(c.a(0), |v| (v.queue.front().map_or(0, |b| b.ctx), u32::try_from(v.queue.len()).unwrap_or(u32::MAX), v.played as u64)).unwrap_or((0, 0, 0));
     let k = ps();
     mem::wp(p, ctx);
     w32(p + k, n);
@@ -1301,7 +1357,7 @@ mod b11 {
         for _ in 0..MAX_QUEUED {
             assert_eq!(call(S_SubmitSourceBuffer, &[v, b]), 0);
         }
-        assert_eq!(call(S_SubmitSourceBuffer, &[v, b]), XAUDIO2_E_INVALID_CALL);
+        assert_eq!(call(S_SubmitSourceBuffer, &[v, b]), Hr::InvalidCall.code());
         assert_eq!(queued(v), MAX_QUEUED);
         assert_eq!(call(V_DestroyVoice, &[v]), 0);
         mem::heap_free(b);
@@ -1313,8 +1369,8 @@ mod b11 {
         let _g = enter();
         let v = new_voice(Kind::Source, FMT, 0, 0);
         let b = xbuf(400, 0, 0, 0, 0, 0, 0);
-        assert_eq!(call(S_SubmitSourceBuffer, &[v, b]), XAUDIO2_E_INVALID_CALL);
-        assert_eq!(call(S_SubmitSourceBuffer, &[v, 0]), XAUDIO2_E_INVALID_CALL);
+        assert_eq!(call(S_SubmitSourceBuffer, &[v, b]), Hr::InvalidCall.code());
+        assert_eq!(call(S_SubmitSourceBuffer, &[v, 0]), Hr::InvalidCall.code());
         assert_eq!(queued(v), 0);
         assert_eq!(call(V_DestroyVoice, &[v]), 0);
         mem::heap_free(b);
@@ -1492,8 +1548,8 @@ mod tests {
         v.queue.push_back(buf(0, 20, 2, 4, 3));
         v.cb = 1;
         let ev = render(&mut v, &mut vec![0f32; 2 * 30]);
-        assert_eq!(ev.iter().filter(|e| e.1 == ON_LOOP_END).count(), 3);
-        assert_eq!(ev.iter().filter(|e| e.1 == ON_BUFFER_END).count(), 1);
+        assert_eq!(ev.iter().filter(|e| e.1 == OnCb::LoopEnd).count(), 3);
+        assert_eq!(ev.iter().filter(|e| e.1 == OnCb::BufferEnd).count(), 1);
     }
 
     /// a step longer than the next buffer passes over it whole (it ends too), not past its end
@@ -1507,7 +1563,7 @@ mod tests {
         v.queue.push_back(buf(0, 100, 0, 100, 0));
         // (8 frames a sample: 3 + 3 + 2 into the third buffer)
         let ev = render(&mut v, &mut vec![0f32; 2]);
-        assert_eq!(ev.iter().filter(|e| e.1 == ON_BUFFER_END).count(), 2);
+        assert_eq!(ev.iter().filter(|e| e.1 == OnCb::BufferEnd).count(), 2);
         assert_eq!(v.pos, 2.0);
         assert_eq!(v.queue.len(), 3);
     }
