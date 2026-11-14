@@ -1236,7 +1236,7 @@ pub fn run(dirs: &crate::dirs::Dirs, a: Args) -> anyhow::Result<()> {
 
 /// Removes the kept web apps no state needs (apps.rs prune; the states' builds from their
 /// indexes, `state.<game>.index` saves).
-async fn prune_apps(dir: PathBuf, current: Option<String>, saves: Arc<saves::Saves>) {
+async fn prune_apps(dir: PathBuf, current: Option<crate::apps::AppKey>, saves: Arc<saves::Saves>) {
     let names: Vec<String> = match saves.db.connect().and_then(|c| {
         let mut q = c.prepare("SELECT name FROM saves WHERE name LIKE 'state.%.index'")?;
         let v = q.query_map([], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
@@ -1254,7 +1254,7 @@ async fn prune_apps(dir: PathBuf, current: Option<String>, saves: Arc<saves::Sav
             Err(e) => return eprintln!("apps: not pruned: {e}"),
         }
     }
-    let _ = tokio::task::spawn_blocking(move || crate::apps::prune(&dir, &used, current.as_deref())).await;
+    let _ = tokio::task::spawn_blocking(move || crate::apps::prune(&dir, &used, current.as_ref())).await;
 }
 
 /// How often [`watchdog`] looks, and how long the runtime may run no task before it is taken
