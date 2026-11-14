@@ -4136,6 +4136,8 @@ mod rows_tests {
 
 #[cfg(test)]
 mod model_tests;
+#[cfg(test)]
+mod format_golden_tests;
 
 /// `rects9` gives what WebGPU's setViewport / setScissorRect accept on the target for every
 /// input (NaN and infinite floats too): the viewport inside the target (as WebGPU adds it up,
