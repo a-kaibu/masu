@@ -1796,7 +1796,7 @@ pub fn init() {
 #[cfg(test)]
 mod save_tests {
     use super::bmp32;
-    use crate::d3d9::widen_bgra;
+    use crate::d3d9::{widen_bgra, SurfFmt};
     use proptest::prelude::*;
 
     proptest! {
@@ -1889,11 +1889,11 @@ mod save_tests {
     #[test]
     fn widen_formats() {
         // X8R8G8B8 opaque, R5G6B5 white and pure red, A1R5G5B5 transparent black
-        assert_eq!(widen_bgra(&[1, 2, 3, 0], 22), [1, 2, 3, 255]);
-        assert_eq!(widen_bgra(&[0xff, 0xff], 23), [255, 255, 255, 255]);
-        assert_eq!(widen_bgra(&[0x00, 0xf8], 23), [0, 0, 255, 255]);
-        assert_eq!(widen_bgra(&[0x00, 0x00], 25), [0, 0, 0, 0]);
-        assert_eq!(widen_bgra(&[0x1f, 0x80], 25), [255, 0, 0, 255]);
+        assert_eq!(widen_bgra(&[1, 2, 3, 0], SurfFmt::X8R8G8B8), [1, 2, 3, 255]);
+        assert_eq!(widen_bgra(&[0xff, 0xff], SurfFmt::R5G6B5), [255, 255, 255, 255]);
+        assert_eq!(widen_bgra(&[0x00, 0xf8], SurfFmt::R5G6B5), [0, 0, 255, 255]);
+        assert_eq!(widen_bgra(&[0x00, 0x00], SurfFmt::A1R5G5B5), [0, 0, 0, 0]);
+        assert_eq!(widen_bgra(&[0x1f, 0x80], SurfFmt::A1R5G5B5), [255, 0, 0, 255]);
     }
 }
 

@@ -279,12 +279,9 @@ pub(crate) fn read_bgra(obj: u32, surface: bool) -> Option<(u32, u32, Vec<u8>)> 
     if d3d_call(desc_m, &a(&[desc.as_mut_ptr() as usize as u32])) != 0 {
         return None;
     }
-    let (fmt, w, h) = (desc[0], desc[6], desc[7]);
-    let bpp = match fmt {
-        21 | 22 => 4,
-        23 | 24 | 25 => 2,
-        _ => return None,
-    };
+    let (w, h) = (desc[6], desc[7]);
+    let fmt = SurfFmt::of(desc[0])?;
+    let bpp = fmt.bytes();
     let mut lr = [0u32; 4];
     if d3d_call(lock_m, &a(&[lr.as_mut_ptr() as usize as u32, 0, 0x10])) != 0 {
         return None;
@@ -299,25 +296,62 @@ pub(crate) fn read_bgra(obj: u32, surface: bool) -> Option<(u32, u32, Vec<u8>)> 
     Some((w, h, out))
 }
 
-/// One row of a D3DFMT_A8R8G8B8 / X8R8G8B8 / R5G6B5 / X1R5G5B5 / A1R5G5B5 surface as BGRA
-/// (X formats opaque).
-pub(crate) fn widen_bgra(row: &[u8], fmt: u32) -> Vec<u8> {
+/// The D3DFORMATs of a surface GetDC and read_bgra take
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SurfFmt {
+    A8R8G8B8,
+    X8R8G8B8,
+    R5G6B5,
+    X1R5G5B5,
+    A1R5G5B5,
+}
+
+impl SurfFmt {
+    pub(crate) fn of(fmt: u32) -> Option<Self> {
+        match fmt {
+            21 => Some(Self::A8R8G8B8),
+            22 => Some(Self::X8R8G8B8),
+            23 => Some(Self::R5G6B5),
+            24 => Some(Self::X1R5G5B5),
+            25 => Some(Self::A1R5G5B5),
+            _ => None,
+        }
+    }
+    /// bytes per pixel
+    fn bytes(self) -> u32 {
+        match self {
+            Self::A8R8G8B8 | Self::X8R8G8B8 => 4,
+            Self::R5G6B5 | Self::X1R5G5B5 | Self::A1R5G5B5 => 2,
+        }
+    }
+    /// a DIB section's bits per pixel over it, and whether its masks are R5G6B5's
+    fn dc_bits(self) -> (u16, bool) {
+        match self {
+            Self::A8R8G8B8 | Self::X8R8G8B8 => (32, false),
+            Self::R5G6B5 => (16, true),
+            Self::X1R5G5B5 | Self::A1R5G5B5 => (16, false),
+        }
+    }
+}
+
+/// One row of a surface as BGRA (X formats opaque).
+pub(crate) fn widen_bgra(row: &[u8], fmt: SurfFmt) -> Vec<u8> {
     let x5 = |v: u16, s: u32| (u32::from(v >> s & 31) * 255 / 31) as u8;
     match fmt {
-        21 => row.to_vec(),
-        22 => row.chunks(4).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-        23 => row
+        SurfFmt::A8R8G8B8 => row.to_vec(),
+        SurfFmt::X8R8G8B8 => row.chunks(4).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        SurfFmt::R5G6B5 => row
             .chunks(2)
             .flat_map(|p| {
                 let v = u16::from_le_bytes([p[0], p[1]]);
                 [x5(v, 0), (u32::from(v >> 5 & 63) * 255 / 63) as u8, x5(v, 11), 255]
             })
             .collect(),
-        _ => row
+        SurfFmt::X1R5G5B5 | SurfFmt::A1R5G5B5 => row
             .chunks(2)
             .flat_map(|p| {
                 let v = u16::from_le_bytes([p[0], p[1]]);
-                let a = if fmt == 25 && v & 0x8000 == 0 { 0 } else { 255 };
+                let a = if fmt == SurfFmt::A1R5G5B5 && v & 0x8000 == 0 { 0 } else { 255 };
                 [x5(v, 0), x5(v, 5), x5(v, 10), a]
             })
             .collect(),
@@ -331,13 +365,9 @@ fn surface_get_dc(c: &mut Ctx) -> u32 {
     if d3d_call(4 << 8 | 12, &[this, desc.as_mut_ptr() as usize as u32]) != 0 {
         return 0x8876_086c;
     }
-    let (fmt, w, h) = (desc[0], desc[6], desc[7]);
-    let (bpp, r565) = match fmt {
-        0x15 | 0x16 => (32, false),
-        0x17 => (16, true),
-        0x18 | 0x19 => (16, false),
-        _ => return 0x8876_086c,
-    };
+    let (w, h) = (desc[6], desc[7]);
+    let Some(fmt) = SurfFmt::of(desc[0]) else { return 0x8876_086c };
+    let (bpp, r565) = fmt.dc_bits();
     // D3DLOCKED_RECT { Pitch, pBits } (x64: pBits at 8)
     let mut lr = [0u32; 4];
     if d3d_call(4 << 8 | 13, &[this, lr.as_mut_ptr() as usize as u32, 0, 0]) != 0 {
@@ -513,3 +543,8 @@ mod tag_tests {
         assert_eq!(METHODS[1].len(), 0x86);
     }
 }
+
+/// Surface rows widened to BGRA against the code before the surface format became a type
+#[cfg(test)]
+#[path = "d3d9_widen_tests.rs"]
+mod widen_tests;
