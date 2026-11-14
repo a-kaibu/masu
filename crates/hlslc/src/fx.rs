@@ -6,28 +6,87 @@
 use super::ast::*;
 use super::Target;
 
-// D3DXPARAMETER_CLASS / _TYPE
-const PC_SCALAR: u32 = 0;
-const PC_VECTOR: u32 = 1;
-const PC_MATRIX_ROWS: u32 = 2;
-const PC_MATRIX_COLUMNS: u32 = 3;
-const PC_OBJECT: u32 = 4;
-const PC_STRUCT: u32 = 5;
-const PT_VOID: u32 = 0;
-const PT_BOOL: u32 = 1;
-const PT_INT: u32 = 2;
-const PT_FLOAT: u32 = 3;
-const PT_STRING: u32 = 4;
-const PT_TEXTURE: u32 = 5;
-const PT_SAMPLER: u32 = 10;
-const PT_PIXELSHADER: u32 = 15;
-const PT_VERTEXSHADER: u32 = 16;
+/// D3DXPARAMETER_CLASS
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PClass {
+    Scalar,
+    Vector,
+    MatrixRows,
+    MatrixColumns,
+    Object,
+    Struct,
+}
+
+impl PClass {
+    fn code(self) -> u32 {
+        match self {
+            PClass::Scalar => 0,
+            PClass::Vector => 1,
+            PClass::MatrixRows => 2,
+            PClass::MatrixColumns => 3,
+            PClass::Object => 4,
+            PClass::Struct => 5,
+        }
+    }
+}
+
+/// D3DXPARAMETER_TYPE
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum PType {
+    Void,
+    Bool,
+    Int,
+    Float,
+    String,
+    Texture,
+    Texture1D,
+    Texture3D,
+    TextureCube,
+    Sampler,
+    Sampler1D,
+    Sampler2D,
+    Sampler3D,
+    SamplerCube,
+    PixelShader,
+    VertexShader,
+}
+
+impl PType {
+    fn code(self) -> u32 {
+        match self {
+            PType::Void => 0,
+            PType::Bool => 1,
+            PType::Int => 2,
+            PType::Float => 3,
+            PType::String => 4,
+            PType::Texture => 5,
+            PType::Texture1D => 6,
+            PType::Texture3D => 8,
+            PType::TextureCube => 9,
+            PType::Sampler => 10,
+            PType::Sampler1D => 11,
+            PType::Sampler2D => 12,
+            PType::Sampler3D => 13,
+            PType::SamplerCube => 14,
+            PType::PixelShader => 15,
+            PType::VertexShader => 16,
+        }
+    }
+    /// a sampler (its value: sampler states)
+    fn is_sampler(self) -> bool {
+        match self {
+            PType::Sampler | PType::Sampler1D | PType::Sampler2D | PType::Sampler3D | PType::SamplerCube => true,
+            PType::Void | PType::Bool | PType::Int | PType::Float | PType::String | PType::Texture
+            | PType::Texture1D | PType::Texture3D | PType::TextureCube | PType::PixelShader | PType::VertexShader => false,
+        }
+    }
+}
 
 /// A type description (D3DX typedef).
 #[derive(Clone)]
 struct Td {
-    ty: u32,
-    class: u32,
+    ty: PType,
+    class: PClass,
     name: String,
     sem: String,
     elements: u32,
@@ -37,42 +96,44 @@ struct Td {
 }
 
 impl Td {
-    fn scalar(ty: u32) -> Td {
-        Td { ty, class: PC_SCALAR, name: String::new(), sem: String::new(), elements: 0, rows: 1, cols: 1, members: Vec::new() }
+    fn scalar(ty: PType) -> Td {
+        Td { ty, class: PClass::Scalar, name: String::new(), sem: String::new(), elements: 0, rows: 1, cols: 1, members: Vec::new() }
     }
-    fn object(ty: u32) -> Td {
-        Td { ty, class: PC_OBJECT, name: String::new(), sem: String::new(), elements: 0, rows: 0, cols: 0, members: Vec::new() }
+    fn object(ty: PType) -> Td {
+        Td { ty, class: PClass::Object, name: String::new(), sem: String::new(), elements: 0, rows: 0, cols: 0, members: Vec::new() }
     }
     fn named(mut self, n: &str) -> Td {
         self.name = n.into();
         self
     }
     /// base types of each component of one element
-    fn bases(&self, out: &mut Vec<u32>) {
+    fn bases(&self, out: &mut Vec<PType>) {
         match self.class {
-            PC_STRUCT => {
+            PClass::Struct => {
                 for m in &self.members {
                     for _ in 0..m.elements.max(1) {
                         m.bases(out);
                     }
                 }
             }
-            PC_OBJECT => {}
-            _ => out.extend(std::iter::repeat_n(self.ty, crate::us(self.rows * self.cols))),
+            PClass::Object => {}
+            PClass::Scalar | PClass::Vector | PClass::MatrixRows | PClass::MatrixColumns => {
+                out.extend(std::iter::repeat_n(self.ty, crate::us(self.rows * self.cols)));
+            }
         }
     }
 }
 
 fn td_of(prog: &Program, t: &Ty, row_major: bool) -> Td {
     let base = |b: B| match b {
-        B::Bool => PT_BOOL,
-        B::Int | B::Uint => PT_INT,
-        B::Float => PT_FLOAT,
+        B::Bool => PType::Bool,
+        B::Int | B::Uint => PType::Int,
+        B::Float => PType::Float,
     };
     let mut td = match t {
         Ty::Scalar(b) => Td::scalar(base(*b)),
-        Ty::Vec(b, n) => Td { class: PC_VECTOR, cols: u32::from(*n), ..Td::scalar(base(*b)) },
-        Ty::Mat(b, r, c) => Td { class: if row_major { PC_MATRIX_ROWS } else { PC_MATRIX_COLUMNS }, rows: u32::from(*r), cols: u32::from(*c), ..Td::scalar(base(*b)) },
+        Ty::Vec(b, n) => Td { class: PClass::Vector, cols: u32::from(*n), ..Td::scalar(base(*b)) },
+        Ty::Mat(b, r, c) => Td { class: if row_major { PClass::MatrixRows } else { PClass::MatrixColumns }, rows: u32::from(*r), cols: u32::from(*c), ..Td::scalar(base(*b)) },
         Ty::Array(e, n) => {
             let mut td = td_of(prog, e, row_major);
             td.elements = td.elements.max(1) * n;
@@ -81,25 +142,25 @@ fn td_of(prog: &Program, t: &Ty, row_major: bool) -> Td {
         Ty::Struct(i) => {
             let st = &prog.structs[*i];
             let members = st.fields.iter().map(|f| td_of(prog, &f.ty, f.row_major.unwrap_or(row_major)).named(&f.name)).collect();
-            Td { class: PC_STRUCT, members, rows: 0, cols: 0, ..Td::scalar(PT_VOID) }
+            Td { class: PClass::Struct, members, rows: 0, cols: 0, ..Td::scalar(PType::Void) }
         }
         Ty::Tex(d, _) | Ty::RwTex(d, _) => Td::object(match d {
-            Dim::T1D => 6,
-            Dim::T3D => 8,
-            Dim::Cube => 9,
+            Dim::T1D => PType::Texture1D,
+            Dim::T3D => PType::Texture3D,
+            Dim::Cube => PType::TextureCube,
             Dim::Buffer | Dim::T1DArray | Dim::T2D | Dim::T2DArray | Dim::T2DMS | Dim::T2DMSArray
-            | Dim::CubeArray => PT_TEXTURE,
+            | Dim::CubeArray => PType::Texture,
         }),
         Ty::Legacy(d) => Td::object(match d {
-            Dim::T1D => 11,
-            Dim::T3D => 13,
-            Dim::Cube => 14,
+            Dim::T1D => PType::Sampler1D,
+            Dim::T3D => PType::Sampler3D,
+            Dim::Cube => PType::SamplerCube,
             Dim::Buffer | Dim::T1DArray | Dim::T2D | Dim::T2DArray | Dim::T2DMS | Dim::T2DMSArray
-            | Dim::CubeArray => 12,
+            | Dim::CubeArray => PType::Sampler2D,
         }),
-        Ty::Sampler(_) => Td::object(PT_SAMPLER),
-        Ty::Str => Td::object(PT_STRING),
-        Ty::Void => Td::scalar(PT_VOID),
+        Ty::Sampler(_) => Td::object(PType::Sampler),
+        Ty::Str => Td::object(PType::String),
+        Ty::Void => Td::scalar(PType::Void),
     };
     td.elements = 0;
     td
@@ -503,17 +564,17 @@ impl W<'_> {
     }
     fn td_words(t: &Td, names: &mut std::slice::Iter<(u32, u32)>, out: &mut Vec<u32>) {
         let Some(&(n, s)) = names.next() else { return };
-        out.extend([t.ty, t.class, n, s, t.elements]);
+        out.extend([t.ty.code(), t.class.code(), n, s, t.elements]);
         match t.class {
-            PC_VECTOR => out.extend([t.cols, t.rows]),
-            PC_SCALAR | PC_MATRIX_ROWS | PC_MATRIX_COLUMNS => out.extend([t.rows, t.cols]),
-            PC_STRUCT => {
+            PClass::Vector => out.extend([t.cols, t.rows]),
+            PClass::Scalar | PClass::MatrixRows | PClass::MatrixColumns => out.extend([t.rows, t.cols]),
+            PClass::Struct => {
                 out.push(crate::u32_of(t.members.len()));
                 for m in &t.members {
                     Self::td_words(m, names, out);
                 }
             }
-            _ => {}
+            PClass::Object => {}
         }
     }
     fn typedef(&mut self, t: &Td) -> u32 {
@@ -542,9 +603,11 @@ impl W<'_> {
                 let i = e * n + k;
                 let v = if vals.len() == 1 { vals[0] } else { vals.get(i).copied().unwrap_or(0.0) };
                 let w = match *b {
-                    PT_FLOAT => (v as f32).to_bits(),
-                    PT_BOOL => u32::from(v != 0.0),
-                    _ => crate::lo32(v as i64),
+                    PType::Float => (v as f32).to_bits(),
+                    PType::Bool => u32::from(v != 0.0),
+                    PType::Void | PType::Int | PType::String | PType::Texture | PType::Texture1D | PType::Texture3D
+                    | PType::TextureCube | PType::Sampler | PType::Sampler1D | PType::Sampler2D | PType::Sampler3D
+                    | PType::SamplerCube | PType::PixelShader | PType::VertexShader => crate::lo32(v as i64),
                 };
                 out.extend_from_slice(&w.to_le_bytes());
             }
@@ -553,10 +616,10 @@ impl W<'_> {
     }
     /// A value: numbers, or object ids / sampler states per element; its offset.
     fn value(&mut self, t: &Td, init: Option<&Expr>, states: &[FxState], top: u32) -> Result<u32, String> {
-        let bytes = if t.class == PC_OBJECT {
+        let bytes = if t.class == PClass::Object {
             let mut b = Vec::new();
             for e in 0..t.elements.max(1) {
-                if (11..=14).contains(&t.ty) || t.ty == PT_SAMPLER {
+                if t.ty.is_sampler() {
                     let recs = self.states(states, u32::MAX, top, if t.elements > 0 { e } else { u32::MAX }, true)?;
                     b.extend_from_slice(&(crate::u32_of(recs.len()) / 4).to_le_bytes());
                     for w in recs {
@@ -564,7 +627,7 @@ impl W<'_> {
                     }
                 } else {
                     let id = self.object();
-                    if t.ty == PT_STRING {
+                    if t.ty == PType::String {
                         let s = match init {
                             Some(Expr::Str(s)) => s.clone(),
                             _ => String::new(),
@@ -649,7 +712,7 @@ impl W<'_> {
             };
             let (td, val): (Td, Vec<u8>) = match (kind, &st.value) {
                 (K::Shader(vs), v) => {
-                    let td = Td::object(if vs { PT_VERTEXSHADER } else { PT_PIXELSHADER });
+                    let td = Td::object(if vs { PType::VertexShader } else { PType::PixelShader });
                     let id = self.object();
                     if reference.is_none() {
                         if let Some(code) = self.shader(v, vs) {
@@ -659,18 +722,18 @@ impl W<'_> {
                     }
                     (td, id.to_le_bytes().to_vec())
                 }
-                (K::Texture, _) => (Td::object(PT_TEXTURE), self.object().to_le_bytes().to_vec()),
-                (K::Sampler, _) => (Td::object(PT_SAMPLER), 0u32.to_le_bytes().to_vec()),
-                _ if reference.is_some() => (Td::scalar(PT_INT), vec![0; 4]),
+                (K::Texture, _) => (Td::object(PType::Texture), self.object().to_le_bytes().to_vec()),
+                (K::Sampler, _) => (Td::object(PType::Sampler), 0u32.to_le_bytes().to_vec()),
+                _ if reference.is_some() => (Td::scalar(PType::Int), vec![0; 4]),
                 (K::ConstF | K::ConstB | K::ConstI, FxVal::Expr(e)) => {
                     let v = eval(self.prog, e).ok_or(format!("line {}: {} is not a constant", st.line, st.name))?;
                     let ty = match kind {
-                        K::ConstB => PT_BOOL,
-                        K::ConstI => PT_INT,
-                        K::Int | K::Float | K::Bool | K::E(_) | K::Shader(_) | K::Texture | K::Sampler | K::ConstF => PT_FLOAT,
+                        K::ConstB => PType::Bool,
+                        K::ConstI => PType::Int,
+                        K::Int | K::Float | K::Bool | K::E(_) | K::Shader(_) | K::Texture | K::Sampler | K::ConstF => PType::Float,
                     };
                     let rows = crate::u32_of(v.len().div_ceil(4).max(1));
-                    let td = Td { class: PC_MATRIX_ROWS, rows, cols: 4, ..Td::scalar(ty) };
+                    let td = Td { class: PClass::MatrixRows, rows, cols: 4, ..Td::scalar(ty) };
                     (td.clone(), Self::numbers(&td, &v))
                 }
                 (_, FxVal::Expr(e)) => {
@@ -684,9 +747,9 @@ impl W<'_> {
                         _ => eval(self.prog, e).ok_or(format!("line {}: the value of {} is not a constant", st.line, st.name))?,
                     };
                     let ty = match kind {
-                        K::Float => PT_FLOAT,
-                        K::Bool => PT_BOOL,
-                        K::Int | K::E(_) | K::Shader(_) | K::Texture | K::Sampler | K::ConstF | K::ConstB | K::ConstI => PT_INT,
+                        K::Float => PType::Float,
+                        K::Bool => PType::Bool,
+                        K::Int | K::E(_) | K::Shader(_) | K::Texture | K::Sampler | K::ConstF | K::ConstB | K::ConstI => PType::Int,
                     };
                     let td = Td::scalar(ty);
                     (td.clone(), Self::numbers(&td, &v[..1.min(v.len())]))
@@ -731,7 +794,7 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
         nparams += 1;
     }
     for (name, vertex, val, annos) in &prog.shaders {
-        let t = Td::object(if *vertex { PT_VERTEXSHADER } else { PT_PIXELSHADER }).named(name);
+        let t = Td::object(if *vertex { PType::VertexShader } else { PType::PixelShader }).named(name);
         let td = w.typedef(&t);
         let id = w.object();
         if let Some(code) = w.shader(val, *vertex) {
