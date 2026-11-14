@@ -1,0 +1,51 @@
+texture: 0
+bad riid: 0x80070057
+subresource 1 of 1: 0
+buffer: 0
+  max 128, current 0
+  IMFDXGIBuffer 0, IMF2DBuffer 0
+  resource 0, the texture 1
+  subresource 0 0
+  unknown not set: 0xc00d36d5
+  set: 0
+  set again: 0x80071392
+  get: 0, the texture 1
+  set NULL: 0
+  get after: 0xc00d36d5
+  lock 0, max 128, current 128
+  the texture's bytes 1
+  unlock 0
+  texel (3, 2) after: 0xff123456
+  unlock unlocked: 0x800702cb
+  scanline unlocked: 0x800702cb
+  lock2d 0, pitch 32, row 1 texel 0 0xff382818
+  contiguous 0, length 128
+bottom-up lock2d 0, pitch 32, scanline 0 texel 0 0xff000000
+NV12 support: 0 2d 1 sample 1 lockable 1
+  odd width: 0x80070057
+  texture: 0
+  view as 61: 0
+  view as 49: 0
+  view as 103: 0x80070057
+  view as 28: 0x80070057
+  staging copy: pitch>=8 1, the bytes 1
+NV12 render target 1
+  texture: 0
+  render target view as 61: 0
+  render target view as 49: 0
+  row 0: 80 80 80 81 82 83 80 80
+  row 1: 80 80 84 85 86 87 80 80
+  row 2: 80 80 80 80 80 80 b8 b7
+  row 3: 80 80 80 80 80 80 b0 af
+  row 4: 40 bf 88 89 8a 8b 40 bf
+  row 5: 40 bf 40 bf 40 bf a0 9f
+manager: 0
+  reset: 0
+reader with the device: 0
+  set RGB32: 0
+  18 frames rrrrrrggggggbbbbbb, textures 18 (64x48 18, format 88)
+manager: 0
+  reset: 0
+reader with the device: 0
+  set NV12: 0
+  18 frames rrrrrrggggggbbbbbb, textures 18 (64x48 18, format 103)
