@@ -57,22 +57,22 @@ impl Rng {
         self.next() % n.max(1)
     }
     pub fn pick<T: Copy>(&mut self, v: &[T]) -> T {
-        v[self.below(v.len() as u64) as usize]
+        v[usize::try_from(self.below(u64::try_from(v.len()).unwrap_or(u64::MAX))).unwrap_or(0)]
     }
     pub fn bytes(&mut self, n: usize) -> Vec<u8> {
-        (0..n).map(|_| self.next() as u8).collect()
+        (0..n).map(|_| self.next().to_le_bytes()[0]).collect()
     }
 }
 /// FNV-1a of guest bytes (a snapshot line for a buffer).
 pub fn hash(a: u32, n: u32) -> u64 {
-    mem::slice(a, n).iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+    mem::slice(a, n).iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
 /// `call` with a guest stack under the CPU, for a handler that calls back into guest code
 /// (Ctx::call; a host_fn trap stands in for the guest's function).
 pub fn call_stacked(f: Handler, args: &[u32]) -> u32 {
     let stack = mem::heap_alloc(0x10000, true);
-    let sp = mem::heap_alloc(4 + 4 * args.len() as u32, true);
-    for (i, &a) in args.iter().enumerate() { mem::w32(sp + 4 + 4 * i as u32, a); }
+    let sp = mem::heap_alloc(4 + 4 * u32::try_from(args.len()).unwrap_or(0), true);
+    for (i, &a) in (0u32..).zip(args) { mem::w32(sp + 4 + 4 * i, a); }
     // (kura's CPU: its run loop stops at sake's traps)
     let cpu = unsafe { &mut *kura::cpu::create(crate::api::TRAP_LO, crate::api::TRAP_HI) };
     cpu.regs[koji::ESP] = stack + 0xfff0;
