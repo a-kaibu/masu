@@ -2,7 +2,7 @@
 //! execute it. Slow but simple; the JIT is checked against it.
 
 use crate::flags::{self, *};
-use crate::{Cpu, Exit, Fault, Memory, ESP, EAX, ECX, EDX, EBP, ESI, EDI};
+use crate::{Cpu, Exit, Fault, Memory, Width, ESP, EAX, ECX, EDX, EBP, ESI, EDI};
 use iced_x86::{ConditionCode, Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 
 /// The value of an operand access, or the Exit its Fault / Stop makes.
@@ -310,20 +310,20 @@ impl<'a, M: Memory> X<'a, M> {
     }
 
     #[inline]
-    fn stack_bits(&self) -> u32 {
-        if self.m64() { 64 } else if self.m16() { 16 } else { 32 }
+    fn stack_bits(&self) -> Width {
+        if self.m64() { Width::W64 } else if self.m16() { Width::W16 } else { Width::W32 }
     }
 
     /// Width of what a CALL / RET / RETF / IRET / ENTER / LEAVE / PUSH sreg / POP sreg moves:
     /// its operand size (66 switches it: `o32 ret` in 16-bit code pops 4 bytes), not the
     /// stack's.
-    fn transfer_bits(&self) -> u32 {
+    fn transfer_bits(&self) -> Width {
         use iced_x86::Code as C;
         match self.ins.code() {
-            C::Retnw | C::Retnw_imm16 | C::Retfw | C::Retfw_imm16 | C::Iretw | C::Enterw_imm16_imm8 | C::Leavew | C::Call_rel16 | C::Call_rm16 | C::Call_ptr1616 | C::Call_m1616 => 16,
-            C::Pushw_ES | C::Pushw_CS | C::Pushw_SS | C::Pushw_DS | C::Pushw_FS | C::Pushw_GS | C::Popw_ES | C::Popw_SS | C::Popw_DS | C::Popw_FS | C::Popw_GS => 16,
-            C::Retnd | C::Retnd_imm16 | C::Retfd | C::Retfd_imm16 | C::Iretd | C::Enterd_imm16_imm8 | C::Leaved | C::Call_rel32_32 | C::Call_rm32 | C::Call_ptr1632 | C::Call_m1632 => 32,
-            C::Pushd_ES | C::Pushd_CS | C::Pushd_SS | C::Pushd_DS | C::Pushd_FS | C::Pushd_GS | C::Popd_ES | C::Popd_SS | C::Popd_DS | C::Popd_FS | C::Popd_GS => 32,
+            C::Retnw | C::Retnw_imm16 | C::Retfw | C::Retfw_imm16 | C::Iretw | C::Enterw_imm16_imm8 | C::Leavew | C::Call_rel16 | C::Call_rm16 | C::Call_ptr1616 | C::Call_m1616 => Width::W16,
+            C::Pushw_ES | C::Pushw_CS | C::Pushw_SS | C::Pushw_DS | C::Pushw_FS | C::Pushw_GS | C::Popw_ES | C::Popw_SS | C::Popw_DS | C::Popw_FS | C::Popw_GS => Width::W16,
+            C::Retnd | C::Retnd_imm16 | C::Retfd | C::Retfd_imm16 | C::Iretd | C::Enterd_imm16_imm8 | C::Leaved | C::Call_rel32_32 | C::Call_rm32 | C::Call_ptr1632 | C::Call_m1632 => Width::W32,
+            C::Pushd_ES | C::Pushd_CS | C::Pushd_SS | C::Pushd_DS | C::Pushd_FS | C::Pushd_GS | C::Popd_ES | C::Popd_SS | C::Popd_DS | C::Popd_FS | C::Popd_GS => Width::W32,
             _ => self.stack_bits(),
         }
     }
@@ -399,12 +399,17 @@ impl<'a, M: Memory> X<'a, M> {
         }
     }
 
-    fn read_mem(&mut self, addr: u32, bits: u32) -> Result<u64, Fault> {
-        let v = match bits {
-            8 => self.mem.read8(addr).map(|v| v as u64),
-            16 => self.mem.read16(addr).map(|v| v as u64),
-            64 => self.mem.read64(addr),
-            _ => self.mem.read32(addr).map(|v| v as u64),
+    /// The width of operand `i` if it is an integer one (None: x87, vector, far pointer).
+    fn width(&self, i: u32) -> Result<Width, Stop> {
+        Width::of_bits(self.op_bits(i)).ok_or(Stop::Ud)
+    }
+
+    fn read_mem(&mut self, addr: u32, w: Width) -> Result<u64, Fault> {
+        let v = match w {
+            Width::W8 => self.mem.read8(addr).map(u64::from),
+            Width::W16 => self.mem.read16(addr).map(u64::from),
+            Width::W32 => self.mem.read32(addr).map(u64::from),
+            Width::W64 => self.mem.read64(addr),
         }?;
         if let Some(l) = &mut self.lock {
             l.seen = v;
@@ -412,19 +417,19 @@ impl<'a, M: Memory> X<'a, M> {
         Ok(v)
     }
 
-    fn write_mem(&mut self, addr: u32, bits: u32, v: u64) -> Result<(), Fault> {
+    fn write_mem(&mut self, addr: u32, w: Width, v: u64) -> Result<(), Fault> {
         if let Some(l) = self.lock {
-            let cur = self.mem.cmpxchg(addr, bits / 8, l.seen, v & flags::mask64(bits))?;
+            let cur = self.mem.cmpxchg(addr, w, l.seen, v & flags::mask64(w.bits()))?;
             if cur != l.seen {
                 self.lock = Some(Lock { lost: true, ..l });
             }
             return Ok(());
         }
-        match bits {
-            8 => self.mem.write8(addr, v as u8),
-            16 => self.mem.write16(addr, v as u16),
-            64 => self.mem.write64(addr, v),
-            _ => self.mem.write32(addr, v as u32),
+        match w {
+            Width::W8 => self.mem.write8(addr, v as u8),
+            Width::W16 => self.mem.write16(addr, v as u16),
+            Width::W32 => self.mem.write32(addr, v as u32),
+            Width::W64 => self.mem.write64(addr, v),
         }
     }
 
@@ -432,9 +437,9 @@ impl<'a, M: Memory> X<'a, M> {
         match self.ins.op_kind(i) {
             OpKind::Register => Ok(self.get_reg(self.ins.op_register(i))),
             OpKind::Memory => {
-                let bits = self.op_bits(i);
+                let w = self.width(i)?;
                 let a = self.addr();
-                Ok(self.read_mem(a, bits)?)
+                Ok(self.read_mem(a, w)?)
             }
             OpKind::Immediate8
             | OpKind::Immediate8_2nd
@@ -471,9 +476,9 @@ impl<'a, M: Memory> X<'a, M> {
                 Ok(())
             }
             OpKind::Memory => {
-                let bits = self.op_bits(i);
+                let w = self.width(i)?;
                 let a = self.addr();
-                Ok(self.write_mem(a, bits, v)?)
+                Ok(self.write_mem(a, w, v)?)
             }
             OpKind::Immediate8
             | OpKind::Immediate8_2nd
@@ -517,17 +522,17 @@ impl<'a, M: Memory> X<'a, M> {
         self.cpu.eflags & CF
     }
 
-    fn push(&mut self, v: u64, bits: u32) -> Result<(), Fault> {
-        let sp = self.sp().wrapping_sub(bits as u64 / 8);
-        self.write_mem(self.stk(sp), bits, v)?;
+    fn push(&mut self, v: u64, w: Width) -> Result<(), Fault> {
+        let sp = self.sp().wrapping_sub(w.bytes64());
+        self.write_mem(self.stk(sp), w, v)?;
         self.set_sp(sp);
         Ok(())
     }
 
-    fn pop(&mut self, bits: u32) -> Result<u64, Fault> {
+    fn pop(&mut self, w: Width) -> Result<u64, Fault> {
         let sp = self.sp();
-        let v = self.read_mem(self.stk(sp), bits)?;
-        self.set_sp(sp.wrapping_add(bits as u64 / 8));
+        let v = self.read_mem(self.stk(sp), w)?;
+        self.set_sp(sp.wrapping_add(w.bytes64()));
         Ok(v)
     }
 
@@ -575,13 +580,13 @@ impl<'a, M: Memory> X<'a, M> {
     fn far_transfer(&mut self) -> Exit {
         let ins = self.ins;
         let (sel, ip, w) = match ins.op_kind(0) {
-            OpKind::FarBranch16 => (ins.far_branch_selector(), ins.far_branch16() as u64, 16),
-            OpKind::FarBranch32 => (ins.far_branch_selector(), ins.far_branch32() as u64, 32),
+            OpKind::FarBranch16 => (ins.far_branch_selector(), u64::from(ins.far_branch16()), Width::W16),
+            OpKind::FarBranch32 => (ins.far_branch_selector(), u64::from(ins.far_branch32()), Width::W32),
             _ => {
-                let w = if ins.memory_size() == iced_x86::MemorySize::SegPtr32 { 32 } else { 16 };
+                let w = if ins.memory_size() == iced_x86::MemorySize::SegPtr32 { Width::W32 } else { Width::W16 };
                 let a = self.addr();
                 let ip = tryf!(self.read_mem(a, w));
-                let sel = tryf!(self.read_mem(a.wrapping_add(w / 8), 16)) as u16;
+                let sel = tryf!(self.read_mem(a.wrapping_add(w.bytes()), Width::W16)) as u16;
                 (sel, ip, w)
             }
         };
@@ -770,19 +775,19 @@ impl<'a, M: Memory> X<'a, M> {
                 let bits = if self.sreg_operand() {
                     self.transfer_bits()
                 } else if ins.op_kind(0) == OpKind::Register || ins.op_kind(0) == OpKind::Memory {
-                    self.op_bits(0)
+                    tryf!(self.width(0))
                 } else {
-                    ins.stack_pointer_increment().unsigned_abs() * 8
+                    tryf!(Width::of_bits(ins.stack_pointer_increment().unsigned_abs() * 8).ok_or(Stop::Ud))
                 };
                 let v = tryf!(self.read_op(0));
                 tryf!(self.push(v, bits));
                 self.done()
             }
             Pop => {
-                let bits = if self.sreg_operand() { self.transfer_bits() } else { self.op_bits(0) };
+                let w = if self.sreg_operand() { self.transfer_bits() } else { tryf!(self.width(0)) };
                 let sp = self.sp();
-                let v = tryf!(self.read_mem(self.stk(sp), bits));
-                self.set_sp(sp.wrapping_add(bits as u64 / 8));
+                let v = tryf!(self.read_mem(self.stk(sp), w));
+                self.set_sp(sp.wrapping_add(w.bytes64()));
                 // POP [ESP+x] uses ESP after the increment
                 if let Err(f) = self.write_op(0, v) {
                     self.set_sp(sp);
@@ -839,15 +844,15 @@ impl<'a, M: Memory> X<'a, M> {
                 self.done()
             }
             Pushfd | Pushf | Pushfq => {
-                let bits = match ins.mnemonic() { Pushf => 16, Pushfq => 64, _ => 32 };
+                let w = match ins.mnemonic() { Pushf => Width::W16, Pushfq => Width::W64, _ => Width::W32 };
                 let v = self.cpu.eflags & !(0x3 << 16); // VM and RF read as 0
-                tryf!(self.push(v as u64, bits));
+                tryf!(self.push(u64::from(v), w));
                 self.done()
             }
             Popfd | Popf | Popfq => {
-                let bits = match ins.mnemonic() { Popf => 16, Popfq => 64, _ => 32 };
-                let v = tryf!(self.pop(bits)) as u32;
-                let which = USER_WRITABLE & flags::mask(bits);
+                let w = match ins.mnemonic() { Popf => Width::W16, Popfq => Width::W64, _ => Width::W32 };
+                let v = tryf!(self.pop(w)) as u32;
+                let which = USER_WRITABLE & flags::mask(w.bits());
                 self.cpu.eflags = (self.cpu.eflags & !which) | (v & which) | 2;
                 self.done()
             }
@@ -931,9 +936,9 @@ impl<'a, M: Memory> X<'a, M> {
             Enter => {
                 let size = ins.immediate16() as u64;
                 let level = ins.immediate8_2nd() as u64 & 31;
-                let (w, sb) = (self.transfer_bits(), self.transfer_bits() as u64 / 8);
+                let (w, sb) = (self.transfer_bits(), self.transfer_bits().bytes64());
                 let m64 = self.m64();
-                let rbp = if m64 { Register::RBP } else if w == 16 { Register::BP } else { Register::EBP };
+                let rbp = if m64 { Register::RBP } else if w == Width::W16 { Register::BP } else { Register::EBP };
                 let bp = self.get_reg(rbp);
                 let mut sp = self.sp().wrapping_sub(sb);
                 tryf!(self.write_mem(self.stk(sp), w, bp));
@@ -954,12 +959,12 @@ impl<'a, M: Memory> X<'a, M> {
             Leave => {
                 let m64 = self.m64();
                 let w = self.transfer_bits();
-                let rbp = if m64 { Register::RBP } else if w == 16 { Register::BP } else { Register::EBP };
+                let rbp = if m64 { Register::RBP } else if w == Width::W16 { Register::BP } else { Register::EBP };
                 // (the stack's width picks SP or ESP, the operand size BP or EBP)
                 let sp_from = if m64 { Register::RBP } else if self.m16() { Register::BP } else { Register::EBP };
                 let bp = self.get_reg(sp_from);
                 let v = tryf!(self.read_mem(self.stk(bp), w));
-                self.set_sp(bp.wrapping_add(w as u64 / 8));
+                self.set_sp(bp.wrapping_add(w.bytes64()));
                 self.set_reg(rbp, v);
                 self.done()
             }
@@ -984,16 +989,16 @@ impl<'a, M: Memory> X<'a, M> {
                 let ip = tryf!(self.pop(w));
                 let cs = tryf!(self.pop(w));
                 let f = tryf!(self.pop(w)) as u32;
-                let which = USER_WRITABLE & if w == 16 { 0xffff } else { !0 };
+                let which = USER_WRITABLE & if w == Width::W16 { 0xffff } else { !0 };
                 self.cpu.eflags = (self.cpu.eflags & !which) | (f & which) | 2;
                 self.load_seg(1, cs as u16);
                 self.jump(ip)
             }
             Lds | Les | Lss | Lfs | Lgs => {
-                let bits = self.op_bits(0);
+                let w = tryf!(self.width(0));
                 let a = self.addr();
-                let off = tryf!(self.read_mem(a, bits));
-                let sel = tryf!(self.read_mem(a.wrapping_add(bits / 8), 16));
+                let off = tryf!(self.read_mem(a, w));
+                let sel = tryf!(self.read_mem(a.wrapping_add(w.bytes()), Width::W16));
                 if self.m16() {
                     let i = match ins.mnemonic() { Les => 0, Lss => 2, Lds => 3, Lfs => 4, _ => 5 };
                     self.load_seg(i, sel as u16);
@@ -1021,8 +1026,8 @@ impl<'a, M: Memory> X<'a, M> {
                 let sp = self.sp();
                 let w = self.transfer_bits();
                 let t = tryf!(self.read_mem(self.stk(sp), w));
-                let extra = if ins.op_count() == 1 { ins.immediate16() as u64 } else { 0 };
-                self.set_sp(sp.wrapping_add(w as u64 / 8 + extra));
+                let extra = if ins.op_count() == 1 { u64::from(ins.immediate16()) } else { 0 };
+                self.set_sp(sp.wrapping_add(w.bytes64() + extra));
                 self.jump(t)
             }
             Ja | Jae | Jb | Jbe | Je | Jg | Jge | Jl | Jle | Jne | Jno | Jnp | Jns | Jo | Jp | Js => {
@@ -1141,7 +1146,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let n = (self.cpu.regs[ECX] as u64) << 32 | self.cpu.regs[3] as u64;
                 // always atomic: a plain store of the unchanged value could undo another
                 // thread's write
-                let d = tryf!(self.mem.cmpxchg(a, 8, cmp, n));
+                let d = tryf!(self.mem.cmpxchg(a, Width::W64, cmp, n));
                 if d == cmp {
                     self.cpu.eflags |= ZF;
                 } else {
@@ -1242,12 +1247,12 @@ impl<'a, M: Memory> X<'a, M> {
             // BOUND: #BR (vector 5, a fault: EIP stays) when the index is outside
             // [lower, upper], signed, both read from the memory operand
             Bound => {
-                let bits = self.op_bits(0);
+                let w = tryf!(self.width(0));
                 let a = self.addr();
-                let lo = tryf!(self.read_mem(a, bits));
-                let hi = tryf!(self.read_mem(a.wrapping_add(bits / 8), bits));
+                let lo = tryf!(self.read_mem(a, w));
+                let hi = tryf!(self.read_mem(a.wrapping_add(w.bytes()), w));
                 let v = self.get_reg(ins.op_register(0));
-                let sx = |x: u64| if bits == 16 { x as u16 as i16 as i64 } else { x as u32 as i32 as i64 };
+                let sx = |x: u64| if w == Width::W16 { x as u16 as i16 as i64 } else { x as u32 as i32 as i64 };
                 if sx(v) < sx(lo) || sx(v) > sx(hi) {
                     return Exit::Interrupt(5);
                 }
@@ -1536,7 +1541,8 @@ impl<'a, M: Memory> X<'a, M> {
     fn bit_test(&mut self) -> Exit {
         use Mnemonic::*;
         let ins = self.ins;
-        let bits = self.op_bits(0);
+        let w = tryf!(self.width(0));
+        let bits = w.bits();
         let off = tryf!(self.read_op(1));
         let reg_offset = ins.op_kind(1) == OpKind::Register;
         let (val, addr) = if ins.op_kind(0) == OpKind::Memory && reg_offset {
@@ -1549,7 +1555,7 @@ impl<'a, M: Memory> X<'a, M> {
                 eff &= 0xffff;
             }
             let a = lin(eff.wrapping_add(self.seg_base()), self.m64());
-            (tryf!(self.read_mem(a, bits)), Some(a))
+            (tryf!(self.read_mem(a, w)), Some(a))
         } else {
             (tryf!(self.read_op(0)), None)
         };
@@ -1563,7 +1569,7 @@ impl<'a, M: Memory> X<'a, M> {
         };
         if ins.mnemonic() != Bt {
             match addr {
-                Some(a) => tryf!(self.write_mem(a, bits, nv)),
+                Some(a) => tryf!(self.write_mem(a, w, nv)),
                 None => tryf!(self.write_op(0, nv)),
             }
         }
@@ -1662,12 +1668,13 @@ impl<'a, M: Memory> X<'a, M> {
         use Mnemonic::*;
         let ins = self.ins;
         let mn = ins.mnemonic();
-        let bits = match mn {
-            Movsb | Stosb | Lodsb | Cmpsb | Scasb => 8,
-            Movsw | Stosw | Lodsw | Cmpsw | Scasw => 16,
-            Movsq | Stosq | Lodsq | Cmpsq | Scasq => 64,
-            _ => 32,
+        let w = match mn {
+            Movsb | Stosb | Lodsb | Cmpsb | Scasb => Width::W8,
+            Movsw | Stosw | Lodsw | Cmpsw | Scasw => Width::W16,
+            Movsq | Stosq | Lodsq | Cmpsq | Scasq => Width::W64,
+            _ => Width::W32,
         };
+        let bits = w.bits();
         let step: u64 = if self.cpu.eflags & DF != 0 { (bits as u64 / 8).wrapping_neg() } else { bits as u64 / 8 };
         let rep = ins.has_rep_prefix() || ins.has_repe_prefix();
         let repne = ins.has_repne_prefix();
@@ -1682,7 +1689,7 @@ impl<'a, M: Memory> X<'a, M> {
         let (rc, rs, rd) = self.string_regs();
         let am = flags::mask64(reg_info(rc).1);
         let m64 = self.m64();
-        let acc = match bits { 8 => Register::AL, 16 => Register::AX, 32 => Register::EAX, _ => Register::RAX };
+        let acc = match w { Width::W8 => Register::AL, Width::W16 => Register::AX, Width::W32 => Register::EAX, Width::W64 => Register::RAX };
         let mut left = REP_STEP_MAX;
         loop {
             if (rep || repne) && self.get_reg(rc) == 0 {
@@ -1694,31 +1701,31 @@ impl<'a, M: Memory> X<'a, M> {
             let da = if self.m16() { self.cpu.sbase[0].wrapping_add(di as u32) } else { lin(di, m64) };
             match mn {
                 Movsb | Movsw | Movsd | Movsq => {
-                    let v = tryf!(self.read_mem(sa, bits));
-                    tryf!(self.write_mem(da, bits, v));
+                    let v = tryf!(self.read_mem(sa, w));
+                    tryf!(self.write_mem(da, w, v));
                     self.set_reg(rs, si.wrapping_add(step) & am);
                     self.set_reg(rd, di.wrapping_add(step) & am);
                 }
                 Stosb | Stosw | Stosd | Stosq => {
                     let v = self.get_reg(acc);
-                    tryf!(self.write_mem(da, bits, v));
+                    tryf!(self.write_mem(da, w, v));
                     self.set_reg(rd, di.wrapping_add(step) & am);
                 }
                 Lodsb | Lodsw | Lodsd | Lodsq => {
-                    let v = tryf!(self.read_mem(sa, bits));
+                    let v = tryf!(self.read_mem(sa, w));
                     self.set_reg(acc, v);
                     self.set_reg(rs, si.wrapping_add(step) & am);
                 }
                 Cmpsb | Cmpsw | Cmpsd | Cmpsq => {
-                    let a = tryf!(self.read_mem(sa, bits));
-                    let b = tryf!(self.read_mem(da, bits));
+                    let a = tryf!(self.read_mem(sa, w));
+                    let b = tryf!(self.read_mem(da, w));
                     let (_, f) = flags::sub64(a, b, 0, bits);
                     self.set_status(f);
                     self.set_reg(rs, si.wrapping_add(step) & am);
                     self.set_reg(rd, di.wrapping_add(step) & am);
                 }
                 _ => {
-                    let b = tryf!(self.read_mem(da, bits));
+                    let b = tryf!(self.read_mem(da, w));
                     let (_, f) = flags::sub64(self.get_reg(acc), b, 0, bits);
                     self.set_status(f);
                     self.set_reg(rd, di.wrapping_add(step) & am);

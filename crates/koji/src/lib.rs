@@ -109,6 +109,51 @@ pub struct Fault {
     pub write: bool,
 }
 
+/// The width of an integer access or operand: 1, 2, 4 or 8 bytes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Width {
+    W8,
+    W16,
+    W32,
+    W64,
+}
+
+impl Width {
+    pub const fn bits(self) -> u32 {
+        match self {
+            Width::W8 => 8,
+            Width::W16 => 16,
+            Width::W32 => 32,
+            Width::W64 => 64,
+        }
+    }
+
+    pub const fn bytes(self) -> u32 {
+        self.bits() / 8
+    }
+
+    pub const fn bytes64(self) -> u64 {
+        // (const: From is not)
+        match self {
+            Width::W8 => 1,
+            Width::W16 => 2,
+            Width::W32 => 4,
+            Width::W64 => 8,
+        }
+    }
+
+    /// None for any other number of bits (an x87 or vector operand, a far pointer).
+    pub const fn of_bits(bits: u32) -> Option<Width> {
+        match bits {
+            8 => Some(Width::W8),
+            16 => Some(Width::W16),
+            32 => Some(Width::W32),
+            64 => Some(Width::W64),
+            _ => None,
+        }
+    }
+}
+
 /// Guest memory. Little-endian, unaligned accesses allowed.
 pub trait Memory {
     fn read8(&mut self, addr: u32) -> Result<u8, Fault>;
@@ -141,21 +186,22 @@ pub trait Memory {
         self.write32(addr, v as u32)?;
         self.write32(addr.wrapping_add(4), (v >> 32) as u32)
     }
-    /// Compare-and-swap of `bytes` (1, 2, 4 or 8) bytes at `addr`, atomic with respect to other
-    /// threads' accesses: stores `new` if the memory holds `old`; returns what it held.
-    fn cmpxchg(&mut self, addr: u32, bytes: u32, old: u64, new: u64) -> Result<u64, Fault> {
-        let cur = match bytes {
-            1 => self.read8(addr)? as u64,
-            2 => self.read16(addr)? as u64,
-            4 => self.read32(addr)? as u64,
-            _ => self.read64(addr)?,
+    /// Compare-and-swap of a `w` access at `addr`, atomic with respect to other threads'
+    /// accesses: stores `new` if the memory holds `old`; returns what it held.
+    fn cmpxchg(&mut self, addr: u32, w: Width, old: u64, new: u64) -> Result<u64, Fault> {
+        let cur = match w {
+            Width::W8 => u64::from(self.read8(addr)?),
+            Width::W16 => u64::from(self.read16(addr)?),
+            Width::W32 => u64::from(self.read32(addr)?),
+            Width::W64 => self.read64(addr)?,
         };
         if cur == old {
-            match bytes {
-                1 => self.write8(addr, new as u8)?,
-                2 => self.write16(addr, new as u16)?,
-                4 => self.write32(addr, new as u32)?,
-                _ => self.write64(addr, new)?,
+            let b = new.to_le_bytes();
+            match w {
+                Width::W8 => self.write8(addr, b[0])?,
+                Width::W16 => self.write16(addr, u16::from_le_bytes([b[0], b[1]]))?,
+                Width::W32 => self.write32(addr, u32::from_le_bytes([b[0], b[1], b[2], b[3]]))?,
+                Width::W64 => self.write64(addr, new)?,
             }
         }
         Ok(cur)

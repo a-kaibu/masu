@@ -151,8 +151,9 @@ impl Memory for Linear {
         unsafe { (check(addr, 8, true)? as *mut u64).write_unaligned(v) };
         Ok(())
     }
-    fn cmpxchg(&mut self, addr: u32, bytes: u32, old: u64, new: u64) -> Result<u64, Fault> {
+    fn cmpxchg(&mut self, addr: u32, w: koji::Width, old: u64, new: u64) -> Result<u64, Fault> {
         use std::sync::atomic::{AtomicU16, AtomicU64, AtomicU8};
+        let bytes = w.bytes();
         let p = check(addr, bytes, true)?;
         // an unaligned operand goes through the aligned 8 bytes holding it, or a lock when
         // it straddles two of those (rare; atomic only against other locked accesses)
