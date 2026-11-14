@@ -93,12 +93,16 @@ pub fn xp3_index(index: &[u8]) -> Vec<Member> {
                         name = Some(String::from_utf16_lossy(&units));
                     }
                 }
-                b"adlr" if b.len() >= 4 => hash = u32::from_le_bytes(b[..4].try_into().unwrap()),
+                b"adlr" => {
+                    if let Some(h) = b.first_chunk::<4>() {
+                        hash = u32::from_le_bytes(*h);
+                    }
+                }
                 b"segm" => {
-                    for s in b.chunks_exact(28) {
-                        let f = u32::from_le_bytes(s[0..4].try_into().unwrap());
-                        let start = u64::from_le_bytes(s[4..12].try_into().unwrap());
-                        let packed = u64::from_le_bytes(s[20..28].try_into().unwrap());
+                    for s in b.as_chunks::<28>().0 {
+                        let f = u32::from_le_bytes(bytes::<0, 4, 28>(s));
+                        let start = u64::from_le_bytes(bytes::<4, 8, 28>(s));
+                        let packed = u64::from_le_bytes(bytes::<20, 8, 28>(s));
                         segments.push((start, packed, f & 7 == 1));
                     }
                 }
@@ -285,7 +289,7 @@ pub fn bgi_index(head: &[u8]) -> Vec<Member> {
         Some(b"BURIKO ARC20") => (96, 128),
         _ => return Vec::new(),
     };
-    let Some(n) = head.get(12..16).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) else { return Vec::new() };
+    let Some(n) = slice_u32(head, 12).and_then(|n| usize::try_from(n).ok()) else { return Vec::new() };
     let base = 16 + n.saturating_mul(entry);
     let mut out = Vec::new();
     for k in 0..n.min(1 << 20) {
@@ -294,8 +298,8 @@ pub fn bgi_index(head: &[u8]) -> Vec<Member> {
         let end = raw.iter().position(|&b| b == 0).unwrap_or(name_len);
         // (names are Shift_JIS; the ASCII ones are what scripts name)
         let name: String = raw[..end].iter().map(|&b| if b < 0x80 { b as char } else { '_' }).collect();
-        let off = u32::from_le_bytes(e[name_len..name_len + 4].try_into().unwrap()) as u64;
-        let size = u32::from_le_bytes(e[name_len + 4..name_len + 8].try_into().unwrap()) as u64;
+        let (Some(off), Some(size)) = (slice_u32(e, name_len), slice_u32(e, name_len + 4)) else { break };
+        let (off, size) = (u64::from(off), u64::from(size));
         if !name.is_empty() {
             out.push(Member { name, segments: vec![(base as u64 + off, size, false)], hash: 0 });
         }
@@ -323,7 +327,7 @@ pub fn is_bgi_script(head: &[u8]) -> bool {
 /// at 20), in order; string k XORed with 28807 * k when `xor` (as most games keep them); a
 /// malformed one gives what it has.
 pub fn siglus_strings(scene: &[u8], xor: bool) -> Vec<String> {
-    let rd = |o: usize| scene.get(o..o + 4).map(|b| i32::from_le_bytes(b.try_into().unwrap()));
+    let rd = |o: usize| scene.get(o..).and_then(|b| b.first_chunk::<4>()).map(|b| i32::from_le_bytes(*b));
     let (Some(idx), Some(cnt), Some(list)) = (rd(12), rd(16), rd(20)) else { return Vec::new() };
     if idx < 0 || cnt < 0 || list < 0 {
         return Vec::new();
@@ -526,7 +530,8 @@ pub fn detect_scheme(samples: &[(&str, u32, &[u8])]) -> Scheme {
         }
         let e = name.rsplit_once('.').map_or(String::new(), |x| x.1.to_ascii_lowercase());
         if let Some((_, magic)) = MAGICS.iter().find(|m| m.0 == e) {
-            let key = buf[0] ^ magic[0].unwrap();
+            let Some(Some(m0)) = magic.first() else { continue };
+            let key = buf[0] ^ m0;
             let tries = [Scheme::Xor(key), Scheme::XorHash(key ^ hash as u8)].into_iter().chain(fixed);
             for t in tries {
                 let mut d = buf[..magic.len()].to_vec();
@@ -600,7 +605,7 @@ pub fn text(bytes: &[u8]) -> (Vec<u16>, bool) {
             0 => (units(body).into_iter().map(|c| if c >= 0x20 { c ^ (((c & 0xfe) << 8) ^ 1) } else { c }).collect(), true),
             1 => (units(body).into_iter().map(|c| ((c & 0xaaaa) >> 1) | ((c & 0x5555) << 1)).collect(), true),
             2 if body.len() >= 16 => {
-                let size = u64::from_le_bytes(body[8..16].try_into().unwrap()) as usize;
+                let size = body.get(8..).and_then(|b| b.first_chunk::<8>()).map_or(0, |b| usize::try_from(u64::from_le_bytes(*b)).unwrap_or(usize::MAX));
                 let out = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(&body[16..], size.min(SCRIPT_MAX)).unwrap_or_default();
                 (units(&out), true)
             }
@@ -664,9 +669,24 @@ pub fn keys(name: &str) -> (String, Option<String>) {
     (n, stem)
 }
 
+/// Bytes `AT..AT + L` of an array of N (one past its end does not compile).
+fn bytes<const AT: usize, const L: usize, const N: usize>(b: &[u8; N]) -> [u8; L] {
+    const { assert!(AT + L <= N, "read past the end of the array") };
+    std::array::from_fn(|i| b[AT + i])
+}
+
+/// The u32 at `at` of `b`, little endian; None past its end.
+fn slice_u32(b: &[u8], at: usize) -> Option<u32> {
+    b.get(at..)?.first_chunk::<4>().map(|b| u32::from_le_bytes(*b))
+}
+
+#[cfg(test)]
+mod pinned_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use proptest::prelude::*;
 
     use xp3_chunk as chunk;

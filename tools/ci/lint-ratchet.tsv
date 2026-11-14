@@ -94,13 +94,12 @@ file	crates/dxwgsl/src/tpf.rs	indexing_slicing	11
 file	crates/dxwgsl/src/wgsl.rs	arithmetic_side_effects	23
 file	crates/dxwgsl/src/wgsl.rs	indexing_slicing	230
 file	crates/dxwgsl/src/wgsl.rs	let_underscore_must_use	26
-file	crates/foresee/src/lib.rs	arithmetic_side_effects	30
-file	crates/foresee/src/lib.rs	as_conversions	62
-file	crates/foresee/src/lib.rs	cast_possible_truncation	30
+file	crates/foresee/src/lib.rs	arithmetic_side_effects	28
+file	crates/foresee/src/lib.rs	as_conversions	58
+file	crates/foresee/src/lib.rs	cast_possible_truncation	29
 file	crates/foresee/src/lib.rs	cast_possible_wrap	5
 file	crates/foresee/src/lib.rs	cast_sign_loss	6
-file	crates/foresee/src/lib.rs	indexing_slicing	38
-file	crates/foresee/src/lib.rs	unwrap_used	10
+file	crates/foresee/src/lib.rs	indexing_slicing	31
 file	crates/foresee/src/lib.rs	wildcard_enum_match_arm	1
 file	crates/glwgsl/src/lib.rs	arithmetic_side_effects	40
 file	crates/glwgsl/src/lib.rs	indexing_slicing	30
@@ -2463,7 +2462,6 @@ file	crates/tls-client/src/lib.rs	cast_possible_truncation	1
 file	crates/tls-client/src/lib.rs	expect_used	1
 file	crates/tls-client/src/lib.rs	indexing_slicing	8
 file	crates/tls-client/src/lib.rs	map_err_ignore	4
-file	crates/tls-client/src/lib.rs	unwrap_used	1
 file	crates/vorbis/src/bits.rs	arithmetic_side_effects	10
 file	crates/vorbis/src/bits.rs	as_conversions	3
 file	crates/vorbis/src/bits.rs	cast_possible_truncation	2
@@ -2500,7 +2498,6 @@ file	crates/waits/src/handoff.rs	indexing_slicing	2
 file	crates/waits/src/lib.rs	arithmetic_side_effects	9
 file	crates/waits/src/lib.rs	as_conversions	7
 file	crates/waits/src/lib.rs	indexing_slicing	5
-file	crates/waits/src/lib.rs	unwrap_used	1
 file	crates/waits/src/outq.rs	arithmetic_side_effects	29
 file	crates/waits/src/outq.rs	as_conversions	7
 file	crates/waits/src/outq.rs	cast_possible_truncation	3
@@ -2512,7 +2509,6 @@ file	crates/waits/src/suspend.rs	arithmetic_side_effects	3
 file	crates/waits/src/suspend.rs	as_conversions	3
 file	crates/waits/src/suspend.rs	cast_possible_truncation	3
 file	crates/waits/src/suspend.rs	indexing_slicing	2
-file	crates/waits/src/suspend.rs	unwrap_used	10
 file	crates/waits/src/uni.rs	arithmetic_side_effects	3
 file	crates/waits/src/uni.rs	as_conversions	1
 file	crates/waits/src/uni.rs	cast_possible_truncation	1

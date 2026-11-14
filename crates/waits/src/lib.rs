@@ -530,19 +530,19 @@ impl Sync {
     /// InitOnceExecuteOnce: runs `f` if no one did (or every run so far failed); `f` gives the
     /// function's result and the word to leave (0 to let the next caller try).
     pub fn once_execute(&self, a: &AtomicU32, f: impl FnOnce() -> (u32, u32)) -> Once {
-        let mut f = Some(f);
+        // (the loop ends when this caller won the word, and only then is `f` run: once, by
+        // construction, where an Option taken inside the loop needed an unwrap)
         loop {
             match a.compare_exchange(0, 1, SeqCst, SeqCst) {
-                Ok(_) => {
-                    let (r, word) = (f.take().unwrap())();
-                    a.store(word, SeqCst);
-                    self.park(key(a)).notify();
-                    return Once::Ran(r);
-                }
+                Ok(_) => break,
                 Err(v) if v & 3 == 2 => return Once::Done(v),
                 Err(_) => self.wait_running(a),
             }
         }
+        let (r, word) = f();
+        a.store(word, SeqCst);
+        self.park(key(a)).notify();
+        Once::Ran(r)
     }
 
     /// InitOnceBeginInitialize.

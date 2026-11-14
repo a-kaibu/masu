@@ -19,6 +19,12 @@ use loom::sync::{atomic::AtomicU32, Condvar, Mutex};
 use std::sync::{atomic::AtomicU32, Condvar, Mutex};
 use std::sync::atomic::Ordering;
 
+/// A lock or wait's result, taken whole when another thread panicked holding the lock (the list
+/// it guards is changed whole under it; a panic elsewhere left it as it was).
+fn ok<T>(r: std::sync::LockResult<T>) -> T {
+    r.unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Windows' MAXIMUM_SUSPEND_COUNT: one more SuspendThread fails.
 pub const MAX_COUNT: u32 = 127;
 
@@ -60,7 +66,7 @@ impl Suspends {
 
     /// SuspendThread: the previous count, None when it is already MAX_COUNT.
     pub fn suspend(&self, tid: u32) -> Option<u32> {
-        let mut l = self.list.lock().unwrap();
+        let mut l = ok(self.list.lock());
         match l.iter_mut().find(|e| e.0 == tid) {
             Some(e) if e.1 >= MAX_COUNT => None,
             Some(e) => {
@@ -77,7 +83,7 @@ impl Suspends {
 
     /// ResumeThread: the previous count; at 0 the thread goes on.
     pub fn resume(&self, tid: u32) -> u32 {
-        let mut l = self.list.lock().unwrap();
+        let mut l = ok(self.list.lock());
         let Some(i) = l.iter().position(|e| e.0 == tid) else { return 0 };
         let old = l[i].1;
         if old == 1 {
@@ -92,7 +98,7 @@ impl Suspends {
     }
 
     pub fn count(&self, tid: u32) -> u32 {
-        self.list.lock().unwrap().iter().find(|e| e.0 == tid).map_or(0, |e| e.1)
+        ok(self.list.lock()).iter().find(|e| e.0 == tid).map_or(0, |e| e.1)
     }
 
     /// Whether some thread is suspended (cheap: the run loops ask before every slice).
@@ -105,7 +111,7 @@ impl Suspends {
     /// every wake-up (`wake`): true returns at once (a save state wants the thread at the top of
     /// its run loop; it comes back here afterwards). Returns whether it waited.
     pub fn park(&self, tid: u32, leave: impl Fn() -> bool) -> bool {
-        let mut l = self.list.lock().unwrap();
+        let mut l = ok(self.list.lock());
         let mut waited = false;
         while l.iter().any(|e| e.0 == tid) {
             if leave() {
@@ -117,7 +123,7 @@ impl Suspends {
                 self.cv.notify_all();
             }
             waited = true;
-            l = self.cv.wait(l).unwrap();
+            l = ok(self.cv.wait(l));
         }
         if waited {
             if let Some(i) = l.parked.iter().position(|&t| t == tid) {
@@ -132,7 +138,7 @@ impl Suspends {
     /// `left` (ms to go; None: no limit) runs out. True: stopped or settled. A thread that is not
     /// suspended is not waited for.
     pub fn wait_stopped(&self, tid: u32, settled: impl Fn() -> bool, left: impl Fn() -> Option<u64>) -> bool {
-        let mut l = self.list.lock().unwrap();
+        let mut l = ok(self.list.lock());
         loop {
             if l.parked.contains(&tid) || settled() {
                 return true;
@@ -144,23 +150,23 @@ impl Suspends {
                 Some(0) => return false,
                 // (settled changes without a notify: looked at again every 5 ms)
                 #[cfg(not(loom))]
-                Some(ms) => l = self.cv.wait_timeout(l, std::time::Duration::from_millis(ms.min(5))).unwrap().0,
+                Some(ms) => l = ok(self.cv.wait_timeout(l, std::time::Duration::from_millis(ms.min(5)))).0,
                 #[cfg(loom)]
-                Some(_) => l = self.cv.wait(l).unwrap(),
-                None => l = self.cv.wait(l).unwrap(),
+                Some(_) => l = ok(self.cv.wait(l)),
+                None => l = ok(self.cv.wait(l)),
             }
         }
     }
 
     /// Wakes every parked thread to ask its `leave` again.
     pub fn wake(&self) {
-        drop(self.list.lock().unwrap());
+        drop(ok(self.list.lock()));
         self.cv.notify_all();
     }
 
     /// A thread that ended (TerminateThread of a suspended thread): its entry goes.
     pub fn forget(&self, tid: u32) {
-        let mut l = self.list.lock().unwrap();
+        let mut l = ok(self.list.lock());
         if let Some(i) = l.iter().position(|e| e.0 == tid) {
             l.swap_remove(i);
             self.any.store(l.len() as u32, Ordering::Release);

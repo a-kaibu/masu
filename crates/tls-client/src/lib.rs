@@ -283,7 +283,7 @@ fn read_response<R: Read>(io: &mut R, method: &str) -> Result<Response, Error> {
             }
             size = Some(n)
         }
-        let n = size.unwrap();
+        let Some(n) = size else { return Err(Error::InvalidResponse) };
         let mut source = Prefix { pending, at: 0, io };
         body.resize(n, 0);
         source.read_exact(&mut body).map_err(tls_error)?;
