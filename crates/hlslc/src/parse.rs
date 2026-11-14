@@ -3,6 +3,11 @@
 use super::ast::*;
 use super::pp::{Tok, Token};
 
+/// '1'..'4' as a width
+fn digit_width(c: u8) -> Option<Width> {
+    Width::new(usize::from(c.checked_sub(b'0')?))
+}
+
 type R<T> = Result<T, String>;
 
 pub struct Parser {
@@ -48,8 +53,8 @@ pub fn builtin_numeric(s: &str) -> Option<Ty> {
         let r = rest.as_bytes();
         return match r {
             [] => Some(Ty::Scalar(b)),
-            [n] if (b'1'..=b'4').contains(n) => Some(Ty::vec(b, usize::from(n - b'0'))),
-            [rr, b'x', c] if (b'1'..=b'4').contains(rr) && (b'1'..=b'4').contains(c) => Some(Ty::Mat(b, rr - b'0', c - b'0')),
+            [n] => digit_width(*n).map(|n| Ty::vec(b, n)),
+            [rr, b'x', c] => digit_width(*rr).zip(digit_width(*c)).map(|(r, c)| Ty::Mat(b, r, c)),
             _ => None,
         };
     }
@@ -191,12 +196,12 @@ impl Parser {
     /// A vector size or matrix row/column count: 1 to 4 (fxc X3052). The lowering keeps at
     /// most 4 components a vector, 16 a matrix; `vector<float, 9>` or `matrix<float, 200, 200>`
     /// (wrapping `as u8`) indexed past them and aborted the VM (review A-6).
-    fn dim_num(&mut self) -> R<u32> {
+    fn dim_num(&mut self) -> R<Width> {
         let n = self.template_num()?;
-        if !(1..=4).contains(&n) {
-            return self.err("vector and matrix dimensions must be between 1 and 4");
+        match Width::new(crate::us(n)) {
+            Some(w) => Ok(w),
+            None => self.err("vector and matrix dimensions must be between 1 and 4"),
         }
-        Ok(n)
     }
 
     /// A type at the current position.
@@ -216,7 +221,7 @@ impl Parser {
             return Ok(Ty::Struct(i));
         }
         if let Some(d) = name.strip_prefix("RW").and_then(tex_dim).filter(|d| !matches!(d, Dim::T2DMS | Dim::T2DMSArray | Dim::Cube | Dim::CubeArray)) {
-            let mut el = Ty::Vec(B::Float, 4);
+            let mut el = Ty::Vec(B::Float, Width::W4);
             if self.eat("<") {
                 // (unorm / snorm float4: the view's format says)
                 while self.is_id("unorm") || self.is_id("snorm") {
@@ -228,7 +233,7 @@ impl Parser {
             return Ok(Ty::RwTex(d, Box::new(el)));
         }
         if let Some(d) = tex_dim(&name) {
-            let mut el = Ty::Vec(B::Float, 4);
+            let mut el = Ty::Vec(B::Float, Width::W4);
             if self.eat("<") {
                 el = self.ty()?;
                 if self.eat(",") {
@@ -250,9 +255,9 @@ impl Parser {
                     self.expect(",")?;
                     let n = self.dim_num()?;
                     self.expect(">")?;
-                    Ty::vec(b, crate::us(n))
+                    Ty::vec(b, n)
                 } else {
-                    Ty::Vec(B::Float, 4)
+                    Ty::Vec(B::Float, Width::W4)
                 }
             }
             "matrix" => {
@@ -263,9 +268,9 @@ impl Parser {
                     self.expect(",")?;
                     let c = self.dim_num()?;
                     self.expect(">")?;
-                    Ty::Mat(b, r as u8, c as u8)
+                    Ty::Mat(b, r, c)
                 } else {
-                    Ty::Mat(B::Float, 4, 4)
+                    Ty::Mat(B::Float, Width::W4, Width::W4)
                 }
             }
             "sampler" | "sampler2D" => Ty::Legacy(Dim::T2D),

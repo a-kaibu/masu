@@ -108,8 +108,6 @@ file	crates/glwgsl/src/lib.rs	let_underscore_must_use	15
 file	crates/glwgsl/src/lib.rs	redundant_locals	1
 file	crates/glwgsl/src/lib.rs	string_slice	5
 file	crates/hlslc/src/ast.rs	arithmetic_side_effects	1
-file	crates/hlslc/src/ast.rs	as_conversions	1
-file	crates/hlslc/src/ast.rs	cast_possible_truncation	1
 file	crates/hlslc/src/d3d9asm.rs	arithmetic_side_effects	12
 file	crates/hlslc/src/d3d9asm.rs	as_conversions	3
 file	crates/hlslc/src/d3d9asm.rs	cast_possible_truncation	1
@@ -125,8 +123,8 @@ file	crates/hlslc/src/fx.rs	cast_sign_loss	2
 file	crates/hlslc/src/fx.rs	indexing_slicing	9
 file	crates/hlslc/src/fx.rs	unwrap_used	1
 file	crates/hlslc/src/intrinsics.rs	arithmetic_side_effects	14
-file	crates/hlslc/src/intrinsics.rs	as_conversions	9
-file	crates/hlslc/src/intrinsics.rs	cast_possible_truncation	3
+file	crates/hlslc/src/intrinsics.rs	as_conversions	3
+file	crates/hlslc/src/intrinsics.rs	cast_possible_truncation	1
 file	crates/hlslc/src/intrinsics.rs	cast_possible_wrap	1
 file	crates/hlslc/src/intrinsics.rs	cast_sign_loss	1
 file	crates/hlslc/src/intrinsics.rs	indexing_slicing	123
@@ -135,7 +133,7 @@ file	crates/hlslc/src/intrinsics.rs	unreachable	2
 file	crates/hlslc/src/lib.rs	indexing_slicing	5
 file	crates/hlslc/src/lib.rs	map_err_ignore	1
 file	crates/hlslc/src/lower.rs	arithmetic_side_effects	93
-file	crates/hlslc/src/lower.rs	as_conversions	47
+file	crates/hlslc/src/lower.rs	as_conversions	43
 file	crates/hlslc/src/lower.rs	cast_possible_truncation	21
 file	crates/hlslc/src/lower.rs	cast_possible_wrap	9
 file	crates/hlslc/src/lower.rs	cast_precision_loss	4
@@ -144,9 +142,9 @@ file	crates/hlslc/src/lower.rs	float_cmp	2
 file	crates/hlslc/src/lower.rs	indexing_slicing	124
 file	crates/hlslc/src/lower.rs	string_slice	2
 file	crates/hlslc/src/lower.rs	unreachable	6
-file	crates/hlslc/src/parse.rs	arithmetic_side_effects	70
-file	crates/hlslc/src/parse.rs	as_conversions	11
-file	crates/hlslc/src/parse.rs	cast_possible_truncation	6
+file	crates/hlslc/src/parse.rs	arithmetic_side_effects	67
+file	crates/hlslc/src/parse.rs	as_conversions	9
+file	crates/hlslc/src/parse.rs	cast_possible_truncation	4
 file	crates/hlslc/src/parse.rs	cast_possible_wrap	1
 file	crates/hlslc/src/parse.rs	cast_sign_loss	2
 file	crates/hlslc/src/parse.rs	checked_conversions	1

@@ -120,25 +120,28 @@ impl L<'_> {
                 Ok(Val::num(t, c))
             }
             (Ty::Vec(_, n), Ty::Vec(_, m)) => {
-                let k = (*n).min(*m) as usize;
+                let k = (*n).min(*m).get();
                 Ok(Val::num(Ty::Scalar(base), vec![self.dot(&a.c[..k], &b.c[..k], base)]))
             }
             (Ty::Vec(_, n), Ty::Mat(_, r, c)) => {
-                let k = (*n).min(*r) as usize;
-                let c = usize::from(*c);
+                let k = (*n).min(*r).get();
+                let w = *c;
+                let c = c.get();
                 let rows: Vec<Vec<C>> = (0..k).map(|i| b.c[i * c..(i + 1) * c].to_vec()).collect();
                 let v = self.lin(&a.c[..k], &rows, base);
-                Ok(Val::num(Ty::vec(base, c), v))
+                Ok(Val::num(Ty::vec(base, w), v))
             }
             (Ty::Mat(_, r, c), Ty::Vec(_, n)) => {
+                let w = *r;
                 let (r, c) = (usize::from(*r), usize::from(*c));
                 let k = usize::from(*n).min(c);
                 // M v: columns of M weighted by v (or a dp per row)
                 let cols: Vec<Vec<C>> = (0..k).map(|j| (0..r).map(|i| a.c[i * c + j]).collect()).collect();
                 let v = self.lin(&b.c[..k], &cols, base);
-                Ok(Val::num(Ty::vec(base, r), v))
+                Ok(Val::num(Ty::vec(base, w), v))
             }
             (Ty::Mat(_, r1, c1), Ty::Mat(_, r2, c2)) => {
+                let (rw, cw) = (*r1, *c2);
                 let (r1, c1, r2, c2) = (usize::from(*r1), usize::from(*c1), usize::from(*r2), usize::from(*c2));
                 let k = c1.min(r2);
                 let rows: Vec<Vec<C>> = (0..k).map(|i| b.c[i * c2..(i + 1) * c2].to_vec()).collect();
@@ -147,7 +150,7 @@ impl L<'_> {
                     let v = self.lin(&a.c[i * c1..i * c1 + k], &rows, base);
                     out.extend(v);
                 }
-                Ok(Val::num(Ty::Mat(base, r1 as u8, c2 as u8), out))
+                Ok(Val::num(Ty::Mat(base, rw, cw), out))
             }
             _ => Err("mul of these types".into()),
         }
@@ -319,7 +322,7 @@ impl L<'_> {
                 let w = coord.c[3];
                 let c = pick(&coord, n);
                 let d = self.x_alu(sm4::DIV, B::Float, &[&c, &vec![w; c.len()]]);
-                self.sample(sm4::SAMPLE, t, sm, Val::num(Ty::vec(B::Float, n), d), vec![], [0; 3], false)?
+                self.sample(sm4::SAMPLE, t, sm, Val::num(Ty::vec_of(B::Float, n).ok_or("tex*proj of this texture")?, d), vec![], [0; 3], false)?
             }
             _ => return Ok(None),
         };
@@ -524,7 +527,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
             let bzxy = [b[2], b[0], b[1]];
             let m = l.x_alu(MUL, B::Float, &[&azxy, &byzx]);
             let r = l.x_alu_m(MAD, B::Float, &[(&ayzx, 0), (&bzxy, 0), (&m, 1)]);
-            Val::num(Ty::Vec(B::Float, 3), r)
+            Val::num(Ty::Vec(B::Float, Width::W3), r)
         }
         "length" => {
             need(1)?;
@@ -630,8 +633,8 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
                 return Err(format!("line {line}: transpose of a non-matrix"));
             };
             let mut out = Vec::new();
-            for j in 0..c as usize {
-                for i in 0..r as usize {
+            for j in 0..c.get() {
+                for i in 0..r.get() {
                     out.push(v.c[i * usize::from(c) + j]);
                 }
             }
@@ -791,7 +794,7 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
                     *x = Src::SampC(s, ch);
                 }
             }
-            v.ty = Ty::Vec(B::Float, 4);
+            v.ty = Ty::Vec(B::Float, Width::W4);
             let C::R(r, _) = v.c[0] else { unreachable!() };
             v.c = Lane::ALL.map(|k| C::R(r, k)).to_vec();
             v
@@ -814,7 +817,7 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
             let si = l.x_opnd(&s.c[..1]);
             let dst = l.x_tmp();
             l.x_emit(SAMPLE_POS, vec![Dst { r: temp(dst), mask: 0x3 }], vec![Src::Tex(t, [0, 1, 2, 3]), si]);
-            Val::num(Ty::Vec(B::Float, 2), vec![C::R(temp(dst), Lane::X), C::R(temp(dst), Lane::Y)])
+            Val::num(Ty::Vec(B::Float, Width::W2), vec![C::R(temp(dst), Lane::X), C::R(temp(dst), Lane::Y)])
         }
         "GetDimensions" if matches!(dim, Dim::T2DMS | Dim::T2DMSArray) => {
             // (width, height[, elements], samples): resinfo (level 0) and sampleinfo

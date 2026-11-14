@@ -236,7 +236,7 @@ fn units(prog: &Program, t: &Ty, out: &mut Vec<usize>) {
             }
         }
         Ty::Mat(_, r, c) => {
-            for _ in 0..*r {
+            for _ in 0..r.get() {
                 out.push(usize::from(*c));
             }
         }
@@ -918,8 +918,8 @@ impl<'a> L<'a> {
                 return Err(format!("cannot convert {:?} to {:?}", v.ty, to));
             }
             let mut o = Vec::new();
-            for r in 0..*r2 as usize {
-                for c in 0..*c2 as usize {
+            for r in 0..r2.get() {
+                for c in 0..c2.get() {
                     o.push(v.c[r * usize::from(*c1) + c]);
                 }
             }
@@ -953,10 +953,10 @@ impl<'a> L<'a> {
         Ok(match (a, b) {
             // (an array, struct or object with a scalar: no common type)
             (Ty::Scalar(_), t) | (t, Ty::Scalar(_)) if t.numeric() => t.with_base(base),
-            (Ty::Vec(_, n), Ty::Vec(_, m)) => Ty::vec(base, (*n).min(*m) as usize),
+            (Ty::Vec(_, n), Ty::Vec(_, m)) => Ty::vec(base, (*n).min(*m)),
             (Ty::Mat(_, r, c), Ty::Mat(_, r2, c2)) => Ty::Mat(base, (*r).min(*r2), (*c).min(*c2)),
-            (Ty::Vec(_, n), Ty::Mat(_, r, c)) | (Ty::Mat(_, r, c), Ty::Vec(_, n)) if usize::from(*n) == usize::from(*r * *c) => {
-                Ty::vec(base, usize::from(*n))
+            (Ty::Vec(_, n), Ty::Mat(_, r, c)) | (Ty::Mat(_, r, c), Ty::Vec(_, n)) if n.get() == r.get() * c.get() => {
+                Ty::vec(base, *n)
             }
             _ => return Err(format!("operands of types {a:?} and {b:?}")),
         })
@@ -998,7 +998,7 @@ impl<'a> L<'a> {
             }
             Ty::Mat(_, r, c) => {
                 let mut out = Vec::new();
-                for _ in 0..*r {
+                for _ in 0..r.get() {
                     let t = self.tmp();
                     self.marks.push((t, self.code.len()));
                     out.extend(Lane::first(usize::from(*c)).map(|k| C::R(temp(t), k)));
@@ -1236,7 +1236,7 @@ impl<'a> L<'a> {
                 Obj::Samp(crate::u32_of(self.samps.len()) - 1)
             }
             Ty::Legacy(d) => {
-                self.texs.push(TexD { name: v.name.clone(), dim: *d, el: Ty::Vec(B::Float, 4), reg, used: false });
+                self.texs.push(TexD { name: v.name.clone(), dim: *d, el: Ty::Vec(B::Float, Width::W4), reg, used: false });
                 self.samps.push(SampD { name: v.name.clone(), cmp: false, reg, used: false });
                 Obj::Legacy(crate::u32_of(self.texs.len()) - 1, crate::u32_of(self.samps.len()) - 1)
             }
@@ -1250,7 +1250,7 @@ impl<'a> L<'a> {
                         Ty::Tex(d, el) => self.texs.push(TexD { name, dim: *d, el: (**el).clone(), reg, used: false }),
                         Ty::Sampler(cmp) => self.samps.push(SampD { name, cmp: *cmp, reg, used: false }),
                         Ty::Legacy(d) => {
-                            self.texs.push(TexD { name: name.clone(), dim: *d, el: Ty::Vec(B::Float, 4), reg, used: false });
+                            self.texs.push(TexD { name: name.clone(), dim: *d, el: Ty::Vec(B::Float, Width::W4), reg, used: false });
                             self.samps.push(SampD { name, cmp: false, reg, used: false });
                         }
                         Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
@@ -2190,10 +2190,10 @@ impl<'a> L<'a> {
                 let y = self.expr(b)?;
                 let t = if x.ty.numeric() && y.ty.numeric() { self.common(&x.ty, &y.ty)? } else { x.ty.clone() };
                 // (a vector condition picks per component)
-                let t = if cv.ty.comps() > 1 && t.comps() == 1 { Ty::vec(t.base(), cv.ty.comps()) } else { t };
+                let t = if cv.ty.comps() > 1 && t.comps() == 1 { Ty::vec_of(t.base(), cv.ty.comps()).ok_or("a condition of more than 4 components")? } else { t };
                 // (a narrower vector condition: the values truncated to it, as fxc does)
                 let t = match t {
-                    Ty::Vec(b, n) if cv.ty.comps() > 1 && crate::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec(b, cv.ty.comps()),
+                    Ty::Vec(b, n) if cv.ty.comps() > 1 && crate::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec_of(b, cv.ty.comps()).ok_or("a condition of more than 4 components")?,
                     t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
                          | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
                 };
@@ -2444,7 +2444,7 @@ impl<'a> L<'a> {
     fn uav_coord(&mut self, u: u32, iv: Val) -> R<Vec<C>> {
         let d = self.uavs[crate::us(u)].dim;
         let n = d.coords() + usize::from(d.array());
-        let iv = self.cast(iv.clone(), &Ty::vec(B::Uint, iv.ty.comps().max(1)))?;
+        let iv = self.cast(iv.clone(), &Ty::vec_of(B::Uint, iv.ty.comps().max(1)).ok_or("a UAV coordinate of more than 4 components")?)?;
         if iv.c.len() != n {
             return Err(format!("{n} coordinates index this RWTexture"));
         }
@@ -2477,12 +2477,12 @@ impl<'a> L<'a> {
                 let n = v.c.len();
                 let s = swizzle_of(name, n).ok_or(format!("bad swizzle .{name}"))?;
                 let c: Vec<C> = s.iter().map(|&i| v.c[i]).collect();
-                Ok(Val::num(Ty::vec(*b, c.len()), c))
+                Ok(Val::num(Ty::vec_of(*b, c.len()).ok_or(format!("bad swizzle .{name}"))?, c))
             }
             Ty::Mat(b, r, c) => {
                 let s = mat_swizzle(name, usize::from(*r), usize::from(*c)).ok_or(format!("bad matrix member .{name}"))?;
                 let comps: Vec<C> = s.iter().map(|&(i, j)| v.c[i * usize::from(*c) + j]).collect();
-                Ok(Val::num(Ty::vec(*b, comps.len()), comps))
+                Ok(Val::num(Ty::vec_of(*b, comps.len()).ok_or(format!("bad matrix member .{name}"))?, comps))
             }
             Ty::Struct(i) => {
                 let mut at = 0;
@@ -2641,9 +2641,10 @@ impl<'a> L<'a> {
                 self.select(elems, iv, Ty::Scalar(*b))
             }
             Ty::Mat(b, r, c) => {
-                let c = usize::from(*c);
-                let elems: Vec<Vec<C>> = (0..*r as usize).map(|i| v.c[i * c..(i + 1) * c].to_vec()).collect();
-                self.select(elems, iv, Ty::vec(*b, c))
+                let w = *c;
+                let c = c.get();
+                let elems: Vec<Vec<C>> = (0..r.get()).map(|i| v.c[i * c..(i + 1) * c].to_vec()).collect();
+                self.select(elems, iv, Ty::vec(*b, w))
             }
             Ty::Tex(..) => {
                 let t = match v.obj {

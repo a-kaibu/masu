@@ -36,13 +36,76 @@ impl Dim {
     }
 }
 
+/// A vector's width or a matrix's row or column count: 1 to 4, nothing else can be built.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Width {
+    W1,
+    W2,
+    W3,
+    W4,
+}
+
+impl Width {
+    pub const ALL: [Width; 4] = [Width::W1, Width::W2, Width::W3, Width::W4];
+
+    pub fn new(n: usize) -> Option<Width> {
+        match n {
+            1 => Some(Width::W1),
+            2 => Some(Width::W2),
+            3 => Some(Width::W3),
+            4 => Some(Width::W4),
+            _ => None,
+        }
+    }
+
+    pub fn get(self) -> usize {
+        usize::from(u8::from(self))
+    }
+}
+
+/// (as the number, which error messages print)
+impl std::fmt::Debug for Width {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", u8::from(*self))
+    }
+}
+
+impl From<Width> for u8 {
+    fn from(w: Width) -> u8 {
+        match w {
+            Width::W1 => 1,
+            Width::W2 => 2,
+            Width::W3 => 3,
+            Width::W4 => 4,
+        }
+    }
+}
+
+impl From<Width> for u16 {
+    fn from(w: Width) -> u16 {
+        u16::from(u8::from(w))
+    }
+}
+
+impl From<Width> for u32 {
+    fn from(w: Width) -> u32 {
+        u32::from(u8::from(w))
+    }
+}
+
+impl From<Width> for usize {
+    fn from(w: Width) -> usize {
+        w.get()
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum Ty {
     Void,
     Scalar(B),
-    Vec(B, u8),
+    Vec(B, Width),
     /// rows, columns
-    Mat(B, u8, u8),
+    Mat(B, Width, Width),
     Array(Box<Ty>, u32),
     Struct(usize),
     /// a texture object and its element type
@@ -72,7 +135,7 @@ impl Ty {
         match self {
             Ty::Scalar(_) => 1,
             Ty::Vec(_, n) => usize::from(*n),
-            Ty::Mat(_, r, c) => usize::from(*r * *c),
+            Ty::Mat(_, r, c) => r.get() * c.get(),
             Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
             | Ty::Legacy(_) | Ty::Str => 0,
         }
@@ -95,8 +158,12 @@ impl Ty {
         }
     }
     /// vector (or scalar for 1) of `n`
-    pub fn vec(b: B, n: usize) -> Ty {
-        if n == 1 { Ty::Scalar(b) } else { Ty::Vec(b, n as u8) }
+    pub fn vec(b: B, n: Width) -> Ty {
+        if n == Width::W1 { Ty::Scalar(b) } else { Ty::Vec(b, n) }
+    }
+    /// `vec` of a computed count, None outside 1..=4
+    pub fn vec_of(b: B, n: usize) -> Option<Ty> {
+        Width::new(n).map(|w| Ty::vec(b, w))
     }
 }
 
