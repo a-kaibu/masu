@@ -1098,7 +1098,7 @@ pub fn close_socket(h: u32) -> u32 {
     });
     match r {
         Ok(()) => {
-            iocp::forget(h);
+            // (the port's association goes with the socket: obj::gone_object)
             obj::close(h);
             0
         }

@@ -10,7 +10,7 @@
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem::{self, ps, r32, rp, w32, wp};
-use crate::obj::{self, Obj};
+use crate::obj::{self, Key, Obj};
 use crate::HashMap;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -20,19 +20,27 @@ pub const STATUS_PENDING: u32 = 0x103;
 /// (bytes, key, overlapped, NTSTATUS)
 type Packet = (u32, u64, u32, u32);
 
+/// A completion port (the object, through whichever of its handles): only `port_of` makes one,
+/// from a handle that is a port.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Port(Key);
+
+/// State per object (a file, socket or port), as Windows keeps it with the object: every handle
+/// to it shares it.
 #[derive(Default)]
 struct State {
-    ports: HashMap<u32, VecDeque<Packet>>,
-    /// handle -> (port, key)
-    assoc: HashMap<u32, (u32, u64)>,
-    /// handle -> FILE_SKIP_* flags
-    modes: HashMap<u32, u32>,
-    /// handles opened with FILE_FLAG_OVERLAPPED
-    overlapped: std::collections::HashSet<u32>,
-    /// handles BindIoCompletionCallback gave a callback (their port's pool thread calls it)
-    bound: HashMap<u32, u32>,
+    ports: HashMap<Key, VecDeque<Packet>>,
+    /// file -> (its port, completion key)
+    assoc: HashMap<Key, (Port, u64)>,
+    /// file -> FILE_SKIP_* flags
+    modes: HashMap<Key, u32>,
+    /// files opened with FILE_FLAG_OVERLAPPED
+    overlapped: std::collections::HashSet<Key>,
+    /// the completion keys of the files BindIoCompletionCallback gave a callback (their port's
+    /// pool thread calls it)
+    bound: HashMap<u64, u32>,
     /// ports whose last handle was closed while waits still hold them (signaled)
-    closed: std::collections::HashSet<u32>,
+    closed: std::collections::HashSet<Key>,
 }
 static ST: Mutex<Option<State>> = Mutex::new(None);
 
@@ -70,10 +78,10 @@ pub fn nt_to_win32(s: u32) -> u32 {
 }
 
 /// Queues a packet on `port` and wakes its waiters
-pub fn post(port: u32, bytes: u32, key: u64, ov: u32, status: u32) {
+pub fn post(port: Port, bytes: u32, key: u64, ov: u32, status: u32) {
     // (a completion that raced the port's close is dropped: making the queue again would
     // keep a dead port's queue for good and tell its waiters it lives)
-    let live = with(|s| s.ports.get_mut(&port).map(|q| q.push_back((bytes, key, ov, status))).is_some());
+    let live = with(|s| s.ports.get_mut(&port.0).map(|q| q.push_back((bytes, key, ov, status))).is_some());
     if live {
         obj::signal();
     }
@@ -90,7 +98,8 @@ pub fn complete(h: u32, ov: u32, status: u32, bytes: u32, sync: bool) {
     wp(ov, status);
     wp(ov + k, bytes);
     let ev = rp(ov + 2 * k + 8);
-    let (assoc, mode) = with(|s| (s.assoc.get(&h).copied(), s.modes.get(&h).copied().unwrap_or(0)));
+    let file = obj::key_of(h);
+    let (assoc, mode) = with(|s| file.map_or((None, 0), |f| (s.assoc.get(&f).copied(), s.modes.get(&f).copied().unwrap_or(0))));
     let mut told = false;
     if ev & !1 != 0 && !(sync && mode & 2 != 0) {
         crate::k32::set_event(ev & !1);
@@ -111,27 +120,31 @@ pub fn complete(h: u32, ov: u32, status: u32, bytes: u32, sync: bool) {
 
 /// Whether completing on `h` within the call skips the port (FILE_SKIP_COMPLETION_PORT_ON_SUCCESS)
 pub fn skips_port(h: u32) -> bool {
-    with(|s| s.modes.get(&h).is_some_and(|m| m & 1 != 0) && s.assoc.contains_key(&h))
+    let Some(f) = obj::key_of(h) else { return false };
+    with(|s| s.modes.get(&f).is_some_and(|m| m & 1 != 0) && s.assoc.contains_key(&f))
 }
 
-/// Drops what is kept for a closed handle
-pub fn forget(h: u32) {
+/// Drops what is kept for an object that went (obj::gone_object)
+pub fn forget(k: Key) {
     with(|s| {
-        s.assoc.remove(&h);
-        s.modes.remove(&h);
-        s.ports.remove(&h);
-        s.overlapped.remove(&h);
-        s.bound.remove(&h);
+        if let Some((_, key)) = s.assoc.remove(&k) {
+            s.bound.remove(&key);
+        }
+        s.modes.remove(&k);
+        s.ports.remove(&k);
+        s.overlapped.remove(&k);
     });
 }
 
 /// CreateFile with FILE_FLAG_OVERLAPPED made `h`
 pub fn mark_overlapped(h: u32) {
-    with(|s| s.overlapped.insert(h));
+    if let Some(f) = obj::key_of(h) {
+        with(|s| s.overlapped.insert(f));
+    }
 }
 /// Whether CreateFile made `h` with FILE_FLAG_OVERLAPPED (its IO keeps no file pointer)
 pub fn is_overlapped(h: u32) -> bool {
-    with(|s| s.overlapped.contains(&h))
+    obj::key_of(h).is_some_and(|f| with(|s| s.overlapped.contains(&f)))
 }
 
 /// BindIoCompletionCallback(file, callback(error, bytes, overlapped), flags): the file's IO
@@ -143,21 +156,26 @@ fn BindIoCompletionCallback(c: &mut Ctx) -> u32 {
         last_error(6);
         return 0;
     }
-    if f == 0 || !with(|s| s.overlapped.contains(&h)) || with(|s| s.bound.contains_key(&h) || s.assoc.contains_key(&h)) {
+    let Some(file) = obj::key_of(h) else {
+        last_error(6);
+        return 0;
+    };
+    if f == 0 || !with(|s| s.overlapped.contains(&file)) || with(|s| s.assoc.contains_key(&file)) {
         last_error(87);
         return 0;
     }
     // (one port for every bound file, its key the file: one IO thread for all of them hands
     // each completion to a pool worker; each file used to have a port and a guest thread of
     // its own, waking once a second)
-    let port = bind_port();
-    if port == 0 {
+    let Some(port) = port_of(bind_port()) else {
         last_error(8);
         return 0;
-    }
+    };
+    // (the completion key is the file's first handle: the IO thread finds its callback by it)
+    let key = u64::from(file.first_handle());
     with(|s| {
-        s.assoc.insert(h, (port, h as u64));
-        s.bound.insert(h, f);
+        s.assoc.insert(file, (port, key));
+        s.bound.insert(key, f);
     });
     1
 }
@@ -185,8 +203,8 @@ fn bind_io_thread(c: &mut Ctx) -> u32 {
     let port = c.a(0);
     loop {
         match wait_packet(c, port, u32::MAX, false) {
-            Ok((bytes, key, ov, status)) => {
-                let Some(f) = with(|s| s.bound.get(&(key as u32)).copied()) else { continue };
+            Ok(((bytes, key, ov, status), _)) => {
+                let Some(f) = with(|s| s.bound.get(&key).copied()) else { continue };
                 let err = nt_to_win32(status);
                 crate::pool::submit(Box::new(move |c| {
                     c.call(f, &[err, bytes, ov]);
@@ -201,42 +219,49 @@ fn bind_io_thread(c: &mut Ctx) -> u32 {
 /// A port handle was closed: its packets go, its waiters end (ERROR_ABANDONED_WAIT_0)
 /// The port's last handle was closed: its waiters end (GetQueuedCompletionStatus:
 /// ERROR_ABANDONED_WAIT_0; a wait on the port: signaled)
-pub fn closed(h: u32) {
+pub fn closed(k: Key) {
     with(|s| {
-        s.ports.remove(&h);
-        s.assoc.retain(|_, (p, _)| *p != h);
-        s.closed.insert(h);
+        s.ports.remove(&k);
+        s.assoc.retain(|_, (p, _)| p.0 != k);
+        s.closed.insert(k);
     });
     obj::signal();
 }
 /// The port object went (the last wait on it ended too)
-pub fn gone(h: u32) {
+pub fn gone(k: Key) {
     with(|s| {
-        s.ports.remove(&h);
-        s.assoc.retain(|_, (p, _)| *p != h);
-        s.closed.remove(&h);
+        s.ports.remove(&k);
+        s.assoc.retain(|_, (p, _)| p.0 != k);
+        s.closed.remove(&k);
     });
 }
 
-/// The port and key handle `h` is tied to
-pub fn association(h: u32) -> Option<(u32, u64)> {
-    with(|s| s.assoc.get(&h).copied())
+/// The port and key handle `h`'s file is tied to
+pub fn association(h: u32) -> Option<(Port, u64)> {
+    let f = obj::key_of(h)?;
+    with(|s| s.assoc.get(&f).copied())
 }
 
 /// Whether a port has packets (a port handle is signaled then)
-pub fn has_packets(h: u32) -> bool {
-    with(|s| s.closed.contains(&h) || s.ports.get(&h).is_some_and(|q| !q.is_empty()))
+pub fn has_packets(k: Key) -> bool {
+    with(|s| s.closed.contains(&k) || s.ports.get(&k).is_some_and(|q| !q.is_empty()))
 }
 
 /// A new port's handle
 pub fn new_port() -> u32 {
     let p = obj::add(Obj::Other("iocp"));
-    with(|s| s.ports.insert(p, VecDeque::new()));
+    if let Some(k) = obj::key_of(p) {
+        with(|s| s.ports.insert(k, VecDeque::new()));
+    }
     p
 }
 
-fn is_port(h: u32) -> bool {
-    obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other("iocp"), _))))
+/// The port handle `h` is to (None: not a port)
+pub fn port_of(h: u32) -> Option<Port> {
+    obj::with(|t| match t.objs.get(&obj::norm(h)) {
+        Some((Obj::Other("iocp"), _)) => t.objs.key(&obj::norm(h)).map(Port),
+        _ => None,
+    })
 }
 
 /// CreateIoCompletionPort(file, port, key, threads)
@@ -247,11 +272,12 @@ fn CreateIoCompletionPort(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    if port != 0 && !is_port(port) {
+    if port != 0 && port_of(port).is_none() {
         last_error(6);
         return 0;
     }
-    if !invalid && obj::with(|t| t.objs.get(&file).is_none()) && !crate::ws2::is_socket(file) {
+    let f = obj::key_of(file);
+    if !invalid && f.is_none() {
         last_error(6);
         return 0;
     }
@@ -260,31 +286,29 @@ fn CreateIoCompletionPort(c: &mut Ctx) -> u32 {
     } else {
         port
     };
-    if !invalid {
-        with(|s| s.assoc.insert(file, (port, key)));
+    if let (Some(f), Some(p)) = (f, port_of(port)) {
+        with(|s| s.assoc.insert(f, (p, key)));
     }
     port
 }
 
-fn take(port: u32) -> Option<Packet> {
-    with(|s| s.ports.get_mut(&port).and_then(|q| q.pop_front()))
+fn take(port: Port) -> Option<Packet> {
+    with(|s| s.ports.get_mut(&port.0).and_then(|q| q.pop_front()))
 }
 
 /// Waits for a packet on `port` (or an APC when alertable): Ok(packet), Err(win32 error)
-fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<Packet, u32> {
-    if !is_port(port) {
-        return Err(6);
-    }
+fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<(Packet, Port), u32> {
+    let Some(port) = port_of(port) else { return Err(6) };
     let tid = crate::cur().tid;
     let deadline = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64));
     loop {
         // (AFD polls end here: a socket that changed is looked at by the port's waiter)
         crate::afd::check();
         if let Some(p) = take(port) {
-            return Ok(p);
+            return Ok((p, port));
         }
         // (closed while waiting)
-        if !with(|s| s.ports.contains_key(&port)) {
+        if !with(|s| s.ports.contains_key(&port.0)) {
             return Err(735); // ERROR_ABANDONED_WAIT_0
         }
         if alertable && crate::apc::run(c) {
@@ -300,7 +324,7 @@ fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<Packe
                 (d - now).as_millis().max(1) as u32
             }
         };
-        let ready = || with(|s| s.ports.get(&port).is_none_or(|q| !q.is_empty())) || (alertable && crate::apc::pending(tid));
+        let ready = || with(|s| s.ports.get(&port.0).is_none_or(|q| !q.is_empty())) || (alertable && crate::apc::pending(tid));
         // (AFD polls waiting: ws2 ends them as sockets change; a look now and then besides, as a
         // safety net: every 10 ms kept an idle network program's waiters from ever sleeping)
         let left = if crate::afd::pending() { left.min(250) } else { left };
@@ -312,7 +336,7 @@ fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<Packe
 fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
     let (port, bp, kp, op, ms) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     match wait_packet(c, port, ms, false) {
-        Ok((bytes, key, ov, status)) => {
+        Ok(((bytes, key, ov, status), _)) => {
             mem::put32(bp, bytes);
             if kp != 0 {
                 if mem::x64() {
@@ -350,7 +374,7 @@ fn GetQueuedCompletionStatusEx(c: &mut Ctx) -> u32 {
     }
     let k = ps();
     match wait_packet(c, port, ms, alertable) {
-        Ok(first) => {
+        Ok((first, port)) => {
             let mut n = 0;
             let mut p = Some(first);
             while let Some((bytes, key, ov, status)) = p {
@@ -380,10 +404,10 @@ fn GetQueuedCompletionStatusEx(c: &mut Ctx) -> u32 {
 /// PostQueuedCompletionStatus(port, bytes, key, overlapped)
 fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
     let (port, bytes, key, ov) = (c.a(0), c.a(1), if mem::x64() { c.a64(2) } else { c.a(2) as u64 }, c.a(3));
-    if !is_port(port) {
+    let Some(port) = port_of(port) else {
         last_error(6);
         return 0;
-    }
+    };
     post(port, bytes, key, ov, 0);
     1
 }
@@ -473,9 +497,7 @@ pub fn init_nt() {
     });
     let set = |c: &mut Ctx| {
         let (port, key, value, status, info) = (c.a(0), if mem::x64() { c.a64(1) } else { c.a(1) as u64 }, c.a(2), c.a(3), c.a(4));
-        if !is_port(port) {
-            return 0xc000_0008;
-        }
+        let Some(port) = port_of(port) else { return 0xc000_0008 };
         post(port, info, key, value, status);
         0
     };
@@ -483,7 +505,7 @@ pub fn init_nt() {
     implement(d, "NtRemoveIoCompletion", |c| {
         let (port, pkey, pval, iosb, ms) = (c.a(0), c.a(1), c.a(2), c.a(3), crate::ntsync::timeout_ms(c.a(4)));
         match wait_packet(c, port, ms, false) {
-            Ok((bytes, key, ov, status)) => {
+            Ok(((bytes, key, ov, status), _)) => {
                 wp(pkey, key as u32);
                 if mem::x64() {
                     mem::w64(pkey, key);
@@ -500,7 +522,7 @@ pub fn init_nt() {
         let (port, info, count, removed, ms, alertable) = (c.a(0), c.a(1), c.a(2), c.a(3), crate::ntsync::timeout_ms(c.a(4)), c.a(5) & 0xff != 0);
         let k = ps();
         match wait_packet(c, port, ms, alertable) {
-            Ok(first) => {
+            Ok((first, port)) => {
                 let (mut n, mut p) = (0, Some(first));
                 while let Some((bytes, key, ov, status)) = p {
                     let e = info + 4 * k * n;
@@ -558,12 +580,128 @@ pub fn init() {
         }
         // (only a handle that is one: a garbage value kept here would hand its FILE_SKIP_*
         // flags to the next real handle of that number)
-        if obj::with(|t| t.objs.get(&h).is_none()) && !crate::ws2::is_socket(h) {
+        let Some(file) = obj::key_of(h) else {
             last_error(6);
             return 0;
-        }
-        with(|s| *s.modes.entry(h).or_default() |= f);
+        };
+        with(|s| *s.modes.entry(file).or_default() |= f);
         1
     });
     let _ = r32;
+}
+
+/// Ports and associations through any handle to the object (review: they were kept by handle
+/// number, so a DuplicateHandle'd port or file was another, unknown one), and what one handle
+/// does pinned before the tables are keyed by obj::Key.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_guest::{call, enter, guest_thread};
+    use proptest::prelude::*;
+
+    fn port() -> u32 {
+        call(CreateIoCompletionPort, &[u32::MAX, 0, 0, 1])
+    }
+    /// GetQueuedCompletionStatus(port, 0 ms): Some((bytes, key, overlapped)) or the error
+    fn get(port: u32) -> Result<(u32, u32, u32), u32> {
+        let out = mem::heap_alloc(12, true);
+        let ok = call(GetQueuedCompletionStatus, &[port, out, out + 4, out + 8, 0]);
+        let r = if ok != 0 { Ok((r32(out), r32(out + 4), r32(out + 8))) } else { Err(crate::k32::get_last_error()) };
+        mem::heap_free(out);
+        r
+    }
+    fn post_(port: u32, bytes: u32, key: u32, ov: u32) -> u32 {
+        call(PostQueuedCompletionStatus, &[port, bytes, key, ov])
+    }
+    /// An OVERLAPPED without an event
+    fn overlapped() -> u32 {
+        mem::heap_alloc(4 * ps() + 8, true)
+    }
+
+    #[test]
+    fn a_port_queues_in_order_and_times_out_empty() {
+        let _g = enter();
+        guest_thread();
+        let p = port();
+        assert_ne!(p, 0);
+        assert_eq!(get(p), Err(258));
+        assert_eq!(post_(p, 5, 7, 0x1234), 1);
+        assert_eq!(post_(p, 6, 8, 0x1238), 1);
+        assert_eq!(get(p), Ok((5, 7, 0x1234)));
+        assert_eq!(get(p), Ok((6, 8, 0x1238)));
+        assert_eq!(get(p), Err(258));
+        assert_eq!(post_(0x7777_0000, 1, 1, 1), 0, "not a port");
+        assert!(obj::close(p));
+    }
+
+    #[test]
+    fn a_duplicated_port_is_the_same_port() {
+        let _g = enter();
+        guest_thread();
+        let p = port();
+        let d = obj::dup(p);
+        assert_eq!(post_(d, 1, 2, 3), 1);
+        assert_eq!(get(p), Ok((1, 2, 3)));
+        assert_eq!(post_(p, 4, 5, 6), 1);
+        // (a wait on either handle sees the packet)
+        assert_eq!(obj::wait(&[d], false, 0, None), 0);
+        assert_eq!(get(d), Ok((4, 5, 6)));
+        // (the first handle closed: the port lives on in the other)
+        assert!(obj::close(p));
+        assert_eq!(post_(d, 7, 8, 9), 1);
+        assert_eq!(get(d), Ok((7, 8, 9)));
+        let k = obj::key_of(d).unwrap();
+        assert!(obj::close(d));
+        assert!(with(|s| !s.ports.contains_key(&k) && !s.closed.contains(&k)), "the port's state went with its last handle");
+    }
+
+    #[test]
+    fn a_files_association_holds_through_any_of_its_handles() {
+        let _g = enter();
+        guest_thread();
+        let f = obj::add(Obj::Other("nul"));
+        let p = call(CreateIoCompletionPort, &[f, 0, 0x55, 1]);
+        assert_ne!(p, 0);
+        let d = obj::dup(f);
+        let ov = overlapped();
+        complete(d, ov, 0, 12, false);
+        assert_eq!(get(p), Ok((12, 0x55, ov)));
+        // (the file's first handle closed: its other still completes on the port)
+        assert!(obj::close(f));
+        complete(d, ov, 0, 13, false);
+        assert_eq!(get(p), Ok((13, 0x55, ov)));
+        let k = obj::key_of(d).unwrap();
+        assert!(obj::close(d));
+        assert!(with(|s| !s.assoc.contains_key(&k)), "the association went with the file");
+        assert!(obj::close(p));
+        mem::heap_free(ov);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+        /// Posts and gets through random handles of one port against a queue: the packets come
+        /// out in order whichever handle posted or gets them.
+        #[test]
+        fn packets_through_any_handle_keep_their_order(ops in proptest::collection::vec((any::<bool>(), 0usize..3, 0u32..1000), 1..40)) {
+            let _g = enter();
+            guest_thread();
+            let p = port();
+            let hs = [p, obj::dup(p), obj::dup(p)];
+            let mut model = std::collections::VecDeque::new();
+            for (is_post, which, v) in ops {
+                let h = hs[which];
+                if is_post {
+                    prop_assert_eq!(post_(h, v, v + 1, v + 2), 1);
+                    model.push_back((v, v + 1, v + 2));
+                } else {
+                    prop_assert_eq!(get(h), model.pop_front().ok_or(258));
+                }
+            }
+            let k = obj::key_of(p).unwrap();
+            for h in hs {
+                prop_assert!(obj::close(h));
+            }
+            prop_assert!(with(|s| !s.ports.contains_key(&k)));
+        }
+    }
 }

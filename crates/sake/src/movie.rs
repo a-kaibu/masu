@@ -114,8 +114,8 @@ fn movie_of(this: u32) -> Option<(u32, String)> {
     let open: Vec<(u32, String)> = crate::obj::with(|t| {
         t.objs
             .iter()
-            .filter_map(|(&h, (o, _))| match o {
-                crate::obj::Obj::File(f) if f.path.to_ascii_lowercase().ends_with(".omv") => Some((h, f.path.clone())),
+            .filter_map(|(&k, (o, _))| match o {
+                crate::obj::Obj::File(f) if f.path.to_ascii_lowercase().ends_with(".omv") => Some((k.first_handle(), f.path.clone())),
                 _ => None,
             })
             .collect()

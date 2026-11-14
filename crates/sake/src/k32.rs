@@ -966,7 +966,7 @@ pub(crate) fn suspend_for_other(tid: u32, suspend: bool) -> Result<u32, u32> {
 }
 /// Thread `tid`'s suspend count one up or down: the count before
 pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
-    let h = obj::with(|t| t.objs.iter().find(|(_, (o, _))| matches!(o, Obj::Thread { tid: x, .. } if *x == tid)).map(|(&h, _)| h));
+    let h = obj::with(|t| t.objs.iter().find(|(_, (o, _))| matches!(o, Obj::Thread { tid: x, .. } if *x == tid)).map(|(&k, _)| k.first_handle()));
     if let Some(h) = h {
         let mut g = GATE.lock().unwrap();
         if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == h && *n > 0) {
@@ -1635,19 +1635,23 @@ pub(crate) fn create_named(name: Option<String>, o: Obj) -> u32 {
             last_error(6);
             return 0;
         }
-        let existing = obj::with(|t| t.names.get(n).map(|h| (*h, t.objs.get(h).map_or(0, |(o, _)| kind(o)))));
+        let existing = obj::with(|t| t.names.get(n).map(|&h| (h, t.objs.by_key(h).map_or(0, |(o, _)| kind(o)))));
         if let Some((h, hk)) = existing {
             if hk != k {
                 last_error(6); // ERROR_INVALID_HANDLE: another kind of object has the name
                 return 0;
             }
             last_error(files::ERROR_ALREADY_EXISTS);
-            return obj::dup(h);
+            return obj::dup_key(h);
         }
     }
     let h = obj::add(o);
     if let Some(n) = name {
-        obj::with(|t| t.add_name(n, h));
+        obj::with(|t| {
+            if let Some(k) = t.objs.key(&h) {
+                t.add_name(n, k);
+            }
+        });
     }
     last_error(0);
     h
@@ -1725,12 +1729,12 @@ pub(crate) fn open_sync(n: String, want: u8) -> u32 {
             }
         };
     }
-    match obj::with(|t| t.names.get(&n).map(|h| (*h, t.objs.get(h).map_or(0, |(o, _)| kind(o))))) {
+    match obj::with(|t| t.names.get(&n).map(|&h| (h, t.objs.by_key(h).map_or(0, |(o, _)| kind(o))))) {
         Some((_, k)) if k != want => {
             last_error(6);
             0
         }
-        Some((h, _)) => obj::dup(h),
+        Some((h, _)) => obj::dup_key(h),
         None => {
             last_error(2);
             0
@@ -9060,11 +9064,11 @@ fn K32EnumProcesses(c: &mut Ctx) -> u32 {
 fn OpenThread(c: &mut Ctx) -> u32 {
     let tid = c.a(2);
     let h = obj::with(|t| {
-        t.objs.iter().filter(|(_, (o, _))| matches!(o, Obj::Thread { tid: x, .. } if *x == tid && tid != 0)).map(|(&h, (o, _))| (matches!(o, Obj::Thread { done: true, .. }), h)).min()
+        t.objs.iter().filter(|(_, (o, _))| matches!(o, Obj::Thread { tid: x, .. } if *x == tid && tid != 0)).map(|(&k, (o, _))| (matches!(o, Obj::Thread { done: true, .. }), k)).min()
     });
     match h {
         Some((_, h)) => {
-            let n = obj::dup(h);
+            let n = obj::dup_key(h);
             // (what was asked of THREAD_ALL_ACCESS; MAXIMUM_ALLOWED all of it)
             let want = c.a(0);
             obj::set_access(n, if want & 0x0200_0000 != 0 { 0x001f_ffff } else { want & 0x001f_ffff });

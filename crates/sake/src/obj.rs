@@ -36,13 +36,34 @@ pub enum Obj {
     Other(&'static str),
 }
 
+/// An object (not a handle to it): the number of its first handle, which stays its name in the
+/// table after that handle closed. Only the table makes one, so a handle cannot be passed where
+/// the object is meant (state kept per object, as a completion port's queue or a file's
+/// association, was kept by whichever handle number came, and a DuplicateHandle'd port was an
+/// unknown one).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct Key(u32);
+
+impl Key {
+    /// The number of the object's first handle (what a module that made the object keeps its
+    /// state under, and what the guest saw first)
+    pub fn first_handle(self) -> u32 {
+        self.0
+    }
+}
+
+/// The object behind handle `h` (None: no such handle)
+pub fn key_of(h: u32) -> Option<Key> {
+    with(|t| t.objs.key(&norm(h)))
+}
+
 /// Objects and the handles to them: every handle is its own number (DuplicateHandle and opening
 /// a named object give a new one, closing one leaves the others valid); an object is kept under
 /// the number of its first handle, with the count of its open handles.
 #[derive(Default)]
 pub struct Objs {
-    map: HashMap<u32, (Obj, u32)>,
-    handles: HashMap<u32, u32>,
+    map: HashMap<Key, (Obj, u32)>,
+    handles: HashMap<u32, Key>,
     /// the handles child processes inherit (HANDLE_FLAG_INHERIT)
     inherit: crate::HashSet<u32>,
     /// the access handles opened with less than all have (OpenMutex & co.)
@@ -51,8 +72,8 @@ pub struct Objs {
 
 impl Objs {
     /// the object key of handle `h` (an object's key also finds it after its first handle closed)
-    fn key(&self, h: &u32) -> Option<u32> {
-        self.handles.get(h).copied().or_else(|| self.map.contains_key(h).then_some(*h))
+    pub fn key(&self, h: &u32) -> Option<Key> {
+        self.handles.get(h).copied().or_else(|| self.map.contains_key(&Key(*h)).then_some(Key(*h)))
     }
     pub fn get(&self, h: &u32) -> Option<&(Obj, u32)> {
         self.map.get(&self.key(h)?)
@@ -64,8 +85,15 @@ impl Objs {
     pub fn contains_key(&self, h: &u32) -> bool {
         self.handles.contains_key(h)
     }
+    /// Object `k`
+    pub fn by_key(&self, k: Key) -> Option<&(Obj, u32)> {
+        self.map.get(&k)
+    }
+    pub fn by_key_mut(&mut self, k: Key) -> Option<&mut (Obj, u32)> {
+        self.map.get_mut(&k)
+    }
     /// (object key, object) for every object
-    pub fn iter(&self) -> impl Iterator<Item = (&u32, &(Obj, u32))> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Key, &(Obj, u32))> {
         self.map.iter()
     }
     pub fn values(&self) -> impl Iterator<Item = &(Obj, u32)> {
@@ -104,8 +132,8 @@ pub fn inherits(h: u32) -> bool {
 /// A handle of number `h` (an inherited one keeps its number in the child).
 pub fn add_at(h: u32, o: Obj, inherit: bool) {
     with(|t| {
-        t.objs.map.insert(h, (o, 1));
-        t.objs.handles.insert(h, h);
+        t.objs.map.insert(Key(h), (o, 1));
+        t.objs.handles.insert(h, Key(h));
         if inherit {
             t.objs.inherit.insert(h);
         }
@@ -116,16 +144,16 @@ pub fn add_at(h: u32, o: Obj, inherit: bool) {
 pub struct Table {
     pub objs: Objs,
     next: u32,
-    /// named objects: name -> handle of the first one
-    pub names: HashMap<String, u32>,
+    /// named objects: name -> the object
+    pub names: HashMap<String, Key>,
     /// the objects `names` has (an object's last close looks the names through only for these:
     /// it scanned every name at the close of every file and thread handle)
-    named: std::collections::HashSet<u32>,
+    named: std::collections::HashSet<Key>,
     /// the handle numbers have passed HANDLE_LIMIT: closed ones are given again
     reuse: u32,
     pub gen: u64,
     /// the waiting threads, by the object keys they wait on, and each one's condition variable
-    waits: waits::wake::WaitList<u32>,
+    waits: waits::wake::WaitList<Key>,
     cvs: HashMap<u64, Arc<Condvar>>,
 }
 /// Handle numbers are new ones up to here (Windows' handle table holds 2^24 of them), then
@@ -134,8 +162,8 @@ pub struct Table {
 const HANDLE_LIMIT: u32 = 0x0400_0000;
 
 impl Table {
-    /// `name` names object `k` (its first handle)
-    pub fn add_name(&mut self, name: String, k: u32) {
+    /// `name` names object `k`
+    pub fn add_name(&mut self, name: String, k: Key) {
         self.names.insert(name, k);
         self.named.insert(k);
     }
@@ -153,7 +181,7 @@ impl Table {
             let h = self.reuse;
             self.reuse += 4;
             // (an object's key is its first handle's number: neither may be taken again)
-            if !self.objs.handles.contains_key(&h) && !self.objs.map.contains_key(&h) {
+            if !self.objs.handles.contains_key(&h) && !self.objs.map.contains_key(&Key(h)) {
                 return h;
             }
         }
@@ -170,7 +198,7 @@ impl Table {
     }
     /// Whether object `k` lets some waiter through now (without taking it); false for the kinds
     /// only `signal` wakes for.
-    fn signaled(&self, k: u32) -> bool {
+    fn signaled(&self, k: Key) -> bool {
         match self.objs.map.get(&k) {
             Some((Obj::Event { set, .. } | Obj::Timer { set, .. }, _)) => *set,
             Some((Obj::Semaphore { count, .. }, _)) => *count > 0,
@@ -200,7 +228,7 @@ pub static TABLE: Mutex<Option<Table>> = Mutex::new(None);
 /// SetEvent lets that thread reach its next API call first, as on Windows; api.rs counts)
 pub static HANDOFF: std::sync::LazyLock<waits::handoff::Handoff> = std::sync::LazyLock::new(|| waits::handoff::Handoff::new(1024));
 /// The last SetEvent of each event (object key) by a guest thread
-static SIGNALS: Mutex<Option<HashMap<u32, waits::handoff::Mark>>> = Mutex::new(None);
+static SIGNALS: Mutex<Option<HashMap<Key, waits::handoff::Mark>>> = Mutex::new(None);
 
 /// Thread `cur()` signals handle `h` (called under the table's lock)
 pub fn note_signal(t: &Table, h: u32) {
@@ -221,9 +249,8 @@ fn defer_to(m: waits::handoff::Mark, tid: u32) {
         eprintln!("sake: thread {tid:04x} woke by {:04x}'s signal waited {:?}{}", m.tid, t.elapsed(), if passed { "" } else { " (ran out)" });
     }
 }
-/// The signal that left handle `h` signaled (by a guest thread)
-fn signal_of(t: &Table, h: u32) -> Option<waits::handoff::Mark> {
-    let k = t.objs.key(&h)?;
+/// The signal that left object `k` signaled (by a guest thread)
+fn signal_of(k: Key) -> Option<waits::handoff::Mark> {
     SIGNALS.lock().unwrap().as_ref()?.get(&k).copied()
 }
 
@@ -242,8 +269,8 @@ pub const CURRENT_THREAD: u32 = 0xffff_fffe;
 pub fn add(o: Obj) -> u32 {
     with(|t| {
         let h = t.new_handle();
-        t.objs.map.insert(h, (o, 1));
-        t.objs.handles.insert(h, h);
+        t.objs.map.insert(Key(h), (o, 1));
+        t.objs.handles.insert(h, Key(h));
         h
     })
 }
@@ -252,7 +279,19 @@ pub fn add(o: Obj) -> u32 {
 pub fn dup(h: u32) -> u32 {
     with(|t| {
         let Some(k) = t.objs.key(&h) else { return 0 };
-        t.objs.map.get_mut(&k).unwrap().1 += 1;
+        let Some(o) = t.objs.map.get_mut(&k) else { return 0 };
+        o.1 += 1;
+        let n = t.new_handle();
+        t.objs.handles.insert(n, k);
+        n
+    })
+}
+
+/// Another handle to object `k` (0: it went)
+pub fn dup_key(k: Key) -> u32 {
+    with(|t| {
+        let Some(o) = t.objs.map.get_mut(&k) else { return 0 };
+        o.1 += 1;
         let n = t.new_handle();
         t.objs.handles.insert(n, k);
         n
@@ -268,17 +307,19 @@ pub fn close(h: u32) -> bool {
         // (a completion port is closed with its last handle, though waits still hold it:
         // they end, signaled, as on Windows)
         let port = (matches!(t.objs.map.get(&k), Some((Obj::Other("iocp"), _))) && !t.objs.handles.values().any(|&v| v == k)).then_some(k);
-        (true, unref(t, k), port)
+        (true, unref(t, k).map(|o| (k, o)), port)
     });
     if let Some(k) = port {
         crate::iocp::closed(k);
     }
-    gone_object(h, gone);
+    if let Some((k, o)) = gone {
+        gone_object(k, o);
+    }
     r
 }
 
 /// One reference to object `k` less: the object when that was its last
-fn unref(t: &mut Table, k: u32) -> Option<Obj> {
+fn unref(t: &mut Table, k: Key) -> Option<Obj> {
     let rc = &mut t.objs.map.get_mut(&k)?.1;
     *rc -= 1;
     if *rc == 0 {
@@ -293,24 +334,36 @@ fn unref(t: &mut Table, k: u32) -> Option<Obj> {
     None
 }
 
-/// An object that went (its last handle closed, or the last wait on it ended)
-fn gone_object(h: u32, gone: Option<Obj>) {
+/// Object `k` went (its last handle closed, or the last wait on it ended). The modules that
+/// keep state for it made it under its first handle's number, whichever handle closed last.
+fn gone_object(k: Key, gone: Obj) {
     // (outside the table's lock: the kernel's comes after it, never before)
+    // (a completion port's association of the object, whatever it is)
+    crate::iocp::forget(k);
+    let h = k.first_handle();
     match gone {
-        Some(Obj::Pipe(p)) => crate::pipe::closed(p),
-        Some(Obj::Other("iocp")) => crate::iocp::gone(h),
-        Some(Obj::Other("ip change notify")) => crate::iphlp::forget(h),
-        Some(Obj::Other("afd")) => {
-            crate::afd::closed(h);
-            crate::iocp::forget(h);
+        Obj::Pipe(p) => crate::pipe::closed(p),
+        Obj::Other("iocp") => crate::iocp::gone(k),
+        Obj::Other("ip change notify") => crate::iphlp::forget(h),
+        Obj::Other("afd") => crate::afd::closed(h),
+        Obj::Shared(id) => {
+            crate::kern::with(|kern| kern.release_sync(id, crate::pid()));
         }
-        Some(Obj::Shared(id)) => {
-            crate::kern::with(|k| k.release_sync(id, crate::pid()));
-        }
-        Some(Obj::DebugObject(port)) => crate::dbg::port_closed(port),
-        Some(Obj::Mapping { file: None, view, .. }) if view != 0 => crate::k32::section_closed(view),
-        Some(Obj::Other("Section")) => crate::k32::snapshot_closed(h),
-        _ => {}
+        Obj::DebugObject(port) => crate::dbg::port_closed(port),
+        Obj::Mapping { file: None, view, .. } if view != 0 => crate::k32::section_closed(view),
+        Obj::Other("Section") => crate::k32::snapshot_closed(h),
+        Obj::Event { .. }
+        | Obj::Timer { .. }
+        | Obj::Mutex { .. }
+        | Obj::Semaphore { .. }
+        | Obj::Thread { .. }
+        | Obj::Process { .. }
+        | Obj::RemoteThread { .. }
+        | Obj::File(_)
+        | Obj::Find(_)
+        | Obj::Mapping { .. }
+        | Obj::Key(_)
+        | Obj::Other(_) => {}
     }
 }
 
@@ -353,9 +406,11 @@ pub fn new_thread_obj(tid: u32) -> u32 {
     add(Obj::Thread { tid, done: false, code: 0x103 })
 }
 
-/// Whether `h` is signaled for thread `tid`; takes it (auto-reset event, mutex, semaphore).
-fn try_take(t: &mut Table, h: u32, tid: u32, take: bool) -> Option<bool> {
-    let (o, _) = t.objs.get_mut(&h)?;
+/// Whether object `k` is signaled for thread `tid`; takes it (auto-reset event, mutex,
+/// semaphore). None: no object (a closed handle).
+fn try_take(t: &mut Table, k: Option<Key>, tid: u32, take: bool) -> Option<bool> {
+    let k = k?;
+    let (o, _) = t.objs.map.get_mut(&k)?;
     Some(match o {
         Obj::Event { manual, set } => {
             let s = *set;
@@ -403,9 +458,9 @@ fn try_take(t: &mut Table, h: u32, tid: u32, take: bool) -> Option<bool> {
         Obj::Process { pid, .. } => crate::process::ended(*pid),
         Obj::RemoteThread { pid, tid } => crate::kern::with(|k| k.thread_exit(*pid, *tid)).0.is_some(),
         // a completion port: while it holds packets (waiting on it takes none)
-        Obj::Other("iocp") => crate::iocp::has_packets(h),
+        Obj::Other("iocp") => crate::iocp::has_packets(k),
         // files and the like count as signaled
-        _ => true,
+        Obj::File(_) | Obj::Pipe(_) | Obj::Find(_) | Obj::Mapping { .. } | Obj::Key(_) | Obj::DebugObject(_) | Obj::Other(_) => true,
     })
 }
 
@@ -413,8 +468,8 @@ pub const WAIT_TIMEOUT: u32 = 0x102;
 /// a mutex whose owner thread ended holding it (until the next wait takes it)
 pub const ABANDONED: u32 = u32::MAX;
 
-fn abandoned(t: &Table, h: u32) -> bool {
-    match t.objs.get(&h) {
+fn abandoned(t: &Table, k: Option<Key>) -> bool {
+    match k.and_then(|k| t.objs.map.get(&k)) {
         Some((Obj::Mutex { owner: ABANDONED, .. }, _)) => true,
         Some((Obj::Shared(id), _)) => crate::kern::with(|k| k.try_take(*id, 0, 0, false)).0.is_some_and(|r| r.1),
         _ => false,
@@ -430,7 +485,10 @@ pub fn waitable(handles: &[u32]) -> bool {
     let me = crate::cur().obj;
     let mut g = lock();
     let t = g.get_or_insert_with(|| Table::new());
-    handles.iter().all(|&h| try_take(t, if h == CURRENT_THREAD { me } else { h }, tid, false).is_some())
+    handles.iter().all(|&h| {
+        let k = t.objs.key(&if h == CURRENT_THREAD { me } else { h });
+        try_take(t, k, tid, false).is_some()
+    })
 }
 /// Handle `h` has only the rights `mask` (waiting needs SYNCHRONIZE)
 pub fn set_access(h: u32, mask: u32) {
@@ -495,7 +553,8 @@ pub fn wait(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool
                     return Some(Ok(handles.len() as u32));
                 }
             }
-            match attempt(t, handles, all, tid, false) {
+            let keys: Vec<Option<Key>> = handles.iter().map(|h| t.objs.key(h)).collect();
+            match attempt(t, &keys, all, tid, false) {
                 Attempt::Done(r, _) => Some(Ok(r)),
                 Attempt::Failed => Some(Err(6)),
                 Attempt::Wait if ms == 0 => Some(Ok(WAIT_TIMEOUT)),
@@ -516,22 +575,22 @@ pub fn wait(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool
     }
     // the wait holds its objects: one whose last handle closes meanwhile stays (a mutex then
     // abandoned is still WAIT_ABANDONED for this waiter)
-    let keys: Vec<Option<u32>> = with(|t| {
+    let keys: Vec<Option<Key>> = with(|t| {
         handles.iter().map(|h| {
             let k = t.objs.key(h)?;
             t.objs.map.get_mut(&k)?.1 += 1;
             Some(k)
         }).collect()
     });
-    let held: Vec<u32> = handles.iter().zip(&keys).map(|(&h, k)| k.unwrap_or(h)).collect();
+    let held = keys.clone();
     let release = std::cell::Cell::new(Some(keys));
     // (the wait's references go when it ends, or before TerminateThread ends the thread in
     // it: check_terminate does not come back, and they kept the objects for good)
     let let_go = || {
         let Some(keys) = release.take() else { return };
-        let gone: Vec<(u32, Obj)> = with(|t| keys.iter().flatten().filter_map(|&k| unref(t, k).map(|o| (k, o))).collect());
+        let gone: Vec<(Key, Obj)> = with(|t| keys.iter().flatten().filter_map(|&k| unref(t, k).map(|o| (k, o))).collect());
         for (k, o) in gone {
-            gone_object(k, Some(o));
+            gone_object(k, o);
         }
     };
     let r = wait_held_then(&held, all, ms, extra, &let_go);
@@ -550,7 +609,7 @@ enum Attempt {
     Wait,
 }
 
-fn attempt(t: &mut Table, handles: &[u32], all: bool, tid: u32, blocked: bool) -> Attempt {
+fn attempt(t: &mut Table, handles: &[Option<Key>], all: bool, tid: u32, blocked: bool) -> Attempt {
     if all {
         let mut ready = true;
         for &h in handles {
@@ -566,7 +625,7 @@ fn attempt(t: &mut Table, handles: &[u32], all: bool, tid: u32, blocked: bool) -
         for &h in handles {
             try_take(t, h, tid, true);
         }
-        let marks: Vec<_> = if blocked { handles.iter().filter_map(|&h| signal_of(t, h)).collect() } else { Vec::new() };
+        let marks: Vec<_> = if blocked { handles.iter().flatten().filter_map(|&k| signal_of(k)).collect() } else { Vec::new() };
         return Attempt::Done(ab.map_or(0, |_| 0x80), marks);
     }
     for (i, &h) in handles.iter().enumerate() {
@@ -575,7 +634,7 @@ fn attempt(t: &mut Table, handles: &[u32], all: bool, tid: u32, blocked: bool) -
             None => return Attempt::Failed,
             Some(true) => {
                 // (woken by another thread's SetEvent: it runs on to its next call first)
-                let m = if blocked { signal_of(t, h) } else { None };
+                let m = if blocked { h.and_then(signal_of) } else { None };
                 return Attempt::Done(i as u32 + if ab { 0x80 } else { 0 }, m.into_iter().collect());
             }
             Some(false) => {}
@@ -586,11 +645,12 @@ fn attempt(t: &mut Table, handles: &[u32], all: bool, tid: u32, blocked: bool) -
 
 #[cfg(test)]
 fn wait_held(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool>) -> u32 {
-    wait_held_then(handles, all, ms, extra, &|| {})
+    let keys: Vec<Option<Key>> = with(|t| handles.iter().map(|h| t.objs.key(h)).collect());
+    wait_held_then(&keys, all, ms, extra, &|| {})
 }
 
 /// wait_held, `ending` run before this thread ends in it (TerminateThread).
-fn wait_held_then(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool>, ending: &dyn Fn()) -> u32 {
+fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool>, ending: &dyn Fn()) -> u32 {
     let tid = crate::cur().tid;
     let deadline = (ms != 0xffff_ffff).then(|| Instant::now() + Duration::from_millis(ms as u64));
     let cv = CV.with(Arc::clone);
@@ -646,7 +706,7 @@ fn wait_held_then(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -
         // (timers turn set by themselves: wake when the first one is due)
         let timer = handles
             .iter()
-            .filter_map(|h| match t.objs.get(h) {
+            .filter_map(|k| match k.and_then(|k| t.objs.map.get(&k)) {
                 Some((Obj::Timer { due, .. }, _)) => *due,
                 _ => None,
             })
@@ -670,7 +730,8 @@ fn wait_held_then(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -
                 me
             }
             None => {
-                let me = t.waits.add(handles, all);
+                let keys: Vec<Key> = handles.iter().flatten().copied().collect();
+                let me = t.waits.add(&keys, all);
                 t.cvs.insert(me, cv.clone());
                 id = Some(me);
                 me
@@ -872,12 +933,12 @@ mod table_review_tests {
                         let h = t.new_handle();
                         prop_assert!(h >= 0x100 && h < HANDLE_LIMIT && h % 4 == 0, "{:#x}", h);
                         prop_assert!(!live.contains_key(&h) && !live.values().any(|&v| v == h), "{:#x} in use", h);
-                        t.objs.map.insert(h, (Obj::Event { manual: false, set: false }, 1));
-                        t.objs.handles.insert(h, h);
+                        t.objs.map.insert(Key(h), (Obj::Event { manual: false, set: false }, 1));
+                        t.objs.handles.insert(h, Key(h));
                         live.insert(h, h);
                         if op == 1 {
                             let n = format!("n{h:x}");
-                            t.add_name(n.clone(), h);
+                            t.add_name(n.clone(), Key(h));
                             names.insert(n, h);
                         }
                     }
@@ -885,21 +946,21 @@ mod table_review_tests {
                         let (&_, &key) = live.iter().nth(k % live.len()).unwrap();
                         let n = t.new_handle();
                         prop_assert!(!live.contains_key(&n) && !live.values().any(|&v| v == n));
-                        t.objs.map.get_mut(&key).unwrap().1 += 1;
-                        t.objs.handles.insert(n, key);
+                        t.objs.map.get_mut(&Key(key)).unwrap().1 += 1;
+                        t.objs.handles.insert(n, Key(key));
                         live.insert(n, key);
                     }
                     _ if !live.is_empty() => {
                         let (&h, &key) = live.iter().nth(k % live.len()).unwrap();
                         live.remove(&h);
                         t.objs.handles.remove(&h);
-                        let gone = unref(&mut t, key).is_some();
+                        let gone = unref(&mut t, Key(key)).is_some();
                         prop_assert_eq!(gone, !live.values().any(|&v| v == key));
                         if gone { names.retain(|_, v| *v != key); }
                     }
                     _ => {}
                 }
-                let got: std::collections::BTreeMap<String, u32> = t.names.iter().map(|(a, b)| (a.clone(), *b)).collect();
+                let got: std::collections::BTreeMap<String, u32> = t.names.iter().map(|(a, b)| (a.clone(), b.0)).collect();
                 prop_assert_eq!(&got, &names);
             }
         }
