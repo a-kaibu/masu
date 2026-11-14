@@ -712,3 +712,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "x3daudio_snapshot_tests.rs"]
+mod snapshot_tests;
