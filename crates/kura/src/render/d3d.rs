@@ -15,59 +15,232 @@ const DATA: u32 = 0xffff_ffff;
 /// (a Direct3D 9 DRAW's pair of the indices: d3d9/device.rs INDEX_PAIR)
 const D9_INDEX_PAIR: u32 = 0x8000_0000;
 
+/// A WebGPU texture format the page makes textures of. Each one's row in `Tf::info` says what it
+/// is (bytes a texel, bits a channel, its kind, whether it can be a storage texture): a format
+/// added here does not compile until it has one.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Tf {
+    Bgra8Unorm,
+    Depth24PlusStencil8,
+    Rgba16Float,
+    Rgba8Unorm,
+    R8Unorm,
+    Rg8Unorm,
+    Depth32Float,
+    R16Float,
+    Rg16Float,
+    Rgb10a2Unorm,
+    Rg11b10Ufloat,
+    Rgba8UnormSrgb,
+    Bgra8UnormSrgb,
+    Depth16Unorm,
+    R32Float,
+    Rg32Float,
+    Rgba8Uint,
+    Rgba8Snorm,
+    Rgba8Sint,
+    R32Uint,
+    R32Sint,
+    Rgba32Float,
+    Rgba32Uint,
+    Rgba32Sint,
+    Rg32Uint,
+    Rg32Sint,
+    R8Snorm,
+    Rg8Snorm,
+    Rgb9e5Ufloat,
+    Rgba16Uint,
+    Rgba16Sint,
+    Rgb10a2Uint,
+    Rg16Uint,
+    Rg16Sint,
+    Rg8Uint,
+    Rg8Sint,
+    R16Uint,
+    R16Sint,
+    R8Uint,
+    R8Sint,
+}
+
+/// What a format's channels hold.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Kind {
+    Unorm,
+    /// the sRGB twin of this format
+    Srgb(Tf),
+    Snorm,
+    Float,
+    /// rg11b10ufloat, rgb9e5ufloat
+    Ufloat,
+    Uint,
+    Sint,
+    Depth,
+}
+
+/// Whether a format can be a storage texture.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Store {
+    No,
+    Yes,
+    /// with the bgra8unorm-storage feature
+    BgraFeature,
+}
+
+struct Info {
+    name: &'static str,
+    bpp: u32,
+    /// bits of a channel (the widest one)
+    bits: u32,
+    kind: Kind,
+    store: Store,
+}
+
+const fn info(name: &'static str, bpp: u32, bits: u32, kind: Kind, store: Store) -> Info {
+    Info { name, bpp, bits, kind, store }
+}
+
+impl Tf {
+    const fn info(self) -> Info {
+        use Kind::*;
+        use Store::{BgraFeature, No, Yes};
+        match self {
+            Tf::Bgra8Unorm => info("bgra8unorm", 4, 8, Unorm, BgraFeature),
+            Tf::Depth24PlusStencil8 => info("depth24plus-stencil8", 4, 24, Depth, No),
+            Tf::Rgba16Float => info("rgba16float", 8, 16, Float, Yes),
+            Tf::Rgba8Unorm => info("rgba8unorm", 4, 8, Unorm, Yes),
+            Tf::R8Unorm => info("r8unorm", 1, 8, Unorm, No),
+            Tf::Rg8Unorm => info("rg8unorm", 2, 8, Unorm, No),
+            Tf::Depth32Float => info("depth32float", 4, 32, Depth, No),
+            Tf::R16Float => info("r16float", 2, 16, Float, No),
+            Tf::Rg16Float => info("rg16float", 4, 16, Float, No),
+            Tf::Rgb10a2Unorm => info("rgb10a2unorm", 4, 10, Unorm, No),
+            Tf::Rg11b10Ufloat => info("rg11b10ufloat", 4, 11, Ufloat, No),
+            Tf::Rgba8UnormSrgb => info("rgba8unorm-srgb", 4, 8, Srgb(Tf::Rgba8Unorm), No),
+            Tf::Bgra8UnormSrgb => info("bgra8unorm-srgb", 4, 8, Srgb(Tf::Bgra8Unorm), No),
+            Tf::Depth16Unorm => info("depth16unorm", 2, 16, Depth, No),
+            Tf::R32Float => info("r32float", 4, 32, Float, Yes),
+            Tf::Rg32Float => info("rg32float", 8, 32, Float, Yes),
+            Tf::Rgba8Uint => info("rgba8uint", 4, 8, Uint, Yes),
+            Tf::Rgba8Snorm => info("rgba8snorm", 4, 8, Snorm, Yes),
+            Tf::Rgba8Sint => info("rgba8sint", 4, 8, Sint, Yes),
+            Tf::R32Uint => info("r32uint", 4, 32, Uint, Yes),
+            Tf::R32Sint => info("r32sint", 4, 32, Sint, Yes),
+            Tf::Rgba32Float => info("rgba32float", 16, 32, Float, Yes),
+            Tf::Rgba32Uint => info("rgba32uint", 16, 32, Uint, Yes),
+            Tf::Rgba32Sint => info("rgba32sint", 16, 32, Sint, Yes),
+            Tf::Rg32Uint => info("rg32uint", 8, 32, Uint, Yes),
+            Tf::Rg32Sint => info("rg32sint", 8, 32, Sint, Yes),
+            Tf::R8Snorm => info("r8snorm", 1, 8, Snorm, No),
+            Tf::Rg8Snorm => info("rg8snorm", 2, 8, Snorm, No),
+            Tf::Rgb9e5Ufloat => info("rgb9e5ufloat", 4, 9, Ufloat, No),
+            Tf::Rgba16Uint => info("rgba16uint", 8, 16, Uint, Yes),
+            Tf::Rgba16Sint => info("rgba16sint", 8, 16, Sint, Yes),
+            Tf::Rgb10a2Uint => info("rgb10a2uint", 4, 10, Uint, No),
+            Tf::Rg16Uint => info("rg16uint", 4, 16, Uint, No),
+            Tf::Rg16Sint => info("rg16sint", 4, 16, Sint, No),
+            Tf::Rg8Uint => info("rg8uint", 2, 8, Uint, No),
+            Tf::Rg8Sint => info("rg8sint", 2, 8, Sint, No),
+            Tf::R16Uint => info("r16uint", 2, 16, Uint, No),
+            Tf::R16Sint => info("r16sint", 2, 16, Sint, No),
+            Tf::R8Uint => info("r8uint", 1, 8, Uint, No),
+            Tf::R8Sint => info("r8sint", 1, 8, Sint, No),
+        }
+    }
+    /// Its WebGPU name.
+    pub(crate) const fn name(self) -> &'static str {
+        self.info().name
+    }
+    const fn kind(self) -> Kind {
+        self.info().kind
+    }
+    /// bytes a texel
+    const fn bpp(self) -> u32 {
+        self.info().bpp
+    }
+    const fn is_depth(self) -> bool {
+        matches!(self.kind(), Kind::Depth)
+    }
+    const fn is_snorm(self) -> bool {
+        matches!(self.kind(), Kind::Snorm)
+    }
+    /// Integer texels (shaders read them as u32 / i32, no filtering or blending).
+    const fn is_uint(self) -> bool {
+        matches!(self.kind(), Kind::Uint)
+    }
+    const fn is_sint(self) -> bool {
+        matches!(self.kind(), Kind::Sint)
+    }
+    /// 32-bit float channels (depth32float too): blended only with float32-blendable.
+    const fn is_float32(self) -> bool {
+        self.info().bits == 32 && matches!(self.kind(), Kind::Float | Kind::Depth)
+    }
+    /// The format without its sRGB-ness.
+    const fn base(self) -> Tf {
+        match self.kind() {
+            Kind::Srgb(b) => b,
+            Kind::Unorm | Kind::Snorm | Kind::Float | Kind::Ufloat | Kind::Uint | Kind::Sint | Kind::Depth => self,
+        }
+    }
+}
+
+/// A WebGPU format as the JSON string the page's calls take.
+fn qf(f: Tf) -> String {
+    q(f.name())
+}
+
 // (crates/kura/src/d3d11/format.rs P_*)
-pub(crate) const TEX_FORMATS: [&str; 41] = [
-    "bgra8unorm",
-    "depth24plus-stencil8",
-    "rgba16float",
-    "rgba16float",
-    "rgba8unorm",
-    "r8unorm",
-    "rg8unorm",
-    "depth32float",
-    "r16float",
-    "rg16float",
-    "rgb10a2unorm",
-    "rg11b10ufloat",
-    "rgba8unorm-srgb",
-    "bgra8unorm-srgb",
-    "depth16unorm",
-    "r32float",
-    "rg32float",
-    "rgba8uint",
-    "rgba8snorm",
-    "rgba8sint",
-    "r32uint",
-    "r32sint",
-    "rgba32float",
-    "rgba32uint",
-    "rgba32sint",
-    "rg32uint",
-    "rg32sint",
-    "r8snorm",
-    "rg8snorm",
-    "rgb9e5ufloat",
-    "rgba16uint",
-    "rgba16sint",
-    "rgb10a2uint",
-    "rg16uint",
-    "rg16sint",
-    "rg8uint",
-    "rg8sint",
-    "r16uint",
-    "r16sint",
-    "r8uint",
-    "r8sint",
+pub(crate) const TEX_FORMATS: [Tf; 41] = [
+    Tf::Bgra8Unorm,
+    Tf::Depth24PlusStencil8,
+    Tf::Rgba16Float,
+    Tf::Rgba16Float,
+    Tf::Rgba8Unorm,
+    Tf::R8Unorm,
+    Tf::Rg8Unorm,
+    Tf::Depth32Float,
+    Tf::R16Float,
+    Tf::Rg16Float,
+    Tf::Rgb10a2Unorm,
+    Tf::Rg11b10Ufloat,
+    Tf::Rgba8UnormSrgb,
+    Tf::Bgra8UnormSrgb,
+    Tf::Depth16Unorm,
+    Tf::R32Float,
+    Tf::Rg32Float,
+    Tf::Rgba8Uint,
+    Tf::Rgba8Snorm,
+    Tf::Rgba8Sint,
+    Tf::R32Uint,
+    Tf::R32Sint,
+    Tf::Rgba32Float,
+    Tf::Rgba32Uint,
+    Tf::Rgba32Sint,
+    Tf::Rg32Uint,
+    Tf::Rg32Sint,
+    Tf::R8Snorm,
+    Tf::Rg8Snorm,
+    Tf::Rgb9e5Ufloat,
+    Tf::Rgba16Uint,
+    Tf::Rgba16Sint,
+    Tf::Rgb10a2Uint,
+    Tf::Rg16Uint,
+    Tf::Rg16Sint,
+    Tf::Rg8Uint,
+    Tf::Rg8Sint,
+    Tf::R16Uint,
+    Tf::R16Sint,
+    Tf::R8Uint,
+    Tf::R8Sint,
 ];
 /// (index of rgba32float)
 const P_RGBA32F: u32 = 22;
-fn tex_format(i: u32) -> &'static str {
+fn tex_format(i: u32) -> Tf {
     // (32-bit float texels a shader samples with a filter want float32-filterable: halves without
     // it, converted on writes and readbacks)
     if i == P_RGBA32F && !gpu::has_feature("float32-filterable") {
-        return "rgba16float";
+        return Tf::Rgba16Float;
     }
-    TEX_FORMATS.get(i as usize).copied().unwrap_or("bgra8unorm")
+    TEX_FORMATS.get(usize::try_from(i).unwrap_or(usize::MAX)).copied().unwrap_or(Tf::Bgra8Unorm)
 }
 /// 32-bit floats (little-endian bytes) as halves.
 fn halves(f32s: &[u8]) -> Vec<u8> {
@@ -76,41 +249,40 @@ fn halves(f32s: &[u8]) -> Vec<u8> {
 
 /// Whether texels of page format `i` arrive as 32-bit floats but are kept as halves.
 fn halved(i: u32) -> bool {
-    i == P_RGBA32F && tex_format(i) == "rgba16float"
+    i == P_RGBA32F && tex_format(i) == Tf::Rgba16Float
 }
-fn bpp(f: &str) -> u32 {
-    match f {
-        "r8unorm" | "r8snorm" | "r8uint" | "r8sint" => 1,
-        "rg8unorm" | "rg8snorm" | "r16float" | "depth16unorm" | "rg8uint" | "rg8sint" | "r16uint" | "r16sint" => 2,
-        "rgba16float" | "rg32float" | "rg32uint" | "rg32sint" | "rgba16uint" | "rgba16sint" => 8,
-        "rgba32float" | "rgba32uint" | "rgba32sint" => 16,
-        _ => 4,
-    }
+fn bpp(f: Tf) -> u32 {
+    f.bpp()
 }
 /// Whether a WebGPU texture of this format can be a storage texture (write-only; bgra8unorm
 /// with the bgra8unorm-storage feature).
-pub(crate) fn storable(f: &str) -> bool {
-    matches!(
-        f,
-        "rgba8unorm" | "rgba8snorm" | "rgba8uint" | "rgba8sint" | "rgba16uint" | "rgba16sint" | "rgba16float" | "r32uint" | "r32sint" | "r32float" | "rg32uint" | "rg32sint" | "rg32float" | "rgba32uint" | "rgba32sint" | "rgba32float"
-    ) || (f == "bgra8unorm" && gpu::has_feature("bgra8unorm-storage"))
+pub(crate) fn storable(f: Tf) -> bool {
+    match f.info().store {
+        Store::Yes => true,
+        Store::No => false,
+        Store::BgraFeature => gpu::has_feature("bgra8unorm-storage"),
+    }
+}
+/// Whether WebGPU draws to the format, depth ones aside (2D textures of it can be render targets).
+fn draws_to(f: Tf) -> bool {
+    !f.is_snorm() && f != Tf::Rgb9e5Ufloat && (f != Tf::Rg11b10Ufloat || gpu::has_feature("rg11b10ufloat-renderable"))
 }
 /// Whether WebGPU draws to a color format (crates/kura/src/render/model.rs format_info).
-fn renderable(f: &str) -> bool {
-    !f.ends_with("snorm") && !is_depth(f) && f != "rgb9e5ufloat" && (f != "rg11b10ufloat" || gpu::has_feature("rg11b10ufloat-renderable"))
+fn renderable(f: Tf) -> bool {
+    draws_to(f) && !is_depth(f)
 }
 /// Whether WebGPU multisamples a format (core: the renderable and depth ones but rg32* and
 /// rgba32*, crates/kura/src/render/model.rs multisamplable).
-fn multisamplable(f: &str) -> bool {
-    (renderable(f) || is_depth(f)) && !f.starts_with("rg32") && !f.starts_with("rgba32")
+fn multisamplable(f: Tf) -> bool {
+    (renderable(f) || is_depth(f)) && !(f.info().bits == 32 && f.bpp() >= 8)
 }
 /// Whether a multisampled texture of format `f` resolves (the blendable color formats).
-fn resolvable(f: &str) -> bool {
-    multisamplable(f) && !is_depth(f) && blendable(f) && f != "r32float"
+fn resolvable(f: Tf) -> bool {
+    multisamplable(f) && !is_depth(f) && blendable(f) && f != Tf::R32Float
 }
 /// Whether WebGPU blends into a color format (without the float32-blendable feature).
-fn blendable(f: &str) -> bool {
-    !f.ends_with("uint") && !f.ends_with("sint") && (!f.ends_with("32float") || gpu::has_feature("float32-blendable"))
+fn blendable(f: Tf) -> bool {
+    !f.is_uint() && !f.is_sint() && (!f.is_float32() || gpu::has_feature("float32-blendable"))
 }
 fn f16_to_f32(h: u16) -> f32 {
     let (s, e, m) = ((h as u32 & 0x8000) << 16, (h >> 10) as u32 & 31, h as u32 & 0x3ff);
@@ -125,10 +297,10 @@ fn f16_to_f32(h: u16) -> f32 {
         _ => s | (e + 112) << 23 | m << 13,
     })
 }
-fn is_depth(f: &str) -> bool {
-    f.starts_with("depth")
+fn is_depth(f: Tf) -> bool {
+    f.is_depth()
 }
-const DS: &str = "depth24plus-stencil8";
+const DS: Tf = Tf::Depth24PlusStencil8;
 
 // (crates/kura/src/d3d11/format.rs vertex_format)
 const VERTEX_FORMATS2: [&str; 32] = [
@@ -326,7 +498,7 @@ struct Tex {
     w: u32,
     h: u32,
     levels: u32,
-    format: &'static str,
+    format: Tf,
     view: Id,
     /// Direct3D 11: array layers (depth of 3D textures), dimension
     layers: u32,
@@ -560,10 +732,10 @@ pub struct D3d {
     data_buf: Id,
     data_size: u32,
     white: Id,
-    clear_pipes: HashMap<(&'static str, bool, u32), Id>,
+    clear_pipes: HashMap<(Option<Tf>, bool, u32), Id>,
     clear_uniform: Id,
     clear_slot: u32,
-    blit_pipes: HashMap<&'static str, Id>,
+    blit_pipes: HashMap<Tf, Id>,
     pub overlay: Option<Overlay>,
     /// changes when a texture goes or the overlay's view changes (view indexes are reused)
     pub tex_gen: u64,
@@ -652,7 +824,7 @@ pub struct D3d {
     pub(crate) snap_graves: Vec<snap::Grave>,
     /// the shader resolve (resolve_into): module, pipeline and layout per target format
     resolve_module: Id,
-    resolve_pipes: HashMap<&'static str, (Id, Id)>,
+    resolve_pipes: HashMap<Tf, (Id, Id)>,
     /// Direct3D 11 depth textures a shader reads as floats (R16_UNORM, R32_FLOAT and the like
     /// views of typeless ones): depth texture -> (its r32float copy, the depth texture's stamp
     /// when copied); see depth_twin
@@ -943,7 +1115,7 @@ impl D3d {
                     let _ = rt;
                     let u = usage::T_BINDING | usage::T_COPY_DST | usage::T_COPY_SRC | if depth || renderable(fmt) { usage::T_RENDER } else { 0 };
                     let levels = if depth { 1 } else { levels.max(1).min(32 - w.max(h).max(1).leading_zeros()) };
-                    let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"mipLevelCount":{levels},"usage":{u}}}"#, q(fmt)));
+                    let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"mipLevelCount":{levels},"usage":{u}}}"#, qf(fmt)));
                     if let Some(old) = self.textures.remove(&id) {
                         old.free(self.shown());
                         self.tex_gen += 1;
@@ -1135,7 +1307,7 @@ impl D3d {
                 WRITE_TEXTURE2 => {
                     let (id, level, layer, x, y, w, h, bpr, off) = (a(1), a(2), a(3), a(4), a(5), a(6), a(7), a(8), a(9));
                     // (of depth only 16-bit: WebGPU writes into no other)
-                    if let Some(t) = self.textures.get(&id).filter(|t| (!is_depth(t.format) || t.format == "depth16unorm") && t.samples == 1) {
+                    if let Some(t) = self.textures.get(&id).filter(|t| (!is_depth(t.format) || t.format == Tf::Depth16Unorm) && t.samples == 1) {
                         let (tw, th, levels, tex, halved) = (t.w, t.h, t.levels, t.tex, t.halved);
                         self.flush_if_used(id);
                         let (lw, lh) = ((tw >> level).max(1), (th >> level).max(1));
@@ -2053,7 +2225,7 @@ impl D3d {
         }
         let (format, samples) = (z.format, z.samples);
         let (depth, stencil) = z.zclear.unwrap_or((1.0, 0));
-        let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"sampleCount":{samples},"usage":{}}}"#, q(format), usage::T_RENDER));
+        let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"sampleCount":{samples},"usage":{}}}"#, qf(format), usage::T_RENDER));
         let view = gpu::view(tex, "");
         self.textures.get_mut(&id)?.fits.insert((w, h), (tex, view));
         // starts as the depth buffer was last cleared (not 0, which fails every LESS test)
@@ -2112,10 +2284,7 @@ impl D3d {
             return;
         }
         // (the pass may have begun before a segment ended: see `seg_close`)
-        let fmt = match self.textures.get(&rt) {
-            Some(t) => t.format,
-            None => "",
-        };
+        let fmt = self.textures.get(&rt).map(|t| t.format);
         if rt != 0 {
             self.touch(rt);
         }
@@ -2145,7 +2314,7 @@ impl D3d {
                 };
                 let p = gpu::render_pipeline(&format!(
                     r#"{{"layout":"auto","vertex":{{"module":{m},"entryPoint":"vs"}},"fragment":{{"module":{m},"entryPoint":"fs","targets":[{}]}},"primitive":{{"topology":"triangle-list"}}{ds}}}"#,
-                    if rt != 0 { format!(r#"{{"format":{},"writeMask":{}}}"#, q(fmt), if flags & 1 != 0 { 15 } else { 0 }) } else { String::new() }
+                    if rt != 0 { format!(r#"{{"format":{},"writeMask":{}}}"#, q(fmt.map_or("", Tf::name)), if flags & 1 != 0 { 15 } else { 0 }) } else { String::new() }
                 ));
                 self.clear_pipes.insert(key, p);
                 p
@@ -2203,7 +2372,7 @@ impl D3d {
         let format = tex_format(color_fmt);
         let depth = depth_fmt != 0xff;
         // (no blending into formats WebGPU does not blend: 32-bit floats, integers)
-        let blend_of = |format: &str| if blend[0] != 0 && blendable(format) {
+        let blend_of = |format: Tf| if blend[0] != 0 && blendable(format) {
             let comp = |s: &str, d: &str, o: &str| {
                 if o == "min" || o == "max" {
                     format!(r#"{{"srcFactor":"one","dstFactor":"one","operation":{}}}"#, q(o))
@@ -2220,10 +2389,10 @@ impl D3d {
             String::new()
         };
         let blend_state = blend_of(format);
-        let mut targets = vec![format!(r#"{{"format":{}{blend_state},"writeMask":{wmask}}}"#, q(format))];
+        let mut targets = vec![format!(r#"{{"format":{}{blend_state},"writeMask":{wmask}}}"#, qf(format))];
         for &(f, m) in &more {
             let f = tex_format(f);
-            targets.push(format!(r#"{{"format":{}{},"writeMask":{m}}}"#, q(f), blend_of(f)));
+            targets.push(format!(r#"{{"format":{}{},"writeMask":{m}}}"#, qf(f), blend_of(f)));
         }
         // (a strip index format only on a strip topology)
         let strip_fmt = match strip {
@@ -2511,8 +2680,8 @@ impl D3d {
         p
     }
 
-    fn blit_pipe(&mut self, format: &'static str) -> Id {
-        if let Some(&p) = self.blit_pipes.get(format) {
+    fn blit_pipe(&mut self, format: Tf) -> Id {
+        if let Some(&p) = self.blit_pipes.get(&format) {
             return p;
         }
         if self.blit_module == 0 {
@@ -2521,7 +2690,7 @@ impl D3d {
         let m = self.blit_module;
         let p = gpu::render_pipeline(&format!(
             r#"{{"layout":"auto","vertex":{{"module":{m},"entryPoint":"vs"}},"fragment":{{"module":{m},"entryPoint":"fs","targets":[{{"format":{}}}]}},"primitive":{{"topology":"triangle-list"}}}}"#,
-            q(format)
+            qf(format)
         ));
         self.blit_pipes.insert(format, p);
         p
@@ -2611,7 +2780,7 @@ impl D3d {
         // multisampled textures: copied whole into one of the same sample count and format
         // group (all Direct3D 11 copies of them; WebGPU neither samples nor partly copies them)
         if s.samples > 1 || t.samples > 1 {
-            let base = |f: &str| f.trim_end_matches("-srgb").to_string();
+            let base = Tf::base;
             let whole = [sl, dl, sx, sy, dx, dy] == [0; 6] && (sw, sh) == (s.w, s.h) && (dw, dh) == (t.w, t.h) && (s.w, s.h) == (t.w, t.h);
             if s.samples != t.samples || !whole || st == dt || base(s_fmt) != base(t_fmt) || s_fmt == DS {
                 return;
@@ -2636,15 +2805,15 @@ impl D3d {
         // one typeless group, `filter` 2): as is when only sRGB-ness differs, else through a
         // buffer (WebGPU copies textures of other formats no other way)
         if filter == 2 {
-            let base = |f: &str| f.trim_end_matches("-srgb").to_string();
+            let base = Tf::base;
             // (depth: 16-bit UNORM and 32-bit float ones, the only ones WebGPU copies out of)
-            let copyable = |f: &str| !is_depth(f) || matches!(f, "depth16unorm" | "depth32float");
+            let copyable = |f: Tf| !is_depth(f) || matches!(f, Tf::Depth16Unorm | Tf::Depth32Float);
             if sw != dw || sh != dh || !copyable(s_fmt) || !copyable(t_fmt) || bpp(s_fmt) != bpp(t_fmt) {
                 return;
             }
-            if t_fmt == "depth32float" {
+            if t_fmt == Tf::Depth32Float {
                 // (drawn from the source's level and layer: its texels' bits; from depth, none)
-                let kind = if s_fmt.ends_with("uint") { 'u' } else if s_fmt.ends_with("sint") { 'i' } else { 'f' };
+                let kind = if s_fmt.is_uint() { 'u' } else if s_fmt.is_sint() { 'i' } else { 'f' };
                 if is_depth(s_fmt) || depth != 1 || self.textures.get(&st).is_none_or(|x| x.dim != "2d") {
                     return;
                 }
@@ -2711,7 +2880,7 @@ impl D3d {
         // (a box inside the level: WebGPU's copy wants it so)
         let slices = |t: &Tex| if t.dim == "3d" { (t.layers >> level).max(1) } else { t.layers.max(1) };
         let inside = |t: &Tex| level < t.levels && x as u64 + w as u64 <= (t.w >> level).max(1) as u64 && y as u64 + h as u64 <= (t.h >> level).max(1) as u64 && z < slices(t);
-        let Some(t) = self.textures.get(&id).filter(|t| (matches!(t.format, "depth16unorm" | "depth32float") || !is_depth(t.format)) && t.samples == 1 && w > 0 && h > 0 && inside(t)) else {
+        let Some(t) = self.textures.get(&id).filter(|t| (matches!(t.format, Tf::Depth16Unorm | Tf::Depth32Float) || !is_depth(t.format)) && t.samples == 1 && w > 0 && h > 0 && inside(t)) else {
             vnhost_d3d9_readback_done(req);
             return;
         };
@@ -2749,7 +2918,7 @@ impl D3d {
         let (stex, sview) = match t.shown {
             Some(s) => s,
             None => {
-                let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"usage":{}}}"#, q(format), usage::T_RENDER | usage::T_BINDING | usage::T_COPY_SRC));
+                let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"usage":{}}}"#, qf(format), usage::T_RENDER | usage::T_BINDING | usage::T_COPY_SRC));
                 let view = gpu::view(tex, "");
                 self.textures.get_mut(&id).unwrap().shown = Some((tex, view));
                 (tex, view)
@@ -2776,7 +2945,7 @@ impl D3d {
         self.end_pass();
         self.touch(dst);
         if samples == 1 {
-            let base = |f: &str| f.trim_end_matches("-srgb").to_string();
+            let base = Tf::base;
             if base(sfmt) == base(tfmt) {
                 self.open = true;
                 gpu::copy_texture(stex, 0, [0, 0, sly], ttex, dl, [0, 0, dly], [w, h, 1]);
@@ -2793,7 +2962,7 @@ impl D3d {
     /// Resolves multisampled `src` into view `dv` (format `fmt`): the GPU's resolve when the
     /// formats are the same, else a shader that averages the samples (an sRGB twin, another
     /// format of the typeless group). Clears not done yet must be done.
-    fn resolve_into(&mut self, src: u32, sly: u32, dv: Id, fmt: &'static str) {
+    fn resolve_into(&mut self, src: u32, sly: u32, dv: Id, fmt: Tf) {
         let Some(s) = self.textures.get(&src) else { return };
         let (sfmt, sview) = (s.format, s.view);
         let _ = sly;
@@ -2804,7 +2973,7 @@ impl D3d {
         if sfmt == fmt && resolvable(fmt) {
             gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{sview},"resolveTarget":{dv},"loadOp":"load","storeOp":"store"}}]}}"#));
             gpu::end_pass();
-        } else if renderable(fmt) && !sfmt.ends_with("int") && !fmt.ends_with("int") {
+        } else if renderable(fmt) && !(sfmt.is_uint() || sfmt.is_sint()) && !(fmt.is_uint() || fmt.is_sint()) {
             let (pipe, layout) = self.resolve_pipe(fmt);
             let group = gpu::bind_group(layout, &[(0, Res::Obj(sview))]);
             gpu::begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{dv},"loadOp":"clear","storeOp":"store"}}]}}"#));
@@ -2835,7 +3004,7 @@ impl D3d {
             _ => {
                 self.next_twin -= 1;
                 let tid = self.next_twin;
-                let r32 = TEX_FORMATS.iter().position(|&f| f == "r32float").unwrap() as u32;
+                let r32 = TEX_FORMATS.iter().position(|&f| f == Tf::R32Float).unwrap() as u32;
                 self.create_texture2([tid, w, h, layers, 1, r32, 0]);
                 // (not kept in save states: made again from the depth texture)
                 self.textures.get_mut(&tid)?.make.clear();
@@ -2903,8 +3072,8 @@ impl D3d {
     }
 
     /// The shader resolve into `format` (see resolve_into): pipeline, its bind group layout.
-    fn resolve_pipe(&mut self, format: &'static str) -> (Id, Id) {
-        if let Some(&p) = self.resolve_pipes.get(format) {
+    fn resolve_pipe(&mut self, format: Tf) -> (Id, Id) {
+        if let Some(&p) = self.resolve_pipes.get(&format) {
             return p;
         }
         if self.resolve_module == 0 {
@@ -2915,7 +3084,7 @@ impl D3d {
         let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
         let p = gpu::render_pipeline(&format!(
             r#"{{"layout":{pl},"vertex":{{"module":{m},"entryPoint":"vs"}},"fragment":{{"module":{m},"entryPoint":"fs","targets":[{{"format":{}}}]}},"primitive":{{"topology":"triangle-list"}}}}"#,
-            q(format)
+            qf(format)
         ));
         gpu::drop(pl);
         self.resolve_pipes.insert(format, (p, layout));
@@ -2936,9 +3105,9 @@ impl D3d {
             _ => ("2d", h),
         };
         // (WebGPU has no 3D depth textures: one of the same texel size that no shader samples as depth)
-        let fmt = if dim == "3d" && is_depth(fmt) { if fmt == "depth16unorm" { "r16float" } else { "r32float" } } else { fmt };
+        let fmt = if dim == "3d" && is_depth(fmt) { if fmt == Tf::Depth16Unorm { Tf::R16Float } else { Tf::R32Float } } else { fmt };
         let depth = is_depth(fmt);
-        let renderable = dim == "2d" && !fmt.ends_with("snorm") && fmt != "rgb9e5ufloat" && (fmt != "rg11b10ufloat" || gpu::has_feature("rg11b10ufloat-renderable"));
+        let renderable = dim == "2d" && draws_to(fmt);
         // (no more levels than the size has)
         let biggest = if dim == "3d" { w.max(h).max(layers) } else { w.max(h) };
         let levels = mips.max(1).min(32 - biggest.max(1).leading_zeros());
@@ -2953,7 +3122,7 @@ impl D3d {
             r#"{{"size":[{w},{h},{}],"dimension":{},"format":{},"mipLevelCount":{levels},"sampleCount":{samples},"usage":{u}}}"#,
             layers.max(1),
             q(dim),
-            q(fmt)
+            qf(fmt)
         ));
         if let Some(old) = self.textures.remove(&id) {
             self.doomed.push(old.tex);
@@ -3273,10 +3442,10 @@ impl D3d {
         }
         let dim = pick(&VIEW_DIM, vdim, "2d");
         let format = match kind {
-            4 => "rgba8uint",
-            5 => "rgba8sint",
-            6 => "depth32float",
-            _ => "rgba8unorm",
+            4 => Tf::Rgba8Uint,
+            5 => Tf::Rgba8Sint,
+            6 => Tf::Depth32Float,
+            _ => Tf::Rgba8Unorm,
         };
         let layers = if dim == "cube" || dim == "cube-array" { 6 } else { 1 };
         let tdim = match dim {
@@ -3289,7 +3458,7 @@ impl D3d {
         let tex = gpu::texture(&format!(
             r#"{{"size":[1,1,{layers}],"dimension":{},"format":{},"sampleCount":{},"usage":{}}}"#,
             q(tdim),
-            q(format),
+            qf(format),
             if ms { 4 } else { 1 },
             usage::T_BINDING | if kind == 6 || ms { usage::T_RENDER } else { usage::T_COPY_DST }
         ));
@@ -3390,7 +3559,7 @@ impl D3d {
             };
             ds = format!(
                 r#","depthStencil":{{"format":{},"depthWriteEnabled":{},"depthCompare":{}{stencil},"depthBias":{},"depthBiasSlopeScale":{},"depthBiasClamp":{}}}"#,
-                q(format),
+                qf(format),
                 en != 0 && write != 0,
                 q(if en != 0 { pick(&COMPARE, func, "less") } else { "always" }),
                 if tri { bias } else { 0 },
@@ -3439,7 +3608,7 @@ impl D3d {
                 }
             };
             let blend = if t[1] != 0 && blendable(format) { format!(r#","blend":{{"color":{},"alpha":{}}}"#, comp(t[2], t[3], t[4]), comp(t[5], t[6], t[7])) } else { String::new() };
-            targets.push(format!(r#"{{"format":{}{blend},"writeMask":{}}}"#, q(format), if ps != 0 { t[8] & 0xf } else { 0 }));
+            targets.push(format!(r#"{{"format":{}{blend},"writeMask":{}}}"#, qf(format), if ps != 0 { t[8] & 0xf } else { 0 }));
         }
         // the blend state's AlphaToCoverageEnable and OMSetBlendState's sample mask (with 4
         // samples; alpha to coverage needs a target 0 and a pixel shader)
@@ -3517,7 +3686,7 @@ impl D3d {
             if !ok {
                 if !self.warned_dispatch {
                     self.warned_dispatch = true;
-                    eprintln!("d3d11: dispatch: UAV texture {} is not a {} storage texture", e[2], tex_format(e[5]));
+                    eprintln!("d3d11: dispatch: UAV texture {} is not a {} storage texture", e[2], tex_format(e[5]).name());
                 }
                 return next;
             }
@@ -3540,7 +3709,7 @@ impl D3d {
                         0 => format!(r#"{{"binding":{binding},"visibility":4,"buffer":{{"type":"uniform"}}}}"#),
                         2 => format!(r#"{{"binding":{binding},"visibility":4,"sampler":{{"type":"filtering"}}}}"#),
                         3 => format!(r#"{{"binding":{binding},"visibility":4,"sampler":{{"type":"comparison"}}}}"#),
-                        7 => format!(r#"{{"binding":{binding},"visibility":4,"storageTexture":{{"access":"write-only","format":{},"viewDimension":{vd}}}}}"#, q(tex_format(e[5]))),
+                        7 => format!(r#"{{"binding":{binding},"visibility":4,"storageTexture":{{"access":"write-only","format":{},"viewDimension":{vd}}}}}"#, qf(tex_format(e[5]))),
                         _ => {
                             let ms = kind != 8 && e[3] == 6;
                             let st = match (kind, e[5]) {
@@ -3603,7 +3772,7 @@ impl D3d {
                                 let copy = gpu::texture(&format!(
                                     r#"{{"size":[{w},{h},{layers}],"dimension":{},"format":{},"usage":{}}}"#,
                                     q(dim),
-                                    q(format),
+                                    qf(format),
                                     usage::T_BINDING | usage::T_COPY_DST
                                 ));
                                 (copy, u64::MAX, HashMap::new())
@@ -3630,9 +3799,9 @@ impl D3d {
                             && !stored.contains(&a)
                             && (t.dim == "3d") == (b == 5)
                             && (!matches!(b, 3 | 4) || (t.layers >= 6 && t.w == t.h))
-                            && (kind != 1 || !t.format.ends_with("int"))
-                            && (kind != 4 || t.format.ends_with("uint"))
-                            && (kind != 5 || t.format.ends_with("sint"))
+                            && (kind != 1 || !(t.format.is_uint() || t.format.is_sint()))
+                            && (kind != 4 || t.format.is_uint())
+                            && (kind != 5 || t.format.is_sint())
                             && (b == 6) == (t.samples > 1)
                     });
                     let v = match ok {
@@ -3821,9 +3990,9 @@ impl D3d {
                         depth == (kind == 6)
                             && (t.dim == "3d") == (b == 5)
                             && (!matches!(b, 3 | 4) || (t.layers >= 6 && t.w == t.h))
-                            && (kind != 1 || !t.format.ends_with("int"))
-                            && (kind != 4 || t.format.ends_with("uint"))
-                            && (kind != 5 || t.format.ends_with("sint"))
+                            && (kind != 1 || !(t.format.is_uint() || t.format.is_sint()))
+                            && (kind != 4 || t.format.is_uint())
+                            && (kind != 5 || t.format.is_sint())
                             && (b == 6) == (t.samples > 1)
                     });
                     let v = match ok {

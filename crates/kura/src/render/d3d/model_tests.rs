@@ -1347,7 +1347,7 @@ fn commands_naming_gone_textures_do_not_abort() {
         assert_ne!(d.view2(id, 3, 2, 4, 1, 6, true), 0);
         assert_ne!(d.present_view(id), 0);
         let dv = d.dummy(1, 1);
-        d.resolve_into(id, 0, dv, "rgba8unorm");
+        d.resolve_into(id, 0, dv, Tf::Rgba8Unorm);
     }
 }
 

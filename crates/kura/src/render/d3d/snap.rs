@@ -349,10 +349,10 @@ impl D3d {
 }
 
 /// The sample type of a color format: WGSL's and the bind group layout's.
-fn sample_kind(format: &str) -> (&'static str, &'static str) {
-    if format.ends_with("uint") {
+fn sample_kind(format: Tf) -> (&'static str, &'static str) {
+    if format.is_uint() {
         ("u32", "uint")
-    } else if format.ends_with("sint") {
+    } else if format.is_sint() {
         ("i32", "sint")
     } else {
         ("f32", "unfilterable-float")
@@ -380,7 +380,7 @@ pub(crate) fn sample_copy_shader(ty: &str, sample: Option<u32>) -> String {
 impl D3d {
     /// A pipeline drawing the sample copy into `format` with `samples` and multisample `mask`;
     /// its bind group layout (the caller drops both).
-    fn sample_copy_pipe(&mut self, format: &'static str, sample: Option<u32>, samples: u32, mask: u32) -> (Id, Id, Id) {
+    fn sample_copy_pipe(&mut self, format: Tf, sample: Option<u32>, samples: u32, mask: u32) -> (Id, Id, Id) {
         let (ty, st) = sample_kind(format);
         let m = gpu::shader(&sample_copy_shader(ty, sample));
         let layout = gpu::bind_group_layout(&format!(
@@ -391,7 +391,7 @@ impl D3d {
         let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{layout}]}}"#));
         let p = gpu::render_pipeline(&format!(
             r#"{{"layout":{pl},"vertex":{{"module":{m},"entryPoint":"vs"}},"fragment":{{"module":{m},"entryPoint":"fs","targets":[{{"format":{}}}]}},"primitive":{{"topology":"triangle-list"}},"multisample":{{"count":{samples},"mask":{mask}}}}}"#,
-            q(format)
+            qf(format)
         ));
         gpu::drop(pl);
         (p, layout, m)
@@ -406,7 +406,7 @@ impl D3d {
         self.end_pass();
         for sample in 0..4 {
             let (pipe, layout, module) = self.sample_copy_pipe(format, Some(sample), 1, 0xf);
-            let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"usage":{}}}"#, q(format), usage::T_RENDER | usage::T_COPY_SRC));
+            let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"usage":{}}}"#, qf(format), usage::T_RENDER | usage::T_COPY_SRC));
             let tv = gpu::view(tex, "");
             let group = gpu::bind_group(layout, &[(0, Res::Obj(view))]);
             self.open = true;
@@ -435,7 +435,7 @@ impl D3d {
         self.end_pass();
         let target = self.textures[&id].view;
         for (k, (bpr, rows)) in samples.iter().enumerate() {
-            let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"usage":{}}}"#, q(format), usage::T_BINDING | usage::T_COPY_DST));
+            let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"usage":{}}}"#, qf(format), usage::T_BINDING | usage::T_COPY_DST));
             gpu::write_texture(tex, 0, [0, 0, 0], rows.as_ptr(), rows.len(), *bpr, h, [w, h, 1]);
             let tv = gpu::view(tex, "");
             let (pipe, layout, module) = self.sample_copy_pipe(format, None, 4, 1 << k);

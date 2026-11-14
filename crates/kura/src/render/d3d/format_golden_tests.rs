@@ -12,7 +12,8 @@ fn every_format_answers_as_pinned() {
     for i in 0..=TEX_FORMATS.len() as u32 {
         let f = tex_format(i);
         got += &format!(
-            "{i} {f} bpp={} storable={} renderable={} ms={} resolvable={} blendable={} depth={} halved={}\n",
+            "{i} {} bpp={} storable={} renderable={} ms={} resolvable={} blendable={} depth={} halved={}\n",
+            f.name(),
             bpp(f),
             u8::from(storable(f)),
             u8::from(renderable(f)),

@@ -4478,7 +4478,7 @@ fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)]) -> Option<(u32,
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
-    let names: Vec<(u32, &str)> = fmts.iter().map(|&(n, f)| (n, crate::render::d3d::TEX_FORMATS.get(f as usize).copied().unwrap_or("rgba8unorm"))).collect();
+    let names: Vec<(u32, &str)> = fmts.iter().map(|&(n, f)| (n, crate::render::d3d::TEX_FORMATS.get(f as usize).map_or("rgba8unorm", |t| t.name()))).collect();
     let r = match dxwgsl::translate_compute(&s.code, &names) {
         Ok(w) => {
             let id = page_id();
