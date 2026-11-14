@@ -125,21 +125,21 @@ impl L<'_> {
             }
             (Ty::Vec(_, n), Ty::Mat(_, r, c)) => {
                 let k = (*n).min(*r) as usize;
-                let c = *c as usize;
+                let c = usize::from(*c);
                 let rows: Vec<Vec<C>> = (0..k).map(|i| b.c[i * c..(i + 1) * c].to_vec()).collect();
                 let v = self.lin(&a.c[..k], &rows, base);
                 Ok(Val::num(Ty::vec(base, c), v))
             }
             (Ty::Mat(_, r, c), Ty::Vec(_, n)) => {
-                let (r, c) = (*r as usize, *c as usize);
-                let k = (*n as usize).min(c);
+                let (r, c) = (usize::from(*r), usize::from(*c));
+                let k = usize::from(*n).min(c);
                 // M v: columns of M weighted by v (or a dp per row)
                 let cols: Vec<Vec<C>> = (0..k).map(|j| (0..r).map(|i| a.c[i * c + j]).collect()).collect();
                 let v = self.lin(&b.c[..k], &cols, base);
                 Ok(Val::num(Ty::vec(base, r), v))
             }
             (Ty::Mat(_, r1, c1), Ty::Mat(_, r2, c2)) => {
-                let (r1, c1, r2, c2) = (*r1 as usize, *c1 as usize, *r2 as usize, *c2 as usize);
+                let (r1, c1, r2, c2) = (usize::from(*r1), usize::from(*c1), usize::from(*r2), usize::from(*c2));
                 let k = c1.min(r2);
                 let rows: Vec<Vec<C>> = (0..k).map(|i| b.c[i * c2..(i + 1) * c2].to_vec()).collect();
                 let mut out = Vec::new();
@@ -187,7 +187,7 @@ impl L<'_> {
     #[allow(clippy::too_many_arguments)]
     fn sample(&mut self, op: sm4::Opcode, t: u32, s: u32, coord: Val, extra: Vec<Vec<C>>, offset: [i32; 3], swz_x: bool) -> R<Val> {
         let (dim, el) = self.x_tex_el(t);
-        let n = dim.coords() + dim.array() as usize;
+        let n = dim.coords() + usize::from(dim.array());
         let coord = self.float(coord)?;
         let mut cc = coord.c.clone();
         if cc.len() < n {
@@ -231,7 +231,7 @@ impl L<'_> {
     pub(super) fn load(&mut self, t: u32, coord: Val, offset: [i32; 3], has_mip: bool) -> R<Val> {
         let (dim, el) = self.x_tex_el(t);
         let coord = self.x_cast(coord.clone(), &coord.ty.with_base(B::Int))?;
-        let n = dim.coords() + dim.array() as usize;
+        let n = dim.coords() + usize::from(dim.array());
         let c = &coord.c;
         if c.len() < n {
             return Err(format!("Load with {} coordinates, {n} wanted", c.len()));
@@ -632,7 +632,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
             let mut out = Vec::new();
             for j in 0..c as usize {
                 for i in 0..r as usize {
-                    out.push(v.c[i * c as usize + j]);
+                    out.push(v.c[i * usize::from(c) + j]);
                 }
             }
             Val::num(Ty::Mat(b, c, r), out)
@@ -646,7 +646,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
                 // (texkill: any component below 0)
                 let o = l.x_opnd(&v.c);
                 let i = l.x_emit(DISCARD, vec![], vec![o]);
-                i.ctl = n as u32;
+                i.ctl = crate::u32_of(n);
                 return Ok(Val::num(Ty::Void, vec![]));
             }
             let m = l.x_alu(LT, B::Bool, &[&v.c, &imm(0, n)]);
@@ -817,7 +817,7 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
         "GetDimensions" if matches!(dim, Dim::T2DMS | Dim::T2DMSArray) => {
             // (width, height[, elements], samples): resinfo (level 0) and sampleinfo
             let outs = args;
-            let want = 3 + (dim == Dim::T2DMSArray) as usize;
+            let want = 3 + usize::from(dim == Dim::T2DMSArray);
             if outs.len() != want {
                 return Err(format!("GetDimensions of a multisampled texture takes {want} outputs"));
             }
@@ -839,7 +839,7 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
         "GetDimensions" => {
             // ([mip,] width[, height][, elements/depth], [levels])
             let dst = l.x_tmp();
-            let has_mip = dim != Dim::Buffer && args.len() > n + dim.array() as usize;
+            let has_mip = dim != Dim::Buffer && args.len() > n + usize::from(dim.array());
             let mip = if has_mip {
                 let m = arg(l, 0)?;
                 l.x_cast(m, &Ty::Scalar(B::Uint))?.c
@@ -848,7 +848,7 @@ pub fn method(l: &mut L, o: Val, name: &str, args: &[Expr]) -> R<Val> {
             };
             let ms = l.x_opnd(&mip);
             let mut ins_ctl = 2;
-            let outs = &args[has_mip as usize..];
+            let outs = &args[usize::from(has_mip)..];
             let Some(out0) = outs.first() else { return Err("GetDimensions takes outputs".into()) };
             // (float outputs: resinfo float)
             let first = l.x_place(out0)?;

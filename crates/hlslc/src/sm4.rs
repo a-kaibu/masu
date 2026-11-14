@@ -414,13 +414,13 @@ impl Enc<'_> {
             RegF::Temp(i) => (T_TEMP, vec![i]),
             RegF::Input(i) => (T_INPUT, vec![i]),
             RegF::Output(i) => (T_OUTPUT, vec![i]),
-            RegF::Cb(s, i) => (T_CB, vec![self.s.cbs[self.s.cb_map[s as usize].unwrap()].slot, i]),
+            RegF::Cb(s, i) => (T_CB, vec![self.s.cbs[self.s.cb_map[crate::us(s)].unwrap()].slot, i]),
             RegF::Icb(i) => (T_ICB, vec![i]),
             RegF::X(a, i) => (T_X, vec![a, i]),
             RegF::Depth => (T_DEPTH, vec![]),
             RegF::Null => (T_NULL, vec![]),
             RegF::Sys(t) => (t, vec![]),
-            RegF::Uav(u) => (T_UAV, vec![self.s.uavs[self.s.uav_map[u as usize].unwrap()].slot]),
+            RegF::Uav(u) => (T_UAV, vec![self.s.uavs[self.s.uav_map[crate::us(u)].unwrap()].slot]),
             RegF::G(g) => (T_TGSM, vec![g]),
         }
     }
@@ -428,14 +428,14 @@ impl Enc<'_> {
     /// `sel`: 0 mask, 1 swizzle, 2 select-1; `num` component count code (0 = none, 1 = one, 2 = four)
     fn reg(&self, out: &mut Vec<u32>, r: &Reg, num: u32, sel: u32, bits: u32, modifier: u32) {
         let (ty, idx) = self.reg_parts(r);
-        let mut t = num | (ty << 12) | ((idx.len() as u32) << 20);
+        let mut t = num | (ty << 12) | (crate::u32_of(idx.len()) << 20);
         if num == 2 {
             t |= (sel << 2) | (bits << 4);
         }
         let rel_at = idx.len().wrapping_sub(1);
         if r.rel.is_some() {
             // last index: immediate + relative
-            t |= 3 << (22 + 3 * rel_at as u32);
+            t |= 3 << (22 + 3 * crate::u32_of(rel_at));
         }
         if modifier != 0 {
             t |= 1 << 31;
@@ -449,7 +449,7 @@ impl Enc<'_> {
             if k == rel_at {
                 if let Some((tr, c)) = r.rel {
                     // the relative part: a temp's component (select-1)
-                    out.push(2 | (2 << 2) | ((c as u32) << 4) | (T_TEMP << 12) | (1 << 20));
+                    out.push(2 | (2 << 2) | (u32::from(c) << 4) | (T_TEMP << 12) | (1 << 20));
                     out.push(tr);
                 }
             }
@@ -459,13 +459,13 @@ impl Enc<'_> {
     fn src(&self, out: &mut Vec<u32>, s: &Src) {
         match s {
             Src::R { r, swz, neg, abs, one } => {
-                let m = (*neg as u32) | ((*abs as u32) << 1);
+                let m = u32::from(*neg) | (u32::from(*abs) << 1);
                 if matches!(r.f, RegF::Depth) {
                     self.reg(out, r, 1, 0, 0, m);
                 } else if *one {
-                    self.reg(out, r, 2, 2, swz[0] as u32, m);
+                    self.reg(out, r, 2, 2, u32::from(swz[0]), m);
                 } else {
-                    let b = swz[0] as u32 | (swz[1] as u32) << 2 | (swz[2] as u32) << 4 | (swz[3] as u32) << 6;
+                    let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
                     self.reg(out, r, 2, 1, b, m);
                 }
             }
@@ -479,27 +479,27 @@ impl Enc<'_> {
                 }
             }
             Src::Tex(t, swz) => {
-                let slot = self.s.texs[self.s.tex_map[*t as usize].unwrap()].slot;
-                let b = swz[0] as u32 | (swz[1] as u32) << 2 | (swz[2] as u32) << 4 | (swz[3] as u32) << 6;
+                let slot = self.s.texs[self.s.tex_map[crate::us(*t)].unwrap()].slot;
+                let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
                 out.push(2 | (1 << 2) | (b << 4) | (T_RESOURCE << 12) | (1 << 20));
                 out.push(slot);
             }
             Src::Samp(s) => {
-                let slot = self.s.samps[self.s.samp_map[*s as usize].unwrap()].slot;
+                let slot = self.s.samps[self.s.samp_map[crate::us(*s)].unwrap()].slot;
                 out.push((T_SAMPLER << 12) | (1 << 20));
                 out.push(slot);
             }
             Src::SampC(s, c) => {
-                let slot = self.s.samps[self.s.samp_map[*s as usize].unwrap()].slot;
-                out.push(2 | (2 << 2) | ((*c as u32) << 4) | (T_SAMPLER << 12) | (1 << 20));
+                let slot = self.s.samps[self.s.samp_map[crate::us(*s)].unwrap()].slot;
+                out.push(2 | (2 << 2) | (u32::from(*c) << 4) | (T_SAMPLER << 12) | (1 << 20));
                 out.push(slot);
             }
             Src::Uav(u, swz) | Src::G(u, swz) => {
                 let (ty, slot) = match s {
-                    Src::Uav(..) => (T_UAV, self.s.uavs[self.s.uav_map[*u as usize].unwrap()].slot),
+                    Src::Uav(..) => (T_UAV, self.s.uavs[self.s.uav_map[crate::us(*u)].unwrap()].slot),
                     Src::R { .. } | Src::Imm(..) | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::G(..) => (T_TGSM, *u),
                 };
-                let b = swz[0] as u32 | (swz[1] as u32) << 2 | (swz[2] as u32) << 4 | (swz[3] as u32) << 6;
+                let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
                 out.push(2 | (1 << 2) | (b << 4) | (ty << 12) | (1 << 20));
                 out.push(slot);
             }
@@ -511,7 +511,7 @@ impl Enc<'_> {
             RegF::Null => out.push(T_NULL << 12),
             RegF::Depth => self.reg(out, &d.r, 1, 0, 0, 0),
             RegF::Temp(_) | RegF::Input(_) | RegF::Output(_) | RegF::Cb(..) | RegF::Icb(_) | RegF::X(..)
-            | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) => self.reg(out, &d.r, 2, 0, d.mask as u32, 0),
+            | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) => self.reg(out, &d.r, 2, 0, u32::from(d.mask), 0),
         }
     }
 
@@ -529,13 +529,13 @@ impl Enc<'_> {
         for s in &i.src {
             self.src(out, s);
         }
-        let len = (out.len() - at) as u32;
-        out[at] = i.op.code() | (i.ctl << 11) | ((i.sat as u32) << 13) | ((i.nz as u32) << 18) | (len << 24) | ((ext as u32) << 31);
+        let len = crate::u32_of(out.len() - at);
+        out[at] = i.op.code() | (i.ctl << 11) | (u32::from(i.sat) << 13) | (u32::from(i.nz) << 18) | (len << 24) | (u32::from(ext) << 31);
     }
 }
 
 fn decl(out: &mut Vec<u32>, op: Opcode, ctl: u32, body: &[u32]) {
-    out.push(op.code() | (ctl << 11) | (((body.len() + 1) as u32) << 24));
+    out.push(op.code() | (ctl << 11) | (crate::u32_of(body.len() + 1) << 24));
     out.extend_from_slice(body);
 }
 
@@ -544,23 +544,23 @@ fn program(s: &mut Shader) -> Vec<u32> {
     let temps = alloc(&mut s.code, &s.marks.clone());
     let s = &*s;
     let e = Enc { s };
-    let kind = if s.threads.is_some() { 5 } else { (!s.pixel) as u32 };
+    let kind = if s.threads.is_some() { 5 } else { u32::from(!s.pixel) };
     let mut w = vec![kind << 16 | (s.major << 4) | s.minor, 0];
     // global flags: refactoring allowed (+ early depth stencil)
-    decl(&mut w, Opcode::DclGlobalFlags, 1 | ((s.early_depth as u32) << 2), &[]);
+    decl(&mut w, Opcode::DclGlobalFlags, 1 | (u32::from(s.early_depth) << 2), &[]);
     if !s.icb.is_empty() {
         w.push(0x35 | (3 << 11));
-        w.push(2 + 4 * s.icb.len() as u32);
+        w.push(2 + 4 * crate::u32_of(s.icb.len()));
         for v in &s.icb {
             w.extend_from_slice(v);
         }
     }
     for cb in &s.cbs {
         let t = 2 | (1 << 2) | (0xe4 << 4) | (T_CB << 12) | (2 << 20);
-        decl(&mut w, Opcode::DclConstantBuffer, cb.dynamic as u32, &[t, cb.slot, cb.size.max(1)]);
+        decl(&mut w, Opcode::DclConstantBuffer, u32::from(cb.dynamic), &[t, cb.slot, cb.size.max(1)]);
     }
     for sm in &s.samps {
-        decl(&mut w, Opcode::DclSampler, sm.cmp as u32, &[(T_SAMPLER << 12) | (1 << 20), sm.slot]);
+        decl(&mut w, Opcode::DclSampler, u32::from(sm.cmp), &[(T_SAMPLER << 12) | (1 << 20), sm.slot]);
     }
     for t in &s.texs {
         let r = t.ret;
@@ -573,14 +573,14 @@ fn program(s: &mut Shader) -> Vec<u32> {
         decl(&mut w, Opcode::DclUavTyped, u.dim, &[(T_UAV << 12) | (1 << 20), u.slot, ret]);
     }
     for (g, &bytes) in s.tgsm.iter().enumerate() {
-        decl(&mut w, Opcode::DclTgsmRaw, 0, &[(T_TGSM << 12) | (1 << 20), g as u32, bytes]);
+        decl(&mut w, Opcode::DclTgsmRaw, 0, &[(T_TGSM << 12) | (1 << 20), crate::u32_of(g), bytes]);
     }
     for &(ty, mask) in &s.sys_inputs {
         // (vThreadIDInGroupFlattened is one component)
-        let t = if ty == 35 { 1 | (ty << 12) } else { 2 | ((mask as u32) << 4) | (ty << 12) };
+        let t = if ty == 35 { 1 | (ty << 12) } else { 2 | (u32::from(mask) << 4) | (ty << 12) };
         decl(&mut w, Opcode::DclInput, 0, &[t]);
     }
-    let reg_tok = |ty: u32, mask: u8| 2 | ((mask as u32) << 4) | (ty << 12) | (1 << 20);
+    let reg_tok = |ty: u32, mask: u8| 2 | (u32::from(mask) << 4) | (ty << 12) | (1 << 20);
     for i in &s.inputs {
         let t = reg_tok(T_INPUT, i.mask);
         if s.pixel {
@@ -608,7 +608,7 @@ fn program(s: &mut Shader) -> Vec<u32> {
         decl(&mut w, Opcode::DclTemps, 0, &[temps]);
     }
     for (n, &size) in s.xs.iter().enumerate() {
-        decl(&mut w, Opcode::DclIndexableTemp, 0, &[n as u32, size, 4]);
+        decl(&mut w, Opcode::DclIndexableTemp, 0, &[crate::u32_of(n), size, 4]);
     }
     if let Some([x, y, z]) = s.threads {
         decl(&mut w, Opcode::DclThreadGroup, 0, &[x, y, z]);
@@ -616,12 +616,12 @@ fn program(s: &mut Shader) -> Vec<u32> {
     for i in &s.code {
         e.ins(&mut w, i);
     }
-    w[1] = w.len() as u32;
+    w[1] = crate::u32_of(w.len());
     w
 }
 
 fn put_str(b: &mut Vec<u8>, s: &str) -> u32 {
-    let at = b.len() as u32;
+    let at = crate::u32_of(b.len());
     b.extend_from_slice(s.as_bytes());
     b.push(0);
     at
@@ -637,12 +637,12 @@ fn set32(b: &mut [u8], at: usize, v: u32) {
 
 fn signature(els: &[SigEl], used_out: bool, d3d10: bool) -> Vec<u8> {
     let mut b = Vec::new();
-    w32(&mut b, els.len() as u32);
+    w32(&mut b, crate::u32_of(els.len()));
     w32(&mut b, 8);
     let names_at = 8 + 24 * els.len();
     let mut names = Vec::new();
     for e in els {
-        let off = names_at as u32 + names.len() as u32;
+        let off = crate::u32_of(names_at) + crate::u32_of(names.len());
         put_str(&mut names, &e.name);
         w32(&mut b, off);
         w32(&mut b, e.index);
@@ -651,7 +651,7 @@ fn signature(els: &[SigEl], used_out: bool, d3d10: bool) -> Vec<u8> {
         w32(&mut b, if e.depth { u32::MAX } else { e.reg });
         // mask, then the read/write mask (outputs: the complement of what is written)
         let rw = if used_out { (!e.mask) & 0xf } else { e.mask };
-        w32(&mut b, e.mask as u32 | ((rw as u32) << 8));
+        w32(&mut b, u32::from(e.mask) | (u32::from(rw) << 8));
     }
     b.extend_from_slice(&names);
     while b.len() % 4 != 0 {
@@ -673,7 +673,7 @@ fn rdef_type(b: &mut Vec<u8>, v: &CbVar, sm5: bool, d3d10: bool, fix_names: &mut
     b.resize(ta + if sm5 { 36 } else { 16 }, 0);
     if !v.members.is_empty() {
         let ma = b.len();
-        set32(b, ta + 12, ma as u32);
+        set32(b, ta + 12, crate::u32_of(ma));
         b.resize(ma + 12 * v.members.len(), 0);
         for (i, m) in v.members.iter().enumerate() {
             let at = ma + 12 * i;
@@ -683,18 +683,18 @@ fn rdef_type(b: &mut Vec<u8>, v: &CbVar, sm5: bool, d3d10: bool, fix_names: &mut
             set32(b, at + 8, m.offset);
         }
     }
-    ta as u32
+    crate::u32_of(ta)
 }
 
 fn rdef(s: &Shader) -> Vec<u8> {
     let sm5 = s.major >= 5;
     let header = if sm5 { 60 } else { 28 };
     let mut b = vec![0u8; header];
-    let ncb = s.cbs.len() as u32;
+    let ncb = crate::u32_of(s.cbs.len());
     // bound resources: samplers, textures, cbuffers
     let mut binds: Vec<(String, u32, u32, u32, u32, u32)> = Vec::new(); // name, type, ret, dim, slot, flags
     for sm in &s.samps {
-        binds.push((sm.name.clone(), 3, 0, 0, sm.slot, sm.cmp as u32 * 2 | sm.explicit as u32));
+        binds.push((sm.name.clone(), 3, 0, 0, sm.slot, u32::from(sm.cmp) * 2 | u32::from(sm.explicit)));
     }
     for t in &s.texs {
         let dim = match t.dim {
@@ -710,7 +710,7 @@ fn rdef(s: &Shader) -> Vec<u8> {
             _ => 10,
         };
         let comps = if s.d3d10 { 0 } else { (t.comps - 1) << 2 };
-        binds.push((t.name.clone(), 2, t.ret, dim, t.slot, comps | t.explicit as u32));
+        binds.push((t.name.clone(), 2, t.ret, dim, t.slot, comps | u32::from(t.explicit)));
     }
     for u in &s.uavs {
         let dim = match u.dim {
@@ -721,10 +721,10 @@ fn rdef(s: &Shader) -> Vec<u8> {
             7 => 3,
             _ => 5,
         };
-        binds.push((u.name.clone(), 4, u.ret, dim, u.slot, (u.comps - 1) << 2 | u.explicit as u32));
+        binds.push((u.name.clone(), 4, u.ret, dim, u.slot, (u.comps - 1) << 2 | u32::from(u.explicit)));
     }
     for cb in &s.cbs {
-        binds.push((cb.name.clone(), 0, 0, 0, cb.slot, cb.explicit as u32));
+        binds.push((cb.name.clone(), 0, 0, 0, cb.slot, u32::from(cb.explicit)));
     }
     let cb_at = b.len();
     // constant buffer descriptions: name, vars, var offset, size, flags, type
@@ -747,9 +747,9 @@ fn rdef(s: &Shader) -> Vec<u8> {
     for (n, cb) in s.cbs.iter().enumerate() {
         let at = cb_at + 24 * n;
         fix_names.push((at, cb.name.clone()));
-        set32(&mut b, at + 4, cb.vars.len() as u32);
+        set32(&mut b, at + 4, crate::u32_of(cb.vars.len()));
         let vars_at = b.len();
-        set32(&mut b, at + 8, vars_at as u32);
+        set32(&mut b, at + 8, crate::u32_of(vars_at));
         set32(&mut b, at + 12, cb.size * 16);
         b.resize(vars_at + var_size * cb.vars.len(), 0);
         for (k, v) in cb.vars.iter().enumerate() {
@@ -774,9 +774,9 @@ fn rdef(s: &Shader) -> Vec<u8> {
     }
     let creator = put_str(&mut b, "sake HLSL compiler");
     set32(&mut b, 0, ncb);
-    set32(&mut b, 4, cb_at as u32);
-    set32(&mut b, 8, binds.len() as u32);
-    set32(&mut b, 12, bind_at as u32);
+    set32(&mut b, 4, crate::u32_of(cb_at));
+    set32(&mut b, 8, crate::u32_of(binds.len()));
+    set32(&mut b, 12, crate::u32_of(bind_at));
     let kind = if s.threads.is_some() { 0x4353 } else if s.pixel { 0xffff } else { 0xfffe };
     set32(&mut b, 16, (kind << 16) | (s.major << 8) | s.minor);
     set32(&mut b, 20, 0x100);
@@ -812,18 +812,18 @@ pub fn container(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
     b.extend_from_slice(&[0; 16]);
     w32(&mut b, 1);
     w32(&mut b, 0);
-    w32(&mut b, chunks.len() as u32);
+    w32(&mut b, crate::u32_of(chunks.len()));
     let mut off = 32 + 4 * chunks.len();
     for (_, c) in chunks {
-        w32(&mut b, off as u32);
+        w32(&mut b, crate::u32_of(off));
         off += 8 + c.len();
     }
     for (t, c) in chunks {
         b.extend_from_slice(t);
-        w32(&mut b, c.len() as u32);
+        w32(&mut b, crate::u32_of(c.len()));
         b.extend_from_slice(c);
     }
-    let n = b.len() as u32;
+    let n = crate::u32_of(b.len());
     set32(&mut b, 24, n);
     let h = checksum(&b[20..]);
     b[4..20].copy_from_slice(&h);
@@ -880,7 +880,7 @@ pub fn checksum(data: &[u8]) -> [u8; 16] {
         md5_block(&mut st, blk);
     }
     let rest = &data[full..];
-    let bits = (len as u32).wrapping_mul(8);
+    let bits = crate::u32_of(len).wrapping_mul(8);
     let mut last = [0u8; 64];
     if rest.len() >= 56 {
         last[..rest.len()].copy_from_slice(rest);

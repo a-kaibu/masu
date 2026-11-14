@@ -101,7 +101,7 @@ fn swz_str(s: [u8; 4]) -> String {
     }
     let mut o = String::from(".");
     for k in s {
-        o.push(SW[k as usize]);
+        o.push(SW[usize::from(k)]);
     }
     o
 }
@@ -232,7 +232,7 @@ impl Gen<'_> {
             }
         }
         let swz: [u8; 4] = v.map(|x| d.iter().position(|c| *c == Some(x)).unwrap() as u8);
-        format!("c{}{}", self.def_base + i as u32, swz_str(swz))
+        format!("c{}{}", self.def_base + crate::u32_of(i), swz_str(swz))
     }
 
     fn reg(&self, r: &Reg) -> Result<String, String> {
@@ -247,7 +247,7 @@ impl Gen<'_> {
             RegF::Output(i) => self.outs.get(&i).cloned().ok_or("an output without a register")?,
             RegF::Depth => "oDepth".into(),
             RegF::Cb(sym, k) => {
-                let cb = self.s.cb_map[sym as usize].ok_or("an unused constant")?;
+                let cb = self.s.cb_map[crate::us(sym)].ok_or("an unused constant")?;
                 let n = self.cmap.get(&(cb, k)).ok_or("constant without a register")?;
                 if r.rel.is_some() {
                     return Ok(format!("c[a0.x + {n}]"));
@@ -326,10 +326,10 @@ impl Gen<'_> {
         let Src::Samp(sym) = s else {
             return Err("a sampler is needed".into());
         };
-        let n = self.s.samp_map[*sym as usize].ok_or("an unused sampler")?;
+        let n = self.s.samp_map[crate::us(*sym)].ok_or("an unused sampler")?;
         let slot = self.s.samps[n].slot;
         let dim = match t {
-            Src::Tex(t, _) => self.s.texs[self.s.tex_map[*t as usize].ok_or("an unused texture")?].dim,
+            Src::Tex(t, _) => self.s.texs[self.s.tex_map[crate::us(*t)].ok_or("an unused texture")?].dim,
             Src::R { .. } | Src::Imm(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) => 3,
         };
         Ok((format!("s{slot}"), dim))
@@ -352,7 +352,7 @@ impl Gen<'_> {
                 return Err("indexed constants in a pixel shader".into());
             }
             let r = self.reg(&Reg { f: RegF::Temp(t), rel: None })?;
-            self.line(format!("mova a0.x, {r}.{}", SW[c as usize]));
+            self.line(format!("mova a0.x, {r}.{}", SW[usize::from(c)]));
         }
         let a = |k: usize| i.src.get(k).cloned().ok_or_else(|| "missing operand".to_string());
         let sat = i.sat;
@@ -379,7 +379,7 @@ impl Gen<'_> {
                     return Err("discard in a vertex shader".into());
                 }
                 let s = a(0)?;
-                let n = i.ctl as usize;
+                let n = crate::us(i.ctl);
                 if n > 0 {
                     // clip(): any component below 0
                     let d = self.scr_d(0, 0xf)?;
@@ -887,7 +887,7 @@ pub struct Uni {
 }
 
 fn put_str(b: &mut Vec<u8>, s: &str) -> u32 {
-    let at = b.len() as u32;
+    let at = crate::u32_of(b.len());
     b.extend_from_slice(s.as_bytes());
     b.push(0);
     while b.len() % 4 != 0 {
@@ -915,7 +915,7 @@ fn put_type(b: &mut Vec<u8>, v: &CbVar) -> u32 {
     if !v.members.is_empty() {
         let mi = b.len();
         b.resize(mi + 8 * v.members.len(), 0);
-        set32(b, at + 12, mi as u32);
+        set32(b, at + 12, crate::u32_of(mi));
         for (k, m) in v.members.iter().enumerate() {
             let n = put_str(b, &m.name);
             let t = put_type(b, m);
@@ -923,7 +923,7 @@ fn put_type(b: &mut Vec<u8>, v: &CbVar) -> u32 {
             set32(b, mi + 8 * k + 4, t);
         }
     }
-    at as u32
+    crate::u32_of(at)
 }
 
 /// The CTAB body: (name, register set, register, count, variable).
@@ -938,8 +938,8 @@ fn ctab(target: &str, entries: &[(String, u16, u32, u32, CbVar)]) -> Vec<u8> {
     let v: u32 = if target.starts_with("ps") { 0xffff_0000 } else { 0xfffe_0000 };
     let digits: Vec<u32> = target.split('_').skip(1).map(|x| x.parse().unwrap_or(0)).collect();
     set32(&mut b, 8, v | digits.first().copied().unwrap_or(0) << 8 | digits.get(1).copied().unwrap_or(0));
-    set32(&mut b, 12, entries.len() as u32);
-    set32(&mut b, 16, info as u32);
+    set32(&mut b, 12, crate::u32_of(entries.len()));
+    set32(&mut b, 16, crate::u32_of(info));
     set32(&mut b, 24, tgt);
     for (k, (name, set, reg, count, var)) in entries.iter().enumerate() {
         let e = info + 20 * k;
@@ -1083,7 +1083,7 @@ pub fn assembly(mut s: Shader) -> Result<(String, Vec<u8>), String> {
     }
     for (k, d) in g.defs.iter().enumerate() {
         let v: Vec<String> = d.iter().map(|c| num(c.unwrap_or(0))).collect();
-        head.push(format!("def c{}, {}", def_base + k as u32, v.join(", ")));
+        head.push(format!("def c{}, {}", def_base + crate::u32_of(k), v.join(", ")));
     }
     if g.loops {
         head.push("defi i0, 255, 0, 1, 0".into());
@@ -1117,7 +1117,7 @@ pub fn finish(s: Shader) -> Result<Vec<u8>, String> {
     if body.len() / 4 > 0x7fff {
         return Err(format!("constant table of {} dwords (at most 32767)", body.len() / 4));
     }
-    out.extend_from_slice(&(0xfffe | ((body.len() as u32 / 4) << 16)).to_le_bytes());
+    out.extend_from_slice(&(0xfffe | ((crate::u32_of(body.len()) / 4) << 16)).to_le_bytes());
     out.extend_from_slice(&body);
     for w in &words[1..] {
         out.extend_from_slice(&w.to_le_bytes());

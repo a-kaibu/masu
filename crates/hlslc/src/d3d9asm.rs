@@ -437,7 +437,7 @@ pub fn assemble(src: &str) -> Result<Vec<u32>, String> {
         if body.len() > 15 {
             return Err(format!("{mnem}: {} operand tokens in one instruction", body.len()));
         }
-        let len = if v.major >= 2 { (body.len() as u32) << 24 } else { 0 };
+        let len = if v.major >= 2 { crate::u32_of(body.len()) << 24 } else { 0 };
         words.push(op | ctl << 16 | len | if coissue { 1 << 30 } else { 0 });
         words.extend(body);
     }
@@ -504,7 +504,7 @@ mod tests {
             "callnz", "loop", "ret", "endloop", "label", "dcl", "pow", "crs", "sgn", "abs", "nrm", "sincos", "rep", "endrep", "if", "ifc", "else", "endif", "break", "breakc", "mova", "defb", "defi",
         ];
         for (i, n) in names.iter().enumerate() {
-            assert_eq!(op_code(n), Some(i as u32), "{n}");
+            assert_eq!(op_code(n), Some(crate::u32_of(i)), "{n}");
         }
         let tex = [
             ("texcoord", 64), ("texcrd", 64), ("texkill", 65), ("tex", 66), ("texld", 66), ("texldp", 66), ("texldb", 66), ("texbem", 67), ("texbeml", 68), ("texreg2ar", 69), ("texreg2gb", 70),

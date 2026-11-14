@@ -5,6 +5,19 @@
 //!
 //! Source text in, bytecode out; std only. The dxwgsl crate turns the output into WGSL.
 
+// (a u32 count or register as an index: lossless on every target, wasm32 and 64-bit hosts)
+const _: () = assert!(usize::BITS >= u32::BITS);
+
+/// A u32 as an index (lossless: the assert above)
+pub(crate) fn us(x: u32) -> usize {
+    usize::try_from(x).unwrap_or(usize::MAX)
+}
+
+/// A length or index as u32 (shader sizes are far below 2^32; u32::MAX past that)
+pub(crate) fn u32_of(x: usize) -> u32 {
+    u32::try_from(x).unwrap_or(u32::MAX)
+}
+
 mod ast;
 pub mod d3d9asm;
 mod fx;

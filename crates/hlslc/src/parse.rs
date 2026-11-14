@@ -48,7 +48,7 @@ pub fn builtin_numeric(s: &str) -> Option<Ty> {
         let r = rest.as_bytes();
         return match r {
             [] => Some(Ty::Scalar(b)),
-            [n] if (b'1'..=b'4').contains(n) => Some(Ty::vec(b, (n - b'0') as usize)),
+            [n] if (b'1'..=b'4').contains(n) => Some(Ty::vec(b, usize::from(n - b'0'))),
             [rr, b'x', c] if (b'1'..=b'4').contains(rr) && (b'1'..=b'4').contains(c) => Some(Ty::Mat(b, rr - b'0', c - b'0')),
             _ => None,
         };
@@ -250,7 +250,7 @@ impl Parser {
                     self.expect(",")?;
                     let n = self.dim_num()?;
                     self.expect(">")?;
-                    Ty::vec(b, n as usize)
+                    Ty::vec(b, crate::us(n))
                 } else {
                     Ty::Vec(B::Float, 4)
                 }

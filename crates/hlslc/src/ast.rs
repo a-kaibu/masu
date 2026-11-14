@@ -71,8 +71,8 @@ impl Ty {
     pub fn comps(&self) -> usize {
         match self {
             Ty::Scalar(_) => 1,
-            Ty::Vec(_, n) => *n as usize,
-            Ty::Mat(_, r, c) => (*r * *c) as usize,
+            Ty::Vec(_, n) => usize::from(*n),
+            Ty::Mat(_, r, c) => usize::from(*r * *c),
             Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
             | Ty::Legacy(_) | Ty::Str => 0,
         }

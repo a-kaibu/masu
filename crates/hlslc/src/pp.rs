@@ -247,7 +247,7 @@ impl Pp<'_> {
         let on = |c: &Vec<(bool, bool, bool)>| c.last().is_none_or(|x| x.0 && x.2);
         let mut pending: Vec<Token> = Vec::new();
         for (n, l) in lines.iter().enumerate() {
-            let line = n as u32 + 1;
+            let line = crate::u32_of(n) + 1;
             let t = l.trim_start();
             if let Some(d) = t.strip_prefix('#') {
                 let d = d.trim_start();
@@ -569,17 +569,17 @@ fn cexpr(t: &[Token], p: &mut usize, min: u32, d: u32) -> Result<i64, String> {
         }
         let r = cexpr(t, p, prec + 1, d)?;
         l = match *op {
-            "||" => (l != 0 || r != 0) as i64,
-            "&&" => (l != 0 && r != 0) as i64,
+            "||" => i64::from(l != 0 || r != 0),
+            "&&" => i64::from(l != 0 && r != 0),
             "|" => l | r,
             "^" => l ^ r,
             "&" => l & r,
-            "==" => (l == r) as i64,
-            "!=" => (l != r) as i64,
-            "<" => (l < r) as i64,
-            ">" => (l > r) as i64,
-            "<=" => (l <= r) as i64,
-            ">=" => (l >= r) as i64,
+            "==" => i64::from(l == r),
+            "!=" => i64::from(l != r),
+            "<" => i64::from(l < r),
+            ">" => i64::from(l > r),
+            "<=" => i64::from(l <= r),
+            ">=" => i64::from(l >= r),
             "<<" => l.wrapping_shl(r as u32),
             ">>" => l.wrapping_shr(r as u32),
             "+" => l.wrapping_add(r),
@@ -621,7 +621,7 @@ fn cunary(t: &[Token], p: &mut usize, d: u32) -> Result<i64, String> {
             *p += 1;
             v
         }
-        Tok::Punct("!") => (cunary(t, p, d)? == 0) as i64,
+        Tok::Punct("!") => i64::from(cunary(t, p, d)? == 0),
         Tok::Punct("-") => cunary(t, p, d)?.wrapping_neg(),
         Tok::Punct("+") => cunary(t, p, d)?,
         Tok::Punct("~") => !cunary(t, p, d)?,

@@ -161,7 +161,7 @@ pub const MAX_INS: usize = 1 << 20;
 
 pub fn ncomp(prog: &Program, t: &Ty) -> usize {
     match t {
-        Ty::Array(e, n) => ncomp(prog, e) * *n as usize,
+        Ty::Array(e, n) => ncomp(prog, e) * crate::us(*n),
         Ty::Struct(i) => prog.structs[*i].fields.iter().map(|f| ncomp(prog, &f.ty)).sum(),
         t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
              | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t.comps(),
@@ -205,7 +205,7 @@ fn units(prog: &Program, t: &Ty, out: &mut Vec<usize>) {
         }
         Ty::Mat(_, r, c) => {
             for _ in 0..*r {
-                out.push(*c as usize);
+                out.push(usize::from(*c));
             }
         }
         t if t.comps() > 0 => out.push(t.comps()),
@@ -591,7 +591,7 @@ impl<'a> L<'a> {
                         let mut v = [0u32; 4];
                         for (dc, s) in &items {
                             if let C::I(x) = s {
-                                v[*dc as usize] = *x;
+                                v[usize::from(*dc)] = *x;
                             }
                         }
                         Src::Imm(v, false)
@@ -600,7 +600,7 @@ impl<'a> L<'a> {
                         let mut swz = [0u8; 4];
                         for (dc, s) in &items {
                             if let C::R(_, c) = s {
-                                swz[*dc as usize] = *c;
+                                swz[usize::from(*dc)] = *c;
                             }
                         }
                         Src::R { r: sr, swz, neg: false, abs: false, one: false }
@@ -889,7 +889,7 @@ impl<'a> L<'a> {
             let mut o = Vec::new();
             for r in 0..*r2 as usize {
                 for c in 0..*c2 as usize {
-                    o.push(v.c[r * *c1 as usize + c]);
+                    o.push(v.c[r * usize::from(*c1) + c]);
                 }
             }
             o
@@ -924,8 +924,8 @@ impl<'a> L<'a> {
             (Ty::Scalar(_), t) | (t, Ty::Scalar(_)) if t.numeric() => t.with_base(base),
             (Ty::Vec(_, n), Ty::Vec(_, m)) => Ty::vec(base, (*n).min(*m) as usize),
             (Ty::Mat(_, r, c), Ty::Mat(_, r2, c2)) => Ty::Mat(base, (*r).min(*r2), (*c).min(*c2)),
-            (Ty::Vec(_, n), Ty::Mat(_, r, c)) | (Ty::Mat(_, r, c), Ty::Vec(_, n)) if *n as usize == (*r * *c) as usize => {
-                Ty::vec(base, *n as usize)
+            (Ty::Vec(_, n), Ty::Mat(_, r, c)) | (Ty::Mat(_, r, c), Ty::Vec(_, n)) if usize::from(*n) == usize::from(*r * *c) => {
+                Ty::vec(base, usize::from(*n))
             }
             _ => return Err(format!("operands of types {a:?} and {b:?}")),
         })
@@ -947,12 +947,12 @@ impl<'a> L<'a> {
             Ty::Array(..) => {
                 let mut u = Vec::new();
                 units(self.prog, t, &mut u);
-                let id = self.xs.len() as u32;
+                let id = crate::u32_of(self.xs.len());
                 self.xs.push(u.len().max(1) as u32);
                 let mut out = Vec::new();
                 for (k, n) in u.iter().enumerate() {
                     for c in 0..*n {
-                        out.push(C::R(Reg { f: RegF::X(id, k as u32), rel: None }, c as u8));
+                        out.push(C::R(Reg { f: RegF::X(id, crate::u32_of(k)), rel: None }, c as u8));
                     }
                 }
                 out
@@ -1000,13 +1000,13 @@ impl<'a> L<'a> {
         match self.globals.get(name).cloned() {
             Some(v) => {
                 match v.obj {
-                    Obj::Tex(t) => self.texs[t as usize].used = true,
-                    Obj::Samp(s) => self.samps[s as usize].used = true,
+                    Obj::Tex(t) => self.texs[crate::us(t)].used = true,
+                    Obj::Samp(s) => self.samps[crate::us(s)].used = true,
                     Obj::Legacy(t, s) => {
-                        self.texs[t as usize].used = true;
-                        self.samps[s as usize].used = true;
+                        self.texs[crate::us(t)].used = true;
+                        self.samps[crate::us(s)].used = true;
                     }
-                    Obj::Uav(u) => self.uavs[u as usize].used = true,
+                    Obj::Uav(u) => self.uavs[crate::us(u)].used = true,
                     // (arrays: the elements indexed are marked)
                     Obj::None | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Shared(..) => {}
                 }
@@ -1028,7 +1028,7 @@ impl<'a> L<'a> {
         let reg = |r: u32| Reg { f: RegF::Cb(sym, r), rel: None };
         match t {
             Ty::Scalar(_) | Ty::Vec(..) => {
-                let n = t.comps() as u32;
+                let n = crate::u32_of(t.comps());
                 // (shader model 2/3: each in registers of its own)
                 if at % 16 + 4 * n > 16 || self.sm3() {
                     at = at.div_ceil(16) * 16;
@@ -1045,7 +1045,7 @@ impl<'a> L<'a> {
             }
             Ty::Mat(_, r, c) => {
                 at = at.div_ceil(16) * 16;
-                let (r, c) = (*r as u32, *c as u32);
+                let (r, c) = (u32::from(*r), u32::from(*c));
                 for i in 0..r {
                     for j in 0..c {
                         let (rr, cc) = if row_major { (i, j) } else { (j, i) };
@@ -1095,7 +1095,7 @@ impl<'a> L<'a> {
                 let st = if self.sm3() { at.div_ceil(16) * 16 } else { at };
                 let e = self.cb_layout(&f.ty, rm, st, 0, &mut v);
                 let first = match v.first() {
-                    Some(C::R(Reg { f: RegF::Cb(_, r), .. }, c)) => r * 16 + *c as u32 * 4,
+                    Some(C::R(Reg { f: RegF::Cb(_, r), .. }, c)) => r * 16 + u32::from(*c) * 4,
                     _ => st,
                 };
                 members.push(self.rdef_var(&f.name, &f.ty, rm, first, e));
@@ -1110,11 +1110,11 @@ impl<'a> L<'a> {
     /// The components of `t`, arrays and struct members counted in.
     fn scalars(&self, t: &Ty) -> u32 {
         match t {
-            Ty::Array(e, n) => self.scalars(e) * *n as u32,
+            Ty::Array(e, n) => self.scalars(e) * u32::from(*n),
             Ty::Struct(i) => self.prog.structs[*i].fields.iter().map(|f| self.scalars(&f.ty)).sum(),
             Ty::Scalar(_) => 1,
-            Ty::Vec(_, n) => *n as u32,
-            Ty::Mat(_, r, c) => *r as u32 * *c as u32,
+            Ty::Vec(_, n) => u32::from(*n),
+            Ty::Mat(_, r, c) => u32::from(*r) * u32::from(*c),
             Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => 0,
         }
     }
@@ -1133,8 +1133,8 @@ impl<'a> L<'a> {
         };
         let (class, rows, cols) = match el {
             Ty::Scalar(_) => (0, 1, 1),
-            Ty::Vec(_, n) => (1, 1, *n as u16),
-            Ty::Mat(_, r, c) => (if row_major { 2 } else { 3 }, *r as u16, *c as u16),
+            Ty::Vec(_, n) => (1, 1, u16::from(*n)),
+            Ty::Mat(_, r, c) => (if row_major { 2 } else { 3 }, u16::from(*r), u16::from(*c)),
             // (a struct: one row of all its members' components)
             Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
             | Ty::Legacy(_) | Ty::Str => (5, 1, self.scalars(el) as u16),
@@ -1155,7 +1155,7 @@ impl<'a> L<'a> {
     }
 
     fn add_cbuffer(&mut self, name: &str, reg: Option<u32>, vars: &[Var]) -> R<()> {
-        let sym = self.cbs.len() as u32;
+        let sym = crate::u32_of(self.cbs.len());
         let mut at = 0;
         let mut rvars = Vec::new();
         for v in vars {
@@ -1172,13 +1172,13 @@ impl<'a> L<'a> {
             let mut comps = Vec::new();
             let end = self.cb_layout(v.ty(), rm, start, sym, &mut comps);
             let first = match comps.first() {
-                Some(C::R(Reg { f: RegF::Cb(_, r), .. }, c)) => r * 16 + *c as u32 * 4,
+                Some(C::R(Reg { f: RegF::Cb(_, r), .. }, c)) => r * 16 + u32::from(*c) * 4,
                 _ => start,
             };
             let mut rv = self.rdef_var(&v.name, v.ty(), rm, first, end);
             rv.explicit = matches!(v.reg, Some(('c', _)));
             rvars.push(rv);
-            self.cbvar.insert(v.name.clone(), (sym as usize, rvars.len() - 1));
+            self.cbvar.insert(v.name.clone(), (crate::us(sym), rvars.len() - 1));
             self.globals.insert(v.name.clone(), Val::num(v.ty().clone(), comps));
             at = at.max(end);
         }
@@ -1194,24 +1194,24 @@ impl<'a> L<'a> {
                     return Err(format!("line {}: a RWTexture's register is a u register", v.line));
                 }
                 self.uavs.push(UavD { name: v.name.clone(), dim: *d, el: (**el).clone(), reg, used: false });
-                Obj::Uav(self.uavs.len() as u32 - 1)
+                Obj::Uav(crate::u32_of(self.uavs.len()) - 1)
             }
             Ty::Tex(d, el) => {
                 self.texs.push(TexD { name: v.name.clone(), dim: *d, el: (**el).clone(), reg, used: false });
-                Obj::Tex(self.texs.len() as u32 - 1)
+                Obj::Tex(crate::u32_of(self.texs.len()) - 1)
             }
             Ty::Sampler(cmp) => {
                 self.samps.push(SampD { name: v.name.clone(), cmp: *cmp, reg, used: false });
-                Obj::Samp(self.samps.len() as u32 - 1)
+                Obj::Samp(crate::u32_of(self.samps.len()) - 1)
             }
             Ty::Legacy(d) => {
                 self.texs.push(TexD { name: v.name.clone(), dim: *d, el: Ty::Vec(B::Float, 4), reg, used: false });
                 self.samps.push(SampD { name: v.name.clone(), cmp: false, reg, used: false });
-                Obj::Legacy(self.texs.len() as u32 - 1, self.samps.len() as u32 - 1)
+                Obj::Legacy(crate::u32_of(self.texs.len()) - 1, crate::u32_of(self.samps.len()) - 1)
             }
             Ty::Array(e, n) => {
                 // one descriptor per element, on consecutive registers
-                let (t0, s0) = (self.texs.len() as u32, self.samps.len() as u32);
+                let (t0, s0) = (crate::u32_of(self.texs.len()), crate::u32_of(self.samps.len()));
                 for i in 0..*n {
                     let name = format!("{}[{i}]", v.name);
                     let reg = reg.map(|r| r + i);
@@ -1317,7 +1317,7 @@ impl<'a> L<'a> {
                     return Err(format!("line {}: more than 32 KB of groupshared memory", v.line));
                 }
                 self.tgsm.push(bytes);
-                let g = self.tgsm.len() as u32 - 1;
+                let g = crate::u32_of(self.tgsm.len()) - 1;
                 self.globals.insert(v.name.clone(), Val { ty: v.ty().clone(), c: Vec::new(), obj: Obj::Shared(g, C::I(0)) });
             } else if matches!(v.ty(), Ty::Str) {
             } else if v.is_static {
@@ -1344,7 +1344,7 @@ impl<'a> L<'a> {
                     // an immediate constant buffer
                     let mut u = Vec::new();
                     units(self.prog, &t, &mut u);
-                    let base = self.icb.len() as u32;
+                    let base = crate::u32_of(self.icb.len());
                     let mut comps = Vec::new();
                     let mut k = 0;
                     for (n, w) in u.iter().enumerate() {
@@ -1353,7 +1353,7 @@ impl<'a> L<'a> {
                             if let C::I(x) = val.c[k] {
                                 *r = x;
                             }
-                            comps.push(C::R(Reg { f: RegF::Icb(base + n as u32), rel: None }, c as u8));
+                            comps.push(C::R(Reg { f: RegF::Icb(base + crate::u32_of(n)), rel: None }, c as u8));
                             k += 1;
                         }
                         self.icb.push(row);
@@ -1449,7 +1449,7 @@ impl<'a> L<'a> {
         units(self.prog, t, &mut u);
         // (an array parameter takes a register per element: `float4 a[65536] : TEXCOORD`
         // is past the 32 registers however its first index is)
-        if index as usize + u.len() > max as usize {
+        if crate::us(index) + u.len() > crate::us(max) {
             return Err(format!("semantic {sem}: {} registers from index {index}, past {max}", u.len()));
         }
         if name == "POSITION" && pixel && !output && self.sm3() {
@@ -1655,7 +1655,7 @@ impl<'a> L<'a> {
             }
             // (a sampler2D: the slot of its texture)
             let legacy = self.globals.values().find_map(|v| match v.obj {
-                Obj::Legacy(t, sm) if sm as usize == n => legacy_slot.get(&(t as usize)).copied(),
+                Obj::Legacy(t, sm) if crate::us(sm) == n => legacy_slot.get(&crate::us(t)).copied(),
                 Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
                 | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) => None,
             });
@@ -2112,7 +2112,7 @@ impl<'a> L<'a> {
                     let one = if fl { fbits(1.0) } else { 1 };
                     let dec = matches!(op, Un::PreDec | Un::PostDec);
                     let c = if fl {
-                        self.alu_m(ADD, B::Float, &[(&old, 0), (&Self::imm(one, old.len()), dec as u8)])
+                        self.alu_m(ADD, B::Float, &[(&old, 0), (&Self::imm(one, old.len()), u8::from(dec))])
                     } else {
                         let v = if dec { one.wrapping_neg() } else { one };
                         self.alu(IADD, p.ty.base(), &[&old, &Self::imm(v, old.len())])
@@ -2159,7 +2159,7 @@ impl<'a> L<'a> {
                 let t = if cv.ty.comps() > 1 && t.comps() == 1 { Ty::vec(t.base(), cv.ty.comps()) } else { t };
                 // (a narrower vector condition: the values truncated to it, as fxc does)
                 let t = match t {
-                    Ty::Vec(b, n) if cv.ty.comps() > 1 && (cv.ty.comps() as u32) < n as u32 => Ty::vec(b, cv.ty.comps()),
+                    Ty::Vec(b, n) if cv.ty.comps() > 1 && crate::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec(b, cv.ty.comps()),
                     t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
                          | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
                 };
@@ -2284,7 +2284,7 @@ impl<'a> L<'a> {
                     if !r.c.iter().all(own) {
                         let k = match &v.ty {
                             Ty::Array(e, _) => ncomp(self.prog, e),
-                            Ty::Mat(_, _, c) => *c as usize,
+                            Ty::Mat(_, _, c) => usize::from(*c),
                             Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_)
                             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => 1,
                         };
@@ -2373,7 +2373,7 @@ impl<'a> L<'a> {
         let mut out = Vec::new();
         for k in (0..n).step_by(4) {
             let m = (n - k).min(4);
-            let a = self.shared_addr(off, k as u32);
+            let a = self.shared_addr(off, crate::u32_of(k));
             let a = self.scalar_src(a);
             let t = self.tmp();
             self.emit(sm4::LD_RAW, vec![Dst { r: temp(t), mask: ((1u16 << m) - 1) as u8 }], vec![a, Src::G(g, [0, 1, 2, 3])]);
@@ -2384,7 +2384,7 @@ impl<'a> L<'a> {
 
     fn shared_store(&mut self, g: u32, off: C, v: &[C]) {
         for (k, ch) in v.chunks(4).enumerate() {
-            let a = self.shared_addr(off, 4 * k as u32);
+            let a = self.shared_addr(off, 4 * crate::u32_of(k));
             let a = self.scalar_src(a);
             let s = self.opnd(ch);
             self.emit(sm4::STORE_RAW, vec![Dst { r: Reg { f: RegF::G(g), rel: None }, mask: ((1u16 << ch.len()) - 1) as u8 }], vec![a, s]);
@@ -2398,7 +2398,7 @@ impl<'a> L<'a> {
         for f in &self.prog.structs[*i].fields {
             let n = ncomp(self.prog, &f.ty);
             if f.name == name {
-                let off = self.alu(sm4::IADD, B::Int, &[&[off], &[C::I(at as u32)]])[0];
+                let off = self.alu(sm4::IADD, B::Int, &[&[off], &[C::I(crate::u32_of(at))]])[0];
                 return Ok(Val { ty: f.ty.clone(), c: Vec::new(), obj: Obj::Shared(g, off) });
             }
             at += n;
@@ -2408,8 +2408,8 @@ impl<'a> L<'a> {
 
     /// A UAV's coordinates (uint, as many as its dimension takes).
     fn uav_coord(&mut self, u: u32, iv: Val) -> R<Vec<C>> {
-        let d = self.uavs[u as usize].dim;
-        let n = d.coords() + d.array() as usize;
+        let d = self.uavs[crate::us(u)].dim;
+        let n = d.coords() + usize::from(d.array());
         let iv = self.cast(iv.clone(), &Ty::vec(B::Uint, iv.ty.comps().max(1)))?;
         if iv.c.len() != n {
             return Err(format!("{n} coordinates index this RWTexture"));
@@ -2418,7 +2418,7 @@ impl<'a> L<'a> {
     }
 
     fn uav_load(&mut self, u: u32, coord: &[C]) -> Val {
-        let el = self.uavs[u as usize].el.clone();
+        let el = self.uavs[crate::us(u)].el.clone();
         let a = self.opnd(coord);
         let t = self.tmp();
         self.emit(sm4::LD_UAV_TYPED, vec![Dst { r: temp(t), mask: 0xf }], vec![a, Src::Uav(u, [0, 1, 2, 3])]);
@@ -2446,8 +2446,8 @@ impl<'a> L<'a> {
                 Ok(Val::num(Ty::vec(*b, c.len()), c))
             }
             Ty::Mat(b, r, c) => {
-                let s = mat_swizzle(name, *r as usize, *c as usize).ok_or(format!("bad matrix member .{name}"))?;
-                let comps: Vec<C> = s.iter().map(|&(i, j)| v.c[i * *c as usize + j]).collect();
+                let s = mat_swizzle(name, usize::from(*r), usize::from(*c)).ok_or(format!("bad matrix member .{name}"))?;
+                let comps: Vec<C> = s.iter().map(|&(i, j)| v.c[i * usize::from(*c) + j]).collect();
                 Ok(Val::num(Ty::vec(*b, comps.len()), comps))
             }
             Ty::Struct(i) => {
@@ -2509,7 +2509,7 @@ impl<'a> L<'a> {
                     && e.iter().zip(e0).all(|(a, b)| match (a, b) {
                         (C::R(ra, ca), C::R(rb, cb)) => {
                             ca == cb
-                                && regno(a) == regno(b).wrapping_add(stride.wrapping_mul(k as u32))
+                                && regno(a) == regno(b).wrapping_add(stride.wrapping_mul(crate::u32_of(k)))
                                 && std::mem::discriminant(&ra.f) == std::mem::discriminant(&rb.f)
                         }
                         _ => false,
@@ -2521,7 +2521,7 @@ impl<'a> L<'a> {
                 for c in e0 {
                     if let C::R(r, k) = c {
                         if let RegF::Cb(s, _) = r.f {
-                            let cb = &mut self.cbs[s as usize];
+                            let cb = &mut self.cbs[crate::us(s)];
                             cb.dynamic = true;
                         }
                         out.push(C::R(Reg { f: r.f, rel: Some(rel) }, *k));
@@ -2551,7 +2551,7 @@ impl<'a> L<'a> {
             let k = ncomp(self.prog, e) as u32;
             let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
             if let C::I(i) = iv.c[0] {
-                if i as i32 as i64 >= *n as i64 || (i as i32) < 0 {
+                if i as i32 as i64 >= i64::from(*n) || (i as i32) < 0 {
                     return Err(format!("index {} out of range", i as i32));
                 }
             }
@@ -2565,22 +2565,22 @@ impl<'a> L<'a> {
         if let (Ty::Array(e, n), Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..)) = (&v.ty, v.obj) {
             // an element of an array of textures/samplers: the index must be known when compiling
             let i = match iv.c.first() {
-                Some(&C::I(i)) if iv.c.len() == 1 && (i as u32) < *n => i as u32,
+                Some(&C::I(i)) if iv.c.len() == 1 && u32::from(i) < *n => u32::from(i),
                 Some(&C::I(_)) => return Err("texture or sampler array index out of range".into()),
                 _ => return Err("a texture or sampler array needs a constant index".into()),
             };
             let obj = match v.obj {
                 Obj::TexArr(t) => {
-                    self.texs[(t + i) as usize].used = true;
+                    self.texs[crate::us(t + i)].used = true;
                     Obj::Tex(t + i)
                 }
                 Obj::SampArr(s) => {
-                    self.samps[(s + i) as usize].used = true;
+                    self.samps[crate::us(s + i)].used = true;
                     Obj::Samp(s + i)
                 }
                 Obj::LegacyArr(t, s) => {
-                    self.texs[(t + i) as usize].used = true;
-                    self.samps[(s + i) as usize].used = true;
+                    self.texs[crate::us(t + i)].used = true;
+                    self.samps[crate::us(s + i)].used = true;
                     Obj::Legacy(t + i, s + i)
                 }
                 Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::Uav(_) | Obj::Shared(..) => unreachable!(),
@@ -2607,7 +2607,7 @@ impl<'a> L<'a> {
                 self.select(elems, iv, Ty::Scalar(*b))
             }
             Ty::Mat(b, r, c) => {
-                let c = *c as usize;
+                let c = usize::from(*c);
                 let elems: Vec<Vec<C>> = (0..*r as usize).map(|i| v.c[i * c..(i + 1) * c].to_vec()).collect();
                 self.select(elems, iv, Ty::vec(*b, c))
             }
@@ -2735,7 +2735,7 @@ impl<'a> L<'a> {
                     .zip(args)
                     .map(|(p, a)| {
                         let pt = p.ty();
-                        (pt != &a.ty) as u32 * 2 + (ncomp(prog, pt) != ncomp(prog, &a.ty)) as u32 * 4 + (pt.base() != a.ty.base()) as u32
+                        u32::from(pt != &a.ty) * 2 + u32::from(ncomp(prog, pt) != ncomp(prog, &a.ty)) * 4 + u32::from(pt.base() != a.ty.base())
                     })
                     .sum::<u32>()
             });
@@ -2883,11 +2883,11 @@ impl<'a> L<'a> {
         self.cond_op(op, c, nz)
     }
     pub(super) fn x_tex_el(&self, t: u32) -> (Dim, Ty) {
-        let d = &self.texs[t as usize];
+        let d = &self.texs[crate::us(t)];
         (d.dim, d.el.clone())
     }
     pub(super) fn x_samp_cmp(&mut self, s: u32) {
-        self.samps[s as usize].cmp = true;
+        self.samps[crate::us(s)].cmp = true;
     }
     pub(super) fn x_sm3(&self) -> bool {
         self.sm3()

@@ -58,7 +58,7 @@ impl Td {
                 }
             }
             PC_OBJECT => {}
-            _ => out.extend(std::iter::repeat_n(self.ty, (self.rows * self.cols) as usize)),
+            _ => out.extend(std::iter::repeat_n(self.ty, crate::us(self.rows * self.cols))),
         }
     }
 }
@@ -71,8 +71,8 @@ fn td_of(prog: &Program, t: &Ty, row_major: bool) -> Td {
     };
     let mut td = match t {
         Ty::Scalar(b) => Td::scalar(base(*b)),
-        Ty::Vec(b, n) => Td { class: PC_VECTOR, cols: *n as u32, ..Td::scalar(base(*b)) },
-        Ty::Mat(b, r, c) => Td { class: if row_major { PC_MATRIX_ROWS } else { PC_MATRIX_COLUMNS }, rows: *r as u32, cols: *c as u32, ..Td::scalar(base(*b)) },
+        Ty::Vec(b, n) => Td { class: PC_VECTOR, cols: u32::from(*n), ..Td::scalar(base(*b)) },
+        Ty::Mat(b, r, c) => Td { class: if row_major { PC_MATRIX_ROWS } else { PC_MATRIX_COLUMNS }, rows: u32::from(*r), cols: u32::from(*c), ..Td::scalar(base(*b)) },
         Ty::Array(e, n) => {
             let mut td = td_of(prog, e, row_major);
             td.elements = td.elements.max(1) * n;
@@ -117,7 +117,7 @@ fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
     Some(match e {
         Expr::Int(v, _) => vec![*v as f64],
         Expr::Float(f) => vec![*f],
-        Expr::Bool(b) => vec![*b as u32 as f64],
+        Expr::Bool(b) => vec![u32::from(*b) as f64],
         Expr::List(v) | Expr::Construct(_, v) => {
             let mut out = Vec::new();
             for x in v {
@@ -409,13 +409,13 @@ const ENUMS: &[(&str, &[(&str, u32)])] = &[
 fn state_op(name: &str) -> Option<(u32, K)> {
     let eq = |a: &str| a.eq_ignore_ascii_case(name);
     if let Some(i) = RS.iter().position(|x| eq(x.0)) {
-        return Some((i as u32, RS[i].1));
+        return Some((crate::u32_of(i), RS[i].1));
     }
     if let Some(i) = TSS.iter().position(|x| eq(x.0)) {
-        return Some((103 + i as u32, TSS[i].1));
+        return Some((103 + crate::u32_of(i), TSS[i].1));
     }
     if let Some(i) = SAMP.iter().position(|x| eq(x.0)) {
-        return Some((165 + i as u32, SAMP[i].1));
+        return Some((165 + crate::u32_of(i), SAMP[i].1));
     }
     Some(match name.to_ascii_lowercase().as_str() {
         "fvf" => (122, K::Int),
@@ -478,14 +478,14 @@ impl W<'_> {
         self.b.extend_from_slice(&v.to_le_bytes());
     }
     fn at(&self) -> u32 {
-        self.b.len() as u32
+        crate::u32_of(self.b.len())
     }
     fn name(&mut self, s: &str) -> u32 {
         if s.is_empty() {
             return 0;
         }
         let at = self.at();
-        self.put(s.len() as u32 + 1);
+        self.put(crate::u32_of(s.len()) + 1);
         self.b.extend_from_slice(s.as_bytes());
         self.b.push(0);
         while self.b.len() % 4 != 0 {
@@ -508,7 +508,7 @@ impl W<'_> {
             PC_VECTOR => out.extend([t.cols, t.rows]),
             PC_SCALAR | PC_MATRIX_ROWS | PC_MATRIX_COLUMNS => out.extend([t.rows, t.cols]),
             PC_STRUCT => {
-                out.push(t.members.len() as u32);
+                out.push(crate::u32_of(t.members.len()));
                 for m in &t.members {
                     Self::td_words(m, names, out);
                 }
@@ -543,7 +543,7 @@ impl W<'_> {
                 let v = if vals.len() == 1 { vals[0] } else { vals.get(i).copied().unwrap_or(0.0) };
                 let w = match *b {
                     PT_FLOAT => (v as f32).to_bits(),
-                    PT_BOOL => (v != 0.0) as u32,
+                    PT_BOOL => u32::from(v != 0.0),
                     _ => v as i64 as u32,
                 };
                 out.extend_from_slice(&w.to_le_bytes());
@@ -558,7 +558,7 @@ impl W<'_> {
             for e in 0..t.elements.max(1) {
                 if (11..=14).contains(&t.ty) || t.ty == PT_SAMPLER {
                     let recs = self.states(states, u32::MAX, top, if t.elements > 0 { e } else { u32::MAX }, true)?;
-                    b.extend_from_slice(&(recs.len() as u32 / 4).to_le_bytes());
+                    b.extend_from_slice(&(crate::u32_of(recs.len()) / 4).to_le_bytes());
                     for w in recs {
                         b.extend_from_slice(&w.to_le_bytes());
                     }
@@ -639,7 +639,7 @@ impl W<'_> {
                 self.warnings.push(format!("line {}: state {} is not supported", st.line, st.name));
                 continue;
             };
-            let si = (out.len() / 4) as u32;
+            let si = crate::u32_of(out.len() / 4);
             let idx = st.index.unwrap_or(0);
             // a reference to a parameter: <name>, (name) or name
             let reference = match &st.value {
@@ -724,9 +724,9 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
         let mut t = td_of(prog, v.ty(), v.row_major.unwrap_or(row_major)).named(&v.name);
         t.sem = v.sem.clone().unwrap_or_default();
         let td = w.typedef(&t);
-        let val = w.value(&t, v.init.as_ref(), &v.states, k as u32)?;
+        let val = w.value(&t, v.init.as_ref(), &v.states, crate::u32_of(k))?;
         let annos = w.annotations(&v.annos)?;
-        recs.extend([td, val, 0, (annos.len() / 2) as u32]);
+        recs.extend([td, val, 0, crate::u32_of(annos.len() / 2)]);
         recs.extend(annos);
         nparams += 1;
     }
@@ -741,7 +741,7 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
         let at = w.at();
         w.put(id);
         let annos = w.annotations(annos)?;
-        recs.extend([td, at, 0, (annos.len() / 2) as u32]);
+        recs.extend([td, at, 0, crate::u32_of(annos.len() / 2)]);
         recs.extend(annos);
         nparams += 1;
     }
@@ -749,13 +749,13 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
     for (ti, t) in prog.techniques.iter().enumerate() {
         let n = w.name(&t.name);
         let annos = w.annotations(&t.annos)?;
-        recs.extend([n, (annos.len() / 2) as u32, t.passes.len() as u32]);
+        recs.extend([n, crate::u32_of(annos.len() / 2), crate::u32_of(t.passes.len())]);
         recs.extend(annos);
         for (pi, p) in t.passes.iter().enumerate() {
             let n = w.name(&p.name);
             let annos = w.annotations(&p.annos)?;
-            let states = w.states(&p.states, ti as u32, pi as u32, u32::MAX, false)?;
-            recs.extend([n, (annos.len() / 2) as u32, (states.len() / 4) as u32]);
+            let states = w.states(&p.states, crate::u32_of(ti), crate::u32_of(pi), u32::MAX, false)?;
+            recs.extend([n, crate::u32_of(annos.len() / 2), crate::u32_of(states.len() / 4)]);
             recs.extend(annos);
             recs.extend(states);
         }
@@ -766,7 +766,7 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
     let start = w.at();
     let (objects, shaders) = (w.objects, w.shaders);
     w.put(nparams);
-    w.put(prog.techniques.len() as u32);
+    w.put(crate::u32_of(prog.techniques.len()));
     w.put(shaders);
     w.put(objects);
     for r in recs {
@@ -774,10 +774,10 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
     }
     let strings = std::mem::take(&mut w.strings);
     let res = std::mem::take(&mut w.res);
-    w.put(strings.len() as u32);
-    w.put(res.len() as u32);
+    w.put(crate::u32_of(strings.len()));
+    w.put(crate::u32_of(res.len()));
     let blob = |w: &mut W, d: &[u8]| {
-        w.put(d.len() as u32);
+        w.put(crate::u32_of(d.len()));
         w.b.extend_from_slice(d);
         while w.b.len() % 4 != 0 {
             w.b.push(0);
