@@ -16,7 +16,6 @@ use crate::wmdec::{self, Frame};
 pub(super) const IID_IDMOWRAPPERFILTER: [u8; 16] = guid(0x52d6_f586, 0x9f0f, 0x4824, [0x8f, 0xc8, 0xe3, 0x2c, 0xa0, 0x49, 0x30, 0xc2]);
 /// CLSID_DMOWrapperFilter {94297043-bd82-4dfd-b0de-8177739c6d20}
 pub const CLSID_DMO_WRAPPER: [u8; 16] = guid(0x9429_7043, 0xbd82, 0x4dfd, [0xb0, 0xde, 0x81, 0x77, 0x73, 0x9c, 0x6d, 0x20]);
-const VFW_E_WRONG_STATE: u32 = 0x8004_0227;
 
 struct Dmo {
     /// the DMO Init asked for
@@ -52,29 +51,29 @@ pub(super) fn gone(b: u32) {
 /// does not come then (the input's EndOfStream tells it).
 pub fn in_graph(g: u32) -> bool {
     let f = FILTERS.lock().unwrap_or_else(|e| e.into_inner());
-    f.as_ref().is_some_and(|m| m.iter().any(|(b, x)| x.kind == Kind::Dmo && x.graph == g && x.pins[0].peer != 0 && DMOS.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|d| d.get(b).is_some_and(|d| d.codec.is_some()))))
+    f.as_ref().is_some_and(|m| m.iter().any(|(b, x)| x.kind == Kind::Dmo && x.graph == g && x.pins.at(PinNo::P1).peer != 0 && DMOS.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|d| d.get(b).is_some_and(|d| d.codec.is_some()))))
 }
 
 /// The input's type (from a game's source): video a codec of wmdec.rs decodes.
 pub(super) fn receive_connection(c: &mut Ctx, b: u32, from: u32, mt: u32) -> u32 {
     if mt == 0 || !is(mt, &MEDIATYPE_VIDEO) {
-        return VFW_E_TYPE_NOT_ACCEPTED;
+        return Hr::TypeNotAccepted.code();
     }
     let (cb, pb) = mt_fmt_at();
     let (len, fmt) = (r32(mt + cb), rp(mt + pb));
     if !is(mt + 44, &FORMAT_VIDEO_INFO) || len < 88 || fmt == 0 {
-        return VFW_E_TYPE_NOT_ACCEPTED;
+        return Hr::TypeNotAccepted.code();
     }
     let f = mem::slice(fmt, len).to_vec();
-    let Some(info) = wmdec::Info::from_bih(&f[48..]) else { return VFW_E_TYPE_NOT_ACCEPTED };
+    let Some(info) = wmdec::Info::from_bih(&f[48..]) else { return Hr::TypeNotAccepted.code() };
     let Some(codec) = wmdec::codec(&info) else {
         eprintln!("sake: DMO wrapper: no decoder for {:?} (format {} bytes)", info, len);
-        return VFW_E_TYPE_NOT_ACCEPTED;
+        return Hr::TypeNotAccepted.code();
     };
-    let wmdec::Info::Video { width, height, .. } = info else { return VFW_E_TYPE_NOT_ACCEPTED };
+    let wmdec::Info::Video { width, height, .. } = info else { return Hr::TypeNotAccepted.code() };
     // (a size no movie has: the samples' w * h * 4 wrapped in u32 and undersized them)
     if !(1..=MAX_DIM).contains(&width) || !(1..=MAX_DIM).contains(&(height as i32).unsigned_abs()) {
-        return VFW_E_TYPE_NOT_ACCEPTED;
+        return Hr::TypeNotAccepted.code();
     }
     let frame = u64::from_le_bytes(f[40..48].try_into().unwrap());
     let h = (height as i32).unsigned_abs();
@@ -88,8 +87,8 @@ pub(super) fn receive_connection(c: &mut Ctx, b: u32, from: u32, mt: u32) -> u32
     let copy = mem::heap_alloc(mt_size(), true);
     copy_mt(mt, copy);
     fwith(b, |x| {
-        x.pins[0].peer = from;
-        x.pins[0].mt = copy;
+        x.pins.at_mut(PinNo::P1).peer = from;
+        x.pins.at_mut(PinNo::P1).mt = copy;
     });
     eprintln!("sake: DMO wrapper: {}x{} {:.3} fps", width, h, SEC as f64 / frame.max(1) as f64);
     0
@@ -108,17 +107,17 @@ pub(super) fn size(b: u32) -> Option<u32> {
 }
 
 /// Stop / Pause / Run of the filter: its clock (stream time from Run's start).
-pub(super) fn state(b: u32, s: u32) {
+pub(super) fn state(b: u32, s: State) {
     let t = now();
     dwith(b, |d| match s {
-        0 => {
+        State::Stopped => {
             d.tl.stop(t);
             d.tl.seek(t, 0);
             d.gen += 1;
             d.shown = false;
         }
-        1 => d.tl.pause(t),
-        _ => d.tl.run(t),
+        State::Paused => d.tl.pause(t),
+        State::Running => d.tl.run(t),
     });
     WAKE.notify_all();
 }
@@ -159,7 +158,7 @@ pub(super) fn downstream(c: &mut Ctx, b: u32, slot: u32) -> u32 {
         }
         _ => {}
     }
-    let out = pin(b, 2).peer;
+    let out = pin(b, PinNo::P2).peer;
     if out == 0 {
         return 0;
     }
@@ -175,13 +174,13 @@ pub(super) fn downstream(c: &mut Ctx, b: u32, slot: u32) -> u32 {
 }
 
 fn base_of(mi: u32) -> u32 {
-    mi - ps() * MI
+    Word::MemInput.base(mi)
 }
 
 fn mi_qi(c: &mut Ctx) -> u32 {
     let (mi, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let b = base_of(mi);
     if is(iid, &IID_IMEMINPUTPIN) {
@@ -191,11 +190,11 @@ fn mi_qi(c: &mut Ctx) -> u32 {
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IPIN) {
         add_ref(b);
-        putp(out, b + ps());
+        putp(out, PinNo::P1.of(b));
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn mi_add_ref(c: &mut Ctx) -> u32 {
     add_ref(base_of(c.a(0)))
@@ -219,13 +218,13 @@ fn mi_receive(c: &mut Ctx) -> u32 {
 }
 fn receive(c: &mut Ctx, b: u32, sample: u32) -> u32 {
     if sample == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    if fwith(b, |f| f.state).unwrap_or(0) == 0 {
-        return VFW_E_WRONG_STATE;
+    if fwith(b, |f| f.state).is_none_or(|s| s == State::Stopped) {
+        return Hr::WrongState.code();
     }
     if dwith(b, |d| d.flushing).unwrap_or(true) {
-        return S_FALSE;
+        return Hr::False.code();
     }
     let tmp = mem::heap_alloc(16, true);
     com(c, sample, 3, &[tmp]);
@@ -235,11 +234,11 @@ fn receive(c: &mut Ctx, b: u32, sample: u32) -> u32 {
     mem::heap_free(tmp);
     let key = com(c, sample, 7, &[]) == 0;
     if ptr == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // (the sample's bytes as they are: the caller holds it until Receive returns)
     let data = mem::slice(ptr, len);
-    let Some((mut codec, gen)) = dwith(b, |d| (d.codec.take(), d.gen)) else { return E_UNEXPECTED };
+    let Some((mut codec, gen)) = dwith(b, |d| (d.codec.take(), d.gen)) else { return Hr::Unexpected.code() };
     let t0 = std::time::Instant::now();
     let frames = codec.as_mut().map(|x| x.decode(&data, if time == u64::MAX { 0 } else { time }, key)).unwrap_or_default();
     stats(Stat::Decoded(t0.elapsed()));
@@ -259,8 +258,8 @@ fn show(c: &mut Ctx, b: u32, gen: u32, time: u64, w: u32, h: u32, bgra: &[u8]) -
     loop {
         let t = now();
         let Some((g, flushing, pos, running, shown, frame)) = dwith(b, |d| (d.gen, d.flushing, d.tl.position(t), d.tl.running(), d.shown, d.frame)) else { return false };
-        let state = fwith(b, |f| f.state).unwrap_or(0);
-        if g != gen || flushing || state == 0 {
+        let stopped = fwith(b, |f| f.state).is_none_or(|s| s == State::Stopped);
+        if g != gen || flushing || stopped {
             return false;
         }
         if running && time <= pos {
@@ -277,7 +276,7 @@ fn show(c: &mut Ctx, b: u32, gen: u32, time: u64, w: u32, h: u32, bgra: &[u8]) -
         }
         pause(if running { (time - pos).min(SEC / 100) } else { SEC / 100 });
     }
-    let mem_pin = pin(b, 2).mem;
+    let mem_pin = pin(b, PinNo::P2).mem;
     let Some((ow, oh, frame)) = dwith(b, |d| (d.w, d.h, d.frame)) else { return false };
     if mem_pin == 0 {
         return true;
@@ -356,20 +355,20 @@ fn mi_receive_multiple(c: &mut Ctx) -> u32 {
 
 /// IDMOWrapperFilter: QI / AddRef / Release of the filter, Init(clsidDMO, catDMO)
 fn dw_qi(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * DW;
+    let b = Word::DmoWrapper.base(c.a(0));
     com(c, b, 0, &[c.a(1), c.a(2)])
 }
 fn dw_add_ref(c: &mut Ctx) -> u32 {
-    add_ref(c.a(0) - ps() * DW)
+    add_ref(Word::DmoWrapper.base(c.a(0)))
 }
 fn dw_release(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * DW;
+    let b = Word::DmoWrapper.base(c.a(0));
     release(c, b)
 }
 fn dw_init(c: &mut Ctx) -> u32 {
-    let (b, clsid) = (c.a(0) - ps() * DW, c.a(1));
+    let (b, clsid) = (Word::DmoWrapper.base(c.a(0)), c.a(1));
     if clsid == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g: [u8; 16] = mem::slice(clsid, 16).try_into().unwrap();
     dwith(b, |d| d.clsid = g);

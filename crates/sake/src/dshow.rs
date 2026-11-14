@@ -170,13 +170,13 @@ fn call(c: &mut Ctx, obj: u32, m: impl Method, args: &[u32]) -> u32 {
 
 /// A graph's state (IMediaControl::GetState's FILTER_STATE).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum State {
+pub(crate) enum State {
     Stopped,
     Paused,
     Running,
 }
 impl State {
-    const fn code(self) -> u32 {
+    pub(crate) const fn code(self) -> u32 {
         match self {
             State::Stopped => 0,
             State::Paused => 1,

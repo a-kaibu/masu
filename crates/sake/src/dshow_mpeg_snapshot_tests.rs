@@ -129,7 +129,7 @@ fn take_log() -> String {
 fn fake_qi(c: &mut Ctx) -> u32 {
     log(format!("f{}.qi", r32(c.a(0) + 4)));
     putp(c.a(2), 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn fake_addref(c: &mut Ctx) -> u32 {
     log(format!("f{}.addref", r32(c.a(0) + 4)));
@@ -141,7 +141,7 @@ fn fake_release(c: &mut Ctx) -> u32 {
 }
 fn fake_other(c: &mut Ctx) -> u32 {
     log(format!("f{}.other", r32(c.a(0) + 4)));
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 /// A stand-in object (a pin, a graph, a sample): IUnknown that logs, every other call logged
 /// and E_NOTIMPL.
@@ -164,19 +164,19 @@ fn fake(tag: u32) -> u32 {
     o
 }
 
-/// The kinds of each method's arguments, by interface word k of a filter's block (vtable
+/// The kinds of each method's arguments, by interface word w of a filter's block (vtable
 /// order): p an out pointer, i an IID (never null), w a name, P a pin, G a graph or sample
 /// stand-in, m a media type, v a value, B a big buffer, S an array of stand-ins.
-fn specs(k: u32) -> Vec<&'static str> {
+fn specs(w: Word) -> Vec<&'static str> {
     let unk = ["ip", "", ""];
-    let tail: &[&str] = match k {
-        0 => &["p", "", "", "vv", "vp", "", "p", "p", "wp", "B", "Gw", ""],
-        1..=3 => &["Pm", "Pm", "", "p", "p", "B", "p", "p", "m", "", "", "", "", "", "vvvvvv"],
-        SS => &["p", "vppppppp", "vv"],
-        FSF => &["wm", "pp"],
-        AR => &["", "", "", "", "vvvB", "pp", "", ""],
-        DW => &["i"],
-        _ => &["p", "", "", "G", "Svp", ""],
+    let tail: &[&str] = match w {
+        Word::Filter => &["p", "", "", "vv", "vp", "", "p", "p", "wp", "B", "Gw", ""],
+        Word::Pin(_) => &["Pm", "Pm", "", "p", "p", "B", "p", "p", "m", "", "", "", "", "", "vvvvvv"],
+        Word::StreamSelect => &["p", "vppppppp", "vv"],
+        Word::FileSource => &["wm", "pp"],
+        Word::AsyncReader => &["", "", "", "", "vvvB", "pp", "", ""],
+        Word::DmoWrapper => &["i"],
+        Word::MemInput => &["p", "", "", "G", "Svp", ""],
     };
     unk.iter().chain(tail).copied().collect()
 }
@@ -199,7 +199,7 @@ impl Names {
             _ => {}
         }
         for (i, &b) in self.filters.iter().enumerate() {
-            if b != 0 && v >= b && v <= b + ps() * MI && (v - b) % ps() == 0 {
+            if b != 0 && v >= b && v <= Word::MemInput.of(b) && (v - b) % ps() == 0 {
                 return format!("F{i}.{}", (v - b) / ps());
             }
         }
@@ -225,7 +225,7 @@ fn state(b: u32, n: &Names) -> String {
     let Some((line, peers)) = fwith(b, |f| {
         let pins: Vec<String> = f.pins.iter().map(|p| format!("{}{}{}{}", if p.out { "o" } else { "i" }, p.name, if p.on { "" } else { "(off)" }, if p.mt != 0 { "+mt" } else { "" })).collect();
         (
-            format!("{:?} refs={} graph={} name={:?} st={} bits={} src={:?} pins=[{}]", f.kind, f.refs, f.graph != 0, String::from_utf16_lossy(&f.name), f.state, f.bits, f.src.as_ref().map(|s| (s.len, s.sub[0])), pins.join(",")),
+            format!("{:?} refs={} graph={} name={:?} st={} bits={} src={:?} pins=[{}]", f.kind, f.refs, f.graph != 0, String::from_utf16_lossy(&f.name), f.state.code(), f.bits, f.src.as_ref().map(|s| (s.len, s.sub[0])), pins.join(",")),
             f.pins.iter().map(|p| (p.peer, p.mem)).collect::<Vec<_>>(),
         )
     }) else {
@@ -306,11 +306,12 @@ fn dshow_mpeg_objects_snapshot() {
         }
         let j = live[usize::try_from(r.below(u64::try_from(live.len()).unwrap_or(1))).unwrap_or(0)];
         let b = names.filters[j];
-        let k = u32::try_from(r.below(u64::from(MI + 1))).unwrap_or(0);
-        let this = b + ps() * k;
+        let k = u32::try_from(r.below(u64::from(Word::N))).unwrap_or(0);
+        let w = Word::ALL.into_iter().find(|w| w.index() == k).unwrap_or(Word::Filter);
+        let this = w.of(b);
         let vt = rp(this);
         let n = methods(vt);
-        let spec = specs(k);
+        let spec = specs(w);
         assert_eq!(spec.len(), usize::try_from(n).unwrap_or(0), "interface {k}");
         let m = u32::try_from(r.below(u64::from(n))).unwrap_or(0);
         let Some(f) = handler_of(rp(vt + ps() * m)) else { continue };

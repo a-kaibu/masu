@@ -38,22 +38,47 @@ use std::time::Duration;
 use waits::calls::Calls;
 
 use crate::api::{Ctx, Handler};
-use crate::dshow::com;
+use crate::dshow::{com, State};
 use crate::dshow_play::{now, Timeline, SEC};
 use crate::mem::{self, ps, put32, putp, r32, rp, w16, w32, w64, wp};
 
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_POINTER: u32 = 0x8000_4003;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_UNEXPECTED: u32 = 0x8000_ffff;
-const S_FALSE: u32 = 1;
-const VFW_E_ALREADY_CONNECTED: u32 = 0x8004_0204;
-const VFW_E_NOT_CONNECTED: u32 = 0x8004_0209;
-const VFW_E_INVALID_DIRECTION: u32 = 0x8004_0208;
-const VFW_E_TYPE_NOT_ACCEPTED: u32 = 0x8004_022a;
-const VFW_E_NO_ACCEPTABLE_TYPES: u32 = 0x8004_022b;
-const VFW_E_NOT_FOUND: u32 = 0x8004_0216;
-const VFW_E_CANNOT_CONNECT: u32 = 0x8004_0217;
+/// The HRESULTs the MPEG / AVI / ASF filters answer (besides S_OK).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Hr {
+    False,
+    NotImpl,
+    NoInterface,
+    Pointer,
+    Unexpected,
+    AlreadyConnected,
+    NotConnected,
+    InvalidDirection,
+    TypeNotAccepted,
+    NoAcceptableTypes,
+    NotFound,
+    CannotConnect,
+    WrongState,
+}
+impl Hr {
+    pub(super) const fn code(self) -> u32 {
+        match self {
+            Hr::False => 1,
+            Hr::NotImpl => 0x8000_4001,
+            Hr::NoInterface => 0x8000_4002,
+            Hr::Pointer => 0x8000_4003,
+            Hr::Unexpected => 0x8000_ffff,
+            Hr::AlreadyConnected => 0x8004_0204,
+            Hr::NotConnected => 0x8004_0209,
+            Hr::InvalidDirection => 0x8004_0208,
+            Hr::TypeNotAccepted => 0x8004_022a,
+            Hr::NoAcceptableTypes => 0x8004_022b,
+            Hr::NotFound => 0x8004_0216,
+            Hr::CannotConnect => 0x8004_0217,
+            Hr::WrongState => 0x8004_0227,
+        }
+    }
+}
+
 
 pub const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] {
     let a = d1.to_le_bytes();
@@ -114,15 +139,89 @@ const IID_IMEDIASAMPLE: [u8; 16] = iface(0x56a8_689a);
 const IID_IASYNCREADER: [u8; 16] = iface(0x56a8_68aa);
 const IID_IFILESOURCEFILTER: [u8; 16] = iface(0x56a8_68a6);
 const IID_IAMSTREAMSELECT: [u8; 16] = guid(0xc196_0960, 0x17f5, 0x11d1, [0xab, 0xe1, 0x00, 0xa0, 0xc9, 0x05, 0xf3, 0x75]);
-/// the splitter's IAMStreamSelect: word SS of its block
-const SS: u32 = 4;
-/// a source's IFileSourceFilter
-const FSF: u32 = 5;
-/// the File Source's pin's IAsyncReader
-const AR: u32 = 6;
-/// the DMO wrapper's IDMOWrapperFilter, its input pin's IMemInputPin (dmo.rs)
-const DW: u32 = 7;
-const MI: u32 = 8;
+/// One of a filter's three pins: word 1, 2 or 3 of its block (`pins.at(k)`). The first is a
+/// decoder's / renderer's input or a source's output, the second and third outputs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PinNo {
+    P1,
+    P2,
+    P3,
+}
+impl PinNo {
+    const ALL: [PinNo; 3] = [PinNo::P1, PinNo::P2, PinNo::P3];
+    /// its interface pointer in filter block `b`
+    fn of(self, b: u32) -> u32 {
+        Word::Pin(self).of(b)
+    }
+}
+/// A filter's pins by number (`pins.at(k)`).
+trait Pins {
+    fn at(&self, k: PinNo) -> &Pin;
+    fn at_mut(&mut self, k: PinNo) -> &mut Pin;
+}
+impl Pins for [Pin; 3] {
+    fn at(&self, k: PinNo) -> &Pin {
+        let [a, b, c] = self;
+        match k {
+            PinNo::P1 => a,
+            PinNo::P2 => b,
+            PinNo::P3 => c,
+        }
+    }
+    fn at_mut(&mut self, k: PinNo) -> &mut Pin {
+        let [a, b, c] = self;
+        match k {
+            PinNo::P1 => a,
+            PinNo::P2 => b,
+            PinNo::P3 => c,
+        }
+    }
+}
+
+/// The interfaces of a filter's block, one pointer-sized word each (the vtable pointer there).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Word {
+    /// IBaseFilter
+    Filter,
+    /// IPin
+    Pin(PinNo),
+    /// the splitter's IAMStreamSelect
+    StreamSelect,
+    /// a source's IFileSourceFilter
+    FileSource,
+    /// the File Source's pin's IAsyncReader
+    AsyncReader,
+    /// the DMO wrapper's IDMOWrapperFilter (dmo.rs)
+    DmoWrapper,
+    /// the DMO wrapper's input pin's IMemInputPin (dmo.rs)
+    MemInput,
+}
+impl Word {
+    const ALL: [Word; 9] = [Word::Filter, Word::Pin(PinNo::P1), Word::Pin(PinNo::P2), Word::Pin(PinNo::P3), Word::StreamSelect, Word::FileSource, Word::AsyncReader, Word::DmoWrapper, Word::MemInput];
+    /// how many words a block has
+    const N: u32 = 9;
+    const fn index(self) -> u32 {
+        match self {
+            Word::Filter => 0,
+            Word::Pin(PinNo::P1) => 1,
+            Word::Pin(PinNo::P2) => 2,
+            Word::Pin(PinNo::P3) => 3,
+            Word::StreamSelect => 4,
+            Word::FileSource => 5,
+            Word::AsyncReader => 6,
+            Word::DmoWrapper => 7,
+            Word::MemInput => 8,
+        }
+    }
+    /// its interface pointer in filter block `b`
+    fn of(self, b: u32) -> u32 {
+        b.wrapping_add(ps() * self.index())
+    }
+    /// the filter block of interface pointer `p` (this word of it)
+    fn base(self, p: u32) -> u32 {
+        p.wrapping_sub(ps() * self.index())
+    }
+}
 
 fn is(p: u32, g: &[u8; 16]) -> bool {
     p != 0 && mem::slice(p, 16) == g
@@ -182,8 +281,7 @@ struct Filter {
     /// the graph it joined (not held: the graph holds the filter)
     graph: u32,
     name: Vec<u16>,
-    /// 0 stopped, 1 paused, 2 running
-    state: u32,
+    state: State,
     pins: [Pin; 3],
     src: Option<Source>,
     /// a video decoder's output to the game's renderer: its bits per pixel (32, 24, 16 = RGB565,
@@ -197,20 +295,23 @@ fn fwith<R>(b: u32, f: impl FnOnce(&mut Filter) -> R) -> Option<R> {
     FILTERS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&b).map(f)
 }
 
-/// The filter and pin number of an interface pointer of ours (k 0: the filter).
-fn ours(p: u32) -> Option<(u32, usize)> {
+/// The filter and word of an interface pointer of ours.
+fn ours(p: u32) -> Option<(u32, Word)> {
     let g = FILTERS.lock().unwrap_or_else(|e| e.into_inner());
     let m = g.as_ref()?;
-    (0..=MI).find_map(|k| p.checked_sub(ps() * k).filter(|b| m.contains_key(b)).map(|b| (b, k as usize)))
+    Word::ALL.into_iter().find_map(|w| p.checked_sub(ps() * w.index()).filter(|b| m.contains_key(b)).map(|b| (b, w)))
 }
-fn pin_of(p: u32) -> Option<(u32, usize)> {
-    ours(p).filter(|x| (1..=3).contains(&x.1))
+fn pin_of(p: u32) -> Option<(u32, PinNo)> {
+    match ours(p)? {
+        (b, Word::Pin(k)) => Some((b, k)),
+        (_, Word::Filter | Word::StreamSelect | Word::FileSource | Word::AsyncReader | Word::DmoWrapper | Word::MemInput) => None,
+    }
 }
 fn kind(b: u32) -> Option<Kind> {
     fwith(b, |f| f.kind)
 }
-fn pin(b: u32, k: usize) -> Pin {
-    fwith(b, |f| f.pins[k - 1].clone()).unwrap_or_default()
+fn pin(b: u32, k: PinNo) -> Pin {
+    fwith(b, |f| f.pins.at(k).clone()).unwrap_or_default()
 }
 
 /// The filter of kind `k`, its IBaseFilter (or one of its interfaces `iid` asks for).
@@ -231,22 +332,25 @@ pub fn create_instance(clsid: u32, iid: u32) -> Option<u32> {
         return Some(0);
     }
     let b = new_filter(k);
-    Some(if is(iid, &IID_IFILESOURCEFILTER) { b + ps() * FSF } else { b })
+    Some(if is(iid, &IID_IFILESOURCEFILTER) { Word::FileSource.of(b) } else { b })
 }
 
 /// A new filter of kind `k` (one reference), its IBaseFilter.
 fn new_filter(k: Kind) -> u32 {
-    let b = mem::heap_alloc((MI + 1) * 8, true);
+    let b = mem::heap_alloc(Word::N * 8, true);
     let v = vtables();
-    wp(b, v.filter);
-    for i in 1..4 {
-        wp(b + ps() * i, v.pin);
+    for w in Word::ALL {
+        let vt = match w {
+            Word::Filter => v.filter,
+            Word::Pin(_) => v.pin,
+            Word::StreamSelect => v.stream_select,
+            Word::FileSource => v.file_source,
+            Word::AsyncReader => v.async_reader,
+            Word::DmoWrapper => dmo::vt().wrapper,
+            Word::MemInput => dmo::vt().mem_input,
+        };
+        wp(w.of(b), vt);
     }
-    wp(b + ps() * SS, v.stream_select);
-    wp(b + ps() * FSF, v.file_source);
-    wp(b + ps() * AR, v.async_reader);
-    wp(b + ps() * DW, dmo::vt().wrapper);
-    wp(b + ps() * MI, dmo::vt().mem_input);
     let p = |out: bool, name: &'static str, on: bool| Pin { out, name, on, ..Pin::default() };
     let pins = match k {
         Kind::Split => [p(false, "Input", true), p(true, "Video", false), p(true, "Audio", false)],
@@ -260,7 +364,7 @@ fn new_filter(k: Kind) -> u32 {
     if k == Kind::Dmo {
         dmo::created(b);
     }
-    FILTERS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Filter { kind: k, refs: 1, graph: 0, name: Vec::new(), state: 0, pins, src: None, bits: 32 });
+    FILTERS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Filter { kind: k, refs: 1, graph: 0, name: Vec::new(), state: State::Stopped, pins, src: None, bits: 32 });
     b
 }
 
@@ -311,7 +415,7 @@ fn release(c: &mut Ctx, b: u32) -> u32 {
 fn f_qi(c: &mut Ctx) -> u32 {
     let (b, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if filter_iid(iid) {
         add_ref(b);
@@ -320,21 +424,21 @@ fn f_qi(c: &mut Ctx) -> u32 {
     }
     if is(iid, &IID_IAMSTREAMSELECT) && kind(b) == Some(Kind::Split) {
         add_ref(b);
-        putp(out, b + ps() * SS);
+        putp(out, Word::StreamSelect.of(b));
         return 0;
     }
     if is(iid, &dmo::IID_IDMOWRAPPERFILTER) && kind(b) == Some(Kind::Dmo) {
         add_ref(b);
-        putp(out, b + ps() * DW);
+        putp(out, Word::DmoWrapper.of(b));
         return 0;
     }
     if is(iid, &IID_IFILESOURCEFILTER) && matches!(kind(b), Some(Kind::File | Kind::Asf)) {
         add_ref(b);
-        putp(out, b + ps() * FSF);
+        putp(out, Word::FileSource.of(b));
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn f_add_ref(c: &mut Ctx) -> u32 {
     add_ref(c.a(0))
@@ -346,7 +450,7 @@ fn f_release(c: &mut Ctx) -> u32 {
 fn f_class(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = match kind(c.a(0)) {
         Some(Kind::Split) => CLSID_MPEG1_SPLITTER,
@@ -361,13 +465,13 @@ fn f_class(c: &mut Ctx) -> u32 {
     put_guid(out, &g);
     0
 }
-fn set_state(c: &mut Ctx, s: u32) -> u32 {
+fn set_state(c: &mut Ctx, s: State) -> u32 {
     let b = c.a(0);
     let Some(k) = fwith(b, |f| {
         f.state = s;
         f.kind
     }) else {
-        return E_UNEXPECTED;
+        return Hr::Unexpected.code();
     };
     if k == Kind::Split {
         streaming(b, s);
@@ -381,43 +485,43 @@ fn set_state(c: &mut Ctx, s: u32) -> u32 {
     0
 }
 fn f_stop(c: &mut Ctx) -> u32 {
-    set_state(c, 0)
+    set_state(c, State::Stopped)
 }
 fn f_pause(c: &mut Ctx) -> u32 {
-    set_state(c, 1)
+    set_state(c, State::Paused)
 }
 fn f_run(c: &mut Ctx) -> u32 {
-    set_state(c, 2)
+    set_state(c, State::Running)
 }
 fn f_get_state(c: &mut Ctx) -> u32 {
     let out = c.a(2);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    put32(out, fwith(c.a(0), |f| f.state).unwrap_or(0));
+    put32(out, fwith(c.a(0), |f| f.state).unwrap_or(State::Stopped).code());
     0
 }
 fn ok(_: &mut Ctx) -> u32 {
     0
 }
 fn notimpl(_: &mut Ctx) -> u32 {
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 fn get_null(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), 0);
     0
 }
 /// The pins there are, in order.
 fn pins_of(b: u32) -> Vec<u32> {
-    fwith(b, |f| f.pins.iter().enumerate().filter(|(_, p)| p.on).map(|(i, _)| b + ps() * (i as u32 + 1)).collect()).unwrap_or_default()
+    fwith(b, |f| PinNo::ALL.into_iter().filter(|&k| f.pins.at(k).on).map(|k| k.of(b)).collect()).unwrap_or_default()
 }
 fn f_enum_pins(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let pins = pins_of(c.a(0));
     putp(out, enum_new(pins));
@@ -426,25 +530,25 @@ fn f_enum_pins(c: &mut Ctx) -> u32 {
 fn f_find_pin(c: &mut Ctx) -> u32 {
     let (b, id, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     let want = if id == 0 { Vec::new() } else { mem::wstr(id) };
-    let found = fwith(b, |f| f.pins.iter().position(|p| p.on && p.name.encode_utf16().eq(want.iter().copied()))).flatten();
+    let found = fwith(b, |f| PinNo::ALL.into_iter().find(|&k| f.pins.at(k).on && f.pins.at(k).name.encode_utf16().eq(want.iter().copied()))).flatten();
     match found {
-        Some(i) => {
+        Some(k) => {
             add_ref(b);
-            putp(out, b + ps() * (i as u32 + 1));
+            putp(out, k.of(b));
             0
         }
-        None => VFW_E_NOT_FOUND,
+        None => Hr::NotFound.code(),
     }
 }
 /// FILTER_INFO { WCHAR achName[128]; IFilterGraph *pGraph }
 fn f_info(c: &mut Ctx) -> u32 {
     let (b, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let (name, graph) = fwith(b, |f| (f.name.clone(), f.graph)).unwrap_or_default();
     mem::fill(out, 256 + ps(), 0);
@@ -473,7 +577,7 @@ fn f_join(c: &mut Ctx) -> u32 {
 fn p_qi(c: &mut Ctx) -> u32 {
     let (p, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IPIN) {
         if let Some((b, _)) = pin_of(p) {
@@ -482,22 +586,22 @@ fn p_qi(c: &mut Ctx) -> u32 {
         putp(out, p);
         return 0;
     }
-    if let Some((b, 1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::Dmo)) {
+    if let Some((b, PinNo::P1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::Dmo)) {
         if is(iid, &IID_IMEMINPUTPIN) {
             add_ref(b);
-            putp(out, b + ps() * MI);
+            putp(out, Word::MemInput.of(b));
             return 0;
         }
     }
-    if let Some((b, 1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::File)) {
+    if let Some((b, PinNo::P1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::File)) {
         if is(iid, &IID_IASYNCREADER) {
             add_ref(b);
-            putp(out, b + ps() * AR);
+            putp(out, Word::AsyncReader.of(b));
             return 0;
         }
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn p_add_ref(c: &mut Ctx) -> u32 {
     pin_of(c.a(0)).map_or(1, |(b, _)| add_ref(b))
@@ -671,26 +775,26 @@ fn wave_format(tag: u16, channels: u16, rate: u32, bits: u16, extra: &[u8]) -> V
 }
 
 /// The media type output pin `k` of filter `b` gives (once its input knows the stream).
-fn out_type(b: u32, k: usize) -> Option<u32> {
+fn out_type(b: u32, k: PinNo) -> Option<u32> {
     if kind(b)? == Kind::Dmo {
-        return if k == 2 { dmo::out_type(b) } else { None };
+        return if k == PinNo::P2 { dmo::out_type(b) } else { None };
     }
     let (kind, info) = (kind(b)?, info_of(b)?);
     let (w, h, r) = (info.width as u32, info.height as u32, info.rate);
     Some(match (kind, k) {
-        (Kind::Split, 2) => {
+        (Kind::Split, PinNo::P2) => {
             let mut f = video_info(w, h, 0, 0, r);
             f.extend([0u8; 12]);
             new_mt(&MEDIATYPE_VIDEO, &SUBTYPE_MPEG1_PAYLOAD, false, 0, &FORMAT_MPEG_VIDEO, &f)
         }
-        (Kind::Split, 3) => {
+        (Kind::Split, PinNo::P3) => {
             // MPEG1WAVEFORMAT: fwHeadLayer ACM_MPEG_LAYER2, the rest unknown
             let mut extra = [0u8; 22];
             extra[0] = 2;
             new_mt(&MEDIATYPE_AUDIO, &SUBTYPE_MPEG1_AUDIO_PAYLOAD, false, 0, &FORMAT_WAVE_FORMAT_EX, &wave_format(0x50, 2, info.audio_rate, 0, &extra))
         }
-        (Kind::VDec, 2) | (Kind::Vnv, 1) => rgb_type(w, h, fwith(b, |f| f.bits).unwrap_or(32), r),
-        (Kind::ADec, 2) => new_mt(&MEDIATYPE_AUDIO, &SUBTYPE_PCM, true, 4, &FORMAT_WAVE_FORMAT_EX, &wave_format(1, 2, info.audio_rate, 16, &[])),
+        (Kind::VDec, PinNo::P2) | (Kind::Vnv, PinNo::P1) => rgb_type(w, h, fwith(b, |f| f.bits).unwrap_or(32), r),
+        (Kind::ADec, PinNo::P2) => new_mt(&MEDIATYPE_AUDIO, &SUBTYPE_PCM, true, 4, &FORMAT_WAVE_FORMAT_EX, &wave_format(1, 2, info.audio_rate, 16, &[])),
         _ => return None,
     })
 }
@@ -708,7 +812,7 @@ fn splitter_of(b: u32) -> Option<u32> {
     match kind(b)? {
         Kind::Split => Some(b),
         _ => {
-            let up = pin(b, 1).peer;
+            let up = pin(b, PinNo::P1).peer;
             let (ub, _) = pin_of(up)?;
             if ub == b { None } else { splitter_of(ub) }
         }
@@ -717,28 +821,28 @@ fn splitter_of(b: u32) -> Option<u32> {
 
 /// Our output pin `out` to our input pin `inp`: the splitter's video to a video decoder, its
 /// sound to a sound decoder, a sound decoder to the sound renderer.
-fn connect_ours(out: (u32, usize), inp: (u32, usize)) -> u32 {
+fn connect_ours(out: (u32, PinNo), inp: (u32, PinNo)) -> u32 {
     let ok = match (kind(out.0), out.1, kind(inp.0), inp.1) {
-        (Some(Kind::Split), 2, Some(Kind::VDec), 1) | (Some(Kind::Split), 3, Some(Kind::ADec), 1) | (Some(Kind::ADec), 2, Some(Kind::Sound), 1) => true,
+        (Some(Kind::Split), PinNo::P2, Some(Kind::VDec), PinNo::P1) | (Some(Kind::Split), PinNo::P3, Some(Kind::ADec), PinNo::P1) | (Some(Kind::ADec), PinNo::P2, Some(Kind::Sound), PinNo::P1) => true,
         _ => false,
     };
     if !ok {
-        return VFW_E_NO_ACCEPTABLE_TYPES;
+        return Hr::NoAcceptableTypes.code();
     }
     if pin(inp.0, inp.1).peer != 0 {
-        return VFW_E_ALREADY_CONNECTED;
+        return Hr::AlreadyConnected.code();
     }
-    let Some(mt) = out_type(out.0, out.1) else { return VFW_E_NO_ACCEPTABLE_TYPES };
-    let (op, ip) = (out.0 + ps() * out.1 as u32, inp.0 + ps() * inp.1 as u32);
+    let Some(mt) = out_type(out.0, out.1) else { return Hr::NoAcceptableTypes.code() };
+    let (op, ip) = (out.1.of(out.0), inp.1.of(inp.0));
     fwith(out.0, |f| {
-        f.pins[out.1 - 1].peer = ip;
-        f.pins[out.1 - 1].mt = mt;
+        f.pins.at_mut(out.1).peer = ip;
+        f.pins.at_mut(out.1).mt = mt;
     });
     // (each pin its own copy: each frees its own when it goes)
     let mt_in = dup_mt(mt);
     fwith(inp.0, |f| {
-        f.pins[inp.1 - 1].peer = op;
-        f.pins[inp.1 - 1].mt = mt_in;
+        f.pins.at_mut(inp.1).peer = op;
+        f.pins.at_mut(inp.1).mt = mt_in;
     });
     // (each holds the other)
     add_ref(out.0);
@@ -749,21 +853,21 @@ fn connect_ours(out: (u32, usize), inp: (u32, usize)) -> u32 {
 /// IPin::Connect(receive pin, media type): only outputs connect.
 fn p_connect(c: &mut Ctx) -> u32 {
     let (p, recv) = (c.a(0), c.a(1));
-    let Some((b, k)) = pin_of(p) else { return E_UNEXPECTED };
+    let Some((b, k)) = pin_of(p) else { return Hr::Unexpected.code() };
     if recv == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let me = pin(b, k);
     if !me.out {
-        return VFW_E_INVALID_DIRECTION;
+        return Hr::InvalidDirection.code();
     }
     if me.peer != 0 {
-        return VFW_E_ALREADY_CONNECTED;
+        return Hr::AlreadyConnected.code();
     }
     match kind(b) {
         Some(Kind::File) => return source_connect(c, b, recv, c.a(2)),
         // (the WM ASF Reader's streams are played through RenderFile, not here)
-        Some(Kind::Asf) => return VFW_E_NO_ACCEPTABLE_TYPES,
+        Some(Kind::Asf) => return Hr::NoAcceptableTypes.code(),
         _ => {}
     }
     if let Some(inp) = pin_of(recv) {
@@ -771,21 +875,21 @@ fn p_connect(c: &mut Ctx) -> u32 {
     }
     // a guest input pin: the video decoder's pictures to a game's renderer
     if !matches!(kind(b), Some(Kind::VDec | Kind::Vnv | Kind::Dmo)) {
-        return VFW_E_NO_ACCEPTABLE_TYPES;
+        return Hr::NoAcceptableTypes.code();
     }
     let dir = mem::heap_alloc(4, true);
     let r = com(c, recv, 9, &[dir]);
     let d = r32(dir);
     mem::heap_free(dir);
     if r != 0 || d != 0 {
-        return VFW_E_INVALID_DIRECTION;
+        return Hr::InvalidDirection.code();
     }
     // (the first of its types the renderer takes)
-    let mut r = VFW_E_NO_ACCEPTABLE_TYPES;
+    let mut r = Hr::NoAcceptableTypes.code();
     let mut mt = 0;
     for bits in RGB_BITS {
         fwith(b, |f| f.bits = bits);
-        let Some(t) = out_type(b, k) else { return VFW_E_NOT_CONNECTED };
+        let Some(t) = out_type(b, k) else { return Hr::NotConnected.code() };
         r = com(c, recv, 4, &[p, t]);
         if r == 0 {
             mt = t;
@@ -796,7 +900,7 @@ fn p_connect(c: &mut Ctx) -> u32 {
     }
     if r != 0 {
         fwith(b, |f| f.bits = 32);
-        return if r == VFW_E_TYPE_NOT_ACCEPTED { VFW_E_NO_ACCEPTABLE_TYPES } else { r };
+        return if r == Hr::TypeNotAccepted.code() { Hr::NoAcceptableTypes.code() } else { r };
     }
     let out = mem::heap_alloc(8 + 16, true);
     put_guid(out + 8, &IID_IMEMINPUTPIN);
@@ -806,13 +910,13 @@ fn p_connect(c: &mut Ctx) -> u32 {
     if r != 0 || mem_pin == 0 {
         com(c, recv, 5, &[]);
         free_mt(mt);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     com(c, recv, 1, &[]);
     fwith(b, |f| {
-        f.pins[k - 1].peer = recv;
-        f.pins[k - 1].mt = mt;
-        f.pins[k - 1].mem = mem_pin;
+        f.pins.at_mut(k).peer = recv;
+        f.pins.at_mut(k).mt = mt;
+        f.pins.at_mut(k).mem = mem_pin;
     });
     // our allocator (not read-only)
     let a = allocator(b);
@@ -824,16 +928,16 @@ fn p_connect(c: &mut Ctx) -> u32 {
 /// (its IAsyncReader), or one of ours.
 fn p_receive_connection(c: &mut Ctx) -> u32 {
     let (p, from, mt) = (c.a(0), c.a(1), c.a(2));
-    let Some((b, k)) = pin_of(p) else { return E_UNEXPECTED };
+    let Some((b, k)) = pin_of(p) else { return Hr::Unexpected.code() };
     if from == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let me = pin(b, k);
     if me.out {
-        return VFW_E_INVALID_DIRECTION;
+        return Hr::InvalidDirection.code();
     }
     if me.peer != 0 {
-        return VFW_E_ALREADY_CONNECTED;
+        return Hr::AlreadyConnected.code();
     }
     // (the File Source's pin is read as a game's source is: through its IAsyncReader)
     if let Some(o) = pin_of(from).filter(|o| kind(o.0) != Some(Kind::File)) {
@@ -843,10 +947,10 @@ fn p_receive_connection(c: &mut Ctx) -> u32 {
         return dmo::receive_connection(c, b, from, mt);
     }
     if kind(b) != Some(Kind::Split) {
-        return VFW_E_TYPE_NOT_ACCEPTED;
+        return Hr::TypeNotAccepted.code();
     }
     if mt != 0 && !is(mt, &MEDIATYPE_STREAM) {
-        return VFW_E_TYPE_NOT_ACCEPTED;
+        return Hr::TypeNotAccepted.code();
     }
     let out = mem::heap_alloc(8, true);
     let iid = mem::heap_alloc(16, false);
@@ -856,11 +960,11 @@ fn p_receive_connection(c: &mut Ctx) -> u32 {
     mem::heap_free(out);
     mem::heap_free(iid);
     if r != 0 || reader == 0 {
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     let Some((len, info)) = probe(c, reader) else {
         com(c, reader, 2, &[]);
-        return VFW_E_TYPE_NOT_ACCEPTED;
+        return Hr::TypeNotAccepted.code();
     };
     com(c, from, 1, &[]);
     let copy = if mt != 0 {
@@ -871,10 +975,10 @@ fn p_receive_connection(c: &mut Ctx) -> u32 {
         0
     };
     fwith(b, |f| {
-        f.pins[0].peer = from;
-        f.pins[0].mt = copy;
-        f.pins[1].on = info.width > 0;
-        f.pins[2].on = info.audio_rate > 0;
+        f.pins.at_mut(PinNo::P1).peer = from;
+        f.pins.at_mut(PinNo::P1).mt = copy;
+        f.pins.at_mut(PinNo::P2).on = info.width > 0;
+        f.pins.at_mut(PinNo::P3).on = info.audio_rate > 0;
     });
     let mut tl = Timeline::new(info.duration_100ns());
     tl.stop = tl.duration;
@@ -884,7 +988,7 @@ fn p_receive_connection(c: &mut Ctx) -> u32 {
     let (thread, gen, calls) = m.get(&b).map_or((false, 0, None), |p| (p.thread, p.gen + 1, Some(p.calls.clone())));
     let calls = calls.unwrap_or_default();
     // (connected again while it runs: the calls go on)
-    if fwith(b, |f| f.state).unwrap_or(0) != 0 {
+    if fwith(b, |f| f.state).is_some_and(|s| s != State::Stopped) {
         calls.run();
     }
     m.insert(b, Pipe { reader, len, info, tl, thread, dead: false, ended: false, gen, calls });
@@ -926,20 +1030,20 @@ fn read_at(c: &mut Ctx, reader: u32, pos: u64, n: u32) -> Option<Vec<u8>> {
 }
 
 fn p_disconnect(c: &mut Ctx) -> u32 {
-    let Some((b, k)) = pin_of(c.a(0)) else { return E_UNEXPECTED };
+    let Some((b, k)) = pin_of(c.a(0)) else { return Hr::Unexpected.code() };
     let me = pin(b, k);
     if me.peer == 0 {
-        return S_FALSE;
+        return Hr::False.code();
     }
     let mt = fwith(b, |f| {
-        let p = &mut f.pins[k - 1];
+        let p = f.pins.at_mut(k);
         p.peer = 0;
         p.mem = 0;
         std::mem::take(&mut p.mt)
     });
     free_mt(mt.unwrap_or(0));
     // (the splitter's source gone: no more reads from it)
-    let reader = if kind(b) == Some(Kind::Split) && k == 1 { pwith(b, |p| std::mem::take(&mut p.reader)).unwrap_or(0) } else { 0 };
+    let reader = if kind(b) == Some(Kind::Split) && k == PinNo::P1 { pwith(b, |p| std::mem::take(&mut p.reader)).unwrap_or(0) } else { 0 };
     if reader != 0 {
         // (a read in flight comes back first)
         stop_calls(b, false);
@@ -949,8 +1053,8 @@ fn p_disconnect(c: &mut Ctx) -> u32 {
         // (one of ours lets this one go too)
         Some((pb, pk)) => {
             let mt = fwith(pb, |f| {
-                f.pins[pk - 1].peer = 0;
-                std::mem::take(&mut f.pins[pk - 1].mt)
+                f.pins.at_mut(pk).peer = 0;
+                std::mem::take(&mut f.pins.at_mut(pk).mt)
             });
             free_mt(mt.unwrap_or(0));
             release(c, pb);
@@ -969,12 +1073,12 @@ fn p_disconnect(c: &mut Ctx) -> u32 {
 fn p_connected_to(c: &mut Ctx) -> u32 {
     let (p, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let peer = pin_of(p).map_or(0, |(b, k)| pin(b, k).peer);
     putp(out, peer);
     if peer == 0 {
-        return VFW_E_NOT_CONNECTED;
+        return Hr::NotConnected.code();
     }
     match pin_of(peer) {
         Some((pb, _)) => {
@@ -989,12 +1093,12 @@ fn p_connected_to(c: &mut Ctx) -> u32 {
 fn p_connection_type(c: &mut Ctx) -> u32 {
     let (p, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let me = pin_of(p).map(|(b, k)| pin(b, k)).unwrap_or_default();
     if me.peer == 0 || me.mt == 0 {
         mem::fill(out, mt_size(), 0);
-        return VFW_E_NOT_CONNECTED;
+        return Hr::NotConnected.code();
     }
     copy_mt(me.mt, out);
     0
@@ -1003,9 +1107,9 @@ fn p_connection_type(c: &mut Ctx) -> u32 {
 fn p_info(c: &mut Ctx) -> u32 {
     let (p, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some((b, k)) = pin_of(p) else { return E_UNEXPECTED };
+    let Some((b, k)) = pin_of(p) else { return Hr::Unexpected.code() };
     let me = pin(b, k);
     add_ref(b);
     mem::fill(out, ps() + 4 + 256, 0);
@@ -1019,7 +1123,7 @@ fn p_info(c: &mut Ctx) -> u32 {
 fn p_direction(c: &mut Ctx) -> u32 {
     let (p, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(out, pin_of(p).is_some_and(|(b, k)| pin(b, k).out) as u32);
     0
@@ -1027,7 +1131,7 @@ fn p_direction(c: &mut Ctx) -> u32 {
 fn p_id(c: &mut Ctx) -> u32 {
     let (p, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let name = pin_of(p).map_or("", |(b, k)| pin(b, k).name);
     let w: Vec<u16> = name.encode_utf16().chain([0]).collect();
@@ -1042,10 +1146,10 @@ fn p_id(c: &mut Ctx) -> u32 {
 fn p_accept(c: &mut Ctx) -> u32 {
     let (p, mt) = (c.a(0), c.a(1));
     if mt == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let me = pin_of(p).map(|(b, k)| pin(b, k)).unwrap_or_default();
-    if me.mt != 0 && mem::slice(mt, 32) == mem::slice(me.mt, 32) { 0 } else { S_FALSE }
+    if me.mt != 0 && mem::slice(mt, 32) == mem::slice(me.mt, 32) { 0 } else { Hr::False.code() }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1136,11 +1240,11 @@ pub fn asf_pin_names(streams: &[bool]) -> Vec<&'static str> {
 /// IFileSourceFilter::Load(name, mt) of source `b`: its file opened, its pins there.
 fn source_load(b: u32, name: u32, mt: u32) -> u32 {
     if name == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(k) = kind(b) else { return E_UNEXPECTED };
+    let Some(k) = kind(b) else { return Hr::Unexpected.code() };
     if fwith(b, |f| f.src.is_some()).unwrap_or(false) {
-        return E_UNEXPECTED;
+        return Hr::Unexpected.code();
     }
     let wname = mem::wstr(name);
     let w = String::from_utf16_lossy(&wname);
@@ -1169,8 +1273,8 @@ fn source_load(b: u32, name: u32, mt: u32) -> u32 {
             // (VFW_E_INVALID_FILE_FORMAT: no ASF file)
             let Some(st) = asf_streams(&head) else { return 0x8004_022f };
             let mut pins: [Pin; 3] = Default::default();
-            for (i, n) in asf_pin_names(&st).into_iter().enumerate() {
-                pins[i] = p(n);
+            for (k, n) in PinNo::ALL.into_iter().zip(asf_pin_names(&st)) {
+                *pins.at_mut(k) = p(n);
             }
             (pins, SUBTYPE_ASF)
         }
@@ -1184,13 +1288,13 @@ fn source_load(b: u32, name: u32, mt: u32) -> u32 {
 }
 
 fn fsf_qi(c: &mut Ctx) -> u32 {
-    let (b, iid, out) = (c.a(0) - ps() * FSF, c.a(1), c.a(2));
+    let (b, iid, out) = (Word::FileSource.base(c.a(0)), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IFILESOURCEFILTER) {
         add_ref(b);
-        putp(out, b + ps() * FSF);
+        putp(out, Word::FileSource.of(b));
         return 0;
     }
     if filter_iid(iid) {
@@ -1199,23 +1303,23 @@ fn fsf_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn fsf_add_ref(c: &mut Ctx) -> u32 {
-    add_ref(c.a(0) - ps() * FSF)
+    add_ref(Word::FileSource.base(c.a(0)))
 }
 fn fsf_release(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * FSF;
+    let b = Word::FileSource.base(c.a(0));
     release(c, b)
 }
 fn fsf_load(c: &mut Ctx) -> u32 {
-    source_load(c.a(0) - ps() * FSF, c.a(1), c.a(2))
+    source_load(Word::FileSource.base(c.a(0)), c.a(1), c.a(2))
 }
 /// GetCurFile(name, mt): a CoTaskMemAlloc copy of the name (NULL before Load) and the type
 fn fsf_cur_file(c: &mut Ctx) -> u32 {
-    let (b, out, mt) = (c.a(0) - ps() * FSF, c.a(1), c.a(2));
+    let (b, out, mt) = (Word::FileSource.base(c.a(0)), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let Some((name, sub)) = fwith(b, |f| f.src.as_ref().map(|s| (s.name.clone(), s.sub))).flatten() else {
         putp(out, 0);
@@ -1242,48 +1346,48 @@ fn fsf_cur_file(c: &mut Ctx) -> u32 {
 /// The File Source's pin to input pin `recv` (IPin::Connect): its type (MEDIATYPE_Stream, the
 /// file's subtype, fixed 1-byte samples, no format) offered through ReceiveConnection.
 fn source_connect(c: &mut Ctx, b: u32, recv: u32, want: u32) -> u32 {
-    let Some(sub) = fwith(b, |f| f.src.as_ref().map(|s| s.sub)).flatten() else { return VFW_E_NOT_CONNECTED };
+    let Some(sub) = fwith(b, |f| f.src.as_ref().map(|s| s.sub)).flatten() else { return Hr::NotConnected.code() };
     if want != 0 && !is(want, &MEDIATYPE_STREAM) && mem::slice(want, 16) != GUID_NULL {
-        return VFW_E_NO_ACCEPTABLE_TYPES;
+        return Hr::NoAcceptableTypes.code();
     }
     let mt = new_mt(&MEDIATYPE_STREAM, &sub, true, 1, &GUID_NULL, &[]);
-    let p = b + ps();
+    let p = PinNo::P1.of(b);
     let r = com(c, recv, 4, &[p, mt]);
     if r != 0 {
         free_mt(mt);
-        return if r == VFW_E_TYPE_NOT_ACCEPTED || r == E_NOINTERFACE { VFW_E_NO_ACCEPTABLE_TYPES } else { r };
+        return if r == Hr::TypeNotAccepted.code() || r == Hr::NoInterface.code() { Hr::NoAcceptableTypes.code() } else { r };
     }
     com(c, recv, 1, &[]);
     fwith(b, |f| {
-        f.pins[0].peer = recv;
-        f.pins[0].mt = mt;
+        f.pins.at_mut(PinNo::P1).peer = recv;
+        f.pins.at_mut(PinNo::P1).mt = mt;
     });
     0
 }
 
 fn ar_qi(c: &mut Ctx) -> u32 {
-    let (b, iid, out) = (c.a(0) - ps() * AR, c.a(1), c.a(2));
+    let (b, iid, out) = (Word::AsyncReader.base(c.a(0)), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IASYNCREADER) {
         add_ref(b);
-        putp(out, b + ps() * AR);
+        putp(out, Word::AsyncReader.of(b));
         return 0;
     }
     if is(iid, &IID_IPIN) {
         add_ref(b);
-        putp(out, b + ps());
+        putp(out, PinNo::P1.of(b));
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn ar_add_ref(c: &mut Ctx) -> u32 {
-    add_ref(c.a(0) - ps() * AR)
+    add_ref(Word::AsyncReader.base(c.a(0)))
 }
 fn ar_release(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * AR;
+    let b = Word::AsyncReader.base(c.a(0));
     release(c, b)
 }
 /// The bytes [pos, pos + n) of a file `len` long that a read gets: (where, how many). S_FALSE
@@ -1296,33 +1400,33 @@ pub fn read_span(pos: u64, n: u32, len: u64) -> (u64, u32) {
 }
 /// SyncRead(LONGLONG pos, LONG n, BYTE *buf)
 fn ar_sync_read(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * AR;
+    let b = Word::AsyncReader.base(c.a(0));
     let (pos, n, buf) = if mem::x64() { (c.a64(1), c.a(2), c.a(3)) } else { (c.a(1) as u64 | (c.a(2) as u64) << 32, c.a(3), c.a(4)) };
     if buf == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // (the file read with no lock of ours held: a slow read held up every filter call of every
     // thread behind FILTERS; seek and read are one step under the file's own lock)
-    let Some((file, len)) = fwith(b, |f| f.src.as_ref().map(|s| (s.file.clone(), s.len))).flatten() else { return E_UNEXPECTED };
+    let Some((file, len)) = fwith(b, |f| f.src.as_ref().map(|s| (s.file.clone(), s.len))).flatten() else { return Hr::Unexpected.code() };
     let (at, k) = read_span(pos, n, len);
-    let Some(dst) = mem::guest_mut(buf, k) else { return E_POINTER };
+    let Some(dst) = mem::guest_mut(buf, k) else { return Hr::Pointer.code() };
     let got = match file.read_at(Some(std::io::SeekFrom::Start(at)), false, dst) {
         Ok(g) => Some(g as u32),
         Err(()) => Some(0),
     };
     match got {
-        None => E_UNEXPECTED,
+        None => Hr::Unexpected.code(),
         Some(k) if k == n => 0,
-        Some(_) => S_FALSE,
+        Some(_) => Hr::False.code(),
     }
 }
 /// Length(LONGLONG *total, LONGLONG *available): the file's size, all of it there
 fn ar_length(c: &mut Ctx) -> u32 {
-    let (b, total, avail) = (c.a(0) - ps() * AR, c.a(1), c.a(2));
+    let (b, total, avail) = (Word::AsyncReader.base(c.a(0)), c.a(1), c.a(2));
     if total == 0 || avail == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(len) = fwith(b, |f| f.src.as_ref().map(|s| s.len)).flatten() else { return E_UNEXPECTED };
+    let Some(len) = fwith(b, |f| f.src.as_ref().map(|s| s.len)).flatten() else { return Hr::Unexpected.code() };
     mem::w64(total, len);
     mem::w64(avail, len);
     0
@@ -1355,17 +1459,17 @@ pub fn add_source(name: u32) -> Result<u32, u32> {
 /// IFilterGraph), as Windows' intelligent connect does; the sound stays unconnected, as
 /// Connect renders only the way to `inp`. None: `out` is no such pin.
 pub fn connect_through(c: &mut Ctx, graph: u32, out: u32, inp: u32) -> Option<u32> {
-    let (b, 1) = pin_of(out)? else { return None };
+    let (b, PinNo::P1) = pin_of(out)? else { return None };
     if kind(b) != Some(Kind::File) || pin_of(inp).is_some() {
         return None;
     }
     let sub = fwith(b, |f| f.src.as_ref().map(|s| s.sub)).flatten()?;
     // (the game's pin takes the stream itself)
-    if pin(b, 1).peer == 0 && source_connect(c, b, inp, 0) == 0 {
+    if pin(b, PinNo::P1).peer == 0 && source_connect(c, b, inp, 0) == 0 {
         return Some(0);
     }
-    if sub != SUBTYPE_MPEG1_SYSTEM || pin(b, 1).peer != 0 {
-        return Some(VFW_E_CANNOT_CONNECT);
+    if sub != SUBTYPE_MPEG1_SYSTEM || pin(b, PinNo::P1).peer != 0 {
+        return Some(Hr::CannotConnect.code());
     }
     let name = |s: &str| {
         let w: Vec<u16> = s.encode_utf16().chain([0]).collect();
@@ -1384,11 +1488,11 @@ pub fn connect_through(c: &mut Ctx, graph: u32, out: u32, inp: u32) -> Option<u3
         r == 0
     };
     let split = new_filter(Kind::Split);
-    let mut ok = added(c, split, "MPEG-I Stream Splitter") && com(c, out, 3, &[split + ps(), 0]) == 0 && pin(split, 2).on;
+    let mut ok = added(c, split, "MPEG-I Stream Splitter") && com(c, out, 3, &[PinNo::P1.of(split), 0]) == 0 && pin(split, PinNo::P2).on;
     let mut vdec = 0;
     if ok {
         vdec = new_filter(Kind::VDec);
-        ok = added(c, vdec, "MPEG Video Decoder") && connect_ours((split, 2), (vdec, 1)) == 0 && com(c, vdec + 2 * ps(), 3, &[inp, 0]) == 0;
+        ok = added(c, vdec, "MPEG Video Decoder") && connect_ours((split, PinNo::P2), (vdec, PinNo::P1)) == 0 && com(c, PinNo::P2.of(vdec), 3, &[inp, 0]) == 0;
     }
     if ok {
         return Some(0);
@@ -1398,18 +1502,18 @@ pub fn connect_through(c: &mut Ctx, graph: u32, out: u32, inp: u32) -> Option<u3
         if f == 0 || kind(f).is_none() {
             continue;
         }
-        for k in 1..=3u32 {
-            let p = pin(f, k as usize);
+        for k in PinNo::ALL {
+            let p = pin(f, k);
             if p.peer != 0 {
                 if pin_of(p.peer).is_some() {
                     com(c, p.peer, 5, &[]);
                 }
-                com(c, f + ps() * k, 5, &[]);
+                com(c, k.of(f), 5, &[]);
             }
         }
         com(c, graph, 4, &[f]);
     }
-    Some(VFW_E_CANNOT_CONNECT)
+    Some(Hr::CannotConnect.code())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1445,17 +1549,17 @@ pub fn is_filter(f: u32) -> bool {
 }
 /// The game's input pin a Vnv filter's output is connected to (0: none).
 pub fn vnv_peer(b: u32) -> u32 {
-    if vwith(b, |_| ()).is_none() { 0 } else { pin(b, 1).peer }
+    if vwith(b, |_| ()).is_none() { 0 } else { pin(b, PinNo::P1).peer }
 }
 
-fn vnv_state(b: u32, s: u32) {
+fn vnv_state(b: u32, s: State) {
     let Some((calls, start)) = vwith(b, |v| {
-        let start = s != 0 && !std::mem::replace(&mut v.thread, true);
+        let start = s != State::Stopped && !std::mem::replace(&mut v.thread, true);
         (v.calls.clone(), start)
     }) else {
         return;
     };
-    if s == 0 {
+    if s == State::Stopped {
         // (a stop: the renderer's Receive in flight comes back before the game goes on)
         WAKE.notify_all();
         calls.stop(STOP_WAIT, &crate::k32::Pause);
@@ -1505,8 +1609,8 @@ fn vnv_thread(c: &mut Ctx) -> u32 {
             break;
         }
         let epoch = calls.epoch();
-        let out = pin(b, 1);
-        if fwith(b, |f| f.state).unwrap_or(0) == 0 || out.mem == 0 {
+        let out = pin(b, PinNo::P1);
+        if fwith(b, |f| f.state).is_none_or(|s| s == State::Stopped) || out.mem == 0 {
             // (stopped: from the start again; a run or a release wakes it, so it need not look 50
             // times a second for a graph the game may never run again)
             last = None;
@@ -1563,14 +1667,14 @@ fn vnv_thread(c: &mut Ctx) -> u32 {
 // the sound in group 1, each enabled
 
 /// The splitter's output pins there are: (pin number, group)
-fn streams(b: u32) -> Vec<(usize, u32)> {
-    [(2, 0), (3, 1)].into_iter().filter(|&(k, _)| fwith(b, |f| f.pins[k - 1].on).unwrap_or(false)).collect()
+fn streams(b: u32) -> Vec<(PinNo, u32)> {
+    [(PinNo::P2, 0), (PinNo::P3, 1)].into_iter().filter(|&(k, _)| fwith(b, |f| f.pins.at(k).on).unwrap_or(false)).collect()
 }
 fn ss_qi(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * SS;
+    let b = Word::StreamSelect.base(c.a(0));
     let (iid, out) = (c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IAMSTREAMSELECT) {
         add_ref(b);
@@ -1583,26 +1687,26 @@ fn ss_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn ss_add_ref(c: &mut Ctx) -> u32 {
-    add_ref(c.a(0) - ps() * SS)
+    add_ref(Word::StreamSelect.base(c.a(0)))
 }
 fn ss_release(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * SS;
+    let b = Word::StreamSelect.base(c.a(0));
     release(c, b)
 }
 fn ss_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    put32(c.a(1), streams(c.a(0) - ps() * SS).len() as u32);
+    put32(c.a(1), streams(Word::StreamSelect.base(c.a(0))).len() as u32);
     0
 }
 /// Info(index, &mt, &flags, &lcid, &group, &name, &object, &unk)
 fn ss_info(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * SS;
-    let Some(&(k, group)) = streams(b).get(c.a(1) as usize) else { return S_FALSE };
+    let b = Word::StreamSelect.base(c.a(0));
+    let Some(&(k, group)) = streams(b).get(c.a(1) as usize) else { return Hr::False.code() };
     let (mt, flags, lcid, grp, name, obj, unk) = (c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(8));
     if mt != 0 {
         let t = out_type(b, k).unwrap_or(0);
@@ -1631,7 +1735,7 @@ fn ss_info(c: &mut Ctx) -> u32 {
 }
 /// Enable(index, flags): the streams there are stay enabled
 fn ss_enable(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps() * SS;
+    let b = Word::StreamSelect.base(c.a(0));
     if (c.a(1) as usize) < streams(b).len() { 0 } else { 0x8007_0057 }
 }
 
@@ -1652,7 +1756,7 @@ fn enum_new(pins: Vec<u32>) -> u32 {
 fn e_qi(c: &mut Ctx) -> u32 {
     let (e, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IENUMPINS) {
         ewith(e, |x| x.2 += 1);
@@ -1660,7 +1764,7 @@ fn e_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn e_add_ref(c: &mut Ctx) -> u32 {
     ewith(c.a(0), |x| {
@@ -1686,7 +1790,7 @@ fn e_release(c: &mut Ctx) -> u32 {
 fn e_next(c: &mut Ctx) -> u32 {
     let (e, n, out, got) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let take = ewith(e, |x| {
         let t: Vec<u32> = x.0.iter().skip(x.1).take(n as usize).copied().collect();
@@ -1703,16 +1807,16 @@ fn e_next(c: &mut Ctx) -> u32 {
     if got != 0 {
         put32(got, take.len() as u32);
     }
-    if take.len() == n as usize { 0 } else { S_FALSE }
+    if take.len() == n as usize { 0 } else { Hr::False.code() }
 }
 fn e_skip(c: &mut Ctx) -> u32 {
     let n = c.a(1) as usize;
     ewith(c.a(0), |x| {
         let left = x.0.len() - x.1.min(x.0.len());
         x.1 = (x.1 + n).min(x.0.len());
-        if left >= n { 0 } else { S_FALSE }
+        if left >= n { 0 } else { Hr::False.code() }
     })
-    .unwrap_or(S_FALSE)
+    .unwrap_or(Hr::False.code())
 }
 fn e_reset(c: &mut Ctx) -> u32 {
     ewith(c.a(0), |x| x.1 = 0);
@@ -1721,9 +1825,9 @@ fn e_reset(c: &mut Ctx) -> u32 {
 fn e_clone(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some((pins, at, _)) = ewith(c.a(0), |x| x.clone()) else { return E_UNEXPECTED };
+    let Some((pins, at, _)) = ewith(c.a(0), |x| x.clone()) else { return Hr::Unexpected.code() };
     let e = enum_new(pins);
     ewith(e, |x| x.1 = at);
     putp(out, e);
@@ -1845,14 +1949,14 @@ fn drop_pool(dec: u32) {
 fn a_qi(c: &mut Ctx) -> u32 {
     let (a, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IMEMALLOCATOR) {
         putp(out, a);
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn one(_: &mut Ctx) -> u32 {
     1
@@ -1861,7 +1965,7 @@ fn one(_: &mut Ctx) -> u32 {
 fn a_set_props(c: &mut Ctx) -> u32 {
     let (req, act) = (c.a(1), c.a(2));
     if req == 0 || act == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     for i in 0..4 {
         w32(act + 4 * i, r32(req + 4 * i));
@@ -1871,7 +1975,7 @@ fn a_set_props(c: &mut Ctx) -> u32 {
 fn a_get_props(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let size = ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).values().find(|a| a.0 == c.a(0)).and_then(|a| a.1.first().copied()).and_then(|s| swith(s, |x| x.size)).unwrap_or(0);
     for (i, v) in [1, size, 1, 0].into_iter().enumerate() {
@@ -1883,14 +1987,14 @@ fn a_get_props(c: &mut Ctx) -> u32 {
 fn a_get_buffer(c: &mut Ctx) -> u32 {
     let (a, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let dec = ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).iter().find(|(_, x)| x.0 == a).map(|(&d, _)| d);
-    let Some(dec) = dec else { return E_UNEXPECTED };
+    let Some(dec) = dec else { return Hr::Unexpected.code() };
     let size = dmo::size(dec).or_else(|| info_of(dec).map(|i| (i.width * i.height * 4) as u32)).unwrap_or(4);
     let s = free_sample(dec, size);
     if s == 0 {
-        return E_UNEXPECTED;
+        return Hr::Unexpected.code();
     }
     putp(out, s);
     0
@@ -1899,7 +2003,7 @@ fn a_get_buffer(c: &mut Ctx) -> u32 {
 fn s_qi(c: &mut Ctx) -> u32 {
     let (s, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IMEDIASAMPLE) {
         swith(s, |x| x.refs += 1);
@@ -1907,7 +2011,7 @@ fn s_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn s_add_ref(c: &mut Ctx) -> u32 {
     swith(c.a(0), |x| {
@@ -1921,7 +2025,7 @@ fn s_release(c: &mut Ctx) -> u32 {
 }
 fn s_pointer(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), swith(c.a(0), |x| x.buf).unwrap_or(0));
     0
@@ -1952,7 +2056,7 @@ fn s_set_time(c: &mut Ctx) -> u32 {
     0
 }
 fn s_is_sync(c: &mut Ctx) -> u32 {
-    if swith(c.a(0), |x| x.sync) == Some(true) { 0 } else { S_FALSE }
+    if swith(c.a(0), |x| x.sync) == Some(true) { 0 } else { Hr::False.code() }
 }
 fn s_set_sync(c: &mut Ctx) -> u32 {
     let v = c.a(1) != 0;
@@ -1960,7 +2064,7 @@ fn s_set_sync(c: &mut Ctx) -> u32 {
     0
 }
 fn s_false(_: &mut Ctx) -> u32 {
-    S_FALSE
+    Hr::False.code()
 }
 fn s_len(c: &mut Ctx) -> u32 {
     swith(c.a(0), |x| x.len).unwrap_or(0)
@@ -1974,18 +2078,18 @@ fn s_set_len(c: &mut Ctx) -> u32 {
         x.len = n;
         0
     })
-    .unwrap_or(E_UNEXPECTED)
+    .unwrap_or(Hr::Unexpected.code())
 }
 /// GetMediaType: no change (S_FALSE, *NULL)
 fn s_media_type(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), 0);
-    S_FALSE
+    Hr::False.code()
 }
 fn s_is_disc(c: &mut Ctx) -> u32 {
-    if swith(c.a(0), |x| x.disc) == Some(true) { 0 } else { S_FALSE }
+    if swith(c.a(0), |x| x.disc) == Some(true) { 0 } else { Hr::False.code() }
 }
 fn s_set_disc(c: &mut Ctx) -> u32 {
     let v = c.a(1) != 0;
@@ -2077,7 +2181,7 @@ pub fn graph_released(c: &mut Ctx, g: u32) {
     for b in mine {
         let pins = fwith(b, |f| {
             f.graph = 0;
-            f.state = 0;
+            f.state = State::Stopped;
             f.pins.iter_mut().map(|p| (std::mem::take(&mut p.peer), std::mem::take(&mut p.mem), std::mem::take(&mut p.mt))).collect::<Vec<_>>()
         })
         .unwrap_or_default();
@@ -2117,25 +2221,25 @@ static WAKE_LOCK: Mutex<()> = Mutex::new(());
 
 /// The splitter's new state: the clock runs, stands, or stops (the position stays: DirectShow
 /// does not rewind); the thread starts with the first Pause or Run.
-fn streaming(b: u32, s: u32) {
+fn streaming(b: u32, s: State) {
     let t = now();
     let start = pwith(b, |p| {
         match s {
-            0 => {
+            State::Stopped => {
                 p.tl.stop(t);
                 p.gen += 1;
                 p.ended = false;
             }
-            1 => p.tl.pause(t),
-            _ => p.tl.run(t),
+            State::Paused => p.tl.pause(t),
+            State::Running => p.tl.run(t),
         }
-        if s != 0 {
+        if s != State::Stopped {
             p.calls.run();
         }
-        s != 0 && !std::mem::replace(&mut p.thread, true)
+        s != State::Stopped && !std::mem::replace(&mut p.thread, true)
     });
     WAKE.notify_all();
-    if s == 0 {
+    if s == State::Stopped {
         stop_calls(b, false);
     }
     if start == Some(true) {
@@ -2248,11 +2352,11 @@ impl Resampler {
 /// The chain the thread feeds: (the video decoder, the renderer's IMemInputPin, its pin), and
 /// whether the sound reaches the sound renderer.
 fn chain(b: u32) -> (Option<(u32, u32, u32)>, bool) {
-    let v = pin_of(pin(b, 2).peer).map(|(d, _)| d).filter(|&d| kind(d) == Some(Kind::VDec)).and_then(|d| {
-        let o = pin(d, 2);
+    let v = pin_of(pin(b, PinNo::P2).peer).map(|(d, _)| d).filter(|&d| kind(d) == Some(Kind::VDec)).and_then(|d| {
+        let o = pin(d, PinNo::P2);
         (o.mem != 0).then_some((d, o.mem, o.peer))
     });
-    let a = pin_of(pin(b, 3).peer).map(|(d, _)| d).filter(|&d| kind(d) == Some(Kind::ADec)).is_some_and(|d| pin_of(pin(d, 2).peer).is_some());
+    let a = pin_of(pin(b, PinNo::P3).peer).map(|(d, _)| d).filter(|&d| kind(d) == Some(Kind::ADec)).is_some_and(|d| pin_of(pin(d, PinNo::P2).peer).is_some());
     (v, a)
 }
 
@@ -2298,7 +2402,7 @@ fn stream_thread(c: &mut Ctx) -> u32 {
         }
         // (stopped: the game may take its source and renderer apart now; nothing of theirs is
         // touched until it pauses or runs again)
-        if fwith(b, |f| f.state).unwrap_or(0) == 0 || reader == 0 {
+        if fwith(b, |f| f.state).is_none_or(|s| s == State::Stopped) || reader == 0 {
             if let Some(s) = d.as_mut() {
                 if let Some((a, _)) = s.out.take() {
                     kura::audio::close(a);
@@ -2644,7 +2748,7 @@ fn vtables() -> &'static Vtables {
 /// EndOfStream / BeginFlush / EndFlush / NewSegment: the DMO wrapper's input passes them on.
 fn flow(c: &mut Ctx, slot: u32) -> u32 {
     match pin_of(c.a(0)) {
-        Some((b, 1)) if kind(b) == Some(Kind::Dmo) => dmo::downstream(c, b, slot),
+        Some((b, PinNo::P1)) if kind(b) == Some(Kind::Dmo) => dmo::downstream(c, b, slot),
         _ => 0,
     }
 }
