@@ -262,14 +262,13 @@ pub fn create(trap_lo: u32, trap_hi: u32) -> *mut Cpu {
     UPPER_OPEN.store(crate::env_on!("MASU_UPPER_OPEN"), Ordering::Relaxed);
     TRAP_LO.store(trap_lo, Ordering::Relaxed);
     TRAP_HI.store(trap_hi, Ordering::Relaxed);
-    let reused = RETIRED.lock().unwrap_or_else(|e| e.into_inner()).pop();
-    let cpu = match reused {
-        Some(p) => {
-            let p = p as *mut Cpu;
+    let taken = RETIRED.lock().unwrap_or_else(|e| e.into_inner()).take(|| Kept(Box::into_raw(Box::default())));
+    let cpu = match taken {
+        crate::pool::Reuse::Again(Kept(p)) => {
             unsafe { *p = Cpu::default() };
             p
         }
-        None => Box::into_raw(Box::new(Cpu::default())),
+        crate::pool::Reuse::New(Kept(p)) => p,
     };
     unsafe {
         (*cpu).trap_lo = trap_lo;
@@ -284,18 +283,23 @@ pub fn create(trap_lo: u32, trap_hi: u32) -> *mut Cpu {
 /// snapshot and MASU_TRACE_EIP read another thread's Cpu without a lock (one that ended
 /// meanwhile reads as a stale state, never as freed memory). A program that starts and ends
 /// threads all the time keeps as many as it had threads at once.
-static RETIRED: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+static RETIRED: Mutex<crate::pool::Pool<Kept>> = Mutex::new(crate::pool::Pool::new());
+
+/// A Cpu kept for good (never freed: see RETIRED)
+struct Kept(*mut Cpu);
+// (only create and destroy touch it, under RETIRED's lock)
+unsafe impl Send for Kept {}
 
 /// # Safety
 /// `cpu` came from [`create`] and is not used after this.
 pub unsafe fn destroy(cpu: *mut Cpu) {
     crate::crashlog::unregister(cpu);
-    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).push(cpu as usize);
+    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).give(Kept(cpu));
 }
 
-/// (tests: Cpus waiting for reuse)
-pub fn retired() -> usize {
-    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).len()
+/// (tests: the Cpus waiting for reuse, made, the most out at once)
+pub fn retired() -> crate::pool::Counts {
+    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).counts()
 }
 
 /// What an [`Exit`] means for the caller of [`run`]; None to keep running.
@@ -729,10 +733,14 @@ mod reuse_tests {
             .map(|p| seen.insert(p))
             .unwrap();
         }
-        // (other tests' threads may hold a few at once)
-        assert!(seen.len() <= 16, "{} Cpus for 200 threads one after the other", seen.len());
-        let (retired, _) = crate::crashlog::counts();
-        assert!(retired >= 1 && retired <= 16, "{retired} crash-log records waiting");
-        assert!(super::retired() >= 1 && super::retired() <= 16, "{} Cpus waiting", super::retired());
+        // (other tests' threads may hold any number at once, more under a sanitizer, #242: so
+        // not a bound but what reuse means: no more made than were ever out at once, and none
+        // made for a thread while one waited)
+        let (cpus, logs) = (super::retired(), crate::crashlog::counts());
+        for (what, c) in [("Cpus", cpus), ("crash-log records", logs)] {
+            assert_eq!(c.made, c.peak, "{what}: {c:?}");
+            assert!(c.waiting >= 1, "{what}: {c:?}");
+        }
+        assert!(seen.len() <= cpus.made, "{} Cpus seen, {cpus:?}", seen.len());
     }
 }

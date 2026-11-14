@@ -40,6 +40,7 @@ pub mod d3d11;
 pub mod gl;
 pub mod cpu;
 pub mod crashlog;
+pub mod pool;
 pub mod jit;
 pub mod display;
 pub mod render;

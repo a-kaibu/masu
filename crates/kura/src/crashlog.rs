@@ -260,9 +260,20 @@ pub fn register(cpu: *mut Cpu) {
         }));
     });
     let mut g = THREADS.lock().unwrap_or_else(|e| e.into_inner());
-    let t: &'static ThreadLog = match RETIRED.lock().unwrap_or_else(|e| e.into_inner()).pop() {
+    let taken = RETIRED.lock().unwrap_or_else(|e| e.into_inner()).take(|| Box::leak(Box::new(ThreadLog {
+        tid: AtomicI32::new(crate::cpu::tid()),
+        cpu: AtomicUsize::new(cpu as usize),
+        guest: AtomicU32::new(0),
+        traps: UnsafeCell::new([[0; 4]; TRAPS]),
+        n: AtomicU32::new(0),
+        exceptions: AtomicU32::new(0),
+        phase: AtomicUsize::new(0),
+        phase_len: AtomicUsize::new(0),
+    })));
+    let t: &'static ThreadLog = match taken {
+        crate::pool::Reuse::New(t) => t,
         // (only ever the calling thread writes its ring; tid is the next owner's)
-        Some(t) => {
+        crate::pool::Reuse::Again(t) => {
             t.tid.store(crate::cpu::tid(), Relaxed);
             t.cpu.store(cpu as usize, Relaxed);
             t.guest.store(0, Relaxed);
@@ -271,16 +282,6 @@ pub fn register(cpu: *mut Cpu) {
             t.phase.store(0, Relaxed);
             t
         }
-        None => Box::leak(Box::new(ThreadLog {
-            tid: AtomicI32::new(crate::cpu::tid()),
-            cpu: AtomicUsize::new(cpu as usize),
-            guest: AtomicU32::new(0),
-            traps: UnsafeCell::new([[0; 4]; TRAPS]),
-            n: AtomicU32::new(0),
-            exceptions: AtomicU32::new(0),
-            phase: AtomicUsize::new(0),
-            phase_len: AtomicUsize::new(0),
-        })),
     };
     CUR.with(|c| c.set(Some(t)));
     g.retain(|x| x.cpu.load(Relaxed) != cpu as usize);
@@ -290,11 +291,11 @@ pub fn register(cpu: *mut Cpu) {
 /// The records of threads that ended, for the next threads (they used to be leaked, one per
 /// thread: ~2 KB each; review P2-1). Kept, never freed: the snapshot reads entries it listed
 /// after letting go of THREADS.
-static RETIRED: Mutex<Vec<&'static ThreadLog>> = Mutex::new(Vec::new());
+static RETIRED: Mutex<crate::pool::Pool<&'static ThreadLog>> = Mutex::new(crate::pool::Pool::new());
 
-/// (tests: how many records wait for reuse, how many threads are listed)
-pub fn counts() -> (usize, usize) {
-    (RETIRED.lock().unwrap_or_else(|e| e.into_inner()).len(), THREADS.lock().unwrap_or_else(|e| e.into_inner()).len())
+/// (tests: the records waiting for reuse, made, the most out at once)
+pub fn counts() -> crate::pool::Counts {
+    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).counts()
 }
 
 /// `cpu` is going away (cpu::destroy).
@@ -305,7 +306,7 @@ pub fn unregister(cpu: *mut Cpu) {
         let keep = x.cpu.load(Relaxed) != cpu as usize;
         if !keep {
             x.cpu.store(0, Relaxed);
-            r.push(*x);
+            r.give(*x);
         }
         keep
     });
