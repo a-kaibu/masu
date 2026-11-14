@@ -1716,7 +1716,7 @@ file	crates/sake/src/mci.rs	let_underscore_must_use	1
 file	crates/sake/src/mci.rs	map_err_ignore	2
 file	crates/sake/src/mci.rs	wildcard_enum_match_arm	5
 file	crates/sake/src/mem.rs	arithmetic_side_effects	126
-file	crates/sake/src/mem.rs	as_conversions	152
+file	crates/sake/src/mem.rs	as_conversions	66
 file	crates/sake/src/mem.rs	cast_possible_truncation	21
 file	crates/sake/src/mem.rs	indexing_slicing	12
 file	crates/sake/src/mem.rs	iter_over_hash_type	1

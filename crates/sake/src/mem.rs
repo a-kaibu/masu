@@ -17,6 +17,20 @@ pub const GUEST_TOP: u32 = 0x8000_0000;
 const GRAN: u32 = 0x1_0000;
 pub const PAGE: u32 = 0x1000;
 
+// (usize holds every u32: wasm32 and 64-bit hosts; the two conversions below are the only casts
+// between guest addresses and the host's)
+const _: () = assert!(std::mem::size_of::<usize>() >= std::mem::size_of::<u32>());
+/// The host pointer of guest address `a` (guest address = host address)
+#[inline(always)]
+fn host<T>(a: u32) -> *mut T {
+    std::ptr::with_exposed_provenance_mut(a as usize)
+}
+/// A guest length as a host one (lossless: see the assert above)
+#[inline(always)]
+fn len(n: u32) -> usize {
+    n as usize
+}
+
 // ---------------------------------------------------------------------------------------------
 // 64-bit programs (PE32+): pointers, handles and SIZE_Ts are 8 bytes in their structures. Guest
 // addresses are still below 4G (and below HI): the upper halves are written as zero and ignored
@@ -71,9 +85,9 @@ pub fn putp(a: u32, v: u32) {
 #[inline]
 pub fn widen(a: u32) -> u64 {
     if HIGH.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-        return a as u64;
+        return u64::from(a);
     }
-    a as u64 | (find(a).map_or(0, |(_, r)| r.hi) as u64) << 32
+    u64::from(a) | (find(a).map_or(0, |(_, r)| r.hi) as u64) << 32
 }
 
 /// How many allocations stand for addresses above 4G (widen's fast path: none).
@@ -119,12 +133,12 @@ pub fn put64(a: u32, v: u64) {
 }
 #[inline(always)]
 pub fn r64(a: u32) -> u64 {
-    unsafe { (a as usize as *const u64).read_unaligned() }
+    unsafe { host::<u64>(a).cast_const().read_unaligned() }
 }
 #[inline(always)]
 pub fn w64(a: u32, v: u64) {
     if guest(a, 8) {
-        unsafe { (a as usize as *mut u64).write_unaligned(v) }
+        unsafe { host::<u64>(a).write_unaligned(v) }
     }
 }
 
@@ -133,7 +147,7 @@ pub fn w64(a: u32, v: u64) {
 /// pass some on purpose) would corrupt sake itself: it is dropped (Windows would fault).
 #[inline(always)]
 pub fn guest(a: u32, n: u32) -> bool {
-    if a as u64 + n as u64 <= GUEST_TOP as u64 {
+    if u64::from(a) + u64::from(n) <= u64::from(GUEST_TOP) {
         return true;
     }
     refused(a, n);
@@ -142,7 +156,7 @@ pub fn guest(a: u32, n: u32) -> bool {
 /// Whether `n` bytes at `a` are all guest memory (a check before reading a guest buffer whose
 /// length the guest gave)
 pub fn in_guest(a: u32, n: u32) -> bool {
-    a as u64 + n as u64 <= GUEST_TOP as u64
+    u64::from(a) + u64::from(n) <= u64::from(GUEST_TOP)
 }
 #[cold]
 #[inline(never)]
@@ -153,32 +167,32 @@ fn refused(a: u32, n: u32) {
 
 #[inline(always)]
 pub fn r8(a: u32) -> u8 {
-    unsafe { *(a as usize as *const u8) }
+    unsafe { *host::<u8>(a).cast_const() }
 }
 #[inline(always)]
 pub fn r16(a: u32) -> u16 {
-    unsafe { (a as usize as *const u16).read_unaligned() }
+    unsafe { host::<u16>(a).cast_const().read_unaligned() }
 }
 #[inline(always)]
 pub fn r32(a: u32) -> u32 {
-    unsafe { (a as usize as *const u32).read_unaligned() }
+    unsafe { host::<u32>(a).cast_const().read_unaligned() }
 }
 #[inline(always)]
 pub fn w8(a: u32, v: u8) {
     if guest(a, 1) {
-        unsafe { *(a as usize as *mut u8) = v }
+        unsafe { *host::<u8>(a) = v }
     }
 }
 #[inline(always)]
 pub fn w16(a: u32, v: u16) {
     if guest(a, 2) {
-        unsafe { (a as usize as *mut u16).write_unaligned(v) }
+        unsafe { host::<u16>(a).write_unaligned(v) }
     }
 }
 #[inline(always)]
 pub fn w32(a: u32, v: u32) {
     if guest(a, 4) {
-        unsafe { (a as usize as *mut u32).write_unaligned(v) }
+        unsafe { host::<u32>(a).write_unaligned(v) }
     }
 }
 /// Writes `v` if `a` is not NULL.
@@ -189,7 +203,7 @@ pub fn put32(a: u32, v: u32) {
     }
 }
 pub fn slice<'a>(a: u32, n: u32) -> &'a [u8] {
-    unsafe { std::slice::from_raw_parts(a as usize as *const u8, n as usize) }
+    unsafe { std::slice::from_raw_parts(host::<u8>(a).cast_const(), len(n)) }
 }
 /// Guest memory `a..a + n` for sake to write into, or None where that is not the guest's: in
 /// the NULL pages (a failed allocation, a NULL pointer with a length) or reaching past
@@ -204,18 +218,18 @@ pub fn guest_mut<'a>(a: u32, n: u32) -> Option<&'a mut [u8]> {
         }
         return None;
     }
-    Some(unsafe { std::slice::from_raw_parts_mut(a as usize as *mut u8, n as usize) })
+    Some(unsafe { std::slice::from_raw_parts_mut(host::<u8>(a), len(n)) })
 }
 /// Whether `a..a + n` is guest memory sake may write for the program (guest_mut's rule).
 #[inline]
 pub fn guest_range(a: u32, n: u32) -> bool {
-    n == 0 || (a >= NULL_TOP && a as u64 + n as u64 <= GUEST_TOP as u64)
+    n == 0 || (a >= NULL_TOP && u64::from(a) + u64::from(n) <= u64::from(GUEST_TOP))
 }
 /// The guest's first 64 KiB: never handed out (NULL pointers fault on Windows too).
 pub const NULL_TOP: u32 = 0x1_0000;
 pub fn fill(a: u32, n: u32, v: u8) {
     if guest(a, n) {
-        unsafe { std::ptr::write_bytes(a as usize as *mut u8, v, n as usize) }
+        unsafe { std::ptr::write_bytes(host::<u8>(a), v, len(n)) }
     }
 }
 /// Zeroes [a, a+n) without writing to the pages in it that are zero already. The browser backs
@@ -231,10 +245,10 @@ pub fn zero(a: u32, n: u32) {
     if !guest(a, n) {
         return;
     }
-    let end = a as u64 + n as u64;
-    let mut p = a as u64;
+    let end = u64::from(a) + u64::from(n);
+    let mut p = u64::from(a);
     while p < end {
-        let next = ((p | (PAGE as u64 - 1)) + 1).min(end);
+        let next = ((p | (u64::from(PAGE) - 1)) + 1).min(end);
         // (inside guest memory: checked above)
         let s = unsafe { std::slice::from_raw_parts_mut(p as usize as *mut u8, (next - p) as usize) };
         if !is_zero(s) {
@@ -260,12 +274,12 @@ pub fn is_zero(s: &[u8]) -> bool {
 
 pub fn copy(dst: u32, src: u32, n: u32) {
     if guest(dst, n) {
-        unsafe { std::ptr::copy(src as usize as *const u8, dst as usize as *mut u8, n as usize) }
+        unsafe { std::ptr::copy(host::<u8>(src).cast_const(), host::<u8>(dst), len(n)) }
     }
 }
 pub fn write(dst: u32, data: &[u8]) {
     if guest(dst, data.len() as u32) {
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), dst as usize as *mut u8, data.len()) }
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), host::<u8>(dst), data.len()) }
     }
 }
 
@@ -341,7 +355,7 @@ pub fn put_cstr(dst: u32, cap: u32, s: &[u8]) -> u32 {
         return 0;
     }
     let n = (s.len() as u32).min(cap - 1);
-    write(dst, &s[..n as usize]);
+    write(dst, &s[..len(n)]);
     w8(dst + n, 0);
     n
 }
@@ -351,7 +365,7 @@ pub fn put_wstr(dst: u32, cap: u32, s: &[u16]) -> u32 {
     }
     let n = (s.len() as u32).min(cap - 1);
     for i in 0..n {
-        w16(dst + 2 * i, s[i as usize]);
+        w16(dst + 2 * i, s[len(i)]);
     }
     w16(dst + 2 * n, 0);
     n
@@ -390,8 +404,8 @@ fn align_up(v: u32, a: u32) -> u32 {
 /// `size` (at least 1) rounded up to whole pages, None past the guest address space (a size
 /// near 4 GB wrapped to 0 and reserved an empty region the program took for ~4 GB, review b07)
 fn page_size(size: u32) -> Option<u32> {
-    let n = (size.max(1) as u64).div_ceil(PAGE as u64) * PAGE as u64;
-    (n <= HI as u64).then_some(n as u32)
+    let n = u64::from(size.max(1)).div_ceil(u64::from(PAGE)) * u64::from(PAGE);
+    (n <= u64::from(HI)).then_some(n as u32)
 }
 
 /// Reserves `size` bytes at `want` (0 = anywhere, lowest first; `top` = highest first).
@@ -459,15 +473,15 @@ pub fn reserve_aligned(size: u32, align: u32, prot: u32, kind: u32) -> Option<u3
 /// The lowest `align`-aligned address with `size` bytes free in one of `holes` ([lo, hi))
 fn aligned_fit(holes: &[(u32, u32)], size: u32, align: u32) -> Option<u32> {
     holes.iter().find_map(|&(lo, hi)| {
-        let b = (lo as u64 + align as u64 - 1) & !(align as u64 - 1);
-        (b + size as u64 <= hi as u64).then_some(b as u32)
+        let b = (u64::from(lo) + u64::from(align) - 1) & !(u64::from(align) - 1);
+        (b + u64::from(size) <= u64::from(hi)).then_some(b as u32)
     })
 }
 
 /// Whether [a, a+n) lies inside one allocation (VirtualAlloc's MEM_COMMIT of a range that runs
 /// past its reservation's end fails on Windows, ERROR_INVALID_ADDRESS)
 pub fn in_one_allocation(a: u32, n: u32) -> bool {
-    find(a).is_some_and(|(b, r)| a as u64 + n.max(1) as u64 <= b as u64 + r.size as u64)
+    find(a).is_some_and(|(b, r)| u64::from(a) + u64::from(n.max(1)) <= u64::from(b) + u64::from(r.size))
 }
 
 /// The size a program reserves to find an aligned block inside (twice the block less a page,
@@ -500,7 +514,7 @@ fn jit_prot(a: u32, n: u32, prot: u32) {
     kura::jit::fault_pages(a, n, kind, none);
     let wx = prot & (0x40 | 0x80) != 0;
     let p = if prot == 0 { 0 } else if wx { libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC } else { libc::PROT_READ };
-    kura::jit::pages_protected(a as usize, n as usize, p);
+    kura::jit::pages_protected(len(a), len(n), p);
 }
 
 /// The pages [first, last) of an allocation of `size` bytes that [off, off + n) touches (`off`
@@ -511,7 +525,7 @@ fn jit_prot(a: u32, n: u32, prot: u32) {
 pub(crate) fn page_span(off: u32, n: u32, size: u32) -> (u32, u32) {
     let pages = size / PAGE;
     let first = (off / PAGE).min(pages);
-    let last = (off as u64 + n as u64).div_ceil(PAGE as u64).min(pages as u64) as u32;
+    let last = (u64::from(off) + u64::from(n)).div_ceil(u64::from(PAGE)).min(u64::from(pages)) as u32;
     (first, last.max(first))
 }
 
@@ -528,7 +542,7 @@ pub fn commit_range(a: u32, n: u32, prot: u32) -> bool {
     let Some((b, r)) = find(a) else { return false };
     let (first, last) = page_span(a - b, n.max(1), r.size);
     if let Some(p) = PAGES.lock().unwrap().get_mut(&b) {
-        for x in &mut p[first as usize..last as usize] {
+        for x in &mut p[len(first)..len(last)] {
             *x = COMMITTED | prot;
         }
     }
@@ -547,11 +561,11 @@ pub fn decommit_range(a: u32, n: u32) -> bool {
     let mut g = PAGES.lock().unwrap();
     if let Some(p) = g.get_mut(&b) {
         for i in first..last {
-            if p[i as usize] != 0 {
+            if p[len(i)] != 0 {
                 if !is_zero(slice(b + i * PAGE, PAGE)) {
                     fill(b + i * PAGE, PAGE, 0);
                 }
-                p[i as usize] = 0;
+                p[len(i)] = 0;
             }
         }
     }
@@ -581,10 +595,10 @@ pub fn query(a: u32) -> Option<(u32, Region, u32, u32, u32, u32)> {
 /// whose protection allows it (no PAGE_GUARD). `code_too`: executable pages count as writable,
 /// as for WriteProcessMemory (it makes them writable for the copy; read-only data it refuses).
 pub fn accessible(a: u32, n: u32, write: bool, code_too: bool) -> u32 {
-    let mut at = a as u64;
-    let end = a as u64 + n as u64;
+    let mut at = u64::from(a);
+    let end = u64::from(a) + u64::from(n);
     while at < end {
-        if at < LO as u64 {
+        if at < u64::from(LO) {
             break;
         }
         let Some((_, _, run, size, state, prot)) = query(at as u32) else { break };
@@ -594,9 +608,9 @@ pub fn accessible(a: u32, n: u32, write: bool, code_too: bool) -> u32 {
         if !ok {
             break;
         }
-        at = run as u64 + size as u64;
+        at = u64::from(run) + u64::from(size);
     }
-    (at.min(end) - a as u64) as u32
+    (at.min(end) - u64::from(a)) as u32
 }
 
 /// Protection of the page at `a` (VirtualProtect), changing it to `prot` for [a, a+n).
@@ -605,8 +619,8 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
     let mut g = PAGES.lock().unwrap();
     let p = g.get_mut(&b)?;
     let (first, last) = page_span(a - b, n.max(1), r.size);
-    let old = p[first as usize] & !COMMITTED;
-    for x in &mut p[first as usize..last as usize] {
+    let old = p[len(first)] & !COMMITTED;
+    for x in &mut p[len(first)..len(last)] {
         if *x & COMMITTED != 0 {
             *x = COMMITTED | prot;
         }
@@ -616,7 +630,7 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
     // writable code may be rewritten: the JIT drops what it translated there (QLIE patches its
     // code with VirtualProtect)
     if prot & 0xcc != 0 {
-        kura::jit::code_changed(a as usize, (b + last * PAGE - a) as usize);
+        kura::jit::code_changed(len(a), (b + last * PAGE - a) as usize);
     }
     Some(if old == 0 { r.prot } else { old })
 }
@@ -659,8 +673,8 @@ pub fn stack_grow(teb: u32, a: u32) -> bool {
 /// Whether `a` is in the lowest page of the thread stack of `teb` (between DeallocationStack
 /// and a page above it), which new_teb leaves inaccessible.
 pub fn stack_floor(teb: u32, a: u32) -> bool {
-    let dealloc = if x64() { r64(teb + 0x1478) } else { r32(teb + 0xe0c) as u64 };
-    dealloc != 0 && (dealloc..dealloc + PAGE as u64).contains(&(a as u64))
+    let dealloc = if x64() { r64(teb + 0x1478) } else { u64::from(r32(teb + 0xe0c)) };
+    dealloc != 0 && (dealloc..dealloc + u64::from(PAGE)).contains(&(u64::from(a)))
 }
 
 /// The allocation holding `a`.
@@ -675,7 +689,7 @@ pub fn release(base: u32) -> bool {
     // stack was zeroed under it)
     let mut sp = SPACE.lock().unwrap();
     let Some(r) = sp.get(&base).copied() else { return false };
-    kura::jit::code_changed(base as usize, r.size as usize);
+    kura::jit::code_changed(len(base), len(r.size));
     jit_prot(base, r.size, 0);
     zero(base, r.size);
     if r.hi != 0 {
@@ -728,7 +742,7 @@ unsafe impl dlmalloc::Allocator for Sys {
             return (std::ptr::null_mut(), 0, 0);
         };
         match alloc(size) {
-            Some(b) => (b as usize as *mut u8, size as usize, 0),
+            Some(b) => (host::<u8>(b), len(size), 0),
             None => (std::ptr::null_mut(), 0, 0),
         }
     }
@@ -792,7 +806,7 @@ fn slab_cap(p: u32) -> u32 {
 pub(crate) static SLAB_MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn slab_lock(t: u32) -> &'static std::sync::atomic::AtomicU32 {
-    unsafe { std::sync::atomic::AtomicU32::from_ptr(t as usize as *mut u32) }
+    unsafe { std::sync::atomic::AtomicU32::from_ptr(host::<u32>(t)) }
 }
 
 /// heap_alloc for HeapAlloc/malloc: small sizes come from the class lists (refilled here when
@@ -956,7 +970,7 @@ pub fn heap_destroy(heap: u32) -> usize {
 
 pub fn heap_alloc(size: u32, zero: bool) -> u32 {
     let Some(total) = size.checked_add(HDR) else { return 0 };
-    let p = unsafe { HEAP.lock().unwrap().malloc(total as usize, 16) } as usize as u32;
+    let p = unsafe { HEAP.lock().unwrap().malloc(len(total), 16) } as usize as u32;
     if p == 0 {
         return 0;
     }
@@ -1044,7 +1058,7 @@ pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
 /// packed structures) but wasm atomics fault on it: an unaligned one inside an aligned qword
 /// swaps that qword, one that straddles two takes a lock (atomic against the others that do).
 pub fn atomic_rmw32(a: u32, f: impl Fn(u32) -> u32) -> u32 {
-    rmw32_at(a as usize, f)
+    rmw32_at(len(a), f)
 }
 // (fetch_update is try_update on newer toolchains, which the one pinned here lacks)
 #[allow(deprecated)]
@@ -1063,7 +1077,7 @@ pub(crate) fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
             let mut old = 0;
             let _ = w.fetch_update(SeqCst, SeqCst, |cur| {
                 old = ((cur & m) >> sh) as u32;
-                Some((cur & !m) | ((f(old) as u64) << sh))
+                Some((cur & !m) | (u64::from(f(old)) << sh))
             });
             return old;
         }
@@ -1638,3 +1652,7 @@ mod review_b07_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "mem_conversion_tests.rs"]
+mod conversion_tests;
