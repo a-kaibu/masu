@@ -128,14 +128,102 @@ fn env(mode: u32, base: u32, c: vec4f, t: vec4f, ec: vec4f) -> vec4f {
 
 // ---- objects ----
 
+/// A GL data type (the `type` of glVertexPointer, glTexImage2D, glDrawElements).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GlType {
+    Byte,
+    UnsignedByte,
+    Short,
+    UnsignedShort,
+    Int,
+    UnsignedInt,
+    Float,
+    Double,
+    HalfFloat,
+}
+
+impl GlType {
+    const fn of(v: u32) -> Option<GlType> {
+        Some(match v {
+            0x1400 => GlType::Byte,
+            0x1401 => GlType::UnsignedByte,
+            0x1402 => GlType::Short,
+            0x1403 => GlType::UnsignedShort,
+            0x1404 => GlType::Int,
+            0x1405 => GlType::UnsignedInt,
+            0x1406 => GlType::Float,
+            0x140A => GlType::Double,
+            0x140B => GlType::HalfFloat,
+            _ => return None,
+        })
+    }
+    /// Bytes of one.
+    const fn size(self) -> usize {
+        match self {
+            GlType::Byte | GlType::UnsignedByte => 1,
+            GlType::Short | GlType::UnsignedShort | GlType::HalfFloat => 2,
+            GlType::Int | GlType::UnsignedInt | GlType::Float => 4,
+            GlType::Double => 8,
+        }
+    }
+    /// Whether pixels come in it (glTexImage2D's types: GL_DOUBLE is none).
+    const fn is_pixel(self) -> bool {
+        match self {
+            GlType::Byte | GlType::UnsignedByte | GlType::Short | GlType::UnsignedShort | GlType::Int | GlType::UnsignedInt | GlType::Float | GlType::HalfFloat => true,
+            GlType::Double => false,
+        }
+    }
+}
+
+/// A texture's base internal format (GL 2.1 table 3.15): which of R, G, B, A its texels keep.
+/// Its code is what the fragment shader's `env` takes (FU.base).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum Base {
+    /// (and every internal format GL 2.1 does not list)
+    #[default]
+    Rgba,
+    Rgb,
+    Alpha,
+    Luminance,
+    LuminanceAlpha,
+    Depth,
+    Intensity,
+}
+
+impl Base {
+    pub(crate) const fn code(self) -> u32 {
+        match self {
+            Base::Rgba => 0,
+            Base::Rgb => 1,
+            Base::Alpha => 2,
+            Base::Luminance => 3,
+            Base::LuminanceAlpha => 4,
+            Base::Depth => 5,
+            Base::Intensity => 6,
+        }
+    }
+    /// The base of a code (tests: the codes they were written with; others RGBA).
+    #[cfg(test)]
+    pub(crate) const fn from_code(c: u32) -> Base {
+        match c {
+            1 => Base::Rgb,
+            2 => Base::Alpha,
+            3 => Base::Luminance,
+            4 => Base::LuminanceAlpha,
+            5 => Base::Depth,
+            6 => Base::Intensity,
+            _ => Base::Rgba,
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Texture {
     gpu: u32,
     w: u32,
     h: u32,
     levels: u32,
-    /// 0 rgba 1 rgb 2 alpha 3 luminance 4 luminance alpha, 5 depth, 6 intensity
-    base: u32,
+    base: Base,
     defined: u32,
     min: u32,
     mag: u32,
@@ -1170,12 +1258,7 @@ extern "C" fn glActiveTexture(u: u32) {
 }
 
 fn type_size(ty: u32) -> usize {
-    match ty {
-        0x1400 | 0x1401 => 1,
-        0x1402 | 0x1403 | 0x140B => 2,
-        0x140A => 8,
-        _ => 4,
-    }
+    GlType::of(ty).map_or(4, GlType::size)
 }
 
 /// Element `i` of array `a` as 4 floats (missing ones from `def`; normalized as GL 2.1's table
@@ -1204,27 +1287,28 @@ pub(crate) fn fetch(g: &Gl, a: &Array, i: u32, def: [f32; 4]) -> [f32; 4] {
     for k in 0..n {
         let p = unsafe { base.add(k * ts) };
         v[k] = unsafe {
-            match a.ty {
-                0x1400 => {
-                    let x = *(p as *const i8) as f32;
+            match GlType::of(a.ty) {
+                Some(GlType::Byte) => {
+                    let x = f32::from(*p.cast::<i8>());
                     if a.normalized { (2.0 * x + 1.0) / 255.0 } else { x }
                 }
-                0x1401 => {
-                    let x = *p as f32;
+                Some(GlType::UnsignedByte) => {
+                    let x = f32::from(*p);
                     if a.normalized { x / 255.0 } else { x }
                 }
-                0x1402 => {
-                    let x = std::ptr::read_unaligned(p as *const i16) as f32;
+                Some(GlType::Short) => {
+                    let x = f32::from(std::ptr::read_unaligned(p.cast::<i16>()));
                     if a.normalized { (2.0 * x + 1.0) / 65535.0 } else { x }
                 }
-                0x1403 => {
-                    let x = std::ptr::read_unaligned(p as *const u16) as f32;
+                Some(GlType::UnsignedShort) => {
+                    let x = f32::from(std::ptr::read_unaligned(p.cast::<u16>()));
                     if a.normalized { x / 65535.0 } else { x }
                 }
-                0x1404 => std::ptr::read_unaligned(p as *const i32) as f32,
-                0x1405 => std::ptr::read_unaligned(p as *const u32) as f32,
-                0x140A => std::ptr::read_unaligned(p as *const f64) as f32,
-                _ => std::ptr::read_unaligned(p as *const f32),
+                Some(GlType::Int) => std::ptr::read_unaligned(p.cast::<i32>()) as f32,
+                Some(GlType::UnsignedInt) => std::ptr::read_unaligned(p.cast::<u32>()) as f32,
+                Some(GlType::Double) => std::ptr::read_unaligned(p.cast::<f64>()) as f32,
+                // (GL_HALF_FLOAT, which GL 2.1 arrays do not take, and unknown types: as floats)
+                Some(GlType::Float | GlType::HalfFloat) | None => std::ptr::read_unaligned(p.cast::<f32>()),
             }
         };
     }
@@ -1565,7 +1649,7 @@ fn draw(g: &mut Gl, c: &mut Ctx, mode: u32, v: Vec<[f32; 16]>) {
     let mut fu = [0u32; 20];
     for u in 0..2 {
         let un = &c.units[u];
-        let t = if un.tex2d { g.textures.get(&un.bound).filter(|t| t.gpu != 0 && t.base != 5) } else { None };
+        let t = if un.tex2d { g.textures.get(&un.bound).filter(|t| t.gpu != 0 && t.base != Base::Depth) } else { None };
         if let Some(t) = t {
             fu[u] = match un.env {
                 0x2101 => 3,
@@ -1574,7 +1658,7 @@ fn draw(g: &mut Gl, c: &mut Ctx, mode: u32, v: Vec<[f32; 16]>) {
                 0x0BE2 => 5,
                 _ => 1,
             };
-            fu[16 + u] = t.base;
+            fu[16 + u] = t.base.code();
             texs[u] = (t.gpu, t.levels, sampler(Some(t)));
         } else {
             texs[u].2 = sampler(None);
@@ -1741,15 +1825,15 @@ extern "C" fn glIsTexture(t: u32) -> u8 {
     (g.textures.contains_key(&t) && !g.reserved.contains(&(K_TEX, t))) as u8
 }
 
-fn base_format(internal: i32) -> u32 {
-    match internal as u32 {
-        0x1906 | 0x803B..=0x803E => 2,
-        1 | 0x1909 | 0x803F..=0x8042 => 3,
-        2 | 0x190A | 0x8043..=0x8048 => 4,
-        0x8049..=0x804D => 6,
-        3 | 0x1907 | 0x8050..=0x8054 | 0x8D62 | 0x8C40 | 0x8C41 | 0x2A10 => 1,
-        0x1902 | 0x81A5..=0x81A7 | 0x84F9 | 0x88F0 | 0x8CAC | 0x8CAD => 5,
-        _ => 0,
+fn base_format(internal: i32) -> Base {
+    match internal.cast_unsigned() {
+        0x1906 | 0x803B..=0x803E => Base::Alpha,
+        1 | 0x1909 | 0x803F..=0x8042 => Base::Luminance,
+        2 | 0x190A | 0x8043..=0x8048 => Base::LuminanceAlpha,
+        0x8049..=0x804D => Base::Intensity,
+        3 | 0x1907 | 0x8050..=0x8054 | 0x8D62 | 0x8C40 | 0x8C41 | 0x2A10 => Base::Rgb,
+        0x1902 | 0x81A5..=0x81A7 | 0x84F9 | 0x88F0 | 0x8CAC | 0x8CAD => Base::Depth,
+        _ => Base::Rgba,
     }
 }
 
@@ -1785,12 +1869,7 @@ pub(crate) fn packed_fields(ty: u32) -> Option<(usize, &'static [(u32, u32)])> {
 
 /// The bytes of one component of an unpacked type (0: not a pixel type).
 fn comp_size(ty: u32) -> usize {
-    match ty {
-        0x1400 | 0x1401 => 1,
-        0x1402 | 0x1403 | 0x140B => 2,
-        0x1404..=0x1406 => 4,
-        _ => 0,
-    }
+    GlType::of(ty).filter(|t| t.is_pixel()).map_or(0, GlType::size)
 }
 
 fn half(h: u16) -> f32 {
@@ -1808,21 +1887,23 @@ fn half(h: u16) -> f32 {
 unsafe fn comp8(p: *const u8, ty: u32) -> u8 {
     use std::ptr::read_unaligned as rd;
     let n = |c: f64| (c.clamp(0.0, 1.0) * 255.0).round() as u8;
-    match ty {
-        0x1401 => *p,
-        0x1400 => n((2.0 * (*p as i8) as f64 + 1.0) / 255.0),
-        0x1403 => ((rd(p as *const u16) as u32 * 255 + 32767) / 65535) as u8,
-        0x1402 => n((2.0 * rd(p as *const i16) as f64 + 1.0) / 65535.0),
-        0x1405 => n(rd(p as *const u32) as f64 / 4294967295.0),
-        0x1404 => n((2.0 * rd(p as *const i32) as f64 + 1.0) / 4294967295.0),
-        0x140B => n(half(rd(p as *const u16)) as f64),
-        _ => n(rd(p as *const f32) as f64),
+    match GlType::of(ty) {
+        Some(GlType::UnsignedByte) => *p,
+        Some(GlType::Byte) => n((2.0 * f64::from(*p.cast::<i8>()) + 1.0) / 255.0),
+        // (at most 255: the low byte is all of it)
+        Some(GlType::UnsignedShort) => ((u32::from(rd(p.cast::<u16>())) * 255 + 32767) / 65535).to_le_bytes()[0],
+        Some(GlType::Short) => n((2.0 * f64::from(rd(p.cast::<i16>())) + 1.0) / 65535.0),
+        Some(GlType::UnsignedInt) => n(f64::from(rd(p.cast::<u32>())) / 4294967295.0),
+        Some(GlType::Int) => n((2.0 * f64::from(rd(p.cast::<i32>())) + 1.0) / 4294967295.0),
+        Some(GlType::HalfFloat) => n(f64::from(half(rd(p.cast::<u16>())))),
+        // (GL_DOUBLE, which pixels do not come in, and unknown types: as floats)
+        Some(GlType::Float | GlType::Double) | None => n(f64::from(rd(p.cast::<f32>()))),
     }
 }
 
 /// Pixels in GL format/type as RGBA8 rows (w x h) of a texture of base format `base`, read
 /// with the unpack state (alignment, row length, skipped rows and pixels) as GL 2.1 3.6.4 says.
-pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u32, base: u32, unpack: [i32; 4]) -> Vec<u8> {
+pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u32, base: Base, unpack: [i32; 4]) -> Vec<u8> {
     let packed = packed_fields(ty);
     let n = format_comps(format).max(1);
     // (an element: a component, or a whole packed group)
@@ -1838,12 +1919,18 @@ pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u3
     let mut out = vec![0u8; w as usize * h as usize * 4];
     // Bytes as they are or in another order (what games upload every frame: movies, software
     // rendering): whole rows, not a pixel at a time through the general path below.
-    let plain = ty == 0x1401 && w > 0;
-    let order: Option<(usize, [usize; 3])> = match (format, base) {
-        (0x1908, 0 | 5) => Some((4, [0, 1, 2])),
-        (0x80E1, 0 | 5) => Some((4, [2, 1, 0])),
-        (0x1907, 0 | 1 | 5) => Some((3, [0, 1, 2])),
-        (0x80E0, 0 | 1 | 5) => Some((3, [2, 1, 0])),
+    let plain = GlType::of(ty) == Some(GlType::UnsignedByte) && w > 0;
+    // (the bases that keep every component the format has)
+    let whole = |rgb_too: bool| match base {
+        Base::Rgba | Base::Depth => true,
+        Base::Rgb => rgb_too,
+        Base::Alpha | Base::Luminance | Base::LuminanceAlpha | Base::Intensity => false,
+    };
+    let order: Option<(usize, [usize; 3])> = match format {
+        0x1908 if whole(false) => Some((4, [0, 1, 2])),
+        0x80E1 if whole(false) => Some((4, [2, 1, 0])),
+        0x1907 if whole(true) => Some((3, [0, 1, 2])),
+        0x80E0 if whole(true) => Some((3, [2, 1, 0])),
         _ => None,
     };
     if let (true, Some((n, o))) = (plain, order) {
@@ -1896,12 +1983,12 @@ pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u3
                 _ => [v[0], v[1], v[2], v[3]],
             };
             let px = match base {
-                1 => [r, g, b, 255],
-                2 => [0, 0, 0, al],
-                3 => [r, r, r, 255],
-                4 => [r, r, r, al],
-                6 => [r, r, r, r],
-                _ => [r, g, b, al],
+                Base::Rgb => [r, g, b, 255],
+                Base::Alpha => [0, 0, 0, al],
+                Base::Luminance => [r, r, r, 255],
+                Base::LuminanceAlpha => [r, r, r, al],
+                Base::Intensity => [r, r, r, r],
+                Base::Rgba | Base::Depth => [r, g, b, al],
             };
             out[(y * w as usize + x) * 4..][..4].copy_from_slice(&px);
         }
@@ -1914,8 +2001,8 @@ fn bound_texture(c: &Ctx) -> u32 {
 }
 
 /// (Re)makes `t`'s page texture for a level 0 of w x h.
-fn alloc_texture(t: &mut Texture, w: u32, h: u32, base: u32) {
-    if t.gpu != 0 && t.w == w && t.h == h && (t.base == 5) == (base == 5) {
+fn alloc_texture(t: &mut Texture, w: u32, h: u32, base: Base) {
+    if t.gpu != 0 && t.w == w && t.h == h && (t.base == Base::Depth) == (base == Base::Depth) {
         t.base = base;
         return;
     }
@@ -1924,9 +2011,9 @@ fn alloc_texture(t: &mut Texture, w: u32, h: u32, base: u32) {
     t.w = w.max(1);
     t.h = h.max(1);
     t.base = base;
-    t.levels = if base == 5 { 1 } else { 32 - t.w.max(t.h).leading_zeros() };
+    t.levels = if base == Base::Depth { 1 } else { 32 - t.w.max(t.h).leading_zeros() };
     t.defined = 0;
-    let (gpu_id, levels, fmt) = (t.gpu, t.levels, if base == 5 { P_D24S8 } else { P_RGBA8 });
+    let (gpu_id, levels, fmt) = (t.gpu, t.levels, if base == Base::Depth { P_D24S8 } else { P_RGBA8 });
     gpu::record(|q| {
         if old != 0 {
             q.cmd(&[gpu::DESTROY_TEXTURE, old]);
@@ -1975,7 +2062,7 @@ unsafe extern "C" fn glTexImage2D(target: u32, level: i32, internal: i32, w: i32
             return;
         }
         t.defined |= 1 << level;
-        if !src.is_null() && base != 5 && w > 0 && h > 0 {
+        if !src.is_null() && base != Base::Depth && w > 0 && h > 0 {
             upload(t, level as u32, 0, 0, w as u32, h as u32, src, format, ty, c.unpack);
         }
     })
@@ -2016,7 +2103,7 @@ unsafe extern "C" fn glTexSubImage2D(target: u32, level: i32, x: i32, y: i32, w:
         if x < 0 || y < 0 || w < 0 || h < 0 || x as i64 + w as i64 > lw || y as i64 + h as i64 > lh {
             return c.err(GL_INVALID_VALUE);
         }
-        if w == 0 || h == 0 || pixels.is_null() || t.base == 5 {
+        if w == 0 || h == 0 || pixels.is_null() || t.base == Base::Depth {
             return;
         }
         upload(t, level as u32, x as u32, y as u32, w as u32, h as u32, pixels, format, ty, c.unpack);
@@ -2108,7 +2195,7 @@ extern "C" fn glGenerateMipmap(target: u32) {
     }
     with(|g, c| {
         if let Some(t) = g.textures.get_mut(&bound_texture(c)) {
-            if t.gpu != 0 && t.base != 5 {
+            if t.gpu != 0 && t.base != Base::Depth {
                 t.defined = (1u32 << t.levels.min(31)) - 1;
                 let id = t.gpu;
                 gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, id]));
@@ -2443,7 +2530,7 @@ extern "C" fn glBindRenderbuffer(_target: u32, rb: u32) {
 extern "C" fn glRenderbufferStorage(_target: u32, internal: u32, w: i32, h: i32) {
     with(|g, c| {
         let Some(r) = g.rbs.get_mut(&c.rb) else { return c.err(GL_INVALID_OPERATION) };
-        let depth = base_format(internal as i32) == 5 || matches!(internal, 0x8D48 | 0x8D46 | 0x8D47 | 0x1901);
+        let depth = base_format(internal as i32) == Base::Depth || matches!(internal, 0x8D48 | 0x8D46 | 0x8D47 | 0x1901);
         let old = r.gpu;
         r.gpu = page_id();
         r.w = w.max(1) as u32;

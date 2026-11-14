@@ -174,7 +174,7 @@ fn unpack_matches_the_spec() {
                         }
                     }
                 }
-                let got = unsafe { to_rgba(data.as_ptr(), w as u32, h as u32, format, ty, base, [align as i32, row_length as i32, skip_rows as i32, skip_pixels as i32]) };
+                let got = unsafe { to_rgba(data.as_ptr(), w as u32, h as u32, format, ty, super::Base::from_code(base), [align as i32, row_length as i32, skip_rows as i32, skip_pixels as i32]) };
                 let want = reference(&data, w, h, format, ty, base, align, row_length, skip_rows, skip_pixels);
                 assert_eq!(got, want, "format {format:#x} type {ty:#x} base {base} {w}x{h} align {align} row {row_length} skip {skip_rows}/{skip_pixels}");
                 cases += 1;

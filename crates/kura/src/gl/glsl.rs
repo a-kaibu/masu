@@ -753,7 +753,7 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
         let mut entries = Vec::new();
         for (k, s) in st.samplers.iter().enumerate() {
             let unit = p.values.get(s).and_then(|v| v.first()).copied().unwrap_or(0) as usize;
-            let t = c.units.get(unit).and_then(|u| g.textures.get(&u.bound)).filter(|t| t.gpu != 0 && t.base != 5);
+            let t = c.units.get(unit).and_then(|u| g.textures.get(&u.bound)).filter(|t| t.gpu != 0 && t.base != super::Base::Depth);
             let (key, maxlod) = sampler(t);
             entries.push([16 + k as u32, 1, t.map_or(0, |t| t.gpu), 1, 0, t.map_or(1, |t| t.levels), 0, 1]);
             entries.push([160 + k as u32, 2, key, 0, maxlod, 0, 0, 0]);

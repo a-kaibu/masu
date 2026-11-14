@@ -45,11 +45,11 @@ fn gl_tables_answer_as_pinned() {
     got += &table("blend_op", "1".into(), |v| blend_op(v).to_string());
     got += &table("stencil_op", "1".into(), |v| stencil_op(v).to_string());
     got += &table("compare", "8".into(), |v| compare(v).to_string());
-    got += &table("base_format", "0".into(), |v| base_format(v as i32).to_string());
+    got += &table("base_format", "0".into(), |v| base_format(v as i32).code().to_string());
     got += &table("format_comps", "0".into(), |v| format_comps(v).to_string());
     got += &table("packed_fields", "None".into(), |v| format!("{:?}", packed_fields(v)));
     // (base_format of the negative and the large internal formats)
-    got += &format!("base_format_far: {:?}\n", [-1, i32::MIN, 0x1_0000, 0x7fff_ffff].map(base_format));
+    got += &format!("base_format_far: {:?}\n", [-1, i32::MIN, 0x1_0000, 0x7fff_ffff].map(|v| base_format(v).code()));
     let mut r = Rng(0x5eed_6c00_0000_0001);
     let types = [0x1400u32, 0x1401, 0x1402, 0x1403, 0x1404, 0x1405, 0x1406, 0x140A, 0x140B, 0x1407, 0];
     for ty in types {
@@ -71,7 +71,7 @@ fn gl_tables_answer_as_pinned() {
                 for _ in 0..3 {
                     let (w, ht) = (1 + (r.next() % 13) as u32, 1 + (r.next() % 7) as u32);
                     let unpack = [[1, 2, 4, 8][(r.next() % 4) as usize], (r.next() % 20) as i32 - 2, (r.next() % 3) as i32, (r.next() % 3) as i32];
-                    let px = unsafe { to_rgba(src.as_ptr(), w, ht, format, ty, base, unpack) };
+                    let px = unsafe { to_rgba(src.as_ptr(), w, ht, format, ty, Base::from_code(base), unpack) };
                     fnv(&mut h, &px);
                 }
             }
