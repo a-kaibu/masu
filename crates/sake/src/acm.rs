@@ -129,7 +129,7 @@ fn mp3_spf(s: &Fmt) -> u32 {
 /// The 16-bit PCM the decoder gives (before any conversion to the stream's output)
 fn mp3_native(s: &Fmt) -> Fmt {
     let ch = s.channels.max(1);
-    Fmt { tag: PCM, channels: ch, rate: s.rate, avg: s.rate * ch as u32 * 2, align: ch * 2, bits: 16, spb: 1, block: 0, bad: false }
+    Fmt { tag: PCM, channels: ch, rate: s.rate, avg: s.rate.wrapping_mul(ch as u32 * 2), align: ch * 2, bits: 16, spb: 1, block: 0, bad: false }
 }
 
 /// Whether every block header is one the codec takes: Windows' imaadp32/msadp32 convert
@@ -895,7 +895,7 @@ fn acmFormatSuggest(c: &mut Ctx) -> u32 {
     w16(dst, PCM);
     w16(dst + 2, ch as u16);
     w32(dst + 4, s.rate);
-    w32(dst + 8, s.rate * ch * 2);
+    w32(dst + 8, s.rate.wrapping_mul(ch * 2)); // (as msacm32's own u32 product)
     w16(dst + 12, (ch * 2) as u16);
     w16(dst + 14, 16);
     if n >= 18 {
@@ -983,17 +983,18 @@ fn acmStreamSize(c: &mut Ctx) -> u32 {
     } else if s.tag == PCM {
         // frames at the other rate, rounded up
         let (from, to) = if flags & 0xf == 0 { (s, d) } else { (d, s) };
-        let frames = (n / from.align.max(1) as u32) as u64;
-        ((frames * to.rate as u64).div_ceil(from.rate.max(1) as u64) * to.align as u64) as u32
+        let frames = u64::from(n / u32::from(from.align.max(1)));
+        // (a size past 4 GB says the most there is, as a 64-bit count would not fit: it wrapped)
+        sat32(frames.saturating_mul(u64::from(to.rate)).div_ceil(u64::from(from.rate.max(1))).saturating_mul(u64::from(to.align)))
     } else if flags & 0xf == 0 {
         // the output of n source bytes: a partial block counts once there is a whole one
-        let align = s.align.max(1) as u32;
+        let align = u32::from(s.align.max(1));
         let blocks = if n < align { 0 } else { n.div_ceil(align) };
-        blocks * s.spb * ch * 2
+        sat32(u64::from(blocks) * u64::from(s.spb) * u64::from(ch) * 2)
     } else {
         // the source for n output bytes
-        let per = (s.spb * ch * 2).max(1);
-        (n / per) * s.align as u32
+        let per = (u64::from(s.spb) * u64::from(ch) * 2).max(1);
+        sat32(u64::from(n) / per * u64::from(s.align))
     };
     put32(out, v);
     if v == 0 { ACMERR_NOTPOSSIBLE } else { 0 }
@@ -1001,11 +1002,15 @@ fn acmStreamSize(c: &mut Ctx) -> u32 {
 /// MP3's sizes as l3codecp gives them (winref acmmp3): a frame's output for each block of
 /// the source begun (nBlockSize, else a frame at the average byte rate), and for an output
 /// size the source of the whole frames it holds.
+/// A byte count that does not fit 32 bits: the most there is.
+fn sat32(v: u64) -> u32 {
+    u32::try_from(v).unwrap_or(u32::MAX)
+}
 fn mp3_size(s: &Fmt, d: &Fmt, n: u32, from_dst: bool) -> u32 {
     let spf = mp3_spf(s) as u64;
-    let block = if s.block != 0 { s.block as u32 } else { ((s.avg as u64 * spf / s.rate.max(1) as u64) as u32).max(1) };
-    let dst_frame = ((spf * d.rate as u64).div_ceil(s.rate.max(1) as u64) * d.align as u64).max(1) as u32;
-    if from_dst { n / dst_frame * block } else { n.div_ceil(block).saturating_mul(dst_frame) }
+    let block = if s.block != 0 { u32::from(s.block) } else { sat32(u64::from(s.avg) * spf / u64::from(s.rate.max(1))).max(1) };
+    let dst_frame = sat32((spf * u64::from(d.rate)).div_ceil(u64::from(s.rate.max(1))) * u64::from(d.align)).max(1);
+    if from_dst { (n / dst_frame).saturating_mul(block) } else { n.div_ceil(block).saturating_mul(dst_frame) }
 }
 fn acmStreamPrepareHeader(c: &mut Ctx) -> u32 {
     let h = c.a(1);
@@ -1069,7 +1074,7 @@ fn acmStreamConvert(c: &mut Ctx) -> u32 {
     } else {
         let ch = s.channels.max(1) as usize;
         let align = s.align.max(1) as u32;
-        let per_block = s.spb * ch as u32 * 2;
+        let per_block = sat32(u64::from(s.spb) * ch as u64 * 2);
         let blocks = (slen / align).min(dlen / per_block.max(1));
         if blocks == 0 {
             // (less than a block, without ACM_STREAMCONVERTF_BLOCKALIGN too)
@@ -1337,7 +1342,7 @@ mod mp3_tests {
     use proptest::prelude::*;
 
     fn pcm(channels: u16, rate: u32, bits: u16, align: u16) -> Fmt {
-        Fmt { tag: PCM, channels, rate, avg: rate * align as u32, align, bits, spb: 1, block: 0, bad: false }
+        Fmt { tag: PCM, channels, rate, avg: rate.wrapping_mul(align as u32), align, bits, spb: 1, block: 0, bad: false }
     }
 
     /// pcm_convert as it was: the whole output, then cut to the destination.
@@ -1681,3 +1686,7 @@ mod drivers {
         }
     }
 }
+
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+#[path = "acm_snapshot_tests.rs"]
+mod snapshot_tests;

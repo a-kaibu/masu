@@ -29,3 +29,41 @@ pub fn guest_thread() {
         crate::enter(0).expect("TEB and stack");
     }
 }
+/// A behaviour snapshot: `out` against src/golden/<name>.txt, the first differing lines shown.
+/// Pins what a module does before its code changes shape (MASU_UPDATE_GOLDEN=1 rewrites it).
+pub fn snapshot(name: &str, out: &str) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("golden").join(format!("{name}.txt"));
+    if std::env::var_os("MASU_UPDATE_GOLDEN").is_some() {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, out).unwrap();
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_default();
+    if want != out {
+        let d: Vec<String> = want.lines().zip(out.lines()).enumerate().filter(|(_, (a, b))| a != b).take(20)
+            .map(|(i, (a, b))| format!("{}:\n- {a}\n+ {b}", i + 1)).collect();
+        panic!("golden/{name}.txt differs ({} lines vs {}; MASU_UPDATE_GOLDEN=1 rewrites it):\n{}", want.lines().count(), out.lines().count(), d.join("\n"));
+    }
+}
+/// Deterministic test inputs (xorshift64*), so a snapshot sweep is the same on every run.
+pub struct Rng(pub u64);
+impl Rng {
+    pub fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_f491_4f6c_dd1d)
+    }
+    pub fn below(&mut self, n: u64) -> u64 {
+        self.next() % n.max(1)
+    }
+    pub fn pick<T: Copy>(&mut self, v: &[T]) -> T {
+        v[self.below(v.len() as u64) as usize]
+    }
+    pub fn bytes(&mut self, n: usize) -> Vec<u8> {
+        (0..n).map(|_| self.next() as u8).collect()
+    }
+}
+/// FNV-1a of guest bytes (a snapshot line for a buffer).
+pub fn hash(a: u32, n: u32) -> u64 {
+    mem::slice(a, n).iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+}
