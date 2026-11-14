@@ -2812,3 +2812,8 @@ mod blit_tests {
         }
     }
 }
+
+/// DirectDraw as a whole, pinned before it is rewritten with types: seeded random programs on
+/// surfaces of every format, each answer and every surface's bytes after it (ddraw/api_golden.txt)
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod api_golden_tests;
