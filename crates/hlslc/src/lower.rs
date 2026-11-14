@@ -260,11 +260,11 @@ fn temp(t: u32) -> Reg {
     Reg { f: RegF::Temp(t), rel: None }
 }
 
-fn ctype(b: B) -> u32 {
+fn ctype(b: B) -> sm4::CompType {
     match b {
-        B::Float => 3,
-        B::Int => 2,
-        B::Bool | B::Uint => 1,
+        B::Float => sm4::CompType::Float,
+        B::Int => sm4::CompType::Sint,
+        B::Bool | B::Uint => sm4::CompType::Uint,
     }
 }
 
@@ -1519,7 +1519,7 @@ impl<'a> L<'a> {
                     Interp::Sample => 6,
                 }
             };
-            let ct = if sysval == SysVal::IsFrontFace { 1 } else { ctype(b) };
+            let ct = if sysval == SysVal::IsFrontFace { sm4::CompType::Uint } else { ctype(b) };
             list.push(SigEl { name: name.clone(), index, sysval, ctype: ct, reg, mask: Lane::mask(n), interp, depth });
             let f = if depth {
                 RegF::Depth

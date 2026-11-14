@@ -263,14 +263,31 @@ impl SysVal {
     }
 }
 
+/// A signature element's D3D_REGISTER_COMPONENT_TYPE.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CompType {
+    Uint,
+    Sint,
+    Float,
+}
+
+impl CompType {
+    pub fn code(self) -> u32 {
+        match self {
+            CompType::Uint => 1,
+            CompType::Sint => 2,
+            CompType::Float => 3,
+        }
+    }
+}
+
 /// A signature element of the shader's interface.
 #[derive(Clone, Debug)]
 pub struct SigEl {
     pub name: String,
     pub index: u32,
     pub sysval: SysVal,
-    /// 1 uint, 2 sint, 3 float
-    pub ctype: u32,
+    pub ctype: CompType,
     pub reg: u32,
     pub mask: u8,
     /// pixel inputs: interpolation mode (1 constant, 2 linear, 3 centroid, 4 noperspective..)
@@ -752,7 +769,7 @@ fn signature(els: &[SigEl], used_out: bool, d3d10: bool) -> Vec<u8> {
         w32(&mut b, off);
         w32(&mut b, e.index);
         w32(&mut b, if d3d10 && matches!(e.sysval, SysVal::Target | SysVal::Depth) { 0 } else { e.sysval.code() });
-        w32(&mut b, e.ctype);
+        w32(&mut b, e.ctype.code());
         w32(&mut b, if e.depth { u32::MAX } else { e.reg });
         // mask, then the read/write mask (outputs: the complement of what is written)
         let rw = if used_out { (!e.mask) & 0xf } else { e.mask };
