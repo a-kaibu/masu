@@ -4037,3 +4037,9 @@ mod review_tests {
         mem::heap_free(out);
     }
 }
+
+/// The rasterizer pinned before its states become types: seeded random draws over every state
+/// value, their target and depth bytes hashed (d3d7_raster_golden.txt)
+#[cfg(test)]
+#[path = "d3d7_raster_tests.rs"]
+mod raster_tests;
