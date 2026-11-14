@@ -6135,3 +6135,9 @@ mod fast_blit_tests {
         }
     }
 }
+
+/// View's pixel access, pinned before its bit depth became a type: every depth a DIB header can
+/// name (the ones GDI draws on and the ones it leaves alone), both 16 bpp layouts, palettes of
+/// every size, random pixels and values, against the code as it was (`Old`, copied verbatim).
+#[cfg(test)]
+mod view_pixel_tests;
