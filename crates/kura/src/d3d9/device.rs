@@ -1243,7 +1243,7 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
 
 /// (Re)creates the swap chain's back buffer and the automatic depth buffer.
 fn reset_buffers(d: &mut D3d) {
-    let dev = d.dev.as_ref().unwrap();
+    let Some(dev) = d.dev.as_ref() else { return };
     let p = dev.pp;
     let (old_bb, old_ds, old_sc) = (dev.backbuffer, dev.auto_depth, dev.swapchain);
     // (the device holds them by binding only: an application's Release of what GetBackBuffer
@@ -1270,7 +1270,7 @@ fn reset_buffers(d: &mut D3d) {
     let sc = d.id_of(sc);
     d.bind(sc);
     d.release(sc);
-    let dev = d.dev.as_mut().unwrap();
+    let Some(dev) = d.dev.as_mut() else { return };
     for r in dev.rt {
         if r != 0 && r != old_bb {
             // (released below)
@@ -1402,8 +1402,10 @@ unsafe fn device_call(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &mut
         if let Some(rec) = d.dev.as_mut().and_then(|dev| dev.recording.as_mut()) {
             rec.mask.record(m, a);
             let swap = |d: &mut D3d| {
-                let dev = d.dev.as_mut().unwrap();
-                std::mem::swap(&mut dev.st, &mut dev.recording.as_mut().unwrap().st);
+                let Some(dev) = d.dev.as_mut() else { return };
+                if let Some(rec) = dev.recording.as_mut() {
+                    std::mem::swap(&mut dev.st, &mut rec.st);
+                }
             };
             swap(d);
             let r = device_method(d, m, a, after);
@@ -1482,7 +1484,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             p[4] = 0;
             p[5] = 0;
             write_pp(a(1), &p);
-            let dev = d.dev.as_mut().unwrap();
+            let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
             dev.pp = p;
             // unbind everything the old state held
             let st = std::mem::replace(&mut dev.st, default_state());
@@ -1563,7 +1565,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                 // the viewport follows the new target
                 if let Some(Data::Surface(sf)) = d.objs.get(&s).map(|o| &o.data) {
                     let (w, h) = (sf.w, sf.h);
-                    let dev = d.dev.as_mut().unwrap();
+                    let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
                     dev.st.viewport = [0, 0, w, h, 0, 1f32.to_bits()];
                     dev.st.scissor = [0, 0, w as i32, h as i32];
                 }
@@ -1749,7 +1751,9 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             }
             let st = dev.st.clone();
             bind_all(d, &state_binds(&st));
-            d.dev.as_mut().unwrap().recording = Some(Box::new(sb::Recording { st, mask: sb::Mask::default() }));
+            if let Some(dev) = d.dev.as_mut() {
+                dev.recording = Some(Box::new(sb::Recording { st, mask: sb::Mask::default() }));
+            }
             S_OK
         }
         61 => {
@@ -1899,7 +1903,9 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             dev.st.decl = decl;
             if let Some(Data::Decl(dc)) = d.objs.get(&decl).map(|o| &o.data) {
                 let f = dc.fvf;
-                d.dev.as_mut().unwrap().st.fvf = f;
+                if let Some(dev) = d.dev.as_mut() {
+                    dev.st.fvf = f;
+                }
             }
             set_bound(d, decl, old);
             S_OK
@@ -1932,7 +1938,9 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                         raw.push([0xff, 17]);
                         let addr = d.new_obj(IF_DECL, 0, Data::Decl(Decl { elems, raw, fvf }));
                         let id = d.id_of(addr);
-                        d.dev.as_mut().unwrap().fvf_decls.insert(fvf, id);
+                        if let Some(dev) = d.dev.as_mut() {
+                            dev.fvf_decls.insert(fvf, id);
+                        }
                         id
                     }
                 };
@@ -2186,7 +2194,7 @@ fn apply_state(d: &mut D3d, sb: u32) {
             d.bind(b);
         }
     }
-    let dev = d.dev.as_mut().unwrap();
+    let Some(dev) = d.dev.as_mut() else { return };
     for t in dev.st.textures.iter_mut() {
         if *t != 0 && !d.objs.contains_key(t) {
             *t = 0;
@@ -2726,7 +2734,7 @@ unsafe fn refresh_p8(d: &mut D3d) {
         return;
     }
     dev.p8_seen = Some(key);
-    let dev = d.dev.as_ref().unwrap();
+    let Some(dev) = d.dev.as_ref() else { return };
     let mut stale = Vec::new();
     for &t in dev.st.textures.iter().filter(|&&t| t != 0) {
         let Some(Data::Texture(tx)) = d.objs.get(&t).map(|o| &o.data) else { continue };
@@ -2817,7 +2825,8 @@ fn readback_as(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32
 }
 
 fn readback(d: &mut D3d, gpu: u32, level: u32, x: u32, y: u32, w: u32, h: u32, mem: u32, pitch: u32) -> u32 {
-    let dev = d.dev.as_mut().unwrap();
+    // (0: no device, no readback made)
+    let Some(dev) = d.dev.as_mut() else { return 0 };
     dev.readbacks += 1;
     let req = dev.readbacks;
     gpu::record(|b| b.cmd(&[gpu::READBACK, req, gpu, level, x, y, w, h, mem, pitch]));
@@ -3542,7 +3551,7 @@ unsafe fn clear(d: &mut D3d, count: u32, rects: u32, flags: u32, color: u32, z: 
     let flags = if dsg.is_none() { flags & 1 } else { flags };
     // render targets 1-3 are cleared too (in a row from 1, of the size of 0)
     let more: Vec<(u32, (u32, u32, u32, u32, u32))> = if flags & 1 != 0 {
-        d.dev.as_ref().unwrap().rt[1..]
+        d.dev.as_ref().map_or(&[][..], |dev| &dev.rt[1..])
             .iter()
             .map_while(|&r| surface_gpu(d, r).filter(|g| (g.2, g.3) == (target.2, target.3)).map(|g| (r, g)))
             .collect()
@@ -3631,7 +3640,9 @@ fn ensure_targets(d: &mut D3d, rt: u32, more: &[u32], ds: u32) {
     c.extend_from_slice(&[z.map_or(0, |z| z.0), 0, 0]);
     gpu::record(|b| b.cmd(&c));
     // (the next single target goes out again)
-    d.dev.as_mut().unwrap().batch_target = None;
+    if let Some(dev) = d.dev.as_mut() {
+        dev.batch_target = None;
+    }
 }
 
 /// Makes the page draw into the device's targets.
@@ -3643,7 +3654,7 @@ fn ensure_target(d: &mut D3d, rt: u32, ds: u32) {
     // target's size, render/d3d.rs depth_for; Windows uses a smaller one too)
     let key = (t.0, t.1, z.map_or(0, |z| z.0));
     let gen = gpu::batch_gen();
-    let dev = d.dev.as_mut().unwrap();
+    let Some(dev) = d.dev.as_mut() else { return };
     if dev.batch_target != Some(key) || dev.batch_gen != gen {
         gpu::record(|b| b.cmd(&[gpu::SET_TARGET, key.0, key.1, key.2]));
         dev.batch_target = Some(key);
@@ -3795,7 +3806,7 @@ unsafe fn front_buffer_data(d: &mut D3d, after: &mut After, chain: Option<(u32, 
     if !fmt::same_on_page(g.4) || fmt::layout(g.4) != Some((4, 1)) {
         return S_OK;
     }
-    let dev = d.dev.as_mut().unwrap();
+    let Some(dev) = d.dev.as_mut() else { return S_OK };
     let i = shown_for(dev, hwnd, cw, ch, g.4);
     let kept = dev.shown[i].gpu;
     if !dev.shown[i].live {
@@ -3865,7 +3876,7 @@ unsafe fn present_from(d: &mut D3d, after: &mut After, chain: Option<(u32, bool,
         };
         gpu::record(|b| b.cmd(&words));
     }
-    let dev = d.dev.as_mut().unwrap();
+    let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
     dev.batch_target = None;
     dev.last_vs = (Vec::new(), 0);
     dev.last_ps = (Vec::new(), 0);
@@ -4028,11 +4039,13 @@ unsafe fn draw(d: &mut D3d, prim: u32, src: Src, prims: u32, _x: Option<()>) -> 
     let hint = d.dev.as_ref().and_then(|v| v.strip_hint);
     let r = if key.is_some() && hint == key {
         let need = 3 * prims * stride;
-        let (mut buf, cap) = d.dev.as_ref().unwrap().strip_buf;
+        let Some((mut buf, cap)) = d.dev.as_ref().map(|dev| dev.strip_buf) else { return D3DERR_INVALIDCALL };
         if cap < need {
             d.guest_free(buf);
             buf = d.guest_alloc(need.max(4096));
-            d.dev.as_mut().unwrap().strip_buf = (buf, need.max(4096));
+            if let Some(dev) = d.dev.as_mut() {
+                dev.strip_buf = (buf, need.max(4096));
+            }
         }
         if buf == 0 {
             draw_one(d, prim, src, prims)
@@ -4160,11 +4173,13 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         more: more_fmts,
     };
     let trace = d.trace || no_prep_cache();
-    let hit = d.dev.as_mut().unwrap().prep.take().filter(|p| p.key == pkey && !trace);
+    let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
+    let hit = dev.prep.take().filter(|p| p.key == pkey && !trace);
     let fresh = hit.is_none();
     // (MASU_PREP_CHECK: a draw that reuses also prepares from scratch, and says what differs)
     let check = !fresh && prep_check();
-    let st = &d.dev.as_ref().unwrap().st;
+    let Some(dev) = d.dev.as_ref() else { return D3DERR_INVALIDCALL };
+    let st = &dev.st;
     let layout = |d: &D3d, st: &State| -> Option<(Vec<Elem>, u32, Vec<u32>)> {
         // the vertex layout
         let (elems, fvf_stride) = if st.decl != 0 {
@@ -4347,7 +4362,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let (vs_mod, vs_consts, writes) = match vs_shader {
         Some(sh) => {
             let key = ModKey::Vs(vs_serial, vs_inputs.clone(), flat);
-            let m = match d.dev.as_ref().unwrap().modules.get(&key) {
+            let m = match d.dev.as_ref().and_then(|dev| dev.modules.get(&key)) {
                 Some(&m) => Ok(m),
                 None => {
                     let opts = shader::Options { link: 0, vs_inputs: vs_inputs.clone(), alpha_test: None, fog: false, addr: Vec::new(), targets: 1, flat };
@@ -4374,7 +4389,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 }
             });
             let key = ModKey::FfVs(ff::VsKey { inputs: ff_inputs.clone(), rhw, tci, flat, light });
-            let m = match d.dev.as_ref().unwrap().modules.get(&key) {
+            let m = match d.dev.as_ref().and_then(|dev| dev.modules.get(&key)) {
                 Some(&m) => Ok(m),
                 None => {
                     let ModKey::FfVs(k) = &key else { unreachable!() };
@@ -4411,7 +4426,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             let link = if vs_shader.is_some() { writes } else { 0x3ff };
             let addr: Vec<_> = plain.iter().filter_map(|&s| addr_of(s)).collect();
             let key = ModKey::Ps(ps_serial, link, alpha_test, addr.clone(), ntargets, flat);
-            let m = match d.dev.as_ref().unwrap().modules.get(&key) {
+            let m = match d.dev.as_ref().and_then(|dev| dev.modules.get(&key)) {
                 Some(&m) => Ok(m),
                 None => {
                     let opts = shader::Options { link, vs_inputs: Vec::new(), alpha_test, fog: false, addr, targets: ntargets, flat };
@@ -4441,7 +4456,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             let addr = samplers.iter().filter_map(|&s| addr_of(s)).collect();
             let vs_writes = vs_shader.is_some().then_some(writes & 0x3ff);
             let key = ModKey::FfPs(ff::PsKey { stages, specular: st.rs[29] != 0, alpha_test, tex, flat, addr, vs_writes });
-            let m = match d.dev.as_ref().unwrap().modules.get(&key) {
+            let m = match d.dev.as_ref().and_then(|dev| dev.modules.get(&key)) {
                 Some(&m) => Ok(m),
                 None => {
                     let ModKey::FfPs(k) = &key else { unreachable!() };
@@ -4454,7 +4469,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     };
 
     // pipeline
-    let dev = d.dev.as_mut().unwrap();
+    let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
     let mut module = |m: Result<u32, (ModKey, String)>| match m {
         Ok(m) => m,
         Err((key, w)) => {
@@ -4553,7 +4568,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let (vs, ps, pretransformed, vs_consts, ps_consts, pipe, blend, wmask) = (prep.vs, prep.ps, prep.pretransformed, prep.vs_consts, prep.ps_consts, prep.pipe, prep.blend, prep.wmask);
     let elems = &prep.elems;
     let samplers = &prep.samplers;
-    let dev = d.dev.as_mut().unwrap();
+    let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
     let st = &dev.st;
 
     // uniforms: the last draw's, when no call since may have changed them (`stale`) and the
@@ -4771,7 +4786,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
 
     let more_rts: [u32; 3] = std::array::from_fn(|k| more.get(k).map_or(0, |m| m.0));
     ensure_targets(d, rt, &more_rts[..more.len()], ds);
-    let dev = d.dev.as_mut().unwrap();
+    let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
     // (uniforms of the last draw can be reused only from the same batch's data: a Clear or a
     // target change since a flush does not write them again)
     let same_batch = dev.uniform_gen == gpu::batch_gen();
