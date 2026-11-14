@@ -16,6 +16,13 @@ pub fn ix(x: i32) -> usize {
     us(x.cast_unsigned())
 }
 
+/// A picture dimension or count (up to a few thousand) as i32: saturates, which no caller's
+/// value reaches.
+#[inline(always)]
+pub fn i32z(n: usize) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+
 /// The low 8 bits (wrapping).
 #[inline(always)]
 pub const fn lo8(x: u32) -> u8 {

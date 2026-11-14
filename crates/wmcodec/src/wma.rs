@@ -6,7 +6,7 @@
 
 use crate::bits::Bits;
 use crate::mdct::Imdct;
-use crate::num::{ix, lo8, lo8z, us};
+use crate::num::{i32z, ix, lo8, lo8z, us};
 use crate::vlc::Vlc;
 use crate::wma_tables as t;
 
@@ -32,11 +32,6 @@ const PADDING: usize = 64;
 enum Version {
     V1,
     V2,
-}
-
-/// A count or index of up to 2048 (frames, blocks, bands) as i32.
-fn i32z(n: usize) -> i32 {
-    i32::try_from(n).unwrap_or(i32::MAX)
 }
 
 /// The same as f64.

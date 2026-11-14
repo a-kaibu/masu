@@ -2481,15 +2481,8 @@ file	crates/wmcodec/src/mdct.rs	arithmetic_side_effects	18
 file	crates/wmcodec/src/mdct.rs	as_conversions	12
 file	crates/wmcodec/src/mdct.rs	cast_possible_truncation	5
 file	crates/wmcodec/src/mdct.rs	indexing_slicing	30
-file	crates/wmcodec/src/msmpeg4.rs	arithmetic_side_effects	244
-file	crates/wmcodec/src/msmpeg4.rs	as_conversions	163
-file	crates/wmcodec/src/msmpeg4.rs	cast_possible_truncation	36
-file	crates/wmcodec/src/msmpeg4.rs	cast_possible_wrap	48
-file	crates/wmcodec/src/msmpeg4.rs	cast_sign_loss	36
-file	crates/wmcodec/src/msmpeg4.rs	expect_used	2
-file	crates/wmcodec/src/msmpeg4.rs	indexing_slicing	141
-file	crates/wmcodec/src/msmpeg4.rs	unwrap_used	1
-file	crates/wmcodec/src/msmpeg4.rs	wildcard_enum_match_arm	3
+file	crates/wmcodec/src/msmpeg4.rs	arithmetic_side_effects	240
+file	crates/wmcodec/src/msmpeg4.rs	indexing_slicing	140
 file	crates/wmcodec/src/vc1.rs	arithmetic_side_effects	753
 file	crates/wmcodec/src/vc1.rs	as_conversions	387
 file	crates/wmcodec/src/vc1.rs	cast_possible_truncation	119
