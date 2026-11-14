@@ -1,7 +1,8 @@
 /* libs: -luser32 */
 /* A rich edit control (RichEdit20W, riched20.dll) given its text by EM_STREAMIN: RTF through
  * the program's EDITSTREAM callback, a few bytes at a time (a license agreement, #164), plain
- * ANSI text, and a callback that fails. WM_GETTEXT gives the text. */
+ * ANSI text, and a callback that fails. WM_GETTEXT gives the text. Lines added as Delphi's
+ * TRichEdit does (EM_EXSETSEL, EM_REPLACESEL, EM_EXGETSEL). */
 #include <windows.h>
 #include <richedit.h>
 #include <stdio.h>
@@ -33,4 +34,23 @@ int main(void){
  CHECK("SF_TEXT replaces the text",len==10&&!wcscmp(t,L"plain ANSI"));
  EDITSTREAM es={0,0,broken}; SendMessageW(re,EM_STREAMIN,SF_TEXT,(LPARAM)&es);
  CHECK("callback error in dwError",es.dwError==7);
+ /* Delphi's TRichEdit.Lines.Add (TRichEditStrings.Insert): EM_EXSETSEL where the line goes,
+  * EM_REPLACESEL, then EM_EXGETSEL must have the caret after it ("RichEdit line insertion
+  * error" otherwise: Kurovadis' splash) */
+ SetWindowTextW(re,L"");
+ CHARRANGE cr={0,0}; SendMessageW(re,EM_EXSETSEL,0,(LPARAM)&cr);
+ SendMessageW(re,EM_REPLACESEL,0,(LPARAM)L"first\r");
+ CHARRANGE g={-5,-5}; SendMessageW(re,EM_EXGETSEL,0,(LPARAM)&g);
+ CHECK("EM_EXGETSEL after EM_REPLACESEL",g.cpMin==6&&g.cpMax==6);
+ cr.cpMin=6; cr.cpMax=6; SendMessageW(re,EM_EXSETSEL,0,(LPARAM)&cr);
+ SendMessageW(re,EM_REPLACESEL,0,(LPARAM)L"second\r");
+ SendMessageW(re,EM_EXGETSEL,0,(LPARAM)&g);
+ CHECK("the second line's caret",g.cpMin==13&&g.cpMax==13);
+ cr.cpMin=0; cr.cpMax=-1; SendMessageW(re,EM_EXSETSEL,0,(LPARAM)&cr);
+ SendMessageW(re,EM_EXGETSEL,0,(LPARAM)&g);
+ CHECK("(0,-1) selects all",g.cpMin==0&&g.cpMax==13);
+ cr.cpMin=4; cr.cpMax=2; SendMessageW(re,EM_EXSETSEL,0,(LPARAM)&cr);
+ SendMessageW(re,EM_EXGETSEL,0,(LPARAM)&g);
+ CHECK("ends in order",g.cpMin==2&&g.cpMax==4);
+ CHECK("EM_EXLINEFROMCHAR",SendMessageW(re,EM_EXLINEFROMCHAR,0,2)==0);
  DestroyWindow(top);return failed;}

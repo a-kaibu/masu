@@ -1268,6 +1268,23 @@ fn edit_line_message(m: u32, arg: u32, ranges: &[(usize, usize)], caret: usize, 
     }
 }
 
+/// EM_EXSETSEL's selection of a rich edit whose text is `len` long, from CHARRANGE (`min`, `max`)
+/// and the selection `cur` it had: (0, -1) all of it; `min` -1 none, the caret at the
+/// selection's end; `max` -1 or past the end the end; the ends in order. (RichEdit's
+/// ME_SetSelection, Wine)
+fn rich_ex_set_sel(min: i32, max: i32, len: u32, cur: (u32, u32)) -> (u32, u32) {
+    if min == 0 && max == -1 {
+        return (0, len);
+    }
+    if min < 0 {
+        let e = cur.0.max(cur.1).min(len);
+        return (e, e);
+    }
+    let a = (min as u32).min(len);
+    let b = if max < 0 { len } else { (max as u32).min(len) };
+    (a.min(b), a.max(b))
+}
+
 /// EM_REPLACESEL: `text` with the selection [a, b) (either order) replaced by `new`; the caret
 /// (an empty selection) after it.
 fn edit_replace(text: &[u16], a: usize, b: usize, new: &[u16]) -> (Vec<u16>, usize) {
@@ -1506,6 +1523,34 @@ fn control_proc_fn(c: &mut Ctx) -> u32 {
         // or plain (SF_TEXT 1, SF_UNICODE 0x10: UTF-16); it replaces the text (or the selection,
         // SFF_SELECTION: sake has none, so it is appended). Returns the characters read in.
         0x449 if is_rich(h) => rich_stream_in(c, h, wp, lp),
+        // EM_EXGETSEL / EM_EXSETSEL (a CHARRANGE {cpMin, cpMax} at lParam) and EM_EXLINEFROMCHAR
+        // (the character in lParam): the edit's selection and EM_LINEFROMCHAR. (Delphi's
+        // TRichEdit.Lines.Add sets the selection with EM_EXSETSEL, replaces it, and raises "RichEdit
+        // line insertion error" unless EM_EXGETSEL then has the caret after the new text.)
+        0x434 if is_rich(h) => {
+            let len = with(|s| s.wins.get(&h).map_or(0, |w| w.text.len() as u32));
+            let sel = ctl(h).sel;
+            if lp != 0 {
+                put32(lp, sel.0.min(sel.1).min(len));
+                put32(lp + 4, sel.0.max(sel.1).min(len));
+            }
+            0
+        }
+        0x437 if is_rich(h) => {
+            if lp == 0 {
+                return 0;
+            }
+            let len = with(|s| s.wins.get(&h).map_or(0, |w| w.text.len() as u32));
+            let sel = rich_ex_set_sel(r32(lp) as i32, r32(lp + 4) as i32, len, ctl(h).sel);
+            set_ctl(h, |t| t.sel = sel);
+            sel.1
+        }
+        0x436 if is_rich(h) => {
+            let len = with(|s| s.wins.get(&h).map_or(0, |w| w.text.len()));
+            let ranges = edit_measure(c, h, 0).0;
+            let caret = ctl(h).sel.1.min(len as u32) as usize;
+            edit_line_message(0xc9, lp, &ranges, caret, len)
+        }
         // EM_EXLIMITTEXT, EM_SETBKGNDCOLOR, EM_SETEVENTMASK, EM_AUTOURLDETECT: taken, nothing to do
         0x435 | 0x443 | 0x445 | 0x45b if is_rich(h) => 0,
         // the edit's selection and lines: EM_GETSEL, EM_SETSEL, EM_REPLACESEL (Delphi's
@@ -9737,6 +9782,44 @@ mod edit_lines_model {
             let cl = edit_line_message(0xc9, u32::MAX, &ranges, caret, len) as usize;
             prop_assert_eq!(edit_line_message(0xbb, u32::MAX, &ranges, caret, len), ranges[cl].0 as u32);
             prop_assert!(ranges[cl].0 <= caret);
+        }
+
+        /// EM_EXSETSEL: the selection is within the text with its ends in order, (0, -1) is
+        /// all of it, cpMin -1 leaves the caret at the old selection's end, and the ends asked
+        /// for inside the text are the ones set
+        #[test]
+        fn ex_set_sel(min in -2i32..60, max in -2i32..60, len in 0u32..50, c0 in 0u32..50, c1 in 0u32..50) {
+            let (a, b) = rich_ex_set_sel(min, max, len, (c0, c1));
+            prop_assert!(a <= b && b <= len);
+            if min == 0 && max == -1 {
+                prop_assert_eq!((a, b), (0, len));
+            } else if min < 0 {
+                prop_assert_eq!(a, b);
+                prop_assert_eq!(a, c0.max(c1).min(len));
+            } else if max >= 0 && (min as u32) <= len && (max as u32) <= len {
+                prop_assert_eq!((a, b), ((min.min(max)) as u32, (min.max(max)) as u32));
+            }
+        }
+
+        /// Delphi's TRichEditStrings.Insert on sake's messages: EM_EXSETSEL at the line's
+        /// start (or the end of the last line), EM_REPLACESEL, then EM_EXGETSEL's cpMin is
+        /// cpMax + the new text's length (else "RichEdit line insertion error", Kurovadis' splash)
+        #[test]
+        fn delphi_lines_add(lines in prop::collection::vec(prop::collection::vec(0x61u16..0x7a, 1..8), 1..6)) {
+            let mut text: Vec<u16> = Vec::new();
+            let mut sel = (0u32, 0u32);
+            for l in &lines {
+                let start = text.len() as i32;
+                sel = rich_ex_set_sel(start, start, text.len() as u32, sel);
+                let mut s = l.clone();
+                s.push(13);
+                let (out, at) = edit_replace(&text, sel.0 as usize, sel.1 as usize, &s);
+                text = out;
+                sel = (at as u32, at as u32);
+                prop_assert_eq!(sel.0.min(sel.1), start as u32 + s.len() as u32);
+            }
+            let want: Vec<u16> = lines.iter().flat_map(|l| l.iter().copied().chain([13])).collect();
+            prop_assert_eq!(text, want);
         }
 
         /// EM_REPLACESEL: the text outside the selection is kept, the new text is in its place,
