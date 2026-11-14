@@ -25,6 +25,8 @@ pub mod wma;
 pub mod wma_tables;
 
 #[cfg(test)]
+mod pin_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod video_tests;

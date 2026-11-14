@@ -1,0 +1,75 @@
+# behaviour pins (src/pin_tests.rs): name, FNV-1a of every output
+SMM0005.rcv	556eaf38e872ba37
+SMM0005.rcv damaged x4	91bbab6b5a7af31a
+SMM0015.rcv	948a210acf615c8a
+SMM0015.rcv damaged x4	850bda0f0e0d2748
+Video_Smoothing.wmv #0	a4c76c306c45f7f6
+Video_Smoothing.wmv #0 damaged x4	0df39866e27083c7
+any bytes	71243f8ba5657a10
+b52crash2.wmv #0	a54f6c29fa60f92f
+b52crash2.wmv #0 damaged x4	cc257cbe40b13144
+b52crash2.wmv #1	d6ae09263f95d918
+b52crash2.wmv #1 damaged x4	6d4b8a4f336857cb
+bloodyback.wmv #0	54e1427adb8197a7
+bloodyback.wmv #0 damaged x4	7d442b05584a3674
+bloodyback.wmv #1	27421f4a2da037a0
+bloodyback.wmv #1 damaged x4	8b26d020270eb237
+buggyDMOdecoding.wmv #0	30fd4b36e839e9ca
+buggyDMOdecoding.wmv #0 damaged x4	583c6822b88fc481
+buggyDMOdecoding.wmv #1	ede84de56e853041
+buggyDMOdecoding.wmv #1 damaged x4	9cf822c25c45462c
+guitar.wmv #0	6a6b5a8ca4d371e9
+guitar.wmv #0 damaged x4	ef1d4a7a465d5ae6
+guitar.wmv #1	d3de7c52f04d8a3c
+guitar.wmv #1 damaged x4	e38d25ad7efdf678
+kelsy_300.wmv #0	0d7ccc4c4ea398a8
+kelsy_300.wmv #0 damaged x4	3fb3e6c5688c5190
+kelsy_300.wmv #1	b220595a13876761
+kelsy_300.wmv #1 damaged x4	5cfb116e7970d7dc
+kelsy_56K.wmv #0	ee29214e6d0c9043
+kelsy_56K.wmv #0 damaged x4	e929ff1d88bb0d21
+kelsy_56K.wmv #1	0ad2ed5efe7433d6
+kelsy_56K.wmv #1 damaged x4	858d15699fb72bad
+mp43-96x64.wmv #0	95f4de22d5196df6
+mp43-96x64.wmv #0 damaged x48	06346b6628d71d22
+niceday.wmv #0	652736dd632a1d65
+niceday.wmv #0 damaged x4	48339afd6c31374e
+niceday.wmv #1	b06ea343fd1df440
+niceday.wmv #1 damaged x4	e693d6e5a723b191
+nokia_n90.wmv #0	a277d6887c053d45
+nokia_n90.wmv #0 damaged x4	6afd1f89030d827a
+nokia_n90.wmv #1	e6cd1b8a5c5b0043
+nokia_n90.wmv #1 damaged x4	1845c9405153cbe9
+pinball.wmv #1	a034297b697d5da2
+pinball.wmv #1 damaged x4	4ce7c87d4dba9ec4
+psychonauts.wmv #0	9fc5860db207b50c
+psychonauts.wmv #0 damaged x4	50f52476c062c5e4
+psychonauts.wmv #1	f86d94791e0b8899
+psychonauts.wmv #1 damaged x4	6892b3a97a678512
+sample-wmv9-complex-CP.wmv #0	f26cc849eadde631
+sample-wmv9-complex-CP.wmv #0 damaged x4	bdc3e88d4162df8a
+sample-wmv9-main-MP@LL.wmv #0	cd104ab3391e763d
+sample-wmv9-main-MP@LL.wmv #0 damaged x4	bdfecc36f689ae8a
+sample-wmv9-simple-SP@ML.wmv #0	de3a1c9565160dcc
+sample-wmv9-simple-SP@ML.wmv #0 damaged x4	a83ce63ae9fbd757
+snowboard.wmv #1	e89ebfffb1410adb
+snowboard.wmv #1 damaged x4	4f966a84f698e5d9
+vc1 synth	548ce1104334912f
+vc1 synth b	557e0517a863276a
+vc1 synth x8	901d0f4d67d4a162
+wmav1-22050-stereo.wma #0	91dd84c1c86381f1
+wmav1-22050-stereo.wma #0 damaged x48	0949a8a08309d128
+wmav2-44100-stereo.wma #0	db7b38b46fe09959
+wmav2-44100-stereo.wma #0 damaged x48	8662da75bdc96d6f
+wmav2-8000-mono.wma #0	4398e984cfc1b7a2
+wmav2-8000-mono.wma #0 damaged x48	6bd010b8d54ac154
+wmv1-96x64.wmv #0	4a328c2705d12320
+wmv1-96x64.wmv #0 damaged x48	b677e643eaf9cf48
+wmv2-66x50.wmv #0	6bcecab98dc7f07d
+wmv2-66x50.wmv #0 damaged x48	18ca5e5eed9c048e
+wmv2-qcif-low.wmv #0	cbf9615da1eaf30f
+wmv2-qcif-low.wmv #0 damaged x48	b928ce7a34cfb90a
+wmv8_x8intra.wmv #0	e5f1374d481ad0f8
+wmv8_x8intra.wmv #0 damaged x4	a86b7507349fcf4b
+wmv8_x8intra.wmv #1	a324db2828e6412e
+wmv8_x8intra.wmv #1 damaged x4	b2c5eaac08b1464c
