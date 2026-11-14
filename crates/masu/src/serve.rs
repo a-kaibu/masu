@@ -63,6 +63,7 @@ use axum::{
     Router,
 };
 use crate::saves;
+use crate::tree_list::ChunkId;
 use std::{net::SocketAddr, path::PathBuf, sync::Arc};
 use koji::jit::{saved, wasm};
 use tower_http::services::ServeDir;
@@ -157,20 +158,21 @@ type Jit = Arc<(PathBuf, tokio::sync::Mutex<()>)>;
 /// Chunks a list holds at most (16 bytes each): 32768 chunks of 4 MiB on average, 128 GiB.
 const CHUNKS_MAX: usize = 32768;
 
+/// A chunks list's bytes (16 a chunk id, as kura and the page write them): the ids, a short
+/// last one left out.
+fn chunk_ids(b: &[u8]) -> impl Iterator<Item = ChunkId> + '_ {
+    b.chunks_exact(16).filter_map(|c| <[u8; 16]>::try_from(c).ok()).map(ChunkId)
+}
+
+fn chunk_bytes(ids: impl IntoIterator<Item = ChunkId>) -> Vec<u8> {
+    ids.into_iter().flat_map(|c| c.0).collect()
+}
+
 /// A run's chunks list `new` (in the order it read them) with an earlier list `old` of the same
 /// name after it: `old`'s chunks `new` lacks, in their order; each chunk once, CHUNKS_MAX at most.
 fn merge_chunks(new: &[u8], old: &[u8]) -> Vec<u8> {
     let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::with_capacity(new.len() + old.len());
-    for c in new.chunks_exact(16).chain(old.chunks_exact(16)) {
-        if out.len() >= 16 * CHUNKS_MAX {
-            break;
-        }
-        if seen.insert(c) {
-            out.extend_from_slice(c);
-        }
-    }
-    out
+    chunk_bytes(chunk_ids(new).chain(chunk_ids(old)).filter(|c| seen.insert(*c)).take(CHUNKS_MAX))
 }
 
 /// Edges a `.next` file holds at most (32 bytes each, 2 MiB), and how many chunks one chunk's
@@ -186,27 +188,63 @@ const FANOUT: usize = 4;
 /// (host/fetch-bridge.js masuFollow): one list in one order cannot say that the title screen
 /// leads to the story and to the gallery.
 fn merge_edges(new: &[u8], old: &[u8]) -> Vec<u8> {
-    let list: Vec<&[u8]> = new.chunks_exact(16).collect();
-    let pairs = list.windows(2).filter(|w| w[0] != w[1]).map(|w| [w[0], w[1]].concat());
+    let list: Vec<ChunkId> = chunk_ids(new).collect();
+    let pairs = list.windows(2).filter_map(|w| match w {
+        [a, b] if a != b => Some((*a, *b)),
+        _ => None,
+    });
+    let old_ids: Vec<ChunkId> = chunk_ids(old.get(..old.len() / 32 * 32).unwrap_or_default()).collect();
+    let old_pairs = old_ids.chunks_exact(2).filter_map(|e| match e {
+        [a, b] => Some((*a, *b)),
+        _ => None,
+    });
     let mut seen = std::collections::HashSet::new();
-    let mut fan: std::collections::HashMap<Vec<u8>, usize> = Default::default();
+    let mut fan: std::collections::HashMap<ChunkId, usize> = Default::default();
     let mut out = Vec::new();
-    for e in pairs.chain(old.chunks_exact(32).map(|e| e.to_vec())) {
-        if out.len() >= 32 * EDGES_MAX {
+    for e in pairs.chain(old_pairs) {
+        if out.len() >= EDGES_MAX {
             break;
         }
         if seen.contains(&e) {
             continue;
         }
-        let n = fan.entry(e[..16].to_vec()).or_default();
+        let n = fan.entry(e.0).or_default();
         if *n >= FANOUT {
             continue;
         }
         *n += 1;
-        out.extend_from_slice(&e);
+        out.push(e);
         seen.insert(e);
     }
-    out
+    chunk_bytes(out.into_iter().flat_map(|(a, b)| [a, b]))
+}
+
+/// What `PUT /jit-save/<name>` is, by its name (letters, digits, `_ - .`, not starting with a
+/// dot, JIT_NAME_MAX at most).
+#[derive(Debug, PartialEq, Eq)]
+enum JitName {
+    /// `trace.<game>.<run>`: a run's read trace (kura vfs/trace.rs)
+    Trace(String),
+    /// `<owner>.chunks`: the store chunks a run read first
+    Chunks(String),
+    /// `<program>-<build>`: a run's new regions
+    Regions { prog: String, ver: String },
+}
+
+impl JitName {
+    fn parse(name: &str) -> Option<JitName> {
+        if name.is_empty() || name.len() > JIT_NAME_MAX || name.starts_with('.') || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+            return None;
+        }
+        if name.starts_with("trace.") {
+            return Some(JitName::Trace(name.to_string()));
+        }
+        if name.ends_with(".chunks") {
+            return Some(JitName::Chunks(name.to_string()));
+        }
+        let (prog, ver) = name.rsplit_once('-')?;
+        (regions_name(name)).then(|| JitName::Regions { prog: prog.to_string(), ver: ver.to_string() })
+    }
 }
 
 /// Whose list `file` is, for _shared.chunks's count: a game's (`game.<id>.chunks`, the page's
@@ -217,6 +255,13 @@ fn list_owner(file: &str) -> String {
         return file.to_string();
     }
     file.rsplit_once('-').map_or(file.to_string(), |x| x.0.to_string())
+}
+
+/// A regions save's body: (u32 module length, module, index); the module and the entries.
+fn regions_body(body: &[u8]) -> Option<(&[u8], Vec<saved::Entry>)> {
+    let n = usize::try_from(u32::from_le_bytes(body.get(..4)?.try_into().ok()?)).ok()?;
+    let end = n.checked_add(4)?;
+    Some((body.get(4..end)?, body.get(end..).and_then(saved::decode)?))
 }
 
 /// Traces kept at most (a run's is up to 4 MiB: kura vfs/trace.rs TRACE_MAX).
@@ -251,16 +296,21 @@ async fn save_trace(jit: &Jit, name: &str, body: &[u8]) -> StatusCode {
 /// Merges a run's regions into `name`'s: those not saved already (same roots and code) go after
 /// the others.
 async fn save_jit(State(jit): State<Jit>, Path(name): Path<String>, body: Bytes) -> StatusCode {
-    if name.is_empty() || name.len() > JIT_NAME_MAX || name.starts_with('.') || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
-        return StatusCode::BAD_REQUEST;
-    }
-    // a run's read trace (kura vfs/trace.rs: what it read when, what was foreseen), whole each
-    // time: jit/traces/<name>, the newest TRACES_MAX kept (hints_eval.rs replays them)
-    if name.starts_with("trace.") {
-        return save_trace(&jit, &name, &body).await;
-    }
-    // the store chunks a run read first, as is (the page fetches them ahead)
-    if name.ends_with(".chunks") {
+    let (prog, ver) = match JitName::parse(&name) {
+        None => return StatusCode::BAD_REQUEST,
+        // a run's read trace (kura vfs/trace.rs: what it read when, what was foreseen), whole
+        // each time: jit/traces/<name>, the newest TRACES_MAX kept (hints_eval.rs replays them)
+        Some(JitName::Trace(name)) => return save_trace(&jit, &name, &body).await,
+        // the store chunks a run read first, as is (the page fetches them ahead)
+        Some(JitName::Chunks(name)) => return save_chunks(&jit, &name, &body).await,
+        Some(JitName::Regions { prog, ver }) => (prog, ver),
+    };
+    save_regions(&jit, &name, &prog, &ver, body).await
+}
+
+/// `PUT /jit-save/<name>.chunks`.
+async fn save_chunks(jit: &Jit, name: &str, body: &[u8]) -> StatusCode {
+    {
         if body.len() % 16 != 0 {
             return StatusCode::BAD_REQUEST;
         }
@@ -306,41 +356,32 @@ async fn save_jit(State(jit): State<Jit>, Path(name): Path<String>, body: Bytes)
             }
         }
         let lists: Vec<Arc<Vec<u8>>> = lists.into_values().map(|l| l.1).collect();
-        let mut count: std::collections::HashMap<[u8; 16], u32> = Default::default();
+        let mut count: std::collections::HashMap<ChunkId, u32> = Default::default();
         for b in &lists {
             let mut once = std::collections::HashSet::new();
-            for c in b.chunks_exact(16) {
-                let c: [u8; 16] = c.try_into().unwrap();
+            for c in chunk_ids(b) {
                 if once.insert(c) {
                     *count.entry(c).or_default() += 1;
                 }
             }
         }
-        let mut shared = Vec::new();
         let mut have = std::collections::HashSet::new();
-        for b in &lists {
-            for c in b.chunks_exact(16) {
-                let c: [u8; 16] = c.try_into().unwrap();
-                if count[&c] >= 2 && shared.len() < 16 * 8192 && have.insert(c) {
-                    shared.extend_from_slice(&c);
-                }
-            }
-        }
+        let shared = chunk_bytes(lists.iter().flat_map(|b| chunk_ids(b)).filter(|c| count.get(c).is_some_and(|&n| n >= 2) && have.insert(*c)).take(8192));
         let tmp = jit.0.join(format!("{shared_name}.tmp"));
         if tokio::fs::write(&tmp, &shared).await.is_err() || tokio::fs::rename(&tmp, jit.0.join(&shared_name)).await.is_err() {
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
-        return StatusCode::NO_CONTENT;
+        StatusCode::NO_CONTENT
     }
-    if !regions_name(&name) {
-        return StatusCode::BAD_REQUEST;
-    }
-    let Some(n) = body.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize) else {
+}
+
+/// `PUT /jit-save/<prog>-<ver>`: merges a run's regions into the saved ones.
+async fn save_regions(jit: &Jit, name: &str, prog: &str, ver: &str, body: Bytes) -> StatusCode {
+    let name = name.to_string();
+    let Some((new_wasm, new_idx)) = regions_body(&body) else {
         return StatusCode::BAD_REQUEST;
     };
-    let (Some(new_wasm), Some(new_idx)) = (body.get(4..4 + n), body.get(4 + n..).and_then(saved::decode)) else {
-        return StatusCode::BAD_REQUEST;
-    };
+    let n = new_wasm.len();
     // (kept for every page of this build: only modules shaped like the translators', see
     // wasm::check)
     if !wasm::check(new_wasm, new_idx.iter().map(|e| e.width() as usize).sum()) {
@@ -354,7 +395,6 @@ async fn save_jit(State(jit): State<Jit>, Path(name): Path<String>, body: Bytes)
     // program's page loads as well: a game's first run starts with them translated (and
     // compiled, from the browser's code cache), like Windows on ARM's per-module translation
     // cache that "other apps can make use of on first launch".
-    let (prog, ver) = name.rsplit_once('-').unwrap_or((&name, ""));
     let shared_name = format!("{SHARED}-{ver}");
     let mut shared = std::collections::HashSet::new();
     part_keys(&jit.0, &shared_name, &mut shared).await;
@@ -2216,6 +2256,33 @@ mod tests {
                 // (not part k of another program: <other>.<k>)
                 proptest::prop_assert!(name.rsplit_once('.').is_none_or(|(_, k)| k.parse::<u32>().is_err() || !super::regions_name(name.rsplit_once('.').unwrap().0)));
             }
+        }
+    }
+
+    proptest::proptest! {
+        /// The name and the body read as save_jit read them before (the oracle: the if-chain on
+        /// the name, `u32 as usize` and slices of the body).
+        #[test]
+        fn jit_names_as_before(name in "(trace\\.|\\.|game\\.|sake-|_shared-|[A-Za-z0-9_.-]|/| |é){0,12}(\\.chunks|-v1|-|)") {
+            let ok = !name.is_empty() && name.len() <= super::JIT_NAME_MAX && !name.starts_with('.') && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.');
+            let old = if !ok { 0 } else if name.starts_with("trace.") { 1 } else if name.ends_with(".chunks") { 2 } else if super::regions_name(&name) { 3 } else { 0 };
+            let new = match super::JitName::parse(&name) {
+                None => 0,
+                Some(super::JitName::Trace(n)) => { proptest::prop_assert_eq!(&n, &name); 1 }
+                Some(super::JitName::Chunks(n)) => { proptest::prop_assert_eq!(&n, &name); 2 }
+                Some(super::JitName::Regions { prog, ver }) => { proptest::prop_assert_eq!(format!("{prog}-{ver}"), name.clone()); 3 }
+            };
+            proptest::prop_assert_eq!(new, old);
+        }
+
+        #[test]
+        fn regions_bodies_as_before(n in 0u32..40, extra in proptest::collection::vec(proptest::num::u8::ANY, 0..60), cut in 0usize..80) {
+            let mut body = n.to_le_bytes().to_vec();
+            body.extend_from_slice(&extra);
+            body.truncate(cut);
+            let old = body.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize).and_then(|n| Some((body.get(4..4 + n)?, body.get(4 + n..).and_then(super::saved::decode)?)));
+            let new = super::regions_body(&body);
+            proptest::prop_assert_eq!(old.map(|o| (o.0.to_vec(), o.1.len())), new.map(|o| (o.0.to_vec(), o.1.len())));
         }
     }
 
