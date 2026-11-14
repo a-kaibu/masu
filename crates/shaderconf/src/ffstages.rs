@@ -139,8 +139,8 @@ fn stage(r: &mut Rng) -> [u32; 10] {
         let base = crate::lo32(r.below(7));
         base | if r.below(4) == 0 { 0x10 } else { 0 } | if r.below(4) == 0 { 0x20 } else { 0 }
     };
-    let cop = COLOR_OPS[r.below(crate::u64_of(COLOR_OPS.len())) as usize];
-    let aop = ALPHA_OPS[r.below(crate::u64_of(ALPHA_OPS.len())) as usize];
+    let cop = COLOR_OPS[crate::usize_of(r.below(crate::u64_of(COLOR_OPS.len())))];
+    let aop = ALPHA_OPS[crate::usize_of(r.below(crate::u64_of(ALPHA_OPS.len())))];
     let res = if r.below(4) == 0 { 5 } else { 1 };
     [cop, a(r), a(r), a(r), aop, a(r), a(r), a(r), res, 0]
 }

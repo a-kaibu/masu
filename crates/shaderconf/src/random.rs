@@ -20,19 +20,76 @@ impl Rng {
     fn below(&mut self, n: u64) -> u64 {
         self.next() % n
     }
+    /// one of `xs` (None only for an empty list)
+    fn pick<T, const N: usize>(&mut self, xs: [T; N]) -> Option<T> {
+        let k = crate::usize_of(self.below(crate::u64_of(N)));
+        xs.into_iter().nth(k)
+    }
     fn int(&mut self, lo: i64, hi: i64) -> f64 {
         (lo + self.below((hi - lo + 1).cast_unsigned()).cast_signed()) as f64
     }
 }
+
+#[derive(Clone, Copy, Debug)]
+enum Comp {
+    X,
+    Y,
+    Z,
+    W,
+}
+
+const COMPS: [Comp; 4] = [Comp::X, Comp::Y, Comp::Z, Comp::W];
+
+impl Comp {
+    fn of(self, v: [f64; 4]) -> f64 {
+        match self {
+            Comp::X => v[0],
+            Comp::Y => v[1],
+            Comp::Z => v[2],
+            Comp::W => v[3],
+        }
+    }
+    fn name(self) -> char {
+        match self {
+            Comp::X => 'x',
+            Comp::Y => 'y',
+            Comp::Z => 'z',
+            Comp::W => 'w',
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Min,
+    Max,
+}
+
+const BIN_OPS: [BinOp; 5] = [BinOp::Add, BinOp::Sub, BinOp::Mul, BinOp::Min, BinOp::Max];
+
+#[derive(Clone, Copy, Debug)]
+enum UnOp {
+    Neg,
+    Abs,
+    /// floor(x * 0.5)
+    Half,
+    /// clamp(x, -64, 64)
+    Clamp,
+}
+
+const UN_OPS: [UnOp; 4] = [UnOp::Neg, UnOp::Abs, UnOp::Half, UnOp::Clamp];
 
 #[derive(Clone)]
 enum E {
     In(usize),
     Var(usize),
     Const([f64; 4]),
-    Swz(Box<E>, [u8; 4]),
-    Bin(u8, Box<E>, Box<E>),
-    Un(u8, Box<E>),
+    Swz(Box<E>, [Comp; 4]),
+    Bin(BinOp, Box<E>, Box<E>),
+    Un(UnOp, Box<E>),
     /// a.x < b.x ? c : d
     Sel(Box<E>, Box<E>, Box<E>, Box<E>),
     Dot(Box<E>, Box<E>),
@@ -68,15 +125,15 @@ fn expr(r: &mut Rng, depth: u32) -> E {
     match r.below(10) {
         0 => {
             let e = sub(r);
-            E::Swz(e, [r.below(4) as u8, r.below(4) as u8, r.below(4) as u8, r.below(4) as u8])
+            E::Swz(e, std::array::from_fn(|_| r.pick(COMPS).unwrap_or(Comp::X)))
         }
         1..=4 => {
             let (a, b) = (sub(r), sub(r));
-            E::Bin(r.below(5) as u8, a, b)
+            E::Bin(r.pick(BIN_OPS).unwrap_or(BinOp::Add), a, b)
         }
         5 | 6 => {
             let e = sub(r);
-            E::Un(r.below(4) as u8, e)
+            E::Un(r.pick(UN_OPS).unwrap_or(UnOp::Neg), e)
         }
         7 | 8 => {
             let (a, b, c, d) = (sub(r), sub(r), sub(r), sub(r));
@@ -137,25 +194,25 @@ impl Ev<'_> {
             E::Const(c) => *c,
             E::Swz(a, s) => {
                 let a = self.e(a);
-                s.map(|k| a[usize::from(k)])
+                s.map(|k| k.of(a))
             }
             E::Bin(op, a, b) => {
                 let (a, b) = (self.e(a), self.e(b));
                 std::array::from_fn(|i| match op {
-                    0 => a[i] + b[i],
-                    1 => a[i] - b[i],
-                    2 => a[i] * b[i],
-                    3 => a[i].min(b[i]),
-                    _ => a[i].max(b[i]),
+                    BinOp::Add => a[i] + b[i],
+                    BinOp::Sub => a[i] - b[i],
+                    BinOp::Mul => a[i] * b[i],
+                    BinOp::Min => a[i].min(b[i]),
+                    BinOp::Max => a[i].max(b[i]),
                 })
             }
             E::Un(op, a) => {
                 let a = self.e(a);
                 a.map(|x| match op {
-                    0 => -x,
-                    1 => x.abs(),
-                    2 => (x * 0.5).floor(),
-                    _ => x.clamp(-64.0, 64.0),
+                    UnOp::Neg => -x,
+                    UnOp::Abs => x.abs(),
+                    UnOp::Half => (x * 0.5).floor(),
+                    UnOp::Clamp => x.clamp(-64.0, 64.0),
                 })
             }
             E::Sel(a, b, c, d) => {
@@ -241,19 +298,19 @@ fn pe(l: &Lang, e: &E) -> String {
         E::In(i) => l.ins[*i].to_string(),
         E::Var(i) => format!("t{i}"),
         E::Const(c) => format!("{}({}, {}, {}, {})", l.vec, num(c[0]), num(c[1]), num(c[2]), num(c[3])),
-        E::Swz(a, s) => format!("({}).{}", pe(l, a), s.iter().map(|&k| b"xyzw"[usize::from(k)] as char).collect::<String>()),
+        E::Swz(a, s) => format!("({}).{}", pe(l, a), s.iter().map(|k| k.name()).collect::<String>()),
         E::Bin(op, a, b) => match op {
-            0 => format!("({} + {})", pe(l, a), pe(l, b)),
-            1 => format!("({} - {})", pe(l, a), pe(l, b)),
-            2 => format!("({} * {})", pe(l, a), pe(l, b)),
-            3 => format!("min({}, {})", pe(l, a), pe(l, b)),
-            _ => format!("max({}, {})", pe(l, a), pe(l, b)),
+            BinOp::Add => format!("({} + {})", pe(l, a), pe(l, b)),
+            BinOp::Sub => format!("({} - {})", pe(l, a), pe(l, b)),
+            BinOp::Mul => format!("({} * {})", pe(l, a), pe(l, b)),
+            BinOp::Min => format!("min({}, {})", pe(l, a), pe(l, b)),
+            BinOp::Max => format!("max({}, {})", pe(l, a), pe(l, b)),
         },
         E::Un(op, a) => match op {
-            0 => format!("(-{})", pe(l, a)),
-            1 => format!("abs({})", pe(l, a)),
-            2 => format!("floor({} * 0.5)", pe(l, a)),
-            _ => format!("clamp({}, -64.0, 64.0)", pe(l, a)),
+            UnOp::Neg => format!("(-{})", pe(l, a)),
+            UnOp::Abs => format!("abs({})", pe(l, a)),
+            UnOp::Half => format!("floor({} * 0.5)", pe(l, a)),
+            UnOp::Clamp => format!("clamp({}, -64.0, 64.0)", pe(l, a)),
         },
         E::Sel(a, b, c, d) => format!("((({}).x < ({}).x) ? {} : {})", pe(l, a), pe(l, b), pe(l, c), pe(l, d)),
         E::Arr(i) => format!("arr[{}]", idx(l, i)),

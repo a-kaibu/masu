@@ -99,7 +99,7 @@ fn mutate_text(r: &mut Rng, s: &str, other: &str) -> String {
                 }
             }
             _ if at < b.len() => {
-                b[at] = (b' ' + r.below(95) as u8) as char;
+                b[at] = u8::try_from(r.below(95)).map_or(' ', |c| char::from(b' ' + c));
             }
             _ => {}
         }
@@ -321,7 +321,7 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_secs(1));
             let s = st.load(Ordering::Relaxed);
-            if s != 0 && (t0.elapsed().as_millis() as u64).saturating_sub(s) > 20_000 {
+            if s != 0 && u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX).saturating_sub(s) > 20_000 {
                 eprintln!("HANG (over 20 s) on\n{}", cur.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
                 std::process::exit(2);
             }
@@ -339,7 +339,7 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
             if let Some(p) = &last {
                 let _ = std::fs::write(p, input.show());
             }
-            started.store(t0.elapsed().as_millis() as u64 + 1, Ordering::Relaxed);
+            started.store(u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX - 1) + 1, Ordering::Relaxed);
             let (took, fail) = input.failure(&msg);
             accepted += usize::from(took);
             started.store(0, Ordering::Relaxed);
