@@ -330,6 +330,14 @@ pub fn module_head(module: &mut Module, long: bool) {
     if long && module.types.len() == 4 {
         module.types.push(FuncType { params: alloc::vec![I32; 3], results: alloc::vec![I32] });
         module.imports.push(Import::Func("callmiss", 4));
+        // long::T_FN: (cpu, 16 registers, flags-dead return address, entry, depth) -> (status, RIP,
+        // 16 registers)
+        let mut params = alloc::vec![I32];
+        params.extend_from_slice(&[I64; 17]);
+        params.extend_from_slice(&[I32, I32]);
+        let mut results = alloc::vec![I32, I64];
+        results.extend_from_slice(&[I64; 16]);
+        module.types.push(FuncType { params, results });
     }
     // (in every 32-bit module: saved bundles merge regions and functions, which needs the same
     // types and imports)

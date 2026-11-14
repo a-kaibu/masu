@@ -322,8 +322,24 @@
       bench.exe calls 146 / 86 / 48 ms、lz 298 / 158 / 517、cpu.exe unfilter 765 / 516 / 551、
       compose 7.3 / 3.8 / 3.7。遅くなるもの: cpu.exe script 225 / 440 / 128、cxx vector 396 / 681 / 270、
       virtual 96 / 179、exceptions 385 / 600、bench sort 576 / 726。仮想呼び出しと間接 call が
-      レジスタを全部 Cpu (lo/hi 分割) に書いて読み直すのが重い。次: レジスタを call の引数・戻り値で
-      渡す (x86 の T_FN と同じ形)、Cpu のレジスタを 64 ビット 1 本に。テスト: jit64test
+      レジスタを全部 Cpu (lo/hi 分割) に書いて読み直すのが重い。
+      第 2 段: レジスタを call の引数・戻り値で渡す (x86 の T_FN と同じ形)。関数は型 T_FN
+      (cpu, rsp, rcx, rdx, r8, r9, rax, … r15 の 16 本 + L_RA + L_ARG + L_DEPTH → status, rip, 16 本)、
+      モジュールごとに表の base にアダプタ (リージョン型)、base+1 に関数。RET は深さ > 0 なら RET_FN と
+      rip を返し、ほかの status は状態が全部 Cpu にある印 (出口は 16 本とも書く)。L_RA は呼び出し元が
+      フラグを読まない戻り先で、そこへの RET は flags_to_cpu を飛ばす。キャッシュ外れは wasm 内で
+      ハッシュを引いてから callmiss。ブロックは別のブロックの先頭で切る (split_blocks、ループの
+      ヘッダが前のブロックの中にあると入口が増えないため)。kura は関数の範囲 (fn_span: 根から 0x1000
+      以内でつながるブロック) の中で外れたら、その関数を作り直し (fn_around)、それでも無ければその番地を
+      根に作る。数字 (3 回の最小、リージョン / FN / x86): bench calls 119 / 52 / 43、lz 205 / 143 / 162、
+      total 1171 / 1003 / 903、cpu unfilter 848 / 633 / 828、mix 709 / 563 / 801、script 269 / 319 / 160、
+      transform 12 / 26 / 12、api 369 / 423 / 369、cxx map 617 / 507 / 419、vector 431 / 414 / 355、
+      virtual 1159 / 1178 / 1051、exceptions 410 / 427 / 727、flatbench 6.7 / 5.8 秒。script・transform・
+      api がまだ遅いので既定オフのまま。次: Cpu のレジスタを 64 ビット 1 本に、間接 call 先の投機
+      インライン。テスト: jit64test (a_return_to_another_alias_keeps_rip_hi、
+      an_indirect_call_over_three_functions、flags_after_a_call_as_the_caller_reads_them、
+      a_loop_header_inside_the_block_before も)、koji blocks_end_where_another_starts、kura
+      a_function_spans_its_blocks_not_its_thunks と fn_span_property。jit64test
       (JFN または seed の 1/2 で FN、functions_call_each_other、deep_recursion_leaves_and_comes_back、
       rotates_stay_translated、calls_through_import_thunks、leaves_called_inline)、host テスト全部を
       MASU_JIT64_FN=1 でも通す。

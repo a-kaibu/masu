@@ -40,6 +40,17 @@ const F_STATUS: u32 = 2;
 const F_CALLMISS: u32 = 4;
 /// Guest calls nested as wasm calls at most (deeper ones leave for the dispatcher)
 const MAX_DEPTH: u32 = 128;
+/// The type of functions (FN64): (cpu, [`FN_ARGS`]...) -> (status, RIP, rax..r15). The
+/// registers are the caller's locals passed on, not in the Cpu (stale there inside); a RET
+/// returns RET_FN with its RIP, anything else a status with the whole state in the Cpu.
+/// Each function's module has its adapter to the region type first ([`fn_adapter`], what the
+/// dispatcher and the hash table's entries call) and the function next to it in the table.
+pub(super) const T_FN: u32 = 5;
+pub(super) const RET_FN: i32 = super::RET_FN;
+/// A function's parameters after the Cpu (see [`T_FN`]): RSP, the MS ABI's argument
+/// registers (V8 keeps the first few in host registers), the rest, then the entry and the
+/// depth.
+const FN_ARGS: [u32; 19] = [L_R + 4, L_R + 1, L_R + 2, L_R + 8, L_R + 9, L_R, L_R + 3, L_R + 5, L_R + 6, L_R + 7, L_R + 10, L_R + 11, L_R + 12, L_R + 13, L_R + 14, L_R + 15, L_RA, L_ARG, L_DEPTH];
 
 const MAX_INS: usize = 120;
 const MAX_BLOCKS: usize = 256;
@@ -101,7 +112,10 @@ const L_FR: u32 = L_FA + 2;
 const L_NT: u32 = L_FA + 3; // i64: where an exit goes
 const L_T: u32 = L_FA + 4; // N_T i64 temporaries
 const N_T: u32 = 6;
-const N_I64: u32 = 16 + 4 + N_T;
+/// functions (FN64): a return address where the caller's flags are dead (its block writes them
+/// all before reading any), 0 for none: a RET there leaves them out of the Cpu (see T_FN)
+const L_RA: u32 = L_T + N_T;
+const N_I64: u32 = 16 + 4 + N_T + 1;
 const L_FC: u32 = L_R + N_I64; // i32: carry kept by INC/DEC
 const L_BLK: u32 = L_FC + 1; // i32
 const L_A: u32 = L_FC + 2; // i32: the instruction's memory address
@@ -348,7 +362,74 @@ fn splice_regs(code: Code, marks: &[(usize, usize, bool)], all: bool) -> Code {
     out
 }
 
+/// Pushes a function's call arguments after the Cpu (see [`FN_ARGS`]): the registers, the
+/// return address `ra` (i64) whose flags are dead, `entry` and `depth`.
+fn fn_args(c: &mut Code, ra: impl FnOnce(&mut Code), entry: impl FnOnce(&mut Code), depth: impl FnOnce(&mut Code)) {
+    c.get(L_CPU);
+    for &l in &FN_ARGS[..16] {
+        c.get(l);
+    }
+    ra(c);
+    entry(c);
+    depth(c);
+}
+
+/// Takes a function's results (see [`T_FN`]) into the registers' locals, RIP into `rip`, the
+/// status into `st`.
+fn fn_results(c: &mut Code, st: u32, rip: u32) {
+    for i in (0..16).rev() {
+        c.set(L_R + i);
+    }
+    c.set(rip).set(st);
+}
+
+/// A function's adapter to the region type (FN64, see [`T_FN`]): the registers from the
+/// Cpu into the function (at function index `f`, the next one), and back; its RET as status
+/// 0 at the RET's RIP.
+fn fn_adapter(f: u32) -> Func {
+    let (st, rip) = (L_R + 16, L_R + 17);
+    let mut c = Code::default();
+    emit_loads(&mut c, u16::MAX);
+    fn_args(&mut c, |c| void(c.i64c(0)), |c| void(c.get(L_ARG)), |c| void(c.get(L_DEPTH)));
+    c.call(f);
+    fn_results(&mut c, st, rip);
+    c.get(st).i32c(RET_FN).eq().if_();
+    emit_stores(&mut c, u16::MAX);
+    c.get(L_CPU).get(rip).x(I32_WRAP).store32(cpu_off!(eip));
+    c.get(L_CPU).get(rip).i64c(32).x(I64_SHR_U).x(I32_WRAP).store32(cpu_off!(rip_hi));
+    c.i32c(0).set(st);
+    c.end();
+    c.get(st);
+    let mut locals = alloc::vec![I64; 16];
+    locals.push(I32);
+    locals.push(I64);
+    Func { ty: 2, locals, code: c }
+}
+
+fn void<T>(_: T) {}
+
 impl<'a> Gen<'a> {
+    /// Returns from a function (FN64): `status` and `rip` (pushed by the closures), then the
+    /// registers' locals.
+    fn ret_fn(&mut self, status: impl FnOnce(&mut Code), rip: impl FnOnce(&mut Code)) {
+        status(&mut self.c);
+        rip(&mut self.c);
+        for i in 0..16 {
+            self.c.get(L_R + i);
+        }
+        self.c.ret();
+    }
+
+    /// `return status` with the state in the Cpu (a function's: with the registers, see
+    /// [`T_FN`]).
+    fn ret_st(&mut self, st: u32) {
+        if self.fnm {
+            self.ret_fn(|c| void(c.get(st)), |c| void(c.i64c(0)));
+        } else {
+            Self::ret_status(&mut self.c, st);
+        }
+    }
+
     fn temp(&mut self) -> u32 {
         if self.temps >= N_T {
             self.bad = true;
@@ -1060,6 +1141,27 @@ impl<'a> Gen<'a> {
         c.get(L_H).get(L_E).i32c(super::RING_SIZE as i32 - 1).and().i32c(3).shl().add().tee(L_H);
         c.get(L_ARG).u32c(mask).and().store32(4);
         c.get(L_H).get(L_NT).x(I32_WRAP).store32(8);
+        if self.fnm {
+            // (a function's: another function's entry, a tail call with the registers as
+            // arguments, as deep as this one (its RET goes back to our caller); anything else
+            // out to the dispatcher)
+            // (in this 4GB alias only: the callee's prologue would find the Cpu's stale)
+            c.get(L_DBG).u32c(super::FN_TAG).and().i32c(0).ne();
+            c.get(L_NT).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c(hi).eq().and().if_();
+            fn_args(c, |c| void(c.get(L_RA)), |c| void(c.get(L_DBG)), |c| void(c.get(L_DEPTH)));
+            c.get(L_DBG).u32c(mask).and().i32c(1).add();
+            c.op(0x13).op(T_FN as u8).op(0); // return_call_indirect, table 0
+            c.end();
+            c.br(2); // miss
+            c.end();
+            c.get(L_DBG).eqz().br_if(1);
+            c.get(L_H).i32c(1).add().get(L_CPU).load32(maskf).and().set(L_H).br(0);
+            c.end(); // probe
+            c.end(); // miss
+            c.end();
+            c.end();
+            return;
+        }
         self.store_regs();
         let c = &mut self.c;
         c.get(L_CPU).get(L_NT).x(I32_WRAP).store32(cpu_off!(eip));
@@ -1093,37 +1195,41 @@ impl<'a> Gen<'a> {
     fn call_fn(&mut self, t: u32, next: u64) {
         let site = self.ins.ip() as u32;
         let (h, v) = (L_H, L_E);
+        // (the flags in the Cpu both ways, the registers as arguments and results)
         let f = self.flags;
         self.flags_to_cpu();
         self.flags = f;
-        self.store_regs();
-        let b = cpu_off!(jit_budget);
+        // (no budget counted: a call goes at most MAX_DEPTH deep, the loops count it)
         self.c.block(); // out
         self.depth += 1;
-        self.c.get(L_CPU).get(L_CPU).load32(b).i32c(1).sub().store32(b);
-        self.c.get(L_CPU).load32(b).i32c(0).le_s();
-        self.c.get(L_DEPTH).u32c(MAX_DEPTH).ge_u().or();
+        self.c.get(L_DEPTH).u32c(MAX_DEPTH).ge_u();
         self.c.get(t).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c((self.ins.ip() >> 32) as u32).ne().or();
         self.c.br_if(0);
         // the call cache: this site's slot holds (target, hash table entry) of the function
         // it called last
         let slot = (site.wrapping_mul(0x9e37_79b1) >> 20) & (super::CALL_CACHE - 1);
         self.c.get(L_CPU).load32(cpu_off!(jit_calls)).u32c(slot * 8).add().tee(h).load32(0).get(t).x(I32_WRAP).eq();
-        self.c.if_i32().get(h).load32(4).else_().get(L_CPU).get(h).get(t).x(I32_WRAP).call(F_CALLMISS).end().tee(v).eqz().br_if(0);
-        self.c.get(L_CPU).get(v);
-        for i in 2..N_PARAMS {
-            if i == L_DEPTH {
-                self.c.get(L_DEPTH).i32c(1).add();
-            } else {
-                self.c.i32c(0);
-            }
-        }
-        self.c.get(v).u32c((1 << ENTRY_SHIFT) - 1).and().call_indirect(2, 0).tee(h);
-        self.c.get(L_CPU).load32(cpu_off!(eip)).u32c(next as u32).ne().or();
-        self.c.get(L_CPU).load32(cpu_off!(rip_hi)).u32c((next >> 32) as u32).ne().or();
-        self.c.if_().get(h).ret().end();
-        self.load_regs();
+        self.c.if_().get(h).load32(4).set(v).else_();
+        self.call_probe(t, h, v);
+        self.c.end();
+        self.c.get(v).eqz().br_if(0);
+        // (the flags dead at the return address: the callee's RET there leaves them out)
+        let dead = self.index.get(&next).is_some_and(|&k| !self.blocks[k].flags_in);
+        fn_args(&mut self.c, |c| void(c.i64c(if dead { next as i64 } else { 0 })), |c| void(c.get(v)), |c| void(c.get(L_DEPTH).i32c(1).add()));
+        self.c.get(v).u32c((1 << ENTRY_SHIFT) - 1).and().i32c(1).add().call_indirect(T_FN, 0);
+        fn_results(&mut self.c, h, L_NT);
+        // another status: the state is in the Cpu, passed up
+        self.c.get(h).i32c(RET_FN).ne().if_();
+        self.ret_fn(|c| void(c.get(h)), |c| void(c.i64c(0)));
+        self.c.end();
         self.flags = Flags::Cpu;
+        // returned elsewhere (longjmp, a return address replaced): on there
+        self.c.get(L_NT).i64c(next as i64).x(I64_NE).if_();
+        self.depth += 1;
+        self.c.get(L_NT);
+        self.exit_dyn(0);
+        self.depth -= 1;
+        self.c.end();
         self.mx_checked = None;
         self.mx_seen = [[None; 2]; 16];
         self.goto(next);
@@ -1132,6 +1238,40 @@ impl<'a> Gen<'a> {
         self.flags = Flags::Cpu;
         self.c.get(t);
         self.exit_dyn(0);
+    }
+
+    /// A call cache miss (FN64): the hash table probed here for the root of a function at the
+    /// target (i64 local `t`), into `v` and the cache slot at `h`, as vnhost_jit_callmiss
+    /// would; not one there, the host's answer (it samples the target to become a function).
+    /// A site calling several functions in turn (a virtual call over a list of objects) misses
+    /// every time and stayed in wasm (the host call was most of such a call).
+    fn call_probe(&mut self, t: u32, h: u32, v: u32) {
+        let (hash, maskf) = (cpu_off!(jit_hash), cpu_off!(jit_mask));
+        let (k, e, x) = (L_A, L_DBG, L_ST);
+        let c = &mut self.c;
+        c.i32c(0).set(v);
+        c.get(L_CPU).load32(maskf).set(k).get(t).x(I32_WRAP);
+        super::dispatch::probe_slot(c, k);
+        c.set(k);
+        c.block();
+        c.loop_();
+        c.get(L_CPU).load32(hash).get(k).i32c(3).shl().add().tee(e).load32(0).tee(x).eqz().br_if(1);
+        c.get(x).get(t).x(I32_WRAP).eq().if_();
+        // (a function's root only, as the host's)
+        c.get(e).load32(4).tee(x).u32c(super::FN_TAG).and().i32c(0).ne();
+        c.get(x).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().eqz().and().if_();
+        c.get(x).set(v);
+        c.get(h).get(t).x(I32_WRAP).store32(0);
+        c.get(h).get(x).store32(4);
+        c.end();
+        c.br(2);
+        c.end();
+        c.get(k).i32c(1).add().get(L_CPU).load32(maskf).and().set(k).br(0);
+        c.end();
+        c.end();
+        c.get(v).eqz().if_();
+        c.get(L_CPU).get(h).get(t).x(I32_WRAP).call(F_CALLMISS).set(v);
+        c.end();
     }
 
     /// Runs the current instruction through the `step` import; with `ends`, leaves after it at
@@ -1145,11 +1285,11 @@ impl<'a> Gen<'a> {
         self.c.get(L_CPU).u32c((ip >> 32) as u32).store32(cpu_off!(rip_hi));
         self.c.get(L_CPU).call(F_STEP).tee(L_ST);
         if ends {
-            Self::ret_status(&mut self.c, L_ST);
+            self.ret_st(L_ST);
             return;
         }
         self.c.if_();
-        Self::ret_status(&mut self.c, L_ST);
+        self.ret_st(L_ST);
         self.c.end();
         self.load_regs();
         self.flags = Flags::Cpu;
@@ -2283,12 +2423,14 @@ impl<'a> Gen<'a> {
                     self.c.get(L_DEPTH).if_();
                     self.depth += 1;
                     let f = self.flags;
-                    self.flags_to_cpu();
+                    if matches!(f, Flags::Lazy(..)) {
+                        // (not to a caller whose flags are dead there)
+                        self.c.get(t).get(L_RA).x(I64_NE).if_();
+                        self.flags_to_cpu();
+                        self.c.end();
+                    }
                     self.flags = f;
-                    self.store_regs();
-                    self.c.get(L_CPU).get(t).x(I32_WRAP).store32(cpu_off!(eip));
-                    self.c.get(L_CPU).get(t).i64c(32).x(I64_SHR_U).x(I32_WRAP).store32(cpu_off!(rip_hi));
-                    self.c.i32c(0).ret();
+                    self.ret_fn(|c| void(c.i32c(RET_FN)), |c| void(c.get(t)));
                     self.depth -= 1;
                     self.c.end();
                     self.c.get(t);
@@ -2579,6 +2721,19 @@ fn index_bound(ins: &[Instruction]) -> Option<(Register, u64, usize)> {
         };
     }
     None
+}
+
+/// Ends each block where another block starts inside it (at one of its instructions), but
+/// for one ending in a jump table (its table read from the whole block, `tables`).
+fn split_blocks(blocks: &mut [Block], index: &BTreeMap<u64, usize>, tables: &BTreeMap<usize, Vec<u64>>) {
+    for (k, b) in blocks.iter_mut().enumerate() {
+        if tables.contains_key(&k) {
+            continue;
+        }
+        if let Some(cut) = b.ins.iter().skip(1).position(|i| index.contains_key(&i.ip())) {
+            b.ins.truncate(cut + 1);
+        }
+    }
 }
 
 /// Whether the function at `f` is a small leaf (FN64 calls it inline): a few blocks of direct
@@ -3081,6 +3236,13 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         index.insert(a, blocks.len());
         blocks.push(Block { start: a, ins, flags_in: true });
     }
+    // (laid out: a block running into another's start ends there, falling through to it. A
+    // jump into the middle of a decoded block made a second block of its tail, and a loop
+    // entered there through the first one's copy is irreducible: std::sort's partition loops
+    // left the layout at every round)
+    if fnm || STRUCTURED.load(Relaxed) {
+        split_blocks(&mut blocks, &index, &tables);
+    }
     // flags a block reads before writing them all
     for b in &mut blocks {
         let mut written = 0;
@@ -3133,10 +3295,18 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let mut g = Gen { c: Code::default(), blocks: &blocks, index: &index, returns: &returns, flags: Flags::Cpu, depth: 0, ins: blocks[0].ins[0], temps: 0, mx_checked: None, mx_seen: [[None; 2]; 16], marks: Vec::new(), hi_swapped: Vec::new(), smc: false, fresh: None, watch_store: false, fell_back: false, bad: false, info: iced_x86::InstructionInfoFactory::new(), structured: lay.is_some(), fwd: alloc::vec![None; nodes], back: alloc::vec![None; nodes], cur: 0, table_node: BTreeMap::new(), side: BTreeMap::new(), fnm, thunks: &thunks, unlaid: Vec::new() };
     // the dispatcher's key is the low 32 bits: code at another 4GB alias is left to the interpreter
     g.c.get(L_CPU).load32(cpu_off!(rip_hi)).u32c((entry >> 32) as u32).ne().if_();
-    g.c.i32c(RET_INTERP).ret();
+    if fnm {
+        // (a function's registers are its arguments: into the Cpu for the interpreter)
+        emit_stores(&mut g.c, u16::MAX);
+        g.ret_fn(|c| void(c.i32c(RET_INTERP)), |c| void(c.i64c(0)));
+    } else {
+        g.c.i32c(RET_INTERP).ret();
+    }
     g.c.end();
     g.c.i32c(0).set(L_FC);
-    g.load_regs();
+    if !fnm {
+        g.load_regs();
+    }
     // (a function's entries are tagged FN_TAG, bit 31)
     g.c.get(L_ARG).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().set(L_BLK);
     let mut count = 0;
@@ -3205,10 +3375,12 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     g.store_regs();
     g.c.get(L_CPU).get(L_NT).x(I32_WRAP).store32(cpu_off!(eip));
     g.c.get(L_CPU).get(L_NT).i64c(32).x(I64_SHR_U).x(I32_WRAP).store32(cpu_off!(rip_hi));
-    Gen::ret_status(&mut g.c, L_ST);
+    g.ret_st(L_ST);
     g.c.end(); // loop
     g.c.op(0x00); // unreachable
-    let mut locals = alloc::vec![I64; N_I64 as usize];
+    // (a function's: the Cpu its only parameter, the region type's others locals, see T_FN)
+    let mut locals = if fnm { alloc::vec![I32; N_PARAMS as usize - 1] } else { Vec::new() };
+    locals.extend_from_slice(&[I64; N_I64 as usize]);
     locals.extend_from_slice(&[I32; N_I32 as usize]);
     locals.extend_from_slice(&[V128; 2]);
     locals.push(V128);
@@ -3218,8 +3390,17 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     if super::LAYOUT.load(Relaxed) {
         layout.push_str(&alloc::format!("entries {:x?}\ntables {:x?}\n", entries.iter().map(|&k| blocks[k].start).collect::<Vec<_>>(), tables.iter().map(|(&k, t)| (blocks[k].start, t.len())).collect::<Vec<_>>()));
     }
-    let code = splice_regs(core::mem::take(&mut g.c), &g.marks, DEBUG_ALL_REGS.load(Relaxed));
-    module.funcs.push(Func { ty: 2, locals, code });
+    // (a function's exits put all its registers in the Cpu: they came as arguments)
+    let code = splice_regs(core::mem::take(&mut g.c), &g.marks, fnm || DEBUG_ALL_REGS.load(Relaxed));
+    if fnm {
+        let (locals, body) = super::wasm::compact_locals_param(1, &FN_ARGS, &locals, code);
+        let nimp = module.imports.iter().filter(|i| matches!(i, super::wasm::Import::Func(..))).count() as u32;
+        let at = nimp + module.funcs.len() as u32;
+        module.funcs.push(fn_adapter(at + 1));
+        module.funcs.push(Func { ty: T_FN, locals, code: body });
+    } else {
+        module.funcs.push(Func { ty: 2, locals, code });
+    }
     let starts = entries.iter().map(|&k| (blocks[k].start as u32, k as u32)).collect();
     let code: Vec<(u32, u32)> = blocks.iter().map(|b| {
         let end = b.ins.last().unwrap().next_ip();
@@ -3339,6 +3520,44 @@ mod tests {
         outer.insert(Register::R13, Some(0x1100u64));
         let ins2 = decode(&[0x4d, 0x89, 0xe5, 0x89, 0xd8, 0x83, 0xe0, 0x7f, 0x41, 0xff, 0x64, 0xc5, 0x00]); // mov r13, r12; ...
         assert!(jump_table_in(&mut Img(img), &ins2, None, &outer).is_empty());
+    }
+
+    /// A block running into another block's start ends there (split_blocks): the loop of
+    /// `a_loop_header_inside_the_block_before` (jit64test) laid out with one instruction in the
+    /// block before its header and in the one before B, each block's code once, no jump out
+    /// of the layout; regions too when structured. (debugging text: LAYOUT)
+    #[test]
+    fn blocks_end_where_another_starts() {
+        struct Img(Vec<u8>);
+        impl Memory for Img {
+            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
+                a.checked_sub(0x1000).and_then(|o| self.0.get(o as usize).copied()).ok_or(crate::Fault { addr: a, write: false })
+            }
+            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
+                Err(crate::Fault { addr: a, write: true })
+            }
+        }
+        #[rustfmt::skip]
+        let code: Vec<u8> = [
+            &[0xb9, 0xe8, 3, 0, 0][..],     // 0: mov ecx, 1000
+            &[0xf6, 0xc1, 0x01],            // 5: H: test cl, 1
+            &[0x75, 0x04],                  // 8: jne B (14)
+            &[0x48, 0x83, 0xc0, 0x01],      // 10: A: add rax, 1
+            &[0x48, 0x83, 0xc2, 0x01],      // 14: B: add rdx, 1
+            &[0xff, 0xc9],                  // 18: dec ecx
+            &[0x75, 0xef],                  // 20: jne H (5)
+            &[0xc3],                        // 22: ret
+        ].concat();
+        super::super::LAYOUT.store(true, Relaxed);
+        let r = translate_function64(&mut Module::default(), &mut Img(code), 0x1000, (0, 0), 1000, |_, _| true).unwrap();
+        let lines: Vec<&str> = r.layout.lines().collect();
+        for (start, n) in [(0x1000, 1), (0x1005, 2), (0x100a, 1), (0x100e, 3)] {
+            let want = alloc::format!("{start:#x} {n} ");
+            assert!(lines.iter().any(|l| l.starts_with(&want)), "{want:?} in {lines:?}");
+        }
+        assert!(!r.layout.contains("out of the layout"), "{}", r.layout);
+        // (the code once: 23 bytes in its ranges)
+        assert_eq!(r.code.iter().map(|c| c.1).sum::<u32>(), 23);
     }
 
     /// A host trap's address is no code: a call through an import's slot misses the call

@@ -2252,6 +2252,45 @@ fn fn_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64]) {
     }
 }
 
+/// The root of a function (FN64) whose code spans `a`: from its root's block on, the blocks
+/// less than a page apart either way (not the import thunks it calls, far off), the smallest.
+fn fn_around(st: &State, a: u32) -> Option<u32> {
+    st.code_of
+        .iter()
+        .filter_map(|(b, c)| {
+            let f = *st.roots.get(b)?.first()?;
+            if !st.fns.contains(&f) {
+                return None;
+            }
+            let (lo, hi) = fn_span(c, f)?;
+            (a >= lo && (a as u64) < hi).then_some((hi - lo as u64, f))
+        })
+        .min()
+        .map(|(_, f)| f)
+}
+
+/// The span of the code ranges `c` around `root` (see [`fn_around`]): (first, end).
+fn fn_span(c: &[(u32, u32)], root: u32) -> Option<(u32, u64)> {
+    const GAP: u64 = 0x1000;
+    let mut r: Vec<(u64, u64)> = c.iter().map(|&(s, n)| (s as u64, s as u64 + n as u64)).collect();
+    r.sort_unstable();
+    let k = r.iter().position(|&(s, e)| root as u64 >= s && (root as u64) < e)?;
+    let (mut lo, mut hi) = r[k];
+    for &(s, e) in &r[k + 1..] {
+        if s > hi + GAP {
+            break;
+        }
+        hi = hi.max(e);
+    }
+    for &(s, e) in r[..k].iter().rev() {
+        if e + GAP < lo {
+            break;
+        }
+        lo = lo.min(s);
+    }
+    Some((lo as u32, hi))
+}
+
 /// Translates the x64 function at `eip` (jit::long::FN64, in the 4GB alias cpu.rip_hi) and
 /// points the hash table at it (entries tagged FN_TAG: calls go to its root).
 fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
@@ -2282,15 +2321,16 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
     if let Some(dir) = std::env::var_os("MASU_JIT_DUMP") {
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{eip:08x}-fn64-{build}.wasm")), &bytes);
     }
+    // (the adapter, then the function: koji::jit::long::T_FN)
     #[cfg(target_os = "emscripten")]
-    let base = load_module(&bytes, 1);
+    let base = load_module(&bytes, 2);
     #[cfg(not(target_os = "emscripten"))]
     let base = { let _ = &bytes; -1 };
     st.known.insert(eip);
     if base < 0 {
         return false;
     }
-    note_load(st, base, 1, bytes.len());
+    note_load(st, base, 2, bytes.len());
     enter_fn_as(st, base as u32, eip, &region.starts, &[], &region.code, true);
     count_compile(1, t0);
     if build > 1 {
@@ -2398,6 +2438,20 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
         st.maps_rev += 1;
         if cpu.mode64 != 0 {
             if jit::long::FN64.load(std::sync::atomic::Ordering::Relaxed) {
+                // (inside a function already: where its blocks that had not run yet go on,
+                // the function built again with it, not one more function from the middle
+                // of it (std::sort's loops became seven functions, each built eight times))
+                st.known.insert(eip);
+                if let Some(f) = fn_around(st, eip).filter(|f| st.fn_builds.get(f).copied().unwrap_or(0) < FN_BUILDS) {
+                    if stats() {
+                        eprintln!("vnjit64 fn {f:#x} (built again for {eip:#x})");
+                    }
+                    // (an entry of it now, or else a function of its own: the dispatcher
+                    // comes here from elsewhere)
+                    if compile_fn64(st, cpu, mem, f) && compiled(&st.hash, eip) {
+                        return true;
+                    }
+                }
                 return compile_fn64(st, cpu, mem, eip);
             }
             return compile_long(st, cpu, mem);
@@ -3693,6 +3747,32 @@ mod invalidate_tests {
                 Ok(())
             })?;
             STATE.with(|s| *s.borrow_mut() = None);
+        }
+    }
+
+    /// A function's span (FN64, fn_span): its blocks around the root up to a page apart, an
+    /// import thunk far off left out; none when the root has no block.
+    #[test]
+    fn a_function_spans_its_blocks_not_its_thunks() {
+        let c = [(0x41000, 0x20), (0x41030, 0x10), (0x41900, 8), (0x48000, 6), (0x40000, 0x10)];
+        assert_eq!(fn_span(&c, 0x41000), Some((0x40000, 0x41908)));
+        assert_eq!(fn_span(&c, 0x48000), Some((0x48000, 0x48006)));
+        assert_eq!(fn_span(&c, 0x50000), None);
+        assert_eq!(fn_span(&[(0x41000, 0x20), (0x42100, 4)], 0x41000), Some((0x41000, 0x41020)));
+    }
+
+    proptest::proptest! {
+        /// The span holds the root's own block, every range in it is a range of `c` or between
+        /// two of them, and it is no wider than the ranges' own extent.
+        #[test]
+        fn fn_span_property(c in proptest::collection::vec((0x1000u32..0x20000, 1u32..0x200), 1..20), k in 0usize..20) {
+            let root = c[k % c.len()].0;
+            let (lo, hi) = fn_span(&c, root).unwrap();
+            proptest::prop_assert!(lo <= root && (root as u64) < hi);
+            let min = c.iter().map(|r| r.0).min().unwrap();
+            let max = c.iter().map(|r| r.0 as u64 + r.1 as u64).max().unwrap();
+            proptest::prop_assert!(lo >= min && hi <= max);
+            proptest::prop_assert!(c.iter().any(|r| r.0 == lo) && c.iter().any(|r| r.0 as u64 + r.1 as u64 == hi));
         }
     }
 

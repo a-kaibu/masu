@@ -820,6 +820,8 @@ struct Jit {
     /// translated code was written over (by a region's store, Cpu::jit_smc, or the
     /// interpreter's): as kura, the translations went and the interpreter runs on
     rewritten: bool,
+    /// functions (long::translate_function64) instead of regions
+    fnm: bool,
 }
 
 impl Jit {
@@ -907,7 +909,7 @@ impl Jit {
         CODE_WRITTEN.store(false, Relaxed);
         koji::jit::set_watch(watch);
         koji::jit::set_fresh(fresh);
-        Jit { engine: engine.clone(), store, linker, table, entries: HashMap::new(), range: (0, u32::MAX), rewritten: false }
+        Jit { engine: engine.clone(), store, linker, table, entries: HashMap::new(), range: (0, u32::MAX), rewritten: false, fnm: koji::jit::long::FN64.load(Relaxed) }
     }
 
     /// Points the Cpu at the hash table and the ring (regions jump to each other through them).
@@ -926,7 +928,7 @@ impl Jit {
         let mut m = koji::jit::wasm::Module::default();
         let full = eip as u64 | (rip_hi as u64) << 32;
         let (lo, hi) = self.range;
-        let fnm = koji::jit::long::FN64.load(Relaxed);
+        let fnm = self.fnm;
         let region = if fnm {
             koji::jit::long::translate_function64(&mut m, &mut Mem(base as *mut u8), full, (END, END + 16), 1000, |a, _| a != END && a >= lo && a < hi)
         } else {
@@ -952,6 +954,11 @@ impl Jit {
         let inst = self.linker.instantiate(&mut self.store, &module).map_err(|e| format!("{e}"))?;
         let f = inst.get_func(&mut self.store, "f0").unwrap();
         let idx = self.table.grow(&mut self.store, 1, Ref::Func(Some(f))).unwrap() as u32;
+        // (a function's module: its adapter, then the function next to it, see long::T_FN)
+        if fnm {
+            let g = inst.get_func(&mut self.store, "f1").unwrap();
+            self.table.grow(&mut self.store, 1, Ref::Func(Some(g))).unwrap();
+        }
         for (a, k) in region.starts {
             self.entries.insert(a, (f, k, idx));
             // (the dispatcher's linear probing, newer regions taking over a block)
@@ -1014,7 +1021,7 @@ impl Jit {
             self.chain(base);
             let mut params = vec![Val::I32(0); 16];
             params[0] = Val::I32(CPU as i32);
-            params[1] = Val::I32((idx | k << koji::jit::ENTRY_SHIFT | if koji::jit::long::FN64.load(Relaxed) { koji::jit::FN_TAG } else { 0 }) as i32);
+            params[1] = Val::I32((idx | k << koji::jit::ENTRY_SHIFT | if self.fnm { koji::jit::FN_TAG } else { 0 }) as i32);
             let mut results = vec![Val::I32(0); 1];
             f.call(&mut self.store, &params, &mut results).map_err(|e| format!("trap: {e:?}"))?;
             regions += 1;
@@ -1862,11 +1869,11 @@ fn run_both_fn(code: &[u8], rbx: u64) -> (Cpu, Cpu, usize, usize) {
         std::ptr::copy_nonoverlapping(code.as_ptr(), (base + CODE as usize) as *mut u8, code.len());
         put_cpu(base as *mut u8, &cpu);
     }
-    koji::jit::long::FN64.store(true, Relaxed);
+    // (this run's Jit only: the tests run on several threads at once)
     let mut jit = Jit::new(&engine, &memory, base);
+    jit.fnm = true;
     STEPS.set(0);
     let regions = jit.run(base).unwrap();
-    koji::jit::long::FN64.store(false, Relaxed);
     (want, unsafe { get_cpu(base as *mut u8) }, regions, STEPS.get())
 }
 
@@ -2020,4 +2027,124 @@ fn leaves_called_inline() {
     }
     assert_eq!(got.eip, END);
     assert!(regions < 12, "{regions} entries from the run loop");
+}
+
+/// A function's callee that moves its own return address to another 4GB alias (FN64: its
+/// RET is a wasm return with the full RIP, the caller's exit goes on in no function of this
+/// alias, the state into the Cpu): RIP's high half as the interpreter has it (jit64test seed
+/// 11 found the tail call into the caller's own entry that dropped it).
+#[test]
+fn a_return_to_another_alias_keeps_rip_hi() {
+    let mut code = vec![0x90u8; 0x20];
+    let mut put = |at: usize, b: &[u8]| code[at..at + b.len()].copy_from_slice(b);
+    put(0, &[0xe8, 5, 0, 0, 0]); // call 10
+    put(5, &[0xe9]); // jmp END
+    put(6, &(END as i32 - (CODE as i32 + 10)).to_le_bytes());
+    put(10, &[0x48, 0x6b, 0xfd, 0xc9]); // imul rdi, rbp, -55
+    put(14, &[0xc6, 0x44, 0x24, 0x04, 0x01]); // mov byte [rsp+4], 1
+    put(19, &[0xc3]); // ret
+    let (want, got, _, _) = run_both_fn(&code, 0);
+    assert_eq!(want.rip_hi, 1);
+    assert_eq!((got.eip, got.rip_hi), (want.eip, want.rip_hi));
+    for i in 0..16 {
+        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+    }
+}
+
+/// One indirect call site over three functions in turn (FN64: a virtual call over a list of
+/// objects), the call cache missing every time and the hash table probed in the caller: the
+/// interpreter's results, the run loop entered a few times only.
+#[test]
+fn an_indirect_call_over_three_functions() {
+    let mut code = vec![0x90u8; 0x70];
+    let mut put = |at: usize, b: &[u8]| code[at..at + b.len()].copy_from_slice(b);
+    for (k, at) in [(0x40u64, 0), (0x48, 10), (0x50, 20)] {
+        put(at, &[0x49, 0xb8 + at as u8 / 10]); // mov r8/r9/r10, CODE + k
+        put(at + 2, &(CODE as u64 + k).to_le_bytes());
+    }
+    put(30, &[0xb9, 0xe7, 3, 0, 0]); // mov ecx, 999
+    put(35, &[0x41, 0xff, 0xd0]); // call r8
+    put(38, &[0x4d, 0x87, 0xc8]); // xchg r8, r9
+    put(41, &[0x4d, 0x87, 0xca]); // xchg r10, r9
+    put(44, &[0xff, 0xc9]); // dec ecx
+    put(46, &[0x75, (35i32 - 48) as u8]); // jne 35
+    put(48, &[0xe9]); // jmp END
+    put(49, &(END as i32 - (CODE as i32 + 53)).to_le_bytes());
+    put(0x40, &[0x48, 0x83, 0xc0, 0x01, 0xc3]); // f1: add rax, 1; ret
+    put(0x48, &[0x48, 0x83, 0xc2, 0x02, 0xc3]); // f2: add rdx, 2; ret
+    put(0x50, &[0x48, 0x83, 0xc6, 0x03, 0xc3]); // f3: add rsi, 3; ret
+    let (want, got, regions, steps) = run_both_fn(&code, 0);
+    assert_eq!((want.gpr(0), want.gpr(2), want.gpr(6)), (333, 666, 999));
+    for i in 0..16 {
+        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+    }
+    assert_eq!(got.eip, END);
+    assert_eq!(steps, 0, "no instruction left to the interpreter");
+    assert!(regions < 12, "{regions} entries from the run loop");
+}
+
+/// A callee's flags (FN64) reach a caller that reads them after the call (`setb` right after
+/// it), and are left out of the Cpu at a return address whose block sets them all first
+/// (`cmp` there): the interpreter's results both ways, the flags kept by pushfq at the end.
+#[test]
+fn flags_after_a_call_as_the_caller_reads_them() {
+    let mut code = vec![0x90u8; 0x60];
+    let mut put = |at: usize, b: &[u8]| code[at..at + b.len()].copy_from_slice(b);
+    let rel = |from: usize, to: usize| (to as i32 - from as i32).to_le_bytes();
+    put(0, &[0xbf, 3, 0, 0, 0]); // mov edi, 3
+    put(5, &[0xb9, 0xc8, 0, 0, 0]); // mov ecx, 200
+    put(10, &[0xe8]); // call f
+    put(11, &rel(15, 0x40));
+    put(15, &[0x0f, 0x92, 0xc0]); // setb al (the callee's CF)
+    put(18, &[0x48, 0x01, 0xc6]); // add rsi, rax
+    put(21, &[0xe8]); // call f
+    put(22, &rel(26, 0x40));
+    put(26, &[0x48, 0x39, 0xd9]); // cmp rcx, rbx (the flags anew)
+    put(29, &[0x48, 0xff, 0xc7]); // inc rdi
+    put(32, &[0xff, 0xc9]); // dec ecx
+    put(34, &[0x75, (10i32 - 36) as u8]); // jne 10
+    put(36, &[0x9c, 0x41, 0x5f]); // pushfq; pop r15
+    put(39, &[0xe9]); // jmp END
+    put(40, &(END as i32 - (CODE as i32 + 44)).to_le_bytes());
+    // (f calls g: no leaf, so not inline, its RET a wasm return)
+    put(0x40, &[0xe8]); // f: call g
+    put(0x41, &rel(0x45, 0x50));
+    put(0x45, &[0x48, 0x83, 0xff, 0x64, 0xc3]); // cmp rdi, 100; ret
+    put(0x50, &[0x48, 0xff, 0xc2, 0xc3]); // g: inc rdx; ret
+    let (want, got, _, steps) = run_both_fn(&code, 0);
+    assert!(want.gpr(6) > 0);
+    assert_eq!(steps, 1, "only pushfq left to the interpreter");
+    for i in 0..16 {
+        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+    }
+    assert_eq!(got.eip, END);
+}
+
+/// A loop whose header the block before it ran into (FN64's structured layout: the block
+/// ends at the header and falls through to it, as std::sort's partition loops). With the
+/// header's code copied in that block, the loop was entered in its middle, irreducible, and
+/// left the function at every round.
+#[test]
+fn a_loop_header_inside_the_block_before() {
+    let jmp = (END - (CODE + 30)).to_le_bytes();
+    #[rustfmt::skip]
+    let code: Vec<u8> = [
+        &[0xb9, 0xe8, 3, 0, 0][..],     // 0: mov ecx, 1000
+        &[0xf6, 0xc1, 0x01],            // 5: H: test cl, 1
+        &[0x75, 0x04],                  // 8: jne B (14)
+        &[0x48, 0x83, 0xc0, 0x01],      // 10: A: add rax, 1
+        &[0x48, 0x83, 0xc2, 0x01],      // 14: B: add rdx, 1
+        &[0xff, 0xc9],                  // 18: dec ecx
+        &[0x75, 0xef],                  // 20: jne H (5)
+        &[0x90, 0x90, 0x90],            // 22: nop x3
+        &[0xe9], &jmp,                  // 25: jmp END
+    ].concat();
+    let (want, got, regions, steps) = run_both_fn(&code, 0);
+    assert_eq!((want.gpr(0), want.gpr(2)), (500, 1000));
+    for i in 0..16 {
+        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+    }
+    assert_eq!(got.eip, END);
+    assert_eq!(steps, 0, "no instruction left to the interpreter");
+    assert!(regions < 6, "{regions} entries from the run loop");
 }
