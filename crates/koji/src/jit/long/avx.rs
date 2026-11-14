@@ -7,6 +7,7 @@
 //! upper half of its destination. Results are built in L_V0 (lower) and L_V1 (upper) before
 //! either is stored, so a destination that is also a source reads the old value.
 
+use crate::cvt::{lo8, lo32, us};
 use super::{Gen, I64Ops, I32_WRAP, I64_EXT_U, L_A, L_CPU, L_V0, L_V1, L_V2};
 use crate::Cpu;
 use core::mem::offset_of;
@@ -16,7 +17,7 @@ use iced_x86::{Instruction, Mnemonic, OpKind, Register};
 fn halves(r: Register) -> (u32, u32) {
     let i = r.number();
     let lo = if i < 8 { offset_of!(Cpu, xmm) + 16 * i } else { offset_of!(Cpu, xmm8) + 16 * (i - 8) };
-    (lo as u32, (offset_of!(Cpu, ymmh) + 16 * i) as u32)
+    (lo32(lo), lo32((offset_of!(Cpu, ymmh) + 16 * i)))
 }
 
 fn reg(ins: &Instruction, i: u32) -> bool {
@@ -104,7 +105,7 @@ impl Gen<'_> {
             return false;
         }
         if (0..ins.op_count()).any(|i| mem(&ins, i)) {
-            if !self.addr(ins.memory_size().size().max(1) as u32) {
+            if !self.addr(lo32(ins.memory_size().size().max(1))) {
                 return false;
             }
         }
@@ -185,7 +186,7 @@ impl Gen<'_> {
                     self.half(1, 0);
                     self.half(1, 1);
                     let q = [(imm >> k) & 3, (imm >> (k + 2)) & 3];
-                    self.c.shuffle(core::array::from_fn(|b| q[b / 8] * 8 + (b % 8) as u8));
+                    self.c.shuffle(core::array::from_fn(|b| q[b / 8] * 8 + lo8(b % 8)));
                     self.c.set(l);
                 }
                 self.put(ins.op_register(0));
@@ -212,9 +213,9 @@ impl Gen<'_> {
                         self.half(1, h);
                         self.c.get(L_V0); // (unused second input)
                         let lanes: [u8; 16] = if ps {
-                            core::array::from_fn(|b| ((imm >> (2 * (b / 4))) & 3) * 4 + (b % 4) as u8)
+                            core::array::from_fn(|b| ((imm >> (2 * (b / 4))) & 3) * 4 + lo8(b % 4))
                         } else {
-                            core::array::from_fn(|b| ((imm >> (2 * h + (b / 8) as u32)) & 1) * 8 + (b % 8) as u8)
+                            core::array::from_fn(|b| ((imm >> (2 * h + lo32(b / 8))) & 1) * 8 + lo8(b % 8))
                         };
                         self.c.shuffle(lanes).set(l);
                     }
@@ -245,7 +246,7 @@ impl Gen<'_> {
                     self.half(1, h);
                     self.half(2, h);
                     let sel = (imm >> (4 * h)) & 0xf;
-                    self.c.shuffle(core::array::from_fn(|b| b as u8 + if sel >> (b / 4) & 1 != 0 { 16 } else { 0 })).set(l);
+                    self.c.shuffle(core::array::from_fn(|b| lo8(b) + if sel >> (b / 4) & 1 != 0 { 16 } else { 0 })).set(l);
                 }
                 self.put(ins.op_register(0));
             }
@@ -312,7 +313,7 @@ impl Gen<'_> {
                     _ => (2, 3),
                 };
                 // extend_low / extend_high of i8x16, i16x8, i32x4 (signed; +2 unsigned)
-                let low = |k: u32| [0x87, 0xa7, 0xc7][k as usize] + if s { 0 } else { 2 };
+                let low = |k: u32| [0x87, 0xa7, 0xc7][us(k)] + if s { 0 } else { 2 };
                 if mem(&ins, 1) {
                     // (only the bytes the form reads: a 16-byte load could cross into an unmapped page)
                     let size = ins.memory_size().size();

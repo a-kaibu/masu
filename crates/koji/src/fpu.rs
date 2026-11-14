@@ -3,6 +3,7 @@
 //! One exception is kept exact: FILD m64 followed by FISTP m64 (old MSVC
 //! CRTs copy 8 bytes that way), via a per-register exact integer shadow.
 
+use crate::cvt::{lo16, lo32, us};
 use crate::f80::F80;
 use crate::flags::{CF, PF, ZF};
 use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
@@ -57,7 +58,7 @@ pub fn int_to_f80(i: i64) -> [u8; 10] {
         let m = i.unsigned_abs();
         let lz = m.leading_zeros();
         b[..8].copy_from_slice(&(m << lz).to_le_bytes());
-        let e = 16383 + 63 - lz as u16 | if i < 0 { 0x8000 } else { 0 };
+        let e = 16383 + 63 - lo16(lz) | if i < 0 { 0x8000 } else { 0 };
         b[8..].copy_from_slice(&e.to_le_bytes());
     }
     b
@@ -75,7 +76,7 @@ pub const C3: u16 = 1 << 14;
 impl Fpu {
     #[inline]
     fn phys(&self, i: u32) -> usize {
-        ((self.top + i) & 7) as usize
+        us((self.top + i) & 7)
     }
     #[inline]
     pub fn st(&self, i: u32) -> f64 {
@@ -295,7 +296,7 @@ pub fn libm_round_even(v: f64) -> f64 {
 /// f64 -> 80-bit extended (10 bytes, little-endian).
 pub fn to_f80(v: f64) -> [u8; 10] {
     let bits = v.to_bits();
-    let sign = (bits >> 63) as u16;
+    let sign = lo16(bits >> 63);
     let exp = ((bits >> 52) & 0x7ff) as i32;
     let frac = bits & ((1u64 << 52) - 1);
     let (e, m) = if exp == 0 && frac == 0 {
@@ -306,9 +307,9 @@ pub fn to_f80(v: f64) -> [u8; 10] {
         // subnormal f64: normalize
         let lz = frac.leading_zeros() - 11; // shift to put the top bit at 52
         let m = frac << (lz + 11);
-        ((exp - 1023 + 16383 - lz as i32 + 1) as u16, m)
+        (lo16(exp - 1023 + 16383 - lo32(lz).cast_signed() + 1), m)
     } else {
-        ((exp - 1023 + 16383) as u16, (1u64 << 63) | (frac << 11))
+        (lo16(exp - 1023 + 16383), (1u64 << 63) | (frac << 11))
     };
     let mut out = [0u8; 10];
     out[..8].copy_from_slice(&m.to_le_bytes());

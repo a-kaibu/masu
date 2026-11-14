@@ -1,6 +1,7 @@
 //! Lazily computed status flags. The JIT records what the last flag-setting operation was and
 //! its operands; EFLAGS are worked out from them only when something reads them.
 
+use crate::cvt::lo32;
 use crate::flags::{self, *};
 
 /// `op` = kind * 4 + size (0: 8 bits, 1: 16, 2: 32, 3: 64); 0: EFLAGS are exact. A raw u32
@@ -166,7 +167,7 @@ impl Lazy {
         let bits = size.bits();
         let (a64, b64, r64, c) = (self.a, self.b, self.r, self.c);
         // (shifts: up to 32 bits only, the long-mode JIT works out 64-bit ones itself)
-        let (a, b) = (a64 as u32, b64 as u32);
+        let (a, b) = (lo32(a64), lo32(b64));
         match kind {
             Kind::Add => flags::add64(a64, b64, 0, bits).1,
             Kind::Sub => flags::sub64(a64, b64, 0, bits).1,
@@ -178,8 +179,8 @@ impl Lazy {
             Kind::Shl => {
                 let m = flags::mask(bits);
                 let wide = u64::from(a & m) << b;
-                let r = wide as u32 & m;
-                let cf = if b <= bits { ((wide >> bits) & 1) as u32 } else { 0 };
+                let r = lo32(wide) & m;
+                let cf = if b <= bits { lo32((wide >> bits) & 1) } else { 0 };
                 let of = u32::from(r & flags::sign(bits) != 0) ^ cf;
                 flags::szp(r, bits) | cf * CF | of * OF
             }
@@ -193,8 +194,8 @@ impl Lazy {
             Kind::Sar => {
                 let sx = ((a << (32 - bits)) as i32) >> (32 - bits);
                 let k = b.min(31);
-                let r = (sx >> k) as u32 & flags::mask(bits);
-                let cf = if b > 31 { u32::from(sx < 0) } else { ((sx >> (k - 1).min(31)) & 1) as u32 };
+                let r = lo32(sx >> k) & flags::mask(bits);
+                let cf = if b > 31 { u32::from(sx < 0) } else { lo32((sx >> (k - 1).min(31)) & 1) };
                 flags::szp(r, bits) | cf * CF
             }
             Kind::Mul => flags::szp64(r64, bits) | if c != 0 { CF | OF } else { 0 },

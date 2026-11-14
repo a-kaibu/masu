@@ -9,6 +9,7 @@
 //! (0: a region, else a function's) and the function's indirect call sites (counted list).
 //! "VNJ1" is the same without the last two (regions only).
 
+use crate::cvt::{lo32, lo64, us};
 use alloc::vec::Vec;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -36,7 +37,7 @@ impl Entry {
     /// What every entry the JIT makes is (an index from the network or a damaged file may say
     /// anything): a root (its name), and the code bytes of all its ranges.
     pub fn consistent(&self) -> bool {
-        !self.roots.is_empty() && self.code.iter().map(|&(_, n)| u64::from(n)).sum::<u64>() == self.text.len() as u64
+        !self.roots.is_empty() && self.code.iter().map(|&(_, n)| u64::from(n)).sum::<u64>() == lo64(self.text.len())
     }
 
     /// Module functions (table entries) it takes.
@@ -48,23 +49,23 @@ impl Entry {
 pub fn encode(entries: &[Entry]) -> Vec<u8> {
     let mut out = Vec::from(&b"VNJ2"[..]);
     let u = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_le_bytes());
-    u(&mut out, entries.len() as u32);
+    u(&mut out, lo32(entries.len()));
     for e in entries {
-        u(&mut out, e.roots.len() as u32);
+        u(&mut out, lo32(e.roots.len()));
         for &r in &e.roots {
             u(&mut out, r);
         }
         for list in [&e.starts, &e.code] {
-            u(&mut out, list.len() as u32);
+            u(&mut out, lo32(list.len()));
             for &(a, b) in list {
                 u(&mut out, a);
                 u(&mut out, b);
             }
         }
-        u(&mut out, e.text.len() as u32);
+        u(&mut out, lo32(e.text.len()));
         out.extend_from_slice(&e.text);
         u(&mut out, e.build);
-        u(&mut out, e.sites.len() as u32);
+        u(&mut out, lo32(e.sites.len()));
         for &a in &e.sites {
             u(&mut out, a);
         }
@@ -118,7 +119,7 @@ fn decode_one(b: &[u8]) -> Option<(Vec<Entry>, usize)> {
                 return None;
             }
             let (starts, code) = (r.pairs()?, r.pairs()?);
-            let n = r.u()? as usize;
+            let n = us(r.u()?);
             let text = b.get(r.1..r.1.checked_add(n)?)?.to_vec();
             r.1 += n;
             let (build, sites) = if v2 { (r.u()?, (0..r.u()?).map(|_| r.u()).collect::<Option<Vec<_>>>()?) } else { (0, Vec::new()) };
@@ -131,7 +132,7 @@ fn decode_one(b: &[u8]) -> Option<(Vec<Entry>, usize)> {
 
 /// `keep` (one per entry) as one per module function, for [`super::wasm::select`].
 pub fn keep_funcs(entries: &[Entry], keep: &[bool]) -> Vec<bool> {
-    entries.iter().zip(keep).flat_map(|(e, &k)| core::iter::repeat_n(k, e.width() as usize)).collect()
+    entries.iter().zip(keep).flat_map(|(e, &k)| core::iter::repeat_n(k, us(e.width()))).collect()
 }
 
 /// The module functions' names, for [`super::wasm::merge`].

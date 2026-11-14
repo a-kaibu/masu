@@ -17,6 +17,7 @@
 //! 32-bit lazy record, or computed EFLAGS for 64-bit operations). Instructions the
 //! translator does not handle run through the `step` import.
 
+use crate::cvt::{lo8, lo32, lo64, us};
 use super::wasm::{Code, Func, Module, I32, I64, V128};
 
 #[path = "long/avx.rs"]
@@ -142,10 +143,10 @@ const STATUS: u32 = CF | PF | AF | ZF | SF | OF;
 use crate::lazy::{ADC, ADD, DEC, INC, LOGIC, MUL, SAR, SBB, SHL, SHR, SUB};
 
 fn off_lo(i: usize) -> u32 {
-    if i < 8 { (offset_of!(Cpu, regs) + 4 * i) as u32 } else { (offset_of!(Cpu, r8) + 8 * (i - 8)) as u32 }
+    if i < 8 { lo32((offset_of!(Cpu, regs) + 4 * i)) } else { lo32((offset_of!(Cpu, r8) + 8 * (i - 8))) }
 }
 fn off_hi(i: usize) -> u32 {
-    (offset_of!(Cpu, hi) + 4 * i) as u32
+    lo32((offset_of!(Cpu, hi) + 4 * i))
 }
 macro_rules! cpu_off {
     ($f:ident) => {
@@ -192,7 +193,7 @@ const I32_WRAP: u8 = 0xa7;
 const I64_EXT_U: u8 = 0xad;
 
 fn mask(bits: u32) -> i64 {
-    if bits >= 64 { -1 } else { ((1u64 << bits) - 1) as i64 }
+    if bits >= 64 { -1 } else { lo64((1u64 << bits) - 1).cast_signed() }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -288,7 +289,7 @@ impl super::structure::Nest for Gen<'_> {
 fn regs_named(code: &Code) -> (u16, u16) {
     let (mut named, mut written) = (0u16, 0u16);
     for &p in &code.locs {
-        let p = p as usize;
+        let p = us(p);
         let (mut l, mut shift, mut at) = (0u32, 0, p + 1);
         loop {
             let c = code.b[at];
@@ -319,14 +320,14 @@ fn emit_loads(c: &mut Code, mask: u16) {
         } else {
             c.get(L_CPU).load64(off_lo(i));
         }
-        c.set(L_R + i as u32);
+        c.set(L_R + lo32(i));
     }
 }
 
 /// Stores of the registers in `mask` from their locals to the Cpu.
 fn emit_stores(c: &mut Code, mask: u16) {
     for i in (0..16).filter(|i| mask >> i & 1 != 0) {
-        let r = L_R + i as u32;
+        let r = L_R + lo32(i);
         if i < 8 {
             c.get(L_CPU).get(r).x(I32_WRAP).store32(off_lo(i));
             c.get(L_CPU).get(r).i64c(32).x(I64_SHR_U).x(I32_WRAP).store32(off_hi(i));
@@ -347,8 +348,8 @@ fn splice_regs(code: Code, marks: &[(usize, usize, bool)], all: bool) -> Code {
     let (mut from, mut lfrom) = (0, 0);
     for &(at, li, store) in marks {
         out.b.extend_from_slice(&code.b[from..at]);
-        let delta = out.b.len() as i64 - at as i64;
-        out.locs.extend(code.locs[lfrom..li].iter().map(|&p| (i64::from(p) + delta) as u32));
+        let delta = lo64(out.b.len()).cast_signed() - lo64(at).cast_signed();
+        out.locs.extend(code.locs[lfrom..li].iter().map(|&p| lo32(i64::from(p) + delta)));
         if store {
             emit_stores(&mut out, written);
         } else {
@@ -357,8 +358,8 @@ fn splice_regs(code: Code, marks: &[(usize, usize, bool)], all: bool) -> Code {
         (from, lfrom) = (at, li);
     }
     out.b.extend_from_slice(&code.b[from..]);
-    let delta = out.b.len() as i64 - code.b.len() as i64;
-    out.locs.extend(code.locs[lfrom..].iter().map(|&p| (i64::from(p) + delta) as u32));
+    let delta = lo64(out.b.len()).cast_signed() - lo64(code.b.len()).cast_signed();
+    out.locs.extend(code.locs[lfrom..].iter().map(|&p| lo32(i64::from(p) + delta)));
     out
 }
 
@@ -563,7 +564,7 @@ impl<'a> Gen<'a> {
         }
         if base == Register::RIP || base == Register::EIP {
             // (iced: the absolute address)
-            let t = ins.memory_displacement64() as u32;
+            let t = lo32(ins.memory_displacement64());
             self.c.u32c(t);
         } else {
             let mut any = false;
@@ -575,14 +576,14 @@ impl<'a> Gen<'a> {
                 // (only the low 32 bits matter modulo 4GB)
                 self.c.get(l).x(I32_WRAP);
                 if scale > 1 {
-                    self.c.i32c(scale.trailing_zeros() as i32).shl();
+                    self.c.i32c(lo32(scale.trailing_zeros()).cast_signed()).shl();
                 }
                 if any {
                     self.c.add();
                 }
                 any = true;
             }
-            let d = ins.memory_displacement64() as u32;
+            let d = lo32(ins.memory_displacement64());
             if !any {
                 self.c.u32c(d);
             } else if d != 0 {
@@ -639,7 +640,7 @@ impl<'a> Gen<'a> {
     fn op_bits(&self, i: u32) -> u32 {
         match self.ins.op_kind(i) {
             OpKind::Register => Self::reg(self.ins.op_register(i)).map_or(0, |r| r.1),
-            OpKind::Memory => self.ins.memory_size().size() as u32 * 8,
+            OpKind::Memory => lo32(self.ins.memory_size().size()) * 8,
             _ => 0,
         }
     }
@@ -650,7 +651,7 @@ impl<'a> Gen<'a> {
             OpKind::Register => self.get_reg(self.ins.op_register(i)),
             OpKind::Memory => self.load(bits),
             _ => {
-                let v = self.ins.immediate(i) as i64;
+                let v = lo64(self.ins.immediate(i)).cast_signed();
                 self.c.i64c(v & mask(bits));
             }
         }
@@ -749,7 +750,7 @@ impl<'a> Gen<'a> {
         self.c.set(t);
         self.c.get(L_CPU);
         self.c.get(L_CPU).load32(cpu_off!(eflags)).u32c(!STATUS).and().get(t).or().store32(cpu_off!(eflags));
-        self.c.get(L_CPU).i32c(0).store32(offset_of!(Cpu, lazy) as u32);
+        self.c.get(L_CPU).i32c(0).store32(lo32(offset_of!(Cpu, lazy)));
         self.flags = Flags::Cpu;
     }
 
@@ -992,7 +993,7 @@ impl<'a> Gen<'a> {
     fn flags_to_cpu(&mut self) {
         let Flags::Lazy(kind, bits) = self.flags else { return };
         use crate::lazy::Lazy;
-        let lazy = offset_of!(Cpu, lazy) as u32;
+        let lazy = lo32(offset_of!(Cpu, lazy));
         if bits == 64 && !matches!(kind, ADD | SUB | ADC | SBB | LOGIC | INC | DEC | MUL) {
             // (64-bit shifts: the flags themselves)
             self.c.get(L_CPU);
@@ -1009,7 +1010,7 @@ impl<'a> Gen<'a> {
             };
             self.c.get(L_CPU).u32c(kind * 4 + size).store32(lazy);
             for (o, l) in [(offset_of!(Lazy, a), L_FA), (offset_of!(Lazy, b), L_FB), (offset_of!(Lazy, r), L_FR)] {
-                self.c.get(L_CPU).get(l).store64(lazy + o as u32);
+                self.c.get(L_CPU).get(l).store64(lazy + lo32(o));
             }
             self.c.get(L_CPU);
             if kind == MUL {
@@ -1017,7 +1018,7 @@ impl<'a> Gen<'a> {
             } else {
                 self.c.get(L_FC);
             }
-            self.c.store32(lazy + offset_of!(Lazy, c) as u32);
+            self.c.store32(lazy + lo32(offset_of!(Lazy, c)));
         }
         self.flags = Flags::Cpu;
     }
@@ -1026,7 +1027,7 @@ impl<'a> Gen<'a> {
     /// changes some of them and keeps the rest. Flags already in the Cpu may still be a lazy
     /// record (from the interpreter or an exit): the host works it out first.
     fn flags_to_eflags(&mut self) {
-        let lazy = offset_of!(Cpu, lazy) as u32;
+        let lazy = lo32(offset_of!(Cpu, lazy));
         match self.flags {
             Flags::Lazy(kind, bits) => {
                 self.c.get(L_CPU);
@@ -1066,7 +1067,7 @@ impl<'a> Gen<'a> {
     }
 
     fn exit_to(&mut self, target: u64, st: i32) {
-        self.c.i64c(target as i64);
+        self.c.i64c(lo64(target).cast_signed());
         self.exit_dyn(st);
     }
 
@@ -1129,7 +1130,7 @@ impl<'a> Gen<'a> {
             self.depth -= 1;
             self.c.end();
         }
-        self.c.u32c(k as u32).set(L_BLK).br(self.depth + 1);
+        self.c.u32c(lo32(k)).set(L_BLK).br(self.depth + 1);
     }
 
     /// The exit block's way on when the target (L_NT) has a region and the budget lasts: a
@@ -1156,13 +1157,13 @@ impl<'a> Gen<'a> {
         c.get(L_E).load32(4).set(L_DBG);
         c.get(L_DBG).u32c(mask).and().get(L_ARG).u32c(mask).and().eq();
         c.get(L_NT).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c(hi).eq().and().if_(); // loop 6
-        c.get(L_DBG).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().set(L_BLK).br(6);
+        c.get(L_DBG).i32c(lo32(ENTRY_SHIFT).cast_signed()).shr_u().u32c(0x7ff).and().set(L_BLK).br(6);
         c.end();
         // (into the ring the host reads to merge regions that jump to each other a lot:
         // ring[0] counts, then RING_SIZE (from, to) pairs)
         let ring = cpu_off!(jit_ring);
         c.get(L_CPU).load32(ring).tee(L_H).get(L_H).load32(0).tee(L_E).i32c(1).add().store32(0);
-        c.get(L_H).get(L_E).i32c(super::RING_SIZE as i32 - 1).and().i32c(3).shl().add().tee(L_H);
+        c.get(L_H).get(L_E).i32c(lo32(super::RING_SIZE).cast_signed() - 1).and().i32c(3).shl().add().tee(L_H);
         c.get(L_ARG).u32c(mask).and().store32(4);
         c.get(L_H).get(L_NT).x(I32_WRAP).store32(8);
         if self.fnm {
@@ -1174,7 +1175,7 @@ impl<'a> Gen<'a> {
             c.get(L_NT).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c(hi).eq().and().if_();
             fn_args(c, |c| void(c.get(L_RA)), |c| void(c.get(L_DBG)), |c| void(c.get(L_DEPTH)));
             c.get(L_DBG).u32c(mask).and().i32c(1).add();
-            c.op(0x13).op(T_FN as u8).op(0); // return_call_indirect, table 0
+            c.op(0x13).op(lo8(T_FN)).op(0); // return_call_indirect, table 0
             c.end();
             c.br(2); // miss
             c.end();
@@ -1217,7 +1218,7 @@ impl<'a> Gen<'a> {
     /// and this function leaves the same way (longjmp, SEH, a callee that left for the
     /// dispatcher). No function there, too deep or the budget spent: out to the target.
     fn call_fn(&mut self, t: u32, next: u64, target: CallTarget) {
-        let site = self.ins.ip() as u32;
+        let site = lo32(self.ins.ip());
         let (h, v) = (L_H, L_E);
         // (the flags in the Cpu both ways, the registers as arguments and results)
         let f = self.flags;
@@ -1227,7 +1228,7 @@ impl<'a> Gen<'a> {
         self.c.block(); // out
         self.depth += 1;
         self.c.get(L_DEPTH).u32c(MAX_DEPTH).ge_u();
-        self.c.get(t).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c((self.ins.ip() >> 32) as u32).ne().or();
+        self.c.get(t).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c(lo32(self.ins.ip() >> 32)).ne().or();
         self.c.br_if(0);
         if let CallTarget::Read = target {
             // (an import's host trap, through the IAT or a thunk's slot: straight out, without
@@ -1246,7 +1247,7 @@ impl<'a> Gen<'a> {
         self.c.get(v).eqz().br_if(0);
         // (the flags dead at the return address: the callee's RET there leaves them out)
         let dead = self.index.get(&next).is_some_and(|&k| !self.blocks[k].flags_in);
-        fn_args(&mut self.c, |c| void(c.i64c(if dead { next as i64 } else { 0 })), |c| void(c.get(v)), |c| void(c.get(L_DEPTH).i32c(1).add()));
+        fn_args(&mut self.c, |c| void(c.i64c(if dead { lo64(next).cast_signed() } else { 0 })), |c| void(c.get(v)), |c| void(c.get(L_DEPTH).i32c(1).add()));
         self.c.get(v).u32c((1 << ENTRY_SHIFT) - 1).and().i32c(1).add().call_indirect(T_FN, 0);
         fn_results(&mut self.c, h, L_NT);
         // another status: the state is in the Cpu, passed up
@@ -1255,7 +1256,7 @@ impl<'a> Gen<'a> {
         self.c.end();
         self.flags = Flags::Cpu;
         // returned elsewhere (longjmp, a return address replaced): on there
-        self.c.get(L_NT).i64c(next as i64).x(I64_NE).if_();
+        self.c.get(L_NT).i64c(lo64(next).cast_signed()).x(I64_NE).if_();
         self.depth += 1;
         self.c.get(L_NT);
         self.exit_dyn(0);
@@ -1290,7 +1291,7 @@ impl<'a> Gen<'a> {
         c.get(x).get(t).x(I32_WRAP).eq().if_();
         // (a function's root only, as the host's)
         c.get(e).load32(4).tee(x).u32c(super::FN_TAG).and().i32c(0).ne();
-        c.get(x).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().eqz().and().if_();
+        c.get(x).i32c(lo32(ENTRY_SHIFT).cast_signed()).shr_u().u32c(0x7ff).and().eqz().and().if_();
         c.get(x).set(v);
         c.get(h).get(t).x(I32_WRAP).store32(0);
         c.get(h).get(x).store32(4);
@@ -1312,8 +1313,8 @@ impl<'a> Gen<'a> {
         self.flags_to_cpu();
         self.store_regs();
         let ip = self.ins.ip();
-        self.c.get(L_CPU).u32c(ip as u32).store32(cpu_off!(eip));
-        self.c.get(L_CPU).u32c((ip >> 32) as u32).store32(cpu_off!(rip_hi));
+        self.c.get(L_CPU).u32c(lo32(ip)).store32(cpu_off!(eip));
+        self.c.get(L_CPU).u32c(lo32(ip >> 32)).store32(cpu_off!(rip_hi));
         self.c.get(L_CPU).call(F_STEP).tee(L_ST);
         if ends {
             self.ret_st(L_ST);
@@ -1423,23 +1424,23 @@ impl<'a> Gen<'a> {
     /// start with Cpu::jit_stale = its address (kura's stale_hit drops the translations; a page
     /// that keeps changing goes to the interpreter), as koji::jit's 32-bit Gen::fresh_entry.
     fn fresh_entry(&mut self, a: u32, bytes: &[u8]) {
-        for (i, (o, w)) in fresh_parts(bytes.len() as u32).into_iter().enumerate() {
+        for (i, (o, w)) in fresh_parts(lo32(bytes.len())).into_iter().enumerate() {
             let mut v = [0u8; 8];
-            v[..w as usize].copy_from_slice(&bytes[o as usize..(o + w) as usize]);
+            v[..us(w)].copy_from_slice(&bytes[us(o)..us(o + w)]);
             let v = u64::from_le_bytes(v);
             self.c.u32c(a.wrapping_add(o));
             match w {
                 8 => {
-                    self.c.load64(0).i64c(v as i64).op(0x52); // i64.ne
+                    self.c.load64(0).i64c(lo64(v).cast_signed()).op(0x52); // i64.ne
                 }
                 4 => {
-                    self.c.load32(0).u32c(v as u32).ne();
+                    self.c.load32(0).u32c(lo32(v)).ne();
                 }
                 2 => {
-                    self.c.load16u(0).u32c(v as u32).ne();
+                    self.c.load16u(0).u32c(lo32(v)).ne();
                 }
                 _ => {
-                    self.c.load8u(0).u32c(v as u32).ne();
+                    self.c.load8u(0).u32c(lo32(v)).ne();
                 }
             }
             if i > 0 {
@@ -1542,7 +1543,7 @@ impl<'a> Gen<'a> {
         if !shape || (bits != 32 && bits != 64) || !(0..n).all(|i| self.simple(i)) || !other_ok || !self.addr(bits / 8) {
             return false;
         }
-        self.c.get(L_A).i32c(bits as i32 / 8 - 1).and().if_();
+        self.c.get(L_A).i32c(lo32(bits).cast_signed() / 8 - 1).and().if_();
         self.depth += 1;
         self.bail();
         self.depth -= 1;
@@ -2386,7 +2387,7 @@ impl<'a> Gen<'a> {
             // (a leaf's call, inline: as a region's)
             Call if ins.op0_kind() == OpKind::NearBranch64 && self.fnm && self.returns.contains(&ins.next_ip()) && self.index.contains_key(&ins.near_branch64()) => {
                 let t = self.temp();
-                self.c.i64c(ins.next_ip() as i64).set(t);
+                self.c.i64c(lo64(ins.next_ip()).cast_signed()).set(t);
                 self.push64(t);
                 self.goto(ins.near_branch64());
                 true
@@ -2396,15 +2397,15 @@ impl<'a> Gen<'a> {
                 match self.thunks.get(&ins.near_branch64()) {
                     // (through an import thunk: where its slot says, as the thunk would)
                     Some(&slot) => {
-                        self.c.u32c(slot as u32).set(L_A);
+                        self.c.u32c(lo32(slot)).set(L_A);
                         self.load(64);
                         self.c.set(t);
                     }
                     None => {
-                        self.c.i64c(ins.near_branch64() as i64).set(t);
+                        self.c.i64c(lo64(ins.near_branch64()).cast_signed()).set(t);
                     }
                 }
-                self.c.i64c(ins.next_ip() as i64).set(r);
+                self.c.i64c(lo64(ins.next_ip()).cast_signed()).set(r);
                 self.push64(r);
                 let target = if self.thunks.contains_key(&ins.near_branch64()) { CallTarget::Read } else { CallTarget::Fixed };
                 self.call_fn(t, ins.next_ip(), target);
@@ -2412,7 +2413,7 @@ impl<'a> Gen<'a> {
             }
             Call if ins.op0_kind() == OpKind::NearBranch64 => {
                 let t = self.temp();
-                self.c.i64c(ins.next_ip() as i64).set(t);
+                self.c.i64c(lo64(ins.next_ip()).cast_signed()).set(t);
                 self.push64(t);
                 self.goto(ins.near_branch64());
                 true
@@ -2424,7 +2425,7 @@ impl<'a> Gen<'a> {
                 let (t, r) = (self.temp(), self.temp());
                 self.read_op(0, 64);
                 self.c.set(t);
-                self.c.i64c(ins.next_ip() as i64).set(r);
+                self.c.i64c(lo64(ins.next_ip()).cast_signed()).set(r);
                 self.push64(r);
                 if self.fnm {
                     self.call_fn(t, ins.next_ip(), CallTarget::Read);
@@ -2441,7 +2442,7 @@ impl<'a> Gen<'a> {
                 // back to a call of the region, or an inline one of the function's: straight
                 // there (else through the exit's lookup, or back to the calling function)
                 for &r in self.returns {
-                    self.c.get(t).i64c(r as i64).x(I64_EQ).if_();
+                    self.c.get(t).i64c(lo64(r).cast_signed()).x(I64_EQ).if_();
                     self.depth += 1;
                     let f = self.flags;
                     self.goto(r);
@@ -2488,7 +2489,7 @@ impl<'a> Gen<'a> {
             return false;
         }
         if base == Register::RIP || base == Register::EIP {
-            self.c.i64c(ins.memory_displacement64() as i64);
+            self.c.i64c(lo64(ins.memory_displacement64()).cast_signed());
             return true;
         }
         let w32 = db == 32;
@@ -2502,7 +2503,7 @@ impl<'a> Gen<'a> {
             if w32 {
                 self.c.x(I32_WRAP);
                 if scale > 1 {
-                    self.c.i32c(scale.trailing_zeros() as i32).shl();
+                    self.c.i32c(lo32(scale.trailing_zeros()).cast_signed()).shl();
                 }
                 if any {
                     self.c.add();
@@ -2520,12 +2521,12 @@ impl<'a> Gen<'a> {
             }
             any = true;
         }
-        let d = ins.memory_displacement64() as i64;
+        let d = lo64(ins.memory_displacement64()).cast_signed();
         if w32 {
             if !any {
-                self.c.i32c(d as i32);
-            } else if d as i32 != 0 {
-                self.c.i32c(d as i32).add();
+                self.c.i32c(lo32(d).cast_signed());
+            } else if lo32(d).cast_signed() != 0 {
+                self.c.i32c(lo32(d).cast_signed()).add();
             }
             self.c.x(I64_EXT_U);
         } else if !any {
@@ -2564,7 +2565,7 @@ fn stored_bytes(info: &mut iced_x86::InstructionInfoFactory, ins: &Instruction) 
         .used_memory()
         .iter()
         .filter(|u| matches!(u.access(), OpAccess::Write | OpAccess::CondWrite | OpAccess::ReadWrite | OpAccess::ReadCondWrite))
-        .map(|u| u.memory_size().size() as u32)
+        .map(|u| lo32(u.memory_size().size()))
         .max()
         .unwrap_or(0)
 }
@@ -2694,14 +2695,14 @@ fn jump_table_in<M: Memory>(mem: &mut M, ins: &[Instruction], n: Option<(Registe
             Jmp if i.ip() == last.ip() => {
                 let at = |mem: &mut M, a: u64, k: u32| -> Option<u64> {
                     let mut b = [0u8; 8];
-                    (mem.fetch(a as u32, &mut b[..k as usize]) == k as usize).then(|| u64::from_le_bytes(b))
+                    (mem.fetch(lo32(a), &mut b[..us(k)]) == us(k)).then(|| u64::from_le_bytes(b))
                 };
                 match i.op0_kind() {
                     OpKind::Register => {
                         if let Some(V::Target(t, signed, b)) = get(&vals, i.op0_register()) {
                             for k in 0..n {
                                 let Some(e) = at(mem, t + 4 * k, 4) else { break };
-                                let e = if signed { i64::from(e as u32 as i32) as u64 } else { e };
+                                let e = if signed { lo64(i64::from(lo32(lo32(e)).cast_signed())) } else { e };
                                 if def.is_some() && !near(b.wrapping_add(e)) {
                                     break;
                                 }
@@ -2814,7 +2815,7 @@ fn decode<M: Memory>(mem: &mut M, ip: u64, trap: (u32, u32)) -> Vec<Instruction>
     let mut out = Vec::new();
     let mut at = ip;
     while out.len() < limit(&DEBUG_INS, MAX_INS) {
-        let lo = at as u32;
+        let lo = lo32(at);
         if !out.is_empty() && lo >= trap.0 && lo < trap.1 {
             break;
         }
@@ -2992,14 +2993,14 @@ fn emit_side64(g: &mut Gen<'_>, side: &[(usize, usize, bool)]) {
     for _ in &finals {
         g.c.block();
     }
-    g.depth += finals.len() as u32;
+    g.depth += lo32(finals.len());
     g.c.get(L_BLK).op(0x0e);
-    super::wasm::uleb(&mut g.c.b, n as u64);
+    super::wasm::uleb(&mut g.c.b, lo64(n));
     for k in 0..n {
         let l = match side.iter().find(|s| s.0 == k) {
             Some(&(e, next, last)) => match (last, g.fwd[next]) {
                 (false, Some(p)) => g.depth - p,
-                _ => finals.iter().position(|f| f.0 == e).unwrap() as u32,
+                _ => lo32(finals.iter().position(|f| f.0 == e).unwrap()),
             },
             None => g.depth - own,
         };
@@ -3033,17 +3034,17 @@ fn emit_block64<M: Memory>(g: &mut Gen<'_>, mem: &mut M, k: usize, count: &mut u
     if let Some(side) = g.side.get(&k).cloned() {
         emit_side64(g, &side);
     }
-    g.smc = super::WATCH.get().is_some_and(|w| w(blocks[k].start as u32));
+    g.smc = super::WATCH.get().is_some_and(|w| w(lo32(blocks[k].start)));
     let list = &blocks[k].ins;
     g.fresh = None;
-    let start = blocks[k].start as u32;
+    let start = lo32(blocks[k].start);
     if super::fresh_at(start) {
         let end = list.last().unwrap().next_ip();
-        let mut b = alloc::vec![0u8; end.wrapping_sub(blocks[k].start) as usize];
+        let mut b = alloc::vec![0u8; us(end.wrapping_sub(blocks[k].start))];
         if !b.is_empty() && mem.fetch(start, &mut b) == b.len() {
             g.ins = list[0];
             g.fresh_entry(start, &b);
-            g.fresh = Some((start, b.len() as u32));
+            g.fresh = Some((start, lo32(b.len())));
         }
     }
     let mut open = true;
@@ -3072,7 +3073,7 @@ fn emit_table64(g: &mut Gen<'_>, targets: &[u64], hi: u32) {
     g.flags = Flags::Cpu;
     g.mx_checked = None;
     g.mx_seen = [[None; 2]; 16];
-    let mut keys: Vec<u64> = targets.iter().copied().filter(|a| g.index.contains_key(a) && (a >> 32) as u32 == hi).collect();
+    let mut keys: Vec<u64> = targets.iter().copied().filter(|a| g.index.contains_key(a) && lo32(a >> 32) == hi).collect();
     keys.sort_unstable();
     keys.dedup();
     g.c.get(L_NT).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c(hi).ne().if_();
@@ -3083,7 +3084,7 @@ fn emit_table64(g: &mut Gen<'_>, targets: &[u64], hi: u32) {
     g.c.end();
     g.c.get(L_NT).x(I32_WRAP).set(L_A);
     if !keys.is_empty() {
-        let low: Vec<u32> = keys.iter().map(|&a| a as u32).collect();
+        let low: Vec<u32> = keys.iter().map(|&a| lo32(a)).collect();
         let (mul, shift, slots) = super::structure::perfect_hash(&low);
         let m = keys.len();
         g.c.block(); // miss
@@ -3092,17 +3093,17 @@ fn emit_table64(g: &mut Gen<'_>, targets: &[u64], hi: u32) {
         for _ in 0..m {
             g.c.block();
         }
-        g.depth += m as u32;
-        g.c.get(L_A).u32c(mul).mul().i32c(shift as i32).shr_u().op(0x0e);
-        super::wasm::uleb(&mut g.c.b, slots.len() as u64);
+        g.depth += lo32(m);
+        g.c.get(L_A).u32c(mul).mul().i32c(lo32(shift).cast_signed()).shr_u().op(0x0e);
+        super::wasm::uleb(&mut g.c.b, lo64(slots.len()));
         for &i in &slots {
             super::wasm::uleb(&mut g.c.b, u64::from(i));
         }
-        super::wasm::uleb(&mut g.c.b, m as u64);
+        super::wasm::uleb(&mut g.c.b, lo64(m));
         for &a in &keys {
             g.c.end();
             g.depth -= 1;
-            g.c.get(L_A).u32c(a as u32).eq().if_();
+            g.c.get(L_A).u32c(lo32(a)).eq().if_();
             g.depth += 1;
             g.goto(a);
             g.flags = Flags::Cpu;
@@ -3123,7 +3124,7 @@ fn emit_entries64(g: &mut Gen<'_>, entries: &[usize]) {
     let n = g.blocks.len();
     let label = |g: &Gen<'_>, k: usize| g.depth - g.fwd[k].or(g.fwd[entries[0]]).expect("an entry's label");
     g.c.get(L_BLK).op(0x0e);
-    super::wasm::uleb(&mut g.c.b, n as u64);
+    super::wasm::uleb(&mut g.c.b, lo64(n));
     let first = label(g, entries[0]);
     for k in 0..n {
         // (an entry inside loops: its outermost header's label, whose side dispatch goes on)
@@ -3201,7 +3202,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         if index.contains_key(&a) || blocks.len() >= limit(&DEBUG_BLOCKS, max_blocks) || total >= max_ins {
             continue;
         }
-        if !roots.contains(&a) && !accept(a as u32, sure) {
+        if !roots.contains(&a) && !accept(lo32(a), sure) {
             continue;
         }
         let ins = decode(mem, a, trap);
@@ -3258,9 +3259,9 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
                     let f = last.near_branch64();
                     if let Some(j) = decode(mem, f, trap).first().filter(|j| j.mnemonic() == Mnemonic::Jmp && j.op0_kind() == OpKind::Memory && j.memory_base() == Register::RIP && j.memory_size().size() == 8) {
                         let slot = j.memory_displacement64();
-                        if !super::fresh_at(f as u32) && (slot >> 32) == (f >> 32) && (u64::from(GUEST_LO)..u64::from(GUEST_HI) - 8).contains(&(slot & 0xffff_ffff)) {
+                        if !super::fresh_at(lo32(f)) && (slot >> 32) == (f >> 32) && (u64::from(GUEST_LO)..u64::from(GUEST_HI) - 8).contains(&(slot & 0xffff_ffff)) {
                             if thunks.insert(f, slot).is_none() {
-                                thunk_code.push((f as u32, j.len() as u32));
+                                thunk_code.push((lo32(f), lo32(j.len())));
                             }
                         }
                     }
@@ -3316,7 +3317,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
 
     super::module_head(module, true);
 
-    let n = blocks.len() as u32;
+    let n = lo32(blocks.len());
     let mut returns: Vec<u64> = blocks
         .iter()
         .filter_map(|b| b.ins.last())
@@ -3357,10 +3358,10 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         g.load_regs();
     }
     // (a function's entries are tagged FN_TAG, bit 31)
-    g.c.get(L_ARG).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().set(L_BLK);
+    g.c.get(L_ARG).i32c(lo32(ENTRY_SHIFT).cast_signed()).shr_u().u32c(0x7ff).and().set(L_BLK);
     let mut count = 0;
     let mut layout = String::new();
-    let hi = (entry >> 32) as u32;
+    let hi = lo32(entry >> 32);
     let entries: Vec<usize>;
     if let Some((l, ents, side)) = &lay {
         entries = ents.clone();
@@ -3409,10 +3410,10 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
                 g.c.op(b);
             }
         }
-        for k in 0..n as usize {
+        for k in 0..us(n) {
             g.c.end();
             // inside: blocks k+1..n-1, the exit block, the loop
-            g.depth = n - 1 - k as u32;
+            g.depth = n - 1 - lo32(k);
             emit_block64(&mut g, mem, k, &mut count, &mut layout);
         }
     }
@@ -3420,7 +3421,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         return None;
     }
     g.c.end(); // exit: L_NT, L_ST (every block leaves by a branch)
-    g.chain((entry >> 32) as u32);
+    g.chain(lo32(entry >> 32));
     g.store_regs();
     g.c.get(L_CPU).get(L_NT).x(I32_WRAP).store32(cpu_off!(eip));
     g.c.get(L_CPU).get(L_NT).i64c(32).x(I64_SHR_U).x(I32_WRAP).store32(cpu_off!(rip_hi));
@@ -3428,7 +3429,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     g.c.end(); // loop
     g.c.op(0x00); // unreachable
     // (a function's: the Cpu its only parameter, the region type's others locals, see T_FN)
-    let mut locals = if fnm { alloc::vec![I32; N_PARAMS as usize - 1] } else { Vec::new() };
+    let mut locals = if fnm { alloc::vec![I32; us(N_PARAMS) - 1] } else { Vec::new() };
     locals.extend_from_slice(&[I64; N_I64 as usize]);
     locals.extend_from_slice(&[I32; N_I32 as usize]);
     locals.extend_from_slice(&[V128; 2]);
@@ -3443,17 +3444,17 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let code = splice_regs(core::mem::take(&mut g.c), &g.marks, fnm || DEBUG_ALL_REGS.load(Relaxed));
     if fnm {
         let (locals, body) = super::wasm::compact_locals_param(1, &FN_ARGS, &locals, code);
-        let nimp = module.imports.iter().filter(|i| matches!(i, super::wasm::Import::Func(..))).count() as u32;
-        let at = nimp + module.funcs.len() as u32;
+        let nimp = lo32(module.imports.iter().filter(|i| matches!(i, super::wasm::Import::Func(..))).count());
+        let at = nimp + lo32(module.funcs.len());
         module.funcs.push(fn_adapter(at + 1, high_half(entry)));
         module.funcs.push(Func { ty: T_FN, locals, code: body });
     } else {
         module.funcs.push(Func { ty: 2, locals, code });
     }
-    let starts = entries.iter().map(|&k| (blocks[k].start as u32, k as u32)).collect();
+    let starts = entries.iter().map(|&k| (lo32(blocks[k].start), lo32(k))).collect();
     let code: Vec<(u32, u32)> = blocks.iter().map(|b| {
         let end = b.ins.last().unwrap().next_ip();
-        (b.start as u32, (end - b.start) as u32)
+        (lo32(b.start), lo32(end - b.start))
     })
     // (the thunks' own bytes: the calls depend on them too, for page checks)
     .chain(thunk_code.iter().copied())

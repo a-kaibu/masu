@@ -18,6 +18,7 @@
 //! `env.eflags(cpu) -> i32` (materializes and returns EFLAGS) and
 //! `env.status(op, a, b, r, c) -> i32` (status flags of a lazy operation).
 
+use crate::cvt::{lo8, lo16, lo32, lo64, us};
 pub mod wasm;
 pub mod dispatch;
 mod structure;
@@ -315,7 +316,7 @@ pub fn module_head(module: &mut Module, long: bool) {
     if module.types.is_empty() {
         module.types.push(FuncType { params: alloc::vec![I32], results: alloc::vec![I32] });
         module.types.push(FuncType { params: alloc::vec![I32; 5], results: alloc::vec![I32] });
-        module.types.push(FuncType { params: alloc::vec![I32; N_PARAMS as usize], results: alloc::vec![I32] });
+        module.types.push(FuncType { params: alloc::vec![I32; us(N_PARAMS)], results: alloc::vec![I32] });
         module.imports.push(Import::Memory);
         module.imports.push(Import::Func("step", 0));
         module.imports.push(Import::Func("eflags", 0));
@@ -341,7 +342,7 @@ pub fn module_head(module: &mut Module, long: bool) {
     }
     // (in every 32-bit module: saved bundles merge regions and functions, which needs the same
     // types and imports)
-    if !long && module.types.len() == T_FN as usize {
+    if !long && module.types.len() == us(T_FN) {
         // T_FN: (cpu, ESP, 7 registers, depth | entry << 16, budget, return address) ->
         // (status, EIP, 8 registers, budget): the state in V8's registers (or its stack) both
         // ways, not in the Cpu
@@ -483,49 +484,49 @@ const MAX_INLINE_TOTAL: usize = 400;
 struct Off;
 impl Off {
     fn reg(i: usize) -> u32 {
-        (offset_of!(Cpu, regs) + 4 * i) as u32
+        lo32((offset_of!(Cpu, regs) + 4 * i))
     }
     fn eip() -> u32 {
-        offset_of!(Cpu, eip) as u32
+        lo32(offset_of!(Cpu, eip))
     }
     fn eflags() -> u32 {
-        offset_of!(Cpu, eflags) as u32
+        lo32(offset_of!(Cpu, eflags))
     }
     fn lazy() -> u32 {
-        offset_of!(Cpu, lazy) as u32
+        lo32(offset_of!(Cpu, lazy))
     }
     fn fs() -> u32 {
-        offset_of!(Cpu, fs_base) as u32
+        lo32(offset_of!(Cpu, fs_base))
     }
     fn sbase(i: u32) -> u32 {
-        (offset_of!(Cpu, sbase) + 4 * i as usize) as u32
+        lo32((offset_of!(Cpu, sbase) + 4 * us(i)))
     }
     fn gs() -> u32 {
-        offset_of!(Cpu, gs_base) as u32
+        lo32(offset_of!(Cpu, gs_base))
     }
     fn budget() -> u32 {
-        offset_of!(Cpu, jit_budget) as u32
+        lo32(offset_of!(Cpu, jit_budget))
     }
     fn calls() -> u32 {
-        offset_of!(Cpu, jit_depth) as u32
+        lo32(offset_of!(Cpu, jit_depth))
     }
     fn code_pages() -> u32 {
-        offset_of!(Cpu, jit_code_pages) as u32
+        lo32(offset_of!(Cpu, jit_code_pages))
     }
     fn smc() -> u32 {
-        offset_of!(Cpu, jit_smc) as u32
+        lo32(offset_of!(Cpu, jit_smc))
     }
     fn stale() -> u32 {
-        offset_of!(Cpu, jit_stale) as u32
+        lo32(offset_of!(Cpu, jit_stale))
     }
     fn call_cache() -> u32 {
-        offset_of!(Cpu, jit_calls) as u32
+        lo32(offset_of!(Cpu, jit_calls))
     }
     fn mxcsr() -> u32 {
-        offset_of!(Cpu, mxcsr) as u32
+        lo32(offset_of!(Cpu, mxcsr))
     }
     fn fpu(field: usize) -> u32 {
-        (offset_of!(Cpu, fpu) + field) as u32
+        lo32((offset_of!(Cpu, fpu) + field))
     }
     fn fregs() -> u32 {
         Off::fpu(offset_of!(Fpu, regs))
@@ -550,11 +551,11 @@ impl Off {
     }
     fn xmm(r: Register) -> u32 {
         debug_assert!(r.is_xmm(), "{r:?}");
-        (offset_of!(Cpu, xmm) + 16 * r.number()) as u32
+        lo32((offset_of!(Cpu, xmm) + 16 * r.number()))
     }
     fn mm(r: Register) -> u32 {
         debug_assert!(r.is_mm(), "{r:?}");
-        (offset_of!(Cpu, mm) + 8 * r.number()) as u32
+        lo32((offset_of!(Cpu, mm) + 8 * r.number()))
     }
 }
 
@@ -847,7 +848,7 @@ pub fn page_check() -> bool {
 }
 
 fn page_map() -> u32 {
-    PAGE_MAP.load(core::sync::atomic::Ordering::Relaxed) as u32
+    lo32(PAGE_MAP.load(core::sync::atomic::Ordering::Relaxed))
 }
 
 /// Pushes whether [the address on local `t`, + `size`) touches a page marked in [`PAGE_MAP`]
@@ -856,7 +857,7 @@ fn page_map() -> u32 {
 fn pages_marked(c: &mut Code, t: u32, size: u32, ins: &Instruction) {
     let map = page_map();
     c.get(t).i32c(12).shr_u().load8u(map);
-    c.get(t).i32c(size.max(1) as i32 - 1).add().i32c(12).shr_u().load8u(map);
+    c.get(t).i32c(lo32(size.max(1)).cast_signed() - 1).add().i32c(12).shr_u().load8u(map);
     c.or();
     if !writes_memory(ins) {
         c.i32c(1).and();
@@ -888,11 +889,11 @@ const STATUS_BITS: u32 =
 
 fn reg_index(r: Register) -> Option<(u32, u32, bool)> {
     if r.is_gpr32() {
-        Some((r.number() as u32, 32, false))
+        Some((lo32(r.number()), 32, false))
     } else if r.is_gpr16() {
-        Some((r.number() as u32, 16, false))
+        Some((lo32(r.number()), 16, false))
     } else if r.is_gpr8() {
-        let n = r.number() as u32;
+        let n = lo32(r.number());
         Some(if n < 4 { (n, 8, false) } else { (n - 4, 8, true) })
     } else {
         None
@@ -1035,7 +1036,7 @@ fn st_index(r: Register) -> u32 {
 fn op_bits(ins: &Instruction, i: u32) -> u32 {
     match ins.op_kind(i) {
         OpKind::Register => reg_index(ins.op_register(i)).map_or(32, |r| r.1),
-        OpKind::Memory => ins.memory_size().size() as u32 * 8,
+        OpKind::Memory => lo32(ins.memory_size().size()) * 8,
         OpKind::Immediate8 => 8,
         OpKind::Immediate16 | OpKind::Immediate8to16 => 16,
         _ => 32,
@@ -1194,7 +1195,7 @@ impl<'a> Gen<'a> {
         for _ in 1..8 {
             self.temp();
         }
-        let v: [u32; 8] = core::array::from_fn(|i| v0 + i as u32);
+        let v: [u32; 8] = core::array::from_fn(|i| v0 + lo32(i));
         let (md, wb) = (self.temp(), self.temp());
         let buf = v[0];
         self.c.get(sp).load32(4).set(md).get(sp).load32(8).set(buf).get(sp).u32c(W_BELOW).sub().set(wb);
@@ -1222,7 +1223,7 @@ impl<'a> Gen<'a> {
             self.c.get(wb).load32(4 * (i - 16)).add().store32(4 * i);
         }
         for (j, &t) in v.iter().enumerate() {
-            self.c.get(md).load32(8 + 4 * j as u32).set(t);
+            self.c.get(md).load32(8 + 4 * lo32(j)).set(t);
         }
         let mut r: [usize; 8] = core::array::from_fn(|i| i);
         for (i, &k) in SHA256_K.iter().enumerate() {
@@ -1230,7 +1231,7 @@ impl<'a> Gen<'a> {
             // h = h + S1(e) + Ch(e, f, g) + K[i] + W[i] (T1)
             self.c.get(h).get(e).i32c(6).rotr().get(e).i32c(11).rotr().xor().get(e).i32c(25).rotr().xor().add();
             self.c.get(g).get(e).get(f).get(g).xor().and().xor().add();
-            self.c.u32c(k).add().get(wb).load32(4 * i as u32).add().set(h);
+            self.c.u32c(k).add().get(wb).load32(4 * lo32(i)).add().set(h);
             self.c.get(d).get(h).add().set(d);
             // h = T1 + S0(a) + Maj(a, b, c)
             self.c.get(h).get(a).i32c(2).rotr().get(a).i32c(13).rotr().xor().get(a).i32c(22).rotr().xor().add();
@@ -1238,7 +1239,7 @@ impl<'a> Gen<'a> {
             r.rotate_right(1);
         }
         for j in 0..8 {
-            self.c.get(md).get(md).load32(8 + 4 * j as u32).get(v[r[j]]).add().store32(8 + 4 * j as u32);
+            self.c.get(md).get(md).load32(8 + 4 * lo32(j)).get(v[r[j]]).add().store32(8 + 4 * lo32(j));
         }
         self.c.i32c(0).set(L_REG);
         self.temps -= 10;
@@ -1282,21 +1283,21 @@ impl<'a> Gen<'a> {
         for (i, &(o, w)) in parts.iter().enumerate() {
             let at = a.wrapping_add(o);
             let mut v = [0u8; 8];
-            v[..w as usize].copy_from_slice(&bytes[o as usize..(o + w) as usize]);
+            v[..us(w)].copy_from_slice(&bytes[us(o)..us(o + w)]);
             let v = u64::from_le_bytes(v);
             self.c.u32c(at);
             match w {
                 8 => {
-                    self.c.load64(0).i64c(v as i64).op(0x52); // i64.ne
+                    self.c.load64(0).i64c(lo64(v).cast_signed()).op(0x52); // i64.ne
                 }
                 4 => {
-                    self.c.load32(0).u32c(v as u32).ne();
+                    self.c.load32(0).u32c(lo32(v)).ne();
                 }
                 2 => {
-                    self.c.load16u(0).u32c(v as u32).ne();
+                    self.c.load16u(0).u32c(lo32(v)).ne();
                 }
                 _ => {
-                    self.c.load8u(0).u32c(v as u32).ne();
+                    self.c.load8u(0).u32c(lo32(v)).ne();
                 }
             }
             if i > 0 {
@@ -1399,7 +1400,7 @@ impl<'a> Gen<'a> {
     /// Slot of ST(i).
     fn fc_slot(&mut self, i: u32) -> u32 {
         self.fc_begin();
-        (self.fc.delta + i as i32).rem_euclid(8) as u32
+        lo32((self.fc.delta + lo32(i).cast_signed()).rem_euclid(8))
     }
 
     /// New temporary with the physical register of slot `r`.
@@ -1407,7 +1408,7 @@ impl<'a> Gen<'a> {
         let p = self.temp();
         self.c.get(L_FTOP);
         if r != 0 {
-            self.c.i32c(r as i32).add();
+            self.c.i32c(lo32(r).cast_signed()).add();
         }
         self.c.i32c(7).and().set(p);
         p
@@ -1417,7 +1418,7 @@ impl<'a> Gen<'a> {
     fn fc_phys_addr(&mut self, r: u32) {
         self.c.get(L_FTOP);
         if r != 0 {
-            self.c.i32c(r as i32).add();
+            self.c.i32c(lo32(r).cast_signed()).add();
         }
         self.c.i32c(7).and().i32c(3).shl().get(L_CPU).add();
     }
@@ -1469,14 +1470,14 @@ impl<'a> Gen<'a> {
         // as swaps: at[x] is where the Cpu has slot x's now, of[r] whose slot r has
         let (mut at, mut of) = (FC_SAME, FC_SAME);
         for r in 0..8u8 {
-            let j = at[src[r as usize] as usize];
+            let j = at[us(src[us(r)])];
             if j == r {
                 continue;
             }
             self.fc_swap_cpu(u32::from(r), u32::from(j));
-            let e = of[r as usize];
-            (of[j as usize], at[e as usize]) = (e, j);
-            (of[r as usize], at[src[r as usize] as usize]) = (src[r as usize], r);
+            let e = of[us(r)];
+            (of[us(j)], at[us(e)]) = (e, j);
+            (of[us(r)], at[us(src[us(r)])]) = (src[us(r)], r);
         }
     }
 
@@ -1485,7 +1486,7 @@ impl<'a> Gen<'a> {
         let phys = |c: &mut Code, r: u32| {
             c.get(L_FTOP);
             if r != 0 {
-                c.i32c(r as i32).add();
+                c.i32c(lo32(r).cast_signed()).add();
             }
             c.i32c(7).and();
         };
@@ -1519,7 +1520,7 @@ impl<'a> Gen<'a> {
         if !fc_handles(ins) {
             return false;
         }
-        let slot = |i: u32| (self.fc.delta + i as i32).rem_euclid(8) as u32;
+        let slot = |i: u32| lo32((self.fc.delta + lo32(i).cast_signed()).rem_euclid(8));
         let known = self.fc.valid | self.fc.empty;
         match ins.mnemonic() {
             Fxch | Fldz | Fld1 | Fst | Fstp => true,
@@ -1739,7 +1740,7 @@ impl<'a> Gen<'a> {
             self.c.u32c(ins.memory_displacement32() & 0xffff);
             for r in [ins.memory_base(), ins.memory_index()] {
                 if r != Register::None {
-                    self.c.get(L_REG + r.number() as u32).add();
+                    self.c.get(L_REG + lo32(r.number())).add();
                 }
             }
             self.c.u32c(0xffff).and();
@@ -1753,14 +1754,14 @@ impl<'a> Gen<'a> {
         }
         self.c.u32c(ins.memory_displacement32());
         if ins.memory_base() != Register::None {
-            self.c.get(L_REG + ins.memory_base().number() as u32).add();
+            self.c.get(L_REG + lo32(ins.memory_base().number())).add();
         }
         if ins.memory_index() != Register::None {
-            self.c.get(L_REG + ins.memory_index().number() as u32);
+            self.c.get(L_REG + lo32(ins.memory_index().number()));
             match ins.memory_index_scale() {
                 1 => {}
                 s => {
-                    self.c.i32c(s.trailing_zeros() as i32).shl();
+                    self.c.i32c(lo32(s.trailing_zeros()).cast_signed()).shl();
                 }
             }
             self.c.add();
@@ -1788,11 +1789,11 @@ impl<'a> Gen<'a> {
             }
         }
         if base.is_gpr32() && ins.memory_index() == Register::None && seg != Register::FS && seg != Register::GS {
-            let disp = ins.memory_displacement32() as i32;
+            let disp = lo32(ins.memory_displacement32()).cast_signed();
             if self.near_safe(base.number(), disp, size) {
                 if disp > 0 {
-                    self.c.get(L_REG + base.number() as u32).set(L_AB);
-                    self.folded = Some((t, disp as u32));
+                    self.c.get(L_REG + lo32(base.number())).set(L_AB);
+                    self.folded = Some((t, lo32(disp)));
                 }
                 return t;
             }
@@ -1839,21 +1840,21 @@ impl<'a> Gen<'a> {
     fn addr_pair(&mut self, t: u32, size: u32) -> Option<u32> {
         let ins = self.ins;
         let (base, index) = (ins.memory_base(), ins.memory_index());
-        let disp = ins.memory_displacement32() as i32;
+        let disp = lo32(ins.memory_displacement32()).cast_signed();
         if !base.is_gpr32() || !index.is_gpr32() || base == Register::ESP || index == Register::ESP
             || matches!(ins.memory_segment(), Register::FS | Register::GS)
-            || disp.unsigned_abs() >= SAFE_MARGIN as u32 / 2
+            || disp.unsigned_abs() >= lo32(SAFE_MARGIN) / 2
         {
             return None;
         }
-        let key = (base.number() as u8, index.number() as u8, ins.memory_index_scale().trailing_zeros() as u8);
+        let key = (lo8(base.number()), lo8(index.number()), lo8(ins.memory_index_scale().trailing_zeros()));
         self.c.get(L_REG + u32::from(key.0)).get(L_REG + u32::from(key.1));
         if key.2 != 0 {
             self.c.i32c(i32::from(key.2)).shl();
         }
         self.c.add().set(L_AB);
         if !self.safe2.contains(&key) && !nocheck() {
-            self.c.get(L_AB).u32c(GUEST_LO + SAFE_MARGIN as u32).sub().u32c(GUEST_HI - GUEST_LO - 2 * SAFE_MARGIN as u32).gt_u().if_();
+            self.c.get(L_AB).u32c(GUEST_LO + lo32(SAFE_MARGIN)).sub().u32c(GUEST_HI - GUEST_LO - 2 * lo32(SAFE_MARGIN)).gt_u().if_();
             self.depth += 1;
             self.bail();
             self.depth -= 1;
@@ -1865,7 +1866,7 @@ impl<'a> Gen<'a> {
         }
         self.c.get(L_AB).i32c(disp).add().set(t);
         if disp > 0 {
-            self.folded = Some((t, disp as u32));
+            self.folded = Some((t, lo32(disp)));
         }
         let _ = size;
         Some(t)
@@ -1883,10 +1884,10 @@ impl<'a> Gen<'a> {
         self.fc = self.fc_in.get(&x).copied().unwrap_or_default();
         self.mmx = (0, 0);
         self.xmm = (0, 0);
-        self.block_index = x as u32;
+        self.block_index = lo32(x);
         self.ctx = self.ctxs[x];
         for r in (0..8).filter(|r| m & (1 << r) != 0) {
-            self.c.get(L_REG + r).u32c(GUEST_LO + SAFE_MARGIN as u32).sub().u32c(GUEST_HI - GUEST_LO - 2 * SAFE_MARGIN as u32).gt_u().if_();
+            self.c.get(L_REG + r).u32c(GUEST_LO + lo32(SAFE_MARGIN)).sub().u32c(GUEST_HI - GUEST_LO - 2 * lo32(SAFE_MARGIN)).gt_u().if_();
             self.depth += 1;
             self.c.u32c(at);
             self.exit_with(RET_INTERP);
@@ -1906,14 +1907,14 @@ impl<'a> Gen<'a> {
         if reg != 4 && page_check() {
             return false;
         }
-        if disp.unsigned_abs() >= SAFE_MARGIN as u32 / 2 {
+        if disp.unsigned_abs() >= lo32(SAFE_MARGIN) / 2 {
             return false;
         }
         let off = match self.safe[reg] {
             Some(o) => o,
             None => {
-                let l = L_REG + reg as u32;
-                self.c.get(l).u32c(GUEST_LO + SAFE_MARGIN as u32).sub().u32c(GUEST_HI - GUEST_LO - 2 * SAFE_MARGIN as u32).gt_u().if_();
+                let l = L_REG + lo32(reg);
+                self.c.get(l).u32c(GUEST_LO + lo32(SAFE_MARGIN)).sub().u32c(GUEST_HI - GUEST_LO - 2 * lo32(SAFE_MARGIN)).gt_u().if_();
                 self.depth += 1;
                 self.bail();
                 self.depth -= 1;
@@ -2011,7 +2012,7 @@ impl<'a> Gen<'a> {
                 self.load_at(op_bits(ins, i), off);
             }
             _ => {
-                let v = ins.immediate(i) as u32 & mask(op_bits(ins, 0).max(op_bits(ins, i)));
+                let v = lo32(ins.immediate(i)) & mask(op_bits(ins, 0).max(op_bits(ins, i)));
                 self.c.u32c(v);
             }
         }
@@ -2053,7 +2054,7 @@ impl<'a> Gen<'a> {
     /// The kept stack slot operand `i` is, if any.
     fn slot_of(&self, i: u32) -> Option<u32> {
         let (base, list) = self.slots.as_ref()?;
-        slot_operand(self.ins, i, *base).and_then(|d| list.iter().position(|&x| x == d)).map(|k| k as u32)
+        slot_operand(self.ins, i, *base).and_then(|d| list.iter().position(|&x| x == d)).map(|k| lo32(k))
     }
 
     /// Loads the kept slots (when they are inside the guest range; otherwise every access to
@@ -2062,9 +2063,9 @@ impl<'a> Gen<'a> {
         let Some((base, list)) = self.slots.clone() else { return };
         let (lo, hi) = (*list.iter().min().unwrap(), *list.iter().max().unwrap() + 4);
         let b = L_REG + reg_index(base).unwrap().0;
-        self.c.get(b).i32c(lo).add().u32c(GUEST_LO).sub().u32c(GUEST_HI - GUEST_LO - (hi - lo) as u32).le_u().if_();
+        self.c.get(b).i32c(lo).add().u32c(GUEST_LO).sub().u32c(GUEST_HI - GUEST_LO - lo32(hi - lo)).le_u().if_();
         for (k, &d) in list.iter().enumerate() {
-            self.c.get(b).i32c(d).add().load32(0).set(L_SLOT + k as u32);
+            self.c.get(b).i32c(d).add().load32(0).set(L_SLOT + lo32(k));
         }
         self.c.end();
     }
@@ -2076,7 +2077,7 @@ impl<'a> Gen<'a> {
         let (lo, hi) = (*list.iter().min().unwrap(), *list.iter().max().unwrap() + 4);
         let b = L_REG + reg_index(base).unwrap().0;
         // a + size > base + lo && a < base + hi
-        self.c.get(a).get(b).i32c(lo - size as i32 + 1).add().sub().u32c((hi - lo) as u32 + size - 1).lt_u().if_();
+        self.c.get(a).get(b).i32c(lo - lo32(size).cast_signed() + 1).add().sub().u32c(lo32(hi - lo) + size - 1).lt_u().if_();
         self.depth += 1;
         self.slots_load();
         self.depth -= 1;
@@ -2237,8 +2238,8 @@ impl<'a> Gen<'a> {
     /// An operation the blocks leading here (functions) left their flags from, for which
     /// condition `cc` needs no EFLAGS.
     fn predict(&mut self, cc: Cond) -> Option<Op> {
-        let k = self.block_index as usize;
-        let ops: Vec<Op> = self.preds.get(k)?.iter().filter_map(|&p| self.flags_out[p as usize]).collect();
+        let k = us(self.block_index);
+        let ops: Vec<Op> = self.preds.get(k)?.iter().filter_map(|&p| self.flags_out[us(p)]).collect();
         ops.into_iter().find(|&op| {
             let (b, l) = (self.c.b.len(), self.c.locs.len());
             let ok = self.cond_known(op, cc.test);
@@ -2274,11 +2275,11 @@ impl<'a> Gen<'a> {
                 }
             };
             let sign = |c: &mut Code| {
-                c.get(L_FR).i32c(bits as i32 - 1).shr_u().i32c(1).and();
+                c.get(L_FR).i32c(lo32(bits).cast_signed() - 1).shr_u().i32c(1).and();
             };
             // OF: the sign of (a ^ r) & (b ^ r) (ADD), (a ^ b) & (a ^ r) (SUB); INC
             // overflows to the smallest value, DEC from it. Then L: SF != OF, LE: that or ZF
-            let sh = bits as i32 - 1;
+            let sh = lo32(bits).cast_signed() - 1;
             let of_cond = |c: &mut Code| {
                 if t != Test::O {
                     sign(c);
@@ -2592,14 +2593,14 @@ impl<'a> Gen<'a> {
     /// The registers into the Cpu (all: a function's came as parameters, the Cpu's are stale).
     fn store_regs(&mut self) {
         for i in 0..8 {
-            self.c.get(L_CPU).get(L_REG + i).store32(Off::reg(i as usize));
+            self.c.get(L_CPU).get(L_REG + i).store32(Off::reg(us(i)));
         }
     }
 
     /// The registers the code names from the Cpu.
     fn load_regs(&mut self) {
         for i in (0..8).filter(|i| self.regs & (1 << i) != 0) {
-            self.c.get(L_CPU).load32(Off::reg(i as usize)).set(L_REG + i);
+            self.c.get(L_CPU).load32(Off::reg(us(i))).set(L_REG + i);
         }
     }
 
@@ -2698,7 +2699,7 @@ impl<'a> Gen<'a> {
             .used_memory()
             .iter()
             .filter(|u| matches!(u.access(), OpAccess::Write | OpAccess::CondWrite | OpAccess::ReadWrite | OpAccess::ReadCondWrite))
-            .map(|u| (u.base(), u.index(), u.scale(), u.displacement() as u32, u.segment(), u.memory_size().size() as u32))
+            .map(|u| (u.base(), u.index(), u.scale(), lo32(u.displacement()), u.segment(), lo32(u.memory_size().size())))
             .collect();
         for (base, index, scale, mut disp, seg, size) in stores {
             let ok = |r: Register| r == Register::None || r.is_gpr32();
@@ -2713,7 +2714,7 @@ impl<'a> Gen<'a> {
                 // the stack pointer a PUSH moved: as it was before; a POP to [esp+d] has its
                 // address from ESP after (SDM), the rest are not worked out
                 match (base, ins.mnemonic()) {
-                    (Register::ESP, _) if spi < 0 => disp = disp.wrapping_sub(spi as u32),
+                    (Register::ESP, _) if spi < 0 => disp = disp.wrapping_sub(lo32(spi)),
                     (Register::ESP, Mnemonic::Pop) => {}
                     _ => continue,
                 }
@@ -2721,12 +2722,12 @@ impl<'a> Gen<'a> {
             let e = self.temp();
             self.c.u32c(disp);
             if base != Register::None {
-                self.c.get(L_REG + base.number() as u32).add();
+                self.c.get(L_REG + lo32(base.number())).add();
             }
             if index != Register::None {
-                self.c.get(L_REG + index.number() as u32);
+                self.c.get(L_REG + lo32(index.number()));
                 if scale > 1 {
-                    self.c.i32c(scale.trailing_zeros() as i32).shl();
+                    self.c.i32c(lo32(scale.trailing_zeros()).cast_signed()).shl();
                 }
                 self.c.add();
             }
@@ -2753,7 +2754,7 @@ impl<'a> Gen<'a> {
     /// Leaves the block for the interpreter at `eip` (the state is that before `eip`) unless
     /// ESP is in the guest range with SAFE_MARGIN to spare.
     fn check_esp(&mut self, eip: u32) {
-        self.c.get(L_REG + 4).u32c(GUEST_LO + SAFE_MARGIN as u32).sub().u32c(GUEST_HI - GUEST_LO - 2 * SAFE_MARGIN as u32).gt_u().if_();
+        self.c.get(L_REG + 4).u32c(GUEST_LO + lo32(SAFE_MARGIN)).sub().u32c(GUEST_HI - GUEST_LO - 2 * lo32(SAFE_MARGIN)).gt_u().if_();
         self.depth += 1;
         self.c.u32c(eip);
         self.exit_with(RET_INTERP);
@@ -2805,7 +2806,7 @@ impl<'a> Gen<'a> {
                     // the whole run at once; with DF set it ends at EDI (ESI), so the range starts
                     // n - size below
                     let (n, df) = (self.temp(), self.temp());
-                    self.c.get(ecx).i32c(size.trailing_zeros() as i32).shl().set(n);
+                    self.c.get(ecx).i32c(lo32(size.trailing_zeros()).cast_signed()).shl().set(n);
                     self.c.get(L_CPU).load32(Off::eflags()).i32c(0x400).and().set(df);
                     self.c.get(ecx).u32c(1 << 28).gt_u();
                     if movs {
@@ -2826,7 +2827,7 @@ impl<'a> Gen<'a> {
                     self.c.end();
                     // back: n - size with DF, else 0 (in df's local)
                     let (back, d) = (df, self.temp());
-                    self.c.get(n).i32c(size as i32).sub().i32c(0).get(df).select().set(back);
+                    self.c.get(n).i32c(lo32(size).cast_signed()).sub().i32c(0).get(df).select().set(back);
                     self.c.get(edi).get(back).sub().set(d);
                     if movs {
                         let sv = self.temp();
@@ -2865,7 +2866,7 @@ impl<'a> Gen<'a> {
                         self.c.get(n).if_().loop_();
                         self.c.get(i).get(L_REG);
                         self.store(size * 8);
-                        self.c.get(i).i32c(size as i32).add().tee(i).get(e).ne().br_if(0);
+                        self.c.get(i).i32c(lo32(size).cast_signed()).add().tee(i).get(e).ne().br_if(0);
                         self.c.end().end();
                     }
                     // the step: -n with DF, else n
@@ -2879,8 +2880,8 @@ impl<'a> Gen<'a> {
                 } else {
                     // step: +size, or -size with DF
                     let st = self.temp();
-                    self.c.i32c(size as i32).get(L_CPU).load32(Off::eflags()).i32c(9).shr_u().i32c(2).and();
-                    self.c.i32c(size as i32).mul().sub().set(st);
+                    self.c.i32c(lo32(size).cast_signed()).get(L_CPU).load32(Off::eflags()).i32c(9).shr_u().i32c(2).and();
+                    self.c.i32c(lo32(size).cast_signed()).mul().sub().set(st);
                     let v = self.temp();
                     if movs || !stos {
                         self.c.get(esi).set(v);
@@ -3015,12 +3016,12 @@ impl<'a> Gen<'a> {
                 let v = self.temp();
                 self.c.u32c(ins.memory_displacement32());
                 if ins.memory_base() != Register::None {
-                    self.c.get(L_REG + ins.memory_base().number() as u32).add();
+                    self.c.get(L_REG + lo32(ins.memory_base().number())).add();
                 }
                 if ins.memory_index() != Register::None {
-                    self.c.get(L_REG + ins.memory_index().number() as u32);
+                    self.c.get(L_REG + lo32(ins.memory_index().number()));
                     if ins.memory_index_scale() > 1 {
-                        self.c.i32c(ins.memory_index_scale().trailing_zeros() as i32).shl();
+                        self.c.i32c(lo32(ins.memory_index_scale().trailing_zeros()).cast_signed()).shl();
                     }
                     self.c.add();
                 }
@@ -3038,7 +3039,7 @@ impl<'a> Gen<'a> {
                 self.write_op(1, a, x);
             }
             Bswap if op_bits(ins, 0) == 32 => {
-                let r = L_REG + ins.op_register(0).number() as u32;
+                let r = L_REG + lo32(ins.op_register(0).number());
                 let v = self.temp();
                 self.c.get(r).set(v);
                 // ((v >> 24) | (v << 24)) | ((v >> 8) & 0xff00) | ((v << 8) & 0xff0000)
@@ -3192,16 +3193,16 @@ impl<'a> Gen<'a> {
                 if ins.op_kind(1) == OpKind::Register {
                     self.read_op(1, addr);
                 } else {
-                    self.c.u32c(ins.immediate(1) as u32);
+                    self.c.u32c(lo32(ins.immediate(1)));
                 }
-                self.c.i32c(bits as i32 - 1).and().i32c(1).add().set(n);
+                self.c.i32c(lo32(bits).cast_signed() - 1).and().i32c(1).add().set(n);
                 self.c.get(a).get(n).shr_u().set(r);
                 self.set_lazy(Kind::Shr, bits, Some(a), Some(n), r, None);
             }
             Shl | Sal | Shr | Sar | Rol | Ror if simple && ins.op_count() == 2 => {
                 let bits = op_bits(ins, 0);
                 let imm = ins.op_kind(1) != OpKind::Register;
-                let count = if imm { ins.immediate(1) as u32 & 31 } else { 0 };
+                let count = if imm { lo32(ins.immediate(1)) & 31 } else { 0 };
                 let rot = matches!(ins.mnemonic(), Rol | Ror);
                 // flags that depend on a count only known at run time (or rotates, which keep
                 // the other flags) go through the interpreter when anyone reads them
@@ -3309,7 +3310,7 @@ impl<'a> Gen<'a> {
                 if ins.op_kind(2) == OpKind::Register {
                     self.c.get(L_REG + 1).i32c(31).and().i64_extend_u();
                 } else {
-                    self.c.i64c((ins.immediate(2) & 31) as i64);
+                    self.c.i64c(lo64(ins.immediate(2) & 31).cast_signed());
                 }
                 if shrd {
                     self.c.op(0x88 /* i64.shr_u */).wrap();
@@ -3369,7 +3370,7 @@ impl<'a> Gen<'a> {
                 self.cond(Cond::of(ins.condition_code()));
                 if self.fuse_zx {
                     // and the MOVZX of it that follows (see emit_block)
-                    self.c.set(L_REG + ins.op_register(0).number() as u32);
+                    self.c.set(L_REG + lo32(ins.op_register(0).number()));
                     return true;
                 }
                 self.c.set(v);
@@ -3380,7 +3381,7 @@ impl<'a> Gen<'a> {
             {
                 let addr = self.mem_addr();
                 let v = self.temp();
-                let dst = L_REG + ins.op_register(0).number() as u32;
+                let dst = L_REG + lo32(ins.op_register(0).number());
                 self.read_op(1, addr);
                 self.c.get(dst);
                 self.cond(Cond::of(ins.condition_code()));
@@ -3413,7 +3414,7 @@ impl<'a> Gen<'a> {
                 let mut copy = None;
                 if ins.mnemonic() == Fild {
                     // (the exact integer goes in L_W)
-                    let size = ins.memory_size().size() as u32;
+                    let size = lo32(ins.memory_size().size());
                     let a = self.addr(size);
                     let o = self.mem_at(a);
                     match size {
@@ -3435,7 +3436,7 @@ impl<'a> Gen<'a> {
                     }
                     self.c.get(L_W).op(0xb9 /* f64.convert_i64_s */);
                 } else if ins.mnemonic() == Fld && ins.op_kind(0) == OpKind::Memory {
-                    let a = self.addr(ins.memory_size().size() as u32);
+                    let a = self.addr(lo32(ins.memory_size().size()));
                     self.fload_mem(a);
                 } else if ins.mnemonic() == Fld {
                     let i = st_index(ins.op_register(0));
@@ -3477,7 +3478,7 @@ impl<'a> Gen<'a> {
             }
             Fst | Fstp if fc_handles(ins) => {
                 if ins.op_kind(0) == OpKind::Memory {
-                    let a = self.addr(ins.memory_size().size() as u32);
+                    let a = self.addr(lo32(ins.memory_size().size()));
                     let v = self.fc_get(0);
                     let o = self.mem_at(a);
                     self.c.get(v);
@@ -3501,7 +3502,7 @@ impl<'a> Gen<'a> {
                 }
             }
             Fist | Fistp if fc_handles(ins) => {
-                let size = ins.memory_size().size() as u32;
+                let size = lo32(ins.memory_size().size());
                 let a = self.addr(size);
                 let v = self.fc_get(0);
                 let r0 = self.fc_slot(0);
@@ -3573,7 +3574,7 @@ impl<'a> Gen<'a> {
                 if known & (1 << ra) == 0 || known & (1 << rb) == 0 {
                     // tags and exact integers in the Cpu move along (the cached ones are
                     // written over when the block leaves): later (FCache::src)
-                    self.fc.src.swap(ra as usize, rb as usize);
+                    self.fc.src.swap(us(ra), us(rb));
                 }
                 let fc = &mut self.fc;
                 for m in [&mut fc.valid, &mut fc.empty] {
@@ -3586,7 +3587,7 @@ impl<'a> Gen<'a> {
                 let mn = ins.mnemonic();
                 // source -> L_F1, d = the destination's slot
                 let d = if ins.op_count() == 1 {
-                    let a = self.addr(ins.memory_size().size() as u32);
+                    let a = self.addr(lo32(ins.memory_size().size()));
                     self.fload_mem(a);
                     self.c.set(L_F1);
                     self.fc_get(0);
@@ -3852,7 +3853,7 @@ impl<'a> Gen<'a> {
                 }
                 if self.ctx != 0 {
                     // an inlined callee returning to its call
-                    let r = self.ret_to[self.ctx as usize];
+                    let r = self.ret_to[us(self.ctx)];
                     self.c.get(t).u32c(r).eq().if_();
                     self.depth += 1;
                     let ctx = core::mem::replace(&mut self.ctx, 0);
@@ -3944,7 +3945,7 @@ impl<'a> Gen<'a> {
     /// The block at `target` in the current context, or else the region's own.
     fn block_of(&self, target: u32) -> Option<usize> {
         let k = self.targets.get(&(self.ctx, target)).or_else(|| self.targets.get(&(0, target)));
-        k.map(|&k| k as usize)
+        k.map(|&k| us(k))
     }
 
     /// Pushes jump target `target`: TARGET_NEXT is the one in L_NEXT (a jump table's).
@@ -3996,10 +3997,10 @@ impl<'a> Gen<'a> {
             return;
         }
         // around a single-block loop the MMX locals stay (see emit_level)
-        let again = k as u32 == self.block_index && self.back[k].is_some();
+        let again = lo32(k) == self.block_index && self.back[k].is_some();
         let keep = self.mm_loop != 0 && again;
         let xkeep = self.xm_loop != 0 && again;
-        let backward = k as u32 <= self.block_index;
+        let backward = lo32(k) <= self.block_index;
         // how: (L_BLK value, label); the top dispatch for none
         let route = if let Some(p) = self.back[k] {
             // (L_BLK is -1 inside loops except right after a side dispatch)
@@ -4009,7 +4010,7 @@ impl<'a> Gen<'a> {
             Some((self.head[k].then_some(-1), p))
         } else if let Some(p) = self.loop_entry(k).filter(|_| !backward) {
             // into the middle of a loop (often the condition at its end): its side dispatch
-            Some((Some(k as i32), p))
+            Some((Some(lo32(k).cast_signed()), p))
         } else {
             None
         };
@@ -4069,7 +4070,7 @@ impl<'a> Gen<'a> {
                     let _ = writeln!(self.notes, "TOP {} -> {k}{}", self.block_index, if backward { " back" } else { "" });
                 }
                 bump(&mut self.c, 12);
-                self.c.i32c(k as i32).set(L_BLK).br(self.depth - 1);
+                self.c.i32c(lo32(k).cast_signed()).set(L_BLK).br(self.depth - 1);
             }
         }
     }
@@ -4080,7 +4081,7 @@ impl<'a> Gen<'a> {
     fn fc_to(&mut self, k: usize) {
         self.fc_sync();
         let cur = self.fc;
-        let d = cur.delta.rem_euclid(8) as u32;
+        let d = lo32(cur.delta.rem_euclid(8));
         let rot = |m: u8| m.rotate_right(d);
         let canon = FCache { on: cur.on, delta: 0, have: rot(cur.have), dirty: rot(cur.dirty), valid: rot(cur.valid), empty: rot(cur.empty), src: FC_SAME };
         if cur.on && self.fc_out.get(&k).is_none() {
@@ -4096,7 +4097,7 @@ impl<'a> Gen<'a> {
         if cur.on && canon == to {
             if d != 0 {
                 // (the Cpu's TOP is L_FTOP while the delta is 0: see x87_flush)
-                self.c.get(L_FTOP).i32c(d as i32).add().i32c(7).and().set(L_FTOP);
+                self.c.get(L_FTOP).i32c(lo32(d).cast_signed()).add().i32c(7).and().set(L_FTOP);
                 self.c.get(L_CPU).get(L_FTOP).store32(Off::ftop());
                 let slots: Vec<u32> = (0..8).filter(|r| cur.have & (1 << r) != 0).collect();
                 for &r in &slots {
@@ -4111,7 +4112,7 @@ impl<'a> Gen<'a> {
             if to.on {
                 if cur.on {
                     if d != 0 {
-                        self.c.get(L_FTOP).i32c(d as i32).add().i32c(7).and().set(L_FTOP);
+                        self.c.get(L_FTOP).i32c(lo32(d).cast_signed()).add().i32c(7).and().set(L_FTOP);
                     }
                 } else {
                     self.c.get(L_CPU).load32(Off::ftop()).set(L_FTOP);
@@ -4192,7 +4193,7 @@ impl<'a> Gen<'a> {
     /// Notes the return address of a call for RET, if it is one of the region's blocks.
     fn ras_push(&mut self, ret: u32) {
         let Some(k) = self.block_of(ret) else { return };
-        self.c.u32c(ret).set(L_RA1).i32c(k as i32).set(L_RK1);
+        self.c.u32c(ret).set(L_RA1).i32c(lo32(k).cast_signed()).set(L_RK1);
     }
 
     /// Jumps to the address on the stack (looked up by the region's shared code).
@@ -4213,10 +4214,10 @@ impl<'a> Gen<'a> {
     /// the way out as before.
     fn call_rest(&mut self) {
         let _site = wasm::MemSite::new(5);
-        let r = self.ret_to[self.ctx as usize];
+        let r = self.ret_to[us(self.ctx)];
         let (h, v) = (self.temp(), self.temp());
-        let hash = offset_of!(Cpu, jit_hash) as u32;
-        let maskf = offset_of!(Cpu, jit_mask) as u32;
+        let hash = lo32(offset_of!(Cpu, jit_hash));
+        let maskf = lo32(offset_of!(Cpu, jit_mask));
         self.c.block(); // slow 0
         self.depth += 1;
         self.c.get(L_BUD).i32c(1).sub().tee(L_BUD).i32c(0).le_s();
@@ -4239,7 +4240,7 @@ impl<'a> Gen<'a> {
         lazy_to_cpu(&mut self.c);
         self.c.end();
         bump(&mut self.c, 2);
-        fn_args(&mut self.c, |c| void(c.get(L_ARG).i32c(1).add().get(v).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().i32c(16).shl().or()), |c| void(c.i32c(0)));
+        fn_args(&mut self.c, |c| void(c.get(L_ARG).i32c(1).add().get(v).i32c(lo32(ENTRY_SHIFT).cast_signed()).shr_u().u32c(0x7ff).and().i32c(16).shl().or()), |c| void(c.i32c(0)));
         self.c.get(v).u32c((1 << ENTRY_SHIFT) - 1).and().i32c(1).add().call_indirect(T_FN, 0);
         take_results(&mut self.c, h, v, r);
         let modes = self.modes;
@@ -4268,7 +4269,7 @@ impl<'a> Gen<'a> {
 /// (the table changed, or an index out of range) jumps there the dynamic way.
 fn emit_dispatch(g: &mut Gen<'_>, t: &structure::Table, node: usize) {
     g.ctx = t.ctx;
-    g.block_index = node as u32;
+    g.block_index = lo32(node);
     g.flags = Flags::Entry;
     let m = t.entries.len();
     g.c.block(); // miss
@@ -4277,21 +4278,21 @@ fn emit_dispatch(g: &mut Gen<'_>, t: &structure::Table, node: usize) {
     for _ in 0..m {
         g.c.block();
     }
-    g.depth += m as u32;
+    g.depth += lo32(m);
     if let Some((mul, shift, slots)) = &t.hash {
-        g.c.get(L_NEXT).u32c(*mul).mul().i32c(*shift as i32).shr_u().op(0x0e);
-        wasm::uleb(&mut g.c.b, slots.len() as u64);
+        g.c.get(L_NEXT).u32c(*mul).mul().i32c(lo32(*shift).cast_signed()).shr_u().op(0x0e);
+        wasm::uleb(&mut g.c.b, lo64(slots.len()));
         for &i in slots {
             wasm::uleb(&mut g.c.b, u64::from(i));
         }
     } else {
         g.c.get(L_BLK).op(0x0e);
-        wasm::uleb(&mut g.c.b, m as u64);
+        wasm::uleb(&mut g.c.b, lo64(m));
         for i in 0..m {
-            wasm::uleb(&mut g.c.b, i as u64);
+            wasm::uleb(&mut g.c.b, lo64(i));
         }
     }
-    wasm::uleb(&mut g.c.b, m as u64);
+    wasm::uleb(&mut g.c.b, lo64(m));
     for &a in &t.entries {
         g.c.end();
         g.depth -= 1;
@@ -4312,7 +4313,7 @@ fn emit_dispatch(g: &mut Gen<'_>, t: &structure::Table, node: usize) {
 /// L_BLK (0 the root, i the i-th other) to the block.
 fn emit_entries<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Vec<Instruction>)], entries: &[usize], node: usize) {
     g.ctx = 0;
-    g.block_index = node as u32;
+    g.block_index = lo32(node);
     g.flags = Flags::Entry;
     g.fc = FCache::default();
     g.mm_loop = 0;
@@ -4323,11 +4324,11 @@ fn emit_entries<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Vec<Instruction>)], entr
     for _ in 0..m {
         g.c.block();
     }
-    g.depth += m as u32;
+    g.depth += lo32(m);
     g.c.get(L_BLK).op(0x0e);
-    wasm::uleb(&mut g.c.b, m as u64);
+    wasm::uleb(&mut g.c.b, lo64(m));
     for i in 0..m {
-        wasm::uleb(&mut g.c.b, i as u64);
+        wasm::uleb(&mut g.c.b, lo64(i));
     }
     wasm::uleb(&mut g.c.b, 0);
     for &k in entries {
@@ -4345,7 +4346,7 @@ fn fn_adapter() -> Func {
     lazy_to_cpu(&mut c);
     c.end();
     // (the entry in the depth's high half)
-    fn_args(&mut c, |c| void(c.get(L_CPU).load32(Off::calls()).get(L_ARG).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().i32c(16).shl().or()), |c| void(c.i32c(0)));
+    fn_args(&mut c, |c| void(c.get(L_CPU).load32(Off::calls()).get(L_ARG).i32c(lo32(ENTRY_SHIFT).cast_signed()).shr_u().u32c(0x7ff).and().i32c(16).shl().or()), |c| void(c.i32c(0)));
     c.get(L_ARG).u32c((1 << ENTRY_SHIFT) - 1).and().i32c(1).add().call_indirect(T_FN, 0);
     // (L_NEXT: the RET's EIP)
     c.set(L_BUD);
@@ -4394,7 +4395,7 @@ fn push_fn_state(c: &mut Code) {
 fn state_to_cpu(c: &mut Code) {
     let _site = wasm::MemSite::new(2);
     for i in 0..8 {
-        c.get(L_CPU).get(L_REG + i).store32(Off::reg(i as usize));
+        c.get(L_CPU).get(L_REG + i).store32(Off::reg(us(i)));
     }
     c.get(L_CPU).get(L_BUD).store32(Off::budget());
 }
@@ -4426,10 +4427,10 @@ fn lazy_store(c: &mut Code) {
     use crate::lazy::Lazy;
     let lo = Off::lazy();
     c.get(L_CPU).get(L_OP).store32(lo);
-    c.get(L_CPU).get(L_FA).i64_extend_u().store64(lo + offset_of!(Lazy, a) as u32);
-    c.get(L_CPU).get(L_FB).i64_extend_u().store64(lo + offset_of!(Lazy, b) as u32);
-    c.get(L_CPU).get(L_FR).i64_extend_u().store64(lo + offset_of!(Lazy, r) as u32);
-    c.get(L_CPU).get(L_FC).store32(lo + offset_of!(Lazy, c) as u32);
+    c.get(L_CPU).get(L_FA).i64_extend_u().store64(lo + lo32(offset_of!(Lazy, a)));
+    c.get(L_CPU).get(L_FB).i64_extend_u().store64(lo + lo32(offset_of!(Lazy, b)));
+    c.get(L_CPU).get(L_FR).i64_extend_u().store64(lo + lo32(offset_of!(Lazy, r)));
+    c.get(L_CPU).get(L_FC).store32(lo + lo32(offset_of!(Lazy, c)));
 }
 
 /// Opens `if L_OP != -1` and stores the lazy operation; the caller closes the `if`.
@@ -4442,7 +4443,7 @@ fn lazy_to_cpu(c: &mut Code) {
 fn writeback(c: &mut Code) {
     let _site = wasm::MemSite::new(4);
     for i in 0..8 {
-        c.get(L_CPU).get(L_REG + i).store32(Off::reg(i as usize));
+        c.get(L_CPU).get(L_REG + i).store32(Off::reg(us(i)));
     }
     c.get(L_CPU).get(L_NEXT).store32(Off::eip());
     c.get(L_CPU).get(L_BUD).store32(Off::budget());
@@ -4453,8 +4454,8 @@ fn writeback(c: &mut Code) {
 /// Code after the blocks (inside the top loop): finds L_NEXT in the hash table and continues
 /// there if the block is in this function, else leaves with RET_CONTINUE.
 fn emit_lookup(c: &mut Code) {
-    let hash = offset_of!(Cpu, jit_hash) as u32;
-    let maskf = offset_of!(Cpu, jit_mask) as u32;
+    let hash = lo32(offset_of!(Cpu, jit_hash));
+    let maskf = lo32(offset_of!(Cpu, jit_mask));
     let (h, e, v) = (L_T, L_T + 1, L_T + 2);
     // depth here: top 0, exit 1
     // pending signals are noticed when the budget runs out (the dispatcher checks them)
@@ -4477,10 +4478,10 @@ fn emit_lookup(c: &mut Code) {
     // another region's block: hand over directly (a tail call with the state as arguments,
     // no dispatcher round trip). The jump goes into the ring the host reads to merge regions
     // that call each other a lot: ring[0] counts, then RING_SIZE (from, to) pairs.
-    let ring = offset_of!(Cpu, jit_ring) as u32;
+    let ring = lo32(offset_of!(Cpu, jit_ring));
     bump(c, 7);
     c.get(L_CPU).load32(ring).tee(h).get(h).load32(0).tee(e).i32c(1).add().store32(0);
-    c.get(h).get(e).i32c(RING_SIZE as i32 - 1).and().i32c(3).shl().add().tee(h);
+    c.get(h).get(e).i32c(lo32(RING_SIZE).cast_signed() - 1).and().i32c(3).shl().add().tee(h);
     c.get(L_ARG).u32c((1 << ENTRY_SHIFT) - 1).and().store32(4);
     c.get(h).get(L_NEXT).store32(8);
     c.get(L_CPU).get(v);
@@ -4489,7 +4490,7 @@ fn emit_lookup(c: &mut Code) {
     c.op(0x13).op(2).op(0); // return_call_indirect table 0
     c.end();
     bump(c, 8);
-    c.get(v).i32c(ENTRY_SHIFT as i32).shr_u().set(L_BLK).br(3);
+    c.get(v).i32c(lo32(ENTRY_SHIFT).cast_signed()).shr_u().set(L_BLK).br(3);
     c.end();
     c.get(v).eqz().br_if(1);
     c.get(h).i32c(1).add().get(L_CPU).load32(maskf).and().set(h).br(0);
@@ -4502,8 +4503,8 @@ fn emit_lookup(c: &mut Code) {
 /// [`emit_lookup`] of a function: a function's entry is a tail call of it (`jmp` to another
 /// function), anything else leaves for the dispatcher.
 fn emit_fn_lookup(c: &mut Code, entry: u32) {
-    let hash = offset_of!(Cpu, jit_hash) as u32;
-    let maskf = offset_of!(Cpu, jit_mask) as u32;
+    let hash = lo32(offset_of!(Cpu, jit_hash));
+    let maskf = lo32(offset_of!(Cpu, jit_mask));
     let (h, e, v) = (L_T, L_T + 1, L_T + 2);
     // depth here: top 0, exit 1
     bump(c, 6);
@@ -4524,9 +4525,9 @@ fn emit_fn_lookup(c: &mut Code, entry: u32) {
     lazy_to_cpu(c);
     c.end();
     // (returning where this one would: the same return address)
-    fn_args(c, |c| void(c.get(L_ARG).get(v).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().i32c(16).shl().or()), |c| void(c.get(L_RAIN)));
+    fn_args(c, |c| void(c.get(L_ARG).get(v).i32c(lo32(ENTRY_SHIFT).cast_signed()).shr_u().u32c(0x7ff).and().i32c(16).shl().or()), |c| void(c.get(L_RAIN)));
     c.get(v).u32c((1 << ENTRY_SHIFT) - 1).and().i32c(1).add();
-    c.op(0x13).op(T_FN as u8).op(0); // return_call_indirect, table 0
+    c.op(0x13).op(lo8(T_FN)).op(0); // return_call_indirect, table 0
     c.end();
     c.get(v).eqz().br_if(1);
     c.get(h).i32c(1).add().get(L_CPU).load32(maskf).and().set(h).br(0);
@@ -4559,9 +4560,9 @@ fn ring_sample(c: &mut Code, h: u32, e: u32, to: u32, site: u32) {
 
 /// [`ring_write`] with temporaries `h`, `e` and the target in local `to`.
 fn ring_write_with(c: &mut Code, h: u32, e: u32, to: u32, from: impl FnOnce(&mut Code)) {
-    let ring = offset_of!(Cpu, jit_ring) as u32;
+    let ring = lo32(offset_of!(Cpu, jit_ring));
     c.get(L_CPU).load32(ring).tee(h).get(h).load32(0).tee(e).i32c(1).add().store32(0);
-    c.get(h).get(e).i32c(RING_SIZE as i32 - 1).and().i32c(3).shl().add().tee(h);
+    c.get(h).get(e).i32c(lo32(RING_SIZE).cast_signed() - 1).and().i32c(3).shl().add().tee(h);
     from(c);
     c.store32(4);
     c.get(h).get(to).store32(8);
@@ -4607,7 +4608,7 @@ pub fn decode16(bytes: &[u8], ip: u32, cs: u32) -> Option<Instruction> {
     if ins.is_invalid() {
         return Some(ins);
     }
-    if off as usize + ins.len() > 0x10000 {
+    if us(off) + ins.len() > 0x10000 {
         return None;
     }
     let counted = matches!(ins.mnemonic(), Mnemonic::Loop | Mnemonic::Loope | Mnemonic::Loopne | Mnemonic::Jcxz | Mnemonic::Jecxz);
@@ -4619,7 +4620,7 @@ pub fn decode16(bytes: &[u8], ip: u32, cs: u32) -> Option<Instruction> {
             return None;
         }
         ins.set_op0_kind(OpKind::NearBranch16);
-        ins.set_near_branch16(t as u16);
+        ins.set_near_branch16(lo16(t));
     }
     if ins.op_count() > 0 && ins.op0_kind() == OpKind::NearBranch16 && matches!(ins.flow_control(), FlowControl::ConditionalBranch | FlowControl::UnconditionalBranch) && !counted {
         let target = cs.wrapping_add(u32::from(ins.near_branch16()));
@@ -4670,7 +4671,7 @@ pub fn hle_at<M: Memory>(mem: &mut M, a: u32) -> Option<Hle> {
         .find(|&&(_, sig, len, hash)| {
             sig.as_bytes().chunks(2).zip(buf).all(|(h, b)| h == b"??" || u8::from_str_radix(core::str::from_utf8(h).unwrap(), 16) == Ok(b))
                 && (len == 0 || {
-                    let mut all = alloc::vec![0u8; len as usize];
+                    let mut all = alloc::vec![0u8; us(len)];
                     mem.fetch(a, &mut all) == all.len() && fnv64(&all) == hash
                 })
         })
@@ -4680,7 +4681,7 @@ pub fn hle_at<M: Memory>(mem: &mut M, a: u32) -> Option<Hle> {
 /// The guest bytes at the start of an [`Hle`] function the translation depends on (page
 /// checks, saved regions checked against the guest's code).
 fn hle_len(h: Hle) -> u32 {
-    HLE.iter().find(|x| x.0 == h).map_or(0, |&(_, sig, len, _)| if len == 0 { sig.len() as u32 / 2 } else { len })
+    HLE.iter().find(|x| x.0 == h).map_or(0, |&(_, sig, len, _)| if len == 0 { lo32(sig.len()) / 2 } else { len })
 }
 
 /// SHA-256's round constants.
@@ -4720,8 +4721,8 @@ fn callee(blocks: &[(u32, Vec<Instruction>)], targets: &BTreeMap<u32, u32>, f: u
         if tail.is_some() && hint == Some(a) && split == usize::MAX {
             split = body.len();
         }
-        body.push(k as usize);
-        let list = &blocks[k as usize].1;
+        body.push(us(k));
+        let list = &blocks[us(k)].1;
         size += list.len();
         if size > MAX_INLINE {
             return None;
@@ -4730,7 +4731,7 @@ fn callee(blocks: &[(u32, Vec<Instruction>)], targets: &BTreeMap<u32, u32>, f: u
         ret |= last.mnemonic() == Mnemonic::Ret;
         if last.mnemonic() == Mnemonic::Jmp && last.op0_kind() != OpKind::NearBranch32 && tail.is_none() {
             if let Some(h) = hint.filter(|&h| h != f && targets.contains_key(&h)) {
-                tail = Some(k as usize);
+                tail = Some(us(k));
                 queue.insert(0, h); // (last: after the wrapper's own blocks)
             }
         }
@@ -4814,7 +4815,7 @@ fn small_callee<M: Memory>(mem: &mut M, f: u32, trap: (u32, u32), hints: &dyn Fn
 /// there instead: then just the way in from the top dispatch goes through its side dispatch,
 /// not every turn of it (the dispatch at a loop's head is checked each time round).
 fn rotate_loops(blocks: &mut [(u32, Vec<Instruction>)]) {
-    let targets: BTreeMap<(u32, u32), u32> = blocks.iter().enumerate().map(|(i, b)| ((0, b.0), i as u32)).collect();
+    let targets: BTreeMap<(u32, u32), u32> = blocks.iter().enumerate().map(|(i, b)| ((0, b.0), lo32(i))).collect();
     let loops = find_loops(blocks, &alloc::vec![0; blocks.len()], &targets, &[]);
     for (&h, &e) in &loops {
         if e == h || loops.range(h + 1..=e).next().is_some() {
@@ -4828,7 +4829,7 @@ fn rotate_loops(blocks: &mut [(u32, Vec<Instruction>)]) {
                 if last.flow_control() == FlowControl::Call && s == last.near_branch32() {
                     continue;
                 }
-                if let Some(j) = targets.get(&(0, s)).map(|&j| j as usize).filter(|j| (h..=e).contains(j)) {
+                if let Some(j) = targets.get(&(0, s)).map(|&j| us(j)).filter(|j| (h..=e).contains(j)) {
                     one &= entry.is_none_or(|x| x == j);
                     entry = Some(j);
                 }
@@ -4847,14 +4848,14 @@ fn rotate_loops(blocks: &mut [(u32, Vec<Instruction>)]) {
 /// loop enters at the top, has its body in the middle of that enclosing loop's range.)
 fn hoist_entries(blocks: &mut [(u32, Vec<Instruction>)]) {
     for _ in 0..8 {
-        let targets: BTreeMap<(u32, u32), u32> = blocks.iter().enumerate().map(|(i, b)| ((0, b.0), i as u32)).collect();
+        let targets: BTreeMap<(u32, u32), u32> = blocks.iter().enumerate().map(|(i, b)| ((0, b.0), lo32(i))).collect();
         let loops = find_loops(blocks, &alloc::vec![0; blocks.len()], &targets, &[]);
         let succ = |i: usize| -> Vec<usize> {
             let last = blocks[i].1.last().unwrap();
             successors(last)
                 .into_iter()
                 .filter(|&s| !(last.flow_control() == FlowControl::Call && s == last.near_branch32()))
-                .filter_map(|s| targets.get(&(0, s)).map(|&j| j as usize))
+                .filter_map(|s| targets.get(&(0, s)).map(|&j| us(j)))
                 .collect()
         };
         let mut preds: Vec<Vec<usize>> = alloc::vec![Vec::new(); blocks.len()];
@@ -4886,7 +4887,7 @@ fn find_loops(blocks: &[(u32, Vec<Instruction>)], ctxs: &[u32], targets: &BTreeM
         let last = list.last().unwrap();
         let mut next = successors(last);
         if ctx != 0 && last.mnemonic() == Mnemonic::Ret {
-            next.push(ret_to[ctx as usize]);
+            next.push(ret_to[us(ctx)]);
         }
         for s in next {
             // a call to an earlier function is no loop (else everything between is one)
@@ -4894,8 +4895,8 @@ fn find_loops(blocks: &[(u32, Vec<Instruction>)], ctxs: &[u32], targets: &BTreeM
                 continue;
             }
             match targets.get(&(ctx, s)).or_else(|| targets.get(&(0, s))) {
-                Some(&j) if j as usize <= i => {
-                    let e = ends.entry(j as usize).or_insert(i);
+                Some(&j) if us(j) <= i => {
+                    let e = ends.entry(us(j)).or_insert(i);
                     *e = (*e).max(i);
                 }
                 _ => {}
@@ -4974,12 +4975,12 @@ fn emit_level<'a>(
     if side.is_some() {
         g.c.get(L_BLK).i32c(-1).ne().if_();
         g.depth += 1;
-        g.c.get(L_BLK).i32c(lo as i32).sub();
+        g.c.get(L_BLK).i32c(lo32(lo).cast_signed()).sub();
     } else {
         g.c.get(L_BLK);
     }
     g.c.op(0x0e);
-    wasm::uleb(&mut g.c.b, (hi - lo + 1) as u64);
+    wasm::uleb(&mut g.c.b, lo64(hi - lo + 1));
     let mut t = 0;
     for m in lo..=hi {
         while items[t].range().1 < m {
@@ -5041,7 +5042,7 @@ fn emit_level<'a>(
                         }
                         for (have, ks) in groups {
                             for (i, &k) in ks.iter().enumerate() {
-                                g.c.get(L_BLK).i32c(k as i32).eq();
+                                g.c.get(L_BLK).i32c(lo32(k).cast_signed()).eq();
                                 if k == h {
                                     g.c.get(L_BLK).i32c(-1).eq().or();
                                 }
@@ -5101,7 +5102,7 @@ fn slot_operand(ins: &Instruction, i: u32, base: Register) -> Option<i32> {
         && ins.memory_index() == Register::None
         && matches!(ins.memory_segment(), Register::SS | Register::DS)
         && ins.memory_size().size() == 4)
-        .then(|| ins.memory_displacement32() as i32)
+        .then(|| lo32(ins.memory_displacement32()).cast_signed())
 }
 
 /// The stack slots a loop keeps in locals (Gen::slots): the most used 32-bit [EBP + d] (or
@@ -5120,7 +5121,7 @@ fn setcc_cmovcc(m: Mnemonic) -> bool {
 fn slot_loop(blocks: &[(u32, Vec<Instruction>)]) -> Option<(Register, Vec<i32>)> {
     use Mnemonic::*;
     // (off by default: then nothing below is worth its cost, run for every outer loop)
-    let max = SLOTS_MAX.load(core::sync::atomic::Ordering::Relaxed) as usize;
+    let max = us(SLOTS_MAX.load(core::sync::atomic::Ordering::Relaxed));
     if max == 0 {
         return None;
     }
@@ -5239,7 +5240,7 @@ fn small_after(info: &mut iced_x86::InstructionInfoFactory, small: &mut [Option<
 
 fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Vec<Instruction>)], k: usize, count: &mut usize) {
     let list = &blocks[k].1;
-    g.block_index = k as u32;
+    g.block_index = lo32(k);
     // (the temporaries of the block before are not this one's: the HLE and fresh-code entries
     // below run before the first Gen::emit resets them)
     g.temps = 0;
@@ -5251,7 +5252,7 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Vec<Instruction>)], k: usi
     g.safe[4] = Some(0); // see Gen::emit
     g.flags = Flags::Entry;
     g.smc = WATCH.get().is_some_and(|w| w(blocks[k].0));
-    g.fresh = g.fresh_code[k].as_ref().map(|b| (blocks[k].0, b.len() as u32));
+    g.fresh = g.fresh_code[k].as_ref().map(|b| (blocks[k].0, lo32(b.len())));
     g.small = [None; 8];
     if let Some(&m) = g.safe_in.get(k) {
         for r in (0..8).filter(|r| m & (1 << r) != 0) {
@@ -5262,7 +5263,7 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Vec<Instruction>)], k: usi
     g.modes = false;
     bump(&mut g.c, 14);
     if let Some(&at) = g.prof.get(k) {
-        g.c.i32c(at as i32).i32c(at as i32).load32(0).i32c(1).add().store32(0);
+        g.c.i32c(lo32(at).cast_signed()).i32c(lo32(at).cast_signed()).load32(0).i32c(1).add().store32(0);
     }
     g.mm_loop = match g.mm_pre {
         Some((h, m)) if h == k => m,
@@ -5311,7 +5312,7 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Vec<Instruction>)], k: usi
             let k = alloc::format!("{:?}{}", ins.mnemonic(), if g.fell_back { "*" } else { "" });
             let e = g.sizes.entry(k).or_insert((0, 0));
             e.0 += 1;
-            e.1 += (g.c.b.len() - b0) as u32;
+            e.1 += lo32(g.c.b.len() - b0);
         }
         if !go {
             break;
@@ -5328,14 +5329,14 @@ fn emit_block<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Vec<Instruction>)], k: usi
 /// What [`Gen::x87_flush`] does, for a block leaving with its x87 cache (`info`: dirty slots,
 /// valid << 8, empty << 16, TOP change << 24; `top`: L_FTOP; `v`: the slots' locals).
 pub fn x87_out(f: &mut crate::Fpu, top: u32, info: u32, v: [f64; 8]) {
-    let (dirty, valid, empty, delta) = (info as u8, (info >> 8) as u8, (info >> 16) as u8, (info >> 24) & 7);
+    let (dirty, valid, empty, delta) = (lo8(info), lo8(info >> 8), lo8(info >> 16), (info >> 24) & 7);
     for r in 0..8 {
         if dirty & (1 << r) != 0 {
-            f.regs[((top + r) & 7) as usize] = v[r as usize];
+            f.regs[us((top + r) & 7)] = v[us(r)];
         }
     }
     if valid | empty != 0 {
-        let rot = |m: u8| ((u32::from(m) * 0x101) << (top & 31) >> 8) as u8;
+        let rot = |m: u8| lo8((u32::from(m) * 0x101) << (top & 31) >> 8);
         f.empty = f.empty & !rot(valid) | rot(empty);
         f.exact &= !rot(valid | empty);
     }
@@ -5443,7 +5444,7 @@ fn block_liveness(g: &Gen, blocks: &[(u32, Vec<Instruction>)], tables: &[structu
         .map(|k| {
             let last = blocks[k].1.last().unwrap();
             let ctx = g.ctxs[k];
-            let find = |a: u32| g.targets.get(&(ctx, a)).or_else(|| g.targets.get(&(0, a))).map(|&b| b as usize);
+            let find = |a: u32| g.targets.get(&(ctx, a)).or_else(|| g.targets.get(&(0, a))).map(|&b| us(b));
             // a function's call (not inlined) goes on at the return address with the flags
             // the callee left, or those from before when it kept them (some hand-written code
             // returns a result in ZF): the callee stores them at its RET, which can return to
@@ -5454,7 +5455,7 @@ fn block_liveness(g: &Gen, blocks: &[(u32, Vec<Instruction>)], tables: &[structu
             // a jump table's dispatch: to its entries (compilers keep no flags across one)
             if let Some(&d) = g.jnode.get(&k) {
                 let t = &tables[d - blocks.len()];
-                return t.entries.iter().map(|&a| g.targets.get(&(t.ctx, a)).or_else(|| g.targets.get(&(0, a))).map(|&b| b as usize)).collect();
+                return t.entries.iter().map(|&a| g.targets.get(&(t.ctx, a)).or_else(|| g.targets.get(&(0, a))).map(|&b| us(b))).collect();
             }
             let direct = last.op0_kind() == OpKind::NearBranch32 || last.flow_control() == FlowControl::Next;
             if !direct {
@@ -5525,7 +5526,7 @@ fn safe_in(g: &Gen, blocks: &[(u32, Vec<Instruction>)], l: &structure::Layout) -
                     && base != Register::ESP
                     && ins.memory_index() == Register::None
                     && !matches!(ins.memory_segment(), Register::FS | Register::GS)
-                    && (ins.memory_displacement32() as i32).unsigned_abs() < SAFE_MARGIN as u32 / 2;
+                    && (ins.memory_displacement32() as i32).unsigned_abs() < lo32(SAFE_MARGIN) / 2;
                 if checks {
                     gen |= 1 << base.number();
                     kill &= !(1 << base.number());
@@ -5551,7 +5552,7 @@ fn safe_in(g: &Gen, blocks: &[(u32, Vec<Instruction>)], l: &structure::Layout) -
             && base != Register::ESP
             && ins.memory_index() == Register::None
             && !matches!(ins.memory_segment(), Register::FS | Register::GS)
-            && (ins.memory_displacement32() as i32).unsigned_abs() < SAFE_MARGIN as u32 / 2
+            && (ins.memory_displacement32() as i32).unsigned_abs() < lo32(SAFE_MARGIN) / 2
     };
     let mut hoist: BTreeMap<usize, (u8, Vec<bool>)> = BTreeMap::new();
     if HOIST.load(core::sync::atomic::Ordering::Relaxed) {
@@ -5664,7 +5665,7 @@ impl<'m, M: Memory> Snapshot<'m, M> {
 impl<M: Memory> Memory for Snapshot<'_, M> {
     fn read8(&mut self, addr: u32) -> Result<u8, crate::Fault> {
         let (b, n) = self.page(addr >> 12);
-        let o = (addr & 0xfff) as usize;
+        let o = us(addr & 0xfff);
         if o < *n { Ok(b[o]) } else { Err(crate::Fault { addr, write: false }) }
     }
     fn write8(&mut self, addr: u32, _: u8) -> Result<(), crate::Fault> {
@@ -5673,9 +5674,9 @@ impl<M: Memory> Memory for Snapshot<'_, M> {
     fn fetch(&mut self, addr: u32, buf: &mut [u8]) -> usize {
         let mut done = 0;
         while done < buf.len() {
-            let a = addr.wrapping_add(done as u32);
+            let a = addr.wrapping_add(lo32(done));
             let (b, n) = self.page(a >> 12);
-            let o = (a & 0xfff) as usize;
+            let o = us(a & 0xfff);
             if o >= *n {
                 break;
             }
@@ -5695,8 +5696,8 @@ fn code_text<M: Memory>(mem: &mut M, code: &[(u32, u32)]) -> Option<Vec<u8>> {
     let mut text = Vec::new();
     for &(a, n) in code {
         let at = text.len();
-        text.resize(at + n as usize, 0);
-        if mem.fetch(a, &mut text[at..]) != n as usize {
+        text.resize(at + us(n), 0);
+        if mem.fetch(a, &mut text[at..]) != us(n) {
             return None;
         }
     }
@@ -5766,7 +5767,7 @@ fn translate_seen<M: Memory>(
                 let f = last.near_branch32();
                 if let Some(j) = decode(mem, f).first().filter(|j| !fresh_at(f) && j.mnemonic() == Mnemonic::Jmp && j.op0_kind() == OpKind::Memory && j.memory_base() == Register::None && j.memory_index() == Register::None && j.memory_segment() == Register::DS) {
                     thunks.insert(f, j.memory_displacement32());
-                    thunk_code.push((f, j.len() as u32));
+                    thunk_code.push((f, lo32(j.len())));
                 }
             }
             // a small callee comes along to be inlined (see `inline` below)
@@ -5799,7 +5800,7 @@ fn translate_seen<M: Memory>(
             }
         }
         total += list.len();
-        targets.insert(a, blocks.len() as u32);
+        targets.insert(a, lo32(blocks.len()));
         blocks.push((a, list));
     }
     if blocks.is_empty() {
@@ -5821,7 +5822,7 @@ fn translate_seen<M: Memory>(
     rotate_loops(&mut blocks);
     hoist_entries(&mut blocks);
     for (i, b) in blocks.iter().enumerate() {
-        targets.insert(b.0, i as u32);
+        targets.insert(b.0, lo32(i));
     }
     // small callees get a copy after each call (an indirect one checking for the target the
     // region was merged for), so the call and return are plain jumps inside a loop
@@ -5867,26 +5868,26 @@ fn translate_seen<M: Memory>(
         inlined.insert(call, (entry, guard));
         if let (Some(t), Some(h)) = (tail, hint) {
             let at = |b| order.len() + body.iter().position(|&x| x == b).unwrap();
-            inlined.insert(at(t), (at(targets[&h] as usize), Some(h)));
+            inlined.insert(at(t), (at(us(targets[&h])), Some(h)));
         }
         for b in body {
             order.push(b);
-            ctxs.push(ret_to.len() as u32);
+            ctxs.push(lo32(ret_to.len()));
         }
         ret_to.push(last.next_ip32());
     }
     let mut starts = Vec::new();
     let mut targets = BTreeMap::new();
     for (k, &b) in order.iter().enumerate() {
-        targets.insert((ctxs[k], blocks[b].0), k as u32);
+        targets.insert((ctxs[k], blocks[b].0), lo32(k));
         if ctxs[k] == 0 && (!fnm || blocks[b].0 == roots[0]) {
-            starts.push((blocks[b].0, k as u32));
+            starts.push((blocks[b].0, lo32(k)));
         }
     }
     let blocks: Vec<(u32, Vec<Instruction>)> = order.iter().map(|&b| blocks[b].clone()).collect();
     module_head(module, false);
 
-    let n = blocks.len() as u32;
+    let n = lo32(blocks.len());
     let mut returns: Vec<u32> = blocks
         .iter()
         .zip(&ctxs)
@@ -5902,7 +5903,7 @@ fn translate_seen<M: Memory>(
         returns.clear();
     }
     let loops = find_loops(&blocks, &ctxs, &targets, &ret_to);
-    let mut head = alloc::vec![false; n as usize];
+    let mut head = alloc::vec![false; us(n)];
     for &h in loops.keys() {
         head[h] = true;
     }
@@ -5917,10 +5918,10 @@ fn translate_seen<M: Memory>(
             if let Some((t, by_index)) = structure::block_table(list) {
                 let d = *jtab.entry((ctxs[k], t)).or_insert_with(|| {
                     tables.push(structure::Table { ctx: ctxs[k], entries: structure::table_entries(mem, t, last.ip32()), hash: None });
-                    n as usize + tables.len() - 1
+                    us(n) + tables.len() - 1
                 });
                 jnode.insert(k, d);
-                let tab = &mut tables[d - n as usize];
+                let tab = &mut tables[d - us(n)];
                 if !by_index && tab.hash.is_none() {
                     tab.entries.sort_unstable();
                     tab.entries.dedup();
@@ -5929,7 +5930,7 @@ fn translate_seen<M: Memory>(
             }
         }
     }
-    let nodes = n as usize + tables.len() + 1; // (+ a function's node for more entries)
+    let nodes = us(n) + tables.len() + 1; // (+ a function's node for more entries)
     // (a function's registers come as parameters: the Cpu's are stale, its exits store them
     // all)
     let mut regs = 0xffu8;
@@ -5951,7 +5952,7 @@ fn translate_seen<M: Memory>(
         .iter()
         .map(|(a, list)| {
             let end = list.last().map_or(*a, |i| i.next_ip32());
-            let mut b = alloc::vec![0u8; end.wrapping_sub(*a) as usize];
+            let mut b = alloc::vec![0u8; us(end.wrapping_sub(*a))];
             (fresh_at(*a) && !b.is_empty() && mem.fetch(*a, &mut b) == b.len()).then_some(b)
         })
         .collect();
@@ -6022,7 +6023,7 @@ fn translate_seen<M: Memory>(
     };
     let mut profile = Vec::new();
     if PROFILE.load(core::sync::atomic::Ordering::Relaxed) && cfg!(target_pointer_width = "32") {
-        let counts: &'static mut [u32] = alloc::boxed::Box::leak(alloc::vec![0u32; n as usize].into_boxed_slice());
+        let counts: &'static mut [u32] = alloc::boxed::Box::leak(alloc::vec![0u32; us(n)].into_boxed_slice());
         for (k, (a, list)) in blocks.iter().enumerate() {
             let at = &counts[k] as *const u32 as usize as u32;
             g.prof.push(at);
@@ -6050,9 +6051,9 @@ fn translate_seen<M: Memory>(
     // ran out) at blocks outside loops but the outermost's heads
     let mut extra = Vec::new();
     let fl = fnm.then(|| {
-        let entry = starts[0].1 as usize;
+        let entry = us(starts[0].1);
         let l0 = structure::layout(&blocks, &ctxs, &targets, &inlined, &ret_to, &tables, &g.jnode, entry, &[]);
-        let find = |a: u32| targets.get(&(0, a)).map(|&b| b as usize);
+        let find = |a: u32| targets.get(&(0, a)).map(|&b| us(b));
         let rets: Vec<usize> = (0..blocks.len())
             .filter(|&k| ctxs[k] == 0 && !inlined.contains_key(&k) && matches!(blocks[k].1.last().unwrap().flow_control(), FlowControl::Call | FlowControl::IndirectCall))
             .filter_map(|k| find(blocks[k].1.last().unwrap().next_ip32()))
@@ -6072,7 +6073,7 @@ fn translate_seen<M: Memory>(
         l
     });
     for &k in &extra {
-        starts.push((blocks[k].0, k as u32));
+        starts.push((blocks[k].0, lo32(k)));
     }
     bump(&mut g.c, 10);
     if fnm {
@@ -6085,7 +6086,7 @@ fn translate_seen<M: Memory>(
             g.c.get(L_ARG).u32c(0xffff).and().set(L_ARG);
         }
     } else {
-        g.c.get(L_ARG).i32c(ENTRY_SHIFT as i32).shr_u().set(L_BLK);
+        g.c.get(L_ARG).i32c(lo32(ENTRY_SHIFT).cast_signed()).shr_u().set(L_BLK);
     }
     if blocks.iter().any(|b| b.1.iter().any(fc_handles)) {
         g.modes_load();
@@ -6101,13 +6102,13 @@ fn translate_seen<M: Memory>(
     g.depth = 2;
     let mut count = 0;
     if fnm {
-        let entry = starts[0].1 as usize;
+        let entry = us(starts[0].1);
         let l = fl.unwrap();
         (g.safe_in, g.hoist) = safe_in(&g, &blocks, &l);
         g.preds = alloc::vec![Vec::new(); blocks.len()];
         for (v, ws) in l.succ.iter().enumerate().take(blocks.len()) {
             for &w in ws.iter().filter(|&&w| w < blocks.len()) {
-                g.preds[w].push(v as u32);
+                g.preds[w].push(lo32(v));
             }
         }
         g.flags_out = alloc::vec![None; blocks.len()];
@@ -6116,7 +6117,7 @@ fn translate_seen<M: Memory>(
             let _ = writeln!(g.notes, "IRREDUCIBLE {}", l.irreducible());
             let _ = writeln!(g.notes, "ENTRIES {:x?}", extra.iter().map(|&k| (k, blocks[k].0)).collect::<Vec<_>>());
         }
-        let nb = n as usize;
+        let nb = us(n);
         fn body<'a>(g: &mut Gen<'a>, l: &structure::Layout, blocks: &'a [(u32, Vec<Instruction>)], tables: &[structure::Table], entries: &[usize], count: &mut usize) {
             let nb = blocks.len();
             structure::emit(g, l, |g, k| {
@@ -6182,7 +6183,7 @@ fn translate_seen<M: Memory>(
         g.fc_fn = None;
         g.fc_in.clear();
     } else {
-        let items = level(0, n as usize - 1, &loops);
+        let items = level(0, us(n) - 1, &loops);
         emit_level(&mut g, &blocks, &loops, &items, None, &mut count);
     }
     g.c.end(); // dyn
@@ -6201,7 +6202,7 @@ fn translate_seen<M: Memory>(
         push_fn_state(&mut g.c);
     }
 
-    let mut locals = alloc::vec![I32; if fnm { N_PARAMS as usize - 1 } else { 0 } + N_LOCALS_I32 as usize];
+    let mut locals = alloc::vec![I32; if fnm { us(N_PARAMS) - 1 } else { 0 } + us(N_LOCALS_I32)];
     locals.extend_from_slice(&[I64, F64, F64, V128, V128, I32]);
     locals.extend_from_slice(&[F64; 8]);
     locals.extend_from_slice(&[V128; 18]);
@@ -6215,14 +6216,14 @@ fn translate_seen<M: Memory>(
     // L_MX, L_MXR, L_MXT
     locals.extend_from_slice(&[I32, I32, F64]);
     if fnm {
-        assert_eq!(1 + locals.len() as u32, L_RAIN + 18);
+        assert_eq!(1 + lo32(locals.len()), L_RAIN + 18);
         let (locals, body) = wasm::compact_locals_param(1, &FN_ARGS, &locals, core::mem::take(&mut g.c));
-        let at = module.funcs.len() as u32;
+        let at = lo32(module.funcs.len());
         module.funcs.push(fn_adapter());
         module.funcs.push(Func { ty: T_FN, locals, code: body });
         module.name_at = at + 1;
     } else {
-        debug_assert_eq!(N_PARAMS + locals.len() as u32, L_RAIN + 18);
+        debug_assert_eq!(N_PARAMS + lo32(locals.len()), L_RAIN + 18);
         let (locals, body) = wasm::compact_locals(N_PARAMS, &locals, core::mem::take(&mut g.c));
         module.funcs.push(Func { ty: 2, locals, code: body });
     }

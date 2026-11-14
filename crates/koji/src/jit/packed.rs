@@ -2,6 +2,7 @@
 //! (loaded with v128.load64_zero, stored as its low i64): lane-wise operations give the same
 //! low half either way; packs, unpacks and shuffles pick their lanes for the 8-byte width.
 
+use crate::cvt::{lo8, lo32, us};
 use super::{rounding, Flags, Gen, Off, L_CPU, L_F0, L_MMX, L_OP, L_V0, L_V1, STATUS_BITS};
 use iced_x86::{Instruction, Mnemonic, OpKind, Register};
 
@@ -162,7 +163,7 @@ pub(super) fn supported(ins: &Instruction) -> bool {
         Pmovmskb => d.is_gpr32() && ins.op_kind(1) == OpKind::Register && vreg(ins.op_register(1)),
         _ if farith(m).is_some() => {
             let (bits, packed, ..) = farith(m).unwrap();
-            d.is_xmm() && src(1, if packed { 16 } else { bits as usize / 8 })
+            d.is_xmm() && src(1, if packed { 16 } else { us(bits) / 8 })
         }
         Minps | Maxps | Minpd | Maxpd | Shufps | Cmpps => d.is_xmm() && src(1, 16),
         Movss => d.is_xmm() && src(1, 4),
@@ -295,8 +296,8 @@ impl Gen<'_> {
         self.c.get(L_V1).simd(0xf8); // i32x4.trunc_sat_f32x4_s
         self.c.i32c(i32::MIN).simd(0x11);
         // in range: -2^31 <= r < 2^31 (false for NaN)
-        self.c.get(L_V1).i32c((-2147483648.0f32).to_bits() as i32).simd(0x11).simd(0x46); // f32x4.ge
-        self.c.get(L_V1).i32c(2147483648.0f32.to_bits() as i32).simd(0x11).simd(0x43); // f32x4.lt
+        self.c.get(L_V1).i32c(lo32((-2147483648.0f32).to_bits()).cast_signed()).simd(0x11).simd(0x46); // f32x4.ge
+        self.c.get(L_V1).i32c(lo32(2147483648.0f32.to_bits()).cast_signed()).simd(0x11).simd(0x43); // f32x4.lt
         self.c.simd(0x4e).simd(0x52); // v128.and, bitselect
         self.vstore(self.ins.op_register(0));
     }
@@ -413,7 +414,7 @@ impl Gen<'_> {
             let mut l = [0u8; 16];
             for (k, &p) in pick.iter().enumerate() {
                 for t in 0..4 {
-                    l[k * 4 + t] = p * 4 + t as u8;
+                    l[k * 4 + t] = p * 4 + lo8(t);
                 }
             }
             self.vread(0, None, false);
@@ -433,7 +434,7 @@ impl Gen<'_> {
             self.c.simd(0x4f);
         } else if m == Pmuludq {
             // the even dwords to the low half of each, then their 64-bit products
-            let l: [u8; 16] = core::array::from_fn(|k| (if k < 4 { k } else if k < 8 { k + 4 } else { k }) as u8);
+            let l: [u8; 16] = core::array::from_fn(|k| lo8(if k < 4 { k } else if k < 8 { k + 4 } else { k }));
             self.vread(0, None, mm);
             self.c.set(L_V0);
             self.vread(1, a, mm);
@@ -462,7 +463,7 @@ impl Gen<'_> {
                 // both halves into one vector, narrowed with itself
                 let mut l = [0u8; 16];
                 for (k, x) in l.iter_mut().enumerate() {
-                    *x = if k < 8 { k as u8 } else { 8 + k as u8 };
+                    *x = if k < 8 { lo8(k) } else { 8 + lo8(k) };
                 }
                 self.c.shuffle(l).set(L_V0).get(L_V0).get(L_V0);
             }
@@ -478,8 +479,8 @@ impl Gen<'_> {
                 for t in 0..e {
                     let at = start + k * e + t;
                     let at = if at < 16 { at } else { 0 };
-                    l[2 * k * e + t] = at as u8;
-                    l[2 * k * e + e + t] = 16 + at as u8;
+                    l[2 * k * e + t] = lo8(at);
+                    l[2 * k * e + e + t] = 16 + lo8(at);
                 }
             }
             self.vread(0, None, mm);
@@ -496,9 +497,9 @@ impl Gen<'_> {
             if ins.op_kind(1) == OpKind::Immediate8 {
                 let n = u32::from(ins.immediate8());
                 if n < bits {
-                    self.c.i32c(n as i32).simd(op);
+                    self.c.i32c(lo32(n).cast_signed()).simd(op);
                 } else if arith {
-                    self.c.i32c(bits as i32 - 1).simd(op);
+                    self.c.i32c(lo32(bits).cast_signed() - 1).simd(op);
                 } else {
                     self.c.drop_().v128zero();
                 }
@@ -519,7 +520,7 @@ impl Gen<'_> {
                     c.get(w).i64c(i64::from(bits)).op(0x54); // i64.lt_u
                 };
                 if arith {
-                    self.c.get(w).wrap().i32c(bits as i32 - 1);
+                    self.c.get(w).wrap().i32c(lo32(bits).cast_signed() - 1);
                     inside(&mut self.c);
                     self.c.op(0x1b); // select
                     self.c.simd(op);
@@ -539,11 +540,11 @@ impl Gen<'_> {
             };
             let imm = ins.immediate8();
             // (PSHUFW, PSHUFLW: the high half as it is, so V8 sees a pshuflw)
-            let mut l: [u8; 16] = core::array::from_fn(|k| k as u8);
+            let mut l: [u8; 16] = core::array::from_fn(|k| lo8(k));
             for k in 0..4 {
-                let j = at + ((imm >> (2 * k)) as usize & 3);
+                let j = at + (us(imm >> (2 * k)) & 3);
                 for t in 0..e {
-                    l[(at + k) * e + t] = (j * e + t) as u8;
+                    l[(at + k) * e + t] = lo8(j * e + t);
                 }
             }
             self.vread(1, a, mm);
@@ -554,9 +555,9 @@ impl Gen<'_> {
             let mut l = [16u8; 16];
             for (k, x) in l.iter_mut().enumerate() {
                 if m == Pslldq && k >= n {
-                    *x = (k - n) as u8;
+                    *x = lo8(k - n);
                 } else if m == Psrldq && k + n < 16 {
-                    *x = (k + n) as u8;
+                    *x = lo8(k + n);
                 }
             }
             self.vread(0, None, mm);
@@ -624,7 +625,7 @@ impl Gen<'_> {
             }
             None => self.vread(1, None, false),
         }
-        self.c.lane(extract, 0).op(op as u8).lane(replace, 0);
+        self.c.lane(extract, 0).op(lo8(op)).lane(replace, 0);
         self.vstore(d);
     }
 
@@ -655,7 +656,7 @@ impl Gen<'_> {
     fn mx_guard(&mut self, k: (super::mxguard::G, u32, u32, bool)) {
         let ins = self.ins;
         if k.0 != super::mxguard::G::Inexact {
-            let size = if ins.op_kind(1) == OpKind::Memory { ins.memory_size().size() as u32 } else { 16 };
+            let size = if ins.op_kind(1) == OpKind::Memory { lo32(ins.memory_size().size()) } else { 16 };
             let a = self.mem_addr_sized(size);
             self.mx_addr = a.map(|t| (size, t));
             if k.3 {

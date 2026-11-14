@@ -1,5 +1,6 @@
 //! EFLAGS bits and the arithmetic helpers that produce them.
 
+use crate::cvt::{lo32, lo64};
 pub const CF: u32 = 1 << 0;
 pub const PF: u32 = 1 << 2;
 pub const AF: u32 = 1 << 4;
@@ -45,12 +46,12 @@ pub fn add(a: u32, b: u32, carry: u32, bits: u32) -> (u32, u32) {
     let m = u64::from(mask(bits));
     let (a, b) = (u64::from(a) & m, u64::from(b) & m);
     let full = a + b + u64::from(carry);
-    let r = (full & m) as u32;
+    let r = lo32(full & m);
     let mut f = szp(r, bits);
     if full > m {
         f |= CF;
     }
-    if ((a ^ full) & (b ^ full)) as u32 & sign(bits) != 0 {
+    if lo32((a ^ full) & (b ^ full)) & sign(bits) != 0 {
         f |= OF;
     }
     if (a ^ b ^ full) & 0x10 != 0 {
@@ -65,12 +66,12 @@ pub fn sub(a: u32, b: u32, borrow: u32, bits: u32) -> (u32, u32) {
     let m = u64::from(mask(bits));
     let (a, b) = (u64::from(a) & m, u64::from(b) & m);
     let full = a.wrapping_sub(b).wrapping_sub(u64::from(borrow));
-    let r = (full & m) as u32;
+    let r = lo32(full & m);
     let mut f = szp(r, bits);
     if a < b + u64::from(borrow) {
         f |= CF;
     }
-    if ((a ^ b) & (a ^ full)) as u32 & sign(bits) != 0 {
+    if lo32((a ^ b) & (a ^ full)) & sign(bits) != 0 {
         f |= OF;
     }
     if (a ^ b ^ full) & 0x10 != 0 {
@@ -120,7 +121,7 @@ pub fn sign64(bits: u32) -> u64 {
 #[inline]
 pub fn szp64(r: u64, bits: u32) -> u32 {
     let r = r & mask64(bits);
-    (if r == 0 { ZF } else { 0 }) | (if r & sign64(bits) != 0 { SF } else { 0 }) | parity(r as u32)
+    (if r == 0 { ZF } else { 0 }) | (if r & sign64(bits) != 0 { SF } else { 0 }) | parity(lo32(r))
 }
 
 #[inline]
@@ -128,12 +129,12 @@ pub fn add64(a: u64, b: u64, carry: u32, bits: u32) -> (u64, u32) {
     let m = u128::from(mask64(bits));
     let (a, b) = (u128::from(a) & m, u128::from(b) & m);
     let full = a + b + u128::from(carry);
-    let r = (full & m) as u64;
+    let r = lo64(full & m);
     let mut f = szp64(r, bits);
     if full > m {
         f |= CF;
     }
-    if ((a ^ full) & (b ^ full)) as u64 & sign64(bits) != 0 {
+    if lo64((a ^ full) & (b ^ full)) & sign64(bits) != 0 {
         f |= OF;
     }
     if (a ^ b ^ full) & 0x10 != 0 {
@@ -147,12 +148,12 @@ pub fn sub64(a: u64, b: u64, borrow: u32, bits: u32) -> (u64, u32) {
     let m = u128::from(mask64(bits));
     let (a, b) = (u128::from(a) & m, u128::from(b) & m);
     let full = a.wrapping_sub(b).wrapping_sub(u128::from(borrow));
-    let r = (full & m) as u64;
+    let r = lo64(full & m);
     let mut f = szp64(r, bits);
     if a < b + u128::from(borrow) {
         f |= CF;
     }
-    if ((a ^ b) & (a ^ full)) as u64 & sign64(bits) != 0 {
+    if lo64((a ^ b) & (a ^ full)) & sign64(bits) != 0 {
         f |= OF;
     }
     if (a ^ b ^ full) & 0x10 != 0 {

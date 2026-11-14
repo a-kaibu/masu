@@ -1,5 +1,6 @@
 //! A small WebAssembly binary encoder: just what the JIT emits.
 
+use crate::cvt::{lo8, lo32, lo64, us};
 use alloc::vec::Vec;
 
 pub const I32: u8 = 0x7f;
@@ -103,7 +104,7 @@ pub fn memory_min_pages() -> u32 {
 
 pub fn uleb(out: &mut Vec<u8>, mut v: u64) {
     loop {
-        let c = (v & 0x7f) as u8;
+        let c = lo8(v & 0x7f);
         v >>= 7;
         if v == 0 {
             out.push(c);
@@ -115,7 +116,7 @@ pub fn uleb(out: &mut Vec<u8>, mut v: u64) {
 
 pub fn sleb(out: &mut Vec<u8>, mut v: i64) {
     loop {
-        let c = (v & 0x7f) as u8;
+        let c = lo8(v & 0x7f);
         v >>= 7;
         let done = (v == 0 && c & 0x40 == 0) || (v == -1 && c & 0x40 != 0);
         out.push(if done { c } else { c | 0x80 });
@@ -126,13 +127,13 @@ pub fn sleb(out: &mut Vec<u8>, mut v: i64) {
 }
 
 fn name(out: &mut Vec<u8>, s: &str) {
-    uleb(out, s.len() as u64);
+    uleb(out, lo64(s.len()));
     out.extend_from_slice(s.as_bytes());
 }
 
 fn section(out: &mut Vec<u8>, id: u8, body: &[u8]) {
     out.push(id);
-    uleb(out, body.len() as u64);
+    uleb(out, lo64(body.len()));
     out.extend_from_slice(body);
 }
 
@@ -141,7 +142,7 @@ impl Code {
     /// Drops what was written from offset `n` on.
     pub fn truncate(&mut self, n: usize) {
         self.b.truncate(n);
-        while self.locs.last().is_some_and(|&p| p as usize >= n) {
+        while self.locs.last().is_some_and(|&p| us(p) >= n) {
             self.locs.pop();
         }
     }
@@ -157,7 +158,7 @@ impl Code {
         self
     }
     pub fn u32c(&mut self, v: u32) -> &mut Self {
-        self.i32c(v as i32)
+        self.i32c(lo32(v).cast_signed())
     }
     pub fn i64c(&mut self, v: i64) -> &mut Self {
         self.b.push(0x42);
@@ -173,19 +174,19 @@ impl Code {
         if l == 0 {
             self.cpu_at = true;
         }
-        self.locs.push(self.b.len() as u32);
+        self.locs.push(lo32(self.b.len()));
         self.b.push(0x20);
         uleb(&mut self.b, u64::from(l));
         self
     }
     pub fn set(&mut self, l: u32) -> &mut Self {
-        self.locs.push(self.b.len() as u32);
+        self.locs.push(lo32(self.b.len()));
         self.b.push(0x21);
         uleb(&mut self.b, u64::from(l));
         self
     }
     pub fn tee(&mut self, l: u32) -> &mut Self {
-        self.locs.push(self.b.len() as u32);
+        self.locs.push(lo32(self.b.len()));
         self.b.push(0x22);
         uleb(&mut self.b, u64::from(l));
         self
@@ -535,25 +536,25 @@ pub struct Module {
 
 impl Module {
     pub fn imported_funcs(&self) -> u32 {
-        self.imports.iter().filter(|i| matches!(i, Import::Func(..))).count() as u32
+        lo32(self.imports.iter().filter(|i| matches!(i, Import::Func(..))).count())
     }
 
     pub fn finish(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.extend_from_slice(b"\0asm\x01\0\0\0");
         let mut s = Vec::new();
-        uleb(&mut s, self.types.len() as u64);
+        uleb(&mut s, lo64(self.types.len()));
         for t in &self.types {
             s.push(0x60);
-            uleb(&mut s, t.params.len() as u64);
+            uleb(&mut s, lo64(t.params.len()));
             s.extend_from_slice(&t.params);
-            uleb(&mut s, t.results.len() as u64);
+            uleb(&mut s, lo64(t.results.len()));
             s.extend_from_slice(&t.results);
         }
         section(&mut out, 1, &s);
 
         s.clear();
-        uleb(&mut s, self.imports.len() as u64);
+        uleb(&mut s, lo64(self.imports.len()));
         for i in &self.imports {
             name(&mut s, "env");
             match i {
@@ -578,7 +579,7 @@ impl Module {
         section(&mut out, 2, &s);
 
         s.clear();
-        uleb(&mut s, self.funcs.len() as u64);
+        uleb(&mut s, lo64(self.funcs.len()));
         for f in &self.funcs {
             uleb(&mut s, u64::from(f.ty));
         }
@@ -586,13 +587,13 @@ impl Module {
 
         s.clear();
         let base = self.imported_funcs();
-        uleb(&mut s, self.funcs.len() as u64);
+        uleb(&mut s, lo64(self.funcs.len()));
         for i in 0..self.funcs.len() {
             let mut n = Vec::from(&b"f"[..]);
             let mut d = Vec::new();
             let mut v = i;
             loop {
-                d.push(b'0' + (v % 10) as u8);
+                d.push(b'0' + lo8(v % 10));
                 v /= 10;
                 if v == 0 {
                     break;
@@ -600,15 +601,15 @@ impl Module {
             }
             d.reverse();
             n.extend_from_slice(&d);
-            uleb(&mut s, n.len() as u64);
+            uleb(&mut s, lo64(n.len()));
             s.extend_from_slice(&n);
             s.push(0x00);
-            uleb(&mut s, u64::from(base) + i as u64);
+            uleb(&mut s, u64::from(base) + lo64(i));
         }
         section(&mut out, 7, &s);
 
         s.clear();
-        uleb(&mut s, self.funcs.len() as u64);
+        uleb(&mut s, lo64(self.funcs.len()));
         for f in &self.funcs {
             let mut body = Vec::new();
             // locals, run-length encoded
@@ -619,14 +620,14 @@ impl Module {
                     _ => groups.push((1, t)),
                 }
             }
-            uleb(&mut body, groups.len() as u64);
+            uleb(&mut body, lo64(groups.len()));
             for (n, t) in groups {
                 uleb(&mut body, u64::from(n));
                 body.push(t);
             }
             body.extend_from_slice(&f.code.b);
             body.push(0x0b);
-            uleb(&mut s, body.len() as u64);
+            uleb(&mut s, lo64(body.len()));
             s.extend_from_slice(&body);
         }
         section(&mut out, 10, &s);
@@ -639,7 +640,7 @@ impl Module {
             uleb(&mut names, u64::from(base) + u64::from(self.name_at));
             name(&mut names, n);
             s.push(1); // function names
-            uleb(&mut s, names.len() as u64);
+            uleb(&mut s, lo64(names.len()));
             s.extend_from_slice(&names);
             section(&mut out, 0, &s);
         }
@@ -674,7 +675,7 @@ fn sections(m: &[u8]) -> Option<Vec<(u8, &[u8])>> {
     while p < m.len() {
         let id = m[p];
         p += 1;
-        let n = read_uleb(m, &mut p)? as usize;
+        let n = us(read_uleb(m, &mut p)?);
         let end = p.checked_add(n)?;
         out.push((id, m.get(p..end)?));
         p = end;
@@ -701,7 +702,7 @@ fn parts(m: &[u8]) -> Option<Parts<'_>> {
     let (mut p, mut nimp) = (0, 0);
     for _ in 0..read_uleb(imports, &mut p)? {
         for _ in 0..2 {
-            let l = read_uleb(imports, &mut p)? as usize;
+            let l = us(read_uleb(imports, &mut p)?);
             p = p.checked_add(l)?;
         }
         match *imports.get(p)? {
@@ -733,7 +734,7 @@ fn parts(m: &[u8]) -> Option<Parts<'_>> {
     for _ in 0..k {
         let ty = read_uleb(f, &mut p)?;
         let at = q;
-        let n = read_uleb(c, &mut q)? as usize;
+        let n = us(read_uleb(c, &mut q)?);
         q = q.checked_add(n)?;
         funcs.push((ty, c.get(at..q)?));
     }
@@ -762,7 +763,7 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
             0 => {
                 // custom: only "name"
                 let mut p = 0;
-                let l = read_uleb(body, &mut p)? as usize;
+                let l = us(read_uleb(body, &mut p)?);
                 if body.get(p..p.checked_add(l)?)? != b"name" {
                     return None;
                 }
@@ -788,7 +789,7 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
     for _ in 0..read_uleb(imports, &mut p)? {
         let mut names = [&b""[..]; 2];
         for n in &mut names {
-            let l = read_uleb(imports, &mut p)? as usize;
+            let l = us(read_uleb(imports, &mut p)?);
             let end = p.checked_add(l)?;
             *n = imports.get(p..end)?;
             p = end;
@@ -831,14 +832,14 @@ fn check_(m: &[u8], funcs: usize) -> Option<()> {
     if let Some(e) = sec(&s, 7) {
         let mut p = 0;
         for _ in 0..read_uleb(e, &mut p)? {
-            let l = read_uleb(e, &mut p)? as usize;
+            let l = us(read_uleb(e, &mut p)?);
             p = p.checked_add(l)?;
             if *e.get(p)? != 0x00 {
                 return None;
             }
             p += 1;
             let f = read_uleb(e, &mut p)?;
-            if f < parts.nimp || f >= parts.nimp + funcs as u64 {
+            if f < parts.nimp || f >= parts.nimp + lo64(funcs) {
                 return None;
             }
         }
@@ -863,7 +864,7 @@ fn heads() -> [(Vec<u8>, Vec<u8>); 2] {
 
 /// A module of `funcs` (exported as "f0", "f1", ... and named `names` if there is one each).
 fn assemble(types: &[u8], imports: &[u8], nimp: u64, funcs: &[(u64, &[u8])], names: &[alloc::string::String]) -> Vec<u8> {
-    let n = funcs.len() as u64;
+    let n = lo64(funcs.len());
     let mut out = Vec::from(&b"\0asm\x01\0\0\0"[..]);
     section(&mut out, 1, types);
     section(&mut out, 2, imports);
@@ -887,17 +888,17 @@ fn assemble(types: &[u8], imports: &[u8], nimp: u64, funcs: &[(u64, &[u8])], nam
         s.extend_from_slice(f.1);
     }
     section(&mut out, 10, &s);
-    if names.len() as u64 == n {
+    if lo64(names.len()) == n {
         s.clear();
         name(&mut s, "name");
         let mut list = Vec::new();
         uleb(&mut list, n);
         for (i, nm) in names.iter().enumerate() {
-            uleb(&mut list, nimp + i as u64);
+            uleb(&mut list, nimp + lo64(i));
             name(&mut list, nm);
         }
         s.push(1);
-        uleb(&mut s, list.len() as u64);
+        uleb(&mut s, lo64(list.len()));
         s.extend_from_slice(&list);
         section(&mut out, 0, &s);
     }
@@ -952,31 +953,31 @@ fn compact(params: u32, extra: &[u32], locals: &[u8], code: Code) -> (Vec<u8>, C
             }
         }
     };
-    let n = params as usize + locals.len();
+    let n = us(params) + locals.len();
     let mut used = alloc::vec![false; n];
     for &p in &code.locs {
-        used[read(&code.b, p as usize + 1).0 as usize] = true;
+        used[us(read(&code.b, us(p) + 1).0)] = true;
     }
-    let mut map: Vec<u32> = (0..n as u32).collect();
+    let mut map: Vec<u32> = (0..lo32(n)).collect();
     let mut kept = Vec::new();
-    let first = params + extra.len() as u32;
+    let first = params + lo32(extra.len());
     for (i, &t) in locals.iter().enumerate() {
-        let l = params as usize + i;
-        if let Some(j) = extra.iter().position(|&e| e == l as u32) {
-            map[l] = params + j as u32;
+        let l = us(params) + i;
+        if let Some(j) = extra.iter().position(|&e| e == lo32(l)) {
+            map[l] = params + lo32(j);
         } else if used[l] {
-            map[l] = first + kept.len() as u32;
+            map[l] = first + lo32(kept.len());
             kept.push(t);
         }
     }
     let mut out = Code { b: Vec::with_capacity(code.b.len()), locs: Vec::with_capacity(code.locs.len()), cpu_at: false };
     let mut from = 0;
     for &p in &code.locs {
-        let p = p as usize;
+        let p = us(p);
         out.b.extend_from_slice(&code.b[from..=p]);
         let (l, end) = read(&code.b, p + 1);
-        out.locs.push(p as u32);
-        uleb(&mut out.b, u64::from(map[l as usize]));
+        out.locs.push(lo32(p));
+        uleb(&mut out.b, u64::from(map[us(l)]));
         from = end;
     }
     out.b.extend_from_slice(&code.b[from..]);

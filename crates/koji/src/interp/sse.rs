@@ -1,5 +1,6 @@
 //! MMX, SSE, SSE2, SSE3, SSSE3 and SSE4.1 (all but DPPS/DPPD, MPSADBW, PHMINPOSUW).
 
+use crate::cvt::{lo8, lo16, lo32, lo64, us};
 use super::{Stop, X};
 use crate::flags::STATUS;
 use crate::round::{self, Op};
@@ -13,8 +14,8 @@ fn lanes(a: u128, b: u128, lane: u32, f: impl Fn(u64, u64) -> u64) -> u128 {
     let mut r = 0u128;
     let mut s = 0;
     while s < 128 {
-        let x = ((a >> s) & m) as u64;
-        let y = ((b >> s) & m) as u64;
+        let x = lo64((a >> s) & m);
+        let y = lo64((b >> s) & m);
         r |= (u128::from(f(x, y)) & m) << s;
         s += lane;
     }
@@ -29,20 +30,20 @@ fn sx(v: u64, bits: u32) -> i64 {
 fn sat_s(v: i64, bits: u32) -> u64 {
     let lo = -(1i64 << (bits - 1));
     let hi = (1i64 << (bits - 1)) - 1;
-    v.clamp(lo, hi) as u64
+    lo64(v.clamp(lo, hi))
 }
 
 fn sat_u(v: i64, bits: u32) -> u64 {
-    v.clamp(0, (1i64 << bits) - 1) as u64
+    lo64(v.clamp(0, (1i64 << bits) - 1))
 }
 
 #[inline]
 fn f32x(v: u128, i: u32) -> f32 {
-    f32::from_bits((v >> (32 * i)) as u32)
+    f32::from_bits(lo32(v >> (32 * i)))
 }
 #[inline]
 fn f64x(v: u128, i: u32) -> f64 {
-    f64::from_bits((v >> (64 * i)) as u64)
+    f64::from_bits(lo64(v >> (64 * i)))
 }
 #[inline]
 fn set32(v: u128, i: u32, x: u32) -> u128 {
@@ -93,7 +94,7 @@ impl<'a, M: Memory> X<'a, M> {
             return false;
         }
         let mut buf = [0u8; 30];
-        let n = self.mem.fetch(self.ins.next_ip() as u32, &mut buf);
+        let n = self.mem.fetch(lo32(self.ins.next_ip()), &mut buf);
         let mut dec = iced_x86::Decoder::with_ip(if self.cpu.mode64 != 0 { 64 } else { 32 }, &buf[..n], self.ins.next_ip(), iced_x86::DecoderOptions::NONE);
         let next = [dec.decode(), dec.decode()];
         crate::jit::control_read(self.ins, &next)
@@ -105,7 +106,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let r = self.ins.op_register(i);
                 if r.is_xmm() { 128 } else if r.is_mm() || r.is_gpr64() { 64 } else { 32 }
             }
-            OpKind::Memory => self.ins.memory_size().size() as u32 * 8,
+            OpKind::Memory => lo32(self.ins.memory_size().size()) * 8,
             _ => 8,
         }
     }
@@ -174,22 +175,22 @@ impl<'a, M: Memory> X<'a, M> {
                 if r.is_xmm() {
                     self.cpu.set_xmm(r.number(), v);
                 } else if r.is_mm() {
-                    self.cpu.mm[r.number()] = v as u64;
+                    self.cpu.mm[r.number()] = lo64(v);
                 } else {
-                    self.set_reg(r, v as u64);
+                    self.set_reg(r, lo64(v));
                 }
                 Ok(())
             }
             OpKind::Memory => {
                 let a = self.addr();
                 Ok(match self.ins.memory_size().size() {
-                    1 => self.mem.write8(a, v as u8),
-                    2 => self.mem.write16(a, v as u16),
-                    4 => self.mem.write32(a, v as u32),
-                    8 => self.mem.write64(a, v as u64),
+                    1 => self.mem.write8(a, lo8(v)),
+                    2 => self.mem.write16(a, lo16(v)),
+                    4 => self.mem.write32(a, lo32(v)),
+                    8 => self.mem.write64(a, lo64(v)),
                     _ => {
-                        self.mem.write64(a, v as u64)?;
-                        self.mem.write64(a.wrapping_add(8), (v >> 64) as u64)
+                        self.mem.write64(a, lo64(v))?;
+                        self.mem.write64(a.wrapping_add(8), lo64(v >> 64))
                     }
                 }?)
             }
@@ -324,12 +325,12 @@ impl<'a, M: Memory> X<'a, M> {
 
             // ---- moves
             Movd => {
-                let v = u128::from(tryf!(self.read_v(1)) as u32);
+                let v = u128::from(lo32(tryf!(self.read_v(1))));
                 tryf!(self.write_v(0, v));
                 self.done()
             }
             Movq | Movq2dq | Movdq2q => {
-                let v = u128::from(tryf!(self.read_v(1)) as u64);
+                let v = u128::from(lo64(tryf!(self.read_v(1))));
                 tryf!(self.write_v(0, v));
                 self.done()
             }
@@ -361,13 +362,13 @@ impl<'a, M: Memory> X<'a, M> {
                     tryf!(self.write_v(0, v));
                 } else {
                     let a = tryf!(self.read_v(0));
-                    let b = tryf!(self.read_v(1)) as u64;
+                    let b = lo64(tryf!(self.read_v(1)));
                     tryf!(self.write_v(0, set64(a, 1, b)));
                 }
                 self.done()
             }
-            Movlhps => binop(self, &|a, b| set64(a, 1, b as u64)),
-            Movhlps => binop(self, &|a, b| set64(a, 0, (b >> 64) as u64)),
+            Movlhps => binop(self, &|a, b| set64(a, 1, lo64(b))),
+            Movhlps => binop(self, &|a, b| set64(a, 0, lo64(b >> 64))),
 
             // ---- logic
             Pand | Andps | Andpd => binop(self, &|a, b| a & b),
@@ -388,19 +389,19 @@ impl<'a, M: Memory> X<'a, M> {
             Paddsw => binop(self, &|a, b| lanes(a, b, 16, |x, y| sat_s(sx(x, 16) + sx(y, 16), 16))),
             Psubsb => binop(self, &|a, b| lanes(a, b, 8, |x, y| sat_s(sx(x, 8) - sx(y, 8), 8))),
             Psubsw => binop(self, &|a, b| lanes(a, b, 16, |x, y| sat_s(sx(x, 16) - sx(y, 16), 16))),
-            Paddusb => binop(self, &|a, b| lanes(a, b, 8, |x, y| sat_u(x as i64 + y as i64, 8))),
-            Paddusw => binop(self, &|a, b| lanes(a, b, 16, |x, y| sat_u(x as i64 + y as i64, 16))),
-            Psubusb => binop(self, &|a, b| lanes(a, b, 8, |x, y| sat_u(x as i64 - y as i64, 8))),
-            Psubusw => binop(self, &|a, b| lanes(a, b, 16, |x, y| sat_u(x as i64 - y as i64, 16))),
+            Paddusb => binop(self, &|a, b| lanes(a, b, 8, |x, y| sat_u(lo64(x).cast_signed() + lo64(y).cast_signed(), 8))),
+            Paddusw => binop(self, &|a, b| lanes(a, b, 16, |x, y| sat_u(lo64(x).cast_signed() + lo64(y).cast_signed(), 16))),
+            Psubusb => binop(self, &|a, b| lanes(a, b, 8, |x, y| sat_u(lo64(x).cast_signed() - lo64(y).cast_signed(), 8))),
+            Psubusw => binop(self, &|a, b| lanes(a, b, 16, |x, y| sat_u(lo64(x).cast_signed() - lo64(y).cast_signed(), 16))),
             Pmullw => binop(self, &|a, b| lanes(a, b, 16, |x, y| x.wrapping_mul(y))),
-            Pmulhw => binop(self, &|a, b| lanes(a, b, 16, |x, y| ((sx(x, 16) * sx(y, 16)) >> 16) as u64)),
+            Pmulhw => binop(self, &|a, b| lanes(a, b, 16, |x, y| lo64((sx(x, 16) * sx(y, 16)) >> 16))),
             Pmulhuw => binop(self, &|a, b| lanes(a, b, 16, |x, y| (x * y) >> 16)),
-            Pmuludq => binop(self, &|a, b| lanes(a, b, 64, |x, y| u64::from(x as u32) * u64::from(y as u32))),
+            Pmuludq => binop(self, &|a, b| lanes(a, b, 64, |x, y| u64::from(lo32(x)) * u64::from(lo32(y)))),
             Pmaddwd => binop(self, &|a, b| {
                 lanes(a, b, 32, |x, y| {
                     let p0 = sx(x & 0xffff, 16) * sx(y & 0xffff, 16);
                     let p1 = sx(x >> 16, 16) * sx(y >> 16, 16);
-                    (p0 + p1) as u64
+                    lo64(p0 + p1)
                 })
             }),
             Pavgb => binop(self, &|a, b| lanes(a, b, 8, |x, y| (x + y + 1) >> 1)),
@@ -415,10 +416,10 @@ impl<'a, M: Memory> X<'a, M> {
                 let n = ins.op_count();
                 let v = tryf!(self.read_v(n - 2));
                 let m = tryf!(self.read_v(n - 1));
-                let a = self.get_reg(Register::EDI).wrapping_add(self.seg_base()) as u32;
+                let a = lo32(self.get_reg(Register::EDI).wrapping_add(self.seg_base()));
                 for k in 0..(if mn == Maskmovq { 8 } else { 16 }) {
                     if (m >> (8 * k + 7)) & 1 != 0 {
-                        tryf!(self.mem.write8(a.wrapping_add(k), (v >> (8 * k)) as u8));
+                        tryf!(self.mem.write8(a.wrapping_add(k), lo8(v >> (8 * k))));
                     }
                 }
                 self.done()
@@ -451,12 +452,12 @@ impl<'a, M: Memory> X<'a, M> {
                 let a = tryf!(self.read_v(0));
                 let c = match ins.op_kind(1) {
                     OpKind::Immediate8 => u64::from(ins.immediate8()),
-                    _ => tryf!(self.read_v(1)) as u64,
+                    _ => lo64(tryf!(self.read_v(1))),
                 };
                 let r = lanes(a, 0, lane, |x, _| match mn {
                     Psllw | Pslld | Psllq => if c >= u64::from(lane) { 0 } else { x << c },
                     Psrlw | Psrld | Psrlq => if c >= u64::from(lane) { 0 } else { x >> c },
-                    _ => (sx(x, lane) >> c.min(u64::from(lane) - 1)) as u64,
+                    _ => lo64(sx(x, lane) >> c.min(u64::from(lane) - 1)),
                 });
                 tryf!(self.write_v(0, r & wmask));
                 self.done()
@@ -488,7 +489,7 @@ impl<'a, M: Memory> X<'a, M> {
                     for i in 0..n {
                         let e = sx(((v >> (i * src)) as u64) & ((1u64 << src) - 1), src);
                         let s = if mn == Packuswb { sat_u(e, dst) } else { sat_s(e, dst) };
-                        r |= (u128::from(s) & ((1u128 << dst) - 1)) << ((k as u32 * n + i) * dst);
+                        r |= (u128::from(s) & ((1u128 << dst) - 1)) << ((lo32(k) * n + i) * dst);
                     }
                 }
                 tryf!(self.write_v(0, r & wmask));
@@ -501,7 +502,7 @@ impl<'a, M: Memory> X<'a, M> {
                     Pshufd => {
                         let mut r = 0u128;
                         for i in 0..4 {
-                            r = set32(r, i, (v >> (32 * ((imm >> (2 * i)) & 3))) as u32);
+                            r = set32(r, i, lo32(v >> (32 * ((imm >> (2 * i)) & 3))));
                         }
                         r
                     }
@@ -509,7 +510,7 @@ impl<'a, M: Memory> X<'a, M> {
                         let base = if mn == Pshufhw { 64 } else { 0 };
                         let mut r = v;
                         for i in 0..4u32 {
-                            let src = u128::from((v >> (base + 16 * ((imm >> (2 * i)) & 3))) as u16);
+                            let src = u128::from(lo16(v >> (base + 16 * ((imm >> (2 * i)) & 3))));
                             r = (r & !(0xffffu128 << (base + 16 * i))) | src << (base + 16 * i);
                         }
                         r
@@ -522,7 +523,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let a = tryf!(self.read_v(0));
                 let b = tryf!(self.read_v(1));
                 let imm = u32::from(ins.immediate8());
-                let pick = |v: u128, s: u32| (v >> (32 * (s & 3))) as u32;
+                let pick = |v: u128, s: u32| lo32(v >> (32 * (s & 3)));
                 let mut r = 0u128;
                 r = set32(r, 0, pick(a, imm));
                 r = set32(r, 1, pick(a, imm >> 2));
@@ -535,20 +536,20 @@ impl<'a, M: Memory> X<'a, M> {
                 let a = tryf!(self.read_v(0));
                 let b = tryf!(self.read_v(1));
                 let imm = u32::from(ins.immediate8());
-                let r = set64(set64(0, 0, (a >> (64 * (imm & 1))) as u64), 1, (b >> (64 * ((imm >> 1) & 1))) as u64);
+                let r = set64(set64(0, 0, lo64(a >> (64 * (imm & 1)))), 1, lo64(b >> (64 * ((imm >> 1) & 1))));
                 tryf!(self.write_v(0, r));
                 self.done()
             }
             Pextrw => {
                 let v = tryf!(self.read_v(1));
                 let n = u32::from(ins.immediate8()) & (if self.vbits(1) == 64 { 3 } else { 7 });
-                let r = u128::from((v >> (16 * n)) as u16);
+                let r = u128::from(lo16(v >> (16 * n)));
                 tryf!(self.write_v(0, r));
                 self.done()
             }
             Pinsrw => {
                 let a = tryf!(self.read_v(0));
-                let v = u128::from(tryf!(self.read_v(1)) as u16);
+                let v = u128::from(lo16(tryf!(self.read_v(1))));
                 let n = u32::from(ins.immediate8()) & (if w == 64 { 3 } else { 7 });
                 let r = (a & !(0xffffu128 << (16 * n))) | v << (16 * n);
                 tryf!(self.write_v(0, r));
@@ -668,7 +669,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let raw = tryf!(self.read_v(1));
                 let a = tryf!(self.read_v(0));
                 // a 64-bit source (REX.W) converts with one rounding, like the hardware
-                let v = if self.vbits(1) == 64 { raw as u64 as i64 } else { i64::from(raw as u32 as i32) };
+                let v = if self.vbits(1) == 64 { lo64(lo64(raw)).cast_signed() } else { i64::from(lo32(lo32(raw)).cast_signed()) };
                 let rc = self.cpu.mxcsr >> 13;
                 let (f, d) = (round::i64_to_f32(v, rc), round::i64_to_f64(v, rc));
                 let r = if mn == Cvtsi2ss { set32(a, 0, f.to_bits()) } else { set64(a, 0, d.to_bits()) };
@@ -698,7 +699,7 @@ impl<'a, M: Memory> X<'a, M> {
             Cvtdq2ps => {
                 let v = tryf!(self.read_v(1));
                 let rc = self.cpu.mxcsr >> 13;
-                let r = lanes(v, 0, 32, |x, _| u64::from(round::i64_to_f32(i64::from(x as u32 as i32), rc).to_bits()));
+                let r = lanes(v, 0, 32, |x, _| u64::from(round::i64_to_f32(i64::from(lo32(lo32(x)).cast_signed()), rc).to_bits()));
                 tryf!(self.write_v(0, r));
                 self.done()
             }
@@ -713,7 +714,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Cvtdq2pd | Cvtpi2pd => {
                 let v = tryf!(self.read_v(1));
-                let r = set64(set64(0, 0, f64::from(v as u32 as i32).to_bits()), 1, f64::from((v >> 32) as u32 as i32).to_bits());
+                let r = set64(set64(0, 0, f64::from(lo32(lo32(v)).cast_signed()).to_bits()), 1, f64::from(lo32(lo32(v >> 32)).cast_signed()).to_bits());
                 tryf!(self.write_v(0, r));
                 self.done()
             }
@@ -741,7 +742,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let a = tryf!(self.read_v(0));
                 let v = tryf!(self.read_v(1));
                 let rc = self.cpu.mxcsr >> 13;
-                let r = set32(set32(a, 0, round::i64_to_f32(i64::from(v as u32 as i32), rc).to_bits()), 1, round::i64_to_f32(i64::from((v >> 32) as u32 as i32), rc).to_bits());
+                let r = set32(set32(a, 0, round::i64_to_f32(i64::from(lo32(lo32(v)).cast_signed()), rc).to_bits()), 1, round::i64_to_f32(i64::from(lo32(lo32(v >> 32)).cast_signed()), rc).to_bits());
                 tryf!(self.write_v(0, r));
                 self.done()
             }
@@ -756,12 +757,12 @@ impl<'a, M: Memory> X<'a, M> {
             Movshdup | Movsldup => {
                 let v = tryf!(self.read_v(1));
                 let o = if mn == Movshdup { 1 } else { 0 };
-                let r = (0..4).fold(0, |r, i| set32(r, i, (v >> (32 * ((i & !1) + o))) as u32));
+                let r = (0..4).fold(0, |r, i| set32(r, i, lo32(v >> (32 * ((i & !1) + o)))));
                 tryf!(self.write_v(0, r));
                 self.done()
             }
             Movddup => {
-                let v = tryf!(self.read_v(1)) as u64;
+                let v = lo64(tryf!(self.read_v(1)));
                 tryf!(self.write_v(0, set64(u128::from(v), 1, v)));
                 self.done()
             }
@@ -801,7 +802,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let n = w / 8;
                 let mut r = 0u128;
                 for i in 0..n {
-                    let c = (b >> (8 * i)) as u8;
+                    let c = lo8(b >> (8 * i));
                     if c & 0x80 == 0 {
                         r |= ((a >> (8 * (u32::from(c) % n))) & 0xff) << (8 * i);
                     }
@@ -816,16 +817,16 @@ impl<'a, M: Memory> X<'a, M> {
                 binop(self, &|a, b| {
                     lanes(a, b, lane, |x, y| match sx(y, lane) {
                         0 => 0,
-                        v if v < 0 => (sx(x, lane).wrapping_neg()) as u64,
+                        v if v < 0 => lo64(sx(x, lane).wrapping_neg()),
                         _ => x,
                     })
                 })
             }
-            Pmulhrsw => binop(self, &|a, b| lanes(a, b, 16, |x, y| (((sx(x, 16) * sx(y, 16) >> 14) + 1) >> 1) as u64)),
+            Pmulhrsw => binop(self, &|a, b| lanes(a, b, 16, |x, y| lo64(((sx(x, 16) * sx(y, 16) >> 14) + 1) >> 1))),
             Pmaddubsw => binop(self, &|a, b| {
                 lanes(a, b, 16, |x, y| {
-                    let p0 = (x & 0xff) as i64 * sx(y & 0xff, 8);
-                    let p1 = (x >> 8 & 0xff) as i64 * sx(y >> 8 & 0xff, 8);
+                    let p0 = lo64(x & 0xff).cast_signed() * sx(y & 0xff, 8);
+                    let p1 = lo64(x >> 8 & 0xff).cast_signed() * sx(y >> 8 & 0xff, 8);
                     sat_s(p0 + p1, 16)
                 })
             }),
@@ -842,14 +843,14 @@ impl<'a, M: Memory> X<'a, M> {
                             let x = (v >> (2 * i * lane)) & m;
                             let y = (v >> ((2 * i + 1) * lane)) & m;
                             let s = if sat {
-                                let (p, q) = (sx(x as u64, 16), sx(y as u64, 16));
+                                let (p, q) = (sx(lo64(x), 16), sx(lo64(y), 16));
                                 u128::from(sat_s(if sub { p - q } else { p + q }, 16))
                             } else if sub {
                                 x.wrapping_sub(y)
                             } else {
                                 x.wrapping_add(y)
                             } & m;
-                            r |= s << ((k as u32 * n + i) * lane);
+                            r |= s << ((lo32(k) * n + i) * lane);
                         }
                     }
                     r
@@ -871,7 +872,7 @@ impl<'a, M: Memory> X<'a, M> {
 
             // ---- SSE4.1
             Pmulld => binop(self, &|a, b| lanes(a, b, 32, |x, y| x.wrapping_mul(y))),
-            Pmuldq => binop(self, &|a, b| lanes(a, b, 64, |x, y| (sx(x & 0xffff_ffff, 32) * sx(y & 0xffff_ffff, 32)) as u64)),
+            Pmuldq => binop(self, &|a, b| lanes(a, b, 64, |x, y| lo64(sx(x & 0xffff_ffff, 32) * sx(y & 0xffff_ffff, 32)))),
             Pcmpeqq => binop(self, &|a, b| lanes(a, b, 64, |x, y| if x == y { u64::MAX } else { 0 })),
             Pminsb => binop(self, &|a, b| lanes(a, b, 8, |x, y| if sx(x, 8) < sx(y, 8) { x } else { y })),
             Pmaxsb => binop(self, &|a, b| lanes(a, b, 8, |x, y| if sx(x, 8) > sx(y, 8) { x } else { y })),
@@ -885,8 +886,8 @@ impl<'a, M: Memory> X<'a, M> {
                 let mut r = 0u128;
                 for (k, v) in [a, b].into_iter().enumerate() {
                     for i in 0..4u32 {
-                        let x = u128::from(sat_u(sx((v >> (32 * i)) as u64 & 0xffff_ffff, 32), 16));
-                        r |= x << (16 * (4 * k as u32 + i));
+                        let x = u128::from(sat_u(sx(lo64(v >> (32 * i)) & 0xffff_ffff, 32), 16));
+                        r |= x << (16 * (4 * lo32(k) + i));
                     }
                 }
                 r
@@ -905,8 +906,8 @@ impl<'a, M: Memory> X<'a, M> {
                 let v = tryf!(self.read_v(1));
                 let mut r = 0u128;
                 for i in 0..128 / to {
-                    let x = (v >> (from * i)) as u64 & ((1u64 << from) - 1);
-                    let x = if signed { sx(x, from) as u64 } else { x };
+                    let x = lo64(v >> (from * i)) & ((1u64 << from) - 1);
+                    let x = if signed { lo64(sx(x, from)) } else { x };
                     let m = if to == 64 { u64::MAX } else { (1u64 << to) - 1 };
                     r |= u128::from(x & m) << (to * i);
                 }
@@ -933,7 +934,7 @@ impl<'a, M: Memory> X<'a, M> {
             Insertps => {
                 let a = tryf!(self.read_v(0));
                 let imm = u32::from(ins.immediate8());
-                let src = if ins.op_kind(1) == OpKind::Memory { tryf!(self.read_v(1)) as u32 } else { (tryf!(self.read_v(1)) >> (32 * (imm >> 6))) as u32 };
+                let src = if ins.op_kind(1) == OpKind::Memory { lo32(tryf!(self.read_v(1))) } else { lo32((tryf!(self.read_v(1)) >> (32 * (imm >> 6)))) };
                 let mut r = set32(a, (imm >> 4) & 3, src);
                 for i in 0..4 {
                     if imm & (1 << i) != 0 {
@@ -996,7 +997,7 @@ impl<'a, M: Memory> X<'a, M> {
             Mpsadbw => {
                 let imm = u32::from(ins.immediate8());
                 binop(self, &|a, b| {
-                    let byte = |v: u128, i: u32| i32::from((v >> (8 * i)) as u8);
+                    let byte = |v: u128, i: u32| i32::from(lo8(v >> (8 * i)));
                     let (so, d) = (4 * (imm & 3), 4 * ((imm >> 2) & 1));
                     (0..8u32).fold(0u128, |r, i| {
                         let sad: i32 = (0..4).map(|j| (byte(a, d + i + j) - byte(b, so + j)).abs()).sum();
@@ -1174,7 +1175,7 @@ fn product_is(a: f64, b: f64, c: f64) -> bool {
         let fr = u128::from(bits & ((1 << 52) - 1));
         if ex == 0 { (fr, -1074) } else { (fr | 1 << 52, ex - 1075) }
     };
-    let norm = |(m, e): (u128, i32)| (m >> m.trailing_zeros(), e + m.trailing_zeros() as i32);
+    let norm = |(m, e): (u128, i32)| (m >> m.trailing_zeros(), e + lo32(m.trailing_zeros()).cast_signed());
     let ((ma, ea), (mb, eb)) = (parts(a), parts(b));
     norm((ma * mb, ea + eb)) == norm(parts(c))
 }
@@ -1566,7 +1567,7 @@ impl<'a, M: Memory> X<'a, M> {
                 for i in 0..4 {
                     if imm & (16 << i) != 0 {
                         f = or2(f, fz(flags32(FOp::Mul, f32x(a, i), f32x(b, i), ue, rc), 0));
-                        p[i as usize] = nan_op32(Op::Mul, f32x(a, i), f32x(b, i), mx);
+                        p[us(i)] = nan_op32(Op::Mul, f32x(a, i), f32x(b, i), mx);
                     }
                 }
                 let (s0, s1) = (nan_op32(Op::Add, p[0], p[1], mx), nan_op32(Op::Add, p[2], p[3], mx));
@@ -1581,7 +1582,7 @@ impl<'a, M: Memory> X<'a, M> {
                 for i in 0..2 {
                     if imm & (16 << i) != 0 {
                         f = or2(f, fz(flags64(FOp::Mul, f64x(a, i), f64x(b, i), ue, rc), 0));
-                        p[i as usize] = nan_op64(Op::Mul, f64x(a, i), f64x(b, i), mx);
+                        p[us(i)] = nan_op64(Op::Mul, f64x(a, i), f64x(b, i), mx);
                     }
                 }
                 f = or2(f, fz(flags64(FOp::Add, p[0], p[1], ue, rc), imm & 3));
@@ -1624,10 +1625,10 @@ impl<'a, M: Memory> X<'a, M> {
             Cvtsi2ss | Cvtsi2sd | Cvtdq2ps | Cvtpi2ps => {
                 let raw = self.read_v(1).ok()?;
                 let vals: [i64; 4] = match mn {
-                    Cvtdq2ps => core::array::from_fn(|i| i64::from((raw >> (32 * i)) as u32 as i32)),
-                    Cvtpi2ps => core::array::from_fn(|i| if i < 2 { i64::from((raw >> (32 * i)) as u32 as i32) } else { 0 }),
-                    _ if self.vbits(1) == 64 => [raw as u64 as i64, 0, 0, 0],
-                    _ => [i64::from(raw as u32 as i32), 0, 0, 0],
+                    Cvtdq2ps => core::array::from_fn(|i| i64::from(lo32(lo32(raw >> (32 * i))).cast_signed())),
+                    Cvtpi2ps => core::array::from_fn(|i| if i < 2 { i64::from(lo32(lo32(raw >> (32 * i))).cast_signed()) } else { 0 }),
+                    _ if self.vbits(1) == 64 => [lo64(lo64(raw)).cast_signed(), 0, 0, 0],
+                    _ => [i64::from(lo32(lo32(raw)).cast_signed()), 0, 0, 0],
                 };
                 for v in vals {
                     let exact = if mn == Cvtsi2sd { (v as f64) as i128 == i128::from(v) } else { (v as f32) as i128 == i128::from(v) };
@@ -1690,11 +1691,11 @@ fn pcmpstr(a: u128, b: u128, imm: u32, lens: Option<(u32, u32)>) -> (u32, u32, u
     let signed = imm & 2 != 0;
     let n: u32 = if words { 8 } else { 16 };
     let el = |v: u128, i: u32| -> i32 {
-        let x = if words { u32::from((v >> (16 * i)) as u16) } else { u32::from((v >> (8 * i)) as u8) };
+        let x = if words { u32::from(lo16(v >> (16 * i))) } else { u32::from(lo8(v >> (8 * i))) };
         match (signed, words) {
-            (true, true) => i32::from(x as u16 as i16),
-            (true, false) => i32::from(x as u8 as i8),
-            _ => x as i32,
+            (true, true) => i32::from(lo16(lo16(x)).cast_signed()),
+            (true, false) => i32::from(lo8(lo8(x)).cast_signed()),
+            _ => lo32(x).cast_signed(),
         }
     };
     let len = |v: u128, r: Option<u32>| match r {

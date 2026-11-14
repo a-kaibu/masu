@@ -6,6 +6,7 @@
 //! result is the negative "indefinite"), so tests/testfloat's extF80 vectors check it. The status
 //! flags are not kept (koji's x87 keeps none).
 
+use crate::cvt::{lo16, lo32, lo64};
 /// An 80-bit extended value: sign and 15-bit exponent, 64-bit significand with its explicit
 /// integer bit (as in memory, little-endian: significand then sign/exponent).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -62,7 +63,7 @@ impl F80 {
         self.exp() != 0 && self.m >> 63 == 0
     }
     fn pack(sign: bool, exp: i32, m: u64) -> F80 {
-        F80 { m, se: u16::from(sign) << 15 | exp as u16 }
+        F80 { m, se: u16::from(sign) << 15 | lo16(exp) }
     }
     pub fn neg(self) -> F80 {
         F80 { m: self.m, se: self.se ^ 0x8000 }
@@ -75,7 +76,7 @@ impl F80 {
     fn unpack(self) -> (bool, i32, u64) {
         let e = self.exp();
         if e == 0 {
-            let lz = self.m.leading_zeros() as i32;
+            let lz = lo32(self.m.leading_zeros()).cast_signed();
             (self.sign(), 1 - lz, self.m << lz)
         } else {
             (self.sign(), e, self.m)
@@ -112,15 +113,15 @@ impl F80 {
         let (sign, e, m) = self.unpack();
         let e = e - BIAS; // the value is m * 2^(e - 63)
         // in units of the result's last place: 2^(e - mbits), or the denormals' 2^(1 - bias - mbits)
-        let ulp = (e - mbits as i32).max(1 - bias - mbits as i32);
-        let shift = (ulp - (e - 63)) as u32; // (at least 63 - mbits)
+        let ulp = (e - lo32(mbits).cast_signed()).max(1 - bias - lo32(mbits).cast_signed());
+        let shift = lo32(ulp - (e - 63)); // (at least 63 - mbits)
         let q = round_shift(m, shift, rc, sign);
         if q == 0 {
             return s;
         }
         // q * 2^ulp: normal when q reaches 2^mbits (a carry included)
         // the exponent field for q in [2^mbits, 2^(mbits+1)) (2^(mbits+1): a carry, one more)
-        let field = ulp + mbits as i32 + bias + (q >> (mbits + 1)) as i32;
+        let field = ulp + lo32(mbits).cast_signed() + bias + lo32(q >> (mbits + 1)).cast_signed();
         if q >> mbits != 0 && field >= emax {
             // overflow: infinity, or the largest finite value when rounding toward zero/away
             let inf = rc == 0 || (rc == 1 && sign) || (rc == 2 && !sign);
@@ -133,7 +134,7 @@ impl F80 {
         f64::from_bits(self.to_ieee(52, 1023, rc & 3))
     }
     pub fn to_f32(self, rc: u32) -> f32 {
-        f32::from_bits(self.to_ieee(23, 127, rc & 3) as u32)
+        f32::from_bits(lo32(self.to_ieee(23, 127, rc & 3)))
     }
 
     /// Rounded to an integer by `rc` (None: a NaN, infinity or unsupported encoding).
@@ -149,7 +150,7 @@ impl F80 {
         if e > 100 {
             return Some(if sign { i128::MIN } else { i128::MAX });
         }
-        let q = if e >= 63 { i128::from(m) << (e - 63) } else { i128::from(round_shift(m, (63 - e) as u32, rc & 3, sign)) };
+        let q = if e >= 63 { i128::from(m) << (e - 63) } else { i128::from(round_shift(m, lo32(63 - e), rc & 3, sign)) };
         Some(if sign { -q } else { q })
     }
 
@@ -169,12 +170,12 @@ impl F80 {
         if e >= 63 {
             return self;
         }
-        let q = round_shift(m, (63 - e) as u32, rc & 3, sign);
+        let q = round_shift(m, lo32(63 - e), rc & 3, sign);
         if q == 0 {
             return F80::pack(sign, 0, 0);
         }
         let lz = q.leading_zeros();
-        F80::pack(sign, BIAS + 63 - lz as i32, q << lz)
+        F80::pack(sign, BIAS + 63 - lo32(lz).cast_signed(), q << lz)
     }
 
     /// Compares two values: None when unordered (a NaN or unsupported encoding); zeros equal.
@@ -225,7 +226,7 @@ impl F80 {
             p <<= 1;
             e -= 1;
         }
-        round_pack(sign, e, (p >> 64) as u64, p as u64, bits_of(pc), rc & 3)
+        round_pack(sign, e, lo64(p >> 64), lo64(p), bits_of(pc), rc & 3)
     }
 
     pub fn div(self, b: F80, pc: u32, rc: u32) -> F80 {
@@ -251,7 +252,7 @@ impl F80 {
         let (q, r) = (num / u128::from(mb), num % u128::from(mb));
         let n2 = r << 64;
         let (q2, r2) = (n2 / u128::from(mb), n2 % u128::from(mb));
-        round_pack(sign, e, q as u64, q2 as u64 | u64::from(r2 != 0), bits_of(pc), rc & 3)
+        round_pack(sign, e, lo64(q), lo64(q2) | u64::from(r2 != 0), bits_of(pc), rc & 3)
     }
 
     pub fn sqrt(self, pc: u32, rc: u32) -> F80 {
@@ -276,7 +277,7 @@ impl F80 {
         let s = isqrt(n);
         let r = n - s * s;
         let extra = if r == 0 { 0 } else if r > s { 0xc000_0000_0000_0000 } else { 0x4000_0000_0000_0000 };
-        round_pack(false, ez, s as u64, extra, bits_of(pc), rc & 3)
+        round_pack(false, ez, lo64(s), extra, bits_of(pc), rc & 3)
     }
 }
 
@@ -312,7 +313,7 @@ fn round_shift(m: u64, shift: u32, rc: u32, sign: bool) -> u64 {
     // (shifted out entirely: below half of the last place when shift > 64)
     let (q, rest, half) = if shift > 64 { (0, x, None) } else { (x >> shift, x & ((1u128 << shift) - 1), Some(1u128 << (shift - 1))) };
     if rest == 0 {
-        return q as u64;
+        return lo64(q);
     }
     let up = match rc {
         0 => half.is_some_and(|h| rest > h || (rest == h && q & 1 != 0)),
@@ -320,7 +321,7 @@ fn round_shift(m: u64, shift: u32, rc: u32, sign: bool) -> u64 {
         2 => !sign,
         _ => false,
     };
-    q as u64 + u64::from(up)
+    lo64(q) + u64::from(up)
 }
 
 /// The x87's NaN rules for two operands (or an unsupported encoding: invalid): None when both
@@ -374,7 +375,7 @@ fn add_sub(a: F80, b: F80, subtract: bool, pc: u32, rc: u32) -> F80 {
     let (sb, eb, mb) = b.unpack();
     // |x| >= |y|
     let ((sx, ex, mx), (sy, ey, my)) = if (ea, ma) >= (eb, mb) { ((sa, ea, ma), (sb, eb, mb)) } else { ((sb, eb, mb), (sa, ea, ma)) };
-    let d = (ex - ey) as u32;
+    let d = lo32(ex - ey);
     let x = u128::from(mx) << 63;
     let y0 = u128::from(my) << 63;
     let y = if d >= 127 { 1 } else { (y0 >> d) | u128::from((y0 & ((1u128 << d) - 1)) != 0) };
@@ -384,7 +385,7 @@ fn add_sub(a: F80, b: F80, subtract: bool, pc: u32, rc: u32) -> F80 {
     }
     let lz = z.leading_zeros();
     let z = z << lz;
-    round_pack(sx, ex + 1 - lz as i32, (z >> 64) as u64, z as u64, bits_of(pc), rc)
+    round_pack(sx, ex + 1 - lo32(lz).cast_signed(), lo64(z >> 64), lo64(z), bits_of(pc), rc)
 }
 
 /// SoftFloat's roundPackToExtF80: `sig` with bit 63 set (unless the value is tiny), `extra`
@@ -399,9 +400,9 @@ fn round_pack(sign: bool, mut exp: i32, mut sig: u64, mut extra: u64, prec: u32,
             inc = if max(sign) { mask } else { 0 };
         }
         let mut bits = sig & mask;
-        if (exp - 1) as u32 >= 0x7ffd {
+        if lo32(exp - 1) >= 0x7ffd {
             if exp <= 0 {
-                sig = jam64(sig, (1 - exp) as u32);
+                sig = jam64(sig, lo32(1 - exp));
                 bits = sig & mask;
                 sig = sig.wrapping_add(inc);
                 exp = (sig >> 63) as i32;
@@ -433,9 +434,9 @@ fn round_pack(sign: bool, mut exp: i32, mut sig: u64, mut extra: u64, prec: u32,
     if !near {
         inc = max(sign) && extra != 0;
     }
-    if (exp - 1) as u32 >= 0x7ffd {
+    if lo32(exp - 1) >= 0x7ffd {
         if exp <= 0 {
-            let n = (1 - exp) as u32;
+            let n = lo32(1 - exp);
             (sig, extra) = jam64_extra(sig, extra, n);
             exp = 0;
             inc = extra >= 1 << 63;

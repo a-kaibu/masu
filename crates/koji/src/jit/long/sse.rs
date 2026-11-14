@@ -7,6 +7,7 @@
 //! alike are their VEX.128 form twice: the lower lanes, then the upper ones with each register's
 //! halves swapped (and memory 16 bytes on); the rest go to the interpreter.
 
+use crate::cvt::{lo8, lo32, us};
 use super::{Flags, Gen, I64Ops, I32_WRAP, I64_EXT_U, L_A, L_CPU, L_V0, L_V1, STATUS};
 use crate::jit::packed::{binop, farith, shift, unpack};
 use alloc::vec::Vec;
@@ -17,13 +18,13 @@ use iced_x86::{EncodingKind, Instruction, Mnemonic, OpKind, Register};
 /// The Cpu offset of XMM register `r`.
 fn xoff(r: Register) -> u32 {
     if r.is_mm() {
-        return (offset_of!(Cpu, mm) + 8 * (r.number())) as u32;
+        return lo32((offset_of!(Cpu, mm) + 8 * (r.number())));
     }
     let i = r.number();
     if i < 8 {
-        (offset_of!(Cpu, xmm) + 16 * i) as u32
+        lo32((offset_of!(Cpu, xmm) + 16 * i))
     } else {
-        (offset_of!(Cpu, xmm8) + 16 * (i - 8)) as u32
+        lo32((offset_of!(Cpu, xmm8) + 16 * (i - 8)))
     }
 }
 
@@ -187,7 +188,7 @@ fn supported(ins: &Instruction) -> bool {
         _ if farith(m).is_some_and(|f| f.1) => n == 2 && full(),
         _ if farith(m).is_some() => {
             let bits = farith(m).unwrap().0;
-            n == 2 && is_x(ins, 0) && (is_x(ins, 1) || mem(ins, 1)) && size_ok(ins, bits as usize / 8)
+            n == 2 && is_x(ins, 0) && (is_x(ins, 1) || mem(ins, 1)) && size_ok(ins, us(bits) / 8)
         }
         _ if shift(m).is_some() => n == 2 && is_x(ins, 0) && (ins.op_kind(1) == OpKind::Immediate8 || ((is_x(ins, 1) || mem(ins, 1)) && size_ok(ins, 16))),
         Pshufd | Pshuflw | Pshufhw | Shufps | Palignr | Pblendw | Blendps | Blendpd => full() && imm(2),
@@ -237,7 +238,7 @@ impl Gen<'_> {
             return self.sse256(&x);
         }
         let Some((li, src1)) = plan(&self.ins) else { return false };
-        let ymmh = |r: usize| (offset_of!(Cpu, ymmh) + 16 * r) as u32;
+        let ymmh = |r: usize| lo32((offset_of!(Cpu, ymmh) + 16 * r));
         if li.mnemonic() == Mnemonic::Vzeroupper {
             for r in 0..16 {
                 self.c.get(L_CPU).i64c(0).store64(ymmh(r));
@@ -246,7 +247,7 @@ impl Gen<'_> {
             return true;
         }
         // the memory operand's address first (it may leave for the interpreter)
-        let size = (0..li.op_count()).find(|&i| mem(&li, i)).map(|_| li.memory_size().size() as u32);
+        let size = (0..li.op_count()).find(|&i| mem(&li, i)).map(|_| lo32(li.memory_size().size()));
         if let Some(s) = size {
             if !self.addr(s.max(1)) {
                 return false;
@@ -305,7 +306,7 @@ impl Gen<'_> {
             // (PE once seen set stays set in this block's straight-line code)
             let pe = mxguard::rounds(k.0) && self.mx_checked != Some(self.depth);
             if pe {
-                mxguard::mode(&mut self.c, L_CPU, offset_of!(Cpu, mxcsr) as u32);
+                mxguard::mode(&mut self.c, L_CPU, lo32(offset_of!(Cpu, mxcsr)));
                 if ops {
                     self.c.or();
                 }
@@ -328,7 +329,7 @@ impl Gen<'_> {
         if !per_lane(&li) {
             return false;
         }
-        let size = (0..li.op_count()).find(|&i| mem(&li, i)).map(|_| li.memory_size().size() as u32);
+        let size = (0..li.op_count()).find(|&i| mem(&li, i)).map(|_| lo32(li.memory_size().size()));
         if size.is_some() && !self.addr(32) {
             return false;
         }
@@ -383,7 +384,7 @@ impl Gen<'_> {
     /// Swaps the lower and upper halves of YMM registers `regs`.
     pub(super) fn swap_hi(&mut self, regs: &[Register]) {
         for &r in regs {
-            let (x, h) = (xoff(r), (offset_of!(Cpu, ymmh) + 16 * (r.number())) as u32);
+            let (x, h) = (xoff(r), lo32((offset_of!(Cpu, ymmh) + 16 * (r.number()))));
             self.c.get(L_CPU).v128load(x).set(super::L_V2);
             self.c.get(L_CPU).get(L_CPU).v128load(h).v128store(x);
             self.c.get(L_CPU).get(super::L_V2).v128store(h);
@@ -469,7 +470,7 @@ impl Gen<'_> {
                 }
             }
             Emms => {
-                let empty = (offset_of!(Cpu, fpu) + offset_of!(crate::fpu::Fpu, empty)) as u32;
+                let empty = lo32((offset_of!(Cpu, fpu) + offset_of!(crate::fpu::Fpu, empty)));
                 self.c.get(L_CPU).i32c(0xff).store8(empty);
             }
             Movntq => {
@@ -536,7 +537,7 @@ impl Gen<'_> {
             }
             Pinsrb | Pinsrw | Pinsrd | Pinsrq => {
                 let (bits, op, lanes) = match m { Pinsrb => (8, 0x17, 16), Pinsrw => (16, 0x1a, 8), Pinsrd => (32, 0x1c, 4), _ => (64, 0x1e, 2) };
-                let lane = (u32::from(ins.immediate8()) % lanes) as u8;
+                let lane = lo8(u32::from(ins.immediate8()) % lanes);
                 self.vfirst(src1);
                 self.gsrc(1, bits);
                 if bits < 64 {
@@ -548,7 +549,7 @@ impl Gen<'_> {
             }
             Pextrb | Pextrw | Pextrd | Pextrq => {
                 let (bits, op, lanes) = match m { Pextrb => (8, 0x16, 16), Pextrw => (16, 0x19, 8), Pextrd => (32, 0x1b, 4), _ => (64, 0x1d, 2) };
-                let lane = (u32::from(ins.immediate8()) % lanes) as u8;
+                let lane = lo8(u32::from(ins.immediate8()) % lanes);
                 self.xget(ins.op_register(1));
                 self.c.lane(op, lane); // (the unsigned extract for bytes and words)
                 if bits < 64 {
@@ -568,7 +569,7 @@ impl Gen<'_> {
                     self.c.lane(extract, 0);
                 }
                 self.vsrc(1, bits / 8);
-                self.c.lane(extract, 0).op(op as u8).lane(replace, 0);
+                self.c.lane(extract, 0).op(lo8(op)).lane(replace, 0);
                 self.c.set(L_V0);
                 self.vput();
             }
@@ -584,7 +585,7 @@ impl Gen<'_> {
                         self.c.lane(0x21, 0).op(0xb6).lane(0x20, 0); // f32.demote_f64
                     }
                     _ => {
-                        let bits = if mem(&ins, 1) { ins.memory_size().size() as u32 * 8 } else if ins.op_register(1).is_gpr64() { 64 } else { 32 };
+                        let bits = if mem(&ins, 1) { lo32(ins.memory_size().size()) * 8 } else if ins.op_register(1).is_gpr64() { 64 } else { 32 };
                         self.gsrc(1, bits);
                         let f = m == Cvtsi2ss;
                         if bits == 32 {
@@ -638,7 +639,7 @@ impl Gen<'_> {
         if matches!(m, Cvtss2si | Cvtsd2si) {
             // nearest, floor, ceil, trunc by RC
             let rc = L_A;
-            self.c.get(L_CPU).load32(offset_of!(Cpu, mxcsr) as u32).i32c(13).shr_u().i32c(3).and().set(rc);
+            self.c.get(L_CPU).load32(lo32(offset_of!(Cpu, mxcsr))).i32c(13).shr_u().i32c(3).and().set(rc);
             // select(kept, this, rc != k): the rounding RC names
             self.c.get(f).op(0xbf).op(0x9e); // f64.reinterpret_i64, f64.nearest
             for (k, op) in [(1, 0x9c), (2, 0x9b), (3, 0x9d)] {
@@ -678,8 +679,8 @@ impl Gen<'_> {
         self.vsrc(1, if single { 4 } else { 8 });
         self.c.set(L_V1);
         let (x, y) = (L_V0, L_V1);
-        let lazy = offset_of!(Cpu, lazy) as u32;
-        let ef = offset_of!(Cpu, eflags) as u32;
+        let lazy = lo32(offset_of!(Cpu, lazy));
+        let ef = lo32(offset_of!(Cpu, eflags));
         self.c.get(L_CPU);
         self.c.get(L_CPU).load32(ef).u32c(!STATUS).and();
         self.c.get(x).get(y).simd(lt).lane(0x1b, 0).i32c(1).and();
@@ -726,8 +727,8 @@ impl Gen<'_> {
             for k in 0..16 / (2 * e) {
                 for t in 0..e {
                     let at = start + k * e + t;
-                    l[2 * k * e + t] = at as u8;
-                    l[2 * k * e + e + t] = 16 + at as u8;
+                    l[2 * k * e + t] = lo8(at);
+                    l[2 * k * e + e + t] = 16 + lo8(at);
                 }
             }
             self.c.get(a).get(b).shuffle(l);
@@ -736,9 +737,9 @@ impl Gen<'_> {
             if ins.op_kind(1) == OpKind::Immediate8 {
                 let n = u32::from(ins.immediate8());
                 if n < bits {
-                    self.c.i32c(n as i32).simd(op);
+                    self.c.i32c(lo32(n).cast_signed()).simd(op);
                 } else if arith {
-                    self.c.i32c(bits as i32 - 1).simd(op);
+                    self.c.i32c(lo32(bits).cast_signed() - 1).simd(op);
                 } else {
                     self.c.drop_().v128zero();
                 }
@@ -747,7 +748,7 @@ impl Gen<'_> {
                 let w = self.temp();
                 self.c.get(b).lane(0x1d, 0).set(w);
                 if arith {
-                    self.c.get(w).x(I32_WRAP).i32c(bits as i32 - 1);
+                    self.c.get(w).x(I32_WRAP).i32c(lo32(bits).cast_signed() - 1);
                     self.c.get(w).i64c(i64::from(bits)).x(super::I64_LT_U);
                     self.c.select().simd(op);
                 } else {
@@ -790,14 +791,14 @@ impl Gen<'_> {
                 }
                 Movsldup | Movshdup | Movddup => {
                     let pick: [u8; 4] = match m { Movsldup => [0, 0, 2, 2], Movshdup => [1, 1, 3, 3], _ => [0, 1, 0, 1] };
-                    let l: [u8; 16] = core::array::from_fn(|k| pick[k / 4] * 4 + (k % 4) as u8);
+                    let l: [u8; 16] = core::array::from_fn(|k| pick[k / 4] * 4 + lo8(k % 4));
                     self.c.get(b).get(b).shuffle(l);
                 }
                 Movhlps | Movlhps => {
                     // MOVHLPS: the source's high quadword to the low one; MOVLHPS: its low one
                     // to the high one
                     let l: [u8; 16] = core::array::from_fn(|k| {
-                        (if m == Movhlps { if k < 8 { 16 + 8 + k } else { k } } else if k < 8 { k } else { 16 + k - 8 }) as u8
+                        lo8(if m == Movhlps { if k < 8 { 16 + 8 + k } else { k } } else if k < 8 { k } else { 16 + k - 8 })
                     });
                     self.c.get(a).get(b).shuffle(l);
                 }
@@ -851,7 +852,7 @@ impl Gen<'_> {
                     self.c.get(b).simd(0xa0);
                 }
                 Pmuludq => {
-                    let l: [u8; 16] = core::array::from_fn(|k| (if k < 4 { k } else if k < 8 { k + 4 } else { k }) as u8);
+                    let l: [u8; 16] = core::array::from_fn(|k| lo8(if k < 4 { k } else if k < 8 { k + 4 } else { k }));
                     self.c.get(a).get(a).shuffle(l);
                     self.c.get(b).get(b).shuffle(l);
                     self.c.simd(0xde); // i64x2.extmul_low_i32x4_u
@@ -867,7 +868,7 @@ impl Gen<'_> {
                     self.c.get(a).get(b).simd(op);
                     if is_mm(&ins, 0) {
                         // (MMX: the first operand's 4 bytes, then the second's)
-                        let l: [u8; 16] = core::array::from_fn(|k| (if k < 4 { k } else if k < 8 { k + 4 } else { k }) as u8);
+                        let l: [u8; 16] = core::array::from_fn(|k| lo8(if k < 4 { k } else if k < 8 { k + 4 } else { k }));
                         self.c.set(a).get(a).get(a).shuffle(l);
                     }
                 }
@@ -890,35 +891,35 @@ impl Gen<'_> {
                 Shufps => {
                     let imm = ins.immediate8();
                     let pick = [imm & 3, (imm >> 2) & 3, 4 + ((imm >> 4) & 3), 4 + (imm >> 6)];
-                    let l: [u8; 16] = core::array::from_fn(|k| pick[k / 4] * 4 + (k % 4) as u8);
+                    let l: [u8; 16] = core::array::from_fn(|k| pick[k / 4] * 4 + lo8(k % 4));
                     self.c.get(a).get(b).shuffle(l);
                 }
                 Pshufd | Pshuflw | Pshufhw => {
                     let (e, at) = match m { Pshufd => (4, 0), Pshufhw => (2, 4), _ => (2, 0) };
                     let imm = ins.immediate8();
-                    let mut l: [u8; 16] = core::array::from_fn(|k| k as u8);
+                    let mut l: [u8; 16] = core::array::from_fn(|k| lo8(k));
                     for k in 0..4 {
-                        let j = at + ((imm >> (2 * k)) as usize & 3);
+                        let j = at + (us(imm >> (2 * k)) & 3);
                         for t in 0..e {
-                            l[(at + k) * e + t] = (j * e + t) as u8;
+                            l[(at + k) * e + t] = lo8(j * e + t);
                         }
                     }
                     self.c.get(b).get(b).shuffle(l);
                 }
                 Pblendw | Blendps | Blendpd => {
                     let e = match m { Pblendw => 2, Blendps => 4, _ => 8 };
-                    let imm = ins.immediate8() as usize;
-                    let l: [u8; 16] = core::array::from_fn(|k| (if imm >> (k / e) & 1 != 0 { 16 + k } else { k }) as u8);
+                    let imm = us(ins.immediate8());
+                    let l: [u8; 16] = core::array::from_fn(|k| lo8(if imm >> (k / e) & 1 != 0 { 16 + k } else { k }));
                     self.c.get(a).get(b).shuffle(l);
                 }
                 Palignr => {
                     // (b:a)'s bytes from imm: b's bytes are 0..15, a's 16..31, past them zeros
-                    let n = ins.immediate8() as usize;
+                    let n = us(ins.immediate8());
                     if n < 16 {
-                        let l: [u8; 16] = core::array::from_fn(|k| (k + n) as u8);
+                        let l: [u8; 16] = core::array::from_fn(|k| lo8(k + n));
                         self.c.get(b).get(a).shuffle(l);
                     } else if n < 32 {
-                        let l: [u8; 16] = core::array::from_fn(|k| (k + n - 16).min(16) as u8);
+                        let l: [u8; 16] = core::array::from_fn(|k| lo8((k + n - 16).min(16)));
                         self.c.get(a).v128zero().shuffle(l);
                     } else {
                         self.c.v128zero();
@@ -927,7 +928,7 @@ impl Gen<'_> {
                 Pslldq | Psrldq => {
                     let n = (ins.immediate8() as usize).min(16);
                     let l: [u8; 16] = core::array::from_fn(|k| {
-                        (if m == Pslldq { if k >= n { k - n } else { 16 } } else if k + n < 16 { k + n } else { 16 }) as u8
+                        lo8(if m == Pslldq { if k >= n { k - n } else { 16 } } else if k + n < 16 { k + n } else { 16 })
                     });
                     self.c.get(a).v128zero().shuffle(l);
                 }
@@ -948,7 +949,7 @@ impl Gen<'_> {
                     if m == Cvtps2dq {
                         // rounded by MXCSR.RC: nearest, floor, ceil, trunc
                         let rc = L_A;
-                        self.c.get(L_CPU).load32(offset_of!(Cpu, mxcsr) as u32).i32c(13).shr_u().i32c(3).and().set(rc);
+                        self.c.get(L_CPU).load32(lo32(offset_of!(Cpu, mxcsr))).i32c(13).shr_u().i32c(3).and().set(rc);
                         self.c.simd(0x6a); // f32x4.nearest
                         for (k, op) in [(1, 0x68), (2, 0x67), (3, 0x69)] {
                             self.c.get(b).simd(op);
@@ -960,8 +961,8 @@ impl Gen<'_> {
                     // out of range or NaN: 0x80000000 (wasm saturates)
                     self.c.get(a).simd(0xf8); // i32x4.trunc_sat_f32x4_s
                     self.c.i32c(i32::MIN).simd(0x11);
-                    self.c.get(a).i32c((-2147483648.0f32).to_bits() as i32).simd(0x11).simd(0x46); // f32x4.ge
-                    self.c.get(a).i32c(2147483648.0f32.to_bits() as i32).simd(0x11).simd(0x43); // f32x4.lt
+                    self.c.get(a).i32c(lo32((-2147483648.0f32).to_bits()).cast_signed()).simd(0x11).simd(0x46); // f32x4.ge
+                    self.c.get(a).i32c(lo32(2147483648.0f32.to_bits()).cast_signed()).simd(0x11).simd(0x43); // f32x4.lt
                     self.c.simd(0x4e).simd(0x52);
                 }
                 Pmovzxbw | Pmovzxwd | Pmovzxdq | Pmovsxbw | Pmovsxwd | Pmovsxdq | Pmovzxbd | Pmovzxwq | Pmovsxbd | Pmovsxwq => {

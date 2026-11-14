@@ -6,6 +6,7 @@
 //! per table (a `br_table` on the index). Edges that would make the graph irreducible leave
 //! the function.
 
+use crate::cvt::{lo32, us};
 use super::*;
 
 /// The jump table of `jmp [index*4 + table]`.
@@ -50,11 +51,11 @@ pub(super) fn perfect_hash(keys: &[u32]) -> (u32, u32, Vec<u32>) {
         let mut m = 0x9e37_79b1u32;
         for _ in 0..64 {
             let shift = 32 - bits;
-            let mut slots = alloc::vec![keys.len() as u32; 1 << bits];
+            let mut slots = alloc::vec![lo32(keys.len()); 1 << bits];
             if keys.iter().enumerate().all(|(i, &k)| {
-                let s = (k.wrapping_mul(m) >> shift) as usize;
-                let free = slots[s] == keys.len() as u32;
-                slots[s] = i as u32;
+                let s = us(k.wrapping_mul(m) >> shift);
+                let free = slots[s] == lo32(keys.len());
+                slots[s] = lo32(i);
                 free
             }) {
                 return (m, shift, slots);
@@ -117,7 +118,7 @@ pub(super) fn layout(
     let n = blocks.len();
     // (more entries: a node before them all, the last, going to each)
     let total = n + tables.len() + usize::from(!extra.is_empty());
-    let find = |ctx: u32, a: u32| targets.get(&(ctx, a)).or_else(|| targets.get(&(0, a))).map(|&b| b as usize);
+    let find = |ctx: u32, a: u32| targets.get(&(ctx, a)).or_else(|| targets.get(&(0, a))).map(|&b| us(b));
     let mut succ: Vec<Vec<usize>> = alloc::vec![Vec::new(); total];
     for k in 0..n {
         let last = blocks[k].1.last().unwrap();
@@ -134,7 +135,7 @@ pub(super) fn layout(
                 s.extend(find(ctx, last.next_ip32()));
             }
             FlowControl::Return if ctx != 0 => {
-                s.extend(find(0, ret_to[ctx as usize]));
+                s.extend(find(0, ret_to[us(ctx)]));
             }
             FlowControl::IndirectBranch => {
                 if let Some(&(e, _)) = inlined.get(&k) {
@@ -149,7 +150,7 @@ pub(super) fn layout(
         // an inlined callee can leave anywhere to a function call of its rest, which returns
         // to the call's return address (Gen::call_rest)
         if ctx != 0 {
-            s.extend(find(0, ret_to[ctx as usize]));
+            s.extend(find(0, ret_to[us(ctx)]));
             s.sort_unstable();
             s.dedup();
         }

@@ -1,5 +1,6 @@
 //! BMI1 and BMI2 (VEX-encoded general register instructions; TZCNT/LZCNT are in mod.rs).
 
+use crate::cvt::{lo32, lo64};
 use super::X;
 use crate::flags::{self, CF, SF, ZF};
 use crate::{Exit, Memory};
@@ -53,8 +54,8 @@ impl<'a, M: Memory> X<'a, M> {
             let p = u128::from(d) * u128::from(src);
             // the low half to the second destination, then the high half to the first (which
             // wins when both are the same register)
-            tryf!(self.write_op(1, p as u64 & m));
-            tryf!(self.write_op(0, (p >> bits) as u64 & m));
+            tryf!(self.write_op(1, lo64(p) & m));
+            tryf!(self.write_op(0, lo64(p >> bits) & m));
             return self.done();
         }
         let a = tryf!(self.read_op(1)) & m;
@@ -65,7 +66,7 @@ impl<'a, M: Memory> X<'a, M> {
                 (r, Some(sz(r)))
             }
             Bextr => {
-                let (start, len) = ((b & 0xff) as u32, ((b >> 8) & 0xff) as u32);
+                let (start, len) = (lo32(b & 0xff), lo32((b >> 8) & 0xff));
                 let v = if start >= bits { 0 } else { a >> start };
                 let r = if len >= 64 { v } else { v & ((1u64 << len) - 1) };
                 (r & m, Some(if r & m == 0 { ZF } else { 0 }))
@@ -83,7 +84,7 @@ impl<'a, M: Memory> X<'a, M> {
                 (r, Some(sz(r) | if a == 0 { CF } else { 0 }))
             }
             Bzhi => {
-                let n = (b & 0xff) as u32;
+                let n = lo32(b & 0xff);
                 let (r, c) = if n < bits { (a & ((1u64 << n) - 1), 0) } else { (a, CF) };
                 (r, Some(sz(r) | c))
             }
@@ -95,12 +96,12 @@ impl<'a, M: Memory> X<'a, M> {
                 (r, None)
             }
             Sarx => {
-                let c = b as u32 & (bits - 1);
+                let c = lo32(b) & (bits - 1);
                 let sx = ((a << (64 - bits)) as i64) >> (64 - bits);
-                ((sx >> c) as u64 & m, None)
+                (lo64(sx >> c) & m, None)
             }
-            Shlx => ((a << (b as u32 & (bits - 1))) & m, None),
-            _ => (a >> (b as u32 & (bits - 1)), None),
+            Shlx => ((a << (lo32(b) & (bits - 1))) & m, None),
+            _ => (a >> (lo32(b) & (bits - 1)), None),
         };
         tryf!(self.write_op(0, r));
         if let Some(f) = f {

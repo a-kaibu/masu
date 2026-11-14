@@ -1,5 +1,6 @@
 //! x87 instructions (see crate::fpu for the f64 model).
 
+use crate::cvt::{lo8, lo16, lo32, lo64, us};
 use super::X;
 use crate::flags::{self, *};
 use crate::f80::F80;
@@ -31,13 +32,13 @@ impl<'a, M: Memory> X<'a, M> {
             MemorySize::Float80 => {
                 let mut b = [0u8; 10];
                 for (i, x) in b.iter_mut().enumerate() {
-                    *x = self.mem.read8(a.wrapping_add(i as u32))?;
+                    *x = self.mem.read8(a.wrapping_add(lo32(i)))?;
                 }
                 fpu::from_f80(&b)
             }
-            MemorySize::Int16 => f64::from(self.mem.read16(a)? as i16),
-            MemorySize::Int32 => f64::from(self.mem.read32(a)? as i32),
-            MemorySize::Int64 => self.mem.read64(a)? as i64 as f64,
+            MemorySize::Int16 => f64::from(lo16(self.mem.read16(a)?).cast_signed()),
+            MemorySize::Int32 => f64::from(lo32(self.mem.read32(a)?).cast_signed()),
+            MemorySize::Int64 => lo64(self.mem.read64(a)?).cast_signed() as f64,
             _ => 0.0,
         })
     }
@@ -53,7 +54,7 @@ impl<'a, M: Memory> X<'a, M> {
                 MemorySize::Float64 => self.mem.write64(a, crate::round::i64_to_f64(i, rc).to_bits()),
                 _ => {
                     for (k, x) in fpu::int_to_f80(i).iter().enumerate() {
-                        self.mem.write8(a.wrapping_add(k as u32), *x)?;
+                        self.mem.write8(a.wrapping_add(lo32(k)), *x)?;
                     }
                     Ok(())
                 }
@@ -65,7 +66,7 @@ impl<'a, M: Memory> X<'a, M> {
             _ => {
                 let b = fpu::to_f80(v);
                 for (i, x) in b.iter().enumerate() {
-                    self.mem.write8(a.wrapping_add(i as u32), *x)?;
+                    self.mem.write8(a.wrapping_add(lo32(i)), *x)?;
                 }
                 Ok(())
             }
@@ -98,13 +99,13 @@ impl<'a, M: Memory> X<'a, M> {
             MemorySize::Float80 => {
                 let mut b = [0u8; 10];
                 for (i, x) in b.iter_mut().enumerate() {
-                    *x = self.mem.read8(a.wrapping_add(i as u32))?;
+                    *x = self.mem.read8(a.wrapping_add(lo32(i)))?;
                 }
                 F80::from_bytes(&b)
             }
-            MemorySize::Int16 => F80::from_i64(i64::from(self.mem.read16(a)? as i16)),
-            MemorySize::Int32 => F80::from_i64(i64::from(self.mem.read32(a)? as i32)),
-            _ => F80::from_i64(self.mem.read64(a)? as i64),
+            MemorySize::Int16 => F80::from_i64(i64::from(lo16(self.mem.read16(a)?).cast_signed())),
+            MemorySize::Int32 => F80::from_i64(i64::from(lo32(self.mem.read32(a)?).cast_signed())),
+            _ => F80::from_i64(lo64(self.mem.read64(a)?).cast_signed()),
         })
     }
 
@@ -145,7 +146,7 @@ impl<'a, M: Memory> X<'a, M> {
                         MemorySize::Float64 => t!(self.mem.write64(a, v.to_f64(rc).to_bits())),
                         _ => {
                             for (i, x) in v.to_bytes().iter().enumerate() {
-                                t!(self.mem.write8(a.wrapping_add(i as u32), *x));
+                                t!(self.mem.write8(a.wrapping_add(lo32(i)), *x));
                             }
                         }
                     }
@@ -162,16 +163,16 @@ impl<'a, M: Memory> X<'a, M> {
                 let a = self.addr();
                 match ins.memory_size() {
                     MemorySize::Int16 => {
-                        let x = r.filter(|r| (-32768..=32767).contains(r)).map_or(i16::MIN, |r| r as i16);
-                        t!(self.mem.write16(a, x as u16));
+                        let x = r.filter(|r| (-32768..=32767).contains(r)).map_or(i16::MIN, |r| lo16(r).cast_signed());
+                        t!(self.mem.write16(a, lo16(x)));
                     }
                     MemorySize::Int32 => {
-                        let x = r.filter(|r| (i128::from(i32::MIN)..=i128::from(i32::MAX)).contains(r)).map_or(i32::MIN, |r| r as i32);
-                        t!(self.mem.write32(a, x as u32));
+                        let x = r.filter(|r| (i128::from(i32::MIN)..=i128::from(i32::MAX)).contains(r)).map_or(i32::MIN, |r| lo32(r).cast_signed());
+                        t!(self.mem.write32(a, lo32(x)));
                     }
                     _ => {
-                        let x = r.filter(|r| (i128::from(i64::MIN)..=i128::from(i64::MAX)).contains(r)).map_or(i64::MIN, |r| r as i64);
-                        t!(self.mem.write64(a, x as u64));
+                        let x = r.filter(|r| (i128::from(i64::MIN)..=i128::from(i64::MAX)).contains(r)).map_or(i64::MIN, |r| lo64(r).cast_signed());
+                        t!(self.mem.write64(a, lo64(x)));
                     }
                 }
                 if mn != Fist {
@@ -302,25 +303,25 @@ impl<'a, M: Memory> X<'a, M> {
                 let f = &self.cpu.fpu;
                 let env = [u32::from(f.cw) | 0xffff_0000, u32::from(f.status()) | 0xffff_0000, u32::from(f.tag_word()) | 0xffff_0000, 0, 0, 0, 0];
                 for (i, v) in env.iter().enumerate() {
-                    t!(self.mem.write32(a + 4 * i as u32, *v));
+                    t!(self.mem.write32(a + 4 * lo32(i), *v));
                 }
                 for i in 0..8 {
                     for (k, x) in self.cpu.fpu.st80(i).to_bytes().iter().enumerate() {
-                        t!(self.mem.write8(a + 28 + 10 * i + k as u32, *x));
+                        t!(self.mem.write8(a + 28 + 10 * i + lo32(k), *x));
                     }
                 }
                 self.cpu.fpu = crate::Fpu::default();
             }
             Frstor => {
                 let a = self.addr();
-                let cw = t!(self.mem.read32(a)) as u16;
-                let sw = t!(self.mem.read32(a + 4)) as u16;
-                let tw = t!(self.mem.read32(a + 8)) as u16;
+                let cw = lo16(t!(self.mem.read32(a)));
+                let sw = lo16(t!(self.mem.read32(a + 4)));
+                let tw = lo16(t!(self.mem.read32(a + 8)));
                 let mut regs = [F80::default(); 8];
                 for (i, r) in regs.iter_mut().enumerate() {
                     let mut b = [0u8; 10];
                     for (k, x) in b.iter_mut().enumerate() {
-                        *x = t!(self.mem.read8(a + 28 + 10 * i as u32 + k as u32));
+                        *x = t!(self.mem.read8(a + 28 + 10 * lo32(i) + lo32(k)));
                     }
                     *r = F80::from_bytes(&b);
                 }
@@ -329,7 +330,7 @@ impl<'a, M: Memory> X<'a, M> {
                 f.set_status(sw);
                 f.set_tag_word(tw);
                 for (i, r) in regs.iter().enumerate() {
-                    f.load80(i as u32, *r);
+                    f.load80(lo32(i), *r);
                 }
             }
             _ => return None,
@@ -355,7 +356,7 @@ impl<'a, M: Memory> X<'a, M> {
                     // FLD ST(i) copies the exact integer too
                     let i = st_index(ins.op_register(0));
                     let f = &self.cpu.fpu;
-                    let p = ((f.top + i) & 7) as usize;
+                    let p = us((f.top + i) & 7);
                     match (f.exact & (1 << p) != 0).then(|| f.ints[p]) {
                         Some(x) => self.cpu.fpu.push_int(x),
                         None => {
@@ -368,9 +369,9 @@ impl<'a, M: Memory> X<'a, M> {
             Fild => {
                 let a = self.addr();
                 let v = match ins.memory_size() {
-                    MemorySize::Int16 => i64::from(tryf!(self.mem.read16(a)) as i16),
-                    MemorySize::Int32 => i64::from(tryf!(self.mem.read32(a)) as i32),
-                    _ => tryf!(self.mem.read64(a)) as i64,
+                    MemorySize::Int16 => i64::from(lo16(tryf!(self.mem.read16(a))).cast_signed()),
+                    MemorySize::Int32 => i64::from(lo32(tryf!(self.mem.read32(a))).cast_signed()),
+                    _ => lo64(tryf!(self.mem.read64(a))).cast_signed(),
                 };
                 self.cpu.fpu.push_int(v);
             }
@@ -395,11 +396,11 @@ impl<'a, M: Memory> X<'a, M> {
                 match ins.memory_size() {
                     MemorySize::Int16 => {
                         let x = if r >= -32768.0 && r <= 32767.0 { r as i16 } else { i16::MIN };
-                        tryf!(self.mem.write16(a, x as u16));
+                        tryf!(self.mem.write16(a, lo16(x)));
                     }
                     MemorySize::Int32 => {
                         let x = if r >= -2147483648.0 && r <= 2147483647.0 { r as i32 } else { i32::MIN };
-                        tryf!(self.mem.write32(a, x as u32));
+                        tryf!(self.mem.write32(a, lo32(x)));
                     }
                     _ => {
                         let x = match exact {
@@ -407,7 +408,7 @@ impl<'a, M: Memory> X<'a, M> {
                             None if r >= -9.223372036854775808e18 && r < 9.223372036854775808e18 => r as i64,
                             None => i64::MIN,
                         };
-                        tryf!(self.mem.write64(a, x as u64));
+                        tryf!(self.mem.write64(a, lo64(x)));
                     }
                 }
                 if mn != Fist {
@@ -428,7 +429,7 @@ impl<'a, M: Memory> X<'a, M> {
                 } else {
                     let mut n = r.abs() as u64;
                     for x in b.iter_mut().take(9) {
-                        *x = (n % 10) as u8 | (((n / 10) % 10) as u8) << 4;
+                        *x = lo8(n % 10) | (((n / 10) % 10) as u8) << 4;
                         n /= 100;
                     }
                     if r.is_sign_negative() {
@@ -436,7 +437,7 @@ impl<'a, M: Memory> X<'a, M> {
                     }
                 }
                 for (i, x) in b.iter().enumerate() {
-                    tryf!(self.mem.write8(a.wrapping_add(i as u32), *x));
+                    tryf!(self.mem.write8(a.wrapping_add(lo32(i)), *x));
                 }
                 self.cpu.fpu.pop();
             }
@@ -649,7 +650,7 @@ impl<'a, M: Memory> X<'a, M> {
             Ftst => { let a = self.cpu.fpu.st(0); self.cpu.fpu.compare_cc(a, 0.0); }
             Fxam => {
                 let f = &self.cpu.fpu;
-                let p = ((f.top) & 7) as usize;
+                let p = us((f.top) & 7);
                 let v = f.st(0);
                 let mut cc = if f.empty & (1 << p) != 0 {
                     C3 | C0
@@ -710,7 +711,7 @@ impl<'a, M: Memory> X<'a, M> {
             Wait | Fnop | Fndisi | Fneni | Fnsetpm => {}
             Ffree | Ffreep => {
                 let i = st_index(ins.op_register(0));
-                let p = ((self.cpu.fpu.top + i) & 7) as u8;
+                let p = lo8((self.cpu.fpu.top + i) & 7);
                 self.cpu.fpu.empty |= 1 << p;
                 if mn == Ffreep {
                     self.cpu.fpu.pop();
@@ -723,13 +724,13 @@ impl<'a, M: Memory> X<'a, M> {
                 let f = &self.cpu.fpu;
                 let env = [u32::from(f.cw) | 0xffff_0000, u32::from(f.status()) | 0xffff_0000, u32::from(f.tag_word()) | 0xffff_0000, 0, 0, 0, 0];
                 for (i, v) in env.iter().enumerate() {
-                    tryf!(self.mem.write32(a + 4 * i as u32, *v));
+                    tryf!(self.mem.write32(a + 4 * lo32(i), *v));
                 }
                 if matches!(mn, Fnsave | Fsave) {
                     for i in 0..8 {
                         let b = fpu::to_f80(self.cpu.fpu.st(i));
                         for (k, x) in b.iter().enumerate() {
-                            tryf!(self.mem.write8(a + 28 + 10 * i + k as u32, *x));
+                            tryf!(self.mem.write8(a + 28 + 10 * i + lo32(k), *x));
                         }
                     }
                     self.cpu.fpu = crate::Fpu::default();
@@ -737,15 +738,15 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Fldenv | Frstor => {
                 let a = self.addr();
-                let cw = tryf!(self.mem.read32(a)) as u16;
-                let sw = tryf!(self.mem.read32(a + 4)) as u16;
-                let tw = tryf!(self.mem.read32(a + 8)) as u16;
+                let cw = lo16(tryf!(self.mem.read32(a)));
+                let sw = lo16(tryf!(self.mem.read32(a + 4)));
+                let tw = lo16(tryf!(self.mem.read32(a + 8)));
                 let mut regs = [0.0; 8];
                 if mn == Frstor {
                     for (i, r) in regs.iter_mut().enumerate() {
                         let mut b = [0u8; 10];
                         for (k, x) in b.iter_mut().enumerate() {
-                            *x = tryf!(self.mem.read8(a + 28 + 10 * i as u32 + k as u32));
+                            *x = tryf!(self.mem.read8(a + 28 + 10 * lo32(i) + lo32(k)));
                         }
                         *r = fpu::from_f80(&b);
                     }
@@ -756,7 +757,7 @@ impl<'a, M: Memory> X<'a, M> {
                 f.set_tag_word(tw);
                 if mn == Frstor {
                     for (i, r) in regs.iter().enumerate() {
-                        let p = ((f.top + i as u32) & 7) as usize;
+                        let p = us((f.top + lo32(i)) & 7);
                         f.regs[p] = *r;
                     }
                 }

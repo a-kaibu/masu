@@ -19,6 +19,7 @@
 //! that, translated code has no checks (SSE float loops run 2-3x faster) and what it raised is
 //! not in MXCSR.
 
+use crate::cvt::{lo8, us};
 use super::wasm::Code;
 use iced_x86::{Instruction, Mnemonic, OpKind};
 
@@ -184,7 +185,7 @@ pub(super) fn operands(c: &mut Code, (g, bits, lanes, _): (G, u32, u32, bool), a
         if lanes * bits < 128 {
             c.simd(12);
             for i in 0..16 {
-                c.b.push(if i < (lanes * bits / 8) as usize { 0 } else { 0xff });
+                c.b.push(if i < us(lanes * bits / 8) { 0 } else { 0xff });
             }
             c.simd(0x50);
         }
@@ -202,9 +203,9 @@ fn paired(c: &mut Code, b64: bool, lanes: u32, (a, ra): (u32, R), (b, rb): (u32,
     // lane j: b's lane j, a's lane j - lanes, then b's lane 0 again
     let (mut idx, mut hi, mut lo, mut z) = ([0u8; 16], [0u8; 16], [0u8; 16], [0u8; 16]);
     for j in 0..n {
-        let (from, lane, r) = if j < lanes as usize { (0, j, rb) } else if j < 2 * lanes as usize { (16, j - lanes as usize, ra) } else { (0, 0, rb) };
+        let (from, lane, r) = if j < us(lanes) { (0, j, rb) } else if j < 2 * us(lanes) { (16, j - us(lanes), ra) } else { (0, 0, rb) };
         for k in 0..w {
-            idx[j * w + k] = (from + lane * w + k) as u8;
+            idx[j * w + k] = lo8(from + lane * w + k);
             hi[j * w + k] = r.hi.to_le_bytes()[k];
             lo[j * w + k] = r.lo.to_le_bytes()[k];
             z[j * w + k] = if r.zero { 0xff } else { 0 };

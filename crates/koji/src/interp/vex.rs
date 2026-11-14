@@ -7,6 +7,7 @@
 //! register XMM16 (`Cpu::vex_tmp`) and the result goes to dst. 256-bit forms aren't supported
 //! (CPUID doesn't report AVX, so only code built for AVX unconditionally uses VEX at all).
 
+use crate::cvt::{lo32, lo64};
 use super::X;
 use crate::{Exit, Memory};
 use alloc::boxed::Box;
@@ -309,13 +310,13 @@ impl<'a, M: Memory> X<'a, M> {
             };
             let neg = matches!(kind, 2 | 3);
             let f = if double {
-                let g = |v: u128| f64::from_bits((v >> (64 * i)) as u64);
+                let g = |v: u128| f64::from_bits(lo64(v >> (64 * i)));
                 let (p, q, s) = (g(x), g(y), g(z));
                 let sn = [p, q, s].iter().any(|v| v.is_nan() && v.to_bits() & 1 << 51 == 0);
                 let den = [p, q, s].iter().any(|v| v.is_subnormal());
                 super::sse::fma_flags(if neg { -p } else { p }, q, if sub { -s } else { s }, false, sn, den, ue, rc)
             } else {
-                let g = |v: u128| f32::from_bits((v >> (32 * i)) as u32);
+                let g = |v: u128| f32::from_bits(lo32(v >> (32 * i)));
                 let (p, q, s) = (g(x), g(y), g(z));
                 let sn = [p, q, s].iter().any(|v| v.is_nan() && v.to_bits() & 1 << 22 == 0);
                 let den = [p, q, s].iter().any(|v| v.is_subnormal());
@@ -337,7 +338,7 @@ impl<'a, M: Memory> X<'a, M> {
             };
             let neg = matches!(kind, 2 | 3);
             let bits = if double {
-                let g = |v: u128| f64::from_bits((v >> (64 * i)) as u64);
+                let g = |v: u128| f64::from_bits(lo64(v >> (64 * i)));
                 let (p, q, s) = (g(x), g(y), g(z));
                 let v = if p.is_nan() || q.is_nan() || s.is_nan() {
                     [p, q, s].into_iter().find(|v| v.is_nan()).unwrap().to_bits() | 1 << 51
@@ -346,7 +347,7 @@ impl<'a, M: Memory> X<'a, M> {
                 };
                 u128::from(v)
             } else {
-                let g = |v: u128| f32::from_bits((v >> (32 * i)) as u32);
+                let g = |v: u128| f32::from_bits(lo32(v >> (32 * i)));
                 let (p, q, s) = (g(x), g(y), g(z));
                 let v = if p.is_nan() || q.is_nan() || s.is_nan() {
                     [p, q, s].into_iter().find(|v| v.is_nan()).unwrap().to_bits() | 1 << 22
@@ -397,7 +398,7 @@ impl<'a, M: Memory> X<'a, M> {
                     for i in 0..128 / lane {
                         if (mask >> (lane * i + lane - 1)) & 1 != 0 {
                             let q = p.wrapping_add(i * lane / 8);
-                            tryf!(if lane == 32 { self.mem.write32(q, (v >> (32 * i)) as u32) } else { self.mem.write64(q, (v >> (64 * i)) as u64) });
+                            tryf!(if lane == 32 { self.mem.write32(q, lo32(v >> (32 * i))) } else { self.mem.write64(q, lo64(v >> (64 * i))) });
                         }
                     }
                 } else {
@@ -422,7 +423,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let lanes = |lane: u32, f: &dyn Fn(u32, u64, u64) -> u64| -> u128 {
                     let m: u128 = if lane == 64 { u128::from(u64::MAX) } else { (1u128 << lane) - 1 };
                     (0..128 / lane).fold(0u128, |r, i| {
-                        r | (u128::from(f(i, ((a >> (lane * i)) & m) as u64, ((b >> (lane * i)) & m) as u64)) & m) << (lane * i)
+                        r | (u128::from(f(i, lo64((a >> (lane * i)) & m), lo64((b >> (lane * i)) & m))) & m) << (lane * i)
                     })
                 };
                 let bcast = |lane: u32| -> u128 {
@@ -444,15 +445,15 @@ impl<'a, M: Memory> X<'a, M> {
                     Vpsllvq => lanes(64, &|_, x, y| if y < 64 { x << y } else { 0 }),
                     Vpsrlvd => lanes(32, &|_, x, y| if y < 32 { x >> y } else { 0 }),
                     Vpsrlvq => lanes(64, &|_, x, y| if y < 64 { x >> y } else { 0 }),
-                    Vpsravd => lanes(32, &|_, x, y| u64::from(((x as u32 as i32) >> y.min(31)) as u32)),
+                    Vpsravd => lanes(32, &|_, x, y| u64::from(((lo32(x) as i32) >> y.min(31)) as u32)),
                     Vpermilps if n == 3 && ins.op_kind(2) == OpKind::Immediate8 => {
-                        lanes(32, &|i, _, _| u64::from((a >> (32 * ((imm >> (2 * i)) & 3))) as u32))
+                        lanes(32, &|i, _, _| u64::from(lo32(a >> (32 * ((imm >> (2 * i)) & 3)))))
                     }
-                    Vpermilps => lanes(32, &|_, _, y| u64::from((a >> (32 * (y & 3))) as u32)),
+                    Vpermilps => lanes(32, &|_, _, y| u64::from(lo32(a >> (32 * (y & 3))))),
                     Vpermilpd if n == 3 && ins.op_kind(2) == OpKind::Immediate8 => {
-                        lanes(64, &|i, _, _| (a >> (64 * ((imm >> i) & 1))) as u64)
+                        lanes(64, &|i, _, _| lo64(a >> (64 * ((imm >> i) & 1))))
                     }
-                    _ => lanes(64, &|_, _, y| (a >> (64 * ((y >> 1) & 1))) as u64),
+                    _ => lanes(64, &|_, _, y| lo64(a >> (64 * ((y >> 1) & 1)))),
                 };
                 self.cpu.set_xmm(xi(ins.op0_register()), r);
                 self.done()

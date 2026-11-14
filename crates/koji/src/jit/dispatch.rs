@@ -7,6 +7,7 @@
 //! second argument);
 //! eip 0 marks a free entry. Entries are found by linear probing from [`slot`].
 
+use crate::cvt::{lo32, us};
 use super::wasm::{Code, Func, FuncType, Import, Module, I32};
 use super::Off;
 use crate::Cpu;
@@ -35,11 +36,11 @@ pub fn probe_slot(c: &mut Code, mask: u32) {
 pub fn module() -> alloc::vec::Vec<u8> {
     let mut m = Module::default();
     m.types.push(FuncType { params: alloc::vec![I32], results: alloc::vec![I32] });
-    m.types.push(FuncType { params: alloc::vec![I32; super::N_PARAMS as usize], results: alloc::vec![I32] });
+    m.types.push(FuncType { params: alloc::vec![I32; us(super::N_PARAMS)], results: alloc::vec![I32] });
     m.imports.push(Import::Memory);
     m.imports.push(Import::Table("table"));
-    let hash = offset_of!(Cpu, jit_hash) as u32;
-    let maskf = offset_of!(Cpu, jit_mask) as u32;
+    let hash = lo32(offset_of!(Cpu, jit_hash));
+    let maskf = lo32(offset_of!(Cpu, jit_mask));
     let (cpu, eip, h, e, st, mask) = (0, 1, 2, 3, 4, 5);
     let mut c = Code::default();
     c.get(cpu).load32(maskf).set(mask);

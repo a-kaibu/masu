@@ -3,6 +3,7 @@
 //! round the exact result again in any direction and to fewer bits, without wider arithmetic.
 //! Only the sign of `e` and whether it is 0 matter.
 
+use crate::cvt::{lo64, us};
 /// Rounding control (x87 CW bits 10-11, MXCSR bits 13-14)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Rc {
@@ -234,18 +235,18 @@ pub(crate) fn parts(v: f64) -> (bool, u128, i32) {
 pub(crate) fn sum_sign(terms: &[(bool, u128, i32)]) -> i32 {
     let live = || terms.iter().filter(|t| t.1 != 0);
     let Some(emin) = live().map(|t| t.2).min() else { return 0 };
-    let n = live().map(|t| (t.2 - emin) as usize).max().unwrap_or(0) / 64 + 4;
+    let n = live().map(|t| us(t.2 - emin)).max().unwrap_or(0) / 64 + 4;
     let (mut pos, mut neg) = (alloc::vec![0u64; n], alloc::vec![0u64; n]);
     for &(s, m, e) in live() {
         let a = if s { &mut neg } else { &mut pos };
-        let sh = (e - emin) as usize;
+        let sh = us(e - emin);
         let (w, b) = (sh / 64, sh % 64);
-        let (p0, p1) = (m as u64, (m >> 64) as u64);
+        let (p0, p1) = (lo64(m), lo64(m >> 64));
         let l = if b == 0 { [p0, p1, 0] } else { [p0 << b, p1 << b | p0 >> (64 - b), p1 >> (64 - b)] };
         let mut c = 0u128;
         for (i, slot) in a.iter_mut().enumerate().skip(w) {
             let t = u128::from(*slot) + c + if i - w < 3 { u128::from(l[i - w]) } else { 0 };
-            *slot = t as u64;
+            *slot = lo64(t);
             c = t >> 64;
             if c == 0 && i - w >= 2 {
                 break;

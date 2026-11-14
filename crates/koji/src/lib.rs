@@ -6,6 +6,7 @@
 //! the browser (the wasm linear memory itself, guest address = wasm address).
 
 #![no_std]
+use crate::cvt::{lo8, lo16, lo32, lo64, us};
 extern crate alloc;
 
 pub(crate) mod interp;
@@ -15,6 +16,7 @@ pub mod jit;
 pub mod f80;
 pub mod fpu;
 pub mod round;
+pub mod cvt;
 
 pub use iced_x86;
 pub use fpu::Fpu;
@@ -62,8 +64,8 @@ impl Cpu {
     #[inline]
     pub fn set_gpr(&mut self, i: usize, v: u64) {
         if i < 8 {
-            self.regs[i] = v as u32;
-            self.hi[i] = (v >> 32) as u32;
+            self.regs[i] = lo32(v);
+            self.hi[i] = lo32(v >> 32);
         } else {
             self.r8[i - 8] = v;
         }
@@ -173,18 +175,18 @@ pub trait Memory {
     }
     #[inline]
     fn write16(&mut self, addr: u32, v: u16) -> Result<(), Fault> {
-        self.write8(addr, v as u8)?;
-        self.write8(addr.wrapping_add(1), (v >> 8) as u8)
+        self.write8(addr, lo8(v))?;
+        self.write8(addr.wrapping_add(1), lo8(v >> 8))
     }
     #[inline]
     fn write32(&mut self, addr: u32, v: u32) -> Result<(), Fault> {
-        self.write16(addr, v as u16)?;
-        self.write16(addr.wrapping_add(2), (v >> 16) as u16)
+        self.write16(addr, lo16(v))?;
+        self.write16(addr.wrapping_add(2), lo16(v >> 16))
     }
     #[inline]
     fn write64(&mut self, addr: u32, v: u64) -> Result<(), Fault> {
-        self.write32(addr, v as u32)?;
-        self.write32(addr.wrapping_add(4), (v >> 32) as u32)
+        self.write32(addr, lo32(v))?;
+        self.write32(addr.wrapping_add(4), lo32(v >> 32))
     }
     /// Compare-and-swap of a `w` access at `addr`, atomic with respect to other threads'
     /// accesses: stores `new` if the memory holds `old`; returns what it held.
@@ -211,8 +213,8 @@ pub trait Memory {
     fn cmpxchg16(&mut self, addr: u32, old: u128, new: u128) -> Result<u128, Fault> {
         let cur = u128::from(self.read64(addr)?) | u128::from(self.read64(addr.wrapping_add(8))?) << 64;
         if cur == old {
-            self.write64(addr, new as u64)?;
-            self.write64(addr.wrapping_add(8), (new >> 64) as u64)?;
+            self.write64(addr, lo64(new))?;
+            self.write64(addr.wrapping_add(8), lo64(new >> 64))?;
         }
         Ok(cur)
     }
@@ -226,7 +228,7 @@ pub trait Memory {
     /// were readable (decoding fails cleanly on a short fetch).
     fn fetch(&mut self, addr: u32, buf: &mut [u8]) -> usize {
         for (i, b) in buf.iter_mut().enumerate() {
-            match self.read8(addr.wrapping_add(i as u32)) {
+            match self.read8(addr.wrapping_add(lo32(i))) {
                 Ok(v) => *b = v,
                 Err(_) => return i,
             }
@@ -388,16 +390,16 @@ pub fn fxsave<M: Memory + ?Sized>(cpu: &Cpu, mem: &mut M, a: u32) -> Result<(), 
         // (an 80-bit value as it is: the precise mode's, or an exact FILD integer)
         let b = cpu.fpu.st80(i).to_bytes();
         for (k, x) in b.iter().enumerate() {
-            mem.write8(a.wrapping_add(32 + 16 * i + k as u32), *x)?;
+            mem.write8(a.wrapping_add(32 + 16 * i + lo32(k)), *x)?;
         }
         for k in 10..16 {
             mem.write8(a.wrapping_add(32 + 16 * i + k), 0)?;
         }
     }
     for i in 0..if cpu.mode64 != 0 { 16 } else { 8 } {
-        let x = cpu.xmm(i as usize);
-        mem.write64(a.wrapping_add(160 + 16 * i), x as u64)?;
-        mem.write64(a.wrapping_add(168 + 16 * i), (x >> 64) as u64)?;
+        let x = cpu.xmm(us(i));
+        mem.write64(a.wrapping_add(160 + 16 * i), lo64(x))?;
+        mem.write64(a.wrapping_add(168 + 16 * i), lo64(x >> 64))?;
     }
     Ok(())
 }
@@ -412,14 +414,14 @@ pub fn fxrstor<M: Memory + ?Sized>(cpu: &mut Cpu, mem: &mut M, a: u32) -> Result
     for (i, r) in regs.iter_mut().enumerate() {
         let mut b = [0u8; 10];
         for (k, x) in b.iter_mut().enumerate() {
-            *x = mem.read8(a.wrapping_add(32 + 16 * i as u32 + k as u32))?;
+            *x = mem.read8(a.wrapping_add(32 + 16 * lo32(i) + lo32(k)))?;
         }
         *r = f80::F80::from_bytes(&b);
     }
     let mut xmm = [0u128; 16];
     for (i, x) in xmm.iter_mut().enumerate().take(if cpu.mode64 != 0 { 16 } else { 8 }) {
-        let lo = mem.read64(a.wrapping_add(160 + 16 * i as u32))?;
-        let hi = mem.read64(a.wrapping_add(168 + 16 * i as u32))?;
+        let lo = mem.read64(a.wrapping_add(160 + 16 * lo32(i)))?;
+        let hi = mem.read64(a.wrapping_add(168 + 16 * lo32(i)))?;
         *x = u128::from(lo) | u128::from(hi) << 64;
     }
     let f = &mut cpu.fpu;
@@ -429,7 +431,7 @@ pub fn fxrstor<M: Memory + ?Sized>(cpu: &mut Cpu, mem: &mut M, a: u32) -> Result
     f.exact = 0;
     f.extv = 0;
     for (i, r) in regs.iter().enumerate() {
-        f.load80(i as u32, *r);
+        f.load80(lo32(i), *r);
     }
     cpu.mxcsr = mxcsr;
     crate::jit::mx_modes(mxcsr, cpu.eip);

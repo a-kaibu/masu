@@ -7,6 +7,7 @@
 //! cross lanes (broadcasts, permutes, inserts and extracts, widening and narrowing
 //! conversions, mask extraction, PTEST) are done here directly.
 
+use crate::cvt::{lo32, lo64, us};
 use super::Stop;
 use super::X;
 use crate::{Exit, Fault, Memory};
@@ -66,8 +67,8 @@ fn vi(r: Register) -> usize {
 #[inline]
 fn lane(v: &[u128; 2], bits: u32, i: u32) -> u64 {
     let per = 128 / bits;
-    let w = v[(i / per) as usize] >> (bits * (i % per));
-    if bits == 64 { w as u64 } else { w as u64 & ((1u64 << bits) - 1) }
+    let w = v[us(i / per)] >> (bits * (i % per));
+    if bits == 64 { lo64(w) } else { lo64(w) & ((1u64 << bits) - 1) }
 }
 
 #[inline]
@@ -75,7 +76,7 @@ fn set_lane(v: &mut [u128; 2], bits: u32, i: u32, x: u64) {
     let per = 128 / bits;
     let m: u128 = if bits == 64 { u128::from(u64::MAX) } else { (1u128 << bits) - 1 };
     let s = bits * (i % per);
-    let h = &mut v[(i / per) as usize];
+    let h = &mut v[us(i / per)];
     *h = (*h & !(m << s)) | ((u128::from(x) & m) << s);
 }
 
@@ -169,11 +170,11 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Vinsertf128 | Vinserti128 => {
                 let mut a = tryf!(self.read_y(1));
-                a[(imm & 1) as usize] = tryf!(self.read_y(2))[0];
+                a[us(imm & 1)] = tryf!(self.read_y(2))[0];
                 self.cpu.set_ymm(dst(), a);
             }
             Vextractf128 | Vextracti128 => {
-                let v = tryf!(self.read_y(1))[(imm & 1) as usize];
+                let v = tryf!(self.read_y(1))[us(imm & 1)];
                 if ins.op0_kind() == OpKind::Register {
                     self.cpu.set_ymm(dst(), [v, 0]);
                 } else {
@@ -182,7 +183,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Vperm2f128 | Vperm2i128 => {
                 let (a, b) = (tryf!(self.read_y(1)), tryf!(self.read_y(2)));
-                let pick = |c: u32| if c & 8 != 0 { 0 } else { [a[0], a[1], b[0], b[1]][(c & 3) as usize] };
+                let pick = |c: u32| if c & 8 != 0 { 0 } else { [a[0], a[1], b[0], b[1]][us(c & 3)] };
                 self.cpu.set_ymm(dst(), [pick(imm), pick(imm >> 4)]);
             }
             Vpermd | Vpermps => {
@@ -190,7 +191,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let (idx, t) = (tryf!(self.read_y(1)), tryf!(self.read_y(2)));
                 let mut r = [0; 2];
                 for i in 0..8 {
-                    set_lane(&mut r, 32, i, lane(&t, 32, lane(&idx, 32, i) as u32 & 7));
+                    set_lane(&mut r, 32, i, lane(&t, 32, lo32(lane(&idx, 32, i)) & 7));
                 }
                 self.cpu.set_ymm(dst(), r);
             }
@@ -269,7 +270,7 @@ impl<'a, M: Memory> X<'a, M> {
                     Ok(v) => v,
                     Err(e) => return e,
                 };
-                self.cpu.set_ymm(dst(), [u128::from(lo as u64) | u128::from(hi as u64) << 64, 0]);
+                self.cpu.set_ymm(dst(), [u128::from(lo64(lo)) | u128::from(lo64(hi)) << 64, 0]);
             }
             _ => return self.split(),
         }
@@ -293,9 +294,9 @@ impl<'a, M: Memory> X<'a, M> {
             if ins.op_kind(i) == OpKind::Register {
                 let r = ins.op_register(i);
                 if r.is_ymm() {
-                    li.set_op_register(i, Register::XMM0 + vi(r) as u32);
+                    li.set_op_register(i, Register::XMM0 + lo32(vi(r)));
                 } else if r.is_xmm() {
-                    shared[i as usize] = Some(vi(r));
+                    shared[us(i)] = Some(vi(r));
                 }
             }
         }
@@ -333,7 +334,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let f = free.next().unwrap();
                 moved[i] = Some((f, self.cpu.xmm(f)));
                 self.cpu.set_xmm(f, snap[*r][0]);
-                hi.set_op_register(i as u32, Register::XMM0 + f as u32);
+                hi.set_op_register(lo32(i), Register::XMM0 + lo32(f));
             }
         }
         let e = self.run_keep_h(&hi);
@@ -373,7 +374,7 @@ impl<'a, M: Memory> X<'a, M> {
                 continue;
             }
             let ix = lane(&idx, ibits, i);
-            let ix = if ibits == 32 { i64::from(ix as u32 as i32) as u64 } else { ix };
+            let ix = if ibits == 32 { lo64(i64::from(lo32(lo32(ix)).cast_signed())) } else { ix };
             let mut a = base.wrapping_add(disp).wrapping_add(ix.wrapping_mul(scale));
             if !self.m64() {
                 a &= 0xffff_ffff;
