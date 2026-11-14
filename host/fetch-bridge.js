@@ -549,6 +549,26 @@ function masuOpfsStore(dir, old) {
     h.timer = setTimeout(() => close(name), MASU_HANDLE_MS);
     return h.h;
   };
+  const write = async (name, o, data) => {
+    if (!data.length) return;
+    // (this worker's own read handle let go; another's (the page's save, another tab): kept already)
+    close(name);
+    let w;
+    try {
+      w = await (await dir.getFileHandle(name, { create: true })).createWritable();
+    } catch (e) {
+      if (e?.name === 'NoModificationAllowedError') return;
+      throw e;
+    }
+    try {
+      await w.write(data);
+      await w.close();
+    } catch (e) {
+      await w.abort().catch(() => {});
+      throw e;
+    }
+    if (o) await old?.delete(o).catch(() => false);
+  };
   return {
     async match(k) {
       const name = masuChunkFile(k);
@@ -568,25 +588,18 @@ function masuOpfsStore(dir, old) {
         if (o) await old?.put(o, response);
         return;
       }
-      const data = new Uint8Array(await response.arrayBuffer());
-      if (!data.length) return;
-      // (this worker's own read handle let go; another's (the page's save, another tab): kept already)
-      close(name);
-      let w;
-      try {
-        w = await (await dir.getFileHandle(name, { create: true })).createWritable();
-      } catch (e) {
-        if (e?.name === 'NoModificationAllowedError') return;
-        throw e;
+      await write(name, o, new Uint8Array(await response.arrayBuffer()));
+    },
+    // a checked chunk's bytes as they are (masuKeep): put's write without a Response around
+    // them (that copied the chunk twice more, ~4 MiB each, on this worker)
+    async putBytes(k, data) {
+      const name = masuChunkFile(k);
+      const o = oldKey(k);
+      if (!name) {
+        if (o) await old?.put(o, new Response(data, { headers: { [MASU_CHECKED]: '1', 'x-masu-size': String(data.length) } }));
+        return;
       }
-      try {
-        await w.write(data);
-        await w.close();
-      } catch (e) {
-        await w.abort().catch(() => {});
-        throw e;
-      }
-      if (o) await old?.delete(o).catch(() => false);
+      await write(name, o, data);
     },
     async delete(k) {
       const name = masuChunkFile(k);
@@ -681,7 +694,8 @@ function masuKeep(cache, url, data) {
   masuSavingBytes += data.length;
   let timer;
   const late = new Promise((r) => (timer = setTimeout(r, MASU_PUT_MS)));
-  Promise.race([cache.put(url, new Response(data, { headers: { [MASU_CHECKED]: '1', 'x-masu-size': String(data.length) } })), late])
+  const put = cache.putBytes ? cache.putBytes(url, data) : cache.put(url, new Response(data, { headers: { [MASU_CHECKED]: '1', 'x-masu-size': String(data.length) } }));
+  Promise.race([put, late])
     .catch(() => {})
     .finally(() => {
       clearTimeout(timer);

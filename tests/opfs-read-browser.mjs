@@ -40,7 +40,20 @@ self.onmessage = async () => {
   const store = masuOpfsStore(await root.getDirectoryHandle('masu-chunks', { create: true }), old);
   const resp = (d) => new Response(d, { headers: { 'x-masu-checked': '1', 'x-masu-size': String(d.length) } });
   // N chunks in OPFS (through the store), N others in Cache Storage as an older page kept them
-  for (let i = 0; i < N; i++) await store.put(url(i), resp(data(i)));
+  // (half through put's Response, half as bytes, putBytes: masuKeep's way; the writes timed)
+  let tPut = 0, tBytes = 0;
+  for (let i = 0; i < N; i++) {
+    const d = data(i), t0 = performance.now();
+    if (i & 1) await store.putBytes(url(i), d);
+    else await store.put(url(i), resp(d));
+    if (i & 1) tBytes += performance.now() - t0;
+    else tPut += performance.now() - t0;
+  }
+  // (a key that is no chunk file's: to Cache Storage, as put sends it)
+  await store.putBytes(location.origin + '/store/trees/x.tsv', new Uint8Array([1, 2, 3]));
+  const other = await old.match(location.origin + '/store/trees/x.tsv');
+  const otherOk = !!other && (await other.arrayBuffer()).byteLength === 3;
+  const bytesChecked = (await store.match(url(1)))?.headers.get('x-masu-checked') === '1';
   for (let i = N; i < 2 * N; i++) await old.put(url(i), resp(data(i)));
   let x = 5;
   const rnd = (n) => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) >>> 8) % n;
@@ -79,7 +92,7 @@ self.onmessage = async () => {
   try { await root.getDirectoryHandle('masu-chunks').then((d) => d.removeEntry(hex(0))); } catch (_) { refused = true; }
   store.closeAll();
   const after = await store.delete(url(0));
-  postMessage({ raw, mode, opfs, cache, bad, oldOk, refused, after, gone: (await store.read(url(0), 0, 10)) === null });
+  postMessage({ raw, mode, opfs, cache, bad, oldOk, refused, after, tPut, tBytes, otherOk, bytesChecked, gone: (await store.read(url(0), 0, 10)) === null });
 };`,
           ],
           { type: 'text/javascript' },
@@ -94,7 +107,10 @@ self.onmessage = async () => {
   }, source);
   console.log(`(one handle straight: ${r.raw.toFixed(3)} ms ${r.mode})`);
   console.log(`opfs-read: 256 KiB block of a 4 MiB chunk: OPFS sync ${r.opfs.toFixed(3)} ms, Cache Storage ${r.cache.toFixed(3)} ms (${(r.cache / r.opfs).toFixed(1)}x)`);
-  assert.equal(r.bad, 0, 'every block as kept');
+  console.log(`opfs-write: 4 MiB chunk put ${(r.tPut / 6).toFixed(2)} ms, putBytes ${(r.tBytes / 6).toFixed(2)} ms`);
+  assert.equal(r.bad, 0, 'every block as kept (both ways of putting)');
+  assert.ok(r.bytesChecked, 'a chunk put as bytes reads back as checked');
+  assert.ok(r.otherOk, 'putBytes of a key that is no chunk goes to Cache Storage');
   assert.ok(r.oldOk, "Cache Storage's old entries read through the store");
   // (disk-bound at 256 KiB here: 1.1-1.2x; not slower, with room for a busy CI machine)
   assert.ok(r.opfs <= r.cache * 1.5, 'OPFS not slower than Cache Storage');
