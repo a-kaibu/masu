@@ -319,7 +319,7 @@ file	crates/kura/src/jit/park.rs	cast_possible_truncation	5
 file	crates/kura/src/jit/park.rs	unwrap_used	1
 file	crates/kura/src/pages.rs	as_conversions	40
 file	crates/kura/src/pages.rs	cast_possible_truncation	14
-file	crates/kura/src/render/d3d.rs	as_conversions	236
+file	crates/kura/src/render/d3d.rs	as_conversions	235
 file	crates/kura/src/render/d3d.rs	cast_possible_truncation	29
 file	crates/kura/src/render/d3d.rs	cast_possible_wrap	11
 file	crates/kura/src/render/d3d.rs	cast_sign_loss	7
