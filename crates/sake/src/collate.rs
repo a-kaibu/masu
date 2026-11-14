@@ -155,7 +155,7 @@ const _: () = {
 /// first mark's place, then the second's)
 fn marked(c: u16) -> Option<(u8, u16)> {
     let i = MARKED.binary_search_by_key(&c, |m| m.0).ok()?;
-    let (_, base, [m1, m2]) = MARKED[i];
+    let &(_, base, [m1, m2]) = MARKED.get(i)?;
     Some((base, u16::from(m1) * 32 + u16::from(m2)))
 }
 

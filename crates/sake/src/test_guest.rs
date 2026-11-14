@@ -87,14 +87,15 @@ pub fn call_stacked(f: Handler, args: &[u32]) -> u32 {
 /// when it is dropped. Borrowing the guard of `enter` it cannot outlive the test's hold on the
 /// guest. A test that wrote at a fixed address instead (ddraw's blit tests at 0x0100_0000)
 /// left its bytes in free space, which the next reservation there showed as its contents
-/// (#242: a new pagefile section read 0xdd513c44 in k32::mapping_names::model).
+/// (#242: a new pagefile section read 0xdd513c44 in k32::mapping_names::model). From the top
+/// of the address space, away from where the guest heap grows (snapshots show heap addresses).
 pub struct Block<'g> {
     pub at: u32,
     _guest: std::marker::PhantomData<&'g MutexGuard<'static, ()>>,
 }
 impl<'g> Block<'g> {
     pub fn new(_guest: &'g MutexGuard<'static, ()>, size: u32) -> Self {
-        let Some(at) = mem::reserve(0, size, 4, 0x2_0000, false) else { panic!("test block of {size:#x} bytes: no room") };
+        let Some(at) = mem::reserve(0, size, 4, 0x2_0000, true) else { panic!("test block of {size:#x} bytes: no room") };
         mem::commit(at, 4);
         Block { at, _guest: std::marker::PhantomData }
     }

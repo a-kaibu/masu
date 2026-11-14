@@ -138,8 +138,7 @@ fn copies_anywhere() {
     let edge = prop_oneof![6 => 0u32..4, 1 => (0u32..4).prop_map(|k| u32::MAX - k), 1 => Just(0x8000_0000)];
     let (copied, wrapped) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
     let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig { cases: 512, ..ProptestConfig::default() });
-    runner
-        .run(&(edge.clone(), edge.clone(), edge.clone(), 0u32..5, 0u32..5, 0u32..5, 0u32..5), |(x, y, z, x0, y0, x1, y1)| {
+    let check = |(x, y, z, x0, y0, x1, y1): (u32, u32, u32, u32, u32, u32, u32)| -> Result<(), TestCaseError> {
             let dst = tex(&[0; 16]);
             let bx = mem(6);
             put(bx, &[x0, y0, 0, x1, y1, 1]);
@@ -164,8 +163,17 @@ fn copies_anywhere() {
             call1(m(IF_TEX2D, 2), &[dst]);
             prop_assert_eq!(got, want, "at ({}, {}, {}) box {:?}", x, y, z, [x0, y0, x1, y1]);
             Ok(())
-        })
-        .unwrap();
+    };
+    runner.run(&(edge.clone(), edge.clone(), edge.clone(), 0u32..5, 0u32..5, 0u32..5, 0u32..5), check).unwrap();
+    // (and every place whose sum wraps, whatever the sample drew: a count of the sample's own
+    // was below the bound once in a while, #242)
+    for x in [u32::MAX, u32::MAX - 1, u32::MAX - 3, 0x8000_0000, 0] {
+        for y in [u32::MAX, u32::MAX - 2, 0] {
+            for (x0, y0, x1, y1) in [(0, 0, 1, 1), (0, 0, 4, 4), (1, 2, 3, 4)] {
+                check((x, y, 0, x0, y0, x1, y1)).unwrap();
+            }
+        }
+    }
     // (both kinds seen: boxes that fit, places whose sums wrap)
     assert!(copied.get() > 10 && wrapped.get() > 5, "copied {} wrapped {}", copied.get(), wrapped.get());
     call1(m(IF_TEX2D, 2), &[src]);
