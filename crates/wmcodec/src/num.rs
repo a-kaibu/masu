@@ -5,14 +5,14 @@ const _: () = assert!(usize::BITS >= 32);
 
 /// u32 to usize (lossless: usize has at least 32 bits).
 #[inline(always)]
-pub const fn us(x: u32) -> usize {
-    x as usize
+pub fn us(x: u32) -> usize {
+    usize::try_from(x).unwrap_or(usize::MAX)
 }
 
 /// i32 to usize for indexing: two's complement, so a negative index is huge and fails the
 /// bounds check as `as usize` did.
 #[inline(always)]
-pub const fn ix(x: i32) -> usize {
+pub fn ix(x: i32) -> usize {
     us(x.cast_unsigned())
 }
 
@@ -45,10 +45,10 @@ mod tests {
         /// each is the `as` it replaces
         #[test]
         fn same_as_as(x in any::<i32>(), u in any::<u64>()) {
-            prop_assert_eq!(ix(x), x as u32 as usize);
-            prop_assert_eq!(lo8(x.cast_unsigned()), x as u8);
-            prop_assert_eq!(lo16(x), x as i16);
-            prop_assert_eq!(lo32(u), u as u32);
+            prop_assert_eq!(ix(x), usize::try_from(x.cast_unsigned()).unwrap());
+            prop_assert_eq!(lo8(x.cast_unsigned()), u8::try_from(x & 0xff).unwrap());
+            prop_assert_eq!(lo16(x), i16::try_from(((x & 0xffff) ^ 0x8000) - 0x8000).unwrap());
+            prop_assert_eq!(lo32(u), u32::try_from(u & 0xffff_ffff).unwrap());
         }
     }
 }
