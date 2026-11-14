@@ -11,7 +11,8 @@ crate against tools/ci/lint-ratchet.tsv. A crate may only go down: a push that a
 
 The tsv also has the count per file, which is what a failure prints the growth of. `allow`/`expect`
 attributes naming a tracked lint count as one of their own ("allow-attr"), so silencing is not a
-way past it. Code under #[cfg(test)] may unwrap (clippy.toml).
+way past it. Code under #[cfg(test)] may unwrap (clippy.toml), and test files (tests/, *_tests.rs,
+tests.rs) are not counted: the tests that pin behaviour before a rewrite may cast freely.
 """
 import collections, json, os, re, subprocess, sys
 
@@ -29,6 +30,7 @@ LINTS = [
     "fn_to_numeric_cast_any",
     "ptr_as_ptr",
 ]
+TEST_FILE = re.compile(r"(^|/)(tests|benches)/|(^|/|_)tests?\.rs$")
 ALLOW = re.compile(r"#!?\[\s*(?:allow|expect)\s*\(([^\]]*)\)\s*\]")
 
 
@@ -85,7 +87,8 @@ def crate_of(f):
 def count():
     per_file = collections.Counter()
     for f, _, _, lint in list(clippy()) + list(allow_attrs()):
-        per_file[(f, lint)] += 1
+        if not TEST_FILE.search(f):
+            per_file[(f, lint)] += 1
     per_crate = collections.Counter()
     for (f, lint), n in per_file.items():
         per_crate[(crate_of(f), lint)] += n
