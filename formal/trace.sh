@@ -22,7 +22,8 @@ fail=0; n=0
 for t in "$dir"/*/; do
   spec=$(cat "$t/SPEC")
   cp "$HERE/tla/$spec.tla" "$HERE/tla/${spec}Trace.tla" "$HERE/tla/${spec}Trace.cfg" "$t"
-  data=$(ls "$t" | grep -v "^$spec\|^SPEC" | head -1)
+  data=""
+  for f in "$t"*; do f=${f##*/}; case $f in "$spec"*|SPEC*) ;; *) data=$f; break ;; esac; done
   out=$(cd "$t" && "$TLC" -workers 1 -cleanup -config "${spec}Trace.cfg" "${spec}Trace.tla" 2>&1)
   if [ $? -ne 0 ]; then
     i=$(echo "$out" | grep -o '^/\\ i = [0-9]*' | tail -1 | grep -o '[0-9]*$')

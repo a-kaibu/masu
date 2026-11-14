@@ -3,7 +3,7 @@
 # package-lock.json is committed: this repository uses pnpm (pnpm install --frozen-lockfile,
 # pnpm exec, pnpm add --dir for tools). npm is slower and keeps its own lock file.
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.." || exit 1
 bad=0
 if git ls-files | grep -E '(^|/)(package-lock\.json|npm-shrinkwrap\.json)$'; then bad=1; fi
 # (the words npm / npx used as commands; this file and lock files aside)

@@ -8,7 +8,7 @@
 # count): targets fuzzed at once (each libFuzzer run is one process; every target still gets
 # its full SECONDS). Each target's output is printed when it ends.
 set -u -o pipefail
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/.." || exit 1
 secs=${1:-60}
 shift || true
 only=" $* "

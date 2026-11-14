@@ -27,7 +27,8 @@ PY
 # (ImageDecoder wants a secure context: a page of localhost)
 PORT=${PORT:-8766}
 python3 -m http.server "$PORT" >/dev/null 2>&1 &
-trap "kill $! 2>/dev/null || true; rm -rf $W" EXIT
+srv=$!
+trap 'kill "$srv" 2>/dev/null || true; rm -rf "$W"' EXIT
 sleep 1
 URL=http://localhost:$PORT/ node "$HERE/cap.mjs" planes.json *.jpg
 python3 - "$ROOT" "$HERE/planes.bin" <<'PY'

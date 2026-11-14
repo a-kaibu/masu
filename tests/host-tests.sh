@@ -53,7 +53,7 @@ for t in $TESTS; do
       # (d3d12.dll as a delay-load import, as UnityPlayer.dll has it: mingw's own helper)
       ldir=$OUT/lib-$t-${1%%-*}
       local at16=@16 at8=@8
-      [ "${1%%-*}" = x86_64 ] && at16= at8=
+      [ "${1%%-*}" = x86_64 ] && at16="" at8=""
       mkdir -p "$ldir" && printf 'LIBRARY d3d12.dll\nEXPORTS\nD3D12CreateDevice%s\nD3D12GetDebugInterface%s\nord101%s @101 NONAME\nord102%s @102 NONAME\n' "$at16" "$at8" "$at16" "$at8" > "$ldir/d3d12.def" &&
         "${1%gcc}dlltool" -k -d "$ldir/d3d12.def" -y "$ldir/libd3d12.a"
       return $?

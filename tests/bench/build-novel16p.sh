@@ -9,7 +9,8 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 DIR=$(mkdir -p "$1" && cd "$1" && pwd)
-export WATCOM=$(cd "$2" && pwd)/watcom
+WATCOM=$(cd "$2" && pwd)/watcom
+export WATCOM
 REPO=https://gitlab.com/freepascal.org/fpc/source.git
 COMMIT=cda6e50f26f319d22fc0458ec99ba8fc369cac73
 FPC=$DIR/fpc/lib/fpc/3.3.1

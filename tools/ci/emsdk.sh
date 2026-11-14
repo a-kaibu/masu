@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced: Emscripten (the release the project builds with, 4.0.15) in $EMSDK4 (default
 # ~/emsdk4), downloaded the first time. Used by tools/ci/build.sh and tests/bench/js.sh.
 export EMSDK4=${EMSDK4:-$HOME/emsdk4}

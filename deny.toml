@@ -1,0 +1,53 @@
+# cargo-deny (tools/ci/lint-tools.sh; CI: the "Dependencies" step of the test job): the
+# dependency tree's known vulnerabilities (RustSec), licenses, sources and duplicate crates.
+[graph]
+all-features = true
+
+[advisories]
+# (every RustSec advisory fails, unmaintained ones too; an exception names the advisory and why)
+version = 2
+yanked = "deny"
+ignore = [
+  # zip 2: the four advisories are all in ZipArchive::extract / ZipStreamReader::extract (symlinks,
+  # SUID bits, permissions), which masu never calls (it reads entries one by one); 9.x is a new API
+  { id = "RUSTSEC-2026-0367", reason = "zip extract(): not called" },
+  { id = "RUSTSEC-2026-0368", reason = "zip extract(): not called" },
+  { id = "RUSTSEC-2026-0369", reason = "zip extract(): not called" },
+  { id = "RUSTSEC-2026-0429", reason = "zip extract(): not called" },
+  # rsa (sake's CryptoAPI/CNG for the game's own RSA): no fixed release yet; the keys are the
+  # game's, nothing secret of the user's goes through it, and there is no timing oracle to reach
+  { id = "RUSTSEC-2023-0071", reason = "no fix released; guest RSA, no user secret" },
+  # crypto-bigint 0.5 under elliptic-curve 0.13 (sake's ECDSA/ECDH for guests): fixed only in 0.7
+  { id = "RUSTSEC-2026-0387", reason = "needs elliptic-curve 0.14; guest crypto, no user secret" },
+  # unmaintained, no replacement in the dependents yet
+  { id = "RUSTSEC-2024-0436", reason = "paste: via texture2ddecoder, kura dev-dependency only" },
+  { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: via ureq 2's rustls-native-certs" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser: via ab_glyph; sake's font rasterizer" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = ["0BSD", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "BSL-1.0", "CC0-1.0", "CDLA-Permissive-2.0", "ISC", "LGPL-2.1-or-later", "MIT", "MIT-0", "MPL-2.0", "Unicode-3.0", "Unlicense", "Zlib", "LicenseRef-a-kaibu-sdrs"]
+
+# (git dependencies with no license field: siglus_rs's MPEG-2 decoder, whose repository is
+# MPL-2.0 (LICENSE-MPL-2.0); a-kaibu/sdrs, which names none yet)
+[[licenses.clarify]]
+crate = "na_mpeg2_decoder"
+expression = "MPL-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "sdrs-core"
+expression = "LicenseRef-a-kaibu-sdrs"
+license-files = []
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = ["https://github.com/xmoezzz/siglus_rs", "https://github.com/a-kaibu/sdrs"]

@@ -13,7 +13,7 @@ ffmpeg -v error -f lavfi -i "$S:s=44100:d=0.5" -c:a libvorbis -q:a 2 -map_metada
 {
   echo "/* mfmore_gen.sh */"
   for n in flac wma ogg; do
-    echo "static const unsigned char file_$n[] = {"
+    echo "static const unsigned char file_${n}[] = {"
     od -An -v -tx1 "$T/a.$n" | sed 's/ \([0-9a-f][0-9a-f]\)/0x\1,/g'
     echo "};"
   done

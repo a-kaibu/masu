@@ -12,5 +12,4 @@ description = "Differential test of koji's long-mode JIT (jit/long.rs) against i
 koji = { path = "../../crates/koji" }
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "encoder", "code_asm", "op_code_info", "fast_fmt"] }
 wasmtime = { version = "29", default-features = false, features = ["cranelift", "runtime", "threads"] }
-anyhow = "1"
 libc = "0.2"

@@ -13,7 +13,7 @@ ffmpeg -v error -f lavfi -i "aevalsrc=0.5*sin(2*PI*550*t):s=22050:d=0.3" -c:a pc
 {
   echo "/* mfreader_gen.sh */"
   for n in m4a mp3 wav; do
-    echo "static const unsigned char file_$n[] = {"
+    echo "static const unsigned char file_${n}[] = {"
     od -An -v -tx1 "$T/a.$n" | sed 's/ \([0-9a-f][0-9a-f]\)/0x\1,/g'
     echo "};"
   done

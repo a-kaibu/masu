@@ -12,7 +12,7 @@ ffmpeg -v error -f lavfi -i "aevalsrc=0.5*sin(2*PI*550*t):s=22050:d=0.5" -c:a li
 {
   echo "/* acmmp3_gen.sh */"
   for n in s m; do
-    echo "static const unsigned char mp3_$n[] = {"
+    echo "static const unsigned char mp3_${n}[] = {"
     od -An -v -tx1 "$T/$n.mp3" | sed 's/ \([0-9a-f][0-9a-f]\)/0x\1,/g'
     echo "};"
   done

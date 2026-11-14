@@ -261,9 +261,44 @@ jobs:
         run: cargo check --workspace --all-targets --locked
       # (clippy's lints for what the compiler could have caught: `as`, `_` arms on enums, unwrap;
       # per crate they only go down, tools/ci/lint-ratchet.tsv)
-      - name: Type-safety lint ratchet
+      - name: Lint ratchet (type-safety, robustness and masu-* lints; tools/ci/lint-ratchet.py)
         timeout-minutes: 15
         run: python3 tools/ci/lint-ratchet.py
+      # (the linters beside clippy, pinned binaries: tools/ci/lint-tools.sh; RustSec's advisory
+      # database once a day)
+      - id: cache-lint
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ~/.cache/masu-lint
+          key: lint-tools-${{ runner.os }}-${{ hashFiles('tools/ci/lint-tools.sh') }}
+      - run: echo "LINT_BIN=$(tools/ci/lint-tools.sh)" >> "$GITHUB_ENV"
+      - if: steps.cache-lint.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ~/.cache/masu-lint
+          key: lint-tools-${{ runner.os }}-${{ hashFiles('tools/ci/lint-tools.sh') }}
+      - run: echo "LINT_DAY=$(date -u +%Y%m%d)" >> "$GITHUB_ENV"
+      - id: cache-advisory
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: ~/.cargo/advisory-dbs
+          key: advisory-db-${{ env.LINT_DAY }}
+          restore-keys: advisory-db-
+      # (known vulnerabilities, licenses, sources: deny.toml; dependencies no code uses)
+      - name: Dependencies (cargo-deny, cargo-machete)
+        run: |
+          PATH=$LINT_BIN:$PATH
+          cargo deny --log-level warn check
+          cargo machete
+      - if: ${{ !cancelled() && steps.cache-advisory.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: ~/.cargo/advisory-dbs
+          key: advisory-db-${{ env.LINT_DAY }}
+      # (every shell script and every workflow's run: blocks, warnings and errors; the runner
+      # image's shellcheck. GitHub's background:/wait: steps are newer than actionlint)
+      - name: Shell scripts and workflows (shellcheck, actionlint)
+        run: tools/ci/shell-lint.sh
       # (the binary cargo test just built: Docker's RustFS stands in for the storage server, so
       # this needs no runner or cache of its own; the old job's timeout, now on the step)
       - name: Encrypted storage against RustFS

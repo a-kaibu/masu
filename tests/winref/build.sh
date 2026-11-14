@@ -55,6 +55,7 @@ for t in changenotify callwndhook xfile mmiobuf nullcall dxversion dircase intop
   [[ "$l" == *-nostdlib* ]] && fpu=
   i686-w64-mingw32-gcc -O2 -mmmx -msse2 -mssse3 -o "$OUT/host_$t-32.exe" "$src" "$OUT/ja32.res" $fpu $l
 done
+# shellcheck disable=SC2046 # (libs: the test's own -l flags, one word each)
 x86_64-w64-mingw32-gcc -O2 -o "$OUT/host_struct64-64.exe" "$ROOT/host/tests/struct64.c" "$OUT/ja64.res" $(libs "$ROOT/host/tests/struct64.c")
 x86_64-w64-mingw32-gcc -O2 -o "$OUT/host_msvcpchar-64.exe" "$ROOT/host/tests/msvcpchar.c" "$OUT/ja64.res"
 # (an exe and two DLLs at fixed bases above 4G: the DLLs beside it, found by LoadLibrary)

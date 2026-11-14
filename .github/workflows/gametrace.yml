@@ -427,7 +427,7 @@ jobs:
             git worktree remove --force "$M" 2>/dev/null || true
             git worktree add -q --detach "$M" FETCH_HEAD
             mkdir -p "$M/testdata/apitrace"
-            took= skip=
+            took="" skip=""
             for m in "${o[@]}"; do
               n=$(basename "$m" .txt)
               # (a title recorded again: its old .txt, and parts of the old way, go)

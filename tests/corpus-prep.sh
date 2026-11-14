@@ -27,7 +27,7 @@ if [ ! -d x ] && [ ! -s "$f" ]; then
   # MIRROR (tests/corpus/mirror.py fetch): the VN Mirror Archive's copy when it has the title,
   # checked against its sha256; else (or when that fails) the title's own site
   if [ -n "${MIRROR:-}" ] && m=$(python3 -I "$HERE/corpus/mirror.py" lookup "$MIRROR" "$url"); then
-    IFS=$'\t' read -r murl msha msize <<< "$m"
+    IFS=$'\t' read -r murl msha _ <<< "$m"
     rm -f "$f.part"
     if dl "$murl" && echo "$msha  $f.part" | sha256sum -c --status; then ok=mirror
     else echo "mirror: $murl failed or its sha256 differs; the title's own site" >&2; rm -f "$f.part"
@@ -101,7 +101,7 @@ if [ ! -d x ]; then
   # writing a 1 GB package into the in-memory file system runs out of wasm memory)
   # (rounds: an installer can come out of another one, kagura_r_trial010a.exe is a self-extracting
   # zip of an Inno Setup installer; a round that changed no .exe ends it)
-  for round in 1 2 3; do
+  for _ in 1 2 3; do
   before=$(find x.part -type f -iname '*.exe' | sort | md5sum)
   find x.part -type f -iname '*.exe' -print0 | while IFS= read -r -d '' s; do
     # (a setup program that runs an .msi stays, for sake: tests/corpus/install.py keep)
@@ -151,6 +151,7 @@ if [ ! -d x ]; then
   # BGI install media: a 16-byte "0123456789ABCDEF" file next to BGIForInstalling.exe marks
   # the media, and the game run from there quits at once (the installed copy doesn't have it)
   find x.part -type f -iname BGIForInstalling.exe -print0 | while IFS= read -r -d '' b; do
+    # shellcheck disable=SC2038 # (grep -l: one name a line, xargs -d '\n')
     find "$(dirname "$b")" -maxdepth 1 -type f -size 16c -exec grep -lx -m1 0123456789ABCDEF {} + 2>/dev/null | xargs -r -d '\n' rm -f
   done
   find x.part -type f -iname '*.msi' -print0 | while IFS= read -r -d '' m; do

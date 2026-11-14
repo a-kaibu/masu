@@ -39,7 +39,7 @@ if [ ! -f "$OUT/browser.txt" ]; then
 fi
 shopt -s nullglob
 traces=("$HERE"/traces/*.trace)
-games=($(python3 "$HERE/games.py" names))
+mapfile -t games < <(python3 "$HERE/games.py" names)
 # (NO_TRACES=1: the replayers alone)
 [ -n "${NO_TRACES:-}" ] && traces=() games=()
 if [ $(( ${#traces[@]} + ${#games[@]} )) -gt 0 ]; then
