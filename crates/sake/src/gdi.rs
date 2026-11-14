@@ -6198,3 +6198,8 @@ mod fast_blit_tests {
 /// every size, random pixels and values, against the code as it was (`Old`, copied verbatim).
 #[cfg(test)]
 mod view_pixel_tests;
+
+/// gdi32 as a whole, pinned before the rest of it is rewritten with types: seeded random programs
+/// of GDI calls, each answer and every bitmap's bytes after it (gdi/api_golden.txt)
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod api_golden_tests;
