@@ -549,10 +549,12 @@ impl Off {
         Off::fpu(offset_of!(Fpu, sw))
     }
     fn xmm(r: Register) -> u32 {
-        (offset_of!(Cpu, xmm) + 16 * (r as usize - Register::XMM0 as usize)) as u32
+        debug_assert!(r.is_xmm(), "{r:?}");
+        (offset_of!(Cpu, xmm) + 16 * r.number()) as u32
     }
     fn mm(r: Register) -> u32 {
-        (offset_of!(Cpu, mm) + 8 * (r as usize - Register::MM0 as usize)) as u32
+        debug_assert!(r.is_mm(), "{r:?}");
+        (offset_of!(Cpu, mm) + 8 * r.number()) as u32
     }
 }
 

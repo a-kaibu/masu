@@ -1648,9 +1648,9 @@ impl<'a, M: Memory> X<'a, M> {
                 unsafe {
                     match size {
                         1 => core::ptr::write_bytes(d, v as u8, len as usize),
-                        2 => (0..n as usize).for_each(|i| (d as *mut u16).add(i).write_unaligned(v as u16)),
-                        4 => (0..n as usize).for_each(|i| (d as *mut u32).add(i).write_unaligned(v as u32)),
-                        _ => (0..n as usize).for_each(|i| (d as *mut u64).add(i).write_unaligned(v)),
+                        2 => (0..n as usize).for_each(|i| d.cast::<u16>().add(i).write_unaligned(v as u16)),
+                        4 => (0..n as usize).for_each(|i| d.cast::<u32>().add(i).write_unaligned(v as u32)),
+                        _ => (0..n as usize).for_each(|i| d.cast::<u64>().add(i).write_unaligned(v)),
                     }
                 }
             }

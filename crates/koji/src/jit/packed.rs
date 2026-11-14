@@ -672,7 +672,7 @@ impl Gen<'_> {
         let depth = self.depth;
         let seen = |g: &Self, i: u32| {
             ins.op_kind(i) == OpKind::Register && ins.op_register(i).is_xmm() && {
-                let r = ins.op_register(i) as usize - Register::XMM0 as usize;
+                let r = ins.op_register(i).number();
                 let want = super::mxguard::key(k, i).map(|k| (k, depth));
                 want.is_some() && g.mx_seen[r].contains(&want)
             }
@@ -681,7 +681,7 @@ impl Gen<'_> {
         let checks = super::mxguard::operands(&mut self.c, k, (k.3 && !s0).then_some(super::L_MXV), (!s1).then_some(super::L_MXV + 1), Some(L_V0));
         for i in 0..2 {
             if (i == 1 || k.3) && ins.op_kind(i) == OpKind::Register && ins.op_register(i).is_xmm() {
-                let r = ins.op_register(i) as usize - Register::XMM0 as usize;
+                let r = ins.op_register(i).number();
                 let want = super::mxguard::key(k, i).map(|k| (k, depth));
                 if !self.mx_seen[r].contains(&want) {
                     self.mx_seen[r] = [self.mx_seen[r][1], want];

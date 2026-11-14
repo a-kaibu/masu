@@ -59,11 +59,8 @@ fn half() -> &'static [Code] {
 /// Register number of an XMM or YMM register.
 #[inline]
 fn vi(r: Register) -> usize {
-    if r.is_ymm() {
-        r as usize - Register::YMM0 as usize
-    } else {
-        r as usize - Register::XMM0 as usize
-    }
+    debug_assert!(r.is_xmm() || r.is_ymm(), "{r:?}");
+    r.number()
 }
 
 #[inline]

@@ -217,7 +217,7 @@ impl<'a, M: Memory> X<'a, M> {
         if !dst.is_xmm() || !src1.is_xmm() {
             return Exit::InvalidOpcode;
         }
-        self.cpu.vex_tmp = self.cpu.xmm(src1 as usize - Register::XMM0 as usize);
+        self.cpu.vex_tmp = self.cpu.xmm(src1.number());
         li.set_op_kind(0, OpKind::Register);
         li.set_op0_register(Register::XMM16);
         for j in 1..li.op_count() {
@@ -271,7 +271,7 @@ impl<'a, M: Memory> X<'a, M> {
             self.cpu.mxcsr = mx;
         }
         if exit == Exit::Continue {
-            self.cpu.set_xmm(dst as usize - Register::XMM0 as usize, self.cpu.vex_tmp);
+            self.cpu.set_xmm(dst.number(), self.cpu.vex_tmp);
         }
         exit
     }
@@ -473,7 +473,8 @@ fn vex_only(mn: iced_x86::Mnemonic) -> bool {
 
 #[inline]
 fn xi(r: Register) -> usize {
-    r as usize - Register::XMM0 as usize
+    debug_assert!(r.is_xmm(), "{r:?}");
+    r.number()
 }
 
 /// The legacy form of a VEX 128-bit instruction that runs as one (see the module docs), and

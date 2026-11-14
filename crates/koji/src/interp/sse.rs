@@ -123,9 +123,9 @@ impl<'a, M: Memory> X<'a, M> {
             OpKind::Register => {
                 let r = self.ins.op_register(i);
                 Ok(if r.is_xmm() {
-                    self.cpu.xmm(r as usize - Register::XMM0 as usize)
+                    self.cpu.xmm(r.number())
                 } else if r.is_mm() {
-                    u128::from(self.cpu.mm[r as usize - Register::MM0 as usize])
+                    u128::from(self.cpu.mm[r.number()])
                 } else {
                     u128::from(self.get_reg(r))
                 })
@@ -172,9 +172,9 @@ impl<'a, M: Memory> X<'a, M> {
             OpKind::Register => {
                 let r = self.ins.op_register(i);
                 if r.is_xmm() {
-                    self.cpu.set_xmm(r as usize - Register::XMM0 as usize, v);
+                    self.cpu.set_xmm(r.number(), v);
                 } else if r.is_mm() {
-                    self.cpu.mm[r as usize - Register::MM0 as usize] = v as u64;
+                    self.cpu.mm[r.number()] = v as u64;
                 } else {
                     self.set_reg(r, v as u64);
                 }
@@ -261,7 +261,7 @@ impl<'a, M: Memory> X<'a, M> {
         if self.tiny != 0 && matches!(r, Exit::Continue | Exit::SingleStep) && self.ins.op_kind(0) == OpKind::Register {
             let r0 = self.ins.op_register(0);
             if r0.is_xmm() {
-                let k = r0 as usize - Register::XMM0 as usize;
+                let k = r0.number();
                 let b = f.out_bits;
                 let mut v = self.cpu.xmm(k);
                 for i in 0..f.out_lanes {
