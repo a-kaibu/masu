@@ -26,6 +26,24 @@ const FOURCC_LIST: u32 = u32::from_le_bytes(*b"LIST");
 /// write there would grow it to that much host memory: refused instead, as a full disk).
 const MAX_WRITE: u64 = 512 << 20;
 
+/// A file being written made `end` bytes long (zeros up to there): false when that is past
+/// MAX_WRITE or the host has no memory for it, as a full disk (#242: growing by doubling asked
+/// for 990 MB under the Mutants runs' 3 GB address-space cap and aborted the process)
+fn grow_to(v: &mut Vec<u8>, end: u64) -> bool {
+    let Ok(end) = usize::try_from(end) else { return false };
+    if end as u64 > MAX_WRITE {
+        return false;
+    }
+    let more = end.saturating_sub(v.len());
+    if more > 0 && v.try_reserve(more).is_err() && v.try_reserve_exact(more).is_err() {
+        return false;
+    }
+    if v.len() < end {
+        v.resize(end, 0);
+    }
+    true
+}
+
 /// Where the chunk after the one at `at` of `size` data bytes starts (8 header bytes, the data
 /// padded to even), or None when that is not past `at` in a 32-bit file (a size near 4 GB:
 /// the walk would come back to `at`, or before it, for ever).
@@ -143,15 +161,12 @@ impl Mmio {
     fn write(&mut self, src: u32, n: u32) -> u32 {
         let n = match &mut self.data {
             Data::File(v) => {
-                let end = self.pos as u64 + n as u64;
-                if end > MAX_WRITE {
+                let end = u64::from(self.pos) + u64::from(n);
+                if !grow_to(v, end) {
                     return u32::MAX;
                 }
-                let end = end as usize;
-                if v.len() < end {
-                    v.resize(end, 0);
-                }
-                v[self.pos as usize..end].copy_from_slice(mem::slice(src, n));
+                let Some(to) = v.get_mut(self.pos as usize..end as usize) else { return u32::MAX };
+                to.copy_from_slice(mem::slice(src, n));
                 n
             }
             Data::Mem(a, len) => {
@@ -169,15 +184,12 @@ impl Mmio {
         let t = v.to_le_bytes();
         match &mut self.data {
             Data::File(d) => {
-                let end = self.pos as u64 + 4;
-                if end > MAX_WRITE {
+                let end = u64::from(self.pos) + 4;
+                if !grow_to(d, end) {
                     return;
                 }
-                let end = end as usize;
-                if d.len() < end {
-                    d.resize(end, 0);
-                }
-                d[self.pos as usize..end].copy_from_slice(&t);
+                let Some(to) = d.get_mut(self.pos as usize..end as usize) else { return };
+                to.copy_from_slice(&t);
             }
             Data::Mem(a, len) => {
                 if self.pos as u64 + 4 <= *len as u64 {
@@ -506,12 +518,13 @@ fn mmioAscend(c: &mut Ctx) -> u32 {
             }
             if size & 1 != 0 {
                 let z = [0u8];
-                if let (Data::File(v), true) = (&mut f.data, (at as u64) < MAX_WRITE) {
-                    if v.len() <= at as usize {
-                        v.resize(at as usize + 1, 0);
+                if let Data::File(v) = &mut f.data {
+                    if grow_to(v, u64::from(at) + 1) {
+                        if let Some(b) = v.get_mut(at as usize) {
+                            *b = z[0];
+                            f.dirty = true;
+                        }
                     }
-                    v[at as usize] = z[0];
-                    f.dirty = true;
                 }
             }
         }
@@ -824,6 +837,22 @@ mod tests {
         /// Any sequence of mmio calls on any RIFF-shaped file, read-only or writable: no panic
         /// (abort), every descend ends (each step of its walk past the last), the file never
         /// grows past MAX_WRITE, and a read gives no more than was asked and the file holds.
+        /// A file grows to any length up to MAX_WRITE with zeros after what it held, never past
+        /// it, and what it held stays (#242)
+        #[test]
+        fn grow_to_is_bounded(held in prop::collection::vec(any::<u8>(), 0..64), end in prop_oneof![0u64..256, Just(MAX_WRITE + 1), Just(u64::MAX)]) {
+            let mut v = held.clone();
+            let ok = grow_to(&mut v, end);
+            prop_assert_eq!(ok, end <= MAX_WRITE);
+            prop_assert_eq!(&v[..held.len()], &held[..]);
+            if ok {
+                prop_assert_eq!(v.len() as u64, end.max(held.len() as u64));
+                prop_assert!(v[held.len()..].iter().all(|&b| b == 0));
+            } else {
+                prop_assert_eq!(v.len(), held.len());
+            }
+        }
+
         #[test]
         fn any_calls_on_any_riff(bytes in arb_riff(), writable in any::<bool>(), ops in prop::collection::vec(arb_op(), 0..24)) {
             let _g = enter();

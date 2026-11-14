@@ -1731,13 +1731,13 @@ file	crates/sake/src/mixer.rs	cast_possible_truncation	2
 file	crates/sake/src/mixer.rs	cast_sign_loss	1
 file	crates/sake/src/mmdevapi.rs	arithmetic_side_effects	16
 file	crates/sake/src/mmdevapi.rs	wildcard_enum_match_arm	1
-file	crates/sake/src/mmio.rs	arithmetic_side_effects	84
-file	crates/sake/src/mmio.rs	as_conversions	64
+file	crates/sake/src/mmio.rs	arithmetic_side_effects	82
+file	crates/sake/src/mmio.rs	as_conversions	61
 file	crates/sake/src/mmio.rs	cast_possible_truncation	8
 file	crates/sake/src/mmio.rs	cast_possible_wrap	1
 file	crates/sake/src/mmio.rs	cast_sign_loss	6
 file	crates/sake/src/mmio.rs	checked_conversions	1
-file	crates/sake/src/mmio.rs	indexing_slicing	8
+file	crates/sake/src/mmio.rs	indexing_slicing	5
 file	crates/sake/src/mmio.rs	string_slice	2
 file	crates/sake/src/mmio.rs	unwrap_used	3
 file	crates/sake/src/mmio.rs	wildcard_enum_match_arm	1
