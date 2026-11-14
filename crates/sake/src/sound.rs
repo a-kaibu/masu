@@ -209,6 +209,7 @@ pub(crate) fn g711(code: u8, alaw: bool) -> i16 {
 /// Non-extensible formats are PCM, float or G.711 (through the mapper only) of one or two
 /// channels; extensible ones need cbSize 22, nAvgBytesPerSec = nBlockAlign * rate and the
 /// valid bits to fit.
+#[cfg(test)]
 pub(crate) fn wave_format_check(tag: u16, ch: u16, rate: u32, avg: u32, align: u16, bits: u16, ext: Option<(u16, u16, [u8; 16])>, direct: bool) -> u32 {
     mm(wave_format_rule(tag, ch, rate, avg, align, bits, ext, direct))
 }

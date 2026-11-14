@@ -357,6 +357,7 @@ pub unsafe extern "C" fn vnhost_mem_info(out: *mut [f64; 2]) {
 
 /// How often vnhost_mem_info walks the heap again (ms); between, the last answer.
 pub const MALLINFO_MS: f64 = 5000.0;
+#[cfg(target_os = "emscripten")]
 static MALLINFO: Every = Every::new(MALLINFO_MS);
 
 /// A value worked out again at most once per `ms` (whoever asks, from any thread): the last one
