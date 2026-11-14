@@ -385,9 +385,11 @@ fn pass(c: &mut Ctx, out: &mut [f32]) {
     }
     // then the graph, from the voices furthest from the mastering voice: effects, volume, sum
     let plan: Vec<(u32, u32, f32, bool)> = with(|e| {
-        let mut v: Vec<(u32, u32)> = e.voices.keys().map(|&k| (depth(e, k), k)).collect();
+        // (voices at one depth newest first, as the sources are: by address, the sums' float
+        // order would follow the heap)
+        let mut v: Vec<(u32, u64, u32)> = e.voices.iter().map(|(&k, x)| (depth(e, k), x.seq, k)).collect();
         v.sort_unstable_by(|a, b| b.cmp(a));
-        v.into_iter().map(|(_, k)| { let x = &e.voices[&k]; (k, dest_of(e, k), x.volume, x.kind == Kind::Master) }).collect()
+        v.into_iter().map(|(_, _, k)| { let x = &e.voices[&k]; (k, dest_of(e, k), x.volume, x.kind == Kind::Master) }).collect()
     });
     for (id, dest, vol, master) in plan {
         let started = bufs.contains_key(&id);
@@ -1636,3 +1638,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "xaudio2_snapshot_tests.rs"]
+mod snapshot_tests;
