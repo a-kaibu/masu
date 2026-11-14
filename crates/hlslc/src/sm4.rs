@@ -1,7 +1,8 @@
 //! Shader model 4/5 code: instructions on virtual temporaries, their register allocation, the
 //! token encoding and the DXBC container (RDEF, ISGN, OSGN, SHDR/SHEX).
 
-pub use dxwgsl::tpf::Opcode;
+pub use dxwgsl::tpf::{OpType, Opcode};
+use dxwgsl::tpf;
 
 /// A register file and index. Temps are virtual until `finish`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -18,7 +19,8 @@ pub enum RegF {
     Null,
     /// compute shader inputs without an index: vThreadID (32), vThreadGroupID (33),
     /// vThreadIDInGroup (34), vThreadIDInGroupFlattened (35)
-    Sys(u32),
+    /// a compute shader's system input (vThreadID ..)
+    Sys(OpType),
     /// a typed unordered access view (symbol): store_uav_typed's destination
     Uav(u32),
     /// thread group shared memory (symbol): store_raw's destination
@@ -218,13 +220,55 @@ pub const STORE_RAW: Opcode = Opcode::StoreRaw;
 /// sync: ctl 1 threads in the group, 2 shared memory, 4 UAVs (group), 8 UAVs (global)
 pub const SYNC: Opcode = Opcode::Sync;
 
+/// A signature element's D3D_NAME: the system values hlslc declares.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SysVal {
+    /// a generic (user) semantic
+    Undefined,
+    Position,
+    ClipDistance,
+    VertexId,
+    PrimitiveId,
+    InstanceId,
+    IsFrontFace,
+    SampleIndex,
+    /// (in the signature only; declared as a plain output)
+    Target,
+    Depth,
+}
+
+impl SysVal {
+    /// the D3D_NAME value
+    pub fn code(self) -> u32 {
+        match self {
+            SysVal::Undefined => 0,
+            SysVal::Position => 1,
+            SysVal::ClipDistance => 2,
+            SysVal::VertexId => 6,
+            SysVal::PrimitiveId => 7,
+            SysVal::InstanceId => 8,
+            SysVal::IsFrontFace => 9,
+            SysVal::SampleIndex => 10,
+            SysVal::Target => 64,
+            SysVal::Depth => 65,
+        }
+    }
+    /// declared with a dcl_*_siv/sgv (not Target and Depth, which are plain outputs)
+    pub fn declared(self) -> bool {
+        match self {
+            SysVal::Undefined | SysVal::Target | SysVal::Depth => false,
+            SysVal::Position | SysVal::ClipDistance | SysVal::VertexId | SysVal::PrimitiveId
+            | SysVal::InstanceId | SysVal::IsFrontFace | SysVal::SampleIndex => true,
+        }
+    }
+}
+
 /// A signature element of the shader's interface.
 #[derive(Clone, Debug)]
 pub struct SigEl {
     pub name: String,
     pub index: u32,
-    /// D3D_NAME (0 for SV_Target and generic ones)
-    pub sysval: u32,
+    pub sysval: SysVal,
     /// 1 uint, 2 sint, 3 float
     pub ctype: u32,
     pub reg: u32,
@@ -319,7 +363,7 @@ pub struct Shader {
     /// compute shaders: [numthreads(x, y, z)]
     pub threads: Option<[u32; 3]>,
     /// compute inputs read: (register type, mask)
-    pub sys_inputs: Vec<(u32, u8)>,
+    pub sys_inputs: Vec<(OpType, u8)>,
     pub uavs: Vec<Uav>,
     pub uav_map: Vec<Option<usize>>,
     /// thread group shared memory: bytes of each g register
@@ -444,20 +488,10 @@ pub(super) fn alloc(code: &mut [Ins], marks: &[(u32, usize)]) -> u32 {
 
 // ---- encoding ----
 
-/// operand types
-const T_TEMP: u32 = 0;
-const T_INPUT: u32 = 1;
-const T_OUTPUT: u32 = 2;
-const T_X: u32 = 3;
-const T_IMM32: u32 = 4;
-const T_SAMPLER: u32 = 6;
-const T_RESOURCE: u32 = 7;
-const T_CB: u32 = 8;
-const T_ICB: u32 = 9;
-const T_DEPTH: u32 = 12;
-const T_NULL: u32 = 13;
-const T_UAV: u32 = 30;
-const T_TGSM: u32 = 31;
+/// an operand type's token bits
+fn ty_bits(t: OpType) -> u32 {
+    t.0 << 12
+}
 
 struct Enc<'a> {
     s: &'a Shader,
@@ -465,26 +499,26 @@ struct Enc<'a> {
 
 impl Enc<'_> {
     /// operand token pieces: (type, indices)
-    fn reg_parts(&self, r: &Reg) -> Result<(u32, Vec<u32>), String> {
+    fn reg_parts(&self, r: &Reg) -> Result<(OpType, Vec<u32>), String> {
         Ok(match r.f {
-            RegF::Temp(i) => (T_TEMP, vec![i]),
-            RegF::Input(i) => (T_INPUT, vec![i]),
-            RegF::Output(i) => (T_OUTPUT, vec![i]),
-            RegF::Cb(s, i) => (T_CB, vec![bound(&self.s.cb_map, &self.s.cbs, s, |c| c.slot, "constant buffer")?, i]),
-            RegF::Icb(i) => (T_ICB, vec![i]),
-            RegF::X(a, i) => (T_X, vec![a, i]),
-            RegF::Depth => (T_DEPTH, vec![]),
-            RegF::Null => (T_NULL, vec![]),
+            RegF::Temp(i) => (tpf::TEMP, vec![i]),
+            RegF::Input(i) => (tpf::INPUT, vec![i]),
+            RegF::Output(i) => (tpf::OUTPUT, vec![i]),
+            RegF::Cb(s, i) => (tpf::CONSTANT_BUFFER, vec![bound(&self.s.cb_map, &self.s.cbs, s, |c| c.slot, "constant buffer")?, i]),
+            RegF::Icb(i) => (tpf::IMM_CONSTANT_BUFFER, vec![i]),
+            RegF::X(a, i) => (tpf::INDEXABLE_TEMP, vec![a, i]),
+            RegF::Depth => (tpf::OUTPUT_DEPTH, vec![]),
+            RegF::Null => (tpf::NULL, vec![]),
             RegF::Sys(t) => (t, vec![]),
-            RegF::Uav(u) => (T_UAV, vec![bound(&self.s.uav_map, &self.s.uavs, u, |u| u.slot, "UAV")?]),
-            RegF::G(g) => (T_TGSM, vec![g]),
+            RegF::Uav(u) => (tpf::UAV, vec![bound(&self.s.uav_map, &self.s.uavs, u, |u| u.slot, "UAV")?]),
+            RegF::G(g) => (tpf::TGSM, vec![g]),
         })
     }
 
     /// `sel`: 0 mask, 1 swizzle, 2 select-1; `num` component count code (0 = none, 1 = one, 2 = four)
     fn reg(&self, out: &mut Vec<u32>, r: &Reg, num: u32, sel: u32, bits: u32, modifier: u32) -> Result<(), String> {
         let (ty, idx) = self.reg_parts(r)?;
-        let mut t = num | (ty << 12) | (crate::u32_of(idx.len()) << 20);
+        let mut t = num | ty_bits(ty) | (crate::u32_of(idx.len()) << 20);
         if num == 2 {
             t |= (sel << 2) | (bits << 4);
         }
@@ -505,7 +539,7 @@ impl Enc<'_> {
             if k == rel_at {
                 if let Some((tr, c)) = r.rel {
                     // the relative part: a temp's component (select-1)
-                    out.push(2 | (2 << 2) | (u32::from(c) << 4) | (T_TEMP << 12) | (1 << 20));
+                    out.push(2 | (2 << 2) | (u32::from(c) << 4) | ty_bits(tpf::TEMP) | (1 << 20));
                     out.push(tr);
                 }
             }
@@ -528,36 +562,36 @@ impl Enc<'_> {
             }
             Src::Imm(v, one) => {
                 if *one {
-                    out.push(1 | (T_IMM32 << 12));
+                    out.push(1 | ty_bits(tpf::IMM32));
                     out.push(v[0]);
                 } else {
-                    out.push(2 | (T_IMM32 << 12));
+                    out.push(2 | ty_bits(tpf::IMM32));
                     out.extend_from_slice(v);
                 }
             }
             Src::Tex(t, swz) => {
                 let slot = bound(&self.s.tex_map, &self.s.texs, *t, |t| t.slot, "texture")?;
                 let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
-                out.push(2 | (1 << 2) | (b << 4) | (T_RESOURCE << 12) | (1 << 20));
+                out.push(2 | (1 << 2) | (b << 4) | ty_bits(tpf::RESOURCE) | (1 << 20));
                 out.push(slot);
             }
             Src::Samp(s) => {
                 let slot = bound(&self.s.samp_map, &self.s.samps, *s, |s| s.slot, "sampler")?;
-                out.push((T_SAMPLER << 12) | (1 << 20));
+                out.push(ty_bits(tpf::SAMPLER) | (1 << 20));
                 out.push(slot);
             }
             Src::SampC(s, c) => {
                 let slot = bound(&self.s.samp_map, &self.s.samps, *s, |s| s.slot, "sampler")?;
-                out.push(2 | (2 << 2) | (u32::from(*c) << 4) | (T_SAMPLER << 12) | (1 << 20));
+                out.push(2 | (2 << 2) | (u32::from(*c) << 4) | ty_bits(tpf::SAMPLER) | (1 << 20));
                 out.push(slot);
             }
             Src::Uav(u, swz) | Src::G(u, swz) => {
                 let (ty, slot) = match s {
-                    Src::Uav(..) => (T_UAV, bound(&self.s.uav_map, &self.s.uavs, *u, |u| u.slot, "UAV")?),
-                    Src::R { .. } | Src::Imm(..) | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::G(..) => (T_TGSM, *u),
+                    Src::Uav(..) => (tpf::UAV, bound(&self.s.uav_map, &self.s.uavs, *u, |u| u.slot, "UAV")?),
+                    Src::R { .. } | Src::Imm(..) | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::G(..) => (tpf::TGSM, *u),
                 };
                 let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
-                out.push(2 | (1 << 2) | (b << 4) | (ty << 12) | (1 << 20));
+                out.push(2 | (1 << 2) | (b << 4) | ty_bits(ty) | (1 << 20));
                 out.push(slot);
             }
         }
@@ -567,7 +601,7 @@ impl Enc<'_> {
     fn dst(&self, out: &mut Vec<u32>, d: &Dst) -> Result<(), String> {
         match d.r.f {
             RegF::Null => {
-                out.push(T_NULL << 12);
+                out.push(ty_bits(tpf::NULL));
                 Ok(())
             }
             RegF::Depth => self.reg(out, &d.r, 1, 0, 0, 0),
@@ -624,52 +658,55 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
         }
     }
     for cb in &s.cbs {
-        let t = 2 | (1 << 2) | (0xe4 << 4) | (T_CB << 12) | (2 << 20);
+        let t = 2 | (1 << 2) | (0xe4 << 4) | ty_bits(tpf::CONSTANT_BUFFER) | (2 << 20);
         decl(&mut w, Opcode::DclConstantBuffer, u32::from(cb.dynamic), &[t, cb.slot, cb.size.max(1)]);
     }
     for sm in &s.samps {
-        decl(&mut w, Opcode::DclSampler, u32::from(sm.cmp), &[(T_SAMPLER << 12) | (1 << 20), sm.slot]);
+        decl(&mut w, Opcode::DclSampler, u32::from(sm.cmp), &[ty_bits(tpf::SAMPLER) | (1 << 20), sm.slot]);
     }
     for t in &s.texs {
         let r = t.ret;
         let ret = r | (r << 4) | (r << 8) | (r << 12);
-        decl(&mut w, Opcode::DclResource, t.dim, &[(T_RESOURCE << 12) | (1 << 20), t.slot, ret]);
+        decl(&mut w, Opcode::DclResource, t.dim, &[ty_bits(tpf::RESOURCE) | (1 << 20), t.slot, ret]);
     }
     for u in &s.uavs {
         let r = u.ret;
         let ret = r | (r << 4) | (r << 8) | (r << 12);
-        decl(&mut w, Opcode::DclUavTyped, u.dim, &[(T_UAV << 12) | (1 << 20), u.slot, ret]);
+        decl(&mut w, Opcode::DclUavTyped, u.dim, &[ty_bits(tpf::UAV) | (1 << 20), u.slot, ret]);
     }
     for (g, &bytes) in s.tgsm.iter().enumerate() {
-        decl(&mut w, Opcode::DclTgsmRaw, 0, &[(T_TGSM << 12) | (1 << 20), crate::u32_of(g), bytes]);
+        decl(&mut w, Opcode::DclTgsmRaw, 0, &[ty_bits(tpf::TGSM) | (1 << 20), crate::u32_of(g), bytes]);
     }
     for &(ty, mask) in &s.sys_inputs {
         // (vThreadIDInGroupFlattened is one component)
-        let t = if ty == 35 { 1 | (ty << 12) } else { 2 | (u32::from(mask) << 4) | (ty << 12) };
+        let t = if ty == tpf::THREAD_ID_IN_GROUP_FLATTENED { 1 | ty_bits(ty) } else { 2 | (u32::from(mask) << 4) | ty_bits(ty) };
         decl(&mut w, Opcode::DclInput, 0, &[t]);
     }
-    let reg_tok = |ty: u32, mask: u8| 2 | (u32::from(mask) << 4) | (ty << 12) | (1 << 20);
+    let reg_tok = |ty: OpType, mask: u8| 2 | (u32::from(mask) << 4) | ty_bits(ty) | (1 << 20);
     for i in &s.inputs {
-        let t = reg_tok(T_INPUT, i.mask);
+        let t = reg_tok(tpf::INPUT, i.mask);
         if s.pixel {
             match i.sysval {
-                0 => decl(&mut w, Opcode::DclInputPs, i.interp, &[t, i.reg]),
-                1 => decl(&mut w, Opcode::DclInputPsSiv, i.interp, &[t, i.reg, 1]),
-                v => decl(&mut w, Opcode::DclInputPsSgv, 1, &[t, i.reg, v]),
+                SysVal::Undefined => decl(&mut w, Opcode::DclInputPs, i.interp, &[t, i.reg]),
+                SysVal::Position => decl(&mut w, Opcode::DclInputPsSiv, i.interp, &[t, i.reg, 1]),
+                v @ (SysVal::ClipDistance | SysVal::VertexId | SysVal::PrimitiveId | SysVal::InstanceId
+                     | SysVal::IsFrontFace | SysVal::SampleIndex | SysVal::Target | SysVal::Depth) => {
+                    decl(&mut w, Opcode::DclInputPsSgv, 1, &[t, i.reg, v.code()]);
+                }
             }
-        } else if i.sysval != 0 {
-            decl(&mut w, Opcode::DclInputSgv, 0, &[t, i.reg, i.sysval]);
+        } else if i.sysval != SysVal::Undefined {
+            decl(&mut w, Opcode::DclInputSgv, 0, &[t, i.reg, i.sysval.code()]);
         } else {
             decl(&mut w, Opcode::DclInput, 0, &[t, i.reg]);
         }
     }
     for o in &s.outputs {
         if o.depth {
-            decl(&mut w, Opcode::DclOutput, 0, &[1 | (T_DEPTH << 12)]);
-        } else if o.sysval != 0 && o.sysval < 64 {
-            decl(&mut w, Opcode::DclOutputSiv, 0, &[reg_tok(T_OUTPUT, o.mask), o.reg, o.sysval]);
+            decl(&mut w, Opcode::DclOutput, 0, &[1 | ty_bits(tpf::OUTPUT_DEPTH)]);
+        } else if o.sysval.declared() {
+            decl(&mut w, Opcode::DclOutputSiv, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg, o.sysval.code()]);
         } else {
-            decl(&mut w, Opcode::DclOutput, 0, &[reg_tok(T_OUTPUT, o.mask), o.reg]);
+            decl(&mut w, Opcode::DclOutput, 0, &[reg_tok(tpf::OUTPUT, o.mask), o.reg]);
         }
     }
     if temps > 0 {
@@ -714,7 +751,7 @@ fn signature(els: &[SigEl], used_out: bool, d3d10: bool) -> Vec<u8> {
         put_str(&mut names, &e.name);
         w32(&mut b, off);
         w32(&mut b, e.index);
-        w32(&mut b, if d3d10 && e.sysval >= 64 { 0 } else { e.sysval });
+        w32(&mut b, if d3d10 && matches!(e.sysval, SysVal::Target | SysVal::Depth) { 0 } else { e.sysval.code() });
         w32(&mut b, e.ctype);
         w32(&mut b, if e.depth { u32::MAX } else { e.reg });
         // mask, then the read/write mask (outputs: the complement of what is written)

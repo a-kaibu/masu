@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use super::ast::*;
 pub use super::sm4::Lane;
-use super::sm4::{self, Dst, Ins, Reg, RegF, SigEl, Src};
+use super::sm4::{self, Dst, Ins, Reg, RegF, SigEl, Src, SysVal};
 
 type R<T> = Result<T, String>;
 
@@ -134,7 +134,7 @@ pub struct L<'a> {
     /// groupshared variables: bytes of each
     tgsm: Vec<u32>,
     /// compute inputs read: (register type, mask)
-    sys_inputs: Vec<(u32, u8)>,
+    sys_inputs: Vec<(sm4::OpType, u8)>,
     threads: Option<[u32; 3]>,
     /// a place is wanted for a read too (compound assignment, ++/--): UAVs load it
     place_reads: bool,
@@ -1426,17 +1426,17 @@ impl<'a> L<'a> {
         let up = name0.to_ascii_uppercase();
         if self.o.compute {
             let ty = match up.as_str() {
-                "SV_DISPATCHTHREADID" => 32,
-                "SV_GROUPID" => 33,
-                "SV_GROUPTHREADID" => 34,
-                "SV_GROUPINDEX" => 35,
+                "SV_DISPATCHTHREADID" => dxwgsl::tpf::THREAD_ID,
+                "SV_GROUPID" => dxwgsl::tpf::THREAD_GROUP_ID,
+                "SV_GROUPTHREADID" => dxwgsl::tpf::THREAD_ID_IN_GROUP,
+                "SV_GROUPINDEX" => dxwgsl::tpf::THREAD_ID_IN_GROUP_FLATTENED,
                 _ => return Err(format!("semantic {sem} is not a compute shader input")),
             };
             if output {
                 return Err(format!("{sem} is an input"));
             }
             let n = t.comps();
-            if n == 0 || n > if ty == 35 { 1 } else { 3 } || t.base() == B::Float || !t.numeric() {
+            if n == 0 || n > if ty == dxwgsl::tpf::THREAD_ID_IN_GROUP_FLATTENED { 1 } else { 3 } || t.base() == B::Float || !t.numeric() {
                 return Err(format!("{sem} of type {t:?}"));
             }
             let mask = Lane::mask(n);
@@ -1463,19 +1463,19 @@ impl<'a> L<'a> {
         // shader model 2/3 names (backward compatibility)
         let (name, sysval) = match (up.as_str(), pixel, output) {
             // (shader model 2/3 pixel shaders: POSITION is not VPOS, not readable)
-            ("POSITION", true, false) if self.sm3() => ("POSITION".to_string(), 0),
-            ("SV_POSITION", _, _) => ("SV_Position".to_string(), 1),
-            ("POSITION", false, true) | ("POSITION", true, false) | ("VPOS", true, false) | ("POSITIONT", false, true) => ("SV_Position".to_string(), 1),
+            ("POSITION", true, false) if self.sm3() => ("POSITION".to_string(), SysVal::Undefined),
+            ("SV_POSITION", _, _) => ("SV_Position".to_string(), SysVal::Position),
+            ("POSITION", false, true) | ("POSITION", true, false) | ("VPOS", true, false) | ("POSITIONT", false, true) => ("SV_Position".to_string(), SysVal::Position),
             // (in the signature as D3D_NAME_TARGET / DEPTH; declared as plain outputs)
-            ("SV_TARGET", true, true) | ("COLOR", true, true) => ("SV_Target".to_string(), 64),
-            ("SV_DEPTH", true, true) | ("DEPTH", true, true) => ("SV_Depth".to_string(), 65),
-            ("SV_VERTEXID", false, false) => ("SV_VertexID".to_string(), 6),
-            ("SV_INSTANCEID", false, false) => ("SV_InstanceID".to_string(), 8),
-            ("SV_ISFRONTFACE", true, false) | ("VFACE", true, false) => ("SV_IsFrontFace".to_string(), 9),
-            ("SV_PRIMITIVEID", true, false) => ("SV_PrimitiveID".to_string(), 7),
-            ("SV_SAMPLEINDEX", true, false) => ("SV_SampleIndex".to_string(), 10),
-            ("SV_CLIPDISTANCE", _, _) => ("SV_ClipDistance".to_string(), 2),
-            _ => (name0.clone(), 0),
+            ("SV_TARGET", true, true) | ("COLOR", true, true) => ("SV_Target".to_string(), SysVal::Target),
+            ("SV_DEPTH", true, true) | ("DEPTH", true, true) => ("SV_Depth".to_string(), SysVal::Depth),
+            ("SV_VERTEXID", false, false) => ("SV_VertexID".to_string(), SysVal::VertexId),
+            ("SV_INSTANCEID", false, false) => ("SV_InstanceID".to_string(), SysVal::InstanceId),
+            ("SV_ISFRONTFACE", true, false) | ("VFACE", true, false) => ("SV_IsFrontFace".to_string(), SysVal::IsFrontFace),
+            ("SV_PRIMITIVEID", true, false) => ("SV_PrimitiveID".to_string(), SysVal::PrimitiveId),
+            ("SV_SAMPLEINDEX", true, false) => ("SV_SampleIndex".to_string(), SysVal::SampleIndex),
+            ("SV_CLIPDISTANCE", _, _) => ("SV_ClipDistance".to_string(), SysVal::ClipDistance),
+            _ => (name0.clone(), SysVal::Undefined),
         };
         let mut u = Vec::new();
         units(self.prog, t, &mut u);
@@ -1505,9 +1505,9 @@ impl<'a> L<'a> {
             };
             let interp = if !pixel || output {
                 0
-            } else if sysval == 1 {
+            } else if sysval == SysVal::Position {
                 4
-            } else if b != B::Float || sysval != 0 {
+            } else if b != B::Float || sysval != SysVal::Undefined {
                 1
             } else {
                 match interp {
@@ -1519,7 +1519,7 @@ impl<'a> L<'a> {
                     Interp::Sample => 6,
                 }
             };
-            let ct = if sysval == 9 { 1 } else { ctype(b) };
+            let ct = if sysval == SysVal::IsFrontFace { 1 } else { ctype(b) };
             list.push(SigEl { name: name.clone(), index, sysval, ctype: ct, reg, mask: Lane::mask(n), interp, depth });
             let f = if depth {
                 RegF::Depth
