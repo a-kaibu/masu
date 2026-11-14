@@ -6,13 +6,15 @@
 
 use crate::bits::Bits;
 use crate::mdct::Imdct;
+use crate::num::{ix, lo8, lo8z, us};
 use crate::vlc::Vlc;
 use crate::wma_tables as t;
 
 const BLOCK_MIN_BITS: u32 = 7;
 const BLOCK_MAX_BITS: u32 = 11;
 const BLOCK_MAX_SIZE: usize = 1 << BLOCK_MAX_BITS;
-const BLOCK_NB_SIZES: usize = (BLOCK_MAX_BITS - BLOCK_MIN_BITS + 1) as usize;
+const BLOCK_NB_SIZES: usize = 5;
+const _: () = assert!(BLOCK_MAX_BITS - BLOCK_MIN_BITS + 1 == 5);
 const HIGH_BAND_MAX_SIZE: usize = 16;
 const NB_LSP_COEFS: usize = 10;
 const MAX_CODED_SUPERFRAME_SIZE: usize = 32768;
@@ -24,6 +26,23 @@ const EXPVLCBITS: u32 = 8;
 const HGAINVLCBITS: u32 = 9;
 /// bytes of zeros after a buffer (FFmpeg's AV_INPUT_BUFFER_PADDING_SIZE)
 const PADDING: usize = 64;
+
+/// WMA 1 (wFormatTag 0x160) or 2 (0x161).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Version {
+    V1,
+    V2,
+}
+
+/// A count or index of up to 2048 (frames, blocks, bands) as i32.
+fn i32z(n: usize) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+
+/// The same as f64.
+fn f64z(n: usize) -> f64 {
+    f64::from(u32::try_from(n).unwrap_or(u32::MAX))
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Error {
@@ -54,13 +73,13 @@ fn coef_table(k: usize) -> CoefTable {
     let mut level = vec![0f32; n];
     let (mut i, mut lv, mut k) = (2usize, 1f32, 0usize);
     while i < n {
-        let l = levels[k] as usize;
+        let l = levels[k];
         k += 1;
         for j in 0..l {
             if i >= n {
                 break;
             }
-            run[i] = j as u16;
+            run[i] = j;
             level[i] = lv;
             i += 1;
         }
@@ -69,10 +88,10 @@ fn coef_table(k: usize) -> CoefTable {
     CoefTable { vlc, run, level }
 }
 
-fn frame_len_bits(rate: u32, version: u32) -> u32 {
+fn frame_len_bits(rate: u32, version: Version) -> u32 {
     if rate <= 16000 {
         9
-    } else if rate <= 22050 || (rate <= 32000 && version == 1) {
+    } else if rate <= 22050 || (rate <= 32000 && version == Version::V1) {
         10
     } else {
         11
@@ -96,18 +115,24 @@ fn log2(v: u32) -> u32 {
 /// pow(10, i / 16) for i in -60..95
 fn pow_tab() -> &'static [f32; 156] {
     static P: std::sync::OnceLock<[f32; 156]> = std::sync::OnceLock::new();
-    P.get_or_init(|| std::array::from_fn(|i| 10f64.powf((i as f64 - 60.0) / 16.0) as f32))
+    P.get_or_init(|| {
+        let mut p = [0f32; 156];
+        for (v, i) in p.iter_mut().zip(-60i32..) {
+            *v = 10f64.powf(f64::from(i) / 16.0) as f32;
+        }
+        p
+    })
 }
 
-fn sine_window(n: usize) -> Vec<f32> {
-    (0..n).map(|i| ((i as f64 + 0.5) * (std::f64::consts::PI / (2.0 * n as f64))).sin() as f32).collect()
+fn sine_window(n: u32) -> Vec<f32> {
+    (0..n).map(|i| ((f64::from(i) + 0.5) * (std::f64::consts::PI / (2.0 * f64::from(n)))).sin() as f32).collect()
 }
 
 pub struct Decoder {
     pub channels: usize,
     pub rate: u32,
     block_align: usize,
-    version: u32,
+    version: Version,
     use_bit_reservoir: bool,
     use_variable_block_len: bool,
     use_exp_vlc: bool,
@@ -126,7 +151,7 @@ pub struct Decoder {
     coef: [CoefTable; 2],
     pub frame_len: usize,
     frame_len_bits: u32,
-    nb_block_sizes: usize,
+    nb_block_sizes: u32,
     reset_block_lengths: bool,
     block_len_bits: u32,
     next_block_len_bits: u32,
@@ -164,50 +189,49 @@ impl Decoder {
     /// WAVEFORMATEX (`extra`).
     pub fn new(tag: u16, channels: u16, rate: u32, bit_rate: u32, block_align: u16, extra: &[u8]) -> Result<Decoder, Error> {
         let version = match tag {
-            0x160 => 1,
-            0x161 => 2,
+            0x160 => Version::V1,
+            0x161 => Version::V2,
             _ => return Err(Error::Params("not WMA 1/2")),
         };
         if block_align == 0 {
             return Err(Error::Params("block_align is not set"));
         }
-        let channels = channels as usize;
+        let nch = channels;
+        let channels = usize::from(channels);
         if rate == 0 || rate > 50000 || channels == 0 || channels > 2 || bit_rate == 0 {
             return Err(Error::Params("rate, channels or bit rate"));
         }
-        let rd16 = |o: usize| u16::from_le_bytes([extra[o], extra[o + 1]]) as u32;
-        let flags2 = if version == 1 && extra.len() >= 4 {
-            rd16(2)
-        } else if version == 2 && extra.len() >= 6 {
-            rd16(4)
-        } else {
-            0
+        let rd16 = |o: usize| u32::from(u16::from_le_bytes([extra[o], extra[o + 1]]));
+        let flags2 = match version {
+            Version::V1 if extra.len() >= 4 => rd16(2),
+            Version::V2 if extra.len() >= 6 => rd16(4),
+            Version::V1 | Version::V2 => 0,
         };
         let use_exp_vlc = flags2 & 1 != 0;
         let use_bit_reservoir = flags2 & 2 != 0;
         let mut use_variable_block_len = flags2 & 4 != 0;
-        if version == 2 && extra.len() >= 8 && rd16(4) == 0xd && use_variable_block_len {
+        if version == Version::V2 && extra.len() >= 8 && rd16(4) == 0xd && use_variable_block_len {
             use_variable_block_len = false;
         }
         let flb = frame_len_bits(rate, version);
         let frame_len = 1usize << flb;
         let nb_block_sizes = if use_variable_block_len {
-            let mut nb = ((flags2 >> 3) & 3) as usize + 1;
-            if bit_rate / channels as u32 >= 32000 {
+            let mut nb = ((flags2 >> 3) & 3) + 1;
+            if bit_rate / u32::from(nch) >= 32000 {
                 nb += 2;
             }
-            nb.min((flb - BLOCK_MIN_BITS) as usize) + 1
+            nb.min(flb - BLOCK_MIN_BITS) + 1
         } else {
             1
         };
         let mut use_noise_coding = true;
         let mut high_freq = rate as f32 * 0.5;
         let mut rate1 = rate;
-        if version == 2 {
+        if version == Version::V2 {
             rate1 = [44100, 22050, 16000, 11025, 8000].into_iter().find(|&r| rate >= r).unwrap_or(rate);
         }
         let bps = bit_rate as f32 / (channels as f32 * rate as f32);
-        let byte_offset_bits = log2((bps * frame_len as f32 / 8.0 + 0.5) as i32 as u32) + 2;
+        let byte_offset_bits = log2(((bps * frame_len as f32 / 8.0 + 0.5) as i32).cast_unsigned()) + 2;
         if byte_offset_bits + 3 > 25 {
             return Err(Error::Params("byte_offset_bits too large"));
         }
@@ -256,18 +280,21 @@ impl Decoder {
         let mut coefs_end = [0i32; BLOCK_NB_SIZES];
         let mut exponent_high_sizes = [0usize; BLOCK_NB_SIZES];
         let mut exponent_high_bands = [[0i32; HIGH_BAND_MAX_SIZE]; BLOCK_NB_SIZES];
-        let coefs_start = if version == 1 { 3 } else { 0 };
-        let r = rate as i32;
-        for k in 0..nb_block_sizes {
-            let block_len = (frame_len >> k) as i32;
-            if version == 1 {
+        let coefs_start = match version {
+            Version::V1 => 3,
+            Version::V2 => 0,
+        };
+        let r = i32::try_from(rate).ok().ok_or(Error::Params("rate"))?;
+        for (k, ku) in (0..us(nb_block_sizes)).zip(0u32..) {
+            let block_len = i32z(frame_len >> k);
+            if version == Version::V1 {
                 let mut lpos = 0;
                 let mut i = 0;
                 while i < 25 {
-                    let a = t::WMA_CRITICAL_FREQS[i] as i32;
+                    let a = i32::from(t::WMA_CRITICAL_FREQS[i]);
                     let pos = ((block_len * 2 * a) + (r >> 1)) / r;
                     let pos = pos.min(block_len);
-                    exponent_bands[0][i] = (pos - lpos) as u16;
+                    exponent_bands[0][i] = u16::try_from(pos - lpos).unwrap_or(0);
                     if pos >= block_len {
                         i += 1;
                         break;
@@ -277,9 +304,8 @@ impl Decoder {
                 }
                 exponent_sizes[0] = i;
             } else {
-                let a = flb as i32 - BLOCK_MIN_BITS as i32 - k as i32;
-                let table: Option<&[u8]> = if a < 3 && a >= 0 {
-                    let a = a as usize;
+                let table: Option<&[u8]> = if let Some(a) = (flb - BLOCK_MIN_BITS).checked_sub(ku).filter(|&a| a < 3) {
+                    let a = us(a);
                     if rate >= 44100 {
                         Some(&t::EXPONENT_BAND_44100[a * 25..a * 25 + 25])
                     } else if rate >= 32000 {
@@ -293,20 +319,20 @@ impl Decoder {
                     None
                 };
                 if let Some(tb) = table {
-                    let n = tb[0] as usize;
+                    let n = usize::from(tb[0]);
                     for i in 0..n {
-                        exponent_bands[k][i] = tb[1 + i] as u16;
+                        exponent_bands[k][i] = u16::from(tb[1 + i]);
                     }
                     exponent_sizes[k] = n;
                 } else {
                     let (mut j, mut lpos) = (0usize, 0i32);
                     for i in 0..25 {
-                        let a = t::WMA_CRITICAL_FREQS[i] as i32;
+                        let a = i32::from(t::WMA_CRITICAL_FREQS[i]);
                         let mut pos = ((block_len * 2 * a) + (r << 1)) / (4 * r);
                         pos <<= 2;
                         pos = pos.min(block_len);
                         if pos > lpos {
-                            exponent_bands[k][j] = (pos - lpos) as u16;
+                            exponent_bands[k][j] = u16::try_from(pos - lpos).unwrap_or(0);
                             j += 1;
                         }
                         if pos >= block_len {
@@ -317,13 +343,13 @@ impl Decoder {
                     exponent_sizes[k] = j;
                 }
             }
-            coefs_end[k] = ((frame_len - (frame_len * 9) / 100) >> k) as i32;
+            coefs_end[k] = i32z((frame_len - (frame_len * 9) / 100) >> k);
             high_band_start[k] = ((block_len as f32 * 2.0 * high_freq) / rate as f32 + 0.5) as i32;
             let n = exponent_sizes[k];
             let (mut j, mut pos) = (0usize, 0i32);
             for i in 0..n {
                 let mut start = pos;
-                pos += exponent_bands[k][i] as i32;
+                pos += i32::from(exponent_bands[k][i]);
                 let mut end = pos;
                 start = start.max(high_band_start[k]);
                 end = end.min(coefs_end[k]);
@@ -334,16 +360,16 @@ impl Decoder {
             }
             exponent_high_sizes[k] = j;
         }
-        let windows = (0..nb_block_sizes).map(|i| sine_window(1 << (flb as usize - i))).collect();
+        let windows = (0..nb_block_sizes).map(|i| sine_window(1 << (flb - i))).collect();
         let mut noise_table = vec![0f32; NOISE_TAB_SIZE];
         let mut noise_mult = 0.0;
         if use_noise_coding {
             noise_mult = if use_exp_vlc { 0.02 } else { 0.04 };
             let mut seed: u32 = 1;
-            let norm = ((1.0 / (1u64 << 31) as f64) * 3f64.sqrt() * noise_mult as f64) as f32;
+            let norm = ((1.0 / f64::from(1u32 << 31)) * 3f64.sqrt() * f64::from(noise_mult)) as f32;
             for v in noise_table.iter_mut() {
                 seed = seed.wrapping_mul(314159).wrapping_add(1);
-                *v = (seed as i32) as f32 * norm;
+                *v = seed.cast_signed() as f32 * norm;
             }
         }
         let mut coef_vlc_table = 2;
@@ -355,17 +381,17 @@ impl Decoder {
             }
         }
         let coef = [coef_table(coef_vlc_table * 2), coef_table(coef_vlc_table * 2 + 1)];
-        let mdct = (0..nb_block_sizes).map(|i| Imdct::new(flb - i as u32 + 1, 1.0 / 32768.0)).collect();
+        let mdct = (0..nb_block_sizes).map(|i| Imdct::new(flb - i + 1, 1.0 / 32768.0)).collect();
         let hgain_vlc = use_noise_coding.then(|| {
             let lens: Vec<u8> = (0..37).map(|i| t::FF_WMA_HGAIN_HUFFTAB[2 * i + 1]).collect();
-            let syms: Vec<i32> = (0..37).map(|i| t::FF_WMA_HGAIN_HUFFTAB[2 * i] as i32).collect();
+            let syms: Vec<i32> = (0..37).map(|i| i32::from(t::FF_WMA_HGAIN_HUFFTAB[2 * i])).collect();
             Vlc::from_lengths(HGAINVLCBITS, &lens, Some(&syms), -18)
         });
         let exp_vlc = use_exp_vlc.then(|| Vlc::from_codes(EXPVLCBITS, &t::AAC_SCALEFACTOR_BITS, &t::AAC_SCALEFACTOR_CODE));
         let mut d = Decoder {
             channels,
             rate,
-            block_align: block_align as usize,
+            block_align: usize::from(block_align),
             version,
             use_bit_reservoir,
             use_variable_block_len,
@@ -423,17 +449,17 @@ impl Decoder {
     }
 
     fn lsp_to_curve_init(&mut self) {
-        let wdel = std::f64::consts::PI / self.frame_len as f64;
-        self.lsp_cos_table = (0..self.frame_len).map(|i| (2.0 * (wdel * i as f64).cos()) as f32).collect();
-        for i in 0..256 {
-            let e = i as f64 - 126.0;
-            self.lsp_pow_e_table[i] = (e * -0.25).exp2() as f32;
+        let wdel = std::f64::consts::PI / f64z(self.frame_len);
+        self.lsp_cos_table = (0..self.frame_len).map(|i| (2.0 * (wdel * f64z(i)).cos()) as f32).collect();
+        for (v, e) in self.lsp_pow_e_table.iter_mut().zip(-126i32..) {
+            *v = (f64::from(e) * -0.25).exp2() as f32;
         }
         let mut b = 1.0f32;
-        for i in (0..(1usize << LSP_POW_BITS)).rev() {
-            let m = (1 << LSP_POW_BITS) + i;
-            let a = m as f32 * (0.5 / (1 << LSP_POW_BITS) as f32);
-            let a = (1.0 / (a as f64).sqrt().sqrt()) as f32;
+        const N: u16 = 1 << LSP_POW_BITS;
+        for (i, k) in (0..usize::from(N)).zip(0..N).rev() {
+            let m = N + k;
+            let a = f32::from(m) * (0.5 / f32::from(N));
+            let a = (1.0 / f64::from(a).sqrt().sqrt()) as f32;
             self.lsp_pow_m_table1[i] = 2.0 * a - b;
             self.lsp_pow_m_table2[i] = b - a;
             b = a;
@@ -442,8 +468,8 @@ impl Decoder {
 
     fn pow_m1_4(&self, x: f32) -> f32 {
         let u = x.to_bits();
-        let e = (u >> 23) as usize;
-        let m = ((u >> (23 - LSP_POW_BITS)) & ((1 << LSP_POW_BITS) - 1)) as usize;
+        let e = us(u >> 23);
+        let m = us((u >> (23 - LSP_POW_BITS)) & ((1 << LSP_POW_BITS) - 1));
         let tf = f32::from_bits(((u << LSP_POW_BITS) & ((1 << 23) - 1)) | (127 << 23));
         let a = self.lsp_pow_m_table1[m];
         let b = self.lsp_pow_m_table2[m];
@@ -453,7 +479,7 @@ impl Decoder {
     fn decode_exp_lsp(&mut self, r: &mut Bits, ch: usize) {
         let mut lsp = [0f32; NB_LSP_COEFS];
         for (i, l) in lsp.iter_mut().enumerate() {
-            let v = if i == 0 || i >= 8 { r.get(3) } else { r.get(4) } as usize;
+            let v = us(if i == 0 || i >= 8 { r.get(3) } else { r.get(4) });
             *l = t::FF_WMA_LSP_CODEBOOK[i * 16 + v];
         }
         let mut val_max = 0f32;
@@ -479,7 +505,7 @@ impl Decoder {
 
     fn decode_exp_vlc(&mut self, r: &mut Bits, ch: usize) -> Result<(), Error> {
         let ptab = pow_tab();
-        let bands = self.exponent_bands[(self.frame_len_bits - self.block_len_bits) as usize];
+        let bands = self.exponent_bands[us(self.frame_len_bits - self.block_len_bits)];
         let mut bi = 0usize;
         let mut q = 0usize;
         let q_end = self.block_len;
@@ -494,9 +520,9 @@ impl Decoder {
                 *q += 1;
             }
         };
-        if self.version == 1 {
-            last_exp = r.get(5) as i32 + 10;
-            let v = ptab[(last_exp + 60) as usize];
+        if self.version == Version::V1 {
+            last_exp = r.i::<5>() + 10;
+            let v = ptab[ix(last_exp + 60)];
             max_scale = v;
             let n = bands[bi];
             bi += 1;
@@ -511,10 +537,10 @@ impl Decoder {
                 return Err(Error::Data("exponent code"));
             }
             last_exp += code - 60;
-            if (last_exp + 60) as u32 >= 156 {
+            if (last_exp + 60).cast_unsigned() >= 156 {
                 return Err(Error::Data("exponent out of range"));
             }
-            let v = ptab[(last_exp + 60) as usize];
+            let v = ptab[ix(last_exp + 60)];
             if v > max_scale {
                 max_scale = v;
             }
@@ -534,14 +560,14 @@ impl Decoder {
         let inp = &self.output;
         let bl = self.block_len;
         if self.block_len_bits <= self.prev_block_len_bits {
-            let w = &self.windows[(self.frame_len_bits - self.block_len_bits) as usize];
+            let w = &self.windows[us(self.frame_len_bits - self.block_len_bits)];
             for i in 0..bl {
                 out[i] += inp[i] * w[i];
             }
         } else {
             let pbl = 1usize << self.prev_block_len_bits;
             let n = (bl - pbl) / 2;
-            let w = &self.windows[(self.frame_len_bits - self.prev_block_len_bits) as usize];
+            let w = &self.windows[us(self.frame_len_bits - self.prev_block_len_bits)];
             for i in 0..pbl {
                 out[n + i] += inp[n + i] * w[i];
             }
@@ -550,14 +576,14 @@ impl Decoder {
         let out = &mut out[bl..];
         let inp = &inp[bl..];
         if self.block_len_bits <= self.next_block_len_bits {
-            let w = &self.windows[(self.frame_len_bits - self.block_len_bits) as usize];
+            let w = &self.windows[us(self.frame_len_bits - self.block_len_bits)];
             for i in 0..bl {
                 out[i] = inp[i] * w[bl - 1 - i];
             }
         } else {
             let nbl = 1usize << self.next_block_len_bits;
             let n = (bl - nbl) / 2;
-            let w = &self.windows[(self.frame_len_bits - self.next_block_len_bits) as usize];
+            let w = &self.windows[us(self.frame_len_bits - self.next_block_len_bits)];
             out[..n].copy_from_slice(&inp[..n]);
             for i in 0..nbl {
                 out[n + i] = inp[n + i] * w[nbl - 1 - i];
@@ -576,18 +602,18 @@ impl Decoder {
         while offset < num_coefs {
             let code = tb.vlc.read(r);
             if code > 1 {
-                offset += tb.run[code as usize] as i32;
-                let neg = r.get1() == 0;
-                let l = tb.level[code as usize];
-                ptr[offset as usize & mask] = if neg { -l } else { l };
+                offset += i32::from(tb.run[ix(code)]);
+                let neg = !r.bit();
+                let l = tb.level[ix(code)];
+                ptr[ix(offset) & mask] = if neg { -l } else { l };
             } else if code == 1 {
                 break;
             } else {
                 // escape (an invalid code, -1, is taken as one too, as in FFmpeg)
-                let level = r.get(coef_nb_bits) as i32;
-                offset += r.get(self.frame_len_bits) as i32;
-                let sign = r.get1() as i32 - 1;
-                ptr[offset as usize & mask] = ((level ^ sign) - sign) as f32;
+                let level = r.get(coef_nb_bits).cast_signed();
+                offset += r.get(self.frame_len_bits).cast_signed();
+                let sign = r.i::<1>() - 1;
+                ptr[ix(offset) & mask] = ((level ^ sign) - sign) as f32;
             }
             offset += 1;
         }
@@ -601,34 +627,34 @@ impl Decoder {
     fn decode_block(&mut self, r: &mut Bits) -> Result<bool, Error> {
         let channels = self.channels;
         if self.use_variable_block_len {
-            let n = log2(self.nb_block_sizes as u32 - 1) + 1;
+            let n = log2(self.nb_block_sizes - 1) + 1;
             if self.reset_block_lengths {
                 self.reset_block_lengths = false;
-                let v = r.get(n) as usize;
+                let v = r.get(n);
                 if v >= self.nb_block_sizes {
                     return Err(Error::Data("prev_block_len_bits"));
                 }
-                self.prev_block_len_bits = self.frame_len_bits - v as u32;
-                let v = r.get(n) as usize;
+                self.prev_block_len_bits = self.frame_len_bits - v;
+                let v = r.get(n);
                 if v >= self.nb_block_sizes {
                     return Err(Error::Data("block_len_bits"));
                 }
-                self.block_len_bits = self.frame_len_bits - v as u32;
+                self.block_len_bits = self.frame_len_bits - v;
             } else {
                 self.prev_block_len_bits = self.block_len_bits;
                 self.block_len_bits = self.next_block_len_bits;
             }
-            let v = r.get(n) as usize;
+            let v = r.get(n);
             if v >= self.nb_block_sizes {
                 return Err(Error::Data("next_block_len_bits"));
             }
-            self.next_block_len_bits = self.frame_len_bits - v as u32;
+            self.next_block_len_bits = self.frame_len_bits - v;
         } else {
             self.next_block_len_bits = self.frame_len_bits;
             self.prev_block_len_bits = self.frame_len_bits;
             self.block_len_bits = self.frame_len_bits;
         }
-        if (self.frame_len_bits - self.block_len_bits) as usize >= self.nb_block_sizes {
+        if self.frame_len_bits - self.block_len_bits >= self.nb_block_sizes {
             return Err(Error::Data("block_len_bits not valid"));
         }
         self.block_len = 1 << self.block_len_bits;
@@ -636,14 +662,14 @@ impl Decoder {
             return Err(Error::Data("frame_len overflow"));
         }
         if channels == 2 {
-            self.ms_stereo = r.get1() != 0;
+            self.ms_stereo = r.bit();
         }
         let mut any = false;
         for ch in 0..channels {
-            self.channel_coded[ch] = r.get1() != 0;
+            self.channel_coded[ch] = r.bit();
             any |= self.channel_coded[ch];
         }
-        let bsize = (self.frame_len_bits - self.block_len_bits) as usize;
+        let bsize = us(self.frame_len_bits - self.block_len_bits);
         if any {
             self.coded_block(r, bsize)?;
         }
@@ -667,10 +693,10 @@ impl Decoder {
         let channels = self.channels;
         let mut total_gain = 1i32;
         loop {
-            if r.left() < 7 {
+            if r.remaining() < 7 {
                 return Err(Error::Data("total_gain overread"));
             }
-            let a = r.get(7) as i32;
+            let a = r.i::<7>();
             total_gain += a;
             if a != 127 {
                 break;
@@ -683,7 +709,7 @@ impl Decoder {
             for ch in 0..channels {
                 if self.channel_coded[ch] {
                     for i in 0..self.exponent_high_sizes[bsize] {
-                        let a = r.get1() != 0;
+                        let a = r.bit();
                         self.high_band_coded[ch][i] = a;
                         if a {
                             nb_coefs[ch] -= self.exponent_high_bands[bsize][i];
@@ -697,7 +723,7 @@ impl Decoder {
                     for i in 0..self.exponent_high_sizes[bsize] {
                         if self.high_band_coded[ch][i] {
                             let v = match val {
-                                None => r.get(7) as i32 - 19,
+                                None => r.i::<7>() - 19,
                                 Some(v) => v + self.hgain_vlc.as_ref().map_or(0, |h| h.read(r)),
                             };
                             val = Some(v);
@@ -707,7 +733,7 @@ impl Decoder {
                 }
             }
         }
-        if self.block_len_bits == self.frame_len_bits || r.get1() != 0 {
+        if self.block_len_bits == self.frame_len_bits || r.bit() {
             for ch in 0..channels {
                 if self.channel_coded[ch] {
                     if self.use_exp_vlc {
@@ -727,18 +753,18 @@ impl Decoder {
         }
         for ch in 0..channels {
             if self.channel_coded[ch] {
-                let tindex = (ch == 1 && self.ms_stereo) as usize;
+                let tindex = usize::from(ch == 1 && self.ms_stereo);
                 let bl = self.block_len;
                 self.coefs1[ch][..bl].iter_mut().for_each(|v| *v = 0.0);
                 self.run_level(r, ch, tindex, nb_coefs[ch], coef_nb_bits)?;
             }
-            if self.version == 1 && channels >= 2 {
+            if self.version == Version::V1 && channels >= 2 {
                 r.align();
             }
         }
         let n4 = self.block_len / 2;
         let mut mdct_norm = 1.0 / n4 as f32;
-        if self.version == 1 {
+        if self.version == Version::V1 {
             mdct_norm *= (n4 as f32).sqrt();
         }
         for ch in 0..channels {
@@ -747,7 +773,7 @@ impl Decoder {
             }
             let esize = self.exponents_bsize[ch];
             let e_at = |i: usize| (i << bsize) >> esize;
-            let mut mult = 10f64.powf(total_gain as f64 * 0.05) as f32 / self.max_exponent[ch];
+            let mut mult = 10f64.powf(f64::from(total_gain) * 0.05) as f32 / self.max_exponent[ch];
             mult *= mdct_norm;
             let mut ci = 0usize; // into coefs
             let mut c1 = 0usize; // into coefs1
@@ -756,17 +782,17 @@ impl Decoder {
             let out = &mut self.coefs[ch];
             if self.use_noise_coding {
                 let mult1 = mult;
-                for i in 0..self.coefs_start as usize {
+                for i in 0..ix(self.coefs_start) {
                     out[ci] = self.noise_table[self.noise_index] * exps[e_at(i)] * mult1;
                     ci += 1;
                     self.noise_index = (self.noise_index + 1) & (NOISE_TAB_SIZE - 1);
                 }
                 let n1 = self.exponent_high_sizes[bsize];
                 let mut exp_power = [0f32; HIGH_BAND_MAX_SIZE];
-                let mut eb = e_at(self.high_band_start[bsize] as usize);
+                let mut eb = e_at(ix(self.high_band_start[bsize]));
                 let mut last_high_band = 0usize;
                 for j in 0..n1 {
-                    let n = self.exponent_high_bands[bsize][j] as usize;
+                    let n = ix(self.exponent_high_bands[bsize][j]);
                     if self.high_band_coded[ch][j] {
                         let mut e2 = 0f32;
                         for i in 0..n {
@@ -778,13 +804,16 @@ impl Decoder {
                     }
                     eb += (n << bsize) >> esize;
                 }
-                let mut eb = e_at(self.coefs_start as usize);
-                for j in -1i32..n1 as i32 {
-                    let n = if j < 0 { (self.high_band_start[bsize] - self.coefs_start) as usize } else { self.exponent_high_bands[bsize][j as usize] as usize };
-                    if j >= 0 && self.high_band_coded[ch][j as usize] {
-                        let j = j as usize;
+                let mut eb = e_at(ix(self.coefs_start));
+                // (the band below the high bands, then each high band)
+                for j in std::iter::once(None).chain((0..n1).map(Some)) {
+                    let n = match j {
+                        None => ix(self.high_band_start[bsize] - self.coefs_start),
+                        Some(j) => ix(self.exponent_high_bands[bsize][j]),
+                    };
+                    if let Some(j) = j.filter(|&j| self.high_band_coded[ch][j]) {
                         let mut m1 = (exp_power[j] / exp_power[last_high_band]).sqrt();
-                        m1 *= 10f64.powf(self.high_band_values[ch][j] as f64 * 0.05) as f32;
+                        m1 *= 10f64.powf(f64::from(self.high_band_values[ch][j]) * 0.05) as f32;
                         m1 /= self.max_exponent[ch] * self.noise_mult;
                         m1 *= mdct_norm;
                         for i in 0..n {
@@ -808,9 +837,10 @@ impl Decoder {
                     }
                     eb += (n << bsize) >> esize;
                 }
-                let n = self.block_len as i32 - self.coefs_end[bsize];
-                // (exponents[-(1 << bsize) >> esize] relative to where the bands ended)
-                let idx = (eb as i64 + ((-(1i64 << bsize)) >> esize)).max(0) as usize;
+                let n = i32z(self.block_len) - self.coefs_end[bsize];
+                // (exponents[-(1 << bsize) >> esize] relative to where the bands ended: the
+                // shift of the negative rounds down, so the step back rounds up)
+                let idx = eb.saturating_sub((1usize << bsize).div_ceil(1 << esize));
                 let mult1 = mult * exps.get(idx).copied().unwrap_or(0.0);
                 for _ in 0..n.max(0) {
                     if ci < BLOCK_MAX_SIZE {
@@ -824,13 +854,13 @@ impl Decoder {
                     out[ci] = 0.0;
                     ci += 1;
                 }
-                for i in 0..nb_coefs[ch].max(0) as usize {
+                for i in 0..ix(nb_coefs[ch].max(0)) {
                     if ci < BLOCK_MAX_SIZE {
                         out[ci] = coefs1[i] * exps[e_at(i)] * mult;
                     }
                     ci += 1;
                 }
-                let n = self.block_len as i32 - self.coefs_end[bsize];
+                let n = i32z(self.block_len) - self.coefs_end[bsize];
                 for _ in 0..n.max(0) {
                     if ci < BLOCK_MAX_SIZE {
                         out[ci] = 0.0;
@@ -885,9 +915,9 @@ impl Decoder {
         let nb_frames;
         if self.use_bit_reservoir {
             r.skip(4);
-            let nf = r.get(4) as i32 - (self.last_superframe_len == 0) as i32;
+            let nf = r.i::<4>() - i32::from(self.last_superframe_len == 0);
             if nf <= 0 {
-                let is_error = nf < 0 || r.left() <= 8;
+                let is_error = nf < 0 || r.remaining() <= 8;
                 if is_error {
                     return Err(Error::Data("nb_frames"));
                 }
@@ -897,7 +927,7 @@ impl Decoder {
                 }
                 let mut q = self.last_superframe_len;
                 for _ in 0..buf_size - 1 {
-                    self.last_superframe[q] = r.get(8) as u8;
+                    self.last_superframe[q] = r.u8::<8>();
                     q += 1;
                 }
                 self.last_superframe[q..q + PADDING].iter_mut().for_each(|b| *b = 0);
@@ -914,8 +944,8 @@ impl Decoder {
             Err(e)
         };
         if self.use_bit_reservoir {
-            let bit_offset = r.get(self.byte_offset_bits + 3) as usize;
-            if bit_offset as isize > r.left() {
+            let bit_offset = us(r.get(self.byte_offset_bits + 3));
+            if r.overread() || bit_offset > r.remaining() {
                 return fail(self, Error::Data("bit offset past the packet"));
             }
             let mut nb_frames = nb_frames;
@@ -926,12 +956,13 @@ impl Decoder {
                 let mut q = self.last_superframe_len;
                 let mut len = bit_offset;
                 while len > 7 {
-                    self.last_superframe[q] = r.get(8) as u8;
+                    self.last_superframe[q] = r.u8::<8>();
                     q += 1;
                     len -= 8;
                 }
                 if len > 0 {
-                    self.last_superframe[q] = (r.get(len as u32) << (8 - len)) as u8;
+                    let len = u32::from(lo8z(len));
+                    self.last_superframe[q] = lo8(r.get(len) << (8 - len));
                     q += 1;
                 }
                 self.last_superframe[q..q + PADDING].iter_mut().for_each(|b| *b = 0);
@@ -947,7 +978,7 @@ impl Decoder {
                 }
                 nb_frames -= 1;
             }
-            let pos = bit_offset + 4 + 4 + self.byte_offset_bits as usize + 3;
+            let pos = bit_offset + 4 + 4 + us(self.byte_offset_bits) + 3;
             if pos >= MAX_CODED_SUPERFRAME_SIZE * 8 || pos > buf_size * 8 {
                 return Err(Error::Data("frame position"));
             }
@@ -959,7 +990,7 @@ impl Decoder {
                     return fail(self, e);
                 }
             }
-            let p = fr.count() + ((bit_offset + 4 + 4 + self.byte_offset_bits as usize + 3) & !7);
+            let p = fr.count() + ((bit_offset + 4 + 4 + us(self.byte_offset_bits) + 3) & !7);
             self.last_bitoffset = p & 7;
             let p = p >> 3;
             if p > buf_size {

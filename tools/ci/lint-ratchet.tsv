@@ -2506,11 +2506,9 @@ file	crates/wmcodec/src/vlc.rs	as_conversions	8
 file	crates/wmcodec/src/vlc.rs	cast_possible_truncation	2
 file	crates/wmcodec/src/vlc.rs	cast_possible_wrap	1
 file	crates/wmcodec/src/vlc.rs	indexing_slicing	4
-file	crates/wmcodec/src/wma.rs	arithmetic_side_effects	136
-file	crates/wmcodec/src/wma.rs	as_conversions	119
-file	crates/wmcodec/src/wma.rs	cast_possible_truncation	31
-file	crates/wmcodec/src/wma.rs	cast_possible_wrap	19
-file	crates/wmcodec/src/wma.rs	cast_precision_loss	21
-file	crates/wmcodec/src/wma.rs	cast_sign_loss	22
-file	crates/wmcodec/src/wma.rs	indexing_slicing	155
+file	crates/wmcodec/src/wma.rs	arithmetic_side_effects	135
+file	crates/wmcodec/src/wma.rs	as_conversions	23
+file	crates/wmcodec/src/wma.rs	cast_possible_truncation	11
+file	crates/wmcodec/src/wma.rs	cast_precision_loss	12
+file	crates/wmcodec/src/wma.rs	indexing_slicing	154
 file	crates/wmcodec/src/wma.rs	misrefactored_assign_op	2
