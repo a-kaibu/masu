@@ -8,6 +8,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import pick_build
 
 
+class Newest(unittest.TestCase):
+    def test_none_good(self):
+        # (main's last builds all cancelled or failed: an error, not a StopIteration)
+        old = pick_build.runs_of_main
+        try:
+            pick_build.runs_of_main = lambda limit=60: [{'databaseId': 1, 'headSha': 'a' * 40, 'status': 'completed', 'conclusion': 'cancelled'}]
+            self.assertEqual(pick_build.main(['--newest']), 1)
+            pick_build.runs_of_main = lambda limit=60: [{'databaseId': 2, 'headSha': 'b' * 40, 'status': 'completed', 'conclusion': 'failure'},
+                                                         {'databaseId': 1, 'headSha': 'a' * 40, 'status': 'completed', 'conclusion': 'success'}]
+            self.assertEqual(pick_build.main(['--newest']), 0)
+        finally:
+            pick_build.runs_of_main = old
+
+
 class Choose(unittest.TestCase):
     def test_property(self):
         rnd = random.Random(2026)

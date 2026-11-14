@@ -53,7 +53,10 @@ def contains(a, b):
 
 def main(argv):
     if argv[:1] == ['--newest']:
-        r = next(r for r in runs_of_main() if r['conclusion'] == 'success')
+        r = next((r for r in runs_of_main() if r['conclusion'] == 'success'), None)
+        if r is None:
+            print('no good CI build of main among the last ones (dispatch with ci_run or sha)', file=sys.stderr)
+            return 1
         print(r['databaseId'], r['headSha'], 'exact')
         return 0
     sha = argv[0]

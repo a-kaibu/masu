@@ -81,6 +81,7 @@ jobs:
           ONLY: ${{ inputs.only }}
           PROBES: ${{ github.event_name == 'push' || inputs.probes == true }}
           SHA_IN: ${{ inputs.sha }}
+          CI_RUN: ${{ inputs.ci_run }}
           GH_TOKEN: ${{ github.token }}
         run: |
           python3 tests/shirusu/report_test.py
@@ -92,6 +93,8 @@ jobs:
           # (the commit under test, fixed here for the whole run)
           if [ "$GITHUB_EVENT_NAME" = push ]; then sha=$GITHUB_SHA
           elif [ -n "$SHA_IN" ]; then sha=$(git rev-parse "$SHA_IN")
+          # (a CI run asked for: its commit, whether or not main has a good build)
+          elif [ -n "$CI_RUN" ]; then sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CI_RUN" --jq .head_sha)
           else read -r _ sha _ < <(python3 tests/shirusu/pick_build.py --newest); fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "titles: $ids; sake of $sha"
