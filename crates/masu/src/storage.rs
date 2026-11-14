@@ -1,4 +1,5 @@
 //! Encrypted immutable S3 objects. Names and key envelopes live in SQLite.
+use crate::locked::Locked;
 use crate::{envelope::Envelope, library::Library};
 use anyhow::{anyhow, ensure, Context, Result};
 use rusqlite::OptionalExtension;
@@ -56,7 +57,7 @@ mod tests {
             UrlPath(p): UrlPath<String>,
             b: Bytes,
         ) -> StatusCode {
-            s.lock().unwrap().insert(p, b.to_vec());
+            s.locked().insert(p, b.to_vec());
             StatusCode::OK
         }
         async fn read(
@@ -122,14 +123,14 @@ mod tests {
         };
         s.put("chunks/test", b"game bytes").await.unwrap();
         let snapshot = s.backup().await.unwrap();
-        let before = objects.lock().unwrap().clone();
+        let before = objects.locked().clone();
         s.config.active_key = "new".into();
         s.rotate_objects().unwrap();
         s.rotate_backup(snapshot).await.unwrap();
         // Only the small backup envelope changed; encrypted object payloads are immutable.
         for (name, bytes) in before {
             if !name.ends_with(&snapshot.to_string()) {
-                assert_eq!(objects.lock().unwrap()[&name], bytes);
+                assert_eq!(objects.locked()[&name], bytes);
             }
         }
         s.config.keys.remove("old");
@@ -137,7 +138,7 @@ mod tests {
         let restored = dir.join("restored.db");
         s.restore(snapshot, &restored).await.unwrap();
         s.db = Library(restored);
-        *s.cache.lock().unwrap() = Default::default();
+        *s.cache.locked() = Default::default();
         assert!(s.db.profile("game").unwrap().favorite);
         assert_eq!(&*s.get("chunks/test").await.unwrap().unwrap(), b"game bytes");
         server.abort();
@@ -232,7 +233,7 @@ pub(crate) mod gc_tests {
                 f.holding.fetch_sub(1, SeqCst);
             }
             busy(&f).await;
-            f.objects.lock().unwrap().insert(p, b.to_vec());
+            f.objects.locked().insert(p, b.to_vec());
             StatusCode::OK
         }
         async fn read(State(f): State<Fake>, UrlPath(p): UrlPath<String>) -> axum::response::Response {
@@ -241,13 +242,13 @@ pub(crate) mod gc_tests {
             }
             f.gets.fetch_add(1, SeqCst);
             busy(&f).await;
-            f.objects.lock().unwrap().get(&p).cloned().map(IntoResponse::into_response).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+            f.objects.locked().get(&p).cloned().map(IntoResponse::into_response).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
         }
         async fn delete(State(f): State<Fake>, UrlPath(p): UrlPath<String>) -> StatusCode {
             if let Some(s) = f.refuse() {
                 return s;
             }
-            f.objects.lock().unwrap().remove(&p);
+            f.objects.locked().remove(&p);
             StatusCode::NO_CONTENT
         }
         let f = Fake { delay_ms, ..Default::default() };
@@ -273,7 +274,7 @@ pub(crate) mod gc_tests {
     }
 
     fn names(f: &Fake) -> std::collections::BTreeSet<String> {
-        f.objects.lock().unwrap().keys().map(|k| k.trim_start_matches("test/").to_string()).collect()
+        f.objects.locked().keys().map(|k| k.trim_start_matches("test/").to_string()).collect()
     }
 
     fn named(s: &Storage) -> std::collections::BTreeSet<String> {
@@ -333,7 +334,7 @@ pub(crate) mod gc_tests {
         assert!(r.deleted > 0, "{r:?}");
         assert_eq!(before.len() - after.len(), r.deleted);
         assert!(named(&s).is_subset(&after));
-        *s.cache.lock().unwrap() = Default::default();
+        *s.cache.locked() = Default::default();
         for (l, v) in &want {
             assert_eq!(&*s.get(l).await.unwrap().unwrap(), &v[..]);
         }
@@ -359,7 +360,7 @@ pub(crate) mod gc_tests {
         let c = s.db.connect().unwrap();
         let mut q = c.prepare("SELECT p.logical,p.object,p.pack,p.offset,p.len,o.envelope FROM packs p JOIN objects o USING(logical) ORDER BY p.pack,p.offset").unwrap();
         let rows: Vec<(String, String, String, i64, i64, String)> = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
-        let objects = f.objects.lock().unwrap();
+        let objects = f.objects.locked();
         let get = |id: &str| objects.iter().find(|(k, _)| k.ends_with(id)).map(|(_, v)| v.clone());
         let mut end: BTreeMap<String, i64> = BTreeMap::new();
         for (l, object, pack, offset, len, env) in rows {
@@ -422,7 +423,7 @@ pub(crate) mod gc_tests {
             let mut short = 0;
             let mut total = 0;
             for pack in &made {
-                let n = f.objects.lock().unwrap().iter().find(|(k, _)| k.ends_with(pack.as_str())).unwrap().1.len();
+                let n = f.objects.locked().iter().find(|(k, _)| k.ends_with(pack.as_str())).unwrap().1.len();
                 total += n as u64;
                 short += (n < target) as usize;
                 let mut q = c.prepare("SELECT logical,offset,len FROM packs WHERE pack=? ORDER BY offset").unwrap();
@@ -771,7 +772,7 @@ pub(crate) mod gc_tests {
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         async fn read(State(f): State<Fake>, UrlPath(p): UrlPath<String>) -> axum::response::Response {
             tokio::time::sleep(std::time::Duration::from_millis(f.delay_ms)).await;
-            f.objects.lock().unwrap().get(&p).cloned().map(IntoResponse::into_response).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+            f.objects.locked().get(&p).cloned().map(IntoResponse::into_response).unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
         }
         let app = Router::new().route("/{*path}", get(read)).with_state(slow);
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -1056,7 +1057,7 @@ pub(crate) mod gc_tests {
         // (the files, and the index's revisions older than the kept ones)
         assert_eq!(r.deleted, 2 * (12 - SAVE_REVISIONS as usize));
         assert_eq!(names(&f), named(s));
-        *s.cache.lock().unwrap() = Default::default();
+        *s.cache.locked() = Default::default();
         for i in 12 - SAVE_REVISIONS..12 {
             assert_eq!(saves.read(&format!("state.g.{}", hash(i))).await.unwrap().unwrap().1, format!("state {i}").into_bytes());
         }
@@ -1177,7 +1178,7 @@ pub(crate) mod gc_tests {
         assert_eq!((m.saves, m.records), (1, 1), "{m:?}");
         assert!(server_store.join("games/b.json").exists() && server_store.join("trees/b.tsv").exists());
         assert_eq!(a_chunks.iter().map(|l| server_a_chunk(l)).collect::<Vec<_>>(), before, "a's chunks stay the server's objects");
-        *s.cache.lock().unwrap() = Default::default();
+        *s.cache.locked() = Default::default();
         for line in std::fs::read_to_string(server_store.join("trees/b.tsv")).unwrap().lines().filter(|l| l.starts_with("f\t")) {
             for c in line.split('\t').nth(5).unwrap().split(',').map(|c| c.split(':').next().unwrap()).filter(|c| c.len() > 2) {
                 assert!(s.get(&format!("chunks/{}/{c}", &c[..2])).await.unwrap().is_some(), "b's chunk {c}");
@@ -1348,7 +1349,7 @@ pub(crate) mod gc_tests {
             assert_eq!(&*t.await.unwrap(), b"payload");
         }
         assert_eq!(f.gets.load(SeqCst), 1);
-        assert!(s.inflight.lock().unwrap().is_empty());
+        assert!(s.inflight.locked().is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1400,17 +1401,17 @@ pub(crate) mod gc_tests {
         let started_tx = Mutex::new(Some(started_tx));
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let release_rx = Mutex::new(release_rx);
-        *disk.before_write.lock().unwrap() = Some(Arc::new(move || {
-            if let Some(tx) = started_tx.lock().unwrap().take() { let _ = tx.send(()); }
+        *disk.before_write.locked() = Some(Arc::new(move || {
+            if let Some(tx) = started_tx.locked().take() { let _ = tx.send(()); }
             // Bounded even when an assertion fails before the writer is released.
-            let _ = release_rx.lock().unwrap().recv_timeout(std::time::Duration::from_secs(5));
+            let _ = release_rx.locked().recv_timeout(std::time::Duration::from_secs(5));
         }));
         let deadline = std::time::Duration::from_secs(2);
         let first = tokio::time::timeout(deadline, s.get("chunks/big")).await.expect("first answer waited for disk").unwrap().unwrap();
         assert_eq!(&*first, &big);
         tokio::time::timeout(deadline, started_rx).await.unwrap().unwrap();
         assert_eq!(disk.files().0.len(), 0, "writer should still be stopped before IO");
-        assert!(s.cache.lock().unwrap().map.is_empty(), "large objects stay outside the plaintext cache");
+        assert!(s.cache.locked().map.is_empty(), "large objects stay outside the plaintext cache");
         tokio::time::timeout(deadline, async {
             let reads = futures_util::future::join_all((0..8).map(|_| s.get("chunks/big"))).await;
             for read in reads {
@@ -1423,7 +1424,7 @@ pub(crate) mod gc_tests {
         assert_eq!(f.gets.load(SeqCst), 1);
         release_tx.send(()).unwrap();
         tokio::time::timeout(deadline, async {
-            while !disk.pending.lock().unwrap().is_empty() {
+            while !disk.pending.locked().is_empty() {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
         }).await.unwrap();
@@ -1443,7 +1444,7 @@ pub(crate) mod gc_tests {
         let id = Uuid::new_v4();
         disk.write_later(id, vec![1; 100]);
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while !disk.pending.lock().unwrap().is_empty() {
+            while !disk.pending.locked().is_empty() {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
         }).await.unwrap();
@@ -1451,7 +1452,7 @@ pub(crate) mod gc_tests {
         assert_eq!(disk.kept(), 0);
         // Oversized objects never enqueue a write or consume pending space.
         disk.write_later(id, vec![0; 4097]);
-        assert!(disk.pending.lock().unwrap().is_empty());
+        assert!(disk.pending.locked().is_empty());
         std::fs::remove_file(dir).unwrap();
     }
 
@@ -1474,7 +1475,7 @@ pub(crate) mod gc_tests {
         assert_eq!(&*g.unwrap().unwrap(), b"bbbb");
         w.unwrap();
         assert_eq!(f.gets.load(SeqCst), 2, "one download for both");
-        assert!(s.inflight.lock().unwrap().is_empty());
+        assert!(s.inflight.locked().is_empty());
         // what the disk has is sent to the bucket too (/store-direct: not through this line)
         assert!(s.direct("chunks/a", 60).await.unwrap().is_some());
         s.put("chunks/d", b"dddd").await.unwrap();
@@ -1520,7 +1521,7 @@ pub(crate) mod gc_tests {
             let mut b = good.clone();
             damage(&mut b);
             std::fs::write(&path, &b).unwrap();
-            *s.cache.lock().unwrap() = Default::default();
+            *s.cache.locked() = Default::default();
             assert_eq!(&*s.get("chunks/x").await.unwrap().unwrap(), b"payload bytes");
             gets += 1;
             assert_eq!(f.gets.load(SeqCst), gets);
@@ -1556,23 +1557,23 @@ pub(crate) mod gc_tests {
         }
         let good = std::fs::read(&path).unwrap();
         for (i, flip) in [0usize, 12, good.len() / 2, good.len() - 1].into_iter().enumerate() {
-            for v in f.objects.lock().unwrap().values_mut() {
+            for v in f.objects.locked().values_mut() {
                 *v = good.clone();
                 v[flip] ^= 1 << (i % 8);
             }
             // the disk's whole copy
-            *s.cache.lock().unwrap() = Default::default();
+            *s.cache.locked() = Default::default();
             let gets = f.gets.load(SeqCst);
             assert_eq!(&*s.get("chunks/x").await.unwrap().unwrap(), b"payload bytes");
             assert_eq!(f.gets.load(SeqCst), gets, "read from the disk");
             // no copy on the disk: the bucket's damaged one is refused, and not kept
             s.disk.as_ref().unwrap().remove(id);
-            *s.cache.lock().unwrap() = Default::default();
+            *s.cache.locked() = Default::default();
             assert!(s.get("chunks/x").await.is_err());
             assert_eq!(f.gets.load(SeqCst), gets + 1);
             tokio::time::sleep(std::time::Duration::from_millis(30)).await;
             assert!(!path.exists(), "a damaged object kept on the disk");
-            assert!(s.cache.lock().unwrap().get(&id).is_none());
+            assert!(s.cache.locked().get(&id).is_none());
             // no disk cache at all: the same
             let d = s.disk.take();
             assert!(s.get("chunks/x").await.is_err());
@@ -1724,7 +1725,7 @@ impl Disk {
             #[cfg(test)] before_write: Default::default(),
         };
         let (files, _) = d.files();
-        *d.bytes.lock().unwrap() = files.iter().map(|f| f.1).sum();
+        *d.bytes.locked() = files.iter().map(|f| f.1).sum();
         d.trim();
         Ok(d)
     }
@@ -1760,7 +1761,7 @@ impl Disk {
     }
 
     fn pending(&self, id: Uuid) -> Option<std::sync::Arc<Vec<u8>>> {
-        self.pending.lock().unwrap().get(&id).cloned()
+        self.pending.locked().get(&id).cloned()
     }
 
     /// Keep the answer independent of disk latency. Pending data shares the
@@ -1769,7 +1770,7 @@ impl Disk {
         if bytes.len() as u64 > self.limit { return; }
         let bytes = std::sync::Arc::new(bytes);
         {
-            let mut pending = self.pending.lock().unwrap();
+            let mut pending = self.pending.locked();
             if pending.contains_key(&id) { return; }
             pending.insert(id, bytes.clone());
         }
@@ -1777,7 +1778,7 @@ impl Disk {
         tokio::task::spawn_blocking(move || {
             disk.write(id, &bytes);
             // A failed write is not a permanent, unbounded memory cache either.
-            disk.pending.lock().unwrap().remove(&id);
+            disk.pending.locked().remove(&id);
         });
     }
 
@@ -1797,7 +1798,7 @@ impl Disk {
     /// Keeps `bytes` as object `id` (written whole or not at all: a temporary file renamed).
     pub(crate) fn write(&self, id: Uuid, bytes: &[u8]) {
         #[cfg(test)]
-        if let Some(hook) = self.before_write.lock().unwrap().clone() { hook(); }
+        if let Some(hook) = self.before_write.locked().clone() { hook(); }
         if bytes.len() as u64 > self.limit {
             return;
         }
@@ -1814,7 +1815,7 @@ impl Disk {
             return;
         }
         let over = {
-            let mut b = self.bytes.lock().unwrap();
+            let mut b = self.bytes.locked();
             *b = (*b + bytes.len() as u64).saturating_sub(old);
             *b > self.limit
         };
@@ -1828,7 +1829,7 @@ impl Disk {
         let p = self.path(id);
         if let Ok(m) = std::fs::metadata(&p) {
             if std::fs::remove_file(&p).is_ok() {
-                let mut b = self.bytes.lock().unwrap();
+                let mut b = self.bytes.locked();
                 *b = b.saturating_sub(m.len());
             }
         }
@@ -1850,12 +1851,12 @@ impl Disk {
                 }
             }
         }
-        *self.bytes.lock().unwrap() = total;
+        *self.bytes.locked() = total;
     }
 
     #[cfg(test)]
     pub(crate) fn kept(&self) -> u64 {
-        *self.bytes.lock().unwrap()
+        *self.bytes.locked()
     }
 }
 
@@ -2330,7 +2331,7 @@ impl Storage {
             .optional()?;
         let Some(entry) = entry else { return Ok(None) };
         let e: Envelope = serde_json::from_str(&entry)?;
-        if let Some(data) = self.cache.lock().unwrap().get(&e.object) {
+        if let Some(data) = self.cache.locked().get(&e.object) {
             return Ok(Some(data));
         }
         // the same object asked for at once (a file's chunks fetched ahead, two clients):
@@ -2338,7 +2339,7 @@ impl Storage {
         let gate = self.gate(e.object);
         let data = async {
             let _one = gate.1.lock().await;
-            if let Some(data) = self.cache.lock().unwrap().get(&e.object) {
+            if let Some(data) = self.cache.locked().get(&e.object) {
                 return Ok(data);
             }
             let key = self.key(&e.key_id)?;
@@ -2372,7 +2373,7 @@ impl Storage {
                 }
             };
             let data = std::sync::Arc::<[u8]>::from(plain);
-            self.cache.lock().unwrap().put(e.object, data.clone(), CACHE_BYTES);
+            self.cache.locked().put(e.object, data.clone(), CACHE_BYTES);
             Ok::<_, anyhow::Error>(data)
         }
         .await;
@@ -2389,18 +2390,18 @@ impl Storage {
     /// Object `id`'s download gate, let go when dropped: also when the future holding it is
     /// dropped mid-download (a client gone away; review b01: its entry stayed).
     fn gate(&self, id: Uuid) -> Gate<'_> {
-        let g = self.inflight.lock().unwrap().entry(id).or_default().clone();
+        let g = self.inflight.locked().entry(id).or_default().clone();
         Gate(self, g, id)
     }
 
     /// Downloads waiting or running now (tests).
     #[cfg(test)]
     pub(crate) fn gates(&self) -> usize {
-        self.inflight.lock().unwrap().len()
+        self.inflight.locked().len()
     }
 
     fn ungate(&self, id: Uuid, gate: &std::sync::Arc<tokio::sync::Mutex<()>>) {
-        let mut f = self.inflight.lock().unwrap();
+        let mut f = self.inflight.locked();
         // (the last one out: the map's and ours are all that are left)
         if f.get(&id).is_some_and(|g| std::sync::Arc::ptr_eq(g, gate)) && std::sync::Arc::strong_count(gate) == 2 {
             f.remove(&id);

@@ -5,6 +5,7 @@
 //! scripts it names and what the scripts it goes on to name, on the game's first run, whichever
 //! way it goes. The first ask starts the reading and is answered 202; the page asks again.
 
+use crate::locked::Locked;
 use crate::treefiles::Trees;
 use axum::{
     extract::{Path, State},
@@ -42,7 +43,7 @@ async fn table(State(f): State<Foresee>, Path(tree): Path<String>) -> Response {
             }
         }
     }
-    if f.going.lock().unwrap().insert(tree.clone()) {
+    if f.going.locked().insert(tree.clone()) {
         let g = f.clone();
         tokio::spawn(async move {
             let text = build(&g.trees, &tree).await;
@@ -51,7 +52,7 @@ async fn table(State(f): State<Foresee>, Path(tree): Path<String>) -> Response {
             if tokio::fs::write(&tmp, &text).await.is_ok() {
                 let _ = tokio::fs::rename(&tmp, g.dir.join(format!("{tree}.tsv"))).await;
             }
-            g.going.lock().unwrap().remove(&tree);
+            g.going.locked().remove(&tree);
         });
     }
     StatusCode::ACCEPTED.into_response()

@@ -8,16 +8,8 @@ fn arr<const AT: usize, const L: usize, const N: usize>(b: &[u8; N]) -> [u8; L] 
     std::array::from_fn(|i| b[AT + i])
 }
 
-pub fn u16<const AT: usize, const N: usize>(b: &[u8; N]) -> u16 {
-    u16::from_le_bytes(arr::<AT, 2, N>(b))
-}
-
 pub fn u32<const AT: usize, const N: usize>(b: &[u8; N]) -> u32 {
     u32::from_le_bytes(arr::<AT, 4, N>(b))
-}
-
-pub fn u64<const AT: usize, const N: usize>(b: &[u8; N]) -> u64 {
-    u64::from_le_bytes(arr::<AT, 8, N>(b))
 }
 
 /// `L` bytes of `b` at `at`; None when they are not all there.
@@ -61,9 +53,8 @@ mod tests {
 
         #[test]
         fn arrays(b in proptest::array::uniform16(proptest::num::u8::ANY)) {
-            proptest::prop_assert_eq!(u16::<14, 16>(&b), u16::from_le_bytes([b[14], b[15]]));
             proptest::prop_assert_eq!(u32::<12, 16>(&b), u32::from_le_bytes([b[12], b[13], b[14], b[15]]));
-            proptest::prop_assert_eq!(u64::<0, 16>(&b), u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]));
+            proptest::prop_assert_eq!(u32::<0, 16>(&b), u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
         }
     }
 }

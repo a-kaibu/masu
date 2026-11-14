@@ -6,6 +6,7 @@
 //! settings: Siglus reads them from its own folder), so a game registered with a launcher
 //! starts that instead (`/games`, serve.rs; `masu add`, unpack.rs pick_exe).
 
+use crate::locked::Locked;
 /// In a game's file list (paths relative to its tree, `/` separated): the engine to start, if it
 /// is a Siglus game: the SiglusEngine.exe in a folder that has Gameexe.dat, the shallowest
 /// (then the first by name). Names are matched as Windows does, without case.
@@ -82,16 +83,16 @@ fn engine_cached(cache: &std::sync::Mutex<std::collections::HashMap<String, (std
     }
     let p = store.join("trees").join(format!("{name}.tsv"));
     let Some(mtime) = std::fs::metadata(&p).ok().and_then(|m| m.modified().ok()) else {
-        cache.lock().unwrap().remove(name);
+        cache.locked().remove(name);
         return None;
     };
-    if let Some((t, e)) = cache.lock().unwrap().get(name) {
+    if let Some((t, e)) = cache.locked().get(name) {
         if *t == mtime {
             return e.clone();
         }
     }
     let e = siglus_engine(tree_files(&std::fs::read_to_string(&p).ok()?).iter().map(String::as_str));
-    cache.lock().unwrap().insert(name.to_string(), (mtime, e.clone()));
+    cache.locked().insert(name.to_string(), (mtime, e.clone()));
     e
 }
 
@@ -220,7 +221,7 @@ mod tests {
                     let p = dir.join("trees").join(format!("{name}.tsv"));
                     let want = std::fs::read_to_string(&p).ok().and_then(|tsv| siglus_engine(tree_files(&tsv).iter().map(String::as_str)));
                     prop_assert_eq!(engine_cached(&cache, &dir, &name), want);
-                    prop_assert_eq!(cache.lock().unwrap().contains_key(&name), p.exists());
+                    prop_assert_eq!(cache.locked().contains_key(&name), p.exists());
                 }
             }
             let _ = std::fs::remove_dir_all(dir);

@@ -4,6 +4,7 @@
 //! for one that is not satisfiable). Files go out one chunk at a time: a big movie does not sit
 //! in memory whole.
 
+use crate::locked::Locked;
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -108,7 +109,7 @@ impl Trees {
     fn tree(&self, name: &str) -> Option<Arc<Tree>> {
         let path = self.store.join("trees").join(format!("{name}.tsv"));
         let mtime = std::fs::metadata(&path).ok()?.modified().ok()?;
-        if let Some(t) = self.cache.lock().unwrap().get(name).filter(|t| t.mtime == mtime) {
+        if let Some(t) = self.cache.locked().get(name).filter(|t| t.mtime == mtime) {
             t.used.store(tick(), std::sync::atomic::Ordering::Relaxed);
             return Some(t.clone());
         }
@@ -124,7 +125,7 @@ impl Trees {
             }
         }
         let t = Arc::new(Tree { mtime, files, used: Default::default() });
-        let mut c = self.cache.lock().unwrap();
+        let mut c = self.cache.locked();
         // (bounded: the least lately used list goes; review b01)
         while c.len() >= TREES_KEPT {
             let Some(old) = c.iter().min_by_key(|(_, t)| t.used.load(std::sync::atomic::Ordering::Relaxed)).map(|(k, _)| k.clone()) else { break };
@@ -222,7 +223,7 @@ impl Trees {
         let c = e.0.list().get(i).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
         let len = usize::try_from(c.len.get()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let Some(id) = c.id else { return Ok(vec![0; len].into()) };
-        if let Some(d) = self.decoded.lock().unwrap().get(id).filter(|d| d.len() == len) {
+        if let Some(d) = self.decoded.locked().get(id).filter(|d| d.len() == len) {
             return Ok(d);
         }
         let logical = id.store_path();
@@ -239,7 +240,7 @@ impl Trees {
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
             .into();
-        self.decoded.lock().unwrap().put(id, d.clone());
+        self.decoded.locked().put(id, d.clone());
         Ok(d)
     }
 
