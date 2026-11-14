@@ -31,3 +31,13 @@ fn every_format_answers_as_pinned() {
     let want = std::fs::read_to_string(&path).unwrap_or_default();
     assert!(want == got, "render::d3d format answers differ from format_golden.txt (MASU_UPDATE_FORMATS=1 rewrites it):\n{got}");
 }
+
+/// The view dimensions and topologies the command words' codes name, pinned before they become
+/// enums: each code's WebGPU name (and one past them: the default), whether a topology is a strip.
+#[test]
+fn view_dimensions_and_topologies_as_pinned() {
+    let dims: Vec<String> = (0..8).map(|i| pick(&VIEW_DIM, i, "2d").to_string()).collect();
+    assert_eq!(dims.join(" "), "1d 2d 2d-array cube cube-array 3d 2d 2d");
+    let topo: Vec<String> = (0..7).map(|i| { let t = pick(&TOPOLOGY, i, "triangle-list"); format!("{t}:{}", u8::from(t.ends_with("strip"))) }).collect();
+    assert_eq!(topo.join(" "), "point-list:0 line-list:0 line-strip:1 triangle-list:0 triangle-strip:1 triangle-list:0 triangle-list:0");
+}
