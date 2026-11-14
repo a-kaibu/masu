@@ -5,11 +5,14 @@
 //! for the defaults) on every pass, so a change takes effect on the next one.
 
 /// Little-endian f32 / u32 field `i` (4-byte units) of a parameter block, or `def`
+fn field(p: &[u8], i: usize) -> Option<[u8; 4]> {
+    p.chunks_exact(4).nth(i).and_then(|b| b.try_into().ok())
+}
 fn f(p: &[u8], i: usize, def: f32) -> f32 {
-    p.get(4 * i..4 * i + 4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).filter(|v| v.is_finite()).unwrap_or(def)
+    field(p, i).map(f32::from_le_bytes).filter(|v| v.is_finite()).unwrap_or(def)
 }
 fn u(p: &[u8], i: usize, def: u32) -> u32 {
-    p.get(4 * i..4 * i + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).unwrap_or(def)
+    field(p, i).map_or(def, u32::from_le_bytes)
 }
 fn db(v: f32) -> f32 {
     10f32.powf(v / 20.0)
@@ -21,7 +24,34 @@ fn db(v: f32) -> f32 {
 pub const MAX_CHANNELS: usize = 64;
 pub const RATES: std::ops::RangeInclusive<u32> = 1000..=200_000;
 pub fn sane(ch: usize, rate: u32) -> bool {
-    (1..=MAX_CHANNELS).contains(&ch) && RATES.contains(&rate)
+    Rate::check(ch, rate).is_some()
+}
+
+/// A sample rate in RATES, with a channel count in 1..=MAX_CHANNELS (only check makes one,
+/// so an effect holding a Rate runs on a format it can size its lines for)
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Rate(u32);
+impl Rate {
+    pub fn check(ch: usize, rate: u32) -> Option<Rate> {
+        ((1..=MAX_CHANNELS).contains(&ch) && RATES.contains(&rate)).then_some(Rate(rate))
+    }
+    /// Exact: at most 200 000, under f32's 2^24
+    fn f32(self) -> f32 {
+        self.0 as f32
+    }
+}
+const _: () = assert!(*RATES.end() < 1 << 24);
+
+/// Samples (a length of time times the rate, rounded by the caller): negative or NaN is 0,
+/// past usize the largest
+fn samples(x: f32) -> usize {
+    x as usize
+}
+
+/// A small count (a delay line's length, a channel index) as a float: lines are at most a
+/// few seconds at 200 kHz, exact in f32
+fn small_f32(n: usize) -> f32 {
+    u32::try_from(n).map_or(f32::MAX, |v| f64::from(v) as f32)
 }
 
 /// One biquad section per channel (direct form I)
@@ -43,7 +73,7 @@ impl Biquad {
             return;
         }
         self.key = key;
-        let (rate, f0, gain, bw) = (rate as f64, f0 as f64, gain as f64, bw as f64);
+        let (rate, f0, gain, bw) = (f64::from(rate), f64::from(f0), f64::from(gain), f64::from(bw));
         let a = gain.sqrt();
         let w0 = 2.0 * std::f64::consts::PI * f0 / rate;
         let (s, cs) = w0.sin_cos();
@@ -58,7 +88,7 @@ impl Biquad {
         let [b0, b1, b2, a1, a2] = self.c;
         for fr in buf.chunks_exact_mut(ch) {
             for (x, z) in fr.iter_mut().zip(self.z.iter_mut()) {
-                let xi = *x as f64;
+                let xi = f64::from(*x);
                 let y = b0 * xi + b1 * z[0] + b2 * z[1] - a1 * z[2] - a2 * z[3];
                 *z = [xi, z[0], y, z[2]];
                 *x = y as f32;
@@ -76,12 +106,10 @@ pub const EQ_CENTRES: [f32; 4] = [100.0, 800.0, 2000.0, 10000.0];
 
 impl Eq {
     pub fn run(&mut self, p: &[u8], buf: &mut [f32], ch: usize, rate: u32) {
-        if !sane(ch, rate) {
-            return;
-        }
-        let fs = rate as f32;
-        for (i, b) in self.bands.iter_mut().enumerate() {
-            let f0 = f(p, 3 * i, EQ_CENTRES[i]).clamp(20.0, 20000.0).min(fs * 0.49);
+        let Some(rate) = Rate::check(ch, rate) else { return };
+        let fs = rate.f32();
+        for ((i, b), centre) in self.bands.iter_mut().enumerate().zip(EQ_CENTRES) {
+            let f0 = f(p, 3 * i, centre).clamp(20.0, 20000.0).min(fs * 0.49);
             let g = f(p, 3 * i + 1, 1.0).clamp(0.126, 7.94);
             let bw = f(p, 3 * i + 2, 1.0).clamp(0.1, 2.0);
             // (a band at unity gain is the identity: skipped)
@@ -108,12 +136,12 @@ impl Default for Limiter {
 }
 impl Limiter {
     pub fn run(&mut self, p: &[u8], buf: &mut [f32], ch: usize, rate: u32) {
-        if !sane(ch, rate) {
-            return;
-        }
-        let release = u(p, 0, 6).clamp(1, 20) as f32 * 0.01;
-        let loud = u(p, 1, 1000).clamp(1, 1800) as f32 / 1000.0;
-        let k = (-1.0 / (release * rate as f32)).exp();
+        let Some(rate) = Rate::check(ch, rate) else { return };
+        // (clamped to u16: the conversions are exact)
+        let in_range = |v: u32, lo: u16, hi: u16| f32::from(u16::try_from(v.clamp(lo.into(), hi.into())).unwrap_or(hi));
+        let release = in_range(u(p, 0, 6), 1, 20) * 0.01;
+        let loud = in_range(u(p, 1, 1000), 1, 1800) / 1000.0;
+        let k = (-1.0 / (release * rate.f32())).exp();
         for fr in buf.chunks_exact_mut(ch) {
             let peak = fr.iter().fold(0f32, |m, x| m.max((x * loud).abs()));
             let want = if peak > 1.0 { 1.0 / peak } else { 1.0 };
@@ -138,19 +166,17 @@ impl Echo {
         Echo { max_delay_ms, ..Default::default() }
     }
     pub fn run(&mut self, p: &[u8], buf: &mut [f32], ch: usize, rate: u32) {
-        if !sane(ch, rate) {
-            return;
-        }
+        let Some(rate) = Rate::check(ch, rate) else { return };
         let max = if self.max_delay_ms > 0.0 { self.max_delay_ms.clamp(1.0, 2000.0) } else { 2000.0 };
         let wet = f(p, 0, 0.5).clamp(0.0, 1.0);
         let fb = f(p, 1, 0.5).clamp(0.0, 1.0);
         let delay = f(p, 2, 500.0).clamp(1.0, max);
-        let cap = ((max / 1000.0 * rate as f32).ceil() as usize + 1) * ch;
+        let cap = (samples((max / 1000.0 * rate.f32()).ceil()) + 1) * ch;
         if self.line.len() != cap {
             self.line = vec![0.0; cap];
             self.at = 0;
         }
-        let d = ((delay / 1000.0 * rate as f32).round() as usize).max(1) * ch;
+        let d = samples((delay / 1000.0 * rate.f32()).round()).max(1) * ch;
         let n = self.line.len();
         for x in buf.iter_mut() {
             let r = (self.at + n - d) % n;
@@ -184,7 +210,7 @@ pub struct Reverb {
     combs: Vec<Vec<Line>>,
     alls: Vec<Vec<Line>>,
     /// (channels, rate) the lines were made for
-    key: (usize, u32),
+    key: (usize, Rate),
     /// the lengths' scale (bits) and decay the comb feedbacks `fbs` are of
     shape: (u32, u32),
     fbs: Vec<Vec<f32>>,
@@ -230,11 +256,9 @@ impl ReverbShape {
 
 impl Reverb {
     pub fn run(&mut self, s: &ReverbShape, buf: &mut [f32], ch: usize, rate: u32) {
-        if !sane(ch, rate) {
-            return;
-        }
+        let Some(rate) = Rate::check(ch, rate) else { return };
         let scale = s.scale.clamp(0.01, MAX_SCALE);
-        let len = |n: usize, c: usize, scale: f32| (((n + SPREAD * (c % 2)) as f32 * (scale * rate as f32 / 44100.0)) as usize).max(1);
+        let len = |n: usize, c: usize, scale: f32| samples(small_f32(n + SPREAD * (c % 2)) * (scale * rate.f32() / 44100.0)).max(1);
         if self.key != (ch, rate) || self.combs.len() != ch {
             let line = |n: usize, c: usize| Line { buf: vec![0.0; len(n, c, MAX_SCALE)], len: 1, at: 0, lp: 0.0 };
             self.combs = (0..ch).map(|c| COMBS.iter().map(|&n| line(n, c)).collect()).collect();
@@ -251,7 +275,7 @@ impl Reverb {
                 }
             }
             // a comb of n samples falls by 60 dB over the decay time
-            self.fbs = self.combs.iter().map(|cs| cs.iter().map(|l| 10f32.powf(-3.0 * l.len as f32 / (s.decay_s * rate as f32)).min(0.98)).collect()).collect();
+            self.fbs = self.combs.iter().map(|cs| cs.iter().map(|l| 10f32.powf(-3.0 * small_f32(l.len) / (s.decay_s * rate.f32())).min(0.98)).collect()).collect();
         }
         let ap = 0.3 + 0.4 * s.diffusion;
         for fr in buf.chunks_exact_mut(ch) {
