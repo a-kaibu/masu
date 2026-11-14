@@ -1,6 +1,8 @@
 //! Bit reading, most significant bit first (FFmpeg's GetBitContext). Reads past the end give
 //! zeros (FFmpeg pads its buffers with zeros); `left` says how far a reader went.
 
+use crate::num::{lo32, us};
+
 #[derive(Clone)]
 pub struct Bits<'a> {
     buf: &'a [u8],
@@ -24,13 +26,16 @@ impl<'a> Bits<'a> {
         let byte = self.pos >> 3;
         // (one 8-byte load where the buffer has it; the five byte loads near its end)
         let v = match self.buf.get(byte..byte + 8) {
-            Some(w) => ((u64::from_be_bytes(w.try_into().unwrap()) << (self.pos & 7)) >> 32) as u32,
+            Some(w) => match w.first_chunk::<8>() {
+                Some(w) => lo32((u64::from_be_bytes(*w) << (self.pos & 7)) >> 32),
+                None => 0,
+            },
             None => {
                 let mut v: u64 = 0;
                 for k in 0..5 {
-                    v = v << 8 | *self.buf.get(byte + k).unwrap_or(&0) as u64;
+                    v = v << 8 | u64::from(*self.buf.get(byte + k).unwrap_or(&0));
                 }
-                ((v << (self.pos & 7)) >> 8) as u32
+                lo32((v << (self.pos & 7)) >> 8)
             }
         };
         // (bits past `end` read as 0)
@@ -59,8 +64,31 @@ impl<'a> Bits<'a> {
     #[inline]
     pub fn get(&mut self, n: u32) -> u32 {
         let v = self.peek(n);
-        self.pos += n as usize;
+        self.pos += us(n);
         v
+    }
+    /// N bits (N up to 25) as an index.
+    #[inline]
+    pub fn uz<const N: u32>(&mut self) -> usize {
+        const { assert!(N <= 25) };
+        us(self.get(N))
+    }
+    /// N bits (N up to 25) as a non-negative i32.
+    #[inline]
+    pub fn i<const N: u32>(&mut self) -> i32 {
+        const { assert!(N <= 25) };
+        self.get(N).cast_signed()
+    }
+    /// N bits (N up to 8) as a byte.
+    #[inline]
+    pub fn u8<const N: u32>(&mut self) -> u8 {
+        const { assert!(N <= 8) };
+        crate::num::lo8(self.get(N))
+    }
+    /// One bit, set or not.
+    #[inline]
+    pub fn bit(&mut self) -> bool {
+        self.get1() != 0
     }
     /// Up to 32 bits.
     pub fn get_long(&mut self, n: u32) -> u32 {
@@ -77,13 +105,22 @@ impl<'a> Bits<'a> {
         if n == 0 {
             return 0;
         }
-        ((v << (32 - n)) as i32) >> (32 - n)
+        (v << (32 - n)).cast_signed() >> (32 - n)
     }
     pub fn count(&self) -> usize {
         self.pos
     }
+    /// Bits left before the end, negative past it.
     pub fn left(&self) -> isize {
-        self.end as isize - self.pos as isize
+        self.end.wrapping_sub(self.pos).cast_signed()
+    }
+    /// Bits left before the end (0 past it).
+    pub fn remaining(&self) -> usize {
+        self.end.saturating_sub(self.pos)
+    }
+    /// Whether the reader went past the end.
+    pub fn overread(&self) -> bool {
+        self.pos > self.end
     }
     pub fn size(&self) -> usize {
         self.end

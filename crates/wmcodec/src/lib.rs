@@ -14,6 +14,7 @@ pub mod msmpeg4;
 #[allow(clippy::all)]
 pub mod msmpeg4_tables;
 pub mod mdct;
+pub mod num;
 #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
 pub mod simd;
 pub mod vc1;
