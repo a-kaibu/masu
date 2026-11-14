@@ -410,11 +410,48 @@ fn reg_flush_for_page() {
 }
 
 extern "C" fn reg_flush_at_exit() {
-    if crate::kern::host::shared() {
-        reg_flush();
-    } else {
-        REG.flush_soon();
+    match exit_flush(crate::kern::host::shared(), on_page_thread()) {
+        ExitFlush::Locked => reg_flush(),
+        ExitFlush::Soon => {
+            REG.flush_soon();
+        }
+        ExitFlush::Nothing => {}
     }
+}
+
+/// What the registry's atexit does
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum ExitFlush {
+    /// a transaction under the kernel's lock
+    Locked,
+    /// REG.flush_soon: writes without waiting for anyone
+    Soon,
+    Nothing,
+}
+
+/// The exit's flush: while shared, written under the kernel's lock, except on the page's own
+/// thread (the exit runs atexit there): a thread of this process can hold the kernel's lock
+/// waiting for a file call it proxies to that thread, so waiting there for the lock never ends
+/// (registrymulti hung about 1 run in 5). Shared transactions are written as they end, so
+/// nothing waits then but an unfinished batch.
+fn exit_flush(shared: bool, page_thread: bool) -> ExitFlush {
+    match (shared, page_thread) {
+        (true, false) => ExitFlush::Locked,
+        (true, true) => ExitFlush::Nothing,
+        (false, _) => ExitFlush::Soon,
+    }
+}
+
+fn on_page_thread() -> bool {
+    #[cfg(target_os = "emscripten")]
+    {
+        extern "C" {
+            fn emscripten_is_main_browser_thread() -> std::ffi::c_int;
+        }
+        unsafe { emscripten_is_main_browser_thread() != 0 }
+    }
+    #[cfg(not(target_os = "emscripten"))]
+    false
 }
 
 /// Keys every Windows has, even empty (setup programs open them to tell whether they may
@@ -5700,6 +5737,22 @@ pub(crate) mod reg_cache_tests {
     use proptest::prelude::*;
 
     const HKEY_CURRENT_USER: u32 = 0x8000_0001;
+
+    /// registrymulti: the exit's flush never waits for the kernel's lock on the page's thread
+    /// (a thread holding it may wait for that thread); off it, a shared registry's flush is a
+    /// locked transaction, an unshared one never waits
+    #[test]
+    fn exit_flush_never_locks_on_the_page_thread() {
+        for shared in [false, true] {
+            for page in [false, true] {
+                let f = exit_flush(shared, page);
+                assert!(!(page && f == ExitFlush::Locked), "{shared} {page}");
+                assert_eq!(f == ExitFlush::Locked, shared && !page);
+                assert_eq!(f == ExitFlush::Soon, !shared);
+            }
+        }
+        assert!(!on_page_thread());
+    }
 
     thread_local! {
         /// registry file writes made on this thread
