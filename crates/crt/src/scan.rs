@@ -211,7 +211,14 @@ pub fn scan<T: Unit>(input: &[T], fmt: &[T], m: Mode, k: &mut impl Sink) -> i32 
                     }
                 }
                 b'c' | b'C' | b's' | b'S' | b'[' => {
-                    let mut set: Option<(bool, Vec<u32>, Vec<(u32, u32)>)> = None;
+                    // (what ends the field: its count of characters, a scan set, or white space;
+                    // the set is there just when the conversion is one)
+                    enum Ends {
+                        Count,
+                        Set { neg: bool, singles: Vec<u32>, ranges: Vec<(u32, u32)> },
+                        Space,
+                    }
+                    let mut ends = if matches!(ty, b'c' | b'C') { Ends::Count } else { Ends::Space };
                     if ty == b'[' {
                         // the scan set: [^...] negates; a ']' first is a member; a-z a range
                         let neg = f(i) == b'^' as u32;
@@ -236,20 +243,19 @@ pub fn scan<T: Unit>(input: &[T], fmt: &[T], m: Mode, k: &mut impl Sink) -> i32 
                             break 'run Stop::Matching;
                         }
                         i += 1; // ']'
-                        set = Some((neg, singles, ranges));
+                        ends = Ends::Set { neg, singles, ranges };
                     }
                     if inp(pos).is_none() {
                         break 'run Stop::Input;
                     }
-                    let end = match ty {
-                        b'c' | b'C' => {
+                    let end = match &ends {
+                        Ends::Count => {
                             // (what is left when the input ends first: the MS CRT and glibc
                             // store and count those characters)
                             let n = if has_width && width > 0 { width } else { 1 };
                             pos.saturating_add(n).min(input.len())
                         }
-                        b'[' => {
-                            let (neg, singles, ranges) = set.as_ref().unwrap();
+                        Ends::Set { neg, singles, ranges } => {
                             let lim = limit(pos);
                             let mut e = pos;
                             while e < lim {
@@ -265,7 +271,7 @@ pub fn scan<T: Unit>(input: &[T], fmt: &[T], m: Mode, k: &mut impl Sink) -> i32 
                             }
                             e
                         }
-                        _ => {
+                        Ends::Space => {
                             let lim = limit(pos);
                             let mut e = pos;
                             while e < lim && !is_space(input[e].code()) {

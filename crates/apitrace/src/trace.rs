@@ -213,8 +213,8 @@ pub fn unpack_cut(file: &[u8]) -> Result<(Vec<u8>, bool), String> {
     let mut out = Vec::new();
     let mut i = 2;
     while i < file.len() {
-        let Some(n) = file.get(i..i + 4) else { return Ok((out, true)) };
-        let n = u32::from_le_bytes(n.try_into().unwrap()) as usize;
+        let Some(n) = file.get(i..).and_then(|f| f.first_chunk::<4>()) else { return Ok((out, true)) };
+        let n = u32::from_le_bytes(*n) as usize;
         i += 4;
         // (the chunk being written when the program was killed: what of it is whole)
         let Some(chunk) = file.get(i..i.saturating_add(n)) else {
@@ -399,8 +399,8 @@ impl<'a> Parser<'a> {
             2 => Value::Bool(true),
             3 => Value::SInt((self.uint()? as i64).wrapping_neg()),
             4 => Value::UInt(self.uint()?),
-            5 => Value::Float(f32::from_le_bytes(self.bytes(4)?.try_into().unwrap())),
-            6 => Value::Double(f64::from_le_bytes(self.bytes(8)?.try_into().unwrap())),
+            5 => Value::Float(f32::from_le_bytes(self.array()?)),
+            6 => Value::Double(f64::from_le_bytes(self.array()?)),
             7 => Value::Str(self.string()?),
             8 => Value::Blob(self.string()?),
             9 => {
@@ -482,6 +482,12 @@ impl<'a> Parser<'a> {
         };
         self.i += 1;
         Ok(b)
+    }
+
+    /// The next N bytes as an array.
+    fn array<const N: usize>(&mut self) -> R<[u8; N]> {
+        let s = self.bytes(N)?;
+        Ok(*s.first_chunk::<N>().ok_or("trace: unexpected end")?)
     }
 
     fn bytes(&mut self, n: usize) -> R<&'a [u8]> {

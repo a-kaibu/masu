@@ -596,7 +596,7 @@ impl Converter {
                 d.copy_from_slice(&v.to_le_bytes());
             }
         };
-        let get = |b: &Blob, o: usize| b.bytes.get(o..o + 4).map(|x| u32::from_le_bytes(x.try_into().unwrap()));
+        let get = |b: &Blob, o: usize| b.bytes.get(o..).and_then(|x| x.first_chunk::<4>()).map(|x| u32::from_le_bytes(*x));
         let size = |b: &Blob| get(b, 0).zip(get(b, 4));
         let window = |b: &mut Blob, name: &str| {
             if let Some(o) = off(name) {
@@ -874,8 +874,14 @@ pub fn read(b: &[u8]) -> Result<(u32, Vec<Record>), String> {
         *i += n;
         Ok(v)
     };
-    let u8_ = |i: &mut usize| -> Result<u8, String> { Ok(bytes(i, 1)?[0]) };
-    let u32_ = |i: &mut usize| -> Result<u32, String> { Ok(u32::from_le_bytes(bytes(i, 4)?.try_into().unwrap())) };
+    /// The next N bytes as an array (past the end: an error).
+    fn take<const N: usize>(b: &[u8], i: &mut usize) -> Result<[u8; N], String> {
+        let v = *b.get(*i..).and_then(|b| b.first_chunk::<N>()).ok_or("replay: past the end")?;
+        *i += N;
+        Ok(v)
+    }
+    let u8_ = |i: &mut usize| -> Result<u8, String> { Ok(u8::from_le_bytes(take::<1>(b, i)?)) };
+    let u32_ = |i: &mut usize| -> Result<u32, String> { Ok(u32::from_le_bytes(take::<4>(b, i)?)) };
     let bits = u32_(&mut i)?;
     let mut names = HashMap::new();
     let mut out = vec![];
@@ -883,7 +889,7 @@ pub fn read(b: &[u8]) -> Result<(u32, Vec<Record>), String> {
         match u8_(&mut i)? {
             NAME => {
                 let id = u32_(&mut i)?;
-                let n = u16::from_le_bytes(bytes(&mut i, 2)?.try_into().unwrap()) as usize;
+                let n = usize::from(u16::from_le_bytes(take::<2>(b, &mut i)?));
                 let name = String::from_utf8(bytes(&mut i, n)?).map_err(|e| e.to_string())?;
                 let index = u32_(&mut i)? as i32;
                 let flags = u8_(&mut i)?;
@@ -899,12 +905,12 @@ pub fn read(b: &[u8]) -> Result<(u32, Vec<Record>), String> {
                 let mut args = vec![];
                 for _ in 0..n {
                     args.push(match u8_(&mut i)? {
-                        WORD => Arg::Word(u64::from_le_bytes(bytes(&mut i, 8)?.try_into().unwrap())),
+                        WORD => Arg::Word(u64::from_le_bytes(take::<8>(b, &mut i)?)),
                         HANDLE => Arg::Handle(u32_(&mut i)?),
                         BLOB => {
                             let n = u32_(&mut i)? as usize;
                             let data = bytes(&mut i, n)?;
-                            let k = u16::from_le_bytes(bytes(&mut i, 2)?.try_into().unwrap());
+                            let k = u16::from_le_bytes(take::<2>(b, &mut i)?);
                             let mut fix = vec![];
                             for _ in 0..k {
                                 fix.push((u32_(&mut i)?, u8_(&mut i)?, u32_(&mut i)?));
