@@ -47,7 +47,7 @@ async fn rustfs_encrypted_storage() -> Result<()> {
         "bucket = {bucket_name:?}\nregion = 'us-east-1'\nendpoint = {endpoint:?}\nprefix = 'test/'\nactive_key = 'old'\ncache = {cache:?}\n[keys]\nold = '{}'\nnew = '{}'\n",
         "01".repeat(32), "02".repeat(32)
     ))?;
-    let mut s = Storage::open(db.clone(), &config)?;
+    let mut s = Storage::open(db.clone(), &config, Credentials::default()?)?;
     let result: Result<()> = async {
         db.set_profile(
             "game",
@@ -87,7 +87,7 @@ async fn rustfs_encrypted_storage() -> Result<()> {
         )?;
         let saves = Saves {
             db: db.clone(),
-            remote: Some(Storage::open(db.clone(), &config)?),
+            remote: Some(Storage::open(db.clone(), &config, Credentials::default()?)?),
             lock: Default::default(),
         };
         assert!(saves.write("game", 0, b"private save").await?);
@@ -262,7 +262,7 @@ async fn rustfs_push_through_503() -> Result<()> {
         "bucket = {bucket_name:?}\nregion = 'us-east-1'\nendpoint = {endpoint:?}\nprefix = 'test/'\nactive_key = 'k'\n[keys]\nk = '{}'\n",
         "04".repeat(32)
     ))?;
-    let s = Storage::open(db.clone(), &config)?;
+    let s = Storage::open(db.clone(), &config, Credentials::default()?)?;
     let mut files = Vec::new();
     for i in 0..48u32 {
         files.push((format!("chunks/{:02x}/c{i}", i % 4), zstd::encode_all(&i.to_le_bytes().repeat(1000)[..], 3)?));
@@ -325,7 +325,7 @@ async fn rustfs_remove_game() -> Result<()> {
         "bucket = {bucket_name:?}\nregion = 'us-east-1'\nendpoint = {endpoint:?}\nprefix = 'test/'\nactive_key = 'k'\n[keys]\nk = '{}'\n",
         "05".repeat(32)
     ))?;
-    let s = Storage::open(db.clone(), &config)?;
+    let s = Storage::open(db.clone(), &config, Credentials::default()?)?;
     let result: Result<()> = async {
         let shared: Vec<u8> = (0..600_000u32).map(|i| (i * 13 % 251) as u8).collect();
         for (name, own) in [("a", 1u8), ("b", 2)] {

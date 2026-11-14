@@ -151,6 +151,11 @@ pub(crate) mod gc_tests {
     use axum::{body::Bytes, extract::{Path as UrlPath, State}, http::StatusCode, response::IntoResponse, routing::get, Router};
     use std::sync::{atomic::{AtomicUsize, Ordering::SeqCst}, Arc, Mutex};
 
+    /// Keys for the test's own fake bucket: never the machine's (Storage::open takes them)
+    pub(crate) fn test_credentials() -> Credentials {
+        Credentials::new(Some("t"), Some("t"), None, None, None).unwrap()
+    }
+
     /// An S3 bucket in memory answering after `delay`; counts requests and the most PUTs or
     /// GETs on their way at once.
     #[derive(Clone, Default)]
@@ -834,10 +839,10 @@ pub(crate) mod gc_tests {
         };
         let (c1, c2) = (cfg("a.toml", "s3a"), cfg("b.toml", "s3b"));
         let lib = |n: &str| Library::new(&dir.join(n)).unwrap();
-        let a = Storage::open(lib("store"), &c1).unwrap();
-        let b = Storage::open(lib("store"), &c1).unwrap();
-        let other_db = Storage::open(lib("store2"), &c1).unwrap();
-        let other_cfg = Storage::open(lib("store"), &c2).unwrap();
+        let a = Storage::open(lib("store"), &c1, test_credentials()).unwrap();
+        let b = Storage::open(lib("store"), &c1, test_credentials()).unwrap();
+        let other_db = Storage::open(lib("store2"), &c1, test_credentials()).unwrap();
+        let other_cfg = Storage::open(lib("store"), &c2, test_credentials()).unwrap();
         assert!(Arc::ptr_eq(a.disk.as_ref().unwrap(), b.disk.as_ref().unwrap()));
         assert!(Arc::ptr_eq(&a.cache, &b.cache) && Arc::ptr_eq(&a.inflight, &b.inflight) && Arc::ptr_eq(&a.requests, &b.requests));
         assert!(!Arc::ptr_eq(&a.requests, &other_db.requests) && !Arc::ptr_eq(&a.requests, &other_cfg.requests));
@@ -849,6 +854,32 @@ pub(crate) mod gc_tests {
         drop(held);
         assert!(b.requests.try_acquire().is_ok());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(32))]
+        /// Any order of opens on two databases and two configurations: two Storages share their
+        /// caches and request cap exactly when both database and configuration are the same
+        /// (with the test's keys: no lookup of the machine's, #242)
+        #[test]
+        fn sharing_is_by_database_and_configuration(opens in proptest::collection::vec((0usize..2, 0usize..2), 1..12)) {
+            let dir = std::env::temp_dir().join(format!("masu-share-pbt-{}", Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let cfgs: Vec<_> = (0..2).map(|i| {
+                let p = dir.join(format!("{i}.toml"));
+                std::fs::write(&p, format!("bucket = \"b\"\nregion = \"us-east-1\"\nendpoint = \"http://127.0.0.1:9\"\nactive_key = \"k\"\ncache = {:?}\ncache_gib = 1\n[keys]\nk = \"{}\"\n", dir.join(format!("s3-{i}")), "04".repeat(32))).unwrap();
+                p
+            }).collect();
+            let opened: Vec<((usize, usize), Storage)> = opens.iter().map(|&(d, c)| ((d, c), Storage::open(Library::new(&dir.join(format!("db{d}"))).unwrap(), &cfgs[c], test_credentials()).unwrap())).collect();
+            for (ka, a) in &opened {
+                for (kb, b) in &opened {
+                    proptest::prop_assert_eq!(Arc::ptr_eq(&a.requests, &b.requests), ka == kb);
+                    proptest::prop_assert_eq!(Arc::ptr_eq(&a.cache, &b.cache), ka == kb);
+                    proptest::prop_assert_eq!(Arc::ptr_eq(&a.inflight, &b.inflight), ka == kb);
+                }
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        }
     }
 
     /// Review b01: a read dropped at any point (its client went away: axum drops the handler)
@@ -2046,10 +2077,14 @@ impl Storage {
         let Some(path) = std::env::var_os("MASU_STORAGE_CONFIG") else {
             return Ok(None);
         };
-        Self::open(db, Path::new(&path)).map(Some)
+        // (the bucket's keys from the environment: AWS_ACCESS_KEY_ID..., the profile or the
+        // instance's metadata)
+        Self::open(db, Path::new(&path), Credentials::default()?).map(Some)
     }
 
-    pub fn open(db: Library, path: &Path) -> Result<Self> {
+    /// The storage `path` configures, signing with `credentials`: given, not looked up here, so
+    /// that a test cannot reach for the machine's (#242: one did, and failed on CI)
+    pub fn open(db: Library, path: &Path, credentials: Credentials) -> Result<Self> {
         let config: Config = toml::from_str(&std::fs::read_to_string(path)?)?;
         ensure!(!config.active_key.is_empty(), "active key id is empty");
         let region = match &config.endpoint {
@@ -2059,7 +2094,7 @@ impl Storage {
             },
             None => config.region.parse()?,
         };
-        let mut bucket = Bucket::new(&config.bucket, region, Credentials::default()?)?;
+        let mut bucket = Bucket::new(&config.bucket, region, credentials)?;
         if config.endpoint.is_some() {
             bucket = bucket.with_path_style();
         }
