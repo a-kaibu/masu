@@ -24,7 +24,7 @@ pub(crate) const AHEAD: u32 = 3 * STEP as u32;
 enum Hr {
     NoInterface,
     NotImpl,
-    /// Hr::InvalidParam.code() (E_INVALIDARG)
+    /// DSERR_INVALIDPARAM (E_INVALIDARG)
     InvalidParam,
     NoDriver,
     AlreadyInitialized,
@@ -1622,7 +1622,7 @@ fn B_Play(c: &mut Ctx) -> u32 {
 }
 fn B_SetCurrentPosition(c: &mut Ctx) -> u32 {
     let (this, p) = (c.a(0), c.a(1));
-    // (past the end: Hr::InvalidParam.code(), as Windows; the mixer read past the buffer)
+    // (past the end: DSERR_INVALIDPARAM, as Windows; the mixer read past the buffer)
     with_buf(this, |b| {
         if p >= b.size && b.size != 0 {
             return Hr::InvalidParam.code();
@@ -2620,7 +2620,7 @@ mod review_b09_tests {
         mem::heap_free(p);
     }
 
-    /// SetCurrentPosition past the buffer: Hr::InvalidParam.code(), the position unchanged.
+    /// SetCurrentPosition past the buffer: DSERR_INVALIDPARAM, the position unchanged.
     #[test]
     fn position_past_the_end_is_refused() {
         let _g = enter();

@@ -18,19 +18,43 @@ use crate::api::{vtable, Ctx, Handler};
 use crate::dshow_play::{self as play, frame_at, now, Play, SEC};
 use crate::mem::{self, ps, putp, r32, rp, w32, wp};
 
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_POINTER: u32 = 0x8000_4003;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_FAIL: u32 = 0x8000_4005;
-const S_FALSE: u32 = 1;
-const MS_S_PENDING: u32 = 0x0004_0001;
-const MS_S_ENDOFSTREAM: u32 = 0x0004_0003;
-const MS_E_PURPOSEID: u32 = 0x8004_0402;
-const MS_E_NOSTREAM: u32 = 0x8004_0403;
-const MS_E_NOTRUNNING: u32 = 0x8004_040a;
-/// (OpenFile of a file not there: what RenderFile answers)
-const VFW_E_NOT_FOUND: u32 = 0x8004_0216;
+/// What the objects answer besides S_OK (made an HRESULT at a handler's edge)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hr {
+    NoInterface,
+    Pointer,
+    NotImpl,
+    InvalidArg,
+    Fail,
+    False,
+    /// MS_S_PENDING: an asynchronous Update
+    Pending,
+    /// MS_S_ENDOFSTREAM
+    EndOfStream,
+    PurposeId,
+    NoStream,
+    NotRunning,
+    /// VFW_E_NOT_FOUND (OpenFile of a file not there: what RenderFile answers)
+    NotFound,
+}
+impl Hr {
+    const fn code(self) -> u32 {
+        match self {
+            Hr::NoInterface => 0x8000_4002,
+            Hr::Pointer => 0x8000_4003,
+            Hr::NotImpl => 0x8000_4001,
+            Hr::InvalidArg => 0x8007_0057,
+            Hr::Fail => 0x8000_4005,
+            Hr::False => 1,
+            Hr::Pending => 0x0004_0001,
+            Hr::EndOfStream => 0x0004_0003,
+            Hr::PurposeId => 0x8004_0402,
+            Hr::NoStream => 0x8004_0403,
+            Hr::NotRunning => 0x8004_040a,
+            Hr::NotFound => 0x8004_0216,
+        }
+    }
+}
 
 /// AddMediaStream: a renderer of its own (an audio stream the game takes no samples of)
 const AMMSF_ADDDEFAULTRENDERER: u32 = 1;
@@ -151,11 +175,12 @@ fn add_ref_guest(c: &mut Ctx, obj: u32) {
 
 /// A STREAM_TIME argument at `i` (two words on x86) and how many words it takes.
 fn time_arg(c: &Ctx, i: u32) -> u64 {
-    if ps() == 4 { c.a(i) as u64 | (c.a(i + 1) as u64) << 32 } else { c.a(i) as u64 }
+    if ps() == 4 { u64::from(c.a(i)) | u64::from(c.a(i + 1)) << 32 } else { u64::from(c.a(i)) }
 }
 fn put_time(p: u32, t: u64) {
-    w32(p, t as u32);
-    w32(p + 4, (t >> 32) as u32);
+    let [a, b, c, d, e, f, g, h] = t.to_le_bytes();
+    w32(p, u32::from_le_bytes([a, b, c, d]));
+    w32(p + 4, u32::from_le_bytes([e, f, g, h]));
 }
 
 /// The interface a GUID at `iid` names, of the ones an object of `kind` has: its first word
@@ -167,14 +192,14 @@ fn iid_ok(iid: u32, ids: &[u32]) -> bool {
 fn qi(c: &mut Ctx, ids: &[u32]) -> u32 {
     let (b, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if iid == 0 || !iid_ok(iid, ids) {
         if crate::env_on!("SAKE_TRACE_COM") {
             eprintln!("sake: amstream QueryInterface {:08x}: no", r32(iid));
         }
         putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     refs(b, 1);
     putp(out, b);
@@ -195,7 +220,7 @@ fn release(c: &mut Ctx) -> u32 {
     n
 }
 fn notimpl(_: &mut Ctx) -> u32 {
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 fn ok(_: &mut Ctx) -> u32 {
     0
@@ -232,7 +257,8 @@ fn stream_of(b: u32, id: u32) -> u32 {
     .unwrap_or(0)
 }
 fn purpose(p: u32) -> Option<u32> {
-    let tail: [u8; 12] = mem::slice(p + 4, 12).try_into().unwrap();
+    let mut tail = [0u8; 12];
+    tail.copy_from_slice(mem::slice(p + 4, 12));
     let id = r32(p);
     (tail == MSPID_TAIL && matches!(id, VIDEO | AUDIO)).then_some(id)
 }
@@ -240,12 +266,12 @@ fn purpose(p: u32) -> Option<u32> {
 fn mms_get_stream(c: &mut Ctx) -> u32 {
     let (b, id, out) = (c.a(0), c.a(1), c.a(2));
     if id == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let s = purpose(id).map_or(0, |id| stream_of(b, id));
     if s == 0 {
         putp(out, 0);
-        return MS_E_NOSTREAM;
+        return Hr::NoStream.code();
     }
     refs(s, 1);
     putp(out, s);
@@ -255,10 +281,10 @@ fn mms_get_stream(c: &mut Ctx) -> u32 {
 fn mms_enum(c: &mut Ctx) -> u32 {
     let (b, i, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let all: Vec<u32> = mms(b, |x| [x.video, x.audio].into_iter().filter(|&s| s != 0).collect()).unwrap_or_default();
-    match all.get(i as usize) {
+    match all.get(usize::try_from(i).unwrap_or(usize::MAX)) {
         Some(&s) => {
             refs(s, 1);
             putp(out, s);
@@ -266,13 +292,13 @@ fn mms_enum(c: &mut Ctx) -> u32 {
         }
         None => {
             putp(out, 0);
-            S_FALSE
+            Hr::False.code()
         }
     }
 }
 fn mms_get_state(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), mms(c.a(0), |x| x.state).unwrap_or(0));
     0
@@ -297,7 +323,7 @@ fn set_state(b: u32, s: u32) {
 fn mms_set_state(c: &mut Ctx) -> u32 {
     let s = c.a(1);
     if s > 1 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     set_state(c.a(0), s);
     0
@@ -309,7 +335,7 @@ fn position(b: u32) -> u64 {
 /// GetTime(STREAM_TIME *)
 fn mms_time(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put_time(c.a(1), position(c.a(0)));
     0
@@ -317,11 +343,11 @@ fn mms_time(c: &mut Ctx) -> u32 {
 /// GetDuration(STREAM_TIME *): S_FALSE before a file is open
 fn mms_duration(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let (open, d) = mms(c.a(0), |x| (x.open, x.duration)).unwrap_or((false, 0));
     put_time(c.a(1), d);
-    if open { 0 } else { S_FALSE }
+    if open { 0 } else { Hr::False.code() }
 }
 /// Seek(STREAM_TIME)
 fn mms_seek(c: &mut Ctx) -> u32 {
@@ -342,7 +368,7 @@ fn mms_seek(c: &mut Ctx) -> u32 {
 }
 fn mms_eos_handle(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), mms(c.a(0), |x| x.eos).unwrap_or(0));
     0
@@ -350,10 +376,10 @@ fn mms_eos_handle(c: &mut Ctx) -> u32 {
 /// GetFilter: none to hand out (games that only stream a file do not ask)
 fn mms_get_null(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), 0);
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 /// Initialize(STREAM_TYPE, DWORD flags, IGraphBuilder *): the graph given is the one it uses
 fn mms_initialize(c: &mut Ctx) -> u32 {
@@ -369,7 +395,7 @@ fn mms_initialize(c: &mut Ctx) -> u32 {
 fn mms_get_graph(c: &mut Ctx) -> u32 {
     let (b, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let mut g = mms(b, |x| x.graph).unwrap_or(0);
     if g == 0 {
@@ -384,7 +410,7 @@ fn mms_get_graph(c: &mut Ctx) -> u32 {
     }
     add_ref_guest(c, g);
     putp(out, g);
-    if g == 0 { E_NOTIMPL } else { 0 }
+    if g == 0 { Hr::NotImpl.code() } else { 0 }
 }
 
 fn new_stream(c: &mut Ctx, b: u32, id: u32, dd: u32) -> u32 {
@@ -401,11 +427,11 @@ fn mms_add_stream(c: &mut Ctx) -> u32 {
         putp(out, 0);
     }
     if id == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(id) = purpose(id) else { return MS_E_PURPOSEID };
+    let Some(id) = purpose(id) else { return Hr::PurposeId.code() };
     if stream_of(b, id) != 0 {
-        return MS_E_PURPOSEID;
+        return Hr::PurposeId.code();
     }
     if id == AUDIO && flags & AMMSF_ADDDEFAULTRENDERER != 0 {
         mms(b, |x| x.sound = true);
@@ -424,13 +450,13 @@ fn mms_add_stream(c: &mut Ctx) -> u32 {
 fn mms_open_file(c: &mut Ctx) -> u32 {
     let (b, name, flags) = (c.a(0), c.a(1), c.a(2));
     if name == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let w = String::from_utf16_lossy(&mem::wstr(name));
     play::end(b);
     let movie = play::Movie::find(&w);
     if movie.is_none() && crate::files::resolve(&w).is_none() {
-        return VFW_E_NOT_FOUND;
+        return Hr::NotFound.code();
     }
     let render = flags & 3;
     let sound = mms(b, |x| {
@@ -449,7 +475,7 @@ fn mms_open_file(c: &mut Ctx) -> u32 {
             mms(b, |x| {
                 x.open = true;
                 x.playing = true;
-                x.size = (movie.w as i32, movie.h as i32);
+                x.size = (movie.w.cast_signed(), movie.h.cast_signed());
                 x.rate = movie.rate;
                 x.duration = movie.duration;
             });
@@ -489,7 +515,7 @@ fn audiostream_qi(c: &mut Ctx) -> u32 {
 /// GetMultiMediaStream(IMultiMediaStream **)
 fn st_get_mms(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let b = stream(c.a(0), |s| s.mms).unwrap_or(0);
     refs(b, 1);
@@ -520,8 +546,8 @@ fn write_format(s: u32, p: u32) {
     mem::fill(p, size, 0);
     w32(p, size);
     w32(p + 4, 0x1 | 0x2 | 0x4 | 0x1000); // caps height width pixelformat
-    w32(p + 8, h as u32);
-    w32(p + 12, w as u32);
+    w32(p + 8, h.cast_unsigned());
+    w32(p + 12, w.cast_unsigned());
     match stream(s, |x| x.pf).flatten() {
         Some(pf) => mem::write(p + 72, &pf),
         None => crate::ddraw::write_display_pf(p + 72),
@@ -533,7 +559,7 @@ fn dd_get_format(c: &mut Ctx) -> u32 {
     let s = c.a(0);
     let b = stream(s, |x| x.mms).unwrap_or(0);
     if !mms(b, |x| x.open).unwrap_or(false) {
-        return MS_E_NOSTREAM;
+        return Hr::NoStream.code();
     }
     for p in [c.a(1), c.a(3)] {
         if p != 0 {
@@ -552,10 +578,11 @@ fn dd_get_format(c: &mut Ctx) -> u32 {
 fn dd_set_format(c: &mut Ctx) -> u32 {
     let p = c.a(1);
     if p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if r32(p + 4) & 0x1000 != 0 {
-        let pf: [u8; 32] = mem::slice(p + 72, 32).try_into().unwrap();
+        let mut pf = [0u8; 32];
+        pf.copy_from_slice(mem::slice(p + 72, 32));
         stream(c.a(0), |x| x.pf = Some(pf));
     }
     0
@@ -572,7 +599,7 @@ fn dd_of(s: u32) -> u32 {
 /// GetDirectDraw(IDirectDraw **)
 fn dd_get_dd(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let dd = dd_of(c.a(0));
     add_ref_guest(c, dd);
@@ -591,7 +618,7 @@ fn dd_set_dd(c: &mut Ctx) -> u32 {
 fn dd_create_sample(c: &mut Ctx) -> u32 {
     let (s, mut surf, rect, out) = (c.a(0), c.a(1), c.a(2), c.a(4));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     if surf == 0 {
@@ -604,13 +631,13 @@ fn dd_create_sample(c: &mut Ctx) -> u32 {
         surf = rp(slot);
         mem::heap_free(desc);
         if hr != 0 || surf == 0 {
-            return if hr != 0 { hr } else { E_FAIL };
+            return if hr != 0 { hr } else { Hr::Fail.code() };
         }
     } else {
         add_ref_guest(c, surf);
     }
     let r = if rect != 0 {
-        (r32(rect) as i32, r32(rect + 4) as i32, r32(rect + 8) as i32, r32(rect + 12) as i32)
+        read_rect(rect)
     } else {
         let (w, h) = crate::ddraw::surface_memory(surf).map_or(frame_size(s), |m| (m.0, m.1));
         (0, 0, w, h)
@@ -626,7 +653,7 @@ fn dd_create_sample(c: &mut Ctx) -> u32 {
 fn dd_allocate(c: &mut Ctx) -> u32 {
     let (s, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let tmp = mem::heap_alloc(8, true);
     let mut args = vec![0, 0, 0, tmp];
@@ -640,14 +667,14 @@ fn dd_allocate(c: &mut Ctx) -> u32 {
 /// GetTimePerFrame(STREAM_TIME *)
 fn dd_time_per_frame(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let b = stream(c.a(0), |x| x.mms).unwrap_or(0);
-    let Some((open, (n, d))) = mms(b, |x| (x.open, x.rate)) else { return MS_E_NOSTREAM };
+    let Some((open, (n, d))) = mms(b, |x| (x.open, x.rate)) else { return Hr::NoStream.code() };
     if !open || n == 0 {
-        return MS_E_NOSTREAM;
+        return Hr::NoStream.code();
     }
-    put_time(c.a(1), SEC * d as u64 / n as u64);
+    put_time(c.a(1), SEC * u64::from(d) / u64::from(n));
     0
 }
 
@@ -659,7 +686,7 @@ fn sample_qi(c: &mut Ctx) -> u32 {
 }
 fn sm_get_stream(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let s = sample(c.a(0), |x| x.stream).unwrap_or(0);
     refs(s, 1);
@@ -669,11 +696,11 @@ fn sm_get_stream(c: &mut Ctx) -> u32 {
 /// GetSampleTimes(STREAM_TIME *start, *end, *current)
 fn sm_times(c: &mut Ctx) -> u32 {
     let b = c.a(0);
-    let Some((s, f)) = sample(b, |x| (x.stream, x.frame)) else { return E_FAIL };
+    let Some((s, f)) = sample(b, |x| (x.stream, x.frame)) else { return Hr::Fail.code() };
     let m = stream(s, |x| x.mms).unwrap_or(0);
     let (n, d) = mms(m, |x| x.rate).unwrap_or((30, 1));
-    let per = if n == 0 { 0 } else { SEC * d as u64 / n as u64 };
-    let start = f.unwrap_or(0) as u64 * per;
+    let per = if n == 0 { 0 } else { SEC * u64::from(d) / u64::from(n) };
+    let start = u64::from(f.unwrap_or(0)) * per;
     for (p, v) in [(c.a(1), start), (c.a(2), start + per), (c.a(3), position(m))] {
         if p != 0 {
             put_time(p, v);
@@ -709,7 +736,7 @@ impl Packer {
             let m = masks[i];
             let shift = if m == 0 { 0 } else { m.trailing_zeros() };
             let bits = if m == 0 { 0 } else { (m >> shift).count_ones().min(32) };
-            (m, shift, bits, 16 - 8 * i as u32)
+            (m, shift, bits, 16 - 8 * u32::try_from(i).unwrap_or(0))
         }))
     }
     #[inline]
@@ -735,15 +762,19 @@ pub fn draw(px: &[u32], w: u32, h: u32, out: &mut [u8], pitch: usize, bpp: u16, 
     if r <= l || b <= t || dw <= 0 || dh <= 0 || w == 0 || h == 0 {
         return;
     }
-    let bytes = (bpp / 8) as usize;
+    let bytes = usize::from(bpp / 8);
     let p = Packer::new(masks);
+    // (all of these are at least 0 here: l >= dst.0, t >= dst.1, dw and dh above 0)
+    let u = |x: i32| u64::try_from(x).unwrap_or(0);
+    let us = |x: u64| usize::try_from(x).unwrap_or(usize::MAX);
+    let wu = us(u64::from(w));
     // (the source column of each x once, not two divisions a pixel)
-    let cols: Vec<usize> = (l..r).map(|x| ((x - dst.0) as u64 * w as u64 / dw as u64) as usize).collect();
+    let cols: Vec<usize> = (l..r).map(|x| us(u(x - dst.0) * u64::from(w) / u(dw))).collect();
     let plain = bytes == 4 && masks == [0xff0000, 0xff00, 0xff];
     for y in t..b {
-        let sy = ((y - dst.1) as u64 * h as u64 / dh as u64) as usize;
-        let row = &px[sy * w as usize..][..w as usize];
-        let o = y as usize * pitch + l as usize * bytes;
+        let sy = us(u(y - dst.1) * u64::from(h) / u(dh));
+        let row = &px[sy * wu..][..wu];
+        let o = us(u(y)) * pitch + us(u(l)) * bytes;
         let Some(line) = out.get_mut(o..) else { break };
         for (d, &sx) in line.chunks_exact_mut(bytes).zip(&cols) {
             let v = if plain { row[sx] } else { p.pack(row[sx]) };
@@ -774,7 +805,7 @@ pub fn next(pos: u64, stop: u64, rate: (u32, u32), frames: u32, have: Option<u32
         // (the last frame shown: the end is at the stop)
         return Next::Wait(stop - pos);
     }
-    let at = ((n as u128 + 1) * rate.1 as u128 * SEC as u128).div_ceil(rate.0 as u128) as u64;
+    let at = u64::try_from(((u128::from(n) + 1) * u128::from(rate.1) * u128::from(SEC)).div_ceil(u128::from(rate.0))).unwrap_or(u64::MAX);
     Next::Wait(at.saturating_sub(pos).max(1))
 }
 
@@ -783,14 +814,14 @@ pub fn next(pos: u64, stop: u64, rate: (u32, u32), frames: u32, have: Option<u32
 /// (MS_S_PENDING, the event set).
 fn sm_update(c: &mut Ctx) -> u32 {
     let (b, flags, event) = (c.a(0), c.a(1), c.a(2));
-    let Some((s, surf, rect)) = sample(b, |x| (x.stream, x.surface, x.rect)) else { return E_FAIL };
+    let Some((s, surf, rect)) = sample(b, |x| (x.stream, x.surface, x.rect)) else { return Hr::Fail.code() };
     let m = stream(s, |x| x.mms).unwrap_or(0);
-    let Some((state, playing, eos)) = mms(m, |x| (x.state, x.playing, x.eos)) else { return E_FAIL };
+    let Some((state, playing, eos)) = mms(m, |x| (x.state, x.playing, x.eos)) else { return Hr::Fail.code() };
     if state != 1 {
-        return MS_E_NOTRUNNING;
+        return Hr::NotRunning.code();
     }
-    let hr = if !playing { MS_S_ENDOFSTREAM } else { update(c, b, m, surf, rect) };
-    if hr == MS_S_ENDOFSTREAM {
+    let hr = if !playing { Hr::EndOfStream.code() } else { update(c, b, m, surf, rect) };
+    if hr == Hr::EndOfStream.code() {
         crate::k32::event_set(eos, true);
     }
     sample(b, |x| x.status = hr);
@@ -798,7 +829,7 @@ fn sm_update(c: &mut Ctx) -> u32 {
         if event != 0 {
             crate::k32::event_set(event, true);
         }
-        return MS_S_PENDING;
+        return Hr::Pending.code();
     }
     hr
 }
@@ -808,20 +839,20 @@ fn update(c: &mut Ctx, b: u32, m: u32, surf: u32, rect: (i32, i32, i32, i32)) ->
         let Some((pos, stop, rate, frames, stream, w, h)) = play::read(|x| {
             x.get(&m).map(|p| (p.tl.position(t), p.tl.stop, p.movie.rate, p.movie.frames, p.movie.stream, p.movie.w, p.movie.h))
         }) else {
-            return MS_S_ENDOFSTREAM;
+            return Hr::EndOfStream.code();
         };
         let have = sample(b, |x| x.frame).flatten();
         match next(pos, stop, rate, frames, have) {
-            Next::End => return MS_S_ENDOFSTREAM,
+            Next::End => return Hr::EndOfStream.code(),
             Next::Wait(d) => kura::snap::sleep(std::time::Duration::from_nanos(d.min(SEC) * 100)),
             Next::Frame(n) => {
                 let t0 = std::time::Instant::now();
-                let mut px = vec![0u32; (w * h) as usize];
+                let mut px = vec![0u32; usize::try_from(w * h).unwrap_or(0)];
                 let mut tries = 0;
-                while !unsafe { play::frame(stream, n as i32, px.as_mut_ptr() as *mut u8, 4 * w as usize, w, h) } {
+                while !unsafe { play::frame(stream, n.cast_signed(), px.as_mut_ptr().cast::<u8>(), 4 * usize::try_from(w).unwrap_or(0), w, h) } {
                     tries += 1;
                     if play::failed(stream) {
-                        return E_FAIL;
+                        return Hr::Fail.code();
                     }
                     // (a frame late on a slow device, after a seek or while a state is saved: the
                     // picture shown stays and the next Update asks again; the first frame is
@@ -830,7 +861,7 @@ fn update(c: &mut Ctx, b: u32, m: u32, surf: u32, rect: (i32, i32, i32, i32)) ->
                         return 0;
                     }
                     if tries > FIRST_FRAME_TRIES {
-                        return E_FAIL;
+                        return Hr::Fail.code();
                     }
                     kura::snap::sleep(std::time::Duration::from_millis(5));
                 }
@@ -843,12 +874,13 @@ fn update(c: &mut Ctx, b: u32, m: u32, surf: u32, rect: (i32, i32, i32, i32)) ->
                 // (kura's Rgb601 frames are bytes r, g, b, a: as 0x00rrggbb, in place)
                 for p in px.iter_mut() {
                     let [r, g, bl, _] = p.to_le_bytes();
-                    *p = (r as u32) << 16 | (g as u32) << 8 | bl as u32;
+                    *p = u32::from(r) << 16 | u32::from(g) << 8 | u32::from(bl);
                 }
                 // (straight into the surface: it was copied out whole and back per frame)
-                let len = pitch as usize * sh as usize;
-                if let Some(out) = mem::guest_mut(bits, len as u32) {
-                    draw(&px, w, h, out, pitch as usize, bpp, [pf[1], pf[2], pf[3]], rect, (sw, sh));
+                // (a surface's rows in guest memory: a 32-bit size)
+                let len = pitch.wrapping_mul(sh.cast_unsigned());
+                if let Some(out) = mem::guest_mut(bits, len) {
+                    draw(&px, w, h, out, usize::try_from(pitch).unwrap_or(0), bpp, [pf[1], pf[2], pf[3]], rect, (sw, sh));
                 }
                 crate::ddraw::drawn(c, surf, crate::user::Rect { l: rect.0, t: rect.1, r: rect.2, b: rect.3 });
                 play::stats(m, n, [t1 - t0, t1.elapsed(), std::time::Duration::ZERO], px.len());
@@ -859,29 +891,33 @@ fn update(c: &mut Ctx, b: u32, m: u32, surf: u32, rect: (i32, i32, i32, i32)) ->
 }
 /// CompletionStatus(DWORD flags, DWORD milliseconds): what the last Update came to
 fn sm_status(c: &mut Ctx) -> u32 {
-    sample(c.a(0), |x| x.status).unwrap_or(E_FAIL)
+    sample(c.a(0), |x| x.status).unwrap_or(Hr::Fail.code())
 }
 /// GetSurface(IDirectDrawSurface **, RECT *)
 fn sm_surface(c: &mut Ctx) -> u32 {
-    let Some((surf, r)) = sample(c.a(0), |x| (x.surface, x.rect)) else { return E_FAIL };
+    let Some((surf, r)) = sample(c.a(0), |x| (x.surface, x.rect)) else { return Hr::Fail.code() };
     if c.a(1) != 0 {
         add_ref_guest(c, surf);
         putp(c.a(1), surf);
     }
     if c.a(2) != 0 {
-        for (i, v) in [r.0, r.1, r.2, r.3].into_iter().enumerate() {
-            w32(c.a(2) + 4 * i as u32, v as u32);
+        for (at, v) in (c.a(2)..).step_by(4).zip([r.0, r.1, r.2, r.3]) {
+            w32(at, v.cast_unsigned());
         }
     }
     0
+}
+/// A RECT's left, top, right, bottom
+fn read_rect(p: u32) -> (i32, i32, i32, i32) {
+    (r32(p).cast_signed(), r32(p + 4).cast_signed(), r32(p + 8).cast_signed(), r32(p + 12).cast_signed())
 }
 /// SetRect(const RECT *)
 fn sm_set_rect(c: &mut Ctx) -> u32 {
     let p = c.a(1);
     if p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let r = (r32(p) as i32, r32(p + 4) as i32, r32(p + 8) as i32, r32(p + 12) as i32);
+    let r = read_rect(p);
     sample(c.a(0), |x| x.rect = r);
     0
 }
