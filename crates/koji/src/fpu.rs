@@ -197,7 +197,7 @@ impl Fpu {
     }
     pub fn set_status(&mut self, v: u16) {
         self.sw = v & !(7 << 11);
-        self.top = ((v >> 11) & 7) as u32;
+        self.top = u32::from((v >> 11) & 7);
     }
     /// Full tag word (11 = empty, 00 = valid; zero/special not tracked).
     pub fn tag_word(&self) -> u16 {
@@ -321,7 +321,7 @@ pub fn from_f80(b: &[u8; 10]) -> f64 {
     let m = u64::from_le_bytes(b[..8].try_into().unwrap());
     let se = u16::from_le_bytes([b[8], b[9]]);
     let sign = if se & 0x8000 != 0 { -1.0 } else { 1.0 };
-    let e = (se & 0x7fff) as i32;
+    let e = i32::from(se & 0x7fff);
     if e == 0 && m == 0 {
         return sign * 0.0;
     }

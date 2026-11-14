@@ -42,9 +42,9 @@ pub fn szp(r: u32, bits: u32) -> u32 {
 /// a + b + carry: (result, status flags)
 #[inline]
 pub fn add(a: u32, b: u32, carry: u32, bits: u32) -> (u32, u32) {
-    let m = mask(bits) as u64;
-    let (a, b) = (a as u64 & m, b as u64 & m);
-    let full = a + b + carry as u64;
+    let m = u64::from(mask(bits));
+    let (a, b) = (u64::from(a) & m, u64::from(b) & m);
+    let full = a + b + u64::from(carry);
     let r = (full & m) as u32;
     let mut f = szp(r, bits);
     if full > m {
@@ -62,12 +62,12 @@ pub fn add(a: u32, b: u32, carry: u32, bits: u32) -> (u32, u32) {
 /// a - b - borrow: (result, status flags)
 #[inline]
 pub fn sub(a: u32, b: u32, borrow: u32, bits: u32) -> (u32, u32) {
-    let m = mask(bits) as u64;
-    let (a, b) = (a as u64 & m, b as u64 & m);
-    let full = a.wrapping_sub(b).wrapping_sub(borrow as u64);
+    let m = u64::from(mask(bits));
+    let (a, b) = (u64::from(a) & m, u64::from(b) & m);
+    let full = a.wrapping_sub(b).wrapping_sub(u64::from(borrow));
     let r = (full & m) as u32;
     let mut f = szp(r, bits);
-    if a < b + borrow as u64 {
+    if a < b + u64::from(borrow) {
         f |= CF;
     }
     if ((a ^ b) & (a ^ full)) as u32 & sign(bits) != 0 {
@@ -125,9 +125,9 @@ pub fn szp64(r: u64, bits: u32) -> u32 {
 
 #[inline]
 pub fn add64(a: u64, b: u64, carry: u32, bits: u32) -> (u64, u32) {
-    let m = mask64(bits) as u128;
-    let (a, b) = (a as u128 & m, b as u128 & m);
-    let full = a + b + carry as u128;
+    let m = u128::from(mask64(bits));
+    let (a, b) = (u128::from(a) & m, u128::from(b) & m);
+    let full = a + b + u128::from(carry);
     let r = (full & m) as u64;
     let mut f = szp64(r, bits);
     if full > m {
@@ -144,12 +144,12 @@ pub fn add64(a: u64, b: u64, carry: u32, bits: u32) -> (u64, u32) {
 
 #[inline]
 pub fn sub64(a: u64, b: u64, borrow: u32, bits: u32) -> (u64, u32) {
-    let m = mask64(bits) as u128;
-    let (a, b) = (a as u128 & m, b as u128 & m);
-    let full = a.wrapping_sub(b).wrapping_sub(borrow as u128);
+    let m = u128::from(mask64(bits));
+    let (a, b) = (u128::from(a) & m, u128::from(b) & m);
+    let full = a.wrapping_sub(b).wrapping_sub(u128::from(borrow));
     let r = (full & m) as u64;
     let mut f = szp64(r, bits);
-    if a < b + borrow as u128 {
+    if a < b + u128::from(borrow) {
         f |= CF;
     }
     if ((a ^ b) & (a ^ full)) as u64 & sign64(bits) != 0 {

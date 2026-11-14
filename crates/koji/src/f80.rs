@@ -42,7 +42,7 @@ impl F80 {
         self.se & 0x8000 != 0
     }
     fn exp(self) -> i32 {
-        (self.se & 0x7fff) as i32
+        i32::from(self.se & 0x7fff)
     }
     pub fn is_nan(self) -> bool {
         self.exp() == 0x7fff && self.m << 1 != 0
@@ -62,7 +62,7 @@ impl F80 {
         self.exp() != 0 && self.m >> 63 == 0
     }
     fn pack(sign: bool, exp: i32, m: u64) -> F80 {
-        F80 { m, se: (sign as u16) << 15 | exp as u16 }
+        F80 { m, se: u16::from(sign) << 15 | exp as u16 }
     }
     pub fn neg(self) -> F80 {
         F80 { m: self.m, se: self.se ^ 0x8000 }
@@ -86,7 +86,7 @@ impl F80 {
         F80::from_bytes(&crate::fpu::to_f80(v))
     }
     pub fn from_f32(v: f32) -> F80 {
-        F80::from_f64(v as f64)
+        F80::from_f64(f64::from(v))
     }
     pub fn from_i64(i: i64) -> F80 {
         F80::from_bytes(&crate::fpu::int_to_f80(i))
@@ -97,7 +97,7 @@ impl F80 {
     fn to_ieee(self, mbits: u32, bias: i32, rc: u32) -> u64 {
         let ebits = if mbits == 52 { 11 } else { 8 };
         let emax = (1i32 << ebits) - 1;
-        let s = (self.sign() as u64) << (mbits + ebits);
+        let s = u64::from(self.sign()) << (mbits + ebits);
         if self.exp() == 0x7fff || self.unsupported() {
             if self.is_inf() {
                 return s | (emax as u64) << mbits;
@@ -149,7 +149,7 @@ impl F80 {
         if e > 100 {
             return Some(if sign { i128::MIN } else { i128::MAX });
         }
-        let q = if e >= 63 { (m as i128) << (e - 63) } else { round_shift(m, (63 - e) as u32, rc & 3, sign) as i128 };
+        let q = if e >= 63 { i128::from(m) << (e - 63) } else { i128::from(round_shift(m, (63 - e) as u32, rc & 3, sign)) };
         Some(if sign { -q } else { q })
     }
 
@@ -194,7 +194,7 @@ impl F80 {
         }
         // (denormals: exponent 0 with no integer bit, below every normal; pseudo-denormals
         // with it equal the smallest normal's scale: compare as unpacked)
-        let mag = |e: u16, m: u64| -> (i32, u64) { if e == 0 { let x = F80 { m, se: 0 }; if m == 0 { (i32::MIN, 0) } else { let (_, e, m) = x.unpack(); (e, m) } } else { (e as i32, m) } };
+        let mag = |e: u16, m: u64| -> (i32, u64) { if e == 0 { let x = F80 { m, se: 0 }; if m == 0 { (i32::MIN, 0) } else { let (_, e, m) = x.unpack(); (e, m) } } else { (i32::from(e), m) } };
         let o = mag(ea, ma).cmp(&mag(eb, mb));
         Some(if sa { o.reverse() } else { o })
     }
@@ -219,7 +219,7 @@ impl F80 {
         }
         let (_, ea, ma) = self.unpack();
         let (_, eb, mb) = b.unpack();
-        let mut p = ma as u128 * mb as u128;
+        let mut p = u128::from(ma) * u128::from(mb);
         let mut e = ea + eb - 0x3ffe;
         if p >> 127 == 0 {
             p <<= 1;
@@ -247,11 +247,11 @@ impl F80 {
         }
         let (_, ea, ma) = self.unpack();
         let (_, eb, mb) = b.unpack();
-        let (num, e) = if ma >= mb { ((ma as u128) << 63, ea - eb + BIAS) } else { ((ma as u128) << 64, ea - eb + BIAS - 1) };
-        let (q, r) = (num / mb as u128, num % mb as u128);
+        let (num, e) = if ma >= mb { (u128::from(ma) << 63, ea - eb + BIAS) } else { (u128::from(ma) << 64, ea - eb + BIAS - 1) };
+        let (q, r) = (num / u128::from(mb), num % u128::from(mb));
         let n2 = r << 64;
-        let (q2, r2) = (n2 / mb as u128, n2 % mb as u128);
-        round_pack(sign, e, q as u64, q2 as u64 | (r2 != 0) as u64, bits_of(pc), rc & 3)
+        let (q2, r2) = (n2 / u128::from(mb), n2 % u128::from(mb));
+        round_pack(sign, e, q as u64, q2 as u64 | u64::from(r2 != 0), bits_of(pc), rc & 3)
     }
 
     pub fn sqrt(self, pc: u32, rc: u32) -> F80 {
@@ -272,7 +272,7 @@ impl F80 {
         }
         let (_, e, m) = self.unpack();
         let k = e - BIAS;
-        let (n, ez) = if k & 1 == 0 { ((m as u128) << 63, k / 2 + BIAS) } else { ((m as u128) << 64, (k - 1).div_euclid(2) + BIAS) };
+        let (n, ez) = if k & 1 == 0 { (u128::from(m) << 63, k / 2 + BIAS) } else { (u128::from(m) << 64, (k - 1).div_euclid(2) + BIAS) };
         let s = isqrt(n);
         let r = n - s * s;
         let extra = if r == 0 { 0 } else if r > s { 0xc000_0000_0000_0000 } else { 0x4000_0000_0000_0000 };
@@ -308,7 +308,7 @@ fn round_shift(m: u64, shift: u32, rc: u32, sign: bool) -> u64 {
     if shift == 0 {
         return m;
     }
-    let x = m as u128;
+    let x = u128::from(m);
     // (shifted out entirely: below half of the last place when shift > 64)
     let (q, rest, half) = if shift > 64 { (0, x, None) } else { (x >> shift, x & ((1u128 << shift) - 1), Some(1u128 << (shift - 1))) };
     if rest == 0 {
@@ -320,7 +320,7 @@ fn round_shift(m: u64, shift: u32, rc: u32, sign: bool) -> u64 {
         2 => !sign,
         _ => false,
     };
-    q as u64 + up as u64
+    q as u64 + u64::from(up)
 }
 
 /// The x87's NaN rules for two operands (or an unsupported encoding: invalid): None when both
@@ -375,9 +375,9 @@ fn add_sub(a: F80, b: F80, subtract: bool, pc: u32, rc: u32) -> F80 {
     // |x| >= |y|
     let ((sx, ex, mx), (sy, ey, my)) = if (ea, ma) >= (eb, mb) { ((sa, ea, ma), (sb, eb, mb)) } else { ((sb, eb, mb), (sa, ea, ma)) };
     let d = (ex - ey) as u32;
-    let x = (mx as u128) << 63;
-    let y0 = (my as u128) << 63;
-    let y = if d >= 127 { 1 } else { (y0 >> d) | ((y0 & ((1u128 << d) - 1)) != 0) as u128 };
+    let x = u128::from(mx) << 63;
+    let y0 = u128::from(my) << 63;
+    let y = if d >= 127 { 1 } else { (y0 >> d) | u128::from((y0 & ((1u128 << d) - 1)) != 0) };
     let z = if sx == sy { x + y } else { x - y };
     if z == 0 {
         return F80::pack(rc == 1, 0, 0);
@@ -394,7 +394,7 @@ fn round_pack(sign: bool, mut exp: i32, mut sig: u64, mut extra: u64, prec: u32,
     let max = |s: bool| rc == if s { 1 } else { 2 }; // (rounding away from zero, directed)
     if prec != 80 {
         let (mut inc, mut mask): (u64, u64) = if prec == 64 { (0x400, 0x7ff) } else { (0x80_0000_0000, 0xff_ffff_ffff) };
-        sig |= (extra != 0) as u64;
+        sig |= u64::from(extra != 0);
         if !near {
             inc = if max(sign) { mask } else { 0 };
         }
@@ -482,9 +482,9 @@ fn jam64(a: u64, n: u32) -> u64 {
     if n == 0 {
         a
     } else if n < 64 {
-        a >> n | ((a << (64 - n)) != 0) as u64
+        a >> n | u64::from((a << (64 - n)) != 0)
     } else {
-        (a != 0) as u64
+        u64::from(a != 0)
     }
 }
 
@@ -493,11 +493,11 @@ fn jam64_extra(a: u64, extra: u64, n: u32) -> (u64, u64) {
     if n == 0 {
         (a, extra)
     } else if n < 64 {
-        (a >> n, a << (64 - n) | (extra != 0) as u64)
+        (a >> n, a << (64 - n) | u64::from(extra != 0))
     } else if n == 64 {
-        (0, a | (extra != 0) as u64)
+        (0, a | u64::from(extra != 0))
     } else {
-        (0, ((a != 0) || extra != 0) as u64)
+        (0, u64::from((a != 0) || extra != 0))
     }
 }
 

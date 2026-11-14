@@ -1458,7 +1458,7 @@ impl<'a> Gen<'a> {
     /// Pushes `mask` (by slot) rotated to physical registers, in its low 8 bits (the rest is
     /// anything: it only goes into u8 stores): mask:mask << TOP >> 8.
     fn fc_rot(&mut self, mask: u8) {
-        self.c.i32c(mask as i32 * 0x101).get(L_FTOP).shl().i32c(8).shr_u();
+        self.c.i32c(i32::from(mask) * 0x101).get(L_FTOP).shl().i32c(8).shr_u();
     }
 
     /// Moves the tags and exact integers the FXCHs put off (see FCache::src) in the Cpu (code
@@ -1471,7 +1471,7 @@ impl<'a> Gen<'a> {
             if j == r {
                 continue;
             }
-            self.fc_swap_cpu(r as u32, j as u32);
+            self.fc_swap_cpu(u32::from(r), u32::from(j));
             let e = of[r as usize];
             (of[j as usize], at[e as usize]) = (e, j);
             (of[r as usize], at[src[r as usize] as usize]) = (src[r as usize], r);
@@ -1589,7 +1589,7 @@ impl<'a> Gen<'a> {
         }
         self.fc_moves(fc.src);
         self.c.get(L_CPU).get(L_FTOP);
-        let info = fc.dirty as u32 | (fc.valid as u32) << 8 | (fc.empty as u32) << 16 | (fc.delta.rem_euclid(8) as u32) << 24;
+        let info = u32::from(fc.dirty) | u32::from(fc.valid) << 8 | u32::from(fc.empty) << 16 | (fc.delta.rem_euclid(8) as u32) << 24;
         self.c.u32c(info);
         for r in 0..8 {
             self.c.get(L_FREG + r);
@@ -1778,9 +1778,9 @@ impl<'a> Gen<'a> {
         // [table + r * scale] with r known small: in the guest range whatever r is
         if !prot && base == Register::None && ins.memory_index().is_gpr32() && seg != Register::FS && seg != Register::GS {
             if let Some(m) = self.small[ins.memory_index().number()] {
-                let lo = ins.memory_displacement32() as u64;
-                let hi = lo + m as u64 * ins.memory_index_scale() as u64 + size as u64;
-                if lo >= GUEST_LO as u64 && hi <= GUEST_HI as u64 {
+                let lo = u64::from(ins.memory_displacement32());
+                let hi = lo + u64::from(m) * u64::from(ins.memory_index_scale()) + u64::from(size);
+                if lo >= u64::from(GUEST_LO) && hi <= u64::from(GUEST_HI) {
                     return t;
                 }
             }
@@ -1845,9 +1845,9 @@ impl<'a> Gen<'a> {
             return None;
         }
         let key = (base.number() as u8, index.number() as u8, ins.memory_index_scale().trailing_zeros() as u8);
-        self.c.get(L_REG + key.0 as u32).get(L_REG + key.1 as u32);
+        self.c.get(L_REG + u32::from(key.0)).get(L_REG + u32::from(key.1));
         if key.2 != 0 {
-            self.c.i32c(key.2 as i32).shl();
+            self.c.i32c(i32::from(key.2)).shl();
         }
         self.c.add().set(L_AB);
         if !self.safe2.contains(&key) && !nocheck() {
@@ -3845,7 +3845,7 @@ impl<'a> Gen<'a> {
             Ret => {
                 let t = self.pop32();
                 if ins.op_count() == 1 {
-                    let n = ins.immediate16() as i32;
+                    let n = i32::from(ins.immediate16());
                     self.c.get(L_REG + 4).i32c(n).add().set(L_REG + 4);
                 }
                 if self.ctx != 0 {
@@ -4280,7 +4280,7 @@ fn emit_dispatch(g: &mut Gen<'_>, t: &structure::Table, node: usize) {
         g.c.get(L_NEXT).u32c(*mul).mul().i32c(*shift as i32).shr_u().op(0x0e);
         wasm::uleb(&mut g.c.b, slots.len() as u64);
         for &i in slots {
-            wasm::uleb(&mut g.c.b, i as u64);
+            wasm::uleb(&mut g.c.b, u64::from(i));
         }
     } else {
         g.c.get(L_BLK).op(0x0e);
@@ -4578,7 +4578,7 @@ fn decode<M: Memory>(mem: &mut M, eip: u32) -> Vec<Instruction> {
                 Some(i) => i,
                 None => break,
             },
-            None => Decoder::with_ip(32, &buf[..n], ip as u64, DecoderOptions::NONE).decode(),
+            None => Decoder::with_ip(32, &buf[..n], u64::from(ip), DecoderOptions::NONE).decode(),
         };
         if ins.is_invalid() {
             break;
@@ -4601,7 +4601,7 @@ pub fn decode16(bytes: &[u8], ip: u32, cs: u32) -> Option<Instruction> {
     if off > 0xffff {
         return None;
     }
-    let mut ins = Decoder::with_ip(16, bytes, off as u64, DecoderOptions::NONE).decode();
+    let mut ins = Decoder::with_ip(16, bytes, u64::from(off), DecoderOptions::NONE).decode();
     if ins.is_invalid() {
         return Some(ins);
     }
@@ -4620,11 +4620,11 @@ pub fn decode16(bytes: &[u8], ip: u32, cs: u32) -> Option<Instruction> {
         ins.set_near_branch16(t as u16);
     }
     if ins.op_count() > 0 && ins.op0_kind() == OpKind::NearBranch16 && matches!(ins.flow_control(), FlowControl::ConditionalBranch | FlowControl::UnconditionalBranch) && !counted {
-        let target = cs.wrapping_add(ins.near_branch16() as u32);
+        let target = cs.wrapping_add(u32::from(ins.near_branch16()));
         ins.set_op0_kind(OpKind::NearBranch32);
         ins.set_near_branch32(target);
     }
-    ins.set_ip(ip as u64);
+    ins.set_ip(u64::from(ip));
     Some(ins)
 }
 
@@ -4655,7 +4655,7 @@ const HLE: &[(Hle, &str, u32, u64)] = &[
 
 /// FNV-1a 64 of `b`.
 fn fnv64(b: &[u8]) -> u64 {
-    b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ x as u64).wrapping_mul(0x100_0000_01b3))
+    b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3))
 }
 
 /// The function [`Gen::hle`] does at `a`, if the guest's code there is one of [`HLE`].
@@ -4693,7 +4693,7 @@ const SHA256_K: [u32; 64] = [
 
 /// A RET at `a`.
 fn ret_at(a: u32) -> Instruction {
-    Decoder::with_ip(32, &[0xc3], a as u64, DecoderOptions::NONE).decode()
+    Decoder::with_ip(32, &[0xc3], u64::from(a), DecoderOptions::NONE).decode()
 }
 
 /// Guest loops: (first block, last block) ranges, from the backward jumps between blocks in
@@ -4983,9 +4983,9 @@ fn emit_level<'a>(
         while items[t].range().1 < m {
             t += 1;
         }
-        wasm::uleb(&mut g.c.b, (g.depth - label[t]) as u64);
+        wasm::uleb(&mut g.c.b, u64::from(g.depth - label[t]));
     }
-    wasm::uleb(&mut g.c.b, (g.depth - label[0]) as u64);
+    wasm::uleb(&mut g.c.b, u64::from(g.depth - label[0]));
     if side.is_some() {
         g.c.end();
         g.depth -= 1;
@@ -5333,7 +5333,7 @@ pub fn x87_out(f: &mut crate::Fpu, top: u32, info: u32, v: [f64; 8]) {
         }
     }
     if valid | empty != 0 {
-        let rot = |m: u8| ((m as u32 * 0x101) << (top & 31) >> 8) as u8;
+        let rot = |m: u8| ((u32::from(m) * 0x101) << (top & 31) >> 8) as u8;
         f.empty = f.empty & !rot(valid) | rot(empty);
         f.exact &= !rot(valid | empty);
     }

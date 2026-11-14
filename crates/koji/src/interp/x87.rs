@@ -21,7 +21,7 @@ impl<'a, M: Memory> X<'a, M> {
             MemorySize::Float32 => {
                 let v = f32::from_bits(self.mem.read32(a)?);
                 self.cpu.fpu.sw |= ex(v.is_nan() && v.to_bits() & 0x40_0000 == 0, v.is_subnormal());
-                fpu::quiet(v as f64)
+                fpu::quiet(f64::from(v))
             }
             MemorySize::Float64 => {
                 let v = f64::from_bits(self.mem.read64(a)?);
@@ -35,8 +35,8 @@ impl<'a, M: Memory> X<'a, M> {
                 }
                 fpu::from_f80(&b)
             }
-            MemorySize::Int16 => self.mem.read16(a)? as i16 as f64,
-            MemorySize::Int32 => self.mem.read32(a)? as i32 as f64,
+            MemorySize::Int16 => f64::from(self.mem.read16(a)? as i16),
+            MemorySize::Int32 => f64::from(self.mem.read32(a)? as i32),
             MemorySize::Int64 => self.mem.read64(a)? as i64 as f64,
             _ => 0.0,
         })
@@ -47,7 +47,7 @@ impl<'a, M: Memory> X<'a, M> {
         // an integer FILD loaded (64 bits: more than the f64 register holds) rounds once, as
         // the control word says, from its exact value
         if let Some(i) = self.cpu.fpu.exact_int() {
-            let rc = (self.cpu.fpu.cw >> 10) as u32;
+            let rc = u32::from(self.cpu.fpu.cw >> 10);
             return match self.ins.memory_size() {
                 MemorySize::Float32 => self.mem.write32(a, crate::round::i64_to_f32(i, rc).to_bits()),
                 MemorySize::Float64 => self.mem.write64(a, crate::round::i64_to_f64(i, rc).to_bits()),
@@ -60,7 +60,7 @@ impl<'a, M: Memory> X<'a, M> {
             };
         }
         match self.ins.memory_size() {
-            MemorySize::Float32 => self.mem.write32(a, crate::round::f64_to_f32(v, (self.cpu.fpu.cw >> 10) as u32).to_bits()),
+            MemorySize::Float32 => self.mem.write32(a, crate::round::f64_to_f32(v, u32::from(self.cpu.fpu.cw >> 10)).to_bits()),
             MemorySize::Float64 => self.mem.write64(a, v.to_bits()),
             _ => {
                 let b = fpu::to_f80(v);
@@ -92,7 +92,7 @@ impl<'a, M: Memory> X<'a, M> {
         Ok(match self.ins.memory_size() {
             MemorySize::Float32 => {
                 let v = f32::from_bits(self.mem.read32(a)?);
-                F80::from_f64(fpu::quiet(v as f64))
+                F80::from_f64(fpu::quiet(f64::from(v)))
             }
             MemorySize::Float64 => F80::from_f64(fpu::quiet(f64::from_bits(self.mem.read64(a)?))),
             MemorySize::Float80 => {
@@ -102,8 +102,8 @@ impl<'a, M: Memory> X<'a, M> {
                 }
                 F80::from_bytes(&b)
             }
-            MemorySize::Int16 => F80::from_i64(self.mem.read16(a)? as i16 as i64),
-            MemorySize::Int32 => F80::from_i64(self.mem.read32(a)? as i32 as i64),
+            MemorySize::Int16 => F80::from_i64(i64::from(self.mem.read16(a)? as i16)),
+            MemorySize::Int32 => F80::from_i64(i64::from(self.mem.read32(a)? as i32)),
             _ => F80::from_i64(self.mem.read64(a)? as i64),
         })
     }
@@ -115,7 +115,7 @@ impl<'a, M: Memory> X<'a, M> {
         use Mnemonic::*;
         let ins = self.ins;
         let mn = ins.mnemonic();
-        let cw = self.cpu.fpu.cw as u32;
+        let cw = u32::from(self.cpu.fpu.cw);
         let (pc, rc) = ((cw >> 8) & 3, (cw >> 10) & 3);
         macro_rules! t {
             ($e:expr) => {
@@ -166,11 +166,11 @@ impl<'a, M: Memory> X<'a, M> {
                         t!(self.mem.write16(a, x as u16));
                     }
                     MemorySize::Int32 => {
-                        let x = r.filter(|r| (i32::MIN as i128..=i32::MAX as i128).contains(r)).map_or(i32::MIN, |r| r as i32);
+                        let x = r.filter(|r| (i128::from(i32::MIN)..=i128::from(i32::MAX)).contains(r)).map_or(i32::MIN, |r| r as i32);
                         t!(self.mem.write32(a, x as u32));
                     }
                     _ => {
-                        let x = r.filter(|r| (i64::MIN as i128..=i64::MAX as i128).contains(r)).map_or(i64::MIN, |r| r as i64);
+                        let x = r.filter(|r| (i128::from(i64::MIN)..=i128::from(i64::MAX)).contains(r)).map_or(i64::MIN, |r| r as i64);
                         t!(self.mem.write64(a, x as u64));
                     }
                 }
@@ -300,7 +300,7 @@ impl<'a, M: Memory> X<'a, M> {
             Fnsave | Fsave => {
                 let a = self.addr();
                 let f = &self.cpu.fpu;
-                let env = [f.cw as u32 | 0xffff_0000, f.status() as u32 | 0xffff_0000, f.tag_word() as u32 | 0xffff_0000, 0, 0, 0, 0];
+                let env = [u32::from(f.cw) | 0xffff_0000, u32::from(f.status()) | 0xffff_0000, u32::from(f.tag_word()) | 0xffff_0000, 0, 0, 0, 0];
                 for (i, v) in env.iter().enumerate() {
                     t!(self.mem.write32(a + 4 * i as u32, *v));
                 }
@@ -368,8 +368,8 @@ impl<'a, M: Memory> X<'a, M> {
             Fild => {
                 let a = self.addr();
                 let v = match ins.memory_size() {
-                    MemorySize::Int16 => tryf!(self.mem.read16(a)) as i16 as i64,
-                    MemorySize::Int32 => tryf!(self.mem.read32(a)) as i32 as i64,
+                    MemorySize::Int16 => i64::from(tryf!(self.mem.read16(a)) as i16),
+                    MemorySize::Int32 => i64::from(tryf!(self.mem.read32(a)) as i32),
                     _ => tryf!(self.mem.read64(a)) as i64,
                 };
                 self.cpu.fpu.push_int(v);
@@ -445,7 +445,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let mut v: i64 = 0;
                 for i in (0..9).rev() {
                     let x = tryf!(self.mem.read8(a.wrapping_add(i)));
-                    v = v * 100 + ((x >> 4) as i64) * 10 + (x & 15) as i64;
+                    v = v * 100 + i64::from(x >> 4) * 10 + i64::from(x & 15);
                 }
                 if tryf!(self.mem.read8(a.wrapping_add(9))) & 0x80 != 0 {
                     v = -v;
@@ -478,7 +478,7 @@ impl<'a, M: Memory> X<'a, M> {
                     let si = if ins.op_count() == 2 { st_index(ins.op_register(1)) } else { 0 };
                     let f = &self.cpu.fpu;
                     if let (Some(a), Some(b)) = (f.exact_st(d), f.exact_st(si)) {
-                        let (a, b) = (a as i128, b as i128);
+                        let (a, b) = (i128::from(a), i128::from(b));
                         let v = match mn {
                             Fadd | Faddp => a + b,
                             Fsub | Fsubp => a - b,
@@ -616,7 +616,7 @@ impl<'a, M: Memory> X<'a, M> {
             Fxtract => {
                 let v = self.cpu.fpu.st(0);
                 let (m, e) = libm::frexp(v);
-                self.cpu.fpu.set_st(0, (e - 1) as f64);
+                self.cpu.fpu.set_st(0, f64::from(e - 1));
                 self.cpu.fpu.push(m * 2.0);
             }
             Fcom | Fcomp | Fcompp | Fucom | Fucomp | Fucompp | Ficom | Ficomp => {
@@ -698,7 +698,7 @@ impl<'a, M: Memory> X<'a, M> {
                     let a = self.addr();
                     tryf!(self.mem.write16(a, v));
                 } else {
-                    self.cpu.regs[EAX] = (self.cpu.regs[EAX] & 0xffff_0000) | v as u32;
+                    self.cpu.regs[EAX] = (self.cpu.regs[EAX] & 0xffff_0000) | u32::from(v);
                 }
             }
             Fnclex | Fclex => self.cpu.fpu.sw &= !0x80ff,
@@ -721,7 +721,7 @@ impl<'a, M: Memory> X<'a, M> {
             Fnstenv | Fstenv | Fnsave | Fsave => {
                 let a = self.addr();
                 let f = &self.cpu.fpu;
-                let env = [f.cw as u32 | 0xffff_0000, f.status() as u32 | 0xffff_0000, f.tag_word() as u32 | 0xffff_0000, 0, 0, 0, 0];
+                let env = [u32::from(f.cw) | 0xffff_0000, u32::from(f.status()) | 0xffff_0000, u32::from(f.tag_word()) | 0xffff_0000, 0, 0, 0, 0];
                 for (i, v) in env.iter().enumerate() {
                     tryf!(self.mem.write32(a + 4 * i as u32, *v));
                 }

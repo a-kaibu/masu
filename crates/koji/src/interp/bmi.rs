@@ -50,7 +50,7 @@ impl<'a, M: Memory> X<'a, M> {
         if mn == Mulx {
             let src = tryf!(self.read_op(2));
             let d = self.get_reg(if bits == 64 { Register::RDX } else { Register::EDX });
-            let p = d as u128 * src as u128;
+            let p = u128::from(d) * u128::from(src);
             // the low half to the second destination, then the high half to the first (which
             // wins when both are the same register)
             tryf!(self.write_op(1, p as u64 & m));
@@ -90,7 +90,7 @@ impl<'a, M: Memory> X<'a, M> {
             Pdep => (pdep(a, b) & m, None),
             Pext => (pext(a, b) & m, None),
             Rorx => {
-                let c = ins.immediate8() as u32 & (bits - 1);
+                let c = u32::from(ins.immediate8()) & (bits - 1);
                 let r = if c == 0 { a } else { (a >> c | a << (bits - c)) & m };
                 (r, None)
             }

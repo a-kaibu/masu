@@ -116,7 +116,7 @@ pub(super) fn layout(
 ) -> Layout {
     let n = blocks.len();
     // (more entries: a node before them all, the last, going to each)
-    let total = n + tables.len() + !extra.is_empty() as usize;
+    let total = n + tables.len() + usize::from(!extra.is_empty());
     let find = |ctx: u32, a: u32| targets.get(&(ctx, a)).or_else(|| targets.get(&(0, a))).map(|&b| b as usize);
     let mut succ: Vec<Vec<usize>> = alloc::vec![Vec::new(); total];
     for k in 0..n {

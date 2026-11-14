@@ -261,8 +261,8 @@ impl<'a, M: Memory> X<'a, M> {
                 return exit;
             }
             let lanes: u128 = match ins.mnemonic() {
-                Vcmpss => u32::MAX as u128,
-                Vcmpsd => u64::MAX as u128,
+                Vcmpss => u128::from(u32::MAX),
+                Vcmpsd => u128::from(u64::MAX),
                 _ => u128::MAX,
             };
             self.cpu.vex_tmp = r ^ (self.cpu.vex_tmp & lanes);
@@ -319,7 +319,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let (p, q, s) = (g(x), g(y), g(z));
                 let sn = [p, q, s].iter().any(|v| v.is_nan() && v.to_bits() & 1 << 22 == 0);
                 let den = [p, q, s].iter().any(|v| v.is_subnormal());
-                let w = |v: f32| v as f64;
+                let w = |v: f32| f64::from(v);
                 super::sse::fma_flags(w(if neg { -p } else { p }), w(q), w(if sub { -s } else { s }), true, sn, den, ue, rc)
             };
             fl = (fl.0 | f.0, fl.1 | f.1);
@@ -344,7 +344,7 @@ impl<'a, M: Memory> X<'a, M> {
                 } else {
                     crate::round::fma64(if neg { -p } else { p }, q, if sub { -s } else { s }, rc).to_bits()
                 };
-                v as u128
+                u128::from(v)
             } else {
                 let g = |v: u128| f32::from_bits((v >> (32 * i)) as u32);
                 let (p, q, s) = (g(x), g(y), g(z));
@@ -353,9 +353,9 @@ impl<'a, M: Memory> X<'a, M> {
                 } else {
                     crate::round::fma32(if neg { -p } else { p }, q, if sub { -s } else { s }, rc).to_bits()
                 };
-                v as u128
+                u128::from(v)
             };
-            let m: u128 = if double { u64::MAX as u128 } else { u32::MAX as u128 };
+            let m: u128 = if double { u128::from(u64::MAX) } else { u128::from(u32::MAX) };
             r = (r & !(m << (lane * i))) | bits << (lane * i);
         }
         self.cpu.set_xmm(xi(ins.op0_register()), r);
@@ -406,8 +406,8 @@ impl<'a, M: Memory> X<'a, M> {
                     for i in 0..128 / lane {
                         if (mask >> (lane * i + lane - 1)) & 1 != 0 {
                             let q = p.wrapping_add(i * lane / 8);
-                            let v = tryf!(if lane == 32 { self.mem.read32(q).map(|v| v as u64) } else { self.mem.read64(q) });
-                            r |= (v as u128) << (lane * i);
+                            let v = tryf!(if lane == 32 { self.mem.read32(q).map(|v| u64::from(v)) } else { self.mem.read64(q) });
+                            r |= u128::from(v) << (lane * i);
                         }
                     }
                     self.cpu.set_xmm(xi(ins.op0_register()), r);
@@ -418,15 +418,15 @@ impl<'a, M: Memory> X<'a, M> {
                 // dst = f(src1, src2 [, imm/reg]) on whole registers
                 let a = tryf!(self.read_v(1));
                 let b = if n > 2 { tryf!(self.read_v(2)) } else { 0 };
-                let imm = ins.immediate8() as u32;
+                let imm = u32::from(ins.immediate8());
                 let lanes = |lane: u32, f: &dyn Fn(u32, u64, u64) -> u64| -> u128 {
-                    let m: u128 = if lane == 64 { u64::MAX as u128 } else { (1u128 << lane) - 1 };
+                    let m: u128 = if lane == 64 { u128::from(u64::MAX) } else { (1u128 << lane) - 1 };
                     (0..128 / lane).fold(0u128, |r, i| {
-                        r | ((f(i, ((a >> (lane * i)) & m) as u64, ((b >> (lane * i)) & m) as u64) as u128) & m) << (lane * i)
+                        r | (u128::from(f(i, ((a >> (lane * i)) & m) as u64, ((b >> (lane * i)) & m) as u64)) & m) << (lane * i)
                     })
                 };
                 let bcast = |lane: u32| -> u128 {
-                    let m: u128 = if lane == 64 { u64::MAX as u128 } else { (1u128 << lane) - 1 };
+                    let m: u128 = if lane == 64 { u128::from(u64::MAX) } else { (1u128 << lane) - 1 };
                     (0..128 / lane).fold(0u128, |r, i| r | (a & m) << (lane * i))
                 };
                 let r = match mn {
@@ -444,11 +444,11 @@ impl<'a, M: Memory> X<'a, M> {
                     Vpsllvq => lanes(64, &|_, x, y| if y < 64 { x << y } else { 0 }),
                     Vpsrlvd => lanes(32, &|_, x, y| if y < 32 { x >> y } else { 0 }),
                     Vpsrlvq => lanes(64, &|_, x, y| if y < 64 { x >> y } else { 0 }),
-                    Vpsravd => lanes(32, &|_, x, y| ((x as u32 as i32) >> y.min(31)) as u32 as u64),
+                    Vpsravd => lanes(32, &|_, x, y| u64::from(((x as u32 as i32) >> y.min(31)) as u32)),
                     Vpermilps if n == 3 && ins.op_kind(2) == OpKind::Immediate8 => {
-                        lanes(32, &|i, _, _| (a >> (32 * ((imm >> (2 * i)) & 3))) as u32 as u64)
+                        lanes(32, &|i, _, _| u64::from((a >> (32 * ((imm >> (2 * i)) & 3))) as u32))
                     }
-                    Vpermilps => lanes(32, &|_, _, y| (a >> (32 * (y & 3))) as u32 as u64),
+                    Vpermilps => lanes(32, &|_, _, y| u64::from((a >> (32 * (y & 3))) as u32)),
                     Vpermilpd if n == 3 && ins.op_kind(2) == OpKind::Immediate8 => {
                         lanes(64, &|i, _, _| (a >> (64 * ((imm >> i) & 1))) as u64)
                     }

@@ -111,7 +111,7 @@ fn regrid(r: f64, es: i32, rc: Rc, near: impl Fn(f64) -> f64, up: impl Fn(f64) -
 
 /// The f32 grid
 fn f32_grid(r: f64, es: i32, rc: Rc) -> f64 {
-    regrid(r, es, rc, |x| x as f32 as f64, |x| next_up32(x as f32) as f64, |x| next_down32(x as f32) as f64)
+    regrid(r, es, rc, |x| f64::from(x as f32), |x| f64::from(next_up32(x as f32)), |x| f64::from(next_down32(x as f32)))
 }
 
 /// Where a result is rounded to
@@ -226,7 +226,7 @@ pub fn unbounded_exp(op: Op, a: f64, b: f64, bits: u32, rc: Rc) -> i32 {
 /// A finite value as (negative, integer significand, exponent): v = ±m * 2^e
 pub(crate) fn parts(v: f64) -> (bool, u128, i32) {
     let b = v.to_bits();
-    let (e, f) = (((b >> 52) & 0x7ff) as i32, (b & ((1 << 52) - 1)) as u128);
+    let (e, f) = (((b >> 52) & 0x7ff) as i32, u128::from(b & ((1 << 52) - 1)));
     if e == 0 { (b >> 63 != 0, f, -1074) } else { (b >> 63 != 0, f | 1 << 52, e - 1075) }
 }
 
@@ -244,7 +244,7 @@ pub(crate) fn sum_sign(terms: &[(bool, u128, i32)]) -> i32 {
         let l = if b == 0 { [p0, p1, 0] } else { [p0 << b, p1 << b | p0 >> (64 - b), p1 >> (64 - b)] };
         let mut c = 0u128;
         for (i, slot) in a.iter_mut().enumerate().skip(w) {
-            let t = *slot as u128 + c + if i - w < 3 { l[i - w] as u128 } else { 0 };
+            let t = u128::from(*slot) + c + if i - w < 3 { u128::from(l[i - w]) } else { 0 };
             *slot = t as u64;
             c = t >> 64;
             if c == 0 && i - w >= 2 {
@@ -297,13 +297,13 @@ pub fn fma32(x: f32, y: f32, z: f32, rc_bits: u32) -> f32 {
         return r;
     }
     if r.is_infinite() {
-        return overflowed(r as f64, f32::MAX as f64, rc) as f32;
+        return overflowed(f64::from(r), f64::from(f32::MAX), rc) as f32;
     }
-    let es = fma_err(x as f64, y as f64, z as f64, r as f64);
+    let es = fma_err(f64::from(x), f64::from(y), f64::from(z), f64::from(r));
     if r == 0.0 && es == 0 {
-        return zero_sum(x as f64 * y as f64, z as f64, rc) as f32;
+        return zero_sum(f64::from(x) * f64::from(y), f64::from(z), rc) as f32;
     }
-    f32_grid(r as f64, es, rc) as f32
+    f32_grid(f64::from(r), es, rc) as f32
 }
 
 /// The exact sum's zero: -0 rounding down, else +0 (an exact zero of nonzero operands, or
@@ -381,7 +381,7 @@ fn rounded32(op: Op, a: f32, b: f32, rc: Rc) -> f32 {
     if !a.is_finite() || (op != Op::Sqrt && !b.is_finite()) || plain.is_nan() {
         return plain;
     }
-    let (x, y) = (a as f64, if op == Op::Sub { -(b as f64) } else { b as f64 });
+    let (x, y) = (f64::from(a), if op == Op::Sub { -f64::from(b) } else { f64::from(b) });
     let (r, es) = match op {
         Op::Add | Op::Sub => {
             let s = x + y;
@@ -418,7 +418,7 @@ pub fn to_f32(r: f64, es: i32, rc: Rc) -> f32 {
 /// double and extended both 53 here, koji's registers being f64), then to f64 as a store
 /// would (twice: below f64's normal range that is not the same as once)
 pub fn x87(op: Op, a: f64, b: f64, cw: u16) -> f64 {
-    let rc = Rc::from_bits((cw >> 10) as u32);
+    let rc = Rc::from_bits(u32::from(cw >> 10));
     let single = (cw >> 8) & 3 == 0;
     if rc == Rc::Near && !single {
         let r = match op {
@@ -478,14 +478,14 @@ pub fn i64_to_f64(v: i64, rc_bits: u32) -> f64 {
     if rc == Rc::Near {
         return r;
     }
-    let e = v as i128 - r as i128;
+    let e = i128::from(v) - r as i128;
     place(r, e.signum() as i32, 0, rc, Prec::Sse)
 }
 
 /// i64 -> f32 as RC says (CVTSI2SS)
 pub fn i64_to_f32(v: i64, rc_bits: u32) -> f32 {
     let r = v as f64;
-    let e = v as i128 - r as i128;
+    let e = i128::from(v) - r as i128;
     to_f32(r, e.signum() as i32, Rc::from_bits(rc_bits))
 }
 

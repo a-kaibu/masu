@@ -97,10 +97,10 @@ pub fn step_cached<M: Memory>(cpu: &mut Cpu, mem: &mut M, cache: Option<&mut Dec
         &mut c.0[i]
     });
     let ins = match slot {
-        Some(e) if e.0 == pc && e.3.ip() >> 32 == cpu.rip_hi as u64 && e.3.ip() as u32 == cpu.eip && (e.2 as usize) <= n && e.1[..e.2 as usize] == buf[..e.2 as usize] => e.3,
+        Some(e) if e.0 == pc && e.3.ip() >> 32 == u64::from(cpu.rip_hi) && e.3.ip() as u32 == cpu.eip && (e.2 as usize) <= n && e.1[..e.2 as usize] == buf[..e.2 as usize] => e.3,
         slot => {
             let bitness = if cpu.mode64 != 0 { 64 } else if cpu.mode16 != 0 { 16 } else { 32 };
-            let rip = cpu.eip as u64 | (cpu.rip_hi as u64) << 32;
+            let rip = u64::from(cpu.eip) | u64::from(cpu.rip_hi) << 32;
             let mut dec = Decoder::with_ip(bitness, &buf[..n], rip, DecoderOptions::NONE);
             let ins = dec.decode();
             if ins.is_invalid() {
@@ -237,7 +237,7 @@ impl<'a, M: Memory> X<'a, M> {
     /// 16-bit mode: loads segment register `i` (ES CS SS DS FS GS) with `sel`; its base comes
     /// from the embedder's table at `Cpu::ldt` ([`crate::LDT_REAL`]: real-mode bases, sel * 16).
     pub(crate) fn load_seg(&mut self, i: usize, sel: u16) {
-        let base = if self.cpu.ldt == crate::LDT_REAL { (sel as u32) << 4 } else if sel >> 3 == 0 { 0 } else { self.mem.read32(self.cpu.ldt.wrapping_add((sel as u32 >> 3) * 4)).unwrap_or(0) };
+        let base = if self.cpu.ldt == crate::LDT_REAL { u32::from(sel) << 4 } else if sel >> 3 == 0 { 0 } else { self.mem.read32(self.cpu.ldt.wrapping_add((u32::from(sel) >> 3) * 4)).unwrap_or(0) };
         self.cpu.sreg[i] = sel;
         self.cpu.sbase[i] = base;
     }
@@ -253,7 +253,7 @@ impl<'a, M: Memory> X<'a, M> {
         let (i, bits, high) = reg_info(r);
         if i == SEG {
             if self.m16() {
-                return self.cpu.sreg[sidx(r)] as u64;
+                return u64::from(self.cpu.sreg[sidx(r)]);
             }
             return selector(r, self.m64());
         }
@@ -262,12 +262,12 @@ impl<'a, M: Memory> X<'a, M> {
             return v & flags::mask64(bits);
         }
         let v = self.cpu.regs[i];
-        (match (bits, high) {
+        u64::from(match (bits, high) {
             (32, _) => v,
             (16, _) => v & 0xffff,
             (8, false) => v & 0xff,
             _ => (v >> 8) & 0xff,
-        }) as u64
+        })
     }
 
     /// Writes a register with its own width (32-bit writes zero the upper half, as in long mode;
@@ -284,7 +284,7 @@ impl<'a, M: Memory> X<'a, M> {
         let old = self.cpu.gpr(i);
         let v = match (bits, high) {
             (64, _) => val,
-            (32, _) => val as u32 as u64,
+            (32, _) => u64::from(val as u32),
             (16, _) => (old & !0xffff) | (val & 0xffff),
             (8, false) => (old & !0xff) | (val & 0xff),
             _ => (old & !0xff00) | ((val & 0xff) << 8),
@@ -295,7 +295,7 @@ impl<'a, M: Memory> X<'a, M> {
     /// Stack pointer and its width.
     #[inline]
     fn sp(&self) -> u64 {
-        if self.m64() { self.cpu.gpr(ESP) } else if self.m16() { self.cpu.regs[ESP] as u64 & 0xffff } else { self.cpu.regs[ESP] as u64 }
+        if self.m64() { self.cpu.gpr(ESP) } else if self.m16() { u64::from(self.cpu.regs[ESP]) & 0xffff } else { u64::from(self.cpu.regs[ESP]) }
     }
 
     #[inline]
@@ -365,7 +365,7 @@ impl<'a, M: Memory> X<'a, M> {
         }
         if index != Register::None {
             asz = reg_info(index).1;
-            a = a.wrapping_add(self.get_reg(index).wrapping_mul(ins.memory_index_scale() as u64));
+            a = a.wrapping_add(self.get_reg(index).wrapping_mul(u64::from(ins.memory_index_scale())));
         }
         a & flags::mask64(asz)
     }
@@ -373,13 +373,13 @@ impl<'a, M: Memory> X<'a, M> {
     #[inline]
     fn seg_base(&self) -> u64 {
         if self.m16() {
-            return self.cpu.sbase[sidx(self.ins.memory_segment())] as u64;
+            return u64::from(self.cpu.sbase[sidx(self.ins.memory_segment())]);
         }
-        (match self.ins.memory_segment() {
+        u64::from(match self.ins.memory_segment() {
             Register::FS => self.cpu.fs_base,
             Register::GS => self.cpu.gs_base,
             _ => 0,
-        }) as u64
+        })
     }
 
     /// Linear address of the memory operand: modulo 4GB in long mode (see `Cpu::rip_hi`).
@@ -538,7 +538,7 @@ impl<'a, M: Memory> X<'a, M> {
 
     #[inline]
     fn next(&self) -> u64 {
-        if self.m64() { self.ins.next_ip() } else if self.m16() { self.ins.next_ip16() as u64 } else { self.ins.next_ip32() as u64 }
+        if self.m64() { self.ins.next_ip() } else if self.m16() { u64::from(self.ins.next_ip16()) } else { u64::from(self.ins.next_ip32()) }
     }
 
     #[inline]
@@ -548,7 +548,7 @@ impl<'a, M: Memory> X<'a, M> {
         } else if self.m16() {
             self.ins.near_branch_target() & 0xffff
         } else {
-            self.ins.near_branch32() as u64
+            u64::from(self.ins.near_branch32())
         }
     }
 
@@ -591,7 +591,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
         };
         if ins.mnemonic() == Mnemonic::Call {
-            let cs = self.cpu.sreg[1] as u64;
+            let cs = u64::from(self.cpu.sreg[1]);
             let ret = self.next();
             tryf!(self.push(cs, w));
             tryf!(self.push(ret, w));
@@ -645,9 +645,9 @@ impl<'a, M: Memory> X<'a, M> {
                 let bits = self.op_bits(1);
                 let v = tryf!(self.read_op(1));
                 let v = match bits {
-                    8 => v as u8 as i8 as i64 as u64,
-                    16 => v as u16 as i16 as i64 as u64,
-                    _ => v as u32 as i32 as i64 as u64,
+                    8 => i64::from(v as u8 as i8) as u64,
+                    16 => i64::from(v as u16 as i16) as u64,
+                    _ => i64::from(v as u32 as i32) as u64,
                 };
                 tryf!(self.write_op(0, v));
                 self.done()
@@ -666,7 +666,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Bswap => {
                 let v = tryf!(self.read_op(0));
-                let r = if self.op_bits(0) == 64 { v.swap_bytes() } else { (v as u32).swap_bytes() as u64 };
+                let r = if self.op_bits(0) == 64 { v.swap_bytes() } else { u64::from((v as u32).swap_bytes()) };
                 tryf!(self.write_op(0, r));
                 self.done()
             }
@@ -725,9 +725,9 @@ impl<'a, M: Memory> X<'a, M> {
                 };
                 let sx = |v: u64| -> i128 {
                     match bits {
-                        16 => v as u16 as i16 as i128,
-                        32 => v as u32 as i32 as i128,
-                        _ => v as i64 as i128,
+                        16 => i128::from(v as u16 as i16),
+                        32 => i128::from(v as u32 as i32),
+                        _ => i128::from(v as i64),
                     }
                 };
                 let full = sx(a) * sx(b);
@@ -741,17 +741,17 @@ impl<'a, M: Memory> X<'a, M> {
             Div | Idiv => self.div(),
 
             Cbw => {
-                let v = self.get_reg(Register::AL) as u8 as i8 as i16 as u16 as u64;
+                let v = u64::from(i16::from(self.get_reg(Register::AL) as u8 as i8) as u16);
                 self.set_reg(Register::AX, v);
                 self.done()
             }
             Cwde => {
-                let v = self.get_reg(Register::AX) as u16 as i16 as i32 as u32 as u64;
+                let v = u64::from(i32::from(self.get_reg(Register::AX) as u16 as i16) as u32);
                 self.set_reg(Register::EAX, v);
                 self.done()
             }
             Cdqe => {
-                let v = self.get_reg(Register::EAX) as u32 as i32 as i64 as u64;
+                let v = i64::from(self.get_reg(Register::EAX) as u32 as i32) as u64;
                 self.set_reg(Register::RAX, v);
                 self.done()
             }
@@ -761,7 +761,7 @@ impl<'a, M: Memory> X<'a, M> {
                 self.done()
             }
             Cdq => {
-                let v = ((self.get_reg(Register::EAX) as u32 as i32) >> 31) as u32 as u64;
+                let v = u64::from(((self.get_reg(Register::EAX) as u32 as i32) >> 31) as u32);
                 self.set_reg(Register::EDX, v);
                 self.done()
             }
@@ -838,7 +838,7 @@ impl<'a, M: Memory> X<'a, M> {
                     *slot = tryf!(self.mem.read16(self.stk(sp.wrapping_add(2 * k as u64))));
                 }
                 for (reg, k) in [(EDI, 0), (ESI, 1), (EBP, 2), (3, 4), (EDX, 5), (ECX, 6), (EAX, 7)] {
-                    self.cpu.regs[reg] = (self.cpu.regs[reg] & 0xffff_0000) | v[k] as u32;
+                    self.cpu.regs[reg] = (self.cpu.regs[reg] & 0xffff_0000) | u32::from(v[k]);
                 }
                 self.set_sp(sp.wrapping_add(16));
                 self.done()
@@ -858,7 +858,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Lahf => {
                 let v = (self.cpu.eflags & (SF | ZF | AF | PF | CF)) | 2;
-                self.set_reg(Register::AH, v as u64);
+                self.set_reg(Register::AH, u64::from(v));
                 self.done()
             }
             Sahf => {
@@ -915,7 +915,7 @@ impl<'a, M: Memory> X<'a, M> {
                 self.done()
             }
             Aam => {
-                let base = ins.immediate8() as u32;
+                let base = u32::from(ins.immediate8());
                 if base == 0 { return Exit::DivideError; }
                 let ax = self.cpu.regs[EAX];
                 let al = ax & 0xff;
@@ -925,7 +925,7 @@ impl<'a, M: Memory> X<'a, M> {
                 self.done()
             }
             Aad => {
-                let base = ins.immediate8() as u32;
+                let base = u32::from(ins.immediate8());
                 let ax = self.cpu.regs[EAX];
                 let r = ((ax & 0xff) + ((ax >> 8) & 0xff) * base) & 0xff;
                 self.cpu.regs[EAX] = (ax & !0xffff) | r;
@@ -934,8 +934,8 @@ impl<'a, M: Memory> X<'a, M> {
             }
 
             Enter => {
-                let size = ins.immediate16() as u64;
-                let level = ins.immediate8_2nd() as u64 & 31;
+                let size = u64::from(ins.immediate16());
+                let level = u64::from(ins.immediate8_2nd()) & 31;
                 let (w, sb) = (self.transfer_bits(), self.transfer_bits().bytes64());
                 let m64 = self.m64();
                 let rbp = if m64 { Register::RBP } else if w == Width::W16 { Register::BP } else { Register::EBP };
@@ -978,7 +978,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let w = self.transfer_bits();
                 let ip = tryf!(self.pop(w));
                 let cs = tryf!(self.pop(w));
-                let extra = if ins.op_count() == 1 { ins.immediate16() as u64 } else { 0 };
+                let extra = if ins.op_count() == 1 { u64::from(ins.immediate16()) } else { 0 };
                 let sp = self.sp();
                 self.set_sp(sp.wrapping_add(extra));
                 self.load_seg(1, cs as u16);
@@ -1063,7 +1063,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Seta | Setae | Setb | Setbe | Sete | Setg | Setge | Setl | Setle | Setne | Setno | Setnp | Setns
             | Seto | Setp | Sets => {
-                let v = self.cc() as u64;
+                let v = u64::from(self.cc());
                 tryf!(self.write_op(0, v));
                 self.done()
             }
@@ -1088,7 +1088,7 @@ impl<'a, M: Memory> X<'a, M> {
                     self.cpu.eflags |= ZF;
                 } else {
                     let r = if ins.mnemonic() == Bsf { v.trailing_zeros() } else { 63 - v.leading_zeros() };
-                    tryf!(self.write_op(0, r as u64));
+                    tryf!(self.write_op(0, u64::from(r)));
                     self.cpu.eflags &= !ZF;
                 }
                 self.done()
@@ -1101,7 +1101,7 @@ impl<'a, M: Memory> X<'a, M> {
                     Tzcnt => if v == 0 { bits } else { v.trailing_zeros() },
                     _ => v.leading_zeros() - (64 - bits),
                 };
-                tryf!(self.write_op(0, r as u64));
+                tryf!(self.write_op(0, u64::from(r)));
                 let f = match ins.mnemonic() {
                     Popcnt => if v == 0 { ZF } else { 0 },
                     _ => (if r == 0 { ZF } else { 0 }) | (if v == 0 || (ins.mnemonic() == Lzcnt && r == bits) { CF } else { 0 }),
@@ -1116,7 +1116,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let n = self.op_bits(1) / 8;
                 let v = tryf!(self.read_op(1));
                 let crc = (0..n).fold(self.get_reg(ins.op0_register()) as u32, |c, i| crc32c_byte(c, (v >> (8 * i)) as u8));
-                tryf!(self.write_op(0, crc as u64));
+                tryf!(self.write_op(0, u64::from(crc)));
                 self.done()
             }
 
@@ -1142,15 +1142,15 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Cmpxchg8b => {
                 let a = self.addr();
-                let cmp = (self.cpu.regs[EDX] as u64) << 32 | self.cpu.regs[EAX] as u64;
-                let n = (self.cpu.regs[ECX] as u64) << 32 | self.cpu.regs[3] as u64;
+                let cmp = u64::from(self.cpu.regs[EDX]) << 32 | u64::from(self.cpu.regs[EAX]);
+                let n = u64::from(self.cpu.regs[ECX]) << 32 | u64::from(self.cpu.regs[3]);
                 // always atomic: a plain store of the unchanged value could undo another
                 // thread's write
                 let d = tryf!(self.mem.cmpxchg(a, Width::W64, cmp, n));
                 if d == cmp {
                     self.cpu.eflags |= ZF;
                 } else {
-                    self.set_reg(Register::EAX, d as u32 as u64);
+                    self.set_reg(Register::EAX, u64::from(d as u32));
                     self.set_reg(Register::EDX, d >> 32);
                     self.cpu.eflags &= !ZF;
                 }
@@ -1158,8 +1158,8 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Cmpxchg16b => {
                 let a = self.addr();
-                let cmp = self.cpu.gpr(EAX) as u128 | (self.cpu.gpr(EDX) as u128) << 64;
-                let n = self.cpu.gpr(3) as u128 | (self.cpu.gpr(ECX) as u128) << 64;
+                let cmp = u128::from(self.cpu.gpr(EAX)) | u128::from(self.cpu.gpr(EDX)) << 64;
+                let n = u128::from(self.cpu.gpr(3)) | u128::from(self.cpu.gpr(ECX)) << 64;
                 let d = tryf!(self.mem.cmpxchg16(a, cmp, n));
                 if d == cmp {
                     self.cpu.eflags |= ZF;
@@ -1198,19 +1198,19 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Xlatb => {
                 let m64 = self.m64() && ins.memory_base() == Register::RBX;
-                let b = if m64 { self.cpu.gpr(3) } else { self.cpu.regs[3] as u64 };
+                let b = if m64 { self.cpu.gpr(3) } else { u64::from(self.cpu.regs[3]) };
                 let a = b.wrapping_add(self.get_reg(Register::AL)) & if m64 { u64::MAX } else if self.m16() { 0xffff } else { 0xffff_ffff };
                 let v = tryf!(self.mem.read8(lin(a.wrapping_add(self.seg_base()), self.m64())));
-                self.set_reg(Register::AL, v as u64);
+                self.set_reg(Register::AL, u64::from(v));
                 self.done()
             }
 
             Cpuid => {
                 let (a, b, c, d) = cpuid_mode(self.cpu.regs[EAX], self.cpu.regs[ECX], self.m64());
-                self.set_reg(Register::EAX, a as u64);
-                self.set_reg(Register::EBX, b as u64);
-                self.set_reg(Register::ECX, c as u64);
-                self.set_reg(Register::EDX, d as u64);
+                self.set_reg(Register::EAX, u64::from(a));
+                self.set_reg(Register::EBX, u64::from(b));
+                self.set_reg(Register::ECX, u64::from(c));
+                self.set_reg(Register::EDX, u64::from(d));
                 self.done()
             }
             // XCR0: x87, SSE and AVX state (OSXSAVE is reported with AVX); other XCRs: #GP
@@ -1224,7 +1224,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Rdtsc => {
                 let t = crate::read_tsc(self.cpu);
-                self.set_reg(Register::EAX, t as u32 as u64);
+                self.set_reg(Register::EAX, u64::from(t as u32));
                 self.set_reg(Register::EDX, t >> 32);
                 self.done()
             }
@@ -1252,7 +1252,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let lo = tryf!(self.read_mem(a, w));
                 let hi = tryf!(self.read_mem(a.wrapping_add(w.bytes()), w));
                 let v = self.get_reg(ins.op_register(0));
-                let sx = |x: u64| if w == Width::W16 { x as u16 as i16 as i64 } else { x as u32 as i32 as i64 };
+                let sx = |x: u64| if w == Width::W16 { i64::from(x as u16 as i16) } else { i64::from(x as u32 as i32) };
                 if sx(v) < sx(lo) || sx(v) > sx(hi) {
                     return Exit::Interrupt(5);
                 }
@@ -1268,7 +1268,7 @@ impl<'a, M: Memory> X<'a, M> {
                 // long mode SYSCALL: RCX = return address, R11 = RFLAGS; the embedder sees it as
                 // a trap at the instruction after it
                 self.cpu.set_gpr(ECX, self.next());
-                self.cpu.set_gpr(11, self.cpu.flags() as u64);
+                self.cpu.set_gpr(11, u64::from(self.cpu.flags()));
                 self.cpu.eip = self.next() as u32;
                 Exit::Syscall
             }
@@ -1309,16 +1309,16 @@ impl<'a, M: Memory> X<'a, M> {
         let cf_in = self.cf();
         let (r, f, which) = match ins.mnemonic() {
             Shl | Sal => {
-                let wide = (a as u128) << count;
+                let wide = u128::from(a) << count;
                 let r = wide as u64 & m;
                 let cf = if count <= bits { ((wide >> bits) & 1) as u32 } else { 0 };
-                let of = ((r & sb != 0) as u32) ^ cf;
+                let of = u32::from(r & sb != 0) ^ cf;
                 (r, flags::szp64(r, bits) | cf * CF | of * OF, STATUS)
             }
             Shr => {
                 let r = if count >= 64 { 0 } else { a >> count };
                 let cf = if count <= bits { ((a >> (count - 1)) & 1) as u32 } else { 0 };
-                let of = (a & sb != 0) as u32;
+                let of = u32::from(a & sb != 0);
                 (r, flags::szp64(r, bits) | cf * CF | of * OF, STATUS)
             }
             Sar => {
@@ -1326,42 +1326,42 @@ impl<'a, M: Memory> X<'a, M> {
                 let c = count.min(63);
                 let r = (sx >> c) as u64 & m;
                 let cf = ((sx >> (c - 1).min(63)) & 1) as u32;
-                let cf = if count >= bits { (sx < 0) as u32 } else { cf };
+                let cf = if count >= bits { u32::from(sx < 0) } else { cf };
                 (r, flags::szp64(r, bits) | cf * CF, STATUS)
             }
             Rol => {
                 let r = if eff == 0 { a } else { ((a << eff) | (a >> (bits - eff))) & m };
                 let cf = (r & 1) as u32;
-                let of = ((r & sb != 0) as u32) ^ cf;
+                let of = u32::from(r & sb != 0) ^ cf;
                 (r, cf * CF | of * OF, CF | OF)
             }
             Ror => {
                 let r = if eff == 0 { a } else { ((a >> eff) | (a << (bits - eff))) & m };
-                let cf = (r & sb != 0) as u32;
-                let of = cf ^ ((r & (sb >> 1) != 0) as u32);
+                let cf = u32::from(r & sb != 0);
+                let of = cf ^ u32::from(r & (sb >> 1) != 0);
                 (r, cf * CF | of * OF, CF | OF)
             }
             Rcl => {
-                let mut v = a as u128 | (cf_in as u128) << bits;
+                let mut v = u128::from(a) | u128::from(cf_in) << bits;
                 let w = bits + 1;
                 if eff != 0 {
                     v = ((v << eff) | (v >> (w - eff))) & ((1u128 << w) - 1);
                 }
                 let r = v as u64 & m;
                 let cf = ((v >> bits) & 1) as u32;
-                let of = ((r & sb != 0) as u32) ^ cf;
+                let of = u32::from(r & sb != 0) ^ cf;
                 (r, cf * CF | of * OF, CF | OF)
             }
             _ => {
                 // RCR
-                let mut v = a as u128 | (cf_in as u128) << bits;
+                let mut v = u128::from(a) | u128::from(cf_in) << bits;
                 let w = bits + 1;
                 if eff != 0 {
                     v = ((v >> eff) | (v << (w - eff))) & ((1u128 << w) - 1);
                 }
                 let r = v as u64 & m;
                 let cf = ((v >> bits) & 1) as u32;
-                let of = ((r & sb != 0) as u32) ^ ((r & (sb >> 1) != 0) as u32);
+                let of = u32::from(r & sb != 0) ^ u32::from(r & (sb >> 1) != 0);
                 (r, cf * CF | of * OF, CF | OF)
             }
         };
@@ -1386,16 +1386,16 @@ impl<'a, M: Memory> X<'a, M> {
         let sb = flags::sign64(bits);
         // (16-bit counts above 16 are undefined; this matches what the hardware gives for 32/64)
         let (r, cf) = if ins.mnemonic() == Mnemonic::Shld {
-            let wide = ((d as u128) << bits | s as u128) << count;
+            let wide = (u128::from(d) << bits | u128::from(s)) << count;
             let r = (wide >> bits) as u64 & m;
             let cf = if bits == 64 { ((d >> (64 - count)) & 1) as u32 } else { ((wide >> (2 * bits)) & 1) as u32 };
             (r, cf)
         } else {
-            let wide = ((s as u128) << bits | d as u128) >> (count - 1);
+            let wide = (u128::from(s) << bits | u128::from(d)) >> (count - 1);
             let cf = (wide & 1) as u32;
             ((wide >> 1) as u64 & m, cf)
         };
-        let of = ((r ^ d) & sb != 0) as u32;
+        let of = u32::from((r ^ d) & sb != 0);
         tryf!(self.write_op(0, r));
         self.set_status(flags::szp64(r, bits) | cf * CF | of * OF);
         self.done()
@@ -1412,35 +1412,35 @@ impl<'a, M: Memory> X<'a, M> {
             8 => {
                 let a = self.get_reg(Register::AL) as u32;
                 let s = s as u32;
-                let p = if signed { (a as u8 as i8 as i32 * s as u8 as i8 as i32) as u32 } else { a * (s & 0xff) };
-                self.set_reg(Register::AX, (p & 0xffff) as u64);
-                lo = (p & 0xff) as u64;
-                ovf = if signed { p as u16 as i16 != p as u8 as i8 as i16 } else { p & 0xff00 != 0 };
+                let p = if signed { (i32::from(a as u8 as i8) * i32::from(s as u8 as i8)) as u32 } else { a * (s & 0xff) };
+                self.set_reg(Register::AX, u64::from(p & 0xffff));
+                lo = u64::from(p & 0xff);
+                ovf = if signed { p as u16 as i16 != i16::from(p as u8 as i8) } else { p & 0xff00 != 0 };
             }
             16 => {
                 let a = self.get_reg(Register::AX) as u32;
                 let s = s as u32;
-                let p = if signed { (a as u16 as i16 as i32 * s as u16 as i16 as i32) as u32 } else { a * (s & 0xffff) };
-                self.set_reg(Register::AX, (p & 0xffff) as u64);
-                self.set_reg(Register::DX, (p >> 16) as u64);
-                lo = (p & 0xffff) as u64;
-                ovf = if signed { p as i32 != p as u16 as i16 as i32 } else { p >> 16 != 0 };
+                let p = if signed { (i32::from(a as u16 as i16) * i32::from(s as u16 as i16)) as u32 } else { a * (s & 0xffff) };
+                self.set_reg(Register::AX, u64::from(p & 0xffff));
+                self.set_reg(Register::DX, u64::from(p >> 16));
+                lo = u64::from(p & 0xffff);
+                ovf = if signed { p as i32 != i32::from(p as u16 as i16) } else { p >> 16 != 0 };
             }
             32 => {
                 let a = self.get_reg(Register::EAX);
-                let p = if signed { (a as u32 as i32 as i64 * s as u32 as i32 as i64) as u64 } else { a * (s & 0xffff_ffff) };
-                self.set_reg(Register::EAX, p as u32 as u64);
+                let p = if signed { (i64::from(a as u32 as i32) * i64::from(s as u32 as i32)) as u64 } else { a * (s & 0xffff_ffff) };
+                self.set_reg(Register::EAX, u64::from(p as u32));
                 self.set_reg(Register::EDX, p >> 32);
-                lo = p as u32 as u64;
-                ovf = if signed { p as i64 != p as u32 as i32 as i64 } else { p >> 32 != 0 };
+                lo = u64::from(p as u32);
+                ovf = if signed { p as i64 != i64::from(p as u32 as i32) } else { p >> 32 != 0 };
             }
             _ => {
                 let a = self.get_reg(Register::RAX);
-                let p = if signed { (a as i64 as i128 * s as i64 as i128) as u128 } else { a as u128 * s as u128 };
+                let p = if signed { (i128::from(a as i64) * i128::from(s as i64)) as u128 } else { u128::from(a) * u128::from(s) };
                 self.set_reg(Register::RAX, p as u64);
                 self.set_reg(Register::RDX, (p >> 64) as u64);
                 lo = p as u64;
-                ovf = if signed { p as i128 != p as u64 as i64 as i128 } else { p >> 64 != 0 };
+                ovf = if signed { p as i128 != i128::from(p as u64 as i64) } else { p >> 64 != 0 };
             }
         }
         let f = flags::szp64(lo, bits) | if ovf { CF | OF } else { 0 };
@@ -1458,11 +1458,11 @@ impl<'a, M: Memory> X<'a, M> {
                 let a = self.get_reg(Register::AX) as u32;
                 let s = s as u32;
                 let (q, rem) = if signed {
-                    let d = s as u8 as i8 as i32;
+                    let d = i32::from(s as u8 as i8);
                     if d == 0 { return Exit::DivideError; }
-                    let n = a as u16 as i16 as i32;
+                    let n = i32::from(a as u16 as i16);
                     let q = n / d;
-                    if q != q as i8 as i32 { return Exit::DivideError; }
+                    if q != i32::from(q as i8) { return Exit::DivideError; }
                     (q as u32, (n % d) as u32)
                 } else {
                     let d = s & 0xff;
@@ -1471,17 +1471,17 @@ impl<'a, M: Memory> X<'a, M> {
                     if q > 0xff { return Exit::DivideError; }
                     (q, a % d)
                 };
-                self.set_reg(Register::AX, ((q & 0xff) | (rem & 0xff) << 8) as u64);
+                self.set_reg(Register::AX, u64::from((q & 0xff) | (rem & 0xff) << 8));
             }
             16 => {
                 let a = (self.get_reg(Register::DX) as u32) << 16 | self.get_reg(Register::AX) as u32;
                 let s = s as u32;
                 let (q, rem) = if signed {
-                    let d = s as u16 as i16 as i32;
+                    let d = i32::from(s as u16 as i16);
                     if d == 0 { return Exit::DivideError; }
                     let n = a as i32;
                     let (q, rm) = (n.wrapping_div(d), n.wrapping_rem(d));
-                    if q != q as i16 as i32 || (n == i32::MIN && d == -1) { return Exit::DivideError; }
+                    if q != i32::from(q as i16) || (n == i32::MIN && d == -1) { return Exit::DivideError; }
                     (q as u32, rm as u32)
                 } else {
                     let d = s & 0xffff;
@@ -1490,18 +1490,18 @@ impl<'a, M: Memory> X<'a, M> {
                     if q > 0xffff { return Exit::DivideError; }
                     (q, a % d)
                 };
-                self.set_reg(Register::AX, (q & 0xffff) as u64);
-                self.set_reg(Register::DX, (rem & 0xffff) as u64);
+                self.set_reg(Register::AX, u64::from(q & 0xffff));
+                self.set_reg(Register::DX, u64::from(rem & 0xffff));
             }
             32 => {
                 let a = self.get_reg(Register::EDX) << 32 | self.get_reg(Register::EAX);
                 let (q, rem) = if signed {
-                    let d = s as u32 as i32 as i64;
+                    let d = i64::from(s as u32 as i32);
                     if d == 0 { return Exit::DivideError; }
                     let n = a as i64;
                     if n == i64::MIN && d == -1 { return Exit::DivideError; }
                     let q = n / d;
-                    if q != q as i32 as i64 { return Exit::DivideError; }
+                    if q != i64::from(q as i32) { return Exit::DivideError; }
                     (q as u32, (n % d) as u32)
                 } else {
                     let d = s & 0xffff_ffff;
@@ -1510,24 +1510,24 @@ impl<'a, M: Memory> X<'a, M> {
                     if q > 0xffff_ffff { return Exit::DivideError; }
                     (q as u32, (a % d) as u32)
                 };
-                self.set_reg(Register::EAX, q as u64);
-                self.set_reg(Register::EDX, rem as u64);
+                self.set_reg(Register::EAX, u64::from(q));
+                self.set_reg(Register::EDX, u64::from(rem));
             }
             _ => {
-                let a = (self.get_reg(Register::RDX) as u128) << 64 | self.get_reg(Register::RAX) as u128;
+                let a = u128::from(self.get_reg(Register::RDX)) << 64 | u128::from(self.get_reg(Register::RAX));
                 let (q, rem) = if signed {
-                    let d = s as i64 as i128;
+                    let d = i128::from(s as i64);
                     if d == 0 { return Exit::DivideError; }
                     let n = a as i128;
                     if n == i128::MIN && d == -1 { return Exit::DivideError; }
                     let q = n / d;
-                    if q != q as i64 as i128 { return Exit::DivideError; }
+                    if q != i128::from(q as i64) { return Exit::DivideError; }
                     (q as u64, (n % d) as u64)
                 } else {
-                    let d = s as u128;
+                    let d = u128::from(s);
                     if d == 0 { return Exit::DivideError; }
                     let q = a / d;
-                    if q > u64::MAX as u128 { return Exit::DivideError; }
+                    if q > u128::from(u64::MAX) { return Exit::DivideError; }
                     (q as u64, (a % d) as u64)
                 };
                 self.set_reg(Register::RAX, q);
@@ -1547,10 +1547,10 @@ impl<'a, M: Memory> X<'a, M> {
         let reg_offset = ins.op_kind(1) == OpKind::Register;
         let (val, addr) = if ins.op_kind(0) == OpKind::Memory && reg_offset {
             // bit string: the offset is signed and may address outside the operand
-            let o = match bits { 16 => off as u16 as i16 as i64, 32 => off as u32 as i32 as i64, _ => off as i64 };
+            let o = match bits { 16 => i64::from(off as u16 as i16), 32 => i64::from(off as u32 as i32), _ => off as i64 };
             let sh = match bits { 16 => 4, 32 => 5, _ => 6 };
             // (the offset wraps at the address size: 16-bit addressing stays in the segment)
-            let mut eff = self.offset().wrapping_add(((o >> sh) * (bits as i64 / 8)) as u64);
+            let mut eff = self.offset().wrapping_add(((o >> sh) * (i64::from(bits) / 8)) as u64);
             if self.offset_bits() == 16 {
                 eff &= 0xffff;
             }
@@ -1559,7 +1559,7 @@ impl<'a, M: Memory> X<'a, M> {
         } else {
             (tryf!(self.read_op(0)), None)
         };
-        let bit = (off & (bits as u64 - 1)) as u32;
+        let bit = (off & (u64::from(bits) - 1)) as u32;
         let cf = ((val >> bit) & 1) as u32;
         let nv = match ins.mnemonic() {
             Bts => val | 1 << bit,
@@ -1609,7 +1609,7 @@ impl<'a, M: Memory> X<'a, M> {
             return false;
         }
         let n = self.get_reg(rc);
-        let size = bits as u64 / 8;
+        let size = u64::from(bits) / 8;
         if n < 16 || n > (1 << 28) {
             return false;
         }
@@ -1635,7 +1635,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let Some(s) = self.mem.host_range(si, len32) else { return false };
                 // forward copies equal memmove unless the destination starts inside the
                 // source above it; backward ones unless it starts below
-                let overlap = (di as u64) < si as u64 + len && (si as u64) < di as u64 + len;
+                let overlap = u64::from(di) < u64::from(si) + len && u64::from(si) < u64::from(di) + len;
                 if overlap && di != si && ((!back && di > si) || (back && di < si)) {
                     return false;
                 }
@@ -1675,7 +1675,7 @@ impl<'a, M: Memory> X<'a, M> {
             _ => Width::W32,
         };
         let bits = w.bits();
-        let step: u64 = if self.cpu.eflags & DF != 0 { (bits as u64 / 8).wrapping_neg() } else { bits as u64 / 8 };
+        let step: u64 = if self.cpu.eflags & DF != 0 { (u64::from(bits) / 8).wrapping_neg() } else { u64::from(bits) / 8 };
         let rep = ins.has_rep_prefix() || ins.has_repe_prefix();
         let repne = ins.has_repne_prefix();
         let src_seg = self.seg_base(); // DS:ESI may take a segment override (FS)
@@ -1768,7 +1768,7 @@ pub const REP_STEP_MAX: u64 = 1 << 16;
 
 /// One byte of CRC-32C (polynomial 0x1EDC6F41, reflected 0x82F63B78), no pre/post inversion
 pub(crate) fn crc32c_byte(c: u32, b: u8) -> u32 {
-    (0..8).fold(c ^ b as u32, |c, _| if c & 1 != 0 { c >> 1 ^ 0x82f6_3b78 } else { c >> 1 })
+    (0..8).fold(c ^ u32::from(b), |c, _| if c & 1 != 0 { c >> 1 ^ 0x82f6_3b78 } else { c >> 1 })
 }
 
 /// CPUID as seen by guest code: a Pentium 4 class CPU with SSE2.
@@ -1807,7 +1807,7 @@ pub fn cpuid_mode(leaf: u32, sub: u32, long: bool) -> (u32, u32, u32, u32) {
         0x8000_0000 => (0x8000_0004, 0, 0, 0),
         // long mode: LAHF/SAHF, SYSCALL, NX, LM (what an x64 CPU says, CPU-Z checks LM);
         // LZCNT (ABM) with AVX
-        0x8000_0001 => (0, 0, (long as u32) | (avx as u32) << 5, if long { (1 << 11) | (1 << 20) | (1 << 29) } else { 0 }),
+        0x8000_0001 => (0, 0, u32::from(long) | u32::from(avx) << 5, if long { (1 << 11) | (1 << 20) | (1 << 29) } else { 0 }),
         0x8000_0002..=0x8000_0004 => {
             const BRAND: &[u8; 48] = b"vnvm virtual x86 processor\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
             let o = (leaf - 0x8000_0002) as usize * 16;

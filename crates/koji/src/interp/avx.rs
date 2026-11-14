@@ -76,10 +76,10 @@ fn lane(v: &[u128; 2], bits: u32, i: u32) -> u64 {
 #[inline]
 fn set_lane(v: &mut [u128; 2], bits: u32, i: u32, x: u64) {
     let per = 128 / bits;
-    let m: u128 = if bits == 64 { u64::MAX as u128 } else { (1u128 << bits) - 1 };
+    let m: u128 = if bits == 64 { u128::from(u64::MAX) } else { (1u128 << bits) - 1 };
     let s = bits * (i % per);
     let h = &mut v[(i / per) as usize];
-    *h = (*h & !(m << s)) | ((x as u128 & m) << s);
+    *h = (*h & !(m << s)) | ((u128::from(x) & m) << s);
 }
 
 /// `v`'s low `bits` repeated over 128 bits.
@@ -87,7 +87,7 @@ fn bcast(v: u128, bits: u32) -> u128 {
     if bits == 128 {
         return v;
     }
-    let m: u128 = if bits == 64 { u64::MAX as u128 } else { (1u128 << bits) - 1 };
+    let m: u128 = if bits == 64 { u128::from(u64::MAX) } else { (1u128 << bits) - 1 };
     (0..128 / bits).fold(0, |r, i| r | (v & m) << (bits * i))
 }
 
@@ -98,7 +98,7 @@ impl<'a, M: Memory> X<'a, M> {
             OpKind::Register if self.ins.op_register(i).is_ymm() => Ok(self.cpu.ymm(vi(self.ins.op_register(i)))),
             OpKind::Memory if self.ins.memory_size().size() == 32 => {
                 let a = self.addr();
-                let r = |x: &mut Self, a: u32| -> Result<u128, Fault> { Ok(x.mem.read64(a)? as u128 | (x.mem.read64(a.wrapping_add(8))? as u128) << 64) };
+                let r = |x: &mut Self, a: u32| -> Result<u128, Fault> { Ok(u128::from(x.mem.read64(a)?) | u128::from(x.mem.read64(a.wrapping_add(8))?) << 64) };
                 Ok([r(self, a)?, r(self, a.wrapping_add(16))?])
             }
             _ => Ok([self.read_v(i)?, 0]),
@@ -155,7 +155,7 @@ impl<'a, M: Memory> X<'a, M> {
         use Mnemonic::*;
         let ins = self.ins;
         let mn = ins.mnemonic();
-        let imm = ins.immediate8() as u32;
+        let imm = u32::from(ins.immediate8());
         let dst = || vi(ins.op0_register());
         match mn {
             Vbroadcastss | Vbroadcastsd | Vbroadcastf128 | Vbroadcasti128 | Vpbroadcastb | Vpbroadcastw | Vpbroadcastd | Vpbroadcastq => {
@@ -272,7 +272,7 @@ impl<'a, M: Memory> X<'a, M> {
                     Ok(v) => v,
                     Err(e) => return e,
                 };
-                self.cpu.set_ymm(dst(), [(lo as u64 as u128) | (hi as u64 as u128) << 64, 0]);
+                self.cpu.set_ymm(dst(), [u128::from(lo as u64) | u128::from(hi as u64) << 64, 0]);
             }
             _ => return self.split(),
         }
@@ -370,19 +370,19 @@ impl<'a, M: Memory> X<'a, M> {
         let mut mv = self.cpu.ymm(vi(mk));
         let base = if ins.memory_base() == Register::None { 0 } else { self.get_reg(ins.memory_base()) };
         let disp = ins.memory_displacement64();
-        let scale = ins.memory_index_scale() as u64;
+        let scale = u64::from(ins.memory_index_scale());
         for i in 0..n {
             if lane(&mv, dbits, i) >> (dbits - 1) == 0 {
                 continue;
             }
             let ix = lane(&idx, ibits, i);
-            let ix = if ibits == 32 { ix as u32 as i32 as i64 as u64 } else { ix };
+            let ix = if ibits == 32 { i64::from(ix as u32 as i32) as u64 } else { ix };
             let mut a = base.wrapping_add(disp).wrapping_add(ix.wrapping_mul(scale));
             if !self.m64() {
                 a &= 0xffff_ffff;
             }
             let a = super::lin(a.wrapping_add(self.seg_base()), self.m64());
-            let v = match if dbits == 32 { self.mem.read32(a).map(|v| v as u64) } else { self.mem.read64(a) } {
+            let v = match if dbits == 32 { self.mem.read32(a).map(|v| u64::from(v)) } else { self.mem.read64(a) } {
                 Ok(v) => v,
                 Err(f) => {
                     self.cpu.set_ymm(vi(d), dv);

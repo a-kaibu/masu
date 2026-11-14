@@ -56,7 +56,7 @@ impl Cpu {
     /// 64-bit general register `i` (0..16, encoding order).
     #[inline]
     pub fn gpr(&self, i: usize) -> u64 {
-        if i < 8 { self.regs[i] as u64 | (self.hi[i] as u64) << 32 } else { self.r8[i - 8] }
+        if i < 8 { u64::from(self.regs[i]) | u64::from(self.hi[i]) << 32 } else { self.r8[i - 8] }
     }
 
     #[inline]
@@ -161,15 +161,15 @@ pub trait Memory {
 
     #[inline]
     fn read16(&mut self, addr: u32) -> Result<u16, Fault> {
-        Ok(self.read8(addr)? as u16 | (self.read8(addr.wrapping_add(1))? as u16) << 8)
+        Ok(u16::from(self.read8(addr)?) | u16::from(self.read8(addr.wrapping_add(1))?) << 8)
     }
     #[inline]
     fn read32(&mut self, addr: u32) -> Result<u32, Fault> {
-        Ok(self.read16(addr)? as u32 | (self.read16(addr.wrapping_add(2))? as u32) << 16)
+        Ok(u32::from(self.read16(addr)?) | u32::from(self.read16(addr.wrapping_add(2))?) << 16)
     }
     #[inline]
     fn read64(&mut self, addr: u32) -> Result<u64, Fault> {
-        Ok(self.read32(addr)? as u64 | (self.read32(addr.wrapping_add(4))? as u64) << 32)
+        Ok(u64::from(self.read32(addr)?) | u64::from(self.read32(addr.wrapping_add(4))?) << 32)
     }
     #[inline]
     fn write16(&mut self, addr: u32, v: u16) -> Result<(), Fault> {
@@ -209,7 +209,7 @@ pub trait Memory {
     /// CMPXCHG16B: compare-and-swap of the 16 bytes at `addr`, atomic with respect to other
     /// threads' 16-byte swaps; returns what the memory held.
     fn cmpxchg16(&mut self, addr: u32, old: u128, new: u128) -> Result<u128, Fault> {
-        let cur = self.read64(addr)? as u128 | (self.read64(addr.wrapping_add(8))? as u128) << 64;
+        let cur = u128::from(self.read64(addr)?) | u128::from(self.read64(addr.wrapping_add(8))?) << 64;
         if cur == old {
             self.write64(addr, new as u64)?;
             self.write64(addr.wrapping_add(8), (new >> 64) as u64)?;
@@ -420,7 +420,7 @@ pub fn fxrstor<M: Memory + ?Sized>(cpu: &mut Cpu, mem: &mut M, a: u32) -> Result
     for (i, x) in xmm.iter_mut().enumerate().take(if cpu.mode64 != 0 { 16 } else { 8 }) {
         let lo = mem.read64(a.wrapping_add(160 + 16 * i as u32))?;
         let hi = mem.read64(a.wrapping_add(168 + 16 * i as u32))?;
-        *x = lo as u128 | (hi as u128) << 64;
+        *x = u128::from(lo) | u128::from(hi) << 64;
     }
     let f = &mut cpu.fpu;
     f.cw = cw;

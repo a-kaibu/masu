@@ -494,7 +494,7 @@ impl Gen<'_> {
         } else if let Some((bits, op, arith)) = shift(m) {
             self.vread(0, None, mm);
             if ins.op_kind(1) == OpKind::Immediate8 {
-                let n = ins.immediate8() as u32;
+                let n = u32::from(ins.immediate8());
                 if n < bits {
                     self.c.i32c(n as i32).simd(op);
                 } else if arith {
@@ -516,7 +516,7 @@ impl Gen<'_> {
                     self.c.get(base).load64(off).set(w);
                 }
                 let inside = |c: &mut super::Code| {
-                    c.get(w).i64c(bits as i64).op(0x54); // i64.lt_u
+                    c.get(w).i64c(i64::from(bits)).op(0x54); // i64.lt_u
                 };
                 if arith {
                     self.c.get(w).wrap().i32c(bits as i32 - 1);

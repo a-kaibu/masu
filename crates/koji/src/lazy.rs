@@ -177,24 +177,24 @@ impl Lazy {
             Kind::Dec => (flags::sub64(a64, 1, 0, bits).1 & !CF) | (c & CF),
             Kind::Shl => {
                 let m = flags::mask(bits);
-                let wide = ((a & m) as u64) << b;
+                let wide = u64::from(a & m) << b;
                 let r = wide as u32 & m;
                 let cf = if b <= bits { ((wide >> bits) & 1) as u32 } else { 0 };
-                let of = ((r & flags::sign(bits) != 0) as u32) ^ cf;
+                let of = u32::from(r & flags::sign(bits) != 0) ^ cf;
                 flags::szp(r, bits) | cf * CF | of * OF
             }
             Kind::Shr => {
                 let a = a & flags::mask(bits);
                 let r = if b >= 32 { 0 } else { a >> b };
                 let cf = if b <= bits { (a >> (b - 1)) & 1 } else { 0 };
-                let of = (a & flags::sign(bits) != 0) as u32;
+                let of = u32::from(a & flags::sign(bits) != 0);
                 flags::szp(r, bits) | cf * CF | of * OF
             }
             Kind::Sar => {
                 let sx = ((a << (32 - bits)) as i32) >> (32 - bits);
                 let k = b.min(31);
                 let r = (sx >> k) as u32 & flags::mask(bits);
-                let cf = if b > 31 { (sx < 0) as u32 } else { ((sx >> (k - 1).min(31)) & 1) as u32 };
+                let cf = if b > 31 { u32::from(sx < 0) } else { ((sx >> (k - 1).min(31)) & 1) as u32 };
                 flags::szp(r, bits) | cf * CF
             }
             Kind::Mul => flags::szp64(r64, bits) | if c != 0 { CF | OF } else { 0 },

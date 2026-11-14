@@ -63,9 +63,9 @@ impl Drop for MemSite {
 pub fn mem_count_slot(store: bool, cpu: bool, off: u32) -> usize {
     let site = MEM_SITE.load(core::sync::atomic::Ordering::Relaxed).min(MEM_SITES.len() - 1) * MEM_SITE_SLOTS;
     site + if cpu {
-        store as usize * MEM_CPU_SLOTS + (off as usize).min(MEM_CPU_SLOTS - 1)
+        usize::from(store) * MEM_CPU_SLOTS + (off as usize).min(MEM_CPU_SLOTS - 1)
     } else {
-        2 * MEM_CPU_SLOTS + store as usize
+        2 * MEM_CPU_SLOTS + usize::from(store)
     }
 }
 
@@ -153,7 +153,7 @@ impl Code {
     }
     pub fn i32c(&mut self, v: i32) -> &mut Self {
         self.b.push(0x41);
-        sleb(&mut self.b, v as i64);
+        sleb(&mut self.b, i64::from(v));
         self
     }
     pub fn u32c(&mut self, v: u32) -> &mut Self {
@@ -175,19 +175,19 @@ impl Code {
         }
         self.locs.push(self.b.len() as u32);
         self.b.push(0x20);
-        uleb(&mut self.b, l as u64);
+        uleb(&mut self.b, u64::from(l));
         self
     }
     pub fn set(&mut self, l: u32) -> &mut Self {
         self.locs.push(self.b.len() as u32);
         self.b.push(0x21);
-        uleb(&mut self.b, l as u64);
+        uleb(&mut self.b, u64::from(l));
         self
     }
     pub fn tee(&mut self, l: u32) -> &mut Self {
         self.locs.push(self.b.len() as u32);
         self.b.push(0x22);
-        uleb(&mut self.b, l as u64);
+        uleb(&mut self.b, u64::from(l));
         self
     }
     pub fn mem(&mut self, o: u8, align: u32, off: u32) -> &mut Self {
@@ -199,8 +199,8 @@ impl Code {
     fn memarg(&mut self, o: u8, align: u32, off: u32) -> &mut Self {
         self.cpu_at = false;
         self.b.push(o);
-        uleb(&mut self.b, align as u64);
-        uleb(&mut self.b, off as u64);
+        uleb(&mut self.b, u64::from(align));
+        uleb(&mut self.b, u64::from(off));
         self
     }
     /// i32.atomic.rmw.* (`o`: 0x1e add, 0x25 sub, 0x2c and, 0x33 or, 0x3a xor, 0x41 xchg,
@@ -290,12 +290,12 @@ impl Code {
     }
     pub fn br(&mut self, depth: u32) -> &mut Self {
         self.b.push(0x0c);
-        uleb(&mut self.b, depth as u64);
+        uleb(&mut self.b, u64::from(depth));
         self
     }
     pub fn br_if(&mut self, depth: u32) -> &mut Self {
         self.b.push(0x0d);
-        uleb(&mut self.b, depth as u64);
+        uleb(&mut self.b, u64::from(depth));
         self
     }
     pub fn ret(&mut self) -> &mut Self {
@@ -305,23 +305,23 @@ impl Code {
     fn count_mem(&mut self, store: bool, off: u32) {
         let at = &MEM_COUNTS[mem_count_slot(store, self.cpu_at, off)] as *const _ as usize as u32 as i32;
         self.b.push(0x41);
-        sleb(&mut self.b, at as i64);
+        sleb(&mut self.b, i64::from(at));
         self.b.push(0x41);
-        sleb(&mut self.b, at as i64);
+        sleb(&mut self.b, i64::from(at));
         self.b.extend_from_slice(&[0x28, 2, 0, 0x41, 1, 0x6a, 0x36, 2, 0]);
     }
 
     pub fn call(&mut self, f: u32) -> &mut Self {
         self.cpu_at = false;
         self.b.push(0x10);
-        uleb(&mut self.b, f as u64);
+        uleb(&mut self.b, u64::from(f));
         self
     }
     pub fn call_indirect(&mut self, ty: u32, table: u32) -> &mut Self {
         self.cpu_at = false;
         self.b.push(0x11);
-        uleb(&mut self.b, ty as u64);
-        uleb(&mut self.b, table as u64);
+        uleb(&mut self.b, u64::from(ty));
+        uleb(&mut self.b, u64::from(table));
         self
     }
     pub fn drop_(&mut self) -> &mut Self {
@@ -425,27 +425,27 @@ impl Code {
     /// A SIMD instruction (0xfd prefix), with a memarg for loads and stores.
     pub fn simd(&mut self, op: u32) -> &mut Self {
         self.b.push(0xfd);
-        uleb(&mut self.b, op as u64);
+        uleb(&mut self.b, u64::from(op));
         self
     }
     pub fn v128load(&mut self, off: u32) -> &mut Self {
         self.simd(0);
         uleb(&mut self.b, 0);
-        uleb(&mut self.b, off as u64);
+        uleb(&mut self.b, u64::from(off));
         self
     }
     /// v128.load64_zero
     pub fn v128load64(&mut self, off: u32) -> &mut Self {
         self.simd(0x5d);
         uleb(&mut self.b, 0);
-        uleb(&mut self.b, off as u64);
+        uleb(&mut self.b, u64::from(off));
         self
     }
     /// v128.load32_zero
     pub fn v128load32(&mut self, off: u32) -> &mut Self {
         self.simd(0x5c);
         uleb(&mut self.b, 0);
-        uleb(&mut self.b, off as u64);
+        uleb(&mut self.b, u64::from(off));
         self
     }
     /// A SIMD lane instruction (extract_lane, replace_lane) on lane `lane`.
@@ -470,7 +470,7 @@ impl Code {
     pub fn simd_mem(&mut self, op: u32, off: u32) -> &mut Self {
         self.simd(op);
         uleb(&mut self.b, 0);
-        uleb(&mut self.b, off as u64);
+        uleb(&mut self.b, u64::from(off));
         self
     }
     pub fn v128zero(&mut self) -> &mut Self {
@@ -487,7 +487,7 @@ impl Code {
     pub fn v128store(&mut self, off: u32) -> &mut Self {
         self.simd(11);
         uleb(&mut self.b, 0);
-        uleb(&mut self.b, off as u64);
+        uleb(&mut self.b, u64::from(off));
         self
     }
     /// memory.copy within memory 0
@@ -561,8 +561,8 @@ impl Module {
                     name(&mut s, "memory");
                     // memory, shared, memory_min_pages() to MEMORY_MAX_PAGES
                     s.extend_from_slice(&[0x02, 0x03]);
-                    uleb(&mut s, memory_min_pages() as u64);
-                    uleb(&mut s, MEMORY_MAX_PAGES as u64);
+                    uleb(&mut s, u64::from(memory_min_pages()));
+                    uleb(&mut s, u64::from(MEMORY_MAX_PAGES));
                 }
                 Import::Table(n) => {
                     name(&mut s, n);
@@ -571,7 +571,7 @@ impl Module {
                 Import::Func(n, ty) => {
                     name(&mut s, n);
                     s.push(0x00);
-                    uleb(&mut s, *ty as u64);
+                    uleb(&mut s, u64::from(*ty));
                 }
             }
         }
@@ -580,7 +580,7 @@ impl Module {
         s.clear();
         uleb(&mut s, self.funcs.len() as u64);
         for f in &self.funcs {
-            uleb(&mut s, f.ty as u64);
+            uleb(&mut s, u64::from(f.ty));
         }
         section(&mut out, 3, &s);
 
@@ -603,7 +603,7 @@ impl Module {
             uleb(&mut s, n.len() as u64);
             s.extend_from_slice(&n);
             s.push(0x00);
-            uleb(&mut s, base as u64 + i as u64);
+            uleb(&mut s, u64::from(base) + i as u64);
         }
         section(&mut out, 7, &s);
 
@@ -621,7 +621,7 @@ impl Module {
             }
             uleb(&mut body, groups.len() as u64);
             for (n, t) in groups {
-                uleb(&mut body, n as u64);
+                uleb(&mut body, u64::from(n));
                 body.push(t);
             }
             body.extend_from_slice(&f.code.b);
@@ -636,7 +636,7 @@ impl Module {
             name(&mut s, "name");
             let mut names = Vec::new();
             uleb(&mut names, 1);
-            uleb(&mut names, base as u64 + self.name_at as u64);
+            uleb(&mut names, u64::from(base) + u64::from(self.name_at));
             name(&mut names, n);
             s.push(1); // function names
             uleb(&mut s, names.len() as u64);
@@ -657,7 +657,7 @@ fn read_uleb(b: &[u8], p: &mut usize) -> Option<u64> {
         if s > 63 || (s == 63 && x & 0x7e != 0) {
             return None;
         }
-        v |= ((x & 0x7f) as u64) << s;
+        v |= u64::from(x & 0x7f) << s;
         if x < 0x80 {
             return Some(v);
         }
@@ -944,7 +944,7 @@ fn compact(params: u32, extra: &[u32], locals: &[u8], code: Code) -> (Vec<u8>, C
         let (mut v, mut shift) = (0u32, 0);
         loop {
             let c = b[at];
-            v |= ((c & 0x7f) as u32) << shift;
+            v |= u32::from(c & 0x7f) << shift;
             at += 1;
             shift += 7;
             if c & 0x80 == 0 {
@@ -976,7 +976,7 @@ fn compact(params: u32, extra: &[u32], locals: &[u8], code: Code) -> (Vec<u8>, C
         out.b.extend_from_slice(&code.b[from..=p]);
         let (l, end) = read(&code.b, p + 1);
         out.locs.push(p as u32);
-        uleb(&mut out.b, map[l as usize] as u64);
+        uleb(&mut out.b, u64::from(map[l as usize]));
         from = end;
     }
     out.b.extend_from_slice(&code.b[from..]);
