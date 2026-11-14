@@ -94,7 +94,7 @@ impl D3d {
             let bpp = bpp(t.format);
             for level in 0..t.levels {
                 let (w, h) = ((t.w >> level).max(1), (t.h >> level).max(1));
-                let layers = if t.dim == "3d" { (t.layers >> level).max(1) } else { t.layers };
+                let layers = if t.dim == Dim::D3 { (t.layers >> level).max(1) } else { t.layers };
                 for layer in 0..layers {
                     let bpr = (w * bpp).div_ceil(256) * 256;
                     let buf = gpu::buffer(bpr * h, usage::COPY_DST | usage::MAP_READ);
@@ -457,7 +457,7 @@ impl D3d {
 /// What a depth-stencil texture comes back as: its last clear (or depth 1, as a new one).
 pub(super) fn depth_clears(id: u32, t: &Tex) -> Vec<u32> {
     let (z, s) = t.zclear.unwrap_or((1.0, 0));
-    let layers = if t.dim == "3d" { 1 } else { t.layers };
+    let layers = if t.dim == Dim::D3 { 1 } else { t.layers };
     (0..t.levels).flat_map(|level| (0..layers).flat_map(move |layer| [CLEAR_VIEW, id, level, layer, 6, 0, 0, 0, 0, z.to_bits(), s])).collect()
 }
 

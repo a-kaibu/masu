@@ -328,12 +328,101 @@ const BLEND2: [&str; 14] = [
 const STENCIL_OP: [&str; 9] =
     ["keep", "keep", "zero", "replace", "increment-clamp", "decrement-clamp", "invert", "increment-wrap", "decrement-wrap"];
 const ADDRESS2: [&str; 4] = ["repeat", "mirror-repeat", "clamp-to-edge", "clamp-to-edge"];
-const VIEW_DIM: [&str; 6] = ["1d", "2d", "2d-array", "cube", "cube-array", "3d"];
 const VERTEX_FORMATS: [&str; 14] = [
     "float32", "float32x2", "float32x3", "float32x4", "unorm8x4", "uint8x4", "sint16x2", "sint16x4", "snorm16x2",
     "snorm16x4", "unorm16x2", "unorm16x4", "float16x2", "float16x4",
 ];
-const TOPOLOGY: [&str; 5] = ["point-list", "line-list", "line-strip", "triangle-list", "triangle-strip"];
+/// A texture's dimension.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Dim {
+    D1,
+    D2,
+    D3,
+}
+impl Dim {
+    const fn name(self) -> &'static str {
+        match self {
+            Dim::D1 => "1d",
+            Dim::D2 => "2d",
+            Dim::D3 => "3d",
+        }
+    }
+}
+/// A view's dimension, by the command words' code (0..=5; others 2D).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ViewDim {
+    D1,
+    D2,
+    D2Array,
+    Cube,
+    CubeArray,
+    D3,
+}
+impl ViewDim {
+    const fn of(code: u32) -> ViewDim {
+        match code {
+            0 => ViewDim::D1,
+            2 => ViewDim::D2Array,
+            3 => ViewDim::Cube,
+            4 => ViewDim::CubeArray,
+            5 => ViewDim::D3,
+            _ => ViewDim::D2,
+        }
+    }
+    const fn name(self) -> &'static str {
+        match self {
+            ViewDim::D1 => "1d",
+            ViewDim::D2 => "2d",
+            ViewDim::D2Array => "2d-array",
+            ViewDim::Cube => "cube",
+            ViewDim::CubeArray => "cube-array",
+            ViewDim::D3 => "3d",
+        }
+    }
+    /// The dimension of a texture views of it are made of.
+    const fn texture(self) -> Dim {
+        match self {
+            ViewDim::D1 => Dim::D1,
+            ViewDim::D3 => Dim::D3,
+            ViewDim::D2 | ViewDim::D2Array | ViewDim::Cube | ViewDim::CubeArray => Dim::D2,
+        }
+    }
+}
+/// A primitive topology, by the command words' code (0..=4; others triangle lists).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Topology {
+    PointList,
+    LineList,
+    LineStrip,
+    TriangleList,
+    TriangleStrip,
+}
+impl Topology {
+    const fn of(code: u32) -> Topology {
+        match code {
+            0 => Topology::PointList,
+            1 => Topology::LineList,
+            2 => Topology::LineStrip,
+            4 => Topology::TriangleStrip,
+            _ => Topology::TriangleList,
+        }
+    }
+    const fn name(self) -> &'static str {
+        match self {
+            Topology::PointList => "point-list",
+            Topology::LineList => "line-list",
+            Topology::LineStrip => "line-strip",
+            Topology::TriangleList => "triangle-list",
+            Topology::TriangleStrip => "triangle-strip",
+        }
+    }
+    const fn is_strip(self) -> bool {
+        match self {
+            Topology::LineStrip | Topology::TriangleStrip => true,
+            Topology::PointList | Topology::LineList | Topology::TriangleList => false,
+        }
+    }
+}
 const COMPARE: [&str; 9] = ["always", "never", "less", "equal", "less-equal", "greater", "not-equal", "greater-equal", "always"];
 const BLEND: [&str; 16] = [
     "one",
@@ -502,7 +591,7 @@ struct Tex {
     view: Id,
     /// Direct3D 11: array layers (depth of 3D textures), dimension
     layers: u32,
-    dim: &'static str,
+    dim: Dim,
     views: HashMap<(u8, u32, u32, u32, u32, bool), Id>,
     /// depth stand-ins of other sizes (see `depth_for`): size -> (texture, view)
     fits: HashMap<(u32, u32), (Id, Id)>,
@@ -1123,7 +1212,7 @@ impl D3d {
                     self.clear_groups2();
                     self.created.set(self.created.get() + 1);
                     let view = gpu::view(tex, "");
-                    self.textures.insert(id, Tex { tex, w, h, levels, format: fmt, view, layers: 1, dim: "2d", views: HashMap::new(), fits: HashMap::new(), zclear: None, zused: 0, halved: halved(format), storage: false, make: c[i..i + 7].to_vec(), samples: 1, shown: None, d24: false, reads: HashMap::new() });
+                    self.textures.insert(id, Tex { tex, w, h, levels, format: fmt, view, layers: 1, dim: Dim::D2, views: HashMap::new(), fits: HashMap::new(), zclear: None, zused: 0, halved: halved(format), storage: false, make: c[i..i + 7].to_vec(), samples: 1, shown: None, d24: false, reads: HashMap::new() });
                     i += 7;
                 }
                 DESTROY_TEXTURE => {
@@ -2396,8 +2485,8 @@ impl D3d {
         }
         // (a strip index format only on a strip topology)
         let strip_fmt = match strip {
-            2 if pick(&TOPOLOGY, topo, "triangle-list").ends_with("strip") => r#","stripIndexFormat":"uint16""#,
-            4 if pick(&TOPOLOGY, topo, "triangle-list").ends_with("strip") => r#","stripIndexFormat":"uint32""#,
+            2 if Topology::of(topo).is_strip() => r#","stripIndexFormat":"uint16""#,
+            4 if Topology::of(topo).is_strip() => r#","stripIndexFormat":"uint32""#,
             _ => "",
         };
         let cull = match cull {
@@ -2438,7 +2527,7 @@ impl D3d {
             layout,
             buffers.join(","),
             targets.join(","),
-            q(pick(&TOPOLOGY, topo, "triangle-list")),
+            q(Topology::of(topo).name()),
             q(cull)
         ));
         Pipe { pipeline, dims, stencil_ref }
@@ -2469,15 +2558,15 @@ impl D3d {
     fn slot_view(&mut self, id: u32, dim: u32) -> Option<Id> {
         let t = self.textures.get(&id)?;
         match dim {
-            1 => (t.dim == "3d").then_some(t.view),
+            1 => (t.dim == Dim::D3).then_some(t.view),
             2 => {
-                if t.dim != "2d" || t.layers < 6 {
+                if t.dim != Dim::D2 || t.layers < 6 {
                     return None;
                 }
                 let levels = t.levels;
                 Some(self.view2(id, 3, 0, levels, 0, 6, false))
             }
-            _ => (t.dim == "2d").then_some(t.view),
+            _ => (t.dim == Dim::D2).then_some(t.view),
         }
     }
 
@@ -2761,7 +2850,7 @@ impl D3d {
         // (levels and boxes inside the textures, as WebGPU wants them; Direct3D fails such a
         // StretchRect too)
         let size = |t: &Tex, l: u32| ((t.w >> l).max(1), (t.h >> l).max(1));
-        let slices = |t: &Tex, l: u32| if t.dim == "3d" { (t.layers >> l).max(1) } else { t.layers.max(1) };
+        let slices = |t: &Tex, l: u32| if t.dim == Dim::D3 { (t.layers >> l).max(1) } else { t.layers.max(1) };
         if sl >= s.levels || dl >= t.levels {
             return;
         }
@@ -2775,7 +2864,7 @@ impl D3d {
         let (s_tex, s_fmt, s_w, s_h) = (s.tex, s.format, s.w, s.h);
         // (WebGPU copies within one texture only between subresources: another level, or other
         // array layers; a 3D level is one)
-        let apart = st != dt || sl != dl || (s.dim != "3d" && sz.abs_diff(dz) >= depth);
+        let apart = st != dt || sl != dl || (s.dim != Dim::D3 && sz.abs_diff(dz) >= depth);
         let (t_tex, t_fmt) = (t.tex, t.format);
         // multisampled textures: copied whole into one of the same sample count and format
         // group (all Direct3D 11 copies of them; WebGPU neither samples nor partly copies them)
@@ -2814,7 +2903,7 @@ impl D3d {
             if t_fmt == Tf::Depth32Float {
                 // (drawn from the source's level and layer: its texels' bits; from depth, none)
                 let kind = if s_fmt.is_uint() { 'u' } else if s_fmt.is_sint() { 'i' } else { 'f' };
-                if is_depth(s_fmt) || depth != 1 || self.textures.get(&st).is_none_or(|x| x.dim != "2d") {
+                if is_depth(s_fmt) || depth != 1 || self.textures.get(&st).is_none_or(|x| x.dim != Dim::D2) {
                     return;
                 }
                 let view = self.view2(st, 1, sl, 1, sz, 1, false);
@@ -2842,7 +2931,7 @@ impl D3d {
         // (stretching blits draw a level of one 2D layer: none of array or 3D textures, which no
         // Direct3D 11 copy stretches; their views would be arrays, invalid for the blit, and take
         // the command buffer with them)
-        if st == dt || t_fmt == DS || [st, dt].iter().any(|i| self.textures.get(i).is_none_or(|x| x.layers > 1 || x.dim != "2d")) {
+        if st == dt || t_fmt == DS || [st, dt].iter().any(|i| self.textures.get(i).is_none_or(|x| x.layers > 1 || x.dim != Dim::D2)) {
             return;
         }
         let pipe = self.blit_pipe(t_fmt);
@@ -2878,7 +2967,7 @@ impl D3d {
         // (Direct3D 11's: level | layer (or 3D slice) << 16)
         let (level, z) = (level & 0xffff, level >> 16);
         // (a box inside the level: WebGPU's copy wants it so)
-        let slices = |t: &Tex| if t.dim == "3d" { (t.layers >> level).max(1) } else { t.layers.max(1) };
+        let slices = |t: &Tex| if t.dim == Dim::D3 { (t.layers >> level).max(1) } else { t.layers.max(1) };
         let inside = |t: &Tex| level < t.levels && x as u64 + w as u64 <= (t.w >> level).max(1) as u64 && y as u64 + h as u64 <= (t.h >> level).max(1) as u64 && z < slices(t);
         let Some(t) = self.textures.get(&id).filter(|t| (matches!(t.format, Tf::Depth16Unorm | Tf::Depth32Float) || !is_depth(t.format)) && t.samples == 1 && w > 0 && h > 0 && inside(t)) else {
             vnhost_d3d9_readback_done(req);
@@ -2936,7 +3025,7 @@ impl D3d {
     /// format WebGPU does not), a copy.
     fn resolve(&mut self, dst: u32, dl: u32, dly: u32, src: u32, sly: u32) {
         let (Some(s), Some(t)) = (self.textures.get(&src), self.textures.get(&dst)) else { return };
-        if src == dst || dl >= t.levels || dly >= t.layers || sly >= s.layers || t.dim == "3d" || t.samples != 1 || ((t.w >> dl).max(1), (t.h >> dl).max(1)) != (s.w, s.h) || is_depth(s.format) || is_depth(t.format) {
+        if src == dst || dl >= t.levels || dly >= t.layers || sly >= s.layers || t.dim == Dim::D3 || t.samples != 1 || ((t.w >> dl).max(1), (t.h >> dl).max(1)) != (s.w, s.h) || is_depth(s.format) || is_depth(t.format) {
             return;
         }
         let (w, h, sfmt, tfmt, samples, stex, ttex) = (s.w, s.h, s.format, t.format, s.samples, s.tex, t.tex);
@@ -2993,7 +3082,7 @@ impl D3d {
     /// its passes': between passes, after the texture's last draw (Direct3D unbinds a view of
     /// the depth buffer being drawn to, see d3d11::hazards).
     fn depth_twin(&mut self, id: u32) -> Option<u32> {
-        let t = self.textures.get(&id).filter(|t| is_depth(t.format) && t.dim == "2d" && t.samples == 1)?;
+        let t = self.textures.get(&id).filter(|t| is_depth(t.format) && t.dim == Dim::D2 && t.samples == 1)?;
         let (w, h, layers) = (t.w, t.h, t.layers);
         // (a clear not done yet: done now, it changes the stamp)
         self.settle(id);
@@ -3100,28 +3189,28 @@ impl D3d {
         // 1D textures are 2D ones of height 1: WebGPU's 1D textures have neither array layers
         // nor mips (dxwgsl declares Texture1D[Array] as texture_2d[_array] to match)
         let (dim, h) = match dim_code {
-            1 => ("3d", h),
-            2 => ("2d", 1),
-            _ => ("2d", h),
+            1 => (Dim::D3, h),
+            2 => (Dim::D2, 1),
+            _ => (Dim::D2, h),
         };
         // (WebGPU has no 3D depth textures: one of the same texel size that no shader samples as depth)
-        let fmt = if dim == "3d" && is_depth(fmt) { if fmt == Tf::Depth16Unorm { Tf::R16Float } else { Tf::R32Float } } else { fmt };
+        let fmt = if dim == Dim::D3 && is_depth(fmt) { if fmt == Tf::Depth16Unorm { Tf::R16Float } else { Tf::R32Float } } else { fmt };
         let depth = is_depth(fmt);
-        let renderable = dim == "2d" && draws_to(fmt);
+        let renderable = dim == Dim::D2 && draws_to(fmt);
         // (no more levels than the size has)
-        let biggest = if dim == "3d" { w.max(h).max(layers) } else { w.max(h) };
+        let biggest = if dim == Dim::D3 { w.max(h).max(layers) } else { w.max(h) };
         let levels = mips.max(1).min(32 - biggest.max(1).leading_zeros());
         // Multisampled: 4 samples, WebGPU's only count above 1 (for Direct3D's 2, 4, 8 and 16),
         // where WebGPU has it (2D, one level and layer, a format it multisamples, no UAV);
         // else 1 sample, and resolving it is a copy
-        let samples = if ms && dim == "2d" && layers <= 1 && mips <= 1 && !uav && multisamplable(fmt) { 4 } else { 1 };
+        let samples = if ms && dim == Dim::D2 && layers <= 1 && mips <= 1 && !uav && multisamplable(fmt) { 4 } else { 1 };
         let levels = if samples > 1 { 1 } else { levels };
         let storage = uav && storable(fmt) && samples == 1;
-        let u = usage::T_BINDING | usage::T_COPY_DST | usage::T_COPY_SRC | if renderable || (depth && dim == "2d") { usage::T_RENDER } else { 0 } | if storage { usage::T_STORAGE } else { 0 };
+        let u = usage::T_BINDING | usage::T_COPY_DST | usage::T_COPY_SRC | if renderable || (depth && dim == Dim::D2) { usage::T_RENDER } else { 0 } | if storage { usage::T_STORAGE } else { 0 };
         let tex = gpu::texture(&format!(
             r#"{{"size":[{w},{h},{}],"dimension":{},"format":{},"mipLevelCount":{levels},"sampleCount":{samples},"usage":{u}}}"#,
             layers.max(1),
-            q(dim),
+            q(dim.name()),
             qf(fmt)
         ));
         if let Some(old) = self.textures.remove(&id) {
@@ -3145,7 +3234,7 @@ impl D3d {
         self.created.set(self.created.get() + 1);
         let view = gpu::view(
             tex,
-            &format!(r#"{{"dimension":{}{},"aspect":{}}}"#, q(dim), if dim == "2d" { r#","arrayLayerCount":1"# } else { "" }, q(if depth { "depth-only" } else { "all" })),
+            &format!(r#"{{"dimension":{}{},"aspect":{}}}"#, q(dim.name()), if dim == Dim::D2 { r#","arrayLayerCount":1"# } else { "" }, q(if depth { "depth-only" } else { "all" })),
         );
         let mut make = vec![CREATE_TEXTURE2];
         make.extend_from_slice(&a);
@@ -3153,7 +3242,7 @@ impl D3d {
         // A depth buffer starts at depth 1 (what Direct3D leaves undefined; WebGPU's zeros fail
         // every LESS test), and the passes that clear rather than load an aspect no draw used
         // yet (see `zused`) start from that too.
-        if depth && dim == "2d" {
+        if depth && dim == Dim::D2 {
             for level in 0..levels {
                 for layer in 0..layers.max(1) {
                     self.clear_now(id, level, layer, 6, [0.0; 4], 1.0, 0);
@@ -3171,14 +3260,14 @@ impl D3d {
         if let Some(&v) = t.views.get(&k) {
             return v;
         }
-        let dname = VIEW_DIM.get(dim as usize).copied().unwrap_or("2d");
+        let dname = ViewDim::of(u32::from(dim));
         let all = t.layers.max(1);
         let base = layer.min(all - 1);
-        let mut count = if matches!(dname, "2d" | "1d" | "3d") { 1 } else { layers.min(all - base).max(1) };
-        if dname == "cube" {
+        let mut count = if matches!(dname, ViewDim::D2 | ViewDim::D1 | ViewDim::D3) { 1 } else { layers.min(all - base).max(1) };
+        if dname == ViewDim::Cube {
             count = 6;
         }
-        if dname == "cube-array" {
+        if dname == ViewDim::CubeArray {
             count = (count / 6 * 6).max(6);
         }
         let m = mip.min(t.levels.max(1) - 1);
@@ -3186,10 +3275,10 @@ impl D3d {
             t.tex,
             &format!(
                 r#"{{"dimension":{},"baseMipLevel":{m},"mipLevelCount":{},"baseArrayLayer":{},"arrayLayerCount":{},"aspect":{}}}"#,
-                q(dname),
+                q(dname.name()),
                 mips.min(t.levels - m).max(1),
-                if dname == "3d" { 0 } else { base },
-                if dname == "3d" { 1 } else { count },
+                if dname == ViewDim::D3 { 0 } else { base },
+                if dname == ViewDim::D3 { 1 } else { count },
                 q(if depth_only { "depth-only" } else { "all" })
             ),
         );
@@ -3216,7 +3305,7 @@ impl D3d {
         let mut colors = Vec::new();
         for k in 0..n {
             let id = tg[1 + k * 3];
-            if self.textures.get(&id).is_none_or(|t| t.dim == "3d") {
+            if self.textures.get(&id).is_none_or(|t| t.dim == Dim::D3) {
                 return false;
             }
             self.use_tex(id);
@@ -3321,7 +3410,7 @@ impl D3d {
     fn clear_view(&mut self, tex: u32, level: u32, layer: u32, flags: u32, color: [f32; 4], depth: f32, stencil: u32) {
         // (a texture WebGPU does not draw to: 3D ones, snorm and the like; a clear pass of
         // one is invalid and took the whole command buffer with it)
-        let Some(t) = self.textures.get(&tex).filter(|t| t.dim == "2d" && (renderable(t.format) || is_depth(t.format))) else { return };
+        let Some(t) = self.textures.get(&tex).filter(|t| t.dim == Dim::D2 && (renderable(t.format) || is_depth(t.format))) else { return };
         let (dep, fits) = (is_depth(t.format), !t.fits.is_empty());
         let flags = if dep { flags & 6 } else { flags & 1 };
         // (a depth buffer with stand-ins of other sizes: all of them now, see depth_for)
@@ -3335,7 +3424,7 @@ impl D3d {
     /// A clear of a whole view as a pass of its own.
     #[allow(clippy::too_many_arguments)]
     fn clear_now(&mut self, tex: u32, level: u32, layer: u32, flags: u32, color: [f32; 4], depth: f32, stencil: u32) {
-        if !self.textures.get(&tex).is_some_and(|t| t.dim == "2d" && (renderable(t.format) || is_depth(t.format))) {
+        if !self.textures.get(&tex).is_some_and(|t| t.dim == Dim::D2 && (renderable(t.format) || is_depth(t.format))) {
             return;
         }
         self.end_pass();
@@ -3379,7 +3468,7 @@ impl D3d {
     }
 
     fn gen_mips(&mut self, tex: u32) {
-        let Some(t) = self.textures.get(&tex).filter(|t| t.levels >= 2 && t.dim == "2d" && !is_depth(t.format)) else { return };
+        let Some(t) = self.textures.get(&tex).filter(|t| t.levels >= 2 && t.dim == Dim::D2 && !is_depth(t.format)) else { return };
         let (format, layers, levels) = (t.format, t.layers, t.levels);
         self.end_pass();
         let pipe = self.blit_pipe(format);
@@ -3440,29 +3529,25 @@ impl D3d {
         if let Some(&v) = self.dummies.get(&(vdim, kind)) {
             return v;
         }
-        let dim = pick(&VIEW_DIM, vdim, "2d");
+        let dim = ViewDim::of(vdim);
         let format = match kind {
             4 => Tf::Rgba8Uint,
             5 => Tf::Rgba8Sint,
             6 => Tf::Depth32Float,
             _ => Tf::Rgba8Unorm,
         };
-        let layers = if dim == "cube" || dim == "cube-array" { 6 } else { 1 };
-        let tdim = match dim {
-            "1d" => "1d",
-            "3d" => "3d",
-            _ => "2d",
-        };
+        let layers = if matches!(dim, ViewDim::Cube | ViewDim::CubeArray) { 6 } else { 1 };
+        let tdim = dim.texture();
         // (view dimension 6: a multisampled one, a render attachment as WebGPU wants those)
         let ms = vdim == 6;
         let tex = gpu::texture(&format!(
             r#"{{"size":[1,1,{layers}],"dimension":{},"format":{},"sampleCount":{},"usage":{}}}"#,
-            q(tdim),
+            q(tdim.name()),
             qf(format),
             if ms { 4 } else { 1 },
             usage::T_BINDING | if kind == 6 || ms { usage::T_RENDER } else { usage::T_COPY_DST }
         ));
-        let v = gpu::view(tex, &format!(r#"{{"dimension":{}}}"#, q(dim)));
+        let v = gpu::view(tex, &format!(r#"{{"dimension":{}}}"#, q(dim.name())));
         self.dummies.insert((vdim, kind), v);
         v
     }
@@ -3494,7 +3579,7 @@ impl D3d {
             let mut entries = Vec::new();
             for e in g.chunks(8) {
                 let (binding, kind, vdim) = (e[0], e[1], e[3]);
-                let vd = q(pick(&VIEW_DIM, vdim, "2d"));
+                let vd = q(ViewDim::of(vdim).name());
                 entries.push(match kind {
                     0 => format!(r#"{{"binding":{binding},"visibility":{visibility},"buffer":{{"type":"uniform"}}}}"#),
                     2 => format!(r#"{{"binding":{binding},"visibility":{visibility},"sampler":{{"type":"filtering"}}}}"#),
@@ -3630,15 +3715,15 @@ impl D3d {
         };
         let pl = gpu::pipeline_layout(&format!(r#"{{"bindGroupLayouts":[{}]}}"#, layouts.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(",")));
         let strip_fmt = match strip {
-            1 if pick(&TOPOLOGY, topo, "triangle-list").ends_with("strip") => r#","stripIndexFormat":"uint16""#,
-            2 if pick(&TOPOLOGY, topo, "triangle-list").ends_with("strip") => r#","stripIndexFormat":"uint32""#,
+            1 if Topology::of(topo).is_strip() => r#","stripIndexFormat":"uint16""#,
+            2 if Topology::of(topo).is_strip() => r#","stripIndexFormat":"uint32""#,
             _ => "",
         };
         let pipeline = gpu::render_pipeline(&format!(
             r#"{{"layout":{pl},"vertex":{{"module":{vm},"entryPoint":"main","buffers":[{}]}},"fragment":{{"module":{fm},"entryPoint":"main","targets":[{}]}},"primitive":{{"topology":{}{strip_fmt},"cullMode":{},"frontFace":{}{}}}{ds}{multisample}}}"#,
             buffers.join(","),
             targets.join(","),
-            q(pick(&TOPOLOGY, topo, "triangle-list")),
+            q(Topology::of(topo).name()),
             q(match cull {
                 2 => "front",
                 3 => "back",
@@ -3682,7 +3767,7 @@ impl D3d {
         // would take the command buffer with it)
         let stored: Vec<u32> = es.chunks(8).filter(|e| e[1] == 7).map(|e| e[2]).collect();
         for e in es.chunks(8).filter(|e| e[1] == 7) {
-            let ok = self.textures.get(&e[2]).is_some_and(|t| t.storage && t.format == tex_format(e[5]) && (t.dim == "3d") == (e[3] == 5));
+            let ok = self.textures.get(&e[2]).is_some_and(|t| t.storage && t.format == tex_format(e[5]) && (t.dim == Dim::D3) == (e[3] == 5));
             if !ok {
                 if !self.warned_dispatch {
                     self.warned_dispatch = true;
@@ -3704,7 +3789,7 @@ impl D3d {
                 let mut entries = Vec::new();
                 for e in es.chunks(8) {
                     let (binding, kind) = (e[0], e[1]);
-                    let vd = q(pick(&VIEW_DIM, e[3], "2d"));
+                    let vd = q(ViewDim::of(e[3]).name());
                     entries.push(match kind {
                         0 => format!(r#"{{"binding":{binding},"visibility":4,"buffer":{{"type":"uniform"}}}}"#),
                         2 => format!(r#"{{"binding":{binding},"visibility":4,"sampler":{{"type":"filtering"}}}}"#),
@@ -3760,10 +3845,10 @@ impl D3d {
                 }
                 8 => {
                     // (what it held: a copy of that mip, made again only when it changed)
-                    let v = match self.textures.get(&a).filter(|t| t.dim != "3d" || b == 5) {
+                    let v = match self.textures.get(&a).filter(|t| t.dim != Dim::D3 || b == 5) {
                         Some(t) => {
                             let m = cc.min(t.levels.max(1) - 1);
-                            let (w, h, layers) = ((t.w >> m).max(1), (t.h >> m).max(1), if t.dim == "3d" { (t.layers >> m).max(1) } else { t.layers.max(1) });
+                            let (w, h, layers) = ((t.w >> m).max(1), (t.h >> m).max(1), if t.dim == Dim::D3 { (t.layers >> m).max(1) } else { t.layers.max(1) });
                             let (src, dim, format) = (t.tex, t.dim, t.format);
                             let stamp = self.stamp_of(a);
                             self.use_tex(a);
@@ -3771,7 +3856,7 @@ impl D3d {
                             let r = t.reads.entry(m).or_insert_with(|| {
                                 let copy = gpu::texture(&format!(
                                     r#"{{"size":[{w},{h},{layers}],"dimension":{},"format":{},"usage":{}}}"#,
-                                    q(dim),
+                                    q(dim.name()),
                                     qf(format),
                                     usage::T_BINDING | usage::T_COPY_DST
                                 ));
@@ -3781,11 +3866,11 @@ impl D3d {
                                 r.1 = stamp;
                                 gpu::copy_texture(src, m, [0, 0, 0], r.0, 0, [0, 0, 0], [w, h, layers]);
                             }
-                            let dname = pick(&VIEW_DIM, b, "2d");
-                            let base = if dname == "3d" { 0 } else { ee.min(layers - 1) };
-                            let count = if matches!(dname, "2d" | "3d") { 1 } else { ff.max(1).min(layers - base) };
+                            let dname = ViewDim::of(b);
+                            let base = if dname == ViewDim::D3 { 0 } else { ee.min(layers - 1) };
+                            let count = if matches!(dname, ViewDim::D2 | ViewDim::D3) { 1 } else { ff.max(1).min(layers - base) };
                             let copy = r.0;
-                            *r.2.entry((b, base, count)).or_insert_with(|| gpu::view(copy, &format!(r#"{{"dimension":{},"baseArrayLayer":{base},"arrayLayerCount":{count}}}"#, q(dname))))
+                            *r.2.entry((b, base, count)).or_insert_with(|| gpu::view(copy, &format!(r#"{{"dimension":{},"baseArrayLayer":{base},"arrayLayerCount":{count}}}"#, q(dname.name()))))
                         }
                         None => self.dummy(b, match dd { 1 => 4, 2 => 5, _ => 1 }),
                     };
@@ -3797,7 +3882,7 @@ impl D3d {
                     let ok = self.textures.get(&a).filter(|t| {
                         !is_depth(t.format)
                             && !stored.contains(&a)
-                            && (t.dim == "3d") == (b == 5)
+                            && (t.dim == Dim::D3) == (b == 5)
                             && (!matches!(b, 3 | 4) || (t.layers >= 6 && t.w == t.h))
                             && (kind != 1 || !(t.format.is_uint() || t.format.is_sint()))
                             && (kind != 4 || t.format.is_uint())
@@ -3988,7 +4073,7 @@ impl D3d {
                     let ok = self.textures.get(&a).filter(|t| {
                         let depth = is_depth(t.format);
                         depth == (kind == 6)
-                            && (t.dim == "3d") == (b == 5)
+                            && (t.dim == Dim::D3) == (b == 5)
                             && (!matches!(b, 3 | 4) || (t.layers >= 6 && t.w == t.h))
                             && (kind != 1 || !(t.format.is_uint() || t.format.is_sint()))
                             && (kind != 4 || t.format.is_uint())
