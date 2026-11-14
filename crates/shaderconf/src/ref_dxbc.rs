@@ -225,7 +225,9 @@ pub fn parse(code: &[u8]) -> Result<Program, String> {
                     return Err("else outside an if".into());
                 }
                 p.jump[s] = i;
-                *stack.last_mut().unwrap() = i;
+                if let Some(t) = stack.last_mut() {
+                    *t = i;
+                }
             }
             0x15 | 0x16 | 0x17 => {
                 let s = stack.pop().ok_or("unbalanced flow control")?;
@@ -449,7 +451,7 @@ impl Run<'_> {
                 0x07 | 0x08 => {
                     if i.op == 0x07 || self.cond(i)? {
                         let s = *blocks.iter().rev().find(|&&s| p.insts[s].op == 0x30).ok_or("continue outside a loop")?;
-                        while *blocks.last().unwrap() != s {
+                        while blocks.last().is_some_and(|&b| b != s) {
                             blocks.pop();
                         }
                         pc = s + 1;

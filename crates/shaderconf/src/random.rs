@@ -357,7 +357,7 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>, n: u32, seed: u64, d
         let mut inc = |_: &str, _: bool| None;
         match hlslc::compile(&src3, &[], &mut inc, "ps", "ps_3_0", 0) {
             Ok(code) => {
-                let words: Vec<u32> = code.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+                let words: Vec<u32> = code.as_chunks::<4>().0.iter().map(|&c| u32::from_le_bytes(c)).collect();
                 d3d9_words(out, errors, &format!("hlsl_{name}"), "random program through hlslc's shader model 3 (exact integer values)", &words, &src3, Tol::Exact,
                     pixels.iter().map(|(ins, v)| { let f = f32s(ins); ([f[0], f[1], f[2]], want(v)) }).collect());
             }

@@ -19,7 +19,15 @@ pub(crate) fn us(x: u32) -> usize {
     usize::try_from(x).unwrap_or(usize::MAX)
 }
 
-/// A length or u32::from(index) (u32::MAX past 2^32)
+/// A number argument, or the usage and exit 2
+fn num<T: std::str::FromStr>(s: &str, usage: &str) -> T {
+    s.parse().unwrap_or_else(|_| {
+        eprintln!("shaderconf: {usage}");
+        std::process::exit(2)
+    })
+}
+
+/// A length or index as u32 (u32::MAX past 2^32)
 pub(crate) fn u32_of(x: usize) -> u32 {
     u32::try_from(x).unwrap_or(u32::MAX)
 }
@@ -141,8 +149,8 @@ fn main() {
     }
     let mut a = std::env::args().skip_while(|a| a != "--fuzz").skip(1);
     if let Some(n) = a.next() {
-        let n = n.parse().expect("--fuzz N [seed]");
-        let seed = a.next().map_or(1, |s| s.parse().expect("--fuzz N [seed]"));
+        let n = num(&n, "--fuzz N [seed]");
+        let seed = a.next().map_or(1, |s| num(&s, "--fuzz N [seed]"));
         // (the inputs that broke a translator before, then new ones)
         let bad = fuzz::regressions(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("regress"));
         for b in &bad {
@@ -152,8 +160,8 @@ fn main() {
     }
     let mut a = std::env::args().skip_while(|a| a != "--oracle").skip(1);
     if let Some(n) = a.next() {
-        let n = n.parse().expect("--oracle N [seed]");
-        let seed = a.next().map_or(1, |s| s.parse().expect("--oracle N [seed]"));
+        let n = num(&n, "--oracle N [seed]");
+        let seed = a.next().map_or(1, |s| num(&s, "--oracle N [seed]"));
         let m = oracle::cases(&out, n, seed);
         eprintln!("shaderconf: {} mutants of {n} with an interpreted result", m.len());
         out = m;

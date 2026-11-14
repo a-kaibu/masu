@@ -450,7 +450,7 @@ impl Run<'_> {
                         }
                         pc = f.start + 1;
                     } else {
-                        let f = loops.pop().unwrap();
+                        let f = loops.pop().ok_or("endrep outside a loop")?;
                         if let Some((old, _)) = f.al {
                             self.al = old;
                         }

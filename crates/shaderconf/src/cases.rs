@@ -332,7 +332,7 @@ float4 ps() : SV_Target {{
         let mut inc = |_: &str, _: bool| None;
         match hlslc::compile(&src3, &[], &mut inc, "ps", "ps_3_0", 0) {
             Ok(code) => {
-                let words: Vec<u32> = code.chunks(4).map(|c| u32::from_le_bytes(c.try_into().unwrap())).collect();
+                let words: Vec<u32> = code.as_chunks::<4>().0.iter().map(|&c| u32::from_le_bytes(c)).collect();
                 let px3 = px.iter().map(|(w, want)| {
                     let f = |i: usize| [f32::from_bits(w[i]), f32::from_bits(w[i + 1]), f32::from_bits(w[i + 2]), f32::from_bits(w[i + 3])];
                     ([f(0), f(4), f(8)], want.clone())

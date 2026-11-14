@@ -190,7 +190,7 @@ impl Input {
     /// rejected, or valid WGSL).
     fn failure(&self, panic_msg: &Mutex<String>) -> (bool, Option<String>) {
         match panic::catch_unwind(AssertUnwindSafe(|| self.run())) {
-            Err(_) => (false, Some(format!("panic: {}", panic_msg.lock().unwrap()))),
+            Err(_) => (false, Some(format!("panic: {}", panic_msg.lock().unwrap_or_else(std::sync::PoisonError::into_inner)))),
             Ok(Err(e)) => (false, Some(e)),
             Ok(Ok(None)) => (false, None),
             Ok(Ok(Some(ws))) => (true, ws.iter().find_map(|w| valid(w).err().map(|e| format!("invalid WGSL: {e}\n{w}")))),
@@ -309,7 +309,7 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
     let msg = Arc::new(Mutex::new(String::new()));
     let m2 = msg.clone();
     panic::set_hook(Box::new(move |i| {
-        *m2.lock().unwrap() = format!("{i}");
+        *m2.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = format!("{i}");
     }));
     // (a hang: the input it is on, then exit)
     let started = Arc::new(AtomicU64::new(0));
@@ -322,7 +322,7 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
             std::thread::sleep(Duration::from_secs(1));
             let s = st.load(Ordering::Relaxed);
             if s != 0 && (t0.elapsed().as_millis() as u64).saturating_sub(s) > 20_000 {
-                eprintln!("HANG (over 20 s) on\n{}", cur.lock().unwrap());
+                eprintln!("HANG (over 20 s) on\n{}", cur.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
                 std::process::exit(2);
             }
         });
@@ -334,8 +334,8 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
         let (mut accepted, mut seen) = (0usize, std::collections::HashSet::new());
         for k in 0..n {
             let input = next_input(&mut r, &seeds);
-            *current.lock().unwrap() = input.show();
-            *CURRENT.lock().unwrap() = input.show();
+            *current.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = input.show();
+            *CURRENT.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = input.show();
             if let Some(p) = &last {
                 let _ = std::fs::write(p, input.show());
             }
