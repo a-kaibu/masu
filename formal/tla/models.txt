@@ -46,3 +46,6 @@ AfdPoll AfdPollNoHook.cfg violation
 BudgetLock BudgetLock.cfg ok
 BudgetLock BudgetLockForce.cfg violation
 BudgetLock BudgetLockNoGrace.cfg violation
+KernLock KernLock.cfg ok
+KernLock KernLockOld.cfg violation
+KernLock KernLockNoTimeout.cfg violation

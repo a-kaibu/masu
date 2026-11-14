@@ -56,9 +56,17 @@ addToLibrary({
     }
   },
   vnhost_kern_unlock__deps: ['$vnkernH'],
-  vnhost_kern_unlock: () => {
+  vnhost_kern_unlock: (pid) => {
+    // (only while it is still this process's: a thread of a process whose exit freed the lock
+    // that still ran on must not let go of the next holder's; formal/tla/KernLock.tla)
     const h = vnkernH();
-    if (Atomics.exchange(h, 0, 0) & 1) Atomics.notify(h, 0, 1);
+    const me = (pid << 1) | 0;
+    for (let c = Atomics.load(h, 0); (c | 1) === (me | 1); c = Atomics.load(h, 0)) {
+      if (Atomics.compareExchange(h, 0, c, 0) === c) {
+        if (c & 1) Atomics.notify(h, 0, 1);
+        return;
+      }
+    }
   },
   vnhost_kern_get__deps: ['$vnkernH'],
   vnhost_kern_get__sig: 'ppp',

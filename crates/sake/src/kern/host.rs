@@ -12,7 +12,7 @@ mod sys {
         pub fn vnhost_kern_can_share() -> i32;
         pub fn vnhost_kern_start_sharing();
         pub fn vnhost_kern_lock(pid: u32);
-        pub fn vnhost_kern_unlock();
+        pub fn vnhost_kern_unlock(pid: u32);
         pub fn vnhost_kern_get(dst: *mut u8, cap: usize) -> usize;
         pub fn vnhost_kern_put(src: *const u8, len: usize) -> i32;
         pub fn vnhost_kern_gen() -> u32;
@@ -53,7 +53,7 @@ pub fn lock() {
 pub fn unlock() {
     #[cfg(target_os = "emscripten")]
     unsafe {
-        sys::vnhost_kern_unlock()
+        sys::vnhost_kern_unlock(crate::pid())
     }
 }
 pub fn gen() -> u32 {
