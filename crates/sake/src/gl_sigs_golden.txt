@@ -101,6 +101,7 @@ glIsBuffer "i" i 4
 glIsEnabled "i" i 4
 glIsFramebuffer "i" i 4
 glIsProgram "i" i 4
+glIsRenderbuffer "i" i 4
 glIsShader "i" i 4
 glIsTexture "i" i 4
 glLineWidth "f" v 4
@@ -115,6 +116,7 @@ glMultMatrixf "i" v 4
 glMultiTexCoord2f "iff" v 12
 glMultiTexCoord2fv "ii" v 8
 glNormal3f "fff" v 12
+glNormal3fv "i" v 4
 glNormalPointer "iii" v 12
 glOrtho "dddddd" v 48
 glPixelStorei "ii" v 8
