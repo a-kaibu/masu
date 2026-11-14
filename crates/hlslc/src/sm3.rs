@@ -764,7 +764,7 @@ impl Gen<'_> {
                         }
                         let (coord, tex, smp) = (a(0)?, a(1)?, a(2)?);
                         let (sname, dim) = self.sampler(&smp, &tex)?;
-                        let s: u32 = sname[1..].parse().map_err(|_| format!("sampler {sname}"))?;
+                        let s: u32 = sname[1..].parse().map_err(|e| format!("sampler {sname}: {e}"))?;
                         if !self.samplers.iter().any(|x| x.0 == s) {
                             self.samplers.push((s, dim));
                         }
