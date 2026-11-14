@@ -424,21 +424,19 @@ impl View {
             }
             Expr::Cmp(a, op, b) => {
                 let mut kinds = [None, None];
-                let mut ops = Vec::with_capacity(2);
-                for (k, o) in [a, b].into_iter().enumerate() {
-                    ops.push(match o {
+                let [a, b] = [(0, a), (1, b)].map(|(k, o)| -> R<COp> {
+                    Ok(match o {
                         Operand::Val(v) => COp::Val(val_field(v, p)),
                         Operand::Col(c) => {
                             let (s, ci) = self.resolve(db, c).map_err(|_| ERROR_FUNCTION_FAILED)?;
                             kinds[k] = Some(self.srcs[s].cols(db)[ci].ty & T_STRING != 0);
                             COp::Col(s, ci)
                         }
-                    });
-                }
+                    })
+                });
+                let (a, b) = (a?, b?);
                 let [sa, sb] = kinds;
                 let string = sa.or(sb).unwrap_or(false) && sa != Some(false) && sb != Some(false);
-                let b = ops.pop().unwrap();
-                let a = ops.pop().unwrap();
                 CExpr::Cmp(a, *op, b, string)
             }
         })
@@ -729,9 +727,8 @@ impl View {
                 if temp && !hold {
                     return Ok(());
                 }
-                db.create_table(&table, cs, !temp)?;
+                let ti = db.create_table(&table, cs, !temp)?;
                 if hold {
-                    let ti = db.table_index(&table).unwrap();
                     db.tables[ti].hold += 1;
                 }
             }

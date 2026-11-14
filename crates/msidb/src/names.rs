@@ -14,15 +14,21 @@ fn b64(c: char) -> Option<u32> {
     })
 }
 
+/// The character of 6 bits (the bits above them not looked at).
 fn unb64(v: u32) -> char {
-    char::from_u32(match v {
-        0..=9 => '0' as u32 + v,
-        10..=35 => 'A' as u32 + v - 10,
-        36..=61 => 'a' as u32 + v - 36,
-        62 => '.' as u32,
-        _ => '_' as u32,
+    let v = v.to_le_bytes()[0] & 0x3f;
+    char::from(match v {
+        0..=9 => b'0' + v,
+        10..=35 => b'A' + v - 10,
+        36..=61 => b'a' + v - 36,
+        62 => b'.',
+        63.. => b'_',
     })
-    .unwrap()
+}
+
+/// A character of the encoded name: 0x3800.. (a pair) and 0x4800.. (one) are never surrogates.
+fn encoded(v: u32) -> char {
+    char::from_u32(v).unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
 pub fn encode(name: &str, table: bool) -> String {
@@ -36,9 +42,9 @@ pub fn encode(name: &str, table: bool) -> String {
             Some(a) => match it.peek().and_then(|&n| b64(n)) {
                 Some(b) => {
                     it.next();
-                    out.push(char::from_u32(0x3800 + (b << 6) + a).unwrap());
+                    out.push(encoded(0x3800 + (b << 6) + a));
                 }
-                None => out.push(char::from_u32(0x4800 + a).unwrap()),
+                None => out.push(encoded(0x4800 + a)),
             },
             None => out.push(c),
         }
@@ -83,6 +89,16 @@ mod tests {
     }
 
     proptest! {
+        /// Every encoded character of any name (b64 pairs and singles): a character, never the
+        /// replacement; and unb64 as the old from_u32 arithmetic.
+        #[test]
+        fn encoded_chars_are_chars(a in 0u32..64, b in 0u32..64) {
+            prop_assert_ne!(encoded(0x3800 + (b << 6) + a), char::REPLACEMENT_CHARACTER);
+            prop_assert_ne!(encoded(0x4800 + a), char::REPLACEMENT_CHARACTER);
+            let old = char::from_u32(match a { 0..=9 => '0' as u32 + a, 10..=35 => 'A' as u32 + a - 10, 36..=61 => 'a' as u32 + a - 36, 62 => '.' as u32, _ => '_' as u32 }).unwrap();
+            prop_assert_eq!(unb64(a), old);
+        }
+
         #[test]
         fn round_trip(s in "[0-9A-Za-z._#!あ-ん]{0,40}", t: bool) {
             prop_assert_eq!(decode(&encode(&s, t)), (s, t));

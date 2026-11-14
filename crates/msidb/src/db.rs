@@ -206,7 +206,7 @@ impl Database {
                 for r in rows.iter_mut() {
                     let b = &data[at..at + w];
                     let v = match w {
-                        4 => u32::from_le_bytes(b.try_into().unwrap()),
+                        4 => b.first_chunk::<4>().map_or(0, |b| u32::from_le_bytes(*b)),
                         3 => rd_ref(b, true),
                         _ => rd_ref(b, false),
                     };
@@ -267,7 +267,7 @@ impl Database {
 
     /// Reads a stream of the source file by its encoded path.
     pub fn read_src(&self, p: &str) -> Option<Vec<u8>> {
-        let mut cf = self.src.as_ref()?.lock().unwrap();
+        let mut cf = self.src.as_ref()?.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         read_stream(&mut cf, p).ok().flatten()
     }
 
@@ -279,7 +279,7 @@ impl Database {
                 Ok(v.len() as u64)
             }
             Stream::File(p) => {
-                let mut cf = self.src.as_ref().ok_or(ERROR_NOT_FOUND)?.lock().unwrap();
+                let mut cf = self.src.as_ref().ok_or(ERROR_NOT_FOUND)?.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 let mut s = cf.open_stream(p).map_err(ioerr)?;
                 io::copy(&mut s, w).map_err(ioerr)
             }
@@ -289,7 +289,7 @@ impl Database {
     pub fn stream_len(&self, name: &str) -> Option<u64> {
         match self.streams.get(name)? {
             Stream::Mem(v) => Some(v.len() as u64),
-            Stream::File(p) => self.src.as_ref()?.lock().unwrap().entry(p).ok().map(|e| e.len()),
+            Stream::File(p) => self.src.as_ref()?.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(p).ok().map(|e| e.len()),
         }
     }
 
@@ -298,9 +298,9 @@ impl Database {
         match self.storages.get(name)? {
             Stream::Mem(v) => Some(v.clone()),
             Stream::File(p) => {
-                let mut cf = self.src.as_ref()?.lock().unwrap();
-                let entries: Vec<(String, bool, Vec<u8>)> = cf.walk_storage(p).ok()?.filter(|e| !e.is_root() && e.path() != std::path::Path::new(p)).map(|e| (e.path().to_string_lossy().into_owned(), e.is_stream(), e.clsid().as_bytes().to_vec())).collect();
-                let root_clsid = cf.entry(p).ok()?.clsid().as_bytes().to_vec();
+                let mut cf = self.src.as_ref()?.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                let entries: Vec<(String, bool, [u8; 16])> = cf.walk_storage(p).ok()?.filter(|e| !e.is_root() && e.path() != std::path::Path::new(p)).map(|e| (e.path().to_string_lossy().into_owned(), e.is_stream(), *e.clsid().as_bytes())).collect();
+                let root_clsid = *cf.entry(p).ok()?.clsid().as_bytes();
                 let mut out = cfb::CompoundFile::create(io::Cursor::new(Vec::new())).ok()?;
                 let _ = out.set_storage_clsid("/", uuid_from(&root_clsid));
                 for (path, stream, cl) in entries {
@@ -525,7 +525,8 @@ impl Database {
         Ok(ri)
     }
 
-    pub fn create_table(&mut self, name: &str, cols: Vec<Col>, persistent: bool) -> R<()> {
+    /// Adds table `name`; its index.
+    pub fn create_table(&mut self, name: &str, cols: Vec<Col>, persistent: bool) -> R<usize> {
         if self.table(name).is_some() {
             return Err(ERROR_BAD_QUERY_SYNTAX);
         }
@@ -534,9 +535,10 @@ impl Database {
             self.pool.add(name, persistent);
             self.pool.add(&c.name, persistent);
         }
+        let ti = self.tables.len();
         self.tables.push(Table { name: name.to_string(), cols, rows: Vec::new(), persistent, hold: 0 });
         self.dirty |= persistent;
-        Ok(())
+        Ok(ti)
     }
 
     /// Adds a column at the end (its values NULL).
@@ -655,7 +657,7 @@ impl Database {
             match s {
                 Stream::Mem(v) => st.write_all(v).map_err(ioerr)?,
                 Stream::File(sp) => {
-                    let mut cf = self.src.as_ref().ok_or(ERROR_FUNCTION_FAILED)?.lock().unwrap();
+                    let mut cf = self.src.as_ref().ok_or(ERROR_FUNCTION_FAILED)?.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     let mut from = cf.open_stream(sp).map_err(ioerr)?;
                     io::copy(&mut from, &mut st).map_err(ioerr)?;
                 }
@@ -711,9 +713,8 @@ fn guid_bytes(b: &[u8; 16]) -> [u8; 16] {
     [b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]]
 }
 
-fn uuid_from(mem: &[u8]) -> uuid::Uuid {
-    let m: [u8; 16] = mem.try_into().unwrap();
-    uuid::Uuid::from_bytes(guid_bytes(&m))
+fn uuid_from(mem: &[u8; 16]) -> uuid::Uuid {
+    uuid::Uuid::from_bytes(guid_bytes(mem))
 }
 
 #[cfg(test)]

@@ -70,7 +70,7 @@ impl Pool {
         if pool.len() < 4 {
             return Ok(p);
         }
-        let h = u32::from_le_bytes(pool[0..4].try_into().unwrap());
+        let Some(h) = pool.first_chunk::<4>().map(|h| u32::from_le_bytes(*h)) else { return Ok(p) };
         p.codepage = h & !LONG_REFS;
         p.long_refs = h & LONG_REFS != 0;
         let mut i = 4;
@@ -80,10 +80,8 @@ impl Pool {
             let refs = u16::from_le_bytes([pool[i + 2], pool[i + 3]]) as u32;
             i += 4;
             if len == 0 && refs != 0 {
-                if i + 4 > pool.len() {
-                    return Err(crate::ERROR_INVALID_DATA);
-                }
-                len = u32::from_le_bytes(pool[i..i + 4].try_into().unwrap()) as usize;
+                let long = pool.get(i..).and_then(|b| b.first_chunk::<4>()).ok_or(crate::ERROR_INVALID_DATA)?;
+                len = usize::try_from(u32::from_le_bytes(*long)).ok().ok_or(crate::ERROR_INVALID_DATA)?;
                 i += 4;
             }
             let end = at.checked_add(len).filter(|&e| e <= data.len()).ok_or(crate::ERROR_INVALID_DATA)?;

@@ -133,8 +133,7 @@ pub fn import(db: &mut Database, data: &[u8], read: &dyn Fn(&str, &str) -> Optio
             ti
         }
         None => {
-            db.create_table(table, cols.clone(), true)?;
-            db.table_index(table).unwrap()
+            db.create_table(table, cols.clone(), true)?
         }
     };
     for l in &lines[3..] {
