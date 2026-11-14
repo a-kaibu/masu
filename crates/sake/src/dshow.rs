@@ -2967,3 +2967,7 @@ mod wait_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "dshow_snapshot_tests.rs"]
+mod snapshot_tests;
