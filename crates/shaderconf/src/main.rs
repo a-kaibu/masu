@@ -24,6 +24,33 @@ pub(crate) fn u32_of(x: usize) -> u32 {
     u32::try_from(x).unwrap_or(u32::MAX)
 }
 
+/// A u64 (a random draw below a small bound) as an index
+pub(crate) fn usize_of(x: u64) -> usize {
+    usize::try_from(x).unwrap_or(usize::MAX)
+}
+
+/// A length as u64 (lossless on every target this runs on)
+pub(crate) fn u64_of(x: usize) -> u64 {
+    u64::try_from(x).unwrap_or(u64::MAX)
+}
+
+/// The low 32 bits (random words, packed fields)
+pub(crate) fn lo32(x: u64) -> u32 {
+    let [a, b, c, d, ..] = x.to_le_bytes();
+    u32::from_le_bytes([a, b, c, d])
+}
+
+/// The low 16 bits of a packed word
+pub(crate) fn lo16(x: u32) -> u16 {
+    let [a, b, ..] = x.to_le_bytes();
+    u16::from_le_bytes([a, b])
+}
+
+/// The low byte of a packed word
+pub(crate) fn lo8(x: u32) -> u8 {
+    x.to_le_bytes()[0]
+}
+
 mod cases;
 mod compute;
 mod fflight;

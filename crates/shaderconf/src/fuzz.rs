@@ -46,7 +46,7 @@ impl Rng {
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
-        if n == 0 { 0 } else { (self.next() % n as u64) as usize }
+        if n == 0 { 0 } else { crate::usize_of(self.next() % n as u64) }
     }
 }
 
@@ -117,7 +117,7 @@ fn mutate_words(r: &mut Rng, w: &[u32], keep: usize) -> Vec<u32> {
         match r.below(7) {
             0 => w[at] ^= 1 << r.below(32),
             1 => w[at] = WORDS[r.below(WORDS.len())],
-            2 => w[at] = r.next() as u32,
+            2 => w[at] = crate::lo32(r.next()),
             3 => w.truncate(at),
             4 => {
                 w.remove(at);

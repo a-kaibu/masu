@@ -55,7 +55,7 @@ fn noise(w: u32, h: u32, seed: u32) -> Vec<u8> {
     (0..w * h * 4)
         .map(|i| {
             x = x.wrapping_mul(1_103_515_245).wrapping_add(12345) & 0x7fff_ffff;
-            if i % 4 == 3 { 255 } else { (x >> 16) as u8 }
+            if i % 4 == 3 { 255 } else { crate::lo8(x >> 16) }
         })
         .collect()
 }

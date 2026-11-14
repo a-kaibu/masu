@@ -91,12 +91,12 @@ fn operand(t: &[u32], at: &mut usize) -> Result<Op, String> {
             op.mask = 1;
         }
         2 => match (w >> 2) & 3 {
-            0 => op.mask = ((w >> 4) & 0xf) as u8,
+            0 => op.mask = crate::lo8((w >> 4) & 0xf),
             1 => {
                 op.swz = std::array::from_fn(|i| ((w >> (4 + 2 * i)) & 3) as u8);
             }
             2 => {
-                let c = ((w >> 4) & 3) as u8;
+                let c = crate::lo8((w >> 4) & 3);
                 op.swz = [c; 4];
                 op.mask = 1 << c;
             }
@@ -109,7 +109,7 @@ fn operand(t: &[u32], at: &mut usize) -> Result<Op, String> {
         let e = *t.get(*at).ok_or("short")?;
         *at += 1;
         if e & 0x3f == 1 {
-            op.md = ((e >> 6) & 0xff) as u8;
+            op.md = crate::lo8((e >> 6) & 0xff);
         }
         ext = e >> 31 != 0;
     }
@@ -266,7 +266,7 @@ fn fmax(a: f32, c: f32) -> f32 {
 
 /// ftoi: NaN 0, out of range saturates.
 fn ftoi(x: f32) -> u32 {
-    if x.is_nan() { 0 } else { (x as i32) as u32 }
+    if x.is_nan() { 0 } else { (x as i32).cast_unsigned() }
 }
 fn ftou(x: f32) -> u32 {
     if x.is_nan() { 0 } else { x as u32 }
@@ -482,8 +482,8 @@ impl Run<'_> {
                 0x31 => self.cw(i, F, |a| if f(a[0]) < f(a[1]) { !0 } else { 0 })?,
                 0x39 => self.cw(i, F, |a| if f(a[0]) != f(a[1]) { !0 } else { 0 })?,
                 0x20 => self.cw(i, I, |a| if a[0] == a[1] { !0 } else { 0 })?,
-                0x21 => self.cw(i, I, |a| if a[0] as i32 >= a[1] as i32 { !0 } else { 0 })?,
-                0x22 => self.cw(i, I, |a| if (a[0] as i32) < a[1] as i32 { !0 } else { 0 })?,
+                0x21 => self.cw(i, I, |a| if a[0].cast_signed() >= a[1].cast_signed() { !0 } else { 0 })?,
+                0x22 => self.cw(i, I, |a| if (a[0].cast_signed()) < a[1].cast_signed() { !0 } else { 0 })?,
                 0x27 => self.cw(i, I, |a| if a[0] != a[1] { !0 } else { 0 })?,
                 0x4f => self.cw(i, U, |a| if a[0] < a[1] { !0 } else { 0 })?,
                 0x50 => self.cw(i, U, |a| if a[0] >= a[1] { !0 } else { 0 })?,
@@ -492,7 +492,7 @@ impl Run<'_> {
                 0x1a => self.cw(i, F, |a| b(if f(a[0]).is_finite() { (f(a[0]) - f(a[0]).floor()).min(f32::from_bits(0x3f7f_ffff)) } else { f32::NAN }))?,
                 0x1b => self.cw(i, F, |a| ftoi(f(a[0])))?,
                 0x1c => self.cw(i, F, |a| ftou(f(a[0])))?,
-                0x2b => self.cw(i, I, |a| b(a[0] as i32 as f32))?,
+                0x2b => self.cw(i, I, |a| b(a[0].cast_signed() as f32))?,
                 0x56 => self.cw(i, U, |a| b(a[0] as f32))?,
                 0x1e => self.cw(i, I, |a| a[0].wrapping_add(a[1]))?,
                 0x1f => {
@@ -504,8 +504,8 @@ impl Run<'_> {
                 }
                 0x23 => self.cw(i, I, |a| a[0].wrapping_mul(a[1]).wrapping_add(a[2]))?,
                 0x52 => self.cw(i, U, |a| a[0].wrapping_mul(a[1]).wrapping_add(a[2]))?,
-                0x24 => self.cw(i, I, |a| (a[0] as i32).max(a[1] as i32) as u32)?,
-                0x25 => self.cw(i, I, |a| (a[0] as i32).min(a[1] as i32) as u32)?,
+                0x24 => self.cw(i, I, |a| (a[0].cast_signed()).max(a[1].cast_signed()).cast_unsigned())?,
+                0x25 => self.cw(i, I, |a| (a[0].cast_signed()).min(a[1].cast_signed()).cast_unsigned())?,
                 0x53 => self.cw(i, U, |a| a[0].max(a[1]))?,
                 0x54 => self.cw(i, U, |a| a[0].min(a[1]))?,
                 0x26 | 0x51 => {
@@ -514,10 +514,10 @@ impl Run<'_> {
                     let a = self.src(&i.ops[2], k)?;
                     let c = self.src(&i.ops[3], k)?;
                     let wide: [u64; 4] = std::array::from_fn(|n| {
-                        if k == I { (a[n] as i32 as i64 * c[n] as i32 as i64) as u64 } else { u64::from(a[n]) * u64::from(c[n]) }
+                        if k == I { (i64::from(a[n].cast_signed()) * i64::from(c[n].cast_signed())).cast_unsigned() } else { u64::from(a[n]) * u64::from(c[n]) }
                     });
-                    self.dst(&i.ops[0], wide.map(|x| (x >> 32) as u32), false)?;
-                    self.dst(&i.ops[1], wide.map(|x| x as u32), false)?;
+                    self.dst(&i.ops[0], wide.map(|x| crate::lo32(x >> 32)), false)?;
+                    self.dst(&i.ops[1], wide.map(|x| crate::lo32(x)), false)?;
                 }
                 0x4e => {
                     let a = self.src(&i.ops[2], U)?;
@@ -529,7 +529,7 @@ impl Run<'_> {
                 }
                 0x28 => self.cw(i, I, |a| a[0].wrapping_neg())?,
                 0x29 => self.cw(i, I, |a| a[0] << (a[1] & 31))?,
-                0x2a => self.cw(i, I, |a| ((a[0] as i32) >> (a[1] & 31)) as u32)?,
+                0x2a => self.cw(i, I, |a| ((a[0].cast_signed()) >> (a[1] & 31)).cast_unsigned())?,
                 0x55 => self.cw(i, U, |a| a[0] >> (a[1] & 31))?,
                 // (denormals are 0: WARP flushes them)
                 0x2f => self.cw(i, F, |a| b(if f(a[0]).is_subnormal() { f32::NEG_INFINITY } else { f(a[0]).log2() }))?,
@@ -603,12 +603,12 @@ impl Run<'_> {
                 }
                 0x81 => self.cw(i, F, |a| b(1.0 / f(a[0])))?,
                 0x82 => self.cw(i, F, |a| f32tof16(f(a[0])))?,
-                0x83 => self.cw(i, U, |a| b(half::f16::from_bits(a[0] as u16).to_f32()))?,
+                0x83 => self.cw(i, U, |a| b(half::f16::from_bits(crate::lo16(a[0])).to_f32()))?,
                 0x86 => self.cw(i, U, |a| a[0].count_ones())?,
                 0x87 => self.cw(i, U, |a| if a[0] == 0 { !0 } else { a[0].leading_zeros() })?,
                 0x88 => self.cw(i, U, |a| if a[0] == 0 { !0 } else { a[0].trailing_zeros() })?,
                 0x89 => self.cw(i, I, |a| {
-                    let x = a[0] as i32;
+                    let x = a[0].cast_signed();
                     if x == 0 || x == -1 { !0 } else if x < 0 { (!a[0]).leading_zeros() } else { a[0].leading_zeros() }
                 })?,
                 0x8a | 0x8b => self.cw(i, U, |a| {
@@ -617,16 +617,16 @@ impl Run<'_> {
                         0
                     } else if w + o < 32 {
                         let sh = x << (32 - w - o);
-                        if i.op == 0x8a { sh >> (32 - w) } else { ((sh as i32) >> (32 - w)) as u32 }
+                        if i.op == 0x8a { sh >> (32 - w) } else { (sh.cast_signed() >> (32 - w)).cast_unsigned() }
                     } else if i.op == 0x8a {
                         x >> o
                     } else {
-                        ((x as i32) >> o) as u32
+                        (x.cast_signed() >> o).cast_unsigned()
                     }
                 })?,
                 0x8c => self.cw(i, U, |a| {
                     let (w, o, x, y) = (a[0] & 31, a[1] & 31, a[2], a[3]);
-                    let m = ((1u64 << w) - 1) as u32;
+                    let m = crate::lo32((1u64 << w) - 1);
                     let m = m.wrapping_shl(o);
                     (x.wrapping_shl(o) & m) | (y & !m)
                 })?,

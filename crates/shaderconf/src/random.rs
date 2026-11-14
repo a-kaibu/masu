@@ -21,7 +21,7 @@ impl Rng {
         self.next() % n
     }
     fn int(&mut self, lo: i64, hi: i64) -> f64 {
-        (lo + self.below((hi - lo + 1) as u64) as i64) as f64
+        (lo + self.below((hi - lo + 1).cast_unsigned()).cast_signed()) as f64
     }
 }
 
@@ -60,7 +60,7 @@ fn expr(r: &mut Rng, depth: u32) -> E {
     if depth == 0 || r.below(4) == 0 {
         return match r.below(3) {
             0 => E::In(r.below(3) as usize),
-            1 => E::Var(r.below(VARS as u64) as usize),
+            1 => E::Var(r.below(crate::u64_of(VARS)) as usize),
             _ => E::Const([r.int(-8, 8), r.int(-8, 8), r.int(-8, 8), r.int(-8, 8)]),
         };
     }
@@ -93,9 +93,9 @@ fn expr(r: &mut Rng, depth: u32) -> E {
 fn stmts(r: &mut Rng, depth: u32, n: u32, dynamic: bool) -> Vec<S> {
     (0..n)
         .map(|_| match if depth == 0 { r.below(4) } else { r.below(7) } {
-            0 => S::Set(r.below(VARS as u64) as usize, expr(r, 3)),
-            1 => S::Add(r.below(VARS as u64) as usize, expr(r, 2)),
-            2 => S::Mask(r.below(VARS as u64) as usize, loop {
+            0 => S::Set(r.below(crate::u64_of(VARS)) as usize, expr(r, 3)),
+            1 => S::Add(r.below(crate::u64_of(VARS)) as usize, expr(r, 2)),
+            2 => S::Mask(r.below(crate::u64_of(VARS)) as usize, loop {
                 let m = [r.below(2) == 0, r.below(2) == 0, r.below(2) == 0, r.below(2) == 0];
                 if m.iter().any(|&b| b) {
                     break m;
@@ -329,7 +329,7 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>, n: u32, seed: u64, d
         // they go to DXBC and GLSL only)
         let dynamic = made % 2 == 1;
         let prog = stmts(&mut r, depth, count, dynamic);
-        let result = r.below(VARS as u64) as usize;
+        let result = r.below(crate::u64_of(VARS)) as usize;
         // six pixels of inputs; programs whose values leave the exact range are drawn again
         let mut pixels = Vec::new();
         let mut ok = true;

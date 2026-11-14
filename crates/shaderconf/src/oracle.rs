@@ -69,7 +69,7 @@ impl Rng {
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
-        (self.next() % n.max(1) as u64) as usize
+        crate::usize_of(self.next() % n.max(1) as u64)
     }
 }
 

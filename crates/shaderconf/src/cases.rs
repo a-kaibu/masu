@@ -145,7 +145,7 @@ fn f16_rtz(v: f32) -> u16 {
     // (round toward zero: the conversion D3D also allows for f32tof16, WARP's, which gives
     // every NaN as 0x7fff)
     if v.is_nan() {
-        return (v.to_bits() >> 16) as u16 & 0x8000 | 0x7fff;
+        return crate::lo16(v.to_bits() >> 16) & 0x8000 | 0x7fff;
     }
     let h = half::f16::from_f32(v);
     if v.is_infinite() || (h.to_f32().abs() <= v.abs()) {
@@ -223,14 +223,14 @@ fn dxbc_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     let conv = |f: fn(f32) -> u32| -> Vec<([u32; 12], [Want; 4])> { F.iter().map(|&a| (f3(a, 0.0, 0.0), wu(&[f(a)]))).collect() };
     dxbc(out, errors, "ftoi", "ftoi: toward zero, NaN to 0, clamped to the int range", "ps_4_0", "uint r = asuint((int)fa.x);", Out::U, Tol::Exact, conv(ftoi));
     dxbc(out, errors, "ftou", "ftou: toward zero, NaN and negatives to 0, clamped", "ps_4_0", "uint r = (uint)fa.x;", Out::U, Tol::Exact, conv(ftou));
-    let itof = U.iter().map(|&a| (u3(a, 0, 0), wf(vec![a as i32 as f32]))).collect();
+    let itof = U.iter().map(|&a| (u3(a, 0, 0), wf(vec![a.cast_signed() as f32]))).collect();
     let utof = U.iter().map(|&a| (u3(a, 0, 0), wf(vec![a as f32]))).collect();
     dxbc(out, errors, "itof", "itof: round to nearest even", "ps_4_0", "float r = (float)ia.x;", Out::F, Tol::Exact, itof);
     dxbc(out, errors, "utof", "utof: round to nearest even", "ps_4_0", "float r = (float)a.x;", Out::F, Tol::Exact, utof);
     let f2h = F.iter().map(|&a| (f3(a, 0.0, 0.0), wu(&[half::f16::from_f32(a).to_bits() as u32, f16_rtz(a) as u32]))).collect();
     dxbc(out, errors, "f32tof16", "f32tof16: binary16, round to nearest even or toward zero; NaN stays NaN", "ps_5_0", "uint r = f32tof16(fa.x);", Out::U, Tol::Exact, f2h);
     let halves: [u32; 10] = [0, 0x8000, 0x3c00, 0xbc00, 0x3555, 0x7bff, 0x0001, 0x03ff, 0x7c00, 0xfc00];
-    let h2f = halves.iter().map(|&h| (u3(h, 0, 0), wf(vec![half::f16::from_bits(h as u16).to_f32()]))).collect();
+    let h2f = halves.iter().map(|&h| (u3(h, 0, 0), wf(vec![half::f16::from_bits(crate::lo16(h)).to_f32()]))).collect();
     dxbc(out, errors, "f16tof32", "f16tof32: exact, binary16 denormals kept", "ps_5_0", "float r = f16tof32(a.x);", Out::F, Tol::Exact, h2f);
     // integers
     let up = upairs();
@@ -241,26 +241,26 @@ fn dxbc_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     dxbc(out, errors, "udiv", "udiv: x / 0 = 0xffffffff", "ps_4_0", "uint r = a.x / b.x;", Out::U, Tol::Exact, ibin(|a, b| a.checked_div(b).unwrap_or(u32::MAX)));
     dxbc(out, errors, "urem", "udiv: x % 0 = 0xffffffff", "ps_4_0", "uint r = a.x % b.x;", Out::U, Tol::Exact, ibin(|a, b| a.checked_rem(b).unwrap_or(u32::MAX)));
     let sdiv: Vec<_> = up.iter().filter(|&&(a, b)| b != 0 && !(a == 0x80000000 && b == u32::MAX)).collect();
-    let px = sdiv.iter().map(|&&(a, b)| (u3(a, b, 0), wu(&[(a as i32 / b as i32) as u32]))).collect();
+    let px = sdiv.iter().map(|&&(a, b)| (u3(a, b, 0), wu(&[(a.cast_signed() / b.cast_signed()).cast_unsigned()]))).collect();
     dxbc(out, errors, "idiv", "signed / truncates toward zero (C rules, HLSL)", "ps_4_0", "uint r = asuint(ia.x / ib.x);", Out::U, Tol::Exact, px);
-    let px = sdiv.iter().map(|&&(a, b)| (u3(a, b, 0), wu(&[(a as i32 % b as i32) as u32]))).collect();
+    let px = sdiv.iter().map(|&&(a, b)| (u3(a, b, 0), wu(&[(a.cast_signed() % b.cast_signed()).cast_unsigned()]))).collect();
     dxbc(out, errors, "irem", "signed %: the sign of the dividend", "ps_4_0", "uint r = asuint(ia.x % ib.x);", Out::U, Tol::Exact, px);
     dxbc(out, errors, "ishl", "ishl: only the low 5 bits of the count", "ps_4_0", "uint r = a.x << b.x;", Out::U, Tol::Exact, ibin(|a, b| a << (b & 31)));
     dxbc(out, errors, "ushr", "ushr: only the low 5 bits of the count", "ps_4_0", "uint r = a.x >> b.x;", Out::U, Tol::Exact, ibin(|a, b| a >> (b & 31)));
-    dxbc(out, errors, "ishr", "ishr: arithmetic, the low 5 bits of the count", "ps_4_0", "uint r = asuint(ia.x >> ib.x);", Out::U, Tol::Exact, ibin(|a, b| ((a as i32) >> (b & 31)) as u32));
+    dxbc(out, errors, "ishr", "ishr: arithmetic, the low 5 bits of the count", "ps_4_0", "uint r = asuint(ia.x >> ib.x);", Out::U, Tol::Exact, ibin(|a, b| (a.cast_signed() >> (b & 31)).cast_unsigned()));
     dxbc(out, errors, "and_or_xor", "and, or, xor, not", "ps_4_0", "uint r = ((a.x & b.x) | ~(a.x ^ b.x)) ^ 0x5a5a5a5a;", Out::U, Tol::Exact, ibin(|a, b| ((a & b) | !(a ^ b)) ^ 0x5a5a5a5a));
     dxbc(out, errors, "umin", "umin", "ps_4_0", "uint r = min(a.x, b.x);", Out::U, Tol::Exact, ibin(|a, b| a.min(b)));
-    dxbc(out, errors, "imax", "imax", "ps_4_0", "uint r = asuint(max(ia.x, ib.x));", Out::U, Tol::Exact, ibin(|a, b| (a as i32).max(b as i32) as u32));
+    dxbc(out, errors, "imax", "imax", "ps_4_0", "uint r = asuint(max(ia.x, ib.x));", Out::U, Tol::Exact, ibin(|a, b| a.cast_signed().max(b.cast_signed()).cast_unsigned()));
     let ib1 = |f: fn(u32) -> u32| -> Vec<([u32; 12], [Want; 4])> { U.iter().map(|&a| (u3(a, 0, 0), wu(&[f(a)]))).collect() };
     dxbc(out, errors, "countbits", "countbits", "ps_5_0", "uint r = countbits(a.x);", Out::U, Tol::Exact, ib1(|a| a.count_ones()));
     dxbc(out, errors, "reversebits", "bfrev", "ps_5_0", "uint r = reversebits(a.x);", Out::U, Tol::Exact, ib1(|a| a.reverse_bits()));
     dxbc(out, errors, "firstbitlow", "firstbit_lo: index of the lowest set bit, 0 -> 0xffffffff", "ps_5_0", "uint r = firstbitlow(a.x);", Out::U, Tol::Exact, ib1(|a| if a == 0 { u32::MAX } else { a.trailing_zeros() }));
     dxbc(out, errors, "firstbithigh_u", "firstbithigh(uint): index from bit 0 of the highest set bit, 0 -> 0xffffffff", "ps_5_0", "uint r = firstbithigh(a.x);", Out::U, Tol::Exact, ib1(|a| if a == 0 { u32::MAX } else { 31 - a.leading_zeros() }));
     dxbc(out, errors, "firstbithigh_i", "firstbithigh(int): for negatives the highest 0 bit; 0 and -1 -> 0xffffffff", "ps_5_0", "uint r = asuint(firstbithigh(ia.x));", Out::U, Tol::Exact, ib1(|a| {
-        let v = if (a as i32) < 0 { !a } else { a };
+        let v = if a.cast_signed() < 0 { !a } else { a };
         if v == 0 { u32::MAX } else { 31 - v.leading_zeros() }
     }));
-    dxbc(out, errors, "abs_int", "iabs (ineg of INT_MIN wraps)", "ps_4_0", "uint r = asuint(abs(ia.x));", Out::U, Tol::Exact, ib1(|a| (a as i32).wrapping_abs() as u32));
+    dxbc(out, errors, "abs_int", "iabs (ineg of INT_MIN wraps)", "ps_4_0", "uint r = asuint(abs(ia.x));", Out::U, Tol::Exact, ib1(|a| a.cast_signed().wrapping_abs().cast_unsigned()));
     dxbc(out, errors, "movc", "movc: any nonzero bits select the first", "ps_4_0", "uint r = a.x ? b.x : c.x;", Out::U, Tol::Exact, U.iter().map(|&a| (u3(a, 0x1234, 0xabcd), wu(&[if a != 0 { 0x1234 } else { 0xabcd }]))).collect());
     // dynamic indexing of a constant buffer array, loops
     let src = "cbuffer C : register(b0) { uint4 A; uint4 B; uint4 Cc; };
@@ -572,7 +572,7 @@ fn fv(v: [f32; 4]) -> Vec<u32> {
     v.iter().map(|x| x.to_bits()).collect()
 }
 fn iv(v: [i32; 4]) -> Vec<u32> {
-    v.iter().map(|&x| x as u32).collect()
+    v.iter().map(|&x| x.cast_unsigned()).collect()
 }
 fn w4(v: [f32; 4]) -> [Want; 4] {
     v.map(one)

@@ -118,7 +118,7 @@ pub fn parse(words: &[u32]) -> Result<Program, String> {
             if d & (1 << 13) != 0 {
                 return Err("relative destination".into());
             }
-            i.dst = Some(Dst { ty: rtype(d), reg: d & 0x7ff, mask: ((d >> 16) & 0xf) as u8, sat: (d >> 20) & 1 != 0 });
+            i.dst = Some(Dst { ty: rtype(d), reg: d & 0x7ff, mask: crate::lo8((d >> 16) & 0xf), sat: (d >> 20) & 1 != 0 });
             if (d >> 24) & 0xf != 0 {
                 return Err("shift scale".into());
             }
@@ -134,7 +134,7 @@ pub fn parse(words: &[u32]) -> Result<Program, String> {
             if body[k - 1] & (1 << 13) != 0 {
                 let r = *body.get(k).ok_or("no relative register")?;
                 k += 1;
-                s.rel = Some((rtype(r), r & 0x7ff, ((r >> 16) & 3) as u8));
+                s.rel = Some((rtype(r), r & 0x7ff, crate::lo8((r >> 16) & 3)));
             }
             i.src.push(s);
         }
@@ -221,7 +221,7 @@ impl Run<'_> {
         let v: V = match s.ty {
             0 => *self.r.get(crate::us(s.reg)).ok_or("temp out of range")?,
             1 | 17 => [0.0; 4],
-            2 => match self.c.get((s.reg as i32 + off) as usize) {
+            2 => match self.c.get((s.reg.cast_signed() + off) as usize) {
                 Some(c) => *c,
                 None => {
                     return Err("constant out of range".into());
@@ -429,7 +429,7 @@ impl Run<'_> {
                         return Err("rep/loop count not an i#".into());
                     }
                     let iv = self.i[crate::us(n.reg) & 15];
-                    let count = iv[0].clamp(0, 255) as u32;
+                    let count = iv[0].clamp(0, 255).cast_unsigned();
                     if count == 0 {
                         pc = p.jump[pc - 1] + 1;
                     } else {
@@ -517,7 +517,7 @@ pub fn run(p: &Program, c: &[[f32; 4]]) -> Result<([[f32; 4]; 4], Option<String>
                     *c = i.raw.map(f32::from_bits);
                 }
             }
-            48 => r.i[crate::us(d.reg) & 15] = i.raw.map(|x| x as i32),
+            48 => r.i[crate::us(d.reg) & 15] = i.raw.map(|x| x.cast_signed()),
             47 => r.b[crate::us(d.reg) & 15] = i.raw[0] != 0,
             _ => {}
         }

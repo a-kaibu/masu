@@ -106,7 +106,7 @@ fn scene(r: &mut Rng, count: usize) -> Scene {
         .collect();
     Scene {
         material,
-        ambient: (r.next() as u32) & 0xff7f7f7f,
+        ambient: (crate::lo32(r.next())) & 0xff7f7f7f,
         world: affine(r, (0.5, 2.0), 2.0),
         view: affine(r, (1.0, 1.0), 3.0),
         lights,
