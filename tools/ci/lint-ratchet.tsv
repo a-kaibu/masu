@@ -512,7 +512,7 @@ file	crates/kura/src/gl/glsl.rs	unsafe_op_in_unsafe_fn	55
 file	crates/kura/src/gl/glsl.rs	unwrap_in_result	4
 file	crates/kura/src/gl/glsl.rs	unwrap_used	40
 file	crates/kura/src/gl/mod.rs	allow-attr	1
-file	crates/kura/src/gl/mod.rs	arithmetic_side_effects	99
+file	crates/kura/src/gl/mod.rs	arithmetic_side_effects	98
 file	crates/kura/src/gl/mod.rs	as_conversions	284
 file	crates/kura/src/gl/mod.rs	cast_possible_truncation	62
 file	crates/kura/src/gl/mod.rs	cast_possible_wrap	17
@@ -527,7 +527,7 @@ file	crates/kura/src/gl/mod.rs	ptr_as_ptr	8
 file	crates/kura/src/gl/mod.rs	undocumented_unsafe_blocks	10
 file	crates/kura/src/gl/mod.rs	unsafe_op_in_unsafe_fn	110
 file	crates/kura/src/gl/mod.rs	unwrap_in_result	3
-file	crates/kura/src/gl/mod.rs	unwrap_used	24
+file	crates/kura/src/gl/mod.rs	unwrap_used	23
 file	crates/kura/src/idec.rs	arithmetic_side_effects	47
 file	crates/kura/src/idec.rs	as_conversions	44
 file	crates/kura/src/idec.rs	cast_possible_truncation	7
@@ -555,13 +555,13 @@ file	crates/kura/src/jit.rs	rest_pat_in_fully_bound_structs	1
 file	crates/kura/src/jit.rs	undocumented_unsafe_blocks	1
 file	crates/kura/src/jit.rs	unnecessary_get_then_check	1
 file	crates/kura/src/jit.rs	unsafe_op_in_unsafe_fn	24
-file	crates/kura/src/jit.rs	unwrap_used	17
 file	crates/kura/src/jit.rs	wildcard_enum_match_arm	1
 file	crates/kura/src/jit/park.rs	arithmetic_side_effects	4
 file	crates/kura/src/jit/park.rs	as_conversions	16
 file	crates/kura/src/jit/park.rs	cast_possible_truncation	5
 file	crates/kura/src/jit/park.rs	indexing_slicing	6
 file	crates/kura/src/jit/park.rs	unwrap_used	1
+file	crates/kura/src/locks.rs	panic	1
 file	crates/kura/src/pages.rs	arithmetic_side_effects	30
 file	crates/kura/src/pages.rs	as_conversions	40
 file	crates/kura/src/pages.rs	cast_possible_truncation	14
