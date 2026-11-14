@@ -273,10 +273,11 @@ static INDEX: Mutex<Option<HashMap<(String, String), u32>>> = Mutex::new(None);
 static IMPLS: RwLock<Option<HashMap<String, Handler>>> = RwLock::new(None);
 
 struct Spec {
-    /// (dll, name) -> (cdecl, bytes, thiscall)
-    by_name: HashMap<(String, String), (bool, u32, bool)>,
-    by_ord: HashMap<(String, u32), String>,
-    dlls: HashSet<String>,
+    /// (dll, name) -> (cdecl, bytes, thiscall); the names are specs.txt's own (54000 lines: a
+    /// String for each of them cost every process start 20+ ms)
+    by_name: HashMap<(&'static str, &'static str), (bool, u32, bool)>,
+    by_ord: HashMap<(&'static str, u32), &'static str>,
+    dlls: HashSet<&'static str>,
 }
 
 fn specs() -> &'static Spec {
@@ -284,29 +285,28 @@ fn specs() -> &'static Spec {
     S.get_or_init(|| {
         let mut s = Spec { by_name: HashMap::default(), by_ord: HashMap::default(), dlls: HashSet::default() };
         for l in include_str!("specs.txt").lines() {
-            let v: Vec<&str> = l.split(' ').collect();
-            if v.len() < 5 {
+            let mut it = l.split(' ');
+            let v: [&'static str; 5] = std::array::from_fn(|_| it.next().unwrap_or(""));
+            if v[4].is_empty() {
                 continue;
             }
             // (thiscall: `this` in ECX, the callee pops the rest)
             let cdecl = !matches!(v[2], "stdcall" | "thiscall");
             let bytes: u32 = v[3].parse::<u32>().unwrap_or(0).saturating_sub(if v[2] == "thiscall" { 4 } else { 0 });
-            s.dlls.insert(v[0].to_string());
-            s.by_name.entry((v[0].to_string(), v[1].to_string())).or_insert((cdecl, bytes, v[2] == "thiscall"));
+            s.dlls.insert(v[0]);
+            s.by_name.entry((v[0], v[1])).or_insert((cdecl, bytes, v[2] == "thiscall"));
             if let Ok(o) = v[4].parse::<u32>() {
-                s.by_ord.insert((v[0].to_string(), o), v[1].to_string());
+                s.by_ord.insert((v[0], o), v[1]);
             }
         }
-        for d in ["sake"] {
-            s.dlls.insert(d.into());
-        }
+        s.dlls.insert("sake");
         s
     })
 }
 
 /// The functions the spec lists for `dll` (a key: "kernel32"), sorted.
 pub fn spec_names(dll: &str) -> Vec<String> {
-    let mut v: Vec<String> = specs().by_name.keys().filter(|(d, _)| d == dll).map(|(_, n)| n.clone()).collect();
+    let mut v: Vec<String> = specs().by_name.keys().filter(|(d, _)| *d == dll).map(|(_, n)| n.to_string()).collect();
     v.sort();
     v
 }
@@ -318,8 +318,8 @@ pub fn spec_names(dll: &str) -> Vec<String> {
 pub fn exported_by(dll: &str, name: &str) -> bool {
     let d = dll_key(dll);
     let sp = specs();
-    !sp.dlls.contains(&d)
-        || sp.by_name.contains_key(&(d.clone(), name.to_string()))
+    !sp.dlls.contains(d.as_str())
+        || sp.by_name.contains_key(&(d.as_str(), name))
         || IMPLS.read().unwrap().as_ref().is_some_and(|m| m.contains_key(&format!("{d}!{name}")))
 }
 
@@ -355,7 +355,7 @@ pub fn dll_key(dll: &str) -> String {
 /// Whether `dll` is one we implement (or at least know the exports of).
 pub fn is_system(dll: &str) -> bool {
     let k = dll_key(dll);
-    specs().dlls.contains(&k) || (crate::mem::x64() && matches!(k.as_str(), "msvcp140" | "vcruntime140_1"))
+    specs().dlls.contains(k.as_str()) || (crate::mem::x64() && matches!(k.as_str(), "msvcp140" | "vcruntime140_1"))
 }
 
 /// The C/C++ runtimes.
@@ -422,12 +422,12 @@ fn forwards(dll: &str) -> &'static [&'static str] {
 
 /// Whether a system DLL exports `name` (specs.txt).
 pub fn exports(dll: &str, name: &str) -> bool {
-    specs().by_name.contains_key(&(dll_key(dll), name.to_string()))
+    specs().by_name.contains_key(&(dll_key(dll).as_str(), name))
 }
 
 /// Name of ordinal `ord` of a system DLL.
 pub fn ordinal_name(dll: &str, ord: u32) -> Option<String> {
-    specs().by_ord.get(&(dll_key(dll), ord)).cloned()
+    specs().by_ord.get(&(dll_key(dll).as_str(), ord)).map(|n| n.to_string())
 }
 
 /// The trap address of a system DLL's export (made on first use).
@@ -451,8 +451,8 @@ pub fn export(dll: &str, name: &str) -> u32 {
         return TRAP_LO + 4 * i;
     }
     let sp = specs();
-    let spec = sp.by_name.get(&key).copied().or_else(|| {
-        forwards(&d).iter().chain(&["kernel32", "kernelbase", "ntdll"]).find_map(|k| sp.by_name.get(&(k.to_string(), name.to_string())).copied())
+    let spec = sp.by_name.get(&(d.as_str(), name)).copied().or_else(|| {
+        forwards(&d).iter().chain(&["kernel32", "kernelbase", "ntdll"]).find_map(|k| sp.by_name.get(&(*k, name)).copied())
     });
     let f = find_impl(&d, name);
     let mut e = ENTRIES.write().unwrap();
@@ -988,8 +988,8 @@ mod spec_tests {
             }
         }
         let known = |d: &str, n: &str| {
-            sp.by_name.contains_key(&(d.to_string(), n.to_string()))
-                || forwards(d).iter().chain(&["kernel32", "kernelbase", "ntdll"]).any(|k| sp.by_name.contains_key(&(k.to_string(), n.to_string())))
+            sp.by_name.contains_key(&(d, n))
+                || forwards(d).iter().chain(&["kernel32", "kernelbase", "ntdll"]).any(|k| sp.by_name.contains_key(&(*k, n)))
         };
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src");
         let mut missing = Vec::new();
@@ -1086,7 +1086,7 @@ mod ordinal_tests {
     }
 
     fn numbered() -> Vec<(String, u32, String)> {
-        let mut v: Vec<_> = specs().by_ord.iter().map(|((d, o), n)| (d.clone(), *o, n.clone())).collect();
+        let mut v: Vec<_> = specs().by_ord.iter().map(|((d, o), n)| (d.to_string(), *o, n.to_string())).collect();
         v.sort();
         v
     }
@@ -1104,7 +1104,7 @@ mod ordinal_tests {
             prop_assume!(dll_key(&name) == *d);
             let got = ordinal_name(&name, *o);
             prop_assert_eq!(got.as_deref(), Some(n.as_str()));
-            prop_assert!(specs().by_name.contains_key(&(d.clone(), n.clone())));
+            prop_assert!(specs().by_name.contains_key(&(d.as_str(), n.as_str())));
         }
     }
 
@@ -1151,7 +1151,7 @@ mod ordinal_tests {
                         if v == 0 {
                             break;
                         }
-                        if v & flag != 0 && specs().dlls.contains(&dll_key(&dll)) && ordinal_name(&dll, (v & 0xffff) as u32).is_none() {
+                        if v & flag != 0 && specs().dlls.contains(dll_key(&dll).as_str()) && ordinal_name(&dll, (v & 0xffff) as u32).is_none() {
                             missing.push(format!("{path}: {dll} #{}", v & 0xffff));
                         }
                         p += if wide { 8 } else { 4 };
