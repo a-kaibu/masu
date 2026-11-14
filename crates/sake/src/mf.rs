@@ -1545,11 +1545,11 @@ fn en_tick(c: &mut Ctx) -> u32 {
 /// picture.
 fn src_rect(p: u32, w: u32, h: u32) -> play::R {
     if p == 0 {
-        return (0, 0, w as i32, h as i32);
+        return play::R::sized(w as i32, h as i32);
     }
     let f = |i: u32| f32::from_bits(r32(p + 4 * i)).clamp(0.0, 1.0);
     let (l, t, r, bt) = ((f(0) * w as f32) as i32, (f(1) * h as f32) as i32, (f(2) * w as f32).round() as i32, (f(3) * h as f32).round() as i32);
-    (l, t, (r - l).max(0), (bt - t).max(0))
+    play::R::new(l, t, (r - l).max(0), (bt - t).max(0))
 }
 
 /// The frame shown now, letterboxed onto `dst` (w x h) with `border` around it: rows of
@@ -1585,9 +1585,9 @@ impl Frames {
         let out = &mut self.out;
         out.clear();
         out.resize((dw * dh) as usize, border);
-        let lb = letterbox((0, 0, dw, dh), src.2, src.3);
-        if lb.2 > 0 && lb.3 > 0 {
-            if src == (0, 0, fw as i32, fh as i32) && lb == src && (dw, dh) == (lb.2, lb.3) && frame.len() >= out.len() {
+        let lb = letterbox(play::R::sized(dw, dh), src.w, src.h);
+        if lb.w > 0 && lb.h > 0 {
+            if src == play::R::sized(fw as i32, fh as i32) && lb == src && (dw, dh) == (lb.w, lb.h) && frame.len() >= out.len() {
                 // the whole picture at its size: no scaling, straight across
                 for (d, &p) in out.iter_mut().zip(frame) {
                     *d = texel(p, rgba);
@@ -1596,11 +1596,11 @@ impl Frames {
             }
             let part = &mut self.part;
             part.clear();
-            part.resize((lb.2 * lb.3) as usize, 0);
+            part.resize((lb.w * lb.h) as usize, 0);
             play::blit(frame, fw as i32, fh as i32, src, part, lb, lb);
-            for y in 0..lb.3 {
-                let o = ((lb.1 + y) * dw + lb.0) as usize;
-                out[o..o + lb.2 as usize].copy_from_slice(&part[(y * lb.2) as usize..((y + 1) * lb.2) as usize]);
+            for y in 0..lb.h {
+                let o = ((lb.y + y) * dw + lb.x) as usize;
+                out[o..o + lb.w as usize].copy_from_slice(&part[(y * lb.w) as usize..((y + 1) * lb.w) as usize]);
             }
         }
         if rgba {

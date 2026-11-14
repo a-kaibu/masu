@@ -591,7 +591,7 @@ fn sync_movie(id: DevId) {
     });
     play::with(|m| {
         if let Some(p) = m.get_mut(&key) {
-            p.place = play::Place { hwnd, dst, src: (0, 0, size.0 as i32, size.1 as i32), letterbox: false, visible: true };
+            p.place = play::Place { hwnd, dst: play::R::of(dst), src: play::R::sized(size.0 as i32, size.1 as i32), letterbox: false, visible: true };
             p.volume = volume;
         }
     });

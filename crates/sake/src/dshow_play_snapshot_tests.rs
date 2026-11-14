@@ -49,19 +49,19 @@ fn dshow_play_snapshot() {
     // the picture
     let n = |r: &mut Rng| r.pick(&[-5i32, 0, 1, 3, 7, 16, 33, 640, 480, i32::MAX / 4]);
     for _ in 0..300 {
-        let dst = (n(&mut r), n(&mut r), n(&mut r), n(&mut r));
+        let dst = R::new(n(&mut r), n(&mut r), n(&mut r), n(&mut r));
         let (w, h) = (n(&mut r), n(&mut r));
-        let b = (n(&mut r), n(&mut r), n(&mut r), n(&mut r));
+        let b = R::new(n(&mut r), n(&mut r), n(&mut r), n(&mut r));
         writeln!(out, "letterbox {dst:?} {w}x{h}: {:?} clip {b:?}: {:?}", letterbox(dst, w, h), clip(dst, b)).unwrap();
     }
     let s = |r: &mut Rng| r.pick(&[-3i32, 0, 1, 2, 5, 8, 12, 20]);
     for i in 0..300 {
         let (fw, fh) = (i32::try_from(1 + r.below(9)).unwrap_or(1), i32::try_from(1 + r.below(9)).unwrap_or(1));
         let frame: Vec<u32> = (0..fw * fh).map(|_| u32::try_from(r.next() & 0x00ff_ffff).unwrap_or(0)).collect();
-        let src = (s(&mut r), s(&mut r), s(&mut r), s(&mut r));
-        let view = (s(&mut r).max(0), s(&mut r).max(0), 1 + s(&mut r).max(0), 1 + s(&mut r).max(0));
-        let dst = (s(&mut r), s(&mut r), s(&mut r), s(&mut r));
-        let mut px = vec![0x1234_5678u32; usize::try_from(view.2 * view.3).unwrap_or(0)];
+        let src = R::new(s(&mut r), s(&mut r), s(&mut r), s(&mut r));
+        let view = R::new(s(&mut r).max(0), s(&mut r).max(0), 1 + s(&mut r).max(0), 1 + s(&mut r).max(0));
+        let dst = R::new(s(&mut r), s(&mut r), s(&mut r), s(&mut r));
+        let mut px = vec![0x1234_5678u32; usize::try_from(view.w * view.h).unwrap_or(0)];
         blit(&frame, fw, fh, src, &mut px, view, dst);
         writeln!(out, "blit {i} {fw}x{fh} src={src:?} view={view:?} dst={dst:?}: {:016x}", fnv(px.iter().copied())).unwrap();
     }

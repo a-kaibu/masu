@@ -1396,9 +1396,9 @@ fn sync(b: u32) {
         let (x, y, w, h) = g.window;
         let d = g.dst.unwrap_or((0, 0, w, h));
         let dst = (x + d.0, y + d.1, d.2, d.3);
-        let dst = play::clip(dst, (x, y, w, h));
+        let dst = play::clip(play::R::of(dst), play::R::new(x, y, w, h));
         // (the game's renderer draws the pictures itself)
-        (Place { hwnd: g.owner, dst, src, letterbox: false, visible: g.visible && g.renderer == 0 }, g.volume)
+        (Place { hwnd: g.owner, dst, src: play::R::of(src), letterbox: false, visible: g.visible && g.renderer == 0 }, g.volume)
     }) else {
         return;
     };
@@ -1950,7 +1950,7 @@ fn place_of(e: &Evr, video: (i32, i32), shown: bool) -> Place {
     } else {
         ((s[0] * video.0 as f32) as i32, (s[1] * video.1 as f32) as i32, ((s[2] - s[0]) * video.0 as f32) as i32, ((s[3] - s[1]) * video.1 as f32) as i32)
     };
-    Place { hwnd: e.hwnd, dst, src, letterbox: e.mode & 1 != 0, visible: e.hwnd != 0 && shown }
+    Place { hwnd: e.hwnd, dst: play::R::of(dst), src: play::R::of(src), letterbox: e.mode & 1 != 0, visible: e.hwnd != 0 && shown }
 }
 
 /// A Media Session's EVR (mf/session.rs), drawing into `hwnd`: its block (one reference, the

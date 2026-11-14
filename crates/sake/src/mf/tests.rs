@@ -324,15 +324,15 @@ fn source_urls_as_paths() {
 fn frame_letterboxed_with_the_border() {
     // a 2x1 picture onto 4x4: rows 1-2 the picture (each pixel twice), the rest the border
     let f = [0x0011_2233, 0x0044_5566];
-    let out = compose(&f, 2, 1, (0, 0, 2, 1), (4, 4), 0x8001_0203, false);
+    let out = compose(&f, 2, 1, play::R::new(0, 0, 2, 1), (4, 4), 0x8001_0203, false);
     let b = 0x8001_0203;
     let (p, q) = (0xff11_2233, 0xff44_5566);
     assert_eq!(out, [b, b, b, b, p, p, q, q, p, p, q, q, b, b, b, b]);
     // R8G8B8A8: red and blue swapped
-    let out = compose(&f, 2, 1, (0, 0, 2, 1), (2, 1), 0, true);
+    let out = compose(&f, 2, 1, play::R::new(0, 0, 2, 1), (2, 1), 0, true);
     assert_eq!(out, [0xff33_2211, 0xff66_5544]);
     // nothing of the picture: all border
-    let out = compose(&f, 2, 1, (0, 0, 0, 0), (2, 2), 7, false);
+    let out = compose(&f, 2, 1, play::R::new(0, 0, 0, 0), (2, 2), 7, false);
     assert_eq!(out, [7; 4]);
 }
 
@@ -342,13 +342,13 @@ proptest! {
     #[test]
     fn compose_fills_all(fw in 1u32..9, fh in 1u32..9, dw in 1u32..17, dh in 1u32..17, border in any::<u32>()) {
         let f: Vec<u32> = (0..fw * fh).map(|i| 0x0100_0000 + i).collect();
-        let out = compose(&f, fw, fh, (0, 0, fw as i32, fh as i32), (dw, dh), border, false);
+        let out = compose(&f, fw, fh, play::R::sized(fw as i32, fh as i32), (dw, dh), border, false);
         prop_assert_eq!(out.len(), (dw * dh) as usize);
-        let lb = letterbox((0, 0, dw as i32, dh as i32), fw as i32, fh as i32);
+        let lb = letterbox(play::R::sized(dw as i32, dh as i32), fw as i32, fh as i32);
         for y in 0..dh as i32 {
             for x in 0..dw as i32 {
                 let v = out[(y * dw as i32 + x) as usize];
-                let inside = x >= lb.0 && x < lb.0 + lb.2 && y >= lb.1 && y < lb.1 + lb.3;
+                let inside = x >= lb.x && x < lb.x + lb.w && y >= lb.y && y < lb.y + lb.h;
                 if inside {
                     prop_assert_eq!(v >> 24, 0xff);
                     prop_assert!(f.contains(&(v & 0x00ff_ffff | 0x0100_0000)));
@@ -365,13 +365,13 @@ proptest! {
 fn compose_model(frame: &[u32], fw: u32, fh: u32, src: play::R, dst: (u32, u32), border: u32, rgba: bool) -> Vec<u32> {
     let (dw, dh) = (dst.0 as i32, dst.1 as i32);
     let mut out = vec![border; (dw * dh) as usize];
-    let lb = letterbox((0, 0, dw, dh), src.2, src.3);
-    if lb.2 > 0 && lb.3 > 0 {
-        let mut part = vec![0u32; (lb.2 * lb.3) as usize];
+    let lb = letterbox(play::R::sized(dw, dh), src.w, src.h);
+    if lb.w > 0 && lb.h > 0 {
+        let mut part = vec![0u32; (lb.w * lb.h) as usize];
         play::blit(frame, fw as i32, fh as i32, src, &mut part, lb, lb);
-        for y in 0..lb.3 {
-            let o = ((lb.1 + y) * dw + lb.0) as usize;
-            out[o..o + lb.2 as usize].copy_from_slice(&part[(y * lb.2) as usize..((y + 1) * lb.2) as usize]);
+        for y in 0..lb.h {
+            let o = ((lb.y + y) * dw + lb.x) as usize;
+            out[o..o + lb.w as usize].copy_from_slice(&part[(y * lb.w) as usize..((y + 1) * lb.w) as usize]);
         }
     }
     if rgba {
@@ -397,10 +397,10 @@ fn picture_sizes_past_any_texture_are_refused() {
 fn whole_picture_at_its_size_straight_across() {
     let f: Vec<u32> = (0..6).map(|i| 0x0010_2030 * i).collect();
     for rgba in [false, true] {
-        assert_eq!(compose(&f, 3, 2, (0, 0, 3, 2), (3, 2), 0x1234, rgba), compose_model(&f, 3, 2, (0, 0, 3, 2), (3, 2), 0x1234, rgba));
+        assert_eq!(compose(&f, 3, 2, play::R::new(0, 0, 3, 2), (3, 2), 0x1234, rgba), compose_model(&f, 3, 2, play::R::new(0, 0, 3, 2), (3, 2), 0x1234, rgba));
     }
     // one column wider than the picture: not the straight copy (the letterbox starts at 0 there)
-    assert_eq!(compose(&f, 3, 2, (0, 0, 3, 2), (4, 2), 9, false), compose_model(&f, 3, 2, (0, 0, 3, 2), (4, 2), 9, false));
+    assert_eq!(compose(&f, 3, 2, play::R::new(0, 0, 3, 2), (4, 2), 9, false), compose_model(&f, 3, 2, play::R::new(0, 0, 3, 2), (4, 2), 9, false));
 }
 
 fn arb_transfer() -> impl Strategy<Value = (u32, u32, (i32, i32, i32, i32), (u32, u32), u32, bool)> {
@@ -420,6 +420,7 @@ proptest! {
     fn kept_frames_match_fresh_ones(calls in prop::collection::vec(arb_transfer(), 1..12)) {
         let mut kept = Frames::default();
         for (fw, fh, src, dst, border, rgba) in calls {
+            let src = play::R::of(src);
             let f: Vec<u32> = (0..fw * fh).map(|i| i.wrapping_mul(0x9e37_79b9)).collect();
             kept.compose(&f, fw, fh, src, dst, border, rgba);
             prop_assert_eq!(&kept.out, &compose_model(&f, fw, fh, src, dst, border, rgba));

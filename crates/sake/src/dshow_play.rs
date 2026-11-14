@@ -16,10 +16,28 @@ use kura::video;
 /// 100 ns units a second (REFERENCE_TIME)
 pub const SEC: u64 = 10_000_000;
 
+/// `t` as a float (times past 2^53 lose their last bits: none a movie reaches).
+fn float(t: u64) -> f64 {
+    t as f64
+}
+/// `x` as a time, saturating (NaN: 0, negative: 0, past the end: u64::MAX).
+fn time(x: f64) -> u64 {
+    x as u64
+}
+
+/// A count of frames or bytes kept as a u64 (a usize is not wider).
+fn wide(n: usize) -> u64 {
+    u64::try_from(n).unwrap_or(u64::MAX)
+}
+/// A u64 count to index by (saturating on a 32-bit host).
+fn narrow(n: u64) -> usize {
+    usize::try_from(n).unwrap_or(usize::MAX)
+}
+
 /// Now on the clock movies play by, in 100 ns units.
 pub fn now() -> u64 {
     static T0: OnceLock<Instant> = OnceLock::new();
-    T0.get_or_init(Instant::now).elapsed().as_nanos() as u64 / 100
+    u64::try_from(T0.get_or_init(Instant::now).elapsed().as_nanos() / 100).unwrap_or(u64::MAX)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -49,7 +67,7 @@ impl Timeline {
         match self.since {
             // (a position past the stop stays where it was set: seeking there)
             Some(t) => {
-                let p = self.pos.saturating_add((now.saturating_sub(t) as f64 * self.rate) as u64);
+                let p = self.pos.saturating_add(time(float(now.saturating_sub(t)) * self.rate));
                 if self.pos >= self.stop { self.pos } else { p.min(self.stop) }
             }
             None => self.pos,
@@ -106,7 +124,7 @@ impl Timeline {
             return None;
         }
         let left = self.stop.saturating_sub(self.position(now));
-        Some((left as f64 / self.rate) as u64)
+        Some(time(float(left) / self.rate))
     }
 }
 
@@ -116,58 +134,102 @@ pub fn frame_at(pos: u64, rate: (u32, u32), frames: u32) -> u32 {
     if rate.0 == 0 || rate.1 == 0 {
         return 0;
     }
-    let n = (pos as u128 * rate.0 as u128 / (rate.1 as u128 * SEC as u128)) as u64;
-    n.min(frames.saturating_sub(1) as u64) as u32
+    let n = u128::from(pos) * u128::from(rate.0) / (u128::from(rate.1) * u128::from(SEC));
+    u32::try_from(n.min(u128::from(frames.saturating_sub(1)))).unwrap_or(u32::MAX)
 }
 
 // ---------------------------------------------------------------------------------------------
 // the picture
 
-/// A rectangle: left, top, width, height.
-pub type R = (i32, i32, i32, i32);
+/// A rectangle by its left, top, width and height: not its right and bottom as a RECT's
+/// (user::Rect) are, so the two cannot be mixed up.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub struct R {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl R {
+    pub const fn new(x: i32, y: i32, w: i32, h: i32) -> R {
+        R { x, y, w, h }
+    }
+    /// `w` x `h` at 0, 0.
+    pub const fn sized(w: i32, h: i32) -> R {
+        R { x: 0, y: 0, w, h }
+    }
+    /// Of a (left, top, width, height) tuple, as the callers keep theirs.
+    pub const fn of(t: (i32, i32, i32, i32)) -> R {
+        R { x: t.0, y: t.1, w: t.2, h: t.3 }
+    }
+    /// Nothing in it.
+    pub const fn empty(self) -> bool {
+        self.w <= 0 || self.h <= 0
+    }
+    pub const fn right(self) -> i32 {
+        self.x.saturating_add(self.w)
+    }
+    pub const fn bottom(self) -> i32 {
+        self.y.saturating_add(self.h)
+    }
+    /// Its corners as a RECT's: left, top, right, bottom.
+    pub const fn ltrb(self) -> [i32; 4] {
+        [self.x, self.y, self.right(), self.bottom()]
+    }
+}
+
+/// (as the tuple it was: what the goldens print)
+impl std::fmt::Debug for R {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "({}, {}, {}, {})", self.x, self.y, self.w, self.h)
+    }
+}
 
 /// The part of `dst` a `src_w` x `src_h` picture fills keeping its shape (centred).
 pub fn letterbox(dst: R, src_w: i32, src_h: i32) -> R {
-    if src_w <= 0 || src_h <= 0 || dst.2 <= 0 || dst.3 <= 0 {
-        return (dst.0, dst.1, 0, 0);
+    if src_w <= 0 || src_h <= 0 || dst.empty() {
+        return R::new(dst.x, dst.y, 0, 0);
     }
-    let (w, h) = if dst.2 as i64 * src_h as i64 > dst.3 as i64 * src_w as i64 {
-        ((dst.3 as i64 * src_w as i64 / src_h as i64) as i32, dst.3)
-    } else {
-        (dst.2, (dst.2 as i64 * src_h as i64 / src_w as i64) as i32)
-    };
-    (dst.0 + (dst.2 - w) / 2, dst.1 + (dst.3 - h) / 2, w, h)
+    let (dw, dh, sw, sh) = (i64::from(dst.w), i64::from(dst.h), i64::from(src_w), i64::from(src_h));
+    // (the other side of the picture is at most `dst`'s: it fits in an i32)
+    let fit = |x: i64| i32::try_from(x).unwrap_or(i32::MAX);
+    let (w, h) = if dw * sh > dh * sw { (fit(dh * sw / sh), dst.h) } else { (dst.w, fit(dw * sh / sw)) };
+    R::new(dst.x + (dst.w - w) / 2, dst.y + (dst.h - h) / 2, w, h)
 }
 
 /// Draws part `src` of a picture (`fw` x `fh`) stretched onto `dst` of a window, nearest
-/// pixel, black around it: into `out`, the window's part `view` (rows of `view.2` pixels).
+/// pixel, black around it: into `out`, the window's part `view` (rows of `view.w` pixels).
 pub fn blit(frame: &[u32], fw: i32, fh: i32, src: R, out: &mut [u32], view: R, dst: R) {
-    let src = clip(src, (0, 0, fw, fh));
-    let on = if src.2 <= 0 || src.3 <= 0 || dst.2 <= 0 || dst.3 <= 0 { (0, 0, 0, 0) } else { clip(dst, view) };
+    let src = clip(src, R::sized(fw, fh));
+    let on = if src.empty() || dst.empty() { R::default() } else { clip(dst, view) };
     // (black around the picture only: a picture over all of the view leaves none)
     if on != view {
         out.fill(0xff00_0000);
     }
-    if on.2 <= 0 || on.3 <= 0 {
+    if on.empty() {
         return;
     }
+    // (all of it within the frame and the view, by the clips: the indices are not negative)
+    let index = |i: i64| usize::try_from(i).unwrap_or(usize::MAX);
+    let scale = |at: i32, from: i32, of: i32, to: i32| (i64::from(at) - i64::from(from)) * i64::from(of) / i64::from(to);
     // the source column of each column, the same on every row
-    let xs: Vec<usize> = (on.0..on.0 + on.2).map(|x| (src.0 + ((x - dst.0) as i64 * src.2 as i64 / dst.2 as i64) as i32) as usize).collect();
-    for y in on.1..on.1 + on.3 {
-        let sy = src.1 + ((y - dst.1) as i64 * src.3 as i64 / dst.3 as i64) as i32;
-        let row = &frame[(sy * fw) as usize..];
-        let o = ((y - view.1) * view.2 + (on.0 - view.0)) as usize;
-        for (d, &sx) in out[o..o + xs.len()].iter_mut().zip(&xs) {
-            *d = row[sx] | 0xff00_0000;
+    let xs: Vec<usize> = (on.x..on.right()).map(|x| index(i64::from(src.x) + scale(x, dst.x, src.w, dst.w))).collect();
+    for y in on.y..on.bottom() {
+        let sy = i64::from(src.y) + scale(y, dst.y, src.h, dst.h);
+        let o = index((i64::from(y) - i64::from(view.y)) * i64::from(view.w) + i64::from(on.x) - i64::from(view.x));
+        let (Some(row), Some(to)) = (frame.get(index(sy * i64::from(fw))..), out.get_mut(o..o.saturating_add(xs.len()))) else { return };
+        for (d, &sx) in to.iter_mut().zip(&xs) {
+            *d = row.get(sx).copied().unwrap_or(0) | 0xff00_0000;
         }
     }
 }
 
 /// `a` within `b`.
 pub fn clip(a: R, b: R) -> R {
-    let (l, t) = (a.0.max(b.0), a.1.max(b.1));
-    let (r, bt) = ((a.0 + a.2).min(b.0 + b.2), (a.1 + a.3).min(b.1 + b.3));
-    (l, t, (r - l).max(0), (bt - t).max(0))
+    let (l, t) = (a.x.max(b.x), a.y.max(b.y));
+    let (r, bt) = (a.right().min(b.right()), a.bottom().min(b.bottom()));
+    R::new(l, t, r.saturating_sub(l).max(0), bt.saturating_sub(t).max(0))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -238,10 +300,10 @@ impl Vorbis {
     #[cfg(test)]
     pub fn new(ogg: &[u8]) -> Option<Vorbis> {
         let d = ogg.to_vec();
-        let len = d.len() as u64;
+        let len = wide(d.len());
         Vorbis::read(
             len,
-            Box::new(move |o, b| match d.get(o as usize..o as usize + b.len()) {
+            Box::new(move |o, b| match d.get(narrow(o)..narrow(o).saturating_add(b.len())) {
                 Some(s) => {
                     b.copy_from_slice(s);
                     true
@@ -258,7 +320,7 @@ impl Vorbis {
         let setup = s.packet()?;
         let i = vorbis::Ident::read(&id).ok()?;
         (s.channels, s.rate) = (i.channels, i.rate);
-        s.every = 30 * i.rate as u64;
+        s.every = 30 * u64::from(i.rate);
         s.heads = [id, setup];
         s.restart();
         s.restarts = 0;
@@ -274,13 +336,13 @@ impl Vorbis {
             if self.pos >= self.len {
                 return None;
             }
-            let n = (self.step as u64).min(self.len - self.pos) as usize;
+            let n = narrow(wide(self.step).min(self.len - self.pos));
             let mut b = vec![0; n];
             if !(self.read)(self.pos, &mut b) {
                 self.pos = self.len;
                 return None;
             }
-            self.pos += n as u64;
+            self.pos += wide(n);
             self.ogg.push(&b);
             if self.pos >= self.len {
                 self.ogg.finish();
@@ -314,35 +376,40 @@ impl Vorbis {
             }
         }
         // what is no longer wanted (a second's worth kept behind for small steps back)
-        let keep = from.saturating_sub(self.rate as u64);
+        let keep = from.saturating_sub(u64::from(self.rate));
         if keep > self.base {
-            let k = ((keep - self.base) as usize).min(self.pcm.len());
+            let k = narrow(keep - self.base).min(self.pcm.len());
             self.pcm.drain(..k);
-            self.base += k as u64;
+            self.base += wide(k);
         }
         let mut buf = Vec::new();
-        while self.base + (self.pcm.len() as u64) < from + n as u64 {
+        while self.base + wide(self.pcm.len()) < from + wide(n) {
             if self.dec.is_none() {
                 break;
             }
             let Some(p) = self.packet() else { break };
+            let Some(dec) = self.dec.as_mut() else { break };
             buf.clear();
-            self.dec.as_mut().unwrap().packet(&p, &mut buf);
+            dec.packet(&p, &mut buf);
             let ch = self.channels.max(1);
-            self.pcm.extend(buf.chunks_exact(ch).map(|f| if ch == 1 { [f[0], f[0]] } else { [f[0], f[1]] }));
-            let end = self.base + self.pcm.len() as u64;
+            self.pcm.extend(buf.chunks_exact(ch).map(|f| match f {
+                &[l, r, ..] => [l, r],
+                &[m] => [m, m],
+                [] => [0.0; 2],
+            }));
+            let end = self.base + wide(self.pcm.len());
             if self.every > 0 && end >= self.marks.last().map_or(self.every, |m| m.0 + self.every) {
-                self.marks.push((end, self.pos, self.ogg.clone(), self.dec.as_ref().unwrap().carry()));
+                self.marks.push((end, self.pos, self.ogg.clone(), dec.carry()));
             }
             // (far behind what is wanted: not kept)
-            let keep = from.saturating_sub(self.rate as u64);
-            if keep > self.base + self.pcm.len() as u64 {
-                self.base += self.pcm.len() as u64;
+            let keep = from.saturating_sub(u64::from(self.rate));
+            if keep > self.base + wide(self.pcm.len()) {
+                self.base += wide(self.pcm.len());
                 self.pcm.clear();
             }
         }
-        for i in 0..n as u64 {
-            let f = (from + i).checked_sub(self.base).and_then(|k| self.pcm.get(k as usize)).copied().unwrap_or([0.0; 2]);
+        for i in 0..wide(n) {
+            let f = (from + i).checked_sub(self.base).and_then(|k| self.pcm.get(narrow(k))).copied().unwrap_or([0.0; 2]);
             out.extend(f);
         }
     }
@@ -379,7 +446,7 @@ impl Movie {
                     video::close(stream);
                     return None;
                 };
-                Vorbis::read(l as u64, Box::new(move |at, b| video::read_at(&mut f, o as u64 + at, b))).map(Sound::Vorbis)
+                Vorbis::read(wide(l), Box::new(move |at, b| video::read_at(&mut f, wide(o) + at, b))).map(Sound::Vorbis)
             }
             None => None,
         };
@@ -466,7 +533,7 @@ pub struct Play {
 impl Play {
     pub fn new(movie: Movie) -> Play {
         let tl = Timeline::new(movie.duration);
-        let src = (0, 0, movie.w as i32, movie.h as i32);
+        let src = R::sized(i32::try_from(movie.w).unwrap_or(i32::MAX), i32::try_from(movie.h).unwrap_or(i32::MAX));
         Play { movie, tl, place: Place { src, ..Place::default() }, volume: 0, disp: 0, shown: None, restacked: None, audio: None }
     }
 }
@@ -543,7 +610,7 @@ pub(crate) fn snap_restore() {
 fn thread() {
     // (once per save-state epoch: a restored copy starts it again)
     if kura::snap::once(&THREAD_AT) {
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("movies".into())
             .spawn(|| {
                 kura::snap::register("movies", false, 0);
@@ -556,8 +623,10 @@ fn thread() {
                     g = PLAYS.lock().unwrap_or_else(|e| e.into_inner());
                     g = WAKE.wait_timeout(g, wait).unwrap_or_else(|e| e.into_inner()).0;
                 }
-            })
-            .expect("movie thread");
+            });
+        if let Err(e) = spawned {
+            eprintln!("sake: the movie thread could not start: {e}");
+        }
     }
 }
 
@@ -583,7 +652,7 @@ fn turn() -> Duration {
                 ended.push(k);
             }
             if let Some(left) = p.tl.until_end(t) {
-                wait = wait.min(Duration::from_nanos(left * 100));
+                wait = wait.min(Duration::from_nanos(left.saturating_mul(100)));
             }
             let n = frame_at(p.tl.position(t), p.movie.rate, p.movie.frames);
             if p.tl.running() {
@@ -591,9 +660,9 @@ fn turn() -> Duration {
                 wait = wait.min(Duration::from_millis(20));
                 // to the next frame
                 if p.movie.rate.0 != 0 {
-                    let next = (n as u128 + 1) * p.movie.rate.1 as u128 * SEC as u128 / p.movie.rate.0 as u128;
-                    let to = (next as u64).saturating_sub(p.tl.position(t));
-                    wait = wait.min(Duration::from_nanos((to as f64 / p.tl.rate.max(0.01) * 100.0) as u64).max(Duration::from_millis(2)));
+                    let next = (u128::from(n) + 1) * u128::from(p.movie.rate.1) * u128::from(SEC) / u128::from(p.movie.rate.0);
+                    let to = u64::try_from(next).unwrap_or(u64::MAX).saturating_sub(p.tl.position(t));
+                    wait = wait.min(Duration::from_nanos(time(float(to) / p.tl.rate.max(0.01) * 100.0)).max(Duration::from_millis(2)));
                 }
             }
             if p.shown.is_some() {
@@ -607,16 +676,17 @@ fn turn() -> Duration {
             // (no window: the screen; a rectangle the game set past it is clipped to it, not a
             // buffer of its size)
             let client = match screens.get(&p.place.hwnd).copied().flatten() {
-                Some(r) => (r.l, r.t, r.r - r.l, r.b - r.t),
-                None if p.place.hwnd == 0 => (0, 0, screen.0, screen.1),
-                None => (0, 0, 0, 0),
+                Some(r) => R::new(r.l, r.t, r.r - r.l, r.b - r.t),
+                None if p.place.hwnd == 0 => R::sized(screen.0, screen.1),
+                None => R::default(),
             };
-            let dst = if p.place.letterbox { letterbox(p.place.dst, p.place.src.2, p.place.src.3) } else { p.place.dst };
-            let on = clip((client.0 + dst.0, client.1 + dst.1, dst.2, dst.3), client);
-            let rect = [on.0, on.1, on.0 + on.2, on.1 + on.3];
-            if !p.place.visible || on.2 <= 0 || on.3 <= 0 {
+            let dst = if p.place.letterbox { letterbox(p.place.dst, p.place.src.w, p.place.src.h) } else { p.place.dst };
+            let on = clip(R::new(client.x + dst.x, client.y + dst.y, dst.w, dst.h), client);
+            let rect = on.ltrb();
+            if !p.place.visible || on.empty() {
                 if p.disp != 0 && p.shown.is_some() {
                     let r8 = [0i32; 8];
+                    // SAFETY: `r8` lives through the call
                     unsafe { kura::display::vnhost_window_pos(p.disp, &raw const r8, 0, 0, 0) };
                     p.shown = None;
                 }
@@ -633,13 +703,14 @@ fn turn() -> Duration {
             let restack = p.shown.map(|s| s.1) != Some(rect) || p.restacked.is_none_or(|r| r.elapsed() >= Duration::from_millis(500));
             if restack {
                 let r8 = [rect[0], rect[1], rect[2], rect[3], rect[0], rect[1], rect[2], rect[3]];
+                // SAFETY: `r8` lives through the call
                 unsafe { kura::display::vnhost_window_pos(p.disp, &raw const r8, 1, 1, 0) };
                 p.restacked = Some(Instant::now());
             }
             if p.shown.map(|s| s.0) != Some(n) || p.shown.map(|s| s.1) != Some(rect) {
                 // the window's part in the picture's coordinates: dst moved by the clip
-                let view = (on.0 - client.0, on.1 - client.1, on.2, on.3);
-                draws.push((k, p.movie.stream, n, p.movie.w, p.movie.h, p.place.src, dst, view, p.disp));
+                let view = R::new(on.x - client.x, on.y - client.y, on.w, on.h);
+                draws.push(Draw { key: k, stream: p.movie.stream, n, w: p.movie.w, h: p.movie.h, src: p.place.src, dst, view, disp: p.disp });
             }
             p.shown = Some((n, rect));
         }
@@ -647,16 +718,19 @@ fn turn() -> Duration {
     for (k, job) in sounds {
         job.run(k);
     }
-    for (k, stream, n, w, h, src, dst, view, disp) in draws {
+    for Draw { key: k, stream, n, w, h, src, dst, view, disp } in draws {
         let t0 = Instant::now();
         // (the buffers stay for the next frame: no allocation per frame)
         let (mut px, mut out) = BUFS.with(|b| b.borrow_mut().remove(&k)).unwrap_or_default();
-        out.resize((view.2 * view.3) as usize, 0);
+        let size = |x: i32| usize::try_from(x).unwrap_or(0);
+        out.resize(size(view.w) * size(view.h), 0);
+        let (wi, hi) = (i32::try_from(w).unwrap_or(i32::MAX), i32::try_from(h).unwrap_or(i32::MAX));
         // the picture as it is, all of it: straight into what the display gets
-        let whole = src == (0, 0, w as i32, h as i32) && dst == view && (dst.2, dst.3) == (w as i32, h as i32);
-        let (buf, pitch) = if whole { (&mut out, view.2 as usize) } else { (&mut px, w as usize) };
-        buf.resize(pitch * h as usize, 0);
-        let ok = unsafe { frame(stream, n as i32, buf.as_mut_ptr() as *mut u8, 4 * pitch, w, h) };
+        let whole = src == R::sized(wi, hi) && dst == view && (dst.w, dst.h) == (wi, hi);
+        let (buf, pitch) = if whole { (&mut out, size(view.w)) } else { (&mut px, size(wi)) };
+        buf.resize(pitch * size(hi), 0);
+        // SAFETY: `buf` holds `h` rows of `pitch` pixels, each `w` long or longer
+        let ok = unsafe { frame(stream, i32::try_from(n).unwrap_or(i32::MAX), buf.as_mut_ptr().cast::<u8>(), 4 * pitch, w, h) };
         let t1 = Instant::now();
         if !ok {
             // (nothing yet: drawn again next turn)
@@ -669,11 +743,12 @@ fn turn() -> Duration {
             continue;
         }
         if !whole {
-            blit(&px, w as i32, h as i32, src, &mut out, view, dst);
+            blit(&px, wi, hi, src, &mut out, view, dst);
         }
         let t2 = Instant::now();
-        let d = [0, 0, view.2, view.3];
-        unsafe { kura::display::vnhost_window_draw(disp, &raw const d, out.as_ptr(), view.2, 0, 0) };
+        let d = [0, 0, view.w, view.h];
+        // SAFETY: `d` and `out` (view.w x view.h pixels) live through the call
+        unsafe { kura::display::vnhost_window_draw(disp, &raw const d, out.as_ptr(), view.w, 0, 0) };
         stats(k, n, [t1 - t0, t2 - t1, t2.elapsed()], out.len());
         BUFS.with(|b| b.borrow_mut().insert(k, (px, out)));
     }
@@ -687,6 +762,20 @@ fn turn() -> Duration {
         }
     }
     wait
+}
+
+/// A frame to draw, decoded outside the lock: play `key`'s frame `n` of `stream` (`w` x `h`),
+/// its part `src` onto `dst` of display window `disp`, of which `view` is on the screen.
+struct Draw {
+    key: u32,
+    stream: u32,
+    n: u32,
+    w: u32,
+    h: u32,
+    src: R,
+    dst: R,
+    view: R,
+    disp: u32,
 }
 
 thread_local! {
@@ -733,13 +822,13 @@ pub(crate) fn stats(k: u32, n: u32, t: [Duration; 3], pixels: usize) {
             "sake: movie {} frames drawn, {} skipped; per frame ms (avg/max): frame {:.2}/{:.2} scale {:.2}/{:.2} display {:.2}/{:.2}; {:.1} Mpixel/s",
             s.frames,
             s.skipped,
-            ms(s.sum[0]) / f as f64,
+            ms(s.sum[0]) / f64::from(f),
             ms(s.max[0]),
-            ms(s.sum[1]) / f as f64,
+            ms(s.sum[1]) / f64::from(f),
             ms(s.max[1]),
-            ms(s.sum[2]) / f as f64,
+            ms(s.sum[2]) / f64::from(f),
             ms(s.max[2]),
-            s.pixels as f64 / since.elapsed().as_secs_f64() / 1e6
+            float(wide(s.pixels)) / since.elapsed().as_secs_f64() / 1e6
         );
         let last = std::mem::take(&mut s.last);
         *s = S { last, ..Default::default() };
@@ -770,7 +859,7 @@ impl SoundJob {
             let Some(p) = m.get_mut(&key) else { return };
             if p.audio.is_some_and(|(a, next)| a == self.audio && next == self.next) {
                 kura::audio::write(self.audio, &buf);
-                p.audio = Some((self.audio, self.next + self.n as u64));
+                p.audio = Some((self.audio, self.next + wide(self.n)));
             }
             if p.movie.sound.is_none() {
                 p.movie.sound = Some(self.sound);
@@ -784,7 +873,7 @@ impl SoundJob {
 fn sound_job(p: &mut Play, t: u64) -> Option<SoundJob> {
     let s = p.movie.sound.as_mut()?;
     let playing = p.tl.running() && p.tl.rate == 1.0 && !p.tl.done;
-    let want = p.tl.position(t) as u128 * s.rate() as u128 / SEC as u128;
+    let want = u128::from(p.tl.position(t)) * u128::from(s.rate()) / u128::from(SEC);
     if !playing {
         if let Some((a, _)) = p.audio.take() {
             kura::audio::close(a);
@@ -793,12 +882,12 @@ fn sound_job(p: &mut Play, t: u64) -> Option<SoundJob> {
     }
     let (a, next) = match p.audio {
         // (out of step by more than 60 ms, after a seek or a pause: queued again from here)
-        Some((a, next)) if (next as i128 - kura::audio::queued(a) as i128 - want as i128).abs() <= s.rate() as i128 * 60 / 1000 => (a, next),
+        Some((a, next)) if (i128::from(next) - i128::from(kura::audio::queued(a)) - i128::try_from(want).unwrap_or(i128::MAX)).abs() <= i128::from(s.rate()) * 60 / 1000 => (a, next),
         old => {
             if let Some((a, _)) = old {
                 kura::audio::close(a);
             }
-            (kura::audio::open(), want as u64)
+            (kura::audio::open(), u64::try_from(want).unwrap_or(u64::MAX))
         }
     };
     let q = kura::audio::queued(a);
@@ -806,8 +895,9 @@ fn sound_job(p: &mut Play, t: u64) -> Option<SoundJob> {
     if q >= AHEAD {
         return None;
     }
-    let n = (AHEAD - q) as usize + 441;
-    let gain = if p.volume >= 0 { 1.0 } else { 10f32.powf(p.volume.max(-10000) as f32 / 2000.0) };
+    let n = narrow(u64::from(AHEAD - q)) + 441;
+    // (-10000..0 is exact in an f32)
+    let gain = if p.volume >= 0 { 1.0 } else { 10f32.powf(f32::from(i16::try_from(p.volume.max(-10000)).unwrap_or(-10000)) / 2000.0) };
     Some(SoundJob { sound: p.movie.sound.take()?, audio: a, next, n, gain })
 }
 
@@ -890,15 +980,15 @@ mod tests {
         fn blit_reference(fw in 1i32..9, fh in 1i32..9, src in (0i32..9, 0i32..9, 0i32..10, 0i32..10), dst in (-5i32..12, -5i32..12, 0i32..14, 0i32..14), view in (-2i32..6, -2i32..6, 1i32..12, 1i32..12)) {
             let frame: Vec<u32> = (0..fw * fh).map(|i| 0x10000 * i as u32 + 7).collect();
             let mut out = vec![0x1234u32; (view.2 * view.3) as usize];
-            blit(&frame, fw, fh, src, &mut out, view, dst);
-            let s = clip(src, (0, 0, fw, fh));
+            blit(&frame, fw, fh, R::of(src), &mut out, R::of(view), R::of(dst));
+            let s = clip(R::of(src), R::sized(fw, fh));
             for y in 0..view.3 {
                 for x in 0..view.2 {
                     let (wx, wy) = (x + view.0, y + view.1);
-                    let inside = s.2 > 0 && s.3 > 0 && wx >= dst.0 && wy >= dst.1 && wx < dst.0 + dst.2 && wy < dst.1 + dst.3;
+                    let inside = s.w > 0 && s.h > 0 && wx >= dst.0 && wy >= dst.1 && wx < dst.0 + dst.2 && wy < dst.1 + dst.3;
                     let want = if inside {
-                        let sx = s.0 + (wx - dst.0) * s.2 / dst.2;
-                        let sy = s.1 + (wy - dst.1) * s.3 / dst.3;
+                        let sx = s.x + (wx - dst.0) * s.w / dst.2;
+                        let sy = s.y + (wy - dst.1) * s.h / dst.3;
                         frame[(sy * fw + sx) as usize] | 0xff00_0000
                     } else { 0xff00_0000 };
                     prop_assert_eq!(out[(y * view.2 + x) as usize], want, "at {},{}", x, y);
@@ -909,13 +999,13 @@ mod tests {
         /// Letterboxing keeps the shape (to a pixel), fills one side, stays centred inside.
         #[test]
         fn letterbox_shape(dst in (-50i32..50, -50i32..50, 1i32..3000, 1i32..3000), sw in 1i32..4000, sh in 1i32..4000) {
-            let r = letterbox(dst, sw, sh);
-            prop_assert!(r.0 >= dst.0 && r.1 >= dst.1 && r.0 + r.2 <= dst.0 + dst.2 && r.1 + r.3 <= dst.1 + dst.3);
-            prop_assert!(r.2 == dst.2 || r.3 == dst.3);
+            let r = letterbox(R::of(dst), sw, sh);
+            prop_assert!(r.x >= dst.0 && r.y >= dst.1 && r.x + r.w <= dst.0 + dst.2 && r.y + r.h <= dst.1 + dst.3);
+            prop_assert!(r.w == dst.2 || r.h == dst.3);
             // w/h within a pixel of sw/sh
-            prop_assert!(((r.2 as i64 * sh as i64) - (r.3 as i64 * sw as i64)).abs() <= sw.max(sh) as i64);
-            prop_assert!((r.0 - dst.0 - (dst.0 + dst.2 - r.0 - r.2)).abs() <= 1);
-            prop_assert!((r.1 - dst.1 - (dst.1 + dst.3 - r.1 - r.3)).abs() <= 1);
+            prop_assert!(((r.w as i64 * sh as i64) - (r.h as i64 * sw as i64)).abs() <= sw.max(sh) as i64);
+            prop_assert!((r.x - dst.0 - (dst.0 + dst.2 - r.x - r.w)).abs() <= 1);
+            prop_assert!((r.y - dst.1 - (dst.1 + dst.3 - r.y - r.h)).abs() <= 1);
         }
     }
 
