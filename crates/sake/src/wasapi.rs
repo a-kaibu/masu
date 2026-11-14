@@ -1859,3 +1859,7 @@ mod tests {
         assert_eq!(steps(), 2089);
     }
 }
+
+#[cfg(test)]
+#[path = "wasapi_snapshot_tests.rs"]
+mod snapshot_tests;
