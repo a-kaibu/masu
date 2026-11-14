@@ -90,19 +90,26 @@ impl Fmt {
     }
     fn read(p: u32) -> Fmt {
         let tag = r16(p);
-        let bits = r16(p + 14) as u32;
+        let bits = u32::from(r16(p + 14));
         let float = tag == 3 || (tag == 0xfffe && r32(p + 24) == 3);
-        let law = if matches!(tag, 6 | 7) { tag as u8 } else if tag == 0xfffe && matches!(r32(p + 24), 6 | 7) { r32(p + 24) as u8 } else { 0 };
+        let sub = if tag == 0xfffe { r32(p + 24) } else { u32::from(tag) };
+        let law = match sub {
+            6 => 6,
+            7 => 7,
+            _ => 0,
+        };
         // (the real channel count: the stride; the mixer plays the first two)
-        Fmt { rate: r32(p + 4), channels: (r16(p + 2) as u32).max(1), bits, float, law }
+        Fmt { rate: r32(p + 4), channels: u32::from(r16(p + 2)).max(1), bits, float, law }
     }
     fn write(&self, p: u32) {
-        w16(p, if self.float { 3 } else if self.law != 0 { self.law as u16 } else { 1 });
-        w16(p + 2, self.channels as u16);
+        // (the WORD fields take the low 16 bits)
+        let low = |x: u32| u16::try_from(x & 0xffff).unwrap_or(0);
+        w16(p, if self.float { 3 } else if self.law != 0 { u16::from(self.law) } else { 1 });
+        w16(p + 2, low(self.channels));
         w32(p + 4, self.rate);
         w32(p + 8, self.rate * self.block());
-        w16(p + 12, self.block() as u16);
-        w16(p + 14, self.bits as u16);
+        w16(p + 12, low(self.block()));
+        w16(p + 14, low(self.bits));
         w16(p + 16, 0);
     }
 }
@@ -145,9 +152,11 @@ fn with<R>(f: impl FnOnce(&mut Dev) -> R) -> R {
 }
 
 fn gains(volume: i32, pan: i32) -> (f32, f32) {
-    let v = 10f32.powf(volume.clamp(-10000, 0) as f32 / 2000.0);
-    let l = if pan > 0 { 10f32.powf(-pan.min(10000) as f32 / 2000.0) } else { 1.0 };
-    let r = if pan < 0 { 10f32.powf(pan.max(-10000) as f32 / 2000.0) } else { 1.0 };
+    // (hundredths of a dB within -10000..=10000: exact as f32)
+    let db = |x: i32| f32::from(i16::try_from(x.clamp(-10000, 10000)).unwrap_or(0)) / 2000.0;
+    let v = 10f32.powf(db(volume.clamp(-10000, 0)));
+    let l = if pan > 0 { 10f32.powf(db(-pan.min(10000))) } else { 1.0 };
+    let r = if pan < 0 { 10f32.powf(db(pan.max(-10000))) } else { 1.0 };
     let v = if volume <= -10000 { 0.0 } else { v };
     (v * l, v * r)
 }
@@ -159,15 +168,17 @@ fn sample(b: &Buf, frame: usize) -> (f32, f32) {
     sample_at(b.data, &b.fmt, frame)
 }
 pub(crate) fn sample_at(data: u32, f: &Fmt, frame: usize) -> (f32, f32) {
-    let at = data + frame as u32 * f.block();
+    // (32-bit guest addresses: the offset wraps as the guest's would)
+    let frame = u32::try_from(frame & 0xffff_ffff).unwrap_or(0);
+    let at = data.wrapping_add(frame.wrapping_mul(f.block()));
     let one = |a: u32| -> f32 {
         match (f.bits, f.float) {
-            (8, _) if f.law != 0 => g711(mem::r8(a), f.law == 6) as f32 / 32768.0,
-            (8, _) => (mem::r8(a) as f32 - 128.0) / 128.0,
-            (16, _) => r16(a) as i16 as f32 / 32768.0,
+            (8, _) if f.law != 0 => f32::from(g711(mem::r8(a), f.law == 6)) / 32768.0,
+            (8, _) => (f32::from(mem::r8(a)) - 128.0) / 128.0,
+            (16, _) => f32::from(r16(a).cast_signed()) / 32768.0,
             (32, true) => f32::from_bits(r32(a)),
-            (32, false) => r32(a) as i32 as f32 / 2_147_483_648.0,
-            (24, _) => ((r32(a) << 8) as i32 >> 8) as f32 / 8_388_608.0,
+            (32, false) => r32(a).cast_signed() as f32 / 2_147_483_648.0,
+            (24, _) => ((r32(a) << 8).cast_signed() >> 8) as f32 / 8_388_608.0,
             _ => 0.0,
         }
     };
@@ -180,14 +191,16 @@ pub(crate) fn sample_at(data: u32, f: &Fmt, frame: usize) -> (f32, f32) {
 pub(crate) fn g711(code: u8, alaw: bool) -> i16 {
     if alaw {
         let v = code ^ 0x55;
-        let (seg, mant) = ((v >> 4) & 7, (v & 15) as i32);
+        let (seg, mant) = ((v >> 4) & 7, i16::from(v & 15));
+        // (at most (15 << 4) + 0x108 << 6 = 32256)
         let mag = if seg == 0 { (mant << 4) + 8 } else { ((mant << 4) + 0x108) << (seg - 1) };
-        (if v & 0x80 != 0 { mag } else { -mag }) as i16
+        if v & 0x80 != 0 { mag } else { -mag }
     } else {
         let v = !code;
-        let (seg, mant) = ((v >> 4) & 7, (v & 15) as i32);
+        let (seg, mant) = ((v >> 4) & 7, i16::from(v & 15));
+        // (at most ((15 << 3) + 0x84 << 7) - 0x84 = 32124)
         let mag = (((mant << 3) + 0x84) << seg) - 0x84;
-        (if v & 0x80 != 0 { -mag } else { mag }) as i16
+        if v & 0x80 != 0 { -mag } else { mag }
     }
 }
 
@@ -265,17 +278,19 @@ fn mix(d: &mut Dev, out: &mut [f32]) -> Vec<u32> {
             continue;
         }
         let block = b.fmt.block().max(1);
-        let frames = (b.size / block) as usize;
+        let n = b.size / block;
+        let (frames, frames_f) = (usize::try_from(n).unwrap_or(usize::MAX), f64::from(n));
         if frames == 0 {
             continue;
         }
         // (a sound being decoded waits at what is there: a pause, not a jump over zeros)
         if let Some(f) = &b.fill {
-            if !f.done() && (b.pos as usize).saturating_add(2 + STEP * b.freq as usize / RATE as usize) > f.frames() as usize {
+            let ahead = u64::try_from(STEP).unwrap_or(u64::MAX).saturating_mul(u64::from(b.freq)) / u64::from(RATE);
+            if !f.done() && (b.pos as u64).saturating_add(2 + ahead) > u64::from(f.frames()) {
                 continue;
             }
         }
-        let step = b.freq as f64 / RATE as f64;
+        let step = f64::from(b.freq) / f64::from(RATE);
         let start_byte = (b.pos as u32) * block;
         let (gl, gr) = b.gain;
         let mut stopped = false;
@@ -288,14 +303,14 @@ fn mix(d: &mut Dev, out: &mut [f32]) -> Vec<u32> {
             o[0] += (l0 + (l1 - l0) * t) * gl;
             o[1] += (r0 + (r1 - r0) * t) * gr;
             b.pos += step;
-            if b.pos >= frames as f64 {
+            if b.pos >= frames_f {
                 // (by the remainder: a step longer than a short looping buffer, or a position
                 // set past its end, left pos past the end and the mixer read whatever followed)
                 if b.looping {
-                    b.pos %= frames as f64;
+                    b.pos %= frames_f;
                 } else if b.repeats > 0 {
                     b.repeats -= 1;
-                    b.pos %= frames as f64;
+                    b.pos %= frames_f;
                 } else {
                     b.pos = 0.0;
                     b.playing = false;
@@ -445,7 +460,7 @@ pub(crate) fn music_set(key: u32, pos: Option<f64>, playing: Option<bool>) {
     with(|d| {
         if let Some(b) = d.bufs.get_mut(&key) {
             if let Some(p) = pos {
-                let frames = (b.size / b.fmt.block().max(1)) as f64;
+                let frames = f64::from(b.size / b.fmt.block().max(1));
                 b.pos = if frames > 0.0 { p.clamp(0.0, frames - 1.0) } else { 0.0 };
             }
             if let Some(on) = playing {
@@ -526,24 +541,25 @@ fn mix_waves(d: &mut Dev, out: &mut [f32]) -> bool {
             continue;
         }
         let block = w.fmt.block().max(1);
-        let step = w.fmt.rate as f64 / RATE as f64;
-        let (gl, gr) = ((w.volume & 0xffff) as f32 / 65535.0, (w.volume >> 16) as f32 / 65535.0);
+        let step = f64::from(w.fmt.rate) / f64::from(RATE);
+        let half = |x: u32| f32::from(u16::try_from(x & 0xffff).unwrap_or(0)) / 65535.0;
+        let (gl, gr) = (half(w.volume), half(w.volume >> 16));
         'frames: for o in out.chunks_exact_mut(2) {
             // (the header that has this frame: one that ran out hands on to the next for the
             // same output frame, which was left silent, a click at each boundary off a step)
             let (h, i) = loop {
                 let Some(&h) = w.queue.front() else { break 'frames };
-                let frames = (hlen(h) / block) as usize;
+                let n = hlen(h) / block;
                 let i = w.pos as usize;
-                if i < frames {
+                if i < usize::try_from(n).unwrap_or(usize::MAX) {
                     break (h, i);
                 }
                 w.queue.pop_front();
                 set_hflags(h, (hflags(h) | WHDR_DONE) & !WHDR_INQUEUE);
                 w.done.push(h);
-                w.played += hlen(h) as u64;
+                w.played += u64::from(hlen(h));
                 // (the part of a step past its end, into the next header)
-                w.pos = (w.pos - frames as f64).max(0.0);
+                w.pos = (w.pos - f64::from(n)).max(0.0);
                 finished = true;
             };
             let data = if w.w16.is_some() { crate::w16::lin(r32(h)) } else { mem::rp(h) };
@@ -554,13 +570,13 @@ fn mix_waves(d: &mut Dev, out: &mut [f32]) -> bool {
         }
         // a header that ended exactly on this step
         if let Some(&h) = w.queue.front() {
-            let frames = (hlen(h) / block) as usize;
-            if w.pos as usize >= frames {
+            let n = hlen(h) / block;
+            if w.pos as usize >= usize::try_from(n).unwrap_or(usize::MAX) {
                 w.queue.pop_front();
                 set_hflags(h, (hflags(h) | WHDR_DONE) & !WHDR_INQUEUE);
                 w.done.push(h);
-                w.played += hlen(h) as u64;
-                w.pos = (w.pos - frames as f64).max(0.0);
+                w.played += u64::from(hlen(h));
+                w.pos = (w.pos - f64::from(n)).max(0.0);
                 finished = true;
             }
         }
@@ -1009,7 +1025,7 @@ fn mixer_held() -> bool {
 }
 
 fn spawn_mixer(id: i32) {
-        std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
             .name("dsound mixer".into())
             .spawn(move || {
                 kura::snap::register("dsound mixer", false, 0);
@@ -1021,7 +1037,7 @@ fn spawn_mixer(id: i32) {
                 let (lock, cv) = (Mutex::new(()), std::sync::Condvar::new());
                 loop {
                     kura::snap::idle();
-                    drop(cv.wait_timeout(lock.lock().unwrap(), Duration::from_millis(10)).unwrap());
+                    drop(cv.wait_timeout(lock.lock().unwrap_or_else(|e| e.into_inner()), Duration::from_millis(10)));
                     kura::snap::busy();
                     loop {
                         let t0 = std::time::Instant::now();
@@ -1051,8 +1067,10 @@ fn spawn_mixer(id: i32) {
                         (t_mix, t_q, t_w, t_all, n, peak) = (0.0, 0.0, 0.0, std::time::Instant::now(), 0, 0.0);
                     }
                 }
-            })
-            .expect("mixer thread");
+            });
+    if let Err(e) = spawned {
+        eprintln!("sake: the dsound mixer thread did not start: {e}");
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1547,11 +1565,11 @@ fn B_GetFormat(c: &mut Ctx) -> u32 {
     0
 }
 fn B_GetVolume(c: &mut Ctx) -> u32 {
-    put32(c.a(1), with_buf(c.a(0), |b| b.volume).unwrap_or(0) as u32);
+    put32(c.a(1), with_buf(c.a(0), |b| b.volume).unwrap_or(0).cast_unsigned());
     0
 }
 fn B_GetPan(c: &mut Ctx) -> u32 {
-    put32(c.a(1), with_buf(c.a(0), |b| b.pan).unwrap_or(0) as u32);
+    put32(c.a(1), with_buf(c.a(0), |b| b.pan).unwrap_or(0).cast_unsigned());
     0
 }
 fn B_GetFrequency(c: &mut Ctx) -> u32 {
@@ -1609,7 +1627,7 @@ fn B_SetCurrentPosition(c: &mut Ctx) -> u32 {
         if p >= b.size && b.size != 0 {
             return Hr::InvalidParam.code();
         }
-        b.pos = (p / b.fmt.block().max(1)) as f64;
+        b.pos = f64::from(p / b.fmt.block().max(1));
         0
     })
     .unwrap_or(0)
@@ -1758,7 +1776,8 @@ fn wave_chunks(b: &[u8]) -> Option<(usize, usize, usize)> {
     }
     let (mut at, mut fmt, mut data) = (12, None, None);
     while at < b.len() && b.len() - at >= 8 {
-        let n = u32::from_le_bytes(b[at + 4..at + 8].try_into().unwrap());
+        let Some(&[n0, n1, n2, n3]) = b.get(at + 4..at + 8) else { break };
+        let n = u32::from_le_bytes([n0, n1, n2, n3]);
         // (64-bit sums: on wasm32 `at + 8 + n` with n = 0xFFFFFFF8 wrapped to `at`, an endless
         // loop on the PlaySound caller's thread, review A-7)
         let (end, next) = crate::audiofile::riff_chunk(at + 8, n, b.len());
@@ -1780,8 +1799,11 @@ pub(crate) fn adpcm_to_pcm(image: Vec<u8>) -> Vec<u8> {
     if f.len() < 20 {
         return image;
     }
-    let u16_at = |o: usize| u16::from_le_bytes([f[o], f[o + 1]]) as usize;
-    let (tag, ch, rate, align) = (u16_at(0), u16_at(2).max(1), u32::from_le_bytes(f[4..8].try_into().unwrap()), u16_at(12));
+    let u16_at = |o: usize| usize::from(u16::from_le_bytes([f[o], f[o + 1]]));
+    let Some(&[r0, r1, r2, r3]) = f.get(4..8) else { return image };
+    let (tag, ch, rate, align) = (u16_at(0), u16_at(2).max(1), u32::from_le_bytes([r0, r1, r2, r3]), u16_at(12));
+    // (ch came from a WORD)
+    let ch16 = u16::try_from(ch).unwrap_or(u16::MAX);
     if !matches!(tag, 2 | 0x11) || align == 0 {
         return image;
     }
@@ -1797,19 +1819,20 @@ pub(crate) fn adpcm_to_pcm(image: Vec<u8>) -> Vec<u8> {
     let bytes: Vec<u8> = pcm.iter().flat_map(|v| v.to_le_bytes()).collect();
     let mut out = Vec::with_capacity(44 + bytes.len());
     out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + bytes.len() as u32).to_le_bytes());
+    let len = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&(36 + len).to_le_bytes());
     out.extend_from_slice(b"WAVEfmt ");
     out.extend_from_slice(&16u32.to_le_bytes());
-    for v in [1u16, ch as u16] {
+    for v in [1u16, ch16] {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * 2 * ch as u32).to_le_bytes());
-    for v in [2 * ch as u16, 16] {
+    out.extend_from_slice(&(rate * 2 * u32::from(ch16)).to_le_bytes());
+    for v in [2 * ch16, 16] {
         out.extend_from_slice(&v.to_le_bytes());
     }
     out.extend_from_slice(b"data");
-    out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    out.extend_from_slice(&len.to_le_bytes());
     out.extend_from_slice(&bytes);
     out
 }
@@ -1849,7 +1872,7 @@ fn play_sound(name: u32, module: u32, flags: u32, wide: bool) -> u32 {
         if mem::accessible(name, 12, false, true) < 12 || r32(name) != u32::from_le_bytes(*b"RIFF") {
             return 0;
         }
-        let n = (8 + r32(name + 4) as u64).min(u32::MAX as u64) as u32;
+        let n = r32(name + 4).saturating_add(8);
         mem::slice(name, mem::accessible(name, n, false, true)).to_vec()
     } else {
         match sound_image(name, module, flags, wide) {
@@ -1859,12 +1882,14 @@ fn play_sound(name: u32, module: u32, flags: u32, wide: bool) -> u32 {
     };
     let image = adpcm_to_pcm(image);
     let Some((fmt, data, size)) = wave_chunks(&image) else { return 0 };
-    let p = mem::heap_alloc(image.len() as u32, false);
+    let Ok(len) = u32::try_from(image.len()) else { return 0 };
+    let (Ok(fmt), Ok(data), Ok(size)) = (u32::try_from(fmt), u32::try_from(data), u32::try_from(size)) else { return 0 };
+    let p = mem::heap_alloc(len, false);
     if p == 0 {
         return 0;
     }
     mem::write(p, &image);
-    let f = Fmt::read(p + fmt as u32);
+    let f = Fmt::read(p + fmt);
     if f.bits == 0 || f.rate == 0 {
         mem::heap_free(p);
         return 0;
@@ -1874,8 +1899,8 @@ fn play_sound(name: u32, module: u32, flags: u32, wide: bool) -> u32 {
         d.bufs.insert(
             PLAY_SOUND,
             Buf {
-                data: p + data as u32,
-                size: size as u32,
+                data: p + data,
+                size,
                 fmt: f,
                 freq: f.rate,
                 flags: 0,
@@ -1897,7 +1922,7 @@ fn play_sound(name: u32, module: u32, flags: u32, wide: bool) -> u32 {
     if flags & SND_ASYNC == 0 && flags & SND_LOOP == 0 {
         // synchronous: back when it has played, or another thread stopped it (PlaySound(NULL));
         // waiting in steps that are save-state points and see TerminateThread
-        let ms = size as u64 * 1000 / (f.rate * f.block()).max(1) as u64;
+        let ms = u64::from(size) * 1000 / u64::from((f.rate * f.block()).max(1));
         let end = std::time::Instant::now() + Duration::from_millis(ms);
         loop {
             let now = std::time::Instant::now();
