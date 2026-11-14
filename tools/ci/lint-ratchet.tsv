@@ -1501,14 +1501,13 @@ file	crates/sake/src/gdiplus_text.rs	cast_sign_loss	20
 file	crates/sake/src/gdiplus_text.rs	indexing_slicing	11
 file	crates/sake/src/gdiplus_text.rs	unwrap_used	4
 file	crates/sake/src/gl.rs	arithmetic_side_effects	15
-file	crates/sake/src/gl.rs	as_conversions	33
-file	crates/sake/src/gl.rs	cast_possible_truncation	12
+file	crates/sake/src/gl.rs	as_conversions	28
+file	crates/sake/src/gl.rs	cast_possible_truncation	11
 file	crates/sake/src/gl.rs	cast_sign_loss	4
-file	crates/sake/src/gl.rs	indexing_slicing	11
+file	crates/sake/src/gl.rs	indexing_slicing	9
 file	crates/sake/src/gl.rs	undocumented_unsafe_blocks	5
 file	crates/sake/src/gl_sigs.rs	indexing_slicing	125
 file	crates/sake/src/gl_sigs.rs	masu-transmute	32
-file	crates/sake/src/gl_sigs.rs	unsafe_op_in_unsafe_fn	32
 file	crates/sake/src/glu.rs	arithmetic_side_effects	113
 file	crates/sake/src/glu.rs	as_conversions	148
 file	crates/sake/src/glu.rs	cast_possible_truncation	47

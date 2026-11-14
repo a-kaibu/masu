@@ -11,7 +11,7 @@ use crate::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use crate::api::{host_fn, implement, Ctx};
-use crate::gl_sigs::{self, Ret};
+use crate::gl_sigs::{self, Ret, Sig};
 use crate::mem::{self, r32, w16, w32};
 
 /// name -> trap, for wglGetProcAddress
@@ -19,12 +19,12 @@ static PROCS: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
 /// strings kura returns (glGetString), copied once into guest memory
 static STRS: Mutex<Option<HashMap<usize, u32>>> = Mutex::new(None);
 
-fn sig_of(name: &str) -> Option<u16> {
+fn sig_of(name: &str) -> Option<Sig> {
     gl_sigs::FUNCS.binary_search_by(|(n, _)| n.cmp(&name)).ok().map(|i| gl_sigs::FUNCS[i].1)
 }
 
 /// kura's function (by its name or the ARB/EXT one's core name) and signature
-fn host_proc(name: &str) -> Option<(usize, u16)> {
+fn host_proc(name: &str) -> Option<(usize, Sig)> {
     let base = name.strip_suffix("ARB").or_else(|| name.strip_suffix("EXT")).unwrap_or(name);
     let proc = |n: &str| {
         let c = std::ffi::CString::new(n).ok()?;
@@ -35,8 +35,8 @@ fn host_proc(name: &str) -> Option<(usize, u16)> {
     Some((f, sig_of(name).or_else(|| sig_of(base))?))
 }
 
-fn stack_bytes(sig: u16) -> u32 {
-    gl_sigs::SIGS[sig as usize].0.chars().map(|k| if k == 'd' { 8 } else { 4 }).sum()
+fn stack_bytes(sig: Sig) -> u32 {
+    sig.kinds().chars().map(|k| if k == 'd' { 8 } else { 4 }).sum()
 }
 
 /// A GL trap's tag (crate::api::set_tag; the data is kura's function): SIG_SET | the signature,
@@ -44,8 +44,8 @@ fn stack_bytes(sig: u16) -> u32 {
 const SIG_SET: u32 = 1 << 31;
 const RET_STR: u32 = 1 << 16;
 
-fn gl_tag(name: &str, sig: u16) -> u32 {
-    SIG_SET | u32::from(sig) | if matches!(name, "glGetString" | "glGetStringi") { RET_STR } else { 0 }
+fn gl_tag(name: &str, sig: Sig) -> u32 {
+    SIG_SET | u32::from(sig.index()) | if matches!(name, "glGetString" | "glGetStringi") { RET_STR } else { 0 }
 }
 
 fn dispatch(c: &mut Ctx) -> u32 {
@@ -64,14 +64,18 @@ fn dispatch(c: &mut Ctx) -> u32 {
         crate::api::set_tag(c.trap, t, e);
         (tag, f) = (t, e);
     }
-    let sig = tag as u16;
+    // (every tag was made by gl_tag from a Sig)
+    let Some(sig) = Sig::of(tag as u16) else {
+        missing(c.trap);
+        return 0;
+    };
     // (12 words at most: gl_sigs::call reads w[..12])
     let mut w = [0u32; 16];
     let mut n = 0;
     if mem::x64() {
         // x64: argument i in RCX/RDX/R8/R9 or XMM0-3 by position, then the stack; pointers
         // and GLsizeiptr pass their low half
-        for (i, k) in gl_sigs::SIGS[sig as usize].0.chars().enumerate() {
+        for (i, k) in sig.kinds().chars().enumerate() {
             match k {
                 'd' => {
                     let v = c.xmm(i as u32);
@@ -119,14 +123,14 @@ pub fn call_gl(name: &str, w: &[u32]) -> u32 {
 
 /// kura's GL function `name` and its signature, for callers that keep it (glu's per-vertex
 /// calls look a function up once, not per call)
-pub fn gl_proc(name: &str) -> Option<(usize, u16)> {
+pub fn gl_proc(name: &str) -> Option<(usize, Sig)> {
     host_proc(name)
 }
 
 /// Calls a function `gl_proc` found with the argument words `w`: missing words are 0 and extra
 /// ones are left out, so a caller's slip is a wrong argument, not an index past the end
 /// (gl_sigs::call reads as many words as the signature has).
-pub fn call_proc(p: Option<(usize, u16)>, w: &[u32]) -> u32 {
+pub fn call_proc(p: Option<(usize, Sig)>, w: &[u32]) -> u32 {
     let Some((f, sig)) = p else { return 0 };
     let words = fit(sig, w);
     match unsafe { gl_sigs::call(sig, f as *const (), &words) } {
@@ -136,8 +140,8 @@ pub fn call_proc(p: Option<(usize, u16)>, w: &[u32]) -> u32 {
 }
 
 /// `w` as exactly the words signature `sig` takes (a double: two): cut, or padded with 0
-fn fit(sig: u16, w: &[u32]) -> std::borrow::Cow<'_, [u32]> {
-    let n = gl_sigs::SIGS.get(sig as usize).map_or(0, |_| (stack_bytes(sig) / 4) as usize);
+fn fit(sig: Sig, w: &[u32]) -> std::borrow::Cow<'_, [u32]> {
+    let n = (stack_bytes(sig) / 4) as usize;
     if w.len() == n {
         return std::borrow::Cow::Borrowed(w);
     }
@@ -408,7 +412,7 @@ mod tag_tests {
             let t = proc_trap(name);
             assert_ne!(t, 0, "{name}");
             let (tag, data) = crate::api::tag_of(t);
-            assert_eq!(tag & !RET_STR, SIG_SET | u32::from(sig), "{name}");
+            assert_eq!(tag & !RET_STR, SIG_SET | u32::from(sig.index()), "{name}");
             assert_eq!(tag & RET_STR != 0, name.starts_with("glGetString"), "{name}");
             assert_eq!(data, f, "{name}");
             assert_eq!(crate::api::args_of(t), (false, stack_bytes(sig)));
@@ -431,20 +435,20 @@ mod fit_tests {
         let mut seen = 0;
         for line in body.lines() {
             let Some((sig, rest)) = line.trim().split_once(" => ") else { continue };
-            let Ok(sig) = sig.parse::<u16>() else { continue };
+            let Some(sig) = sig.strip_prefix("Sig::S").and_then(|k| k.parse::<u16>().ok()).and_then(gl_sigs::Sig::of) else { continue };
             let top = rest.match_indices("w[").filter_map(|(i, _)| rest[i + 2..].split(']').next()?.parse::<usize>().ok()).max();
             let n = stack_bytes(sig) as usize / 4;
             if let Some(top) = top {
-                assert!(top < n, "signature {sig} ({}) reads w[{top}] of {n}", gl_sigs::SIGS[sig as usize].0);
+                assert!(top < n, "signature {sig:?} ({}) reads w[{top}] of {n}", sig.kinds());
             }
             seen += 1;
         }
-        assert_eq!(seen, gl_sigs::SIGS.len(), "an arm per signature");
+        assert_eq!(seen, gl_sigs::Sig::ALL.len(), "an arm per signature");
     }
 
     proptest! {
         #[test]
-        fn fitted_words_are_the_signatures(sig in 0..gl_sigs::SIGS.len() as u16, w in proptest::collection::vec(any::<u32>(), 0..16)) {
+        fn fitted_words_are_the_signatures(sig in proptest::sample::select(gl_sigs::Sig::ALL.to_vec()), w in proptest::collection::vec(any::<u32>(), 0..16)) {
             let n = stack_bytes(sig) as usize / 4;
             let f = fit(sig, &w);
             prop_assert_eq!(f.len(), n);
@@ -465,7 +469,7 @@ mod sig_golden_tests {
     fn functions_keep_their_signatures() {
         let mut out = String::new();
         for &(name, sig) in gl_sigs::FUNCS {
-            let (kinds, ret) = gl_sigs::SIGS[sig as usize];
+            let (kinds, ret) = (sig.kinds(), sig.ret());
             out += &format!("{name} {kinds:?} {ret} {}\n", stack_bytes(sig));
         }
         let golden = concat!(env!("CARGO_MANIFEST_DIR"), "/src/gl_sigs_golden.txt");

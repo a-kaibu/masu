@@ -519,7 +519,7 @@ use crate::gl::call_gl;
 /// call_gl with the function looked up once per call site (the per-vertex calls)
 macro_rules! gl {
     ($name:literal, $w:expr) => {{
-        static F: std::sync::OnceLock<Option<(usize, u16)>> = std::sync::OnceLock::new();
+        static F: std::sync::OnceLock<Option<(usize, crate::gl_sigs::Sig)>> = std::sync::OnceLock::new();
         crate::gl::call_proc(*F.get_or_init(|| crate::gl::gl_proc($name)), $w)
     }};
 }
