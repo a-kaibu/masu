@@ -97,7 +97,7 @@ pub fn check(table: &Path, got: &BTreeMap<String, u64>) {
     }
     if std::env::var_os("PIN_RECORD").is_some() {
         want.extend(got.iter().map(|(k, v)| (k.clone(), *v)));
-        let mut s = String::from("# behaviour pins (src/pin_tests.rs): name, FNV-1a of every output\n");
+        let mut s = String::from("# behaviour pins: name, FNV-1a of every output (PIN_RECORD=1 writes it)\n");
         for (k, v) in &want {
             s += &format!("{k}\t{v:016x}\n");
         }

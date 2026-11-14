@@ -1,0 +1,6 @@
+# behaviour pins: name, FNV-1a of every output (PIN_RECORD=1 writes it)
+any bytes	c829dec6210588a4
+mono32k.mp2	1a1d05bf32e5edd3
+mono32k.mp2 damaged x32	89506f52f18047b3
+testsrc.mpg	2b1b19bfcbd0787f
+testsrc.mpg damaged x32	65f518002bd91b14

@@ -1,0 +1,22 @@
+# behaviour pins: name, FNV-1a of every output (PIN_RECORD=1 writes it)
+any bytes	88a15b954de9d47c
+mono-q0	5248e85c6dd82870
+mono-q0 headers damaged x40	3f93b6d7ac1d86a5
+mono-q0 packets damaged x40	a7d37d0d6b14968d
+mono-q0 pages damaged x16	a705a2e5a28760d9
+stereo-48k	26cfb8053f884a47
+stereo-48k headers damaged x40	19b36a05b81ad125
+stereo-48k packets damaged x40	f39e8411d22a5f75
+stereo-48k pages damaged x16	6042a1d976a1e605
+stereo-q10-silence	5ee0e1fd1ecfcf8f
+stereo-q10-silence headers damaged x40	c9c3fbf1cbdd3429
+stereo-q10-silence packets damaged x40	b1cb3a002b0f53dd
+stereo-q10-silence pages damaged x16	f0f71838a7f15cfe
+stereo-q5	9ffbc1ace10f7b71
+stereo-q5 headers damaged x40	345ca6290298de5c
+stereo-q5 packets damaged x40	10353143b375e157
+stereo-q5 pages damaged x16	f42ef0b79fba9274
+surround-q3	327d775cccf71870
+surround-q3 headers damaged x40	ea310337b80068ed
+surround-q3 packets damaged x40	b8c26ee71c980837
+surround-q3 pages damaged x16	2d696bf56b2a9131
