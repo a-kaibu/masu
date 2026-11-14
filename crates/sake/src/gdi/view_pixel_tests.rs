@@ -256,7 +256,7 @@ fn run_new(v: &View, x: i32, y: i32, op: Op) -> u32 {
 /// a view over `buf` as View::of makes it (the new code's way of naming the depth)
 fn new_view(buf: &mut [u8], w: i32, h: i32, stride: isize, up: bool, bpp: u16, r565: bool, pal: &[u32]) -> View {
     let top = if up { unsafe { buf.as_mut_ptr().offset((h as isize - 1) * stride) } } else { buf.as_mut_ptr() };
-    View { top, stride: if up { -stride } else { stride }, w, h, bpp, r565, pal: pal.to_vec(), mono: false }
+    View { top, stride: if up { -stride } else { stride }, w, h, bpp: Depth::of(bpp), r565, pal: pal.to_vec(), mono: false }
 }
 
 proptest! {
@@ -286,5 +286,16 @@ proptest! {
         }
         drop(new);
         prop_assert!(a == b, "rows differ");
+    }
+}
+
+/// Every u16 names the depth it was: the named ones for 1/4/8/16/24/32, `Other` keeping the rest.
+#[test]
+fn depth_round_trips_every_u16() {
+    for b in 0..=u16::MAX {
+        let d = Depth::of(b);
+        assert_eq!(d.bits(), b);
+        assert_eq!(matches!(d, Depth::Other(_)), ![1, 4, 8, 16, 24, 32].contains(&b), "{b}");
+        assert_eq!(d.indexed(), b <= 8);
     }
 }

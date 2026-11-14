@@ -374,6 +374,87 @@ pub fn solid_brush(color: u32) -> u32 {
 // ---------------------------------------------------------------------------------------------
 // views: pixels at an address
 
+/// A view's bits per pixel: the depths GDI draws on, by name (a `match` lists all of them), and
+/// any other a DIB header carries (`Other`: reads as 0, writes nothing, as before).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Depth {
+    D1,
+    D4,
+    D8,
+    D16,
+    D24,
+    D32,
+    Other(u16),
+}
+
+impl Depth {
+    const fn of(bpp: u16) -> Depth {
+        match bpp {
+            1 => Depth::D1,
+            4 => Depth::D4,
+            8 => Depth::D8,
+            16 => Depth::D16,
+            24 => Depth::D24,
+            32 => Depth::D32,
+            b => Depth::Other(b),
+        }
+    }
+    const fn bits(self) -> u16 {
+        match self {
+            Depth::D1 => 1,
+            Depth::D4 => 4,
+            Depth::D8 => 8,
+            Depth::D16 => 16,
+            Depth::D24 => 24,
+            Depth::D32 => 32,
+            Depth::Other(b) => b,
+        }
+    }
+    /// pixels are palette indices (and depths 8 or less GDI does not draw on)
+    const fn indexed(self) -> bool {
+        self.bits() <= 8
+    }
+}
+
+/// A column or row already inside the view (never negative) as an offset
+#[inline]
+fn at(x: i32) -> usize {
+    debug_assert!(x >= 0);
+    usize::try_from(x).unwrap_or(0)
+}
+/// a pixel's three bytes (B, G, R in memory) as 0xRRGGBB
+#[inline]
+unsafe fn read24(p: *const u8) -> u32 {
+    let [b, g, r] = unsafe { p.cast::<[u8; 3]>().read_unaligned() };
+    u32::from_le_bytes([b, g, r, 0])
+}
+/// the low three bytes of `v` as a pixel's B, G, R
+#[inline]
+unsafe fn write24(p: *mut u8, v: u32) {
+    let [b, g, r, _] = v.to_le_bytes();
+    unsafe { p.cast::<[u8; 3]>().write_unaligned([b, g, r]) }
+}
+/// the low 16 bits
+#[inline]
+const fn lo16(v: u32) -> u16 {
+    let [a, b, _, _] = v.to_le_bytes();
+    u16::from_le_bytes([a, b])
+}
+/// the low 8 bits
+#[inline]
+const fn lo8(v: u32) -> u8 {
+    v.to_le_bytes()[0]
+}
+/// 0xRRGGBB as the 16-bit pixel (5-6-5 or 5-5-5)
+#[inline]
+const fn to16(c: u32, r565: bool) -> u32 {
+    if r565 {
+        (c >> 19 & 31) << 11 | (c >> 10 & 63) << 5 | (c >> 3 & 31)
+    } else {
+        (c >> 19 & 31) << 10 | (c >> 11 & 31) << 5 | (c >> 3 & 31)
+    }
+}
+
 #[derive(Clone)]
 struct View {
     /// address of row 0 (the top row)
@@ -381,7 +462,7 @@ struct View {
     stride: isize,
     w: i32,
     h: i32,
-    bpp: u16,
+    bpp: Depth,
     r565: bool,
     pal: Vec<u32>,
     /// a monochrome DDB: colors map through the DC's text/background colors
@@ -398,10 +479,10 @@ impl View {
         } else {
             (base, b.stride as isize)
         };
-        View { top, stride, w: b.w, h: b.h, bpp: b.bpp, r565: b.r565, pal: b.pal.clone(), mono: b.bpp == 1 && !b.dib }
+        View { top, stride, w: b.w, h: b.h, bpp: Depth::of(b.bpp), r565: b.r565, pal: b.pal.clone(), mono: b.bpp == 1 && !b.dib }
     }
     fn surface(px: &mut [u32], w: i32, h: i32) -> View {
-        View { top: px.as_mut_ptr() as *mut u8, stride: w as isize * 4, w, h, bpp: 32, r565: false, pal: Vec::new(), mono: false }
+        View { top: px.as_mut_ptr().cast::<u8>(), stride: w as isize * 4, w, h, bpp: Depth::D32, r565: false, pal: Vec::new(), mono: false }
     }
     #[inline]
     fn row(&self, y: i32) -> *mut u8 {
@@ -414,15 +495,13 @@ impl View {
     #[inline]
     fn get(&self, x: i32, y: i32) -> u32 {
         let r = self.row(y);
+        let x = at(x);
         unsafe {
             match self.bpp {
-                32 => (r as *const u32).add(x as usize).read_unaligned(),
-                24 => {
-                    let p = r.add(3 * x as usize);
-                    (*p.add(2) as u32) << 16 | (*p.add(1) as u32) << 8 | *p as u32
-                }
-                16 => {
-                    let v = (r as *const u16).add(x as usize).read_unaligned() as u32;
+                Depth::D32 => r.cast::<u32>().add(x).read_unaligned(),
+                Depth::D24 => read24(r.add(3 * x)),
+                Depth::D16 => {
+                    let v = u32::from(r.cast::<u16>().add(x).read_unaligned());
                     if self.r565 {
                         let (r5, g6, b5) = (v >> 11 & 31, v >> 5 & 63, v & 31);
                         (r5 << 3 | r5 >> 2) << 16 | (g6 << 2 | g6 >> 4) << 8 | (b5 << 3 | b5 >> 2)
@@ -431,16 +510,16 @@ impl View {
                         (r5 << 3 | r5 >> 2) << 16 | (g5 << 3 | g5 >> 2) << 8 | (b5 << 3 | b5 >> 2)
                     }
                 }
-                8 => self.pal_at(*r.add(x as usize) as usize),
-                4 => {
-                    let b = *r.add(x as usize / 2);
-                    self.pal_at(if x & 1 == 0 { b >> 4 } else { b & 15 } as usize)
+                Depth::D8 => self.pal_at(usize::from(*r.add(x))),
+                Depth::D4 => {
+                    let b = *r.add(x / 2);
+                    self.pal_at(usize::from(if x & 1 == 0 { b >> 4 } else { b & 15 }))
                 }
-                1 => {
-                    let b = *r.add(x as usize / 8);
-                    self.pal_at((b >> (7 - (x & 7)) & 1) as usize)
+                Depth::D1 => {
+                    let b = *r.add(x / 8);
+                    self.pal_at(usize::from(b >> (7 - (x & 7)) & 1))
                 }
-                _ => 0,
+                Depth::Other(_) => 0,
             }
         }
     }
@@ -449,63 +528,56 @@ impl View {
     #[inline]
     fn raw(&self, x: i32, y: i32) -> u32 {
         let r = self.row(y);
+        let x = at(x);
         unsafe {
             match self.bpp {
-                32 => (r as *const u32).add(x as usize).read_unaligned(),
-                24 => {
-                    let p = r.add(3 * x as usize);
-                    (*p.add(2) as u32) << 16 | (*p.add(1) as u32) << 8 | *p as u32
-                }
-                16 => (r as *const u16).add(x as usize).read_unaligned() as u32,
-                8 => *r.add(x as usize) as u32,
-                4 => (*r.add(x as usize / 2) >> if x & 1 == 0 { 4 } else { 0 } & 15) as u32,
-                1 => (*r.add(x as usize / 8) >> (7 - (x & 7)) & 1) as u32,
-                _ => 0,
+                Depth::D32 => r.cast::<u32>().add(x).read_unaligned(),
+                Depth::D24 => read24(r.add(3 * x)),
+                Depth::D16 => u32::from(r.cast::<u16>().add(x).read_unaligned()),
+                Depth::D8 => u32::from(*r.add(x)),
+                Depth::D4 => u32::from(*r.add(x / 2) >> if x & 1 == 0 { 4 } else { 0 } & 15),
+                Depth::D1 => u32::from(*r.add(x / 8) >> (7 - (x & 7)) & 1),
+                Depth::Other(_) => 0,
             }
         }
     }
     #[inline]
     fn set_raw(&self, x: i32, y: i32, v: u32) {
         let r = self.row(y);
+        let x = at(x);
         unsafe {
             match self.bpp {
-                32 => (r as *mut u32).add(x as usize).write_unaligned(v),
-                24 => {
-                    let p = r.add(3 * x as usize);
-                    *p = v as u8;
-                    *p.add(1) = (v >> 8) as u8;
-                    *p.add(2) = (v >> 16) as u8;
-                }
-                16 => (r as *mut u16).add(x as usize).write_unaligned(v as u16),
-                8 => *r.add(x as usize) = v as u8,
-                4 => {
-                    let p = r.add(x as usize / 2);
-                    let i = (v & 15) as u8;
+                Depth::D32 => r.cast::<u32>().add(x).write_unaligned(v),
+                Depth::D24 => write24(r.add(3 * x), v),
+                Depth::D16 => r.cast::<u16>().add(x).write_unaligned(lo16(v)),
+                Depth::D8 => *r.add(x) = lo8(v),
+                Depth::D4 => {
+                    let p = r.add(x / 2);
+                    let i = lo8(v & 15);
                     *p = if x & 1 == 0 { (*p & 0x0f) | i << 4 } else { (*p & 0xf0) | i };
                 }
-                1 => {
-                    let p = r.add(x as usize / 8);
+                Depth::D1 => {
+                    let p = r.add(x / 8);
                     let m = 0x80u8 >> (x & 7);
                     *p = if v & 1 != 0 { *p | m } else { *p & !m };
                 }
-                _ => {}
+                Depth::Other(_) => {}
             }
         }
     }
     /// A solid color (0xRRGGBB) as a stored pixel: palettes take the nearest entry.
     fn pixel(&self, c: u32) -> u32 {
         match self.bpp {
-            32 | 24 => c & 0xffffff,
-            16 if self.r565 => (c >> 19 & 31) << 11 | (c >> 10 & 63) << 5 | (c >> 3 & 31),
-            16 => (c >> 19 & 31) << 10 | (c >> 11 & 31) << 5 | (c >> 3 & 31),
-            _ => self.index_of(c),
+            Depth::D32 | Depth::D24 => c & 0xffffff,
+            Depth::D16 => to16(c, self.r565),
+            Depth::D8 | Depth::D4 | Depth::D1 | Depth::Other(_) => self.index_of(c),
         }
     }
     /// The COLORREF (0xBBGGRR) a stored pixel shows
     fn color_of(&self, px: u32) -> u32 {
         let c = match self.bpp {
-            32 | 24 => px & 0xffffff,
-            16 => {
+            Depth::D32 | Depth::D24 => px & 0xffffff,
+            Depth::D16 => {
                 let x5 = |v: u32| v << 3 | v >> 2;
                 let (r, g, b) = if self.r565 {
                     let g6 = px >> 5 & 63;
@@ -515,16 +587,17 @@ impl View {
                 };
                 x5(r) << 16 | g << 8 | x5(b)
             }
-            _ => self.pal_at(px as usize),
+            Depth::D8 | Depth::D4 | Depth::D1 | Depth::Other(_) => self.pal_at(usize::try_from(px).unwrap_or(usize::MAX)),
         };
         (c & 0xff) << 16 | (c & 0xff00) | (c >> 16 & 0xff)
     }
     /// The bits a stored pixel has
     fn raw_mask(&self) -> u32 {
-        if self.bpp >= 32 {
+        let bits = self.bpp.bits();
+        if bits >= 32 {
             u32::MAX
         } else {
-            (1u32 << self.bpp) - 1
+            (1u32 << bits) - 1
         }
     }
     fn pal_at(&self, i: usize) -> u32 {
@@ -532,15 +605,15 @@ impl View {
     }
     fn index_of(&self, c: u32) -> u32 {
         let c = c & 0xffffff;
-        if self.bpp == 1 && self.pal.len() == 2 && self.pal[0] == 0 && self.pal[1] == 0xffffff {
-            return (c != 0) as u32;
+        if self.bpp == Depth::D1 && self.pal == [0, 0xffffff] {
+            return u32::from(c != 0);
         }
         let mut best = (u32::MAX, 0);
-        for (i, &p) in self.pal.iter().enumerate() {
-            let d = |s: u32| ((c >> s & 255) as i32 - (p >> s & 255) as i32).pow(2) as u32;
+        for (i, &p) in (0u32..).zip(&self.pal) {
+            let d = |s: u32| (c >> s & 255).abs_diff(p >> s & 255).pow(2);
             let e = d(16) + d(8) + d(0);
             if e < best.0 {
-                best = (e, i as u32);
+                best = (e, i);
                 if e == 0 {
                     break;
                 }
@@ -551,36 +624,25 @@ impl View {
     #[inline]
     fn put(&self, x: i32, y: i32, c: u32) {
         let r = self.row(y);
+        let xu = at(x);
         unsafe {
             match self.bpp {
-                32 => (r as *mut u32).add(x as usize).write_unaligned(c),
-                24 => {
-                    let p = r.add(3 * x as usize);
-                    *p = c as u8;
-                    *p.add(1) = (c >> 8) as u8;
-                    *p.add(2) = (c >> 16) as u8;
+                Depth::D32 => r.cast::<u32>().add(xu).write_unaligned(c),
+                Depth::D24 => write24(r.add(3 * xu), c),
+                Depth::D16 => r.cast::<u16>().add(xu).write_unaligned(lo16(to16(c, self.r565))),
+                Depth::D8 => *r.add(xu) = lo8(self.index_of(c)),
+                Depth::D4 => {
+                    let i = lo8(self.index_of(c));
+                    let p = r.add(xu / 2);
+                    *p = if xu & 1 == 0 { (*p & 0x0f) | i << 4 } else { (*p & 0xf0) | i };
                 }
-                16 => {
-                    let v = if self.r565 {
-                        (c >> 19 & 31) << 11 | (c >> 10 & 63) << 5 | (c >> 3 & 31)
-                    } else {
-                        (c >> 19 & 31) << 10 | (c >> 11 & 31) << 5 | (c >> 3 & 31)
-                    };
-                    (r as *mut u16).add(x as usize).write_unaligned(v as u16)
-                }
-                8 => *r.add(x as usize) = self.index_of(c) as u8,
-                4 => {
-                    let i = self.index_of(c) as u8;
-                    let p = r.add(x as usize / 2);
-                    *p = if x & 1 == 0 { (*p & 0x0f) | i << 4 } else { (*p & 0xf0) | i };
-                }
-                1 => {
-                    let i = self.index_of(c) as u8;
-                    let p = r.add(x as usize / 8);
-                    let m = 0x80u8 >> (x & 7);
+                Depth::D1 => {
+                    let i = lo8(self.index_of(c));
+                    let p = r.add(xu / 8);
+                    let m = 0x80u8 >> (xu & 7);
                     *p = if i != 0 { *p | m } else { *p & !m };
                 }
-                _ => {}
+                Depth::Other(_) => {}
             }
         }
     }
@@ -1166,7 +1228,7 @@ fn pat_blt(c: &mut Canvas, r: Rect, pat: &Pat, op: u8) -> Rect {
         // (a raster op of the null brush draws nothing)
         return Rect::default();
     }
-    if let (Pat::Solid(col), 0xf0, 32) = (pat, op, c.v.bpp) {
+    if let (Pat::Solid(col), 0xf0, Depth::D32) = (pat, op, c.v.bpp) {
         for y in r.t..r.b {
             let row = c.v.row(y) as *mut u32;
             for x in r.l..r.r {
@@ -1262,7 +1324,7 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
     let in_src = |x: i32, y: i32| x >= 0 && y >= 0 && x < sw_ && y < sh_;
     let d = &c.v;
     // fast path: same depth (32), copy, no stretch or flip
-    if op == 0xcc && d.bpp == 32 && sv.bpp == 32 && sw == dw && sh == dh && !flip.0 && !flip.1 {
+    if op == 0xcc && d.bpp == Depth::D32 && sv.bpp == Depth::D32 && sw == dw && sh == dh && !flip.0 && !flip.1 {
         let x0 = r.l.max(dx - sx);
         let x1 = r.r.min(dx - sx + sw_);
         if x0 >= x1 {
@@ -1292,7 +1354,7 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
     // raster ops combine stored pixels (an indexed destination's: indices); a source of
     // another format is converted first, to an index by the 5 high bits of each component
     // as Windows does
-    let same = sv.bpp == d.bpp && !mono_to_color && !color_to_mono && if d.bpp <= 8 { sv.pal == d.pal } else { sv.r565 == d.r565 };
+    let same = sv.bpp == d.bpp && !mono_to_color && !color_to_mono && if d.bpp.indexed() { sv.pal == d.pal } else { sv.r565 == d.r565 };
     let mask = d.raw_mask();
     let (text_px, bk_px) = (d.pixel(text), d.pixel(bk));
     for y in r.t..r.b {
@@ -1310,7 +1372,7 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
                     if sc == 0 { text_px } else { bk_px }
                 } else if color_to_mono {
                     (sc != s.bk) as u32 ^ 1
-                } else if d.bpp <= 8 {
+                } else if d.bpp.indexed() {
                     d.index_of(sc & 0xf8f8f8 | 0x040404)
                 } else {
                     d.pixel(sc)
@@ -1346,10 +1408,10 @@ fn blit_fast(d: &View, sv: &View, r: Rect, xs: &[i32], map_y: &dyn Fn(i32) -> i3
     if GENERIC_ONLY.with(|g| g.get()) {
         return false;
     }
-    if d.bpp != 32 || d.mono || sv.mono || (op >> 4 ^ op) & 0x0f != 0 {
+    if d.bpp != Depth::D32 || d.mono || sv.mono || (op >> 4 ^ op) & 0x0f != 0 {
         return false;
     }
-    let same = sv.bpp == 32 && sv.r565 == d.r565;
+    let same = sv.bpp == Depth::D32 && sv.r565 == d.r565;
     // a raster op other than SRCCOPY combines raw pixels: only 32 bpp onto 32 bpp here
     if op != 0xcc && !same {
         return false;
@@ -1392,32 +1454,27 @@ fn blit_fast(d: &View, sv: &View, r: Rect, xs: &[i32], map_y: &dyn Fn(i32) -> i3
         return true;
     }
     match sv.bpp {
-        32 => rows(&mut |s, dp| span(s, dp, xs, |s, x| p32(s, x) & 0xffffff, |s, _| s)),
-        24 => rows(&mut |s, dp| {
-            span(s, dp, xs, |s, x| unsafe {
-                let p = s.add(3 * x);
-                (*p.add(2) as u32) << 16 | (*p.add(1) as u32) << 8 | *p as u32
-            }, |s, _| s)
-        }),
-        16 if sv.r565 => rows(&mut |s, dp| {
+        Depth::D32 => rows(&mut |s, dp| span(s, dp, xs, |s, x| p32(s, x) & 0xffffff, |s, _| s)),
+        Depth::D24 => rows(&mut |s, dp| span(s, dp, xs, |s, x| unsafe { read24(s.add(3 * x)) }, |s, _| s)),
+        Depth::D16 if sv.r565 => rows(&mut |s, dp| {
             span(s, dp, xs, |s, x| {
-                let v = unsafe { (s as *const u16).add(x).read_unaligned() } as u32;
+                let v = u32::from(unsafe { s.cast::<u16>().add(x).read_unaligned() });
                 let (r5, g6, b5) = (v >> 11 & 31, v >> 5 & 63, v & 31);
                 (r5 << 3 | r5 >> 2) << 16 | (g6 << 2 | g6 >> 4) << 8 | (b5 << 3 | b5 >> 2)
             }, |s, _| s)
         }),
-        16 => rows(&mut |s, dp| {
+        Depth::D16 => rows(&mut |s, dp| {
             span(s, dp, xs, |s, x| {
-                let v = unsafe { (s as *const u16).add(x).read_unaligned() } as u32;
+                let v = u32::from(unsafe { s.cast::<u16>().add(x).read_unaligned() });
                 let (r5, g5, b5) = (v >> 10 & 31, v >> 5 & 31, v & 31);
                 (r5 << 3 | r5 >> 2) << 16 | (g5 << 3 | g5 >> 2) << 8 | (b5 << 3 | b5 >> 2)
             }, |s, _| s)
         }),
-        8 => {
+        Depth::D8 => {
             let lut: [u32; 256] = std::array::from_fn(|i| sv.pal_at(i) & 0xffffff);
-            rows(&mut |s, dp| span(s, dp, xs, |s, x| unsafe { lut[*s.add(x) as usize] }, |s, _| s))
+            rows(&mut |s, dp| span(s, dp, xs, |s, x| unsafe { lut[usize::from(*s.add(x))] }, |s, _| s))
         }
-        _ => return false,
+        Depth::D4 | Depth::D1 | Depth::Other(_) => return false,
     }
     true
 }
@@ -1450,7 +1507,7 @@ pub fn blend_argb(dc: u32, x0: i32, y0: i32, w: i32, h: i32, cols: &[Option<u32>
                 let old = rgb(cv.v.color_of(cv.v.raw(dx, dy)));
                 let mix = |s: u32| ((argb >> s & 255) * a + (old >> s & 255) * (255 - a) + 127) / 255;
                 let col = mix(16) << 16 | mix(8) << 8 | mix(0);
-                let alpha = if cv.v.bpp == 32 { 0xff00_0000 } else { 0 };
+                let alpha = if cv.v.bpp == Depth::D32 { 0xff00_0000 } else { 0 };
                 cv.v.set_raw(dx, dy, (cv.v.pixel(col) | alpha) & cv.v.raw_mask());
                 out = out.or(&Rect { l: dx, t: dy, r: dx + 1, b: dy + 1 });
             }
@@ -3204,8 +3261,8 @@ fn dib_copy(b: &Bitmap, start: u32, lines: u32, bits: u32, i: &DibInfo, to_dib: 
         if row < 0 || row >= b.h || drow < 0 || drow >= i.h {
             continue;
         }
-        if bv.bpp == dv.bpp && bv.bpp >= 16 && bv.r565 == dv.r565 {
-            let n = (w as usize * bv.bpp as usize).div_ceil(8);
+        if bv.bpp == dv.bpp && bv.bpp.bits() >= 16 && bv.r565 == dv.r565 {
+            let n = (w as usize * usize::from(bv.bpp.bits())).div_ceil(8);
             unsafe {
                 if to_dib {
                     std::ptr::copy(bv.row(row), dv.row(drow), n);
@@ -3217,9 +3274,9 @@ fn dib_copy(b: &Bitmap, start: u32, lines: u32, bits: u32, i: &DibInfo, to_dib: 
         }
         for x in 0..w {
             if to_dib {
-                dv.put(x, drow, bv.get(x, row) & if dv.bpp == 32 { 0xffff_ffff } else { 0xffffff });
+                dv.put(x, drow, bv.get(x, row) & if dv.bpp == Depth::D32 { 0xffff_ffff } else { 0xffffff });
             } else {
-                bv.put(x, row, dv.get(x, drow) & if bv.bpp == 32 { 0xffff_ffff } else { 0xffffff });
+                bv.put(x, row, dv.get(x, drow) & if bv.bpp == Depth::D32 { 0xffff_ffff } else { 0xffffff });
             }
         }
     }
@@ -3524,7 +3581,7 @@ fn AlphaBlend(c: &mut Ctx) -> u32 {
         let Some((sv, sox, soy, _)) = source(t, src) else { return Rect::default() };
         let (dx, dy) = cv.dev(d.0, d.1);
         let r = Rect { l: dx, t: dy, r: dx + d.2, b: dy + d.3 }.and(&cv.clip);
-        if s.2 == d.2 && s.3 == d.3 && sv.bpp == 32 && cv.v.bpp == 32 {
+        if s.2 == d.2 && s.3 == d.3 && sv.bpp == Depth::D32 && cv.v.bpp == Depth::D32 {
             alpha_rows(&sv, &cv.v, &r, (s.0 + sox - dx, s.1 + soy - dy), k, per_pixel);
             return r;
         }
@@ -6092,7 +6149,7 @@ mod fast_blit_tests {
         let stride = ((w as usize * bpp as usize + 31) / 32 * 4) as isize;
         let base = buf.as_mut_ptr();
         let (top, stride) = if up { (unsafe { base.offset((h as isize - 1) * stride) }, -stride) } else { (base, stride) };
-        View { top, stride, w, h, bpp, r565, pal: pal.to_vec(), mono: false }
+        View { top, stride, w, h, bpp: Depth::of(bpp), r565, pal: pal.to_vec(), mono: false }
     }
 
     fn bytes(w: i32, h: i32, bpp: u16) -> usize {
