@@ -1,92 +1,127 @@
 //! A Direct3D 9 shader assembler (vs_1_1 .. vs_3_0, ps_1_1 .. ps_3_0 assembly to the bytecode
 //! CreateVertexShader/CreatePixelShader take), for D3DXAssembleShader.
 
+macro_rules! d3d9_ops {
+    ($($v:ident $name:literal $(| $alias:literal)* = $code:literal,)*) => {
+        /// A Direct3D 9 instruction (D3DSHADER_INSTRUCTION_OPCODE_TYPE), as the assembler reads
+        /// it and hlslc's shader model 2/3 back end writes it: a misspelt mnemonic is a compile
+        /// error, not an assembler error at run time
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub enum Op {
+            $($v,)*
+        }
+
+        impl Op {
+            /// The mnemonic (and its other spellings)
+            pub fn from_name(n: &str) -> Option<Op> {
+                Some(match n {
+                    $($name $(| $alias)* => Op::$v,)*
+                    _ => return None,
+                })
+            }
+
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Op::$v => $name,)*
+                }
+            }
+
+            pub fn code(self) -> u32 {
+                match self {
+                    $(Op::$v => $code,)*
+                }
+            }
+        }
+    };
+}
+
+d3d9_ops! {
+    Nop "nop" = 0,
+    Mov "mov" = 1,
+    Add "add" = 2,
+    Sub "sub" = 3,
+    Mad "mad" = 4,
+    Mul "mul" = 5,
+    Rcp "rcp" = 6,
+    Rsq "rsq" = 7,
+    Dp3 "dp3" = 8,
+    Dp4 "dp4" = 9,
+    Min "min" = 10,
+    Max "max" = 11,
+    Slt "slt" = 12,
+    Sge "sge" = 13,
+    Exp "exp" = 14,
+    Log "log" = 15,
+    Lit "lit" = 16,
+    Dst "dst" = 17,
+    Lrp "lrp" = 18,
+    Frc "frc" = 19,
+    M4x4 "m4x4" = 20,
+    M4x3 "m4x3" = 21,
+    M3x4 "m3x4" = 22,
+    M3x3 "m3x3" = 23,
+    M3x2 "m3x2" = 24,
+    Call "call" = 25,
+    Callnz "callnz" = 26,
+    Loop "loop" = 27,
+    Ret "ret" = 28,
+    Endloop "endloop" = 29,
+    Label "label" = 30,
+    Dcl "dcl" = 31,
+    Pow "pow" = 32,
+    Crs "crs" = 33,
+    Sgn "sgn" = 34,
+    Abs "abs" = 35,
+    Nrm "nrm" = 36,
+    Sincos "sincos" = 37,
+    Rep "rep" = 38,
+    Endrep "endrep" = 39,
+    If "if" = 40,
+    Ifc "ifc" = 41,
+    Else "else" = 42,
+    Endif "endif" = 43,
+    Break "break" = 44,
+    Breakc "breakc" = 45,
+    Mova "mova" = 46,
+    Defb "defb" = 47,
+    Defi "defi" = 48,
+    Texcoord "texcoord" | "texcrd" = 64,
+    Texkill "texkill" = 65,
+    Tex "tex" | "texld" | "texldp" | "texldb" = 66,
+    Texbem "texbem" = 67,
+    Texbeml "texbeml" = 68,
+    Texreg2ar "texreg2ar" = 69,
+    Texreg2gb "texreg2gb" = 70,
+    Texm3x2pad "texm3x2pad" = 71,
+    Texm3x2tex "texm3x2tex" = 72,
+    Texm3x3pad "texm3x3pad" = 73,
+    Texm3x3tex "texm3x3tex" = 74,
+    Texm3x3spec "texm3x3spec" = 76,
+    Texm3x3vspec "texm3x3vspec" = 77,
+    Expp "expp" = 78,
+    Logp "logp" = 79,
+    Cnd "cnd" = 80,
+    Def "def" = 81,
+    Texreg2rgb "texreg2rgb" = 82,
+    Texdp3tex "texdp3tex" = 83,
+    Texm3x2depth "texm3x2depth" = 84,
+    Texdp3 "texdp3" = 85,
+    Texm3x3 "texm3x3" = 86,
+    Texdepth "texdepth" = 87,
+    Cmp "cmp" = 88,
+    Bem "bem" = 89,
+    Dp2add "dp2add" = 90,
+    Dsx "dsx" = 91,
+    Dsy "dsy" = 92,
+    Texldd "texldd" = 93,
+    Setp "setp" = 94,
+    Texldl "texldl" = 95,
+    Breakp "breakp" = 96,
+    Phase "phase" = 0xfffd,
+}
+
 fn op_code(name: &str) -> Option<u32> {
-    Some(match name {
-        "nop" => 0,
-        "mov" => 1,
-        "add" => 2,
-        "sub" => 3,
-        "mad" => 4,
-        "mul" => 5,
-        "rcp" => 6,
-        "rsq" => 7,
-        "dp3" => 8,
-        "dp4" => 9,
-        "min" => 10,
-        "max" => 11,
-        "slt" => 12,
-        "sge" => 13,
-        "exp" => 14,
-        "log" => 15,
-        "lit" => 16,
-        "dst" => 17,
-        "lrp" => 18,
-        "frc" => 19,
-        "m4x4" => 20,
-        "m4x3" => 21,
-        "m3x4" => 22,
-        "m3x3" => 23,
-        "m3x2" => 24,
-        "call" => 25,
-        "callnz" => 26,
-        "loop" => 27,
-        "ret" => 28,
-        "endloop" => 29,
-        "label" => 30,
-        "dcl" => 31,
-        "pow" => 32,
-        "crs" => 33,
-        "sgn" => 34,
-        "abs" => 35,
-        "nrm" => 36,
-        "sincos" => 37,
-        "rep" => 38,
-        "endrep" => 39,
-        "if" => 40,
-        "ifc" => 41,
-        "else" => 42,
-        "endif" => 43,
-        "break" => 44,
-        "breakc" => 45,
-        "mova" => 46,
-        "defb" => 47,
-        "defi" => 48,
-        "texcoord" | "texcrd" => 64,
-        "texkill" => 65,
-        "tex" | "texld" | "texldp" | "texldb" => 66,
-        "texbem" => 67,
-        "texbeml" => 68,
-        "texreg2ar" => 69,
-        "texreg2gb" => 70,
-        "texm3x2pad" => 71,
-        "texm3x2tex" => 72,
-        "texm3x3pad" => 73,
-        "texm3x3tex" => 74,
-        "texm3x3spec" => 76,
-        "texm3x3vspec" => 77,
-        "expp" => 78,
-        "logp" => 79,
-        "cnd" => 80,
-        "def" => 81,
-        "texreg2rgb" => 82,
-        "texdp3tex" => 83,
-        "texm3x2depth" => 84,
-        "texdp3" => 85,
-        "texm3x3" => 86,
-        "texdepth" => 87,
-        "cmp" => 88,
-        "bem" => 89,
-        "dp2add" => 90,
-        "dsx" => 91,
-        "dsy" => 92,
-        "texldd" => 93,
-        "setp" => 94,
-        "texldl" => 95,
-        "breakp" => 96,
-        "phase" => 0xfffd,
-        _ => return None,
-    })
+    Op::from_name(name).map(Op::code)
 }
 
 /// Instructions with no destination (all operands are sources).

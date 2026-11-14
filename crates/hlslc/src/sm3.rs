@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use super::sm4::*;
+use crate::d3d9asm::Op as D9;
 
 /// the operations this output has (anything else is an error here)
 pub fn float_op(op: Opcode) -> bool {
@@ -294,8 +295,8 @@ impl Gen<'_> {
     }
 
     /// `op dst, srcs` (dst a scratch register with `mask` when `to` is None)
-    fn op(&mut self, op: &str, sat: bool, d: &str, srcs: &[&Src]) -> Result<(), String> {
-        let mut l = format!("{op}{} {d}", if sat { "_sat" } else { "" });
+    fn op(&mut self, op: D9, sat: bool, d: &str, srcs: &[&Src]) -> Result<(), String> {
+        let mut l = format!("{}{} {d}", op.name(), if sat { "_sat" } else { "" });
         for s in srcs {
             let t = self.src(s)?;
             l.push_str(", ");
@@ -383,7 +384,7 @@ impl Gen<'_> {
                 if n > 0 {
                     // clip(): any component below 0
                     let d = self.scr_d(0, 0xf)?;
-                    self.op("mov", false, &d, &[&s])?;
+                    self.op(D9::Mov, false, &d, &[&s])?;
                     let m = self.scr_d(0, ((1u16 << n) - 1) as u8)?;
                     self.line(format!("texkill {m}"));
                     return Ok(());
@@ -394,13 +395,13 @@ impl Gen<'_> {
                         return Ok(());
                     }
                     let d = self.scr_d(0, 1)?;
-                    self.op("mov", false, &d, &[&Src::Imm([0xbf80_0000; 4], true)])?;
+                    self.op(D9::Mov, false, &d, &[&Src::Imm([0xbf80_0000; 4], true)])?;
                 } else if i.nz {
                     let d = self.scr_d(0, 1)?;
-                    self.op("mov", false, &d, &[&neg(&abs(&c))])?;
+                    self.op(D9::Mov, false, &d, &[&neg(&abs(&c))])?;
                 } else {
                     let d = self.scr_d(0, 1)?;
-                    self.op("cmp", false, &d, &[&neg(&abs(&c)), &Src::Imm([0xbf80_0000; 4], true), &zero])?;
+                    self.op(D9::Cmp, false, &d, &[&neg(&abs(&c)), &Src::Imm([0xbf80_0000; 4], true), &zero])?;
                 }
                 let m = self.scr_d(0, 1)?;
                 self.line(format!("texkill {m}"));
@@ -448,17 +449,17 @@ impl Gen<'_> {
                 let m = d0.mask;
                 let d = if d0.r.f == RegF::Null { String::new() } else { self.dst(d0)? };
                 let simple = match i.op {
-                    MOV => Some("mov"),
-                    ADD => Some("add"),
-                    MUL => Some("mul"),
-                    MAD => Some("mad"),
-                    MIN => Some("min"),
-                    MAX => Some("max"),
-                    FRC => Some("frc"),
-                    DP3 => Some("dp3"),
-                    DP4 => Some("dp4"),
-                    DERIV_RTX => Some("dsx"),
-                    DERIV_RTY => Some("dsy"),
+                    MOV => Some(D9::Mov),
+                    ADD => Some(D9::Add),
+                    MUL => Some(D9::Mul),
+                    MAD => Some(D9::Mad),
+                    MIN => Some(D9::Min),
+                    MAX => Some(D9::Max),
+                    FRC => Some(D9::Frc),
+                    DP3 => Some(D9::Dp3),
+                    DP4 => Some(D9::Dp4),
+                    DERIV_RTX => Some(D9::Dsx),
+                    DERIV_RTY => Some(D9::Dsy),
                     Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
                     | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
                     | Opcode::Eq | Opcode::Exp | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge
@@ -505,7 +506,7 @@ impl Gen<'_> {
                 }
                 match i.op {
                     DIV | SQRT | RSQ | RCP | EXP | LOG => {
-                        let (x, op) = if i.op == DIV { (a(1)?, "rcp") } else { (a(0)?, "") };
+                        let x = if i.op == DIV { a(1)? } else { a(0)? };
                         for k in 0..4 {
                             if m & 1 << k == 0 {
                                 continue;
@@ -513,15 +514,15 @@ impl Gen<'_> {
                             let dk = self.scr_d(0, 1 << k)?;
                             let ck = comp(&x, k);
                             match i.op {
-                                DIV => self.op(op, false, &dk, &[&ck])?,
+                                DIV => self.op(D9::Rcp, false, &dk, &[&ck])?,
                                 SQRT => {
-                                    self.op("rsq", false, &dk, &[&ck])?;
+                                    self.op(D9::Rsq, false, &dk, &[&ck])?;
                                     let sk = comp(&scr(0), k);
-                                    self.op("rcp", false, &dk, &[&sk])?;
+                                    self.op(D9::Rcp, false, &dk, &[&sk])?;
                                 }
-                                RSQ => self.op("rsq", false, &dk, &[&ck])?,
-                                RCP => self.op("rcp", false, &dk, &[&ck])?,
-                                EXP => self.op("exp", false, &dk, &[&ck])?,
+                                RSQ => self.op(D9::Rsq, false, &dk, &[&ck])?,
+                                RCP => self.op(D9::Rcp, false, &dk, &[&ck])?,
+                                EXP => self.op(D9::Exp, false, &dk, &[&ck])?,
                                 Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
                                 | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
                                 | Opcode::DerivRty | Opcode::Discard | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
@@ -558,56 +559,56 @@ impl Gen<'_> {
                                 | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
                                 | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
                                 | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
-                                | Opcode::Itod | Opcode::Utod | Opcode::Unknown => self.op("log", false, &dk, &[&ck])?,
+                                | Opcode::Itod | Opcode::Utod | Opcode::Unknown => self.op(D9::Log, false, &dk, &[&ck])?,
                             }
                         }
                         if i.op == DIV {
-                            self.op("mul", sat, &d, &[&a(0)?, &scr(0)])?;
+                            self.op(D9::Mul, sat, &d, &[&a(0)?, &scr(0)])?;
                         } else {
-                            self.op("mov", sat, &d, &[&scr(0)])?;
+                            self.op(D9::Mov, sat, &d, &[&scr(0)])?;
                         }
                     }
                     ROUND_NI => {
                         let s0 = self.scr_d(0, m)?;
-                        self.op("frc", false, &s0, &[&a(0)?])?;
-                        self.op("add", sat, &d, &[&a(0)?, &neg(&scr(0))])?;
+                        self.op(D9::Frc, false, &s0, &[&a(0)?])?;
+                        self.op(D9::Add, sat, &d, &[&a(0)?, &neg(&scr(0))])?;
                     }
                     ROUND_PI => {
                         let s0 = self.scr_d(0, m)?;
-                        self.op("frc", false, &s0, &[&neg(&a(0)?)])?;
-                        self.op("add", sat, &d, &[&a(0)?, &scr(0)])?;
+                        self.op(D9::Frc, false, &s0, &[&neg(&a(0)?)])?;
+                        self.op(D9::Add, sat, &d, &[&a(0)?, &scr(0)])?;
                     }
                     ROUND_NE => {
                         let s0 = self.scr_d(0, m)?;
                         let s1 = self.scr_d(1, m)?;
-                        self.op("add", false, &s0, &[&a(0)?, &Src::Imm([0x3f00_0000; 4], true)])?;
-                        self.op("frc", false, &s1, &[&scr(0)])?;
-                        self.op("add", sat, &d, &[&scr(0), &neg(&scr(1))])?;
+                        self.op(D9::Add, false, &s0, &[&a(0)?, &Src::Imm([0x3f00_0000; 4], true)])?;
+                        self.op(D9::Frc, false, &s1, &[&scr(0)])?;
+                        self.op(D9::Add, sat, &d, &[&scr(0), &neg(&scr(1))])?;
                     }
                     ROUND_Z => {
                         let s0 = self.scr_d(0, m)?;
                         let x = a(0)?;
-                        self.op("frc", false, &s0, &[&abs(&x)])?;
-                        self.op("add", false, &s0, &[&abs(&x), &neg(&scr(0))])?;
+                        self.op(D9::Frc, false, &s0, &[&abs(&x)])?;
+                        self.op(D9::Add, false, &s0, &[&abs(&x), &neg(&scr(0))])?;
                         if pixel {
-                            self.op("cmp", sat, &d, &[&x, &scr(0), &neg(&scr(0))])?;
+                            self.op(D9::Cmp, sat, &d, &[&x, &scr(0), &neg(&scr(0))])?;
                         } else {
                             let s1 = self.scr_d(1, m)?;
-                            self.op("sge", false, &s1, &[&x, &zero])?;
-                            self.op("mad", false, &s1, &[&scr(1), &Src::Imm([0x4000_0000; 4], true), &Src::Imm([0xbf80_0000; 4], true)])?;
-                            self.op("mul", sat, &d, &[&scr(0), &scr(1)])?;
+                            self.op(D9::Sge, false, &s1, &[&x, &zero])?;
+                            self.op(D9::Mad, false, &s1, &[&scr(1), &Src::Imm([0x4000_0000; 4], true), &Src::Imm([0xbf80_0000; 4], true)])?;
+                            self.op(D9::Mul, sat, &d, &[&scr(0), &scr(1)])?;
                         }
                     }
                     EQ | NE | LT | GE => {
                         let (x, y) = (a(0)?, a(1)?);
                         if pixel {
                             let s0 = self.scr_d(0, m)?;
-                            self.op("add", false, &s0, &[&x, &neg(&y)])?;
+                            self.op(D9::Add, false, &s0, &[&x, &neg(&y)])?;
                             let na = neg(&abs(&scr(0)));
                             match i.op {
-                                EQ => self.op("cmp", sat, &d, &[&na, &one, &zero])?,
-                                NE => self.op("cmp", sat, &d, &[&na, &zero, &one])?,
-                                LT => self.op("cmp", sat, &d, &[&scr(0), &zero, &one])?,
+                                EQ => self.op(D9::Cmp, sat, &d, &[&na, &one, &zero])?,
+                                NE => self.op(D9::Cmp, sat, &d, &[&na, &zero, &one])?,
+                                LT => self.op(D9::Cmp, sat, &d, &[&scr(0), &zero, &one])?,
                                 Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
                                 | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
                                 | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
@@ -644,12 +645,12 @@ impl Gen<'_> {
                                 | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
                                 | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
                                 | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
-                                | Opcode::Itod | Opcode::Utod | Opcode::Unknown => self.op("cmp", sat, &d, &[&scr(0), &one, &zero])?,
+                                | Opcode::Itod | Opcode::Utod | Opcode::Unknown => self.op(D9::Cmp, sat, &d, &[&scr(0), &one, &zero])?,
                             }
                         } else {
                             match i.op {
-                                LT => self.op("slt", sat, &d, &[&x, &y])?,
-                                GE => self.op("sge", sat, &d, &[&x, &y])?,
+                                LT => self.op(D9::Slt, sat, &d, &[&x, &y])?,
+                                GE => self.op(D9::Sge, sat, &d, &[&x, &y])?,
                                 Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
                                 | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
                                 | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
@@ -688,13 +689,13 @@ impl Gen<'_> {
                                 | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {
                                     let s0 = self.scr_d(0, m)?;
                                     let s1 = self.scr_d(1, m)?;
-                                    self.op("sge", false, &s0, &[&x, &y])?;
-                                    self.op("sge", false, &s1, &[&y, &x])?;
+                                    self.op(D9::Sge, false, &s0, &[&x, &y])?;
+                                    self.op(D9::Sge, false, &s1, &[&y, &x])?;
                                     if i.op == EQ {
-                                        self.op("mul", sat, &d, &[&scr(0), &scr(1)])?;
+                                        self.op(D9::Mul, sat, &d, &[&scr(0), &scr(1)])?;
                                     } else {
-                                        self.op("mul", false, &s0, &[&scr(0), &scr(1)])?;
-                                        self.op("add", sat, &d, &[&neg(&scr(0)), &one])?;
+                                        self.op(D9::Mul, false, &s0, &[&scr(0), &scr(1)])?;
+                                        self.op(D9::Add, sat, &d, &[&neg(&scr(0)), &one])?;
                                     }
                                 }
                             }
@@ -703,20 +704,20 @@ impl Gen<'_> {
                     MOVC => {
                         let (c, x, y) = (a(0)?, a(1)?, a(2)?);
                         if pixel {
-                            self.op("cmp", sat, &d, &[&neg(&abs(&c)), &y, &x])?;
+                            self.op(D9::Cmp, sat, &d, &[&neg(&abs(&c)), &y, &x])?;
                         } else {
                             let s0 = self.scr_d(0, m)?;
-                            self.op("add", false, &s0, &[&x, &neg(&y)])?;
-                            self.op("mad", sat, &d, &[&c, &scr(0), &y])?;
+                            self.op(D9::Add, false, &s0, &[&x, &neg(&y)])?;
+                            self.op(D9::Mad, sat, &d, &[&c, &scr(0), &y])?;
                         }
                     }
                     DP2 => {
                         if pixel {
-                            self.op("dp2add", sat, &d, &[&a(0)?, &a(1)?, &zero])?;
+                            self.op(D9::Dp2add, sat, &d, &[&a(0)?, &a(1)?, &zero])?;
                         } else {
                             let s = self.scr_d(0, 3)?;
-                            self.op("mul", false, &s, &[&a(0)?, &a(1)?])?;
-                            self.op("add", sat, &d, &[&comp(&scr(0), 0), &comp(&scr(0), 1)])?;
+                            self.op(D9::Mul, false, &s, &[&a(0)?, &a(1)?])?;
+                            self.op(D9::Add, sat, &d, &[&comp(&scr(0), 0), &comp(&scr(0), 1)])?;
                         }
                     }
                     SINCOS => {
@@ -737,22 +738,22 @@ impl Gen<'_> {
                                     false,
                                 );
                                 let c2 = Src::Imm([(-0.020833334f32).to_bits(), (-0.125f32).to_bits(), 1f32.to_bits(), 0.5f32.to_bits()], false);
-                                self.op("sincos", false, &sc, &[&ck, &c1, &c2])?;
+                                self.op(D9::Sincos, false, &sc, &[&ck, &c1, &c2])?;
                             } else {
-                                self.op("sincos", false, &sc, &[&ck])?;
+                                self.op(D9::Sincos, false, &sc, &[&ck])?;
                             }
                             let s1 = self.scr_d(1, 1 << k)?;
                             let s2 = self.scr_d(2, 1 << k)?;
-                            self.op("mov", false, &s1, &[&comp(&scr(0), 1)])?;
-                            self.op("mov", false, &s2, &[&comp(&scr(0), 0)])?;
+                            self.op(D9::Mov, false, &s1, &[&comp(&scr(0), 1)])?;
+                            self.op(D9::Mov, false, &s2, &[&comp(&scr(0), 0)])?;
                         }
                         if let Some(ds) = dsin {
                             let dd = self.dst(&ds)?;
-                            self.op("mov", sat, &dd, &[&scr(1)])?;
+                            self.op(D9::Mov, sat, &dd, &[&scr(1)])?;
                         }
                         if let Some(dc) = dcos {
                             let dd = self.dst(&dc)?;
-                            self.op("mov", sat, &dd, &[&scr(2)])?;
+                            self.op(D9::Mov, sat, &dd, &[&scr(2)])?;
                         }
                     }
                     SAMPLE | SAMPLE_L | SAMPLE_B | SAMPLE_D => {
@@ -820,23 +821,23 @@ impl Gen<'_> {
                             | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
                             | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {
                                 let s = self.scr_d(0, 0xf)?;
-                                self.op("mov", false, &s, &[&coord])?;
+                                self.op(D9::Mov, false, &s, &[&coord])?;
                                 let w = self.scr_d(0, 8)?;
                                 let lod = if i.op == SAMPLE { zero.clone() } else { comp(&a(3)?, 0) };
-                                self.op("mov", false, &w, &[&lod])?;
+                                self.op(D9::Mov, false, &w, &[&lod])?;
                                 let name = if op == SAMPLE_L { "texldl" } else { "texldb" };
                                 self.line(format!("{name} {td}, r{}, {sname}", self.temps));
                             }
                         }
                         if sat && direct {
-                            self.op("mov_sat", false, &d, &[&Src::R { r: d0.r, swz: [0, 1, 2, 3], neg: false, abs: false, one: false }])?;
+                            self.op(D9::Mov, true, &d, &[&Src::R { r: d0.r, swz: [0, 1, 2, 3], neg: false, abs: false, one: false }])?;
                         }
                         if !direct {
                             let mut sw = [0u8; 4];
                             for (k, x) in sw.iter_mut().enumerate() {
                                 *x = tswz[k];
                             }
-                            self.op("mov", sat, &d, &[&Src::R { r: Reg { f: RegF::Temp(1001), rel: None }, swz: sw, neg: false, abs: false, one: false }])?;
+                            self.op(D9::Mov, sat, &d, &[&Src::R { r: Reg { f: RegF::Temp(1001), rel: None }, swz: sw, neg: false, abs: false, one: false }])?;
                         }
                     }
                     op @ (Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
