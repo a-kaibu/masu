@@ -44,8 +44,44 @@ manager: 0
 reader with the device: 0
   set RGB32: 0
   18 frames rrrrrrggggggbbbbbb, textures 18 (64x48 18, format 88)
+  texels rrrrrrggggggbbbbbb, alpha 255 0
 manager: 0
   reset: 0
 reader with the device: 0
   set NV12: 0
   18 frames rrrrrrggggggbbbbbb, textures 18 (64x48 18, format 103)
+manager: 0
+  reset: 0
+reader with the device: 0
+  set ARGB32: 0
+  21 frames rrrrrrggggggggbbbbbbb, textures 21 (64x48 21, format 87)
+  texels rrrrrrggggggggbbbbbbb, alpha 255 21
+video device: 0
+  protected: 1
+  reset: 0
+  reader: 0
+  set NV12: 0
+  audio decoder? 0
+  decoder: 0
+  d3d11 aware: 1
+  output 64x48 NV12 1
+allocator: 0
+  before init: 0xc00d36b6
+  manager: 0
+  init: 0
+  sample: 0
+  texture 64x48 format 87 bind 0x28 usage 0, the video device 1
+manager: 0
+  reset: 0
+reader with the device: 0
+  set ARGB32 of H.264: 0
+  18 frames rrrrrrggggggbbbbbb, textures 18 (64x48 18, format 87)
+  texels rrrrrrggggggbbbbbb, alpha 255 18
+manager: 0
+  reset: 0
+reader with the device: 0
+  set NV12 of H.264: 0
+  18 frames rrrrrrggggggbbbbbb, textures 18 (64x48 18, format 103)
+shared: video device 0, another device 1
+  set ARGB32: 0
+  18 frames, handles 0, opened 0: ------------------

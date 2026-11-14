@@ -1,0 +1,31 @@
+SuspendThread(t)                                             = 0 err 57005
+TryEnterCriticalSection(&cs)                                 = 1 err 57005
+cs waiter got it while suspended: 0
+ResumeThread(t)                                              = 1 err 57005
+WaitForSingleObject(t, 5000)                                 = 0 err 57005
+GetExitCodeThread(t, &code)                                  = 1 err 57005
+code 1, got 1
+SuspendThread(t)                                             = 0 err 57005
+entered again, cs waiter got it: 1
+ResumeThread(t)                                              = 1 err 57005
+WaitForSingleObject(t, 5000)                                 = 0 err 57005
+got 2
+SuspendThread(t)                                             = 0 err 57005
+SetEvent(ev)                                                 = 1 err 57005
+WaitForSingleObject(ev, 0)                                   = 0 err 57005
+event waiter woke while suspended: 0
+ResumeThread(t)                                              = 1 err 57005
+event waiter after resume (still waiting): 0
+SetEvent(ev)                                                 = 1 err 57005
+WaitForSingleObject(t, 5000)                                 = 0 err 57005
+GetExitCodeThread(t, &code)                                  = 1 err 57005
+code 10, got 1
+SuspendThread(t)                                             = 0 err 57005
+ReleaseMutex(mtx)                                            = 1 err 57005
+WaitForSingleObject(mtx, 0)                                  = 0 err 57005
+mutex waiter got it while suspended: 0
+ReleaseMutex(mtx)                                            = 1 err 57005
+ResumeThread(t)                                              = 1 err 57005
+WaitForSingleObject(t, 5000)                                 = 0 err 57005
+GetExitCodeThread(t, &code)                                  = 1 err 57005
+code 20, got 1
