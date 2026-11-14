@@ -1,0 +1,114 @@
+msg 0x1 id0x0 opened: 0
+add refused: 1
+add f0 -> 0xdead: 11
+add f3 -> 0xdead: 11
+add f4 -> 0x0: 0
+add f7 -> 0xdead: 11
+msg 0x1 id0x0 opened: 1
+msg 0x2 id0x0 opened: 1
+add: 1
+id of hadid same true: 0
+  open desc cb36 fcc0x63647561 ver0x5000000
+msg 0x3 id0x0 opened: 119
+open -> opened true same slot true: 0
+id of had is hadid true: 0
+  details cb1800
+msg 0x600a id0x77 opened: 0
+details wfalse 0x4: cb4 pid0xcccccccc short "" 17bf927c73c0ef71: 0
+  details cb1800
+msg 0x600a id0x77 opened: 0
+details wfalse 0x398: cb920 pid0x420001 short "Vorbis" e6666bb52d1e2233: 0
+  details cb1800
+msg 0x600a id0x77 opened: 0
+details wtrue 0x518: cb1304 pid0x420001 short "Vorbis" 81d68a6a1e523e73: 0
+details wfalse 0x3: cb3 pid0xcccccccc short "" 91b7e1eba28f7926: 11
+  tag details 0x1234 0x1
+msg 0x6019 id0x77 opened: 0
+tag details W: 0
+  suggest cb24 f0x10000 src tag 0x674f cb22 dst? true cb50
+msg 0x601b id0x77 opened: 0
+suggest 0x674f via had -> 0x1/2/44100: 0
+  suggest cb24 f0x10000 src tag 0x674f cb22 dst? true cb50
+msg 0x601b id0x77 opened: 0
+suggest 0x674f via any -> 0x1/2/44100: 0
+  stream open cb40 src 0x674f/44100 dst 0x1/16 filter? false cb0x1111 inst0x2222 f0x1 has? true
+msg 0x604c id0x77 opened: 0
+stream open 0x674f via had f1 -> -: 0
+  stream open cb40 src 0x674f/44100 dst 0x1/16 filter? false cb0x1111 inst0x2222 f0x0 has? true
+msg 0x604c id0x77 opened: 0
+stream open 0x674f via had f0 -> +: 0
+id of stream is hadid true: 0
+  size inst? true cb16 f0x0 src100 dst0
+msg 0x604e id0x77 opened: 0
+size 100/0 -> 200: 0
+  size inst? true cb16 f0x1 src0 dst100
+msg 0x604e id0x77 opened: 0
+size 100/1 -> 50: 0
+convert unprepared: 514
+  0x6051 hdr cb84 st0x0 src40 dst64 conv0x10
+msg 0x6051 id0x77 opened: 8
+prepare st0x20000: 0
+prepare again: 0
+  convert cb84 st0x20000 used 0/0 conv0x30 prep true 40 true 64
+msg 0x604f id0x77 opened: 0
+convert st0x30000 used 40/40 44e924d28360808d: 0
+convert past the prepared length: 11
+  0x6050
+msg 0x6050 id0x77 opened: 8
+reset: 0
+  0x6052 hdr cb84 st0x30000 src40 dst64 conv0x30
+msg 0x6052 id0x77 opened: 8
+unprepare st0x10000: 0
+unprepare again: 514
+msg 0x604d id0x77 opened: 0
+close: 0
+  stream open cb40 src 0x674f/44100 dst 0x1/16 filter? false cb0x1111 inst0x2222 f0x0 has? true
+msg 0x604c id0x77 opened: 0
+stream open 0x674f via any f0 -> +: 0
+id of stream is hadid true: 0
+  size inst? true cb16 f0x0 src100 dst0
+msg 0x604e id0x77 opened: 0
+size 100/0 -> 200: 0
+  size inst? true cb16 f0x1 src0 dst100
+msg 0x604e id0x77 opened: 0
+size 100/1 -> 50: 0
+convert unprepared: 514
+  0x6051 hdr cb84 st0x0 src40 dst64 conv0x10
+msg 0x6051 id0x77 opened: 8
+prepare st0x20000: 0
+prepare again: 0
+  convert cb84 st0x20000 used 0/0 conv0x30 prep true 40 true 64
+msg 0x604f id0x77 opened: 0
+convert st0x30000 used 40/40 44e924d28360808d: 0
+convert past the prepared length: 11
+  0x6050
+msg 0x6050 id0x77 opened: 8
+reset: 0
+  0x6052 hdr cb84 st0x30000 src40 dst64 conv0x30
+msg 0x6052 id0x77 opened: 8
+unprepare st0x10000: 0
+unprepare again: 514
+msg 0x604d id0x77 opened: 0
+close: 0
+  suggest cb24 f0x10000 src tag 0x9999 cb22 dst? true cb50
+suggest 0x9999 via had -> 0x0/0/0: 512
+  suggest cb24 f0x10000 src tag 0x9999 cb22 dst? true cb50
+suggest 0x9999 via any -> 0x0/0/0: 512
+  stream open cb40 src 0x9999/44100 dst 0x1/16 filter? false cb0x1111 inst0x2222 f0x1 has? true
+msg 0x604c id0x77 opened: 512
+stream open 0x9999 via had f1 -> 0: 512
+  stream open cb40 src 0x9999/44100 dst 0x1/16 filter? false cb0x1111 inst0x2222 f0x0 has? true
+msg 0x604c id0x77 opened: 512
+stream open 0x9999 via had f0 -> 0: 512
+  stream open cb40 src 0x9999/44100 dst 0x1/16 filter? false cb0x1111 inst0x2222 f0x0 has? true
+msg 0x604c id0x77 opened: 512
+stream open 0x9999 via any f0 -> 0: 512
+msg 0x4 id0x77 opened: 1
+driver close: 0
+driver close again: 0
+msg 0x5 id0x0 opened: 1
+msg 0x6 id0x0 opened: 1
+remove: 0
+remove again: 5
+open removed: 5
+open an opened handle -> 0xac0001: 0

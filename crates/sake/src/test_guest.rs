@@ -67,3 +67,17 @@ impl Rng {
 pub fn hash(a: u32, n: u32) -> u64 {
     mem::slice(a, n).iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
 }
+/// `call` with a guest stack under the CPU, for a handler that calls back into guest code
+/// (Ctx::call; a host_fn trap stands in for the guest's function).
+pub fn call_stacked(f: Handler, args: &[u32]) -> u32 {
+    let stack = mem::heap_alloc(0x10000, true);
+    let sp = mem::heap_alloc(4 + 4 * args.len() as u32, true);
+    for (i, &a) in args.iter().enumerate() { mem::w32(sp + 4 + 4 * i as u32, a); }
+    // (kura's CPU: its run loop stops at sake's traps)
+    let cpu = unsafe { &mut *kura::cpu::create(crate::api::TRAP_LO, crate::api::TRAP_HI) };
+    cpu.regs[koji::ESP] = stack + 0xfff0;
+    let result = f(&mut Ctx { cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None });
+    mem::heap_free(sp);
+    mem::heap_free(stack);
+    result
+}
