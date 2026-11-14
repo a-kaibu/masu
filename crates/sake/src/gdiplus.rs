@@ -107,7 +107,58 @@ struct Bitmap {
     /// an indexed bitmap's colors and each pixel's index
     palette: Vec<u32>,
     idx: Vec<u8>,
-    locked: Option<(u32, u32, u32, u32, u32)>, // buffer, x, y, w, format (to write back)
+    locked: Option<Lock>,
+}
+
+/// A LockBits in progress: what UnlockBits writes back
+#[derive(Clone, Copy)]
+struct Lock {
+    buf: u32,
+    x: u32,
+    y: u32,
+    /// the width to write back (0: a read-only lock)
+    w: u32,
+    fmt: LockFmt,
+}
+
+/// The format LockBits hands pixels out in: the ones it converts to, by name, or an indexed
+/// bitmap's own format (its indices); any other format asked for is 32bppARGB
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LockFmt {
+    Rgb24,
+    Rgb32,
+    Argb32,
+    Pargb32,
+    Rgb555,
+    Rgb565,
+    Indexed(u32),
+}
+
+impl LockFmt {
+    /// the format of a lock asking for `fmt` (`own_index`: an indexed bitmap asking for its own)
+    fn of(fmt: u32, own_index: bool) -> LockFmt {
+        match fmt {
+            _ if own_index => LockFmt::Indexed(fmt),
+            FMT_24RGB => LockFmt::Rgb24,
+            FMT_32RGB => LockFmt::Rgb32,
+            FMT_32PARGB => LockFmt::Pargb32,
+            FMT_16RGB555 => LockFmt::Rgb555,
+            FMT_16RGB565 => LockFmt::Rgb565,
+            _ => LockFmt::Argb32,
+        }
+    }
+    /// the PixelFormat it is
+    fn raw(self) -> u32 {
+        match self {
+            LockFmt::Rgb24 => FMT_24RGB,
+            LockFmt::Rgb32 => FMT_32RGB,
+            LockFmt::Argb32 => FMT_32ARGB,
+            LockFmt::Pargb32 => FMT_32PARGB,
+            LockFmt::Rgb555 => FMT_16RGB555,
+            LockFmt::Rgb565 => FMT_16RGB565,
+            LockFmt::Indexed(f) => f,
+        }
+    }
 }
 
 const FMT_1IDX: u32 = 0x0003_0101;
@@ -381,7 +432,7 @@ fn GdipGetImageEncodersSize(c: &mut Ctx) -> u32 {
 fn GdipDisposeImage(c: &mut Ctx) -> u32 {
     if let Some(b) = with(|m| m.remove(&c.a(0))) {
         // (disposed while locked: the lock's copy of the image goes too)
-        if let Some((buf, ..)) = b.locked {
+        if let Some(Lock { buf, .. }) = b.locked {
             mem::heap_free(buf);
         }
         mem::heap_free(c.a(0));
@@ -476,10 +527,8 @@ fn GdipBitmapLockBits(c: &mut Ctx) -> u32 {
         if b.locked.is_some() {
             return Err(WRONG_STATE);
         }
-        let own_index = indexed(fmt) && fmt == b.fmt && !b.idx.is_empty();
-        if !own_index && ![FMT_24RGB, FMT_32RGB, FMT_32ARGB, FMT_32PARGB, FMT_16RGB555, FMT_16RGB565].contains(&fmt) {
-            fmt = FMT_32ARGB;
-        }
+        let lf = LockFmt::of(fmt, indexed(fmt) && fmt == b.fmt && !b.idx.is_empty());
+        fmt = lf.raw();
         let bits = lock_bits(fmt);
         let stride = ((w * bits).div_ceil(8) + 3) & !3;
         // (no room on the guest heap: OutOfMemory, not rows written from address 0)
@@ -493,29 +542,27 @@ fn GdipBitmapLockBits(c: &mut Ctx) -> u32 {
             row.fill(0);
             for i in 0..w {
                 let s = ((y + j) * b.w + x + i) as usize;
-                if own_index {
-                    let v = u32::from(b.idx[s]);
-                    let bit = i * bits;
-                    row[(bit / 8) as usize] |= (v << (8 - bits - bit % 8)) as u8;
-                    continue;
-                }
                 let [bl, g, rd, a] = b.straight(s);
                 let d = (i * bits / 8) as usize;
-                match fmt {
-                    FMT_24RGB => row[d..d + 3].copy_from_slice(&[bl, g, rd]),
-                    FMT_16RGB555 | FMT_16RGB565 => row[d..d + 2].copy_from_slice(&pack16(fmt, [bl, g, rd]).to_le_bytes()),
-                    // (the fourth byte as the bitmap has it)
+                match lf {
+                    LockFmt::Indexed(_) => {
+                        let v = u32::from(b.idx[s]);
+                        let bit = i * bits;
+                        row[(bit / 8) as usize] |= (v << (8 - bits - bit % 8)) as u8;
+                    }
+                    LockFmt::Rgb24 => row[d..d + 3].copy_from_slice(&[bl, g, rd]),
+                    LockFmt::Rgb555 | LockFmt::Rgb565 => row[d..d + 2].copy_from_slice(&pack16(fmt, [bl, g, rd]).to_le_bytes()),
                     // (the fourth byte as the bitmap has it; a PARGB one's own bytes)
-                    FMT_32RGB | FMT_32PARGB if b.fmt == fmt => row[d..d + 4].copy_from_slice(&b.px[4 * s..4 * s + 4]),
-                    FMT_32RGB => row[d..d + 4].copy_from_slice(&b.px[4 * s..4 * s + 4]),
-                    FMT_32PARGB => row[d..d + 4].copy_from_slice(&[premul(bl, a), premul(g, a), premul(rd, a), a]),
-                    _ => row[d..d + 4].copy_from_slice(&[bl, g, rd, a]),
+                    LockFmt::Pargb32 if b.fmt == fmt => row[d..d + 4].copy_from_slice(&b.px[4 * s..4 * s + 4]),
+                    LockFmt::Rgb32 => row[d..d + 4].copy_from_slice(&b.px[4 * s..4 * s + 4]),
+                    LockFmt::Pargb32 => row[d..d + 4].copy_from_slice(&[premul(bl, a), premul(g, a), premul(rd, a), a]),
+                    LockFmt::Argb32 => row[d..d + 4].copy_from_slice(&[bl, g, rd, a]),
                 }
             }
             mem::write(buf + j * stride, &row);
         }
         // (ImageLockModeWrite: copied back by UnlockBits)
-        b.locked = Some((buf, x, y, if flags & 2 != 0 { w } else { 0 }, fmt));
+        b.locked = Some(Lock { buf, x, y, w: if flags & 2 != 0 { w } else { 0 }, fmt: lf });
         Ok((w, h, stride, buf))
     });
     let (w, h, stride, buf) = match r {
@@ -534,36 +581,38 @@ fn GdipBitmapUnlockBits(c: &mut Ctx) -> u32 {
     let (bmp, data) = (c.a(0), c.a(1));
     with(|m| {
         let Some(b) = m.get_mut(&bmp) else { return INVALID_PARAMETER };
-        let Some((buf, x, y, w, fmt)) = b.locked.take() else { return WIN32_ERROR };
+        let Some(Lock { buf, x, y, w, fmt: lf }) = b.locked.take() else { return WIN32_ERROR };
         let (h, stride) = (r32(data + 4), r32(data + 8));
+        let fmt = lf.raw();
         let bits = lock_bits(fmt);
         for j in 0..h.min(b.h - y) {
             let row = mem::slice(buf + j * stride, (w * bits).div_ceil(8)).to_vec();
             for i in 0..w {
                 let s = (i * bits / 8) as usize;
                 let d = ((y + j) * b.w + x + i) as usize;
-                if indexed(fmt) {
-                    let v = get_bits(&row, i, bits) as u8;
-                    b.idx[d] = v;
-                    let col = b.palette.get(v as usize).copied().unwrap_or(0xff00_0000);
-                    b.px[4 * d..4 * d + 4].copy_from_slice(&col.to_le_bytes());
-                    continue;
-                }
-                let v = match bits {
-                    16 => {
+                let v = match lf {
+                    LockFmt::Indexed(_) => {
+                        let v = get_bits(&row, i, bits) as u8;
+                        b.idx[d] = v;
+                        let col = b.palette.get(usize::from(v)).copied().unwrap_or(0xff00_0000);
+                        b.px[4 * d..4 * d + 4].copy_from_slice(&col.to_le_bytes());
+                        continue;
+                    }
+                    LockFmt::Rgb555 | LockFmt::Rgb565 => {
                         let [bl, g, rd] = unpack16(fmt, u16::from_le_bytes([row[s], row[s + 1]]));
                         [bl, g, rd, 0xff]
                     }
-                    24 => [row[s], row[s + 1], row[s + 2], 0xff],
-                    _ if fmt == b.fmt && (fmt == FMT_32RGB || fmt == FMT_32PARGB) => {
+                    LockFmt::Rgb24 => [row[s], row[s + 1], row[s + 2], 0xff],
+                    LockFmt::Rgb32 | LockFmt::Pargb32 if fmt == b.fmt => {
                         b.px[4 * d..4 * d + 4].copy_from_slice(&row[s..s + 4]);
                         continue;
                     }
-                    _ if fmt == FMT_32PARGB => {
+                    LockFmt::Pargb32 => {
                         let a = row[s + 3];
                         [unpremul(row[s], a), unpremul(row[s + 1], a), unpremul(row[s + 2], a), a]
                     }
-                    _ => [row[s], row[s + 1], row[s + 2], if fmt == FMT_32RGB { 0xff } else { row[s + 3] }],
+                    LockFmt::Rgb32 => [row[s], row[s + 1], row[s + 2], 0xff],
+                    LockFmt::Argb32 => [row[s], row[s + 1], row[s + 2], row[s + 3]],
                 };
                 if !b.idx.is_empty() {
                     let k = b.nearest(v);
@@ -882,7 +931,7 @@ mod review_b06_tests {
         add(Bitmap { w: 2, h: 2, px: vec![7; 16], fmt: FMT_32ARGB, flags: 0, palette: Vec::new(), idx: Vec::new(), locked: None }, out);
         let h = mem::rp(out);
         let buf = mem::heap_alloc(4096, true);
-        with(|m| m.get_mut(&h).unwrap().locked = Some((buf, 0, 0, 2, FMT_32ARGB)));
+        with(|m| m.get_mut(&h).unwrap().locked = Some(Lock { buf, x: 0, y: 0, w: 2, fmt: LockFmt::Argb32 }));
         assert!(mem::heap_owns(buf));
         assert_eq!(crate::test_guest::call(GdipDisposeImage, &[h]), OK);
         // (a freed block loses its header's mark)
