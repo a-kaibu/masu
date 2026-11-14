@@ -20,7 +20,7 @@ impl Field {
         match self {
             Field::Int(i) => i.to_string(),
             Field::Str(s) => s.clone(),
-            _ => String::new(),
+            Field::Null | Field::Stream(_) => String::new(),
         }
     }
     /// MsiRecordGetInteger: strings that are whole decimal numbers, else NULL_INT.
@@ -28,7 +28,7 @@ impl Field {
         match self {
             Field::Int(i) => *i,
             Field::Str(s) => parse_int(s).unwrap_or(NULL_INT),
-            _ => NULL_INT,
+            Field::Null | Field::Stream(_) => NULL_INT,
         }
     }
 }
@@ -76,7 +76,7 @@ impl Record {
         }
         self.f[i] = match v {
             Field::Str(s) if s.is_empty() => Field::Null,
-            v => v,
+            v @ Field::Null | v @ Field::Int(_) | v @ Field::Str(_) | v @ Field::Stream(_) => v,
         };
         self.pos[i] = 0;
         Ok(())

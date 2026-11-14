@@ -348,7 +348,7 @@ impl P {
             (Operand::Col(c), Operand::Val(Val::Null)) | (Operand::Val(Val::Null), Operand::Col(c)) => match op {
                 Op::Eq => return Ok(Expr::IsNull(c.clone(), true)),
                 Op::Ne => return Ok(Expr::IsNull(c.clone(), false)),
-                _ => return Err(ERROR_BAD_QUERY_SYNTAX),
+                Op::Lt | Op::Gt | Op::Le | Op::Ge => return Err(ERROR_BAD_QUERY_SYNTAX),
             },
             _ => {}
         }

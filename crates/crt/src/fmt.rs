@@ -562,7 +562,7 @@ fn char_is_wide<T: Unit>(upper: bool, size: Size, m: Mode) -> bool {
         Size::Short => false,
         Size::Long => true,
         Size::Tchar => T::WIDE,
-        _ => {
+        Size::None | Size::Bytes(_) => {
             let own = T::WIDE && (m.legacy_wide || m.legacy);
             if upper { !own } else { own }
         }

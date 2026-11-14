@@ -18,7 +18,6 @@ file	crates/apitrace/src/replay.rs	indexing_slicing	20
 file	crates/apitrace/src/replay.rs	string_slice	2
 file	crates/apitrace/src/replay.rs	unwrap_in_result	3
 file	crates/apitrace/src/replay.rs	unwrap_used	6
-file	crates/apitrace/src/replay.rs	wildcard_enum_match_arm	9
 file	crates/apitrace/src/snappy.rs	arithmetic_side_effects	33
 file	crates/apitrace/src/snappy.rs	as_conversions	27
 file	crates/apitrace/src/snappy.rs	cast_possible_truncation	15
@@ -31,7 +30,6 @@ file	crates/apitrace/src/trace.rs	cast_sign_loss	1
 file	crates/apitrace/src/trace.rs	indexing_slicing	3
 file	crates/apitrace/src/trace.rs	unwrap_in_result	3
 file	crates/apitrace/src/trace.rs	unwrap_used	3
-file	crates/apitrace/src/trace.rs	wildcard_enum_match_arm	3
 file	crates/asf/src/lib.rs	arithmetic_side_effects	69
 file	crates/asf/src/lib.rs	indexing_slicing	19
 file	crates/asf/src/write.rs	arithmetic_side_effects	18
@@ -49,7 +47,6 @@ file	crates/crt/src/fmt.rs	cast_possible_truncation	24
 file	crates/crt/src/fmt.rs	cast_possible_wrap	10
 file	crates/crt/src/fmt.rs	cast_sign_loss	5
 file	crates/crt/src/fmt.rs	indexing_slicing	27
-file	crates/crt/src/fmt.rs	wildcard_enum_match_arm	1
 file	crates/crt/src/lib.rs	arithmetic_side_effects	4
 file	crates/crt/src/lib.rs	as_conversions	5
 file	crates/crt/src/lib.rs	cast_possible_truncation	2
@@ -64,7 +61,6 @@ file	crates/crt/src/scan.rs	as_conversions	49
 file	crates/crt/src/scan.rs	cast_possible_truncation	9
 file	crates/crt/src/scan.rs	indexing_slicing	6
 file	crates/crt/src/scan.rs	unwrap_used	1
-file	crates/crt/src/scan.rs	wildcard_enum_match_arm	1
 file	crates/crt/src/sec.rs	arithmetic_side_effects	16
 file	crates/crt/src/sec.rs	as_conversions	1
 file	crates/crt/src/sec.rs	cast_possible_truncation	1
@@ -981,7 +977,6 @@ file	crates/mpeg1/src/video.rs	as_conversions	3
 file	crates/mpeg1/src/video.rs	indexing_slicing	82
 file	crates/msidb/src/cond.rs	arithmetic_side_effects	24
 file	crates/msidb/src/cond.rs	indexing_slicing	12
-file	crates/msidb/src/cond.rs	wildcard_enum_match_arm	1
 file	crates/msidb/src/db.rs	arithmetic_side_effects	17
 file	crates/msidb/src/db.rs	as_conversions	12
 file	crates/msidb/src/db.rs	cast_possible_truncation	1
@@ -993,15 +988,12 @@ file	crates/msidb/src/db.rs	map_err_ignore	2
 file	crates/msidb/src/db.rs	string_slice	1
 file	crates/msidb/src/db.rs	unwrap_in_result	3
 file	crates/msidb/src/db.rs	unwrap_used	7
-file	crates/msidb/src/db.rs	wildcard_enum_match_arm	2
 file	crates/msidb/src/format.rs	arithmetic_side_effects	28
 file	crates/msidb/src/format.rs	indexing_slicing	16
 file	crates/msidb/src/format.rs	string_slice	1
-file	crates/msidb/src/format.rs	wildcard_enum_match_arm	2
 file	crates/msidb/src/idt.rs	indexing_slicing	11
 file	crates/msidb/src/idt.rs	map_err_ignore	1
 file	crates/msidb/src/idt.rs	unwrap_used	1
-file	crates/msidb/src/idt.rs	wildcard_enum_match_arm	1
 file	crates/msidb/src/names.rs	arithmetic_side_effects	11
 file	crates/msidb/src/names.rs	as_conversions	12
 file	crates/msidb/src/names.rs	unwrap_used	3
@@ -1015,14 +1007,12 @@ file	crates/msidb/src/record.rs	arithmetic_side_effects	4
 file	crates/msidb/src/record.rs	as_conversions	4
 file	crates/msidb/src/record.rs	cast_possible_truncation	2
 file	crates/msidb/src/record.rs	indexing_slicing	5
-file	crates/msidb/src/record.rs	wildcard_enum_match_arm	3
 file	crates/msidb/src/sql.rs	arithmetic_side_effects	28
 file	crates/msidb/src/sql.rs	as_conversions	1
 file	crates/msidb/src/sql.rs	cast_possible_truncation	1
 file	crates/msidb/src/sql.rs	cast_sign_loss	1
 file	crates/msidb/src/sql.rs	indexing_slicing	18
 file	crates/msidb/src/sql.rs	map_err_ignore	2
-file	crates/msidb/src/sql.rs	wildcard_enum_match_arm	1
 file	crates/msidb/src/suminfo.rs	arithmetic_side_effects	16
 file	crates/msidb/src/suminfo.rs	as_conversions	15
 file	crates/msidb/src/suminfo.rs	cast_possible_truncation	4
@@ -1035,7 +1025,7 @@ file	crates/msidb/src/transform.rs	cast_possible_truncation	1
 file	crates/msidb/src/transform.rs	cast_sign_loss	1
 file	crates/msidb/src/transform.rs	indexing_slicing	15
 file	crates/msidb/src/transform.rs	map_err_ignore	2
-file	crates/msidb/src/transform.rs	wildcard_enum_match_arm	3
+file	crates/msidb/src/transform.rs	wildcard_enum_match_arm	1
 file	crates/msidb/src/view.rs	arithmetic_side_effects	9
 file	crates/msidb/src/view.rs	as_conversions	9
 file	crates/msidb/src/view.rs	cast_possible_truncation	2
@@ -1043,9 +1033,8 @@ file	crates/msidb/src/view.rs	cast_possible_wrap	2
 file	crates/msidb/src/view.rs	cast_sign_loss	5
 file	crates/msidb/src/view.rs	indexing_slicing	84
 file	crates/msidb/src/view.rs	map_err_ignore	3
-file	crates/msidb/src/view.rs	match_wildcard_for_single_variants	1
 file	crates/msidb/src/view.rs	unwrap_used	5
-file	crates/msidb/src/view.rs	wildcard_enum_match_arm	4
+file	crates/msidb/src/view.rs	wildcard_enum_match_arm	1
 file	crates/sake/src/acm.rs	arithmetic_side_effects	126
 file	crates/sake/src/acm.rs	as_conversions	57
 file	crates/sake/src/acm.rs	cast_possible_truncation	16

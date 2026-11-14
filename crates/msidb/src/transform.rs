@@ -138,7 +138,7 @@ impl Database {
                 let (t, name) = (f[0].text(), f[2].text());
                 let ty = match f[3] {
                     Field::Int(v) => v as u16,
-                    _ => return Err(bad),
+                    Field::Null | Field::Str(_) | Field::Stream(_) => return Err(bad),
                 };
                 let col = Col { name, ty };
                 if let Some(nt) = new_tables.iter_mut().find(|x| x.0 == t) {
@@ -175,7 +175,7 @@ impl Database {
                             let sname = format!("{name}.{}", key.join("\t"));
                             Field::Stream(read(cf, &format!("/{}", names::encode(&sname, false))).unwrap_or_default())
                         }
-                        f => f,
+                        f @ Field::Null | f @ Field::Int(_) | f @ Field::Str(_) => f,
                     }
                 };
                 match op {

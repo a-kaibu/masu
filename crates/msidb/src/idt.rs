@@ -77,7 +77,7 @@ pub fn export(db: &mut Database, table: &str) -> R<(Vec<u8>, Vec<(String, Vec<u8
                     files.push((format!("{table}/{name}"), d.clone()));
                     fs.push(name);
                 }
-                f => fs.push(escape(&f.text())),
+                f @ Field::Null | f @ Field::Int(_) | f @ Field::Str(_) => fs.push(escape(&f.text())),
             }
         }
         out.push_str(&fs.join("\t"));

@@ -37,7 +37,7 @@ impl Value {
             Value::Bool(b) => *b as i64,
             Value::SInt(v) | Value::Enum(_, v) => *v,
             Value::UInt(v) | Value::Bitmask(_, v) => *v as i64,
-            _ => return None,
+            Value::Null | Value::Float(_) | Value::Double(_) | Value::Str(_) | Value::Blob(_) | Value::Array(_) | Value::Struct(..) | Value::Opaque(_) | Value::Repr(..) | Value::WStr(_) => return None,
         })
     }
 
@@ -45,7 +45,7 @@ impl Value {
     pub fn deref(&self) -> Option<&Value> {
         match self {
             Value::Array(v) if v.len() == 1 => Some(&v[0]),
-            _ => None,
+            Value::Null | Value::Bool(_) | Value::SInt(_) | Value::UInt(_) | Value::Float(_) | Value::Double(_) | Value::Str(_) | Value::Blob(_) | Value::Enum(..) | Value::Bitmask(..) | Value::Array(_) | Value::Struct(..) | Value::Opaque(_) | Value::Repr(..) | Value::WStr(_) => None,
         }
     }
 
@@ -53,7 +53,7 @@ impl Value {
     pub fn member(&self, name: &str) -> Option<&Value> {
         match self {
             Value::Struct(sig, m) => sig.members.iter().position(|n| n == name).and_then(|i| m.get(i)),
-            _ => None,
+            Value::Null | Value::Bool(_) | Value::SInt(_) | Value::UInt(_) | Value::Float(_) | Value::Double(_) | Value::Str(_) | Value::Blob(_) | Value::Enum(..) | Value::Bitmask(..) | Value::Array(_) | Value::Opaque(_) | Value::Repr(..) | Value::WStr(_) => None,
         }
     }
 }

@@ -133,7 +133,7 @@ impl Src {
             },
             Src::Virt { rows, .. } => match &rows[r][c] {
                 Field::Int(i) => ((*i as u32) ^ 0x8000_0000, String::new()),
-                f => (0, f.text()),
+                f @ Field::Null | f @ Field::Str(_) | f @ Field::Stream(_) => (0, f.text()),
             },
         }
     }
@@ -236,7 +236,7 @@ fn compare(fa: &Fv, op: Op, fb: &Fv, string: bool) -> bool {
         match op {
             Op::Eq => x == y,
             Op::Ne => x != y,
-            _ => false,
+            Op::Lt | Op::Gt | Op::Le | Op::Ge => false,
         }
     } else {
         match (fa.num(), fb.num()) {
@@ -369,7 +369,7 @@ impl View {
                             string |= self.srcs[si].cols(db)[ci].ty & T_STRING != 0;
                         }
                         Operand::Val(Val::Str(_)) => string = true,
-                        _ => {}
+                        Operand::Val(_) => {}
                     }
                 }
                 // (strings compare only for equality)
@@ -936,7 +936,7 @@ fn num(f: &Field) -> Option<i64> {
     match f {
         Field::Int(i) if *i != NULL_INT => Some(*i as i64),
         Field::Str(s) => s.trim().parse().ok(),
-        _ => None,
+        Field::Null | Field::Int(_) | Field::Stream(_) => None,
     }
 }
 

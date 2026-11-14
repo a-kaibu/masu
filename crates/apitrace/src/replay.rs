@@ -123,7 +123,7 @@ fn ptrbits_of(events: &[u8], cut: bool) -> Result<u32, String> {
             Value::Opaque(a) => *a > u32::MAX as u64,
             Value::Array(a) => a.iter().any(high),
             Value::Struct(_, m) => m.iter().any(high),
-            _ => false,
+            Value::Null | Value::Bool(_) | Value::SInt(_) | Value::UInt(_) | Value::Float(_) | Value::Double(_) | Value::Str(_) | Value::Blob(_) | Value::Enum(..) | Value::Bitmask(..) | Value::Repr(..) | Value::WStr(_) => false,
         }
     }
     while let Some(c) = p.next_call()? {
@@ -289,7 +289,7 @@ pub fn ddraw_window(events: &[u8], cut: bool) -> Result<Option<(i32, i32, u32, u
 fn opaque(v: &Value) -> Option<u64> {
     match v {
         Value::Opaque(a) => Some(*a),
-        v => match v.deref() {
+        v @ Value::Null | v @ Value::Bool(_) | v @ Value::SInt(_) | v @ Value::UInt(_) | v @ Value::Float(_) | v @ Value::Double(_) | v @ Value::Str(_) | v @ Value::Blob(_) | v @ Value::Enum(..) | v @ Value::Bitmask(..) | v @ Value::Array(_) | v @ Value::Struct(..) | v @ Value::Repr(..) | v @ Value::WStr(_) => match v.deref() {
             Some(Value::Opaque(a)) => Some(*a),
             _ => None,
         },
@@ -301,7 +301,7 @@ fn hands_out(v: &Value) -> bool {
     match v {
         Value::Opaque(a) => *a != 0,
         Value::Array(a) => a.iter().any(hands_out),
-        _ => false,
+        Value::Null | Value::Bool(_) | Value::SInt(_) | Value::UInt(_) | Value::Float(_) | Value::Double(_) | Value::Str(_) | Value::Blob(_) | Value::Enum(..) | Value::Bitmask(..) | Value::Struct(..) | Value::Repr(..) | Value::WStr(_) => false,
     }
 }
 
@@ -422,7 +422,7 @@ impl Converter {
                 flags |= NAME_HR;
                 ret_word = ret.and_then(|r| r.int()).map(|r| r as u32);
             }
-            _ => {}
+            Ty::Int(_) | Ty::F4 | Ty::F8 | Ty::F10 | Ty::Void | Ty::Fn | Ty::Hwnd | Ty::Rec(_) | Ty::Obj(_) | Ty::Ptr(_) | Ty::Arr(..) | Ty::Bits(_) => {}
         }
         if method == "CreateBuffer" {
             if let Some(Arg::OutObj(h)) = args.last() {
@@ -481,7 +481,7 @@ impl Converter {
                     Some(&h) if matches!(&**inner, Ty::Obj(_) | Ty::Void) || matches!(&**inner, Ty::Rec(r) if r.ends_with("__")) => Arg::Handle(h),
                     _ => Arg::Word(0),
                 },
-                v => {
+                v @ Value::Bool(_) | v @ Value::SInt(_) | v @ Value::UInt(_) | v @ Value::Float(_) | v @ Value::Double(_) | v @ Value::Str(_) | v @ Value::Blob(_) | v @ Value::Enum(..) | v @ Value::Bitmask(..) | v @ Value::Array(_) | v @ Value::Struct(..) | v @ Value::Repr(..) | v @ Value::WStr(_) => {
                     let mut p = Packer::with(self.l, self.arch, &self.objects);
                     p.pointee(inner, v)?;
                     let mut blob = p.finish();
@@ -569,7 +569,7 @@ impl Converter {
             };
             return Ok(match v {
                 Value::Array(a) if a.len() > 1 => Arg::OutArr(a.iter().map(|x| h(opaque(x))).collect()),
-                v => Arg::OutObj(h(opaque(v))),
+                v @ Value::Null | v @ Value::Bool(_) | v @ Value::SInt(_) | v @ Value::UInt(_) | v @ Value::Float(_) | v @ Value::Double(_) | v @ Value::Str(_) | v @ Value::Blob(_) | v @ Value::Enum(..) | v @ Value::Bitmask(..) | v @ Value::Array(_) | v @ Value::Struct(..) | v @ Value::Opaque(_) | v @ Value::Repr(..) | v @ Value::WStr(_) => Arg::OutObj(h(opaque(v))),
             });
         }
         // an InOut argument (apitrace writes it at the LEAVE only): what the call left there,
@@ -714,7 +714,7 @@ impl<'a> Packer<'a> {
                     self.put(start + i as u32 * size, t, x)?;
                 }
             }
-            v => {
+            v @ Value::Null | v @ Value::Bool(_) | v @ Value::SInt(_) | v @ Value::UInt(_) | v @ Value::Float(_) | v @ Value::Double(_) | v @ Value::Enum(..) | v @ Value::Bitmask(..) | v @ Value::Struct(..) | v @ Value::Opaque(_) => {
                 let size = self.elem_size(t)?;
                 self.b.bytes.resize(start as usize + size as usize, 0);
                 self.put(start, t, v)?;
@@ -727,7 +727,7 @@ impl<'a> Packer<'a> {
         match t {
             // (void*: bytes)
             Ty::Void => Ok(1),
-            t => self.l.size(t, self.arch),
+            t @ Ty::Int(_) | t @ Ty::F4 | t @ Ty::F8 | t @ Ty::F10 | t @ Ty::Hr | t @ Ty::Fn | t @ Ty::Hwnd | t @ Ty::Rec(_) | t @ Ty::Obj(_) | t @ Ty::Ptr(_) | t @ Ty::Arr(..) | t @ Ty::Bits(_) => self.l.size(t, self.arch),
         }
     }
 
@@ -743,7 +743,7 @@ impl<'a> Packer<'a> {
             (Ty::Int(w), v) => {
                 let x = match v {
                     Value::Float(f) => *f as i64,
-                    v => v.int().ok_or(format!("an integer {v}"))?,
+                    v @ Value::Null | v @ Value::Bool(_) | v @ Value::SInt(_) | v @ Value::UInt(_) | v @ Value::Double(_) | v @ Value::Str(_) | v @ Value::Blob(_) | v @ Value::Enum(..) | v @ Value::Bitmask(..) | v @ Value::Array(_) | v @ Value::Struct(..) | v @ Value::Opaque(_) | v @ Value::Repr(..) | v @ Value::WStr(_) => v.int().ok_or(format!("an integer {v}"))?,
                 };
                 self.word(off, *w as usize, x as u64);
             }

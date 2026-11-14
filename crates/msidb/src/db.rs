@@ -423,7 +423,7 @@ impl Database {
             for &k in &keys {
                 match r.v[k].cmp(&v[k]) {
                     std::cmp::Ordering::Equal => continue,
-                    o => return o,
+                    o @ std::cmp::Ordering::Less | o @ std::cmp::Ordering::Greater => return o,
                 }
             }
             std::cmp::Ordering::Equal
@@ -500,7 +500,7 @@ impl Database {
                     self.streams.insert(name, Stream::Mem(d.clone()));
                     self.tables[ti].rows[ri].v[c] = 1;
                 }
-                _ => {
+                Field::Null | Field::Int(_) | Field::Str(_) => {
                     self.streams.remove(&name);
                     self.tables[ti].rows[ri].v[c] = 0;
                 }

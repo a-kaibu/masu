@@ -336,7 +336,7 @@ pub fn scan<T: Unit>(input: &[T], fmt: &[T], m: Mode, k: &mut impl Sink) -> i32 
     };
     match result {
         Stop::Input if !converted => -1,
-        _ => assigned,
+        Stop::Input | Stop::Matching => assigned,
     }
 }
 

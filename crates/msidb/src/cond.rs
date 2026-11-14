@@ -241,7 +241,7 @@ impl P<'_> {
                     _ => (V::Str(self.env.property(&s)), false),
                 })
             }
-            _ => None,
+            Tok::Op(_) | Tok::LP | Tok::RP => None,
         }
     }
 }

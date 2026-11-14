@@ -104,7 +104,7 @@ impl F<'_> {
             let n: usize = key.parse().ok()?;
             return Some(match self.rec.get(n) {
                 Field::Null => String::new(),
-                f => self.field(&f.text()),
+                f @ Field::Int(_) | f @ Field::Str(_) | f @ Field::Stream(_) => self.field(&f.text()),
             });
         }
         // (without a package only fields are keys)
@@ -277,7 +277,7 @@ pub fn format_record(rec: &Record, env: &dyn Env) -> String {
             }
             s
         }
-        f => format_str(&f.text(), rec, env),
+        f @ Field::Int(_) | f @ Field::Str(_) | f @ Field::Stream(_) => format_str(&f.text(), rec, env),
     }
 }
 
