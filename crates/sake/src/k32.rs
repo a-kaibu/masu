@@ -1349,6 +1349,8 @@ fn TerminateThread(c: &mut Ctx) -> u32 {
     }
     obj::signal();
     CS.wake();
+    // (one suspended inside a wait: stand_while_suspended lets it go to end)
+    SUSPENDS.wake();
     1
 }
 // thread priorities are kept (and answered) but change nothing: by thread handle
@@ -1495,14 +1497,34 @@ pub(crate) fn sleep_ms(ms: u32) {
 // WaitOnAddress: a generation per parking bucket of addresses (crates/waits)
 static ADDR: waits::Addr = waits::Addr::new();
 
-/// A save state: the waits here stand still where a restored copy calls the API again.
+/// A save state: the waits here stand still where a restored copy calls the API again. And a
+/// thread suspended (SuspendThread) while it waits stands still there too, holding nothing,
+/// instead of taking the lock or the object it waits for (#221; waits::Host).
 pub(crate) struct Pause;
 impl waits::Host for Pause {
     fn pausing(&self) -> bool {
-        kura::snap::pausing()
+        kura::snap::pausing() || suspended_here()
     }
     fn point(&self) {
-        crate::snap::point();
+        if kura::snap::pausing() {
+            crate::snap::point();
+        } else {
+            stand_while_suspended();
+        }
+    }
+}
+
+/// Whether this guest thread's suspend count is above 0 (cheap while no thread is suspended).
+/// (Not once TerminateThread ended it: it goes on to end.)
+pub(crate) fn suspended_here() -> bool {
+    SUSPENDS.any() && crate::cur_opt().is_some_and(|t| SUSPENDS.count(t.tid) > 0) && !terminated_here()
+}
+
+/// Inside an API call that waits: stands still while this thread is suspended, holding
+/// nothing (a save state lets it go to its own point: Pause asks again).
+pub(crate) fn stand_while_suspended() {
+    if let Some(t) = crate::cur_opt() {
+        SUSPENDS.park(t.tid, || kura::snap::pausing() && kura::snap::parkable() || terminated_here());
     }
 }
 

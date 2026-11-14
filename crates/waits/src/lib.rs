@@ -41,7 +41,11 @@ use std::time::{Duration, Instant};
 
 /// What a waiting thread does for a save state.
 pub trait Host {
-    /// Whether threads are asked to stand still now.
+    /// Whether this thread is asked to stand still now (a save state; SuspendThread of it). A
+    /// lock is not taken while it is: a thread suspended while it waited for a critical
+    /// section took it when it came free, then stood still holding it at the top of its run
+    /// loop, and the thread that suspended it waited for it forever (on Windows a suspended
+    /// thread does not run to take it: KiriKiri2's sound thread, #221).
     fn pausing(&self) -> bool {
         false
     }
@@ -189,8 +193,16 @@ impl Cs {
         }
         let mut spins = 0;
         loop {
+            while h.pausing() {
+                h.point();
+            }
             if own.compare_exchange(0, me, Acquire, Relaxed).is_ok() {
-                return Entered::First;
+                if !h.pausing() {
+                    return Entered::First;
+                }
+                // (asked to stand still between the look above and the take: let go again)
+                self.leave(own, waiters);
+                continue;
             }
             spins += 1;
             if spins < SPINS {
@@ -367,7 +379,23 @@ impl Sync {
     /// false then, with no mark of it left in the word (_Mtx_timedlock: it polled srw_try with
     /// 1 ms sleeps, a thousand wakeups a second for each waiting thread).
     pub fn srw_acquire_until(&self, a: &AtomicU32, shared: bool, h: &impl Host, left: impl Fn() -> Option<u64>) -> bool {
+        loop {
+            if !self.srw_acquire_once(a, shared, h, &left) {
+                return false;
+            }
+            if !h.pausing() {
+                return true;
+            }
+            // (asked to stand still while it took it: let go again, Host::pausing)
+            self.srw_release(a, shared);
+        }
+    }
+
+    fn srw_acquire_once(&self, a: &AtomicU32, shared: bool, h: &impl Host, left: &impl Fn() -> Option<u64>) -> bool {
         for _ in 0..SPINS {
+            while h.pausing() {
+                h.point();
+            }
             if Self::srw_try(a, shared) {
                 return true;
             }
@@ -393,8 +421,14 @@ impl Sync {
         };
         mark(true);
         handshake();
-        while !Self::srw_take(a, shared, !shared) {
-            if h.pausing() {
+        loop {
+            // (looked at before the take, once: a thread suspended meanwhile does not take it,
+            // and one resumed after the look takes it now, not after a wakeup that may not come)
+            let pausing = h.pausing();
+            if !pausing && Self::srw_take(a, shared, !shared) {
+                break;
+            }
+            if pausing {
                 // (not marked while paused: a save state taken then has no waiter in the word)
                 mark(false);
                 p.cv.notify_all();

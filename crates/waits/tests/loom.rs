@@ -619,6 +619,85 @@ mod suspend {
         });
     }
 
+    /// #221 (KiriKiri2's sound thread): a thread suspended (SuspendThread) while it waits for a
+    /// critical section does not take it when it comes free, as on Windows, where a suspended
+    /// thread does not run to: the thread that suspended it takes it, and the waiter takes it
+    /// after ResumeThread. (It took it and stood still holding it at the top of its run loop, and
+    /// the suspender waited for it forever: loom reports that as a deadlock.) The suspension may
+    /// come at any point of the waiter's enter before the section is let go.
+    #[test]
+    fn a_suspended_waiter_does_not_take_the_critical_section() {
+        use waits::{Cs, Entered, NoPause};
+        const W: u32 = 2;
+        struct Sus(Arc<Suspends>);
+        impl waits::Host for Sus {
+            fn pausing(&self) -> bool {
+                self.0.any() && self.0.count(W) > 0
+            }
+            fn point(&self) {
+                self.0.park(W, || false);
+            }
+        }
+        model(|| {
+            let s = Arc::new(Suspends::new());
+            let cs = Arc::new(Cs::new());
+            let own = Arc::new(AtomicU32::new(1)); // held by the suspender
+            let waiters = Arc::new(AtomicU32::new(0));
+            let waiter = {
+                let (s, cs, own, waiters) = (s.clone(), cs.clone(), own.clone(), waiters.clone());
+                thread::spawn(move || {
+                    assert_eq!(cs.enter(&own, &waiters, W, &Sus(s.clone())), Entered::First);
+                    // (the top of its run loop: a suspended thread stands still here)
+                    s.park(W, || false);
+                    cs.leave(&own, &waiters);
+                })
+            };
+            assert_eq!(s.suspend(W), Some(0));
+            cs.leave(&own, &waiters);
+            assert_eq!(cs.enter(&own, &waiters, 1, &NoPause), Entered::First);
+            cs.leave(&own, &waiters);
+            assert_eq!(s.resume(W), 1);
+            waiter.join().unwrap();
+            assert_eq!(own.load(SeqCst), 0);
+        });
+    }
+
+    /// The same for an SRW lock held exclusively by the suspender.
+    #[test]
+    fn a_suspended_waiter_does_not_take_the_srw_lock() {
+        use waits::{NoPause, Sync as Waits};
+        const W: u32 = 2;
+        struct Sus(Arc<Suspends>);
+        impl waits::Host for Sus {
+            fn pausing(&self) -> bool {
+                self.0.any() && self.0.count(W) > 0
+            }
+            fn point(&self) {
+                self.0.park(W, || false);
+            }
+        }
+        model(|| {
+            let s = Arc::new(Suspends::new());
+            let sync = Arc::new(Waits::new());
+            let word = Arc::new(AtomicU32::new(1));
+            let waiter = {
+                let (s, sync, word) = (s.clone(), sync.clone(), word.clone());
+                thread::spawn(move || {
+                    sync.srw_acquire(&word, false, &Sus(s.clone()));
+                    s.park(W, || false);
+                    sync.srw_release(&word, false);
+                })
+            };
+            assert_eq!(s.suspend(W), Some(0));
+            sync.srw_release(&word, false);
+            sync.srw_acquire(&word, false, &NoPause);
+            sync.srw_release(&word, false);
+            assert_eq!(s.resume(W), 1);
+            waiter.join().unwrap();
+            assert_eq!(word.load(SeqCst), 0);
+        });
+    }
+
     /// GetThreadContext's wait (review b09): once the target is suspended, wait_stopped returns
     /// only after the target has reached its safe point, and in every interleaving it does
     /// return (no lost wake-up); the target then stays there until ResumeThread

@@ -484,7 +484,7 @@ pub fn wait(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool
     // access check and the first try, as wait_held's first round would (it took the table's lock
     // four times). (Not while a save state or TerminateThread waits for this thread: those
     // stop it in wait_held.)
-    if !kura::snap::pausing() && !crate::k32::terminating() {
+    if !kura::snap::pausing() && !crate::k32::terminating() && !crate::k32::suspended_here() {
         let first = with(|t| {
             // (a handle without SYNCHRONIZE cannot be waited on)
             if handles.iter().any(|h| t.objs.access.get(h).is_some_and(|a| a & 0x0010_0000 == 0)) {
@@ -617,6 +617,17 @@ fn wait_held_then(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -
             }
             crate::k32::check_terminate();
             g = lock();
+        }
+        // (suspended while it waited (SuspendThread): it takes nothing until it is resumed;
+        // its entry goes, so what woke it goes on to another waiter, #221)
+        if crate::k32::suspended_here() {
+            if let Some(id) = id.take() {
+                g.as_mut().unwrap().leave(id);
+            }
+            drop(g);
+            crate::k32::stand_while_suspended();
+            g = lock();
+            continue;
         }
         let t = g.get_or_insert_with(Table::new);
         if let Some(x) = extra {
