@@ -349,7 +349,8 @@ impl Parser {
         match t {
             Ty::Array(e, n) => self.comps(e).saturating_mul((*n).max(1) as u64),
             Ty::Struct(i) => self.prog.structs.get(*i).map_or(0, |s| s.fields.iter().fold(0u64, |a, f| a.saturating_add(self.comps(&f.ty)))),
-            t => t.comps() as u64,
+            t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
+                 | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t.comps() as u64,
         }
     }
 
@@ -537,7 +538,7 @@ impl Parser {
                         break;
                     }
                 }
-                _ => {}
+                Tok::Ident(_) | Tok::Int(..) | Tok::Float(_) | Tok::Str(_) | Tok::Punct(_) | Tok::PackMatrix(_) => {}
             }
             if lines.last().is_none_or(|l| l.0 != t.line) {
                 lines.push((t.line, Vec::new()));
@@ -1288,11 +1289,13 @@ pub fn const_int(e: &Expr) -> Option<i64> {
                 Bin::Shr => a.checked_shr(u32::try_from(b).ok()?)?,
                 Bin::And => a & b,
                 Bin::Or => a | b,
-                _ => return None,
+                Bin::Xor | Bin::LAnd | Bin::LOr | Bin::Lt | Bin::Gt | Bin::Le | Bin::Ge | Bin::Eq | Bin::Ne => return None,
             }
         }
         Expr::Un(Un::Neg, a) => const_int(a)?.checked_neg()?,
         Expr::Cast(_, a) => const_int(a)?,
-        _ => return None,
+        Expr::Bool(_) | Expr::Var(..) | Expr::Un(..) | Expr::Assign(..) | Expr::Cond(..) | Expr::Call(..)
+        | Expr::Construct(..) | Expr::Member(..) | Expr::Method(..) | Expr::Index(..) | Expr::List(_) | Expr::Comma(..)
+        | Expr::Str(_) => return None,
     })
 }

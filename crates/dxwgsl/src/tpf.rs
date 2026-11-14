@@ -173,6 +173,14 @@ macro_rules! opcodes {
                 }
             }
 
+            /// Its number (bits 0-10 of the opcode token; Unknown: 0x7ff, no opcode's)
+            pub fn code(self) -> u32 {
+                match self {
+                    $(Opcode::$name => $code,)*
+                    Opcode::Unknown => 0x7ff,
+                }
+            }
+
             /// How its words are read (the operand counts: d3d11TokenizedProgramFormat.hpp)
             pub fn shape(self) -> Shape {
                 match self {

@@ -163,7 +163,8 @@ pub fn ncomp(prog: &Program, t: &Ty) -> usize {
     match t {
         Ty::Array(e, n) => ncomp(prog, e) * *n as usize,
         Ty::Struct(i) => prog.structs[*i].fields.iter().map(|f| ncomp(prog, &f.ty)).sum(),
-        t => t.comps(),
+        t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
+             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t.comps(),
     }
 }
 
@@ -180,7 +181,8 @@ fn leaf_bases(prog: &Program, t: &Ty, out: &mut Vec<B>) {
                 leaf_bases(prog, &f.ty, out);
             }
         }
-        t => {
+        t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
+             | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => {
             for _ in 0..t.comps() {
                 out.push(t.base());
             }
@@ -207,7 +209,8 @@ fn units(prog: &Program, t: &Ty, out: &mut Vec<usize>) {
             }
         }
         t if t.comps() > 0 => out.push(t.comps()),
-        _ => {}
+        Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+             | Ty::Legacy(_) | Ty::Str => {}
     }
 }
 
@@ -229,7 +232,7 @@ fn ctype(b: B) -> u32 {
     match b {
         B::Float => 3,
         B::Int => 2,
-        _ => 1,
+        B::Bool | B::Uint => 1,
     }
 }
 
@@ -280,7 +283,7 @@ fn has_return(s: &Stmt) -> bool {
         Stmt::If(_, a, b) => has_return(a) || b.as_deref().is_some_and(has_return),
         Stmt::For(_, _, _, b) | Stmt::While(_, b) | Stmt::Do(b, _) => has_return(b),
         Stmt::Switch(_, cs) => cs.iter().any(|c| c.1.iter().any(has_return)),
-        _ => false,
+        Stmt::Expr(_) | Stmt::Decl(_) | Stmt::Break | Stmt::Continue | Stmt::Discard => false,
     }
 }
 
@@ -290,7 +293,8 @@ fn has_continue(s: &Stmt) -> bool {
         Stmt::Block(v) => v.iter().any(has_continue),
         Stmt::If(_, a, b) => has_continue(a) || b.as_deref().is_some_and(has_continue),
         Stmt::Switch(_, cs) => cs.iter().any(|c| c.1.iter().any(has_continue)),
-        _ => false,
+        Stmt::Expr(_) | Stmt::Decl(_) | Stmt::For(..) | Stmt::While(..) | Stmt::Do(..) | Stmt::Break
+        | Stmt::Return(..) | Stmt::Discard => false,
     }
 }
 
@@ -299,7 +303,9 @@ fn expr_writes(e: &Expr, name: &str, outs: &dyn Fn(&str) -> bool) -> bool {
         match t {
             Expr::Var(n, _) => return n == name,
             Expr::Member(a, _) | Expr::Index(a, _) => t = a,
-            _ => return false,
+            Expr::Int(..) | Expr::Float(_) | Expr::Bool(_) | Expr::Bin(..) | Expr::Un(..) | Expr::Assign(..)
+            | Expr::Cond(..) | Expr::Call(..) | Expr::Construct(..) | Expr::Cast(..) | Expr::Method(..) | Expr::List(_)
+            | Expr::Comma(..) | Expr::Str(_) => return false,
         }
     };
     match e {
@@ -315,7 +321,7 @@ fn expr_writes(e: &Expr, name: &str, outs: &dyn Fn(&str) -> bool) -> bool {
         }
         Expr::Construct(_, args) | Expr::List(args) => args.iter().any(|a| expr_writes(a, name, outs)),
         Expr::Method(o, m, args) => expr_writes(o, name, outs) || args.iter().any(|a| expr_writes(a, name, outs) || (m == "GetDimensions" && root(a))),
-        _ => false,
+        Expr::Int(..) | Expr::Float(_) | Expr::Bool(_) | Expr::Var(..) | Expr::Str(_) => false,
     }
 }
 
@@ -334,12 +340,12 @@ fn writes(s: &Stmt, name: &str, outs: &dyn Fn(&str) -> bool) -> bool {
         Stmt::While(c, b) | Stmt::Do(b, c) => expr_writes(c, name, outs) || writes(b, name, outs),
         Stmt::Switch(c, cs) => expr_writes(c, name, outs) || cs.iter().any(|c| c.1.iter().any(|s| writes(s, name, outs))),
         Stmt::Return(Some(e), _) => expr_writes(e, name, outs),
-        _ => false,
+        Stmt::Break | Stmt::Continue | Stmt::Return(..) | Stmt::Discard => false,
     }
 }
 
 /// Constant folding of an elementwise operation on immediates.
-fn fold(op: u32, a: &[u32], tru: u32) -> Option<u32> {
+fn fold(op: sm4::Opcode, a: &[u32], tru: u32) -> Option<u32> {
     use sm4::*;
     let f = |i: usize| flt(a[i]);
     let i = |k: usize| a[k] as i32;
@@ -395,7 +401,37 @@ fn fold(op: u32, a: &[u32], tru: u32) -> Option<u32> {
         RSQ => fbits(1.0 / f(0).sqrt()),
         EXP => fbits(f(0).exp2()),
         LOG => fbits(f(0).log2()),
-        _ => return None,
+        Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+        | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+        | Opcode::DerivRty | Opcode::Discard | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+        | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+        | Opcode::If | Opcode::Imad
+        | Opcode::Imul | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Loop | Opcode::CustomData
+        | Opcode::Nop | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz
+        | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Switch | Opcode::SinCos
+        | Opcode::Udiv | Opcode::Umul | Opcode::Umad | Opcode::DclResource | Opcode::DclConstantBuffer
+        | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+        | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+        | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+        | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+        | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+        | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+        | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+        | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+        | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+        | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+        | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+        | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+        | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+        | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+        | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+        | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+        | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+        | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+        | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+        | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+        | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+        | Opcode::Itod | Opcode::Utod | Opcode::Unknown => return None,
     })
 }
 
@@ -468,17 +504,17 @@ impl<'a> L<'a> {
         self.next - 1
     }
 
-    fn emit(&mut self, op: u32, dst: Vec<Dst>, src: Vec<Src>) -> &mut Ins {
+    fn emit(&mut self, op: sm4::Opcode, dst: Vec<Dst>, src: Vec<Src>) -> &mut Ins {
         self.code.push(Ins { op, sat: false, nz: false, ctl: 0, dst, src, offset: [0; 3] });
         self.code.last_mut().unwrap()
     }
 
-    fn flow(&mut self, op: u32) {
+    fn flow(&mut self, op: sm4::Opcode) {
         self.emit(op, vec![], vec![]);
     }
 
     /// if_nz / if_z (and breakc, discard...) on one component
-    fn cond_op(&mut self, op: u32, c: C, nz: bool) {
+    fn cond_op(&mut self, op: sm4::Opcode, c: C, nz: bool) {
         let s = self.scalar_src(c);
         self.emit(op, vec![], vec![s]).nz = nz;
     }
@@ -525,7 +561,7 @@ impl<'a> L<'a> {
         self.assign_op(sm4::MOV, dst, src, false);
     }
 
-    fn assign_op(&mut self, op: u32, dst: &[C], src: &[C], sat: bool) {
+    fn assign_op(&mut self, op: sm4::Opcode, dst: &[C], src: &[C], sat: bool) {
         // group destination comps by register
         let mut groups: Vec<(Reg, Vec<(u8, C)>)> = Vec::new();
         for (d, s) in dst.iter().zip(src) {
@@ -601,7 +637,7 @@ impl<'a> L<'a> {
 
     /// An elementwise operation over comps (args the same length); modifiers per argument
     /// (1 negate, 2 absolute value).
-    fn alu_m(&mut self, op: u32, b: B, args: &[(&[C], u8)]) -> Vec<C> {
+    fn alu_m(&mut self, op: sm4::Opcode, b: B, args: &[(&[C], u8)]) -> Vec<C> {
         let mut owned: Vec<(&[C], u8)> = args.to_vec();
         let (mut op, mut b) = (op, b);
         if self.sm3() {
@@ -626,7 +662,41 @@ impl<'a> L<'a> {
                     owned[0].1 ^= 1;
                     MOV
                 }
-                x => x,
+                x @ (Opcode::Add | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+                     | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+                     | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+                     | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+                     | Opcode::Eq | Opcode::Exp | Opcode::Frc | Opcode::Ge
+                     | Opcode::If | Opcode::Ishl
+                     | Opcode::Ishr | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+                     | Opcode::Loop | Opcode::Lt | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+                     | Opcode::Mov | Opcode::Movc | Opcode::Mul | Opcode::Ne | Opcode::Nop | Opcode::Not
+                     | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+                     | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz
+                     | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
+                     | Opcode::Udiv | Opcode::Umad | Opcode::Ushr | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+                     | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+                     | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+                     | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+                     | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+                     | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+                     | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+                     | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+                     | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+                     | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+                     | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+                     | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+                     | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+                     | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+                     | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+                     | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+                     | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+                     | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+                     | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+                     | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+                     | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+                     | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+                     | Opcode::Itod | Opcode::Utod | Opcode::Unknown) => x,
             };
             b = B::Float;
         }
@@ -680,7 +750,7 @@ impl<'a> L<'a> {
                                 }
                             }
                         }
-                        _ => {}
+                        Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) => {}
                     }
                 }
                 srcs.push(s);
@@ -691,13 +761,13 @@ impl<'a> L<'a> {
         out
     }
 
-    fn alu(&mut self, op: u32, b: B, args: &[&[C]]) -> Vec<C> {
+    fn alu(&mut self, op: sm4::Opcode, b: B, args: &[&[C]]) -> Vec<C> {
         let a: Vec<(&[C], u8)> = args.iter().map(|x| (*x, 0u8)).collect();
         self.alu_m(op, b, &a)
     }
 
     /// An operation with two results (imul/udiv: hi/quotient first): which one to keep.
-    fn alu2(&mut self, op: u32, args: &[&[C]], second: bool) -> Vec<C> {
+    fn alu2(&mut self, op: sm4::Opcode, args: &[&[C]], second: bool) -> Vec<C> {
         use sm4::*;
         if self.sm3() {
             match op {
@@ -710,7 +780,43 @@ impl<'a> L<'a> {
                     }
                     return self.alu_m(MAD, B::Float, &[(&tq, 1), (args[1], 0), (args[0], 0)]);
                 }
-                _ => {}
+                Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+                | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+                | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+                | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+                | Opcode::Eq | Opcode::Exp | Opcode::Frc | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge
+                | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+                | Opcode::Imax | Opcode::Imin | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+                | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+                | Opcode::Loop | Opcode::Lt | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+                | Opcode::Mov | Opcode::Movc | Opcode::Mul | Opcode::Ne | Opcode::Nop | Opcode::Not
+                | Opcode::Or | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+                | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz
+                | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
+                | Opcode::Ult | Opcode::Uge | Opcode::Umad | Opcode::Umax
+                | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+                | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+                | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+                | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+                | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+                | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+                | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+                | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+                | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+                | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+                | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+                | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+                | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+                | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+                | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+                | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+                | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+                | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+                | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+                | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+                | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+                | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+                | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {}
             }
         }
         let n = args[0].len();
@@ -868,7 +974,8 @@ impl<'a> L<'a> {
                 }
                 out
             }
-            t => {
+            t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+                 | Ty::Legacy(_) | Ty::Str) => {
                 let n = t.comps();
                 if n == 0 {
                     return Vec::new();
@@ -966,7 +1073,7 @@ impl<'a> L<'a> {
                 }
                 at
             }
-            _ => at,
+            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => at,
         }
     }
 
@@ -1008,14 +1115,15 @@ impl<'a> L<'a> {
             Ty::Scalar(_) => 1,
             Ty::Vec(_, n) => *n as u32,
             Ty::Mat(_, r, c) => *r as u32 * *c as u32,
-            _ => 0,
+            Ty::Void | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => 0,
         }
     }
 
     fn rdef_var0(&self, name: &str, t: &Ty, row_major: bool, off: u32, end: u32) -> sm4::CbVar {
         let (el, elems) = match t {
             Ty::Array(e, n) => (&**e, *n as u16),
-            t => (t, 0),
+            t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Tex(..)
+                 | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => (t, 0),
         };
         let ty = match el.base() {
             B::Bool => 1,
@@ -1028,7 +1136,8 @@ impl<'a> L<'a> {
             Ty::Vec(_, n) => (1, 1, *n as u16),
             Ty::Mat(_, r, c) => (if row_major { 2 } else { 3 }, *r as u16, *c as u16),
             // (a struct: one row of all its members' components)
-            _ => (5, 1, self.scalars(el) as u16),
+            Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+            | Ty::Legacy(_) | Ty::Str => (5, 1, self.scalars(el) as u16),
         };
         sm4::CbVar {
             name: name.into(),
@@ -1113,16 +1222,18 @@ impl<'a> L<'a> {
                             self.texs.push(TexD { name: name.clone(), dim: *d, el: Ty::Vec(B::Float, 4), reg, used: false });
                             self.samps.push(SampD { name, cmp: false, reg, used: false });
                         }
-                        _ => return Err(format!("line {}: arrays of arrays of textures or samplers are not supported", v.line)),
+                        Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
+                        | Ty::RwTex(..) | Ty::Str => return Err(format!("line {}: arrays of arrays of textures or samplers are not supported", v.line)),
                     }
                 }
                 match &**e {
                     Ty::Tex(..) => Obj::TexArr(t0),
                     Ty::Sampler(_) => Obj::SampArr(s0),
-                    _ => Obj::LegacyArr(t0, s0),
+                    Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
+                    | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => Obj::LegacyArr(t0, s0),
                 }
             }
-            _ => return Ok(()),
+            Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Str => return Ok(()),
         };
         self.globals.insert(v.name.clone(), Val { ty: v.ty().clone(), c: Vec::new(), obj });
         Ok(())
@@ -1146,7 +1257,8 @@ impl<'a> L<'a> {
                     sized = Ty::Array(el.clone(), total.div_ceil(eb.len()) as u32);
                     &sized
                 }
-                t => t,
+                t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
+                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
             };
             let mut tb = Vec::new();
             leaf_bases(self.prog, t, &mut tb);
@@ -1544,7 +1656,8 @@ impl<'a> L<'a> {
             // (a sampler2D: the slot of its texture)
             let legacy = self.globals.values().find_map(|v| match v.obj {
                 Obj::Legacy(t, sm) if sm as usize == n => legacy_slot.get(&(t as usize)).copied(),
-                _ => None,
+                Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
+                | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) => None,
             });
             let slot = s.reg.or(legacy).unwrap_or_else(|| {
                 let mut k = 0;
@@ -1596,7 +1709,7 @@ impl<'a> L<'a> {
                 Dim::T2D => 3,
                 Dim::T3D => 5,
                 Dim::T1DArray => 7,
-                _ => 8,
+                Dim::T2DArray | Dim::T2DMS | Dim::T2DMSArray | Dim::Cube | Dim::CubeArray => 8,
             };
             let ret = match u.el.base() {
                 B::Int => 3,
@@ -1668,7 +1781,7 @@ impl<'a> L<'a> {
         Ok(match v.ty.base() {
             B::Bool => c,
             B::Float => self.alu(sm4::NE, B::Bool, &[&[c], &[C::I(0)]])[0],
-            _ => c,
+            B::Int | B::Uint => c,
         })
     }
 
@@ -1840,7 +1953,7 @@ impl<'a> L<'a> {
                         let c = self.copy(&val.c);
                         self.scalar_src(c[0])
                     }
-                    s => s,
+                    s @ (Src::R { .. } | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s,
                 };
                 self.emit(SWITCH, vec![], vec![s]);
                 self.fctx().loops += 1;
@@ -2047,7 +2160,8 @@ impl<'a> L<'a> {
                 // (a narrower vector condition: the values truncated to it, as fxc does)
                 let t = match t {
                     Ty::Vec(b, n) if cv.ty.comps() > 1 && (cv.ty.comps() as u32) < n as u32 => Ty::vec(b, cv.ty.comps()),
-                    t => t,
+                    t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
+                         | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
                 };
                 let x = self.cast(x, &t)?;
                 let y = self.cast(y, &t)?;
@@ -2095,7 +2209,9 @@ impl<'a> L<'a> {
                 let v = self.expr_place_or_value(a)?;
                 self.member(v, name)
             }
-            e => self.expr(e),
+            e @ (Expr::Int(..) | Expr::Float(_) | Expr::Bool(_) | Expr::Bin(..) | Expr::Un(..) | Expr::Assign(..)
+                 | Expr::Cond(..) | Expr::Call(..) | Expr::Construct(..) | Expr::Cast(..) | Expr::Method(..) | Expr::List(_)
+                 | Expr::Comma(..) | Expr::Str(_)) => self.expr(e),
         }
     }
 
@@ -2105,7 +2221,8 @@ impl<'a> L<'a> {
         let v = match v.obj {
             // (groupshared memory: through a copy, stored back)
             Obj::Shared(..) => self.shared_place(v)?,
-            _ => v,
+            Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
+            | Obj::LegacyArr(..) | Obj::Uav(_) => v,
         };
         if !v.c.iter().all(writable) {
             return Err("assignment to a constant, a uniform or an input".into());
@@ -2126,14 +2243,16 @@ impl<'a> L<'a> {
                         let p = self.shared_place(v)?;
                         self.member(p, n)?
                     }
-                    _ => self.member(v, n)?,
+                    Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
+                    | Obj::LegacyArr(..) | Obj::Uav(_) => self.member(v, n)?,
                 }
             }
             Expr::Index(a, i) => {
                 let v = self.place_in(a)?;
                 let v = match v.obj {
                     Obj::Shared(..) if !matches!(v.ty, Ty::Array(..)) => self.shared_place(v)?,
-                    _ => v,
+                    Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
+                    | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) => v,
                 };
                 let mut iv = self.expr(i)?;
                 if let (Ty::RwTex(_, el), Obj::Uav(u)) = (&v.ty, v.obj) {
@@ -2160,13 +2279,14 @@ impl<'a> L<'a> {
                     // (a register indexed relative to the variable's own storage is the place)
                     let own = |c: &C| match c {
                         C::R(Reg { f, rel: Some(_) }, _) => v.c.iter().any(|d| matches!(d, C::R(Reg { f: g, .. }, _) if g == f)),
-                        _ => false,
+                        C::R(..) | C::I(_) => false,
                     };
                     if !r.c.iter().all(own) {
                         let k = match &v.ty {
                             Ty::Array(e, _) => ncomp(self.prog, e),
                             Ty::Mat(_, _, c) => *c as usize,
-                            _ => 1,
+                            Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_)
+                            | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => 1,
                         };
                         // (the elements are written back: a constant buffer's or an input's are not
                         // places)
@@ -2183,7 +2303,9 @@ impl<'a> L<'a> {
                     }
                 }
             }
-            _ => return Err("assignment to something that is not a variable".into()),
+            Expr::Int(..) | Expr::Float(_) | Expr::Bool(_) | Expr::Bin(..) | Expr::Un(..) | Expr::Assign(..)
+            | Expr::Cond(..) | Expr::Call(..) | Expr::Construct(..) | Expr::Cast(..) | Expr::Method(..) | Expr::List(_)
+            | Expr::Comma(..) | Expr::Str(_) => return Err("assignment to something that is not a variable".into()),
         })
     }
 
@@ -2236,7 +2358,8 @@ impl<'a> L<'a> {
                 let c = self.shared_load(g, off, ncomp(self.prog, &v.ty));
                 Val::num(v.ty, c)
             }
-            _ => v,
+            Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
+            | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) => v,
         }
     }
 
@@ -2338,7 +2461,7 @@ impl<'a> L<'a> {
                 }
                 Err(format!("no member '{name}'"))
             }
-            t => Err(format!("member .{name} of {t:?}")),
+            t @ (Ty::Void | Ty::Array(..) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => Err(format!("member .{name} of {t:?}")),
         }
     }
 
@@ -2375,7 +2498,7 @@ impl<'a> L<'a> {
         let addressable = |c: &C| matches!(c, C::R(Reg { f: RegF::X(..) | RegF::Cb(..) | RegF::Icb(_), rel: None }, _));
         let regno = |c: &C| match c {
             C::R(Reg { f: RegF::X(_, r) | RegF::Cb(_, r) | RegF::Icb(r), .. }, _) => *r,
-            _ => 0,
+            C::R(..) | C::I(_) => 0,
         };
         let e0 = elems.first().ok_or("index into an array of no elements")?;
         // (shader model 3 pixel shaders: no address register)
@@ -2460,7 +2583,7 @@ impl<'a> L<'a> {
                     self.samps[(s + i) as usize].used = true;
                     Obj::Legacy(t + i, s + i)
                 }
-                _ => unreachable!(),
+                Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::Uav(_) | Obj::Shared(..) => unreachable!(),
             };
             return Ok(Val { ty: (**e).clone(), c: Vec::new(), obj });
         }
@@ -2491,11 +2614,12 @@ impl<'a> L<'a> {
             Ty::Tex(..) => {
                 let t = match v.obj {
                     Obj::Tex(t) => t,
-                    _ => return Err("texture[] of a non-texture".into()),
+                    Obj::None | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..)
+                    | Obj::Uav(_) | Obj::Shared(..) => return Err("texture[] of a non-texture".into()),
                 };
                 self.load(t, iv, [0; 3], false)
             }
-            t => Err(format!("index of {t:?}")),
+            t @ (Ty::Void | Ty::Scalar(_) | Ty::Struct(_) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => Err(format!("index of {t:?}")),
         }
     }
 
@@ -2524,7 +2648,7 @@ impl<'a> L<'a> {
         let base = t.base();
         let f = base == B::Float;
         let u = base == B::Uint;
-        let cmp = |s: &mut Self, o: u32, swap: bool| {
+        let cmp = |s: &mut Self, o: sm4::Opcode, swap: bool| {
             let c = if swap { s.alu(o, B::Bool, &[&b.c, &a.c]) } else { s.alu(o, B::Bool, &[&a.c, &b.c]) };
             Val::num(t.with_base(B::Bool), c)
         };
@@ -2719,13 +2843,13 @@ impl<'a> L<'a> {
 
     // ---- for intrinsics.rs ----
 
-    pub(super) fn x_alu(&mut self, op: u32, b: B, args: &[&[C]]) -> Vec<C> {
+    pub(super) fn x_alu(&mut self, op: sm4::Opcode, b: B, args: &[&[C]]) -> Vec<C> {
         self.alu(op, b, args)
     }
-    pub(super) fn x_alu_m(&mut self, op: u32, b: B, args: &[(&[C], u8)]) -> Vec<C> {
+    pub(super) fn x_alu_m(&mut self, op: sm4::Opcode, b: B, args: &[(&[C], u8)]) -> Vec<C> {
         self.alu_m(op, b, args)
     }
-    pub(super) fn x_alu2(&mut self, op: u32, args: &[&[C]], second: bool) -> Vec<C> {
+    pub(super) fn x_alu2(&mut self, op: sm4::Opcode, args: &[&[C]], second: bool) -> Vec<C> {
         self.alu2(op, args, second)
     }
     pub(super) fn x_cast(&mut self, v: Val, t: &Ty) -> R<Val> {
@@ -2752,10 +2876,10 @@ impl<'a> L<'a> {
     pub(super) fn x_last(&mut self) -> &mut Ins {
         self.code.last_mut().unwrap()
     }
-    pub(super) fn x_emit(&mut self, op: u32, dst: Vec<Dst>, src: Vec<Src>) -> &mut Ins {
+    pub(super) fn x_emit(&mut self, op: sm4::Opcode, dst: Vec<Dst>, src: Vec<Src>) -> &mut Ins {
         self.emit(op, dst, src)
     }
-    pub(super) fn x_cond(&mut self, op: u32, c: C, nz: bool) {
+    pub(super) fn x_cond(&mut self, op: sm4::Opcode, c: C, nz: bool) {
         self.cond_op(op, c, nz)
     }
     pub(super) fn x_tex_el(&self, t: u32) -> (Dim, Ty) {

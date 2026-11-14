@@ -408,7 +408,7 @@ impl Pp<'_> {
                                 j += 1;
                                 continue;
                             }
-                            _ => {}
+                            Tok::Ident(_) | Tok::Int(..) | Tok::Float(_) | Tok::Str(_) | Tok::Punct(_) | Tok::PackMatrix(_) => {}
                         }
                         args.last_mut().unwrap().push(t.clone());
                         j += 1;
@@ -625,7 +625,7 @@ fn cunary(t: &[Token], p: &mut usize, d: u32) -> Result<i64, String> {
         Tok::Punct("-") => cunary(t, p, d)?.wrapping_neg(),
         Tok::Punct("+") => cunary(t, p, d)?,
         Tok::Punct("~") => !cunary(t, p, d)?,
-        _ => return Err("bad #if expression".into()),
+        Tok::Str(_) | Tok::Punct(_) | Tok::PackMatrix(_) => return Err("bad #if expression".into()),
     })
 }
 

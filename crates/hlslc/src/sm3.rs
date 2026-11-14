@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use super::sm4::*;
 
 /// the operations this output has (anything else is an error here)
-pub fn float_op(op: u32) -> bool {
+pub fn float_op(op: Opcode) -> bool {
     matches!(
         op,
         ADD | MUL
@@ -38,7 +38,7 @@ pub fn float_op(op: u32) -> bool {
     )
 }
 
-fn op_name(op: u32) -> String {
+fn op_name(op: Opcode) -> String {
     match op {
         CONTINUE => "continue".into(),
         SWITCH | CASE | DEFAULT | ENDSWITCH => "switch".into(),
@@ -46,7 +46,37 @@ fn op_name(op: u32) -> String {
         COUNTBITS | FIRSTBIT_HI | FIRSTBIT_LO | FIRSTBIT_SHI | BFREV => "bit counting".into(),
         LD | RESINFO | GATHER4 | SAMPLE_C | SAMPLE_C_LZ => "this texture operation".into(),
         F32TOF16 | F16TOF32 => "half conversion".into(),
-        x => format!("operation {x:#x}"),
+        Opcode::Add | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+        | Opcode::Continuec | Opcode::Cut | Opcode::DerivRtx
+        | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+        | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::Eq | Opcode::Exp | Opcode::Frc | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge
+        | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+        | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Itof | Opcode::Label | Opcode::LdMs | Opcode::Log
+        | Opcode::Loop | Opcode::Lt | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+        | Opcode::Mov | Opcode::Movc | Opcode::Mul | Opcode::Ne | Opcode::Nop | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+        | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::Sample | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::SinCos
+        | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax
+        | Opcode::Umin | Opcode::Utof | Opcode::DclResource | Opcode::DclConstantBuffer
+        | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+        | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+        | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+        | Opcode::Lod | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+        | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+        | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+        | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::Uaddc | Opcode::Usubb | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Swapc | Opcode::DclStream
+        | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+        | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+        | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+        | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+        | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+        | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+        | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+        | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+        | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+        | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+        | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+        | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+        | Opcode::Itod | Opcode::Utod | Opcode::Unknown => format!("operation {:#x}", op.code()),
     }
 }
 
@@ -119,7 +149,7 @@ fn comp(s: &Src, k: usize) -> Src {
             Src::R { r: *r, swz: [c; 4], neg: *neg, abs: *abs, one: true }
         }
         Src::Imm(v, scalar) => Src::Imm([if *scalar { v[0] } else { v[k] }; 4], true),
-        s => s.clone(),
+        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s.clone(),
     }
 }
 
@@ -127,7 +157,7 @@ fn neg(s: &Src) -> Src {
     match s {
         Src::R { r, swz, neg, abs, one } => Src::R { r: *r, swz: *swz, neg: !neg, abs: *abs, one: *one },
         Src::Imm(v, sc) => Src::Imm(v.map(|x| if x == 0 { 0 } else { x ^ 0x8000_0000 }), *sc),
-        s => s.clone(),
+        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s.clone(),
     }
 }
 
@@ -135,7 +165,7 @@ fn abs(s: &Src) -> Src {
     match s {
         Src::R { r, swz, one, .. } => Src::R { r: *r, swz: *swz, neg: false, abs: true, one: *one },
         Src::Imm(v, sc) => Src::Imm(v.map(|x| x & 0x7fff_ffff), *sc),
-        s => s.clone(),
+        s @ (Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..)) => s.clone(),
     }
 }
 
@@ -224,7 +254,7 @@ impl Gen<'_> {
                 }
                 format!("c{n}")
             }
-            _ => return Err("indexable temps and immediate constant buffers are not available in shader model 2/3".into()),
+            RegF::Icb(_) | RegF::X(..) | RegF::Null | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) => return Err("indexable temps and immediate constant buffers are not available in shader model 2/3".into()),
         })
     }
 
@@ -300,7 +330,7 @@ impl Gen<'_> {
         let slot = self.s.samps[n].slot;
         let dim = match t {
             Src::Tex(t, _) => self.s.texs[self.s.tex_map[*t as usize].ok_or("an unused texture")?].dim,
-            _ => 3,
+            Src::R { .. } | Src::Imm(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) => 3,
         };
         Ok((format!("s{slot}"), dim))
     }
@@ -375,7 +405,43 @@ impl Gen<'_> {
                 let m = self.scr_d(0, 1)?;
                 self.line(format!("texkill {m}"));
             }
-            _ => {
+            Opcode::Add | Opcode::And | Opcode::Call | Opcode::Callc
+            | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+            | Opcode::DerivRty | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+            | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndSwitch
+            | Opcode::Eq | Opcode::Exp | Opcode::Frc | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge
+            | Opcode::Iadd | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+            | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+            | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+            | Opcode::Lt | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+            | Opcode::Mov | Opcode::Movc | Opcode::Mul | Opcode::Ne | Opcode::Nop | Opcode::Not
+            | Opcode::Or | Opcode::ResInfo | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+            | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz
+            | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
+            | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax
+            | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+            | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+            | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+            | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+            | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+            | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+            | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+            | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+            | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+            | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+            | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+            | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+            | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+            | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+            | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+            | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+            | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+            | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+            | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+            | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+            | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+            | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+            | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {
                 let Some(d0) = i.dst.first() else {
                     return Err(op_name(i.op));
                 };
@@ -393,7 +459,41 @@ impl Gen<'_> {
                     DP4 => Some("dp4"),
                     DERIV_RTX => Some("dsx"),
                     DERIV_RTY => Some("dsy"),
-                    _ => None,
+                    Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+                    | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+                    | Opcode::Eq | Opcode::Exp | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge
+                    | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+                    | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+                    | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+                    | Opcode::Loop | Opcode::Lt | Opcode::CustomData
+                    | Opcode::Movc | Opcode::Ne | Opcode::Nop | Opcode::Not
+                    | Opcode::Or | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+                    | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz
+                    | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
+                    | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax
+                    | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+                    | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+                    | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+                    | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+                    | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+                    | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+                    | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+                    | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+                    | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+                    | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+                    | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+                    | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+                    | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+                    | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+                    | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+                    | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+                    | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+                    | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+                    | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+                    | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+                    | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+                    | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+                    | Opcode::Itod | Opcode::Utod | Opcode::Unknown => None,
                 };
                 if let Some(name) = simple {
                     if matches!(i.op, DERIV_RTX | DERIV_RTY) && !pixel {
@@ -422,7 +522,43 @@ impl Gen<'_> {
                                 RSQ => self.op("rsq", false, &dk, &[&ck])?,
                                 RCP => self.op("rcp", false, &dk, &[&ck])?,
                                 EXP => self.op("exp", false, &dk, &[&ck])?,
-                                _ => self.op("log", false, &dk, &[&ck])?,
+                                Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+                                | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+                                | Opcode::DerivRty | Opcode::Discard | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+                                | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+                                | Opcode::Eq | Opcode::Frc | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge
+                                | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+                                | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+                                | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+                                | Opcode::Loop | Opcode::Lt | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+                                | Opcode::Mov | Opcode::Movc | Opcode::Mul | Opcode::Ne | Opcode::Nop | Opcode::Not
+                                | Opcode::Or | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+                                | Opcode::RoundPi | Opcode::RoundZ | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz
+                                | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Switch | Opcode::SinCos
+                                | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax
+                                | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+                                | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+                                | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+                                | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+                                | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+                                | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+                                | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+                                | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::F32ToF16 | Opcode::F16ToF32
+                                | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+                                | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+                                | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+                                | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+                                | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+                                | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+                                | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+                                | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+                                | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+                                | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+                                | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+                                | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+                                | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+                                | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+                                | Opcode::Itod | Opcode::Utod | Opcode::Unknown => self.op("log", false, &dk, &[&ck])?,
                             }
                         }
                         if i.op == DIV {
@@ -472,13 +608,84 @@ impl Gen<'_> {
                                 EQ => self.op("cmp", sat, &d, &[&na, &one, &zero])?,
                                 NE => self.op("cmp", sat, &d, &[&na, &zero, &one])?,
                                 LT => self.op("cmp", sat, &d, &[&scr(0), &zero, &one])?,
-                                _ => self.op("cmp", sat, &d, &[&scr(0), &one, &zero])?,
+                                Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+                                | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+                                | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+                                | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+                                | Opcode::Exp | Opcode::Frc | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge
+                                | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+                                | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+                                | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+                                | Opcode::Loop | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+                                | Opcode::Mov | Opcode::Movc | Opcode::Mul | Opcode::Nop | Opcode::Not
+                                | Opcode::Or | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+                                | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz
+                                | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
+                                | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax
+                                | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+                                | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+                                | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+                                | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+                                | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+                                | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+                                | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+                                | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+                                | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+                                | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+                                | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+                                | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+                                | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+                                | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+                                | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+                                | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+                                | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+                                | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+                                | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+                                | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+                                | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+                                | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+                                | Opcode::Itod | Opcode::Utod | Opcode::Unknown => self.op("cmp", sat, &d, &[&scr(0), &one, &zero])?,
                             }
                         } else {
                             match i.op {
                                 LT => self.op("slt", sat, &d, &[&x, &y])?,
                                 GE => self.op("sge", sat, &d, &[&x, &y])?,
-                                _ => {
+                                Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+                                | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+                                | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+                                | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+                                | Opcode::Eq | Opcode::Exp | Opcode::Frc | Opcode::Ftoi | Opcode::Ftou | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+                                | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+                                | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+                                | Opcode::Loop | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+                                | Opcode::Mov | Opcode::Movc | Opcode::Mul | Opcode::Ne | Opcode::Nop | Opcode::Not
+                                | Opcode::Or | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+                                | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz
+                                | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
+                                | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax
+                                | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+                                | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+                                | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+                                | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+                                | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+                                | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+                                | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+                                | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+                                | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+                                | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+                                | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+                                | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+                                | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+                                | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+                                | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+                                | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+                                | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+                                | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+                                | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+                                | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+                                | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+                                | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+                                | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {
                                     let s0 = self.scr_d(0, m)?;
                                     let s1 = self.scr_d(1, m)?;
                                     self.op("sge", false, &s0, &[&x, &y])?;
@@ -559,7 +766,7 @@ impl Gen<'_> {
                         }
                         let tswz = match tex {
                             Src::Tex(_, s) => s,
-                            _ => [0, 1, 2, 3],
+                            Src::R { .. } | Src::Imm(..) | Src::Samp(_) | Src::SampC(..) | Src::Uav(..) | Src::G(..) => [0, 1, 2, 3],
                         };
                         let direct = tswz == [0, 1, 2, 3];
                         let td = if direct { d.clone() } else { self.scr_d(1, 0xf)? };
@@ -575,7 +782,43 @@ impl Gen<'_> {
                                 let dy = self.src(&a(4)?)?;
                                 self.line(format!("texldd {td}, {c}, {sname}, {dx}, {dy}"));
                             }
-                            _ => {
+                            Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+                            | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+                            | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4
+                            | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+                            | Opcode::Eq | Opcode::Exp | Opcode::Frc | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge
+                            | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+                            | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+                            | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+                            | Opcode::Loop | Opcode::Lt | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+                            | Opcode::Mov | Opcode::Movc | Opcode::Mul | Opcode::Ne | Opcode::Nop | Opcode::Not
+                            | Opcode::Or | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi
+                            | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::SampleC | Opcode::SampleCLz
+                            | Opcode::SampleL | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
+                            | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax
+                            | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+                            | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+                            | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+                            | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+                            | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+                            | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+                            | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+                            | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+                            | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+                            | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+                            | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+                            | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+                            | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+                            | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+                            | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+                            | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+                            | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+                            | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+                            | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+                            | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+                            | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+                            | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+                            | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {
                                 let s = self.scr_d(0, 0xf)?;
                                 self.op("mov", false, &s, &[&coord])?;
                                 let w = self.scr_d(0, 8)?;
@@ -596,7 +839,39 @@ impl Gen<'_> {
                             self.op("mov", sat, &d, &[&Src::R { r: Reg { f: RegF::Temp(1001), rel: None }, swz: sw, neg: false, abs: false, one: false }])?;
                         }
                     }
-                    op => return Err(format!("{} is not available in shader model 2/3", op_name(op))),
+                    op @ (Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc
+                          | Opcode::Case | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx
+                          | Opcode::DerivRty | Opcode::Discard | Opcode::Dp3 | Opcode::Dp4
+                          | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch
+                          | Opcode::Frc | Opcode::Ftoi | Opcode::Ftou | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt | Opcode::Imad
+                          | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+                          | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Loop | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData
+                          | Opcode::Mov | Opcode::Mul | Opcode::Nop | Opcode::Not
+                          | Opcode::Or | Opcode::ResInfo | Opcode::Ret | Opcode::Retc | Opcode::SampleC | Opcode::SampleCLz
+                          | Opcode::Switch | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax
+                          | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+                          | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput
+                          | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput
+                          | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10
+                          | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+                          | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream
+                          | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine
+                          | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::F32ToF16 | Opcode::F16ToF32
+                          | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi
+                          | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream
+                          | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain
+                          | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+                          | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+                          | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured
+                          | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+                          | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume
+                          | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch
+                          | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd
+                          | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+                          | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+                          | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11
+                          | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+                          | Opcode::Itod | Opcode::Utod | Opcode::Unknown) => return Err(format!("{} is not available in shader model 2/3", op_name(op))),
                 }
             }
         }

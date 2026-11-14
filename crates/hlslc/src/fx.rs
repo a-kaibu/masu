@@ -87,13 +87,15 @@ fn td_of(prog: &Program, t: &Ty, row_major: bool) -> Td {
             Dim::T1D => 6,
             Dim::T3D => 8,
             Dim::Cube => 9,
-            _ => PT_TEXTURE,
+            Dim::Buffer | Dim::T1DArray | Dim::T2D | Dim::T2DArray | Dim::T2DMS | Dim::T2DMSArray
+            | Dim::CubeArray => PT_TEXTURE,
         }),
         Ty::Legacy(d) => Td::object(match d {
             Dim::T1D => 11,
             Dim::T3D => 13,
             Dim::Cube => 14,
-            _ => 12,
+            Dim::Buffer | Dim::T1DArray | Dim::T2D | Dim::T2DArray | Dim::T2DMS | Dim::T2DMSArray
+            | Dim::CubeArray => 12,
         }),
         Ty::Sampler(_) => Td::object(PT_SAMPLER),
         Ty::Str => Td::object(PT_STRING),
@@ -152,7 +154,8 @@ fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
                         Bin::Or => (p as i64 | q as i64) as f64,
                         Bin::And => (p as i64 & q as i64) as f64,
                         Bin::Shl => (p as i64).wrapping_shl(q as i64 as u32) as f64,
-                        _ => return None,
+                        Bin::Mod | Bin::Shr | Bin::Xor | Bin::LAnd | Bin::LOr | Bin::Lt
+                        | Bin::Gt | Bin::Le | Bin::Ge | Bin::Eq | Bin::Ne => return None,
                     })
                 })
                 .collect::<Option<Vec<f64>>>()?
@@ -170,7 +173,8 @@ fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
             }
             eval_at(prog, g.init.as_ref()?, vars + 1)?
         }
-        _ => return None,
+        Expr::Un(..) | Expr::Assign(..) | Expr::Cond(..) | Expr::Call(..) | Expr::Member(..) | Expr::Method(..)
+        | Expr::Index(..) | Expr::Comma(..) | Expr::Str(_) => return None,
     })
 }
 
@@ -623,7 +627,7 @@ impl W<'_> {
                     None
                 }
             },
-            _ => None,
+            FxVal::Expr(_) | FxVal::Ref(_) | FxVal::Null => None,
         }
     }
     /// State records (op, index, typedef, value: 4 words each); `ti` the technique (u32::MAX for
@@ -641,7 +645,7 @@ impl W<'_> {
             let reference = match &st.value {
                 FxVal::Ref(n) => Some(n.clone()),
                 FxVal::Expr(Expr::Var(n, _)) if self.params.contains(n) => Some(n.clone()),
-                _ => None,
+                FxVal::Expr(_) | FxVal::Compile(..) | FxVal::Asm(_) | FxVal::Null => None,
             };
             let (td, val): (Td, Vec<u8>) = match (kind, &st.value) {
                 (K::Shader(vs), v) => {
@@ -663,7 +667,7 @@ impl W<'_> {
                     let ty = match kind {
                         K::ConstB => PT_BOOL,
                         K::ConstI => PT_INT,
-                        _ => PT_FLOAT,
+                        K::Int | K::Float | K::Bool | K::E(_) | K::Shader(_) | K::Texture | K::Sampler | K::ConstF => PT_FLOAT,
                     };
                     let rows = v.len().div_ceil(4).max(1) as u32;
                     let td = Td { class: PC_MATRIX_ROWS, rows, cols: 4, ..Td::scalar(ty) };
@@ -682,7 +686,7 @@ impl W<'_> {
                     let ty = match kind {
                         K::Float => PT_FLOAT,
                         K::Bool => PT_BOOL,
-                        _ => PT_INT,
+                        K::Int | K::E(_) | K::Shader(_) | K::Texture | K::Sampler | K::ConstF | K::ConstB | K::ConstI => PT_INT,
                     };
                     let td = Td::scalar(ty);
                     (td.clone(), Self::numbers(&td, &v[..1.min(v.len())]))

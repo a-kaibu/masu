@@ -1,6 +1,8 @@
 //! Shader model 4/5 code: instructions on virtual temporaries, their register allocation, the
 //! token encoding and the DXBC container (RDEF, ISGN, OSGN, SHDR/SHEX).
 
+pub use dxwgsl::tpf::Opcode;
+
 /// A register file and index. Temps are virtual until `finish`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum RegF {
@@ -54,7 +56,7 @@ pub struct Dst {
 
 #[derive(Clone, Debug)]
 pub struct Ins {
-    pub op: u32,
+    pub op: Opcode,
     pub sat: bool,
     pub nz: bool,
     /// opcode-specific control bits (11..23)
@@ -65,100 +67,100 @@ pub struct Ins {
 }
 
 // opcodes
-pub const ADD: u32 = 0x00;
-pub const AND: u32 = 0x01;
-pub const BREAK: u32 = 0x02;
-pub const BREAKC: u32 = 0x03;
-pub const CASE: u32 = 0x06;
-pub const CONTINUE: u32 = 0x07;
-pub const DEFAULT: u32 = 0x0a;
-pub const DERIV_RTX: u32 = 0x0b;
-pub const DERIV_RTY: u32 = 0x0c;
-pub const DISCARD: u32 = 0x0d;
-pub const DIV: u32 = 0x0e;
-pub const DP2: u32 = 0x0f;
-pub const DP3: u32 = 0x10;
-pub const DP4: u32 = 0x11;
-pub const ELSE: u32 = 0x12;
-pub const ENDIF: u32 = 0x15;
-pub const ENDLOOP: u32 = 0x16;
-pub const ENDSWITCH: u32 = 0x17;
-pub const EQ: u32 = 0x18;
-pub const EXP: u32 = 0x19;
-pub const FRC: u32 = 0x1a;
-pub const FTOI: u32 = 0x1b;
-pub const FTOU: u32 = 0x1c;
-pub const GE: u32 = 0x1d;
-pub const IADD: u32 = 0x1e;
-pub const IF: u32 = 0x1f;
-pub const IEQ: u32 = 0x20;
-pub const IGE: u32 = 0x21;
-pub const ILT: u32 = 0x22;
-pub const IMAD: u32 = 0x23;
-pub const IMAX: u32 = 0x24;
-pub const IMIN: u32 = 0x25;
-pub const IMUL: u32 = 0x26;
-pub const INE: u32 = 0x27;
-pub const INEG: u32 = 0x28;
-pub const ISHL: u32 = 0x29;
-pub const ISHR: u32 = 0x2a;
-pub const ITOF: u32 = 0x2b;
-pub const LD: u32 = 0x2d;
-pub const LD_MS: u32 = 0x2e;
-pub const LOG: u32 = 0x2f;
-pub const LOOP: u32 = 0x30;
-pub const LT: u32 = 0x31;
-pub const MAD: u32 = 0x32;
-pub const MIN: u32 = 0x33;
-pub const MAX: u32 = 0x34;
-pub const MOV: u32 = 0x36;
-pub const MOVC: u32 = 0x37;
-pub const MUL: u32 = 0x38;
-pub const NE: u32 = 0x39;
-pub const NOT: u32 = 0x3b;
-pub const OR: u32 = 0x3c;
-pub const RESINFO: u32 = 0x3d;
-pub const SAMPLE_POS: u32 = 0x6e;
-pub const SAMPLE_INFO: u32 = 0x6f;
-pub const RET: u32 = 0x3e;
-pub const ROUND_NE: u32 = 0x40;
-pub const ROUND_NI: u32 = 0x41;
-pub const ROUND_PI: u32 = 0x42;
-pub const ROUND_Z: u32 = 0x43;
-pub const RSQ: u32 = 0x44;
-pub const SAMPLE: u32 = 0x45;
-pub const SAMPLE_C: u32 = 0x46;
-pub const SAMPLE_C_LZ: u32 = 0x47;
-pub const SAMPLE_L: u32 = 0x48;
-pub const SAMPLE_D: u32 = 0x49;
-pub const SAMPLE_B: u32 = 0x4a;
-pub const SQRT: u32 = 0x4b;
-pub const SWITCH: u32 = 0x4c;
-pub const SINCOS: u32 = 0x4d;
-pub const UDIV: u32 = 0x4e;
-pub const ULT: u32 = 0x4f;
-pub const UGE: u32 = 0x50;
-pub const UMUL: u32 = 0x51;
-pub const UMAX: u32 = 0x53;
-pub const UMIN: u32 = 0x54;
-pub const USHR: u32 = 0x55;
-pub const UTOF: u32 = 0x56;
-pub const XOR: u32 = 0x57;
-pub const GATHER4: u32 = 0x6d;
-pub const RCP: u32 = 0x81;
-pub const F32TOF16: u32 = 0x82;
-pub const F16TOF32: u32 = 0x83;
-pub const COUNTBITS: u32 = 0x86;
-pub const FIRSTBIT_HI: u32 = 0x87;
-pub const FIRSTBIT_LO: u32 = 0x88;
-pub const FIRSTBIT_SHI: u32 = 0x89;
-pub const BFREV: u32 = 0x8d;
-pub const LD_UAV_TYPED: u32 = 0xa3;
-pub const STORE_UAV_TYPED: u32 = 0xa4;
-pub const LD_RAW: u32 = 0xa5;
-pub const STORE_RAW: u32 = 0xa6;
+pub const ADD: Opcode = Opcode::Add;
+pub const AND: Opcode = Opcode::And;
+pub const BREAK: Opcode = Opcode::Break;
+pub const BREAKC: Opcode = Opcode::Breakc;
+pub const CASE: Opcode = Opcode::Case;
+pub const CONTINUE: Opcode = Opcode::Continue;
+pub const DEFAULT: Opcode = Opcode::Default;
+pub const DERIV_RTX: Opcode = Opcode::DerivRtx;
+pub const DERIV_RTY: Opcode = Opcode::DerivRty;
+pub const DISCARD: Opcode = Opcode::Discard;
+pub const DIV: Opcode = Opcode::Div;
+pub const DP2: Opcode = Opcode::Dp2;
+pub const DP3: Opcode = Opcode::Dp3;
+pub const DP4: Opcode = Opcode::Dp4;
+pub const ELSE: Opcode = Opcode::Else;
+pub const ENDIF: Opcode = Opcode::EndIf;
+pub const ENDLOOP: Opcode = Opcode::EndLoop;
+pub const ENDSWITCH: Opcode = Opcode::EndSwitch;
+pub const EQ: Opcode = Opcode::Eq;
+pub const EXP: Opcode = Opcode::Exp;
+pub const FRC: Opcode = Opcode::Frc;
+pub const FTOI: Opcode = Opcode::Ftoi;
+pub const FTOU: Opcode = Opcode::Ftou;
+pub const GE: Opcode = Opcode::Ge;
+pub const IADD: Opcode = Opcode::Iadd;
+pub const IF: Opcode = Opcode::If;
+pub const IEQ: Opcode = Opcode::Ieq;
+pub const IGE: Opcode = Opcode::Ige;
+pub const ILT: Opcode = Opcode::Ilt;
+pub const IMAD: Opcode = Opcode::Imad;
+pub const IMAX: Opcode = Opcode::Imax;
+pub const IMIN: Opcode = Opcode::Imin;
+pub const IMUL: Opcode = Opcode::Imul;
+pub const INE: Opcode = Opcode::Ine;
+pub const INEG: Opcode = Opcode::Ineg;
+pub const ISHL: Opcode = Opcode::Ishl;
+pub const ISHR: Opcode = Opcode::Ishr;
+pub const ITOF: Opcode = Opcode::Itof;
+pub const LD: Opcode = Opcode::Ld;
+pub const LD_MS: Opcode = Opcode::LdMs;
+pub const LOG: Opcode = Opcode::Log;
+pub const LOOP: Opcode = Opcode::Loop;
+pub const LT: Opcode = Opcode::Lt;
+pub const MAD: Opcode = Opcode::Mad;
+pub const MIN: Opcode = Opcode::Min;
+pub const MAX: Opcode = Opcode::Max;
+pub const MOV: Opcode = Opcode::Mov;
+pub const MOVC: Opcode = Opcode::Movc;
+pub const MUL: Opcode = Opcode::Mul;
+pub const NE: Opcode = Opcode::Ne;
+pub const NOT: Opcode = Opcode::Not;
+pub const OR: Opcode = Opcode::Or;
+pub const RESINFO: Opcode = Opcode::ResInfo;
+pub const SAMPLE_POS: Opcode = Opcode::SamplePos;
+pub const SAMPLE_INFO: Opcode = Opcode::SampleInfo;
+pub const RET: Opcode = Opcode::Ret;
+pub const ROUND_NE: Opcode = Opcode::RoundNe;
+pub const ROUND_NI: Opcode = Opcode::RoundNi;
+pub const ROUND_PI: Opcode = Opcode::RoundPi;
+pub const ROUND_Z: Opcode = Opcode::RoundZ;
+pub const RSQ: Opcode = Opcode::Rsq;
+pub const SAMPLE: Opcode = Opcode::Sample;
+pub const SAMPLE_C: Opcode = Opcode::SampleC;
+pub const SAMPLE_C_LZ: Opcode = Opcode::SampleCLz;
+pub const SAMPLE_L: Opcode = Opcode::SampleL;
+pub const SAMPLE_D: Opcode = Opcode::SampleD;
+pub const SAMPLE_B: Opcode = Opcode::SampleB;
+pub const SQRT: Opcode = Opcode::Sqrt;
+pub const SWITCH: Opcode = Opcode::Switch;
+pub const SINCOS: Opcode = Opcode::SinCos;
+pub const UDIV: Opcode = Opcode::Udiv;
+pub const ULT: Opcode = Opcode::Ult;
+pub const UGE: Opcode = Opcode::Uge;
+pub const UMUL: Opcode = Opcode::Umul;
+pub const UMAX: Opcode = Opcode::Umax;
+pub const UMIN: Opcode = Opcode::Umin;
+pub const USHR: Opcode = Opcode::Ushr;
+pub const UTOF: Opcode = Opcode::Utof;
+pub const XOR: Opcode = Opcode::Xor;
+pub const GATHER4: Opcode = Opcode::Gather4;
+pub const RCP: Opcode = Opcode::Rcp;
+pub const F32TOF16: Opcode = Opcode::F32ToF16;
+pub const F16TOF32: Opcode = Opcode::F16ToF32;
+pub const COUNTBITS: Opcode = Opcode::CountBits;
+pub const FIRSTBIT_HI: Opcode = Opcode::FirstBitHi;
+pub const FIRSTBIT_LO: Opcode = Opcode::FirstBitLo;
+pub const FIRSTBIT_SHI: Opcode = Opcode::FirstBitShi;
+pub const BFREV: Opcode = Opcode::Bfrev;
+pub const LD_UAV_TYPED: Opcode = Opcode::LdUavTyped;
+pub const STORE_UAV_TYPED: Opcode = Opcode::StoreUavTyped;
+pub const LD_RAW: Opcode = Opcode::LdRaw;
+pub const STORE_RAW: Opcode = Opcode::StoreRaw;
 /// sync: ctl 1 threads in the group, 2 shared memory, 4 UAVs (group), 8 UAVs (global)
-pub const SYNC: u32 = 0xbe;
+pub const SYNC: Opcode = Opcode::Sync;
 
 /// A signature element of the shader's interface.
 #[derive(Clone, Debug)]
@@ -495,7 +497,7 @@ impl Enc<'_> {
             Src::Uav(u, swz) | Src::G(u, swz) => {
                 let (ty, slot) = match s {
                     Src::Uav(..) => (T_UAV, self.s.uavs[self.s.uav_map[*u as usize].unwrap()].slot),
-                    _ => (T_TGSM, *u),
+                    Src::R { .. } | Src::Imm(..) | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::G(..) => (T_TGSM, *u),
                 };
                 let b = swz[0] as u32 | (swz[1] as u32) << 2 | (swz[2] as u32) << 4 | (swz[3] as u32) << 6;
                 out.push(2 | (1 << 2) | (b << 4) | (ty << 12) | (1 << 20));
@@ -508,7 +510,8 @@ impl Enc<'_> {
         match d.r.f {
             RegF::Null => out.push(T_NULL << 12),
             RegF::Depth => self.reg(out, &d.r, 1, 0, 0, 0),
-            _ => self.reg(out, &d.r, 2, 0, d.mask as u32, 0),
+            RegF::Temp(_) | RegF::Input(_) | RegF::Output(_) | RegF::Cb(..) | RegF::Icb(_) | RegF::X(..)
+            | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) => self.reg(out, &d.r, 2, 0, d.mask as u32, 0),
         }
     }
 
@@ -527,12 +530,12 @@ impl Enc<'_> {
             self.src(out, s);
         }
         let len = (out.len() - at) as u32;
-        out[at] = i.op | (i.ctl << 11) | ((i.sat as u32) << 13) | ((i.nz as u32) << 18) | (len << 24) | ((ext as u32) << 31);
+        out[at] = i.op.code() | (i.ctl << 11) | ((i.sat as u32) << 13) | ((i.nz as u32) << 18) | (len << 24) | ((ext as u32) << 31);
     }
 }
 
-fn decl(out: &mut Vec<u32>, op: u32, ctl: u32, body: &[u32]) {
-    out.push(op | (ctl << 11) | (((body.len() + 1) as u32) << 24));
+fn decl(out: &mut Vec<u32>, op: Opcode, ctl: u32, body: &[u32]) {
+    out.push(op.code() | (ctl << 11) | (((body.len() + 1) as u32) << 24));
     out.extend_from_slice(body);
 }
 
@@ -544,7 +547,7 @@ fn program(s: &mut Shader) -> Vec<u32> {
     let kind = if s.threads.is_some() { 5 } else { (!s.pixel) as u32 };
     let mut w = vec![kind << 16 | (s.major << 4) | s.minor, 0];
     // global flags: refactoring allowed (+ early depth stencil)
-    decl(&mut w, 0x6a, 1 | ((s.early_depth as u32) << 2), &[]);
+    decl(&mut w, Opcode::DclGlobalFlags, 1 | ((s.early_depth as u32) << 2), &[]);
     if !s.icb.is_empty() {
         w.push(0x35 | (3 << 11));
         w.push(2 + 4 * s.icb.len() as u32);
@@ -554,61 +557,61 @@ fn program(s: &mut Shader) -> Vec<u32> {
     }
     for cb in &s.cbs {
         let t = 2 | (1 << 2) | (0xe4 << 4) | (T_CB << 12) | (2 << 20);
-        decl(&mut w, 0x59, cb.dynamic as u32, &[t, cb.slot, cb.size.max(1)]);
+        decl(&mut w, Opcode::DclConstantBuffer, cb.dynamic as u32, &[t, cb.slot, cb.size.max(1)]);
     }
     for sm in &s.samps {
-        decl(&mut w, 0x5a, sm.cmp as u32, &[(T_SAMPLER << 12) | (1 << 20), sm.slot]);
+        decl(&mut w, Opcode::DclSampler, sm.cmp as u32, &[(T_SAMPLER << 12) | (1 << 20), sm.slot]);
     }
     for t in &s.texs {
         let r = t.ret;
         let ret = r | (r << 4) | (r << 8) | (r << 12);
-        decl(&mut w, 0x58, t.dim, &[(T_RESOURCE << 12) | (1 << 20), t.slot, ret]);
+        decl(&mut w, Opcode::DclResource, t.dim, &[(T_RESOURCE << 12) | (1 << 20), t.slot, ret]);
     }
     for u in &s.uavs {
         let r = u.ret;
         let ret = r | (r << 4) | (r << 8) | (r << 12);
-        decl(&mut w, 0x9c, u.dim, &[(T_UAV << 12) | (1 << 20), u.slot, ret]);
+        decl(&mut w, Opcode::DclUavTyped, u.dim, &[(T_UAV << 12) | (1 << 20), u.slot, ret]);
     }
     for (g, &bytes) in s.tgsm.iter().enumerate() {
-        decl(&mut w, 0x9f, 0, &[(T_TGSM << 12) | (1 << 20), g as u32, bytes]);
+        decl(&mut w, Opcode::DclTgsmRaw, 0, &[(T_TGSM << 12) | (1 << 20), g as u32, bytes]);
     }
     for &(ty, mask) in &s.sys_inputs {
         // (vThreadIDInGroupFlattened is one component)
         let t = if ty == 35 { 1 | (ty << 12) } else { 2 | ((mask as u32) << 4) | (ty << 12) };
-        decl(&mut w, 0x5f, 0, &[t]);
+        decl(&mut w, Opcode::DclInput, 0, &[t]);
     }
     let reg_tok = |ty: u32, mask: u8| 2 | ((mask as u32) << 4) | (ty << 12) | (1 << 20);
     for i in &s.inputs {
         let t = reg_tok(T_INPUT, i.mask);
         if s.pixel {
             match i.sysval {
-                0 => decl(&mut w, 0x62, i.interp, &[t, i.reg]),
-                1 => decl(&mut w, 0x64, i.interp, &[t, i.reg, 1]),
-                v => decl(&mut w, 0x63, 1, &[t, i.reg, v]),
+                0 => decl(&mut w, Opcode::DclInputPs, i.interp, &[t, i.reg]),
+                1 => decl(&mut w, Opcode::DclInputPsSiv, i.interp, &[t, i.reg, 1]),
+                v => decl(&mut w, Opcode::DclInputPsSgv, 1, &[t, i.reg, v]),
             }
         } else if i.sysval != 0 {
-            decl(&mut w, 0x60, 0, &[t, i.reg, i.sysval]);
+            decl(&mut w, Opcode::DclInputSgv, 0, &[t, i.reg, i.sysval]);
         } else {
-            decl(&mut w, 0x5f, 0, &[t, i.reg]);
+            decl(&mut w, Opcode::DclInput, 0, &[t, i.reg]);
         }
     }
     for o in &s.outputs {
         if o.depth {
-            decl(&mut w, 0x65, 0, &[1 | (T_DEPTH << 12)]);
+            decl(&mut w, Opcode::DclOutput, 0, &[1 | (T_DEPTH << 12)]);
         } else if o.sysval != 0 && o.sysval < 64 {
-            decl(&mut w, 0x67, 0, &[reg_tok(T_OUTPUT, o.mask), o.reg, o.sysval]);
+            decl(&mut w, Opcode::DclOutputSiv, 0, &[reg_tok(T_OUTPUT, o.mask), o.reg, o.sysval]);
         } else {
-            decl(&mut w, 0x65, 0, &[reg_tok(T_OUTPUT, o.mask), o.reg]);
+            decl(&mut w, Opcode::DclOutput, 0, &[reg_tok(T_OUTPUT, o.mask), o.reg]);
         }
     }
     if temps > 0 {
-        decl(&mut w, 0x68, 0, &[temps]);
+        decl(&mut w, Opcode::DclTemps, 0, &[temps]);
     }
     for (n, &size) in s.xs.iter().enumerate() {
-        decl(&mut w, 0x69, 0, &[n as u32, size, 4]);
+        decl(&mut w, Opcode::DclIndexableTemp, 0, &[n as u32, size, 4]);
     }
     if let Some([x, y, z]) = s.threads {
-        decl(&mut w, 0x9b, 0, &[x, y, z]);
+        decl(&mut w, Opcode::DclThreadGroup, 0, &[x, y, z]);
     }
     for i in &s.code {
         e.ins(&mut w, i);

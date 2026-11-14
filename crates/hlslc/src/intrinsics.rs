@@ -52,7 +52,7 @@ impl L<'_> {
         Ok((t, out))
     }
 
-    fn unary_f(&mut self, op: u32, v: Val) -> R<Val> {
+    fn unary_f(&mut self, op: sm4::Opcode, v: Val) -> R<Val> {
         let v = self.float(v)?;
         let c = self.x_alu(op, B::Float, &[&v.c]);
         Ok(Val::num(v.ty, c))
@@ -90,7 +90,7 @@ impl L<'_> {
         let cols: Vec<Vec<C>> = (0..m).map(|j| rows.iter().map(|r| r[j]).collect()).collect();
         let one_reg = |v: &Vec<C>| match v[0] {
             C::R(r0, _) => v.iter().all(|c| matches!(c, C::R(r, _) if *r == r0)),
-            _ => false,
+            C::I(_) => false,
         };
         if base == B::Float && cols.iter().all(one_reg) && coef.len() > 1 {
             return cols.iter().map(|c| self.dot(coef, c, base)).collect();
@@ -156,13 +156,15 @@ impl L<'_> {
     fn texture_of(&self, v: &Val) -> R<u32> {
         match v.obj {
             Obj::Tex(t) | Obj::Legacy(t, _) => Ok(t),
-            _ => Err("a texture is needed".into()),
+            Obj::None | Obj::Samp(_) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Uav(_)
+            | Obj::Shared(..) => Err("a texture is needed".into()),
         }
     }
     fn sampler_of(&self, v: &Val) -> R<u32> {
         match v.obj {
             Obj::Samp(s) | Obj::Legacy(_, s) => Ok(s),
-            _ => Err("a sampler is needed".into()),
+            Obj::None | Obj::Tex(_) | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Uav(_)
+            | Obj::Shared(..) => Err("a sampler is needed".into()),
         }
     }
 
@@ -175,7 +177,7 @@ impl L<'_> {
         for (k, c) in v.c.iter().take(3).enumerate() {
             match c {
                 C::I(x) => o[k] = *x as i32,
-                _ => return Err("texel offsets must be constants".into()),
+                C::R(..) => return Err("texel offsets must be constants".into()),
             }
         }
         Ok(o)
@@ -183,7 +185,7 @@ impl L<'_> {
 
     /// sample* instruction; result: the texture's element
     #[allow(clippy::too_many_arguments)]
-    fn sample(&mut self, op: u32, t: u32, s: u32, coord: Val, extra: Vec<Vec<C>>, offset: [i32; 3], swz_x: bool) -> R<Val> {
+    fn sample(&mut self, op: sm4::Opcode, t: u32, s: u32, coord: Val, extra: Vec<Vec<C>>, offset: [i32; 3], swz_x: bool) -> R<Val> {
         let (dim, el) = self.x_tex_el(t);
         let n = dim.coords() + dim.array() as usize;
         let coord = self.float(coord)?;
@@ -242,7 +244,7 @@ impl L<'_> {
             Dim::T2D => vec![c[0], c[1], z, mip],
             Dim::T1DArray => vec![c[0], c[1], z, mip],
             Dim::T2DArray | Dim::T3D => vec![c[0], c[1], c[2], mip],
-            _ => return Err("Load from this texture type".into()),
+            Dim::T2DMS | Dim::T2DMSArray | Dim::Cube | Dim::CubeArray => return Err("Load from this texture type".into()),
         };
         let dst = self.x_tmp();
         let a = self.x_opnd(&addr);
@@ -373,10 +375,10 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
                 "log2" => LOG,
                 "ddx" => DERIV_RTX,
                 "ddy" => DERIV_RTY,
-                "ddx_coarse" => 0x7a,
-                "ddx_fine" => 0x7b,
-                "ddy_coarse" => 0x7c,
-                _ => 0x7d,
+                "ddx_coarse" => sm4::Opcode::DerivRtxCoarse,
+                "ddx_fine" => sm4::Opcode::DerivRtxFine,
+                "ddy_coarse" => sm4::Opcode::DerivRtyCoarse,
+                _ => sm4::Opcode::DerivRtyFine,
             };
             let v = l.expr(&args[0])?;
             l.unary_f(op, v)?
@@ -474,7 +476,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
             let (mx, mn) = match t.base() {
                 B::Float => (MAX, MIN),
                 B::Uint => (UMAX, UMIN),
-                _ => (IMAX, IMIN),
+                B::Bool | B::Int => (IMAX, IMIN),
             };
             let a = l.x_alu(mx, t.base(), &[&c[0], &c[1]]);
             let r = l.x_alu(mn, t.base(), &[&a, &c[2]]);

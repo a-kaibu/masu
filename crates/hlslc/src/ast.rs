@@ -61,7 +61,7 @@ impl Ty {
         match self {
             Ty::Scalar(b) | Ty::Vec(b, _) | Ty::Mat(b, _, _) => *b,
             Ty::Array(t, _) => t.base(),
-            _ => B::Float,
+            Ty::Void | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str => B::Float,
         }
     }
     pub fn numeric(&self) -> bool {
@@ -73,7 +73,8 @@ impl Ty {
             Ty::Scalar(_) => 1,
             Ty::Vec(_, n) => *n as usize,
             Ty::Mat(_, r, c) => (*r * *c) as usize,
-            _ => 0,
+            Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+            | Ty::Legacy(_) | Ty::Str => 0,
         }
     }
     pub fn with_base(&self, b: B) -> Ty {
@@ -81,7 +82,8 @@ impl Ty {
             Ty::Scalar(_) => Ty::Scalar(b),
             Ty::Vec(_, n) => Ty::Vec(b, *n),
             Ty::Mat(_, r, c) => Ty::Mat(b, *r, *c),
-            t => t.clone(),
+            t @ (Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
+                 | Ty::Legacy(_) | Ty::Str) => t.clone(),
         }
     }
     /// a texture or sampler, or an array of them
@@ -89,7 +91,7 @@ impl Ty {
         match self {
             Ty::Tex(..) | Ty::Sampler(_) | Ty::Legacy(_) | Ty::RwTex(..) => true,
             Ty::Array(e, _) => e.is_object(),
-            _ => false,
+            Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Str => false,
         }
     }
     /// vector (or scalar for 1) of `n`

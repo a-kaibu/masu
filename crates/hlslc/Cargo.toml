@@ -6,9 +6,11 @@ license.workspace = true
 description = "HLSL compiler: source to DXBC (shader model 4/5), Direct3D 9 bytecode (2/3) and fx_2_0 effects; Direct3D 9 shader assembler"
 
 [dependencies]
+# (the SM4/5 opcode table: one enum for the compiler that writes the tokens and the translator
+# that reads them)
+dxwgsl = { path = "../dxwgsl" }
 
 [dev-dependencies]
-dxwgsl = { path = "../dxwgsl" }
 naga = { version = "30", features = ["wgsl-in"] }
 # (no fork or timeout: the tests also run on wasm32, formal/wasm32.sh)
 proptest = { version = "1", default-features = false, features = ["std"] }
