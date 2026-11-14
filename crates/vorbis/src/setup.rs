@@ -1,6 +1,6 @@
 //! The identification and setup headers.
 
-use crate::bits::{ilog, Bits};
+use crate::bits::{ilog, us, Bits};
 use crate::codebook::Codebook;
 use crate::Error;
 
@@ -11,11 +11,58 @@ pub struct Ident {
     pub blocksize: [usize; 2],
 }
 
+/// A floor 1 partition class.
+pub struct Class {
+    pub dim: usize,
+    /// subclass bits
+    pub sub: u32,
+    /// the master book (`sub` > 0)
+    pub master: Option<usize>,
+    /// the subclass books
+    pub subs: Vec<Option<usize>>,
+}
+
+/// A floor 1's multiplier (1..=4) and the range of its posts' values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Multiplier {
+    X1,
+    X2,
+    X3,
+    X4,
+}
+
+impl Multiplier {
+    fn of(two_bits: u8) -> Multiplier {
+        match two_bits & 3 {
+            0 => Multiplier::X1,
+            1 => Multiplier::X2,
+            2 => Multiplier::X3,
+            _ => Multiplier::X4,
+        }
+    }
+    pub fn get(self) -> i32 {
+        match self {
+            Multiplier::X1 => 1,
+            Multiplier::X2 => 2,
+            Multiplier::X3 => 3,
+            Multiplier::X4 => 4,
+        }
+    }
+    /// The posts' range (the specification's [256, 128, 86, 64][multiplier - 1]).
+    pub fn range(self) -> i32 {
+        match self {
+            Multiplier::X1 => 256,
+            Multiplier::X2 => 128,
+            Multiplier::X3 => 86,
+            Multiplier::X4 => 64,
+        }
+    }
+}
+
 pub struct Floor1 {
     pub partition_class: Vec<u8>,
-    /// per class: dimensions, subclass bits, master book (-1: none), subclass books (-1: none)
-    pub classes: Vec<(usize, u32, i32, Vec<i32>)>,
-    pub multiplier: i32,
+    pub classes: Vec<Class>,
+    pub multiplier: Multiplier,
     /// the posts' x (in decoding order)
     pub x: Vec<i32>,
     /// for posts 2..: the low and high neighbours
@@ -25,15 +72,26 @@ pub struct Floor1 {
     pub sorted: Vec<usize>,
 }
 
+/// A residue's type: how its vectors interleave.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ResidueKind {
+    /// each partition's values interleaved by the book's dimension
+    Zero,
+    /// each partition's values in order
+    One,
+    /// the channels interleaved into one vector
+    Two,
+}
+
 pub struct Residue {
-    pub kind: u16,
+    pub kind: ResidueKind,
     pub begin: usize,
     pub end: usize,
     pub grouping: usize,
     pub classifications: usize,
     pub classbook: usize,
-    /// per classification: the books of each stage (-1: none)
-    pub books: Vec<[i32; 8]>,
+    /// per classification: the book of each stage
+    pub books: Vec<[Option<usize>; 8]>,
     pub stages: usize,
 }
 
@@ -51,6 +109,44 @@ pub struct Mode {
     pub mapping: usize,
 }
 
+/// A block's size: the stream's short or long one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Block {
+    Short,
+    Long,
+}
+
+impl Block {
+    /// The size of a block flag (`false`: short).
+    pub fn of(flag: bool) -> Block {
+        if flag {
+            Block::Long
+        } else {
+            Block::Short
+        }
+    }
+    /// The index of the size in the stream's blocksizes.
+    pub fn index(self) -> usize {
+        match self {
+            Block::Short => 0,
+            Block::Long => 1,
+        }
+    }
+}
+
+impl Mode {
+    pub fn block(&self) -> Block {
+        Block::of(self.blockflag)
+    }
+}
+
+impl Ident {
+    /// The size in samples of a block.
+    pub fn size(&self, b: Block) -> usize {
+        self.blocksize[b.index()]
+    }
+}
+
 pub struct Setup {
     pub ident: Ident,
     pub books: Vec<Codebook>,
@@ -65,7 +161,7 @@ fn header(b: &mut Bits, kind: u32) -> Result<(), Error> {
         return Err(Error::Header);
     }
     for &c in b"vorbis" {
-        if b.read(8) != Some(c as u32) {
+        if b.read(8) != Some(u32::from(c)) {
             return Err(Error::Header);
         }
     }
@@ -80,7 +176,7 @@ impl Ident {
         if b.read(32).ok_or(e)? != 0 {
             return Err(e);
         }
-        let channels = b.read(8).ok_or(e)? as usize;
+        let channels = b.uz::<8>().ok_or(e)?;
         let rate = b.read(32).ok_or(e)?;
         b.read(32).ok_or(e)?;
         b.read(32).ok_or(e)?;
@@ -97,37 +193,38 @@ impl Ident {
 impl Floor1 {
     fn read(b: &mut Bits, books: usize) -> Result<Floor1, Error> {
         let e = Error::Header;
-        let parts = b.read(5).ok_or(e)? as usize;
+        let parts = b.uz::<5>().ok_or(e)?;
         let mut partition_class = Vec::with_capacity(parts);
         for _ in 0..parts {
-            partition_class.push(b.read(4).ok_or(e)? as u8);
+            partition_class.push(b.u8::<4>().ok_or(e)?);
         }
-        let nclasses = partition_class.iter().map(|&c| c as usize + 1).max().unwrap_or(0);
-        let book = |v: u32| -> Result<i32, Error> {
-            let v = v as i32 - 1;
-            if v >= books as i32 {
-                Err(e)
-            } else {
-                Ok(v)
+        let nclasses = partition_class.iter().map(|&c| usize::from(c) + 1).max().unwrap_or(0);
+        // a book number + 1 (0: none)
+        let book = |v: usize| -> Result<Option<usize>, Error> {
+            match v.checked_sub(1) {
+                None => Ok(None),
+                Some(v) if v < books => Ok(Some(v)),
+                Some(_) => Err(e),
             }
         };
         let mut classes = Vec::with_capacity(nclasses);
         for _ in 0..nclasses {
-            let dim = b.read(3).ok_or(e)? as usize + 1;
+            let dim = b.uz::<3>().ok_or(e)? + 1;
             let sub = b.read(2).ok_or(e)?;
-            let master = if sub > 0 { book(b.read(8).ok_or(e)? + 1)? } else { -1 };
+            let master = if sub > 0 { book(b.uz::<8>().ok_or(e)? + 1)? } else { None };
             let mut subs = Vec::with_capacity(1 << sub);
             for _ in 0..1 << sub {
-                subs.push(book(b.read(8).ok_or(e)?)?);
+                subs.push(book(b.uz::<8>().ok_or(e)?)?);
             }
-            classes.push((dim, sub, master, subs));
+            classes.push(Class { dim, sub, master, subs });
         }
-        let multiplier = b.read(2).ok_or(e)? as i32 + 1;
+        let multiplier = Multiplier::of(b.u8::<2>().ok_or(e)?);
         let rangebits = b.read(4).ok_or(e)?;
         let mut x = vec![0, 1 << rangebits];
         for &c in &partition_class {
-            for _ in 0..classes[c as usize].0 {
-                x.push(b.read(rangebits).ok_or(e)? as i32);
+            for _ in 0..classes[usize::from(c)].dim {
+                // (rangebits < 16: a post's x fits an i32)
+                x.push(i32::try_from(b.read(rangebits).ok_or(e)?).ok().ok_or(e)?);
             }
         }
         if x.len() > 65 {
@@ -160,13 +257,13 @@ impl Floor1 {
 }
 
 impl Residue {
-    fn read(b: &mut Bits, kind: u16, books: &[Codebook]) -> Result<Residue, Error> {
+    fn read(b: &mut Bits, kind: ResidueKind, books: &[Codebook]) -> Result<Residue, Error> {
         let e = Error::Header;
-        let begin = b.read(24).ok_or(e)? as usize;
-        let end = b.read(24).ok_or(e)? as usize;
-        let grouping = b.read(24).ok_or(e)? as usize + 1;
-        let classifications = b.read(6).ok_or(e)? as usize + 1;
-        let classbook = b.read(8).ok_or(e)? as usize;
+        let begin = b.uz::<24>().ok_or(e)?;
+        let end = b.uz::<24>().ok_or(e)?;
+        let grouping = b.uz::<24>().ok_or(e)? + 1;
+        let classifications = b.uz::<6>().ok_or(e)? + 1;
+        let classbook = b.uz::<8>().ok_or(e)?;
         let mut cascade = Vec::with_capacity(classifications);
         for _ in 0..classifications {
             let low = b.read(3).ok_or(e)?;
@@ -176,17 +273,17 @@ impl Residue {
         let mut list = Vec::with_capacity(classifications);
         let mut stages = 0;
         for &c in &cascade {
-            let mut s = [-1i32; 8];
+            let mut s = [None; 8];
             for (k, slot) in s.iter_mut().enumerate() {
                 if c >> k & 1 == 1 {
-                    let book = b.read(8).ok_or(e)? as usize;
+                    let book = b.uz::<8>().ok_or(e)?;
                     if book >= books.len() || books[book].values.is_empty() {
                         return Err(e);
                     }
-                    *slot = book as i32;
+                    *slot = Some(book);
                 }
             }
-            stages = stages.max(ilog(c) as usize);
+            stages = stages.max(us(ilog(c)));
             list.push(s);
         }
         if classbook >= books.len() || books[classbook].dim == 0 {
@@ -201,7 +298,7 @@ impl Setup {
         let e = Error::Header;
         let mut b = Bits::new(packet);
         header(&mut b, 5)?;
-        let nbooks = b.read(8).ok_or(e)? as usize + 1;
+        let nbooks = b.uz::<8>().ok_or(e)? + 1;
         let mut books = Vec::with_capacity(nbooks);
         for _ in 0..nbooks {
             books.push(Codebook::read(&mut b)?);
@@ -225,10 +322,12 @@ impl Setup {
         let nres = b.read(6).ok_or(e)? + 1;
         let mut residues = Vec::new();
         for _ in 0..nres {
-            let kind = b.read(16).ok_or(e)? as u16;
-            if kind > 2 {
-                return Err(e);
-            }
+            let kind = match b.read(16).ok_or(e)? {
+                0 => ResidueKind::Zero,
+                1 => ResidueKind::One,
+                2 => ResidueKind::Two,
+                _ => return Err(e),
+            };
             residues.push(Residue::read(&mut b, kind, &books)?);
         }
         let nmaps = b.read(6).ok_or(e)? + 1;
@@ -238,14 +337,14 @@ impl Setup {
             if b.read(16).ok_or(e)? != 0 {
                 return Err(e);
             }
-            let submaps = if b.flag().ok_or(e)? { b.read(4).ok_or(e)? as usize + 1 } else { 1 };
+            let submaps = if b.flag().ok_or(e)? { b.uz::<4>().ok_or(e)? + 1 } else { 1 };
             let mut coupling = Vec::new();
             if b.flag().ok_or(e)? {
-                let steps = b.read(8).ok_or(e)? as usize + 1;
-                let bits = ilog(ch as u32 - 1);
+                let steps = b.uz::<8>().ok_or(e)? + 1;
+                let bits = ilog(u32::try_from(ch - 1).ok().ok_or(e)?);
                 for _ in 0..steps {
-                    let m = b.read(bits).ok_or(e)? as usize;
-                    let a = b.read(bits).ok_or(e)? as usize;
+                    let m = us(b.read(bits).ok_or(e)?);
+                    let a = us(b.read(bits).ok_or(e)?);
                     if m == a || m >= ch || a >= ch {
                         return Err(e);
                     }
@@ -258,7 +357,7 @@ impl Setup {
             let mut mux = vec![0usize; ch];
             if submaps > 1 {
                 for m in mux.iter_mut() {
-                    *m = b.read(4).ok_or(e)? as usize;
+                    *m = b.uz::<4>().ok_or(e)?;
                     if *m >= submaps {
                         return Err(e);
                     }
@@ -267,8 +366,8 @@ impl Setup {
             let mut subs = Vec::with_capacity(submaps);
             for _ in 0..submaps {
                 b.read(8).ok_or(e)?;
-                let f = b.read(8).ok_or(e)? as usize;
-                let r = b.read(8).ok_or(e)? as usize;
+                let f = b.uz::<8>().ok_or(e)?;
+                let r = b.uz::<8>().ok_or(e)?;
                 if f >= floors.len() || r >= residues.len() {
                     return Err(e);
                 }
@@ -282,7 +381,7 @@ impl Setup {
             let blockflag = b.flag().ok_or(e)?;
             let window = b.read(16).ok_or(e)?;
             let transform = b.read(16).ok_or(e)?;
-            let mapping = b.read(8).ok_or(e)? as usize;
+            let mapping = b.uz::<8>().ok_or(e)?;
             if window != 0 || transform != 0 || mapping >= mappings.len() {
                 return Err(e);
             }

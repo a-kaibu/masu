@@ -745,10 +745,10 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
         b.iter_mut().flatten().for_each(|v| *v *= 32768.0);
         b
     };
-    let (lw, nw) = (r32(vb + VB_LW) as usize, r32(vb + VB_NW) as usize);
+    let (lw, nw) = (vorbis::Block::of(r32(vb + VB_LW) != 0), vorbis::Block::of(r32(vb + VB_NW) != 0));
     let window = |bufs: &mut Vec<Vec<f32>>| {
         for b in bufs.iter_mut() {
-            win.apply(b, lw, w, nw);
+            win.apply(b, lw, vorbis::Block::of(w == 1), nw);
         }
     };
     match sh {

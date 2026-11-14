@@ -38,18 +38,21 @@ impl Imdct {
         let m = n / 2;
         let p = m / 2;
         let pi = std::f64::consts::PI;
-        let pre = (0..p).map(|k| cis(-pi * (k as f64 + 0.25) / m as f64)).collect();
-        let post = (0..p).map(|j| cis(-pi * j as f64 / m as f64)).collect();
-        let tw = (0..p / 2).map(|k| cis(-2.0 * pi * k as f64 / p as f64)).collect();
+        // (n <= 8192: sizes and indices are u32, exact as f64)
+        let p32 = u32::try_from(p).unwrap_or(u32::MAX);
+        let f = |v: usize| f64::from(u32::try_from(v).unwrap_or(u32::MAX));
+        let pre = (0..p).map(|k| cis(-pi * (f(k) + 0.25) / f(m))).collect();
+        let post = (0..p).map(|j| cis(-pi * f(j) / f(m))).collect();
+        let tw = (0..p / 2).map(|k| cis(-2.0 * pi * f(k) / f(p))).collect();
         let bits = p.trailing_zeros();
-        let rev = (0..p as u32).map(|i| if bits == 0 { 0 } else { i.reverse_bits() >> (32 - bits) }).collect();
+        let rev = (0..p32).map(|i| if bits == 0 { 0 } else { i.reverse_bits() >> (32 - bits) }).collect();
         Imdct { n, pre, post, tw, rev, buf: vec![C::default(); p], u: vec![0.0; m] }
     }
 
     fn fft(&mut self) {
         let p = self.buf.len();
         for i in 0..p {
-            let j = self.rev[i] as usize;
+            let j = crate::bits::us(self.rev[i]);
             if i < j {
                 self.buf.swap(i, j);
             }

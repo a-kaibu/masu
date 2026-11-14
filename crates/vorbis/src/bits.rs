@@ -1,5 +1,26 @@
 //! Vorbis's bit packing: least significant bit first, as libogg's oggpack_read.
 
+// (a u32 read from a packet always fits a usize: `us` widens, it never truncates)
+const _: () = assert!(usize::BITS >= 32);
+
+/// An i32 known to be >= 0 as an index (a negative one is 2^31 or more: out of any slice).
+#[inline(always)]
+pub fn ix(x: i32) -> usize {
+    us(x.cast_unsigned())
+}
+
+/// A length as an i32 (lengths here are at most a block, 8192).
+#[inline(always)]
+pub fn i32_len(n: usize) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
+}
+
+/// A u32 as a length, a count or an index.
+#[inline(always)]
+pub fn us(x: u32) -> usize {
+    usize::try_from(x).unwrap_or(usize::MAX)
+}
+
 /// Reads bits from a packet. Past its end every read fails (as oggpack_read's -1), and the
 /// reader stays at the end.
 #[derive(Clone)]
@@ -27,34 +48,60 @@ impl<'a> Bits<'a> {
         self.data.len() * 8 - self.pos
     }
 
+    /// `N` bits (`N` <= 8, checked when it compiles) as a byte.
+    #[inline]
+    pub fn u8<const N: u32>(&mut self) -> Option<u8> {
+        const { assert!(N <= 8) };
+        self.read(N).map(|v| v.to_le_bytes()[0])
+    }
+
+    /// `N` bits (`N` <= 16, checked when it compiles) as a u16.
+    #[inline]
+    pub fn u16<const N: u32>(&mut self) -> Option<u16> {
+        const { assert!(N <= 16) };
+        self.read(N).map(|v| {
+            let [a, b, _, _] = v.to_le_bytes();
+            u16::from_le_bytes([a, b])
+        })
+    }
+
+    /// `N` bits (`N` <= 32, checked when it compiles) as a count or an index.
+    #[inline]
+    pub fn uz<const N: u32>(&mut self) -> Option<usize> {
+        const { assert!(N <= 32) };
+        self.read(N).map(us)
+    }
+
     /// The next `n` bits (0..=32) without taking them, and how many of them are there.
     #[inline]
     pub fn peek(&self, n: u32) -> (u32, u32) {
         debug_assert!(n <= 32);
-        let have = (self.left() as u32).min(n);
+        let have = u32::try_from(self.left().min(us(n))).unwrap_or(n);
         let byte = self.pos / 8;
-        let shift = (self.pos % 8) as u32;
+        let shift = self.pos.to_le_bytes()[0] & 7;
         // (up to 5 bytes hold 32 bits at any shift: one 8-byte load away from the end)
-        let v = match self.data.get(byte..byte + 8) {
-            Some(w) => u64::from_le_bytes(w.try_into().unwrap()),
+        let v = match self.data.get(byte..).and_then(<[u8]>::first_chunk::<8>) {
+            Some(w) => u64::from_le_bytes(*w),
             None => {
                 let mut v: u64 = 0;
                 for k in 0..5 {
                     if let Some(&b) = self.data.get(byte + k) {
-                        v |= (b as u64) << (8 * k);
+                        v |= u64::from(b) << (8 * k);
                     }
                 }
                 v
             }
         };
-        let v = (v >> shift) as u32;
+        // (the low 32 bits)
+        let [a, b, c, d, ..] = (v >> shift).to_le_bytes();
+        let v = u32::from_le_bytes([a, b, c, d]);
         let mask = if have == 32 { u32::MAX } else { (1u32 << have) - 1 };
         (v & mask, have)
     }
 
     #[inline]
     pub fn skip(&mut self, n: u32) {
-        self.pos = (self.pos + n as usize).min(self.data.len() * 8);
+        self.pos = (self.pos + us(n)).min(self.data.len() * 8);
     }
 
     /// `n` bits (0..=32), or None past the end (then the reader is at the end).
@@ -65,7 +112,7 @@ impl<'a> Bits<'a> {
             self.pos = self.data.len() * 8;
             return None;
         }
-        self.pos += n as usize;
+        self.pos += us(n);
         Some(v)
     }
 

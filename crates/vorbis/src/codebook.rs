@@ -1,7 +1,7 @@
 //! Codebooks: the Huffman trees (codewords assigned as libvorbis's _make_words does) and the
 //! VQ value vectors (as _book_unquantize).
 
-use crate::bits::{ilog, Bits};
+use crate::bits::{ilog, us, Bits};
 use crate::Error;
 
 /// Codewords up to this long are found with one table lookup.
@@ -24,8 +24,9 @@ pub struct Codebook {
 
 /// The specification's float32_unpack (libvorbis _float32_unpack).
 pub fn float32_unpack(x: u32) -> f32 {
-    let mut mant = (x & 0x1f_ffff) as f64;
-    let exp = ((x & 0x7fe0_0000) >> 21) as i32;
+    let mut mant = f64::from(x & 0x1f_ffff);
+    // (10 bits)
+    let exp = i32::from(u16::try_from((x & 0x7fe0_0000) >> 21).unwrap_or(0));
     if x & 0x8000_0000 != 0 {
         mant = -mant;
     }
@@ -37,7 +38,9 @@ pub fn lookup1_values(entries: usize, dim: usize) -> usize {
     if dim == 0 {
         return 0;
     }
-    let mut r = (entries as f64).powf(1.0 / dim as f64).floor() as usize;
+    // (entries < 2^24 and dim < 2^16 as read: exact as f64)
+    let f = |v: usize| f64::from(u32::try_from(v).unwrap_or(u32::MAX));
+    let mut r = f(entries).powf(1.0 / f(dim)).floor() as usize;
     // (fix floating point error either way)
     let pow = |r: usize| (0..dim).try_fold(1usize, |a, _| a.checked_mul(r));
     while pow(r + 1).is_some_and(|p| p <= entries) {
@@ -59,7 +62,7 @@ pub fn make_words(lengths: &[u8]) -> Option<Vec<u32>> {
         if len == 0 {
             continue;
         }
-        let len = len as usize;
+        let len = usize::from(len);
         let mut entry = marker[len];
         if len < 32 && (entry >> len) != 0 {
             return None;
@@ -116,8 +119,10 @@ impl Codebook {
             return Ok(book);
         }
         let words = make_words(lengths).ok_or(Error::Codebook)?;
+        // (entries < 2^24: an entry number is a u32)
+        let entry = |e: usize| u32::try_from(e).ok().ok_or(Error::Codebook);
         if used == 1 {
-            book.single = lengths.iter().position(|&l| l > 0).map(|e| e as u32);
+            book.single = lengths.iter().position(|&l| l > 0).map(entry).transpose()?;
             return Ok(book);
         }
         book.fast = vec![(0, 0); 1 << FAST];
@@ -125,17 +130,18 @@ impl Codebook {
             if len == 0 {
                 continue;
             }
-            let len32 = len as u32;
+            let len32 = u32::from(len);
             let r = reverse(w, len32);
+            let e = entry(e)?;
             if len32 <= FAST {
                 let step = 1usize << len32;
-                let mut k = r as usize;
+                let mut k = us(r);
                 while k < 1 << FAST {
-                    book.fast[k] = (e as u32, len);
+                    book.fast[k] = (e, len);
                     k += step;
                 }
             } else {
-                book.slow.push((r, len, e as u32));
+                book.slow.push((r, len, e));
             }
         }
         book.slow.sort_by_key(|s| (s.1, s.0));
@@ -155,13 +161,13 @@ impl Codebook {
             return None;
         }
         let (bits, have) = b.peek(FAST);
-        let (e, len) = self.fast[bits as usize];
+        let (e, len) = self.fast[us(bits)];
         if len != 0 {
-            if (len as u32) > have {
+            if u32::from(len) > have {
                 b.skip(have);
                 return None;
             }
-            b.skip(len as u32);
+            b.skip(u32::from(len));
             return Some(e);
         }
         let (bits, have) = b.peek(32);
@@ -172,7 +178,7 @@ impl Codebook {
         while i < self.slow.len() {
             let len = self.slow[i].1;
             let n = self.slow[i..].partition_point(|s| s.1 == len);
-            let l32 = len as u32;
+            let l32 = u32::from(len);
             if l32 > have {
                 break;
             }
@@ -195,18 +201,18 @@ impl Codebook {
             return self.decode(b);
         }
         let (bits, have) = b.peek(FAST);
-        let (e, len) = self.fast[bits as usize];
+        let (e, len) = self.fast[us(bits)];
         if len != 0 {
-            if (len as u32) > have {
+            if u32::from(len) > have {
                 b.skip(have);
                 return None;
             }
-            b.skip(len as u32);
+            b.skip(u32::from(len));
             return Some(e);
         }
         let (bits, have) = b.peek(32);
         for &(r, len, e) in &self.slow {
-            let len = len as u32;
+            let len = u32::from(len);
             if len > have {
                 break;
             }
@@ -223,7 +229,7 @@ impl Codebook {
     /// The value vector of an entry.
     #[inline]
     pub fn vector(&self, e: u32) -> &[f32] {
-        let s = e as usize * self.dim;
+        let s = us(e) * self.dim;
         &self.values[s..s + self.dim]
     }
 
@@ -233,26 +239,26 @@ impl Codebook {
         if b.read(24).ok_or(e)? != 0x56_4342 {
             return Err(e);
         }
-        let dim = b.read(16).ok_or(e)? as usize;
-        let entries = b.read(24).ok_or(e)? as usize;
+        let dim = b.uz::<16>().ok_or(e)?;
+        let entries = b.uz::<24>().ok_or(e)?;
         let ordered = b.flag().ok_or(e)?;
         let mut lengths = vec![0u8; entries];
         if !ordered {
             let sparse = b.flag().ok_or(e)?;
             for l in lengths.iter_mut() {
                 if !sparse || b.flag().ok_or(e)? {
-                    *l = b.read(5).ok_or(e)? as u8 + 1;
+                    *l = b.u8::<5>().ok_or(e)? + 1;
                 }
             }
         } else {
             let mut cur = 0usize;
             let mut len = b.read(5).ok_or(e)? + 1;
             while cur < entries {
-                let n = b.read(ilog((entries - cur) as u32)).ok_or(e)? as usize;
+                let n = us(b.read(ilog(u32::try_from(entries - cur).ok().ok_or(e)?)).ok_or(e)?);
                 if len > 32 || cur + n > entries {
                     return Err(e);
                 }
-                lengths[cur..cur + n].fill(len as u8);
+                lengths[cur..cur + n].fill(u8::try_from(len).ok().ok_or(e)?);
                 cur += n;
                 len += 1;
             }
@@ -303,7 +309,8 @@ pub fn unquantize(lookup: u32, dim: usize, entries: usize, _lengths: &[u8], min:
             } else {
                 mult.get(e * dim + k).copied().unwrap_or(0)
             };
-            let val = m as f32 * delta + min + last;
+            // (a multiplicand has at most 16 bits: exact as f32)
+            let val = f32::from(u16::try_from(m).unwrap_or(u16::MAX)) * delta + min + last;
             if seq {
                 last = val;
             }

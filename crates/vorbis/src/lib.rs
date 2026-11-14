@@ -12,7 +12,7 @@ pub mod ogg;
 pub mod setup;
 
 pub use bits::Bits;
-pub use setup::{Ident, Setup};
+pub use setup::{Block, Ident, Setup};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -29,7 +29,9 @@ fn slope(len: usize) -> Vec<f32> {
     let pi = std::f64::consts::PI;
     (0..len)
         .map(|i| {
-            let s = ((i as f64 + 0.5) / len as f64 * pi / 2.0).sin();
+            // (len <= 4096: exact as f64)
+            let f = |v: usize| f64::from(u32::try_from(v).unwrap_or(u32::MAX));
+            let s = ((f(i) + 0.5) / f(len) * pi / 2.0).sin();
             (pi / 2.0 * s * s).sin() as f32
         })
         .collect()
@@ -46,11 +48,14 @@ impl Window {
         Window { blocksize, slopes: [slope(blocksize[0] / 2), slope(blocksize[1] / 2)] }
     }
 
-    /// Windows a block of size `w` whose neighbours have sizes `lw` and `nw` (each 0 short,
-    /// 1 long; a short block's neighbours count as short).
-    pub fn apply(&self, d: &mut [f32], lw: usize, w: usize, nw: usize) {
-        let (lw, nw) = if w == 1 { (lw.min(1), nw.min(1)) } else { (0, 0) };
-        let n = self.blocksize[w];
+    /// Windows a block of size `w` whose neighbours have sizes `lw` and `nw` (a short block's
+    /// neighbours count as short).
+    pub fn apply(&self, d: &mut [f32], lw: Block, w: Block, nw: Block) {
+        let (lw, nw) = match w {
+            Block::Long => (lw.index(), nw.index()),
+            Block::Short => (0, 0),
+        };
+        let n = self.blocksize[w.index()];
         let (ln, rn) = (self.blocksize[lw], self.blocksize[nw]);
         let ls = n / 4 - ln / 4;
         let rs = n / 2 + n / 4 - rn / 4;
@@ -119,15 +124,14 @@ impl Decoder {
     pub fn packet(&mut self, packet: &[u8], out: &mut Vec<f32>) {
         let mut b = Bits::new(packet);
         let Some((mode, pw, nw)) = decode::packet_header(&self.setup, &mut b) else { return };
-        let w = self.setup.modes[mode].blockflag as usize;
-        let [bs0, bs1] = self.setup.ident.blocksize;
-        let n = [bs0, bs1][w];
+        let w = self.setup.modes[mode].block();
+        let n = self.setup.ident.size(w);
         {
             let mut pcm: Vec<&mut [f32]> = self.block.iter_mut().map(|v| &mut v[..n]).collect();
             decode::mapping_inverse(&self.setup, &mut self.state, &mut b, mode, &mut pcm);
         }
         for v in self.block.iter_mut() {
-            self.window.apply(v, pw as usize, w, nw as usize);
+            self.window.apply(v, Block::of(pw), w, Block::of(nw));
         }
         // overlap-add: from the previous block's centre to this one's
         let pn = self.prev_n;
@@ -140,9 +144,10 @@ impl Decoder {
                 for j in 0..len {
                     let p = pn / 2 + j;
                     let mut s = if p < pn { self.prev[c][p] } else { 0.0 };
-                    let q = j as isize - (pn / 4) as isize + (n / 4) as isize;
-                    if q >= 0 && (q as usize) < n {
-                        s += self.block[c][q as usize];
+                    // (j - pn / 4 + n / 4, when it is in the block: below 0 it wraps past n)
+                    let q = (j + n / 4).wrapping_sub(pn / 4);
+                    if q < n {
+                        s += self.block[c][q];
                     }
                     out[base + j * ch + c] = s;
                 }
@@ -163,16 +168,17 @@ mod tests {
     fn window_power_complementary() {
         let bs = [256, 2048];
         let win = Window::new(bs);
+        let b = |x: usize| Block::of(x == 1);
         for lw in 0..2 {
             for w in 0..2 {
                 for nw in 0..2 {
                     let n = bs[w];
                     let mut d = vec![1f32; n];
-                    win.apply(&mut d, lw, w, nw);
+                    win.apply(&mut d, b(lw), b(w), b(nw));
                     // the right half of this block against a next block of size nw
                     let nn = bs[if w == 1 { nw } else { 0 }];
                     let mut next = vec![1f32; nn];
-                    win.apply(&mut next, w, if w == 1 { nw } else { 0 }, 0);
+                    win.apply(&mut next, b(w), b(if w == 1 { nw } else { 0 }), Block::Short);
                     // the overlap (r samples' slope): this block's from 3n/4 - r/4, the
                     // next's from nn/4 - r/4
                     let r = bs[w.min(if w == 1 { nw } else { 0 })];

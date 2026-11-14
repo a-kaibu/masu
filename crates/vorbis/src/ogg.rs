@@ -69,21 +69,22 @@ impl Reader {
                 pos += 1;
                 continue;
             }
-            let nseg = data[pos + 26] as usize;
+            let nseg = usize::from(data[pos + 26]);
             if pos + 27 + nseg > data.len() {
                 break;
             }
             let lacing = &data[pos + 27..pos + 27 + nseg];
-            let body: usize = lacing.iter().map(|&l| l as usize).sum();
+            let body: usize = lacing.iter().map(|&l| usize::from(l)).sum();
             if !end && pos + 27 + nseg + body > data.len() {
                 break;
             }
-            let s = u32::from_le_bytes(data[pos + 14..pos + 18].try_into().unwrap());
-            let g = u64::from_le_bytes(data[pos + 6..pos + 14].try_into().unwrap());
+            // (the 27 bytes of the page header are there)
+            let (Some(g), Some(s)) = (data[pos + 6..].first_chunk::<8>(), data[pos + 14..].first_chunk::<4>()) else { break };
+            let (s, g) = (u32::from_le_bytes(*s), u64::from_le_bytes(*g));
             let mut body = pos + 27 + nseg;
             let mine = *self.serial.get_or_insert(s) == s;
             for &l in lacing {
-                let e = (body + l as usize).min(data.len());
+                let e = (body + usize::from(l)).min(data.len());
                 if mine {
                     if !self.skipping {
                         self.cur.extend_from_slice(&data[body..e]);

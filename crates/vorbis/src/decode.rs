@@ -1,12 +1,10 @@
 //! An audio packet's spectrum to time: libvorbis's mapping0_inverse (floor 1, residues 0/1/2,
 //! inverse coupling, IMDCT), step for step.
 
-use crate::bits::{ilog, Bits};
+use crate::bits::{i32_len, ilog, ix, us, Bits};
 use crate::floor1_table::INVERSE_DB;
 use crate::imdct::Imdct;
-use crate::setup::{Floor1, Residue, Setup};
-
-const QUANT: [i32; 4] = [256, 128, 86, 64];
+use crate::setup::{Floor1, Residue, ResidueKind, Setup};
 
 /// Reusable buffers and the transforms of one stream.
 pub struct State {
@@ -33,19 +31,27 @@ fn floor1_read(f: &Floor1, setup: &Setup, b: &mut Bits, out: &mut Vec<i32>) -> O
     if !b.flag()? {
         return None;
     }
-    let q = QUANT[(f.multiplier - 1) as usize];
-    let bits = ilog(q as u32 - 1);
+    let q = f.multiplier.range();
+    // (q - 1 < 256: a post's value is at most 8 bits, an i32)
+    let bits = ilog(q.unsigned_abs() - 1);
+    let post = |v: u32| i32::try_from(v).ok();
     out.clear();
-    out.push(b.read(bits)? as i32);
-    out.push(b.read(bits)? as i32);
+    out.push(post(b.read(bits)?)?);
+    out.push(post(b.read(bits)?)?);
     for &c in &f.partition_class {
-        let (dim, sub, master, ref subs) = f.classes[c as usize];
-        let csub = (1u32 << sub) - 1;
-        let mut cval = if sub > 0 { setup.books[master as usize].decode(b)? } else { 0 };
-        for _ in 0..dim {
-            let book = subs[(cval & csub) as usize];
-            cval >>= sub;
-            out.push(if book >= 0 { setup.books[book as usize].decode(b)? as i32 } else { 0 });
+        let cl = &f.classes[usize::from(c)];
+        let csub = (1u32 << cl.sub) - 1;
+        let mut cval = match cl.master {
+            Some(m) if cl.sub > 0 => setup.books[m].decode(b)?,
+            Some(_) | None => 0,
+        };
+        for _ in 0..cl.dim {
+            let book = cl.subs[us(cval & csub)];
+            cval >>= cl.sub;
+            out.push(match book {
+                Some(k) => post(setup.books[k].decode(b)?)?,
+                None => 0,
+            });
         }
     }
     // amplitude synthesis
@@ -93,8 +99,9 @@ fn render_line(n: usize, x0: i32, x1: i32, y0: i32, y1: i32, d: &mut [f32], down
         // in 10.22 fixed point: the slope truncated, y rounded down
         let slope = ((y1 - y0) << 22) / (x1 - x0);
         let mut acc = y0 << 22;
-        for x in x0..(n as i32).min(x1) {
-            d[x as usize] *= INVERSE_DB[(acc >> 22).clamp(0, 255) as usize];
+        // (posts' x are >= 0)
+        for x in ix(x0)..ix(i32_len(n).min(x1)) {
+            d[x] *= INVERSE_DB[ix((acc >> 22).clamp(0, 255))];
             acc = acc.wrapping_add(slope);
         }
         return;
@@ -104,13 +111,14 @@ fn render_line(n: usize, x0: i32, x1: i32, y0: i32, y1: i32, d: &mut [f32], down
     let mut ady = dy.abs();
     let base = dy / adx;
     let sy = if dy < 0 { base - 1 } else { base + 1 };
-    let mut x = x0;
+    // (posts' x are >= 0)
+    let mut x = ix(x0);
     let mut y = y0;
     let mut err = 0;
     ady -= (base * adx).abs();
-    let n = (n as i32).min(x1);
+    let n = ix(i32_len(n).min(x1));
     if x < n {
-        d[x as usize] *= INVERSE_DB[y as usize];
+        d[x] *= INVERSE_DB[ix(y)];
     }
     loop {
         x += 1;
@@ -124,7 +132,8 @@ fn render_line(n: usize, x0: i32, x1: i32, y0: i32, y1: i32, d: &mut [f32], down
         } else {
             y += base;
         }
-        d[x as usize] *= INVERSE_DB[(y as usize).min(255)];
+        // (a y under 0 is 255: 2^31 or more, clamped)
+        d[x] *= INVERSE_DB[ix(y).min(255)];
     }
 }
 
@@ -133,19 +142,19 @@ fn floor1_apply(f: &Floor1, fit: &[i32], out: &mut [f32], down: bool) {
     let n = out.len();
     let clamp = |v: i32| v.clamp(0, 255);
     let (mut lx, mut hx) = (0, 0);
-    let mut ly = clamp(fit[0] * f.multiplier);
+    let mut ly = clamp(fit[0] * f.multiplier.get());
     for &cur in &f.sorted[1..] {
         let hy = fit[cur] & 0x7fff;
         if hy == fit[cur] {
             hx = f.x[cur];
-            let hy = clamp(hy * f.multiplier);
+            let hy = clamp(hy * f.multiplier.get());
             render_line(n, lx, hx, ly, hy, out, down);
             lx = hx;
             ly = hy;
         }
     }
-    for v in out.iter_mut().skip(hx.max(0) as usize) {
-        *v *= INVERSE_DB[ly as usize];
+    for v in out.iter_mut().skip(ix(hx.max(0))) {
+        *v *= INVERSE_DB[ix(ly)];
     }
 }
 
@@ -155,7 +164,10 @@ fn residue(r: &Residue, setup: &Setup, b: &mut Bits, vecs: &mut [&mut [f32]], ha
     let classbook = &setup.books[r.classbook];
     let per_word = classbook.dim;
     let ch = vecs.len();
-    let (max, n_ch) = if r.kind == 2 { (half * ch, 1) } else { (half, ch) };
+    let (max, n_ch) = match r.kind {
+        ResidueKind::Two => (half * ch, 1),
+        ResidueKind::Zero | ResidueKind::One => (half, ch),
+    };
     let end = r.end.min(max);
     if end <= r.begin {
         return;
@@ -163,7 +175,7 @@ fn residue(r: &Residue, setup: &Setup, b: &mut Bits, vecs: &mut [&mut [f32]], ha
     let n = end - r.begin;
     let partvals = n / r.grouping;
     let partwords = partvals.div_ceil(per_word);
-    let partvals_max = r.classifications.checked_pow(per_word as u32).unwrap_or(usize::MAX);
+    let partvals_max = u32::try_from(per_word).ok().and_then(|p| r.classifications.checked_pow(p)).unwrap_or(usize::MAX);
     // the classifications of each partition, per channel (one "channel" for residue 2)
     let mut classes = vec![0u8; n_ch * partwords * per_word];
     'stages: for s in 0..r.stages {
@@ -173,12 +185,13 @@ fn residue(r: &Residue, setup: &Setup, b: &mut Bits, vecs: &mut [&mut [f32]], ha
             if s == 0 {
                 for j in 0..n_ch {
                     let Some(temp) = classbook.decode(b) else { break 'stages };
-                    if temp as usize >= partvals_max {
+                    let mut v = us(temp);
+                    if v >= partvals_max {
                         break 'stages;
                     }
-                    let mut v = temp as usize;
                     for k in (0..per_word).rev() {
-                        classes[(j * partwords + l) * per_word + k] = (v % r.classifications) as u8;
+                        // (classifications <= 64)
+                        classes[(j * partwords + l) * per_word + k] = (v % r.classifications).to_le_bytes()[0];
                         v /= r.classifications;
                     }
                 }
@@ -186,17 +199,14 @@ fn residue(r: &Residue, setup: &Setup, b: &mut Bits, vecs: &mut [&mut [f32]], ha
             let mut k = 0;
             while k < per_word && i < partvals {
                 for j in 0..n_ch {
-                    let c = classes[(j * partwords + l) * per_word + k] as usize;
-                    let book = r.books[c][s];
-                    if book < 0 {
-                        continue;
-                    }
-                    let book = &setup.books[book as usize];
+                    let c = usize::from(classes[(j * partwords + l) * per_word + k]);
+                    let Some(book) = r.books[c][s] else { continue };
+                    let book = &setup.books[book];
                     let offset = r.begin + i * r.grouping;
                     let ok = match r.kind {
-                        0 => decodevs_add(book, b, &mut vecs[j][offset..], r.grouping),
-                        1 => decodev_add(book, b, &mut vecs[j][offset..], r.grouping),
-                        _ => decodevv_add(book, b, vecs, offset, r.grouping),
+                        ResidueKind::Zero => decodevs_add(book, b, &mut vecs[j][offset..], r.grouping),
+                        ResidueKind::One => decodev_add(book, b, &mut vecs[j][offset..], r.grouping),
+                        ResidueKind::Two => decodevv_add(book, b, vecs, offset, r.grouping),
                     };
                     if !ok {
                         break 'stages;
@@ -274,8 +284,8 @@ fn decodevv_add(book: &crate::codebook::Codebook, b: &mut Bits, a: &mut [&mut [f
 /// block's samples before windowing.
 pub fn mapping_inverse(setup: &Setup, st: &mut State, b: &mut Bits, mode: usize, pcm: &mut [&mut [f32]]) {
     let m = &setup.mappings[setup.modes[mode].mapping];
-    let w = setup.modes[mode].blockflag as usize;
-    let n = setup.ident.blocksize[w];
+    let w = setup.modes[mode].block();
+    let n = setup.ident.size(w);
     let half = n / 2;
     let ch = setup.ident.channels;
     for i in 0..ch {
@@ -302,15 +312,18 @@ pub fn mapping_inverse(setup: &Setup, st: &mut State, b: &mut Bits, mode: usize,
                 bundle.push(&mut v[..half]);
             }
         }
-        if r.kind == 2 {
-            if any {
-                residue(r, setup, b, &mut bundle, half);
+        match r.kind {
+            ResidueKind::Two => {
+                if any {
+                    residue(r, setup, b, &mut bundle, half);
+                }
             }
-        } else {
-            // (residues 0 and 1 decode the channels in use only)
-            let mut used: Vec<&mut [f32]> = bundle.into_iter().zip(zero).filter(|(_, z)| !z).map(|(v, _)| v).collect();
-            if !used.is_empty() {
-                residue(r, setup, b, &mut used, half);
+            ResidueKind::Zero | ResidueKind::One => {
+                // (residues 0 and 1 decode the channels in use only)
+                let mut used: Vec<&mut [f32]> = bundle.into_iter().zip(zero).filter(|(_, z)| !z).map(|(v, _)| v).collect();
+                if !used.is_empty() {
+                    residue(r, setup, b, &mut used, half);
+                }
             }
         }
     }
@@ -341,7 +354,7 @@ pub fn mapping_inverse(setup: &Setup, st: &mut State, b: &mut Bits, mode: usize,
         }
     }
     for v in pcm.iter_mut().take(ch) {
-        st.imdct[w].backward(&mut v[..n]);
+        st.imdct[w.index()].backward(&mut v[..n]);
     }
 }
 
@@ -350,7 +363,7 @@ pub fn packet_header(setup: &Setup, b: &mut Bits) -> Option<(usize, bool, bool)>
     if b.read(1)? != 0 {
         return None;
     }
-    let mode = b.read(ilog(setup.modes.len() as u32 - 1))? as usize;
+    let mode = us(b.read(ilog(u32::try_from(setup.modes.len() - 1).ok()?))?);
     if mode >= setup.modes.len() {
         return None;
     }
