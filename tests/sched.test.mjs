@@ -196,7 +196,7 @@ test('budget: no class past the game takes more than the burst and the rate allo
       now += rnd(200);
       const cls = rnd(5);
       if (ctx.masuTake(cls, now)) took[cls]++;
-      const tokens = ctx.masuBudgetWith((v) => v[0]);
+      const tokens = ctx.masuBudgetWith((v) => v[0]).v;
       assert.ok(tokens <= ctx.MASU_BURST + 1e-9);
       // (never below the game's floor)
       assert.ok(tokens >= ctx.MASU_RESERVE[0] - 1e-9);
