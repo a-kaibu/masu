@@ -1,7 +1,7 @@
 //! Lists an ASF file's streams and samples (stream, time in ms, size, key): `asfdump FILE`.
-fn main() {
-    let path = std::env::args().nth(1).expect("asfdump FILE");
-    let mut r = asf::Reader::new(std::fs::read(path).unwrap()).unwrap();
+fn main() -> Result<(), String> {
+    let path = std::env::args().nth(1).ok_or("asfdump FILE")?;
+    let mut r = asf::Reader::new(std::fs::read(path).map_err(|e| e.to_string())?).map_err(|e| format!("{e:?}"))?;
     for s in &r.header.streams {
         println!("stream {} {:?} codec {:#x} spread {:?} format {} bytes", s.number, s.kind, s.codec(), s.spread, s.format.len());
     }
@@ -12,4 +12,5 @@ fn main() {
     while let Some(s) = r.next_sample() {
         println!("{},{},{},{}", s.stream, s.time / 10_000, s.data.len(), if s.key { "K" } else { "_" });
     }
+    Ok(())
 }

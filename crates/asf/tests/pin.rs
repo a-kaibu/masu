@@ -108,7 +108,7 @@ fn check(table: &Path, got: &BTreeMap<String, u64>) {
 
 fn header(h: &mut H, x: &asf::Header) {
     for s in &x.streams {
-        h.bytes(&[s.number, u8::from(s.encrypted)]);
+        h.bytes(&[s.number.get(), u8::from(s.encrypted)]);
         match &s.kind {
             Kind::Audio => h.bytes(b"a"),
             Kind::Video { width, height } => {
@@ -150,7 +150,7 @@ fn header(h: &mut H, x: &asf::Header) {
 }
 
 fn sample(h: &mut H, s: &asf::Sample) {
-    h.bytes(&[s.stream, u8::from(s.key)]);
+    h.bytes(&[s.stream.get(), u8::from(s.key)]);
     h.u64(s.time);
     h.usize(s.data.len());
     h.bytes(&s.data);
@@ -179,7 +179,7 @@ fn all(h: &mut H, d: &[u8]) {
                     h.u64(u64::from(p.send_time));
                     h.u64(u64::from(p.duration));
                     for q in &p.payloads {
-                        h.bytes(&[q.stream, u8::from(q.key)]);
+                        h.bytes(&[q.stream.get(), u8::from(q.key)]);
                         for v in [q.object, q.offset, q.object_size, q.time] {
                             h.u64(u64::from(v));
                         }
@@ -214,7 +214,7 @@ fn all(h: &mut H, d: &[u8]) {
     // the samples muxed again, and read back
     let mux = asf::write::Mux { packet_size: 1500, preroll: 0, streams: r.header.streams.clone(), attributes: vec![("WM/Title".into(), Value::Str("pin".into()))], compress_small: true };
     let ss: Vec<_> = samples.iter().take(300).map(|s| (s.stream, s.key, u32::try_from(s.time).unwrap_or(u32::MAX), s.data.clone())).collect();
-    let w = mux.write(&ss, end);
+    let w = mux.write(&ss, end).unwrap();
     h.bytes(&w);
     if let Ok(mut r) = asf::Reader::new(w) {
         while let Some(s) = r.next_sample() {

@@ -562,14 +562,14 @@ fn thread(c: &mut Ctx) -> u32 {
                         flags |= WM_SF_DISCONTINUITY;
                     }
                     let alloc = if o.alloc_stream != 0 && o.compressed {
-                        (o.alloc_stream, true, o.stream as u32)
+                        (o.alloc_stream, true, u32::from(o.stream))
                     } else if o.alloc_output != 0 && !o.compressed {
                         (o.alloc_output, false, k as u32)
                     } else {
                         (0, false, 0)
                     };
                     // (the callback's own buffers, if it asked to allocate them)
-                    let num = if o.compressed { o.stream as u32 } else { k as u32 };
+                    let num = if o.compressed { u32::from(o.stream) } else { k as u32 };
                     let own = asy(b, |a| if o.compressed { a.alloc_stream.contains(&num) } else { a.alloc_out.contains(&num) }).unwrap_or(false);
                     (alloc, flags, own.then_some((o.compressed, num)))
                 };

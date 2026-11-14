@@ -481,7 +481,7 @@ pub fn fuzz(data: &[u8]) {
     let mut out = Out { codec, ty, time_per_frame: 0 };
     let stride = (ow as usize * (bits as usize / 8)).next_multiple_of(4);
     for (i, chunk) in body.chunks(97).enumerate() {
-        let x = asf::Sample { stream: 1, key: i == 0, time: i as u64 * 1000, data: chunk.to_vec() };
+        let x = asf::Sample { stream: asf::StreamNumber::of(1), key: i == 0, time: i as u64 * 1000, data: chunk.to_vec() };
         for (_, _, b) in out.decode(&x) {
             if matches!(info, Info::Video { .. }) {
                 assert_eq!(b.len(), stride * oh as usize);

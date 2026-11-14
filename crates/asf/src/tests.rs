@@ -2,6 +2,10 @@ use super::*;
 use crate::write::*;
 use proptest::prelude::*;
 
+fn sn(n: u8) -> StreamNumber {
+    StreamNumber::of(n)
+}
+
 fn w16(v: &mut Vec<u8>, x: u16) {
     v.extend(x.to_le_bytes());
 }
@@ -38,15 +42,15 @@ fn bih(w: u32, h: u32, fourcc: &[u8; 4], extra: &[u8]) -> Vec<u8> {
 
 fn two_streams(spread: Option<Spread>) -> Vec<Stream> {
     vec![
-        Stream { number: 1, kind: Kind::Audio, format: wave(0x161, 2, 44100, 0x2e7, &[0, 0, 0, 0, 0x17, 0, 0, 0, 0, 0]), encrypted: false, time_offset: 0, spread, avg_time_per_frame: 0, bitrate: 64000 },
-        Stream { number: 2, kind: Kind::Video { width: 320, height: 240 }, format: bih(320, 240, b"WMV3", &[0x4f, 0xf1, 0x08, 0x01]), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 333_333, bitrate: 1_000_000 },
+        Stream { number: sn(1), kind: Kind::Audio, format: wave(0x161, 2, 44100, 0x2e7, &[0, 0, 0, 0, 0x17, 0, 0, 0, 0, 0]), encrypted: false, time_offset: 0, spread, avg_time_per_frame: 0, bitrate: 64000 },
+        Stream { number: sn(2), kind: Kind::Video { width: 320, height: 240 }, format: bih(320, 240, b"WMV3", &[0x4f, 0xf1, 0x08, 0x01]), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 333_333, bitrate: 1_000_000 },
     ]
 }
 
 #[test]
 fn header_fields() {
     let m = Mux { packet_size: 1024, preroll: 3000, streams: two_streams(None), attributes: vec![("WM/Title".into(), Value::Str("t".into())), ("IsVBR".into(), Value::Bool(false))], compress_small: false };
-    let f = m.write(&[(2, true, 0, vec![7; 3000])], 8930);
+    let f = m.write(&[(sn(2), true, 0, vec![7; 3000])], 8930).unwrap();
     let h = read_header(&mut f.as_slice()).unwrap();
     assert_eq!(h.duration, 8930 * 10_000);
     assert_eq!(h.preroll, 3000);
@@ -73,22 +77,22 @@ fn a_seek_goes_to_the_key_frame_before() {
     let m = Mux { packet_size: 512, preroll: 0, streams: two_streams(None), attributes: vec![], compress_small: false };
     let mut s = Vec::new();
     for k in 0..60u32 {
-        s.push((2u8, k % 10 == 0, k * 33, vec![k as u8; 700]));
-        s.push((1u8, true, k * 33, vec![k as u8; 100]));
+        s.push((sn(2), k % 10 == 0, k * 33, vec![k as u8; 700]));
+        s.push((sn(1), true, k * 33, vec![k as u8; 100]));
     }
-    let f = m.write(&s, 2000);
+    let f = m.write(&s, 2000).unwrap();
     let mut r = Reader::new(f).unwrap();
     r.seek(25 * 33 * 10_000);
-    let first_video = std::iter::from_fn(|| r.next_sample()).find(|s| s.stream == 2).unwrap();
+    let first_video = std::iter::from_fn(|| r.next_sample()).find(|s| s.stream == sn(2)).unwrap();
     assert!(first_video.key);
     assert_eq!(first_video.time, 20 * 33 * 10_000);
     r.seek(0);
     assert_eq!(r.next_sample().unwrap().time, 0);
 }
 
-fn sample_strategy() -> impl Strategy<Value = Vec<(u8, bool, u32, Vec<u8>)>> {
+fn sample_strategy() -> impl Strategy<Value = Vec<(StreamNumber, bool, u32, Vec<u8>)>> {
     prop::collection::vec((1u8..=3, any::<bool>(), prop::collection::vec(any::<u8>(), 0..2500)), 0..40).prop_map(|v| {
-        v.into_iter().enumerate().map(|(i, (s, k, d))| (s, k, i as u32 * 20, d)).collect()
+        v.into_iter().enumerate().map(|(i, (s, k, d))| (sn(s), k, i as u32 * 20, d)).collect()
     })
 }
 
@@ -99,17 +103,17 @@ proptest! {
     #[test]
     fn objects_round_trip(samples in sample_strategy(), packet in 300usize..3000, preroll in 0u64..5000, small in any::<bool>()) {
         let mut streams = two_streams(None);
-        streams.push(Stream { number: 3, kind: Kind::Other([9; 16]), format: vec![], encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 0, bitrate: 0 });
+        streams.push(Stream { number: sn(3), kind: Kind::Other([9; 16]), format: vec![], encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 0, bitrate: 0 });
         let m = Mux { packet_size: packet, preroll, streams, attributes: vec![], compress_small: small };
-        let f = m.write(&samples, 1000);
+        let f = m.write(&samples, 1000).unwrap();
         let mut r = Reader::new(f).unwrap();
         let got: Vec<_> = std::iter::from_fn(|| r.next_sample()).collect();
         // (an empty object: a compressed payload cannot hold one, and a plain one is whole at once)
         let want: Vec<_> = samples.iter().map(|(s, k, t, d)| Sample { stream: *s, key: *k, time: *t as u64 * 10_000, data: d.clone() }).collect();
         prop_assert_eq!(got.len(), want.len());
         for s in 1..=3u8 {
-            let g: Vec<_> = got.iter().filter(|x| x.stream == s).collect();
-            let w: Vec<_> = want.iter().filter(|x| x.stream == s).collect();
+            let g: Vec<_> = got.iter().filter(|x| x.stream == sn(s)).collect();
+            let w: Vec<_> = want.iter().filter(|x| x.stream == sn(s)).collect();
             prop_assert_eq!(g, w);
         }
     }
@@ -131,8 +135,8 @@ proptest! {
         let s = Spread { span, packet_size: cs * 3, chunk_size: cs };
         let m = Mux { packet_size: 1500, preroll: 0, streams: two_streams(Some(s)), attributes: vec![], compress_small: false };
         let n = s.packet_size as usize * span as usize;
-        let samples: Vec<_> = (0..objs).map(|k| (1u8, true, k as u32 * 10, (0..n).map(|i| (i * 7 + k) as u8).collect::<Vec<u8>>())).collect();
-        let mut r = Reader::new(m.write(&samples, 100)).unwrap();
+        let samples: Vec<_> = (0..objs).map(|k| (sn(1), true, k as u32 * 10, (0..n).map(|i| (i * 7 + k) as u8).collect::<Vec<u8>>())).collect();
+        let mut r = Reader::new(m.write(&samples, 100).unwrap()).unwrap();
         for (_, _, _, d) in &samples {
             prop_assert_eq!(&r.next_sample().unwrap().data, d);
         }
@@ -142,7 +146,7 @@ proptest! {
     #[test]
     fn damage_is_safe(samples in sample_strategy(), flips in prop::collection::vec((any::<prop::sample::Index>(), any::<u8>()), 1..40)) {
         let m = Mux { packet_size: 700, preroll: 100, streams: two_streams(None), attributes: vec![("A".into(), Value::U32(1))], compress_small: true };
-        let mut f = m.write(&samples, 1000);
+        let mut f = m.write(&samples, 1000).unwrap();
         for (i, x) in flips {
             let k = i.index(f.len());
             f[k] ^= x;
@@ -196,9 +200,9 @@ fn matches_ffprobe() {
     let _ = std::fs::remove_dir_all(&dir);
     let mut r = Reader::new(f).unwrap();
     // ffprobe's stream index k is the k-th stream of the header
-    let numbers: Vec<u8> = r.header.streams.iter().map(|s| s.number).collect();
+    let numbers: Vec<StreamNumber> = r.header.streams.iter().map(|s| s.number).collect();
     let got: Vec<Sample> = std::iter::from_fn(|| r.next_sample()).collect();
-    let mut want: Vec<(u8, u64, usize, bool)> = Vec::new();
+    let mut want: Vec<(StreamNumber, u64, usize, bool)> = Vec::new();
     for l in text.lines() {
         let v: Vec<&str> = l.split(',').collect();
         let idx: usize = v[0].parse().unwrap();
@@ -220,7 +224,7 @@ fn matches_ffprobe() {
 #[test]
 fn huge_packet_sizes_are_refused() {
     let m = Mux { packet_size: 1024, preroll: 0, streams: two_streams(None), attributes: vec![], compress_small: false };
-    let f = m.write(&[(2, true, 0, vec![7; 3000])], 1000);
+    let f = m.write(&[(sn(2), true, 0, vec![7; 3000])], 1000).unwrap();
     // (File Properties: minimum and maximum data packet size, side by side)
     let pat: Vec<u8> = [1024u32.to_le_bytes(), 1024u32.to_le_bytes()].concat();
     let at = f.windows(8).position(|w| w == &pat[..]).unwrap();
@@ -276,12 +280,12 @@ fn reassembly_of_overlapping_fragments() {
             for (off, n) in sends {
                 if stray {
                     // (stream 9: not in the header)
-                    got.extend(a.push(Payload { stream: 9, key: true, object: no as u32, offset: off as u32, object_size: data.len() as u32, time: 0, data: data[off..off + n].to_vec() }));
+                    got.extend(a.push(Payload { stream: sn(9), key: true, object: no as u32, offset: off as u32, object_size: data.len() as u32, time: 0, data: data[off..off + n].to_vec() }));
                 }
-                got.extend(a.push(Payload { stream: *stream, key: true, object: no as u32, offset: off as u32, object_size: data.len() as u32, time: 0, data: data[off..off + n].to_vec() }));
+                got.extend(a.push(Payload { stream: sn(*stream), key: true, object: no as u32, offset: off as u32, object_size: data.len() as u32, time: 0, data: data[off..off + n].to_vec() }));
             }
         }
-        let got: Vec<_> = got.into_iter().map(|s| (s.stream, s.data)).collect();
+        let got: Vec<_> = got.into_iter().map(|s| (s.stream.get(), s.data)).collect();
         prop_assert_eq!(got, want);
     });
 }
@@ -293,16 +297,16 @@ fn objects_take_memory_as_they_come() {
     let mut a = Assembler::new(&header_of(two_streams(None)));
     for obj in 0..200u32 {
         for s in [1u8, 2] {
-            assert!(a.push(Payload { stream: s, key: true, object: obj, offset: 0, object_size: u32::MAX, time: 0, data: vec![1; 10] }).is_none());
+            assert!(a.push(Payload { stream: sn(s), key: true, object: obj, offset: 0, object_size: u32::MAX, time: 0, data: vec![1; 10] }).is_none());
         }
     }
     let held: usize = a.held();
     assert!(held < 1 << 20, "{held}");
     a.reset();
     // (a gap: the object is dropped; the next payload in order would have completed it)
-    assert!(a.push(Payload { stream: 1, key: true, object: 7, offset: 0, object_size: 8, time: 0, data: vec![1; 4] }).is_none());
-    assert!(a.push(Payload { stream: 1, key: true, object: 7, offset: 6, object_size: 8, time: 0, data: vec![1; 2] }).is_none());
-    assert!(a.push(Payload { stream: 1, key: true, object: 7, offset: 4, object_size: 8, time: 0, data: vec![1; 2] }).is_none());
+    assert!(a.push(Payload { stream: sn(1), key: true, object: 7, offset: 0, object_size: 8, time: 0, data: vec![1; 4] }).is_none());
+    assert!(a.push(Payload { stream: sn(1), key: true, object: 7, offset: 6, object_size: 8, time: 0, data: vec![1; 2] }).is_none());
+    assert!(a.push(Payload { stream: sn(1), key: true, object: 7, offset: 4, object_size: 8, time: 0, data: vec![1; 2] }).is_none());
     assert_eq!(a.held(), 0);
 }
 
@@ -317,17 +321,17 @@ proptest! {
         let mut s = Vec::new();
         for (k, &key) in keys.iter().enumerate() {
             let k = k as u32;
-            s.push((2u8, key || k == 0, k * 33, vec![k as u8; 300]));
-            s.push((1u8, true, k * 33, vec![k as u8; 50]));
+            s.push((sn(2), key || k == 0, k * 33, vec![k as u8; 300]));
+            s.push((sn(1), true, k * 33, vec![k as u8; 50]));
         }
-        let f = m.write(&s, keys.len() as u64 * 33 + 100);
+        let f = m.write(&s, keys.len() as u64 * 33 + 100).unwrap();
         let mut r = Reader::new(f).unwrap();
         let t = at as u64 * 10_000;
         let key = r.key_before(t);
         prop_assert!(key <= t);
         r.seek(t);
         // (a packet may hold the end of the object before the key frame: decoded, not shown)
-        let first = std::iter::from_fn(|| r.next_sample()).find(|s| s.stream == 2 && s.key).unwrap();
+        let first = std::iter::from_fn(|| r.next_sample()).find(|s| s.stream == sn(2) && s.key).unwrap();
         if t > 0 {
             prop_assert_eq!(first.time, key);
         }

@@ -45,6 +45,64 @@ pub const NO_ERROR_CORRECTION: Guid = guid(0x20fb_5700, 0x5b55, 0x11cf, [0xa8, 0
 /// 100 ns units a millisecond (ASF's times are in ms in packets, in 100 ns in the header)
 const MS: u64 = 10_000;
 
+// (a u32 field of the file always fits a usize: `us` is the widening, not a truncation)
+const _: () = assert!(usize::BITS >= 32);
+
+/// A u32 of the file as a length or an offset.
+#[inline(always)]
+fn us(x: u32) -> usize {
+    usize::try_from(x).unwrap_or(usize::MAX)
+}
+
+/// A stream's number: the low 7 bits of a stream number byte (1..=127 in a valid file; 0 can
+/// come out of a damaged one, and is then a stream like any other).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct StreamNumber(u8);
+
+impl StreamNumber {
+    /// The number of a stream number byte or word (its flag bits dropped).
+    pub const fn of(b: u8) -> StreamNumber {
+        StreamNumber(b & 0x7f)
+    }
+    /// `b` as a number, if it is one (`b` < 128).
+    pub const fn new(b: u8) -> Option<StreamNumber> {
+        if b < 0x80 {
+            Some(StreamNumber(b))
+        } else {
+            None
+        }
+    }
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl From<StreamNumber> for u8 {
+    fn from(n: StreamNumber) -> u8 {
+        n.0
+    }
+}
+impl From<StreamNumber> for u16 {
+    fn from(n: StreamNumber) -> u16 {
+        u16::from(n.0)
+    }
+}
+impl From<StreamNumber> for u32 {
+    fn from(n: StreamNumber) -> u32 {
+        u32::from(n.0)
+    }
+}
+impl std::fmt::Display for StreamNumber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// The low 7 bits of a word (an Extended Stream Properties' or a Stream Properties' flags).
+fn stream_number16(w: u16) -> StreamNumber {
+    StreamNumber::of(w.to_le_bytes()[0])
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     /// not an ASF file (no Header Object first)
@@ -76,7 +134,7 @@ pub struct Spread {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stream {
-    pub number: u8,
+    pub number: StreamNumber,
     pub kind: Kind,
     /// WAVEFORMATEX (audio) or BITMAPINFOHEADER (video), as the file holds it
     pub format: Vec<u8>,
@@ -93,7 +151,7 @@ impl Stream {
     /// The codec: WAVEFORMATEX.wFormatTag (audio) or BITMAPINFOHEADER.biCompression (video).
     pub fn codec(&self) -> u32 {
         match self.kind {
-            Kind::Audio => le16(&self.format, 0).unwrap_or(0) as u32,
+            Kind::Audio => u32::from(le16(&self.format, 0).unwrap_or(0)),
             Kind::Video { .. } => le32(&self.format, 16).unwrap_or(0),
             Kind::Other(_) => 0,
         }
@@ -142,7 +200,7 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn stream(&self, number: u8) -> Option<&Stream> {
+    pub fn stream(&self, number: StreamNumber) -> Option<&Stream> {
         self.streams.iter().find(|s| s.number == number)
     }
     /// A file attribute (stream 0) by name.
@@ -206,7 +264,7 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
         return Err(Error::Truncated);
     }
     let mut h = Header::default();
-    let mut ext: Vec<(u8, u64, u32)> = Vec::new();
+    let mut ext: Vec<(StreamNumber, u64, u32)> = Vec::new();
     let mut file_props = false;
     for (g, body) in objects(&b[30..size]) {
         match g {
@@ -229,7 +287,7 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
                 }
             }
             HEADER_EXTENSION => {
-                let n = le32(body, 18).unwrap_or(0) as usize;
+                let n = us(le32(body, 18).unwrap_or(0));
                 let inner = body.get(22..22usize.saturating_add(n).min(body.len())).unwrap_or(&[]);
                 for (g, o) in objects(inner) {
                     match g {
@@ -238,18 +296,18 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
                             // alt bitrate, alt buffer, alt fullness, max object size, flags,
                             // stream number, language, avg time per frame, ...
                             if let (Some(rate), Some(n), Some(t)) = (le32(o, 16), le16(o, 48), le64(o, 52)) {
-                                ext.push(((n & 0x7f) as u8, t, rate));
+                                ext.push((stream_number16(n), t, rate));
                             }
                             // (it may hold the stream's Stream Properties Object, after its
                             // names and payload extension systems)
                             if let (Some(names), Some(systems)) = (le16(o, 60), le16(o, 62)) {
                                 let mut at = 64usize;
                                 for _ in 0..names {
-                                    let len = le16(o, at.saturating_add(2)).unwrap_or(0) as usize;
+                                    let len = usize::from(le16(o, at.saturating_add(2)).unwrap_or(0));
                                     at = at.saturating_add(4 + len);
                                 }
                                 for _ in 0..systems {
-                                    let len = le32(o, at.saturating_add(18)).unwrap_or(0) as usize;
+                                    let len = us(le32(o, at.saturating_add(18)).unwrap_or(0));
                                     at = at.saturating_add(22 + len);
                                 }
                                 if let Some(rest) = o.get(at..) {
@@ -271,7 +329,7 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
                 }
             }
             CONTENT_DESCRIPTION => {
-                let lens: Vec<usize> = (0..5).map(|k| le16(body, k * 2).unwrap_or(0) as usize).collect();
+                let lens: Vec<usize> = (0..5).map(|k| usize::from(le16(body, k * 2).unwrap_or(0))).collect();
                 let mut at = 10usize;
                 let mut strs = Vec::new();
                 for l in lens {
@@ -298,7 +356,7 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
     }
     // the Data Object: its GUID, size, file id, total packets, reserved
     if guid_at(b, size) == Some(DATA) {
-        h.data_offset = size as u64 + 50;
+        h.data_offset = u64::try_from(size).map_err(|_| Error::Bad("header size"))? + 50;
         if let Some(n) = le64(b, size + 40) {
             if h.packets == 0 {
                 h.packets = n;
@@ -325,8 +383,8 @@ fn stream_properties(b: &[u8]) -> Option<Stream> {
     let ty = guid_at(b, 0)?;
     let ec = guid_at(b, 16)?;
     let time_offset = le64(b, 32)?;
-    let tlen = le32(b, 40)? as usize;
-    let elen = le32(b, 44)? as usize;
+    let tlen = us(le32(b, 40)?);
+    let elen = us(le32(b, 44)?);
     let flags = le16(b, 48)?;
     let ts = b.get(54..54usize.checked_add(tlen)?)?;
     let es = b.get(54 + tlen..(54 + tlen).checked_add(elen)?).unwrap_or(&[]);
@@ -335,7 +393,7 @@ fn stream_properties(b: &[u8]) -> Option<Stream> {
         VIDEO_MEDIA => {
             let width = le32(ts, 0)?;
             let height = le32(ts, 4)?;
-            let n = le16(ts, 9)? as usize;
+            let n = usize::from(le16(ts, 9)?);
             (Kind::Video { width, height }, ts.get(11..11 + n.min(ts.len().saturating_sub(11)))?.to_vec())
         }
         g => (Kind::Other(g), ts.to_vec()),
@@ -344,7 +402,7 @@ fn stream_properties(b: &[u8]) -> Option<Stream> {
         .then(|| Some(Spread { span: *es.first()?, packet_size: le16(es, 1)?, chunk_size: le16(es, 3)? }))
         .flatten()
         .filter(|s| s.span > 1 && s.chunk_size > 0 && s.packet_size % s.chunk_size == 0);
-    Some(Stream { number: (flags & 0x7f) as u8, kind, format, encrypted: flags & 0x8000 != 0, time_offset, spread, avg_time_per_frame: 0, bitrate: 0 })
+    Some(Stream { number: stream_number16(flags), kind, format, encrypted: flags & 0x8000 != 0, time_offset, spread, avg_time_per_frame: 0, bitrate: 0 })
 }
 
 fn value(ty: u16, v: &[u8], wide_bool: bool) -> Value {
@@ -365,11 +423,13 @@ fn extended_content(b: &[u8]) -> Vec<Attribute> {
     let mut at = 2usize;
     for _ in 0..n {
         let Some(nl) = le16(b, at) else { break };
-        let Some(name) = b.get(at + 2..at + 2 + nl as usize) else { break };
-        at += 2 + nl as usize;
+        let nl = usize::from(nl);
+        let Some(name) = b.get(at + 2..at + 2 + nl) else { break };
+        at += 2 + nl;
         let (Some(ty), Some(vl)) = (le16(b, at), le16(b, at + 2)) else { break };
-        let Some(v) = b.get(at + 4..at + 4 + vl as usize) else { break };
-        at += 4 + vl as usize;
+        let vl = usize::from(vl);
+        let Some(v) = b.get(at + 4..at + 4 + vl) else { break };
+        at += 4 + vl;
         out.push(Attribute { stream: 0, name: utf16(name), value: value(ty, v, true) });
     }
     out
@@ -381,11 +441,12 @@ fn metadata(b: &[u8]) -> Vec<Attribute> {
     let mut at = 2usize;
     for _ in 0..n {
         let (Some(stream), Some(nl), Some(ty), Some(vl)) = (le16(b, at + 2), le16(b, at + 4), le16(b, at + 6), le32(b, at + 8)) else { break };
+        let (nl, vl) = (usize::from(nl), us(vl));
         let ns = at + 12;
-        let Some(name) = b.get(ns..ns + nl as usize) else { break };
-        let vs = ns + nl as usize;
-        let Some(v) = vs.checked_add(vl as usize).and_then(|e| b.get(vs..e)) else { break };
-        at = vs + vl as usize;
+        let Some(name) = b.get(ns..ns + nl) else { break };
+        let vs = ns + nl;
+        let Some(v) = vs.checked_add(vl).and_then(|e| b.get(vs..e)) else { break };
+        at = vs + vl;
         out.push(Attribute { stream, name: utf16(name), value: value(ty, v, false) });
     }
     out
@@ -397,7 +458,7 @@ fn metadata(b: &[u8]) -> Vec<Attribute> {
 /// A piece of a media object in a packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Payload {
-    pub stream: u8,
+    pub stream: StreamNumber,
     pub key: bool,
     pub object: u32,
     pub offset: u32,
@@ -416,16 +477,42 @@ pub struct Packet {
     pub payloads: Vec<Payload>,
 }
 
-/// A field of length type `t` (0 none, 1 byte, 2 word, 3 dword) at `*at`.
+/// The length type of a packet's field: two bits of a flags byte.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Len {
+    None,
+    Byte,
+    Word,
+    Dword,
+}
+
+impl Len {
+    /// The length type in the low two bits of `t`.
+    fn of(t: u8) -> Len {
+        match t & 3 {
+            0 => Len::None,
+            1 => Len::Byte,
+            2 => Len::Word,
+            _ => Len::Dword,
+        }
+    }
+}
+
+/// A field of length type `t` (in its low 2 bits: none, byte, word, dword) at `*at`.
 fn field(b: &[u8], at: &mut usize, t: u8) -> Option<u32> {
-    let v = match t & 3 {
-        0 => return Some(0),
-        1 => *b.get(*at)? as u32,
-        2 => le16(b, *at)? as u32,
-        _ => le32(b, *at)?,
+    let (v, n) = match Len::of(t) {
+        Len::None => return Some(0),
+        Len::Byte => (u32::from(*b.get(*at)?), 1),
+        Len::Word => (u32::from(le16(b, *at)?), 2),
+        Len::Dword => (le32(b, *at)?, 4),
     };
-    *at += [0, 1, 2, 4][(t & 3) as usize];
+    *at += n;
     Some(v)
+}
+
+/// A field of length type `t` as a length.
+fn field_len(b: &[u8], at: &mut usize, t: u8) -> Option<usize> {
+    field(b, at, t).map(us)
 }
 
 /// Parses one packet (`b`: the packet's `packet_size` bytes). What a damaged packet holds before
@@ -438,15 +525,15 @@ pub fn packet(b: &[u8]) -> Result<Packet, Error> {
         if flags & 0x10 != 0 {
             return Err(Error::Bad("opaque error correction"));
         }
-        at = 1 + (flags & 0x0f) as usize;
+        at = 1 + usize::from(flags & 0x0f);
         flags = *b.get(at).ok_or(Error::Truncated)?;
     }
     let props = *b.get(at + 1).ok_or(Error::Truncated)?;
     at += 2;
     let multiple = flags & 1 != 0;
-    let len = field(b, &mut at, flags >> 5).ok_or(Error::Truncated)? as usize;
+    let len = field_len(b, &mut at, flags >> 5).ok_or(Error::Truncated)?;
     let _sequence = field(b, &mut at, flags >> 1).ok_or(Error::Truncated)?;
-    let mut padding = field(b, &mut at, flags >> 3).ok_or(Error::Truncated)? as usize;
+    let mut padding = field_len(b, &mut at, flags >> 3).ok_or(Error::Truncated)?;
     let send_time = le32(b, at).ok_or(Error::Truncated)?;
     let duration = le16(b, at + 4).ok_or(Error::Truncated)?;
     at += 6;
@@ -459,7 +546,7 @@ pub fn packet(b: &[u8]) -> Result<Packet, Error> {
     let (count, ptype) = if multiple {
         let f = *b.get(at).ok_or(Error::Truncated)?;
         at += 1;
-        ((f & 0x3f) as usize, f >> 6)
+        (usize::from(f & 0x3f), f >> 6)
     } else {
         (1, 0)
     };
@@ -471,23 +558,24 @@ pub fn packet(b: &[u8]) -> Result<Packet, Error> {
         at += 1;
         let object = field(b, &mut at, props >> 4).ok_or(Error::Truncated)?;
         let offset = field(b, &mut at, props >> 2).ok_or(Error::Truncated)?;
-        let rlen = field(b, &mut at, props).ok_or(Error::Truncated)? as usize;
-        let (stream, key) = (sn & 0x7f, sn & 0x80 != 0);
+        let rlen = field_len(b, &mut at, props).ok_or(Error::Truncated)?;
+        let (stream, key) = (StreamNumber::of(sn), sn & 0x80 != 0);
         if rlen == 1 {
             // compressed payload: `offset` is the presentation time, then a time delta, then
             // sub-payloads (a length byte, its object)
-            let delta = *b.get(at).ok_or(Error::Truncated)? as u32;
+            let delta = u32::from(*b.get(at).ok_or(Error::Truncated)?);
             at += 1;
-            let plen = if multiple { field(b, &mut at, ptype).ok_or(Error::Truncated)? as usize } else { end.saturating_sub(at) };
+            let plen = if multiple { field_len(b, &mut at, ptype).ok_or(Error::Truncated)? } else { end.saturating_sub(at) };
             let stop = at.checked_add(plen).filter(|&e| e <= end).ok_or(Error::Truncated)?;
             let mut t = offset;
             let mut obj = object;
             while at < stop {
-                let n = b[at] as usize;
+                let n = b[at];
                 at += 1;
+                let (n, object_size) = (usize::from(n), u32::from(n));
                 let d = b.get(at..at + n).filter(|_| at + n <= stop).ok_or(Error::Truncated)?;
                 at += n;
-                p.payloads.push(Payload { stream, key, object: obj, offset: 0, object_size: n as u32, time: t, data: d.to_vec() });
+                p.payloads.push(Payload { stream, key, object: obj, offset: 0, object_size, time: t, data: d.to_vec() });
                 obj = obj.wrapping_add(1);
                 t = t.wrapping_add(delta);
             }
@@ -496,11 +584,11 @@ pub fn packet(b: &[u8]) -> Result<Packet, Error> {
         let rep = b.get(at..at.checked_add(rlen).ok_or(Error::Truncated)?).ok_or(Error::Truncated)?;
         at += rlen;
         let (object_size, time) = if rlen >= 8 { (le32(rep, 0).unwrap_or(0), le32(rep, 4).unwrap_or(0)) } else { (0, 0) };
-        let plen = if multiple { field(b, &mut at, ptype).ok_or(Error::Truncated)? as usize } else { end.saturating_sub(at) };
+        let plen = if multiple { field_len(b, &mut at, ptype).ok_or(Error::Truncated)? } else { end.saturating_sub(at) };
         let d = at.checked_add(plen).filter(|&e| e <= end).and_then(|e| b.get(at..e)).ok_or(Error::Truncated)?;
         at += plen;
         // (no replicated data: the payload is the whole object)
-        let object_size = if rlen >= 8 { object_size } else { plen as u32 };
+        let object_size = if rlen >= 8 { object_size } else { u32::try_from(plen).map_err(|_| Error::Truncated)? };
         p.payloads.push(Payload { stream, key, object, offset, object_size, time, data: d.to_vec() });
     }
     Ok(p)
@@ -512,7 +600,7 @@ pub fn packet(b: &[u8]) -> Result<Packet, Error> {
 /// A stream's media object, whole: a sample.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sample {
-    pub stream: u8,
+    pub stream: StreamNumber,
     pub key: bool,
     /// presentation time, 100 ns (preroll taken off)
     pub time: u64,
@@ -532,11 +620,11 @@ struct Partial {
 /// Puts media objects back together from payloads.
 #[derive(Default)]
 pub struct Assembler {
-    parts: HashMap<u8, Partial>,
-    spread: HashMap<u8, Spread>,
+    parts: HashMap<StreamNumber, Partial>,
+    spread: HashMap<StreamNumber, Spread>,
     preroll: u64,
     /// the header's streams (None: any, an assembler made without one)
-    streams: Option<std::collections::HashSet<u8>>,
+    streams: Option<std::collections::HashSet<StreamNumber>>,
 }
 
 /// Objects are never larger than this (a damaged size must not allocate gigabytes).
@@ -568,8 +656,8 @@ impl Assembler {
         if self.streams.as_ref().is_some_and(|s| !s.contains(&p.stream)) {
             return None;
         }
-        let size = p.object_size.min(MAX_OBJECT) as usize;
-        let off = p.offset as usize;
+        let size = us(p.object_size.min(MAX_OBJECT));
+        let off = us(p.offset);
         let fresh = !matches!(self.parts.get(&p.stream), Some(q) if q.object == p.object);
         if fresh {
             // (a new object drops an unfinished one: lost packets)
@@ -603,7 +691,7 @@ impl Assembler {
         if let Some(s) = self.spread.get(&p.stream) {
             data = descramble(&data, *s);
         }
-        let time = (q.time as u64).saturating_sub(self.preroll).saturating_mul(MS);
+        let time = u64::from(q.time).saturating_sub(self.preroll).saturating_mul(MS);
         Some(Sample { stream: p.stream, key: q.key, time, data })
     }
 }
@@ -611,7 +699,7 @@ impl Assembler {
 /// Undoes the Audio Spread interleaving of one span (`d`: `span` x `packet_size` bytes; any
 /// other size is left as it is).
 pub fn descramble(d: &[u8], s: Spread) -> Vec<u8> {
-    let (span, ps, cs) = (s.span as usize, s.packet_size as usize, s.chunk_size as usize);
+    let (span, ps, cs) = (usize::from(s.span), usize::from(s.packet_size), usize::from(s.chunk_size));
     if span <= 1 || cs == 0 || ps % cs != 0 || d.len() != ps * span {
         return d.to_vec();
     }
@@ -629,7 +717,7 @@ pub fn descramble(d: &[u8], s: Spread) -> Vec<u8> {
 
 /// The interleaving `descramble` undoes (for tests, and the writer of test files).
 pub fn scramble(d: &[u8], s: Spread) -> Vec<u8> {
-    let (span, ps, cs) = (s.span as usize, s.packet_size as usize, s.chunk_size as usize);
+    let (span, ps, cs) = (usize::from(s.span), usize::from(s.packet_size), usize::from(s.chunk_size));
     if span <= 1 || cs == 0 || ps % cs != 0 || d.len() != ps * span {
         return d.to_vec();
     }
@@ -679,7 +767,7 @@ impl Source for Vec<u8> {
 fn read_full<S: Source + ?Sized>(s: &mut S, off: u64, buf: &mut [u8]) -> usize {
     let mut got = 0;
     while got < buf.len() {
-        let n = s.read_at(off + got as u64, &mut buf[got..]);
+        let n = s.read_at(off + u64::try_from(got).unwrap_or(u64::MAX), &mut buf[got..]);
         if n == 0 {
             break;
         }
@@ -698,7 +786,7 @@ pub fn read_header<S: Source + ?Sized>(s: &mut S) -> Result<Header, Error> {
     if n > 16 << 20 {
         return Err(Error::Bad("header over 16 MiB"));
     }
-    let mut b = vec![0u8; n as usize];
+    let mut b = vec![0u8; usize::try_from(n).map_err(|_| Error::Bad("header over 16 MiB"))?];
     let got = read_full(s, 0, &mut b);
     b.truncate(got);
     header(&b)
@@ -712,7 +800,7 @@ pub struct Reader<S: Source> {
     next: u64,
     queue: VecDeque<Sample>,
     /// samples of streams not in this set are dropped (None: all)
-    pub only: Option<Vec<u8>>,
+    pub only: Option<Vec<StreamNumber>>,
 }
 
 impl<S: Source> Reader<S> {
@@ -726,8 +814,8 @@ impl<S: Source> Reader<S> {
         if self.header.packets != 0 && k >= self.header.packets {
             return None;
         }
-        let size = self.header.packet_size as usize;
-        let off = self.header.data_offset.checked_add(k.checked_mul(size as u64)?)?;
+        let size = us(self.header.packet_size);
+        let off = self.header.data_offset.checked_add(k.checked_mul(u64::from(self.header.packet_size))?)?;
         let mut b = vec![0u8; size];
         if read_full(&mut self.src, off, &mut b) < size {
             return None;
@@ -791,18 +879,18 @@ impl<S: Source> Reader<S> {
         while hi - lo > 1 {
             let mid = lo + (hi - lo) / 2;
             match self.packet_at(mid) {
-                Some(p) if (p.send_time as u64) <= want => lo = mid,
-                _ => hi = mid,
+                Some(p) if u64::from(p.send_time) <= want => lo = mid,
+                Some(_) | None => hi = mid,
             }
         }
-        let video: Vec<u8> = self.header.streams.iter().filter(|s| matches!(s.kind, Kind::Video { .. })).map(|s| s.number).collect();
+        let video: Vec<StreamNumber> = self.header.streams.iter().filter(|s| matches!(s.kind, Kind::Video { .. })).map(|s| s.number).collect();
         // back to a packet where a key frame of the video (at or before t) begins
         let mut k = lo;
         loop {
             let p = self.packet_at(k).unwrap_or_default();
-            let key = p.payloads.iter().find(|pl| video.contains(&pl.stream) && pl.key && pl.offset == 0 && (pl.time as u64) <= want);
+            let key = p.payloads.iter().find(|pl| video.contains(&pl.stream) && pl.key && pl.offset == 0 && u64::from(pl.time) <= want);
             if let Some(pl) = key {
-                return (k, (pl.time as u64).saturating_sub(self.header.preroll).saturating_mul(MS));
+                return (k, u64::from(pl.time).saturating_sub(self.header.preroll).saturating_mul(MS));
             }
             if video.is_empty() {
                 return (k, t);

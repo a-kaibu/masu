@@ -26,14 +26,15 @@ fn bih_rgb(w: u32, h: u32) -> Vec<u8> {
 
 fn streams() -> Vec<asf::Stream> {
     vec![
-        asf::Stream { number: 1, kind: asf::Kind::Audio, format: wave_pcm(2, 8000), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 0, bitrate: 256000 },
-        asf::Stream { number: 2, kind: asf::Kind::Video { width: 4, height: 2 }, format: bih_rgb(4, 2), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 400_000, bitrate: 0 },
+        asf::Stream { number: asf::StreamNumber::of(1), kind: asf::Kind::Audio, format: wave_pcm(2, 8000), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 0, bitrate: 256000 },
+        asf::Stream { number: asf::StreamNumber::of(2), kind: asf::Kind::Video { width: 4, height: 2 }, format: bih_rgb(4, 2), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 400_000, bitrate: 0 },
     ]
 }
 
 fn reader(samples: &[(u8, bool, u32, Vec<u8>)]) -> Reader {
     let m = Mux { packet_size: 600, preroll: 0, streams: streams(), attributes: vec![("WM/VideoWidth".into(), asf::Value::U32(4))], compress_small: false };
-    let f = m.write(samples, 1000);
+    let samples: Vec<_> = samples.iter().map(|(n, k, t, d)| (asf::StreamNumber::of(*n), *k, *t, d.clone())).collect();
+    let f = m.write(&samples, 1000).unwrap();
     let mut r = Reader { r: None, stream: 0, outputs: Vec::new(), pending: VecDeque::new(), range: (0, 0), ended: false, attrs: Default::default() };
     assert_eq!(open_src(&mut r, Box::new(f)), 0);
     r
@@ -53,7 +54,7 @@ fn compressed_in_file_order() {
     }
     for (n, key, t, d) in &s {
         let (k, time, _dur, data, kk) = next_sample(&mut r, 0).unwrap();
-        assert_eq!((r.outputs[k].stream, time, &data, kk), (*n, *t as u64 * 10_000, d, *key));
+        assert_eq!((r.outputs[k].stream.get(), time, &data, kk), (*n, *t as u64 * 10_000, d, *key));
     }
     assert!(next_sample(&mut r, 0).is_none());
 }
@@ -91,7 +92,7 @@ fn uncompressed_output_is_decoded() {
     assert_eq!(r.outputs[1].ty, crate::wmdec::rgb_type(4, 2, 24, 400_000));
     let mut got = Vec::new();
     while let Some((k, t, d, data, _)) = next_sample(&mut r, 0) {
-        got.push((r.outputs[k].stream, t, d, data));
+        got.push((r.outputs[k].stream.get(), t, d, data));
     }
     assert_eq!(got.len(), 3);
     assert_eq!(got[0], (1, 0, 64 / 4 * 10_000_000 / 8000, pcm));
@@ -153,7 +154,7 @@ proptest! {
             let got = next_sample(&mut r, p);
             match got {
                 Some((k, _, _, d, _)) => {
-                    let n = r.outputs[k].stream as usize;
+                    let n = usize::from(r.outputs[k].stream.get());
                     prop_assert!(p == 0 || p as usize == n);
                     prop_assert_eq!(d[0], per[n][next[n]]);
                     next[n] += 1;
@@ -229,7 +230,7 @@ proptest! {
         let got = chosen_format(offered.clone(), &t).unwrap();
         prop_assert!(offered.contains(&got));
         let mut d = crate::wmdec::decoder(st, &got).unwrap();
-        let x = asf::Sample { stream: 2, time: 0, key: true, data: picture(3) };
+        let x = asf::Sample { stream: asf::StreamNumber::of(2), time: 0, key: true, data: picture(3) };
         let out = d.decode(&x);
         prop_assert_eq!(out.len(), 1);
     }

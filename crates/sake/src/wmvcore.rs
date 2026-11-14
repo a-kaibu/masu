@@ -280,7 +280,7 @@ unsafe impl Send for GuestStream {}
 
 /// One output (= one stream of the file, in header order).
 pub struct Output {
-    pub stream: u8,
+    pub stream: asf::StreamNumber,
     /// the type the output gives
     pub ty: MediaType,
     /// read compressed (SetReadStreamSamples TRUE)
@@ -313,7 +313,7 @@ impl Reader {
         self.r.as_ref().map(|r| &r.header)
     }
     fn output_of(&self, stream: u8) -> Option<usize> {
-        self.outputs.iter().position(|o| o.stream == stream)
+        self.outputs.iter().position(|o| o.stream.get() == stream)
     }
 }
 
@@ -734,7 +734,7 @@ fn sr_set_range_by_frame(c: &mut Ctx) -> u32 {
     let t = {
         let r = lock(&rr);
         let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-        let Some(s) = h.stream(n) else { return E_INVALIDARG };
+        let Some(s) = asf::StreamNumber::new(n).and_then(|n| h.stream(n)) else { return E_INVALIDARG };
         let per = if s.avg_time_per_frame != 0 { s.avg_time_per_frame } else { 333_667 };
         (frame.saturating_mul(per), (count as i64).max(0) as u64 * per)
     };
@@ -824,7 +824,7 @@ fn sr_get_next_sample(c: &mut Ctx) -> u32 {
         flags |= WM_SF_DISCONTINUITY;
     }
     let alloc = if o.alloc_stream != 0 && o.compressed {
-        (o.alloc_stream, true, o.stream as u32)
+        (o.alloc_stream, true, u32::from(o.stream))
     } else if o.alloc_output != 0 && !o.compressed {
         (o.alloc_output, false, k as u32)
     } else {
@@ -841,7 +841,7 @@ fn sr_get_next_sample(c: &mut Ctx) -> u32 {
     w32(pflags, flags);
     put32(pout, k as u32);
     if pnum != 0 {
-        w16(pnum, stream as u16);
+        w16(pnum, u16::from(stream));
     }
     0
 }
@@ -855,9 +855,9 @@ pub fn next_sample(r: &mut Reader, want: u8) -> Option<(usize, u64, u64, Vec<u8>
     let end = if r.range.1 != 0 { r.range.0.saturating_add(r.range.1) } else { u64::MAX };
     loop {
         // uncompressed samples decoded already
-        let ready = r.outputs.iter().enumerate().filter(|(_, o)| o.selected && !o.compressed && (want == 0 || o.stream == want)).filter_map(|(k, o)| o.ready.front().map(|s| (k, s.0))).min_by_key(|x| x.1);
+        let ready = r.outputs.iter().enumerate().filter(|(_, o)| o.selected && !o.compressed && (want == 0 || o.stream.get() == want)).filter_map(|(k, o)| o.ready.front().map(|s| (k, s.0))).min_by_key(|x| x.1);
         // a sample from the file, of this output, before any later one
-        let at = r.pending.iter().position(|s| want == 0 || s.stream == want);
+        let at = r.pending.iter().position(|s| want == 0 || s.stream.get() == want);
         if let Some((k, t)) = ready {
             if at.is_none_or(|i| r.pending[i].time >= t) {
                 let (time, dur, data, key) = r.outputs[k].ready.pop_front().unwrap();
@@ -866,7 +866,7 @@ pub fn next_sample(r: &mut Reader, want: u8) -> Option<(usize, u64, u64, Vec<u8>
         }
         if let Some(i) = at {
             let s = r.pending.remove(i).unwrap();
-            let k = r.output_of(s.stream)?;
+            let k = r.output_of(s.stream.get())?;
             let dur = r.header().and_then(|h| h.stream(s.stream)).map(|st| sample_duration(st, &s)).unwrap_or(0);
             let o = &mut r.outputs[k];
             if o.compressed {
@@ -905,7 +905,7 @@ pub fn next_sample(r: &mut Reader, want: u8) -> Option<(usize, u64, u64, Vec<u8>
                     // (a program pulling one stream leaves the others' samples here: past
                     // MAX_PENDING the oldest of another stream goes, not the whole track kept)
                     if r.pending.len() >= MAX_PENDING {
-                        let i = r.pending.iter().position(|x| want != 0 && x.stream != want).unwrap_or(0);
+                        let i = r.pending.iter().position(|x| want != 0 && x.stream.get() != want).unwrap_or(0);
                         r.pending.remove(i);
                     }
                     r.pending.push_back(s);
@@ -1134,7 +1134,7 @@ fn sr_get_stream_number_for_output(c: &mut Ctx) -> u32 {
     }
     let r = lock(&rr);
     let Some(o) = r.outputs.get(k) else { return E_INVALIDARG };
-    w16(out, o.stream as u16);
+    w16(out, u16::from(o.stream));
     0
 }
 
@@ -1158,7 +1158,7 @@ fn sr_get_max_stream_sample_size(c: &mut Ctx) -> u32 {
     }
     let r = lock(&rr);
     let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-    let Some(st) = h.stream(s) else { return E_INVALIDARG };
+    let Some(st) = asf::StreamNumber::new(s).and_then(|s| h.stream(s)) else { return E_INVALIDARG };
     // (the largest object the file can hold: its packets', or a picture's when uncompressed)
     let n = match st.kind {
         // (saturating: a header's width and height are any u32)
@@ -1284,7 +1284,7 @@ fn pr_get_stream_by_number(c: &mut Ctx) -> u32 {
     }
     let r = lock(&rr);
     let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-    let Some(s) = h.stream(n) else {
+    let Some(s) = asf::StreamNumber::new(n).and_then(|n| h.stream(n)) else {
         putp(out, 0);
         return NS_E_UNRECOGNIZED_STREAM_TYPE;
     };
@@ -1566,7 +1566,7 @@ fn sc_get_stream_number(c: &mut Ctx) -> u32 {
         return E_POINTER;
     }
     match with_props(c.a(0), |p| match p {
-        Props::Stream(s) => s.number as u16,
+        Props::Stream(s) => u16::from(s.number),
         Props::Output(_) => 0,
     }) {
         Some(n) => {

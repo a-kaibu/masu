@@ -206,7 +206,7 @@ pub struct Opened {
 }
 
 /// The reader of stream `number` of the file at `path`
-fn reader(path: &str, number: u8) -> Option<asf::Reader<Src>> {
+fn reader(path: &str, number: asf::StreamNumber) -> Option<asf::Reader<Src>> {
     let f = kura::fs::File::open(path).ok()?;
     let mut r = asf::Reader::new(Box::new(HostFile(f)) as Src).ok()?;
     r.only = Some(vec![number]);
@@ -281,12 +281,12 @@ mod tests {
 
     /// A file of `n` pictures 40 ms apart, a key frame every `key`, no sound; its path.
     fn pictures(n: u32, key: u32) -> String {
-        let streams = vec![asf::Stream { number: 2, kind: asf::Kind::Video { width: W, height: H }, format: bih(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 400_000, bitrate: 0 }];
-        let s: Vec<_> = (0..n).map(|k| (2u8, k % key == 0, k * 40, picture(k))).collect();
+        let streams = vec![asf::Stream { number: asf::StreamNumber::of(2), kind: asf::Kind::Video { width: W, height: H }, format: bih(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 400_000, bitrate: 0 }];
+        let s: Vec<_> = (0..n).map(|k| (asf::StreamNumber::of(2), k % key == 0, k * 40, picture(k))).collect();
         // (small packets: a seek's packet holds little of the pictures before its key frame)
         let m = Mux { packet_size: 100, preroll: 0, streams, attributes: vec![], compress_small: false };
         let p = std::env::temp_dir().join(format!("sake-asfmovie-{}-{n}-{key}.wmv", std::process::id()));
-        std::fs::write(&p, m.write(&s, n as u64 * 40)).unwrap();
+        std::fs::write(&p, m.write(&s, n as u64 * 40).unwrap()).unwrap();
         p.to_str().unwrap().to_string()
     }
 
@@ -318,17 +318,17 @@ mod tests {
     #[test]
     fn sound_that_begins_late_is_sought_once() {
         let streams = vec![
-            asf::Stream { number: 1, kind: asf::Kind::Audio, format: wave(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 0, bitrate: RATE * 32 },
-            asf::Stream { number: 2, kind: asf::Kind::Video { width: W, height: H }, format: bih(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 400_000, bitrate: 0 },
+            asf::Stream { number: asf::StreamNumber::of(1), kind: asf::Kind::Audio, format: wave(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 0, bitrate: RATE * 32 },
+            asf::Stream { number: asf::StreamNumber::of(2), kind: asf::Kind::Video { width: W, height: H }, format: bih(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 400_000, bitrate: 0 },
         ];
-        let mut s = vec![(2u8, true, 0, picture(0))];
+        let mut s = vec![(asf::StreamNumber::of(2), true, 0, picture(0))];
         for a in 0..4u32 {
             let data = (a * 400..a * 400 + 400).flat_map(|i| { let (l, r) = pcm(i); [l.to_le_bytes(), r.to_le_bytes()].concat() }).collect();
-            s.push((1, true, 200 + a * 50, data));
+            s.push((asf::StreamNumber::of(1), true, 200 + a * 50, data));
         }
         let m = Mux { packet_size: 800, preroll: 0, streams, attributes: vec![], compress_small: false };
         let p = std::env::temp_dir().join(format!("sake-asfmovie-late-{}.wmv", std::process::id()));
-        std::fs::write(&p, m.write(&s, 400)).unwrap();
+        std::fs::write(&p, m.write(&s, 400).unwrap()).unwrap();
         let mut a = open(p.to_str().unwrap()).unwrap().audio.unwrap();
         SEEKS.with(|c| c.set(0));
         let mut got = Vec::new();
@@ -347,21 +347,21 @@ mod tests {
         static P: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         P.get_or_init(|| {
             let streams = vec![
-                asf::Stream { number: 1, kind: asf::Kind::Audio, format: wave(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 0, bitrate: RATE * 32 },
-                asf::Stream { number: 2, kind: asf::Kind::Video { width: W, height: H }, format: bih(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 400_000, bitrate: 0 },
+                asf::Stream { number: asf::StreamNumber::of(1), kind: asf::Kind::Audio, format: wave(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 0, bitrate: RATE * 32 },
+                asf::Stream { number: asf::StreamNumber::of(2), kind: asf::Kind::Video { width: W, height: H }, format: bih(), encrypted: false, time_offset: 0, spread: None, avg_time_per_frame: 400_000, bitrate: 0 },
             ];
             let mut s = Vec::new();
             for k in 0..PICS {
-                s.push((2u8, k % 4 == 0, k * 40, picture(k)));
+                s.push((asf::StreamNumber::of(2), k % 4 == 0, k * 40, picture(k)));
                 if k % 5 == 0 || k % 5 == 2 {
-                    let a = s.iter().filter(|x| x.0 == 1).count() as u32;
+                    let a = s.iter().filter(|x| x.0.get() == 1).count() as u32;
                     let data = (a * 400..a * 400 + 400).flat_map(|i| { let (l, r) = pcm(i); [l.to_le_bytes(), r.to_le_bytes()].concat() }).collect();
-                    s.push((1, true, a * 50, data));
+                    s.push((asf::StreamNumber::of(1), true, a * 50, data));
                 }
             }
             let m = Mux { packet_size: 800, preroll: 0, streams, attributes: vec![], compress_small: false };
             let p = std::env::temp_dir().join(format!("sake-asfmovie-{}.wmv", std::process::id()));
-            std::fs::write(&p, m.write(&s, PICS as u64 * 40)).unwrap();
+            std::fs::write(&p, m.write(&s, PICS as u64 * 40).unwrap()).unwrap();
             p.to_str().unwrap().to_string()
         })
         .clone()

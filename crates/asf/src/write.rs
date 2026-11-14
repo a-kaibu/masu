@@ -14,11 +14,27 @@ pub struct Mux {
     pub compress_small: bool,
 }
 
-fn obj(g: &Guid, body: &[u8]) -> Vec<u8> {
+/// A length or a count of the file that does not fit its field.
+const TOO_LONG: Error = Error::Bad("a length past its field");
+
+fn u8_of(n: usize) -> Result<u8, Error> {
+    u8::try_from(n).map_err(|_| TOO_LONG)
+}
+fn u16_of(n: usize) -> Result<u16, Error> {
+    u16::try_from(n).map_err(|_| TOO_LONG)
+}
+fn u32_of(n: usize) -> Result<u32, Error> {
+    u32::try_from(n).map_err(|_| TOO_LONG)
+}
+fn u64_of(n: usize) -> Result<u64, Error> {
+    u64::try_from(n).map_err(|_| TOO_LONG)
+}
+
+fn obj(g: &Guid, body: &[u8]) -> Result<Vec<u8>, Error> {
     let mut o = g.to_vec();
-    o.extend(((body.len() + 24) as u64).to_le_bytes());
+    o.extend(u64_of(body.len() + 24)?.to_le_bytes());
     o.extend(body);
-    o
+    Ok(o)
 }
 fn w16(v: &mut Vec<u8>, x: u16) {
     v.extend(x.to_le_bytes());
@@ -36,8 +52,9 @@ fn wstr(s: &str) -> Vec<u8> {
 }
 
 impl Mux {
-    /// The file of `samples` (stream, key, time ms without preroll, data), in this order.
-    pub fn write(&self, samples: &[(u8, bool, u32, Vec<u8>)], duration_ms: u64) -> Vec<u8> {
+    /// The file of `samples` (stream, key, time ms without preroll, data), in this order; an
+    /// error for a length past its field (a packet size over 64 KiB, an object over 4 GiB).
+    pub fn write(&self, samples: &[(StreamNumber, bool, u32, Vec<u8>)], duration_ms: u64) -> Result<Vec<u8>, Error> {
         // the packets first (their count goes in the header)
         let mut packets: Vec<Vec<u8>> = Vec::new();
         // per packet: payloads (stream byte, object, offset, replicated, data) or compressed
@@ -45,26 +62,26 @@ impl Mux {
             Plain { sn: u8, object: u8, offset: u32, size: u32, time: u32, data: Vec<u8> },
             Comp { sn: u8, object: u8, time: u32, data: Vec<u8> },
         }
-        let mut objects: HashMap<u8, u8> = HashMap::new();
+        let mut objects: HashMap<StreamNumber, u8> = HashMap::new();
         let mut cur: Vec<P> = Vec::new();
         let mut used = 0usize;
         // packet head: flags, props, word length, no sequence, word padding, send time, duration,
         // payload flags
         let head = 1 + 1 + 2 + 2 + 4 + 2 + 1;
-        let flush = |cur: &mut Vec<P>, used: &mut usize, packets: &mut Vec<Vec<u8>>| {
+        let flush = |cur: &mut Vec<P>, used: &mut usize, packets: &mut Vec<Vec<u8>>| -> Result<(), Error> {
             if cur.is_empty() {
-                return;
+                return Ok(());
             }
             let mut b = Vec::new();
             let send = cur.iter().map(|p| match p { P::Plain { time, .. } | P::Comp { time, .. } => *time }).min().unwrap_or(0);
             b.push(0x01 | (2 << 3) | (2 << 5)); // multiple payloads, word padding, word length
             b.push(0x01 | (3 << 2) | (1 << 4) | (1 << 6)); // replicated byte, offset dword, object byte, stream byte
-            w16(&mut b, self.packet_size as u16);
+            w16(&mut b, u16_of(self.packet_size)?);
             let pad = self.packet_size - head - *used;
-            w16(&mut b, pad as u16);
+            w16(&mut b, u16_of(pad)?);
             w32(&mut b, send.saturating_sub(100));
             w16(&mut b, 0);
-            b.push(cur.len() as u8 | (2 << 6)); // word payload lengths
+            b.push(u8_of(cur.len())? | (2 << 6)); // word payload lengths
             for p in cur.drain(..) {
                 match p {
                     P::Plain { sn, object, offset, size, time, data } => {
@@ -74,7 +91,7 @@ impl Mux {
                         b.push(8);
                         w32(&mut b, size);
                         w32(&mut b, time);
-                        w16(&mut b, data.len() as u16);
+                        w16(&mut b, u16_of(data.len())?);
                         b.extend(data);
                     }
                     P::Comp { sn, object, time, data } => {
@@ -83,8 +100,8 @@ impl Mux {
                         w32(&mut b, time);
                         b.push(1);
                         b.push(0); // delta
-                        w16(&mut b, (data.len() + 1) as u16);
-                        b.push(data.len() as u8);
+                        w16(&mut b, u16_of(data.len() + 1)?);
+                        b.push(u8_of(data.len())?);
                         b.extend(data);
                     }
                 }
@@ -92,13 +109,14 @@ impl Mux {
             b.resize(self.packet_size, 0);
             packets.push(b);
             *used = 0;
+            Ok(())
         };
         for (stream, key, t, data) in samples {
             let o = objects.entry(*stream).or_insert(0);
             let object = *o;
             *o = o.wrapping_add(1);
-            let sn = stream | if *key { 0x80 } else { 0 };
-            let time = *t + self.preroll as u32;
+            let sn = stream.get() | if *key { 0x80 } else { 0 };
+            let time = *t + u32::try_from(self.preroll).map_err(|_| TOO_LONG)?;
             let spread = self.streams.iter().find(|s| s.number == *stream).and_then(|s| s.spread);
             let data = match spread {
                 Some(s) => scramble(data, s),
@@ -107,7 +125,7 @@ impl Mux {
             if self.compress_small && data.len() < 200 && !data.is_empty() {
                 let need = 1 + 1 + 4 + 1 + 1 + 2 + 1 + data.len();
                 if used + need > self.packet_size - head {
-                    flush(&mut cur, &mut used, &mut packets);
+                    flush(&mut cur, &mut used, &mut packets)?;
                 }
                 used += need;
                 cur.push(P::Comp { sn, object, time, data });
@@ -118,34 +136,34 @@ impl Mux {
                 // (an empty object is still one payload)
                 let room = (self.packet_size - head).saturating_sub(used + 1 + 1 + 4 + 1 + 8 + 2);
                 if room == 0 {
-                    flush(&mut cur, &mut used, &mut packets);
+                    flush(&mut cur, &mut used, &mut packets)?;
                     continue;
                 }
                 let n = room.min(data.len() - off);
                 used += 1 + 1 + 4 + 1 + 8 + 2 + n;
-                cur.push(P::Plain { sn, object, offset: off as u32, size: data.len() as u32, time, data: data[off..off + n].to_vec() });
+                cur.push(P::Plain { sn, object, offset: u32_of(off)?, size: u32_of(data.len())?, time, data: data[off..off + n].to_vec() });
                 off += n;
                 if off >= data.len() {
                     break;
                 }
-                flush(&mut cur, &mut used, &mut packets);
+                flush(&mut cur, &mut used, &mut packets)?;
             }
         }
-        flush(&mut cur, &mut used, &mut packets);
+        flush(&mut cur, &mut used, &mut packets)?;
 
         let mut hdr = Vec::new();
         let mut fp = vec![0u8; 16];
         w64(&mut fp, 0);
         w64(&mut fp, 0);
-        w64(&mut fp, packets.len() as u64);
+        w64(&mut fp, u64_of(packets.len())?);
         w64(&mut fp, (duration_ms + self.preroll) * 10_000);
         w64(&mut fp, duration_ms * 10_000);
         w64(&mut fp, self.preroll);
         w32(&mut fp, 2);
-        w32(&mut fp, self.packet_size as u32);
-        w32(&mut fp, self.packet_size as u32);
+        w32(&mut fp, u32_of(self.packet_size)?);
+        w32(&mut fp, u32_of(self.packet_size)?);
         w32(&mut fp, 1_000_000);
-        hdr.push(obj(&FILE_PROPERTIES, &fp));
+        hdr.push(obj(&FILE_PROPERTIES, &fp)?);
         let mut ext_inner = Vec::new();
         for s in &self.streams {
             let (ty, ts) = match &s.kind {
@@ -155,7 +173,7 @@ impl Mux {
                     w32(&mut t, *width);
                     w32(&mut t, *height);
                     t.push(2);
-                    w16(&mut t, s.format.len() as u16);
+                    w16(&mut t, u16_of(s.format.len())?);
                     t.extend(&s.format);
                     (VIDEO_MEDIA, t)
                 }
@@ -175,13 +193,13 @@ impl Mux {
             let mut sp = ty.to_vec();
             sp.extend(ec);
             w64(&mut sp, s.time_offset);
-            w32(&mut sp, ts.len() as u32);
-            w32(&mut sp, es.len() as u32);
-            w16(&mut sp, s.number as u16 | if s.encrypted { 0x8000 } else { 0 });
+            w32(&mut sp, u32_of(ts.len())?);
+            w32(&mut sp, u32_of(es.len())?);
+            w16(&mut sp, u16::from(s.number) | if s.encrypted { 0x8000 } else { 0 });
             w32(&mut sp, 0);
             sp.extend(ts);
             sp.extend(es);
-            hdr.push(obj(&STREAM_PROPERTIES, &sp));
+            hdr.push(obj(&STREAM_PROPERTIES, &sp)?);
             let mut x = Vec::new();
             w64(&mut x, 0);
             w64(&mut x, 0);
@@ -190,55 +208,55 @@ impl Mux {
             for _ in 0..7 {
                 w32(&mut x, 0);
             }
-            w16(&mut x, s.number as u16);
+            w16(&mut x, u16::from(s.number));
             w16(&mut x, 0);
             w64(&mut x, s.avg_time_per_frame);
             w16(&mut x, 0);
             w16(&mut x, 0);
-            ext_inner.extend(obj(&EXTENDED_STREAM_PROPERTIES, &x));
+            ext_inner.extend(obj(&EXTENDED_STREAM_PROPERTIES, &x)?);
         }
         let mut he = vec![0u8; 16];
         w16(&mut he, 6);
-        w32(&mut he, ext_inner.len() as u32);
+        w32(&mut he, u32_of(ext_inner.len())?);
         he.extend(ext_inner);
-        hdr.push(obj(&HEADER_EXTENSION, &he));
+        hdr.push(obj(&HEADER_EXTENSION, &he)?);
         if !self.attributes.is_empty() {
             let mut e = Vec::new();
-            w16(&mut e, self.attributes.len() as u16);
+            w16(&mut e, u16_of(self.attributes.len())?);
             for (n, v) in &self.attributes {
                 let name = wstr(n);
-                w16(&mut e, name.len() as u16);
+                w16(&mut e, u16_of(name.len())?);
                 e.extend(name);
                 let (ty, b) = match v {
                     Value::Str(s) => (0, wstr(s)),
                     Value::Bytes(b) => (1, b.clone()),
-                    Value::Bool(b) => (2, (*b as u32).to_le_bytes().to_vec()),
+                    Value::Bool(b) => (2, u32::from(*b).to_le_bytes().to_vec()),
                     Value::U32(x) => (3, x.to_le_bytes().to_vec()),
                     Value::U64(x) => (4, x.to_le_bytes().to_vec()),
                     Value::U16(x) => (5, x.to_le_bytes().to_vec()),
                     Value::Guid(g) => (6, g.to_vec()),
                 };
                 w16(&mut e, ty);
-                w16(&mut e, b.len() as u16);
+                w16(&mut e, u16_of(b.len())?);
                 e.extend(b);
             }
-            hdr.push(obj(&EXTENDED_CONTENT_DESCRIPTION, &e));
+            hdr.push(obj(&EXTENDED_CONTENT_DESCRIPTION, &e)?);
         }
         let body: Vec<u8> = hdr.concat();
         let mut f = HEADER.to_vec();
-        w64(&mut f, (30 + body.len()) as u64);
-        w32(&mut f, hdr.len() as u32);
+        w64(&mut f, u64_of(30 + body.len())?);
+        w32(&mut f, u32_of(hdr.len())?);
         f.extend([1, 2]);
         f.extend(body);
         f.extend(DATA);
-        w64(&mut f, (50 + packets.len() * self.packet_size) as u64);
+        w64(&mut f, u64_of(50 + packets.len() * self.packet_size)?);
         f.extend([0u8; 16]);
-        w64(&mut f, packets.len() as u64);
+        w64(&mut f, u64_of(packets.len())?);
         f.extend([1, 1]);
         for p in packets {
             f.extend(p);
         }
-        f
+        Ok(f)
     }
 }
 
