@@ -717,7 +717,7 @@ impl std::hash::Hasher for Fast {
         }
     }
     fn write_u32(&mut self, v: u32) {
-        self.write_u64(v as u64);
+        self.write_u64(u64::from(v));
     }
     fn write_u64(&mut self, v: u64) {
         self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x9e37_79b9_7f4a_7c15);

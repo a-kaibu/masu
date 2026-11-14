@@ -192,7 +192,7 @@ const HALF: i32 = 1 << 15;
 /// One pixel as libjpeg's ycc_rgb_convert: B, G, R.
 #[inline(always)]
 fn ycc_bgr(y: u8, u: u8, v: u8) -> [u8; 3] {
-    let (y, u, v) = (y as i32, u as i32 - 128, v as i32 - 128);
+    let (y, u, v) = (i32::from(y), i32::from(u) - 128, i32::from(v) - 128);
     let c = |x: i32| x.clamp(0, 255) as u8;
     [c(y + ((CB_B * u + HALF) >> 16)), c(y + ((-CB_G * u - CR_G * v + HALF) >> 16)), c(y + ((CR_R * v + HALF) >> 16))]
 }
@@ -216,13 +216,13 @@ fn upsample(layout: Layout, c: &[u8], cw: usize, ch: usize, y: usize, cs: &mut [
             // (the sums padded with their edge ones: cs[i + 1] is sample i's)
             if layout == Layout::I422 {
                 for (s, &a) in cs[1..cw + 1].iter_mut().zip(row(y)) {
-                    *s = a as u16;
+                    *s = u16::from(a);
                 }
             } else {
                 let r = y / 2;
                 let nb = if y % 2 == 0 { r.saturating_sub(1) } else { (r + 1).min(ch - 1) };
                 for ((s, &a), &b) in cs[1..cw + 1].iter_mut().zip(row(r)).zip(row(nb)) {
-                    *s = a as u16 * 3 + b as u16;
+                    *s = u16::from(a) * 3 + u16::from(b);
                 }
             }
             cs[0] = cs[1];
@@ -446,7 +446,7 @@ pub extern "C" fn vnhost_idec_begin(id: u32, w: u32, h: u32, layout: u32) -> u32
 
 fn begin(id: u32, w: u32, h: u32, layout: u32) -> Option<usize> {
     let layout = Layout::from_u32(layout)?;
-    if w == 0 || h == 0 || w as u64 * h as u64 > 1 << 28 {
+    if w == 0 || h == 0 || u64::from(w) * u64::from(h) > 1 << 28 {
         return None;
     }
     let n = layout.size(w, h);
@@ -507,7 +507,7 @@ pub fn test_page_pass(dec: &mut dyn FnMut(&[u8]) -> Option<Picture>) {
                 if let Some(at) = at {
                     unsafe { std::ptr::copy_nonoverlapping(pic.bytes.as_ptr(), at as *mut u8, pic.bytes.len().min(pic.layout.size(pic.w, pic.h))) };
                 }
-                vnhost_idec_done(id, at.is_some() as u32);
+                vnhost_idec_done(id, u32::from(at.is_some()));
             }
             None => vnhost_idec_done(id, 0),
         }

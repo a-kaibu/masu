@@ -57,7 +57,7 @@ static EXE_PAGES: [AtomicU32; 1 << 14] = [const { AtomicU32::new(0) }; 1 << 14];
 /// further than the last page below 2 GB (addr + len is summed wide: it wrapped a 32-bit usize
 /// and the range lo..=hi then ran backwards).
 fn page_span(addr: u32, len: u32) -> (usize, usize) {
-    let end = (addr as u64 + len as u64 - 1) >> 12;
+    let end = (u64::from(addr) + u64::from(len) - 1) >> 12;
     ((addr >> 12) as usize, end.min((1 << 19) - 1) as usize)
 }
 
@@ -461,7 +461,7 @@ fn reclaim(st: &mut State) {
         }
         gone.push((base, n));
         freed.0 += 1;
-        freed.1 += bytes as u64;
+        freed.1 += u64::from(bytes);
         false
     });
     for (base, n) in gone {
@@ -499,7 +499,7 @@ const FN_BUILDS: u32 = 8;
 const MAX_MERGES: u32 = 512;
 /// The hops of `n` samples out of a ring of `len`, `hops` hops since the last one.
 fn hop_share(hops: u32, n: usize, len: usize) -> u32 {
-    (hops as u64 * n as u64 / len.max(1) as u64).min(u32::MAX as u64) as u32
+    (u64::from(hops) * n as u64 / len.max(1) as u64).min(u64::from(u32::MAX)) as u32
 }
 
 /// Hops out of a long-mode region that make merge_hot64 merge it with where they go
@@ -883,7 +883,7 @@ fn drop_states(lo: usize, hi: usize) {
     }
     {
         let (a, e) = ((lo as u64) << 12, ((hi as u64) + 1) << 12);
-        CODE_RANGES.locked().retain(|&s, &mut end| (end as u64) <= a || (s as u64) >= e);
+        CODE_RANGES.locked().retain(|&s, &mut end| u64::from(end) <= a || u64::from(s) >= e);
     }
     changed(lo as u32, hi as u32);
 }
@@ -1126,7 +1126,7 @@ fn init_flags() {
             if !jit::wasm::MEMCOUNT.swap(true, Relaxed) {
                 std::thread::spawn(move || loop {
                     std::thread::sleep(std::time::Duration::from_secs(secs.max(1)));
-                    let c: Vec<u64> = MEM_COUNTS.iter().map(|c| c.swap(0, Relaxed) as u64).collect();
+                    let c: Vec<u64> = MEM_COUNTS.iter().map(|c| u64::from(c.swap(0, Relaxed))).collect();
                     let mut lines = Vec::new();
                     for (k, name) in MEM_SITES.iter().enumerate() {
                         let c = &c[k * MEM_SITE_SLOTS..(k + 1) * MEM_SITE_SLOTS];
@@ -1737,7 +1737,7 @@ static SAVE_ACKS: [std::sync::atomic::AtomicU64; 32] = [const { std::sync::atomi
 const NO_ACK: u32 = u32::MAX;
 
 fn ack(id: u32, a: Ack) {
-    SAVE_ACKS[id as usize % 32].store(1 << 63 | (id as u64) << 8 | a as u64, Ordering::Release);
+    SAVE_ACKS[id as usize % 32].store(1 << 63 | u64::from(id) << 8 | a as u64, Ordering::Release);
 }
 
 /// host/vnjit.js, when the server answered save `id` (or the request failed): `ack` an [`Ack`].
@@ -1983,14 +1983,14 @@ fn merge_hot(st: &mut State, cpu: &Cpu) {
     const N: usize = jit::RING_SIZE as usize;
     let mut jumps = [0u64; N];
     for (i, j) in jumps.iter_mut().enumerate() {
-        *j = (st.ring[1 + 2 * i] as u64) << 32 | st.ring[2 + 2 * i] as u64;
+        *j = u64::from(st.ring[1 + 2 * i]) << 32 | u64::from(st.ring[2 + 2 * i]);
     }
     if stats() {
         thread_local! { static HOPS: std::cell::Cell<(u64, u64, Option<std::time::Instant>)> = const { std::cell::Cell::new((0, 0, None)) }; }
         HOPS.with(|h| {
             let (mut n, mut last, t) = h.get();
             let t = t.unwrap_or_else(std::time::Instant::now);
-            n += st.ring[0] as u64;
+            n += u64::from(st.ring[0]);
             thread_local! { static PAIRS: RefCell<HashMap<(u32, u32), u64>> = RefCell::new(HashMap::new()); }
             PAIRS.with(|p| {
                 let mut p = p.borrow_mut();
@@ -2349,7 +2349,7 @@ fn fn_around(st: &State, a: u32) -> Option<u32> {
                 return None;
             }
             let (lo, hi) = fn_span(c, f)?;
-            (a >= lo && (a as u64) < hi).then_some((hi - lo as u64, f))
+            (a >= lo && u64::from(a) < hi).then_some((hi - u64::from(lo), f))
         })
         .min()
         .map(|(_, f)| f)
@@ -2358,9 +2358,9 @@ fn fn_around(st: &State, a: u32) -> Option<u32> {
 /// The span of the code ranges `c` around `root` (see [`fn_around`]): (first, end).
 fn fn_span(c: &[(u32, u32)], root: u32) -> Option<(u32, u64)> {
     const GAP: u64 = 0x1000;
-    let mut r: Vec<(u64, u64)> = c.iter().map(|&(s, n)| (s as u64, s as u64 + n as u64)).collect();
+    let mut r: Vec<(u64, u64)> = c.iter().map(|&(s, n)| (u64::from(s), u64::from(s) + u64::from(n))).collect();
     r.sort_unstable();
-    let k = r.iter().position(|&(s, e)| root as u64 >= s && (root as u64) < e)?;
+    let k = r.iter().position(|&(s, e)| u64::from(root) >= s && u64::from(root) < e)?;
     let (mut lo, mut hi) = r[k];
     for &(s, e) in &r[k + 1..] {
         if s > hi + GAP {
@@ -2387,7 +2387,7 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
     let build = st.fn_builds[&eip];
     let mut m = Module { name: Some(format!("x64_{:x}{eip:08x}_fn{build}", cpu.rip_hi)), ..Module::default() };
     let (lo, hi) = (cpu.trap_lo, cpu.trap_hi);
-    let entry = eip as u64 | (cpu.rip_hi as u64) << 32;
+    let entry = u64::from(eip) | u64::from(cpu.rip_hi) << 32;
     if crate::env_on!("MASU_JIT_LAYOUT") {
         jit::LAYOUT.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -2433,7 +2433,7 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
 /// merge_hot's region for long mode (jit::long): the roots' blocks and the ones that ran.
 fn merge_long(st: &mut State, cpu: &Cpu, roots: Vec<u32>, from: u32, to: u32) {
     let (lo, hi) = (cpu.trap_lo, cpu.trap_hi);
-    let full: Vec<u64> = roots.iter().map(|&r| r as u64 | (cpu.rip_hi as u64) << 32).collect();
+    let full: Vec<u64> = roots.iter().map(|&r| u64::from(r) | u64::from(cpu.rip_hi) << 32).collect();
     let mut m = Module { name: Some(format!("x64_{:x}{:08x}_{}", cpu.rip_hi, roots[0], roots.len())), ..Module::default() };
     let (misses, known, hash, translated) = (&st.misses, &st.known, &st.hash, &st.translated);
     let Some(region) = jit::long::translate_region64(&mut m, &mut Linear, &full, (lo, hi), |a, sure| {
@@ -2644,7 +2644,7 @@ fn compile_long(st: &mut State, cpu: &Cpu, mem: &mut Linear) -> bool {
     let mut m = Module { name: Some(format!("x64_{:x}{eip:08x}", cpu.rip_hi)), ..Module::default() };
     let (lo, hi) = (cpu.trap_lo, cpu.trap_hi);
     let (misses, known, hash) = (&st.misses, &st.known, &st.hash);
-    let entry = eip as u64 | (cpu.rip_hi as u64) << 32;
+    let entry = u64::from(eip) | u64::from(cpu.rip_hi) << 32;
     if crate::env_on!("MASU_JIT_LAYOUT") {
         jit::LAYOUT.store(true, std::sync::atomic::Ordering::Relaxed);
     }
@@ -3194,7 +3194,7 @@ pub extern "C" fn vnhost_jit_status(op: u32, a: u32, b: u32, r: u32, c: u32) -> 
         eprintln!("vnjit64 check: condition {b} at {a:#x}: lazy {r}, eflags {c:#x}");
         return 0;
     }
-    koji::lazy::Lazy { op, a: a as u64, b: b as u64, r: r as u64, c }.status()
+    koji::lazy::Lazy { op, a: u64::from(a), b: u64::from(b), r: u64::from(r), c }.status()
 }
 
 /// MASU_JIT_PROFILE: every region's blocks (address, entry counter, instruction keys).
@@ -3237,7 +3237,7 @@ pub extern "C" fn vnhost_jit_profile() {
     let mut blocks: Vec<(u64, u32, usize)> = Vec::new();
     let mut total = 0u64;
     for (a, at, keys) in prof.iter() {
-        let n = unsafe { (*at as usize as *const u32).read_volatile() } as u64;
+        let n = u64::from(unsafe { (*at as usize as *const u32).read_volatile() });
         if n == 0 {
             continue;
         }
@@ -3323,7 +3323,7 @@ fn count_step(cpu: &Cpu) {
     let mut b = [0u8; 16];
     let n = koji::Memory::fetch(&mut Linear, cpu.eip, &mut b);
     let bits = if cpu.mode64 != 0 { 64 } else { 32 };
-    let mut d = koji::iced_x86::Decoder::with_ip(bits, &b[..n], cpu.eip as u64, koji::iced_x86::DecoderOptions::NONE);
+    let mut d = koji::iced_x86::Decoder::with_ip(bits, &b[..n], u64::from(cpu.eip), koji::iced_x86::DecoderOptions::NONE);
     let ins = d.decode();
     let pre = if ins.has_lock_prefix() {
         "lock "

@@ -772,12 +772,12 @@ const UNIFORM_VECTORS: u32 = 1024;
 const VARYING_VECTORS: u32 = 15;
 
 fn get(g: &Gl, c: &Ctx, pname: u32) -> Option<Vec<f64>> {
-    let f = |v: &[f32]| v.iter().map(|&x| x as f64).collect::<Vec<_>>();
-    let i = |v: &[i32]| v.iter().map(|&x| x as f64).collect::<Vec<_>>();
+    let f = |v: &[f32]| v.iter().map(|&x| f64::from(x)).collect::<Vec<_>>();
+    let i = |v: &[i32]| v.iter().map(|&x| f64::from(x)).collect::<Vec<_>>();
     Some(match pname {
         0x0BA2 => i(&c.viewport),
         0x0C10 => i(&c.scissor),
-        0x0D33 => vec![MAX_TEXTURE as f64],
+        0x0D33 => vec![f64::from(MAX_TEXTURE)],
         0x0D36 | 0x0D38 | 0x0D39 => vec![stack_depth(pname) as f64],
         0x84E2 => vec![2.0],
         0x8872 | 0x8B4D | 0x8B4C => vec![8.0],
@@ -786,17 +786,17 @@ fn get(g: &Gl, c: &Ctx, pname: u32) -> Option<Vec<f64>> {
         // left MAX_BONE_PALETTE undefined, the shader failed and the game crashed). What
         // glwgsl's per-stage uniform block (WebGPU: 64 KiB bindings) and WebGPU's 16 inter-stage
         // vectors hold, as GL 2.1 / GLES 2 name them (gl/limits_tests.rs)
-        0x8B4A | 0x8B49 => vec![(UNIFORM_VECTORS * 4) as f64],
-        0x8DFB | 0x8DFD => vec![UNIFORM_VECTORS as f64],
-        0x8B4B => vec![(VARYING_VECTORS * 4) as f64],
-        0x8DFC => vec![VARYING_VECTORS as f64],
+        0x8B4A | 0x8B49 => vec![f64::from(UNIFORM_VECTORS * 4)],
+        0x8DFB | 0x8DFD => vec![f64::from(UNIFORM_VECTORS)],
+        0x8B4B => vec![f64::from(VARYING_VECTORS * 4)],
+        0x8DFC => vec![f64::from(VARYING_VECTORS)],
         0x0BA6 => f(c.modelview.last().unwrap()),
         0x0BA7 => f(c.projection.last().unwrap()),
         0x0BA8 => f(c.units[c.active].matrices.last().unwrap()),
-        0x8069 => vec![c.units[c.active].bound as f64],
-        0x0BA0 => vec![c.matrix_mode as f64],
-        0x0CF5 => vec![c.unpack[0] as f64],
-        0x0D05 => vec![c.pack[0] as f64],
+        0x8069 => vec![f64::from(c.units[c.active].bound)],
+        0x0BA0 => vec![f64::from(c.matrix_mode)],
+        0x0CF5 => vec![f64::from(c.unpack[0])],
+        0x0D05 => vec![f64::from(c.pack[0])],
         0x0D3A => vec![8192.0, 8192.0],
         0x0D56 => vec![24.0],
         0x0D57 => vec![8.0],
@@ -804,26 +804,26 @@ fn get(g: &Gl, c: &Ctx, pname: u32) -> Option<Vec<f64>> {
         0x821D => vec![EXTENSIONS.split(' ').count() as f64],
         0x821B => vec![2.0],
         0x821C => vec![1.0],
-        0x8CA6 => vec![c.fbo_draw as f64],
-        0x8CAA => vec![c.fbo_read as f64],
-        0x8CA7 => vec![c.rb as f64],
-        0x8894 => vec![c.array_buffer as f64],
-        0x8895 => vec![c.element_buffer as f64],
+        0x8CA6 => vec![f64::from(c.fbo_draw)],
+        0x8CAA => vec![f64::from(c.fbo_read)],
+        0x8CA7 => vec![f64::from(c.rb)],
+        0x8894 => vec![f64::from(c.array_buffer)],
+        0x8895 => vec![f64::from(c.element_buffer)],
         0x0B00 => f(&c.color),
-        0x84E0 => vec![(GL_TEXTURE0 + c.active as u32) as f64],
-        0x84E1 => vec![(GL_TEXTURE0 + c.client_active as u32) as f64],
-        0x0BE1 => vec![c.blend[0] as f64],
-        0x0BE0 => vec![c.blend[1] as f64],
+        0x84E0 => vec![f64::from(GL_TEXTURE0 + c.active as u32)],
+        0x84E1 => vec![f64::from(GL_TEXTURE0 + c.client_active as u32)],
+        0x0BE1 => vec![f64::from(c.blend[0])],
+        0x0BE0 => vec![f64::from(c.blend[1])],
         0x0C22 => f(&c.clear_color),
-        0x0B73 => vec![c.clear_depth as f64],
-        0x0B72 => vec![c.depth_mask as u32 as f64],
-        0x0B74 => vec![c.depth_func as f64],
-        0x0C23 => (0..4).map(|k| ((c.color_mask >> k) & 1) as f64).collect(),
+        0x0B73 => vec![f64::from(c.clear_depth)],
+        0x0B72 => vec![f64::from(u32::from(c.depth_mask))],
+        0x0B74 => vec![f64::from(c.depth_func)],
+        0x0C23 => (0..4).map(|k| f64::from((c.color_mask >> k) & 1)).collect(),
         0x9126 => vec![2.0],
         0x821E => vec![0.0],
         0x80E8 | 0x80E9 => vec![65536.0],
         0x0D32 => vec![32.0],
-        0x8B8D => vec![c.program as f64], // GL_CURRENT_PROGRAM
+        0x8B8D => vec![f64::from(c.program)], // GL_CURRENT_PROGRAM
         _ if c.caps.contains(&pname) => vec![1.0],
         0x0BE2 | 0x0B71 | 0x0BC0 | 0x0B44 | 0x0C11 | 0x0B90 | 0x0DE1 => vec![0.0],
         _ => {
@@ -853,7 +853,7 @@ unsafe extern "C" fn glGetDoublev(p: u32, out: *mut f64) {
     get_into(p, out, |x| x)
 }
 unsafe extern "C" fn glGetBooleanv(p: u32, out: *mut u8) {
-    get_into(p, out, |x| (x != 0.0) as u8)
+    get_into(p, out, |x| u8::from(x != 0.0))
 }
 
 fn set_cap(cap: u32, on: bool) {
@@ -874,7 +874,7 @@ extern "C" fn glDisable(cap: u32) {
     set_cap(cap, false)
 }
 extern "C" fn glIsEnabled(cap: u32) -> u8 {
-    with(|_, c| if cap == GL_TEXTURE_2D { c.units[c.active].tex2d } else { c.caps.contains(&cap) } as u8)
+    with(|_, c| u8::from(if cap == GL_TEXTURE_2D { c.units[c.active].tex2d } else { c.caps.contains(&cap) }))
 }
 
 fn client_state(cap: u32, on: bool) {
@@ -909,13 +909,13 @@ extern "C" fn glClearDepth(d: f64) {
     with(|_, c| c.clear_depth = d.clamp(0.0, 1.0) as f32)
 }
 extern "C" fn glClearDepthf(d: f32) {
-    glClearDepth(d as f64)
+    glClearDepth(f64::from(d))
 }
 extern "C" fn glClearStencil(s: i32) {
     with(|_, c| c.clear_stencil = s)
 }
 extern "C" fn glColorMask(r: u8, g: u8, b: u8, a: u8) {
-    with(|_, c| c.color_mask = (r != 0) as u32 | ((g != 0) as u32) << 1 | ((b != 0) as u32) << 2 | ((a != 0) as u32) << 3)
+    with(|_, c| c.color_mask = u32::from(r != 0) | u32::from(g != 0) << 1 | u32::from(b != 0) << 2 | u32::from(a != 0) << 3)
 }
 extern "C" fn glDepthMask(m: u8) {
     with(|_, c| c.depth_mask = m != 0)
@@ -1138,7 +1138,7 @@ extern "C" fn glVertex2i(x: i32, y: i32) {
     vertex(x as f32, y as f32, 0.0, 1.0)
 }
 extern "C" fn glVertex2s(x: i32, y: i32) {
-    vertex(x as i16 as f32, y as i16 as f32, 0.0, 1.0)
+    vertex(f32::from(x as i16), f32::from(y as i16), 0.0, 1.0)
 }
 extern "C" fn glVertex2d(x: f64, y: f64) {
     vertex(x as f32, y as f32, 0.0, 1.0)
@@ -1180,10 +1180,10 @@ extern "C" fn glColor4d(r: f64, g: f64, b: f64, a: f64) {
     color(r as f32, g as f32, b as f32, a as f32)
 }
 extern "C" fn glColor3ub(r: u8, g: u8, b: u8) {
-    color(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0)
+    color(f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, 1.0)
 }
 extern "C" fn glColor4ub(r: u8, g: u8, b: u8, a: u8) {
-    color(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0)
+    color(f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, f32::from(a) / 255.0)
 }
 unsafe extern "C" fn glColor3fv(v: *const f32) {
     color(*v, *v.add(1), *v.add(2), 1.0)
@@ -1271,7 +1271,7 @@ pub(crate) fn fetch(g: &Gl, a: &Array, i: u32, def: [f32; 4]) -> [f32; 4] {
     let n = if a.size == 0x80E1 { 4 } else { a.size.clamp(1, 4) as usize };
     let stride = if a.stride > 0 { a.stride as usize } else { ts * n };
     // (summed wide: on a 32-bit usize it wrapped and read anywhere, the host's memory too)
-    let off = a.ptr as u64 + stride as u64 * i as u64;
+    let off = u64::from(a.ptr) + stride as u64 * u64::from(i);
     let end = off + (ts * n) as u64;
     let base: *const u8 = if a.buffer != 0 {
         match g.buffers.get(&a.buffer) {
@@ -1334,7 +1334,7 @@ fn array_vertex(g: &Gl, c: &Ctx, i: u32) -> [f32; 16] {
 pub(crate) fn indices(g: &Gl, c: &Ctx, count: i32, ty: u32, ptr: u32) -> Vec<u32> {
     let n = (count.max(0) as usize).min(MAX_VERTICES);
     let ts = type_size(ty);
-    let end = ptr as u64 + (n * ts) as u64;
+    let end = u64::from(ptr) + (n * ts) as u64;
     let src: *const u8 = if c.element_buffer != 0 {
         match g.buffers.get(&c.element_buffer) {
             Some(b) if end <= b.data.len() as u64 => unsafe { b.data.as_ptr().add(ptr as usize) },
@@ -1351,8 +1351,8 @@ pub(crate) fn indices(g: &Gl, c: &Ctx, count: i32, ty: u32, ptr: u32) -> Vec<u32
     (0..n)
         .map(|k| unsafe {
             match ty {
-                GL_UNSIGNED_BYTE => *src.add(k) as u32,
-                GL_UNSIGNED_SHORT => std::ptr::read_unaligned((src as *const u16).add(k)) as u32,
+                GL_UNSIGNED_BYTE => u32::from(*src.add(k)),
+                GL_UNSIGNED_SHORT => u32::from(std::ptr::read_unaligned((src as *const u16).add(k))),
                 _ => std::ptr::read_unaligned((src as *const u32).add(k)),
             }
         })
@@ -1363,7 +1363,7 @@ pub(crate) fn indices(g: &Gl, c: &Ctx, count: i32, ty: u32, ptr: u32) -> Vec<u32
 /// MAX_VERTICES of them (a count of garbage asked for count * 64 bytes and aborted).
 fn draw_range(first: i32, count: i32) -> std::ops::Range<u32> {
     let lo = first.max(0) as u32;
-    let hi = (first as i64 + count.max(0) as i64).clamp(0, u32::MAX as i64) as u32;
+    let hi = (i64::from(first) + i64::from(count.max(0))).clamp(0, i64::from(u32::MAX)) as u32;
     lo..hi.max(lo).min(lo.saturating_add(MAX_VERTICES as u32))
 }
 
@@ -1524,12 +1524,12 @@ pub(crate) fn pipeline_key(c: &Ctx, vs: u32, ps: u32, topo: u32, depth: bool, ve
         }
     };
     // (y is negated: GL's counter-clockwise is clockwise on the page)
-    k.extend_from_slice(&[cull, (c.front == GL_CW) as u32, 0, 0, 0]);
+    k.extend_from_slice(&[cull, u32::from(c.front == GL_CW), 0, 0, 0]);
     if depth {
         let dt = c.caps.contains(&GL_DEPTH_TEST);
         let st = c.caps.contains(&GL_STENCIL_TEST);
         let face = [stencil_op(c.stencil_ops[0]).code(), stencil_op(c.stencil_ops[1]).code(), stencil_op(c.stencil_ops[2]).code(), compare(c.stencil[0]).code()];
-        k.extend_from_slice(&[P_D24S8, dt as u32, c.depth_mask as u32, compare(c.depth_func).code(), st as u32, (c.stencil[2] & 0xff) | (c.stencil_mask & 0xff) << 8]);
+        k.extend_from_slice(&[P_D24S8, u32::from(dt), u32::from(c.depth_mask), compare(c.depth_func).code(), u32::from(st), (c.stencil[2] & 0xff) | (c.stencil_mask & 0xff) << 8]);
         k.extend_from_slice(&face);
         k.extend_from_slice(&face);
     } else {
@@ -1537,7 +1537,7 @@ pub(crate) fn pipeline_key(c: &Ctx, vs: u32, ps: u32, topo: u32, depth: bool, ve
     }
     k.extend_from_slice(vertex);
     let b = &c.blend;
-    let on = c.caps.contains(&GL_BLEND) as u32;
+    let on = u32::from(c.caps.contains(&GL_BLEND));
     k.extend_from_slice(&[1, P_RGBA8, on, blend_factor(b[0]).code(), blend_factor(b[1]).code(), blend_op(b[4]).code(), blend_factor(b[2]).code(), blend_factor(b[3]).code(), blend_op(b[5]).code(), c.color_mask]);
     k
 }
@@ -1574,9 +1574,9 @@ pub(crate) fn sampler(t: Option<&Texture>) -> (u32, u32) {
     };
     let mip_filter = matches!(t.min, 0x2700..=0x2703);
     let mipmapped = mip_filter && (t.defined.count_ones() > 1 || t.gen_mips);
-    let min = matches!(t.min, 0x2601 | 0x2701 | 0x2703) as u32;
-    let mip = matches!(t.min, 0x2702 | 0x2703) as u32;
-    let mag = (t.mag == 0x2601) as u32;
+    let min = u32::from(matches!(t.min, 0x2601 | 0x2701 | 0x2703));
+    let mip = u32::from(matches!(t.min, 0x2702 | 0x2703));
+    let mag = u32::from(t.mag == 0x2601);
     let key = wrap(t.wrap_s) | wrap(t.wrap_t) << 3 | 2 << 6 | mag << 9 | min << 10 | mip << 11 | 1 << 17;
     (key, if mipmapped { 1000f32.to_bits() } else { 0 })
 }
@@ -1682,7 +1682,7 @@ fn draw(g: &mut Gl, c: &mut Ctx, mode: u32, v: Vec<[f32; 16]>) {
     fu[4] = c.alpha_ref.to_bits();
     let state = draw_state(c, w, h);
     gpu::record(|q| {
-        q.cmd(&[gpu::SET_TARGETS2, (color != 0) as u32]);
+        q.cmd(&[gpu::SET_TARGETS2, u32::from(color != 0)]);
         if color != 0 {
             q.cmd(&[color, level, 0]);
         }
@@ -1714,7 +1714,7 @@ extern "C" fn glClear(mask: u32) {
         // (with the scissor test on: only its box, as a rectangle clear of the targets)
         if c.caps.contains(&GL_SCISSOR_TEST) && color != 0 {
             let sc = c.scissor;
-            let f = (mask & 0x4000 != 0 && c.color_mask != 0) as u32 | (mask & 0x100 != 0 && depth != 0) as u32 * 2 | (mask & 0x400 != 0 && depth != 0) as u32 * 4;
+            let f = u32::from(mask & 0x4000 != 0 && c.color_mask != 0) | u32::from(mask & 0x100 != 0 && depth != 0) * 2 | u32::from(mask & 0x400 != 0 && depth != 0) * 4;
             let (x, y) = (sc[0].max(0) as u32, sc[1].max(0) as u32);
             let (w, h) = ((sc[0] + sc[2]).max(0) as u32 - x, (sc[1] + sc[3]).max(0) as u32 - y);
             if f != 0 && w > 0 && h > 0 {
@@ -1729,7 +1729,7 @@ extern "C" fn glClear(mask: u32) {
             if mask & 0x4000 != 0 && color != 0 && c.color_mask != 0 {
                 q.cmd(&[gpu::CLEAR_VIEW, color, level, 0, 1, cc[0], cc[1], cc[2], cc[3], 0, 0]);
             }
-            let f = (mask & 0x100 != 0) as u32 * 2 | (mask & 0x400 != 0) as u32 * 4;
+            let f = u32::from(mask & 0x100 != 0) * 2 | u32::from(mask & 0x400 != 0) * 4;
             if f != 0 && depth != 0 {
                 q.cmd(&[gpu::CLEAR_VIEW, depth, 0, 0, f, 0, 0, 0, 0, cd, cs]);
             }
@@ -1833,7 +1833,7 @@ extern "C" fn glBindTexture(target: u32, t: u32) {
 extern "C" fn glIsTexture(t: u32) -> u8 {
     let g = lock();
     let g = g.as_ref().unwrap();
-    (g.textures.contains_key(&t) && !g.reserved.contains(&(K_TEX, t))) as u8
+    u8::from(g.textures.contains_key(&t) && !g.reserved.contains(&(K_TEX, t)))
 }
 
 fn base_format(internal: i32) -> Base {
@@ -1884,7 +1884,7 @@ fn comp_size(ty: u32) -> usize {
 }
 
 fn half(h: u16) -> f32 {
-    let (s, e, m) = ((h >> 15) as u32, ((h >> 10) & 31) as i32, (h & 1023) as f32);
+    let (s, e, m) = (u32::from(h >> 15), i32::from((h >> 10) & 31), f32::from(h & 1023));
     let v = match e {
         0 => m * (2f32).powi(-24),
         31 => if m == 0.0 { f32::INFINITY } else { f32::NAN },
@@ -1965,13 +1965,13 @@ pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u3
             match packed {
                 Some((b, fields)) => {
                     let bits = match b {
-                        1 => *p as u32,
-                        2 => std::ptr::read_unaligned(p as *const u16) as u32,
+                        1 => u32::from(*p),
+                        2 => u32::from(std::ptr::read_unaligned(p as *const u16)),
                         _ => std::ptr::read_unaligned(p as *const u32),
                     };
                     for (k, &(sh, nb)) in fields.iter().enumerate().take(4) {
                         let max = (1u64 << nb) - 1;
-                        v[k] = ((((bits as u64 >> sh) & max) * 255 + max / 2) / max) as u8;
+                        v[k] = ((((u64::from(bits) >> sh) & max) * 255 + max / 2) / max) as u8;
                     }
                 }
                 None => {
@@ -2110,8 +2110,8 @@ unsafe extern "C" fn glTexSubImage2D(target: u32, level: i32, x: i32, y: i32, w:
             return c.err(if level < 0 { GL_INVALID_VALUE } else { GL_INVALID_OPERATION });
         }
         // (the level's size, and the region in it)
-        let (lw, lh) = ((t.w >> level).max(1) as i64, (t.h >> level).max(1) as i64);
-        if x < 0 || y < 0 || w < 0 || h < 0 || x as i64 + w as i64 > lw || y as i64 + h as i64 > lh {
+        let (lw, lh) = (i64::from((t.w >> level).max(1)), i64::from((t.h >> level).max(1)));
+        if x < 0 || y < 0 || w < 0 || h < 0 || i64::from(x) + i64::from(w) > lw || i64::from(y) + i64::from(h) > lh {
             return c.err(GL_INVALID_VALUE);
         }
         if w == 0 || h == 0 || pixels.is_null() || t.base == Base::Depth {
@@ -2297,7 +2297,7 @@ unsafe extern "C" fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, t
             let d = out.add(row * pitch + col * bpp);
             for k in 0..comps {
                 if ty == GL_FLOAT {
-                    std::ptr::write_unaligned((d as *mut f32).add(k), px[k] as f32 / 255.0);
+                    std::ptr::write_unaligned((d as *mut f32).add(k), f32::from(px[k]) / 255.0);
                 } else {
                     *d.add(k) = px[k];
                 }
@@ -2347,7 +2347,7 @@ extern "C" fn glBindBuffer(target: u32, b: u32) {
 extern "C" fn glIsBuffer(b: u32) -> u8 {
     let g = lock();
     let g = g.as_ref().unwrap();
-    (g.buffers.contains_key(&b) && !g.reserved.contains(&(K_BUF, b))) as u8
+    u8::from(g.buffers.contains_key(&b) && !g.reserved.contains(&(K_BUF, b)))
 }
 fn bound_buffer(c: &Ctx, target: u32) -> u32 {
     match target {
@@ -2455,7 +2455,7 @@ extern "C" fn glBindFramebuffer(target: u32, f: u32) {
 extern "C" fn glIsFramebuffer(f: u32) -> u8 {
     let g = lock();
     let g = g.as_ref().unwrap();
-    (g.fbos.contains_key(&f) && !g.reserved.contains(&(K_FBO, f))) as u8
+    u8::from(g.fbos.contains_key(&f) && !g.reserved.contains(&(K_FBO, f)))
 }
 fn attach(target: u32, point: u32, a: Att) {
     with(|g, c| {
@@ -2527,7 +2527,7 @@ unsafe extern "C" fn glDeleteRenderbuffers(n: i32, names: *const u32) {
 extern "C" fn glIsRenderbuffer(r: u32) -> u8 {
     let g = lock();
     let g = g.as_ref().unwrap();
-    (g.rbs.contains_key(&r) && !g.reserved.contains(&(K_RB, r))) as u8
+    u8::from(g.rbs.contains_key(&r) && !g.reserved.contains(&(K_RB, r)))
 }
 extern "C" fn glBindRenderbuffer(_target: u32, rb: u32) {
     with(|g, c| {

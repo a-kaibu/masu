@@ -73,10 +73,10 @@ pub fn quality_levels(fmt: u32, count: u32) -> u32 {
     let Some(f) = format(fmt).filter(|f| f.0) else { return 0 };
     match count {
         1 => 1,
-        2 => f.4[0] as u32,
-        4 => f.4[1] as u32,
+        2 => u32::from(f.4[0]),
+        4 => u32::from(f.4[1]),
         // (16: what the probe's runner took for 8 bits of RGBA, the most a format has)
-        8 | 16 => f.4[2] as u32,
+        8 | 16 => u32::from(f.4[2]),
         _ => 0,
     }
 }
@@ -857,7 +857,7 @@ pub fn buffer_view(kind: u32, size: u32, bind: u32, misc: u32, stride: u32, w: O
         }
         bytes
     };
-    if first.checked_add(n).is_none_or(|end| end as u64 * elem as u64 > size as u64) {
+    if first.checked_add(n).is_none_or(|end| u64::from(end) * u64::from(elem) > u64::from(size)) {
         return bad;
     }
     let mut desc = vec![fmt, dim, first, n];

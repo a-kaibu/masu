@@ -72,7 +72,7 @@ impl From<Info> for Metadata {
             len: if i.dir { 0 } else { i.len },
             modified: UNIX_EPOCH + Duration::from_secs(i.mtime.max(0) as u64),
             readonly: i.mode & 0o200 == 0,
-            ino: i.ino as u64 | 1 << 40,
+            ino: u64::from(i.ino) | 1 << 40,
             links: 1,
         }
     }
@@ -85,7 +85,7 @@ impl From<std::fs::Metadata> for Metadata {
         #[cfg(not(unix))]
         let ino = 0;
         #[cfg(unix)]
-        let links = if m.is_dir() { 1 } else { std::os::unix::fs::MetadataExt::nlink(&m).clamp(1, u32::MAX as u64) as u32 };
+        let links = if m.is_dir() { 1 } else { std::os::unix::fs::MetadataExt::nlink(&m).clamp(1, u64::from(u32::MAX)) as u32 };
         #[cfg(not(unix))]
         let links = 1;
         Metadata { dir: m.is_dir(), len: m.len(), modified: m.modified().unwrap_or(UNIX_EPOCH), readonly: m.permissions().readonly(), ino, links }
@@ -116,7 +116,7 @@ pub fn symlink_metadata<P: AsRef<Path>>(p: P) -> io::Result<Metadata> {
 pub fn stamp<P: AsRef<Path>>(p: P) -> u64 {
     let count = vfs::change_count();
     match vfs::info_at(&path_str(p.as_ref()), true) {
-        At::Ours(_) => 1 << 63 | count as u64,
+        At::Ours(_) => 1 << 63 | u64::from(count),
         At::Outside(h) => match std::fs::metadata(h) {
             Err(_) => 0,
             Ok(m) if m.modified().ok().and_then(|t| SystemTime::now().duration_since(t).ok()).is_none_or(|d| d < RECENT) => 0,

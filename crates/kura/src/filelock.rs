@@ -31,7 +31,7 @@ struct Lock {
 
 /// Whether [a, a + al) and [b, b + bl) share a byte (empty ranges share none).
 pub fn overlap(a: u64, al: u64, b: u64, bl: u64) -> bool {
-    al != 0 && bl != 0 && (a as u128) < b as u128 + bl as u128 && (b as u128) < a as u128 + al as u128
+    al != 0 && bl != 0 && u128::from(a) < u128::from(b) + u128::from(bl) && u128::from(b) < u128::from(a) + u128::from(al)
 }
 
 /// Whether a lock request (`owner`, exclusive `excl`) over a range that overlaps a held lock

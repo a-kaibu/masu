@@ -264,7 +264,7 @@ unsafe fn d3d8_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, af
                     dev.st.rs[k] = 0;
                 }
                 dev.st.rs[166] = 8192f32.to_bits();
-                dev.st.rs[153] = (a(4) & 0x20 != 0) as u32;
+                dev.st.rs[153] = u32::from(a(4) & 0x20 != 0);
                 dev.st.rs[164] = 1f32.to_bits();
             }
             r

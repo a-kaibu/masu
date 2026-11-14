@@ -11,6 +11,7 @@ pub mod gpu;
 #[cfg(test)]
 pub mod model;
 
+#[cfg(test)]
 use crate::locks::Lock;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
@@ -124,7 +125,7 @@ pub(crate) fn snap_restore() {
     crate::snap::VNHOST_SNAP.restoring.store(0, SeqCst);
     let here = *s == RESTORED;
     *s = if here { crate::snap::epoch() + 1 } else { 0 };
-    crate::snap::GPU_THREAD.store(here as u32, SeqCst);
+    crate::snap::GPU_THREAD.store(u32::from(here), SeqCst);
 }
 
 /// The page's canvas is `w`×`h` device pixels.
@@ -146,9 +147,9 @@ pub extern "C" fn vnhost_render_input(kind: u32, x: i32, y: i32, data: u32) -> i
 /// holds (a game's window off the screen takes its clicks there too).
 fn to_screen(layout: &[i32; 12], x: i32, y: i32) -> (i32, i32) {
     let [rx, ry, rw, rh, l, t, r, b, el, et, er, eb] = *layout;
-    let fx = l as i64 + ((x - rx) as i64 * (r - l) as i64).div_euclid(rw.max(1) as i64);
-    let fy = t as i64 + ((y - ry) as i64 * (b - t) as i64).div_euclid(rh.max(1) as i64);
-    (fx.clamp(el as i64, (er as i64 - 1).max(el as i64)) as i32, fy.clamp(et as i64, (eb as i64 - 1).max(et as i64)) as i32)
+    let fx = i64::from(l) + (i64::from(x - rx) * i64::from(r - l)).div_euclid(i64::from(rw.max(1)));
+    let fy = i64::from(t) + (i64::from(y - ry) * i64::from(b - t)).div_euclid(i64::from(rh.max(1)));
+    (fx.clamp(i64::from(el), (i64::from(er) - 1).max(i64::from(el))) as i32, fy.clamp(i64::from(et), (i64::from(eb) - 1).max(i64::from(et))) as i32)
 }
 
 /// Where the shown part of the screen is on the canvas: `out` = x y w h (canvas pixels), the
@@ -210,7 +211,7 @@ pub extern "C" fn vnhost_render_snap_tick(t: f64) {
 #[no_mangle]
 pub extern "C" fn vnhost_gpu_time(us: f64, passes: u32) {
     GPU_NS.fetch_add((us * 1000.0) as u64, Relaxed);
-    GPU_PASSES.fetch_add(passes as u64, Relaxed);
+    GPU_PASSES.fetch_add(u64::from(passes), Relaxed);
 }
 
 /// The GPU time of every render pass so far, in ms (tests/bench reads it from the page's thread);
@@ -337,15 +338,15 @@ fn screen_uv(v: [i32; 4], e: [i32; 4]) -> [f32; 4] {
 
 /// Where a frame of `width`×`height` goes on a canvas of `cw`×`ch`.
 fn letterbox(cw: u32, ch: u32, width: i32, height: i32) -> Rect {
-    let (width, height) = (width.max(1) as f64, height.max(1) as f64);
-    let mut scale = (cw as f64 / width).min(ch as f64 / height);
+    let (width, height) = (f64::from(width.max(1)), f64::from(height.max(1)));
+    let mut scale = (f64::from(cw) / width).min(f64::from(ch) / height);
     let integer = scale.floor();
     if integer >= 1.0 && integer / scale > 0.92 {
         scale = integer;
     }
     let w = (width * scale).round();
     let h = (height * scale).round();
-    Rect { x: ((cw as f64 - w) / 2.0).floor() as f32, y: ((ch as f64 - h) / 2.0).floor() as f32, w: w as f32, h: h as f32 }
+    Rect { x: ((f64::from(cw) - w) / 2.0).floor() as f32, y: ((f64::from(ch) - h) / 2.0).floor() as f32, w: w as f32, h: h as f32 }
 }
 
 struct Pipe {
@@ -595,7 +596,7 @@ impl Render {
         let mut io = [0u32; 12];
         io[0] = self.serial.unwrap_or(u32::MAX);
         // (the changed rows straight from the game window's surface when only it changed)
-        io[3] = self.serial.is_some() as u32;
+        io[3] = u32::from(self.serial.is_some());
         let again = crate::display::frame_with(&mut io, |io, bits, e| {
             if Some(io[0]) == self.serial {
                 return Some(false);
@@ -670,7 +671,7 @@ impl Render {
         let (pipeline, layout) = (pipe.pipeline, pipe.layout);
         let [vl, vt, vr, vb] = self.shown;
         let nearest = (r.w as i32) % (vr - vl).max(1) == 0 && (r.h as i32) % (vb - vt).max(1) == 0;
-        let gi = nearest as usize;
+        let gi = usize::from(nearest);
         if self.group_main[gi] == 0 {
             let smp = if nearest { self.nearest } else { self.linear };
             self.group_main[gi] = gpu::bind_group(layout, &[(0, Res::Obj(self.tex_view)), (1, Res::Obj(smp)), (2, Res::Buffer(self.uv[0], 0, 16))]);
@@ -797,7 +798,7 @@ impl Render {
             let g = self.d3d.gpu_ms.take();
             eprintln!(
                 "page stats/{secs:.1}s: rAF {:.1}/s, slow {}, render {}ms, d3d frames {:.1}/s, batches {}ms, gpu {:.0}ms (max {:.0}), passes {}, submits {}, textures {}, upload {:.1}MB, tile load {}MB store {}MB, same frames skipped {}, regions unchanged {} redrawn {}, screen redraws {} upload {:.1}MB",
-                s.frames as f64 / secs,
+                f64::from(s.frames) / secs,
                 s.slow,
                 FRAME_US.swap(0, Relaxed) / 1000,
                 (self.d3d.frames - s.d3d_at) as f64 / secs,

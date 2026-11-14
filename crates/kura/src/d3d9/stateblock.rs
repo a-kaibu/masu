@@ -264,8 +264,8 @@ pub fn copy_masked(dst: &mut State, src: &State, m: &Mask) {
             }
         }
     }
-    dst.vsb = dst.vsb & !(m.vsb as u32) | src.vsb & m.vsb as u32;
-    dst.psb = dst.psb & !(m.psb as u32) | src.psb & m.psb as u32;
+    dst.vsb = dst.vsb & !u32::from(m.vsb) | src.vsb & u32::from(m.vsb);
+    dst.psb = dst.psb & !u32::from(m.psb) | src.psb & u32::from(m.psb);
     for (i, d) in dst.vsi_more.iter_mut().enumerate().take(src.vsi_more.len()) {
         if bit(&m.vsi_more, i) {
             *d = src.vsi_more[i];
@@ -387,7 +387,7 @@ pub fn differs(dst: &State, src: &State, m: &Mask) -> bool {
             return true;
         }
     }
-    if (dst.vsb ^ src.vsb) & m.vsb as u32 != 0 || (dst.psb ^ src.psb) & m.psb as u32 != 0 {
+    if (dst.vsb ^ src.vsb) & u32::from(m.vsb) != 0 || (dst.psb ^ src.psb) & u32::from(m.psb) != 0 {
         return true;
     }
     for (i, d) in dst.vsi_more.iter().enumerate().take(src.vsi_more.len()) {

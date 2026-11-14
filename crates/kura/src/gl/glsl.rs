@@ -221,8 +221,8 @@ unsafe extern "C" fn glGetShaderiv(sh: u32, p: u32, out: *mut i32) {
         0x8B4F => if x.pixel { 0x8B30 } else { 0x8B31 },
         // (GL_OBJECT_TYPE_ARB: GL_SHADER_OBJECT_ARB)
         0x8B4E => 0x8B48,
-        0x8B80 => x.deleted as i32,
-        0x8B81 => x.ok as i32,
+        0x8B80 => i32::from(x.deleted),
+        0x8B81 => i32::from(x.ok),
         0x8B84 => x.log.len() as i32 + 1,
         0x8B88 => x.source.len() as i32 + 1,
         _ => {
@@ -260,7 +260,7 @@ extern "C" fn glDeleteShader(sh: u32) {
     g2.collect_programs();
 }
 extern "C" fn glIsShader(sh: u32) -> u8 {
-    gl().as_ref().unwrap().shaders.contains_key(&sh) as u8
+    u8::from(gl().as_ref().unwrap().shaders.contains_key(&sh))
 }
 extern "C" fn glCreateProgram() -> u32 {
     let mut g = gl();
@@ -356,10 +356,10 @@ unsafe extern "C" fn glGetProgramiv(p: u32, pname: u32, out: *mut i32) {
     }
     let x = &g.as_ref().unwrap().programs[&p];
     *out = match pname {
-        0x8B80 => x.deleted as i32,
+        0x8B80 => i32::from(x.deleted),
         // (GL_OBJECT_TYPE_ARB: GL_PROGRAM_OBJECT_ARB)
         0x8B4E => 0x8B40,
-        0x8B82 | 0x8B83 => x.linked.is_some() as i32,
+        0x8B82 | 0x8B83 => i32::from(x.linked.is_some()),
         0x8B84 => x.log.len() as i32 + 1,
         0x8B85 => x.shaders.len() as i32,
         0x8B86 => x.linked.as_ref().map_or(0, |l| l.sizes.len() as i32),
@@ -434,7 +434,7 @@ extern "C" fn glDeleteObject(o: u32) {
     }
 }
 extern "C" fn glIsProgram(p: u32) -> u8 {
-    gl().as_ref().unwrap().programs.contains_key(&p) as u8
+    u8::from(gl().as_ref().unwrap().programs.contains_key(&p))
 }
 unsafe extern "C" fn glGetUniformLocation(p: u32, name: *const c_char) -> i32 {
     let n = CStr::from_ptr(name).to_string_lossy().into_owned();
@@ -644,7 +644,7 @@ fn builtin(name: &str) -> Option<usize> {
 
 /// gl_NormalMatrix: the inverse transpose of the model-view matrix's upper 3x3 (column-major)
 fn normal_matrix(mv: &[f32; 16]) -> [f32; 9] {
-    let m = |c: usize, r: usize| mv[c * 4 + r] as f64;
+    let m = |c: usize, r: usize| f64::from(mv[c * 4 + r]);
     // (cofactors: inverse = adjugate / det; its transpose is the cofactor matrix / det)
     let cof = |c: usize, r: usize| {
         let (c1, c2) = ((c + 1) % 3, (c + 2) % 3);
@@ -762,7 +762,7 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
     }
     let state = draw_state(c, w, h);
     gpu::record(|q| {
-        q.cmd(&[gpu::SET_TARGETS2, (color != 0) as u32]);
+        q.cmd(&[gpu::SET_TARGETS2, u32::from(color != 0)]);
         if color != 0 {
             q.cmd(&[color, level, 0]);
         }
@@ -772,7 +772,7 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
         wds.extend_from_slice(&state);
         wds.extend_from_slice(&[1, DATA, vo, 0, 0, 0]);
         for (block, entries) in &groups {
-            let nb = !block.is_empty() as u32;
+            let nb = u32::from(!block.is_empty());
             wds.push(nb + entries.len() as u32);
             if nb != 0 {
                 let off = q.data(block, 256);

@@ -145,7 +145,7 @@ unsafe fn pointed(d: &D11, m: u32, a: &dyn Fn(usize) -> u32) -> Option<Vec<(usiz
 unsafe fn update_size(d: &D11, a: &dyn Fn(usize) -> u32) -> Option<u32> {
     let bx = (a(3) != 0).then(|| [rd(a(3), 0), rd(a(3), 1), rd(a(3), 2), rd(a(3), 3), rd(a(3), 4), rd(a(3), 5)]);
     let size: u64 = match d.objs.get(&d.id_of(a(1))).map(|o| &o.data) {
-        Some(Data::Buffer(b)) => bx.map_or(b.size, |x| x[3].min(b.size).saturating_sub(x[0])) as u64,
+        Some(Data::Buffer(b)) => u64::from(bx.map_or(b.size, |x| x[3].min(b.size).saturating_sub(x[0]))),
         Some(Data::Texture(t)) => {
             let level = a(2) % t.mips.max(1);
             let (lw, lh) = ((t.w >> level).max(1), (t.h >> level).max(1));
@@ -159,11 +159,11 @@ unsafe fn update_size(d: &D11, a: &dyn Fn(usize) -> u32) -> Option<u32> {
             }
             let (row, rows) = format::pitch_rows(t.fmt, w, h);
             // (in 64 bits: the pitches are the application's)
-            (dp as u64 - 1) * a(6) as u64 + (rows as u64 - 1) * a(5) as u64 + row as u64
+            (u64::from(dp) - 1) * u64::from(a(6)) + (u64::from(rows) - 1) * u64::from(a(5)) + u64::from(row)
         }
         _ => 0,
     };
-    (size <= MAX_BLOB && (a(4) as u64) + size <= 1 << 32).then_some(size as u32)
+    (size <= MAX_BLOB && u64::from(a(4)) + size <= 1 << 32).then_some(size as u32)
 }
 
 /// A call onto the list being recorded (nobody else has it yet).
@@ -400,7 +400,7 @@ unsafe fn map(d: &mut D11, this: u32, res: u32, sub: u32, ty: u32, out: u32) -> 
             let (pitch, rows) = format::pitch_rows(t.fmt, lw, lh);
             let ld = if t.dim == 3 { (t.layers >> level).max(1) } else { 1 };
             // (in 64 bits: a 2048^3 texture's level 0 does not fit in 32)
-            let size = pitch as u64 * rows as u64 * ld as u64;
+            let size = u64::from(pitch) * u64::from(rows) * u64::from(ld);
             if size > MAX_BLOB {
                 if out != 0 {
                     wrp(out, 0, 0);

@@ -24,6 +24,7 @@
 //! ([`restore_begin`] gives them); services started lazily see [`epoch`] change and start
 //! again. The clocks the program reads continue from the moment of the save ([`Ctl::offset`]).
 
+#[cfg(test)]
 use crate::locks::Lock;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering::*};
 use std::sync::{Condvar, Mutex};
@@ -442,8 +443,8 @@ pub fn merge_ranges(mut v: Vec<(u32, u32)>) -> Vec<u32> {
         .drain(..)
         .filter(|&(_, n)| n > 0)
         .map(|(a, n)| {
-            let lo = a as u64 & !(G - 1);
-            let hi = ((a as u64 + n as u64 + G - 1) & !(G - 1)).min(1 << 32);
+            let lo = u64::from(a) & !(G - 1);
+            let hi = ((u64::from(a) + u64::from(n) + G - 1) & !(G - 1)).min(1 << 32);
             (lo, hi)
         })
         .collect();
@@ -456,7 +457,7 @@ pub fn merge_ranges(mut v: Vec<(u32, u32)>) -> Vec<u32> {
         }
     }
     // (a length is 32 bits: all 4 GiB in one range is two halves)
-    out.iter().flat_map(|&(lo, hi)| if hi - lo > u32::MAX as u64 { vec![lo as u32, 0x8000_0000, (lo + 0x8000_0000) as u32, (hi - lo - 0x8000_0000) as u32] } else { vec![lo as u32, (hi - lo) as u32] }).collect()
+    out.iter().flat_map(|&(lo, hi)| if hi - lo > u64::from(u32::MAX) { vec![lo as u32, 0x8000_0000, (lo + 0x8000_0000) as u32, (hi - lo - 0x8000_0000) as u32] } else { vec![lo as u32, (hi - lo) as u32] }).collect()
 }
 
 // ---------------------------------------------------------------------------------------------

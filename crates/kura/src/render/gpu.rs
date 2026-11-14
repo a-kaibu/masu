@@ -165,7 +165,7 @@ pub fn pipeline_hit() {
 impl PipelineStats {
     fn made(&mut self, us: u32) {
         self.made += 1;
-        self.total_us += us as u64;
+        self.total_us += u64::from(us);
         self.max_us = self.max_us.max(us);
         if self.recent.len() == RECENT {
             self.recent.pop_front();
@@ -192,9 +192,9 @@ pub unsafe extern "C" fn vnhost_gpu_pipelines(out: *mut [f64; 6]) {
         PIPELINE_HITS.load(std::sync::atomic::Ordering::Relaxed) as f64,
         s.made as f64,
         s.total_us as f64 / 1000.0,
-        s.max_us as f64 / 1000.0,
-        s.quantile(0.5) as f64 / 1000.0,
-        s.quantile(0.95) as f64 / 1000.0,
+        f64::from(s.max_us) / 1000.0,
+        f64::from(s.quantile(0.5)) / 1000.0,
+        f64::from(s.quantile(0.95)) / 1000.0,
     ];
     *out = v;
 }
@@ -453,7 +453,7 @@ pub fn set_vertex_buffer(slot: u32, buf: Id, off: u32) {
 }
 pub fn set_index_buffer(buf: Id, u32_: bool, off: u32) {
     if to_set(|s| &mut s.index, (buf, u32_, off)) {
-        unsafe { ffi::vngpu_set_index_buffer(buf, u32_ as u32, off) }
+        unsafe { ffi::vngpu_set_index_buffer(buf, u32::from(u32_), off) }
     }
 }
 pub fn set_viewport(x: f32, y: f32, w: f32, h: f32, z0: f32, z1: f32) {

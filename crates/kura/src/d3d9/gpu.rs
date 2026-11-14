@@ -7,6 +7,7 @@
 //!
 //! Without a page (node) nothing ever polls, and batches are dropped at each Present.
 
+#[cfg(test)]
 use crate::locks::Lock;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex};
@@ -93,7 +94,7 @@ impl Batch {
             let c = &self.cmds[at..at + 9];
             let (h, pitch, ptr) = (c[6], c[7], c[8]);
             let len = pitch as usize * h as usize;
-            if (ptr as u64) < hi as u64 && ptr as u64 + len as u64 > lo as u64 {
+            if u64::from(ptr) < u64::from(hi) && u64::from(ptr) + len as u64 > u64::from(lo) {
                 let off = self.blob(unsafe { std::slice::from_raw_parts(ptr as usize as *const u8, len) });
                 self.cmds[at] = WRITE_TEXTURE;
                 self.cmds[at + 8] = off;
@@ -107,7 +108,7 @@ impl Batch {
     fn reads(&self, lo: u32, hi: u32) -> bool {
         self.mems.iter().any(|&at| {
             let c = &self.cmds[at..at + 9];
-            (c[8] as u64) < hi as u64 && c[8] as u64 + c[7] as u64 * c[6] as u64 > lo as u64
+            u64::from(c[8]) < u64::from(hi) && u64::from(c[8]) + u64::from(c[7]) * u64::from(c[6]) > u64::from(lo)
         })
     }
 
@@ -515,7 +516,7 @@ pub unsafe extern "C" fn vnhost_d3d9_poll(out: *mut [u32; 6]) -> u32 {
         q.reading = q.closed.pop_front();
         let Some(b) = &q.reading else { return 0 };
         super::stats::batch(b.data.len(), b.blob.len());
-        q.shown += b.presents as u64;
+        q.shown += u64::from(b.presents);
         out[0] = b.cmds.as_ptr() as u32;
         out[1] = b.cmds.len() as u32;
         out[2] = b.data.as_ptr() as u32;

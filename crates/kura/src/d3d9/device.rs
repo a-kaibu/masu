@@ -140,7 +140,7 @@ pub struct IndexRange {
 pub(crate) unsafe fn scan_indices(iptr: u32, isize: u32, n: u32) -> (u32, u32, bool) {
     let (mut lo, mut hi, mut ffff) = (u32::MAX, 0, false);
     for k in 0..n {
-        let v = if isize == 4 { *((iptr + 4 * k) as *const u32) } else { *((iptr + 2 * k) as *const u16) as u32 };
+        let v = if isize == 4 { *((iptr + 4 * k) as *const u32) } else { u32::from(*((iptr + 2 * k) as *const u16)) };
         lo = lo.min(v);
         hi = hi.max(v);
         ffff |= isize == 2 && v == 0xffff;
@@ -181,7 +181,7 @@ pub(crate) fn page_buffer(objs: &mut HashMap<u32, super::Obj, super::FastHash>, 
             let off = q.blob(&all);
             q.cmd(&[gpu::WRITE_BUFFER, b.gpu, 0, off, size]);
         });
-        RESIDENT_SENT.fetch_add(size as u64, std::sync::atomic::Ordering::Relaxed);
+        RESIDENT_SENT.fetch_add(u64::from(size), std::sync::atomic::Ordering::Relaxed);
         b.dirty = None;
         b.sent = b.gen;
     }
@@ -603,7 +603,7 @@ pub(crate) unsafe fn wrp(p: u32, i: usize, v: u32) {
 /// D3DPRESENT_PARAMETERS as 14 dwords in its 32-bit layout (hDeviceWindow at 7; 64-bit: 8-byte
 /// aligned at dword 8, the rest 2 dwords later)
 fn pp_index(i: usize) -> usize {
-    if ptr() == 8 && i >= 7 { i + 1 + (i > 7) as usize } else { i }
+    if ptr() == 8 && i >= 7 { i + 1 + usize::from(i > 7) } else { i }
 }
 unsafe fn read_pp(pp: u32) -> [u32; 14] {
     let mut p = [0u32; 14];
@@ -725,8 +725,8 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
     let a = |i: usize| *args.add(i);
     let (p, u) = stale(d, iface, m, this, &a);
     if let Some(dev) = d.dev.as_mut() {
-        dev.prep_gen += p as u64;
-        dev.uni_gen += u as u64;
+        dev.prep_gen += u64::from(p);
+        dev.uni_gen += u64::from(u);
     }
     match iface {
         IF_D3D9 => d3d9_call(d, m, this, &a),
@@ -893,9 +893,9 @@ unsafe fn raster_status(d: &D3d, out: u32) -> u32 {
     let h = d.dev.as_ref().map_or(768, |dev| dev.pp[1].max(1));
     let total = h + h / 20 + 1; // ~5% of the lines in vertical blank
     let phase = (T0.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 60.0).fract();
-    let line = (phase * total as f64) as u32;
+    let line = (phase * f64::from(total)) as u32;
     let vblank = line >= h;
-    wr(out, 0, vblank as u32);
+    wr(out, 0, u32::from(vblank));
     wr(out, 1, if vblank { 0 } else { line });
     S_OK
 }
@@ -1116,7 +1116,7 @@ fn gpu_id() -> u32 {
 fn gpu_texture(w: u32, h: u32, levels: u32, f: u32, usage: u32) -> u32 {
     let id = gpu_id();
     let rt = usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL) != 0 || fmt::is_depth(f);
-    gpu::record(|b| b.cmd(&[gpu::CREATE_TEXTURE, id, w.max(1), h.max(1), levels.max(1), fmt::page_format(f), rt as u32]));
+    gpu::record(|b| b.cmd(&[gpu::CREATE_TEXTURE, id, w.max(1), h.max(1), levels.max(1), fmt::page_format(f), u32::from(rt)]));
     id
 }
 
@@ -1284,7 +1284,7 @@ fn reset_buffers(d: &mut D3d) {
     dev.rt = [bb, 0, 0, 0];
     dev.ds = ds;
     dev.st = default_state();
-    dev.st.rs[7] = (ds != 0) as u32;
+    dev.st.rs[7] = u32::from(ds != 0);
     // (software vertex processing: 8192 float, 2048 integer and boolean vertex shader
     // constants; POINTSIZE_MAX is 8192.0 on either kind of device, winref d3d9state)
     if dev.behavior & 0x20 != 0 {
@@ -1448,7 +1448,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             let dev = dev!(d);
             let was = dev.cursor;
             dev.cursor = a(1) != 0;
-            was as u32
+            u32::from(was)
         }
         13 => create_swap_chain(d, a(1), a(2)),
         14 => {
@@ -1925,7 +1925,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                         if (6..=0xe).contains(&pos) {
                             let n = (pos - 6) / 2 + 1;
                             let idx = if fvf & 0x1000 != 0 { Some(5) } else if fvf & 0x8000 != 0 { Some(4) } else { None };
-                            let w = n - idx.is_some() as u32;
+                            let w = n - u32::from(idx.is_some());
                             let mut at = 1;
                             if w > 0 {
                                 raw.insert(at, [12 << 16, (w - 1) | 1 << 16]);
@@ -2042,7 +2042,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                 if r >= 16 {
                     let x = &mut st.vsb_more[r as usize - 16];
                     if set {
-                        *x = v as u32;
+                        *x = u32::from(v);
                     } else {
                         *p.add(i as usize) = *x;
                     }
@@ -2057,7 +2057,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                         *bits &= !b;
                     }
                 } else {
-                    *p.add(i as usize) = (*bits & b != 0) as u32;
+                    *p.add(i as usize) = u32::from(*bits & b != 0);
                 }
             }
             S_OK
@@ -3237,7 +3237,7 @@ unsafe fn stretch_rect(d: &mut D3d, src: u32, srect: u32, dst: u32, drect: u32, 
             dr[1],
             dr[2] - dr[0],
             dr[3] - dr[1],
-            (filter >= 2) as u32,
+            u32::from(filter >= 2),
         ])
     });
     if let Some(dev) = d.dev.as_mut() {
@@ -3298,20 +3298,20 @@ pub(crate) const UP_MAX: u64 = 64 << 20;
 /// past `first`: to the end of its vertex buffer, or for UP data to UP_MAX bytes and the end of
 /// the 4 GB. (stream number, guest pointer of vertex 0, stride) as `draw_one` has them.
 fn clamp_count(d: &D3d, slots: &[(u32, u32, u32); 16], src: &Src, streams: &[(u32, u32, u32)], first: u32, count: u32, divider: impl Fn(u32) -> Option<u32>) -> u32 {
-    let mut n = count as u64;
+    let mut n = u64::from(count);
     for &(s, ptr, stride) in streams {
         if stride == 0 || divider(s).is_some() {
             continue;
         }
         let end = match src {
-            Src::Up { .. } | Src::UpIndexed { .. } => (ptr as u64 + UP_MAX).min(1 << 32),
+            Src::Up { .. } | Src::UpIndexed { .. } => (u64::from(ptr) + UP_MAX).min(1 << 32),
             _ => match slots.get(s as usize).and_then(|&(vb, _, _)| d.objs.get(&vb)).map(|o| &o.data) {
-                Some(Data::Buffer(b)) => b.mem as u64 + b.len as u64,
+                Some(Data::Buffer(b)) => u64::from(b.mem) + u64::from(b.len),
                 _ => continue,
             },
         };
-        let start = ptr as u64 + first as u64 * stride as u64;
-        n = n.min(end.saturating_sub(start) / stride as u64);
+        let start = u64::from(ptr) + u64::from(first) * u64::from(stride);
+        n = n.min(end.saturating_sub(start) / u64::from(stride));
     }
     n as u32
 }
@@ -3416,12 +3416,12 @@ const STRIP_STRIDE: u32 = 0xffff;
 
 /// Whether registers `start .. start + n` are among `len` (the sum of two u32 wraps a 32-bit usize).
 fn regs_fit(start: u32, n: u32, len: usize) -> bool {
-    start as u64 + n as u64 <= len as u64
+    u64::from(start) + u64::from(n) <= len as u64
 }
 
 /// The viewport (x, y, width, height, ..) as a rectangle, its edges at most i32::MAX.
 fn clear_area(vp: &[u32; 6]) -> [i32; 4] {
-    let edge = |a: u32, b: u32| (a as u64 + b as u64).min(i32::MAX as u64) as i32;
+    let edge = |a: u32, b: u32| (u64::from(a) + u64::from(b)).min(i32::MAX as u64) as i32;
     [edge(vp[0], 0), edge(vp[1], 0), edge(vp[0], vp[2]), edge(vp[1], vp[3])]
 }
 
@@ -3699,12 +3699,12 @@ pub fn present_part(words: (u32, u32), w: u32, h: u32, dst: [i32; 4], bound: (u3
         return None;
     }
     // (the clipped part's share of the source, rounded out to whole pixels)
-    let (dw, dh) = ((dst[2] - dst[0]) as i64, (dst[3] - dst[1]) as i64);
-    let (sw, sh) = ((src[2] - src[0]) as i64, (src[3] - src[1]) as i64);
+    let (dw, dh) = (i64::from(dst[2] - dst[0]), i64::from(dst[3] - dst[1]));
+    let (sw, sh) = (i64::from(src[2] - src[0]), i64::from(src[3] - src[1]));
     let map = |v: i32, d0: i32, dn: i64, s0: u32, sn: i64, up: bool| {
-        let num = (v - d0) as i64 * sn;
+        let num = i64::from(v - d0) * sn;
         let q = if up { (num + dn - 1).div_euclid(dn) } else { num.div_euclid(dn) };
-        (s0 as i64 + q).clamp(s0 as i64, s0 as i64 + sn) as u32
+        (i64::from(s0) + q).clamp(i64::from(s0), i64::from(s0) + sn) as u32
     };
     let mut s = [map(c[0], dst[0], dw, src[0], sw, false), map(c[1], dst[1], dh, src[1], sh, false), map(c[2], dst[0], dw, src[0], sw, true), map(c[3], dst[1], dh, src[1], sh, true)];
     s[2] = s[2].max(s[0] + 1).min(src[2]);
@@ -3737,7 +3737,7 @@ fn shown_for(dev: &mut Device, hwnd: u32, cw: u32, ch: u32, f: u32) -> usize {
 fn copy_present(bb: (u32, u32, u32, u32), src: (u32, u32), kept: u32, dst: [i32; 4], cw: u32, ch: u32) {
     if let Some((s, t)) = present_part(src, bb.2, bb.3, dst, (cw, ch)) {
         let scaled = (s[2] - s[0], s[3] - s[1]) != (t[2] - t[0], t[3] - t[1]);
-        gpu::record(|b| b.cmd(&[gpu::COPY, bb.0, bb.1, s[0], s[1], s[2] - s[0], s[3] - s[1], kept, 0, t[0], t[1], t[2] - t[0], t[3] - t[1], scaled as u32]));
+        gpu::record(|b| b.cmd(&[gpu::COPY, bb.0, bb.1, s[0], s[1], s[2] - s[0], s[3] - s[1], kept, 0, t[0], t[1], t[2] - t[0], t[3] - t[1], u32::from(scaled)]));
     }
 }
 
@@ -4094,7 +4094,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             let Some(Data::Buffer(ib)) = d.objs.get(&st.indices).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
             let isize = if ib.fmt == fmt::INDEX32 { 4 } else { 2 };
             let iptr = ib.mem + start * isize;
-            if (*start as u64 + nverts as u64) * isize as u64 > ib.len as u64 {
+            if (u64::from(*start) + u64::from(nverts)) * u64::from(isize) > u64::from(ib.len) {
                 return D3DERR_INVALIDCALL;
             }
             // (a resident buffer changes only through its locks, `gen`: see page_buffer)
@@ -4110,8 +4110,8 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 dev.ranges[slot].set(IndexRange { key, lo, n, ffff });
             }
             ffff = f;
-            let first = *base as i64 + lo as i64;
-            if !(0..=u32::MAX as i64).contains(&first) {
+            let first = i64::from(*base) + i64::from(lo);
+            if !(0..=i64::from(u32::MAX)).contains(&first) {
                 return D3DERR_INVALIDCALL;
             }
             (first as u32, n, Some((iptr, isize, lo)))
@@ -4266,7 +4266,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             eprintln!("d3d9:   lit: ambient {:#x} material {:?} colorvertex {} sources {} {} {} {} lights {:?}", st.rs[139], st.material, st.rs[141], st.rs[145], st.rs[146], st.rs[147], st.rs[148], on);
         }
         if let Some((iptr, isize, _)) = index {
-            let ix: Vec<u32> = (0..nverts.min(12)).map(|k| if isize == 4 { *((iptr + 4 * k) as *const u32) } else { *((iptr + 2 * k) as *const u16) as u32 }).collect();
+            let ix: Vec<u32> = (0..nverts.min(12)).map(|k| if isize == 4 { *((iptr + 4 * k) as *const u32) } else { u32::from(*((iptr + 2 * k) as *const u16)) }).collect();
             eprintln!("d3d9:   indices {ix:?}");
         }
         if st.vs != 0 {
@@ -4450,7 +4450,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 if is2d {
                     samplers.push(i as u32);
                 }
-                let projected = (st.tss[i][24] & 0x100 != 0) as u32;
+                let projected = u32::from(st.tss[i][24] & 0x100 != 0);
                 stages.push([s[1], s[2], s[3], s[26], s[4], s[5], s[6], s[27], s[28], projected]);
             }
             let addr = samplers.iter().filter_map(|&s| addr_of(s)).collect();
@@ -4501,7 +4501,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         fmt::page_format(target.4),
         dsg.map_or(0xff, |_| gpu::FMT_DEPTH24S8),
         // (ZWRITEENABLE writes only with ZENABLE on)
-        (st.rs[7] != 0 && st.rs[14] != 0) as u32,
+        u32::from(st.rs[7] != 0 && st.rs[14] != 0),
         if st.rs[7] != 0 { st.rs[23] } else { 8 },
     ];
     key.extend_from_slice(&blend);
@@ -4715,8 +4715,8 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         .map(|&(sn, _, stride)| {
             let (vb, off, _) = st.streams.get(sn as usize).copied()?;
             let Some(Data::Buffer(b)) = d.objs.get(&vb).map(|o| &o.data) else { return None };
-            let at = off as u64 + first as u64 * stride as u64;
-            let fits = at % 4 == 0 && stride % 4 == 0 && at + count as u64 * stride as u64 <= b.len as u64;
+            let at = u64::from(off) + u64::from(first) * u64::from(stride);
+            let fits = at % 4 == 0 && stride % 4 == 0 && at + u64::from(count) * u64::from(stride) <= u64::from(b.len);
             (from_buffer && divider(sn).is_none() && fits && resident(b)).then_some((vb, at as u32))
         })
         .collect();
@@ -4738,10 +4738,10 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     });
     for (k, &(sn, ptr, stride)) in streams.iter().enumerate() {
         if let Some((g, at, cg)) = stream_bufs[k] {
-            for w in [g as u64, cg, at as u64, (count * stride) as u64] {
+            for w in [u64::from(g), cg, u64::from(at), u64::from(count * stride)] {
                 h.add(&w.to_le_bytes());
             }
-            RESIDENT_READ.fetch_add((count * stride) as u64, std::sync::atomic::Ordering::Relaxed);
+            RESIDENT_READ.fetch_add(u64::from(count * stride), std::sync::atomic::Ordering::Relaxed);
             continue;
         }
         match divider(sn) {
@@ -4753,7 +4753,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     match (index, index_buf) {
         (Some((_, isz, _)), Some(_)) => {
             let (g, at, cg) = index_buf.unwrap();
-            for w in [g as u64, cg, at as u64, (nverts * isz) as u64] {
+            for w in [u64::from(g), cg, u64::from(at), u64::from(nverts * isz)] {
                 h.add(&w.to_le_bytes());
             }
         }
@@ -4831,7 +4831,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 // fan, indexed
                 // (straight into one buffer of bytes)
                 let get = |i: u32| -> u32 {
-                    if *isz == 4 { *((iptr + i * 4) as *const u32) } else { *((iptr + i * 2) as *const u16) as u32 }
+                    if *isz == 4 { *((iptr + i * 4) as *const u32) } else { u32::from(*((iptr + i * 2) as *const u16)) }
                 };
                 let mut bytes = Vec::with_capacity(prims as usize * 12);
                 for t in 0..prims {
@@ -4844,7 +4844,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             (Some((iptr, _, min)), _) if widen => {
                 let mut bytes = Vec::with_capacity(nverts as usize * 4);
                 for k in 0..nverts {
-                    bytes.extend_from_slice(&(*((iptr + 2 * k) as *const u16) as u32).to_le_bytes());
+                    bytes.extend_from_slice(&u32::from(*((iptr + 2 * k) as *const u16)).to_le_bytes());
                 }
                 (4, b.data(&bytes, 4), nverts, -(*min as i32))
             }
@@ -5022,7 +5022,7 @@ fn prep_mode() -> u8 {
         return m;
     }
     let on = |k: &str| std::env::var_os(k).is_some_and(|v| v != "0");
-    let m = on("MASU_NOPREP") as u8 | (on("MASU_PREP_CHECK") as u8) << 1;
+    let m = u8::from(on("MASU_NOPREP")) | u8::from(on("MASU_PREP_CHECK")) << 1;
     PREP_MODE.store(m, Relaxed);
     m
 }
@@ -5047,7 +5047,7 @@ fn merging() -> bool {
     use std::sync::atomic::Ordering::Relaxed;
     let mut m = MERGE_MODE.load(Relaxed);
     if m == 0xff {
-        m = std::env::var_os("MASU_NOMERGE").is_some_and(|v| v != "0") as u8;
+        m = u8::from(std::env::var_os("MASU_NOMERGE").is_some_and(|v| v != "0"));
         MERGE_MODE.store(m, Relaxed);
     }
     m == 0

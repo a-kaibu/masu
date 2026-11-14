@@ -251,7 +251,7 @@ pub unsafe extern "C" fn vnhost_adec_list(out: *mut u32, max: u32) -> u32 {
             r.desc.0 as u32,
             r.desc.1 as u32,
             r.queued,
-            r.failed as u32,
+            u32::from(r.failed),
         ]);
     }
     rows.len() as u32
@@ -375,7 +375,7 @@ fn put(dst: &mut VecDeque<f32>, src: &[f32], from: usize, to: usize) {
 pub extern "C" fn vnhost_adec_done(id: u32, gen: u32, seq: u32) {
     with(|m| {
         if let Some(s) = m.get_mut(&id).filter(|s| s.gen == gen) {
-            s.done = s.done.max((seq as u64).min(s.taken));
+            s.done = s.done.max(u64::from(seq).min(s.taken));
         }
     });
     WAKE.notify_all();

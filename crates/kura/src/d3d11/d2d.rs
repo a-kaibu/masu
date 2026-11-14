@@ -439,7 +439,7 @@ pub fn draw(addr: u32, items: &[Item], bitmap: Option<u32>) {
         c.extend_from_slice(&[0, 1, DATA, vo, 0, 0, 0]);
         // group 0: nothing; group 1: the atlas, the ramps (and the bitmap)
         c.push(0);
-        c.push(2 + bitmap.is_some() as u32);
+        c.push(2 + u32::from(bitmap.is_some()));
         c.extend_from_slice(&[16, 1, atlas, 1, 0, 1, 0, 1]);
         c.extend_from_slice(&[17, 1, ramps, 1, 0, 1, 0, 1]);
         if let Some(b) = bitmap {

@@ -180,7 +180,7 @@ pub unsafe fn to_floats(conv: Conv, n: u32, src: *const u8, pitch: usize, w: u32
                 let row = src.add(y * pitch);
                 for i in 0..w * n {
                     let v = u16::from_le_bytes([*row.add(2 * i), *row.add(2 * i + 1)]);
-                    out[y * w * n + i] = if conv == U16N { v as f32 / 65535.0 } else { ((v as i16) as f32 / 32767.0).max(-1.0) };
+                    out[y * w * n + i] = if conv == U16N { f32::from(v) / 65535.0 } else { (f32::from(v as i16) / 32767.0).max(-1.0) };
                 }
             }
         }
@@ -272,7 +272,7 @@ pub fn from_page(fmt: u32, page: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
             let b = f.bpp as usize;
             for t in 0..n {
                 let px = &page[t * 4..t * 4 + 4];
-                let v = [px[2], px[1], px[0], px[3]].map(|x| x as f32 / 255.0);
+                let v = [px[2], px[1], px[0], px[3]].map(|x| f32::from(x) / 255.0);
                 if !crate::d3d9::format::pack(c.d3d9().raw(), v, &mut out[t * b..t * b + b]) {
                     return None;
                 }
@@ -288,7 +288,7 @@ fn bc4_block(b: &[u8], signed: bool) -> [f32; 16] {
     // As WARP (winref d3d11tex, BC4/BC5 UNORM and SNORM): each palette entry, (weights * ends)
     // / (7 or 5), goes to 16 bits first: UNORM floor(v * 257) / 65535, SNORM
     // trunc(v * 32767 / 127) times the float 1 / 32767
-    let (e0, e1) = if signed { ((b[0] as i8).max(-127) as i64, (b[1] as i8).max(-127) as i64) } else { (b[0] as i64, b[1] as i64) };
+    let (e0, e1) = if signed { (i64::from((b[0] as i8).max(-127)), i64::from((b[1] as i8).max(-127))) } else { (i64::from(b[0]), i64::from(b[1])) };
     // (palette entries as num / den)
     let mut pal = [(0i64, 1i64); 8];
     pal[0] = (e0, 1);
@@ -342,12 +342,12 @@ pub fn f16_bits(v: f32) -> u16 {
     let rest = (m | 0x80_0000) & ((1 << shift) - 1);
     let half = 1 << (shift - 1);
     let up = rest > half || (rest == half && h & 1 == 1);
-    sign | (h + up as u32) as u16
+    sign | (h + u32::from(up)) as u16
 }
 
 /// f16 bits to f32 (exact)
 pub fn f16_to_f32(h: u16) -> f32 {
-    let (s, e, m) = ((h as u32 >> 15) << 31, (h as u32 >> 10) & 31, h as u32 & 1023);
+    let (s, e, m) = ((u32::from(h) >> 15) << 31, (u32::from(h) >> 10) & 31, u32::from(h) & 1023);
     let bits = match e {
         0 if m == 0 => 0,
         // subnormal: normalize
@@ -604,10 +604,10 @@ pub fn pitch_rows(dxgi: u32, w: u32, h: u32) -> (u32, u32) {
 /// `mips` levels, `layers` array slices or 1 for 3D, `samples` each), saturating: CreateTexture*
 /// refuses what no 32-bit heap holds before any size is worked out in u32 (review b02).
 pub fn texture_bytes(dxgi: u32, w: u32, h: u32, d: u32, layers: u32, mips: u32, samples: u32) -> u64 {
-    let (block, bpp) = info(dxgi).map_or((1, 4), |f| (f.block.max(1) as u64, f.bpp as u64));
+    let (block, bpp) = info(dxgi).map_or((1, 4), |f| (u64::from(f.block.max(1)), u64::from(f.bpp)));
     let mut total = 0u64;
     for l in 0..mips.min(32) {
-        let (lw, lh, ld) = ((w >> l).max(1) as u64, (h >> l).max(1) as u64, (d >> l).max(1) as u64);
+        let (lw, lh, ld) = (u64::from((w >> l).max(1)), u64::from((h >> l).max(1)), u64::from((d >> l).max(1)));
         // (NV12: even rows, the chroma ones too: pitch_rows)
         let level = if dxgi == 103 {
             lw.next_multiple_of(2).saturating_mul(lh + lh.div_ceil(2)).saturating_mul(ld)
@@ -616,20 +616,20 @@ pub fn texture_bytes(dxgi: u32, w: u32, h: u32, d: u32, layers: u32, mips: u32, 
         };
         total = total.saturating_add(level);
     }
-    total.saturating_mul(layers.max(1) as u64).saturating_mul(samples.max(1) as u64)
+    total.saturating_mul(u64::from(layers.max(1))).saturating_mul(u64::from(samples.max(1)))
 }
 
 /// Bytes the page's texture of those takes (block-compressed and converted formats decoded to
 /// their page format's texels, as `texture_bytes` saturating): a BC1 texture a quarter of the
 /// heap in the guest's layout is twice the heap decoded, so CreateTexture* refuses that too.
 pub fn page_texture_bytes(dxgi: u32, w: u32, h: u32, d: u32, layers: u32, mips: u32, samples: u32) -> u64 {
-    let bpp = info(dxgi).map_or(4, |f| page_bpp(f.page).max(1)) as u64;
+    let bpp = u64::from(info(dxgi).map_or(4, |f| page_bpp(f.page).max(1)));
     let mut total = 0u64;
     for l in 0..mips.min(32) {
-        let (lw, lh, ld) = ((w >> l).max(1) as u64, (h >> l).max(1) as u64, (d >> l).max(1) as u64);
+        let (lw, lh, ld) = (u64::from((w >> l).max(1)), u64::from((h >> l).max(1)), u64::from((d >> l).max(1)));
         total = total.saturating_add(lw.saturating_mul(lh).saturating_mul(ld).saturating_mul(bpp));
     }
-    total.saturating_mul(layers.max(1) as u64).saturating_mul(samples.max(1) as u64)
+    total.saturating_mul(u64::from(layers.max(1))).saturating_mul(u64::from(samples.max(1)))
 }
 
 /// The most a texture may take ([`texture_bytes`]): more is E_OUTOFMEMORY (as Windows answers

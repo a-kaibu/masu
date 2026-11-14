@@ -48,11 +48,11 @@ impl Card {
     /// Mixes the time elapsed since `clock`.
     fn advance(&mut self) {
         let now = Instant::now();
-        let n = (now.duration_since(self.clock).as_secs_f64() * RATE as f64) as u64;
+        let n = (now.duration_since(self.clock).as_secs_f64() * f64::from(RATE)) as u64;
         if n == 0 {
             return;
         }
-        self.clock += std::time::Duration::from_nanos(n * 1_000_000_000 / RATE as u64);
+        self.clock += std::time::Duration::from_nanos(n * 1_000_000_000 / u64::from(RATE));
         if self.streams.values().all(|s| s.q.is_empty()) {
             return;
         }
@@ -111,7 +111,7 @@ pub fn write(id: i32, frames: &[f32]) -> usize {
         let take = (frames.len() / 2).min(QUEUE_CAP.saturating_sub(before));
         s.q.extend(frames[..take * 2].chunks_exact(2).map(|f| [f[0], f[1]]));
         if stats() {
-            let (sum, n) = s.q.range(before..).fold((0f64, 0usize), |(a, n), f| (a + (f[0] * f[0]) as f64, n + 1));
+            let (sum, n) = s.q.range(before..).fold((0f64, 0usize), |(a, n), f| (a + f64::from(f[0] * f[0]), n + 1));
             static ACC: Mutex<(f64, usize)> = Mutex::new((0.0, 0));
             let mut acc = ACC.lock().unwrap_or_else(|e| e.into_inner());
             acc.0 += sum;

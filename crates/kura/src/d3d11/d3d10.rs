@@ -311,7 +311,7 @@ pub(super) unsafe fn device(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) ->
                 for k in 0..6 {
                     desc[b + 1 + k] = rd(p, 9 + k);
                 }
-                desc[b + 7] = *((p + 60 + t as u32) as *const u8) as u32;
+                desc[b + 7] = u32::from(*((p + 60 + t as u32) as *const u8));
             }
             let r = dev(d, 20, &[args[0], at(&mut desc), args[2]]);
             reface(d, args[2], 1);

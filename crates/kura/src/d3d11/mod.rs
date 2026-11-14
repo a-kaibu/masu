@@ -515,7 +515,7 @@ unsafe fn swap_desc(desc: u32) -> [u32; 15] {
     let mut p = [0u32; 15];
     for (i, v) in p.iter_mut().enumerate() {
         // (64-bit: OutputWindow is 8-byte aligned, at dword 12)
-        let k = if ptr() == 8 && i >= 11 { i + 1 + (i > 11) as usize } else { i };
+        let k = if ptr() == 8 && i >= 11 { i + 1 + usize::from(i > 11) } else { i };
         *v = rd(desc, k);
     }
     p
@@ -523,7 +523,7 @@ unsafe fn swap_desc(desc: u32) -> [u32; 15] {
 
 unsafe fn put_swap_desc(desc: u32, p: [u32; 15]) {
     for (i, v) in p.into_iter().enumerate() {
-        let k = if ptr() == 8 && i >= 11 { i + 1 + (i > 11) as usize } else { i };
+        let k = if ptr() == 8 && i >= 11 { i + 1 + usize::from(i > 11) } else { i };
         wr(desc, k, v);
     }
     if ptr() == 8 {
@@ -1127,7 +1127,7 @@ unsafe fn new_state(d: &mut D11, iface: u32, desc: Vec<u32>, out: u32) -> u32 {
 /// comparison filter (else NEVER), a bias of -16 to 15.99 and LODs that are numbers; the
 /// border color is 0 without a BORDER address.
 fn normalize_state(m: u32, desc: &mut [u32]) -> Option<()> {
-    let b = |v: &mut u32| *v = (*v != 0) as u32;
+    let b = |v: &mut u32| *v = u32::from(*v != 0);
     let ok = |c: bool| c.then_some(());
     let f = |v: u32| f32::from_bits(v);
     match m {
@@ -1477,8 +1477,8 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
         IF_SWAPCHAIN => swapchain_call(d, m, this, &a, after),
         // Enter/Leave: every call already runs under the host's lock
         IF_MULTITHREAD => match m {
-            5 => std::mem::replace(&mut d.mt_protected, a(1) != 0) as u32,
-            6 => d.mt_protected as u32,
+            5 => u32::from(std::mem::replace(&mut d.mt_protected, a(1) != 0)),
+            6 => u32::from(d.mt_protected),
             _ => 0,
         },
         IF_DXGIDEVICE => match m {
@@ -1737,7 +1737,7 @@ fn is_warp(d: &D11, id: u32) -> bool {
 
 /// An adapter's LUID (AdapterLuid): its place in the list, from 0x1000
 fn adapter_luid(d: &D11, id: u32) -> u32 {
-    0x1000 + is_warp(d, id) as u32
+    0x1000 + u32::from(is_warp(d, id))
 }
 
 /// EnumAdapters(1), EnumAdapterByGpuPreference, EnumAdapterByLuid, EnumWarpAdapter: adapter
@@ -3023,13 +3023,13 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             let ctx = d.context;
             return private_data(d, m, ctx, a);
         }
-        7 | 16 => set_slots(d, &mut st.cbs[(m == 16) as usize], a(1), a(2), a(3)),
+        7 | 16 => set_slots(d, &mut st.cbs[usize::from(m == 16)], a(1), a(2), a(3)),
         8 | 25 => {
-            set_slots(d, &mut st.srvs[(m == 8) as usize], a(1), a(2), a(3));
-            hazards::after_srvs(d, st, (m == 8) as usize, a(1), a(2));
+            set_slots(d, &mut st.srvs[usize::from(m == 8)], a(1), a(2), a(3));
+            hazards::after_srvs(d, st, usize::from(m == 8), a(1), a(2));
         }
         9 => set_one(d, &mut st.ps, a(1)),
-        10 | 26 => set_slots(d, &mut st.samplers[(m == 10) as usize], a(1), a(2), a(3)),
+        10 | 26 => set_slots(d, &mut st.samplers[usize::from(m == 10)], a(1), a(2), a(3)),
         11 => set_one(d, &mut st.vs, a(1)),
         12 => draw(d, st, true, a(1), 1, a(2), a(3) as i32, 0),
         13 => draw(d, st, false, a(1), 1, a(2), 0, 0),
@@ -3243,7 +3243,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         42 => {
             // DispatchIndirect(args, offset): the group counts from the buffer
             if let Some(Data::Buffer(b)) = d.objs.get(&d.id_of(a(1))).map(|o| &o.data) {
-                if a(2) as u64 + 12 <= b.size as u64 {
+                if u64::from(a(2)) + 12 <= u64::from(b.size) {
                     let p = b.mem + a(2);
                     let (x, y, z) = (rd(p, 0), rd(p, 1), rd(p, 2));
                     dispatch(d, st, x, y, z);
@@ -3251,13 +3251,13 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             }
         }
         38..=40 => {}
-        72 | 77 => get_slots(d, &st.cbs[(m == 77) as usize], a(1), a(2), a(3)),
-        73 | 84 => get_slots(d, &st.srvs[(m == 73) as usize], a(1), a(2), a(3)),
+        72 | 77 => get_slots(d, &st.cbs[usize::from(m == 77)], a(1), a(2), a(3)),
+        73 | 84 => get_slots(d, &st.srvs[usize::from(m == 73)], a(1), a(2), a(3)),
         74 => {
             get_one(d, st.ps, a(1));
             wr(a(3), 0, 0);
         }
-        75 | 85 => get_slots(d, &st.samplers[(m == 75) as usize], a(1), a(2), a(3)),
+        75 | 85 => get_slots(d, &st.samplers[usize::from(m == 75)], a(1), a(2), a(3)),
         76 => {
             get_one(d, st.vs, a(1));
             wr(a(3), 0, 0);
@@ -3467,7 +3467,7 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
             let (pitch, rows) = format::pitch_rows(t.fmt, lw, lh);
             let depth = if t.dim == 3 { (t.layers >> level).max(1) } else { 1 };
             // (in 64 bits: a 2048^3 texture's level 0 does not fit in 32)
-            let Some(size) = u32::try_from(pitch as u64 * rows as u64 * depth as u64).ok().filter(|&n| n < 0x8000_0000) else {
+            let Some(size) = u32::try_from(u64::from(pitch) * u64::from(rows) * u64::from(depth)).ok().filter(|&n| n < 0x8000_0000) else {
                 wrp(out, 0, 0);
                 return E_OUTOFMEMORY;
             };
@@ -3823,7 +3823,7 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
     }
     let (pitch, rows) = format::pitch_rows(t.fmt, w, h);
     // (in 64 bits; past what the allocator gives, or nothing from it: none)
-    let size = u32::try_from(pitch as u64 * rows as u64 * depth as u64).ok().filter(|&n| n < 0x8000_0000)?;
+    let size = u32::try_from(u64::from(pitch) * u64::from(rows) * u64::from(depth)).ok().filter(|&n| n < 0x8000_0000)?;
     let mem = ((*d.calls).alloc)(size.max(16)) as u32;
     if mem == 0 {
         return None;
@@ -3846,7 +3846,7 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
     }
     if packs {
         let pp = w * format::page_bpp(t.page);
-        let Some(n) = u32::try_from(pp as u64 * h as u64).ok().filter(|&n| n < 0x8000_0000) else {
+        let Some(n) = u32::try_from(u64::from(pp) * u64::from(h)).ok().filter(|&n| n < 0x8000_0000) else {
             ((*d.calls).free)(mem as *mut u8);
             return None;
         };
@@ -4088,11 +4088,11 @@ unsafe fn wire_edges(d: &D11, st: &State, indexed: bool, count: u32, start: u32,
     let idx: Vec<u32> = if indexed {
         let isz = if st.ib.1 == 42 { 4u64 } else { 2 };
         let Some(Data::Buffer(b)) = d.objs.get(&st.ib.0).map(|o| &o.data) else { return None };
-        if st.ib.2 as u64 + (start as u64 + count as u64) * isz > b.size as u64 {
+        if u64::from(st.ib.2) + (u64::from(start) + u64::from(count)) * isz > u64::from(b.size) {
             return None;
         }
         let p = b.mem + st.ib.2 + start * isz as u32;
-        (0..count as usize).map(|k| if isz == 4 { rd(p, k) } else { *(p as *const u16).add(k) as u32 }).collect()
+        (0..count as usize).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*(p as *const u16).add(k)) }).collect()
     } else {
         (start..start.saturating_add(count)).collect()
     };
@@ -4211,7 +4211,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         let i = match slots.iter().position(|s| s.0 == e.3) {
             Some(i) => i,
             None => {
-                slots.push((e.3, if sprite.is_some() { 1 } else { e.5 as u32 }, Vec::new()));
+                slots.push((e.3, if sprite.is_some() { 1 } else { u32::from(e.5) }, Vec::new()));
                 slots.len() - 1
             }
         };
@@ -4244,7 +4244,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     let mut key = vec![vs, ps.as_ref().map_or(0, |p| p.0), topo, strip];
     // rasterizer: cull, front ccw, depth bias, slope, clamp
     // (front ccw in bit 0, DepthClipEnable off in bit 1)
-    key.extend_from_slice(&[r[1], (r[2] != 0) as u32 | ((r[6] == 0) as u32) << 1, r[3], r[5], r[4]]);
+    key.extend_from_slice(&[r[1], u32::from(r[2] != 0) | u32::from(r[6] == 0) << 1, r[3], r[5], r[4]]);
     // depth stencil
     match (depth_fmt, &ds) {
         (Some(f), Some(s)) => {
@@ -4405,7 +4405,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     match &wire {
         // (the edges hold the vertex numbers of a draw without indices: no base then)
         Some(e) => w.extend_from_slice(&[1, e.len() as u32, instances, 0, if indexed { base as u32 } else { 0 }, first_instance]),
-        None => w.extend_from_slice(&[indexed as u32, count, instances, start, base as u32, first_instance]),
+        None => w.extend_from_slice(&[u32::from(indexed), count, instances, start, base as u32, first_instance]),
     }
     // What it reads from its buffers (vertices, indices, constants), hashed: the page tells a
     // frame that draws the same as the last one, though from another place in a ring buffer
@@ -4417,7 +4417,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     let mut h = 0x811c_9dc5u32;
     let mut add = |p: u32, n: u32| {
         for &b in std::slice::from_raw_parts(p as *const u8, n as usize) {
-            h = (h ^ b as u32).wrapping_mul(0x0100_0193);
+            h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
         }
     };
     let mut known = count <= 4096;
@@ -4426,9 +4426,9 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     } else if indexed {
         let isz = if st.ib.1 == 42 { 4 } else { 2 };
         match mem(st.ib.0) {
-            Some((m, size)) if st.ib.2 as u64 + (start as u64 + count as u64) * isz <= size as u64 => {
+            Some((m, size)) if u64::from(st.ib.2) + (u64::from(start) + u64::from(count)) * isz <= u64::from(size) => {
                 let p = m + st.ib.2 + start * isz as u32;
-                (0..count as usize).map(|k| if isz == 4 { rd(p, k) } else { *(p as *const u16).add(k) as u32 }.wrapping_add(base as u32)).collect()
+                (0..count as usize).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*(p as *const u16).add(k)) }.wrapping_add(base as u32)).collect()
             }
             _ => {
                 known = false;
@@ -4444,9 +4444,9 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
             known = false;
             break;
         };
-        let at = |v: u32| off as u64 + v as u64 * stride as u64;
+        let at = |v: u32| u64::from(off) + u64::from(v) * u64::from(stride);
         let vs: Vec<u32> = if s.1 != 0 { (first_instance..first_instance.saturating_add(instances)).collect() } else { verts.clone() };
-        if stride == 0 || vs.iter().any(|&v| at(v) + stride as u64 > size as u64) {
+        if stride == 0 || vs.iter().any(|&v| at(v) + u64::from(stride) > u64::from(size)) {
             known = false;
             break;
         }
@@ -4603,7 +4603,7 @@ fn sampler_key(s: &[u32], cmp: bool) -> u32 {
         _ => 0,
     };
     let (mip, mag, min) = (f & 1, (f >> 2) & 1, (f >> 4) & 1);
-    let aniso = (f & 0x40 != 0) as u32;
+    let aniso = u32::from(f & 0x40 != 0);
     let func = if cmp { s[6] & 15 } else { 0 };
     addr(s[1]) | addr(s[2]) << 3 | addr(s[3]) << 6 | mag << 9 | min << 10 | mip << 11 | aniso << 12 | func << 13 | (s[5].clamp(1, 16)) << 17
 }

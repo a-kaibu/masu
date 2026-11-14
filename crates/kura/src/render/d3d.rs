@@ -285,7 +285,7 @@ fn blendable(f: Tf) -> bool {
     !f.is_uint() && !f.is_sint() && (!f.is_float32() || gpu::has_feature("float32-blendable"))
 }
 fn f16_to_f32(h: u16) -> f32 {
-    let (s, e, m) = ((h as u32 & 0x8000) << 16, (h >> 10) as u32 & 31, h as u32 & 0x3ff);
+    let (s, e, m) = ((u32::from(h) & 0x8000) << 16, u32::from(h >> 10) & 31, u32::from(h) & 0x3ff);
     f32::from_bits(match (e, m) {
         (0, 0) => s,
         (0, _) => {
@@ -606,7 +606,7 @@ fn q24(z: f32) -> f32 {
 
 /// A depth in 0..1 as Direct3D's 24-bit UNORM depth reads back (TWIN_Q24's value).
 pub(crate) fn q24(z: f32) -> f32 {
-    let k = (z.clamp(0.0, 1.0) as f64 * 16777215.0).round_ties_even();
+    let k = (f64::from(z.clamp(0.0, 1.0)) * 16777215.0).round_ties_even();
     (k / 16777215.0) as f32
 }
 
@@ -1325,7 +1325,7 @@ impl D3d {
                         // detach_mem); 32-bit floats as they come, halved for a page without
                         // float32-filterable)
                         let src_bpp = if halved { 16 } else { bpp(fmt) };
-                        if cw > 0 && ch > 0 && bpr as u64 >= cw as u64 * src_bpp as u64 && bpr % 4 == 0 {
+                        if cw > 0 && ch > 0 && u64::from(bpr) >= u64::from(cw) * u64::from(src_bpp) && bpr % 4 == 0 {
                             STATS[3].fetch_add(len as u64, Relaxed);
                             if halved {
                                 let half = halves(&blob[off as usize..off as usize + len]);
@@ -1660,7 +1660,7 @@ impl D3d {
             let at = i + k;
             // (data offsets: vso, pso, vertex buffers, indices)
             let offset = at == i + 12 || at == i + 14 || (at > p && at <= p + nbuf) || at == p + 1 + nbuf + 1;
-            h = add(h, if offset { 0 } else { w as u64 });
+            h = add(h, if offset { 0 } else { u64::from(w) });
         }
         let base = h;
         let mut others = 0xcbf2_9ce4_8422_2325u64;
@@ -1786,7 +1786,7 @@ impl D3d {
             _ if !known => None,
             None => Some(None),
             // (most of the target: drawn whole, a clear is cheaper than a load on a tiler)
-            Some(d) if ((d[2].saturating_sub(d[0])) as u64 * (d[3].saturating_sub(d[1])) as u64) * 10 > tw as u64 * th as u64 * 6 => None,
+            Some(d) if (u64::from(d[2].saturating_sub(d[0])) * u64::from(d[3].saturating_sub(d[1]))) * 10 > u64::from(tw) * u64::from(th) * 6 => None,
             // (a draw starts it: only inside what it covers is nothing left from before)
             Some(d) if cover && !(d[0] >= covered[0] && d[1] >= covered[1] && d[2] <= covered[2] && d[3] <= covered[3]) => None,
             Some(d) => Some(Some(d)),
@@ -2310,7 +2310,7 @@ impl D3d {
     /// stores back (`&d3dstats`: tile load/store).
     fn traffic(&self, tex: u32, level: u32, load: bool, store: bool) {
         let Some(t) = self.textures.get(&tex) else { return };
-        let bytes = ((t.w >> level).max(1) * (t.h >> level).max(1) * bpp(t.format)) as u64;
+        let bytes = u64::from((t.w >> level).max(1) * (t.h >> level).max(1) * bpp(t.format));
         if load {
             STATS[4].fetch_add(bytes, Relaxed);
         }
@@ -2937,10 +2937,10 @@ impl D3d {
             return;
         }
         let ((slw, slh), (dlw, dlh)) = (size(s, sl), size(t, dl));
-        if sx as u64 + sw as u64 > slw as u64 || sy as u64 + sh as u64 > slh as u64 || dx as u64 + dw as u64 > dlw as u64 || dy as u64 + dh as u64 > dlh as u64 {
+        if u64::from(sx) + u64::from(sw) > u64::from(slw) || u64::from(sy) + u64::from(sh) > u64::from(slh) || u64::from(dx) + u64::from(dw) > u64::from(dlw) || u64::from(dy) + u64::from(dh) > u64::from(dlh) {
             return;
         }
-        if sz as u64 + depth as u64 > slices(s, sl) as u64 || dz as u64 + depth as u64 > slices(t, dl) as u64 || ((sz | dz) != 0 || depth > 1) && filter != 0 && filter != 2 {
+        if u64::from(sz) + u64::from(depth) > u64::from(slices(s, sl)) || u64::from(dz) + u64::from(depth) > u64::from(slices(t, dl)) || ((sz | dz) != 0 || depth > 1) && filter != 0 && filter != 2 {
             return;
         }
         let (s_tex, s_fmt, s_w, s_h) = (s.tex, s.format, s.w, s.h);
@@ -3050,7 +3050,7 @@ impl D3d {
         let (level, z) = (level & 0xffff, level >> 16);
         // (a box inside the level: WebGPU's copy wants it so)
         let slices = |t: &Tex| if t.dim == Dim::D3 { (t.layers >> level).max(1) } else { t.layers.max(1) };
-        let inside = |t: &Tex| level < t.levels && x as u64 + w as u64 <= (t.w >> level).max(1) as u64 && y as u64 + h as u64 <= (t.h >> level).max(1) as u64 && z < slices(t);
+        let inside = |t: &Tex| level < t.levels && u64::from(x) + u64::from(w) <= u64::from((t.w >> level).max(1)) && u64::from(y) + u64::from(h) <= u64::from((t.h >> level).max(1)) && z < slices(t);
         let Some(t) = self.textures.get(&id).filter(|t| (matches!(t.format, Tf::Depth16Unorm | Tf::Depth32Float) || !is_depth(t.format)) && t.samples == 1 && w > 0 && h > 0 && inside(t)) else {
             vnhost_d3d9_readback_done(req);
             return;
@@ -3184,7 +3184,7 @@ impl D3d {
         };
         self.end_pass();
         self.flush_if_used(tid);
-        let q = self.textures[&id].d24 as usize;
+        let q = usize::from(self.textures[&id].d24);
         if self.twin_pipe[q].0 == 0 {
             // (24-bit: the UNORM value k / (2^24 - 1) of k = round(z * (2^24 - 1)), as
             // k 2^-24 + k 2^-48 (the series' first terms) rounded as k / (2^24 - 1): a tie
@@ -3337,7 +3337,7 @@ impl D3d {
     #[allow(clippy::too_many_arguments)]
     fn view2(&mut self, id: u32, dim: u8, mip: u32, mips: u32, layer: u32, layers: u32, depth_only: bool) -> Id {
         // (a texture gone: a 1x1 of zeros, not an abort of the page)
-        let Some(t) = self.textures.get_mut(&id) else { return self.dummy(dim as u32, 1) };
+        let Some(t) = self.textures.get_mut(&id) else { return self.dummy(u32::from(dim), 1) };
         let k = (dim, mip, mips, layer, layers, depth_only);
         if let Some(&v) = t.views.get(&k) {
             return v;
@@ -3697,7 +3697,7 @@ impl D3d {
             qi += 1;
         } else {
             let (fmt, en, write, func, sen, masks) = (k[qi], k[qi + 1], k[qi + 2], k[qi + 3], k[qi + 4], k[qi + 5]);
-            zuse = (en != 0 || write != 0) as u32 | ((sen != 0) as u32) << 1;
+            zuse = u32::from(en != 0 || write != 0) | u32::from(sen != 0) << 1;
             let face = |o: usize| {
                 if sen != 0 {
                     format!(
@@ -4005,7 +4005,7 @@ impl D3d {
         q_ += 6;
         let (sx, sy, sw, sh, s_on) = (c[q_], c[q_ + 1], c[q_ + 2], c[q_ + 3], c[q_ + 4]);
         q_ += 5;
-        let blend: [f64; 4] = std::array::from_fn(|k| f32of(c[q_ + k]) as f64);
+        let blend: [f64; 4] = std::array::from_fn(|k| f64::from(f32of(c[q_ + k])));
         q_ += 4;
         let stencil_ref = c[q_];
         q_ += 1;
@@ -4266,7 +4266,7 @@ pub(crate) fn rects9(tw: u32, th: u32, vp: [f32; 6], sc: [u32; 4], clip: Option<
     let span = |a: f32, b: f32| {
         let mut w = b - a;
         // (one rounding: one step down is enough, see the proof)
-        if w > 0.0 && a as f64 + w as f64 > b as f64 {
+        if w > 0.0 && f64::from(a) + f64::from(w) > f64::from(b) {
             w = f32::from_bits(w.to_bits() - 1);
         }
         w
@@ -4279,7 +4279,7 @@ pub(crate) fn rects9(tw: u32, th: u32, vp: [f32; 6], sc: [u32; 4], clip: Option<
 }
 
 fn color_of(c: u32) -> [f64; 4] {
-    [((c >> 16) & 255) as f64 / 255.0, ((c >> 8) & 255) as f64 / 255.0, (c & 255) as f64 / 255.0, (c >> 24) as f64 / 255.0]
+    [f64::from((c >> 16) & 255) / 255.0, f64::from((c >> 8) & 255) / 255.0, f64::from(c & 255) / 255.0, f64::from(c >> 24) / 255.0]
 }
 
 fn drop_all<K>(m: &mut HashMap<K, Id>) {
@@ -4415,19 +4415,19 @@ pub use snap::Saved;
 /// The bytes of `h` rows of `bpr` bytes at `off` of a blob of `blob` bytes: None when they are
 /// not all in it (the products of two u32 wrapped a 32-bit usize and passed the test).
 fn rows_in(off: u32, bpr: u32, h: u32, blob: usize) -> Option<usize> {
-    let len = bpr as u64 * h as u64;
-    (off as u64 + len <= blob as u64).then_some(len as usize)
+    let len = u64::from(bpr) * u64::from(h);
+    (u64::from(off) + len <= blob as u64).then_some(len as usize)
 }
 
 /// The bytes of `ch` rows `pitch` apart at guest address `ptr`, the last one `cw` pixels of `bpp`
 /// bytes: None for no rows, rows shorter than their pixels or an end past the 4 GB.
 fn rows_at(ptr: u32, pitch: u32, ch: u32, cw: u32, bpp: u32) -> Option<usize> {
-    let row = cw as u64 * bpp as u64;
-    if ch == 0 || row == 0 || (ch > 1 && (pitch as u64) < row) {
+    let row = u64::from(cw) * u64::from(bpp);
+    if ch == 0 || row == 0 || (ch > 1 && u64::from(pitch) < row) {
         return None;
     }
-    let len = pitch as u64 * (ch as u64 - 1) + row;
-    (ptr as u64 + len <= 1 << 32).then_some(len as usize)
+    let len = u64::from(pitch) * (u64::from(ch) - 1) + row;
+    (u64::from(ptr) + len <= 1 << 32).then_some(len as usize)
 }
 
 #[cfg(test)]
