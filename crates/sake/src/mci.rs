@@ -2170,8 +2170,18 @@ mod decode_tests {
         // a page that takes the chunks but decodes none: the decoder stops pushing at the limit
         let (m, _) = sound(mp3(2000)).unwrap();
         let (data, _) = block(&m);
-        std::thread::sleep(Duration::from_millis(200));
+        // (the decoder thread may be slow to start under a loaded test run: waited for, then
+        // given time to push past the limit if it would)
         let mut chunks = 0;
+        let end = Instant::now() + Duration::from_secs(30);
+        while chunks == 0 && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(20));
+            kura::adec::test_page_pass(&mut |_, _| {
+                chunks += 1;
+                Vec::new()
+            });
+        }
+        std::thread::sleep(Duration::from_millis(200));
         kura::adec::test_page_pass(&mut |_, _| {
             chunks += 1;
             Vec::new()
