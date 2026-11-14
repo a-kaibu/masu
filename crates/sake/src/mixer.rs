@@ -429,7 +429,8 @@ fn line_controls_api(c: &mut Ctx, wide: bool) -> u32 {
     }
     let (cb, arr) = (r32(p + 16), mem::rp(p + 20));
     let csize = control_size(wide);
-    if wide && arr == 0 || !wide && cb != csize {
+    // (a null array: refused by both forms; the A form wrote its controls at address 0)
+    if arr == 0 || !wide && cb != csize {
         return INVALPARAM;
     }
     if !names_device(h, flags, is_wave) {
@@ -652,6 +653,23 @@ mod tests {
         assert!(!names_device(0, 0x3000_0000, no_wave));
     }
 
+    /// mixerGetLineControlsA with pamxctrl NULL refused as the W form is, nothing written
+    #[test]
+    fn controls_a_null_array() {
+        let _g = crate::test_guest::enter();
+        let p = mem::heap_alloc(64, true);
+        for wide in [false, true] {
+            w32(p, lines_controls_size());
+            w32(p + 4, DEST_LINE);
+            w32(p + 12, 2);
+            w32(p + 16, control_size(wide));
+            mem::wp(p + 20, 0);
+            let f = if wide { (|c: &mut Ctx| line_controls_api(c, true)) as crate::api::Handler } else { |c: &mut Ctx| line_controls_api(c, false) };
+            assert_eq!(crate::test_guest::call(f, &[0, p, 0]), INVALPARAM, "wide {wide}");
+        }
+        mem::heap_free(p);
+    }
+
     #[test]
     fn layouts() {
         // sizeof(MIXERLINEA/W) on x86 (mmsystem.h, pack 1): 168 / 280
@@ -718,3 +736,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "mixer_snapshot_tests.rs"]
+mod snapshot_tests;
