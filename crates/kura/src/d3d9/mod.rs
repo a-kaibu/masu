@@ -55,6 +55,8 @@ mod cost_tests;
 mod prep_tests;
 #[cfg(test)]
 mod merge_tests;
+#[cfg(test)]
+mod format_golden_tests;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
