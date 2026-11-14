@@ -1373,11 +1373,8 @@ file	crates/sake/src/dshow_play.rs	ptr_as_ptr	1
 file	crates/sake/src/dshow_play.rs	undocumented_unsafe_blocks	4
 file	crates/sake/src/dshow_play.rs	unwrap_used	2
 file	crates/sake/src/dwrite.rs	arithmetic_side_effects	83
-file	crates/sake/src/dwrite.rs	as_conversions	75
-file	crates/sake/src/dwrite.rs	cast_possible_truncation	45
-file	crates/sake/src/dwrite.rs	cast_possible_wrap	2
-file	crates/sake/src/dwrite.rs	cast_precision_loss	2
-file	crates/sake/src/dwrite.rs	cast_sign_loss	1
+file	crates/sake/src/dwrite.rs	as_conversions	6
+file	crates/sake/src/dwrite.rs	cast_possible_truncation	4
 file	crates/sake/src/dwrite.rs	indexing_slicing	28
 file	crates/sake/src/eventlog.rs	arithmetic_side_effects	43
 file	crates/sake/src/eventlog.rs	as_conversions	43
