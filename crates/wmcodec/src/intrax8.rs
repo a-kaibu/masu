@@ -7,6 +7,7 @@ use crate::bits::Bits;
 use crate::idct;
 use crate::intrax8_tables as t;
 use crate::msmpeg4_tables as m4;
+use crate::num::{ix, lo16, lo16u, lo8, lo8z, us};
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
@@ -25,7 +26,7 @@ fn tables() -> &'static Tables {
     T.get_or_init(|| {
         // (symbol, length) pairs, codes assigned in order (ff_vlc_init_tables_from_lengths)
         let mk = |bits: u32, pairs: &[u8]| {
-            let syms: Vec<i32> = pairs.chunks(2).map(|p| p[0] as i32).collect();
+            let syms: Vec<i32> = pairs.chunks(2).map(|p| i32::from(p[0])).collect();
             let lens: Vec<u8> = pairs.chunks(2).map(|p| p[1]).collect();
             Vlc::from_lengths(bits, &lens, Some(&syms), 0)
         };
@@ -64,10 +65,57 @@ const QUANT_TABLE: [i32; 64] = [
     428, 433, 438, 443, 448, 454, 459, 465, 470, 476, 482, 488, 493, 499, 505, 511,
 ];
 
-const PREDICTION_TABLE: [[u8; 12]; 3] = [
-    [0, 8, 4, 10, 11, 2, 6, 9, 1, 3, 5, 7],
-    [4, 0, 8, 11, 10, 3, 5, 2, 6, 9, 1, 7],
-    [8, 0, 4, 10, 11, 1, 7, 2, 6, 9, 3, 5],
+/// The 12 prediction directions of a block (spatial_compensation_0..11): 0 the smooth blend of
+/// both edges, 4 from above, 8 from the left, the rest the diagonals and blends between.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Orient {
+    O0,
+    O1,
+    O2,
+    O3,
+    O4,
+    O5,
+    O6,
+    O7,
+    O8,
+    O9,
+    O10,
+    O11,
+}
+
+impl Orient {
+    const ALL: [Orient; 12] = [O0, O1, O2, O3, O4, O5, O6, O7, O8, O9, O10, O11];
+
+    /// Direction `n` (0..12).
+    fn of(n: u32) -> Option<Orient> {
+        Orient::ALL.get(us(n)).copied()
+    }
+
+    fn n(self) -> u32 {
+        match self {
+            O0 => 0,
+            O1 => 1,
+            O2 => 2,
+            O3 => 3,
+            O4 => 4,
+            O5 => 5,
+            O6 => 6,
+            O7 => 7,
+            O8 => 8,
+            O9 => 9,
+            O10 => 10,
+            O11 => 11,
+        }
+    }
+}
+
+use Orient::*;
+
+/// [predicted orientation][coded orientation]
+const PREDICTION_TABLE: [[Orient; 12]; 3] = [
+    [O0, O8, O4, O10, O11, O2, O6, O9, O1, O3, O5, O7],
+    [O4, O0, O8, O11, O10, O3, O5, O2, O6, O9, O1, O7],
+    [O8, O0, O4, O10, O11, O1, O7, O2, O6, O9, O3, O5],
 ];
 
 // the scratchpad's areas: 1 and 2 the two columns left (bottom up), 3 the corner, 4 + 5 the row
@@ -101,8 +149,8 @@ pub struct IntraX8 {
     flat_dc: bool,
     predicted_dc: i32,
     raw_orient: i32,
-    chroma_orient: i32,
-    orient: i32,
+    chroma_orient: Orient,
+    orient: Orient,
     est_run: i32,
     mb_x: usize,
     mb_y: usize,
@@ -124,7 +172,7 @@ impl IntraX8 {
             mb_w, mb_h, prediction: vec![0; mb_w * 2 * 2],
             quant: 1, dquant: 2, qsum: 0, use_quant_matrix: false, quant_dc_chroma: 1, divide_quant_dc_luma: 1,
             divide_quant_dc_chroma: 1, loopfilter: false, ac_sel: [None; 4], dc_sel: [None; 3], orient_sel: None,
-            edges: 0, flat_dc: false, predicted_dc: 0, raw_orient: 0, chroma_orient: 0, orient: 0, est_run: 0,
+            edges: 0, flat_dc: false, predicted_dc: 0, raw_orient: 0, chroma_orient: O0, orient: O0, est_run: 0,
             mb_x: 0, mb_y: 0, scratch: [0; 42], block: [0; 64],
         }
     }
@@ -138,7 +186,7 @@ impl IntraX8 {
         self.quant = dquant >> 1;
         self.qsum = quant_offset;
         self.loopfilter = loopfilter;
-        self.use_quant_matrix = r.get1() != 0;
+        self.use_quant_matrix = r.bit();
         let q = self.quant.max(1);
         self.divide_quant_dc_luma = ((1 << 16) + (q >> 1)) / q;
         if self.quant < 5 {
@@ -155,7 +203,7 @@ impl IntraX8 {
             self.mb_y = mb_y;
             let mut d0 = mb_y * 8 * y.stride;
             let mut dc = (mb_y & !1) * 4 * u.stride;
-            if r.left() < 1 {
+            if r.remaining() == 0 {
                 return mb_y;
             }
             for mb_x in 0..self.mb_w * 2 {
@@ -184,8 +232,8 @@ impl IntraX8 {
 
     fn select_ac(&mut self, r: &mut Bits, mode: usize) {
         if self.ac_sel[mode].is_none() {
-            let k = r.get(3) as usize;
-            self.ac_sel[mode] = Some(((self.quant < 13) as usize * 2 + (mode >> 1)) * 8 + k);
+            let k = r.uz::<3>();
+            self.ac_sel[mode] = Some((usize::from(self.quant < 13) * 2 + (mode >> 1)) * 8 + k);
         }
     }
 
@@ -197,41 +245,41 @@ impl IntraX8 {
                 return (64, 64, true);
             }
             let fin = i > 22;
-            let i = i - 23 * fin as i32;
+            let i = i - 23 * i32::from(fin);
             let l = (0xE50000 >> (i & 0x1E)) & 3;
             let t = 0x01030F >> (l << 3);
             (i & t, l, fin)
         } else if i < 73 {
-            let (eb, mask, ro, lo) = AC_DECODE[(i - 46) as usize];
-            let e = r.get(eb) as i32;
-            let mask = mask as i32;
+            let (eb, mask, ro, lo) = AC_DECODE[ix(i - 46)];
+            let e = r.get(eb).cast_signed();
+            let mask = mask.cast_signed();
             (ro + (e & mask), lo + (e & !mask), i - 46 > 58 - 46)
         } else if i < 75 {
-            let e = r.get(5) as usize;
-            ((CRAZY_MIX_RUNLEVEL[e] >> 4) as i32, (CRAZY_MIX_RUNLEVEL[e] & 15) as i32, i & 1 == 0)
+            let e = r.uz::<5>();
+            (i32::from(CRAZY_MIX_RUNLEVEL[e] >> 4), i32::from(CRAZY_MIX_RUNLEVEL[e] & 15), i & 1 == 0)
         } else {
-            let level = r.get(7 - 3 * (i as u32 & 1)) as i32;
-            let run = r.get(6) as i32;
-            (run, level, r.get1() != 0)
+            let level = r.get(7 - 3 * (i.cast_unsigned() & 1)).cast_signed();
+            let run = r.i::<6>();
+            (run, level, r.bit())
         }
     }
 
     /// x8_get_dc_rlf: (level, final), None on a bad code
     fn dc_rlf(&mut self, r: &mut Bits, mode: usize) -> Option<(i32, bool)> {
         if self.dc_sel[mode].is_none() {
-            let k = r.get(3) as usize;
-            self.dc_sel[mode] = Some((self.quant < 13) as usize * 8 + k);
+            let k = r.uz::<3>();
+            self.dc_sel[mode] = Some(usize::from(self.quant < 13) * 8 + k);
         }
         let mut i = tables().dc[self.dc_sel[mode].unwrap_or(0)].read(r);
         let fin = i > 16;
-        i -= 17 * fin as i32;
+        i -= 17 * i32::from(fin);
         if i <= 0 {
             return if i == 0 { Some((0, fin)) } else { None };
         }
         let mut c = (i + 1) >> 1;
-        c -= (c > 1) as i32;
-        let e = r.get(c as u32) as i32;
-        let i = DC_INDEX_OFFSET[i as usize] + (e >> 1);
+        c -= i32::from(c > 1);
+        let e = r.get(c.cast_unsigned()).cast_signed();
+        let i = DC_INDEX_OFFSET[ix(i)] + (e >> 1);
         let e = -(e & 1);
         Some(((i ^ e) - e, fin))
     }
@@ -239,7 +287,7 @@ impl IntraX8 {
     fn orient_vlc(&mut self, r: &mut Bits) -> i32 {
         let low = self.quant < 13;
         if self.orient_sel.is_none() {
-            self.orient_sel = Some(r.get(1 + low as u32) as usize);
+            self.orient_sel = Some(us(r.get(1 + u32::from(low))));
         }
         let k = self.orient_sel.unwrap_or(0);
         if low { tables().orient_low[k].read(r) } else { tables().orient_high[k].read(r) }
@@ -256,7 +304,7 @@ impl IntraX8 {
         };
         self.flat_dc = false;
         if range < quant || range < 3 {
-            self.orient = 0;
+            self.orient = O0;
             // (a +-1 IDCT difference breaks decoding here)
             if range < 3 {
                 self.flat_dc = true;
@@ -269,14 +317,14 @@ impl IntraX8 {
         }
         if range < 2 * self.quant {
             if self.edges & 3 == 0 {
-                if self.orient == 1 {
-                    self.orient = 11;
+                if self.orient == O1 {
+                    self.orient = O11;
                 }
-                if self.orient == 2 {
-                    self.orient = 10;
+                if self.orient == O2 {
+                    self.orient = O10;
                 }
             } else {
-                self.orient = 0;
+                self.orient = O0;
             }
             self.raw_orient = 0;
         } else {
@@ -284,51 +332,52 @@ impl IntraX8 {
             if !(0..12).contains(&self.raw_orient) {
                 return None;
             }
-            self.orient = PREDICTION_TABLE[self.orient as usize][self.raw_orient as usize] as i32;
+            self.orient = PREDICTION_TABLE[us(self.orient.n())][ix(self.raw_orient)];
         }
         Some(())
     }
 
-    fn update_predictions(&mut self, orient: i32, est_run: i32) {
-        self.prediction[self.mb_x * 2 + (self.mb_y & 1)] = ((est_run << 2) + (orient == 4) as i32 + 2 * (orient == 8) as i32) as u8;
+    fn update_predictions(&mut self, orient: Orient, est_run: i32) {
+        self.prediction[self.mb_x * 2 + (self.mb_y & 1)] = lo8(((est_run << 2) + i32::from(orient == O4) + 2 * i32::from(orient == O8)).cast_unsigned());
     }
 
     fn get_prediction_chroma(&mut self) {
         let (x, y) = (self.mb_x, self.mb_y);
-        self.edges = (x >> 1 == 0) as u32 | 2 * (y >> 1 == 0) as u32 | 4 * (x >= 2 * self.mb_w - 1) as u32;
+        self.edges = u32::from(x >> 1 == 0) | 2 * u32::from(y >> 1 == 0) | 4 * u32::from(x >= 2 * self.mb_w - 1);
         self.raw_orient = 0;
         if self.edges & 3 != 0 {
-            self.chroma_orient = 4 << ((0xCC >> self.edges) & 1);
+            self.chroma_orient = if (0xCC >> self.edges) & 1 != 0 { O8 } else { O4 };
             return;
         }
-        self.chroma_orient = ((self.prediction[2 * x - 2] & 3) << 2) as i32;
+        // (update_predictions stores 0..2 in the low bits)
+        self.chroma_orient = Orient::of(u32::from(self.prediction[2 * x - 2] & 3) << 2).unwrap_or(O0);
     }
 
     fn get_prediction(&mut self) {
         let (x, y) = (self.mb_x, self.mb_y);
-        self.edges = (x == 0) as u32 | 2 * (y == 0) as u32 | 4 * (x >= 2 * self.mb_w - 1) as u32;
+        self.edges = u32::from(x == 0) | 2 * u32::from(y == 0) | 4 * u32::from(x >= 2 * self.mb_w - 1);
         let p = &self.prediction;
         match self.edges & 3 {
             1 => {
-                self.est_run = (p[(y & 1 == 0) as usize] >> 2) as i32;
-                self.orient = 1;
+                self.est_run = i32::from(p[usize::from(y & 1 == 0)] >> 2);
+                self.orient = O1;
                 return;
             }
             2 => {
-                self.est_run = (p[2 * x - 2] >> 2) as i32;
-                self.orient = 2;
+                self.est_run = i32::from(p[2 * x - 2] >> 2);
+                self.orient = O2;
                 return;
             }
             3 => {
                 self.est_run = 16;
-                self.orient = 0;
+                self.orient = O0;
                 return;
             }
             _ => {}
         }
-        let b = p[2 * x + (y & 1 == 0) as usize] as i32;
-        let a = p[2 * x - 2 + (y & 1)] as i32;
-        let c = p[2 * x - 2 + (y & 1 == 0) as usize] as i32;
+        let b = i32::from(p[2 * x + usize::from(y & 1 == 0)]);
+        let a = i32::from(p[2 * x - 2 + (y & 1)]);
+        let c = i32::from(p[2 * x - 2 + usize::from(y & 1 == 0)]);
         self.est_run = b.min(a);
         // (not the edges: x & y, as FFmpeg has it)
         if x & y != 0 {
@@ -336,15 +385,17 @@ impl IntraX8 {
         }
         self.est_run >>= 2;
         let (a, b, c) = (a & 3, b & 3, c & 3);
-        let i = ((0xFFEAF4C4u32 >> (2 * b + 8 * a)) & 3) as i32;
-        self.orient = if i != 3 { i } else { ((0xFFEAD8 >> (2 * c + 8 * (self.quant > 12) as i32)) & 3) as i32 };
+        let i = (0xFFEAF4C4u32 >> (2 * b + 8 * a)) & 3;
+        let i = if i != 3 { i } else { (0xFFEAD8u32 >> (2 * c + 8 * i32::from(self.quant > 12))) & 3 };
+        // (0..3: two bits)
+        self.orient = Orient::of(i).unwrap_or(O0);
     }
 
     /// x8_ac_compensation
     fn ac_compensation(&mut self, direction: i32, dc_level: i32) {
         let b = &mut self.block;
         let tt = |x: i32| (x * dc_level + 0x8000) >> 16;
-        let mut sub = |x: usize, y: usize, t: i32| b[x + y * 8] = (b[x + y * 8] as i32 - t) as i16;
+        let mut sub = |x: usize, y: usize, t: i32| b[x + y * 8] = lo16(i32::from(b[x + y * 8]) - t);
         match direction {
             0 => {
                 let t = tt(3811);
@@ -399,7 +450,7 @@ impl IntraX8 {
     /// x8_decode_intra_mb: one 8x8 block at `at` of plane `p` (`chroma` 0 luma, 1 / 2)
     fn decode_block(&mut self, r: &mut Bits, p: &mut Plane, at: usize, chroma: usize) -> Option<()> {
         self.block = [0; 64];
-        let dc_mode = if chroma != 0 { 2 } else { (self.est_run != 0) as usize };
+        let dc_mode = if chroma != 0 { 2 } else { usize::from(self.est_run != 0) };
         let (mut dc_level, fin) = self.dc_rlf(r, dc_mode)?;
         let mut n = 0;
         let mut zeros_only = false;
@@ -422,7 +473,7 @@ impl IntraX8 {
                     }
                 };
                 self.select_ac(r, ac_mode);
-                let scan = [0, 2, 3][((0x928548 >> (2 * self.orient)) & 3) as usize];
+                let scan = [0, 2, 3][us((0x928548u32 >> (2 * self.orient.n())) & 3)];
                 let mut pos = 0;
                 loop {
                     n += 1;
@@ -436,38 +487,38 @@ impl IntraX8 {
                         return None;
                     }
                     let mut level = (level + 1) * self.dquant + self.qsum;
-                    let sign = -(r.get1() as i32);
+                    let sign = -r.i::<1>();
                     level = (level ^ sign) - sign;
                     if use_quant_matrix {
-                        level = (level * QUANT_TABLE[pos as usize]) >> 8;
+                        level = (level * QUANT_TABLE[ix(pos)]) >> 8;
                     }
-                    self.block[m4::WMV1_SCANTABLE[scan * 64 + pos as usize] as usize] = level as i16;
+                    self.block[usize::from(m4::WMV1_SCANTABLE[scan * 64 + ix(pos)])] = lo16(level);
                     if f {
                         break;
                     }
                 }
             } else {
-                if self.flat_dc && ((dc_level + 1) as u32) < 3 {
+                if self.flat_dc && (dc_level + 1).cast_unsigned() < 3 {
                     let (divide, dc_quant) = if chroma == 0 { (self.divide_quant_dc_luma, self.quant) } else { (self.divide_quant_dc_chroma, self.quant_dc_chroma) };
                     // (meant as dc_level += predicted_dc / quant)
                     dc_level += (self.predicted_dc * divide + (1 << 12)) >> 13;
-                    solid(p.px, at, stride, ((dc_level * dc_quant + 4) >> 3).clamp(0, 255) as u8);
+                    solid(p.px, at, stride, lo8(((dc_level * dc_quant + 4) >> 3).clamp(0, 255).cast_unsigned()));
                     break 'placed;
                 }
                 zeros_only = dc_level == 0;
             }
-            self.block[0] = (dc_level * if chroma == 0 { self.quant } else { self.quant_dc_chroma }) as i16;
-            if (dc_level + 1) as u32 >= 3 && self.edges & 3 != 3 {
-                let direction = (0x6A017C >> (self.orient * 2)) & 3;
+            self.block[0] = lo16(dc_level * if chroma == 0 { self.quant } else { self.quant_dc_chroma });
+            if (dc_level + 1).cast_unsigned() >= 3 && self.edges & 3 != 3 {
+                let direction = (0x6A017Ci32 >> (self.orient.n() * 2)) & 3;
                 if direction != 3 {
-                    let dc = self.block[0] as i32;
+                    let dc = i32::from(self.block[0]);
                     self.ac_compensation(direction, dc);
                 }
             }
             if self.flat_dc {
-                solid(p.px, at, stride, self.predicted_dc as u8);
+                solid(p.px, at, stride, lo8(self.predicted_dc.cast_unsigned()));
             } else {
-                spatial_compensation(self.orient as usize, &self.scratch, p.px, at, stride);
+                spatial_compensation(self.orient, &self.scratch, p.px, at, stride);
             }
             if !zeros_only {
                 idct::wmv2_add(p.px, at, stride, &mut self.block);
@@ -477,11 +528,11 @@ impl IntraX8 {
             self.update_predictions(self.orient, n);
         }
         if self.loopfilter {
-            if !(self.edges & 2 != 0 || (zeros_only && (self.orient | 4) == 4)) {
-                loop_filter(p.px, at, stride as isize, 1, self.quant);
+            if !(self.edges & 2 != 0 || (zeros_only && matches!(self.orient, O0 | O4))) {
+                loop_filter(p.px, at, stride.cast_signed(), 1, self.quant);
             }
-            if !(self.edges & 1 != 0 || (zeros_only && (self.orient | 8) == 8)) {
-                loop_filter(p.px, at, 1, stride as isize, self.quant);
+            if !(self.edges & 1 != 0 || (zeros_only && matches!(self.orient, O0 | O8))) {
+                loop_filter(p.px, at, 1, stride.cast_signed(), self.quant);
             }
         }
         Some(())
@@ -506,11 +557,12 @@ fn setup_spatial_compensation(px: &[u8], at: usize, stride: usize, dst: &mut [u8
         let mut p = at - 1;
         for i in (0..8).rev() {
             dst[AREA1 + i] = px[p - 1];
-            let c = px[p] as i32;
+            let b = px[p];
+            let c = i32::from(b);
             sum += c;
             min = min.min(c);
             max = max.max(c);
-            dst[AREA2 + i] = c as u8;
+            dst[AREA2 + i] = b;
             p += stride;
         }
     }
@@ -519,9 +571,9 @@ fn setup_spatial_compensation(px: &[u8], at: usize, stride: usize, dst: &mut [u8
         let mut c = 0;
         for i in 0..8 {
             c = px[p + i];
-            sum += c as i32;
-            min = min.min(c as i32);
-            max = max.max(c as i32);
+            sum += i32::from(c);
+            min = min.min(i32::from(c));
+            max = max.max(i32::from(c));
         }
         if edges & 4 != 0 {
             dst[AREA5..AREA5 + 8].fill(c);
@@ -532,19 +584,19 @@ fn setup_spatial_compensation(px: &[u8], at: usize, stride: usize, dst: &mut [u8
         dst[AREA6..AREA6 + 8].copy_from_slice(&px[p - stride..p - stride + 8]);
     }
     if edges & 3 != 0 {
-        let avg = ((sum + 4) >> 3) as u8;
+        let avg = lo8(((sum + 4) >> 3).cast_unsigned());
         if edges & 1 != 0 {
             dst[AREA1..AREA1 + 17].fill(avg);
         } else {
             dst[AREA3..AREA3 + 25].fill(avg);
         }
-        sum += avg as i32 * 9;
+        sum += i32::from(avg) * 9;
     } else {
         let c = px[at - 1 - stride];
         dst[AREA3] = c;
-        sum += c as i32;
+        sum += i32::from(c);
     }
-    sum += dst[AREA5] as i32 + dst[AREA5 + 1] as i32;
+    sum += i32::from(dst[AREA5]) + i32::from(dst[AREA5 + 1]);
     (max - min, sum)
 }
 
@@ -560,7 +612,7 @@ const ZERO_PREDICTION_WEIGHTS: [u32; 128] = [
 ];
 
 /// spatial_compensation_0..11: the prediction of direction `k` from the edge pixels `s`
-fn spatial_compensation(k: usize, s: &[u8; 42], px: &mut [u8], at: usize, stride: usize) {
+fn spatial_compensation(k: Orient, s: &[u8; 42], px: &mut [u8], at: usize, stride: usize) {
     let mut put = |f: &dyn Fn(usize, usize) -> u8| {
         for y in 0..8 {
             for x in 0..8 {
@@ -568,20 +620,21 @@ fn spatial_compensation(k: usize, s: &[u8; 42], px: &mut [u8], at: usize, stride
             }
         }
     };
-    let g = |i: usize| s[i] as i32;
+    let g = |i: usize| usize::from(s[i]);
+    let g4 = |i: usize| u16::from(lo8z(g(i))) << 4;
     match k {
-        0 => {
+        O0 => {
             let mut left = [[0u16; 8]; 2];
             let mut top = [[0u16; 8]; 2];
             for i in 0..8 {
-                let a = (g(AREA2 + 7 - i) << 4) as u16;
+                let a = g4(AREA2 + 7 - i);
                 for j in 0..8 {
                     let p = i.abs_diff(j);
                     left[p & 1][j] = left[p & 1][j].wrapping_add(a >> (p >> 1));
                 }
             }
             for i in 0..12 {
-                let a = (g(AREA4 + i) << 4) as u16;
+                let a = g4(AREA4 + i);
                 let from = match i {
                     0..8 => 0,
                     8..10 => 5,
@@ -593,36 +646,39 @@ fn spatial_compensation(k: usize, s: &[u8; 42], px: &mut [u8], at: usize, stride
                 }
             }
             for i in 0..8 {
-                top[0][i] = top[0][i].wrapping_add(((top[1][i] as u32 * 181 + 128) >> 8) as u16);
-                left[0][i] = left[0][i].wrapping_add(((left[1][i] as u32 * 181 + 128) >> 8) as u16);
+                top[0][i] = top[0][i].wrapping_add(lo16u((u32::from(top[1][i]) * 181 + 128) >> 8));
+                left[0][i] = left[0][i].wrapping_add(lo16u((u32::from(left[1][i]) * 181 + 128) >> 8));
             }
-            put(&|x, y| ((top[0][x] as u32 * ZERO_PREDICTION_WEIGHTS[y * 16 + x * 2] + left[0][y] as u32 * ZERO_PREDICTION_WEIGHTS[y * 16 + x * 2 + 1] + 0x8000) >> 16) as u8);
+            put(&|x, y| lo8((u32::from(top[0][x]) * ZERO_PREDICTION_WEIGHTS[y * 16 + x * 2] + u32::from(left[0][y]) * ZERO_PREDICTION_WEIGHTS[y * 16 + x * 2 + 1] + 0x8000) >> 16));
         }
-        1 => put(&|x, y| s[AREA4 + (2 * y + x + 2).min(15)]),
-        2 => put(&|x, y| s[AREA4 + 1 + y + x]),
-        3 => put(&|x, y| s[AREA4 + ((y + 1) >> 1) + x]),
-        4 => put(&|x, _| ((g(AREA4 + x) + g(AREA6 + x) + 1) >> 1) as u8),
-        5 => put(&|x, y| if (2 * x as i32 - y as i32) < 0 { s[(AREA2 as i32 + 9 + 2 * x as i32 - y as i32) as usize] } else { s[AREA4 + x - ((y + 1) >> 1)] }),
-        6 => put(&|x, y| s[(AREA3 as i32 + x as i32 - y as i32) as usize]),
-        7 => put(&|x, y| {
-            let d = x as i32 - 2 * y as i32;
-            if d > 0 { ((g((AREA3 as i32 - 1 + d) as usize) + g((AREA3 as i32 + d) as usize) + 1) >> 1) as u8 } else { s[AREA2 + 8 - y + (x >> 1)] }
+        O1 => put(&|x, y| s[AREA4 + (2 * y + x + 2).min(15)]),
+        O2 => put(&|x, y| s[AREA4 + 1 + y + x]),
+        O3 => put(&|x, y| s[AREA4 + ((y + 1) >> 1) + x]),
+        O4 => put(&|x, _| lo8z((g(AREA4 + x) + g(AREA6 + x) + 1) >> 1)),
+        O5 => put(&|x, y| if 2 * x < y { s[AREA2 + 9 + 2 * x - y] } else { s[AREA4 + x - ((y + 1) >> 1)] }),
+        O6 => put(&|x, y| s[AREA3 + x - y]),
+        O7 => put(&|x, y| {
+            if let Some(d) = x.checked_sub(2 * y).filter(|&d| d > 0) {
+                lo8z((g(AREA3 - 1 + d) + g(AREA3 + d) + 1) >> 1)
+            } else {
+                s[AREA2 + 8 - y + (x >> 1)]
+            }
         }),
-        8 => put(&|_, y| ((g(AREA1 + 7 - y) + g(AREA2 + 7 - y) + 1) >> 1) as u8),
-        9 => put(&|x, y| s[AREA2 + 6 - (x + y).min(6)]),
-        10 => put(&|x, y| ((g(AREA2 + 7 - y) * (8 - x as i32) + g(AREA4 + x) * x as i32 + 4) >> 3) as u8),
-        _ => put(&|x, y| ((g(AREA2 + 7 - y) * y as i32 + g(AREA4 + x) * (8 - y as i32) + 4) >> 3) as u8),
+        O8 => put(&|_, y| lo8z((g(AREA1 + 7 - y) + g(AREA2 + 7 - y) + 1) >> 1)),
+        O9 => put(&|x, y| s[AREA2 + 6 - (x + y).min(6)]),
+        O10 => put(&|x, y| lo8z((g(AREA2 + 7 - y) * (8 - x) + g(AREA4 + x) * x + 4) >> 3)),
+        O11 => put(&|x, y| lo8z((g(AREA2 + 7 - y) * y + g(AREA4 + x) * (8 - y) + 4) >> 3)),
     }
 }
 
 /// x8_loop_filter: across the edge before `at` (`a` the step across it, `b` along it)
 fn loop_filter(px: &mut [u8], at: usize, a: isize, b: isize, quant: i32) {
     let ql = (quant + 10) >> 3;
-    for i in 0..8 {
-        let o = at as isize + i * b;
-        let p = |k: isize| px[(o + k * a) as usize] as i32;
+    for i in 0..8isize {
+        let o = at.cast_signed() + i * b;
+        let p = |k: isize| i32::from(px[(o + k * a).cast_unsigned()]);
         let (p0, p1, p2, p3, p4, p5, p6, p7, p8, p9) = (p(-5), p(-4), p(-3), p(-2), p(-1), p(0), p(1), p(2), p(3), p(4));
-        let le = |x: i32, y: i32| ((x - y).abs() <= ql) as i32;
+        let le = |x: i32, y: i32| i32::from((x - y).abs() <= ql);
         let mut t = le(p1, p2) + le(p2, p3) + le(p3, p4) + le(p4, p5);
         if t > 0 {
             t += le(p5, p6) + le(p6, p7) + le(p7, p8) + le(p8, p9) + le(p0, p1);
@@ -638,7 +694,7 @@ fn loop_filter(px: &mut [u8], at: usize, a: isize, b: isize, quant: i32) {
                         max = max.max(v);
                     }
                     if max - min < 2 * quant {
-                        let mut set = |k: isize, v: i32| px[(o + k * a) as usize] = v as u8;
+                        let mut set = |k: isize, v: i32| px[(o + k * a).cast_unsigned()] = lo8(v.cast_unsigned());
                         set(-2, (4 * p2 + 3 * p3 + p7 + 4) >> 3);
                         set(-1, (3 * p2 + 3 * p4 + 2 * p7 + 4) >> 3);
                         set(0, (2 * p2 + 3 * p5 + 3 * p7 + 4) >> 3);
@@ -663,9 +719,9 @@ fn loop_filter(px: &mut [u8], at: usize, a: isize, b: isize, quant: i32) {
                     x = m;
                 }
                 x = (x ^ sign) - sign;
-                let (i4, i5) = ((o - a) as usize, o as usize);
-                px[i4] = (px[i4] as i32 - x) as u8;
-                px[i5] = (px[i5] as i32 + x) as u8;
+                let (i4, i5) = ((o - a).cast_unsigned(), o.cast_unsigned());
+                px[i4] = lo8((i32::from(px[i4]) - x).cast_unsigned());
+                px[i5] = lo8((i32::from(px[i5]) + x).cast_unsigned());
             }
         }
     }
@@ -692,10 +748,10 @@ mod tests {
         /// The flat prediction of a block with all its edge pixels `v` is `v`, in every direction
         /// that reads only edge pixels.
         #[test]
-        fn flat_edges_predict_flat(v in any::<u8>(), k in 1usize..12) {
+        fn flat_edges_predict_flat(v in any::<u8>(), k in 1u32..12) {
             let s = [v; 42];
             let mut px = [0u8; 64];
-            spatial_compensation(k, &s, &mut px, 0, 8);
+            spatial_compensation(Orient::of(k).unwrap(), &s, &mut px, 0, 8);
             prop_assert!(px.iter().all(|&p| p == v), "direction {k}");
         }
     }

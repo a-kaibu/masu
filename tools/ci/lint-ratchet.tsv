@@ -2486,10 +2486,7 @@ file	crates/wmcodec/src/idct.rs	as_conversions	5
 file	crates/wmcodec/src/idct.rs	cast_possible_truncation	1
 file	crates/wmcodec/src/idct.rs	indexing_slicing	53
 file	crates/wmcodec/src/intrax8.rs	arithmetic_side_effects	144
-file	crates/wmcodec/src/intrax8.rs	as_conversions	122
-file	crates/wmcodec/src/intrax8.rs	cast_possible_truncation	36
-file	crates/wmcodec/src/intrax8.rs	cast_possible_wrap	26
-file	crates/wmcodec/src/intrax8.rs	cast_sign_loss	35
+file	crates/wmcodec/src/intrax8.rs	as_conversions	1
 file	crates/wmcodec/src/intrax8.rs	indexing_slicing	74
 file	crates/wmcodec/src/mdct.rs	arithmetic_side_effects	18
 file	crates/wmcodec/src/mdct.rs	as_conversions	12

@@ -29,6 +29,19 @@ pub const fn lo16(x: i32) -> i16 {
     i16::from_le_bytes([a, b])
 }
 
+/// The low 16 bits of a u32.
+#[inline(always)]
+pub const fn lo16u(x: u32) -> u16 {
+    let [a, b, _, _] = x.to_le_bytes();
+    u16::from_le_bytes([a, b])
+}
+
+/// The low 8 bits of a usize.
+#[inline(always)]
+pub const fn lo8z(x: usize) -> u8 {
+    x.to_le_bytes()[0]
+}
+
 /// The low 32 bits of a u64.
 #[inline(always)]
 pub const fn lo32(x: u64) -> u32 {
@@ -49,6 +62,8 @@ mod tests {
             prop_assert_eq!(lo8(x.cast_unsigned()), u8::try_from(x & 0xff).unwrap());
             prop_assert_eq!(lo16(x), i16::try_from(((x & 0xffff) ^ 0x8000) - 0x8000).unwrap());
             prop_assert_eq!(lo32(u), u32::try_from(u & 0xffff_ffff).unwrap());
+            prop_assert_eq!(lo16u(lo32(u)), u16::try_from(u & 0xffff).unwrap());
+            prop_assert_eq!(lo8z(usize::try_from(u & 0xffff_ffff).unwrap()), u8::try_from(u & 0xff).unwrap());
         }
     }
 }
