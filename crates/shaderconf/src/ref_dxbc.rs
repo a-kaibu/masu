@@ -7,6 +7,126 @@
 //! What it is for: the cases' expected pixels check it (tests below); then it is the oracle
 //! for bytecode nobody wrote expectations for (fuzzed programs, real games' shaders).
 
+/// The instructions this interpreter runs: name = opcode, operand count (from the D3D10/11
+/// instruction reference; its own table, not dxwgsl's)
+macro_rules! codes {
+    ($($name:ident = $code:literal, $n:literal;)*) => {
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        enum Code {
+            $($name,)*
+        }
+        impl Code {
+            fn from_code(c: u32) -> Option<Code> {
+                match c {
+                    $($code => Some(Code::$name),)*
+                    _ => None,
+                }
+            }
+            fn code(self) -> u32 {
+                match self {
+                    $(Code::$name => $code,)*
+                }
+            }
+            fn operands(self) -> usize {
+                match self {
+                    $(Code::$name => $n,)*
+                }
+            }
+        }
+    };
+}
+
+codes! {
+    Add = 0x00, 3;
+    And = 0x01, 3;
+    Break = 0x02, 0;
+    Breakc = 0x03, 1;
+    Case = 0x06, 1;
+    Continue = 0x07, 0;
+    Continuec = 0x08, 1;
+    Default = 0x0a, 0;
+    Div = 0x0e, 3;
+    Dp2 = 0x0f, 3;
+    Dp3 = 0x10, 3;
+    Dp4 = 0x11, 3;
+    Else = 0x12, 0;
+    EndIf = 0x15, 0;
+    EndLoop = 0x16, 0;
+    EndSwitch = 0x17, 0;
+    Eq = 0x18, 3;
+    Exp = 0x19, 2;
+    Frc = 0x1a, 2;
+    Ftoi = 0x1b, 2;
+    Ftou = 0x1c, 2;
+    Ge = 0x1d, 3;
+    Iadd = 0x1e, 3;
+    If = 0x1f, 1;
+    Ieq = 0x20, 3;
+    Ige = 0x21, 3;
+    Ilt = 0x22, 3;
+    Imad = 0x23, 4;
+    Imax = 0x24, 3;
+    Imin = 0x25, 3;
+    Imul = 0x26, 4;
+    Ine = 0x27, 3;
+    Ineg = 0x28, 2;
+    Ishl = 0x29, 3;
+    Ishr = 0x2a, 3;
+    Itof = 0x2b, 2;
+    Log = 0x2f, 2;
+    Loop = 0x30, 0;
+    Lt = 0x31, 3;
+    Mad = 0x32, 4;
+    Min = 0x33, 3;
+    Max = 0x34, 3;
+    Mov = 0x36, 2;
+    Movc = 0x37, 4;
+    Mul = 0x38, 3;
+    Ne = 0x39, 3;
+    Nop = 0x3a, 0;
+    Not = 0x3b, 2;
+    Or = 0x3c, 3;
+    Ret = 0x3e, 0;
+    Retc = 0x3f, 1;
+    RoundNe = 0x40, 2;
+    RoundNi = 0x41, 2;
+    RoundPi = 0x42, 2;
+    RoundZ = 0x43, 2;
+    Rsq = 0x44, 2;
+    Sqrt = 0x4b, 2;
+    Switch = 0x4c, 1;
+    SinCos = 0x4d, 3;
+    Udiv = 0x4e, 4;
+    Ult = 0x4f, 3;
+    Uge = 0x50, 3;
+    Umul = 0x51, 4;
+    Umad = 0x52, 4;
+    Umax = 0x53, 3;
+    Umin = 0x54, 3;
+    Ushr = 0x55, 3;
+    Utof = 0x56, 2;
+    Xor = 0x57, 3;
+    Rcp = 0x81, 2;
+    F32ToF16 = 0x82, 2;
+    F16ToF32 = 0x83, 2;
+    CountBits = 0x86, 2;
+    FirstBitHi = 0x87, 2;
+    FirstBitLo = 0x88, 2;
+    FirstBitShi = 0x89, 2;
+    Ubfe = 0x8a, 4;
+    Ibfe = 0x8b, 4;
+    Bfi = 0x8c, 5;
+    Bfrev = 0x8d, 2;
+    Swapc = 0x8e, 5;
+}
+
+impl Code {
+    /// a float result (the float checks apply)
+    fn float_out(self) -> bool {
+        matches!(self, Code::Add | Code::Div | Code::Exp | Code::Frc | Code::Log | Code::Mad | Code::Min | Code::Max | Code::Mul | Code::RoundNe | Code::RoundNi | Code::RoundPi | Code::RoundZ | Code::Rsq | Code::Sqrt | Code::Rcp | Code::F16ToF32)
+    }
+}
+
 /// A register value: four 32-bit components.
 pub type V = [u32; 4];
 
@@ -32,7 +152,7 @@ pub struct Op {
 
 #[derive(Clone, Debug)]
 struct Inst {
-    op: u32,
+    op: Code,
     sat: bool,
     /// (if, breakc, ...: true when testing for nonzero)
     nz: bool,
@@ -185,30 +305,14 @@ pub fn parse(code: &[u8]) -> Result<Program, String> {
                 while k < len {
                     ops.push(operand(body, &mut k)?);
                 }
-                const OPS: &[u32] = &[
-                    0x00, 0x01, 0x02, 0x03, 0x06, 0x07, 0x08, 0x0a, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a,
-                    0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x2b, 0x2f, 0x30,
-                    0x31, 0x32, 0x33, 0x34, 0x36, 0x37, 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3e, 0x3f, 0x40, 0x41, 0x42, 0x43, 0x44, 0x4b,
-                    0x4c, 0x4d, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x81, 0x82, 0x83, 0x86, 0x87, 0x88, 0x89,
-                    0x8a, 0x8b, 0x8c, 0x8d, 0x8e,
-                ];
-                if !OPS.contains(&op) {
+                let Some(code) = Code::from_code(op) else {
                     return Err(format!("opcode {op:#x}"));
-                }
-                // (the operand count of each opcode, from the D3D10/11 instruction reference)
-                let want = match op {
-                    0x02 | 0x07 | 0x0a | 0x12 | 0x15 | 0x16 | 0x17 | 0x30 | 0x3a | 0x3e => 0,
-                    0x03 | 0x06 | 0x08 | 0x1f | 0x3f | 0x4c => 1,
-                    0x19 | 0x1a | 0x1b | 0x1c | 0x28 | 0x2b | 0x2f | 0x36 | 0x3b | 0x40..=0x44 | 0x4b | 0x56 | 0x81..=0x83
-                    | 0x86..=0x89 | 0x8d => 2,
-                    0x23 | 0x26 | 0x32 | 0x37 | 0x4e | 0x51 | 0x52 | 0x8a | 0x8b => 4,
-                    0x8c | 0x8e => 5,
-                    _ => 3,
                 };
+                let want = code.operands();
                 if ops.len() != want {
                     return Err(format!("opcode {op:#x} with {} operands, {want} wanted", ops.len()));
                 }
-                p.insts.push(Inst { op, sat: (w >> 13) & 1 != 0, nz: (w >> 18) & 1 != 0, ops });
+                p.insts.push(Inst { op: code, sat: (w >> 13) & 1 != 0, nz: (w >> 18) & 1 != 0, ops });
             }
         }
         at += len;
@@ -218,10 +322,10 @@ pub fn parse(code: &[u8]) -> Result<Program, String> {
     let mut stack: Vec<usize> = Vec::new();
     for i in 0..p.insts.len() {
         match p.insts[i].op {
-            0x1f | 0x30 | 0x4c => stack.push(i),
-            0x12 => {
+            Code::If | Code::Loop | Code::Switch => stack.push(i),
+            Code::Else => {
                 let s = *stack.last().ok_or("else outside an if")?;
-                if p.insts[s].op != 0x1f {
+                if p.insts[s].op != Code::If {
                     return Err("else outside an if".into());
                 }
                 p.jump[s] = i;
@@ -229,12 +333,25 @@ pub fn parse(code: &[u8]) -> Result<Program, String> {
                     *t = i;
                 }
             }
-            0x15 | 0x16 | 0x17 => {
+            Code::EndIf | Code::EndLoop | Code::EndSwitch => {
                 let s = stack.pop().ok_or("unbalanced flow control")?;
-                let want: &[u32] = match p.insts[i].op {
-                    0x15 => &[0x1f, 0x12],
-                    0x16 => &[0x30],
-                    _ => &[0x4c],
+                let want: &[Code] = match p.insts[i].op {
+                    Code::EndIf => &[Code::If, Code::Else],
+                    Code::EndLoop => &[Code::Loop],
+                    Code::Add | Code::And | Code::Break | Code::Breakc | Code::Case | Code::Continue
+                    | Code::Continuec | Code::Default | Code::Div | Code::Dp2 | Code::Dp3 | Code::Dp4
+                    | Code::Else | Code::EndSwitch | Code::Eq | Code::Exp | Code::Frc | Code::Ftoi
+                    | Code::Ftou | Code::Ge | Code::Iadd | Code::If | Code::Ieq | Code::Ige
+                    | Code::Ilt | Code::Imad | Code::Imax | Code::Imin | Code::Imul | Code::Ine
+                    | Code::Ineg | Code::Ishl | Code::Ishr | Code::Itof | Code::Log | Code::Loop
+                    | Code::Lt | Code::Mad | Code::Min | Code::Max | Code::Mov | Code::Movc
+                    | Code::Mul | Code::Ne | Code::Nop | Code::Not | Code::Or | Code::Ret
+                    | Code::Retc | Code::RoundNe | Code::RoundNi | Code::RoundPi | Code::RoundZ | Code::Rsq
+                    | Code::Sqrt | Code::Switch | Code::SinCos | Code::Udiv | Code::Ult | Code::Uge
+                    | Code::Umul | Code::Umad | Code::Umax | Code::Umin | Code::Ushr | Code::Utof
+                    | Code::Xor | Code::Rcp | Code::F32ToF16 | Code::F16ToF32 | Code::CountBits | Code::FirstBitHi
+                    | Code::FirstBitLo | Code::FirstBitShi | Code::Ubfe | Code::Ibfe | Code::Bfi | Code::Bfrev
+                    | Code::Swapc => &[Code::Switch],
                 };
                 if !want.contains(&p.insts[s].op) {
                     return Err("unbalanced flow control".into());
@@ -242,7 +359,19 @@ pub fn parse(code: &[u8]) -> Result<Program, String> {
                 p.jump[s] = i;
                 p.jump[i] = s;
             }
-            _ => {}
+            Code::Add | Code::And | Code::Break | Code::Breakc | Code::Case | Code::Continue
+            | Code::Continuec | Code::Default | Code::Div | Code::Dp2 | Code::Dp3 | Code::Dp4
+            | Code::Eq | Code::Exp | Code::Frc | Code::Ftoi | Code::Ftou | Code::Ge
+            | Code::Iadd | Code::Ieq | Code::Ige | Code::Ilt | Code::Imad | Code::Imax
+            | Code::Imin | Code::Imul | Code::Ine | Code::Ineg | Code::Ishl | Code::Ishr
+            | Code::Itof | Code::Log | Code::Lt | Code::Mad | Code::Min | Code::Max
+            | Code::Mov | Code::Movc | Code::Mul | Code::Ne | Code::Nop | Code::Not
+            | Code::Or | Code::Ret | Code::Retc | Code::RoundNe | Code::RoundNi | Code::RoundPi
+            | Code::RoundZ | Code::Rsq | Code::Sqrt | Code::SinCos | Code::Udiv | Code::Ult
+            | Code::Uge | Code::Umul | Code::Umad | Code::Umax | Code::Umin | Code::Ushr
+            | Code::Utof | Code::Xor | Code::Rcp | Code::F32ToF16 | Code::F16ToF32 | Code::CountBits
+            | Code::FirstBitHi | Code::FirstBitLo | Code::FirstBitShi | Code::Ubfe | Code::Ibfe | Code::Bfi
+            | Code::Bfrev | Code::Swapc => {}
         }
     }
     if !stack.is_empty() {
@@ -310,8 +439,6 @@ struct Run<'a> {
 }
 
 /// Float ops whose results the oracle wants finite.
-const FLOAT_OUT: &[u32] = &[0x00, 0x0e, 0x19, 0x1a, 0x2f, 0x32, 0x33, 0x34, 0x38, 0x40, 0x41, 0x42, 0x43, 0x44, 0x4b, 0x81, 0x83];
-
 #[derive(Clone, Copy, PartialEq)]
 enum K {
     F,
@@ -394,7 +521,7 @@ impl Run<'_> {
     fn cw(&mut self, i: &Inst, k: K, g: impl Fn(&[u32]) -> u32) -> Result<(), String> {
         let s: Vec<V> = i.ops[1..].iter().map(|o| self.src(o, k)).collect::<Result<_, _>>()?;
         let mut v: V = std::array::from_fn(|c| g(&s.iter().map(|x| x[c]).collect::<Vec<_>>()));
-        if self.zero_flip && FLOAT_OUT.contains(&i.op) {
+        if self.zero_flip && i.op.float_out() {
             for x in &mut v {
                 if *x == 0x8000_0000 {
                     *x = 0;
@@ -402,10 +529,10 @@ impl Run<'_> {
             }
         }
         // (float math or comparisons on a denormal: implementations may flush it)
-        if (FLOAT_OUT.contains(&i.op) || matches!(i.op, 0x18 | 0x1d | 0x31 | 0x39)) && s.iter().flatten().any(|&x| f(x).is_subnormal()) {
+        if (i.op.float_out() || matches!(i.op, Code::Eq | Code::Ge | Code::Lt | Code::Ne)) && s.iter().flatten().any(|&x| f(x).is_subnormal()) {
             self.taint("a denormal operand");
         }
-        if FLOAT_OUT.contains(&i.op) {
+        if i.op.float_out() {
             self.finite(&i.ops[0], &v);
         }
         self.dst(&i.ops[0], v, i.sat)
@@ -440,26 +567,26 @@ impl Run<'_> {
             pc += 1;
             use K::*;
             match i.op {
-                0x00 => self.cw(i, F, |a| b(f(a[0]) + f(a[1])))?,
-                0x01 => self.cw(i, U, |a| a[0] & a[1])?,
-                0x02 | 0x03 => {
-                    if i.op == 0x02 || self.cond(i)? {
+                Code::Add => self.cw(i, F, |a| b(f(a[0]) + f(a[1])))?,
+                Code::And => self.cw(i, U, |a| a[0] & a[1])?,
+                Code::Break | Code::Breakc => {
+                    if i.op == Code::Break || self.cond(i)? {
                         let s = blocks.pop().ok_or("break outside a loop")?;
                         pc = p.jump[s] + 1;
                     }
                 }
-                0x07 | 0x08 => {
-                    if i.op == 0x07 || self.cond(i)? {
-                        let s = *blocks.iter().rev().find(|&&s| p.insts[s].op == 0x30).ok_or("continue outside a loop")?;
+                Code::Continue | Code::Continuec => {
+                    if i.op == Code::Continue || self.cond(i)? {
+                        let s = *blocks.iter().rev().find(|&&s| p.insts[s].op == Code::Loop).ok_or("continue outside a loop")?;
                         while blocks.last().is_some_and(|&b| b != s) {
                             blocks.pop();
                         }
                         pc = s + 1;
                     }
                 }
-                0x0e => self.cw(i, F, |a| b(f(a[0]) / f(a[1])))?,
-                0x0f | 0x10 | 0x11 => {
-                    let n = crate::us(i.op - 0x0d);
+                Code::Div => self.cw(i, F, |a| b(f(a[0]) / f(a[1])))?,
+                Code::Dp2 | Code::Dp3 | Code::Dp4 => {
+                    let n = crate::us(i.op.code() - 0x0d);
                     let a = self.src(&i.ops[1], F)?;
                     let c = self.src(&i.ops[2], F)?;
                     if a[..n].iter().chain(&c[..n]).any(|&x| f(x).is_subnormal()) {
@@ -472,47 +599,47 @@ impl Run<'_> {
                     self.finite(&i.ops[0], &[b(d); 4]);
                     self.dst(&i.ops[0], [b(d); 4], i.sat)?;
                 }
-                0x12 => pc = p.jump[pc - 1] + 1,
-                0x15 => {}
-                0x16 => pc = p.jump[pc - 1] + 1,
-                0x17 => {
+                Code::Else => pc = p.jump[pc - 1] + 1,
+                Code::EndIf => {}
+                Code::EndLoop => pc = p.jump[pc - 1] + 1,
+                Code::EndSwitch => {
                     blocks.pop();
                 }
-                0x06 | 0x0a => {}
-                0x18 => self.cw(i, F, |a| if f(a[0]) == f(a[1]) { !0 } else { 0 })?,
-                0x1d => self.cw(i, F, |a| if f(a[0]) >= f(a[1]) { !0 } else { 0 })?,
-                0x31 => self.cw(i, F, |a| if f(a[0]) < f(a[1]) { !0 } else { 0 })?,
-                0x39 => self.cw(i, F, |a| if f(a[0]) != f(a[1]) { !0 } else { 0 })?,
-                0x20 => self.cw(i, I, |a| if a[0] == a[1] { !0 } else { 0 })?,
-                0x21 => self.cw(i, I, |a| if a[0].cast_signed() >= a[1].cast_signed() { !0 } else { 0 })?,
-                0x22 => self.cw(i, I, |a| if (a[0].cast_signed()) < a[1].cast_signed() { !0 } else { 0 })?,
-                0x27 => self.cw(i, I, |a| if a[0] != a[1] { !0 } else { 0 })?,
-                0x4f => self.cw(i, U, |a| if a[0] < a[1] { !0 } else { 0 })?,
-                0x50 => self.cw(i, U, |a| if a[0] >= a[1] { !0 } else { 0 })?,
-                0x19 => self.cw(i, F, |a| b(f(a[0]).exp2()))?,
+                Code::Case | Code::Default => {}
+                Code::Eq => self.cw(i, F, |a| if f(a[0]) == f(a[1]) { !0 } else { 0 })?,
+                Code::Ge => self.cw(i, F, |a| if f(a[0]) >= f(a[1]) { !0 } else { 0 })?,
+                Code::Lt => self.cw(i, F, |a| if f(a[0]) < f(a[1]) { !0 } else { 0 })?,
+                Code::Ne => self.cw(i, F, |a| if f(a[0]) != f(a[1]) { !0 } else { 0 })?,
+                Code::Ieq => self.cw(i, I, |a| if a[0] == a[1] { !0 } else { 0 })?,
+                Code::Ige => self.cw(i, I, |a| if a[0].cast_signed() >= a[1].cast_signed() { !0 } else { 0 })?,
+                Code::Ilt => self.cw(i, I, |a| if (a[0].cast_signed()) < a[1].cast_signed() { !0 } else { 0 })?,
+                Code::Ine => self.cw(i, I, |a| if a[0] != a[1] { !0 } else { 0 })?,
+                Code::Ult => self.cw(i, U, |a| if a[0] < a[1] { !0 } else { 0 })?,
+                Code::Uge => self.cw(i, U, |a| if a[0] >= a[1] { !0 } else { 0 })?,
+                Code::Exp => self.cw(i, F, |a| b(f(a[0]).exp2()))?,
                 // (below 1: -tiny gives 0x3f7fffff; infinities NaN)
-                0x1a => self.cw(i, F, |a| b(if f(a[0]).is_finite() { (f(a[0]) - f(a[0]).floor()).min(f32::from_bits(0x3f7f_ffff)) } else { f32::NAN }))?,
-                0x1b => self.cw(i, F, |a| ftoi(f(a[0])))?,
-                0x1c => self.cw(i, F, |a| ftou(f(a[0])))?,
-                0x2b => self.cw(i, I, |a| b(a[0].cast_signed() as f32))?,
-                0x56 => self.cw(i, U, |a| b(a[0] as f32))?,
-                0x1e => self.cw(i, I, |a| a[0].wrapping_add(a[1]))?,
-                0x1f => {
+                Code::Frc => self.cw(i, F, |a| b(if f(a[0]).is_finite() { (f(a[0]) - f(a[0]).floor()).min(f32::from_bits(0x3f7f_ffff)) } else { f32::NAN }))?,
+                Code::Ftoi => self.cw(i, F, |a| ftoi(f(a[0])))?,
+                Code::Ftou => self.cw(i, F, |a| ftou(f(a[0])))?,
+                Code::Itof => self.cw(i, I, |a| b(a[0].cast_signed() as f32))?,
+                Code::Utof => self.cw(i, U, |a| b(a[0] as f32))?,
+                Code::Iadd => self.cw(i, I, |a| a[0].wrapping_add(a[1]))?,
+                Code::If => {
                     if !self.cond(i)? {
                         let j = p.jump[pc - 1];
                         // (to the else's body, or past the endif)
                         pc = j + 1;
                     }
                 }
-                0x23 => self.cw(i, I, |a| a[0].wrapping_mul(a[1]).wrapping_add(a[2]))?,
-                0x52 => self.cw(i, U, |a| a[0].wrapping_mul(a[1]).wrapping_add(a[2]))?,
-                0x24 => self.cw(i, I, |a| (a[0].cast_signed()).max(a[1].cast_signed()).cast_unsigned())?,
-                0x25 => self.cw(i, I, |a| (a[0].cast_signed()).min(a[1].cast_signed()).cast_unsigned())?,
-                0x53 => self.cw(i, U, |a| a[0].max(a[1]))?,
-                0x54 => self.cw(i, U, |a| a[0].min(a[1]))?,
-                0x26 | 0x51 => {
+                Code::Imad => self.cw(i, I, |a| a[0].wrapping_mul(a[1]).wrapping_add(a[2]))?,
+                Code::Umad => self.cw(i, U, |a| a[0].wrapping_mul(a[1]).wrapping_add(a[2]))?,
+                Code::Imax => self.cw(i, I, |a| (a[0].cast_signed()).max(a[1].cast_signed()).cast_unsigned())?,
+                Code::Imin => self.cw(i, I, |a| (a[0].cast_signed()).min(a[1].cast_signed()).cast_unsigned())?,
+                Code::Umax => self.cw(i, U, |a| a[0].max(a[1]))?,
+                Code::Umin => self.cw(i, U, |a| a[0].min(a[1]))?,
+                Code::Imul | Code::Umul => {
                     // (hi, lo) = a * b
-                    let k = if i.op == 0x26 { I } else { U };
+                    let k = if i.op == Code::Imul { I } else { U };
                     let a = self.src(&i.ops[2], k)?;
                     let c = self.src(&i.ops[3], k)?;
                     let wide: [u64; 4] = std::array::from_fn(|n| {
@@ -521,7 +648,7 @@ impl Run<'_> {
                     self.dst(&i.ops[0], wide.map(|x| crate::lo32(x >> 32)), false)?;
                     self.dst(&i.ops[1], wide.map(|x| crate::lo32(x)), false)?;
                 }
-                0x4e => {
+                Code::Udiv => {
                     let a = self.src(&i.ops[2], U)?;
                     let c = self.src(&i.ops[3], U)?;
                     let q = std::array::from_fn(|n| a[n].checked_div(c[n]).unwrap_or(!0));
@@ -529,47 +656,47 @@ impl Run<'_> {
                     self.dst(&i.ops[0], q, false)?;
                     self.dst(&i.ops[1], r, false)?;
                 }
-                0x28 => self.cw(i, I, |a| a[0].wrapping_neg())?,
-                0x29 => self.cw(i, I, |a| a[0] << (a[1] & 31))?,
-                0x2a => self.cw(i, I, |a| ((a[0].cast_signed()) >> (a[1] & 31)).cast_unsigned())?,
-                0x55 => self.cw(i, U, |a| a[0] >> (a[1] & 31))?,
+                Code::Ineg => self.cw(i, I, |a| a[0].wrapping_neg())?,
+                Code::Ishl => self.cw(i, I, |a| a[0] << (a[1] & 31))?,
+                Code::Ishr => self.cw(i, I, |a| ((a[0].cast_signed()) >> (a[1] & 31)).cast_unsigned())?,
+                Code::Ushr => self.cw(i, U, |a| a[0] >> (a[1] & 31))?,
                 // (denormals are 0: WARP flushes them)
-                0x2f => self.cw(i, F, |a| b(if f(a[0]).is_subnormal() { f32::NEG_INFINITY } else { f(a[0]).log2() }))?,
-                0x30 => blocks.push(pc - 1),
-                0x32 => self.cw(i, F, |a| b(f(a[0]) * f(a[1]) + f(a[2])))?,
-                0x33 => {
+                Code::Log => self.cw(i, F, |a| b(if f(a[0]).is_subnormal() { f32::NEG_INFINITY } else { f(a[0]).log2() }))?,
+                Code::Loop => blocks.push(pc - 1),
+                Code::Mad => self.cw(i, F, |a| b(f(a[0]) * f(a[1]) + f(a[2])))?,
+                Code::Min => {
                     let flip = self.zero_flip;
                     self.cw(i, F, |a| b(if flip && f(a[0]) == 0.0 && f(a[1]) == 0.0 { fmax(f(a[0]), f(a[1])) } else { fmin(f(a[0]), f(a[1])) }))?
                 }
-                0x34 => {
+                Code::Max => {
                     let flip = self.zero_flip;
                     self.cw(i, F, |a| b(if flip && f(a[0]) == 0.0 && f(a[1]) == 0.0 { fmin(f(a[0]), f(a[1])) } else { fmax(f(a[0]), f(a[1])) }))?
                 }
-                0x36 => self.cw(i, F, |a| a[0])?,
-                0x37 => {
+                Code::Mov => self.cw(i, F, |a| a[0])?,
+                Code::Movc => {
                     let c = self.src(&i.ops[1], U)?;
                     let a = self.src(&i.ops[2], F)?;
                     let e = self.src(&i.ops[3], F)?;
                     self.dst(&i.ops[0], std::array::from_fn(|n| if c[n] != 0 { a[n] } else { e[n] }), i.sat)?;
                 }
-                0x38 => self.cw(i, F, |a| b(f(a[0]) * f(a[1])))?,
-                0x3a => {}
-                0x3b => self.cw(i, U, |a| !a[0])?,
-                0x3c => self.cw(i, U, |a| a[0] | a[1])?,
-                0x57 => self.cw(i, U, |a| a[0] ^ a[1])?,
-                0x3e => return Ok(()),
-                0x3f => {
+                Code::Mul => self.cw(i, F, |a| b(f(a[0]) * f(a[1])))?,
+                Code::Nop => {}
+                Code::Not => self.cw(i, U, |a| !a[0])?,
+                Code::Or => self.cw(i, U, |a| a[0] | a[1])?,
+                Code::Xor => self.cw(i, U, |a| a[0] ^ a[1])?,
+                Code::Ret => return Ok(()),
+                Code::Retc => {
                     if self.cond(i)? {
                         return Ok(());
                     }
                 }
-                0x40 => self.cw(i, F, |a| b(f(a[0]).round_ties_even()))?,
-                0x41 => self.cw(i, F, |a| b(f(a[0]).floor()))?,
-                0x42 => self.cw(i, F, |a| b(f(a[0]).ceil()))?,
-                0x43 => self.cw(i, F, |a| b(f(a[0]).trunc()))?,
-                0x44 => self.cw(i, F, |a| b(1.0 / f(a[0]).sqrt()))?,
-                0x4b => self.cw(i, F, |a| b(f(a[0]).sqrt()))?,
-                0x4c => {
+                Code::RoundNe => self.cw(i, F, |a| b(f(a[0]).round_ties_even()))?,
+                Code::RoundNi => self.cw(i, F, |a| b(f(a[0]).floor()))?,
+                Code::RoundPi => self.cw(i, F, |a| b(f(a[0]).ceil()))?,
+                Code::RoundZ => self.cw(i, F, |a| b(f(a[0]).trunc()))?,
+                Code::Rsq => self.cw(i, F, |a| b(1.0 / f(a[0]).sqrt()))?,
+                Code::Sqrt => self.cw(i, F, |a| b(f(a[0]).sqrt()))?,
+                Code::Switch => {
                     let s = self.src(&i.ops[0], I)?[0];
                     let start = pc - 1;
                     let end = p.jump[start];
@@ -580,11 +707,23 @@ impl Run<'_> {
                     let mut default = None;
                     for j in start + 1..end {
                         match p.insts[j].op {
-                            0x1f | 0x30 | 0x4c => depth += 1,
-                            0x15 | 0x16 | 0x17 => depth -= 1,
-                            0x06 if depth == 0 && p.insts[j].ops[0].imm[0] == s && target.is_none() => target = Some(j),
-                            0x0a if depth == 0 => default = Some(j),
-                            _ => {}
+                            Code::If | Code::Loop | Code::Switch => depth += 1,
+                            Code::EndIf | Code::EndLoop | Code::EndSwitch => depth -= 1,
+                            Code::Case if depth == 0 && p.insts[j].ops[0].imm[0] == s && target.is_none() => target = Some(j),
+                            Code::Default if depth == 0 => default = Some(j),
+                            Code::Add | Code::And | Code::Break | Code::Breakc | Code::Case | Code::Continue
+                            | Code::Continuec | Code::Default | Code::Div | Code::Dp2 | Code::Dp3 | Code::Dp4
+                            | Code::Else | Code::Eq | Code::Exp | Code::Frc | Code::Ftoi | Code::Ftou
+                            | Code::Ge | Code::Iadd | Code::Ieq | Code::Ige | Code::Ilt | Code::Imad
+                            | Code::Imax | Code::Imin | Code::Imul | Code::Ine | Code::Ineg | Code::Ishl
+                            | Code::Ishr | Code::Itof | Code::Log | Code::Lt | Code::Mad | Code::Min
+                            | Code::Max | Code::Mov | Code::Movc | Code::Mul | Code::Ne | Code::Nop
+                            | Code::Not | Code::Or | Code::Ret | Code::Retc | Code::RoundNe | Code::RoundNi
+                            | Code::RoundPi | Code::RoundZ | Code::Rsq | Code::Sqrt | Code::SinCos | Code::Udiv
+                            | Code::Ult | Code::Uge | Code::Umul | Code::Umad | Code::Umax | Code::Umin
+                            | Code::Ushr | Code::Utof | Code::Xor | Code::Rcp | Code::F32ToF16 | Code::F16ToF32
+                            | Code::CountBits | Code::FirstBitHi | Code::FirstBitLo | Code::FirstBitShi | Code::Ubfe | Code::Ibfe
+                            | Code::Bfi | Code::Bfrev | Code::Swapc => {}
                         }
                     }
                     match target.or(default) {
@@ -595,7 +734,7 @@ impl Run<'_> {
                         }
                     }
                 }
-                0x4d => {
+                Code::SinCos => {
                     let a = self.src(&i.ops[2], F)?;
                     if a.iter().any(|&x| f(x).abs() > 1e4) {
                         self.taint("sincos far from 0");
@@ -603,37 +742,37 @@ impl Run<'_> {
                     self.dst(&i.ops[0], a.map(|x| b(f(x).sin())), i.sat)?;
                     self.dst(&i.ops[1], a.map(|x| b(f(x).cos())), i.sat)?;
                 }
-                0x81 => self.cw(i, F, |a| b(1.0 / f(a[0])))?,
-                0x82 => self.cw(i, F, |a| f32tof16(f(a[0])))?,
-                0x83 => self.cw(i, U, |a| b(half::f16::from_bits(crate::lo16(a[0])).to_f32()))?,
-                0x86 => self.cw(i, U, |a| a[0].count_ones())?,
-                0x87 => self.cw(i, U, |a| if a[0] == 0 { !0 } else { a[0].leading_zeros() })?,
-                0x88 => self.cw(i, U, |a| if a[0] == 0 { !0 } else { a[0].trailing_zeros() })?,
-                0x89 => self.cw(i, I, |a| {
+                Code::Rcp => self.cw(i, F, |a| b(1.0 / f(a[0])))?,
+                Code::F32ToF16 => self.cw(i, F, |a| f32tof16(f(a[0])))?,
+                Code::F16ToF32 => self.cw(i, U, |a| b(half::f16::from_bits(crate::lo16(a[0])).to_f32()))?,
+                Code::CountBits => self.cw(i, U, |a| a[0].count_ones())?,
+                Code::FirstBitHi => self.cw(i, U, |a| if a[0] == 0 { !0 } else { a[0].leading_zeros() })?,
+                Code::FirstBitLo => self.cw(i, U, |a| if a[0] == 0 { !0 } else { a[0].trailing_zeros() })?,
+                Code::FirstBitShi => self.cw(i, I, |a| {
                     let x = a[0].cast_signed();
                     if x == 0 || x == -1 { !0 } else if x < 0 { (!a[0]).leading_zeros() } else { a[0].leading_zeros() }
                 })?,
-                0x8a | 0x8b => self.cw(i, U, |a| {
+                Code::Ubfe | Code::Ibfe => self.cw(i, U, |a| {
                     let (w, o, x) = (a[0] & 31, a[1] & 31, a[2]);
                     if w == 0 {
                         0
                     } else if w + o < 32 {
                         let sh = x << (32 - w - o);
-                        if i.op == 0x8a { sh >> (32 - w) } else { (sh.cast_signed() >> (32 - w)).cast_unsigned() }
-                    } else if i.op == 0x8a {
+                        if i.op == Code::Ubfe { sh >> (32 - w) } else { (sh.cast_signed() >> (32 - w)).cast_unsigned() }
+                    } else if i.op == Code::Ubfe {
                         x >> o
                     } else {
                         (x.cast_signed() >> o).cast_unsigned()
                     }
                 })?,
-                0x8c => self.cw(i, U, |a| {
+                Code::Bfi => self.cw(i, U, |a| {
                     let (w, o, x, y) = (a[0] & 31, a[1] & 31, a[2], a[3]);
                     let m = crate::lo32((1u64 << w) - 1);
                     let m = m.wrapping_shl(o);
                     (x.wrapping_shl(o) & m) | (y & !m)
                 })?,
-                0x8d => self.cw(i, U, |a| a[0].reverse_bits())?,
-                0x8e => {
+                Code::Bfrev => self.cw(i, U, |a| a[0].reverse_bits())?,
+                Code::Swapc => {
                     let c = self.src(&i.ops[2], U)?;
                     let a = self.src(&i.ops[3], U)?;
                     let e = self.src(&i.ops[4], U)?;
@@ -642,7 +781,6 @@ impl Run<'_> {
                     self.dst(&i.ops[0], d0, false)?;
                     self.dst(&i.ops[1], d1, false)?;
                 }
-                op => return Err(format!("opcode {op:#x}")),
             }
         }
         Ok(())

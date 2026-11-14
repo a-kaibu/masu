@@ -1577,7 +1577,6 @@ file	crates/sake/src/k32.rs	cast_possible_wrap	24
 file	crates/sake/src/k32.rs	cast_sign_loss	46
 file	crates/sake/src/k32.rs	indexing_slicing	73
 file	crates/sake/src/k32.rs	let_underscore_must_use	5
-file	crates/sake/src/k32.rs	manual_unwrap_or_default	1
 file	crates/sake/src/k32.rs	masu-set_len	3
 file	crates/sake/src/k32.rs	string_slice	14
 file	crates/sake/src/k32.rs	undocumented_unsafe_blocks	11
