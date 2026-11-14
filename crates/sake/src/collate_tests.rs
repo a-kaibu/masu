@@ -39,12 +39,12 @@ fn orders_as_windows() {
     }
 }
 
-/// The level that decides `a` against `b`: 0 primary, 1 diacritic, 2 tertiary, 3 hyphens and
-/// apostrophes, 4 equal
+/// The level that decides `a` against `b`: 0 primary, 1 diacritic, 2 case, 3 kana kind, 4 kana
+/// width, 5 hyphens and apostrophes, 6 equal
 fn level(a: &[u16], b: &[u16], flags: u32) -> usize {
     let (ka, kb) = (key(a, flags), key(b, flags));
-    let sp = |k: &(Vec<u32>, Vec<u8>, Vec<u8>, Vec<(usize, u8)>)| k.3.iter().map(|x| x.1).collect::<Vec<u8>>();
-    [ka.0 != kb.0, ka.1 != kb.1, ka.2 != kb.2, sp(&ka) != sp(&kb)].iter().position(|&d| d).unwrap_or(4)
+    let sp = |k: &Key| k.specials.iter().map(|x| x.1).collect::<Vec<u8>>();
+    [ka.primary != kb.primary, ka.diacritic != kb.diacritic, ka.case != kb.case, ka.kind != kb.kind, ka.width != kb.width, sp(&ka) != sp(&kb)].iter().position(|&d| d).unwrap_or(6)
 }
 
 /// Found by the proptest: a later level decides once a higher one is ignored
@@ -86,7 +86,25 @@ fn levels_as_windows() {
             }
         }
     }
-    assert!(bad.is_empty(), "{} differences:\n{}", bad.len(), bad[..bad.len().min(60)].join("\n"));
+    assert!(bad.is_empty(), "{} differences:\n{}", bad.len(), bad[..bad.len().min(if std::env::var_os("COLLATE_ALL").is_some() { usize::MAX } else { 60 })].join("\n"));
+}
+
+/// Every marked Latin letter against its base letter and against every other marked form of
+/// it: the mark decides at the diacritic level (after the base: a < à), it is gone ignoring
+/// marks, and two letters with different marks never weigh the same (#242: è and é did)
+#[test]
+fn marks_are_diacritics() {
+    for &(c, base, _) in MARKED.iter() {
+        let b = [u16::from(base)];
+        assert_eq!(compare(&b, &[c], 0), Ordering::Less, "{c:x}");
+        assert_eq!(level(&b, &[c], 0), 1, "{c:x}");
+        assert_eq!(compare(&b, &[c], NORM_IGNORENONSPACE), Ordering::Equal, "{c:x}");
+        for &(d, base2, _) in MARKED.iter() {
+            if base2 == base && d != c {
+                assert_ne!(compare(&[c], &[d], 0), Ordering::Equal, "{c:x} {d:x}");
+            }
+        }
+    }
 }
 
 fn text() -> impl Strategy<Value = Vec<u16>> {
@@ -133,7 +151,7 @@ proptest! {
         let f = f & !SORT_STRINGSORT;
         let fine = compare(&a, &b, 0);
         let coarse = compare(&a, &b, f);
-        let touched = if f & NORM_IGNORENONSPACE != 0 { 1 } else if f != 0 { 2 } else { 4 };
+        let touched = if f & NORM_IGNORENONSPACE != 0 { 1 } else if f != 0 { 2 } else { 6 };
         if f & NORM_IGNORESYMBOLS == 0 && level(&a, &b, 0) < touched {
             prop_assert_eq!(coarse, fine);
         }
@@ -163,7 +181,7 @@ proptest! {
 /// The key the comparison used to build, compared level by level
 fn compare_by_keys(a: &[u16], b: &[u16], flags: u32) -> Ordering {
     let (ka, kb) = (key(a, flags), key(b, flags));
-    ka.0.cmp(&kb.0).then_with(|| ka.1.cmp(&kb.1)).then_with(|| ka.2.cmp(&kb.2)).then_with(|| ka.3.iter().map(|x| x.1).cmp(kb.3.iter().map(|x| x.1)))
+    ka.primary.cmp(&kb.primary).then_with(|| ka.diacritic.cmp(&kb.diacritic)).then_with(|| ka.case.cmp(&kb.case)).then_with(|| ka.kind.cmp(&kb.kind)).then_with(|| ka.width.cmp(&kb.width)).then_with(|| ka.specials.iter().map(|x| x.1).cmp(kb.specials.iter().map(|x| x.1)))
 }
 
 proptest::proptest! {
