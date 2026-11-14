@@ -1284,7 +1284,7 @@ impl Parser {
 pub fn const_int(e: &Expr) -> Option<i64> {
     Some(match e {
         Expr::Int(v, _) => *v,
-        Expr::Float(f) => *f as i64,
+        Expr::Float(f) => dxwgsl::num::trunc_i64(*f),
         Expr::Bin(op, a, b) => {
             let (a, b) = (const_int(a)?, const_int(b)?);
             match op {

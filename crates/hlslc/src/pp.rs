@@ -619,7 +619,7 @@ fn cunary(t: &[Token], p: &mut usize, d: u32) -> Result<i64, String> {
     *p += 1;
     Ok(match &tk.t {
         Tok::Int(v, _) => v.cast_signed(),
-        Tok::Float(f) => *f as i64,
+        Tok::Float(f) => dxwgsl::num::trunc_i64(*f),
         Tok::Ident(_) => 0,
         Tok::Punct("(") => {
             let v = cexpr(t, p, 0, d)?;

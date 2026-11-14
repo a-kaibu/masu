@@ -176,7 +176,7 @@ fn eval(prog: &Program, e: &Expr) -> Option<Vec<f64>> {
 fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
     let eval = |prog: &Program, e: &Expr| eval_at(prog, e, vars);
     Some(match e {
-        Expr::Int(v, _) => vec![*v as f64],
+        Expr::Int(v, _) => vec![dxwgsl::num::to_f64(*v)],
         Expr::Float(f) => vec![*f],
         Expr::Bool(b) => vec![f64::from(u32::from(*b))],
         Expr::List(v) | Expr::Construct(_, v) => {
@@ -212,9 +212,9 @@ fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
                         Bin::Sub => p - q,
                         Bin::Mul => p * q,
                         Bin::Div => p / q,
-                        Bin::Or => (p as i64 | q as i64) as f64,
-                        Bin::And => (p as i64 & q as i64) as f64,
-                        Bin::Shl => (p as i64).wrapping_shl(crate::lo32(q as i64)) as f64,
+                        Bin::Or => dxwgsl::num::to_f64(dxwgsl::num::trunc_i64(p) | dxwgsl::num::trunc_i64(q)),
+                        Bin::And => dxwgsl::num::to_f64(dxwgsl::num::trunc_i64(p) & dxwgsl::num::trunc_i64(q)),
+                        Bin::Shl => dxwgsl::num::to_f64(dxwgsl::num::trunc_i64(p).wrapping_shl(crate::lo32(dxwgsl::num::trunc_i64(q)))),
                         Bin::Mod | Bin::Shr | Bin::Xor | Bin::LAnd | Bin::LOr | Bin::Lt
                         | Bin::Gt | Bin::Le | Bin::Ge | Bin::Eq | Bin::Ne => return None,
                     })
@@ -603,11 +603,11 @@ impl W<'_> {
                 let i = e * n + k;
                 let v = if vals.len() == 1 { vals[0] } else { vals.get(i).copied().unwrap_or(0.0) };
                 let w = match *b {
-                    PType::Float => (v as f32).to_bits(),
+                    PType::Float => (dxwgsl::num::to_f32(v)).to_bits(),
                     PType::Bool => u32::from(v != 0.0),
                     PType::Void | PType::Int | PType::String | PType::Texture | PType::Texture1D | PType::Texture3D
                     | PType::TextureCube | PType::Sampler | PType::Sampler1D | PType::Sampler2D | PType::Sampler3D
-                    | PType::SamplerCube | PType::PixelShader | PType::VertexShader => crate::lo32(v as i64),
+                    | PType::SamplerCube | PType::PixelShader | PType::VertexShader => crate::lo32(dxwgsl::num::trunc_i64(v)),
                 };
                 out.extend_from_slice(&w.to_le_bytes());
             }

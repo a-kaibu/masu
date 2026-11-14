@@ -403,10 +403,10 @@ fn fold(op: sm4::Opcode, a: &[u32], tru: u32) -> Option<u32> {
         ISHL => a[0].wrapping_shl(a[1] & 31),
         ISHR => (i(0) >> (a[1] & 31)).cast_unsigned(),
         USHR => a[0] >> (a[1] & 31),
-        ITOF => fbits(i(0) as f32),
-        UTOF => fbits(a[0] as f32),
-        FTOI => (f(0) as i32).cast_unsigned(),
-        FTOU => f(0) as u32,
+        ITOF => fbits(dxwgsl::num::to_f32(i(0))),
+        UTOF => fbits(dxwgsl::num::to_f32(a[0])),
+        FTOI => (dxwgsl::num::trunc_i32(f(0))).cast_unsigned(),
+        FTOU => dxwgsl::num::trunc_u32(f(0)),
         EQ => m(f(0) == f(1)),
         NE => m(f(0) != f(1)),
         LT => m(f(0) < f(1)),
@@ -514,7 +514,7 @@ impl<'a> L<'a> {
     /// an int constant
     fn ival(&self, v: i64) -> u32 {
         if self.sm3() {
-            fbits(v as f32)
+            fbits(dxwgsl::num::to_f32(v))
         } else {
             crate::lo32(v)
         }
@@ -2069,7 +2069,7 @@ impl<'a> L<'a> {
         use sm4::*;
         Ok(match e {
             Expr::Int(v, u) => self.lit_int(*v, *u),
-            Expr::Float(f) => Val::num(Ty::Scalar(B::Float), vec![C::I(fbits(*f as f32))]),
+            Expr::Float(f) => Val::num(Ty::Scalar(B::Float), vec![C::I(fbits(dxwgsl::num::to_f32(*f)))]),
             Expr::Bool(b) => Val::num(Ty::Scalar(B::Bool), vec![C::I(if *b { self.tru() } else { 0 })]),
             Expr::Var(n, line) => {
                 let v = self.lookup(n, *line)?;
@@ -2508,7 +2508,7 @@ impl<'a> L<'a> {
         let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
         let mut c = iv.c[0];
         if stride > 1 && self.sm3() {
-            c = self.alu(sm4::MUL, B::Float, &[&[c], &[C::I(fbits(stride as f32))]])[0];
+            c = self.alu(sm4::MUL, B::Float, &[&[c], &[C::I(fbits(dxwgsl::num::to_f32(stride)))]])[0];
         } else if stride > 1 {
             c = if stride.is_power_of_two() {
                 self.alu(sm4::ISHL, B::Int, &[&[c], &[C::I(stride.trailing_zeros())]])[0]
@@ -2528,7 +2528,7 @@ impl<'a> L<'a> {
     /// index, or a select chain
     fn select(&mut self, elems: Vec<Vec<C>>, iv: Val, ty: Ty) -> R<Val> {
         if let Some(C::I(k)) = iv.c.first() {
-            let k = if iv.ty.base() == B::Float || self.sm3() { flt(*k) as i64 } else { i64::from(k.cast_signed()) };
+            let k = if iv.ty.base() == B::Float || self.sm3() { dxwgsl::num::trunc_i64(flt(*k)) } else { i64::from(k.cast_signed()) };
             let e = usize::try_from(k).ok().and_then(|k| elems.get(k)).ok_or(format!("index {k} out of range"))?;
             return Ok(Val::num(ty, e.clone()));
         }

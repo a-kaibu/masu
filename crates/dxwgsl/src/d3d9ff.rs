@@ -145,7 +145,7 @@ pub fn lighting_regs(regs: &mut [[f32; 4]], material: &[f32; 17], ambient: u32, 
             let mut v = [0f32; 4];
             for r in 0..3 {
                 let (r1, r2) = ((r + 1) % 3, (r + 2) % 3);
-                v[r] = ((m(c1, r1) * m(c2, r2) - m(c1, r2) * m(c2, r1)) / det) as f32;
+                v[r] = crate::num::to_f32((m(c1, r1) * m(c2, r2) - m(c1, r2) * m(c2, r1)) / det);
             }
             v
         } else {
@@ -163,7 +163,7 @@ pub fn lighting_regs(regs: &mut [[f32; 4]], material: &[f32; 17], ambient: u32, 
         regs[b + 2] = l.ambient;
         regs[b + 3] = [p[0], p[1], p[2], l.range];
         regs[b + 4] = [d[0], d[1], d[2], l.falloff];
-        regs[b + 5] = [l.attenuation[0], l.attenuation[1], l.attenuation[2], l.ty as f32];
+        regs[b + 5] = [l.attenuation[0], l.attenuation[1], l.attenuation[2], crate::num::to_f32(l.ty)];
         regs[b + 6] = [(l.theta / 2.0).cos(), (l.phi / 2.0).cos(), 0.0, 0.0];
     }
 }

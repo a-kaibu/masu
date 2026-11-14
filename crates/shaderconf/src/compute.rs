@@ -37,12 +37,12 @@ fn config(sharp: f32, iw: u32, ih: u32, ow: u32, oh: u32, hdr: u32) -> Vec<u32> 
         smax - smin,
         lmin,
         lmax - lmin,
-        iw as f32 / ow as f32,
-        ih as f32 / oh as f32,
-        1.0 / ow as f32,
-        1.0 / oh as f32,
-        1.0 / iw as f32,
-        1.0 / ih as f32,
+        dxwgsl::num::to_f32(iw) / dxwgsl::num::to_f32(ow),
+        dxwgsl::num::to_f32(ih) / dxwgsl::num::to_f32(oh),
+        1.0 / dxwgsl::num::to_f32(ow),
+        1.0 / dxwgsl::num::to_f32(oh),
+        1.0 / dxwgsl::num::to_f32(iw),
+        1.0 / dxwgsl::num::to_f32(ih),
     ];
     let mut w: Vec<u32> = f.iter().map(|x| x.to_bits()).collect();
     w.extend_from_slice(&[0, 0, iw, ih, 0, 0, ow, oh, 0, 0]);

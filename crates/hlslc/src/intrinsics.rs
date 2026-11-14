@@ -610,7 +610,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
             if small {
                 let C::I(e) = c[1][0] else { unreachable!() };
                 let mut r = c[0].clone();
-                for _ in 1..f32::from_bits(e) as u32 {
+                for _ in 1..dxwgsl::num::trunc_u32(f32::from_bits(e)) {
                     r = l.x_alu(MUL, B::Float, &[&r, &c[0]]);
                 }
                 return Ok(Val::num(t, r));

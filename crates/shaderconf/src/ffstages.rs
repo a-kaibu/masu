@@ -27,7 +27,7 @@ impl Rng {
     }
     fn color(&mut self) -> [f64; 4] {
         // (on the 8-bit grid, as vertex colors and TFACTOR are)
-        std::array::from_fn(|_| self.below(256) as f64 / 255.0)
+        std::array::from_fn(|_| dxwgsl::num::to_f64(self.below(256)) / 255.0)
     }
 }
 
@@ -164,17 +164,17 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
             let g = Regs { diffuse: r.color(), specular: r.color(), tfactor: r.color(), constant: std::array::from_fn(|_| r.color()) };
             let want = reference(stages, *specular, &g);
             let mut regs = vec![[0f32; 4]; n + 2];
-            regs[0] = g.tfactor.map(|x| x as f32);
+            regs[0] = g.tfactor.map(|x| dxwgsl::num::to_f32(x));
             for s in 0..8 {
-                regs[1 + s] = g.constant[s].map(|x| x as f32);
+                regs[1 + s] = g.constant[s].map(|x| dxwgsl::num::to_f32(x));
             }
-            regs[n] = g.diffuse.map(|x| x as f32);
-            regs[n + 1] = g.specular.map(|x| x as f32);
+            regs[n] = g.diffuse.map(|x| dxwgsl::num::to_f32(x));
+            regs[n + 1] = g.specular.map(|x| dxwgsl::num::to_f32(x));
             let mut d = vec![0u8; size];
             for (j, v) in regs.iter().flatten().enumerate() {
                 d[at + j * 4..at + j * 4 + 4].copy_from_slice(&v.to_le_bytes());
             }
-            let w: [Want; 4] = std::array::from_fn(|c| Some(vec![want[c] as f32]));
+            let w: [Want; 4] = std::array::from_fn(|c| Some(vec![dxwgsl::num::to_f32(want[c])]));
             pixels.push((d, w));
         }
         if pixels.is_empty() {

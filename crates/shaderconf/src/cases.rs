@@ -101,7 +101,7 @@ fn wf(v: Vec<f32>) -> [Want; 4] {
     [Some(v), one(0.0), one(0.0), one(1.0)]
 }
 fn wu(v: &[u32]) -> [Want; 4] {
-    [Some(v.iter().map(|x| (x >> 16) as f32).collect()), Some(v.iter().map(|x| (x & 0xffff) as f32).collect()), one(0.0), one(1.0)]
+    [Some(v.iter().map(|x| dxwgsl::num::to_f32(x >> 16)).collect()), Some(v.iter().map(|x| dxwgsl::num::to_f32(x & 0xffff)).collect()), one(0.0), one(1.0)]
 }
 fn f3(a: f32, b: f32, c: f32) -> [u32; 12] {
     [a.to_bits(), 0, 0, 0, b.to_bits(), 0, 0, 0, c.to_bits(), 0, 0, 0]
@@ -129,7 +129,7 @@ fn ftoi(f: f32) -> u32 {
     if f.is_nan() {
         0
     } else {
-        (f64::from(f).trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32).cast_unsigned()
+        (dxwgsl::num::trunc_i32(f64::from(f).trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)))).cast_unsigned()
     }
 }
 /// ftou: NaN and negatives 0, clamped
@@ -137,7 +137,7 @@ fn ftou(f: f32) -> u32 {
     if f.is_nan() {
         0
     } else {
-        f64::from(f).trunc().clamp(0.0, f64::from(u32::MAX)) as u32
+        dxwgsl::num::trunc_u32(f64::from(f).trunc().clamp(0.0, f64::from(u32::MAX)))
     }
 }
 
@@ -198,12 +198,13 @@ fn dxbc_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     dxbc(out, errors, "sin", "sincos: within 0.0008 for |x| <= 100 pi", "ps_4_0", "float r = sin(fa.x);", Out::F, Tol::Abs(0.0008), sin);
     dxbc(out, errors, "cos", "sincos: within 0.0008 for |x| <= 100 pi", "ps_4_0", "float r = cos(fa.x);", Out::F, Tol::Abs(0.0008), cos);
     // comparisons: ordered, NaN unequal to everything
-    for (n, op, f) in [
-        ("lt", "<", (|a: f32, b: f32| a < b) as fn(f32, f32) -> bool),
+    let cmps: [(&str, &str, fn(f32, f32) -> bool); 4] = [
+        ("lt", "<", |a, b| a < b),
         ("ge", ">=", |a, b| a >= b),
         ("eq", "==", |a, b| a == b),
         ("ne", "!=", |a, b| a != b),
-    ] {
+    ];
+    for (n, op, f) in cmps {
         let px = fp.iter().map(|&(a, b)| (f3(a, b, 0.0), wu(&[u32::from(f(a, b))]))).collect();
         dxbc(out, errors, &format!("cmp_{n}"), "float comparisons are ordered (NaN: false, != true); -0 == +0", "ps_4_0", &format!("uint r = (fa.x {op} fb.x) ? 1 : 0;"), Out::U, Tol::Exact, px);
     }
@@ -223,8 +224,8 @@ fn dxbc_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     let conv = |f: fn(f32) -> u32| -> Vec<([u32; 12], [Want; 4])> { F.iter().map(|&a| (f3(a, 0.0, 0.0), wu(&[f(a)]))).collect() };
     dxbc(out, errors, "ftoi", "ftoi: toward zero, NaN to 0, clamped to the int range", "ps_4_0", "uint r = asuint((int)fa.x);", Out::U, Tol::Exact, conv(ftoi));
     dxbc(out, errors, "ftou", "ftou: toward zero, NaN and negatives to 0, clamped", "ps_4_0", "uint r = (uint)fa.x;", Out::U, Tol::Exact, conv(ftou));
-    let itof = U.iter().map(|&a| (u3(a, 0, 0), wf(vec![a.cast_signed() as f32]))).collect();
-    let utof = U.iter().map(|&a| (u3(a, 0, 0), wf(vec![a as f32]))).collect();
+    let itof = U.iter().map(|&a| (u3(a, 0, 0), wf(vec![dxwgsl::num::to_f32(a.cast_signed())]))).collect();
+    let utof = U.iter().map(|&a| (u3(a, 0, 0), wf(vec![dxwgsl::num::to_f32(a)]))).collect();
     dxbc(out, errors, "itof", "itof: round to nearest even", "ps_4_0", "float r = (float)ia.x;", Out::F, Tol::Exact, itof);
     dxbc(out, errors, "utof", "utof: round to nearest even", "ps_4_0", "float r = (float)a.x;", Out::F, Tol::Exact, utof);
     let f2h = F.iter().map(|&a| (f3(a, 0.0, 0.0), wu(&[u32::from(half::f16::from_f32(a).to_bits()), u32::from(f16_rtz(a))]))).collect();
@@ -277,7 +278,7 @@ float4 ps() : SV_Target {
         .map(|&(n, brk)| {
             let mut s = 0.0f32;
             for i in 0..n {
-                s += 0.5 * (i + 1) as f32;
+                s += 0.5 * dxwgsl::num::to_f32(i + 1);
                 if i == brk {
                     break;
                 }
@@ -314,9 +315,9 @@ float4 ps() : SV_Target {{
         let px = [(0.0f32, 2.0f32, 1.0f32), (2.0, 2.0, 2.0), (2.0, 1.0, 3.0), (3.0, 0.0, 0.0)]
             .iter()
             .map(|&(i, j, k)| {
-                let mut arr: Vec<[f32; 4]> = (0..len).map(|q| [q as f32, 0.0, 0.0, 1.0]).collect();
-                arr[i as usize] = [9.0, 8.0, 7.0, 6.0];
-                arr[j as usize][1] += 5.0;
+                let mut arr: Vec<[f32; 4]> = (0..len).map(|q| [dxwgsl::num::to_f32(q), 0.0, 0.0, 1.0]).collect();
+                arr[dxwgsl::num::trunc_usize(i)] = [9.0, 8.0, 7.0, 6.0];
+                arr[dxwgsl::num::trunc_usize(j)][1] += 5.0;
                 let mut w = vec![0u32; 12];
                 w[0] = i.to_bits();
                 w[1] = j.to_bits();
@@ -324,7 +325,7 @@ float4 ps() : SV_Target {{
                 for (q, v) in [9.0f32, 8.0, 7.0, 6.0].iter().enumerate() {
                     w[4 + q] = v.to_bits();
                 }
-                (w, [one(arr[2][0]), one(arr[2][1]), one(arr[k as usize][0]), one(arr[1][1])])
+                (w, [one(arr[2][0]), one(arr[2][1]), one(arr[dxwgsl::num::trunc_usize(k)][0]), one(arr[1][1])])
             })
             .collect::<Vec<_>>();
         dxbc_raw(out, errors, n, "a local array written at a run-time index", &src, "ps_4_0", Tol::Exact, px.clone());
@@ -373,7 +374,7 @@ fn packing(out: &mut Vec<Case>, errors: &mut Vec<String>) {
         let src = format!("cbuffer C : register(b0) {{ {decl} }};\nfloat4 ps() : SV_Target {{ return float4({expr}, 0, 0, 1); }}\n");
         match dxbc_wgsl(&src, "ps_4_0") {
             Ok((wgsl, group, binding, code)) => {
-                let data: Vec<u8> = (0..64u32).flat_map(|i| (i as f32).to_bits().to_le_bytes()).collect();
+                let data: Vec<u8> = (0..64u32).flat_map(|i| (dxwgsl::num::to_f32(i)).to_bits().to_le_bytes()).collect();
                 out.push(Case {
                     name: format!("dxbc/pack_{name}"),
                     api: "dxbc",
@@ -382,7 +383,7 @@ fn packing(out: &mut Vec<Case>, errors: &mut Vec<String>) {
                     wgsl,
                     group,
                     binding,
-                    pixels: vec![(data, wf(vec![word as f32]))],
+                    pixels: vec![(data, wf(vec![dxwgsl::num::to_f32(word)]))],
                     tol: Tol::Exact,
                     rule: "HLSL constant buffer packing",
                 });
@@ -610,7 +611,7 @@ fn glsl_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     glsl(out, errors, "atan2", "atan(y, x): the quadrant from both signs", "gl_FragColor = vec4(atan(a.x, b.x), 0.0, 0.0, 1.0);", Tol::Abs(1e-5), atan);
     let idiv: Vec<_> = [(7, 2), (-7, 2), (7, -2), (-7, -2), (0, 5), (100, 7)]
         .iter()
-        .map(|&(x, y): &(i32, i32)| (vec![("ia", iv([x, 0, 0, 0])), ("ib", iv([y, 0, 0, 0]))], w4([(x / y) as f32, 0.0, 0.0, 1.0])))
+        .map(|&(x, y): &(i32, i32)| (vec![("ia", iv([x, 0, 0, 0])), ("ib", iv([y, 0, 0, 0]))], w4([dxwgsl::num::to_f32(x / y), 0.0, 0.0, 1.0])))
         .collect();
     glsl(out, errors, "int_div", "int division truncates", "gl_FragColor = vec4(float(ia.x / ib.x), 0.0, 0.0, 1.0);", Tol::Exact, idiv);
     let rel: Vec<_> = [(1.0f32, 2.0f32), (2.0, 1.0), (1.0, 1.0)]
@@ -619,7 +620,7 @@ fn glsl_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
         .collect();
     glsl(out, errors, "relational", "lessThan, greaterThanEqual, equal as floats", "gl_FragColor = vec4(vec3(lessThan(a.xxx, b.xxx).x, greaterThanEqual(a, b).x, equal(a, b).x), 1.0);", Tol::Exact, rel);
     // matrices: column-major uniforms (glUniformMatrix, transpose false); m * v sums columns
-    let m4: Vec<f32> = (1..=16).map(|i| i as f32).collect();
+    let m4: Vec<f32> = (1..=16).map(|i| dxwgsl::num::to_f32(i)).collect();
     let v = [1.0f32, 0.5, -1.0, 2.0];
     let mv: [f32; 4] = std::array::from_fn(|r| (0..4).map(|c| m4[c * 4 + r] * v[c]).sum());
     let vm: [f32; 4] = std::array::from_fn(|c| (0..4).map(|r| m4[c * 4 + r] * v[r]).sum());
@@ -627,7 +628,7 @@ fn glsl_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     glsl(out, errors, "mat4_vec", "m * v: columns weighted by v (column-major storage)", "gl_FragColor = m4 * a;", Tol::Exact, vec![(vec![("m4", m4u.clone()), ("a", fv(v))], w4(mv))]);
     glsl(out, errors, "vec_mat4", "v * m: dot products with the columns", "gl_FragColor = a * m4;", Tol::Exact, vec![(vec![("m4", m4u.clone()), ("a", fv(v))], w4(vm))]);
     glsl(out, errors, "mat4_index", "m[i] is column i", "gl_FragColor = m4[1];", Tol::Exact, vec![(vec![("m4", m4u)], w4([5.0, 6.0, 7.0, 8.0]))]);
-    let m3: Vec<u32> = (1..=9).map(|i| (i as f32).to_bits()).collect();
+    let m3: Vec<u32> = (1..=9).map(|i| (dxwgsl::num::to_f32(i)).to_bits()).collect();
     glsl(out, errors, "mat3_columns", "mat3 uniform: three columns of three (std140 pads each to 16 bytes)", "gl_FragColor = vec4(m3[0].z, m3[1].x, m3[2].z, m3[1][1]);", Tol::Exact, vec![(vec![("m3", m3)], w4([3.0, 4.0, 9.0, 5.0]))]);
     let m2: Vec<u32> = [1.0f32, 2.0, 3.0, 4.0].iter().map(|x| x.to_bits()).collect();
     glsl(out, errors, "mat2_vec", "mat2 * vec2", "gl_FragColor = vec4(m2 * a.xy, m2[1]);", Tol::Exact, vec![(vec![("m2", m2), ("a", fv([1.0, 1.0, 0.0, 0.0]))], w4([4.0, 6.0, 3.0, 4.0]))]);
@@ -636,7 +637,7 @@ fn glsl_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     let bools: Vec<_> = [0, 1, -3].iter().map(|&i| (vec![("ia", iv([i, 0, 0, 0]))], w4([f32::from(u8::from(i != 0)), if i != 0 { 2.0 } else { 3.0 }, 0.0, 1.0]))).collect();
     glsl(out, errors, "bool", "bool(int) and float(bool)", "bool t = bool(ia.x); gl_FragColor = vec4(float(t), t ? 2.0 : 3.0, 0.0, 1.0);", Tol::Exact, bools);
     glsl(out, errors, "loop", "for loop with a uniform bound and break", "float s = 0.0; for (int i = 0; i < 16; i++) { if (i >= ia.x) break; s += a.x; } gl_FragColor = vec4(s, 0.0, 0.0, 1.0);", Tol::Exact,
-        [0, 3, 16, 40].iter().map(|&n| (vec![("ia", iv([n, 0, 0, 0])), ("a", fv([0.5, 0.0, 0.0, 0.0]))], w4([0.5 * n.min(16) as f32, 0.0, 0.0, 1.0]))).collect());
+        [0, 3, 16, 40].iter().map(|&n| (vec![("ia", iv([n, 0, 0, 0])), ("a", fv([0.5, 0.0, 0.0, 0.0]))], w4([0.5 * dxwgsl::num::to_f32(n.min(16)), 0.0, 0.0, 1.0]))).collect());
 }
 
 pub fn all(out: &mut Vec<Case>, errors: &mut Vec<String>) {

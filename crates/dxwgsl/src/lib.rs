@@ -29,6 +29,7 @@ pub mod addr;
 pub mod d3d9;
 pub mod d3d9ff;
 pub mod dxbc;
+pub mod num;
 pub mod tpf;
 mod wgsl;
 

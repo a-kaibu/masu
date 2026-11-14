@@ -132,7 +132,7 @@ fn rtype(w: u32) -> u32 {
 }
 
 fn src_token(w: u32) -> Src {
-    Src { ty: rtype(w), reg: w & 0x7ff, swz: std::array::from_fn(|i| ((w >> (16 + 2 * i)) & 3) as u8), md: (w >> 24) & 0xf, rel: None }
+    Src { ty: rtype(w), reg: w & 0x7ff, swz: std::array::from_fn(|i| crate::lo8((w >> (16 + 2 * i)) & 3)), md: (w >> 24) & 0xf, rel: None }
 }
 
 const NO_DST: &[Code] = &[Code::Nop, Code::Call, Code::Callnz, Code::Loop, Code::Ret, Code::EndLoop, Code::Label, Code::Rep, Code::EndRep, Code::If, Code::Ifc, Code::Else, Code::EndIf, Code::Break, Code::Breakc, Code::Breakp];
@@ -339,9 +339,9 @@ impl Run<'_> {
                     return Err("constant out of range".into());
                 }
             },
-            7 => self.i[crate::us(s.reg) & 15].map(|x| x as f32),
+            7 => self.i[crate::us(s.reg) & 15].map(|x| dxwgsl::num::to_f32(x)),
             14 => [if self.b[crate::us(s.reg) & 15] { 1.0 } else { 0.0 }; 4],
-            15 => [self.al as f32; 4],
+            15 => [dxwgsl::num::to_f32(self.al); 4],
             19 => self.pr.map(|x| if x { 1.0 } else { 0.0 }),
             t => return Err(format!("source register type {t}")),
         };
@@ -440,7 +440,7 @@ impl Run<'_> {
                         Code::Mul => a[k] * b[k],
                         Code::Min => a[k].min(b[k]),
                         Code::Max => a[k].max(b[k]),
-                        Code::Slt => u32::from(a[k] < b[k]) as f32,
+                        Code::Slt => dxwgsl::num::to_f32(u32::from(a[k] < b[k])),
                         Code::Nop | Code::Mov | Code::Mad | Code::Rcp | Code::Rsq | Code::Dp3
                         | Code::Dp4 | Code::Sge | Code::Exp | Code::Log | Code::Lrp | Code::Frc
                         | Code::M4x4 | Code::M4x3 | Code::M3x4 | Code::M3x3 | Code::M3x2 | Code::Call
@@ -448,7 +448,7 @@ impl Run<'_> {
                         | Code::Crs | Code::Abs | Code::Nrm | Code::SinCos | Code::Rep | Code::EndRep
                         | Code::If | Code::Ifc | Code::Else | Code::EndIf | Code::Break | Code::Breakc
                         | Code::Defb | Code::Defi | Code::Expp | Code::Logp | Code::Cnd | Code::Def
-                        | Code::Cmp | Code::Dp2Add | Code::Setp | Code::Breakp => u32::from(a[k] >= b[k]) as f32,
+                        | Code::Cmp | Code::Dp2Add | Code::Setp | Code::Breakp => dxwgsl::num::to_f32(u32::from(a[k] >= b[k])),
                     });
                     self.write(i, v)?
                 }
@@ -536,7 +536,7 @@ impl Run<'_> {
                 }
                 Code::Setp => {
                     let (a, b) = (self.s(i, 0)?, self.s(i, 1)?);
-                    let v = std::array::from_fn(|k| u32::from(cmp(i.cmp, a[k], b[k])) as f32);
+                    let v = std::array::from_fn(|k| dxwgsl::num::to_f32(u32::from(cmp(i.cmp, a[k], b[k]))));
                     self.write(i, v)?
                 }
                 // (applied before the program runs)

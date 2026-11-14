@@ -26,7 +26,7 @@ impl Rng {
         xs.into_iter().nth(k)
     }
     fn int(&mut self, lo: i64, hi: i64) -> f64 {
-        (lo + self.below((hi - lo + 1).cast_unsigned()).cast_signed()) as f64
+        dxwgsl::num::to_f64(lo + self.below((hi - lo + 1).cast_unsigned()).cast_signed())
     }
 }
 
@@ -111,7 +111,7 @@ enum S {
 }
 
 const VARS: usize = 3;
-const LIMIT: f64 = (1 << 22) as f64;
+const LIMIT: f64 = 4_194_304.0; // 2^22
 
 fn expr(r: &mut Rng, depth: u32) -> E {
     if depth == 0 || r.below(4) == 0 {
@@ -177,7 +177,7 @@ struct Ev<'a> {
 
 /// An array index or loop count from a value: its x clamped to 0..3
 fn index(v: V) -> usize {
-    v[0].clamp(0.0, 3.0) as usize
+    dxwgsl::num::trunc_usize(v[0].clamp(0.0, 3.0))
 }
 
 impl Ev<'_> {
@@ -337,7 +337,7 @@ fn ps(l: &Lang, s: &[S], ind: usize, out: &mut String) {
     for st in s {
         match st {
             S::Mask(v, m, e) => {
-                let k: String = (0..4).filter(|&i| m[i]).map(|i| b"xyzw"[i] as char).collect();
+                let k: String = (0..4).filter(|&i| m[i]).map(|i| char::from(b"xyzw"[i])).collect();
                 out.push_str(&format!("{pad}t{v}.{k} = ({}).{k};\n", pe(l, e)));
             }
             S::ArrSet(i, e) => out.push_str(&format!("{pad}arr[{}] = {};\n", idx(l, i), pe(l, e))),
@@ -392,7 +392,7 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>, n: u32, seed: u64, d
         let mut ok = true;
         for _ in 0..6 {
             let ins: [V; 3] = std::array::from_fn(|_| [r.int(-20, 20), r.int(-20, 20), r.int(-20, 20), r.int(-20, 20)]);
-            let mut ev = Ev { ins: &ins, vars: [[0.0; 4]; VARS], arr: std::array::from_fn(|i| [i as f64, 1.0, 2.0, 3.0]), ok: true };
+            let mut ev = Ev { ins: &ins, vars: [[0.0; 4]; VARS], arr: std::array::from_fn(|i| [dxwgsl::num::to_f64(i), 1.0, 2.0, 3.0]), ok: true };
             ev.s(&prog);
             ok &= ev.ok;
             pixels.push((ins, ev.vars[result]));
@@ -401,8 +401,8 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>, n: u32, seed: u64, d
             continue;
         }
         made += 1;
-        let want = |v: &V| -> [Want; 4] { v.map(|x| Some(vec![x as f32])) };
-        let f32s = |ins: &[V; 3]| -> Vec<[f32; 4]> { ins.iter().map(|v| v.map(|x| x as f32)).collect() };
+        let want = |v: &V| -> [Want; 4] { v.map(|x| Some(vec![dxwgsl::num::to_f32(x)])) };
+        let f32s = |ins: &[V; 3]| -> Vec<[f32; 4]> { ins.iter().map(|v| v.map(|x| dxwgsl::num::to_f32(x))).collect() };
         let name = format!("{prefix}{made:03}");
         let hl = Lang { vec: "float4", ins: ["A", "B", "Cc"], glsl: false };
         let b = body(&hl, &prog);

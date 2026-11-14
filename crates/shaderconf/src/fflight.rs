@@ -23,7 +23,7 @@ impl Rng {
     }
     /// uniform in [a, b)
     fn f(&mut self, a: f32, b: f32) -> f32 {
-        a + (b - a) * ((self.next() >> 40) as f32 / (1u64 << 24) as f32)
+        a + (b - a) * (dxwgsl::num::to_f32(self.next() >> 40) / dxwgsl::num::to_f32(1u64 << 24))
     }
     fn v3(&mut self, a: f32, b: f32) -> [f32; 3] {
         [self.f(a, b), self.f(a, b), self.f(a, b)]
@@ -322,7 +322,7 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
                 for (j, v) in regs.iter().flatten().enumerate() {
                     d[at + j * 4..at + j * 4 + 4].copy_from_slice(&v.to_le_bytes());
                 }
-                let w: [Want; 4] = std::array::from_fn(|c| Some(vec![want[o][c] as f32]));
+                let w: [Want; 4] = std::array::from_fn(|c| Some(vec![dxwgsl::num::to_f32(want[o][c])]));
                 pixels.push((d, w));
             }
             if pixels.len() < 8 {
