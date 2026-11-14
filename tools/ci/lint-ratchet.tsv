@@ -1492,11 +1492,9 @@ file	crates/sake/src/gl.rs	undocumented_unsafe_blocks	5
 file	crates/sake/src/gl_sigs.rs	indexing_slicing	125
 file	crates/sake/src/gl_sigs.rs	masu-transmute	32
 file	crates/sake/src/glu.rs	arithmetic_side_effects	113
-file	crates/sake/src/glu.rs	as_conversions	148
-file	crates/sake/src/glu.rs	cast_possible_truncation	47
-file	crates/sake/src/glu.rs	cast_possible_wrap	39
-file	crates/sake/src/glu.rs	cast_precision_loss	19
-file	crates/sake/src/glu.rs	cast_sign_loss	34
+file	crates/sake/src/glu.rs	as_conversions	30
+file	crates/sake/src/glu.rs	cast_possible_truncation	20
+file	crates/sake/src/glu.rs	cast_sign_loss	7
 file	crates/sake/src/glu.rs	indexing_slicing	72
 file	crates/sake/src/guest.rs	arithmetic_side_effects	1
 file	crates/sake/src/guest.rs	as_conversions	4
@@ -1899,6 +1897,10 @@ file	crates/sake/src/ntsync.rs	as_conversions	21
 file	crates/sake/src/ntsync.rs	cast_possible_truncation	1
 file	crates/sake/src/ntsync.rs	cast_possible_wrap	7
 file	crates/sake/src/ntsync.rs	cast_sign_loss	6
+file	crates/sake/src/num.rs	as_conversions	9
+file	crates/sake/src/num.rs	cast_possible_truncation	7
+file	crates/sake/src/num.rs	cast_precision_loss	2
+file	crates/sake/src/num.rs	cast_sign_loss	3
 file	crates/sake/src/obj.rs	arithmetic_side_effects	14
 file	crates/sake/src/obj.rs	as_conversions	6
 file	crates/sake/src/obj.rs	cast_possible_truncation	3
