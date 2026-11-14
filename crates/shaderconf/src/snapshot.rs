@@ -234,6 +234,17 @@ fn type_sources() -> Vec<(String, String)> {
             }
         }
     }
+    // (each interpolation modifier, on float and int inputs, beside a position and a face)
+    for m in ["", "linear", "centroid", "nointerpolation", "noperspective", "noperspective centroid", "sample", "linear centroid"] {
+        for t in ["float4", "float2", "int2", "uint"] {
+            let src = format!(
+                "float4 main({m} {t} a : TEXCOORD0, {m} float b : TEXCOORD1, float4 p : SV_Position, bool f : SV_IsFrontFace) : SV_Target {{
+    return (float4)a.x * b + p * (f ? 1 : 2);
+}}"
+            );
+            out.push((format!("interp-{m}-{t}"), src));
+        }
+    }
     out
 }
 
