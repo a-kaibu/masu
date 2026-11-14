@@ -230,7 +230,7 @@ file	crates/koji/src/interp/bmi.rs	cast_possible_wrap	1
 file	crates/koji/src/interp/bmi.rs	cast_sign_loss	1
 file	crates/koji/src/interp/bmi.rs	wildcard_enum_match_arm	1
 file	crates/koji/src/interp/mod.rs	arithmetic_side_effects	81
-file	crates/koji/src/interp/mod.rs	as_conversions	264
+file	crates/koji/src/interp/mod.rs	as_conversions	251
 file	crates/koji/src/interp/mod.rs	cast_possible_truncation	108
 file	crates/koji/src/interp/mod.rs	cast_possible_wrap	44
 file	crates/koji/src/interp/mod.rs	cast_ptr_alignment	3
@@ -355,8 +355,8 @@ file	crates/koji/src/lazy.rs	cast_possible_truncation	5
 file	crates/koji/src/lazy.rs	cast_possible_wrap	1
 file	crates/koji/src/lazy.rs	cast_sign_loss	2
 file	crates/koji/src/lib.rs	arithmetic_side_effects	11
-file	crates/koji/src/lib.rs	as_conversions	39
-file	crates/koji/src/lib.rs	cast_possible_truncation	16
+file	crates/koji/src/lib.rs	as_conversions	33
+file	crates/koji/src/lib.rs	cast_possible_truncation	13
 file	crates/koji/src/lib.rs	fn_to_numeric_cast_any	1
 file	crates/koji/src/lib.rs	indexing_slicing	12
 file	crates/koji/src/lib.rs	masu-transmute	1
