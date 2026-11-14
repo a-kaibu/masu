@@ -43,6 +43,7 @@ mod compute_tests;
 mod dxgi_tests;
 
 use crate::d3d9::gpu;
+use crate::render::d3d::Factor;
 use crate::d3d9::HostCalls;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -3951,25 +3952,23 @@ fn state_desc(d: &D11, id: u32) -> Option<&Vec<u32>> {
     }
 }
 
-/// D3D11_BLEND to d3d9.ts BLEND2 (color; `alpha`: as an alpha factor)
-fn blend_factor(b: u32, alpha: bool) -> u32 {
-    // BLEND2: zero one src one-minus-src src-alpha one-minus-src-alpha dst-alpha
-    // one-minus-dst-alpha dst one-minus-dst src-alpha-saturated constant one-minus-constant
+/// D3D11_BLEND to the pipeline key's blend factor (color; `alpha`: as an alpha factor)
+fn blend_factor(b: u32, alpha: bool) -> Factor {
     match b {
-        1 => 0,
-        2 => 1,
-        3 => if alpha { 4 } else { 2 },
-        4 => if alpha { 5 } else { 3 },
-        5 => 4,
-        6 => 5,
-        7 => 6,
-        8 => 7,
-        9 => if alpha { 6 } else { 8 },
-        10 => if alpha { 7 } else { 9 },
-        11 => 10,
-        14 => 11,
-        15 => 12,
-        _ => 1,
+        1 => Factor::Zero,
+        2 => Factor::One,
+        3 => if alpha { Factor::SrcAlpha } else { Factor::Src },
+        4 => if alpha { Factor::OneMinusSrcAlpha } else { Factor::OneMinusSrc },
+        5 => Factor::SrcAlpha,
+        6 => Factor::OneMinusSrcAlpha,
+        7 => Factor::DstAlpha,
+        8 => Factor::OneMinusDstAlpha,
+        9 => if alpha { Factor::DstAlpha } else { Factor::Dst },
+        10 => if alpha { Factor::OneMinusDstAlpha } else { Factor::OneMinusDst },
+        11 => Factor::SrcAlphaSaturated,
+        14 => Factor::Constant,
+        15 => Factor::OneMinusConstant,
+        _ => Factor::One,
     }
 }
 
@@ -4275,7 +4274,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     for (i, f) in formats.iter().enumerate() {
         let rt = if b[1] != 0 { i } else { 0 };
         let t = &b[2 + rt * 8..2 + rt * 8 + 8];
-        key.extend_from_slice(&[*f, t[0], blend_factor(t[1], false), blend_factor(t[2], false), t[3], blend_factor(t[4], true), blend_factor(t[5], true), t[6], t[7] & 0xf]);
+        key.extend_from_slice(&[*f, t[0], blend_factor(t[1], false).code(), blend_factor(t[2], false).code(), t[3], blend_factor(t[4], true).code(), blend_factor(t[5], true).code(), t[6], t[7] & 0xf]);
     }
     // multisampling: AlphaToCoverageEnable, the sample mask (render::d3d pipeline2)
     key.extend_from_slice(&[b[0], st.sample_mask]);

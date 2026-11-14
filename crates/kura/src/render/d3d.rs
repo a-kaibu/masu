@@ -309,24 +309,6 @@ const VERTEX_FORMATS2: [&str; 32] = [
     "snorm16x4", "uint16x2", "uint16x4", "sint16x2", "sint16x4", "float16x2", "float16x4", "unorm8x2", "uint8x2",
     "unorm10-10-10-2", "unorm8x4-bgra", "snorm8x2", "sint8x2",
 ];
-const BLEND2: [&str; 14] = [
-    "zero",
-    "one",
-    "src",
-    "one-minus-src",
-    "src-alpha",
-    "one-minus-src-alpha",
-    "dst-alpha",
-    "one-minus-dst-alpha",
-    "dst",
-    "one-minus-dst",
-    "src-alpha-saturated",
-    "constant",
-    "one-minus-constant",
-    "one",
-];
-const STENCIL_OP: [&str; 9] =
-    ["keep", "keep", "zero", "replace", "increment-clamp", "decrement-clamp", "invert", "increment-wrap", "decrement-wrap"];
 const ADDRESS2: [&str; 4] = ["repeat", "mirror-repeat", "clamp-to-edge", "clamp-to-edge"];
 const VERTEX_FORMATS: [&str; 14] = [
     "float32", "float32x2", "float32x3", "float32x4", "unorm8x4", "uint8x4", "sint16x2", "sint16x4", "snorm16x2",
@@ -423,7 +405,6 @@ impl Topology {
         }
     }
 }
-const COMPARE: [&str; 9] = ["always", "never", "less", "equal", "less-equal", "greater", "not-equal", "greater-equal", "always"];
 const BLEND: [&str; 16] = [
     "one",
     "zero",
@@ -460,27 +441,112 @@ const BLEND_ALPHA: [&str; 16] = [
     "constant",
     "one-minus-constant",
 ];
-const BLEND_OP: [&str; 6] = ["add", "add", "subtract", "reverse-subtract", "min", "max"];
 const ADDRESS: [&str; 6] = ["repeat", "repeat", "mirror-repeat", "clamp-to-edge", "clamp-to-edge", "mirror-repeat"];
 
 fn pick<'a>(t: &[&'a str], i: u32, or: &'a str) -> &'a str {
     t.get(i as usize).copied().unwrap_or(or)
 }
-/// The key's blend factor `c` (BLEND2: d3d11 and gl), `or` past them.
+/// One enum of the pipeline key's states: each value's code in the key (d3d11's and gl's draws
+/// write them; d3d9's states are the same numbers), the value of a code, and its WebGPU name.
+macro_rules! key_enum {
+    ($(#[$m:meta])* $name:ident { $($v:ident = $c:literal => $s:literal,)* }) => {
+        $(#[$m])*
+        #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+        pub(crate) enum $name {
+            $($v,)*
+        }
+        impl $name {
+            /// Its code in the pipeline key.
+            pub(crate) const fn code(self) -> u32 {
+                match self {
+                    $($name::$v => $c,)*
+                }
+            }
+            /// The value with key code `c`.
+            pub(crate) const fn of(c: u32) -> Option<Self> {
+                match c {
+                    $($c => Some($name::$v),)*
+                    _ => None,
+                }
+            }
+            /// Its WebGPU name.
+            pub(crate) const fn name(self) -> &'static str {
+                match self {
+                    $($name::$v => $s,)*
+                }
+            }
+        }
+    };
+}
+key_enum!(
+    /// A blend factor (d3d11 and gl; d3d9's D3DBLEND go by BLEND and BLEND_ALPHA).
+    Factor {
+        Zero = 0 => "zero",
+        One = 1 => "one",
+        Src = 2 => "src",
+        OneMinusSrc = 3 => "one-minus-src",
+        SrcAlpha = 4 => "src-alpha",
+        OneMinusSrcAlpha = 5 => "one-minus-src-alpha",
+        DstAlpha = 6 => "dst-alpha",
+        OneMinusDstAlpha = 7 => "one-minus-dst-alpha",
+        Dst = 8 => "dst",
+        OneMinusDst = 9 => "one-minus-dst",
+        SrcAlphaSaturated = 10 => "src-alpha-saturated",
+        Constant = 11 => "constant",
+        OneMinusConstant = 12 => "one-minus-constant",
+    }
+);
+key_enum!(
+    /// A blend operation (D3DBLENDOP, D3D11_BLEND_OP).
+    BlendOp {
+        Add = 1 => "add",
+        Subtract = 2 => "subtract",
+        ReverseSubtract = 3 => "reverse-subtract",
+        Min = 4 => "min",
+        Max = 5 => "max",
+    }
+);
+key_enum!(
+    /// A stencil operation (D3DSTENCILOP, D3D11_STENCIL_OP).
+    StencilOp {
+        Keep = 1 => "keep",
+        Zero = 2 => "zero",
+        Replace = 3 => "replace",
+        IncrementClamp = 4 => "increment-clamp",
+        DecrementClamp = 5 => "decrement-clamp",
+        Invert = 6 => "invert",
+        IncrementWrap = 7 => "increment-wrap",
+        DecrementWrap = 8 => "decrement-wrap",
+    }
+);
+key_enum!(
+    /// A comparison (D3DCMPFUNC, D3D11_COMPARISON_FUNC).
+    Compare {
+        Never = 1 => "never",
+        Less = 2 => "less",
+        Equal = 3 => "equal",
+        LessEqual = 4 => "less-equal",
+        Greater = 5 => "greater",
+        NotEqual = 6 => "not-equal",
+        GreaterEqual = 7 => "greater-equal",
+        Always = 8 => "always",
+    }
+);
+/// The key's blend factor `c`, `or` past them (and one, for 13).
 fn factor_name(c: u32, or: &'static str) -> &'static str {
-    pick(&BLEND2, c, or)
+    Factor::of(c).map_or(if c == 13 { "one" } else { or }, Factor::name)
 }
-/// The key's (and D3DBLENDOP's) blend operation `c`.
+/// The key's blend operation `c` (add for none).
 fn blend_op_name(c: u32) -> &'static str {
-    pick(&BLEND_OP, c, "add")
+    BlendOp::of(c).map_or("add", BlendOp::name)
 }
-/// The key's (and D3DSTENCILOP's) stencil operation `c`.
+/// The key's stencil operation `c` (keep for none).
 fn stencil_op_name(c: u32) -> &'static str {
-    pick(&STENCIL_OP, c, "keep")
+    StencilOp::of(c).map_or("keep", StencilOp::name)
 }
-/// The key's (and D3DCMPFUNC's) comparison `c`, `or` past them.
+/// The key's comparison `c`, `or` past them (and always, for 0).
 fn compare_name(c: u32, or: &'static str) -> &'static str {
-    pick(&COMPARE, c, or)
+    Compare::of(c).map_or(if c == 0 { "always" } else { or }, Compare::name)
 }
 fn f32of(u: u32) -> f32 {
     f32::from_bits(u)
@@ -2478,17 +2544,17 @@ impl D3d {
         let depth = depth_fmt != 0xff;
         // (no blending into formats WebGPU does not blend: 32-bit floats, integers)
         let blend_of = |format: Tf| if blend[0] != 0 && blendable(format) {
-            let comp = |s: &str, d: &str, o: &str| {
-                if o == "min" || o == "max" {
-                    format!(r#"{{"srcFactor":"one","dstFactor":"one","operation":{}}}"#, q(o))
+            let comp = |s: &str, d: &str, o: u32| {
+                if matches!(BlendOp::of(o), Some(BlendOp::Min | BlendOp::Max)) {
+                    format!(r#"{{"srcFactor":"one","dstFactor":"one","operation":{}}}"#, q(blend_op_name(o)))
                 } else {
-                    format!(r#"{{"srcFactor":{},"dstFactor":{},"operation":{}}}"#, q(s), q(d), q(o))
+                    format!(r#"{{"srcFactor":{},"dstFactor":{},"operation":{}}}"#, q(s), q(d), q(blend_op_name(o)))
                 }
             };
             format!(
                 r#","blend":{{"color":{},"alpha":{}}}"#,
-                comp(pick(&BLEND, blend[1], "one"), pick(&BLEND, blend[2], "zero"), blend_op_name(blend[3])),
-                comp(pick(&BLEND_ALPHA, blend[4], "one"), pick(&BLEND_ALPHA, blend[5], "zero"), blend_op_name(blend[6]))
+                comp(pick(&BLEND, blend[1], "one"), pick(&BLEND, blend[2], "zero"), blend[3]),
+                comp(pick(&BLEND_ALPHA, blend[4], "one"), pick(&BLEND_ALPHA, blend[5], "zero"), blend[6])
             )
         } else {
             String::new()
@@ -3702,7 +3768,7 @@ impl D3d {
             }
             let comp = |s: u32, d: u32, o: u32| {
                 let op = blend_op_name(o);
-                if op == "min" || op == "max" {
+                if matches!(BlendOp::of(o), Some(BlendOp::Min | BlendOp::Max)) {
                     format!(r#"{{"operation":{},"srcFactor":"one","dstFactor":"one"}}"#, q(op))
                 } else {
                     format!(r#"{{"operation":{},"srcFactor":{},"dstFactor":{}}}"#, q(op), q(factor_name(s, "one")), q(factor_name(d, "zero")))

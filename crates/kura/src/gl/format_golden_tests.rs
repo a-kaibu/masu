@@ -41,10 +41,10 @@ fn gl_tables_answer_as_pinned() {
     let mut got = String::new();
     got += &table("type_size", "4".into(), |v| type_size(v).to_string());
     got += &table("comp_size", "0".into(), |v| comp_size(v).to_string());
-    got += &table("blend_factor", "1".into(), |v| blend_factor(v).to_string());
-    got += &table("blend_op", "1".into(), |v| blend_op(v).to_string());
-    got += &table("stencil_op", "1".into(), |v| stencil_op(v).to_string());
-    got += &table("compare", "8".into(), |v| compare(v).to_string());
+    got += &table("blend_factor", "1".into(), |v| blend_factor(v).code().to_string());
+    got += &table("blend_op", "1".into(), |v| blend_op(v).code().to_string());
+    got += &table("stencil_op", "1".into(), |v| stencil_op(v).code().to_string());
+    got += &table("compare", "8".into(), |v| compare(v).code().to_string());
     got += &table("base_format", "0".into(), |v| base_format(v as i32).code().to_string());
     got += &table("format_comps", "0".into(), |v| format_comps(v).to_string());
     got += &table("packed_fields", "None".into(), |v| format!("{:?}", packed_fields(v)));

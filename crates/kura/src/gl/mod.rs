@@ -14,6 +14,7 @@
 #![allow(non_snake_case, clippy::missing_safety_doc, clippy::too_many_arguments)]
 
 use crate::d3d9::gpu;
+use crate::render::d3d::{BlendOp, Compare, Factor, StencilOp};
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CStr};
@@ -1454,50 +1455,59 @@ fn target_of(g: &mut Gl, c: &Ctx, fbo: u32) -> Option<(u32, u32, u32, u32, u32)>
     Some((c0.map_or(0, |x| x.0), c0.map_or(0, |x| x.1), d0.map_or(0, |x| x.0), w, h))
 }
 
-fn blend_factor(f: u32) -> u32 {
+fn blend_factor(f: u32) -> Factor {
     match f {
-        0 => 0,
-        1 => 1,
-        0x300 => 2,
-        0x301 => 3,
-        0x302 => 4,
-        0x303 => 5,
-        0x304 => 6,
-        0x305 => 7,
-        0x306 => 8,
-        0x307 => 9,
-        0x308 => 10,
-        0x8001 | 0x8003 => 11,
-        0x8002 | 0x8004 => 12,
-        _ => 1,
+        0 => Factor::Zero,
+        1 => Factor::One,
+        0x300 => Factor::Src,
+        0x301 => Factor::OneMinusSrc,
+        0x302 => Factor::SrcAlpha,
+        0x303 => Factor::OneMinusSrcAlpha,
+        0x304 => Factor::DstAlpha,
+        0x305 => Factor::OneMinusDstAlpha,
+        0x306 => Factor::Dst,
+        0x307 => Factor::OneMinusDst,
+        0x308 => Factor::SrcAlphaSaturated,
+        0x8001 | 0x8003 => Factor::Constant,
+        0x8002 | 0x8004 => Factor::OneMinusConstant,
+        _ => Factor::One,
     }
 }
 
-fn blend_op(m: u32) -> u32 {
+fn blend_op(m: u32) -> BlendOp {
     match m {
-        0x800A => 2,
-        0x800B => 3,
-        0x8007 => 4,
-        0x8008 => 5,
-        _ => 1,
+        0x800A => BlendOp::Subtract,
+        0x800B => BlendOp::ReverseSubtract,
+        0x8007 => BlendOp::Min,
+        0x8008 => BlendOp::Max,
+        _ => BlendOp::Add,
     }
 }
 
-fn stencil_op(o: u32) -> u32 {
+fn stencil_op(o: u32) -> StencilOp {
     match o {
-        0 => 2,
-        0x1E01 => 3,
-        0x1E02 => 4,
-        0x1E03 => 5,
-        0x150A => 6,
-        0x8507 => 7,
-        0x8508 => 8,
-        _ => 1,
+        0 => StencilOp::Zero,
+        0x1E01 => StencilOp::Replace,
+        0x1E02 => StencilOp::IncrementClamp,
+        0x1E03 => StencilOp::DecrementClamp,
+        0x150A => StencilOp::Invert,
+        0x8507 => StencilOp::IncrementWrap,
+        0x8508 => StencilOp::DecrementWrap,
+        _ => StencilOp::Keep,
     }
 }
 
-fn compare(f: u32) -> u32 {
-    if (0x200..=0x207).contains(&f) { f - 0x200 + 1 } else { 8 }
+fn compare(f: u32) -> Compare {
+    match f {
+        0x200 => Compare::Never,
+        0x201 => Compare::Less,
+        0x202 => Compare::Equal,
+        0x203 => Compare::LessEqual,
+        0x204 => Compare::Greater,
+        0x205 => Compare::NotEqual,
+        0x206 => Compare::GreaterEqual,
+        _ => Compare::Always,
+    }
 }
 
 /// The pipeline key's states after the shaders (topology on): see d3d11::draw.
@@ -1517,8 +1527,8 @@ pub(crate) fn pipeline_key(c: &Ctx, vs: u32, ps: u32, topo: u32, depth: bool, ve
     if depth {
         let dt = c.caps.contains(&GL_DEPTH_TEST);
         let st = c.caps.contains(&GL_STENCIL_TEST);
-        let face = [stencil_op(c.stencil_ops[0]), stencil_op(c.stencil_ops[1]), stencil_op(c.stencil_ops[2]), compare(c.stencil[0])];
-        k.extend_from_slice(&[P_D24S8, dt as u32, c.depth_mask as u32, compare(c.depth_func), st as u32, (c.stencil[2] & 0xff) | (c.stencil_mask & 0xff) << 8]);
+        let face = [stencil_op(c.stencil_ops[0]).code(), stencil_op(c.stencil_ops[1]).code(), stencil_op(c.stencil_ops[2]).code(), compare(c.stencil[0]).code()];
+        k.extend_from_slice(&[P_D24S8, dt as u32, c.depth_mask as u32, compare(c.depth_func).code(), st as u32, (c.stencil[2] & 0xff) | (c.stencil_mask & 0xff) << 8]);
         k.extend_from_slice(&face);
         k.extend_from_slice(&face);
     } else {
@@ -1527,7 +1537,7 @@ pub(crate) fn pipeline_key(c: &Ctx, vs: u32, ps: u32, topo: u32, depth: bool, ve
     k.extend_from_slice(vertex);
     let b = &c.blend;
     let on = c.caps.contains(&GL_BLEND) as u32;
-    k.extend_from_slice(&[1, P_RGBA8, on, blend_factor(b[0]), blend_factor(b[1]), blend_op(b[4]), blend_factor(b[2]), blend_factor(b[3]), blend_op(b[5]), c.color_mask]);
+    k.extend_from_slice(&[1, P_RGBA8, on, blend_factor(b[0]).code(), blend_factor(b[1]).code(), blend_op(b[4]).code(), blend_factor(b[2]).code(), blend_factor(b[3]).code(), blend_op(b[5]).code(), c.color_mask]);
     k
 }
 

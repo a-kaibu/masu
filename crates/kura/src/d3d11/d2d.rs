@@ -401,7 +401,7 @@ pub fn draw(addr: u32, items: &[Item], bitmap: Option<u32>) {
     // ONE, INV_SRC_ALPHA
     let mut key = vec![vs, ps, 4, 0, 1, 0, 0, 0, 0, 0xffff];
     key.extend_from_slice(&[1, std::mem::size_of::<Item>() as u32, 1, 5, 3, 0, 0, 3, 16, 1, 3, 32, 2, 3, 48, 3, 7, 64, 4]);
-    key.extend_from_slice(&[1, tpage, 1, blend_factor(2, false), blend_factor(6, false), 1, blend_factor(2, true), blend_factor(6, true), 1, 0xf]);
+    key.extend_from_slice(&[1, tpage, 1, blend_factor(2, false).code(), blend_factor(6, false).code(), 1, blend_factor(2, true).code(), blend_factor(6, true).code(), 1, 0xf]);
     let pipe = match d.pipelines.get(&key) {
         Some(&p) => {
             crate::render::gpu::pipeline_hit();
