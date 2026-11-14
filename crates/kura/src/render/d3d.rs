@@ -466,6 +466,22 @@ const ADDRESS: [&str; 6] = ["repeat", "repeat", "mirror-repeat", "clamp-to-edge"
 fn pick<'a>(t: &[&'a str], i: u32, or: &'a str) -> &'a str {
     t.get(i as usize).copied().unwrap_or(or)
 }
+/// The key's blend factor `c` (BLEND2: d3d11 and gl), `or` past them.
+fn factor_name(c: u32, or: &'static str) -> &'static str {
+    pick(&BLEND2, c, or)
+}
+/// The key's (and D3DBLENDOP's) blend operation `c`.
+fn blend_op_name(c: u32) -> &'static str {
+    pick(&BLEND_OP, c, "add")
+}
+/// The key's (and D3DSTENCILOP's) stencil operation `c`.
+fn stencil_op_name(c: u32) -> &'static str {
+    pick(&STENCIL_OP, c, "keep")
+}
+/// The key's (and D3DCMPFUNC's) comparison `c`, `or` past them.
+fn compare_name(c: u32, or: &'static str) -> &'static str {
+    pick(&COMPARE, c, or)
+}
 fn f32of(u: u32) -> f32 {
     f32::from_bits(u)
 }
@@ -2471,8 +2487,8 @@ impl D3d {
             };
             format!(
                 r#","blend":{{"color":{},"alpha":{}}}"#,
-                comp(pick(&BLEND, blend[1], "one"), pick(&BLEND, blend[2], "zero"), pick(&BLEND_OP, blend[3], "add")),
-                comp(pick(&BLEND_ALPHA, blend[4], "one"), pick(&BLEND_ALPHA, blend[5], "zero"), pick(&BLEND_OP, blend[6], "add"))
+                comp(pick(&BLEND, blend[1], "one"), pick(&BLEND, blend[2], "zero"), blend_op_name(blend[3])),
+                comp(pick(&BLEND_ALPHA, blend[4], "one"), pick(&BLEND_ALPHA, blend[5], "zero"), blend_op_name(blend[6]))
             )
         } else {
             String::new()
@@ -2499,10 +2515,10 @@ impl D3d {
                 let face = |o: usize| {
                     format!(
                         r#"{{"failOp":{},"depthFailOp":{},"passOp":{},"compare":{}}}"#,
-                        q(pick(&STENCIL_OP, st[o], "keep")),
-                        q(pick(&STENCIL_OP, st[o + 1], "keep")),
-                        q(pick(&STENCIL_OP, st[o + 2], "keep")),
-                        q(pick(&COMPARE, st[o + 3], "always"))
+                        q(stencil_op_name(st[o])),
+                        q(stencil_op_name(st[o + 1])),
+                        q(stencil_op_name(st[o + 2])),
+                        q(compare_name(st[o + 3], "always"))
                     )
                 };
                 format!(r#","stencilFront":{},"stencilBack":{},"stencilReadMask":{},"stencilWriteMask":{}"#, face(3), face(7), st[1], st[2])
@@ -2513,7 +2529,7 @@ impl D3d {
             format!(
                 r#","depthStencil":{{"format":"depth24plus-stencil8","depthWriteEnabled":{},"depthCompare":{}{stencil_state}}}"#,
                 depth_write != 0,
-                q(pick(&COMPARE, depth_cmp, "always"))
+                q(compare_name(depth_cmp, "always"))
             )
         } else {
             String::new()
@@ -3518,7 +3534,7 @@ impl D3d {
             num(lo),
             num(hi),
             if aniso { ((key >> 17) & 31).clamp(1, 16) } else { 1 },
-            if func != 0 { format!(r#","compare":{}"#, q(pick(&COMPARE, func, "always"))) } else { String::new() }
+            if func != 0 { format!(r#","compare":{}"#, q(compare_name(func, "always"))) } else { String::new() }
         ));
         self.samplers2.insert((key, min_lod, max_lod), s);
         s
@@ -3620,10 +3636,10 @@ impl D3d {
                 if sen != 0 {
                     format!(
                         r#"{{"failOp":{},"depthFailOp":{},"passOp":{},"compare":{}}}"#,
-                        q(pick(&STENCIL_OP, k[o], "keep")),
-                        q(pick(&STENCIL_OP, k[o + 1], "keep")),
-                        q(pick(&STENCIL_OP, k[o + 2], "keep")),
-                        q(pick(&COMPARE, k[o + 3], "always"))
+                        q(stencil_op_name(k[o])),
+                        q(stencil_op_name(k[o + 1])),
+                        q(stencil_op_name(k[o + 2])),
+                        q(compare_name(k[o + 3], "always"))
                     )
                 } else {
                     "{}".into()
@@ -3646,7 +3662,7 @@ impl D3d {
                 r#","depthStencil":{{"format":{},"depthWriteEnabled":{},"depthCompare":{}{stencil},"depthBias":{},"depthBiasSlopeScale":{},"depthBiasClamp":{}}}"#,
                 qf(format),
                 en != 0 && write != 0,
-                q(if en != 0 { pick(&COMPARE, func, "less") } else { "always" }),
+                q(if en != 0 { compare_name(func, "less") } else { "always" }),
                 if tri { bias } else { 0 },
                 num(if tri { slope } else { 0.0 }),
                 num(if tri { clamp } else { 0.0 })
@@ -3685,11 +3701,11 @@ impl D3d {
                 return false;
             }
             let comp = |s: u32, d: u32, o: u32| {
-                let op = pick(&BLEND_OP, o, "add");
+                let op = blend_op_name(o);
                 if op == "min" || op == "max" {
                     format!(r#"{{"operation":{},"srcFactor":"one","dstFactor":"one"}}"#, q(op))
                 } else {
-                    format!(r#"{{"operation":{},"srcFactor":{},"dstFactor":{}}}"#, q(op), q(pick(&BLEND2, s, "one")), q(pick(&BLEND2, d, "zero")))
+                    format!(r#"{{"operation":{},"srcFactor":{},"dstFactor":{}}}"#, q(op), q(factor_name(s, "one")), q(factor_name(d, "zero")))
                 }
             };
             let blend = if t[1] != 0 && blendable(format) { format!(r#","blend":{{"color":{},"alpha":{}}}"#, comp(t[2], t[3], t[4]), comp(t[5], t[6], t[7])) } else { String::new() };

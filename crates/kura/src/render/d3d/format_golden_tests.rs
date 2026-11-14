@@ -41,3 +41,30 @@ fn view_dimensions_and_topologies_as_pinned() {
     let topo: Vec<String> = (0..7).map(|i| { let t = Topology::of(i); format!("{}:{}", t.name(), u8::from(t.is_strip())) }).collect();
     assert_eq!(topo.join(" "), "point-list:0 line-list:0 line-strip:1 triangle-list:0 triangle-strip:1 triangle-list:0 triangle-list:0");
 }
+
+/// The key's blend factors, blend operations, stencil operations and comparisons (codes 0..=20
+/// and two far past them): each one's WebGPU name, with each default the decoders pass.
+#[test]
+fn key_states_as_pinned() {
+    let codes: Vec<u32> = (0..=20).chain([0x8006, u32::MAX]).collect();
+    let names = |f: &dyn Fn(u32) -> &'static str| codes.iter().map(|&c| f(c)).collect::<Vec<_>>().join(" ");
+    let got = [
+        names(&|c| factor_name(c, "one")),
+        names(&|c| factor_name(c, "zero")),
+        names(&blend_op_name),
+        names(&stencil_op_name),
+        names(&|c| compare_name(c, "always")),
+        names(&|c| compare_name(c, "less")),
+    ];
+    let want = [
+        "zero one src one-minus-src src-alpha one-minus-src-alpha dst-alpha one-minus-dst-alpha dst one-minus-dst src-alpha-saturated constant one-minus-constant one one one one one one one one one one",
+        "zero one src one-minus-src src-alpha one-minus-src-alpha dst-alpha one-minus-dst-alpha dst one-minus-dst src-alpha-saturated constant one-minus-constant one zero zero zero zero zero zero zero zero zero",
+        "add add subtract reverse-subtract min max add add add add add add add add add add add add add add add add add",
+        "keep keep zero replace increment-clamp decrement-clamp invert increment-wrap decrement-wrap keep keep keep keep keep keep keep keep keep keep keep keep keep keep",
+        "always never less equal less-equal greater not-equal greater-equal always always always always always always always always always always always always always always always",
+        "always never less equal less-equal greater not-equal greater-equal always less less less less less less less less less less less less less less",
+    ];
+    for (g, w) in got.iter().zip(want) {
+        assert_eq!(g, w);
+    }
+}
