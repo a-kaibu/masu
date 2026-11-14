@@ -249,6 +249,78 @@ fn types() -> Vec<String> {
     })
 }
 
+/// Effect parameters of every D3DX class and type (numbers, vectors, matrices both ways,
+/// arrays, structs, strings, each texture and sampler kind, shader objects, states,
+/// annotations): one effect each, then all together, through compile_effect
+fn effect_params() -> Vec<&'static str> {
+    vec![
+        "bool b = true;",
+        "int i = -3;",
+        "float f = 1.5;",
+        "half h = 2;",
+        "float2 v2 = {1, 2};",
+        "float3 v3 = float3(1, 2, 3);",
+        "float4 v4 <string UIName = \"x\"; float UIMin = 0.5;> = {1, 2, 3, 4};",
+        "int2 iv = {7, -8};",
+        "bool3 bv = {true, false, true};",
+        "float4x4 m;",
+        "float3x2 m32 = {1, 2, 3, 4, 5, 6};",
+        "row_major float2x3 rm = {1, 2, 3, 4, 5, 6};",
+        "column_major float3x3 cm = {1, 2, 3, 4, 5, 6, 7, 8, 9};",
+        "float a[3] = {1, 2, 3};",
+        "float4 av[2] = {1, 2, 3, 4, 5, 6, 7, 8};",
+        "struct S { float x; int2 y; float2x2 z; }; S st;",
+        "struct T { float x; }; T sa[2];",
+        "string str = \"hello\";",
+        "texture tx;",
+        "Texture1D<float4> t1;",
+        "texture2D t2;",
+        "Texture2D<float4> u2;",
+        "Texture3D<float4> t3;",
+        "TextureCube<float4> tc;",
+        "sampler s0;",
+        "texture tt; sampler1D s1 = sampler_state { Texture = <tt>; };",
+        "sampler2D s2 = sampler_state { MinFilter = LINEAR; AddressU = WRAP; MaxAnisotropy = 4; };",
+        "sampler3D s3;",
+        "samplerCUBE sc;",
+        "sampler2D sar[2];",
+        "float4 vsf(float4 p : POSITION) : POSITION { return p; } VertexShader vs = compile vs_2_0 vsf();",
+        "PixelShader pa = asm { ps_2_0 mov oC0, c0 };",
+    ]
+}
+
+const EFFECT_BODY: &str = "
+float4 ps(float4 c : COLOR0) : COLOR { return c * 2; }
+float4 vs2(float4 p : POSITION) : POSITION { return p; }
+technique t0 <string name = \"t\";> {
+    pass p0 <int k = 3;> {
+        ZEnable = true;
+        AlphaBlendEnable = FALSE;
+        SrcBlend = SRCALPHA;
+        FillMode = WIREFRAME;
+        VertexShader = compile vs_2_0 vs2();
+        PixelShader = compile ps_2_0 ps();
+    }
+    pass p1 { PixelShader = compile ps_3_0 ps(); }
+}
+technique t1 { pass { PixelShader = asm { ps_2_0 mov oC0, v0 }; } }";
+
+fn effect_src(params: &str) -> String {
+    format!("{params}{EFFECT_BODY}")
+}
+
+fn effects() -> Vec<String> {
+    let mut srcs: Vec<(String, String)> = effect_params().iter().enumerate().map(|(k, p)| (format!("{k}"), effect_src(p))).collect();
+    srcs.push(("all".into(), effect_src(&effect_params().join("\n"))));
+    par_map(&srcs, |_, (name, src)| {
+        let mut o = format!("effect {name}\t");
+        for flags in [0, hlslc::PACK_MATRIX_ROW_MAJOR] {
+            o.push_str(&format!(" {flags:x}:{}", result(quiet(|| hlslc::compile_effect(src, &[], &mut |_: &str, _: bool| None, flags)).map(|r| r.map(|b| hash(&b))))));
+        }
+        o
+    })
+}
+
 /// `f` of each item with its index, on all cores, in order (the translators share no state)
 pub fn par_map<T: Sync>(items: &[T], f: impl Fn(usize, &T) -> String + Sync) -> Vec<String> {
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
@@ -290,6 +362,7 @@ pub fn lines(fuzz_n: usize, oracle_n: usize) -> Vec<String> {
     }
     l.extend(crate::fuzz::traces(&out, fuzz_n, 7));
     l.extend(types());
+    l.extend(effects());
     panic::set_hook(hook);
     l
 }
