@@ -46,9 +46,9 @@ pub fn probe(head: &[u8], tail: &[u8], whole: bool) -> Option<Info> {
         if whole {
             v.end();
         }
-        let mut n = 0u64;
+        let mut n = 0u32;
         while v.decode().is_some() {
-            n += 1;
+            n = n.saturating_add(1);
             if !whole {
                 break;
             }
@@ -58,7 +58,7 @@ pub fn probe(head: &[u8], tail: &[u8], whole: bool) -> Option<Info> {
         info.height = h.height;
         info.rate = h.rate;
         if whole && h.rate > 0.0 {
-            info.duration = n as f64 / h.rate;
+            info.duration = f64::from(n) / h.rate;
         }
         return Some(info);
     }
@@ -110,13 +110,13 @@ pub const MAX_TAIL: u64 = 16 << 20;
 /// duration read as 0 stopped it at once (#230).
 pub fn probe_stream(len: u64, part: u64, mut read: impl FnMut(u64, usize) -> Option<Vec<u8>>) -> Option<Info> {
     let part = part.max(1);
-    let head = read(0, part.min(len) as usize)?;
+    let head = read(0, usize::try_from(part.min(len)).ok()?)?;
     if len <= part {
         return probe(&head, &head, true);
     }
     let mut back = part;
     loop {
-        let tail = read(len - back, back as usize)?;
+        let tail = read(len - back, usize::try_from(back).ok()?)?;
         let i = probe(&head, &tail, false)?;
         // (a bare video stream has no times to find)
         if i.duration > 0.0 || back >= len.min(MAX_TAIL) || ps::is_video_stream(&head) {
@@ -149,7 +149,7 @@ fn last_stamped(tail: &[u8]) -> Option<(f64, Vec<u8>)> {
         if tail[i] == 0 && tail[i + 1] == 0 && tail[i + 2] == 1 && ps::is_video(tail[i + 3]) {
             // (this one packet first, its bytes only: demuxing all the tail after every start
             // code met on the way back, while none had a time, was quadratic in the tail)
-            let len = (tail[i + 4] as usize) << 8 | tail.get(i + 5).copied().unwrap_or(0) as usize;
+            let len = usize::from(u16::from_be_bytes([tail[i + 4], tail.get(i + 5).copied().unwrap_or(0)]));
             let mut m = Demux::new();
             m.push(&tail[i..(i + 6 + len).min(tail.len())]);
             m.end();
@@ -179,15 +179,15 @@ fn shown_after(pts: f64, es: &[u8], rate: f64) -> Option<f64> {
         match es[j + 3] {
             0xb8 => {
                 if let Some(b) = base {
-                    base = Some(b + (top + 1) as f64 / rate);
+                    base = Some(b + f64::from(top + 1) / rate);
                     top = 0;
                 }
             }
             0x00 => {
-                let t = (es[j + 4] as u32) << 2 | (es[j + 5] as u32) >> 6;
-                let b = *base.get_or_insert(pts - t as f64 / rate);
+                let t = u32::from(es[j + 4]) << 2 | u32::from(es[j + 5]) >> 6;
+                let b = *base.get_or_insert(pts - f64::from(t) / rate);
                 top = top.max(t);
-                last = last.max(b + t as f64 / rate);
+                last = last.max(b + f64::from(t) / rate);
             }
             _ => {}
         }

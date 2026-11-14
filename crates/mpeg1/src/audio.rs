@@ -6,8 +6,51 @@ use crate::bits::Bits;
 use crate::tables::*;
 
 pub const SAMPLES_PER_FRAME: usize = 1152;
-const MODE_JOINT_STEREO: u32 = 1;
-const MODE_MONO: u32 = 3;
+/// A frame's channel mode (its header's two mode bits).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Mode {
+    Stereo,
+    JointStereo,
+    DualChannel,
+    Mono,
+}
+
+impl Mode {
+    fn of(two_bits: u8) -> Mode {
+        match two_bits & 3 {
+            0 => Mode::Stereo,
+            1 => Mode::JointStereo,
+            2 => Mode::DualChannel,
+            _ => Mode::Mono,
+        }
+    }
+}
+
+/// A subband's scale factor selection information: which of its three parts carry their own
+/// scale factor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+enum ScfSi {
+    /// three scale factors
+    #[default]
+    Each,
+    /// the second is the first's
+    FirstTwo,
+    /// one for all three
+    One,
+    /// the third is the second's
+    LastTwo,
+}
+
+impl ScfSi {
+    fn of(two_bits: u8) -> ScfSi {
+        match two_bits & 3 {
+            0 => ScfSi::Each,
+            1 => ScfSi::FirstTwo,
+            2 => ScfSi::One,
+            _ => ScfSi::LastTwo,
+        }
+    }
+}
 
 /// A frame header's facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,7 +60,7 @@ pub struct Header {
     pub size: usize,
     bitrate_index: usize,
     rate_index: usize,
-    mode: u32,
+    mode: Mode,
     bound: usize,
     crc: bool,
 }
@@ -35,27 +78,26 @@ pub fn header(d: &[u8]) -> Option<Header> {
     if version != 3 || layer != 2 {
         return None;
     }
-    let bitrate_index = (b.read(4) as i32 - 1) as usize;
+    // (index 0, free format, and 15 are not taken)
+    let bitrate_index = b.uz::<4>().checked_sub(1)?;
     if bitrate_index > 13 {
         return None;
     }
-    let rate_index = b.read(2) as usize;
+    let rate_index = b.uz::<2>();
     if rate_index == 3 {
         return None;
     }
-    let padding = b.read(1) as usize;
+    let padding = b.uz::<1>();
     b.skip(1);
-    let mode = b.read(2);
-    let ext = b.read(2);
-    let bound = if mode == MODE_JOINT_STEREO {
-        ((ext + 1) << 2) as usize
-    } else if mode == MODE_MONO {
-        0
-    } else {
-        32
+    let mode = Mode::of(b.u8::<2>());
+    let ext = b.uz::<2>();
+    let bound = match mode {
+        Mode::JointStereo => (ext + 1) << 2,
+        Mode::Mono => 0,
+        Mode::Stereo | Mode::DualChannel => 32,
     };
     let rate = SAMPLE_RATE[rate_index];
-    let size = (144000 * BIT_RATE[bitrate_index] / rate) as usize + padding;
+    let size = crate::bits::us(144000 * BIT_RATE[bitrate_index] / rate) + padding;
     Some(Header { rate, size, bitrate_index, rate_index, mode, bound, crc })
 }
 
@@ -65,7 +107,7 @@ pub struct Audio {
     ended: bool,
     first: Option<Header>,
     allocation: [[u8; 32]; 2],
-    sf_info: [[u8; 32]; 2],
+    sf_info: [[ScfSi; 32]; 2],
     scale_factor: [[[i32; 3]; 32]; 2],
     sample: [[[i32; 3]; 32]; 2],
     d: Box<[f32; 1024]>,
@@ -93,7 +135,7 @@ impl Audio {
             ended: false,
             first: None,
             allocation: [[0; 32]; 2],
-            sf_info: [[0; 32]; 2],
+            sf_info: [[ScfSi::Each; 32]; 2],
             scale_factor: [[[0; 3]; 32]; 2],
             sample: [[[0; 3]; 32]; 2],
             d,
@@ -167,15 +209,16 @@ impl Audio {
 
     fn frame(&mut self, h: &Header, d: &[u8]) {
         let mut b = Bits::new(d);
-        let tab1 = if h.mode == MODE_MONO { 0 } else { 1 };
-        let tab2 = QUANT_LUT_STEP_1[tab1][h.bitrate_index] as usize;
-        let tab3 = QUANT_LUT_STEP_2[tab2][h.rate_index] as usize;
+        let mono = h.mode == Mode::Mono;
+        let tab1 = if mono { 0 } else { 1 };
+        let tab2 = usize::from(QUANT_LUT_STEP_1[tab1][h.bitrate_index]);
+        let tab3 = usize::from(QUANT_LUT_STEP_2[tab2][h.rate_index]);
         let sblimit = tab3 & 63;
         let tab3 = tab3 >> 6;
         let bound = h.bound.min(sblimit);
         let read_allocation = |b: &mut Bits, sb: usize| -> u8 {
             let tab4 = QUANT_LUT_STEP_3[tab3][sb];
-            QUANT_LUT_STEP_4[(tab4 & 15) as usize][b.read((tab4 >> 4) as u32) as usize]
+            QUANT_LUT_STEP_4[usize::from(tab4 & 15)][crate::bits::us(b.read(u32::from(tab4 >> 4)))]
         };
         for sb in 0..bound {
             self.allocation[0][sb] = read_allocation(&mut b, sb);
@@ -186,14 +229,14 @@ impl Audio {
             self.allocation[0][sb] = a;
             self.allocation[1][sb] = a;
         }
-        let channels = if h.mode == MODE_MONO { 1 } else { 2 };
+        let channels = if mono { 1 } else { 2 };
         for sb in 0..sblimit {
             for ch in 0..channels {
                 if self.allocation[ch][sb] != 0 {
-                    self.sf_info[ch][sb] = b.read(2) as u8;
+                    self.sf_info[ch][sb] = ScfSi::of(b.u8::<2>());
                 }
             }
-            if h.mode == MODE_MONO {
+            if mono {
                 self.sf_info[1][sb] = self.sf_info[0][sb];
             }
         }
@@ -202,30 +245,30 @@ impl Audio {
                 if self.allocation[ch][sb] != 0 {
                     let sf = &mut self.scale_factor[ch][sb];
                     match self.sf_info[ch][sb] {
-                        0 => {
-                            sf[0] = b.read(6) as i32;
-                            sf[1] = b.read(6) as i32;
-                            sf[2] = b.read(6) as i32;
+                        ScfSi::Each => {
+                            sf[0] = b.i32::<6>();
+                            sf[1] = b.i32::<6>();
+                            sf[2] = b.i32::<6>();
                         }
-                        1 => {
-                            sf[0] = b.read(6) as i32;
+                        ScfSi::FirstTwo => {
+                            sf[0] = b.i32::<6>();
                             sf[1] = sf[0];
-                            sf[2] = b.read(6) as i32;
+                            sf[2] = b.i32::<6>();
                         }
-                        2 => {
-                            sf[0] = b.read(6) as i32;
+                        ScfSi::One => {
+                            sf[0] = b.i32::<6>();
                             sf[1] = sf[0];
                             sf[2] = sf[0];
                         }
-                        _ => {
-                            sf[0] = b.read(6) as i32;
-                            sf[1] = b.read(6) as i32;
+                        ScfSi::LastTwo => {
+                            sf[0] = b.i32::<6>();
+                            sf[1] = b.i32::<6>();
                             sf[2] = sf[1];
                         }
                     }
                 }
             }
-            if h.mode == MODE_MONO {
+            if mono {
                 self.scale_factor[1][sb] = self.scale_factor[0][sb];
             }
         }
@@ -289,25 +332,26 @@ impl Audio {
             *sample = [0; 3];
             return;
         }
-        let (levels, group, bits) = QUANT_TAB[q as usize - 1];
+        let (levels, group, bits) = QUANT_TAB[usize::from(q) - 1];
         let mut sf = self.scale_factor[ch][sb][part];
         if sf == 63 {
             sf = 0;
         } else {
             let shift = sf / 3;
-            sf = (SCALEFACTOR_BASE[(sf % 3) as usize] + ((1 << shift) >> 1)) >> shift;
+            sf = (SCALEFACTOR_BASE[crate::bits::us((sf % 3).cast_unsigned())] + ((1 << shift) >> 1)) >> shift;
         }
-        let mut adj = levels as i32;
+        let mut adj = i32::from(levels);
         if group {
-            let mut val = b.read(bits as u32) as i32;
+            // (bits <= 10)
+            let mut val = b.read(u32::from(bits)).cast_signed();
             sample[0] = val % adj;
             val /= adj;
             sample[1] = val % adj;
             sample[2] = val / adj;
         } else {
-            sample[0] = b.read(bits as u32) as i32;
-            sample[1] = b.read(bits as u32) as i32;
-            sample[2] = b.read(bits as u32) as i32;
+            for v in sample.iter_mut() {
+                *v = b.read(u32::from(bits)).cast_signed();
+            }
         }
         // (pl_mpeg takes 65536 / (levels + 1): coarse quantizers came out up to a quarter too
         // quiet; ISO 11172-3 2.4.3.3.4 steps by 2 / levels)

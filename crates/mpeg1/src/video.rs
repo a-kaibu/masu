@@ -13,9 +13,25 @@ const USER_DATA: u8 = 0xb2;
 const GOP: u8 = 0xb8;
 const SEQUENCE_END: u8 = 0xb7;
 
-const TYPE_I: u32 = 1;
-const TYPE_P: u32 = 2;
-const TYPE_B: u32 = 3;
+/// A picture's coding type (D pictures, type 4, are not decoded).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PictureType {
+    I,
+    P,
+    B,
+}
+
+impl PictureType {
+    /// The type of a picture header's three bits (None: forbidden, D, or reserved).
+    fn of(three_bits: u32) -> Option<PictureType> {
+        match three_bits {
+            1 => Some(PictureType::I),
+            2 => Some(PictureType::P),
+            3 => Some(PictureType::B),
+            _ => None,
+        }
+    }
+}
 
 /// A decoded picture: planes with whole macroblocks (`y_stride` x 16-aligned height; chroma
 /// half of each), of which `width` x `height` is the picture.
@@ -70,7 +86,8 @@ pub struct Video {
     cur: usize,
     fwd: usize,
     bwd: usize,
-    picture_type: u32,
+    /// the picture's type (None: one not decoded)
+    picture_type: Option<PictureType>,
     motion_fwd: Motion,
     motion_bwd: Motion,
     quantizer_scale: i32,
@@ -131,7 +148,7 @@ impl Video {
             cur: 0,
             fwd: 1,
             bwd: 2,
-            picture_type: 0,
+            picture_type: None,
             motion_fwd: Motion::default(),
             motion_bwd: Motion::default(),
             quantizer_scale: 0,
@@ -259,17 +276,17 @@ impl Video {
                     self.at = end;
                     self.picture(&pic);
                     self.pic = pic;
-                    let shown = if self.picture_type == TYPE_B {
-                        Some(self.cur)
-                    } else if matches!(self.picture_type, TYPE_I | TYPE_P) {
-                        if self.has_reference {
-                            Some(self.fwd)
-                        } else {
-                            self.has_reference = true;
-                            None
+                    let shown = match self.picture_type {
+                        Some(PictureType::B) => Some(self.cur),
+                        Some(PictureType::I | PictureType::P) => {
+                            if self.has_reference {
+                                Some(self.fwd)
+                            } else {
+                                self.has_reference = true;
+                                None
+                            }
                         }
-                    } else {
-                        None
+                        None => None,
                     };
                     if let Some(f) = shown {
                         self.pictures += 1;
@@ -283,25 +300,25 @@ impl Video {
 
     fn sequence_header(&mut self, d: &[u8]) {
         let mut b = Bits::new(d);
-        let width = b.read(12) as usize;
-        let height = b.read(12) as usize;
+        let width = b.uz::<12>();
+        let height = b.uz::<12>();
         // (a corrupt header's size: three frames of it are made at once)
         if width == 0 || height == 0 || width * height > MAX_PIXELS {
             return;
         }
         b.skip(4); // pixel aspect ratio
-        let rate = PICTURE_RATE[b.read(4) as usize];
+        let rate = PICTURE_RATE[b.uz::<4>()];
         b.skip(18 + 1 + 10 + 1);
         let mut intra = INTRA_QUANT;
         if b.read(1) != 0 {
             for &z in ZIG_ZAG.iter() {
-                intra[z as usize] = b.read(8) as u8;
+                intra[usize::from(z)] = b.u8::<8>();
             }
         }
         let mut non_intra = [16u8; 64];
         if b.read(1) != 0 {
             for &z in ZIG_ZAG.iter() {
-                non_intra[z as usize] = b.read(8) as u8;
+                non_intra[usize::from(z)] = b.u8::<8>();
             }
         }
         self.intra_quant = intra;
@@ -312,13 +329,15 @@ impl Video {
             return;
         }
         self.header = Some(Header { width, height, rate });
-        self.mb_width = width.div_ceil(16) as i32;
-        self.mb_height = height.div_ceil(16) as i32;
+        // (12-bit sizes: 256 macroblocks a side at most)
+        let (mbw, mbh) = (width.div_ceil(16), height.div_ceil(16));
+        self.mb_width = i32::try_from(mbw).unwrap_or(i32::MAX);
+        self.mb_height = i32::try_from(mbh).unwrap_or(i32::MAX);
         self.mb_size = self.mb_width * self.mb_height;
-        self.luma_width = self.mb_width as usize * 16;
-        self.chroma_width = self.mb_width as usize * 8;
-        let luma = self.luma_width * self.mb_height as usize * 16;
-        let chroma = self.chroma_width * self.mb_height as usize * 8;
+        self.luma_width = mbw * 16;
+        self.chroma_width = mbw * 8;
+        let luma = self.luma_width * mbh * 16;
+        let chroma = self.chroma_width * mbh * 8;
         // (a row and a pixel more, as pl_mpeg's frames sit one after another in memory: a
         // half-pixel motion vector at the bottom edge reads past its plane)
         // (memory there is not for them: no pictures, as for no header, rather than an abort)
@@ -350,31 +369,30 @@ impl Video {
     fn picture(&mut self, d: &[u8]) {
         let mut b = Bits::new(d);
         b.skip(10); // temporal reference
-        self.picture_type = b.read(3);
+        self.picture_type = PictureType::of(b.read(3));
         b.skip(16); // vbv delay
-        if self.picture_type == 0 || self.picture_type > TYPE_B {
-            return;
-        }
-        if matches!(self.picture_type, TYPE_P | TYPE_B) {
+        let Some(ty) = self.picture_type else { return };
+        if matches!(ty, PictureType::P | PictureType::B) {
             self.motion_fwd.full_px = b.read(1) != 0;
             let f_code = b.read(3);
             if f_code == 0 {
-                self.picture_type = 0;
+                self.picture_type = None;
                 return;
             }
             self.motion_fwd.r_size = f_code - 1;
         }
-        if self.picture_type == TYPE_B {
+        if ty == PictureType::B {
             self.motion_bwd.full_px = b.read(1) != 0;
             let f_code = b.read(3);
             if f_code == 0 {
-                self.picture_type = 0;
+                self.picture_type = None;
                 return;
             }
             self.motion_bwd.r_size = f_code - 1;
         }
+        let reference = matches!(ty, PictureType::I | PictureType::P);
         let temp = self.fwd;
-        if matches!(self.picture_type, TYPE_I | TYPE_P) {
+        if reference {
             self.fwd = self.bwd;
         }
         let mut code = loop {
@@ -384,13 +402,13 @@ impl Video {
             }
         };
         while let Some(c @ 0x01..=0xaf) = code {
-            self.slice(&mut b, c as i32);
+            self.slice(&mut b, i32::from(c));
             if self.mb_address >= self.mb_size - 1 {
                 break;
             }
             code = b.next_start_code();
         }
-        if matches!(self.picture_type, TYPE_I | TYPE_P) {
+        if reference {
             self.bwd = self.cur;
             self.cur = temp;
         }
@@ -404,7 +422,7 @@ impl Video {
         self.motion_bwd.v = 0;
         self.motion_fwd.v = 0;
         self.dc_predictor = [128; 3];
-        self.quantizer_scale = b.read(5) as i32;
+        self.quantizer_scale = b.i32::<5>();
         while b.read(1) != 0 {
             b.skip(8);
         }
@@ -418,13 +436,13 @@ impl Video {
 
     fn macroblock(&mut self, b: &mut Bits) {
         let mut increment = 0i32;
-        let mut t = b.vlc(MB_ADDRESS_INCREMENT) as i32;
+        let mut t = i32::from(b.vlc(MB_ADDRESS_INCREMENT));
         while t == 34 {
-            t = b.vlc(MB_ADDRESS_INCREMENT) as i32;
+            t = i32::from(b.vlc(MB_ADDRESS_INCREMENT));
         }
         while t == 35 {
             increment += 33;
-            t = b.vlc(MB_ADDRESS_INCREMENT) as i32;
+            t = i32::from(b.vlc(MB_ADDRESS_INCREMENT));
         }
         increment += t;
         if self.slice_begin {
@@ -436,7 +454,7 @@ impl Video {
             }
             if increment > 1 {
                 self.dc_predictor = [128; 3];
-                if self.picture_type == TYPE_P {
+                if self.picture_type == Some(PictureType::P) {
                     self.motion_fwd.h = 0;
                     self.motion_fwd.v = 0;
                 }
@@ -459,16 +477,17 @@ impl Video {
             return;
         }
         let table = match self.picture_type {
-            TYPE_I => MB_TYPE_I,
-            TYPE_P => MB_TYPE_P,
-            _ => MB_TYPE_B,
+            Some(PictureType::I) => MB_TYPE_I,
+            Some(PictureType::P) => MB_TYPE_P,
+            // (no picture of another type gets here: its slices are not read)
+            Some(PictureType::B) | None => MB_TYPE_B,
         };
-        self.mb_type = b.vlc(table) as u32;
+        self.mb_type = u32::from(b.vlc(table));
         self.mb_intra = self.mb_type & 1 != 0;
         self.motion_fwd.is_set = self.mb_type & 8 != 0;
         self.motion_bwd.is_set = self.mb_type & 4 != 0;
         if self.mb_type & 0x10 != 0 {
-            self.quantizer_scale = b.read(5) as i32;
+            self.quantizer_scale = b.i32::<5>();
         }
         if self.mb_intra {
             self.motion_bwd.h = 0;
@@ -481,7 +500,7 @@ impl Video {
             self.predict_macroblock();
         }
         let cbp = if self.mb_type & 2 != 0 {
-            b.vlc(CODED_BLOCK_PATTERN) as u32
+            u32::from(b.vlc(CODED_BLOCK_PATTERN))
         } else if self.mb_intra {
             0x3f
         } else {
@@ -499,7 +518,7 @@ impl Video {
             let r = self.motion_fwd.r_size;
             self.motion_fwd.h = motion_vector(b, r, self.motion_fwd.h);
             self.motion_fwd.v = motion_vector(b, r, self.motion_fwd.v);
-        } else if self.picture_type == TYPE_P {
+        } else if self.picture_type == Some(PictureType::P) {
             self.motion_fwd.h = 0;
             self.motion_fwd.v = 0;
         }
@@ -516,7 +535,7 @@ impl Video {
             fh <<= 1;
             fv <<= 1;
         }
-        if self.picture_type == TYPE_B {
+        if self.picture_type == Some(PictureType::B) {
             let (mut bh, mut bv) = (self.motion_bwd.h, self.motion_bwd.v);
             if self.motion_bwd.full_px {
                 bh <<= 1;
@@ -552,9 +571,9 @@ impl Video {
         if self.mb_intra {
             let plane = if block > 3 { block - 3 } else { 0 };
             let predictor = self.dc_predictor[plane];
-            let size = b.vlc(if plane == 0 { DCT_SIZE_Y } else { DCT_SIZE_C }) as u32;
+            let size = u32::from(b.vlc(if plane == 0 { DCT_SIZE_Y } else { DCT_SIZE_C }));
             self.block[0] = if size > 0 {
-                let diff = b.read(size) as i32;
+                let diff = b.read(size).cast_signed();
                 if diff & (1 << (size - 1)) != 0 {
                     predictor.wrapping_add(diff)
                 } else {
@@ -577,18 +596,18 @@ impl Video {
             }
             let (run, mut level);
             if coeff == 0xffff {
-                run = b.read(6) as usize;
-                level = b.read(8) as i32;
+                run = b.uz::<6>();
+                level = b.i32::<8>();
                 if level == 0 {
-                    level = b.read(8) as i32;
+                    level = b.i32::<8>();
                 } else if level == 128 {
-                    level = b.read(8) as i32 - 256;
+                    level = b.i32::<8>() - 256;
                 } else if level > 128 {
                     level -= 256;
                 }
             } else {
-                run = (coeff >> 8) as usize;
-                level = (coeff & 0xff) as i32;
+                run = usize::from(coeff >> 8);
+                level = i32::from(coeff & 0xff);
                 if b.read(1) != 0 {
                     level = -level;
                 }
@@ -597,20 +616,21 @@ impl Video {
             if n >= 64 {
                 return;
             }
-            let z = ZIG_ZAG[n] as usize;
+            let z = usize::from(ZIG_ZAG[n]);
             n += 1;
             level <<= 1;
             if !self.mb_intra {
                 level += if level < 0 { -1 } else { 1 };
             }
-            level = (level * self.quantizer_scale * quant[z] as i32) >> 4;
+            level = (level * self.quantizer_scale * i32::from(quant[z])) >> 4;
             if level & 1 == 0 {
                 level -= if level > 0 { 1 } else { -1 };
             }
             level = level.clamp(-2048, 2047);
-            self.block[z] = level * PREMULTIPLIER[z] as i32;
+            self.block[z] = level * i32::from(PREMULTIPLIER[z]);
         }
-        let (row, col) = (self.mb_row as usize, self.mb_col as usize);
+        // (the macroblock is in the picture: 0 <= row < mb_height, 0 <= col < mb_width)
+        let (row, col) = (crate::bits::us(self.mb_row.cast_unsigned()), crate::bits::us(self.mb_col.cast_unsigned()));
         let lw = self.luma_width;
         let cw = self.chroma_width;
         let cur = self.cur;
@@ -636,7 +656,7 @@ impl Video {
             let v = (s[0].wrapping_add(128)) >> 8;
             for _ in 0..8 {
                 for x in 0..8 {
-                    d[di + x] = if self.mb_intra { clamp(v) } else { clamp(d[di + x] as i32 + v) };
+                    d[di + x] = if self.mb_intra { clamp(v) } else { clamp(i32::from(d[di + x]) + v) };
                 }
                 di += dw;
             }
@@ -658,14 +678,16 @@ fn two(f: &mut [Frame], s: usize, d: usize) -> (&Frame, &mut Frame) {
 }
 
 fn clamp(n: i32) -> u8 {
-    n.clamp(0, 255) as u8
+    // (0..=255: the low byte)
+    n.clamp(0, 255).to_le_bytes()[0]
 }
 
 fn motion_vector(b: &mut Bits, r_size: u32, motion: i32) -> i32 {
     let fscale = 1i32 << r_size;
-    let m_code = b.vlc(MOTION) as i16 as i32;
+    // (the table's values are i16s)
+    let m_code = i32::from(b.vlc(MOTION).cast_signed());
     let d = if m_code != 0 && fscale != 1 {
-        let r = b.read(r_size) as i32;
+        let r = b.read(r_size).cast_signed();
         let d = ((m_code.abs() - 1) << r_size) + r + 1;
         if m_code < 0 {
             -d
@@ -691,16 +713,16 @@ fn process(s: &[u8], d: &mut [u8], row: i32, col: i32, mb_width: i32, mb_height:
     let vp = mv >> 1;
     let odd_h = mh & 1 == 1;
     let odd_v = mv & 1 == 1;
-    let si = ((row * bs) + vp) as i64 * dw as i64 + (col * bs) as i64 + hp as i64;
-    let di = ((row * dw + col) * bs) as i64;
-    let max = dw as i64 * (mb_height * bs - bs + 1) as i64 - bs as i64;
+    let w = i64::from;
+    let si = w((row * bs) + vp) * w(dw) + w(col * bs) + w(hp);
+    let di = w((row * dw + col) * bs);
+    let max = w(dw) * w(mb_height * bs - bs + 1) - w(bs);
     // (pl_mpeg compares unsigned: a negative address is past the maximum)
-    if si < 0 || di < 0 || si > max || di > max {
+    if si > max || di > max {
         return;
     }
-    let (dw, bs) = (dw as usize, bs as usize);
-    let (si, di) = (si as usize, di as usize);
-    if si + (bs - 1 + odd_v as usize) * dw + bs + odd_h as usize > s.len() || di + (bs - 1) * dw + bs > d.len() {
+    let (Ok(si), Ok(di), Ok(dw), Ok(bs)) = (usize::try_from(si), usize::try_from(di), usize::try_from(dw), usize::try_from(bs)) else { return };
+    if si + (bs - 1 + usize::from(odd_v)) * dw + bs + usize::from(odd_h) > s.len() || di + (bs - 1) * dw + bs > d.len() {
         return;
     }
     #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
@@ -715,13 +737,15 @@ fn process(s: &[u8], d: &mut [u8], row: i32, col: i32, mb_width: i32, mb_height:
 pub fn process_rows(s: &[u8], d: &mut [u8], mut si: usize, mut di: usize, dw: usize, bs: usize, odd_h: bool, odd_v: bool, interp: bool) {
     for _ in 0..bs {
         for x in 0..bs {
+            let px = |i: usize| u32::from(s[i]);
             let p = match (odd_h, odd_v) {
-                (false, false) => s[si + x] as u32,
-                (false, true) => (s[si + x] as u32 + s[si + x + dw] as u32 + 1) >> 1,
-                (true, false) => (s[si + x] as u32 + s[si + x + 1] as u32 + 1) >> 1,
-                (true, true) => (s[si + x] as u32 + s[si + x + 1] as u32 + s[si + x + dw] as u32 + s[si + x + dw + 1] as u32 + 2) >> 2,
+                (false, false) => px(si + x),
+                (false, true) => (px(si + x) + px(si + x + dw) + 1) >> 1,
+                (true, false) => (px(si + x) + px(si + x + 1) + 1) >> 1,
+                (true, true) => (px(si + x) + px(si + x + 1) + px(si + x + dw) + px(si + x + dw + 1) + 2) >> 2,
             };
-            d[di + x] = if interp { ((d[di + x] as u32 + p + 1) >> 1) as u8 } else { p as u8 };
+            // (averages of bytes: 0..=255, the low byte)
+            d[di + x] = if interp { ((u32::from(d[di + x]) + p + 1) >> 1).to_le_bytes()[0] } else { p.to_le_bytes()[0] };
         }
         si += dw;
         di += dw;
@@ -812,7 +836,7 @@ pub fn idct_put_scalar(s: &mut [i32; 64], d: &mut [u8], mut di: usize, dw: usize
     for y in 0..8 {
         for x in 0..8 {
             let v = s[y * 8 + x];
-            d[di + x] = if intra { clamp(v) } else { clamp(d[di + x] as i32 + v) };
+            d[di + x] = if intra { clamp(v) } else { clamp(i32::from(d[di + x]) + v) };
         }
         di += dw;
     }
@@ -852,14 +876,14 @@ fn bgrx_pairs(f: &Frame, out: &mut [u8], stride: usize, bottom_up: bool, row: us
     let (w, h) = (f.width & !1, f.height & !1);
     for col in from..w / 2 {
         let ci = row * f.c_stride + col;
-        let cr = f.cr[ci] as i32 - 128;
-        let cb = f.cb[ci] as i32 - 128;
+        let cr = i32::from(f.cr[ci]) - 128;
+        let cb = i32::from(f.cb[ci]) - 128;
         let r = (cr * 104597) >> 16;
         let g = (cb * 25674 + cr * 53278) >> 16;
         let b = (cb * 132201) >> 16;
         for (dy, dx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
             let (x, y) = (col * 2 + dx, row * 2 + dy);
-            let yv = ((f.y[y * f.y_stride + x] as i32 - 16) * 76309) >> 16;
+            let yv = ((i32::from(f.y[y * f.y_stride + x]) - 16) * 76309) >> 16;
             let oy = if bottom_up { h - 1 - y } else { y };
             let o = oy * stride + x * 4;
             if o + 4 <= out.len() {

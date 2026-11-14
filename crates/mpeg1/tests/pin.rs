@@ -140,7 +140,8 @@ fn decode(h: &mut H, d: &[u8], cut: usize) {
             a.out.iter().for_each(|s| h.bytes(&s.to_bits().to_le_bytes()));
         }
         if let Some(x) = a.header() {
-            h.bytes(format!("{x:?}").as_bytes());
+            h.u64(u64::from(x.rate));
+            h.usize(x.size);
         }
         h.u64(a.frames);
     };
@@ -209,8 +210,10 @@ fn all(h: &mut H, d: &[u8]) {
     }));
     for i in 0..d.len().min(20000) {
         if let Some(x) = audio::header(&d[i..]) {
+            // (its private fields show in the samples)
             h.usize(i);
-            h.bytes(format!("{x:?}").as_bytes());
+            h.u64(u64::from(x.rate));
+            h.usize(x.size);
         }
     }
 }

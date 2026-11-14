@@ -2,6 +2,15 @@
 //! end gives 0 and moves nothing, so a cut or corrupt stream decodes to something without
 //! panicking.
 
+// (a u32 read from a stream always fits a usize: `us` widens, it never truncates)
+const _: () = assert!(usize::BITS >= 32);
+
+/// A u32 as a length, a count or an index.
+#[inline(always)]
+pub fn us(x: u32) -> usize {
+    usize::try_from(x).unwrap_or(usize::MAX)
+}
+
 pub struct Bits<'a> {
     d: &'a [u8],
     /// in bits
@@ -19,21 +28,43 @@ impl<'a> Bits<'a> {
 
     /// `n` (at most 32) bits, 0 when fewer are left
     pub fn read(&mut self, n: u32) -> u32 {
-        if n == 0 || !self.has(n as usize) {
+        if n == 0 || !self.has(us(n)) {
             return 0;
         }
-        let mut v: u64 = 0;
+        // (n <= 32 bits: a u32 holds them)
+        let mut v: u32 = 0;
         let mut left = n;
         while left > 0 {
-            let byte = self.d[self.pos >> 3] as u64;
-            let rem = 8 - (self.pos & 7) as u32;
+            let byte = u32::from(self.d[self.pos >> 3]);
+            let rem = 8 - u32::from(self.pos.to_le_bytes()[0] & 7);
             let take = rem.min(left);
             let shift = rem - take;
-            v = (v << take) | ((byte >> shift) & ((1 << take) - 1));
-            self.pos += take as usize;
+            v = v.wrapping_shl(take) | ((byte >> shift) & ((1 << take) - 1));
+            self.pos += us(take);
             left -= take;
         }
-        v as u32
+        v
+    }
+
+    /// `N` bits (`N` <= 8, checked when it compiles) as a byte.
+    #[inline]
+    pub fn u8<const N: u32>(&mut self) -> u8 {
+        const { assert!(N <= 8) };
+        self.read(N).to_le_bytes()[0]
+    }
+
+    /// `N` bits (`N` <= 31, checked when it compiles) as an i32 (>= 0).
+    #[inline]
+    pub fn i32<const N: u32>(&mut self) -> i32 {
+        const { assert!(N <= 31) };
+        self.read(N).cast_signed()
+    }
+
+    /// `N` bits (`N` <= 32, checked when it compiles) as a count or an index.
+    #[inline]
+    pub fn uz<const N: u32>(&mut self) -> usize {
+        const { assert!(N <= 32) };
+        us(self.read(N))
     }
 
     pub fn skip(&mut self, n: usize) {
@@ -78,11 +109,11 @@ impl<'a> Bits<'a> {
     }
 
     pub fn peek_non_zero(&mut self, n: u32) -> bool {
-        if !self.has(n as usize) {
+        if !self.has(us(n)) {
             return false;
         }
         let v = self.read(n);
-        self.pos -= n as usize;
+        self.pos -= us(n);
         v != 0
     }
 
@@ -91,11 +122,13 @@ impl<'a> Bits<'a> {
     pub fn vlc(&mut self, t: &[(i16, u16)]) -> u16 {
         let mut i = 0usize;
         loop {
-            let (next, value) = t[i + self.read(1) as usize];
-            if next <= 0 {
+            let (next, value) = t[i + us(self.read(1))];
+            // (a next index <= 0: a leaf)
+            let Ok(next) = usize::try_from(next) else { return value };
+            if next == 0 {
                 return value;
             }
-            i = next as usize;
+            i = next;
             if i + 1 >= t.len() {
                 return 0;
             }

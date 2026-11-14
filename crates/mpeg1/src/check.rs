@@ -15,7 +15,7 @@ pub struct Decoded {
 }
 
 pub fn fnv(h: u64, d: &[u8]) -> u64 {
-    d.iter().fold(h, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+    d.iter().fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3))
 }
 
 /// Demux and decode `data` fed in the slices `cuts` gives (each a length, then the rest).
@@ -82,12 +82,14 @@ pub fn check(data: &[u8], cuts: &[usize]) {
     let _ = crate::probe(data, data, true);
     // (probe_stream in parts as small as the cuts: its reads stay in the stream, and a head
     // that is all of it reads as the stream whole)
-    let part = cuts.first().map_or(256 << 10, |&c| c.max(1) as u64);
-    let i = crate::probe_stream(data.len() as u64, part, |pos, n| {
-        assert!(pos as usize + n <= data.len(), "read {n} at {pos} of {}", data.len());
-        Some(data[pos as usize..pos as usize + n].to_vec())
+    let wide = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+    let part = cuts.first().map_or(256 << 10, |&c| wide(c.max(1)));
+    let i = crate::probe_stream(wide(data.len()), part, |pos, n| {
+        let pos = usize::try_from(pos).unwrap_or(usize::MAX);
+        assert!(pos.checked_add(n).is_some_and(|e| e <= data.len()), "read {n} at {pos} of {}", data.len());
+        Some(data[pos..pos + n].to_vec())
     });
-    if part >= data.len() as u64 {
+    if part >= wide(data.len()) {
         assert_eq!(i, crate::probe(data, data, true));
     }
 }

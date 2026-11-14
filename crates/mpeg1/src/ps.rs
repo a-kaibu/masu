@@ -38,13 +38,14 @@ pub fn is_video_stream(d: &[u8]) -> bool {
 }
 
 fn time(b: &mut Bits) -> f64 {
-    let mut clock = (b.read(3) as u64) << 30;
+    // (33 bits: the top 3, then 30 a u32 holds; both exact as f64, and so is their sum)
+    let top = b.read(3);
     b.skip(1);
-    clock |= (b.read(15) as u64) << 15;
+    let mut low = b.read(15) << 15;
     b.skip(1);
-    clock |= b.read(15) as u64;
+    low |= b.read(15);
     b.skip(1);
-    clock as f64 / 90000.0
+    (f64::from(top) * f64::from(1u32 << 30) + f64::from(low)) / 90000.0
 }
 
 impl Demux {
@@ -98,7 +99,7 @@ impl Demux {
                 self.at = i;
                 return None;
             }
-            let len = u16::from_be_bytes([d[i + 4], d[i + 5]]) as usize;
+            let len = usize::from(u16::from_be_bytes([d[i + 4], d[i + 5]]));
             let start = i + 6;
             if start + len > d.len() {
                 if !self.ended {
