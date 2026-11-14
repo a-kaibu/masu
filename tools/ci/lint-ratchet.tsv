@@ -2389,7 +2389,6 @@ file	crates/shaderconf/src/cases.rs	float_cmp	3
 file	crates/shaderconf/src/cases.rs	indexing_slicing	25
 file	crates/shaderconf/src/cases.rs	lossy_float_literal	3
 file	crates/shaderconf/src/cases.rs	string_slice	2
-file	crates/shaderconf/src/cases.rs	unwrap_used	1
 file	crates/shaderconf/src/compute.rs	arithmetic_side_effects	4
 file	crates/shaderconf/src/compute.rs	as_conversions	8
 file	crates/shaderconf/src/compute.rs	cast_precision_loss	8
@@ -2413,10 +2412,8 @@ file	crates/shaderconf/src/fuzz.rs	exit	1
 file	crates/shaderconf/src/fuzz.rs	indexing_slicing	15
 file	crates/shaderconf/src/fuzz.rs	let_underscore_must_use	4
 file	crates/shaderconf/src/fuzz.rs	undocumented_unsafe_blocks	4
-file	crates/shaderconf/src/fuzz.rs	unwrap_used	5
 file	crates/shaderconf/src/json.rs	indexing_slicing	1
 file	crates/shaderconf/src/json.rs	let_underscore_must_use	5
-file	crates/shaderconf/src/main.rs	expect_used	4
 file	crates/shaderconf/src/oracle.rs	arithmetic_side_effects	6
 file	crates/shaderconf/src/oracle.rs	as_conversions	4
 file	crates/shaderconf/src/oracle.rs	cast_possible_truncation	1
@@ -2427,14 +2424,12 @@ file	crates/shaderconf/src/random.rs	cast_possible_truncation	16
 file	crates/shaderconf/src/random.rs	cast_precision_loss	2
 file	crates/shaderconf/src/random.rs	cast_sign_loss	1
 file	crates/shaderconf/src/random.rs	indexing_slicing	35
-file	crates/shaderconf/src/random.rs	unwrap_used	1
 file	crates/shaderconf/src/ref_d3d9.rs	arithmetic_side_effects	23
 file	crates/shaderconf/src/ref_d3d9.rs	as_conversions	7
 file	crates/shaderconf/src/ref_d3d9.rs	cast_precision_loss	5
 file	crates/shaderconf/src/ref_d3d9.rs	cast_sign_loss	1
 file	crates/shaderconf/src/ref_d3d9.rs	float_cmp	2
 file	crates/shaderconf/src/ref_d3d9.rs	indexing_slicing	75
-file	crates/shaderconf/src/ref_d3d9.rs	unwrap_used	1
 file	crates/shaderconf/src/ref_dxbc.rs	arithmetic_side_effects	41
 file	crates/shaderconf/src/ref_dxbc.rs	as_conversions	13
 file	crates/shaderconf/src/ref_dxbc.rs	cast_possible_truncation	3
@@ -2442,7 +2437,6 @@ file	crates/shaderconf/src/ref_dxbc.rs	cast_precision_loss	2
 file	crates/shaderconf/src/ref_dxbc.rs	cast_sign_loss	2
 file	crates/shaderconf/src/ref_dxbc.rs	float_cmp	4
 file	crates/shaderconf/src/ref_dxbc.rs	indexing_slicing	199
-file	crates/shaderconf/src/ref_dxbc.rs	unwrap_used	2
 file	crates/shaderconf/src/snapshot.rs	arithmetic_side_effects	1
 file	crates/shaderconf/src/snapshot.rs	indexing_slicing	2
 file	crates/tls-client/src/lib.rs	arithmetic_side_effects	10
