@@ -39,24 +39,24 @@ fn every_objects_vtable() {
     made(CreateTransformedGeometry, &[f, pg, m]);
     made(CreateStrokeStyle, &[f, 0, 0, 0]);
     // (these two need a D3D11 device of the guest's: their lists alone)
-    com::vtable("ID2D1HwndRenderTarget", &hwnd_methods());
-    com::vtable("ID2D1BitmapRenderTarget", &bitmap_rt_methods());
+    com::vtable(com::iface!(ID2D1HwndRenderTarget), &hwnd_methods());
+    com::vtable(com::iface!(ID2D1BitmapRenderTarget), &bitmap_rt_methods());
     com::check_vtables(
         "d2d/vtables.txt",
         &[
             FACTORY,
             DEVICE,
             CONTEXT,
-            "ID2D1HwndRenderTarget",
-            "ID2D1BitmapRenderTarget",
-            "ID2D1SolidColorBrush",
-            "ID2D1GradientStopCollection",
-            "ID2D1LinearGradientBrush",
-            "ID2D1Bitmap1",
-            "ID2D1PathGeometry1",
-            "ID2D1GeometrySink",
-            "ID2D1TransformedGeometry",
-            "ID2D1StrokeStyle1",
+            com::iface!(ID2D1HwndRenderTarget),
+            com::iface!(ID2D1BitmapRenderTarget),
+            com::iface!(ID2D1SolidColorBrush),
+            com::iface!(ID2D1GradientStopCollection),
+            com::iface!(ID2D1LinearGradientBrush),
+            com::iface!(ID2D1Bitmap1),
+            com::iface!(ID2D1PathGeometry1),
+            com::iface!(ID2D1GeometrySink),
+            com::iface!(ID2D1TransformedGeometry),
+            com::iface!(ID2D1StrokeStyle1),
         ],
     );
 }

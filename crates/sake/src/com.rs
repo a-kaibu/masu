@@ -16,8 +16,132 @@ pub use methods::Guid;
 pub const E_NOTIMPL: u32 = 0x8000_4001;
 pub const E_NOINTERFACE: u32 = 0x8000_4002;
 
+/// An interface com_methods.rs has a vtable for. Only `com::iface!(IName)` makes one, and the
+/// compiler checks the name there: a misspelt interface does not build (it panicked at the first
+/// object of it).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct Iface(&'static str);
+
+impl Iface {
+    #[doc(hidden)]
+    pub const fn checked(name: &'static str) -> Iface {
+        assert!(find(name).is_some(), "com: no such interface in com_methods.rs");
+        Iface(name)
+    }
+    pub const fn name(self) -> &'static str {
+        self.0
+    }
+}
+
+/// A method of interface `of` (its own or one it derives from), as `com::impls!` names it: the
+/// compiler checks it is one, so a misspelt method does not build (it was a silent E_NOTIMPL
+/// stub). `slot`: that vtable slot only, for an interface with two methods of one name
+/// (ID2D1DeviceContext's CreateBitmap at 4 and 57).
+#[derive(Clone, Copy, Debug)]
+pub struct Method {
+    of: Iface,
+    name: &'static str,
+    slot: Option<usize>,
+}
+
+impl Method {
+    #[doc(hidden)]
+    pub const fn checked(of: Iface, name: &'static str, slot: Option<usize>) -> Method {
+        let Some(t) = find(of.0) else { panic!("com: no such interface") };
+        let ms = t.1;
+        match slot {
+            Some(i) => assert!(i < ms.len() && str_eq(ms[i].0, name), "com: the interface has no such method at that slot"),
+            None => {
+                let mut i = 0;
+                while i < ms.len() && !str_eq(ms[i].0, name) {
+                    i += 1;
+                }
+                assert!(i < ms.len(), "com: the interface has no such method");
+            }
+        }
+        Method { of, name, slot }
+    }
+    pub const fn name(self) -> &'static str {
+        self.name
+    }
+}
+
+/// (for the macros: a handler as a fn pointer, whichever function it is)
+#[doc(hidden)]
+pub const fn handler(f: Handler) -> Handler {
+    f
+}
+
+const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+type Table = (&'static str, &'static [(&'static str, u8, u8)], &'static [&'static str]);
+
+const fn find(name: &str) -> Option<&'static Table> {
+    let mut i = 0;
+    while i < methods::IFACES.len() {
+        if str_eq(methods::IFACES[i].0, name) {
+            return Some(&methods::IFACES[i]);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// `com::iface!(IWICBitmap)`: that interface, checked when it compiles.
+macro_rules! iface {
+    ($i:ident) => {{
+        const I: $crate::com::Iface = $crate::com::Iface::checked(stringify!($i));
+        I
+    }};
+}
+pub(crate) use iface;
+
+/// `com::impls!(IWICBitmapSource { GetSize: src_size, CreateBitmap@57: f })`: methods of that
+/// interface (or of the ones it derives from) and their handlers, every name checked when it
+/// compiles. An object of a derived interface takes them (com::vtable: of another, it panics).
+macro_rules! impls {
+    ($i:ident { $($m:ident $(@ $slot:literal)? : $h:expr),* $(,)? }) => {
+        [$((
+            {
+                const M: $crate::com::Method = $crate::com::Method::checked($crate::com::iface!($i), stringify!($m), $crate::com::impls!(@slot $($slot)?));
+                M
+            },
+            $crate::com::handler($h),
+        )),*]
+    };
+    (@slot) => { None };
+    (@slot $s:literal) => { Some($s) };
+}
+pub(crate) use impls;
+
+/// `com::method!(IDWriteFactory::CreateMonitorRenderingParams)`: that method, checked when it
+/// compiles (for a handler shared by several methods that asks which one it is).
+macro_rules! method {
+    ($i:ident :: $m:ident) => {{
+        const M: $crate::com::Method = $crate::com::Method::checked($crate::com::iface!($i), stringify!($m), None);
+        M
+    }};
+}
+pub(crate) use method;
+
+/// A vtable's methods: com::impls! lists.
+pub type Impls<'a> = &'a [(Method, Handler)];
+
 struct Obj {
-    iface: &'static str,
+    iface: Iface,
     refs: u32,
     /// what goes with the object at its last Release (its module's state), before its memory
     free: Option<fn(u32)>,
@@ -44,14 +168,15 @@ pub fn method_name(trap: u32) -> Option<&'static str> {
 pub fn method_dwords(trap: u32) -> Option<u32> {
     NAMES.lock().unwrap().as_ref()?.get(&trap).map(|m| m.1 as u32)
 }
-static VTBLS: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
+static VTBLS: Mutex<Option<HashMap<Iface, u32>>> = Mutex::new(None);
 
 fn objs<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
     f(OBJS.lock().unwrap().get_or_insert_with(HashMap::new))
 }
 
-fn table(iface: &str) -> &'static (&'static str, &'static [(&'static str, u8, u8)], &'static [&'static str]) {
-    methods::IFACES.iter().find(|t| t.0 == iface).unwrap_or_else(|| panic!("com: no interface {iface}"))
+fn table(iface: Iface) -> &'static Table {
+    // (Iface::checked found it when it compiled)
+    find(iface.0).unwrap_or_else(|| panic!("com: no interface {}", iface.0))
 }
 
 /// The IIDs an interface answers QueryInterface for (itself and its bases), worked out once for
@@ -120,7 +245,7 @@ fn query_interface(c: &mut Ctx) -> u32 {
     let want = read_guid(riid);
     let found = objs(|m| {
         let o = m.get_mut(&this)?;
-        let hit = iids_of(o.iface).contains(&want).then_some(this);
+        let hit = iids_of(o.iface.0).contains(&want).then_some(this);
         if hit.is_some() {
             o.refs += 1;
         }
@@ -132,7 +257,7 @@ fn query_interface(c: &mut Ctx) -> u32 {
             0
         }
         None => {
-            let iface = objs(|m| m.get(&this).map_or("?", |o| o.iface));
+            let iface = objs(|m| m.get(&this).map_or("?", |o| o.iface.0));
             warn_once(&format!("sake: com {iface}::QueryInterface {{{}}}: no", fmt_guid(want)));
             mem::putp(out, 0);
             E_NOINTERFACE
@@ -217,13 +342,13 @@ pub fn is_stub(a: u32) -> bool {
     STUBS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&a))
 }
 
-/// What slot `i` (method `name`) of a vtable gets from `impls`: "name#i" (that slot only, where
-/// an interface has two methods of one name, as ID2D1DeviceContext's CreateBitmap with
-/// D2D1_BITMAP_PROPERTIES1 at 57 beside 4's), else the first entry named `name`; None for
-/// IUnknown's own or a stub.
-fn slot_impl(i: usize, name: &str, impls: &[(&str, Handler)]) -> Option<Handler> {
-    let slot = format!("{name}#{i}");
-    impls.iter().find(|m| m.0 == slot).or_else(|| impls.iter().find(|m| m.0 == name)).map(|m| m.1)
+/// What slot `i` (method `name`) of a vtable gets from `impls`: an entry for that slot (where an
+/// interface has two methods of one name, as ID2D1DeviceContext's CreateBitmap with
+/// D2D1_BITMAP_PROPERTIES1 at 57 beside 4's), else the first entry named `name` without a slot;
+/// None for IUnknown's own or a stub.
+fn slot_impl(i: usize, name: &str, impls: Impls) -> Option<Handler> {
+    let named = |m: &&(Method, Handler)| m.0.name == name;
+    impls.iter().filter(named).find(|m| m.0.slot == Some(i)).or_else(|| impls.iter().filter(named).find(|m| m.0.slot.is_none())).map(|m| m.1)
 }
 /// Slot `i`'s handler: `impls`' or, with none, IUnknown's own for 0..3 and a stub after.
 fn slot_handler(i: usize, found: Option<Handler>) -> Handler {
@@ -236,29 +361,34 @@ fn slot_handler(i: usize, found: Option<Handler>) -> Handler {
     }
 }
 
-/// The vtable of `iface` with the methods `impls` names; built once per interface.
-pub fn vtable(iface: &'static str, impls: &[(&str, Handler)]) -> u32 {
+/// The vtable of `iface` with the methods `impls` names; built once per interface. Every method
+/// must be one of `iface`'s own or of an interface it derives from (a list for another
+/// interface panics here, at its first object).
+pub fn vtable(iface: Iface, impls: Impls) -> u32 {
     #[cfg(test)]
-    CALLS.with(|c| c.borrow_mut().push((iface, impls.iter().map(|&(n, f)| (n.to_string(), f)).collect())));
-    if let Some(&v) = VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).get(iface) {
+    CALLS.with(|c| c.borrow_mut().push((iface, impls.to_vec())));
+    if let Some(&v) = VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).get(&iface) {
         return v;
     }
     // (one builder at a time, looking again under it: two threads making the first object of an
     // interface at once each built a table, and the loser's and its host functions stayed)
     static BUILD: Mutex<()> = Mutex::new(());
     let _b = BUILD.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(&v) = VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).get(iface) {
+    if let Some(&v) = VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).get(&iface) {
         return v;
     }
     let t = table(iface);
+    for m in impls {
+        assert!(t.2.contains(&m.0.of.0), "com: {}::{} is not a method of {}", m.0.of.0, m.0.name, iface.0);
+    }
     let k = mem::ps();
     let v = mem::heap_alloc(k * t.1.len() as u32, true);
     for (i, &(name, dwords, kind)) in t.1.iter().enumerate() {
         let found = slot_impl(i, name, impls);
         let f = slot_handler(i, found);
-        let a = host_fn(&format!("{iface}::{i}:{name}"), f, 4 * dwords as u32);
+        let a = host_fn(&format!("{}::{i}:{name}", iface.0), f, 4 * dwords as u32);
         if i > 2 && found.is_none() {
-            STUBS.lock().unwrap().get_or_insert_with(HashMap::new).insert(a, (iface, name, kind));
+            STUBS.lock().unwrap().get_or_insert_with(HashMap::new).insert(a, (iface.0, name, kind));
         }
         NAMES.lock().unwrap().get_or_insert_with(HashMap::new).insert(a, (name, dwords));
         mem::wp(v + k * i as u32, a);
@@ -270,7 +400,7 @@ pub fn vtable(iface: &'static str, impls: &[(&str, Handler)]) -> u32 {
 /// (tests) Every vtable asked for on this thread (a test's own objects, whatever other tests
 /// built first): its interface and the methods it was asked with.
 #[cfg(test)]
-type Calls = Vec<(&'static str, Vec<(String, Handler)>)>;
+type Calls = Vec<(Iface, Vec<(Method, Handler)>)>;
 #[cfg(test)]
 thread_local!(static CALLS: std::cell::RefCell<Calls> = const { std::cell::RefCell::new(Vec::new()) });
 
@@ -280,15 +410,15 @@ thread_local!(static CALLS: std::cell::RefCell<Calls> = const { std::cell::RefCe
 /// module's object constructors are pinned with this before their method lists change shape
 /// (MASU_UPDATE_VTABLES=1 writes the file).
 #[cfg(test)]
-pub(crate) fn check_vtables(golden: &str, ifaces: &[&str]) {
+pub(crate) fn check_vtables(golden: &str, ifaces: &[Iface]) {
     let calls = CALLS.with(|c| c.borrow().clone());
     let mut seen: Vec<(Handler, String)> =
         vec![(query_interface, "QueryInterface".into()), (add_ref, "AddRef".into()), (release, "Release".into()), (stub, "stub".into())];
     let mut out = String::new();
     for &i in ifaces {
-        let Some((_, impls)) = calls.iter().rev().find(|b| b.0 == i) else { panic!("com: no vtable asked for {i}") };
-        let impls: Vec<(&str, Handler)> = impls.iter().map(|(n, f)| (n.as_str(), *f)).collect();
-        for (k, &(name, _, _)) in table(i).1.iter().enumerate() {
+        let Some((_, impls)) = calls.iter().rev().find(|b| b.0 == i) else { panic!("com: no vtable asked for {}", i.0) };
+        let i = i.0;
+        for (k, &(name, _, _)) in table(Iface(i)).1.iter().enumerate() {
             let f = slot_handler(k, slot_impl(k, name, &impls));
             let label = match seen.iter().find(|s| std::ptr::fn_addr_eq(s.0, f)) {
                 Some(s) => s.1.clone(),
@@ -328,7 +458,7 @@ fn diff(a: &str, b: &str) -> String {
 }
 
 /// A new object (refcount 1) of `size` bytes, the vtable pointer first.
-pub fn object(iface: &'static str, impls: &[(&str, Handler)], size: u32) -> u32 {
+pub fn object(iface: Iface, impls: Impls, size: u32) -> u32 {
     let vt = vtable(iface, impls);
     let o = mem::heap_alloc(size.max(mem::ps()), true);
     mem::wp(o, vt);
@@ -345,7 +475,7 @@ pub fn add_ref_obj(obj: u32) {
     });
 }
 
-pub fn is(obj: u32, iface: &str) -> bool {
+pub fn is(obj: u32, iface: Iface) -> bool {
     objs(|m| m.get(&obj).is_some_and(|o| o.iface == iface))
 }
 
@@ -430,7 +560,7 @@ mod lifetime_tests {
         FREED_OBJS.lock().unwrap().iter().filter(|&&x| x == o).count()
     }
     fn new() -> u32 {
-        let o = object("ID2D1StrokeStyle1", &[], 8);
+        let o = object(iface!(ID2D1StrokeStyle1), &[], 8);
         on_free(o, note);
         o
     }
@@ -524,15 +654,27 @@ mod review_tests {
         assert!(iids_of("no such interface").is_empty());
     }
 
+    /// A list for one interface given to an object of another (not derived from it) is refused
+    /// at its first vtable: its methods would sit in other slots.
+    #[test]
+    #[should_panic(expected = "is not a method of IWICBitmapLock")]
+    fn methods_of_another_interface_panic() {
+        let _g = crate::test_guest::enter();
+        fn h(_: &mut Ctx) -> u32 {
+            0
+        }
+        vtable(iface!(IWICBitmapLock), &impls!(ID2D1Bitmap { GetSize: h }));
+    }
+
     #[test]
     fn first_vtables_race_to_one() {
         let _g = crate::test_guest::enter();
         // (interfaces from the end of the table: the least likely to be built by other tests)
-        let names: Vec<&'static str> = methods::IFACES.iter().rev().take(6).map(|t| t.0).collect();
+        let names: Vec<Iface> = methods::IFACES.iter().rev().take(6).map(|t| Iface(t.0)).collect();
         for name in names {
             let ts: Vec<_> = (0..8).map(|_| std::thread::spawn(move || vtable(name, &[]))).collect();
             let vs: Vec<u32> = ts.into_iter().map(|t| t.join().unwrap()).collect();
-            assert!(vs.iter().all(|&v| v == vs[0] && v != 0), "{name}: {vs:x?}");
+            assert!(vs.iter().all(|&v| v == vs[0] && v != 0), "{name:?}: {vs:x?}");
             assert_eq!(vtable(name, &[]), vs[0]);
         }
     }

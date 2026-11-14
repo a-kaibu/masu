@@ -92,21 +92,21 @@ fn set_format(obj: u32, f: impl Fn(&mut Format)) {
 
 // ---- factory ----
 
-const FACTORY: &str = "IDWriteFactory7";
+const FACTORY: com::Iface = com::iface!(IDWriteFactory7);
 
-fn factory_methods() -> Vec<(&'static str, crate::api::Handler)> {
-    vec![
-        ("CreateTextFormat", CreateTextFormat),
-        ("CreateTextLayout", CreateTextLayout),
-        ("CreateGdiCompatibleTextLayout", CreateGdiCompatibleTextLayout),
-        ("CreateRenderingParams", CreateRenderingParams),
-        ("CreateMonitorRenderingParams", CreateRenderingParams),
-        ("CreateCustomRenderingParams", CreateCustomRenderingParams),
-        ("GetSystemFontCollection", GetSystemFontCollection),
-        ("GetSystemFontFallback", GetSystemFontFallback),
-        ("CreateNumberSubstitution", CreateNumberSubstitution),
-        ("TranslateColorGlyphRun", TranslateColorGlyphRun),
-    ]
+fn factory_methods() -> Vec<(com::Method, crate::api::Handler)> {
+    com::impls!(IDWriteFactory7 {
+        CreateTextFormat: CreateTextFormat,
+        CreateTextLayout: CreateTextLayout,
+        CreateGdiCompatibleTextLayout: CreateGdiCompatibleTextLayout,
+        CreateRenderingParams: CreateRenderingParams,
+        CreateMonitorRenderingParams: CreateRenderingParams,
+        CreateCustomRenderingParams: CreateCustomRenderingParams,
+        GetSystemFontCollection: GetSystemFontCollection,
+        GetSystemFontFallback: GetSystemFontFallback,
+        CreateNumberSubstitution: CreateNumberSubstitution,
+        TranslateColorGlyphRun: TranslateColorGlyphRun,
+    }).to_vec()
 }
 
 static SHARED: Mutex<u32> = Mutex::new(0);
@@ -143,7 +143,7 @@ fn CreateTextFormat(c: &mut Ctx) -> u32 {
     // (this, family, collection, weight, style, stretch, size, locale, out)
     let family = String::from_utf16_lossy(&wstr(c.a(1), None));
     let fmt = Format { family, size: fl(c, 6), weight: c.a(3) as i32, align: 0, para: 0, wrap: 0, spacing: None, char_spacing: (0.0, 0.0, 0.0) };
-    let o = com::object("IDWriteTextFormat3", &format_methods(), 8);
+    let o = com::object(com::iface!(IDWriteTextFormat3), &format_methods(), 8);
     formats(|m| m.insert(o, fmt));
     com::on_free(o, |o| {
         formats(|m| m.remove(&o));
@@ -152,30 +152,30 @@ fn CreateTextFormat(c: &mut Ctx) -> u32 {
     0
 }
 
-fn format_methods() -> Vec<(&'static str, crate::api::Handler)> {
-    vec![
-        ("SetTextAlignment", SetTextAlignment),
-        ("SetParagraphAlignment", SetParagraphAlignment),
-        ("SetWordWrapping", SetWordWrapping),
-        ("SetLineSpacing", SetLineSpacing),
-        ("SetReadingDirection", ok),
-        ("SetFlowDirection", ok),
-        ("SetIncrementalTabStop", ok),
-        ("SetTrimming", ok),
-        ("GetTextAlignment", GetTextAlignment),
-        ("GetParagraphAlignment", GetParagraphAlignment),
-        ("GetWordWrapping", GetWordWrapping),
-        ("GetReadingDirection", zero),
-        ("GetFlowDirection", zero),
-        ("GetFontWeight", GetFontWeight),
-        ("GetFontStyle", zero),
-        ("GetFontStretch", five),
-        ("GetFontSize", GetFontSize),
-        ("GetFontFamilyNameLength", GetFontFamilyNameLength),
-        ("GetFontFamilyName", GetFontFamilyName),
-        ("GetLocaleNameLength", zero),
-        ("GetLocaleName", GetLocaleName),
-    ]
+fn format_methods() -> Vec<(com::Method, crate::api::Handler)> {
+    com::impls!(IDWriteTextFormat {
+        SetTextAlignment: SetTextAlignment,
+        SetParagraphAlignment: SetParagraphAlignment,
+        SetWordWrapping: SetWordWrapping,
+        SetLineSpacing: SetLineSpacing,
+        SetReadingDirection: ok,
+        SetFlowDirection: ok,
+        SetIncrementalTabStop: ok,
+        SetTrimming: ok,
+        GetTextAlignment: GetTextAlignment,
+        GetParagraphAlignment: GetParagraphAlignment,
+        GetWordWrapping: GetWordWrapping,
+        GetReadingDirection: zero,
+        GetFlowDirection: zero,
+        GetFontWeight: GetFontWeight,
+        GetFontStyle: zero,
+        GetFontStretch: five,
+        GetFontSize: GetFontSize,
+        GetFontFamilyNameLength: GetFontFamilyNameLength,
+        GetFontFamilyName: GetFontFamilyName,
+        GetLocaleNameLength: zero,
+        GetLocaleName: GetLocaleName,
+    }).to_vec()
 }
 
 fn ok(_: &mut Ctx) -> u32 {
@@ -248,31 +248,31 @@ fn GetLocaleName(c: &mut Ctx) -> u32 {
 
 // ---- layouts ----
 
-fn layout_methods() -> Vec<(&'static str, crate::api::Handler)> {
+fn layout_methods() -> Vec<(com::Method, crate::api::Handler)> {
     let mut v = format_methods();
-    v.extend_from_slice(&[
-        ("SetMaxWidth", SetMaxWidth),
-        ("SetMaxHeight", SetMaxHeight),
-        ("GetMaxWidth", GetMaxWidth),
-        ("GetMaxHeight", GetMaxHeight),
-        ("GetMetrics", GetMetrics),
-        ("SetFontSize", SetFontSize),
-        ("SetFontWeight", SetFontWeight),
-        ("SetFontFamilyName", SetFontFamilyName),
-        ("SetUnderline", ok),
-        ("SetStrikethrough", ok),
-        ("SetDrawingEffect", ok),
-        ("SetLocaleName", ok),
-        ("SetFontStyle", ok),
-        ("SetFontStretch", ok),
-        ("SetTypography", ok),
-        ("SetInlineObject", ok),
-        ("SetFontCollection", ok),
-        ("SetCharacterSpacing", SetCharacterSpacing),
-        ("GetLineMetrics", GetLineMetrics),
-        ("GetClusterMetrics", GetClusterMetrics),
-        ("Draw", Draw),
-    ]);
+    v.extend_from_slice(&com::impls!(IDWriteTextLayout4 {
+        SetMaxWidth: SetMaxWidth,
+        SetMaxHeight: SetMaxHeight,
+        GetMaxWidth: GetMaxWidth,
+        GetMaxHeight: GetMaxHeight,
+        GetMetrics: GetMetrics,
+        SetFontSize: SetFontSize,
+        SetFontWeight: SetFontWeight,
+        SetFontFamilyName: SetFontFamilyName,
+        SetUnderline: ok,
+        SetStrikethrough: ok,
+        SetDrawingEffect: ok,
+        SetLocaleName: ok,
+        SetFontStyle: ok,
+        SetFontStretch: ok,
+        SetTypography: ok,
+        SetInlineObject: ok,
+        SetFontCollection: ok,
+        SetCharacterSpacing: SetCharacterSpacing,
+        GetLineMetrics: GetLineMetrics,
+        GetClusterMetrics: GetClusterMetrics,
+        Draw: Draw,
+    }));
     v
 }
 
@@ -281,7 +281,7 @@ fn new_layout(text: Vec<u16>, fmt: u32, w: f32, h: f32, out: u32) -> u32 {
         mem::putp(out, 0);
         return 0x8007_0057;
     };
-    let o = com::object("IDWriteTextLayout4", &layout_methods(), 8);
+    let o = com::object(com::iface!(IDWriteTextLayout4), &layout_methods(), 8);
     layouts(|m| m.insert(o, Layout { fmt, text, max_w: w, max_h: h }));
     com::on_free(o, |o| {
         layouts(|m| m.remove(&o));
@@ -633,17 +633,17 @@ fn Draw(c: &mut Ctx) -> u32 {
 fn CreateRenderingParams(c: &mut Ctx) -> u32 {
     // (CreateRenderingParams(this, out), CreateMonitorRenderingParams(this, monitor, out))
     let out = if is_monitor_call(c) { c.a(2) } else { c.a(1) };
-    mem::putp(out, com::object("IDWriteRenderingParams3", &[], 8));
+    mem::putp(out, com::object(com::iface!(IDWriteRenderingParams3), &[], 8));
     0
 }
 fn is_monitor_call(c: &Ctx) -> bool {
-    com::method_name(c.trap).is_some_and(|n| n == "CreateMonitorRenderingParams")
+    com::method_name(c.trap) == Some(com::method!(IDWriteFactory::CreateMonitorRenderingParams).name())
 }
 fn CreateCustomRenderingParams(c: &mut Ctx) -> u32 {
     // (this, gamma, contrast, [grayscale contrast,] cleartype level, geometry, mode, [grid fit,] out):
     // the out pointer is the last argument
     let n = com::method_dwords(c.trap).unwrap_or(8);
-    mem::putp(c.a(n - 1), com::object("IDWriteRenderingParams3", &[], 8));
+    mem::putp(c.a(n - 1), com::object(com::iface!(IDWriteRenderingParams3), &[], 8));
     0
 }
 fn GetSystemFontCollection(c: &mut Ctx) -> u32 {
@@ -657,7 +657,7 @@ const E_INVALIDARG: u32 = 0x8007_0057;
 const E_NOT_SUFFICIENT_BUFFER: u32 = 0x8007_007a;
 
 /// An object whose value (a face index) follows the vtable pointer.
-fn with_value(iface: &'static str, methods: &[(&'static str, crate::api::Handler)], v: u32) -> u32 {
+fn with_value(iface: com::Iface, methods: com::Impls, v: u32) -> u32 {
     let o = com::object(iface, methods, 16);
     w32(o + mem::ps(), v);
     o
@@ -672,50 +672,50 @@ pub fn face_index(face: u32) -> usize {
 
 fn collection() -> u32 {
     with_value(
-        "IDWriteFontCollection",
-        &[("GetFontFamilyCount", GetFontFamilyCount), ("GetFontFamily", GetFontFamily), ("FindFamilyName", FindFamilyName), ("GetFontFromFontFace", GetFontFromFontFace)],
+        com::iface!(IDWriteFontCollection),
+        &com::impls!(IDWriteFontCollection { GetFontFamilyCount: GetFontFamilyCount, GetFontFamily: GetFontFamily, FindFamilyName: FindFamilyName, GetFontFromFontFace: GetFontFromFontFace }),
         0,
     )
 }
 fn family(i: u32) -> u32 {
-    let m: [(&'static str, crate::api::Handler); 6] = [
-        ("GetFontCollection", GetFontCollection),
-        ("GetFontCount", one),
-        ("GetFont", GetFont),
-        ("GetFamilyNames", GetFamilyNames),
-        ("GetFirstMatchingFont", GetFirstMatchingFont),
-        ("GetMatchingFonts", GetMatchingFonts),
-    ];
-    with_value("IDWriteFontFamily", &m, i)
+    let m = com::impls!(IDWriteFontFamily {
+        GetFontCollection: GetFontCollection,
+        GetFontCount: one,
+        GetFont: GetFont,
+        GetFamilyNames: GetFamilyNames,
+        GetFirstMatchingFont: GetFirstMatchingFont,
+        GetMatchingFonts: GetMatchingFonts,
+    });
+    with_value(com::iface!(IDWriteFontFamily), &m, i)
 }
 fn font(i: u32) -> u32 {
-    let m: [(&'static str, crate::api::Handler); 11] = [
-        ("GetFontFamily", FontGetFontFamily),
-        ("GetWeight", weight),
-        ("GetStretch", five),
-        ("GetStyle", zero),
-        ("IsSymbolFont", zero),
-        ("GetFaceNames", GetFaceNames),
-        ("GetInformationalStrings", GetInformationalStrings),
-        ("GetSimulations", zero),
-        ("HasCharacter", HasCharacter),
-        ("CreateFontFace", CreateFontFace),
-        ("GetMetrics", FontGetMetrics),
-    ];
-    with_value("IDWriteFont", &m, i)
+    let m = com::impls!(IDWriteFont {
+        GetFontFamily: FontGetFontFamily,
+        GetWeight: weight,
+        GetStretch: five,
+        GetStyle: zero,
+        IsSymbolFont: zero,
+        GetFaceNames: GetFaceNames,
+        GetInformationalStrings: GetInformationalStrings,
+        GetSimulations: zero,
+        HasCharacter: HasCharacter,
+        CreateFontFace: CreateFontFace,
+        GetMetrics: FontGetMetrics,
+    });
+    with_value(com::iface!(IDWriteFont), &m, i)
 }
 fn face(i: u32) -> u32 {
-    let m: [(&'static str, crate::api::Handler); 8] = [
-        ("GetType", FaceGetType),
-        ("GetFiles", GetFiles),
-        ("GetIndex", FaceGetIndex),
-        ("GetSimulations", zero),
-        ("IsSymbolFont", zero),
-        ("GetMetrics", FontGetMetrics),
-        ("GetGlyphIndices", GetGlyphIndices),
-        ("GetGlyphRunOutline", GetGlyphRunOutline),
-    ];
-    with_value("IDWriteFontFace", &m, i)
+    let m = com::impls!(IDWriteFontFace {
+        GetType: FaceGetType,
+        GetFiles: GetFiles,
+        GetIndex: FaceGetIndex,
+        GetSimulations: zero,
+        IsSymbolFont: zero,
+        GetMetrics: FontGetMetrics,
+        GetGlyphIndices: GetGlyphIndices,
+        GetGlyphRunOutline: GetGlyphRunOutline,
+    });
+    with_value(com::iface!(IDWriteFontFace), &m, i)
 }
 
 fn one(_: &mut Ctx) -> u32 {
@@ -782,8 +782,8 @@ fn GetFirstMatchingFont(c: &mut Ctx) -> u32 {
     0
 }
 fn GetMatchingFonts(c: &mut Ctx) -> u32 {
-    let m: [(&'static str, crate::api::Handler); 3] = [("GetFontCollection", GetFontCollection), ("GetFontCount", one), ("GetFont", GetFont)];
-    mem::putp(c.a(4), with_value("IDWriteFontList", &m, value(c.a(0))));
+    let m = com::impls!(IDWriteFontList { GetFontCollection: GetFontCollection, GetFontCount: one, GetFont: GetFont });
+    mem::putp(c.a(4), with_value(com::iface!(IDWriteFontList), &m, value(c.a(0))));
     0
 }
 fn FontGetFontFamily(c: &mut Ctx) -> u32 {
@@ -877,8 +877,8 @@ fn GetFiles(c: &mut Ctx) -> u32 {
     for (k, ch) in path.iter().enumerate() {
         mem::w16(key + 2 * k as u32, *ch);
     }
-    let m: [(&'static str, crate::api::Handler); 3] = [("GetReferenceKey", GetReferenceKey), ("GetLoader", GetLoader), ("Analyze", Analyze)];
-    let f = with_value("IDWriteFontFile", &m, i);
+    let m = com::impls!(IDWriteFontFile { GetReferenceKey: GetReferenceKey, GetLoader: GetLoader, Analyze: Analyze });
+    let f = with_value(com::iface!(IDWriteFontFile), &m, i);
     w32(f + mem::ps() + 4, key);
     mem::putp(out, f);
     w32(n, 1);
@@ -895,9 +895,8 @@ fn GetLoader(c: &mut Ctx) -> u32 {
     static LOADER: Mutex<u32> = Mutex::new(0);
     let mut g = LOADER.lock().unwrap();
     if *g == 0 {
-        let m: [(&'static str, crate::api::Handler); 3] =
-            [("GetFilePathLengthFromKey", GetFilePathLengthFromKey), ("GetFilePathFromKey", GetFilePathFromKey), ("GetLastWriteTimeFromKey", GetLastWriteTimeFromKey)];
-        *g = com::object("IDWriteLocalFontFileLoader", &m, 8);
+        let m = com::impls!(IDWriteLocalFontFileLoader { GetFilePathLengthFromKey: GetFilePathLengthFromKey, GetFilePathFromKey: GetFilePathFromKey, GetLastWriteTimeFromKey: GetLastWriteTimeFromKey });
+        *g = com::object(com::iface!(IDWriteLocalFontFileLoader), &m, 8);
         com::keep(*g);
     }
     com::add_ref_obj(*g);
@@ -940,15 +939,15 @@ fn GetLastWriteTimeFromKey(c: &mut Ctx) -> u32 {
 static STRINGS: Mutex<Option<HashMap<u32, Vec<(String, String)>>>> = Mutex::new(None);
 
 fn strings(v: Vec<(String, String)>) -> u32 {
-    let m: [(&'static str, crate::api::Handler); 6] = [
-        ("GetCount", StrGetCount),
-        ("FindLocaleName", FindLocaleName),
-        ("GetLocaleNameLength", GetLocaleNameLength),
-        ("GetLocaleName", StrGetLocaleName),
-        ("GetStringLength", GetStringLength),
-        ("GetString", GetString),
-    ];
-    let o = com::object("IDWriteLocalizedStrings", &m, 8);
+    let m = com::impls!(IDWriteLocalizedStrings {
+        GetCount: StrGetCount,
+        FindLocaleName: FindLocaleName,
+        GetLocaleNameLength: GetLocaleNameLength,
+        GetLocaleName: StrGetLocaleName,
+        GetStringLength: GetStringLength,
+        GetString: GetString,
+    });
+    let o = com::object(com::iface!(IDWriteLocalizedStrings), &m, 8);
     STRINGS.lock().unwrap().get_or_insert_with(HashMap::new).insert(o, v);
     com::on_free(o, |o| {
         STRINGS.lock().unwrap().get_or_insert_with(HashMap::new).remove(&o);
@@ -1011,12 +1010,12 @@ fn GetString(c: &mut Ctx) -> u32 {
 // ---- font fallback ----
 
 fn GetSystemFontFallback(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(1), com::object("IDWriteFontFallback", &[("MapCharacters", MapCharacters)], 8));
+    mem::putp(c.a(1), com::object(com::iface!(IDWriteFontFallback), &com::impls!(IDWriteFontFallback { MapCharacters: MapCharacters }), 8));
     0
 }
 fn CreateNumberSubstitution(c: &mut Ctx) -> u32 {
     // (this, method, locale, ignore user override, out)
-    mem::putp(c.a(4), com::object("IDWriteNumberSubstitution", &[], 8));
+    mem::putp(c.a(4), com::object(com::iface!(IDWriteNumberSubstitution), &[], 8));
     0
 }
 
@@ -1446,19 +1445,19 @@ mod vtable_tests {
             "dwrite_vtables.txt",
             &[
                 FACTORY,
-                "IDWriteTextFormat3",
-                "IDWriteTextLayout4",
-                "IDWriteRenderingParams3",
-                "IDWriteFontCollection",
-                "IDWriteFontFamily",
-                "IDWriteFont",
-                "IDWriteFontFace",
-                "IDWriteFontList",
-                "IDWriteFontFile",
-                "IDWriteLocalFontFileLoader",
-                "IDWriteLocalizedStrings",
-                "IDWriteFontFallback",
-                "IDWriteNumberSubstitution",
+                com::iface!(IDWriteTextFormat3),
+                com::iface!(IDWriteTextLayout4),
+                com::iface!(IDWriteRenderingParams3),
+                com::iface!(IDWriteFontCollection),
+                com::iface!(IDWriteFontFamily),
+                com::iface!(IDWriteFont),
+                com::iface!(IDWriteFontFace),
+                com::iface!(IDWriteFontList),
+                com::iface!(IDWriteFontFile),
+                com::iface!(IDWriteLocalFontFileLoader),
+                com::iface!(IDWriteLocalizedStrings),
+                com::iface!(IDWriteFontFallback),
+                com::iface!(IDWriteNumberSubstitution),
             ],
         );
     }

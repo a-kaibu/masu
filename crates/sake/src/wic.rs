@@ -158,7 +158,7 @@ fn with<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
     f(OBJS.lock().unwrap().get_or_insert_with(HashMap::new))
 }
 
-fn new(iface: &'static str, impls: &[(&str, crate::api::Handler)], o: Obj) -> u32 {
+fn new(iface: com::Iface, impls: com::Impls, o: Obj) -> u32 {
     let p = com::object(iface, impls, 8);
     with(|m| m.insert(p, o));
     com::on_free(p, free);
@@ -218,19 +218,19 @@ fn lock_into_raw(owner: u32, fmt: Fmt, (x, y, w, h): (u32, u32, u32, u32), strid
 
 // ---- streams ----
 
-fn stream_impls() -> Vec<(&'static str, crate::api::Handler)> {
-    vec![
-        ("Release", release as crate::api::Handler),
-        ("Read", s_read),
-        ("Write", s_write),
-        ("Seek", s_seek),
-        ("SetSize", s_set_size),
-        ("Stat", s_stat),
-        ("Commit", ok),
-        ("InitializeFromMemory", s_init_memory),
-        ("InitializeFromFilename", s_init_filename),
-        ("InitializeFromIStream", s_init_istream),
-    ]
+fn stream_impls() -> Vec<(com::Method, crate::api::Handler)> {
+    com::impls!(IWICStream {
+        Release: release,
+        Read: s_read,
+        Write: s_write,
+        Seek: s_seek,
+        SetSize: s_set_size,
+        Stat: s_stat,
+        Commit: ok,
+        InitializeFromMemory: s_init_memory,
+        InitializeFromFilename: s_init_filename,
+        InitializeFromIStream: s_init_istream,
+    }).to_vec()
 }
 
 fn ok(_: &mut Ctx) -> u32 {
@@ -393,12 +393,12 @@ const JPEG: Guid = (0x19e4_a5aa, 0x5662, 0x4fc5, [0xa0, 0xc0, 0x17, 0x58, 0x02, 
 const BMP: Guid = (0x0af1_d87e, 0xfcfe, 0x4188, [0xbd, 0xeb, 0xa7, 0x90, 0x64, 0x71, 0xcb, 0xe3]);
 const GIF: Guid = (0x1f8a_5601, 0x7d4d, 0x4cbd, [0x9c, 0x82, 0x1b, 0xc8, 0xd4, 0xee, 0xb9, 0xa5]);
 
-fn source_impls() -> Vec<(&'static str, crate::api::Handler)> {
-    vec![("Release", release as crate::api::Handler), ("GetSize", src_size), ("GetPixelFormat", src_format), ("GetResolution", src_resolution), ("CopyPalette", src_palette), ("CopyPixels", src_copy)]
+fn source_impls() -> Vec<(com::Method, crate::api::Handler)> {
+    com::impls!(IWICBitmapSource { Release: release, GetSize: src_size, GetPixelFormat: src_format, GetResolution: src_resolution, CopyPalette: src_palette, CopyPixels: src_copy }).to_vec()
 }
 
 /// A source object of `iface`.
-fn new_source(iface: &'static str, img: Arc<Img>, fmt: Fmt, extra: &[(&'static str, crate::api::Handler)]) -> u32 {
+fn new_source(iface: com::Iface, img: Arc<Img>, fmt: Fmt, extra: com::Impls) -> u32 {
     let mut impls = source_impls();
     impls.extend_from_slice(extra);
     new(iface, &impls, Obj::Source { img, fmt, raw: None })
@@ -574,8 +574,8 @@ fn decoder(data: &[u8]) -> Option<u32> {
         picture::Kind::Bmp => None,
     };
     let d = new(
-        "IWICBitmapDecoder",
-        &[("Release", release), ("GetContainerFormat", dec_container), ("GetFrameCount", dec_frame_count), ("GetFrame", dec_frame), ("CopyPalette", dec_palette), ("Initialize", ok)],
+        com::iface!(IWICBitmapDecoder),
+        &com::impls!(IWICBitmapDecoder { Release: release, GetContainerFormat: dec_container, GetFrameCount: dec_frame_count, GetFrame: dec_frame, CopyPalette: dec_palette, Initialize: ok }),
         Obj::Decoder { pic: Arc::new(pic), container, meta, made: Vec::new() },
     );
     Some(d)
@@ -647,7 +647,7 @@ fn dec_frame(c: &mut Ctx) -> u32 {
         (img, raw)
     });
     let fmt = f.fmt;
-    let p = new_source("IWICBitmapFrameDecode", img, fmt, &[("GetMetadataQueryReader", frame_reader)]);
+    let p = new_source(com::iface!(IWICBitmapFrameDecode), img, fmt, &com::impls!(IWICBitmapFrameDecode { GetMetadataQueryReader: frame_reader }));
     let (container, meta) = with(|m| match m.get(&this) {
         Some(Obj::Decoder { container, meta, .. }) => (*container, meta.clone()),
         _ => (BMP, None),
@@ -681,8 +681,8 @@ fn frame_reader(c: &mut Ctx) -> u32 {
     match frame_meta(|m| m.get(&this).cloned()) {
         Some((container, Some(meta))) => {
             let r = new(
-                "IWICMetadataQueryReader",
-                &[("Release", release), ("GetContainerFormat", reader_container), ("GetLocation", reader_location), ("GetMetadataByName", reader_get), ("GetEnumerator", reader_enum)],
+                com::iface!(IWICMetadataQueryReader),
+                &com::impls!(IWICMetadataQueryReader { Release: release, GetContainerFormat: reader_container, GetLocation: reader_location, GetMetadataByName: reader_get, GetEnumerator: reader_enum }),
                 Obj::Reader { container, meta },
             );
             mem::putp(out, r);
@@ -768,8 +768,8 @@ fn reader_enum(c: &mut Ctx) -> u32 {
 
 fn new_names(names: Vec<String>, pos: usize) -> u32 {
     new(
-        "IEnumString",
-        &[("Release", release), ("Next", names_next), ("Skip", names_skip), ("Reset", names_reset), ("Clone", names_clone)],
+        com::iface!(IEnumString),
+        &com::impls!(IEnumString { Release: release, Next: names_next, Skip: names_skip, Reset: names_reset, Clone: names_clone }),
         Obj::Names { names, pos },
     )
 }
@@ -887,14 +887,14 @@ fn f_decoder_from_stream(c: &mut Ctx) -> u32 {
 
 fn f_create_stream(c: &mut Ctx) -> u32 {
     let out = c.a(1);
-    mem::putp(out, new("IWICStream", &stream_impls(), Obj::Stream { data: Vec::new(), pos: 0 }));
+    mem::putp(out, new(com::iface!(IWICStream), &stream_impls(), Obj::Stream { data: Vec::new(), pos: 0 }));
     0
 }
 
 fn f_create_converter(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     let empty = Arc::new(Img::new(0, 0, Vec::new()));
-    mem::putp(out, new_source("IWICFormatConverter", empty, Fmt::Bgra, &[("Initialize", conv_init), ("CanConvert", conv_can)]));
+    mem::putp(out, new_source(com::iface!(IWICFormatConverter), empty, Fmt::Bgra, &com::impls!(IWICFormatConverter { Initialize: conv_init, CanConvert: conv_can })));
     0
 }
 
@@ -923,20 +923,20 @@ fn f_create_palette(c: &mut Ctx) -> u32 {
         return E_INVALIDARG;
     }
     let p = new(
-        "IWICPalette",
-        &[
-            ("Release", release),
-            ("InitializePredefined", pal_predefined),
-            ("InitializeCustom", pal_custom),
-            ("InitializeFromBitmap", pal_from_bitmap),
-            ("InitializeFromPalette", pal_from_palette),
-            ("GetType", pal_type),
-            ("GetColorCount", pal_count),
-            ("GetColors", pal_colors),
-            ("IsBlackWhite", pal_is_bw),
-            ("IsGrayscale", pal_is_gray),
-            ("HasAlpha", pal_has_alpha),
-        ],
+        com::iface!(IWICPalette),
+        &com::impls!(IWICPalette {
+            Release: release,
+            InitializePredefined: pal_predefined,
+            InitializeCustom: pal_custom,
+            InitializeFromBitmap: pal_from_bitmap,
+            InitializeFromPalette: pal_from_palette,
+            GetType: pal_type,
+            GetColorCount: pal_count,
+            GetColors: pal_colors,
+            IsBlackWhite: pal_is_bw,
+            IsGrayscale: pal_is_gray,
+            HasAlpha: pal_has_alpha,
+        }),
         Obj::Palette { colors: Vec::new(), kind: 0 },
     );
     mem::putp(out, p);
@@ -1155,7 +1155,7 @@ fn conv_can(c: &mut Ctx) -> u32 {
 fn f_create_scaler(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     let empty = Arc::new(Img::new(0, 0, Vec::new()));
-    mem::putp(out, new_source("IWICBitmapScaler", empty, Fmt::Bgra, &[("Initialize", scaler_init)]));
+    mem::putp(out, new_source(com::iface!(IWICBitmapScaler), empty, Fmt::Bgra, &com::impls!(IWICBitmapScaler { Initialize: scaler_init })));
     0
 }
 
@@ -1373,7 +1373,7 @@ fn crop(img: &Img, (x, y, w, h): (u32, u32, u32, u32)) -> Img {
 fn f_create_clipper(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     let empty = Arc::new(Img::new(0, 0, Vec::new()));
-    mem::putp(out, new_source("IWICBitmapClipper", empty, Fmt::Bgra, &[("Initialize", clipper_init)]));
+    mem::putp(out, new_source(com::iface!(IWICBitmapClipper), empty, Fmt::Bgra, &com::impls!(IWICBitmapClipper { Initialize: clipper_init })));
     0
 }
 
@@ -1392,7 +1392,7 @@ fn clipper_init(c: &mut Ctx) -> u32 {
 fn f_create_flip(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     let empty = Arc::new(Img::new(0, 0, Vec::new()));
-    mem::putp(out, new_source("IWICBitmapFlipRotator", empty, Fmt::Bgra, &[("Initialize", flip_init)]));
+    mem::putp(out, new_source(com::iface!(IWICBitmapFlipRotator), empty, Fmt::Bgra, &com::impls!(IWICBitmapFlipRotator { Initialize: flip_init })));
     0
 }
 
@@ -1435,8 +1435,8 @@ fn new_bitmap(img: Img, fmt: Fmt) -> u32 {
 
 fn new_bitmap_shared(img: Arc<Img>, fmt: Fmt) -> u32 {
     let mut impls = source_impls();
-    impls.extend_from_slice(&[("Lock", bm_lock as crate::api::Handler), ("SetResolution", ok), ("SetPalette", bm_set_palette)]);
-    new("IWICBitmap", &impls, Obj::Bitmap { img: Arc::new(Mutex::new(img)), fmt, raw: None })
+    impls.extend_from_slice(&com::impls!(IWICBitmap { Lock: bm_lock, SetResolution: ok, SetPalette: bm_set_palette }));
+    new(com::iface!(IWICBitmap), &impls, Obj::Bitmap { img: Arc::new(Mutex::new(img)), fmt, raw: None })
 }
 
 fn bm_set_palette(c: &mut Ctx) -> u32 {
@@ -1564,8 +1564,8 @@ fn bm_lock(c: &mut Ctx) -> u32 {
     }
     mem::write(buf, &data);
     let l = new(
-        "IWICBitmapLock",
-        &[("Release", release), ("GetSize", lock_size), ("GetStride", lock_stride), ("GetDataPointer", lock_data), ("GetPixelFormat", lock_format)],
+        com::iface!(IWICBitmapLock),
+        &com::impls!(IWICBitmapLock { Release: release, GetSize: lock_size, GetStride: lock_stride, GetDataPointer: lock_data, GetPixelFormat: lock_format }),
         Obj::Lock { bitmap, fmt, rect: r, buf, stride, write: flags & 2 != 0, owner: this },
     );
     mem::putp(out, l);
@@ -1683,17 +1683,17 @@ fn f_component_info(c: &mut Ctx) -> u32 {
     // (Windows leaves *out as it was for a component it does not know: winref wicconv)
     let Some(f) = fmt_of(read_guid(clsid)) else { return WINCODEC_ERR_COMPONENTNOTFOUND };
     let p = new(
-        "IWICPixelFormatInfo2",
-        &[
-            ("Release", release),
-            ("GetComponentType", pfi_type),
-            ("GetCLSID", pfi_guid),
-            ("GetFormatGUID", pfi_guid),
-            ("GetBitsPerPixel", pfi_bits),
-            ("GetChannelCount", pfi_channels),
-            ("SupportsTransparency", pfi_transparency),
-            ("GetNumericRepresentation", pfi_numeric),
-        ],
+        com::iface!(IWICPixelFormatInfo2),
+        &com::impls!(IWICPixelFormatInfo2 {
+            Release: release,
+            GetComponentType: pfi_type,
+            GetCLSID: pfi_guid,
+            GetFormatGUID: pfi_guid,
+            GetBitsPerPixel: pfi_bits,
+            GetChannelCount: pfi_channels,
+            SupportsTransparency: pfi_transparency,
+            GetNumericRepresentation: pfi_numeric,
+        }),
         Obj::FormatInfo(f),
     );
     mem::putp(out, p);
@@ -1703,22 +1703,22 @@ fn f_component_info(c: &mut Ctx) -> u32 {
 /// CoCreateInstance of the imaging factory (IWICImagingFactory and IWICImagingFactory2).
 pub fn factory() -> u32 {
     com::object(
-        "IWICImagingFactory2",
-        &[
-            ("CreateDecoderFromFilename", f_decoder_from_filename),
-            ("CreateDecoderFromStream", f_decoder_from_stream),
-            ("CreateComponentInfo", f_component_info),
-            ("CreateFormatConverter", f_create_converter),
-            ("CreatePalette", f_create_palette),
-            ("CreateBitmapScaler", f_create_scaler),
-            ("CreateBitmapClipper", f_create_clipper),
-            ("CreateBitmapFlipRotator", f_create_flip),
-            ("CreateStream", f_create_stream),
-            ("CreateBitmap", f_create_bitmap),
-            ("CreateBitmapFromSource", f_bitmap_from_source),
-            ("CreateBitmapFromSourceRect", f_bitmap_from_source_rect),
-            ("CreateBitmapFromMemory", f_bitmap_from_memory),
-        ],
+        com::iface!(IWICImagingFactory2),
+        &com::impls!(IWICImagingFactory2 {
+            CreateDecoderFromFilename: f_decoder_from_filename,
+            CreateDecoderFromStream: f_decoder_from_stream,
+            CreateComponentInfo: f_component_info,
+            CreateFormatConverter: f_create_converter,
+            CreatePalette: f_create_palette,
+            CreateBitmapScaler: f_create_scaler,
+            CreateBitmapClipper: f_create_clipper,
+            CreateBitmapFlipRotator: f_create_flip,
+            CreateStream: f_create_stream,
+            CreateBitmap: f_create_bitmap,
+            CreateBitmapFromSource: f_bitmap_from_source,
+            CreateBitmapFromSourceRect: f_bitmap_from_source_rect,
+            CreateBitmapFromMemory: f_bitmap_from_memory,
+        }),
         8,
     )
 }
@@ -1766,20 +1766,20 @@ mod vtable_tests {
         com::check_vtables(
             "wic_vtables.txt",
             &[
-                "IWICImagingFactory2",
-                "IWICStream",
-                "IWICFormatConverter",
-                "IWICBitmapScaler",
-                "IWICBitmapClipper",
-                "IWICBitmapFlipRotator",
-                "IWICPalette",
-                "IWICBitmap",
-                "IWICBitmapLock",
-                "IWICPixelFormatInfo2",
-                "IWICBitmapDecoder",
-                "IWICBitmapFrameDecode",
-                "IWICMetadataQueryReader",
-                "IEnumString",
+                com::iface!(IWICImagingFactory2),
+                com::iface!(IWICStream),
+                com::iface!(IWICFormatConverter),
+                com::iface!(IWICBitmapScaler),
+                com::iface!(IWICBitmapClipper),
+                com::iface!(IWICBitmapFlipRotator),
+                com::iface!(IWICPalette),
+                com::iface!(IWICBitmap),
+                com::iface!(IWICBitmapLock),
+                com::iface!(IWICPixelFormatInfo2),
+                com::iface!(IWICBitmapDecoder),
+                com::iface!(IWICBitmapFrameDecode),
+                com::iface!(IWICMetadataQueryReader),
+                com::iface!(IEnumString),
             ],
         );
     }

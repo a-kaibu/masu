@@ -213,23 +213,23 @@ fn ok(_: &mut Ctx) -> u32 {
 
 // ---- factory, device ----
 
-const FACTORY: &str = "ID2D1Factory7";
-const DEVICE: &str = "ID2D1Device6";
-const CONTEXT: &str = "ID2D1DeviceContext6";
+const FACTORY: com::Iface = com::iface!(ID2D1Factory7);
+const DEVICE: com::Iface = com::iface!(ID2D1Device6);
+const CONTEXT: com::Iface = com::iface!(ID2D1DeviceContext6);
 
 fn factory() -> u32 {
     com::object(
         FACTORY,
-        &[
-            ("CreateDevice", CreateDevice as Handler),
-            ("CreateDxgiSurfaceRenderTarget", CreateDxgiSurfaceRenderTarget),
-            ("CreateHwndRenderTarget", CreateHwndRenderTarget),
-            ("GetDesktopDpi", GetDpi),
-            ("CreatePathGeometry", CreatePathGeometry),
-            ("CreateTransformedGeometry", CreateTransformedGeometry),
-            ("CreateStrokeStyle", CreateStrokeStyle),
-            ("ReloadSystemMetrics", ok),
-        ],
+        &com::impls!(ID2D1Factory7 {
+            CreateDevice: CreateDevice,
+            CreateDxgiSurfaceRenderTarget: CreateDxgiSurfaceRenderTarget,
+            CreateHwndRenderTarget: CreateHwndRenderTarget,
+            GetDesktopDpi: GetDpi,
+            CreatePathGeometry: CreatePathGeometry,
+            CreateTransformedGeometry: CreateTransformedGeometry,
+            CreateStrokeStyle: CreateStrokeStyle,
+            ReloadSystemMetrics: ok,
+        }),
         8,
     )
 }
@@ -252,19 +252,19 @@ fn back_buffer(c: &mut Ctx, sc: u32) -> u32 {
     bmp
 }
 
-fn hwnd_methods() -> Vec<(&'static str, Handler)> {
+fn hwnd_methods() -> Vec<(com::Method, Handler)> {
     // (first match wins: these before the device context's)
-    let mut methods: Vec<(&str, Handler)> = vec![
-        ("EndDraw", HwndEndDraw as Handler),
-        ("Flush", Flush),
-        ("CheckWindowState", zero),
-        ("Resize", Resize),
-        ("GetHwnd", GetHwnd),
-        ("GetPixelFormat", GetPixelFormat),
-        ("GetMaximumBitmapSize", GetMaximumBitmapSize),
-        ("CreateCompatibleRenderTarget", CreateCompatibleRenderTarget),
-    ];
-    methods.extend(context_methods());
+    let mut methods = com::impls!(ID2D1HwndRenderTarget {
+        EndDraw: HwndEndDraw,
+        Flush: Flush,
+        CheckWindowState: zero,
+        Resize: Resize,
+        GetHwnd: GetHwnd,
+        GetPixelFormat: GetPixelFormat,
+        GetMaximumBitmapSize: GetMaximumBitmapSize,
+        CreateCompatibleRenderTarget: CreateCompatibleRenderTarget,
+    }).to_vec();
+    methods.extend(render_target_methods());
     methods
 }
 
@@ -297,7 +297,7 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     new_device(factory, dev_out);
     let device = mem::rp(dev_out);
     mem::heap_free(dev_out);
-    let o = com::object("ID2D1HwndRenderTarget", &hwnd_methods(), 8);
+    let o = com::object(com::iface!(ID2D1HwndRenderTarget), &hwnd_methods(), 8);
     st(|s| {
         s.parents.insert(o, device);
         s.dcs.insert(o, Dc { device, ..Default::default() });
@@ -311,9 +311,9 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     0
 }
 
-fn bitmap_rt_methods() -> Vec<(&'static str, Handler)> {
-    let mut methods: Vec<(&str, Handler)> = vec![("GetBitmap", GetBitmap as Handler), ("CreateCompatibleRenderTarget", CreateCompatibleRenderTarget)];
-    methods.extend(context_methods());
+fn bitmap_rt_methods() -> Vec<(com::Method, Handler)> {
+    let mut methods = com::impls!(ID2D1BitmapRenderTarget { GetBitmap: GetBitmap, CreateCompatibleRenderTarget: CreateCompatibleRenderTarget }).to_vec();
+    methods.extend(render_target_methods());
     methods
 }
 
@@ -354,7 +354,7 @@ fn CreateCompatibleRenderTarget(c: &mut Ctx) -> u32 {
     let bmp = new_bitmap(tex);
     st(|s| s.owned.insert(bmp, tex));
     gpu2d::clear(tex, [0.0; 4]);
-    let o = com::object("ID2D1BitmapRenderTarget", &bitmap_rt_methods(), 8);
+    let o = com::object(com::iface!(ID2D1BitmapRenderTarget), &bitmap_rt_methods(), 8);
     // (it keeps its device and the D3D11 device its textures come from)
     com::add_ref_obj(device);
     c.call(mem::rp(mem::rp(d3d) + mem::ps()), &[d3d]);
@@ -419,7 +419,7 @@ fn D2D1CreateFactory(c: &mut Ctx) -> u32 {
 fn new_device(factory: u32, out: u32) -> u32 {
     let d = com::object(
         DEVICE,
-        &[("CreateDeviceContext", CreateDeviceContext as Handler), ("GetFactory", GetFactory), ("ClearResources", ok), ("SetMaximumTextureMemory", ok)],
+        &com::impls!(ID2D1Device6 { CreateDeviceContext: CreateDeviceContext, GetFactory: GetFactory, ClearResources: ok, SetMaximumTextureMemory: ok }),
         8,
     );
     com::add_ref_obj(factory);
@@ -463,51 +463,61 @@ fn GetFactory(c: &mut Ctx) -> u32 {
     0
 }
 
-fn context_methods() -> Vec<(&'static str, Handler)> {
-    vec![
-        ("Release", DcRelease),
-        ("CreateSolidColorBrush", CreateSolidColorBrush),
-        ("CreateBitmapFromDxgiSurface", CreateBitmapFromDxgiSurface),
-        ("CreateBitmap#57", CreateBitmap1),
-        ("CreateBitmap", CreateBitmap),
-        ("CreateBitmapFromWicBitmap", CreateBitmapFromWicBitmap),
-        ("DrawBitmap", DrawBitmap),
-        ("SetTarget", SetTarget),
-        ("GetTarget", GetTarget),
-        ("BeginDraw", BeginDraw),
-        ("EndDraw", EndDraw),
-        ("Flush", Flush),
-        ("Clear", Clear),
-        ("SetTransform", SetTransform),
-        ("GetTransform", GetTransform),
-        ("FillRectangle", FillRectangle),
-        ("FillEllipse", FillEllipse),
-        ("DrawEllipse", DrawEllipse),
-        ("CreateGradientStopCollection", CreateGradientStopCollection),
-        ("CreateLinearGradientBrush", CreateLinearGradientBrush),
-        ("DrawRectangle", DrawRectangle),
-        ("DrawText", DrawText),
-        ("DrawTextLayout", DrawTextLayout),
-        ("DrawGlyphRun", DrawGlyphRun),
-        ("DrawGeometry", DrawGeometry),
-        ("FillGeometry", FillGeometry),
-        ("PushAxisAlignedClip", PushAxisAlignedClip),
-        ("PopAxisAlignedClip", PopAxisAlignedClip),
-        ("SetAntialiasMode", SetAntialiasMode),
-        ("SetTextAntialiasMode", ok),
-        ("SetTextRenderingParams", ok),
-        ("SetDpi", SetDpi),
-        ("SetUnitMode", ok),
-        ("SetPrimitiveBlend", ok),
-        ("SetTags", ok),
-        ("GetAntialiasMode", GetAntialiasMode),
-        ("GetTextAntialiasMode", zero),
-        ("GetDpi", GetDpi),
-        ("GetSize", GetSize),
-        ("GetPixelSize", GetPixelSize),
-        ("GetDevice", GetDevice),
-        ("GetFactory", GetFactory),
-    ]
+/// ID2D1RenderTarget's methods: every render target's (an HWND's, a bitmap's, a device context's)
+fn render_target_methods() -> Vec<(com::Method, Handler)> {
+    com::impls!(ID2D1RenderTarget {
+        Release: DcRelease,
+        CreateSolidColorBrush: CreateSolidColorBrush,
+        CreateBitmap: CreateBitmap,
+        CreateBitmapFromWicBitmap: CreateBitmapFromWicBitmap,
+        DrawBitmap: DrawBitmap,
+        BeginDraw: BeginDraw,
+        EndDraw: EndDraw,
+        Flush: Flush,
+        Clear: Clear,
+        SetTransform: SetTransform,
+        GetTransform: GetTransform,
+        FillRectangle: FillRectangle,
+        FillEllipse: FillEllipse,
+        DrawEllipse: DrawEllipse,
+        CreateGradientStopCollection: CreateGradientStopCollection,
+        CreateLinearGradientBrush: CreateLinearGradientBrush,
+        DrawRectangle: DrawRectangle,
+        DrawText: DrawText,
+        DrawTextLayout: DrawTextLayout,
+        DrawGlyphRun: DrawGlyphRun,
+        DrawGeometry: DrawGeometry,
+        FillGeometry: FillGeometry,
+        PushAxisAlignedClip: PushAxisAlignedClip,
+        PopAxisAlignedClip: PopAxisAlignedClip,
+        SetAntialiasMode: SetAntialiasMode,
+        SetTextAntialiasMode: ok,
+        SetTextRenderingParams: ok,
+        SetDpi: SetDpi,
+        SetTags: ok,
+        GetAntialiasMode: GetAntialiasMode,
+        GetTextAntialiasMode: zero,
+        GetDpi: GetDpi,
+        GetSize: GetSize,
+        GetPixelSize: GetPixelSize,
+        GetFactory: GetFactory,
+    })
+    .to_vec()
+}
+
+/// A device context's: a render target's and ID2D1DeviceContext's own
+fn context_methods() -> Vec<(com::Method, Handler)> {
+    let mut v = render_target_methods();
+    v.extend(com::impls!(ID2D1DeviceContext {
+        CreateBitmapFromDxgiSurface: CreateBitmapFromDxgiSurface,
+        CreateBitmap@57: CreateBitmap1,
+        SetTarget: SetTarget,
+        GetTarget: GetTarget,
+        SetUnitMode: ok,
+        SetPrimitiveBlend: ok,
+        GetDevice: GetDevice,
+    }));
+    v
 }
 
 fn zero(_: &mut Ctx) -> u32 {
@@ -617,8 +627,8 @@ fn CreateSolidColorBrush(c: &mut Ctx) -> u32 {
     let color = [rf(col, 0), rf(col, 1), rf(col, 2), rf(col, 3)];
     let opacity = if props != 0 { rf(props, 0) } else { 1.0 };
     let o = com::object(
-        "ID2D1SolidColorBrush",
-        &[("SetColor", SetColor as Handler), ("GetColor", GetColor), ("SetOpacity", SetOpacity), ("GetOpacity", GetOpacity), ("SetTransform", ok), ("GetTransform", GetIdentity)],
+        com::iface!(ID2D1SolidColorBrush),
+        &com::impls!(ID2D1SolidColorBrush { SetColor: SetColor, GetColor: GetColor, SetOpacity: SetOpacity, GetOpacity: GetOpacity, SetTransform: ok, GetTransform: GetIdentity }),
         8,
     );
     st(|s| s.brushes.insert(o, Brush { color, opacity, linear: None }));
@@ -662,15 +672,15 @@ fn GetIdentity(c: &mut Ctx) -> u32 {
 /// An ID2D1Bitmap1 object (both kinds: a D3D11 surface, or an image of its own).
 fn bitmap_object() -> u32 {
     com::object(
-        "ID2D1Bitmap1",
-        &[
-            ("Release", BitmapRelease as Handler),
-            ("GetSize", BitmapSize),
-            ("GetPixelSize", BitmapPixelSize),
-            ("GetDpi", GetDpi),
-            ("GetPixelFormat", BitmapFormat),
-            ("CopyFromMemory", CopyFromMemory),
-        ],
+        com::iface!(ID2D1Bitmap1),
+        &com::impls!(ID2D1Bitmap1 {
+            Release: BitmapRelease,
+            GetSize: BitmapSize,
+            GetPixelSize: BitmapPixelSize,
+            GetDpi: GetDpi,
+            GetPixelFormat: BitmapFormat,
+            CopyFromMemory: CopyFromMemory,
+        }),
         8,
     )
 }
@@ -1220,7 +1230,7 @@ fn CreateGradientStopCollection(c: &mut Ctx) -> u32 {
         let q = p + 20 * i;
         (rf(q, 0), [rf(q, 1), rf(q, 2), rf(q, 3), rf(q, 4)])
     }).collect();
-    let o = com::object("ID2D1GradientStopCollection", &[("GetGradientStopCount", StopCount as Handler)], 8);
+    let o = com::object(com::iface!(ID2D1GradientStopCollection), &com::impls!(ID2D1GradientStopCollection { GetGradientStopCount: StopCount }), 8);
     st(|s| s.stops.insert(o, stops));
     com::on_free(o, |o| {
         st(|s| s.stops.remove(&o));
@@ -1237,7 +1247,7 @@ fn CreateLinearGradientBrush(c: &mut Ctx) -> u32 {
     let (lp, bp, sc) = (c.a(1), c.a(2), c.a(3));
     let opacity = if bp != 0 { rf(bp, 0) } else { 1.0 };
     let stops = st(|s| s.stops.get(&sc).cloned()).unwrap_or_default();
-    let o = com::object("ID2D1LinearGradientBrush", &[("SetOpacity", SetOpacity as Handler), ("GetOpacity", GetOpacity)], 8);
+    let o = com::object(com::iface!(ID2D1LinearGradientBrush), &com::impls!(ID2D1LinearGradientBrush { SetOpacity: SetOpacity, GetOpacity: GetOpacity }), 8);
     let linear = Some(([rf(lp, 0), rf(lp, 1)], [rf(lp, 2), rf(lp, 3)], stops));
     st(|s| s.brushes.insert(o, Brush { color: [0.0; 4], opacity, linear }));
     com::on_free(o, free_brush);
@@ -1546,8 +1556,8 @@ fn geoms<R>(f: impl FnOnce(&mut HashMap<u32, Geom>) -> R) -> R {
     f(GEOMS.lock().unwrap().get_or_insert_with(HashMap::new))
 }
 
-fn geom_methods() -> Vec<(&'static str, Handler)> {
-    vec![("Open", GeomOpen as Handler), ("GetFactory", GetFactoryOfGeom)]
+fn geom_methods() -> Vec<(com::Method, Handler)> {
+    com::impls!(ID2D1PathGeometry { Open: GeomOpen, GetFactory: GetFactoryOfGeom }).to_vec()
 }
 /// A geometry keeps its factory (after the vtable pointer) and a transformed one its source.
 fn free_geom(o: u32) {
@@ -1557,7 +1567,7 @@ fn free_geom(o: u32) {
     }
 }
 fn CreatePathGeometry(c: &mut Ctx) -> u32 {
-    let o = com::object("ID2D1PathGeometry1", &geom_methods(), 16);
+    let o = com::object(com::iface!(ID2D1PathGeometry1), &geom_methods(), 16);
     w32(o + mem::ps(), c.a(0));
     com::add_ref_obj(c.a(0));
     com::on_free(o, free_geom);
@@ -1575,7 +1585,7 @@ fn CreateTransformedGeometry(c: &mut Ctx) -> u32 {
     // (this, source, matrix *, out)
     let (src, m, out) = (c.a(1), c.a(2), c.a(3));
     let xf = [rf(m, 0), rf(m, 1), rf(m, 2), rf(m, 3), rf(m, 4), rf(m, 5)];
-    let o = com::object("ID2D1TransformedGeometry", &[("GetFactory", GetFactoryOfGeom as Handler)], 16);
+    let o = com::object(com::iface!(ID2D1TransformedGeometry), &com::impls!(ID2D1TransformedGeometry { GetFactory: GetFactoryOfGeom }), 16);
     w32(o + mem::ps(), c.a(0));
     com::add_ref_obj(c.a(0));
     com::add_ref_obj(src);
@@ -1586,26 +1596,26 @@ fn CreateTransformedGeometry(c: &mut Ctx) -> u32 {
 }
 fn CreateStrokeStyle(c: &mut Ctx) -> u32 {
     // (this, properties, dashes, dash count, out): drawn as a round pen whatever it says
-    mem::putp(c.a(4), com::object("ID2D1StrokeStyle1", &[], 8));
+    mem::putp(c.a(4), com::object(com::iface!(ID2D1StrokeStyle1), &[], 8));
     0
 }
 /// Open(this, out sink): the sink records into the geometry
 fn GeomOpen(c: &mut Ctx) -> u32 {
-    let m: [(&'static str, Handler); 12] = [
-        ("SetFillMode", ok),
-        ("SetSegmentFlags", ok),
-        ("BeginFigure", SinkFigure),
-        ("AddLines", SinkFigure),
-        ("AddBeziers", SinkFigure),
-        ("EndFigure", ok),
-        ("Close", ok),
-        ("AddLine", SinkFigure),
-        ("AddBezier", SinkFigure),
-        ("AddQuadraticBezier", SinkFigure),
-        ("AddQuadraticBeziers", SinkFigure),
-        ("AddArc", SinkFigure),
-    ];
-    let o = com::object("ID2D1GeometrySink", &m, 16);
+    let m = com::impls!(ID2D1GeometrySink {
+        SetFillMode: ok,
+        SetSegmentFlags: ok,
+        BeginFigure: SinkFigure,
+        AddLines: SinkFigure,
+        AddBeziers: SinkFigure,
+        EndFigure: ok,
+        Close: ok,
+        AddLine: SinkFigure,
+        AddBezier: SinkFigure,
+        AddQuadraticBezier: SinkFigure,
+        AddQuadraticBeziers: SinkFigure,
+        AddArc: SinkFigure,
+    });
+    let o = com::object(com::iface!(ID2D1GeometrySink), &m, 16);
     w32(o + mem::ps(), c.a(0));
     com::add_ref_obj(c.a(0));
     // (the sink keeps its geometry)
@@ -1627,7 +1637,7 @@ fn SinkFigure(c: &mut Ctx) -> u32 {
 /// IDWriteFontFace::GetGlyphRunOutline into a sink of ours: the glyphs go in its geometry
 /// (false: not our sink).
 pub fn sink_glyphs(sink: u32, glyphs: Vec<(usize, f32, u16, f32, f32)>) -> bool {
-    if sink == 0 || com::method_name(mem::rp(mem::rp(sink) + 9 * mem::ps())) != Some("Close") {
+    if sink == 0 || com::method_name(mem::rp(mem::rp(sink) + 9 * mem::ps())) != Some(com::method!(ID2D1GeometrySink::Close).name()) {
         return false;
     }
     let g = r32(sink + mem::ps());
