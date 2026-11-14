@@ -2008,3 +2008,8 @@ mod tests {
         assert_eq!(predefined(9, false).unwrap().len(), 256);
     }
 }
+
+/// The scaler against the code as it was before the interpolation mode became a type
+#[cfg(test)]
+#[path = "wic_scale_tests.rs"]
+mod scale_tests;
