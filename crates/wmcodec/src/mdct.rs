@@ -1,6 +1,8 @@
 //! The inverse MDCT FFmpeg's WMA decoder uses (the old ff_imdct_calc: pre-rotation, an
 //! n/4-point complex inverse FFT, post-rotation), with its scale.
 
+use crate::num::us;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct C {
     pub re: f32,
@@ -16,10 +18,11 @@ pub struct Fft {
 
 impl Fft {
     pub fn new(bits: u32) -> Fft {
-        let n = 1usize << bits;
-        let rev = (0..n as u32).map(|i| if bits == 0 { 0 } else { i.reverse_bits() >> (32 - bits) }).collect();
-        let tw = (0..n / 2).map(|k| {
-            let a = 2.0 * std::f64::consts::PI * k as f64 / n as f64;
+        let nu = 1u32 << bits;
+        let n = us(nu);
+        let rev = (0..nu).map(|i| if bits == 0 { 0 } else { i.reverse_bits() >> (32 - bits) }).collect();
+        let tw = (0..nu / 2).map(|k| {
+            let a = 2.0 * std::f64::consts::PI * f64::from(k) / f64::from(nu);
             C { re: a.cos() as f32, im: a.sin() as f32 }
         }).collect();
         Fft { n, rev, tw }
@@ -27,7 +30,7 @@ impl Fft {
     pub fn run(&self, z: &mut [C]) {
         let n = self.n;
         for i in 0..n {
-            let j = self.rev[i] as usize;
+            let j = us(self.rev[i]);
             if i < j {
                 z.swap(i, j);
             }
@@ -61,14 +64,15 @@ pub struct Imdct {
 
 impl Imdct {
     pub fn new(bits: u32, scale: f64) -> Imdct {
-        let n = 1usize << bits;
+        let nu = 1u32 << bits;
+        let n = us(nu);
         let n4 = n / 4;
-        let theta = 1.0 / 8.0 + if scale < 0.0 { n4 as f64 } else { 0.0 };
+        let theta = 1.0 / 8.0 + if scale < 0.0 { f64::from(nu / 4) } else { 0.0 };
         let sc = scale.abs().sqrt();
         let mut tcos = Vec::with_capacity(n4);
         let mut tsin = Vec::with_capacity(n4);
-        for i in 0..n4 {
-            let alpha = 2.0 * std::f64::consts::PI * (i as f64 + theta) / n as f64;
+        for i in 0..nu / 4 {
+            let alpha = 2.0 * std::f64::consts::PI * (f64::from(i) + theta) / f64::from(nu);
             tcos.push((-alpha.cos() * sc) as f32);
             tsin.push((-alpha.sin() * sc) as f32);
         }

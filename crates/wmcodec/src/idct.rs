@@ -2,9 +2,11 @@
 //! simple_idct.c's 8x4 / 4x8 and wmv2dsp.c), bit for bit, in wrapping 32-bit arithmetic as C
 //! does it. Blocks are 8x8 coefficients in raster order; `put` writes, `add` adds to `dst`.
 
+use crate::num::{lo16, lo8};
+
 #[inline]
 fn clip(v: i32) -> u8 {
-    v.clamp(0, 255) as u8
+    lo8(v.clamp(0, 255).cast_unsigned())
 }
 
 const W1: i32 = 22725;
@@ -19,11 +21,11 @@ const COL_SHIFT: u32 = 20;
 
 fn row_cond_dc(row: &mut [i16]) {
     if row[1..8].iter().all(|&x| x == 0) {
-        let t = (row[0] as i32).wrapping_mul(8) as i16;
+        let t = lo16(i32::from(row[0]).wrapping_mul(8));
         row[..8].fill(t);
         return;
     }
-    let r = |k: usize| row[k] as i32;
+    let r = |k: usize| i32::from(row[k]);
     let mut a0 = W4.wrapping_mul(r(0)).wrapping_add(1 << (ROW_SHIFT - 1));
     let mut a1 = a0;
     let mut a2 = a0;
@@ -47,19 +49,19 @@ fn row_cond_dc(row: &mut [i16]) {
         b3 = b3.wrapping_add(W3.wrapping_mul(r(5))).wrapping_sub(W1.wrapping_mul(r(7)));
     }
     let s = ROW_SHIFT;
-    row[0] = (a0.wrapping_add(b0) >> s) as i16;
-    row[7] = (a0.wrapping_sub(b0) >> s) as i16;
-    row[1] = (a1.wrapping_add(b1) >> s) as i16;
-    row[6] = (a1.wrapping_sub(b1) >> s) as i16;
-    row[2] = (a2.wrapping_add(b2) >> s) as i16;
-    row[5] = (a2.wrapping_sub(b2) >> s) as i16;
-    row[3] = (a3.wrapping_add(b3) >> s) as i16;
-    row[4] = (a3.wrapping_sub(b3) >> s) as i16;
+    row[0] = lo16(a0.wrapping_add(b0) >> s);
+    row[7] = lo16(a0.wrapping_sub(b0) >> s);
+    row[1] = lo16(a1.wrapping_add(b1) >> s);
+    row[6] = lo16(a1.wrapping_sub(b1) >> s);
+    row[2] = lo16(a2.wrapping_add(b2) >> s);
+    row[5] = lo16(a2.wrapping_sub(b2) >> s);
+    row[3] = lo16(a3.wrapping_add(b3) >> s);
+    row[4] = lo16(a3.wrapping_sub(b3) >> s);
 }
 
 /// One column (`b` from its top coefficient, stride 8): the 8 outputs, top to bottom.
 fn col(b: &[i16], c: usize) -> [i32; 8] {
-    let r = |k: usize| b[c + 8 * k] as i32;
+    let r = |k: usize| i32::from(b[c + 8 * k]);
     let mut a0 = W4.wrapping_mul(r(0) + ((1 << (COL_SHIFT - 1)) / W4));
     let mut a1 = a0;
     let mut a2 = a0;
@@ -128,7 +130,7 @@ pub fn simple_inplace(b: &mut [i16; 64]) {
     }
     for c in 0..8 {
         for (k, v) in col(b, c).into_iter().enumerate() {
-            b[k * 8 + c] = v as i16;
+            b[k * 8 + c] = lo16(v);
         }
     }
 }
@@ -141,44 +143,45 @@ pub fn simple_add(dst: &mut [u8], stride: usize, b: &mut [i16; 64]) {
     for c in 0..8 {
         for (k, v) in col(b, c).into_iter().enumerate() {
             let d = &mut dst[k * stride + c];
-            *d = clip(*d as i32 + v);
+            *d = clip(i32::from(*d) + v);
         }
     }
 }
 
-// the 4-point transforms of the 8x4 and 4x8 IDCTs
-const C1: i32 = (0.6532814824f64 * std::f64::consts::SQRT_2 * 4096.0 + 0.5) as i32;
-const C2: i32 = (0.2705980501f64 * std::f64::consts::SQRT_2 * 4096.0 + 0.5) as i32;
-const C3: i32 = (0.5f64 * std::f64::consts::SQRT_2 * 4096.0 + 0.5) as i32;
+// the 4-point transforms of the 8x4 and 4x8 IDCTs (c * sqrt 2 * 2^12 or 2^15 + 0.5, truncated: the
+// test `rotation_constants` checks them)
+const C1: i32 = 3784; // (0.6532814824f64 * std::f64::consts::SQRT_2 * 4096.0 + 0.5) truncated
+const C2: i32 = 1567; // (0.2705980501f64 * std::f64::consts::SQRT_2 * 4096.0 + 0.5) truncated
+const C3: i32 = 2896; // (0.5f64 * std::f64::consts::SQRT_2 * 4096.0 + 0.5) truncated
 const C_SHIFT: u32 = 4 + 1 + 12;
-const R1: i32 = (0.6532814824f64 * std::f64::consts::SQRT_2 * 32768.0 + 0.5) as i32;
-const R2: i32 = (0.2705980501f64 * std::f64::consts::SQRT_2 * 32768.0 + 0.5) as i32;
-const R3: i32 = (0.5f64 * std::f64::consts::SQRT_2 * 32768.0 + 0.5) as i32;
+const R1: i32 = 30274; // (0.6532814824f64 * std::f64::consts::SQRT_2 * 32768.0 + 0.5) truncated
+const R2: i32 = 12540; // (0.2705980501f64 * std::f64::consts::SQRT_2 * 32768.0 + 0.5) truncated
+const R3: i32 = 23170; // (0.5f64 * std::f64::consts::SQRT_2 * 32768.0 + 0.5) truncated
 const R_SHIFT: u32 = 11;
 
 fn idct4col_add(dst: &mut [u8], off: usize, stride: usize, b: &[i16], c: usize) {
-    let (a0, a1, a2, a3) = (b[c] as i32, b[c + 8] as i32, b[c + 16] as i32, b[c + 24] as i32);
+    let (a0, a1, a2, a3) = (i32::from(b[c]), i32::from(b[c + 8]), i32::from(b[c + 16]), i32::from(b[c + 24]));
     let c0 = (a0 + a2).wrapping_mul(C3).wrapping_add(1 << (C_SHIFT - 1));
     let c2 = (a0 - a2).wrapping_mul(C3).wrapping_add(1 << (C_SHIFT - 1));
     let c1 = a1.wrapping_mul(C1).wrapping_add(a3.wrapping_mul(C2));
     let c3 = a1.wrapping_mul(C2).wrapping_sub(a3.wrapping_mul(C1));
     for (k, v) in [c0.wrapping_add(c1), c2.wrapping_add(c3), c2.wrapping_sub(c3), c0.wrapping_sub(c1)].into_iter().enumerate() {
         let d = &mut dst[off + k * stride];
-        *d = clip(*d as i32 + (v >> C_SHIFT));
+        *d = clip(i32::from(*d) + (v >> C_SHIFT));
     }
 }
 
 fn idct4row(row: &mut [i16]) {
-    let (a0, a1, a2, a3) = (row[0] as i32, row[1] as i32, row[2] as i32, row[3] as i32);
+    let (a0, a1, a2, a3) = (i32::from(row[0]), i32::from(row[1]), i32::from(row[2]), i32::from(row[3]));
     let c0 = (a0 + a2).wrapping_mul(R3).wrapping_add(1 << (R_SHIFT - 1));
     let c2 = (a0 - a2).wrapping_mul(R3).wrapping_add(1 << (R_SHIFT - 1));
     let c1 = a1.wrapping_mul(R1).wrapping_add(a3.wrapping_mul(R2));
     let c3 = a1.wrapping_mul(R2).wrapping_sub(a3.wrapping_mul(R1));
     // (unsigned shifts in C: the same low 16 bits)
-    row[0] = (c0.wrapping_add(c1) >> R_SHIFT) as i16;
-    row[1] = (c2.wrapping_add(c3) >> R_SHIFT) as i16;
-    row[2] = (c2.wrapping_sub(c3) >> R_SHIFT) as i16;
-    row[3] = (c0.wrapping_sub(c1) >> R_SHIFT) as i16;
+    row[0] = lo16(c0.wrapping_add(c1) >> R_SHIFT);
+    row[1] = lo16(c2.wrapping_add(c3) >> R_SHIFT);
+    row[2] = lo16(c2.wrapping_sub(c3) >> R_SHIFT);
+    row[3] = lo16(c0.wrapping_sub(c1) >> R_SHIFT);
 }
 
 /// ff_simple_idct84_add: 8 wide, 4 high (the first 4 rows of `b`).
@@ -199,7 +202,7 @@ pub fn simple48_add(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
     for c in 0..4 {
         for (k, v) in col(b, c).into_iter().enumerate() {
             let d = &mut dst[off + k * stride + c];
-            *d = clip(*d as i32 + v);
+            *d = clip(i32::from(*d) + v);
         }
     }
 }
@@ -223,7 +226,7 @@ const V6: i32 = 1108;
 const V7: i32 = 565;
 
 fn wmv2_row(b: &mut [i16]) {
-    let r = |k: usize| b[k] as i32;
+    let r = |k: usize| i32::from(b[k]);
     let a1 = V1 * r(1) + V7 * r(7);
     let a7 = V7 * r(1) - V1 * r(7);
     let a5 = V5 * r(5) + V3 * r(3);
@@ -234,18 +237,18 @@ fn wmv2_row(b: &mut [i16]) {
     let a4 = V0 * r(0) - V0 * r(4);
     let s1 = 181i32.wrapping_mul(a1 - a5 + a7 - a3).wrapping_add(128) >> 8;
     let s2 = 181i32.wrapping_mul(a1 - a5 - a7 + a3).wrapping_add(128) >> 8;
-    b[0] = ((a0 + a2 + a1 + a5 + (1 << 7)) >> 8) as i16;
-    b[1] = ((a4 + a6 + s1 + (1 << 7)) >> 8) as i16;
-    b[2] = ((a4 - a6 + s2 + (1 << 7)) >> 8) as i16;
-    b[3] = ((a0 - a2 + a7 + a3 + (1 << 7)) >> 8) as i16;
-    b[4] = ((a0 - a2 - a7 - a3 + (1 << 7)) >> 8) as i16;
-    b[5] = ((a4 - a6 - s2 + (1 << 7)) >> 8) as i16;
-    b[6] = ((a4 + a6 - s1 + (1 << 7)) >> 8) as i16;
-    b[7] = ((a0 + a2 - a1 - a5 + (1 << 7)) >> 8) as i16;
+    b[0] = lo16((a0 + a2 + a1 + a5 + (1 << 7)) >> 8);
+    b[1] = lo16((a4 + a6 + s1 + (1 << 7)) >> 8);
+    b[2] = lo16((a4 - a6 + s2 + (1 << 7)) >> 8);
+    b[3] = lo16((a0 - a2 + a7 + a3 + (1 << 7)) >> 8);
+    b[4] = lo16((a0 - a2 - a7 - a3 + (1 << 7)) >> 8);
+    b[5] = lo16((a4 - a6 - s2 + (1 << 7)) >> 8);
+    b[6] = lo16((a4 + a6 - s1 + (1 << 7)) >> 8);
+    b[7] = lo16((a0 + a2 - a1 - a5 + (1 << 7)) >> 8);
 }
 
 fn wmv2_col(b: &mut [i16], c: usize) {
-    let r = |k: usize| b[c + 8 * k] as i32;
+    let r = |k: usize| i32::from(b[c + 8 * k]);
     let a1 = (V1 * r(1) + V7 * r(7) + 4) >> 3;
     let a7 = (V7 * r(1) - V1 * r(7) + 4) >> 3;
     let a5 = (V5 * r(5) + V3 * r(3) + 4) >> 3;
@@ -267,7 +270,7 @@ fn wmv2_col(b: &mut [i16], c: usize) {
         a0 + a2 - a1 - a5,
     ];
     for (k, v) in out.into_iter().enumerate() {
-        b[c + 8 * k] = ((v + (1 << 13)) >> 14) as i16;
+        b[c + 8 * k] = lo16((v + (1 << 13)) >> 14);
     }
 }
 
@@ -295,7 +298,7 @@ pub fn wmv2_put(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16; 64]) {
     #[allow(unreachable_code)]
     for y in 0..8 {
         for x in 0..8 {
-            dst[off + y * stride + x] = clip(b[y * 8 + x] as i32);
+            dst[off + y * stride + x] = clip(i32::from(b[y * 8 + x]));
         }
     }
 }
@@ -308,7 +311,7 @@ pub fn wmv2_add(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16; 64]) {
     for y in 0..8 {
         for x in 0..8 {
             let d = &mut dst[off + y * stride + x];
-            *d = clip(*d as i32 + b[y * 8 + x] as i32);
+            *d = clip(i32::from(*d) + i32::from(b[y * 8 + x]));
         }
     }
 }
@@ -317,6 +320,13 @@ pub fn wmv2_add(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16; 64]) {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn rotation_constants() {
+        let r = |c: f64, s: f64| (c * std::f64::consts::SQRT_2 * s + 0.5) as i32;
+        assert_eq!([C1, C2, C3], [r(0.6532814824, 4096.0), r(0.2705980501, 4096.0), r(0.5, 4096.0)]);
+        assert_eq!([R1, R2, R3], [r(0.6532814824, 32768.0), r(0.2705980501, 32768.0), r(0.5, 32768.0)]);
+    }
 
     /// The 8-point DCT-II basis, scaled as the IDCTs expect (orthonormal * 8 / 8).
     fn reference(b: &[i16; 64]) -> [f64; 64] {
