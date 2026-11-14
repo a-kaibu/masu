@@ -1956,6 +1956,7 @@ pub fn init() {
     session::init();
     topology::init();
     dxgi::init();
+    mft::init();
     reader::init();
     plat::init();
     source::init();
@@ -1966,6 +1967,7 @@ pub mod movie;
 pub mod session;
 mod topology;
 mod dxgi;
+mod mft;
 mod source;
 mod vstream;
 mod plat;

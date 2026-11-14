@@ -414,6 +414,9 @@ pub struct State {
 }
 
 pub struct D11 {
+    /// children made by another device object of the device (a D3D11_CREATE_DEVICE_VIDEO_SUPPORT
+    /// one: see create_device): child -> that device object, which their GetDevice gives back
+    made_by: HashMap<u32, u32>,
     /// CreateDeviceContextState was called: QueryInterface gives the device's D3D10 faces
     ten_faces: bool,
     /// the device was last made by D3D10CreateDevice*: its children's D3D10 faces give it back
@@ -695,6 +698,7 @@ impl D11 {
             return;
         }
         let o = self.objs.remove(&id).unwrap();
+        self.made_by.remove(&id);
         for &(_, _, held) in &o.private {
             if held != 0 {
                 self.release(held);
@@ -773,6 +777,7 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
         Some(d) => d.vtbls = v,
         None => {
             *g = Some(D11 {
+                made_by: HashMap::new(),
                 ten_faces: false,
                 level: 0xb000,
                 made10: false,
@@ -889,6 +894,12 @@ pub fn name(iface: u32, m: u32) -> String {
     }
 }
 
+/// Shared handles (GetSharedHandle): the texture's id above this
+const SHARED_BASE: u32 = 0x4000_0000;
+fn shared_handle(id: u32) -> u32 {
+    SHARED_BASE + id
+}
+
 unsafe fn query_interface(d: &mut D11, id: u32, iface: u32, riid: u32, out: u32) -> u32 {
     if out == 0 || riid == 0 {
         return E_INVALIDARG;
@@ -978,17 +989,6 @@ unsafe fn create_device(d: &mut D11, args: *const u32) -> u32 {
         wr(level_out, 0, 0);
         return E_INVALIDARG;
     }
-    // D3D11_CREATE_DEVICE_VIDEO_SUPPORT: the adapter has no video decoder or processor (no
-    // ID3D11VideoDevice), so a device for video fails as on a driver without video support
-    // (Microsoft Basic Render Driver); Unity's VideoPlayer then decodes in software through
-    // Media Foundation (#227), not into D3D11 textures this device could not give it
-    if a(3) & 0x800 != 0 {
-        for o in [sc_out, dev_out, ctx_out] {
-            wrp(o, 0, 0);
-        }
-        wr(level_out, 0, 0);
-        return DXGI_ERROR_UNSUPPORTED;
-    }
     // (the swap chain's description is checked before anything is made: no window, or a format
     // a swap chain can't have, and nothing comes back)
     if desc != 0 && sc_out != 0 {
@@ -1043,11 +1043,20 @@ unsafe fn create_device(d: &mut D11, args: *const u32) -> u32 {
         }
         d.add_ref(d.device);
     }
+    // D3D11_CREATE_DEVICE_VIDEO_SUPPORT next to a device in use: another device object of the
+    // same device (a decoding device of its own, as Unity's VideoPlayer makes one: it tells its
+    // textures from its own device's by the device, and opens them through shared handles, #227)
+    let mut dev = d.device;
+    if a(3) & 0x800 != 0 && dev_out != 0 && d.objs.get(&d.device).is_some_and(|o| o.refs > 1) {
+        d.release(d.device);
+        let v = d.new_obj(IF_DEVICE, Data::Device);
+        dev = d.id_of(v);
+    }
     wr(level_out, 0, level);
     d.level = level;
     d.made10 = false;
     if dev_out != 0 {
-        wrp(dev_out, 0, d.addr_of(d.device));
+        wrp(dev_out, 0, d.addr_of(dev));
     } else {
         d.release(d.device);
     }
@@ -1558,10 +1567,12 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
             _ => 0,
         },
         IF_DXGIRES => match m {
-            6 | 7 => parent(d, d.device, a(1), a(2)),
+            6 | 7 => parent(d, d.made_by.get(&this).copied().unwrap_or(d.device), a(1), a(2)),
             8 => {
-                // GetSharedHandle: none (nothing is shared across processes)
-                wr(a(1), 0, 0);
+                // GetSharedHandle: a handle of a texture made with D3D11_RESOURCE_MISC_SHARED (or
+                // SHARED_KEYEDMUTEX / SHARED_NTHANDLE), for OpenSharedResource; none otherwise
+                let shared = matches!(d.objs.get(&this).map(|o| &o.data), Some(Data::Texture(t)) if t.misc & 0x902 != 0);
+                wr(a(1), 0, if shared { shared_handle(this) } else { 0 });
                 S_OK
             }
             9 => {
@@ -1591,7 +1602,7 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
             _ => E_NOTIMPL,
         },
         IF_SURFACE => match m {
-            6 | 7 => parent(d, d.device, a(1), a(2)),
+            6 | 7 => parent(d, d.made_by.get(&this).copied().unwrap_or(d.device), a(1), a(2)),
             8 => {
                 // GetDesc: Width Height Format SampleDesc
                 let Some(Data::Texture(t)) = d.objs.get(&this).map(|o| &o.data) else { return E_FAIL };
@@ -1621,6 +1632,17 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
             }
             _ => E_NOTIMPL,
         },
+        IF_DEVICE if this != d.device => {
+            // (another device object: what it makes is its)
+            let before = d.next;
+            let r = device_call(d, m, this, &a);
+            for id in before + 1..=d.next {
+                if d.objs.contains_key(&id) {
+                    d.made_by.insert(id, this);
+                }
+            }
+            r
+        }
         IF_DEVICE => device_call(d, m, this, &a),
         IF_CONTEXT if this != d.context => deferred::call(d, this, m, &a, after),
         IF_CONTEXT => context_call(d, m, &a, after),
@@ -2332,7 +2354,22 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
         }
         26 => E_INVALIDARG,
         27 => deferred::create(d, a(1), a(2)),
-        28 => E_NOTIMPL,
+        28 | 48 => {
+            // OpenSharedResource(handle, riid, out), OpenSharedResource1: the texture itself
+            // (one process, one device)
+            if a(3) == 0 {
+                return E_INVALIDARG;
+            }
+            wrp(a(3), 0, 0);
+            let id = a(1).wrapping_sub(SHARED_BASE);
+            match d.objs.get(&id) {
+                Some(o) if a(1) >= SHARED_BASE && matches!(&o.data, Data::Texture(t) if t.misc & 0x902 != 0) => {
+                    let iface = o.iface;
+                    query_interface(d, id, iface, a(2), a(3))
+                }
+                _ => E_INVALIDARG,
+            }
+        }
         29 => {
             // CheckFormatSupport(format, out)
             // (Windows' answers: what the page does with a format is its own business)
@@ -2455,7 +2492,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             wrp(a(7), 0, o);
             S_OK
         }
-        48 | 49 => E_NOTIMPL,
+        49 => E_NOTIMPL,
         52 => 0,
         // ID3D11Device3: the *1 / *2 descriptions extend the old ones at their ends (texture
         // layout, conservative rasterization, plane slices of planar formats, a query's
@@ -2608,6 +2645,9 @@ unsafe fn create_view(d: &mut D11, m: u32, res: u32, desc: u32, out: u32) -> u32
     let v = View { res: rid, fmt: c.desc[0], desc: c.desc, mip: c.mip, mips: c.mips, layer: c.layer, layers: c.layers, buf: None };
     if out == 0 {
         return S_FALSE;
+    }
+    if d.trace {
+        eprintln!("d3d11: view {kind} of texture {rid} ({}x{} format {} bind {:#x}) as {}", t.w, t.h, t.fmt, t.bind, v.fmt);
     }
     // NV12's chroma plane (an R8G8 view of any kind): a view of its texture (see `Nv12`)
     let chroma = match &t.nv12 {
@@ -2839,8 +2879,9 @@ fn buffer_view_sync(d: &mut D11, view: u32) {
 unsafe fn child_call(d: &mut D11, iface: u32, m: u32, this: u32, a: &dyn Fn(usize) -> u32) -> u32 {
     match m {
         3 => {
-            d.add_ref(d.device);
-            wrp(a(1), 0, d.addr_of(d.device));
+            let dev = d.made_by.get(&this).copied().unwrap_or(d.device);
+            d.add_ref(dev);
+            wrp(a(1), 0, d.addr_of(dev));
             return S_OK;
         }
         4..=6 => return private_data(d, m, this, a),

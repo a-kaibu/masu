@@ -291,26 +291,85 @@ fn adapter_enumeration_model() {
 }
 
 /// A device asked for video (D3D11_CREATE_DEVICE_VIDEO_SUPPORT, with or without BGRA_SUPPORT, as
-/// Unity's VideoPlayer asks for its own decoding device, #227): unsupported, nothing comes back
-/// (no device, context, swap chain, level); the same call without the flag makes a device.
+/// Unity's VideoPlayer asks for its own decoding device, #227): made, the one device there is
+/// (Unity then sees it as its own and draws the reader's textures with it), multithread
+/// protected through ID3D10Multithread.
+/// D3D11_CREATE_DEVICE_VIDEO_SUPPORT (#227): with the program's device in use, another device
+/// object of it (Unity's VideoPlayer tells its decoder's textures from its own by the device,
+/// and then opens them through their shared handles); random textures made on it: a shared one
+/// (MISC_SHARED, SHARED_KEYEDMUTEX, SHARED_NTHANDLE) has a handle that OpenSharedResource(1) on
+/// the first device opens as the very texture, any other none, and made-up handles open nothing.
 #[test]
-fn video_support_device_is_refused() {
+fn video_support_device_is_made() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     init();
-    for flags in [0x800, 0x820, 0x822] {
-        let (dev, level, ctx) = (mem(2), mem(2), mem(2));
+    let (dev, level, ctx) = (mem(2), mem(2), mem(2));
+    assert_eq!(call1(CREATE_DEVICE, &[0, 1, 0, 0x20, 0, 0, 7, 0, 0, dev, level, ctx]), 0);
+    let main = rd1(dev);
+    call1(m(IF_CONTEXT, 2), &[rd1(ctx)]);
+    let tex2d = iid(0x6f15aaf2);
+    let dxgires = iid(0x035f3ab4);
+    for seed in 0..seeds() * 4 {
+        let mut r = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+        let flags = [0x800, 0x820, 0x822][r.below(3)];
         put(dev, &[0xdead, 0]);
         put(level, &[0xdead]);
         put(ctx, &[0xdead, 0]);
-        assert_eq!(call1(CREATE_DEVICE, &[0, 1, 0, flags, 0, 0, 7, 0, 0, dev, level, ctx]), DXGI_ERROR_UNSUPPORTED, "flags {flags:#x}");
-        assert_eq!((rd1(dev), rd1(level), rd1(ctx)), (0, 0, 0));
+        assert_eq!(call1(CREATE_DEVICE, &[0, 1, 0, flags, 0, 0, 7, 0, 0, dev, level, ctx]), 0, "flags {flags:#x}");
+        let video = rd1(dev);
+        assert_ne!(video, main, "flags {flags:#x}");
+        assert_eq!(rd1(level), 0xb000);
+        assert_ne!(rd1(ctx), 0);
+        // ID3D10Multithread {9b7e4e00-342c-4106-a19f-4f2704f689f0}: SetMultithreadProtected
+        let iid10 = mem(16);
+        put(iid10, &[0x9b7e_4e00, 0x4106_342c, 0x274f_9fa1, 0xf089_f604]);
+        let o = mem(2);
+        assert_eq!(call1(m(IF_DEVICE, 0), &[video, iid10, o]), 0);
+        call1(m(IF_MULTITHREAD, 5), &[rd1(o), 1]);
+        assert_eq!(call1(m(IF_MULTITHREAD, 6), &[rd1(o)]), 1);
+        call1(m(IF_MULTITHREAD, 2), &[rd1(o)]);
+        for _ in 0..4 {
+            let misc = [0, 2, 0x100, 0x800 | 2, 0x800 | 0x100][r.below(5)];
+            let shared = misc != 0;
+            let d = mem(11);
+            put(d, &[1 + r.below(64) as u32, 1 + r.below(64) as u32, 1, 1, [87, 28][r.below(2)], 1, 0, 0, [0x8, 0x28][r.below(2)], 0, misc]);
+            let t = mem(2);
+            assert_eq!(call1(m(IF_DEVICE, 5), &[video, d, 0, t]), 0, "misc {misc:#x}");
+            let t = rd1(t);
+            // (its device: the one that made it, ID3D11DeviceChild::GetDevice)
+            assert_eq!(call1(m(IF_TEX2D, 3), &[t, o]), 0);
+            assert_eq!(rd1(o), video);
+            call1(m(IF_DEVICE, 2), &[video]);
+            assert_eq!(call1(m(IF_TEX2D, 0), &[t, dxgires, o]), 0);
+            let res = rd1(o);
+            let h = mem(2);
+            put(h, &[0xdead]);
+            assert_eq!(call1(m(IF_DXGIRES, 8), &[res, h]), 0);
+            let h = rd1(h);
+            assert_eq!(h != 0, shared, "misc {misc:#x}");
+            let open = [28, 48][r.below(2)];
+            put(o, &[0xdead]);
+            if shared {
+                let before = refs(t);
+                assert_eq!(call1(m(IF_DEVICE, open), &[main, h, tex2d, o]), 0);
+                assert_eq!(rd1(o), t);
+                assert_eq!(refs(t), before + 1);
+                call1(m(IF_TEX2D, 2), &[rd1(o)]);
+            }
+            for bad in [0, 1, h.wrapping_add(0x1000), 0x4000_0000 + 0xfff_ffff] {
+                if bad != h || !shared {
+                    assert_eq!(call1(m(IF_DEVICE, open), &[main, bad, tex2d, o]), E_INVALIDARG, "handle {bad:#x}");
+                    assert_eq!(rd1(o), 0);
+                }
+            }
+            call1(m(IF_DXGIRES, 2), &[res]);
+            call1(m(IF_TEX2D, 2), &[t]);
+        }
+        call1(m(IF_CONTEXT, 2), &[rd1(ctx)]);
+        call1(m(IF_DEVICE, 2), &[video]);
+        assert!(refs(main) >= 1);
     }
-    let (dev, level, ctx) = (mem(2), mem(2), mem(2));
-    assert_eq!(call1(CREATE_DEVICE, &[0, 1, 0, 0x20, 0, 0, 7, 0, 0, dev, level, ctx]), 0);
-    assert_ne!(rd1(dev), 0);
-    assert_eq!(rd1(level), 0xb000);
-    call1(m(IF_CONTEXT, 2), &[rd1(ctx)]);
-    call1(m(IF_DEVICE, 2), &[rd1(dev)]);
+    call1(m(IF_DEVICE, 2), &[main]);
 }
 
 /// WaitForVBlank waits a frame without the device's lock (review b02: it slept 16 ms holding it,

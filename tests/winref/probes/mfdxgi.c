@@ -4,7 +4,9 @@
  * arguments), then a Source Reader given the device (MF_SOURCE_READER_D3D_MANAGER, advanced
  * video processing) reading mfwmv's movie as RGB32 and as NV12: whether its samples are
  * textures, their size and format, and the colour of each frame through Lock; an NV12 texture's
- * luma and chroma views. WARP on the Windows runner.
+ * luma and chroma views, cleared as render targets, boxes updated and copied; a device for video
+ * given to a reader: the decoder transform, a sample allocator's textures. WARP on the Windows
+ * runner.
  * libs: -lmfplat -lmfreadwrite -lmfuuid -ld3d11 -lole32 -luuid
  * run: browser (sake's D3D11 is WebGPU: tests/winref/run-browser.mjs) */
 #define COBJMACROS
@@ -16,6 +18,7 @@
 #include <mfreadwrite.h>
 #include <mferror.h>
 #include "mfwmv_data.h"
+#include "mfvideo_data.h"
 
 DEFINE_GUID(KEY, 0x12345678, 0x1111, 0x2222, 0x33, 0x33, 0x44, 0x44, 0x55, 0x55, 0x66, 0x66);
 
@@ -275,7 +278,8 @@ static void reader(const WCHAR *path, const GUID *sub, const char *name) {
         IMFMediaType_Release(t);
         printf("  set %s: %#lx\n", name, hr);
         int nv12 = IsEqualGUID(sub, &MFVideoFormat_NV12);
-        char cols[40] = { 0 };
+        char cols[40] = { 0 }, gpu[40] = { 0 };
+        int alpha_ok = 0;
         int n = 0, textures = 0, sized = 0;
         DXGI_FORMAT fmt = 0;
         for (int k = 0; k < 40; k++) {
@@ -299,6 +303,12 @@ static void reader(const WCHAR *path, const GUID *sub, const char *name) {
                         textures++;
                         if (d.Width == 64 && d.Height == 48) sized++;
                         fmt = d.Format;
+                        /* the texture's own texels (what a shader draws), RGB ones */
+                        if (!nv12 && n < 39) {
+                            DWORD t = texel(tx, 32, 24);
+                            gpu[n] = classify_rgb((t >> 16) & 255, (t >> 8) & 255, t & 255);
+                            alpha_ok += (t >> 24) == 0xff;
+                        }
                         ID3D11Texture2D_Release(tx);
                     }
                     IMFDXGIBuffer_Release(x);
@@ -324,9 +334,197 @@ static void reader(const WCHAR *path, const GUID *sub, const char *name) {
             if (flags & MF_SOURCE_READERF_ENDOFSTREAM) break;
         }
         printf("  %d frames %s, textures %d (64x48 %d, format %d)\n", n, cols, textures, sized, fmt);
+        if (!nv12) printf("  texels %s, alpha 255 %d\n", gpu, alpha_ok);
         IMFSourceReader_Release(r);
     }
     IMFDXGIDeviceManager_Release(m);
+}
+
+/* A device for video (D3D11_CREATE_DEVICE_VIDEO_SUPPORT) given to a reader, as Unity's
+   VideoPlayer does: the stream's decoder (GetServiceForStream(IID_IMFTransform)), its
+   attributes and output type, and a sample allocator's samples (MFCreateVideoSampleAllocatorEx)
+   as textures of the device */
+static void decoder(const WCHAR *path) {
+    D3D_FEATURE_LEVEL want = D3D_FEATURE_LEVEL_11_0, got;
+    ID3D11Device *vd = NULL;
+    HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_WARP, NULL, D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, &want, 1, D3D11_SDK_VERSION, &vd, &got, NULL);
+    if (FAILED(hr)) hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, &want, 1, D3D11_SDK_VERSION, &vd, &got, NULL);
+    printf("video device: %#lx\n", hr);
+    if (!vd) return;
+    ID3D10Multithread *mt = NULL;
+    if (SUCCEEDED(ID3D11Device_QueryInterface(vd, &IID_ID3D10Multithread, (void **)&mt))) {
+        printf("  protected: %d\n", ID3D10Multithread_SetMultithreadProtected(mt, TRUE) >= 0);
+        ID3D10Multithread_Release(mt);
+    }
+    UINT token = 0;
+    IMFDXGIDeviceManager *m = NULL;
+    MFCreateDXGIDeviceManager(&token, &m);
+    if (!m) return;
+    printf("  reset: %#lx\n", IMFDXGIDeviceManager_ResetDevice(m, (IUnknown *)vd, token));
+    IMFAttributes *a = NULL;
+    MFCreateAttributes(&a, 3);
+    IMFAttributes_SetUnknown(a, &MF_SOURCE_READER_D3D_MANAGER, (IUnknown *)m);
+    IMFAttributes_SetUINT32(a, &MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+    IMFAttributes_SetUINT32(a, &MF_SA_D3D11_BINDFLAGS, D3D11_BIND_SHADER_RESOURCE);
+    IMFSourceReader *r = NULL;
+    hr = MFCreateSourceReaderFromURL(path, a, &r);
+    IMFAttributes_Release(a);
+    printf("  reader: %#lx\n", hr);
+    if (r) {
+        IMFMediaType *t = NULL;
+        MFCreateMediaType(&t);
+        IMFMediaType_SetGUID(t, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+        IMFMediaType_SetGUID(t, &MF_MT_SUBTYPE, &MFVideoFormat_NV12);
+        printf("  set NV12: %#lx\n", IMFSourceReader_SetCurrentMediaType(r, MF_SOURCE_READER_FIRST_VIDEO_STREAM, NULL, t));
+        IMFMediaType_Release(t);
+        IMFTransform *x = NULL;
+        printf("  audio decoder? %d\n", SUCCEEDED(IMFSourceReader_GetServiceForStream(r, MF_SOURCE_READER_MEDIASOURCE, &GUID_NULL, &IID_IMFTransform, (void **)&x)));
+        if (x) IMFTransform_Release(x), x = NULL;
+        hr = IMFSourceReader_GetServiceForStream(r, MF_SOURCE_READER_FIRST_VIDEO_STREAM, &GUID_NULL, &IID_IMFTransform, (void **)&x);
+        printf("  decoder: %#lx\n", hr);
+        if (x) {
+            IMFAttributes *xa = NULL;
+            if (SUCCEEDED(IMFTransform_GetAttributes(x, &xa)) && xa) {
+                UINT32 aware = 0;
+                IMFAttributes_GetUINT32(xa, &MF_SA_D3D11_AWARE, &aware);
+                printf("  d3d11 aware: %u\n", aware);
+                IMFAttributes_Release(xa);
+            }
+            IMFMediaType *o = NULL;
+            if (SUCCEEDED(IMFTransform_GetOutputCurrentType(x, 0, &o)) && o) {
+                UINT64 size = 0;
+                GUID sub = { 0 };
+                IMFMediaType_GetUINT64(o, &MF_MT_FRAME_SIZE, &size);
+                IMFMediaType_GetGUID(o, &MF_MT_SUBTYPE, &sub);
+                printf("  output %ux%u NV12 %d\n", (UINT)(size >> 32), (UINT)size, IsEqualGUID(&sub, &MFVideoFormat_NV12));
+                IMFMediaType_Release(o);
+            }
+            IMFTransform_Release(x);
+        }
+        IMFSourceReader_Release(r);
+    }
+    /* the allocator of 64x48 ARGB32 frames, render targets and shader resources */
+    IMFVideoSampleAllocatorEx *al = NULL;
+    hr = MFCreateVideoSampleAllocatorEx(&IID_IMFVideoSampleAllocatorEx, (void **)&al);
+    printf("allocator: %#lx\n", hr);
+    if (al) {
+        IMFSample *s = NULL;
+        printf("  before init: %#lx\n", IMFVideoSampleAllocatorEx_AllocateSample(al, &s));
+        printf("  manager: %#lx\n", IMFVideoSampleAllocatorEx_SetDirectXManager(al, (IUnknown *)m));
+        IMFMediaType *t = NULL;
+        MFCreateMediaType(&t);
+        IMFMediaType_SetGUID(t, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+        IMFMediaType_SetGUID(t, &MF_MT_SUBTYPE, &MFVideoFormat_ARGB32);
+        IMFMediaType_SetUINT64(t, &MF_MT_FRAME_SIZE, (UINT64)64 << 32 | 48);
+        IMFAttributes *aa = NULL;
+        MFCreateAttributes(&aa, 1);
+        IMFAttributes_SetUINT32(aa, &MF_SA_D3D11_BINDFLAGS, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE);
+        printf("  init: %#lx\n", IMFVideoSampleAllocatorEx_InitializeSampleAllocatorEx(al, 0, 4, aa, t));
+        IMFAttributes_Release(aa);
+        IMFMediaType_Release(t);
+        hr = IMFVideoSampleAllocatorEx_AllocateSample(al, &s);
+        printf("  sample: %#lx\n", hr);
+        if (s) {
+            IMFMediaBuffer *b = NULL;
+            IMFSample_GetBufferByIndex(s, 0, &b);
+            IMFDXGIBuffer *x = NULL;
+            if (b && SUCCEEDED(IMFMediaBuffer_QueryInterface(b, &IID_IMFDXGIBuffer, (void **)&x))) {
+                ID3D11Texture2D *tx = NULL;
+                if (SUCCEEDED(IMFDXGIBuffer_GetResource(x, &IID_ID3D11Texture2D, (void **)&tx))) {
+                    D3D11_TEXTURE2D_DESC d;
+                    ID3D11Texture2D_GetDesc(tx, &d);
+                    ID3D11Device *td = NULL;
+                    ID3D11Texture2D_GetDevice(tx, &td);
+                    printf("  texture %ux%u format %d bind %#x usage %d, the video device %d\n", d.Width, d.Height, d.Format, d.BindFlags, d.Usage, td == vd);
+                    if (td) ID3D11Device_Release(td);
+                    ID3D11Texture2D_Release(tx);
+                }
+                IMFDXGIBuffer_Release(x);
+            }
+            if (b) IMFMediaBuffer_Release(b);
+            IMFSample_Release(s);
+        }
+        IMFVideoSampleAllocatorEx_Release(al);
+    }
+    IMFDXGIDeviceManager_Release(m);
+    ID3D11Device_Release(vd);
+}
+
+/* Unity's VideoPlayer with a device of its own (#227): the video device is not the program's,
+   so its ARGB32 frames are opened on the program's device through their shared handles
+   (IDXGIResource::GetSharedHandle, ID3D11Device::OpenSharedResource) and drawn from there */
+static void shared(const WCHAR *path) {
+    D3D_FEATURE_LEVEL want = D3D_FEATURE_LEVEL_11_0, got;
+    ID3D11Device *vd = NULL;
+    HRESULT hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_WARP, NULL, D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, &want, 1, D3D11_SDK_VERSION, &vd, &got, NULL);
+    if (FAILED(hr)) hr = D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, &want, 1, D3D11_SDK_VERSION, &vd, &got, NULL);
+    printf("shared: video device %#lx, another device %d\n", hr, vd && vd != dev);
+    if (!vd) return;
+    UINT token = 0;
+    IMFDXGIDeviceManager *m = NULL;
+    MFCreateDXGIDeviceManager(&token, &m);
+    IMFDXGIDeviceManager_ResetDevice(m, (IUnknown *)vd, token);
+    IMFAttributes *a = NULL;
+    MFCreateAttributes(&a, 3);
+    IMFAttributes_SetUnknown(a, &MF_SOURCE_READER_D3D_MANAGER, (IUnknown *)m);
+    IMFAttributes_SetUINT32(a, &MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+    IMFAttributes_SetUINT32(a, &MF_SOURCE_READER_D3D11_BIND_FLAGS, D3D11_BIND_SHADER_RESOURCE);
+    IMFSourceReader *r = NULL;
+    hr = MFCreateSourceReaderFromURL(path, a, &r);
+    IMFAttributes_Release(a);
+    if (r) {
+        IMFMediaType *t = NULL;
+        MFCreateMediaType(&t);
+        IMFMediaType_SetGUID(t, &MF_MT_MAJOR_TYPE, &MFMediaType_Video);
+        IMFMediaType_SetGUID(t, &MF_MT_SUBTYPE, &MFVideoFormat_ARGB32);
+        printf("  set ARGB32: %#lx\n", IMFSourceReader_SetCurrentMediaType(r, MF_SOURCE_READER_FIRST_VIDEO_STREAM, NULL, t));
+        IMFMediaType_Release(t);
+        char cols[40] = { 0 };
+        int n = 0, handles = 0, opened = 0;
+        for (int k = 0; k < 40 && n < 39; k++) {
+            IMFSample *s = NULL;
+            DWORD idx = 0, flags = 0;
+            LONGLONG ts = 0;
+            if (FAILED(IMFSourceReader_ReadSample(r, MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &idx, &flags, &ts, &s))) break;
+            if (s) {
+                IMFMediaBuffer *b = NULL;
+                IMFDXGIBuffer *x = NULL;
+                ID3D11Texture2D *tx = NULL;
+                char c = '-';
+                IMFSample_GetBufferByIndex(s, 0, &b);
+                if (b && SUCCEEDED(IMFMediaBuffer_QueryInterface(b, &IID_IMFDXGIBuffer, (void **)&x)) && SUCCEEDED(IMFDXGIBuffer_GetResource(x, &IID_ID3D11Texture2D, (void **)&tx))) {
+                    IDXGIResource *res = NULL;
+                    HANDLE h = NULL;
+                    if (SUCCEEDED(ID3D11Texture2D_QueryInterface(tx, &IID_IDXGIResource, (void **)&res))) {
+                        IDXGIResource_GetSharedHandle(res, &h);
+                        IDXGIResource_Release(res);
+                    }
+                    handles += h != NULL;
+                    IDXGIResource *o = NULL;
+                    ID3D11Texture2D *ot = NULL;
+                    if (h && SUCCEEDED(ID3D11Device_OpenSharedResource(dev, h, &IID_IDXGIResource, (void **)&o))) {
+                        if (SUCCEEDED(IDXGIResource_QueryInterface(o, &IID_ID3D11Texture2D, (void **)&ot))) {
+                            opened++;
+                            DWORD v = texel(ot, 32, 24);
+                            c = classify_rgb((v >> 16) & 255, (v >> 8) & 255, v & 255);
+                            ID3D11Texture2D_Release(ot);
+                        }
+                        IDXGIResource_Release(o);
+                    }
+                    ID3D11Texture2D_Release(tx);
+                }
+                if (x) IMFDXGIBuffer_Release(x);
+                if (b) IMFMediaBuffer_Release(b);
+                IMFSample_Release(s);
+                cols[n++] = c;
+            }
+            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) break;
+        }
+        printf("  %d frames, handles %d, opened %d: %s\n", n, handles, opened, cols);
+        IMFSourceReader_Release(r);
+    }
+    IMFDXGIDeviceManager_Release(m);
+    ID3D11Device_Release(vd);
 }
 
 int main(void) {
@@ -359,6 +557,17 @@ int main(void) {
     nv12_targets();
     reader(path, &MFVideoFormat_RGB32, "RGB32");
     reader(path, &MFVideoFormat_NV12, "NV12");
+    reader(path, &MFVideoFormat_ARGB32, "ARGB32");
+    decoder(path);
+    DeleteFileW(path);
+    /* mfvideo's H.264 movie (the same colours): the frames the page decodes, as textures */
+    swprintf(path, MAX_PATH, L"%lsmfdxgi-probe.mp4", dir);
+    f = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, 0, NULL);
+    WriteFile(f, file_mp4, sizeof file_mp4, &w, NULL);
+    CloseHandle(f);
+    reader(path, &MFVideoFormat_ARGB32, "ARGB32 of H.264");
+    reader(path, &MFVideoFormat_NV12, "NV12 of H.264");
+    shared(path);
     DeleteFileW(path);
     ID3D11DeviceContext_Release(ctx);
     ID3D11Device_Release(dev);

@@ -155,10 +155,10 @@ fn desc(c: &mut Ctx, tex: u32) -> [u32; 11] {
 
 /// A new texture of `dev`: `w` x `h` of DXGI format `fmt`, `usage`/`bind`/`cpu` flags, the
 /// first rows of `init` (pitch bytes each) in it if given; 0 if the device refuses it.
-fn new_texture(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, usage: u32, bind: u32, cpu: u32, init: Option<(u32, u32)>) -> u32 {
+fn new_texture(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, usage: u32, bind: u32, cpu: u32, misc: u32, init: Option<(u32, u32)>) -> u32 {
     // (the desc at 0, the D3D11_SUBRESOURCE_DATA at 48, the texture out at 80)
     let p = mem::heap_alloc(96, true);
-    for (i, v) in [w, h, 1, 1, fmt, 1, 0, usage, bind, cpu, 0].into_iter().enumerate() {
+    for (i, v) in [w, h, 1, 1, fmt, 1, 0, usage, bind, cpu, misc].into_iter().enumerate() {
         w32(p + 4 * i as u32, v);
     }
     let (sd, out) = (p + 48, p + 80);
@@ -182,7 +182,7 @@ fn read_back(c: &mut Ctx, b: u32) -> bool {
     let Some((dev, ctx)) = device_context(c, tex) else { return false };
     if staging == 0 {
         // D3D11_USAGE_STAGING, CPU read | write
-        staging = new_texture(c, dev, w, h, fmt, 3, 0, 0x30000, None);
+        staging = new_texture(c, dev, w, h, fmt, 3, 0, 0x30000, 0, None);
         dx(b, |d| d.staging = staging);
     }
     let mut ok = false;
@@ -566,7 +566,15 @@ pub fn format_of(sub: u32) -> Option<u32> {
 
 /// A buffer over a new texture of `dev` holding a decoded frame (`w` x `h`, DXGI `fmt`,
 /// top-down rows of `bytes`), as the reader hands it out; None: the device refused it.
+/// D3D11_USAGE_DEFAULT, bound as shader resource and render target (the decoder's and the video
+/// processor's textures: Unity draws NV12 ones through views of their planes).
 pub fn frame_buffer(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, bytes: &[u8]) -> Option<u32> {
+    texture_buffer(c, dev, w, h, fmt, 0, 0x28, bytes)
+}
+
+/// A buffer over a new texture of `dev` (`w` x `h`, DXGI `fmt`, D3D11_USAGE `usage`, bind
+/// flags `bind`) made of top-down rows `bytes`; None: the device refused it.
+pub fn texture_buffer(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, usage: u32, bind: u32, bytes: &[u8]) -> Option<u32> {
     let (max, rows) = layout(fmt, w, h)?;
     if bytes.len() < max as usize {
         return None;
@@ -574,16 +582,27 @@ pub fn frame_buffer(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, bytes: &[u8
     // (the initial data stays the buffer's copy: kura may read it after CreateTexture2D)
     let data = mem::heap_alloc(max, false);
     mem::write(data, &bytes[..max as usize]);
-    // D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, and D3D11_BIND_RENDER_TARGET for RGB
-    // (the video processor's output; NV12 is the decoder's, which kura draws no target of)
-    let bind = if fmt == 103 { 0x8 } else { 0x28 };
-    let tex = new_texture(c, dev, w, h, fmt, 0, bind, 0, Some((data, max / rows)));
+    let cpu = match usage {
+        // (dynamic: CPU write; staging: read and write)
+        2 => 0x10000,
+        3 => 0x30000,
+        _ => 0,
+    };
+    // (default textures shared, D3D11_RESOURCE_MISC_SHARED: a program decoding with a device
+    // of its own opens them with the device it draws with, as Unity does, #227)
+    let misc = if usage == 0 && bind & 0x28 != 0 { 2 } else { 0 };
+    let tex = new_texture(c, dev, w, h, fmt, usage, bind, cpu, misc, Some((data, max / rows)));
     let b = if tex != 0 { new_buffer(c, tex, 0, false, true, Some(data)) } else { None };
     if b.is_none() {
         release(c, tex);
         mem::heap_free(data);
     }
     b
+}
+
+/// The bytes of a frame of DXGI `fmt`, `w` x `h` (None: not a format of ours).
+pub fn frame_bytes(fmt: u32, w: u32, h: u32) -> Option<u32> {
+    layout(fmt, w, h).map(|l| l.0)
 }
 
 /// The device of IMFDXGIDeviceManager `m` of ours (a reference the caller releases), or 0.

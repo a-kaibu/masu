@@ -1205,7 +1205,7 @@ fn sm_copy_to(c: &mut Ctx) -> u32 {
 }
 
 /// A sample (one reference): its time, duration and one buffer of `bytes`.
-fn new_sample(time: Option<u64>, dur: Option<u64>, bytes: Option<&[u8]>) -> u32 {
+pub(super) fn new_sample(time: Option<u64>, dur: Option<u64>, bytes: Option<&[u8]>) -> u32 {
     static VT: OnceLock<u32> = OnceLock::new();
     let vt = *VT.get_or_init(|| {
         let mut m = attrs_methods();
@@ -1241,7 +1241,7 @@ fn new_sample(time: Option<u64>, dur: Option<u64>, bytes: Option<&[u8]>) -> u32 
 }
 
 /// A sample (one reference) of buffer `b` (whose reference it takes).
-fn new_sample_of(time: Option<u64>, dur: Option<u64>, b: u32) -> u32 {
+pub(super) fn new_sample_of(time: Option<u64>, dur: Option<u64>, b: u32) -> u32 {
     let s = new_sample(time, dur, None);
     sample(s, |x| x.bufs = vec![b]);
     s
@@ -1665,6 +1665,36 @@ fn sr_flush(c: &mut Ctx) -> u32 {
     }
     0
 }
+/// GetServiceForStream(DWORD stream, REFGUID service, REFIID, void **): a video stream's decoder
+/// (GUID_NULL, IMFTransform: see mft); nothing else.
+fn sr_service(c: &mut Ctx) -> u32 {
+    let (this, i, svc, riid, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    if out == 0 || riid == 0 {
+        return E_POINTER;
+    }
+    putp(out, 0);
+    if i == MEDIASOURCE {
+        return MF_E_UNSUPPORTED_SERVICE;
+    }
+    let k = match on_stream(this, i, |r, k| matches!(r.streams[k].kind, Kind::Video(_)).then_some(k)) {
+        Ok(k) => k,
+        Err(e) => return e,
+    };
+    let null = svc == 0 || guid_at(svc) == [0; 16];
+    match k {
+        Some(k) if null && super::mft::is_transform(&guid_at(riid)) => {
+            putp(out, super::mft::transform(c, this, k));
+            0
+        }
+        _ => MF_E_UNSUPPORTED_SERVICE,
+    }
+}
+/// The current type of reader `this`'s stream `k` (a copy of its store).
+pub(super) fn current_type(this: u32, k: usize) -> Option<Store> {
+    let t = reader(this, |r| r.streams.get(k).map(|s| s.current))??;
+    store_of(t)
+}
+
 /// GetPresentationAttribute(DWORD stream, REFGUID, PROPVARIANT *)
 fn sr_presentation(c: &mut Ctx) -> u32 {
     let (i, g, p) = (c.a(1), c.a(2), c.a(3));
@@ -1709,7 +1739,7 @@ fn reader_vtable() -> u32 {
                 (sr_seek, 12),
                 (sr_read, 28),
                 (sr_flush, 8),
-                (|_| MF_E_UNSUPPORTED_SERVICE, 20),
+                (sr_service, 20),
                 (sr_presentation, 16),
             ],
         )

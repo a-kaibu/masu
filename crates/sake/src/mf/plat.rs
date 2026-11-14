@@ -9,8 +9,7 @@
 //! - MFGetStrideForBitmapInfoHeader, MFCalculateImageSize, MFAverageTimePerFrameToFrameRate,
 //!   MFFrameRateToAverageTimePerFrame (Windows' tables; Wine's mediatype.c has them too)
 //! - MFTEnumEx: the decoders there are (H.264, AAC, MP3: the page's)
-//! - MFCreateVideoSampleAllocatorEx: none (D3D11 frames are not given out: the reader hands
-//!   out memory buffers, Unity then copies them into its textures)
+//! (MFCreateVideoSampleAllocatorEx: mft.rs)
 
 use super::*;
 use std::collections::VecDeque;
@@ -805,15 +804,6 @@ fn MFTEnumEx(c: &mut Ctx) -> u32 {
     0
 }
 
-/// MFCreateVideoSampleAllocatorEx(REFIID, void **): none (see the top)
-fn MFCreateVideoSampleAllocatorEx(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out != 0 {
-        putp(out, 0);
-    }
-    E_NOTIMPL
-}
-
 pub fn init() {
     implement("mfplat", "MFCreateAsyncResult", MFCreateAsyncResult);
     implement("mfplat", "MFInvokeCallback", MFInvokeCallback);
@@ -825,5 +815,4 @@ pub fn init() {
     implement("mfplat", "MFAverageTimePerFrameToFrameRate", MFAverageTimePerFrameToFrameRate);
     implement("mfplat", "MFFrameRateToAverageTimePerFrame", MFFrameRateToAverageTimePerFrame);
     implement("mfplat", "MFTEnumEx", MFTEnumEx);
-    implement("mfplat", "MFCreateVideoSampleAllocatorEx", MFCreateVideoSampleAllocatorEx);
 }
