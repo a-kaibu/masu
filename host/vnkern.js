@@ -1,7 +1,7 @@
 // The kernel the host's processes share (crates/sake/src/kern/host.rs): one SharedArrayBuffer
 // for all of them, `vnvmKernel` (host/pre.js: the host's, or the first process's own), every
 // thread of every process has it. Int32 words:
-//   0 lock (0 free, 1 taken, 2 taken with waiters), 1 generation (changes with every change,
+//   0 lock (0 free, else its holder's process id x 2, + 1 with waiters), 1 generation (changes with every change,
 //   what waiting is on), 2 sharing (1 once a process started another), 3 the state's length,
 //   4 how many processes ended, 16.. a ring of 64 (id, exit code) of them;
 // the state's bytes from byte 1024.
@@ -12,29 +12,53 @@ addToLibrary({
   vnhost_kern_can_share: () => (vnvmKernel && vnvmCanSpawn ? 1 : 0),
   vnhost_kern_start_sharing__deps: ['$vnkernH'],
   vnhost_kern_start_sharing: () => Atomics.store(vnkernH(), 2, 1),
-  vnhost_kern_lock__deps: ['$vnkernH'],
-  vnhost_kern_lock: (pid) => {
-    // (Drepper's futex mutex; its holder's process in [5], so that the lock goes when that
-    // process ends holding it: host/pre.js)
-    const h = vnkernH();
-    let c = Atomics.compareExchange(h, 0, 0, 1);
-    if (c !== 0) {
-      if (c !== 2) c = Atomics.exchange(h, 0, 2);
-      while (c !== 0) {
-        Atomics.wait(h, 0, 2);
-        c = Atomics.exchange(h, 0, 2);
-      }
+  // The lock, word 0: 0 free, else its holder's process id x 2, + 1 while others wait (one
+  // word, so that whatever moment a holder is stopped at, the word names it). A holder whose
+  // process ended (on the ring) lets it go here: its exit (host/pre.js) frees what its threads
+  // hold then, but a thread of it that still ran could take it after that and be stopped
+  // holding it (registrymulti: a child's watcher woken by its own end), every process then
+  // waiting for good.
+  $vnkernFreeDead: (h, c) => {
+    const holder = c >>> 1;
+    if (!holder) return false;
+    const n = Atomics.load(h, 4) >>> 0;
+    for (let i = n > 64 ? n - 64 : 0; i < n; i++) {
+      if (Atomics.load(h, 16 + 2 * (i % 64)) >>> 0 !== holder) continue;
+      if (Atomics.compareExchange(h, 0, c, 0) !== c) return false;
+      Atomics.notify(h, 0);
+      return true;
     }
-    Atomics.store(h, 5, pid);
+    return false;
+  },
+  vnhost_kern_lock__deps: ['$vnkernH', '$vnkernFreeDead'],
+  vnhost_kern_lock: (pid) => {
+    const h = vnkernH();
+    const me = (pid << 1) | 0;
+    let c = Atomics.compareExchange(h, 0, 0, me);
+    if (c === 0) return;
+    // (a thread that waited takes it marked waited for: others may still wait, as Drepper's)
+    for (;;) {
+      if (c === 0) {
+        c = Atomics.compareExchange(h, 0, 0, me | 1);
+        if (c === 0) return;
+        continue;
+      }
+      if (!(c & 1)) {
+        const was = Atomics.compareExchange(h, 0, c, c | 1);
+        if (was !== c) {
+          c = was;
+          continue;
+        }
+        c |= 1;
+      }
+      if (Atomics.wait(h, 0, c, 100) === 'timed-out') vnkernFreeDead(h, c);
+      c = Atomics.load(h, 0);
+    }
   },
   vnhost_kern_unlock__deps: ['$vnkernH'],
   vnhost_kern_unlock: () => {
     const h = vnkernH();
-    Atomics.store(h, 5, 0);
-    if (Atomics.sub(h, 0, 1) !== 1) {
-      Atomics.store(h, 0, 0);
-      Atomics.notify(h, 0, 1);
-    }
+    if (Atomics.exchange(h, 0, 0) & 1) Atomics.notify(h, 0, 1);
   },
   vnhost_kern_get__deps: ['$vnkernH'],
   vnhost_kern_get__sig: 'ppp',

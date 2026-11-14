@@ -311,6 +311,145 @@ test("vnkern: an ended process's entry overwritten by 64 later ones is reported 
   }
 });
 
+// ---- host/vnkern.js's lock: a holder whose process ended (registrymulti hung, 1 run in 3)
+
+function kernLock() {
+  const kernel = new SharedArrayBuffer(4096);
+  const { lib, context } = library("vnkern.js", { vnvmKernel: kernel, vnvmKernelI32: undefined, Atomics, Int32Array, Uint8Array });
+  const h = new Int32Array(kernel, 0, 256);
+  const end = (pid) => {
+    const i = Atomics.load(h, 4) >>> 0;
+    Atomics.store(h, 16 + 2 * (i % 64), pid);
+    Atomics.store(h, 17 + 2 * (i % 64), 0);
+    Atomics.store(h, 4, i + 1);
+  };
+  return { lib, context, h, end, kernel };
+}
+
+test("vnkern: the lock a thread of an ended process took after its exit is let go", () => {
+  const { lib, h, end } = kernLock();
+  lib.vnhost_kern_lock(0x20010);
+  assert.equal(Atomics.load(h, 0) >>> 1, 0x20010);
+  end(0x10010);
+  end(0x20010); // (its exit had run before the thread took the lock: nothing freed it)
+  const t = Date.now();
+  lib.vnhost_kern_lock(0x10);
+  assert.equal(Atomics.load(h, 0) >>> 1, 0x10);
+  assert.ok(Date.now() - t < 5000);
+  lib.vnhost_kern_unlock();
+  assert.equal(Atomics.load(h, 0), 0);
+});
+
+test("vnkern: host/pre.js's exit lets go the lock its process holds, with or without waiters", () => {
+  const pre = read("pre.js");
+  const at = pre.indexOf("for (let c = Atomics.load(h, 0); c >>> 1 === pid;");
+  assert.ok(at > 0);
+  const body = pre.slice(at, pre.indexOf("\n    }\n", at) + 6);
+  const release = new Function("Atomics", "h", "pid", body);
+  for (const word of [0x20010 * 2, 0x20010 * 2 + 1]) {
+    const h = new Int32Array(new SharedArrayBuffer(1024));
+    h[0] = word;
+    release(Atomics, h, 0x10010); // (another process's: kept)
+    assert.equal(h[0], word);
+    release(Atomics, h, 0x20010);
+    assert.equal(h[0], 0);
+  }
+});
+
+test("vnkern: a live holder's lock is never taken (PBT: rings of ended processes)", () => {
+  const { context, h, end } = kernLock();
+  let x = 7;
+  const rnd = (n) => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) >>> 8) % n;
+  for (let round = 0; round < 3000; round++) {
+    h.fill(0);
+    const ended = [];
+    for (let i = 0, n = rnd(140); i < n; i++) {
+      const pid = 0x10 + 0x10000 * rnd(200);
+      end(pid);
+      ended.push(pid);
+    }
+    const holder = rnd(4) ? 0x10 + 0x10000 * rnd(200) : 0;
+    const word = holder ? (holder << 1) | rnd(2) : 0;
+    Atomics.store(h, 0, word);
+    // (the model: freed exactly when the holder is among the last 64 ended)
+    const want = holder !== 0 && ended.slice(-64).includes(holder);
+    assert.equal(context.vnkernFreeDead(h, word), want, `holder ${holder} ended ${ended.length}`);
+    assert.equal(Atomics.load(h, 0), want ? 0 : word);
+    // (a stale word: the lock changed hands since it was read, nothing is freed)
+    if (want) {
+      Atomics.store(h, 0, (0x7fff0 << 1) | 1);
+      assert.equal(context.vnkernFreeDead(h, word), false);
+      assert.equal(Atomics.load(h, 0), (0x7fff0 << 1) | 1);
+    }
+  }
+});
+
+/** A worker running vnkern.js on `kernel`: `job(lib, data)` is its body (a function's source). */
+async function kernWorker(kernel, job, data) {
+  const { Worker } = await import("node:worker_threads");
+  const src = `
+    const { workerData, parentPort } = require("node:worker_threads");
+    const vm = require("node:vm");
+    let lib;
+    const ctx = vm.createContext({ vnvmKernel: workerData.kernel, vnvmKernelI32: undefined, Atomics, Int32Array, Uint8Array, addToLibrary: (x) => (lib = x) });
+    vm.runInContext(workerData.code, ctx);
+    for (const [k, v] of Object.entries(lib)) if (k.startsWith("$") && !k.includes("__")) ctx[k.slice(1)] = v;
+    (${job})(lib, workerData.data, (m) => parentPort.postMessage(m));
+  `;
+  return new Worker(src, { eval: true, workerData: { kernel, code: read("vnkern.js"), data } });
+}
+
+test("vnkern: a thread waiting for a live holder waits, then takes the lock once it is let go", async () => {
+  const { lib, h, kernel } = kernLock();
+  lib.vnhost_kern_lock(0x10);
+  const w = await kernWorker(kernel, `(lib, _, post) => { lib.vnhost_kern_lock(0x20010); post("took"); lib.vnhost_kern_unlock(); }`);
+  let took = false;
+  const done = new Promise((r) => w.on("message", () => { took = true; r(); }));
+  await new Promise((r) => setTimeout(r, 600));
+  assert.equal(took, false, "took a live holder's lock");
+  lib.vnhost_kern_unlock();
+  await done;
+  await w.terminate();
+  assert.equal(Atomics.load(h, 0), 0);
+});
+
+test("vnkern: threads of several processes counting under the lock never overlap (stress)", async () => {
+  const { h, kernel } = kernLock();
+  const shared = new Int32Array(new SharedArrayBuffer(8));
+  const job = `(lib, d, post) => {
+    const s = new Int32Array(d.buf);
+    for (let i = 0; i < 4000; i++) {
+      lib.vnhost_kern_lock(d.pid);
+      const v = s[0]; if (s[1]++ !== 0) throw new Error("two holders");
+      s[0] = v + 1; s[1]--;
+      lib.vnhost_kern_unlock();
+    }
+    post("done");
+  }`;
+  const ws = await Promise.all([0x10, 0x10010, 0x20010, 0x30010].map((pid) => kernWorker(kernel, job, { pid, buf: shared.buffer })));
+  await Promise.all(ws.map((w) => new Promise((r, j) => { w.on("message", r); w.on("error", j); })));
+  await Promise.all(ws.map((w) => w.terminate()));
+  assert.equal(shared[0], 16000);
+  assert.equal(Atomics.load(h, 0), 0);
+});
+
+test("vnkern: a process stopped while holding the lock, at any moment, does not stop the others", async () => {
+  const { h, kernel, end } = kernLock();
+  for (let round = 0; round < 6; round++) {
+    const victim = 0x50010 + 0x10000 * round;
+    const dying = await kernWorker(kernel, `(lib, d, post) => { post("up"); for (;;) { lib.vnhost_kern_lock(d.pid); lib.vnhost_kern_unlock(); } }`, { pid: victim });
+    await new Promise((r) => dying.on("message", r));
+    await new Promise((r) => setTimeout(r, 5 + round * 7));
+    await dying.terminate();
+    end(victim);
+    const other = await kernWorker(kernel, `(lib, _, post) => { lib.vnhost_kern_lock(0x10); lib.vnhost_kern_unlock(); post("ok"); }`);
+    const ok = await Promise.race([new Promise((r) => other.on("message", () => r(true))), new Promise((r) => setTimeout(() => r(false), 5000))]);
+    await other.terminate();
+    assert.ok(ok, `round ${round}: the lock stayed with the stopped process`);
+  }
+  assert.equal(Atomics.load(h, 0) & ~1, 0);
+});
+
 test("vngpu: a validation error repeated every draw prints its first five and then each 1000th", () => {
   const printed = [];
   const { lib } = library("vngpu.js", { err: (m) => printed.push(m), performance, navigator: {} });
