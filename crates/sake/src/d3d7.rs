@@ -1491,9 +1491,9 @@ impl Tex {
 
 #[derive(Clone)]
 struct Stage {
-    cop: u32,
+    cop: TexOp,
     ca: [u32; 2],
-    aop: u32,
+    aop: TexOp,
     aa: [u32; 2],
     tex: Option<Tex>,
     tci: usize,
@@ -1753,35 +1753,92 @@ fn arg(a: u32, diff: &C4, cur: &C4, tex: &C4, tf: &C4, spec: &C4) -> C4 {
     v
 }
 
+/// D3DTEXTUREOP, read from the stage's state once: the operations the rasterizer does by name,
+/// DISABLE (0 and 1), and the rest kept by number (`Other`: modulated, as before)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TexOp {
+    Disable(u32),
+    SelectArg1,
+    SelectArg2,
+    Modulate,
+    Modulate2x,
+    Modulate4x,
+    Add,
+    AddSigned,
+    AddSigned2x,
+    Subtract,
+    AddSmooth,
+    BlendDiffuseAlpha,
+    BlendTextureAlpha,
+    BlendFactorAlpha,
+    BlendTextureAlphaPm,
+    BlendCurrentAlpha,
+    ModulateAlphaAddColor,
+    ModulateColorAddAlpha,
+    ModulateInvAlphaAddColor,
+    ModulateInvColorAddAlpha,
+    DotProduct3,
+    Other(u32),
+}
+
+impl TexOp {
+    fn of(v: u32) -> TexOp {
+        match v {
+            0 | 1 => TexOp::Disable(v),
+            2 => TexOp::SelectArg1,
+            3 => TexOp::SelectArg2,
+            4 => TexOp::Modulate,
+            5 => TexOp::Modulate2x,
+            6 => TexOp::Modulate4x,
+            7 => TexOp::Add,
+            8 => TexOp::AddSigned,
+            9 => TexOp::AddSigned2x,
+            10 => TexOp::Subtract,
+            11 => TexOp::AddSmooth,
+            12 => TexOp::BlendDiffuseAlpha,
+            13 => TexOp::BlendTextureAlpha,
+            14 => TexOp::BlendFactorAlpha,
+            15 => TexOp::BlendTextureAlphaPm,
+            16 => TexOp::BlendCurrentAlpha,
+            18 => TexOp::ModulateAlphaAddColor,
+            19 => TexOp::ModulateColorAddAlpha,
+            20 => TexOp::ModulateInvAlphaAddColor,
+            21 => TexOp::ModulateInvColorAddAlpha,
+            24 => TexOp::DotProduct3,
+            v => TexOp::Other(v),
+        }
+    }
+    /// The operation reads the stage's texture: through an argument it uses, or by its alpha
+    fn uses_tex(self, a: &[u32; 2]) -> bool {
+        (a[0] & 0xf == 2 && self != TexOp::SelectArg2) || (a[1] & 0xf == 2 && self != TexOp::SelectArg1) || matches!(self, TexOp::BlendTextureAlpha | TexOp::BlendTextureAlphaPm)
+    }
+}
+
 /// One texture operation on one channel set (`n` channels from `o`).
-fn op(o: u32, a1: &C4, a2: &C4, diff: &C4, tex: &C4, tf: &C4, cur: &C4, out: &mut C4, from: usize, to: usize) {
+fn op(o: TexOp, a1: &C4, a2: &C4, diff: &C4, tex: &C4, tf: &C4, cur: &C4, out: &mut C4, from: usize, to: usize) {
     for i in from..to {
         let (x, y) = (a1[i], a2[i]);
         out[i] = match o {
-            2 => x,
-            3 => y,
-            4 => x * y,
-            5 => x * y * 2.,
-            6 => x * y * 4.,
-            7 => x + y,
-            8 => x + y - 0.5,
-            9 => (x + y - 0.5) * 2.,
-            10 => x - y,
-            11 => x + y - x * y,
-            12 => x * diff[3] + y * (1. - diff[3]),
-            13 => x * tex[3] + y * (1. - tex[3]),
-            14 => x * tf[3] + y * (1. - tf[3]),
-            15 => x + y * (1. - tex[3]),
-            16 => x * cur[3] + y * (1. - cur[3]),
-            18 => x + a1[3] * y,
-            19 => x * y + a1[3],
-            20 => x + (1. - a1[3]) * y,
-            21 => (1. - x) * y + a1[3],
-            24 => {
-                let d = (0..3).map(|k| (a1[k] - 0.5) * (a2[k] - 0.5)).sum::<f32>() * 4.;
-                d
-            }
-            _ => x * y,
+            TexOp::SelectArg1 => x,
+            TexOp::SelectArg2 => y,
+            TexOp::Modulate | TexOp::Disable(_) | TexOp::Other(_) => x * y,
+            TexOp::Modulate2x => x * y * 2.,
+            TexOp::Modulate4x => x * y * 4.,
+            TexOp::Add => x + y,
+            TexOp::AddSigned => x + y - 0.5,
+            TexOp::AddSigned2x => (x + y - 0.5) * 2.,
+            TexOp::Subtract => x - y,
+            TexOp::AddSmooth => x + y - x * y,
+            TexOp::BlendDiffuseAlpha => x * diff[3] + y * (1. - diff[3]),
+            TexOp::BlendTextureAlpha => x * tex[3] + y * (1. - tex[3]),
+            TexOp::BlendFactorAlpha => x * tf[3] + y * (1. - tf[3]),
+            TexOp::BlendTextureAlphaPm => x + y * (1. - tex[3]),
+            TexOp::BlendCurrentAlpha => x * cur[3] + y * (1. - cur[3]),
+            TexOp::ModulateAlphaAddColor => x + a1[3] * y,
+            TexOp::ModulateColorAddAlpha => x * y + a1[3],
+            TexOp::ModulateInvAlphaAddColor => x + (1. - a1[3]) * y,
+            TexOp::ModulateInvColorAddAlpha => (1. - x) * y + a1[3],
+            TexOp::DotProduct3 => (0..3).map(|k| (a1[k] - 0.5) * (a2[k] - 0.5)).sum::<f32>() * 4.,
         }
         .clamp(0., 1.);
     }
@@ -1823,9 +1880,9 @@ impl Raster {
             let tci = (t[TSS_TEXCOORDINDEX] & 7) as usize;
             ntc = ntc.max(tci + 1);
             stages.push(Stage {
-                cop: t[TSS_COLOROP],
+                cop: TexOp::of(t[TSS_COLOROP]),
                 ca: [t[TSS_COLORARG1], t[TSS_COLORARG2]],
-                aop: t[TSS_ALPHAOP],
+                aop: TexOp::of(t[TSS_ALPHAOP]),
                 aa: [t[TSS_ALPHAARG1], t[TSS_ALPHAARG2]],
                 tex,
                 tci,
@@ -1865,7 +1922,6 @@ impl Raster {
     fn shade(&self, diff: &C4, spec: &C4, tc: &[[f32; 2]; 8]) -> Option<C4> {
         let mut cur = *diff;
         for s in &self.stages {
-            let uses_tex = |a: &[u32; 2], o: u32| (a[0] & 0xf == 2 && o != 3) || (a[1] & 0xf == 2 && o != 2) || matches!(o, 13 | 15);
             let tex = if s.tex.is_some() {
                 let t = s.sample(tc[s.tci], self.ck);
                 if self.ck && s.tex.as_ref().is_some_and(|t| t.key.is_some()) && t[3] < 0.5 && t[0] + t[1] + t[2] == 0. && !s.linear {
@@ -1876,12 +1932,12 @@ impl Raster {
                 [1.; 4]
             };
             let mut out = cur;
-            let (ctex, atex) = (uses_tex(&s.ca, s.cop), uses_tex(&s.aa, s.aop));
+            let (ctex, atex) = (s.cop.uses_tex(&s.ca), s.aop.uses_tex(&s.aa));
             if s.tex.is_some() || !ctex {
                 let (a1, a2) = (arg(s.ca[0], diff, &cur, &tex, &self.tfactor, spec), arg(s.ca[1], diff, &cur, &tex, &self.tfactor, spec));
                 op(s.cop, &a1, &a2, diff, &tex, &self.tfactor, &cur, &mut out, 0, 3);
             }
-            if s.aop > 1 && (s.tex.is_some() || !atex) {
+            if !matches!(s.aop, TexOp::Disable(_)) && (s.tex.is_some() || !atex) {
                 let (a1, a2) = (arg(s.aa[0], diff, &cur, &tex, &self.tfactor, spec), arg(s.aa[1], diff, &cur, &tex, &self.tfactor, spec));
                 op(s.aop, &a1, &a2, diff, &tex, &self.tfactor, &cur, &mut out, 3, 4);
             }
@@ -1964,17 +2020,20 @@ impl Raster {
             3 => self.tfactor[ch].iter().all(|&c| c == 1.),
             _ => false,
         };
-        let is_tex = |o: u32, a: &[u32; 2], ch: std::ops::Range<usize>| match o {
-            2 => a[0] == 2,
-            3 => a[1] == 2,
-            4 => (a[0] == 2 && one(a[1], ch.clone())) || (a[1] == 2 && one(a[0], ch)),
-            _ => false,
+        let is_tex = |o: TexOp, a: &[u32; 2], ch: std::ops::Range<usize>| match o {
+            TexOp::SelectArg1 => a[0] == 2,
+            TexOp::SelectArg2 => a[1] == 2,
+            TexOp::Modulate => (a[0] == 2 && one(a[1], ch.clone())) || (a[1] == 2 && one(a[0], ch)),
+            TexOp::Disable(_) | TexOp::Modulate2x | TexOp::Modulate4x | TexOp::Add | TexOp::AddSigned | TexOp::AddSigned2x | TexOp::Subtract
+            | TexOp::AddSmooth | TexOp::BlendDiffuseAlpha | TexOp::BlendTextureAlpha | TexOp::BlendFactorAlpha | TexOp::BlendTextureAlphaPm
+            | TexOp::BlendCurrentAlpha | TexOp::ModulateAlphaAddColor | TexOp::ModulateColorAddAlpha | TexOp::ModulateInvAlphaAddColor
+            | TexOp::ModulateInvColorAddAlpha | TexOp::DotProduct3 | TexOp::Other(_) => false,
         };
         if !is_tex(s.cop, &s.ca, 0..3) {
             return None;
         }
         // (with ALPHAOP disabled the alpha is the diffuse one: fine where the target has none)
-        if !is_tex(s.aop, &s.aa, 3..4) && !(s.aop <= 1 && self.fmt.ch[3].1 == 0) {
+        if !is_tex(s.aop, &s.aa, 3..4) && !(matches!(s.aop, TexOp::Disable(_)) && self.fmt.ch[3].1 == 0) {
             return None;
         }
         let off = |k: usize, n: i32| -> Option<i32> {
@@ -3595,9 +3654,9 @@ mod tests {
             let mut buf = vec![0u32; (w * h) as usize];
             let mut r = raster(&mut buf, w, h);
             r.stages.push(Stage {
-                cop: 2,
+                cop: TexOp::SelectArg1,
                 ca: [2, 1],
-                aop: 2,
+                aop: TexOp::SelectArg1,
                 aa: [2, 1],
                 tex: Some(Tex { bits: texels.as_ptr().cast::<u8>(), w: tw, h: th, pitch: tw as usize * 4, bpp: 4, fmt: ARGB, pal: None, key: None }),
                 tci: 0,
@@ -3845,7 +3904,7 @@ mod tests {
                 spec: false,
                 fog: None,
                 cull: 1,
-                stages: vec![Stage { cop: s.cop, ca: s.ca, aop: s.aop, aa: s.aa, tex: Some(tex.tex()), tci: 0, addr: [Addr::of(s.addr); 2], border: [0.; 4], linear: s.linear }],
+                stages: vec![Stage { cop: TexOp::of(s.cop), ca: s.ca, aop: TexOp::of(s.aop), aa: s.aa, tex: Some(tex.tex()), tci: 0, addr: [Addr::of(s.addr); 2], border: [0.; 4], linear: s.linear }],
                 tfactor: s.tfactor,
                 ntc: 1,
                 copy,

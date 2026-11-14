@@ -77,9 +77,9 @@ fn draw(rng: &mut Rng, out: &mut Vec<String>) {
     let stages: Vec<Stage> = texes
         .iter()
         .map(|(px, tw, th, b, f, key)| Stage {
-            cop: rng.state(27),
+            cop: TexOp::of(rng.state(27)),
             ca: [rng.state(6) | rng.pick(&[0, 0, 0x10, 0x20, 0x30]), rng.state(6) | rng.pick(&[0, 0, 0x10, 0x20])],
-            aop: rng.state(27),
+            aop: TexOp::of(rng.state(27)),
             aa: [rng.state(6) | rng.pick(&[0, 0, 0x10]), rng.state(6)],
             tex: (rng.below(8) != 0).then(|| Tex { bits: px.as_ptr(), w: *tw, h: *th, pitch: *tw as usize * b, bpp: *b, fmt: *f, pal: None, key: *key }),
             tci: rng.below(2) as usize,
