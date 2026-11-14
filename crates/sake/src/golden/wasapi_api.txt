@@ -37,7 +37,7 @@
 47 reset: 0x88890001
 49 padding: 0x88890001 3735928559
 50 set rate 384000.5: 0x88890001
-51 latency: 0x80004003 3735928559
+51 latency: 0x80004003 0
 52 service iid#12: 0x88890001 0
 53 session name "Game": 0x800706f4 get 0x0 ""
 54 start: 0x88890001
@@ -53,7 +53,7 @@
 65 new client#4
 67 session ids: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" ends with pid true
 70 session icon: 0x0 get 0x0 "C:\\icon.ico,1"
-71 padding: 0x80004003 3735928559
+71 padding: 0x80004003 0
 72 set event 0x0: 0x88890001
 73 buffer size: 0x88890001 3735928559
 74 initialize 0xfffe/32ch/44100/12b/blk48/avg2116800/cb21/v12/Some(2) mode=0 flags=0x40000 d=0 guid=false: 0x80070057 session=Some("default")
@@ -141,7 +141,7 @@
 173 endpoint qi 0x0 endpoint; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c2026000, 3f001f63, 0, 3f800000, 0, 415, 829, 2, 0, c2828000, 0, 3d000000]
 174 endpoint set scalar 0: 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c2828000, 0, 0, 3f800000, 0, 0, 829, 2, 0, c2828000, 0, 3d000000]
 175 supported 0xfffe/32ch/0/16b/blk64/avg0/cb30/v16/Some(1) mode=0: 0x80070057 0x0
-176 buffer size: 0x80004003 3735928559
+176 buffer size: 0x80004003 0
 177 reset: 0x88890001
 179 initialize 0x1/2ch/48000/64b/blk16/avg12345/cb0/v0/None mode=0 flags=0x0 d=200000001 guid=false: 0x80070057 session=Some("default")
 180 service iid#0: 0x88890001 0
@@ -159,7 +159,7 @@
 194 session icon: 0x0 get 0x0 "C:\\icon.ico,1"
 195 new client#16
 196 set event 0x44: 0x88890001
-197 simple vol NaN: 0x80070057 get 0x800706f4 0xdeadbeef; mute 1: 0x0 get 0x800706f4 3735928559
+197 simple vol NaN: 0x80070057 get 0x800706f4 0x0; mute 1: 0x0 get 0x800706f4 0
 199 start: 0x88890001
 200 mix format: 0x0 0x7d4dbc6d08589d17
 201 endpoint set db 1: 0x80070057; reads [0, 0, 80070057, 80070057, 0, 0, 0, 0, 0] [c2828000, 0, 0, 0, 0, 0, 829, 2, 0, c2828000, 0, 3d000000]
@@ -272,7 +272,7 @@
 326 initialize 0x1/1ch/44100/32b/blk4/avg176400/cb0/v0/None mode=2 flags=0x100000 d=10000000 guid=false: 0x80070057 session=Some("1")
 327 set event 0x0: 0x80070057
 328 buffer size: 0x0 882
-329 buffer size: 0x80004003 3735928559
+329 buffer size: 0x80004003 0
 331 channel vol 1 1.5: 0x80070057 get 0x0 0x3e800000; all 2: 0x80070057 0x0 [3e800000, 3e800000]; count 0x0 2
 333 padding: 0x0 0
 334 padding: 0x0 0
@@ -500,7 +500,7 @@
 581 new client#32
 582 client qi iid#10: 0x80004002 0
 583 client qi iid#2: 0x80004002 0
-584 simple vol 1: 0x0 get 0x800706f4 0x9c7e0; mute 0: 0x0 get 0x800706f4 640992
+584 simple vol 1: 0x0 get 0x800706f4 0x0; mute 0: 0x0 get 0x800706f4 0
 585 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x100000 d=10000000 guid=true: 0x0 session=Some("1")
 586 new client#33
 587 initialize 0xfffe/0ch/0/24b/blk0/avg0/cb30/v0/None mode=0 flags=0x100000 d=1000000 guid=true: 0x80070057 session=Some("default")
@@ -571,7 +571,7 @@
 657 channel vol 2 0.5: 0x80070057 get 0x80070057 0xdeadbeef; all 3: 0x80070057 0x80070057 [3f800000, 0, 0]; count 0x0 2
 658 initialize 0x6/2ch/44100/8b/blk2/avg1/cb22/v0/None mode=0 flags=0x1 d=200000001 guid=false: 0x88890021 session=Some("default")
 659 padding: 0x88890001 3735928559
-660 padding: 0x80004003 3735928559
+660 padding: 0x80004003 0
 662 client addref: 2
 663 client qi iid#3: 0x0 adjust#36
 665 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x0 d=1000000 guid=true: 0x0 session=Some("0")
@@ -579,7 +579,7 @@
 667 manager nulls: 0x800706f4 0x800706f4 0x800706f4
 668 period: 0x0 [0, 0, 0, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
 669 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
-670 simple vol NaN: 0x80070057 get 0x800706f4 0xdeadbeef; mute 7: 0x0 get 0x800706f4 3735928559
+670 simple vol NaN: 0x80070057 get 0x800706f4 0x0; mute 7: 0x0 get 0x800706f4 0
 671 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
 672 session name "": 0x0 get 0x0 ""
 673 new client#37
@@ -653,7 +653,7 @@
 746 new client#43
 747 supported 0x1/2ch/0/0b/blk0/avg0/cb22/v0/None mode=0: 0x80004003 -
 750 new client#44
-751 latency: 0x80004003 3735928559
+751 latency: 0x80004003 0
 752 latency: 0x88890001 3735928559
 753 endpoint set ch 1 scalar 0.5: 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c1200000, 3f58c42b, c2028000, 3f000000, 1, 6e8, 829, 2, 0, c2828000, 0, 3d000000]
 754 new client#45
@@ -712,7 +712,7 @@
 812 clock freq 0x0 352800, pos 0x0 0, chars 0x0
 813 set event 0x44: 0x88890001
 814 new client#50
-816 buffer size: 0x80004003 3735928559
+816 buffer size: 0x80004003 0
 817 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x0 d=10000000 guid=true: 0x0 session=Some("0")
 818 padding: 0x0 0
 820 service iid#12: 0x80004002 0
@@ -744,7 +744,7 @@
 852 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 853 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=1 flags=0x20000 d=10000000 guid=false: 0x8889000e session=Some("default")
 854 endpoint set ch 0 scalar 0: 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [0, 3f800000, c2828000, 0, 1, 828, 829, 2, 0, c2828000, 0, 3d000000]
-855 padding: 0x80004003 3735928559
+855 padding: 0x80004003 0
 856 mix format: 0x0 0x7d4dbc6d08589d17
 857 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x0 d=200000001 guid=false: 0x88890016 session=Some("default")
 858 endpoint set ch 0 scalar 0.5: 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [0, 3f800000, c2028000, 3f000000, 1, 828, 829, 2, 0, c2828000, 0, 3d000000]
@@ -763,7 +763,7 @@
 873 session ids: 0x800706f4 "" 0x800706f4 "" ends with pid false
 874 initialize 0x2/3ch/44100/0b/blk0/avg0/cb0/v0/None mode=2 flags=0x0 d=100000 guid=false: 0x80070057 session=Some("default")
 875 new client#55
-876 buffer size: 0x80004003 3735928559
+876 buffer size: 0x80004003 0
 877 manager notify 0x800706f4 0x0 duck 0x800706f4 0x0
 878 start: 0x88890001
 880 client addref: 2
@@ -797,7 +797,7 @@
 911 supported 0x1/0ch/192000/32b/blk0/avg0/cb0/v0/None mode=0: 0x80070057 0x0
 913 set rate 22050: 0x88890001
 914 set rate 0: 0x88890001
-915 latency: 0x80004003 3735928559
+915 latency: 0x80004003 0
 916 start: 0x88890001
 917 latency: 0x88890001 3735928559
 918 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=1 flags=0x1000000 d=1000000 guid=true: 0x8889000e session=Some("default")
@@ -853,11 +853,11 @@
 976 set event 0x44: 0x88890001
 977 set rate 0: 0x88890001
 978 set event 0x44: 0x88890001
-979 padding: 0x80004003 3735928559
+979 padding: 0x80004003 0
 980 padding: 0x88890001 3735928559
 981 set rate 44100: 0x88890001
 982 session ids: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" ends with pid true
-983 latency: 0x80004003 3735928559
+983 latency: 0x80004003 0
 984 mix format: 0x80004003 
 986 service iid#7: 0x88890001 0
 987 session ids: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" ends with pid true
@@ -965,12 +965,12 @@
 1104 manager nulls: 0x800706f4 0x800706f4 0x800706f4
 1105 channel vol 2 1: 0x80070057 get 0x80070057 0xdeadbeef; all 1: 0x80070057 0x80070057 [3e800000]; count 0x0 2
 1106 latency: 0x88890001 3735928559
-1107 simple vol NaN: 0x80070057 get 0x800706f4 0x1bdba0; mute 1: 0x0 get 0x800706f4 1825696
+1107 simple vol NaN: 0x80070057 get 0x800706f4 0x0; mute 1: 0x0 get 0x800706f4 0
 1109 endpoint set ch 1 scalar 1.5: 0x80070057; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [0, 3f800000, c2028000, 3f000000, 1, 828, 829, 2, 0, c2828000, 0, 3d000000]
 1111 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x40000 d=200000001 guid=true: 0x88890016 session=Some("default")
 1112 client qi(adj) iid#1: 0x80004002 0
 1113 endpoint set ch 1 db -0.03125: 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [0, 3f800000, bd000000, 3f7fe09d, 1, 828, 829, 2, 0, c2828000, 0, 3d000000]
-1114 simple vol 0: 0x0 get 0x800706f4 0xdeadbeef; mute 1: 0x0 get 0x800706f4 3735928559
+1114 simple vol 0: 0x0 get 0x800706f4 0x0; mute 1: 0x0 get 0x800706f4 0
 1115 session notify: 0x800706f4 0x0 system 0x1 ducking 0x0
 1116 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x1 d=10000000 guid=false: 0x88890021 session=Some("default")
 1117 endpoint qi 0x0 endpoint; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [0, 3f800000, c2028000, 3f000000, 1, 828, 829, 2, 0, c2828000, 0, 3d000000]
@@ -1072,7 +1072,7 @@
 1219 padding: 0x88890001 3735928559
 1220 stop: 0x88890001
 1222 new client#78
-1223 session state: 0x800706f4 1833360
+1223 session state: 0x800706f4 0
 1224 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
 1225 period: 0x80004003 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 1226 latency: 0x88890001 3735928559
@@ -1171,7 +1171,7 @@
 1328 channel vol 2 1: 0x80070057 get 0x80070057 0xdeadbeef; all 1: 0x800706f4 0x80070057 [3f800000]; count 0x0 2
 1329 client release: 1
 1330 new client#89
-1331 simple vol 1: 0x0 get 0x800706f4 0xdeadbeef; mute 1: 0x0 get 0x800706f4 3735928559
+1331 simple vol 1: 0x0 get 0x800706f4 0x0; mute 1: 0x0 get 0x800706f4 0
 1332 set event 0x44: 0x88890001
 1333 client qi(adj) iid#99: 0x0 client#89
 1334 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x40000 d=100000 guid=false: 0x0 session=Some("default")
@@ -1233,7 +1233,7 @@
 1390 session notify: 0x800706f4 0x0 system 0x1 ducking 0x0
 1391 endpoint step up 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c11f8000, 3f58e38e, 0, 3f800000, 1, 6e9, 829, 2, 0, c2828000, 0, 3d000000]
 1392 mix format: 0x0 0x7d4dbc6d08589d17
-1393 simple vol NaN: 0x80070057 get 0x800706f4 0xdeadbeef; mute 1: 0x0 get 0x800706f4 3735928559
+1393 simple vol NaN: 0x80070057 get 0x800706f4 0x0; mute 1: 0x0 get 0x800706f4 0
 1394 get buffer 882: 0x0 buffer
 1395 padding: 0x88890001 3735928559
 1396 new client#92
@@ -1330,7 +1330,7 @@
 1487 channel vol 1 0: 0x0 get 0x0 0x0; all 1: 0x80070057 0x80070057 [3e800000]; count 0x0 2
 1488 endpoint step up 0x0; reads [0, 0, 80070057, 80070057, 0, 0, 0, 0, 0] [c11e8000, 3f592254, 0, 0, 1, 6eb, 829, 2, 0, c2828000, 0, 3d000000]
 1489 latency: 0x0 300000
-1490 padding: 0x80004003 3735928559
+1490 padding: 0x80004003 0
 1491 stream vol 31 NaN: 0x80070057 get 0x80070057 0xdeadbeef; all 1: 0x80070057 0x80070057 [3e800000]; count 0x0 2
 1492 buffer size: 0x0 882
 1493 stop: 0x1
@@ -1564,7 +1564,7 @@
 1721 endpoint step down 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c1208000, 3f58a4c8, c2028000, 3f000000, 0, 6e7, 829, 2, 0, c2828000, 0, 3d000000]
 1722 mix format: 0x0 0x7d4dbc6d08589d17
 1723 supported 0x3/33ch/44100/12b/blk49/avg2160900/cb22/v0/None mode=2: 0x80070057 0x0
-1724 buffer size: 0x80004003 3735928559
+1724 buffer size: 0x80004003 0
 1725 initialize 0x3/8ch/22050/16b/blk16/avg352800/cb22/v0/None mode=0 flags=0x0 d=100000 guid=false: 0x80070057 session=Some("default")
 1726 stream vol 31 NaN: 0x80070057 get 0x80070057 0xdeadbeef; all 3: 0x80070057 0x80070057 [3e800000, 3e800000, 0]; count 0x0 2
 1727 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -1573,7 +1573,7 @@
 1730 stop: 0x88890001
 1731 new client#111
 1732 endpoint set ch 2 scalar 0: 0x80070057; reads [0, 0, 80070057, 80070057, 0, 0, 0, 0, 0] [c1208000, 3f58a4c8, 0, 0, 0, 6e7, 829, 2, 0, c2828000, 0, 3d000000]
-1733 padding: 0x80004003 3735928559
+1733 padding: 0x80004003 0
 1734 set event 0x0: 0x88890001
 1735 mix format: 0x0 0x7d4dbc6d08589d17
 1736 endpoint qi 0x0 endpoint; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c1208000, 3f58a4c8, 0, 3f800000, 0, 6e7, 829, 2, 0, c2828000, 0, 3d000000]
@@ -1650,7 +1650,7 @@
 1807 buffer size: 0x88890001 3735928559
 1808 start: 0x88890001
 1809 buffer size: 0x88890001 3735928559
-1810 simple vol 1: 0x0 get 0x800706f4 0x21ff20; mute 0: 0x0 get 0x800706f4 2228000
+1810 simple vol 1: 0x0 get 0x800706f4 0x0; mute 0: 0x0 get 0x800706f4 0
 1811 endpoint set ch 0 db -70: 0x80070057; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c1210000, 3f588565, 0, 3f800000, 0, 6e6, 829, 2, 0, c2828000, 0, 3d000000]
 1812 set rate 22050: 0x88890001
 1813 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x0 d=200000001 guid=false: 0x88890016 session=Some("default")
@@ -1814,7 +1814,7 @@
 1971 endpoint set db -10: 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c1200000, 3f58c42b, 0, 3f800000, 0, 6e8, 829, 2, 0, c2828000, 0, 3d000000]
 1972 client qi iid#5: 0x80004002 0
 1973 mix format: 0x0 0x7d4dbc6d08589d17
-1974 padding: 0x80004003 3735928559
+1974 padding: 0x80004003 0
 1975 reset: 0x88890001
 1976 new client#126
 1977 release buffer 0 flags=4: 0x0 padding=Some(0)
@@ -1828,7 +1828,7 @@
 1985 stream vol 1 0.5: 0x0 get 0x0 0x3f000000; all 1: 0x80070057 0x80070057 [3f000000]; count 0x0 2
 1986 padding: 0x88890001 3735928559
 1987 service iid#6: 0x88890001 0
-1988 latency: 0x80004003 3735928559
+1988 latency: 0x80004003 0
 1989 stop: 0x88890001
 1990 endpoint mute 0: 0x1; reads [0, 0, 80070057, 80070057, 0, 0, 0, 0, 0] [c1200000, 3f58c42b, 0, 0, 0, 6e8, 829, 2, 0, c2828000, 0, 3d000000]
 1991 start: 0x88890001
@@ -1883,7 +1883,7 @@
 2040 get buffer 0: 0x88890007 0x0
 2041 new client#131
 2042 endpoint qi 0x0 endpoint; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [0, 3f800000, 0, 3f800000, 0, 828, 829, 2, 0, c2828000, 0, 3d000000]
-2043 buffer size: 0x80004003 3735928559
+2043 buffer size: 0x80004003 0
 2044 stop: 0x88890001
 2045 get buffer 0: 0x88890007 0x0
 2046 set event 0x44: 0x88890001
@@ -1924,7 +1924,7 @@
 2081 simple vol NaN: 0x80070057 get 0x0 0x3f000000; mute 0: 0x0 get 0x0 0
 2082 new client#131
 2083 manager qi iid#13: 0x80004002 0 ref 1
-2084 latency: 0x80004003 3735928559
+2084 latency: 0x80004003 0
 2085 client release: 0
 2086 initialize 0x2/32ch/44100/32b/blk128/avg5644800/cb0/v0/None mode=0 flags=0x1 d=0 guid=false: 0x88890021 session=Some("default")
 2087 initialize 0x3/2ch/48000/12b/blk3/avg144000/cb22/v0/None mode=2 flags=0x80000000 d=100000 guid=true: 0x80070057 session=Some("default")
@@ -2013,7 +2013,7 @@
 2170 supported 0xfffe/2ch/0/32b/blk8/avg0/cb30/v24/Some(3) mode=1: 0x8889000e -
 2171 initialize 0x6/2ch/192000/32b/blk8/avg1536000/cb0/v0/None mode=0 flags=0x1000000 d=1000000 guid=false: 0x88890008 session=Some("default")
 2172 initialize 0xfffe/2ch/44100/24b/blk6/avg264600/cb21/v33/Some(3) mode=1 flags=0x20000 d=100000 guid=false: 0x8889000e session=Some("default")
-2173 latency: 0x80004003 3735928559
+2173 latency: 0x80004003 0
 2174 reset: 0x88890001
 2175 new client#139
 2176 period: 0x80004003 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -2025,7 +2025,7 @@
 2182 period: 0x80004003 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 2183 set rate 22050: 0x88890001
 2184 set rate 44100: 0x88890001
-2185 latency: 0x80004003 3735928559
+2185 latency: 0x80004003 0
 2186 stream vol 2 0: 0x80070057 get 0x80070057 0xdeadbeef; all 1: 0x80070057 0x80070057 [3f800000]; count 0x0 2
 2187 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
 2188 client addref(adj): 2
@@ -2116,7 +2116,7 @@
 2273 reset: 0x88890005
 2274 stream vol 1 0.5: 0x0 get 0x0 0x3f000000; all 1: 0x80070057 0x80070057 [3e800000]; count 0x0 2
 2275 padding: 0x0 0
-2276 padding: 0x80004003 3735928559
+2276 padding: 0x80004003 0
 2277 clock freq 0x0 352800, pos 0x0 0, chars 0x0
 2278 stop: 0x0
 2279 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=2 flags=0x100000 d=1000000 guid=true: 0x80070057 session=Some("default")
@@ -2146,13 +2146,13 @@
 2303 reset: 0x88890001
 2304 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=2 flags=0x40000 d=1000000 guid=true: 0x80070057 session=Some("default")
 2305 channel vol 2 1: 0x80070057 get 0x80070057 0xdeadbeef; all 3: 0x800706f4 0x80070057 [3e800000, 3f800000, 0]; count 0x0 2
-2306 simple vol 0.5: 0x0 get 0x800706f4 0xdeadbeef; mute 7: 0x0 get 0x800706f4 3735928559
+2306 simple vol 0.5: 0x0 get 0x800706f4 0x0; mute 7: 0x0 get 0x800706f4 0
 2307 get buffer 100000: 0x88890006 0x0
 2308 client addref: 3
 2309 channel vol 0 1.5: 0x80070057 get 0x0 0x3e800000; all 3: 0x80070057 0x80070057 [3e800000, 3f800000, 0]; count 0x0 2
 2310 simple vol 0: 0x0 get 0x0 0x0; mute 0: 0x0 get 0x0 0
 2311 supported 0x1/3ch/44100/32b/blk12/avg529200/cb0/v0/None mode=2: 0x80070057 0x0
-2312 padding: 0x80004003 3735928559
+2312 padding: 0x80004003 0
 2313 service iid#13: 0x88890001 0
 2314 endpoint mute 0: 0x1; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c2828000, 0, 0, 3f800000, 0, 0, 829, 2, 0, c2828000, 0, 3d000000]
 2315 new client#143
@@ -2246,7 +2246,7 @@
 2403 start: 0x88890001
 2404 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=1 flags=0x20000 d=0 guid=true: 0x8889000e session=Some("default")
 2405 stop: 0x88890001
-2406 session state: 0x800706f4 3735928559
+2406 session state: 0x800706f4 0
 2407 supported 0x2/8ch/22050/32b/blk32/avg705600/cb0/v0/None mode=2: 0x80070057 0x0
 2408 initialize 0x2/32ch/48000/32b/blk3/avg144000/cb0/v0/None mode=0 flags=0x1000000 d=100000 guid=false: 0x88890008 session=Some("default")
 2409 new client#148
@@ -2300,7 +2300,7 @@
 2457 initialize 0xfffe/1ch/44100/12b/blk7/avg308700/cb0/v0/Some(3) mode=0 flags=0x1000000 d=1000000 guid=false: 0x80070057 session=Some("default")
 2458 stream vol 32 1.5: 0x80070057 get 0x80070057 0xdeadbeef; all 2: 0x0 0x0 [3f800000, 3e800000]; count 0x0 2
 2459 stop: 0x88890001
-2460 simple vol 0.5: 0x0 get 0x800706f4 0xdeadbeef; mute 0: 0x0 get 0x800706f4 3735928559
+2460 simple vol 0.5: 0x0 get 0x800706f4 0x0; mute 0: 0x0 get 0x800706f4 0
 2461 service iid#2: 0x88890001 0
 2462 clock freq 0x0 352800, pos 0x0 0, chars 0x0
 2463 release buffer 100 flags=4 taken=441: 0x80070057 padding=Some(442)
@@ -2370,7 +2370,7 @@
 2527 service iid#10: 0x88890001 0
 2528 new client#160
 2529 padding: 0x88890001 3735928559
-2530 simple vol 0.5: 0x0 get 0x800706f4 0xdeadbeef; mute 0: 0x0 get 0x800706f4 3735928559
+2530 simple vol 0.5: 0x0 get 0x800706f4 0x0; mute 0: 0x0 get 0x800706f4 0
 2531 get buffer 1: 0x88890007 0x0
 2532 service iid#1: 0x88890001 0
 2533 channel vol 0 1: 0x0 get 0x0 0x3f800000; all 2: 0x800706f4 0x0 [3f800000, 0]; count 0x0 2
@@ -2416,7 +2416,7 @@
 2573 get buffer 882: 0x0 buffer
 2574 endpoint step up 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [0, 3f800000, c2828000, 0, 0, 828, 829, 2, 0, c2828000, 0, 3d000000]
 2575 initialize 0x3/32ch/44100/0b/blk0/avg0/cb22/v0/None mode=0 flags=0x80000000 d=100000 guid=true: 0x80070057 session=Some("default")
-2576 buffer size: 0x80004003 3735928559
+2576 buffer size: 0x80004003 0
 2577 start: 0x88890001
 2578 new client#167
 2579 new client#168
@@ -2450,7 +2450,7 @@
 2607 set rate 0: 0x88890001
 2608 endpoint set ch 2 db 1: 0x80070057; reads [0, 0, 80070057, 80070057, 0, 0, 0, 0, 0] [bd000000, 3f7fe09d, 0, 0, 0, 827, 829, 2, 0, c2828000, 0, 3d000000]
 2609 get buffer 100000: 0x88890006 0x0
-2610 buffer size: 0x80004003 3735928559
+2610 buffer size: 0x80004003 0
 2611 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x40000 d=200000001 guid=false: 0x88890016 session=Some("default")
 2612 start: 0x88890001
 2613 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
@@ -2509,7 +2509,7 @@
 2666 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
 2667 initialize 0x6/2ch/22050/32b/blk8/avg176400/cb0/v0/None mode=2 flags=0x1000000 d=100000 guid=true: 0x80070057 session=Some("default")
 2668 buffer size: 0x88890001 3735928559
-2669 buffer size: 0x80004003 3735928559
+2669 buffer size: 0x80004003 0
 2670 latency: 0x88890001 3735928559
 2671 simple vol 1.5: 0x80070057 get 0x0 0x3f000000; mute 1: 0x0 get 0x0 1
 2672 mix format: 0x0 0x7d4dbc6d08589d17
@@ -2606,7 +2606,7 @@
 2763 endpoint qi 0x0 endpoint; reads [0, 0, 80070057, 80070057, 0, 0, 0, 0, 0] [c1200000, 3f58c42b, 0, 0, 0, 6e8, 829, 2, 0, c2828000, 0, 3d000000]
 2764 endpoint step up 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c11f8000, 3f58e38e, 0, 3f800000, 0, 6e9, 829, 2, 0, c2828000, 0, 3d000000]
 2765 set event 0x44: 0x88890001
-2766 latency: 0x80004003 3735928559
+2766 latency: 0x80004003 0
 2767 session group set=false: 0x0 get 0x0 the set one
 2768 mix format: 0x0 0x7d4dbc6d08589d17
 2769 release buffer 1 flags=0 taken=1: 0x0 padding=Some(1766)
@@ -2744,7 +2744,7 @@
 2901 session qi iid#5: 0x80004003 untouched
 2902 set event 0x0: 0x88890001
 2903 start: 0x88890001
-2904 latency: 0x80004003 3735928559
+2904 latency: 0x80004003 0
 2905 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
 2906 release buffer 0 flags=4: 0x0 padding=Some(1766)
 2907 service iid#13: 0x88890001 0
@@ -2813,9 +2813,9 @@
 2970 clock freq 0x80004003 0, pos 0x80004003 0, chars 0x80004003
 2971 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=1 flags=0x1000000 d=1000000 guid=true: 0x88890002 session=Some("1")
 2972 stream vol 0 NaN: 0x80070057 get 0x0 0x3f800000; all 3: 0x80070057 0x80070057 [3f800000, 3f800000, 0]; count 0x0 2
-2973 buffer size: 0x80004003 3735928559
+2973 buffer size: 0x80004003 0
 2974 period: 0x0 [a0, 86, 1, 0, 0, 0, 0, 0, 30, 75, 0, 0, 0, 0, 0, 0]
-2975 simple vol NaN: 0x80070057 get 0x800706f4 0x444cd0; mute 7: 0x0 get 0x800706f4 4476112
+2975 simple vol NaN: 0x80070057 get 0x800706f4 0x0; mute 7: 0x0 get 0x800706f4 0
 2976 reset: 0x0
 2977 session name "Game": 0x0 get 0x0 "Game"
 2978 release buffer 1 flags=0: 0x88890007 padding=Some(1766)
@@ -2907,7 +2907,7 @@
 3064 service iid#6: 0x88890001 0
 3065 new client#190
 3066 client release: 0
-3067 latency: 0x80004003 3735928559
+3067 latency: 0x80004003 0
 3068 start: 0x88890001
 3069 simple vol 1.5: 0x80070057 get 0x0 0x3f000000; mute 7: 0x0 get 0x0 1
 3070 release buffer 1 flags=0 taken=882: 0x0 padding=Some(1767)
@@ -2966,7 +2966,7 @@
 3123 initialize 0xfffe/1ch/44100/16b/blk2/avg88200/cb22/v20/None mode=0 flags=0x100000 d=100000 guid=false: 0x80070057 session=Some("default")
 3124 set rate 22050: 0x88890001
 3125 service iid#3: 0x88890001 0
-3126 simple vol 1: 0x0 get 0x800706f4 0xdeadbeef; mute 7: 0x0 get 0x800706f4 3735928559
+3126 simple vol 1: 0x0 get 0x800706f4 0x0; mute 7: 0x0 get 0x800706f4 0
 3127 start: 0x88890001
 3128 latency: 0x88890001 3735928559
 3129 service iid#12: 0x88890001 0
@@ -3226,7 +3226,7 @@
 3383 session ids: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" ends with pid true
 3384 manager nulls: 0x800706f4 0x800706f4 0x800706f4
 3385 release buffer 441 flags=1 taken=1: 0x88890009 padding=Some(1767)
-3386 buffer size: 0x80004003 3735928559
+3386 buffer size: 0x80004003 0
 3387 session name "Game": 0x0 get 0x0 "Game"
 3388 service iid#1: 0x88890001 0
 3389 stream vol 32 0: 0x80070057 get 0x80070057 0xdeadbeef; all 2: 0x0 0x0 [3e800000, 3f800000]; count 0x0 2
@@ -3291,7 +3291,7 @@
 3448 service iid#0: 0x80004003 untouched
 3449 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=1 flags=0x1 d=200000001 guid=true: 0x88890021 session=Some("default")
 3450 start: 0x88890005
-3451 padding: 0x80004003 3735928559
+3451 padding: 0x80004003 0
 3452 start: 0x88890005
 3453 client qi iid#0: 0x0 client#212
 3454 initialize 0x1/8ch/48000/24b/blk24/avg1152000/cb22/v0/None mode=0 flags=0x40000 d=200000001 guid=false: 0x88890002 session=Some("default")
@@ -3573,7 +3573,7 @@
 3730 set rate -1: 0x88890001
 3731 mix format: 0x0 0x7d4dbc6d08589d17
 3732 set rate -1: 0x88890001
-3733 simple vol 0.5: 0x0 get 0x800706f4 0x459870; mute 7: 0x0 get 0x800706f4 4561008
+3733 simple vol 0.5: 0x0 get 0x800706f4 0x0; mute 7: 0x0 get 0x800706f4 0
 3734 start: 0x88890001
 3735 reset: 0x88890001
 3736 release buffer 5000 flags=0: 0x88890007 padding=Some(2208)
@@ -3714,7 +3714,7 @@
 3871 set event 0x0: 0x88890001
 3872 client qi(adj) iid#99: 0x0 client#236
 3873 stop: 0x88890001
-3874 latency: 0x80004003 3735928559
+3874 latency: 0x80004003 0
 3875 service iid#10: 0x88890001 0
 3876 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=1 flags=0x80000000 d=100000 guid=true: 0x80070057 session=Some("default")
 3877 initialize 0x2/2ch/44100/32b/blk8/avg352800/cb0/v0/None mode=1 flags=0x40000 d=10000000 guid=false: 0x8889000e session=Some("default")
@@ -4026,7 +4026,7 @@
 4183 buffer size: 0x0 882
 4184 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x1 d=0 guid=false: 0x88890021 session=Some("default")
 4185 buffer size: 0x0 882
-4186 simple vol NaN: 0x80070057 get 0x800706f4 0x5a1fb0; mute 7: 0x0 get 0x800706f4 5906352
+4186 simple vol NaN: 0x80070057 get 0x800706f4 0x0; mute 7: 0x0 get 0x800706f4 0
 4187 service iid#1: 0x0 new
 4188 manager enum: 0x0 count 0x0 3 get count 0x80070057 new
 4189 endpoint set scalar 0: 0x0; reads [0, 0, 0, 0, 0, 0, 0, 0, 0] [c2828000, 0, c2828000, 0, 0, 0, 829, 2, 0, c2828000, 0, 3d000000]
@@ -4067,7 +4067,7 @@
 4224 get buffer 100000: 0x88890006 0x0
 4225 release buffer 0 flags=1: 0x0 padding=Some(1)
 4226 session name "": 0x0 get 0x0 ""
-4227 latency: 0x80004003 3735928559
+4227 latency: 0x80004003 0
 4228 supported 0xfffe/33ch/192000/16b/blk66/avg12672000/cb30/v24/Some(3) mode=1: 0x8889000e 0x0
 4229 padding: 0x88890001 3735928559
 4230 client release(adj): 0
@@ -4395,7 +4395,7 @@
 4552 padding: 0x0 0
 4553 set rate 384000.5: 0x80070057
 4554 stop: 0x1
-4555 latency: 0x80004003 3735928559
+4555 latency: 0x80004003 0
 4556 simple vol NaN: 0x80070057 get 0x0 0x0; mute 7: 0x0 get 0x0 1
 4557 stop: 0x1
 4558 get buffer 441: 0x88890006 0x0
@@ -4485,7 +4485,7 @@
 4642 clock freq 0x0 352800, pos 0x0 0, chars 0x0
 4643 stream vol 32 0: 0x80070057 get 0x80070057 0xdeadbeef; all 6: 0x80070057 0x80070057 [3f000000, 0, 0, 0, 0, 0]; count 0x0 2
 4644 service iid#13: 0x80004003 untouched
-4645 session state: 0x800706f4 3735928559
+4645 session state: 0x800706f4 0
 4646 client addref(adj): 2
 4647 buffer size: 0x88890001 3735928559
 4648 initialize 0xfffe/2ch/44100/32b/blk8/avg352800/cb22/v32/Some(3) mode=0 flags=0x0 d=200000001 guid=false: 0x88890016 session=Some("default")
@@ -4598,7 +4598,7 @@
 4755 service iid#9: 0x88890001 0
 4756 new client#297
 4757 start: 0x88890001
-4758 padding: 0x80004003 3735928559
+4758 padding: 0x80004003 0
 4759 get buffer 100000: 0x88890006 0x0
 4760 service iid#9: 0x88890001 0
 4761 channel vol 1 1: 0x0 get 0x0 0x3f800000; all 2: 0x0 0x0 [3e800000, 3e800000]; count 0x0 2
@@ -4769,7 +4769,7 @@
 4926 session ids: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}|" ends with pid true
 4927 simple vol 1: 0x0 get 0x0 0x3f800000; mute 7: 0x0 get 0x0 1
 4928 new client#308
-4929 latency: 0x80004003 3735928559
+4929 latency: 0x80004003 0
 4930 simple vol NaN: 0x80070057 get 0x0 0x3f000000; mute 7: 0x0 get 0x0 1
 4931 start: 0x88890001
 4932 endpoint set ch 2 db -65.25: 0x80070057; reads [0, 0, 80070057, 80070057, 0, 0, 0, 0, 0] [0, 3f800000, 0, 0, 1, 828, 829, 2, 0, c2828000, 0, 3d000000]
@@ -4822,7 +4822,7 @@
 4979 channel vol 1 1.5: 0x80070057 get 0x0 0x3f800000; all 3: 0x80070057 0x80070057 [3f800000, 3f800000, 0]; count 0x0 2
 4980 service iid#0: 0x80004002 0
 4981 client addref: 5
-4982 padding: 0x80004003 3735928559
+4982 padding: 0x80004003 0
 4983 buffer size: 0x0 882
 4984 client addref: 6
 4985 new client#310

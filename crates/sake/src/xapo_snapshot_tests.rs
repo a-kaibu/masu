@@ -287,6 +287,13 @@ fn xapo_snapshot() {
             w32(gp + 2 * ps(), r.pick(&[0u32, 1, 2, 8]));
             let n = r.pick(&[0u32, 4, 12, 52]);
             let hr = call(GetParameters, &[o + ps(), gp, n]);
+            // (the level pointers are heap addresses: zeros where they were left)
+            if rp(gp) == peaks {
+                putp(gp, 0);
+            }
+            if rp(gp + ps()) == rmss {
+                putp(gp + ps(), 0);
+            }
             writeln!(out, "  get {n}: {hr:#x} params={:#x} peaks={:#x} rms={:#x}", hash(gp, 64), hash(peaks, 256), hash(rmss, 256)).unwrap();
             mem::heap_free(gp);
             mem::heap_free(peaks);

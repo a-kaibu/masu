@@ -157,8 +157,9 @@ fn x3daudio_snapshot() {
         let flags = flag_bits.iter().fold(0, |a, b| if r.below(2) == 0 { a | b.0 } else { a });
         let dst = r.pick(&[1u32, 2, 2, 6, 8, 0, 0xcccc_cccc, 64]);
         let (src, d) = counts(channels, dst);
-        let pm = mem::heap_alloc(4 * 64 * 64, true);
-        let pd = mem::heap_alloc(4 * 64, true);
+        // (one word more than the largest: the word past what is written shows an overrun)
+        let pm = mem::heap_alloc(4 * 64 * 64 + 4, true);
+        let pd = mem::heap_alloc(4 * 64 + 4, true);
         let dp = mem::heap_alloc(48, true);
         w32(dp, if r.below(10) == 0 { 0 } else { pm });
         w32(dp + 4, if r.below(10) == 0 { 0 } else { pd });
