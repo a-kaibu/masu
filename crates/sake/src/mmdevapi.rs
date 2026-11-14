@@ -517,3 +517,7 @@ mod tests {
         assert_eq!(crate::wasapi::shared_supported(&w), 0);
     }
 }
+
+#[cfg(test)]
+#[path = "mmdevapi_snapshot_tests.rs"]
+mod snapshot_tests;

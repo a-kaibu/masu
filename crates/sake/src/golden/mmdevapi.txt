@@ -1,0 +1,3000 @@
+create_instance: Some("enumerator") None
+0 open store 4096: 0x80070057 untouched
+1 qi endpoint iid#2: 0x80004002 0
+2 ep flow: 0x0 0
+3 ps count: 0x80004003 3735928559
+4 open store 2: 0x0 store
+6 ep flow: 0x0 0
+7 ps set/commit: 0x80030005 0x80030005 one=1
+8 enum flow=1 mask=0xe: 0x0 new
+9 unregister 0x0: 0x80004003
+10 ps set/commit: 0x80030005 0x80030005 one=1
+11 activate iid#9 p=true: 0x0 new
+12 default flow=0 role=2: 0x0 device
+13 activate iid#9 p=true: 0x0 new
+14 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+15 activate iid#10 p=true: 0x80004002 0
+16 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+17 ps count: 0x0 7
+18 activate iid#9 p=true: 0x0 new
+19 ps set/commit: 0x80030005 0x80030005 one=1
+20 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+21 unregister 0x3000: 0x80070490
+22 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+23 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+24 ps set/commit: 0x80030005 0x80030005 one=1
+25 col qi iid#3: 0x80004002 0 refs=1
+26 activate iid#9 p=true: 0x0 new
+27 default flow=3 role=2: 0x80070057 0
+28 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+29 activate iid#8 p=false: 0x80004003 untouched
+30 open store 2: 0x0 store
+31 open store 3: 0x80070057 untouched
+32 enum flow=2 mask=0x0: 0x80004003 untouched
+33 ps set/commit: 0x80030005 0x80030005 one=1
+34 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+35 ps count: 0x0 7
+36 en addref/release: +1 +0
+37 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+38 enum flow=1 mask=0x0: 0x0 new
+39 enum flow=3 mask=0x1: 0x80070057 0
+40 register 0x3000: 0x0
+41 col addref: 2
+42 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+43 dev state: 0x0 1
+44 ps set/commit: 0x80030005 0x80030005 one=1
+45 register 0x3000: 0x0
+46 activate iid#6 p=false: 0x80004003 untouched
+47 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+48 ps set/commit: 0x80030005 0x80030005 one=1
+49 register 0x1000: 0x0
+50 col item 4294967295: 0x80070057 0
+51 open store 1: 0x0 store
+52 enum flow=3 mask=0xe: 0x80070057 0
+53 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+54 dev state: 0x80004003 3735928559
+55 unregister 0x1000: 0x0
+56 enum flow=0 mask=0x0: 0x0 new
+57 en addref/release: +1 +0
+58 qi enumerator iid#5: 0x80004002 0
+59 ps get [3, d8, a5, 1d],0: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+60 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+61 default flow=0 role=3: 0x80070057 0
+62 qi enumerator iid#7: 0x80004002 0
+63 dev state: 0x0 1
+64 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+65 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+66 ps set/commit: 0x80030005 0x80030005 one=1
+67 activate iid#0 p=false: 0x80004003 untouched
+68 get "" id=true: 0x80070057 0
+69 col release: 0
+70 enum flow=2 mask=0x0: 0x0 new
+71 unregister 0x0: 0x80004003
+72 ps count: 0x0 7
+73 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+74 activate iid#1 p=true: 0x80004002 0
+75 ps count: 0x0 7
+76 register 0x3000: 0x0
+77 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+78 col release: 0
+79 register 0x0: 0x80004003
+80 col addref: 3
+81 ep flow: 0x0 0
+82 open store 4096: 0x80070057 untouched
+83 en addref/release: +1 +0
+84 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+85 get "" id=true: 0x80070057 0
+86 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+87 unregister 0x1000: 0x80070490
+88 qi endpoint iid#2: 0x80004002 0
+89 unregister 0x0: 0x80004003
+90 open store 1: 0x0 store
+91 register 0x1000: 0x0
+92 activate iid#0 p=true: 0x80004002 0
+93 activate iid#11 p=true: 0x80004002 0
+94 activate iid#9 p=true: 0x0 new
+95 unregister 0x0: 0x80004003
+96 en addref/release: +1 +0
+97 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+98 ps set/commit: 0x80030005 0x80030005 one=1
+99 default flow=0 role=2: 0x0 device
+100 enum flow=0 mask=0x10: 0x80070057 0
+101 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+102 ps set/commit: 0x80030005 0x80030005 one=1
+103 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+104 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+105 activate iid#7 p=true: 0x0 new
+106 en addref/release: +1 +0
+107 ps set/commit: 0x80030005 0x80030005 one=1
+108 en addref/release: +1 +0
+109 unregister 0x1000: 0x0
+110 activate iid#7 p=true: 0x0 new
+111 enum flow=1 mask=0x1: 0x0 new
+112 ps set/commit: 0x80030005 0x80030005 one=1
+113 en addref/release: +1 +0
+114 en addref/release: +1 +0
+115 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+116 col item 0: 0x80070057 0
+117 activate iid#7 p=true: 0x0 new
+118 register 0x0: 0x80004003
+119 en addref/release: +1 +0
+120 dev state: 0x80004003 3735928559
+121 ps count: 0x0 7
+122 col release: 0
+123 default flow=1 role=1: 0x80070490 0
+124 register 0x0: 0x80004003
+125 register 0x3000: 0x0
+126 dev state: 0x0 1
+127 activate iid#5 p=true: 0x0 store
+128 dev state: 0x80004003 3735928559
+129 en addref/release: +1 +0
+130 default flow=3 role=0: 0x80070057 0
+131 unregister 0x3000: 0x0
+132 activate iid#4 p=true: 0x80004002 0
+133 activate iid#0 p=true: 0x80004002 0
+134 default flow=2 role=1: 0x80070490 0
+135 dev state: 0x0 1
+136 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+137 register 0x3000: 0x0
+138 dev id: 0x80004003 ""
+139 enum flow=1 mask=0x10: 0x80004003 untouched
+140 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+141 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+142 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+143 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+144 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+145 enum flow=0 mask=0xf: 0x0 new
+146 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+147 register 0x2000: 0x0
+148 unregister 0x0: 0x80004003
+149 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+150 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+151 en addref/release: +1 +0
+152 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+153 ps count: 0x0 7
+154 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+155 ps count: 0x0 7
+156 register 0x3000: 0x0
+157 unregister 0x0: 0x80004003
+158 register 0x0: 0x80004003
+159 col release: 0
+160 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+161 col addref: 4
+162 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+163 register 0x0: 0x80004003
+164 default flow=1 role=0: 0x80070490 0
+165 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+166 ps set/commit: 0x80030005 0x80030005 one=1
+167 default flow=1 role=1: 0x80070490 0
+168 enum flow=3 mask=0x2: 0x80070057 0
+169 col qi iid#4: 0x80004002 0 refs=4
+170 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+171 col release: 3
+172 enum flow=2 mask=0xf: 0x80004003 untouched
+173 enum flow=2 mask=0x1: 0x0 new
+174 ep flow: 0x0 0
+175 col count: 0x0 1
+176 register 0x2000: 0x0
+177 ep flow: 0x0 0
+178 dev state: 0x0 1
+179 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+180 ep flow: 0x0 0
+181 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+182 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+183 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+184 ps count: 0x0 7
+185 ps count: 0x0 7
+186 activate iid#1 p=true: 0x80004003 untouched
+187 col qi iid#8: 0x80004002 0 refs=1
+188 dev state: 0x0 1
+189 register 0x2000: 0x0
+190 ep flow: 0x0 0
+191 enum flow=0 mask=0xf: 0x0 new
+192 activate iid#6 p=true: 0x0 new
+193 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+194 ps set/commit: 0x80030005 0x80030005 one=1
+195 open store 0: 0x0 store
+196 en addref/release: +1 +0
+197 ps get [4d, 6, 9f, f1],0: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+198 activate iid#0 p=true: 0x80004002 0
+199 en addref/release: +1 +0
+200 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+201 enum flow=2 mask=0xe: 0x0 new
+202 qi enumerator iid#2: 0x80004003 untouched
+203 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+204 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+205 register 0x0: 0x80004003
+206 unregister 0x0: 0x80004003
+207 register 0x3000: 0x0
+208 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+209 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+210 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+211 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+212 register 0x3000: 0x0
+213 dev id: 0x80004003 ""
+214 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+215 col count: 0x0 0
+216 ep flow: 0x0 0
+217 ps count: 0x0 7
+218 en addref/release: +1 +0
+219 dev state: 0x0 1
+220 open store 3: 0x80070057 untouched
+221 dev state: 0x0 1
+222 ps set/commit: 0x80030005 0x80030005 one=1
+223 open store 3: 0x80070057 untouched
+224 ps set/commit: 0x80030005 0x80030005 one=1
+225 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+226 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+227 qi store iid#1: 0x80004002 0
+228 dev state: 0x0 1
+229 default flow=0 role=2: 0x0 device
+230 ps count: 0x0 7
+231 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+232 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+233 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+234 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+235 ep flow: 0x0 0
+236 default flow=1 role=3: 0x80070057 0
+237 ps set/commit: 0x80030005 0x80030005 one=1
+238 ps count: 0x0 7
+239 open store 2: 0x80004003 untouched
+240 ps set/commit: 0x80030005 0x80030005 one=1
+241 en addref/release: +1 +0
+242 dev state: 0x0 1
+243 qi enumerator iid#8: 0x80004002 0
+244 col qi iid#4: 0x80004002 0 refs=1
+245 qi enumerator iid#4: 0x80004002 0
+246 unregister 0x3000: 0x0
+247 col addref: 2
+248 open store 2: 0x0 store
+249 ep flow: 0x0 0
+250 qi device iid#6: 0x80004003 untouched
+251 open store 1: 0x0 store
+252 unregister 0x0: 0x80004003
+253 activate iid#3 p=true: 0x80004002 0
+254 activate iid#11 p=true: 0x80004003 untouched
+255 dev state: 0x0 1
+256 open store 4096: 0x80070057 untouched
+257 open store 3: 0x80070057 untouched
+258 get "" id=false: 0x80004003 untouched
+259 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+260 open store 0: 0x80004003 untouched
+261 col addref: 3
+262 default flow=2 role=2: 0x80070490 0
+263 open store 1: 0x0 store
+264 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+265 ep flow: 0x0 0
+266 unregister 0x3000: 0x0
+267 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+268 ps count: 0x0 7
+269 register 0x0: 0x80004003
+270 ps set/commit: 0x80030005 0x80030005 one=1
+271 activate iid#0 p=true: 0x80004002 0
+272 enum flow=1 mask=0x1: 0x0 new
+273 default flow=1 role=3: 0x80070057 0
+274 ps set/commit: 0x80030005 0x80030005 one=1
+275 qi enumerator iid#5: 0x80004002 0
+276 default flow=0 role=3: 0x80070057 0
+277 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+278 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+279 unregister 0x1000: 0x80070490
+280 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+281 enum flow=3 mask=0x2: 0x80070057 0
+282 ps set/commit: 0x80030005 0x80030005 one=1
+283 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+284 get "" id=true: 0x80070057 0
+285 default flow=3 role=0: 0x80004003 untouched
+286 default flow=3 role=3: 0x80070057 0
+287 default flow=3 role=0: 0x80070057 0
+288 get "" id=true: 0x80070057 0
+289 dev state: 0x0 1
+290 register 0x0: 0x80004003
+291 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+292 col qi iid#10: 0x80004002 0 refs=1
+293 register 0x1000: 0x0
+294 ep flow: 0x0 0
+295 unregister 0x2000: 0x0
+296 dev state: 0x0 1
+297 en addref/release: +1 +0
+298 register 0x0: 0x80004003
+299 dev state: 0x0 1
+300 open store 0: 0x0 store
+301 qi store iid#4: 0x80004002 0
+302 qi store iid#10: 0x80004002 0
+303 activate iid#4 p=true: 0x80004002 0
+304 unregister 0x0: 0x80004003
+305 qi enumerator iid#8: 0x80004002 0
+306 ps count: 0x0 7
+307 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+308 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+309 ep flow: 0x0 0
+310 dev id: 0x80004003 ""
+311 col release: 0
+312 ps count: 0x0 7
+313 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+314 col item 4294967295: 0x80070057 0
+315 qi device iid#1: 0x80004002 0
+316 dev state: 0x0 1
+317 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+318 open store 3: 0x80070057 untouched
+319 register 0x1000: 0x0
+320 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+321 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+322 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+323 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+324 ps count: 0x0 7
+325 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+326 get "" id=true: 0x80070057 0
+327 ps count: 0x0 7
+328 register 0x3000: 0x0
+329 ep flow: 0x0 0
+330 qi store iid#9: 0x80004002 0
+331 open store 1: 0x0 store
+332 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+333 col count: 0x0 0
+334 ps count: 0x0 7
+335 enum flow=3 mask=0x10: 0x80070057 0
+336 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+337 activate iid#5 p=true: 0x0 store
+338 ps set/commit: 0x80030005 0x80030005 one=1
+339 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+340 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+341 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+342 unregister 0x0: 0x80004003
+343 ps count: 0x0 7
+344 ps get [6e, 51, 6e, 2],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+345 open store 1: 0x0 store
+346 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+347 col item 1: 0x80004003 untouched
+348 default flow=3 role=3: 0x80070057 0
+349 ps set/commit: 0x80030005 0x80030005 one=1
+350 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+351 qi enumerator iid#8: 0x80004002 0
+352 enum flow=1 mask=0x10: 0x80070057 0
+353 unregister 0x3000: 0x0
+354 default flow=0 role=2: 0x0 device
+355 en addref/release: +1 +0
+356 en addref/release: +1 +0
+357 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+358 ep flow: 0x0 0
+359 qi endpoint iid#9: 0x80004002 0
+360 activate iid#2 p=true: 0x80004002 0
+361 unregister 0x1000: 0x0
+362 ep flow: 0x0 0
+363 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+364 ep flow: 0x0 0
+365 unregister 0x1000: 0x0
+366 ps set/commit: 0x80030005 0x80030005 one=1
+367 enum flow=2 mask=0xe: 0x80004003 untouched
+368 ep flow: 0x0 0
+369 enum flow=0 mask=0x10: 0x80070057 0
+370 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+371 default flow=0 role=1: 0x0 device
+372 en addref/release: +1 +0
+373 register 0x3000: 0x0
+374 col item 1: 0x80070057 0
+375 en addref/release: +1 +0
+376 dev id: 0x80004003 ""
+377 open store 2: 0x0 store
+378 col count: 0x0 0
+379 unregister 0x1000: 0x80070490
+380 ps get [3, d8, a5, 1d],4: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+381 register 0x2000: 0x0
+382 unregister 0x2000: 0x0
+383 col count: 0x0 0
+384 unregister 0x0: 0x80004003
+385 ep flow: 0x0 0
+386 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+387 qi enumerator iid#1: 0x0 enumerator
+388 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+389 enum flow=3 mask=0x2: 0x80070057 0
+390 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+391 enum flow=3 mask=0x1: 0x80070057 0
+392 en addref/release: +1 +0
+393 ps count: 0x0 7
+394 enum flow=3 mask=0xf: 0x80070057 0
+395 ep flow: 0x80004003 3735928559
+396 enum flow=1 mask=0xf: 0x0 new
+397 register 0x1000: 0x0
+398 en addref/release: +1 +0
+399 open store 0: 0x0 store
+400 activate iid#2 p=false: 0x80004003 untouched
+401 qi store iid#6: 0x80004002 0
+402 enum flow=2 mask=0xe: 0x0 new
+403 enum flow=1 mask=0xe: 0x0 new
+404 en addref/release: +1 +0
+405 enum flow=1 mask=0xe: 0x0 new
+406 get "" id=true: 0x80004003 untouched
+407 qi store iid#4: 0x80004002 0
+408 activate iid#6 p=false: 0x80004003 untouched
+409 ps at 6: 0x80004003 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+410 col item 0: 0x80070057 0
+411 ps count: 0x0 7
+412 register 0x3000: 0x0
+413 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+414 default flow=1 role=2: 0x80070490 0
+415 register 0x2000: 0x0
+416 ps set/commit: 0x80030005 0x80030005 one=1
+417 dev state: 0x0 1
+418 ps count: 0x0 7
+419 dev state: 0x0 1
+420 ps set/commit: 0x80030005 0x80030005 one=1
+421 unregister 0x3000: 0x0
+422 col addref: 2
+423 ep flow: 0x0 0
+424 unregister 0x2000: 0x0
+425 en addref/release: +1 +0
+426 open store 3: 0x80070057 untouched
+427 activate iid#11 p=true: 0x80004002 0
+428 activate iid#10 p=true: 0x80004003 untouched
+429 unregister 0x0: 0x80004003
+430 dev state: 0x0 1
+431 dev id: 0x80004003 ""
+432 open store 1: 0x0 store
+433 qi store iid#11: 0x80004002 0
+434 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+435 col addref: 3
+436 register 0x1000: 0x0
+437 col count: 0x0 0
+438 col release: 2
+439 ps get [4e, 25, 5c, a4],15: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+440 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+441 default flow=0 role=1: 0x0 device
+442 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+443 col release: 1
+444 ep flow: 0x80004003 3735928559
+445 ep flow: 0x0 0
+446 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+447 qi endpoint iid#11: 0x80004003 untouched
+448 activate iid#3 p=true: 0x80004003 untouched
+449 activate iid#7 p=true: 0x0 new
+450 activate iid#10 p=true: 0x80004003 untouched
+451 activate iid#8 p=false: 0x80004003 untouched
+452 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+453 ep flow: 0x0 0
+454 activate iid#11 p=true: 0x80004002 0
+455 en addref/release: +1 +0
+456 ps get [3, d8, a5, 1d],0: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+457 activate iid#0 p=true: 0x80004002 0
+458 qi endpoint iid#7: 0x80004002 0
+459 activate iid#5 p=true: 0x0 store
+460 dev state: 0x0 1
+461 register 0x2000: 0x0
+462 register 0x1000: 0x0
+463 ps set/commit: 0x80030005 0x80030005 one=1
+464 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+465 ps set/commit: 0x80030005 0x80030005 one=1
+466 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+467 open store 3: 0x80070057 untouched
+468 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+469 unregister 0x0: 0x80004003
+470 ps count: 0x80004003 3735928559
+471 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+472 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+473 col qi iid#6: 0x80004002 0 refs=1
+474 qi endpoint iid#4: 0x0 endpoint
+475 enum flow=1 mask=0x0: 0x0 new
+476 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+477 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+478 ps count: 0x0 7
+479 qi enumerator iid#2: 0x80004002 0
+480 qi device iid#8: 0x80004002 0
+481 open store 4096: 0x80070057 untouched
+482 register 0x2000: 0x0
+483 ps set/commit: 0x80030005 0x80030005 one=1
+484 register 0x3000: 0x0
+485 default flow=0 role=2: 0x0 device
+486 ps set/commit: 0x80030005 0x80030005 one=1
+487 qi enumerator iid#10: 0x80004002 0
+488 dev state: 0x0 1
+489 en addref/release: +1 +0
+490 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+491 default flow=0 role=2: 0x0 device
+492 dev id: 0x80004003 ""
+493 register 0x3000: 0x0
+494 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+495 col addref: 2
+496 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+497 enum flow=3 mask=0x2: 0x80070057 0
+498 qi enumerator iid#6: 0x80004002 0
+499 ps count: 0x0 7
+500 ps count: 0x0 7
+501 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+502 en addref/release: +1 +0
+503 en addref/release: +1 +0
+504 en addref/release: +1 +0
+505 qi store iid#4: 0x80004002 0
+506 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+507 ps count: 0x0 7
+508 activate iid#3 p=true: 0x80004002 0
+509 unregister 0x1000: 0x0
+510 dev state: 0x0 1
+511 unregister 0x1000: 0x0
+512 enum flow=2 mask=0x10: 0x80070057 0
+513 dev state: 0x0 1
+514 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+515 register 0x0: 0x80004003
+516 col item 0: 0x80070057 0
+517 dev state: 0x0 1
+518 en addref/release: +1 +0
+519 ep flow: 0x0 0
+520 ep flow: 0x0 0
+521 qi enumerator iid#9: 0x80004002 0
+522 default flow=1 role=3: 0x80070057 0
+523 enum flow=3 mask=0xf: 0x80070057 0
+524 dev state: 0x0 1
+525 default flow=2 role=3: 0x80004003 untouched
+526 dev id: 0x80004003 ""
+527 open store 1: 0x0 store
+528 unregister 0x1000: 0x0
+529 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+530 en addref/release: +1 +0
+531 default flow=0 role=3: 0x80070057 0
+532 register 0x1000: 0x0
+533 get "" id=true: 0x80070057 0
+534 col qi iid#0: 0x0 self refs=3
+535 en addref/release: +1 +0
+536 register 0x3000: 0x0
+537 ps set/commit: 0x80030005 0x80030005 one=1
+538 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+539 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+540 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+541 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+542 register 0x0: 0x80004003
+543 ps get [4e, 25, 5c, a4],15: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+544 dev state: 0x80004003 3735928559
+545 dev state: 0x80004003 3735928559
+546 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+547 ep flow: 0x0 0
+548 activate iid#11 p=true: 0x80004002 0
+549 register 0x1000: 0x0
+550 dev state: 0x0 1
+551 unregister 0x0: 0x80004003
+552 ep flow: 0x0 0
+553 default flow=0 role=3: 0x80070057 0
+554 ep flow: 0x0 0
+555 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+556 enum flow=3 mask=0xf: 0x80070057 0
+557 ep flow: 0x0 0
+558 default flow=2 role=2: 0x80070490 0
+559 ep flow: 0x0 0
+560 default flow=3 role=3: 0x80004003 untouched
+561 qi store iid#6: 0x80004002 0
+562 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+563 qi store iid#9: 0x80004002 0
+564 ps get [c8, 64, 31, 23],1: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+565 unregister 0x2000: 0x0
+566 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+567 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+568 enum flow=2 mask=0x10: 0x80070057 0
+569 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+570 ep flow: 0x0 0
+571 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+572 ep flow: 0x0 0
+573 en addref/release: +1 +0
+574 qi device iid#3: 0x0 device
+575 ps set/commit: 0x80030005 0x80030005 one=1
+576 en addref/release: +1 +0
+577 activate iid#4 p=true: 0x80004002 0
+578 register 0x3000: 0x0
+579 col addref: 4
+580 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+581 col item 4294967295: 0x80070057 0
+582 activate iid#10 p=false: 0x80004003 untouched
+583 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+584 ps count: 0x0 7
+585 register 0x2000: 0x0
+586 unregister 0x2000: 0x0
+587 col addref: 5
+588 dev state: 0x0 1
+589 col addref: 6
+590 register 0x1000: 0x0
+591 open store 2: 0x0 store
+592 unregister 0x2000: 0x0
+593 register 0x1000: 0x0
+594 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+595 default flow=0 role=2: 0x0 device
+596 enum flow=3 mask=0x10: 0x80070057 0
+597 ps set/commit: 0x80030005 0x80030005 one=1
+598 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+599 dev state: 0x80004003 3735928559
+600 unregister 0x3000: 0x0
+601 enum flow=2 mask=0xf: 0x0 new
+602 qi store iid#7: 0x80004002 0
+603 ep flow: 0x0 0
+604 ps count: 0x0 7
+605 ps count: 0x0 7
+606 register 0x3000: 0x0
+607 ps count: 0x0 7
+608 default flow=2 role=0: 0x80004003 untouched
+609 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+610 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+611 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+612 col item 0: 0x0 device
+613 get "" id=false: 0x80004003 untouched
+614 en addref/release: +1 +0
+615 activate iid#1 p=true: 0x80004002 0
+616 col count: 0x0 1
+617 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+618 open store 3: 0x80070057 untouched
+619 col release: 0
+620 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+621 activate iid#5 p=true: 0x0 store
+622 enum flow=2 mask=0x1: 0x0 new
+623 default flow=3 role=2: 0x80070057 0
+624 default flow=1 role=1: 0x80070490 0
+625 dev state: 0x0 1
+626 dev state: 0x0 1
+627 activate iid#4 p=true: 0x80004002 0
+628 en addref/release: +1 +0
+629 ps count: 0x80004003 3735928559
+630 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+631 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+632 enum flow=0 mask=0x2: 0x0 new
+633 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+634 activate iid#7 p=true: 0x0 new
+635 qi enumerator iid#4: 0x80004002 0
+636 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+637 default flow=1 role=2: 0x80070490 0
+638 enum flow=1 mask=0x10: 0x80070057 0
+639 dev state: 0x0 1
+640 default flow=0 role=0: 0x0 device
+641 activate iid#2 p=true: 0x80004002 0
+642 activate iid#8 p=true: 0x80004002 0
+643 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+644 qi device iid#2: 0x80004002 0
+645 dev state: 0x0 1
+646 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+647 get "" id=true: 0x80070057 0
+648 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+649 en addref/release: +1 +0
+650 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+651 open store 2: 0x0 store
+652 ps set/commit: 0x80030005 0x80030005 one=1
+653 register 0x2000: 0x0
+654 col qi iid#5: 0x80004002 0 refs=1
+655 ps set/commit: 0x80030005 0x80030005 one=1
+656 enum flow=3 mask=0x0: 0x80070057 0
+657 col item 4294967295: 0x80004003 untouched
+658 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+659 default flow=3 role=1: 0x80070057 0
+660 get "" id=true: 0x80070057 0
+661 qi enumerator iid#4: 0x80004003 untouched
+662 en addref/release: +1 +0
+663 ep flow: 0x0 0
+664 ps count: 0x0 7
+665 en addref/release: +1 +0
+666 activate iid#2 p=true: 0x80004002 0
+667 default flow=1 role=3: 0x80070057 0
+668 ep flow: 0x0 0
+669 default flow=3 role=3: 0x80070057 0
+670 default flow=1 role=0: 0x80070490 0
+671 get "" id=true: 0x80070057 0
+672 default flow=1 role=0: 0x80070490 0
+673 col item 4294967295: 0x80070057 0
+674 default flow=0 role=2: 0x0 device
+675 register 0x2000: 0x0
+676 en addref/release: +1 +0
+677 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+678 ps set/commit: 0x80030005 0x80030005 one=1
+679 ps count: 0x0 7
+680 ps count: 0x0 7
+681 enum flow=1 mask=0x1: 0x0 new
+682 ep flow: 0x0 0
+683 default flow=3 role=1: 0x80070057 0
+684 register 0x1000: 0x0
+685 default flow=0 role=2: 0x0 device
+686 activate iid#4 p=false: 0x80004003 untouched
+687 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+688 col release: 0
+689 qi device iid#1: 0x80004002 0
+690 unregister 0x0: 0x80004003
+691 col item 0: 0x80004003 untouched
+692 default flow=3 role=0: 0x80070057 0
+693 en addref/release: +1 +0
+694 col release: 0
+695 activate iid#9 p=false: 0x80004003 untouched
+696 ps set/commit: 0x80030005 0x80030005 one=1
+697 open store 1: 0x0 store
+698 col count: 0x0 1
+699 ps set/commit: 0x80030005 0x80030005 one=1
+700 dev state: 0x0 1
+701 enum flow=2 mask=0x10: 0x80070057 0
+702 qi endpoint iid#7: 0x80004002 0
+703 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+704 dev state: 0x0 1
+705 default flow=0 role=1: 0x0 device
+706 default flow=0 role=3: 0x80070057 0
+707 default flow=2 role=2: 0x80070490 0
+708 qi enumerator iid#7: 0x80004002 0
+709 ps set/commit: 0x80030005 0x80030005 one=1
+710 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+711 ep flow: 0x0 0
+712 default flow=3 role=1: 0x80070057 0
+713 ps count: 0x0 7
+714 ps count: 0x0 7
+715 default flow=1 role=2: 0x80070490 0
+716 en addref/release: +1 +0
+717 ep flow: 0x0 0
+718 activate iid#2 p=true: 0x80004002 0
+719 en addref/release: +1 +0
+720 ep flow: 0x0 0
+721 ps set/commit: 0x80030005 0x80030005 one=1
+722 ps count: 0x0 7
+723 unregister 0x1000: 0x0
+724 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+725 qi enumerator iid#11: 0x80004002 0
+726 ep flow: 0x0 0
+727 ps set/commit: 0x80030005 0x80030005 one=1
+728 dev state: 0x0 1
+729 qi endpoint iid#1: 0x80004002 0
+730 unregister 0x2000: 0x0
+731 ps count: 0x0 7
+732 ep flow: 0x0 0
+733 unregister 0x3000: 0x0
+734 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+735 activate iid#3 p=true: 0x80004002 0
+736 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+737 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+738 dev state: 0x0 1
+739 ps set/commit: 0x80030005 0x80030005 one=1
+740 open store 0: 0x0 store
+741 en addref/release: +1 +0
+742 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+743 unregister 0x3000: 0x0
+744 qi store iid#9: 0x80004002 0
+745 dev state: 0x0 1
+746 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+747 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+748 ps count: 0x0 7
+749 default flow=1 role=1: 0x80070490 0
+750 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+751 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+752 ps set/commit: 0x80030005 0x80030005 one=1
+753 activate iid#1 p=true: 0x80004002 0
+754 ps count: 0x0 7
+755 register 0x2000: 0x0
+756 enum flow=0 mask=0x1: 0x0 new
+757 activate iid#5 p=true: 0x0 store
+758 en addref/release: +1 +0
+759 register 0x2000: 0x0
+760 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+761 qi enumerator iid#6: 0x80004002 0
+762 col count: 0x0 1
+763 qi store iid#9: 0x80004002 0
+764 col addref: 2
+765 col addref: 3
+766 col release: 2
+767 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+768 enum flow=0 mask=0x10: 0x80070057 0
+769 dev state: 0x0 1
+770 open store 4096: 0x80070057 untouched
+771 col release: 1
+772 open store 0: 0x80004003 untouched
+773 register 0x1000: 0x0
+774 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+775 activate iid#2 p=true: 0x80004002 0
+776 qi enumerator iid#0: 0x80004003 untouched
+777 ps set/commit: 0x80030005 0x80030005 one=1
+778 get "" id=true: 0x80070057 0
+779 register 0x3000: 0x0
+780 ep flow: 0x0 0
+781 enum flow=2 mask=0x1: 0x0 new
+782 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+783 unregister 0x1000: 0x0
+784 qi enumerator iid#8: 0x80004002 0
+785 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80004003 untouched
+786 ps count: 0x0 7
+787 default flow=1 role=2: 0x80070490 0
+788 ps get [4e, 25, 5c, a4],14: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+789 en addref/release: +1 +0
+790 open store 1: 0x0 store
+791 activate iid#4 p=true: 0x80004002 0
+792 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+793 ps get [4e, 25, 5c, a4],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+794 qi enumerator iid#2: 0x80004002 0
+795 default flow=2 role=0: 0x80070490 0
+796 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+797 ep flow: 0x0 0
+798 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+799 unregister 0x3000: 0x0
+800 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+801 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80004003 untouched
+802 get "" id=true: 0x80070057 0
+803 qi store iid#3: 0x80004002 0
+804 qi device iid#9: 0x80004002 0
+805 default flow=0 role=3: 0x80070057 0
+806 ep flow: 0x0 0
+807 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+808 col release: 0
+809 open store 1: 0x0 store
+810 register 0x1000: 0x0
+811 ps set/commit: 0x80030005 0x80030005 one=1
+812 ep flow: 0x0 0
+813 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+814 en addref/release: +1 +0
+815 register 0x1000: 0x0
+816 ps set/commit: 0x80030005 0x80030005 one=1
+817 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+818 ps set/commit: 0x80030005 0x80030005 one=1
+819 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+820 ps set/commit: 0x80030005 0x80030005 one=1
+821 col count: 0x0 1
+822 enum flow=3 mask=0xe: 0x80070057 0
+823 qi device iid#8: 0x80004002 0
+824 col addref: 2
+825 default flow=1 role=0: 0x80004003 untouched
+826 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+827 get "" id=true: 0x80070057 0
+828 register 0x3000: 0x0
+829 register 0x0: 0x80004003
+830 col addref: 3
+831 en addref/release: +1 +0
+832 col item 4294967295: 0x80070057 0
+833 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+834 ep flow: 0x80004003 3735928559
+835 enum flow=2 mask=0xf: 0x0 new
+836 enum flow=3 mask=0x10: 0x80070057 0
+837 ep flow: 0x0 0
+838 open store 1: 0x0 store
+839 dev state: 0x0 1
+840 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+841 activate iid#3 p=true: 0x80004002 0
+842 enum flow=0 mask=0xf: 0x0 new
+843 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+844 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+845 default flow=0 role=0: 0x0 device
+846 dev state: 0x0 1
+847 register 0x2000: 0x0
+848 unregister 0x3000: 0x0
+849 open store 3: 0x80070057 untouched
+850 unregister 0x3000: 0x0
+851 col qi iid#2: 0x0 self refs=2
+852 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+853 ps set/commit: 0x80030005 0x80030005 one=1
+854 get "" id=true: 0x80070057 0
+855 enum flow=3 mask=0x10: 0x80070057 0
+856 qi enumerator iid#0: 0x0 enumerator
+857 col qi iid#11: 0x80004002 0 refs=2
+858 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+859 default flow=3 role=1: 0x80070057 0
+860 ps count: 0x0 7
+861 dev state: 0x0 1
+862 ps count: 0x0 7
+863 ps set/commit: 0x80030005 0x80030005 one=1
+864 register 0x0: 0x80004003
+865 register 0x2000: 0x0
+866 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+867 en addref/release: +1 +0
+868 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+869 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+870 unregister 0x0: 0x80004003
+871 qi endpoint iid#5: 0x80004002 0
+872 qi device iid#1: 0x80004002 0
+873 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+874 enum flow=1 mask=0x2: 0x0 new
+875 dev state: 0x0 1
+876 unregister 0x0: 0x80004003
+877 ps set/commit: 0x80030005 0x80030005 one=1
+878 ps get [1, 0, 0, 0],14: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+879 open store 3: 0x80070057 untouched
+880 dev state: 0x0 1
+881 register 0x1000: 0x0
+882 activate iid#1 p=true: 0x80004002 0
+883 register 0x1000: 0x0
+884 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+885 ep flow: 0x0 0
+886 unregister 0x3000: 0x0
+887 get "" id=true: 0x80070057 0
+888 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+889 register 0x0: 0x80004003
+890 register 0x0: 0x80004003
+891 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+892 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+893 en addref/release: +1 +0
+894 open store 1: 0x0 store
+895 activate iid#1 p=true: 0x80004002 0
+896 activate iid#8 p=true: 0x80004002 0
+897 enum flow=3 mask=0xe: 0x80070057 0
+898 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+899 enum flow=2 mask=0x0: 0x0 new
+900 qi endpoint iid#4: 0x0 endpoint
+901 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+902 dev state: 0x0 1
+903 default flow=2 role=2: 0x80070490 0
+904 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+905 col release: 0
+906 default flow=1 role=2: 0x80070490 0
+907 qi store iid#0: 0x0 store
+908 open store 2: 0x0 store
+909 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+910 ep flow: 0x0 0
+911 unregister 0x3000: 0x0
+912 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+913 ep flow: 0x0 0
+914 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80004003 untouched
+915 dev id: 0x80004003 ""
+916 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+917 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+918 activate iid#9 p=true: 0x80004003 untouched
+919 activate iid#8 p=true: 0x80004002 0
+920 ps set/commit: 0x80030005 0x80030005 one=1
+921 open store 3: 0x80070057 untouched
+922 ps count: 0x0 7
+923 enum flow=1 mask=0xf: 0x0 new
+924 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+925 enum flow=3 mask=0x1: 0x80070057 0
+926 qi store iid#11: 0x80004002 0
+927 en addref/release: +1 +0
+928 ps set/commit: 0x80030005 0x80030005 one=1
+929 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+930 ps count: 0x0 7
+931 register 0x2000: 0x0
+932 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+933 enum flow=1 mask=0x10: 0x80070057 0
+934 en addref/release: +1 +0
+935 dev state: 0x0 1
+936 activate iid#8 p=false: 0x80004003 untouched
+937 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+938 default flow=1 role=1: 0x80070490 0
+939 ps count: 0x0 7
+940 ps count: 0x0 7
+941 unregister 0x1000: 0x0
+942 qi endpoint iid#10: 0x0 device
+943 col item 1: 0x80004003 untouched
+944 en addref/release: +1 +0
+945 open store 2: 0x80004003 untouched
+946 en addref/release: +1 +0
+947 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+948 ps set/commit: 0x80030005 0x80030005 one=1
+949 ps set/commit: 0x80030005 0x80030005 one=1
+950 dev state: 0x0 1
+951 activate iid#8 p=true: 0x80004002 0
+952 qi store iid#6: 0x80004002 0
+953 activate iid#4 p=false: 0x80004003 untouched
+954 ps count: 0x0 7
+955 col item 0: 0x80070057 0
+956 open store 0: 0x0 store
+957 open store 3: 0x80070057 untouched
+958 col addref: 2
+959 default flow=0 role=3: 0x80070057 0
+960 default flow=2 role=3: 0x80070057 0
+961 get "" id=true: 0x80070057 0
+962 activate iid#8 p=true: 0x80004003 untouched
+963 ep flow: 0x0 0
+964 open store 4096: 0x80070057 untouched
+965 unregister 0x2000: 0x0
+966 open store 1: 0x0 store
+967 ep flow: 0x0 0
+968 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+969 ep flow: 0x0 0
+970 register 0x0: 0x80004003
+971 ps set/commit: 0x80030005 0x80030005 one=1
+972 ps set/commit: 0x80030005 0x80030005 one=1
+973 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+974 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+975 ps count: 0x0 7
+976 dev state: 0x0 1
+977 default flow=3 role=0: 0x80070057 0
+978 unregister 0x3000: 0x0
+979 get "" id=false: 0x80004003 untouched
+980 activate iid#5 p=true: 0x0 store
+981 col release: 1
+982 ps set/commit: 0x80030005 0x80030005 one=1
+983 qi device iid#3: 0x0 device
+984 activate iid#3 p=true: 0x80004002 0
+985 activate iid#7 p=true: 0x0 new
+986 ps count: 0x0 7
+987 ps get [4d, 6, 9f, f1],0: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+988 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+989 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+990 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+991 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+992 open store 0: 0x0 store
+993 ps count: 0x0 7
+994 enum flow=0 mask=0x10: 0x80070057 0
+995 en addref/release: +1 +0
+996 get "" id=true: 0x80070057 0
+997 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+998 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+999 enum flow=1 mask=0xe: 0x0 new
+1000 ep flow: 0x0 0
+1001 enum flow=3 mask=0xe: 0x80070057 0
+1002 en addref/release: +1 +0
+1003 default flow=3 role=0: 0x80004003 untouched
+1004 get "" id=true: 0x80004003 untouched
+1005 ep flow: 0x0 0
+1006 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1007 qi enumerator iid#6: 0x80004002 0
+1008 dev state: 0x0 1
+1009 dev state: 0x0 1
+1010 open store 1: 0x0 store
+1011 register 0x3000: 0x0
+1012 ep flow: 0x0 0
+1013 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1014 ep flow: 0x0 0
+1015 ep flow: 0x0 0
+1016 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+1017 ps count: 0x0 7
+1018 ps set/commit: 0x80030005 0x80030005 one=1
+1019 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1020 qi store iid#4: 0x80004002 0
+1021 en addref/release: +1 +0
+1022 activate iid#10 p=false: 0x80004003 untouched
+1023 ps set/commit: 0x80030005 0x80030005 one=1
+1024 unregister 0x3000: 0x0
+1025 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1026 en addref/release: +1 +0
+1027 enum flow=3 mask=0x1: 0x80070057 0
+1028 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+1029 enum flow=2 mask=0x2: 0x0 new
+1030 unregister 0x1000: 0x0
+1031 enum flow=1 mask=0x10: 0x80070057 0
+1032 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1033 dev state: 0x0 1
+1034 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+1035 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1036 ps set/commit: 0x80030005 0x80030005 one=1
+1037 enum flow=2 mask=0x2: 0x0 new
+1038 enum flow=3 mask=0x1: 0x80070057 0
+1039 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1040 qi device iid#5: 0x80004002 0
+1041 en addref/release: +1 +0
+1042 col release: 0
+1043 en addref/release: +1 +0
+1044 default flow=1 role=0: 0x80070490 0
+1045 enum flow=2 mask=0x10: 0x80070057 0
+1046 qi enumerator iid#4: 0x80004002 0
+1047 ps set/commit: 0x80030005 0x80030005 one=1
+1048 open store 0: 0x0 store
+1049 activate iid#9 p=false: 0x80004003 untouched
+1050 register 0x0: 0x80004003
+1051 dev id: 0x80004003 ""
+1052 activate iid#3 p=true: 0x80004002 0
+1053 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1054 ps set/commit: 0x80030005 0x80030005 one=1
+1055 unregister 0x1000: 0x0
+1056 enum flow=3 mask=0x10: 0x80070057 0
+1057 register 0x3000: 0x0
+1058 col addref: 2
+1059 get "" id=true: 0x80070057 0
+1060 unregister 0x3000: 0x0
+1061 open store 0: 0x0 store
+1062 dev state: 0x0 1
+1063 register 0x0: 0x80004003
+1064 open store 1: 0x0 store
+1065 register 0x0: 0x80004003
+1066 qi store iid#11: 0x80004002 0
+1067 ps at 6: 0x80004003 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1068 activate iid#3 p=true: 0x80004002 0
+1069 ps set/commit: 0x80030005 0x80030005 one=1
+1070 dev state: 0x80004003 3735928559
+1071 qi device iid#5: 0x80004002 0
+1072 unregister 0x0: 0x80004003
+1073 en addref/release: +1 +0
+1074 ps count: 0x0 7
+1075 register 0x0: 0x80004003
+1076 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1077 col addref: 3
+1078 default flow=1 role=3: 0x80070057 0
+1079 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+1080 ps set/commit: 0x80030005 0x80030005 one=1
+1081 get "" id=true: 0x80070057 0
+1082 ep flow: 0x0 0
+1083 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1084 enum flow=0 mask=0x10: 0x80070057 0
+1085 ps count: 0x0 7
+1086 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+1087 en addref/release: +1 +0
+1088 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+1089 default flow=2 role=2: 0x80070490 0
+1090 open store 1: 0x0 store
+1091 get "" id=false: 0x80004003 untouched
+1092 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1093 ps set/commit: 0x80030005 0x80030005 one=1
+1094 ep flow: 0x0 0
+1095 ps set/commit: 0x80030005 0x80030005 one=1
+1096 activate iid#6 p=false: 0x80004003 untouched
+1097 ep flow: 0x0 0
+1098 qi endpoint iid#4: 0x0 endpoint
+1099 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1100 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+1101 en addref/release: +1 +0
+1102 qi device iid#2: 0x80004002 0
+1103 qi enumerator iid#1: 0x0 enumerator
+1104 register 0x0: 0x80004003
+1105 qi device iid#8: 0x80004002 0
+1106 ps count: 0x0 7
+1107 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80004003 untouched
+1108 default flow=2 role=3: 0x80070057 0
+1109 enum flow=1 mask=0x2: 0x0 new
+1110 open store 1: 0x80004003 untouched
+1111 dev state: 0x0 1
+1112 ep flow: 0x0 0
+1113 dev state: 0x80004003 3735928559
+1114 dev state: 0x0 1
+1115 register 0x2000: 0x0
+1116 open store 2: 0x0 store
+1117 en addref/release: +1 +0
+1118 ep flow: 0x0 0
+1119 default flow=3 role=2: 0x80070057 0
+1120 ep flow: 0x0 0
+1121 en addref/release: +1 +0
+1122 en addref/release: +1 +0
+1123 ps count: 0x0 7
+1124 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+1125 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1126 register 0x0: 0x80004003
+1127 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1128 open store 0: 0x0 store
+1129 dev state: 0x0 1
+1130 dev state: 0x0 1
+1131 enum flow=2 mask=0xf: 0x0 new
+1132 register 0x1000: 0x0
+1133 unregister 0x1000: 0x0
+1134 qi endpoint iid#4: 0x0 endpoint
+1135 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1136 qi endpoint iid#3: 0x0 device
+1137 dev state: 0x0 1
+1138 col release: 0
+1139 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1140 dev state: 0x0 1
+1141 open store 3: 0x80070057 untouched
+1142 en addref/release: +1 +0
+1143 ps set/commit: 0x80030005 0x80030005 one=1
+1144 activate iid#6 p=true: 0x0 new
+1145 col item 0: 0x80070057 0
+1146 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1147 en addref/release: +1 +0
+1148 ps at 6: 0x80004003 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1149 dev state: 0x0 1
+1150 default flow=1 role=2: 0x80070490 0
+1151 en addref/release: +1 +0
+1152 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+1153 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1154 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1155 col count: 0x0 0
+1156 open store 4096: 0x80070057 untouched
+1157 dev state: 0x0 1
+1158 dev state: 0x80004003 3735928559
+1159 col release: 0
+1160 en addref/release: +1 +0
+1161 ps set/commit: 0x80030005 0x80030005 one=1
+1162 unregister 0x1000: 0x0
+1163 open store 2: 0x0 store
+1164 unregister 0x3000: 0x0
+1165 activate iid#3 p=true: 0x80004002 0
+1166 dev state: 0x0 1
+1167 enum flow=2 mask=0x0: 0x0 new
+1168 dev state: 0x0 1
+1169 col count: 0x80004003 3735928559
+1170 qi enumerator iid#2: 0x80004002 0
+1171 en addref/release: +1 +0
+1172 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1173 register 0x2000: 0x0
+1174 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1175 unregister 0x3000: 0x0
+1176 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1177 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1178 dev state: 0x0 1
+1179 dev state: 0x0 1
+1180 ps count: 0x0 7
+1181 default flow=3 role=0: 0x80070057 0
+1182 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1183 dev state: 0x0 1
+1184 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+1185 ps count: 0x0 7
+1186 qi enumerator iid#8: 0x80004002 0
+1187 unregister 0x0: 0x80004003
+1188 dev state: 0x0 1
+1189 en addref/release: +1 +0
+1190 qi endpoint iid#11: 0x80004002 0
+1191 enum flow=0 mask=0x0: 0x0 new
+1192 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1193 ep flow: 0x0 0
+1194 enum flow=0 mask=0x1: 0x0 new
+1195 ep flow: 0x0 0
+1196 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+1197 dev state: 0x0 1
+1198 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1199 register 0x3000: 0x0
+1200 get "" id=true: 0x80070057 0
+1201 open store 1: 0x0 store
+1202 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=false: 0x80004003 untouched
+1203 open store 3: 0x80070057 untouched
+1204 ps set/commit: 0x80030005 0x80030005 one=1
+1205 ep flow: 0x0 0
+1206 register 0x2000: 0x0
+1207 ps set/commit: 0x80030005 0x80030005 one=1
+1208 register 0x3000: 0x0
+1209 dev id: 0x80004003 ""
+1210 ps count: 0x0 7
+1211 get "" id=false: 0x80004003 untouched
+1212 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1213 default flow=0 role=3: 0x80070057 0
+1214 qi device iid#6: 0x80004003 untouched
+1215 ps count: 0x0 7
+1216 enum flow=3 mask=0x10: 0x80070057 0
+1217 register 0x1000: 0x0
+1218 enum flow=1 mask=0x2: 0x0 new
+1219 ps count: 0x0 7
+1220 unregister 0x3000: 0x0
+1221 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1222 en addref/release: +1 +0
+1223 enum flow=1 mask=0xf: 0x0 new
+1224 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1225 default flow=1 role=2: 0x80070490 0
+1226 ps count: 0x0 7
+1227 en addref/release: +1 +0
+1228 dev state: 0x0 1
+1229 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1230 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+1231 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1232 unregister 0x1000: 0x0
+1233 open store 1: 0x0 store
+1234 ep flow: 0x0 0
+1235 open store 0: 0x0 store
+1236 ps at 7: 0x80004003 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1237 activate iid#11 p=true: 0x80004002 0
+1238 register 0x3000: 0x0
+1239 enum flow=1 mask=0xf: 0x0 new
+1240 ep flow: 0x0 0
+1241 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+1242 activate iid#2 p=true: 0x80004002 0
+1243 ps set/commit: 0x80030005 0x80030005 one=1
+1244 qi store iid#10: 0x80004003 untouched
+1245 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+1246 col addref: 2
+1247 enum flow=2 mask=0x10: 0x80070057 0
+1248 register 0x3000: 0x0
+1249 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1250 activate iid#9 p=true: 0x0 new
+1251 dev state: 0x0 1
+1252 open store 2: 0x0 store
+1253 qi store iid#5: 0x0 store
+1254 ep flow: 0x0 0
+1255 activate iid#0 p=true: 0x80004002 0
+1256 open store 3: 0x80070057 untouched
+1257 get "" id=true: 0x80070057 0
+1258 enum flow=2 mask=0x1: 0x0 new
+1259 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1260 ep flow: 0x0 0
+1261 ps count: 0x0 7
+1262 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1263 ps set/commit: 0x80030005 0x80030005 one=1
+1264 unregister 0x3000: 0x0
+1265 ep flow: 0x0 0
+1266 ps count: 0x0 7
+1267 dev state: 0x0 1
+1268 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+1269 ps get [1, 0, 0, 0],14: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1270 unregister 0x3000: 0x0
+1271 en addref/release: +1 +0
+1272 ps count: 0x0 7
+1273 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1274 ps get [c8, 64, 31, 23],1: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1275 register 0x1000: 0x0
+1276 register 0x3000: 0x0
+1277 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1278 register 0x2000: 0x0
+1279 en addref/release: +1 +0
+1280 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+1281 dev state: 0x0 1
+1282 unregister 0x2000: 0x0
+1283 col qi iid#4: 0x80004002 0 refs=1
+1284 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1285 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1286 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1287 open store 2: 0x0 store
+1288 default flow=3 role=2: 0x80070057 0
+1289 enum flow=1 mask=0xf: 0x0 new
+1290 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+1291 register 0x0: 0x80004003
+1292 enum flow=0 mask=0xf: 0x0 new
+1293 qi endpoint iid#2: 0x80004002 0
+1294 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1295 col release: 0
+1296 dev state: 0x0 1
+1297 activate iid#9 p=true: 0x0 new
+1298 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1299 dev state: 0x0 1
+1300 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1301 dev state: 0x0 1
+1302 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1303 qi endpoint iid#10: 0x80004003 untouched
+1304 ps count: 0x0 7
+1305 dev state: 0x0 1
+1306 ps set/commit: 0x80030005 0x80030005 one=1
+1307 qi device iid#4: 0x80004003 untouched
+1308 ps at 7: 0x80004003 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1309 col release: 0
+1310 ep flow: 0x0 0
+1311 en addref/release: +1 +0
+1312 en addref/release: +1 +0
+1313 open store 3: 0x80070057 untouched
+1314 qi store iid#4: 0x80004002 0
+1315 col item 1: 0x80070057 0
+1316 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1317 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+1318 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1319 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1320 ep flow: 0x0 0
+1321 open store 0: 0x0 store
+1322 ep flow: 0x0 0
+1323 enum flow=2 mask=0x1: 0x80004003 untouched
+1324 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1325 default flow=3 role=2: 0x80004003 untouched
+1326 ps count: 0x0 7
+1327 default flow=0 role=1: 0x0 device
+1328 qi device iid#3: 0x80004003 untouched
+1329 activate iid#3 p=true: 0x80004002 0
+1330 default flow=3 role=2: 0x80070057 0
+1331 ps set/commit: 0x80030005 0x80030005 one=1
+1332 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1333 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1334 enum flow=3 mask=0xe: 0x80004003 untouched
+1335 open store 1: 0x0 store
+1336 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1337 open store 3: 0x80070057 untouched
+1338 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1339 qi store iid#11: 0x80004002 0
+1340 ps set/commit: 0x80030005 0x80030005 one=1
+1341 open store 1: 0x0 store
+1342 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1343 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1344 register 0x3000: 0x0
+1345 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+1346 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+1347 enum flow=1 mask=0x2: 0x0 new
+1348 dev state: 0x0 1
+1349 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1350 ps set/commit: 0x80030005 0x80030005 one=1
+1351 default flow=3 role=3: 0x80070057 0
+1352 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1353 default flow=2 role=3: 0x80070057 0
+1354 qi endpoint iid#4: 0x0 endpoint
+1355 activate iid#6 p=true: 0x0 new
+1356 enum flow=1 mask=0x0: 0x0 new
+1357 qi device iid#3: 0x0 device
+1358 ep flow: 0x0 0
+1359 enum flow=2 mask=0x1: 0x0 new
+1360 ps set/commit: 0x80030005 0x80030005 one=1
+1361 enum flow=0 mask=0xf: 0x0 new
+1362 enum flow=2 mask=0x1: 0x80004003 untouched
+1363 qi endpoint iid#6: 0x80004002 0
+1364 enum flow=2 mask=0x2: 0x0 new
+1365 open store 0: 0x0 store
+1366 open store 4096: 0x80070057 untouched
+1367 unregister 0x2000: 0x0
+1368 enum flow=3 mask=0x0: 0x80070057 0
+1369 ep flow: 0x0 0
+1370 qi enumerator iid#3: 0x80004002 0
+1371 ep flow: 0x0 0
+1372 col item 4294967295: 0x80070057 0
+1373 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+1374 ep flow: 0x0 0
+1375 activate iid#1 p=true: 0x80004002 0
+1376 unregister 0x3000: 0x0
+1377 col count: 0x0 0
+1378 default flow=3 role=1: 0x80070057 0
+1379 ps get [4e, 25, 5c, a4],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1380 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1381 ps set/commit: 0x80030005 0x80030005 one=1
+1382 ep flow: 0x80004003 3735928559
+1383 default flow=1 role=3: 0x80070057 0
+1384 activate iid#4 p=true: 0x80004002 0
+1385 ps set/commit: 0x80030005 0x80030005 one=1
+1386 register 0x0: 0x80004003
+1387 ps set/commit: 0x80030005 0x80030005 one=1
+1388 en addref/release: +1 +0
+1389 default flow=3 role=0: 0x80070057 0
+1390 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1391 open store 4096: 0x80070057 untouched
+1392 qi endpoint iid#2: 0x80004002 0
+1393 activate iid#3 p=true: 0x80004002 0
+1394 get "" id=false: 0x80004003 untouched
+1395 qi enumerator iid#3: 0x80004002 0
+1396 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1397 default flow=1 role=1: 0x80070490 0
+1398 enum flow=2 mask=0x1: 0x0 new
+1399 ps count: 0x0 7
+1400 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1401 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+1402 en addref/release: +1 +0
+1403 default flow=0 role=3: 0x80070057 0
+1404 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1405 en addref/release: +1 +0
+1406 open store 4096: 0x80070057 untouched
+1407 activate iid#10 p=true: 0x80004002 0
+1408 dev state: 0x80004003 3735928559
+1409 dev state: 0x80004003 3735928559
+1410 open store 3: 0x80070057 untouched
+1411 col addref: 2
+1412 en addref/release: +1 +0
+1413 dev state: 0x0 1
+1414 en addref/release: +1 +0
+1415 col release: 1
+1416 open store 2: 0x0 store
+1417 unregister 0x0: 0x80004003
+1418 en addref/release: +1 +0
+1419 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1420 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1421 col qi iid#2: 0x0 self refs=2
+1422 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1423 default flow=3 role=1: 0x80070057 0
+1424 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1425 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1426 ps set/commit: 0x80030005 0x80030005 one=1
+1427 activate iid#5 p=true: 0x0 store
+1428 en addref/release: +1 +0
+1429 register 0x0: 0x80004003
+1430 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1431 ps set/commit: 0x80030005 0x80030005 one=1
+1432 en addref/release: +1 +0
+1433 ps count: 0x0 7
+1434 activate iid#3 p=true: 0x80004002 0
+1435 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1436 unregister 0x0: 0x80004003
+1437 qi device iid#11: 0x80004002 0
+1438 dev state: 0x0 1
+1439 ep flow: 0x0 0
+1440 col count: 0x0 1
+1441 dev state: 0x0 1
+1442 ep flow: 0x0 0
+1443 ps count: 0x80004003 3735928559
+1444 unregister 0x3000: 0x0
+1445 unregister 0x1000: 0x0
+1446 default flow=2 role=2: 0x80070490 0
+1447 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1448 unregister 0x0: 0x80004003
+1449 enum flow=2 mask=0x0: 0x80004003 untouched
+1450 en addref/release: +1 +0
+1451 open store 3: 0x80070057 untouched
+1452 register 0x3000: 0x0
+1453 unregister 0x1000: 0x0
+1454 ps get [1, 0, 0, 0],14: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1455 unregister 0x0: 0x80004003
+1456 ps set/commit: 0x80030005 0x80030005 one=1
+1457 open store 1: 0x0 store
+1458 default flow=2 role=0: 0x80070490 0
+1459 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1460 qi device iid#2: 0x80004002 0
+1461 dev state: 0x0 1
+1462 qi device iid#10: 0x0 device
+1463 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1464 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1465 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1466 en addref/release: +1 +0
+1467 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1468 en addref/release: +1 +0
+1469 default flow=3 role=1: 0x80070057 0
+1470 dev state: 0x0 1
+1471 ps get [4d, 6, 9f, f1],0: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1472 ps get [4e, 25, 5c, a4],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1473 unregister 0x2000: 0x0
+1474 register 0x2000: 0x0
+1475 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1476 unregister 0x3000: 0x0
+1477 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1478 unregister 0x1000: 0x0
+1479 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1480 qi enumerator iid#3: 0x80004002 0
+1481 ps count: 0x0 7
+1482 default flow=2 role=0: 0x80070490 0
+1483 activate iid#0 p=true: 0x80004002 0
+1484 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+1485 activate iid#0 p=true: 0x80004002 0
+1486 register 0x1000: 0x0
+1487 ep flow: 0x0 0
+1488 qi store iid#4: 0x80004002 0
+1489 ps set/commit: 0x80030005 0x80030005 one=1
+1490 ps set/commit: 0x80030005 0x80030005 one=1
+1491 register 0x3000: 0x0
+1492 default flow=1 role=3: 0x80070057 0
+1493 default flow=1 role=0: 0x80070490 0
+1494 ps get [4e, 25, 5c, a4],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1495 get "" id=true: 0x80070057 0
+1496 activate iid#2 p=true: 0x80004002 0
+1497 en addref/release: +1 +0
+1498 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+1499 ep flow: 0x0 0
+1500 ps set/commit: 0x80030005 0x80030005 one=1
+1501 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1502 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1503 default flow=1 role=1: 0x80070490 0
+1504 ps count: 0x0 7
+1505 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1506 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1507 ps count: 0x0 7
+1508 ep flow: 0x0 0
+1509 dev state: 0x0 1
+1510 enum flow=0 mask=0x2: 0x0 new
+1511 ps count: 0x0 7
+1512 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1513 dev state: 0x0 1
+1514 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1515 ps set/commit: 0x80030005 0x80030005 one=1
+1516 open store 3: 0x80070057 untouched
+1517 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1518 ep flow: 0x0 0
+1519 default flow=1 role=3: 0x80070057 0
+1520 unregister 0x2000: 0x0
+1521 unregister 0x1000: 0x0
+1522 dev state: 0x0 1
+1523 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+1524 ps set/commit: 0x80030005 0x80030005 one=1
+1525 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1526 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+1527 dev state: 0x0 1
+1528 default flow=0 role=1: 0x0 device
+1529 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1530 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1531 qi enumerator iid#1: 0x0 enumerator
+1532 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1533 ep flow: 0x0 0
+1534 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1535 open store 0: 0x0 store
+1536 get "" id=false: 0x80004003 untouched
+1537 ps count: 0x0 7
+1538 ep flow: 0x0 0
+1539 default flow=1 role=2: 0x80070490 0
+1540 get "" id=true: 0x80070057 0
+1541 default flow=0 role=0: 0x0 device
+1542 qi enumerator iid#0: 0x0 enumerator
+1543 get "" id=true: 0x80070057 0
+1544 ep flow: 0x0 0
+1545 open store 2: 0x0 store
+1546 open store 0: 0x0 store
+1547 ps count: 0x0 7
+1548 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1549 activate iid#10 p=false: 0x80004003 untouched
+1550 default flow=0 role=2: 0x0 device
+1551 register 0x3000: 0x0
+1552 enum flow=2 mask=0x1: 0x0 new
+1553 register 0x2000: 0x0
+1554 open store 0: 0x0 store
+1555 activate iid#1 p=true: 0x80004002 0
+1556 activate iid#1 p=true: 0x80004002 0
+1557 register 0x2000: 0x0
+1558 ep flow: 0x0 0
+1559 activate iid#4 p=true: 0x80004002 0
+1560 ps set/commit: 0x80030005 0x80030005 one=1
+1561 register 0x2000: 0x0
+1562 ep flow: 0x0 0
+1563 activate iid#8 p=true: 0x80004002 0
+1564 ep flow: 0x0 0
+1565 qi store iid#1: 0x80004002 0
+1566 ep flow: 0x0 0
+1567 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1568 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1569 qi device iid#7: 0x80004002 0
+1570 open store 1: 0x0 store
+1571 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1572 ps set/commit: 0x80030005 0x80030005 one=1
+1573 open store 2: 0x0 store
+1574 default flow=1 role=2: 0x80070490 0
+1575 default flow=0 role=1: 0x0 device
+1576 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1577 unregister 0x1000: 0x0
+1578 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1579 register 0x0: 0x80004003
+1580 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1581 dev state: 0x0 1
+1582 enum flow=3 mask=0x2: 0x80070057 0
+1583 ep flow: 0x0 0
+1584 ps set/commit: 0x80030005 0x80030005 one=1
+1585 en addref/release: +1 +0
+1586 ep flow: 0x0 0
+1587 enum flow=1 mask=0x2: 0x80004003 untouched
+1588 col count: 0x0 1
+1589 unregister 0x2000: 0x0
+1590 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1591 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1592 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1593 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1594 enum flow=3 mask=0x10: 0x80070057 0
+1595 ep flow: 0x0 0
+1596 ps count: 0x0 7
+1597 default flow=3 role=1: 0x80070057 0
+1598 en addref/release: +1 +0
+1599 ep flow: 0x0 0
+1600 unregister 0x3000: 0x0
+1601 register 0x3000: 0x0
+1602 ps count: 0x0 7
+1603 qi store iid#0: 0x0 store
+1604 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+1605 dev state: 0x0 1
+1606 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1607 ep flow: 0x0 0
+1608 ps count: 0x0 7
+1609 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1610 col qi iid#9: 0x80004002 0 refs=1
+1611 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+1612 register 0x2000: 0x0
+1613 dev state: 0x0 1
+1614 register 0x1000: 0x0
+1615 default flow=1 role=0: 0x80070490 0
+1616 ps set/commit: 0x80030005 0x80030005 one=1
+1617 default flow=3 role=3: 0x80070057 0
+1618 ps count: 0x0 7
+1619 activate iid#4 p=true: 0x80004002 0
+1620 activate iid#1 p=true: 0x80004002 0
+1621 dev state: 0x0 1
+1622 activate iid#8 p=true: 0x80004002 0
+1623 ps count: 0x0 7
+1624 ps count: 0x0 7
+1625 ps set/commit: 0x80030005 0x80030005 one=1
+1626 ps set/commit: 0x80030005 0x80030005 one=1
+1627 qi device iid#6: 0x80004002 0
+1628 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1629 ep flow: 0x0 0
+1630 enum flow=2 mask=0xf: 0x0 new
+1631 col release: 0
+1632 dev state: 0x0 1
+1633 register 0x1000: 0x0
+1634 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1635 qi endpoint iid#7: 0x80004002 0
+1636 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1637 en addref/release: +1 +0
+1638 col item 0: 0x0 device
+1639 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1640 ps count: 0x0 7
+1641 qi endpoint iid#2: 0x80004002 0
+1642 en addref/release: +1 +0
+1643 enum flow=3 mask=0xf: 0x80070057 0
+1644 open store 3: 0x80070057 untouched
+1645 ep flow: 0x80004003 3735928559
+1646 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1647 ep flow: 0x0 0
+1648 en addref/release: +1 +0
+1649 activate iid#9 p=true: 0x0 new
+1650 en addref/release: +1 +0
+1651 open store 2: 0x80004003 untouched
+1652 default flow=2 role=3: 0x80070057 0
+1653 qi endpoint iid#5: 0x80004002 0
+1654 open store 1: 0x0 store
+1655 ps set/commit: 0x80030005 0x80030005 one=1
+1656 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1657 col count: 0x0 1
+1658 dev state: 0x0 1
+1659 enum flow=3 mask=0xf: 0x80004003 untouched
+1660 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1661 ps count: 0x0 7
+1662 get "" id=true: 0x80070057 0
+1663 qi store iid#8: 0x80004002 0
+1664 open store 2: 0x0 store
+1665 unregister 0x2000: 0x0
+1666 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1667 ps set/commit: 0x80030005 0x80030005 one=1
+1668 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1669 unregister 0x3000: 0x0
+1670 register 0x1000: 0x0
+1671 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1672 ep flow: 0x0 0
+1673 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1674 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1675 unregister 0x0: 0x80004003
+1676 get "" id=true: 0x80070057 0
+1677 enum flow=1 mask=0xe: 0x0 new
+1678 activate iid#7 p=true: 0x0 new
+1679 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1680 register 0x1000: 0x0
+1681 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1682 en addref/release: +1 +0
+1683 ps count: 0x0 7
+1684 en addref/release: +1 +0
+1685 register 0x1000: 0x0
+1686 qi endpoint iid#3: 0x0 device
+1687 ps count: 0x0 7
+1688 unregister 0x3000: 0x0
+1689 default flow=0 role=3: 0x80070057 0
+1690 open store 1: 0x0 store
+1691 dev state: 0x0 1
+1692 col qi iid#11: 0x80004002 0 refs=1
+1693 en addref/release: +1 +0
+1694 ps count: 0x0 7
+1695 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1696 register 0x3000: 0x0
+1697 open store 0: 0x0 store
+1698 default flow=1 role=0: 0x80070490 0
+1699 en addref/release: +1 +0
+1700 enum flow=2 mask=0x2: 0x0 new
+1701 default flow=0 role=3: 0x80070057 0
+1702 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1703 ps set/commit: 0x80030005 0x80030005 one=1
+1704 unregister 0x1000: 0x0
+1705 ps count: 0x0 7
+1706 ps count: 0x0 7
+1707 unregister 0x1000: 0x0
+1708 col count: 0x0 0
+1709 register 0x0: 0x80004003
+1710 ps count: 0x0 7
+1711 open store 3: 0x80070057 untouched
+1712 enum flow=2 mask=0xf: 0x0 new
+1713 register 0x1000: 0x0
+1714 default flow=3 role=2: 0x80070057 0
+1715 ps count: 0x0 7
+1716 default flow=1 role=1: 0x80070490 0
+1717 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+1718 enum flow=3 mask=0xe: 0x80070057 0
+1719 activate iid#1 p=true: 0x80004002 0
+1720 dev state: 0x0 1
+1721 ep flow: 0x80004003 3735928559
+1722 col count: 0x0 1
+1723 en addref/release: +1 +0
+1724 ep flow: 0x0 0
+1725 unregister 0x3000: 0x0
+1726 col addref: 2
+1727 default flow=3 role=3: 0x80070057 0
+1728 qi enumerator iid#3: 0x80004003 untouched
+1729 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1730 enum flow=3 mask=0xe: 0x80070057 0
+1731 ps set/commit: 0x80030005 0x80030005 one=1
+1732 register 0x3000: 0x0
+1733 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1734 ep flow: 0x0 0
+1735 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1736 ps count: 0x0 7
+1737 enum flow=1 mask=0xe: 0x0 new
+1738 ep flow: 0x0 0
+1739 en addref/release: +1 +0
+1740 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1741 dev id: 0x80004003 ""
+1742 dev state: 0x0 1
+1743 register 0x1000: 0x0
+1744 dev state: 0x80004003 3735928559
+1745 ps set/commit: 0x80030005 0x80030005 one=1
+1746 ep flow: 0x0 0
+1747 enum flow=0 mask=0x0: 0x0 new
+1748 qi enumerator iid#3: 0x80004002 0
+1749 ps set/commit: 0x80030005 0x80030005 one=1
+1750 register 0x1000: 0x0
+1751 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1752 enum flow=2 mask=0x2: 0x0 new
+1753 ep flow: 0x80004003 3735928559
+1754 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1755 qi endpoint iid#2: 0x80004002 0
+1756 unregister 0x3000: 0x0
+1757 get "" id=true: 0x80070057 0
+1758 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1759 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+1760 ep flow: 0x0 0
+1761 col count: 0x0 0
+1762 col count: 0x80004003 3735928559
+1763 default flow=3 role=1: 0x80070057 0
+1764 unregister 0x0: 0x80004003
+1765 enum flow=3 mask=0x1: 0x80070057 0
+1766 register 0x1000: 0x0
+1767 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1768 col count: 0x0 0
+1769 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1770 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1771 register 0x1000: 0x0
+1772 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1773 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1774 ps set/commit: 0x80030005 0x80030005 one=1
+1775 ps count: 0x0 7
+1776 en addref/release: +1 +0
+1777 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1778 ps count: 0x80004003 3735928559
+1779 open store 2: 0x0 store
+1780 unregister 0x3000: 0x0
+1781 dev state: 0x0 1
+1782 col release: 0
+1783 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1784 unregister 0x1000: 0x0
+1785 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1786 register 0x1000: 0x0
+1787 get "" id=true: 0x80070057 0
+1788 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1789 col item 0: 0x80070057 0
+1790 activate iid#8 p=true: 0x80004002 0
+1791 open store 1: 0x0 store
+1792 en addref/release: +1 +0
+1793 dev id: 0x80004003 ""
+1794 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1795 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1796 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1797 register 0x2000: 0x0
+1798 ep flow: 0x0 0
+1799 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1800 open store 4096: 0x80070057 untouched
+1801 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1802 open store 0: 0x0 store
+1803 enum flow=1 mask=0x2: 0x80004003 untouched
+1804 enum flow=1 mask=0x1: 0x0 new
+1805 ep flow: 0x0 0
+1806 qi enumerator iid#9: 0x80004002 0
+1807 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+1808 unregister 0x1000: 0x0
+1809 col release: 0
+1810 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1811 open store 1: 0x0 store
+1812 ps set/commit: 0x80030005 0x80030005 one=1
+1813 col qi iid#5: 0x80004002 0 refs=1
+1814 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+1815 activate iid#11 p=true: 0x80004002 0
+1816 register 0x3000: 0x0
+1817 ps count: 0x0 7
+1818 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1819 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1820 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+1821 col qi iid#11: 0x80004002 0 refs=1
+1822 col release: 0
+1823 ps get [6e, 51, 6e, 2],2: 0x0 vt=31 "sake Audio"
+1824 enum flow=0 mask=0x1: 0x0 new
+1825 unregister 0x2000: 0x0
+1826 enum flow=1 mask=0xe: 0x0 new
+1827 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1828 register 0x2000: 0x0
+1829 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1830 ps set/commit: 0x80030005 0x80030005 one=1
+1831 enum flow=0 mask=0x2: 0x0 new
+1832 activate iid#10 p=true: 0x80004002 0
+1833 col qi iid#2: 0x0 self refs=2
+1834 en addref/release: +1 +0
+1835 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1836 dev state: 0x0 1
+1837 dev state: 0x0 1
+1838 ps get [c8, 64, 31, 23],1: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1839 ps count: 0x0 7
+1840 col qi iid#7: 0x80004002 0 refs=2
+1841 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1842 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+1843 qi store iid#10: 0x80004002 0
+1844 ps set/commit: 0x80030005 0x80030005 one=1
+1845 ps set/commit: 0x80030005 0x80030005 one=1
+1846 ps count: 0x0 7
+1847 ps count: 0x0 7
+1848 en addref/release: +1 +0
+1849 open store 3: 0x80070057 untouched
+1850 unregister 0x3000: 0x0
+1851 dev state: 0x0 1
+1852 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+1853 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+1854 unregister 0x1000: 0x0
+1855 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1856 activate iid#1 p=true: 0x80004002 0
+1857 qi enumerator iid#10: 0x80004002 0
+1858 unregister 0x2000: 0x0
+1859 ep flow: 0x0 0
+1860 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1861 ep flow: 0x0 0
+1862 unregister 0x2000: 0x0
+1863 unregister 0x0: 0x80004003
+1864 ps set/commit: 0x80030005 0x80030005 one=1
+1865 col item 0: 0x80070057 0
+1866 register 0x0: 0x80004003
+1867 dev state: 0x0 1
+1868 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1869 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1870 qi enumerator iid#10: 0x80004002 0
+1871 unregister 0x2000: 0x0
+1872 register 0x3000: 0x0
+1873 register 0x0: 0x80004003
+1874 enum flow=3 mask=0x10: 0x80070057 0
+1875 unregister 0x0: 0x80004003
+1876 ps set/commit: 0x80030005 0x80030005 one=1
+1877 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80004003 untouched
+1878 col count: 0x0 0
+1879 en addref/release: +1 +0
+1880 ep flow: 0x0 0
+1881 enum flow=0 mask=0x0: 0x0 new
+1882 activate iid#1 p=true: 0x80004003 untouched
+1883 ps count: 0x0 7
+1884 qi enumerator iid#6: 0x80004002 0
+1885 open store 1: 0x0 store
+1886 col item 1: 0x80070057 0
+1887 col count: 0x0 0
+1888 ep flow: 0x80004003 3735928559
+1889 col addref: 2
+1890 activate iid#1 p=false: 0x80004003 untouched
+1891 qi device iid#3: 0x0 device
+1892 en addref/release: +1 +0
+1893 ps at 6: 0x80004003 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1894 col addref: 3
+1895 dev state: 0x0 1
+1896 ps set/commit: 0x80030005 0x80030005 one=1
+1897 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1898 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1899 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1900 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+1901 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80004003 untouched
+1902 default flow=0 role=3: 0x80070057 0
+1903 open store 2: 0x0 store
+1904 open store 1: 0x0 store
+1905 unregister 0x1000: 0x0
+1906 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+1907 activate iid#7 p=true: 0x0 new
+1908 ps set/commit: 0x80030005 0x80030005 one=1
+1909 qi endpoint iid#11: 0x80004002 0
+1910 ep flow: 0x0 0
+1911 col release: 2
+1912 en addref/release: +1 +0
+1913 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+1914 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1915 unregister 0x2000: 0x0
+1916 default flow=3 role=3: 0x80070057 0
+1917 ep flow: 0x0 0
+1918 ps count: 0x0 7
+1919 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+1920 en addref/release: +1 +0
+1921 col addref: 3
+1922 enum flow=1 mask=0xf: 0x0 new
+1923 open store 0: 0x0 store
+1924 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1925 register 0x2000: 0x0
+1926 ps set/commit: 0x80030005 0x80030005 one=1
+1927 en addref/release: +1 +0
+1928 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1929 register 0x0: 0x80004003
+1930 ps count: 0x0 7
+1931 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1932 ep flow: 0x0 0
+1933 enum flow=0 mask=0xe: 0x0 new
+1934 ps set/commit: 0x80030005 0x80030005 one=1
+1935 open store 1: 0x0 store
+1936 open store 0: 0x0 store
+1937 default flow=1 role=0: 0x80070490 0
+1938 col item 0: 0x80070057 0
+1939 enum flow=0 mask=0x0: 0x0 new
+1940 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1941 ps get [4e, 25, 5c, a4],15: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+1942 register 0x1000: 0x0
+1943 unregister 0x3000: 0x0
+1944 unregister 0x1000: 0x0
+1945 default flow=1 role=0: 0x80070490 0
+1946 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+1947 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1948 dev state: 0x0 1
+1949 activate iid#6 p=true: 0x0 new
+1950 en addref/release: +1 +0
+1951 ps count: 0x0 7
+1952 open store 0: 0x0 store
+1953 dev state: 0x0 1
+1954 qi endpoint iid#9: 0x80004002 0
+1955 ps count: 0x0 7
+1956 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1957 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1958 qi device iid#8: 0x80004003 untouched
+1959 ep flow: 0x0 0
+1960 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1961 en addref/release: +1 +0
+1962 default flow=2 role=2: 0x80070490 0
+1963 enum flow=3 mask=0x2: 0x80070057 0
+1964 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1965 unregister 0x3000: 0x0
+1966 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=false: 0x80004003 untouched
+1967 ps set/commit: 0x80030005 0x80030005 one=1
+1968 register 0x2000: 0x0
+1969 ps count: 0x0 7
+1970 unregister 0x0: 0x80004003
+1971 register 0x2000: 0x0
+1972 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+1973 en addref/release: +1 +0
+1974 unregister 0x3000: 0x0
+1975 get "" id=true: 0x80070057 0
+1976 enum flow=2 mask=0x2: 0x0 new
+1977 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+1978 get "" id=true: 0x80070057 0
+1979 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1980 enum flow=3 mask=0xe: 0x80070057 0
+1981 qi endpoint iid#11: 0x80004002 0
+1982 ps count: 0x0 7
+1983 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+1984 unregister 0x1000: 0x0
+1985 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+1986 dev state: 0x0 1
+1987 dev state: 0x0 1
+1988 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1989 col release: 0
+1990 open store 1: 0x80004003 untouched
+1991 ep flow: 0x0 0
+1992 dev state: 0x0 1
+1993 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+1994 dev state: 0x0 1
+1995 open store 1: 0x0 store
+1996 default flow=3 role=3: 0x80070057 0
+1997 en addref/release: +1 +0
+1998 dev state: 0x80004003 3735928559
+1999 register 0x0: 0x80004003
+2000 enum flow=2 mask=0x0: 0x0 new
+2001 col count: 0x0 0
+2002 ep flow: 0x0 0
+2003 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2004 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2005 default flow=3 role=1: 0x80070057 0
+2006 qi store iid#9: 0x80004002 0
+2007 dev state: 0x0 1
+2008 ep flow: 0x0 0
+2009 register 0x1000: 0x0
+2010 ps count: 0x0 7
+2011 open store 2: 0x0 store
+2012 qi device iid#8: 0x80004002 0
+2013 enum flow=3 mask=0x2: 0x80070057 0
+2014 dev state: 0x0 1
+2015 activate iid#9 p=true: 0x0 new
+2016 unregister 0x1000: 0x0
+2017 en addref/release: +1 +0
+2018 default flow=1 role=3: 0x80070057 0
+2019 unregister 0x2000: 0x0
+2020 en addref/release: +1 +0
+2021 en addref/release: +1 +0
+2022 enum flow=3 mask=0xf: 0x80070057 0
+2023 unregister 0x3000: 0x80070490
+2024 enum flow=3 mask=0x0: 0x80070057 0
+2025 dev state: 0x0 1
+2026 ep flow: 0x0 0
+2027 default flow=2 role=3: 0x80070057 0
+2028 col addref: 2
+2029 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2030 ps set/commit: 0x80030005 0x80030005 one=1
+2031 en addref/release: +1 +0
+2032 ps set/commit: 0x80030005 0x80030005 one=1
+2033 activate iid#6 p=true: 0x80004003 untouched
+2034 col count: 0x0 0
+2035 qi device iid#2: 0x80004002 0
+2036 open store 1: 0x0 store
+2037 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2038 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2039 get "" id=true: 0x80070057 0
+2040 ep flow: 0x0 0
+2041 open store 1: 0x80004003 untouched
+2042 unregister 0x1000: 0x0
+2043 enum flow=1 mask=0xe: 0x0 new
+2044 open store 4096: 0x80070057 untouched
+2045 unregister 0x0: 0x80004003
+2046 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2047 dev state: 0x0 1
+2048 get "" id=true: 0x80070057 0
+2049 col qi iid#5: 0x80004002 0 refs=1
+2050 ps get [1, 0, 0, 0],14: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2051 en addref/release: +1 +0
+2052 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2053 open store 2: 0x0 store
+2054 dev state: 0x0 1
+2055 default flow=1 role=3: 0x80070057 0
+2056 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2057 col addref: 2
+2058 qi enumerator iid#8: 0x80004002 0
+2059 activate iid#3 p=true: 0x80004003 untouched
+2060 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+2061 enum flow=0 mask=0x0: 0x0 new
+2062 enum flow=1 mask=0xf: 0x80004003 untouched
+2063 enum flow=3 mask=0x10: 0x80070057 0
+2064 dev state: 0x0 1
+2065 qi device iid#11: 0x80004002 0
+2066 ps count: 0x0 7
+2067 qi device iid#11: 0x80004002 0
+2068 activate iid#10 p=true: 0x80004002 0
+2069 open store 2: 0x0 store
+2070 qi endpoint iid#3: 0x80004003 untouched
+2071 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2072 enum flow=3 mask=0x2: 0x80070057 0
+2073 ps set/commit: 0x80030005 0x80030005 one=1
+2074 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2075 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2076 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+2077 enum flow=1 mask=0x1: 0x0 new
+2078 default flow=2 role=3: 0x80070057 0
+2079 activate iid#10 p=true: 0x80004002 0
+2080 open store 4096: 0x80070057 untouched
+2081 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2082 en addref/release: +1 +0
+2083 col item 4294967295: 0x80070057 0
+2084 open store 0: 0x0 store
+2085 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2086 col qi iid#3: 0x80004002 0 refs=1
+2087 enum flow=1 mask=0xe: 0x0 new
+2088 default flow=1 role=2: 0x80070490 0
+2089 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+2090 ep flow: 0x0 0
+2091 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2092 enum flow=2 mask=0x10: 0x80070057 0
+2093 col addref: 2
+2094 ps set/commit: 0x80030005 0x80030005 one=1
+2095 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2096 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2097 ps count: 0x0 7
+2098 dev state: 0x0 1
+2099 dev state: 0x80004003 3735928559
+2100 activate iid#5 p=true: 0x0 store
+2101 unregister 0x3000: 0x80070490
+2102 dev state: 0x0 1
+2103 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2104 en addref/release: +1 +0
+2105 qi store iid#8: 0x80004002 0
+2106 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2107 ps set/commit: 0x80030005 0x80030005 one=1
+2108 activate iid#1 p=true: 0x80004002 0
+2109 default flow=0 role=3: 0x80004003 untouched
+2110 unregister 0x1000: 0x0
+2111 ps count: 0x0 7
+2112 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2113 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2114 open store 3: 0x80070057 untouched
+2115 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2116 qi store iid#2: 0x80004002 0
+2117 dev state: 0x0 1
+2118 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2119 ep flow: 0x0 0
+2120 col qi iid#2: 0x0 self refs=3
+2121 activate iid#0 p=true: 0x80004002 0
+2122 ps set/commit: 0x80030005 0x80030005 one=1
+2123 activate iid#8 p=true: 0x80004002 0
+2124 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2125 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2126 col item 0: 0x80070057 0
+2127 activate iid#3 p=true: 0x80004002 0
+2128 ep flow: 0x0 0
+2129 ep flow: 0x0 0
+2130 en addref/release: +1 +0
+2131 open store 2: 0x80004003 untouched
+2132 default flow=0 role=3: 0x80070057 0
+2133 ps set/commit: 0x80030005 0x80030005 one=1
+2134 activate iid#5 p=true: 0x0 store
+2135 ps count: 0x80004003 3735928559
+2136 ps set/commit: 0x80030005 0x80030005 one=1
+2137 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2138 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2139 activate iid#2 p=true: 0x80004002 0
+2140 enum flow=3 mask=0x1: 0x80070057 0
+2141 enum flow=1 mask=0xf: 0x0 new
+2142 col count: 0x0 0
+2143 qi enumerator iid#3: 0x80004002 0
+2144 ps count: 0x0 7
+2145 register 0x3000: 0x0
+2146 open store 4096: 0x80070057 untouched
+2147 activate iid#0 p=true: 0x80004002 0
+2148 ps set/commit: 0x80030005 0x80030005 one=1
+2149 qi endpoint iid#0: 0x0 device
+2150 ep flow: 0x0 0
+2151 activate iid#3 p=true: 0x80004002 0
+2152 en addref/release: +1 +0
+2153 unregister 0x3000: 0x0
+2154 register 0x3000: 0x0
+2155 default flow=1 role=1: 0x80070490 0
+2156 ps set/commit: 0x80030005 0x80030005 one=1
+2157 default flow=3 role=3: 0x80070057 0
+2158 default flow=3 role=3: 0x80070057 0
+2159 default flow=3 role=0: 0x80070057 0
+2160 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2161 ps count: 0x0 7
+2162 ps count: 0x0 7
+2163 activate iid#7 p=true: 0x0 new
+2164 open store 3: 0x80070057 untouched
+2165 qi device iid#10: 0x0 device
+2166 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2167 unregister 0x2000: 0x0
+2168 unregister 0x1000: 0x0
+2169 en addref/release: +1 +0
+2170 ep flow: 0x0 0
+2171 enum flow=0 mask=0x0: 0x0 new
+2172 activate iid#2 p=true: 0x80004002 0
+2173 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+2174 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2175 ep flow: 0x0 0
+2176 unregister 0x1000: 0x0
+2177 default flow=3 role=1: 0x80070057 0
+2178 activate iid#8 p=true: 0x80004003 untouched
+2179 ps count: 0x0 7
+2180 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2181 enum flow=2 mask=0x2: 0x80004003 untouched
+2182 ps count: 0x0 7
+2183 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2184 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2185 qi endpoint iid#4: 0x0 endpoint
+2186 get "" id=true: 0x80070057 0
+2187 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2188 ep flow: 0x0 0
+2189 dev state: 0x0 1
+2190 enum flow=2 mask=0x10: 0x80070057 0
+2191 open store 0: 0x0 store
+2192 enum flow=0 mask=0xe: 0x0 new
+2193 ps set/commit: 0x80030005 0x80030005 one=1
+2194 unregister 0x2000: 0x0
+2195 qi enumerator iid#6: 0x80004002 0
+2196 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2197 qi device iid#3: 0x0 device
+2198 qi endpoint iid#1: 0x80004002 0
+2199 ps count: 0x0 7
+2200 col count: 0x0 0
+2201 enum flow=0 mask=0xf: 0x0 new
+2202 enum flow=0 mask=0xe: 0x80004003 untouched
+2203 default flow=2 role=0: 0x80070490 0
+2204 register 0x1000: 0x0
+2205 col count: 0x0 1
+2206 en addref/release: +1 +0
+2207 ps set/commit: 0x80030005 0x80030005 one=1
+2208 register 0x0: 0x80004003
+2209 default flow=3 role=1: 0x80070057 0
+2210 register 0x2000: 0x0
+2211 ep flow: 0x0 0
+2212 unregister 0x3000: 0x0
+2213 ps set/commit: 0x80030005 0x80030005 one=1
+2214 col count: 0x0 1
+2215 default flow=2 role=1: 0x80070490 0
+2216 enum flow=1 mask=0x10: 0x80070057 0
+2217 get "" id=true: 0x80070057 0
+2218 ps get [3, d8, a5, 1d],0: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2219 open store 1: 0x0 store
+2220 enum flow=0 mask=0xe: 0x0 new
+2221 register 0x1000: 0x0
+2222 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2223 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2224 qi store iid#6: 0x80004002 0
+2225 enum flow=2 mask=0x2: 0x0 new
+2226 get "" id=true: 0x80070057 0
+2227 activate iid#9 p=true: 0x80004003 untouched
+2228 qi device iid#2: 0x80004002 0
+2229 en addref/release: +1 +0
+2230 en addref/release: +1 +0
+2231 col addref: 2
+2232 ep flow: 0x0 0
+2233 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2234 activate iid#1 p=true: 0x80004002 0
+2235 ps set/commit: 0x80030005 0x80030005 one=1
+2236 register 0x3000: 0x0
+2237 qi endpoint iid#10: 0x0 device
+2238 ep flow: 0x0 0
+2239 en addref/release: +1 +0
+2240 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2241 ep flow: 0x0 0
+2242 qi enumerator iid#7: 0x80004002 0
+2243 default flow=0 role=0: 0x0 device
+2244 col item 4294967295: 0x80070057 0
+2245 unregister 0x2000: 0x0
+2246 activate iid#8 p=true: 0x80004002 0
+2247 qi endpoint iid#5: 0x80004002 0
+2248 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2249 ps count: 0x0 7
+2250 ps set/commit: 0x80030005 0x80030005 one=1
+2251 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2252 unregister 0x3000: 0x0
+2253 default flow=0 role=0: 0x0 device
+2254 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2255 activate iid#10 p=true: 0x80004002 0
+2256 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2257 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2258 col addref: 3
+2259 open store 2: 0x0 store
+2260 en addref/release: +1 +0
+2261 enum flow=1 mask=0xf: 0x0 new
+2262 register 0x3000: 0x0
+2263 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2264 qi enumerator iid#6: 0x80004003 untouched
+2265 open store 0: 0x0 store
+2266 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2267 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2268 enum flow=3 mask=0x0: 0x80070057 0
+2269 enum flow=3 mask=0xf: 0x80070057 0
+2270 en addref/release: +1 +0
+2271 unregister 0x0: 0x80004003
+2272 ps set/commit: 0x80030005 0x80030005 one=1
+2273 en addref/release: +1 +0
+2274 activate iid#5 p=true: 0x0 store
+2275 ep flow: 0x0 0
+2276 ps count: 0x0 7
+2277 activate iid#4 p=true: 0x80004002 0
+2278 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2279 register 0x2000: 0x0
+2280 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2281 open store 1: 0x0 store
+2282 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2283 ps set/commit: 0x80030005 0x80030005 one=1
+2284 activate iid#6 p=true: 0x0 new
+2285 en addref/release: +1 +0
+2286 enum flow=1 mask=0x1: 0x0 new
+2287 col addref: 2
+2288 ep flow: 0x0 0
+2289 default flow=3 role=0: 0x80070057 0
+2290 qi store iid#4: 0x80004002 0
+2291 dev state: 0x0 1
+2292 register 0x0: 0x80004003
+2293 ps set/commit: 0x80030005 0x80030005 one=1
+2294 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2295 unregister 0x0: 0x80004003
+2296 en addref/release: +1 +0
+2297 ps count: 0x0 7
+2298 register 0x2000: 0x0
+2299 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2300 register 0x1000: 0x0
+2301 activate iid#1 p=false: 0x80004003 untouched
+2302 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2303 col item 4294967295: 0x80070057 0
+2304 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2305 enum flow=2 mask=0xf: 0x0 new
+2306 enum flow=1 mask=0x1: 0x0 new
+2307 qi endpoint iid#7: 0x80004002 0
+2308 qi device iid#5: 0x80004002 0
+2309 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2310 get "" id=true: 0x80070057 0
+2311 ep flow: 0x0 0
+2312 unregister 0x2000: 0x0
+2313 register 0x1000: 0x0
+2314 activate iid#10 p=true: 0x80004002 0
+2315 open store 4096: 0x80070057 untouched
+2316 register 0x2000: 0x0
+2317 dev id: 0x80004003 ""
+2318 col release: 0
+2319 default flow=1 role=0: 0x80070490 0
+2320 open store 3: 0x80070057 untouched
+2321 default flow=0 role=1: 0x0 device
+2322 ps count: 0x0 7
+2323 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2324 en addref/release: +1 +0
+2325 open store 1: 0x0 store
+2326 ps set/commit: 0x80030005 0x80030005 one=1
+2327 activate iid#10 p=true: 0x80004002 0
+2328 unregister 0x0: 0x80004003
+2329 ps count: 0x0 7
+2330 dev state: 0x0 1
+2331 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2332 qi device iid#4: 0x0 endpoint
+2333 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2334 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2335 col item 0: 0x80004003 untouched
+2336 col count: 0x0 1
+2337 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2338 activate iid#6 p=true: 0x0 new
+2339 col item 0: 0x0 device
+2340 get "" id=true: 0x80070057 0
+2341 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2342 register 0x1000: 0x0
+2343 default flow=0 role=0: 0x0 device
+2344 get "" id=true: 0x80070057 0
+2345 default flow=0 role=3: 0x80070057 0
+2346 ps set/commit: 0x80030005 0x80030005 one=1
+2347 ps set/commit: 0x80030005 0x80030005 one=1
+2348 default flow=3 role=1: 0x80004003 untouched
+2349 en addref/release: +1 +0
+2350 enum flow=2 mask=0xf: 0x0 new
+2351 en addref/release: +1 +0
+2352 qi device iid#10: 0x80004003 untouched
+2353 qi enumerator iid#2: 0x80004002 0
+2354 register 0x2000: 0x0
+2355 unregister 0x0: 0x80004003
+2356 qi store iid#1: 0x80004002 0
+2357 ps count: 0x0 7
+2358 unregister 0x0: 0x80004003
+2359 ps set/commit: 0x80030005 0x80030005 one=1
+2360 enum flow=0 mask=0x0: 0x0 new
+2361 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2362 unregister 0x3000: 0x0
+2363 activate iid#10 p=true: 0x80004003 untouched
+2364 open store 4096: 0x80070057 untouched
+2365 open store 1: 0x0 store
+2366 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2367 ps count: 0x0 7
+2368 activate iid#7 p=true: 0x0 new
+2369 ps count: 0x0 7
+2370 qi endpoint iid#11: 0x80004002 0
+2371 dev state: 0x0 1
+2372 default flow=1 role=3: 0x80070057 0
+2373 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2374 activate iid#6 p=true: 0x0 new
+2375 register 0x1000: 0x0
+2376 default flow=1 role=0: 0x80070490 0
+2377 ps set/commit: 0x80030005 0x80030005 one=1
+2378 col qi iid#0: 0x0 self refs=2
+2379 register 0x3000: 0x0
+2380 register 0x1000: 0x0
+2381 ps count: 0x0 7
+2382 unregister 0x3000: 0x0
+2383 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2384 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2385 get "" id=true: 0x80070057 0
+2386 default flow=3 role=2: 0x80070057 0
+2387 open store 2: 0x0 store
+2388 col item 0: 0x80070057 0
+2389 col count: 0x0 0
+2390 default flow=3 role=2: 0x80070057 0
+2391 default flow=2 role=0: 0x80070490 0
+2392 ps count: 0x0 7
+2393 default flow=0 role=3: 0x80070057 0
+2394 open store 2: 0x0 store
+2395 col release: 1
+2396 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2397 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2398 col count: 0x0 0
+2399 col release: 0
+2400 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2401 enum flow=0 mask=0xe: 0x0 new
+2402 en addref/release: +1 +0
+2403 dev state: 0x0 1
+2404 default flow=0 role=3: 0x80070057 0
+2405 enum flow=0 mask=0x10: 0x80070057 0
+2406 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2407 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2408 activate iid#0 p=true: 0x80004002 0
+2409 ps set/commit: 0x80030005 0x80030005 one=1
+2410 ep flow: 0x0 0
+2411 en addref/release: +1 +0
+2412 ps set/commit: 0x80030005 0x80030005 one=1
+2413 ps get [c8, 64, 31, 23],1: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2414 col item 4294967295: 0x80070057 0
+2415 activate iid#10 p=true: 0x80004002 0
+2416 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2417 unregister 0x3000: 0x80070490
+2418 activate iid#11 p=false: 0x80004003 untouched
+2419 ps set/commit: 0x80030005 0x80030005 one=1
+2420 unregister 0x3000: 0x80070490
+2421 register 0x1000: 0x0
+2422 register 0x0: 0x80004003
+2423 ps at 6: 0x80004003 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2424 open store 0: 0x0 store
+2425 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2426 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2427 en addref/release: +1 +0
+2428 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2429 activate iid#5 p=true: 0x0 store
+2430 dev state: 0x0 1
+2431 open store 2: 0x0 store
+2432 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2433 open store 3: 0x80070057 untouched
+2434 default flow=0 role=3: 0x80070057 0
+2435 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2436 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2437 ep flow: 0x0 0
+2438 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2439 open store 0: 0x0 store
+2440 ps count: 0x0 7
+2441 en addref/release: +1 +0
+2442 open store 3: 0x80070057 untouched
+2443 en addref/release: +1 +0
+2444 get "" id=false: 0x80004003 untouched
+2445 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2446 dev state: 0x0 1
+2447 enum flow=2 mask=0xf: 0x0 new
+2448 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+2449 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2450 enum flow=3 mask=0xe: 0x80070057 0
+2451 col addref: 2
+2452 ps set/commit: 0x80030005 0x80030005 one=1
+2453 col release: 1
+2454 default flow=0 role=1: 0x0 device
+2455 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2456 ps count: 0x0 7
+2457 ps set/commit: 0x80030005 0x80030005 one=1
+2458 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2459 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2460 open store 3: 0x80070057 untouched
+2461 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2462 dev state: 0x80004003 3735928559
+2463 open store 0: 0x0 store
+2464 ep flow: 0x0 0
+2465 register 0x2000: 0x0
+2466 default flow=1 role=1: 0x80070490 0
+2467 open store 4096: 0x80070057 untouched
+2468 activate iid#8 p=true: 0x80004002 0
+2469 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2470 col qi iid#6: 0x80004002 0 refs=1
+2471 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2472 get "" id=true: 0x80070057 0
+2473 qi endpoint iid#0: 0x0 device
+2474 enum flow=1 mask=0x1: 0x0 new
+2475 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2476 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2477 ep flow: 0x0 0
+2478 default flow=3 role=3: 0x80070057 0
+2479 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2480 default flow=3 role=2: 0x80070057 0
+2481 ep flow: 0x0 0
+2482 activate iid#4 p=true: 0x80004002 0
+2483 activate iid#3 p=true: 0x80004002 0
+2484 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80004003 untouched
+2485 ps set/commit: 0x80030005 0x80030005 one=1
+2486 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80004003 untouched
+2487 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2488 register 0x2000: 0x0
+2489 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2490 register 0x0: 0x80004003
+2491 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+2492 open store 0: 0x0 store
+2493 ps count: 0x0 7
+2494 default flow=2 role=3: 0x80070057 0
+2495 register 0x0: 0x80004003
+2496 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2497 enum flow=3 mask=0x2: 0x80070057 0
+2498 open store 4096: 0x80070057 untouched
+2499 register 0x0: 0x80004003
+2500 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2501 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2502 unregister 0x3000: 0x80070490
+2503 enum flow=0 mask=0xf: 0x0 new
+2504 qi store iid#9: 0x80004002 0
+2505 default flow=0 role=2: 0x80004003 untouched
+2506 activate iid#9 p=true: 0x0 new
+2507 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2508 ps count: 0x0 7
+2509 ep flow: 0x0 0
+2510 dev state: 0x0 1
+2511 ps get [4d, 6, 9f, f1],0: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2512 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2513 activate iid#8 p=true: 0x80004002 0
+2514 en addref/release: +1 +0
+2515 ps set/commit: 0x80030005 0x80030005 one=1
+2516 col item 1: 0x80070057 0
+2517 qi device iid#0: 0x80004003 untouched
+2518 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+2519 ps get [4d, 6, 9f, f1],0: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2520 dev state: 0x0 1
+2521 open store 3: 0x80070057 untouched
+2522 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2523 unregister 0x1000: 0x0
+2524 ps count: 0x0 7
+2525 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2526 enum flow=2 mask=0x10: 0x80070057 0
+2527 qi store iid#5: 0x0 store
+2528 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2529 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2530 register 0x1000: 0x0
+2531 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2532 en addref/release: +1 +0
+2533 ps set/commit: 0x80030005 0x80030005 one=1
+2534 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2535 dev state: 0x0 1
+2536 enum flow=0 mask=0x10: 0x80070057 0
+2537 default flow=1 role=2: 0x80004003 untouched
+2538 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2539 activate iid#8 p=true: 0x80004002 0
+2540 ps get [3, d8, a5, 1d],4: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2541 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2542 activate iid#5 p=true: 0x0 store
+2543 open store 0: 0x0 store
+2544 qi endpoint iid#0: 0x0 device
+2545 ps set/commit: 0x80030005 0x80030005 one=1
+2546 unregister 0x2000: 0x0
+2547 open store 3: 0x80070057 untouched
+2548 activate iid#6 p=true: 0x0 new
+2549 open store 4096: 0x80070057 untouched
+2550 default flow=0 role=0: 0x0 device
+2551 qi endpoint iid#6: 0x80004002 0
+2552 activate iid#5 p=true: 0x0 store
+2553 register 0x2000: 0x0
+2554 ep flow: 0x0 0
+2555 open store 3: 0x80070057 untouched
+2556 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2557 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2558 dev state: 0x0 1
+2559 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2560 ps set/commit: 0x80030005 0x80030005 one=1
+2561 ep flow: 0x0 0
+2562 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2563 register 0x3000: 0x0
+2564 default flow=1 role=1: 0x80070490 0
+2565 en addref/release: +1 +0
+2566 enum flow=0 mask=0x10: 0x80070057 0
+2567 en addref/release: +1 +0
+2568 ps count: 0x0 7
+2569 unregister 0x2000: 0x0
+2570 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2571 open store 0: 0x0 store
+2572 ps get [4e, 25, 5c, a4],2: 0x0 vt=31 "スピーカー"
+2573 ps set/commit: 0x80030005 0x80030005 one=1
+2574 en addref/release: +1 +0
+2575 open store 0: 0x0 store
+2576 col addref: 2
+2577 ps count: 0x0 7
+2578 register 0x2000: 0x0
+2579 en addref/release: +1 +0
+2580 register 0x2000: 0x0
+2581 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80004003 untouched
+2582 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2583 unregister 0x3000: 0x0
+2584 dev state: 0x0 1
+2585 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2586 default flow=3 role=3: 0x80070057 0
+2587 en addref/release: +1 +0
+2588 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=false: 0x80004003 untouched
+2589 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+2590 dev state: 0x0 1
+2591 default flow=1 role=3: 0x80070057 0
+2592 dev id: 0x80004003 ""
+2593 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+2594 register 0x1000: 0x0
+2595 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2596 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2597 qi device iid#10: 0x0 device
+2598 ps set/commit: 0x80030005 0x80030005 one=1
+2599 en addref/release: +1 +0
+2600 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2601 dev state: 0x0 1
+2602 register 0x0: 0x80004003
+2603 ps count: 0x0 7
+2604 register 0x0: 0x80004003
+2605 enum flow=0 mask=0xe: 0x0 new
+2606 unregister 0x3000: 0x80070490
+2607 ps count: 0x0 7
+2608 register 0x2000: 0x0
+2609 enum flow=1 mask=0x1: 0x0 new
+2610 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2611 enum flow=2 mask=0xe: 0x0 new
+2612 open store 3: 0x80070057 untouched
+2613 dev state: 0x0 1
+2614 default flow=1 role=2: 0x80070490 0
+2615 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2616 ps count: 0x0 7
+2617 ps count: 0x0 7
+2618 enum flow=2 mask=0x0: 0x0 new
+2619 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=false: 0x80004003 untouched
+2620 get "" id=true: 0x80070057 0
+2621 ep flow: 0x0 0
+2622 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+2623 enum flow=3 mask=0x0: 0x80070057 0
+2624 col count: 0x0 0
+2625 col qi iid#0: 0x0 self refs=2
+2626 dev state: 0x0 1
+2627 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2628 ps set/commit: 0x80030005 0x80030005 one=1
+2629 dev state: 0x0 1
+2630 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2631 enum flow=1 mask=0x10: 0x80070057 0
+2632 en addref/release: +1 +0
+2633 unregister 0x2000: 0x0
+2634 qi endpoint iid#11: 0x80004002 0
+2635 unregister 0x3000: 0x80070490
+2636 enum flow=3 mask=0x10: 0x80070057 0
+2637 ps set/commit: 0x80030005 0x80030005 one=1
+2638 register 0x1000: 0x0
+2639 en addref/release: +1 +0
+2640 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2641 qi endpoint iid#2: 0x80004002 0
+2642 register 0x1000: 0x0
+2643 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2644 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2645 col addref: 3
+2646 open store 3: 0x80070057 untouched
+2647 register 0x0: 0x80004003
+2648 ps count: 0x0 7
+2649 activate iid#7 p=true: 0x0 new
+2650 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80004003 untouched
+2651 enum flow=3 mask=0x10: 0x80070057 0
+2652 ps get [c8, 64, 31, 23],1: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2653 default flow=3 role=3: 0x80070057 0
+2654 unregister 0x3000: 0x80070490
+2655 unregister 0x0: 0x80004003
+2656 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2657 open store 3: 0x80070057 untouched
+2658 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2659 activate iid#2 p=true: 0x80004002 0
+2660 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2661 register 0x3000: 0x0
+2662 register 0x1000: 0x0
+2663 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2664 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2665 ep flow: 0x0 0
+2666 ps count: 0x0 7
+2667 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2668 qi enumerator iid#11: 0x80004002 0
+2669 dev state: 0x0 1
+2670 get "" id=true: 0x80004003 untouched
+2671 dev state: 0x0 1
+2672 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2673 ps count: 0x0 7
+2674 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2675 dev state: 0x0 1
+2676 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2677 activate iid#5 p=true: 0x0 store
+2678 qi store iid#6: 0x80004002 0
+2679 register 0x0: 0x80004003
+2680 activate iid#1 p=true: 0x80004002 0
+2681 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2682 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2683 default flow=1 role=1: 0x80070490 0
+2684 en addref/release: +1 +0
+2685 col count: 0x0 0
+2686 ps set/commit: 0x80030005 0x80030005 one=1
+2687 en addref/release: +1 +0
+2688 dev state: 0x80004003 3735928559
+2689 ps set/commit: 0x80030005 0x80030005 one=1
+2690 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2691 qi enumerator iid#10: 0x80004003 untouched
+2692 ps set/commit: 0x80030005 0x80030005 one=1
+2693 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2694 open store 3: 0x80070057 untouched
+2695 dev state: 0x0 1
+2696 open store 3: 0x80070057 untouched
+2697 ps at 7: 0x80004003 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2698 get "" id=true: 0x80070057 0
+2699 enum flow=3 mask=0xe: 0x80070057 0
+2700 ps set/commit: 0x80030005 0x80030005 one=1
+2701 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2702 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2703 register 0x2000: 0x0
+2704 register 0x2000: 0x0
+2705 register 0x1000: 0x0
+2706 en addref/release: +1 +0
+2707 col addref: 4
+2708 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2709 ep flow: 0x0 0
+2710 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2711 ps count: 0x0 7
+2712 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2713 ep flow: 0x0 0
+2714 en addref/release: +1 +0
+2715 ps set/commit: 0x80030005 0x80030005 one=1
+2716 ep flow: 0x0 0
+2717 dev state: 0x0 1
+2718 register 0x3000: 0x0
+2719 qi enumerator iid#7: 0x80004002 0
+2720 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2721 default flow=1 role=3: 0x80070057 0
+2722 enum flow=3 mask=0x10: 0x80070057 0
+2723 dev state: 0x0 1
+2724 ps set/commit: 0x80030005 0x80030005 one=1
+2725 ps get [6e, 51, 6e, 2],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2726 ep flow: 0x0 0
+2727 ep flow: 0x0 0
+2728 col release: 3
+2729 ps set/commit: 0x80030005 0x80030005 one=1
+2730 activate iid#5 p=true: 0x0 store
+2731 ps set/commit: 0x80030005 0x80030005 one=1
+2732 ps set/commit: 0x80030005 0x80030005 one=1
+2733 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2734 dev state: 0x0 1
+2735 ps set/commit: 0x80030005 0x80030005 one=1
+2736 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2737 ps count: 0x0 7
+2738 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2739 open store 3: 0x80070057 untouched
+2740 activate iid#3 p=true: 0x80004002 0
+2741 open store 3: 0x80070057 untouched
+2742 register 0x1000: 0x0
+2743 ep flow: 0x80004003 3735928559
+2744 activate iid#7 p=true: 0x0 new
+2745 activate iid#9 p=true: 0x0 new
+2746 open store 0: 0x0 store
+2747 unregister 0x3000: 0x0
+2748 dev state: 0x0 1
+2749 activate iid#0 p=true: 0x80004003 untouched
+2750 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2751 activate iid#10 p=true: 0x80004002 0
+2752 enum flow=2 mask=0xe: 0x80004003 untouched
+2753 unregister 0x0: 0x80004003
+2754 default flow=3 role=1: 0x80070057 0
+2755 ps count: 0x0 7
+2756 default flow=0 role=2: 0x0 device
+2757 qi store iid#11: 0x80004002 0
+2758 default flow=3 role=3: 0x80070057 0
+2759 en addref/release: +1 +0
+2760 register 0x2000: 0x0
+2761 ps count: 0x0 7
+2762 enum flow=0 mask=0x0: 0x0 new
+2763 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2764 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2765 ep flow: 0x0 0
+2766 register 0x2000: 0x0
+2767 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2768 enum flow=1 mask=0x1: 0x0 new
+2769 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2770 enum flow=0 mask=0xf: 0x0 new
+2771 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2772 ps count: 0x0 7
+2773 open store 4096: 0x80070057 untouched
+2774 dev state: 0x0 1
+2775 dev state: 0x0 1
+2776 activate iid#4 p=true: 0x80004002 0
+2777 col count: 0x0 1
+2778 unregister 0x0: 0x80004003
+2779 ep flow: 0x0 0
+2780 dev state: 0x0 1
+2781 enum flow=0 mask=0x0: 0x0 new
+2782 activate iid#0 p=true: 0x80004002 0
+2783 register 0x3000: 0x0
+2784 qi device iid#10: 0x0 device
+2785 ep flow: 0x0 0
+2786 activate iid#11 p=true: 0x80004002 0
+2787 activate iid#2 p=true: 0x80004002 0
+2788 en addref/release: +1 +0
+2789 enum flow=2 mask=0xf: 0x0 new
+2790 qi enumerator iid#8: 0x80004002 0
+2791 default flow=2 role=3: 0x80070057 0
+2792 ps set/commit: 0x80030005 0x80030005 one=1
+2793 ps set/commit: 0x80030005 0x80030005 one=1
+2794 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2795 dev state: 0x0 1
+2796 open store 3: 0x80070057 untouched
+2797 get "" id=true: 0x80070057 0
+2798 register 0x0: 0x80004003
+2799 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2800 activate iid#4 p=true: 0x80004002 0
+2801 activate iid#4 p=true: 0x80004002 0
+2802 dev state: 0x0 1
+2803 enum flow=1 mask=0x1: 0x0 new
+2804 ps count: 0x0 7
+2805 qi store iid#5: 0x0 store
+2806 unregister 0x1000: 0x0
+2807 dev state: 0x0 1
+2808 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2809 unregister 0x2000: 0x0
+2810 default flow=3 role=3: 0x80070057 0
+2811 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2812 col addref: 2
+2813 en addref/release: +1 +0
+2814 unregister 0x3000: 0x0
+2815 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2816 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2817 open store 2: 0x0 store
+2818 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+2819 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2820 ep flow: 0x0 0
+2821 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2822 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+2823 open store 4096: 0x80070057 untouched
+2824 dev state: 0x0 1
+2825 ps get [c8, 64, 31, 23],1: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2826 ps at 6: 0x0 [c8, 64, 31, 23, 2c, 1b, 7d, 4c, bc, 68, b6, 71, 68, 7a, 25, 67] 1
+2827 default flow=1 role=0: 0x80070490 0
+2828 activate iid#4 p=true: 0x80004002 0
+2829 unregister 0x2000: 0x0
+2830 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2831 col item 0: 0x80070057 0
+2832 ep flow: 0x0 0
+2833 col addref: 3
+2834 ep flow: 0x80004003 3735928559
+2835 default flow=3 role=3: 0x80070057 0
+2836 qi device iid#2: 0x80004002 0
+2837 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2838 ep flow: 0x0 0
+2839 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2840 ps set/commit: 0x80030005 0x80030005 one=1
+2841 en addref/release: +1 +0
+2842 dev state: 0x0 1
+2843 col addref: 4
+2844 ps get [1, 0, 0, 0],14: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2845 col count: 0x0 0
+2846 en addref/release: +1 +0
+2847 qi enumerator iid#11: 0x80004002 0
+2848 open store 1: 0x0 store
+2849 ps set/commit: 0x80030005 0x80030005 one=1
+2850 ps at 0: 0x0 [4e, 25, 5c, a4, 1c, df, fd, 4e, 80, 20, 67, d1, 46, a8, 50, e0] 14
+2851 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2852 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2853 get "" id=true: 0x80070057 0
+2854 dev state: 0x0 1
+2855 activate iid#2 p=false: 0x80004003 untouched
+2856 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2857 dev state: 0x0 1
+2858 unregister 0x2000: 0x0
+2859 open store 0: 0x0 store
+2860 register 0x1000: 0x0
+2861 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=false: 0x80004003 untouched
+2862 unregister 0x3000: 0x0
+2863 activate iid#2 p=true: 0x80004002 0
+2864 activate iid#3 p=true: 0x80004002 0
+2865 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2866 ps set/commit: 0x80030005 0x80030005 one=1
+2867 activate iid#6 p=true: 0x0 new
+2868 dev id: 0x80004003 ""
+2869 en addref/release: +1 +0
+2870 open store 4096: 0x80070057 untouched
+2871 dev state: 0x0 1
+2872 en addref/release: +1 +0
+2873 unregister 0x2000: 0x0
+2874 en addref/release: +1 +0
+2875 default flow=1 role=1: 0x80070490 0
+2876 ps count: 0x0 7
+2877 register 0x0: 0x80004003
+2878 ps set/commit: 0x80030005 0x80030005 one=1
+2879 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2880 ps set/commit: 0x80030005 0x80030005 one=1
+2881 enum flow=3 mask=0x1: 0x80070057 0
+2882 qi store iid#6: 0x80004002 0
+2883 ep flow: 0x0 0
+2884 ps set/commit: 0x80030005 0x80030005 one=1
+2885 unregister 0x1000: 0x0
+2886 ps count: 0x80004003 3735928559
+2887 default flow=3 role=2: 0x80070057 0
+2888 unregister 0x0: 0x80004003
+2889 ps get [4e, 25, 5c, a4],14: 0x0 vt=31 "スピーカー (sake Audio)"
+2890 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2891 ps count: 0x0 7
+2892 ps get [c8, 64, 31, 23],1: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2893 en addref/release: +1 +0
+2894 ps set/commit: 0x80030005 0x80030005 one=1
+2895 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2896 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2897 register 0x0: 0x80004003
+2898 col qi iid#7: 0x80004002 0 refs=4
+2899 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2900 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2901 qi endpoint iid#11: 0x80004002 0
+2902 dev state: 0x0 1
+2903 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2904 register 0x0: 0x80004003
+2905 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2906 ps set/commit: 0x80030005 0x80030005 one=1
+2907 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2908 ps count: 0x0 7
+2909 ps count: 0x0 7
+2910 en addref/release: +1 +0
+2911 ep flow: 0x80004003 3735928559
+2912 activate iid#7 p=true: 0x0 new
+2913 open store 4096: 0x80070057 untouched
+2914 col item 0: 0x80070057 0
+2915 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2916 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=false: 0x80004003 untouched
+2917 qi endpoint iid#0: 0x0 device
+2918 dev state: 0x0 1
+2919 default flow=0 role=3: 0x80070057 0
+2920 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=false: 0x80004003 untouched
+2921 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2922 unregister 0x0: 0x80004003
+2923 ps at 4294967295: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2924 activate iid#9 p=true: 0x0 new
+2925 unregister 0x1000: 0x0
+2926 ps get [3, d8, a5, 1d],0: 0x0 vt=19 1
+2927 ps get [4e, 25, 5c, a4],15: 0x0 vt=0 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+2928 unregister 0x0: 0x80004003
+2929 ps get [6e, 51, 6e, 2],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2930 open store 0: 0x80004003 untouched
+2931 en addref/release: +1 +0
+2932 qi store iid#11: 0x80004002 0
+2933 dev state: 0x0 1
+2934 unregister 0x0: 0x80004003
+2935 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2936 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2937 ps get [c8, 64, 31, 23],1: 0x0 vt=31 "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}"
+2938 enum flow=1 mask=0xf: 0x80004003 untouched
+2939 ps get [3, d8, a5, 1d],4: 0x0 vt=31 "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2940 ps at 7: 0x80070057 [ef, be, ad, de, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] 0
+2941 activate iid#10 p=false: 0x80004003 untouched
+2942 qi store iid#0: 0x0 store
+2943 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2944 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2945 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
+2946 ps count: 0x0 7
+2947 activate iid#3 p=true: 0x80004002 0
+2948 dev state: 0x0 1
+2949 ps count: 0x0 7
+2950 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2951 open store 3: 0x80070057 untouched
+2952 ps get [4d, 6, 9f, f1],0: 0x0 vt=65 40 [fe, ff, 2, 0, 44, ac, 0, 0, 10, b1, 2, 0, 4, 0, 10, 0, 16, 0, 10, 0, 3, 0, 0, 0, 1, 0, 0, 0, 0, 0, 10, 0, 80, 0, 0, aa, 0, 38, 9b, 71]
+2953 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2954 unregister 0x2000: 0x0
+2955 activate iid#3 p=false: 0x80004003 untouched
+2956 default flow=0 role=1: 0x0 device
+2957 enum flow=1 mask=0x1: 0x0 new
+2958 ps get [6e, 51, 6e, 2],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2959 ps count: 0x0 7
+2960 qi endpoint iid#2: 0x80004002 0
+2961 open store 0: 0x80004003 untouched
+2962 default flow=1 role=1: 0x80004003 untouched
+2963 col release: 0
+2964 open store 4096: 0x80070057 untouched
+2965 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2966 qi endpoint iid#8: 0x80004003 untouched
+2967 enum flow=3 mask=0x2: 0x80070057 0
+2968 ps count: 0x0 7
+2969 ps at 3: 0x0 [3, d8, a5, 1d, 92, d4, dd, 4e, 8c, 23, e0, c0, ff, ee, 7f, e] 0
+2970 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2971 default flow=1 role=1: 0x80070490 0
+2972 unregister 0x0: 0x80004003
+2973 qi store iid#6: 0x80004002 0
+2974 dev state: 0x80004003 3735928559
+2975 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=false: 0x80004003 untouched
+2976 qi enumerator iid#3: 0x80004002 0
+2977 activate iid#2 p=false: 0x80004003 untouched
+2978 enum flow=1 mask=0x10: 0x80070057 0
+2979 ps set/commit: 0x80030005 0x80030005 one=1
+2980 ep flow: 0x0 0
+2981 col release: 3
+2982 ps set/commit: 0x80030005 0x80030005 one=1
+2983 register 0x3000: 0x0
+2984 qi endpoint iid#8: 0x80004002 0
+2985 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2986 default flow=1 role=2: 0x80070490 0
+2987 en addref/release: +1 +0
+2988 get "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x0 device
+2989 unregister 0x1000: 0x0
+2990 activate iid#2 p=true: 0x80004002 0
+2991 ps count: 0x0 7
+2992 en addref/release: +1 +0
+2993 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2994 ps count: 0x0 7
+2995 dev id: 0x0 "{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}"
+2996 ps get [4e, 25, 5c, a4],2: 0x80004003 vt=52428 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
+2997 enum flow=3 mask=0x10: 0x80070057 0
+2998 get "{0.0.0.00000000}.{5A2C1E0B-7F3D-4E8A-9C61-3B8D0F4A2E17}" id=true: 0x80070057 0
+2999 get "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}" id=true: 0x80070057 0
