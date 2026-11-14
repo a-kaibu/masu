@@ -1282,6 +1282,9 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
         return Rect { l: x0, r: x1, ..r };
     }
     let xs: Vec<i32> = (r.l..r.r).map(map_x).collect();
+    if blit_fast(d, sv, r, &xs, &map_y, op) {
+        return r;
+    }
     let mono_to_color = sv.mono && !d.mono;
     let color_to_mono = d.mono && !sv.mono;
     let need_dst = (op >> 1 ^ op) & 0x55 != 0;
@@ -1323,6 +1326,100 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
         }
     }
     r
+}
+
+#[cfg(test)]
+thread_local! {
+    /// (tests: blit's per-pixel path only, the reference blit_fast is compared with)
+    static GENERIC_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// blit's common cases onto a 32 bpp destination (a DIB section, a window surface) with the
+/// pixel format and the raster op chosen once per blit instead of once per pixel: a source of
+/// 32, 24, 16 or 8 bpp (8: its palette as a table), SRCCOPY or a raster op of source and
+/// destination only (sprite masks: SRCAND, SRCPAINT, SRCINVERT), stretched and mirrored or not.
+/// The same pixels as the per-pixel path (tests: fast_blit_is_the_per_pixel_blit). `xs` is the
+/// source column of each destination column of `r` (monotonic: the ones inside the source
+/// are one run). false: not one of these, nothing done.
+fn blit_fast(d: &View, sv: &View, r: Rect, xs: &[i32], map_y: &dyn Fn(i32) -> i32, op: u8) -> bool {
+    #[cfg(test)]
+    if GENERIC_ONLY.with(|g| g.get()) {
+        return false;
+    }
+    if d.bpp != 32 || d.mono || sv.mono || (op >> 4 ^ op) & 0x0f != 0 {
+        return false;
+    }
+    let same = sv.bpp == 32 && sv.r565 == d.r565;
+    // a raster op other than SRCCOPY combines raw pixels: only 32 bpp onto 32 bpp here
+    if op != 0xcc && !same {
+        return false;
+    }
+    let Some(k0) = xs.iter().position(|&x| x >= 0 && x < sv.w) else { return true };
+    let k1 = xs.iter().rposition(|&x| x >= 0 && x < sv.w).unwrap() + 1;
+    let xs = &xs[k0..k1];
+    let x0 = r.l + k0 as i32;
+    // each destination row from its source row
+    let rows = |f: &mut dyn FnMut(*const u8, *mut u32)| {
+        for y in r.t..r.b {
+            let syy = map_y(y);
+            if syy < 0 || syy >= sv.h {
+                continue;
+            }
+            f(sv.row(syy), unsafe { (d.row(y) as *mut u32).add(x0 as usize) });
+        }
+    };
+    #[inline(always)]
+    fn span(s: *const u8, dp: *mut u32, xs: &[i32], px: impl Fn(*const u8, usize) -> u32, op: impl Fn(u32, u32) -> u32) {
+        for (i, &x) in xs.iter().enumerate() {
+            unsafe {
+                let p = dp.add(i);
+                p.write_unaligned(op(px(s, x as usize), p.read_unaligned()));
+            }
+        }
+    }
+    let p32 = |s: *const u8, x: usize| unsafe { (s as *const u32).add(x).read_unaligned() };
+    if same {
+        // (no stretch: whole rows; the overlapping case of a DC onto itself is ptr::copy's)
+        let straight = xs.windows(2).all(|w| w[1] == w[0] + 1);
+        match op {
+            0xcc if straight => rows(&mut |s, dp| unsafe { std::ptr::copy((s as *const u32).add(xs[0] as usize), dp, xs.len()) }),
+            0xcc => rows(&mut |s, dp| span(s, dp, xs, p32, |s, _| s)),
+            0x88 => rows(&mut |s, dp| span(s, dp, xs, p32, |s, d| s & d)),
+            0xee => rows(&mut |s, dp| span(s, dp, xs, p32, |s, d| s | d)),
+            0x66 => rows(&mut |s, dp| span(s, dp, xs, p32, |s, d| s ^ d)),
+            _ => rows(&mut |s, dp| span(s, dp, xs, p32, |s, d| rop3(op, 0, s, d))),
+        }
+        return true;
+    }
+    match sv.bpp {
+        32 => rows(&mut |s, dp| span(s, dp, xs, |s, x| p32(s, x) & 0xffffff, |s, _| s)),
+        24 => rows(&mut |s, dp| {
+            span(s, dp, xs, |s, x| unsafe {
+                let p = s.add(3 * x);
+                (*p.add(2) as u32) << 16 | (*p.add(1) as u32) << 8 | *p as u32
+            }, |s, _| s)
+        }),
+        16 if sv.r565 => rows(&mut |s, dp| {
+            span(s, dp, xs, |s, x| {
+                let v = unsafe { (s as *const u16).add(x).read_unaligned() } as u32;
+                let (r5, g6, b5) = (v >> 11 & 31, v >> 5 & 63, v & 31);
+                (r5 << 3 | r5 >> 2) << 16 | (g6 << 2 | g6 >> 4) << 8 | (b5 << 3 | b5 >> 2)
+            }, |s, _| s)
+        }),
+        16 => rows(&mut |s, dp| {
+            span(s, dp, xs, |s, x| {
+                let v = unsafe { (s as *const u16).add(x).read_unaligned() } as u32;
+                let (r5, g5, b5) = (v >> 10 & 31, v >> 5 & 31, v & 31);
+                (r5 << 3 | r5 >> 2) << 16 | (g5 << 3 | g5 >> 2) << 8 | (b5 << 3 | b5 >> 2)
+            }, |s, _| s)
+        }),
+        8 => {
+            let lut: [u32; 256] = std::array::from_fn(|i| sv.pal_at(i) & 0xffffff);
+            rows(&mut |s, dp| span(s, dp, xs, |s, x| unsafe { lut[*s.add(x) as usize] }, |s, _| s))
+        }
+        _ => return false,
+    }
+    true
 }
 
 /// GDI+ painting into a DC: the w x h straight ARGB colors (None: left alone) from logical
@@ -5922,6 +6019,62 @@ mod size_tests {
                 prop_assert_eq!(size as u64, row as u64 * h as u64);
                 prop_assert!(size < mem::GUEST_TOP);
             }
+        }
+    }
+}
+
+/// blit_fast against blit's per-pixel path: every pixel the same (and the same rectangle
+/// back) for random 32 bpp destinations and 32/24/16 (555 and 565)/8 bpp sources, bottom-up or
+/// not, any stretch, mirroring, clip and offset, SRCCOPY and the source/destination raster ops.
+#[cfg(test)]
+mod fast_blit_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn view(buf: &mut [u8], w: i32, h: i32, bpp: u16, r565: bool, up: bool, pal: &[u32]) -> View {
+        let stride = ((w as usize * bpp as usize + 31) / 32 * 4) as isize;
+        let base = buf.as_mut_ptr();
+        let (top, stride) = if up { (unsafe { base.offset((h as isize - 1) * stride) }, -stride) } else { (base, stride) };
+        View { top, stride, w, h, bpp, r565, pal: pal.to_vec(), mono: false }
+    }
+
+    fn bytes(w: i32, h: i32, bpp: u16) -> usize {
+        (w as usize * bpp as usize + 31) / 32 * 4 * h as usize
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(600))]
+        #[test]
+        fn fast_blit_is_the_per_pixel_blit(
+            sw in 1i32..24, sh in 1i32..24, dw in 1i32..32, dh in 1i32..32,
+            bpp in prop::sample::select(vec![32u16, 24, 16, 8]), r565: bool, sup: bool, dup: bool,
+            dst in (-6i32..24, -6i32..24, prop_oneof![1i32..40, -40i32..-1], prop_oneof![1i32..40, -40i32..-1]),
+            srcr in (-3i32..20, -3i32..20, prop_oneof![1i32..30, -30i32..-1], prop_oneof![1i32..30, -30i32..-1]),
+            op in prop::sample::select(vec![0xccu8, 0x88, 0xee, 0x66, 0x44, 0x33, 0x11, 0xbb, 0x55, 0xaa]),
+            half: bool, clip in prop::option::of((-4i32..34, -4i32..34, 0i32..40, 0i32..40)), seed: u64,
+        ) {
+            let mut rng = seed | 1;
+            let mut next = || { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; rng as u8 };
+            let mut sbuf: Vec<u8> = (0..bytes(sw, sh, bpp)).map(|_| next()).collect();
+            let dinit: Vec<u8> = (0..bytes(dw, dh, 32)).map(|_| next()).collect();
+            let pal: Vec<u32> = (0..256).map(|i| (i as u32).wrapping_mul(0x9e3779b9) & 0xffffff).collect();
+            let pal = &pal[..(seed % 300) as usize % 257];
+            let sv = view(&mut sbuf, sw, sh, bpp, r565 && bpp == 16, sup, pal);
+            let full = Rect { l: 0, t: 0, r: dw, b: dh };
+            let clip = clip.map_or(full, |c| Rect { l: c.0, t: c.1, r: c.0 + c.2, b: c.1 + c.3 }.and(&full));
+            let mut out = vec![];
+            for generic in [true, false] {
+                let mut dbuf = dinit.clone();
+                let dv = view(&mut dbuf, dw, dh, 32, false, dup, &[]);
+                let mut c = Canvas { v: dv, ox: 0, oy: 0, clip };
+                let src = Src { v: &sv, x: srcr.0, y: srcr.1, w: srcr.2, h: srcr.3, bk: 0xffffff, half };
+                GENERIC_ONLY.with(|g| g.set(generic));
+                let r = blit(&mut c, dst, Some(src), op, &Pat::None, 0, 0xffffff);
+                GENERIC_ONLY.with(|g| g.set(false));
+                drop(c);
+                out.push((r.l, r.t, r.r, r.b, dbuf));
+            }
+            prop_assert!(out[0] == out[1], "per pixel {:?} vs fast {:?}", (out[0].0, out[0].1, out[0].2, out[0].3), (out[1].0, out[1].1, out[1].2, out[1].3));
         }
     }
 }
