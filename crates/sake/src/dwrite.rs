@@ -484,38 +484,49 @@ fn cluster_flags(ch: &[u32], i: usize) -> (bool, bool, bool) {
     (wrap, space, nl)
 }
 
-/// The script of a character for splitting runs: 0 for characters any script takes (white
+/// A script runs are split by
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Script {
+    Latin,
+    Han,
+    Hiragana,
+    Katakana,
+    Symbol,
+    Other,
+}
+
+/// The script of a character for splitting runs: None for characters any script takes (white
 /// space, ASCII punctuation and digits, CJK punctuation, the long vowel mark), which join the run
 /// before them.
-fn script(k: u32) -> u8 {
-    match k {
-        0x41..=0x5a | 0x61..=0x7a | 0xc0..=0x24f => 1,
-        0x3005 => 2,
-        0..=0x7f | 0x80..=0xbf | 0x3000..=0x303f | 0x30fb | 0x30fc | 0xff01..=0xff20 | 0xff3b..=0xff40 | 0xff5b..=0xff65 => 0,
-        0x3400..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x3ffff => 2,
-        0x3040..=0x309f => 3,
-        0x30a0..=0x30ff | 0x31f0..=0x31ff | 0xff66..=0xff9f => 4,
-        0x2600..=0x27bf | 0x1f000.. => 5,
-        0xff21..=0xff3a | 0xff41..=0xff5a => 1,
-        _ => 6,
-    }
+fn script(k: u32) -> Option<Script> {
+    Some(match k {
+        0x41..=0x5a | 0x61..=0x7a | 0xc0..=0x24f => Script::Latin,
+        0x3005 => Script::Han,
+        0..=0x7f | 0x80..=0xbf | 0x3000..=0x303f | 0x30fb | 0x30fc | 0xff01..=0xff20 | 0xff3b..=0xff40 | 0xff5b..=0xff65 => return None,
+        0x3400..=0x9fff | 0xf900..=0xfaff | 0x20000..=0x3ffff => Script::Han,
+        0x3040..=0x309f => Script::Hiragana,
+        0x30a0..=0x30ff | 0x31f0..=0x31ff | 0xff66..=0xff9f => Script::Katakana,
+        0x2600..=0x27bf | 0x1f000.. => Script::Symbol,
+        0xff21..=0xff3a | 0xff41..=0xff5a => Script::Latin,
+        _ => Script::Other,
+    })
 }
 
 /// [from, to) split where the script changes (a character of script 0 joins the run before it,
 /// or the one after it at the start).
 fn split_scripts(ch: &[u32], from: usize, to: usize) -> Vec<(usize, usize)> {
     let mut v = Vec::new();
-    let (mut start, mut cur) = (from, 0u8);
+    let (mut start, mut cur) = (from, None);
     for i in from..to {
-        let s = script(ch[i]);
-        if s == 0 || s == cur {
+        let Some(s) = script(ch[i]) else { continue };
+        if cur == Some(s) {
             continue;
         }
-        if cur != 0 {
+        if cur.is_some() {
             v.push((start, i));
             start = i;
         }
-        cur = s;
+        cur = Some(s);
     }
     if start < to {
         v.push((start, to));
@@ -1313,7 +1324,7 @@ mod layout_tests {
                 proptest::prop_assert_eq!(a, at);
                 proptest::prop_assert!(b > a);
                 at = b;
-                let mut sc: Vec<u8> = ch[a..b].iter().map(|&k| script(k)).filter(|&x| x != 0).collect();
+                let mut sc: Vec<Script> = ch[a..b].iter().filter_map(|&k| script(k)).collect();
                 sc.dedup();
                 proptest::prop_assert!(sc.len() <= 1, "{:?} {:?}", &ch[a..b], sc);
             }
@@ -1498,3 +1509,8 @@ mod review_b06_tests {
         }
     }
 }
+
+/// Script runs against the code before a script became a type
+#[cfg(test)]
+#[path = "dwrite_script_tests.rs"]
+mod script_tests;
