@@ -1589,3 +1589,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "dmime_snapshot_tests.rs"]
+mod snapshot_tests;
