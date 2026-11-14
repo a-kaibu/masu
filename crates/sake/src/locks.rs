@@ -1,7 +1,7 @@
 //! Taking a lock: `m.locked()` for a Mutex, `l.r()` / `l.w()` for an RwLock. A lock poisoned by a
 //! panic on another thread panics here as `.lock().unwrap()` did (state left half-changed is not
 //! read on); the one place that says so, instead of an unwrap at every lock.
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Condvar, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub trait Lock<T: ?Sized> {
     fn locked(&self) -> MutexGuard<'_, T>;
@@ -36,6 +36,14 @@ impl<T: ?Sized> Rw<T> for RwLock<T> {
             Ok(g) => g,
             Err(e) => poisoned(&e),
         }
+    }
+}
+/// Condvar::wait, a poisoned lock panicking as above.
+#[track_caller]
+pub fn wait<'a, T>(cv: &Condvar, g: MutexGuard<'a, T>) -> MutexGuard<'a, T> {
+    match cv.wait(g) {
+        Ok(g) => g,
+        Err(e) => poisoned(&e),
     }
 }
 #[track_caller]

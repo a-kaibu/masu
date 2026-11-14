@@ -787,7 +787,8 @@ fn K32GetModuleInformation(c: &mut Ctx) -> u32 {
         last_error(122);
         return 0;
     }
-    let (size, entry) = crate::pe::with(b, |m| (m.size, m.entry)).unwrap();
+    // (None: unloaded since psapi_module found it)
+    let Some((size, entry)) = crate::pe::with(b, |m| (m.size, m.entry)) else { return 0 };
     let (b, size, entry) = module_info(c.a(1), b, size, entry);
     mem::wp(p, b);
     w32(p + ps, size);
@@ -815,7 +816,7 @@ fn module_info_of_module_0() {
 fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
     let (dst, cap) = (c.a(2), c.a(3));
     let Some(b) = psapi_module(c.a(0), c.a(1)) else { return 0 };
-    let path = crate::pe::with(b, |m| m.path.clone()).unwrap();
+    let Some(path) = crate::pe::with(b, |m| m.path.clone()) else { return 0 };
     let name = if base_only { path.rsplit(['\\', '/']).next().unwrap_or(&path).to_string() } else { path };
     if cap == 0 {
         last_error(122);
@@ -989,7 +990,7 @@ pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
 pub fn wait_gate(h: u32) {
     let mut g = GATE.locked();
     while g.iter().any(|&(x, n)| x == h && n > 0) {
-        g = GATE_CV.wait(g).unwrap();
+        g = crate::locks::wait(&GATE_CV, g);
     }
     g.retain(|&(x, _)| x != h);
 }
@@ -1005,7 +1006,7 @@ pub fn wait_gate_start(h: u32, start: u32, param: u32) {
             g = GATE.locked();
             continue;
         }
-        g = GATE_CV.wait(g).unwrap();
+        g = crate::locks::wait(&GATE_CV, g);
     }
     g.retain(|&(x, _)| x != h);
 }
@@ -3100,10 +3101,11 @@ fn VirtualQueryEx(c: &mut Ctx) -> u32 {
         }
         Some(Ok(v)) => {
             let size = if mem::x64() { 48 } else { 28 };
-            if len < size || v.len() != 7 {
+            let Ok(v) = <[u32; 7]>::try_from(v) else { return 0 };
+            if len < size {
                 return 0;
             }
-            write_mbi(mbi, v.try_into().unwrap());
+            write_mbi(mbi, v);
             size
         }
     }
@@ -5913,7 +5915,7 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
                     's' => num(sec),
                     _ => {
                         let m = if ja { if am { "午前" } else { "午後" } } else if am { "AM" } else { "PM" };
-                        if n == 1 { m.chars().next().unwrap().to_string() } else { m.into() }
+                        if n == 1 { m.chars().take(1).collect() } else { m.into() }
                     }
                 };
                 out.push_str(&s);
@@ -6115,8 +6117,8 @@ impl Atoms {
         self.1.as_ref()?.get(&s.to_lowercase()).copied()
     }
     fn add(&mut self, s: String) -> u32 {
-        if let Some(i) = self.find(&s) {
-            self.0[i].as_mut().unwrap().1 += 1;
+        if let Some((i, Some(e))) = self.find(&s).and_then(|i| Some((i, self.0.get_mut(i)?.as_mut()))) {
+            e.1 += 1;
             return 0xc000 + i as u32;
         }
         let i = self.2.first().copied().unwrap_or(self.0.len());
@@ -8701,7 +8703,7 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
     // offset (F&C's archive reader maps its decoded index again 0x40000 in); past its end:
     // ERROR_ACCESS_DENIED. The block goes when its last view is unmapped and its last handle
     // closed (it stayed for good).
-    if file.is_none() {
+    let Some(f) = file else {
         if off + n as u64 > size as u64 || off >= size.max(1) as u64 {
             last_error(5);
             return 0;
@@ -8723,8 +8725,7 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
             }
         });
         return b + off as u32;
-    }
-    let f = file.unwrap();
+    };
     // a file's view: the bytes from `off`, as many as asked (0: to the end); the section is the
     // file (a writable mapping made it at least its size), past it ERROR_ACCESS_DENIED; a view
     // bigger than the address space can hold: ERROR_NOT_ENOUGH_MEMORY

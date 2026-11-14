@@ -486,8 +486,7 @@ fn path_of(oa: u32) -> Option<u32> {
         }
     }
     // a device path (QueryDosDevice's): its drive
-    for d in ['C', 'D', 'Z'] {
-        let dev = crate::k32::drive_device(d).unwrap();
+    for (d, dev) in ['C', 'D', 'Z'].into_iter().filter_map(|d| Some((d, crate::k32::drive_device(d)?))) {
         // (s may hold Japanese: compare bytes, the device name is ASCII)
         if s.as_bytes().get(..dev.len()).is_some_and(|p| p.eq_ignore_ascii_case(dev.as_bytes())) {
             w.splice(0..dev.len(), [d as u16, b':' as u16]);
@@ -1352,7 +1351,20 @@ fn nt_match_reference(expr: &[u16], name: &[u16]) -> bool {
 
 /// The fixed part of each FILE_INFORMATION_CLASS NtQueryDirectoryFile writes: (its size, where
 /// FileNameLength is, where the name goes)
-fn dir_class(class: u32) -> Option<(u32, u32, u32)> {
+/// A directory class NtQueryDirectoryFile answers (only dir_class makes one): the class, the
+/// size of its fixed part, where FileNameLength is, where the name goes
+#[derive(Clone, Copy)]
+struct DirClass {
+    class: u32,
+    fixed: u32,
+    len_at: u32,
+    name_at: u32,
+}
+fn dir_class(class: u32) -> Option<DirClass> {
+    let (fixed, len_at, name_at) = dir_class_layout(class)?;
+    Some(DirClass { class, fixed, len_at, name_at })
+}
+fn dir_class_layout(class: u32) -> Option<(u32, u32, u32)> {
     Some(match class {
         1 => (64, 60, 64),   // FileDirectoryInformation
         2 => (68, 60, 68),   // FileFullDirectoryInformation
@@ -1374,8 +1386,8 @@ fn dir_class(class: u32) -> Option<(u32, u32, u32)> {
 
 /// One entry at `p` (zeroed first): the times, sizes and attributes the class has, and as much
 /// of the name as fits in `room` bytes; the name's bytes written
-fn dir_entry(p: u32, class: u32, name: &str, m: &kura::fs::Metadata, attrs: u32, room: u32) -> u32 {
-    let (fixed, len_at, name_at) = dir_class(class).unwrap();
+fn dir_entry(p: u32, dc: DirClass, name: &str, m: &kura::fs::Metadata, attrs: u32, room: u32) -> u32 {
+    let DirClass { class, fixed, len_at, name_at } = dc;
     mem::fill(p, fixed, 0);
     if class != 12 {
         let t = m.modified().map_or(0, crate::files::filetime);
@@ -1403,11 +1415,13 @@ fn dir_entry(p: u32, class: u32, name: &str, m: &kura::fs::Metadata, attrs: u32,
 fn nt_query_directory_file(c: &mut Ctx) -> u32 {
     let (h, io, buf, len, class) = (c.a(0), c.a(4), c.a(5), c.a(6), c.a(7));
     let (single, mask, restart) = (c.a(8) & 0xff != 0, c.a(9), c.a(10) & 0xff != 0);
-    let Some((fixed, _, _)) = dir_class(class) else {
+    let Some(dc @ DirClass { fixed, .. }) = dir_class(class) else {
         // FileObjectIdInformation, FileQuotaInformation, FileReparsePointInformation: not for
         // a directory of files, once the buffer holds one
         return match class {
-            29 | 32 | 33 if len < [72, 56, 16][[29, 32, 33].iter().position(|&x| x == class).unwrap()] => 0xc000_0004,
+            29 if len < 72 => 0xc000_0004,
+            32 if len < 56 => 0xc000_0004,
+            33 if len < 16 => 0xc000_0004,
             29 | 32 | 33 => 0xc000_0003,
             // STATUS_INVALID_INFO_CLASS; WoW64's thunk has no conversion for the classes from
             // 76 on that are not a directory's (76, 84..100 and 99 in winref ntdir):
@@ -1475,7 +1489,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
         if at + need > len {
             if prev.is_none() {
                 // (not even the first: its fixed part and what fits of the name, kept for next time)
-                dir_entry(buf, class, name, m, entry_attrs(&f.path, name, m), len);
+                dir_entry(buf, dc, name, m, entry_attrs(&f.path, name, m), len);
                 iosb(io, 0x8000_0005, len);
                 return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
             }
@@ -1484,7 +1498,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
         if let Some(p) = prev {
             w32(buf + p, at - p);
         }
-        dir_entry(buf + at, class, name, m, entry_attrs(&f.path, name, m), need);
+        dir_entry(buf + at, dc, name, m, entry_attrs(&f.path, name, m), need);
         prev = Some(at);
         s.at += 1;
         at = (at + need + 7) & !7;
@@ -1492,7 +1506,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
             break;
         }
     }
-    let end = prev.map_or(0, |p| p + fixed + r32(buf + p + dir_class(class).unwrap().1));
+    let end = prev.map_or(0, |p| p + fixed + r32(buf + p + dc.len_at));
     iosb(io, 0, end);
     0
 }
@@ -1858,7 +1872,7 @@ mod tests {
 
 #[cfg(test)]
 mod dir_class_tests {
-    use super::dir_class;
+    use super::{dir_class, dir_class_layout};
     use std::mem::offset_of;
 
     // the directory information structures as ntifs.h lays them out (FILE_ID_128 is 16 bytes,
@@ -1913,12 +1927,17 @@ mod dir_class_tests {
             (80, offset_of!(IdAllExtd, name) as u32),
             (81, offset_of!(IdAllExtdBoth, name) as u32),
         ] {
-            assert_eq!(dir_class(class), Some((name_at, len_at, name_at)), "class {class}");
+            assert_eq!(dir_class_layout(class), Some((name_at, len_at, name_at)), "class {class}");
         }
-        assert_eq!(dir_class(12), Some((12, 8, 12)));
+        assert_eq!(dir_class_layout(12), Some((12, 8, 12)));
+        // (DirClass carries the class and its layout as they are)
+        for c in 0..100 {
+            let d = dir_class(c).map(|d| (d.class, d.fixed, d.len_at, d.name_at));
+            assert_eq!(d, dir_class_layout(c).map(|(f, l, n)| (c, f, l, n)), "class {c}");
+        }
         // not a directory's, or past the classes
         for c in [0, 4, 29, 50, 76, 77, 82, 84, 99] {
-            assert_eq!(dir_class(c), None, "class {c}");
+            assert_eq!(dir_class_layout(c), None, "class {c}");
         }
     }
 }
