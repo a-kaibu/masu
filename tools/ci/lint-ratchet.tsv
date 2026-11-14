@@ -179,12 +179,10 @@ file	crates/hlslc/src/sm3.rs	string_slice	2
 file	crates/hlslc/src/sm3.rs	unwrap_in_result	1
 file	crates/hlslc/src/sm3.rs	unwrap_used	4
 file	crates/hlslc/src/sm4.rs	arithmetic_side_effects	56
-file	crates/hlslc/src/sm4.rs	as_conversions	2
+file	crates/hlslc/src/sm4.rs	as_conversions	1
 file	crates/hlslc/src/sm4.rs	cast_possible_truncation	1
-file	crates/hlslc/src/sm4.rs	cast_sign_loss	1
-file	crates/hlslc/src/sm4.rs	indexing_slicing	34
+file	crates/hlslc/src/sm4.rs	indexing_slicing	22
 file	crates/hlslc/src/sm4.rs	iter_over_hash_type	1
-file	crates/hlslc/src/sm4.rs	unwrap_used	6
 file	crates/koji/examples/corpus.rs	as_conversions	9
 file	crates/koji/examples/corpus.rs	unwrap_used	6
 file	crates/koji/examples/ibench.rs	as_conversions	3
