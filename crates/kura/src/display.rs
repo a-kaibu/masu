@@ -20,6 +20,41 @@ struct Rect {
     b: i32,
 }
 
+/// A non-negative offset or size as an index (callers make none negative; one that were would
+/// be usize::MAX, out of every slice, as the wrapped `as usize` it replaces).
+fn ix(v: i32) -> usize {
+    usize::try_from(v).unwrap_or(usize::MAX)
+}
+
+/// A count as a C int (saturating; display's counts are of windows and pixels of one screen).
+fn cint(v: usize) -> c_int {
+    c_int::try_from(v).unwrap_or(c_int::MAX)
+}
+
+/// The low 32 bits (a scripted input's numbers, read as i64).
+fn lo32(v: i64) -> u32 {
+    let [a, b, c, d, ..] = v.to_le_bytes();
+    u32::from_le_bytes([a, b, c, d])
+}
+
+/// sake's surface a window shows, by its address (a pointer would make Display not Send).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Surface(usize);
+
+impl Surface {
+    fn of(p: *const u32) -> Surface {
+        Surface(p.expose_provenance())
+    }
+    fn ptr(self) -> *const u32 {
+        std::ptr::with_exposed_provenance(self.0)
+    }
+    /// Its address as the page's 32-bit word (wasm32: all of it).
+    fn word(self) -> u32 {
+        let [a, b, c, d, ..] = self.0.to_le_bytes();
+        u32::from_le_bytes([a, b, c, d])
+    }
+}
+
 impl Rect {
     fn w(&self) -> i32 {
         self.r - self.l
@@ -54,18 +89,19 @@ struct Win {
     /// (`vnhost_window_draw` compares new pixels with them: only what changed is redrawn)
     pixels: Vec<u32>,
     /// sake: the surface the window shows instead of `pixels` (rect-sized rows, owned by the
-    /// caller; see `vnhost_window_draw_shared`), 0 for none
-    shared: usize,
+    /// caller; see `vnhost_window_draw_shared`)
+    shared: Option<Surface>,
 }
 
 impl Win {
     /// the window's pixels, rect-sized rows
     fn px(&self) -> &[u32] {
-        if self.shared != 0 {
-            let n = self.rect.w().max(0) as usize * self.rect.h().max(0) as usize;
-            unsafe { std::slice::from_raw_parts(self.shared as *const u32, n) }
-        } else {
-            &self.pixels
+        match self.shared {
+            Some(s) => {
+                let n = ix(self.rect.w().max(0)) * ix(self.rect.h().max(0));
+                unsafe { std::slice::from_raw_parts(s.ptr(), n) }
+            }
+            None => &self.pixels,
         }
     }
 }
@@ -108,7 +144,7 @@ fn with<R>(f: impl FnOnce(&mut Display) -> R) -> R {
             h,
             wins: HashMap::new(),
             order: Vec::new(),
-            screen: vec![0xff00_0000; (w * h) as usize],
+            screen: vec![0xff00_0000; ix(w * h)],
             serial: 0,
             bands: Default::default(),
             stale: Rect::default(),
@@ -133,7 +169,8 @@ fn start_screenshots() {
                         let mut out = format!("P6\n{} {}\n255\n", d.ext.w(), d.ext.h()).into_bytes();
                         out.reserve(d.screen.len() * 3);
                         for p in &d.screen {
-                            out.extend_from_slice(&[(p >> 16) as u8, (p >> 8) as u8, *p as u8]);
+                            let [b, g, r, _] = p.to_le_bytes();
+                            out.extend_from_slice(&[r, g, b]);
                         }
                         out
                     })
@@ -162,7 +199,7 @@ fn start_scripted_input() {
                 let (Ok(at), &[kind, x, y, data]) = (at.parse::<f64>(), v.as_slice()) else { continue };
                 let wait = std::time::Duration::from_secs_f64(at).saturating_sub(t0.elapsed());
                 std::thread::sleep(wait);
-                vnhost_input_push(kind as u32, x as i32, y as i32, data as u32);
+                vnhost_input_push(lo32(kind), lo32(x).cast_signed(), lo32(y).cast_signed(), lo32(data));
                 if crate::env_on!("MASU_INPUT_TRACE") {
                     let n = input_queued() * 16;
                     // and the windows there, top first
@@ -172,7 +209,7 @@ fn start_scripted_input() {
                             .rev()
                             .filter(|id| {
                                 let r = d.wins[id].rect;
-                                d.wins[id].visible && x >= r.l as i64 && x < r.r as i64 && y >= r.t as i64 && y < r.b as i64
+                                d.wins[id].visible && x >= i64::from(r.l) && x < i64::from(r.r) && y >= i64::from(r.t) && y < i64::from(r.b)
                             })
                             .map(|id| format!("{id:x}{:?}", d.wins[id].rect))
                             .collect()
@@ -195,7 +232,7 @@ impl Display {
         let shown = |id: &u32| self.wins[id].visible && !self.wins[id].px().is_empty();
         let area = |id: &u32| {
             let c = self.wins[id].client.and(&screen);
-            if c.empty() { 0 } else { c.w() as i64 * c.h() as i64 }
+            if c.empty() { 0 } else { i64::from(c.w()) * i64::from(c.h()) }
         };
         let Some(main) = self.order.iter().filter(|id| shown(id)).max_by_key(|id| area(id)) else { return screen };
         if area(main) == 0 {
@@ -224,7 +261,7 @@ impl Display {
 
     /// `screen`'s index of screen pixel (x, y) (inside `ext`)
     fn at_index(&self, x: i32, y: i32) -> usize {
-        (y - self.ext.t) as usize * self.ext.w() as usize + (x - self.ext.l) as usize
+        ix(y - self.ext.t) * ix(self.ext.w()) + ix(x - self.ext.l)
     }
 
     /// `screen` made to hold `extent_of` when that changed (all of it composed again); whether
@@ -237,7 +274,7 @@ impl Display {
         self.ext = e;
         // (a window moving over the screen's edge moves the extent each frame: the same size
         // keeps its buffer)
-        let n = e.w() as usize * e.h() as usize;
+        let n = ix(e.w()) * ix(e.h());
         if self.screen.len() == n {
             self.screen.fill(0xff00_0000);
         } else {
@@ -260,7 +297,7 @@ impl Display {
         let shown = |w: &Win| w.visible && !w.px().is_empty();
         let &top = self.order.iter().rev().find(|id| shown(&self.wins[id]) && !self.wins[id].rect.and(area).empty())?;
         let w = &self.wins[&top];
-        (w.shared != 0 && w.rect.and(area) == *area).then_some(top)
+        (w.shared.is_some() && w.rect.and(area) == *area).then_some(top)
     }
 
     /// Makes `screen` whole where direct draws left it behind.
@@ -304,7 +341,7 @@ impl Display {
         if first.is_none() {
             for y in area.t..area.b {
                 let row = self.at_index(area.l, y);
-                self.screen[row..row + area.w() as usize].fill(0xff00_0000);
+                self.screen[row..row + ix(area.w())].fill(0xff00_0000);
             }
         }
         for id in &self.order[first.unwrap_or(0)..] {
@@ -313,11 +350,11 @@ impl Display {
             if !win.visible || r.empty() || win.px().is_empty() {
                 continue;
             }
-            let ww = win.rect.w() as usize;
+            let ww = ix(win.rect.w());
             for y in r.t..r.b {
-                let src = (y - win.rect.t) as usize * ww + (r.l - win.rect.l) as usize;
-                let dst = (y - self.ext.t) as usize * self.ext.w() as usize + (r.l - self.ext.l) as usize;
-                let n = r.w() as usize;
+                let src = ix(y - win.rect.t) * ww + ix(r.l - win.rect.l);
+                let dst = ix(y - self.ext.t) * ix(self.ext.w()) + ix(r.l - self.ext.l);
+                let n = ix(r.w());
                 self.screen[dst..dst + n].copy_from_slice(&win.px()[src..src + n]);
             }
         }
@@ -351,7 +388,7 @@ pub unsafe extern "C" fn vnhost_display_view(out: *mut i32) {
 /// returns how many. (The page draws the ones above a Direct3D window over its frames.)
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_display_windows(out: *mut i32, max: c_int) -> c_int {
-    with(|d| d.windows(std::slice::from_raw_parts_mut(out, 4 * max.max(0) as usize)) as c_int)
+    with(|d| cint(d.windows(std::slice::from_raw_parts_mut(out, 4 * ix(max.max(0))))))
 }
 
 /// [`vnhost_display_windows`] of the windows above window `hwnd` (the one a Direct3D frame is
@@ -443,10 +480,10 @@ impl Display {
     fn pos(&mut self, hwnd: u32, rect: Rect, client: Rect, visible: bool, restack: bool, above: u32) {
         let d = self;
         let old = d.wins.get(&hwnd).map(|w| if w.visible { w.rect } else { Rect::default() }).unwrap_or_default();
-        let win = d.wins.entry(hwnd).or_insert_with(|| Win { rect: Rect::default(), client, visible: false, pixels: Vec::new(), shared: 0 });
+        let win = d.wins.entry(hwnd).or_insert_with(|| Win { rect: Rect::default(), client, visible: false, pixels: Vec::new(), shared: None });
         if win.rect.w() != rect.w() || win.rect.h() != rect.h() {
-            win.shared = 0;
-            win.pixels = vec![0xff00_0000; rect.w().max(0) as usize * rect.h().max(0) as usize];
+            win.shared = None;
+            win.pixels = vec![0xff00_0000; ix(rect.w().max(0)) * ix(rect.h().max(0))];
         }
         win.rect = rect;
         win.client = client;
@@ -504,7 +541,7 @@ fn pace() {
     static NEXT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
     let now = std::time::Instant::now();
     let wait = {
-        let mut next = NEXT.lock().unwrap();
+        let mut next = NEXT.lock().unwrap_or_else(|e| e.into_inner());
         let at = next.map_or(now, |n| n.max(now));
         *next = Some(at + FRAME);
         at - now
@@ -534,22 +571,22 @@ impl Display {
         if dirty.empty() || win.px().is_empty() {
             return;
         }
-        if win.shared != 0 && win.shared != bits as usize {
+        if win.shared.is_some_and(|s| s != Surface::of(bits)) {
             win.pixels = win.px().to_vec();
-            win.shared = 0;
+            win.shared = None;
         }
-        let ww = win.rect.w() as usize;
+        let ww = ix(win.rect.w());
         // Games redraw all of their window every frame, mostly the same pixels (a still screen,
         // a message waiting for a click): only the box that changed goes to the screen, the
         // page uploads and redraws only that, and nothing at all when nothing changed. The new
         // pixels are compared with `pixels` (what the screen has of the window) as they are
         // copied there; a whole new frame costs a row's compare more than the copy.
         // (the alpha byte is whatever the surface has: the page draws the frame opaque)
-        let src = |y: i32| std::slice::from_raw_parts(bits.offset(((y - oy) * stride + (dirty.l - ox)) as isize), dirty.w() as usize);
+        let src = |y: i32| std::slice::from_raw_parts(bits.offset(isize::try_from((y - oy) * stride + (dirty.l - ox)).unwrap_or(isize::MAX)), ix(dirty.w()));
         let changed = if nodiff() {
             for y in dirty.t..dirty.b {
-                let dst = y as usize * ww + dirty.l as usize;
-                win.pixels[dst..dst + dirty.w() as usize].copy_from_slice(src(y));
+                let dst = ix(y) * ww + ix(dirty.l);
+                win.pixels[dst..dst + ix(dirty.w())].copy_from_slice(src(y));
             }
             dirty
         } else {
@@ -655,11 +692,12 @@ fn last_diff(a: &[u32], b: &[u32]) -> Option<usize> {
 /// Copies rows `src(y)` (y in `dirty.t..dirty.b`, columns `dirty.l..dirty.r`) into `px` (rows
 /// of `ww`) and returns the box of what was different there (empty: nothing).
 fn update_changed<'a>(px: &mut [u32], ww: usize, dirty: Rect, src: impl Fn(i32) -> &'a [u32]) -> Rect {
-    let (l, w) = (dirty.l as usize, dirty.w() as usize);
-    let row = |y: i32| y as usize * ww + l..y as usize * ww + l + w;
+    let (l, w) = (ix(dirty.l), ix(dirty.w()));
+    let row = |y: i32| ix(y) * ww + l..ix(y) * ww + l + w;
     // the first and the last row that changed
     let Some(t) = (dirty.t..dirty.b).find(|&y| first_diff(&px[row(y)], src(y)).is_some()) else { return Rect::default() };
-    let b = (t..dirty.b).rev().find(|&y| first_diff(&px[row(y)], src(y)).is_some()).unwrap() + 1;
+    // (row t differs: the search from the bottom ends there at the latest)
+    let b = (t..dirty.b).rev().find(|&y| first_diff(&px[row(y)], src(y)).is_some()).unwrap_or(t) + 1;
     // the columns, from both ends of each row: only what lies outside the box so far is
     // looked at
     let (mut x0, mut x1) = (w, 0);
@@ -684,7 +722,9 @@ fn update_changed<'a>(px: &mut [u32], ww: usize, dirty: Rect, src: impl Fn(i32) 
         let r = row(y);
         px[r.start + x0..r.start + x1].copy_from_slice(&src(y)[x0..x1]);
     }
-    Rect { l: dirty.l + x0 as i32, t, r: dirty.l + x1 as i32, b }
+    // (x0 <= x1 <= w, a width that came from an i32)
+    let col = |x: usize| i32::try_from(x).unwrap_or(i32::MAX);
+    Rect { l: dirty.l + col(x0), t, r: dirty.l + col(x1), b }
 }
 
 /// sake: like `vnhost_window_draw`, but `bits` is the window's whole surface (`w`*`h` pixels),
@@ -714,7 +754,7 @@ impl Display {
     unsafe fn draw_shared(&mut self, hwnd: u32, dirty: Rect, bits: *const u32, w: c_int, h: c_int) {
         if let Some(win) = self.wins.get_mut(&hwnd) {
             if win.rect.w() == w && win.rect.h() == h {
-                win.shared = bits as usize;
+                win.shared = Some(Surface::of(bits));
             }
         }
         self.draw(hwnd, dirty, bits, w, 0, 0)
@@ -722,10 +762,10 @@ impl Display {
 
     fn unshare(&mut self, hwnd: u32) {
         if let Some(win) = self.wins.get_mut(&hwnd) {
-            if win.shared != 0 {
+            if win.shared.is_some() {
                 let px = win.px().to_vec();
                 win.pixels = px;
-                win.shared = 0;
+                win.shared = None;
             }
         }
     }
@@ -754,8 +794,8 @@ impl Display {
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_display_frame(io: *mut u32) -> *const u32 {
     let direct_ok = *io.add(3) == 1;
-    let io = std::slice::from_raw_parts_mut(io, 12);
-    with(|d| d.frame(io.try_into().unwrap(), direct_ok))
+    let io = &mut *io.cast::<[u32; 12]>();
+    with(|d| d.frame(io, direct_ok))
 }
 
 /// `vnhost_display_frame` for the drawing thread, with `f` run on the frame while the screen
@@ -774,7 +814,7 @@ pub fn frame_with<R>(io: &mut [u32; 12], f: impl FnOnce(&[u32; 12], *const u32, 
 impl Display {
     fn frame(&mut self, io: &mut [u32; 12], direct_ok: bool) -> *const u32 {
         let d = self;
-        let n = d.serial.wrapping_sub(io[0]) as usize;
+        let n = usize::try_from(d.serial.wrapping_sub(io[0])).unwrap_or(usize::MAX);
         let mut one = None;
         let all = d.ext;
         let area = if n <= d.bands.len() {
@@ -789,17 +829,17 @@ impl Display {
         // (rows and columns of `screen`: from the extent's corner)
         let (el, et) = (d.ext.l, d.ext.t);
         io[0] = d.serial;
-        io[1] = (area.t - et).max(0) as u32;
-        io[2] = (area.b.max(area.t) - et).max(0) as u32;
-        io[10] = (area.l - el).max(0) as u32;
-        io[11] = (area.r.max(area.l) - el).max(0) as u32;
-        let win = one.filter(|_| direct_ok).and_then(|id| d.wins.get(&id)).filter(|w| w.shared != 0);
+        io[1] = (area.t - et).max(0).cast_unsigned();
+        io[2] = (area.b.max(area.t) - et).max(0).cast_unsigned();
+        io[10] = (area.l - el).max(0).cast_unsigned();
+        io[11] = (area.r.max(area.l) - el).max(0).cast_unsigned();
+        let win = one.filter(|_| direct_ok).and_then(|id| d.wins.get(&id)).filter(|w| w.shared.is_some());
         match win {
             Some(w) => {
                 io[3] = 1;
-                io[4] = w.shared as u32;
-                io[5] = w.rect.w() as u32;
-                io[6..10].copy_from_slice(&[(w.rect.l - el) as u32, (w.rect.t - et) as u32, (w.rect.r - el) as u32, (w.rect.b - et) as u32]);
+                io[4] = w.shared.map_or(0, Surface::word);
+                io[5] = w.rect.w().cast_unsigned();
+                io[6..10].copy_from_slice(&[(w.rect.l - el).cast_unsigned(), (w.rect.t - et).cast_unsigned(), (w.rect.r - el).cast_unsigned(), (w.rect.b - et).cast_unsigned()]);
             }
             None => {
                 // (rows a direct draw changed may be among them)
@@ -863,7 +903,7 @@ pub extern "C" fn vnhost_input_push(kind: u32, x: i32, y: i32, data: u32) -> c_i
     if crate::snap::pausing() {
         return 0;
     }
-    input_add(&mut INPUT.lock().unwrap_or_else(|e| e.into_inner()), [kind, x as u32, y as u32, data]);
+    input_add(&mut INPUT.lock().unwrap_or_else(|e| e.into_inner()), [kind, x.cast_unsigned(), y.cast_unsigned(), data]);
     INPUT_READY.notify_one();
     0
 }
@@ -999,7 +1039,7 @@ mod tests {
     }
 
     fn disp(w: i32, h: i32) -> Display {
-        Display { w, h, wins: HashMap::new(), order: Vec::new(), screen: vec![0xff00_0000; (w * h) as usize], serial: 0, bands: Default::default(), stale: Rect::default(), ext: rect(0, 0, w, h) }
+        Display { w, h, wins: HashMap::new(), order: Vec::new(), screen: vec![0xff00_0000; ix(w * h)], serial: 0, bands: Default::default(), stale: Rect::default(), ext: rect(0, 0, w, h) }
     }
 
     const BLACK: u32 = 0xff00_0000;
@@ -1394,7 +1434,7 @@ mod tests {
         let s0 = d.serial;
         let surf: Vec<u32> = (0..12).map(|i| 0xff00_0100 | i).collect();
         unsafe { d.draw_shared(1, rect(0, 0, 4, 3), surf.as_ptr(), 4, 3) };
-        assert_eq!(d.wins[&1].shared, surf.as_ptr() as usize);
+        assert_eq!(d.wins[&1].shared, Some(Surface::of(surf.as_ptr())));
         assert_eq!(d.wins[&1].px(), &surf[..]);
         // the screen was not written: the page takes the window's surface
         assert_eq!(d.at(10, 10), BLACK);
@@ -1440,18 +1480,18 @@ mod tests {
         // a different surface: the old one is copied first
         let surf4: Vec<u32> = (0..12).map(|i| 0xff00_0400 | i).collect();
         unsafe { d.draw(1, rect(0, 0, 1, 1), surf4.as_ptr(), 4, 0, 0) };
-        assert_eq!(d.wins[&1].shared, 0);
+        assert_eq!(d.wins[&1].shared, None);
         assert_eq!(d.wins[&1].px()[..3], [0xff00_0400, 0xff00_0301, 0xff00_0302]);
         // unshare keeps a copy
         unsafe { d.draw_shared(1, rect(0, 0, 4, 3), surf4.as_ptr(), 4, 3) };
         d.unshare(1);
-        assert_eq!(d.wins[&1].shared, 0);
+        assert_eq!(d.wins[&1].shared, None);
         assert_eq!(d.wins[&1].px(), &surf4[..]);
         d.unshare(1);
         d.unshare(5);
         // a surface of another size is not taken
         unsafe { d.draw_shared(1, rect(0, 0, 2, 2), surf4.as_ptr(), 2, 6) };
-        assert_eq!(d.wins[&1].shared, 0);
+        assert_eq!(d.wins[&1].shared, None);
     }
 
     #[test]
@@ -1570,7 +1610,7 @@ mod tests {
             let surf = vec![0xff65_4321u32; 48];
             vnhost_window_draw_shared(7, [0, 0, 8, 6].as_ptr(), surf.as_ptr(), 8, 6);
             vnhost_window_unshare(7);
-            with(|d| assert_eq!((d.wins[&7].shared, d.wins[&7].px()[0]), (0, 0xff65_4321)));
+            with(|d| assert_eq!((d.wins[&7].shared, d.wins[&7].px()[0]), (None, 0xff65_4321)));
             // (the extent taken, then window 8 moved over the edge: the frame says the new one,
             // and its buffer holds all of it while the closure reads it)
             let mut e0 = [0i32; 4];
