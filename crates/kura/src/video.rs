@@ -971,7 +971,9 @@ pub unsafe extern "C" fn vnhost_video_list(out: *mut u32, max: u32) -> u32 {
     PAGE.store(true, Ordering::Relaxed);
     // (the headers handed out by the last list are read by now)
     drop(std::mem::take(&mut *GRAVE.lock().unwrap_or_else(|e| e.into_inner())));
-    let out = std::slice::from_raw_parts_mut(out, max as usize * 6);
+    // (a `max` whose words overflow the address space lists nothing, as in vnhost_adec_list)
+    let Some(words) = usize::try_from(max).ok().and_then(|m| m.checked_mul(6)) else { return 0 };
+    let out = std::slice::from_raw_parts_mut(out, words);
     with(|m| {
         let mut n = 0;
         for (&id, s) in m.iter().filter(|(_, s)| !s.closed) {
@@ -997,27 +999,35 @@ pub unsafe extern "C" fn vnhost_video_list(out: *mut u32, max: u32) -> u32 {
 /// so it stays as it is while the page reads it, whatever the guest does to the stream.
 static CHUNK: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
+/// The bytes of frame `n` of track `t` of stream `id` into `c` (what was there before goes) and
+/// the frame's place in presentation order; None (and `c` as it was) when they are not read yet.
+pub fn chunk_into(id: u32, t: u32, n: u32, c: &mut Vec<u8>) -> Option<u32> {
+    with(|m| {
+        let s = m.get(&id)?;
+        let n_at = usize::try_from(n).ok()?;
+        let &(off, sz, _) = s.index.get(usize::try_from(t).ok()?)?.get(n_at)?;
+        let b = s.src.bytes(u64::from(off), usize::try_from(sz).ok()?)?;
+        c.clear();
+        c.extend_from_slice(b);
+        Some(s.pts.as_ref().and_then(|p| p.get(n_at).copied()).unwrap_or(n))
+    })
+}
+
 /// The bytes of frame `n` of track `t` of stream `id`, copied for the page (and their size in
 /// `size[0]`, the frame's place in presentation order in `size[1]`); 0 when they are not read
 /// yet (`fill`: the page tries again on its next frame).
 ///
 /// # Safety
-/// `size` must hold two writable words.
+/// `size` must hold two writable words. (Typed as two words, not one `*mut u32`: a caller in
+/// Rust that passes the address of one word does not compile; #241 was such a caller, a test
+/// with `let mut size = 0u32`, and ASan saw the second word written past it.)
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_video_chunk(id: u32, t: u32, n: u32, size: *mut u32) -> u32 {
+pub unsafe extern "C" fn vnhost_video_chunk(id: u32, t: u32, n: u32, size: *mut [u32; 2]) -> u32 {
     let mut c = CHUNK.lock().unwrap_or_else(|e| e.into_inner());
-    let ok = with(|m| {
-        let s = m.get(&id)?;
-        let &(off, sz, _) = s.index.get(t as usize)?.get(n as usize)?;
-        let b = s.src.bytes(off as u64, sz as usize)?;
-        c.clear();
-        c.extend_from_slice(b);
-        Some(s.pts.as_ref().and_then(|p| p.get(n as usize).copied()).unwrap_or(n))
-    });
-    let Some(pts) = ok else { return 0 };
-    *size = c.len() as u32;
+    let Some(pts) = chunk_into(id, t, n, &mut c) else { return 0 };
     // (its frame in presentation order: the page's timestamp of it)
-    *size.add(1) = pts;
+    let Ok(len) = u32::try_from(c.len()) else { return 0 };
+    *size = [len, pts];
     // (an empty frame still has an address the page can read nothing from)
     c.reserve(1);
     c.as_ptr() as u32
@@ -1131,8 +1141,8 @@ fn fit_rows(layout: &[[u32; 7]; 2], tracks: u32, w: u32, h: u32, len: usize) -> 
 /// # Safety
 /// `layout` must hold 14 words.
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_video_ready(id: u32, buf: u32, layout: *const u32, ok: u32) {
-    let l = std::slice::from_raw_parts(layout, 14);
+pub unsafe extern "C" fn vnhost_video_ready(id: u32, buf: u32, layout: *const [u32; 14], ok: u32) {
+    let l = &*layout;
     with(|m| {
         let Some(s) = m.get_mut(&id) else { return };
         let (w, h, tracks) = (s.w, s.h, s.tracks);
@@ -1187,7 +1197,7 @@ mod tests {
         assert!(exists(id), "dropped while the page writes into it");
         assert_eq!(unsafe { vnhost_video_begin(id, 1, &mut size) }, 0, "a closed stream takes no new writes");
         let layout = [RGBA, 0, 64, 0, 0, 0, 0, RGBA, 0, 64, 0, 0, 0, 0];
-        unsafe { vnhost_video_ready(id, buf, layout.as_ptr(), 1) };
+        unsafe { vnhost_video_ready(id, buf, &layout, 1) };
         assert!(!exists(id));
     }
 
@@ -1217,7 +1227,7 @@ mod tests {
         let mut size = 16 * 16 * 4;
         let buf = unsafe { vnhost_video_begin(id, 0, &mut size) };
         let layout = [RGBA, 0, 64, 0, 0, 0, 0, RGBA, 0, 64, 0, 0, 0, 0];
-        unsafe { vnhost_video_ready(id, buf, layout.as_ptr(), 1) };
+        unsafe { vnhost_video_ready(id, buf, &layout, 1) };
         with(|m| m.get_mut(&id).unwrap().slots[0].reading += 1);
         let mut px = vec![0u8; 16 * 16 * 4];
         assert!(unsafe { frame(id, 0, px.as_mut_ptr(), 64, 16, 16, Out::Rgb) });
@@ -1226,7 +1236,7 @@ mod tests {
             let b = unsafe { vnhost_video_begin(id, n, &mut size) };
             assert_ne!(b, buf, "the page must not write the slot a guest reads");
             if b != 0 {
-                unsafe { vnhost_video_ready(id, b, layout.as_ptr(), 1) };
+                unsafe { vnhost_video_ready(id, b, &layout, 1) };
             }
         }
         with(|m| m.get_mut(&id).unwrap().slots[0].reading -= 1);
@@ -1243,7 +1253,7 @@ mod tests {
             let mut size = 16 * 16 * 4;
             let buf = unsafe { vnhost_video_begin(id, 0, &mut size) };
             let layout = [RGBA, 0, 64, 0, 0, 0, 0, RGBA, 0, 64, 0, 0, 0, 0];
-            unsafe { vnhost_video_ready(id, buf, layout.as_ptr(), 1) };
+            unsafe { vnhost_video_ready(id, buf, &layout, 1) };
             let reader = std::thread::spawn(move || {
                 let mut px = vec![0u8; 16 * 16 * 4];
                 for _ in 0..20 {
@@ -1285,10 +1295,13 @@ mod tests {
         let id = open(d.clone()).unwrap();
         assert!(decodable(id));
         // (the page's copy of a frame: from memory as from a file)
-        let mut size = 0;
+        let mut size = [0u32; 2];
         assert_ne!(unsafe { vnhost_video_chunk(id, 0, 1, &mut size) }, 0);
         let (off, sz, _) = info(&d).unwrap().tracks[0].1[1];
-        assert_eq!(&CHUNK.lock().unwrap()[..], &d[off as usize..(off + sz) as usize]);
+        // (the bytes through chunk_into: other tests' calls share CHUNK)
+        let mut c = Vec::new();
+        assert_eq!(chunk_into(id, 0, 1, &mut c), Some(1));
+        assert_eq!((&c[..], size[0]), (&d[off as usize..(off + sz) as usize], sz));
         assert_eq!(unsafe { vnhost_video_chunk(id, 0, 4, &mut size) }, 0, "no frame 4");
         assert_eq!(unsafe { vnhost_video_chunk(id, 1, 0, &mut size) }, 0, "no track 1");
         // (the page, which has no decoder for it, gives up on it: still there)
@@ -1390,12 +1403,15 @@ mod tests {
                 for (t, (_, frames)) in i.tracks.iter().enumerate() {
                     let k = (0..=n).rev().find(|&k| frames[k].2).unwrap();
                     for j in k..=(n + READ_LOW).min(last) {
-                        let mut size = 0u32;
-                        let p = unsafe { vnhost_video_chunk(id, t as u32, j as u32, &mut size) };
+                        let mut size = [0u32; 2];
+                        let (t32, j32) = (u32::try_from(t).unwrap(), u32::try_from(j).unwrap());
+                        let p = unsafe { vnhost_video_chunk(id, t32, j32, &mut size) };
                         proptest::prop_assert!(p != 0, "track {} frame {} after asking {}", t, j, ask);
-                        // (the pointer is a wasm address: the copy itself is looked at)
-                        let got = CHUNK.lock().unwrap().clone();
-                        proptest::prop_assert_eq!(size as usize, got.len());
+                        // (the pointer is a wasm address: the copy itself is looked at, through
+                        // chunk_into, as other tests' calls share CHUNK)
+                        let mut got = Vec::new();
+                        proptest::prop_assert!(chunk_into(id, t32, j32, &mut got).is_some());
+                        proptest::prop_assert_eq!(usize::try_from(size[0]).unwrap(), got.len());
                         proptest::prop_assert_eq!(&got[..], &tracks[t].1[j].0[..]);
                     }
                 }
@@ -1480,6 +1496,17 @@ mod tests {
         };
         assert_eq!(row(id)[3..], [u32::MAX; 3]);
         assert!(available(), "listing streams is the page being there");
+        // (at most `max` rows, in exactly `max` rows' room: #241's kind of write past the
+        // page's buffer)
+        for max in 0..9u32 {
+            let mut n = 0;
+            let rows = crate::host_out_tests::guarded(6 * 16, 0x5a5a_5a5a, crate::host_out_tests::C32, |p| n = unsafe { vnhost_video_list(p, max) });
+            assert!(n <= max && n >= 1.min(max), "{n} of max {max}");
+            assert!(rows[6 * usize::try_from(n).unwrap()..].iter().all(|&w| w == 0x5a5a_5a5a), "words past {n} rows written");
+            crate::host_out_tests::guarded(6 * usize::try_from(max).unwrap(), 0, crate::host_out_tests::C32, |p| unsafe {
+                vnhost_video_list(p, max);
+            });
+        }
         let rung = DOORBELL.load(Ordering::SeqCst);
         let mut px = [0u8; 4];
         // nothing decoded: after the first frame's wait the guest goes on without one
@@ -1498,7 +1525,7 @@ mod tests {
         let mut size = 16 * 16 * 4;
         let buf = unsafe { vnhost_video_begin(id, 0, &mut size) };
         let layout = [RGBA, 0, 64, 0, 0, 0, 0, RGBA, 0, 64, 0, 0, 0, 0];
-        unsafe { vnhost_video_ready(id, buf, layout.as_ptr(), 1) };
+        unsafe { vnhost_video_ready(id, buf, &layout, 1) };
         assert_eq!((vnhost_video_has(id, 0), vnhost_video_has(id, 1)), (1, 0));
         assert_eq!(vnhost_video_doorbell(), DOORBELL.as_ptr() as u32);
         vnhost_video_fail(id);
@@ -1804,7 +1831,7 @@ mod tests {
         let mut size = 40;
         let buf = unsafe { vnhost_video_begin(id, 0, &mut size) };
         let layout = [RGBA, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        unsafe { vnhost_video_ready(id, buf, layout.as_ptr(), 1) };
+        unsafe { vnhost_video_ready(id, buf, &layout, 1) };
         assert_eq!(with(|m| m[&id].slots.iter().find(|s| s.frame == 0).map(|s| s.rows)), Some(2));
         // (frame_exact hands out only whole frames)
         assert!(!frame_exact(id, 0, Duration::from_millis(1), |_, _| {}));
@@ -1815,7 +1842,7 @@ mod tests {
         for l in [[7, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [RGBA, 30, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]] {
             let buf = unsafe { vnhost_video_begin(id, 1, &mut size) };
             assert_ne!(buf, 0);
-            unsafe { vnhost_video_ready(id, buf, l.as_ptr(), 1) };
+            unsafe { vnhost_video_ready(id, buf, &l, 1) };
             assert_eq!(vnhost_video_has(id, 1), 0, "{l:?}");
         }
         // (two zero-size copies: two slots, each found again by its own address)
@@ -1823,9 +1850,9 @@ mod tests {
         let a = unsafe { vnhost_video_begin(id, 2, &mut z) };
         let b = unsafe { vnhost_video_begin(id, 3, &mut z) };
         assert!(a != 0 && b != 0 && a != b);
-        unsafe { vnhost_video_ready(id, b, layout.as_ptr(), 0) };
+        unsafe { vnhost_video_ready(id, b, &layout, 0) };
         assert!(with(|m| m[&id].slots.iter().any(|s| s.writing && s.frame == 2)), "the other slot is still written");
-        unsafe { vnhost_video_ready(id, a, layout.as_ptr(), 0) };
+        unsafe { vnhost_video_ready(id, a, &layout, 0) };
         close(id);
         assert!(!exists(id));
     }

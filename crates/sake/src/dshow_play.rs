@@ -617,7 +617,7 @@ fn turn() -> Duration {
             if !p.place.visible || on.2 <= 0 || on.3 <= 0 {
                 if p.disp != 0 && p.shown.is_some() {
                     let r8 = [0i32; 8];
-                    unsafe { kura::display::vnhost_window_pos(p.disp, r8.as_ptr(), 0, 0, 0) };
+                    unsafe { kura::display::vnhost_window_pos(p.disp, &raw const r8, 0, 0, 0) };
                     p.shown = None;
                 }
                 continue;
@@ -633,7 +633,7 @@ fn turn() -> Duration {
             let restack = p.shown.map(|s| s.1) != Some(rect) || p.restacked.is_none_or(|r| r.elapsed() >= Duration::from_millis(500));
             if restack {
                 let r8 = [rect[0], rect[1], rect[2], rect[3], rect[0], rect[1], rect[2], rect[3]];
-                unsafe { kura::display::vnhost_window_pos(p.disp, r8.as_ptr(), 1, 1, 0) };
+                unsafe { kura::display::vnhost_window_pos(p.disp, &raw const r8, 1, 1, 0) };
                 p.restacked = Some(Instant::now());
             }
             if p.shown.map(|s| s.0) != Some(n) || p.shown.map(|s| s.1) != Some(rect) {
@@ -673,7 +673,7 @@ fn turn() -> Duration {
         }
         let t2 = Instant::now();
         let d = [0, 0, view.2, view.3];
-        unsafe { kura::display::vnhost_window_draw(disp, d.as_ptr(), out.as_ptr(), view.2, 0, 0) };
+        unsafe { kura::display::vnhost_window_draw(disp, &raw const d, out.as_ptr(), view.2, 0, 0) };
         stats(k, n, [t1 - t0, t2 - t1, t2.elapsed()], out.len());
         BUFS.with(|b| b.borrow_mut().insert(k, (px, out)));
     }

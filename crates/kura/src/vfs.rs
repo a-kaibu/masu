@@ -305,7 +305,7 @@ mod net {
 /// last call (ms), the chunk cache (bytes), chunks a read fetched again after the cache dropped
 /// them.
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_net_stats(out: *mut f64) {
+pub unsafe extern "C" fn vnhost_net_stats(out: *mut [f64; 12]) {
     use std::sync::atomic::Ordering::Relaxed;
     let ms = |us: u64| us as f64 / 1000.0;
     let (cache, refetched) = CACHE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or((0, 0), |c| (c.bytes, c.refetched));
@@ -323,7 +323,7 @@ pub unsafe extern "C" fn vnhost_net_stats(out: *mut f64) {
         cache as f64,
         refetched as f64,
     ];
-    std::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());
+    *out = v;
 }
 
 /// Store requests on their way now (the page holds its read-ahead back meanwhile: the game's

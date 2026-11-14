@@ -304,7 +304,7 @@ pub unsafe extern "C" fn vnhost_load_busy() -> f64 {
 /// Thread `i` of vnhost_load_busy's count (in order of their first wait): its CPU time (ms) and
 /// waits so far to `out[0..2]`; false past the last thread.
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_load_slot(i: u32, out: *mut f64) -> bool {
+pub unsafe extern "C" fn vnhost_load_slot(i: u32, out: *mut [f64; 2]) -> bool {
     let n = LOAD_N.load(Ordering::Relaxed).min(LOAD_THREADS);
     let Some(l) = LOAD[..n].get(i as usize) else { return false };
     let mut busy = f64::from_bits(l.busy.load(Ordering::Relaxed));
@@ -312,9 +312,7 @@ pub unsafe extern "C" fn vnhost_load_slot(i: u32, out: *mut f64) -> bool {
     if woke != 0.0 {
         busy += (emscripten_date_now() - woke).min(LOAD_RUN_MAX);
     }
-    let out = std::slice::from_raw_parts_mut(out, 2);
-    out[0] = busy;
-    out[1] = l.waits.load(Ordering::Relaxed) as f64;
+    *out = [busy, l.waits.load(Ordering::Relaxed) as f64];
     true
 }
 
@@ -344,7 +342,7 @@ extern "C" {
 /// has handed out now.
 #[cfg(target_os = "emscripten")]
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_mem_info(out: *mut f64) {
+pub unsafe extern "C" fn vnhost_mem_info(out: *mut [f64; 2]) {
     extern "C" {
         static __heap_base: u8;
     }
@@ -354,9 +352,7 @@ pub unsafe extern "C" fn vnhost_mem_info(out: *mut f64) {
     // waiting: the page's meter asks each second, the profile of the scenario had it at ~4 ms
     // a call on the page's thread; once per MALLINFO_MS is enough for the logs that show it)
     let used = MALLINFO.get(crate::render::d3d::now(), || mallinfo().uordblks as u32 as f64);
-    let out = std::slice::from_raw_parts_mut(out, 2);
-    out[0] = top.saturating_sub(base) as f64;
-    out[1] = used;
+    *out = [top.saturating_sub(base) as f64, used];
 }
 
 /// How often vnhost_mem_info walks the heap again (ms); between, the last answer.

@@ -1030,7 +1030,7 @@ impl D3d {
             if self.inflight >= 2 {
                 break;
             }
-            if unsafe { vnhost_d3d9_poll(io.as_mut_ptr()) } == 0 {
+            if unsafe { vnhost_d3d9_poll(&raw mut io) } == 0 {
                 break;
             }
             let t0 = now();

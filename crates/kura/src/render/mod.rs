@@ -153,29 +153,27 @@ fn to_screen(layout: &[i32; 12], x: i32, y: i32) -> (i32, i32) {
 /// Where the shown part of the screen is on the canvas: `out` = x y w h (canvas pixels), the
 /// view l t r b (screen pixels), the screen's buffer's w h.
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_render_layout(out: *mut i32) {
+pub unsafe extern "C" fn vnhost_render_layout(out: *mut [i32; 10]) {
     let l = *LAYOUT.lock().unwrap_or_else(|e| e.into_inner());
-    std::slice::from_raw_parts_mut(out, 10).copy_from_slice(&[l[0], l[1], l[2], l[3], l[4], l[5], l[6], l[7], l[10] - l[8], l[11] - l[9]]);
+    *out = [l[0], l[1], l[2], l[3], l[4], l[5], l[6], l[7], l[10] - l[8], l[11] - l[9]];
 }
 
 /// Tests: asks for the picture shown (at the screen's pixels) and gives the last one taken:
 /// `out` = pixels (BGRA rows), width, height; returns its serial (0: none yet).
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_render_shot(out: *mut u32) -> u32 {
+pub unsafe extern "C" fn vnhost_render_shot(out: *mut [u32; 3]) -> u32 {
     SHOT_WANT.fetch_add(1, Relaxed);
     let s = *SHOT.lock().unwrap_or_else(|e| e.into_inner());
-    *out = s.1 as u32;
-    *out.add(1) = s.2;
-    *out.add(2) = s.3;
+    *out = [s.1 as u32, s.2, s.3];
     s.0
 }
 
 /// The page: the screen's latest frame (serial, pixels, row length, rows) and counters
 /// (Direct3D frames, batch ms, passes, MB uploaded) into `out` (8 words).
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_render_info(out: *mut u32) {
+pub unsafe extern "C" fn vnhost_render_info(out: *mut [u32; 8]) {
     let f = *FRAME.lock().unwrap_or_else(|e| e.into_inner());
-    let out = std::slice::from_raw_parts_mut(out, 8);
+    let out = &mut *out;
     out[..4].copy_from_slice(&f);
     out[4] = STATS[0].load(Relaxed) as u32;
     out[5] = (STATS[1].load(Relaxed) / 1000) as u32;
@@ -507,13 +505,13 @@ impl Render {
     fn frame(&mut self, t: f64) {
         self.stats(t);
         let mut e = [0i32; 4];
-        unsafe { crate::display::vnhost_display_extent(e.as_mut_ptr()) };
+        unsafe { crate::display::vnhost_display_extent(&raw mut e) };
         let (w, h, origin) = (e[2] - e[0], e[3] - e[1], (e[0], e[1]));
         if (w, h, origin) != (self.width, self.height, self.origin) {
             self.serial = None;
         }
         let mut v = [0i32; 4];
-        unsafe { crate::display::vnhost_display_view(v.as_mut_ptr()) };
+        unsafe { crate::display::vnhost_display_view(&raw mut v) };
         let v = if v[2] > v[0] && v[3] > v[1] { v } else { e };
         let c = CANVAS.load(Relaxed);
         let canvas = ((c >> 16).max(1), (c & 0xffff).max(1));

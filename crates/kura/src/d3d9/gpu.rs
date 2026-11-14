@@ -507,8 +507,8 @@ pub fn wait_readback(id: u32) -> bool {
 /// blob ptr, blob bytes];
 /// returns 0 when there is none. The batch stays valid until the next call.
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_d3d9_poll(out: *mut u32) -> u32 {
-    let out = std::slice::from_raw_parts_mut(out, 6);
+pub unsafe extern "C" fn vnhost_d3d9_poll(out: *mut [u32; 6]) -> u32 {
+    let out = &mut *out;
     let r = with(|q| {
         q.last_poll = Some(now());
         q.reading = q.closed.pop_front();

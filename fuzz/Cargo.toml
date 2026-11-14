@@ -400,3 +400,10 @@ path = "fuzz_targets/jit_wasm_check.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "video_chunk"
+path = "fuzz_targets/video_chunk.rs"
+test = false
+doc = false
+bench = false

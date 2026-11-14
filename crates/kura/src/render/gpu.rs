@@ -186,7 +186,7 @@ impl PipelineStats {
 /// The pipeline counters into `out` (f64 each): cache hits, pipelines created, their creation
 /// time in all, the longest, p50 and p95 of the recent ones (ms).
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_gpu_pipelines(out: *mut f64) {
+pub unsafe extern "C" fn vnhost_gpu_pipelines(out: *mut [f64; 6]) {
     let s = PIPELINES.lock().unwrap_or_else(|e| e.into_inner());
     let v = [
         PIPELINE_HITS.load(std::sync::atomic::Ordering::Relaxed) as f64,
@@ -196,7 +196,7 @@ pub unsafe extern "C" fn vnhost_gpu_pipelines(out: *mut f64) {
         s.quantile(0.5) as f64 / 1000.0,
         s.quantile(0.95) as f64 / 1000.0,
     ];
-    std::ptr::copy_nonoverlapping(v.as_ptr(), out, v.len());
+    *out = v;
 }
 
 #[cfg(test)]

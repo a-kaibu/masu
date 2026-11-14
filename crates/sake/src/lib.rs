@@ -1039,7 +1039,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs_f64(secs.max(0.1)));
                 let mut m = [0f64; 2];
-                unsafe { kura::wrap::vnhost_mem_info(m.as_mut_ptr()) };
+                unsafe { kura::wrap::vnhost_mem_info(&raw mut m) };
                 max = max.max(m[0]);
                 eprintln!("sake: heap top {:.0} MB (max {:.0}), in use {:.0} MB", m[0] / 1048576.0, max / 1048576.0, m[1] / 1048576.0);
             }

@@ -412,7 +412,9 @@ pub extern "C" fn vnhost_idec_doorbell() -> u32 {
 /// `out` must hold `max * 3` words.
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_idec_list(out: *mut u32, max: u32) -> u32 {
-    let out = std::slice::from_raw_parts_mut(out, max as usize * 3);
+    // (a `max` whose words overflow the address space lists nothing, as in vnhost_adec_list)
+    let Some(words) = usize::try_from(max).ok().and_then(|m| m.checked_mul(3)) else { return 0 };
+    let out = std::slice::from_raw_parts_mut(out, words);
     let rows = list(max as usize);
     for (n, r) in rows.iter().enumerate() {
         out[n * 3..n * 3 + 3].copy_from_slice(&[r.0, r.1 as u32, r.2 as u32]);
@@ -537,14 +539,14 @@ pub fn test_cases(bin: &[u8]) -> Vec<(String, Picture, Vec<u8>)> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
 
     /// Tests: the most one allocation of `zeroed` gets (a heap that is full past it)
     pub(super) static HEAP: AtomicUsize = AtomicUsize::new(usize::MAX);
     /// (tests that share the page and HEAP)
-    static ONE: Mutex<()> = Mutex::new(());
+    pub(crate) static ONE: Mutex<()> = Mutex::new(());
 
     /// A picture bigger than the heap can hold fails on its own (the guest falls back to its own
     /// decoder), and the next one that fits decodes: a full heap no longer aborts the VM.

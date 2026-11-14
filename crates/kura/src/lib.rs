@@ -52,3 +52,5 @@ pub mod filelock;
 pub mod wrap;
 pub mod usage;
 pub mod snap;
+#[cfg(test)]
+mod host_out_tests;

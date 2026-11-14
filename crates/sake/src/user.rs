@@ -573,7 +573,7 @@ pub fn flush(top: u32, r: Rect) {
         g.unshare();
         g.shown_by = top;
     }
-    unsafe { kura::display::vnhost_window_draw_shared(top, d.as_ptr(), g.px.as_ptr(), g.w, g.h) };
+    unsafe { kura::display::vnhost_window_draw_shared(top, &raw const d, g.px.as_ptr(), g.w, g.h) };
 }
 
 /// What the display gets of a client area (screen coordinates): at most the 8192x8192 its
@@ -592,13 +592,13 @@ fn update_display(s: &State, h: u32) {
     let r = shown_rect(w.client.off(w.rect.l, w.rect.t));
     let c = Rect { l: r[0], t: r[1], r: r[2], b: r[3] };
     let shown = w.visible && w.style & 0x4000_0000 == 0 && c.w() > 0 && c.h() > 0;
-    unsafe { kura::display::vnhost_window_pos(h, r.as_ptr(), shown as i32, 0, 0) };
+    unsafe { kura::display::vnhost_window_pos(h, &raw const r, shown as i32, 0, 0) };
     // owned windows (dialogs) stay above their owner, as on Windows: RealLive's fullscreen
     // settings dialog is shown before its topmost fullscreen owner
     if shown {
         for (&o, ow) in s.wins.iter().filter(|(_, ow)| ow.owner == h && ow.visible && (ow.parent == 0 || ow.parent == DESKTOP)) {
             let r = shown_rect(ow.client.off(ow.rect.l, ow.rect.t));
-            unsafe { kura::display::vnhost_window_pos(o, r.as_ptr(), 1, 1, 0) };
+            unsafe { kura::display::vnhost_window_pos(o, &raw const r, 1, 1, 0) };
         }
     }
 }
@@ -3372,7 +3372,8 @@ fn SetParent(c: &mut Ctx) -> u32 {
             // a top-level window made a child leaves the screen's windows: it is drawn in its
             // parent's now (タイムリープ's D3D9 window, shown, then put in its menu dialog: the
             // screen kept it under the dialog and the frames under the dialog's gray, #192)
-            unsafe { kura::display::vnhost_window_pos(h, [0i32; 8].as_ptr(), 0, 0, 0) };
+            let none = [0i32; 8];
+            unsafe { kura::display::vnhost_window_pos(h, &raw const none, 0, 0, 0) };
         }
         if old == 0 { DESKTOP } else { old }
     })

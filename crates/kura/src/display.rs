@@ -379,16 +379,18 @@ pub extern "C" fn vnhost_display_set_size(w: c_int, h: c_int) {
 
 /// The part of the screen the page shows (see `Display::view`): `out` gets l, t, r, b.
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_display_view(out: *mut i32) {
+pub unsafe extern "C" fn vnhost_display_view(out: *mut [i32; 4]) {
     let v = with(|d| d.view());
-    std::slice::from_raw_parts_mut(out, 4).copy_from_slice(&[v.l, v.t, v.r, v.b]);
+    *out = [v.l, v.t, v.r, v.b];
 }
 
 /// The visible top-level windows, topmost first: `out` gets l, t, r, b of up to `max` of them;
 /// returns how many. (The page draws the ones above a Direct3D window over its frames.)
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_display_windows(out: *mut i32, max: c_int) -> c_int {
-    with(|d| cint(d.windows(std::slice::from_raw_parts_mut(out, 4 * ix(max.max(0))))))
+    // (a `max` whose words overflow the address space lists nothing)
+    let Some(words) = usize::try_from(max).unwrap_or(0).checked_mul(4) else { return 0 };
+    with(|d| cint(d.windows(std::slice::from_raw_parts_mut(out, words))))
 }
 
 /// [`vnhost_display_windows`] of the windows above window `hwnd` (the one a Direct3D frame is
@@ -401,9 +403,9 @@ pub fn windows_above(hwnd: u32, out: &mut [i32]) -> Option<usize> {
 /// What `vnhost_display_frame`'s buffer holds, in screen coordinates (l t r b): the screen and
 /// the windows shown on it, whole (a game's window partly off the screen too).
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_display_extent(out: *mut i32) {
+pub unsafe extern "C" fn vnhost_display_extent(out: *mut [i32; 4]) {
     let e = with(|d| d.ext);
-    std::slice::from_raw_parts_mut(out, 4).copy_from_slice(&[e.l, e.t, e.r, e.b]);
+    *out = [e.l, e.t, e.r, e.b];
 }
 
 #[no_mangle]
@@ -418,10 +420,10 @@ pub unsafe extern "C" fn vnhost_display_size(w: *mut c_int, h: *mut c_int) {
 /// its surface is on the screen, then its client area; with `restack`, it goes just below
 /// `above` (0: on top).
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_window_pos(hwnd: u32, rect: *const i32, visible: c_int, restack: c_int, above: u32) {
+pub unsafe extern "C" fn vnhost_window_pos(hwnd: u32, rect: *const [i32; 8], visible: c_int, restack: c_int, above: u32) {
     start_screenshots();
     start_scripted_input();
-    let r = std::slice::from_raw_parts(rect, 8);
+    let r = &*rect;
     let rect = Rect { l: r[0], t: r[1], r: r[2], b: r[3] };
     let client = Rect { l: r[4], t: r[5], r: r[6], b: r[7] };
     with(|d| d.pos(hwnd, rect, client, visible != 0, restack != 0, above))
@@ -552,8 +554,8 @@ fn pace() {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_window_draw(hwnd: u32, dirty: *const i32, bits: *const u32, stride: c_int, ox: c_int, oy: c_int) {
-    let r = std::slice::from_raw_parts(dirty, 4);
+pub unsafe extern "C" fn vnhost_window_draw(hwnd: u32, dirty: *const [i32; 4], bits: *const u32, stride: c_int, ox: c_int, oy: c_int) {
+    let r = &*dirty;
     let dirty = Rect { l: r[0], t: r[1], r: r[2], b: r[3] };
     with(|d| d.draw(hwnd, dirty, bits, stride, ox, oy))
 }
@@ -731,8 +733,8 @@ fn update_changed<'a>(px: &mut [u32], ww: usize, dirty: Rect, src: impl Fn(i32) 
 /// which the window then shows directly instead of copying it (one copy of each frame less).
 /// The caller keeps `bits` alive and unmoved until `vnhost_window_unshare`.
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_window_draw_shared(hwnd: u32, dirty: *const i32, bits: *const u32, w: c_int, h: c_int) {
-    let r = std::slice::from_raw_parts(dirty, 4);
+pub unsafe extern "C" fn vnhost_window_draw_shared(hwnd: u32, dirty: *const [i32; 4], bits: *const u32, w: c_int, h: c_int) {
+    let r = &*dirty;
     with(|d| d.draw_shared(hwnd, Rect { l: r[0], t: r[1], r: r[2], b: r[3] }, bits, w, h))
 }
 
@@ -792,9 +794,9 @@ impl Display {
 /// `io[3]` stays 1 and `io[4..10]` = the surface's address, its row length in pixels and the
 /// window's rect on the screen (l t r b). Otherwise `io[3]` = 0 and `screen` has them.
 #[no_mangle]
-pub unsafe extern "C" fn vnhost_display_frame(io: *mut u32) -> *const u32 {
-    let direct_ok = *io.add(3) == 1;
-    let io = &mut *io.cast::<[u32; 12]>();
+pub unsafe extern "C" fn vnhost_display_frame(io: *mut [u32; 12]) -> *const u32 {
+    let io = &mut *io;
+    let direct_ok = io[3] == 1;
     with(|d| d.frame(io, direct_ok))
 }
 
@@ -1593,29 +1595,46 @@ mod tests {
             let (mut w, mut h) = (0, 0);
             vnhost_display_size(&mut w, &mut h);
             assert_eq!((w, h), (64, 48));
-            vnhost_window_pos(7, [4, 4, 12, 10, 5, 6, 11, 9].as_ptr(), 1, 0, 0);
-            vnhost_window_pos(8, [40, 30, 44, 34, 40, 30, 44, 34].as_ptr(), 1, 0, 0);
+            vnhost_window_pos(7, &[4, 4, 12, 10, 5, 6, 11, 9], 1, 0, 0);
+            vnhost_window_pos(8, &[40, 30, 44, 34, 40, 30, 44, 34], 1, 0, 0);
             let mut v = [0i32; 4];
-            vnhost_display_view(v.as_mut_ptr());
+            vnhost_display_view(&mut v);
             assert_eq!(v, [5, 6, 11, 9], "the client area only, not the window above");
+            // (each answer exactly its words: #241's kind of write past the caller's buffer)
+            use crate::host_out_tests::{guarded, guarded_n};
+            assert_eq!(guarded_n::<i32, 4>(0, i32::MIN, |p| vnhost_display_view(p)), v);
+            guarded_n::<i32, 4>(0, i32::MIN, |p| vnhost_display_extent(p));
+            for direct in [0, 1] {
+                let mut io = [u32::MAX; 12];
+                io[3] = direct;
+                guarded_n::<u32, 12>(0, u32::MAX - 1, |p| {
+                    p.write(io);
+                    vnhost_display_frame(p);
+                });
+            }
+            for max in -2..8 {
+                let mut n = 0;
+                guarded(4 * usize::try_from(max).unwrap_or(0), 0i32, i32::MIN, |p| n = vnhost_display_windows(p, max));
+                assert_eq!(n, max.clamp(0, 2), "{max} at most");
+            }
             let mut list = [0i32; 8];
             assert_eq!(vnhost_display_windows(list.as_mut_ptr(), 2), 2);
             assert_eq!(list, [40, 30, 44, 34, 4, 4, 12, 10]);
             let px = vec![0xff12_3456u32; 48];
-            vnhost_window_draw(7, [0, 0, 8, 6].as_ptr(), px.as_ptr(), 8, 0, 0);
+            vnhost_window_draw(7, &[0, 0, 8, 6], px.as_ptr(), 8, 0, 0);
             let mut io = [u32::MAX; 12];
             io[3] = 0;
-            let screen = std::slice::from_raw_parts(vnhost_display_frame(io.as_mut_ptr()), 64 * 48);
+            let screen = std::slice::from_raw_parts(vnhost_display_frame(&mut io), 64 * 48);
             assert_eq!((screen[4 * 64 + 4], screen[3 * 64 + 4]), (0xff12_3456, BLACK));
             let surf = vec![0xff65_4321u32; 48];
-            vnhost_window_draw_shared(7, [0, 0, 8, 6].as_ptr(), surf.as_ptr(), 8, 6);
+            vnhost_window_draw_shared(7, &[0, 0, 8, 6], surf.as_ptr(), 8, 6);
             vnhost_window_unshare(7);
             with(|d| assert_eq!((d.wins[&7].shared, d.wins[&7].px()[0]), (None, 0xff65_4321)));
             // (the extent taken, then window 8 moved over the edge: the frame says the new one,
             // and its buffer holds all of it while the closure reads it)
             let mut e0 = [0i32; 4];
-            vnhost_display_extent(e0.as_mut_ptr());
-            vnhost_window_pos(8, [60, 30, 80, 34, 60, 30, 80, 34].as_ptr(), 1, 0, 0);
+            vnhost_display_extent(&mut e0);
+            vnhost_window_pos(8, &[60, 30, 80, 34, 60, 30, 80, 34], 1, 0, 0);
             let mut io = [u32::MAX; 12];
             io[3] = 0;
             let (e, black) = frame_with(&mut io, |_, p, e| {
@@ -1633,7 +1652,7 @@ mod tests {
                 let mut k = 0;
                 while !s2.load(std::sync::atomic::Ordering::Relaxed) {
                     let x = 50 + k % 40;
-                    vnhost_window_pos(8, [x, 30, x + 20, 34, x, 30, x + 20, 34].as_ptr(), 1, 0, 0);
+                    vnhost_window_pos(8, &[x, 30, x + 20, 34, x, 30, x + 20, 34], 1, 0, 0);
                     k += 1;
                 }
             });
