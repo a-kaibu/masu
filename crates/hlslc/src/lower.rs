@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use super::ast::*;
 pub use super::sm4::Lane;
-use super::sm4::{self, Dst, Ins, Reg, RegF, SigEl, Src, SysVal};
+use super::sm4::{self, Dst, InterpMode, Ins, Reg, RegF, SigEl, Src, SysVal};
 
 type R<T> = Result<T, String>;
 
@@ -1504,19 +1504,19 @@ impl<'a> L<'a> {
                 )
             };
             let interp = if !pixel || output {
-                0
+                InterpMode::Undefined
             } else if sysval == SysVal::Position {
-                4
+                InterpMode::LinearNoPerspective
             } else if b != B::Float || sysval != SysVal::Undefined {
-                1
+                InterpMode::Constant
             } else {
                 match interp {
-                    Interp::Linear => 2,
-                    Interp::Centroid => 3,
-                    Interp::NoInterp => 1,
-                    Interp::NoPersp => 4,
-                    Interp::NoPerspCentroid => 5,
-                    Interp::Sample => 6,
+                    Interp::Linear => InterpMode::Linear,
+                    Interp::Centroid => InterpMode::LinearCentroid,
+                    Interp::NoInterp => InterpMode::Constant,
+                    Interp::NoPersp => InterpMode::LinearNoPerspective,
+                    Interp::NoPerspCentroid => InterpMode::LinearNoPerspectiveCentroid,
+                    Interp::Sample => InterpMode::LinearSample,
                 }
             };
             let ct = if sysval == SysVal::IsFrontFace { sm4::CompType::Uint } else { ctype(b) };

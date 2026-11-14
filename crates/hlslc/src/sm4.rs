@@ -281,6 +281,33 @@ impl CompType {
     }
 }
 
+/// A pixel input's D3D10_SB_INTERPOLATION_MODE.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InterpMode {
+    /// (not a pixel input)
+    Undefined,
+    Constant,
+    Linear,
+    LinearCentroid,
+    LinearNoPerspective,
+    LinearNoPerspectiveCentroid,
+    LinearSample,
+}
+
+impl InterpMode {
+    pub fn code(self) -> u32 {
+        match self {
+            InterpMode::Undefined => 0,
+            InterpMode::Constant => 1,
+            InterpMode::Linear => 2,
+            InterpMode::LinearCentroid => 3,
+            InterpMode::LinearNoPerspective => 4,
+            InterpMode::LinearNoPerspectiveCentroid => 5,
+            InterpMode::LinearSample => 6,
+        }
+    }
+}
+
 /// A signature element of the shader's interface.
 #[derive(Clone, Debug)]
 pub struct SigEl {
@@ -290,8 +317,7 @@ pub struct SigEl {
     pub ctype: CompType,
     pub reg: u32,
     pub mask: u8,
-    /// pixel inputs: interpolation mode (1 constant, 2 linear, 3 centroid, 4 noperspective..)
-    pub interp: u32,
+    pub interp: InterpMode,
     /// the register is oDepth
     pub depth: bool,
 }
@@ -704,8 +730,8 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
         let t = reg_tok(tpf::INPUT, i.mask);
         if s.pixel {
             match i.sysval {
-                SysVal::Undefined => decl(&mut w, Opcode::DclInputPs, i.interp, &[t, i.reg]),
-                SysVal::Position => decl(&mut w, Opcode::DclInputPsSiv, i.interp, &[t, i.reg, 1]),
+                SysVal::Undefined => decl(&mut w, Opcode::DclInputPs, i.interp.code(), &[t, i.reg]),
+                SysVal::Position => decl(&mut w, Opcode::DclInputPsSiv, i.interp.code(), &[t, i.reg, 1]),
                 v @ (SysVal::ClipDistance | SysVal::VertexId | SysVal::PrimitiveId | SysVal::InstanceId
                      | SysVal::IsFrontFace | SysVal::SampleIndex | SysVal::Target | SysVal::Depth) => {
                     decl(&mut w, Opcode::DclInputPsSgv, 1, &[t, i.reg, v.code()]);
