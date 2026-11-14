@@ -1292,8 +1292,8 @@ file	crates/sake/src/d3d11.rs	as_conversions	12
 file	crates/sake/src/d3d11.rs	cast_possible_truncation	8
 file	crates/sake/src/d3d11.rs	undocumented_unsafe_blocks	5
 file	crates/sake/src/d3d7.rs	arithmetic_side_effects	274
-file	crates/sake/src/d3d7.rs	as_conversions	201
-file	crates/sake/src/d3d7.rs	cast_possible_truncation	63
+file	crates/sake/src/d3d7.rs	as_conversions	194
+file	crates/sake/src/d3d7.rs	cast_possible_truncation	56
 file	crates/sake/src/d3d7.rs	cast_possible_wrap	19
 file	crates/sake/src/d3d7.rs	cast_precision_loss	39
 file	crates/sake/src/d3d7.rs	cast_sign_loss	43
@@ -1373,11 +1373,11 @@ file	crates/sake/src/dbg.rs	cast_possible_truncation	14
 file	crates/sake/src/dbg.rs	indexing_slicing	1
 file	crates/sake/src/dbg.rs	let_underscore_must_use	5
 file	crates/sake/src/dbg.rs	unwrap_used	3
-file	crates/sake/src/ddraw.rs	arithmetic_side_effects	161
-file	crates/sake/src/ddraw.rs	as_conversions	119
-file	crates/sake/src/ddraw.rs	cast_possible_truncation	29
+file	crates/sake/src/ddraw.rs	arithmetic_side_effects	156
+file	crates/sake/src/ddraw.rs	as_conversions	101
+file	crates/sake/src/ddraw.rs	cast_possible_truncation	24
 file	crates/sake/src/ddraw.rs	cast_possible_wrap	8
-file	crates/sake/src/ddraw.rs	cast_sign_loss	49
+file	crates/sake/src/ddraw.rs	cast_sign_loss	36
 file	crates/sake/src/ddraw.rs	indexing_slicing	32
 file	crates/sake/src/ddraw.rs	masu-static_mut	1
 file	crates/sake/src/ddraw.rs	multiple_unsafe_ops_per_block	4
