@@ -2031,3 +2031,43 @@ mod file_name_tests {
         }
     }
 }
+
+/// What the kinds of Obj::Other answer (NtQueryObject's type name, GetFileType, WriteConsole's
+/// check), pinned before their names became an enum.
+#[cfg(test)]
+mod other_kind_tests {
+    use crate::obj::{self, Obj};
+    use crate::test_guest::{call, enter};
+
+    #[test]
+    fn every_other_kind_answers_as_before() {
+        let _g = enter();
+        // (the object, its type name, GetFileType, a console output handle)
+        let kinds: [(Obj, &str, u32, bool); 17] = [
+            (Obj::Other("iocp"), "iocp", 2, false),
+            (Obj::Other("afd"), "afd", 2, false),
+            (Obj::Other("Section"), "Section", 2, false),
+            (Obj::Other("nul"), "nul", 2, false),
+            (Obj::Other("ip change notify"), "ip change notify", 2, false),
+            (Obj::Other("volume"), "volume", 2, false),
+            (Obj::Other("stdin"), "stdin", 2, false),
+            (Obj::Other("stdout"), "stdout", 2, true),
+            (Obj::Other("stderr"), "stderr", 2, true),
+            (Obj::Other("console"), "console", 2, true),
+            (Obj::Other("socket"), "socket", 2, false),
+            (Obj::Other("service"), "service", 2, false),
+            (Obj::Other("service status"), "service status", 2, false),
+            (Obj::Other("service manager"), "service manager", 2, false),
+            (Obj::Other("provider change"), "provider change", 2, false),
+            (Obj::Other("token"), "token", 2, false),
+            (Obj::Other("impersonation token"), "impersonation token", 2, false),
+        ];
+        for (o, name, file_type, console) in kinds {
+            assert_eq!(super::type_name(&o), name);
+            let h = obj::add(o);
+            assert_eq!(call(crate::k32::GetFileType, &[h]), file_type, "{name}");
+            assert_eq!(crate::k32::is_console_out(h), console, "{name}");
+            assert!(obj::close(h));
+        }
+    }
+}

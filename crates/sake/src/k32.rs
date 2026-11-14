@@ -6993,7 +6993,7 @@ fn GetStdHandle(c: &mut Ctx) -> u32 {
 fn SetStdHandle(_: &mut Ctx) -> u32 {
     1
 }
-fn GetFileType(c: &mut Ctx) -> u32 {
+pub(crate) fn GetFileType(c: &mut Ctx) -> u32 {
     // FILE_TYPE_DISK, CHAR (the console), PIPE
     match obj::with(|t| t.objs.get(&c.a(0)).map(|(o, _)| match o {
         Obj::Other(_) => 2,
