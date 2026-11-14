@@ -134,7 +134,7 @@ fn finish(shader: sm4::Shader, t: &Target) -> Result<Vec<u8>, String> {
     if t.major < 4 {
         return sm3::finish(shader);
     }
-    Ok(sm4::finish(shader))
+    sm4::finish(shader)
 }
 
 /// HLSL source to a DXBC blob (or shader model 2/3 bytecode).

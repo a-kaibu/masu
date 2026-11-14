@@ -409,25 +409,25 @@ struct Enc<'a> {
 
 impl Enc<'_> {
     /// operand token pieces: (type, indices)
-    fn reg_parts(&self, r: &Reg) -> (u32, Vec<u32>) {
-        match r.f {
+    fn reg_parts(&self, r: &Reg) -> Result<(u32, Vec<u32>), String> {
+        Ok(match r.f {
             RegF::Temp(i) => (T_TEMP, vec![i]),
             RegF::Input(i) => (T_INPUT, vec![i]),
             RegF::Output(i) => (T_OUTPUT, vec![i]),
-            RegF::Cb(s, i) => (T_CB, vec![self.s.cbs[self.s.cb_map[crate::us(s)].unwrap()].slot, i]),
+            RegF::Cb(s, i) => (T_CB, vec![bound(&self.s.cb_map, &self.s.cbs, s, |c| c.slot, "constant buffer")?, i]),
             RegF::Icb(i) => (T_ICB, vec![i]),
             RegF::X(a, i) => (T_X, vec![a, i]),
             RegF::Depth => (T_DEPTH, vec![]),
             RegF::Null => (T_NULL, vec![]),
             RegF::Sys(t) => (t, vec![]),
-            RegF::Uav(u) => (T_UAV, vec![self.s.uavs[self.s.uav_map[crate::us(u)].unwrap()].slot]),
+            RegF::Uav(u) => (T_UAV, vec![bound(&self.s.uav_map, &self.s.uavs, u, |u| u.slot, "UAV")?]),
             RegF::G(g) => (T_TGSM, vec![g]),
-        }
+        })
     }
 
     /// `sel`: 0 mask, 1 swizzle, 2 select-1; `num` component count code (0 = none, 1 = one, 2 = four)
-    fn reg(&self, out: &mut Vec<u32>, r: &Reg, num: u32, sel: u32, bits: u32, modifier: u32) {
-        let (ty, idx) = self.reg_parts(r);
+    fn reg(&self, out: &mut Vec<u32>, r: &Reg, num: u32, sel: u32, bits: u32, modifier: u32) -> Result<(), String> {
+        let (ty, idx) = self.reg_parts(r)?;
         let mut t = num | (ty << 12) | (crate::u32_of(idx.len()) << 20);
         if num == 2 {
             t |= (sel << 2) | (bits << 4);
@@ -454,19 +454,20 @@ impl Enc<'_> {
                 }
             }
         }
+        Ok(())
     }
 
-    fn src(&self, out: &mut Vec<u32>, s: &Src) {
+    fn src(&self, out: &mut Vec<u32>, s: &Src) -> Result<(), String> {
         match s {
             Src::R { r, swz, neg, abs, one } => {
                 let m = u32::from(*neg) | (u32::from(*abs) << 1);
                 if matches!(r.f, RegF::Depth) {
-                    self.reg(out, r, 1, 0, 0, m);
+                    self.reg(out, r, 1, 0, 0, m)?;
                 } else if *one {
-                    self.reg(out, r, 2, 2, u32::from(swz[0]), m);
+                    self.reg(out, r, 2, 2, u32::from(swz[0]), m)?;
                 } else {
                     let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
-                    self.reg(out, r, 2, 1, b, m);
+                    self.reg(out, r, 2, 1, b, m)?;
                 }
             }
             Src::Imm(v, one) => {
@@ -479,24 +480,24 @@ impl Enc<'_> {
                 }
             }
             Src::Tex(t, swz) => {
-                let slot = self.s.texs[self.s.tex_map[crate::us(*t)].unwrap()].slot;
+                let slot = bound(&self.s.tex_map, &self.s.texs, *t, |t| t.slot, "texture")?;
                 let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
                 out.push(2 | (1 << 2) | (b << 4) | (T_RESOURCE << 12) | (1 << 20));
                 out.push(slot);
             }
             Src::Samp(s) => {
-                let slot = self.s.samps[self.s.samp_map[crate::us(*s)].unwrap()].slot;
+                let slot = bound(&self.s.samp_map, &self.s.samps, *s, |s| s.slot, "sampler")?;
                 out.push((T_SAMPLER << 12) | (1 << 20));
                 out.push(slot);
             }
             Src::SampC(s, c) => {
-                let slot = self.s.samps[self.s.samp_map[crate::us(*s)].unwrap()].slot;
+                let slot = bound(&self.s.samp_map, &self.s.samps, *s, |s| s.slot, "sampler")?;
                 out.push(2 | (2 << 2) | (u32::from(*c) << 4) | (T_SAMPLER << 12) | (1 << 20));
                 out.push(slot);
             }
             Src::Uav(u, swz) | Src::G(u, swz) => {
                 let (ty, slot) = match s {
-                    Src::Uav(..) => (T_UAV, self.s.uavs[self.s.uav_map[crate::us(*u)].unwrap()].slot),
+                    Src::Uav(..) => (T_UAV, bound(&self.s.uav_map, &self.s.uavs, *u, |u| u.slot, "UAV")?),
                     Src::R { .. } | Src::Imm(..) | Src::Tex(..) | Src::Samp(_) | Src::SampC(..) | Src::G(..) => (T_TGSM, *u),
                 };
                 let b = u32::from(swz[0]) | u32::from(swz[1]) << 2 | u32::from(swz[2]) << 4 | u32::from(swz[3]) << 6;
@@ -504,34 +505,45 @@ impl Enc<'_> {
                 out.push(slot);
             }
         }
+        Ok(())
     }
 
-    fn dst(&self, out: &mut Vec<u32>, d: &Dst) {
+    fn dst(&self, out: &mut Vec<u32>, d: &Dst) -> Result<(), String> {
         match d.r.f {
-            RegF::Null => out.push(T_NULL << 12),
+            RegF::Null => {
+                out.push(T_NULL << 12);
+                Ok(())
+            }
             RegF::Depth => self.reg(out, &d.r, 1, 0, 0, 0),
             RegF::Temp(_) | RegF::Input(_) | RegF::Output(_) | RegF::Cb(..) | RegF::Icb(_) | RegF::X(..)
             | RegF::Sys(_) | RegF::Uav(_) | RegF::G(_) => self.reg(out, &d.r, 2, 0, u32::from(d.mask), 0),
         }
     }
 
-    fn ins(&self, out: &mut Vec<u32>, i: &Ins) {
+    fn ins(&self, out: &mut Vec<u32>, i: &Ins) -> Result<(), String> {
         let at = out.len();
         let ext = i.offset != [0; 3];
         out.push(0);
         if ext {
-            let o = |v: i32| (v as u32) & 0xf;
+            let o = |v: i32| v.cast_unsigned() & 0xf;
             out.push(1 | (o(i.offset[0]) << 9) | (o(i.offset[1]) << 13) | (o(i.offset[2]) << 17));
         }
         for d in &i.dst {
-            self.dst(out, d);
+            self.dst(out, d)?;
         }
         for s in &i.src {
-            self.src(out, s);
+            self.src(out, s)?;
         }
         let len = crate::u32_of(out.len() - at);
         out[at] = i.op.code() | (i.ctl << 11) | (u32::from(i.sat) << 13) | (u32::from(i.nz) << 18) | (len << 24) | (u32::from(ext) << 31);
+        Ok(())
     }
+}
+
+/// The slot a symbol was bound to (lower.rs binds every symbol an instruction names; an
+/// unbound one is an error, not a panic)
+fn bound<T>(map: &[Option<usize>], v: &[T], sym: u32, slot: impl Fn(&T) -> u32, what: &str) -> Result<u32, String> {
+    map.get(crate::us(sym)).copied().flatten().and_then(|k| v.get(k)).map(slot).ok_or_else(|| format!("an unbound {what} (symbol {sym})"))
 }
 
 fn decl(out: &mut Vec<u32>, op: Opcode, ctl: u32, body: &[u32]) {
@@ -540,7 +552,7 @@ fn decl(out: &mut Vec<u32>, op: Opcode, ctl: u32, body: &[u32]) {
 }
 
 /// The SHDR/SHEX chunk.
-fn program(s: &mut Shader) -> Vec<u32> {
+fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
     let temps = alloc(&mut s.code, &s.marks.clone());
     let s = &*s;
     let e = Enc { s };
@@ -614,10 +626,10 @@ fn program(s: &mut Shader) -> Vec<u32> {
         decl(&mut w, Opcode::DclThreadGroup, 0, &[x, y, z]);
     }
     for i in &s.code {
-        e.ins(&mut w, i);
+        e.ins(&mut w, i)?;
     }
     w[1] = crate::u32_of(w.len());
-    w
+    Ok(w)
 }
 
 fn put_str(b: &mut Vec<u8>, s: &str) -> u32 {
@@ -794,8 +806,8 @@ fn rdef(s: &Shader) -> Vec<u8> {
 }
 
 /// The whole DXBC blob.
-pub fn finish(mut s: Shader) -> Vec<u8> {
-    let prog = program(&mut s);
+pub fn finish(mut s: Shader) -> Result<Vec<u8>, String> {
+    let prog = program(&mut s)?;
     let shdr: Vec<u8> = prog.iter().flat_map(|w| w.to_le_bytes()).collect();
     let chunks: Vec<([u8; 4], Vec<u8>)> = vec![
         (*b"RDEF", rdef(&s)),
@@ -803,7 +815,7 @@ pub fn finish(mut s: Shader) -> Vec<u8> {
         (*b"OSGN", signature(&s.outputs, true, s.d3d10)),
         (if s.major >= 5 { *b"SHEX" } else { *b"SHDR" }, shdr),
     ];
-    container(&chunks)
+    Ok(container(&chunks))
 }
 
 pub fn container(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
