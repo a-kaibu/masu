@@ -68,6 +68,10 @@ jobs:
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
         run: node tests/opfs-read-browser.mjs
+      - name: sake's wasm from bytes, the server's file kept in the HTTP cache for the next start (web/src/wasmkeep.ts)
+        env:
+          PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
+        run: node tests/wasm-keep-browser.mjs
       - name: A lost WebGPU device is replaced and the drawing goes on (host/vngpu.js)
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs

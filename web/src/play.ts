@@ -69,6 +69,7 @@ import { checkOnline, startApp } from "./pwa";
 import { Budget, pool } from "./ahead";
 import { startWarm, warmAllowed, warmBusyWidth, warmMax, type Warm } from "./warm";
 import { savedChunks } from "./offline";
+import { keepServerWasm } from "./wasmkeep";
 import { sakeWasmBytes, wasmModuleArg } from "./wasmsource";
 import { deviceChunks } from "./chunkstore";
 import { fetchForesee, handForesee, mountedTrees } from "./foresee";
@@ -701,6 +702,13 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   started = true;
   rootModule = sake;
   activeModule ??= sake;
+  // (compiled from bytes: the server's file into the HTTP cache, for the next start's code)
+  void wasmBytes.then(({ from }) => {
+    if (from !== "device" && from !== "bucket") return;
+    void keepServerWasm(wasmUrl, { busy: () => !!sake._vnhost_net_busy?.() }).then((k) =>
+      recorder?.note(`sake wasm for the next start: ${k}`),
+    );
+  });
   keepInstallation(sake as unknown as SavesModule, installation, () =>
     toast.error("インストール状態をこの端末に保存できませんでした。"),
   );

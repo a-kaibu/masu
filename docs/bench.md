@@ -52,7 +52,20 @@ network worker, the audio worklet): `DIR/<build>-<time>/trace.json` for Perfetto
 `summary.txt`, each thread's time on the CPU (from `/proc`: a sampled thread blocked in
 `Atomics.wait` inside wasm still looks busy there) with its busiest scripts and functions. Build
 sake with `SAKE_LDEXTRA=--profiling-funcs` for wasm function names. `node tests/bench/profile.mjs
-trace.json` summarizes a trace again.
+trace.json` summarizes a trace again. The sampler costs every thread CPU of its own (a game
+thread waiting in wasm showed ~0.5 s for ~15 s of play under it, ~0.05 s without), so for what V8
+compiles, `BENCH_PROFILE_CATEGORIES=v8.wasm,disabled-by-default-v8.wasm.detailed` traces without
+it, and `CHROME_ARGS=--js-flags=--trace-wasm-compilation-times DEBUG=pw:browser` prints every
+function compiled, with its tier and time.
+
+What these benches cannot show: the browser keeps a wasm module's compiled code only with the
+HTTP cache's entry of the URL it streamed it from, and Playwright's contexts here are off the
+record, with no code cache. In a profile of its own (persistent, as a player's) the scenario's
+second and third starts were, here: from the server's file, title in 0.71 / 0.74 s and TurboFan
+0.14 / 0.07 s of CPU; from the same bytes (the device, the bucket) 1.07 / 0.99 s and 0.97 /
+1.47 s; on the Android-like machine 1.13 / 1.24 s against 1.69 / 1.89 s (and 4.3 s of TurboFan
+over three starts against 10.6 s). From Cache Storage it compiled as from bytes. Hence
+`web/src/wasmkeep.ts` (after a start from bytes, the server's file into the HTTP cache).
 
 The report (job summary, artifact `bench-report`) lists every metric with the change against the
 previous commit; a change is marked when it is over 3% and every round of one build beat every

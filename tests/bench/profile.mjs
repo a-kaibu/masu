@@ -30,7 +30,14 @@ function threadCpu() {
   return out;
 }
 
-const CATEGORIES = ["devtools.timeline", "v8.execute", "disabled-by-default-v8.cpu_profiler", "disabled-by-default-devtools.timeline"];
+// (BENCH_PROFILE_CATEGORIES=a,b,...: others, e.g. v8.wasm,disabled-by-default-v8.wasm.detailed
+// for what V8 compiled when, without the sampler's own cost on every thread)
+const CATEGORIES = process.env.BENCH_PROFILE_CATEGORIES?.split(",") ?? [
+  "devtools.timeline",
+  "v8.execute",
+  "disabled-by-default-v8.cpu_profiler",
+  "disabled-by-default-devtools.timeline",
+];
 
 /** Starts tracing (call before the page's goto); returns stop(): writes DIR. */
 export async function profile(browser, page, dir) {
