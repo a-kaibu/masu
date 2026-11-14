@@ -155,7 +155,7 @@ enum Obj {
 static OBJS: Mutex<Option<HashMap<u32, Obj>>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
-    f(OBJS.lock().unwrap().get_or_insert_with(HashMap::new))
+    f(OBJS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::new))
 }
 
 fn new(iface: com::Iface, impls: com::Impls, o: Obj) -> u32 {
@@ -178,7 +178,7 @@ fn free(this: u32) {
             if write {
                 let data = mem::slice(buf, stride * rect.3).to_vec();
                 lock_into_raw(owner, fmt, rect, stride, &data);
-                let mut g = bitmap.lock().unwrap();
+                let mut g = bitmap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 let img = Arc::make_mut(&mut *g);
                 let part = decode(fmt, rect.2, rect.3, stride, &data, &img.palette);
                 for row in 0..rect.3 {
@@ -410,8 +410,8 @@ fn new_source(iface: com::Iface, img: Arc<Img>, fmt: Fmt, extra: com::Impls) -> 
 fn image_of(this: u32) -> Option<(Arc<Img>, Fmt)> {
     with(|m| match m.get(&this)? {
         Obj::Source { img, fmt, .. } => Some((img.clone(), *fmt)),
-        Obj::Bitmap { img, fmt, .. } => Some((img.lock().unwrap().clone(), *fmt)),
-        _ => None,
+        Obj::Bitmap { img, fmt, .. } => Some((img.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone(), *fmt)),
+        Obj::Stream { .. } | Obj::Decoder { .. } | Obj::Reader { .. } | Obj::Names { .. } | Obj::Palette { .. } | Obj::FormatInfo(_) | Obj::Lock { .. } => None,
     })
 }
 
@@ -486,7 +486,7 @@ fn src_resolution(c: &mut Ctx) -> u32 {
     }
     let (dx, dy) = with(|m| match m.get(&this) {
         Some(Obj::Source { img, .. }) => img.dpi,
-        Some(Obj::Bitmap { img, .. }) => img.lock().unwrap().dpi,
+        Some(Obj::Bitmap { img, .. }) => img.lock().unwrap_or_else(std::sync::PoisonError::into_inner).dpi,
         _ => (96.0, 96.0),
     });
     mem::w64(x, dx.to_bits());
@@ -668,7 +668,7 @@ fn dec_frame(c: &mut Ctx) -> u32 {
 static FRAME_META: Mutex<Option<HashMap<u32, (Guid, Option<Arc<wicmeta::Meta>>)>>> = Mutex::new(None);
 
 fn frame_meta<R>(f: impl FnOnce(&mut HashMap<u32, (Guid, Option<Arc<wicmeta::Meta>>)>) -> R) -> R {
-    f(FRAME_META.lock().unwrap().get_or_insert_with(HashMap::new))
+    f(FRAME_META.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::new))
 }
 
 /// IWICBitmapFrameDecode::GetMetadataQueryReader(this, out)
@@ -1467,7 +1467,7 @@ fn bm_set_palette(c: &mut Ctx) -> u32 {
     };
     with(|m| match m.get(&this) {
         Some(Obj::Bitmap { img, fmt, raw }) => {
-            let mut g = img.lock().unwrap();
+            let mut g = img.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let i = Arc::make_mut(&mut *g);
             // (an indexed bitmap made from memory: its pixels through the new palette)
             if let Some(fr) = raw.as_ref().filter(|_| fmt.indexed()) {
@@ -1570,7 +1570,7 @@ fn bm_lock(c: &mut Ctx) -> u32 {
         return E_FAIL;
     };
     let (w, h) = {
-        let i = bitmap.lock().unwrap();
+        let i = bitmap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         (i.w, i.h)
     };
     let Some(r) = rect(prc, w, h) else {
@@ -1581,7 +1581,7 @@ fn bm_lock(c: &mut Ctx) -> u32 {
     let mut data = vec![0u8; (stride * r.3) as usize];
     match raw_of(this) {
         Some(fr) if fr.fmt == fmt => picture::copy_rect(fmt, &fr.bits, fr.stride(), r, stride, &mut data),
-        _ => encode(&bitmap.lock().unwrap(), fmt, r, stride, &mut data),
+        _ => encode(&bitmap.lock().unwrap_or_else(std::sync::PoisonError::into_inner), fmt, r, stride, &mut data),
     }
     mem::write(buf, &data);
     let l = new(

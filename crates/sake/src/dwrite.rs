@@ -40,10 +40,10 @@ static FORMATS: Mutex<Option<HashMap<u32, Format>>> = Mutex::new(None);
 static LAYOUTS: Mutex<Option<HashMap<u32, Layout>>> = Mutex::new(None);
 
 fn formats<R>(f: impl FnOnce(&mut HashMap<u32, Format>) -> R) -> R {
-    f(FORMATS.lock().unwrap().get_or_insert_with(HashMap::new))
+    f(FORMATS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::new))
 }
 fn layouts<R>(f: impl FnOnce(&mut HashMap<u32, Layout>) -> R) -> R {
-    f(LAYOUTS.lock().unwrap().get_or_insert_with(HashMap::new))
+    f(LAYOUTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::new))
 }
 
 fn fl(c: &Ctx, i: u32) -> f32 {
@@ -123,7 +123,7 @@ fn TranslateColorGlyphRun(c: &mut Ctx) -> u32 {
 fn DWriteCreateFactory(c: &mut Ctx) -> u32 {
     let (ty, out) = (c.a(0), c.a(2));
     let f = if ty == 0 {
-        let mut g = SHARED.lock().unwrap();
+        let mut g = SHARED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if *g == 0 {
             *g = com::object(FACTORY, &factory_methods(), 8);
             // (the shared factory is handed out again: never freed)
@@ -447,7 +447,7 @@ fn GetClusterMetrics(c: &mut Ctx) -> u32 {
 /// The IDWriteFontFace of built-in face `i` (one object per face, kept).
 fn face_obj(i: usize) -> u32 {
     static FACES: Mutex<Option<HashMap<usize, u32>>> = Mutex::new(None);
-    *FACES.lock().unwrap().get_or_insert_with(HashMap::new).entry(i).or_insert_with(|| {
+    *FACES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::new).entry(i).or_insert_with(|| {
         let f = face(i as u32);
         com::keep(f);
         f
@@ -893,7 +893,7 @@ fn GetReferenceKey(c: &mut Ctx) -> u32 {
 }
 fn GetLoader(c: &mut Ctx) -> u32 {
     static LOADER: Mutex<u32> = Mutex::new(0);
-    let mut g = LOADER.lock().unwrap();
+    let mut g = LOADER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if *g == 0 {
         let m = com::impls!(IDWriteLocalFontFileLoader { GetFilePathLengthFromKey: GetFilePathLengthFromKey, GetFilePathFromKey: GetFilePathFromKey, GetLastWriteTimeFromKey: GetLastWriteTimeFromKey });
         *g = com::object(com::iface!(IDWriteLocalFontFileLoader), &m, 8);
@@ -948,14 +948,14 @@ fn strings(v: Vec<(String, String)>) -> u32 {
         GetString: GetString,
     });
     let o = com::object(com::iface!(IDWriteLocalizedStrings), &m, 8);
-    STRINGS.lock().unwrap().get_or_insert_with(HashMap::new).insert(o, v);
+    STRINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::new).insert(o, v);
     com::on_free(o, |o| {
-        STRINGS.lock().unwrap().get_or_insert_with(HashMap::new).remove(&o);
+        STRINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::new).remove(&o);
     });
     o
 }
 fn strings_of(o: u32) -> Vec<(String, String)> {
-    STRINGS.lock().unwrap().as_ref().and_then(|m| m.get(&o).cloned()).unwrap_or_default()
+    STRINGS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().and_then(|m| m.get(&o).cloned()).unwrap_or_default()
 }
 fn StrGetCount(c: &mut Ctx) -> u32 {
     strings_of(c.a(0)).len() as u32

@@ -131,7 +131,7 @@ pub fn call_proc(p: Option<(usize, u16)>, w: &[u32]) -> u32 {
     let words = fit(sig, w);
     match unsafe { gl_sigs::call(sig, f as *const (), &words) } {
         Ret::I(v) => v,
-        _ => 0,
+        Ret::V | Ret::F(_) => 0,
     }
 }
 
@@ -148,7 +148,7 @@ fn fit(sig: u16, w: &[u32]) -> std::borrow::Cow<'_, [u32]> {
 
 /// a NUL-terminated host string, copied into guest memory (once)
 fn guest_str(p: usize) -> u32 {
-    *STRS.lock().unwrap().get_or_insert_with(HashMap::default).entry(p).or_insert_with(|| {
+    *STRS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::default).entry(p).or_insert_with(|| {
         let s = unsafe { std::ffi::CStr::from_ptr(p as *const std::ffi::c_char) }.to_bytes();
         let g = mem::heap_alloc(s.len() as u32 + 1, true);
         mem::write(g, s);
@@ -158,7 +158,7 @@ fn guest_str(p: usize) -> u32 {
 
 /// A trap for GL function `name` (wglGetProcAddress), 0 if kura has none.
 fn proc_trap(name: &str) -> u32 {
-    if let Some(&t) = PROCS.lock().unwrap().get_or_insert_with(HashMap::default).get(name) {
+    if let Some(&t) = PROCS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::default).get(name) {
         return t;
     }
     let t = match name {
@@ -184,7 +184,7 @@ fn proc_trap(name: &str) -> u32 {
             },
         },
     };
-    PROCS.lock().unwrap().get_or_insert_with(HashMap::default).insert(name.into(), t);
+    PROCS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::default).insert(name.into(), t);
     t
 }
 

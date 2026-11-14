@@ -181,7 +181,7 @@ fn extended(id: u32, this: u32) -> bool {
         d3d_call(D3D9_QI | 2, &[o]);
         o
     };
-    EXTENDED.lock().unwrap().contains(&d3d)
+    EXTENDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).contains(&d3d)
 }
 const D3D9_QI: u32 = 1 << 8;
 const DEVICE_QI: u32 = 2 << 8;
@@ -349,14 +349,14 @@ fn surface_get_dc(c: &mut Ctx) -> u32 {
     let dc = c.call(f, &[0]);
     let f = crate::export_once!("gdi32", "SelectObject");
     let old = c.call(f, &[dc, hbm]);
-    DCS.lock().unwrap().get_or_insert_with(HashMap::default).insert(dc, (this, hbm, old));
+    DCS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::default).insert(dc, (this, hbm, old));
     putp(out, dc);
     0
 }
 
 fn surface_release_dc(c: &mut Ctx) -> u32 {
     let (this, dc) = (c.a(0), c.a(1));
-    let Some((s, hbm, old)) = DCS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&dc) else { return 0x8876_086c };
+    let Some((s, hbm, old)) = DCS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::default).remove(&dc) else { return 0x8876_086c };
     let _ = this;
     for (dll, name, args) in [("gdi32", "SelectObject", vec![dc, old]), ("gdi32", "DeleteDC", vec![dc]), ("gdi32", "DeleteObject", vec![hbm])] {
         let f = crate::api::export(dll, name);
@@ -429,7 +429,7 @@ fn ValidatePixelShader(c: &mut Ctx) -> u32 {
 fn Direct3DCreate9(c: &mut Ctx) -> u32 {
     let o = create9(c);
     // (an address an Ex object had before it was released)
-    EXTENDED.lock().unwrap().retain(|&e| e != o);
+    EXTENDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).retain(|&e| e != o);
     o
 }
 fn create9(c: &mut Ctx) -> u32 {
@@ -445,7 +445,7 @@ fn Direct3DCreate9Ex(c: &mut Ctx) -> u32 {
     let out = if mem::x64() { c.a64(1) as u32 } else { c.a(1) };
     let o = create9(c);
     if o != 0 {
-        let mut ex = EXTENDED.lock().unwrap();
+        let mut ex = EXTENDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if !ex.contains(&o) {
             ex.push(o);
         }

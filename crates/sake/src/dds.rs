@@ -35,7 +35,7 @@ pub struct Dds {
 
 /// The D3DFORMAT of a DDS pixel format (the 32 bytes at 76), None for one not handled.
 pub fn pixel_format(pf: &[u8]) -> Option<u32> {
-    let g = |o: usize| u32::from_le_bytes(pf[o..o + 4].try_into().unwrap());
+    let g = |o: usize| pf[o..o + 4].try_into().map_or(0, u32::from_le_bytes);
     let (flags, cc, bits, r, gm, b, a) = (g(4), g(8), g(12), g(16), g(20), g(24), g(28));
     if flags & DDPF_FOURCC != 0 {
         // (FourCC DXTn, or a D3DFORMAT number: the float and 16-bit formats)
@@ -91,7 +91,7 @@ pub fn parse(data: &[u8]) -> Option<Dds> {
     if data.len() < HEADER || &data[..4] != b"DDS " {
         return None;
     }
-    let g = |o: usize| u32::from_le_bytes(data[o..o + 4].try_into().unwrap());
+    let g = |o: usize| data[o..o + 4].try_into().map_or(0, u32::from_le_bytes);
     let (h, w) = (g(12), g(16));
     let caps2 = g(112);
     let fmt = pixel_format(&data[76..108])?;

@@ -63,7 +63,7 @@ pub fn png(data: &[u8]) -> Option<Meta> {
     let mut m = Meta::default();
     let mut p = 8usize;
     while p + 8 <= data.len() {
-        let len = u32::from_be_bytes(data[p..p + 4].try_into().unwrap()) as usize;
+        let len = data[p..p + 4].try_into().map_or(0, u32::from_be_bytes) as usize;
         let ty = &data[p + 4..p + 8];
         // (a length over 2^31 - 1 is invalid PNG)
         if len > 0x7fff_ffff {
@@ -86,7 +86,7 @@ pub fn png(data: &[u8]) -> Option<Meta> {
             }
             b"gAMA" if len == 4 => {
                 block("/gAMA");
-                m.items.push(("/gAMA/ImageGamma".into(), Value::U4(u32::from_be_bytes(body.try_into().unwrap()))));
+                m.items.push(("/gAMA/ImageGamma".into(), Value::U4(body.try_into().map_or(0, u32::from_be_bytes))));
             }
             b"tEXt" => {
                 // keyword (1-79 Latin-1 bytes), NUL, text

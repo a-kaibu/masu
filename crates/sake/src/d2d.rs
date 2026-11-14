@@ -198,7 +198,7 @@ struct State {
 static S: Mutex<Option<State>> = Mutex::new(None);
 
 fn st<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    f(S.lock().unwrap().get_or_insert_with(State::default))
+    f(S.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(State::default))
 }
 
 fn fl(c: &Ctx, i: u32) -> f32 {
@@ -1553,7 +1553,7 @@ enum Geom {
 }
 static GEOMS: Mutex<Option<HashMap<u32, Geom>>> = Mutex::new(None);
 fn geoms<R>(f: impl FnOnce(&mut HashMap<u32, Geom>) -> R) -> R {
-    f(GEOMS.lock().unwrap().get_or_insert_with(HashMap::new))
+    f(GEOMS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::new))
 }
 
 fn geom_methods() -> Vec<(com::Method, Handler)> {

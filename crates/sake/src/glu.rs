@@ -722,7 +722,7 @@ fn build_mipmaps(target: u32, internal: u32, w: i32, h: i32, format: u32, ty: u3
 /// guest copies of strings (once each)
 fn gstr(s: &str, wide: bool) -> u32 {
     static S: Mutex<Option<HashMap<(String, bool), u32>>> = Mutex::new(None);
-    *S.lock().unwrap().get_or_insert_with(HashMap::default).entry((s.into(), wide)).or_insert_with(|| {
+    *S.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::default).entry((s.into(), wide)).or_insert_with(|| {
         let b: Vec<u8> = if wide { s.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect() } else { s.bytes().chain([0]).collect() };
         let p = mem::heap_alloc(b.len() as u32, false);
         mem::write(p, &b);
