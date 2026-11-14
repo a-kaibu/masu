@@ -905,9 +905,24 @@ fn on_guest_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
     if cfg!(target_os = "wasi") {
         return f();
     }
-    let stack = if cfg!(debug_assertions) { 64 << 20 } else { 1 << 20 };
-    std::thread::Builder::new().stack_size(stack).spawn(f).unwrap().join().unwrap()
+    std::thread::Builder::new().stack_size(guest_stack()).spawn(f).unwrap().join().unwrap()
 }
+
+/// The stack the deep-nesting tests run on: the guest threads' 1 MiB in a release build. A
+/// sanitizer build (tools/ci/sanitize.sh: --cfg masu_sanitize) has frames several times as
+/// big (ASan's redzones around every local, TSan's bookkeeping; #242: the lowering's
+/// stmt/stmts recursion ran out at 1 MiB), and a debug build's are bigger still; there the
+/// stack is scaled, not the limit (the release build is what ships).
+fn guest_stack() -> usize {
+    if cfg!(debug_assertions) {
+        64 << 20
+    } else if cfg!(masu_sanitize) {
+        SANITIZE_STACK
+    } else {
+        1 << 20
+    }
+}
+const SANITIZE_STACK: usize = 8 << 20;
 
 fn try_compile(src: String, target: &'static str) -> Result<Vec<u8>, String> {
     on_guest_stack(move || super::compile(&src, &[], &mut |_, _| None, "ps", target, 0))

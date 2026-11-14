@@ -12,7 +12,8 @@ kind=${1:-address}
 shift || true
 pkgs=("$@")
 [ ${#pkgs[@]} -gt 0 ] || pkgs=(-p koji -p kura -p sake -p crt -p vorbis -p hlslc -p dxwgsl -p glwgsl -p shaderconf -p masu -p waits -p wmcodec -p masu-tls)
-export RUSTFLAGS="-Zsanitizer=$kind" RUSTDOCFLAGS="-Zsanitizer=$kind"
+# (masu_sanitize: tests that size a thread's stack for release frames scale it, #242)
+export RUSTFLAGS="-Zsanitizer=$kind --cfg masu_sanitize" RUSTDOCFLAGS="-Zsanitizer=$kind --cfg masu_sanitize"
 if [ "$kind" = address ]; then
   # Guest test arenas are mmap'd and hold pointers into the normal heap. Their
   # dlsym-based root registration needs this symbol in .dynsym, not just .symtab.
