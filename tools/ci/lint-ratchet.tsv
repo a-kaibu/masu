@@ -259,7 +259,7 @@ file	crates/koji/src/interp/x87.rs	wildcard_enum_match_arm	19
 file	crates/koji/src/jit/dispatch.rs	as_conversions	12
 file	crates/koji/src/jit/dispatch.rs	cast_possible_truncation	3
 file	crates/koji/src/jit/long.rs	arithmetic_side_effects	157
-file	crates/koji/src/jit/long.rs	as_conversions	187
+file	crates/koji/src/jit/long.rs	as_conversions	151
 file	crates/koji/src/jit/long.rs	cast_possible_truncation	60
 file	crates/koji/src/jit/long.rs	cast_possible_wrap	29
 file	crates/koji/src/jit/long.rs	cast_sign_loss	3
@@ -269,13 +269,13 @@ file	crates/koji/src/jit/long.rs	unwrap_in_result	2
 file	crates/koji/src/jit/long.rs	unwrap_used	10
 file	crates/koji/src/jit/long.rs	wildcard_enum_match_arm	29
 file	crates/koji/src/jit/long/avx.rs	arithmetic_side_effects	16
-file	crates/koji/src/jit/long/avx.rs	as_conversions	12
+file	crates/koji/src/jit/long/avx.rs	as_conversions	10
 file	crates/koji/src/jit/long/avx.rs	cast_possible_truncation	8
 file	crates/koji/src/jit/long/avx.rs	indexing_slicing	2
 file	crates/koji/src/jit/long/avx.rs	unwrap_used	1
 file	crates/koji/src/jit/long/avx.rs	wildcard_enum_match_arm	6
-file	crates/koji/src/jit/long/sse.rs	arithmetic_side_effects	47
-file	crates/koji/src/jit/long/sse.rs	as_conversions	58
+file	crates/koji/src/jit/long/sse.rs	arithmetic_side_effects	44
+file	crates/koji/src/jit/long/sse.rs	as_conversions	42
 file	crates/koji/src/jit/long/sse.rs	cast_possible_truncation	30
 file	crates/koji/src/jit/long/sse.rs	cast_possible_wrap	5
 file	crates/koji/src/jit/long/sse.rs	indexing_slicing	9
