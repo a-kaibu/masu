@@ -500,7 +500,13 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
             Some(sb) => {
                 d.d8.sb[a(1) as usize - 1] = 0;
                 d.release(sb);
-                S_OK
+                // (while recording: D3DERR_INVALIDCALL, the block gone all the same; kikizake
+                // golden d3d8-32 edge-release-while-recording)
+                if d.dev.as_ref().is_some_and(|v| v.recording.is_some()) {
+                    D3DERR_INVALIDCALL
+                } else {
+                    S_OK
+                }
             }
             None => D3DERR_INVALIDCALL,
         },

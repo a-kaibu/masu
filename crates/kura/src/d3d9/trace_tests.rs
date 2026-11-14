@@ -59,6 +59,17 @@ pub(crate) unsafe fn lsan_root(p: *mut libc::c_void, n: usize) {
 /// Runs `f` on a thread whose stack and heap are below 4 GB: the Direct3D 8 layer hands the
 /// Direct3D 9 one structures on its stack and heap by 32-bit address, as it does in wasm32.
 pub(crate) fn on_low_stack(f: fn()) {
+    // (a panic on that thread reports itself from the system heap: the message, and above all
+    // the backtrace's symbols, would exhaust the bump heap and abort the process instead of
+    // failing the test)
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            LOW_HEAP.with(|l| l.set(false));
+            prev(info)
+        }));
+    });
     unsafe {
         let size = 16 << 20;
         let st = libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_32BIT, -1, 0);
@@ -541,4 +552,20 @@ fn d3d9_object_lifetimes_trace() {
     for seed in 0..seeds() {
         run(seed);
     }
+}
+
+/// A panic on `on_low_stack`'s thread reports itself from the system heap (its hook turns the
+/// bump heap off), so a failing test there fails instead of aborting on an exhausted heap.
+#[test]
+fn low_stack_panic_reports_from_the_system_heap() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    on_low_stack(|| {
+        let low = Box::new(0u8);
+        assert!((&*low as *const u8 as usize) < 1 << 32, "the bump heap is below 4 GB");
+        let r = std::panic::catch_unwind(|| panic!("on the low stack"));
+        assert!(r.is_err());
+        let after = Box::new(0u8);
+        assert!((&*after as *const u8 as usize) >= 1 << 32, "after a panic the system heap");
+        LOW_HEAP.with(|l| l.set(true));
+    });
 }
