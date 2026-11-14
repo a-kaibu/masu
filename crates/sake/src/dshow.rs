@@ -22,22 +22,50 @@ use crate::api::{Ctx, Handler};
 use crate::dshow_play::{self as play, now, Place, Play, SEC};
 use crate::mem::{self, ps, put32, put64, putp, r32, rp, w32, w64, wp};
 
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_POINTER: u32 = 0x8000_4003;
-const VFW_E_NOT_STOPPED: u32 = 0x8004_0224;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
-const E_ABORT: u32 = 0x8000_4004;
-const E_FAIL: u32 = 0x8000_4005;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const S_FALSE: u32 = 1;
+/// The HRESULTs the graph and its renderers answer (besides S_OK).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hr {
+    False,
+    NotImpl,
+    NoInterface,
+    Pointer,
+    Abort,
+    Fail,
+    OutOfMemory,
+    InvalidArg,
+    /// VFW_E_NOT_FOUND (RenderFile of a file not there, as Windows answers: tests/winref dshow)
+    NotFound,
+    /// VFW_E_NOT_STOPPED
+    NotStopped,
+    /// VFW_E_WRONG_STATE
+    WrongState,
+    /// VFW_E_CANNOT_CONNECT
+    CannotConnect,
+    /// VFW_E_NO_ACCEPTABLE_TYPES
+    NoAcceptableTypes,
+}
+impl Hr {
+    const fn code(self) -> u32 {
+        match self {
+            Hr::False => 1,
+            Hr::NotImpl => 0x8000_4001,
+            Hr::NoInterface => 0x8000_4002,
+            Hr::Pointer => 0x8000_4003,
+            Hr::Abort => 0x8000_4004,
+            Hr::Fail => 0x8000_4005,
+            Hr::OutOfMemory => 0x8007_000e,
+            Hr::InvalidArg => 0x8007_0057,
+            Hr::NotFound => 0x8004_0216,
+            Hr::NotStopped => 0x8004_0224,
+            Hr::WrongState => 0x8004_0227,
+            Hr::CannotConnect => 0x8004_0217,
+            Hr::NoAcceptableTypes => 0x8004_022b,
+        }
+    }
+}
 const EC_COMPLETE: u32 = 1;
-/// VFW_E_NOT_FOUND (RenderFile of a file not there, as Windows answers: tests/winref dshow)
-const NOT_FOUND: u32 = 0x8004_0216;
 /// EC_PAUSED: a Pause done (p1 S_OK)
 const EC_PAUSED: u32 = 0x0e;
-/// VFW_E_WRONG_STATE
-const WRONG_STATE: u32 = 0x8004_0227;
 /// AM_MEDIAEVENT_NONOTIFY: the event handle is not signalled
 const NONOTIFY: u32 = 1;
 const OATRUE: u32 = 0xffff_ffff;
@@ -45,24 +73,119 @@ const OATRUE: u32 = 0xffff_ffff;
 /// WS_CLIPSIBLINGS | WS_CLIPCHILDREN)
 const DEFAULT_STYLE: u32 = 0x06cf_0000;
 
+/// A graph's interface: which word of its block (an interface pointer is block + slot * pointer
+/// size), never a plain number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Slot(u32);
+impl Slot {
+    /// The interface pointer of block `b`.
+    fn of(self, b: u32) -> u32 {
+        b + ps() * self.0
+    }
+}
 // interfaces, by slot
-const GB: u32 = 0; // IGraphBuilder / IFilterGraph(2)
-const MC: u32 = 1; // IMediaControl
-const ME: u32 = 2; // IMediaEventEx
-const MS: u32 = 3; // IMediaSeeking
-const MP: u32 = 4; // IMediaPosition
-const BA: u32 = 5; // IBasicAudio
-const VW: u32 = 6; // IVideoWindow
-const BV: u32 = 7; // IBasicVideo(2)
+const GB: Slot = Slot(0); // IGraphBuilder / IFilterGraph(2)
+const MC: Slot = Slot(1); // IMediaControl
+const ME: Slot = Slot(2); // IMediaEventEx
+const MS: Slot = Slot(3); // IMediaSeeking
+const MP: Slot = Slot(4); // IMediaPosition
+const BA: Slot = Slot(5); // IBasicAudio
+const VW: Slot = Slot(6); // IVideoWindow
+const BV: Slot = Slot(7); // IBasicVideo(2)
 // (the two as the graph hands them out when its renderer is windowless: every call
 // E_NOINTERFACE, as no filter of it has a window)
-const VW_NONE: u32 = 8;
-const BV_NONE: u32 = 9;
-const GC: u32 = 10; // IGraphConfig
-const ES: u32 = 11; // IMediaEventSink (what filters tell the graph)
-const NI: u32 = 12;
+const VW_NONE: Slot = Slot(8);
+const BV_NONE: Slot = Slot(9);
+const GC: Slot = Slot(10); // IGraphConfig
+const ES: Slot = Slot(11); // IMediaEventSink (what filters tell the graph)
+const NI: usize = 12;
 
-fn slot_of(iid: u32) -> Option<u32> {
+/// A COM method by its vtable slot: each interface's methods an enum of their own, so the
+/// slot of one cannot be passed as a bare number.
+pub(crate) trait Method: Copy {
+    fn slot(self) -> u32;
+}
+#[derive(Clone, Copy)]
+enum Unknown {
+    AddRef,
+    Release,
+}
+impl Method for Unknown {
+    fn slot(self) -> u32 {
+        match self {
+            Unknown::AddRef => 1,
+            Unknown::Release => 2,
+        }
+    }
+}
+/// IBaseFilter's (after IUnknown, GetClassID)
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BaseFilter {
+    Stop,
+    Pause,
+    Run,
+    EnumPins,
+    JoinFilterGraph,
+}
+impl Method for BaseFilter {
+    fn slot(self) -> u32 {
+        match self {
+            BaseFilter::Stop => 4,
+            BaseFilter::Pause => 5,
+            BaseFilter::Run => 6,
+            BaseFilter::EnumPins => 10,
+            BaseFilter::JoinFilterGraph => 13,
+        }
+    }
+}
+#[derive(Clone, Copy)]
+enum Pin {
+    Connect,
+    Disconnect,
+    ConnectedTo,
+    QueryDirection,
+}
+impl Method for Pin {
+    fn slot(self) -> u32 {
+        match self {
+            Pin::Connect => 3,
+            Pin::Disconnect => 5,
+            Pin::ConnectedTo => 6,
+            Pin::QueryDirection => 9,
+        }
+    }
+}
+/// IEnumPins::Next
+#[derive(Clone, Copy)]
+struct EnumNext;
+impl Method for EnumNext {
+    fn slot(self) -> u32 {
+        3
+    }
+}
+/// Method `m` of `obj` (`this` first).
+fn call(c: &mut Ctx, obj: u32, m: impl Method, args: &[u32]) -> u32 {
+    com(c, obj, m.slot(), args)
+}
+
+/// A graph's state (IMediaControl::GetState's FILTER_STATE).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum State {
+    Stopped,
+    Paused,
+    Running,
+}
+impl State {
+    const fn code(self) -> u32 {
+        match self {
+            State::Stopped => 0,
+            State::Paused => 1,
+            State::Running => 2,
+        }
+    }
+}
+
+fn slot_of(iid: u32) -> Option<Slot> {
     Some(match r32(iid) {
         0 | 0x56a8_68a9 | 0x56a8_689f | 0x36b7_3882 => GB,
         0x56a8_68b1 => MC,
@@ -87,8 +210,7 @@ struct Graph {
     notify: (u32, u32, u32),
     flags: u32,
     events: VecDeque<(u32, u32, u32)>,
-    /// 0 stopped, 1 paused, 2 running
-    state: u32,
+    state: State,
     /// no movie to play (none, or no `.vnv` for it): EC_COMPLETE went out since RenderFile (a
     /// Run again, of a looping movie rewound by SetPositions, then "plays" on without end)
     done: bool,
@@ -172,14 +294,14 @@ fn wait_graph<R>(b: u32, ms: u32, mut f: impl FnMut(Option<&mut Graph>) -> Optio
 }
 
 /// The block an interface pointer of slot `k` belongs to.
-fn base(c: &Ctx, k: u32) -> u32 {
-    c.a(0) - ps() * k
+fn base(c: &Ctx, k: Slot) -> u32 {
+    c.a(0) - ps() * k.0
 }
 
-fn qi_k(c: &mut Ctx, k: u32) -> u32 {
+fn qi_k(c: &mut Ctx, k: Slot) -> u32 {
     let b = base(c, k);
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match slot_of(c.a(1)) {
         Some(s) => {
@@ -193,7 +315,7 @@ fn qi_k(c: &mut Ctx, k: u32) -> u32 {
                 BV if windowless => BV_NONE,
                 s => s,
             };
-            putp(c.a(2), b + ps() * s);
+            putp(c.a(2), s.of(b));
             0
         }
         None => {
@@ -201,18 +323,18 @@ fn qi_k(c: &mut Ctx, k: u32) -> u32 {
                 eprintln!("sake: FilterGraph QueryInterface {:08x}: no", r32(c.a(1)));
             }
             putp(c.a(2), 0);
-            E_NOINTERFACE
+            Hr::NoInterface.code()
         }
     }
 }
-fn add_ref_k(c: &mut Ctx, k: u32) -> u32 {
+fn add_ref_k(c: &mut Ctx, k: Slot) -> u32 {
     with(base(c, k), |g| {
         g.refs += 1;
         g.refs
     })
     .unwrap_or(1)
 }
-fn release_k(c: &mut Ctx, k: u32) -> u32 {
+fn release_k(c: &mut Ctx, k: Slot) -> u32 {
     let b = base(c, k);
     let n = with(b, |g| {
         g.refs = g.refs.saturating_sub(1);
@@ -232,8 +354,8 @@ fn release_k(c: &mut Ctx, k: u32) -> u32 {
         CHANGED.notify_all();
         if let Some(g) = g {
             for f in g.filters {
-                com(c, f, 13, &[0, 0]);
-                com(c, f, 2, &[]);
+                call(c, f, BaseFilter::JoinFilterGraph, &[0, 0]);
+                call(c, f, Unknown::Release, &[]);
             }
             crate::obj::close(g.event);
             crate::com::free_later(b);
@@ -261,10 +383,10 @@ fn ok(_: &mut Ctx) -> u32 {
     0
 }
 fn notimpl(_: &mut Ctx) -> u32 {
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 fn nointerface(_: &mut Ctx) -> u32 {
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 
 /// A double argument: x86 stack slots `slot`, `slot + 1`; x64 argument `arg` (its XMM register).
@@ -273,7 +395,7 @@ fn dbl(c: &Ctx, slot: u32, arg: u32) -> f64 {
 }
 fn put_dbl(p: u32, v: f64) -> u32 {
     if p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(p, v.to_bits());
     0
@@ -285,7 +407,7 @@ fn put_dbl(p: u32, v: f64) -> u32 {
 /// reference, as COM's enumerators do.
 fn enum_filters(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     static E: OnceLock<u32> = OnceLock::new();
     let v = *E.get_or_init(|| {
@@ -295,7 +417,7 @@ fn enum_filters(c: &mut Ctx) -> u32 {
             if ok {
                 add(c);
             }
-            if ok { 0 } else { E_NOINTERFACE }
+            if ok { 0 } else { Hr::NoInterface.code() }
         }
         fn add(c: &mut Ctx) -> u32 {
             let p = c.a(0) + 3 * ps();
@@ -317,14 +439,14 @@ fn enum_filters(c: &mut Ctx) -> u32 {
             let (f, at) = (r32(e + ps()), r32(e + 2 * ps()));
             let got = (n > 0 && f != 0 && at == 0) as u32;
             if got == 1 {
-                com(c, f, 1, &[]);
+                call(c, f, Unknown::AddRef, &[]);
                 putp(c.a(2), f);
                 w32(e + 2 * ps(), 1);
             }
             if c.a(3) != 0 {
                 put32(c.a(3), got);
             }
-            if got == n { 0 } else { S_FALSE }
+            if got == n { 0 } else { Hr::False.code() }
         }
         /// Skip(n)
         fn skip(c: &mut Ctx) -> u32 {
@@ -333,7 +455,7 @@ fn enum_filters(c: &mut Ctx) -> u32 {
             if c.a(1) > 0 {
                 w32(e + 2 * ps(), 1);
             }
-            if c.a(1) <= left { 0 } else { S_FALSE }
+            if c.a(1) <= left { 0 } else { Hr::False.code() }
         }
         fn reset(c: &mut Ctx) -> u32 {
             w32(c.a(0) + 2 * ps(), 0);
@@ -389,7 +511,7 @@ fn take_filter(filters: &mut Vec<u32>, evr: &mut u32, f: u32) -> bool {
 }
 fn remove_filter_at(c: &mut Ctx, b: u32, f: u32) -> u32 {
     if f == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let had = with(b, |g| {
         g.named.retain(|x| x.1 != f);
@@ -397,10 +519,10 @@ fn remove_filter_at(c: &mut Ctx, b: u32, f: u32) -> u32 {
     })
     .unwrap_or(false);
     if !had {
-        return E_FAIL;
+        return Hr::Fail.code();
     }
-    com(c, f, 13, &[0, 0]);
-    com(c, f, 2, &[]);
+    call(c, f, BaseFilter::JoinFilterGraph, &[0, 0]);
+    call(c, f, Unknown::Release, &[]);
     0
 }
 fn remove_filter(c: &mut Ctx) -> u32 {
@@ -418,20 +540,20 @@ fn add_filter(c: &mut Ctx) -> u32 {
 }
 fn add_filter_at(c: &mut Ctx, b: u32, f: u32, name: u32) -> u32 {
     if f == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // (one added again stays added once)
     let is_evr = evr_with(f, |_| ()).is_some();
     if !with(b, |g| put_filter(&mut g.filters, &mut g.evr, f, is_evr)).unwrap_or(false) {
         return 0;
     }
-    com(c, f, 1, &[]);
+    call(c, f, Unknown::AddRef, &[]);
     if name != 0 {
         let n = mem::wstr(name);
         with(b, |g| g.named.push((n, f)));
     }
     // IBaseFilter::JoinFilterGraph(graph, name)
-    com(c, f, 13, &[b + ps() * GB, name]);
+    call(c, f, BaseFilter::JoinFilterGraph, &[GB.of(b), name]);
     0
 }
 
@@ -443,7 +565,7 @@ fn add_filter_at(c: &mut Ctx, b: u32, f: u32, name: u32) -> u32 {
 fn add_source_filter(c: &mut Ctx) -> u32 {
     let (b, file, name, out) = (base(c, GB), c.a(1), c.a(2), c.a(3));
     if file == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     let f = match crate::dshow_mpeg::add_source(file) {
@@ -470,30 +592,30 @@ pub(crate) fn com(c: &mut Ctx, obj: u32, slot: u32, args: &[u32]) -> u32 {
 fn find_filter(c: &mut Ctx) -> u32 {
     let (name, out) = (c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     let want = if name == 0 { Vec::new() } else { mem::wstr(name) };
     if let Some(f) = with(base(c, GB), |g| g.named.iter().find(|(n, _)| *n == want).map(|x| x.1)).flatten() {
-        com(c, f, 1, &[]);
+        call(c, f, Unknown::AddRef, &[]);
         putp(out, f);
         return 0;
     }
     if crate::env_on!("SAKE_TRACE_COM") && name != 0 {
         eprintln!("sake: FilterGraph FindFilterByName {:?}: none", String::from_utf16_lossy(&mem::wstr(name)));
     }
-    NOT_FOUND
+    Hr::NotFound.code()
 }
 fn connect_direct(c: &mut Ctx) -> u32 {
     let b = base(c, GB);
     let (out, inp, mt) = (c.a(1), c.a(2), c.a(3));
     if out == 0 || inp == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    if with(b, |g| g.state).unwrap_or(0) != 0 {
-        return VFW_E_NOT_STOPPED;
+    if with(b, |g| g.state).unwrap_or(State::Stopped) != State::Stopped {
+        return Hr::NotStopped.code();
     }
-    let r = com(c, out, 3, &[inp, mt]);
+    let r = call(c, out, Pin::Connect, &[inp, mt]);
     if r == 0 {
         with(b, |g| g.wired = true);
     }
@@ -505,14 +627,14 @@ fn connect_direct(c: &mut Ctx) -> u32 {
 fn connect(c: &mut Ctx) -> u32 {
     let (out, inp) = (c.a(1), c.a(2));
     if out == 0 || inp == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let b = base(c, GB);
     // (a File Source's stream to the game's renderer: through the MPEG-1 filters)
-    if crate::dshow_mpeg::is_pin(out) && with(b, |g| g.state).unwrap_or(0) != 0 {
-        return VFW_E_NOT_STOPPED;
+    if crate::dshow_mpeg::is_pin(out) && with(b, |g| g.state).unwrap_or(State::Stopped) != State::Stopped {
+        return Hr::NotStopped.code();
     }
-    if let Some(r) = crate::dshow_mpeg::connect_through(c, b + ps() * GB, out, inp) {
+    if let Some(r) = crate::dshow_mpeg::connect_through(c, GB.of(b), out, inp) {
         if r == 0 {
             with(b, |g| g.wired = true);
         }
@@ -521,31 +643,31 @@ fn connect(c: &mut Ctx) -> u32 {
     if !crate::dshow_mpeg::is_pin(out) && !crate::dshow_mpeg::is_pin(inp) {
         return 0;
     }
-    if with(b, |g| g.state).unwrap_or(0) != 0 {
-        return VFW_E_NOT_STOPPED;
+    if with(b, |g| g.state).unwrap_or(State::Stopped) != State::Stopped {
+        return Hr::NotStopped.code();
     }
-    let r = com(c, out, 3, &[inp, 0]);
+    let r = call(c, out, Pin::Connect, &[inp, 0]);
     if r == 0 {
         with(b, |g| g.wired = true);
     }
     // (VFW_E_CANNOT_CONNECT, as Windows says when no filter would do)
-    if r & 0x8000_0000 != 0 { 0x8004_0217 } else { r }
+    if r & 0x8000_0000 != 0 { Hr::CannotConnect.code() } else { r }
 }
 /// Disconnect(pin): pin->Disconnect
 fn disconnect(c: &mut Ctx) -> u32 {
     let pin = c.a(1);
     if pin == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    com(c, pin, 5, &[])
+    call(c, pin, Pin::Disconnect, &[])
 }
-/// Stop/Pause/Run (IBaseFilter slots 4, 5, 6) of each filter of a wired graph
-fn filters_to(c: &mut Ctx, b: u32, slot: u32) {
+/// Stop/Pause/Run of each filter of a wired graph
+fn filters_to(c: &mut Ctx, b: u32, m: BaseFilter) {
     let fs = with(b, |g| if g.wired { g.filters.clone() } else { Vec::new() }).unwrap_or_default();
     for f in fs {
         // (Run's start time: 0, a REFERENCE_TIME that is two words on x86)
-        let start: &[u32] = if slot != 6 { &[] } else if ps() == 4 { &[0, 0] } else { &[0] };
-        com(c, f, slot, start);
+        let start: &[u32] = if m != BaseFilter::Run { &[] } else if ps() == 4 { &[0, 0] } else { &[0] };
+        call(c, f, m, start);
     }
 }
 
@@ -556,7 +678,7 @@ fn load(b: u32, w: &str) -> Result<(), u32> {
     play::end(b);
     let movie = play::Movie::find(w);
     if movie.is_none() && crate::files::resolve(w).is_none() {
-        return Err(NOT_FOUND);
+        return Err(Hr::NotFound.code());
     }
     sound_close(b);
     if movie.is_none() {
@@ -597,7 +719,7 @@ fn load(b: u32, w: &str) -> Result<(), u32> {
 }
 fn render_file(b: u32, name: u32) -> u32 {
     if name == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let w = String::from_utf16_lossy(&mem::wstr(name));
     match load(b, &w) {
@@ -636,32 +758,32 @@ fn free_inputs(c: &mut Ctx, b: u32) -> Vec<u32> {
         }
         // IBaseFilter::EnumPins, IEnumPins::Next
         putp(tmp, 0);
-        if com(c, f, 10, &[tmp]) != 0 || rp(tmp) == 0 {
+        if call(c, f, BaseFilter::EnumPins, &[tmp]) != 0 || rp(tmp) == 0 {
             continue;
         }
         let e = rp(tmp);
         loop {
             putp(tmp, 0);
-            if com(c, e, 3, &[1, tmp, 0]) != 0 || rp(tmp) == 0 {
+            if call(c, e, EnumNext, &[1, tmp, 0]) != 0 || rp(tmp) == 0 {
                 break;
             }
             let p = rp(tmp);
             // QueryDirection (PINDIR_INPUT 0), ConnectedTo (VFW_E_NOT_CONNECTED)
             w32(tmp + 8, 1);
-            com(c, p, 9, &[tmp + 8]);
+            call(c, p, Pin::QueryDirection, &[tmp + 8]);
             let input = r32(tmp + 8) == 0;
             putp(tmp, 0);
-            let free = com(c, p, 6, &[tmp]) != 0;
+            let free = call(c, p, Pin::ConnectedTo, &[tmp]) != 0;
             if rp(tmp) != 0 {
-                com(c, rp(tmp), 2, &[]);
+                call(c, rp(tmp), Unknown::Release, &[]);
             }
             if input && free {
                 found.push(p);
             } else {
-                com(c, p, 2, &[]);
+                call(c, p, Unknown::Release, &[]);
             }
         }
-        com(c, e, 2, &[]);
+        call(c, e, Unknown::Release, &[]);
     }
     mem::heap_free(tmp);
     found
@@ -676,9 +798,10 @@ fn to_renderer(c: &mut Ctx, b: u32) {
     if old != 0 {
         let peer = crate::dshow_mpeg::vnv_peer(old);
         if peer != 0 {
-            com(c, peer, 5, &[]);
+            call(c, peer, Pin::Disconnect, &[]);
         }
-        com(c, old + ps(), 5, &[]);
+        // (its input pin, the word after its IBaseFilter)
+        call(c, old + ps(), Pin::Disconnect, &[]);
         remove_filter_at(c, b, old);
     }
     let inputs = free_inputs(c, b);
@@ -696,14 +819,14 @@ fn to_renderer(c: &mut Ctx, b: u32) {
     add_filter_at(c, b, v, n);
     mem::heap_free(n);
     // (the graph holds it now)
-    com(c, v, 2, &[]);
+    call(c, v, Unknown::Release, &[]);
     // IPin::Connect(the game's pin, any type): the first that takes the pictures
-    let mut r = 0x8004_022b;
+    let mut r = Hr::NoAcceptableTypes.code();
     for inp in inputs {
         if r != 0 {
-            r = com(c, v + ps(), 3, &[inp, 0]);
+            r = call(c, v + ps(), Pin::Connect, &[inp, 0]);
         }
-        com(c, inp, 2, &[]);
+        call(c, inp, Unknown::Release, &[]);
     }
     if r != 0 {
         eprintln!("sake: movie: the game's renderer in the graph refused the pictures ({r:#x})");
@@ -722,23 +845,23 @@ fn to_renderer(c: &mut Ctx, b: u32) {
 
 /// The video window shows itself when the graph pauses or runs (AutoShow). Returns the state
 /// before.
-fn set_state(b: u32, s: u32) -> u32 {
+fn set_state(b: u32, s: State) -> State {
     let t = now();
     let (playing, was) = with(b, |g| {
         let was = std::mem::replace(&mut g.state, s);
-        if s != 0 && g.auto_show {
+        if s != State::Stopped && g.auto_show {
             g.visible = true;
         }
         (g.playing, was)
     })
-    .unwrap_or((false, 0));
+    .unwrap_or((false, State::Stopped));
     if playing {
         play::with(|m| {
             if let Some(p) = m.get_mut(&b) {
                 match s {
-                    0 => p.tl.stop(t),
-                    1 => p.tl.pause(t),
-                    _ => p.tl.run(t),
+                    State::Stopped => p.tl.stop(t),
+                    State::Paused => p.tl.pause(t),
+                    State::Running => p.tl.run(t),
                 }
             }
         });
@@ -747,9 +870,9 @@ fn set_state(b: u32, s: u32) -> u32 {
         sounds(|m| {
             if let Some(p) = m.get_mut(&b) {
                 match s {
-                    0 => p.tl.stop(t),
-                    1 => p.tl.pause(t),
-                    _ => p.tl.run(t),
+                    State::Stopped => p.tl.stop(t),
+                    State::Paused => p.tl.pause(t),
+                    State::Running => p.tl.run(t),
                 }
             }
         });
@@ -763,13 +886,13 @@ fn set_state(b: u32, s: u32) -> u32 {
 /// From stopped it answers S_FALSE (Windows: the change is still under way), else S_OK.
 fn run(c: &mut Ctx) -> u32 {
     let b = base(c, MC);
-    filters_to(c, b, 6);
-    let was = set_state(b, 2);
+    filters_to(c, b, BaseFilter::Run);
+    let was = set_state(b, State::Running);
     // (an MPEG-1 stream of dshow_mpeg.rs plays: its own end)
     let mpeg = crate::dshow_mpeg::movie(b).is_some() || crate::dshow_mpeg::dmo_in_graph(b);
     if is_sound(b) {
         sound_end_check(b);
-        return if was == 0 { S_FALSE } else { 0 };
+        return if was == State::Stopped { Hr::False.code() } else { 0 };
     }
     let run = with(b, |g| {
         // (a Run again, after a Pause, keeps the end to come)
@@ -783,7 +906,7 @@ fn run(c: &mut Ctx) -> u32 {
     if let Some(Some(n)) = run {
         end_later(b, n);
     }
-    if was == 0 { S_FALSE } else { 0 }
+    if was == State::Stopped { Hr::False.code() } else { 0 }
 }
 
 /// How long a movie with nothing to play "plays". Not 0: CatSystem2 (ここなつ #48) stores its
@@ -843,15 +966,15 @@ fn end_in(b: u32, n: u32, after: std::time::Duration) {
 /// Queues EC_PAUSED; S_FALSE from stopped, as Run.
 fn pause(c: &mut Ctx) -> u32 {
     let b = base(c, MC);
-    filters_to(c, b, 5);
-    let was = set_state(b, 1);
+    filters_to(c, b, BaseFilter::Pause);
+    let was = set_state(b, State::Paused);
     queue(b, EC_PAUSED, 0);
-    if was == 0 { S_FALSE } else { 0 }
+    if was == State::Stopped { Hr::False.code() } else { 0 }
 }
 fn stop(c: &mut Ctx) -> u32 {
     let b = base(c, MC);
-    filters_to(c, b, 4);
-    set_state(b, 0);
+    filters_to(c, b, BaseFilter::Stop);
+    set_state(b, State::Stopped);
     // (without a movie, one run again after a stop plays to its end again; one ending now
     // doesn't)
     with(b, |g| {
@@ -863,9 +986,9 @@ fn stop(c: &mut Ctx) -> u32 {
 }
 fn get_state(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    put32(c.a(2), with(base(c, MC), |g| g.state).unwrap_or(0));
+    put32(c.a(2), with(base(c, MC), |g| g.state).unwrap_or(State::Stopped).code());
     0
 }
 
@@ -918,7 +1041,7 @@ fn es_notify(c: &mut Ctx) -> u32 {
 
 fn get_event_handle(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), with(base(c, ME), |g| g.event).unwrap_or(0));
     0
@@ -928,7 +1051,7 @@ fn get_event(c: &mut Ctx) -> u32 {
     let b = base(c, ME);
     let (pc, p1, p2, ms) = (c.a(1), c.a(2), c.a(3), c.a(4));
     if pc == 0 || p1 == 0 || p2 == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // (the event object reset when the queue is empty: under the lock, as before, so that a
     // filter's Notify in between is not lost)
@@ -953,7 +1076,7 @@ fn get_event(c: &mut Ctx) -> u32 {
             put32(pc, 0);
             putp(p1, 0);
             putp(p2, 0);
-            E_ABORT
+            Hr::Abort.code()
         }
     }
 }
@@ -963,14 +1086,14 @@ fn wait_for_completion(c: &mut Ctx) -> u32 {
     let b = base(c, ME);
     let (ms, pc) = (c.a(1), c.a(2));
     if pc == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = wait_graph(b, ms, |g| {
-        let (done, running) = g.map_or((true, false), |g| (g.events.iter().any(|e| e.0 == EC_COMPLETE), g.state == 2 && !g.ended));
+        let (done, running) = g.map_or((true, false), |g| (g.events.iter().any(|e| e.0 == EC_COMPLETE), g.state == State::Running && !g.ended));
         if done {
             Some((EC_COMPLETE, 0))
         } else if !running {
-            Some((0, WRONG_STATE))
+            Some((0, Hr::WrongState.code()))
         } else {
             None
         }
@@ -982,7 +1105,7 @@ fn wait_for_completion(c: &mut Ctx) -> u32 {
         }
         None => {
             put32(pc, 0);
-            E_ABORT
+            Hr::Abort.code()
         }
     }
 }
@@ -994,7 +1117,7 @@ fn set_notify_window(c: &mut Ctx) -> u32 {
 fn set_notify_flags(c: &mut Ctx) -> u32 {
     let f = c.a(1);
     if f > 1 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     with(base(c, ME), |g| {
         g.flags = f;
@@ -1004,7 +1127,7 @@ fn set_notify_flags(c: &mut Ctx) -> u32 {
 }
 fn get_notify_flags(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), with(base(c, ME), |g| g.flags).unwrap_or(0));
     0
@@ -1125,7 +1248,7 @@ fn write_media_time(p: u32) {
 const CAPS: u32 = 0x37;
 fn ms_caps(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), CAPS);
     0
@@ -1133,36 +1256,36 @@ fn ms_caps(c: &mut Ctx) -> u32 {
 fn ms_check_caps(c: &mut Ctx) -> u32 {
     let p = c.a(1);
     if p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let want = r32(p);
     put32(p, want & CAPS);
     if want & !CAPS == 0 {
         0
     } else if want & CAPS != 0 {
-        S_FALSE
+        Hr::False.code()
     } else {
-        0x8000_4005
+        Hr::Fail.code()
     }
 }
 fn ms_format_supported(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    if media_time(c.a(1)) { 0 } else { S_FALSE }
+    if media_time(c.a(1)) { 0 } else { Hr::False.code() }
 }
 fn ms_get_format(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     write_media_time(c.a(1));
     0
 }
 fn ms_set_format(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    if media_time(c.a(1)) { 0 } else { E_INVALIDARG }
+    if media_time(c.a(1)) { 0 } else { Hr::InvalidArg.code() }
 }
 /// A graph's movie's duration (its `.vnv`'s, or the MPEG-1 stream's of dshow_mpeg.rs).
 fn duration(b: u32) -> u64 {
@@ -1181,21 +1304,21 @@ pub(crate) fn volume(b: u32) -> i32 {
 }
 fn ms_duration(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(c.a(1), duration(base(c, MS)));
     0
 }
 fn ms_stop_pos(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(c.a(1), timeline(base(c, MS), |tl, _| tl.stop).unwrap_or(0));
     0
 }
 fn ms_cur_pos(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(c.a(1), timeline(base(c, MS), |tl, t| tl.position(t)).unwrap_or(0));
     0
@@ -1205,10 +1328,10 @@ fn ms_convert(c: &mut Ctx) -> u32 {
     let (out, tf) = (c.a(1), c.a(2));
     let (v, sf) = if mem::x64() { (c.a64(3), c.a(4)) } else { (c.a(3) as u64 | (c.a(4) as u64) << 32, c.a(5)) };
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if (tf != 0 && !media_time(tf)) || (sf != 0 && !media_time(sf)) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     w64(out, v);
     0
@@ -1277,7 +1400,7 @@ fn ms_available(c: &mut Ctx) -> u32 {
 }
 fn set_rate(b: u32, r: f64) -> u32 {
     if r <= 0.0 || !r.is_finite() {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     timeline(b, |tl, t| tl.set_rate(t, r));
     0
@@ -1344,7 +1467,7 @@ fn mp_can_seek(c: &mut Ctx) -> u32 {
 fn ba_put_volume(c: &mut Ctx) -> u32 {
     let v = c.i(1);
     if !(-10000..=0).contains(&v) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let b = base(c, BA);
     with(b, |g| g.volume = v);
@@ -1358,7 +1481,7 @@ fn ba_put_volume(c: &mut Ctx) -> u32 {
 }
 fn ba_get_volume(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), with(base(c, BA), |g| g.volume).unwrap_or(0) as u32);
     0
@@ -1366,14 +1489,14 @@ fn ba_get_volume(c: &mut Ctx) -> u32 {
 fn ba_put_balance(c: &mut Ctx) -> u32 {
     let v = c.i(1);
     if !(-10000..=10000).contains(&v) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     with(base(c, BA), |g| g.balance = v);
     0
 }
 fn ba_get_balance(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), with(base(c, BA), |g| g.balance).unwrap_or(0) as u32);
     0
@@ -1389,7 +1512,7 @@ fn sync(b: u32) {
         let src = g.src.unwrap_or((0, 0, video.0, video.1));
         if g.evr != 0 {
             if let Some(e) = evr_with(g.evr, |e| *e).filter(|e| e.windowless) {
-                return (place_of(&e, video, g.state != 0 || g.visible), g.volume);
+                return (place_of(&e, video, g.state != State::Stopped || g.visible), g.volume);
             }
         }
         // the window's place (in its owner's client area, or on the screen), the picture in it
@@ -1416,7 +1539,7 @@ fn vw_prop(c: &mut Ctx, i: u32) -> u32 {
     let (put, prop) = if (26..30).contains(&i) { (i % 2 == 1, i / 2) } else { (i % 2 == 0, i / 2) };
     let v = c.a(1);
     if !put && v == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     with(b, |g| {
         // (the u32 properties: a pointer-sized owner and drain)
@@ -1541,7 +1664,7 @@ fn bv_prop(c: &mut Ctx, i: u32) -> u32 {
     let (put, dest, f) = (i % 2 == 0, i >= 8, (i % 8) / 2);
     let v = c.a(1);
     if !put && v == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     with(b, |g| {
         let full = if dest { (0, 0, g.window.2, g.window.3) } else { (0, 0, g.video.0, g.video.1) };
@@ -1569,7 +1692,7 @@ fn bv_set_rect(c: &mut Ctx, dest: bool) -> u32 {
     let b = base(c, BV);
     let r = (c.i(1), c.i(2), c.i(3), c.i(4));
     if r.2 <= 0 || r.3 <= 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     with(b, |g| if dest { g.dst = Some(r) } else { g.src = Some(r) });
     sync(b);
@@ -1590,7 +1713,7 @@ fn bv_default_rect(c: &mut Ctx, dest: bool) -> u32 {
 }
 fn bv_is_default(c: &mut Ctx, dest: bool) -> u32 {
     let d = with(base(c, BV), |g| if dest { g.dst.is_none() } else { g.src.is_none() }).unwrap_or(true);
-    if d { 0 } else { S_FALSE }
+    if d { 0 } else { Hr::False.code() }
 }
 fn bv_size(c: &mut Ctx) -> u32 {
     let v = with(base(c, BV), |g| g.video).unwrap_or_default();
@@ -1609,18 +1732,18 @@ fn bv_image(c: &mut Ctx) -> u32 {
     let b = base(c, BV);
     let (psize, img) = (c.a(1), c.a(2));
     if psize == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let Some((w, h)) = play::read(|m| m.get(&b).map(|p| (p.movie.w, p.movie.h))) else {
-        return E_NOTIMPL;
+        return Hr::NotImpl.code();
     };
-    let Some(need) = dib_bytes(w, h) else { return E_OUTOFMEMORY };
+    let Some(need) = dib_bytes(w, h) else { return Hr::OutOfMemory.code() };
     if img == 0 {
         put32(psize, need);
         return 0;
     }
     if r32(psize) < need {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     if !put_dib(b, img, need) {
         // E_UNEXPECTED
@@ -1688,8 +1811,8 @@ macro_rules! bv_props {
     };
 }
 
-fn vtables() -> &'static [u32; NI as usize] {
-    static V: OnceLock<[u32; NI as usize]> = OnceLock::new();
+fn vtables() -> &'static [u32; NI] {
+    static V: OnceLock<[u32; NI]> = OnceLock::new();
     V.get_or_init(|| {
         let gb: Vec<(Handler, u32)> = iunknown!(GB)
             .into_iter()
@@ -1893,13 +2016,13 @@ pub fn create_instance(clsid: u32, iid: u32) -> Option<u32> {
         return None;
     }
     let s = slot_of(iid)?;
-    let b = mem::heap_alloc(NI * 8, true);
-    for (k, v) in vtables().iter().enumerate() {
-        wp(b + ps() * k as u32, *v);
+    let b = mem::heap_alloc(8 * u32::try_from(NI).unwrap_or(0), true);
+    for (k, v) in (0..).zip(vtables()) {
+        wp(Slot(k).of(b), *v);
     }
     let event = crate::obj::add(crate::obj::Obj::Event { manual: true, set: false });
     GRAPHS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Graph::new(event));
-    Some(b + ps() * s)
+    Some(s.of(b))
 }
 
 impl Graph {
@@ -1911,7 +2034,7 @@ impl Graph {
         flags: 0,
         events: VecDeque::new(),
         ended: false,
-        state: 0,
+        state: State::Stopped,
         done: false,
         playing: false,
         runs: 0,
@@ -2108,7 +2231,7 @@ fn evr_qi(c: &mut Ctx, k: u32) -> u32 {
         }
         None => {
             putp(c.a(2), 0);
-            E_NOINTERFACE
+            Hr::NoInterface.code()
         }
     }
 }
@@ -2123,7 +2246,7 @@ fn evr_get_service(c: &mut Ctx) -> u32 {
         }
         None => {
             putp(c.a(3), 0);
-            E_NOINTERFACE
+            Hr::NoInterface.code()
         }
     }
 }
@@ -2131,12 +2254,12 @@ fn evr_get_service(c: &mut Ctx) -> u32 {
 fn evr_query_info(c: &mut Ctx) -> u32 {
     let (e, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let graph = evr_with(e, |v| v.graph).unwrap_or(0);
     mem::fill(out, 128 * 2 + ps(), 0);
     if graph != 0 {
-        com(c, graph, 1, &[]);
+        call(c, graph, Unknown::AddRef, &[]);
     }
     wp(out + 256, graph);
     0
@@ -2171,7 +2294,7 @@ fn dc_set_pos(c: &mut Ctx) -> u32 {
     let e = dc_block(c);
     let (s, d) = (c.a(1), c.a(2));
     if s == 0 && d == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     evr_with(e, |v| {
         if s != 0 {
@@ -2187,7 +2310,7 @@ fn dc_set_pos(c: &mut Ctx) -> u32 {
 }
 fn dc_get_pos(c: &mut Ctx) -> u32 {
     let e = evr_with(dc_block(c), |v| *v);
-    let Some(e) = e else { return E_POINTER };
+    let Some(e) = e else { return Hr::Pointer.code() };
     let (s, d) = (c.a(1), c.a(2));
     if s != 0 {
         for (i, v) in e.src.iter().enumerate() {
@@ -2209,7 +2332,7 @@ fn dc_set_mode(c: &mut Ctx) -> u32 {
 }
 fn dc_get_mode(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), evr_with(dc_block(c), |v| v.mode).unwrap_or(1));
     0
@@ -2222,7 +2345,7 @@ fn dc_set_window(c: &mut Ctx) -> u32 {
 }
 fn dc_get_window(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), evr_with(dc_block(c), |v| v.hwnd).unwrap_or(0));
     0
@@ -2293,7 +2416,7 @@ const VMR9_WINDOWLESS: u32 = 2;
 fn vmr_qi(c: &mut Ctx, k: u32) -> u32 {
     let b = c.a(0) - ps() * k;
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let windowless = evr_with(b, |e| e.windowless).unwrap_or(false);
     let s = match r32(c.a(1)) {
@@ -2313,7 +2436,7 @@ fn vmr_qi(c: &mut Ctx, k: u32) -> u32 {
                 eprintln!("sake: VMR-9 QueryInterface {:08x}: no", r32(c.a(1)));
             }
             putp(c.a(2), 0);
-            E_NOINTERFACE
+            Hr::NoInterface.code()
         }
     }
 }
@@ -2324,7 +2447,7 @@ fn vmr_block(c: &Ctx, k: u32) -> u32 {
 fn vmr_set_mode(c: &mut Ctx) -> u32 {
     let (b, m) = (vmr_block(c, VMR_CONFIG), c.a(1));
     if !(1..=4).contains(&m) || m == 3 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     evr_with(b, |e| e.windowless = m == VMR9_WINDOWLESS);
     evr_changed(b);
@@ -2332,7 +2455,7 @@ fn vmr_set_mode(c: &mut Ctx) -> u32 {
 }
 fn vmr_get_mode(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let w = evr_with(vmr_block(c, VMR_CONFIG), |e| e.windowless).unwrap_or(false);
     put32(c.a(1), if w { VMR9_WINDOWLESS } else { 1 });
@@ -2379,13 +2502,13 @@ pub(crate) fn wl_set_pos(c: &mut Ctx) -> u32 {
     let e = wl_block(c);
     let (s, d) = (c.a(1), c.a(2));
     if s == 0 && d == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if s != 0 {
         let r = rect_at(s);
         let v = native(e);
         if r.0 < 0 || r.1 < 0 || r.2 <= 0 || r.3 <= 0 || r.0 + r.2 > v.0 || r.1 + r.3 > v.1 {
-            return E_INVALIDARG;
+            return Hr::InvalidArg.code();
         }
     }
     evr_with(e, |v| {
@@ -2401,7 +2524,7 @@ pub(crate) fn wl_set_pos(c: &mut Ctx) -> u32 {
 }
 pub(crate) fn wl_get_pos(c: &mut Ctx) -> u32 {
     let b = wl_block(c);
-    let Some(e) = evr_with(b, |v| *v) else { return E_POINTER };
+    let Some(e) = evr_with(b, |v| *v) else { return Hr::Pointer.code() };
     let v = native(b);
     if c.a(1) != 0 {
         put_rect(c.a(1), e.src_px.unwrap_or((0, 0, v.0, v.1)));
@@ -2413,7 +2536,7 @@ pub(crate) fn wl_get_pos(c: &mut Ctx) -> u32 {
 }
 pub(crate) fn wl_get_mode(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), evr_with(wl_block(c), |v| v.mode).unwrap_or(0));
     0
@@ -2434,15 +2557,15 @@ pub(crate) fn wl_set_window(c: &mut Ctx) -> u32 {
 pub(crate) fn wl_image(c: &mut Ctx) -> u32 {
     let e = wl_block(c);
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = GRAPHS.lock().unwrap_or_else(|x| x.into_inner()).get_or_insert_with(HashMap::new).iter().find(|(_, g)| g.evr == e && g.playing).map(|(&b, _)| b);
-    let Some(b) = g else { return E_NOTIMPL };
+    let Some(b) = g else { return Hr::NotImpl.code() };
     // (sized by the movie that plays, the one put_dib writes)
-    let Some(need) = play::read(|m| m.get(&b).map(|p| (p.movie.w, p.movie.h))).and_then(|(w, h)| dib_bytes(w, h)) else { return E_NOTIMPL };
+    let Some(need) = play::read(|m| m.get(&b).map(|p| (p.movie.w, p.movie.h))).and_then(|(w, h)| dib_bytes(w, h)) else { return Hr::NotImpl.code() };
     let img = mem::heap_alloc(need, false);
     if img == 0 {
-        return E_OUTOFMEMORY;
+        return Hr::OutOfMemory.code();
     }
     if !put_dib(b, img, need) {
         mem::heap_free(img);
@@ -2458,7 +2581,7 @@ pub(crate) fn wl_set_border(c: &mut Ctx) -> u32 {
 }
 pub(crate) fn wl_get_border(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), evr_with(wl_block(c), |e| e.border).unwrap_or(0));
     0
@@ -2471,7 +2594,7 @@ fn wl_set_key(c: &mut Ctx) -> u32 {
 }
 fn wl_get_key(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), evr_with(wl_block(c), |e| e.key).unwrap_or(0));
     0
@@ -2789,7 +2912,7 @@ mod wait_tests {
     }
     fn get(b: u32, ms: u32) -> (u32, u32, u32) {
         let out = mem::heap_alloc(12, true);
-        let r = call(get_event, &[b + ps() * ME, out, out + 4, out + 8, ms]);
+        let r = call(get_event, &[ME.of(b), out, out + 4, out + 8, ms]);
         let v = (r, r32(out), r32(out + 4));
         mem::heap_free(out);
         v
@@ -2803,7 +2926,7 @@ mod wait_tests {
         let b = 0x7eae_0000;
         graph(b);
         let t = Instant::now();
-        assert_eq!(get(b, 120).0, E_ABORT);
+        assert_eq!(get(b, 120).0, Hr::Abort.code());
         assert!(t.elapsed() >= Duration::from_millis(120));
         let q = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(150));
@@ -2864,14 +2987,14 @@ mod wait_tests {
         let b = 0x7eb0_0000;
         graph(b);
         let pc = mem::heap_alloc(4, true);
-        assert_eq!(call(wait_for_completion, &[b + ps() * ME, u32::MAX, pc]), WRONG_STATE);
-        with(b, |g| g.state = 2);
-        assert_eq!(call(wait_for_completion, &[b + ps() * ME, 50, pc]), E_ABORT);
+        assert_eq!(call(wait_for_completion, &[ME.of(b), u32::MAX, pc]), Hr::WrongState.code());
+        with(b, |g| g.state = State::Running);
+        assert_eq!(call(wait_for_completion, &[ME.of(b), 50, pc]), Hr::Abort.code());
         let q = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(80));
             queue(b, EC_COMPLETE, 0);
         });
-        assert_eq!(call(wait_for_completion, &[b + ps() * ME, u32::MAX, pc]), 0);
+        assert_eq!(call(wait_for_completion, &[ME.of(b), u32::MAX, pc]), 0);
         assert_eq!(r32(pc), EC_COMPLETE);
         q.join().unwrap();
         assert_eq!(with(b, |g| g.events.len()), Some(1));
@@ -2882,7 +3005,7 @@ mod wait_tests {
             CHANGED.notify_all();
         });
         let t = Instant::now();
-        assert_eq!(call(wait_for_completion, &[b + ps() * ME, u32::MAX, pc]), 0);
+        assert_eq!(call(wait_for_completion, &[ME.of(b), u32::MAX, pc]), 0);
         assert!(t.elapsed() < Duration::from_secs(2));
         q.join().unwrap();
         mem::heap_free(pc);
@@ -2904,7 +3027,7 @@ mod wait_tests {
         fn graph_and_evr_count_as_a_model(ops in proptest::collection::vec((0u8..3, 0usize..4, proptest::prelude::any::<bool>()), 0..40)) {
             let _g = enter();
             let gb = create_instance(iid(0xe436_ebb3, 0x11ce_524f), iid(0x56a8_68a9, 0)).unwrap();
-            let gbase = gb - ps() * GB;
+            let gbase = gb - ps() * GB.0;
             let event = with(gbase, |g| g.event).unwrap();
             let ev = create_instance(iid(0xfa10_746c, 0x4b6c_9b63), iid(0x56a8_6895, 0)).unwrap();
             // (graph slots: IGraphBuilder, IMediaControl, IMediaEventEx, IMediaSeeking; EVR
@@ -2923,20 +3046,20 @@ mod wait_tests {
                     0 => {
                         let out = mem::heap_alloc(8, true);
                         let id = if on_graph { iid(giids[k], 0) } else { iid(eiids[k], 0) };
-                        let qi: Handler = if on_graph { [|c: &mut Ctx| qi_k(c, 0), |c: &mut Ctx| qi_k(c, 1), |c: &mut Ctx| qi_k(c, 2), |c: &mut Ctx| qi_k(c, 3)][((p - if on_graph { gbase } else { ev }) / ps()) as usize % 4] } else { [|c: &mut Ctx| evr_qi(c, 0), |c: &mut Ctx| evr_qi(c, 1), |c: &mut Ctx| evr_qi(c, 2)][((p - ev) / ps()) as usize % 3] };
+                        let qi: Handler = if on_graph { [|c: &mut Ctx| qi_k(c, Slot(0)), |c: &mut Ctx| qi_k(c, Slot(1)), |c: &mut Ctx| qi_k(c, Slot(2)), |c: &mut Ctx| qi_k(c, Slot(3))][((p - if on_graph { gbase } else { ev }) / ps()) as usize % 4] } else { [|c: &mut Ctx| evr_qi(c, 0), |c: &mut Ctx| evr_qi(c, 1), |c: &mut Ctx| evr_qi(c, 2)][((p - ev) / ps()) as usize % 3] };
                         proptest::prop_assert_eq!(call(qi, &[p, id, out]), 0);
                         *n += 1;
                         list.push(r32(out));
                     }
                     1 => {
                         let slot = (p - if on_graph { gbase } else { ev }) / ps();
-                        let r = if on_graph { call(match slot { 0 => |c: &mut Ctx| add_ref_k(c, 0), 1 => |c: &mut Ctx| add_ref_k(c, 1), 2 => |c: &mut Ctx| add_ref_k(c, 2), _ => |c: &mut Ctx| add_ref_k(c, 3) }, &[p]) } else { call(match slot { 0 => |c: &mut Ctx| evr_add_ref(c, 0), 1 => |c: &mut Ctx| evr_add_ref(c, 1), _ => |c: &mut Ctx| evr_add_ref(c, 2) }, &[p]) };
+                        let r = if on_graph { call(match slot { 0 => |c: &mut Ctx| add_ref_k(c, Slot(0)), 1 => |c: &mut Ctx| add_ref_k(c, Slot(1)), 2 => |c: &mut Ctx| add_ref_k(c, Slot(2)), _ => |c: &mut Ctx| add_ref_k(c, Slot(3)) }, &[p]) } else { call(match slot { 0 => |c: &mut Ctx| evr_add_ref(c, 0), 1 => |c: &mut Ctx| evr_add_ref(c, 1), _ => |c: &mut Ctx| evr_add_ref(c, 2) }, &[p]) };
                         *n += 1;
                         proptest::prop_assert_eq!(r, *n);
                     }
                     _ => {
                         let slot = (p - if on_graph { gbase } else { ev }) / ps();
-                        let r = if on_graph { call(match slot { 0 => |c: &mut Ctx| release_k(c, 0), 1 => |c: &mut Ctx| release_k(c, 1), 2 => |c: &mut Ctx| release_k(c, 2), _ => |c: &mut Ctx| release_k(c, 3) }, &[p]) } else { call(match slot { 0 => |c: &mut Ctx| evr_release(c, 0), 1 => |c: &mut Ctx| evr_release(c, 1), _ => |c: &mut Ctx| evr_release(c, 2) }, &[p]) };
+                        let r = if on_graph { call(match slot { 0 => |c: &mut Ctx| release_k(c, Slot(0)), 1 => |c: &mut Ctx| release_k(c, Slot(1)), 2 => |c: &mut Ctx| release_k(c, Slot(2)), _ => |c: &mut Ctx| release_k(c, Slot(3)) }, &[p]) } else { call(match slot { 0 => |c: &mut Ctx| evr_release(c, 0), 1 => |c: &mut Ctx| evr_release(c, 1), _ => |c: &mut Ctx| evr_release(c, 2) }, &[p]) };
                         *n -= 1;
                         proptest::prop_assert_eq!(r, *n);
                     }
@@ -2945,7 +3068,7 @@ mod wait_tests {
                 proptest::prop_assert_eq!(evr_with(ev, |_| ()).is_some(), en > 0);
             }
             for _ in 0..gn {
-                call(|c: &mut Ctx| release_k(c, 0), &[gb]);
+                call(|c: &mut Ctx| release_k(c, Slot(0)), &[gb]);
             }
             for _ in 0..en {
                 call(|c: &mut Ctx| evr_release(c, 0), &[ev]);

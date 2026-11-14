@@ -21,7 +21,7 @@ fn take_log() -> String {
 fn fake_qi(c: &mut Ctx) -> u32 {
     log(format!("f{}.qi", r32(c.a(0) + 4)));
     put32(c.a(2), 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn fake_addref(c: &mut Ctx) -> u32 {
     log(format!("f{}.addref", r32(c.a(0) + 4)));
@@ -33,7 +33,7 @@ fn fake_release(c: &mut Ctx) -> u32 {
 }
 fn fake_other(c: &mut Ctx) -> u32 {
     log(format!("f{}.other", r32(c.a(0) + 4)));
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 /// A stand-in filter (or pin): IUnknown that logs, every other call logged and E_NOTIMPL.
 fn fake(tag: u32) -> u32 {
@@ -69,7 +69,7 @@ struct Obj {
 impl Obj {
     const fn ifaces(&self) -> u32 {
         match self.kind {
-            Kind::Graph => NI,
+            Kind::Graph => 12,
             Kind::Evr | Kind::Vmr => 3,
         }
     }
@@ -116,7 +116,7 @@ fn state(o: &Obj, nm: impl Fn(u32) -> String) -> String {
             let Some((ev, line)) = with(o.b, |g| {
                 (g.events.iter().copied().collect::<Vec<_>>(), format!(
                     "refs={} st={} done={} ended={} runs={} notify={:x?} flags={} owner={:#x} style={:#x}/{:#x} win={:?} vis={} auto={} drain={} full={} src={:?} dst={:?} vol={} bal={} evr={} filters={} named={} wired={}",
-                    g.refs, g.state, g.done, g.ended, g.runs, g.notify, g.flags, g.owner, g.style, g.style_ex, g.window, g.visible, g.auto_show, g.drain, g.full_screen, g.src, g.dst, g.volume, g.balance, g.evr != 0, g.filters.len(), g.named.len(), g.wired
+                    g.refs, g.state.code(), g.done, g.ended, g.runs, g.notify, g.flags, g.owner, g.style, g.style_ex, g.window, g.visible, g.auto_show, g.drain, g.full_screen, g.src, g.dst, g.volume, g.balance, g.evr != 0, g.filters.len(), g.named.len(), g.wired
                 ))
             }) else {
                 return "gone".into();
@@ -136,7 +136,7 @@ fn specs(kind: Kind, k: u32) -> Vec<&'static str> {
     const DISP: [&str; 4] = ["", "", "", ""];
     let with = |tail: &[&'static str], disp: bool| -> Vec<&'static str> { UNK.iter().chain(if disp { &DISP[..] } else { &[] }).chain(tail).copied().collect() };
     let bf = ["", "", "", "", "", "", "", "", "", "B", "Gw", ""];
-    match (kind, k) {
+    match (kind, Slot(k)) {
         (Kind::Graph, GB) => with(&["fw", "f", "p", "wp", "ffp", "", "f", "", "ff", "", "ww", "wwp", "", "", "", "", "", ""], false),
         (Kind::Graph, MC) => with(&["", "", "", "vp", "w", "", "", "", ""], true),
         (Kind::Graph, ME) => with(&["p", "pppz", "zp", "", "", "", "vvv", "v", "p"], true),
@@ -155,10 +155,10 @@ fn specs(kind: Kind, k: u32) -> Vec<&'static str> {
         }
         (Kind::Graph, GC) => with(&["", "", "", "", "", "", "", "", "", "fv"], false),
         (Kind::Graph, _) => with(&["vvv"], false),
-        (Kind::Evr | Kind::Vmr, 0) => with(&bf, false),
-        (Kind::Evr, 1) => with(&["iip"], false),
+        (Kind::Evr | Kind::Vmr, Slot(0)) => with(&bf, false),
+        (Kind::Evr, Slot(1)) => with(&["iip"], false),
         (Kind::Evr, _) => with(&["pp", "pp", "nr", "pp", "v", "p", "v", "p", "", "", "", "p", "", "p", "", "p"], false),
-        (Kind::Vmr, 1) => with(&["", "", "p", "", "p", "v", "p"], false),
+        (Kind::Vmr, Slot(1)) => with(&["", "", "p", "", "p", "v", "p"], false),
         (Kind::Vmr, _) => with(&["pppp", "pp", "pp", "rr", "pp", "p", "v", "v", "", "", "p", "v", "p", "v", "p"], false),
     }
 }
