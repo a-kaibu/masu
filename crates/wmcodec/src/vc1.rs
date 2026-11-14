@@ -22,34 +22,89 @@ use std::sync::OnceLock;
 // ---------------------------------------------------------------------------------------
 // tables
 
-// transform types (TT_*)
-const TT_8X8: i32 = 0;
-const TT_8X4_BOTTOM: i32 = 1;
-const TT_8X4_TOP: i32 = 2;
-const TT_8X4: i32 = 3;
-const TT_4X8_RIGHT: i32 = 4;
-const TT_4X8_LEFT: i32 = 5;
-const TT_4X8: i32 = 6;
-const TT_4X4: i32 = 7;
+/// A block's transform type as coded (TT_*): an 8x4 or 4x8 may name the half it codes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tt {
+    T8x8,
+    T8x4Bottom,
+    T8x4Top,
+    T8x4,
+    T4x8Right,
+    T4x8Left,
+    T4x8,
+    T4x4,
+}
 
-const TTBLK_TO_TT: [[i32; 8]; 3] = [
-    [TT_8X4, TT_4X8, TT_8X8, TT_4X4, TT_8X4_TOP, TT_8X4_BOTTOM, TT_4X8_RIGHT, TT_4X8_LEFT],
-    [TT_8X8, TT_4X8_RIGHT, TT_4X8_LEFT, TT_4X4, TT_8X4, TT_4X8, TT_8X4_BOTTOM, TT_8X4_TOP],
-    [TT_8X8, TT_4X8, TT_4X4, TT_8X4_BOTTOM, TT_4X8_RIGHT, TT_4X8_LEFT, TT_8X4, TT_8X4_TOP],
-];
-const TTFRM_TO_TT: [i32; 4] = [TT_8X8, TT_8X4, TT_4X8, TT_4X4];
+impl Tt {
+    /// The low 3 bits of a TTMB symbol (TT_* order).
+    fn of(v: i32) -> Tt {
+        match v & 7 {
+            0 => Tt::T8x8,
+            1 => Tt::T8x4Bottom,
+            2 => Tt::T8x4Top,
+            3 => Tt::T8x4,
+            4 => Tt::T4x8Right,
+            5 => Tt::T4x8Left,
+            6 => Tt::T4x8,
+            _ => Tt::T4x4,
+        }
+    }
+    /// The TTMB value of it (what the frame-level TTFRM stands for).
+    fn code(self) -> i32 {
+        match self {
+            Tt::T8x8 => 0,
+            Tt::T8x4Bottom => 1,
+            Tt::T8x4Top => 2,
+            Tt::T8x4 => 3,
+            Tt::T4x8Right => 4,
+            Tt::T4x8Left => 5,
+            Tt::T4x8 => 6,
+            Tt::T4x4 => 7,
+        }
+    }
+}
 
-// motion vector modes (MV_PMODE_*)
-const MV_1MV_HPEL_BILIN: u8 = 0;
-const MV_1MV: u8 = 1;
-const MV_1MV_HPEL: u8 = 2;
-const MV_MIXED_MV: u8 = 3;
-const MV_INTENSITY_COMP: u8 = 4;
-const PMODE: [[u8; 5]; 2] = [
-    [MV_1MV_HPEL_BILIN, MV_1MV, MV_1MV_HPEL, MV_INTENSITY_COMP, MV_MIXED_MV],
-    [MV_1MV, MV_MIXED_MV, MV_1MV_HPEL, MV_INTENSITY_COMP, MV_1MV_HPEL_BILIN],
-];
-const PMODE2: [[u8; 4]; 2] = [[MV_1MV_HPEL_BILIN, MV_1MV, MV_1MV_HPEL, MV_MIXED_MV], [MV_1MV, MV_MIXED_MV, MV_1MV_HPEL, MV_1MV_HPEL_BILIN]];
+/// The transform a block is coded with (once an 8x4 / 4x8's half is in its sub-block pattern).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tx {
+    T8x8,
+    T8x4,
+    T4x8,
+    T4x4,
+}
+
+const TTBLK_TO_TT: [[Tt; 8]; 3] = {
+    use Tt::*;
+    [
+        [T8x4, T4x8, T8x8, T4x4, T8x4Top, T8x4Bottom, T4x8Right, T4x8Left],
+        [T8x8, T4x8Right, T4x8Left, T4x4, T8x4, T4x8, T8x4Bottom, T8x4Top],
+        [T8x8, T4x8, T4x4, T8x4Bottom, T4x8Right, T4x8Left, T8x4, T8x4Top],
+    ]
+};
+const TTFRM_TO_TT: [Tt; 4] = [Tt::T8x8, Tt::T8x4, Tt::T4x8, Tt::T4x4];
+
+/// A P picture's motion vector mode (MV_PMODE_*).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MvMode {
+    /// one vector, half pels, bilinear
+    HpelBilin,
+    /// one vector, quarter pels
+    OneMv,
+    /// one vector, half pels, bicubic
+    OneMvHpel,
+    /// one or four vectors per MB
+    Mixed,
+    /// intensity compensation, then the mode in mv_mode2
+    IntensityComp,
+}
+const PMODE: [[MvMode; 5]; 2] = {
+    use MvMode::*;
+    [[HpelBilin, OneMv, OneMvHpel, IntensityComp, Mixed], [OneMv, Mixed, OneMvHpel, IntensityComp, HpelBilin]]
+};
+const PMODE2: [[MvMode; 4]; 2] = {
+    use MvMode::*;
+    [[HpelBilin, OneMv, OneMvHpel, Mixed], [OneMv, Mixed, OneMvHpel, HpelBilin]]
+};
 
 // coding sets (CS_*)
 const CS_HIGH_MOT_INTRA: usize = 0;
@@ -61,22 +116,83 @@ const CS_MID_RATE_INTER: usize = 5;
 const CS_HIGH_RATE_INTRA: usize = 6;
 const CS_HIGH_RATE_INTER: usize = 7;
 
-const QUANT_FRAME_IMPLICIT: u32 = 0;
-const QUANT_FRAME_EXPLICIT: u32 = 1;
-const QUANT_NON_UNIFORM: u32 = 2;
+/// The sequence's QUANTIZER (QUANT_*).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum QuantMode {
+    FrameImplicit,
+    FrameExplicit,
+    NonUniform,
+    Uniform,
+}
 
-const DQPROFILE_FOUR_EDGES: u32 = 0;
-const DQPROFILE_DOUBLE_EDGES: u32 = 1;
-const DQPROFILE_SINGLE_EDGE: u32 = 2;
-const DQPROFILE_ALL_MBS: u32 = 3;
+impl QuantMode {
+    /// Two bits.
+    fn of(v: u32) -> QuantMode {
+        match v & 3 {
+            0 => QuantMode::FrameImplicit,
+            1 => QuantMode::FrameExplicit,
+            2 => QuantMode::NonUniform,
+            _ => QuantMode::Uniform,
+        }
+    }
+}
 
-const IMODE_RAW: i32 = 0;
-const IMODE_NORM2: i32 = 1;
-const IMODE_DIFF2: i32 = 2;
-const IMODE_NORM6: i32 = 3;
-const IMODE_DIFF6: i32 = 4;
-const IMODE_ROWSKIP: i32 = 5;
-const IMODE_COLSKIP: i32 = 6;
+/// Which MBs a picture's DQUANT applies to (DQPROFILE_*).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DqProfile {
+    FourEdges,
+    DoubleEdges,
+    SingleEdge,
+    AllMbs,
+}
+
+impl DqProfile {
+    /// Two bits.
+    fn of(v: u32) -> DqProfile {
+        match v & 3 {
+            0 => DqProfile::FourEdges,
+            1 => DqProfile::DoubleEdges,
+            2 => DqProfile::SingleEdge,
+            _ => DqProfile::AllMbs,
+        }
+    }
+}
+
+/// A bitplane's coding (IMODE_*).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Imode {
+    Raw,
+    Norm2,
+    Diff2,
+    Norm6,
+    Diff6,
+    RowSkip,
+    ColSkip,
+}
+
+impl Imode {
+    /// The IMODE VLC's symbol (None: not a code).
+    fn of(v: i32) -> Option<Imode> {
+        Some(match v {
+            0 => Imode::Raw,
+            1 => Imode::Norm2,
+            2 => Imode::Diff2,
+            3 => Imode::Norm6,
+            4 => Imode::Diff6,
+            5 => Imode::RowSkip,
+            6 => Imode::ColSkip,
+            _ => return None,
+        })
+    }
+}
+
+/// The bitplanes of a picture header.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum BitPlane {
+    MvType,
+    Skip,
+    Direct,
+}
 
 /// block_map: the storage order of an MB's blocks (0, 2 / 1, 3 swapped)
 const BLOCK_MAP: [usize; 6] = [0, 2, 1, 3, 4, 5];
@@ -85,9 +201,13 @@ const OFFSET_TABLE1: [i32; 9] = [0, 1, 3, 7, 15, 31, 63, 127, 255];
 const DCPRED: [i32; 32] = [
     -1, 1024, 512, 341, 256, 205, 171, 146, 128, 114, 102, 93, 85, 79, 73, 68, 64, 60, 57, 54, 51, 49, 47, 45, 43, 41, 39, 38, 37, 35, 34, 33,
 ];
-const BMV_BACKWARD: u8 = 0;
-const BMV_FORWARD: u8 = 1;
-const BMV_INTERPOLATED: u8 = 2;
+/// A B MB's prediction (BMV_TYPE_*).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Bmv {
+    Backward,
+    Forward,
+    Interpolated,
+}
 
 /// scale_mv: a co-located vector scaled to the forward (or, `inv`, the backward) reference
 fn scale_mv(value: i32, bfrac: i32, inv: bool, qs: bool) -> i32 {
@@ -624,7 +744,7 @@ pub struct Decoder {
     vstransform: bool,
     overlap: bool,
     rangered: bool,
-    quantizer_mode: u32,
+    quantizer_mode: QuantMode,
     finterpflag: bool,
     res_rtm_flag: bool,
     res_x8: bool,
@@ -643,7 +763,7 @@ pub struct Decoder {
     halfpq: i32,
     pquantizer: bool,
     dquantfrm: bool,
-    dqprofile: u32,
+    dqprofile: DqProfile,
     dqsbedge: u32,
     dqbilevel: bool,
     altpq: i32,
@@ -654,8 +774,8 @@ pub struct Decoder {
     range_y: i32,
     x8_type: bool,
     tt_index: usize,
-    mv_mode: u8,
-    mv_mode2: u8,
+    mv_mode: MvMode,
+    mv_mode2: MvMode,
     quarter_sample: bool,
     mspel: bool,
     use_ic: bool,
@@ -695,7 +815,7 @@ pub struct Decoder {
     qscale: Vec<i32>,
     /// cbp / ttblk / is_intra / luma_mv: three rows of mbs, the current at 2 * mbs
     cbp: Vec<u32>,
-    ttblk: Vec<i32>,
+    ttblk: Vec<[Tx; 6]>,
     is_intra: Vec<u8>,
     luma_mv: Vec<[i16; 2]>,
     blocks: Vec<[[i16; 64]; 6]>,
@@ -775,7 +895,7 @@ impl Decoder {
         let _resync_marker = r.bit();
         let rangered = r.bit();
         let max_b_frames = r.get(3);
-        let quantizer_mode = r.get(2);
+        let quantizer_mode = QuantMode::of(r.get(2));
         let finterpflag = r.bit();
         if res_sprite {
             return Err(Error::Unsupported("WMV3 sprites"));
@@ -795,8 +915,8 @@ impl Decoder {
             ffmpeg_conceals: false, ffmpeg_drops: false, loop_filter, fastuvmc, extended_mv, dquant, vstransform, overlap, rangered,
             quantizer_mode, finterpflag, res_rtm_flag, res_x8, multires, fasttx: res_fasttx, low_delay: max_b_frames == 0,
             pict: Type::I, rangeredfrm: false, rnd: 0, pq: 1, pqindex: 1, halfpq: 0, pquantizer: false,
-            dquantfrm: false, dqprofile: 0, dqsbedge: 0, dqbilevel: false, altpq: 0, mvrange: 0,
-            k_x: 9, k_y: 8, range_x: 256, range_y: 128, x8_type: false, tt_index: 0, mv_mode: 0, mv_mode2: 0,
+            dquantfrm: false, dqprofile: DqProfile::FourEdges, dqsbedge: 0, dqbilevel: false, altpq: 0, mvrange: 0,
+            k_x: 9, k_y: 8, range_x: 256, range_y: 128, x8_type: false, tt_index: 0, mv_mode: MvMode::HpelBilin, mv_mode2: MvMode::HpelBilin,
             quarter_sample: false, mspel: false, use_ic: false, luty: [0; 256], lutuv: [0; 256],
             mv_type_is_raw: false, skip_is_raw: false, dmb_is_raw: false,
             mv_type_plane: vec![0; mbs * mb_h2], skip_plane: vec![0; mbs * mb_h2], direct_plane: vec![0; mbs * mb_h2],
@@ -812,7 +932,7 @@ impl Decoder {
             next_motion: vec![[0; 2]; mvo(b8) + b8 * (2 * mb_h2 + 1) + 8],
             qscale: vec![0; mbs * (mb_h2 + 1)],
             cbp: vec![0; 3 * mbs],
-            ttblk: vec![0; 3 * mbs],
+            ttblk: vec![[Tx::T8x8; 6]; 3 * mbs],
             is_intra: vec![0; 3 * mbs],
             luma_mv: vec![[0; 2]; 3 * mbs],
             blocks: vec![[[0; 64]; 6]; mb_w + 2],
@@ -906,17 +1026,17 @@ impl Decoder {
 // headers (vc1.c)
 
 impl Decoder {
-    /// `which`: the MV type (0), skip (1) or direct (2) plane
-    fn bitplane(&mut self, r: &mut Bits, which: u8) -> Result<(bool, i32), Error> {
+    /// Ok(true): the plane is coded raw, in the MBs.
+    fn bitplane(&mut self, r: &mut Bits, which: BitPlane) -> Result<bool, Error> {
         let (width, height, stride) = (self.mb_w, self.mb_h, self.mbs);
         let plane = match which {
-            0 => &mut self.mv_type_plane,
-            1 => &mut self.skip_plane,
-            _ => &mut self.direct_plane,
+            BitPlane::MvType => &mut self.mv_type_plane,
+            BitPlane::Skip => &mut self.skip_plane,
+            BitPlane::Direct => &mut self.direct_plane,
         };
         let tb = tables();
         let invert = lo8(r.get1());
-        let imode = tb.imode.read(r);
+        let imode = Imode::of(tb.imode.read(r));
         let rowskip = |p: &mut [u8], base: usize, w: usize, h: usize, r: &mut Bits| {
             for y in 0..h {
                 if !r.bit() {
@@ -942,8 +1062,8 @@ impl Decoder {
             }
         };
         match imode {
-            IMODE_RAW => return Ok((true, i32::from(invert))),
-            IMODE_DIFF2 | IMODE_NORM2 => {
+            Some(Imode::Raw) => return Ok(true),
+            Some(Imode::Diff2 | Imode::Norm2) => {
                 let mut pp = 0usize;
                 let mut y;
                 let mut offset;
@@ -979,7 +1099,7 @@ impl Decoder {
                     y += 2;
                 }
             }
-            IMODE_DIFF6 | IMODE_NORM6 => {
+            Some(Imode::Diff6 | Imode::Norm6) => {
                 if height % 3 == 0 && width % 3 != 0 {
                     // 2x3
                     let mut pp = 0;
@@ -1028,11 +1148,11 @@ impl Decoder {
                     }
                 }
             }
-            IMODE_ROWSKIP => rowskip(plane, 0, width, height, r),
-            IMODE_COLSKIP => colskip(plane, 0, width, height, r),
-            _ => {}
+            Some(Imode::RowSkip) => rowskip(plane, 0, width, height, r),
+            Some(Imode::ColSkip) => colskip(plane, 0, width, height, r),
+            None => {}
         }
-        if imode == IMODE_DIFF2 || imode == IMODE_DIFF6 {
+        if matches!(imode, Some(Imode::Diff2 | Imode::Diff6)) {
             plane[0] ^= invert;
             for x in 1..width {
                 plane[x] ^= plane[x - 1];
@@ -1053,7 +1173,7 @@ impl Decoder {
                 *v = u8::from(*v == 0);
             }
         }
-        Ok((false, (imode << 1) + i32::from(invert)))
+        Ok(false)
     }
 
     fn vop_dquant(&mut self, r: &mut Bits) {
@@ -1062,10 +1182,10 @@ impl Decoder {
             if !self.dquantfrm {
                 return;
             }
-            self.dqprofile = r.get(2);
+            self.dqprofile = DqProfile::of(r.get(2));
             match self.dqprofile {
-                DQPROFILE_SINGLE_EDGE | DQPROFILE_DOUBLE_EDGES => self.dqsbedge = r.get(2),
-                DQPROFILE_ALL_MBS => {
+                DqProfile::SingleEdge | DqProfile::DoubleEdges => self.dqsbedge = r.get(2),
+                DqProfile::AllMbs => {
                     self.dqbilevel = r.bit();
                     if !self.dqbilevel {
                         self.halfpq = 0;
@@ -1123,14 +1243,14 @@ impl Decoder {
         if pqindex == 0 {
             return Err(Error::Data("PQINDEX 0"));
         }
-        self.pq = i32::from(t::VC1_PQUANT_TABLE[if self.quantizer_mode == QUANT_FRAME_IMPLICIT { 0 } else { 32 } + us(pqindex)]);
+        self.pq = i32::from(t::VC1_PQUANT_TABLE[if self.quantizer_mode == QuantMode::FrameImplicit { 0 } else { 32 } + us(pqindex)]);
         self.pqindex = pqindex;
         self.halfpq = if pqindex < 9 { u32::cast_signed(r.get1()) } else { 0 };
         self.pquantizer = match self.quantizer_mode {
-            QUANT_FRAME_IMPLICIT => pqindex < 9,
-            QUANT_NON_UNIFORM => false,
-            QUANT_FRAME_EXPLICIT => r.bit(),
-            _ => true,
+            QuantMode::FrameImplicit => pqindex < 9,
+            QuantMode::NonUniform => false,
+            QuantMode::FrameExplicit => r.bit(),
+            QuantMode::Uniform => true,
         };
         self.dquantfrm = false;
         if self.extended_mv {
@@ -1153,7 +1273,7 @@ impl Decoder {
             self.tt_index = (usize::from(self.pq > 4)) + (usize::from(self.pq > 12));
             let lowquant = usize::from(self.pq <= 12);
             self.mv_mode = PMODE[lowquant][us(r.unary(1, 4))];
-            if self.mv_mode == MV_INTENSITY_COMP {
+            if self.mv_mode == MvMode::IntensityComp {
                 self.mv_mode2 = PMODE2[lowquant][us(r.unary(1, 3))];
                 let lumscale = u32::cast_signed(r.get(6));
                 let lumshift = u32::cast_signed(r.get(6));
@@ -1168,17 +1288,17 @@ impl Decoder {
                     self.lutuv[i] = clip8((scale * (v - 128) + 128 * 64 + 32) >> 6);
                 }
             }
-            let m = if self.mv_mode == MV_INTENSITY_COMP { self.mv_mode2 } else { self.mv_mode };
-            self.quarter_sample = m != MV_1MV_HPEL && m != MV_1MV_HPEL_BILIN;
-            self.mspel = m != MV_1MV_HPEL_BILIN;
-            if m == MV_MIXED_MV {
-                let (raw, _) = self.bitplane(r, 0)?;
+            let m = if self.mv_mode == MvMode::IntensityComp { self.mv_mode2 } else { self.mv_mode };
+            self.quarter_sample = m != MvMode::OneMvHpel && m != MvMode::HpelBilin;
+            self.mspel = m != MvMode::HpelBilin;
+            if m == MvMode::Mixed {
+                let raw = self.bitplane(r, BitPlane::MvType)?;
                 self.mv_type_is_raw = raw;
             } else {
                 self.mv_type_is_raw = false;
                 self.mv_type_plane.fill(0);
             }
-            let (raw, _) = self.bitplane(r, 1)?;
+            let raw = self.bitplane(r, BitPlane::Skip)?;
             self.skip_is_raw = raw;
             if r.remaining() < 4 {
                 return Err(Error::Data("picture header"));
@@ -1190,20 +1310,20 @@ impl Decoder {
             }
             if self.vstransform {
                 self.ttmbf = r.bit();
-                self.ttfrm = if self.ttmbf { TTFRM_TO_TT[us(r.get(2))] } else { 0 };
+                self.ttfrm = if self.ttmbf { TTFRM_TO_TT[us(r.get(2))].code() } else { 0 };
             } else {
                 self.ttmbf = true;
-                self.ttfrm = TT_8X8;
+                self.ttfrm = Tt::T8x8.code();
             }
         }
         if self.pict == Type::B && !bi {
             self.tt_index = (usize::from(self.pq > 4)) + (usize::from(self.pq > 12));
-            self.mv_mode = if r.bit() { MV_1MV } else { MV_1MV_HPEL_BILIN };
-            self.quarter_sample = self.mv_mode == MV_1MV;
+            self.mv_mode = if r.bit() { MvMode::OneMv } else { MvMode::HpelBilin };
+            self.quarter_sample = self.mv_mode == MvMode::OneMv;
             self.mspel = self.quarter_sample;
-            let (raw, _) = self.bitplane(r, 2)?;
+            let raw = self.bitplane(r, BitPlane::Direct)?;
             self.dmb_is_raw = raw;
-            let (raw, _) = self.bitplane(r, 1)?;
+            let raw = self.bitplane(r, BitPlane::Skip)?;
             self.skip_is_raw = raw;
             self.mv_table_index = us(r.get(2));
             self.cbptab = us(r.get(2));
@@ -1212,10 +1332,10 @@ impl Decoder {
             }
             if self.vstransform {
                 self.ttmbf = r.bit();
-                self.ttfrm = if self.ttmbf { TTFRM_TO_TT[us(r.get(2))] } else { 0 };
+                self.ttfrm = if self.ttmbf { TTFRM_TO_TT[us(r.get(2))].code() } else { 0 };
             } else {
                 self.ttmbf = true;
-                self.ttfrm = TT_8X8;
+                self.ttfrm = Tt::T8x8.code();
             }
         }
         if !self.x8_type {
@@ -1265,8 +1385,8 @@ impl Decoder {
             _ if self.x8_type => self.x8_blocks(&mut r),
             Type::I => self.i_blocks(&mut r),
             Type::P => self.p_blocks(&mut r),
-            _ if self.bi_type => self.i_blocks(&mut r),
-            _ => self.b_blocks(&mut r),
+            Type::B if self.bi_type => self.i_blocks(&mut r),
+            Type::B => self.b_blocks(&mut r),
         };
         // a picture damaged part way is still the picture (and the next reference), as in FFmpeg
         if res.is_err() {
@@ -1792,43 +1912,45 @@ impl Decoder {
 
     /// vc1_decode_p_block: the pattern of 4x4 parts coded
     #[allow(clippy::too_many_arguments)]
-    fn p_block(&mut self, r: &mut Bits, block: &mut [i16; 64], n: usize, mquant: i32, ttmb: i32, first_block: bool, plane: usize, dst: usize, ls: usize, block_tt: &mut i32) -> Result<i32, Error> {
+    fn p_block(&mut self, r: &mut Bits, block: &mut [i16; 64], n: usize, mquant: i32, ttmb: i32, first_block: bool, plane: usize, dst: usize, ls: usize, block_tt: &mut [Tx; 6]) -> Result<i32, Error> {
         let tb = tables();
         let quant = mquant.abs();
         *block = [0; 64];
-        let mut ttblk = ttmb & 7;
+        let mut tt = Tt::of(ttmb);
         let mut subblkpat: i32 = 0;
         if ttmb == -1 {
             let k = tb.ttblk[self.tt_index].read(r);
             if k < 0 {
                 return Err(Error::Data("TTBLK VLC"));
             }
-            ttblk = TTBLK_TO_TT[self.tt_index][ix(k)];
+            tt = TTBLK_TO_TT[self.tt_index][ix(k)];
         }
-        if ttblk == TT_4X4 {
+        if tt == Tt::T4x4 {
             subblkpat = !(tb.subblkpat[self.tt_index].read(r) + 1);
         }
-        if ttblk != TT_8X8 && ttblk != TT_4X4 && ((self.ttmbf || (ttmb != -1 && ttmb & 8 != 0 && !first_block)) || (!self.res_rtm_flag && !first_block)) {
+        if tt != Tt::T8x8 && tt != Tt::T4x4 && ((self.ttmbf || (ttmb != -1 && ttmb & 8 != 0 && !first_block)) || (!self.res_rtm_flag && !first_block)) {
+            // (the pattern coded here, not the half the type names)
             subblkpat = u32::cast_signed(decode012(r));
             if subblkpat != 0 {
                 subblkpat ^= 3;
             }
-            if ttblk == TT_8X4_TOP || ttblk == TT_8X4_BOTTOM {
-                ttblk = TT_8X4;
-            }
-            if ttblk == TT_4X8_RIGHT || ttblk == TT_4X8_LEFT {
-                ttblk = TT_4X8;
-            }
+            tt = match tt {
+                Tt::T8x4Top | Tt::T8x4Bottom => Tt::T8x4,
+                Tt::T4x8Right | Tt::T4x8Left => Tt::T4x8,
+                Tt::T8x8 | Tt::T8x4 | Tt::T4x8 | Tt::T4x4 => tt,
+            };
         }
         let scale = quant * 2 + if mquant < 0 { 0 } else { self.halfpq };
-        if ttblk == TT_8X4_TOP || ttblk == TT_8X4_BOTTOM {
-            subblkpat = 2 - i32::from(ttblk == TT_8X4_TOP);
-            ttblk = TT_8X4;
-        }
-        if ttblk == TT_4X8_RIGHT || ttblk == TT_4X8_LEFT {
-            subblkpat = 2 - i32::from(ttblk == TT_4X8_LEFT);
-            ttblk = TT_4X8;
-        }
+        let (tx, subblkpat) = match tt {
+            Tt::T8x8 => (Tx::T8x8, subblkpat),
+            Tt::T8x4Top => (Tx::T8x4, 1),
+            Tt::T8x4Bottom => (Tx::T8x4, 2),
+            Tt::T8x4 => (Tx::T8x4, subblkpat),
+            Tt::T4x8Left => (Tx::T4x8, 1),
+            Tt::T4x8Right => (Tx::T4x8, 2),
+            Tt::T4x8 => (Tx::T4x8, subblkpat),
+            Tt::T4x4 => (Tx::T4x4, subblkpat),
+        };
         let cs = self.codingset2;
         let put = |block: &mut [i16; 64], idx: usize, value: i32, pq: bool| {
             let mut v = value * scale;
@@ -1838,9 +1960,9 @@ impl Decoder {
             block[idx] = lo16(v);
         };
         let pquant = self.pquantizer;
-        let mut pat = 0;
-        match ttblk {
-            TT_8X8 => {
+        let pat;
+        match tx {
+            Tx::T8x8 => {
                 pat = 0xF;
                 let mut i = 0usize;
                 loop {
@@ -1870,7 +1992,7 @@ impl Decoder {
                     add_pixels(d, dst, ls, block);
                 }
             }
-            TT_4X4 => {
+            Tx::T4x4 => {
                 pat = !subblkpat & 0xF;
                 for j in 0..4 {
                     let mut last = subblkpat & (1 << (3 - j)) != 0;
@@ -1900,7 +2022,7 @@ impl Decoder {
                     }
                 }
             }
-            TT_8X4 => {
+            Tx::T8x4 => {
                 pat = !((subblkpat & 2) * 6 + (subblkpat & 1) * 3) & 0xF;
                 for j in 0..2 {
                     let mut last = subblkpat & (1 << (1 - j)) != 0;
@@ -1930,7 +2052,7 @@ impl Decoder {
                     }
                 }
             }
-            TT_4X8 => {
+            Tx::T4x8 => {
                 pat = !(subblkpat * 5) & 0xF;
                 for j in 0..2 {
                     let mut last = subblkpat & (1 << (1 - j)) != 0;
@@ -1960,9 +2082,10 @@ impl Decoder {
                     }
                 }
             }
-            _ => {}
         }
-        *block_tt |= ttblk << (n * 4);
+        if let Some(t) = block_tt.get_mut(n) {
+            *t = tx;
+        }
         Ok(pat)
     }
 
@@ -1972,7 +2095,7 @@ impl Decoder {
             return mquant;
         }
         let mut edges = 0;
-        if self.dqprofile == DQPROFILE_ALL_MBS {
+        if self.dqprofile == DqProfile::AllMbs {
             if self.dqbilevel {
                 mquant = if r.bit() { -self.altpq } else { self.pq };
             } else {
@@ -1980,11 +2103,11 @@ impl Decoder {
                 mquant = if mqdiff != 7 { -self.pq - mqdiff } else { -(u32::cast_signed(r.get(5))) };
             }
         }
-        if self.dqprofile == DQPROFILE_SINGLE_EDGE {
+        if self.dqprofile == DqProfile::SingleEdge {
             edges = 1 << self.dqsbedge;
-        } else if self.dqprofile == DQPROFILE_DOUBLE_EDGES {
+        } else if self.dqprofile == DqProfile::DoubleEdges {
             edges = (3 << self.dqsbedge) % 15;
-        } else if self.dqprofile == DQPROFILE_FOUR_EDGES {
+        } else if self.dqprofile == DqProfile::FourEdges {
             edges = 15;
         }
         if edges & 1 != 0 && self.mb_x == 0 {
@@ -2049,7 +2172,7 @@ impl Decoder {
         let mb_pos = self.mb_x + self.mb_y * self.mbs;
         let mut ttmb = self.ttfrm;
         let mut first_block = true;
-        let (mut block_cbp, mut block_tt, mut block_intra) = (0u32, 0i32, 0u32);
+        let (mut block_cbp, mut block_tt, mut block_intra) = (0u32, [Tx::T8x8; 6], 0u32);
         let mut mquant = self.pq;
         let fourmv = if self.mv_type_is_raw { r.bit() } else { self.mv_type_plane[mb_pos] != 0 };
         let skipped = if self.skip_is_raw { r.bit() } else { self.skip_plane[mb_pos] != 0 };
@@ -2274,12 +2397,12 @@ impl Decoder {
     }
 
     /// vc1_b_mc
-    fn b_mc(&mut self, direct: bool, mode: u8) {
-        if direct || mode == BMV_INTERPOLATED {
+    fn b_mc(&mut self, direct: bool, mode: Bmv) {
+        if direct || mode == Bmv::Interpolated {
             self.mc_1mv(0);
             self.interp_mc();
         } else {
-            self.mc_1mv(usize::from(mode == BMV_BACKWARD));
+            self.mc_1mv(usize::from(mode == Bmv::Backward));
         }
     }
 
@@ -2290,7 +2413,7 @@ impl Decoder {
         let mut first_block = true;
         let mut mquant = self.pq;
         let mut has = false;
-        let mut bmvtype = BMV_BACKWARD;
+        let mut bmvtype = Bmv::Backward;
         let tb = tables();
         self.mb_intra = false;
         let direct = if self.dmb_is_raw { r.bit() } else { self.direct_plane[mb_pos] != 0 };
@@ -2312,12 +2435,12 @@ impl Decoder {
             if skipped || !self.mb_intra {
                 let later = self.bfraction >= 128;
                 bmvtype = match decode012(r) {
-                    0 => if later { BMV_BACKWARD } else { BMV_FORWARD },
-                    1 => if later { BMV_FORWARD } else { BMV_BACKWARD },
+                    0 => if later { Bmv::Backward } else { Bmv::Forward },
+                    1 => if later { Bmv::Forward } else { Bmv::Backward },
                     _ => {
                         dmv_x[0] = 0;
                         dmv_y[0] = 0;
-                        BMV_INTERPOLATED
+                        Bmv::Interpolated
                     }
                 };
             }
@@ -2328,7 +2451,7 @@ impl Decoder {
         }
         if skipped {
             if direct {
-                bmvtype = BMV_INTERPOLATED;
+                bmvtype = Bmv::Interpolated;
             }
             self.pred_b_mv(dmv_x, dmv_y, direct, bmvtype);
             self.b_mc(direct, bmvtype);
@@ -2359,7 +2482,7 @@ impl Decoder {
                 cbp = 0;
                 self.pred_b_mv(dmv_x, dmv_y, direct, bmvtype);
             } else {
-                if bmvtype == BMV_INTERPOLATED {
+                if bmvtype == Bmv::Interpolated {
                     let (x, y, h) = self.mvdata(r);
                     has = h;
                     dmv_x[0] = x;
@@ -2386,7 +2509,7 @@ impl Decoder {
                 }
             }
         }
-        let mut block_tt = 0;
+        let mut block_tt = [Tx::T8x8; 6];
         for i in 0..6 {
             let d = self.dci(i);
             self.dc_val[d] = 0;
@@ -2424,7 +2547,7 @@ impl Decoder {
     }
 
     /// ff_vc1_pred_b_mv: s->mv[0][0] / [1][0] and motion_val[0] / [1] at the MB's first block
-    fn pred_b_mv(&mut self, mut dmv_x: [i32; 2], mut dmv_y: [i32; 2], direct: bool, mvtype: u8) {
+    fn pred_b_mv(&mut self, mut dmv_x: [i32; 2], mut dmv_y: [i32; 2], direct: bool, mvtype: Bmv) {
         let (rx, ry) = (self.range_x, self.range_y);
         if !self.quarter_sample {
             for k in 0..2 {
@@ -2452,7 +2575,7 @@ impl Decoder {
         self.mv_b = [px1, py1];
         if !direct {
             for dir in 0..2 {
-                if dir == 0 && mvtype == BMV_BACKWARD || dir == 1 && mvtype == BMV_FORWARD {
+                if dir == 0 && mvtype == Bmv::Backward || dir == 1 && mvtype == Bmv::Forward {
                     continue;
                 }
                 let mv = if dir == 0 { &mut self.motion } else { &mut self.motion1 };
@@ -2804,8 +2927,7 @@ impl Decoder {
                 }
             }
         }
-        let tt = (self.ttblk[m] >> (i * 4)) & 0xf;
-        if tt == TT_4X4 || tt == TT_4X8 {
+        if matches!(self.ttblk[m].get(i), Some(Tx::T4x4 | Tx::T4x8)) {
             let p = self.plane(k);
             if left_cbp & 3 != 0 {
                 h_lf(p, dst + 4 * usize::cast_signed(ls) + 4, ls, 4, pq);
@@ -2846,8 +2968,7 @@ impl Decoder {
                 }
             }
         }
-        let tt = (self.ttblk[m] >> (i * 4)) & 0xf;
-        if tt == TT_4X4 || tt == TT_8X4 {
+        if matches!(self.ttblk[m].get(i), Some(Tx::T4x4 | Tx::T8x4)) {
             let p = self.plane(k);
             if top_cbp & 5 != 0 {
                 v_lf(p, dst + 4 * usize::cast_signed(ls) + 4, ls, 4, pq);
