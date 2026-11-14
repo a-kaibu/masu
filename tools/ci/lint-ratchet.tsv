@@ -1231,12 +1231,12 @@ file	crates/sake/src/d3d7.rs	multiple_unsafe_ops_per_block	2
 file	crates/sake/src/d3d7.rs	undocumented_unsafe_blocks	12
 file	crates/sake/src/d3d7.rs	unwrap_in_result	1
 file	crates/sake/src/d3d7.rs	unwrap_used	3
-file	crates/sake/src/d3d9.rs	arithmetic_side_effects	22
-file	crates/sake/src/d3d9.rs	as_conversions	41
+file	crates/sake/src/d3d9.rs	arithmetic_side_effects	20
+file	crates/sake/src/d3d9.rs	as_conversions	37
 file	crates/sake/src/d3d9.rs	borrow_as_ptr	6
-file	crates/sake/src/d3d9.rs	cast_possible_truncation	25
+file	crates/sake/src/d3d9.rs	cast_possible_truncation	21
 file	crates/sake/src/d3d9.rs	cast_possible_wrap	2
-file	crates/sake/src/d3d9.rs	indexing_slicing	11
+file	crates/sake/src/d3d9.rs	indexing_slicing	10
 file	crates/sake/src/d3d9.rs	masu-from_raw_parts	1
 file	crates/sake/src/d3d9.rs	undocumented_unsafe_blocks	8
 file	crates/sake/src/d3d9.rs	unsafe_op_in_unsafe_fn	1
