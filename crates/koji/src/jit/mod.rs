@@ -27,7 +27,7 @@ mod rounding;
 mod mxguard;
 pub mod long;
 
-use crate::lazy;
+use crate::lazy::{Kind, Op, Size};
 use crate::{Cpu, Fpu, Memory};
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, VecDeque};
@@ -639,8 +639,8 @@ enum Flags {
     /// not known statically: the lazy operation in L_OP/L_FA.. if L_OP != -1, else in the Cpu
     /// (`eflags`, or its own lazy state)
     Entry,
-    /// lazy operation `op` (kind * 4 + size) with operands in L_FA/L_FB/L_FR/L_FC
-    Known(u32),
+    /// lazy operation `op` with operands in L_FA/L_FB/L_FR/L_FC
+    Known(Op),
 }
 
 struct Gen<'a> {
@@ -669,7 +669,7 @@ struct Gen<'a> {
     /// functions: per block, the blocks with an edge to it, and the lazy operation each block
     /// emitted so far ends with (see [`Gen::predict`])
     preds: Vec<Vec<u32>>,
-    flags_out: Vec<Option<u32>>,
+    flags_out: Vec<Option<Op>>,
     /// the block's stores are tested for rewriting translated code (see [`WATCH`])
     smc: bool,
     /// per block, its code's bytes when it is checked on entry (see [`FRESH`]), and the
@@ -1030,38 +1030,82 @@ fn op_bits(ins: &Instruction, i: u32) -> u32 {
     }
 }
 
-fn cc_index(cc: ConditionCode) -> u32 {
-    match cc {
-        ConditionCode::o => 0,
-        ConditionCode::no => 1,
-        ConditionCode::b => 2,
-        ConditionCode::ae => 3,
-        ConditionCode::e => 4,
-        ConditionCode::ne => 5,
-        ConditionCode::be => 6,
-        ConditionCode::a => 7,
-        ConditionCode::s => 8,
-        ConditionCode::ns => 9,
-        ConditionCode::p => 10,
-        ConditionCode::np => 11,
-        ConditionCode::l => 12,
-        ConditionCode::ge => 13,
-        ConditionCode::le => 14,
-        _ => 15,
+/// What a condition tests (bits 3..1 of its encoding), before the negation (bit 0).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Test {
+    O,
+    B,
+    Z,
+    Be,
+    S,
+    P,
+    L,
+    Le,
+}
+
+/// A condition (Jcc / SETcc / CMOVcc): a test, negated or not.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Cond {
+    test: Test,
+    neg: bool,
+}
+
+impl Cond {
+    const fn new(test: Test, neg: bool) -> Cond {
+        Cond { test, neg }
+    }
+    /// CF set (B): what INC / DEC carry along.
+    const B: Cond = Cond::new(Test::B, false);
+
+    fn of(cc: ConditionCode) -> Cond {
+        match cc {
+            ConditionCode::o => Cond::new(Test::O, false),
+            ConditionCode::no => Cond::new(Test::O, true),
+            ConditionCode::b => Cond::new(Test::B, false),
+            ConditionCode::ae => Cond::new(Test::B, true),
+            ConditionCode::e => Cond::new(Test::Z, false),
+            ConditionCode::ne => Cond::new(Test::Z, true),
+            ConditionCode::be => Cond::new(Test::Be, false),
+            ConditionCode::a => Cond::new(Test::Be, true),
+            ConditionCode::s => Cond::new(Test::S, false),
+            ConditionCode::ns => Cond::new(Test::S, true),
+            ConditionCode::p => Cond::new(Test::P, false),
+            ConditionCode::np => Cond::new(Test::P, true),
+            ConditionCode::l => Cond::new(Test::L, false),
+            ConditionCode::ge => Cond::new(Test::L, true),
+            ConditionCode::le => Cond::new(Test::Le, false),
+            // (None: only asked of instructions that have a condition)
+            ConditionCode::g | ConditionCode::None => Cond::new(Test::Le, true),
+        }
+    }
+
+    /// Its x86 encoding (0..16), as the layout's names have it.
+    fn code(self) -> u32 {
+        let t = match self.test {
+            Test::O => 0,
+            Test::B => 1,
+            Test::Z => 2,
+            Test::Be => 3,
+            Test::S => 4,
+            Test::P => 5,
+            Test::L => 6,
+            Test::Le => 7,
+        };
+        t * 2 + u32::from(self.neg)
     }
 }
 
 /// iced RflagsBits a condition reads
-fn cc_reads(cc: u32) -> u32 {
-    match cc >> 1 {
-        0 => RflagsBits::OF,
-        1 => RflagsBits::CF,
-        2 => RflagsBits::ZF,
-        3 => RflagsBits::CF | RflagsBits::ZF,
-        4 => RflagsBits::SF,
-        5 => RflagsBits::PF,
-        6 => RflagsBits::SF | RflagsBits::OF,
-        _ => RflagsBits::ZF | RflagsBits::SF | RflagsBits::OF,
+fn cc_reads(t: Test) -> u32 {
+    match t {
+        Test::O => RflagsBits::OF,
+        Test::B => RflagsBits::CF,
+        Test::Z => RflagsBits::ZF,
+        Test::Be => RflagsBits::CF | RflagsBits::ZF,
+        Test::S => RflagsBits::SF,
+        Test::P => RflagsBits::PF,
+        Test::L => RflagsBits::SF | RflagsBits::OF,
+        Test::Le => RflagsBits::ZF | RflagsBits::SF | RflagsBits::OF,
     }
 }
 
@@ -2080,12 +2124,12 @@ impl<'a> Gen<'a> {
     }
 
     /// Records a lazy flag operation (if anything reads its flags).
-    fn set_lazy(&mut self, kind: u32, bits: u32, a: Option<u32>, b: Option<u32>, r: u32, c: Option<u32>) {
+    fn set_lazy(&mut self, kind: Kind, bits: u32, a: Option<u32>, b: Option<u32>, r: u32, c: Option<u32>) {
         if !self.flags_live(STATUS_BITS) {
             return;
         }
-        let op = lazy::op(kind, bits);
-        self.c.u32c(op).set(L_OP);
+        let op = Op::new(kind, Size::of_bits32(bits));
+        self.c.u32c(op.raw()).set(L_OP);
         if let Some(a) = a {
             self.c.get(a).set(L_FA);
         }
@@ -2111,16 +2155,16 @@ impl<'a> Gen<'a> {
                 self.c.get(L_CPU).load32(Off::eflags()).else_().get(L_CPU).call(F_EFLAGS).end();
             }
             Flags::Known(op) => {
-                self.c.u32c(op).get(L_FA).get(L_FB).get(L_FR).get(L_FC).call(F_STATUS);
+                self.c.u32c(op.raw()).get(L_FA).get(L_FB).get(L_FR).get(L_FC).call(F_STATUS);
             }
         }
     }
 
     /// Pushes condition `cc` (0/1).
-    fn cond(&mut self, cc: u32) {
-        let neg = cc & 1 != 0;
+    fn cond(&mut self, cc: Cond) {
+        let neg = cc.neg;
         if let Flags::Known(op) = self.flags {
-            if self.cond_known(op, cc) {
+            if self.cond_known(op, cc.test) {
                 if neg {
                     // (eqz: TurboFan folds it into the comparison or the branch, an xor stays)
                     self.c.eqz();
@@ -2130,8 +2174,8 @@ impl<'a> Gen<'a> {
         } else if let Some(op) = self.predict(cc) {
             // flags from before the block: most likely those a block leading here left (a
             // second jcc after a cmp), checked
-            self.c.get(L_OP).u32c(op).eq().if_i32();
-            self.cond_known(op, cc);
+            self.c.get(L_OP).u32c(op.raw()).eq().if_i32();
+            self.cond_known(op, cc.test);
             self.c.else_();
             self.cond_entry(cc);
             self.c.end();
@@ -2154,21 +2198,22 @@ impl<'a> Gen<'a> {
     /// docs/v8-wasm-shape.md): ZF, SF and PF come from the lazy result alone, whatever the
     /// operation (every kind's are those of its result at its size), so those need EFLAGS only
     /// when the flags are in the Cpu.
-    fn cond_entry(&mut self, cc: u32) {
-        let k = cc >> 1;
-        if !matches!(k, 2 | 4 | 5) {
-            return self.cond_eflags(cc);
+    fn cond_entry(&mut self, cc: Cond) {
+        let t = cc.test;
+        match t {
+            Test::Z | Test::S | Test::P => {}
+            Test::O | Test::B | Test::Be | Test::L | Test::Le => return self.cond_eflags(cc),
         }
         self.c.get(L_OP).i32c(-1).eq().if_i32();
-        self.cond_eflags(cc & !1);
+        self.cond_eflags(Cond::new(t, false));
         self.c.else_();
-        if k == 5 {
+        if t == Test::P {
             // PF: the low byte has an even number of ones
             self.c.get(L_FR).i32c(0xff).and().op(0x69).i32c(1).and().eqz();
         } else {
             // the result's bits at the operation's size at the top: << 32 - (8 << size)
             self.c.get(L_FR).i32c(32).i32c(8).get(L_OP).i32c(3).and().shl().sub().shl();
-            if k == 2 {
+            if t == Test::Z {
                 self.c.eqz();
             } else {
                 self.c.i32c(31).shr_u();
@@ -2179,12 +2224,12 @@ impl<'a> Gen<'a> {
 
     /// An operation the blocks leading here (functions) left their flags from, for which
     /// condition `cc` needs no EFLAGS.
-    fn predict(&mut self, cc: u32) -> Option<u32> {
+    fn predict(&mut self, cc: Cond) -> Option<Op> {
         let k = self.block_index as usize;
-        let ops: Vec<u32> = self.preds.get(k)?.iter().filter_map(|&p| self.flags_out[p as usize]).collect();
+        let ops: Vec<Op> = self.preds.get(k)?.iter().filter_map(|&p| self.flags_out[p as usize]).collect();
         ops.into_iter().find(|&op| {
             let (b, l) = (self.c.b.len(), self.c.locs.len());
-            let ok = self.cond_known(op, cc);
+            let ok = self.cond_known(op, cc.test);
             self.c.b.truncate(b);
             self.c.locs.truncate(l);
             ok
@@ -2193,11 +2238,11 @@ impl<'a> Gen<'a> {
 
     /// Pushes condition `cc` without its negation (bit 0) from the lazy operation `op` in
     /// the locals; false (nothing pushed) if that needs EFLAGS.
-    fn cond_known(&mut self, op: u32, cc: u32) -> bool {
+    fn cond_known(&mut self, op: Op, t: Test) -> bool {
         {
-            let bits = 8 << (op & 3);
+            let bits = op.size.bits();
             let m = mask(bits);
-            let kind = op >> 2;
+            let kind = op.kind;
             let sext = |c: &mut Code, l: u32| {
                 c.get(l);
                 match bits {
@@ -2219,8 +2264,21 @@ impl<'a> Gen<'a> {
             let sign = |c: &mut Code| {
                 c.get(L_FR).i32c(bits as i32 - 1).shr_u().i32c(1).and();
             };
-            let done = match (kind, cc >> 1) {
-                (lazy::SUB, 1) => {
+            // OF: the sign of (a ^ r) & (b ^ r) (ADD), (a ^ b) & (a ^ r) (SUB); INC
+            // overflows to the smallest value, DEC from it. Then L: SF != OF, LE: that or ZF
+            let sh = bits as i32 - 1;
+            let of_cond = |c: &mut Code| {
+                if t != Test::O {
+                    sign(c);
+                    c.xor();
+                }
+                if t == Test::Le {
+                    zero(c);
+                    c.eqz().or();
+                }
+            };
+            let done = match (kind, t) {
+                (Kind::Sub, Test::B) => {
                     self.c.get(L_FA);
                     and_mask(&mut self.c, m);
                     self.c.get(L_FB);
@@ -2228,7 +2286,7 @@ impl<'a> Gen<'a> {
                     self.c.lt_u();
                     true
                 }
-                (lazy::SUB, 3) => {
+                (Kind::Sub, Test::Be) => {
                     self.c.get(L_FA);
                     and_mask(&mut self.c, m);
                     self.c.get(L_FB);
@@ -2236,41 +2294,41 @@ impl<'a> Gen<'a> {
                     self.c.le_u();
                     true
                 }
-                (lazy::SUB, 6) => {
+                (Kind::Sub, Test::L) => {
                     sext(&mut self.c, L_FA);
                     sext(&mut self.c, L_FB);
                     self.c.lt_s();
                     true
                 }
-                (lazy::SUB, 7) => {
+                (Kind::Sub, Test::Le) => {
                     sext(&mut self.c, L_FA);
                     sext(&mut self.c, L_FB);
                     self.c.le_s();
                     true
                 }
-                (lazy::ADD, 1) => {
+                (Kind::Add, Test::B) => {
                     zero(&mut self.c);
                     self.c.get(L_FA);
                     and_mask(&mut self.c, m);
                     self.c.lt_u();
                     true
                 }
-                (lazy::LOGIC, 0) | (lazy::LOGIC, 1) => {
+                (Kind::Logic, Test::O) | (Kind::Logic, Test::B) => {
                     self.c.i32c(0);
                     true
                 }
-                (lazy::LOGIC, 3) => {
+                (Kind::Logic, Test::Be) => {
                     zero(&mut self.c);
                     self.c.eqz();
                     true
                 }
                 // (OF is clear: SF != OF is r < 0, ZF | SF != OF is r <= 0)
-                (lazy::LOGIC, 6) => {
+                (Kind::Logic, Test::L) => {
                     sext(&mut self.c, L_FR);
                     self.c.i32c(0).lt_s();
                     true
                 }
-                (lazy::LOGIC, 7) => {
+                (Kind::Logic, Test::Le) => {
                     sext(&mut self.c, L_FR);
                     self.c.i32c(0).le_s();
                     true
@@ -2278,82 +2336,92 @@ impl<'a> Gen<'a> {
                 // CF of a 32-bit shift by 1..31: the last bit shifted out
                 // SBB (a 64-bit comparison's high half): the exact difference a - b - carry
                 // as i64, unsigned for B/BE, signed for L/LE
-                (lazy::SBB, 1 | 3 | 6 | 7) if bits == 32 => {
-                    let ext = if matches!(cc >> 1, 1 | 3) { 0xad } else { 0xac }; // i64.extend_i32_u/s
+                (Kind::Sbb, Test::B | Test::Be | Test::L | Test::Le) => {
+                    if bits != 32 {
+                        return false;
+                    }
+                    let ext = if matches!(t, Test::B | Test::Be) { 0xad } else { 0xac }; // i64.extend_i32_u/s
                     self.c.get(L_FA).op(ext).get(L_FB).op(ext).op(0x7d).get(L_FC).op(0xad).op(0x7d).i64c(0);
-                    self.c.op(if matches!(cc >> 1, 1 | 6) { 0x53 } else { 0x57 }); // i64.lt_s / le_s
+                    self.c.op(if matches!(t, Test::B | Test::L) { 0x53 } else { 0x57 }); // i64.lt_s / le_s
                     true
                 }
-                (lazy::ADC, 1) if bits == 32 => {
+                (Kind::Adc, Test::B) => {
+                    if bits != 32 {
+                        return false;
+                    }
                     self.c.get(L_FA).op(0xad).get(L_FB).op(0xad).op(0x7c).get(L_FC).op(0xad).op(0x7c).i64c(1 << 32).op(0x5a);
                     true
                 }
-                (lazy::SHR, 1) if bits == 32 => {
+                (Kind::Shr, Test::B) => {
+                    if bits != 32 {
+                        return false;
+                    }
                     self.c.get(L_FA).get(L_FB).i32c(1).sub().shr_u().i32c(1).and();
                     true
                 }
-                (lazy::SAR, 1) if bits == 32 => {
+                (Kind::Sar, Test::B) => {
+                    if bits != 32 {
+                        return false;
+                    }
                     self.c.get(L_FA).get(L_FB).i32c(1).sub().shr_s().i32c(1).and();
                     true
                 }
-                (lazy::SHL, 1) if bits == 32 => {
+                (Kind::Shl, Test::B) => {
+                    if bits != 32 {
+                        return false;
+                    }
                     self.c.get(L_FA).i32c(32).get(L_FB).sub().shr_u().i32c(1).and();
                     true
                 }
-                (lazy::INC | lazy::DEC, 1) => {
+                (Kind::Inc | Kind::Dec, Test::B) => {
                     self.c.get(L_FC).i32c(1).and();
                     true
                 }
-                (lazy::MUL, 1) => {
+                (Kind::Mul, Test::B) => {
                     self.c.get(L_FC).i32c(0).ne();
                     true
                 }
-                (lazy::ADD | lazy::SUB | lazy::LOGIC | lazy::INC | lazy::DEC | lazy::ADC | lazy::SBB | lazy::MUL | lazy::SHL | lazy::SHR | lazy::SAR, 2) => {
+                (Kind::Add | Kind::Sub | Kind::Logic | Kind::Inc | Kind::Dec | Kind::Adc | Kind::Sbb | Kind::Mul | Kind::Shl | Kind::Shr | Kind::Sar, Test::Z) => {
                     zero(&mut self.c);
                     self.c.eqz();
                     true
                 }
-                (lazy::ADD | lazy::SUB | lazy::LOGIC | lazy::INC | lazy::DEC | lazy::ADC | lazy::SBB | lazy::MUL | lazy::SHL | lazy::SHR | lazy::SAR, 4) => {
+                (Kind::Add | Kind::Sub | Kind::Logic | Kind::Inc | Kind::Dec | Kind::Adc | Kind::Sbb | Kind::Mul | Kind::Shl | Kind::Shr | Kind::Sar, Test::S) => {
                     sign(&mut self.c);
                     true
                 }
                 // OF: the sign of (a ^ r) & (b ^ r) (ADD), (a ^ b) & (a ^ r) (SUB); INC
                 // overflows to the smallest value, DEC from it
-                (lazy::ADD | lazy::SUB | lazy::INC | lazy::DEC | lazy::MUL, 0 | 6 | 7) => {
-                    let sh = bits as i32 - 1;
-                    match kind {
-                        lazy::ADD => {
-                            self.c.get(L_FA).get(L_FR).xor().get(L_FB).get(L_FR).xor().and().i32c(sh).shr_u().i32c(1).and();
-                        }
-                        lazy::SUB => {
-                            self.c.get(L_FA).get(L_FB).xor().get(L_FA).get(L_FR).xor().and().i32c(sh).shr_u().i32c(1).and();
-                        }
-                        lazy::INC => {
-                            self.c.get(L_FR);
-                            and_mask(&mut self.c, m);
-                            self.c.u32c(1 << sh).eq();
-                        }
-                        lazy::DEC => {
-                            self.c.get(L_FA);
-                            and_mask(&mut self.c, m);
-                            self.c.u32c(1 << sh).eq();
-                        }
-                        _ => {
-                            self.c.get(L_FC).i32c(0).ne();
-                        }
-                    }
-                    // L: SF != OF, LE: that or ZF
-                    if cc >> 1 != 0 {
-                        sign(&mut self.c);
-                        self.c.xor();
-                    }
-                    if cc >> 1 == 7 {
-                        zero(&mut self.c);
-                        self.c.eqz().or();
-                    }
+                (Kind::Add, Test::O | Test::L | Test::Le) => {
+                    self.c.get(L_FA).get(L_FR).xor().get(L_FB).get(L_FR).xor().and().i32c(sh).shr_u().i32c(1).and();
+                    of_cond(&mut self.c);
                     true
                 }
-                (lazy::ADD, 3) => {
+                (Kind::Sub, Test::O) => {
+                    self.c.get(L_FA).get(L_FB).xor().get(L_FA).get(L_FR).xor().and().i32c(sh).shr_u().i32c(1).and();
+                    of_cond(&mut self.c);
+                    true
+                }
+                (Kind::Inc, Test::O | Test::L | Test::Le) => {
+                    self.c.get(L_FR);
+                    and_mask(&mut self.c, m);
+                    self.c.u32c(1 << sh).eq();
+                    of_cond(&mut self.c);
+                    true
+                }
+                (Kind::Dec, Test::O | Test::L | Test::Le) => {
+                    self.c.get(L_FA);
+                    and_mask(&mut self.c, m);
+                    self.c.u32c(1 << sh).eq();
+                    of_cond(&mut self.c);
+                    true
+                }
+                (Kind::Mul, Test::O | Test::L | Test::Le) => {
+                    self.c.get(L_FC).i32c(0).ne();
+                    of_cond(&mut self.c);
+                    true
+                }
+                (Kind::Add, Test::Be) => {
                     zero(&mut self.c);
                     self.c.eqz();
                     zero(&mut self.c);
@@ -2363,22 +2431,23 @@ impl<'a> Gen<'a> {
                     true
                 }
                 // PF: an even number of ones in the low byte
-                (lazy::ADD | lazy::SUB | lazy::LOGIC | lazy::INC | lazy::DEC | lazy::ADC | lazy::SBB | lazy::MUL | lazy::SHL | lazy::SHR | lazy::SAR, 5) => {
+                (Kind::Add | Kind::Sub | Kind::Logic | Kind::Inc | Kind::Dec | Kind::Adc | Kind::Sbb | Kind::Mul | Kind::Shl | Kind::Shr | Kind::Sar, Test::P) => {
                     self.c.get(L_FR).i32c(0xff).and().op(0x69).i32c(1).and().eqz(); // i32.popcnt
                     true
                 }
-                _ => false,
+                // (these need EFLAGS)
+                (Kind::Adc | Kind::Shl | Kind::Shr | Kind::Sar, Test::O | Test::Be | Test::L | Test::Le) | (Kind::Sbb, Test::O) | (Kind::Inc | Kind::Dec | Kind::Mul, Test::Be) => false,
             };
             done
         }
     }
 
     /// Pushes condition `cc` without its negation from EFLAGS.
-    fn cond_eflags(&mut self, cc: u32) {
+    fn cond_eflags(&mut self, cc: Cond) {
         if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
             let k = match self.flags {
-                Flags::Known(op) => alloc::format!("CONDFB_k{}_b{}_cc{}", op >> 2, 8 << (op & 3), cc),
-                Flags::Entry => alloc::format!("CONDFB_entry_cc{cc}"),
+                Flags::Known(op) => alloc::format!("CONDFB_k{}_b{}_cc{}", op.kind.code(), op.size.bits(), cc.code()),
+                Flags::Entry => alloc::format!("CONDFB_entry_cc{}", cc.code()),
             };
             self.sizes.entry(k).or_insert((0, 0)).0 += 1;
         }
@@ -2388,19 +2457,19 @@ impl<'a> Gen<'a> {
         let bit = |c: &mut Code, n: i32| {
             c.get(t).i32c(n).shr_u().i32c(1).and();
         };
-        match cc >> 1 {
-            0 => bit(&mut self.c, 11),
-            1 => bit(&mut self.c, 0),
-            2 => bit(&mut self.c, 6),
-            3 => {
+        match cc.test {
+            Test::O => bit(&mut self.c, 11),
+            Test::B => bit(&mut self.c, 0),
+            Test::Z => bit(&mut self.c, 6),
+            Test::Be => {
                 self.c.get(t).u32c(0x41).and().i32c(0).ne();
             }
-            4 => bit(&mut self.c, 7),
-            5 => bit(&mut self.c, 2),
-            6 => {
+            Test::S => bit(&mut self.c, 7),
+            Test::P => bit(&mut self.c, 2),
+            Test::L => {
                 self.c.get(t).i32c(7).shr_u().get(t).i32c(11).shr_u().xor().i32c(1).and();
             }
-            _ => {
+            Test::Le => {
                 self.c.get(t).i32c(7).shr_u().get(t).i32c(11).shr_u().xor().get(t).i32c(6).shr_u().or().i32c(1).and();
             }
         }
@@ -2472,7 +2541,7 @@ impl<'a> Gen<'a> {
         }
         match self.flags {
             Flags::Known(op) => {
-                self.c.u32c(op).set(L_OP);
+                self.c.u32c(op.raw()).set(L_OP);
                 lazy_store(&mut self.c);
             }
             Flags::Entry => {
@@ -2491,7 +2560,7 @@ impl<'a> Gen<'a> {
         self.c.get(L_CPU).u32c(eip).store32(Off::eip());
         match self.flags {
             Flags::Known(op) => {
-                self.c.u32c(op).set(L_OP);
+                self.c.u32c(op.raw()).set(L_OP);
                 lazy_store(&mut self.c);
             }
             Flags::Entry => {
@@ -2847,7 +2916,7 @@ impl<'a> Gen<'a> {
                     self.c.get(L_REG).get(old).sub().set(r);
                     self.c.get(L_REG).set(b);
                     self.c.get(old).set(L_REG);
-                    self.set_lazy(lazy::SUB, 32, Some(b), Some(old), r, None);
+                    self.set_lazy(Kind::Sub, 32, Some(b), Some(old), r, None);
                     return self.after(last, next);
                 }
                 self.c.get(a).get(b).atomic32(match mn {
@@ -2867,7 +2936,7 @@ impl<'a> Gen<'a> {
                 }
                 let carry = if matches!(mn, Inc | Dec) && self.flags_live(RflagsBits::CF) {
                     let c = self.temp();
-                    self.cond(2);
+                    self.cond(Cond::B);
                     self.c.set(c);
                     Some(c)
                 } else {
@@ -2875,13 +2944,13 @@ impl<'a> Gen<'a> {
                 };
                 self.c.get(old).get(b);
                 let kind = match mn {
-                    Add | Xadd => { self.c.add(); lazy::ADD }
-                    Inc => { self.c.add(); lazy::INC }
-                    Sub => { self.c.sub(); lazy::SUB }
-                    Dec => { self.c.sub(); lazy::DEC }
-                    And => { self.c.and(); lazy::LOGIC }
-                    Or => { self.c.or(); lazy::LOGIC }
-                    _ => { self.c.xor(); lazy::LOGIC }
+                    Add | Xadd => { self.c.add(); Kind::Add }
+                    Inc => { self.c.add(); Kind::Inc }
+                    Sub => { self.c.sub(); Kind::Sub }
+                    Dec => { self.c.sub(); Kind::Dec }
+                    And => { self.c.and(); Kind::Logic }
+                    Or => { self.c.or(); Kind::Logic }
+                    _ => { self.c.xor(); Kind::Logic }
                 };
                 self.c.set(r);
                 let fb = if matches!(mn, Inc | Dec) { None } else { Some(b) };
@@ -2905,7 +2974,7 @@ impl<'a> Gen<'a> {
                     } else {
                         self.c.get(L_REG + 2).i32c(0).ne().set(o);
                     }
-                    self.set_lazy(lazy::MUL, 32, None, None, r, Some(o));
+                    self.set_lazy(Kind::Mul, 32, None, None, r, Some(o));
                 }
             }
 
@@ -2973,7 +3042,7 @@ impl<'a> Gen<'a> {
                 let (a, b, r) = (self.temp(), self.temp(), self.temp());
                 let carry = if matches!(ins.mnemonic(), Adc | Sbb) {
                     let c = self.temp();
-                    self.cond(2);
+                    self.cond(Cond::B);
                     self.c.set(c);
                     Some(c)
                 } else {
@@ -2988,31 +3057,31 @@ impl<'a> Gen<'a> {
                 let kind = match ins.mnemonic() {
                     Add => {
                         self.c.add();
-                        lazy::ADD
+                        Kind::Add
                     }
                     Adc => {
                         self.c.add().get(carry.unwrap()).add();
-                        lazy::ADC
+                        Kind::Adc
                     }
                     Sub | Cmp => {
                         self.c.sub();
-                        lazy::SUB
+                        Kind::Sub
                     }
                     Sbb => {
                         self.c.sub().get(carry.unwrap()).sub();
-                        lazy::SBB
+                        Kind::Sbb
                     }
                     And | Test => {
                         self.c.and();
-                        lazy::LOGIC
+                        Kind::Logic
                     }
                     Or => {
                         self.c.or();
-                        lazy::LOGIC
+                        Kind::Logic
                     }
                     _ => {
                         self.c.xor();
-                        lazy::LOGIC
+                        Kind::Logic
                     }
                 };
                 if bits < 32 {
@@ -3030,7 +3099,7 @@ impl<'a> Gen<'a> {
                 let (a, r) = (self.temp(), self.temp());
                 let carry = if self.flags_live(RflagsBits::CF) {
                     let c = self.temp();
-                    self.cond(2);
+                    self.cond(Cond::B);
                     self.c.set(c);
                     Some(c)
                 } else {
@@ -3048,7 +3117,7 @@ impl<'a> Gen<'a> {
                 }
                 self.c.set(r);
                 self.write_op(0, addr, r);
-                let kind = if ins.mnemonic() == Inc { lazy::INC } else { lazy::DEC };
+                let kind = if ins.mnemonic() == Inc { Kind::Inc } else { Kind::Dec };
                 self.set_lazy(kind, bits, Some(a), None, r, carry);
             }
             Neg | Not if simple => {
@@ -3069,7 +3138,7 @@ impl<'a> Gen<'a> {
                 self.write_op(0, addr, r);
                 if ins.mnemonic() == Neg {
                     self.c.i32c(0).set(z);
-                    self.set_lazy(lazy::SUB, bits, Some(z), Some(a), r, None);
+                    self.set_lazy(Kind::Sub, bits, Some(z), Some(a), r, None);
                 }
             }
             // (their flags go through the interpreter when anything reads them)
@@ -3115,7 +3184,7 @@ impl<'a> Gen<'a> {
                 }
                 self.c.i32c(bits as i32 - 1).and().i32c(1).add().set(n);
                 self.c.get(a).get(n).shr_u().set(r);
-                self.set_lazy(lazy::SHR, bits, Some(a), Some(n), r, None);
+                self.set_lazy(Kind::Shr, bits, Some(a), Some(n), r, None);
             }
             Shl | Sal | Shr | Sar | Rol | Ror if simple && ins.op_count() == 2 => {
                 let bits = op_bits(ins, 0);
@@ -3191,9 +3260,9 @@ impl<'a> Gen<'a> {
                     self.write_op(0, addr, r);
                     if !rot {
                         let kind = match ins.mnemonic() {
-                            Shl | Sal => lazy::SHL,
-                            Shr => lazy::SHR,
-                            _ => lazy::SAR,
+                            Shl | Sal => Kind::Shl,
+                            Shr => Kind::Shr,
+                            _ => Kind::Sar,
                         };
                         if imm {
                             self.set_lazy(kind, bits, Some(a), Some(n), r, None);
@@ -3273,7 +3342,7 @@ impl<'a> Gen<'a> {
                 {
                     // overflow: the 64-bit product differs from the sign extension of its low half
                     self.c.get(L_W).get(r).i64_extend_s().op(0x52 /* i64.ne */).set(o);
-                    self.set_lazy(lazy::MUL, 32, None, None, r, Some(o));
+                    self.set_lazy(Kind::Mul, 32, None, None, r, Some(o));
                 }
             }
             Cdq => {
@@ -3285,7 +3354,7 @@ impl<'a> Gen<'a> {
             Setb | Setae | Sete | Setne | Setbe | Seta | Sets | Setns | Setp | Setnp | Setl | Setge | Setle | Setg | Seto | Setno if simple => {
                 let addr = self.mem_addr();
                 let v = self.temp();
-                self.cond(cc_index(ins.condition_code()));
+                self.cond(Cond::of(ins.condition_code()));
                 if self.fuse_zx {
                     // and the MOVZX of it that follows (see emit_block)
                     self.c.set(L_REG + ins.op_register(0).number() as u32);
@@ -3302,7 +3371,7 @@ impl<'a> Gen<'a> {
                 let dst = L_REG + ins.op_register(0).number() as u32;
                 self.read_op(1, addr);
                 self.c.get(dst);
-                self.cond(cc_index(ins.condition_code()));
+                self.cond(Cond::of(ins.condition_code()));
                 self.c.select().set(v);
                 self.c.get(v).set(dst);
             }
@@ -3666,7 +3735,7 @@ impl<'a> Gen<'a> {
                 return false;
             }
             Jo | Jno | Jb | Jae | Je | Jne | Jbe | Ja | Js | Jns | Jp | Jnp | Jl | Jge | Jle | Jg if ins.op_kind(0) == OpKind::NearBranch32 => {
-                self.cond(cc_index(ins.condition_code()));
+                self.cond(Cond::of(ins.condition_code()));
                 self.c.if_();
                 self.depth += 1;
                 self.goto(ins.near_branch32());
@@ -5311,7 +5380,7 @@ fn liveness(list: &[Instruction], out: u32) -> (Vec<u32>, u32) {
             read |= RflagsBits::CF; // the lazy INC/DEC carries CF along
         }
         if ins.condition_code() != ConditionCode::None {
-            read |= cc_reads(cc_index(ins.condition_code()));
+            read |= cc_reads(Cond::of(ins.condition_code()).test);
         }
         // 16-bit code the interpreter steps (see ok16) reads them all: it may leave the region
         // there (HLT, INT, a fault), the flags of what came before in the Cpu
@@ -6321,6 +6390,31 @@ mod tests {
             assert!(ok, "a 32-bit translation came out different next to a 16-bit one");
         });
     }
+    /// Cond::of gives every condition code its x86 encoding (what cc_index numbered them),
+    /// and the flags each test reads are the SDM's.
+    #[test]
+    fn conditions_are_their_encodings() {
+        use ConditionCode::*;
+        let all = [o, no, b, ae, e, ne, be, a, s, ns, p, np, l, ge, le, g];
+        for (i, cc) in (0u32..).zip(all) {
+            let c = Cond::of(cc);
+            assert_eq!(c.code(), i, "{cc:?}");
+            assert_eq!(c.neg, i & 1 == 1);
+            let want = match i >> 1 {
+                0 => RflagsBits::OF,
+                1 => RflagsBits::CF,
+                2 => RflagsBits::ZF,
+                3 => RflagsBits::CF | RflagsBits::ZF,
+                4 => RflagsBits::SF,
+                5 => RflagsBits::PF,
+                6 => RflagsBits::SF | RflagsBits::OF,
+                _ => RflagsBits::ZF | RflagsBits::SF | RflagsBits::OF,
+            };
+            assert_eq!(cc_reads(c.test), want, "{cc:?}");
+        }
+        assert_eq!(Cond::B, Cond::of(b));
+    }
+
     /// The loop cache's SETcc/CMOVcc test is what its names said (every mnemonic iced has).
     #[test]
     fn setcc_cmovcc_by_name() {

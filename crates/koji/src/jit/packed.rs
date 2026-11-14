@@ -854,7 +854,7 @@ impl Gen<'_> {
                     // only CF read: as SUB 0 - bit, which borrows exactly when the bit is set
                     let (z, r) = (self.temp(), self.temp());
                     self.c.i32c(0).set(z).i32c(0).get(b).sub().set(r);
-                    self.set_lazy(crate::lazy::SUB, 32, Some(z), Some(b), r, None);
+                    self.set_lazy(crate::lazy::Kind::Sub, 32, Some(z), Some(b), r, None);
                 } else {
                     self.c.get(L_CPU);
                     self.eflags();

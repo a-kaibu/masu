@@ -49,7 +49,7 @@ crate	koji	expect_used	2
 crate	koji	fn_to_numeric_cast_any	2
 crate	koji	ptr_as_ptr	3
 crate	koji	unwrap_used	144
-crate	koji	wildcard_enum_match_arm	214
+crate	koji	wildcard_enum_match_arm	213
 crate	kura	as_conversions	3227
 crate	kura	cast_possible_truncation	653
 crate	kura	cast_possible_wrap	137

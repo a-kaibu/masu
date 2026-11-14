@@ -3,7 +3,8 @@
 
 use crate::flags::{self, *};
 
-/// `op` = kind * 4 + size (0: 8 bits, 1: 16, 2: 32, 3: 64); 0: EFLAGS are exact.
+/// `op` = kind * 4 + size (0: 8 bits, 1: 16, 2: 32, 3: 64); 0: EFLAGS are exact. A raw u32
+/// because the JIT's wasm stores it; Rust code goes through [`Op`].
 #[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct Lazy {
@@ -15,26 +16,143 @@ pub struct Lazy {
     pub r: u64,
 }
 
-pub const ADD: u32 = 1;
-pub const SUB: u32 = 2;
-pub const LOGIC: u32 = 3;
-pub const INC: u32 = 4;
-pub const DEC: u32 = 5;
-/// shifts: `a` the value, `b` the count (1..31)
-pub const SHL: u32 = 6;
-pub const SHR: u32 = 7;
-pub const SAR: u32 = 8;
-pub const ADC: u32 = 9;
-pub const SBB: u32 = 10;
-/// MUL/IMUL: CF = OF = `c`, SZP from `r`
-pub const MUL: u32 = 11;
+/// The flag-setting operation a lazy record is of.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    Add,
+    Sub,
+    /// AND / OR / XOR / TEST: SZP from `r`, CF = OF = 0
+    Logic,
+    Inc,
+    Dec,
+    /// shifts: `a` the value, `b` the count (1..31)
+    Shl,
+    Shr,
+    Sar,
+    Adc,
+    Sbb,
+    /// MUL/IMUL: CF = OF = `c`, SZP from `r`
+    Mul,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 11] = [Kind::Add, Kind::Sub, Kind::Logic, Kind::Inc, Kind::Dec, Kind::Shl, Kind::Shr, Kind::Sar, Kind::Adc, Kind::Sbb, Kind::Mul];
+
+    /// Its number in [`Lazy::op`] (never 0: that is "exact").
+    pub const fn code(self) -> u32 {
+        match self {
+            Kind::Add => 1,
+            Kind::Sub => 2,
+            Kind::Logic => 3,
+            Kind::Inc => 4,
+            Kind::Dec => 5,
+            Kind::Shl => 6,
+            Kind::Shr => 7,
+            Kind::Sar => 8,
+            Kind::Adc => 9,
+            Kind::Sbb => 10,
+            Kind::Mul => 11,
+        }
+    }
+
+    pub const fn from_code(code: u32) -> Option<Kind> {
+        // (a match, not a search of ALL: Lazy::status is on the JIT's flag path)
+        Some(match code {
+            1 => Kind::Add,
+            2 => Kind::Sub,
+            3 => Kind::Logic,
+            4 => Kind::Inc,
+            5 => Kind::Dec,
+            6 => Kind::Shl,
+            7 => Kind::Shr,
+            8 => Kind::Sar,
+            9 => Kind::Adc,
+            10 => Kind::Sbb,
+            11 => Kind::Mul,
+            _ => return None,
+        })
+    }
+}
+
+/// The operand size of a lazy record.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Size {
+    B8,
+    B16,
+    B32,
+    B64,
+}
+
+impl Size {
+    pub const fn code(self) -> u32 {
+        match self {
+            Size::B8 => 0,
+            Size::B16 => 1,
+            Size::B32 => 2,
+            Size::B64 => 3,
+        }
+    }
+
+    pub const fn from_code(code: u32) -> Size {
+        match code & 3 {
+            0 => Size::B8,
+            1 => Size::B16,
+            2 => Size::B32,
+            _ => Size::B64,
+        }
+    }
+
+    pub const fn bits(self) -> u32 {
+        8 << self.code()
+    }
+
+    /// The 32-bit JIT's sizes: 8 and 16, anything else 32.
+    pub const fn of_bits32(bits: u32) -> Size {
+        match bits {
+            8 => Size::B8,
+            16 => Size::B16,
+            _ => Size::B32,
+        }
+    }
+}
+
+/// A lazy operation: what [`Lazy::op`] holds, typed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Op {
+    pub kind: Kind,
+    pub size: Size,
+}
+
+impl Op {
+    pub const fn new(kind: Kind, size: Size) -> Op {
+        Op { kind, size }
+    }
+
+    pub const fn raw(self) -> u32 {
+        self.kind.code() * 4 + self.size.code()
+    }
+
+    /// None: 0 (EFLAGS exact) or a number no kind has.
+    pub fn decode(raw: u32) -> Option<Op> {
+        Some(Op { kind: Kind::from_code(raw >> 2)?, size: Size::from_code(raw) })
+    }
+}
+
+// (the raw kind numbers, for the long-mode JIT's lazy records)
+pub const ADD: u32 = Kind::Add.code();
+pub const SUB: u32 = Kind::Sub.code();
+pub const LOGIC: u32 = Kind::Logic.code();
+pub const INC: u32 = Kind::Inc.code();
+pub const DEC: u32 = Kind::Dec.code();
+pub const SHL: u32 = Kind::Shl.code();
+pub const SHR: u32 = Kind::Shr.code();
+pub const SAR: u32 = Kind::Sar.code();
+pub const ADC: u32 = Kind::Adc.code();
+pub const SBB: u32 = Kind::Sbb.code();
+pub const MUL: u32 = Kind::Mul.code();
 
 pub fn size_code(bits: u32) -> u32 {
-    match bits {
-        8 => 0,
-        16 => 1,
-        _ => 2,
-    }
+    Size::of_bits32(bits).code()
 }
 
 pub fn op(kind: u32, bits: u32) -> u32 {
@@ -44,19 +162,20 @@ pub fn op(kind: u32, bits: u32) -> u32 {
 impl Lazy {
     /// The status flags (CF PF AF ZF SF OF) this operation produced.
     pub fn status(&self) -> u32 {
-        let bits = 8 << (self.op & 3);
+        let Some(Op { kind, size }) = Op::decode(self.op) else { return 0 };
+        let bits = size.bits();
         let (a64, b64, r64, c) = (self.a, self.b, self.r, self.c);
         // (shifts: up to 32 bits only, the long-mode JIT works out 64-bit ones itself)
         let (a, b) = (a64 as u32, b64 as u32);
-        match self.op >> 2 {
-            ADD => flags::add64(a64, b64, 0, bits).1,
-            SUB => flags::sub64(a64, b64, 0, bits).1,
-            ADC => flags::add64(a64, b64, c, bits).1,
-            SBB => flags::sub64(a64, b64, c, bits).1,
-            LOGIC => flags::szp64(r64, bits),
-            INC => (flags::add64(a64, 1, 0, bits).1 & !CF) | (c & CF),
-            DEC => (flags::sub64(a64, 1, 0, bits).1 & !CF) | (c & CF),
-            SHL => {
+        match kind {
+            Kind::Add => flags::add64(a64, b64, 0, bits).1,
+            Kind::Sub => flags::sub64(a64, b64, 0, bits).1,
+            Kind::Adc => flags::add64(a64, b64, c, bits).1,
+            Kind::Sbb => flags::sub64(a64, b64, c, bits).1,
+            Kind::Logic => flags::szp64(r64, bits),
+            Kind::Inc => (flags::add64(a64, 1, 0, bits).1 & !CF) | (c & CF),
+            Kind::Dec => (flags::sub64(a64, 1, 0, bits).1 & !CF) | (c & CF),
+            Kind::Shl => {
                 let m = flags::mask(bits);
                 let wide = ((a & m) as u64) << b;
                 let r = wide as u32 & m;
@@ -64,22 +183,21 @@ impl Lazy {
                 let of = ((r & flags::sign(bits) != 0) as u32) ^ cf;
                 flags::szp(r, bits) | cf * CF | of * OF
             }
-            SHR => {
+            Kind::Shr => {
                 let a = a & flags::mask(bits);
                 let r = if b >= 32 { 0 } else { a >> b };
                 let cf = if b <= bits { (a >> (b - 1)) & 1 } else { 0 };
                 let of = (a & flags::sign(bits) != 0) as u32;
                 flags::szp(r, bits) | cf * CF | of * OF
             }
-            SAR => {
+            Kind::Sar => {
                 let sx = ((a << (32 - bits)) as i32) >> (32 - bits);
                 let k = b.min(31);
                 let r = (sx >> k) as u32 & flags::mask(bits);
                 let cf = if b > 31 { (sx < 0) as u32 } else { ((sx >> (k - 1).min(31)) & 1) as u32 };
                 flags::szp(r, bits) | cf * CF
             }
-            MUL => flags::szp64(r64, bits) | if c != 0 { CF | OF } else { 0 },
-            _ => 0,
+            Kind::Mul => flags::szp64(r64, bits) | if c != 0 { CF | OF } else { 0 },
         }
     }
 }
@@ -87,6 +205,29 @@ impl Lazy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every raw `op` decodes as the old arithmetic read it (kind = op >> 2 when it is one of
+    /// the eleven, size = op & 3), and Op::raw is its inverse.
+    #[test]
+    fn op_codes_round_trip() {
+        for raw in 0u32..0x400 {
+            match Op::decode(raw) {
+                Some(op) => {
+                    assert!((1..=11).contains(&(raw >> 2)), "{raw}");
+                    assert_eq!(op.raw(), raw);
+                    assert_eq!(op.size.bits(), 8 << (raw & 3));
+                }
+                None => assert!(raw >> 2 == 0 || raw >> 2 > 11, "{raw}"),
+            }
+        }
+        for k in Kind::ALL {
+            assert_eq!(Kind::from_code(k.code()), Some(k));
+            for sz in [Size::B8, Size::B16, Size::B32, Size::B64] {
+                assert_eq!(Op::decode(Op::new(k, sz).raw()), Some(Op::new(k, sz)));
+            }
+        }
+        assert_eq!([8, 16, 32, 64, 1].map(|b| Size::of_bits32(b).code()), [0, 1, 2, 2, 2]);
+    }
 
     /// The 64-bit helpers give the 32-bit ones' flags at 8, 16 and 32 bits.
     #[test]
