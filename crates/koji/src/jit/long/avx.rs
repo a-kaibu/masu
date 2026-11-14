@@ -135,7 +135,7 @@ impl Gen<'_> {
                 self.put(ins.op_register(0));
             }
             Vextractf128 | Vextracti128 => {
-                let h = (ins.immediate8() & 1) as u32;
+                let h = u32::from(ins.immediate8() & 1);
                 if mem(&ins, 0) {
                     self.c.get(L_A);
                     self.half(1, h);
@@ -153,7 +153,7 @@ impl Gen<'_> {
                     if s & 8 != 0 {
                         self.c.v128zero();
                     } else {
-                        self.half(if s & 2 == 0 { 1 } else { 2 }, (s & 1) as u32);
+                        self.half(if s & 2 == 0 { 1 } else { 2 }, u32::from(s & 1));
                     }
                     self.c.set(l);
                 }

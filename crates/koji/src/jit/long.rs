@@ -292,7 +292,7 @@ fn regs_named(code: &Code) -> (u16, u16) {
         let (mut l, mut shift, mut at) = (0u32, 0, p + 1);
         loop {
             let c = code.b[at];
-            l |= ((c & 0x7f) as u32) << shift;
+            l |= u32::from(c & 0x7f) << shift;
             at += 1;
             shift += 7;
             if c & 0x80 == 0 {
@@ -348,7 +348,7 @@ fn splice_regs(code: Code, marks: &[(usize, usize, bool)], all: bool) -> Code {
     for &(at, li, store) in marks {
         out.b.extend_from_slice(&code.b[from..at]);
         let delta = out.b.len() as i64 - at as i64;
-        out.locs.extend(code.locs[lfrom..li].iter().map(|&p| (p as i64 + delta) as u32));
+        out.locs.extend(code.locs[lfrom..li].iter().map(|&p| (i64::from(p) + delta) as u32));
         if store {
             emit_stores(&mut out, written);
         } else {
@@ -358,7 +358,7 @@ fn splice_regs(code: Code, marks: &[(usize, usize, bool)], all: bool) -> Code {
     }
     out.b.extend_from_slice(&code.b[from..]);
     let delta = out.b.len() as i64 - code.b.len() as i64;
-    out.locs.extend(code.locs[lfrom..].iter().map(|&p| (p as i64 + delta) as u32));
+    out.locs.extend(code.locs[lfrom..].iter().map(|&p| (i64::from(p) + delta) as u32));
     out
 }
 
@@ -705,7 +705,7 @@ impl<'a> Gen<'a> {
 
     /// Pushes bit `bits - 1` of the i64 on the stack, as i32.
     fn sign_bit(&mut self, bits: u32) {
-        self.c.i64c(bits as i64 - 1).x(I64_SHR_U).i64c(1).x(I64_AND).x(I32_WRAP);
+        self.c.i64c(i64::from(bits) - 1).x(I64_SHR_U).i64c(1).x(I64_AND).x(I32_WRAP);
     }
 
     fn zf(&mut self) {
@@ -966,7 +966,7 @@ impl<'a> Gen<'a> {
             }
             SHL => {
                 // CF: the last bit out (b = count 1..bits-1); OF: MSB(r) ^ CF
-                self.c.get(L_FA).i64c(bits as i64).get(L_FB).x(I64_SUB).x(I64_SHR_U).x(I32_WRAP).i32c(1).and().tee(L_ST).or();
+                self.c.get(L_FA).i64c(i64::from(bits)).get(L_FB).x(I64_SUB).x(I64_SHR_U).x(I32_WRAP).i32c(1).and().tee(L_ST).or();
                 self.c.get(L_FR);
                 self.sign_bit(bits);
                 self.c.get(L_ST).xor().i32c(11).shl().or();
@@ -1364,7 +1364,7 @@ impl<'a> Gen<'a> {
         self.c.end();
         self.load(64);
         self.c.set(v);
-        self.c.get(rsp).i64c(8 + extra as i64).x(I64_ADD).set(rsp);
+        self.c.get(rsp).i64c(8 + i64::from(extra)).x(I64_ADD).set(rsp);
     }
 
     /// One instruction; false if it ended the block.
@@ -1624,7 +1624,7 @@ impl<'a> Gen<'a> {
         self.read_op(0, bits);
         self.c.set(L_FA);
         self.get_reg(Register::CL);
-        self.c.i64c(bits as i64 - 1).x(I64_AND).set(L_FB);
+        self.c.i64c(i64::from(bits) - 1).x(I64_AND).set(L_FB);
         self.c.get(L_FA);
         let kind = match m {
             Shl | Sal => {
@@ -1669,7 +1669,7 @@ impl<'a> Gen<'a> {
         self.read_op(0, bits);
         self.c.set(v);
         self.read_op(1, if imm { 8 } else { bits });
-        self.c.i64c(bits as i64 - 1).x(I64_AND).set(b);
+        self.c.i64c(i64::from(bits) - 1).x(I64_AND).set(b);
         let ef = cpu_off!(eflags);
         self.c.get(L_CPU);
         self.c.get(L_CPU).load32(ef).u32c(!CF).and();
@@ -1910,7 +1910,7 @@ impl<'a> Gen<'a> {
             self.c.get(r).x(I64_EQZ).i32c(6).shl();
             self.c.get(v).x(I64_EQZ);
             if m == Lzcnt {
-                self.c.get(r).i64c(bits as i64).x(I64_EQ).or();
+                self.c.get(r).i64c(i64::from(bits)).x(I64_EQ).or();
             }
             self.c.or();
         }
@@ -1938,7 +1938,7 @@ impl<'a> Gen<'a> {
         self.c.set(v);
         let rol = ins.mnemonic() == Mnemonic::Rol;
         if !by_cl {
-            let count = (ins.immediate8() as u32) & cmask;
+            let count = u32::from(ins.immediate8()) & cmask;
             if count == 0 {
                 self.write_op(0, bits, v);
                 return true;
@@ -1947,10 +1947,10 @@ impl<'a> Gen<'a> {
             if eff == 0 {
                 self.c.get(v).set(r);
             } else if bits == 64 {
-                self.c.get(v).i64c(eff as i64).x(if rol { I64_ROTL } else { I64_ROTR }).set(r);
+                self.c.get(v).i64c(i64::from(eff)).x(if rol { I64_ROTL } else { I64_ROTR }).set(r);
             } else {
                 let (k, j) = if rol { (eff, bits - eff) } else { (bits - eff, eff) };
-                self.c.get(v).i64c(k as i64).x(I64_SHL).get(v).i64c(j as i64).x(I64_SHR_U).x(I64_OR).i64c(mask(bits)).x(I64_AND).set(r);
+                self.c.get(v).i64c(i64::from(k)).x(I64_SHL).get(v).i64c(i64::from(j)).x(I64_SHR_U).x(I64_OR).i64c(mask(bits)).x(I64_AND).set(r);
             }
             self.flags_to_eflags();
             self.rotate_flags(r, bits, rol);
@@ -1961,7 +1961,7 @@ impl<'a> Gen<'a> {
         self.flags_to_eflags();
         let n = self.temp();
         self.get_reg(Register::CL);
-        self.c.i64c(cmask as i64).x(I64_AND).set(n);
+        self.c.i64c(i64::from(cmask)).x(I64_AND).set(n);
         self.c.get(n).x(I64_EQZ).if_();
         self.depth += 1;
         // (nothing changes; a 32-bit register is still zero-extended)
@@ -1971,11 +1971,11 @@ impl<'a> Gen<'a> {
             self.c.get(v).get(n).x(if rol { I64_ROTL } else { I64_ROTR }).set(r);
         } else {
             // e = count % bits; (v << k | v >> j) & mask with k + j = bits (e 0: v)
-            self.c.get(n).i64c(bits as i64).x(I64_REM_U).set(n);
+            self.c.get(n).i64c(i64::from(bits)).x(I64_REM_U).set(n);
             if rol {
-                self.c.get(v).get(n).x(I64_SHL).get(v).i64c(bits as i64).get(n).x(I64_SUB).x(I64_SHR_U);
+                self.c.get(v).get(n).x(I64_SHL).get(v).i64c(i64::from(bits)).get(n).x(I64_SUB).x(I64_SHR_U);
             } else {
-                self.c.get(v).get(n).x(I64_SHR_U).get(v).i64c(bits as i64).get(n).x(I64_SUB).x(I64_SHL);
+                self.c.get(v).get(n).x(I64_SHR_U).get(v).i64c(i64::from(bits)).get(n).x(I64_SUB).x(I64_SHL);
             }
             self.c.x(I64_OR).i64c(mask(bits)).x(I64_AND).set(r);
         }
@@ -1994,10 +1994,10 @@ impl<'a> Gen<'a> {
         self.c.get(L_CPU).load32(ef).u32c(!(CF | OF)).and();
         if rol {
             self.c.get(r).i64c(1).x(I64_AND).x(I32_WRAP);
-            self.c.get(r).i64c(bits as i64 - 1).x(I64_SHR_U).x(I32_WRAP).get(r).x(I32_WRAP).xor().i32c(1).and().i32c(11).shl().or().or();
+            self.c.get(r).i64c(i64::from(bits) - 1).x(I64_SHR_U).x(I32_WRAP).get(r).x(I32_WRAP).xor().i32c(1).and().i32c(11).shl().or().or();
         } else {
-            self.c.get(r).i64c(bits as i64 - 1).x(I64_SHR_U).x(I32_WRAP).i32c(1).and();
-            self.c.get(r).i64c(bits as i64 - 1).x(I64_SHR_U).get(r).i64c(bits as i64 - 2).x(I64_SHR_U).x(I64_XOR).x(I32_WRAP).i32c(1).and().i32c(11).shl().or().or();
+            self.c.get(r).i64c(i64::from(bits) - 1).x(I64_SHR_U).x(I32_WRAP).i32c(1).and();
+            self.c.get(r).i64c(i64::from(bits) - 1).x(I64_SHR_U).get(r).i64c(i64::from(bits) - 2).x(I64_SHR_U).x(I64_XOR).x(I32_WRAP).i32c(1).and().i32c(11).shl().or().or();
         }
         self.c.store32(ef);
     }
@@ -2122,7 +2122,7 @@ impl<'a> Gen<'a> {
             Shl | Shr | Sar | Sal => {
                 let bits = self.op_bits(0);
                 let count = match ins.op_kind(1) {
-                    OpKind::Immediate8 => ins.immediate8() as u32,
+                    OpKind::Immediate8 => u32::from(ins.immediate8()),
                     _ if ins.op_register(1) == Register::CL && bits >= 32 => return self.shift_cl(bits),
                     _ => return false,
                 } & if bits == 64 { 63 } else { 31 };
@@ -2148,7 +2148,7 @@ impl<'a> Gen<'a> {
                 }
                 self.read_op(0, bits);
                 self.c.set(L_FA);
-                self.c.i64c(count as i64).set(L_FB);
+                self.c.i64c(i64::from(count)).set(L_FB);
                 let kind = match m {
                     Shl | Sal => {
                         self.bin(L_FA, L_FB, I64_SHL, bits);
@@ -2165,7 +2165,7 @@ impl<'a> Gen<'a> {
                     _ => {
                         self.c.get(L_FA);
                         self.sext(bits);
-                        self.c.i64c(count as i64).x(I64_SHR_S);
+                        self.c.i64c(i64::from(count)).x(I64_SHR_S);
                         if bits < 64 {
                             self.c.i64c(mask(bits)).x(I64_AND);
                         }
@@ -2228,7 +2228,7 @@ impl<'a> Gen<'a> {
                 self.c.i64c(0).set(r);
                 for k in 0..bits / 8 {
                     let to = bits - 8 - 8 * k;
-                    self.c.get(r).get(v).i64c(8 * k as i64).x(I64_SHR_U).i64c(0xff).x(I64_AND).i64c(to as i64).x(I64_SHL).x(I64_OR).set(r);
+                    self.c.get(r).get(v).i64c(8 * i64::from(k)).x(I64_SHR_U).i64c(0xff).x(I64_AND).i64c(i64::from(to)).x(I64_SHL).x(I64_OR).set(r);
                 }
                 self.write_op(0, bits, r);
                 true
@@ -2435,7 +2435,7 @@ impl<'a> Gen<'a> {
                 true
             }
             Ret => {
-                let extra = if ins.op_count() == 1 { ins.immediate16() as u32 } else { 0 };
+                let extra = if ins.op_count() == 1 { u32::from(ins.immediate16()) } else { 0 };
                 let t = self.temp();
                 self.pop64(t, extra);
                 // back to a call of the region, or an inline one of the function's: straight
@@ -2512,7 +2512,7 @@ impl<'a> Gen<'a> {
                     self.c.i64c(0xffff_ffff).x(I64_AND);
                 }
                 if scale > 1 {
-                    self.c.i64c(scale.trailing_zeros() as i64).x(I64_SHL);
+                    self.c.i64c(i64::from(scale.trailing_zeros())).x(I64_SHL);
                 }
                 if any {
                     self.c.x(I64_ADD);
@@ -2701,7 +2701,7 @@ fn jump_table_in<M: Memory>(mem: &mut M, ins: &[Instruction], n: Option<(Registe
                         if let Some(V::Target(t, signed, b)) = get(&vals, i.op0_register()) {
                             for k in 0..n {
                                 let Some(e) = at(mem, t + 4 * k, 4) else { break };
-                                let e = if signed { e as u32 as i32 as i64 as u64 } else { e };
+                                let e = if signed { i64::from(e as u32 as i32) as u64 } else { e };
                                 if def.is_some() && !near(b.wrapping_add(e)) {
                                     break;
                                 }
@@ -3003,9 +3003,9 @@ fn emit_side64(g: &mut Gen<'_>, side: &[(usize, usize, bool)]) {
             },
             None => g.depth - own,
         };
-        super::wasm::uleb(&mut g.c.b, l as u64);
+        super::wasm::uleb(&mut g.c.b, u64::from(l));
     }
-    super::wasm::uleb(&mut g.c.b, (g.depth - own) as u64);
+    super::wasm::uleb(&mut g.c.b, u64::from(g.depth - own));
     for &(e, next) in &finals {
         g.c.end();
         g.depth -= 1;
@@ -3096,7 +3096,7 @@ fn emit_table64(g: &mut Gen<'_>, targets: &[u64], hi: u32) {
         g.c.get(L_A).u32c(mul).mul().i32c(shift as i32).shr_u().op(0x0e);
         super::wasm::uleb(&mut g.c.b, slots.len() as u64);
         for &i in &slots {
-            super::wasm::uleb(&mut g.c.b, i as u64);
+            super::wasm::uleb(&mut g.c.b, u64::from(i));
         }
         super::wasm::uleb(&mut g.c.b, m as u64);
         for &a in &keys {
@@ -3133,9 +3133,9 @@ fn emit_entries64(g: &mut Gen<'_>, entries: &[usize]) {
             _ if entries.contains(&k) => label(g, k),
             _ => first,
         };
-        super::wasm::uleb(&mut g.c.b, l as u64);
+        super::wasm::uleb(&mut g.c.b, u64::from(l));
     }
-    super::wasm::uleb(&mut g.c.b, first as u64);
+    super::wasm::uleb(&mut g.c.b, u64::from(first));
 }
 
 pub fn translate_region64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], trap: (u32, u32), accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
@@ -3258,7 +3258,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
                     let f = last.near_branch64();
                     if let Some(j) = decode(mem, f, trap).first().filter(|j| j.mnemonic() == Mnemonic::Jmp && j.op0_kind() == OpKind::Memory && j.memory_base() == Register::RIP && j.memory_size().size() == 8) {
                         let slot = j.memory_displacement64();
-                        if !super::fresh_at(f as u32) && (slot >> 32) == (f >> 32) && (GUEST_LO as u64..GUEST_HI as u64 - 8).contains(&(slot & 0xffff_ffff)) {
+                        if !super::fresh_at(f as u32) && (slot >> 32) == (f >> 32) && (u64::from(GUEST_LO)..u64::from(GUEST_HI) - 8).contains(&(slot & 0xffff_ffff)) {
                             if thunks.insert(f, slot).is_none() {
                                 thunk_code.push((f as u32, j.len() as u32));
                             }
@@ -3400,9 +3400,9 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
             // br_table: 0x0e vec(labels) default
             g.c.op(0x0e);
             let mut tmp = Vec::new();
-            super::wasm::uleb(&mut tmp, n as u64);
+            super::wasm::uleb(&mut tmp, u64::from(n));
             for k in 0..n {
-                super::wasm::uleb(&mut tmp, k as u64);
+                super::wasm::uleb(&mut tmp, u64::from(k));
             }
             super::wasm::uleb(&mut tmp, 0);
             for b in tmp {

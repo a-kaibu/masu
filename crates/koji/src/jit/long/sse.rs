@@ -17,9 +17,9 @@ use iced_x86::{EncodingKind, Instruction, Mnemonic, OpKind, Register};
 /// The Cpu offset of XMM register `r`.
 fn xoff(r: Register) -> u32 {
     if r.is_mm() {
-        return (offset_of!(Cpu, mm) + 8 * (r as usize - Register::MM0 as usize)) as u32;
+        return (offset_of!(Cpu, mm) + 8 * (r.number())) as u32;
     }
-    let i = r as usize - Register::XMM0 as usize;
+    let i = r.number();
     if i < 8 {
         (offset_of!(Cpu, xmm) + 16 * i) as u32
     } else {
@@ -263,7 +263,7 @@ impl Gen<'_> {
             && is_x(&saved, 0)
             && !matches!(saved.mnemonic(), Vcomiss | Vcomisd | Vucomiss | Vucomisd | Vptest | Vtestps | Vtestpd | Vmaskmovdqu)
         {
-            let r = ymmh(saved.op0_register() as usize - Register::XMM0 as usize);
+            let r = ymmh(saved.op0_register().number());
             self.c.get(L_CPU).i64c(0).store64(r);
             self.c.get(L_CPU).i64c(0).store64(r + 8);
         }
@@ -280,7 +280,7 @@ impl Gen<'_> {
             // since: not again)
             let reg = |i: u32| {
                 let r = if i == 0 { src1 } else { (li.op_kind(1) == OpKind::Register).then(|| li.op_register(1)) };
-                r.filter(|r| r.is_xmm()).map(|r| r as usize - Register::XMM0 as usize)
+                r.filter(|r| r.is_xmm()).map(|r| r.number())
             };
             let seen = |g: &Self, i: u32| !hi && reg(i).is_some_and(|r| mxguard::key(k, i).is_some_and(|w| g.mx_seen[r].contains(&Some(w))));
             let (a, b) = (k.3 && !seen(self, 0), !seen(self, 1));
@@ -383,7 +383,7 @@ impl Gen<'_> {
     /// Swaps the lower and upper halves of YMM registers `regs`.
     pub(super) fn swap_hi(&mut self, regs: &[Register]) {
         for &r in regs {
-            let (x, h) = (xoff(r), (offset_of!(Cpu, ymmh) + 16 * (r as usize - Register::XMM0 as usize)) as u32);
+            let (x, h) = (xoff(r), (offset_of!(Cpu, ymmh) + 16 * (r.number())) as u32);
             self.c.get(L_CPU).v128load(x).set(super::L_V2);
             self.c.get(L_CPU).get(L_CPU).v128load(h).v128store(x);
             self.c.get(L_CPU).get(super::L_V2).v128store(h);
@@ -536,7 +536,7 @@ impl Gen<'_> {
             }
             Pinsrb | Pinsrw | Pinsrd | Pinsrq => {
                 let (bits, op, lanes) = match m { Pinsrb => (8, 0x17, 16), Pinsrw => (16, 0x1a, 8), Pinsrd => (32, 0x1c, 4), _ => (64, 0x1e, 2) };
-                let lane = (ins.immediate8() as u32 % lanes) as u8;
+                let lane = (u32::from(ins.immediate8()) % lanes) as u8;
                 self.vfirst(src1);
                 self.gsrc(1, bits);
                 if bits < 64 {
@@ -548,7 +548,7 @@ impl Gen<'_> {
             }
             Pextrb | Pextrw | Pextrd | Pextrq => {
                 let (bits, op, lanes) = match m { Pextrb => (8, 0x16, 16), Pextrw => (16, 0x19, 8), Pextrd => (32, 0x1b, 4), _ => (64, 0x1d, 2) };
-                let lane = (ins.immediate8() as u32 % lanes) as u8;
+                let lane = (u32::from(ins.immediate8()) % lanes) as u8;
                 self.xget(ins.op_register(1));
                 self.c.lane(op, lane); // (the unsigned extract for bytes and words)
                 if bits < 64 {
@@ -609,7 +609,7 @@ impl Gen<'_> {
                 } else {
                     self.vfirst(src1);
                     self.c.get(L_A).load64(0);
-                    self.c.lane(0x1e, high as u8); // i64x2.replace_lane
+                    self.c.lane(0x1e, u8::from(high)); // i64x2.replace_lane
                     self.c.set(L_V0);
                     self.vput();
                 }
@@ -734,7 +734,7 @@ impl Gen<'_> {
         } else if let Some((bits, op, arith)) = shift(m) {
             self.c.get(a);
             if ins.op_kind(1) == OpKind::Immediate8 {
-                let n = ins.immediate8() as u32;
+                let n = u32::from(ins.immediate8());
                 if n < bits {
                     self.c.i32c(n as i32).simd(op);
                 } else if arith {
@@ -748,11 +748,11 @@ impl Gen<'_> {
                 self.c.get(b).lane(0x1d, 0).set(w);
                 if arith {
                     self.c.get(w).x(I32_WRAP).i32c(bits as i32 - 1);
-                    self.c.get(w).i64c(bits as i64).x(super::I64_LT_U);
+                    self.c.get(w).i64c(i64::from(bits)).x(super::I64_LT_U);
                     self.c.select().simd(op);
                 } else {
                     self.c.get(w).x(I32_WRAP).simd(op);
-                    self.c.i32c(0).get(w).i64c(bits as i64).x(super::I64_LT_U).sub().simd(0x0f).simd(0x4e);
+                    self.c.i32c(0).get(w).i64c(i64::from(bits)).x(super::I64_LT_U).sub().simd(0x0f).simd(0x4e);
                 }
             }
         } else {
