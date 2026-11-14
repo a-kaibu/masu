@@ -25,10 +25,39 @@ const DRIVERS: [(u32, u32, &str, &str); 2] = [
     (DRIVER, 17, "Microsoft IMA ADPCM", "Microsoft IMA ADPCM CODEC"),
     (DRIVER_MS, 33, "MS-ADPCM", "Microsoft ADPCM"),
 ];
-const IMA: u16 = 0x11;
-const MSADPCM: u16 = 2;
-const PCM: u16 = 1;
-const MP3: u16 = 0x55;
+/// A WAVEFORMATEX's wFormatTag, parsed once where it is read: a codec's own arm in every
+/// match, so a new one is a compile error wherever it is not handled.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Tag {
+    Pcm,
+    Ima,
+    MsAdpcm,
+    Mp3,
+    /// (never one of the above: only `Tag::from` makes it)
+    Other(u16),
+}
+impl From<u16> for Tag {
+    fn from(v: u16) -> Tag {
+        match v {
+            1 => Tag::Pcm,
+            0x11 => Tag::Ima,
+            2 => Tag::MsAdpcm,
+            0x55 => Tag::Mp3,
+            v => Tag::Other(v),
+        }
+    }
+}
+impl From<Tag> for u16 {
+    fn from(t: Tag) -> u16 {
+        match t {
+            Tag::Pcm => 1,
+            Tag::Ima => 0x11,
+            Tag::MsAdpcm => 2,
+            Tag::Mp3 => 0x55,
+            Tag::Other(v) => v,
+        }
+    }
+}
 /// How long a conversion waits for the page's decoder.
 const MP3_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
 /// How long a stream whose page did not answer last time waits (it answers late or never).
@@ -42,7 +71,7 @@ const MMSYSERR_INVALPARAM: u32 = 11;
 
 #[derive(Clone, Copy)]
 struct Fmt {
-    tag: u16,
+    tag: Tag,
     channels: u16,
     rate: u32,
     /// nAvgBytesPerSec
@@ -59,18 +88,18 @@ struct Fmt {
 }
 
 fn read_fmt(p: u32) -> Fmt {
-    let (tag, channels, rate, align, bits) = (r16(p), r16(p + 2), r32(p + 4), r16(p + 12), r16(p + 14));
-    let ch = channels.max(1) as u32;
-    let ima_spb = (align as u32).saturating_sub(4 * ch) * 8 / (4 * ch) + 1;
-    let bad = tag == IMA && r16(p + 16) >= 2 && r16(p + 18) as u32 != ima_spb;
+    let (tag, channels, rate, align, bits) = (Tag::from(r16(p)), r16(p + 2), r32(p + 4), r16(p + 12), r16(p + 14));
+    let ch = u32::from(channels.max(1));
+    let ima_spb = u32::from(align).saturating_sub(4 * ch) * 8 / (4 * ch) + 1;
+    let bad = tag == Tag::Ima && r16(p + 16) >= 2 && u32::from(r16(p + 18)) != ima_spb;
     let spb = match tag {
-        IMA => ima_spb,
-        MSADPCM if r16(p + 16) >= 2 => r16(p + 18) as u32,
-        MSADPCM => ((align as u32).saturating_sub(7 * ch)) * 8 / (4 * ch) + 2,
-        _ => 1,
+        Tag::Ima => ima_spb,
+        Tag::MsAdpcm if r16(p + 16) >= 2 => u32::from(r16(p + 18)),
+        Tag::MsAdpcm => (u32::from(align).saturating_sub(7 * ch)) * 8 / (4 * ch) + 2,
+        Tag::Pcm | Tag::Mp3 | Tag::Other(_) => 1,
     };
     // MPEGLAYER3WAVEFORMAT: cbSize 12, wID, fdwFlags, nBlockSize, ...
-    let block = if tag == MP3 && r16(p + 16) >= 12 { r16(p + 24) } else { 0 };
+    let block = if tag == Tag::Mp3 && r16(p + 16) >= 12 { r16(p + 24) } else { 0 };
     Fmt { tag, channels, rate, avg: r32(p + 8), align, bits, spb, block, bad }
 }
 
@@ -106,21 +135,21 @@ fn mp3_ok() -> bool {
     kura::adec::available()
 }
 
-static STREAMS: Mutex<Option<HashMap<u32, Stream>>> = Mutex::new(None);
+static STREAMS: Mutex<Option<HashMap<Has, Stream>>> = Mutex::new(None);
 static NEXT: Mutex<u32> = Mutex::new(0x00ac_1000);
 
 fn pcm_ok(f: &Fmt) -> bool {
-    f.tag == PCM && matches!(f.bits, 8 | 16) && matches!(f.channels, 1 | 2) && f.rate != 0 && f.align == f.channels * f.bits / 8
+    f.tag == Tag::Pcm && matches!(f.bits, 8 | 16) && matches!(f.channels, 1 | 2) && f.rate != 0 && f.align == f.channels * f.bits / 8
 }
 fn supported(s: &Fmt, d: &Fmt) -> bool {
-    d.tag == PCM && d.bits == 16 && d.channels == s.channels && d.rate == s.rate && matches!(s.tag, IMA | MSADPCM) && !s.bad
+    d.tag == Tag::Pcm && d.bits == 16 && d.channels == s.channels && d.rate == s.rate && matches!(s.tag, Tag::Ima | Tag::MsAdpcm) && !s.bad
         || pcm_ok(s) && pcm_ok(d)
         || mp3_pair(s, d)
 }
 /// MP3 to PCM: Windows takes 8-bit, mono and half the rate as well (winref acmmp3); those go
 /// through the PCM converter after the decoder.
 fn mp3_pair(s: &Fmt, d: &Fmt) -> bool {
-    s.tag == MP3 && matches!(s.channels, 1 | 2) && s.rate != 0 && pcm_ok(d) && mp3_ok()
+    s.tag == Tag::Mp3 && matches!(s.channels, 1 | 2) && s.rate != 0 && pcm_ok(d) && mp3_ok()
 }
 /// MP3's samples per frame: MPEG-1 1152, MPEG-2 and 2.5 (under 32 kHz) 576
 fn mp3_spf(s: &Fmt) -> u32 {
@@ -129,17 +158,17 @@ fn mp3_spf(s: &Fmt) -> u32 {
 /// The 16-bit PCM the decoder gives (before any conversion to the stream's output)
 fn mp3_native(s: &Fmt) -> Fmt {
     let ch = s.channels.max(1);
-    Fmt { tag: PCM, channels: ch, rate: s.rate, avg: s.rate.wrapping_mul(ch as u32 * 2), align: ch * 2, bits: 16, spb: 1, block: 0, bad: false }
+    Fmt { tag: Tag::Pcm, channels: ch, rate: s.rate, avg: s.rate.wrapping_mul(u32::from(ch) * 2), align: ch * 2, bits: 16, spb: 1, block: 0, bad: false }
 }
 
 /// Whether every block header is one the codec takes: Windows' imaadp32/msadp32 convert
 /// nothing (and say so with no error) when any block has a step index past 88 or a
 /// predictor past the coefficient table.
 fn headers_ok(s: &Fmt, src: u32, blocks: u32) -> bool {
-    let ch = s.channels.max(1) as u32;
+    let ch = u32::from(s.channels.max(1));
     (0..blocks).all(|k| {
-        let b = src + k * s.align as u32;
-        (0..ch).all(|c| if s.tag == IMA { r8(b + 4 * c + 2) <= 88 } else { r8(b + c) < 7 })
+        let b = src + k * u32::from(s.align);
+        (0..ch).all(|c| if s.tag == Tag::Ima { r8(b + 4 * c + 2) <= 88 } else { r8(b + c) < 7 })
     })
 }
 
@@ -151,11 +180,11 @@ fn headers_ok(s: &Fmt, src: u32, blocks: u32) -> bool {
 /// `src` as `d`, `max` frames at most (the destination's room: the rates are the guest's, and
 /// 8000 -> 0xFFFFFFFF made a multi-GB Vec before it was cut to the buffer).
 fn pcm_convert(s: &Fmt, d: &Fmt, src: &[u8], max: usize) -> Vec<u8> {
-    let sa = s.align as usize;
+    let sa = usize::from(s.align);
     let frame = |i: usize| -> [i32; 2] {
         let get = |k: usize| -> i32 {
-            let o = i * sa + k * (s.bits as usize / 8);
-            if s.bits == 8 { (src[o] as i32 - 128) << 8 } else { i16::from_le_bytes([src[o], src[o + 1]]) as i32 }
+            let o = i * sa + k * usize::from(s.bits / 8);
+            if s.bits == 8 { (i32::from(src[o]) - 128) << 8 } else { i32::from(i16::from_le_bytes([src[o], src[o + 1]])) }
         };
         let l = get(0);
         let r = if s.channels == 2 { get(1) } else { l };
@@ -165,22 +194,22 @@ fn pcm_convert(s: &Fmt, d: &Fmt, src: &[u8], max: usize) -> Vec<u8> {
         }
     };
     let n = src.len() / sa.max(1);
-    let (sr, dr) = (s.rate as u64, d.rate as u64);
+    let (sr, dr) = (u64::from(s.rate), u64::from(d.rate));
     // fitted to Windows' output (winref acm): upsampling steps an error term that starts at
     // dr/2 and moves to the next frame once it exceeds dr; downsampling rounds from sr/2
     let c = if sr < dr { dr / 2 - 1 } else { (sr / 2).max(dr / 4) };
     let mut out = Vec::new();
-    for i in 0u64..max as u64 {
-        let k = ((i * sr + c) / dr) as usize;
+    for i in 0..u64::try_from(max).unwrap_or(u64::MAX) {
+        let k = usize::try_from((i * sr + c) / dr).unwrap_or(usize::MAX);
         if k >= n {
             break;
         }
         let f = frame(k);
-        for v in &f[..d.channels as usize] {
+        for &v in &f[..usize::from(d.channels)] {
             if d.bits == 8 {
-                out.push(((v >> 8) + 128) as u8);
+                out.push(u8_of((v >> 8) + 128));
             } else {
-                out.extend_from_slice(&(*v as i16).to_le_bytes());
+                out.extend_from_slice(&sat16(v).to_le_bytes());
             }
         }
     }
@@ -190,7 +219,15 @@ fn pcm_convert(s: &Fmt, d: &Fmt, src: &[u8], max: usize) -> Vec<u8> {
 // ---------------------------------------------------------------------------------------------
 // decoders: whole blocks of `src` to 16-bit samples
 
-const IMA_INDEX: [i32; 16] = [-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8];
+/// A 16-bit sample from an i32 the codec has clamped (or clamps it)
+fn sat16(v: i32) -> i16 {
+    i16::try_from(v.clamp(-32768, 32767)).unwrap_or(0)
+}
+/// An 8-bit PCM byte from 0..=255 (or clamps it)
+fn u8_of(v: i32) -> u8 {
+    u8::try_from(v.clamp(0, 255)).unwrap_or(0)
+}
+const IMA_INDEX: [isize; 16] = [-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8];
 const IMA_STEP: [i32; 89] = [
     7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97, 107, 118, 130, 143,
     157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796, 876, 963, 1060, 1166, 1282, 1411,
@@ -207,16 +244,16 @@ pub fn ima_block(b: &[u8], ch: usize, spb: usize, out: &mut Vec<i16>) {
     out.resize(start + spb * ch, 0);
     for c in 0..ch {
         let h = &b[4 * c..4 * c + 4];
-        let mut pred = i16::from_le_bytes([h[0], h[1]]) as i32;
-        let mut idx = (h[2] as i32).clamp(0, 88);
-        out[start + c] = pred as i16;
+        let mut pred = i32::from(i16::from_le_bytes([h[0], h[1]]));
+        let mut idx = usize::from(h[2]).min(88);
+        out[start + c] = sat16(pred);
         // data: 4 bytes (8 samples) per channel in turn
         for i in 1..spb {
             let k = i - 1;
             let at = 4 * ch + (k / 8) * 4 * ch + 4 * c + (k % 8) / 2;
             let Some(&byte) = b.get(at) else { break };
-            let nib = if k % 2 == 0 { byte & 15 } else { byte >> 4 } as i32;
-            let step = IMA_STEP[idx as usize];
+            let nib = if k % 2 == 0 { byte & 15 } else { byte >> 4 };
+            let step = IMA_STEP[idx];
             let mut diff = step >> 3;
             if nib & 4 != 0 {
                 diff += step;
@@ -228,8 +265,8 @@ pub fn ima_block(b: &[u8], ch: usize, spb: usize, out: &mut Vec<i16>) {
                 diff += step >> 2;
             }
             pred = if nib & 8 != 0 { pred - diff } else { pred + diff }.clamp(-32768, 32767);
-            idx = (idx + IMA_INDEX[nib as usize]).clamp(0, 88);
-            out[start + i * ch + c] = pred as i16;
+            idx = idx.saturating_add_signed(IMA_INDEX[usize::from(nib)]).min(88);
+            out[start + i * ch + c] = sat16(pred);
         }
     }
 }
@@ -241,13 +278,13 @@ pub fn ms_block(b: &[u8], ch: usize, spb: usize, out: &mut Vec<i16>) {
     if b.len() < 7 * ch || spb < 2 {
         return;
     }
-    let s16 = |o: usize| i16::from_le_bytes([b[o], b[o + 1]]) as i32;
+    let s16 = |o: usize| i32::from(i16::from_le_bytes([b[o], b[o + 1]]));
     let mut coef = vec![(0, 0); ch];
     let mut delta = vec![0; ch];
     let mut s1 = vec![0; ch];
     let mut s2 = vec![0; ch];
     for c in 0..ch {
-        coef[c] = MS_COEF[(b[c] as usize).min(6)];
+        coef[c] = MS_COEF[usize::from(b[c]).min(6)];
         delta[c] = s16(ch + 2 * c);
         s1[c] = s16(3 * ch + 2 * c);
         s2[c] = s16(5 * ch + 2 * c);
@@ -255,24 +292,24 @@ pub fn ms_block(b: &[u8], ch: usize, spb: usize, out: &mut Vec<i16>) {
     let start = out.len();
     out.resize(start + spb * ch, 0);
     for c in 0..ch {
-        out[start + c] = s2[c] as i16;
-        out[start + ch + c] = s1[c] as i16;
+        out[start + c] = sat16(s2[c]);
+        out[start + ch + c] = sat16(s1[c]);
     }
     let mut n = 0usize;
     for i in 2..spb {
         for c in 0..ch {
             let Some(&byte) = b.get(7 * ch + n / 2) else { return };
-            let nib = if n % 2 == 0 { byte >> 4 } else { byte & 15 } as i32;
+            let nib = if n % 2 == 0 { byte >> 4 } else { byte & 15 };
             n += 1;
-            let signed = if nib >= 8 { nib - 16 } else { nib };
+            let signed = i32::from(nib) - if nib >= 8 { 16 } else { 0 };
             let p = ((s1[c] * coef[c].0 + s2[c] * coef[c].1) >> 8) + signed * delta[c];
             let p = p.clamp(-32768, 32767);
             s2[c] = s1[c];
             s1[c] = p;
             // the spec's delta has no upper bound: a run of big nibbles grows it 3x a sample until
             // the multiply overflows, so cap it where it still fits (as FFmpeg does)
-            delta[c] = (MS_ADAPT[nib as usize] * delta[c] >> 8).clamp(16, i32::MAX / 768);
-            out[start + i * ch + c] = p as i16;
+            delta[c] = (MS_ADAPT[usize::from(nib)] * delta[c] >> 8).clamp(16, i32::MAX / 768);
+            out[start + i * ch + c] = sat16(p);
         }
     }
 }
@@ -283,22 +320,49 @@ pub fn ms_block(b: &[u8], ch: usize, spb: usize, out: &mut Vec<i16>) {
 // gets the ACMDM_ messages Windows' msacm32 sends (a game's Vorbis.acm: LoadLibrary, then
 // acmDriverAdd(&id, module, DriverProc, 0, ACM_DRIVERADDF_FUNCTION) and acmDriverOpen)
 
-const DRV_LOAD: u32 = 1;
-const DRV_ENABLE: u32 = 2;
-const DRV_OPEN: u32 = 3;
-const DRV_CLOSE: u32 = 4;
-const DRV_DISABLE: u32 = 5;
-const DRV_FREE: u32 = 6;
-const ACMDM_DRIVER_DETAILS: u32 = 0x600a;
-const ACMDM_FORMATTAG_DETAILS: u32 = 0x6019;
-const ACMDM_FORMAT_SUGGEST: u32 = 0x601b;
-const ACMDM_STREAM_OPEN: u32 = 0x604c;
-const ACMDM_STREAM_CLOSE: u32 = 0x604d;
-const ACMDM_STREAM_SIZE: u32 = 0x604e;
-const ACMDM_STREAM_CONVERT: u32 = 0x604f;
-const ACMDM_STREAM_RESET: u32 = 0x6050;
-const ACMDM_STREAM_PREPARE: u32 = 0x6051;
-const ACMDM_STREAM_UNPREPARE: u32 = 0x6052;
+/// The messages a DriverProc gets: `send` takes only these (not any u32, such as an error code).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Msg {
+    Load,
+    Enable,
+    Open,
+    Close,
+    Disable,
+    Free,
+    DriverDetails,
+    FormatTagDetails,
+    FormatSuggest,
+    StreamOpen,
+    StreamClose,
+    StreamSize,
+    StreamConvert,
+    StreamReset,
+    StreamPrepare,
+    StreamUnprepare,
+}
+impl Msg {
+    /// DRV_* / ACMDM_* (msacmdrv.h)
+    fn code(self) -> u32 {
+        match self {
+            Msg::Load => 1,
+            Msg::Enable => 2,
+            Msg::Open => 3,
+            Msg::Close => 4,
+            Msg::Disable => 5,
+            Msg::Free => 6,
+            Msg::DriverDetails => 0x600a,
+            Msg::FormatTagDetails => 0x6019,
+            Msg::FormatSuggest => 0x601b,
+            Msg::StreamOpen => 0x604c,
+            Msg::StreamClose => 0x604d,
+            Msg::StreamSize => 0x604e,
+            Msg::StreamConvert => 0x604f,
+            Msg::StreamReset => 0x6050,
+            Msg::StreamPrepare => 0x6051,
+            Msg::StreamUnprepare => 0x6052,
+        }
+    }
+}
 const MMSYSERR_ERROR: u32 = 1;
 const MMSYSERR_INVALHANDLE: u32 = 5;
 const MMSYSERR_NOTSUPPORTED: u32 = 8;
@@ -311,10 +375,59 @@ const STATUSF_PREPARED: u32 = 0x0002_0000;
 const ADDED: u32 = 0x00ad_0000;
 const OPENED: u32 = 0x00ae_0000;
 
+/// An added driver: its place in ADDED_DRIVERS, 16 bits as it is the low half of its handles
+/// (a driver past 65535 is not added, so no two handles name one).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Slot(u16);
+impl Slot {
+    /// its HACMDRIVERID
+    fn id(self) -> u32 {
+        ADDED | u32::from(self.0)
+    }
+    /// its HACMDRIVER
+    fn opened(self) -> u32 {
+        OPENED | u32::from(self.0)
+    }
+}
+/// What a HACMDRIVERID / HACMDRIVER / HACMOBJ the program passes names, read once at the edge.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Hacm {
+    /// an added driver's id (live or not)
+    Id(Slot),
+    /// an added driver opened (live or not)
+    Opened(Slot),
+    /// a built-in driver, a stream, 0 or anything else
+    Other(u32),
+}
+impl From<u32> for Hacm {
+    fn from(h: u32) -> Hacm {
+        let [a, b, ..] = h.to_le_bytes();
+        let slot = Slot(u16::from_le_bytes([a, b]));
+        match h & 0xffff_0000 {
+            ADDED => Hacm::Id(slot),
+            OPENED => Hacm::Opened(slot),
+            _ => Hacm::Other(h),
+        }
+    }
+}
+/// A HACMSTREAM (built-in or on an added driver): the streams' key, never a driver handle or
+/// a header pointer.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+struct Has(u32);
+/// A new stream's handle
+fn next_has() -> Has {
+    let mut n = NEXT.lock().unwrap_or_else(|e| e.into_inner());
+    *n += 1;
+    Has(*n)
+}
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[derive(Clone)]
 struct Added {
     proc_: u32,
-    /// DRV_OPEN's answer, the dwDriverId of every later message (0: not open)
+    /// Msg::Open's answer, the dwDriverId of every later message (0: not open)
     id: u32,
     removed: bool,
 }
@@ -323,32 +436,37 @@ static ADDED_DRIVERS: Mutex<Vec<Added>> = Mutex::new(Vec::new());
 /// A stream on an added driver: its driver and the ACMDRVSTREAMINSTANCE (with the formats
 /// copied next to it) it keeps for the stream's life
 struct GuestStream {
-    drv: usize,
+    drv: Slot,
     inst: u32,
     /// the program's ACMSTREAMHEADERs prepared on it -> the ACMDRVSTREAMHEADER the driver sees
     hdrs: HashMap<u32, u32>,
 }
-static GUEST_STREAMS: Mutex<Option<HashMap<u32, GuestStream>>> = Mutex::new(None);
+static GUEST_STREAMS: Mutex<Option<HashMap<Has, GuestStream>>> = Mutex::new(None);
 
-fn added(i: usize) -> Option<Added> {
-    ADDED_DRIVERS.lock().unwrap().get(i).cloned().filter(|d| !d.removed)
+fn added(i: Slot) -> Option<Added> {
+    lock(&ADDED_DRIVERS).get(usize::from(i.0)).cloned().filter(|d| !d.removed)
 }
-/// The added driver a HACMDRIVERID or HACMDRIVER names
-fn added_index(h: u32) -> Option<usize> {
-    let i = match h & 0xffff_0000 {
-        ADDED | OPENED => (h & 0xffff) as usize,
-        _ => return None,
-    };
-    added(i).map(|_| i)
+/// Changes added driver i's entry
+fn added_set(i: Slot, f: impl FnOnce(&mut Added)) {
+    if let Some(d) = lock(&ADDED_DRIVERS).get_mut(usize::from(i.0)) {
+        f(d);
+    }
 }
-fn send(c: &mut Ctx, i: usize, msg: u32, l1: u32, l2: u32) -> u32 {
+/// The live added driver a HACMDRIVERID or HACMDRIVER names
+fn added_index(h: u32) -> Option<Slot> {
+    match Hacm::from(h) {
+        Hacm::Id(i) | Hacm::Opened(i) => added(i).map(|_| i),
+        Hacm::Other(_) => None,
+    }
+}
+fn send(c: &mut Ctx, i: Slot, msg: Msg, l1: u32, l2: u32) -> u32 {
     let Some(d) = added(i) else { return MMSYSERR_INVALHANDLE };
-    c.call(d.proc_, &[d.id, OPENED + i as u32, msg, l1, l2])
+    c.call(d.proc_, &[d.id, i.opened(), msg.code(), l1, l2])
 }
 
-/// Byte offsets of a structure's fields: DWORDs are 4 bytes, pointers `ps` and aligned to it
 /// Field offsets and size of an msacm struct; msacm.h packs them to 1 byte, so a pointer after
-/// a DWORD is not aligned on x64.
+/// a DWORD is not aligned on x64. (tests: what `Fields::at` is checked against)
+#[cfg(test)]
 fn layout(fields: &[bool], ps: u32) -> (Vec<u32>, u32) {
     let mut o = 0u32;
     let mut v = Vec::new();
@@ -363,7 +481,7 @@ fn put_field(at: u32, ptr: bool, v: u32) {
 }
 /// A WAVEFORMATEX's size (18 + cbSize; PCM's may be 16 bytes)
 fn wfx_len(p: u32) -> u32 {
-    if r16(p) == PCM { 16 } else { 18 + r16(p + 16) as u32 }
+    if Tag::from(r16(p)) == Tag::Pcm { 16 } else { 18 + u32::from(r16(p + 16)) }
 }
 fn copy_out(p: u32, n: u32) -> u32 {
     let q = mem::heap_alloc(n.max(4), true);
@@ -373,41 +491,138 @@ fn copy_out(p: u32, n: u32) -> u32 {
     q
 }
 
-/// ACMDRVSTREAMINSTANCE: cbStruct, pwfxSrc, pwfxDst, pwfltr, dwCallback, dwInstance, fdwOpen,
-/// fdwDriver, dwDriver, has
-const INST: [bool; 10] = [false, true, true, true, true, true, false, false, true, true];
-/// ACMDRVSTREAMHEADER: ACMSTREAMHEADER's fields, then fdwConvert, padshNext, fdwDriver,
-/// dwDriver, fdwPrepared, dwPrepared, pbPreparedSrc, cbPreparedSrcLength, pbPreparedDst,
-/// cbPreparedDstLength
-const HDR: [bool; 21] = [
-    false, false, true, true, false, false, true, true, false, false, true, // ACMSTREAMHEADER
-    false, true, false, true, false, true, true, false, true, false,
-];
-const H_STATUS: usize = 1;
-const H_SRC: usize = 3;
-const H_SRC_LEN: usize = 4;
-const H_SRC_USED: usize = 5;
-const H_DST: usize = 7;
-const H_DST_LEN: usize = 8;
-const H_DST_USED: usize = 9;
-const H_CONVERT: usize = 11;
-const H_PREP_SRC: usize = 17;
-const H_PREP_SRC_LEN: usize = 18;
-const H_PREP_DST: usize = 19;
-const H_PREP_DST_LEN: usize = 20;
+/// A packed msacm struct's fields, in order: each a DWORD or a pointer. A field is named, not
+/// counted, so a wrong one does not compile and a missing one is a match error.
+trait Fields: Copy + PartialEq + 'static {
+    const ALL: &'static [Self];
+    fn is_ptr(self) -> bool;
+    /// its byte offset (pointers `ps` bytes)
+    fn at(self, ps: u32) -> u32 {
+        Self::ALL.iter().take_while(|&&f| f != self).map(|f| if f.is_ptr() { ps } else { 4 }).sum()
+    }
+    fn size(ps: u32) -> u32 {
+        Self::ALL.iter().map(|f| if f.is_ptr() { ps } else { 4 }).sum()
+    }
+    fn get(self, base: u32) -> u32 {
+        let at = base + self.at(mem::ps());
+        if self.is_ptr() { rp(at) } else { r32(at) }
+    }
+    fn set(self, base: u32, v: u32) {
+        put_field(base + self.at(mem::ps()), self.is_ptr(), v)
+    }
+}
 
-fn hdr_get(h: u32, f: usize) -> u32 {
-    let (o, _) = layout(&HDR, mem::ps());
-    if HDR[f] { rp(h + o[f]) } else { r32(h + o[f]) }
+/// ACMDRVSTREAMINSTANCE
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Inst {
+    CbStruct,
+    Src,
+    Dst,
+    Filter,
+    Callback,
+    Instance,
+    FdwOpen,
+    FdwDriver,
+    DwDriver,
+    Has,
 }
-fn hdr_set(h: u32, f: usize, v: u32) {
-    let (o, _) = layout(&HDR, mem::ps());
-    put_field(h + o[f], HDR[f], v)
+impl Fields for Inst {
+    const ALL: &'static [Inst] = &[Inst::CbStruct, Inst::Src, Inst::Dst, Inst::Filter, Inst::Callback, Inst::Instance, Inst::FdwOpen, Inst::FdwDriver, Inst::DwDriver, Inst::Has];
+    fn is_ptr(self) -> bool {
+        match self {
+            Inst::CbStruct | Inst::FdwOpen | Inst::FdwDriver => false,
+            Inst::Src | Inst::Dst | Inst::Filter | Inst::Callback | Inst::Instance | Inst::DwDriver | Inst::Has => true,
+        }
+    }
 }
+/// ACMDRVSTREAMHEADER: ACMSTREAMHEADER's fields (cbStruct .. dwDstUser, `Hdr::OWN`), then the
+/// driver's
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Hdr {
+    CbStruct,
+    Status,
+    User,
+    Src,
+    SrcLen,
+    SrcUsed,
+    SrcUser,
+    Dst,
+    DstLen,
+    DstUsed,
+    DstUser,
+    Convert,
+    Next,
+    FdwDriver,
+    DwDriver,
+    FdwPrepared,
+    DwPrepared,
+    PrepSrc,
+    PrepSrcLen,
+    PrepDst,
+    PrepDstLen,
+}
+impl Hdr {
+    /// the program's ACMSTREAMHEADER
+    const OWN: [Hdr; 11] = [Hdr::CbStruct, Hdr::Status, Hdr::User, Hdr::Src, Hdr::SrcLen, Hdr::SrcUsed, Hdr::SrcUser, Hdr::Dst, Hdr::DstLen, Hdr::DstUsed, Hdr::DstUser];
+}
+impl Fields for Hdr {
+    const ALL: &'static [Hdr] = &[
+        Hdr::CbStruct, Hdr::Status, Hdr::User, Hdr::Src, Hdr::SrcLen, Hdr::SrcUsed, Hdr::SrcUser, Hdr::Dst, Hdr::DstLen, Hdr::DstUsed, Hdr::DstUser,
+        Hdr::Convert, Hdr::Next, Hdr::FdwDriver, Hdr::DwDriver, Hdr::FdwPrepared, Hdr::DwPrepared, Hdr::PrepSrc, Hdr::PrepSrcLen, Hdr::PrepDst, Hdr::PrepDstLen,
+    ];
+    fn is_ptr(self) -> bool {
+        match self {
+            Hdr::CbStruct | Hdr::Status | Hdr::SrcLen | Hdr::SrcUsed | Hdr::DstLen | Hdr::DstUsed | Hdr::Convert | Hdr::FdwDriver | Hdr::FdwPrepared | Hdr::PrepSrcLen | Hdr::PrepDstLen => false,
+            Hdr::User | Hdr::Src | Hdr::SrcUser | Hdr::Dst | Hdr::DstUser | Hdr::Next | Hdr::DwDriver | Hdr::DwPrepared | Hdr::PrepSrc | Hdr::PrepDst => true,
+        }
+    }
+}
+/// ACMDRVOPENDESC
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum OpenDesc {
+    CbStruct,
+    FccType,
+    FccComp,
+    Version,
+    Flags,
+    Error,
+    SectionName,
+    AliasName,
+    DevNode,
+}
+impl Fields for OpenDesc {
+    const ALL: &'static [OpenDesc] = &[OpenDesc::CbStruct, OpenDesc::FccType, OpenDesc::FccComp, OpenDesc::Version, OpenDesc::Flags, OpenDesc::Error, OpenDesc::SectionName, OpenDesc::AliasName, OpenDesc::DevNode];
+    fn is_ptr(self) -> bool {
+        match self {
+            OpenDesc::CbStruct | OpenDesc::FccType | OpenDesc::FccComp | OpenDesc::Version | OpenDesc::Flags | OpenDesc::Error | OpenDesc::DevNode => false,
+            OpenDesc::SectionName | OpenDesc::AliasName => true,
+        }
+    }
+}
+/// ACMDRVFORMATSUGGEST
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Suggest {
+    CbStruct,
+    Flags,
+    Src,
+    SrcLen,
+    Dst,
+    DstLen,
+}
+impl Fields for Suggest {
+    const ALL: &'static [Suggest] = &[Suggest::CbStruct, Suggest::Flags, Suggest::Src, Suggest::SrcLen, Suggest::Dst, Suggest::DstLen];
+    fn is_ptr(self) -> bool {
+        match self {
+            Suggest::CbStruct | Suggest::Flags | Suggest::SrcLen | Suggest::DstLen => false,
+            Suggest::Src | Suggest::Dst => true,
+        }
+    }
+}
+
 /// The program's header's own fields (cbStruct .. dwDstUser) into the driver's, or back
 fn hdr_sync(from: u32, to: u32) {
-    for f in 0..11 {
-        hdr_set(to, f, hdr_get(from, f));
+    for f in Hdr::OWN {
+        f.set(to, f.get(from));
     }
 }
 
@@ -428,18 +643,19 @@ fn driver_add(c: &mut Ctx) -> u32 {
         _ => return MMSYSERR_INVALPARAM,
     }
     let i = {
-        let mut v = ADDED_DRIVERS.lock().unwrap();
+        let mut v = lock(&ADDED_DRIVERS);
+        let Ok(i) = u16::try_from(v.len()) else { return MMSYSERR_ERROR };
         v.push(Added { proc_: lparam, id: 0, removed: false });
-        v.len() - 1
+        Slot(i)
     };
     // (Windows loads and enables it when it is added: a DriverProc that refuses DRV_LOAD is
     // not added)
-    if send(c, i, DRV_LOAD, 0, 0) == 0 {
-        ADDED_DRIVERS.lock().unwrap()[i].removed = true;
+    if send(c, i, Msg::Load, 0, 0) == 0 {
+        added_set(i, |d| d.removed = true);
         return MMSYSERR_ERROR;
     }
-    send(c, i, DRV_ENABLE, 0, 0);
-    putp(out, ADDED + i as u32);
+    send(c, i, Msg::Enable, 0, 0);
+    putp(out, i.id());
     0
 }
 fn acmDriverAddA(c: &mut Ctx) -> u32 {
@@ -451,31 +667,27 @@ fn acmDriverAddW(c: &mut Ctx) -> u32 {
 /// acmDriverRemove(hadid, 0)
 fn acmDriverRemove(c: &mut Ctx) -> u32 {
     let Some(i) = added_index(c.a(0)) else { return MMSYSERR_INVALHANDLE };
-    send(c, i, DRV_DISABLE, 0, 0);
-    send(c, i, DRV_FREE, 0, 0);
-    ADDED_DRIVERS.lock().unwrap()[i].removed = true;
+    send(c, i, Msg::Disable, 0, 0);
+    send(c, i, Msg::Free, 0, 0);
+    added_set(i, |d| d.removed = true);
     0
 }
 /// Opens added driver i (DRV_OPEN with an ACMDRVOPENDESC); its dwDriverId
-fn open_added(c: &mut Ctx, i: usize) -> u32 {
+fn open_added(c: &mut Ctx, i: Slot) -> u32 {
     if let Some(d) = added(i) {
         if d.id != 0 {
             return d.id;
         }
     }
-    let ps = mem::ps();
-    // ACMDRVOPENDESC: cbStruct, fccType, fccComp, dwVersion, dwFlags, dwError, pszSectionName,
-    // pszAliasName, dnDevNode
-    let f = [false, false, false, false, false, false, true, true, false];
-    let (o, size) = layout(&f, ps);
+    let size = OpenDesc::size(mem::ps());
     let d = mem::heap_alloc(size, true);
-    w32(d + o[0], size);
-    w32(d + o[1], u32::from_le_bytes(*b"audc"));
-    w32(d + o[3], 0x0500_0000);
-    let id = send(c, i, DRV_OPEN, 0, d);
+    OpenDesc::CbStruct.set(d, size);
+    OpenDesc::FccType.set(d, u32::from_le_bytes(*b"audc"));
+    OpenDesc::Version.set(d, 0x0500_0000);
+    let id = send(c, i, Msg::Open, 0, d);
     mem::heap_free(d);
     if id != 0 {
-        ADDED_DRIVERS.lock().unwrap()[i].id = id;
+        added_set(i, |d| d.id = id);
     }
     id
 }
@@ -488,10 +700,10 @@ fn acmDriverOpen(c: &mut Ctx) -> u32 {
         if open_added(c, i) == 0 {
             return MMSYSERR_ERROR;
         }
-        putp(out, OPENED + i as u32);
+        putp(out, i.opened());
         return 0;
     }
-    if id & 0xffff_0000 == ADDED {
+    if let Hacm::Id(_) = Hacm::from(id) {
         return MMSYSERR_INVALHANDLE;
     }
     // (a built-in driver gives back itself; another id: the first)
@@ -500,12 +712,12 @@ fn acmDriverOpen(c: &mut Ctx) -> u32 {
 }
 fn acmDriverClose(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    if h & 0xffff_0000 == OPENED {
+    if let Hacm::Opened(_) = Hacm::from(h) {
         let Some(i) = added_index(h) else { return MMSYSERR_INVALHANDLE };
         if let Some(d) = added(i) {
             if d.id != 0 {
-                send(c, i, DRV_CLOSE, 0, 0);
-                ADDED_DRIVERS.lock().unwrap()[i].id = 0;
+                send(c, i, Msg::Close, 0, 0);
+                added_set(i, |d| d.id = 0);
             }
         }
     }
@@ -513,25 +725,20 @@ fn acmDriverClose(c: &mut Ctx) -> u32 {
 }
 
 /// acmStreamOpen on added driver i; Some(result) when the driver answered
-fn stream_open_added(c: &mut Ctx, i: usize, ph: u32, src: u32, dst: u32, filter: u32, cb: u32, inst: u32, flags: u32) -> u32 {
+fn stream_open_added(c: &mut Ctx, i: Slot, ph: u32, src: u32, dst: u32, filter: u32, cb: u32, inst: u32, flags: u32) -> u32 {
     if open_added(c, i) == 0 {
         return MMSYSERR_ERROR;
     }
-    let ps = mem::ps();
-    let (o, size) = layout(&INST, ps);
+    let size = Inst::size(mem::ps());
     let (ls, ld) = (wfx_len(src), wfx_len(dst));
     let si = mem::heap_alloc(size, true);
     let (s2, d2) = (copy_out(src, ls), copy_out(dst, ld));
     let f2 = if filter != 0 { copy_out(filter, r32(filter).clamp(12, 0x1000)) } else { 0 };
-    let h = {
-        let mut n = NEXT.lock().unwrap();
-        *n += 1;
-        *n
-    };
-    for (k, v) in [(0, size), (1, s2), (2, d2), (3, f2), (4, cb), (5, inst), (6, flags), (9, h)] {
-        put_field(si + o[k], INST[k], v);
+    let h = next_has();
+    for (k, v) in [(Inst::CbStruct, size), (Inst::Src, s2), (Inst::Dst, d2), (Inst::Filter, f2), (Inst::Callback, cb), (Inst::Instance, inst), (Inst::FdwOpen, flags), (Inst::Has, h.0)] {
+        k.set(si, v);
     }
-    let r = send(c, i, ACMDM_STREAM_OPEN, si, 0);
+    let r = send(c, i, Msg::StreamOpen, si, 0);
     // ACM_STREAMOPENF_QUERY, or a refusal: nothing stays open
     if r != 0 || flags & 1 != 0 {
         for p in [si, s2, d2, f2] {
@@ -544,23 +751,22 @@ fn stream_open_added(c: &mut Ctx, i: usize, ph: u32, src: u32, dst: u32, filter:
         }
         return r;
     }
-    GUEST_STREAMS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, GuestStream { drv: i, inst: si, hdrs: HashMap::default() });
-    putp(ph, h);
+    lock(&GUEST_STREAMS).get_or_insert_with(HashMap::default).insert(h, GuestStream { drv: i, inst: si, hdrs: HashMap::default() });
+    putp(ph, h.0);
     0
 }
-fn guest<R>(h: u32, f: impl FnOnce(&mut GuestStream) -> R) -> Option<R> {
-    GUEST_STREAMS.lock().unwrap().get_or_insert_with(HashMap::default).get_mut(&h).map(f)
+fn guest<R>(h: Has, f: impl FnOnce(&mut GuestStream) -> R) -> Option<R> {
+    lock(&GUEST_STREAMS).get_or_insert_with(HashMap::default).get_mut(&h).map(f)
 }
-fn guest_close(c: &mut Ctx, h: u32) -> Option<u32> {
+fn guest_close(c: &mut Ctx, h: Has) -> Option<u32> {
     let (drv, inst) = guest(h, |g| (g.drv, g.inst))?;
-    let r = send(c, drv, ACMDM_STREAM_CLOSE, inst, 0);
+    let r = send(c, drv, Msg::StreamClose, inst, 0);
     if r != 0 {
         return Some(r);
     }
-    let g = GUEST_STREAMS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&h)?;
-    let (o, _) = layout(&INST, mem::ps());
-    for k in [1, 2, 3] {
-        let p = rp(g.inst + o[k]);
+    let g = lock(&GUEST_STREAMS).get_or_insert_with(HashMap::default).remove(&h)?;
+    for k in [Inst::Src, Inst::Dst, Inst::Filter] {
+        let p = k.get(g.inst);
         if p != 0 {
             mem::heap_free(p);
         }
@@ -571,107 +777,107 @@ fn guest_close(c: &mut Ctx, h: u32) -> Option<u32> {
     }
     Some(0)
 }
-fn guest_size(c: &mut Ctx, h: u32, n: u32, out: u32, flags: u32) -> Option<u32> {
+fn guest_size(c: &mut Ctx, h: Has, n: u32, out: u32, flags: u32) -> Option<u32> {
     let (drv, inst) = guest(h, |g| (g.drv, g.inst))?;
     // ACMDRVSTREAMSIZE: cbStruct, fdwSize, cbSrcLength, cbDstLength
     let z = mem::heap_alloc(16, true);
     w32(z, 16);
     w32(z + 4, flags);
     w32(z + if flags & 0xf == 0 { 8 } else { 12 }, n);
-    let r = send(c, drv, ACMDM_STREAM_SIZE, inst, z);
+    let r = send(c, drv, Msg::StreamSize, inst, z);
     if r == 0 {
         put32(out, r32(z + if flags & 0xf == 0 { 12 } else { 8 }));
     }
     mem::heap_free(z);
     Some(r)
 }
-fn guest_prepare(c: &mut Ctx, h: u32, hdr: u32, flags: u32) -> Option<u32> {
+fn guest_prepare(c: &mut Ctx, h: Has, hdr: u32, flags: u32) -> Option<u32> {
     let (drv, inst) = guest(h, |g| (g.drv, g.inst))?;
     if hdr == 0 || r32(hdr) < 44 {
         return Some(MMSYSERR_INVALPARAM);
     }
-    if r32(hdr + 4) & STATUSF_PREPARED != 0 {
+    if Hdr::Status.get(hdr) & STATUSF_PREPARED != 0 {
         return Some(0);
     }
-    let (_, size) = layout(&HDR, mem::ps());
-    let d = mem::heap_alloc(size, true);
+    let d = mem::heap_alloc(Hdr::size(mem::ps()), true);
     hdr_sync(hdr, d);
-    hdr_set(d, H_CONVERT, flags);
-    let r = send(c, drv, ACMDM_STREAM_PREPARE, inst, d);
+    Hdr::Convert.set(d, flags);
+    let r = send(c, drv, Msg::StreamPrepare, inst, d);
     // (a driver with nothing to prepare says MMSYSERR_NOTSUPPORTED: msacm32 prepares it)
     if r != 0 && r != MMSYSERR_NOTSUPPORTED {
         mem::heap_free(d);
         return Some(r);
     }
-    hdr_set(d, H_PREP_SRC, hdr_get(hdr, H_SRC));
-    hdr_set(d, H_PREP_SRC_LEN, hdr_get(hdr, H_SRC_LEN));
-    hdr_set(d, H_PREP_DST, hdr_get(hdr, H_DST));
-    hdr_set(d, H_PREP_DST_LEN, hdr_get(hdr, H_DST_LEN));
-    w32(hdr + 4, (r32(hdr + 4) | STATUSF_PREPARED) & !STATUSF_DONE);
+    Hdr::PrepSrc.set(d, Hdr::Src.get(hdr));
+    Hdr::PrepSrcLen.set(d, Hdr::SrcLen.get(hdr));
+    Hdr::PrepDst.set(d, Hdr::Dst.get(hdr));
+    Hdr::PrepDstLen.set(d, Hdr::DstLen.get(hdr));
+    Hdr::Status.set(hdr, (Hdr::Status.get(hdr) | STATUSF_PREPARED) & !STATUSF_DONE);
     guest(h, |g| g.hdrs.insert(hdr, d));
     Some(0)
 }
-fn guest_unprepare(c: &mut Ctx, h: u32, hdr: u32) -> Option<u32> {
+fn guest_unprepare(c: &mut Ctx, h: Has, hdr: u32) -> Option<u32> {
     let (drv, inst) = guest(h, |g| (g.drv, g.inst))?;
     let Some(d) = guest(h, |g| g.hdrs.get(&hdr).copied()).flatten() else { return Some(ACMERR_UNPREPARED) };
     hdr_sync(hdr, d);
-    let r = send(c, drv, ACMDM_STREAM_UNPREPARE, inst, d);
+    let r = send(c, drv, Msg::StreamUnprepare, inst, d);
     if r != 0 && r != MMSYSERR_NOTSUPPORTED {
         return Some(r);
     }
     guest(h, |g| g.hdrs.remove(&hdr));
     mem::heap_free(d);
-    w32(hdr + 4, r32(hdr + 4) & !STATUSF_PREPARED);
+    Hdr::Status.set(hdr, Hdr::Status.get(hdr) & !STATUSF_PREPARED);
     Some(0)
 }
-fn guest_convert(c: &mut Ctx, h: u32, hdr: u32, flags: u32) -> Option<u32> {
+fn guest_convert(c: &mut Ctx, h: Has, hdr: u32, flags: u32) -> Option<u32> {
     let (drv, inst) = guest(h, |g| (g.drv, g.inst))?;
     let Some(d) = guest(h, |g| g.hdrs.get(&hdr).copied()).flatten() else { return Some(ACMERR_UNPREPARED) };
     // (the buffers have to be the ones prepared)
-    if hdr_get(hdr, H_SRC) != hdr_get(d, H_PREP_SRC) || hdr_get(hdr, H_DST) != hdr_get(d, H_PREP_DST)
-        || hdr_get(hdr, H_SRC_LEN) > hdr_get(d, H_PREP_SRC_LEN) || hdr_get(hdr, H_DST_LEN) > hdr_get(d, H_PREP_DST_LEN)
+    if Hdr::Src.get(hdr) != Hdr::PrepSrc.get(d) || Hdr::Dst.get(hdr) != Hdr::PrepDst.get(d)
+        || Hdr::SrcLen.get(hdr) > Hdr::PrepSrcLen.get(d) || Hdr::DstLen.get(hdr) > Hdr::PrepDstLen.get(d)
     {
         return Some(MMSYSERR_INVALPARAM);
     }
     hdr_sync(hdr, d);
-    hdr_set(d, H_CONVERT, flags);
-    hdr_set(d, H_SRC_USED, 0);
-    hdr_set(d, H_DST_USED, 0);
-    hdr_set(d, H_STATUS, hdr_get(hdr, H_STATUS) & !STATUSF_DONE);
-    let r = send(c, drv, ACMDM_STREAM_CONVERT, inst, d);
-    hdr_set(hdr, H_SRC_USED, hdr_get(d, H_SRC_USED));
-    hdr_set(hdr, H_DST_USED, hdr_get(d, H_DST_USED));
+    Hdr::Convert.set(d, flags);
+    Hdr::SrcUsed.set(d, 0);
+    Hdr::DstUsed.set(d, 0);
+    Hdr::Status.set(d, Hdr::Status.get(hdr) & !STATUSF_DONE);
+    let r = send(c, drv, Msg::StreamConvert, inst, d);
+    Hdr::SrcUsed.set(hdr, Hdr::SrcUsed.get(d));
+    Hdr::DstUsed.set(hdr, Hdr::DstUsed.get(d));
     if r == 0 {
-        w32(hdr + 4, r32(hdr + 4) | STATUSF_DONE);
+        Hdr::Status.set(hdr, Hdr::Status.get(hdr) | STATUSF_DONE);
     }
     Some(r)
 }
 fn acmStreamReset(c: &mut Ctx) -> u32 {
-    let h = c.a(0);
+    let h = Has(c.a(0));
     if let Some((drv, inst)) = guest(h, |g| (g.drv, g.inst)) {
-        let r = send(c, drv, ACMDM_STREAM_RESET, inst, 0);
+        let r = send(c, drv, Msg::StreamReset, inst, 0);
         return if r == MMSYSERR_NOTSUPPORTED { 0 } else { r };
     }
     0
 }
-/// ACMDM_FORMAT_SUGGEST on added driver i (ACMDRVFORMATSUGGEST: cbStruct, fdwSuggest,
+/// Msg::FormatSuggest on added driver i (ACMDRVFORMATSUGGEST: cbStruct, fdwSuggest,
 /// pwfxSrc, cbwfxSrc, pwfxDst, cbwfxDst)
-fn suggest_added(c: &mut Ctx, i: usize, src: u32, dst: u32, n: u32, flags: u32) -> u32 {
+fn suggest_added(c: &mut Ctx, i: Slot, src: u32, dst: u32, n: u32, flags: u32) -> u32 {
     if open_added(c, i) == 0 {
         return MMSYSERR_ERROR;
     }
-    let f = [false, false, true, false, true, false];
-    let (o, size) = layout(&f, mem::ps());
+    let size = Suggest::size(mem::ps());
     let z = mem::heap_alloc(size, true);
-    for (k, v) in [(0, size), (1, flags), (2, src), (3, wfx_len(src)), (4, dst), (5, n)] {
-        put_field(z + o[k], f[k], v);
+    for (k, v) in [(Suggest::CbStruct, size), (Suggest::Flags, flags), (Suggest::Src, src), (Suggest::SrcLen, wfx_len(src)), (Suggest::Dst, dst), (Suggest::DstLen, n)] {
+        k.set(z, v);
     }
-    let r = send(c, i, ACMDM_FORMAT_SUGGEST, z, 0);
+    let r = send(c, i, Msg::FormatSuggest, z, 0);
     mem::heap_free(z);
     r
 }
-fn added_count() -> usize {
-    ADDED_DRIVERS.lock().unwrap().len()
+/// Every added driver's slot, the last added first (as Windows tries them)
+fn added_slots() -> impl Iterator<Item = Slot> {
+    let n = u16::try_from(lock(&ADDED_DRIVERS).len()).unwrap_or(u16::MAX);
+    (0..n).rev().map(Slot)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -696,9 +902,9 @@ fn acmDriverEnum(c: &mut Ctx) -> u32 {
 fn acmDriverID(c: &mut Ctx) -> u32 {
     let h = c.a(0);
     let id = if let Some(i) = added_index(h) {
-        ADDED + i as u32
-    } else if let Some(i) = guest(h, |g| g.drv) {
-        ADDED + i as u32
+        i.id()
+    } else if let Some(i) = guest(Has(h), |g| g.drv) {
+        i.id()
     } else if let Some(&(d, ..)) = DRIVERS.iter().find(|d| d.0 == h) {
         d
     } else {
@@ -759,9 +965,9 @@ fn driver_details(c: &mut Ctx, wide: bool) -> u32 {
     mem::write(p, &b);
     0
 }
-/// An added driver's ACMDRIVERDETAILSW (ACMDM_DRIVER_DETAILS); the A form's strings are the
+/// An added driver's ACMDRIVERDETAILSW (Msg::DriverDetails); the A form's strings are the
 /// W ones in the ANSI code page (the driver only speaks W)
-fn added_details(c: &mut Ctx, i: usize, p: u32, wide: bool) -> u32 {
+fn added_details(c: &mut Ctx, i: Slot, p: u32, wide: bool) -> u32 {
     if p == 0 || r32(p) < 4 {
         return MMSYSERR_INVALPARAM;
     }
@@ -775,7 +981,7 @@ fn added_details(c: &mut Ctx, i: usize, p: u32, wide: bool) -> u32 {
     let full_w = head + 2 * STRS.iter().sum::<u32>();
     let w = mem::heap_alloc(full_w, true);
     w32(w, full_w);
-    let r = send(c, i, ACMDM_DRIVER_DETAILS, w, 0);
+    let r = send(c, i, Msg::DriverDetails, w, 0);
     if r == 0 {
         let want = r32(p);
         let mut b: Vec<u8> = (0..head).map(|k| r8(w + k)).collect();
@@ -816,9 +1022,9 @@ fn acmDriverDetailsW(c: &mut Ctx) -> u32 {
     }
     driver_details(c, true)
 }
-const TAGS: [(u16, u32, &str); 4] = [(PCM, 16, "PCM"), (IMA, 20, "IMA ADPCM"), (MSADPCM, 50, "Microsoft ADPCM"), (MP3, 30, "MPEG Layer-3")];
+const TAGS: [(Tag, u32, &str); 4] = [(Tag::Pcm, 16, "PCM"), (Tag::Ima, 20, "IMA ADPCM"), (Tag::MsAdpcm, 50, "Microsoft ADPCM"), (Tag::Mp3, 30, "MPEG Layer-3")];
 /// The format tags there are (MP3 when the page decodes it)
-fn tags() -> &'static [(u16, u32, &'static str)] {
+fn tags() -> &'static [(Tag, u32, &'static str)] {
     if mp3_ok() { &TAGS } else { &TAGS[..3] }
 }
 fn format_tag_details(c: &mut Ctx, wide: bool) -> u32 {
@@ -826,13 +1032,13 @@ fn format_tag_details(c: &mut Ctx, wide: bool) -> u32 {
     let tags = tags();
     let t = match flags & 0xf {
         0 => tags.get(r32(p + 4) as usize),
-        1 => tags.iter().find(|t| t.0 as u32 == r32(p + 8)),
+        1 => tags.iter().find(|t| u32::from(u16::from(t.0)) == r32(p + 8)),
         _ => tags.iter().max_by_key(|t| t.1),
     };
     let Some(&(tag, size, name)) = t else { return ACMERR_NOTPOSSIBLE };
-    let i = tags.iter().position(|x| x.0 == tag).unwrap_or(0) as u32;
+    let i = tags.iter().position(|x| x.0 == tag).and_then(|i| u32::try_from(i).ok()).unwrap_or(0);
     w32(p + 4, i);
-    w32(p + 8, tag as u32);
+    w32(p + 8, u32::from(u16::from(tag)));
     w32(p + 12, size);
     w32(p + 16, 1);
     w32(p + 20, 1);
@@ -856,7 +1062,7 @@ fn acmFormatTagDetailsW(c: &mut Ctx) -> u32 {
         if open_added(c, i) == 0 {
             return MMSYSERR_ERROR;
         }
-        return send(c, i, ACMDM_FORMATTAG_DETAILS, c.a(1), c.a(2));
+        return send(c, i, Msg::FormatTagDetails, c.a(1), c.a(2));
     }
     format_tag_details(c, true)
 }
@@ -881,9 +1087,14 @@ fn acmFormatSuggest(c: &mut Ctx) -> u32 {
         return suggest_added(c, i, src, dst, n, c.a(4));
     }
     let s = read_fmt(src);
-    if !matches!(s.tag, IMA | MSADPCM | PCM) && !(s.tag == MP3 && mp3_ok()) || s.bad {
+    let takes = match s.tag {
+        Tag::Ima | Tag::MsAdpcm | Tag::Pcm => true,
+        Tag::Mp3 => mp3_ok(),
+        Tag::Other(_) => false,
+    };
+    if !takes || s.bad {
         if had == 0 {
-            for i in (0..added_count()).rev() {
+            for i in added_slots() {
                 if added(i).is_some() && suggest_added(c, i, src, dst, n, c.a(4)) == 0 {
                     return 0;
                 }
@@ -892,7 +1103,7 @@ fn acmFormatSuggest(c: &mut Ctx) -> u32 {
         return ACMERR_NOTPOSSIBLE;
     }
     let ch = s.channels.max(1) as u32;
-    w16(dst, PCM);
+    w16(dst, u16::from(Tag::Pcm));
     w16(dst + 2, ch as u16);
     w32(dst + 4, s.rate);
     w32(dst + 8, s.rate.wrapping_mul(ch * 2)); // (as msacm32's own u32 product)
@@ -914,11 +1125,11 @@ fn acmStreamOpen(c: &mut Ctx) -> u32 {
     if let Some(i) = added_index(had) {
         return stream_open_added(c, i, ph, src, dst, c.a(4), c.a(5), c.a(6), flags);
     }
-    if had & 0xffff_0000 == ADDED || had & 0xffff_0000 == OPENED {
+    if let Hacm::Id(_) | Hacm::Opened(_) = Hacm::from(had) {
         return MMSYSERR_INVALHANDLE;
     }
     if had == 0 {
-        for i in (0..added_count()).rev() {
+        for i in added_slots() {
             if added(i).is_some() && stream_open_added(c, i, ph, src, dst, c.a(4), c.a(5), c.a(6), flags) == 0 {
                 return 0;
             }
@@ -927,11 +1138,11 @@ fn acmStreamOpen(c: &mut Ctx) -> u32 {
     let (s, d) = (read_fmt(src), read_fmt(dst));
     if !supported(&s, &d) {
         // (once a pair: which codecs games ask for, MP3 = 0x55, shows in corpus logs)
-        static SEEN: Mutex<Vec<(u16, u16)>> = Mutex::new(Vec::new());
+        static SEEN: Mutex<Vec<(Tag, Tag)>> = Mutex::new(Vec::new());
         let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
         if !seen.contains(&(s.tag, d.tag)) {
             seen.push((s.tag, d.tag));
-            eprintln!("sake: acm: no conversion from format {:#x} ({} Hz, {} ch) to {:#x} ({} bit)", s.tag, s.rate, s.channels, d.tag, d.bits);
+            eprintln!("sake: acm: no conversion from format {:#x} ({} Hz, {} ch) to {:#x} ({} bit)", u16::from(s.tag), s.rate, s.channels, u16::from(d.tag), d.bits);
         }
         if ph != 0 {
             putp(ph, 0);
@@ -942,12 +1153,8 @@ fn acmStreamOpen(c: &mut Ctx) -> u32 {
     if flags & 1 != 0 {
         return 0;
     }
-    let h = {
-        let mut n = NEXT.lock().unwrap();
-        *n += 1;
-        *n
-    };
-    let mp3 = if s.tag == MP3 {
+    let h = next_has();
+    let mp3 = if s.tag == Tag::Mp3 {
         let Some(dec) = kura::adec::open("mp3", s.rate, s.channels as u32, &[]) else {
             putp(ph, 0);
             return ACMERR_NOTPOSSIBLE;
@@ -956,31 +1163,31 @@ fn acmStreamOpen(c: &mut Ctx) -> u32 {
     } else {
         None
     };
-    STREAMS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, Stream { src: s, dst: d, mp3 });
-    putp(ph, h);
+    lock(&STREAMS).get_or_insert_with(HashMap::default).insert(h, Stream { src: s, dst: d, mp3 });
+    putp(ph, h.0);
     0
 }
-fn with<R>(h: u32, f: impl FnOnce(&Stream) -> R) -> Option<R> {
-    STREAMS.lock().unwrap().get_or_insert_with(HashMap::default).get(&h).map(f)
+fn with<R>(h: Has, f: impl FnOnce(&Stream) -> R) -> Option<R> {
+    lock(&STREAMS).get_or_insert_with(HashMap::default).get(&h).map(f)
 }
 fn acmStreamClose(c: &mut Ctx) -> u32 {
-    if let Some(r) = guest_close(c, c.a(0)) {
+    if let Some(r) = guest_close(c, Has(c.a(0))) {
         return r;
     }
-    STREAMS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&c.a(0));
+    lock(&STREAMS).get_or_insert_with(HashMap::default).remove(&Has(c.a(0)));
     0
 }
 /// acmStreamSize(has, cbInput, pdwOutputBytes, flags): SOURCE (0) or DESTINATION (1)
 fn acmStreamSize(c: &mut Ctx) -> u32 {
-    let (h, n, out, flags) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (h, n, out, flags) = (Has(c.a(0)), c.a(1), c.a(2), c.a(3));
     if let Some(r) = guest_size(c, h, n, out, flags) {
         return r;
     }
-    let Some((s, d)) = with(h, |st| (st.src, st.dst)) else { return 5 };
-    let ch = s.channels.max(1) as u32;
-    let v = if s.tag == MP3 {
+    let Some((s, d)) = with(h, |st| (st.src, st.dst)) else { return MMSYSERR_INVALHANDLE };
+    let ch = u32::from(s.channels.max(1));
+    let v = if s.tag == Tag::Mp3 {
         mp3_size(&s, &d, n, flags & 0xf != 0)
-    } else if s.tag == PCM {
+    } else if s.tag == Tag::Pcm {
         // frames at the other rate, rounded up
         let (from, to) = if flags & 0xf == 0 { (s, d) } else { (d, s) };
         let frames = u64::from(n / u32::from(from.align.max(1)));
@@ -999,112 +1206,114 @@ fn acmStreamSize(c: &mut Ctx) -> u32 {
     put32(out, v);
     if v == 0 { ACMERR_NOTPOSSIBLE } else { 0 }
 }
+/// A byte count that does not fit 32 bits: the most there is.
+fn sat32<T: TryInto<u32>>(v: T) -> u32 {
+    v.try_into().unwrap_or(u32::MAX)
+}
+/// A guest's 32-bit count as an index (every host's usize holds it)
+fn us(v: u32) -> usize {
+    usize::try_from(v).unwrap_or(usize::MAX)
+}
 /// MP3's sizes as l3codecp gives them (winref acmmp3): a frame's output for each block of
 /// the source begun (nBlockSize, else a frame at the average byte rate), and for an output
 /// size the source of the whole frames it holds.
-/// A byte count that does not fit 32 bits: the most there is.
-fn sat32(v: u64) -> u32 {
-    u32::try_from(v).unwrap_or(u32::MAX)
-}
 fn mp3_size(s: &Fmt, d: &Fmt, n: u32, from_dst: bool) -> u32 {
-    let spf = mp3_spf(s) as u64;
+    let spf = u64::from(mp3_spf(s));
     let block = if s.block != 0 { u32::from(s.block) } else { sat32(u64::from(s.avg) * spf / u64::from(s.rate.max(1))).max(1) };
     let dst_frame = sat32((spf * u64::from(d.rate)).div_ceil(u64::from(s.rate.max(1))) * u64::from(d.align)).max(1);
     if from_dst { (n / dst_frame).saturating_mul(block) } else { n.div_ceil(block).saturating_mul(dst_frame) }
 }
 fn acmStreamPrepareHeader(c: &mut Ctx) -> u32 {
-    let h = c.a(1);
-    if let Some(r) = guest_prepare(c, c.a(0), h, c.a(2)) {
+    let (has, h) = (Has(c.a(0)), c.a(1));
+    if let Some(r) = guest_prepare(c, has, h, c.a(2)) {
         return r;
     }
     // (l3codecp refuses a header with no source: winref acmmp3, its probe's last call)
-    let p = mem::ps();
-    if with(c.a(0), |st| st.src.tag == MP3).unwrap_or(false) && r32(h + 8 + 2 * p) == 0 {
+    if with(has, |st| st.src.tag == Tag::Mp3).unwrap_or(false) && Hdr::SrcLen.get(h) == 0 {
         return MMSYSERR_INVALPARAM;
     }
-    w32(h + 4, r32(h + 4) | 0x0002_0000);
+    Hdr::Status.set(h, Hdr::Status.get(h) | STATUSF_PREPARED);
     0
 }
 fn acmStreamUnprepareHeader(c: &mut Ctx) -> u32 {
     let h = c.a(1);
-    if let Some(r) = guest_unprepare(c, c.a(0), h) {
+    if let Some(r) = guest_unprepare(c, Has(c.a(0)), h) {
         return r;
     }
-    w32(h + 4, r32(h + 4) & !0x0002_0000);
+    Hdr::Status.set(h, Hdr::Status.get(h) & !STATUSF_PREPARED);
     0
 }
 /// acmStreamConvert(has, ACMSTREAMHEADER*, flags)
 fn acmStreamConvert(c: &mut Ctx) -> u32 {
-    let (h, hdr) = (c.a(0), c.a(1));
-    let (h, hdr, flags) = (h, hdr, c.a(2));
+    let (h, hdr, flags) = (Has(c.a(0)), c.a(1), c.a(2));
     if let Some(r) = guest_convert(c, h, hdr, flags) {
         return r;
     }
-    let Some((s, d, mp3)) = with(h, |st| (st.src, st.dst, st.mp3.clone())) else { return 5 };
-    // ACMSTREAMHEADER: cbStruct, fdwStatus, dwUser, pbSrc, cbSrcLength, cbSrcLengthUsed,
-    // dwSrcUser, pbDst, cbDstLength, cbDstLengthUsed (the pointer-sized ones 8 bytes on x64)
-    let p = mem::ps();
-    let (o_src, o_dst) = (8 + p, 8 + 3 * p + 8);
-    let (src, slen, dst, dlen) = (rp(hdr + o_src), r32(hdr + o_src + p), rp(hdr + o_dst), r32(hdr + o_dst + p));
-    let (o_sused, o_dused) = (o_src + p + 4, o_dst + p + 4);
-    let (used_in, used_out) = if let Some(m) = mp3 {
-        let input = mem::slice(src, if mem::guest(src, slen) { slen } else { 0 });
-        let n = mp3_native(&s);
-        // (the decoder's frames that fit, at its rate)
-        let room = (dlen / d.align.max(1) as u32) as usize;
-        let frames = (room as u64 * s.rate as u64 / d.rate.max(1) as u64).min(usize::MAX as u64 / 4);
-        let (out, used) = mp3_convert(&mut m.lock().unwrap_or_else(|e| e.into_inner()), input, frames as usize * n.channels as usize, flags & 0x10 != 0, flags & 0x20 != 0);
-        let mut bytes: Vec<u8> = out.iter().flat_map(|v| v.to_le_bytes()).collect();
-        if (d.bits, d.channels, d.rate) != (16, n.channels, n.rate) {
-            bytes = pcm_convert(&n, &d, &bytes, room);
-            // (a format whose block align is not its frame's)
-            bytes.truncate(room * d.align as usize);
-        }
-        mem::write(dst, &bytes);
-        (used as u32, bytes.len() as u32)
-    } else if s.tag == PCM {
-        let sa = s.align.max(1) as u32;
-        let n = slen / sa * sa;
-        let input = mem::slice(src, if mem::guest(src, n) { n } else { 0 });
-        let room = (dlen / d.align.max(1) as u32) as usize;
-        let mut out = pcm_convert(&s, &d, input, room);
-        out.truncate(room * d.align as usize);
-        mem::write(dst, &out);
-        (input.len() as u32, out.len() as u32)
-    } else {
-        let ch = s.channels.max(1) as usize;
-        let align = s.align.max(1) as u32;
-        let per_block = sat32(u64::from(s.spb) * ch as u64 * 2);
-        let blocks = (slen / align).min(dlen / per_block.max(1));
-        if blocks == 0 {
-            // (less than a block, without ACM_STREAMCONVERTF_BLOCKALIGN too)
-            w32(hdr + o_sused, 0);
-            w32(hdr + o_dused, 0);
-            return MMSYSERR_INVALPARAM;
-        }
-        if !headers_ok(&s, src, blocks) {
-            w32(hdr + o_sused, blocks * align);
-            w32(hdr + o_dused, 0);
-            w32(hdr + 4, r32(hdr + 4) | 0x0001_0000);
-            return 0;
-        }
-        let mut out = Vec::with_capacity((blocks * per_block / 2) as usize);
-        for k in 0..blocks {
-            let b = mem::slice(src + k * align, align);
-            if s.tag == IMA {
-                ima_block(b, ch, s.spb as usize, &mut out);
-            } else {
-                ms_block(b, ch, s.spb as usize, &mut out);
+    let Some((s, d, mp3)) = with(h, |st| (st.src, st.dst, st.mp3.clone())) else { return MMSYSERR_INVALHANDLE };
+    let (src, slen, dst, dlen) = (Hdr::Src.get(hdr), Hdr::SrcLen.get(hdr), Hdr::Dst.get(hdr), Hdr::DstLen.get(hdr));
+    // (the destination's whole frames)
+    let room = us(dlen / u32::from(d.align.max(1)));
+    let (used_in, used_out) = match (s.tag, mp3) {
+        (Tag::Mp3, Some(m)) => {
+            let input = mem::slice(src, if mem::guest(src, slen) { slen } else { 0 });
+            let n = mp3_native(&s);
+            // (the decoder's frames that fit, at its rate)
+            let frames = (room as u64 * u64::from(s.rate) / u64::from(d.rate.max(1))).min(usize::MAX as u64 / 4);
+            let (out, used) = mp3_convert(&mut lock(&m), input, us(sat32(frames)) * usize::from(n.channels), flags & 0x10 != 0, flags & 0x20 != 0);
+            let mut bytes: Vec<u8> = out.iter().flat_map(|v| v.to_le_bytes()).collect();
+            if (d.bits, d.channels, d.rate) != (16, n.channels, n.rate) {
+                bytes = pcm_convert(&n, &d, &bytes, room);
+                // (a format whose block align is not its frame's)
+                bytes.truncate(room * usize::from(d.align));
             }
+            mem::write(dst, &bytes);
+            (sat32(used), sat32(bytes.len()))
         }
-        let bytes: Vec<u8> = out.iter().flat_map(|v| v.to_le_bytes()).collect();
-        mem::write(dst, &bytes);
-        (blocks * align, bytes.len() as u32)
+        (Tag::Pcm, _) => {
+            let sa = u32::from(s.align.max(1));
+            let n = slen / sa * sa;
+            let input = mem::slice(src, if mem::guest(src, n) { n } else { 0 });
+            let mut out = pcm_convert(&s, &d, input, room);
+            out.truncate(room * usize::from(d.align));
+            mem::write(dst, &out);
+            (sat32(input.len()), sat32(out.len()))
+        }
+        (Tag::Ima | Tag::MsAdpcm, _) => {
+            let ch = usize::from(s.channels.max(1));
+            let align = u32::from(s.align.max(1));
+            let per_block = sat32(u64::from(s.spb) * ch as u64 * 2);
+            let blocks = (slen / align).min(dlen / per_block.max(1));
+            if blocks == 0 {
+                // (less than a block, without ACM_STREAMCONVERTF_BLOCKALIGN too)
+                Hdr::SrcUsed.set(hdr, 0);
+                Hdr::DstUsed.set(hdr, 0);
+                return MMSYSERR_INVALPARAM;
+            }
+            if !headers_ok(&s, src, blocks) {
+                Hdr::SrcUsed.set(hdr, blocks * align);
+                Hdr::DstUsed.set(hdr, 0);
+                Hdr::Status.set(hdr, Hdr::Status.get(hdr) | STATUSF_DONE);
+                return 0;
+            }
+            let mut out = Vec::with_capacity(us(blocks * per_block / 2));
+            for k in 0..blocks {
+                let b = mem::slice(src + k * align, align);
+                if s.tag == Tag::Ima {
+                    ima_block(b, ch, us(s.spb), &mut out);
+                } else {
+                    ms_block(b, ch, us(s.spb), &mut out);
+                }
+            }
+            let bytes: Vec<u8> = out.iter().flat_map(|v| v.to_le_bytes()).collect();
+            mem::write(dst, &bytes);
+            (blocks * align, sat32(bytes.len()))
+        }
+        // (acmStreamOpen opens no other pair: an MP3 stream always has its decoder)
+        (Tag::Mp3 | Tag::Other(_), _) => return ACMERR_NOTPOSSIBLE,
     };
-    w32(hdr + o_sused, used_in);
-    w32(hdr + o_dused, used_out);
-    // ACMSTREAMHEADER_STATUSF_DONE
-    w32(hdr + 4, r32(hdr + 4) | 0x0001_0000);
+    Hdr::SrcUsed.set(hdr, used_in);
+    Hdr::DstUsed.set(hdr, used_out);
+    Hdr::Status.set(hdr, Hdr::Status.get(hdr) | STATUSF_DONE);
     0
 }
 
@@ -1208,11 +1417,11 @@ mod proptests {
         let mut b = vec![0u8; 4 * ch + (spb - 1).div_ceil(8) * 4 * ch];
         let mut want = vec![0i16; spb * ch];
         for (c, s) in pcm.iter().enumerate() {
-            let (mut pred, mut idx) = (s[0] as i32, 0i32);
+            let (mut pred, mut idx) = (s[0] as i32, 0usize);
             b[4 * c..4 * c + 4].copy_from_slice(&[s[0] as u8, (s[0] >> 8) as u8, 0, 0]);
             want[c] = s[0];
             for i in 1..spb {
-                let step = IMA_STEP[idx as usize];
+                let step = IMA_STEP[idx];
                 let mut diff = s[i] as i32 - pred;
                 let mut nib = 0;
                 if diff < 0 {
@@ -1228,7 +1437,7 @@ mod proptests {
                     }
                 }
                 pred = if nib & 8 != 0 { pred - d } else { pred + d }.clamp(-32768, 32767);
-                idx = (idx + IMA_INDEX[nib as usize]).clamp(0, 88);
+                idx = idx.saturating_add_signed(IMA_INDEX[nib as usize]).min(88);
                 want[i * ch + c] = pred as i16;
                 let k = i - 1;
                 let at = 4 * ch + (k / 8) * 4 * ch + 4 * c + (k % 8) / 2;
@@ -1258,13 +1467,38 @@ mod proptests {
     /// msacmdrv.h structs are pack(1): the sizes a driver built with it expects.
     #[test]
     fn driver_struct_layouts() {
-        assert_eq!(layout(&INST, 4).1, 40);
-        assert_eq!(layout(&INST, 8).1, 68);
-        assert_eq!(layout(&HDR, 4).1, 84);
-        assert_eq!(layout(&HDR, 8).1, 124);
+        assert_eq!(Inst::size(4), 40);
+        assert_eq!(Inst::size(8), 68);
+        assert_eq!(Hdr::size(4), 84);
+        assert_eq!(Hdr::size(8), 124);
+        assert_eq!(OpenDesc::size(4), 36);
+        assert_eq!(Suggest::size(8), 32);
         // ACMDRVSTREAMHEADER.pbSrc follows dwUser; on x64 padshNext sits right after fdwConvert
-        assert_eq!(layout(&HDR, 8).0[3], 16);
-        assert_eq!(layout(&HDR, 8).0[12], 68);
+        assert_eq!(Hdr::Src.at(8), 16);
+        assert_eq!(Hdr::Next.at(8), 68);
+        // (the program's own header's fields, as acmStreamConvert reads them: pbSrc at 8 + p,
+        // pbDst at 8 + 3p + 8)
+        for p in [4, 8] {
+            assert_eq!((Hdr::Src.at(p), Hdr::SrcLen.at(p), Hdr::SrcUsed.at(p)), (8 + p, 8 + 2 * p, 12 + 2 * p));
+            assert_eq!((Hdr::Dst.at(p), Hdr::DstLen.at(p), Hdr::DstUsed.at(p)), (16 + 3 * p, 16 + 4 * p, 20 + 4 * p));
+            assert_eq!(Hdr::Status.at(p), 4);
+        }
+        // every field in ALL once, in order (a field left out of ALL would sit at the end)
+        for (k, f) in Hdr::ALL.iter().enumerate() {
+            assert_eq!(Hdr::ALL.iter().position(|g| g == f), Some(k));
+        }
+        assert_eq!(Hdr::ALL[..11], Hdr::OWN);
+        fn same<F: Fields>() {
+            for ps in [4, 8] {
+                let (offs, size) = layout(&F::ALL.iter().map(|f| f.is_ptr()).collect::<Vec<_>>(), ps);
+                assert_eq!(F::ALL.iter().map(|f| f.at(ps)).collect::<Vec<_>>(), offs);
+                assert_eq!(F::size(ps), size);
+            }
+        }
+        same::<Inst>();
+        same::<Hdr>();
+        same::<OpenDesc>();
+        same::<Suggest>();
     }
 
     proptest! {
@@ -1342,7 +1576,7 @@ mod mp3_tests {
     use proptest::prelude::*;
 
     fn pcm(channels: u16, rate: u32, bits: u16, align: u16) -> Fmt {
-        Fmt { tag: PCM, channels, rate, avg: rate.wrapping_mul(align as u32), align, bits, spb: 1, block: 0, bad: false }
+        Fmt { tag: Tag::Pcm, channels, rate, avg: rate.wrapping_mul(align as u32), align, bits, spb: 1, block: 0, bad: false }
     }
 
     /// pcm_convert as it was: the whole output, then cut to the destination.
@@ -1600,8 +1834,8 @@ mod mp3_tests {
     #[test]
     fn sizes_as_l3codecp() {
         // winref acmmp3 on Windows: 64 kbps 44.1 kHz stereo, nBlockSize 208, 16-bit stereo out
-        let mut s = Fmt { tag: MP3, channels: 2, rate: 44100, avg: 8000, align: 1, bits: 0, spb: 1, block: 208, bad: false };
-        let d = Fmt { tag: PCM, channels: 2, rate: 44100, avg: 176400, align: 4, bits: 16, spb: 1, block: 0, bad: false };
+        let mut s = Fmt { tag: Tag::Mp3, channels: 2, rate: 44100, avg: 8000, align: 1, bits: 0, spb: 1, block: 208, bad: false };
+        let d = Fmt { tag: Tag::Pcm, channels: 2, rate: 44100, avg: 176400, align: 4, bits: 16, spb: 1, block: 0, bad: false };
         for (n, want) in [(1, 4608), (208, 4608), (209, 9216), (4096, 92160), (100000, 2216448), (1000, 23040), (4388, 101376)] {
             assert_eq!(mp3_size(&s, &d, n, false), want, "{n}");
         }
@@ -1609,8 +1843,8 @@ mod mp3_tests {
             assert_eq!(mp3_size(&s, &d, n, true), want, "{n}");
         }
         // 22.05 kHz mono 32 kbps, nBlockSize 104: 576-sample frames
-        let m = Fmt { tag: MP3, channels: 1, rate: 22050, avg: 4000, align: 1, bits: 0, spb: 1, block: 104, bad: false };
-        let md = Fmt { tag: PCM, channels: 1, rate: 22050, avg: 44100, align: 2, bits: 16, spb: 1, block: 0, bad: false };
+        let m = Fmt { tag: Tag::Mp3, channels: 1, rate: 22050, avg: 4000, align: 1, bits: 0, spb: 1, block: 104, bad: false };
+        let md = Fmt { tag: Tag::Pcm, channels: 1, rate: 22050, avg: 44100, align: 2, bits: 16, spb: 1, block: 0, bad: false };
         assert_eq!(mp3_size(&m, &md, 4096, false), 46080);
         // no nBlockSize: a frame at the average byte rate (8000 * 1152 / 44100 = 208)
         s.block = 0;

@@ -6,6 +6,10 @@ use super::*;
 use crate::test_guest::{call, enter, guest_thread, hash, snapshot, Rng};
 use std::fmt::Write;
 
+const PCM: u16 = 1;
+const IMA: u16 = 0x11;
+const MSADPCM: u16 = 2;
+const MP3: u16 = 0x55;
 const TAGS_TRIED: [u16; 6] = [PCM, IMA, MSADPCM, MP3, 0x9999, 0];
 const RATES: [u32; 8] = [0, 1, 8000, 11025, 22050, 44100, 48000, 0xffff_ffff];
 
