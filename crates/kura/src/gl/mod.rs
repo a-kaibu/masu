@@ -2475,4 +2475,6 @@ mod draw_tests;
 #[cfg(test)]
 mod unpack_tests;
 #[cfg(test)]
+mod format_golden_tests;
+#[cfg(test)]
 mod limits_tests;
