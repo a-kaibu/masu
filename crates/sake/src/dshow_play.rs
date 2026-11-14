@@ -1092,3 +1092,7 @@ mod tests {
         assert!(wait >= Duration::from_millis(500) || read(|m| !m.is_empty()), "stopped: {wait:?}");
     }
 }
+
+#[cfg(test)]
+#[path = "dshow_play_snapshot_tests.rs"]
+mod snapshot_tests;
