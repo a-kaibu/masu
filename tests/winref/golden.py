@@ -53,11 +53,6 @@ def sources(probe):
             if "// msstl" in open(cpp).read():
                 extra += [os.path.join(shim, f) for f in sorted(os.listdir(shim))]
             return [cpp] + extra
-    elif base.startswith("kikizake_"):
-        # (a kikizake suite: its case file compiled into the executor; hashed as kikizake's
-        # runner/golden.py does)
-        k = kikizake()
-        return [os.path.join(k, "cases", base[9:] + ".txt"), os.path.join(k, "runner", "kikizake.c"), os.path.join(k, "runner", "build.sh")]
     elif base.startswith("replay_"):
         # (a recorded D3D trace played back: tests/replay; the converter is part of it)
         rep = os.path.join(ROOT, "tests", "replay")
@@ -77,6 +72,10 @@ def sources(probe):
 
 
 def src_hash(probe):
+    if probe.startswith("kikizake_"):
+        # (a kikizake suite: kikizake's runner/golden.py says what it is built from)
+        import subprocess
+        return subprocess.run(["python3", os.path.join(kikizake(), "runner", "golden.py"), "src", probe], check=True, capture_output=True, text=True).stdout.strip()
     h = hashlib.sha256()
     for f in sources(probe):
         if os.path.exists(f):
