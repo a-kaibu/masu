@@ -483,11 +483,11 @@ impl<'a, M: Memory> X<'a, M> {
         Exit::Continue
     }
 
-    /// A far JMP/CALL (ptr16:16, or m16:16 / m16:32)?
+    /// A far JMP/CALL (ptr16:16 / ptr16:32, or m16:16 / m16:32 / m16:64)?
     fn far(&self) -> bool {
         match self.ins.op_kind(0) {
             OpKind::FarBranch16 | OpKind::FarBranch32 => true,
-            OpKind::Memory => matches!(self.ins.memory_size(), iced_x86::MemorySize::SegPtr16 | iced_x86::MemorySize::SegPtr32),
+            OpKind::Memory => matches!(self.ins.memory_size(), iced_x86::MemorySize::SegPtr16 | iced_x86::MemorySize::SegPtr32 | iced_x86::MemorySize::SegPtr64),
             _ => false,
         }
     }
@@ -886,6 +886,10 @@ impl<'a, M: Memory> X<'a, M> {
             }
 
             Jmp | Call if self.m16() && self.far() => self.far_transfer(),
+            // (a far transfer in 32-bit or long mode: to another code segment, which user-mode
+            // code here has none of; the ptr16:32 form panicked reading its operand as an
+            // immediate and the m16:32 one jumped to the offset, ignoring the selector)
+            Jmp | Call if self.far() => Exit::InvalidOpcode,
             Retf if self.m16() => {
                 let w = self.transfer_bits();
                 let ip = tryf!(self.pop(w));
