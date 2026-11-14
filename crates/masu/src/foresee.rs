@@ -13,7 +13,7 @@ use axum::{
     routing::get,
     Router,
 };
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -64,7 +64,7 @@ pub async fn build(trees: &Trees, tree: &str) -> String {
     let mut files = trees.list(tree).unwrap_or_default();
     files.sort();
     for (path, size) in &files {
-        let mut cache = HashMap::new();
+        let mut cache = crate::treefiles::ReadCache::default();
         let base = path.rsplit('/').next().unwrap_or(path);
         if base == "scene.pck" {
             out += &siglus(trees, tree, path, *size, &files).await;
@@ -85,7 +85,7 @@ pub async fn build(trees: &Trees, tree: &str) -> String {
 
 /// An archive's script members' lines (`members` in the archive's order; `script`: whether one
 /// is a script, by its name or its first bytes).
-async fn members_lines(trees: &Trees, tree: &str, path: &str, mut members: Vec<foresee::Member>, cache: &mut HashMap<u64, std::sync::Arc<[u8]>>, by_bytes: Option<fn(&[u8]) -> bool>, scheme: foresee::Scheme) -> String {
+async fn members_lines(trees: &Trees, tree: &str, path: &str, mut members: Vec<foresee::Member>, cache: &mut crate::treefiles::ReadCache, by_bytes: Option<fn(&[u8]) -> bool>, scheme: foresee::Scheme) -> String {
     let mut out = String::new();
     // (in the archive's order: the chunks they lie in read once)
     members.sort_by_key(|m| m.segments[0].0);
@@ -124,7 +124,7 @@ async fn members_lines(trees: &Trees, tree: &str, path: &str, mut members: Vec<f
     out
 }
 
-async fn xp3(trees: &Trees, tree: &str, path: &str, cache: &mut HashMap<u64, std::sync::Arc<[u8]>>) -> String {
+async fn xp3(trees: &Trees, tree: &str, path: &str, cache: &mut crate::treefiles::ReadCache) -> String {
     let members = xp3_members(trees, tree, path, cache).await;
     let scheme = xp3_scheme(trees, tree, path, &members, cache).await;
     if scheme != foresee::Scheme::None {
@@ -135,7 +135,7 @@ async fn xp3(trees: &Trees, tree: &str, path: &str, cache: &mut HashMap<u64, std
 
 /// How an .xp3's members are encrypted (foresee::detect_scheme), from the first bytes of some
 /// of its images, sounds and scripts (those stored as they are, or small zlib'd ones).
-async fn xp3_scheme(trees: &Trees, tree: &str, path: &str, members: &[foresee::Member], cache: &mut HashMap<u64, std::sync::Arc<[u8]>>) -> foresee::Scheme {
+async fn xp3_scheme(trees: &Trees, tree: &str, path: &str, members: &[foresee::Member], cache: &mut crate::treefiles::ReadCache) -> foresee::Scheme {
     let mut firsts: Vec<(String, u32, Vec<u8>)> = Vec::new();
     let (mut magic, mut text) = (0, 0);
     for m in members {
@@ -170,13 +170,13 @@ async fn xp3_scheme(trees: &Trees, tree: &str, path: &str, members: &[foresee::M
     foresee::detect_scheme(&samples)
 }
 
-async fn bgi(trees: &Trees, tree: &str, path: &str, cache: &mut HashMap<u64, std::sync::Arc<[u8]>>) -> String {
+async fn bgi(trees: &Trees, tree: &str, path: &str, cache: &mut crate::treefiles::ReadCache) -> String {
     let members = bgi_members(trees, tree, path, cache).await;
     members_lines(trees, tree, path, members, cache, Some(foresee::is_bgi_script), foresee::Scheme::None).await
 }
 
 /// An .xp3's members, from its index.
-async fn xp3_members(trees: &Trees, tree: &str, path: &str, cache: &mut HashMap<u64, std::sync::Arc<[u8]>>) -> Vec<foresee::Member> {
+async fn xp3_members(trees: &Trees, tree: &str, path: &str, cache: &mut crate::treefiles::ReadCache) -> Vec<foresee::Member> {
     let Some(head) = trees.read(tree, path, 0, 0x28, cache).await else { return Vec::new() };
     let Some(at) = foresee::xp3_index_at(&head) else { return Vec::new() };
     let Some(len) = trees.read(tree, path, at, 17, cache).await.as_deref().and_then(foresee::xp3_index_len) else { return Vec::new() };
@@ -188,7 +188,7 @@ async fn xp3_members(trees: &Trees, tree: &str, path: &str, cache: &mut HashMap<
 }
 
 /// A BGI .arc's members, from its index.
-async fn bgi_members(trees: &Trees, tree: &str, path: &str, cache: &mut HashMap<u64, std::sync::Arc<[u8]>>) -> Vec<foresee::Member> {
+async fn bgi_members(trees: &Trees, tree: &str, path: &str, cache: &mut crate::treefiles::ReadCache) -> Vec<foresee::Member> {
     let Some(len) = trees.read(tree, path, 0, 16, cache).await.as_deref().and_then(foresee::bgi_index_len) else { return Vec::new() };
     if len > foresee::INDEX_MAX as u64 {
         return Vec::new();
@@ -204,7 +204,7 @@ pub async fn members(trees: &Trees, tree: &str) -> String {
     let mut files = trees.list(tree).unwrap_or_default();
     files.sort();
     for (path, _) in &files {
-        let mut cache = HashMap::new();
+        let mut cache = crate::treefiles::ReadCache::default();
         let ms = if path.ends_with(".xp3") {
             xp3_members(trees, tree, path, &mut cache).await
         } else if path.ends_with(".arc") {
@@ -251,10 +251,10 @@ async fn siglus(trees: &Trees, tree: &str, path: &str, size: u64, files: &[(Stri
     }
     let dir = path.rsplit_once('/').map_or("", |d| d.0);
     let gameexe = if dir.is_empty() { "gameexe.dat".to_string() } else { format!("{dir}/gameexe.dat") };
-    let mut cache = HashMap::new();
+    let mut cache = crate::treefiles::ReadCache::default();
     let Some(scene) = trees.read(tree, path, 0, size, &mut cache).await else { return String::new() };
     let game = match files.iter().find(|f| f.0 == gameexe) {
-        Some((p, n)) => trees.read(tree, p, 0, *n, &mut HashMap::new()).await.unwrap_or_default(),
+        Some((p, n)) => trees.read(tree, p, 0, *n, &mut crate::treefiles::ReadCache::default()).await.unwrap_or_default(),
         None => Vec::new(),
     };
     tokio::task::spawn_blocking(move || siglus_lines(scene, &game)).await.unwrap_or_default()

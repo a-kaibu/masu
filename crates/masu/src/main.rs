@@ -40,6 +40,9 @@ mod saves;
 mod serve;
 mod tls_relay;
 mod treefiles;
+/// A packed tree's list (`trees/<name>.tsv`), shared with kura's file system.
+#[path = "../../kura/src/tree_list.rs"]
+pub mod tree_list;
 mod unpack;
 mod update;
 mod ttc;

@@ -26,16 +26,11 @@ struct File {
 
 /// A tree list's files (trees/<name>.tsv: "f" lines, path in column 4, size 5, chunks 6).
 fn tree(text: &str) -> Vec<File> {
-    let unesc = |s: &str| s.replace("\\t", "\t").replace("\\n", "\n").replace("\\\\", "\\");
-    text.lines()
-        .skip(1)
+    crate::tree_list::good_lines(text)
         .filter_map(|l| {
-            let f: Vec<&str> = l.split('\t').collect();
-            if f.len() != 6 || f[0] != "f" {
-                return None;
-            }
-            let chunks = f[5].split(',').filter(|c| !c.is_empty()).filter_map(|c| c.split_once(':').map(|(h, n)| (h.to_string(), n.parse().unwrap_or(0)))).collect();
-            Some(File { path: unesc(f[3]), size: f[4].parse().ok()?, chunks })
+            let c = l.chunks()?;
+            let chunks = c.list().iter().map(|c| (c.id.map(|id| id.to_string()).unwrap_or_default(), c.len.get())).collect();
+            Some(File { size: c.size(), chunks, path: l.path })
         })
         .collect()
 }
@@ -503,7 +498,7 @@ fn replay_counts_what_hints_foresaw() {
     let pretty = compact("{\n  \"run\": \"Z:\\\\masu\\\\a b.exe\",\n  \"mounts\": [\n    \"/masu/game=g 1\"\n  ],\n  \"engine\": \"Siglus \\\"x\\\"\"\n}");
     assert_eq!(mounts(&pretty), vec!["g 1"]);
     assert_eq!(field(&pretty, "run"), Some("Z:\\\\masu\\\\a b.exe"));
-    let t = tree("v1\t\t\nf\t0\t0\tvoice/a\\tb.ogg\t3\taa:1,bb:2\nd\t0\t0\tvoice\t0\t\n");
+    let t = tree("v1\t\t\nf\t0\t0\tvoice/a\\tb.ogg\t3\taa000000000000000000000000000000:1,:2\nd\t0\t0\tvoice\t0\t\n");
     assert_eq!((t.len(), t[0].path.as_str(), t[0].chunks.len()), (1, "voice/a\tb.ogg", 2));
 }
 

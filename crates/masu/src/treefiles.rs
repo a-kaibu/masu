@@ -15,46 +15,28 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
-struct Entry {
-    size: u64,
-    chunks: Vec<String>,
-    /// where each chunk starts and, last, the size (chunks are cut by content: pack.rs, cdc.rs)
-    starts: Vec<u64>,
-}
+use crate::tree_list::{ChunkId, Chunks};
+
+/// A file of a tree list: its chunks (cut by content: pack.rs, cdc.rs), checked when the list is
+/// read (tree_list.rs: a damaged list's sums, hashes and lengths are not a file of it).
+struct Entry(Chunks);
 
 impl Entry {
-    /// The chunk that holds byte `at`.
-    fn index(&self, at: u64) -> u64 {
-        (self.starts.partition_point(|&x| x <= at) - 1) as u64
+    fn size(&self) -> u64 {
+        self.0.size()
+    }
+
+    /// The chunk that holds byte `at` (one of the file's: `at` < its size).
+    fn index(&self, at: u64) -> usize {
+        self.0.starts().partition_point(|&x| x <= at).saturating_sub(1)
     }
 
     /// Where chunk `i` starts, and its length.
-    fn span(&self, i: u64) -> (u64, u64) {
-        let s = &self.starts;
-        (s[i as usize], s[i as usize + 1] - s[i as usize])
+    fn span(&self, i: usize) -> Option<(u64, u64)> {
+        let s = self.0.starts();
+        Some((*s.get(i)?, s.get(i + 1)? - s.get(i)?))
     }
 }
-
-/// A tree list's chunks of one file (`<hash>:<length>,...`): the hashes, and where each starts;
-/// `None` if the lengths do not add up to `size`, a length is past [`CHUNK_MAX`], or a hash is
-/// not hex (empty: a chunk of zeros). Checked here, once (review b01: a damaged list's sums
-/// wrapped, its non-ASCII hashes panicked at `&hash[..2]`, its lengths sized allocations).
-fn parse_chunks(field: &str, size: u64) -> Option<(Vec<String>, Vec<u64>)> {
-    let (mut hashes, mut starts, mut at) = (Vec::new(), vec![0u64], 0u64);
-    for c in field.split(',').filter(|c| !c.is_empty()) {
-        let (h, n) = c.split_once(':')?;
-        if !(h.is_empty() || h.len() > 2 && h.bytes().all(|b| b.is_ascii_hexdigit())) {
-            return None;
-        }
-        at = at.checked_add(n.parse::<u64>().ok().filter(|&n| n > 0 && n <= CHUNK_MAX)?)?;
-        hashes.push(h.to_string());
-        starts.push(at);
-    }
-    (at == size).then_some((hashes, starts))
-}
-
-/// A chunk's length at most (FastCDC's longest is 4x its average, which pack.rs caps at 64 MiB).
-const CHUNK_MAX: u64 = 512 << 20;
 
 /// Decoded chunks kept for the next reads (a media element asking for small ranges one after
 /// another decoded the same chunk each time: review b01), this many bytes in all.
@@ -63,29 +45,29 @@ const DECODED_MAX: usize = 64 << 20;
 /// Decoded chunks by hash, newest last.
 #[derive(Default)]
 struct Decoded {
-    map: HashMap<String, Arc<[u8]>>,
-    order: std::collections::VecDeque<String>,
+    map: HashMap<ChunkId, Arc<[u8]>>,
+    order: std::collections::VecDeque<ChunkId>,
     bytes: usize,
 }
 
 impl Decoded {
-    fn get(&mut self, k: &str) -> Option<Arc<[u8]>> {
-        let d = self.map.get(k)?.clone();
-        self.order.retain(|x| x != k);
-        self.order.push_back(k.to_string());
+    fn get(&mut self, k: ChunkId) -> Option<Arc<[u8]>> {
+        let d = self.map.get(&k)?.clone();
+        self.order.retain(|x| *x != k);
+        self.order.push_back(k);
         Some(d)
     }
 
-    fn put(&mut self, k: &str, d: Arc<[u8]>) {
+    fn put(&mut self, k: ChunkId, d: Arc<[u8]>) {
         if d.len() > DECODED_MAX / 4 {
             return;
         }
-        if let Some(old) = self.map.insert(k.to_string(), d.clone()) {
+        if let Some(old) = self.map.insert(k, d.clone()) {
             self.bytes -= old.len();
-            self.order.retain(|x| x != k);
+            self.order.retain(|x| *x != k);
         }
         self.bytes += d.len();
-        self.order.push_back(k.to_string());
+        self.order.push_back(k);
         while self.bytes > DECODED_MAX {
             let Some(k) = self.order.pop_front() else { break };
             self.bytes -= self.map.remove(&k).map_or(0, |d| d.len());
@@ -131,17 +113,14 @@ impl Trees {
             return Some(t.clone());
         }
         let text = std::fs::read_to_string(&path).ok()?;
-        let mut lines = text.lines();
-        lines.next()?;
-        let unesc = |s: &str| s.replace("\\t", "\t").replace("\\n", "\n").replace("\\\\", "\\");
+        text.lines().next()?;
         let mut files = HashMap::new();
-        for l in lines {
-            let f: Vec<&str> = l.split('\t').collect();
-            if f.len() == 6 && f[0] == "f" {
-                let Ok(size) = f[4].parse() else { continue };
-                let Some((chunks, starts)) = parse_chunks(f[5], size) else { continue };
-                let e = Entry { size, chunks, starts };
-                files.insert(unesc(f[3]).to_lowercase(), Arc::new(e));
+        for l in crate::tree_list::good_lines(&text) {
+            match l.kind {
+                crate::tree_list::Kind::File(c) => {
+                    files.insert(l.path.to_lowercase(), Arc::new(Entry(c)));
+                }
+                crate::tree_list::Kind::Dir | crate::tree_list::Kind::Link(_) => {}
             }
         }
         let t = Arc::new(Tree { mtime, files, used: Default::default() });
@@ -239,17 +218,14 @@ fn decode(raw: &[u8], len: usize) -> Option<Vec<u8>> {
 
 impl Trees {
     /// Chunk `i` of `e`, decoded.
-    async fn chunk(&self, e: &Entry, i: u64) -> Result<Arc<[u8]>, StatusCode> {
-        let hash = e.chunks.get(i as usize).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
-        let len = e.span(i).1 as usize;
-        if hash.is_empty() {
-            return Ok(vec![0; len].into());
-        }
-        if let Some(d) = self.decoded.lock().unwrap().get(hash).filter(|d| d.len() == len) {
+    async fn chunk(&self, e: &Entry, i: usize) -> Result<Arc<[u8]>, StatusCode> {
+        let c = e.0.list().get(i).ok_or(StatusCode::INTERNAL_SERVER_ERROR)?;
+        let len = usize::try_from(c.len.get()).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let Some(id) = c.id else { return Ok(vec![0; len].into()) };
+        if let Some(d) = self.decoded.lock().unwrap().get(id).filter(|d| d.len() == len) {
             return Ok(d);
         }
-        let Some(dir) = hash.get(..2) else { return Err(StatusCode::INTERNAL_SERVER_ERROR) };
-        let logical = format!("chunks/{dir}/{hash}");
+        let logical = id.store_path();
         let remote = match self.remote.as_ref() {
             Some(remote) => remote.get(&logical).await.map_err(|_| StatusCode::BAD_GATEWAY)?,
             None => None,
@@ -263,7 +239,7 @@ impl Trees {
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
             .ok_or(StatusCode::INTERNAL_SERVER_ERROR)?
             .into();
-        self.decoded.lock().unwrap().put(hash, d.clone());
+        self.decoded.lock().unwrap().put(id, d.clone());
         Ok(d)
     }
 
@@ -277,7 +253,7 @@ impl Trees {
                 let (t, e) = (self.clone(), e.clone());
                 async move {
                     let data = t.chunk(&e, i).await.map_err(|s| std::io::Error::other(s.to_string()))?;
-                    let start = e.span(i).0;
+                    let start = e.span(i).ok_or_else(|| std::io::Error::other("chunk past the list"))?.0;
                     let from = if i == first { (a - start) as usize } else { 0 };
                     let to = if i == last { (b - start) as usize + 1 } else { data.len() };
                     // (a slice of the kept chunk, not a copy)
@@ -288,32 +264,35 @@ impl Trees {
     }
 }
 
+/// The chunks of one file [`Trees::read`] keeps for the next reads of it (by index).
+#[derive(Default)]
+pub struct ReadCache(HashMap<usize, Arc<[u8]>>);
+
 impl Trees {
     /// Tree `name`'s files: (path, lower case; size), in no order. None: no such tree.
     pub fn list(&self, name: &str) -> Option<Vec<(String, u64)>> {
-        Some(self.tree(name)?.files.iter().map(|(p, e)| (p.clone(), e.size)).collect())
+        Some(self.tree(name)?.files.iter().map(|(p, e)| (p.clone(), e.size())).collect())
     }
 
     /// Tree `name`'s file at `path` (lower case): bytes `a..a + len` (fewer at its end), the
     /// chunks it spans kept in `cache` (index -> bytes) for the next reads of the same file.
-    pub async fn read(&self, name: &str, path: &str, a: u64, len: u64, cache: &mut HashMap<u64, Arc<[u8]>>) -> Option<Vec<u8>> {
+    pub async fn read(&self, name: &str, path: &str, a: u64, len: u64, cache: &mut ReadCache) -> Option<Vec<u8>> {
         let e = self.tree(name)?.files.get(path)?.clone();
-        if a >= e.size || len == 0 {
+        if a >= e.size() || len == 0 {
             return Some(Vec::new());
         }
-        let b = (a + len).min(e.size) - 1;
+        let b = (a + len).min(e.size()) - 1;
         let mut out = Vec::with_capacity((b + 1 - a) as usize);
         for i in e.index(a)..=e.index(b) {
-            if !cache.contains_key(&i) {
+            if !cache.0.contains_key(&i) {
                 // (a few kept: the members of one archive lie side by side)
-                if cache.len() >= 8 {
-                    let k = *cache.keys().next().unwrap();
-                    cache.remove(&k);
+                if let Some(k) = cache.0.keys().next().copied().filter(|_| cache.0.len() >= 8) {
+                    cache.0.remove(&k);
                 }
-                cache.insert(i, self.chunk(&e, i).await.ok()?);
+                cache.0.insert(i, self.chunk(&e, i).await.ok()?);
             }
-            let d = &cache[&i];
-            let start = e.span(i).0;
+            let d = cache.0.get(&i)?;
+            let start = e.span(i)?.0;
             let from = a.max(start) - start;
             let to = (b + 1).min(start + d.len() as u64) - start;
             out.extend_from_slice(&d[from as usize..to as usize]);
@@ -335,22 +314,22 @@ pub async fn file(State(t): State<Trees>, Path((name, path)): Path<(String, Stri
         let tree = t.tree(&name).ok_or(StatusCode::NOT_FOUND)?;
         let e = tree.files.get(&path.to_lowercase()).ok_or(StatusCode::NOT_FOUND)?.clone();
         let r = Response::builder().header(header::CONTENT_TYPE, mime(&path)).header(header::ACCEPT_RANGES, "bytes");
-        let part = match range(&h, e.size) {
+        let part = match range(&h, e.size()) {
             None => None,
             Some(Some(p)) => Some(p),
             Some(None) => {
                 return Ok(r
                     .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                    .header(header::CONTENT_RANGE, format!("bytes */{}", e.size))
+                    .header(header::CONTENT_RANGE, format!("bytes */{}", e.size()))
                     .body(Body::empty())
                     .unwrap());
             }
         };
-        if e.size == 0 {
+        if e.size() == 0 {
             return Ok(r.header(header::CONTENT_LENGTH, 0).body(Body::empty()).unwrap());
         }
-        let (a, b) = part.unwrap_or((0, e.size - 1));
-        if part.is_none() && e.size <= MAX_PAGE && mime(&path).starts_with("text/html") {
+        let (a, b) = part.unwrap_or((0, e.size() - 1));
+        if part.is_none() && e.size() <= MAX_PAGE && mime(&path).starts_with("text/html") {
             use futures_util::TryStreamExt;
             let parts: Vec<axum::body::Bytes> = t.clone().bytes(e, a, b).try_collect().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let page: Vec<u8> = parts.concat();
@@ -359,7 +338,7 @@ pub async fn file(State(t): State<Trees>, Path((name, path)): Path<(String, Stri
         }
         let mut r = r.header(header::CONTENT_LENGTH, b - a + 1);
         if part.is_some() {
-            r = r.status(StatusCode::PARTIAL_CONTENT).header(header::CONTENT_RANGE, format!("bytes {a}-{b}/{}", e.size));
+            r = r.status(StatusCode::PARTIAL_CONTENT).header(header::CONTENT_RANGE, format!("bytes {a}-{b}/{}", e.size()));
         }
         Ok(r.body(Body::from_stream(t.clone().bytes(e, a, b))).unwrap())
     }
@@ -455,42 +434,24 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    fn id(i: u32) -> ChunkId {
+        let mut b = [0; 16];
+        b[..4].copy_from_slice(&i.to_le_bytes());
+        ChunkId(b)
+    }
+
     #[test]
     fn decoded_bounded() {
         let mut d = Decoded::default();
         for i in 0..100 {
-            d.put(&format!("{i:04x}"), vec![i as u8; 4 << 20].into());
+            d.put(id(i), vec![i as u8; 4 << 20].into());
             assert!(d.bytes <= DECODED_MAX);
             assert_eq!(d.bytes, d.map.values().map(|v| v.len()).sum::<usize>());
             assert_eq!(d.order.len(), d.map.len());
         }
-        assert!(d.get("0063").is_some() && d.get("0000").is_none());
-        d.put("big", vec![0u8; DECODED_MAX].into());
-        assert!(d.get("big").is_none(), "too big to keep");
-    }
-
-    proptest::proptest! {
-        /// Any chunk column: no panic; what parses is hex hashes (or empty), lengths in
-        /// 1..=CHUNK_MAX whose sum is the size, starts rising from 0.
-        #[test]
-        fn parse_chunks_on_anything(field in "[0-9a-fA-Fg:,\\PC]{0,60}", size in proptest::num::u64::ANY) {
-            if let Some((hashes, starts)) = parse_chunks(&field, size) {
-                proptest::prop_assert_eq!(starts.len(), hashes.len() + 1);
-                proptest::prop_assert_eq!(starts[0], 0);
-                proptest::prop_assert_eq!(*starts.last().unwrap(), size);
-                proptest::prop_assert!(starts.windows(2).all(|w| w[0] < w[1] && w[1] - w[0] <= CHUNK_MAX));
-                proptest::prop_assert!(hashes.iter().all(|h| h.is_empty() || h.len() > 2 && h.bytes().all(|b| b.is_ascii_hexdigit())));
-            }
-        }
-
-        /// Lengths that add past u64: refused, not wrapped to the size.
-        #[test]
-        fn parse_chunks_never_wraps(n in 1usize..40) {
-            let field: Vec<String> = (0..n).map(|i| format!("ab{i:030x}:{}", CHUNK_MAX)).collect();
-            let total = CHUNK_MAX as u128 * n as u128;
-            let size = (total % (1u128 << 64)) as u64;
-            proptest::prop_assert_eq!(parse_chunks(&field.join(","), size).is_some(), total < 1u128 << 64);
-        }
+        assert!(d.get(id(99)).is_some() && d.get(id(0)).is_none());
+        d.put(id(1000), vec![0u8; DECODED_MAX].into());
+        assert!(d.get(id(1000)).is_none(), "too big to keep");
     }
 
     /// Random files of many chunks of any length (some all zero), random ranges: what comes
@@ -537,8 +498,8 @@ mod tests {
         // cap when other tests compressed concurrently (the unmutated baseline failed).
         let bomb = zstd::encode_all(std::io::repeat(0).take(64 << 20), 1).unwrap();
         std::fs::create_dir_all(dir.join("chunks/bb")).unwrap();
-        std::fs::write(dir.join("chunks/bb/bb00"), bomb).unwrap();
-        lines += "f\t644\t0\tbomb\t128\tbb00:64,bb00:64\n";
+        std::fs::write(dir.join("chunks/bb/bb000000000000000000000000000000"), bomb).unwrap();
+        lines += "f\t644\t0\tbomb\t128\tbb000000000000000000000000000000:64,bb000000000000000000000000000000:64\n";
         std::fs::create_dir_all(dir.join("trees")).unwrap();
         std::fs::write(dir.join("trees/m.tsv"), lines).unwrap();
         let t = Trees { store: dir.clone(), remote: Arc::new(None), cache: Default::default(), decoded: Default::default() };
@@ -634,10 +595,11 @@ mod tests {
     async fn tree_listing_rules() {
         let (dir, app) = store();
         let h = {
+            let h = "abcd0000000000000000000000000000";
             let d = dir.join("chunks/ab");
             std::fs::create_dir_all(&d).unwrap();
-            std::fs::write(d.join("abcd"), zstd::encode_all(&b"zz"[..], 3).unwrap()).unwrap();
-            "abcd"
+            std::fs::write(d.join(h), zstd::encode_all(&b"zz"[..], 3).unwrap()).unwrap();
+            h
         };
         // other kinds of lines, lines with other field counts and lists whose lengths do not
         // add up are not files; a short chunk name is an error; a name with _ - . is a name

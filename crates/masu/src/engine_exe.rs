@@ -27,28 +27,13 @@ pub fn siglus_engine<'a>(files: impl IntoIterator<Item = &'a str>) -> Option<Str
 
 /// The paths of the files `trees/<name>.tsv` lists (escapes undone, pack.rs `esc`).
 pub fn tree_files(tsv: &str) -> Vec<String> {
-    let unesc = |s: &str| {
-        let mut out = String::with_capacity(s.len());
-        let mut it = s.chars();
-        while let Some(c) = it.next() {
-            if c == '\\' {
-                match it.next() {
-                    Some('t') => out.push('\t'),
-                    Some('n') => out.push('\n'),
-                    Some(o) => out.push(o),
-                    None => out.push('\\'),
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    };
-    tsv.lines().skip(1).filter_map(|l| {
-        let mut f = l.split('\t');
-        (f.next()? == "f").then_some(())?;
-        Some(unesc(f.nth(2)?))
-    }).collect()
+    use crate::tree_list::Kind;
+    crate::tree_list::good_lines(tsv)
+        .filter_map(|l| match l.kind {
+            Kind::File(_) => Some(l.path),
+            Kind::Dir | Kind::Link(_) => None,
+        })
+        .collect()
 }
 
 /// For a game entry (store/games/<id>.json) whose `run` is a program in the tree mounted at
@@ -180,7 +165,7 @@ mod tests {
 
     #[test]
     fn tree_lists() {
-        let tsv = "vnvm-tree\t2\t4194304\nd\t755\t0\tStartData\nf\t644\t0\tStart.exe\t3\tab:3\nf\t644\t0\ta\\tb\\\\c.dat\t0\t\nl\t777\t0\tlink\tStart.exe\n";
+        let tsv = "vnvm-tree\t2\t4194304\nd\t755\t0\tStartData\nf\t644\t0\tStart.exe\t3\t:3\nf\t644\t0\ta\\tb\\\\c.dat\t0\t\nl\t777\t0\tlink\tStart.exe\n";
         assert_eq!(tree_files(tsv), ["Start.exe", "a\tb\\c.dat"]);
     }
 
@@ -190,7 +175,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("trees")).unwrap();
         let mut tsv = String::from("vnvm-tree\t2\t4194304\n");
         for f in ANEMOI {
-            tsv.push_str(&format!("f\t644\t0\t{f}\t1\tab:1\n"));
+            tsv.push_str(&format!("f\t644\t0\t{f}\t1\t:1\n"));
         }
         std::fs::write(dir.join("trees/anemoi-t.tsv"), &tsv).unwrap();
         let mut g = entry("Z:\\masu\\game\\Start.exe", &["/masu/game=anemoi-t"]);
@@ -222,7 +207,7 @@ mod tests {
                         let mut tsv = String::from("vnvm-tree\t2\t4194304\n");
                         let files: &[&str] = match k { 1 => ANEMOI, 2 => &["Start.exe", "x/SiglusEngine.exe", "x/Gameexe.dat"], _ => &["Start.exe", "a.dat"] };
                         for f in files {
-                            tsv.push_str(&format!("f\t644\t0\t{f}\t1\tab:1\n"));
+                            tsv.push_str(&format!("f\t644\t0\t{f}\t1\t:1\n"));
                         }
                         std::fs::write(&p, &tsv).unwrap();
                         // (each write a time of its own: the cache goes by the file's time)

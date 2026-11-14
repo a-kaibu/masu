@@ -38,26 +38,28 @@ const AHEAD_MIB: u32 = 256;
 /// small files (the exe, DLLs, scripts, small archives), smallest first, then the first and
 /// last chunks of the others; each chunk once.
 pub(crate) fn start_set(tsv: &str) -> Vec<String> {
-    let mut files: Vec<(u64, Vec<&str>)> = Vec::new();
-    for l in tsv.lines().skip(1) {
-        let f: Vec<&str> = l.split('\t').collect();
-        if f.len() != 6 || f[0] != "f" {
-            continue;
-        }
-        let Ok(size) = f[4].parse::<u64>() else { continue };
-        let hashes: Vec<&str> = f[5].split(',').filter_map(|c| c.split_once(':').map(|x| x.0)).filter(|h| h.len() > 2 && h.bytes().all(|b| b.is_ascii_hexdigit())).collect();
-        if !hashes.is_empty() {
-            files.push((size, hashes));
+    use crate::tree_list::{ChunkId, Kind};
+    let mut files: Vec<(u64, Vec<ChunkId>)> = Vec::new();
+    for l in crate::tree_list::good_lines(tsv) {
+        match l.kind {
+            Kind::File(c) => {
+                let ids: Vec<ChunkId> = c.list().iter().filter_map(|c| c.id).collect();
+                if !ids.is_empty() {
+                    files.push((c.size(), ids));
+                }
+            }
+            Kind::Dir | Kind::Link(_) => {}
         }
     }
     files.sort_by_key(|f| f.0);
     let (small, big): (Vec<_>, Vec<_>) = files.into_iter().partition(|f| f.0 <= AHEAD_WHOLE);
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    let picks = small.iter().flat_map(|f| f.1.iter().copied()).chain(big.iter().flat_map(|f| [f.1[0], f.1[f.1.len() - 1]]));
-    for h in picks {
-        if seen.insert(h) {
-            out.push(format!("chunks/{}/{h}", &h[..2]));
+    let ends = |ids: &[ChunkId]| [ids.first().copied(), ids.last().copied()];
+    let picks = small.iter().flat_map(|f| f.1.iter().copied()).chain(big.iter().flat_map(|f| ends(&f.1)).flatten());
+    for id in picks {
+        if seen.insert(id) {
+            out.push(id.store_path());
         }
     }
     out
@@ -555,7 +557,8 @@ mod tests {
     }
 
     fn line(path: &str, size: u64, chunks: &[(&str, u64)]) -> String {
-        let c: Vec<String> = chunks.iter().map(|(h, n)| format!("{h}:{n}")).collect();
+        // (a short name stands for itself padded with zeros to a chunk id's 32 digits)
+        let c: Vec<String> = chunks.iter().map(|(h, n)| format!("{h:0<32}:{n}")).collect();
         format!("f\t644\t0\t{path}\t{size}\t{}\n", c.join(","))
     }
 
@@ -575,26 +578,27 @@ mod tests {
         tsv += &line("dup.dll", 100, &[("bb01", 100)]);
         tsv += "garbage line\n";
         let got = start_set(&tsv);
-        let names: Vec<&str> = got.iter().map(|l| l.rsplit('/').next().unwrap()).collect();
+        let names: Vec<&str> = got.iter().map(|l| l.rsplit('/').next().unwrap().trim_end_matches('0')).collect();
         assert_eq!(names, ["bb01", "aa01", "aa02", "dd01", "cc01", "cc03"]);
-        assert_eq!(got[0], "chunks/bb/bb01");
+        assert_eq!(got[0], "chunks/bb/bb010000000000000000000000000000");
     }
 
     proptest::proptest! {
         /// Any tree: what start_set names is chunks of its files, each once; every chunk of a
         /// file up to AHEAD_WHOLE is in it, and the ends of every bigger one.
         #[test]
-        fn start_set_model(files in proptest::collection::vec((0u64..(20 << 20), proptest::collection::vec(0u16..64, 1..6)), 0..12)) {
+        fn start_set_model(files in proptest::collection::vec((1u64..(5 << 20), proptest::collection::vec(0u16..64, 1..6)), 0..12)) {
             let mut tsv = String::from("vnvm-tree\t2\t64\n");
+            let files: Vec<(u64, Vec<u16>)> = files.into_iter().map(|(n, hs)| (n * hs.len() as u64, hs)).collect();
             for (k, (size, hs)) in files.iter().enumerate() {
-                let c: Vec<(String, u64)> = hs.iter().map(|h| (format!("{h:04x}"), 1)).collect();
+                let c: Vec<(String, u64)> = hs.iter().map(|h| (format!("{h:04x}"), size / hs.len() as u64)).collect();
                 let c: Vec<(&str, u64)> = c.iter().map(|(h, n)| (h.as_str(), *n)).collect();
                 tsv += &line(&format!("f{k}"), *size, &c);
             }
             let got = start_set(&tsv);
             let set: std::collections::HashSet<&String> = got.iter().collect();
             proptest::prop_assert_eq!(set.len(), got.len());
-            let name = |h: &u16| format!("chunks/{:02x}/{h:04x}", h >> 8);
+            let name = |h: &u16| format!("chunks/{:02x}/{:0<32}", h >> 8, format!("{h:04x}"));
             let all: std::collections::HashSet<String> = files.iter().flat_map(|f| f.1.iter().map(name)).collect();
             for l in &got {
                 proptest::prop_assert!(all.contains(l));
@@ -620,7 +624,7 @@ mod tests {
         let mut tsv = String::from("vnvm-tree\t2\t64\n");
         let mut names = Vec::new();
         for k in 0..20u32 {
-            let h = format!("{:02x}{k:062x}", k * 11 % 256);
+            let h = format!("{:02x}{k:030x}", k * 11 % 256);
             let data = zstd::encode_all(&format!("chunk {k}").into_bytes()[..], 3).unwrap();
             remote.put(&format!("chunks/{}/{h}", &h[..2]), &data).await.unwrap();
             tsv += &line(&format!("file{k}.dat"), 7, &[(&h, 7)]);
@@ -660,7 +664,7 @@ mod tests {
     async fn a_failed_fetch_ahead_is_tried_again() {
         let (fake, mut remote, dir) = crate::storage::gc_tests::serve(0).await;
         remote.set_disk(dir.join("s3"), 64 << 20);
-        let h = format!("ab{:062x}", 1);
+        let h = format!("ab{:030x}", 1);
         remote.put(&format!("chunks/ab/{h}"), &zstd::encode_all(&b"chunk"[..], 3).unwrap()).await.unwrap();
         std::fs::create_dir_all(dir.join("trees")).unwrap();
         std::fs::write(dir.join("trees/game.tsv"), format!("vnvm-tree\t2\t64\n{}", line("f.dat", 5, &[(&h, 5)]))).unwrap();
@@ -699,7 +703,7 @@ mod tests {
         remote.set_disk(dir.join("s3"), 256 << 20);
         let mut tsv = String::from("vnvm-tree\t2\t64\n");
         for k in 0..6u32 {
-            let h = format!("cd{k:062x}");
+            let h = format!("cd{k:030x}");
             let data: Vec<u8> = (0..(3u32 << 19)).map(|i| (i.wrapping_mul(2654435761).wrapping_add(k) >> 13) as u8).collect();
             remote.put(&format!("chunks/cd/{h}"), &data).await.unwrap();
             tsv += &line(&format!("f{k}.dat"), 7, &[(&h, 7)]);
@@ -714,7 +718,7 @@ mod tests {
         assert_eq!(fake.take_most(), 1, "one 1.5 MiB object at a time in 2 MiB");
         // (an object past the whole budget still goes, alone)
         let mut tsv = String::from("vnvm-tree\t2\t64\n");
-        let h = format!("ef{:062x}", 9);
+        let h = format!("ef{:030x}", 9);
         (*state.remote).as_ref().unwrap().put(&format!("chunks/ef/{h}"), &vec![1u8; 3 << 20]).await.unwrap();
         tsv += &line("big.dat", 7, &[(&h, 7)]);
         std::fs::write(dir.join("trees/big.tsv"), &tsv).unwrap();

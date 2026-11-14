@@ -45,6 +45,7 @@ pub mod display;
 pub mod render;
 pub mod pages;
 pub mod vfs;
+pub mod tree_list;
 pub mod fs;
 pub mod filelock;
 pub mod wrap;

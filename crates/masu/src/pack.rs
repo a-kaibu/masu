@@ -15,6 +15,7 @@
 //! brand, release date, score, tags, story and cover; `masu meta` does that again or for older entries.
 
 use crate::meta;
+use crate::tree_list::{self, Chunk, ChunkId, ChunkLen, Chunks, Kind, Line, Mode};
 use crate::unpack;
 
 use anyhow::{bail, Context, Result};
@@ -197,29 +198,15 @@ fn game_trees(g: &GameEntry) -> impl Iterator<Item = &str> {
     g.mounts.iter().filter_map(|m| m.split_once('=').map(|(_, t)| t)).filter(|t| !t.is_empty())
 }
 
-/// The chunks `trees/<name>.tsv` lists (none for a tree that is not there).
-/// A chunk's name as a tree lists it: hex digits, more than two (the first two name its
-/// folder). A hand-damaged list's other names are skipped, where `&h[..2]` of a non-ASCII one
-/// panicked (review b01).
-fn is_chunk_name(c: &str) -> bool {
-    c.len() > 2 && c.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-fn tree_chunks(store: &Path, name: &str) -> Result<std::collections::HashSet<String>> {
+/// The chunks `trees/<name>.tsv` lists (none for a tree that is not there), damaged lines' too
+/// (tree_list.rs `listed_ids`).
+fn tree_chunks(store: &Path, name: &str) -> Result<std::collections::HashSet<ChunkId>> {
     let text = match fs::read_to_string(store.join("trees").join(format!("{name}.tsv"))) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Default::default()),
         Err(e) => return Err(e.into()),
     };
-    Ok(text
-        .lines()
-        .filter(|l| l.starts_with("f\t"))
-        .filter_map(|l| l.split('\t').nth(5))
-        .flat_map(|c| c.split(','))
-        .map(|c| c.split_once(':').map_or(c, |(h, _)| h))
-        .filter(|c| is_chunk_name(c))
-        .map(String::from)
-        .collect())
+    Ok(tree_list::listed_ids(&text).collect())
 }
 
 /// The read-order list earlier runs of game `id` left in masu serve's `jit` folder, as the page
@@ -276,23 +263,15 @@ pub fn read_order(store: &Path, id: &str, list: &[u8]) -> Result<Vec<String>> {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => return Err(e.into()),
         };
-        tree_order.extend(
-            text.lines()
-                .filter(|l| l.starts_with("f\t"))
-                .filter_map(|l| l.split('\t').nth(5))
-                .flat_map(|c| c.split(','))
-                .map(|c| c.split_once(':').map_or(c, |(h, _)| h))
-                .filter(|c| is_chunk_name(c))
-                .map(String::from),
-        );
+        tree_order.extend(tree_list::listed_ids(&text));
     }
-    let own: std::collections::HashSet<&str> = tree_order.iter().map(String::as_str).collect();
-    let first = list.chunks_exact(16).map(|c| c.iter().map(|b| format!("{b:02x}")).collect::<String>());
+    let own: std::collections::HashSet<ChunkId> = tree_order.iter().copied().collect();
+    let first = list.chunks_exact(16).filter_map(|c| <[u8; 16]>::try_from(c).ok()).map(ChunkId);
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
-    for h in first.filter(|h| own.contains(h.as_str())).chain(tree_order.iter().cloned()) {
-        if seen.insert(h.clone()) {
-            out.push(format!("chunks/{}/{h}", &h[..2]));
+    for id in first.filter(|id| own.contains(id)).chain(tree_order) {
+        if seen.insert(id) {
+            out.push(id.store_path());
         }
     }
     Ok(out)
@@ -339,7 +318,7 @@ fn removal(store: &Path, id: &str) -> Result<Vec<String>> {
         out.push(format!("trees/{t}.tsv"));
         chunks.extend(tree_chunks(store, t)?.into_iter().filter(|c| !kept.contains(c)));
     }
-    out.extend(chunks.into_iter().map(|c| format!("chunks/{}/{c}", &c[..2])));
+    out.extend(chunks.into_iter().map(|c| c.store_path()));
     Ok(out)
 }
 
@@ -504,7 +483,7 @@ fn add_game(
             .with_context(|| format!("tree {tree} (pack it with `tree` first)"))?,
     };
     let exe = exe.replace('\\', "/");
-    if !list.lines().any(|l| l.starts_with("f\t") && l.split('\t').nth(3).is_some_and(|p| p.eq_ignore_ascii_case(&exe))) {
+    if !tree_list::good_lines(&list).any(|l| l.chunks().is_some() && l.path.eq_ignore_ascii_case(&exe)) {
         bail!("{exe} is not a file in tree {tree}");
     }
     for m in &mount {
@@ -669,14 +648,15 @@ pub fn run(store: &Path, cmd: Cmd) -> Result<()> {
     Ok(())
 }
 
-/// Stores `buf` as a chunk; returns its name ("" for all zero).
-fn put_chunk(store: &Path, buf: &[u8]) -> Result<String> {
+/// Stores `buf` as a chunk; returns its name (none for all zero).
+fn put_chunk(store: &Path, buf: &[u8]) -> Result<Option<ChunkId>> {
     if buf.iter().all(|&b| b == 0) {
-        return Ok(String::new());
+        return Ok(None);
     }
-    let h = blake3::hash(buf).to_hex()[..32].to_string();
-    write_chunk(&store.join("chunks").join(&h[..2]), &h, buf)?;
-    Ok(h)
+    let id = ChunkId::of_hash(blake3::hash(buf).as_bytes());
+    let h = id.to_string();
+    write_chunk(&store.join("chunks").join(h.get(..2).unwrap_or_default()), &h, buf)?;
+    Ok(Some(id))
 }
 
 const ZSTD_MAGIC: [u8; 4] = [0x28, 0xb5, 0x2f, 0xfd];
@@ -730,10 +710,6 @@ impl Drop for Scratch {
     }
 }
 
-/// Escapes a path or link target for the tsv (tab, newline and backslash).
-fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n")
-}
 
 /// `trees/<name>.tsv`:
 ///
@@ -829,7 +805,7 @@ pub fn ensure_prefix(store: &Path, fonts: &Path, rtp: Option<&Path>) -> Result<b
     let stamp = rtp.map(rtp_stamp).transpose()?;
     let have = fs::read_to_string(&tsv).ok();
     if let Some(list) = &have {
-        if stamp.as_ref().is_none_or(|s| list.lines().any(|l| l.split('\t').nth(3) == Some(&esc(&stamp_path(s))))) {
+        if stamp.as_ref().is_none_or(|s| tree_list::good_lines(list).any(|l| l.path == stamp_path(s))) {
             return Ok(false);
         }
     }
@@ -909,7 +885,7 @@ fn rtp_stamp(rtp: &Path) -> Result<String> {
     all.sort();
     let mut h = blake3::Hasher::new();
     for (r, p) in all {
-        if !in_rtp_part(&esc(&r)) {
+        if !in_rtp_part(&r) {
             continue;
         }
         h.update(r.as_bytes());
@@ -925,9 +901,9 @@ fn rtp_stamp(rtp: &Path) -> Result<String> {
 /// the XP RTP's system32 DLLs, and the stamps.
 fn in_rtp_part(path: &str) -> bool {
     let under = |dir: &str| path == dir || path.starts_with(&format!("{dir}/"));
-    RTP_DIRS.iter().any(|d| under(&esc(d)))
-        || (path.starts_with(&esc(RTP_SYSTEM)) && !path[RTP_SYSTEM.len()..].contains('/'))
-        || path.starts_with(&esc(&format!("drive_c/Program Files/{RTP_STAMP}-")))
+    RTP_DIRS.iter().any(|d| under(d))
+        || path.strip_prefix(RTP_SYSTEM).is_some_and(|rest| !rest.contains('/'))
+        || path.starts_with(&format!("drive_c/Program Files/{RTP_STAMP}-"))
 }
 
 /// The RTP part of `from` (an RTP install's drive_c, at tree path `rel`) copied into `to`.
@@ -937,12 +913,12 @@ fn copy_rtp(from: &Path, to: &Path, rel: &str) -> Result<()> {
         let r = format!("{rel}/{}", e.file_name().to_string_lossy());
         let t = to.join(e.file_name());
         if e.file_type()?.is_dir() {
-            if in_rtp_part(&esc(&r)) {
+            if in_rtp_part(&r) {
                 copy_dir(&e.path(), &t)?;
             } else if RTP_DIRS.iter().any(|d| d.starts_with(&format!("{r}/"))) || RTP_SYSTEM.starts_with(&format!("{r}/")) {
                 copy_rtp(&e.path(), &t, &r)?;
             }
-        } else if in_rtp_part(&esc(&r)) {
+        } else if in_rtp_part(&r) {
             fs::create_dir_all(to)?;
             fs::copy(e.path(), t)?;
         }
@@ -954,22 +930,17 @@ fn copy_rtp(from: &Path, to: &Path, rel: &str) -> Result<()> {
 /// folders only): `old`'s other lines as they were, then `new`'s lines that `old` lacks (the
 /// folders above the RTPs once).
 fn merge_rtp(old: &str, new: &str) -> String {
-    let mut lines = old.lines();
-    let mut out = format!("{}\n", lines.next().unwrap_or("vnvm-tree\t2\t0"));
+    let mut out = format!("{}\n", old.lines().next().unwrap_or("vnvm-tree\t2\t0"));
     let mut seen = std::collections::HashSet::new();
-    for l in lines {
-        let path = l.split('\t').nth(3).unwrap_or("");
-        if l.is_empty() || in_rtp_part(path) {
-            continue;
-        }
-        seen.insert(path.to_string());
-        out.push_str(l);
+    for l in tree_list::good_lines(old).filter(|l| !in_rtp_part(&l.path)) {
+        out.push_str(&l.to_string());
         out.push('\n');
+        seen.insert(l.path);
     }
-    for l in new.lines().skip(1) {
-        let path = l.split('\t').nth(3).unwrap_or("");
-        if !l.is_empty() && seen.insert(path.to_string()) {
-            out.push_str(l);
+    for l in tree_list::good_lines(new) {
+        let text = l.to_string();
+        if seen.insert(l.path) {
+            out.push_str(&text);
             out.push('\n');
         }
     }
@@ -1092,7 +1063,7 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
     // one of them is kept as a link, review b01, where the walk went round until ENAMETOOLONG)
     let mut todo = vec![(root.clone(), String::new(), vec![root.clone()])];
     // (movies to make playable copies of: done after the walk, several at once)
-    let mut movies: Vec<(usize, PathBuf, String, u32, i64, bool)> = Vec::new();
+    let mut movies: Vec<(usize, PathBuf, String, Mode, i64, bool)> = Vec::new();
     // NW.js apps unpacked from their exe (see nwjs.rs), walked as if in the exe's folder; the
     // first of two same paths wins
     let unpacked = store.join("tmp").join(format!("nwjs-{name}-{}", std::process::id()));
@@ -1125,7 +1096,7 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
                     let app = if rel.is_empty() { "app".to_string() } else { format!("{rel}/app") };
                     eprintln!("{path}: Electron app unpacked as {app}");
                     apps += 1;
-                    lines.push(format!("d\t755\t{}\t{}", mtime(&e.metadata()?), esc(&app)));
+                    lines.push(Line { mode: Mode::DIR, mtime: mtime(&e.metadata()?), path: app.clone(), kind: Kind::Dir }.to_string());
                     seen.insert(app.clone());
                     todo.push((to.clone(), app, vec![to]));
                 }
@@ -1138,16 +1109,16 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
                 let inside = resolved.as_ref().is_some_and(|r| r.starts_with(&root));
                 let round = resolved.as_ref().is_some_and(|r| chain.iter().any(|c| c.starts_with(r)));
                 if !follow || inside || round || target == Path::new("/") || resolved.is_none() {
-                    lines.push(format!("l\t{:o}\t{}\t{}\t{}", 0o777, mtime(&meta), esc(&path), esc(&target.to_string_lossy())));
+                    lines.push(Line { mode: Mode::LINK, mtime: mtime(&meta), path, kind: Kind::Link(target.to_string_lossy().into_owned()) }.to_string());
                     continue;
                 }
                 disk = resolved.unwrap();
                 meta = fs::metadata(&disk)?;
             }
-            let mode = mode(&meta) & 0o7777;
+            let mode = Mode::of(mode(&meta));
             if meta.is_dir() {
                 if first {
-                    lines.push(format!("d\t{mode:o}\t{}\t{}", mtime(&meta), esc(&path)));
+                    lines.push(Line { mode, mtime: mtime(&meta), path: path.clone(), kind: Kind::Dir }.to_string());
                 }
                 let mut chain = chain.clone();
                 chain.push(disk.canonicalize().unwrap_or_else(|_| disk.clone()));
@@ -1175,7 +1146,7 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
     }
     // (the transcodes, ffmpeg's slowest part of a pack, side by side: review b01, one at a
     // time inside the walk before; a movie that fails leaves its line out)
-    let made: Vec<(usize, Option<(PathBuf, String, u32, i64, u64)>)> = movies
+    let made: Vec<(usize, Option<(PathBuf, String, Mode, i64, u64)>)> = movies
         .par_iter()
         .map(|(line, disk, path, mode, mtime, omv)| {
             let v = if *omv { crate::movie::vnv_for(store, disk) } else { crate::movie::movie_vnv_for(store, disk) };
@@ -1196,7 +1167,7 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
     }
     let done: Vec<(usize, String)> = files
         .par_iter()
-        .map(|(line, disk, path, mode, mtime, size)| -> Result<(usize, String)> {
+        .map(|(line, disk, path, mode, mtime, _size)| -> Result<(usize, String)> {
             let f = File::open(disk).with_context(|| disk.display().to_string())?;
             // (a file's chunks in parallel too: a game that is one big archive packs on every
             // core; rayon runs a task per thread at a time, so the buffers in memory are about
@@ -1211,15 +1182,18 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
                     (at - n, n)
                 })
                 .collect();
-            let hashes: Vec<String> = spans
+            let list: Vec<Chunk> = spans
                 .into_par_iter()
                 .map(|(off, n)| {
-                    let mut buf = vec![0u8; n as usize];
+                    let mut buf = vec![0u8; usize::try_from(n)?];
                     read_exact_at(&f, &mut buf, off)?;
-                    Ok(format!("{}:{n}", put_chunk(store, &buf)?))
+                    Ok(Chunk { id: put_chunk(store, &buf)?, len: ChunkLen::try_from(n).map_err(|_| anyhow::anyhow!("{path}: a chunk of {n} bytes"))? })
                 })
                 .collect::<Result<_>>()?;
-            Ok((*line, format!("f\t{mode:o}\t{mtime}\t{}\t{size}\t{}", esc(path), hashes.join(","))))
+            // (the size listed is what was read: a file that changed while packed lists what its
+            // chunks hold, where the size from before the read made a line no reader takes)
+            let chunks = Chunks::new(list).context("chunks past 2^64 bytes")?;
+            Ok((*line, Line { mode: *mode, mtime: *mtime, path: path.clone(), kind: Kind::File(chunks) }.to_string()))
         })
         .collect::<Result<_>>()?;
     let bytes: u64 = files.iter().map(|f| f.5).sum();
@@ -1468,7 +1442,7 @@ mod tests {
         let (a, b, c, prefix) = (chunks("a"), chunks("b"), chunks("c"), chunks(PREFIX_TREE));
         let only_a: std::collections::HashSet<_> = a.iter().filter(|x| !b.contains(*x) && !c.contains(*x)).cloned().collect();
         assert!(!only_a.is_empty() && only_a.len() < a.len(), "a has chunks of its own and shared ones");
-        let on_disk = |x: &String| store.join("chunks").join(&x[..2]).join(x).exists();
+        let on_disk = |x: &ChunkId| store.join(x.store_path()).exists();
 
         let gone = remove_game_blocking(&store, "a").unwrap();
         assert!(gone.contains(&"games/a.json".to_string()) && gone.contains(&"games/a.jpg".to_string()) && gone.contains(&"trees/a.tsv".to_string()), "{gone:?}");
@@ -1672,7 +1646,7 @@ mod tests {
                     7 => format!("{}/{n}.dll", dirs[4]),
                     _ => format!("{}/{n}", dirs[*d]),
                 };
-                match k { 0 => format!("d\t755\t0\t{path}"), 1 => format!("f\t644\t0\t{path}\t1\th:1"), _ => format!("l\t777\t0\t{path}\tt") }
+                match k { 0 => format!("d\t755\t0\t{path}"), 1 => format!("f\t644\t0\t{path}\t1\t:1"), _ => format!("l\t777\t0\t{path}\tt") }
             };
             let dedup = |v: &[(usize, usize, String)]| {
                 let mut seen = std::collections::HashSet::new();
@@ -1820,16 +1794,16 @@ mod tests {
     }
 
     proptest::proptest! {
-        /// Any text in a tree's chunk column: the names kept are hex, and a path made of them
-        /// never panics (review b01: `&h[..2]` of a non-ASCII name did).
+        /// Any text in a tree's chunk column: no panic (review b01: `&h[..2]` of a non-ASCII
+        /// name did), and what is kept is the column's chunk ids, each a store path.
         #[test]
-        fn chunk_names_from_a_damaged_tree(col in "\\PC{0,40}") {
+        fn chunk_names_from_a_damaged_tree(col in "(\\PC{0,40}|(([0-9a-fA-F]{32}|[0-9a-f]{0,40}):[0-9]{0,2},?){1,3})") {
             let t = std::env::temp_dir().join(format!("masu-damaged-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(t.join("trees")).unwrap();
             fs::write(t.join("trees/x.tsv"), format!("vnvm-tree\t2\t65536\nf\t644\t0\ta.bin\t1\t{col}\n")).unwrap();
             for c in tree_chunks(&t, "x").unwrap() {
-                proptest::prop_assert!(is_chunk_name(&c));
-                let _ = format!("chunks/{}/{c}", &c[..2]);
+                proptest::prop_assert!(col.contains(&c.to_string()) || col.to_lowercase().contains(&c.to_string()));
+                proptest::prop_assert_eq!(c.store_path(), format!("chunks/{}/{c}", &c.to_string()[..2]));
             }
             let _ = fs::remove_dir_all(&t);
         }

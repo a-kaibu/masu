@@ -52,19 +52,6 @@ impl Layout {
     }
 }
 
-/// A tree list's chunks of one file (`<hash>:<length>,...`, `:<length>` all zero): the hashes
-/// and where each starts; `None` when the lengths do not add up to `size`.
-fn parse_chunks(field: &str, size: u64) -> Option<(Vec<Option<Hash>>, Arc<Vec<u64>>)> {
-    let (mut hashes, mut starts, mut at) = (Vec::new(), vec![0u64], 0u64);
-    for c in field.split(',').filter(|c| !c.is_empty()) {
-        let (h, n) = c.split_once(':')?;
-        at += n.parse::<u64>().ok().filter(|&n| n > 0)?;
-        hashes.push(hex16(h));
-        starts.push(at);
-    }
-    (at == size).then(|| (hashes, Arc::new(starts)))
-}
-
 enum Data {
     Dir(BTreeMap<String, Ino>),
     File(Content),
@@ -397,35 +384,6 @@ fn trace() -> bool {
     *ON.get_or_init(|| std::env::var_os("MASU_TRACE_VFS").is_some())
 }
 
-fn unesc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut it = s.chars();
-    while let Some(c) = it.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match it.next() {
-            Some('t') => out.push('\t'),
-            Some('n') => out.push('\n'),
-            Some(c) => out.push(c),
-            None => {}
-        }
-    }
-    out
-}
-
-fn hex16(s: &str) -> Option<Hash> {
-    if s.len() != 32 {
-        return None;
-    }
-    let mut h = [0; 16];
-    for i in 0..16 {
-        h[i] = u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()?;
-    }
-    Some(h)
-}
-
 fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
@@ -570,32 +528,22 @@ impl Fs {
     }
 
     fn load_tree(&mut self, root: Ino, tsv: &str) {
-        let mut lines = tsv.lines();
-        lines.next();
-        for line in lines {
-            let f: Vec<&str> = line.split('\t').collect();
-            if f.len() < 4 {
-                continue;
-            }
-            let mode = u32::from_str_radix(f[1], 8).unwrap_or(0o644);
-            let mtime = f[2].parse().unwrap_or(0);
-            let path = unesc(f[3]);
-            let (dir, name) = match path.rsplit_once('/') {
+        use crate::tree_list::Kind;
+        for l in crate::tree_list::good_lines(tsv) {
+            let (dir, name) = match l.path.rsplit_once('/') {
                 Some((d, n)) => (d, n),
-                None => ("", path.as_str()),
+                None => ("", l.path.as_str()),
             };
             let Some(parent) = self.walk(root, dir) else { continue };
-            let data = match f[0] {
-                "d" => Data::Dir(BTreeMap::new()),
-                "l" if f.len() > 4 => Data::Link(unesc(f[4])),
-                "f" if f.len() > 5 => {
-                    let size = f[4].parse().unwrap_or(0);
-                    let Some((chunks, starts)) = parse_chunks(f[5], size) else { continue };
-                    Data::File(Content::Lower { size, chunks: Arc::new(chunks), starts })
+            let data = match l.kind {
+                Kind::Dir => Data::Dir(BTreeMap::new()),
+                Kind::Link(t) => Data::Link(t),
+                Kind::File(c) => {
+                    let chunks: Vec<Option<Hash>> = c.list().iter().map(|c| c.id.map(|id| id.0)).collect();
+                    Data::File(Content::Lower { size: c.size(), chunks: Arc::new(chunks), starts: Arc::new(c.starts().to_vec()) })
                 }
-                _ => continue,
             };
-            let ino = self.add(data, mode, mtime);
+            let ino = self.add(data, l.mode.get(), l.mtime);
             if let Some(Data::Dir(c)) = self.data_mut(parent) {
                 c.insert(name.to_string(), ino);
             }
@@ -2800,15 +2748,16 @@ pub(crate) mod tests {
     /// not add up to the size, or a chunk with no length, is refused.
     #[test]
     fn chunk_layout() {
-        let (h, s) = parse_chunks("00112233445566778899aabbccddeeff:3,:5,ffeeddccbbaa99887766554433221100:2", 10).unwrap();
-        assert_eq!((h.len(), h[1]), (3, None));
-        let l = Layout { size: 10, starts: s };
+        let parse = |c: &str, size: u64| crate::tree_list::Line::parse(&format!("f\t644\t0\tx\t{size}\t{c}")).ok().and_then(|l| l.chunks().cloned());
+        let c = parse("00112233445566778899aabbccddeeff:3,:5,ffeeddccbbaa99887766554433221100:2", 10).unwrap();
+        assert_eq!((c.list().len(), c.list()[1].id), (3, None));
+        let l = Layout { size: 10, starts: Arc::new(c.starts().to_vec()) };
         assert_eq!((0..10).map(|at| l.index(at)).collect::<Vec<_>>(), [0, 0, 0, 1, 1, 1, 1, 1, 2, 2]);
         assert_eq!([l.span(0), l.span(1), l.span(2)], [(0, 3), (3, 5), (8, 2)]);
-        assert!(parse_chunks("00112233445566778899aabbccddeeff:3", 4).is_none());
-        assert!(parse_chunks("00112233445566778899aabbccddeeff:0", 0).is_none());
-        assert!(parse_chunks("00112233445566778899aabbccddeeff", 9).is_none());
-        assert_eq!(parse_chunks("", 0).unwrap().0.len(), 0);
+        assert!(parse("00112233445566778899aabbccddeeff:3", 4).is_none());
+        assert!(parse("00112233445566778899aabbccddeeff:0", 0).is_none());
+        assert!(parse("00112233445566778899aabbccddeeff", 9).is_none());
+        assert_eq!(parse("", 0).unwrap().list().len(), 0);
     }
 
     /// The pieces fetched for a read (block() is 24 in tests, PIECE 4 blocks): every block of
