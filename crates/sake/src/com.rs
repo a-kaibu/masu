@@ -346,9 +346,9 @@ pub fn is_stub(a: u32) -> bool {
 /// interface has two methods of one name, as ID2D1DeviceContext's CreateBitmap with
 /// D2D1_BITMAP_PROPERTIES1 at 57 beside 4's), else the first entry named `name` without a slot;
 /// None for IUnknown's own or a stub.
-fn slot_impl(i: usize, name: &str, impls: Impls) -> Option<Handler> {
+fn slot_impl<'a>(i: usize, name: &str, impls: Impls<'a>) -> Option<&'a (Method, Handler)> {
     let named = |m: &&(Method, Handler)| m.0.name == name;
-    impls.iter().filter(named).find(|m| m.0.slot == Some(i)).or_else(|| impls.iter().filter(named).find(|m| m.0.slot.is_none())).map(|m| m.1)
+    impls.iter().filter(named).find(|m| m.0.slot == Some(i)).or_else(|| impls.iter().filter(named).find(|m| m.0.slot.is_none()))
 }
 /// Slot `i`'s handler: `impls`' or, with none, IUnknown's own for 0..3 and a stub after.
 fn slot_handler(i: usize, found: Option<Handler>) -> Handler {
@@ -384,7 +384,7 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
     let k = mem::ps();
     let v = mem::heap_alloc(k * t.1.len() as u32, true);
     for (i, &(name, dwords, kind)) in t.1.iter().enumerate() {
-        let found = slot_impl(i, name, impls);
+        let found = slot_impl(i, name, impls).map(|m| m.1);
         let f = slot_handler(i, found);
         let a = host_fn(&format!("{}::{i}:{name}", iface.0), f, 4 * dwords as u32);
         if i > 2 && found.is_none() {
@@ -412,21 +412,30 @@ thread_local!(static CALLS: std::cell::RefCell<Calls> = const { std::cell::RefCe
 #[cfg(test)]
 pub(crate) fn check_vtables(golden: &str, ifaces: &[Iface]) {
     let calls = CALLS.with(|c| c.borrow().clone());
-    let mut seen: Vec<(Handler, String)> =
-        vec![(query_interface, "QueryInterface".into()), (add_ref, "AddRef".into()), (release, "Release".into()), (stub, "stub".into())];
+    // (slots are named by the list entry that fills them, not by the handler's address: an
+    // optimized build merges identical handlers such as `|_| 0`)
+    let mut seen: Vec<((&str, &str, Option<usize>), String)> = Vec::new();
     let mut out = String::new();
     for &i in ifaces {
         let Some((_, impls)) = calls.iter().rev().find(|b| b.0 == i) else { panic!("com: no vtable asked for {}", i.0) };
         let i = i.0;
         for (k, &(name, _, _)) in table(Iface(i)).1.iter().enumerate() {
-            let f = slot_handler(k, slot_impl(k, name, &impls));
-            let label = match seen.iter().find(|s| std::ptr::fn_addr_eq(s.0, f)) {
-                Some(s) => s.1.clone(),
-                None => {
-                    let l = format!("{i}.{k}");
-                    seen.push((f, l.clone()));
-                    l
+            let label = match (slot_impl(k, name, impls), k) {
+                (Some(m), _) => {
+                    let key = (m.0.of.0, m.0.name, m.0.slot);
+                    match seen.iter().find(|s| s.0 == key) {
+                        Some(s) => s.1.clone(),
+                        None => {
+                            let l = format!("{i}.{k}");
+                            seen.push((key, l.clone()));
+                            l
+                        }
+                    }
                 }
+                (None, 0) => "QueryInterface".into(),
+                (None, 1) => "AddRef".into(),
+                (None, 2) => "Release".into(),
+                (None, _) => "stub".to_string(),
             };
             if label != "stub" {
                 out += &format!("{i} {k} {name}: {label}\n");
