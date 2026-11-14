@@ -103,9 +103,11 @@ try {
       let want = 0;
       let next = 0x100000;
       const note = (c) => reading && during.push(c);
+      // (each block its own: the list and the chunk's size and frame number apart)
+      let heap = 0x10000;
       const wasm = {
         wasmMemory: { buffer: mem.buffer },
-        _malloc: () => 0x10000,
+        _malloc: (n) => ((heap += (n + 15) & ~15), heap - ((n + 15) & ~15)),
         _vnhost_video_doorbell: () => 0x100,
         _vnhost_video_list(out) {
           note("list");
@@ -117,7 +119,8 @@ try {
           note("chunk");
           const at = 0x80000 + n * 0x4000;
           mem.set(chunks[n].data, at);
-          new Uint32Array(mem.buffer, size, 1)[0] = chunks[n].data.length;
+          // (its size and its frame in presentation order, as sake's vnhost_video_chunk gives)
+          new Uint32Array(mem.buffer, size, 2).set([chunks[n].data.length, n]);
           return at;
         },
         _vnhost_video_begin(_id, n, size) {
