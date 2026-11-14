@@ -193,7 +193,9 @@ fn mci_command_snapshot() {
         if r == 0 {
             ids.push(r32(p + 4));
         }
-        writeln!(out, "open {flags:#x} {ty:#x}: {r}{}", if r == 0 { format!(" id#{}", ids.len()) } else { String::new() }).unwrap();
+        // (a type string is a heap address: shown as "tp")
+        let ty_shown = if ty == tp { "tp".to_string() } else { format!("{ty:#x}") };
+        writeln!(out, "open {flags:#x} {ty_shown}: {r}{}", if r == 0 { format!(" id#{}", ids.len()) } else { String::new() }).unwrap();
     }
     let msgs = [MCI_CLOSE, MCI_PLAY, MCI_SEEK, MCI_STOP, MCI_PAUSE, MCI_INFO, MCI_GETDEVCAPS, MCI_SET, MCI_STATUS, MCI_CUE, MCI_WINDOW, MCI_PUT, MCI_WHERE, MCI_RESUME, MCI_SETAUDIO, 0x805, 0x80f, 0x1234];
     let flag_bits = [MCI_WAIT, MCI_FROM, MCI_TO, 0x100, 0x200, 0x400, 0x800, 0x1_0000, 0x2_0000, 0x4_0000, 0x80_0000, 0x100_0000];
@@ -239,7 +241,9 @@ fn mci_command_snapshot() {
         } else {
             String::new()
         };
-        writeln!(out, "{case} dev#{which} {msg:#x} {flags:#x} blk{}: {rc} [{:x} {:x} {:x} {:x} {:x}] {info:?}", blk != 0, r32(p + 4), r32(p + 8), r32(p + 12), r32(p + 16), r32(p + 20)).unwrap();
+        // (an info's buffer is a heap address: shown as "buf")
+        let first = if r32(p + 4) == buf { "buf".to_string() } else { format!("{:x}", r32(p + 4)) };
+        writeln!(out, "{case} dev#{which} {msg:#x} {flags:#x} blk{}: {rc} [{first} {:x} {:x} {:x} {:x}] {info:?}", blk != 0, r32(p + 8), r32(p + 12), r32(p + 16), r32(p + 20)).unwrap();
     }
     let rc = call(mciSendCommandA, &[MCI_ALL_DEVICE_ID, MCI_CLOSE, 0, 0]);
     writeln!(out, "close all: {rc}").unwrap();
