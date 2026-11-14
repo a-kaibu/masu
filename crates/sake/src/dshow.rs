@@ -2670,6 +2670,7 @@ fn vmr(iid: u32) -> Option<u32> {
 #[cfg(test)]
 mod ends_tests {
     use super::*;
+    use crate::locks::Lock as _;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -2693,7 +2694,7 @@ mod ends_tests {
         sounds(|m| m.insert(b, SoundGraph { tl, pcm: None, rate: 22050 }));
     }
     fn pending(b: u32) -> usize {
-        ENDS.lock().unwrap().iter().filter(|e| e.1 == b).count()
+        ENDS.locked().iter().filter(|e| e.1 == b).count()
     }
 
     /// A sound-only graph (#85): past its end while it runs, its end is reached once; before
@@ -2739,7 +2740,7 @@ mod ends_tests {
             // (a check due soon may already have been taken by the ends thread: at most one)
             let most = usize::from(!done);
             proptest::prop_assert!(pending(b) <= most);
-            ENDS.lock().unwrap().retain(|e| e.1 != b);
+            ENDS.locked().retain(|e| e.1 != b);
             sounds(|m| m.remove(&b));
         }
     }

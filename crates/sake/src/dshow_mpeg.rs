@@ -2768,6 +2768,7 @@ fn p_new_segment(c: &mut Ctx) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::locks::Lock as _;
     use proptest::prelude::*;
 
     #[test]
@@ -3088,7 +3089,7 @@ mod tests {
             let mut ext: HashMap<u32, u32> = HashMap::new();
             let mut held: Vec<u32> = Vec::new();
             let mut pool = true;
-            let present = |s: u32| SAMPLES.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&s));
+            let present = |s: u32| SAMPLES.locked().as_ref().is_some_and(|m| m.contains_key(&s));
             for (op, i, size) in ops {
                 match op {
                     0 => {
@@ -3117,7 +3118,7 @@ mod tests {
                         prop_assert_eq!(left, *e);
                     }
                     3 if pool => {
-                        FILTERS.lock().unwrap().as_mut().unwrap().remove(&dec);
+                        FILTERS.locked().as_mut().unwrap().remove(&dec);
                         drop_pool(dec);
                         pool = false;
                     }
@@ -3131,13 +3132,13 @@ mod tests {
                 unref(s);
             }
             if pool {
-                FILTERS.lock().unwrap().as_mut().unwrap().remove(&dec);
+                FILTERS.locked().as_mut().unwrap().remove(&dec);
                 drop_pool(dec);
             }
             for &s in ext.keys() {
                 prop_assert!(!present(s), "sample {:#x} left", s);
             }
-            prop_assert!(!ALLOCS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&dec)));
+            prop_assert!(!ALLOCS.locked().as_ref().is_some_and(|m| m.contains_key(&dec)));
         }
     }
 

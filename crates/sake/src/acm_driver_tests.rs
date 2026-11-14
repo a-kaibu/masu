@@ -5,6 +5,7 @@
 //! convert / unprepare / reset / close, remove) and their results are lines of
 //! golden/acm_driver.txt.
 use super::*;
+use crate::locks::Lock as _;
 use crate::test_guest::{call_stacked as call, enter, guest_thread, snapshot};
 use std::fmt::Write;
 
@@ -12,7 +13,7 @@ static LOG: Mutex<String> = Mutex::new(String::new());
 static REFUSE_LOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn log(s: String) {
-    let mut l = LOG.lock().unwrap();
+    let mut l = LOG.locked();
     l.push_str(&s);
     l.push('\n');
 }
@@ -104,12 +105,12 @@ fn driver_proc(c: &mut Ctx) -> u32 {
 fn acm_added_driver_snapshot() {
     let _g = enter();
     guest_thread();
-    LOG.lock().unwrap().clear();
+    LOG.locked().clear();
     let mut out = String::new();
     let proc_ = crate::api::host_fn("acm_tests::driver_proc", driver_proc, 20);
     let (ph, n, src, dst, hdr) = (mem::heap_alloc(8, true), mem::heap_alloc(8, true), mem::heap_alloc(64, true), mem::heap_alloc(64, true), mem::heap_alloc(84, true));
     let step = |out: &mut String, what: &str, r: u32| {
-        let l = std::mem::take(&mut *LOG.lock().unwrap());
+        let l = std::mem::take(&mut *LOG.locked());
         write!(out, "{l}{what}: {r}\n").unwrap();
     };
     // a driver that refuses DRV_LOAD is not added
