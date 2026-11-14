@@ -22,8 +22,8 @@
 //!   takes the movie's size unless MCIWNDF_NOAUTOSIZEWINDOW. The play bar and menu are not
 //!   drawn.
 //!
-//! Not here: `sequencer` (MIDI) and `cdaudio` (MCIERR_CANNOT_LOAD_DRIVER), recording, and the
-//! less used commands (MCIERR_UNSUPPORTED_FUNCTION).
+//! Not here: `sequencer` (MIDI) and `cdaudio` (McErr::CannotLoadDriver), recording, and the
+//! less used commands (McErr::UnsupportedFunction).
 
 #![allow(non_snake_case)]
 
@@ -38,23 +38,57 @@ use crate::mem::{self, r32, w32};
 // ---------------------------------------------------------------------------------------------
 // constants (mmsystem.h, digitalv.h, vfw.h)
 
-const MCIERR_INVALID_DEVICE_ID: u32 = 257;
-const MCIERR_UNRECOGNIZED_KEYWORD: u32 = 259;
-const MCIERR_UNRECOGNIZED_COMMAND: u32 = 261;
-const MCIERR_INVALID_DEVICE_NAME: u32 = 263;
-const MCIERR_CANNOT_LOAD_DRIVER: u32 = 266;
-const MCIERR_MISSING_STRING_ARGUMENT: u32 = 269;
-const MCIERR_BAD_INTEGER: u32 = 270;
-const MCIERR_MISSING_PARAMETER: u32 = 273;
-const MCIERR_UNSUPPORTED_FUNCTION: u32 = 274;
-const MCIERR_FILE_NOT_FOUND: u32 = 275;
-const MCIERR_OUTOFRANGE: u32 = 282;
-const MCIERR_EXTENSION_NOT_FOUND: u32 = 281;
-const MCIERR_DUPLICATE_ALIAS: u32 = 289;
-const MCIERR_BAD_TIME_FORMAT: u32 = 293;
-const MCIERR_INVALID_FILE: u32 = 296;
-const MCIERR_NULL_PARAMETER_BLOCK: u32 = 297;
-const MCIERR_NO_INTEGER: u32 = 312;
+
+/// MCIERR_* (mmsystem.h): what an MCI call fails with, by name; `code` is the number the
+/// program sees.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum McErr {
+    InvalidDeviceId,
+    UnrecognizedKeyword,
+    UnrecognizedCommand,
+    InvalidDeviceName,
+    CannotLoadDriver,
+    MissingStringArgument,
+    BadInteger,
+    MissingParameter,
+    UnsupportedFunction,
+    FileNotFound,
+    OutOfRange,
+    ExtensionNotFound,
+    DuplicateAlias,
+    BadTimeFormat,
+    InvalidFile,
+    NullParameterBlock,
+    NoInteger,
+}
+impl McErr {
+    const ALL: [McErr; 17] = [McErr::InvalidDeviceId, McErr::UnrecognizedKeyword, McErr::UnrecognizedCommand, McErr::InvalidDeviceName, McErr::CannotLoadDriver, McErr::MissingStringArgument, McErr::BadInteger, McErr::MissingParameter, McErr::UnsupportedFunction, McErr::FileNotFound, McErr::OutOfRange, McErr::ExtensionNotFound, McErr::DuplicateAlias, McErr::BadTimeFormat, McErr::InvalidFile, McErr::NullParameterBlock, McErr::NoInteger];
+    pub fn code(self) -> u32 {
+        match self {
+            McErr::InvalidDeviceId => 257,
+            McErr::UnrecognizedKeyword => 259,
+            McErr::UnrecognizedCommand => 261,
+            McErr::InvalidDeviceName => 263,
+            McErr::CannotLoadDriver => 266,
+            McErr::MissingStringArgument => 269,
+            McErr::BadInteger => 270,
+            McErr::MissingParameter => 273,
+            McErr::UnsupportedFunction => 274,
+            McErr::FileNotFound => 275,
+            McErr::OutOfRange => 282,
+            McErr::ExtensionNotFound => 281,
+            McErr::DuplicateAlias => 289,
+            McErr::BadTimeFormat => 293,
+            McErr::InvalidFile => 296,
+            McErr::NullParameterBlock => 297,
+            McErr::NoInteger => 312,
+        }
+    }
+    /// The error a program's number names (None: 0 or one MCI here does not give)
+    pub fn from_code(e: u32) -> Option<McErr> {
+        McErr::ALL.into_iter().find(|x| x.code() == e)
+    }
+}
 
 const MCI_OPEN: u32 = 0x803;
 const MCI_CLOSE: u32 = 0x804;
@@ -108,16 +142,57 @@ const MCI_STATUS_READY: u32 = 7;
 const MCI_STATUS_CURRENT_TRACK: u32 = 8;
 const MCI_DGV_STATUS_VOLUME: u32 = 0x4019;
 
-pub const MCI_MODE_NOT_READY: u32 = 524;
-pub const MCI_MODE_STOP: u32 = 525;
-pub const MCI_MODE_PLAY: u32 = 526;
-pub const MCI_MODE_PAUSE: u32 = 529;
-pub const MCI_MODE_OPEN: u32 = 530;
+/// MCI_MODE_* a device is in
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Mode {
+    #[default]
+    NotReady,
+    Stop,
+    Play,
+    Pause,
+}
+impl Mode {
+    pub fn code(self) -> u32 {
+        match self {
+            Mode::NotReady => 524,
+            Mode::Stop => 525,
+            Mode::Play => 526,
+            Mode::Pause => 529,
+        }
+    }
+    /// Its name in a status string and MCIWNDM_GETMODE
+    fn name(self) -> &'static str {
+        match self {
+            Mode::NotReady => "not ready",
+            Mode::Stop => "stopped",
+            Mode::Play => "playing",
+            Mode::Pause => "paused",
+        }
+    }
+}
 
-pub const MCI_FORMAT_MILLISECONDS: u32 = 0;
-pub const MCI_FORMAT_FRAMES: u32 = 3;
-pub const MCI_FORMAT_BYTES: u32 = 8;
-pub const MCI_FORMAT_SAMPLES: u32 = 9;
+/// MCI_FORMAT_* a device here takes (MCI_SET_TIME_FORMAT)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TimeFormat {
+    Ms,
+    Frames,
+    Bytes,
+    Samples,
+}
+impl TimeFormat {
+    pub fn code(self) -> u32 {
+        match self {
+            TimeFormat::Ms => 0,
+            TimeFormat::Frames => 3,
+            TimeFormat::Bytes => 8,
+            TimeFormat::Samples => 9,
+        }
+    }
+    /// None: SMPTE, HMS, TMSF ... (none taken here)
+    pub fn from_code(f: u32) -> Option<TimeFormat> {
+        [TimeFormat::Ms, TimeFormat::Frames, TimeFormat::Bytes, TimeFormat::Samples].into_iter().find(|x| x.code() == f)
+    }
+}
 
 const MCI_ALL_DEVICE_ID: u32 = 0xffff;
 const MM_MCINOTIFY: u32 = 0x3b9;
@@ -145,72 +220,74 @@ pub enum Kind {
 
 /// A device type by its name (`type x`, MCI_OPEN_TYPE): Some(Err) for one Windows has but not
 /// here (MIDI, CD), None for one it doesn't know.
-pub fn kind_of_type(t: &str) -> Option<Result<Kind, u32>> {
+pub fn kind_of_type(t: &str) -> Option<Result<Kind, McErr>> {
     match t.to_ascii_lowercase().as_str() {
         "waveaudio" => Some(Ok(Kind::Wave)),
         "mpegvideo" | "mpegvideo2" | "digitalvideo" => Some(Ok(Kind::Mpeg)),
         "avivideo" => Some(Ok(Kind::Avi)),
-        "sequencer" | "cdaudio" | "videodisc" | "vcr" | "overlay" | "scanner" | "animation" | "dat" => Some(Err(MCIERR_CANNOT_LOAD_DRIVER)),
+        "sequencer" | "cdaudio" | "videodisc" | "vcr" | "overlay" | "scanner" | "animation" | "dat" => Some(Err(McErr::CannotLoadDriver)),
         _ => None,
     }
 }
 
 /// A device type by MCI_OPEN_TYPE_ID's low word (MCI_DEVTYPE_*).
-fn kind_of_id(id: u32) -> Result<Kind, u32> {
+fn kind_of_id(id: u32) -> Result<Kind, McErr> {
     match id & 0xffff {
         DEVTYPE_WAVEFORM_AUDIO => Ok(Kind::Wave),
         DEVTYPE_DIGITAL_VIDEO => Ok(Kind::Mpeg),
-        DEVTYPE_SEQUENCER | DEVTYPE_CD_AUDIO => Err(MCIERR_CANNOT_LOAD_DRIVER),
-        _ => Err(MCIERR_INVALID_DEVICE_NAME),
+        DEVTYPE_SEQUENCER | DEVTYPE_CD_AUDIO => Err(McErr::CannotLoadDriver),
+        _ => Err(McErr::InvalidDeviceName),
     }
 }
 
 /// The device a file opens by its extension (the registry's [MCI Extensions]): None for one
 /// with no extension or one not listed.
-pub fn kind_of_file(path: &str) -> Option<Result<Kind, u32>> {
+pub fn kind_of_file(path: &str) -> Option<Result<Kind, McErr>> {
     let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let (_, ext) = name.rsplit_once('.')?;
     Some(match ext.to_ascii_lowercase().as_str() {
         "wav" => Ok(Kind::Wave),
         "avi" => Ok(Kind::Avi),
         "mp3" | "mp2" | "mpa" | "mpg" | "mpeg" | "m1v" | "m2v" | "mpe" | "mpv2" | "m1a" | "m2a" | "wma" | "wmv" | "asf" | "aif" | "aiff" | "aifc" | "au" | "snd" | "m4a" | "mp4" | "mov" => Ok(Kind::Mpeg),
-        "mid" | "midi" | "rmi" | "cda" => Err(MCIERR_CANNOT_LOAD_DRIVER),
+        "mid" | "midi" | "rmi" | "cda" => Err(McErr::CannotLoadDriver),
         _ => return None,
     })
 }
 
 /// A device's position or length (100 ns) in its time format: ms, frames of the movie's rate
 /// (num/den a second), bytes or samples of the sound's format (rate, block).
-pub fn to_format(t: u64, format: u32, rate: u32, block: u32, fps: (u32, u32)) -> u32 {
+pub fn to_format(t: u64, format: TimeFormat, rate: u32, block: u32, fps: (u32, u32)) -> u32 {
+    let (t, sec) = (u128::from(t), u128::from(SEC));
     let v = match format {
-        MCI_FORMAT_FRAMES if fps.0 != 0 => t as u128 * fps.0 as u128 / (fps.1.max(1) as u128 * SEC as u128),
-        MCI_FORMAT_SAMPLES => t as u128 * rate as u128 / SEC as u128,
-        MCI_FORMAT_BYTES => t as u128 * rate as u128 / SEC as u128 * block as u128,
-        _ => (t as u128 + 5_000) / 10_000,
+        TimeFormat::Frames if fps.0 != 0 => t * u128::from(fps.0) / (u128::from(fps.1.max(1)) * sec),
+        TimeFormat::Samples => t * u128::from(rate) / sec,
+        TimeFormat::Bytes => t * u128::from(rate) / sec * u128::from(block),
+        // (a movie with no frame rate: in ms)
+        TimeFormat::Ms | TimeFormat::Frames => (t + 5_000) / 10_000,
     };
-    v.min(u32::MAX as u128) as u32
+    u32::try_from(v).unwrap_or(u32::MAX)
 }
 
 /// A value in the time format back to 100 ns.
-pub fn from_format(v: u32, format: u32, rate: u32, block: u32, fps: (u32, u32)) -> u64 {
-    let v = v as u128;
+pub fn from_format(v: u32, format: TimeFormat, rate: u32, block: u32, fps: (u32, u32)) -> u64 {
+    let (v, sec) = (u128::from(v), u128::from(SEC));
     let t = match format {
         // (rounded up: the time of a frame or sample is where it starts, which reads back as it)
-        MCI_FORMAT_FRAMES if fps.0 != 0 => (v * fps.1.max(1) as u128 * SEC as u128).div_ceil(fps.0 as u128),
-        MCI_FORMAT_SAMPLES if rate != 0 => (v * SEC as u128).div_ceil(rate as u128),
-        MCI_FORMAT_BYTES if rate != 0 && block != 0 => (v / block as u128 * SEC as u128).div_ceil(rate as u128),
-        _ => v * 10_000,
+        TimeFormat::Frames if fps.0 != 0 => (v * u128::from(fps.1.max(1)) * sec).div_ceil(u128::from(fps.0)),
+        TimeFormat::Samples if rate != 0 => (v * sec).div_ceil(u128::from(rate)),
+        TimeFormat::Bytes if rate != 0 && block != 0 => (v / u128::from(block) * sec).div_ceil(u128::from(rate)),
+        // (no rate or block to count in: as ms)
+        TimeFormat::Ms | TimeFormat::Frames | TimeFormat::Samples | TimeFormat::Bytes => v * 10_000,
     };
-    t.min(u64::MAX as u128) as u64
+    u64::try_from(t).unwrap_or(u64::MAX)
 }
 
 /// Whether a device of `kind` (a movie when `video`) takes the time format.
-pub fn format_ok(kind: Kind, video: bool, format: u32) -> bool {
+pub fn format_ok(kind: Kind, video: bool, format: TimeFormat) -> bool {
     match format {
-        MCI_FORMAT_MILLISECONDS => true,
-        MCI_FORMAT_BYTES | MCI_FORMAT_SAMPLES => kind == Kind::Wave,
-        MCI_FORMAT_FRAMES => kind != Kind::Wave && video,
-        _ => false,
+        TimeFormat::Ms => true,
+        TimeFormat::Bytes | TimeFormat::Samples => kind == Kind::Wave,
+        TimeFormat::Frames => kind != Kind::Wave && video,
     }
 }
 
@@ -298,26 +375,27 @@ pub fn words(s: &str) -> Option<Vec<String>> {
 
 /// Windows' text for an MCI error (en-US), None for a code it has none for.
 pub fn error_text(e: u32) -> Option<&'static str> {
-    Some(match e {
-        0 => "The specified command was carried out.",
-        MCIERR_INVALID_DEVICE_ID => "Invalid MCI device ID. Use the ID returned when opening the MCI device.",
-        MCIERR_UNRECOGNIZED_KEYWORD => "The driver cannot recognize the specified command parameter.",
-        MCIERR_UNRECOGNIZED_COMMAND => "The driver cannot recognize the specified command.",
-        MCIERR_INVALID_DEVICE_NAME => "The specified device is not open or is not recognized by MCI.",
-        MCIERR_CANNOT_LOAD_DRIVER => "The specified device driver will not load properly.",
-        MCIERR_MISSING_STRING_ARGUMENT => "The specified command requires a character-string parameter. Please provide one.",
-        MCIERR_BAD_INTEGER => "The specified integer is invalid for this command.",
-        MCIERR_MISSING_PARAMETER => "The specified command requires a parameter. Please supply one.",
-        MCIERR_UNSUPPORTED_FUNCTION => "The MCI device you are using does not support the specified command.",
-        MCIERR_FILE_NOT_FOUND => "Cannot find the specified file. Make sure the path and filename are correct.",
-        MCIERR_EXTENSION_NOT_FOUND => "The specified extension has no device type associated with it. Specify a device when performing this command.",
-        MCIERR_OUTOFRANGE => "The specified parameter is out of range for the specified command.",
-        MCIERR_DUPLICATE_ALIAS => "The specified alias is already being used in this application. Use a unique alias.",
-        MCIERR_BAD_TIME_FORMAT => "The specified format is invalid for this command.",
-        MCIERR_INVALID_FILE => "The specified file cannot be played on the specified MCI device. The file may be corrupt, not in the correct format, or no file handler available for this format.",
-        MCIERR_NULL_PARAMETER_BLOCK => "A null parameter block was passed to MCI.",
-        MCIERR_NO_INTEGER => "The parameter for this MCI command must be an integer value.",
-        _ => return None,
+    if e == 0 {
+        return Some("The specified command was carried out.");
+    }
+    Some(match McErr::from_code(e)? {
+        McErr::InvalidDeviceId => "Invalid MCI device ID. Use the ID returned when opening the MCI device.",
+        McErr::UnrecognizedKeyword => "The driver cannot recognize the specified command parameter.",
+        McErr::UnrecognizedCommand => "The driver cannot recognize the specified command.",
+        McErr::InvalidDeviceName => "The specified device is not open or is not recognized by MCI.",
+        McErr::CannotLoadDriver => "The specified device driver will not load properly.",
+        McErr::MissingStringArgument => "The specified command requires a character-string parameter. Please provide one.",
+        McErr::BadInteger => "The specified integer is invalid for this command.",
+        McErr::MissingParameter => "The specified command requires a parameter. Please supply one.",
+        McErr::UnsupportedFunction => "The MCI device you are using does not support the specified command.",
+        McErr::FileNotFound => "Cannot find the specified file. Make sure the path and filename are correct.",
+        McErr::ExtensionNotFound => "The specified extension has no device type associated with it. Specify a device when performing this command.",
+        McErr::OutOfRange => "The specified parameter is out of range for the specified command.",
+        McErr::DuplicateAlias => "The specified alias is already being used in this application. Use a unique alias.",
+        McErr::BadTimeFormat => "The specified format is invalid for this command.",
+        McErr::InvalidFile => "The specified file cannot be played on the specified MCI device. The file may be corrupt, not in the correct format, or no file handler available for this format.",
+        McErr::NullParameterBlock => "A null parameter block was passed to MCI.",
+        McErr::NoInteger => "The parameter for this MCI command must be an integer value.",
     })
 }
 
@@ -343,7 +421,7 @@ struct Dev {
     /// timing of a sound (a movie's is in its Play)
     tl: Timeline,
     duration: u64,
-    format: u32,
+    format: TimeFormat,
     notes: Notes,
     /// `repeat`: from the start again at the end
     repeat: bool,
@@ -371,7 +449,7 @@ impl Dev {
     fn fps(&self) -> (u32, u32) {
         match self.media {
             Media::Movie { fps, .. } => fps,
-            _ => (0, 1),
+            Media::Sound { .. } | Media::Silent { .. } => (0, 1),
         }
     }
     fn to_fmt(&self, t: u64) -> u32 {
@@ -412,14 +490,14 @@ fn timeline<R>(id: u32, f: impl FnOnce(&mut Timeline, u64) -> R) -> Option<R> {
 }
 
 /// playing (running, short of its stop), paused (held mid-play), else stopped
-fn mode(id: u32) -> u32 {
-    let Some(playing) = timeline(id, |tl, t| tl.running() && tl.position(t) < tl.stop) else { return MCI_MODE_NOT_READY };
+fn mode(id: u32) -> Mode {
+    let Some(playing) = timeline(id, |tl, t| tl.running() && tl.position(t) < tl.stop) else { return Mode::NotReady };
     if playing {
-        MCI_MODE_PLAY
+        Mode::Play
     } else if dev(id, |d| d.paused()).unwrap_or(false) {
-        MCI_MODE_PAUSE
+        Mode::Pause
     } else {
-        MCI_MODE_STOP
+        Mode::Stop
     }
 }
 
@@ -543,18 +621,18 @@ pub fn ended(key: u32) -> bool {
 }
 
 /// Opens device `kind` (None: by the element's extension) on `element`, as `alias`.
-fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<u32, u32> {
+fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<u32, McErr> {
     if element.is_empty() {
         // (a device opened without a file: only a simple device; these are compound)
-        return Err(MCIERR_UNSUPPORTED_FUNCTION);
+        return Err(McErr::UnsupportedFunction);
     }
     let kind = match kind {
         Some(k) => k,
-        None => kind_of_file(element).ok_or(MCIERR_EXTENSION_NOT_FOUND)??,
+        None => kind_of_file(element).ok_or(McErr::ExtensionNotFound)??,
     };
     let alias = alias.map(|a| a.to_ascii_lowercase()).unwrap_or_else(|| element.to_ascii_lowercase());
     if with(|s| s.devs.values().any(|d| d.alias == alias)) {
-        return Err(MCIERR_DUPLICATE_ALIAS);
+        return Err(McErr::DuplicateAlias);
     }
     let full = crate::files::full_path(element);
     let vnv = play::Movie::find(&full);
@@ -570,17 +648,17 @@ fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<u32, u
     } else {
         let Some(host) = crate::files::resolve(&full) else {
             mem::heap_free(key);
-            return Err(MCIERR_FILE_NOT_FOUND);
+            return Err(McErr::FileNotFound);
         };
         // (a movie with no .vnv is not read whole to find it is no sound file)
         let Some(head) = crate::audiofile::head_of(&host) else {
             mem::heap_free(key);
-            return Err(MCIERR_FILE_NOT_FOUND);
+            return Err(McErr::FileNotFound);
         };
         let bytes = if crate::audiofile::maybe_sound(&head) { kura::fs::read(&host).ok() } else { Some(Vec::new()) };
         let Some(bytes) = bytes else {
             mem::heap_free(key);
-            return Err(MCIERR_FILE_NOT_FOUND);
+            return Err(McErr::FileNotFound);
         };
         match sound(bytes) {
             Some(x) => x,
@@ -589,7 +667,7 @@ fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<u32, u
                 if crate::files::resolve(&full).is_some() && kind != Kind::Wave {
                     eprintln!("sake: mci {element}: not played (no .vnv to decode, see masu pack)");
                 }
-                return Err(MCIERR_INVALID_FILE);
+                return Err(McErr::InvalidFile);
             }
         }
     };
@@ -602,7 +680,7 @@ fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<u32, u
         s.next += 1;
         s.devs.insert(
             id,
-            Dev { kind, alias, element: element.to_string(), media, key, tl: Timeline::new(duration), duration, format: MCI_FORMAT_MILLISECONDS, notes: Notes::default(), repeat: false, gen: 0, hwnd: 0, dst: None, volume: 0, mciwnd: 0 },
+            Dev { kind, alias, element: element.to_string(), media, key, tl: Timeline::new(duration), duration, format: TimeFormat::Ms, notes: Notes::default(), repeat: false, gen: 0, hwnd: 0, dst: None, volume: 0, mciwnd: 0 },
         );
         id
     });
@@ -770,11 +848,11 @@ fn close(id: u32) -> bool {
 
 /// play [from] [to]: runs from `from` (else where it is; at the end: from the start) to `to`
 /// (else the end).
-fn play_dev(id: u32, from: Option<u32>, to: Option<u32>, repeat: bool) -> Result<(), u32> {
-    let Some((f, tt, dur)) = dev(id, |d| (from.map(|v| d.from_fmt(v)), to.map(|v| d.from_fmt(v)), d.duration)) else { return Err(MCIERR_INVALID_DEVICE_ID) };
+fn play_dev(id: u32, from: Option<u32>, to: Option<u32>, repeat: bool) -> Result<(), McErr> {
+    let Some((f, tt, dur)) = dev(id, |d| (from.map(|v| d.from_fmt(v)), to.map(|v| d.from_fmt(v)), d.duration)) else { return Err(McErr::InvalidDeviceId) };
     if let (Some(a), Some(b)) = (f, tt) {
         if a > b {
-            return Err(MCIERR_OUTOFRANGE);
+            return Err(McErr::OutOfRange);
         }
     }
     dev(id, |d| {
@@ -848,12 +926,12 @@ fn aligned(off: u32) -> u32 {
     off.div_ceil(ps) * ps
 }
 
-fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u32 {
+fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> Result<(), McErr> {
     let cb = if p != 0 { mem::rp(p) } else { 0 };
     let notify = (flags & MCI_NOTIFY != 0).then_some(cb);
     if msg == MCI_OPEN {
         if p == 0 {
-            return MCIERR_NULL_PARAMETER_BLOCK;
+            return Err(McErr::NullParameterBlock);
         }
         let ps = mem::ps();
         // MCI_OPEN_PARMS { dwCallback, wDeviceID, lpstrDeviceType, lpstrElementName, lpstrAlias }
@@ -868,13 +946,13 @@ fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) 
         let kind = if flags & MCI_OPEN_TYPE_ID != 0 {
             match kind_of_id(mem::rp(type_at)) {
                 Ok(k) => Some(k),
-                Err(e) => return e,
+                Err(e) => return Err(e),
             }
         } else if flags & MCI_OPEN_TYPE != 0 {
             match kind_of_type(&s(type_at)) {
                 Some(Ok(k)) => Some(k),
-                Some(Err(e)) => return e,
-                None => return MCIERR_INVALID_DEVICE_NAME,
+                Some(Err(e)) => return Err(e),
+                None => return Err(McErr::InvalidDeviceName),
             }
         } else {
             None
@@ -883,7 +961,7 @@ fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) 
         let alias = (flags & MCI_OPEN_ALIAS != 0).then(|| s(alias_at));
         let id = match open(kind, &element, alias.as_deref()) {
             Ok(id) => id,
-            Err(e) => return e,
+            Err(e) => return Err(e),
         };
         w32(id_at, id);
         // MCI_DGV_OPEN_PARMS: dwStyle, hWndParent after the alias
@@ -894,23 +972,23 @@ fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) 
             dev(id, |d| d.hwnd = if child || parent != 0 { parent } else { 0 });
         }
         post_all(notify.map(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)]).unwrap_or_default(), id);
-        return 0;
+        return Ok(());
     }
     if id == MCI_ALL_DEVICE_ID && msg == MCI_CLOSE {
         let ids: Vec<u32> = with(|s| s.devs.keys().copied().collect());
         for i in ids {
             close(i);
         }
-        return 0;
+        return Ok(());
     }
     if dev(id, |_| ()).is_none() {
-        return MCIERR_INVALID_DEVICE_ID;
+        return Err(McErr::InvalidDeviceId);
     }
     let interrupts = matches!(msg, MCI_STOP | MCI_SEEK | MCI_CLOSE | MCI_PLAY);
     let out = dev(id, |d| d.notes.command(notify, interrupts)).unwrap_or_default();
     post_all(out, id);
     let r = command(c, id, msg, flags, p, wide);
-    if r == 0 {
+    if r.is_ok() {
         if let Some(w) = notify {
             if msg == MCI_PLAY {
                 dev(id, |d| d.notes.wait_end(w));
@@ -933,31 +1011,28 @@ fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) 
     r
 }
 
-fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u32 {
+fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> Result<(), McErr> {
     let need = |p: u32| p != 0;
     match msg {
         MCI_CLOSE => {
             close(id);
-            0
+            Ok(())
         }
         MCI_PLAY => {
             // MCI_PLAY_PARMS { dwCallback, dwFrom, dwTo }
             let from = (flags & MCI_FROM != 0 && need(p)).then(|| r32(field(p, 1, 0)));
             let to = (flags & MCI_TO != 0 && need(p)).then(|| r32(field(p, 1, 1)));
-            match play_dev(id, from, to, flags & MCI_DGV_PLAY_REPEAT != 0) {
-                Ok(()) => 0,
-                Err(e) => e,
-            }
+            play_dev(id, from, to, flags & MCI_DGV_PLAY_REPEAT != 0)
         }
         MCI_STOP => {
             stop_dev(id, false);
-            0
+            Ok(())
         }
         MCI_PAUSE => {
-            if mode(id) == MCI_MODE_PLAY {
+            if mode(id) == Mode::Play {
                 stop_dev(id, true);
             }
-            0
+            Ok(())
         }
         MCI_RESUME => {
             if dev(id, |d| d.paused()).unwrap_or(false) {
@@ -966,7 +1041,7 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u
                 sync_sound(id);
                 arm(id);
             }
-            0
+            Ok(())
         }
         MCI_SEEK => {
             let to = if flags & MCI_SEEK_TO_START != 0 {
@@ -977,52 +1052,48 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u
                 let v = r32(field(p, 1, 0));
                 let (t, dur) = dev(id, |d| (d.from_fmt(v), d.duration)).unwrap_or((0, 0));
                 if dev(id, |d| d.to_fmt(dur)).unwrap_or(0) < v {
-                    return MCIERR_OUTOFRANGE;
+                    return Err(McErr::OutOfRange);
                 }
                 t
             } else {
-                return MCIERR_MISSING_PARAMETER;
+                return Err(McErr::MissingParameter);
             };
             seek_dev(id, to);
-            0
+            Ok(())
         }
         MCI_STATUS => {
             if !need(p) {
-                return MCIERR_NULL_PARAMETER_BLOCK;
+                return Err(McErr::NullParameterBlock);
             }
             if flags & MCI_STATUS_ITEM == 0 {
-                return MCIERR_MISSING_PARAMETER;
+                return Err(McErr::MissingParameter);
             }
             // MCI_STATUS_PARMS { dwCallback, dwReturn, dwItem, dwTrack }
             let ret = field(p, 1, 0);
-            let item = r32(field(p, 2, 0));
-            let v = match status(id, item) {
-                Ok(v) => v,
-                Err(e) => return e,
-            };
-            mem::wp(ret, v);
-            0
+            let Some(item) = Item::from_code(r32(field(p, 2, 0))) else { return Err(McErr::UnsupportedFunction) };
+            mem::wp(ret, status(id, item));
+            Ok(())
         }
-        // (these read or write their parameter block: none is MCIERR_NULL_PARAMETER_BLOCK, as
+        // (these read or write their parameter block: none is McErr::NullParameterBlock, as
         // Windows, not low memory)
-        MCI_SET | MCI_SETAUDIO | MCI_WINDOW | MCI_PUT | MCI_WHERE | MCI_INFO if !need(p) => MCIERR_NULL_PARAMETER_BLOCK,
+        MCI_SET | MCI_SETAUDIO | MCI_WINDOW | MCI_PUT | MCI_WHERE | MCI_INFO if !need(p) => Err(McErr::NullParameterBlock),
         MCI_SET => {
             if flags & MCI_SET_TIME_FORMAT != 0 {
-                let f = r32(field(p, 1, 0));
+                let Some(f) = TimeFormat::from_code(r32(field(p, 1, 0))) else { return Err(McErr::BadTimeFormat) };
                 let ok = dev(id, |d| format_ok(d.kind, d.video(), f)).unwrap_or(false);
                 if !ok {
-                    return MCIERR_BAD_TIME_FORMAT;
+                    return Err(McErr::BadTimeFormat);
                 }
                 dev(id, |d| d.format = f);
             }
-            0
+            Ok(())
         }
         MCI_SETAUDIO => {
             // MCI_DGV_SETAUDIO_PARMS { dwCallback, dwItem, dwValue, ... }
             if flags & MCI_DGV_SETAUDIO_ITEM != 0 && flags & MCI_DGV_SETAUDIO_VALUE != 0 && r32(field(p, 1, 0)) == MCI_DGV_SETAUDIO_VOLUME {
                 set_volume(id, volume_db(r32(field(p, 1, 1))));
             }
-            0
+            Ok(())
         }
         MCI_WINDOW => {
             // MCI_DGV_WINDOW_PARMS { dwCallback, hWnd, ... }
@@ -1031,7 +1102,7 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u
                 dev(id, |d| d.hwnd = h);
                 sync_movie(id);
             }
-            0
+            Ok(())
         }
         MCI_PUT => {
             // MCI_DGV_RECT_PARMS { dwCallback, RECT rc } (right, bottom: width, height)
@@ -1041,7 +1112,7 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u
                 dev(id, |d| d.dst = Some(rect));
                 sync_movie(id);
             }
-            0
+            Ok(())
         }
         MCI_WHERE => {
             if flags & MCI_DGV_WHERE_DESTINATION != 0 {
@@ -1052,11 +1123,11 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u
                     w32(r + 4 * i as u32, v as u32);
                 }
             }
-            0
+            Ok(())
         }
         MCI_GETDEVCAPS => {
             if flags & MCI_GETDEVCAPS_ITEM == 0 || !need(p) {
-                return MCIERR_MISSING_PARAMETER;
+                return Err(McErr::MissingParameter);
             }
             let item = r32(field(p, 2, 0));
             let (kind, video) = dev(id, |d| (d.kind, d.video())).unwrap_or((Kind::Mpeg, false));
@@ -1070,10 +1141,10 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u
                 7 => 0,
                 8 => 1,
                 9 => 0,
-                _ => return MCIERR_UNSUPPORTED_FUNCTION,
+                _ => return Err(McErr::UnsupportedFunction),
             };
             mem::wp(field(p, 1, 0), v);
-            0
+            Ok(())
         }
         MCI_INFO => {
             // MCI_INFO_PARMS { dwCallback, lpstrReturn, dwRetSize }; MCI_INFO_FILE 0x200, PRODUCT 0x100
@@ -1081,10 +1152,10 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> u
             let (kind, el) = dev(id, |d| (d.kind, d.element.clone())).unwrap_or((Kind::Mpeg, String::new()));
             let s = if flags & 0x200 != 0 { el } else { product(kind).to_string() };
             crate::k32::ret_str(buf, size, &s, wide);
-            0
+            Ok(())
         }
-        MCI_CUE => 0,
-        _ => MCIERR_UNSUPPORTED_FUNCTION,
+        MCI_CUE => Ok(()),
+        _ => Err(McErr::UnsupportedFunction),
     }
 }
 
@@ -1096,20 +1167,52 @@ fn product(kind: Kind) -> &'static str {
     }
 }
 
-fn status(id: u32, item: u32) -> Result<u32, u32> {
-    Ok(match item {
-        MCI_STATUS_LENGTH => dev(id, |d| d.to_fmt(d.duration)).unwrap_or(0),
-        MCI_STATUS_POSITION => {
+/// MCI_STATUS_* items a device here answers
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Item {
+    Length,
+    Position,
+    Tracks,
+    Mode,
+    MediaPresent,
+    TimeFormat,
+    Ready,
+    CurrentTrack,
+    Volume,
+}
+impl Item {
+    const ALL: [Item; 9] = [Item::Length, Item::Position, Item::Tracks, Item::Mode, Item::MediaPresent, Item::TimeFormat, Item::Ready, Item::CurrentTrack, Item::Volume];
+    fn code(self) -> u32 {
+        match self {
+            Item::Length => MCI_STATUS_LENGTH,
+            Item::Position => MCI_STATUS_POSITION,
+            Item::Tracks => MCI_STATUS_NUMBER_OF_TRACKS,
+            Item::Mode => MCI_STATUS_MODE,
+            Item::MediaPresent => MCI_STATUS_MEDIA_PRESENT,
+            Item::TimeFormat => MCI_STATUS_TIME_FORMAT,
+            Item::Ready => MCI_STATUS_READY,
+            Item::CurrentTrack => MCI_STATUS_CURRENT_TRACK,
+            Item::Volume => MCI_DGV_STATUS_VOLUME,
+        }
+    }
+    fn from_code(v: u32) -> Option<Item> {
+        Item::ALL.into_iter().find(|x| x.code() == v)
+    }
+}
+
+fn status(id: u32, item: Item) -> u32 {
+    match item {
+        Item::Length => dev(id, |d| d.to_fmt(d.duration)).unwrap_or(0),
+        Item::Position => {
             let p = position(id);
             dev(id, |d| d.to_fmt(p)).unwrap_or(0)
         }
-        MCI_STATUS_NUMBER_OF_TRACKS | MCI_STATUS_CURRENT_TRACK => 1,
-        MCI_STATUS_MODE => mode(id),
-        MCI_STATUS_MEDIA_PRESENT | MCI_STATUS_READY => 1,
-        MCI_STATUS_TIME_FORMAT => dev(id, |d| d.format).unwrap_or(0),
-        MCI_DGV_STATUS_VOLUME => dev(id, |d| volume_mci(d.volume)).unwrap_or(0),
-        _ => return Err(MCIERR_UNSUPPORTED_FUNCTION),
-    })
+        Item::Tracks | Item::CurrentTrack => 1,
+        Item::Mode => mode(id).code(),
+        Item::MediaPresent | Item::Ready => 1,
+        Item::TimeFormat => dev(id, |d| d.format.code()).unwrap_or(0),
+        Item::Volume => dev(id, |d| volume_mci(d.volume)).unwrap_or(0),
+    }
 }
 
 fn set_volume(id: u32, db: i32) {
@@ -1126,13 +1229,17 @@ fn set_volume(id: u32, db: i32) {
     }
 }
 
+/// An MCI answer as the program gets it: 0 or the error's number
+fn mmresult(r: Result<(), McErr>) -> u32 {
+    r.err().map_or(0, McErr::code)
+}
 fn mciSendCommandA(c: &mut Ctx) -> u32 {
     let (id, msg, flags, p) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    send_command(c, id, msg, flags, p, false)
+    mmresult(send_command(c, id, msg, flags, p, false))
 }
 fn mciSendCommandW(c: &mut Ctx) -> u32 {
     let (id, msg, flags, p) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    send_command(c, id, msg, flags, p, true)
+    mmresult(send_command(c, id, msg, flags, p, true))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1143,17 +1250,17 @@ fn device_id(name: &str) -> u32 {
     with(|s| s.devs.iter().find(|(_, d)| d.alias == n || d.element.to_ascii_lowercase() == n).map_or(0, |(&i, _)| i))
 }
 
-fn int(w: Option<&String>) -> Result<u32, u32> {
-    let w = w.ok_or(MCIERR_MISSING_PARAMETER)?;
-    w.parse::<u32>().map_err(|_| MCIERR_BAD_INTEGER)
+fn int(w: Option<&String>) -> Result<u32, McErr> {
+    let w = w.ok_or(McErr::MissingParameter)?;
+    w.parse::<u32>().map_err(|_| McErr::BadInteger)
 }
 
 /// Runs a command string; the text it returns.
-fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, u32> {
-    let Some(w) = words(cmd) else { return Err(MCIERR_MISSING_STRING_ARGUMENT) };
+fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
+    let Some(w) = words(cmd) else { return Err(McErr::MissingStringArgument) };
     let lw: Vec<String> = w.iter().map(|x| x.to_ascii_lowercase()).collect();
-    let Some(verb) = lw.first() else { return Err(MCIERR_MISSING_STRING_ARGUMENT) };
-    let Some(name) = w.get(1) else { return Err(MCIERR_MISSING_PARAMETER) };
+    let Some(verb) = lw.first() else { return Err(McErr::MissingStringArgument) };
+    let Some(name) = w.get(1) else { return Err(McErr::MissingParameter) };
     let rest = &lw[2..];
     let has = |k: &str| rest.iter().any(|x| x == k);
     // (the word after keyword `k`, as an index into `w`)
@@ -1172,9 +1279,9 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, u32> {
             Some(Some(t)) => match kind_of_type(t) {
                 Some(Ok(k)) => Some(k),
                 Some(Err(e)) => return Err(e),
-                None => return Err(MCIERR_INVALID_DEVICE_NAME),
+                None => return Err(McErr::InvalidDeviceName),
             },
-            Some(None) => return Err(MCIERR_MISSING_PARAMETER),
+            Some(None) => return Err(McErr::MissingParameter),
             None => None,
         };
         // (a bare device name: "open waveaudio" has no element)
@@ -1201,18 +1308,18 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, u32> {
     // (the command first: an unknown one is that, whatever the device)
     const VERBS: [&str; 17] = ["play", "stop", "pause", "resume", "close", "cue", "seek", "status", "set", "setaudio", "window", "put", "where", "capability", "info", "open", "close"];
     if !VERBS.contains(&verb.as_str()) {
-        return Err(MCIERR_UNRECOGNIZED_COMMAND);
+        return Err(McErr::UnrecognizedCommand);
     }
     let id = device_id(name);
     if id == 0 {
-        return Err(MCIERR_INVALID_DEVICE_NAME);
+        return Err(McErr::InvalidDeviceName);
     }
     // the command as the parameter block mciSendCommand takes
     let ps = mem::ps();
     let p = mem::heap_alloc(64, true);
     mem::wp(p, cb);
     let mut ret = String::new();
-    let r = (|| -> Result<u32, u32> {
+    let r = (|| -> Result<(), McErr> {
         let msg = match verb.as_str() {
             "play" => {
                 if let Some(i) = after("from") {
@@ -1241,53 +1348,45 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, u32> {
                         flags |= MCI_TO;
                         w32(p + ps, int(after("to").and_then(|i| w.get(i)))?);
                     }
-                    None => return Err(MCIERR_MISSING_PARAMETER),
+                    None => return Err(McErr::MissingParameter),
                 }
                 MCI_SEEK
             }
             "status" => {
                 let item = rest.iter().filter(|x| *x != "notify" && *x != "wait").cloned().collect::<Vec<_>>().join(" ");
                 let it = match item.as_str() {
-                    "length" => MCI_STATUS_LENGTH,
-                    "position" => MCI_STATUS_POSITION,
-                    "mode" => MCI_STATUS_MODE,
-                    "ready" => MCI_STATUS_READY,
-                    "media present" => MCI_STATUS_MEDIA_PRESENT,
-                    "time format" => MCI_STATUS_TIME_FORMAT,
-                    "number of tracks" => MCI_STATUS_NUMBER_OF_TRACKS,
-                    "current track" => MCI_STATUS_CURRENT_TRACK,
-                    "volume" => MCI_DGV_STATUS_VOLUME,
-                    "" => return Err(MCIERR_MISSING_PARAMETER),
-                    _ => return Err(MCIERR_UNRECOGNIZED_KEYWORD),
+                    "length" => Item::Length,
+                    "position" => Item::Position,
+                    "mode" => Item::Mode,
+                    "ready" => Item::Ready,
+                    "media present" => Item::MediaPresent,
+                    "time format" => Item::TimeFormat,
+                    "number of tracks" => Item::Tracks,
+                    "current track" => Item::CurrentTrack,
+                    "volume" => Item::Volume,
+                    "" => return Err(McErr::MissingParameter),
+                    _ => return Err(McErr::UnrecognizedKeyword),
                 };
-                let v = status(id, it)?;
                 ret = match it {
-                    MCI_STATUS_MODE => match v {
-                        MCI_MODE_PLAY => "playing",
-                        MCI_MODE_PAUSE => "paused",
-                        MCI_MODE_OPEN => "open",
-                        MCI_MODE_NOT_READY => "not ready",
-                        _ => "stopped",
-                    }
-                    .into(),
-                    MCI_STATUS_READY | MCI_STATUS_MEDIA_PRESENT => if v != 0 { "true" } else { "false" }.into(),
-                    MCI_STATUS_TIME_FORMAT => format_name(v).into(),
-                    _ => v.to_string(),
+                    Item::Mode => mode(id).name().into(),
+                    Item::Ready | Item::MediaPresent => "true".into(),
+                    Item::TimeFormat => format_name(dev(id, |d| d.format).unwrap_or(TimeFormat::Ms)).into(),
+                    Item::Length | Item::Position | Item::Tracks | Item::CurrentTrack | Item::Volume => status(id, it).to_string(),
                 };
-                return Ok(0);
+                return Ok(());
             }
             "set" => {
                 if let Some(i) = rest.iter().position(|x| x == "format").filter(|&i| i > 0 && rest[i - 1] == "time") {
                     let f = match rest.get(i + 1).map(|s| s.as_str()) {
-                        Some("milliseconds") | Some("ms") => MCI_FORMAT_MILLISECONDS,
-                        Some("frames") => MCI_FORMAT_FRAMES,
-                        Some("bytes") => MCI_FORMAT_BYTES,
-                        Some("samples") => MCI_FORMAT_SAMPLES,
-                        Some(_) => return Err(MCIERR_BAD_TIME_FORMAT),
-                        None => return Err(MCIERR_MISSING_PARAMETER),
+                        Some("milliseconds") | Some("ms") => TimeFormat::Ms,
+                        Some("frames") => TimeFormat::Frames,
+                        Some("bytes") => TimeFormat::Bytes,
+                        Some("samples") => TimeFormat::Samples,
+                        Some(_) => return Err(McErr::BadTimeFormat),
+                        None => return Err(McErr::MissingParameter),
                     };
                     flags |= MCI_SET_TIME_FORMAT;
-                    w32(p + ps, f);
+                    w32(p + ps, f.code());
                 }
                 MCI_SET
             }
@@ -1311,7 +1410,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, u32> {
                 if let Some(i) = after("at").filter(|_| has("destination")) {
                     flags |= MCI_DGV_PUT_DESTINATION | MCI_DGV_RECT;
                     for k in 0..4 {
-                        let v = w.get(i + k).ok_or(MCIERR_MISSING_PARAMETER)?.parse::<i32>().map_err(|_| MCIERR_BAD_INTEGER)?;
+                        let v = w.get(i + k).ok_or(McErr::MissingParameter)?.parse::<i32>().map_err(|_| McErr::BadInteger)?;
                         w32(p + ps + 4 * k as u32, v as u32);
                     }
                 }
@@ -1320,11 +1419,11 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, u32> {
             "where" => {
                 flags |= MCI_DGV_WHERE_DESTINATION;
                 let r = send_command(c, id, MCI_WHERE, flags, p, false);
-                if r == 0 {
+                if r.is_ok() {
                     let v: Vec<String> = (0..4).map(|k| (r32(p + ps + 4 * k) as i32).to_string()).collect();
                     ret = v.join(" ");
                 }
-                return Ok(r);
+                return r;
             }
             "capability" => {
                 let item = rest.join(" ");
@@ -1334,39 +1433,39 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, u32> {
                     "can record" | "can eject" | "can save" => "false".into(),
                     "has video" | "can stretch" => if video { "true" } else { "false" }.into(),
                     "device type" => if kind == Kind::Wave { "waveaudio" } else { "digitalvideo" }.into(),
-                    _ => return Err(MCIERR_UNRECOGNIZED_KEYWORD),
+                    _ => return Err(McErr::UnrecognizedKeyword),
                 };
-                return Ok(0);
+                return Ok(());
             }
             "info" => {
                 let (kind, el) = dev(id, |d| (d.kind, d.element.clone())).unwrap_or((Kind::Mpeg, String::new()));
                 ret = if has("file") { el } else { product(kind).into() };
-                return Ok(0);
+                return Ok(());
             }
-            _ => return Err(MCIERR_UNRECOGNIZED_COMMAND),
+            _ => return Err(McErr::UnrecognizedCommand),
         };
-        Ok(send_command(c, id, msg, flags, p, false))
+        send_command(c, id, msg, flags, p, false)
     })();
     mem::heap_free(p);
     match r {
-        Ok(0) => Ok(ret),
-        Ok(e) | Err(e) => Err(e),
+        Ok(()) => Ok(ret),
+        Err(e) => Err(e),
     }
 }
 
-fn format_name(f: u32) -> &'static str {
+fn format_name(f: TimeFormat) -> &'static str {
     match f {
-        MCI_FORMAT_FRAMES => "frames",
-        MCI_FORMAT_BYTES => "bytes",
-        MCI_FORMAT_SAMPLES => "samples",
-        _ => "milliseconds",
+        TimeFormat::Frames => "frames",
+        TimeFormat::Bytes => "bytes",
+        TimeFormat::Samples => "samples",
+        TimeFormat::Ms => "milliseconds",
     }
 }
 
 fn mci_send_string(c: &mut Ctx, wide: bool) -> u32 {
     let (cmd, ret, size, cb) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if cmd == 0 {
-        return MCIERR_MISSING_STRING_ARGUMENT;
+        return McErr::MissingStringArgument.code();
     }
     let s = crate::k32::arg_str(cmd, wide);
     match send_string(c, &s, cb) {
@@ -1376,7 +1475,7 @@ fn mci_send_string(c: &mut Ctx, wide: bool) -> u32 {
             }
             0
         }
-        Err(e) => e,
+        Err(e) => e.code(),
     }
 }
 fn mciSendStringA(c: &mut Ctx) -> u32 {
@@ -1449,7 +1548,7 @@ struct Wnd {
     dev: u32,
     style: u32,
     parent: u32,
-    mode: u32,
+    mode: Mode,
     repeat: bool,
 }
 
@@ -1463,10 +1562,10 @@ fn gcall(c: &mut Ctx, dll: &str, name: &str, args: &[u32]) -> u32 {
     c.call(f, args)
 }
 
-/// The mode an MCIWnd shows: of its device, MCI_MODE_NOT_READY with none.
-fn wnd_mode(h: u32) -> u32 {
+/// The mode an MCIWnd shows: of its device, Mode::NotReady with none.
+fn wnd_mode(h: u32) -> Mode {
     match wnd(h, |w| w.dev).unwrap_or(0) {
-        0 => MCI_MODE_NOT_READY,
+        0 => Mode::NotReady,
         d => mode(d),
     }
 }
@@ -1476,7 +1575,7 @@ fn wnd_notify(c: &mut Ctx, h: u32) {
     let m = wnd_mode(h);
     let Some((parent, style, was)) = wnd(h, |w| (w.parent, w.style, std::mem::replace(&mut w.mode, m))) else { return };
     if was != m && style & MCIWNDF_NOTIFYMODE != 0 && parent != 0 {
-        crate::user::send(c, parent, MCIWNDM_NOTIFYMODE, h, m);
+        crate::user::send(c, parent, MCIWNDM_NOTIFYMODE, h, m.code());
     }
 }
 
@@ -1486,11 +1585,11 @@ fn wnd_open(c: &mut Ctx, h: u32, file: &str) -> u32 {
             close(d);
         }
     }
-    let id = match open(None, file, Some(&format!("mciwnd{h:x}"))).or_else(|e| if e == MCIERR_EXTENSION_NOT_FOUND { open(Some(Kind::Mpeg), file, Some(&format!("mciwnd{h:x}"))) } else { Err(e) }) {
+    let id = match open(None, file, Some(&format!("mciwnd{h:x}"))).or_else(|e| if e == McErr::ExtensionNotFound { open(Some(Kind::Mpeg), file, Some(&format!("mciwnd{h:x}"))) } else { Err(e) }) {
         Ok(id) => id,
         Err(e) => {
             wnd_notify(c, h);
-            return e;
+            return e.code();
         }
     };
     let style = wnd(h, |w| {
@@ -1521,7 +1620,7 @@ fn wnd_open(c: &mut Ctx, h: u32, file: &str) -> u32 {
 }
 
 fn wnd_command(c: &mut Ctx, h: u32, msg: u32, from: Option<u32>, to: Option<u32>) -> u32 {
-    let Some(d) = wnd(h, |w| w.dev).filter(|&d| d != 0) else { return MCIERR_INVALID_DEVICE_ID };
+    let Some(d) = wnd(h, |w| w.dev).filter(|&d| d != 0) else { return McErr::InvalidDeviceId.code() };
     let r = match msg {
         MCI_PLAY => {
             let repeat = wnd(h, |w| w.repeat).unwrap_or(false);
@@ -1532,7 +1631,7 @@ fn wnd_command(c: &mut Ctx, h: u32, msg: u32, from: Option<u32>, to: Option<u32>
                     arm(d);
                     0
                 }
-                Err(e) => e,
+                Err(e) => e.code(),
             }
         }
         MCI_STOP => {
@@ -1540,7 +1639,7 @@ fn wnd_command(c: &mut Ctx, h: u32, msg: u32, from: Option<u32>, to: Option<u32>
             0
         }
         MCI_PAUSE => {
-            if mode(d) == MCI_MODE_PLAY {
+            if mode(d) == Mode::Play {
                 stop_dev(d, true);
             }
             0
@@ -1564,7 +1663,7 @@ fn wnd_command(c: &mut Ctx, h: u32, msg: u32, from: Option<u32>, to: Option<u32>
             close(d);
             0
         }
-        _ => MCIERR_UNSUPPORTED_FUNCTION,
+        _ => McErr::UnsupportedFunction.code(),
     };
     wnd_notify(c, h);
     r
@@ -1581,7 +1680,7 @@ fn mciwnd_proc(c: &mut Ctx) -> u32 {
             let style = r32(cs + 4 * mem::ps() + 4 * 4);
             let parent = mem::rp(cs + 3 * mem::ps());
             let file = mem::rp(cs);
-            WNDS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(h, Wnd { style: style & 0xffff, parent, mode: MCI_MODE_NOT_READY, ..Wnd::default() });
+            WNDS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(h, Wnd { style: style & 0xffff, parent, mode: Mode::NotReady, ..Wnd::default() });
             if file != 0 {
                 let f = crate::k32::arg_str(file, true);
                 wnd_open(c, h, &f);
@@ -1590,7 +1689,7 @@ fn mciwnd_proc(c: &mut Ctx) -> u32 {
         }
         MCIWNDM_OPENA | MCIWNDM_OPENW => {
             if lp == 0 {
-                return MCIERR_UNSUPPORTED_FUNCTION;
+                return McErr::UnsupportedFunction.code();
             }
             let f = crate::k32::arg_str(lp, msg == MCIWNDM_OPENW);
             wnd_open(c, h, &f)
@@ -1606,15 +1705,9 @@ fn mciwnd_proc(c: &mut Ctx) -> u32 {
         MCIWNDM_GETMODEA | MCIWNDM_GETMODEW => {
             let m = wnd_mode(h);
             if lp != 0 && wp != 0 {
-                let s = match m {
-                    MCI_MODE_PLAY => "playing",
-                    MCI_MODE_PAUSE => "paused",
-                    MCI_MODE_NOT_READY => "not ready",
-                    _ => "stopped",
-                };
-                crate::k32::ret_str(lp, wp, s, msg == MCIWNDM_GETMODEW);
+                crate::k32::ret_str(lp, wp, m.name(), msg == MCIWNDM_GETMODEW);
             }
-            m
+            m.code()
         }
         MCIWNDM_GETLENGTH | MCIWNDM_GETEND => dev(devid, |d| d.to_fmt(d.duration)).unwrap_or(0),
         MCIWNDM_GETSTART => 0,
@@ -1779,7 +1872,7 @@ mod tests {
             (MCI_INFO, 0x200),
             (MCI_STATUS, MCI_STATUS_ITEM),
         ] {
-            assert_eq!(command(&mut c, 0x7777, msg, flags, 0, false), MCIERR_NULL_PARAMETER_BLOCK, "{msg:#x}");
+            assert_eq!(command(&mut c, 0x7777, msg, flags, 0, false), Err(McErr::NullParameterBlock), "{msg:#x}");
         }
     }
 
@@ -1798,7 +1891,7 @@ mod tests {
     fn devices_by_type_and_extension() {
         assert_eq!(kind_of_type("MPEGVideo"), Some(Ok(Kind::Mpeg)));
         assert_eq!(kind_of_type("waveaudio"), Some(Ok(Kind::Wave)));
-        assert_eq!(kind_of_type("sequencer"), Some(Err(MCIERR_CANNOT_LOAD_DRIVER)));
+        assert_eq!(kind_of_type("sequencer"), Some(Err(McErr::CannotLoadDriver)));
         assert_eq!(kind_of_type("nonsense"), None);
         assert_eq!(kind_of_file("C:\\a\\b.WAV"), Some(Ok(Kind::Wave)));
         assert_eq!(kind_of_file("x.mpg"), Some(Ok(Kind::Mpeg)));
@@ -1806,22 +1899,22 @@ mod tests {
         // (no extension: the program must name the type: LiLiM's Data\Sound\se\lilim)
         assert_eq!(kind_of_file("Data\\Sound\\se\\lilim"), None);
         assert_eq!(kind_of_file("dir.d\\lilim"), None);
-        assert_eq!(kind_of_file("x.mid"), Some(Err(MCIERR_CANNOT_LOAD_DRIVER)));
+        assert_eq!(kind_of_file("x.mid"), Some(Err(McErr::CannotLoadDriver)));
     }
 
     #[test]
     fn time_formats() {
         // 2.5 s: 2500 ms, 25 frames at 10 fps, 22050 samples at 8820 Hz, bytes of 4-byte frames
         let t = 25_000_000;
-        assert_eq!(to_format(t, MCI_FORMAT_MILLISECONDS, 0, 0, (0, 1)), 2500);
-        assert_eq!(to_format(t, MCI_FORMAT_FRAMES, 0, 0, (10, 1)), 25);
-        assert_eq!(to_format(t, MCI_FORMAT_SAMPLES, 8820, 4, (0, 1)), 22050);
-        assert_eq!(to_format(t, MCI_FORMAT_BYTES, 8820, 4, (0, 1)), 88200);
-        assert!(format_ok(Kind::Wave, false, MCI_FORMAT_BYTES));
-        assert!(!format_ok(Kind::Mpeg, false, MCI_FORMAT_BYTES));
-        assert!(!format_ok(Kind::Mpeg, false, MCI_FORMAT_FRAMES));
-        assert!(format_ok(Kind::Mpeg, true, MCI_FORMAT_FRAMES));
-        assert!(!format_ok(Kind::Wave, false, 1));
+        assert_eq!(to_format(t, TimeFormat::Ms, 0, 0, (0, 1)), 2500);
+        assert_eq!(to_format(t, TimeFormat::Frames, 0, 0, (10, 1)), 25);
+        assert_eq!(to_format(t, TimeFormat::Samples, 8820, 4, (0, 1)), 22050);
+        assert_eq!(to_format(t, TimeFormat::Bytes, 8820, 4, (0, 1)), 88200);
+        assert!(format_ok(Kind::Wave, false, TimeFormat::Bytes));
+        assert!(!format_ok(Kind::Mpeg, false, TimeFormat::Bytes));
+        assert!(!format_ok(Kind::Mpeg, false, TimeFormat::Frames));
+        assert!(format_ok(Kind::Mpeg, true, TimeFormat::Frames));
+        assert_eq!(TimeFormat::from_code(1), None);
     }
 
     #[test]
@@ -1862,8 +1955,8 @@ mod tests {
 
     #[test]
     fn error_texts() {
-        assert!(error_text(MCIERR_INVALID_DEVICE_NAME).unwrap().contains("not open"));
-        assert!(error_text(MCIERR_FILE_NOT_FOUND).is_some());
+        assert!(error_text(McErr::InvalidDeviceName.code()).unwrap().contains("not open"));
+        assert!(error_text(McErr::FileNotFound.code()).is_some());
         assert_eq!(error_text(1234), None);
     }
 
@@ -1894,11 +1987,11 @@ mod tests {
         /// milliseconds exactly; samples and bytes to the frame)
         #[test]
         fn formats_round_trip(v in 0u32..10_000_000, rate in prop::sample::select(vec![8000u32, 11025, 22050, 44100, 48000]), block in prop::sample::select(vec![1u32, 2, 4]), fps in 1u32..61) {
-            prop_assert_eq!(to_format(from_format(v, MCI_FORMAT_MILLISECONDS, rate, block, (fps, 1)), MCI_FORMAT_MILLISECONDS, rate, block, (fps, 1)), v);
-            prop_assert_eq!(to_format(from_format(v, MCI_FORMAT_FRAMES, rate, block, (fps, 1)), MCI_FORMAT_FRAMES, rate, block, (fps, 1)), v);
-            let s = to_format(from_format(v, MCI_FORMAT_SAMPLES, rate, block, (fps, 1)), MCI_FORMAT_SAMPLES, rate, block, (fps, 1));
+            prop_assert_eq!(to_format(from_format(v, TimeFormat::Ms, rate, block, (fps, 1)), TimeFormat::Ms, rate, block, (fps, 1)), v);
+            prop_assert_eq!(to_format(from_format(v, TimeFormat::Frames, rate, block, (fps, 1)), TimeFormat::Frames, rate, block, (fps, 1)), v);
+            let s = to_format(from_format(v, TimeFormat::Samples, rate, block, (fps, 1)), TimeFormat::Samples, rate, block, (fps, 1));
             prop_assert!(v - s <= 1, "{} {}", v, s);
-            let b = to_format(from_format(v, MCI_FORMAT_BYTES, rate, block, (fps, 1)), MCI_FORMAT_BYTES, rate, block, (fps, 1));
+            let b = to_format(from_format(v, TimeFormat::Bytes, rate, block, (fps, 1)), TimeFormat::Bytes, rate, block, (fps, 1));
             prop_assert!(v - b <= 2 * block, "{} {}", v, b);
         }
 
