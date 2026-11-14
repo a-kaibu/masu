@@ -252,6 +252,22 @@ fn back_buffer(c: &mut Ctx, sc: u32) -> u32 {
     bmp
 }
 
+fn hwnd_methods() -> Vec<(&'static str, Handler)> {
+    // (first match wins: these before the device context's)
+    let mut methods: Vec<(&str, Handler)> = vec![
+        ("EndDraw", HwndEndDraw as Handler),
+        ("Flush", Flush),
+        ("CheckWindowState", zero),
+        ("Resize", Resize),
+        ("GetHwnd", GetHwnd),
+        ("GetPixelFormat", GetPixelFormat),
+        ("GetMaximumBitmapSize", GetMaximumBitmapSize),
+        ("CreateCompatibleRenderTarget", CreateCompatibleRenderTarget),
+    ];
+    methods.extend(context_methods());
+    methods
+}
+
 /// CreateHwndRenderTarget(render target properties, HWND properties, out)
 fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     let (factory, hp, out) = (c.a(0), c.a(2), c.a(3));
@@ -281,19 +297,7 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     new_device(factory, dev_out);
     let device = mem::rp(dev_out);
     mem::heap_free(dev_out);
-    // (first match wins: these before the device context's)
-    let mut methods: Vec<(&str, Handler)> = vec![
-        ("EndDraw", HwndEndDraw as Handler),
-        ("Flush", Flush),
-        ("CheckWindowState", zero),
-        ("Resize", Resize),
-        ("GetHwnd", GetHwnd),
-        ("GetPixelFormat", GetPixelFormat),
-        ("GetMaximumBitmapSize", GetMaximumBitmapSize),
-        ("CreateCompatibleRenderTarget", CreateCompatibleRenderTarget),
-    ];
-    methods.extend(context_methods());
-    let o = com::object("ID2D1HwndRenderTarget", &methods, 8);
+    let o = com::object("ID2D1HwndRenderTarget", &hwnd_methods(), 8);
     st(|s| {
         s.parents.insert(o, device);
         s.dcs.insert(o, Dc { device, ..Default::default() });
@@ -305,6 +309,12 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     set_target(c, o, bmp, true);
     mem::putp(out, o);
     0
+}
+
+fn bitmap_rt_methods() -> Vec<(&'static str, Handler)> {
+    let mut methods: Vec<(&str, Handler)> = vec![("GetBitmap", GetBitmap as Handler), ("CreateCompatibleRenderTarget", CreateCompatibleRenderTarget)];
+    methods.extend(context_methods());
+    methods
 }
 
 /// CreateCompatibleRenderTarget(size in DIPs *, size in pixels *, pixel format *, options, out):
@@ -344,9 +354,7 @@ fn CreateCompatibleRenderTarget(c: &mut Ctx) -> u32 {
     let bmp = new_bitmap(tex);
     st(|s| s.owned.insert(bmp, tex));
     gpu2d::clear(tex, [0.0; 4]);
-    let mut methods: Vec<(&str, Handler)> = vec![("GetBitmap", GetBitmap as Handler), ("CreateCompatibleRenderTarget", CreateCompatibleRenderTarget)];
-    methods.extend(context_methods());
-    let o = com::object("ID2D1BitmapRenderTarget", &methods, 8);
+    let o = com::object("ID2D1BitmapRenderTarget", &bitmap_rt_methods(), 8);
     // (it keeps its device and the D3D11 device its textures come from)
     com::add_ref_obj(device);
     c.call(mem::rp(mem::rp(d3d) + mem::ps()), &[d3d]);
@@ -1800,6 +1808,9 @@ mod draw_tests;
 
 #[cfg(test)]
 mod lifetime_tests;
+
+#[cfg(test)]
+mod vtable_tests;
 
 #[cfg(test)]
 mod source_tests {

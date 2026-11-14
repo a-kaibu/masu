@@ -1403,6 +1403,68 @@ pub fn init() {
 }
 
 #[cfg(test)]
+mod vtable_tests {
+    //! Every DirectWrite object's vtable, slot by slot (dwrite_vtables.txt), pinned before the
+    //! method lists change shape (com::check_vtables).
+    use super::*;
+    use crate::test_guest::{call, enter};
+
+    fn made(f: crate::api::Handler, args: &[u32]) -> u32 {
+        let o = mem::heap_alloc(8, true);
+        let mut a = args.to_vec();
+        a.push(o);
+        assert_eq!(call(f, &a), 0);
+        let p = mem::rp(o);
+        mem::heap_free(o);
+        p
+    }
+
+    #[test]
+    fn every_objects_vtable() {
+        let _g = enter();
+        made(DWriteCreateFactory, &[1, 0]);
+        let name = mem::heap_alloc(16, true);
+        for (i, ch) in (0u32..).zip("Arial".encode_utf16()) {
+            mem::w16(name + 2 * i, ch);
+        }
+        let fmt = made(CreateTextFormat, &[0, name, 0, 400, 0, 5, 12f32.to_bits(), name]);
+        let out = mem::heap_alloc(8, true);
+        assert_eq!(new_layout(vec![0x41], fmt, 100.0, 100.0, out), 0);
+        made(CreateRenderingParams, &[0]);
+        collection();
+        let fam = family(0);
+        font(0);
+        let fc = face(0);
+        made(GetMatchingFonts, &[fam, 400, 5, 0]);
+        w32(out, 1);
+        let file = made(GetFiles, &[fc, out]);
+        made(GetLoader, &[file]);
+        strings(Vec::new());
+        made(GetSystemFontFallback, &[0]);
+        made(CreateNumberSubstitution, &[0, 0, name, 0]);
+        com::check_vtables(
+            "dwrite_vtables.txt",
+            &[
+                FACTORY,
+                "IDWriteTextFormat3",
+                "IDWriteTextLayout4",
+                "IDWriteRenderingParams3",
+                "IDWriteFontCollection",
+                "IDWriteFontFamily",
+                "IDWriteFont",
+                "IDWriteFontFace",
+                "IDWriteFontList",
+                "IDWriteFontFile",
+                "IDWriteLocalFontFileLoader",
+                "IDWriteLocalizedStrings",
+                "IDWriteFontFallback",
+                "IDWriteNumberSubstitution",
+            ],
+        );
+    }
+}
+
+#[cfg(test)]
 mod review_b06_tests {
     use super::*;
 

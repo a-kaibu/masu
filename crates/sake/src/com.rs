@@ -217,8 +217,29 @@ pub fn is_stub(a: u32) -> bool {
     STUBS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&a))
 }
 
+/// What slot `i` (method `name`) of a vtable gets from `impls`: "name#i" (that slot only, where
+/// an interface has two methods of one name, as ID2D1DeviceContext's CreateBitmap with
+/// D2D1_BITMAP_PROPERTIES1 at 57 beside 4's), else the first entry named `name`; None for
+/// IUnknown's own or a stub.
+fn slot_impl(i: usize, name: &str, impls: &[(&str, Handler)]) -> Option<Handler> {
+    let slot = format!("{name}#{i}");
+    impls.iter().find(|m| m.0 == slot).or_else(|| impls.iter().find(|m| m.0 == name)).map(|m| m.1)
+}
+/// Slot `i`'s handler: `impls`' or, with none, IUnknown's own for 0..3 and a stub after.
+fn slot_handler(i: usize, found: Option<Handler>) -> Handler {
+    match (found, i) {
+        (Some(f), _) => f,
+        (None, 0) => query_interface,
+        (None, 1) => add_ref,
+        (None, 2) => release,
+        (None, _) => stub,
+    }
+}
+
 /// The vtable of `iface` with the methods `impls` names; built once per interface.
 pub fn vtable(iface: &'static str, impls: &[(&str, Handler)]) -> u32 {
+    #[cfg(test)]
+    CALLS.with(|c| c.borrow_mut().push((iface, impls.iter().map(|&(n, f)| (n.to_string(), f)).collect())));
     if let Some(&v) = VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).get(iface) {
         return v;
     }
@@ -233,17 +254,8 @@ pub fn vtable(iface: &'static str, impls: &[(&str, Handler)]) -> u32 {
     let k = mem::ps();
     let v = mem::heap_alloc(k * t.1.len() as u32, true);
     for (i, &(name, dwords, kind)) in t.1.iter().enumerate() {
-        // ("name#slot": that slot only, where an interface has two methods of one name, as
-        // ID2D1DeviceContext's CreateBitmap with D2D1_BITMAP_PROPERTIES1 at 57 beside 4's)
-        let slot = format!("{name}#{i}");
-        let found = impls.iter().find(|m| m.0 == slot).or_else(|| impls.iter().find(|m| m.0 == name));
-        let f: Handler = match found {
-            Some(m) => m.1,
-            None if i == 0 => query_interface,
-            None if i == 1 => add_ref,
-            None if i == 2 => release,
-            None => stub,
-        };
+        let found = slot_impl(i, name, impls);
+        let f = slot_handler(i, found);
         let a = host_fn(&format!("{iface}::{i}:{name}"), f, 4 * dwords as u32);
         if i > 2 && found.is_none() {
             STUBS.lock().unwrap().get_or_insert_with(HashMap::new).insert(a, (iface, name, kind));
@@ -253,6 +265,66 @@ pub fn vtable(iface: &'static str, impls: &[(&str, Handler)]) -> u32 {
     }
     VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).insert(iface, v);
     v
+}
+
+/// (tests) Every vtable asked for on this thread (a test's own objects, whatever other tests
+/// built first): its interface and the methods it was asked with.
+#[cfg(test)]
+type Calls = Vec<(&'static str, Vec<(String, Handler)>)>;
+#[cfg(test)]
+thread_local!(static CALLS: std::cell::RefCell<Calls> = const { std::cell::RefCell::new(Vec::new()) });
+
+/// (tests) What fills each slot of these interfaces' vtables (as this thread last asked for
+/// them), one line per slot that is not a stub: its handler named by the first slot (in this
+/// order) it filled, so that two slots sharing a handler, and which list's handler won, show. A
+/// module's object constructors are pinned with this before their method lists change shape
+/// (MASU_UPDATE_VTABLES=1 writes the file).
+#[cfg(test)]
+pub(crate) fn check_vtables(golden: &str, ifaces: &[&str]) {
+    let calls = CALLS.with(|c| c.borrow().clone());
+    let mut seen: Vec<(Handler, String)> =
+        vec![(query_interface, "QueryInterface".into()), (add_ref, "AddRef".into()), (release, "Release".into()), (stub, "stub".into())];
+    let mut out = String::new();
+    for &i in ifaces {
+        let Some((_, impls)) = calls.iter().rev().find(|b| b.0 == i) else { panic!("com: no vtable asked for {i}") };
+        let impls: Vec<(&str, Handler)> = impls.iter().map(|(n, f)| (n.as_str(), *f)).collect();
+        for (k, &(name, _, _)) in table(i).1.iter().enumerate() {
+            let f = slot_handler(k, slot_impl(k, name, &impls));
+            let label = match seen.iter().find(|s| std::ptr::fn_addr_eq(s.0, f)) {
+                Some(s) => s.1.clone(),
+                None => {
+                    let l = format!("{i}.{k}");
+                    seen.push((f, l.clone()));
+                    l
+                }
+            };
+            if label != "stub" {
+                out += &format!("{i} {k} {name}: {label}\n");
+            }
+        }
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(golden);
+    if std::env::var_os("MASU_UPDATE_VTABLES").is_some() {
+        std::fs::write(&path, &out).unwrap();
+    }
+    let want = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(want == out, "com: {golden} differs (MASU_UPDATE_VTABLES=1 rewrites it):\n{}", diff(&want, &out));
+}
+#[cfg(test)]
+fn diff(a: &str, b: &str) -> String {
+    let (x, y): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
+    let mut d = String::new();
+    for l in &x {
+        if !y.contains(l) {
+            d += &format!("- {l}\n");
+        }
+    }
+    for l in &y {
+        if !x.contains(l) {
+            d += &format!("+ {l}\n");
+        }
+    }
+    d
 }
 
 /// A new object (refcount 1) of `size` bytes, the vtable pointer first.

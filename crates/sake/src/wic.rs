@@ -1724,6 +1724,68 @@ pub fn factory() -> u32 {
 }
 
 #[cfg(test)]
+mod vtable_tests {
+    //! Every WIC object's vtable, slot by slot (wic_vtables.txt), pinned before the method lists
+    //! change shape (com::check_vtables).
+    use super::*;
+    use crate::test_guest::{call, enter};
+
+    fn made(f: crate::api::Handler, args: &[u32]) -> u32 {
+        let o = mem::heap_alloc(8, true);
+        let mut a = args.to_vec();
+        a.push(o);
+        assert_eq!(call(f, &a), 0);
+        let p = mem::rp(o);
+        mem::heap_free(o);
+        p
+    }
+
+    #[test]
+    fn every_objects_vtable() {
+        let _g = enter();
+        factory();
+        made(f_create_stream, &[0]);
+        made(f_create_converter, &[0]);
+        made(f_create_scaler, &[0]);
+        made(f_create_clipper, &[0]);
+        made(f_create_flip, &[0]);
+        made(f_create_palette, &[0]);
+        let f = picture::ALL[0];
+        let g = mem::heap_alloc(16, true);
+        write_guid(g, f.guid());
+        let buf = mem::heap_alloc(64, true);
+        let bm = made(f_bitmap_from_memory, &[0, 1, 1, g, 16, 16, buf]);
+        made(bm_lock, &[bm, 0, 1]);
+        made(f_component_info, &[0, g]);
+        // (a 1x1 GIF: its frame has a metadata reader, whose enumerator is an IEnumString)
+        let gif = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b";
+        let d = decoder(gif).expect("a GIF decoder");
+        let fr = made(dec_frame, &[d, 0]);
+        let r = made(frame_reader, &[fr]);
+        made(reader_enum, &[r]);
+        com::check_vtables(
+            "wic_vtables.txt",
+            &[
+                "IWICImagingFactory2",
+                "IWICStream",
+                "IWICFormatConverter",
+                "IWICBitmapScaler",
+                "IWICBitmapClipper",
+                "IWICBitmapFlipRotator",
+                "IWICPalette",
+                "IWICBitmap",
+                "IWICBitmapLock",
+                "IWICPixelFormatInfo2",
+                "IWICBitmapDecoder",
+                "IWICBitmapFrameDecode",
+                "IWICMetadataQueryReader",
+                "IEnumString",
+            ],
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
