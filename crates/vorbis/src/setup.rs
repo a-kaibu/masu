@@ -143,7 +143,11 @@ impl Mode {
 impl Ident {
     /// The size in samples of a block.
     pub fn size(&self, b: Block) -> usize {
-        self.blocksize[b.index()]
+        let [short, long] = self.blocksize;
+        match b {
+            Block::Short => short,
+            Block::Long => long,
+        }
     }
 }
 
