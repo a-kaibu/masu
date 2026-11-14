@@ -5,20 +5,53 @@ use crate::flags::{self, *};
 use crate::{Cpu, Exit, Fault, Memory, ESP, EAX, ECX, EDX, EBP, ESI, EDI};
 use iced_x86::{ConditionCode, Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 
+/// The value of an operand access, or the Exit its Fault / Stop makes.
+macro_rules! tryf {
+    ($e:expr) => {
+        match $e {
+            Ok(v) => v,
+            Err(f) => return Exit::from(f),
+        }
+    };
+}
+
+/// Why an operand access did not complete.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Stop {
+    Fault(Fault),
+    /// The operand is not one the access can make (a far pointer, a branch target, a
+    /// string instruction's implicit operand read as an immediate, a write to an immediate):
+    /// the instruction is one this core does not implement in that form.
+    Ud,
+}
+
+impl From<Fault> for Stop {
+    fn from(f: Fault) -> Stop {
+        Stop::Fault(f)
+    }
+}
+
+impl From<Fault> for Exit {
+    fn from(f: Fault) -> Exit {
+        Exit::Fault(f)
+    }
+}
+
+impl From<Stop> for Exit {
+    fn from(s: Stop) -> Exit {
+        match s {
+            Stop::Fault(f) => Exit::Fault(f),
+            Stop::Ud => Exit::InvalidOpcode,
+        }
+    }
+}
+
+// (after tryf!: the submodules use it)
 mod x87;
 mod avx;
 mod bmi;
 pub(crate) mod sse;
 pub(crate) mod vex;
-
-macro_rules! tryf {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(f) => return Exit::Fault(f),
-        }
-    };
-}
 
 /// Execute one instruction at `cpu.eip`.
 pub fn step<M: Memory>(cpu: &mut Cpu, mem: &mut M) -> Exit {
@@ -395,30 +428,76 @@ impl<'a, M: Memory> X<'a, M> {
         }
     }
 
-    fn read_op(&mut self, i: u32) -> Result<u64, Fault> {
+    fn read_op(&mut self, i: u32) -> Result<u64, Stop> {
         match self.ins.op_kind(i) {
             OpKind::Register => Ok(self.get_reg(self.ins.op_register(i))),
             OpKind::Memory => {
                 let bits = self.op_bits(i);
                 let a = self.addr();
-                self.read_mem(a, bits)
+                Ok(self.read_mem(a, bits)?)
             }
-            _ => Ok(self.ins.immediate(i) & flags::mask64(self.op_bits(i))),
+            OpKind::Immediate8
+            | OpKind::Immediate8_2nd
+            | OpKind::Immediate16
+            | OpKind::Immediate32
+            | OpKind::Immediate64
+            | OpKind::Immediate8to16
+            | OpKind::Immediate8to32
+            | OpKind::Immediate8to64
+            | OpKind::Immediate32to64 => Ok(self.ins.immediate(i) & flags::mask64(self.op_bits(i))),
+            // (iced has no immediate for these: it panicked in debug builds, read 0 in release)
+            OpKind::NearBranch16
+            | OpKind::NearBranch32
+            | OpKind::NearBranch64
+            | OpKind::FarBranch16
+            | OpKind::FarBranch32
+            | OpKind::MemorySegSI
+            | OpKind::MemorySegESI
+            | OpKind::MemorySegRSI
+            | OpKind::MemorySegDI
+            | OpKind::MemorySegEDI
+            | OpKind::MemorySegRDI
+            | OpKind::MemoryESDI
+            | OpKind::MemoryESEDI
+            | OpKind::MemoryESRDI => Err(Stop::Ud),
         }
     }
 
     /// Write operand `i` (register or memory) with its own width.
-    fn write_op(&mut self, i: u32, v: u64) -> Result<(), Fault> {
+    fn write_op(&mut self, i: u32, v: u64) -> Result<(), Stop> {
         match self.ins.op_kind(i) {
             OpKind::Register => {
                 self.set_reg(self.ins.op_register(i), v);
                 Ok(())
             }
-            _ => {
+            OpKind::Memory => {
                 let bits = self.op_bits(i);
                 let a = self.addr();
-                self.write_mem(a, bits, v)
+                Ok(self.write_mem(a, bits, v)?)
             }
+            OpKind::Immediate8
+            | OpKind::Immediate8_2nd
+            | OpKind::Immediate16
+            | OpKind::Immediate32
+            | OpKind::Immediate64
+            | OpKind::Immediate8to16
+            | OpKind::Immediate8to32
+            | OpKind::Immediate8to64
+            | OpKind::Immediate32to64
+            | OpKind::NearBranch16
+            | OpKind::NearBranch32
+            | OpKind::NearBranch64
+            | OpKind::FarBranch16
+            | OpKind::FarBranch32
+            | OpKind::MemorySegSI
+            | OpKind::MemorySegESI
+            | OpKind::MemorySegRSI
+            | OpKind::MemorySegDI
+            | OpKind::MemorySegEDI
+            | OpKind::MemorySegRDI
+            | OpKind::MemoryESDI
+            | OpKind::MemoryESEDI
+            | OpKind::MemoryESRDI => Err(Stop::Ud),
         }
     }
 
@@ -707,7 +786,7 @@ impl<'a, M: Memory> X<'a, M> {
                 // POP [ESP+x] uses ESP after the increment
                 if let Err(f) = self.write_op(0, v) {
                     self.set_sp(sp);
-                    return Exit::Fault(f);
+                    return Exit::from(f);
                 }
                 self.done()
             }

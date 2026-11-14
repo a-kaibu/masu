@@ -18,15 +18,6 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use iced_x86::{Code, Instruction, Mnemonic, OpKind, Register};
 
-macro_rules! tryf {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(f) => return Exit::Fault(f),
-        }
-    };
-}
-
 /// Per VEX.256 `Code`: its VEX.128 `Code` (INVALID: none), found by name
 /// (`VEX_Vaddps_ymm_ymm_ymmm256` -> `VEX_Vaddps_xmm_xmm_xmmm128`).
 static HALF: AtomicPtr<Vec<Code>> = AtomicPtr::new(core::ptr::null_mut());

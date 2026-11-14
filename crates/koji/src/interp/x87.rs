@@ -8,15 +8,6 @@ use crate::round::{self, Op};
 use crate::{Exit, Memory, EAX};
 use iced_x86::{MemorySize, Mnemonic, OpKind, Register};
 
-macro_rules! tryf {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(f) => return Exit::Fault(f),
-        }
-    };
-}
-
 fn st_index(r: Register) -> u32 {
     r as u32 - Register::ST0 as u32
 }

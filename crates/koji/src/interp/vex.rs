@@ -18,15 +18,6 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicPtr, Ordering};
 use iced_x86::{Code, OpKind, Register};
 
-macro_rules! tryf {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(f) => return Exit::Fault(f),
-        }
-    };
-}
-
 /// Per VEX `Code`: its legacy `Code` (INVALID: none), whether VEX.vvvv is the extra source,
 /// the FMA kind (see [`fma_kind`]), and a VEX.256 one's VEX.128 form (INVALID: none).
 struct Tables {

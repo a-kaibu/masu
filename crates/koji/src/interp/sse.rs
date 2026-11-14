@@ -6,15 +6,6 @@ use crate::round::{self, Op};
 use crate::{fpu, Exit, Fault, Memory};
 use iced_x86::{Mnemonic, OpKind, Register};
 
-macro_rules! tryf {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(f) => return Exit::Fault(f),
-        }
-    };
-}
-
 /// Apply `f` to each `lane`-bit element of a and b.
 #[inline]
 fn lanes(a: u128, b: u128, lane: u32, f: impl Fn(u64, u64) -> u64) -> u128 {

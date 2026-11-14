@@ -141,7 +141,7 @@ file	crates/koji/src/interp/mod.rs	cast_possible_wrap	44
 file	crates/koji/src/interp/mod.rs	cast_sign_loss	25
 file	crates/koji/src/interp/mod.rs	ptr_as_ptr	3
 file	crates/koji/src/interp/mod.rs	unwrap_used	1
-file	crates/koji/src/interp/mod.rs	wildcard_enum_match_arm	28
+file	crates/koji/src/interp/mod.rs	wildcard_enum_match_arm	26
 file	crates/koji/src/interp/sse.rs	as_conversions	206
 file	crates/koji/src/interp/sse.rs	cast_possible_truncation	69
 file	crates/koji/src/interp/sse.rs	cast_possible_wrap	29

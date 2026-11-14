@@ -5,15 +5,6 @@ use crate::flags::{self, CF, SF, ZF};
 use crate::{Exit, Memory};
 use iced_x86::{Mnemonic, Register};
 
-macro_rules! tryf {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(f) => return Exit::Fault(f),
-        }
-    };
-}
-
 pub(super) fn is_bmi(m: Mnemonic) -> bool {
     use Mnemonic::*;
     matches!(m, Andn | Bextr | Blsi | Blsmsk | Blsr | Bzhi | Mulx | Pdep | Pext | Rorx | Sarx | Shlx | Shrx)
