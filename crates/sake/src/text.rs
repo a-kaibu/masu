@@ -72,8 +72,18 @@ pub fn mb2w_checked(cp: u32, s: &[u8]) -> (Vec<u16>, bool) {
     if e == encoding_rs::WINDOWS_1252 && s.is_ascii() {
         return (s.iter().map(|&b| b as u16).collect(), false);
     }
-    let (cow, bad) = e.decode_without_bom_handling(s);
-    (cow.encode_utf16().collect(), bad)
+    decode_utf16(e, s)
+}
+
+/// `s` decoded straight to UTF-16 (not through a UTF-8 String), each malformed sequence as
+/// U+FFFD: what decode_without_bom_handling + encode_utf16 gave, and whether there were any.
+fn decode_utf16(e: &'static encoding_rs::Encoding, s: &[u8]) -> (Vec<u16>, bool) {
+    let mut d = e.new_decoder_without_bom_handling();
+    let mut out = vec![0u16; d.max_utf16_buffer_length(s.len()).unwrap_or(s.len() * 2 + 16)];
+    let (_, read, n, bad) = d.decode_to_utf16(s, &mut out, true);
+    debug_assert_eq!(read, s.len());
+    out.truncate(n);
+    (out, bad)
 }
 
 fn utf8_to_w(s: &[u8]) -> (Vec<u16>, bool) {
@@ -99,9 +109,9 @@ fn utf8_to_w(s: &[u8]) -> (Vec<u16>, bool) {
 
 fn sjis_to_w(s: &[u8]) -> (Vec<u16>, bool) {
     // (the common case: valid text, where WHATWG's Shift_JIS is Windows')
-    let (cow, err) = encoding_rs::SHIFT_JIS.decode_without_bom_handling(s);
+    let (w, err) = decode_utf16(encoding_rs::SHIFT_JIS, s);
     if !err && !s.contains(&0x80) {
-        return (cow.encode_utf16().collect(), false);
+        return (w, false);
     }
     let mut out = Vec::with_capacity(s.len());
     let mut bad = false;
@@ -166,17 +176,24 @@ pub fn w2mb_def(cp: u32, s: &[u16], def: &[u8]) -> (Vec<u8>, bool) {
 
 /// w2mb_def; `best_fit` false is WC_NO_BEST_FIT_CHARS
 pub fn w2mb_flags(cp: u32, s: &[u16], def: &[u8], best_fit: bool) -> (Vec<u8>, bool) {
-    let st = String::from_utf16_lossy(s);
+    // (ASCII, the common case, is the same bytes in every code page here: no String between)
+    if s.iter().all(|&c| c < 0x80) {
+        return (s.iter().map(|&c| c as u8).collect(), false);
+    }
     if cp == 65001 {
-        return (st.into_bytes(), false);
+        return (String::from_utf16_lossy(s).into_bytes(), false);
     }
     let e = enc(cp);
-    if st.is_ascii() {
-        return (st.into_bytes(), false);
-    }
     // (encoding_rs's encode() would write HTML character references)
     let mut encoder = e.new_encoder();
-    let src: Vec<u16> = st.encode_utf16().collect();
+    // (an unpaired surrogate is U+FFFD, as from_utf16_lossy makes it: copied only then)
+    let lossy;
+    let src: &[u16] = if char::decode_utf16(s.iter().copied()).all(|c| c.is_ok()) {
+        s
+    } else {
+        lossy = String::from_utf16_lossy(s).encode_utf16().collect::<Vec<u16>>();
+        &lossy
+    };
     // (in chunks of 64 bytes: OutputFull just means the next chunk)
     let (mut out, mut buf) = (Vec::with_capacity(src.len() * 2), [0u8; 64]);
     let (mut read, mut used) = (0, false);
@@ -734,6 +751,54 @@ mod proptests {
         fn unmappable_is_question_mark(n in 1usize..8) {
             let w: Vec<u16> = "😀".repeat(n).encode_utf16().collect();
             prop_assert_eq!(w2mb(932, &w), vec![b'?'; n]);
+        }
+    }
+}
+
+/// The conversions against the way they were made before they skipped the UTF-8 String
+/// between (decode + encode_utf16, from_utf16_lossy + encode_utf16): the same output and
+/// flags for any bytes / UTF-16 units in every code page here.
+#[cfg(test)]
+mod direct_utf16_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn decode_ref(e: &'static encoding_rs::Encoding, s: &[u8]) -> (Vec<u16>, bool) {
+        let (cow, bad) = e.decode_without_bom_handling(s);
+        (cow.encode_utf16().collect(), bad)
+    }
+
+    fn w2mb_ref(cp: u32, s: &[u16], def: &[u8], best_fit: bool) -> (Vec<u8>, bool) {
+        let st = String::from_utf16_lossy(s);
+        if cp == 65001 || st.is_ascii() {
+            return (st.into_bytes(), false);
+        }
+        let src: Vec<u16> = st.encode_utf16().collect();
+        w2mb_flags(cp, &src, def, best_fit)
+    }
+
+    const CPS: [u32; 9] = [0, 932, 936, 949, 950, 65001, 1250, 1251, 1252];
+
+    /// bytes with many lead and trail bytes, ASCII and code page edges
+    fn bytes() -> impl Strategy<Value = Vec<u8>> {
+        prop::collection::vec(prop_oneof![any::<u8>(), 0x81u8..0xa0, 0xe0u8..0xfd, 0x40u8..0x7f, Just(0x80), Just(0xa0)], 0..40)
+    }
+
+    /// UTF-16 with ASCII, kana, kanji, Latin, private use, unpaired and paired surrogates
+    fn units() -> impl Strategy<Value = Vec<u16>> {
+        prop::collection::vec(prop_oneof![0u16..0x80, 0x3000u16..0x3100, 0x4e00u16..0x9fff, 0xc0u16..0x180, 0xe000u16..0xe800, 0xd800u16..0xe000, any::<u16>()], 0..40)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(3000))]
+        #[test]
+        fn decoding_is_decode_then_utf16(s in bytes(), cp in prop::sample::select(CPS.to_vec())) {
+            prop_assert_eq!(decode_utf16(enc(cp), &s), decode_ref(enc(cp), &s));
+        }
+
+        #[test]
+        fn encoding_is_through_the_lossy_string(s in units(), cp in prop::sample::select(CPS.to_vec()), best: bool) {
+            prop_assert_eq!(w2mb_flags(cp, &s, b"?", best), w2mb_ref(cp, &s, b"?", best));
         }
     }
 }
