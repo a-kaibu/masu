@@ -26,11 +26,11 @@ pub(crate) fn time(x: f64) -> u64 {
 }
 
 /// A count of frames or bytes kept as a u64 (a usize is not wider).
-fn wide(n: usize) -> u64 {
+pub(crate) fn wide(n: usize) -> u64 {
     u64::try_from(n).unwrap_or(u64::MAX)
 }
 /// A u64 count to index by (saturating on a 32-bit host).
-fn narrow(n: u64) -> usize {
+pub(crate) fn narrow(n: u64) -> usize {
     usize::try_from(n).unwrap_or(usize::MAX)
 }
 

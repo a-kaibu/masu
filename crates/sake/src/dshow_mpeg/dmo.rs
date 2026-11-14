@@ -72,11 +72,12 @@ pub(super) fn receive_connection(c: &mut Ctx, b: u32, from: u32, mt: u32) -> u32
     };
     let wmdec::Info::Video { width, height, .. } = info else { return Hr::TypeNotAccepted.code() };
     // (a size no movie has: the samples' w * h * 4 wrapped in u32 and undersized them)
-    if !(1..=MAX_DIM).contains(&width) || !(1..=MAX_DIM).contains(&(height as i32).unsigned_abs()) {
+    if !(1..=MAX_DIM).contains(&width) || !(1..=MAX_DIM).contains(&height.cast_signed().unsigned_abs()) {
         return Hr::TypeNotAccepted.code();
     }
-    let frame = u64::from_le_bytes(f[40..48].try_into().unwrap());
-    let h = (height as i32).unsigned_abs();
+    let Some(&frame) = f.get(40..).and_then(|f| f.first_chunk::<8>()) else { return Hr::TypeNotAccepted.code() };
+    let frame = u64::from_le_bytes(frame);
+    let h = height.cast_signed().unsigned_abs();
     dwith(b, |d| {
         d.codec = Some(codec);
         d.w = width;
@@ -90,7 +91,7 @@ pub(super) fn receive_connection(c: &mut Ctx, b: u32, from: u32, mt: u32) -> u32
         x.pins.at_mut(PinNo::P1).peer = from;
         x.pins.at_mut(PinNo::P1).mt = copy;
     });
-    eprintln!("sake: DMO wrapper: {}x{} {:.3} fps", width, h, SEC as f64 / frame.max(1) as f64);
+    eprintln!("sake: DMO wrapper: {}x{} {:.3} fps", width, h, float(SEC) / float(frame.max(1)));
     0
 }
 
@@ -100,7 +101,7 @@ pub(super) const MAX_DIM: u32 = 8192;
 /// The output's type: RGB32 of the input's size.
 pub(super) fn out_type(b: u32) -> Option<u32> {
     let (w, h, frame) = dwith(b, |d| (d.w, d.h, d.frame)).filter(|x| x.0 > 0)?;
-    Some(new_mt(&MEDIATYPE_VIDEO, &SUBTYPE_RGB32, true, w * h * 4, &FORMAT_VIDEO_INFO, &video_info(w, h, 32, 0, SEC as f64 / frame as f64)))
+    Some(new_mt(&MEDIATYPE_VIDEO, &SUBTYPE_RGB32, true, w * h * 4, &FORMAT_VIDEO_INFO, &video_info(w, h, 32, 0, float(SEC) / float(frame))))
 }
 pub(super) fn size(b: u32) -> Option<u32> {
     dwith(b, |d| d.w * d.h * 4).filter(|&s| s > 0)
@@ -281,7 +282,7 @@ fn show(c: &mut Ctx, b: u32, gen: u32, time: u64, w: u32, h: u32, bgra: &[u8]) -
     if mem_pin == 0 {
         return true;
     }
-    let size = wmdec::rgb_size(ow, oh, 32) as u32;
+    let size = wmdec::rgb_size(ow, oh, 32).low_u32();
     let s = free_sample(b, size);
     let buf = swith(s, |x| {
         x.len = size;
@@ -330,7 +331,7 @@ fn stats(s: Stat) {
     }
     if since.elapsed() >= Duration::from_secs(5) {
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-        eprintln!("sake: DMO wrapper: {} samples decoded, ms avg/max {:.2}/{:.2}; {} pictures shown, {} dropped", n, ms(*sum) / (*n).max(1) as f64, ms(*max), shown, dropped);
+        eprintln!("sake: DMO wrapper: {} samples decoded, ms avg/max {:.2}/{:.2}; {} pictures shown, {} dropped", n, ms(*sum) / (*n).max(1).to_f64(), ms(*max), shown, dropped);
         *g = None;
     }
 }
@@ -370,7 +371,7 @@ fn dw_init(c: &mut Ctx) -> u32 {
     if clsid == 0 {
         return Hr::Pointer.code();
     }
-    let g: [u8; 16] = mem::slice(clsid, 16).try_into().unwrap();
+    let g = guid_at(clsid);
     dwith(b, |d| d.clsid = g);
     0
 }

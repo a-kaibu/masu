@@ -39,8 +39,9 @@ use waits::calls::Calls;
 
 use crate::api::{Ctx, Handler};
 use crate::dshow::{com, State};
-use crate::dshow_play::{now, Timeline, SEC};
+use crate::dshow_play::{float, narrow, now, time, wide, Timeline, SEC};
 use crate::mem::{self, ps, put32, putp, r32, rp, w16, w32, w64, wp};
+use crate::num::{Low as _, ToF32 as _, ToF64 as _, ToUsize as _};
 
 /// The HRESULTs the MPEG / AVI / ASF filters answer (besides S_OK).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +59,8 @@ pub(super) enum Hr {
     NotFound,
     CannotConnect,
     WrongState,
+    /// VFW_E_INVALID_FILE_FORMAT
+    InvalidFileFormat,
 }
 impl Hr {
     pub(super) const fn code(self) -> u32 {
@@ -75,6 +78,7 @@ impl Hr {
             Hr::NotFound => 0x8004_0216,
             Hr::CannotConnect => 0x8004_0217,
             Hr::WrongState => 0x8004_0227,
+            Hr::InvalidFileFormat => 0x8004_022f,
         }
     }
 }
@@ -223,6 +227,10 @@ impl Word {
     }
 }
 
+/// The GUID at guest address `p`.
+fn guid_at(p: u32) -> [u8; 16] {
+    mem::slice(p, 16).first_chunk::<16>().copied().unwrap_or([0; 16])
+}
 fn is(p: u32, g: &[u8; 16]) -> bool {
     p != 0 && mem::slice(p, 16) == g
 }
@@ -553,7 +561,7 @@ fn f_info(c: &mut Ctx) -> u32 {
     let (name, graph) = fwith(b, |f| (f.name.clone(), f.graph)).unwrap_or_default();
     mem::fill(out, 256 + ps(), 0);
     for (i, &w) in name.iter().take(127).enumerate() {
-        w16(out + 2 * i as u32, w);
+        w16(out + 2 * i.low_u32(), w);
     }
     if graph != 0 {
         com(c, graph, 1, &[]);
@@ -625,14 +633,14 @@ fn new_mt(major: &[u8; 16], sub: &[u8; 16], fixed: bool, sample: u32, fmt_type: 
     let p = mem::heap_alloc(mt_size(), true);
     put_guid(p, major);
     put_guid(p + 16, sub);
-    w32(p + 32, fixed as u32);
-    w32(p + 36, !fixed as u32);
+    w32(p + 32, u32::from(fixed));
+    w32(p + 36, u32::from(!fixed));
     w32(p + 40, sample);
     put_guid(p + 44, fmt_type);
     let (cb, pb) = mt_fmt_at();
-    let f = mem::heap_alloc(fmt.len().max(1) as u32, true);
+    let f = mem::heap_alloc(fmt.len().max(1).low_u32(), true);
     mem::write(f, fmt);
-    w32(p + cb, fmt.len() as u32);
+    w32(p + cb, fmt.len().low_u32());
     wp(p + pb, f);
     p
 }
@@ -677,8 +685,8 @@ fn video_info(w: u32, h: u32, bits: u16, compression: u32, rate: f64) -> Vec<u8>
     for (i, x) in [0, 0, w, h, 0, 0, w, h].into_iter().enumerate() {
         put(&mut v, 4 * i, &x.to_le_bytes());
     }
-    let frame = if rate > 0.0 { (SEC as f64 / rate) as u64 } else { 0 };
-    put(&mut v, 32, &((w as u64 * h as u64 * bits as u64 * rate.max(0.0) as u64) as u32).to_le_bytes());
+    let frame = if rate > 0.0 { time(float(SEC) / rate) } else { 0 };
+    put(&mut v, 32, &(u64::from(w) * u64::from(h) * u64::from(bits) * time(rate.max(0.0))).low_u32().to_le_bytes());
     put(&mut v, 40, &frame.to_le_bytes());
     put(&mut v, 48, &40u32.to_le_bytes());
     put(&mut v, 52, &w.to_le_bytes());
@@ -686,12 +694,12 @@ fn video_info(w: u32, h: u32, bits: u16, compression: u32, rate: f64) -> Vec<u8>
     put(&mut v, 60, &1u16.to_le_bytes());
     put(&mut v, 62, &bits.to_le_bytes());
     put(&mut v, 64, &compression.to_le_bytes());
-    put(&mut v, 68, &(w * h * bits as u32 / 8).to_le_bytes());
+    put(&mut v, 68, &(w * h * u32::from(bits) / 8).to_le_bytes());
     v
 }
 /// A DIB row's bytes: `w` pixels of `bits` (15: 16), to a 4-byte multiple.
 pub fn dib_stride(w: u32, bits: u16) -> u32 {
-    let b = if bits == 15 { 16 } else { bits as u32 };
+    let b = if bits == 15 { 16 } else { u32::from(bits) };
     (w * b).div_ceil(32) * 4
 }
 /// The RGB types a video decoder offers a game's renderer, in order (Windows' decoders offer
@@ -717,7 +725,7 @@ fn rgb_type(w: u32, h: u32, bits: u16, rate: f64) -> u32 {
 /// BGRX pixels (`w` x `h`, rows 4w apart, in the order they come) as rows of `bits` per pixel
 /// (`dib_stride` apart, the padding 0).
 pub fn pack_bgrx(src: &[u8], w: u32, h: u32, bits: u16) -> Vec<u8> {
-    let mut out = vec![0u8; dib_stride(w, bits) as usize * h as usize];
+    let mut out = vec![0u8; dib_stride(w, bits).to_usize() * h.to_usize()];
     pack_into(src, (w, h), false, (w, h, bits), &mut out);
     out
 }
@@ -728,13 +736,13 @@ pub fn pack_bgrx(src: &[u8], w: u32, h: u32, bits: u16) -> Vec<u8> {
 /// sequence header, a probe that disagreed) is clipped to it, not indexed past. False (nothing
 /// written) when `dst` or `src` is shorter than their sizes say.
 pub fn pack_into(src: &[u8], (sw, sh): (u32, u32), flip: bool, (w, h, bits): (u32, u32, u16), dst: &mut [u8]) -> bool {
-    let stride = dib_stride(w, bits) as usize;
-    let (sw, sh, w, h) = (sw as usize, sh as usize, w as usize, h as usize);
+    let stride = dib_stride(w, bits).to_usize();
+    let (sw, sh, w, h) = (sw.to_usize(), sh.to_usize(), w.to_usize(), h.to_usize());
     if dst.len() < stride * h || src.len() < 4 * sw * sh {
         return false;
     }
     let cw = sw.min(w);
-    let bpp = if bits == 15 { 2 } else { bits as usize / 8 };
+    let bpp = if bits == 15 { 2 } else { usize::from(bits) / 8 };
     for y in 0..h {
         let o = &mut dst[stride * y..][..stride];
         let sy = if flip { h - 1 - y } else { y };
@@ -747,7 +755,7 @@ pub fn pack_into(src: &[u8], (sw, sh): (u32, u32), flip: bool, (w, h, bits): (u3
             o[..4 * cw].copy_from_slice(row);
         } else {
             for x in 0..cw {
-                let (b, g, r) = (row[4 * x] as u16, row[4 * x + 1] as u16, row[4 * x + 2] as u16);
+                let (b, g, r) = (u16::from(row[4 * x]), u16::from(row[4 * x + 1]), u16::from(row[4 * x + 2]));
                 match bits {
                     24 => o[3 * x..3 * x + 3].copy_from_slice(&row[4 * x..4 * x + 3]),
                     16 => o[2 * x..2 * x + 2].copy_from_slice(&((r >> 3) << 11 | (g >> 2) << 5 | b >> 3).to_le_bytes()),
@@ -766,10 +774,10 @@ fn wave_format(tag: u16, channels: u16, rate: u32, bits: u16, extra: &[u8]) -> V
     v.extend(tag.to_le_bytes());
     v.extend(channels.to_le_bytes());
     v.extend(rate.to_le_bytes());
-    v.extend((rate * align as u32).to_le_bytes());
+    v.extend((rate * u32::from(align)).to_le_bytes());
     v.extend(align.max(1).to_le_bytes());
     v.extend(bits.to_le_bytes());
-    v.extend((extra.len() as u16).to_le_bytes());
+    v.extend(extra.len().low_u16().to_le_bytes());
     v.extend_from_slice(extra);
     v
 }
@@ -780,7 +788,7 @@ fn out_type(b: u32, k: PinNo) -> Option<u32> {
         return if k == PinNo::P2 { dmo::out_type(b) } else { None };
     }
     let (kind, info) = (kind(b)?, info_of(b)?);
-    let (w, h, r) = (info.width as u32, info.height as u32, info.rate);
+    let (w, h, r) = (info.width.low_u32(), info.height.low_u32(), info.rate);
     Some(match (kind, k) {
         (Kind::Split, PinNo::P2) => {
             let mut f = video_info(w, h, 0, 0, r);
@@ -802,7 +810,7 @@ fn out_type(b: u32, k: PinNo) -> Option<u32> {
 /// The stream's facts for any filter of the chain: the splitter's, upstream of it.
 fn info_of(b: u32) -> Option<mpeg1::Info> {
     if let Some((w, h, rate)) = vwith(b, |v| (v.w, v.h, v.rate)) {
-        return Some(mpeg1::Info { width: w as usize, height: h as usize, rate: rate.0 as f64 / rate.1.max(1) as f64, ..mpeg1::Info::default() });
+        return Some(mpeg1::Info { width: w.to_usize(), height: h.to_usize(), rate: rate.0.to_f64() / rate.1.max(1).to_f64(), ..mpeg1::Info::default() });
     }
     let s = splitter_of(b)?;
     PIPES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get(&s).map(|p| p.info)
@@ -811,7 +819,7 @@ fn info_of(b: u32) -> Option<mpeg1::Info> {
 fn splitter_of(b: u32) -> Option<u32> {
     match kind(b)? {
         Kind::Split => Some(b),
-        _ => {
+        Kind::VDec | Kind::ADec | Kind::Sound | Kind::File | Kind::Asf | Kind::Vnv | Kind::Dmo => {
             let up = pin(b, PinNo::P1).peer;
             let (ub, _) = pin_of(up)?;
             if ub == b { None } else { splitter_of(ub) }
@@ -1002,7 +1010,7 @@ trait Dur {
 }
 impl Dur for mpeg1::Info {
     fn duration_100ns(&self) -> u64 {
-        (self.duration.max(0.0) * SEC as f64) as u64
+        time(self.duration.max(0.0) * float(SEC))
     }
 }
 
@@ -1016,13 +1024,13 @@ fn probe(c: &mut Ctx, reader: u32) -> Option<(u64, mpeg1::Info)> {
         return None;
     }
     // (its end further back while it holds no picture: a stream may end in padding, #230)
-    mpeg1::probe_stream(len, 256 << 10, |pos, n| read_at(c, reader, pos, n as u32)).map(|i| (len, i))
+    mpeg1::probe_stream(len, 256 << 10, |pos, n| read_at(c, reader, pos, n.low_u32())).map(|i| (len, i))
 }
 
 /// `n` bytes at `pos` of the stream (IAsyncReader::SyncRead into a buffer of ours).
 fn read_at(c: &mut Ctx, reader: u32, pos: u64, n: u32) -> Option<Vec<u8>> {
     let buf = mem::heap_alloc(n.max(1), false);
-    let args: Vec<u32> = if mem::x64() { vec![pos as u32, n, buf] } else { vec![pos as u32, (pos >> 32) as u32, n, buf] };
+    let args: Vec<u32> = if mem::x64() { vec![pos.low_u32(), n, buf] } else { vec![pos.low_u32(), (pos >> 32).low_u32(), n, buf] };
     let r = com(c, reader, 7, &args);
     let v = (r & 0x8000_0000 == 0).then(|| mem::slice(buf, n).to_vec());
     mem::heap_free(buf);
@@ -1114,9 +1122,9 @@ fn p_info(c: &mut Ctx) -> u32 {
     add_ref(b);
     mem::fill(out, ps() + 4 + 256, 0);
     wp(out, b);
-    w32(out + ps(), me.out as u32);
+    w32(out + ps(), u32::from(me.out));
     for (i, w) in me.name.encode_utf16().take(127).enumerate() {
-        w16(out + ps() + 4 + 2 * i as u32, w);
+        w16(out + ps() + 4 + 2 * i.low_u32(), w);
     }
     0
 }
@@ -1125,7 +1133,7 @@ fn p_direction(c: &mut Ctx) -> u32 {
     if out == 0 {
         return Hr::Pointer.code();
     }
-    put32(out, pin_of(p).is_some_and(|(b, k)| pin(b, k).out) as u32);
+    put32(out, u32::from(pin_of(p).is_some_and(|(b, k)| pin(b, k).out)));
     0
 }
 fn p_id(c: &mut Ctx) -> u32 {
@@ -1135,9 +1143,9 @@ fn p_id(c: &mut Ctx) -> u32 {
     }
     let name = pin_of(p).map_or("", |(b, k)| pin(b, k).name);
     let w: Vec<u16> = name.encode_utf16().chain([0]).collect();
-    let s = mem::heap_alloc(2 * w.len() as u32, false);
+    let s = mem::heap_alloc(2 * w.len().low_u32(), false);
     for (i, v) in w.iter().enumerate() {
-        w16(s + 2 * i as u32, *v);
+        w16(s + 2 * i.low_u32(), *v);
     }
     putp(out, s);
     0
@@ -1197,22 +1205,22 @@ const ASF_VIDEO_MEDIA: [u8; 16] = guid(0xbc19_efc0, 0x5b4d, 0x11cf, [0xa8, 0xfd,
 /// video), or None when `head` doesn't start with one whole. (Streams in the header
 /// extension's extended stream properties, and others than sound and pictures, are left out.)
 pub fn asf_streams(head: &[u8]) -> Option<Vec<bool>> {
-    let u64at = |o: usize| head.get(o..o + 8).map(|b| u64::from_le_bytes(b.try_into().unwrap()));
+    let u64at = |o: usize| head.get(o..)?.first_chunk::<8>().map(|b| u64::from_le_bytes(*b));
     if head.get(..16)? != ASF_HEADER {
         return None;
     }
     let size = u64at(16)?;
-    let count = u32::from_le_bytes(head.get(24..28)?.try_into().unwrap());
-    if size > head.len() as u64 || size < 30 {
+    let count = u32::from_le_bytes(*head.get(24..)?.first_chunk::<4>()?);
+    if size > wide(head.len()) || size < 30 {
         return None;
     }
-    let end = size as usize;
+    let end = narrow(size);
     let mut at = 30usize;
     let mut out: Vec<(u16, bool)> = Vec::new();
     for _ in 0..count {
         let obj = head.get(at..at + 24).filter(|_| at + 24 <= end)?;
         let n = u64at(at + 16)?;
-        if n < 24 || n > (end - at) as u64 {
+        if n < 24 || n > wide(end - at) {
             return None;
         }
         if obj[..16] == ASF_STREAM_PROPERTIES && n >= 78 {
@@ -1223,7 +1231,7 @@ pub fn asf_streams(head: &[u8]) -> Option<Vec<bool>> {
                 out.push((num, video));
             }
         }
-        at += n as usize;
+        at += narrow(n);
     }
     out.sort_by_key(|x| x.0);
     Some(out.into_iter().map(|x| x.1).collect())
@@ -1256,22 +1264,21 @@ fn source_load(b: u32, name: u32, mt: u32) -> u32 {
     let len = file.size();
     let mut head = file.read_vec(64 << 10);
     // (an ASF header object longer than that: all of it)
-    if k == Kind::Asf && head.len() >= 24 {
-        let n = u64::from_le_bytes(head[16..24].try_into().unwrap());
-        if n > head.len() as u64 && n <= 16 << 20 {
+    if let Some(&n) = head.get(16..).and_then(|h| h.first_chunk::<8>()).filter(|_| k == Kind::Asf) {
+        let n = u64::from_le_bytes(n);
+        if n > wide(head.len()) && n <= 16 << 20 {
             file.seek(std::io::SeekFrom::Start(0));
-            head = file.read_vec(n as usize);
+            head = file.read_vec(narrow(n));
         }
     }
     let p = |name: &'static str| Pin { out: true, name, on: true, ..Pin::default() };
     let (pins, sub) = match k {
         Kind::File => {
-            let sub = if mt != 0 { mem::slice(mt + 16, 16).try_into().unwrap() } else { stream_subtype(&head) };
+            let sub = if mt != 0 { guid_at(mt + 16) } else { stream_subtype(&head) };
             ([p("Output"), Pin::default(), Pin::default()], sub)
         }
-        _ => {
-            // (VFW_E_INVALID_FILE_FORMAT: no ASF file)
-            let Some(st) = asf_streams(&head) else { return 0x8004_022f };
+        Kind::Asf | Kind::Split | Kind::VDec | Kind::ADec | Kind::Sound | Kind::Vnv | Kind::Dmo => {
+            let Some(st) = asf_streams(&head) else { return Hr::InvalidFileFormat.code() };
             let mut pins: [Pin; 3] = Default::default();
             for (k, n) in PinNo::ALL.into_iter().zip(asf_pin_names(&st)) {
                 *pins.at_mut(k) = p(n);
@@ -1328,9 +1335,9 @@ fn fsf_cur_file(c: &mut Ctx) -> u32 {
         }
         return 0;
     };
-    let s = mem::heap_alloc(2 * name.len() as u32 + 2, true);
+    let s = mem::heap_alloc(2 * name.len().low_u32() + 2, true);
     for (i, w) in name.iter().enumerate() {
-        w16(s + 2 * i as u32, *w);
+        w16(s + 2 * i.low_u32(), *w);
     }
     putp(out, s);
     if mt != 0 {
@@ -1396,12 +1403,12 @@ pub fn read_span(pos: u64, n: u32, len: u64) -> (u64, u32) {
     if pos >= len {
         return (len, 0);
     }
-    (pos, (len - pos).min(n as u64) as u32)
+    (pos, (len - pos).min(u64::from(n)).low_u32())
 }
 /// SyncRead(LONGLONG pos, LONG n, BYTE *buf)
 fn ar_sync_read(c: &mut Ctx) -> u32 {
     let b = Word::AsyncReader.base(c.a(0));
-    let (pos, n, buf) = if mem::x64() { (c.a64(1), c.a(2), c.a(3)) } else { (c.a(1) as u64 | (c.a(2) as u64) << 32, c.a(3), c.a(4)) };
+    let (pos, n, buf) = if mem::x64() { (c.a64(1), c.a(2), c.a(3)) } else { (u64::from(c.a(1)) | u64::from(c.a(2)) << 32, c.a(3), c.a(4)) };
     if buf == 0 {
         return Hr::Pointer.code();
     }
@@ -1411,7 +1418,7 @@ fn ar_sync_read(c: &mut Ctx) -> u32 {
     let (at, k) = read_span(pos, n, len);
     let Some(dst) = mem::guest_mut(buf, k) else { return Hr::Pointer.code() };
     let got = match file.read_at(Some(std::io::SeekFrom::Start(at)), false, dst) {
-        Ok(g) => Some(g as u32),
+        Ok(g) => Some(g.low_u32()),
         Err(()) => Some(0),
     };
     match got {
@@ -1473,9 +1480,9 @@ pub fn connect_through(c: &mut Ctx, graph: u32, out: u32, inp: u32) -> Option<u3
     }
     let name = |s: &str| {
         let w: Vec<u16> = s.encode_utf16().chain([0]).collect();
-        let p = mem::heap_alloc(2 * w.len() as u32, false);
+        let p = mem::heap_alloc(2 * w.len().low_u32(), false);
         for (i, x) in w.iter().enumerate() {
-            w16(p + 2 * i as u32, *x);
+            w16(p + 2 * i.low_u32(), *x);
         }
         p
     };
@@ -1628,20 +1635,21 @@ fn vnv_thread(c: &mut Ctx) -> u32 {
                 }
             }
             FeedStep::Frame(n) => {
-                let (_, _, stream, mw, mh) = at.unwrap();
+                // (a frame comes only while there is a movie)
+                let Some((_, _, stream, mw, mh)) = at else { continue };
                 let (fw, fh) = (mw.min(w), mh.min(h));
-                top.resize((4 * fw * fh) as usize, 0);
-                if !unsafe { crate::dshow_play::frame(stream, n as i32, top.as_mut_ptr(), 4 * fw as usize, fw, fh) } {
+                top.resize((4 * fw * fh).to_usize(), 0);
+                if !unsafe { crate::dshow_play::frame(stream, n.cast_signed(), top.as_mut_ptr(), 4 * fw.to_usize(), fw, fh) } {
                     pause(SEC / 100);
                     continue;
                 }
-                let frame = SEC * rate.1.max(1) as u64 / rate.0.max(1) as u64;
+                let frame = SEC * u64::from(rate.1.max(1)) / u64::from(rate.0.max(1));
                 let bits = fwith(b, |f| f.bits).unwrap_or(32);
                 let size = dib_stride(w, bits) * h;
                 let sample = free_sample(b, size);
                 let buf = swith(sample, |x| {
                     x.len = size;
-                    x.time = Some((n as u64 * frame, (n as u64 + 1) * frame));
+                    x.time = Some((u64::from(n) * frame, (u64::from(n) + 1) * frame));
                     x.sync = true;
                     x.disc = last.is_none();
                     x.buf
@@ -1700,13 +1708,13 @@ fn ss_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    put32(c.a(1), streams(Word::StreamSelect.base(c.a(0))).len() as u32);
+    put32(c.a(1), streams(Word::StreamSelect.base(c.a(0))).len().low_u32());
     0
 }
 /// Info(index, &mt, &flags, &lcid, &group, &name, &object, &unk)
 fn ss_info(c: &mut Ctx) -> u32 {
     let b = Word::StreamSelect.base(c.a(0));
-    let Some(&(k, group)) = streams(b).get(c.a(1) as usize) else { return Hr::False.code() };
+    let Some(&(k, group)) = streams(b).get(c.a(1).to_usize()) else { return Hr::False.code() };
     let (mt, flags, lcid, grp, name, obj, unk) = (c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(8));
     if mt != 0 {
         let t = out_type(b, k).unwrap_or(0);
@@ -1723,9 +1731,9 @@ fn ss_info(c: &mut Ctx) -> u32 {
     if name != 0 {
         let n = pin(b, k).name;
         let w: Vec<u16> = n.encode_utf16().chain([0]).collect();
-        let p = mem::heap_alloc(2 * w.len() as u32, false);
+        let p = mem::heap_alloc(2 * w.len().low_u32(), false);
         for (i, v) in w.iter().enumerate() {
-            w16(p + 2 * i as u32, *v);
+            w16(p + 2 * i.low_u32(), *v);
         }
         putp(name, p);
     }
@@ -1736,7 +1744,7 @@ fn ss_info(c: &mut Ctx) -> u32 {
 /// Enable(index, flags): the streams there are stay enabled
 fn ss_enable(c: &mut Ctx) -> u32 {
     let b = Word::StreamSelect.base(c.a(0));
-    if (c.a(1) as usize) < streams(b).len() { 0 } else { 0x8007_0057 }
+    if c.a(1).to_usize() < streams(b).len() { 0 } else { 0x8007_0057 }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1793,7 +1801,7 @@ fn e_next(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let take = ewith(e, |x| {
-        let t: Vec<u32> = x.0.iter().skip(x.1).take(n as usize).copied().collect();
+        let t: Vec<u32> = x.0.iter().skip(x.1).take(n.to_usize()).copied().collect();
         x.1 += t.len();
         t
     })
@@ -1802,15 +1810,15 @@ fn e_next(c: &mut Ctx) -> u32 {
         if let Some((b, _)) = pin_of(p) {
             add_ref(b);
         }
-        wp(out + ps() * i as u32, p);
+        wp(out + ps() * i.low_u32(), p);
     }
     if got != 0 {
-        put32(got, take.len() as u32);
+        put32(got, take.len().low_u32());
     }
-    if take.len() == n as usize { 0 } else { Hr::False.code() }
+    if take.len() == n.to_usize() { 0 } else { Hr::False.code() }
 }
 fn e_skip(c: &mut Ctx) -> u32 {
-    let n = c.a(1) as usize;
+    let n = c.a(1).to_usize();
     ewith(c.a(0), |x| {
         let left = x.0.len() - x.1.min(x.0.len());
         x.1 = (x.1 + n).min(x.0.len());
@@ -1979,7 +1987,7 @@ fn a_get_props(c: &mut Ctx) -> u32 {
     }
     let size = ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).values().find(|a| a.0 == c.a(0)).and_then(|a| a.1.first().copied()).and_then(|s| swith(s, |x| x.size)).unwrap_or(0);
     for (i, v) in [1, size, 1, 0].into_iter().enumerate() {
-        w32(out + 4 * i as u32, v);
+        w32(out + 4 * i.low_u32(), v);
     }
     0
 }
@@ -1991,7 +1999,7 @@ fn a_get_buffer(c: &mut Ctx) -> u32 {
     }
     let dec = ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).iter().find(|(_, x)| x.0 == a).map(|(&d, _)| d);
     let Some(dec) = dec else { return Hr::Unexpected.code() };
-    let size = dmo::size(dec).or_else(|| info_of(dec).map(|i| (i.width * i.height * 4) as u32)).unwrap_or(4);
+    let size = dmo::size(dec).or_else(|| info_of(dec).map(|i| (i.width * i.height * 4).low_u32())).unwrap_or(4);
     let s = free_sample(dec, size);
     if s == 0 {
         return Hr::Unexpected.code();
@@ -2338,12 +2346,12 @@ impl Resampler {
                 continue;
             }
             // outputs between last (0) and cur (to): at, at + from, ...
-            while self.at < self.to as u64 {
-                let k = self.at as f32 / self.to as f32;
+            while self.at < u64::from(self.to) {
+                let k = self.at.to_f32() / self.to.to_f32();
                 out.push_back([self.last[0] + (cur[0] - self.last[0]) * k, self.last[1] + (cur[1] - self.last[1]) * k]);
-                self.at += self.from as u64;
+                self.at += u64::from(self.from);
             }
-            self.at -= self.to as u64;
+            self.at -= u64::from(self.to);
             self.last = cur;
         }
     }
@@ -2424,18 +2432,17 @@ fn stream_thread(c: &mut Ctx) -> u32 {
                     });
                 }
             }
-            d = Some(Dec::new(gen, video.is_some(), audio, info.audio_rate));
         }
-        let s = d.as_mut().unwrap();
-        let frame = if info.rate > 0.0 { (SEC as f64 / info.rate) as u64 } else { SEC / 30 };
+        let s = d.get_or_insert_with(|| Dec::new(gen, video.is_some(), audio, info.audio_rate));
+        let frame = if info.rate > 0.0 { time(float(SEC) / info.rate) } else { SEC / 30 };
         // the sound to kura, up to a little ahead of the clock
-        let want = (pos as u128 * kura::audio::RATE as u128 / SEC as u128) as u64;
+        let want = u64::try_from(u128::from(pos) * u128::from(kura::audio::RATE) / u128::from(SEC)).unwrap_or(u64::MAX);
         let g = fwith(b, |f| f.graph).unwrap_or(0);
         sound(s, running, want, crate::dshow::volume(g));
         // (the sound keeps half a second decoded ahead, read on while a picture waits)
-        let sound_low = s.audio.is_some() && s.pcm_at + (s.pcm.len() as u64) < want + kura::audio::RATE as u64 / 2;
+        let sound_low = s.audio.is_some() && s.pcm_at + wide(s.pcm.len()) < want + u64::from(kura::audio::RATE) / 2;
         // the next picture: due, or wait for it
-        if let Some((n, ..)) = &s.next {
+        if let Some(&(n, ..)) = s.next.as_ref() {
             let at = n * frame;
             if at >= stop && pos >= stop {
                 // (past the stop position: no more pictures)
@@ -2455,11 +2462,11 @@ fn stream_thread(c: &mut Ctx) -> u32 {
                 pause(SEC / 100);
                 continue;
             }
-            let (n, px, pw, ph) = s.next.take().unwrap();
+            let Some((_, px, pw, ph)) = s.next.take() else { continue };
             // (late by more than two pictures: dropped)
             if let Some((dec, mem_pin, _)) = video {
                 if n * frame + 2 * frame >= pos {
-                    let (w, h) = (info.width as u32, info.height as u32);
+                    let (w, h) = (info.width.low_u32(), info.height.low_u32());
                     let bits = fwith(dec, |f| f.bits).unwrap_or(32);
                     let size = dib_stride(w, bits) * h;
                     let sample = free_sample(dec, size);
@@ -2497,14 +2504,14 @@ fn stream_thread(c: &mut Ctx) -> u32 {
                     } else {
                         px.clear();
                     }
-                    s.next = Some((n, px, f.width as u32, f.height as u32));
+                    s.next = Some((n, px, f.width.low_u32(), f.height.low_u32()));
                     s.pictures += 1;
                     continue;
                 }
             }
         }
         // (only sound: decoded a second ahead)
-        let sound_full = s.video.is_none() && s.pcm_at + (s.pcm.len() as u64) > want + kura::audio::RATE as u64;
+        let sound_full = s.video.is_none() && s.pcm_at + wide(s.pcm.len()) > want + u64::from(kura::audio::RATE);
         if !s.past_stop && !sound_full && feed(c, s, reader, len, &calls, epoch) {
             continue;
         }
@@ -2518,7 +2525,7 @@ fn stream_thread(c: &mut Ctx) -> u32 {
                 s.eos_sent = true;
             }
         }
-        let sound_end = if audio { (s.pcm_at + s.pcm.len() as u64) * SEC / kura::audio::RATE as u64 } else { 0 };
+        let sound_end = if audio { (s.pcm_at + wide(s.pcm.len())) * SEC / u64::from(kura::audio::RATE) } else { 0 };
         let last = (s.pictures * frame).max(sound_end).min(stop);
         if running && pos >= last && (s.pcm.is_empty() || s.past_stop) {
             let tell = pwith(b, |p| p.gen == gen && !std::mem::replace(&mut p.ended, true)).unwrap_or(false);
@@ -2574,11 +2581,11 @@ fn feed(c: &mut Ctx, s: &mut Dec, reader: u32, len: u64, calls: &Calls, epoch: u
         }
         return true;
     }
-    let n = (len - s.pos).min(READ as u64) as u32;
+    let n = (len - s.pos).min(u64::from(READ)).low_u32();
     if s.buf == 0 {
         s.buf = mem::heap_alloc(READ, false);
     }
-    let args: Vec<u32> = if mem::x64() { vec![s.pos as u32, n, s.buf] } else { vec![s.pos as u32, (s.pos >> 32) as u32, n, s.buf] };
+    let args: Vec<u32> = if mem::x64() { vec![s.pos.low_u32(), n, s.buf] } else { vec![s.pos.low_u32(), (s.pos >> 32).low_u32(), n, s.buf] };
     // (stopped meanwhile: nothing read)
     let Some(r) = call_out(calls, epoch, || com(c, reader, 7, &args)) else { return false };
     if r & 0x8000_0000 != 0 {
@@ -2588,7 +2595,7 @@ fn feed(c: &mut Ctx, s: &mut Dec, reader: u32, len: u64, calls: &Calls, epoch: u
     }
     let bytes = mem::slice(s.buf, n).to_vec();
     s.demux.push(&bytes);
-    s.pos += n as u64;
+    s.pos += u64::from(n);
     true
 }
 
@@ -2604,9 +2611,9 @@ fn pause(t: u64) {
 /// on a pause, as the movie player's.
 fn sound(s: &mut Dec, running: bool, want: u64, volume: i32) {
     if s.out.is_none() || !running {
-        let n = want.saturating_sub(s.pcm_at).min(s.pcm.len() as u64) as usize;
+        let n = narrow(want.saturating_sub(s.pcm_at).min(wide(s.pcm.len())));
         s.pcm.drain(..n);
-        s.pcm_at += n as u64;
+        s.pcm_at += wide(n);
     }
     if !running || s.audio.is_none() {
         if let Some((a, _)) = s.out.take() {
@@ -2615,7 +2622,7 @@ fn sound(s: &mut Dec, running: bool, want: u64, volume: i32) {
         return;
     }
     let (a, next) = match s.out {
-        Some((a, next)) if (next as i128 - kura::audio::queued(a) as i128 - want as i128).abs() <= kura::audio::RATE as i128 * 60 / 1000 => (a, next),
+        Some((a, next)) if (i128::from(next) - i128::from(kura::audio::queued(a)) - i128::from(want)).abs() <= i128::from(kura::audio::RATE) * 60 / 1000 => (a, next),
         old => {
             if let Some((a, _)) = old {
                 kura::audio::close(a);
@@ -2624,18 +2631,18 @@ fn sound(s: &mut Dec, running: bool, want: u64, volume: i32) {
         }
     };
     // (what is before `next` is not wanted any more)
-    let drop_n = next.saturating_sub(s.pcm_at).min(s.pcm.len() as u64) as usize;
+    let drop_n = narrow(next.saturating_sub(s.pcm_at).min(wide(s.pcm.len())));
     s.pcm.drain(..drop_n);
-    s.pcm_at += drop_n as u64;
+    s.pcm_at += wide(drop_n);
     let mut next = next.max(s.pcm_at);
     let end = want + AHEAD;
     if next < end && !s.pcm.is_empty() && s.pcm_at <= next {
-        let n = ((end - next) as usize).min(s.pcm.len());
-        let gain = if volume >= 0 { 1.0 } else { 10f32.powf(volume.max(-10000) as f32 / 2000.0) };
+        let n = narrow(end - next).min(s.pcm.len());
+        let gain = if volume >= 0 { 1.0 } else { 10f32.powf(volume.max(-10000).to_f32() / 2000.0) };
         let buf: Vec<f32> = s.pcm.drain(..n).flat_map(|f| [f[0] * gain, f[1] * gain]).collect();
         kura::audio::write(a, &buf);
-        s.pcm_at += n as u64;
-        next += n as u64;
+        s.pcm_at += wide(n);
+        next += wide(n);
     }
     s.out = Some((a, next));
 }
@@ -3034,7 +3041,7 @@ mod tests {
             let row = &src[4 * w as usize * y..][..4 * w as usize];
             let o = &mut out[stride * y..][..stride];
             for x in 0..w as usize {
-                let (b, g, r) = (row[4 * x] as u16, row[4 * x + 1] as u16, row[4 * x + 2] as u16);
+                let (b, g, r) = (u16::from(row[4 * x]), u16::from(row[4 * x + 1]), u16::from(row[4 * x + 2]));
                 match bits {
                     24 => o[3 * x..3 * x + 3].copy_from_slice(&row[4 * x..4 * x + 3]),
                     16 => o[2 * x..2 * x + 2].copy_from_slice(&((r >> 3) << 11 | (g >> 2) << 5 | b >> 3).to_le_bytes()),
