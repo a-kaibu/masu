@@ -129,7 +129,7 @@ fn ftoi(f: f32) -> u32 {
     if f.is_nan() {
         0
     } else {
-        f64::from(f).trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32 as u32
+        (f64::from(f).trunc().clamp(f64::from(i32::MIN), f64::from(i32::MAX)) as i32).cast_unsigned()
     }
 }
 /// ftou: NaN and negatives 0, clamped
@@ -137,7 +137,7 @@ fn ftou(f: f32) -> u32 {
     if f.is_nan() {
         0
     } else {
-        f64::from(f).trunc().clamp(0.0, u32::MAX as f64) as u32
+        f64::from(f).trunc().clamp(0.0, f64::from(u32::MAX)) as u32
     }
 }
 

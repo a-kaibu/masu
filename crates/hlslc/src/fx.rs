@@ -153,7 +153,7 @@ fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
                         Bin::Div => p / q,
                         Bin::Or => (p as i64 | q as i64) as f64,
                         Bin::And => (p as i64 & q as i64) as f64,
-                        Bin::Shl => (p as i64).wrapping_shl(q as i64 as u32) as f64,
+                        Bin::Shl => (p as i64).wrapping_shl(crate::lo32(q as i64)) as f64,
                         Bin::Mod | Bin::Shr | Bin::Xor | Bin::LAnd | Bin::LOr | Bin::Lt
                         | Bin::Gt | Bin::Le | Bin::Ge | Bin::Eq | Bin::Ne => return None,
                     })

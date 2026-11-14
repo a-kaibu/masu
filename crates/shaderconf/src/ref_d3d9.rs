@@ -221,7 +221,7 @@ impl Run<'_> {
         let v: V = match s.ty {
             0 => *self.r.get(crate::us(s.reg)).ok_or("temp out of range")?,
             1 | 17 => [0.0; 4],
-            2 => match self.c.get((s.reg.cast_signed() + off) as usize) {
+            2 => match usize::try_from(s.reg.cast_signed() + off).ok().and_then(|k| self.c.get(k)) {
                 Some(c) => *c,
                 None => {
                     return Err("constant out of range".into());
