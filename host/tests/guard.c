@@ -1,6 +1,8 @@
 /* Page protection: PAGE_NOACCESS faults with STATUS_ACCESS_VIOLATION, PAGE_GUARD once with
  * STATUS_GUARD_PAGE_VIOLATION (then the page is plain), caught by a vectored handler that
- * fixes the page and continues. The accesses run in hot loops first, so that translated code
+ * fixes the page and continues. PAGE_READONLY: calls through a table of function pointers
+ * there (a vtable in .rdata: `call [reg+reg*8]`, which also writes the stack) do not fault, a
+ * store does. The accesses run in hot loops first, so that translated code
  * meets them as well as the interpreter. No C runtime; built for x86 and x86-64.
  * libs: -nostdlib -lkernel32 -luser32 */
 #include <windows.h>
@@ -47,10 +49,26 @@ __attribute__((noinline)) static void store(volatile int *p, int n, int v)
         p[i] = v;
 }
 
+static unsigned f0(unsigned x) { return x + 1; }
+static unsigned f1(unsigned x) { return x * 3; }
+static unsigned f2(unsigned x) { return x ^ 0x55; }
+static unsigned f3(unsigned x) { return x - 7; }
+typedef unsigned (*fn)(unsigned);
+
+/* calls through the table at t, in turn (noinline: the same code for every run) */
+__attribute__((noinline)) static unsigned calls(fn *volatile t, int n)
+{
+    unsigned s = 0;
+    fn *p = t;
+    for (int i = 0; i < n; i++)
+        s = p[i & 3](s);
+    return s;
+}
+
 void mainCRTStartup(void)
 {
     DWORD old;
-    char *m = VirtualAlloc(NULL, 3 * 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    char *m = VirtualAlloc(NULL, 4 * 4096, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     AddVectoredExceptionHandler(1, handler);
     /* hot: page 0 a few thousand times */
     int s = 0;
@@ -87,5 +105,22 @@ void mainCRTStartup(void)
     faults = 0;
     s = sum((int *)(m + 8192), 1024, 1);
     out("guard again: faults %d\n", (int)faults);
+
+    /* page 3 read-only, a table of functions: called through, hot, without a fault */
+    fn *t = (fn *)(m + 12288);
+    t[0] = f0, t[1] = f1, t[2] = f2, t[3] = f3;
+    VirtualProtect(m + 12288, 4096, PAGE_READONLY, &old);
+    faults = 0;
+    unsigned c = 0;
+    for (int k = 0; k < 200; k++)
+        c += calls(t, 1000 + k);
+    out("readonly calls: faults %d sum %x\n", (int)faults, c);
+    /* a store into it faults (the handler opens the page) */
+    fix = m + 12288;
+    faults = 0;
+    store((int *)(m + 12288 + 64), 16, 5);
+    out("readonly write: faults %d code %x at +%x value %d\n", (int)faults, (unsigned)code,
+        (unsigned)(seen - m), ((int *)(m + 12288))[16 + 15]);
+    fix = NULL;
     ExitProcess(0);
 }

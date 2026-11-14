@@ -335,8 +335,27 @@
       total 1171 / 1003 / 903、cpu unfilter 848 / 633 / 828、mix 709 / 563 / 801、script 269 / 319 / 160、
       transform 12 / 26 / 12、api 369 / 423 / 369、cxx map 617 / 507 / 419、vector 431 / 414 / 355、
       virtual 1159 / 1178 / 1051、exceptions 410 / 427 / 727、flatbench 6.7 / 5.8 秒。script・transform・
-      api がまだ遅いので既定オフのまま。次: Cpu のレジスタを 64 ビット 1 本に、間接 call 先の投機
-      インライン。テスト: jit64test (a_return_to_another_alias_keeps_rip_hi、
+      api がまだ遅いので既定オフのまま。
+      第 3 段 (全ケースをリージョン以下に): (1) 読み取り専用ページの vtable を通す `call [rax+0x10]`
+      が、iced の used_memory にスタックへの書き込みも入るため「書く命令」とされ、ページ検査で毎回
+      インタプリタに落ちていた (全モード、x86 も。cxx virtual 1868 → 175 ms)。書くかどうかは
+      メモリオペランドだけで見る (koji `only_the_operand_tells_a_write`、host/tests/guard.c に
+      読み取り専用ページの関数表)。(2) IAT・thunk 経由の call 先がホストの trap なら、呼び出し
+      キャッシュ・ハッシュ探索・callmiss を飛ばしてそのまま出る (jit64test
+      `api_calls_go_straight_to_the_host`)。(3) 間接ジャンプで終わるブロック (switch) で外れたら、
+      unwind 表 (RUNTIME_FUNCTION、sake seh64::function_start → kura set_fn_start) の関数先頭から
+      その番地を入口に加えて関数を作る (State::fn_also、作り直しでも残す)。関数になっている先頭が
+      あればそれを先に使う。rbp 基準の MinGW のジャンプ表 (`movsxd rax,[rbp+rax*4]; add rax,rbp`、
+      rbp は関数先頭で 1 回だけ lea、既定セグメント SS) も読む (koji
+      `jump_table_relative_to_a_base_the_function_set`、kura `a_switch_block_ends_in_an_indirect_jump`)。
+      cpu script 461 → 305 ms。ほかのループまで先頭から作ると main() が 1 つの関数になって
+      ケースごとに 8 回作り直され、遅くなった。(4) 4GB 別名のチェックは関数でなくアダプタで
+      (関数の入口での全レジスタ書き出しが 1 つ減る)。(5) 関数から別の関数の遠い入口への跳び出し
+      (深さ 0 の RET が呼び出し元の戻り先へ: その枠は wasm の call の外で作られた) では作り直さない
+      (kura `elsewhere`、`a_jump_out_to_another_function_far_off_builds_nothing`。std::sort の
+      再帰で 2 つの関数が 8 回ずつ作り直されていた)。短いケース (transform 20 ms など) の差は
+      翻訳とコンパイルの立ち上がりで、10 倍の長さで回すと FN が速い (transform 131 / 112)。
+      次: Cpu のレジスタを 64 ビット 1 本に、間接 call 先の投機インライン。テスト: jit64test (a_return_to_another_alias_keeps_rip_hi、
       an_indirect_call_over_three_functions、flags_after_a_call_as_the_caller_reads_them、
       a_loop_header_inside_the_block_before も)、koji blocks_end_where_another_starts、kura
       a_function_spans_its_blocks_not_its_thunks と fn_span_property。jit64test

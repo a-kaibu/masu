@@ -861,14 +861,24 @@ fn pages_marked(c: &mut Code, t: u32, size: u32, ins: &Instruction) {
     }
 }
 
-/// Whether `ins` may write its memory operand (a read-only page faults it).
+/// Whether `ins` may write its memory operand (a read-only page faults it). Only the operand
+/// counts: a CALL or PUSH through memory writes the stack too, but reads its operand, and a
+/// virtual call through a vtable on a read-only page left to the interpreter at every call
+/// (cxx.exe virtual, every mode). Not told apart (no used memory is the operand): any write.
 fn writes_memory(ins: &Instruction) -> bool {
     use iced_x86::OpAccess::*;
-    iced_x86::InstructionInfoFactory::new()
-        .info(ins)
-        .used_memory()
+    let mut f = iced_x86::InstructionInfoFactory::new();
+    let info = f.info(ins);
+    let writes = |m: &iced_x86::UsedMemory| !matches!(m.access(), Read | CondRead | NoMemAccess | None);
+    let used = info.used_memory();
+    let operand: Vec<_> = used
         .iter()
-        .any(|m| !matches!(m.access(), Read | CondRead | NoMemAccess | None))
+        .filter(|m| m.base() == ins.memory_base() && m.index() == ins.memory_index() && m.scale() == ins.memory_index_scale() && m.displacement() == ins.memory_displacement64())
+        .collect();
+    if operand.is_empty() {
+        return used.iter().any(writes);
+    }
+    operand.into_iter().any(writes)
 }
 
 const STATUS_BITS: u32 =
@@ -6240,6 +6250,46 @@ fn translate_seen<M: Memory>(
 
 #[cfg(test)]
 mod tests {
+    /// A CALL or PUSH through memory reads its operand (the stack write is not the operand's);
+    /// a store, an RMW, a POP to memory write it (review: vtables on read-only pages).
+    #[test]
+    fn only_the_operand_tells_a_write() {
+        use iced_x86::code_asm::*;
+        for bits in [32u32, 64] {
+            let mut a = CodeAssembler::new(bits).unwrap();
+            if bits == 64 {
+                a.call(qword_ptr(rax + 0x10)).unwrap();
+                a.push(qword_ptr(rcx)).unwrap();
+                a.call(qword_ptr(rsp + 8)).unwrap();
+                a.call(qword_ptr(rbx + rsi * 8 + 0x20)).unwrap();
+                a.mov(rax, qword_ptr(rsp - 8)).unwrap();
+                a.mov(qword_ptr(rax + 8), rcx).unwrap();
+                a.add(dword_ptr(rsp - 8), 1).unwrap();
+                a.pop(qword_ptr(rax)).unwrap();
+                a.pop(qword_ptr(rsp - 8)).unwrap();
+                a.xchg(qword_ptr(rdx), rax).unwrap();
+            } else {
+                a.call(dword_ptr(eax + 0x10)).unwrap();
+                a.push(dword_ptr(ecx)).unwrap();
+                a.call(dword_ptr(esp + 4)).unwrap();
+                a.jmp(dword_ptr(0x401000)).unwrap();
+                a.mov(eax, dword_ptr(esp - 4)).unwrap();
+                a.mov(dword_ptr(eax + 8), ecx).unwrap();
+                a.add(dword_ptr(esp - 4), 1).unwrap();
+                a.pop(dword_ptr(eax)).unwrap();
+                a.pop(dword_ptr(esp - 4)).unwrap();
+                a.xchg(dword_ptr(edx), eax).unwrap();
+            }
+            let mut bytes = a.assemble(0x1000).unwrap();
+            // (and RIP-relative / absolute: jmp [rip+0x100], jmp [0x401000])
+            bytes.extend_from_slice(&[0xff, 0x25, 0x00, 0x01, 0x00, 0x00]);
+            let want = [false, false, false, false, false, true, true, true, true, true, false];
+            let mut d = iced_x86::Decoder::with_ip(bits, &bytes, 0x1000, iced_x86::DecoderOptions::NONE);
+            let got: Vec<bool> = d.iter().map(|i| super::writes_memory(&i)).collect();
+            assert_eq!(got, want, "{bits}-bit");
+        }
+    }
+
     extern crate std;
     use super::*;
 

@@ -385,10 +385,15 @@ fn fn_results(c: &mut Code, st: u32, rip: u32) {
 
 /// A function's adapter to the region type (FN64, see [`T_FN`]): the registers from the
 /// Cpu into the function (at function index `f`, the next one), and back; its RET as status
-/// 0 at the RET's RIP.
-fn fn_adapter(f: u32) -> Func {
+/// 0 at the RET's RIP. The dispatcher's key is the low 32 bits: code at another 4GB alias
+/// than `hi` is left to the interpreter here (the function itself is called and chained to
+/// only from its alias, the callers check: no stores of every register for it there).
+fn fn_adapter(f: u32, hi: u32) -> Func {
     let (st, rip) = (L_R + 16, L_R + 17);
     let mut c = Code::default();
+    c.get(L_CPU).load32(cpu_off!(rip_hi)).u32c(hi).ne().if_();
+    c.i32c(RET_INTERP).ret();
+    c.end();
     emit_loads(&mut c, u16::MAX);
     fn_args(&mut c, |c| void(c.i64c(0)), |c| void(c.get(L_ARG)), |c| void(c.get(L_DEPTH)));
     c.call(f);
@@ -407,6 +412,25 @@ fn fn_adapter(f: u32) -> Func {
 }
 
 fn void<T>(_: T) {}
+
+/// The low 32 bits of an address (the dispatcher's key, the host trap range's).
+fn low_half(a: u64) -> u32 {
+    u32::try_from(a & 0xffff_ffff).unwrap_or(u32::MAX)
+}
+
+/// The high 32 bits of an address (its 4GB alias, Cpu::rip_hi).
+fn high_half(a: u64) -> u32 {
+    u32::try_from(a >> 32).unwrap_or(u32::MAX)
+}
+
+/// Where a call's target comes from (FN64, Gen::call_fn).
+#[derive(Clone, Copy)]
+enum CallTarget {
+    /// the instruction's own (a direct call): never a host trap
+    Fixed,
+    /// read at run time (a register, memory, an import thunk's slot): maybe a host trap
+    Read,
+}
 
 impl<'a> Gen<'a> {
     /// Returns from a function (FN64): `status` and `rip` (pushed by the closures), then the
@@ -1192,7 +1216,7 @@ impl<'a> Gen<'a> {
     /// goes on there; returned anywhere else, or with another status, the state is in the Cpu
     /// and this function leaves the same way (longjmp, SEH, a callee that left for the
     /// dispatcher). No function there, too deep or the budget spent: out to the target.
-    fn call_fn(&mut self, t: u32, next: u64) {
+    fn call_fn(&mut self, t: u32, next: u64, target: CallTarget) {
         let site = self.ins.ip() as u32;
         let (h, v) = (L_H, L_E);
         // (the flags in the Cpu both ways, the registers as arguments and results)
@@ -1205,6 +1229,13 @@ impl<'a> Gen<'a> {
         self.c.get(L_DEPTH).u32c(MAX_DEPTH).ge_u();
         self.c.get(t).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c((self.ins.ip() >> 32) as u32).ne().or();
         self.c.br_if(0);
+        if let CallTarget::Read = target {
+            // (an import's host trap, through the IAT or a thunk's slot: straight out, without
+            // the cache, the probe and the host's callmiss that find nothing there; API calls
+            // went through all three every time)
+            self.c.get(t).x(I32_WRAP).get(L_CPU).load32(cpu_off!(trap_lo)).sub();
+            self.c.get(L_CPU).load32(cpu_off!(trap_hi)).get(L_CPU).load32(cpu_off!(trap_lo)).sub().lt_u().br_if(0);
+        }
         // the call cache: this site's slot holds (target, hash table entry) of the function
         // it called last
         let slot = (site.wrapping_mul(0x9e37_79b1) >> 20) & (super::CALL_CACHE - 1);
@@ -2375,7 +2406,8 @@ impl<'a> Gen<'a> {
                 }
                 self.c.i64c(ins.next_ip() as i64).set(r);
                 self.push64(r);
-                self.call_fn(t, ins.next_ip());
+                let target = if self.thunks.contains_key(&ins.near_branch64()) { CallTarget::Read } else { CallTarget::Fixed };
+                self.call_fn(t, ins.next_ip(), target);
                 true
             }
             Call if ins.op0_kind() == OpKind::NearBranch64 => {
@@ -2395,7 +2427,7 @@ impl<'a> Gen<'a> {
                 self.c.i64c(ins.next_ip() as i64).set(r);
                 self.push64(r);
                 if self.fnm {
-                    self.call_fn(t, ins.next_ip());
+                    self.call_fn(t, ins.next_ip(), CallTarget::Read);
                     return true;
                 }
                 self.c.get(t);
@@ -2622,7 +2654,8 @@ fn jump_table_in<M: Memory>(mem: &mut M, ins: &[Instruction], n: Option<(Registe
     let last = ins.last().unwrap();
     // the table's address of a memory operand [base + ireg*scale + disp]
     let table = |vals: &Vec<(Register, V)>, i: &Instruction, scale: u32| -> Option<u64> {
-        if i.memory_index().full_register() != ireg || i.memory_index_scale() != scale || i.memory_segment() != Register::DS && i.memory_segment() != Register::None {
+        // (SS: an rbp or rsp base's default, flat in long mode as DS)
+        if i.memory_index().full_register() != ireg || i.memory_index_scale() != scale || !matches!(i.memory_segment(), Register::DS | Register::SS | Register::None) {
             return None;
         }
         let base = match i.memory_base() {
@@ -2636,6 +2669,14 @@ fn jump_table_in<M: Memory>(mem: &mut M, ins: &[Instruction], n: Option<(Registe
         };
         Some(base.wrapping_add(i.memory_displacement64()))
     };
+    // (a register the block never writes, set to an address once in the function)
+    let outer_const = |r: Register| -> Option<V> {
+        let r = r.full_register();
+        if ins.iter().any(|x| x.op_count() > 0 && x.op0_kind() == OpKind::Register && x.op0_register().full_register() == r) {
+            return None;
+        }
+        (*outer.get(&r)?).map(V::Const)
+    };
     let mut targets = Vec::new();
     for (at_k, i) in ins.iter().enumerate() {
         let dst = if i.op_count() > 0 && i.op0_kind() == OpKind::Register { Some(i.op0_register()) } else { None };
@@ -2643,7 +2684,10 @@ fn jump_table_in<M: Memory>(mem: &mut M, ins: &[Instruction], n: Option<(Registe
             Lea if i.memory_base() == Register::RIP && i.memory_index() == Register::None => Some(V::Const(i.memory_displacement64())),
             Movsxd if i.op1_kind() == OpKind::Memory => table(&vals, i, 4).map(|t| V::Entry(t, true)),
             Mov if i.op1_kind() == OpKind::Memory && dst.is_some_and(|r| r.is_gpr32()) => table(&vals, i, 4).map(|t| V::Entry(t, false)),
-            Add if i.op1_kind() == OpKind::Register && dst.is_some() => match (get(&vals, dst.unwrap()), get(&vals, i.op1_register())) {
+            // (the base not set in the block either: the function's one value for it, as the
+            // table's base: MinGW's `movsxd rax, [rbp+rax*4]; add rax, rbp; jmp rax` with rbp
+            // set once at the function's start, an interpreter's switch, cpu.exe script)
+            Add if i.op1_kind() == OpKind::Register && dst.is_some() => match (get(&vals, dst.unwrap()), get(&vals, i.op1_register()).or_else(|| outer_const(i.op1_register()))) {
                 (Some(V::Entry(t, s)), Some(V::Const(b))) | (Some(V::Const(b)), Some(V::Entry(t, s))) => Some(V::Target(t, s, b)),
                 _ => None,
             },
@@ -3112,7 +3156,15 @@ pub static FN64: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool
 /// `max_ins`: instructions it takes at most (a function built again takes more: big
 /// interpreters' loops, whose cases are its blocks).
 pub fn translate_function64<M: Memory>(module: &mut Module, mem: &mut M, entry: u64, trap: (u32, u32), max_ins: usize, accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
-    translate_seen64(module, &mut super::Snapshot::new(mem), &[entry], trap, accept, Some(max_ins))
+    translate_function64_with(module, mem, entry, &[], trap, max_ins, accept)
+}
+
+/// [`translate_function64`], entered also at `also` (where the dispatcher missed inside it:
+/// a loop the interpreter ran into).
+pub fn translate_function64_with<M: Memory>(module: &mut Module, mem: &mut M, entry: u64, also: &[u64], trap: (u32, u32), max_ins: usize, accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
+    let mut roots = alloc::vec![entry];
+    roots.extend(also.iter().filter(|&&a| a != entry && !(trap.0..trap.1).contains(&low_half(a))));
+    translate_seen64(module, &mut super::Snapshot::new(mem), &roots, trap, accept, Some(max_ins))
 }
 
 fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], trap: (u32, u32), mut accept: impl FnMut(u32, bool) -> bool, fn_ins: Option<usize>) -> Option<Region> {
@@ -3293,16 +3345,13 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let lay = if !STRUCTURED.load(Relaxed) && !fnm { None } else { structure64(&blocks, &index, &returns, (&group_of, &groups), roots, fnm) };
     let nodes = blocks.len() + groups.len() + 1;
     let mut g = Gen { c: Code::default(), blocks: &blocks, index: &index, returns: &returns, flags: Flags::Cpu, depth: 0, ins: blocks[0].ins[0], temps: 0, mx_checked: None, mx_seen: [[None; 2]; 16], marks: Vec::new(), hi_swapped: Vec::new(), smc: false, fresh: None, watch_store: false, fell_back: false, bad: false, info: iced_x86::InstructionInfoFactory::new(), structured: lay.is_some(), fwd: alloc::vec![None; nodes], back: alloc::vec![None; nodes], cur: 0, table_node: BTreeMap::new(), side: BTreeMap::new(), fnm, thunks: &thunks, unlaid: Vec::new() };
-    // the dispatcher's key is the low 32 bits: code at another 4GB alias is left to the interpreter
-    g.c.get(L_CPU).load32(cpu_off!(rip_hi)).u32c((entry >> 32) as u32).ne().if_();
-    if fnm {
-        // (a function's registers are its arguments: into the Cpu for the interpreter)
-        emit_stores(&mut g.c, u16::MAX);
-        g.ret_fn(|c| void(c.i32c(RET_INTERP)), |c| void(c.i64c(0)));
-    } else {
+    // the dispatcher's key is the low 32 bits: code at another 4GB alias is left to the
+    // interpreter (a function's adapter checks, fn_adapter)
+    if !fnm {
+        g.c.get(L_CPU).load32(cpu_off!(rip_hi)).u32c(high_half(entry)).ne().if_();
         g.c.i32c(RET_INTERP).ret();
+        g.c.end();
     }
-    g.c.end();
     g.c.i32c(0).set(L_FC);
     if !fnm {
         g.load_regs();
@@ -3396,7 +3445,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         let (locals, body) = super::wasm::compact_locals_param(1, &FN_ARGS, &locals, code);
         let nimp = module.imports.iter().filter(|i| matches!(i, super::wasm::Import::Func(..))).count() as u32;
         let at = nimp + module.funcs.len() as u32;
-        module.funcs.push(fn_adapter(at + 1));
+        module.funcs.push(fn_adapter(at + 1, high_half(entry)));
         module.funcs.push(Func { ty: T_FN, locals, code: body });
     } else {
         module.funcs.push(Func { ty: 2, locals, code });
@@ -3485,6 +3534,41 @@ mod tests {
         img3[..code3.len()].copy_from_slice(code3);
         let ins3 = decode(code3);
         assert!(jump_table(&mut Img(img3), &ins3, None).is_empty());
+    }
+
+    /// MinGW's switch with the table's base set once at the function's start (`lea rbp,
+    /// [rip+T]` there, `movsxd rax, [rbp+rax*4]; add rax, rbp; jmp rax` here, the bound
+    /// checked by the jump before): the entries relative to T; none without the function's
+    /// value for rbp, or when the block sets rbp itself (cpu.exe script's interpreter).
+    #[test]
+    fn jump_table_relative_to_a_base_the_function_set() {
+        struct Img(Vec<u8>);
+        impl Memory for Img {
+            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
+                a.checked_sub(0x1000).and_then(|o| self.0.get(usize::try_from(o).ok()?).copied()).ok_or(crate::Fault { addr: a, write: false })
+            }
+            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
+                Err(crate::Fault { addr: a, write: true })
+            }
+        }
+        let mut img = alloc::vec![0u8; 0x200];
+        for (k, t) in [-0xc0i32, -0xb0, -0x40, 0x20].iter().enumerate() {
+            img[0x100 + 4 * k..0x104 + 4 * k].copy_from_slice(&t.to_le_bytes());
+        }
+        let decode = |code: &[u8]| -> Vec<Instruction> { Decoder::with_ip(64, code, 0x1000, DecoderOptions::NONE).into_iter().collect() };
+        // movsxd rax, [rbp+rax*4]; add rax, rbp; jmp rax
+        let ins = decode(&[0x48, 0x63, 0x44, 0x85, 0x00, 0x48, 0x01, 0xe8, 0xff, 0xe0]);
+        let n = Some((Register::RAX, 4));
+        let mut outer = BTreeMap::new();
+        outer.insert(Register::RBP, Some(0x1100u64));
+        assert_eq!(jump_table_in(&mut Img(img.clone()), &ins, n, &outer), alloc::vec![0x1040, 0x1050, 0x10c0, 0x1120]);
+        assert!(jump_table_in(&mut Img(img.clone()), &ins, n, &BTreeMap::new()).is_empty());
+        outer.insert(Register::RBP, None);
+        assert!(jump_table_in(&mut Img(img.clone()), &ins, n, &outer).is_empty());
+        // (rbp set in the block: not the function's value)
+        outer.insert(Register::RBP, Some(0x1100u64));
+        let ins2 = decode(&[0x48, 0x89, 0xdd, 0x48, 0x63, 0x44, 0x85, 0x00, 0x48, 0x01, 0xe8, 0xff, 0xe0]); // mov rbp, rbx; ...
+        assert!(jump_table_in(&mut Img(img), &ins2, n, &outer).is_empty());
     }
 
     /// Lua 5.4's dispatch at the end of every opcode, `mov eax, ebx; and eax, 0x7f;

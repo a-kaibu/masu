@@ -269,7 +269,7 @@ file	crates/koji/src/interp/x87.rs	wildcard_enum_match_arm	19
 file	crates/koji/src/jit/dispatch.rs	as_conversions	12
 file	crates/koji/src/jit/dispatch.rs	cast_possible_truncation	3
 file	crates/koji/src/jit/long.rs	arithmetic_side_effects	157
-file	crates/koji/src/jit/long.rs	as_conversions	188
+file	crates/koji/src/jit/long.rs	as_conversions	187
 file	crates/koji/src/jit/long.rs	cast_possible_truncation	60
 file	crates/koji/src/jit/long.rs	cast_possible_wrap	29
 file	crates/koji/src/jit/long.rs	cast_sign_loss	3

@@ -389,6 +389,10 @@ struct State {
     fns: HashSet<u32>,
     /// times each function was built
     fn_builds: HashMap<u32, u32>,
+    /// FN64: the entries a function is built with besides its root (where the dispatcher
+    /// missed inside it: a loop entered from the interpreter, as a function run once whose
+    /// loop is all its time), kept for its next builds
+    fn_also: HashMap<u32, Vec<u32>>,
     /// indirect call/jump sites of functions: the function, and the target it mostly takes
     site_fn: HashMap<u32, Vec<u32>>,
     hints: HashMap<u32, u32>,
@@ -1041,6 +1045,7 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
                 late: HashMap::new(),
                 fns: HashSet::new(),
                 fn_builds: HashMap::new(),
+                fn_also: HashMap::new(),
                 site_fn: HashMap::new(),
                 hints: HashMap::new(),
                 rehinted: HashSet::new(),
@@ -2239,16 +2244,96 @@ fn fn_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64]) {
                 _ => continue,
             }
         };
+        // (a jump out to an entry of another function far off, a RET at depth 0 to a caller
+        // the wasm calls do not hold (its frame made before, in the interpreter or ahead of
+        // an exit): it chains there already, a build takes nothing in; std::sort's recursion
+        // built two functions again eight times each, every time in new, cold code)
+        if from != jit::FN_TAG && elsewhere(st, f, from, to) {
+            continue;
+        }
         let w = st.hot.entry((from, to)).or_insert(0);
         *w += 1;
         if *w >= FN_WINDOWS && st.fn_builds.get(&f).copied().unwrap_or(0) < FN_BUILDS {
             st.hot.remove(&(from, to));
             if stats() {
-                eprintln!("vnjit64 fn {f:#x} ({})", if from == jit::FN_TAG { "called" } else { "built again" });
+                eprintln!("vnjit64 fn {f:#x} ({}, {from:#x} -> {to:#x})", if from == jit::FN_TAG { "called" } else { "built again" });
             }
             compile_fn64(st, cpu, &mut Linear, f);
             return;
         }
+    }
+}
+
+/// The most entries a function (FN64) is built with besides its root ([`State::fn_also`]).
+const FN_ALSO: usize = 32;
+
+/// sake's unwind tables (x64 RUNTIME_FUNCTIONs): the start of the function `a` is in.
+static FN_START: std::sync::OnceLock<fn(u32) -> Option<u32>> = std::sync::OnceLock::new();
+
+/// See [`FN_START`].
+pub fn set_fn_start(f: fn(u32) -> Option<u32>) {
+    // (set once, by sake's start: a second call keeps the first)
+    if FN_START.set(f).is_err() {
+        eprintln!("kura: set_fn_start called twice (the first stays)");
+    }
+}
+
+fn fn_start(a: u32) -> Option<u32> {
+    FN_START.get().and_then(|f| f(a))
+}
+
+/// Whether the block at `a` (x64, up to 32 instructions) ends in an indirect JMP.
+fn ends_in_indirect_jump(a: u32) -> bool {
+    let mut b = [0u8; 256];
+    let n = koji::Memory::fetch(&mut Linear, a, &mut b);
+    block_ends_in_indirect_jump(b.get(..n).unwrap_or(&[]), a)
+}
+
+/// [`ends_in_indirect_jump`] of the code `b` at `a`.
+fn block_ends_in_indirect_jump(b: &[u8], a: u32) -> bool {
+    let mut d = koji::iced_x86::Decoder::with_ip(64, b, u64::from(a), koji::iced_x86::DecoderOptions::NONE);
+    for _ in 0..32 {
+        if !d.can_decode() {
+            return false;
+        }
+        use koji::iced_x86::FlowControl as F;
+        // (every kind named: a new one in iced does not compile until it is placed here)
+        match d.decode().flow_control() {
+            F::Next => {}
+            F::IndirectBranch => return true,
+            F::UnconditionalBranch | F::ConditionalBranch | F::Return | F::Call | F::IndirectCall | F::Interrupt | F::XbeginXabortXend | F::Exception => return false,
+        }
+    }
+    false
+}
+
+/// Whether `to`, jumped to from function `f`'s module `base`, is an entry of another
+/// function (FN64) and outside f's span ([`fn_span`]).
+fn elsewhere(st: &State, f: u32, base: u32, to: u32) -> bool {
+    let Some(v) = hash_entry(&st.hash, to) else { return false };
+    if v & jit::FN_TAG == 0 || st.roots.get(&(v & BASE_MASK)).and_then(|r| r.first()) == Some(&f) {
+        return false;
+    }
+    let Some(c) = st.code_of.get(&base) else { return false };
+    fn_span(c, f).is_some_and(|(lo, hi)| to < lo || u64::from(to) >= hi)
+}
+
+/// A hash table entry's module base (below its block, see jit::ENTRY_SHIFT).
+const BASE_MASK: u32 = (1 << jit::ENTRY_SHIFT) - 1;
+
+/// The hash table's entry for `a`.
+fn hash_entry(hash: &[[u32; 2]], a: u32) -> Option<u32> {
+    let mask = u32::try_from(hash.len().checked_sub(1)?).ok()?;
+    let mut h = jit::dispatch::slot(a, mask);
+    loop {
+        let &[k, v] = hash.get(usize::try_from(h).ok()?)?;
+        if k == 0 {
+            return None;
+        }
+        if k == a {
+            return Some(v);
+        }
+        h = h.wrapping_add(1) & mask;
     }
 }
 
@@ -2310,7 +2395,8 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
     // (the blocks that ran, and the ones its calls come back to or its jump tables reach)
     // (built again: twice as many instructions each time, as build_fn)
     let base_ins = *FN_INS.get_or_init(|| std::env::var("MASU_JIT_FN_INS").ok().and_then(|v| v.parse().ok()).unwrap_or(1000));
-    let Some(region) = jit::long::translate_function64(&mut m, mem, entry, (lo, hi), base_ins << (build.min(4) - 1), |a, sure| debug_allowed(a) && !(a >= lo && a < hi) && (a == eip || sure || ran(misses, known, a))) else {
+    let also: Vec<u64> = st.fn_also.get(&eip).map_or(Vec::new(), |v| v.iter().map(|&a| u64::from(a) | u64::from(cpu.rip_hi).wrapping_shl(32)).collect());
+    let Some(region) = jit::long::translate_function64_with(&mut m, mem, entry, &also, (lo, hi), base_ins << (build.min(4) - 1), |a, sure| debug_allowed(a) && !(a >= lo && a < hi) && (a == eip || sure || ran(misses, known, a))) else {
         st.known.insert(eip);
         return false;
     };
@@ -2318,6 +2404,7 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
         eprintln!("vnjit64 fn {entry:#x} build {build}\n{}", region.layout);
     }
     let bytes = m.finish();
+    let t1 = Instant::now();
     if let Some(dir) = std::env::var_os("MASU_JIT_DUMP") {
         let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{eip:08x}-fn64-{build}.wasm")), &bytes);
     }
@@ -2337,7 +2424,7 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
         count_compile(2, t0);
     }
     if crate::env_on!("MASU_JIT_TIME") {
-        eprintln!("vnjit time {eip:#x}: {} ins, fn64 build {build} in {:?}", region.instructions, t0.elapsed());
+        eprintln!("vnjit time {eip:#x}: {} ins, fn64 build {build} in {:?} (translate {:?}, {} bytes, load {:?})", region.instructions, t0.elapsed(), t1.duration_since(t0), bytes.len(), t1.elapsed());
     }
     true
 }
@@ -2442,12 +2529,27 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
                 // the function built again with it, not one more function from the middle
                 // of it (std::sort's loops became seven functions, each built eight times))
                 st.known.insert(eip);
-                if let Some(f) = fn_around(st, eip).filter(|f| st.fn_builds.get(f).copied().unwrap_or(0) < FN_BUILDS) {
+                // (else the function the image's unwind table puts it in: a function called
+                // once, whose loop is entered from the interpreter, is built from its start,
+                // with the jump table its start sets up; built from the loop the switch of an
+                // interpreter went out to a function per case, cpu.exe script)
+                // (only for a block that ends in an indirect jump, a switch: other loops built
+                // from the start made main() of a benchmark one function built again for each
+                // case's loop, eight times, the case running meanwhile in new code each time)
+                // (the unwind table's function first when it is one already: a block of it
+                // goes in it, not in a function built from a case of its switch nearby)
+                let start = fn_start(eip).filter(|&s| s != eip && !(s >= cpu.trap_lo && s < cpu.trap_hi));
+                let start = start.filter(|s| st.fns.contains(s) || ends_in_indirect_jump(eip));
+                if let Some(f) = start.or_else(|| fn_around(st, eip)).filter(|f| st.fn_builds.get(f).copied().unwrap_or(0) < FN_BUILDS) {
                     if stats() {
                         eprintln!("vnjit64 fn {f:#x} (built again for {eip:#x})");
                     }
-                    // (an entry of it now, or else a function of its own: the dispatcher
+                    // (with it as an entry, or else a function of its own: the dispatcher
                     // comes here from elsewhere)
+                    let also = st.fn_also.entry(f).or_default();
+                    if !also.contains(&eip) && also.len() < FN_ALSO {
+                        also.push(eip);
+                    }
                     if compile_fn64(st, cpu, mem, f) && compiled(&st.hash, eip) {
                         return true;
                     }
@@ -3759,6 +3861,65 @@ mod invalidate_tests {
         assert_eq!(fn_span(&c, 0x48000), Some((0x48000, 0x48006)));
         assert_eq!(fn_span(&c, 0x50000), None);
         assert_eq!(fn_span(&[(0x41000, 0x20), (0x42100, 4)], 0x41000), Some((0x41000, 0x41020)));
+    }
+
+    /// A function's jump out (FN64) to an entry of another function far off (a RET at depth
+    /// 0 to a caller's return address) builds nothing again; one to an entry of its own, to
+    /// no entry, or to another function's entry inside its span does.
+    #[test]
+    fn a_jump_out_to_another_function_far_off_builds_nothing() {
+        with_state(|st| {
+            let (f, g) = (0x41000u32, 0x62000u32);
+            let (bf, bg) = (0x10u32, 0x20u32);
+            st.roots.insert(bf, vec![f]);
+            st.roots.insert(bg, vec![g]);
+            st.fns.insert(f);
+            st.fns.insert(g);
+            st.code_of.insert(bf, vec![(f, 0x80), (f + 0x100, 0x40)]);
+            st.code_of.insert(bg, vec![(g, 0x200)]);
+            let tag = |b: u32, k: u32| b | k << jit::ENTRY_SHIFT | jit::FN_TAG;
+            // g's entries: its root, a return address; f's: a block of its own; and one of g
+            // that lies inside f's span (a function built at a block of f)
+            for (a, v) in [(g, tag(bg, 0)), (g + 0x1bc, tag(bg, 3)), (f + 0x100, tag(bf, 1)), (f + 0x40, tag(bg, 4))] {
+                insert(&mut st.hash, a, v);
+            }
+            assert!(elsewhere(st, f, bf, g + 0x1bc));
+            assert!(elsewhere(st, f, bf, g));
+            assert!(!elsewhere(st, f, bf, f + 0x100), "its own entry");
+            assert!(!elsewhere(st, f, bf, f + 0x30), "no entry");
+            assert!(!elsewhere(st, f, bf, f + 0x40), "another's entry in its span");
+            assert!(!elsewhere(st, f, bf, 0x90000), "no entry, far");
+            // (a region's entry, not a function's)
+            insert(&mut st.hash, 0x70000, bg);
+            assert!(!elsewhere(st, f, bf, 0x70000));
+        });
+        STATE.with(|s| *s.borrow_mut() = None);
+    }
+
+    /// A switch's block (straight code, then `jmp reg` or `jmp [mem]`) and no other: a
+    /// conditional jump, a call, a RET, a direct JMP, or no end within 32 instructions.
+    #[test]
+    fn a_switch_block_ends_in_an_indirect_jump() {
+        use proptest::prelude::*;
+        // (straight instructions: lea eax,[rax+1]; add rcx,rdx; movsxd rax,[rbp+rax*4]; nop)
+        let straight: [&[u8]; 4] = [&[0x8d, 0x40, 0x01], &[0x48, 0x01, 0xd1], &[0x48, 0x63, 0x44, 0x85, 0x00], &[0x90]];
+        let ends: [(&[u8], bool); 7] = [
+            (&[0xff, 0xe0], true),             // jmp rax
+            (&[0xff, 0x24, 0xc5, 0, 0x10, 0, 0], true), // jmp [rax*8+0x1000]
+            (&[0x75, 0x02], false),            // jne
+            (&[0xe8, 0, 0, 0, 0], false),      // call
+            (&[0xc3], false),                  // ret
+            (&[0xeb, 0x00], false),            // jmp short
+            (&[0xff, 0xd0], false),            // call rax
+        ];
+        proptest!(|(body in proptest::collection::vec(0usize..4, 0..20), end in 0usize..7)| {
+            let mut b: Vec<u8> = body.iter().flat_map(|&k| straight[k].iter().copied()).collect();
+            b.extend_from_slice(ends[end].0);
+            prop_assert_eq!(super::block_ends_in_indirect_jump(&b, 0x40_1000), ends[end].1);
+        });
+        // (no end within 32 instructions; the end cut off)
+        assert!(!super::block_ends_in_indirect_jump(&[0x90; 40].iter().copied().chain([0xff, 0xe0]).collect::<Vec<_>>(), 0x40_1000));
+        assert!(!super::block_ends_in_indirect_jump(&[0x90, 0xff], 0x40_1000));
     }
 
     proptest::proptest! {

@@ -798,6 +798,24 @@ static STALE_HITS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 thread_local! {
     /// instructions regions handed to the interpreter (the `step` import), on this thread
     static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// calls of the `callmiss` import, on this thread
+    static CALLMISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Host trap addresses (as sake's API traps) in the runs that set them: a call there is an
+/// API, [`host_api`].
+const TRAP_LO: u32 = 0x17_0000;
+const TRAP_HI: u32 = 0x17_1000;
+
+/// The host's side of an API at a trap address: rax += rcx + the trap's offset, then back
+/// to the return address on the stack (memory at `m`).
+fn host_api(c: &mut Cpu, m: *mut u8) {
+    let rsp = c.gpr(4);
+    let ret = unsafe { ((m as usize + rsp as u32 as usize) as *const u64).read_unaligned() };
+    c.set_gpr(0, c.gpr(0).wrapping_add(c.gpr(1)).wrapping_add((c.eip - TRAP_LO) as u64));
+    c.set_gpr(4, rsp + 8);
+    c.eip = ret as u32;
+    c.rip_hi = (ret >> 32) as u32;
 }
 
 /// The translated code's byte ranges (kura's CODE_RANGES), and whether the interpreter wrote
@@ -880,6 +898,7 @@ impl Jit {
         // (kura's vnhost_jit_callmiss: a function's root in the hash table goes in the slot)
         linker
             .func_wrap("env", "callmiss", move |_cpu: i32, slot: i32, target: i32| -> i32 {
+                CALLMISSES.set(CALLMISSES.get() + 1);
                 let target = target as u32;
                 let mut h = koji::jit::dispatch::slot(target, HASH_N - 1);
                 loop {
@@ -991,6 +1010,12 @@ impl Jit {
         // step a round: 0x20001 iterations of a three-instruction loop fit)
         for _ in 0..1_000_000 {
             let c = unsafe { get_cpu(m) };
+            if c.trap_hi != 0 && (c.trap_lo..c.trap_hi).contains(&c.eip) {
+                let mut c = c;
+                host_api(&mut c, m);
+                unsafe { put_cpu(m, &c) };
+                continue;
+            }
             if c.eip == END {
                 if std::env::var("JRING").is_ok() {
                     eprintln!("regions {regions} chained {}", unsafe { ((base + RING as usize) as *const u32).read() });
@@ -1849,6 +1874,11 @@ fn pe_damaged_never_panics() {
 /// Runs `code` at CODE (rsp, rbx as given) by the interpreter alone and by the JIT with
 /// functions (FN64): both Cpus, the JIT's run-loop entries and its interpreter steps.
 fn run_both_fn(code: &[u8], rbx: u64) -> (Cpu, Cpu, usize, usize) {
+    run_both_fn_traps(code, rbx, false)
+}
+
+/// [`run_both_fn`], with host traps at [TRAP_LO, TRAP_HI) when `traps`.
+fn run_both_fn_traps(code: &[u8], rbx: u64, traps: bool) -> (Cpu, Cpu, usize, usize) {
     let mut config = Config::new();
     config.wasm_threads(true).consume_fuel(true);
     let engine = Engine::new(&config).unwrap();
@@ -1858,10 +1888,17 @@ fn run_both_fn(code: &[u8], rbx: u64) -> (Cpu, Cpu, usize, usize) {
     let mut cpu = Cpu { mode64: 1, eip: CODE, jit_budget: 1 << 30, mxcsr: 0x1f80, ..Cpu::default() };
     cpu.set_gpr(4, (STACK - 0x800) as u64);
     cpu.set_gpr(3, rbx);
+    if traps {
+        (cpu.trap_lo, cpu.trap_hi) = (TRAP_LO, TRAP_HI);
+    }
     let mut want = cpu.clone();
     let mut m = vec![0u8; MEM];
     m[CODE as usize..CODE as usize + code.len()].copy_from_slice(code);
     while want.eip != END {
+        if traps && (TRAP_LO..TRAP_HI).contains(&want.eip) {
+            host_api(&mut want, m.as_mut_ptr());
+            continue;
+        }
         assert_eq!(koji::step(&mut want, &mut Mem(m.as_mut_ptr())), Exit::Continue);
     }
     unsafe {
@@ -1873,6 +1910,7 @@ fn run_both_fn(code: &[u8], rbx: u64) -> (Cpu, Cpu, usize, usize) {
     let mut jit = Jit::new(&engine, &memory, base);
     jit.fnm = true;
     STEPS.set(0);
+    CALLMISSES.set(0);
     let regions = jit.run(base).unwrap();
     (want, unsafe { get_cpu(base as *mut u8) }, regions, STEPS.get())
 }
@@ -1995,6 +2033,37 @@ fn calls_through_import_thunks() {
     assert_eq!(got.eip, END);
     assert_eq!(steps, 0, "no instruction left to the interpreter");
     assert!(regions < 12, "{regions} entries from the run loop");
+}
+
+/// API calls (FN64): `call [rip+IAT]` and `call thunk` (`jmp [rip+slot]`) to host trap
+/// addresses go straight out to the host, a thousand times each: the host's results, and
+/// no call cache miss asked of the host for a trap (each call asked once, then probed).
+#[test]
+fn api_calls_go_straight_to_the_host() {
+    let mut code = vec![0x90u8; 0x80];
+    let mut put = |at: usize, b: &[u8]| code[at..at + b.len()].copy_from_slice(b);
+    put(0x00, &[0xb9, 0xe8, 3, 0, 0]); // mov ecx, 1000
+    put(0x05, &[0xff, 0x15]); // call [rip+..] (the IAT slot: trap + 8)
+    put(0x07, &(0x70i32 - 0x0b).to_le_bytes());
+    put(0x0b, &[0xe8]); // call thunk (0x60)
+    put(0x0c, &(0x60i32 - 0x10).to_le_bytes());
+    put(0x10, &[0x48, 0xff, 0xc2]); // inc rdx
+    put(0x13, &[0xff, 0xc9]); // dec ecx
+    put(0x15, &[0x75, (0x05i32 - 0x17) as u8]); // jne 0x05
+    put(0x17, &[0xe9]); // jmp END
+    put(0x18, &(END as i32 - (CODE as i32 + 0x1c)).to_le_bytes());
+    put(0x60, &[0xff, 0x25]); // thunk: jmp [rip+..] (the slot: trap + 0x10)
+    put(0x62, &(0x78i32 - 0x66).to_le_bytes());
+    put(0x70, &((TRAP_LO + 8) as u64).to_le_bytes());
+    put(0x78, &((TRAP_LO + 0x10) as u64).to_le_bytes());
+    let (want, got, _, steps) = run_both_fn_traps(&code, 0, true);
+    assert_eq!(want.gpr(2), 1000);
+    for i in 0..16 {
+        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+    }
+    assert_eq!(got.eip, END);
+    assert_eq!(steps, 0, "no instruction left to the interpreter");
+    assert_eq!(CALLMISSES.get(), 0, "callmiss asked for a trap");
 }
 
 /// Small leaves (FN64) run inline in their caller: a leaf of three blocks called twice a
