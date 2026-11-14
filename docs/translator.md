@@ -269,3 +269,58 @@ tools/jit32test's fixed program "calls: flags, registers, RET elsewhere, tail ju
 covers the convention (six mutants of it fail it: flags left out at a RET to a caller that
 reads them, flags always left out, the state not stored on a RET elsewhere, the adapter not
 storing it, a result dropped, two registers swapped between caller and callee).
+
+## x87 loops (2026-11-14)
+
+Profiling the x87 cases (`perf record -k 1` of node with `--perf-prof`, `perf inject --jit`)
+showed that the FPU code spent its time on bookkeeping, not on arithmetic. The cache of the
+x87 registers in wasm locals (FCache, function-wide since 2026-11-01) was there, but:
+
+- L_MX, L_MXR and L_MXT (the control word's "arithmetic needs the slow path" and rounding
+  masks) were loaded from the Cpu at the start of every block that does x87 arithmetic, a
+  loop's too. Now a translation with x87 instructions loads them once at its start and again
+  only after what may change the control word: FLDCW, a fallback to the interpreter, a call.
+- Every FLD/FADD/FMUL m32/m64 read and wrote the status word in the Cpu to set IE for a
+  signalling NaN and DE for a denormal. Now that happens in an `if` taken only for a NaN or a
+  denormal operand.
+- A product or quotient whose result is an exact zero (0 * y, x * 0, 0 / y) went to the
+  rounding slow path every time (its result is below the smallest normal). An exact zero needs
+  no rounding in any mode, so the condition now leaves it out.
+- The function's root kept no cache (`k != root`): a function made from a loop's head (the
+  common case, since the head is where the ring samples it) went through the Cpu at every
+  iteration. A root that is entered at its first instruction only now keeps the cache; the
+  way in from the caller checks that the cache's pending tags agree with the Cpu (written
+  registers full and not exact, popped ones empty) and otherwise starts the interpreter there.
+  Functions with more entries are as before.
+- FXCH of a slot whose tags are in the Cpu swapped the tags (fempty, fexact) and the exact
+  integer there. GCC's and MSVC's x87 code is full of FXCH pairs. Now FCache::src records the
+  permutation and the swaps are made (as cycles) only before an instruction that reads or
+  writes those tags, at a jump to another block, or at a flush; the instructions that leave
+  them alone (FXCH, FLDZ/FLD1, FST/FSTP, loads, arithmetic on known slots) let it wait.
+
+Speed (node, five interleaved rounds of the build before and this one, min / median in ms;
+this machine is noisy, so the medians move by 20% or more between runs):
+
+| | before | after |
+|---|---|---|
+| x87b chain (dependent FMUL/FADD m32) | 58 / 76 | 19 / 27 |
+| x87b div | 34 / 63 | 18 / 29 |
+| x87b arr | 21 / 30 | 15 / 21 |
+| x87b mat (4x4 float) | 32 / 55 | 26 / 46 |
+| x87b ftol | 19 / 37 | 17 / 31 |
+| bench.exe float | 65 / 70 | 50 / 52 |
+| cpu.exe script / mix | 117 / 154, 343 / 617 | 106 / 133, 340 / 498 |
+
+Integer code (bench.exe calls/blend/lz, cpu.exe compose/transform, flatbench) stays the same
+within the noise. Plain wasm does chain in 11 ms and float in 9: what is left is mostly the
+80-bit semantics (the precision and rounding checks, the tags), not the bookkeeping.
+
+tools/jit32test has new fixed programs: "x87 root loop" (four loops at a function's root,
+starting at a random TOP with an exact integer near 2^60 in ST3: FXCH pairs, a single FXCH,
+FILD after FXCH, zero and denormal products, FISTP m64 of the exact integer afterwards; each
+with pads so that the root is a function and not a region) and "x87 fldcw call" (a callee
+that flips the rounding mode with FLDCW and calls a leaf, so it is not inlined). Mutants they
+catch: no moves for the put-off FXCHs (14 failures), no reload of the modes after a call, the
+root's guard left out ("x87 loop push" fails in FN mode). The random runs (3000 programs,
+seeds 7, 11, 31; 4000 seed 21) and TestFloat (302 371 cases) show no difference from the
+interpreter.

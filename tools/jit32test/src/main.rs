@@ -968,6 +968,109 @@ fn fixed() -> Result<Vec<(&'static str, Vec<Instruction>)>, IcedError> {
     a.jne(top)?;
     a.jmp(END as u64)?;
     v.push(("x87 loop pop", a.take_instructions()));
+    // Loops whose head is the program's first instruction (a function made from a loop's head:
+    // its root keeps the x87 cache around the loop), on a stack the test fills first (st3 an
+    // exact 64-bit integer: x87_root_stack), counted by carries (at most 4 iterations from any
+    // counter): FXCH of registers the loop never writes (their tags and exact integer move
+    // later, FCache::src), in pairs (nothing moves) or one per iteration (moved at the back
+    // edge), FILD after an FXCH (moved before it), products of zero and of a denormal
+    // (fmul's slow path skips exact zeros), and FISTP m64 of the integer after the loop.
+    // (the test translates entries at addresses = 1 mod 3 as regions: the program jumps to the
+    // loop, NOPs between move it)
+    for (k, pad) in (0..4).flat_map(|k| (0..3).map(move |p| (k, p))) {
+        let mut a = CodeAssembler::new(32)?;
+        let mut top = a.create_label();
+        a.jmp(top)?;
+        for _ in 0..pad {
+            a.nop()?;
+        }
+        a.set_label(&mut top)?;
+        a.fxch(st0, st1)?;
+        a.fmul_2(st1, st0)?;
+        a.fxch(st0, st1)?;
+        if k == 1 {
+            a.fxch(st0, st3)?;
+        } else {
+            a.fxch(st0, st3)?;
+            a.fxch(st0, st3)?;
+        }
+        a.fadd(qword_ptr(ebp + 0x40))?;
+        a.fadd_2(st2, st0)?;
+        if k == 2 {
+            a.fxch(st0, st2)?;
+            a.fild(qword_ptr(ebx + 0x208))?;
+            a.fmul_2(st0, st0)?;
+            a.fstp(qword_ptr(ebx + 0x220))?;
+            a.fxch(st0, st2)?;
+        }
+        if k == 3 {
+            // 0 * x, x * 0, 0 / x and a denormal operand (4.9e-324) under the test's control word
+            a.mov(dword_ptr(ebx + 0x300), 1)?;
+            a.mov(dword_ptr(ebx + 0x304), 0)?;
+            a.mov(dword_ptr(ebx + 0x308), 0)?;
+            a.mov(dword_ptr(ebx + 0x30c), 0x8000_0000u32)?;
+            a.fldz()?;
+            a.fmul(qword_ptr(ebp + 0x48))?;
+            a.fld(st1)?;
+            a.fmul_2(st0, st1)?;
+            a.fdivr(qword_ptr(ebx + 0x308))?;
+            a.fmul(qword_ptr(ebx + 0x300))?;
+            a.fstp(qword_ptr(ebx + 0x228))?;
+            a.fld(qword_ptr(ebx + 0x308))?;
+            a.fdiv(qword_ptr(ebp + 0x50))?;
+            a.faddp(st1, st0)?;
+            a.fstp(qword_ptr(ebx + 0x230))?;
+        }
+        a.add(dword_ptr(ebx + COUNTER as i32), 0x4000_0000)?;
+        a.jae(top)?;
+        a.fxch(st0, st3)?;
+        a.fistp(qword_ptr(ebx + 0x200))?;
+        for j in 0..3 {
+            a.fstp(qword_ptr(ebx + 0x210 + 8 * j))?;
+        }
+        a.jmp(END as u64)?;
+        v.push(("x87 root loop", a.take_instructions()));
+    }
+    // FLDCW in a function the loop calls (a new rounding control each time): the arithmetic
+    // after the call rounds as it says (the modes are loaded once, again after a call)
+    for pad in 0..3 {
+    let mut a = CodeAssembler::new(32)?;
+    let (mut top, mut sub, mut out) = (a.create_label(), a.create_label(), a.create_label());
+    a.mov(dword_ptr(ebx + 0x7f8), 0x027f)?;
+    a.fld(qword_ptr(ebp + 0x40))?;
+    a.fld(qword_ptr(ebp + 0x48))?;
+    a.jmp(top)?;
+    for _ in 0..pad {
+        a.nop()?;
+    }
+    a.set_label(&mut top)?;
+    a.fmul_2(st0, st1)?;
+    a.fdiv(qword_ptr(ebp + 0x50))?;
+    a.fst(qword_ptr(ebx + 0x240))?;
+    a.call(sub)?;
+    a.fadd_2(st0, st1)?;
+    a.fdiv(qword_ptr(ebp + 0x58))?;
+    a.fst(qword_ptr(ebx + 0x248))?;
+    a.fstp(qword_ptr(ebx + 0x260))?;
+    a.fld(qword_ptr(ebp + 0x40))?;
+    a.add(dword_ptr(ebx + COUNTER as i32), 0x1000_0000)?;
+    a.jae(top)?;
+    a.jmp(out)?;
+    // (it calls: a small callee without calls is inlined)
+    let mut leaf = a.create_label();
+    a.set_label(&mut sub)?;
+    a.xor(dword_ptr(ebx + 0x7f8), 0x0c00)?;
+    a.fldcw(word_ptr(ebx + 0x7f8))?;
+    a.call(leaf)?;
+    a.ret()?;
+    a.set_label(&mut leaf)?;
+    a.ret()?;
+    a.set_label(&mut out)?;
+    a.fstp(qword_ptr(ebx + 0x250))?;
+    a.fstp(qword_ptr(ebx + 0x258))?;
+    a.jmp(END as u64)?;
+    v.push(("x87 fldcw call", a.take_instructions()));
+    }
     for k in 0..20 {
         v.push(("ssecvt j loop", ssecvt_loop(k)?));
         v.push(("mx ssecvt j loop", ssecvt_loop(k)?));
@@ -1608,6 +1711,23 @@ fn initial(rng: &mut Rng) -> Cpu {
     c
 }
 
+/// The x87 stack the "x87 root" programs start with: four registers at a random TOP, ST3 an
+/// exact 64-bit integer a double doesn't hold (FILD'ed: FISTP m64 stores it as it was).
+fn x87_root_stack(c: &mut Cpu, rng: &mut Rng) {
+    let f = &mut c.fpu;
+    f.top = rng.below(8) as u32;
+    f.empty = 0xff;
+    for i in 0..4 {
+        let p = (f.top as usize + i) & 7;
+        f.empty &= !(1 << p);
+        f.regs[p] = [0.5, 1.0000001, -3.25, 0.0][i] * (1 + rng.below(4)) as f64;
+    }
+    let p = (f.top as usize + 3) & 7;
+    f.ints[p] = (1 << 60) + 1 + 2 * rng.below(1000) as i64;
+    f.regs[p] = f.ints[p] as f64;
+    f.exact |= 1 << p;
+}
+
 /// DATA: random bytes, and doubles/floats/small integers the x87 and SSE code reads sensibly
 fn random_data(rng: &mut Rng) -> Vec<u8> {
     let mut d: Vec<u8> = (0..DATA_LEN).map(|_| rng.next() as u8).collect();
@@ -1810,7 +1930,10 @@ fn main() {
             for blocks in [1, 2, koji::jit::MAX_BLOCKS] {
                 let mode = Mode { fns, blocks, hoist: true, slots: 0, pre: false, exact: !name.starts_with("mx "), fresh: false, stale: 0 };
                 let data = random_data(&mut rng);
-                let cpu0 = initial(&mut rng);
+                let mut cpu0 = initial(&mut rng);
+                if name.starts_with("x87 root") {
+                    x87_root_stack(&mut cpu0, &mut rng);
+                }
                 let (diffs, _) = run_case(&engine, &dispatch, &memory, base, &list, &data, &cpu0, mode);
                 if !diffs.is_empty() {
                     fails += 1;

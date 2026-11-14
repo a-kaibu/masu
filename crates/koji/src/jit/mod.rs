@@ -679,6 +679,10 @@ struct Gen<'a> {
     /// Gen::modes)
     modes: bool,
     modes_depth: u32,
+    /// L_MX, L_MXR and L_MXT are loaded at the start and again right after whatever may change
+    /// the control word (FLDCW, the interpreter, a call), so they hold everywhere: translations
+    /// with x87 arithmetic (else they were loaded again in every block, a loop's too)
+    modes_always: bool,
     sizes: BTreeMap<String, (u32, u32)>,
     /// blocks done by [`Gen::hle`] instead of their guest code
     hle: BTreeMap<u32, Hle>,
@@ -770,7 +774,8 @@ struct Gen<'a> {
     /// caches' written and popped slots then differ between iterations, no loop cache
     fc_moved: bool,
     /// The same across a whole function (structured): (its root, its number of blocks); the
-    /// root and the dispatch nodes start with an empty cache
+    /// root (when the function has more entries) and the dispatch nodes start with an empty
+    /// cache
     fc_fn: Option<(usize, usize)>,
     notes: String,
     /// SETcc r8 followed by MOVZX r32, r8: emitted as one write of r32
@@ -782,7 +787,10 @@ struct Gen<'a> {
 /// `have` its value is in L_FREG + r, `dirty` it was changed; `valid`/`empty` its empty and exact
 /// bits are to be set as after a write (not empty, not exact) or a pop (empty). The Cpu is
 /// brought up to date whenever the block leaves or calls the interpreter.
-#[derive(Clone, Copy, Default, PartialEq)]
+/// `src`: FXCH of a slot whose tags are in the Cpu swaps them there; that is put off: slot r's
+/// tags and exact integer in the Cpu are slot src[r]'s until [`Gen::fc_sync`] (or a flush)
+/// moves them (a loop's FXCH pairs then cost nothing: GCC's and MSVC's x87 code is full of them).
+#[derive(Clone, Copy, PartialEq)]
 struct FCache {
     on: bool,
     delta: i32,
@@ -790,6 +798,15 @@ struct FCache {
     dirty: u8,
     valid: u8,
     empty: u8,
+    src: [u8; 8],
+}
+
+const FC_SAME: [u8; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+
+impl Default for FCache {
+    fn default() -> FCache {
+        FCache { on: false, delta: 0, have: 0, dirty: 0, valid: 0, empty: 0, src: FC_SAME }
+    }
 }
 
 /// See [`Gen::safe`].
@@ -1259,17 +1276,29 @@ impl<'a> Gen<'a> {
     /// hold after it). (SSE has none: the JIT runs only while MXCSR.RC is to nearest, see
     /// [`sse_ok`].)
     fn modes(&mut self) {
-        if self.modes && self.modes_depth == self.depth {
+        if self.modes_always || self.modes && self.modes_depth == self.depth {
             return;
         }
+        self.modes_load();
+        self.modes = true;
+        self.modes_depth = self.depth;
+    }
+
+    fn modes_load(&mut self) {
         let m = self.x87_mode();
         m.arith_slow(&mut self.c);
         self.c.set(L_MX);
         m.rc_slow(&mut self.c);
         self.c.set(L_MXR);
         self.c.f64c(f64::INFINITY).f64c(f64::from_bits(0x000f_ffff_ffff_ffff)).get(L_MX).op(0x1b).set(L_MXT);
-        self.modes = true;
-        self.modes_depth = self.depth;
+    }
+
+    /// After something that may have changed the x87 control word.
+    fn modes_changed(&mut self) {
+        self.modes = false;
+        if self.modes_always {
+            self.modes_load();
+        }
     }
 
     /// [] -> [i32]: whether the x87's rounding control isn't to nearest
@@ -1370,6 +1399,83 @@ impl<'a> Gen<'a> {
         self.c.i32c(mask as i32 * 0x101).get(L_FTOP).shl().i32c(8).shr_u();
     }
 
+    /// Moves the tags and exact integers the FXCHs put off (see FCache::src) in the Cpu (code
+    /// only: the cache stays as it is).
+    fn fc_moves(&mut self, src: [u8; 8]) {
+        // as swaps: at[x] is where the Cpu has slot x's now, of[r] whose slot r has
+        let (mut at, mut of) = (FC_SAME, FC_SAME);
+        for r in 0..8u8 {
+            let j = at[src[r as usize] as usize];
+            if j == r {
+                continue;
+            }
+            self.fc_swap_cpu(r as u32, j as u32);
+            let e = of[r as usize];
+            (of[j as usize], at[e as usize]) = (e, j);
+            (of[r as usize], at[src[r as usize] as usize]) = (src[r as usize], r);
+        }
+    }
+
+    /// Swaps slots a and b's tags and exact integers in the Cpu (uses L_W, no temporaries).
+    fn fc_swap_cpu(&mut self, a: u32, b: u32) {
+        let phys = |c: &mut Code, r: u32| {
+            c.get(L_FTOP);
+            if r != 0 {
+                c.i32c(r as i32).add();
+            }
+            c.i32c(7).and();
+        };
+        self.fc_phys_addr(a);
+        self.c.load64(Off::fints()).set(L_W);
+        self.fc_phys_addr(a);
+        self.fc_phys_addr(b);
+        self.c.load64(Off::fints()).store64(Off::fints());
+        self.fc_phys_addr(b);
+        self.c.get(L_W).store64(Off::fints());
+        for field in [Off::fexact(), Off::fempty()] {
+            // x ^= (((x >> pa) ^ (x >> pb)) & 1) * (1 << pa | 1 << pb)
+            self.c.get(L_CPU).get(L_CPU).load8u(field);
+            self.c.get(L_CPU).load8u(field);
+            phys(&mut self.c, a);
+            self.c.shr_u().get(L_CPU).load8u(field);
+            phys(&mut self.c, b);
+            self.c.shr_u().xor().i32c(1).and();
+            self.c.i32c(1);
+            phys(&mut self.c, a);
+            self.c.shl().i32c(1);
+            phys(&mut self.c, b);
+            self.c.shl().or().mul().xor().store8(field);
+        }
+    }
+
+    /// Whether `ins` (an FPU instruction) leaves the Cpu's tags and exact integers alone, so
+    /// that the moves FXCHs put off can wait (see FCache::src)
+    fn fc_src_kept(&self, ins: &Instruction) -> bool {
+        use Mnemonic::*;
+        if !fc_handles(ins) {
+            return false;
+        }
+        let slot = |i: u32| (self.fc.delta + i as i32).rem_euclid(8) as u32;
+        let known = self.fc.valid | self.fc.empty;
+        match ins.mnemonic() {
+            Fxch | Fldz | Fld1 | Fst | Fstp => true,
+            Fld => ins.op_kind(0) == OpKind::Memory || self.fc.valid & (1 << slot(st_index(ins.op_register(0)))) != 0,
+            Fadd | Faddp | Fsub | Fsubp | Fsubr | Fsubrp | Fmul | Fmulp => {
+                ins.op_count() == 1 || known & (1 << slot(st_index(ins.op_register(0))) | 1 << slot(st_index(ins.op_register(1)))) != 0
+            }
+            Fdiv | Fdivp | Fdivr | Fdivrp => true,
+            _ => false,
+        }
+    }
+
+    /// Does the moves the FXCHs put off now (before code that reads or writes the Cpu's tags).
+    fn fc_sync(&mut self) {
+        if self.fc.on && self.fc.src != FC_SAME {
+            self.fc_moves(self.fc.src);
+            self.fc.src = FC_SAME;
+        }
+    }
+
     /// Brings the Cpu up to date (code only: the caches stay as they are).
     fn fc_flush(&mut self) {
         self.mmx_flush();
@@ -1419,6 +1525,7 @@ impl<'a> Gen<'a> {
         if !fc.on || fc.dirty.count_ones() + if fc.valid | fc.empty != 0 { 4 } else { 0 } <= 2 {
             return self.x87_flush();
         }
+        self.fc_moves(fc.src);
         self.c.get(L_CPU).get(L_FTOP);
         let info = fc.dirty as u32 | (fc.valid as u32) << 8 | (fc.empty as u32) << 16 | (fc.delta.rem_euclid(8) as u32) << 24;
         self.c.u32c(info);
@@ -1433,6 +1540,7 @@ impl<'a> Gen<'a> {
         if !fc.on {
             return;
         }
+        self.fc_moves(fc.src);
         for r in 0..8 {
             if fc.dirty & (1 << r) != 0 {
                 self.fc_phys_addr(r);
@@ -1478,18 +1586,28 @@ impl<'a> Gen<'a> {
     /// FNSTSW after FLD / FADD m64 of a denormal read 0 where the interpreter read DE).
     fn fload_mem(&mut self, a: u32) {
         let o = self.mem_at(a);
+        // (the status word only for a NaN or a denormal: in a loop, a load and a store of the
+        // Cpu per operand were much of an FADD m64's cost)
         if self.ins.memory_size() == iced_x86::MemorySize::Float32 {
             let t = self.temp();
             self.c.load32(o).tee(t).op(0xbe /* f32.reinterpret_i32 */).op(0xbb /* f64.promote_f32 */);
+            self.c.get(t).i32c(0x7fff_ffff).and().i32c(0x7f80_0000).gt_u();
+            self.c.get(t).i32c(0x7fff_ffff).and().i32c(1).sub().i32c(0x7f_ffff).lt_u().or().if_();
             // sw |= (|v| > +inf && !quiet) | (|v| - 1 < 0x7fffff) << 1
             self.c.get(L_CPU).get(L_CPU).load16u(Off::fsw());
             self.c.get(t).i32c(0x7fff_ffff).and().i32c(0x7f80_0000).gt_u();
             self.c.get(t).i32c(22).shr_u().i32c(1).and().eqz().and().or();
             self.c.get(t).i32c(0x7fff_ffff).and().i32c(1).sub().i32c(0x7f_ffff).lt_u().i32c(1).shl().or();
             self.c.store16(Off::fsw());
+            self.c.end();
         } else {
+            self.c.load64(o).set(L_W);
+            self.c.get(L_W).i64c(i64::MAX).op(0x83 /* i64.and */).i64c(0x7ff0_0000_0000_0000).op(0x56 /* i64.gt_u */);
+            self.c.get(L_W).i64c(i64::MAX).op(0x83 /* i64.and */).i64c(1).op(0x7d /* i64.sub */);
+            self.c.i64c(0x000f_ffff_ffff_ffff).op(0x54 /* i64.lt_u */).or();
+            self.c.if_ty(wasm::F64);
             // v | (|v| > +inf) << 51
-            self.c.load64(o).tee(L_W);
+            self.c.get(L_W);
             self.c.get(L_W).i64c(i64::MAX).op(0x83 /* i64.and */).i64c(0x7ff0_0000_0000_0000).op(0x56 /* i64.gt_u */);
             self.c.op(0xad /* i64.extend_i32_u */).i64c(51).op(0x86 /* i64.shl */).op(0x84 /* i64.or */);
             self.c.op(0xbf /* f64.reinterpret_i64 */);
@@ -1500,17 +1618,8 @@ impl<'a> Gen<'a> {
             self.c.get(L_W).i64c(i64::MAX).op(0x83 /* i64.and */).i64c(1).op(0x7d /* i64.sub */);
             self.c.i64c(0x000f_ffff_ffff_ffff).op(0x54 /* i64.lt_u */).i32c(1).shl().or();
             self.c.store16(Off::fsw());
+            self.c.else_().get(L_W).op(0xbf /* f64.reinterpret_i64 */).end();
         }
-    }
-
-    /// Swaps bits `a` and `b` of a byte field.
-    fn fswap_bits(&mut self, field: u32, a: u32, b: u32) {
-        let (x, y) = (self.temp(), self.temp());
-        self.c.get(L_CPU).load8u(field).set(x);
-        // y = ((x >> a) ^ (x >> b)) & 1; x ^= y << a | y << b
-        self.c.get(x).get(a).shr_u().get(x).get(b).shr_u().xor().i32c(1).and().set(y);
-        self.c.get(L_CPU).get(x).get(y).get(a).shl().get(y).get(b).shl().or().xor().store8(field);
-        self.temps -= 2;
     }
 
     // ---- registers
@@ -2332,6 +2441,7 @@ impl<'a> Gen<'a> {
         self.spill(self.eip());
         self.c.get(L_CPU).call(F_STEP).set(L_ST);
         self.reload();
+        self.modes_changed();
         self.c.i32c(-1).set(L_OP);
         self.flags = Flags::Entry;
         self.c.get(L_ST).if_();
@@ -2573,6 +2683,9 @@ impl<'a> Gen<'a> {
                 return false;
             }
             return self.after(last, next);
+        }
+        if self.fc.src != FC_SAME && touches_fpu(&ins) && !self.fc_src_kept(&ins) {
+            self.fc_sync();
         }
         match ins.mnemonic() {
             Nop | Pause | Wait | Endbr32 | Prefetchnta | Prefetcht0 | Prefetcht1 | Prefetcht2 | Prefetchw | Lfence | Sfence => {}
@@ -3344,7 +3457,7 @@ impl<'a> Gen<'a> {
             Fldcw if fpu_neutral(ins) => {
                 let a = self.addr(2);
                 self.c.get(L_CPU).get(a).load16u(0).store16(Off::fcw());
-                self.modes = false;
+                self.modes_changed();
             }
             Fnstcw | Fstcw if fpu_neutral(ins) => {
                 let a = self.addr(2);
@@ -3370,17 +3483,8 @@ impl<'a> Gen<'a> {
                 let known = self.fc.valid | self.fc.empty;
                 if known & (1 << ra) == 0 || known & (1 << rb) == 0 {
                     // tags and exact integers in the Cpu move along (the cached ones are
-                    // written over when the block leaves)
-                    let (pa, pb) = (self.fc_phys(ra), self.fc_phys(rb));
-                    self.freg_at(pa, 3);
-                    self.c.load64(Off::fints()).set(L_W);
-                    self.freg_at(pa, 3);
-                    self.freg_at(pb, 3);
-                    self.c.load64(Off::fints()).store64(Off::fints());
-                    self.freg_at(pb, 3);
-                    self.c.get(L_W).store64(Off::fints());
-                    self.fswap_bits(Off::fexact(), pa, pb);
-                    self.fswap_bits(Off::fempty(), pa, pb);
+                    // written over when the block leaves): later (FCache::src)
+                    self.fc.src.swap(ra as usize, rb as usize);
                 }
                 let fc = &mut self.fc;
                 for m in [&mut fc.valid, &mut fc.empty] {
@@ -3441,6 +3545,14 @@ impl<'a> Gen<'a> {
                 self.modes();
                 if matches!(op, rounding::Ar::Mul | rounding::Ar::Div) {
                     self.c.get(L_RO).op(0x99 /* f64.abs */).get(L_MXT).op(0x65); // f64.le
+                    // (a zero that is exact (0 * y, x * 0, 0 / y) needs no rounding in any mode:
+                    // products of zero went to the slow path every time)
+                    self.c.get(L_RO).f64c(0.0).op(0x62 /* f64.ne */);
+                    self.c.get(L_F0).f64c(0.0).op(0x62 /* f64.ne */);
+                    if op == rounding::Ar::Mul {
+                        self.c.get(L_F1).f64c(0.0).op(0x62 /* f64.ne */).and();
+                    }
+                    self.c.or().and();
                 } else {
                     self.c.get(L_MX);
                 }
@@ -3877,10 +3989,11 @@ impl<'a> Gen<'a> {
     /// Those count their slots from TOP (delta 0): L_FTOP moves by delta and the locals with
     /// it, and that is all when the rest is the same; otherwise it goes through the Cpu.
     fn fc_to(&mut self, k: usize) {
+        self.fc_sync();
         let cur = self.fc;
         let d = cur.delta.rem_euclid(8) as u32;
         let rot = |m: u8| m.rotate_right(d);
-        let canon = FCache { on: cur.on, delta: 0, have: rot(cur.have), dirty: rot(cur.dirty), valid: rot(cur.valid), empty: rot(cur.empty) };
+        let canon = FCache { on: cur.on, delta: 0, have: rot(cur.have), dirty: rot(cur.dirty), valid: rot(cur.valid), empty: rot(cur.empty), src: FC_SAME };
         if cur.on && self.fc_out.get(&k).is_none() {
             self.fc_out.insert(k, canon);
         }
@@ -3975,6 +4088,7 @@ impl<'a> Gen<'a> {
         fn_args(&mut self.c, |c| void(c.get(L_ARG).i32c(1).add()), |c| void(c.u32c(ra)));
         self.c.get(v).u32c((1 << ENTRY_SHIFT) - 1).and().i32c(1).add().call_indirect(T_FN, 0);
         take_results(&mut self.c, h, v, next);
+        self.modes_changed();
         self.c.i32c(-1).set(L_OP);
         self.goto(next);
         self.depth -= 1;
@@ -4039,6 +4153,9 @@ impl<'a> Gen<'a> {
         fn_args(&mut self.c, |c| void(c.get(L_ARG).i32c(1).add().get(v).i32c(ENTRY_SHIFT as i32).shr_u().u32c(0x7ff).and().i32c(16).shl().or()), |c| void(c.i32c(0)));
         self.c.get(v).u32c((1 << ENTRY_SHIFT) - 1).and().i32c(1).add().call_indirect(T_FN, 0);
         take_results(&mut self.c, h, v, r);
+        let modes = self.modes;
+        self.modes_changed();
+        self.modes = modes;
         let (fc, flags, mmx, xmm) = (self.fc, self.flags, self.mmx, self.xmm);
         self.c.i32c(-1).set(L_OP);
         self.fc = FCache::default();
@@ -5808,6 +5925,7 @@ fn translate_seen<M: Memory>(
         store_seen: false,
         modes: false,
         modes_depth: 0,
+        modes_always: false,
         sizes: Default::default(),
         hle,
         thunks,
@@ -5880,6 +5998,10 @@ fn translate_seen<M: Memory>(
     } else {
         g.c.get(L_ARG).i32c(ENTRY_SHIFT as i32).shr_u().set(L_BLK);
     }
+    if blocks.iter().any(|b| b.1.iter().any(fc_handles)) {
+        g.modes_load();
+        g.modes_always = true;
+    }
     g.c.block(); // exit
     if fnm {
         g.c.block(); // (where regions have the top loop)
@@ -5924,7 +6046,9 @@ fn translate_seen<M: Memory>(
         if blocks.iter().any(|b| b.1.iter().any(fc_handles)) {
             let b0 = g.c.b.len();
             let mut fin = BTreeMap::new();
-            g.fc_fn = Some((entry, nb));
+            // (a root the function enters at its first instruction only keeps the cache too,
+            // loaded below)
+            g.fc_fn = Some((if extra.is_empty() { usize::MAX } else { entry }, nb));
             for _ in 0..6 {
                 g.fc_in = fin.clone();
                 g.fc_out.clear();
@@ -5937,6 +6061,33 @@ fn translate_seen<M: Memory>(
                 fin = out;
             }
             g.fc_in = fin;
+            // a root that is a loop's head keeps the cache around the loop too (it went through
+            // the Cpu at every iteration: a function made from a loop's head is one): the way
+            // in from the caller loads it as a jump from outside would
+            if extra.is_empty() {
+                if let Some(&to) = g.fc_in.get(&entry).filter(|f| f.on) {
+                    // (nothing cached yet: the emitting above left its last block's caches)
+                    (g.fc, g.mmx, g.xmm) = (FCache::default(), (0, 0), (0, 0));
+                    g.c.get(L_CPU).load32(Off::ftop()).set(L_FTOP);
+                    // (the cache's pending tags must be what the Cpu has: its written registers
+                    // full and not exact, its popped ones empty; else the interpreter starts)
+                    if to.valid | to.empty != 0 {
+                        g.c.get(L_CPU).load8u(Off::fempty());
+                        g.c.get(L_CPU).load8u(Off::fexact()).or();
+                        g.fc_rot(to.valid);
+                        g.c.and();
+                        g.c.get(L_CPU).load8u(Off::fempty()).i32c(-1).xor();
+                        g.fc_rot(to.empty);
+                        g.c.and().or().i32c(0xff).and().if_();
+                        g.depth += 1;
+                        g.c.u32c(blocks[entry].0);
+                        g.exit_with(RET_INTERP);
+                        g.depth -= 1;
+                        g.c.end();
+                    }
+                    g.fc_load(to.have);
+                }
+            }
         }
         body(&mut g, &l, &blocks, &tables, &entries, &mut count);
         g.fc_fn = None;
