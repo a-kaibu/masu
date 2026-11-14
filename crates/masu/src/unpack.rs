@@ -492,15 +492,15 @@ fn installshield(job: &Job, src: &Path, out: &Path) -> Result<bool> {
         f.read_exact(&mut b).context("truncated setup")?;
         Ok(b)
     };
-    let u32_at = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
+    let u32_at = |b: &[u8], o: usize| crate::le::u32_at(b, o).context("truncated setup");
     let mut entries = vec![];
     if &h[..14] == b"ISSetupStream\0" {
         let ver = u16::from_le_bytes([h[16], h[17]]);
         for i in 0..count {
             // (version 4 on: 64-bit sizes, 48-byte entry headers)
             let (hl, b) = if ver >= 4 { (48, rd(pos, 18)?) } else { (24, rd(pos, 14)?) };
-            let (nl, flags) = (u32_at(&b, 0) as usize, u32_at(&b, 4));
-            let len = if ver >= 4 { u64::from_le_bytes(b[10..18].try_into().unwrap()) } else { u32_at(&b, 10) as u64 };
+            let (nl, flags) = (usize::try_from(u32_at(&b, 0)?)?, u32_at(&b, 4)?);
+            let len = if ver >= 4 { crate::le::u64_at(&b, 10).context("truncated setup")? } else { u64::from(u32_at(&b, 10)?) };
             if nl % 2 != 0 || nl > IS_NAME_MAX {
                 bail!("entry {i}: a name of {nl} bytes");
             }
@@ -516,7 +516,7 @@ fn installshield(job: &Job, src: &Path, out: &Path) -> Result<bool> {
         for _ in 0..count {
             let a = rd(pos, 312)?;
             let raw = &a[..a[..260].iter().position(|&c| c == 0).unwrap_or(260)];
-            let (flags, len) = (u32_at(&a, 260), u32_at(&a, 268) as u64);
+            let (flags, len) = (u32_at(&a, 260)?, u64::from(u32_at(&a, 268)?));
             entries.push((pos + 312, len, flags, raw.to_vec(), cp932(raw)));
             pos = (pos + 312).checked_add(len).filter(|&e| e <= size).context("truncated setup")?;
         }

@@ -72,9 +72,9 @@ fn glyphs(f: &Font) -> Result<Vec<&[u8]>> {
         bail!("head cut short");
     }
     let offs: Vec<usize> = if be16(head, 50).context("head cut short")? == 1 {
-        loca.chunks_exact(4).map(|c| u32::from_be_bytes(c.try_into().unwrap()) as usize).collect()
+        crate::le::pieces::<4>(loca).iter().map(|c| u32::from_be_bytes(*c) as usize).collect()
     } else {
-        loca.chunks_exact(2).map(|c| u16::from_be_bytes(c.try_into().unwrap()) as usize * 2).collect()
+        crate::le::pieces::<2>(loca).iter().map(|c| usize::from(u16::from_be_bytes(*c)) * 2).collect()
     };
     offs.windows(2).map(|w| glyf.get(w[0]..w[1].max(w[0])).context("loca past glyf")).collect()
 }

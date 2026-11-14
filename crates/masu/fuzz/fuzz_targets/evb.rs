@@ -7,6 +7,9 @@
 #[path = "../../src/evb.rs"]
 mod evb;
 
+#[allow(dead_code)]
+#[path = "../../src/le.rs"]
+mod le;
 use libfuzzer_sys::fuzz_target;
 use std::io::Cursor;
 use std::path::Component;

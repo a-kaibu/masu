@@ -60,8 +60,8 @@ pub fn read_info(len: u64, at: &mut dyn FnMut(u64, &mut [u8]) -> bool) -> Option
     if !at(0, &mut head) || &head[..4] != b"VNV1" {
         return None;
     }
-    let u = |b: &[u8], o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap());
-    let (w, h, nt) = (u(&head, 4), u(&head, 8), u(&head, 12));
+    let u = |b: &[u8], o: usize| b.get(o..).and_then(|b| b.first_chunk()).map(|b| u32::from_le_bytes(*b));
+    let (w, h, nt) = (u(&head, 4)?, u(&head, 8)?, u(&head, 12)?);
     if w == 0 || h == 0 || w > 8192 || h > 8192 || !(1..=2).contains(&nt) {
         return None;
     }
@@ -82,7 +82,7 @@ pub fn read_info(len: u64, at: &mut dyn FnMut(u64, &mut [u8]) -> bool) -> Option
             return None;
         }
         let codec = std::str::from_utf8(&c[..cl as usize]).ok()?.to_string();
-        let n = u(&c, cl as usize) as u64;
+        let n = u64::from(u(&c, usize::try_from(cl).ok()?)?);
         o += 8 + cl;
         if n > len.saturating_sub(o) / 12 {
             return None;
@@ -92,9 +92,9 @@ pub fn read_info(len: u64, at: &mut dyn FnMut(u64, &mut [u8]) -> bool) -> Option
             return None;
         }
         let mut frames = Vec::with_capacity(n as usize);
-        for e in t.chunks_exact(12) {
-            let (off, size, key) = (u(e, 0), u(e, 4), u(e, 8));
-            if off as u64 + size as u64 > len {
+        for e in t.as_chunks::<12>().0 {
+            let (off, size, key) = (u(e, 0)?, u(e, 4)?, u(e, 8)?);
+            if u64::from(off) + u64::from(size) > len {
                 return None;
             }
             frames.push((off, size, key != 0));
@@ -106,9 +106,9 @@ pub fn read_info(len: u64, at: &mut dyn FnMut(u64, &mut [u8]) -> bool) -> Option
     let mut t = [0u8; TRAILER_LEN];
     if len >= o + TRAILER_LEN as u64 && at(len - TRAILER_LEN as u64, &mut t) && &t[24..] == TRAILER {
         let tpos = len - TRAILER_LEN as u64;
-        let (num, den) = (u(&t, 0), u(&t, 4));
-        let dur = u(&t, 8) as u64 | (u(&t, 12) as u64) << 32;
-        let (ao, al) = (u(&t, 16) as u64, u(&t, 20) as u64);
+        let (num, den) = (u(&t, 0)?, u(&t, 4)?);
+        let dur = u64::from(u(&t, 8)?) | u64::from(u(&t, 12)?) << 32;
+        let (ao, al) = (u64::from(u(&t, 16)?), u64::from(u(&t, 20)?));
         if num == 0 || den == 0 || ao + al > tpos {
             return None;
         }

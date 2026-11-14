@@ -88,11 +88,8 @@ pub fn transcode(omv: &Path, out: &Path) -> Result<()> {
     let mut data = Vec::new();
     (&mut f).take(64 << 10).read_to_end(&mut data)?;
     let ogg = data.windows(4).position(|w| w == b"OggS").context("no Ogg stream")?;
-    if data.len() < 0x40 {
-        bail!("not an .omv");
-    }
-    let u32_at = |o: usize| u32::from_le_bytes(data[o..o + 4].try_into().unwrap());
-    let (w, h, frame_us) = (u32_at(0x2c), u32_at(0x30), u32_at(0x3c));
+    let Some(head) = data.first_chunk::<0x40>() else { bail!("not an .omv") };
+    let (w, h, frame_us) = (crate::le::u32::<0x2c, 0x40>(head), crate::le::u32::<0x30, 0x40>(head), crate::le::u32::<0x3c, 0x40>(head));
     if w == 0 || h == 0 || w > 8192 || h > 8192 {
         bail!("unexpected header ({w}x{h})");
     }
@@ -172,7 +169,7 @@ fn ivf_frames(p: &Path) -> Result<(u32, u32, Vec<(u64, u32, bool)>)> {
         let mut fh = [0u8; 13];
         let size = {
             r.read_exact(&mut fh[..12])?;
-            u32::from_le_bytes(fh[..4].try_into().unwrap())
+            crate::le::u32::<0, 13>(&fh)
         };
         if at + 12 + size as u64 > len {
             bail!("IVF cut short");

@@ -48,13 +48,13 @@ pub struct Cabinet {
 }
 
 fn u16_at(b: &[u8], p: usize) -> Result<u16> {
-    Ok(u16::from_le_bytes(b.get(p..p + 2).context("cabinet header cut short")?.try_into().unwrap()))
+    crate::le::u16_at(b, p).context("cabinet header cut short")
 }
 fn u32_at(b: &[u8], p: usize) -> Result<u32> {
-    Ok(u32::from_le_bytes(b.get(p..p + 4).context("cabinet header cut short")?.try_into().unwrap()))
+    crate::le::u32_at(b, p).context("cabinet header cut short")
 }
 fn u64_at(b: &[u8], p: usize) -> Result<u64> {
-    Ok(u64::from_le_bytes(b.get(p..p + 8).context("cabinet header cut short")?.try_into().unwrap()))
+    crate::le::u64_at(b, p).context("cabinet header cut short")
 }
 /// A NUL-terminated Shift-JIS string at `p`.
 fn str_at(b: &[u8], p: usize) -> Result<String> {
