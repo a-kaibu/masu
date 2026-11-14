@@ -52,5 +52,13 @@ void mainCRTStartup(void)
     /* not the device: a name that only starts with NUL */
     h = CreateFileA("NULX", GENERIC_READ, 0, NULL, OPEN_EXISTING, 0, NULL);
     out("NULX: %d error %d\n", h != INVALID_HANDLE_VALUE, (int)GetLastError());
+    /* a handle that is none: FILE_TYPE_UNKNOWN and ERROR_INVALID_HANDLE (a GUI program's
+     * GetStdHandle on Windows is NULL; its CRT asks GetFileType of it) */
+    SetLastError(0);
+    DWORD t0 = GetFileType(NULL);
+    out("GetFileType(NULL): %d error %d\n", (int)t0, (int)GetLastError());
+    SetLastError(0);
+    t0 = GetFileType((HANDLE)(ULONG_PTR)0x3ffffffc);
+    out("GetFileType(no handle): %d error %d\n", (int)t0, (int)GetLastError());
     ExitProcess(0);
 }

@@ -7001,7 +7001,12 @@ pub(crate) fn GetFileType(c: &mut Ctx) -> u32 {
         _ => 1,
     })) {
         Some(k) => k,
-        None => 0,
+        // (no such handle: FILE_TYPE_UNKNOWN and ERROR_INVALID_HANDLE, as Windows; shirusu
+        // compare saw a GUI program's CRT ask it of NULL)
+        None => {
+            last_error(6);
+            0
+        }
     }
 }
 fn GetConsoleMode(_: &mut Ctx) -> u32 {
