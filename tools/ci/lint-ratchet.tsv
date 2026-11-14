@@ -494,7 +494,7 @@ file	crates/kura/src/d3d9/device.rs	undocumented_unsafe_blocks	5
 file	crates/kura/src/d3d9/device.rs	unreachable	3
 file	crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	325
 file	crates/kura/src/d3d9/device.rs	unwrap_in_result	2
-file	crates/kura/src/d3d9/device.rs	unwrap_used	37
+file	crates/kura/src/d3d9/device.rs	unwrap_used	9
 file	crates/kura/src/d3d9/device.rs	wildcard_enum_match_arm	5
 file	crates/kura/src/d3d9/format.rs	arithmetic_side_effects	68
 file	crates/kura/src/d3d9/format.rs	as_conversions	81
