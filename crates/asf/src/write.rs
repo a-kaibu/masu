@@ -18,16 +18,16 @@ pub struct Mux {
 const TOO_LONG: Error = Error::Bad("a length past its field");
 
 fn u8_of(n: usize) -> Result<u8, Error> {
-    u8::try_from(n).map_err(|_| TOO_LONG)
+    u8::try_from(n).ok().ok_or(TOO_LONG)
 }
 fn u16_of(n: usize) -> Result<u16, Error> {
-    u16::try_from(n).map_err(|_| TOO_LONG)
+    u16::try_from(n).ok().ok_or(TOO_LONG)
 }
 fn u32_of(n: usize) -> Result<u32, Error> {
-    u32::try_from(n).map_err(|_| TOO_LONG)
+    u32::try_from(n).ok().ok_or(TOO_LONG)
 }
 fn u64_of(n: usize) -> Result<u64, Error> {
-    u64::try_from(n).map_err(|_| TOO_LONG)
+    u64::try_from(n).ok().ok_or(TOO_LONG)
 }
 
 fn obj(g: &Guid, body: &[u8]) -> Result<Vec<u8>, Error> {
@@ -116,7 +116,7 @@ impl Mux {
             let object = *o;
             *o = o.wrapping_add(1);
             let sn = stream.get() | if *key { 0x80 } else { 0 };
-            let time = *t + u32::try_from(self.preroll).map_err(|_| TOO_LONG)?;
+            let time = *t + u32::try_from(self.preroll).ok().ok_or(TOO_LONG)?;
             let spread = self.streams.iter().find(|s| s.number == *stream).and_then(|s| s.spread);
             let data = match spread {
                 Some(s) => scramble(data, s),

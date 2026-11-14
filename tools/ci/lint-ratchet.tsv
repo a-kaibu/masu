@@ -32,16 +32,9 @@ file	crates/apitrace/src/trace.rs	indexing_slicing	3
 file	crates/apitrace/src/trace.rs	unwrap_in_result	3
 file	crates/apitrace/src/trace.rs	unwrap_used	3
 file	crates/apitrace/src/trace.rs	wildcard_enum_match_arm	3
-file	crates/asf/examples/asfdump.rs	expect_used	1
-file	crates/asf/examples/asfdump.rs	unwrap_used	2
-file	crates/asf/src/lib.rs	arithmetic_side_effects	71
-file	crates/asf/src/lib.rs	as_conversions	49
-file	crates/asf/src/lib.rs	cast_possible_truncation	3
-file	crates/asf/src/lib.rs	indexing_slicing	20
-file	crates/asf/src/lib.rs	map_err_ignore	1
+file	crates/asf/src/lib.rs	arithmetic_side_effects	69
+file	crates/asf/src/lib.rs	indexing_slicing	19
 file	crates/asf/src/write.rs	arithmetic_side_effects	18
-file	crates/asf/src/write.rs	as_conversions	27
-file	crates/asf/src/write.rs	cast_possible_truncation	19
 file	crates/asf/src/write.rs	indexing_slicing	1
 file	crates/crt/src/dec.rs	arithmetic_side_effects	17
 file	crates/crt/src/dec.rs	as_conversions	17
@@ -2374,7 +2367,7 @@ file	crates/sake/src/wmi.rs	cast_sign_loss	1
 file	crates/sake/src/wmi.rs	indexing_slicing	10
 file	crates/sake/src/wmi.rs	string_slice	1
 file	crates/sake/src/wmvcore.rs	arithmetic_side_effects	48
-file	crates/sake/src/wmvcore.rs	as_conversions	79
+file	crates/sake/src/wmvcore.rs	as_conversions	75
 file	crates/sake/src/wmvcore.rs	cast_possible_truncation	41
 file	crates/sake/src/wmvcore.rs	cast_possible_wrap	2
 file	crates/sake/src/wmvcore.rs	cast_sign_loss	1
@@ -2386,7 +2379,7 @@ file	crates/sake/src/wmvcore.rs	unwrap_in_result	2
 file	crates/sake/src/wmvcore.rs	unwrap_used	3
 file	crates/sake/src/wmvcore.rs	wildcard_enum_match_arm	2
 file	crates/sake/src/wmvcore/asyncr.rs	arithmetic_side_effects	9
-file	crates/sake/src/wmvcore/asyncr.rs	as_conversions	17
+file	crates/sake/src/wmvcore/asyncr.rs	as_conversions	15
 file	crates/sake/src/wmvcore/asyncr.rs	cast_possible_truncation	9
 file	crates/sake/src/wmvcore/asyncr.rs	cast_possible_wrap	1
 file	crates/sake/src/wmvcore/asyncr.rs	unwrap_used	1

@@ -259,7 +259,7 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
         return Err(Error::NotAsf);
     }
     let size = le64(b, 16).ok_or(Error::Truncated)?;
-    let size = usize::try_from(size).map_err(|_| Error::Bad("header size"))?;
+    let size = usize::try_from(size).ok().ok_or(Error::Bad("header size"))?;
     if size < 30 || size > b.len() {
         return Err(Error::Truncated);
     }
@@ -356,7 +356,7 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
     }
     // the Data Object: its GUID, size, file id, total packets, reserved
     if guid_at(b, size) == Some(DATA) {
-        h.data_offset = u64::try_from(size).map_err(|_| Error::Bad("header size"))? + 50;
+        h.data_offset = u64::try_from(size).ok().ok_or(Error::Bad("header size"))? + 50;
         if let Some(n) = le64(b, size + 40) {
             if h.packets == 0 {
                 h.packets = n;
@@ -588,7 +588,7 @@ pub fn packet(b: &[u8]) -> Result<Packet, Error> {
         let d = at.checked_add(plen).filter(|&e| e <= end).and_then(|e| b.get(at..e)).ok_or(Error::Truncated)?;
         at += plen;
         // (no replicated data: the payload is the whole object)
-        let object_size = if rlen >= 8 { object_size } else { u32::try_from(plen).map_err(|_| Error::Truncated)? };
+        let object_size = if rlen >= 8 { object_size } else { u32::try_from(plen).ok().ok_or(Error::Truncated)? };
         p.payloads.push(Payload { stream, key, object, offset, object_size, time, data: d.to_vec() });
     }
     Ok(p)
@@ -786,7 +786,7 @@ pub fn read_header<S: Source + ?Sized>(s: &mut S) -> Result<Header, Error> {
     if n > 16 << 20 {
         return Err(Error::Bad("header over 16 MiB"));
     }
-    let mut b = vec![0u8; usize::try_from(n).map_err(|_| Error::Bad("header over 16 MiB"))?];
+    let mut b = vec![0u8; usize::try_from(n).ok().ok_or(Error::Bad("header over 16 MiB"))?];
     let got = read_full(s, 0, &mut b);
     b.truncate(got);
     header(&b)
