@@ -1214,9 +1214,9 @@ file	crates/sake/src/d2d.rs	cast_sign_loss	24
 file	crates/sake/src/d2d.rs	expect_used	1
 file	crates/sake/src/d2d.rs	float_cmp	1
 file	crates/sake/src/d2d.rs	indexing_slicing	18
-file	crates/sake/src/d3d11.rs	arithmetic_side_effects	7
-file	crates/sake/src/d3d11.rs	as_conversions	12
-file	crates/sake/src/d3d11.rs	cast_possible_truncation	8
+file	crates/sake/src/d3d11.rs	arithmetic_side_effects	6
+file	crates/sake/src/d3d11.rs	as_conversions	9
+file	crates/sake/src/d3d11.rs	cast_possible_truncation	5
 file	crates/sake/src/d3d11.rs	undocumented_unsafe_blocks	5
 file	crates/sake/src/d3d7.rs	arithmetic_side_effects	274
 file	crates/sake/src/d3d7.rs	as_conversions	193

@@ -15,12 +15,51 @@ use kura::d3d11::{CREATE_DEVICE, CREATE_DEVICE10, CREATE_FACTORY};
 mod methods;
 use methods::METHODS;
 
-const FIRST: u32 = 64;
+const FIRST: u8 = 64;
 const E_NOTIMPL: u32 = 0x8000_4001;
 
 /// A method's trap tag (crate::api::set_tag): its id, with FLOAT for a method that returns a
 /// float; the tag's data is its argument count with `this`.
 const FLOAT: u32 = 1 << 31;
+
+/// A vtable trap's tag: kura's method (interface FIRST.., vtable index; the host takes
+/// `iface << 8 | index`) and whether it returns a float (FLOAT: answered 0.0 here).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Tag {
+    iface: u8,
+    index: u8,
+    float: bool,
+}
+
+impl Tag {
+    /// the tag as the trap keeps it
+    fn bits(self) -> u32 {
+        self.id() | if self.float { FLOAT } else { 0 }
+    }
+    /// a trap's tag back, None for one `bits` didn't make
+    fn of(bits: u32) -> Option<Self> {
+        let [index, iface, 0, top] = bits.to_le_bytes() else { return None };
+        let float = match top {
+            0 => false,
+            0x80 => true,
+            _ => return None,
+        };
+        Some(Self { iface, index, float })
+    }
+    /// `iface << 8 | index`, as kura takes it
+    fn id(self) -> u32 {
+        u32::from(self.iface) << 8 | u32::from(self.index)
+    }
+}
+
+// (the interfaces and their methods fit a u8, below 255 so that `(0u8..).zip` never steps past)
+const fn short(l: &[&[u8]]) -> bool {
+    match l {
+        [] => true,
+        [h, rest @ ..] => h.len() < 255 && short(rest),
+    }
+}
+const _: () = assert!(FIRST as usize + METHODS.len() < 255 && short(&METHODS));
 
 fn calls() -> &'static kura::d3d9::HostCalls {
     crate::d3d9::host_calls()
@@ -28,11 +67,13 @@ fn calls() -> &'static kura::d3d9::HostCalls {
 
 fn method(c: &mut Ctx) -> u32 {
     let (tag, nargs) = crate::api::tag_of(c.trap);
-    let id = tag & !FLOAT;
-    if tag & FLOAT != 0 {
+    // (every tag was made by init from a Tag)
+    let Some(tag) = Tag::of(tag) else { return 0 };
+    if tag.float {
         c.st0 = Some(0.0);
         return 0;
     }
+    let id = tag.id();
     if mem::x64() {
         // (the host reads 8-byte slots: the method's arguments, the rest 0)
         let a: [u64; 16] = std::array::from_fn(|i| if i < nargs { c.a64(i as u32) } else { 0 });
@@ -57,20 +98,19 @@ fn host(id: u32, args: &[u32]) -> u32 {
 fn init() {
     static DONE: OnceLock<()> = OnceLock::new();
     DONE.get_or_init(|| {
-        let n = FIRST + METHODS.len() as u32;
+        let n = u32::from(FIRST) + METHODS.len() as u32;
         let ps = mem::ps();
         let table = mem::heap_alloc(ps * n, true);
-        for (k, m) in METHODS.iter().enumerate() {
-            let i = FIRST + k as u32;
+        for (i, m) in (FIRST..).zip(METHODS) {
             let v = mem::heap_alloc(ps * m.len() as u32, true);
-            for (j, &args) in m.iter().enumerate() {
+            for (j, &args) in (0u8..).zip(m) {
                 let float = args == 0;
                 let bytes = if float { 8 } else { 4 * u32::from(args) };
                 let a = host_fn(&format!("d3d11:{i}:{j}"), method, bytes);
-                crate::api::set_tag(a, i << 8 | j as u32 | if float { FLOAT } else { 0 }, args as usize);
-                mem::wp(v + ps * j as u32, a);
+                crate::api::set_tag(a, Tag { iface: i, index: j, float }.bits(), usize::from(args));
+                mem::wp(v + ps * u32::from(j), a);
             }
-            mem::wp(table + ps * i, v);
+            mem::wp(table + ps * u32::from(i), v);
         }
         unsafe { kura::d3d11::init(table as usize as *const u32, n) };
     });
@@ -198,14 +238,19 @@ mod tag_tests {
         let _g = crate::test_guest::enter();
         init();
         for (k, m) in METHODS.iter().enumerate() {
-            let i = FIRST + k as u32;
+            let i = u32::from(FIRST) + k as u32;
             for (j, &args) in m.iter().enumerate() {
                 let a = crate::api::export("sake", &format!("d3d11:{i}:{j}"));
                 let (tag, n) = crate::api::tag_of(a);
                 assert_eq!(tag & !FLOAT, i << 8 | j as u32);
                 assert_eq!(tag & FLOAT != 0, args == 0);
                 assert_eq!(n, args as usize);
+                assert_eq!(Tag::of(tag).map(Tag::bits), Some(tag));
             }
+        }
+        // (no other bits come back as a tag)
+        for bits in [1 << 16, 1 << 24, 1 << 30, 0x4000_0000 | 0x4100, u32::MAX] {
+            assert_eq!(Tag::of(bits), None, "{bits:#x}");
         }
     }
 }
