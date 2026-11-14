@@ -1519,7 +1519,7 @@ file	crates/sake/src/gdi_geom.rs	cast_sign_loss	5
 file	crates/sake/src/gdi_geom.rs	cloned_ref_to_slice_refs	1
 file	crates/sake/src/gdi_geom.rs	indexing_slicing	27
 file	crates/sake/src/gdiplus.rs	arithmetic_side_effects	105
-file	crates/sake/src/gdiplus.rs	as_conversions	73
+file	crates/sake/src/gdiplus.rs	as_conversions	72
 file	crates/sake/src/gdiplus.rs	cast_possible_truncation	23
 file	crates/sake/src/gdiplus.rs	cast_possible_wrap	3
 file	crates/sake/src/gdiplus.rs	cast_precision_loss	2
@@ -1535,8 +1535,8 @@ file	crates/sake/src/gdiplus_brush.rs	cast_precision_loss	21
 file	crates/sake/src/gdiplus_brush.rs	cast_sign_loss	24
 file	crates/sake/src/gdiplus_brush.rs	float_cmp	4
 file	crates/sake/src/gdiplus_brush.rs	indexing_slicing	42
-file	crates/sake/src/gdiplus_brush.rs	unwrap_used	7
-file	crates/sake/src/gdiplus_brush.rs	wildcard_enum_match_arm	10
+file	crates/sake/src/gdiplus_brush.rs	unwrap_used	1
+file	crates/sake/src/gdiplus_brush.rs	wildcard_enum_match_arm	8
 file	crates/sake/src/gdiplus_font.rs	arithmetic_side_effects	4
 file	crates/sake/src/gdiplus_font.rs	as_conversions	7
 file	crates/sake/src/gdiplus_font.rs	cast_possible_truncation	5

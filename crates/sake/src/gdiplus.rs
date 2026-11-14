@@ -611,8 +611,7 @@ fn GdipBitmapUnlockBits(c: &mut Ctx) -> u32 {
                         let a = row[s + 3];
                         [unpremul(row[s], a), unpremul(row[s + 1], a), unpremul(row[s + 2], a), a]
                     }
-                    LockFmt::Rgb32 => [row[s], row[s + 1], row[s + 2], 0xff],
-                    LockFmt::Argb32 => [row[s], row[s + 1], row[s + 2], row[s + 3]],
+                    LockFmt::Rgb32 | LockFmt::Argb32 => [row[s], row[s + 1], row[s + 2], if lf == LockFmt::Rgb32 { 0xff } else { row[s + 3] }],
                 };
                 if !b.idx.is_empty() {
                     let k = b.nearest(v);
