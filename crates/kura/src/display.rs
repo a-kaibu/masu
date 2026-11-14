@@ -869,6 +869,10 @@ pub extern "C" fn vnhost_input_push(kind: u32, x: i32, y: i32, data: u32) -> c_i
 }
 
 #[cfg(test)]
+#[path = "display_golden_tests.rs"]
+mod golden_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
