@@ -22,6 +22,8 @@ mod trace_tests;
 #[cfg(test)]
 mod map_tests;
 #[cfg(test)]
+mod format_golden_tests;
+#[cfg(test)]
 mod bind_tests;
 #[cfg(test)]
 mod draw_tests;
@@ -1460,42 +1462,7 @@ unsafe fn keep_bits(t: &mut Texture, sub: u32, mem: usize, pitch: u32, slice: u3
 
 /// A box of guest texels (`pitch` bytes per row) as the page's (and its bytes per row).
 unsafe fn page_texels(t: &Texture, f: &format::Format, src: *const u8, pitch: u32, w: u32, h: u32) -> (Vec<u8>, u32) {
-    let mut out = Vec::new();
-    let bpr;
-    if f.conv == format::F32_TO_F16 {
-        for y in 0..h {
-            let p = src.add((y * pitch) as usize) as *const f32;
-            for x in 0..(w * 4) as usize {
-                out.extend_from_slice(&format::f16_bits(p.add(x).read_unaligned()).to_le_bytes());
-            }
-        }
-        bpr = w * 8;
-    } else if let Some(v) = format::to_floats(f.conv, format::page_bpp(t.page) / 4, src, pitch as usize, w, h) {
-        out = v;
-        bpr = w * format::page_bpp(t.page);
-    } else if let Some(v) = format::bc67_texels(f.conv, src, pitch as usize, w, h) {
-        out = v;
-        bpr = w * format::page_bpp(t.page);
-    } else if let Some(v) = format::widened_texels(f.conv, src, pitch as usize, w, h) {
-        out = v;
-        bpr = w * format::page_bpp(t.page);
-    } else if f.conv != 0 {
-        crate::d3d9::format::convert(f.conv, src, pitch as usize, w, h, &mut out);
-        bpr = w * format::page_bpp(t.page);
-    } else {
-        let row = w.div_ceil(f.block) * f.bpp;
-        for y in 0..h.div_ceil(f.block) {
-            let p = src.add((y * pitch) as usize);
-            out.extend_from_slice(std::slice::from_raw_parts(p, row as usize));
-        }
-        if f.no_alpha {
-            for px in out.chunks_exact_mut(4) {
-                px[3] = 255;
-            }
-        }
-        bpr = row;
-    }
-    (out, bpr)
+    format::to_page(f, t.page, src, pitch, w, h)
 }
 
 unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, after: &mut After) -> u32 {
