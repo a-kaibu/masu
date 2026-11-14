@@ -44,6 +44,7 @@ proptest! {
             prop_assert_eq!(x.trunc_i32(), x as i32);
             prop_assert_eq!(x.trunc_i64(), x as i64);
             prop_assert_eq!(x.trunc_isize(), x as isize);
+            prop_assert_eq!(x.trunc_usize(), x as usize);
             prop_assert!(same_f32(x.to_f32(), x as f32) || x.is_nan());
             let y = x as f32;
             prop_assert_eq!(y.trunc_u8(), y as u8);
@@ -52,6 +53,18 @@ proptest! {
             prop_assert_eq!(y.trunc_i32(), y as i32);
             prop_assert_eq!(y.trunc_i64(), y as i64);
             prop_assert_eq!(y.trunc_isize(), y as isize);
+            prop_assert_eq!(y.trunc_usize(), y as usize);
         }
+    }
+}
+
+proptest! {
+    /// what `as usize` gives for the values a usize holds, usize::MAX past them
+    #[test]
+    fn indices(a: u32, b: i32, c: u64, d: i64) {
+        prop_assert_eq!(a.to_usize(), a as usize);
+        prop_assert_eq!(b.to_usize(), if b >= 0 { b as usize } else { usize::MAX });
+        prop_assert_eq!(c.to_usize(), c as usize);
+        prop_assert_eq!(d.to_usize(), if d >= 0 { d as usize } else { usize::MAX });
     }
 }

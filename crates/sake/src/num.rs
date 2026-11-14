@@ -46,6 +46,7 @@ pub trait Trunc: Copy {
     fn trunc_i32(self) -> i32;
     fn trunc_i64(self) -> i64;
     fn trunc_isize(self) -> isize;
+    fn trunc_usize(self) -> usize;
 }
 
 macro_rules! trunc {
@@ -74,6 +75,10 @@ macro_rules! trunc {
             #[inline]
             fn trunc_isize(self) -> isize {
                 self as isize
+            }
+            #[inline]
+            fn trunc_usize(self) -> usize {
+                self as usize
             }
         }
     )*};
@@ -108,6 +113,24 @@ macro_rules! low {
     )*};
 }
 low!(u32, i32, u64, i64, usize, isize);
+
+/// An integer as an index or a length: itself, or usize::MAX for one no usize holds (a
+/// negative one: an index past any slice, so it fails where it is used, as `as` made it).
+pub trait ToUsize: Copy {
+    fn to_usize(self) -> usize;
+}
+
+macro_rules! to_usize {
+    ($($t:ty),*) => {$(
+        impl ToUsize for $t {
+            #[inline]
+            fn to_usize(self) -> usize {
+                usize::try_from(self).unwrap_or(usize::MAX)
+            }
+        }
+    )*};
+}
+to_usize!(u32, i32, u64, i64, isize);
 
 #[cfg(test)]
 #[path = "num_tests.rs"]
