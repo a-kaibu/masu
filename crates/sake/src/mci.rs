@@ -107,6 +107,51 @@ const MCI_WHERE: u32 = 0x843;
 const MCI_RESUME: u32 = 0x855;
 const MCI_SETAUDIO: u32 = 0x873;
 
+/// The MCI_ commands mciSendCommand takes, parsed once (Other: the rest, unsupported)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Cmd {
+    Open,
+    Close,
+    Play,
+    Seek,
+    Stop,
+    Pause,
+    Info,
+    GetDevCaps,
+    Set,
+    Status,
+    Cue,
+    Window,
+    Put,
+    Where,
+    Resume,
+    SetAudio,
+    Other(u32),
+}
+impl From<u32> for Cmd {
+    fn from(m: u32) -> Cmd {
+        match m {
+            MCI_OPEN => Cmd::Open,
+            MCI_CLOSE => Cmd::Close,
+            MCI_PLAY => Cmd::Play,
+            MCI_SEEK => Cmd::Seek,
+            MCI_STOP => Cmd::Stop,
+            MCI_PAUSE => Cmd::Pause,
+            MCI_INFO => Cmd::Info,
+            MCI_GETDEVCAPS => Cmd::GetDevCaps,
+            MCI_SET => Cmd::Set,
+            MCI_STATUS => Cmd::Status,
+            MCI_CUE => Cmd::Cue,
+            MCI_WINDOW => Cmd::Window,
+            MCI_PUT => Cmd::Put,
+            MCI_WHERE => Cmd::Where,
+            MCI_RESUME => Cmd::Resume,
+            MCI_SETAUDIO => Cmd::SetAudio,
+            m => Cmd::Other(m),
+        }
+    }
+}
+
 const MCI_NOTIFY: u32 = 1;
 const MCI_WAIT: u32 = 2;
 const MCI_FROM: u32 = 4;
@@ -427,6 +472,8 @@ struct Dev {
     repeat: bool,
     /// bumped by every command that changes when the end comes (the waiter's stale check)
     gen: u32,
+    /// paused (not stopped): a play is under way but held (it was the top bit of `gen`)
+    paused: bool,
     /// the movie's window (MCI_WINDOW, the open's parent, an MCIWnd) and its place in it
     hwnd: u32,
     dst: Option<(i32, i32, i32, i32)>,
@@ -462,9 +509,13 @@ impl Dev {
     }
 }
 
+/// An MCIDEVICEID: the devices' key (from 1; one a program passes is looked up, never trusted)
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct DevId(u32);
+
 #[derive(Default)]
 struct State {
-    devs: HashMap<u32, Dev>,
+    devs: HashMap<DevId, Dev>,
     next: u32,
 }
 
@@ -474,12 +525,12 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
     f(g.get_or_insert_with(|| State { devs: HashMap::new(), next: 1 }))
 }
-fn dev<R>(id: u32, f: impl FnOnce(&mut Dev) -> R) -> Option<R> {
+fn dev<R>(id: DevId, f: impl FnOnce(&mut Dev) -> R) -> Option<R> {
     with(|s| s.devs.get_mut(&id).map(f))
 }
 
 /// The timeline of device `id` (the movie's own for a movie) to change, with the time now.
-fn timeline<R>(id: u32, f: impl FnOnce(&mut Timeline, u64) -> R) -> Option<R> {
+fn timeline<R>(id: DevId, f: impl FnOnce(&mut Timeline, u64) -> R) -> Option<R> {
     let (key, video) = dev(id, |d| (d.key, d.video()))?;
     let t = play::now();
     if video {
@@ -490,7 +541,7 @@ fn timeline<R>(id: u32, f: impl FnOnce(&mut Timeline, u64) -> R) -> Option<R> {
 }
 
 /// playing (running, short of its stop), paused (held mid-play), else stopped
-fn mode(id: u32) -> Mode {
+fn mode(id: DevId) -> Mode {
     let Some(playing) = timeline(id, |tl, t| tl.running() && tl.position(t) < tl.stop) else { return Mode::NotReady };
     if playing {
         Mode::Play
@@ -504,20 +555,20 @@ fn mode(id: u32) -> Mode {
 impl Dev {
     /// paused (not stopped): a play is under way but held
     fn paused(&self) -> bool {
-        self.gen & 0x8000_0000 != 0
+        self.paused
     }
 }
 
-fn post_all(out: Vec<(u32, u32)>, id: u32) {
+fn post_all(out: Vec<(u32, u32)>, id: DevId) {
     for (w, code) in out {
         if w != 0 {
-            crate::user::post(w, MM_MCINOTIFY, code, id);
+            crate::user::post(w, MM_MCINOTIFY, code, id.0);
         }
     }
 }
 
 /// The sound's mixer state follows its timeline (where it is, whether it plays).
-fn sync_sound(id: u32) {
+fn sync_sound(id: DevId) {
     let Some((key, frames_at, playing)) = dev(id, |d| {
         let t = play::now();
         let pos = d.tl.position(t);
@@ -530,7 +581,7 @@ fn sync_sound(id: u32) {
 }
 
 /// A device's movie gets its place (window, rectangle) and volume.
-fn sync_movie(id: u32) {
+fn sync_movie(id: DevId) {
     let Some((key, hwnd, dst, size, volume)) = dev(id, |d| (d.key, d.hwnd, d.dst, match d.media { Media::Movie { size, .. } => size, _ => (0, 0) }, d.volume)) else { return };
     let client = if hwnd != 0 { crate::user::client_rect_screen(hwnd).map(|r| (r.r - r.l, r.b - r.t)) } else { None };
     let dst = dst.unwrap_or_else(|| match client {
@@ -549,9 +600,10 @@ fn sync_movie(id: u32) {
 /// Arms the wait for device `id`'s end: on the pool's timer thread, which (if nothing changed
 /// the device meanwhile) reports it (notify, repeat, MCIWnd's mode). Each play used to start a
 /// guest thread of its own (and leave its handle open).
-fn arm(id: u32) {
+fn arm(id: DevId) {
     let Some(gen) = dev(id, |d| {
-        d.gen = (d.gen + 1) & 0x7fff_ffff;
+        d.gen = d.gen.wrapping_add(1);
+        d.paused = false;
         d.gen
     }) else {
         return;
@@ -560,23 +612,23 @@ fn arm(id: u32) {
 }
 
 /// Bumps the generation (a wait in flight gives up), keeping the paused flag.
-fn disarm(id: u32) {
-    dev(id, |d| d.gen = (d.gen & 0x8000_0000) | ((d.gen + 1) & 0x7fff_ffff));
-    crate::pool::TIMERS.cancel(crate::pool::key::MCI | id as u64);
+fn disarm(id: DevId) {
+    dev(id, |d| d.gen = d.gen.wrapping_add(1));
+    crate::pool::TIMERS.cancel(crate::pool::key::MCI | u64::from(id.0));
 }
 
 /// Device `id` under generation `gen`: its end now, or a look again when it is due (in 250 ms
 /// at most: the timeline may change under it).
-fn end_check(id: u32, gen: u32) {
+fn end_check(id: DevId, gen: u32) {
     loop {
-        let live = dev(id, |d| d.gen & 0x7fff_ffff == gen && !d.paused()).unwrap_or(false);
+        let live = dev(id, |d| d.gen == gen && !d.paused()).unwrap_or(false);
         if !live {
             return;
         }
         let Some(left) = timeline(id, |tl, t| tl.until_end(t)).flatten() else { return };
         if left > 0 {
             let d = Duration::from_nanos(left * 100).min(Duration::from_millis(250));
-            crate::pool::TIMERS.after(crate::pool::key::MCI | id as u64, d, Box::new(move |_| end_check(id, gen)));
+            crate::pool::TIMERS.after(crate::pool::key::MCI | u64::from(id.0), d, Box::new(move |_| end_check(id, gen)));
             return;
         }
         // the end: once (a movie's may come from the movie thread first: `ended`)
@@ -591,7 +643,7 @@ fn end_check(id: u32, gen: u32) {
 
 /// Device `id` played to its end: again from the start (repeat; true), or its report goes out
 /// and an MCIWnd shows the new mode.
-fn finished(id: u32) -> bool {
+fn finished(id: DevId) -> bool {
     let (repeat, mciwnd) = dev(id, |d| (d.repeat, d.mciwnd)).unwrap_or((false, 0));
     if repeat {
         timeline(id, |tl, t| {
@@ -621,7 +673,7 @@ pub fn ended(key: u32) -> bool {
 }
 
 /// Opens device `kind` (None: by the element's extension) on `element`, as `alias`.
-fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<u32, McErr> {
+fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<DevId, McErr> {
     if element.is_empty() {
         // (a device opened without a file: only a simple device; these are compound)
         return Err(McErr::UnsupportedFunction);
@@ -676,11 +728,11 @@ fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<u32, M
         crate::sound::music_set(key, Some(0.0), Some(false));
     }
     let id = with(|s| {
-        let id = s.next;
+        let id = DevId(s.next);
         s.next += 1;
         s.devs.insert(
             id,
-            Dev { kind, alias, element: element.to_string(), media, key, tl: Timeline::new(duration), duration, format: TimeFormat::Ms, notes: Notes::default(), repeat: false, gen: 0, hwnd: 0, dst: None, volume: 0, mciwnd: 0 },
+            Dev { kind, alias, element: element.to_string(), media, key, tl: Timeline::new(duration), duration, format: TimeFormat::Ms, notes: Notes::default(), repeat: false, gen: 0, paused: false, hwnd: 0, dst: None, volume: 0, mciwnd: 0 },
         );
         id
     });
@@ -831,7 +883,7 @@ fn pcm_i16(x: f32) -> i16 {
     (x.clamp(-1.0, 1.0) * 32767.0).round() as i16
 }
 
-fn close(id: u32) -> bool {
+fn close(id: DevId) -> bool {
     let Some(d) = with(|s| s.devs.remove(&id)) else { return false };
     post_all(d.notes.clone().command(None, true), id);
     match d.media {
@@ -848,7 +900,7 @@ fn close(id: u32) -> bool {
 
 /// play [from] [to]: runs from `from` (else where it is; at the end: from the start) to `to`
 /// (else the end).
-fn play_dev(id: u32, from: Option<u32>, to: Option<u32>, repeat: bool) -> Result<(), McErr> {
+fn play_dev(id: DevId, from: Option<u32>, to: Option<u32>, repeat: bool) -> Result<(), McErr> {
     let Some((f, tt, dur)) = dev(id, |d| (from.map(|v| d.from_fmt(v)), to.map(|v| d.from_fmt(v)), d.duration)) else { return Err(McErr::InvalidDeviceId) };
     if let (Some(a), Some(b)) = (f, tt) {
         if a > b {
@@ -857,7 +909,7 @@ fn play_dev(id: u32, from: Option<u32>, to: Option<u32>, repeat: bool) -> Result
     }
     dev(id, |d| {
         d.repeat = repeat;
-        d.gen &= 0x7fff_ffff;
+        d.paused = false;
     });
     timeline(id, |tl, t| {
         let at = tl.position(t);
@@ -871,35 +923,35 @@ fn play_dev(id: u32, from: Option<u32>, to: Option<u32>, repeat: bool) -> Result
     Ok(())
 }
 
-fn stop_dev(id: u32, pause: bool) {
+fn stop_dev(id: DevId, pause: bool) {
     timeline(id, |tl, t| if pause { tl.pause(t) } else { tl.stop(t) });
     dev(id, |d| {
         if pause {
-            d.gen |= 0x8000_0000;
+            d.paused = true;
         } else {
-            d.gen &= 0x7fff_ffff;
+            d.paused = false;
         }
     });
     disarm(id);
     sync_sound(id);
 }
 
-fn seek_dev(id: u32, to: u64) {
+fn seek_dev(id: DevId, to: u64) {
     timeline(id, |tl, t| {
         tl.stop(t);
         tl.seek(t, to);
     });
-    dev(id, |d| d.gen &= 0x7fff_ffff);
+    dev(id, |d| d.paused = false);
     disarm(id);
     sync_sound(id);
 }
 
-fn position(id: u32) -> u64 {
+fn position(id: DevId) -> u64 {
     timeline(id, |tl, t| tl.position(t)).unwrap_or(0)
 }
 
 /// Waits (MCI_WAIT) until the play of `id` ends.
-fn wait_end(id: u32) {
+fn wait_end(id: DevId) {
     loop {
         let left = timeline(id, |tl, t| tl.until_end(t)).flatten();
         match left {
@@ -926,10 +978,10 @@ fn aligned(off: u32) -> u32 {
     off.div_ceil(ps) * ps
 }
 
-fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> Result<(), McErr> {
+fn send_command(c: &mut Ctx, id: u32, cmd: Cmd, flags: u32, p: u32, wide: bool) -> Result<(), McErr> {
     let cb = if p != 0 { mem::rp(p) } else { 0 };
     let notify = (flags & MCI_NOTIFY != 0).then_some(cb);
-    if msg == MCI_OPEN {
+    if cmd == Cmd::Open {
         if p == 0 {
             return Err(McErr::NullParameterBlock);
         }
@@ -963,7 +1015,7 @@ fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) 
             Ok(id) => id,
             Err(e) => return Err(e),
         };
-        w32(id_at, id);
+        w32(id_at, id.0);
         // MCI_DGV_OPEN_PARMS: dwStyle, hWndParent after the alias
         if flags & MCI_DGV_OPEN_PARENT != 0 {
             let style_at = alias_at + ps;
@@ -974,29 +1026,30 @@ fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) 
         post_all(notify.map(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)]).unwrap_or_default(), id);
         return Ok(());
     }
-    if id == MCI_ALL_DEVICE_ID && msg == MCI_CLOSE {
-        let ids: Vec<u32> = with(|s| s.devs.keys().copied().collect());
+    if id == MCI_ALL_DEVICE_ID && cmd == Cmd::Close {
+        let ids: Vec<DevId> = with(|s| s.devs.keys().copied().collect());
         for i in ids {
             close(i);
         }
         return Ok(());
     }
+    let id = DevId(id);
     if dev(id, |_| ()).is_none() {
         return Err(McErr::InvalidDeviceId);
     }
-    let interrupts = matches!(msg, MCI_STOP | MCI_SEEK | MCI_CLOSE | MCI_PLAY);
+    let interrupts = matches!(cmd, Cmd::Stop | Cmd::Seek | Cmd::Close | Cmd::Play);
     let out = dev(id, |d| d.notes.command(notify, interrupts)).unwrap_or_default();
     post_all(out, id);
-    let r = command(c, id, msg, flags, p, wide);
+    let r = command(c, id, cmd, flags, p, wide);
     if r.is_ok() {
         if let Some(w) = notify {
-            if msg == MCI_PLAY {
+            if cmd == Cmd::Play {
                 dev(id, |d| d.notes.wait_end(w));
             } else {
                 post_all(vec![(w, MCI_NOTIFY_SUCCESSFUL)], id);
             }
         }
-        if msg == MCI_PLAY {
+        if cmd == Cmd::Play {
             if flags & MCI_WAIT != 0 {
                 wait_end(id);
                 let out = dev(id, |d| d.notes.end()).unwrap_or_default();
@@ -1011,39 +1064,39 @@ fn send_command(c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) 
     r
 }
 
-fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> Result<(), McErr> {
+fn command(_c: &mut Ctx, id: DevId, cmd: Cmd, flags: u32, p: u32, wide: bool) -> Result<(), McErr> {
     let need = |p: u32| p != 0;
-    match msg {
-        MCI_CLOSE => {
+    match cmd {
+        Cmd::Close => {
             close(id);
             Ok(())
         }
-        MCI_PLAY => {
+        Cmd::Play => {
             // MCI_PLAY_PARMS { dwCallback, dwFrom, dwTo }
             let from = (flags & MCI_FROM != 0 && need(p)).then(|| r32(field(p, 1, 0)));
             let to = (flags & MCI_TO != 0 && need(p)).then(|| r32(field(p, 1, 1)));
             play_dev(id, from, to, flags & MCI_DGV_PLAY_REPEAT != 0)
         }
-        MCI_STOP => {
+        Cmd::Stop => {
             stop_dev(id, false);
             Ok(())
         }
-        MCI_PAUSE => {
+        Cmd::Pause => {
             if mode(id) == Mode::Play {
                 stop_dev(id, true);
             }
             Ok(())
         }
-        MCI_RESUME => {
+        Cmd::Resume => {
             if dev(id, |d| d.paused()).unwrap_or(false) {
-                dev(id, |d| d.gen &= 0x7fff_ffff);
+                dev(id, |d| d.paused = false);
                 timeline(id, |tl, t| tl.run(t));
                 sync_sound(id);
                 arm(id);
             }
             Ok(())
         }
-        MCI_SEEK => {
+        Cmd::Seek => {
             let to = if flags & MCI_SEEK_TO_START != 0 {
                 0
             } else if flags & MCI_SEEK_TO_END != 0 {
@@ -1061,7 +1114,7 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> R
             seek_dev(id, to);
             Ok(())
         }
-        MCI_STATUS => {
+        Cmd::Status => {
             if !need(p) {
                 return Err(McErr::NullParameterBlock);
             }
@@ -1076,8 +1129,8 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> R
         }
         // (these read or write their parameter block: none is McErr::NullParameterBlock, as
         // Windows, not low memory)
-        MCI_SET | MCI_SETAUDIO | MCI_WINDOW | MCI_PUT | MCI_WHERE | MCI_INFO if !need(p) => Err(McErr::NullParameterBlock),
-        MCI_SET => {
+        Cmd::Set | Cmd::SetAudio | Cmd::Window | Cmd::Put | Cmd::Where | Cmd::Info if !need(p) => Err(McErr::NullParameterBlock),
+        Cmd::Set => {
             if flags & MCI_SET_TIME_FORMAT != 0 {
                 let Some(f) = TimeFormat::from_code(r32(field(p, 1, 0))) else { return Err(McErr::BadTimeFormat) };
                 let ok = dev(id, |d| format_ok(d.kind, d.video(), f)).unwrap_or(false);
@@ -1088,14 +1141,14 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> R
             }
             Ok(())
         }
-        MCI_SETAUDIO => {
+        Cmd::SetAudio => {
             // MCI_DGV_SETAUDIO_PARMS { dwCallback, dwItem, dwValue, ... }
             if flags & MCI_DGV_SETAUDIO_ITEM != 0 && flags & MCI_DGV_SETAUDIO_VALUE != 0 && r32(field(p, 1, 0)) == MCI_DGV_SETAUDIO_VOLUME {
                 set_volume(id, volume_db(r32(field(p, 1, 1))));
             }
             Ok(())
         }
-        MCI_WINDOW => {
+        Cmd::Window => {
             // MCI_DGV_WINDOW_PARMS { dwCallback, hWnd, ... }
             if flags & MCI_DGV_WINDOW_HWND != 0 {
                 let h = mem::rp(field(p, 1, 0));
@@ -1104,7 +1157,7 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> R
             }
             Ok(())
         }
-        MCI_PUT => {
+        Cmd::Put => {
             // MCI_DGV_RECT_PARMS { dwCallback, RECT rc } (right, bottom: width, height)
             if flags & MCI_DGV_PUT_DESTINATION != 0 && flags & MCI_DGV_RECT != 0 {
                 let r = field(p, 1, 0);
@@ -1114,7 +1167,7 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> R
             }
             Ok(())
         }
-        MCI_WHERE => {
+        Cmd::Where => {
             if flags & MCI_DGV_WHERE_DESTINATION != 0 {
                 let (dst, size) = dev(id, |d| (d.dst, match d.media { Media::Movie { size, .. } => size, _ => (0, 0) })).unwrap_or((None, (0, 0)));
                 let (x, y, w, h) = dst.unwrap_or((0, 0, size.0 as i32, size.1 as i32));
@@ -1125,7 +1178,7 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> R
             }
             Ok(())
         }
-        MCI_GETDEVCAPS => {
+        Cmd::GetDevCaps => {
             if flags & MCI_GETDEVCAPS_ITEM == 0 || !need(p) {
                 return Err(McErr::MissingParameter);
             }
@@ -1146,7 +1199,7 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> R
             mem::wp(field(p, 1, 0), v);
             Ok(())
         }
-        MCI_INFO => {
+        Cmd::Info => {
             // MCI_INFO_PARMS { dwCallback, lpstrReturn, dwRetSize }; MCI_INFO_FILE 0x200, PRODUCT 0x100
             let (buf, size) = (mem::rp(field(p, 1, 0)), r32(field(p, 2, 0)));
             let (kind, el) = dev(id, |d| (d.kind, d.element.clone())).unwrap_or((Kind::Mpeg, String::new()));
@@ -1154,8 +1207,9 @@ fn command(_c: &mut Ctx, id: u32, msg: u32, flags: u32, p: u32, wide: bool) -> R
             crate::k32::ret_str(buf, size, &s, wide);
             Ok(())
         }
-        MCI_CUE => Ok(()),
-        _ => Err(McErr::UnsupportedFunction),
+        Cmd::Cue => Ok(()),
+        // (an open comes before a device: send_command)
+        Cmd::Open | Cmd::Other(_) => Err(McErr::UnsupportedFunction),
     }
 }
 
@@ -1200,7 +1254,7 @@ impl Item {
     }
 }
 
-fn status(id: u32, item: Item) -> u32 {
+fn status(id: DevId, item: Item) -> u32 {
     match item {
         Item::Length => dev(id, |d| d.to_fmt(d.duration)).unwrap_or(0),
         Item::Position => {
@@ -1215,7 +1269,7 @@ fn status(id: u32, item: Item) -> u32 {
     }
 }
 
-fn set_volume(id: u32, db: i32) {
+fn set_volume(id: DevId, db: i32) {
     let Some((key, video)) = dev(id, |d| {
         d.volume = db;
         (d.key, d.video())
@@ -1235,19 +1289,19 @@ fn mmresult(r: Result<(), McErr>) -> u32 {
 }
 fn mciSendCommandA(c: &mut Ctx) -> u32 {
     let (id, msg, flags, p) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    mmresult(send_command(c, id, msg, flags, p, false))
+    mmresult(send_command(c, id, Cmd::from(msg), flags, p, false))
 }
 fn mciSendCommandW(c: &mut Ctx) -> u32 {
     let (id, msg, flags, p) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    mmresult(send_command(c, id, msg, flags, p, true))
+    mmresult(send_command(c, id, Cmd::from(msg), flags, p, true))
 }
 
 // ---------------------------------------------------------------------------------------------
 // mciSendString
 
-fn device_id(name: &str) -> u32 {
+fn device_id(name: &str) -> Option<DevId> {
     let n = name.to_ascii_lowercase();
-    with(|s| s.devs.iter().find(|(_, d)| d.alias == n || d.element.to_ascii_lowercase() == n).map_or(0, |(&i, _)| i))
+    with(|s| s.devs.iter().find(|(_, d)| d.alias == n || d.element.to_ascii_lowercase() == n).map(|(&i, _)| i))
 }
 
 fn int(w: Option<&String>) -> Result<u32, McErr> {
@@ -1296,10 +1350,10 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
             dev(id, |d| d.hwnd = h);
         }
         post_all(notify.map(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)]).unwrap_or_default(), id);
-        return Ok(id.to_string());
+        return Ok(id.0.to_string());
     }
     if verb == "close" && lw[1] == "all" {
-        let ids: Vec<u32> = with(|s| s.devs.keys().copied().collect());
+        let ids: Vec<DevId> = with(|s| s.devs.keys().copied().collect());
         for i in ids {
             close(i);
         }
@@ -1310,10 +1364,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
     if !VERBS.contains(&verb.as_str()) {
         return Err(McErr::UnrecognizedCommand);
     }
-    let id = device_id(name);
-    if id == 0 {
-        return Err(McErr::InvalidDeviceName);
-    }
+    let Some(id) = device_id(name) else { return Err(McErr::InvalidDeviceName) };
     // the command as the parameter block mciSendCommand takes
     let ps = mem::ps();
     let p = mem::heap_alloc(64, true);
@@ -1333,13 +1384,13 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
                 if has("repeat") {
                     flags |= MCI_DGV_PLAY_REPEAT;
                 }
-                MCI_PLAY
+                Cmd::Play
             }
-            "stop" => MCI_STOP,
-            "pause" => MCI_PAUSE,
-            "resume" => MCI_RESUME,
-            "close" => MCI_CLOSE,
-            "cue" => MCI_CUE,
+            "stop" => Cmd::Stop,
+            "pause" => Cmd::Pause,
+            "resume" => Cmd::Resume,
+            "close" => Cmd::Close,
+            "cue" => Cmd::Cue,
             "seek" => {
                 match after("to").map(|i| lw.get(i).map(|s| s.as_str())) {
                     Some(Some("start")) => flags |= MCI_SEEK_TO_START,
@@ -1350,7 +1401,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
                     }
                     None => return Err(McErr::MissingParameter),
                 }
-                MCI_SEEK
+                Cmd::Seek
             }
             "status" => {
                 let item = rest.iter().filter(|x| *x != "notify" && *x != "wait").cloned().collect::<Vec<_>>().join(" ");
@@ -1388,7 +1439,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
                     flags |= MCI_SET_TIME_FORMAT;
                     w32(p + ps, f.code());
                 }
-                MCI_SET
+                Cmd::Set
             }
             "setaudio" => {
                 if let Some(i) = after("to").filter(|_| has("volume")) {
@@ -1396,7 +1447,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
                     w32(p + ps, MCI_DGV_SETAUDIO_VOLUME);
                     w32(p + ps + 4, int(w.get(i))?);
                 }
-                MCI_SETAUDIO
+                Cmd::SetAudio
             }
             "window" => {
                 if let Some(i) = after("handle") {
@@ -1404,7 +1455,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
                     flags |= MCI_DGV_WINDOW_HWND;
                     mem::wp(p + ps, h);
                 }
-                MCI_WINDOW
+                Cmd::Window
             }
             "put" => {
                 if let Some(i) = after("at").filter(|_| has("destination")) {
@@ -1414,11 +1465,11 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
                         w32(p + ps + 4 * k as u32, v as u32);
                     }
                 }
-                MCI_PUT
+                Cmd::Put
             }
             "where" => {
                 flags |= MCI_DGV_WHERE_DESTINATION;
-                let r = send_command(c, id, MCI_WHERE, flags, p, false);
+                let r = send_command(c, id.0, Cmd::Where, flags, p, false);
                 if r.is_ok() {
                     let v: Vec<String> = (0..4).map(|k| (r32(p + ps + 4 * k) as i32).to_string()).collect();
                     ret = v.join(" ");
@@ -1444,7 +1495,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
             }
             _ => return Err(McErr::UnrecognizedCommand),
         };
-        send_command(c, id, msg, flags, p, false)
+        send_command(c, id.0, msg, flags, p, false)
     })();
     mem::heap_free(p);
     match r {
@@ -1508,10 +1559,10 @@ fn mciGetErrorStringW(c: &mut Ctx) -> u32 {
     mci_get_error_string(c, true)
 }
 fn mciGetDeviceIDA(c: &mut Ctx) -> u32 {
-    device_id(&crate::k32::arg_str(c.a(0), false))
+    device_id(&crate::k32::arg_str(c.a(0), false)).map_or(0, |d| d.0)
 }
 fn mciGetDeviceIDW(c: &mut Ctx) -> u32 {
-    device_id(&crate::k32::arg_str(c.a(0), true))
+    device_id(&crate::k32::arg_str(c.a(0), true)).map_or(0, |d| d.0)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1545,7 +1596,7 @@ const MCIWNDF_NOTIFYMODE: u32 = 0x100;
 
 #[derive(Default)]
 struct Wnd {
-    dev: u32,
+    dev: Option<DevId>,
     style: u32,
     parent: u32,
     mode: Mode,
@@ -1564,9 +1615,9 @@ fn gcall(c: &mut Ctx, dll: &str, name: &str, args: &[u32]) -> u32 {
 
 /// The mode an MCIWnd shows: of its device, Mode::NotReady with none.
 fn wnd_mode(h: u32) -> Mode {
-    match wnd(h, |w| w.dev).unwrap_or(0) {
-        0 => Mode::NotReady,
-        d => mode(d),
+    match wnd(h, |w| w.dev).flatten() {
+        None => Mode::NotReady,
+        Some(d) => mode(d),
     }
 }
 
@@ -1580,10 +1631,8 @@ fn wnd_notify(c: &mut Ctx, h: u32) {
 }
 
 fn wnd_open(c: &mut Ctx, h: u32, file: &str) -> u32 {
-    if let Some(d) = wnd(h, |w| std::mem::take(&mut w.dev)) {
-        if d != 0 {
-            close(d);
-        }
+    if let Some(d) = wnd(h, |w| w.dev.take()).flatten() {
+        close(d);
     }
     let id = match open(None, file, Some(&format!("mciwnd{h:x}"))).or_else(|e| if e == McErr::ExtensionNotFound { open(Some(Kind::Mpeg), file, Some(&format!("mciwnd{h:x}"))) } else { Err(e) }) {
         Ok(id) => id,
@@ -1593,7 +1642,7 @@ fn wnd_open(c: &mut Ctx, h: u32, file: &str) -> u32 {
         }
     };
     let style = wnd(h, |w| {
-        w.dev = id;
+        w.dev = Some(id);
         w.style
     })
     .unwrap_or(0);
@@ -1619,10 +1668,10 @@ fn wnd_open(c: &mut Ctx, h: u32, file: &str) -> u32 {
     0
 }
 
-fn wnd_command(c: &mut Ctx, h: u32, msg: u32, from: Option<u32>, to: Option<u32>) -> u32 {
-    let Some(d) = wnd(h, |w| w.dev).filter(|&d| d != 0) else { return McErr::InvalidDeviceId.code() };
-    let r = match msg {
-        MCI_PLAY => {
+fn wnd_command(c: &mut Ctx, h: u32, cmd: Cmd, from: Option<u32>, to: Option<u32>) -> u32 {
+    let Some(d) = wnd(h, |w| w.dev).flatten() else { return McErr::InvalidDeviceId.code() };
+    let r = match cmd {
+        Cmd::Play => {
             let repeat = wnd(h, |w| w.repeat).unwrap_or(false);
             let out = dev(d, |x| x.notes.command(None, true)).unwrap_or_default();
             post_all(out, d);
@@ -1634,36 +1683,36 @@ fn wnd_command(c: &mut Ctx, h: u32, msg: u32, from: Option<u32>, to: Option<u32>
                 Err(e) => e.code(),
             }
         }
-        MCI_STOP => {
+        Cmd::Stop => {
             stop_dev(d, false);
             0
         }
-        MCI_PAUSE => {
+        Cmd::Pause => {
             if mode(d) == Mode::Play {
                 stop_dev(d, true);
             }
             0
         }
-        MCI_RESUME => {
+        Cmd::Resume => {
             if dev(d, |x| x.paused()).unwrap_or(false) {
-                dev(d, |x| x.gen &= 0x7fff_ffff);
+                dev(d, |x| x.paused = false);
                 timeline(d, |tl, t| tl.run(t));
                 sync_sound(d);
                 arm(d);
             }
             0
         }
-        MCI_SEEK => {
+        Cmd::Seek => {
             let t = dev(d, |x| x.from_fmt(from.unwrap_or(0))).unwrap_or(0);
             seek_dev(d, t);
             0
         }
-        MCI_CLOSE => {
-            wnd(h, |w| w.dev = 0);
+        Cmd::Close => {
+            wnd(h, |w| w.dev = None);
             close(d);
             0
         }
-        _ => McErr::UnsupportedFunction.code(),
+        Cmd::Open | Cmd::Info | Cmd::GetDevCaps | Cmd::Set | Cmd::Status | Cmd::Cue | Cmd::Window | Cmd::Put | Cmd::Where | Cmd::SetAudio | Cmd::Other(_) => McErr::UnsupportedFunction.code(),
     };
     wnd_notify(c, h);
     r
@@ -1671,7 +1720,9 @@ fn wnd_command(c: &mut Ctx, h: u32, msg: u32, from: Option<u32>, to: Option<u32>
 
 fn mciwnd_proc(c: &mut Ctx) -> u32 {
     let (h, msg, wp, lp) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    let devid = wnd(h, |w| w.dev).unwrap_or(0);
+    let devid = wnd(h, |w| w.dev).flatten();
+    // (what the window's device answers; with none, 0)
+    let on = |f: &dyn Fn(&mut Dev) -> u32| devid.and_then(|i| dev(i, |d| f(d))).unwrap_or(0);
     match msg {
         // WM_CREATE: CREATESTRUCT's lpCreateParams is the file (or NULL)
         0x1 => {
@@ -1694,10 +1745,10 @@ fn mciwnd_proc(c: &mut Ctx) -> u32 {
             let f = crate::k32::arg_str(lp, msg == MCIWNDM_OPENW);
             wnd_open(c, h, &f)
         }
-        MCI_PLAY | MCI_STOP | MCI_PAUSE | MCI_RESUME | MCI_CLOSE => wnd_command(c, h, msg, None, None),
-        MCI_SEEK => wnd_command(c, h, msg, Some(lp), None),
-        MCIWNDM_PLAYFROM => wnd_command(c, h, MCI_PLAY, Some(lp), None),
-        MCIWNDM_PLAYTO => wnd_command(c, h, MCI_PLAY, None, Some(lp)),
+        MCI_PLAY | MCI_STOP | MCI_PAUSE | MCI_RESUME | MCI_CLOSE => wnd_command(c, h, Cmd::from(msg), None, None),
+        MCI_SEEK => wnd_command(c, h, Cmd::Seek, Some(lp), None),
+        MCIWNDM_PLAYFROM => wnd_command(c, h, Cmd::Play, Some(lp), None),
+        MCIWNDM_PLAYTO => wnd_command(c, h, Cmd::Play, None, Some(lp)),
         WM_MCIWND_MODE => {
             wnd_notify(c, h);
             0
@@ -1709,30 +1760,34 @@ fn mciwnd_proc(c: &mut Ctx) -> u32 {
             }
             m.code()
         }
-        MCIWNDM_GETLENGTH | MCIWNDM_GETEND => dev(devid, |d| d.to_fmt(d.duration)).unwrap_or(0),
+        MCIWNDM_GETLENGTH | MCIWNDM_GETEND => on(&|d| d.to_fmt(d.duration)),
         MCIWNDM_GETSTART => 0,
         MCIWNDM_GETPOSITIONA | MCIWNDM_GETPOSITIONW => {
-            let p = position(devid);
-            dev(devid, |d| d.to_fmt(p)).unwrap_or(0)
+            let p = devid.map_or(0, position);
+            on(&|d| d.to_fmt(p))
         }
-        MCIWNDM_GETDEVICEID => devid,
-        MCIWNDM_CAN_PLAY => (devid != 0) as u32,
-        MCIWNDM_CAN_WINDOW => dev(devid, |d| d.video()).unwrap_or(false) as u32,
+        MCIWNDM_GETDEVICEID => devid.map_or(0, |d| d.0),
+        MCIWNDM_CAN_PLAY => u32::from(devid.is_some()),
+        MCIWNDM_CAN_WINDOW => on(&|d| u32::from(d.video())),
         MCIWNDM_SETVOLUME => {
-            set_volume(devid, volume_db(lp));
+            if let Some(i) = devid {
+                set_volume(i, volume_db(lp));
+            }
             0
         }
-        MCIWNDM_GETVOLUME => dev(devid, |d| volume_mci(d.volume)).unwrap_or(0),
+        MCIWNDM_GETVOLUME => on(&|d| volume_mci(d.volume)),
         MCIWNDM_SETREPEAT => {
             wnd(h, |w| w.repeat = lp != 0);
-            dev(devid, |d| d.repeat = lp != 0);
+            if let Some(i) = devid {
+                dev(i, |d| d.repeat = lp != 0);
+            }
             0
         }
-        MCIWNDM_GETREPEAT => wnd(h, |w| w.repeat as u32).unwrap_or(0),
+        MCIWNDM_GETREPEAT => wnd(h, |w| u32::from(w.repeat)).unwrap_or(0),
         // WM_SIZE / WM_MOVE: the movie follows the client area
         0x5 | 0x3 => {
-            if devid != 0 {
-                sync_movie(devid);
+            if let Some(i) = devid {
+                sync_movie(i);
             }
             gcall(c, "user32", "DefWindowProcW", &[h, msg, wp, lp])
         }
@@ -1747,8 +1802,8 @@ fn mciwnd_proc(c: &mut Ctx) -> u32 {
         }
         // WM_DESTROY: the device closes
         0x2 => {
-            if devid != 0 {
-                close(devid);
+            if let Some(i) = devid {
+                close(i);
             }
             WNDS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&h);
             0
@@ -1872,7 +1927,7 @@ mod tests {
             (MCI_INFO, 0x200),
             (MCI_STATUS, MCI_STATUS_ITEM),
         ] {
-            assert_eq!(command(&mut c, 0x7777, msg, flags, 0, false), Err(McErr::NullParameterBlock), "{msg:#x}");
+            assert_eq!(command(&mut c, DevId(0x7777), Cmd::from(msg), flags, 0, false), Err(McErr::NullParameterBlock), "{msg:#x}");
         }
     }
 
