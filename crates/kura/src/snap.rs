@@ -24,6 +24,7 @@
 //! ([`restore_begin`] gives them); services started lazily see [`epoch`] change and start
 //! again. The clocks the program reads continue from the moment of the save ([`Ctl::offset`]).
 
+use crate::locks::Lock;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering::*};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
@@ -831,9 +832,9 @@ mod tests {
             // (the Ctl holds 32-bit addresses: only meaningful in the wasm32 module; here the
             // buffer is checked by its contents)
             fail("first".into());
-            assert_eq!(*MSG.lock().unwrap(), "first");
+            assert_eq!(*MSG.locked(), "first");
             fail("second, longer".into());
-            assert_eq!(*MSG.lock().unwrap(), "second, longer");
+            assert_eq!(*MSG.locked(), "second, longer");
             assert_eq!(VNHOST_SNAP.msg_len.load(SeqCst), 14);
         } else {
             fail("first".into());
@@ -913,7 +914,7 @@ mod tests {
         STOP.store(1, SeqCst);
         threads.into_iter().for_each(|t| t.join().unwrap());
         GPU_THREAD.store(0, SeqCst);
-        *REFUSE.lock().unwrap() = None;
+        *REFUSE.locked() = None;
     }
 
     /// A save the page holds after its copy (a hidden tab: saved, then out of sight until it is
@@ -941,7 +942,7 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
         assert_eq!(VNHOST_SNAP.stirs.load(SeqCst), at);
         {
-            let _g = GATE.lock().unwrap();
+            let _g = GATE.locked();
             GATE_CV.notify_all();
         }
         until("a stir", || VNHOST_SNAP.stirs.load(SeqCst) != at);
@@ -995,7 +996,7 @@ mod tests {
                 register("host", false, 0);
                 while STOP.load(SeqCst) == 0 {
                     idle();
-                    let g = HOST_LOCK.lock().unwrap();
+                    let g = HOST_LOCK.locked();
                     let mut g = HOST_CV.wait_timeout(g, Duration::from_millis(ms)).unwrap().0;
                     *g += 1;
                     drop(g);
@@ -1013,7 +1014,7 @@ mod tests {
             until("READY", || matches!(VNHOST_SNAP.state.load(SeqCst), ST_READY | ST_FAILED));
             assert_eq!(VNHOST_SNAP.state.load(SeqCst), ST_READY, "round {round}: no state");
             // (the page copying)
-            let (w, h) = (WORK.load(SeqCst), *HOST_LOCK.lock().unwrap());
+            let (w, h) = (WORK.load(SeqCst), *HOST_LOCK.locked());
             let t = std::time::Instant::now();
             while t.elapsed() < Duration::from_millis(80) {
                 assert!(GATE.try_lock().is_ok(), "round {round}: GATE held while copied");
@@ -1021,12 +1022,12 @@ mod tests {
                 std::thread::sleep(Duration::from_micros(200));
             }
             assert_eq!(WORK.load(SeqCst), w, "round {round}: a thread ran while copied");
-            assert_eq!(*HOST_LOCK.lock().unwrap(), h, "round {round}: a host thread ran while copied");
+            assert_eq!(*HOST_LOCK.locked(), h, "round {round}: a host thread ran while copied");
             VNHOST_SNAP.cmd.store(CMD_RESUME, SeqCst);
             until("RUNNING", || VNHOST_SNAP.state.load(SeqCst) == ST_RUNNING);
             assert_eq!(VNHOST_SNAP.stirred.load(SeqCst), 0, "round {round}: stirred");
             // (all up again before the next pause: one still waking would stand as parked in it)
-            assert!(!PARTS.lock().unwrap().iter().any(|p| p.state.load(SeqCst) == PARKED), "round {round}: parked after RUNNING");
+            assert!(!PARTS.locked().iter().any(|p| p.state.load(SeqCst) == PARKED), "round {round}: parked after RUNNING");
         }
         STOP.store(1, SeqCst);
         threads.into_iter().for_each(|t| t.join().unwrap());
@@ -1085,7 +1086,7 @@ mod tests {
             VNHOST_SNAP.cmd.store(CMD_SAVE, SeqCst);
             until("READY", || VNHOST_SNAP.state.load(SeqCst) == ST_READY);
             if wake {
-                let _g = GATE.lock().unwrap();
+                let _g = GATE.locked();
                 GATE_CV.notify_all();
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -1149,7 +1150,7 @@ mod tests {
                 .collect();
             ts.into_iter().for_each(|t| t.join().unwrap());
             assert!(retired(NAME) <= 4, "round {round}: {} parts kept", retired(NAME));
-            assert!(!PARTS.lock().unwrap().iter().any(|p| std::ptr::eq(p.name, NAME)));
+            assert!(!PARTS.locked().iter().any(|p| std::ptr::eq(p.name, NAME)));
         }
         // (another name or kind gets a part of its own)
         let t = std::thread::spawn(|| {

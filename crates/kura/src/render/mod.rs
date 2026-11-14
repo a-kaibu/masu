@@ -11,6 +11,7 @@ pub mod gpu;
 #[cfg(test)]
 pub mod model;
 
+use crate::locks::Lock;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::Mutex;
@@ -845,12 +846,12 @@ mod start_tests {
     #[test]
     fn a_thread_not_made_is_tried_again() {
         let _one = crate::snap::ONE.lock().unwrap_or_else(|e| e.into_inner());
-        *STARTED.lock().unwrap() = 0;
+        *STARTED.locked() = 0;
         crate::snap::GPU_THREAD.store(0, SeqCst);
         let mut tries = 0;
         // (a model: results of pthread_create, then whether a thread runs and how often it was made)
         for results in [[11, 11, 0, 0], [0, 0, 0, 0], [11, 0, 11, 0]] {
-            *STARTED.lock().unwrap() = 0;
+            *STARTED.locked() = 0;
             crate::snap::GPU_THREAD.store(0, SeqCst);
             let mut made = 0;
             for e in results {
@@ -866,7 +867,7 @@ mod start_tests {
             assert_eq!(made, 1, "{results:?}: made once, after the failures");
         }
         assert_eq!(tries, 3 + 1 + 2, "no try after one was made");
-        *STARTED.lock().unwrap() = 0;
+        *STARTED.locked() = 0;
         crate::snap::GPU_THREAD.store(0, SeqCst);
     }
 }

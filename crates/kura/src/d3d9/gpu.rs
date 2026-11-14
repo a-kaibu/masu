@@ -7,6 +7,7 @@
 //!
 //! Without a page (node) nothing ever polls, and batches are dropped at each Present.
 
+use crate::locks::Lock;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -694,7 +695,7 @@ mod hidden_tests {
         let _g = super::super::trace_tests::SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         for first in 0..3 {
             set_pump(None);
-            assert!(QUEUE.lock().unwrap().is_none());
+            assert!(QUEUE.locked().is_none());
             match first {
                 0 => present(1),
                 1 => wait_done(3),

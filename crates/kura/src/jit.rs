@@ -16,6 +16,7 @@
 //! no interpreter warm-up and no translation, and in Chromium the browser's code cache of the
 //! module keeps V8's optimized code too.
 
+use crate::locks::{Lock, Rw};
 use crate::cpu::Linear;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -253,7 +254,7 @@ fn reinstate(st: &mut State, a: u32) -> bool {
 fn note_stale(a: u32, how: &str) {
     static COUNTS: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
     let n = {
-        let mut m = COUNTS.lock().unwrap();
+        let mut m = COUNTS.locked();
         let c = m.get_or_insert_with(HashMap::new).entry(a >> 12).or_insert(0);
         *c += 1;
         *c
@@ -544,7 +545,7 @@ static SHARED_BYTES: AtomicUsize = AtomicUsize::new(0);
 /// Adds `r` to SHARED under `key`: an older build of the same code (the same bytes) goes, so
 /// do the oldest builds past SHARED_PER_KEY, and the oldest of all past SHARED_MAX.
 fn share_push(key: Vec<u32>, r: Arc<Shared>) {
-    let mut g = SHARED.lock().unwrap();
+    let mut g = SHARED.locked();
     let map = g.get_or_insert_with(HashMap::new);
     let list = map.entry(key).or_default();
     let mut freed = 0;
@@ -639,7 +640,7 @@ fn loaded(base: i32, n: u32, bytes: usize) -> i32 {
 
 /// SHARED: (modules, bytes of module code, guest text and tables).
 fn shared_size() -> (usize, usize) {
-    let g = SHARED.lock().unwrap();
+    let g = SHARED.locked();
     let Some(m) = g.as_ref() else { return (0, 0) };
     m.values().flatten().fold((0, 0), |(n, b), r| (n + 1, b + r.size()))
 }
@@ -664,7 +665,7 @@ fn region_text(mem: &mut Linear, region: &jit::Region) -> Option<Vec<u8>> {
 
 /// A region for `roots` some thread built from the same code as ours.
 fn shared(mem: &mut Linear, roots: &[u32]) -> Option<Arc<Shared>> {
-    let list = SHARED.lock().unwrap().as_ref()?.get(roots)?.clone();
+    let list = SHARED.locked().as_ref()?.get(roots)?.clone();
     let exact = jit::mx_exact();
     list.into_iter().rev().find(|r| r.exact == exact && code_kept(&r.code) && code_bytes(mem, &r.code).is_some_and(|t| t == r.text))
 }
@@ -760,12 +761,12 @@ static CODE_RANGES: Mutex<BTreeMap<u32, u32>> = Mutex::new(BTreeMap::new());
 
 fn in_code(a: u32) -> bool {
     // (blocks are short: those starting up to 4 KB below)
-    CODE_RANGES.lock().unwrap().range(a.saturating_sub(0x1000)..=a).any(|(_, &e)| a < e)
+    CODE_RANGES.locked().range(a.saturating_sub(0x1000)..=a).any(|(_, &e)| a < e)
 }
 
 fn mark_code(code: &[(u32, u32)]) {
     {
-        let mut r = CODE_RANGES.lock().unwrap();
+        let mut r = CODE_RANGES.locked();
         for &(a, n) in code {
             let e = r.entry(a).or_insert(0);
             *e = (*e).max(a.saturating_add(n.max(1)));
@@ -832,8 +833,8 @@ fn drop_translations() {
     for w in &CODE_PAGES {
         w.store(0, Ordering::Relaxed);
     }
-    CODE_RANGES.lock().unwrap().clear();
-    *SHARED.lock().unwrap() = None;
+    CODE_RANGES.locked().clear();
+    *SHARED.locked() = None;
     SHARED_BYTES.store(0, Ordering::Relaxed);
     changed(0, u32::MAX);
 }
@@ -882,7 +883,7 @@ fn drop_states(lo: usize, hi: usize) {
     }
     {
         let (a, e) = ((lo as u64) << 12, ((hi as u64) + 1) << 12);
-        CODE_RANGES.lock().unwrap().retain(|&s, &mut end| (end as u64) <= a || (s as u64) >= e);
+        CODE_RANGES.locked().retain(|&s, &mut end| (end as u64) <= a || (s as u64) >= e);
     }
     changed(lo as u32, hi as u32);
 }
@@ -895,7 +896,7 @@ const CHANGES_KEPT: usize = 1024;
 
 /// A new generation for a change of pages `lo..=hi`.
 fn changed(lo: u32, hi: u32) {
-    let mut c = CHANGES.lock().unwrap();
+    let mut c = CHANGES.locked();
     let g = GENERATION.fetch_add(1, Ordering::SeqCst).wrapping_add(1);
     c.push_back((g, lo, hi));
     while c.len() > CHANGES_KEPT {
@@ -905,7 +906,7 @@ fn changed(lo: u32, hi: u32) {
 
 /// The pages changed in generations `seen + 1 ..= now` (None: all of it, or not known).
 fn changes_since(seen: u32, now: u32) -> Option<Vec<(u32, u32)>> {
-    let c = CHANGES.lock().unwrap();
+    let c = CHANGES.locked();
     // (every generation in between must still be listed)
     if !c.front().is_some_and(|f| f.0.wrapping_sub(seen) as i32 <= 1) {
         return None;
@@ -1340,7 +1341,7 @@ fn check64(before: &Cpu, states: &[(Cpu, usize)], got: &Cpu, writes: &[(u32, u8)
         return; // (too far)
     }
     static SEEN: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
-    if !SEEN.lock().unwrap().get_or_insert_with(HashSet::new).insert(before.eip) {
+    if !SEEN.locked().get_or_insert_with(HashSet::new).insert(before.eip) {
         return;
     }
     let mut bf = before.clone();
@@ -1523,15 +1524,15 @@ static SAVED: std::sync::LazyLock<std::sync::RwLock<Saved>> = std::sync::LazyLoc
 fn saved_regions() -> std::sync::RwLockReadGuard<'static, Saved> {
     let n = LATE.len();
     {
-        let s = SAVED.read().unwrap();
+        let s = SAVED.r();
         if s.late.len() >= n {
             return s;
         }
     }
-    let mut s = SAVED.write().unwrap();
+    let mut s = SAVED.w();
     take_late(&mut s, &LATE, n);
     drop(s);
-    SAVED.read().unwrap()
+    SAVED.r()
 }
 
 /// Puts `inbox`'s parts below `n` into `s` (those not in yet), as parts 1 up. A part whose
@@ -1581,7 +1582,7 @@ fn part_base(st: &mut State, s: &Saved, part: u16) -> i32 {
         MODULES[5].fetch_add(t0.elapsed().as_micros() as u64, Ordering::Relaxed);
         // (the first thread to load each part says so: the run log shows the late parts used)
         static SAID: Mutex<Vec<u16>> = Mutex::new(Vec::new());
-        let mut said = SAID.lock().unwrap();
+        let mut said = SAID.locked();
         if base < 0 || !said.contains(&part) {
             said.push(part);
             eprintln!("vnjit: saved part {part} loaded: {n} functions, {} KiB, {} ms{}", wasm.len() >> 10, t0.elapsed().as_millis(), if base < 0 { " (failed)" } else { "" });
@@ -1837,7 +1838,7 @@ fn maybe_save() {
     }
     // (a function's newest build; a newer one than saved goes again)
     let new: Vec<(Vec<u32>, Arc<Shared>)> = {
-        let sh = SHARED.lock().unwrap();
+        let sh = SHARED.locked();
         let Some(sh) = sh.as_ref() else { return };
         sh.iter()
             .filter_map(|(r, l)| {
@@ -3222,7 +3223,7 @@ fn profiling() -> bool {
 
 fn keep_profile(region: &mut jit::Region) {
     if profiling() {
-        PROF.lock().unwrap().append(&mut region.profile);
+        PROF.locked().append(&mut region.profile);
     }
 }
 
@@ -3230,7 +3231,7 @@ fn keep_profile(region: &mut jit::Region) {
 /// a block left early still counts whole; the interpreter's own steps are not in it).
 #[no_mangle]
 pub extern "C" fn vnhost_jit_profile() {
-    let prof = PROF.lock().unwrap();
+    let prof = PROF.locked();
     let mut by_key: HashMap<&str, u64> = HashMap::new();
     let mut by_cat: HashMap<&str, u64> = HashMap::new();
     let mut blocks: Vec<(u64, u32, usize)> = Vec::new();
@@ -3722,10 +3723,10 @@ mod late_tests {
                 });
                 for _ in 0..3 {
                     sc.spawn(|| {
-                        while saved.read().unwrap().late.len() < LATE_MAX {
+                        while saved.r().late.len() < LATE_MAX {
                             let n = inbox.len();
-                            if saved.read().unwrap().late.len() < n {
-                                take_late(&mut saved.write().unwrap(), inbox, n);
+                            if saved.r().late.len() < n {
+                                take_late(&mut saved.w(), inbox, n);
                             }
                         }
                     });
@@ -3997,21 +3998,21 @@ mod invalidate_tests {
         // a newer build of the same code takes the older one's place
         share_push(key.clone(), mk(1, 1, 10));
         share_push(key.clone(), mk(1, 2, 10));
-        let l = SHARED.lock().unwrap().as_ref().unwrap()[&key].clone();
+        let l = SHARED.locked().as_ref().unwrap()[&key].clone();
         assert_eq!(l.iter().map(|s| s.build).collect::<Vec<_>>(), vec![2]);
         // other code (rewritten) is kept beside it, up to SHARED_PER_KEY builds
         for t in 2..10 {
             share_push(key.clone(), mk(t, 1, 10));
         }
-        assert_eq!(SHARED.lock().unwrap().as_ref().unwrap()[&key].len(), SHARED_PER_KEY);
+        assert_eq!(SHARED.locked().as_ref().unwrap()[&key].len(), SHARED_PER_KEY);
         // the oldest go past SHARED_MAX
         for i in 0..20u32 {
             share_push(vec![0xbeef_0000 + i], mk(0, 1, 4 << 20));
         }
         assert!(SHARED_BYTES.load(Ordering::Relaxed) <= SHARED_MAX);
-        let total: usize = SHARED.lock().unwrap().as_ref().unwrap().values().flatten().map(|s| s.size()).sum();
+        let total: usize = SHARED.locked().as_ref().unwrap().values().flatten().map(|s| s.size()).sum();
         assert_eq!(total, SHARED_BYTES.load(Ordering::Relaxed));
-        assert!(SHARED.lock().unwrap().as_ref().unwrap().contains_key(&vec![0xbeef_0000 + 19]), "the newest stays");
-        assert!(!SHARED.lock().unwrap().as_ref().unwrap().contains_key(&vec![0xbeef_0000]), "the oldest went");
+        assert!(SHARED.locked().as_ref().unwrap().contains_key(&vec![0xbeef_0000 + 19]), "the newest stays");
+        assert!(!SHARED.locked().as_ref().unwrap().contains_key(&vec![0xbeef_0000]), "the oldest went");
     }
 }

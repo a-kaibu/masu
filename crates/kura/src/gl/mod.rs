@@ -15,6 +15,7 @@
 
 use crate::d3d9::gpu;
 use crate::render::d3d::{BlendOp, Compare, Factor, StencilOp};
+use crate::locks::Lock;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CStr};
@@ -756,7 +757,7 @@ extern "C" fn glGetStringi(name: u32, i: u32) -> *const u8 {
     if name != 0x1F03 {
         return std::ptr::null();
     }
-    let mut v = NAMES.lock().unwrap();
+    let mut v = NAMES.locked();
     if v.is_empty() {
         *v = EXTENSIONS.split(' ').map(|s| format!("{s}\0").into_bytes()).collect();
     }
