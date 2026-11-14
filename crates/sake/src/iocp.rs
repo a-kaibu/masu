@@ -266,7 +266,7 @@ pub fn port_of(h: u32) -> Option<Port> {
 
 /// CreateIoCompletionPort(file, port, key, threads)
 fn CreateIoCompletionPort(c: &mut Ctx) -> u32 {
-    let (file, port, key) = (c.a(0), c.a(1), if mem::x64() { c.a64(2) } else { c.a(2) as u64 });
+    let (file, port, key) = (c.a(0), c.a(1), if mem::x64() { c.a64(2) } else { u64::from(c.a(2)) });
     let invalid = file == u32::MAX;
     if invalid && port != 0 {
         last_error(87);
@@ -300,7 +300,7 @@ fn take(port: Port) -> Option<Packet> {
 fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<(Packet, Port), u32> {
     let Some(port) = port_of(port) else { return Err(6) };
     let tid = crate::cur().tid;
-    let deadline = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64));
+    let deadline = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms)));
     loop {
         // (AFD polls end here: a socket that changed is looked at by the port's waiter)
         crate::afd::check();
@@ -403,7 +403,7 @@ fn GetQueuedCompletionStatusEx(c: &mut Ctx) -> u32 {
 
 /// PostQueuedCompletionStatus(port, bytes, key, overlapped)
 fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
-    let (port, bytes, key, ov) = (c.a(0), c.a(1), if mem::x64() { c.a64(2) } else { c.a(2) as u64 }, c.a(3));
+    let (port, bytes, key, ov) = (c.a(0), c.a(1), if mem::x64() { c.a64(2) } else { u64::from(c.a(2)) }, c.a(3));
     let Some(port) = port_of(port) else {
         last_error(6);
         return 0;
@@ -496,7 +496,7 @@ pub fn init_nt() {
         0
     });
     let set = |c: &mut Ctx| {
-        let (port, key, value, status, info) = (c.a(0), if mem::x64() { c.a64(1) } else { c.a(1) as u64 }, c.a(2), c.a(3), c.a(4));
+        let (port, key, value, status, info) = (c.a(0), if mem::x64() { c.a64(1) } else { u64::from(c.a(1)) }, c.a(2), c.a(3), c.a(4));
         let Some(port) = port_of(port) else { return 0xc000_0008 };
         post(port, info, key, value, status);
         0

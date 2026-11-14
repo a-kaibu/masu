@@ -31,7 +31,7 @@ pub fn get_last_error() -> u32 {
 }
 
 fn ok(b: bool) -> u32 {
-    b as u32
+    u32::from(b)
 }
 
 /// A guest string argument as Rust text: ANSI (`wide` false) or UTF-16.
@@ -402,7 +402,7 @@ fn TerminateProcess(c: &mut Ctx) -> u32 {
             }
             unsafe { libc::exit(c.a(1) as i32) }
         }
-        Some((pid, _)) => crate::process::terminate(pid, c.a(1)) as u32,
+        Some((pid, _)) => u32::from(crate::process::terminate(pid, c.a(1))),
         None => {
             last_error(6);
             0
@@ -1413,7 +1413,7 @@ fn GetThreadPriorityBoost(c: &mut Ctx) -> u32 {
     let mut g = BOOST_OFF.locked();
     let (proc, m) = g.get_or_insert_with(Default::default);
     let off = m.get(&tid).copied().unwrap_or(*proc);
-    put32(c.a(1), off as u32);
+    put32(c.a(1), u32::from(off));
     1
 }
 fn SetThreadPriorityBoost(c: &mut Ctx) -> u32 {
@@ -1426,7 +1426,7 @@ fn SetThreadPriorityBoost(c: &mut Ctx) -> u32 {
 }
 fn GetProcessPriorityBoost(c: &mut Ctx) -> u32 {
     let off = BOOST_OFF.locked().get_or_insert_with(Default::default).0;
-    put32(c.a(1), off as u32);
+    put32(c.a(1), u32::from(off));
     1
 }
 fn SetProcessPriorityBoost(c: &mut Ctx) -> u32 {
@@ -1482,7 +1482,7 @@ fn Sleep(c: &mut Ctx) -> u32 {
 /// Sleeps `ms` (INFINITE: for good); a save state may be taken meanwhile (the call starts over
 /// in a restored copy).
 pub(crate) fn sleep_ms(ms: u32) {
-    let end = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64));
+    let end = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms)));
     loop {
         let left = match end {
             Some(e) => match e.checked_duration_since(std::time::Instant::now()) {
@@ -1533,9 +1533,9 @@ pub(crate) fn stand_while_suspended() {
 /// The `size`-byte value at `a` (1, 2, 4, 8; else None)
 fn value_at(a: u32, size: u32) -> Option<u64> {
     Some(match size {
-        1 => mem::r8(a) as u64,
-        2 => r16(a) as u64,
-        4 => r32(a) as u64,
+        1 => u64::from(mem::r8(a)),
+        2 => u64::from(r16(a)),
+        4 => u64::from(r32(a)),
         8 => mem::r64(a),
         _ => return None,
     })
@@ -1788,7 +1788,7 @@ fn SetWaitableTimer(c: &mut Ctx) -> u32 {
         let now = files::filetime(SystemTime::now()) as i64;
         Duration::from_nanos((v - now).max(0) as u64 * 100)
     };
-    let period = Duration::from_millis(c.a(2) as u64);
+    let period = Duration::from_millis(u64::from(c.a(2)));
     let r = obj::with(|t| match t.objs.get_mut(&c.a(0)) {
         Some((Obj::Timer { set, due, period: p, .. }, _)) => {
             *set = false;
@@ -1856,7 +1856,7 @@ fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
 /// FALSE, WAIT_TIMEOUT and a NULL overlapped (key and bytes as they were)
 fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
     let (port, pbytes, pkey, pov, ms) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
-    let deadline = (ms != 0xffff_ffff).then(|| std::time::Instant::now() + std::time::Duration::from_millis(ms as u64));
+    let deadline = (ms != 0xffff_ffff).then(|| std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms)));
     loop {
         let got = {
             let mut g = PORTS.locked();
@@ -1923,12 +1923,12 @@ fn PulseEvent(c: &mut Ctx) -> u32 {
 fn CreateMutexA(c: &mut Ctx) -> u32 {
     let tid = crate::cur().tid;
     let own = c.a(1) != 0;
-    sa_inherit(c.a(0), create_named(named(c.a(2), false), Obj::Mutex { owner: if own { tid } else { 0 }, count: own as u32 }))
+    sa_inherit(c.a(0), create_named(named(c.a(2), false), Obj::Mutex { owner: if own { tid } else { 0 }, count: u32::from(own) }))
 }
 fn CreateMutexW(c: &mut Ctx) -> u32 {
     let tid = crate::cur().tid;
     let own = c.a(1) != 0;
-    sa_inherit(c.a(0), create_named(named(c.a(2), true), Obj::Mutex { owner: if own { tid } else { 0 }, count: own as u32 }))
+    sa_inherit(c.a(0), create_named(named(c.a(2), true), Obj::Mutex { owner: if own { tid } else { 0 }, count: u32::from(own) }))
 }
 fn OpenSemaphoreA(c: &mut Ctx) -> u32 {
     open_named(c, false, 3)
@@ -2026,7 +2026,7 @@ pub(crate) fn release_semaphore(h: u32, n: i32) -> Result<i32, u32> {
         Some(_) if n <= 0 => Err(87),
         Some((Obj::Semaphore { count, max }, _)) => {
             let prev = *count;
-            if *count as i64 + n as i64 > *max as i64 {
+            if i64::from(*count) + i64::from(n) > i64::from(*max) {
                 return Err(298); // ERROR_TOO_MANY_POSTS
             }
             *count += n;
@@ -2262,7 +2262,7 @@ fn GetHandleInformation(c: &mut Ctx) -> u32 {
         last_error(6);
         return 0;
     }
-    put32(c.a(1), obj::inherits(h) as u32);
+    put32(c.a(1), u32::from(obj::inherits(h)));
     1
 }
 fn InitializeCriticalSectionEx(c: &mut Ctx) -> u32 {
@@ -2291,7 +2291,7 @@ pub(crate) fn raise_from_api(c: &mut Ctx, code: u32, flags: u32, nargs: u32) {
         let ret = mem::r64(c.esp);
         c.cpu.eip = ret as u32;
         c.cpu.rip_hi = (ret >> 32) as u32;
-        c.cpu.set_gpr(4, c.esp as u64 + 8);
+        c.cpu.set_gpr(4, u64::from(c.esp) + 8);
         crate::seh64::raise(c.cpu, code, flags, ret as u32, &[]);
     } else {
         let ret = r32(c.esp);
@@ -2369,7 +2369,7 @@ pub(crate) fn srw_acquire(l: u32, shared: bool) {
 }
 /// srw_acquire for at most `ms` milliseconds: whether it got the lock.
 pub(crate) fn srw_acquire_for(l: u32, shared: bool, ms: u32) -> bool {
-    let end = std::time::Instant::now() + std::time::Duration::from_millis(ms as u64);
+    let end = std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms));
     SYNC.srw_acquire_until(atomic(l), shared, &Pause, || Some(end.saturating_duration_since(std::time::Instant::now()).as_nanos().div_ceil(1_000_000) as u64))
 }
 pub(crate) fn srw_release(l: u32, shared: bool) {
@@ -2396,10 +2396,10 @@ fn ReleaseSRWLockShared(c: &mut Ctx) -> u32 {
     0
 }
 fn TryAcquireSRWLockExclusive(c: &mut Ctx) -> u32 {
-    srw_try(c.a(0), false) as u32
+    u32::from(srw_try(c.a(0), false))
 }
 fn TryAcquireSRWLockShared(c: &mut Ctx) -> u32 {
-    srw_try(c.a(0), true) as u32
+    u32::from(srw_try(c.a(0), true))
 }
 fn InitializeConditionVariable(c: &mut Ctx) -> u32 {
     crate::mem::wp(c.a(0), 0);
@@ -2431,13 +2431,13 @@ pub(crate) fn cv_wake(cv: u32) {
 }
 fn SleepConditionVariableSRW(c: &mut Ctx) -> u32 {
     let (cv, l, ms, shared) = (c.a(0), c.a(1), c.a(2), c.a(3) & 1 != 0);
-    cv_wait(cv, ms, |l, s| srw_release(l as u32, s != 0), crate::snap::Reacquire::Srw, l as u64, shared as u64, 1) as u32
+    u32::from(cv_wait(cv, ms, |l, s| srw_release(l as u32, s != 0), crate::snap::Reacquire::Srw, u64::from(l), u64::from(shared), 1))
 }
 fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
     let (cv, cs, ms) = (c.a(0), c.a(1), c.a(2));
     // a recursively entered section is left and entered again as a whole
     let depth = r32(cs + cs_off(REC)).max(1);
-    cv_wait(
+    u32::from(cv_wait(
         cv,
         ms,
         |cs, _| {
@@ -2445,10 +2445,10 @@ fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
             cs_leave(cs as u32)
         },
         crate::snap::Reacquire::Cs,
-        cs as u64,
-        depth as u64,
+        u64::from(cs),
+        u64::from(depth),
         1,
-    ) as u32
+    ))
 }
 /// SleepConditionVariableCS's lock back: section `cs` entered `depth` times
 pub(crate) fn cs_reacquire(cs: u64, depth: u64) {
@@ -2830,7 +2830,7 @@ fn DecodePointer(c: &mut Ctx) -> u32 {
 // memory
 
 fn VirtualAlloc(c: &mut Ctx) -> u32 {
-    let a = if mem::x64() { c.a64(0) } else { c.a(0) as u64 };
+    let a = if mem::x64() { c.a64(0) } else { u64::from(c.a(0)) };
     alloc64(a, c.a(1), c.a(2), c.a(3)).unwrap_or_else(|e| {
         last_error(e);
         0
@@ -2869,7 +2869,7 @@ pub(crate) fn alloc64(a: u64, size: u32, ty: u32, prot: u32) -> Result<u32, u32>
 fn VirtualAllocEx(c: &mut Ctx) -> u32 {
     let (a, n, ty, prot) = (c.a(1), c.a(2), c.a(3), c.a(4));
     match remote(c.a(0), xmem::ALLOC, vec![a, n, ty, prot], vec![]) {
-        None => alloc64(if mem::x64() { c.a64(1) } else { a as u64 }, n, ty, prot).unwrap_or_else(|e| {
+        None => alloc64(if mem::x64() { c.a64(1) } else { u64::from(a) }, n, ty, prot).unwrap_or_else(|e| {
             last_error(e);
             0
         }),
@@ -2964,7 +2964,7 @@ fn NtAllocateVirtualMemory(c: &mut Ctx) -> u32 {
         return 0xC000_000D;
     }
     let (want, size) = (mem::rp(pbase), mem::rp(psize));
-    let want64 = if mem::x64() { mem::r64(pbase) } else { want as u64 };
+    let want64 = if mem::x64() { mem::r64(pbase) } else { u64::from(want) };
     let r = match xmem::target(c.a(0)) {
         xmem::Target::Own => alloc64(want64, size, ty, prot),
         xmem::Target::Bad => return 0xC000_0008,
@@ -3128,7 +3128,7 @@ fn VirtualQuery(c: &mut Ctx) -> u32 {
     }
     let [base, _, _, n, ..] = query_r(a);
     write_mbi(mbi, [base, 0, 0, n, 0x10000, 1, 0]);
-    mem::w64(mbi, base as u64 | (hi as u64) << 32);
+    mem::w64(mbi, u64::from(base) | u64::from(hi) << 32);
     48
 }
 fn virtual_query(a: u32, mbi: u32, len: u32) -> u32 {
@@ -3168,7 +3168,7 @@ pub(crate) fn write_mbi(mbi: u32, [base, alloc, aprot, n, state, prot, kind]: [u
         mem::w64(mbi, mem::widen(base));
         mem::w64(mbi + 8, if alloc != 0 { mem::widen(alloc) } else { 0 });
         w32(mbi + 16, aprot);
-        mem::w64(mbi + 24, n as u64);
+        mem::w64(mbi + 24, u64::from(n));
         w32(mbi + 32, state);
         w32(mbi + 36, prot);
         w32(mbi + 40, kind);
@@ -3346,7 +3346,7 @@ fn NtQuerySystemTime(c: &mut Ctx) -> u32 {
 }
 fn RtlTimeToSecondsSince1970(c: &mut Ctx) -> u32 {
     let s = (get64(c.a(0)) / 10_000_000) as i64 - 11_644_473_600;
-    if !(0..=u32::MAX as i64).contains(&s) {
+    if !(0..=i64::from(u32::MAX)).contains(&s) {
         return 0;
     }
     put32(c.a(1), s as u32);
@@ -3445,7 +3445,7 @@ fn RtlCreateUnicodeStringFromAsciiz(c: &mut Ctx) -> u32 {
         return 0;
     }
     let w = crate::text::a2w(&cstr(s));
-    (counted_out(us, &w, 2, true) == 0) as u32
+    u32::from(counted_out(us, &w, 2, true) == 0)
 }
 fn RtlFreeUnicodeString(c: &mut Ctx) -> u32 {
     let us = c.a(0);
@@ -3463,7 +3463,7 @@ fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
         put_counted(us, n, n + unit, b);
         b
     } else {
-        if n + unit > r16(us + 2) as u32 {
+        if n + unit > u32::from(r16(us + 2)) {
             return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
         }
         w16(us, n as u16);
@@ -3476,17 +3476,17 @@ fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
     0
 }
 fn counted_bytes(us: u32) -> Vec<u8> {
-    (0..r16(us) as u32).map(|i| mem::r8(mem::rp(us + mem::ps()) + i)).collect()
+    (0..u32::from(r16(us))).map(|i| mem::r8(mem::rp(us + mem::ps()) + i)).collect()
 }
 fn counted_wide(us: u32) -> Vec<u16> {
-    (0..r16(us) as u32 / 2).map(|i| r16(mem::rp(us + mem::ps()) + 2 * i)).collect()
+    (0..u32::from(r16(us)) / 2).map(|i| r16(mem::rp(us + mem::ps()) + 2 * i)).collect()
 }
 fn RtlAnsiStringToUnicodeString(c: &mut Ctx) -> u32 {
     let w = a2w(&counted_bytes(c.a(1)));
     counted_out(c.a(0), &w, 2, c.a(2) != 0)
 }
 fn RtlUnicodeStringToAnsiString(c: &mut Ctx) -> u32 {
-    let a: Vec<u16> = crate::text::w2a(&counted_wide(c.a(1))).into_iter().map(|b| b as u16).collect();
+    let a: Vec<u16> = crate::text::w2a(&counted_wide(c.a(1))).into_iter().map(|b| u16::from(b)).collect();
     counted_out(c.a(0), &a, 1, c.a(2) != 0)
 }
 /// RtlMultiByteToUnicodeN(dst, dst bytes, &written bytes, src, src bytes): the ANSI code page's
@@ -3537,7 +3537,7 @@ fn RtlUnicodeToMultiByteSize(c: &mut Ctx) -> u32 {
 }
 /// RtlUpcaseUnicodeChar(c): Windows' upper case of one UTF-16 unit
 fn RtlUpcaseUnicodeChar(c: &mut Ctx) -> u32 {
-    crate::nt::up(c.a(0) as u16) as u32
+    u32::from(crate::nt::up(c.a(0) as u16))
 }
 /// RtlCompareUnicodeString(a, b, case insensitive): the difference of the first units that
 /// differ (in upper case when asked), else of the lengths
@@ -3547,7 +3547,7 @@ fn RtlCompareUnicodeString(c: &mut Ctx) -> u32 {
     for (x, y) in a.iter().zip(&b) {
         let (x, y) = (f(*x), f(*y));
         if x != y {
-            return (x as i32 - y as i32) as u32;
+            return (i32::from(x) - i32::from(y)) as u32;
         }
     }
     (a.len() as i32 - b.len() as i32) as u32
@@ -3555,7 +3555,7 @@ fn RtlCompareUnicodeString(c: &mut Ctx) -> u32 {
 /// RtlEqualUnicodeString(a, b, case insensitive)
 fn RtlEqualUnicodeString(c: &mut Ctx) -> u32 {
     let (a, b) = (counted_wide(c.a(0)), counted_wide(c.a(1)));
-    (a.len() == b.len() && RtlCompareUnicodeString(c) == 0) as u32
+    u32::from(a.len() == b.len() && RtlCompareUnicodeString(c) == 0)
 }
 /// RtlDosPathNameToNtPathName_U(dos, &nt, &filepart, reserved): "\??\" + the full path
 fn RtlDosPathNameToNtPathName_U(c: &mut Ctx) -> u32 {
@@ -3564,7 +3564,7 @@ fn RtlDosPathNameToNtPathName_U(c: &mut Ctx) -> u32 {
     let w: Vec<u16> = format!("\\??\\{full}").encode_utf16().collect();
     counted_out(nt, &w, 2, true);
     if part != 0 {
-        let at = w.iter().rposition(|&x| x == b'\\' as u16).map_or(0, |i| i + 1);
+        let at = w.iter().rposition(|&x| x == u16::from(b'\\')).map_or(0, |i| i + 1);
         mem::wp(part, if at < w.len() { mem::rp(nt + mem::ps()) + 2 * at as u32 } else { 0 });
     }
     1
@@ -3597,9 +3597,9 @@ fn NtProtectVirtualMemory(c: &mut Ctx) -> u32 {
     match mem::protect(base, size, c.a(3)) {
         Some(old) => {
             let start = base & !0xfff;
-            let end = (base as u64 + size.max(1) as u64 + 0xfff) & !0xfff;
+            let end = (u64::from(base) + u64::from(size.max(1)) + 0xfff) & !0xfff;
             mem::wp(pb, start);
-            mem::wp(ps, (end - start as u64) as u32);
+            mem::wp(ps, (end - u64::from(start)) as u32);
             put32(c.a(4), old);
             0
         }
@@ -3731,7 +3731,7 @@ fn HeapSize(c: &mut Ctx) -> u32 {
 /// HeapValidate(heap, flags, block): a whole heap is valid; a block is one the heap gave
 fn HeapValidate(c: &mut Ctx) -> u32 {
     let p = c.a(2);
-    (p == 0 || mem::heap_owns(p)) as u32
+    u32::from(p == 0 || mem::heap_owns(p))
 }
 fn HeapCompact(_: &mut Ctx) -> u32 {
     0x10_0000
@@ -4391,8 +4391,8 @@ fn tp_current(h: u32, gen: u32) -> bool {
 /// Close*: the object goes (its handle block too; a callback queued for it calls nothing).
 fn tp_close(h: u32) {
     if tp_with(|m| m.remove(&h)).is_some() {
-        crate::pool::TIMERS.cancel(crate::pool::key::TP | h as u64);
-        crate::pool::wait_cancel(h as u64);
+        crate::pool::TIMERS.cancel(crate::pool::key::TP | u64::from(h));
+        crate::pool::wait_cancel(u64::from(h));
         mem::heap_free(h);
         TP_CV.notify_all();
     }
@@ -4481,7 +4481,7 @@ static WAIT_RUNNING: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
 /// Windows runs those, one after the other.
 fn rw_arm(h: u32, gen: u32, obj_h: u32, ms: u32, flags: u32) {
     crate::pool::wait_add(
-        h as u64,
+        u64::from(h),
         obj_h,
         ms,
         Box::new(move |c, r| {
@@ -4491,7 +4491,7 @@ fn rw_arm(h: u32, gen: u32, obj_h: u32, ms: u32, flags: u32) {
             let run = move |c: &mut Ctx| {
                 let Some((cb, ctx)) = tp_with(|m| m.get(&h).filter(|t| t.gen == gen).map(|t| (t.cb, t.ctx))) else { return };
                 WAIT_RUNNING.locked().push((h, crate::cur().tid));
-                c.call(cb, &[ctx, (r != 0) as u32]);
+                c.call(cb, &[ctx, u32::from(r != 0)]);
                 WAIT_RUNNING.locked().retain(|x| x.0 != h);
                 if flags & 8 == 0 && tp_current(h, gen) {
                     rw_arm(h, gen, obj_h, ms, flags);
@@ -4599,7 +4599,7 @@ fn UnregisterWait(c: &mut Ctx) -> u32 {
 /// A registered wait goes: no more callbacks
 fn rw_forget(h: u32) {
     tp_with(|m| m.remove(&h));
-    crate::pool::wait_cancel(h as u64);
+    crate::pool::wait_cancel(u64::from(h));
 }
 /// UnregisterWaitEx(wait, event): event INVALID_HANDLE_VALUE waits for a running callback,
 /// another event is set once it is done
@@ -4641,7 +4641,7 @@ fn CreateThreadpoolTimer(c: &mut Ctx) -> u32 {
 /// `period` ms after (a period missed by far starts over from now).
 fn tp_timer_arm(h: u32, gen: u32, at: std::time::Instant, period: u32) {
     crate::pool::TIMERS.set(
-        crate::pool::key::TP | h as u64,
+        crate::pool::key::TP | u64::from(h),
         at,
         Box::new(move |_| {
             if !tp_current(h, gen) {
@@ -4649,7 +4649,7 @@ fn tp_timer_arm(h: u32, gen: u32, at: std::time::Instant, period: u32) {
             }
             tp_queue(h, gen, TpCall::Object);
             if period != 0 {
-                let p = std::time::Duration::from_millis(period as u64);
+                let p = std::time::Duration::from_millis(u64::from(period));
                 let now = std::time::Instant::now();
                 let next = if at + p * 4 < now { now + p } else { at + p };
                 tp_timer_arm(h, gen, next, period);
@@ -4665,17 +4665,17 @@ fn SetThreadpoolTimer(c: &mut Ctx) -> u32 {
         let at = std::time::Instant::now() + std::time::Duration::from_millis(due_ms(due));
         tp_timer_arm(h, gen, at, period);
     } else {
-        crate::pool::TIMERS.cancel(crate::pool::key::TP | h as u64);
+        crate::pool::TIMERS.cancel(crate::pool::key::TP | u64::from(h));
     }
     0
 }
 fn IsThreadpoolTimerSet(c: &mut Ctx) -> u32 {
-    crate::pool::TIMERS.pending(crate::pool::key::TP | c.a(0) as u64) as u32
+    u32::from(crate::pool::TIMERS.pending(crate::pool::key::TP | u64::from(c.a(0))))
 }
 fn WaitForThreadpoolTimerCallbacks(c: &mut Ctx) -> u32 {
     if c.a(1) != 0 {
         tp_bump(c.a(0));
-        crate::pool::TIMERS.cancel(crate::pool::key::TP | c.a(0) as u64);
+        crate::pool::TIMERS.cancel(crate::pool::key::TP | u64::from(c.a(0)));
     }
     0
 }
@@ -4691,9 +4691,9 @@ fn SetThreadpoolWait(c: &mut Ctx) -> u32 {
     let (h, obj_h, due) = (c.a(0), c.a(1), c.a(2));
     let Some(gen) = tp_bump(h) else { return 0 };
     if obj_h != 0 {
-        let ms = if due == 0 { u32::MAX } else { due_ms(due).min(u32::MAX as u64 - 1) as u32 };
+        let ms = if due == 0 { u32::MAX } else { due_ms(due).min(u64::from(u32::MAX) - 1) as u32 };
         crate::pool::wait_add(
-            h as u64,
+            u64::from(h),
             obj_h,
             ms,
             Box::new(move |_, r| {
@@ -4703,14 +4703,14 @@ fn SetThreadpoolWait(c: &mut Ctx) -> u32 {
             }),
         );
     } else {
-        crate::pool::wait_cancel(h as u64);
+        crate::pool::wait_cancel(u64::from(h));
     }
     0
 }
 fn WaitForThreadpoolWaitCallbacks(c: &mut Ctx) -> u32 {
     if c.a(1) != 0 {
         tp_bump(c.a(0));
-        crate::pool::wait_cancel(c.a(0) as u64);
+        crate::pool::wait_cancel(u64::from(c.a(0)));
     }
     0
 }
@@ -4811,7 +4811,7 @@ fn IsWow64Process(c: &mut Ctx) -> u32 {
         last_error(6);
         return 0;
     };
-    put32(c.a(1), w as u32);
+    put32(c.a(1), u32::from(w));
     1
 }
 /// IsWow64Process2(process, &process machine, &native machine): IMAGE_FILE_MACHINE_I386
@@ -4889,7 +4889,7 @@ fn RtlWow64EnableFsRedirection(c: &mut Ctx) -> u32 {
     if mem::x64() {
         return 0xc000_0002;
     }
-    FS_REDIR_OFF.with(|r| r.set((c.a(0) == 0) as u32));
+    FS_REDIR_OFF.with(|r| r.set(u32::from(c.a(0) == 0)));
     0
 }
 /// kernel32's switches in a 64-bit process (not WoW64): FALSE, ERROR_INVALID_FUNCTION
@@ -4923,7 +4923,7 @@ fn Wow64EnableWow64FsRedirection(c: &mut Ctx) -> u32 {
     if mem::x64() {
         return not_wow64();
     }
-    FS_REDIR_OFF.with(|r| r.set((c.a(0) & 0xff == 0) as u32));
+    FS_REDIR_OFF.with(|r| r.set(u32::from(c.a(0) & 0xff == 0)));
     1
 }
 
@@ -5104,7 +5104,7 @@ pub fn verify_version(cur: &OsVer, want: &OsVer, types: u32, cond: u64) -> Resul
     let c = |k: u32| (cond >> (3 * k) & 7) as u8;
     let check = |ok: bool| if ok { Ok(()) } else { Err(VerFail::Mismatch) };
     if types & 0x80 != 0 {
-        check(ver_compare(cur.product as u32, want.product as u32, c(7)))?;
+        check(ver_compare(u32::from(cur.product), u32::from(want.product), c(7)))?;
     }
     if types & 0x40 != 0 {
         match c(6) {
@@ -5126,8 +5126,8 @@ pub fn verify_version(cur: &OsVer, want: &OsVer, types: u32, cond: u64) -> Resul
         let parts = [
             (2, 1, cur.major, want.major),
             (1, 0, cur.minor, want.minor),
-            (0x20, 5, cur.sp_major as u32, want.sp_major as u32),
-            (0x10, 4, cur.sp_minor as u32, want.sp_minor as u32),
+            (0x20, 5, u32::from(cur.sp_major), u32::from(want.sp_major)),
+            (0x10, 4, u32::from(cur.sp_minor), u32::from(want.sp_minor)),
         ];
         for (bit, slot, l, r) in parts {
             if types & bit != 0 && next {
@@ -5147,7 +5147,7 @@ pub fn ver_set_condition_mask(mask: u64, types: u32, cond: u8) -> u64 {
     if types == 0 {
         return 0;
     }
-    let c = (cond & 7) as u64;
+    let c = u64::from(cond & 7);
     // Windows marks this layout with bit 63, even for condition zero. The highest type
     // bit chooses its three-bit slot (including unrecognized types, winref/versions).
     mask | (1 << 63) | c.wrapping_shl(3 * types.ilog2())
@@ -5169,7 +5169,7 @@ fn read_osver(p: u32, wide: bool) -> OsVer {
 }
 /// The condition mask argument (a 64-bit value: two stack slots on x86, after two 32-bit ones)
 fn cond_mask_arg(c: &Ctx) -> u64 {
-    if mem::x64() { c.a64(2) } else { c.a(2) as u64 | (c.a(3) as u64) << 32 }
+    if mem::x64() { c.a64(2) } else { u64::from(c.a(2)) | u64::from(c.a(3)) << 32 }
 }
 fn verify_version_info(c: &mut Ctx, wide: bool) -> u32 {
     match verify_version(&os_version(), &read_osver(c.a(0), wide), c.a(1), cond_mask_arg(c)) {
@@ -5196,7 +5196,7 @@ fn RtlVerifyVersionInfo(c: &mut Ctx) -> u32 {
     }
 }
 fn VerSetConditionMask(c: &mut Ctx) -> u32 {
-    let (m, t, k) = if mem::x64() { (c.a64(0), c.a(1), c.a(2)) } else { (c.a(0) as u64 | (c.a(1) as u64) << 32, c.a(2), c.a(3)) };
+    let (m, t, k) = if mem::x64() { (c.a64(0), c.a(1), c.a(2)) } else { (u64::from(c.a(0)) | u64::from(c.a(1)) << 32, c.a(2), c.a(3)) };
     let v = ver_set_condition_mask(m, t, k as u8);
     c.ret64(v)
 }
@@ -5558,7 +5558,7 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
     // (WC_NO_BEST_FIT_CHARS: a character the code page lacks is the default one, never a
     // look-alike)
     let (a, used) = crate::text::w2mb_flags(cp, &s, &d, c.a(1) & 0x400 == 0);
-    put32(pused, used as u32);
+    put32(pused, u32::from(used));
     if cap == 0 {
         return a.len() as u32;
     }
@@ -5584,7 +5584,7 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
 
 /// CT_CTYPE1, with C1_DEFINED (0x200) on every character but the surrogates
 pub(crate) fn ctype1(ch: u16) -> u16 {
-    let c = ch as u32;
+    let c = u32::from(ch);
     let mut t = 0u16;
     if let Some(x) = char::from_u32(c) {
         t |= 0x200;
@@ -5651,7 +5651,7 @@ fn ctype3(ch: u16) -> u16 {
     const FULLWIDTH: u16 = 0x80;
     const IDEOGRAPH: u16 = 0x100;
     const ALPHA: u16 = 0x8000;
-    let c = ch as u32;
+    let c = u32::from(ch);
     let t1 = ctype1(ch);
     let alpha = if t1 & 0x100 != 0 { ALPHA } else { 0 };
     let symbol = if t1 & 0x10 != 0 || c == 0x20 || c == 0x3000 { SYMBOL } else { 0 };
@@ -5807,7 +5807,7 @@ fn CompareStringOrdinal(c: &mut Ctx) -> u32 {
         if !nocase {
             return v;
         }
-        v.into_iter().map(|u| char::from_u32(u as u32).filter(|ch| !ch.is_ascii() || ch.is_ascii_lowercase()).and_then(|ch| {
+        v.into_iter().map(|u| char::from_u32(u32::from(u)).filter(|ch| !ch.is_ascii() || ch.is_ascii_lowercase()).and_then(|ch| {
             let mut it = ch.to_uppercase();
             match (it.next(), it.next()) {
                 (Some(x), None) if (x as u32) < 0x10000 => Some(x as u16),
@@ -5826,7 +5826,7 @@ fn CompareStringW(c: &mut Ctx) -> u32 {
 /// '...' is literal text ('' a quote). `skip` drops fields of those letters with the literal
 /// text before them (TIME_NOSECONDS and the like).
 fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> String {
-    let (y, mo, dow, d, h, mi, sec) = (st[0] as u32, st[1] as u32, st[2] as usize % 7, st[3] as u32, st[4] as u32, st[5] as u32, st[6] as u32);
+    let (y, mo, dow, d, h, mi, sec) = (u32::from(st[0]), u32::from(st[1]), st[2] as usize % 7, u32::from(st[3]), u32::from(st[4]), u32::from(st[5]), u32::from(st[6]));
     enum Item {
         Lit(String),
         Field(char, usize),
@@ -5935,7 +5935,7 @@ fn read_systemtime(p: u32, date: bool) -> Option<[u16; 8]> {
     if let Some(t) = tmp {
         mem::heap_free(t);
     }
-    let (y, m, d) = (st[0] as i64, st[1] as i64, st[3] as i64);
+    let (y, m, d) = (i64::from(st[0]), i64::from(st[1]), i64::from(st[3]));
     let good = if date { (1601..=30827).contains(&y) && (1..=12).contains(&m) && d >= 1 && d <= days_in_month(y, m) } else { st[4] < 24 && st[5] < 60 && st[6] < 60 && st[7] < 1000 };
     let mut st = st;
     if date {
@@ -6004,7 +6004,7 @@ fn GetTimeFormatW(c: &mut Ctx) -> u32 {
     date_time_format(c, false, true)
 }
 fn MulDiv(c: &mut Ctx) -> u32 {
-    let (a, b, d) = (c.i(0) as i64, c.i(1) as i64, c.i(2) as i64);
+    let (a, b, d) = (i64::from(c.i(0)), i64::from(c.i(1)), i64::from(c.i(2)));
     if d == 0 {
         return 0xffff_ffff;
     }
@@ -6356,7 +6356,7 @@ fn put64(p: u32, v: u64) {
     w32(p + 4, (v >> 32) as u32);
 }
 fn get64(p: u32) -> u64 {
-    r32(p) as u64 | (r32(p + 4) as u64) << 32
+    u64::from(r32(p)) | u64::from(r32(p + 4)) << 32
 }
 fn GetSystemTimeAsFileTime(c: &mut Ctx) -> u32 {
     put64(c.a(0), files::filetime(std::time::SystemTime::now()));
@@ -6385,7 +6385,7 @@ fn days_in_month(y: i64, m: i64) -> i64 {
 }
 /// A SYSTEMTIME's FILETIME (day of week ignored), None for fields Windows rejects.
 fn systemtime_ft(p: u32) -> Option<u64> {
-    let f = |o| r16(p + o) as i64;
+    let f = |o| i64::from(r16(p + o));
     let (y, m, d, h, mi, s, ms) = (f(0), f(2), f(6), f(8), f(10), f(12), f(14));
     if !(1601..=30827).contains(&y) || !(1..=12).contains(&m) || d < 1 || d > days_in_month(y, m) || h > 23 || mi > 59 || s > 59 || ms > 999 {
         return None;
@@ -6405,7 +6405,7 @@ fn SystemTimeToFileTime(c: &mut Ctx) -> u32 {
 /// as local FILETIME: wDay is the week (5: the last) of wDayOfWeek in wMonth; a nonzero wYear is
 /// an absolute date.
 fn tz_transition(p: u32, year: i64) -> Option<i64> {
-    let f = |o| r16(p + o) as i64;
+    let f = |o| i64::from(r16(p + o));
     let (m, dow, wk, h, mi, s, ms) = (f(2), f(4), f(6), f(8), f(10), f(12), f(14));
     if m == 0 {
         return None;
@@ -6424,11 +6424,11 @@ fn tz_transition(p: u32, year: i64) -> Option<i64> {
 }
 /// The bias (minutes, UTC = local + bias) in effect at `t` (a FILETIME, UTC or local).
 fn tz_bias_at(z: u32, t: i64, utc: bool) -> i64 {
-    let bias = r32(z) as i32 as i64;
-    let (std_b, dst_b) = (r32(z + 84) as i32 as i64, r32(z + 168) as i32 as i64);
+    let bias = i64::from(r32(z) as i32);
+    let (std_b, dst_b) = (i64::from(r32(z + 84) as i32), i64::from(r32(z + 168) as i32));
     let st = mem::heap_alloc(16, true);
     write_systemtime(st, t.div_euclid(10_000_000) - 11_644_473_600, 0);
-    let year = r16(st) as i64;
+    let year = i64::from(r16(st));
     mem::heap_free(st);
     let (Some(dst_start), Some(std_start)) = (tz_transition(z + 152, year), tz_transition(z + 68, year)) else {
         return bias + std_b;
@@ -6482,7 +6482,7 @@ fn TzSpecificLocalTimeToSystemTime(c: &mut Ctx) -> u32 {
     1
 }
 fn DosDateTimeToFileTime(c: &mut Ctx) -> u32 {
-    let (d, t) = (c.a(0) as i64 & 0xffff, c.a(1) as i64 & 0xffff);
+    let (d, t) = (i64::from(c.a(0)) & 0xffff, i64::from(c.a(1)) & 0xffff);
     let (y, m, dd, h, mi, s) = (1980 + (d >> 9), (d >> 5) & 15, d & 31, t >> 11, (t >> 5) & 63, (t & 31) * 2);
     if !(1..=12).contains(&m) || dd < 1 || dd > days_in_month(y, m) || h > 23 || mi > 59 || s > 59 {
         last_error(87);
@@ -6573,7 +6573,7 @@ fn GetTickCount(_: &mut Ctx) -> u32 {
     ticks_ms()
 }
 fn GetTickCount64(c: &mut Ctx) -> u32 {
-    let v = ticks_ms() as u64;
+    let v = u64::from(ticks_ms());
     c.ret64(v)
 }
 pub(crate) fn qpc() -> u64 {
@@ -7308,9 +7308,9 @@ fn _hwrite(c: &mut Ctx) -> u32 {
 fn _llseek(c: &mut Ctx) -> u32 {
     let Some(f) = obj::file(c.a(0)) else { return 0xffff_ffff };
     let pos = match c.a(2) {
-        0 => SeekFrom::Start(c.a(1) as u64),
-        1 => SeekFrom::Current(c.i(1) as i64),
-        _ => SeekFrom::End(c.i(1) as i64),
+        0 => SeekFrom::Start(u64::from(c.a(1))),
+        1 => SeekFrom::Current(i64::from(c.i(1))),
+        _ => SeekFrom::End(i64::from(c.i(1))),
     };
     f.seek(pos).map_or(0xffff_ffff, |p| p as u32)
 }
@@ -7494,7 +7494,7 @@ fn SetFilePointer(c: &mut Ctx) -> u32 {
         last_error(6);
         return 0xffff_ffff;
     };
-    let off = if phi != 0 { (lo as u64 | (r32(phi) as u64) << 32) as i64 } else { lo as i32 as i64 };
+    let off = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo as i32) };
     let pos = match how {
         0 => SeekFrom::Start(off as u64),
         1 => SeekFrom::Current(off),
@@ -7519,7 +7519,7 @@ fn SetFilePointerEx(c: &mut Ctx) -> u32 {
     let (h, off, out, how) = if mem::x64() {
         (c.a(0), c.a64(1) as i64, c.a(2), c.a(3))
     } else {
-        (c.a(0), (c.a(1) as u64 | (c.a(2) as u64) << 32) as i64, c.a(3), c.a(4))
+        (c.a(0), (u64::from(c.a(1)) | u64::from(c.a(2)) << 32) as i64, c.a(3), c.a(4))
     };
     let Some(f) = obj::file(h) else { return 0 };
     let pos = match how {
@@ -7579,18 +7579,18 @@ fn FlushFileBuffers(_: &mut Ctx) -> u32 {
 /// LockFile(h, offset low, high, length low, high): an exclusive lock, failing at once
 /// (ERROR_LOCK_VIOLATION) when the range is locked (kura::filelock has the rules).
 fn LockFile(c: &mut Ctx) -> u32 {
-    let (off, len) = (c.a(1) as u64 | (c.a(2) as u64) << 32, c.a(3) as u64 | (c.a(4) as u64) << 32);
+    let (off, len) = (u64::from(c.a(1)) | u64::from(c.a(2)) << 32, u64::from(c.a(3)) | u64::from(c.a(4)) << 32);
     lock_file(c.a(0), off, len, true, true)
 }
 /// UnlockFile(h, offset low, high, length low, high)
 fn UnlockFile(c: &mut Ctx) -> u32 {
-    let (off, len) = (c.a(1) as u64 | (c.a(2) as u64) << 32, c.a(3) as u64 | (c.a(4) as u64) << 32);
+    let (off, len) = (u64::from(c.a(1)) | u64::from(c.a(2)) << 32, u64::from(c.a(3)) | u64::from(c.a(4)) << 32);
     unlock_file(c.a(0), off, len)
 }
 /// OVERLAPPED's Offset / OffsetHigh (after Internal, InternalHigh: ULONG_PTRs)
 fn ov_offset(ov: u32) -> u64 {
     let k = mem::ps();
-    r32(ov + 2 * k) as u64 | (r32(ov + 2 * k + 4) as u64) << 32
+    u64::from(r32(ov + 2 * k)) | u64::from(r32(ov + 2 * k + 4)) << 32
 }
 /// LockFileEx(h, flags, reserved, length low, high, overlapped): LOCKFILE_EXCLUSIVE_LOCK (2) or
 /// shared, LOCKFILE_FAIL_IMMEDIATELY (1) or wait until the range is free, at OVERLAPPED's offset.
@@ -7600,7 +7600,7 @@ fn LockFileEx(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    lock_file(c.a(0), ov_offset(ov), c.a(3) as u64 | (c.a(4) as u64) << 32, flags & 2 != 0, flags & 1 != 0)
+    lock_file(c.a(0), ov_offset(ov), u64::from(c.a(3)) | u64::from(c.a(4)) << 32, flags & 2 != 0, flags & 1 != 0)
 }
 /// UnlockFileEx(h, reserved, length low, high, overlapped)
 fn UnlockFileEx(c: &mut Ctx) -> u32 {
@@ -7609,7 +7609,7 @@ fn UnlockFileEx(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    unlock_file(c.a(0), ov_offset(ov), c.a(2) as u64 | (c.a(3) as u64) << 32)
+    unlock_file(c.a(0), ov_offset(ov), u64::from(c.a(2)) | u64::from(c.a(3)) << 32)
 }
 fn lock_file(h: u32, off: u64, len: u64, excl: bool, now: bool) -> u32 {
     let Some(f) = obj::file(h) else {
@@ -7725,13 +7725,13 @@ fn GetFileInformationByHandleEx(c: &mut Ctx) -> u32 {
             put64(p, m.len().next_multiple_of(4096));
             put64(p + 8, m.len());
             w32(p + 16, 1);
-            mem::write(p + 21, &[m.is_dir() as u8]);
+            mem::write(p + 21, &[u8::from(m.is_dir())]);
         }
         9 => w32(p, files::attrs(&m)),
         _ => {
             put64(p, 0x1234);
             // (a file id from the path: os.path.samefile compares them)
-            let h = f.path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b.to_ascii_lowercase() as u64).wrapping_mul(0x100_0000_01b3));
+            let h = f.path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b.to_ascii_lowercase())).wrapping_mul(0x100_0000_01b3));
             put64(p + 8, h);
         }
     }
@@ -7744,8 +7744,8 @@ fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
         return 0x8007_0057;
     }
     let w = mem::wstr(p);
-    let sep = |i: usize| w.get(i).is_some_and(|&ch| ch == b'\\' as u16 || ch == b'/' as u16);
-    let n = if w.len() >= 2 && w[1] == b':' as u16 {
+    let sep = |i: usize| w.get(i).is_some_and(|&ch| ch == u16::from(b'\\') || ch == u16::from(b'/'));
+    let n = if w.len() >= 2 && w[1] == u16::from(b':') {
         if sep(2) { 3 } else { 2 }
     } else if sep(0) && sep(1) {
         // \\server\share\ (or \\?\...)
@@ -7768,7 +7768,7 @@ fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
     0
 }
 fn VerifyConsoleIoHandle(c: &mut Ctx) -> u32 {
-    obj::file(c.a(0)).is_none() as u32
+    u32::from(obj::file(c.a(0)).is_none())
 }
 /// SetHandleInformation(h, mask, flags): HANDLE_FLAG_INHERIT (protection from close is not kept)
 fn SetHandleInformation(c: &mut Ctx) -> u32 {
@@ -8457,7 +8457,7 @@ fn query_dos_device(c: &mut Ctx, wide: bool) -> u32 {
     };
     let mut units: Vec<u16> = Vec::new();
     for x in &v {
-        if wide { units.extend(x.encode_utf16()) } else { units.extend(x.bytes().map(|b| b as u16)) }
+        if wide { units.extend(x.encode_utf16()) } else { units.extend(x.bytes().map(|b| u16::from(b))) }
         units.push(0);
     }
     units.push(0);
@@ -8494,7 +8494,7 @@ fn logical_drive_strings(c: &mut Ctx, wide: bool) -> u32 {
         return s.len() as u32;
     }
     for (i, &b) in s.iter().enumerate() {
-        if wide { w16(out + 2 * i as u32, b as u16) } else { w8(out + i as u32, b) }
+        if wide { w16(out + 2 * i as u32, u16::from(b)) } else { w8(out + i as u32, b) }
     }
     s.len() as u32 - 1
 }
@@ -8515,8 +8515,8 @@ pub(crate) const DISK_TOTAL_CLUSTERS: u32 = 0x0200_0000;
 
 /// (free bytes, total bytes) of the disk sake reports
 pub(crate) fn disk_bytes() -> (u64, u64) {
-    let cluster = (DISK_SECTORS_PER_CLUSTER * DISK_BYTES_PER_SECTOR) as u64;
-    (DISK_FREE_CLUSTERS as u64 * cluster, DISK_TOTAL_CLUSTERS as u64 * cluster)
+    let cluster = u64::from(DISK_SECTORS_PER_CLUSTER * DISK_BYTES_PER_SECTOR);
+    (u64::from(DISK_FREE_CLUSTERS) * cluster, u64::from(DISK_TOTAL_CLUSTERS) * cluster)
 }
 
 fn GetDiskFreeSpaceA(c: &mut Ctx) -> u32 {
@@ -8655,7 +8655,7 @@ fn create_file_mapping(c: &mut Ctx, wide: bool) -> u32 {
     let (protect, size) = (c.a(2) & 0xff, c.a(4));
     let write = matches!(protect, 0x04 | 0x40);
     // (a writable mapping larger than its file makes the file that long, as Windows does)
-    let want = c.a(4) as u64 | (c.a(3) as u64) << 32;
+    let want = u64::from(c.a(4)) | u64::from(c.a(3)) << 32;
     if let (Some(f), true) = (&f, write) {
         if want > f.size() {
             let _ = f.f.locked().set_len(want);
@@ -8698,13 +8698,13 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
         last_error(6);
         return 0;
     };
-    let off = off_lo as u64 | (off_hi as u64) << 32;
+    let off = u64::from(off_lo) | u64::from(off_hi) << 32;
     // a pagefile section: one block of its whole size that every view shows, at the view's
     // offset (F&C's archive reader maps its decoded index again 0x40000 in); past its end:
     // ERROR_ACCESS_DENIED. The block goes when its last view is unmapped and its last handle
     // closed (it stayed for good).
     let Some(f) = file else {
-        if off + n as u64 > size as u64 || off >= size.max(1) as u64 {
+        if off + u64::from(n) > u64::from(size) || off >= u64::from(size.max(1)) {
             last_error(5);
             return 0;
         }
@@ -8730,18 +8730,18 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
     // file (a writable mapping made it at least its size), past it ERROR_ACCESS_DENIED; a view
     // bigger than the address space can hold: ERROR_NOT_ENOUGH_MEMORY
     let len = f.size();
-    let section = len.max(size as u64);
-    if off > section || n as u64 > section - off {
+    let section = len.max(u64::from(size));
+    if off > section || u64::from(n) > section - off {
         last_error(5);
         return 0;
     }
-    let want = if n == 0 { section - off } else { n as u64 };
+    let want = if n == 0 { section - off } else { u64::from(n) };
     if want > 0x7fff_0000 {
         last_error(8);
         return 0;
     }
     let n = want as u32;
-    let have = len.saturating_sub(off).min(n as u64) as u32;
+    let have = len.saturating_sub(off).min(u64::from(n)) as u32;
     let path = files::host_to_win(&f.path);
     // (a read-only view of what another read-only view shows already: the same copy)
     // (FILE_MAP_READ alone: FILE_MAP_WRITE and FILE_MAP_COPY views are the program's own)
@@ -9187,7 +9187,7 @@ fn computer_name_ex(c: &mut Ctx, wide: bool) -> u32 {
 }
 /// RtlGenRandom (advapi32!SystemFunction036): the browser's random bytes.
 fn SystemFunction036(c: &mut Ctx) -> u32 {
-    random_into(c.a(0), c.a(1)) as u32
+    u32::from(random_into(c.a(0), c.a(1)))
 }
 /// `n` random bytes straight into guest memory at `p` (a guest-sized Vec could be any size):
 /// false where the buffer is not writable or the browser gives none
@@ -9295,16 +9295,16 @@ static SLIST: Mutex<()> = Mutex::new(());
 /// (first entry, depth) of list `h`
 fn slist_get(h: u32) -> (u32, u32) {
     if mem::x64() {
-        ((mem::r64(h + 8) & !0xf) as u32, r16(h) as u32)
+        ((mem::r64(h + 8) & !0xf) as u32, u32::from(r16(h)))
     } else {
-        (r32(h), r16(h + 4) as u32)
+        (r32(h), u32::from(r16(h + 4)))
     }
 }
 fn slist_set(h: u32, next: u32, depth: u32) {
     if mem::x64() {
         let seq = (mem::r64(h) >> 16).wrapping_add(1) & 0xffff_ffff_ffff;
-        mem::w64(h, (depth & 0xffff) as u64 | seq << 16);
-        mem::w64(h + 8, next as u64 & !0xf | 1);
+        mem::w64(h, u64::from(depth & 0xffff) | seq << 16);
+        mem::w64(h + 8, u64::from(next) & !0xf | 1);
         return;
     }
     w32(h, next);

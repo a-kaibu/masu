@@ -55,14 +55,14 @@ impl Ctx<'_> {
     }
     /// A pointer-sized argument (size_t, ptrdiff_t): x64 all 64 bits, x86 the slot.
     pub fn z(&self, i: u32) -> u64 {
-        if crate::mem::x64() { self.a64(i) } else { self.a(i) as u64 }
+        if crate::mem::x64() { self.a64(i) } else { u64::from(self.a(i)) }
     }
     /// The 64-bit integer argument `i` (x64: one argument; x86: the slots `i`, `i + 1`).
     pub fn q(&self, i: u32) -> u64 {
         if crate::mem::x64() {
             return self.a64(i);
         }
-        self.a(i) as u64 | (self.a(i + 1) as u64) << 32
+        u64::from(self.a(i)) | u64::from(self.a(i + 1)) << 32
     }
     /// The double argument `i` (x64: XMM `i` or its stack slot; x86: the slots `i`, `i + 1`).
     pub fn d(&self, i: u32) -> f64 {
@@ -128,7 +128,7 @@ impl Ctx<'_> {
         if crate::mem::x64() {
             for &i in floats {
                 if i < 4 {
-                    self.cpu.set_xmm(i, args[i] as u128);
+                    self.cpu.set_xmm(i, u128::from(args[i]));
                 }
             }
         }
@@ -142,7 +142,7 @@ impl Ctx<'_> {
         if crate::mem::x64() {
             return f64::from_bits(self.xmm(i / 2));
         }
-        f64::from_bits(self.a(i) as u64 | (self.a(i + 1) as u64) << 32)
+        f64::from_bits(u64::from(self.a(i)) | u64::from(self.a(i + 1)) << 32)
     }
     /// Calls guest code at `f` with `args` (stdcall or cdecl alike); returns EAX.
     pub fn call(&mut self, f: u32, args: &[u32]) -> u32 {
@@ -215,7 +215,7 @@ impl Meta {
     }
     /// (bytes: 20 bits, a stdcall function's arguments are far fewer; more is cut to META_BYTES)
     fn pack(self) -> u32 {
-        META_SET | self.bytes.min(META_BYTES) | (self.cdecl as u32) << 20 | (self.known as u32) << 21 | (self.this_arg as u32) << 22 | (self.yields as u32 & 3) << 23
+        META_SET | self.bytes.min(META_BYTES) | u32::from(self.cdecl) << 20 | u32::from(self.known) << 21 | u32::from(self.this_arg) << 22 | (u32::from(self.yields) & 3) << 23
     }
     fn unpack(w: u32) -> Option<Meta> {
         (w & META_SET != 0).then_some(Meta { bytes: w & META_BYTES, cdecl: w >> 20 & 1 != 0, known: w >> 21 & 1 != 0, this_arg: w >> 22 & 1 != 0, yields: (w >> 23 & 3) as u8 })
@@ -693,7 +693,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     let shirusu = if sw & SW_SHIRUSU != 0 {
         let x64 = crate::mem::x64();
         let n = if x64 { 12 } else { (bytes / 4).min(12) };
-        let args: Vec<u64> = (0..n).map(|k| if x64 { c.a64(k) } else { c.a(k) as u64 }).collect();
+        let args: Vec<u64> = (0..n).map(|k| if x64 { c.a64(k) } else { u64::from(c.a(k)) }).collect();
         crate::shirusu::enter(i, &args)
     } else {
         None
@@ -711,10 +711,10 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     crate::cur().api = outer;
     if let Some(o) = shirusu.filter(|_| !c.jumped) {
         let ret = match c.edx {
-            Some(d) => (d as u64) << 32 | r as u64,
-            None if crate::mem::x64() && r >= 0xffff_f000 => r as i32 as i64 as u64,
+            Some(d) => u64::from(d) << 32 | u64::from(r),
+            None if crate::mem::x64() && r >= 0xffff_f000 => i64::from(r as i32) as u64,
             None if crate::mem::x64() => crate::mem::widen(r),
-            None => r as u64,
+            None => u64::from(r),
         };
         crate::shirusu::leave(o, ret);
     }
@@ -815,7 +815,7 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
         let args: Vec<String> = (0..nargs)
             .map(|k| if x64 { format!("{:x}", Ctx { cpu: &mut *cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this: None }.a64(k)) } else { format!("{:x}", r32(esp + 4 + 4 * k)) })
             .collect();
-        let from = if x64 { crate::mem::r64(esp) } else { r32(esp) as u64 };
+        let from = if x64 { crate::mem::r64(esp) } else { u64::from(r32(esp)) };
         let line = format!("sake {:04x} {}: {n}({}) from {:x}", crate::cur().tid, crate::k32::ticks_ms() - 60_000, args.join(","), from);
         if tr == 3 {
             RING.with(|r| {
@@ -853,18 +853,18 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
         // RAX: a 64-bit result (ret64), a small negative one (INVALID_HANDLE_VALUE,
         // pseudo-handles) sign-extended, an address in an image above 4G widened
         let rax = match edx {
-            Some(d) => (d as u64) << 32 | r as u64,
-            None if r >= 0xffff_f000 => r as i32 as i64 as u64,
+            Some(d) => u64::from(d) << 32 | u64::from(r),
+            None if r >= 0xffff_f000 => i64::from(r as i32) as u64,
             None => crate::mem::widen(r),
         };
         cpu.set_gpr(EAX, rax);
         if let Some(v) = st0 {
-            cpu.set_xmm(0, v.to_bits() as u128);
+            cpu.set_xmm(0, u128::from(v.to_bits()));
         }
         let ret = crate::mem::r64(esp);
         cpu.eip = ret as u32;
         cpu.rip_hi = (ret >> 32) as u32;
-        cpu.set_gpr(ESP, esp as u64 + 8);
+        cpu.set_gpr(ESP, u64::from(esp) + 8);
         crate::tctx::apply_pending_after_call(cpu);
         return;
     }

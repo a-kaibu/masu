@@ -51,7 +51,7 @@ fn thunk(name: &str) -> Option<(u32, u32)> {
     let t = crate::pe::with(base, |m| m.exports.get(name).copied())??;
     let trap = export("ntdll", name);
     if let Some(i) = slot {
-        THUNKS[i].store((t as u64) << 32 | trap as u64, Relaxed);
+        THUNKS[i].store(u64::from(t) << 32 | u64::from(trap), Relaxed);
     }
     Some((t, trap))
 }
@@ -342,7 +342,7 @@ pub mod via {
     pub fn set_file_pointer(c: &mut Ctx) -> Option<u32> {
         hooked("NtSetInformationFile").or_else(|| hooked("NtQueryInformationFile"))?;
         let (h, lo, phi, how) = (c.a(0), c.a(1), c.a(2), c.a(3));
-        let d = if phi != 0 { (lo as u64 | (r32(phi) as u64) << 32) as i64 } else { lo as i32 as i64 };
+        let d = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo as i32) };
         Some(match seek(c, h, d, how) {
             Ok(p) => {
                 put32(phi, (p >> 32) as u32);
@@ -357,7 +357,7 @@ pub mod via {
     /// SetFilePointerEx(h, distance (2 dwords), &new, method)
     pub fn set_file_pointer_ex(c: &mut Ctx) -> Option<u32> {
         hooked("NtSetInformationFile").or_else(|| hooked("NtQueryInformationFile"))?;
-        let (h, d, out, how) = (c.a(0), (c.a(1) as u64 | (c.a(2) as u64) << 32) as i64, c.a(3), c.a(4));
+        let (h, d, out, how) = (c.a(0), (u64::from(c.a(1)) | u64::from(c.a(2)) << 32) as i64, c.a(3), c.a(4));
         Some(match seek(c, h, d, how) {
             Ok(p) => {
                 if out != 0 {
@@ -473,14 +473,14 @@ fn path_of(oa: u32) -> Option<u32> {
     if us == 0 {
         return None;
     }
-    let (n, b) = (r16(us) as u32 / 2, mem::rp(us + mem::ps()));
+    let (n, b) = (u32::from(r16(us)) / 2, mem::rp(us + mem::ps()));
     let mut w: Vec<u16> = (0..n).map(|i| r16(b + 2 * i)).collect();
     let s = String::from_utf16_lossy(&w);
     for pre in ["\\??\\UNC\\", "\\??\\", "\\DosDevices\\", "\\GLOBAL??\\"] {
         if s.starts_with(pre) {
             w.drain(..pre.len());
             if pre.ends_with("UNC\\") {
-                w.splice(0..0, [b'\\' as u16, b'\\' as u16]);
+                w.splice(0..0, [u16::from(b'\\'), u16::from(b'\\')]);
             }
             break;
         }
@@ -489,7 +489,7 @@ fn path_of(oa: u32) -> Option<u32> {
     for (d, dev) in ['C', 'D', 'Z'].into_iter().filter_map(|d| Some((d, crate::k32::drive_device(d)?))) {
         // (s may hold Japanese: compare bytes, the device name is ASCII)
         if s.as_bytes().get(..dev.len()).is_some_and(|p| p.eq_ignore_ascii_case(dev.as_bytes())) {
-            w.splice(0..dev.len(), [d as u16, b':' as u16]);
+            w.splice(0..dev.len(), [d as u16, u16::from(b':')]);
         }
     }
     // relative to RootDirectory (a directory handle): under that directory
@@ -597,7 +597,7 @@ fn afd_name(oa: u32) -> Option<String> {
     if us == 0 {
         return None;
     }
-    let (n, b) = (r16(us) as u32 / 2, mem::rp(us + mem::ps()));
+    let (n, b) = (u32::from(r16(us)) / 2, mem::rp(us + mem::ps()));
     let s = String::from_utf16_lossy(&(0..n).map(|i| r16(b + 2 * i)).collect::<Vec<_>>());
     s.to_ascii_lowercase().starts_with("\\device\\").then_some(s)
 }
@@ -628,7 +628,7 @@ fn nt_device_io_control_file(c: &mut Ctx) -> u32 {
 pub fn fs_info(class: u32, ty: u32) -> Result<Vec<u8>, u32> {
     let w = |s: &str| s.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<u8>>();
     use crate::k32::{DISK_BYTES_PER_SECTOR, DISK_FREE_CLUSTERS, DISK_SECTORS_PER_CLUSTER, DISK_TOTAL_CLUSTERS};
-    let (sec, bps, total, free) = (DISK_SECTORS_PER_CLUSTER, DISK_BYTES_PER_SECTOR, DISK_TOTAL_CLUSTERS as u64, DISK_FREE_CLUSTERS as u64);
+    let (sec, bps, total, free) = (DISK_SECTORS_PER_CLUSTER, DISK_BYTES_PER_SECTOR, u64::from(DISK_TOTAL_CLUSTERS), u64::from(DISK_FREE_CLUSTERS));
     let mut v = Vec::new();
     match class {
         // FileFsVolumeInformation: creation time, serial, label length, supports objects, label
@@ -844,7 +844,7 @@ fn nt_query_information_file(c: &mut Ctx) -> u32 {
                 w32(out + o + 4, size_hi);
             }
             w32(out + 16, r32(i + 40));
-            w32(out + 20, (attrs & 0x10 != 0) as u32 * 0x100);
+            w32(out + 20, u32::from(attrs & 0x10 != 0) * 0x100);
         }
         _ => {
             // FILE_NETWORK_OPEN_INFORMATION
@@ -891,7 +891,7 @@ fn file_all_information(c: &mut Ctx, h: u32, io: u32, out: u32, len: u32) -> u32
         w32(out + o + 4, size_hi);
     }
     w32(out + 56, r32(i + 40));
-    w32(out + 60, (attrs & 0x10 != 0) as u32 * 0x100);
+    w32(out + 60, u32::from(attrs & 0x10 != 0) * 0x100);
     mem::heap_free(i);
     mem::fill(out + 64, 16, 0);
     let p = mem::heap_alloc(8, true);
@@ -907,7 +907,7 @@ fn file_all_information(c: &mut Ctx, h: u32, io: u32, out: u32, len: u32) -> u32
 /// (status, bytes given, the bytes to write) for a Windows path and a buffer of `len` >= 8
 fn file_name_info(win: &str, len: u32) -> (u32, u32, Vec<u8>) {
     let name = win.get(2..).filter(|_| win.as_bytes().get(1) == Some(&b':')).unwrap_or(win);
-    let name: Vec<u16> = if name.is_empty() { vec![b'\\' as u16] } else { name.encode_utf16().collect() };
+    let name: Vec<u16> = if name.is_empty() { vec![u16::from(b'\\')] } else { name.encode_utf16().collect() };
     let bytes = 2 * name.len() as u32;
     let mut w = bytes.to_le_bytes().to_vec();
     let room = ((len - 4) / 2) as usize;
@@ -1057,7 +1057,7 @@ fn set_name_info(tid: u32, buf: u32, len: u32) -> u32 {
     if buf == 0 || mem::accessible(buf, len, false, false) < len {
         return 0xC000_0005;
     }
-    let (n, p) = (r16(buf) as u32, mem::rp(buf + ps));
+    let (n, p) = (u32::from(r16(buf)), mem::rp(buf + ps));
     if n != 0 && (p == 0 || mem::accessible(p, n, false, false) < n) {
         return 0xC000_0005;
     }
@@ -1150,8 +1150,8 @@ fn nt_query_information_thread(c: &mut Ctx) -> u32 {
             w32(out + 5 * ps, 8);
             w32(out + 5 * ps + 4, 8);
         }
-        12 => w32(out, (crate::k32::thread_count() <= 1) as u32),
-        14 => w32(out, crate::k32::boost_off(tid) as u32),
+        12 => w32(out, u32::from(crate::k32::thread_count() <= 1)),
+        14 => w32(out, u32::from(crate::k32::boost_off(tid))),
         30 => mem::wp(out, crate::affinity::with(|a| a.thread(tid))),
         _ => {}
     }
@@ -1187,7 +1187,7 @@ fn nt_query_information_process(c: &mut Ctx) -> u32 {
         }
         7 if debugged() => mem::wp(out, u32::MAX),
         0x1e if debugged() => mem::wp(out, crate::obj::add(crate::obj::Obj::Event { manual: true, set: false })),
-        0x1f => w32(out, !debugged() as u32),
+        0x1f => w32(out, u32::from(!debugged())),
         // (a 32-bit process is a WoW64 one, k32::is_wow64: its 32-bit PEB's address; a 64-bit
         // one 0)
         0x1a if crate::k32::is_wow64(c.a(0)) == Some(true) => w32(out, crate::PEB.load(std::sync::atomic::Ordering::Relaxed)),
@@ -1203,7 +1203,7 @@ fn upcase(n: &str) -> Vec<u16> {
     n.encode_utf16().map(up).collect()
 }
 pub fn up(u: u16) -> u16 {
-    match char::from_u32(u as u32) {
+    match char::from_u32(u32::from(u)) {
         Some(c) => {
             let mut it = c.to_uppercase();
             match (it.next(), it.next()) {
@@ -1231,15 +1231,15 @@ fn entry_attrs(dir: &str, name: &str, m: &kura::fs::Metadata) -> u32 {
 /// or nothing at the end. ".." is matched as "." (Windows' answers in Wine's ntdll directory
 /// test).
 pub fn nt_match(expr: &[u16], name: &[u16]) -> bool {
-    let name = if name == [b'.' as u16, b'.' as u16] { &name[..1] } else { name };
+    let name = if name == [u16::from(b'.'), u16::from(b'.')] { &name[..1] } else { name };
     let (e, n) = (expr.len(), name.len());
     // (each literal and ? takes one character of the name: a mask with more than the name has
     // matches nothing, before any table; the mask is a guest string of up to 32767 characters)
     if expr.iter().filter(|&&c| !matches!(c, 0x2a | 0x3c | 0x3e | 0x22)).count() > n {
         return false;
     }
-    let lead = name.iter().take_while(|&&c| c == b'.' as u16).count();
-    let dot = b'.' as u16;
+    let lead = name.iter().take_while(|&&c| c == u16::from(b'.')).count();
+    let dot = u16::from(b'.');
     // m[i][j]: expr[i..] against name[j..], filled from the last row up (row i needs rows past
     // i only): no recursion as deep as the mask (it was one frame per character)
     let w = n + 1;
@@ -1250,7 +1250,7 @@ pub fn nt_match(expr: &[u16], name: &[u16]) -> bool {
     for i in (0..e).rev() {
         let next = (i + 1) * w;
         for k in 0..w {
-            before[k + 1] = before[k] + m[next + k] as u32;
+            before[k + 1] = before[k] + u32::from(m[next + k]);
         }
         let any = |a: usize, b: usize| before[b + 1] > before[a];
         for j in (0..=n).rev() {
@@ -1450,9 +1450,9 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
         // the last one, "*" at first
         let mask: Vec<u16> = if mask != 0 && r16(mask) != 0 {
             let b = mem::rp(mask + mem::ps());
-            (0..r16(mask) as u32 / 2).map(|i| r16(b + 2 * i)).collect()
+            (0..u32::from(r16(mask)) / 2).map(|i| r16(b + 2 * i)).collect()
         } else {
-            scan.as_ref().map_or(vec![b'*' as u16], |s| s.0.clone())
+            scan.as_ref().map_or(vec![u16::from(b'*')], |s| s.0.clone())
         };
         let win = crate::files::host_to_win(&f.path);
         let all = crate::files::find(&format!("{}\\*", win.trim_end_matches('\\'))).map_or(Vec::new(), |f| f.entries);

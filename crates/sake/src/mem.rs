@@ -87,7 +87,7 @@ pub fn widen(a: u32) -> u64 {
     if HIGH.load(std::sync::atomic::Ordering::Relaxed) == 0 {
         return u64::from(a);
     }
-    u64::from(a) | (find(a).map_or(0, |(_, r)| r.hi) as u64) << 32
+    u64::from(a) | u64::from(find(a).map_or(0, |(_, r)| r.hi)) << 32
 }
 
 /// How many allocations stand for addresses above 4G (widen's fast path: none).

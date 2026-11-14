@@ -166,7 +166,7 @@ pub fn method_name(trap: u32) -> Option<&'static str> {
 }
 /// Its argument count (dwords, with `this` and a hidden result pointer).
 pub fn method_dwords(trap: u32) -> Option<u32> {
-    NAMES.lock().unwrap().as_ref()?.get(&trap).map(|m| m.1 as u32)
+    NAMES.lock().unwrap().as_ref()?.get(&trap).map(|m| u32::from(m.1))
 }
 static VTBLS: Mutex<Option<HashMap<Iface, u32>>> = Mutex::new(None);
 
@@ -224,7 +224,7 @@ fn stub(c: &mut Ctx) -> u32 {
     } else {
         let (iface, name, kind) = STUBS.lock().unwrap().as_ref().and_then(|m| m.get(&c.trap).copied()).unwrap_or(("?", "?", 0));
         warn_once(&format!("sake: com {iface}::{name} not implemented"));
-        crate::api::set_tag(c.trap, STUB_TAG | STUB_WARNED | kind as u32, 0);
+        crate::api::set_tag(c.trap, STUB_TAG | STUB_WARNED | u32::from(kind), 0);
         kind
     };
     match kind {
@@ -386,7 +386,7 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
     for (i, &(name, dwords, kind)) in t.1.iter().enumerate() {
         let found = slot_impl(i, name, impls).map(|m| m.1);
         let f = slot_handler(i, found);
-        let a = host_fn(&format!("{}::{i}:{name}", iface.0), f, 4 * dwords as u32);
+        let a = host_fn(&format!("{}::{i}:{name}", iface.0), f, 4 * u32::from(dwords));
         if i > 2 && found.is_none() {
             STUBS.lock().unwrap().get_or_insert_with(HashMap::new).insert(a, (iface.0, name, kind));
         }
