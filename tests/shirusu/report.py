@@ -106,7 +106,10 @@ def one(tid, a):
     os.makedirs(out, exist_ok=True)
     wdir = os.path.join(a.windows, f'windows-{tid}')
     wtrace = os.path.join(wdir, 'windows.trace')
-    log = os.path.join(a.sake, tid, 'console.log')
+    # (the page's shirusu lines, tests/corpus.mjs; a console.log of an older page has them inline)
+    log = os.path.join(a.sake, tid, 'shirusu.log')
+    if not os.path.exists(log):
+        log = os.path.join(a.sake, tid, 'console.log')
     r = {'id': tid, 'notes': [], 'candidates': [],
          'win_plain': reached(load(os.path.join(wdir, 'plain', 'result.json'))),
          'win_reached': reached(load(os.path.join(wdir, 'shots', 'result.json'))),
@@ -116,6 +119,10 @@ def one(tid, a):
     r['bits'] = bits
     strace = os.path.join(out, 'sake.trace')
     if os.path.exists(log):
+        # (lines the page could not keep: web/src/shirusu.ts)
+        lost = sum(int(l.split()[-1]) for l in open(log, encoding='utf-8', errors='replace') if l.startswith('shirusu X dropped '))
+        if lost:
+            r['notes'].append(f'sake: {lost} shirusu lines dropped by the page')
         code, text = run([a.convert, log, strace, '--arch', 'x86_64' if bits == 64 else 'x86', '--target', tid])
         open(os.path.join(out, 'convert.txt'), 'w', encoding='utf-8').write(text)
         if code != 0:
@@ -124,7 +131,7 @@ def one(tid, a):
         else:
             r['sake_calls'] = int(text.split()[0])
     else:
-        r['notes'].append('sake: no console.log')
+        r['notes'].append('sake: no shirusu.log or console.log')
         strace = None
     if os.path.exists(wtrace):
         # (what shirusu itself says it missed: children it could not inject, losses)

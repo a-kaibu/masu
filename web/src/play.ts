@@ -100,6 +100,7 @@ import { accountInput } from "./account-settings";
 import { keepInstallation, loadInstallation } from "./installation";
 import { Held } from "./held";
 import { LineLimit } from "./linelimit";
+import { ShirusuLines } from "./shirusu";
 import { surfaceSize } from "./surface";
 import {
   joinRecords,
@@ -259,6 +260,9 @@ async function loadSavesOrOld(
 /** The guest's lines shown in the console (all of them reach the crash log); &alllines: every
  * one (a test program whose output is its result: tests/winref/run-browser.mjs) */
 const shown = params.has("alllines") ? { allow: () => true } : new LineLimit();
+// (SAKE_SHIRUSU=1: its lines for the harness, not the console; web/src/shirusu.ts)
+const shirusu = new ShirusuLines();
+(window as unknown as { masuShirusuTake: () => string }).masuShirusuTake = () => shirusu.drain();
 const leftOut = (n: number) =>
   console.warn(`(${n} lines of the program's output not shown: too many at once)`);
 
@@ -563,6 +567,7 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       exited = childProcesses.size === 0 && pendingChildren === 0;
     },
     printErr: (line: string) => {
+      if (shirusu.take(line)) return;
       // (the crash log sees every line: an abort is never left out)
       if (shown.allow(Date.now(), leftOut)) console.warn(line);
       recorder?.printErr(line);

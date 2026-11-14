@@ -433,6 +433,7 @@ jobs:
             results/sake-build.txt
             results/**/*.json
             results/**/console.log
+            results/**/shirusu.log
             results/**/title.png
             results/**/last.png
           retention-days: 14

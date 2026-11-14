@@ -8,9 +8,11 @@ compares a trial game on real Windows with the same game on sake.
 ## Pieces
 
 - **sake** (`crates/sake/src/shirusu.rs`): with `SAKE_SHIRUSU=1`, every guest call to an API of
-  `tools/shirusu/apis.txt` writes an enter line and a leave line on stderr (the page's
-  console.log): raw arguments, result, last error, and what shirusu's own hooks read of memory
+  `tools/shirusu/apis.txt` writes an enter line and a leave line on stderr: raw arguments, result, last error, and what shirusu's own hooks read of memory
   (CreateFileW's path, WriteFile's and ReadFile's buffers up to 4096 bytes, the I/O counts).
+  The page keeps these lines apart from the console (web/src/shirusu.ts) and tests/corpus.mjs
+  takes them every 2 s into shirusu.log: through the console they were cut by its line limit
+  and slowed the page until games timed out.
 - **tools/shirusu** (`sake-shirusu LOG OUT.trace --arch x86|x86_64`): those lines into a
   Trace. Schemas come from shirusu's API catalog and values from shirusu-hook's capture
   functions, so both sides hash and encode alike. Outside masu's workspace, pinned to one

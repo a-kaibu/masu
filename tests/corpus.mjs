@@ -44,6 +44,15 @@ page.on("console", (m) => {
 page.on("pageerror", (e) => { appendFileSync(logFile, `[pageerror] ${e.message}\n`); res.errors.push("pageerror: " + e.message.slice(0, 200)); });
 page.on("crash", () => { crashed = true; res.errors.push("page crashed"); });
 await page.goto(url);
+// (SAKE_SHIRUSU=1: the page keeps sake's shirusu lines apart from the console,
+// web/src/shirusu.ts; they are taken every 2 s, in order, into shirusu.log)
+let shirusuChain = Promise.resolve();
+const drainShirusu = () =>
+  (shirusuChain = shirusuChain.then(async () => {
+    const s = await page.evaluate(() => window.masuShirusuTake?.() ?? "").catch(() => "");
+    if (s) appendFileSync(`${out}/shirusu.log`, s + "\n");
+  }));
+const shirusuTimer = setInterval(() => void drainShirusu(), 2000);
 
 const CRC = new Int32Array(256).map((_, n) => {
   for (let k = 0; k < 8; k++) n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1;
@@ -244,6 +253,8 @@ if (res.title === null) {
   if (snap) writeFileSync(`${out}/threads.txt`, snap);
   res.d3d = last?.d3d ?? false;
   save();
+  clearInterval(shirusuTimer);
+  await drainShirusu();
   await browser.close();
   process.exit(0);
 }
@@ -305,4 +316,6 @@ res.storyMatch = STORY_SIG ? storySigs.some((g) => sigSame(STORY_SIG, g)) : null
 res.crashed = crashed;
 res.end = now();
 save();
+clearInterval(shirusuTimer);
+await drainShirusu();
 await browser.close();
