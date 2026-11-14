@@ -3055,3 +3055,7 @@ mod tests {
         free_mt(0);
     }
 }
+
+#[cfg(test)]
+#[path = "dshow_mpeg_snapshot_tests.rs"]
+mod snapshot_tests;

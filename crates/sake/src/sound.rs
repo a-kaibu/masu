@@ -139,7 +139,7 @@ struct Buf {
 }
 
 struct Dev {
-    bufs: HashMap<u32, Buf>,
+    bufs: HashMap<Key, Buf>,
     waves: HashMap<u32, Wave>,
     stream: i32,
 }
@@ -267,6 +267,17 @@ fn read_format_check(p: u32, direct: bool) -> Result<(), WaveErr> {
     wave_format_rule(tag, r16(p + 2), r32(p + 4), r32(p + 8), r16(p + 12), r16(p + 14), ext, direct)
 }
 
+/// Whose a buffer of the mixer is: a DirectSound buffer (its interface pointer), a sound
+/// another module plays under its own key (music_start: a graph, an MCI device, a segment
+/// state), or PlaySound's. Kept apart: a music key that is a heap address once freed and given
+/// to a new DirectSound buffer stopped that buffer instead.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Key {
+    Ds(u32),
+    Music(u32),
+    PlaySound,
+}
+
 /// Mixes STEP frames of every playing buffer into `out`; fires notifications.
 fn mix(d: &mut Dev, out: &mut [f32]) -> Vec<u32> {
     let mut events = Vec::new();
@@ -358,7 +369,7 @@ pub(crate) fn music_start(key: u32, data: u32, size: u32, fmt: Fmt, repeats: u32
         return false;
     }
     start_mixer();
-    with(|d| d.bufs.insert(key, music_buf(key, data, size, fmt, repeats, volume)));
+    with(|d| d.bufs.insert(Key::Music(key), music_buf(key, data, size, fmt, repeats, volume)));
     true
 }
 
@@ -448,17 +459,17 @@ pub(crate) fn fill_drop(data: u32) {
 
 /// Stops and forgets `key`.
 pub(crate) fn music_stop(key: u32) {
-    with(|d| d.bufs.remove(&key));
+    with(|d| d.bufs.remove(&Key::Music(key)));
 }
 
 pub(crate) fn music_playing(key: u32) -> bool {
-    with(|d| d.bufs.get(&key).is_some_and(|b| b.playing))
+    with(|d| d.bufs.get(&Key::Music(key)).is_some_and(|b| b.playing))
 }
 
 /// Moves `key` to frame `pos` and/or starts or holds it (MCI's seek, pause, resume: mci.rs).
 pub(crate) fn music_set(key: u32, pos: Option<f64>, playing: Option<bool>) {
     with(|d| {
-        if let Some(b) = d.bufs.get_mut(&key) {
+        if let Some(b) = d.bufs.get_mut(&Key::Music(key)) {
             if let Some(p) = pos {
                 let frames = f64::from(b.size / b.fmt.block().max(1));
                 b.pos = if frames > 0.0 { p.clamp(0.0, frames - 1.0) } else { 0.0 };
@@ -472,12 +483,12 @@ pub(crate) fn music_set(key: u32, pos: Option<f64>, playing: Option<bool>) {
 
 /// Frames played of the current pass (the segment state's seek)
 pub(crate) fn music_pos(key: u32) -> Option<f64> {
-    with(|d| d.bufs.get(&key).map(|b| b.pos))
+    with(|d| d.bufs.get(&Key::Music(key)).map(|b| b.pos))
 }
 
 pub(crate) fn music_volume(key: u32, volume: i32) {
     with(|d| {
-        if let Some(b) = d.bufs.get_mut(&key) {
+        if let Some(b) = d.bufs.get_mut(&Key::Music(key)) {
             b.volume = volume;
             b.gain = gains(volume, 0);
         }
@@ -1343,7 +1354,7 @@ fn DS_CreateSoundBuffer(c: &mut Ctx) -> u32 {
     let gain = gains(0, 0);
     with(|d| {
         d.bufs.insert(
-            o,
+            Key::Ds(o),
             Buf {
                 data,
                 size,
@@ -1385,7 +1396,7 @@ fn DS_DuplicateSoundBuffer(c: &mut Ctx) -> u32 {
     let (src, out) = (c.a(1), c.a(2));
     let o = new_object(buf_vtbl(), 0);
     let ok = with(|d| {
-        let Some(s) = d.bufs.get(&src) else { return false };
+        let Some(s) = d.bufs.get(&Key::Ds(src)) else { return false };
         let b = Buf {
             data: s.data,
             size: s.size,
@@ -1405,7 +1416,7 @@ fn DS_DuplicateSoundBuffer(c: &mut Ctx) -> u32 {
             owner: s.owner,
             fill: s.fill.clone(),
         };
-        d.bufs.insert(o, b);
+        d.bufs.insert(Key::Ds(o), b);
         true
     });
     if !ok {
@@ -1436,7 +1447,7 @@ fn DS_VerifyCertification(c: &mut Ctx) -> u32 {
 }
 
 fn with_buf<R>(this: u32, f: impl FnOnce(&mut Buf) -> R) -> Option<R> {
-    with(|d| d.bufs.get_mut(&this).map(f))
+    with(|d| d.bufs.get_mut(&Key::Ds(this)).map(f))
 }
 
 fn B_QueryInterface(c: &mut Ctx) -> u32 {
@@ -1512,12 +1523,12 @@ fn B_Release(c: &mut Ctx) -> u32 {
 /// last one it leaves the mixer, and its PCM goes once no duplicate shares it.
 fn buf_release(this: u32) -> u32 {
     let gone = with(|d| {
-        let b = d.bufs.get_mut(&this)?;
+        let b = d.bufs.get_mut(&Key::Ds(this))?;
         b.refs = b.refs.saturating_sub(1);
         if b.refs > 0 {
             return Some(Err(b.refs));
         }
-        let b = d.bufs.remove(&this)?;
+        let b = d.bufs.remove(&Key::Ds(this))?;
         // the data goes once neither the buffer nor a duplicate of it is left
         let shared = d.bufs.values().any(|x| x.owner == b.owner);
         Some(Ok((!shared && b.data != 0).then_some(b.data)))
@@ -1760,8 +1771,6 @@ fn N_SetNotificationPositions(c: &mut Ctx) -> u32 {
 // PlaySound / sndPlaySound: one sound at a time (a new one stops the last), a .wav file or a
 // RIFF image in memory, played as a buffer of the mixer's own
 
-/// the buffer's key in `Dev::bufs` (not a guest address)
-const PLAY_SOUND: u32 = 0xffff_fff0;
 const SND_ASYNC: u32 = 1;
 const SND_MEMORY: u32 = 4;
 const SND_LOOP: u32 = 8;
@@ -1854,12 +1863,12 @@ fn sound_image(name: u32, module: u32, flags: u32, wide: bool) -> Option<Vec<u8>
 }
 
 fn play_sound(name: u32, module: u32, flags: u32, wide: bool) -> u32 {
-    let playing = with(|d| d.bufs.get(&PLAY_SOUND).is_some_and(|b| b.playing));
+    let playing = with(|d| d.bufs.get(&Key::PlaySound).is_some_and(|b| b.playing));
     if flags & SND_NOSTOP != 0 && playing {
         return 0;
     }
     // (owner: the image's start; data points into it)
-    let old = with(|d| d.bufs.remove(&PLAY_SOUND)).map(|b| b.owner);
+    let old = with(|d| d.bufs.remove(&Key::PlaySound)).map(|b| b.owner);
     if let Some(p) = old {
         mem::heap_free(p);
     }
@@ -1897,7 +1906,7 @@ fn play_sound(name: u32, module: u32, flags: u32, wide: bool) -> u32 {
     start_mixer();
     with(|d| {
         d.bufs.insert(
-            PLAY_SOUND,
+            Key::PlaySound,
             Buf {
                 data: p + data,
                 size,
@@ -1926,7 +1935,7 @@ fn play_sound(name: u32, module: u32, flags: u32, wide: bool) -> u32 {
         let end = std::time::Instant::now() + Duration::from_millis(ms);
         loop {
             let now = std::time::Instant::now();
-            if now >= end || !with(|d| d.bufs.get(&PLAY_SOUND).is_some_and(|b| b.owner == p && b.playing)) {
+            if now >= end || !with(|d| d.bufs.get(&Key::PlaySound).is_some_and(|b| b.owner == p && b.playing)) {
                 break;
             }
             std::thread::sleep((end - now).min(Duration::from_millis(50)));
@@ -2160,6 +2169,39 @@ mod play_sound_tests {
     }
 
     proptest! {
+        /// A music key that is the same number as a DirectSound buffer's pointer (a freed
+        /// segment state's block given to a new buffer) leaves the buffer alone, whatever is
+        /// done under it: the two kinds of key are kept apart by type.
+        #[test]
+        fn music_keys_never_touch_buffers(ops in proptest::collection::vec((0u8..5, 0u32..3), 1..30)) {
+            let _g = crate::test_guest::enter();
+            let keys = [0x7c_0010u32, 0x7c_0020, 0x7c_0030];
+            let fmt = Fmt { rate: RATE, channels: 2, bits: 16, float: false, law: 0 };
+            let data = mem::heap_alloc(400, true);
+            for &k in &keys {
+                with(|d| d.bufs.insert(Key::Ds(k), music_buf(k, data, 400, fmt, 0, 0)));
+            }
+            let before: Vec<_> = keys.iter().map(|&k| with(|d| d.bufs.get(&Key::Ds(k)).map(|b| (b.pos, b.playing, b.volume)))).collect();
+            for (op, k) in ops {
+                let k = keys[usize::try_from(k).unwrap_or(0)];
+                match op {
+                    0 => { with(|d| d.bufs.insert(Key::Music(k), music_buf(k, data, 400, fmt, 0, 0))); }
+                    1 => music_stop(k),
+                    2 => music_set(k, Some(7.0), Some(false)),
+                    3 => music_volume(k, -5000),
+                    _ => { let _ = (music_playing(k), music_pos(k)); }
+                }
+            }
+            let after: Vec<_> = keys.iter().map(|&k| with(|d| d.bufs.get(&Key::Ds(k)).map(|b| (b.pos, b.playing, b.volume)))).collect();
+            for &k in &keys {
+                with(|d| { d.bufs.remove(&Key::Ds(k)); d.bufs.remove(&Key::Music(k)); });
+            }
+            mem::heap_free(data);
+            prop_assert_eq!(before, after);
+        }
+    }
+
+    proptest! {
         /// IMA ADPCM: every block becomes samples-per-block frames of 16-bit PCM, in a WAVE
         /// image the player reads back
         #[test]
@@ -2197,11 +2239,11 @@ mod music_tests {
         let fill = fill_start(data);
         let fmt = Fmt { rate: RATE, channels: 1, bits: 16, float: false, law: 0 };
         let mut d = dev();
-        d.bufs.insert(1, music_buf(1, data, n * 2, fmt, 0, 0));
+        d.bufs.insert(Key::Music(1), music_buf(1, data, n * 2, fmt, 0, 0));
         let mut out = vec![0f32; STEP * 2];
         mix(&mut d, &mut out);
         assert!(out.iter().all(|&x| x == 0.0));
-        assert_eq!(d.bufs[&1].pos, 0.0);
+        assert_eq!(d.bufs[&Key::Music(1)].pos, 0.0);
         // 1000 frames in: two steps play, the third waits
         assert!(fill.write(1000, || {}));
         let mut played = 0;
@@ -2211,13 +2253,13 @@ mod music_tests {
             played += out.chunks_exact(2).filter(|f| f[0] != 0.0).count();
         }
         assert_eq!(played, 2 * STEP);
-        assert!(d.bufs[&1].pos as u32 <= 1000);
+        assert!(d.bufs[&Key::Music(1)].pos as u32 <= 1000);
         // finished at 1000 of 4000 frames: the rest plays (as zeros would: what is in the block)
         fill.finish();
         for _ in 0..20 {
             mix(&mut d, &mut out);
         }
-        assert!(!d.bufs[&1].playing);
+        assert!(!d.bufs[&Key::Music(1)].playing);
         fill_drop(data);
         assert!(!fill.write(n, || panic!("written after the drop")));
         mem::heap_free(data);
@@ -2234,12 +2276,12 @@ mod music_tests {
             let fmt = Fmt { rate: RATE, channels: 1, bits: 16, float: false, law: 0 };
             let mut d = dev();
             let repeats = if infinite { u32::MAX } else { r };
-            d.bufs.insert(1, music_buf(1, data, n * 2, fmt, repeats, if mute { -10000 } else { 0 }));
+            d.bufs.insert(Key::Music(1), music_buf(1, data, n * 2, fmt, repeats, if mute { -10000 } else { 0 }));
             let total = (n * (r + 1) + 50) as usize;
             let mut out = vec![0f32; total * 2];
             mix(&mut d, &mut out);
             let sounding = out.chunks_exact(2).filter(|f| f[0] != 0.0).count();
-            let playing = d.bufs[&1].playing;
+            let playing = d.bufs[&Key::Music(1)].playing;
             mem::heap_free(data);
             if mute {
                 prop_assert_eq!(sounding, 0);
@@ -2414,7 +2456,7 @@ mod lifetime_tests {
         o
     }
     fn alive(b: u32) -> bool {
-        with(|d| d.bufs.contains_key(&b))
+        with(|d| d.bufs.contains_key(&Key::Ds(b)))
     }
 
     /// cmvs's streaming pattern: a buffer, its notify interface, both released: nothing stays.
@@ -2584,10 +2626,10 @@ mod review_b09_tests {
             b.looping = true;
             b.playing = true;
             b.pos = start % frames as f64;
-            d.bufs.insert(1, b);
+            d.bufs.insert(Key::Music(1), b);
             let mut out = vec![0f32; 2 * 200];
             mix(&mut d, &mut out);
-            prop_assert!(d.bufs[&1].pos < frames as f64, "pos {}", d.bufs[&1].pos);
+            prop_assert!(d.bufs[&Key::Music(1)].pos < frames as f64, "pos {}", d.bufs[&Key::Music(1)].pos);
             mem::heap_free(data);
         }
     }
@@ -2627,14 +2669,14 @@ mod review_b09_tests {
         let data = mem::heap_alloc(400, true);
         let fmt = Fmt { rate: RATE, channels: 2, bits: 16, float: false, law: 0 };
         let key = 0x7b_0001;
-        with(|d| d.bufs.insert(key, music_buf(key, data, 400, fmt, 0, 0)));
+        with(|d| d.bufs.insert(Key::Ds(key), music_buf(key, data, 400, fmt, 0, 0)));
         assert_eq!(call(B_SetCurrentPosition, &[key, 396]), 0);
-        assert_eq!(with(|d| d.bufs[&key].pos), 99.0);
+        assert_eq!(with(|d| d.bufs[&Key::Ds(key)].pos), 99.0);
         assert_eq!(call(B_SetCurrentPosition, &[key, 400]), Hr::InvalidParam.code());
-        assert_eq!(with(|d| d.bufs[&key].pos), 99.0);
+        assert_eq!(with(|d| d.bufs[&Key::Ds(key)].pos), 99.0);
         music_set(key, Some(1e9), None);
-        assert_eq!(with(|d| d.bufs[&key].pos), 99.0);
-        with(|d| d.bufs.remove(&key));
+        assert_eq!(with(|d| d.bufs[&Key::Ds(key)].pos), 99.0);
+        with(|d| d.bufs.remove(&Key::Ds(key)));
         mem::heap_free(data);
     }
 }

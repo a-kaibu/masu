@@ -211,7 +211,7 @@ fn sound_pure_snapshot() {
 
 /// Buffer `key`'s mixing, alone: `steps` passes of it, each one's output and notifications,
 /// then where it is
-fn mix_alone(key: u32, steps: u64) -> String {
+fn mix_alone(key: Key, steps: u64) -> String {
     let Some(b) = with(|d| d.bufs.remove(&key)) else { return "gone".into() };
     let mut tmp = Dev { bufs: HashMap::default(), waves: HashMap::default(), stream: -1 };
     tmp.bufs.insert(key, b);
@@ -378,11 +378,14 @@ fn sound_dsound_snapshot() {
             8 => format!("addref {}: {}", names.of(buf), call(B_AddRef, &[buf])),
             9 if r.below(3) == 0 => {
                 let n = call(B_Release, &[buf]);
-                let gone = !with(|d| d.bufs.contains_key(&buf));
+                let gone = !with(|d| d.bufs.contains_key(&Key::Ds(buf)));
                 let shown = names.of(buf);
                 if gone && buf != 0x0bad_0000 {
                     bufs.retain(|&x| x != buf);
                     names.drop_(buf);
+                    // (a released-too-often buffer leaves its 3D / notify objects pointing at
+                    // freed memory, which a later buffer can get: they are not used again)
+                    kids.retain(|&k| r32(k + 4) != buf);
                 }
                 format!("release {shown}: {n} gone={gone}")
             }
@@ -493,7 +496,7 @@ fn sound_dsound_snapshot() {
                         if n == 0 {
                             kids.retain(|&x| x != k);
                             names.drop_(k);
-                            if !with(|d| d.bufs.contains_key(&b)) {
+                            if !with(|d| d.bufs.contains_key(&Key::Ds(b))) {
                                 bufs.retain(|&x| x != b);
                                 names.drop_(b);
                             }
@@ -511,14 +514,14 @@ fn sound_dsound_snapshot() {
                 images.push(p);
                 let name = if r.below(10) == 0 { 0 } else { p };
                 let rc = play_sound(name, 0, flags, false);
-                let st = with(|d| d.bufs.get(&PLAY_SOUND).map(|b| (fmt_str(&b.fmt), b.size, b.playing, b.looping)));
+                let st = with(|d| d.bufs.get(&Key::PlaySound).map(|b| (fmt_str(&b.fmt), b.size, b.playing, b.looping)));
                 format!("playsound {} bytes flags={flags:#x} name={}: {rc} {st:?}", img.len(), name != 0)
             }
             _ => {
                 // the mixer, by hand: a buffer alone, or the PlaySound one
-                let key = if r.below(5) == 0 { PLAY_SOUND } else { buf };
+                let key = if r.below(5) == 0 { Key::PlaySound } else { Key::Ds(buf) };
                 let steps = r.below(3) + 1;
-                format!("mix {}:{}", if key == PLAY_SOUND { "playsound".into() } else { names.of(key) }, mix_alone(key, steps))
+                format!("mix {}:{}", if key == Key::PlaySound { "playsound".into() } else { names.of(buf) }, mix_alone(key, steps))
             }
         };
         writeln!(out, "{i} {line}").unwrap();
@@ -528,7 +531,7 @@ fn sound_dsound_snapshot() {
         while call(N_Release, &[k]) > 0 {}
     }
     for b in bufs {
-        while with(|d| d.bufs.contains_key(&b)) {
+        while with(|d| d.bufs.contains_key(&Key::Ds(b))) {
             call(B_Release, &[b]);
         }
     }

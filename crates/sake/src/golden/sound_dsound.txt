@@ -368,7 +368,7 @@ create: 0x0 #1
 365 ds caps 20: 0x0 [14, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 366 caps #12: 0x0 [14, 80, 64, 0, 0]
 367 position #10 true true: 0x0 0 2
-368 kid addref #18: 3
+368 kid addref #17: 2
 369 stop #4: 0x0
 370 lock #12 off=4409 bytes=0 flags=0: 0x0 +9 0 0 0
 371 mix #15: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
@@ -420,7 +420,7 @@ create: 0x0 #1
 417 set position #15 100: 0x80070057 pos=Some(0.0)
 418 get #5: 0x0 vol=-10000 0x0 pan=20000 0x0 freq=200000 0x0 status=0x0
 419 position #4 true true: 0x0 0 3180
-420 kid addref #18: 4
+420 kid addref #20: 2
 421 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 422 format #4 size=15 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 423 position #10 false true: 0x0 3735928559 2
@@ -464,12 +464,12 @@ create: 0x0 #1
 461 misc #8: [0, 0, 80004001, 0, 80004002, 88780082]
 462 ds caps 4: 0x0 [4, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 463 format #5 size=0 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
-464 kid qi #20: 0x0 self=true refs=2
+464 kid qi #17: 0x0 self=true refs=3
 465 ds addref/release: 13 12
 466 playsound 61 bytes flags=0xc name=true: 1 Some(("22050Hz/1ch/16b", 0, true, true))
 467 playsound 1598 bytes flags=0x40 name=true: 1 None
 468 qi #9 0x279afa86: 0x0 #23 refs=Some(5)
-469 kid addref #18: 5
+469 kid addref #23: 2
 470 mix #3: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 471 format #9 size=40 to=true: 0x0 written=18 [1, 0, 1, 0, 44, ac, 0, 0, 88, 58, 1, 0, 2, 0, 10, 0, 0, 0]
 472 qi #11 0x279afa85: 0x0 self refs=Some(5)
@@ -478,7 +478,7 @@ create: 0x0 #1
 475 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 476 set #22 vol=-600 pan=-10000 freq=1: 0x0 0x0 0x0 Some((1056984526, 916990887, 100))
 477 mix #4: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
-478 notify #20 n=2097152 p=true: 0x80070057 Some([])
+478 notify #23 n=2097152 p=true: 0x80070057 Some([(0, 0), (8000, 1), (4294967295, 2), (8000, 3), (8000, 4), (8000, 5), (100, 6), (4294967295, 7)])
 479 mix #8: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=441.9999999999998 playing=false looping=false
 480 get #4: 0x0 vol=-10000 0x0 pan=20000 0x0 freq=200000 0x0 status=0x0
 481 mix playsound:gone
@@ -524,7 +524,7 @@ create: 0x0 #1
 521 misc #10: [0, 0, 80004001, 0, 80004002, 88780082]
 522 set format #7: 0x0 Some(("44100Hz/2ch/64b", 200000))
 523 position #9 true true: 0x0 0 2
-524 notify #17 n=0 p=true: 0x0 Some([])
+524 notify #20 n=0 p=true: 0x0 Some([])
 525 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=25 playing=false looping=false
 526 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 527 ds caps 200: 0x0 [c8, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
@@ -592,7 +592,7 @@ create: 0x0 #1
 589 qi #2 0x0: 0x0 self refs=Some(7)
 590 ds addref/release: 15 14
 591 ds qi 0x0: 0x0 #0
-592 kid qi #23: 0x80004002 self=false refs=1
+592 kid qi #17: 0x80004002 self=false refs=3
 593 addref #15: 4
 594 lock #22 off=0 bytes=9000 flags=1: 0x0 +1 2 data 1
 595 mix #4: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
@@ -609,7 +609,7 @@ create: 0x0 #1
 606 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 607 ds qi 0xc50a7e93: 0x0 #0
 608 lock #3 off=0 bytes=4410 flags=1: 0x0 +1 3 data 1
-609 notify #18 n=0 p=true: 0x0 Some([])
+609 notify #24 n=0 p=true: 0x0 Some([])
 610 mix playsound:gone
 611 mix #7: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 612 mix playsound:gone
@@ -651,7 +651,7 @@ create: 0x0 #1
 648 misc #12: [0, 0, 80004001, 0, 80004002, 88780082]
 649 mix #3: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 650 set position #22 4410: 0x80070057 pos=Some(0.0)
-651 kid addref #20: 4
+651 kid addref #17: 4
 652 playsound 36 bytes flags=0x5 name=true: 0 None
 653 set #8 vol=100 pan=20000 freq=44100: 0x0 0x0 0x0 Some((925353388, 1065353216, 44100))
 654 set #11 vol=100 pan=-10000 freq=22050: 0x0 0x0 0x0 Some((1065353216, 925353388, 22050))
@@ -668,7 +668,7 @@ create: 0x0 #1
 665 addref #9: 7
 666 play #8 0: 0x0
 667 misc #10: [0, 0, 80004001, 0, 80004002, 88780082]
-668 kid addref #17: 2
+668 kid addref #23: 3
 669 set position #10 2: 0x0 pos=Some(2.0)
 670 misc #3: [0, 0, 80004001, 0, 80004002, 88780082]
 671 set #8 vol=100 pan=3000 freq=0: 0x0 0x0 0x0 Some((1023510242, 1065353216, 44100))
@@ -684,7 +684,7 @@ create: 0x0 #1
 681 lock #7 off=9000 bytes=4410 flags=0: 0x0 +0 3 0 0
 682 stop #8: 0x0
 683 set position #11 4294967295: 0x0 pos=Some(4294967295.0)
-684 notify #23 n=1 p=true: 0x0 Some([(1, 0)])
+684 notify #24 n=1 p=true: 0x0 Some([(1, 0)])
 685 misc #9: [0, 0, 80004001, 0, 80004002, 88780082]
 686 play #4 2: 0x0
 687 lock #15 off=0 bytes=4294967295 flags=1: 0x0 +80 20 data 80
@@ -760,7 +760,7 @@ create: 0x0 #1
 757 get #15: 0x0 vol=100 0x0 pan=20000 0x0 freq=11025 0x0 status=0x5
 758 ds caps 4: 0x0 [4, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 759 mix playsound: [0x28527d02ef427cd9 ev=[]] [0x69e52790e36d9f85 ev=[]] pos=551.25 playing=true looping=false
-760 kid addref #23: 2
+760 kid addref #20: 4
 761 set #15 vol=100 pan=0 freq=22050: 0x0 0x0 0x0 Some((1065353216, 1065353216, 22050))
 762 misc #11: [0, 0, 80004001, 0, 80004002, 88780082]
 763 set #9 vol=-10001 pan=20000 freq=1: 0x0 0x0 0x0 Some((0, 0, 100))
@@ -783,7 +783,7 @@ create: 0x0 #1
 780 get #4: 0x0 vol=-10000 0x0 pan=20000 0x0 freq=96000 0x0 status=0x1
 781 caps #22: 0x0 [14, 80, 3, 0, 0]
 782 ds caps 4: 0x0 [4, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
-783 kid qi #25: 0x0 self=true refs=2
+783 kid qi #20: 0x0 self=true refs=5
 784 ds caps 0: 0x0 [0, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 785 misc #10: [0, 0, 80004001, 0, 80004002, 88780082]
 786 caps ?: 0x0 [14, 0, 0, 0, 0]
@@ -848,7 +848,7 @@ create: 0x0 #1
 845 playsound 46 bytes flags=0xc name=true: 1 Some(("22050Hz/1ch/16bf", 2, true, true))
 846 playsound 572 bytes flags=0xd name=true: 1 Some(("22050Hz/2ch/16b", 2020, true, true))
 847 lock #8 off=4409 bytes=9000 flags=2: 0x0 +4409 4411 data 4409
-848 kid release #20: 3 buffer refs=Some(7)
+848 kid release #20: 4 buffer refs=Some(7)
 849 format #12 size=0 to=false: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 850 playsound 56 bytes flags=0xd name=true: 1 Some(("44100Hz/2ch/16b", 12, true, true))
 851 mix #4: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=1919.9999999999754 playing=true looping=false
@@ -884,7 +884,7 @@ create: 0x0 #1
 881 set position #9 100: 0x80070057 pos=Some(0.0)
 882 ds addref/release: 22 21
 883 mix #3: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=2 playing=false looping=false
-884 kid qi #20: 0x0 self=true refs=4
+884 kid qi #17: 0x0 self=true refs=5
 885 mix #22: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 886 ds qi 0x0: 0x0 #0
 887 addref #5: 3
@@ -918,7 +918,7 @@ create: 0x0 #1
 915 lock #2 off=9000 bytes=100 flags=3: 0x0 +0 3 0 0
 916 ds caps 20: 0x0 [14, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 917 ds caps 96: 0x0 [60, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
-918 kid addref #30: 2
+918 kid addref #32: 2
 919 play #3 1: 0x0
 920 set #15 vol=100 pan=10000 freq=0: 0x0 0x0 0x0 Some((925353388, 1065353216, 11025))
 921 lock #11 off=4410 bytes=1 flags=1: 0x80070057 0xdeadbeef 0 0 0
@@ -1025,7 +1025,7 @@ create: 0x0 #1
 1022 kid qi #34: 0x80004002 self=false refs=1
 1023 qi #3 0x0: 0x0 self refs=Some(8)
 1024 set format #10: 0x0 Some(("8000Hz/2ch/32b", 8000))
-1025 kid addref #28: 2
+1025 kid addref #17: 6
 1026 qi #7 0xb0210783: 0x0 #36 refs=Some(8)
 1027 ds qi 0x279afa83: 0x0 #0
 1028 format #15 size=16 to=false: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
@@ -1041,7 +1041,7 @@ create: 0x0 #1
 1038 misc ?: [0, 0, 80004001, 0, 80004002, 88780082]
 1039 caps #5: 0x0 [14, 8000, 2274, 0, 0]
 1040 lock #2 off=1 bytes=1 flags=0: 0x0 +1 1 0 0
-1041 kid addref #30: 3
+1041 kid addref #34: 2
 1042 play #8 2: 0x0
 1043 addref #9: 10
 1044 caps #10: 0x0 [14, 80, 3, 0, 0]
@@ -1059,7 +1059,7 @@ create: 0x0 #1
 1056 mix playsound: [0x6453c2087f83a899 ev=[]] [0xce3dc22ccd806699 ev=[]] [0x4703c6da4172d945 ev=[]] pos=3.5 playing=true looping=true
 1057 get #10: 0x0 vol=-10000 0x0 pan=-3000 0x0 freq=8000 0x0 status=0x0
 1058 misc #8: [0, 0, 80004001, 0, 80004002, 88780082]
-1059 kid addref #17: 3
+1059 kid addref #30: 2
 1060 qi #5 0x0: 0x0 self refs=Some(5)
 1061 position #11 true true: 0x0 0 0
 1062 ds caps 4: 0x0 [4, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
@@ -1123,10 +1123,10 @@ create: 0x0 #1
 1120 notify #17 n=3 p=true: 0x0 Some([(100, 0), (4409, 1), (4294967295, 2)])
 1121 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1122 release #2: 5 gone=false
-1123 kid addref #29: 2
+1123 kid addref #32: 3
 1124 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=4408 playing=true looping=true
 1125 lock #10 off=1 bytes=4410 flags=0: 0x0 +1 2 data 1
-1126 kid release #18: 4 buffer refs=Some(4)
+1126 kid release #35: 0 buffer refs=Some(7)
 1127 mix #11: [0x4b13108f6406ccc5 ev=[]] pos=4408 playing=true looping=true
 1128 lock #8 off=0 bytes=100 flags=1: 0x0 +3698 100 0 0
 1129 set #15 vol=-1 pan=0 freq=100: 0x0 0x0 0x0 Some((1065333912, 1065333912, 100))
@@ -1152,7 +1152,7 @@ create: 0x0 #1
 1149 mix playsound: [0xe3c83dce9e893b59 ev=[]] [0x29fb6a8b1bce3959 ev=[]] [0xea7d36f2d6435c41 ev=[]] pos=0 playing=true looping=true
 1150 mix #7: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=true looping=false
 1151 position #15 false true: 0x0 3735928559 4
-1152 kid addref #17: 4
+1152 kid addref #31: 2
 1153 ds caps 96: 0x0 [60, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
 1154 set format #15: 0x0 Some(("11025Hz/2ch/16b", 100))
 1155 mix playsound: [0x2bcc511a903ae565 ev=[]] [0x13c30e460f63edd5 ev=[]] pos=2 playing=true looping=true
@@ -1211,7 +1211,7 @@ create: 0x0 #1
 1208 ds addref/release: 28 27
 1209 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1210 misc #3: [0, 0, 80004001, 0, 80004002, 88780082]
-1211 release #11: 7 gone=false
+1211 release #11: 6 gone=false
 1212 ds qi 0x0: 0x0 #0
 1213 ds addref/release: 29 28
 1214 set #22 vol=-600 pan=-10000 freq=100: 0x0 0x0 0x0 Some((1056984526, 916990887, 100))
@@ -1226,7 +1226,7 @@ create: 0x0 #1
 1223 caps #5: 0x0 [14, 8000, 2274, 0, 0]
 1224 set format #9: 0x0 Some(("8000Hz/1ch/24b", 8000))
 1225 misc #7: [0, 0, 80004001, 0, 80004002, 88780082]
-1226 kid qi #31: 0x0 self=true refs=2
+1226 kid qi #36: 0x0 self=true refs=2
 1227 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1228 set format #3: 0x0 Some(("11025Hz/2ch/12b", 11025))
 1229 ds addref/release: 29 28
@@ -1249,14 +1249,14 @@ create: 0x0 #1
 1246 mix #8: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=2738.99999999991 playing=false looping=false
 1247 mix #12: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 1248 set ? vol=0 pan=-3000 freq=1: 0x0 0x0 0x0 None
-1249 notify #38 n=0 p=true: 0x0 Some([])
+1249 notify #17 n=0 p=true: 0x0 Some([])
 1250 misc #3: [0, 0, 80004001, 0, 80004002, 88780082]
 1251 stop #10: 0x0
-1252 kid qi #36: 0x80004002 self=false refs=1
+1252 kid qi #33: 0x80004002 self=false refs=1
 1253 caps #2: 0x0 [14, 8000, 3, 0, 0]
 1254 set format #10: 0x0 Some(("22050Hz/1ch/16b/law7", 22050))
-1255 addref #11: 8
-1256 notify #18 n=8 p=true: 0x0 Some([(4294967295, 0), (2000, 1), (4294967295, 2), (8000, 3), (2000, 4), (4294967295, 5), (4409, 6), (4409, 7)])
+1255 addref #11: 7
+1256 notify #37 n=8 p=true: 0x0 Some([(4294967295, 0), (2000, 1), (4294967295, 2), (8000, 3), (2000, 4), (4294967295, 5), (4409, 6), (4409, 7)])
 1257 ds caps 200: 0x0 [c8, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
 1258 playsound 817 bytes flags=0xc name=true: 1 Some(("22050Hz/1ch/16b", 3030, true, true))
 1259 get #15: 0x0 vol=-1 0x0 pan=0 0x0 freq=96000 0x0 status=0x0
@@ -1331,7 +1331,7 @@ create: 0x0 #1
 1328 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1329 misc #4: [0, 0, 80004001, 0, 80004002, 88780082]
 1330 ds qi 0x1234: 0x80004002 0
-1331 kid qi #37: 0x0 self=true refs=2
+1331 kid qi #38: 0x0 self=true refs=2
 1332 play #10 1: 0x0
 1333 addref #10: 6
 1334 mix #12: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=2 playing=true looping=true
@@ -1347,7 +1347,7 @@ create: 0x0 #1
 1344 lock #4 off=100 bytes=9000 flags=0: 0x0 +100 8720 data 100
 1345 set format #15: 0x0 Some(("8000Hz/2ch/16b", 8000))
 1346 mix ?:gone
-1347 kid addref #18: 5
+1347 kid addref #28: 2
 1348 caps #3: 0x0 [14, 10, 4, 0, 0]
 1349 mix #12: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=2 playing=true looping=true
 1350 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
@@ -1358,7 +1358,7 @@ create: 0x0 #1
 1355 misc #22: [0, 0, 80004001, 0, 80004002, 88780082]
 1356 addref #10: 7
 1357 misc #12: [0, 0, 80004001, 0, 80004002, 88780082]
-1358 qi #11 0xb0210783: 0x0 #41 refs=Some(9)
+1358 qi #11 0xb0210783: 0x0 #41 refs=Some(8)
 1359 mix ?:gone
 1360 set position #22 2: 0x0 pos=Some(0.0)
 1361 ds qi 0xc50a7e93: 0x0 #0
@@ -1403,7 +1403,7 @@ create: 0x0 #1
 1400 format #12 size=40 to=true: 0x0 written=18 [7, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, c, 0, 0, 0]
 1401 format #12 size=16 to=true: 0x0 written=18 [7, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, c, 0, 0, 0]
 1402 caps #15: 0x0 [14, 80, 64, 0, 0]
-1403 kid qi #30: 0x0 self=true refs=4
+1403 kid qi #25: 0x0 self=true refs=2
 1404 mix #9: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 1405 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=4408 playing=true looping=true
 1406 playsound 35 bytes flags=0x5 name=false: 1 None
@@ -1446,7 +1446,7 @@ create: 0x0 #1
 1443 ds addref/release: 39 38
 1444 format #2 size=15 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 1445 mix #12: [0x4b13108f6406ccc5 ev=[]] pos=2 playing=true looping=true
-1446 kid release #27: 0 buffer refs=Some(11)
+1446 kid release #30: 1 buffer refs=None
 1447 lock #12 off=100 bytes=4410 flags=1: 0x0 +2 98 data 2
 1448 lock #2 off=0 bytes=1 flags=0: 0x0 +0 1 0 0
 1449 mix #8: [0xe612e8159a1814b8 ev=[]] [0x7c2118638a15c567 ev=[]] [0xa12501deb137419b ev=[]] pos=4061.99999999991 playing=true looping=false
@@ -1466,7 +1466,7 @@ create: 0x0 #1
 1463 position #11 true true: 0x0 0 0
 1464 ds qi 0x279afa83: 0x0 #0
 1465 play #2 2: 0x0
-1466 kid qi #29: 0x0 self=true refs=3
+1466 kid qi #33: 0x0 self=true refs=2
 1467 play #4 1: 0x0
 1468 addref #9: 16
 1469 set position #9 4410: 0x80070057 pos=Some(0.0)
@@ -1497,13 +1497,13 @@ create: 0x0 #1
 1494 play #7 1: 0x0
 1495 set format #3: 0x0 Some(("44100Hz/6ch/24b/law6", 44100))
 1496 caps ?: 0x0 [14, 0, 0, 0, 0]
-1497 qi #11 0x6825a449: 0x0 self refs=Some(10)
+1497 qi #11 0x6825a449: 0x0 self refs=Some(9)
 1498 mix #10: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0.00000000000002353672812205332 playing=true looping=true
 1499 position #12 true true: 0x0 2 2
 1500 play #8 1: 0x0
 1501 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1502 playsound 306 bytes flags=0xc name=true: 1 Some(("44100Hz/1ch/16b", 1010, true, true))
-1503 qi #11 0x279afa86: 0x0 #44 refs=Some(11)
+1503 qi #11 0x279afa86: 0x0 #44 refs=Some(10)
 1504 addref #8: 8
 1505 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1506 mix #22: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
@@ -1534,10 +1534,10 @@ create: 0x0 #1
 1531 position #5 false true: 0x0 3735928559 5999
 1532 addref #9: 17
 1533 mix #22: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=true looping=true
-1534 kid release #31: 1 buffer refs=Some(8)
+1534 kid release #43: 0 buffer refs=Some(7)
 1535 set format #15: 0x0 Some(("11025Hz/6ch/8bf", 11025))
 1536 format #9 size=0 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
-1537 kid release #41: 0 buffer refs=Some(10)
+1537 kid release #27: 0 buffer refs=Some(11)
 1538 set position #5 17640: 0x80070057 pos=Some(3999.99999999997)
 1539 lock ? off=100 bytes=0 flags=0: 0x80070057 0xdeadbeef 0 0 0
 1540 mix playsound: [0x3009ea25353fd5dd ev=[]] [0xdf3aebca9c8576a ev=[]] pos=2 playing=true looping=true
@@ -1667,10 +1667,10 @@ create: 0x0 #1
 1664 mix #12: [0x4b13108f6406ccc5 ev=[]] pos=3.999999999999937 playing=true looping=false
 1665 caps #15: 0x0 [14, 80, 64, 0, 0]
 1666 ds addref/release: 44 43
-1667 kid qi #38: 0x80004002 self=false refs=1
+1667 kid qi #23: 0x80004002 self=false refs=3
 1668 mix #4: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=1643.5 playing=false looping=true
 1669 lock #22 off=4410 bytes=4410 flags=1: 0x0 +0 3 0 0
-1670 mix #2: [0xacbd3821bded8856 ev=[0, 1, 2]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
+1670 mix #2: [0xacbd3821bded8856 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 1671 ds caps 20: 0x0 [14, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 1672 caps #7: 0x0 [14, 8000, 3, 0, 0]
 1673 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
@@ -1706,7 +1706,7 @@ create: 0x0 #1
 1703 stop #12: 0x0
 1704 caps #15: 0x0 [14, 80, 64, 0, 0]
 1705 format #2 size=18 to=true: 0x0 written=18 [1, 0, 2, 0, 44, ac, 0, 0, 88, 58, 1, 0, 2, 0, 8, 0, 0, 0]
-1706 release #2: 7 gone=false
+1706 release #2: 6 gone=false
 1707 playsound 560 bytes flags=0xd name=true: 1 Some(("11025Hz/2ch/16b", 2000, true, true))
 1708 stop #10: 0x0
 1709 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
@@ -1743,7 +1743,7 @@ create: 0x0 #1
 1740 ds qi 0x1234: 0x80004002 0
 1741 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1742 release #9: 19 gone=false
-1743 kid qi #35: 0x80004002 self=false refs=1
+1743 kid qi #37: 0x80004002 self=false refs=1
 1744 format #9 size=16 to=true: 0x0 written=18 [1, 0, 1, 0, 40, 1f, 0, 0, c0, 5d, 0, 0, 3, 0, 18, 0, 0, 0]
 1745 qi #3 0xb0210783: 0x0 #50 refs=Some(13)
 1746 format #10 size=15 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
@@ -1783,7 +1783,7 @@ create: 0x0 #1
 1780 lock #3 off=1 bytes=4294967295 flags=0: 0x0 +1 3 data 1
 1781 position ? true true: 0x0 3735928559 0
 1782 playsound 69 bytes flags=0x40 name=true: 1 None
-1783 kid qi #38: 0x0 self=true refs=2
+1783 kid qi #31: 0x0 self=true refs=3
 1784 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1785 mix #15: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=15.500000000000234 playing=false looping=false
 1786 stop #11: 0x0
@@ -1796,18 +1796,18 @@ create: 0x0 #1
 1793 mix playsound: [0x36c7edc58ec9b64c ev=[]] [0x9c1fb03a4b3986cc ev=[]] [0x36c7edc58ec9b64c ev=[]] pos=1 playing=true looping=true
 1794 playsound 61 bytes flags=0x40 name=true: 1 None
 1795 playsound 48 bytes flags=0x40 name=true: 1 None
-1796 kid addref #39: 2
+1796 kid addref #28: 3
 1797 stop #15: 0x0
 1798 mix playsound:gone
 1799 lock #11 off=1 bytes=0 flags=2: 0x80070057 0xdeadbeef 0 0 0
-1800 kid qi #18: 0x0 self=true refs=6
+1800 kid qi #33: 0x0 self=true refs=3
 1801 ds qi 0xc50a7e93: 0x0 #0
 1802 playsound 573 bytes flags=0xc name=true: 1 Some(("44100Hz/2ch/16b", 2000, true, true))
 1803 get #15: 0x0 vol=100 0x0 pan=10000 0x0 freq=22050 0x0 status=0x0
 1804 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=4408 playing=false looping=true
 1805 ds qi 0x1234: 0x80004002 0
 1806 ds qi 0xc50a7e93: 0x0 #0
-1807 kid addref #49: 2
+1807 kid addref #20: 6
 1808 ds addref/release: 48 47
 1809 mix ?:gone
 1810 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=8266.999999999905 playing=true looping=true
@@ -1819,7 +1819,7 @@ create: 0x0 #1
 1816 lock #12 off=0 bytes=100 flags=2: 0x0 +0 100 0 0
 1817 lock #3 off=0 bytes=4294967295 flags=1: 0x0 +0 4 0 0
 1818 caps #7: 0x0 [14, 8000, 3, 0, 0]
-1819 kid release #32: 0 buffer refs=Some(18)
+1819 kid release #48: 0 buffer refs=None
 1820 stop #7: 0x0
 1821 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1822 stop #11: 0x0
@@ -1840,7 +1840,7 @@ create: 0x0 #1
 1837 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1838 get #4: 0x0 vol=-10000 0x0 pan=-10000 0x0 freq=8000 0x0 status=0x0
 1839 ds caps 20: 0x0 [14, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
-1840 mix #2: [0x4a416e6671183a61 ev=[0, 1]] [0xacbd3821bded8856 ev=[]] [0xacbd3821bded8856 ev=[]] pos=0.000000000000022426505097428162 playing=true looping=true
+1840 mix #2: [0x4a416e6671183a61 ev=[]] [0xacbd3821bded8856 ev=[]] [0xacbd3821bded8856 ev=[]] pos=0.000000000000022426505097428162 playing=true looping=true
 1841 play #9 2: 0x0
 1842 mix playsound: [0xa3dd29ca0483aebd ev=[]] [0xb7d31d3f0a35c5a1 ev=[]] pos=0 playing=true looping=true
 1843 qi #3 0x279afa84: 0x0 #51 refs=Some(14)
@@ -1899,11 +1899,11 @@ create: 0x0 #1
 1896 set format #2: 0x0 Some(("44100Hz/1ch/24b", 44100))
 1897 addref #15: 11
 1898 set format #11: 0x0 Some(("22050Hz/2ch/24bf", 22050))
-1899 kid qi #31: 0x80004002 self=false refs=1
+1899 kid qi #46: 0x80004002 self=false refs=1
 1900 misc #12: [0, 0, 80004001, 0, 80004002, 88780082]
 1901 ds caps 0: 0x0 [0, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 1902 format #15 size=18 to=true: 0x0 written=18 [3, 0, 6, 0, 11, 2b, 0, 0, 66, 2, 1, 0, 6, 0, 8, 0, 0, 0]
-1903 kid release #18: 5 buffer refs=Some(10)
+1903 kid release #38: 1 buffer refs=Some(14)
 1904 playsound 64 bytes flags=0xc name=true: 1 Some(("22050Hz/2ch/16b", 20, true, true))
 1905 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1906 addref #4: 17
@@ -1916,11 +1916,11 @@ create: 0x0 #1
 1913 lock #11 off=4294967295 bytes=0 flags=3: 0x80070057 0xdeadbeef 0 0 0
 1914 caps #10: 0x0 [14, 80, 3, 0, 0]
 1915 stop #22: 0x0
-1916 qi #9 0x6825a449: 0x0 self refs=Some(19)
+1916 qi #9 0x6825a449: 0x0 self refs=Some(20)
 1917 get ?: 0x0 vol=0 0x0 pan=0 0x0 freq=44100 0x0 status=0x0
-1918 qi #9 0x5555: 0x80004002 0x0 refs=Some(19)
+1918 qi #9 0x5555: 0x80004002 0x0 refs=Some(20)
 1919 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
-1920 addref #2: 8
+1920 addref #2: 7
 1921 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 1922 stop #22: 0x0
 1923 ds qi 0x1234: 0x80004002 0
@@ -1958,7 +1958,7 @@ create: 0x0 #1
 1955 format #7 size=15 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 1956 mix #2: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 1957 format #3 size=18 to=true: 0x0 written=18 [7, 0, 2, 0, 22, 56, 0, 0, 20, 62, 5, 0, 10, 0, 40, 0, 0, 0]
-1958 kid qi #48: 0x80004002 self=false refs=1
+1958 kid qi #44: 0x80004002 self=false refs=1
 1959 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=4408 playing=false looping=true
 1960 caps #4: 0x0 [14, 8000, 2274, 0, 0]
 1961 format #12 size=16 to=true: 0x0 written=18 [6, 0, 1, 0, 0, 77, 1, 0, 0, 77, 1, 0, 1, 0, 8, 0, 0, 0]
@@ -1966,7 +1966,7 @@ create: 0x0 #1
 1963 get #5: 0x0 vol=100 0x0 pan=0 0x0 freq=44100 0x0 status=0x5
 1964 set format #2: 0x0 Some(("8000Hz/1ch/64b/law7", 8000))
 1965 ds caps 96: 0x0 [60, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
-1966 kid release #26: 0 buffer refs=Some(8)
+1966 kid release #25: 1 buffer refs=Some(11)
 1967 ds caps 200: 0x0 [c8, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
 1968 format #22 size=18 to=true: 0x0 written=18 [1, 0, 2, 0, 11, 2b, 0, 0, 33, 81, 0, 0, 3, 0, c, 0, 0, 0]
 1969 lock #2 off=4409 bytes=0 flags=1: 0x0 +1 0 0 0
@@ -1983,12 +1983,12 @@ create: 0x0 #1
 1980 get ?: 0x0 vol=0 0x0 pan=0 0x0 freq=44100 0x0 status=0x0
 1981 get #12: 0x0 vol=-600 0x0 pan=3000 0x0 freq=200000 0x0 status=0x0
 1982 qi #3 0x279afa86: 0x0 #52 refs=Some(15)
-1983 notify #23 n=1 p=true: 0x0 Some([(4409, 0)])
+1983 notify #17 n=1 p=true: 0x0 Some([(4409, 0)])
 1984 set format #9: 0x0 Some(("0Hz/2ch/12b", 0))
 1985 set position #10 0: 0x0 pos=Some(0.0)
 1986 qi #3 0x279afa86: 0x0 #53 refs=Some(16)
 1987 get #15: 0x0 vol=100 0x0 pan=10000 0x0 freq=8000 0x0 status=0x0
-1988 addref #5: 9
+1988 addref #5: 10
 1989 set #4 vol=0 pan=-3000 freq=200001: 0x0 0x0 0x0 Some((1065353216, 1023510242, 200000))
 1990 stop #8: 0x0
 1991 mix #8: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=587.9999999999998 playing=false looping=true
@@ -2000,14 +2000,14 @@ create: 0x0 #1
 1997 mix playsound: [0x2b363d55673d6d6d ev=[]] [0x44d04deed4d2f695 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 1998 mix #7: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 1999 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=2533.9999999999054 playing=true looping=true
-2000 kid addref #35: 2
+2000 kid addref #30: 2
 2001 lock #8 off=9000 bytes=100 flags=3: 0x0 +3528 5292 data 3528
 2002 set position #5 100: 0x0 pos=Some(100.0)
 2003 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=4408 playing=false looping=true
 2004 mix #7: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2005 ds addref/release: 50 49
 2006 ds addref/release: 50 49
-2007 addref #2: 9
+2007 addref #2: 8
 2008 play #10 1: 0x0
 2009 misc #11: [0, 0, 80004001, 0, 80004002, 88780082]
 2010 stop #9: 0x0
@@ -2020,7 +2020,7 @@ create: 0x0 #1
 2017 play #7 1: 0x0
 2018 set position #12 2: 0x0 pos=Some(2.0)
 2019 lock #11 off=0 bytes=1 flags=3: 0x80070057 0xdeadbeef 0 0 0
-2020 mix #4: [0x9318f6cbf4d4168b ev=[]] [0x5df46a8c903ab33f ev=[]] [0xba40db34480f0851 ev=[]] pos=490.0000000000017 playing=true looping=true
+2020 mix #4: [0x9318f6cbf4d4168b ev=[1, 4, 6, 7]] [0x5df46a8c903ab33f ev=[1, 3, 4, 6, 7]] [0xba40db34480f0851 ev=[1, 3, 4]] pos=490.0000000000017 playing=true looping=true
 2021 release #10: 7 gone=false
 2022 position #11 false true: 0x0 3735928559 0
 2023 ds addref/release: 50 49
@@ -2028,7 +2028,7 @@ create: 0x0 #1
 2025 play #15 2: 0x0
 2026 set #4 vol=-5000 pan=3000 freq=44100: 0x0 0x0 0x0 Some((953267990, 995049015, 44100))
 2027 stop #2: 0x0
-2028 addref #9: 20
+2028 addref #9: 21
 2029 mix #15: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2030 ds addref/release: 50 49
 2031 get #9: 0x0 vol=-600 0x0 pan=0 0x0 freq=0 0x0 status=0x0
@@ -2076,10 +2076,10 @@ create: 0x0 #1
 2073 qi #7 0x6825a449: 0x0 self refs=Some(9)
 2074 set position #11 4408: 0x0 pos=Some(734.0)
 2075 get #5: 0x0 vol=100 0x0 pan=0 0x0 freq=44100 0x0 status=0x0
-2076 kid release #46: 0 buffer refs=Some(11)
-2077 kid addref #35: 3
+2076 kid release #32: 2 buffer refs=Some(21)
+2077 kid addref #34: 3
 2078 position #8 true false: 0x0 3522 0
-2079 notify #33 n=8 p=false: 0x80070057 Some([])
+2079 notify #32 n=8 p=false: 0x80070057 Some([(0, 0), (8000, 1), (4294967295, 2), (8000, 3), (8000, 4), (8000, 5), (100, 6), (4294967295, 7)])
 2080 mix ?:gone
 2081 set format #7: 0x0 Some(("11025Hz/1ch/16b", 11025))
 2082 lock #4 off=4409 bytes=0 flags=0: 0x0 +4409 0 0 0
@@ -2156,29 +2156,29 @@ create: 0x0 #1
 2153 mix #8: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=587.9999999999998 playing=false looping=true
 2154 mix #8: [0x4b13108f6406ccc5 ev=[]] pos=587.9999999999998 playing=false looping=true
 2155 lock #5 off=4410 bytes=4294967295 flags=3: 0x0 +441 8379 data 441
-2156 kid qi #47: 0x0 self=true refs=2
+2156 kid qi #46: 0x0 self=true refs=2
 2157 caps #5: 0x0 [14, 8000, 2274, 0, 0]
 2158 mix #12: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=2.0000000000037517 playing=false looping=true
 2159 set format #3: 0x0 Some(("96000Hz/2ch/64b", 96000))
 2160 stop #5: 0x0
-2161 qi #9 0x279afa84: 0x0 #55 refs=Some(21)
+2161 qi #9 0x279afa84: 0x0 #55 refs=Some(22)
 2162 ds addref/release: 54 53
 2163 stop #7: 0x0
-2164 kid release #17: 3 buffer refs=Some(9)
+2164 kid release #17: 5 buffer refs=Some(8)
 2165 lock #9 off=9000 bytes=4294967295 flags=3: 0x0 +0 3 0 0
 2166 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2167 ds addref/release: 54 53
 2168 stop #7: 0x0
-2169 kid release #28: 1 buffer refs=Some(9)
+2169 kid release #28: 2 buffer refs=Some(9)
 2170 ds addref/release: 54 53
 2171 caps #22: 0x0 [14, 80, 3, 0, 0]
 2172 mix playsound: [0xa5bf3e211afb5797 ev=[]] [0xa5bf3e211afb5797 ev=[]] [0xa5bf3e211afb5797 ev=[]] pos=0 playing=true looping=true
 2173 qi #10 0x279afa86: 0x0 #56 refs=Some(9)
 2174 qi ? 0x279afa86: 0x0 #57 refs=None
-2175 qi #2 0xb0210783: 0x0 #58 refs=Some(10)
+2175 qi #2 0xb0210783: 0x0 #58 refs=Some(9)
 2176 mix #7: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2177 ds caps 0: 0x0 [0, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
-2178 notify #42 n=8 p=true: 0x0 Some([(0, 0), (0, 1), (4409, 2), (2000, 3), (1, 4), (100, 5), (0, 6), (1, 7)])
+2178 notify #41 n=8 p=true: 0x0 Some([(0, 0), (0, 1), (4409, 2), (2000, 3), (1, 4), (100, 5), (0, 6), (1, 7)])
 2179 format #15 size=18 to=false: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2180 misc #2: [0, 0, 80004001, 0, 80004002, 88780082]
 2181 format #11 size=16 to=true: 0x0 written=18 [3, 0, 2, 0, 22, 56, 0, 0, cc, 4, 2, 0, 6, 0, 18, 0, 0, 0]
@@ -2187,22 +2187,22 @@ create: 0x0 #1
 2184 mix #10: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=1.5 playing=true looping=true
 2185 format #9 size=15 to=false: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2186 format #12 size=15 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
-2187 kid addref #34: 2
+2187 kid addref #33: 4
 2188 caps #2: 0x0 [14, 8000, 3, 0, 0]
 2189 lock #8 off=4294967295 bytes=1 flags=0: 0x0 +6555 1 0 0
 2190 set #7 vol=-5000 pan=0 freq=100: 0x0 0x0 0x0 Some((995049015, 995049015, 100))
-2191 kid qi #24: 0x80004002 self=false refs=1
+2191 kid qi #25: 0x80004002 self=false refs=1
 2192 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2193 mix #10: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=1.5 playing=true looping=true
 2194 mix playsound: [0xa5bf3e211afb5797 ev=[]] [0xa5bf3e211afb5797 ev=[]] [0xa5bf3e211afb5797 ev=[]] pos=0 playing=true looping=true
 2195 mix #3: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=true looping=true
 2196 set #10 vol=0 pan=0 freq=200000: 0x0 0x0 0x0 Some((1065353216, 1065353216, 200000))
 2197 playsound 46 bytes flags=0x40 name=true: 1 None
-2198 kid qi #33: 0x80004002 self=false refs=1
+2198 kid qi #32: 0x80004002 self=false refs=2
 2199 mix #12: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=2.0000000000037517 playing=false looping=true
 2200 mix #22: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2201 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
-2202 addref #2: 11
+2202 addref #2: 10
 2203 addref ?: 1
 2204 ds qi 0x1234: 0x80004002 0
 2205 playsound 48 bytes flags=0x15 name=false: 1 None
@@ -2219,7 +2219,7 @@ create: 0x0 #1
 2216 stop #10: 0x0
 2217 qi #15 0x279afa86: 0x0 #59 refs=Some(12)
 2218 set position #9 2: 0x0 pos=Some(0.0)
-2219 qi #9 0x279afa85: 0x0 self refs=Some(22)
+2219 qi #9 0x279afa85: 0x0 self refs=Some(23)
 2220 get #5: 0x0 vol=100 0x0 pan=0 0x0 freq=0 0x0 status=0x0
 2221 get #10: 0x0 vol=0 0x0 pan=0 0x0 freq=200000 0x0 status=0x0
 2222 play #11 2: 0x0
@@ -2239,8 +2239,8 @@ create: 0x0 #1
 2236 mix #7: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2237 caps #11: 0x0 [14, 1, 0, 0, 0]
 2238 set position #3 2: 0x0 pos=Some(0.0)
-2239 notify #25 n=8 p=true: 0x0 Some([(1, 0), (2000, 1), (100, 2), (0, 3), (2000, 4), (2000, 5), (100, 6), (1, 7)])
-2240 mix #4: [0x7c723122fbba5e60 ev=[]] pos=931.0000000000017 playing=true looping=true
+2239 notify #26 n=8 p=true: 0x0 Some([(1, 0), (2000, 1), (100, 2), (0, 3), (2000, 4), (2000, 5), (100, 6), (1, 7)])
+2240 mix #4: [0x7c723122fbba5e60 ev=[6, 7]] pos=931.0000000000017 playing=true looping=true
 2241 set position #9 2: 0x0 pos=Some(0.0)
 2242 set position #8 4408: 0x0 pos=Some(551.0)
 2243 release #22: 10 gone=false
@@ -2265,7 +2265,7 @@ create: 0x0 #1
 2262 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2263 qi #4 0x6825a449: 0x0 self refs=Some(19)
 2264 stop #4: 0x0
-2265 kid qi #49: 0x0 self=true refs=3
+2265 kid qi #49: 0x0 self=true refs=2
 2266 format #9 size=15 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2267 caps #3: 0x0 [14, 10, 4, 0, 0]
 2268 play #9 0: 0x0
@@ -2278,26 +2278,26 @@ create: 0x0 #1
 2275 addref #12: 10
 2276 qi #22 0x279afa84: 0x0 #60 refs=Some(12)
 2277 misc #22: [0, 0, 80004001, 0, 80004002, 88780082]
-2278 kid qi #24: 0x0 self=true refs=2
+2278 kid qi #25: 0x0 self=true refs=2
 2279 lock #2 off=9000 bytes=4410 flags=3: 0x0 +1 2 data 1
 2280 get #11: 0x0 vol=-600 0x0 pan=-3000 0x0 freq=44100 0x0 status=0x1
 2281 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2282 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
-2283 addref #9: 23
+2283 addref #9: 24
 2284 position #10 true true: 0x0 1 0
 2285 caps #12: 0x0 [14, 80, 64, 0, 0]
 2286 mix #7: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2287 mix playsound:gone
 2288 misc #5: [0, 0, 80004001, 0, 80004002, 88780082]
-2289 kid release #36: 0 buffer refs=Some(9)
+2289 kid release #36: 1 buffer refs=Some(10)
 2290 ds addref/release: 55 54
 2291 ds qi 0x0: 0x0 #0
-2292 kid addref #17: 4
+2292 kid addref #58: 2
 2293 mix playsound:gone
-2294 kid qi #35: 0x0 self=true refs=4
+2294 kid qi #45: 0x0 self=true refs=2
 2295 position #3 true true: 0x0 0 0
 2296 ds caps 96: 0x0 [60, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
-2297 addref #7: 10
+2297 addref #7: 11
 2298 position #4 true true: 0x0 7448 2156
 2299 misc #2: [0, 0, 80004001, 0, 80004002, 88780082]
 2300 set position #3 4410: 0x80070057 pos=Some(0.0)
@@ -2305,8 +2305,8 @@ create: 0x0 #1
 2302 get ?: 0x0 vol=0 0x0 pan=0 0x0 freq=44100 0x0 status=0x0
 2303 set position #3 100: 0x80070057 pos=Some(0.0)
 2304 ds qi 0xc50a7e93: 0x0 #0
-2305 addref #11: 12
-2306 notify #51 n=0 p=true: 0x0 Some([])
+2305 addref #11: 13
+2306 notify #24 n=0 p=true: 0x0 Some([])
 2307 caps #11: 0x0 [14, 1, 0, 0, 0]
 2308 misc #3: [0, 0, 80004001, 0, 80004002, 88780082]
 2309 release #4: 18 gone=false
@@ -2322,26 +2322,26 @@ create: 0x0 #1
 2319 misc #4: [0, 0, 80004001, 0, 80004002, 88780082]
 2320 ds qi 0x0: 0x0 #0
 2321 lock #15 off=1 bytes=100 flags=1: 0x0 +20 80 data 20
-2322 kid release #43: 0 buffer refs=Some(10)
+2322 kid release #50: 0 buffer refs=Some(16)
 2323 mix #22: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2324 format #8 size=0 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2325 set #10 vol=100 pan=-10000 freq=22050: 0x0 0x0 0x0 Some((1065353216, 925353388, 22050))
 2326 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
-2327 kid release #17: 3 buffer refs=Some(10)
+2327 kid release #46: 1 buffer refs=Some(13)
 2328 ds caps 200: 0x0 [c8, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
 2329 stop #11: 0x0
 2330 get #7: 0x0 vol=-5000 0x0 pan=0 0x0 freq=100 0x0 status=0x5
 2331 mix #10: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=1.5 playing=false looping=true
 2332 get #5: 0x0 vol=100 0x0 pan=0 0x0 freq=0 0x0 status=0x0
 2333 ds addref/release: 58 57
-2334 kid release #60: 0 buffer refs=Some(11)
+2334 kid release #26: 0 buffer refs=Some(9)
 2335 play ? 0: 0x0
 2336 addref #4: 19
 2337 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2338 lock #8 off=4410 bytes=100 flags=2: 0x0 +4410 4410 data 4410
 2339 mix #2: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2340 lock #2 off=0 bytes=9000 flags=2: 0x0 +0 3 0 0
-2341 kid release #18: 4 buffer refs=Some(11)
+2341 kid release #37: 0 buffer refs=Some(18)
 2342 format #12 size=18 to=true: 0x0 written=18 [6, 0, 1, 0, 0, 77, 1, 0, 0, 77, 1, 0, 1, 0, 8, 0, 0, 0]
 2343 get #10: 0x0 vol=100 0x0 pan=-10000 0x0 freq=22050 0x0 status=0x0
 2344 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
@@ -2378,19 +2378,19 @@ create: 0x0 #1
 2375 set #11 vol=-600 pan=-10000 freq=1: 0x0 0x0 0x0 Some((1056984526, 916990887, 100))
 2376 misc #8: [0, 0, 80004001, 0, 80004002, 88780082]
 2377 set #5 vol=0 pan=3000 freq=200001: 0x0 0x0 0x0 Some((1023510242, 1065353216, 200000))
-2378 qi #3 0x279afa84: 0x0 #61 refs=Some(18)
+2378 qi #3 0x279afa84: 0x0 #61 refs=Some(17)
 2379 format #22 size=40 to=true: 0x0 written=18 [1, 0, 2, 0, 11, 2b, 0, 0, 33, 81, 0, 0, 3, 0, c, 0, 0, 0]
 2380 ds caps 96: 0x0 [60, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
-2381 kid addref #29: 4
+2381 kid addref #30: 3
 2382 ds addref/release: 59 58
 2383 ds qi 0x0: 0x0 #0
 2384 misc #10: [0, 0, 80004001, 0, 80004002, 88780082]
 2385 mix #7: [0xedddb32c459d1d49 ev=[]] [0xedddb32c459d1d49 ev=[]] [0xedddb32c459d1d49 ev=[]] pos=0.000000000000022648549702353193 playing=true looping=true
 2386 set format #10: 0x0 Some(("22050Hz/1ch/0b/law7", 22050))
 2387 set position #5 17640: 0x80070057 pos=Some(0.0)
-2388 kid qi #40: 0x0 self=true refs=2
+2388 kid qi #41: 0x0 self=true refs=2
 2389 play #12 2: 0x0
-2390 qi #4 0x279afa85: 0x0 self refs=Some(20)
+2390 qi #4 0x279afa85: 0x0 self refs=Some(19)
 2391 set format #3: 0x0 Some(("0Hz/2ch/12b/law6", 0))
 2392 position #4 false true: 0x0 3735928559 2156
 2393 ds qi 0x279afa83: 0x0 #0
@@ -2437,12 +2437,12 @@ create: 0x0 #1
 2434 set #22 vol=-10001 pan=10000 freq=200000: 0x0 0x0 0x0 Some((0, 0, 200000))
 2435 ds caps 20: 0x0 [14, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 2436 ds caps 96: 0x0 [60, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
-2437 qi #9 0x0: 0x0 self refs=Some(24)
+2437 qi #9 0x0: 0x0 self refs=Some(25)
 2438 position #4 true true: 0x0 3724 4164
 2439 caps #8: 0x0 [14, 8000, 2274, 0, 0]
 2440 lock #10 off=4409 bytes=9000 flags=2: 0x0 +2 1 data 2
 2441 mix #8: [0x4b13108f6406ccc5 ev=[]] pos=551 playing=false looping=true
-2442 addref #7: 11
+2442 addref #7: 12
 2443 playsound 52 bytes flags=0x5 name=true: 1 Some(("22050Hz/1ch/16b", 8, true, false))
 2444 mix #11: [0x4b13108f6406ccc5 ev=[]] pos=734 playing=true looping=true
 2445 mix playsound: [0xac5cacab8db459 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
@@ -2476,7 +2476,7 @@ create: 0x0 #1
 2473 qi #12 0x279afa84: 0x0 #63 refs=Some(11)
 2474 play #9 0: 0x0
 2475 set position #22 4294967295: 0x80070057 pos=Some(0.0)
-2476 qi #9 0xb0210783: 0x0 #64 refs=Some(25)
+2476 qi #9 0xb0210783: 0x0 #64 refs=Some(26)
 2477 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2478 mix #2: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2479 mix ?:gone
@@ -2496,13 +2496,13 @@ create: 0x0 #1
 2493 lock #22 off=4410 bytes=100 flags=2: 0x0 +0 3 0 0
 2494 qi #5 0x279afa86: 0x0 #65 refs=Some(11)
 2495 mix #7: [0xedddb32c459d1d49 ev=[]] pos=0.00000000000003019806626980426 playing=true looping=true
-2496 kid qi #30: 0x0 self=true refs=5
+2496 kid qi #31: 0x0 self=true refs=4
 2497 lock #10 off=4294967295 bytes=4294967295 flags=2: 0x0 +0 3 0 0
 2498 set format #7: 0x0 Some(("11025Hz/1ch/16b", 100))
 2499 lock #7 off=4294967295 bytes=0 flags=1: 0x0 +2 0 0 0
 2500 format #8 size=40 to=true: 0x0 written=18 [1, 0, 2, 0, 44, ac, 0, 0, 20, 62, 5, 0, 8, 0, 20, 0, 0, 0]
 2501 ds qi 0x0: 0x0 #0
-2502 kid addref #37: 3
+2502 kid addref #38: 2
 2503 playsound 2594 bytes flags=0x15 name=true: 0 None
 2504 mix #2: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2505 set format #2: 0x0 Some(("96000Hz/6ch/64b/law7", 96000))
@@ -2537,7 +2537,7 @@ create: 0x0 #1
 2534 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=734 playing=false looping=true
 2535 set position #5 17640: 0x80070057 pos=Some(0.0)
 2536 misc #11: [0, 0, 80004001, 0, 80004002, 88780082]
-2537 kid release #23: 1 buffer refs=Some(25)
+2537 kid release #24: 0 buffer refs=Some(11)
 2538 get #15: 0x0 vol=100 0x0 pan=20000 0x0 freq=22050 0x0 status=0x0
 2539 mix #10: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=1.5 playing=false looping=true
 2540 ds qi 0x279afa83: 0x0 #0
@@ -2545,12 +2545,12 @@ create: 0x0 #1
 2542 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2543 ds qi 0x279afa85: 0x80004002 0
 2544 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
-2545 notify #42 n=8 p=true: 0x0 Some([(4409, 0), (4294967295, 1), (4409, 2), (0, 3), (100, 4), (1, 5), (2000, 6), (4294967295, 7)])
+2545 notify #17 n=8 p=true: 0x0 Some([(4409, 0), (4294967295, 1), (4409, 2), (0, 3), (100, 4), (1, 5), (2000, 6), (4294967295, 7)])
 2546 mix playsound: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2547 play #2 2: 0x0
-2548 qi #4 0xb0210783: 0x0 #66 refs=Some(21)
+2548 qi #4 0xb0210783: 0x0 #66 refs=Some(20)
 2549 ds addref/release: 65 64
-2550 release #22: 10 gone=false
+2550 release #22: 11 gone=false
 2551 playsound 45 bytes flags=0xd name=false: 1 None
 2552 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2553 addref #10: 10
@@ -2566,7 +2566,7 @@ create: 0x0 #1
 2563 ds addref/release: 65 64
 2564 set #4 vol=-1 pan=20000 freq=44100: 0x0 0x0 0x0 Some((925340737, 1065333912, 44100))
 2565 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
-2566 kid addref #66: 2
+2566 kid addref #46: 2
 2567 mix #15: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2568 set format #3: 0x0 Some(("22050Hz/2ch/32bf", 22050))
 2569 ds qi 0x1234: 0x80004002 0
@@ -2587,15 +2587,15 @@ create: 0x0 #1
 2584 mix #11: [0x4b13108f6406ccc5 ev=[]] pos=734 playing=false looping=true
 2585 set #15 vol=-5000 pan=10000 freq=44100: 0x0 0x0 0x0 Some((856150428, 995049015, 44100))
 2586 stop #22: 0x0
-2587 kid release #55: 0 buffer refs=Some(24)
+2587 kid release #23: 2 buffer refs=Some(26)
 2588 release #7: 11 gone=false
 2589 format #8 size=15 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2590 mix #3: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2591 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=734 playing=false looping=true
-2592 qi #4 0x279afa85: 0x0 self refs=Some(22)
+2592 qi #4 0x279afa85: 0x0 self refs=Some(21)
 2593 mix #12: [0xbe6f161f7713c692 ev=[]] pos=0.0000000000009379164112033322 playing=true looping=true
 2594 playsound 78 bytes flags=0xd name=false: 1 None
-2595 release #11: 11 gone=false
+2595 release #11: 12 gone=false
 2596 set format #11: 0x0 Some(("0Hz/1ch/64b", 0))
 2597 get #8: 0x0 vol=-10001 0x0 pan=3000 0x0 freq=200000 0x0 status=0x0
 2598 misc #15: [0, 0, 80004001, 0, 80004002, 88780082]
@@ -2605,7 +2605,7 @@ create: 0x0 #1
 2602 mix #7: [0xedddb32c459d1d49 ev=[]] pos=0.00000000000005284661597215745 playing=true looping=true
 2603 mix #7: [0xedddb32c459d1d49 ev=[]] [0xedddb32c459d1d49 ev=[]] pos=0.00000000000006794564910705958 playing=true looping=true
 2604 set format ?: 0x0 None
-2605 kid qi #45: 0x0 self=true refs=2
+2605 kid qi #46: 0x0 self=true refs=3
 2606 mix #12: [0xbe6f161f7713c692 ev=[]] pos=0.0000000000018758328224066645 playing=true looping=true
 2607 ds qi 0x279afa85: 0x80004002 0
 2608 qi #5 0xb0210783: 0x0 #68 refs=Some(13)
@@ -2619,11 +2619,11 @@ create: 0x0 #1
 2616 caps #5: 0x0 [14, 8000, 2274, 0, 0]
 2617 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2618 get #12: 0x0 vol=-600 0x0 pan=3000 0x0 freq=200000 0x0 status=0x5
-2619 qi #3 0xb0210783: 0x0 #69 refs=Some(19)
+2619 qi #3 0xb0210783: 0x0 #69 refs=Some(18)
 2620 ds qi 0x1234: 0x80004002 0
 2621 set format #15: 0x0 Some(("22050Hz/6ch/24b", 22050))
 2622 format #9 size=16 to=true: 0x0 written=18 [1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, c, 0, 0, 0]
-2623 kid qi #51: 0x0 self=true refs=3
+2623 kid qi #53: 0x0 self=true refs=2
 2624 format #2 size=18 to=true: 0x0 written=18 [7, 0, 6, 0, 0, 77, 1, 0, 0, 50, 46, 0, 30, 0, 40, 0, 0, 0]
 2625 format #9 size=0 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2626 ds caps 4: 0x0 [4, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
@@ -2648,9 +2648,9 @@ create: 0x0 #1
 2645 notify #68 n=8 p=true: 0x0 Some([(100, 0), (100, 1), (2000, 2), (8000, 3), (100, 4), (4409, 5), (4409, 6), (4409, 7)])
 2646 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2647 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=734 playing=false looping=true
-2648 qi #11 0x0: 0x0 self refs=Some(12)
+2648 qi #11 0x0: 0x0 self refs=Some(13)
 2649 position #15 false true: 0x0 3735928559 60
-2650 qi #3 0x6825a449: 0x0 self refs=Some(20)
+2650 qi #3 0x6825a449: 0x0 self refs=Some(19)
 2651 get #12: 0x0 vol=-600 0x0 pan=3000 0x0 freq=200000 0x0 status=0x5
 2652 play #4 1: 0x0
 2653 mix #7: [0xedddb32c459d1d49 ev=[]] [0xedddb32c459d1d49 ev=[]] pos=0.00000000000008304468224196171 playing=true looping=true
@@ -2671,34 +2671,34 @@ create: 0x0 #1
 2668 playsound 45 bytes flags=0x5 name=true: 1 Some(("44100Hz/1ch/8b/law7", 1, true, false))
 2669 play #4 2: 0x0
 2670 playsound 57 bytes flags=0xd name=true: 1 Some(("11025Hz/2ch/16b/law7", 1, true, true))
-2671 addref #22: 11
+2671 addref #22: 12
 2672 mix #15: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2673 set #15 vol=-600 pan=10000 freq=96000: 0x0 0x0 0x0 Some((916990887, 1056984526, 96000))
 2674 caps #5: 0x0 [14, 8000, 2274, 0, 0]
 2675 mix #10: [0x4b13108f6406ccc5 ev=[]] pos=1.5 playing=false looping=true
 2676 ds addref/release: 66 65
 2677 format #2 size=18 to=true: 0x0 written=18 [7, 0, 6, 0, 0, 77, 1, 0, 0, 50, 46, 0, 30, 0, 40, 0, 0, 0]
-2678 mix #4: [0x7819a6c40776da2f ev=[]] [0xef9176cf87a90702 ev=[]] pos=3021.9999999999645 playing=true looping=false
+2678 mix #4: [0x7819a6c40776da2f ev=[]] [0xef9176cf87a90702 ev=[6, 7]] pos=3021.9999999999645 playing=true looping=false
 2679 format ? size=18 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2680 mix #2: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=true looping=false
 2681 ds addref/release: 66 65
 2682 mix #10: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=1.5 playing=false looping=true
 2683 kid release #62: 0 buffer refs=Some(10)
 2684 set format ?: 0x0 None
-2685 addref #4: 23
-2686 mix #4: [0xb6f0a0ddac217b71 ev=[]] [0x14bb21e10c271cf6 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
+2685 addref #4: 22
+2686 mix #4: [0xb6f0a0ddac217b71 ev=[]] [0x14bb21e10c271cf6 ev=[0, 2, 3, 5]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2687 play #7 1: 0x0
 2688 playsound 48 bytes flags=0xd name=true: 1 Some(("44100Hz/2ch/8b", 4, true, true))
-2689 release #11: 11 gone=false
+2689 release #11: 12 gone=false
 2690 qi #2 0x279afa84: 0x0 #71 refs=Some(11)
 2691 ds caps 0: 0x0 [0, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 2692 set position #3 17640: 0x80070057 pos=Some(0.0)
-2693 addref #11: 12
+2693 addref #11: 13
 2694 set #9 vol=-600 pan=3000 freq=100: 0x0 0x0 0x0 Some((1015141790, 1056984526, 100))
 2695 ds qi 0x279afa83: 0x0 #0
-2696 kid qi #42: 0x0 self=true refs=2
-2697 addref #3: 21
-2698 kid release #23: 0 buffer refs=Some(23)
+2696 kid qi #44: 0x0 self=true refs=2
+2697 addref #3: 20
+2698 kid release #25: 1 buffer refs=Some(12)
 2699 ds qi 0xc50a7e93: 0x0 #0
 2700 mix #7: [0xedddb32c459d1d49 ev=[]] [0xedddb32c459d1d49 ev=[]] [0xedddb32c459d1d49 ev=[]] pos=0.0000000000001056932319443149 playing=true looping=true
 2701 mix #15: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
@@ -2751,14 +2751,14 @@ create: 0x0 #1
 2748 stop #9: 0x0
 2749 mix #12: [0xac3529bfbc4f84dd ev=[]] [0x8ac3c8ffe069d09d ev=[]] [0x7adfee8774d85105 ev=[]] pos=23.000000000007503 playing=true looping=true
 2750 set format #9: 0x0 Some(("22050Hz/1ch/24b/law7", 22050))
-2751 notify #57 n=2097152 p=false: 0x80070057 None
+2751 notify #36 n=2097152 p=false: 0x80070057 Some([])
 2752 stop #5: 0x0
 2753 playsound 48 bytes flags=0xc name=true: 0 None
-2754 release #11: 11 gone=false
+2754 release #11: 12 gone=false
 2755 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2756 get #7: 0x0 vol=-1 0x0 pan=3000 0x0 freq=100 0x0 status=0x5
 2757 misc #4: [0, 0, 80004001, 0, 80004002, 88780082]
-2758 kid addref #29: 5
+2758 kid addref #56: 2
 2759 stop #12: 0x0
 2760 format #4 size=40 to=false: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2761 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
@@ -2768,7 +2768,7 @@ create: 0x0 #1
 2765 addref #12: 15
 2766 position #8 true false: 0x0 4408 0
 2767 mix #9: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
-2768 qi #22 0x6825a449: 0x0 self refs=Some(12)
+2768 qi #22 0x6825a449: 0x0 self refs=Some(13)
 2769 get #22: 0x0 vol=-10001 0x0 pan=10000 0x0 freq=200000 0x0 status=0x1
 2770 set format #10: 0x0 Some(("0Hz/2ch/12b", 0))
 2771 mix playsound:gone
@@ -2796,7 +2796,7 @@ create: 0x0 #1
 2793 set position #15 0: 0x0 pos=Some(0.0)
 2794 get #5: 0x0 vol=0 0x0 pan=3000 0x0 freq=200000 0x0 status=0x0
 2795 get ?: 0x0 vol=0 0x0 pan=0 0x0 freq=44100 0x0 status=0x0
-2796 kid release #57: 0 buffer refs=None
+2796 kid release #54: 1 buffer refs=Some(13)
 2797 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2798 set #12 vol=-10000 pan=-10000 freq=200000: 0x0 0x0 0x0 Some((0, 0, 200000))
 2799 stop #12: 0x0
@@ -2808,7 +2808,7 @@ create: 0x0 #1
 2805 misc #2: [0, 0, 80004001, 0, 80004002, 88780082]
 2806 addref #8: 12
 2807 ds qi 0x0: 0x0 #0
-2808 kid release #29: 4 buffer refs=Some(21)
+2808 kid release #66: 0 buffer refs=Some(21)
 2809 format ? size=16 to=true: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2810 stop #15: 0x0
 2811 ds caps 200: 0x0 [c8, f5f, 64, 30d40, 1, 40, 40, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, cccccccc]
@@ -2839,12 +2839,12 @@ create: 0x0 #1
 2836 set #11 vol=-10000 pan=3000 freq=96000: 0x0 0x0 0x0 Some((0, 0, 96000))
 2837 lock #8 off=0 bytes=0 flags=2: 0x0 +0 8820 0 0
 2838 misc #2: [0, 0, 80004001, 0, 80004002, 88780082]
-2839 kid addref #65: 2
+2839 kid addref #52: 2
 2840 mix #11: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=734 playing=false looping=true
 2841 addref #10: 11
 2842 position #2 true true: 0x0 0 0
 2843 ds addref/release: 73 72
-2844 kid release #61: 0 buffer refs=Some(20)
+2844 kid release #25: 0 buffer refs=Some(11)
 2845 lock #3 off=1 bytes=100 flags=3: 0x0 +0 4 0 0
 2846 mix #9: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2847 format #3 size=40 to=true: 0x0 written=18 [1, 0, 2, 0, 22, 56, 0, 0, 88, 58, 1, 0, 4, 0, 10, 0, 0, 0]
@@ -2867,17 +2867,17 @@ create: 0x0 #1
 2864 ds qi 0x1234: 0x80004002 0
 2865 playsound 85 bytes flags=0xd name=false: 1 None
 2866 mix #7: [0x9ab4151ca5627d28 ev=[]] [0x9ab4151ca5627d28 ev=[]] pos=0.00000000000012079226507921703 playing=true looping=true
-2867 mix #22: [0x4b13108f6406ccc5 ev=[0, 1, 2, 3, 4, 5, 6, 7]] pos=0 playing=false looping=false
+2867 mix #22: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2868 caps #9: 0x0 [14, 10, 3, 0, 0]
 2869 ds caps 20: 0x0 [14, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 2870 set format #4: 0x0 Some(("44100Hz/1ch/64b/law7", 44100))
 2871 ds addref/release: 73 72
 2872 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2873 set position #10 2: 0x0 pos=Some(0.0)
-2874 notify #53 n=1 p=true: 0x0 Some([(4294967295, 0)])
+2874 notify #45 n=1 p=true: 0x0 Some([(4294967295, 0)])
 2875 misc #10: [0, 0, 80004001, 0, 80004002, 88780082]
 2876 format #5 size=16 to=true: 0x0 written=18 [1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 10, 0, 0, 0]
-2877 kid qi #24: 0x0 self=true refs=3
+2877 kid qi #42: 0x0 self=true refs=2
 2878 stop #22: 0x0
 2879 mix ?:gone
 2880 get #12: 0x0 vol=-10000 0x0 pan=-10000 0x0 freq=200000 0x0 status=0x5
@@ -2892,7 +2892,7 @@ create: 0x0 #1
 2889 mix #11: [0x4b13108f6406ccc5 ev=[]] pos=734 playing=false looping=true
 2890 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2891 ds qi 0x279afa83: 0x0 #0
-2892 mix #3: [0xa22f4a4ca1859d95 ev=[0]] pos=0 playing=false looping=false
+2892 mix #3: [0xa22f4a4ca1859d95 ev=[]] pos=0 playing=false looping=false
 2893 lock #15 off=4410 bytes=4410 flags=1: 0x0 +80 20 data 80
 2894 set position #15 0: 0x0 pos=Some(0.0)
 2895 playsound 77 bytes flags=0xc name=true: 1 Some(("22050Hz/2ch/32bf", 33, true, true))
@@ -2909,7 +2909,7 @@ create: 0x0 #1
 2906 ds qi 0x279afa85: 0x80004002 0
 2907 get #3: 0x0 vol=0 0x0 pan=3000 0x0 freq=22050 0x0 status=0x0
 2908 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
-2909 qi #15 0x5555: 0x80004002 0x0 refs=Some(12)
+2909 qi #15 0x5555: 0x80004002 0x0 refs=Some(11)
 2910 mix #8: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=551 playing=false looping=true
 2911 get #10: 0x0 vol=-10000 0x0 pan=3000 0x0 freq=8000 0x0 status=0x1
 2912 stop #22: 0x0
@@ -2924,24 +2924,24 @@ create: 0x0 #1
 2921 caps #4: 0x0 [14, 8000, 2274, 0, 0]
 2922 mix #2: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2923 mix #15: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
-2924 addref #9: 24
+2924 addref #9: 27
 2925 mix #12: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=23.000000000013127 playing=true looping=true
 2926 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
-2927 release #9: 23 gone=false
+2927 release #9: 26 gone=false
 2928 lock #5 off=1 bytes=9000 flags=1: 0x0 +1323 7497 data 1323
 2929 ds caps 0: 0x0 [0, f5f, 64, 30d40, 1, 40, 40, 40, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc, cccccccc]
 2930 mix playsound: [0x94316f58f249eb3a ev=[]] [0x6c4b7c7c317da89e ev=[]] pos=2.5 playing=true looping=true
 2931 misc #7: [0, 0, 80004001, 0, 80004002, 88780082]
 2932 set position #7 100: 0x80070057 pos=Some(1.4344081478157023e-13)
-2933 kid qi #17: 0x0 self=true refs=4
+2933 kid qi #39: 0x0 self=true refs=2
 2934 playsound 53 bytes flags=0xc name=true: 1 Some(("22050Hz/2ch/16b", 9, true, true))
 2935 position #4 true false: 0x0 400 0
 2936 mix #7: [0x4b13108f6406ccc5 ev=[]] pos=0.00000000000021049828546892968 playing=true looping=true
-2937 qi #9 0x5555: 0x80004002 0x0 refs=Some(23)
+2937 qi #9 0x5555: 0x80004002 0x0 refs=Some(26)
 2938 mix #2: [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2939 ds addref/release: 74 73
 2940 caps #11: 0x0 [14, 1, 0, 0, 0]
-2941 kid release #31: 0 buffer refs=Some(12)
+2941 kid release #55: 0 buffer refs=Some(25)
 2942 mix #5: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=true
 2943 mix #22: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2944 ds qi 0x1234: 0x80004002 0
@@ -2951,7 +2951,7 @@ create: 0x0 #1
 2948 mix #3: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2949 format #2 size=18 to=false: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2950 lock #8 off=4294967295 bytes=4294967295 flags=0: 0x0 +6555 2265 data 6555
-2951 qi #11 0xb0210783: 0x0 #72 refs=Some(12)
+2951 qi #11 0xb0210783: 0x0 #72 refs=Some(13)
 2952 play #2 1: 0x0
 2953 ds misc: 0x0 0x0 0x0 speaker=4 0x0 0x0 0x0 cert=0
 2954 position #11 true true: 0x0 0 0
@@ -2964,7 +2964,7 @@ create: 0x0 #1
 2961 get #12: 0x0 vol=-10000 0x0 pan=-10000 0x0 freq=44100 0x0 status=0x5
 2962 release #3: 20 gone=false
 2963 ds addref/release: 74 73
-2964 addref #11: 13
+2964 addref #11: 14
 2965 stop #2: 0x0
 2966 format #9 size=16 to=false: 0x0 written=18 [cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc, cc]
 2967 position #12 true true: 0x0 69 92
@@ -2977,7 +2977,7 @@ create: 0x0 #1
 2974 mix #3: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=false looping=false
 2975 mix #9: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=0 playing=true looping=false
 2976 play #22 1: 0x0
-2977 kid qi #64: 0x0 self=true refs=2
+2977 kid qi #23: 0x0 self=true refs=3
 2978 lock ? off=1 bytes=0 flags=0: 0x80070057 0xdeadbeef 0 0 0
 2979 mix #8: [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] [0x4b13108f6406ccc5 ev=[]] pos=551 playing=false looping=true
 2980 ds addref/release: 74 73
@@ -2996,7 +2996,7 @@ create: 0x0 #1
 2993 set format #7: 0x0 Some(("8000Hz/1ch/16b", 8000))
 2994 qi #12 0x6825a449: 0x0 self refs=Some(17)
 2995 mix #7: [0x9ab4151ca5627d28 ev=[]] pos=0.0000000000002162714451969805 playing=true looping=true
-2996 notify #67 n=2097152 p=true: 0x80070057 Some([])
+2996 notify #41 n=2097152 p=true: 0x80070057 Some([(0, 0), (0, 1), (4409, 2), (2000, 3), (1, 4), (100, 5), (0, 6), (1, 7)])
 2997 play #8 1: 0x0
 2998 set position #11 100: 0x0 pos=Some(12.0)
 2999 set #8 vol=-10000 pan=20000 freq=200001: 0x0 0x0 0x0 Some((0, 0, 200000))

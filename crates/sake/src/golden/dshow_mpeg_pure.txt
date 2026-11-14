@@ -1,0 +1,928 @@
+video_info 0x0 24 1000000000: 88 12e83b98b7a2c2dd stride=0
+video_info 1x240 8 30: 88 505fc5fd4f8e61e4 stride=4
+video_info 320x0 0 0: 88 ed19836911329790 stride=0
+video_info 320x7 15 0: 88 181328815c24ec62 stride=640
+video_info 0x7 32 0: 88 395b70cafc849998 stride=0
+video_info 2x1 32 23.976: 88 52c7180d7210cbf2 stride=8
+video_info 1x2 15 23.976: 88 c4a88abf92bac254 stride=4
+video_info 320x7 32 29.97: 88 8cd9ef6d583c4b1e stride=1280
+video_info 641x0 16 NaN: 88 f2c21814ba2546fe stride=1284
+video_info 3x240 24 0.000000001: 88 e1406e4b468e231d stride=12
+video_info 320x240 16 23.976: 88 5a664631fbbc8e60 stride=640
+video_info 3x2 16 29.97: 88 bd40160157927139 stride=8
+video_info 641x2 0 29.97: 88 0f6a40e2b4901116 stride=0
+video_info 2x1 16 23.976: 88 ec4c445b187db700 stride=4
+video_info 641x0 15 0.000000001: 88 9c0f7a53fb1e95bc stride=1284
+video_info 0x0 15 1000000000: 88 d4078ee4ee85a692 stride=0
+video_info 641x2 24 30: 88 77ec126990c0a9c8 stride=1924
+video_info 3x2 8 NaN: 88 8eb57a9db53141b0 stride=4
+video_info 1x1 8 1000000000: 88 0ee7924ecee45517 stride=4
+video_info 3x240 15 29.97: 88 560861710c007c52 stride=8
+video_info 1x1 15 30: 88 7a449ac927b3fb2e stride=4
+video_info 641x1 24 23.976: 88 9bb0767204efad84 stride=1924
+video_info 2x2 0 NaN: 88 7e97d60915752a7f stride=0
+video_info 2x2 24 29.97: 88 778676ff751a3540 stride=8
+video_info 320x2 16 1000000000: 88 fc13214136c7dba8 stride=640
+video_info 641x2 16 0: 88 a7c10ed9a581b7fc stride=1284
+video_info 641x2 16 30: 88 f093d10c53c1993e stride=1284
+video_info 5x0 32 1000000000: 88 fcdc55c4c953ceca stride=20
+video_info 2x2 8 NaN: 88 eeab43afc832e2f3 stride=4
+video_info 1x240 0 30: 88 5d7de23d09cf2747 stride=0
+video_info 3x7 24 23.976: 88 00c885a687782549 stride=12
+video_info 320x0 24 0.000000001: 88 a9e6e37087dbd2c8 stride=960
+video_info 0x1 8 29.97: 88 59cd1fff1be6d52b stride=0
+video_info 1x0 24 29.97: 88 6b927cc757aab9da stride=4
+video_info 3x1 15 NaN: 88 0fa25701f63b16ac stride=8
+video_info 0x240 16 0.000000001: 88 c6f824dc0ee44a76 stride=0
+video_info 320x0 16 0: 88 529d397af0a78e23 stride=640
+video_info 0x2 24 29.97: 88 2ec622a28ee79679 stride=0
+video_info 3x0 8 30: 88 6e7a41b9b409e56e stride=4
+video_info 0x7 8 0.000000001: 88 37f63a8e3f8dda68 stride=0
+video_info 3x1 8 30: 88 911f63bb7efc0f06 stride=4
+video_info 1x240 24 23.976: 88 a901563cc7fb9348 stride=4
+video_info 0x240 16 0: 88 b661462243f740a5 stride=0
+video_info 5x7 0 30: 88 6bf60c1786dbdc57 stride=0
+video_info 1x240 0 23.976: 88 c2e2948d6c02f92a stride=0
+video_info 0x7 0 29.97: 88 64d8a84821111dad stride=0
+video_info 5x1 32 23.976: 88 43f7be13b78d35b0 stride=20
+video_info 320x2 0 NaN: 88 044d414ad6f901ce stride=0
+video_info 0x0 0 29.97: 88 388fad77118b268a stride=0
+video_info 641x240 32 1000000000: 88 dbb5685185924f77 stride=2564
+video_info 641x240 8 30: 88 8933bd6a3f1ebdd0 stride=644
+video_info 320x7 8 23.976: 88 0d3d0d2362d6d961 stride=320
+video_info 0x7 16 1000000000: 88 9edf26dcdbf9902b stride=0
+video_info 1x7 15 29.97: 88 a3447be2f966f382 stride=4
+video_info 1x7 8 NaN: 88 3bb184a4a15cc474 stride=4
+video_info 1x1 0 30: 88 67007ed4f3f2b476 stride=0
+video_info 320x240 24 NaN: 88 ef6ed48c9224977c stride=960
+video_info 3x2 32 29.97: 88 cf9c9a09da39906e stride=12
+video_info 641x240 24 29.97: 88 9644c266bf0830b9 stride=1924
+video_info 0x0 8 NaN: 88 37ddf9dd3a2a07b4 stride=0
+video_info 0x2 16 1000000000: 88 6457118d55c3b3ad stride=0
+video_info 2x7 16 0: 88 04f949c3369cc4c4 stride=4
+video_info 5x2 0 NaN: 88 a42e72989d88baf2 stride=0
+video_info 1x0 24 30: 88 0d6327a8c5fb4cfc stride=4
+video_info 3x7 8 1000000000: 88 089b1d2ff1d4d6d2 stride=4
+video_info 1x240 24 23.976: 88 5b039d4188e802cd stride=4
+video_info 2x240 16 0: 88 929b76f2583a1242 stride=4
+video_info 641x0 16 23.976: 88 9dcf7047806aecf8 stride=1284
+video_info 1x1 16 NaN: 88 650f29f8c2d1d467 stride=4
+video_info 5x7 15 23.976: 88 3e0e7974b55573b9 stride=12
+video_info 2x7 16 23.976: 88 5fc0d1ab69e342cf stride=4
+video_info 3x0 24 30: 88 5645de1f4f68c39d stride=12
+video_info 3x2 16 NaN: 88 48e2b6217048d112 stride=8
+video_info 2x7 24 1000000000: 88 1e227557567c3338 stride=8
+video_info 2x1 8 NaN: 88 25448039a8d3de65 stride=4
+video_info 2x7 32 29.97: 88 c72e3af08b4b33d8 stride=8
+video_info 2x0 32 30: 88 8ee5f48391fa71a4 stride=8
+video_info 641x7 15 1000000000: 88 a646768028b9bb28 stride=1284
+video_info 320x2 24 0.000000001: 88 3cd09385a2c85e98 stride=960
+video_info 3x240 8 1000000000: 88 d1bd966075999971 stride=4
+video_info 320x0 32 0: 88 e4e6e5ff7241e9ea stride=1280
+video_info 5x1 15 30: 88 4df7a915fd828f1e stride=12
+video_info 1x1 32 23.976: 88 0856bee4af14ee83 stride=4
+video_info 0x7 0 0.000000001: 88 a4b39370cb673543 stride=0
+video_info 0x7 24 1000000000: 88 a618c9ad885df473 stride=0
+video_info 0x0 24 30: 88 ec8dad74f789781e stride=0
+video_info 2x1 8 0.000000001: 88 ee7dec648db829f7 stride=4
+video_info 0x2 0 1000000000: 88 7c8b7527ba64d57e stride=0
+video_info 3x0 8 NaN: 88 a68cc2090da4b9c6 stride=4
+video_info 0x0 32 1000000000: 88 edeb640d11d982c5 stride=0
+video_info 1x240 32 29.97: 88 b8b44c2980a6f435 stride=4
+video_info 2x2 15 0.000000001: 88 0b377ab8f3cc8e17 stride=4
+video_info 641x2 16 29.97: 88 8874c76b6af71c59 stride=1284
+video_info 320x240 16 1000000000: 88 482ae54207c97c3f stride=640
+video_info 1x7 0 30: 88 8820d673cc810813 stride=0
+video_info 2x7 24 0: 88 456437dca1669e58 stride=8
+video_info 5x240 8 0.000000001: 88 74ebf68a797dff57 stride=8
+video_info 320x240 16 30: 88 9fde22437db1178c stride=640
+video_info 2x0 15 30: 88 fd61711fa4a777fa stride=4
+video_info 3x240 24 0.000000001: 88 cd9b9be93bdfceb7 stride=12
+video_info 5x2 24 30: 88 d53d7e62b90f8262 stride=16
+video_info 3x0 16 23.976: 88 e2f39dec503b0831 stride=8
+video_info 320x240 0 0.000000001: 88 33f9e332d98edb03 stride=0
+video_info 641x0 8 30: 88 f1eec6045cee1dbd stride=644
+video_info 5x1 24 29.97: 88 527a7a3bacdeee94 stride=16
+video_info 3x2 15 30: 88 32c5d0112e0ee2fe stride=8
+video_info 2x7 32 30: 88 1e9fe59b6e73436c stride=8
+video_info 2x0 8 0.000000001: 88 b8ed7433dc28f3d4 stride=4
+video_info 3x1 0 0.000000001: 88 6889390b2831d5f6 stride=0
+video_info 641x2 15 0.000000001: 88 9c824b3ed3e4f684 stride=1284
+video_info 320x240 8 30: 88 0927bdb6bc10387f stride=320
+video_info 5x240 16 29.97: 88 a56e354fb7a7891d stride=12
+video_info 320x7 15 0.000000001: 88 56d07a8a0bc9ad3b stride=640
+video_info 3x2 16 29.97: 88 bd40160157927139 stride=8
+video_info 1x7 15 1000000000: 88 40a1f67fd2e9bd64 stride=4
+video_info 320x7 16 0.000000001: 88 9a6358243617ef21 stride=640
+video_info 320x240 15 1000000000: 88 b3572036ca6ff81f stride=640
+video_info 0x1 16 30: 88 1d0bb73b34f1aaf4 stride=0
+video_info 0x2 0 0.000000001: 88 39b79c760cf3f2a6 stride=0
+video_info 2x240 24 0: 88 2f38b92da8e5d81e stride=8
+video_info 320x2 32 1000000000: 88 9f3ba76bf5da3b7a stride=1280
+video_info 5x0 0 30: 88 fa06d92adf7a0490 stride=0
+video_info 1x2 16 0: 88 88a4fb862036863b stride=4
+video_info 641x7 32 23.976: 88 4181c9c5b131def6 stride=2564
+video_info 320x2 16 0: 88 ce72aabc8f4e68e6 stride=640
+video_info 320x2 8 0.000000001: 88 72ab2a13ea72f780 stride=320
+video_info 1x1 0 30: 88 67007ed4f3f2b476 stride=0
+video_info 320x240 16 0.000000001: 88 e5272db16ab7c4cb stride=640
+video_info 1x240 16 1000000000: 88 26ea5679f242e6a3 stride=4
+video_info 1x0 15 29.97: 88 dcbb5f76f1192805 stride=4
+video_info 1x1 15 29.97: 88 b899f3706d64eb58 stride=4
+video_info 0x2 16 0: 88 6457118d55c3b3ad stride=0
+video_info 641x240 24 NaN: 88 be88856f845c9d9d stride=1924
+video_info 1x1 15 1000000000: 88 ef6552cec19e8fbf stride=4
+video_info 1x2 16 23.976: 88 ba90a6d3cf4bcd93 stride=4
+video_info 2x240 16 30: 88 28788e7192d3089b stride=4
+video_info 2x0 16 23.976: 88 8eeb7f20c5377d21 stride=4
+video_info 1x7 32 30: 88 96d696583d31314e stride=4
+video_info 641x7 8 0: 88 e30151b85eb012c3 stride=644
+video_info 0x0 0 0: 88 b30e98611ecc2b1f stride=0
+video_info 2x240 24 29.97: 88 c225dbe78bd72ad5 stride=8
+video_info 641x7 24 0.000000001: 88 819850e5b913ed72 stride=1924
+video_info 0x7 8 29.97: 88 695e81f8ede9d985 stride=0
+video_info 2x2 16 NaN: 88 5ebeb1567af09b67 stride=4
+video_info 0x240 24 30: 88 340f8e31c6c6ad0e stride=0
+video_info 320x1 16 30: 88 901d9741f208ff30 stride=640
+video_info 320x0 16 29.97: 88 d2408ab33f368535 stride=640
+video_info 1x1 24 1000000000: 88 f2843f9adf639f52 stride=4
+video_info 641x240 32 NaN: 88 0bb3b686ff978da2 stride=2564
+video_info 5x240 8 30: 88 585e8d3751888dfc stride=8
+video_info 320x1 32 0: 88 a2cd1e897c4bbbe6 stride=1280
+video_info 2x240 0 NaN: 88 1d064b05f7b0e147 stride=0
+video_info 320x2 0 1000000000: 88 4f4dbdc6d0b7fa44 stride=0
+video_info 1x0 15 29.97: 88 dcbb5f76f1192805 stride=4
+video_info 2x2 8 0.000000001: 88 c5a6dac4980475b8 stride=4
+video_info 2x1 16 1000000000: 88 3a766fed6ff01da0 stride=4
+video_info 5x0 24 NaN: 88 f5a2b2f41cef6a82 stride=16
+video_info 2x0 24 0.000000001: 88 8d572d69a1fd9a4d stride=8
+video_info 2x2 8 29.97: 88 4637a864bcae6e2f stride=4
+video_info 0x0 32 1000000000: 88 edeb640d11d982c5 stride=0
+video_info 320x1 24 29.97: 88 7651b21df0038059 stride=960
+video_info 5x2 24 29.97: 88 fe38a3dd762ffd62 stride=16
+video_info 2x240 0 1000000000: 88 33524962a5e9ca6d stride=0
+video_info 5x1 0 NaN: 88 4b42f539ec6fde6b stride=0
+video_info 0x2 8 1000000000: 88 2a9bc5c93c92d8bf stride=0
+video_info 3x240 15 30: 88 877d49ea1f525621 stride=8
+video_info 1x1 32 30: 88 c254b05aac942a87 stride=4
+video_info 3x7 15 23.976: 88 115d655af40db0f3 stride=8
+video_info 1x240 15 29.97: 88 aad51f8142846f83 stride=4
+video_info 1x2 8 1000000000: 88 0a98e9a8d892f81e stride=4
+video_info 320x7 8 0: 88 8c3c9adf0f8357e4 stride=320
+video_info 641x1 8 23.976: 88 6a95b02c8cd420ce stride=644
+video_info 2x2 32 0.000000001: 88 0c26cf11cb065326 stride=8
+video_info 641x240 24 1000000000: 88 04e0f04ff653ba84 stride=1924
+video_info 641x2 16 23.976: 88 e8fc1b1e29c64ee3 stride=1284
+video_info 2x1 32 30: 88 beb69290ff680164 stride=8
+video_info 641x7 0 23.976: 88 ba9d56a8dce8f93a stride=0
+video_info 3x240 24 0: 88 e3487562af2a688c stride=12
+video_info 3x2 8 1000000000: 88 ab9f38d68f523a8a stride=4
+video_info 320x1 24 30: 88 472f9431111f6fc1 stride=960
+video_info 0x7 16 0: 88 5beff03ea5e1bb92 stride=0
+video_info 1x240 24 30: 88 d18d2146c2210d31 stride=4
+video_info 641x240 8 29.97: 88 8290c80ac683dfb0 stride=644
+video_info 1x0 15 0: 88 86db5df8b1c5873a stride=4
+video_info 641x7 15 29.97: 88 b737501328733dde stride=1284
+video_info 1x2 32 1000000000: 88 431708fdf52e5363 stride=4
+video_info 641x7 0 0.000000001: 88 f9069dc6517ef278 stride=0
+video_info 0x2 0 1000000000: 88 7c8b7527ba64d57e stride=0
+video_info 3x2 8 NaN: 88 f0c0c0ea98a53a93 stride=4
+video_info 320x0 0 NaN: 88 ed19836911329790 stride=0
+video_info 5x240 24 30: 88 f1c7c171f38d7b25 stride=16
+video_info 2x2 15 0.000000001: 88 32220f1f3abd7854 stride=4
+video_info 641x2 15 23.976: 88 7b7ed26bf434c910 stride=1284
+video_info 1x2 24 NaN: 88 cb8526927c2bf8e1 stride=4
+video_info 320x0 15 1000000000: 88 eeb50c58ead63e17 stride=640
+video_info 2x240 24 0: 88 2f38b92da8e5d81e stride=8
+video_info 0x2 0 0.000000001: 88 c4f1d3b89eb4636c stride=0
+video_info 2x7 0 30: 88 181d5df160c4fc80 stride=0
+video_info 320x7 0 NaN: 88 4d9f56839b0ecb84 stride=0
+video_info 1x240 15 29.97: 88 3aaed5aac6e23490 stride=4
+pack 9x0 -> 3x2x24 flip=true len=23: false 4c95f11639167c0a bgrx=cbf29ce484222325
+pack 1x1 -> 9x1x16 flip=false len=20: true ad0db5a792dbdcc9 bgrx=8d28f9b5af096289
+pack 0x0 -> 3x2x24 flip=true len=23: false 4c95f11639167c0a bgrx=cbf29ce484222325
+pack 9x7 -> 0x0x24 flip=false len=0: true cbf29ce484222325 bgrx=1ef2c0280b3a033c
+pack 5x4 -> 0x0x15 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 3x4 -> 5x4x32 flip=false len=80: true bb7e8bbbe58066d1 bgrx=1b04af4f25ddbb91
+pack 1x7 -> 0x0x16 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 2x2 -> 3x0x15 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 0x0 -> 2x1x24 flip=true len=8: true a8c7f832281a39c5 bgrx=cbf29ce484222325
+pack 9x0 -> 2x4x32 flip=false len=32: true 0c8210784d8af5a5 bgrx=cbf29ce484222325
+pack 3x0 -> 9x1x16 flip=true len=20: true ee85fafd354b0935 bgrx=cbf29ce484222325
+pack 0x2 -> 5x0x32 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 0x0 -> 0x0x24 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 2x7 -> 1x1x32 flip=false len=3: false ec56241a297f4b4e bgrx=-
+pack 9x0 -> 9x4x16 flip=false len=79: false 1a3d4f6542485692 bgrx=cbf29ce484222325
+pack 2x4 -> 5x0x16 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 9x1 -> 5x7x24 flip=true len=111: false 85b87608f47a3572 bgrx=-
+pack 1x0 -> 9x4x16 flip=false len=79: false 1a3d4f6542485692 bgrx=cbf29ce484222325
+pack 3x4 -> 3x4x16 flip=false len=32: true 565747c89c7b9f6c bgrx=565747c89c7b9f6c
+pack 0x2 -> 9x1x24 flip=true len=27: false 77160a886d23fb36 bgrx=cbf29ce484222325
+pack 0x1 -> 5x0x16 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 3x7 -> 2x1x16 flip=false len=4: true 23f3438e30f21864 bgrx=4282932b720a73ed
+pack 9x0 -> 5x1x16 flip=true len=11: false 9809dcbe62a23846 bgrx=cbf29ce484222325
+pack 9x4 -> 1x7x32 flip=false len=28: true 03d92c8ff126fb39 bgrx=3e83dced1bee9cc0
+pack 1x4 -> 2x2x15 flip=false len=8: false c95c2681eba2d08d bgrx=-
+pack 3x2 -> 1x0x24 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 9x1 -> 5x1x16 flip=false len=12: true b1744fc258e3dadf bgrx=edd6143fa2a939e1
+pack 5x7 -> 1x7x24 flip=false len=28: true 8c1bbeeca2f53b88 bgrx=59a94b670cd2465e
+pack 5x7 -> 9x7x24 flip=true len=195: false 8c6cc73d02a1a58e bgrx=-
+pack 1x7 -> 2x0x32 flip=true len=0: true cbf29ce484222325 bgrx=28750daa5bda0aa2
+pack 1x7 -> 3x7x24 flip=false len=84: false f2ac9f049e691fe1 bgrx=-
+pack 3x4 -> 2x7x32 flip=false len=55: false 4aa5b83ee87dd1ea bgrx=-
+pack 2x4 -> 0x2x24 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 3x1 -> 5x4x32 flip=false len=80: false de84200fa0ea7f75 bgrx=-
+pack 9x7 -> 1x7x16 flip=true len=27: false 77160a886d23fb36 bgrx=-
+pack 9x7 -> 0x0x16 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 5x4 -> 9x4x32 flip=false len=143: false e8708994c523d352 bgrx=673fcd2037312ace
+pack 0x2 -> 1x0x24 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 5x7 -> 5x2x16 flip=false len=24: true c8638c58d8831309 bgrx=4d7951bf38f5bca7
+pack 1x7 -> 9x0x15 flip=true len=0: true cbf29ce484222325 bgrx=c916f82d3ee0a92d
+pack 9x2 -> 0x1x16 flip=false len=0: true cbf29ce484222325 bgrx=0cc849b744cb7f62
+pack 3x4 -> 5x4x32 flip=false len=80: true 8c59f43f0e4303d5 bgrx=8908f06f57afce95
+pack 5x2 -> 2x1x16 flip=false len=3: false ec56241a297f4b4e bgrx=-
+pack 9x1 -> 2x2x15 flip=true len=7: false d0bbc981c51a441a bgrx=-
+pack 1x0 -> 0x7x24 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 5x2 -> 5x2x16 flip=false len=23: false 4c95f11639167c0a bgrx=-
+pack 2x2 -> 5x4x24 flip=true len=64: false 6502f47973980765 bgrx=-
+pack 3x0 -> 0x0x24 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 3x1 -> 9x0x16 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 9x4 -> 1x7x24 flip=true len=27: false 77160a886d23fb36 bgrx=950e4e525637ef76
+pack 5x7 -> 5x1x16 flip=true len=11: false 9809dcbe62a23846 bgrx=-
+pack 1x7 -> 3x2x32 flip=true len=23: false 4c95f11639167c0a bgrx=459db944af5f0742
+pack 0x1 -> 9x2x16 flip=true len=40: true 40d69e0cf0f65c45 bgrx=cbf29ce484222325
+pack 5x1 -> 3x4x24 flip=true len=47: false f3f6537639e72cb2 bgrx=-
+pack 3x7 -> 3x0x24 flip=false len=0: true cbf29ce484222325 bgrx=156fabfcc8ad5478
+pack 3x0 -> 0x1x15 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 3x1 -> 5x2x16 flip=true len=23: false 4c95f11639167c0a bgrx=e1c97db4c0aa107e
+pack 0x7 -> 1x7x24 flip=true len=27: false 77160a886d23fb36 bgrx=cbf29ce484222325
+pack 9x0 -> 2x0x32 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 2x7 -> 9x7x16 flip=false len=139: false a01102317924a9c6 bgrx=-
+pack 3x0 -> 2x0x32 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 2x4 -> 3x0x24 flip=true len=0: true cbf29ce484222325 bgrx=ba17517fe0182bdb
+pack 9x1 -> 5x7x32 flip=true len=140: false 21901d10d94bd339 bgrx=-
+pack 2x2 -> 1x0x16 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 9x1 -> 5x7x24 flip=false len=112: false b2a668376ba97c55 bgrx=-
+pack 3x2 -> 1x0x24 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 0x1 -> 1x1x15 flip=true len=4: true 4d25767f9dce13f5 bgrx=cbf29ce484222325
+pack 2x4 -> 5x4x32 flip=true len=79: false 1a3d4f6542485692 bgrx=-
+pack 9x7 -> 0x1x16 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 2x1 -> 0x1x15 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 0x7 -> 0x2x24 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 0x7 -> 2x4x15 flip=false len=16: true 88201fb960ff6465 bgrx=cbf29ce484222325
+pack 1x0 -> 3x1x24 flip=true len=12: true 5467b0da1d106495 bgrx=cbf29ce484222325
+pack 0x4 -> 1x4x16 flip=false len=16: true 88201fb960ff6465 bgrx=cbf29ce484222325
+pack 9x0 -> 3x4x32 flip=true len=48: true a09d945a1cd8d6e5 bgrx=cbf29ce484222325
+pack 2x2 -> 9x1x16 flip=false len=19: false a7f7a947430d94fe bgrx=-
+pack 9x1 -> 3x1x24 flip=true len=11: false 9809dcbe62a23846 bgrx=-
+pack 3x1 -> 2x1x24 flip=true len=7: false d0bbc981c51a441a bgrx=0d17556f9865fcfb
+pack 1x1 -> 9x7x15 flip=false len=139: false a01102317924a9c6 bgrx=df0f906de88c5c81
+pack 9x0 -> 3x7x32 flip=false len=83: false 73be52b1bd4646be bgrx=cbf29ce484222325
+pack 2x0 -> 1x1x24 flip=false len=4: true 4d25767f9dce13f5 bgrx=cbf29ce484222325
+pack 0x2 -> 5x4x15 flip=false len=48: true a09d945a1cd8d6e5 bgrx=cbf29ce484222325
+pack 0x4 -> 5x7x15 flip=false len=84: true 6975f1271857fe35 bgrx=cbf29ce484222325
+pack 1x4 -> 5x4x16 flip=true len=47: false f3f6537639e72cb2 bgrx=-
+pack 2x4 -> 2x7x15 flip=true len=28: true 74beade3991b9836 bgrx=9d80ab8f46ed6d06
+pack 5x4 -> 3x4x15 flip=false len=31: false 0ff3f8f8ec2c2a42 bgrx=51d99a5f534a824e
+pack 2x2 -> 1x7x32 flip=true len=27: false 77160a886d23fb36 bgrx=d92a81b5c63067b5
+pack 3x2 -> 1x1x16 flip=false len=4: false 15ab4374834e0051 bgrx=-
+pack 5x1 -> 0x2x16 flip=true len=0: true cbf29ce484222325 bgrx=72771869e43309cf
+pack 1x7 -> 1x4x32 flip=true len=15: false 50f6d00c0543f9d2 bgrx=-
+pack 9x0 -> 3x2x32 flip=false len=23: false 4c95f11639167c0a bgrx=cbf29ce484222325
+pack 3x4 -> 0x2x15 flip=true len=0: true cbf29ce484222325 bgrx=bc1cb953d88e2b54
+pack 3x0 -> 2x1x15 flip=false len=4: true 4d25767f9dce13f5 bgrx=cbf29ce484222325
+pack 2x0 -> 3x1x15 flip=true len=8: true a8c7f832281a39c5 bgrx=cbf29ce484222325
+pack 3x2 -> 9x1x24 flip=true len=28: false 7e6f78d174247ac9 bgrx=-
+pack 0x2 -> 2x0x24 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 1x1 -> 3x4x24 flip=false len=47: false f3f6537639e72cb2 bgrx=819951fe11dad84b
+pack 0x2 -> 9x7x32 flip=true len=252: true 2fba1332b14beb55 bgrx=cbf29ce484222325
+pack 5x7 -> 3x4x24 flip=false len=48: true 4ccf5d836a998501 bgrx=2beb171fef7f09ed
+pack 9x0 -> 0x4x24 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 1x1 -> 3x0x15 flip=false len=0: true cbf29ce484222325 bgrx=6dcb523203d2a2dd
+pack 9x4 -> 3x4x15 flip=false len=32: false 47baf5f94f0ce685 bgrx=-
+pack 5x7 -> 3x7x24 flip=false len=84: false f2ac9f049e691fe1 bgrx=-
+pack 9x7 -> 5x4x15 flip=false len=48: false 72bbe8e463cfeb15 bgrx=-
+pack 3x2 -> 3x4x24 flip=false len=47: false f3f6537639e72cb2 bgrx=4eb70f9507fc7a04
+pack 3x1 -> 3x4x32 flip=false len=48: true 954623d76433bc73 bgrx=a60ccc65d3a91943
+pack 5x4 -> 1x1x16 flip=true len=3: false ec56241a297f4b4e bgrx=-
+pack 9x4 -> 5x0x16 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 9x0 -> 5x4x32 flip=true len=80: true f14b84b8290b8965 bgrx=cbf29ce484222325
+pack 2x4 -> 0x2x24 flip=false len=0: true cbf29ce484222325 bgrx=187035954745a3c1
+pack 0x4 -> 5x1x24 flip=true len=15: false 50f6d00c0543f9d2 bgrx=cbf29ce484222325
+pack 5x4 -> 0x0x15 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 2x1 -> 5x1x16 flip=false len=11: false 9809dcbe62a23846 bgrx=-
+pack 3x2 -> 1x0x15 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 2x2 -> 2x2x15 flip=false len=7: false d0bbc981c51a441a bgrx=-
+pack 5x7 -> 2x7x16 flip=false len=28: true 5b8f835e65828dab bgrx=96f74f71e6b8044a
+pack 3x7 -> 5x2x16 flip=false len=24: false 394557c30135dd5d bgrx=-
+pack 0x4 -> 0x0x24 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 5x1 -> 9x0x32 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 2x7 -> 1x2x32 flip=true len=8: true 18254684b6d94c2c bgrx=22fa5c439e79b0d7
+pack 3x1 -> 2x2x15 flip=true len=8: false c95c2681eba2d08d bgrx=-
+pack 9x7 -> 5x4x15 flip=true len=48: true a5f7713c3e309db3 bgrx=08d331382339c5f6
+pack 3x1 -> 9x0x15 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 1x2 -> 1x2x15 flip=true len=8: true 5e57afec7bb46fcd bgrx=542d247ec82dd955
+pack 9x0 -> 5x0x24 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 0x1 -> 9x0x16 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 5x1 -> 0x0x24 flip=true len=0: true cbf29ce484222325 bgrx=f6a089a0211f6c0b
+pack 1x1 -> 5x4x24 flip=true len=64: true 58a95b36c463b72f bgrx=518d0a70b85b749f
+pack 1x2 -> 5x4x15 flip=true len=48: true 6eba46ad85a9e294 bgrx=fe2f08528dcd74a0
+pack 2x7 -> 3x2x24 flip=false len=23: false 4c95f11639167c0a bgrx=-
+pack 9x7 -> 1x0x32 flip=true len=0: true cbf29ce484222325 bgrx=06ca24a67de4c823
+pack 5x7 -> 3x4x24 flip=true len=48: false 72bbe8e463cfeb15 bgrx=-
+pack 3x4 -> 5x1x16 flip=false len=11: false 9809dcbe62a23846 bgrx=fcf18a6d5bb557b6
+pack 0x7 -> 5x1x15 flip=false len=11: false 9809dcbe62a23846 bgrx=cbf29ce484222325
+pack 9x2 -> 2x7x24 flip=false len=55: false 4aa5b83ee87dd1ea bgrx=ca9a46e60e721372
+pack 5x2 -> 5x4x15 flip=true len=47: false f3f6537639e72cb2 bgrx=-
+pack 5x1 -> 0x1x24 flip=false len=0: true cbf29ce484222325 bgrx=6733418fdd384bc2
+pack 9x2 -> 2x0x15 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 2x7 -> 1x1x24 flip=true len=4: true 778d99b0b3d0d6ab bgrx=d822c631e1566e68
+pack 2x1 -> 1x4x24 flip=true len=16: true a33094bc4512445e bgrx=aabb7ecbace65dea
+pack 5x7 -> 9x7x24 flip=true len=195: false 8c6cc73d02a1a58e bgrx=-
+pack 0x2 -> 1x0x24 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 1x2 -> 1x0x24 flip=false len=0: true cbf29ce484222325 bgrx=651c000f67d4a59f
+pack 3x7 -> 2x2x24 flip=false len=15: false 50f6d00c0543f9d2 bgrx=-
+pack 9x1 -> 5x7x15 flip=false len=84: false f2ac9f049e691fe1 bgrx=-
+pack 5x1 -> 5x0x24 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 3x1 -> 1x0x24 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 1x2 -> 3x2x16 flip=false len=15: false 50f6d00c0543f9d2 bgrx=a8db22d6af2239a4
+pack 9x4 -> 9x7x24 flip=true len=196: false 3e7bb7ab78aba811 bgrx=-
+pack 0x4 -> 1x2x24 flip=true len=7: false d0bbc981c51a441a bgrx=cbf29ce484222325
+pack 1x4 -> 0x2x24 flip=true len=0: true cbf29ce484222325 bgrx=5528b3b7fa239f1b
+pack 9x2 -> 5x2x24 flip=true len=31: false 0ff3f8f8ec2c2a42 bgrx=-
+pack 3x2 -> 5x1x16 flip=false len=12: false fafafa8199a6a9b9 bgrx=-
+pack 9x1 -> 3x1x15 flip=true len=8: false c95c2681eba2d08d bgrx=-
+pack 5x4 -> 0x7x16 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 5x0 -> 0x1x24 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 2x2 -> 3x4x16 flip=false len=31: false 0ff3f8f8ec2c2a42 bgrx=519ae49fcd109d8b
+pack 2x2 -> 2x7x16 flip=true len=27: false 77160a886d23fb36 bgrx=-
+pack 0x2 -> 3x0x32 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 2x2 -> 9x4x32 flip=true len=144: false 1b0dbecafbe12cb5 bgrx=-
+pack 1x4 -> 5x0x16 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 2x2 -> 5x4x32 flip=true len=79: false 1a3d4f6542485692 bgrx=8a7af9e9d63322c7
+pack 2x2 -> 9x4x16 flip=false len=80: true e0e9d131690da6f4 bgrx=37cb4d887bd84534
+pack 5x4 -> 9x2x24 flip=true len=56: true 88d449f83e6f1898 bgrx=719f1da566f1b2e8
+pack 9x0 -> 5x7x16 flip=true len=84: true 6975f1271857fe35 bgrx=cbf29ce484222325
+pack 5x2 -> 9x7x15 flip=true len=140: true dcbf57cb845eb57f bgrx=08e66eac0f8adc8f
+pack 9x2 -> 3x7x16 flip=true len=55: false 4aa5b83ee87dd1ea bgrx=-
+pack 9x4 -> 3x1x32 flip=false len=11: false 9809dcbe62a23846 bgrx=e36e43fde6047b7a
+pack 3x0 -> 3x4x24 flip=false len=47: false f3f6537639e72cb2 bgrx=cbf29ce484222325
+pack 5x4 -> 5x4x32 flip=false len=80: true 406adc8798a7c1b0 bgrx=406adc8798a7c1b0
+pack 3x0 -> 1x7x24 flip=true len=28: true 17d9c15239d081d5 bgrx=cbf29ce484222325
+pack 2x1 -> 3x1x15 flip=false len=7: false d0bbc981c51a441a bgrx=-
+pack 1x4 -> 5x1x32 flip=false len=20: false 7768ff16f01316a1 bgrx=-
+pack 0x7 -> 3x4x32 flip=true len=48: true a09d945a1cd8d6e5 bgrx=cbf29ce484222325
+pack 9x2 -> 1x4x15 flip=true len=15: false 50f6d00c0543f9d2 bgrx=7b9d789af5bba984
+pack 9x4 -> 2x2x15 flip=true len=7: false d0bbc981c51a441a bgrx=99ec8a215dff9d61
+pack 2x1 -> 5x2x16 flip=false len=23: false 4c95f11639167c0a bgrx=0a79ac5dacb7fd7d
+pack 1x4 -> 2x4x32 flip=false len=31: false 0ff3f8f8ec2c2a42 bgrx=-
+pack 5x0 -> 9x7x32 flip=false len=251: false e212c7ff8fde3fd6 bgrx=cbf29ce484222325
+pack 9x7 -> 5x0x32 flip=true len=0: true cbf29ce484222325 bgrx=daa345f2800ee7c8
+pack 9x2 -> 9x4x32 flip=false len=143: false e8708994c523d352 bgrx=c2336cabc86d9e50
+pack 2x2 -> 9x2x32 flip=true len=72: false e4552315f04c60cd bgrx=-
+pack 3x7 -> 1x2x32 flip=false len=7: false d0bbc981c51a441a bgrx=-
+pack 3x4 -> 0x1x16 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 0x0 -> 1x0x15 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 5x2 -> 9x0x32 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 0x7 -> 1x1x24 flip=true len=3: false ec56241a297f4b4e bgrx=cbf29ce484222325
+pack 2x0 -> 0x7x16 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 2x1 -> 1x0x24 flip=true len=0: true cbf29ce484222325 bgrx=0ca7d9c0bffa4225
+pack 9x1 -> 5x2x32 flip=false len=40: true 022d9388d3851f1e bgrx=bf6f53decf880ad6
+pack 5x2 -> 5x1x15 flip=false len=12: false fafafa8199a6a9b9 bgrx=-
+pack 3x1 -> 2x1x24 flip=true len=7: false d0bbc981c51a441a bgrx=aeb3a15979812173
+pack 3x2 -> 5x2x24 flip=false len=32: true 977c6f0ecd414d97 bgrx=7d3023efd644a2c7
+pack 5x7 -> 1x4x16 flip=false len=16: true 1ba0c1f9bf24625f bgrx=880347728b8540bb
+pack 2x4 -> 1x7x32 flip=false len=27: false 77160a886d23fb36 bgrx=6573bde584ac9c6d
+pack 5x0 -> 0x2x16 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 5x2 -> 0x1x16 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 2x1 -> 9x1x15 flip=true len=20: false 7768ff16f01316a1 bgrx=-
+pack 3x7 -> 3x0x32 flip=true len=0: true cbf29ce484222325 bgrx=92c210e700423536
+pack 5x0 -> 9x1x24 flip=true len=27: false 77160a886d23fb36 bgrx=cbf29ce484222325
+pack 1x4 -> 1x0x24 flip=true len=0: true cbf29ce484222325 bgrx=6fedaef4cb95bedd
+pack 5x7 -> 1x7x16 flip=false len=28: true c69dcf38b5e0f1d7 bgrx=db170dc6b7187972
+pack 1x4 -> 1x0x16 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 3x0 -> 1x7x15 flip=false len=28: true 17d9c15239d081d5 bgrx=cbf29ce484222325
+pack 2x4 -> 9x4x16 flip=true len=79: false 1a3d4f6542485692 bgrx=dd1695192288654a
+pack 2x7 -> 9x2x32 flip=true len=71: false 2effb5a31107d3da bgrx=bc160c58e7478926
+pack 1x4 -> 2x4x15 flip=true len=15: false 50f6d00c0543f9d2 bgrx=a144cb56cc7f5160
+pack 0x1 -> 3x1x32 flip=true len=11: false 9809dcbe62a23846 bgrx=cbf29ce484222325
+pack 2x0 -> 1x1x15 flip=true len=3: false ec56241a297f4b4e bgrx=cbf29ce484222325
+pack 9x7 -> 2x0x24 flip=false len=0: true cbf29ce484222325 bgrx=a6a21228aaa1352d
+pack 5x0 -> 3x0x24 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 0x7 -> 1x4x24 flip=false len=15: false 50f6d00c0543f9d2 bgrx=cbf29ce484222325
+pack 5x2 -> 2x7x24 flip=false len=56: true fbb34880d9ea3d6d bgrx=499c62454d14cb63
+pack 9x1 -> 5x1x32 flip=true len=20: true af232d106f5bde2d bgrx=ce22bf5fef11aef4
+pack 2x2 -> 3x0x24 flip=false len=0: true cbf29ce484222325 bgrx=ef1ccb9a06bd787a
+pack 3x2 -> 3x0x15 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 5x1 -> 0x4x32 flip=false len=0: true cbf29ce484222325 bgrx=2a4e9ab952c9b6b2
+pack 1x0 -> 9x4x32 flip=true len=144: true ec32669a74fcae65 bgrx=cbf29ce484222325
+pack 0x7 -> 1x7x16 flip=true len=28: true 17d9c15239d081d5 bgrx=cbf29ce484222325
+pack 2x1 -> 2x4x24 flip=true len=31: false 0ff3f8f8ec2c2a42 bgrx=-
+pack 3x1 -> 9x7x32 flip=false len=251: false e212c7ff8fde3fd6 bgrx=ceaf3d406be331cb
+pack 9x7 -> 2x7x24 flip=true len=55: false 4aa5b83ee87dd1ea bgrx=-
+pack 3x7 -> 3x2x16 flip=true len=15: false 50f6d00c0543f9d2 bgrx=-
+pack 2x2 -> 9x4x24 flip=true len=111: false 85b87608f47a3572 bgrx=-
+pack 5x0 -> 1x1x15 flip=false len=4: true 4d25767f9dce13f5 bgrx=cbf29ce484222325
+pack 9x1 -> 1x0x16 flip=true len=0: true cbf29ce484222325 bgrx=8956c5138fe48bce
+pack 2x7 -> 2x1x32 flip=false len=7: false d0bbc981c51a441a bgrx=3475fd9cf2ac3b12
+pack 9x4 -> 3x1x24 flip=true len=11: false 9809dcbe62a23846 bgrx=-
+pack 2x1 -> 3x1x24 flip=false len=12: true 816ea34caffef289 bgrx=123504a309bcb279
+pack 5x0 -> 0x1x16 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 3x2 -> 1x1x24 flip=true len=3: false ec56241a297f4b4e bgrx=bf3aa5b7317e8d17
+pack 9x7 -> 1x0x24 flip=false len=0: true cbf29ce484222325 bgrx=f482cf8131110f48
+pack 9x2 -> 5x1x15 flip=true len=12: true aa5ea519767d91ce bgrx=0a4b5b1267109afc
+pack 0x2 -> 1x4x16 flip=false len=16: true 88201fb960ff6465 bgrx=cbf29ce484222325
+pack 3x7 -> 9x7x24 flip=true len=196: true f7a360792e8b9795 bgrx=aa70b84e4879cba5
+pack 1x1 -> 9x4x24 flip=false len=111: false 85b87608f47a3572 bgrx=af540ad498bbdd9f
+pack 3x1 -> 5x0x16 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 0x2 -> 5x0x32 flip=false len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 2x0 -> 1x0x32 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 5x1 -> 0x4x16 flip=false len=0: true cbf29ce484222325 bgrx=bb252329dedad5c0
+pack 2x1 -> 0x7x24 flip=true len=0: true cbf29ce484222325 bgrx=f698091a76a8439e
+pack 9x2 -> 5x0x24 flip=true len=0: true cbf29ce484222325 bgrx=f643eabe56acf868
+pack 9x7 -> 1x7x15 flip=false len=28: false 7e6f78d174247ac9 bgrx=-
+pack 1x4 -> 9x7x24 flip=false len=195: false 8c6cc73d02a1a58e bgrx=9131da9cbcfcda6c
+pack 9x0 -> 3x2x15 flip=true len=16: true 88201fb960ff6465 bgrx=cbf29ce484222325
+pack 9x7 -> 2x2x15 flip=true len=8: false c95c2681eba2d08d bgrx=-
+pack 2x1 -> 0x7x32 flip=false len=0: true cbf29ce484222325 bgrx=726d3c154133e8f8
+pack 5x2 -> 3x2x32 flip=true len=23: false 4c95f11639167c0a bgrx=-
+pack 0x4 -> 5x7x24 flip=true len=112: true a4ca53d582377be5 bgrx=cbf29ce484222325
+pack 2x2 -> 5x0x32 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 2x4 -> 2x1x24 flip=false len=8: false c95c2681eba2d08d bgrx=-
+pack 1x4 -> 1x0x15 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 1x1 -> 5x2x15 flip=true len=23: false 4c95f11639167c0a bgrx=17efaa5021957775
+pack 0x2 -> 5x2x24 flip=false len=32: true 0c8210784d8af5a5 bgrx=cbf29ce484222325
+pack 1x2 -> 9x1x24 flip=true len=27: false 77160a886d23fb36 bgrx=8be8ed4257f722d1
+pack 3x2 -> 5x4x16 flip=false len=47: false f3f6537639e72cb2 bgrx=7f9a85465677401f
+pack 5x2 -> 5x0x15 flip=true len=0: true cbf29ce484222325 bgrx=28e46f92d11eee5e
+pack 5x7 -> 9x4x32 flip=true len=143: false e8708994c523d352 bgrx=ed374a3f12933082
+pack 1x2 -> 1x4x24 flip=true len=15: false 50f6d00c0543f9d2 bgrx=-
+pack 5x7 -> 9x4x32 flip=true len=143: false e8708994c523d352 bgrx=bd32024add6bfd58
+pack 9x1 -> 1x2x32 flip=true len=7: false d0bbc981c51a441a bgrx=f9a6d9aa6633f3eb
+pack 2x2 -> 3x4x15 flip=true len=32: false 47baf5f94f0ce685 bgrx=-
+pack 0x0 -> 5x1x32 flip=false len=19: false a7f7a947430d94fe bgrx=cbf29ce484222325
+pack 2x7 -> 2x1x24 flip=false len=7: false d0bbc981c51a441a bgrx=b633ba074292c8b1
+pack 2x4 -> 2x2x32 flip=false len=15: false 50f6d00c0543f9d2 bgrx=-
+pack 2x7 -> 5x7x24 flip=true len=112: false b2a668376ba97c55 bgrx=-
+pack 5x7 -> 1x4x24 flip=true len=16: false d75cfb6cf280e535 bgrx=-
+pack 9x1 -> 1x4x24 flip=false len=15: false 50f6d00c0543f9d2 bgrx=d7339e4c225ecada
+pack 0x4 -> 1x4x32 flip=true len=15: false 50f6d00c0543f9d2 bgrx=cbf29ce484222325
+pack 2x4 -> 0x0x16 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 1x2 -> 9x0x15 flip=true len=0: true cbf29ce484222325 bgrx=746012f5a0ce7dea
+pack 0x0 -> 9x1x16 flip=true len=20: true ee85fafd354b0935 bgrx=cbf29ce484222325
+pack 5x1 -> 2x1x32 flip=false len=7: false d0bbc981c51a441a bgrx=-
+pack 1x4 -> 2x2x32 flip=false len=15: false 50f6d00c0543f9d2 bgrx=5cce2411e048cbdd
+pack 1x1 -> 2x1x16 flip=false len=3: false ec56241a297f4b4e bgrx=3ae3005cb8fa0c50
+pack 3x7 -> 9x2x15 flip=true len=39: false d26f378f55ab37fa bgrx=017f73fad3692cd4
+pack 3x1 -> 9x2x24 flip=true len=55: false 4aa5b83ee87dd1ea bgrx=f444fddf1a59aa2b
+pack 0x4 -> 2x2x15 flip=true len=8: true a8c7f832281a39c5 bgrx=cbf29ce484222325
+pack 9x7 -> 3x1x32 flip=false len=12: true cd3d46014186a123 bgrx=bb876e141fb46a16
+pack 0x4 -> 3x7x16 flip=false len=56: true 8ac123d6f7dce585 bgrx=cbf29ce484222325
+pack 1x4 -> 9x1x24 flip=true len=28: true c61f428ab2022732 bgrx=8d3df16fdc4413dd
+pack 1x7 -> 1x7x15 flip=true len=28: true d7bb53e08b3a25d3 bgrx=a92cdbf2dc574e07
+pack 0x1 -> 0x2x24 flip=true len=0: true cbf29ce484222325 bgrx=cbf29ce484222325
+pack 5x0 -> 9x2x15 flip=true len=40: true 40d69e0cf0f65c45 bgrx=cbf29ce484222325
+pack 9x7 -> 2x7x32 flip=true len=55: false 4aa5b83ee87dd1ea bgrx=c11b2134113211a5
+pack 5x7 -> 5x2x24 flip=true len=31: false 0ff3f8f8ec2c2a42 bgrx=-
+pack 0x4 -> 1x7x24 flip=true len=28: true 17d9c15239d081d5 bgrx=cbf29ce484222325
+pack 5x0 -> 9x7x15 flip=true len=139: false a01102317924a9c6 bgrx=cbf29ce484222325
+pack 0x4 -> 2x2x16 flip=false len=7: false d0bbc981c51a441a bgrx=cbf29ce484222325
+pack 2x0 -> 2x7x15 flip=true len=28: true 17d9c15239d081d5 bgrx=cbf29ce484222325
+pack 2x4 -> 2x4x24 flip=true len=32: false 47baf5f94f0ce685 bgrx=-
+pack 3x2 -> 1x1x32 flip=true len=3: false ec56241a297f4b4e bgrx=4672041bbd17d668
+pack 5x2 -> 0x1x24 flip=true len=0: false cbf29ce484222325 bgrx=-
+pack 2x7 -> 1x0x16 flip=false len=0: true cbf29ce484222325 bgrx=b7270ae128787704
+pack 9x2 -> 0x2x15 flip=false len=0: false cbf29ce484222325 bgrx=-
+pack 9x1 -> 5x4x16 flip=false len=47: false f3f6537639e72cb2 bgrx=a354e412073299fa
+pack 2x4 -> 2x1x24 flip=false len=8: true c3d4a5529d616c6b bgrx=6844c3ffc59c583e
+pack 1x1 -> 1x4x24 flip=false len=16: true f200bba3edd4df29 bgrx=f17c227601da2bf9
+pack 9x7 -> 1x1x15 flip=true len=3: false ec56241a297f4b4e bgrx=-
+pack 1x7 -> 5x0x16 flip=false len=0: false cbf29ce484222325 bgrx=-
+wave_format 80 6 44100 16 +12: [50, 00, 06, 00, 44, ac, 00, 00, 30, 13, 08, 00, 0c, 00, 10, 00, 0c, 00, 3e, be, fd, d2, cd, 7f, 1e, 54, 2c, 14, 20, 9b]
+wave_format 80 1 44100 0 +12: [50, 00, 01, 00, 44, ac, 00, 00, 44, ac, 00, 00, 01, 00, 00, 00, 0c, 00, 7a, 10, 72, 71, 79, 3d, 56, cd, bd, 0e, c3, d4]
+wave_format 1 0 44100 8 +6: [01, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 08, 00, 06, 00, 94, aa, 4e, c3, 13, e9]
+wave_format 1 2 44100 8 +0: [01, 00, 02, 00, 44, ac, 00, 00, 88, 58, 01, 00, 02, 00, 08, 00, 00, 00]
+wave_format 80 0 44100 0 +12: [50, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 00, 00, 0c, 00, af, 27, af, 2b, 56, fb, 82, 54, b7, f8, 41, 80]
+wave_format 1 1 44100 16 +6: [01, 00, 01, 00, 44, ac, 00, 00, 88, 58, 01, 00, 02, 00, 10, 00, 06, 00, ed, 62, 5d, 31, 9d, fa]
+wave_format 85 0 8000 32 +12: [55, 00, 00, 00, 40, 1f, 00, 00, 00, 00, 00, 00, 01, 00, 20, 00, 0c, 00, 0c, 85, b9, 41, 2f, 1d, 89, 5d, 31, 2a, 6b, 5d]
+wave_format 80 2 48000 32 +12: [50, 00, 02, 00, 80, bb, 00, 00, 00, dc, 05, 00, 08, 00, 20, 00, 0c, 00, 3f, 3e, dd, cc, e4, ce, f7, d6, 1d, 65, 13, e1]
+wave_format 1 1 48000 0 +0: [01, 00, 01, 00, 80, bb, 00, 00, 80, bb, 00, 00, 01, 00, 00, 00, 00, 00]
+wave_format 3 0 44100 8 +0: [03, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 08, 00, 00, 00]
+wave_format 3 6 0 0 +6: [03, 00, 06, 00, 00, 00, 00, 00, 00, 00, 00, 00, 06, 00, 00, 00, 06, 00, 66, 13, 83, fc, d7, 84]
+wave_format 80 2 48000 32 +0: [50, 00, 02, 00, 80, bb, 00, 00, 00, dc, 05, 00, 08, 00, 20, 00, 00, 00]
+wave_format 3 1 48000 24 +0: [03, 00, 01, 00, 80, bb, 00, 00, 80, 32, 02, 00, 03, 00, 18, 00, 00, 00]
+wave_format 80 6 0 0 +6: [50, 00, 06, 00, 00, 00, 00, 00, 00, 00, 00, 00, 06, 00, 00, 00, 06, 00, ac, 9a, 7a, 12, e2, 92]
+wave_format 3 0 48000 8 +6: [03, 00, 00, 00, 80, bb, 00, 00, 00, 00, 00, 00, 01, 00, 08, 00, 06, 00, 7f, be, cd, 76, 92, 43]
+wave_format 85 6 0 0 +0: [55, 00, 06, 00, 00, 00, 00, 00, 00, 00, 00, 00, 06, 00, 00, 00, 00, 00]
+wave_format 1 1 48000 8 +0: [01, 00, 01, 00, 80, bb, 00, 00, 80, bb, 00, 00, 01, 00, 08, 00, 00, 00]
+wave_format 3 6 48000 16 +12: [03, 00, 06, 00, 80, bb, 00, 00, 00, ca, 08, 00, 0c, 00, 10, 00, 0c, 00, 58, 98, 50, 74, 12, 24, 2c, 2c, fa, 1b, b7, 78]
+wave_format 1 0 8000 16 +6: [01, 00, 00, 00, 40, 1f, 00, 00, 00, 00, 00, 00, 01, 00, 10, 00, 06, 00, 49, 77, 21, 8c, 6c, b1]
+wave_format 80 0 8000 24 +12: [50, 00, 00, 00, 40, 1f, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 0c, 00, 25, 4e, e9, e0, c3, 06, d5, a8, 2c, f1, e7, 48]
+wave_format 3 1 0 32 +12: [03, 00, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 04, 00, 20, 00, 0c, 00, d8, e7, 0f, d0, 39, 1f, e5, ec, c3, ec, 5e, e6]
+wave_format 85 2 48000 8 +6: [55, 00, 02, 00, 80, bb, 00, 00, 00, 77, 01, 00, 02, 00, 08, 00, 06, 00, 62, e3, 58, 4e, 32, 0c]
+wave_format 1 1 8000 24 +12: [01, 00, 01, 00, 40, 1f, 00, 00, c0, 5d, 00, 00, 03, 00, 18, 00, 0c, 00, af, 26, 56, 38, d7, b6, bf, b4, 5a, d8, d2, 89]
+wave_format 1 1 0 8 +6: [01, 00, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 01, 00, 08, 00, 06, 00, 56, d6, 7f, 25, 24, 92]
+wave_format 80 2 8000 24 +12: [50, 00, 02, 00, 40, 1f, 00, 00, 80, bb, 00, 00, 06, 00, 18, 00, 0c, 00, 9a, f6, 91, 43, 90, f6, 3a, 37, 0f, dd, 74, 59]
+wave_format 3 6 48000 16 +12: [03, 00, 06, 00, 80, bb, 00, 00, 00, ca, 08, 00, 0c, 00, 10, 00, 0c, 00, a3, 10, 87, 5b, 2f, a2, c6, 6d, e9, c9, bb, 67]
+wave_format 80 0 8000 32 +12: [50, 00, 00, 00, 40, 1f, 00, 00, 00, 00, 00, 00, 01, 00, 20, 00, 0c, 00, a8, 0e, 96, c7, d7, 0e, d4, 7a, 97, f7, 12, 75]
+wave_format 85 0 44100 24 +0: [55, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 00, 00]
+wave_format 3 1 0 8 +0: [03, 00, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 01, 00, 08, 00, 00, 00]
+wave_format 85 1 8000 24 +12: [55, 00, 01, 00, 40, 1f, 00, 00, c0, 5d, 00, 00, 03, 00, 18, 00, 0c, 00, c6, bb, 88, 97, 1c, a3, 66, 7b, c7, a1, 21, 9b]
+wave_format 85 0 48000 24 +6: [55, 00, 00, 00, 80, bb, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 06, 00, 7b, 8a, 2a, ee, 2c, 9d]
+wave_format 80 1 0 8 +12: [50, 00, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 01, 00, 08, 00, 0c, 00, 51, c1, c1, c3, 80, 55, 65, a8, 9a, 44, a1, 52]
+wave_format 80 2 44100 16 +0: [50, 00, 02, 00, 44, ac, 00, 00, 10, b1, 02, 00, 04, 00, 10, 00, 00, 00]
+wave_format 85 0 0 24 +6: [55, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 06, 00, 77, 4b, 9b, aa, 65, df]
+wave_format 1 1 0 16 +6: [01, 00, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 02, 00, 10, 00, 06, 00, 55, 3b, e4, 69, 26, 53]
+wave_format 3 1 44100 32 +12: [03, 00, 01, 00, 44, ac, 00, 00, 10, b1, 02, 00, 04, 00, 20, 00, 0c, 00, cf, 6c, d4, 41, 0e, f7, 5d, d0, ea, 2d, 14, d4]
+wave_format 1 2 0 0 +0: [01, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 02, 00, 00, 00, 00, 00]
+wave_format 1 0 44100 16 +12: [01, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 10, 00, 0c, 00, 3d, 95, f0, 5b, bd, cb, aa, f2, 40, 91, f0, 4b]
+wave_format 80 1 44100 24 +12: [50, 00, 01, 00, 44, ac, 00, 00, cc, 04, 02, 00, 03, 00, 18, 00, 0c, 00, 51, db, 32, 5b, d8, e5, 37, 55, ff, ea, 7b, a9]
+wave_format 1 6 8000 24 +12: [01, 00, 06, 00, 40, 1f, 00, 00, 80, 32, 02, 00, 12, 00, 18, 00, 0c, 00, 4a, ff, 3b, cc, 27, 39, ee, cc, 68, f9, 8c, 5b]
+wave_format 80 2 48000 0 +0: [50, 00, 02, 00, 80, bb, 00, 00, 00, 77, 01, 00, 02, 00, 00, 00, 00, 00]
+wave_format 80 1 48000 16 +6: [50, 00, 01, 00, 80, bb, 00, 00, 00, 77, 01, 00, 02, 00, 10, 00, 06, 00, a2, 7f, 3d, bd, 4b, e3]
+wave_format 1 0 0 0 +6: [01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 01, 00, 00, 00, 06, 00, 2e, 08, f7, 09, 4e, 6e]
+wave_format 80 2 0 24 +0: [50, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 06, 00, 18, 00, 00, 00]
+wave_format 85 0 44100 24 +12: [55, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 0c, 00, 11, d3, c8, 25, 59, f6, 5a, 58, 45, d5, 4b, f7]
+wave_format 3 6 8000 24 +0: [03, 00, 06, 00, 40, 1f, 00, 00, 80, 32, 02, 00, 12, 00, 18, 00, 00, 00]
+wave_format 1 1 8000 32 +0: [01, 00, 01, 00, 40, 1f, 00, 00, 00, 7d, 00, 00, 04, 00, 20, 00, 00, 00]
+wave_format 1 1 48000 32 +12: [01, 00, 01, 00, 80, bb, 00, 00, 00, ee, 02, 00, 04, 00, 20, 00, 0c, 00, 8a, 7a, f9, 41, 18, 35, 99, 84, ac, 71, f7, ea]
+wave_format 3 6 48000 16 +0: [03, 00, 06, 00, 80, bb, 00, 00, 00, ca, 08, 00, 0c, 00, 10, 00, 00, 00]
+wave_format 80 0 44100 8 +12: [50, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 08, 00, 0c, 00, 69, 78, 08, 51, 64, 5c, eb, 89, d1, 1c, 5f, 01]
+wave_format 3 2 48000 0 +0: [03, 00, 02, 00, 80, bb, 00, 00, 00, 77, 01, 00, 02, 00, 00, 00, 00, 00]
+wave_format 1 0 44100 0 +6: [01, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 00, 00, 06, 00, 68, bf, cd, 12, 1e, 25]
+wave_format 3 1 44100 0 +6: [03, 00, 01, 00, 44, ac, 00, 00, 44, ac, 00, 00, 01, 00, 00, 00, 06, 00, 9b, 5a, d4, 31, 2d, 25]
+wave_format 85 1 44100 32 +12: [55, 00, 01, 00, 44, ac, 00, 00, 10, b1, 02, 00, 04, 00, 20, 00, 0c, 00, 12, b4, 19, ff, ab, c7, 6a, 74, 8c, 50, 4d, 91]
+wave_format 85 2 48000 32 +0: [55, 00, 02, 00, 80, bb, 00, 00, 00, dc, 05, 00, 08, 00, 20, 00, 00, 00]
+wave_format 85 0 0 0 +6: [55, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 01, 00, 00, 00, 06, 00, 86, 3e, 8d, c5, fc, 69]
+wave_format 3 1 48000 16 +0: [03, 00, 01, 00, 80, bb, 00, 00, 00, 77, 01, 00, 02, 00, 10, 00, 00, 00]
+wave_format 85 6 8000 32 +0: [55, 00, 06, 00, 40, 1f, 00, 00, 00, ee, 02, 00, 18, 00, 20, 00, 00, 00]
+wave_format 80 6 8000 8 +0: [50, 00, 06, 00, 40, 1f, 00, 00, 80, bb, 00, 00, 06, 00, 08, 00, 00, 00]
+wave_format 85 6 0 8 +12: [55, 00, 06, 00, 00, 00, 00, 00, 00, 00, 00, 00, 06, 00, 08, 00, 0c, 00, f9, b3, b6, fb, 5d, 09, be, 5f, f2, b2, 2c, 9f]
+wave_format 85 0 48000 8 +0: [55, 00, 00, 00, 80, bb, 00, 00, 00, 00, 00, 00, 01, 00, 08, 00, 00, 00]
+wave_format 85 0 48000 24 +12: [55, 00, 00, 00, 80, bb, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 0c, 00, 7c, f5, 32, 7d, 1b, fe, 17, a0, af, 4f, 5d, 19]
+wave_format 3 1 44100 8 +12: [03, 00, 01, 00, 44, ac, 00, 00, 44, ac, 00, 00, 01, 00, 08, 00, 0c, 00, ee, 02, f5, 53, 8c, d9, 7d, 77, 78, 55, 2f, c3]
+wave_format 1 0 8000 0 +6: [01, 00, 00, 00, 40, 1f, 00, 00, 00, 00, 00, 00, 01, 00, 00, 00, 06, 00, 60, 05, 9c, 24, ca, d7]
+wave_format 85 6 8000 8 +6: [55, 00, 06, 00, 40, 1f, 00, 00, 80, bb, 00, 00, 06, 00, 08, 00, 06, 00, 76, 0d, 1f, b0, e0, 6c]
+wave_format 85 0 44100 32 +0: [55, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 20, 00, 00, 00]
+wave_format 3 6 48000 0 +6: [03, 00, 06, 00, 80, bb, 00, 00, 00, 65, 04, 00, 06, 00, 00, 00, 06, 00, 97, 5e, f7, e2, 98, de]
+wave_format 1 2 8000 16 +6: [01, 00, 02, 00, 40, 1f, 00, 00, 00, 7d, 00, 00, 04, 00, 10, 00, 06, 00, 8a, 24, bf, 16, 85, 6f]
+wave_format 80 6 48000 0 +0: [50, 00, 06, 00, 80, bb, 00, 00, 00, 65, 04, 00, 06, 00, 00, 00, 00, 00]
+wave_format 1 0 0 16 +6: [01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 01, 00, 10, 00, 06, 00, cf, 8b, 7a, d1, 6e, db]
+wave_format 85 2 8000 8 +6: [55, 00, 02, 00, 40, 1f, 00, 00, 80, 3e, 00, 00, 02, 00, 08, 00, 06, 00, c6, 58, 66, 1d, 19, 79]
+wave_format 1 2 0 32 +0: [01, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 08, 00, 20, 00, 00, 00]
+wave_format 85 0 44100 16 +0: [55, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 10, 00, 00, 00]
+wave_format 85 2 8000 24 +6: [55, 00, 02, 00, 40, 1f, 00, 00, 80, bb, 00, 00, 06, 00, 18, 00, 06, 00, c5, c3, c5, b3, 15, 72]
+wave_format 85 6 48000 32 +0: [55, 00, 06, 00, 80, bb, 00, 00, 00, 94, 11, 00, 18, 00, 20, 00, 00, 00]
+wave_format 85 6 0 16 +0: [55, 00, 06, 00, 00, 00, 00, 00, 00, 00, 00, 00, 0c, 00, 10, 00, 00, 00]
+wave_format 1 2 44100 32 +6: [01, 00, 02, 00, 44, ac, 00, 00, 20, 62, 05, 00, 08, 00, 20, 00, 06, 00, 68, c9, a2, 41, 7d, 93]
+wave_format 3 0 48000 24 +6: [03, 00, 00, 00, 80, bb, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 06, 00, 76, bc, 00, cf, 86, 0a]
+wave_format 85 1 48000 0 +12: [55, 00, 01, 00, 80, bb, 00, 00, 80, bb, 00, 00, 01, 00, 00, 00, 0c, 00, ac, ad, 7a, f7, 33, fb, a8, 88, d1, ec, c4, 33]
+wave_format 80 2 0 8 +12: [50, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 02, 00, 08, 00, 0c, 00, 20, 62, ff, 14, 7c, eb, 52, ec, 02, b5, f8, 36]
+wave_format 1 6 0 16 +12: [01, 00, 06, 00, 00, 00, 00, 00, 00, 00, 00, 00, 0c, 00, 10, 00, 0c, 00, fa, ad, 62, d2, 67, 31, b5, 79, 7c, 6e, 07, 67]
+wave_format 85 1 8000 24 +6: [55, 00, 01, 00, 40, 1f, 00, 00, c0, 5d, 00, 00, 03, 00, 18, 00, 06, 00, 90, 3f, f1, 53, f5, 3a]
+wave_format 3 0 44100 24 +6: [03, 00, 00, 00, 44, ac, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 06, 00, 4a, 68, 22, 87, a6, ca]
+wave_format 80 6 48000 8 +0: [50, 00, 06, 00, 80, bb, 00, 00, 00, 65, 04, 00, 06, 00, 08, 00, 00, 00]
+wave_format 3 0 48000 0 +6: [03, 00, 00, 00, 80, bb, 00, 00, 00, 00, 00, 00, 01, 00, 00, 00, 06, 00, fe, 07, ce, 5c, 67, 73]
+wave_format 1 2 0 0 +6: [01, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 02, 00, 00, 00, 06, 00, 85, c0, 1c, ed, 6f, 3d]
+wave_format 1 2 0 8 +0: [01, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 02, 00, 08, 00, 00, 00]
+wave_format 1 1 44100 0 +6: [01, 00, 01, 00, 44, ac, 00, 00, 44, ac, 00, 00, 01, 00, 00, 00, 06, 00, 4f, d5, ec, 83, c4, 56]
+wave_format 3 1 0 16 +0: [03, 00, 01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 02, 00, 10, 00, 00, 00]
+wave_format 80 1 48000 0 +12: [50, 00, 01, 00, 80, bb, 00, 00, 80, bb, 00, 00, 01, 00, 00, 00, 0c, 00, 7f, ee, 46, 86, 5a, 7d, 91, 9d, 50, ea, 9d, ea]
+wave_format 80 1 8000 8 +6: [50, 00, 01, 00, 40, 1f, 00, 00, 40, 1f, 00, 00, 01, 00, 08, 00, 06, 00, f5, e1, 38, 6e, b2, f7]
+wave_format 85 1 44100 0 +12: [55, 00, 01, 00, 44, ac, 00, 00, 44, ac, 00, 00, 01, 00, 00, 00, 0c, 00, b8, 83, e0, f4, 30, 0f, b9, fa, 17, 5b, 4c, 82]
+wave_format 1 0 8000 0 +12: [01, 00, 00, 00, 40, 1f, 00, 00, 00, 00, 00, 00, 01, 00, 00, 00, 0c, 00, 9b, 4b, 4a, de, 58, a0, be, ea, b2, 2f, f5, 2b]
+wave_format 85 2 48000 32 +6: [55, 00, 02, 00, 80, bb, 00, 00, 00, dc, 05, 00, 08, 00, 20, 00, 06, 00, 89, 1a, 1a, c3, a5, 4b]
+wave_format 85 1 44100 24 +0: [55, 00, 01, 00, 44, ac, 00, 00, cc, 04, 02, 00, 03, 00, 18, 00, 00, 00]
+wave_format 1 0 0 24 +0: [01, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 00, 01, 00, 18, 00, 00, 00]
+wave_format 3 2 48000 16 +12: [03, 00, 02, 00, 80, bb, 00, 00, 00, ee, 02, 00, 04, 00, 10, 00, 0c, 00, b6, 78, 31, d1, bc, 29, 95, f8, 82, ba, 8f, ce]
+wave_format 3 2 0 24 +12: [03, 00, 02, 00, 00, 00, 00, 00, 00, 00, 00, 00, 06, 00, 18, 00, 0c, 00, f0, 83, d3, be, 60, bb, 3a, f9, 81, c6, 07, ca]
+wave_format 3 2 44100 0 +6: [03, 00, 02, 00, 44, ac, 00, 00, 88, 58, 01, 00, 02, 00, 00, 00, 06, 00, 5f, 71, 43, 80, 13, ba]
+wave_format 85 6 48000 8 +12: [55, 00, 06, 00, 80, bb, 00, 00, 00, 65, 04, 00, 06, 00, 08, 00, 0c, 00, a3, 38, 85, a9, cb, c7, 3e, 95, 76, 7a, 51, 11]
+source movie.wmv 4d22c37f9dcc60f5/4: asf=true sub=[86, eb, 36, e4] streams=None pins=None
+source a.wmv.dat 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source movie f397aadfaf9dd00f/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true]) pins=Some(["Raw Audio 0", "Raw Video 1"])
+source a.WMA de8ab4d9225c907a/5: asf=true sub=[84, eb, 36, e4] streams=None pins=None
+source logo.DAT e140ce52e00a9789/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie.wmv fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie a0880019ff2c2c36/3: asf=false sub=[00, 00, 00, 00] streams=None pins=None
+source movie.wmv fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source OP01.dat ee73364b317730ae/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false]) pins=Some(["Raw Video 0", "Raw Audio 1"])
+source a.wmv.dat b1c6c6d405d46f12/16: asf=false sub=[88, eb, 36, e4] streams=None pins=None
+source OP01.dat 063bba6cc81eef60/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true, false]) pins=Some(["Raw Audio 0", "Raw Video 1", "Raw Audio 2"])
+source logo.DAT 4a87ce99b8f39f57/15: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source a.wmv.dat a0880019ff2c2c36/3: asf=false sub=[00, 00, 00, 00] streams=None pins=None
+source movie.wmv 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source OP01.dat 098ef5655f715184/93: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source movie de8ab4d9225c907a/5: asf=false sub=[84, eb, 36, e4] streams=None pins=None
+source a.WMA e140ce52e00a9789/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie.wmv e140ce52e00a9789/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie 0daa4f794e1604ec/16: asf=false sub=[8b, eb, 36, e4] streams=None pins=None
+source logo.DAT ac0997a594b8e62f/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false, false, true]) pins=Some(["Raw Video 0", "Raw Audio 1", "Raw Audio 2"])
+source logo.DAT b547dfb1ce134604/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([true]) pins=Some(["Raw Video 0"])
+source movie 4d22c37f9dcc60f5/4: asf=false sub=[86, eb, 36, e4] streams=None pins=None
+source OP01.dat 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source movie 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source movie 0daa4f794e1604ec/16: asf=false sub=[8b, eb, 36, e4] streams=None pins=None
+source OP01.dat 7ba822fd5dd326e7/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false, true]) pins=Some(["Raw Video 0", "Raw Audio 1", "Raw Video 2"])
+source movie.wmv adac86f2e9c39f31/54: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source movie de8ab4d9225c907a/5: asf=false sub=[84, eb, 36, e4] streams=None pins=None
+source movie.wmv 55b5419b74d9e01b/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true]) pins=Some(["Raw Audio 0", "Raw Video 1"])
+source a.wmv.dat fc9c66f9448bb8ed/186: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, true]) pins=Some(["Raw Video 0", "Raw Video 1"])
+source a.wmv.dat b1c6c6d405d46f12/16: asf=false sub=[88, eb, 36, e4] streams=None pins=None
+source a.WMA a4d3f273e8b3205e/186: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source OP01.dat 0c594af6b17237e4/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true, true, true]) pins=Some(["Raw Audio 0", "Raw Video 1", "Raw Video 2"])
+source OP01.dat cbf29ce484222325/0: asf=false sub=[00, 00, 00, 00] streams=None pins=None
+source x.asf fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie 1e28e46492e7f27e/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie.wmv 0daa4f794e1604ec/16: asf=true sub=[8b, eb, 36, e4] streams=None pins=None
+source a.WMA 098ef5655f715184/93: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source logo.DAT d5d540cc7fbe592c/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([true]) pins=Some(["Raw Video 0"])
+source movie a0880019ff2c2c36/3: asf=false sub=[00, 00, 00, 00] streams=None pins=None
+source logo.DAT c8948b1e9b6ead17/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true, true]) pins=Some(["Raw Audio 0", "Raw Video 1", "Raw Video 2"])
+source movie fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source x.asf de8ab4d9225c907a/5: asf=true sub=[84, eb, 36, e4] streams=None pins=None
+source x.asf 3b616e27c7b8c384/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, false, false, true]) pins=Some(["Raw Audio 0", "Raw Audio 1", "Raw Audio 2"])
+source x.asf 8d6b9d58dae03601/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true, true]) pins=Some(["Raw Audio 0", "Raw Video 1", "Raw Video 2"])
+source movie.wmv de8ab4d9225c907a/5: asf=true sub=[84, eb, 36, e4] streams=None pins=None
+source a.WMA adac86f2e9c39f31/54: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source OP01.dat 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source a.WMA a0880019ff2c2c36/3: asf=true sub=[00, 00, 00, 00] streams=None pins=None
+source logo.DAT ca4acea0cd7c2330/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false, false]) pins=Some(["Raw Video 0", "Raw Audio 1", "Raw Audio 2"])
+source a.wmv.dat 42d12d9c40d58308/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, false, true]) pins=Some(["Raw Audio 0", "Raw Audio 1", "Raw Video 2"])
+source a.wmv.dat b1c6c6d405d46f12/16: asf=false sub=[88, eb, 36, e4] streams=None pins=None
+source movie fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source a.wmv.dat d5d540cc7fbe592c/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([true]) pins=Some(["Raw Video 0"])
+source x.asf 4d22c37f9dcc60f5/4: asf=true sub=[86, eb, 36, e4] streams=None pins=None
+source OP01.dat fc9c66f9448bb8ed/186: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, true]) pins=Some(["Raw Video 0", "Raw Video 1"])
+source OP01.dat fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie 4d22c37f9dcc60f5/4: asf=false sub=[86, eb, 36, e4] streams=None pins=None
+source movie.wmv fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source a.wmv.dat 99e3fd8f64206274/54: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source movie.wmv b1c6c6d405d46f12/16: asf=true sub=[88, eb, 36, e4] streams=None pins=None
+source a.wmv.dat 40a373044ca95cdd/132: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source OP01.dat fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie 4d22c37f9dcc60f5/4: asf=false sub=[86, eb, 36, e4] streams=None pins=None
+source a.WMA 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source a.wmv.dat f50f02356efc57f2/186: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true]) pins=Some(["Raw Audio 0", "Raw Video 1"])
+source logo.DAT cbf29ce484222325/0: asf=false sub=[00, 00, 00, 00] streams=None pins=None
+source a.WMA ca4acea0cd7c2330/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false, false]) pins=Some(["Raw Video 0", "Raw Audio 1", "Raw Audio 2"])
+source x.asf 99e3fd8f64206274/54: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source x.asf 0daa4f794e1604ec/16: asf=true sub=[8b, eb, 36, e4] streams=None pins=None
+source movie.wmv 1e28e46492e7f27e/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source OP01.dat ac0997a594b8e62f/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false, false, true]) pins=Some(["Raw Video 0", "Raw Audio 1", "Raw Audio 2"])
+source x.asf cbf29ce484222325/0: asf=true sub=[00, 00, 00, 00] streams=None pins=None
+source a.WMA 99e3fd8f64206274/54: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source movie.wmv 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source a.WMA 4d22c37f9dcc60f5/4: asf=true sub=[86, eb, 36, e4] streams=None pins=None
+source x.asf 234d10c4b2ea0423/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, false, false, false]) pins=Some(["Raw Audio 0", "Raw Audio 1", "Raw Audio 2"])
+source movie 35b04a3d8d0134bc/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, true]) pins=Some(["Raw Video 0", "Raw Video 1"])
+source movie de8ab4d9225c907a/5: asf=false sub=[84, eb, 36, e4] streams=None pins=None
+source a.WMA 234d10c4b2ea0423/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, false, false, false]) pins=Some(["Raw Audio 0", "Raw Audio 1", "Raw Audio 2"])
+source a.WMA d5d540cc7fbe592c/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([true]) pins=Some(["Raw Video 0"])
+source a.wmv.dat b1c6c6d405d46f12/16: asf=false sub=[88, eb, 36, e4] streams=None pins=None
+source x.asf dc4c4e9a607216d4/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false]) pins=Some(["Raw Video 0", "Raw Audio 1"])
+source logo.DAT 4a87ce99b8f39f57/15: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source OP01.dat 0daa4f794e1604ec/16: asf=false sub=[8b, eb, 36, e4] streams=None pins=None
+source logo.DAT 098ef5655f715184/93: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source movie.wmv 34faa377abc10cd9/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, true, true]) pins=Some(["Raw Video 0", "Raw Video 1", "Raw Video 2"])
+source logo.DAT b1c6c6d405d46f12/16: asf=false sub=[88, eb, 36, e4] streams=None pins=None
+source a.WMA dddfa7a9ab31075d/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true, true]) pins=Some(["Raw Audio 0", "Raw Video 1", "Raw Video 2"])
+source movie fc9c66f9448bb8ed/186: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, true]) pins=Some(["Raw Video 0", "Raw Video 1"])
+source logo.DAT cbf29ce484222325/0: asf=false sub=[00, 00, 00, 00] streams=None pins=None
+source movie.wmv d6d84ed01280744e/171: asf=true sub=[90, 0f, b8, 3d] streams=None pins=None
+source logo.DAT 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source movie 0daa4f794e1604ec/16: asf=false sub=[8b, eb, 36, e4] streams=None pins=None
+source logo.DAT fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source x.asf db85dbb5db0b3576/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, true]) pins=Some(["Raw Audio 0", "Raw Video 1"])
+source logo.DAT cbf29ce484222325/0: asf=false sub=[00, 00, 00, 00] streams=None pins=None
+source x.asf a4d3f273e8b3205e/186: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source a.wmv.dat d5d540cc7fbe592c/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([true]) pins=Some(["Raw Video 0"])
+source a.WMA b1c6c6d405d46f12/16: asf=true sub=[88, eb, 36, e4] streams=None pins=None
+source movie d083c07c829bddbb/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, true, false, false]) pins=Some(["Raw Video 0", "Raw Video 1", "Raw Audio 2"])
+source a.wmv.dat c84851420d50b37a/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, false, false]) pins=Some(["Raw Audio 0", "Raw Audio 1", "Raw Audio 2"])
+source a.WMA 4d22c37f9dcc60f5/4: asf=true sub=[86, eb, 36, e4] streams=None pins=None
+source x.asf cdc6f4552fb03274/342: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false, true, true]) pins=Some(["Raw Video 0", "Raw Audio 1", "Raw Video 2"])
+source a.WMA fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source a.wmv.dat b1c6c6d405d46f12/16: asf=false sub=[88, eb, 36, e4] streams=None pins=None
+source x.asf fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source movie 42d12d9c40d58308/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, false, true]) pins=Some(["Raw Audio 0", "Raw Audio 1", "Raw Video 2"])
+source movie.wmv 4d22c37f9dcc60f5/4: asf=true sub=[86, eb, 36, e4] streams=None pins=None
+source a.WMA 3437f452a1801f75/186: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, false]) pins=Some(["Raw Audio 0", "Raw Audio 1"])
+source x.asf c78f63b68b442b52/186: asf=true sub=[90, 0f, b8, 3d] streams=Some([true, false]) pins=Some(["Raw Video 0", "Raw Audio 1"])
+source x.asf b1c6c6d405d46f12/16: asf=true sub=[88, eb, 36, e4] streams=None pins=None
+source a.WMA fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source OP01.dat d5d540cc7fbe592c/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([true]) pins=Some(["Raw Video 0"])
+source a.WMA cbf29ce484222325/0: asf=true sub=[00, 00, 00, 00] streams=None pins=None
+source a.wmv.dat 2ea393339aa8964a/264: asf=true sub=[90, 0f, b8, 3d] streams=Some([false, false]) pins=Some(["Raw Audio 0", "Raw Audio 1"])
+source movie.wmv 6ce44ed17e7e9be7/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([false]) pins=Some(["Raw Audio 0"])
+source movie b1c6c6d405d46f12/16: asf=false sub=[88, eb, 36, e4] streams=None pins=None
+source movie fa94562d0e9a3c78/30: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+source logo.DAT 1e28e46492e7f27e/108: asf=true sub=[90, 0f, b8, 3d] streams=Some([]) pins=Some([])
+read_span 1 4294967295 1: (1, 0)
+read_span 100 1 100: (100, 0)
+read_span 0 100 50: (0, 50)
+read_span 0 1 50: (0, 1)
+read_span 4294967296 1 100: (100, 0)
+read_span 4294967296 4294967295 8589934592: (4294967296, 4294967295)
+read_span 0 0 1: (0, 0)
+read_span 4294967296 4294967295 8589934592: (4294967296, 4294967295)
+read_span 4294967296 1 100: (100, 0)
+read_span 18446744073709551615 1 0: (0, 0)
+read_span 18446744073709551615 0 8589934592: (8589934592, 0)
+read_span 18446744073709551615 1 100: (100, 0)
+read_span 4294967296 4294967295 50: (50, 0)
+read_span 18446744073709551615 4294967295 100: (100, 0)
+read_span 18446744073709551615 100 8589934592: (8589934592, 0)
+read_span 1 4294967295 0: (0, 0)
+read_span 100 1 1: (1, 0)
+read_span 100 0 8589934592: (100, 0)
+read_span 4294967296 0 8589934592: (4294967296, 0)
+read_span 100 0 8589934592: (100, 0)
+read_span 1 0 100: (1, 0)
+read_span 100 0 8589934592: (100, 0)
+read_span 1 0 8589934592: (1, 0)
+read_span 1 0 50: (1, 0)
+read_span 100 1 50: (50, 0)
+read_span 4294967296 100 8589934592: (4294967296, 100)
+read_span 4294967296 4294967295 100: (100, 0)
+read_span 0 1 8589934592: (0, 1)
+read_span 4294967296 4294967295 1: (1, 0)
+read_span 4294967296 1 8589934592: (4294967296, 1)
+read_span 100 4294967295 8589934592: (100, 4294967295)
+read_span 4294967296 1 8589934592: (4294967296, 1)
+read_span 18446744073709551615 0 50: (50, 0)
+read_span 0 100 8589934592: (0, 100)
+read_span 100 4294967295 1: (1, 0)
+read_span 4294967296 0 50: (50, 0)
+read_span 1 4294967295 1: (1, 0)
+read_span 18446744073709551615 1 100: (100, 0)
+read_span 0 100 0: (0, 0)
+read_span 1 0 0: (0, 0)
+read_span 0 4294967295 8589934592: (0, 4294967295)
+read_span 0 4294967295 8589934592: (0, 4294967295)
+read_span 100 0 0: (0, 0)
+read_span 0 1 1: (0, 1)
+read_span 4294967296 1 0: (0, 0)
+read_span 1 0 100: (1, 0)
+read_span 0 1 50: (0, 1)
+read_span 1 0 0: (0, 0)
+read_span 4294967296 1 0: (0, 0)
+read_span 1 0 100: (1, 0)
+read_span 100 1 100: (100, 0)
+read_span 18446744073709551615 0 1: (1, 0)
+read_span 1 100 50: (1, 49)
+read_span 1 100 0: (0, 0)
+read_span 0 4294967295 100: (0, 100)
+read_span 100 0 50: (50, 0)
+read_span 100 1 50: (50, 0)
+read_span 4294967296 1 100: (100, 0)
+read_span 18446744073709551615 1 100: (100, 0)
+read_span 100 100 1: (1, 0)
+read_span 100 0 1: (1, 0)
+read_span 100 1 50: (50, 0)
+read_span 4294967296 0 8589934592: (4294967296, 0)
+read_span 0 100 100: (0, 100)
+read_span 100 0 50: (50, 0)
+read_span 0 100 50: (0, 50)
+read_span 18446744073709551615 100 1: (1, 0)
+read_span 4294967296 100 0: (0, 0)
+read_span 4294967296 1 100: (100, 0)
+read_span 18446744073709551615 0 8589934592: (8589934592, 0)
+read_span 0 4294967295 1: (0, 1)
+read_span 0 100 50: (0, 50)
+read_span 18446744073709551615 100 8589934592: (8589934592, 0)
+read_span 1 4294967295 8589934592: (1, 4294967295)
+read_span 1 4294967295 50: (1, 49)
+read_span 4294967296 4294967295 8589934592: (4294967296, 4294967295)
+read_span 4294967296 4294967295 8589934592: (4294967296, 4294967295)
+read_span 4294967296 4294967295 1: (1, 0)
+read_span 0 100 100: (0, 100)
+read_span 1 1 50: (1, 1)
+read_span 4294967296 1 1: (1, 0)
+read_span 100 100 0: (0, 0)
+read_span 100 1 0: (0, 0)
+read_span 100 4294967295 1: (1, 0)
+read_span 1 1 8589934592: (1, 1)
+read_span 0 1 1: (0, 1)
+read_span 18446744073709551615 100 0: (0, 0)
+read_span 4294967296 1 100: (100, 0)
+read_span 100 0 100: (100, 0)
+read_span 4294967296 0 0: (0, 0)
+read_span 1 4294967295 1: (1, 0)
+read_span 100 100 0: (0, 0)
+read_span 1 1 50: (1, 1)
+read_span 0 4294967295 100: (0, 100)
+read_span 4294967296 1 8589934592: (4294967296, 1)
+read_span 100 0 8589934592: (100, 0)
+read_span 4294967296 100 0: (0, 0)
+read_span 100 1 50: (50, 0)
+read_span 0 0 50: (0, 0)
+read_span 100 100 8589934592: (100, 100)
+feed None None false false: Wait
+feed None None false true: Wait
+feed None None true false: Wait
+feed None None true true: Wait
+feed None Some(0) false false: Frame(0)
+feed None Some(0) false true: Frame(0)
+feed None Some(0) true false: Frame(0)
+feed None Some(0) true true: Frame(0)
+feed None Some(5) false false: Frame(5)
+feed None Some(5) false true: Frame(5)
+feed None Some(5) true false: Frame(5)
+feed None Some(5) true true: Frame(5)
+feed None Some(6) false false: Frame(6)
+feed None Some(6) false true: Frame(6)
+feed None Some(6) true false: Frame(6)
+feed None Some(6) true true: Frame(6)
+feed Some(0) None false false: End
+feed Some(0) None false true: Wait
+feed Some(0) None true false: End
+feed Some(0) None true true: Wait
+feed Some(0) Some(0) false false: Wait
+feed Some(0) Some(0) false true: Wait
+feed Some(0) Some(0) true false: End
+feed Some(0) Some(0) true true: Wait
+feed Some(0) Some(5) false false: Frame(5)
+feed Some(0) Some(5) false true: Frame(5)
+feed Some(0) Some(5) true false: Frame(5)
+feed Some(0) Some(5) true true: Frame(5)
+feed Some(0) Some(6) false false: Frame(6)
+feed Some(0) Some(6) false true: Frame(6)
+feed Some(0) Some(6) true false: Frame(6)
+feed Some(0) Some(6) true true: Frame(6)
+feed Some(5) None false false: End
+feed Some(5) None false true: Wait
+feed Some(5) None true false: End
+feed Some(5) None true true: Wait
+feed Some(5) Some(0) false false: Frame(0)
+feed Some(5) Some(0) false true: Frame(0)
+feed Some(5) Some(0) true false: Frame(0)
+feed Some(5) Some(0) true true: Frame(0)
+feed Some(5) Some(5) false false: Wait
+feed Some(5) Some(5) false true: Wait
+feed Some(5) Some(5) true false: End
+feed Some(5) Some(5) true true: Wait
+feed Some(5) Some(6) false false: Frame(6)
+feed Some(5) Some(6) false true: Frame(6)
+feed Some(5) Some(6) true false: Frame(6)
+feed Some(5) Some(6) true true: Frame(6)
+resample 22050->44100 119: 236 e983418faab8ab47
+resample 48000->22050 500: 230 ed5aa866573916d1
+resample 8000->22050 507: 1395 8c43708eb829247c
+resample 44100->44100 563: 563 f925ce6ff00b3122
+resample 44100->22050 436: 218 d57d2c8f29933ddb
+resample 44100->48000 537: 584 20a5fafe64be661d
+resample 48000->44100 99: 91 f4cdc4235bf75551
+resample 32000->44100 556: 765 9e4734ec82953f6f
+resample 44100->48000 561: 610 aa147eccbc4e72e0
+resample 32000->22050 215: 148 920d5341bbc78b92
+resample 32000->22050 425: 293 c2c47cf2590966cd
+resample 44100->48000 121: 131 c40edf32985ef8fe
+resample 48000->48000 159: 159 14c0dfe0721212ad
+resample 22050->48000 461: 1002 ecc8b1df0e60ce6a
+resample 32000->44100 84: 115 5e4608777406bad6
+resample 32000->48000 104: 155 bb236677786c1b91
+resample 32000->48000 535: 801 e32ef32f97fe774d
+resample 22050->22050 216: 216 7e0b9e293376021d
+resample 22050->22050 467: 467 13f10ea9b3712f18
+resample 8000->44100 66: 359 9a461bd6774d0d2a
+resample 32000->48000 546: 818 e232a4be6f25217c
+resample 44100->22050 591: 295 318dcdb785c2ae6f
+resample 8000->44100 371: 2040 0b959ce50523c836
+resample 44100->22050 43: 21 6175894fce117862
+resample 32000->44100 548: 754 bfbc547051df62d9
+resample 22050->22050 209: 209 ecfdfc2cf096c003
+resample 22050->22050 432: 432 2fc62843065f58ce
+resample 48000->22050 37: 17 080d38e17399bfec
+resample 44100->48000 457: 497 d511631dcc6e061e
+resample 32000->48000 201: 300 5ac1e858b3b3059b
+resample 22050->22050 577: 577 b174d94d2e410d21
+resample 48000->48000 270: 270 a8d4e8b13f687e32
+resample 32000->48000 24: 35 5769ee5eadaa6a39
+resample 48000->48000 117: 117 2f9e5012864f650f
+resample 8000->22050 115: 315 466e27e053f1d3fe
+resample 8000->48000 387: 2316 7eb94a76cffe697e
+resample 8000->22050 412: 1133 3bf141756b1822f7
+resample 32000->22050 97: 67 138f89c8833e7116
+resample 8000->44100 105: 574 1587364ea6ca2450
+resample 22050->22050 103: 103 42c7f80a635e67f1
+resample 48000->48000 183: 183 d1a5f948f832047e
+resample 44100->44100 553: 553 95beee7b7c3c3ccb
+resample 8000->44100 207: 1136 d55ab027b9ca8dc2
+resample 32000->22050 110: 76 308fd52498bdc9b5
+resample 8000->44100 76: 414 582bac0765feb184
+resample 8000->48000 381: 2280 55106ab4ea92d2d5
+resample 44100->48000 225: 244 6ce0f431e8dbdfd6
+resample 8000->48000 162: 966 ffc3ab9b6c81b7c0
+resample 8000->48000 590: 3534 322029baf1663052
+resample 48000->48000 530: 530 8870109b6b60870d
+resample 22050->22050 218: 218 65ec8d4079231bca
+resample 8000->44100 175: 960 ec5fc854bc936ce7
+resample 32000->48000 162: 242 d847d2c9a87559aa
+resample 8000->22050 346: 951 9061f016fb3d4735
+resample 32000->44100 315: 433 aa111a891511ae7f
+resample 32000->22050 16: 11 a8c9346949ef72b4
+resample 44100->48000 383: 416 5e151f468a3d967d
+resample 48000->48000 409: 409 2491d555fdde7566
+resample 8000->22050 555: 1527 a17831a856a5a80a
+resample 48000->48000 172: 172 b4ba85296d79f6e8
