@@ -735,7 +735,7 @@ fn signature(els: &[SigEl], used_out: bool, d3d10: bool) -> Vec<u8> {
 fn rdef_type(b: &mut Vec<u8>, v: &CbVar, sm5: bool, d3d10: bool, fix_names: &mut Vec<(usize, String)>) -> u32 {
     let ta = b.len();
     let elems = if d3d10 { v.elems.max(1) } else { v.elems };
-    for x in [v.class, v.ty, v.rows, v.cols, elems, v.members.len() as u16] {
+    for x in [v.class, v.ty, v.rows, v.cols, elems, crate::sat16(v.members.len())] {
         b.extend_from_slice(&x.to_le_bytes());
     }
     b.resize(ta + if sm5 { 36 } else { 16 }, 0);

@@ -406,7 +406,7 @@ pub fn assemble(src: &str) -> Result<Vec<u32>, String> {
                         None => {
                             let digits = m.trim_start_matches(|c: char| c.is_ascii_alphabetic());
                             let name = &m[..m.len() - digits.len()];
-                            let u = USAGES.iter().position(|u| *u == name).ok_or(format!("dcl usage {m}"))? as u32;
+                            let u = crate::u32_of(USAGES.iter().position(|u| *u == name).ok_or(format!("dcl usage {m}"))?);
                             tok |= u | digits.parse::<u32>().unwrap_or(0) << 16;
                         }
                     }
@@ -419,7 +419,7 @@ pub fn assemble(src: &str) -> Result<Vec<u32>, String> {
                 // def c, f, f, f, f / defb b, bool / defi i, n, n, n, n
                 dest(operands.first().ok_or("def without a register")?, v, 0, 0, &mut body)?;
                 for o in &operands[1..] {
-                    body.push(if op == 48 { o.trim().parse::<i32>().map_err(|_| format!("bad integer {o}"))? as u32 } else { number(o)? });
+                    body.push(if op == 48 { o.trim().parse::<i32>().map_err(|_| format!("bad integer {o}"))?.cast_unsigned() } else { number(o)? });
                 }
             }
             _ => {
@@ -610,7 +610,7 @@ mod tests {
         assert!(assemble("ps_3_0\ndcl_bogus v0").is_err());
         // constants
         assert_eq!(body("vs_3_0\ndefb b0, true\ndefb b1, false"), [0x0200_002f, 0xe00f_0800, 1, 0x0200_002f, 0xe00f_0801, 0, end]);
-        assert_eq!(body("vs_3_0\ndefi i1, 1, -2, 3, 4"), [0x0500_0030, 0xf00f_0001, 1, (-2i32) as u32, 3, 4, end]);
+        assert_eq!(body("vs_3_0\ndefi i1, 1, -2, 3, 4"), [0x0500_0030, 0xf00f_0001, 1, (-2i32).cast_unsigned(), 3, 4, end]);
         assert_eq!(body("ps_2_0\ndef c0, 1.0, 0.5f, -2, 0"), [0x0500_0051, 0xa00f_0000, 0x3f80_0000, 0x3f00_0000, 0xc000_0000, 0, end]);
         // comparisons, predicates, co-issue, projected and biased texld
         assert_eq!(body("ps_3_0\nif_gt r0.x, r1.x\nendif"), [0x0201_0029, 0x8000_0000, 0x8000_0001, 0x0000_002b, end]);

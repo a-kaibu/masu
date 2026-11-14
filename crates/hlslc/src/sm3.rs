@@ -228,11 +228,13 @@ impl Gen<'_> {
         let d = &mut self.defs[i];
         for x in &distinct {
             if !d.contains(&Some(*x)) {
-                let f = d.iter().position(|c| c.is_none()).unwrap();
-                d[f] = Some(*x);
+                // (a def with room: found above)
+                if let Some(c) = d.iter_mut().find(|c| c.is_none()) {
+                    *c = Some(*x);
+                }
             }
         }
-        let swz: [u8; 4] = v.map(|x| d.iter().position(|c| *c == Some(x)).unwrap() as u8);
+        let swz: [u8; 4] = v.map(|x| d.iter().position(|c| *c == Some(x)).and_then(|k| u8::try_from(k).ok()).unwrap_or(0));
         format!("c{}{}", self.def_base + crate::u32_of(i), swz_str(swz))
     }
 
@@ -762,8 +764,9 @@ impl Gen<'_> {
                         }
                         let (coord, tex, smp) = (a(0)?, a(1)?, a(2)?);
                         let (sname, dim) = self.sampler(&smp, &tex)?;
-                        if !self.samplers.iter().any(|x| x.0 == sname[1..].parse::<u32>().unwrap()) {
-                            self.samplers.push((sname[1..].parse().unwrap(), dim));
+                        let s: u32 = sname[1..].parse().map_err(|_| format!("sampler {sname}"))?;
+                        if !self.samplers.iter().any(|x| x.0 == s) {
+                            self.samplers.push((s, dim));
                         }
                         let tswz = match tex {
                             Src::Tex(_, s) => s,
@@ -910,7 +913,7 @@ fn put_type(b: &mut Vec<u8>, v: &CbVar) -> u32 {
     let at = b.len();
     b.resize(at + 16, 0);
     let (class, ty, rows, cols, elems) = ctype(v);
-    for (k, x) in [class, ty, rows, cols, elems, v.members.len() as u16].iter().enumerate() {
+    for (k, x) in [class, ty, rows, cols, elems, crate::sat16(v.members.len())].iter().enumerate() {
         set16(b, at + 2 * k, *x);
     }
     if !v.members.is_empty() {
@@ -948,8 +951,8 @@ fn ctab(target: &str, entries: &[(String, u16, u32, u32, CbVar)]) -> Vec<u8> {
         let t = put_type(&mut b, var);
         set32(&mut b, e, n);
         set16(&mut b, e + 4, *set);
-        set16(&mut b, e + 6, *reg as u16);
-        set16(&mut b, e + 8, *count as u16);
+        set16(&mut b, e + 6, crate::sat16(*reg));
+        set16(&mut b, e + 8, crate::sat16(*count));
         set32(&mut b, e + 12, t);
     }
     b

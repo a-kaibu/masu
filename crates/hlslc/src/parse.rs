@@ -184,11 +184,13 @@ impl Parser {
     fn template_num(&mut self) -> R<u32> {
         match self.peek() {
             // (not `as u32`: 2^32 + 1 is not 1)
-            Some(Tok::Int(v, _)) if *v <= u32::MAX as u64 => {
-                let v = *v as u32;
-                self.p += 1;
-                Ok(v)
-            }
+            Some(Tok::Int(v, _)) => match u32::try_from(*v) {
+                Ok(v) => {
+                    self.p += 1;
+                    Ok(v)
+                }
+                Err(_) => self.err("expected a number"),
+            },
             _ => self.err("expected a number"),
         }
     }
@@ -330,12 +332,13 @@ impl Parser {
             self.expect("]")?;
             let n = const_int(&e).ok_or(format!("line {}: array size is not a constant", self.line()))?;
             // (no shader storage holds more than 65536 elements)
-            if !(1..=65536).contains(&n) {
+            let size = u32::try_from(n).ok().filter(|n| (1..=65536).contains(n));
+            let Some(n) = size else {
                 return Err(format!("line {}: array size {n} is out of range", self.line()));
-            }
-            dims.push(n as u32);
+            };
+            dims.push(n);
         }
-        if dims.iter().map(|&n| n.max(1) as u64).product::<u64>() > 65536 {
+        if dims.iter().map(|&n| u64::from(n.max(1))).product::<u64>() > 65536 {
             return Err(format!("line {}: array too large", self.line()));
         }
         for n in dims.into_iter().rev() {
@@ -352,10 +355,10 @@ impl Parser {
     /// components of a type, saturating
     fn comps(&self, t: &Ty) -> u64 {
         match t {
-            Ty::Array(e, n) => self.comps(e).saturating_mul((*n).max(1) as u64),
+            Ty::Array(e, n) => self.comps(e).saturating_mul(u64::from((*n).max(1))),
             Ty::Struct(i) => self.prog.structs.get(*i).map_or(0, |s| s.fields.iter().fold(0u64, |a, f| a.saturating_add(self.comps(&f.ty)))),
             t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
-                 | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t.comps() as u64,
+                 | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => u64::try_from(t.comps()).unwrap_or(u64::MAX),
         }
     }
 
@@ -592,7 +595,7 @@ impl Parser {
             if self.eat("[") {
                 let e = self.expr()?;
                 self.expect("]")?;
-                index = Some(const_int(&e).ok_or(format!("line {line}: state index is not a constant"))? as u32);
+                index = Some(crate::lo32(const_int(&e).ok_or(format!("line {line}: state index is not a constant"))?));
             }
             self.expect("=")?;
             let value = self.fx_value()?;
@@ -1237,7 +1240,7 @@ impl Parser {
         match self.peek().cloned() {
             Some(Tok::Int(v, u)) => {
                 self.p += 1;
-                Ok(Expr::Int(v as i64, u))
+                Ok(Expr::Int(v.cast_signed(), u))
             }
             Some(Tok::Float(f)) => {
                 self.p += 1;

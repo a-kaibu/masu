@@ -18,6 +18,17 @@ pub(crate) fn u32_of(x: usize) -> u32 {
     u32::try_from(x).unwrap_or(u32::MAX)
 }
 
+/// The low 32 bits: the wrap the formats mean (two's complement immediates, shift counts)
+pub(crate) fn lo32(x: i64) -> u32 {
+    let [a, b, c, d, ..] = x.to_le_bytes();
+    u32::from_le_bytes([a, b, c, d])
+}
+
+/// A count the formats keep in 16 bits (u16::MAX past that)
+pub(crate) fn sat16<T: TryInto<u16>>(x: T) -> u16 {
+    x.try_into().unwrap_or(u16::MAX)
+}
+
 mod ast;
 pub mod d3d9asm;
 mod fx;

@@ -117,7 +117,7 @@ fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
     Some(match e {
         Expr::Int(v, _) => vec![*v as f64],
         Expr::Float(f) => vec![*f],
-        Expr::Bool(b) => vec![u32::from(*b) as f64],
+        Expr::Bool(b) => vec![f64::from(u32::from(*b))],
         Expr::List(v) | Expr::Construct(_, v) => {
             let mut out = Vec::new();
             for x in v {
@@ -502,7 +502,7 @@ impl W<'_> {
         }
     }
     fn td_words(t: &Td, names: &mut std::slice::Iter<(u32, u32)>, out: &mut Vec<u32>) {
-        let (n, s) = *names.next().unwrap();
+        let Some(&(n, s)) = names.next() else { return };
         out.extend([t.ty, t.class, n, s, t.elements]);
         match t.class {
             PC_VECTOR => out.extend([t.cols, t.rows]),
@@ -537,14 +537,14 @@ impl W<'_> {
         t.bases(&mut bases);
         let n = bases.len();
         let mut out = Vec::new();
-        for e in 0..t.elements.max(1) as usize {
+        for e in 0..crate::us(t.elements.max(1)) {
             for (k, b) in bases.iter().enumerate() {
                 let i = e * n + k;
                 let v = if vals.len() == 1 { vals[0] } else { vals.get(i).copied().unwrap_or(0.0) };
                 let w = match *b {
                     PT_FLOAT => (v as f32).to_bits(),
                     PT_BOOL => u32::from(v != 0.0),
-                    _ => v as i64 as u32,
+                    _ => crate::lo32(v as i64),
                 };
                 out.extend_from_slice(&w.to_le_bytes());
             }
@@ -669,17 +669,17 @@ impl W<'_> {
                         K::ConstI => PT_INT,
                         K::Int | K::Float | K::Bool | K::E(_) | K::Shader(_) | K::Texture | K::Sampler | K::ConstF => PT_FLOAT,
                     };
-                    let rows = v.len().div_ceil(4).max(1) as u32;
+                    let rows = crate::u32_of(v.len().div_ceil(4).max(1));
                     let td = Td { class: PC_MATRIX_ROWS, rows, cols: 4, ..Td::scalar(ty) };
                     (td.clone(), Self::numbers(&td, &v))
                 }
                 (_, FxVal::Expr(e)) => {
                     let v = match (kind, e) {
                         (K::E(k), Expr::Var(n, _)) => {
-                            vec![enum_value(k, n).ok_or(format!("line {}: {n} is not a value of {}", st.line, st.name))? as f64]
+                            vec![f64::from(enum_value(k, n).ok_or(format!("line {}: {n} is not a value of {}", st.line, st.name))?)]
                         }
                         (_, Expr::Var(n, _)) if n.eq_ignore_ascii_case("true") || n.eq_ignore_ascii_case("false") => {
-                            vec![n.eq_ignore_ascii_case("true") as u32 as f64]
+                            vec![f64::from(u32::from(n.eq_ignore_ascii_case("true")))]
                         }
                         _ => eval(self.prog, e).ok_or(format!("line {}: the value of {} is not a constant", st.line, st.name))?,
                     };

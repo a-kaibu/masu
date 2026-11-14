@@ -483,7 +483,7 @@ impl Pp<'_> {
                     (Some(Tok::Ident(id)), _) => (id.clone(), 2),
                     _ => return Err(format!("line {line}: bad defined()")),
                 };
-                t2.push(Token { t: Tok::Int(self.macros.contains_key(&id) as u64, false), line });
+                t2.push(Token { t: Tok::Int(u64::from(self.macros.contains_key(&id)), false), line });
                 i += n;
                 continue;
             }
@@ -585,8 +585,8 @@ fn cexpr(t: &[Token], p: &mut usize, min: u32, d: u32) -> Result<i64, String> {
             ">" => i64::from(l > r),
             "<=" => i64::from(l <= r),
             ">=" => i64::from(l >= r),
-            "<<" => l.wrapping_shl(r as u32),
-            ">>" => l.wrapping_shr(r as u32),
+            "<<" => l.wrapping_shl(crate::lo32(r)),
+            ">>" => l.wrapping_shr(crate::lo32(r)),
             "+" => l.wrapping_add(r),
             "-" => l.wrapping_sub(r),
             "*" => l.wrapping_mul(r),
@@ -618,7 +618,7 @@ fn cunary(t: &[Token], p: &mut usize, d: u32) -> Result<i64, String> {
     let Some(tk) = t.get(*p) else { return Err("bad #if expression".into()) };
     *p += 1;
     Ok(match &tk.t {
-        Tok::Int(v, _) => *v as i64,
+        Tok::Int(v, _) => v.cast_signed(),
         Tok::Float(f) => *f as i64,
         Tok::Ident(_) => 0,
         Tok::Punct("(") => {

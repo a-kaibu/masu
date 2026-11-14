@@ -291,13 +291,13 @@ fn mat_swizzle(name: &str, r: usize, c: usize) -> Option<Vec<(usize, usize)>> {
             if b.len() < 2 {
                 return None;
             }
-            ((b[0] as char).to_digit(10)? as usize, (b[1] as char).to_digit(10)? as usize, 3)
+            (crate::us(char::from(b[0]).to_digit(10)?), crate::us(char::from(b[1]).to_digit(10)?), 3)
         } else {
             let b = rest.as_bytes();
             if b.len() < 2 {
                 return None;
             }
-            ((b[0] as char).to_digit(10)? as usize - 1, (b[1] as char).to_digit(10)? as usize - 1, 2)
+            (crate::us(char::from(b[0]).to_digit(10)?).checked_sub(1)?, crate::us(char::from(b[1]).to_digit(10)?).checked_sub(1)?, 2)
         };
         if a >= r || b >= c {
             return None;
@@ -380,7 +380,7 @@ fn writes(s: &Stmt, name: &str, outs: &dyn Fn(&str) -> bool) -> bool {
 fn fold(op: sm4::Opcode, a: &[u32], tru: u32) -> Option<u32> {
     use sm4::*;
     let f = |i: usize| flt(a[i]);
-    let i = |k: usize| a[k] as i32;
+    let i = |k: usize| a[k].cast_signed();
     let m = |b: bool| if b { tru } else { 0 };
     Some(match op {
         MOV => a[0],
@@ -391,8 +391,8 @@ fn fold(op: sm4::Opcode, a: &[u32], tru: u32) -> Option<u32> {
         MIN => fbits(f(0).min(f(1))),
         MAX => fbits(f(0).max(f(1))),
         IADD => a[0].wrapping_add(a[1]),
-        IMAX => i(0).max(i(1)) as u32,
-        IMIN => i(0).min(i(1)) as u32,
+        IMAX => i(0).max(i(1)).cast_unsigned(),
+        IMIN => i(0).min(i(1)).cast_unsigned(),
         UMAX => a[0].max(a[1]),
         UMIN => a[0].min(a[1]),
         AND => a[0] & a[1],
@@ -401,11 +401,11 @@ fn fold(op: sm4::Opcode, a: &[u32], tru: u32) -> Option<u32> {
         NOT => !a[0],
         INEG => a[0].wrapping_neg(),
         ISHL => a[0].wrapping_shl(a[1] & 31),
-        ISHR => (i(0) >> (a[1] & 31)) as u32,
+        ISHR => (i(0) >> (a[1] & 31)).cast_unsigned(),
         USHR => a[0] >> (a[1] & 31),
         ITOF => fbits(i(0) as f32),
         UTOF => fbits(a[0] as f32),
-        FTOI => f(0) as i32 as u32,
+        FTOI => (f(0) as i32).cast_unsigned(),
         FTOU => f(0) as u32,
         EQ => m(f(0) == f(1)),
         NE => m(f(0) != f(1)),
@@ -516,7 +516,7 @@ impl<'a> L<'a> {
         if self.sm3() {
             fbits(v as f32)
         } else {
-            v as u32
+            crate::lo32(v)
         }
     }
 
@@ -584,7 +584,8 @@ impl<'a> L<'a> {
         let t = self.tmp();
         let dst: Vec<C> = Lane::first(n).map(|k| C::R(temp(t), k)).collect();
         self.assign_raw(&dst, cs);
-        Src::R { r: temp(t), swz: [0, 1.min(n as u8 - 1), 2.min(n as u8 - 1), 3.min(n as u8 - 1)], neg: false, abs: false, one: false }
+        let last = Lane::first(n).last().map_or(3, u8::from);
+        Src::R { r: temp(t), swz: [0, 1.min(last), 2.min(last), 3.min(last)], neg: false, abs: false, one: false }
     }
 
     /// dst comps <- src comps, movs grouped by register (no overlap check)
@@ -742,7 +743,7 @@ impl<'a> L<'a> {
                     .iter()
                     .map(|a| {
                         let C::I(v) = a.0[k] else { unreachable!() };
-                        let v = if a.1 & 2 != 0 { if b == B::Float { v & 0x7fff_ffff } else { (v as i32).unsigned_abs() } } else { v };
+                        let v = if a.1 & 2 != 0 { if b == B::Float { v & 0x7fff_ffff } else { v.cast_signed().unsigned_abs() } } else { v };
                         if a.1 & 1 != 0 { neg_imm(v, b) } else { v }
                     })
                     .collect();
@@ -774,7 +775,7 @@ impl<'a> L<'a> {
                         Src::Imm(v, _) => {
                             for x in v.iter_mut() {
                                 if md & 2 != 0 {
-                                    *x = if b == B::Float { *x & 0x7fff_ffff } else { (*x as i32).unsigned_abs() };
+                                    *x = if b == B::Float { *x & 0x7fff_ffff } else { x.cast_signed().unsigned_abs() };
                                 }
                                 if md & 1 != 0 {
                                     *x = neg_imm(*x, b);
@@ -979,7 +980,7 @@ impl<'a> L<'a> {
                 let mut u = Vec::new();
                 units(self.prog, t, &mut u);
                 let id = crate::u32_of(self.xs.len());
-                self.xs.push(u.len().max(1) as u32);
+                self.xs.push(crate::u32_of(u.len().max(1)));
                 let mut out = Vec::new();
                 for (k, n) in u.iter().enumerate() {
                     for c in Lane::first(*n) {
@@ -1152,7 +1153,7 @@ impl<'a> L<'a> {
 
     fn rdef_var0(&self, name: &str, t: &Ty, row_major: bool, off: u32, end: u32) -> sm4::CbVar {
         let (el, elems) = match t {
-            Ty::Array(e, n) => (&**e, *n as u16),
+            Ty::Array(e, n) => (&**e, crate::sat16(*n)),
             t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Struct(_) | Ty::Tex(..)
                  | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => (t, 0),
         };
@@ -1168,7 +1169,7 @@ impl<'a> L<'a> {
             Ty::Mat(_, r, c) => (if row_major { 2 } else { 3 }, u16::from(*r), u16::from(*c)),
             // (a struct: one row of all its members' components)
             Ty::Void | Ty::Array(..) | Ty::Struct(_) | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..)
-            | Ty::Legacy(_) | Ty::Str => (5, 1, self.scalars(el) as u16),
+            | Ty::Legacy(_) | Ty::Str => (5, 1, crate::sat16(self.scalars(el))),
         };
         sm4::CbVar {
             name: name.into(),
@@ -1285,7 +1286,7 @@ impl<'a> L<'a> {
                     if eb.is_empty() || total == 0 {
                         return Err("an empty initializer for an array without a size".into());
                     }
-                    sized = Ty::Array(el.clone(), total.div_ceil(eb.len()) as u32);
+                    sized = Ty::Array(el.clone(), crate::u32_of(total.div_ceil(eb.len())));
                     &sized
                 }
                 t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
@@ -1342,7 +1343,7 @@ impl<'a> L<'a> {
                 if no_size(v.ty()) {
                     return Err(format!("line {}: groupshared array {} without a size", v.line, v.name));
                 }
-                let bytes = 4 * ncomp(prog, v.ty()) as u32;
+                let bytes = 4 * crate::u32_of(ncomp(prog, v.ty()));
                 // (32 KB per thread group, as Direct3D 11 allows)
                 if self.tgsm.iter().sum::<u32>() + bytes > 32768 {
                     return Err(format!("line {}: more than 32 KB of groupshared memory", v.line));
@@ -1560,7 +1561,10 @@ impl<'a> L<'a> {
             if x < 1 || y < 1 || z < 1 || x > 1024 || y > 1024 || z > if self.o.major >= 5 { 64 } else { 1 } || x * y * z > max {
                 return Err(format!("numthreads({x}, {y}, {z}) is out of range"));
             }
-            self.threads = Some([x as u32, y as u32, z as u32]);
+            let [Ok(x), Ok(y), Ok(z)] = [x, y, z].map(u32::try_from) else {
+                return Err(format!("numthreads({x}, {y}, {z}) is out of range"));
+            };
+            self.threads = Some([x, y, z]);
         }
         self.scopes.open();
         self.setup_globals(&uniforms)?;
@@ -1675,7 +1679,7 @@ impl<'a> L<'a> {
                 B::Float => 5,
             };
             tex_map[n] = Some(texs.len());
-            texs.push(sm4::Tex { name: t.name.clone(), dim, ret, comps: t.el.comps().max(1) as u32, slot, explicit: t.reg.is_some() });
+            texs.push(sm4::Tex { name: t.name.clone(), dim, ret, comps: crate::u32_of(t.el.comps().max(1)), slot, explicit: t.reg.is_some() });
         }
         let mut staken: Vec<u32> = self.samps.iter().filter(|t| t.used).filter_map(|t| t.reg).collect();
         let mut samp_map = vec![None; self.samps.len()];
@@ -1748,7 +1752,7 @@ impl<'a> L<'a> {
                 B::Float => 5,
             };
             uav_map[n] = Some(uavs.len());
-            uavs.push(sm4::Uav { name: u.name.clone(), dim, ret, comps: u.el.comps().max(1) as u32, slot, explicit: u.reg.is_some() });
+            uavs.push(sm4::Uav { name: u.name.clone(), dim, ret, comps: crate::u32_of(u.el.comps().max(1)), slot, explicit: u.reg.is_some() });
         }
         Ok(sm4::Shader {
             threads: self.threads,
@@ -1996,7 +2000,7 @@ impl<'a> L<'a> {
                         match l {
                             Some(e) => {
                                 let k = super::parse::const_int(e).ok_or("case label is not a constant")?;
-                                self.emit(CASE, vec![], vec![Src::Imm([k as u32; 4], true)]);
+                                self.emit(CASE, vec![], vec![Src::Imm([crate::lo32(k); 4], true)]);
                             }
                             None => self.flow(DEFAULT),
                         }
@@ -2350,7 +2354,7 @@ impl<'a> L<'a> {
             match wb {
                 Wb::Sel(elems, iv, cp, b) => {
                     for (k, e) in elems.iter().enumerate() {
-                        let m = self.alu(sm4::IEQ, B::Bool, &[&[iv], &[C::I(self.ival(k as i64))]])[0];
+                        let m = self.alu(sm4::IEQ, B::Bool, &[&[iv], &[C::I(self.ival(i64::from(crate::u32_of(k))))]])[0];
                         let n = e.len();
                         let v = self.alu(sm4::MOVC, b, &[&vec![m; n], &cp, e]);
                         self.assign(e, &v);
@@ -2524,8 +2528,8 @@ impl<'a> L<'a> {
     /// index, or a select chain
     fn select(&mut self, elems: Vec<Vec<C>>, iv: Val, ty: Ty) -> R<Val> {
         if let Some(C::I(k)) = iv.c.first() {
-            let k = if iv.ty.base() == B::Float || self.sm3() { flt(*k) as i64 } else { *k as i32 as i64 };
-            let e = elems.get(k as usize).ok_or(format!("index {k} out of range"))?;
+            let k = if iv.ty.base() == B::Float || self.sm3() { flt(*k) as i64 } else { i64::from(k.cast_signed()) };
+            let e = usize::try_from(k).ok().and_then(|k| elems.get(k)).ok_or(format!("index {k} out of range"))?;
             return Ok(Val::num(ty, e.clone()));
         }
         // a regular layout: element k = element 0 with register + k * stride
@@ -2568,7 +2572,7 @@ impl<'a> L<'a> {
         let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
         let mut cur = elems[0].clone();
         for (k, e) in elems.iter().enumerate().skip(1) {
-            let m = self.alu(sm4::IEQ, B::Bool, &[&iv.c, &[C::I(self.ival(k as i64))]])[0];
+            let m = self.alu(sm4::IEQ, B::Bool, &[&iv.c, &[C::I(self.ival(i64::from(crate::u32_of(k))))]])[0];
             let n = cur.len();
             cur = self.alu(sm4::MOVC, ty.base(), &[&vec![m; n], e, &cur]);
         }
@@ -2582,11 +2586,12 @@ impl<'a> L<'a> {
                 let v = self.shared_value(v);
                 return self.index(v, iv);
             };
-            let k = ncomp(self.prog, e) as u32;
+            let k = crate::u32_of(ncomp(self.prog, e));
             let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
             if let C::I(i) = iv.c[0] {
-                if i as i32 as i64 >= i64::from(*n) || (i as i32) < 0 {
-                    return Err(format!("index {} out of range", i as i32));
+                let i = i.cast_signed();
+                if i64::from(i) >= i64::from(*n) || i < 0 {
+                    return Err(format!("index {i} out of range"));
                 }
             }
             let off = self.alu(sm4::IMAD, B::Int, &[&iv.c, &[C::I(k)], &[off]])[0];
@@ -2624,14 +2629,14 @@ impl<'a> L<'a> {
         match &v.ty {
             Ty::Array(e, n) => {
                 let k = ncomp(self.prog, e);
-                let mut elems: Vec<Vec<C>> = (0..*n as usize).map(|i| v.c[i * k..(i + 1) * k].to_vec()).collect();
+                let mut elems: Vec<Vec<C>> = (0..crate::us(*n)).map(|i| v.c[i * k..(i + 1) * k].to_vec()).collect();
                 let not_reg = !elems.is_empty()
                     && !elems[0].iter().all(|c| matches!(c, C::R(Reg { f: RegF::X(..) | RegF::Cb(..) | RegF::Icb(_), .. }, _)));
                 if not_reg && !matches!(iv.c.first(), Some(C::I(_))) && *n > 4 && !self.sm3() {
                     // (into an indexable temp first)
                     let st = self.storage(&v.ty);
                     self.assign(&st, &v.c);
-                    elems = (0..*n as usize).map(|i| st[i * k..(i + 1) * k].to_vec()).collect();
+                    elems = (0..crate::us(*n)).map(|i| st[i * k..(i + 1) * k].to_vec()).collect();
                 }
                 self.select(elems, iv, (**e).clone())
             }

@@ -179,7 +179,7 @@ impl L<'_> {
         let mut o = [0; 3];
         for (k, c) in v.c.iter().take(3).enumerate() {
             match c {
-                C::I(x) => o[k] = *x as i32,
+                C::I(x) => o[k] = x.cast_signed(),
                 C::R(..) => return Err("texel offsets must be constants".into()),
             }
         }
@@ -359,7 +359,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
                 "DeviceMemoryBarrier" => 8,
                 _ => 10,
             };
-            let ctl = mem | name.ends_with("WithGroupSync") as u32;
+            let ctl = mem | u32::from(name.ends_with("WithGroupSync"));
             l.x_emit(SYNC, vec![], vec![]).ctl = ctl;
             Val::num(Ty::Void, vec![])
         }
