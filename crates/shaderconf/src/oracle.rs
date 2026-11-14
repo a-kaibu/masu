@@ -24,11 +24,11 @@ pub fn close(got: f32, want: f32, tol: Tol) -> bool {
     }
     let ord = |x: f32| {
         let b = x.to_bits();
-        if b & 0x8000_0000 != 0 { -((b & 0x7fff_ffff) as i64) } else { b as i64 }
+        if b & 0x8000_0000 != 0 { -i64::from(b & 0x7fff_ffff) } else { i64::from(b) }
     };
     match tol {
         Tol::Exact => false,
-        Tol::Ulp(n) => (ord(got) - ord(want)).abs() <= n as i64,
+        Tol::Ulp(n) => (ord(got) - ord(want)).abs() <= i64::from(n),
         Tol::Abs(e) => (got - want).abs() <= e,
         Tol::Rel(r, a) => (got - want).abs() <= (r * want.abs()).max(a),
     }
@@ -106,7 +106,7 @@ fn translate(api: &str, code: &[u8]) -> Option<(String, u32, u32, usize)> {
         "dxbc" => {
             let w = std::panic::catch_unwind(|| dxwgsl::translate(code, true, None)).ok()?.ok()?;
             match w.bindings.as_slice() {
-                [(b, dxwgsl::Binding::Uniform(size))] => Some((w.code, 1, *b, *size as usize)),
+                [(b, dxwgsl::Binding::Uniform(size))] => Some((w.code, 1, *b, crate::us(*size))),
                 [] => Some((w.code, 1, 0, 0)),
                 _ => None,
             }

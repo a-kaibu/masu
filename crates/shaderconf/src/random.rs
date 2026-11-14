@@ -137,7 +137,7 @@ impl Ev<'_> {
             E::Const(c) => *c,
             E::Swz(a, s) => {
                 let a = self.e(a);
-                s.map(|k| a[k as usize])
+                s.map(|k| a[usize::from(k)])
             }
             E::Bin(op, a, b) => {
                 let (a, b) = (self.e(a), self.e(b));
@@ -241,7 +241,7 @@ fn pe(l: &Lang, e: &E) -> String {
         E::In(i) => l.ins[*i].to_string(),
         E::Var(i) => format!("t{i}"),
         E::Const(c) => format!("{}({}, {}, {}, {})", l.vec, num(c[0]), num(c[1]), num(c[2]), num(c[3])),
-        E::Swz(a, s) => format!("({}).{}", pe(l, a), s.iter().map(|&k| b"xyzw"[k as usize] as char).collect::<String>()),
+        E::Swz(a, s) => format!("({}).{}", pe(l, a), s.iter().map(|&k| b"xyzw"[usize::from(k)] as char).collect::<String>()),
         E::Bin(op, a, b) => match op {
             0 => format!("({} + {})", pe(l, a), pe(l, b)),
             1 => format!("({} - {})", pe(l, a), pe(l, b)),

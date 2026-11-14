@@ -285,7 +285,7 @@ fn next_input(r: &mut Rng, seeds: &[Input]) -> Input {
     let o = r.below(seeds.len());
     let other = match &seeds[o] {
         Input::Hlsl(s, _) | Input::Asm(s) | Input::Glsl(s) => s.as_str(),
-        _ => "",
+        Input::Dxbc(_) | Input::D3d9(_) => "",
     };
     match &seeds[i] {
         Input::Hlsl(s, t) => Input::Hlsl(mutate_text(r, s, other), t),
@@ -341,7 +341,7 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
             }
             started.store(t0.elapsed().as_millis() as u64 + 1, Ordering::Relaxed);
             let (took, fail) = input.failure(&msg);
-            accepted += took as usize;
+            accepted += usize::from(took);
             started.store(0, Ordering::Relaxed);
             if let Some(f) = fail {
                 // (one report per distinct message)

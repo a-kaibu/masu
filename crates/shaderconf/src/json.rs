@@ -10,8 +10,8 @@ fn string(s: &mut String, v: &str) {
             '"' => s.push_str("\\\""),
             '\\' => s.push_str("\\\\"),
             '\n' => s.push_str("\\n"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(s, "\\u{:04x}", c as u32);
+            c if u32::from(c) < 0x20 => {
+                let _ = write!(s, "\\u{:04x}", u32::from(c));
             }
             c => s.push(c),
         }

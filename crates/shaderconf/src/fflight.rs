@@ -175,51 +175,51 @@ fn xf(v: [f64; 4], m: &[f64; 16]) -> [f64; 4] {
 /// to a discontinuity (range edge, N.L or N.H at 0, a spotlight's cone edges) to compare.
 fn reference(s: &Scene, k: &LightKey, with_normal: bool) -> Option<[[f64; 4]; 2]> {
     const EPS: f64 = 2e-3;
-    let d = |m: &[f32; 16]| m.map(|x| x as f64);
+    let d = |m: &[f32; 16]| m.map(|x| f64::from(x));
     let (w, v) = (d(&s.world), d(&s.view));
     let wv: [f64; 16] = std::array::from_fn(|i| (0..4).map(|k| w[i / 4 * 4 + k] * v[k * 4 + i % 4]).sum());
-    let p = xf([s.pos[0] as f64, s.pos[1] as f64, s.pos[2] as f64, 1.0], &wv);
+    let p = xf([f64::from(s.pos[0]), f64::from(s.pos[1]), f64::from(s.pos[2]), 1.0], &wv);
     let p = [p[0], p[1], p[2]];
     // normals by the inverse transpose of world * view: n * transpose(inverse(WV))
     let inv = inverse(&wv)?;
-    let n0 = if with_normal { s.normal.map(|x| x as f64) } else { [0.0; 3] };
+    let n0 = if with_normal { s.normal.map(|x| f64::from(x)) } else { [0.0; 3] };
     let mut n: V3 = std::array::from_fn(|c| (0..3).map(|k| n0[k] * inv[c * 4 + k]).sum());
     if k.normalize {
         n = norm(n);
     }
-    let m = |i: usize| -> [f64; 4] { std::array::from_fn(|c| s.material[i * 4 + c] as f64) };
+    let m = |i: usize| -> [f64; 4] { std::array::from_fn(|c| f64::from(s.material[i * 4 + c])) };
     let vc = |src: u8, mat: usize| -> [f64; 4] {
         match src {
-            1 => s.c0.map(|x| x as f64),
-            2 => s.c1.map(|x| x as f64),
+            1 => s.c0.map(|x| f64::from(x)),
+            2 => s.c1.map(|x| f64::from(x)),
             _ => m(mat),
         }
     };
     let (cd, cs, ca, ce) = (vc(k.sources[0], 0), vc(k.sources[1], 2), vc(k.sources[2], 1), vc(k.sources[3], 3));
-    let power = s.material[16] as f64;
-    let ga = [16, 8, 0].map(|sh| ((s.ambient >> sh) & 0xff) as f64 / 255.0);
+    let power = f64::from(s.material[16]);
+    let ga = [16, 8, 0].map(|sh| f64::from((s.ambient >> sh) & 0xff) / 255.0);
     let (mut amb, mut dif, mut spe) = ([0f64; 3], [0f64; 3], [0f64; 3]);
-    for l in s.lights.iter().take(k.count as usize) {
-        let lp = xf([l.position[0] as f64, l.position[1] as f64, l.position[2] as f64, 1.0], &v);
-        let ld = xf([l.direction[0] as f64, l.direction[1] as f64, l.direction[2] as f64, 0.0], &v);
+    for l in s.lights.iter().take(usize::from(k.count)) {
+        let lp = xf([f64::from(l.position[0]), f64::from(l.position[1]), f64::from(l.position[2]), 1.0], &v);
+        let ld = xf([f64::from(l.direction[0]), f64::from(l.direction[1]), f64::from(l.direction[2]), 0.0], &v);
         let ldir = norm([ld[0], ld[1], ld[2]]);
         let (dir, atten) = if l.ty == 3 {
             (ldir.map(|x| -x), 1.0)
         } else {
             let to = sub([lp[0], lp[1], lp[2]], p);
             let dist = dot(to, to).sqrt();
-            if (dist - l.range as f64).abs() < EPS {
+            if (dist - f64::from(l.range)).abs() < EPS {
                 return None;
             }
-            if dist > l.range as f64 {
+            if dist > f64::from(l.range) {
                 continue;
             }
-            let a = l.attenuation.map(|x| x as f64);
+            let a = l.attenuation.map(|x| f64::from(x));
             let mut att = 1.0 / (a[0] + a[1] * dist + a[2] * dist * dist);
             let dir = norm(to);
             if l.ty == 2 {
                 let rho = dot(ldir.map(|x| -x), dir);
-                let (ct, cp) = ((l.theta as f64 / 2.0).cos(), (l.phi as f64 / 2.0).cos());
+                let (ct, cp) = ((f64::from(l.theta) / 2.0).cos(), (f64::from(l.phi) / 2.0).cos());
                 if (rho - ct).abs() < EPS || (rho - cp).abs() < EPS {
                     return None;
                 }
@@ -228,7 +228,7 @@ fn reference(s: &Scene, k: &LightKey, with_normal: bool) -> Option<[[f64; 4]; 2]
                 } else if rho <= cp {
                     0.0
                 } else {
-                    ((rho - cp) / (ct - cp)).powf(l.falloff as f64)
+                    ((rho - cp) / (ct - cp)).powf(f64::from(l.falloff))
                 };
             }
             (dir, att)
@@ -238,8 +238,8 @@ fn reference(s: &Scene, k: &LightKey, with_normal: bool) -> Option<[[f64; 4]; 2]
             return None;
         }
         for c in 0..3 {
-            amb[c] += atten * l.ambient[c] as f64;
-            dif[c] += atten * nl.max(0.0) * l.diffuse[c] as f64;
+            amb[c] += atten * f64::from(l.ambient[c]);
+            dif[c] += atten * nl.max(0.0) * f64::from(l.diffuse[c]);
         }
         if k.specular {
             let view = if k.local_viewer { norm(p.map(|x| -x)) } else { [0.0, 0.0, -1.0] };
@@ -251,7 +251,7 @@ fn reference(s: &Scene, k: &LightKey, with_normal: bool) -> Option<[[f64; 4]; 2]
             if nl > 0.0 && nh > 0.0 {
                 let f = if power == 0.0 { 1.0 } else { nh.powf(power) };
                 for c in 0..3 {
-                    spe[c] += atten * f * l.specular[c] as f64;
+                    spe[c] += atten * f * f64::from(l.specular[c]);
                 }
             }
         }
@@ -307,9 +307,9 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
             let mut tries = 0;
             while pixels.len() < 24 && tries < 400 {
                 tries += 1;
-                let s = scene(&mut r, count as usize);
+                let s = scene(&mut r, usize::from(count));
                 let Some(want) = reference(&s, &lk, with_normal) else { continue };
-                let mut regs = vec![[0f32; 4]; (ff::VS_CONSTS + 4) as usize];
+                let mut regs = vec![[0f32; 4]; crate::us(ff::VS_CONSTS + 4)];
                 ff::lighting_regs(&mut regs, &s.material, s.ambient, &s.world, &s.view, &s.lights);
                 // (the shader's position transform: anything, the pixel is a color)
                 let n = ff::VS_CONSTS as usize;
@@ -354,7 +354,7 @@ mod tests {
     fn inverse_inverts() {
         let mut r = Rng(5);
         for _ in 0..200 {
-            let m = affine(&mut r, (0.3, 3.0), 4.0).map(|x| x as f64);
+            let m = affine(&mut r, (0.3, 3.0), 4.0).map(|x| f64::from(x));
             let i = inverse(&m).unwrap();
             for a in 0..4 {
                 for b in 0..4 {

@@ -75,10 +75,10 @@ pub fn parse(words: &[u32]) -> Result<Program, String> {
         }
         let op = w & 0xffff;
         if op == 0xfffe {
-            at += 1 + ((w >> 16) & 0x7fff) as usize;
+            at += 1 + crate::us((w >> 16) & 0x7fff);
             continue;
         }
-        let len = ((w >> 24) & 0xf) as usize;
+        let len = crate::us((w >> 24) & 0xf);
         let body = words.get(at + 1..at + 1 + len).ok_or("instruction past the end")?;
         at += 1 + len;
         // (what exec runs: anything else is outside the interpreter, run or not)
@@ -219,7 +219,7 @@ impl Run<'_> {
             Some((t, _, _)) => return Err(format!("relative addressing through register type {t}")),
         };
         let v: V = match s.ty {
-            0 => *self.r.get(s.reg as usize).ok_or("temp out of range")?,
+            0 => *self.r.get(crate::us(s.reg)).ok_or("temp out of range")?,
             1 | 17 => [0.0; 4],
             2 => match self.c.get((s.reg as i32 + off) as usize) {
                 Some(c) => *c,
@@ -227,13 +227,13 @@ impl Run<'_> {
                     return Err("constant out of range".into());
                 }
             },
-            7 => self.i[s.reg as usize & 15].map(|x| x as f32),
-            14 => [if self.b[s.reg as usize & 15] { 1.0 } else { 0.0 }; 4],
+            7 => self.i[crate::us(s.reg) & 15].map(|x| x as f32),
+            14 => [if self.b[crate::us(s.reg) & 15] { 1.0 } else { 0.0 }; 4],
             15 => [self.al as f32; 4],
             19 => self.pr.map(|x| if x { 1.0 } else { 0.0 }),
             t => return Err(format!("source register type {t}")),
         };
-        let v: V = std::array::from_fn(|k| v[s.swz[k] as usize]);
+        let v: V = std::array::from_fn(|k| v[usize::from(s.swz[k])]);
         if v.iter().any(|x| x.is_subnormal()) {
             self.taint.borrow_mut().get_or_insert_with(|| "a denormal (implementations may flush it)".into());
         }
@@ -254,8 +254,8 @@ impl Run<'_> {
     }
     fn boolean(&self, s: &Src) -> Result<bool, String> {
         let v = match s.ty {
-            14 => self.b[s.reg as usize & 15],
-            19 => self.pr[s.swz[0] as usize],
+            14 => self.b[crate::us(s.reg) & 15],
+            19 => self.pr[usize::from(s.swz[0])],
             t => return Err(format!("condition register type {t}")),
         };
         Ok(if s.md == 13 { !v } else { v })
@@ -268,7 +268,7 @@ impl Run<'_> {
         let v = if d.sat { v.map(|x| if x.is_nan() { 0.0 } else { x.clamp(0.0, 1.0) }) } else { v };
         let pred: [bool; 4] = match &i.pred {
             None => [true; 4],
-            Some(p) => std::array::from_fn(|k| self.pr[p.swz[k] as usize] != (p.md == 13)),
+            Some(p) => std::array::from_fn(|k| self.pr[usize::from(p.swz[k])] != (p.md == 13)),
         };
         if d.ty == 19 {
             for k in 0..4 {
@@ -279,8 +279,8 @@ impl Run<'_> {
             return Ok(());
         }
         let slot = match d.ty {
-            0 => self.r.get_mut(d.reg as usize).ok_or("temp out of range")?,
-            8 => self.o.get_mut(d.reg as usize).ok_or("oC out of range")?,
+            0 => self.r.get_mut(crate::us(d.reg)).ok_or("temp out of range")?,
+            8 => self.o.get_mut(crate::us(d.reg)).ok_or("oC out of range")?,
             t => return Err(format!("destination register type {t}")),
         };
         for k in 0..4 {
@@ -328,8 +328,8 @@ impl Run<'_> {
                         5 => a[k] * b[k],
                         10 => a[k].min(b[k]),
                         11 => a[k].max(b[k]),
-                        12 => (a[k] < b[k]) as u32 as f32,
-                        _ => (a[k] >= b[k]) as u32 as f32,
+                        12 => u32::from(a[k] < b[k]) as f32,
+                        _ => u32::from(a[k] >= b[k]) as f32,
                     });
                     self.write(i, v)?
                 }
@@ -362,12 +362,12 @@ impl Run<'_> {
                 }
                 20..=24 => {
                     // m4x4, m4x3, m3x4, m3x3, m3x2: rows from consecutive registers
-                    let (n, rows) = [(4, 4), (4, 3), (3, 4), (3, 3), (3, 2)][(i.op - 20) as usize];
+                    let (n, rows) = [(4, 4), (4, 3), (3, 4), (3, 3), (3, 2)][crate::us(i.op - 20)];
                     let a = self.s(i, 0)?;
                     let mut v = [0.0; 4];
                     for (row, out) in v.iter_mut().enumerate().take(rows) {
                         let mut s = i.src[1].clone();
-                        s.reg += row as u32;
+                        s.reg += crate::u32_of(row);
                         *out = dp(a, self.read(&s)?, n);
                     }
                     self.write(i, v)?
@@ -428,7 +428,7 @@ impl Run<'_> {
                     if n.ty != 7 {
                         return Err("rep/loop count not an i#".into());
                     }
-                    let iv = self.i[n.reg as usize & 15];
+                    let iv = self.i[crate::us(n.reg) & 15];
                     let count = iv[0].clamp(0, 255) as u32;
                     if count == 0 {
                         pc = p.jump[pc - 1] + 1;
@@ -513,12 +513,12 @@ pub fn run(p: &Program, c: &[[f32; 4]]) -> Result<([[f32; 4]; 4], Option<String>
         }
         match i.op {
             81 => {
-                if let Some(c) = r.c.get_mut(d.reg as usize) {
+                if let Some(c) = r.c.get_mut(crate::us(d.reg)) {
                     *c = i.raw.map(f32::from_bits);
                 }
             }
-            48 => r.i[d.reg as usize & 15] = i.raw.map(|x| x as i32),
-            47 => r.b[d.reg as usize & 15] = i.raw[0] != 0,
+            48 => r.i[crate::us(d.reg) & 15] = i.raw.map(|x| x as i32),
+            47 => r.b[crate::us(d.reg) & 15] = i.raw[0] != 0,
             _ => {}
         }
     }

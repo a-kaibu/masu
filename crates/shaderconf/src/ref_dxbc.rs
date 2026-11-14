@@ -151,13 +151,13 @@ pub fn parse(code: &[u8]) -> Result<Program, String> {
     if (t[0] >> 16) & 0xffff != 0 {
         return Err("not a pixel shader".into());
     }
-    let end = (t[1] as usize).min(t.len());
+    let end = crate::us(t[1]).min(t.len());
     let mut p = Program { insts: Vec::new(), temps: 0, xs: Vec::new(), icb: Vec::new(), jump: Vec::new() };
     let mut at = 2;
     while at < end {
         let w = t[at];
         let op = w & 0x7ff;
-        let len = if op == 0x35 { *t.get(at + 1).ok_or("short")? as usize } else { ((w >> 24) & 0x7f) as usize };
+        let len = if op == 0x35 { *t.get(at + 1).ok_or("short")? as usize } else { crate::us((w >> 24) & 0x7f) };
         if len == 0 || at + len > end {
             return Err(format!("instruction {op:#x}: length {len}"));
         }
@@ -328,27 +328,27 @@ impl Run<'_> {
     fn reg(&self, o: &Op) -> Result<V, String> {
         let i0 = o.idx.first().map(|i| self.index(i)).transpose()?.unwrap_or(0);
         Ok(match o.ty {
-            0 => *self.r.get(i0 as usize).ok_or("temp out of range")?,
-            2 => self.o[i0 as usize & 7],
+            0 => *self.r.get(crate::us(i0)).ok_or("temp out of range")?,
+            2 => self.o[crate::us(i0) & 7],
             3 => {
                 let i1 = self.index(o.idx.get(1).ok_or("x# without index")?)?;
                 let x = &self.x.iter().find(|x| x.0 == i0).ok_or("undeclared x#")?.1;
                 // (out of range: 0, as reads of a register past the end)
-                x.get(i1 as usize).copied().unwrap_or_else(|| self.taint("x# read out of range"))
+                x.get(crate::us(i1)).copied().unwrap_or_else(|| self.taint("x# read out of range"))
             }
             4 => o.imm,
             8 => {
                 let i1 = self.index(o.idx.get(1).ok_or("cb without index")?)?;
-                self.cb.get(i0 as usize).and_then(|c| c.get(i1 as usize)).copied().unwrap_or_else(|| self.taint("cb read out of range"))
+                self.cb.get(crate::us(i0)).and_then(|c| c.get(crate::us(i1))).copied().unwrap_or_else(|| self.taint("cb read out of range"))
             }
-            9 => self.p.icb.get(i0 as usize).copied().unwrap_or_else(|| self.taint("icb read out of range")),
+            9 => self.p.icb.get(crate::us(i0)).copied().unwrap_or_else(|| self.taint("icb read out of range")),
             t => return Err(format!("source register type {t}")),
         })
     }
     /// A source read as kind `k` (modifiers: float negate/abs; integer negate).
     fn src(&self, o: &Op, k: K) -> Result<V, String> {
         let v = self.reg(o)?;
-        let v: V = std::array::from_fn(|i| v[o.swz[i] as usize]);
+        let v: V = std::array::from_fn(|i| v[usize::from(o.swz[i])]);
         Ok(v.map(|x| match (k, o.md) {
             (_, 0) => x,
             (K::F, 1) => x ^ 0x8000_0000,
@@ -369,7 +369,7 @@ impl Run<'_> {
             0 => self.r.get_mut(i0).ok_or("temp out of range")?,
             2 => self.o.get_mut(i0).ok_or("output out of range")?,
             3 => {
-                let x = &mut self.x.iter_mut().find(|x| x.0 == i0 as u32).ok_or("undeclared x#")?.1;
+                let x = &mut self.x.iter_mut().find(|x| x.0 == crate::u32_of(i0)).ok_or("undeclared x#")?.1;
                 match x.get_mut(i1.unwrap_or(0) as usize) {
                     Some(s) => s,
                     // (writes past the end are dropped)
@@ -457,7 +457,7 @@ impl Run<'_> {
                 }
                 0x0e => self.cw(i, F, |a| b(f(a[0]) / f(a[1])))?,
                 0x0f | 0x10 | 0x11 => {
-                    let n = (i.op - 0x0d) as usize;
+                    let n = crate::us(i.op - 0x0d);
                     let a = self.src(&i.ops[1], F)?;
                     let c = self.src(&i.ops[2], F)?;
                     if a[..n].iter().chain(&c[..n]).any(|&x| f(x).is_subnormal()) {
@@ -514,7 +514,7 @@ impl Run<'_> {
                     let a = self.src(&i.ops[2], k)?;
                     let c = self.src(&i.ops[3], k)?;
                     let wide: [u64; 4] = std::array::from_fn(|n| {
-                        if k == I { (a[n] as i32 as i64 * c[n] as i32 as i64) as u64 } else { a[n] as u64 * c[n] as u64 }
+                        if k == I { (a[n] as i32 as i64 * c[n] as i32 as i64) as u64 } else { u64::from(a[n]) * u64::from(c[n]) }
                     });
                     self.dst(&i.ops[0], wide.map(|x| (x >> 32) as u32), false)?;
                     self.dst(&i.ops[1], wide.map(|x| x as u32), false)?;
@@ -654,7 +654,7 @@ pub fn run(p: &Program, cb: &[Vec<V>]) -> Result<([V; 8], Option<String>), Strin
         let mut r = Run {
             p,
             r: vec![[0; 4]; p.temps],
-            x: p.xs.iter().map(|&(n, s)| (n, vec![[0; 4]; s as usize])).collect(),
+            x: p.xs.iter().map(|&(n, s)| (n, vec![[0; 4]; crate::us(s)])).collect(),
             o: [[0; 4]; 8],
             cb,
             taint: Default::default(),

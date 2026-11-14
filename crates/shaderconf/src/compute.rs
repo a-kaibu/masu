@@ -71,8 +71,8 @@ fn string(s: &str) -> String {
             '"' => o.push_str("\\\""),
             '\\' => o.push_str("\\\\"),
             '\n' => o.push_str("\\n"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(o, "\\u{:04x}", c as u32);
+            c if u32::from(c) < 0x20 => {
+                let _ = write!(o, "\\u{:04x}", u32::from(c));
             }
             c => o.push(c),
         }
@@ -152,7 +152,7 @@ pub fn cases() -> Result<String, String> {
         let code = hlslc::compile(&main, &defs, &mut inc, "main", "cs_5_0", 0).map_err(|e| format!("{name}: hlslc: {e}"))?;
         let ours = dxwgsl::translate_compute(&code, &[(0, "rgba8unorm")]).map_err(|e| format!("{name}: dxwgsl: {e}"))?.code;
         let slang = text(&format!("slang/nis_s{sc}_h{hdr}_t{tg}_p{half}_v{vp}.wgsl"))?;
-        let img = noise(iw, ih, 2 * k as u32 + 1);
+        let img = noise(iw, ih, 2 * crate::u32_of(k) + 1);
         let mut b = vec![format!(r#"{{"binding":0,"uniform":[{}]}}"#, list(&config(sharp, iw, ih, ow, oh, hdr)))];
         b.push(format!(r#"{{"binding":16,"texture":{{"format":"rgba8unorm","w":{iw},"h":{ih},"bytes":[{}]}}}}"#, list(&img)));
         if sc == 1 {

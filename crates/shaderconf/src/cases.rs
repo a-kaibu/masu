@@ -129,7 +129,7 @@ fn ftoi(f: f32) -> u32 {
     if f.is_nan() {
         0
     } else {
-        (f as f64).trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32 as u32
+        f64::from(f).trunc().clamp(i32::MIN as f64, i32::MAX as f64) as i32 as u32
     }
 }
 /// ftou: NaN and negatives 0, clamped
@@ -137,7 +137,7 @@ fn ftou(f: f32) -> u32 {
     if f.is_nan() {
         0
     } else {
-        (f as f64).trunc().clamp(0.0, u32::MAX as f64) as u32
+        f64::from(f).trunc().clamp(0.0, u32::MAX as f64) as u32
     }
 }
 
@@ -424,7 +424,7 @@ pub fn d3d9_words(out: &mut Vec<Case>, errors: &mut Vec<String>, name: &str, rul
             pixels: pixels
                 .into_iter()
                 .map(|(c, w)| {
-                    let mut d = vec![0u8; size as usize];
+                    let mut d = vec![0u8; crate::us(size)];
                     // (x[4], i[16], then c[])
                     let at = (dxwgsl::d3d9::CONSTS_EXTRA as usize + 16) * 16;
                     for (k, v) in c.iter().flatten().enumerate() {
@@ -615,7 +615,7 @@ fn glsl_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     glsl(out, errors, "int_div", "int division truncates", "gl_FragColor = vec4(float(ia.x / ib.x), 0.0, 0.0, 1.0);", Tol::Exact, idiv);
     let rel: Vec<_> = [(1.0f32, 2.0f32), (2.0, 1.0), (1.0, 1.0)]
         .iter()
-        .map(|&(x, y)| (ab([x, 0.0, 0.0, 0.0], [y, 0.0, 0.0, 0.0]), w4([(x < y) as u8 as f32, (x >= y) as u8 as f32, (x == y) as u8 as f32, 1.0])))
+        .map(|&(x, y)| (ab([x, 0.0, 0.0, 0.0], [y, 0.0, 0.0, 0.0]), w4([u8::from(x < y) as f32, u8::from(x >= y) as f32, u8::from(x == y) as f32, 1.0])))
         .collect();
     glsl(out, errors, "relational", "lessThan, greaterThanEqual, equal as floats", "gl_FragColor = vec4(vec3(lessThan(a.xxx, b.xxx).x, greaterThanEqual(a, b).x, equal(a, b).x), 1.0);", Tol::Exact, rel);
     // matrices: column-major uniforms (glUniformMatrix, transpose false); m * v sums columns
@@ -633,7 +633,7 @@ fn glsl_cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     glsl(out, errors, "mat2_vec", "mat2 * vec2", "gl_FragColor = vec4(m2 * a.xy, m2[1]);", Tol::Exact, vec![(vec![("m2", m2), ("a", fv([1.0, 1.0, 0.0, 0.0]))], w4([4.0, 6.0, 3.0, 4.0]))]);
     let fa: Vec<u32> = [10.0f32, 20.0, 30.0].iter().map(|x| x.to_bits()).collect();
     glsl(out, errors, "float_array", "uniform float[3]: elements 16 bytes apart (std140)", "gl_FragColor = vec4(f[0], f[1], f[2], 1.0);", Tol::Exact, vec![(vec![("f", fa)], w4([10.0, 20.0, 30.0, 1.0]))]);
-    let bools: Vec<_> = [0, 1, -3].iter().map(|&i| (vec![("ia", iv([i, 0, 0, 0]))], w4([(i != 0) as u8 as f32, if i != 0 { 2.0 } else { 3.0 }, 0.0, 1.0]))).collect();
+    let bools: Vec<_> = [0, 1, -3].iter().map(|&i| (vec![("ia", iv([i, 0, 0, 0]))], w4([u8::from(i != 0) as f32, if i != 0 { 2.0 } else { 3.0 }, 0.0, 1.0]))).collect();
     glsl(out, errors, "bool", "bool(int) and float(bool)", "bool t = bool(ia.x); gl_FragColor = vec4(float(t), t ? 2.0 : 3.0, 0.0, 1.0);", Tol::Exact, bools);
     glsl(out, errors, "loop", "for loop with a uniform bound and break", "float s = 0.0; for (int i = 0; i < 16; i++) { if (i >= ia.x) break; s += a.x; } gl_FragColor = vec4(s, 0.0, 0.0, 1.0);", Tol::Exact,
         [0, 3, 16, 40].iter().map(|&n| (vec![("ia", iv([n, 0, 0, 0])), ("a", fv([0.5, 0.0, 0.0, 0.0]))], w4([0.5 * n.min(16) as f32, 0.0, 0.0, 1.0]))).collect());
