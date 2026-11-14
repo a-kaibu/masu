@@ -77,13 +77,7 @@ file	crates/crt/src/time.rs	cast_sign_loss	8
 file	crates/crt/src/time.rs	format_in_format_args	1
 file	crates/crt/src/time.rs	indexing_slicing	11
 file	crates/crt/src/time.rs	string_slice	2
-file	crates/decbench/src/main.rs	arithmetic_side_effects	14
-file	crates/decbench/src/main.rs	as_conversions	10
-file	crates/decbench/src/main.rs	cast_possible_truncation	4
-file	crates/decbench/src/main.rs	cast_precision_loss	1
-file	crates/decbench/src/main.rs	indexing_slicing	7
-file	crates/decbench/src/main.rs	undocumented_unsafe_blocks	2
-file	crates/decbench/src/main.rs	unwrap_used	13
+file	crates/decbench/src/main.rs	arithmetic_side_effects	2
 file	crates/dxwgsl/src/d3d9.rs	arithmetic_side_effects	46
 file	crates/dxwgsl/src/d3d9.rs	indexing_slicing	17
 file	crates/dxwgsl/src/d3d9.rs	let_underscore_must_use	25
