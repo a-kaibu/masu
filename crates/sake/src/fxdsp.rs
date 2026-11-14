@@ -571,3 +571,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "fxdsp_snapshot_tests.rs"]
+mod snapshot_tests;
