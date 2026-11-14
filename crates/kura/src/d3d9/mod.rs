@@ -32,6 +32,8 @@ mod draw8_tests;
 #[cfg(test)]
 mod golden_tests;
 #[cfg(test)]
+mod kikizake8_tests;
+#[cfg(test)]
 mod present_tests;
 #[cfg(test)]
 mod swapchain_tests;

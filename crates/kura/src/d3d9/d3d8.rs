@@ -469,14 +469,17 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
             // GetRenderState: Direct3D 8's states (LINEPATTERN, ZVISIBLE, EDGEANTIALIAS, ZBIAS,
             // SOFTWAREVERTEXPROCESSING, PATCHSEGMENTS are not Direct3D 9's); the unused and
             // legacy ones, Direct3D 9's own among them, read 0xbaadcafe (as Windows:
-            // tests/winref/golden/d3d8state-32)
+            // tests/winref/golden/d3d8state-32) until set: then what was set (kikizake golden
+            // d3d8-32 edge-set-legacy-rs). Direct3D 9's own (174 on, but 177 and past 209) stay
+            // 0xbaadcafe: theirs are its states, not Direct3D 8's.
             let (st, out) = (a(1), a(2));
             let unset = matches!(st, 0 | 42 | 50 | 61..=63 | 96..=127 | 138 | 149 | 150 | 165 | 169 | 174..=255);
             if out == 0 || !(unset || device::rs_valid(st) || matches!(st, 10 | 30 | 153 | 164)) {
                 return D3DERR_INVALIDCALL;
             }
             let Some(dev) = d.dev.as_ref() else { return D3DERR_INVALIDCALL };
-            wr(out, 0, if unset { 0xbaad_cafe } else { dev.st.rs[st as usize] });
+            let d9 = matches!(st, 174..=209) && st != 177;
+            wr(out, 0, if d9 { 0xbaad_cafe } else { dev.st.rs[st as usize] });
             S_OK
         }
         34..=50 => same(d, m + 7, after),
@@ -505,6 +508,11 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
             let mut o = 0u32;
             let r = c9(d, dev, 59, this, &[me, a(1), &mut o as *mut u32 as u32], after);
             if r == S_OK {
+                // (Direct3D 8's own states in the block: the whole state is in it already, the
+                // mask says which apply)
+                if let Some(super::Data::StateBlock(b)) = d.objs.get_mut(&d.id_of(o)).map(|x| &mut x.data) {
+                    b.mask.add_d3d8(a(1));
+                }
                 wr(a(2), 0, new_token(d, o));
             }
             r

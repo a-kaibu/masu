@@ -30,6 +30,7 @@ const MAX_PRIVATE: u32 = 1 << 24;
 const DDERR_NOCLIPLIST: u32 = 0x8876_00cd;
 const DDERR_NOPALETTEATTACHED: u32 = 0x8876_023c;
 const DDERR_NOCOLORKEY: u32 = 0x8876_00d7;
+const DDERR_NOCOLORKEYHW: u32 = 0x8876_00dc;
 const DDERR_INVALIDRECT: u32 = 0x8876_0096;
 const DDERR_INVALIDCAPS: u32 = 0x8876_0064;
 
@@ -932,6 +933,11 @@ fn S_SetColorKey(c: &mut Ctx) -> u32 {
     if kind == 2 && surf(id).is_some_and(|x| x.caps2 & DDSCAPS2_MIPMAPSUBLEVEL != 0) {
         return 0x8876_025b;
     }
+    // (a system-memory surface takes no destination key: kikizake DDRAW.KEY.DESTHW, golden
+    // ddraw-32/-64)
+    if flags & 0x2 != 0 && surf(id).is_some_and(|x| x.caps & CAPS_SYSTEMMEMORY != 0) {
+        return DDERR_NOCOLORKEYHW;
+    }
     let key = if ck == 0 { None } else { Some((r32(ck), r32(ck + 4))) };
     with(|s| {
         if let Some(x) = s.surfs.get_mut(&id) {
@@ -1341,7 +1347,11 @@ fn S_Blt(c: &mut Ctx) -> u32 {
     let Some(dst) = surf(id) else { return DDERR_INVALIDPARAMS };
     let dr = if drp == 0 { Rect { l: 0, t: 0, r: dst.w, b: dst.h } } else { Rect::read(drp) };
     if flags & 0x400 != 0 {
-        // COLORFILL
+        // COLORFILL (a rectangle outside the surface: DDERR_INVALIDRECT, as a copy's; kikizake
+        // golden ddraw-32/-64 basic-*)
+        if dst.clipper == 0 && !rect_ok(dr, dst.w, dst.h) {
+            return DDERR_INVALIDRECT;
+        }
         let color = if fx != 0 { r32(fx + fx_at(80, mem::x64())) } else { 0 };
         fill(&dst, dr, color);
         present_if_primary(c, id, dr);
@@ -1362,8 +1372,22 @@ fn S_Blt(c: &mut Ctx) -> u32 {
         present_if_primary(c, id, dr);
         return DD_OK;
     }
+    // (the keys before the rectangles, as Windows on system-memory surfaces: kikizake
+    // DDRAW.KEY.DESTHW and DDRAW.KEY.UNSET, golden ddraw-32/-64): no destination key there,
+    // given (DDBLT_KEYDESTOVERRIDE) or the surface's (DDBLT_KEYDEST), nor DDBLT_KEYSRC without
+    // the source's key
+    let sysmem = |x: &Surf| x.caps & CAPS_SYSTEMMEMORY != 0;
+    if flags & 0x4000 != 0 && sysmem(&dst) {
+        return DDERR_NOCOLORKEYHW;
+    }
+    if flags & 0x2000 != 0 && sysmem(&dst) && dst.ck_dst.is_none() {
+        return E_INVALIDARG;
+    }
     let Some((sid_, _)) = sid(srcb) else { return DDERR_INVALIDPARAMS };
     let Some(src) = surf(sid_) else { return DDERR_INVALIDPARAMS };
+    if flags & 0x8000 != 0 && sysmem(&src) && src.ck_src.is_none() {
+        return E_INVALIDARG;
+    }
     let sr = if srp == 0 { Rect { l: 0, t: 0, r: src.w, b: src.h } } else { Rect::read(srp) };
     if (dst.clipper == 0 && !rect_ok(dr, dst.w, dst.h)) || !rect_ok(sr, src.w, src.h) {
         return DDERR_INVALIDRECT;
@@ -1396,6 +1420,13 @@ fn S_BltFast(c: &mut Ctx) -> u32 {
     let dr = Rect { l: x, t: y, r: x + sr.r - sr.l, b: y + sr.b - sr.t };
     if !rect_ok(dr, dst.w, dst.h) || !rect_ok(sr, src.w, src.h) {
         return DDERR_INVALIDRECT;
+    }
+    // (a key flag without the key, after the rectangles, as Windows on system-memory surfaces:
+    // kikizake DDRAW.KEY.UNSET; with both flags the source key only, DDRAW.FAST.BOTHKEYS)
+    let unset = (trans & 1 != 0 && src.ck_src.is_none() && src.caps & CAPS_SYSTEMMEMORY != 0)
+        || (trans & 3 == 2 && dst.ck_dst.is_none() && dst.caps & CAPS_SYSTEMMEMORY != 0);
+    if unset {
+        return E_INVALIDARG;
     }
     let key = if trans & 1 != 0 { src.ck_src } else { None };
     if src.bpp == dst.bpp {
@@ -2640,6 +2671,114 @@ mod blit_tests {
 
     const SRC: u32 = 0x0100_0000;
     const DST: u32 = 0x0110_0000;
+
+    /// (a source key, flags of Blt / BltFast and their rectangles, for the key checks)
+    #[derive(Debug, Clone)]
+    struct KeyCall {
+        bpp: u16,
+        src_key: Option<u32>,
+        set_dest: bool,
+        fast: bool,
+        flags: [bool; 4],
+        dr: Rect,
+        sr: Rect,
+        same: bool,
+    }
+    fn key_call() -> impl Strategy<Value = KeyCall> {
+        (prop::sample::select(vec![8u16, 16, 32]), prop::option::of(any::<u32>()), any::<bool>(), any::<bool>(), any::<[bool; 4]>(), rect(), rect(), any::<bool>())
+            .prop_map(|(bpp, src_key, set_dest, fast, flags, dr, sr, same)| KeyCall { bpp, src_key, set_dest, fast, flags, dr, sr, same })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(600))]
+        /// Color keys on system-memory surfaces as Windows answers them (kikizake DDRAW.KEY.*,
+        /// golden ddraw-32/-64): SetColorKey(DDCKEY_DESTBLT) DDERR_NOCOLORKEYHW and no key;
+        /// Blt: DDBLT_KEYDESTOVERRIDE DDERR_NOCOLORKEYHW, then DDBLT_KEYDEST (no destination
+        /// key there ever) or DDBLT_KEYSRC without the source's key E_INVALIDARG, then the
+        /// rectangles; BltFast: the rectangles first, then a key flag without its key (the
+        /// destination's alone: with the source's only the source key counts). A call that
+        /// fails writes nothing.
+        #[test]
+        fn sysmem_color_keys_as_windows(k in key_call(), seed: u32) {
+            let _g = crate::test_guest::enter();
+            let (sw, sh, dw, dh) = (16, 12, 20, 14);
+            let (sb, db) = (0x7_0001u32, 0x7_0002u32);
+            let mut src = surf_at(SRC, sw, sh, k.bpp);
+            let mut dst = surf_at(DST, dw, dh, k.bpp);
+            src.caps = CAPS_SYSTEMMEMORY | CAPS_OFFSCREENPLAIN;
+            dst.caps = CAPS_SYSTEMMEMORY | CAPS_OFFSCREENPLAIN;
+            let (sn, dn) = (src.pitch * sh as u32, dst.pitch * dh as u32);
+            let mut x = seed | 1;
+            for (at, n) in [(SRC, sn), (DST, dn)] {
+                for b in mem::guest_mut(at, n).unwrap() {
+                    x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+                    *b = x as u8;
+                }
+            }
+            with(|s| {
+                *s = fresh();
+                s.surfs.insert(1, src.clone());
+                s.surfs.insert(2, dst.clone());
+                s.blocks.insert(sb, (1, 7));
+                s.blocks.insert(db, (2, 7));
+            });
+            let ck = mem::heap_alloc(8, true);
+            if let Some(v) = k.src_key {
+                mem::w32(ck, v);
+                mem::w32(ck + 4, v);
+                prop_assert_eq!(crate::test_guest::call(S_SetColorKey, &[sb, 0x8, ck]), DD_OK);
+            }
+            if k.set_dest {
+                prop_assert_eq!(crate::test_guest::call(S_SetColorKey, &[db, 0x2, ck]), DDERR_NOCOLORKEYHW);
+                prop_assert!(surf(2).unwrap().ck_dst.is_none());
+            }
+            let rp = mem::heap_alloc(32, true);
+            for (i, r) in [k.dr, k.sr].iter().enumerate() {
+                for (j, v) in [r.l, r.t, r.r, r.b].into_iter().enumerate() {
+                    mem::w32(rp + 16 * i as u32 + 4 * j as u32, v as u32);
+                }
+            }
+            let fx = mem::heap_alloc(100, true);
+            mem::w32(fx, 100);
+            let src_b = if k.same { db } else { sb };
+            let (s_w, s_h, s_key) = if k.same { (dw, dh, None) } else { (sw, sh, k.src_key) };
+            let rect_ok_ = |r: Rect, w: i32, h: i32| r.l < r.r && r.t < r.b && r.l >= 0 && r.t >= 0 && r.r <= w && r.b <= h;
+            let before = mem::slice(DST, dn).to_vec();
+            let (got, want) = if k.fast {
+                let trans = k.flags[0] as u32 | (k.flags[1] as u32) << 1 | 0x10;
+                let (x0, y0) = (k.dr.l, k.dr.t);
+                let dr = Rect { l: x0, t: y0, r: x0 + k.sr.r - k.sr.l, b: y0 + k.sr.b - k.sr.t };
+                let want = if !rect_ok_(dr, dw, dh) || !rect_ok_(k.sr, s_w, s_h) {
+                    DDERR_INVALIDRECT
+                } else if (k.flags[0] && s_key.is_none()) || (k.flags[1] && !k.flags[0]) {
+                    E_INVALIDARG
+                } else {
+                    DD_OK
+                };
+                (crate::test_guest::call(S_BltFast, &[db, x0 as u32, y0 as u32, src_b, rp + 16, trans]), want)
+            } else {
+                // KEYSRC, KEYDEST, KEYSRCOVERRIDE, KEYDESTOVERRIDE
+                let flags = [0x8000u32, 0x2000, 0x10000, 0x4000].iter().zip(k.flags).filter(|f| f.1).fold(0x0100_0000, |a, f| a | f.0);
+                let want = if k.flags[3] {
+                    DDERR_NOCOLORKEYHW
+                } else if k.flags[1] || (k.flags[0] && s_key.is_none()) {
+                    E_INVALIDARG
+                } else if !rect_ok_(k.dr, dw, dh) || !rect_ok_(k.sr, s_w, s_h) {
+                    DDERR_INVALIDRECT
+                } else {
+                    DD_OK
+                };
+                (crate::test_guest::call(S_Blt, &[db, rp, src_b, rp + 16, flags, fx]), want)
+            };
+            prop_assert_eq!(got, want, "{:?}", k);
+            if got != DD_OK {
+                prop_assert!(mem::slice(DST, dn) == &before[..]);
+            }
+            for p in [ck, rp, fx] {
+                mem::heap_free(p);
+            }
+        }
+    }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(800))]

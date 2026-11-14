@@ -231,7 +231,8 @@ fn run(seed: u64) -> Vec<Step> {
                 }
                 (t.op, t.ret, t.got) = ("End", code(res), if res == 0 { blocks.len() as i64 } else { 0 });
             }
-            _ if blocks.is_empty() || recording => continue,
+            // (while recording too: D3DERR_INVALIDCALL then)
+            _ if blocks.is_empty() => continue,
             73..=84 => {
                 let b = r.below(blocks.len());
                 (t.op, t.k, t.ret) = ("Capture", b as i64 + 1, code(call(IF_STATEBLOCK, 4, &[blocks[b]])));
@@ -318,6 +319,7 @@ fn check(steps: &[Step], seed: u64) {
                     ("ok", blocks.len() as i64)
                 }
             },
+            "Capture" | "Apply" if rec.is_some() => ("invalid", 0),
             "Capture" => {
                 let b = &mut blocks[t.k as usize - 1];
                 for k in 0..n {

@@ -119,13 +119,13 @@ impl Fmt {
     }
 }
 
-fn get_bits(row: &[u8], x: u32, bits: u32) -> u32 {
+pub(crate) fn get_bits(row: &[u8], x: u32, bits: u32) -> u32 {
     let bit = x * bits;
     let b = row.get((bit / 8) as usize).copied().unwrap_or(0) as u32;
     (b >> (8 - bits - bit % 8)) & ((1 << bits) - 1)
 }
 
-fn put_bits(row: &mut [u8], x: u32, bits: u32, v: u32) {
+pub(crate) fn put_bits(row: &mut [u8], x: u32, bits: u32, v: u32) {
     let bit = x * bits;
     let shift = 8 - bits - bit % 8;
     let m = (((1u32 << bits) - 1) << shift) as u8;
@@ -479,6 +479,7 @@ pub enum Kind {
 
 /// One frame: its pixels in their own format (tight rows of `fmt.row_bytes(w)`), palette as
 /// ARGB colors (empty: none), dots per inch.
+#[derive(Clone)]
 pub struct Frame {
     pub w: u32,
     pub h: u32,

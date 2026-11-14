@@ -9,8 +9,10 @@
    EndStateBlock. CreateStateBlock and Capture take the masked states from the device, Apply
    puts them back and leaves the rest alone. While recording, a Set changes the recording, not
    the device (Get reads the device). Out of order: a second BeginStateBlock, EndStateBlock
-   without Begin, CreateStateBlock while recording or of a type above 3: D3DERR_INVALIDCALL;
-   type 0 makes a block of nothing (Windows, the winref probe d3d9sb).
+   without Begin, CreateStateBlock, Capture or Apply while recording, CreateStateBlock of a
+   type above 3: D3DERR_INVALIDCALL;
+   type 0 makes a block of nothing (Windows, the winref probe d3d9sb; Capture and Apply while
+   recording: kikizake golden d3d9-32 / d3d8-32 edge-calls-while-recording).
 
    Keys: render states rsP (ALPHAREF), rsV (CULLMODE), rsB (SHADEMODE); texture stage states
    tssP (COLOROP), tssB (TEXCOORDINDEX); sampler states ssP (ADDRESSU), ssV (DMAPOFFSET:
@@ -53,8 +55,10 @@ Do(s, t) ==
             ELSE NewBlock([s EXCEPT !.recording = FALSE], s.rst, s.rmask)
       [] t.op = "Capture" ->
             LET b == s.blocks[t.k] IN
-            Res([s EXCEPT !.blocks[t.k].st = [k \in K |-> IF k \in b.mask THEN s.dev[k] ELSE b.st[k]]], "ok", 0)
+            IF s.recording THEN Res(s, "invalid", 0)
+            ELSE Res([s EXCEPT !.blocks[t.k].st = [k \in K |-> IF k \in b.mask THEN s.dev[k] ELSE b.st[k]]], "ok", 0)
       [] t.op = "Apply" ->
             LET b == s.blocks[t.k] IN
-            Res([s EXCEPT !.dev = [k \in K |-> IF k \in b.mask THEN b.st[k] ELSE s.dev[k]]], "ok", 0)
+            IF s.recording THEN Res(s, "invalid", 0)
+            ELSE Res([s EXCEPT !.dev = [k \in K |-> IF k \in b.mask THEN b.st[k] ELSE s.dev[k]]], "ok", 0)
 =============================================================================

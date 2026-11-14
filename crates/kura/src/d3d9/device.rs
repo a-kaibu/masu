@@ -804,8 +804,9 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
         IF_STATEBLOCK => match m {
             3 => device_out(d, a(1)),
             4 => {
-                // Capture
-                let Some(dev) = &d.dev else { return D3DERR_INVALIDCALL };
+                // Capture (not while recording: D3DERR_INVALIDCALL, as Apply; kikizake golden
+                // d3d9-32 / d3d8-32 edge-calls-while-recording)
+                let Some(dev) = d.dev.as_ref().filter(|v| v.recording.is_none()) else { return D3DERR_INVALIDCALL };
                 if let Some(Data::StateBlock(b)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
                     let old = state_binds(&b.st);
                     sb::copy_masked(&mut b.st, &dev.st, &b.mask);
@@ -816,7 +817,7 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
                 S_OK
             }
             5 => {
-                if !matches!(d.objs.get(&this).map(|o| &o.data), Some(Data::StateBlock(_))) {
+                if d.dev.as_ref().is_some_and(|v| v.recording.is_some()) || !matches!(d.objs.get(&this).map(|o| &o.data), Some(Data::StateBlock(_))) {
                     return D3DERR_INVALIDCALL;
                 }
                 apply_state(d, this);

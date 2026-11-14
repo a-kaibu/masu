@@ -22,6 +22,12 @@ const VERTEX_RS: &[u32] = &[
     9, 22, 28, 29, 34, 35, 36, 37, 38, 48, 136, 137, 139, 140, 141, 142, 143, 145, 146, 147, 148, 151, 152, 154,
     155, 156, 157, 158, 159, 160, 161, 162, 163, 166, 167, 170, 172, 173, 178, 179, 180, 181, 182, 183, 184,
 ];
+/// Direct3D 8's own render states in its blocks (kikizake golden/d3d8-32, D3D8.SB.GROUPS):
+/// LINEPATTERN and ZBIAS pixel (EDGEANTIALIAS too, already in PIXEL_RS), SOFTWAREVERTEXPROCESSING
+/// and PATCHSEGMENTS vertex, ZVISIBLE in none. Not Direct3D 9's: its Get of them is
+/// D3DERR_INVALIDCALL, or (ZBIAS's 47) a legacy state no Direct3D 9 block holds.
+const PIXEL_RS8: &[u32] = &[10, 47];
+const VERTEX_RS8: &[u32] = &[153, 164];
 /// (texture stage states)
 const PIXEL_TSS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 22, 23, 24, 26, 27, 28];
 const VERTEX_TSS: &[u32] = &[11, 24];
@@ -131,6 +137,20 @@ impl Mask {
         (m.vsi_more, m.vsb_more) = (vec![!0; st.vsi_more.len().div_ceil(64)], vec![!0; st.vsb_more.len().div_ceil(64)]);
         m.lights = st.lights.keys().copied().collect();
         m
+    }
+
+    /// A Direct3D 8 block of type `kind` (CreateStateBlock's D3DSBT_*): Direct3D 9's mask
+    /// and Direct3D 8's own states of the kind.
+    pub fn add_d3d8(&mut self, kind: u32) {
+        let own: &[&[u32]] = match kind {
+            1 => &[PIXEL_RS8, VERTEX_RS8],
+            2 => &[PIXEL_RS8],
+            3 => &[VERTEX_RS8],
+            _ => &[],
+        };
+        for &r in own.iter().copied().flatten() {
+            self.rs[r as usize / 64] |= 1 << (r % 64);
+        }
     }
 
     /// What a Set* call (device method `m` with arguments `a`) changes, added while recording.

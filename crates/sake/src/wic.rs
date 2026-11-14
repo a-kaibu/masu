@@ -135,7 +135,7 @@ enum Obj {
     Bitmap {
         img: Arc<Mutex<Arc<Img>>>,
         fmt: Fmt,
-        raw: Option<(Vec<u8>, u32)>,
+        raw: Option<Arc<picture::Frame>>,
     },
     /// IWICPixelFormatInfo2 of a pixel format (CreateComponentInfo)
     FormatInfo(Fmt),
@@ -147,6 +147,8 @@ enum Obj {
         buf: u32,
         stride: u32,
         write: bool,
+        /// the IWICBitmap (its bytes as they are, raw, take what a write lock wrote)
+        owner: u32,
     },
 }
 
@@ -172,9 +174,10 @@ fn free(this: u32) {
     {
         frame_meta(|m| m.remove(&this));
         // (every kind goes: a stream holds the whole file, a source or bitmap its pixels)
-        if let Some(Obj::Lock { bitmap, fmt, rect, buf, stride, write }) = with(|m| m.remove(&this)) {
+        if let Some(Obj::Lock { bitmap, fmt, rect, buf, stride, write, owner }) = with(|m| m.remove(&this)) {
             if write {
                 let data = mem::slice(buf, stride * rect.3).to_vec();
+                lock_into_raw(owner, fmt, rect, stride, &data);
                 let mut g = bitmap.lock().unwrap();
                 let img = Arc::make_mut(&mut *g);
                 let part = decode(fmt, rect.2, rect.3, stride, &data, &img.palette);
@@ -187,6 +190,30 @@ fn free(this: u32) {
             mem::heap_free(buf);
         }
     }
+}
+
+/// What a write lock wrote, into its bitmap's bytes as they are: rows of whole bytes patched,
+/// else (pixels under 8 bits not starting or ending on a byte) the bytes dropped, the BGRA
+/// pixels the only ones then.
+fn lock_into_raw(owner: u32, fmt: Fmt, (x, y, w, h): (u32, u32, u32, u32), stride: u32, data: &[u8]) {
+    with(|m| {
+        let Some(Obj::Bitmap { raw, .. }) = m.get_mut(&owner) else { return };
+        let Some(fr) = raw.as_mut() else { return };
+        let bits = fmt.bits() as u64;
+        if (x as u64 * bits) % 8 != 0 || (w as u64 * bits) % 8 != 0 {
+            *raw = None;
+            return;
+        }
+        let fr = Arc::make_mut(fr);
+        let (row, at, n) = (fr.stride() as usize, (x as u64 * bits / 8) as usize, (w as u64 * bits / 8) as usize);
+        for r in 0..h as usize {
+            let d = (y as usize + r) * row + at;
+            let s = r * stride as usize;
+            if let (Some(d), Some(s)) = (fr.bits.get_mut(d..d + n), data.get(s..s + n)) {
+                d.copy_from_slice(s);
+            }
+        }
+    });
 }
 
 // ---- streams ----
@@ -814,7 +841,7 @@ fn names_clone(c: &mut Ctx) -> u32 {
 
 fn raw_of(this: u32) -> Option<Arc<picture::Frame>> {
     with(|m| match m.get(&this) {
-        Some(Obj::Source { raw, .. }) => raw.clone(),
+        Some(Obj::Source { raw, .. } | Obj::Bitmap { raw, .. }) => raw.clone(),
         _ => None,
     })
 }
@@ -1422,9 +1449,9 @@ fn bm_set_palette(c: &mut Ctx) -> u32 {
             let mut g = img.lock().unwrap();
             let i = Arc::make_mut(&mut *g);
             // (an indexed bitmap made from memory: its pixels through the new palette)
-            if let Some((data, stride)) = raw {
+            if let Some(fr) = raw.as_ref().filter(|_| fmt.indexed()) {
                 let (w, h) = (i.w, i.h);
-                i.px = picture::to_bgra(*fmt, w, h, *stride, data, &colors);
+                i.px = picture::to_bgra(*fmt, w, h, fr.stride(), &fr.bits, &colors);
             }
             i.palette = colors;
             0
@@ -1465,11 +1492,22 @@ fn f_bitmap_from_memory(c: &mut Ctx) -> u32 {
         return WINCODEC_ERR_INSUFFICIENTBUFFER;
     }
     let data = mem::slice(buf, size).to_vec();
-    let b = new_bitmap(decode(f, w, h, stride, &data, &[]), f);
-    if f.indexed() {
+    let img = decode(f, w, h, stride, &data, &[]);
+    // (and the bytes as they are, rows packed: Lock and CopyPixels in its own format, a converter to it
+    // and an indexed bitmap's SetPalette read them; Windows copies them unchanged, kikizake
+    // WIC.SAME, golden wic-32/-64)
+    let mut bits = vec![0u8; (row * h as u64) as usize];
+    for (y, r) in bits.chunks_exact_mut(row as usize).enumerate() {
+        let at = y * stride as usize;
+        r.copy_from_slice(&data[at..at + row as usize]);
+    }
+    let raw = Arc::new(picture::Frame { w, h, fmt: f, bits, palette: Vec::new(), dpi: img.dpi });
+    let b = new_bitmap(img, f);
+    // (straight BGRA: the pixels are the bytes already)
+    if f != Fmt::Bgra {
         with(|m| {
-            if let Some(Obj::Bitmap { raw, .. }) = m.get_mut(&b) {
-                *raw = Some((data, stride));
+            if let Some(Obj::Bitmap { raw: r, .. }) = m.get_mut(&b) {
+                *r = Some(raw);
             }
         });
     }
@@ -1520,12 +1558,15 @@ fn bm_lock(c: &mut Ctx) -> u32 {
     let stride = fmt.row_bytes(r.2).div_ceil(4) * 4;
     let buf = mem::heap_alloc((stride * r.3).max(4), true);
     let mut data = vec![0u8; (stride * r.3) as usize];
-    encode(&bitmap.lock().unwrap(), fmt, r, stride, &mut data);
+    match raw_of(this) {
+        Some(fr) if fr.fmt == fmt => picture::copy_rect(fmt, &fr.bits, fr.stride(), r, stride, &mut data),
+        _ => encode(&bitmap.lock().unwrap(), fmt, r, stride, &mut data),
+    }
     mem::write(buf, &data);
     let l = new(
         "IWICBitmapLock",
         &[("Release", release), ("GetSize", lock_size), ("GetStride", lock_stride), ("GetDataPointer", lock_data), ("GetPixelFormat", lock_format)],
-        Obj::Lock { bitmap, fmt, rect: r, buf, stride, write: flags & 2 != 0 },
+        Obj::Lock { bitmap, fmt, rect: r, buf, stride, write: flags & 2 != 0, owner: this },
     );
     mem::putp(out, l);
     0
@@ -1781,6 +1822,118 @@ mod tests {
                 seen += 1;
             }
             assert_eq!(seen, picture::ALL.len());
+        }
+    }
+
+    /// The bits of a row of `w` pixels of `f` that are pixels (the last byte's past them 0).
+    fn pixel_bits(f: Fmt, w: u32, row: &mut [u8]) {
+        let tail = (w * f.bits()) % 8;
+        if tail != 0 {
+            *row.last_mut().unwrap() &= (0xff00u32 >> tail) as u8;
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(300))]
+        /// A bitmap from memory in any format, read in that format: by its CopyPixels, a
+        /// converter to the same format and a read lock, the bytes as they were (Windows copies
+        /// them: kikizake WIC.SAME, golden wic-32/-64; a converter through BGRA lost the bits
+        /// of 16-bit channels, premultiplied and CMYK pixels, the fourth byte of BGR32, ...);
+        /// after a write lock, what it wrote.
+        #[test]
+        fn same_format_keeps_the_bytes(fi in 0..picture::ALL.len(), w in 1u32..40, h in 1u32..6, pad in 0u32..9, seed: u32, lx in 0u32..40, lw in 1u32..40) {
+            use crate::test_guest::call;
+            let _g = crate::test_guest::enter();
+            let f = picture::ALL[fi];
+            let row = f.row_bytes(w);
+            let stride = row + pad;
+            let mut x = seed | 1;
+            let mut bytes = || { x ^= x << 13; x ^= x >> 17; x ^= x << 5; x as u8 };
+            let px: Vec<u8> = (0..stride * h).map(|_| bytes()).collect();
+            let g = mem::heap_alloc(16, true);
+            write_guid(g, f.guid());
+            let buf = mem::heap_alloc(stride * h, true);
+            mem::write(buf, &px);
+            let out = mem::heap_alloc(8, true);
+            proptest::prop_assert_eq!(call(f_bitmap_from_memory, &[0, w, h, g, stride, stride * h, buf, out]), 0);
+            let bm = mem::rp(out);
+            let pal = if f.indexed() {
+                proptest::prop_assert_eq!(call(f_create_palette, &[0, out]), 0);
+                let pal = mem::rp(out);
+                let colors = mem::heap_alloc(16 * 4, true);
+                for i in 0..16 {
+                    mem::w32(colors + 4 * i, 0xff00_0000 | i * 0x0f0f0f);
+                }
+                proptest::prop_assert_eq!(call(pal_custom, &[pal, colors, 16]), 0);
+                proptest::prop_assert_eq!(call(bm_set_palette, &[bm, pal]), 0);
+                mem::heap_free(colors);
+                pal
+            } else {
+                0
+            };
+            let want: Vec<Vec<u8>> = (0..h).map(|y| {
+                let mut r = px[(y * stride) as usize..(y * stride + row) as usize].to_vec();
+                pixel_bits(f, w, &mut r);
+                r
+            }).collect();
+            let copied = |src: u32| -> Vec<Vec<u8>> {
+                let o = mem::heap_alloc(row * h, true);
+                assert_eq!(call(src_copy, &[src, 0, row, row * h, o]), 0);
+                let v = (0..h).map(|y| { let mut r = mem::slice(o + y * row, row).to_vec(); pixel_bits(f, w, &mut r); r }).collect();
+                mem::heap_free(o);
+                v
+            };
+            proptest::prop_assert_eq!(copied(bm), want.clone(), "{:?} CopyPixels", f);
+            proptest::prop_assert_eq!(call(f_create_converter, &[0, out]), 0);
+            let conv = mem::rp(out);
+            proptest::prop_assert_eq!(call(conv_init, &[conv, bm, g, 0, pal, 0, 0]), 0);
+            proptest::prop_assert_eq!(copied(conv), want.clone(), "{:?} converter", f);
+            // (a read lock of all of it)
+            proptest::prop_assert_eq!(call(bm_lock, &[bm, 0, 1, out]), 0);
+            let l = mem::rp(out);
+            let (ls, lp) = lock(l, |_, _, b, s| (s, b)).unwrap();
+            let locked: Vec<Vec<u8>> = (0..h).map(|y| { let mut r = mem::slice(lp + y * ls, row).to_vec(); pixel_bits(f, w, &mut r); r }).collect();
+            proptest::prop_assert_eq!(&locked, &want, "{:?} lock", f);
+            call(release, &[l]);
+            // (a write lock of columns lx.. (as many as fit) of row 0, bytes inverted)
+            let (lx, lw) = (lx % w, lw.min(w - lx % w));
+            let rc = mem::heap_alloc(16, true);
+            for (i, v) in [lx, 0, lw, 1].into_iter().enumerate() {
+                mem::w32(rc + 4 * i as u32, v);
+            }
+            proptest::prop_assert_eq!(call(bm_lock, &[bm, rc, 3, out]), 0);
+            let l = mem::rp(out);
+            let lp = lock(l, |_, _, b, _| b).unwrap();
+            let n = f.row_bytes(lw);
+            let wrote: Vec<u8> = mem::slice(lp, n).iter().map(|b| !b).collect();
+            mem::write(lp, &wrote);
+            call(release, &[l]);
+            let mut after = want.clone();
+            if f.bits() % 8 == 0 {
+                let at = (lx * f.bits() / 8) as usize;
+                after[0][at..at + n as usize].copy_from_slice(&wrote);
+            } else {
+                for i in 0..lw {
+                    let v = picture::get_bits(&wrote, i, f.bits());
+                    picture::put_bits(&mut after[0], lx + i, f.bits(), v);
+                }
+            }
+            let got = copied(bm);
+            // (pixels under 8 bits written off a byte boundary: through BGRA, not exact;
+            // the rest exact)
+            if (lx * f.bits()) % 8 == 0 && (lw * f.bits()) % 8 == 0 {
+                proptest::prop_assert_eq!(got, after, "{:?} after a write lock", f);
+            } else {
+                proptest::prop_assert_eq!(&got[1..], &after[1..], "{:?} other rows", f);
+            }
+            for p in [g, buf, out, rc] {
+                mem::heap_free(p);
+            }
+            call(release, &[conv]);
+            call(release, &[bm]);
+            if pal != 0 {
+                call(release, &[pal]);
+            }
         }
     }
 

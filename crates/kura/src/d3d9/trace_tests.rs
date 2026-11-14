@@ -87,6 +87,16 @@ pub(crate) fn on_low_stack(f: fn()) {
     }
 }
 
+/// Runs `f` (on `on_low_stack`'s thread) with the heap above 4 GB again: for a long test whose
+/// heap the Direct3D 8 layer never hands on by address (kikizake8_tests: 160 devices and 440
+/// state blocks would fill the bump heap, which is never freed).
+pub(crate) fn high_heap<R>(f: impl FnOnce() -> R) -> R {
+    let was = LOW_HEAP.with(|l| l.replace(false));
+    let r = f();
+    LOW_HEAP.with(|l| l.set(was));
+    r
+}
+
 thread_local! {
     static LOW_HEAP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
