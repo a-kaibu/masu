@@ -1066,6 +1066,20 @@ pub enum FOp {
     MinMax,
 }
 
+impl FOp {
+    /// The operation as one that rounds (None: MIN/MAX, which pick an operand).
+    pub fn rounded(self) -> Option<Op> {
+        match self {
+            FOp::Add => Some(Op::Add),
+            FOp::Sub => Some(Op::Sub),
+            FOp::Mul => Some(Op::Mul),
+            FOp::Div => Some(Op::Div),
+            FOp::Sqrt => Some(Op::Sqrt),
+            FOp::MinMax => None,
+        }
+    }
+}
+
 /// An SSE add/sub/mul/div with x86's NaN results: the first NaN operand, quieted, or the
 /// default NaN (negative) for an invalid operation.
 fn nan_op32(op: Op, x: f32, y: f32, mx: u32) -> f32 {
@@ -1145,45 +1159,46 @@ fn arith_flags(op: FOp, x: f64, y: f64, single: bool, sn: bool, den: bool, ue_un
         return (ZE, 0);
     }
     let pre = if den { DE } else { 0 };
-    if op == FOp::MinMax || x.is_infinite() || y.is_infinite() {
+    let Some(op) = op.rounded() else { return (pre, 0) };
+    if x.is_infinite() || y.is_infinite() {
         return (pre, 0);
     }
     // the rounded result (to nearest, as the arithmetic itself) and whether it is exact
     let (inf, sub, zero, inexact) = if single {
         let (a, b) = (x as f32, y as f32);
         let r = match op {
-            FOp::Add => a + b,
-            FOp::Sub => a - b,
-            FOp::Mul => a * b,
-            FOp::Div => a / b,
-            _ => libm::sqrtf(b),
+            Op::Add => a + b,
+            Op::Sub => a - b,
+            Op::Mul => a * b,
+            Op::Div => a / b,
+            Op::Sqrt => libm::sqrtf(b),
         };
         let rd = r as f64;
         let inexact = r.is_infinite()
             || match op {
-                FOp::Add | FOp::Sub => {
-                    let (s, e) = two_sum(x, if op == FOp::Sub { -y } else { y });
+                Op::Add | Op::Sub => {
+                    let (s, e) = two_sum(x, if op == Op::Sub { -y } else { y });
                     rd != s || e != 0.0
                 }
-                FOp::Mul => rd != x * y, // (24 x 24 bits: exact in f64)
-                FOp::Div => rd * y != x,
-                _ => rd * rd != y,
+                Op::Mul => rd != x * y, // (24 x 24 bits: exact in f64)
+                Op::Div => rd * y != x,
+                Op::Sqrt => rd * rd != y,
             };
         (r.is_infinite(), r.is_subnormal(), r == 0.0, inexact)
     } else {
         let r = match op {
-            FOp::Add => x + y,
-            FOp::Sub => x - y,
-            FOp::Mul => x * y,
-            FOp::Div => x / y,
-            _ => libm::sqrt(y),
+            Op::Add => x + y,
+            Op::Sub => x - y,
+            Op::Mul => x * y,
+            Op::Div => x / y,
+            Op::Sqrt => libm::sqrt(y),
         };
         let inexact = r.is_infinite()
             || match op {
-                FOp::Add | FOp::Sub => two_sum(x, if op == FOp::Sub { -y } else { y }).1 != 0.0,
-                FOp::Mul => !product_is(x, y, r),
-                FOp::Div => !product_is(r, y, x),
-                _ => !product_is(r, r, y),
+                Op::Add | Op::Sub => two_sum(x, if op == Op::Sub { -y } else { y }).1 != 0.0,
+                Op::Mul => !product_is(x, y, r),
+                Op::Div => !product_is(r, y, x),
+                Op::Sqrt => !product_is(r, r, y),
             };
         (r.is_infinite(), r.is_subnormal(), r == 0.0, inexact)
     };
@@ -1197,27 +1212,20 @@ fn arith_flags(op: FOp, x: f64, y: f64, single: bool, sn: bool, den: bool, ue_un
 /// past the largest finite value (so rounding toward zero just past it does not overflow),
 /// tiny when it is below the smallest normal (a result rounding up to the smallest normal from
 /// below is still tiny when the unbounded rounding is not)
-fn result_flags(op: FOp, x: f64, y: f64, single: bool, inexact: bool, ue_unmasked: bool, rc: u32) -> u32 {
-    let rop = match op {
-        FOp::Add => Op::Add,
-        FOp::Sub => Op::Sub,
-        FOp::Mul => Op::Mul,
-        FOp::Div => Op::Div,
-        _ => Op::Sqrt,
-    };
-    let (a, b) = if op == FOp::Sqrt { (y, 0.0) } else { (x, y) };
+fn result_flags(op: Op, x: f64, y: f64, single: bool, inexact: bool, ue_unmasked: bool, rc: u32) -> u32 {
+    let (a, b) = if op == Op::Sqrt { (y, 0.0) } else { (x, y) };
     // (an exact zero: no flags)
     let zero = match op {
-        FOp::Add | FOp::Sub => {
-            let (s, e) = two_sum(x, if op == FOp::Sub { -y } else { y });
+        Op::Add | Op::Sub => {
+            let (s, e) = two_sum(x, if op == Op::Sub { -y } else { y });
             s == 0.0 && e == 0.0
         }
-        _ => a == 0.0 || (op == FOp::Mul && b == 0.0),
+        Op::Mul | Op::Div | Op::Sqrt => a == 0.0 || (op == Op::Mul && b == 0.0),
     };
     if zero {
         return 0;
     }
-    let ex = round::unbounded_exp(rop, a, b, if single { 24 } else { 53 }, round::Rc::from_bits(rc));
+    let ex = round::unbounded_exp(op, a, b, if single { 24 } else { 53 }, round::Rc::from_bits(rc));
     exp_flags(ex, single, inexact, ue_unmasked)
 }
 
@@ -1282,8 +1290,7 @@ fn fma_post(x: f64, y: f64, z: f64, r: f64, single: bool, inexact: bool, ue_unma
         && cmp_abs(1, emin) < 0
         && match rc {
             round::Rc::Near => cmp_abs((1 << (p + 1)) - 1, emin - p - 1) < 0,
-            _ if toward => true,
-            _ => cmp_abs((1 << p) - 1, emin - p) <= 0,
+            round::Rc::Down | round::Rc::Up | round::Rc::Zero => toward || cmp_abs((1 << p) - 1, emin - p) <= 0,
         };
     (if tiny && (inexact || ue_unmasked) { UE } else { 0 }) | if inexact { PE } else { 0 }
 }

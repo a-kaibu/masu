@@ -103,11 +103,9 @@ fn regrid(r: f64, es: i32, rc: Rc, near: impl Fn(f64) -> f64, up: impl Fn(f64) -
             }
             n
         }
-        Rc::Down if s < 0 => down(n),
-        Rc::Up if s > 0 => up(n),
-        Rc::Zero if s < 0 && n > 0.0 => down(n),
-        Rc::Zero if s > 0 && n < 0.0 => up(n),
-        _ => n,
+        Rc::Down => if s < 0 { down(n) } else { n },
+        Rc::Up => if s > 0 { up(n) } else { n },
+        Rc::Zero => if s < 0 && n > 0.0 { down(n) } else if s > 0 && n < 0.0 { up(n) } else { n },
     }
 }
 
@@ -159,11 +157,9 @@ fn place(p: f64, es: i32, k: i32, rc: Rc, prec: Prec) -> f64 {
             }
             n
         }
-        Rc::Down if s < 0 => next_down(n),
-        Rc::Up if s > 0 => next_up(n),
-        Rc::Zero if s < 0 && n > 0.0 => next_down(n),
-        Rc::Zero if s > 0 && n < 0.0 => next_up(n),
-        _ => n,
+        Rc::Down => if s < 0 { next_down(n) } else { n },
+        Rc::Up => if s > 0 { next_up(n) } else { n },
+        Rc::Zero => if s < 0 && n > 0.0 { next_down(n) } else if s > 0 && n < 0.0 { next_up(n) } else { n },
     }
 }
 
