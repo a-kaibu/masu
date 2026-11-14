@@ -372,7 +372,7 @@ impl Run<'_> {
             2 => self.o.get_mut(i0).ok_or("output out of range")?,
             3 => {
                 let x = &mut self.x.iter_mut().find(|x| x.0 == crate::u32_of(i0)).ok_or("undeclared x#")?.1;
-                match x.get_mut(i1.unwrap_or(0) as usize) {
+                match x.get_mut(crate::us(i1.unwrap_or(0))) {
                     Some(s) => s,
                     // (writes past the end are dropped)
                     None => {

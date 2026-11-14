@@ -50,7 +50,7 @@ pub fn interpret(c: &Case, data: &[u8]) -> Result<([f32; 4], Option<String>), St
         "d3d9" => {
             let p = ref_d3d9::parse(&words(&c.code))?;
             // (x[4], i[16], then c[])
-            let at = (dxwgsl::d3d9::CONSTS_EXTRA as usize + 16) * 16;
+            let at = (crate::us(dxwgsl::d3d9::CONSTS_EXTRA) + 16) * 16;
             let consts: Vec<[f32; 4]> = words(data.get(at..).unwrap_or(&[])).chunks_exact(4).take(256).map(|v| std::array::from_fn(|i| f32::from_bits(v[i]))).collect();
             let (o, t) = ref_d3d9::run(&p, &consts)?;
             Ok((o[0], t))
@@ -69,7 +69,7 @@ impl Rng {
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
-        crate::usize_of(self.next() % n.max(1) as u64)
+        crate::usize_of(self.next() % crate::u64_of(n.max(1)))
     }
 }
 
@@ -84,7 +84,7 @@ fn mutate(r: &mut Rng, w: &[u32], keep: usize) -> Vec<u32> {
         let i = keep + r.below(w.len() - keep);
         match r.below(4) {
             0 => w[i] ^= 1 << r.below(32),
-            1 => w[i] ^= (r.below(4) as u32) << (4 + 2 * r.below(4)),
+            1 => w[i] ^= (crate::u32_of(r.below(4))) << (4 + 2 * r.below(4)),
             2 => {
                 let j = keep + r.below(w.len() - keep);
                 w[i] = w[j];
@@ -119,7 +119,7 @@ fn translate(api: &str, code: &[u8]) -> Option<(String, u32, u32, usize)> {
             }
             let o = dxwgsl::d3d9::Options { link: 0, vs_inputs: Vec::new(), alpha_test: None, fog: false, addr: Vec::new(), targets: 1, flat: false };
             let wgsl = std::panic::catch_unwind(|| dxwgsl::d3d9::Gen::new(&s).pixel(&o)).ok()?;
-            Some((wgsl, 0, 1, dxwgsl::d3d9::uniform_size(s.max_const) as usize))
+            Some((wgsl, 0, 1, crate::us(dxwgsl::d3d9::uniform_size(s.max_const))))
         }
     }
 }

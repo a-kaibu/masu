@@ -410,7 +410,7 @@ impl Run<'_> {
                 }
                 94 => {
                     let (a, b) = (self.s(i, 0)?, self.s(i, 1)?);
-                    let v = std::array::from_fn(|k| cmp(i.cmp, a[k], b[k]) as u32 as f32);
+                    let v = std::array::from_fn(|k| u32::from(cmp(i.cmp, a[k], b[k])) as f32);
                     self.write(i, v)?
                 }
                 // (applied before the program runs)

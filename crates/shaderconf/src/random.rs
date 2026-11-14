@@ -59,8 +59,8 @@ const LIMIT: f64 = (1 << 22) as f64;
 fn expr(r: &mut Rng, depth: u32) -> E {
     if depth == 0 || r.below(4) == 0 {
         return match r.below(3) {
-            0 => E::In(r.below(3) as usize),
-            1 => E::Var(r.below(crate::u64_of(VARS)) as usize),
+            0 => E::In(crate::usize_of(r.below(3))),
+            1 => E::Var(crate::usize_of(r.below(crate::u64_of(VARS)))),
             _ => E::Const([r.int(-8, 8), r.int(-8, 8), r.int(-8, 8), r.int(-8, 8)]),
         };
     }
@@ -93,9 +93,9 @@ fn expr(r: &mut Rng, depth: u32) -> E {
 fn stmts(r: &mut Rng, depth: u32, n: u32, dynamic: bool) -> Vec<S> {
     (0..n)
         .map(|_| match if depth == 0 { r.below(4) } else { r.below(7) } {
-            0 => S::Set(r.below(crate::u64_of(VARS)) as usize, expr(r, 3)),
-            1 => S::Add(r.below(crate::u64_of(VARS)) as usize, expr(r, 2)),
-            2 => S::Mask(r.below(crate::u64_of(VARS)) as usize, loop {
+            0 => S::Set(crate::usize_of(r.below(crate::u64_of(VARS))), expr(r, 3)),
+            1 => S::Add(crate::usize_of(r.below(crate::u64_of(VARS))), expr(r, 2)),
+            2 => S::Mask(crate::usize_of(r.below(crate::u64_of(VARS))), loop {
                 let m = [r.below(2) == 0, r.below(2) == 0, r.below(2) == 0, r.below(2) == 0];
                 if m.iter().any(|&b| b) {
                     break m;
@@ -104,7 +104,7 @@ fn stmts(r: &mut Rng, depth: u32, n: u32, dynamic: bool) -> Vec<S> {
             3 => S::ArrSet(expr(r, 1), expr(r, 2)),
             4 => S::If(expr(r, 2), expr(r, 2), stmts(r, depth - 1, 2, dynamic), stmts(r, depth - 1, 1, dynamic)),
             5 if dynamic => S::Dyn(expr(r, 1), stmts(r, depth - 1, 2, dynamic)),
-            _ => S::For(1 + r.below(3) as u32, stmts(r, depth - 1, 2, dynamic)),
+            _ => S::For(1 + crate::lo32(r.below(3)), stmts(r, depth - 1, 2, dynamic)),
         })
         .collect()
 }
@@ -329,7 +329,7 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>, n: u32, seed: u64, d
         // they go to DXBC and GLSL only)
         let dynamic = made % 2 == 1;
         let prog = stmts(&mut r, depth, count, dynamic);
-        let result = r.below(crate::u64_of(VARS)) as usize;
+        let result = crate::usize_of(r.below(crate::u64_of(VARS)));
         // six pixels of inputs; programs whose values leave the exact range are drawn again
         let mut pixels = Vec::new();
         let mut ok = true;

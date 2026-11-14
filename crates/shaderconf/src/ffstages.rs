@@ -136,7 +136,7 @@ fn wgsl(k: &PsKey) -> String {
 
 fn stage(r: &mut Rng) -> [u32; 10] {
     let a = |r: &mut Rng| {
-        let base = r.below(7) as u32;
+        let base = crate::lo32(r.below(7));
         base | if r.below(4) == 0 { 0x10 } else { 0 } | if r.below(4) == 0 { 0x20 } else { 0 }
     };
     let cop = COLOR_OPS[r.below(crate::u64_of(COLOR_OPS.len())) as usize];
@@ -147,14 +147,14 @@ fn stage(r: &mut Rng) -> [u32; 10] {
 
 pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     let mut r = Rng(0x2191);
-    let n = ff::PS_CONSTS as usize;
-    let size = dxwgsl::d3d9::uniform_size(ff::PS_CONSTS + 2) as usize;
-    let at = (dxwgsl::d3d9::CONSTS_EXTRA as usize + 16) * 16;
+    let n = crate::us(ff::PS_CONSTS);
+    let size = crate::us(dxwgsl::d3d9::uniform_size(ff::PS_CONSTS + 2));
+    let at = (crate::us(dxwgsl::d3d9::CONSTS_EXTRA) + 16) * 16;
     // the game's: stage 0 SELECTARG1 DIFFUSE (its texture is not bound here), stage 1 MODULATE
     // TEXTURE DIFFUSE with none; then random setups of 1 to 4 stages
     let mut setups = vec![(vec![[2, 0, 1, 1, 2, 0, 1, 1, 1, 0], [4, 2, 0, 1, 4, 2, 0, 1, 1, 0]], false)];
     for _ in 0..60 {
-        let count = 1 + r.below(4) as usize;
+        let count = 1 + crate::usize_of(r.below(4));
         setups.push(((0..count).map(|_| stage(&mut r)).collect(), r.below(2) == 0));
     }
     for (si, (stages, specular)) in setups.iter().enumerate() {
