@@ -780,27 +780,30 @@ fn GdipCreateTextureIAI(c: &mut Ctx) -> u32 {
 }
 
 /// The transform of a texture, linear or path gradient brush
-fn brush_m(b: &mut Brush) -> Option<&mut M> {
-    match b {
-        Brush::Texture { m, .. } | Brush::Line { m, .. } | Brush::PathGrad { m, .. } => Some(m),
-        _ => None,
-    }
+/// The brushes with a transform and a wrap mode: which one a Get/Set..Transform or ..WrapMode
+/// family is for
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Xf {
+    Texture,
+    Line,
+    PathGrad,
 }
-fn wrap_of(b: &mut Brush) -> Option<&mut u32> {
-    match b {
-        Brush::Texture { wrap, .. } | Brush::Line { wrap, .. } | Brush::PathGrad { wrap, .. } => Some(wrap),
-        _ => None,
+
+/// A brush's transform and wrap mode when it is of kind `want` (None: another kind, which the
+/// call refuses)
+fn parts(want: Xf, b: &mut Brush) -> Option<(&mut M, &mut u32)> {
+    match (want, b) {
+        (Xf::Texture, Brush::Texture { m, wrap, .. }) | (Xf::Line, Brush::Line { m, wrap, .. }) | (Xf::PathGrad, Brush::PathGrad { m, wrap, .. }) => Some((m, wrap)),
+        (Xf::Texture | Xf::Line | Xf::PathGrad, Brush::Solid(_) | Brush::Hatch { .. } | Brush::Texture { .. } | Brush::Line { .. } | Brush::PathGrad { .. }) => None,
     }
 }
 /// Get..Transform(brush, matrix) of brushes of `kind`
-fn get_transform(c: &mut Ctx, kind: u32) -> u32 {
+fn get_transform(c: &mut Ctx, kind: Xf) -> u32 {
     let (h, mh) = (c.a(0), c.a(1));
     let mut got = None;
     let s = on_brush(h, |b| {
-        if !b_kind(kind, b) {
-            return INVALID_PARAMETER;
-        }
-        got = brush_m(b).map(|m| *m);
+        let Some((m, _)) = parts(kind, b) else { return INVALID_PARAMETER };
+        got = Some(*m);
         OK
     });
     let Some(m) = got.filter(|_| s == OK) else { return INVALID_PARAMETER };
@@ -809,103 +812,89 @@ fn get_transform(c: &mut Ctx, kind: u32) -> u32 {
         OK
     })
 }
-fn b_kind(kind: u32, b: &Brush) -> bool {
-    b.kind() == kind
-}
-fn set_transform(c: &mut Ctx, kind: u32) -> u32 {
+fn set_transform(c: &mut Ctx, kind: Xf) -> u32 {
     let Some(m) = matrix(c.a(1)) else { return INVALID_PARAMETER };
     on_brush(c.a(0), |b| {
-        if !b_kind(kind, b) {
-            return INVALID_PARAMETER;
-        }
-        *brush_m(b).unwrap() = m;
+        let Some((bm, _)) = parts(kind, b) else { return INVALID_PARAMETER };
+        *bm = m;
         OK
     })
 }
-fn reset_transform(c: &mut Ctx, kind: u32) -> u32 {
+fn reset_transform(c: &mut Ctx, kind: Xf) -> u32 {
     on_brush(c.a(0), |b| {
-        if !b_kind(kind, b) {
-            return INVALID_PARAMETER;
-        }
-        *brush_m(b).unwrap() = IDENTITY;
+        let Some((bm, _)) = parts(kind, b) else { return INVALID_PARAMETER };
+        *bm = IDENTITY;
         OK
     })
 }
 /// Multiply..Transform(brush, matrix, order): a NULL matrix does nothing
-fn multiply_transform(c: &mut Ctx, kind: u32) -> u32 {
+fn multiply_transform(c: &mut Ctx, kind: Xf) -> u32 {
     let (h, mh, order) = (c.a(0), c.a(1), c.a(2));
     let op = if mh == 0 { None } else {
         let Some(m) = matrix(mh) else { return INVALID_PARAMETER };
         Some(m)
     };
     on_brush(h, |b| {
-        if !b_kind(kind, b) {
-            return INVALID_PARAMETER;
-        }
+        let Some((bm, _)) = parts(kind, b) else { return INVALID_PARAMETER };
         match op {
-            Some(op) => combine(brush_m(b).unwrap(), &op, order),
+            Some(op) => combine(bm, &op, order),
             None => OK,
         }
     })
 }
-fn op_transform(c: &mut Ctx, kind: u32, op: M, order: u32) -> u32 {
+fn op_transform(c: &mut Ctx, kind: Xf, op: M, order: u32) -> u32 {
     on_brush(c.a(0), |b| {
-        if !b_kind(kind, b) {
-            return INVALID_PARAMETER;
-        }
-        combine(brush_m(b).unwrap(), &op, order)
+        let Some((bm, _)) = parts(kind, b) else { return INVALID_PARAMETER };
+        combine(bm, &op, order)
     })
 }
-fn get_wrap(c: &mut Ctx, kind: u32) -> u32 {
+fn get_wrap(c: &mut Ctx, kind: Xf) -> u32 {
     let out = c.a(1);
     on_brush(c.a(0), |b| {
-        if out == 0 || !b_kind(kind, b) {
-            return INVALID_PARAMETER;
-        }
-        w32(out, *wrap_of(b).unwrap());
+        let Some((_, wrap)) = parts(kind, b).filter(|_| out != 0) else { return INVALID_PARAMETER };
+        w32(out, *wrap);
         OK
     })
 }
-fn set_wrap(c: &mut Ctx, kind: u32) -> u32 {
+fn set_wrap(c: &mut Ctx, kind: Xf) -> u32 {
     let v = c.a(1);
     on_brush(c.a(0), |b| {
-        if !b_kind(kind, b) || v > CLAMP || kind == 4 && v == CLAMP {
-            return INVALID_PARAMETER;
-        }
-        *wrap_of(b).unwrap() = v;
+        // (a linear gradient cannot clamp)
+        let Some((_, wrap)) = parts(kind, b).filter(|_| v <= CLAMP && !(kind == Xf::Line && v == CLAMP)) else { return INVALID_PARAMETER };
+        *wrap = v;
         OK
     })
 }
 
 fn GdipGetTextureTransform(c: &mut Ctx) -> u32 {
-    get_transform(c, 2)
+    get_transform(c, Xf::Texture)
 }
 fn GdipSetTextureTransform(c: &mut Ctx) -> u32 {
-    set_transform(c, 2)
+    set_transform(c, Xf::Texture)
 }
 fn GdipResetTextureTransform(c: &mut Ctx) -> u32 {
-    reset_transform(c, 2)
+    reset_transform(c, Xf::Texture)
 }
 fn GdipMultiplyTextureTransform(c: &mut Ctx) -> u32 {
-    multiply_transform(c, 2)
+    multiply_transform(c, Xf::Texture)
 }
 fn GdipTranslateTextureTransform(c: &mut Ctx) -> u32 {
     let (op, o) = ([1.0, 0.0, 0.0, 1.0, c.f(1), c.f(2)], c.a(3));
-    op_transform(c, 2, op, o)
+    op_transform(c, Xf::Texture, op, o)
 }
 fn GdipScaleTextureTransform(c: &mut Ctx) -> u32 {
     let (op, o) = ([c.f(1), 0.0, 0.0, c.f(2), 0.0, 0.0], c.a(3));
-    op_transform(c, 2, op, o)
+    op_transform(c, Xf::Texture, op, o)
 }
 fn GdipRotateTextureTransform(c: &mut Ctx) -> u32 {
     let (op, o) = (rotation(c.f(1)), c.a(2));
-    op_transform(c, 2, op, o)
+    op_transform(c, Xf::Texture, op, o)
 }
 fn GdipGetTextureWrapMode(c: &mut Ctx) -> u32 {
-    get_wrap(c, 2)
+    get_wrap(c, Xf::Texture)
 }
 fn GdipSetTextureWrapMode(c: &mut Ctx) -> u32 {
-    set_wrap(c, 2)
+    set_wrap(c, Xf::Texture)
 }
 
 // ---- linear gradients ----
@@ -1103,34 +1092,34 @@ fn GdipSetLineGammaCorrection(c: &mut Ctx) -> u32 {
     })
 }
 fn GdipGetLineWrapMode(c: &mut Ctx) -> u32 {
-    get_wrap(c, 4)
+    get_wrap(c, Xf::Line)
 }
 fn GdipSetLineWrapMode(c: &mut Ctx) -> u32 {
-    set_wrap(c, 4)
+    set_wrap(c, Xf::Line)
 }
 fn GdipGetLineTransform(c: &mut Ctx) -> u32 {
-    get_transform(c, 4)
+    get_transform(c, Xf::Line)
 }
 fn GdipSetLineTransform(c: &mut Ctx) -> u32 {
-    set_transform(c, 4)
+    set_transform(c, Xf::Line)
 }
 fn GdipResetLineTransform(c: &mut Ctx) -> u32 {
-    reset_transform(c, 4)
+    reset_transform(c, Xf::Line)
 }
 fn GdipMultiplyLineTransform(c: &mut Ctx) -> u32 {
-    multiply_transform(c, 4)
+    multiply_transform(c, Xf::Line)
 }
 fn GdipTranslateLineTransform(c: &mut Ctx) -> u32 {
     let (op, o) = ([1.0, 0.0, 0.0, 1.0, c.f(1), c.f(2)], c.a(3));
-    op_transform(c, 4, op, o)
+    op_transform(c, Xf::Line, op, o)
 }
 fn GdipScaleLineTransform(c: &mut Ctx) -> u32 {
     let (op, o) = ([c.f(1), 0.0, 0.0, c.f(2), 0.0, 0.0], c.a(3));
-    op_transform(c, 4, op, o)
+    op_transform(c, Xf::Line, op, o)
 }
 fn GdipRotateLineTransform(c: &mut Ctx) -> u32 {
     let (op, o) = (rotation(c.f(1)), c.a(2));
-    op_transform(c, 4, op, o)
+    op_transform(c, Xf::Line, op, o)
 }
 
 // ---- blends (linear and path gradients alike) ----
@@ -1527,34 +1516,34 @@ fn GdipSetPathGradientGammaCorrection(c: &mut Ctx) -> u32 {
     })
 }
 fn GdipGetPathGradientWrapMode(c: &mut Ctx) -> u32 {
-    get_wrap(c, 3)
+    get_wrap(c, Xf::PathGrad)
 }
 fn GdipSetPathGradientWrapMode(c: &mut Ctx) -> u32 {
-    set_wrap(c, 3)
+    set_wrap(c, Xf::PathGrad)
 }
 fn GdipGetPathGradientTransform(c: &mut Ctx) -> u32 {
-    get_transform(c, 3)
+    get_transform(c, Xf::PathGrad)
 }
 fn GdipSetPathGradientTransform(c: &mut Ctx) -> u32 {
-    set_transform(c, 3)
+    set_transform(c, Xf::PathGrad)
 }
 fn GdipResetPathGradientTransform(c: &mut Ctx) -> u32 {
-    reset_transform(c, 3)
+    reset_transform(c, Xf::PathGrad)
 }
 fn GdipMultiplyPathGradientTransform(c: &mut Ctx) -> u32 {
-    multiply_transform(c, 3)
+    multiply_transform(c, Xf::PathGrad)
 }
 fn GdipTranslatePathGradientTransform(c: &mut Ctx) -> u32 {
     let (op, o) = ([1.0, 0.0, 0.0, 1.0, c.f(1), c.f(2)], c.a(3));
-    op_transform(c, 3, op, o)
+    op_transform(c, Xf::PathGrad, op, o)
 }
 fn GdipScalePathGradientTransform(c: &mut Ctx) -> u32 {
     let (op, o) = ([c.f(1), 0.0, 0.0, c.f(2), 0.0, 0.0], c.a(3));
-    op_transform(c, 3, op, o)
+    op_transform(c, Xf::PathGrad, op, o)
 }
 fn GdipRotatePathGradientTransform(c: &mut Ctx) -> u32 {
     let (op, o) = (rotation(c.f(1)), c.a(2));
-    op_transform(c, 3, op, o)
+    op_transform(c, Xf::PathGrad, op, o)
 }
 
 // ---- painting ----
