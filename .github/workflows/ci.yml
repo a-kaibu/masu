@@ -259,6 +259,11 @@ jobs:
         run: cargo test -p crt
       - name: Check all Rust targets without warnings
         run: cargo check --workspace --all-targets --locked
+      # (clippy's lints for what the compiler could have caught: `as`, `_` arms on enums, unwrap;
+      # per crate they only go down, tools/ci/lint-ratchet.tsv)
+      - name: Type-safety lint ratchet
+        timeout-minutes: 15
+        run: python3 tools/ci/lint-ratchet.py
       # (the binary cargo test just built: Docker's RustFS stands in for the storage server, so
       # this needs no runner or cache of its own; the old job's timeout, now on the step)
       - name: Encrypted storage against RustFS
