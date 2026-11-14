@@ -6,6 +6,25 @@
 //!
 //! Bytes in, WGSL text and what it binds out; no GPU or OS calls, std only.
 
+// (a u32 count or offset as an index: lossless on every target, wasm32 and 64-bit hosts)
+const _: () = assert!(usize::BITS >= u32::BITS);
+
+/// A u32 as an index (lossless: the assert above)
+pub(crate) fn us(x: u32) -> usize {
+    usize::try_from(x).unwrap_or(usize::MAX)
+}
+
+/// A count or index as u32 (callers' values are small: shader registers and stages; u32::MAX
+/// past that)
+pub(crate) fn u32_of(x: usize) -> u32 {
+    u32::try_from(x).unwrap_or(u32::MAX)
+}
+
+/// The low 8 bits of `x` (a field the caller masked or shifted down)
+pub(crate) fn lo8(x: u32) -> u8 {
+    x.to_le_bytes()[0]
+}
+
 pub mod addr;
 pub mod d3d9;
 pub mod d3d9ff;
@@ -21,8 +40,8 @@ mod wgsl;
 pub fn f32_text(f: f32) -> String {
     let s = format!("{f:?}");
     match s.parse::<f64>() {
-        Ok(d) if d.abs() <= f32::MAX as f64 => s,
-        _ => format!("{:?}", f as f64),
+        Ok(d) if d.abs() <= f64::from(f32::MAX) => s,
+        _ => format!("{:?}", f64::from(f)),
     }
 }
 
@@ -72,44 +91,4 @@ pub fn point_sprite_gs(code: &[u8]) -> Option<f32> {
 }
 
 #[cfg(test)]
-mod f32_text_tests {
-    use super::f32_text;
-    use proptest::prelude::*;
-
-    /// Tint's rule: the text as a double must not exceed f32's range, and must still name the
-    /// same f32
-    fn tint_accepts(t: &str, f: f32) -> bool {
-        let d: f64 = t.parse().unwrap();
-        d.abs() <= f32::MAX as f64 && d as f32 == f && (d as f32).to_bits() == f.to_bits()
-    }
-
-    #[test]
-    fn largest_values() {
-        assert_eq!(f32_text(f32::MAX), "3.4028234663852886e38");
-        assert_eq!(f32_text(f32::MIN), "-3.4028234663852886e38");
-        assert_eq!(f32_text(1.5), "1.5");
-        assert_eq!(f32_text(-0.0), "-0.0");
-        for f in [f32::MAX, f32::MIN, f32::from_bits(0x7f7f_fffe), f32::MIN_POSITIVE, f32::from_bits(1), 3.402823466e38] {
-            assert!(tint_accepts(&f32_text(f), f), "{f:?} -> {}", f32_text(f));
-        }
-    }
-
-    proptest! {
-        #[test]
-        fn every_finite_value_reads_back(bits in any::<u32>()) {
-            let f = f32::from_bits(bits);
-            prop_assume!(f.is_finite());
-            let t = f32_text(f);
-            prop_assert!(tint_accepts(&t, f), "{:?} -> {}", f, t);
-        }
-        // the top of the range, where shortest decimals round up past f32::MAX
-        #[test]
-        fn top_of_the_range_reads_back(k in 0u32..0x10000) {
-            for sign in [0u32, 0x8000_0000] {
-                let f = f32::from_bits((0x7f7f_ffff - k) | sign);
-                let t = f32_text(f);
-                prop_assert!(tint_accepts(&t, f), "{:?} -> {}", f, t);
-            }
-        }
-    }
-}
+mod f32_text_tests;

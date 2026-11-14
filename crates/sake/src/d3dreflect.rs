@@ -347,15 +347,17 @@ fn parse(code: &[u8], fl: u8) -> Option<Refl> {
     if let Some(s) = shdr {
         if let Ok(p) = dxwgsl::tpf::decode(s) {
             for i in &p.insts {
-                match i.op {
-                    0x68 => r.temps = i.extra.first().copied().unwrap_or(0),
-                    0x9b => {
-                        if i.extra.len() >= 3 {
-                            r.threads = [i.extra[0], i.extra[1], i.extra[2]];
-                        }
-                    }
-                    0x35 | 0x58..=0x6a | 0x8f..=0xa2 => {}
-                    _ => r.insts += 1,
+                use dxwgsl::tpf::{Opcode, Shape};
+                if i.op == Opcode::DclTemps {
+                    r.temps = i.extra.first().copied().unwrap_or(0);
+                }
+                if i.op == Opcode::DclThreadGroup && i.extra.len() >= 3 {
+                    r.threads = [i.extra[0], i.extra[1], i.extra[2]];
+                }
+                // (the instruction count: declarations and custom data left out)
+                match i.op.shape() {
+                    Shape::Decl(_) | Shape::Data => {}
+                    Shape::Ops(_) | Shape::Unchecked => r.insts += 1,
                 }
             }
         }

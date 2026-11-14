@@ -1,29 +1,61 @@
 //! Shader model 4/5 bytecode (the "tokenized program format" of DXBC's SHDR/SHEX chunk),
 //! decoded into instructions with their operands. wgsl.rs writes WGSL of them.
 
-/// Program types in the version token
-pub const PIXEL: u32 = 0;
-pub const VERTEX: u32 = 1;
-pub const COMPUTE: u32 = 5;
+/// A program type (the version token's bits 16-31): its own number, not a register or opcode
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ProgramType(pub u32);
+
+impl std::fmt::Display for ProgramType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// An operand type (D3D10_SB_OPERAND_TYPE, bits 12-19 of the operand token): its own number
+/// space, so a register number or opcode in its place does not compile
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct OpType(pub u32);
+
+impl std::fmt::Display for OpType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl OpType {
+    /// vThreadID, vThreadGroupID, vThreadIDInGroup, vThreadIDInGroupFlattened
+    pub fn is_compute_input(self) -> bool {
+        matches!(self, THREAD_ID | THREAD_GROUP_ID | THREAD_ID_IN_GROUP | THREAD_ID_IN_GROUP_FLATTENED)
+    }
+}
+
+// program types
+pub const PIXEL: ProgramType = ProgramType(0);
+pub const VERTEX: ProgramType = ProgramType(1);
+pub const COMPUTE: ProgramType = ProgramType(5);
 
 // operand types
-pub const TEMP: u32 = 0;
-pub const INPUT: u32 = 1;
-pub const OUTPUT: u32 = 2;
-pub const INDEXABLE_TEMP: u32 = 3;
-pub const IMM32: u32 = 4;
-pub const IMM64: u32 = 5;
-pub const SAMPLER: u32 = 6;
-pub const RESOURCE: u32 = 7;
-pub const CONSTANT_BUFFER: u32 = 8;
-pub const IMM_CONSTANT_BUFFER: u32 = 9;
-pub const OUTPUT_DEPTH: u32 = 12;
-pub const NULL: u32 = 13;
-pub const OUTPUT_COVERAGE_MASK: u32 = 15;
-pub const OUTPUT_DEPTH_GE: u32 = 38;
-pub const UAV: u32 = 30;
-pub const TGSM: u32 = 31;
-pub const OUTPUT_DEPTH_LE: u32 = 39;
+pub const TEMP: OpType = OpType(0);
+pub const INPUT: OpType = OpType(1);
+pub const OUTPUT: OpType = OpType(2);
+pub const INDEXABLE_TEMP: OpType = OpType(3);
+pub const IMM32: OpType = OpType(4);
+pub const IMM64: OpType = OpType(5);
+pub const SAMPLER: OpType = OpType(6);
+pub const RESOURCE: OpType = OpType(7);
+pub const CONSTANT_BUFFER: OpType = OpType(8);
+pub const IMM_CONSTANT_BUFFER: OpType = OpType(9);
+pub const OUTPUT_DEPTH: OpType = OpType(12);
+pub const NULL: OpType = OpType(13);
+pub const OUTPUT_COVERAGE_MASK: OpType = OpType(15);
+pub const OUTPUT_DEPTH_GE: OpType = OpType(38);
+pub const UAV: OpType = OpType(30);
+pub const TGSM: OpType = OpType(31);
+pub const THREAD_ID: OpType = OpType(32);
+pub const THREAD_GROUP_ID: OpType = OpType(33);
+pub const THREAD_ID_IN_GROUP: OpType = OpType(34);
+pub const THREAD_ID_IN_GROUP_FLATTENED: OpType = OpType(35);
+pub const OUTPUT_DEPTH_LE: OpType = OpType(39);
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Sel {
@@ -45,7 +77,7 @@ pub enum Index {
 
 #[derive(Clone, Debug)]
 pub struct Operand {
-    pub ty: u32,
+    pub ty: OpType,
     /// 0, 1 or 4
     pub comps: u8,
     pub sel: Sel,
@@ -69,7 +101,7 @@ impl Operand {
         match self.sel {
             Sel::Mask(m) => m,
             Sel::Scalar(c) => 1 << c,
-            _ => if self.comps == 1 { 1 } else { 0xf },
+            Sel::Swizzle(_) | Sel::None => if self.comps == 1 { 1 } else { 0xf },
         }
     }
     /// The swizzle (sources): source component for each of x, y, z, w.
@@ -77,14 +109,16 @@ impl Operand {
         match self.sel {
             Sel::Swizzle(s) => s,
             Sel::Scalar(c) => [c; 4],
-            _ => [0, 1, 2, 3],
+            Sel::Mask(_) | Sel::None => [0, 1, 2, 3],
         }
     }
 }
 
 #[derive(Clone, Debug)]
 pub struct Inst {
-    pub op: u32,
+    pub op: Opcode,
+    /// the opcode's number (bits 0-10 of its token: what messages show; any number for Unknown)
+    pub code: u32,
     /// the opcode token's bits 11-23 (opcode-specific controls)
     pub ctl: u32,
     pub sat: bool,
@@ -100,48 +134,284 @@ pub struct Inst {
 }
 
 pub struct Program {
-    pub kind: u32,
+    pub kind: ProgramType,
     pub major: u32,
     pub insts: Vec<Inst>,
 }
 
-// opcodes the decoder treats specially
-pub const OP_CUSTOMDATA: u32 = 0x35;
-pub const OP_DCL_RESOURCE: u32 = 0x58;
-pub const OP_DCL_CONSTANT_BUFFER: u32 = 0x59;
-pub const OP_DCL_SAMPLER: u32 = 0x5a;
-pub const OP_DCL_INDEX_RANGE: u32 = 0x5b;
-pub const OP_DCL_INPUT: u32 = 0x5f;
-pub const OP_DCL_INPUT_SGV: u32 = 0x60;
-pub const OP_DCL_INPUT_SIV: u32 = 0x61;
-pub const OP_DCL_INPUT_PS: u32 = 0x62;
-pub const OP_DCL_INPUT_PS_SGV: u32 = 0x63;
-pub const OP_DCL_INPUT_PS_SIV: u32 = 0x64;
-pub const OP_DCL_OUTPUT: u32 = 0x65;
-pub const OP_DCL_OUTPUT_SGV: u32 = 0x66;
-pub const OP_DCL_OUTPUT_SIV: u32 = 0x67;
-pub const OP_DCL_TEMPS: u32 = 0x68;
-pub const OP_DCL_INDEXABLE_TEMP: u32 = 0x69;
-pub const OP_DCL_GLOBAL_FLAGS: u32 = 0x6a;
-pub const OP_DCL_RESOURCE_RAW: u32 = 0xa1;
-pub const OP_DCL_RESOURCE_STRUCTURED: u32 = 0xa2;
+/// How the decoder reads an instruction's words.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Shape {
+    /// an instruction with this many operands (a program that gives another count is rejected)
+    Ops(usize),
+    /// a declaration: this many operands, then words of its own (Inst::extra)
+    Decl(usize),
+    /// OP_CUSTOMDATA: a length, then data (Inst::data)
+    Data,
+    /// not checked: operands up to the instruction's end (the hull, geometry, double and atomic
+    /// instructions wgsl.rs does not translate, and unknown opcodes)
+    Unchecked,
+}
 
-/// The operand count of each instruction (d3d11TokenizedProgramFormat.hpp; declarations and
-/// the hull/geometry shader instructions left out): a program that gives another count is
-/// rejected.
-pub fn arity(op: u32) -> Option<usize> {
-    Some(match op {
-        0x02 | 0x07 | 0x09 | 0x0a | 0x12 | 0x13 | 0x14 | 0x15 | 0x16 | 0x17 | 0x30 | 0x3a | 0x3e | 0xbe => 0,
-        0x03 | 0x04 | 0x06 | 0x08 | 0x0d | 0x1f | 0x2c | 0x3f | 0x4c => 1,
-        0x05 | 0x0b | 0x0c | 0x19 | 0x1a | 0x1b | 0x1c | 0x28 | 0x2b | 0x2f | 0x36 | 0x3b | 0x40..=0x44 | 0x4b | 0x56 | 0x6f | 0x79..=0x7d | 0x81..=0x83
-        | 0x86..=0x89 | 0x8d => 2,
-        0x00 | 0x01 | 0x0e | 0x0f | 0x10 | 0x11 | 0x18 | 0x1d | 0x1e | 0x20 | 0x21 | 0x22 | 0x24 | 0x25 | 0x27 | 0x29 | 0x2a | 0x2d | 0x31 | 0x33 | 0x34
-        | 0x38 | 0x39 | 0x3c | 0x3d | 0x4d | 0x4f | 0x50 | 0x53 | 0x54 | 0x55 | 0x57 | 0x6e | 0xa3..=0xa6 => 3,
-        0x23 | 0x26 | 0x2e | 0x32 | 0x37 | 0x45 | 0x4e | 0x51 | 0x52 | 0x6c | 0x6d | 0x84 | 0x85 | 0x8a | 0x8b | 0xa7 | 0xa8 => 4,
-        0x46 | 0x47 | 0x48 | 0x4a | 0x7e | 0x7f | 0x8c | 0x8e => 5,
-        0x49 | 0x80 => 6,
-        _ => return None,
-    })
+macro_rules! opcodes {
+    ($($name:ident = $code:literal => $shape:ident $(($n:literal))?,)*) => {
+        /// An instruction's opcode (D3D10_SB_OPCODE_TYPE and D3D11_SB_OPCODE_TYPE,
+        /// d3d11TokenizedProgramFormat.hpp): a match on it names every one, so a new opcode is
+        /// a compile error wherever instructions are told apart.
+        #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+        pub enum Opcode {
+            $($name,)*
+            /// none of those (Inst::code has the number)
+            Unknown,
+        }
+
+        impl Opcode {
+            pub fn from_code(c: u32) -> Opcode {
+                match c {
+                    $($code => Opcode::$name,)*
+                    _ => Opcode::Unknown,
+                }
+            }
+
+            /// How its words are read (the operand counts: d3d11TokenizedProgramFormat.hpp)
+            pub fn shape(self) -> Shape {
+                match self {
+                    $(Opcode::$name => Shape::$shape $(($n))?,)*
+                    Opcode::Unknown => Shape::Unchecked,
+                }
+            }
+        }
+    };
+}
+
+opcodes! {
+    Add = 0x00 => Ops(3),
+    And = 0x01 => Ops(3),
+    Break = 0x02 => Ops(0),
+    Breakc = 0x03 => Ops(1),
+    Call = 0x04 => Ops(1),
+    Callc = 0x05 => Ops(2),
+    Case = 0x06 => Ops(1),
+    Continue = 0x07 => Ops(0),
+    Continuec = 0x08 => Ops(1),
+    Cut = 0x09 => Ops(0),
+    Default = 0x0a => Ops(0),
+    DerivRtx = 0x0b => Ops(2),
+    DerivRty = 0x0c => Ops(2),
+    Discard = 0x0d => Ops(1),
+    Div = 0x0e => Ops(3),
+    Dp2 = 0x0f => Ops(3),
+    Dp3 = 0x10 => Ops(3),
+    Dp4 = 0x11 => Ops(3),
+    Else = 0x12 => Ops(0),
+    Emit = 0x13 => Ops(0),
+    EmitThenCut = 0x14 => Ops(0),
+    EndIf = 0x15 => Ops(0),
+    EndLoop = 0x16 => Ops(0),
+    EndSwitch = 0x17 => Ops(0),
+    Eq = 0x18 => Ops(3),
+    Exp = 0x19 => Ops(2),
+    Frc = 0x1a => Ops(2),
+    Ftoi = 0x1b => Ops(2),
+    Ftou = 0x1c => Ops(2),
+    Ge = 0x1d => Ops(3),
+    Iadd = 0x1e => Ops(3),
+    If = 0x1f => Ops(1),
+    Ieq = 0x20 => Ops(3),
+    Ige = 0x21 => Ops(3),
+    Ilt = 0x22 => Ops(3),
+    Imad = 0x23 => Ops(4),
+    Imax = 0x24 => Ops(3),
+    Imin = 0x25 => Ops(3),
+    Imul = 0x26 => Ops(4),
+    Ine = 0x27 => Ops(3),
+    Ineg = 0x28 => Ops(2),
+    Ishl = 0x29 => Ops(3),
+    Ishr = 0x2a => Ops(3),
+    Itof = 0x2b => Ops(2),
+    Label = 0x2c => Ops(1),
+    Ld = 0x2d => Ops(3),
+    LdMs = 0x2e => Ops(4),
+    Log = 0x2f => Ops(2),
+    Loop = 0x30 => Ops(0),
+    Lt = 0x31 => Ops(3),
+    Mad = 0x32 => Ops(4),
+    Min = 0x33 => Ops(3),
+    Max = 0x34 => Ops(3),
+    CustomData = 0x35 => Data,
+    Mov = 0x36 => Ops(2),
+    Movc = 0x37 => Ops(4),
+    Mul = 0x38 => Ops(3),
+    Ne = 0x39 => Ops(3),
+    Nop = 0x3a => Ops(0),
+    Not = 0x3b => Ops(2),
+    Or = 0x3c => Ops(3),
+    ResInfo = 0x3d => Ops(3),
+    Ret = 0x3e => Ops(0),
+    Retc = 0x3f => Ops(1),
+    RoundNe = 0x40 => Ops(2),
+    RoundNi = 0x41 => Ops(2),
+    RoundPi = 0x42 => Ops(2),
+    RoundZ = 0x43 => Ops(2),
+    Rsq = 0x44 => Ops(2),
+    Sample = 0x45 => Ops(4),
+    SampleC = 0x46 => Ops(5),
+    SampleCLz = 0x47 => Ops(5),
+    SampleL = 0x48 => Ops(5),
+    SampleD = 0x49 => Ops(6),
+    SampleB = 0x4a => Ops(5),
+    Sqrt = 0x4b => Ops(2),
+    Switch = 0x4c => Ops(1),
+    SinCos = 0x4d => Ops(3),
+    Udiv = 0x4e => Ops(4),
+    Ult = 0x4f => Ops(3),
+    Uge = 0x50 => Ops(3),
+    Umul = 0x51 => Ops(4),
+    Umad = 0x52 => Ops(4),
+    Umax = 0x53 => Ops(3),
+    Umin = 0x54 => Ops(3),
+    Ushr = 0x55 => Ops(3),
+    Utof = 0x56 => Ops(2),
+    Xor = 0x57 => Ops(3),
+    DclResource = 0x58 => Decl(1),
+    DclConstantBuffer = 0x59 => Decl(1),
+    DclSampler = 0x5a => Decl(1),
+    DclIndexRange = 0x5b => Decl(1),
+    DclGsOutputPrimitiveTopology = 0x5c => Decl(0),
+    DclGsInputPrimitive = 0x5d => Decl(0),
+    DclMaxOutputVertexCount = 0x5e => Decl(0),
+    DclInput = 0x5f => Decl(1),
+    DclInputSgv = 0x60 => Decl(1),
+    DclInputSiv = 0x61 => Decl(1),
+    DclInputPs = 0x62 => Decl(1),
+    DclInputPsSgv = 0x63 => Decl(1),
+    DclInputPsSiv = 0x64 => Decl(1),
+    DclOutput = 0x65 => Decl(1),
+    DclOutputSgv = 0x66 => Decl(1),
+    DclOutputSiv = 0x67 => Decl(1),
+    DclTemps = 0x68 => Decl(0),
+    DclIndexableTemp = 0x69 => Decl(0),
+    DclGlobalFlags = 0x6a => Decl(0),
+    Reserved10 = 0x6b => Unchecked,
+    Lod = 0x6c => Ops(4),
+    Gather4 = 0x6d => Ops(4),
+    SamplePos = 0x6e => Ops(3),
+    SampleInfo = 0x6f => Ops(2),
+    Reserved101 = 0x70 => Unchecked,
+    HsDecls = 0x71 => Unchecked,
+    HsControlPointPhase = 0x72 => Unchecked,
+    HsForkPhase = 0x73 => Unchecked,
+    HsJoinPhase = 0x74 => Unchecked,
+    EmitStream = 0x75 => Unchecked,
+    CutStream = 0x76 => Unchecked,
+    EmitThenCutStream = 0x77 => Unchecked,
+    InterfaceCall = 0x78 => Unchecked,
+    BufInfo = 0x79 => Ops(2),
+    DerivRtxCoarse = 0x7a => Ops(2),
+    DerivRtxFine = 0x7b => Ops(2),
+    DerivRtyCoarse = 0x7c => Ops(2),
+    DerivRtyFine = 0x7d => Ops(2),
+    Gather4C = 0x7e => Ops(5),
+    Gather4Po = 0x7f => Ops(5),
+    Gather4PoC = 0x80 => Ops(6),
+    Rcp = 0x81 => Ops(2),
+    F32ToF16 = 0x82 => Ops(2),
+    F16ToF32 = 0x83 => Ops(2),
+    Uaddc = 0x84 => Ops(4),
+    Usubb = 0x85 => Ops(4),
+    CountBits = 0x86 => Ops(2),
+    FirstBitHi = 0x87 => Ops(2),
+    FirstBitLo = 0x88 => Ops(2),
+    FirstBitShi = 0x89 => Ops(2),
+    Ubfe = 0x8a => Ops(4),
+    Ibfe = 0x8b => Ops(4),
+    Bfi = 0x8c => Ops(5),
+    Bfrev = 0x8d => Ops(2),
+    Swapc = 0x8e => Ops(5),
+    DclStream = 0x8f => Decl(0),
+    DclFunctionBody = 0x90 => Decl(0),
+    DclFunctionTable = 0x91 => Decl(0),
+    DclInterface = 0x92 => Decl(0),
+    DclInputControlPointCount = 0x93 => Decl(0),
+    DclOutputControlPointCount = 0x94 => Decl(0),
+    DclTessDomain = 0x95 => Decl(0),
+    DclTessPartitioning = 0x96 => Decl(0),
+    DclTessOutputPrimitive = 0x97 => Decl(0),
+    DclHsMaxTessFactor = 0x98 => Decl(0),
+    DclHsForkPhaseInstanceCount = 0x99 => Decl(0),
+    DclHsJoinPhaseInstanceCount = 0x9a => Decl(0),
+    DclThreadGroup = 0x9b => Decl(0),
+    DclUavTyped = 0x9c => Decl(1),
+    DclUavRaw = 0x9d => Decl(1),
+    DclUavStructured = 0x9e => Decl(1),
+    DclTgsmRaw = 0x9f => Decl(1),
+    DclTgsmStructured = 0xa0 => Decl(1),
+    DclResourceRaw = 0xa1 => Decl(1),
+    DclResourceStructured = 0xa2 => Decl(1),
+    LdUavTyped = 0xa3 => Ops(3),
+    StoreUavTyped = 0xa4 => Ops(3),
+    LdRaw = 0xa5 => Ops(3),
+    StoreRaw = 0xa6 => Ops(3),
+    LdStructured = 0xa7 => Ops(4),
+    StoreStructured = 0xa8 => Ops(4),
+    AtomicAnd = 0xa9 => Unchecked,
+    AtomicOr = 0xaa => Unchecked,
+    AtomicXor = 0xab => Unchecked,
+    AtomicCmpStore = 0xac => Unchecked,
+    AtomicIadd = 0xad => Unchecked,
+    AtomicImax = 0xae => Unchecked,
+    AtomicImin = 0xaf => Unchecked,
+    AtomicUmax = 0xb0 => Unchecked,
+    AtomicUmin = 0xb1 => Unchecked,
+    ImmAtomicAlloc = 0xb2 => Unchecked,
+    ImmAtomicConsume = 0xb3 => Unchecked,
+    ImmAtomicIadd = 0xb4 => Unchecked,
+    ImmAtomicAnd = 0xb5 => Unchecked,
+    ImmAtomicOr = 0xb6 => Unchecked,
+    ImmAtomicXor = 0xb7 => Unchecked,
+    ImmAtomicExch = 0xb8 => Unchecked,
+    ImmAtomicCmpExch = 0xb9 => Unchecked,
+    ImmAtomicImax = 0xba => Unchecked,
+    ImmAtomicImin = 0xbb => Unchecked,
+    ImmAtomicUmax = 0xbc => Unchecked,
+    ImmAtomicUmin = 0xbd => Unchecked,
+    Sync = 0xbe => Ops(0),
+    Dadd = 0xbf => Unchecked,
+    Dmax = 0xc0 => Unchecked,
+    Dmin = 0xc1 => Unchecked,
+    Dmul = 0xc2 => Unchecked,
+    Deq = 0xc3 => Unchecked,
+    Dge = 0xc4 => Unchecked,
+    Dlt = 0xc5 => Unchecked,
+    Dne = 0xc6 => Unchecked,
+    Dmov = 0xc7 => Unchecked,
+    Dmovc = 0xc8 => Unchecked,
+    Dtof = 0xc9 => Unchecked,
+    Ftod = 0xca => Unchecked,
+    EvalSnapped = 0xcb => Unchecked,
+    EvalSampleIndex = 0xcc => Unchecked,
+    EvalCentroid = 0xcd => Unchecked,
+    DclGsInstanceCount = 0xce => Unchecked,
+    Abort = 0xcf => Unchecked,
+    DebugBreak = 0xd0 => Unchecked,
+    Reserved11 = 0xd1 => Unchecked,
+    Ddiv = 0xd2 => Unchecked,
+    Dfma = 0xd3 => Unchecked,
+    Drcp = 0xd4 => Unchecked,
+    Msad = 0xd5 => Unchecked,
+    Dtoi = 0xd6 => Unchecked,
+    Dtou = 0xd7 => Unchecked,
+    Itod = 0xd8 => Unchecked,
+    Utod = 0xd9 => Unchecked,
+}
+
+/// The operand count of each instruction (declarations and the hull/geometry shader
+/// instructions left out): a program that gives another count is rejected.
+pub fn arity(op: Opcode) -> Option<usize> {
+    match op.shape() {
+        Shape::Ops(n) => Some(n),
+        Shape::Decl(_) | Shape::Data | Shape::Unchecked => None,
+    }
 }
 
 struct Reader<'a> {
@@ -162,12 +432,16 @@ impl Reader<'_> {
     fn operand(&mut self) -> Result<Operand, String> {
         let t = self.next()?;
         let num = t & 3;
-        let comps = [0u8, 1, 4, 4][num as usize];
+        let comps: u8 = match num {
+            0 => 0,
+            1 => 1,
+            _ => 4,
+        };
         let sel = if num == 2 {
             match (t >> 2) & 3 {
-                0 => Sel::Mask(((t >> 4) & 0xf) as u8),
-                1 => Sel::Swizzle([((t >> 4) & 3) as u8, ((t >> 6) & 3) as u8, ((t >> 8) & 3) as u8, ((t >> 10) & 3) as u8]),
-                _ => Sel::Scalar(((t >> 4) & 3) as u8),
+                0 => Sel::Mask(crate::lo8((t >> 4) & 0xf)),
+                1 => Sel::Swizzle([4, 6, 8, 10].map(|sh| crate::lo8((t >> sh) & 3))),
+                _ => Sel::Scalar(crate::lo8((t >> 4) & 3)),
             }
         } else {
             Sel::None
@@ -175,14 +449,14 @@ impl Reader<'_> {
         if num == 3 {
             return Err("N-component operand".into());
         }
-        let ty = (t >> 12) & 0xff;
+        let ty = OpType((t >> 12) & 0xff);
         let dims = (t >> 20) & 3;
         let mut modifier = 0;
         if t >> 31 != 0 {
             let mut e = self.next()?;
             loop {
                 if e & 0x3f == 1 {
-                    modifier = ((e >> 6) & 0xff) as u8;
+                    modifier = crate::lo8(e >> 6);
                 }
                 if e >> 31 == 0 {
                     break;
@@ -231,16 +505,17 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
     if w.len() < 2 {
         return Err("empty shader".into());
     }
-    let kind = w[0] >> 16;
+    let kind = ProgramType(w[0] >> 16);
     let major = (w[0] >> 4) & 0xf;
-    let len = (w[1] as usize).min(w.len());
+    let len = crate::us(w[1]).min(w.len());
     let mut insts = Vec::new();
     let mut p = 2;
     while p < len {
         let t = w[p];
-        let op = t & 0x7ff;
-        if op == OP_CUSTOMDATA {
-            let n = *w.get(p + 1).ok_or("truncated customdata")? as usize;
+        let code = t & 0x7ff;
+        let op = Opcode::from_code(code);
+        if op.shape() == Shape::Data {
+            let n = crate::us(*w.get(p + 1).ok_or("truncated customdata")?);
             // (checked: on wasm32 `p + n` with n near 2^32 wrapped below `len` and the slice
             // below panicked, the VM gone, review A-7)
             if n < 2 || p.checked_add(n).is_none_or(|e| e > len) {
@@ -248,6 +523,7 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
             }
             insts.push(Inst {
                 op,
+                code,
                 ctl: t >> 11,
                 sat: false,
                 nz: false,
@@ -260,13 +536,14 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
             continue;
         }
         // (bits 24..30: the length in dwords)
-        let n = ((t >> 24) & 0x7f) as usize;
+        let n = crate::us((t >> 24) & 0x7f);
         if n == 0 || p + n > len {
             return Err(format!("bad instruction length at {p}"));
         }
         let mut r = Reader { w: &w, p: p + 1, end: p + n };
         let mut inst = Inst {
             op,
+            code,
             ctl: (t >> 11) & 0x1fff,
             sat: (t >> 13) & 1 != 0,
             nz: (t >> 18) & 1 != 0,
@@ -279,7 +556,7 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
             loop {
                 let e = r.next()?;
                 if e & 0x3f == 1 {
-                    let s4 = |v: u32| ((v as i32) << 28) >> 28;
+                    let s4 = |v: u32| (v.cast_signed() << 28) >> 28;
                     inst.offset = [s4(e >> 9), s4(e >> 13), s4(e >> 17)];
                 }
                 if e >> 31 == 0 {
@@ -288,13 +565,9 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
             }
         }
         // declarations that are not just operands
-        let (operands, words) = match op {
-            OP_DCL_TEMPS | OP_DCL_GLOBAL_FLAGS => (0, true),
-            OP_DCL_INDEXABLE_TEMP => (0, true),
-            0x5c..=0x5e | 0x93..=0x9b | 0x8f | 0x90..=0x92 => (0, true),
-            OP_DCL_RESOURCE | OP_DCL_CONSTANT_BUFFER | OP_DCL_SAMPLER | OP_DCL_INDEX_RANGE | OP_DCL_INPUT..=OP_DCL_OUTPUT_SIV
-            | OP_DCL_RESOURCE_RAW | OP_DCL_RESOURCE_STRUCTURED | 0x9c..=0xa0 => (1, true),
-            _ => (usize::MAX, false),
+        let (operands, words) = match op.shape() {
+            Shape::Decl(n) => (n, true),
+            Shape::Ops(_) | Shape::Data | Shape::Unchecked => (usize::MAX, false),
         };
         let mut k = 0;
         let mut last = r.p;
@@ -304,7 +577,7 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
             k += 1;
         }
         // fxc ends samplepos with a zero word past its three operands (its length counts it)
-        if op == 0x6e && inst.ops.len() == 4 && r.p == r.end && r.end - last == 1 && r.w[last] == 0 {
+        if op == Opcode::SamplePos && inst.ops.len() == 4 && r.p == r.end && r.end - last == 1 && r.w[last] == 0 {
             inst.ops.pop();
         }
         if words {
@@ -313,11 +586,11 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
             }
         }
         if operands == 1 && inst.ops.len() != 1 {
-            return Err(format!("declaration {op:#x} at {p} without its operand"));
+            return Err(format!("declaration {code:#x} at {p} without its operand"));
         }
         if let Some(k) = arity(op) {
             if inst.ops.len() != k || r.p != r.end {
-                return Err(format!("instruction {op:#x} at {p}: {} operands, {k} wanted", inst.ops.len()));
+                return Err(format!("instruction {code:#x} at {p}: {} operands, {k} wanted", inst.ops.len()));
             }
         }
         p += n;
@@ -327,55 +600,4 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use proptest::prelude::*;
-
-    fn shdr(words: &[u32]) -> Vec<u8> {
-        let mut w = vec![0x0040_0050u32, words.len() as u32 + 2];
-        w.extend(words);
-        w.iter().flat_map(|x| x.to_le_bytes()).collect()
-    }
-
-    /// Review A-7: an OP_CUSTOMDATA length near 2^32 is an error (on wasm32 `p + n` wrapped
-    /// below the program's length and the slice panicked); a good one still decodes.
-    #[test]
-    fn customdata_lengths() {
-        for n in [0u32, 1, 5, 0xffff_ffff, 0xffff_fffe, 0xffff_fffd, 0x8000_0000] {
-            assert!(super::decode(&shdr(&[super::OP_CUSTOMDATA, n, 1, 2])).is_err(), "{n:#x}");
-        }
-        let p = super::decode(&shdr(&[super::OP_CUSTOMDATA, 4, 7, 8])).unwrap();
-        assert_eq!(p.insts[0].data, [7, 8]);
-    }
-
-    proptest! {
-        /// Any words: decode returns, no panic.
-        #[test]
-        fn any_words(words in proptest::collection::vec(prop_oneof![any::<u32>(), Just(super::OP_CUSTOMDATA), 0u32..8, Just(u32::MAX)], 0..40)) {
-            let _ = super::decode(&shdr(&words));
-        }
-    }
-
-    /// (every compute instruction wgsl translates has its operand count checked: the fuzzer's
-    /// ld_structured with 3 operands indexed past them)
-    #[test]
-    fn compute_instructions_have_their_arity() {
-        for (op, k) in [(0xa3, 3), (0xa4, 3), (0xa5, 3), (0xa6, 3), (0xa7, 4), (0xa8, 4), (0xbe, 0)] {
-            assert_eq!(super::arity(op), Some(k), "{op:#x}");
-        }
-    }
-
-    /// fxc's own bytecode (D3DCompile on Windows, winref d3d11's MSAA shaders, ps_4_1):
-    /// samplepos carries a zero word past its operands; ld2dms and sampleinfo as documented
-    #[test]
-    fn fxc_multisample_shaders() {
-        for (name, code, want) in [
-            ("samplepos", &include_bytes!("fxc/ps41_samplepos.dxbc")[..], &["textureNumSamples", "d3d_samplepos"][..]),
-            ("ld2dms", &include_bytes!("fxc/ps41_ld2dms.dxbc")[..], &["textureLoad"][..]),
-        ] {
-            let w = crate::translate(code, true, None).unwrap_or_else(|e| panic!("{name}: {e}"));
-            for s in want {
-                assert!(w.code.contains(s), "{name}: no {s} in\n{}", w.code);
-            }
-        }
-    }
-}
+mod tests;

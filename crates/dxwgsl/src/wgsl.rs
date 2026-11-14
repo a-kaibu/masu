@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 
 use crate::dxbc::{Container, SigElement};
 use crate::{Binding, Wgsl};
-use crate::tpf::{self, Index, Inst, Operand, Program};
+use crate::tpf::{self, Index, Inst, Opcode, Operand, Program};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum K {
@@ -54,7 +54,7 @@ fn bits(mask: u32) -> Vec<u8> {
 }
 
 fn letters(c: &[u8]) -> String {
-    c.iter().map(|&c| XYZW[c as usize]).collect()
+    c.iter().map(|&c| XYZW[usize::from(c)]).collect()
 }
 
 /// A pixel shader input register passed between the stages.
@@ -93,7 +93,7 @@ struct W {
     /// groupshared memory: dwords of each g register, and the structured ones' strides
     tgsm: BTreeMap<u32, (u32, u32)>,
     /// compute inputs (register types 32..35) read
-    sys_in: std::collections::BTreeSet<u32>,
+    sys_in: std::collections::BTreeSet<tpf::OpType>,
     used_u: std::collections::BTreeSet<u32>,
     /// UAVs read (from a copy taken before the dispatch: binding 300 + n)
     used_ur: std::collections::BTreeSet<u32>,
@@ -125,11 +125,9 @@ struct W {
     body: String,
     depth: usize,
     tmp: u32,
-    /// open switch statements: (labels waiting for a body, a case is open, a default was given)
-    switches: Vec<(Vec<String>, bool, bool)>,
-    /// what each open block is: b'i' if, b'e' its else, b'l' loop, b's' switch
-    blocks: Vec<u8>,
-    last_op: u32,
+    /// the open blocks, innermost last
+    blocks: Vec<Block>,
+    last_op: Option<Opcode>,
     /// samplers addressing as WebGPU's can't (crate::addr), and the (texture, sampler) pairs
     /// sampled with them
     addr: Vec<crate::addr::Addr>,
@@ -142,13 +140,13 @@ type R<T> = Result<T, String>;
 fn declarations(w: &mut W, p: &Program) -> R<()> {
     for i in &p.insts {
         match i.op {
-            tpf::OP_DCL_TEMPS => w.temps = i.extra.first().copied().unwrap_or(0),
-            tpf::OP_DCL_INDEXABLE_TEMP => {
+            Opcode::DclTemps => w.temps = i.extra.first().copied().unwrap_or(0),
+            Opcode::DclIndexableTemp => {
                 if i.extra.len() >= 2 {
                     w.xs.insert(i.extra[0], i.extra[1]);
                 }
             }
-            tpf::OP_DCL_CONSTANT_BUFFER => {
+            Opcode::DclConstantBuffer => {
                 let o = &i.ops[0];
                 let size = match o.idx.get(1) {
                     Some(Index::Imm(n)) => *n,
@@ -156,12 +154,12 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
                 };
                 w.cbs.insert(o.reg(), size.clamp(1, 4096));
             }
-            tpf::OP_CUSTOMDATA => {
+            Opcode::CustomData => {
                 if i.ctl == 3 {
                     w.icb = i.data.clone();
                 }
             }
-            tpf::OP_DCL_RESOURCE => {
+            Opcode::DclResource => {
                 let ret = match i.extra.first().map(|r| r & 0xf) {
                     Some(3) => K::I,
                     Some(4) => K::U,
@@ -169,36 +167,36 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
                 };
                 w.res.insert(i.ops[0].reg(), Res { dim: i.ctl & 0xf, ret, depth: false });
             }
-            tpf::OP_DCL_SAMPLER => {
+            Opcode::DclSampler => {
                 w.samplers.insert(i.ops[0].reg(), i.ctl & 0xf == 1);
             }
-            tpf::OP_DCL_INPUT if (32..=35).contains(&i.ops[0].ty) && p.kind == tpf::COMPUTE => {
+            Opcode::DclInput if i.ops[0].ty.is_compute_input() && p.kind == tpf::COMPUTE => {
                 w.sys_in.insert(i.ops[0].ty);
             }
-            tpf::OP_DCL_INPUT..=tpf::OP_DCL_INPUT_PS_SIV => {
+            Opcode::DclInput | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv => {
                 let o = &i.ops[0];
                 if o.ty != tpf::INPUT {
                     return Err(format!("input register type {}", o.ty));
                 }
-                let sysval = if matches!(i.op, tpf::OP_DCL_INPUT_SGV | tpf::OP_DCL_INPUT_SIV | tpf::OP_DCL_INPUT_PS_SGV | tpf::OP_DCL_INPUT_PS_SIV) {
+                let sysval = if matches!(i.op, Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv) {
                     i.extra.first().copied().unwrap_or(0)
                 } else {
                     0
                 };
-                let interp = if (tpf::OP_DCL_INPUT_PS..=tpf::OP_DCL_INPUT_PS_SIV).contains(&i.op) { i.ctl & 0xf } else { 0 };
+                let interp = if matches!(i.op, Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv) { i.ctl & 0xf } else { 0 };
                 let e = w.inputs.entry(o.reg()).or_insert(InDecl { mask: 0, sysval, interp });
-                e.mask |= o.mask() as u32;
+                e.mask |= u32::from(o.mask());
                 if sysval != 0 {
                     e.sysval = sysval;
                 }
             }
-            tpf::OP_DCL_OUTPUT..=tpf::OP_DCL_OUTPUT_SIV => {
+            Opcode::DclOutput | Opcode::DclOutputSgv | Opcode::DclOutputSiv => {
                 let o = &i.ops[0];
                 match o.ty {
                     tpf::OUTPUT => {
-                        let sysval = if i.op != tpf::OP_DCL_OUTPUT { i.extra.first().copied().unwrap_or(0) } else { 0 };
+                        let sysval = if i.op != Opcode::DclOutput { i.extra.first().copied().unwrap_or(0) } else { 0 };
                         let e = w.outputs.entry(o.reg()).or_insert((0, sysval));
-                        e.0 |= o.mask() as u32;
+                        e.0 |= u32::from(o.mask());
                         if sysval != 0 {
                             e.1 = sysval;
                         }
@@ -208,15 +206,15 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
                     t => return Err(format!("output register type {t}")),
                 }
             }
-            tpf::OP_DCL_INDEX_RANGE => return Err("indexed input/output ranges".into()),
-            0x9b if p.kind == tpf::COMPUTE => {
+            Opcode::DclIndexRange => return Err("indexed input/output ranges".into()),
+            Opcode::DclThreadGroup if p.kind == tpf::COMPUTE => {
                 let [x, y, z] = i.extra[..] else { return Err("dcl_thread_group without 3 sizes".into()) };
                 if x == 0 || y == 0 || z == 0 || x > 1024 || y > 1024 || z > 64 || x * y * z > 1024 {
                     return Err(format!("thread group {x}x{y}x{z} past Direct3D's limits"));
                 }
                 w.threads = Some([x, y, z]);
             }
-            0x9c => {
+            Opcode::DclUavTyped => {
                 // (dimension in the control bits, the globally coherent flag above it)
                 let ret = match i.extra.first().map(|r| r & 0xf) {
                     Some(3) => K::I,
@@ -229,11 +227,11 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
                 }
                 w.uavs.insert(o.reg(), UavDecl { dim: i.ctl & 0x1f, ret });
             }
-            0x9f | 0xa0 => {
+            Opcode::DclTgsmRaw | Opcode::DclTgsmStructured => {
                 let o = &i.ops[0];
                 let (bytes, stride) = match (i.op, &i.extra[..]) {
-                    (0x9f, [b]) => (*b, 4),
-                    (0xa0, [s, n]) => (s.saturating_mul(*n), *s),
+                    (Opcode::DclTgsmRaw, [b]) => (*b, 4),
+                    (Opcode::DclTgsmStructured, [s, n]) => (s.saturating_mul(*n), *s),
                     _ => return Err("bad groupshared declaration".into()),
                 };
                 if o.ty != tpf::TGSM || bytes % 4 != 0 || stride % 4 != 0 || stride == 0 || bytes == 0 || bytes > 32768 {
@@ -241,10 +239,37 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
                 }
                 w.tgsm.insert(o.reg(), (bytes / 4, stride));
             }
-            tpf::OP_DCL_RESOURCE_RAW | tpf::OP_DCL_RESOURCE_STRUCTURED | 0x9d | 0x9e => {
+            Opcode::DclResourceRaw | Opcode::DclResourceStructured | Opcode::DclUavRaw | Opcode::DclUavStructured => {
                 return Err("raw/structured buffers and UAVs".into())
             }
-            _ => {}
+            Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc | Opcode::Case
+            | Opcode::Continue | Opcode::Continuec | Opcode::Cut | Opcode::Default | Opcode::DerivRtx | Opcode::DerivRty | Opcode::Discard
+            | Opcode::Div | Opcode::Dp2 | Opcode::Dp3 | Opcode::Dp4 | Opcode::Else | Opcode::Emit | Opcode::EmitThenCut
+            | Opcode::EndIf | Opcode::EndLoop | Opcode::EndSwitch | Opcode::Eq | Opcode::Exp | Opcode::Frc | Opcode::Ftoi
+            | Opcode::Ftou | Opcode::Ge | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige | Opcode::Ilt
+            | Opcode::Imad | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg | Opcode::Ishl
+            | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log | Opcode::Loop
+            | Opcode::Lt | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::Mov | Opcode::Movc | Opcode::Mul
+            | Opcode::Ne | Opcode::Nop | Opcode::Not | Opcode::Or | Opcode::ResInfo | Opcode::Ret | Opcode::Retc
+            | Opcode::RoundNe | Opcode::RoundNi | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq | Opcode::Sample | Opcode::SampleC
+            | Opcode::SampleCLz | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
+            | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax | Opcode::Umin
+            | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclGlobalFlags
+            | Opcode::Reserved10 | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
+            | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream | Opcode::InterfaceCall
+            | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine | Opcode::Gather4C | Opcode::Gather4Po
+            | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32 | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits
+            | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev
+            | Opcode::Swapc | Opcode::DclStream | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount
+            | Opcode::DclTessDomain | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+            | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured | Opcode::StoreStructured | Opcode::AtomicAnd
+            | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax
+            | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor
+            | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync
+            | Opcode::Dadd | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge | Opcode::Dlt
+            | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped | Opcode::EvalSampleIndex
+            | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11 | Opcode::Ddiv | Opcode::Dfma
+            | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {}
         }
     }
     if p.kind == tpf::COMPUTE {
@@ -258,7 +283,7 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
     check_registers(w, p)?;
     // compare sampling needs depth textures
     for i in &p.insts {
-        if matches!(i.op, 0x46 | 0x47 | 0x7e) {
+        if matches!(i.op, Opcode::SampleC | Opcode::SampleCLz | Opcode::Gather4C) {
             if let Some(r) = i.ops.get(2).and_then(|o| w.res.get_mut(&o.reg())) {
                 r.depth = true;
             }
@@ -277,7 +302,7 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
     }
     // (D3D11.3 spec: 4096 vectors of temps in all, r# and every x# together: so no shader asks
     // the GPU for 4096 arrays of 4096)
-    if w.xs.values().map(|&n| n as u64).sum::<u64>() + w.temps as u64 > 4096 {
+    if w.xs.values().map(|&n| u64::from(n)).sum::<u64>() + u64::from(w.temps) > 4096 {
         return Err("more temps than Direct3D allows (r# and x# together past 4096)".into());
     }
     if w.inputs.keys().chain(w.outputs.keys()).any(|&r| r >= 32) || w.cbs.keys().any(|&r| r >= 15) || w.res.keys().any(|&r| r >= 128) || w.samplers.keys().any(|&r| r >= 16) {
@@ -355,7 +380,7 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
             tpf::IMM_CONSTANT_BUFFER => {
                 // icb[] reads the shader's dcl_immediateConstantBuffer (customdata class 3):
                 // without one there is no icb array to read (fuzz: Formal shaders, seed 354)
-                let n = w.icb.len() as u32 / 4;
+                let n = u32::try_from(w.icb.len() / 4).unwrap_or(u32::MAX);
                 if n == 0 {
                     return Err("icb is not declared".into());
                 }
@@ -366,7 +391,7 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
                 }
                 1
             }
-            32..=35 => {
+            tpf::THREAD_ID | tpf::THREAD_GROUP_ID | tpf::THREAD_ID_IN_GROUP | tpf::THREAD_ID_IN_GROUP_FLATTENED => {
                 if !w.sys_in.contains(&o.ty) {
                     return Err(format!("compute input {} is not declared", o.ty));
                 }
@@ -427,6 +452,37 @@ pub fn varyings(ps: &[u8]) -> R<Vec<Varying>> {
     Ok(w.ps_varyings())
 }
 
+/// An open switch statement
+#[derive(Default)]
+struct Switch {
+    /// case labels waiting for a body
+    pending: Vec<String>,
+    /// a case is open
+    in_case: bool,
+    /// a default label was given
+    has_default: bool,
+}
+
+/// An open block of the program
+enum Block {
+    If,
+    /// an if's else
+    Else,
+    Loop,
+    Switch(Switch),
+}
+
+/// Which of the sample instructions (sample, sample_c, sample_c_lz, sample_l, sample_d, sample_b)
+#[derive(Clone, Copy)]
+enum Sampling {
+    Plain,
+    Compare,
+    CompareLevelZero,
+    Level,
+    Grad,
+    Bias,
+}
+
 impl W {
     fn new(pixel: bool, isgn: Vec<SigElement>, osgn: Vec<SigElement>) -> W {
         W {
@@ -461,9 +517,8 @@ impl W {
             body: String::new(),
             depth: 1,
             tmp: 0,
-            switches: Vec::new(),
             blocks: Vec::new(),
-            last_op: u32::MAX,
+            last_op: None,
         }
     }
 
@@ -497,7 +552,7 @@ impl W {
         match k {
             K::U => format!("{v}u"),
             K::I => {
-                let i = v as i32;
+                let i = v.cast_signed();
                 if i == i32::MIN {
                     "bitcast<i32>(0x80000000u)".into()
                 } else if i < 0 {
@@ -555,10 +610,10 @@ impl W {
                 let i = self.index(o.idx.first().ok_or("icb without index")?)?;
                 format!("icb[{i}]")
             }
-            32 => "vtid".into(),
-            33 => "vgid".into(),
-            34 => "vltid".into(),
-            35 => "vlidx".into(),
+            tpf::THREAD_ID => "vtid".into(),
+            tpf::THREAD_GROUP_ID => "vgid".into(),
+            tpf::THREAD_ID_IN_GROUP => "vltid".into(),
+            tpf::THREAD_ID_IN_GROUP_FLATTENED => "vlidx".into(),
             t => return Err(format!("operand type {t}")),
         })
     }
@@ -571,13 +626,13 @@ impl W {
             return Ok(format!("bitcast<{}>({e})", vty(K::U, comps.len())));
         }
         let swz = o.swizzle();
-        let pick: Vec<u8> = comps.iter().map(|&c| swz[c as usize]).collect();
+        let pick: Vec<u8> = comps.iter().map(|&c| swz[usize::from(c)]).collect();
         let n = pick.len();
         if n == 0 {
             return Err("a source no component of the destination reads".into());
         }
         let mut e = if o.ty == tpf::IMM32 {
-            let vals: Vec<String> = pick.iter().map(|&c| self.lit(k, o.imm[c as usize])).collect();
+            let vals: Vec<String> = pick.iter().map(|&c| self.lit(k, o.imm[usize::from(c)])).collect();
             if n == 1 {
                 vals[0].clone()
             } else if vals.iter().all(|v| *v == vals[0]) {
@@ -588,7 +643,7 @@ impl W {
         } else {
             let base = self.reg(o)?;
             let sw = if self.split && o.ty == tpf::TEMP {
-                let parts: Vec<String> = pick.iter().map(|&c| format!("{base}_{}", XYZW[c as usize])).collect();
+                let parts: Vec<String> = pick.iter().map(|&c| format!("{base}_{}", XYZW[usize::from(c)])).collect();
                 if n == 1 { parts[0].clone() } else { format!("{}({})", vty(K::U, n), parts.join(", ")) }
             } else if pick == [0, 1, 2, 3] {
                 base
@@ -616,7 +671,7 @@ impl W {
         if o.ty == tpf::NULL {
             return Ok(());
         }
-        let comps = bits(o.mask() as u32);
+        let comps = bits(u32::from(o.mask()));
         if comps.is_empty() || (o.comps == 0 && matches!(o.ty, tpf::TEMP | tpf::INDEXABLE_TEMP | tpf::OUTPUT)) {
             // (writes nothing: no compiler makes it, and it is not valid bytecode)
             return Err("a destination with an empty write mask".into());
@@ -651,12 +706,12 @@ impl W {
         let place = self.reg(o)?;
         if self.split && o.ty == tpf::TEMP {
             if n == 1 {
-                self.line(&format!("{place}_{} = {b};", XYZW[comps[0] as usize]));
+                self.line(&format!("{place}_{} = {b};", XYZW[usize::from(comps[0])]));
             } else {
                 let t = self.fresh();
                 let mut s = format!("{{ let {t} = {b};");
                 for (i, c) in comps.iter().enumerate() {
-                    let _ = write!(s, " {place}_{} = {t}.{};", XYZW[*c as usize], XYZW[i]);
+                    let _ = write!(s, " {place}_{} = {t}.{};", XYZW[usize::from(*c)], XYZW[i]);
                 }
                 s.push_str(" }");
                 self.line(&s);
@@ -666,12 +721,12 @@ impl W {
         if comps.len() == 4 {
             self.line(&format!("{place} = {b};"));
         } else if comps.len() == 1 {
-            self.line(&format!("{place}.{} = {b};", XYZW[comps[0] as usize]));
+            self.line(&format!("{place}.{} = {b};", XYZW[usize::from(comps[0])]));
         } else {
             let t = self.fresh();
             let mut s = format!("{{ let {t} = {b};");
             for (i, c) in comps.iter().enumerate() {
-                let _ = write!(s, " {place}.{} = {t}.{};", XYZW[*c as usize], XYZW[i]);
+                let _ = write!(s, " {place}.{} = {t}.{};", XYZW[usize::from(*c)], XYZW[i]);
             }
             s.push_str(" }");
             self.line(&s);
@@ -681,7 +736,7 @@ impl W {
 
     /// A component-wise instruction: dst = f(sources read as `kin`) of type `kout`.
     fn cw(&mut self, i: &Inst, kin: K, kout: K, f: impl Fn(&[String]) -> String) -> R<()> {
-        let comps = bits(i.ops[0].mask() as u32);
+        let comps = bits(u32::from(i.ops[0].mask()));
         let mut a = Vec::new();
         for o in &i.ops[1..] {
             a.push(self.src(o, kin, &comps)?);
@@ -699,7 +754,7 @@ impl W {
 
     /// The same, with a per-component scalar function (for builtins that take scalars).
     fn per_comp(&mut self, i: &Inst, kin: &[K], kout: K, f: impl Fn(&[String]) -> String) -> R<()> {
-        let comps = bits(i.ops[0].mask() as u32);
+        let comps = bits(u32::from(i.ops[0].mask()));
         let n = comps.len();
         let mut names = Vec::new();
         for (j, o) in i.ops[1..].iter().enumerate() {
@@ -719,7 +774,7 @@ impl W {
     }
 
     fn cmp(&mut self, i: &Inst, k: K, op: &str) -> R<()> {
-        let n = bits(i.ops[0].mask() as u32).len();
+        let n = bits(u32::from(i.ops[0].mask())).len();
         let (z, t) = (self.splat(K::U, n, 0), self.splat(K::U, n, 0xffff_ffff));
         if op == "!==" {
             return self.cw(i, k, K::U, |a| format!("select({z}, {t}, !({} == {}))", a[0], a[1]));
@@ -732,12 +787,12 @@ impl W {
         Ok(if i.nz { format!("{c} != 0u") } else { format!("{c} == 0u") })
     }
 
-    fn dot(&mut self, i: &Inst, n: usize) -> R<()> {
-        let comps: Vec<u8> = (0..n as u8).collect();
+    fn dot(&mut self, i: &Inst, n: u8) -> R<()> {
+        let comps: Vec<u8> = (0..n).collect();
         let a = self.src(&i.ops[1], K::F, &comps)?;
         let b = self.src(&i.ops[2], K::F, &comps)?;
         let d = if n == 1 { format!("({a} * {b})") } else { format!("dot({a}, {b})") };
-        let m = bits(i.ops[0].mask() as u32).len();
+        let m = bits(u32::from(i.ops[0].mask())).len();
         let v = if m == 1 { d } else { format!("vec{m}<f32>({d})") };
         self.dst(&i.ops[0], v, K::F, i.sat)
     }
@@ -745,8 +800,8 @@ impl W {
     /// A vec4 result (of `k`) that the destination takes through `swz` (the resource operand's
     /// swizzle).
     fn vec4_result(&mut self, i: &Inst, e: String, k: K, swz: [u8; 4]) -> R<()> {
-        let comps = bits(i.ops[0].mask() as u32);
-        let pick: Vec<u8> = comps.iter().map(|&c| swz[c as usize]).collect();
+        let comps = bits(u32::from(i.ops[0].mask()));
+        let pick: Vec<u8> = comps.iter().map(|&c| swz[usize::from(c)]).collect();
         let t = self.fresh();
         self.line(&format!("let {t} = {e};"));
         let v = if pick == [0, 1, 2, 3] { t } else { format!("{t}.{}", letters(&pick)) };
@@ -801,13 +856,13 @@ impl W {
         }
     }
 
-    fn sample(&mut self, i: &Inst) -> R<()> {
+    fn sample(&mut self, i: &Inst, how: Sampling) -> R<()> {
         let (t, dim, k, depth) = self.texture(&i.ops[2])?;
         let s = self.sampler(&i.ops[3])?;
         let swz = i.ops[2].swizzle();
         let (coord, layer) = self.sample_coords(&i.ops[1], dim)?;
         let off = self.offset(i, dim);
-        let compare = matches!(i.op, 0x46 | 0x47);
+        let compare = matches!(how, Sampling::Compare | Sampling::CompareLevelZero);
         let addr = (matches!(dim, 3 | 8) && off.is_none() && !compare && !depth && k == K::F && self.addr.iter().any(|a| a.sampler == s)).then(|| coord.clone());
         let mut args = vec![format!("t{t}"), format!("s{s}"), if addr.is_some() { format!("am{s}({coord})") } else { coord }];
         args.extend(layer);
@@ -815,13 +870,13 @@ impl W {
             let l = w.src(o, K::F, &[0])?;
             Ok(if depth { format!("i32({l})") } else { l })
         };
-        let (f, extra, compare) = match i.op {
-            0x45 if self.pixel => ("textureSample", vec![], false),
-            0x45 => ("textureSampleLevel", vec![if depth { "0i".into() } else { "0.0f".into() }], false),
-            0x48 => ("textureSampleLevel", vec![level(self, &i.ops[4])?], false),
-            0x4a if self.pixel => ("textureSampleBias", vec![self.src(&i.ops[4], K::F, &[0])?], false),
-            0x4a => ("textureSampleLevel", vec![if depth { "0i".into() } else { "0.0f".into() }], false),
-            0x49 => {
+        let (f, extra, compare) = match how {
+            Sampling::Plain if self.pixel => ("textureSample", vec![], false),
+            Sampling::Plain => ("textureSampleLevel", vec![if depth { "0i".into() } else { "0.0f".into() }], false),
+            Sampling::Level => ("textureSampleLevel", vec![level(self, &i.ops[4])?], false),
+            Sampling::Bias if self.pixel => ("textureSampleBias", vec![self.src(&i.ops[4], K::F, &[0])?], false),
+            Sampling::Bias => ("textureSampleLevel", vec![if depth { "0i".into() } else { "0.0f".into() }], false),
+            Sampling::Grad => {
                 let n: &[u8] = match dim {
                     2 | 7 => &[0],
                     3 | 8 => &[0, 1],
@@ -831,9 +886,8 @@ impl W {
                 let (dx, dy) = if n.len() == 1 { (format!("vec2<f32>({dx}, 0.0f)"), format!("vec2<f32>({dy}, 0.0f)")) } else { (dx, dy) };
                 ("textureSampleGrad", vec![dx, dy], false)
             }
-            0x46 if self.pixel => ("textureSampleCompare", vec![self.src(&i.ops[4], K::F, &[0])?], true),
-            0x46 | 0x47 => ("textureSampleCompareLevel", vec![self.src(&i.ops[4], K::F, &[0])?], true),
-            op => return Err(format!("sample opcode {op:#x}")),
+            Sampling::Compare if self.pixel => ("textureSampleCompare", vec![self.src(&i.ops[4], K::F, &[0])?], true),
+            Sampling::Compare | Sampling::CompareLevelZero => ("textureSampleCompareLevel", vec![self.src(&i.ops[4], K::F, &[0])?], true),
         };
         args.extend(extra);
         args.extend(off);
@@ -858,7 +912,7 @@ impl W {
         let channel = i.ops[3].swizzle()[0];
         let (coord, layer) = self.sample_coords(&i.ops[1], dim)?;
         let mut args = Vec::new();
-        let compare = i.op == 0x7e;
+        let compare = i.op == Opcode::Gather4C;
         if !depth {
             args.push(format!("{channel}"));
         }
@@ -888,7 +942,7 @@ impl W {
         };
         // ld2dms: the sample index instead of a level (WebGPU has no multisampled arrays: the
         // page binds those single-sampled, see texture_type)
-        if i.op == 0x2e {
+        if i.op == Opcode::LdMs {
             if !matches!(dim, 4 | 9) {
                 return Err(format!("ld2dms from resource dimension {dim}"));
             }
@@ -958,7 +1012,7 @@ impl W {
         if matches!(dim, 4 | 9) {
             // (a multisampled one: no levels but 1; arrays of it are single layers on the page)
             let dims = format!("textureDimensions(t{t})");
-            let u = format!("vec4<u32>({dims}, {}u, 1u)", (dim == 9) as u32);
+            let u = format!("vec4<u32>({dims}, {}u, 1u)", u32::from(dim == 9));
             let (e, k) = match i.ctl & 3 {
                 2 => (u, K::U),
                 1 => {
@@ -991,7 +1045,7 @@ impl W {
         self.vec4_result(i, e, k, swz)
     }
 
-    fn open(&mut self, s: &str, kind: u8) {
+    fn open(&mut self, s: &str, kind: Block) {
         self.line(s);
         self.depth += 1;
         self.blocks.push(kind);
@@ -1005,28 +1059,26 @@ impl W {
 
     /// Before a statement in a switch: open the case its labels name.
     fn case_body(&mut self) -> bool {
-        if self.blocks.last() != Some(&b's') {
+        let Some(Block::Switch(sw)) = self.blocks.last_mut() else { return true };
+        if sw.in_case {
             return true;
         }
-        let sw = self.switches.last_mut().unwrap();
-        if sw.1 {
-            return true;
-        }
-        if sw.0.is_empty() {
+        if sw.pending.is_empty() {
             // (dead code after a case's break)
             return false;
         }
-        let labels = std::mem::take(&mut sw.0).join(", ");
-        sw.1 = true;
+        let labels = std::mem::take(&mut sw.pending).join(", ");
+        sw.in_case = true;
         self.line(&format!("case {labels}: {{"));
         self.depth += 1;
         true
     }
 
+    /// In a switch: close the open case (if one is).
     fn close_case(&mut self) {
-        let sw = self.switches.last_mut().unwrap();
-        if sw.1 {
-            sw.1 = false;
+        let Some(Block::Switch(sw)) = self.blocks.last_mut() else { return };
+        if sw.in_case {
+            sw.in_case = false;
             self.depth -= 1;
             self.line("}");
         }
@@ -1036,38 +1088,39 @@ impl W {
         use K::*;
         let op = i.op;
         // declarations
-        if (0x58..=0x6a).contains(&op) || op == tpf::OP_CUSTOMDATA || (0x8f..=0xa2).contains(&op) {
+        if matches!(op.shape(), tpf::Shape::Decl(_) | tpf::Shape::Data) {
             return Ok(());
         }
         // switch structure
         match op {
-            0x06 | 0x0a => {
-                if self.blocks.last() != Some(&b's') {
-                    return Err("case outside a switch".into());
-                }
-                if self.switches.last().unwrap().1 {
-                    if matches!(self.last_op, 0x3e | 0x07) {
+            Opcode::Case | Opcode::Default => {
+                let Some(Block::Switch(sw)) = self.blocks.last() else { return Err("case outside a switch".into()) };
+                if sw.in_case {
+                    if matches!(self.last_op, Some(Opcode::Ret | Opcode::Continue)) {
                         self.close_case();
                     } else {
                         return Err("switch case falls through".into());
                     }
                 }
-                let label = if op == 0x0a {
-                    self.switches.last_mut().unwrap().2 = true;
+                let Some(Block::Switch(sw)) = self.blocks.last_mut() else { return Err("case outside a switch".into()) };
+                let label = if op == Opcode::Default {
+                    sw.has_default = true;
                     "default".to_string()
                 } else {
-                    format!("{}i", i.ops[0].imm[0] as i32)
+                    format!("{}i", i.ops[0].imm[0].cast_signed())
                 };
-                self.switches.last_mut().unwrap().0.push(label);
-                self.last_op = op;
+                sw.pending.push(label);
+                self.last_op = Some(op);
                 return Ok(());
             }
-            0x17 => {
-                if self.blocks.last() != Some(&b's') {
+            Opcode::EndSwitch => {
+                if !matches!(self.blocks.last(), Some(Block::Switch(_))) {
                     return Err("endswitch outside a switch".into());
                 }
                 self.close_case();
-                let (pending, _, has_default) = self.switches.pop().unwrap();
+                let Some(Block::Switch(Switch { pending, has_default, .. })) = self.blocks.last_mut().map(|b| std::mem::replace(b, Block::Switch(Switch::default()))) else {
+                    return Err("endswitch outside a switch".into());
+                };
                 if !pending.is_empty() {
                     self.line(&format!("case {}: {{}}", pending.join(", ")));
                 }
@@ -1075,141 +1128,171 @@ impl W {
                     self.line("default: {}");
                 }
                 self.close();
-                self.last_op = op;
+                self.last_op = Some(op);
                 return Ok(());
             }
-            0x02 if self.blocks.last() == Some(&b's') => {
+            Opcode::Break if matches!(self.blocks.last(), Some(Block::Switch(_))) => {
                 self.close_case();
-                self.last_op = op;
+                self.last_op = Some(op);
                 return Ok(());
             }
-            0x12 | 0x15 | 0x16 => {}
-            _ => {
+            Opcode::Else | Opcode::EndIf | Opcode::EndLoop => {}
+            Opcode::Add | Opcode::And | Opcode::Break | Opcode::Breakc | Opcode::Call | Opcode::Callc | Opcode::Continue
+            | Opcode::Continuec | Opcode::Cut | Opcode::DerivRtx | Opcode::DerivRty | Opcode::Discard | Opcode::Div | Opcode::Dp2
+            | Opcode::Dp3 | Opcode::Dp4 | Opcode::Emit | Opcode::EmitThenCut | Opcode::Eq | Opcode::Exp | Opcode::Frc
+            | Opcode::Ftoi | Opcode::Ftou | Opcode::Ge | Opcode::Iadd | Opcode::If | Opcode::Ieq | Opcode::Ige
+            | Opcode::Ilt | Opcode::Imad | Opcode::Imax | Opcode::Imin | Opcode::Imul | Opcode::Ine | Opcode::Ineg
+            | Opcode::Ishl | Opcode::Ishr | Opcode::Itof | Opcode::Label | Opcode::Ld | Opcode::LdMs | Opcode::Log
+            | Opcode::Loop | Opcode::Lt | Opcode::Mad | Opcode::Min | Opcode::Max | Opcode::CustomData | Opcode::Mov
+            | Opcode::Movc | Opcode::Mul | Opcode::Ne | Opcode::Nop | Opcode::Not | Opcode::Or | Opcode::ResInfo
+            | Opcode::Ret | Opcode::Retc | Opcode::RoundNe | Opcode::RoundNi | Opcode::RoundPi | Opcode::RoundZ | Opcode::Rsq
+            | Opcode::Sample | Opcode::SampleC | Opcode::SampleCLz | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt
+            | Opcode::Switch | Opcode::SinCos | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad
+            | Opcode::Umax | Opcode::Umin | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclResource | Opcode::DclConstantBuffer
+            | Opcode::DclSampler | Opcode::DclIndexRange | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput | Opcode::DclInputSgv
+            | Opcode::DclInputSiv | Opcode::DclInputPs | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput | Opcode::DclOutputSgv | Opcode::DclOutputSiv
+            | Opcode::DclTemps | Opcode::DclIndexableTemp | Opcode::DclGlobalFlags | Opcode::Reserved10 | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos
+            | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream
+            | Opcode::CutStream | Opcode::EmitThenCutStream | Opcode::InterfaceCall | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse
+            | Opcode::DerivRtyFine | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32
+            | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi | Opcode::Ubfe
+            | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev | Opcode::Swapc | Opcode::DclStream | Opcode::DclFunctionBody | Opcode::DclFunctionTable
+            | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor
+            | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw
+            | Opcode::DclTgsmStructured | Opcode::DclResourceRaw | Opcode::DclResourceStructured | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw
+            | Opcode::LdStructured | Opcode::StoreStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd
+            | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume | Opcode::ImmAtomicIadd
+            | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin
+            | Opcode::ImmAtomicUmax | Opcode::ImmAtomicUmin | Opcode::Sync | Opcode::Dadd | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul
+            | Opcode::Deq | Opcode::Dge | Opcode::Dlt | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof
+            | Opcode::Ftod | Opcode::EvalSnapped | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak
+            | Opcode::Reserved11 | Opcode::Ddiv | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou
+            | Opcode::Itod | Opcode::Utod | Opcode::Unknown => {
                 if !self.case_body() {
                     return Ok(());
                 }
             }
         }
-        self.last_op = op;
+        self.last_op = Some(op);
         // (_sat is for float results: not valid on integer, bit or comparison instructions)
-        const INT_RESULT: &[u32] = &[
-            0x01, 0x18, 0x1b, 0x1c, 0x1d, 0x1e, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2a, 0x31, 0x39, 0x3b,
-            0x3c, 0x4e, 0x4f, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x57, 0x82, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e,
+        const INT_RESULT: &[Opcode] = &[
+            Opcode::And, Opcode::Eq, Opcode::Ftoi, Opcode::Ftou, Opcode::Ge, Opcode::Iadd, Opcode::Ieq, Opcode::Ige, Opcode::Ilt, Opcode::Imad, Opcode::Imax, Opcode::Imin, Opcode::Imul, Opcode::Ine, Opcode::Ineg, Opcode::Ishl, Opcode::Ishr, Opcode::Lt, Opcode::Ne, Opcode::Not,
+            Opcode::Or, Opcode::Udiv, Opcode::Ult, Opcode::Uge, Opcode::Umul, Opcode::Umad, Opcode::Umax, Opcode::Umin, Opcode::Ushr, Opcode::Xor, Opcode::F32ToF16, Opcode::CountBits, Opcode::FirstBitHi, Opcode::FirstBitLo, Opcode::FirstBitShi, Opcode::Ubfe, Opcode::Ibfe, Opcode::Bfi, Opcode::Bfrev, Opcode::Swapc,
         ];
         if i.sat && INT_RESULT.contains(&op) {
-            return Err(format!("_sat on integer instruction {op:#x}"));
+            return Err(format!("_sat on integer instruction {:#x}", i.code));
         }
         // (break and continue: inside a loop; break also in a switch, handled above)
-        if matches!(op, 0x02 | 0x03 | 0x07 | 0x08) && !self.blocks.contains(&b'l') && !(matches!(op, 0x02 | 0x03) && self.blocks.contains(&b's')) {
+        if matches!(op, Opcode::Break | Opcode::Breakc | Opcode::Continue | Opcode::Continuec) && !self.blocks.iter().any(|b| matches!(b, Block::Loop)) && !(matches!(op, Opcode::Break | Opcode::Breakc) && self.blocks.iter().any(|b| matches!(b, Block::Switch(_)))) {
             return Err("break/continue outside a loop".into());
         }
         match op {
-            0x00 => self.cw(i, F, F, |a| format!("({} + {})", a[0], a[1]))?,
-            0x01 => self.cw(i, U, U, |a| format!("({} & {})", a[0], a[1]))?,
-            0x02 => self.line("break;"),
-            0x03 => {
+            Opcode::Add => self.cw(i, F, F, |a| format!("({} + {})", a[0], a[1]))?,
+            Opcode::And => self.cw(i, U, U, |a| format!("({} & {})", a[0], a[1]))?,
+            Opcode::Break => self.line("break;"),
+            Opcode::Breakc => {
                 let c = self.cond(i)?;
                 self.line(&format!("if ({c}) {{ break; }}"));
             }
-            0x07 => self.line("continue;"),
-            0x08 => {
+            Opcode::Continue => self.line("continue;"),
+            Opcode::Continuec => {
                 let c = self.cond(i)?;
                 self.line(&format!("if ({c}) {{ continue; }}"));
             }
-            0x0b => self.cw(i, F, F, |a| format!("dpdx({})", a[0]))?,
-            0x0c => self.cw(i, F, F, |a| format!("dpdy({})", a[0]))?,
-            0x7a => self.cw(i, F, F, |a| format!("dpdxCoarse({})", a[0]))?,
-            0x7b => self.cw(i, F, F, |a| format!("dpdxFine({})", a[0]))?,
-            0x7c => self.cw(i, F, F, |a| format!("dpdyCoarse({})", a[0]))?,
-            0x7d => self.cw(i, F, F, |a| format!("dpdyFine({})", a[0]))?,
-            0x0d => {
+            Opcode::DerivRtx => self.cw(i, F, F, |a| format!("dpdx({})", a[0]))?,
+            Opcode::DerivRty => self.cw(i, F, F, |a| format!("dpdy({})", a[0]))?,
+            Opcode::DerivRtxCoarse => self.cw(i, F, F, |a| format!("dpdxCoarse({})", a[0]))?,
+            Opcode::DerivRtxFine => self.cw(i, F, F, |a| format!("dpdxFine({})", a[0]))?,
+            Opcode::DerivRtyCoarse => self.cw(i, F, F, |a| format!("dpdyCoarse({})", a[0]))?,
+            Opcode::DerivRtyFine => self.cw(i, F, F, |a| format!("dpdyFine({})", a[0]))?,
+            Opcode::Discard => {
                 let c = self.cond(i)?;
                 self.line(&format!("if ({c}) {{ discard; }}"));
             }
-            0x0e => self.cw(i, F, F, |a| format!("({} / {})", a[0], a[1]))?,
-            0x0f => self.dot(i, 2)?,
-            0x10 => self.dot(i, 3)?,
-            0x11 => self.dot(i, 4)?,
-            0x12 => {
-                if self.blocks.last() != Some(&b'i') {
+            Opcode::Div => self.cw(i, F, F, |a| format!("({} / {})", a[0], a[1]))?,
+            Opcode::Dp2 => self.dot(i, 2)?,
+            Opcode::Dp3 => self.dot(i, 3)?,
+            Opcode::Dp4 => self.dot(i, 4)?,
+            Opcode::Else => {
+                let Some(last) = self.blocks.last_mut().filter(|b| matches!(b, Block::If)) else {
                     return Err("else outside an if (or a second one)".into());
-                }
-                *self.blocks.last_mut().unwrap() = b'e';
+                };
+                *last = Block::Else;
                 self.depth -= 1;
                 self.line("} else {");
                 self.depth += 1;
             }
-            0x15 | 0x16 => {
-                let open = self.blocks.last().copied();
-                if !(if op == 0x15 { matches!(open, Some(b'i' | b'e')) } else { open == Some(b'l') }) {
-                    return Err(format!("{} without its block", if op == 0x15 { "endif" } else { "endloop" }));
+            Opcode::EndIf | Opcode::EndLoop => {
+                let open = self.blocks.last();
+                if !(if op == Opcode::EndIf { matches!(open, Some(Block::If | Block::Else)) } else { matches!(open, Some(Block::Loop)) }) {
+                    return Err(format!("{} without its block", if op == Opcode::EndIf { "endif" } else { "endloop" }));
                 }
                 self.close()
             }
-            0x18 => self.cmp(i, F, "==")?,
-            0x1d => self.cmp(i, F, ">=")?,
-            0x31 => self.cmp(i, F, "<")?,
+            Opcode::Eq => self.cmp(i, F, "==")?,
+            Opcode::Ge => self.cmp(i, F, ">=")?,
+            Opcode::Lt => self.cmp(i, F, "<")?,
             // (unordered: true when either is NaN; `!=` on floats is not that on every WebGPU)
-            0x39 => self.cmp(i, F, "!==")?,
-            0x20 => self.cmp(i, I, "==")?,
-            0x21 => self.cmp(i, I, ">=")?,
-            0x22 => self.cmp(i, I, "<")?,
-            0x27 => self.cmp(i, I, "!=")?,
-            0x4f => self.cmp(i, U, "<")?,
-            0x50 => self.cmp(i, U, ">=")?,
-            0x19 => {
+            Opcode::Ne => self.cmp(i, F, "!==")?,
+            Opcode::Ieq => self.cmp(i, I, "==")?,
+            Opcode::Ige => self.cmp(i, I, ">=")?,
+            Opcode::Ilt => self.cmp(i, I, "<")?,
+            Opcode::Ine => self.cmp(i, I, "!=")?,
+            Opcode::Ult => self.cmp(i, U, "<")?,
+            Opcode::Uge => self.cmp(i, U, ">=")?,
+            Opcode::Exp => {
                 self.helpers.insert("d3d_exp2");
                 self.per_comp(i, &[F], F, |a| format!("d3d_exp2({})", a[0]))?
             }
-            0x1a => {
+            Opcode::Frc => {
                 self.helpers.insert("d3d_frc");
                 self.per_comp(i, &[F], F, |a| format!("d3d_frc({})", a[0]))?
             }
-            0x1b => {
+            Opcode::Ftoi => {
                 self.helpers.insert("d3d_ftoi");
                 self.per_comp(i, &[F], I, |a| format!("d3d_ftoi({})", a[0]))?
             }
-            0x1c => {
+            Opcode::Ftou => {
                 self.helpers.insert("d3d_ftou");
                 self.per_comp(i, &[F], U, |a| format!("d3d_ftou({})", a[0]))?
             }
-            0x2b => {
-                let n = vty(F, bits(i.ops[0].mask() as u32).len());
+            Opcode::Itof => {
+                let n = vty(F, bits(u32::from(i.ops[0].mask())).len());
                 self.cw(i, I, F, |a| format!("{n}({})", a[0]))?
             }
-            0x56 => {
-                let n = vty(F, bits(i.ops[0].mask() as u32).len());
+            Opcode::Utof => {
+                let n = vty(F, bits(u32::from(i.ops[0].mask())).len());
                 self.cw(i, U, F, |a| format!("{n}({})", a[0]))?
             }
-            0x1e => self.cw(i, I, I, |a| format!("({} + {})", a[0], a[1]))?,
-            0x1f => {
+            Opcode::Iadd => self.cw(i, I, I, |a| format!("({} + {})", a[0], a[1]))?,
+            Opcode::If => {
                 let c = self.cond(i)?;
-                self.open(&format!("if ({c}) {{"), b'i');
+                self.open(&format!("if ({c}) {{"), Block::If);
             }
-            0x23 => self.cw(i, I, I, |a| format!("({} * {} + {})", a[0], a[1], a[2]))?,
-            0x52 => self.cw(i, U, U, |a| format!("({} * {} + {})", a[0], a[1], a[2]))?,
-            0x24 => self.cw(i, I, I, |a| format!("max({}, {})", a[0], a[1]))?,
-            0x25 => self.cw(i, I, I, |a| format!("min({}, {})", a[0], a[1]))?,
-            0x53 => self.cw(i, U, U, |a| format!("max({}, {})", a[0], a[1]))?,
-            0x54 => self.cw(i, U, U, |a| format!("min({}, {})", a[0], a[1]))?,
-            0x26 | 0x51 => {
+            Opcode::Imad => self.cw(i, I, I, |a| format!("({} * {} + {})", a[0], a[1], a[2]))?,
+            Opcode::Umad => self.cw(i, U, U, |a| format!("({} * {} + {})", a[0], a[1], a[2]))?,
+            Opcode::Imax => self.cw(i, I, I, |a| format!("max({}, {})", a[0], a[1]))?,
+            Opcode::Imin => self.cw(i, I, I, |a| format!("min({}, {})", a[0], a[1]))?,
+            Opcode::Umax => self.cw(i, U, U, |a| format!("max({}, {})", a[0], a[1]))?,
+            Opcode::Umin => self.cw(i, U, U, |a| format!("min({}, {})", a[0], a[1]))?,
+            Opcode::Imul | Opcode::Umul => {
                 // (high, low) = a * b: the low half only
                 if i.ops[0].ty != tpf::NULL {
                     return Err("the high half of imul/umul".into());
                 }
-                let k = if op == 0x26 { I } else { U };
-                let comps = bits(i.ops[1].mask() as u32);
+                let k = if op == Opcode::Imul { I } else { U };
+                let comps = bits(u32::from(i.ops[1].mask()));
                 let a = self.src(&i.ops[2], k, &comps)?;
                 let b = self.src(&i.ops[3], k, &comps)?;
                 self.dst(&i.ops[1], format!("({a} * {b})"), k, false)?;
             }
-            0x4e => {
+            Opcode::Udiv => {
                 // udiv quotient, remainder, a, b
                 for (d, opr) in [(0usize, "/"), (1, "%")] {
                     if i.ops[d].ty == tpf::NULL {
                         continue;
                     }
-                    let comps = bits(i.ops[d].mask() as u32);
+                    let comps = bits(u32::from(i.ops[d].mask()));
                     let a = self.src(&i.ops[2], U, &comps)?;
                     let b = self.src(&i.ops[3], U, &comps)?;
                     let t = self.fresh();
@@ -1228,58 +1311,62 @@ impl W {
                     self.dst(&i.ops[d], v, U, false)?;
                 }
             }
-            0x28 => self.cw(i, I, I, |a| format!("(-{})", a[0]))?,
-            0x29 => self.shift(i, I, "<<")?,
-            0x2a => self.shift(i, I, ">>")?,
-            0x55 => self.shift(i, U, ">>")?,
-            0x2d | 0x2e => self.load(i)?,
-            0x6e => self.sample_pos(i)?,
-            0x6f => self.sample_info(i)?,
-            0x2f => {
+            Opcode::Ineg => self.cw(i, I, I, |a| format!("(-{})", a[0]))?,
+            Opcode::Ishl => self.shift(i, I, "<<")?,
+            Opcode::Ishr => self.shift(i, I, ">>")?,
+            Opcode::Ushr => self.shift(i, U, ">>")?,
+            Opcode::Ld | Opcode::LdMs => self.load(i)?,
+            Opcode::SamplePos => self.sample_pos(i)?,
+            Opcode::SampleInfo => self.sample_info(i)?,
+            Opcode::Log => {
                 self.helpers.insert("d3d_log2");
                 self.per_comp(i, &[F], F, |a| format!("d3d_log2({})", a[0]))?
             }
-            0x30 => self.open("loop {", b'l'),
-            0x32 => self.cw(i, F, F, |a| format!("({} * {} + {})", a[0], a[1], a[2]))?,
-            0x33 => self.cw(i, F, F, |a| format!("min({}, {})", a[0], a[1]))?,
-            0x34 => self.cw(i, F, F, |a| format!("max({}, {})", a[0], a[1]))?,
-            0x36 => {
+            Opcode::Loop => self.open("loop {", Block::Loop),
+            Opcode::Mad => self.cw(i, F, F, |a| format!("({} * {} + {})", a[0], a[1], a[2]))?,
+            Opcode::Min => self.cw(i, F, F, |a| format!("min({}, {})", a[0], a[1]))?,
+            Opcode::Max => self.cw(i, F, F, |a| format!("max({}, {})", a[0], a[1]))?,
+            Opcode::Mov => {
                 let k = if i.sat || i.ops[1].modifier != 0 { F } else { U };
                 self.cw(i, k, k, |a| a[0].clone())?
             }
-            0x37 => {
+            Opcode::Movc => {
                 let k = if i.sat || i.ops[2..].iter().any(|o| o.modifier != 0) { F } else { U };
-                let comps = bits(i.ops[0].mask() as u32);
+                let comps = bits(u32::from(i.ops[0].mask()));
                 let c = self.src(&i.ops[1], U, &comps)?;
                 let a = self.src(&i.ops[2], k, &comps)?;
                 let b = self.src(&i.ops[3], k, &comps)?;
                 let z = self.splat(U, comps.len(), 0);
                 self.dst(&i.ops[0], format!("select({b}, {a}, {c} != {z})"), k, i.sat)?;
             }
-            0x38 => self.cw(i, F, F, |a| format!("({} * {})", a[0], a[1]))?,
-            0x3a => {}
-            0x3b => self.cw(i, U, U, |a| format!("(~{})", a[0]))?,
-            0x3c => self.cw(i, U, U, |a| format!("({} | {})", a[0], a[1]))?,
-            0x57 => self.cw(i, U, U, |a| format!("({} ^ {})", a[0], a[1]))?,
-            0x3d => self.resinfo(i)?,
-            0x3e => self.line("return;"),
-            0x3f => {
+            Opcode::Mul => self.cw(i, F, F, |a| format!("({} * {})", a[0], a[1]))?,
+            Opcode::Nop => {}
+            Opcode::Not => self.cw(i, U, U, |a| format!("(~{})", a[0]))?,
+            Opcode::Or => self.cw(i, U, U, |a| format!("({} | {})", a[0], a[1]))?,
+            Opcode::Xor => self.cw(i, U, U, |a| format!("({} ^ {})", a[0], a[1]))?,
+            Opcode::ResInfo => self.resinfo(i)?,
+            Opcode::Ret => self.line("return;"),
+            Opcode::Retc => {
                 let c = self.cond(i)?;
                 self.line(&format!("if ({c}) {{ return; }}"));
             }
-            0x40 => self.cw(i, F, F, |a| format!("round({})", a[0]))?,
-            0x41 => self.cw(i, F, F, |a| format!("floor({})", a[0]))?,
-            0x42 => self.cw(i, F, F, |a| format!("ceil({})", a[0]))?,
-            0x43 => self.cw(i, F, F, |a| format!("trunc({})", a[0]))?,
-            0x44 => self.cw(i, F, F, |a| format!("inverseSqrt({})", a[0]))?,
-            0x45..=0x4a => self.sample(i)?,
-            0x4b => self.cw(i, F, F, |a| format!("sqrt({})", a[0]))?,
-            0x4c => {
+            Opcode::RoundNe => self.cw(i, F, F, |a| format!("round({})", a[0]))?,
+            Opcode::RoundNi => self.cw(i, F, F, |a| format!("floor({})", a[0]))?,
+            Opcode::RoundPi => self.cw(i, F, F, |a| format!("ceil({})", a[0]))?,
+            Opcode::RoundZ => self.cw(i, F, F, |a| format!("trunc({})", a[0]))?,
+            Opcode::Rsq => self.cw(i, F, F, |a| format!("inverseSqrt({})", a[0]))?,
+            Opcode::Sample => self.sample(i, Sampling::Plain)?,
+            Opcode::SampleC => self.sample(i, Sampling::Compare)?,
+            Opcode::SampleCLz => self.sample(i, Sampling::CompareLevelZero)?,
+            Opcode::SampleL => self.sample(i, Sampling::Level)?,
+            Opcode::SampleD => self.sample(i, Sampling::Grad)?,
+            Opcode::SampleB => self.sample(i, Sampling::Bias)?,
+            Opcode::Sqrt => self.cw(i, F, F, |a| format!("sqrt({})", a[0]))?,
+            Opcode::Switch => {
                 let c = self.src(&i.ops[0], I, &[0])?;
-                self.open(&format!("switch ({c}) {{"), b's');
-                self.switches.push((Vec::new(), false, false));
+                self.open(&format!("switch ({c}) {{"), Block::Switch(Switch::default()));
             }
-            0x4d => {
+            Opcode::SinCos => {
                 // sincos sin, cos, a
                 let t = self.fresh();
                 let all = self.src(&i.ops[2], F, &[0, 1, 2, 3])?;
@@ -1288,17 +1375,17 @@ impl W {
                     if i.ops[d].ty == tpf::NULL {
                         continue;
                     }
-                    let comps = bits(i.ops[d].mask() as u32);
+                    let comps = bits(u32::from(i.ops[d].mask()));
                     let a = if comps.len() == 4 { t.clone() } else { format!("{t}.{}", letters(&comps)) };
                     self.dst(&i.ops[d], format!("{f}({a})"), F, i.sat)?;
                 }
             }
-            0x6d | 0x7e => self.gather(i)?,
-            0xa3 => self.ld_uav(i)?,
-            0xa4 => self.store_uav(i)?,
-            0xa5 | 0xa7 => self.ld_tgsm(i)?,
-            0xa6 | 0xa8 => self.store_tgsm(i)?,
-            0xbe => {
+            Opcode::Gather4 | Opcode::Gather4C => self.gather(i)?,
+            Opcode::LdUavTyped => self.ld_uav(i)?,
+            Opcode::StoreUavTyped => self.store_uav(i)?,
+            Opcode::LdRaw | Opcode::LdStructured => self.ld_tgsm(i)?,
+            Opcode::StoreRaw | Opcode::StoreStructured => self.store_tgsm(i)?,
+            Opcode::Sync => {
                 if self.threads.is_none() {
                     return Err("sync outside a compute shader".into());
                 }
@@ -1308,32 +1395,32 @@ impl W {
                     self.line("workgroupBarrier();");
                 }
             }
-            0x79 => {
+            Opcode::BufInfo => {
                 let (t, _, _, _) = self.texture(&i.ops[1])?;
                 let swz = i.ops[1].swizzle();
                 self.vec4_result(i, format!("vec4<u32>(textureDimensions(t{t}).x)"), U, swz)?;
             }
-            0x81 => self.cw(i, F, F, |a| format!("(1.0f / {})", a[0]))?,
-            0x82 => {
+            Opcode::Rcp => self.cw(i, F, F, |a| format!("(1.0f / {})", a[0]))?,
+            Opcode::F32ToF16 => {
                 self.helpers.insert("d3d_f32tof16");
                 self.per_comp(i, &[F], U, |a| format!("d3d_f32tof16({})", a[0]))?
             }
-            0x83 => self.per_comp(i, &[U], F, |a| format!("unpack2x16float({} & 0xffffu).x", a[0]))?,
-            0x86 => self.cw(i, U, U, |a| format!("countOneBits({})", a[0]))?,
-            0x87 => self.per_comp(i, &[U], U, |a| format!("select(31u - firstLeadingBit({0}), 0xffffffffu, {0} == 0u)", a[0]))?,
-            0x88 => self.cw(i, U, U, |a| format!("firstTrailingBit({})", a[0]))?,
-            0x89 => self.per_comp(i, &[I], U, |a| {
+            Opcode::F16ToF32 => self.per_comp(i, &[U], F, |a| format!("unpack2x16float({} & 0xffffu).x", a[0]))?,
+            Opcode::CountBits => self.cw(i, U, U, |a| format!("countOneBits({})", a[0]))?,
+            Opcode::FirstBitHi => self.per_comp(i, &[U], U, |a| format!("select(31u - firstLeadingBit({0}), 0xffffffffu, {0} == 0u)", a[0]))?,
+            Opcode::FirstBitLo => self.cw(i, U, U, |a| format!("firstTrailingBit({})", a[0]))?,
+            Opcode::FirstBitShi => self.per_comp(i, &[I], U, |a| {
                 format!("select(31u - bitcast<u32>(firstLeadingBit({0})), 0xffffffffu, {0} == 0i || {0} == -1i)", a[0])
             })?,
-            0x8a => self.per_comp(i, &[U, U, U], U, |a| format!("extractBits({}, {} & 31u, {} & 31u)", a[2], a[1], a[0]))?,
-            0x8b => self.per_comp(i, &[U, U, I], I, |a| format!("extractBits({}, {} & 31u, {} & 31u)", a[2], a[1], a[0]))?,
-            0x8c => self.per_comp(i, &[U], U, |a| format!("insertBits({}, {}, {} & 31u, {} & 31u)", a[3], a[2], a[1], a[0]))?,
-            0x8d => self.cw(i, U, U, |a| format!("reverseBits({})", a[0]))?,
-            0x8e => {
+            Opcode::Ubfe => self.per_comp(i, &[U, U, U], U, |a| format!("extractBits({}, {} & 31u, {} & 31u)", a[2], a[1], a[0]))?,
+            Opcode::Ibfe => self.per_comp(i, &[U, U, I], I, |a| format!("extractBits({}, {} & 31u, {} & 31u)", a[2], a[1], a[0]))?,
+            Opcode::Bfi => self.per_comp(i, &[U], U, |a| format!("insertBits({}, {}, {} & 31u, {} & 31u)", a[3], a[2], a[1], a[0]))?,
+            Opcode::Bfrev => self.cw(i, U, U, |a| format!("reverseBits({})", a[0]))?,
+            Opcode::Swapc => {
                 // swapc d0, d1, cond, a, b: d0 = cond ? b : a, d1 = cond ? a : b
                 let mut vals = Vec::new();
                 for d in 0..2 {
-                    let comps = bits(i.ops[d].mask() as u32);
+                    let comps = bits(u32::from(i.ops[d].mask()));
                     let c = self.src(&i.ops[2], U, &comps)?;
                     let a = self.src(&i.ops[3], U, &comps)?;
                     let b = self.src(&i.ops[4], U, &comps)?;
@@ -1347,7 +1434,26 @@ impl W {
                     self.dst(&i.ops[d], v, U, false)?;
                 }
             }
-            op => return Err(format!("opcode {op:#x}")),
+            // (declarations returned above; the rest: not translated)
+            Opcode::Call | Opcode::Callc | Opcode::Case | Opcode::Cut | Opcode::Default | Opcode::Emit | Opcode::EmitThenCut
+            | Opcode::EndSwitch | Opcode::Label | Opcode::CustomData | Opcode::DclResource | Opcode::DclConstantBuffer | Opcode::DclSampler | Opcode::DclIndexRange
+            | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclInput | Opcode::DclInputSgv | Opcode::DclInputSiv | Opcode::DclInputPs
+            | Opcode::DclInputPsSgv | Opcode::DclInputPsSiv | Opcode::DclOutput | Opcode::DclOutputSgv | Opcode::DclOutputSiv | Opcode::DclTemps | Opcode::DclIndexableTemp
+            | Opcode::DclGlobalFlags | Opcode::Reserved10 | Opcode::Lod | Opcode::Reserved101 | Opcode::HsDecls | Opcode::HsControlPointPhase | Opcode::HsForkPhase
+            | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream | Opcode::InterfaceCall | Opcode::Gather4Po | Opcode::Gather4PoC
+            | Opcode::Uaddc | Opcode::Usubb | Opcode::DclStream | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount
+            | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount
+            | Opcode::DclThreadGroup | Opcode::DclUavTyped | Opcode::DclUavRaw | Opcode::DclUavStructured | Opcode::DclTgsmRaw | Opcode::DclTgsmStructured | Opcode::DclResourceRaw
+            | Opcode::DclResourceStructured | Opcode::AtomicAnd | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd | Opcode::AtomicImax
+            | Opcode::AtomicImin | Opcode::AtomicUmax | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd
+            | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor | Opcode::ImmAtomicExch | Opcode::ImmAtomicCmpExch | Opcode::ImmAtomicImax | Opcode::ImmAtomicImin | Opcode::ImmAtomicUmax
+            | Opcode::ImmAtomicUmin | Opcode::Dadd | Opcode::Dmax | Opcode::Dmin | Opcode::Dmul | Opcode::Deq | Opcode::Dge
+            | Opcode::Dlt | Opcode::Dne | Opcode::Dmov | Opcode::Dmovc | Opcode::Dtof | Opcode::Ftod | Opcode::EvalSnapped
+            | Opcode::EvalSampleIndex | Opcode::EvalCentroid | Opcode::DclGsInstanceCount | Opcode::Abort | Opcode::DebugBreak | Opcode::Reserved11 | Opcode::Ddiv
+            | Opcode::Dfma | Opcode::Drcp | Opcode::Msad | Opcode::Dtoi | Opcode::Dtou | Opcode::Itod | Opcode::Utod
+            | Opcode::Unknown => {
+                return Err(format!("opcode {:#x}", i.code))
+            }
         }
         Ok(())
     }
@@ -1430,7 +1536,7 @@ impl W {
     }
 
     fn ld_tgsm(&mut self, i: &Inst) -> R<()> {
-        let structured = i.op == 0xa7;
+        let structured = i.op == Opcode::LdStructured;
         let (g, a, dwords) = self.tgsm_addr(i, structured, 1)?;
         let swz = i.ops[if structured { 3 } else { 2 }].swizzle();
         // (out of range: 0, as Direct3D reads past the memory)
@@ -1440,9 +1546,9 @@ impl W {
     }
 
     fn store_tgsm(&mut self, i: &Inst) -> R<()> {
-        let structured = i.op == 0xa8;
+        let structured = i.op == Opcode::StoreStructured;
         let d = &i.ops[0];
-        let comps = bits(d.mask() as u32);
+        let comps = bits(u32::from(d.mask()));
         let (g, a, dwords) = {
             let g = d.reg();
             if d.ty != tpf::TGSM {
@@ -1473,7 +1579,7 @@ impl W {
     }
 
     fn shift(&mut self, i: &Inst, k: K, opr: &str) -> R<()> {
-        let comps = bits(i.ops[0].mask() as u32);
+        let comps = bits(u32::from(i.ops[0].mask()));
         let a = self.src(&i.ops[1], k, &comps)?;
         let b = self.src(&i.ops[2], K::U, &comps)?;
         let m = self.splat(K::U, comps.len(), 31);
@@ -1513,7 +1619,7 @@ fn texture_type(dim: u32, k: K, depth: bool) -> R<(String, u32)> {
         };
         return Ok((t.into(), vd));
     }
-    let t = ["texture_1d", "texture_2d", "texture_2d_array", "texture_cube", "texture_cube_array", "texture_3d"][vd as usize];
+    let t = ["texture_1d", "texture_2d", "texture_2d_array", "texture_cube", "texture_cube_array", "texture_3d"][crate::us(vd)];
     Ok((format!("{t}<{}>", k.s()), vd))
 }
 
@@ -1543,7 +1649,7 @@ pub fn translate_point_sprite(code: &[u8], ps: Option<&[u8]>, max_size: f32) -> 
 /// float)).
 pub fn uav_slots(code: &[u8]) -> R<Vec<(u32, u32, u32)>> {
     let (_, p) = parse(code)?;
-    Ok(p.insts.iter().filter(|i| i.op == 0x9c && !i.ops.is_empty()).map(|i| (i.ops[0].reg(), i.ctl & 0x1f, i.extra.first().map_or(5, |r| r & 0xf))).collect())
+    Ok(p.insts.iter().filter(|i| i.op == Opcode::DclUavTyped && !i.ops.is_empty()).map(|i| (i.ops[0].reg(), i.ctl & 0x1f, i.extra.first().map_or(5, |r| r & 0xf))).collect())
 }
 
 /// A compute shader (cs_4_x/cs_5_0 DXBC) as a WGSL compute entry point `main`. Group 0:
@@ -1567,10 +1673,10 @@ pub fn translate_compute(code: &[u8], uav_formats: &[(u32, &str)]) -> R<Wgsl> {
         return Err("a compute shader with input/output registers".into());
     }
     for i in &p.insts {
-        if matches!(i.op, 0x0b | 0x0c | 0x7a..=0x7d | 0x0d | 0x45 | 0x4a | 0x46 | 0x7e..=0x80) && i.op != 0x7e {
+        if matches!(i.op, Opcode::DerivRtx | Opcode::DerivRty | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine | Opcode::Discard | Opcode::Sample | Opcode::SampleB | Opcode::SampleC | Opcode::Gather4C | Opcode::Gather4Po | Opcode::Gather4PoC) && i.op != Opcode::Gather4C {
             // (no derivatives in a compute shader: implicit-level sampling and discard neither)
-            if !matches!(i.op, 0x7e | 0x7f) {
-                return Err(format!("instruction {:#x} in a compute shader", i.op));
+            if !matches!(i.op, Opcode::Gather4C | Opcode::Gather4Po) {
+                return Err(format!("instruction {:#x} in a compute shader", i.code));
             }
         }
         w.inst(i)?;
@@ -1610,18 +1716,18 @@ pub fn translate_compute(code: &[u8], uav_formats: &[(u32, &str)]) -> R<Wgsl> {
     for (g, &(dwords, _)) in &w.tgsm {
         let _ = writeln!(m, "var<workgroup> g{g}: array<u32, {dwords}>;");
     }
-    for (ty, name) in [(32, "vtid"), (33, "vgid"), (34, "vltid"), (35, "vlidx")] {
+    for (ty, name) in [(tpf::THREAD_ID, "vtid"), (tpf::THREAD_GROUP_ID, "vgid"), (tpf::THREAD_ID_IN_GROUP, "vltid"), (tpf::THREAD_ID_IN_GROUP_FLATTENED, "vlidx")] {
         if w.sys_in.contains(&ty) {
             let _ = writeln!(m, "var<private> {name}: vec4<u32>;");
         }
     }
     let _ = write!(m, "\nfn shader_main() {{\n{temps}{}}}\n\n", w.body);
-    let [x, y, z] = w.threads.unwrap();
+    let Some([x, y, z]) = w.threads else { return Err("a compute shader without dcl_thread_group".into()) };
     let _ = writeln!(
         m,
         "@compute @workgroup_size({x}, {y}, {z})\nfn main(@builtin(global_invocation_id) in_tid: vec3<u32>, @builtin(workgroup_id) in_gid: vec3<u32>, @builtin(local_invocation_id) in_ltid: vec3<u32>, @builtin(local_invocation_index) in_lidx: u32) {{"
     );
-    for (ty, s) in [(32, "vtid = vec4<u32>(in_tid, 0u);"), (33, "vgid = vec4<u32>(in_gid, 0u);"), (34, "vltid = vec4<u32>(in_ltid, 0u);"), (35, "vlidx = vec4<u32>(in_lidx);")] {
+    for (ty, s) in [(tpf::THREAD_ID, "vtid = vec4<u32>(in_tid, 0u);"), (tpf::THREAD_GROUP_ID, "vgid = vec4<u32>(in_gid, 0u);"), (tpf::THREAD_ID_IN_GROUP, "vltid = vec4<u32>(in_ltid, 0u);"), (tpf::THREAD_ID_IN_GROUP_FLATTENED, "vlidx = vec4<u32>(in_lidx);")] {
         if w.sys_in.contains(&ty) {
             let _ = writeln!(m, "    {s}");
         }
@@ -1746,7 +1852,7 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
     if !w.blocks.is_empty() {
         return Err("unclosed block".into());
     }
-    let group = pixel as u32;
+    let group = u32::from(pixel);
     let mut m = String::from("diagnostic(off, derivative_uniformity);\n\n");
     let mut bindings = Vec::new();
     module_decls(&mut w, &mut m, &mut bindings, group, None)?;
@@ -1762,7 +1868,7 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         if c.len() == 4 {
             format!("{place} = {val};")
         } else {
-            c.iter().map(|&c| format!("{place}.{0} = {val}.{0};", XYZW[c as usize])).collect::<Vec<_>>().join(" ")
+            c.iter().map(|&c| format!("{place}.{0} = {val}.{0};", XYZW[usize::from(c)])).collect::<Vec<_>>().join(" ")
         }
     };
     if pixel {
@@ -1770,7 +1876,7 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
         for (&r, d) in &w.inputs {
             match d.sysval {
                 0 => {
-                    let v = vary.iter().find(|v| v.reg == r).unwrap();
+                    let Some(v) = vary.iter().find(|v| v.reg == r) else { return Err(format!("v{r} without its varying")) };
                     params.push(format!("@location({r}) {} in{r}: {}", v.interp, vty(v.k, 4)));
                     let val = if v.k == K::U { format!("in{r}") } else { format!("bitcast<vec4<u32>>(in{r})") };
                     pre.push(assign(format!("v{r}"), d.mask, val));
@@ -1844,7 +1950,7 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
                 .osgn
                 .iter()
                 .find(|e| e.sysval == 0 && e.name.eq_ignore_ascii_case("PSIZE") && w.outputs.contains_key(&e.reg))
-                .map_or("1.0f".to_string(), |e| format!("bitcast<f32>(o{}.{})", e.reg, XYZW[bits(e.mask).first().copied().unwrap_or(0) as usize]));
+                .map_or("1.0f".to_string(), |e| format!("bitcast<f32>(o{}.{})", e.reg, XYZW[usize::from(bits(e.mask).first().copied().unwrap_or(0))]));
             // (the geometry shader's strip 0 1 2 3 as triangles 0 1 2, 2 1 3)
             post.push("var sp_c = array<vec2<f32>, 6>(vec2<f32>(0.5f, -0.5f), vec2<f32>(0.5f, 0.5f), vec2<f32>(-0.5f, -0.5f), vec2<f32>(-0.5f, -0.5f), vec2<f32>(0.5f, 0.5f), vec2<f32>(-0.5f, 0.5f));".into());
             post.push(format!("let sp_s = clamp({size}, 1.0f, {}f);", crate::f32_text(max)));
@@ -1862,7 +1968,7 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
                             continue;
                         }
                         for (pc, vc) in bits(e.mask).into_iter().zip(bits(f.mask)) {
-                            comp[pc as usize] = format!("o{}.{}", f.reg, XYZW[vc as usize]);
+                            comp[usize::from(pc)] = format!("o{}.{}", f.reg, XYZW[usize::from(vc)]);
                         }
                     }
                     let r = v.reg;
@@ -1908,133 +2014,10 @@ fn translate_with(code: &[u8], pixel: bool, ps: Option<&[u8]>, sprite: Option<f3
 }
 
 #[cfg(test)]
-mod icb_tests {
-    /// ps_4_0: dcl_output o0.xyzw; [dcl_immediateConstantBuffer of `icb` vec4s]; mov o0, icb[k]; ret
-    fn ps(icb: Option<&[[u32; 4]]>, k: u32) -> Vec<u8> {
-        let mut t = vec![0x0000_0040, 0, 0x0300_0065, 0x0010_20f2, 0];
-        if let Some(v) = icb {
-            t.extend([0x35 | 3 << 11, 2 + 4 * v.len() as u32]);
-            t.extend(v.iter().flatten());
-        }
-        t.extend([0x0500_0036, 0x0010_20f2, 0, 0x0010_9e46, k, 0x0100_003e]);
-        t[1] = t.len() as u32;
-        let shdr: Vec<u8> = t.iter().flat_map(|x| x.to_le_bytes()).collect();
-        // OSGN: SV_Target0, float4, o0, mask xyzw
-        let mut osgn = Vec::new();
-        for x in [1u32, 8, 32, 0, 64, 3, 0, 0xf] {
-            osgn.extend(x.to_le_bytes());
-        }
-        osgn.extend(b"SV_Target\0\0\0");
-        let chunks: [(&[u8; 4], &[u8]); 2] = [(b"OSGN", &osgn), (b"SHDR", &shdr)];
-        let mut d = b"DXBC".to_vec();
-        d.extend([0; 16]);
-        d.extend(1u32.to_le_bytes());
-        d.extend(0u32.to_le_bytes()); // total size, set below
-        d.extend((chunks.len() as u32).to_le_bytes());
-        let mut at = d.len() + 4 * chunks.len();
-        for (_, c) in chunks {
-            d.extend((at as u32).to_le_bytes());
-            at += 8 + c.len();
-        }
-        for (tag, c) in chunks {
-            d.extend(*tag);
-            d.extend((c.len() as u32).to_le_bytes());
-            d.extend(c);
-        }
-        let n = d.len() as u32;
-        d[24..28].copy_from_slice(&n.to_le_bytes());
-        d
-    }
-
-    fn valid(w: &str) {
-        let m = naga::front::wgsl::parse_str(w).unwrap_or_else(|e| panic!("{}\n{w}", e.emit_to_string(w)));
-        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-            .validate(&m)
-            .unwrap_or_else(|e| panic!("{e:?}\n{w}"));
-    }
-
-    #[test]
-    fn icb_reads_its_declaration() {
-        let v = [[1, 2, 3, 4], [5, 6, 7, 8]];
-        for k in 0..2 {
-            let w = crate::translate(&ps(Some(&v), k), true, None).expect("declared icb");
-            assert!(w.code.contains(&format!("icb[{k}")), "{}", w.code);
-            valid(&w.code);
-        }
-    }
-
-    #[test]
-    fn icb_without_a_declaration_is_rejected() {
-        // the fuzz's input read icb[3] with no dcl_immediateConstantBuffer: WGSL naming an
-        // undefined icb went to WebGPU
-        let e = crate::translate(&ps(None, 3), true, None).err().expect("rejected");
-        assert_eq!(e, "icb is not declared");
-        let e = crate::translate(&ps(Some(&[]), 0), true, None).err().expect("rejected");
-        assert_eq!(e, "icb is not declared");
-        let e = crate::translate(&ps(Some(&[[1, 2, 3, 4]]), 1), true, None).err().expect("rejected");
-        assert!(e.contains("past its size"), "{e}");
-    }
-}
+mod icb_tests;
 
 #[cfg(test)]
-mod tests {
-    /// Every DXBC file in $MASU_DXBC_DIR (shaders taken from games) translates to WGSL that naga
-    /// accepts. Pixel or vertex comes from the program type; each vertex shader is linked to
-    /// every pixel shader in the directory.
-    #[test]
-    fn corpus() {
-        let Ok(dir) = std::env::var("MASU_DXBC_DIR") else { return };
-        let mut shaders = Vec::new();
-        for e in std::fs::read_dir(&dir).unwrap() {
-            let p = e.unwrap().path();
-            let code = std::fs::read(&p).unwrap();
-            let Ok((_, prog)) = super::parse(&code) else { continue };
-            shaders.push((p, code, prog.kind));
-        }
-        let mut fails = 0;
-        let check = |name: &str, code: &[u8], pixel: bool, ps: Option<&[u8]>| -> bool {
-            match super::translate(code, pixel, ps) {
-                Ok(w) => match naga::front::wgsl::parse_str(&w.code) {
-                    Ok(m) => {
-                        let v = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m);
-                        if let Err(e) = v {
-                            eprintln!("{name}: invalid: {e:?}\n{}", w.code);
-                            return false;
-                        }
-                        if std::env::var_os("MASU_DXBC_PRINT").is_some() {
-                            eprintln!("{name}:\n{}", w.code);
-                        }
-                        true
-                    }
-                    Err(e) => {
-                        eprintln!("{name}: {}\n{}", e.emit_to_string(&w.code), w.code);
-                        false
-                    }
-                },
-                Err(e) => {
-                    eprintln!("{name}: {e}");
-                    false
-                }
-            }
-        };
-        for (p, code, kind) in &shaders {
-            let name = p.display().to_string();
-            match *kind {
-                0 => fails += !check(&name, code, true, None) as u32,
-                1 => {
-                    fails += !check(&name, code, false, None) as u32;
-                    for (q, ps, k) in &shaders {
-                        if *k == 0 {
-                            fails += !check(&format!("{name} + {}", q.display()), code, false, Some(ps)) as u32;
-                        }
-                    }
-                }
-                k => eprintln!("{name}: program type {k} skipped"),
-            }
-        }
-        assert_eq!(fails, 0);
-    }
-}
+mod tests;
 
 /// Direct3D's results where WGSL's built-ins leave them to the implementation (D3D11.3
 /// functional spec; checked on WebGPU by tests/shaders.mjs). Infinities and NaN come from bit
