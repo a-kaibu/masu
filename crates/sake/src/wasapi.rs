@@ -25,32 +25,109 @@ use crate::HashMap;
 
 const S_OK: u32 = 0;
 const S_FALSE: u32 = 1;
-const E_POINTER: u32 = 0x8000_4003;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_UNEXPECTED: u32 = 0x8000_ffff;
-/// HRESULT_FROM_WIN32(RPC_X_NULL_REF_POINTER): the session interfaces' NULL pointer error
-const NULL_REF: u32 = 0x8007_06f4;
-const NOT_INITIALIZED: u32 = 0x8889_0001;
-const ALREADY_INITIALIZED: u32 = 0x8889_0002;
-const NOT_STOPPED: u32 = 0x8889_0005;
-const BUFFER_TOO_LARGE: u32 = 0x8889_0006;
-const OUT_OF_ORDER: u32 = 0x8889_0007;
-const UNSUPPORTED_FORMAT: u32 = 0x8889_0008;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
-const INVALID_SIZE: u32 = 0x8889_0009;
-const BUFFER_OPERATION_PENDING: u32 = 0x8889_000b;
-const EXCLUSIVE_MODE_NOT_ALLOWED: u32 = 0x8889_000e;
-const EVENTHANDLE_NOT_EXPECTED: u32 = 0x8889_0011;
-const EVENTHANDLE_NOT_SET: u32 = 0x8889_0014;
-const INVALID_STREAM_FLAG: u32 = 0x8889_0021;
+
+/// The failures WASAPI answers (E_*, AUDCLNT_E_*)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Hr {
+    Pointer,
+    NoInterface,
+    InvalidArg,
+    Unexpected,
+    /// HRESULT_FROM_WIN32(RPC_X_NULL_REF_POINTER): the session interfaces' NULL pointer error
+    NullRef,
+    OutOfMemory,
+    NotInitialized,
+    AlreadyInitialized,
+    NotStopped,
+    BufferTooLarge,
+    OutOfOrder,
+    UnsupportedFormat,
+    InvalidSize,
+    /// AUDCLNT_E_DEVICE_INVALIDATED's neighbour AUDCLNT_E_ENDPOINT_CREATE_FAILED (no capture
+    /// endpoint to loop back)
+    EndpointCreateFailed,
+    BufferOperationPending,
+    ExclusiveModeNotAllowed,
+    EventHandleNotExpected,
+    EventHandleNotSet,
+    BufferSizeError,
+    InvalidStreamFlag,
+}
+impl Hr {
+    pub(crate) const fn code(self) -> u32 {
+        match self {
+            Hr::Pointer => 0x8000_4003,
+            Hr::NoInterface => 0x8000_4002,
+            Hr::InvalidArg => 0x8007_0057,
+            Hr::Unexpected => 0x8000_ffff,
+            Hr::NullRef => 0x8007_06f4,
+            Hr::OutOfMemory => 0x8007_000e,
+            Hr::NotInitialized => 0x8889_0001,
+            Hr::AlreadyInitialized => 0x8889_0002,
+            Hr::NotStopped => 0x8889_0005,
+            Hr::BufferTooLarge => 0x8889_0006,
+            Hr::OutOfOrder => 0x8889_0007,
+            Hr::UnsupportedFormat => 0x8889_0008,
+            Hr::InvalidSize => 0x8889_0009,
+            Hr::EndpointCreateFailed => 0x8889_000a,
+            Hr::BufferOperationPending => 0x8889_000b,
+            Hr::ExclusiveModeNotAllowed => 0x8889_000e,
+            Hr::EventHandleNotExpected => 0x8889_0011,
+            Hr::EventHandleNotSet => 0x8889_0014,
+            Hr::BufferSizeError => 0x8889_0016,
+            Hr::InvalidStreamFlag => 0x8889_0021,
+        }
+    }
+}
+/// A success: S_OK, or S_FALSE (nothing to do, or a near format)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Done {
+    Ok,
+    False,
+}
+/// A method's HRESULT
+fn hr(r: Result<Done, Hr>) -> u32 {
+    match r {
+        Ok(Done::Ok) => S_OK,
+        Ok(Done::False) => S_FALSE,
+        Err(e) => e.code(),
+    }
+}
+const E_POINTER: u32 = Hr::Pointer.code();
+const E_NOINTERFACE: u32 = Hr::NoInterface.code();
+const E_INVALIDARG: u32 = Hr::InvalidArg.code();
+const NULL_REF: u32 = Hr::NullRef.code();
+const NOT_INITIALIZED: u32 = Hr::NotInitialized.code();
 
 /// AUDCLNT_STREAMFLAGS_* and AUDCLNT_SESSIONFLAGS_*: what Initialize takes
-const LOOPBACK: u32 = 0x2_0000;
-const EVENTCALLBACK: u32 = 0x4_0000;
-const RATEADJUST: u32 = 0x10_0000;
-const AUTOCONVERTPCM: u32 = 0x8000_0000;
-const VALID_FLAGS: u32 = 0x1_0000 | LOOPBACK | EVENTCALLBACK | 0x8_0000 | RATEADJUST | 0x100_0000 | 0x800_0000 | AUTOCONVERTPCM | 0x7000_0000;
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub(crate) struct Flags(u32);
+impl Flags {
+    pub(crate) const fn has(self, f: Flags) -> bool {
+        self.0 & f.0 != 0
+    }
+}
+const LOOPBACK: Flags = Flags(0x2_0000);
+const EVENTCALLBACK: Flags = Flags(0x4_0000);
+const RATEADJUST: Flags = Flags(0x10_0000);
+const AUTOCONVERTPCM: Flags = Flags(0x8000_0000);
+const VALID_FLAGS: u32 = 0x1_0000 | LOOPBACK.0 | EVENTCALLBACK.0 | 0x8_0000 | RATEADJUST.0 | 0x100_0000 | 0x800_0000 | AUTOCONVERTPCM.0 | 0x7000_0000;
+
+/// AUDCLNT_SHAREMODE
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ShareMode {
+    Shared,
+    Exclusive,
+}
+impl ShareMode {
+    fn of(v: u32) -> Option<ShareMode> {
+        match v {
+            0 => Some(ShareMode::Shared),
+            1 => Some(ShareMode::Exclusive),
+            _ => None,
+        }
+    }
+}
 /// AUDCLNT_BUFFERFLAGS_SILENT
 const SILENT: u32 = 2;
 
@@ -65,6 +142,10 @@ const STEP_DB: f32 = 0.03125;
 /// x86 stdcall: the handler pops this many bytes of arguments (x64 ignores it)
 fn b(n: u32) -> u32 {
     4 * n
+}
+/// A guest index (a channel, a session) as an index of ours
+fn us(i: u32) -> usize {
+    usize::try_from(i).unwrap_or(usize::MAX)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -108,11 +189,11 @@ fn read_wave(p: u32) -> Wave {
 /// Whether Windows' audio engine takes `w` (S_OK) or why not (E_INVALIDARG for a malformed
 /// one, AUDCLNT_E_UNSUPPORTED_FORMAT for a well-formed one it does not play); `compatible`:
 /// whether its rate and channels fit the stream (else a valid one is unsupported too).
-pub(crate) fn check(w: &Wave, compatible: bool) -> Result<Fmt, u32> {
+pub(crate) fn check(w: &Wave, compatible: bool) -> Result<Fmt, Hr> {
     // (WAVEFORMATEX: PCM or IEEE float of one or two channels, all of its bits valid)
     let (float, valid) = if w.tag == 0xfffe {
         if w.cb < 22 {
-            return Err(E_INVALIDARG);
+            return Err(Hr::InvalidArg);
         }
         // (another SubFormat: unsupported, once the rest is well-formed)
         let float = match w.sub {
@@ -125,67 +206,69 @@ pub(crate) fn check(w: &Wave, compatible: bool) -> Result<Fmt, u32> {
         let float = match w.tag {
             1 => false,
             3 => true,
-            _ => return Err(UNSUPPORTED_FORMAT),
+            _ => return Err(Hr::UnsupportedFormat),
         };
         if w.channels > 2 {
-            return Err(E_INVALIDARG);
+            return Err(Hr::InvalidArg);
         }
         (Some(float), w.bits)
     };
-    if w.channels as usize > MAX_CHANNELS {
-        return Err(UNSUPPORTED_FORMAT);
+    if usize::from(w.channels) > MAX_CHANNELS {
+        return Err(Hr::UnsupportedFormat);
     }
-    if w.channels == 0 || w.rate == 0 || w.block as u32 != w.channels as u32 * w.bits as u32 / 8 || w.avg != w.block as u32 * w.rate || valid == 0 || valid > w.bits {
-        return Err(E_INVALIDARG);
+    let block = u32::from(w.channels) * u32::from(w.bits) / 8;
+    if w.channels == 0 || w.rate == 0 || u32::from(w.block) != block || w.avg != u32::from(w.block).wrapping_mul(w.rate) || valid == 0 || valid > w.bits {
+        return Err(Hr::InvalidArg);
     }
-    let Some(float) = float else { return Err(UNSUPPORTED_FORMAT) };
+    let Some(float) = float else { return Err(Hr::UnsupportedFormat) };
     if float {
         match w.bits {
             32 if valid == 32 => {}
-            32 | 64 => return Err(UNSUPPORTED_FORMAT),
-            _ => return Err(E_INVALIDARG),
+            32 | 64 => return Err(Hr::UnsupportedFormat),
+            _ => return Err(Hr::InvalidArg),
         }
     } else {
         match w.bits {
             8 | 16 | 24 | 32 if valid == w.bits || (w.bits, valid) == (32, 24) => {}
-            8 | 16 | 24 | 32 => return Err(UNSUPPORTED_FORMAT),
-            _ => return Err(E_INVALIDARG),
+            8 | 16 | 24 | 32 => return Err(Hr::UnsupportedFormat),
+            _ => return Err(Hr::InvalidArg),
         }
     }
     if !compatible {
-        return Err(UNSUPPORTED_FORMAT);
+        return Err(Hr::UnsupportedFormat);
     }
-    Ok(Fmt { rate: w.rate, channels: w.channels as u32, bits: w.bits as u32, float, law: 0 })
+    Ok(Fmt { rate: w.rate, channels: u32::from(w.channels), bits: u32::from(w.bits), float, law: 0 })
 }
 
 /// What shared mode does with a format: Initialize's answer (`flags`: its stream flags) and
 /// IsFormatSupported's (S_FALSE: valid, but another rate or channel count than the mix)
-pub(crate) fn shared_initialize(w: &Wave, flags: u32) -> Result<Fmt, u32> {
-    let compatible = if flags & AUTOCONVERTPCM != 0 {
+pub(crate) fn shared_initialize(w: &Wave, flags: Flags) -> Result<Fmt, Hr> {
+    let mix_channels = u32::from(w.channels) == MIX.channels;
+    let compatible = if flags.has(AUTOCONVERTPCM) {
         true
-    } else if flags & RATEADJUST != 0 {
-        w.channels as u32 == MIX.channels
+    } else if flags.has(RATEADJUST) {
+        mix_channels
     } else {
-        w.rate == MIX.rate && w.channels as u32 == MIX.channels
+        w.rate == MIX.rate && mix_channels
     };
     check(w, compatible)
 }
-pub(crate) fn shared_supported(w: &Wave) -> u32 {
-    match check(w, true) {
-        Ok(_) if w.rate == MIX.rate && w.channels as u32 == MIX.channels => S_OK,
-        Ok(_) => S_FALSE,
-        Err(hr) => hr,
-    }
+/// IsFormatSupported's answer: S_OK for the mix rate and channels, S_FALSE for another valid one
+pub(crate) fn shared_supported(w: &Wave) -> Result<Done, Hr> {
+    check(w, true).map(|_| if w.rate == MIX.rate && u32::from(w.channels) == MIX.channels { Done::Ok } else { Done::False })
 }
 
 /// The mix format as a CoTaskMemAlloc'd WAVEFORMATEXTENSIBLE.
 fn mix_format() -> u32 {
+    const CHANNELS: u16 = 2;
+    const BLOCK: u16 = 8;
+    const _: () = assert!(MIX.channels == 2 && MIX.bits == 32);
     let p = mem::heap_alloc(40, true);
     w16(p, 0xfffe);
-    w16(p + 2, MIX.channels as u16);
+    w16(p + 2, CHANNELS);
     w32(p + 4, MIX.rate);
-    w32(p + 8, MIX.rate * MIX.block());
-    w16(p + 12, MIX.block() as u16);
+    w32(p + 8, MIX.rate * u32::from(BLOCK));
+    w16(p + 12, BLOCK);
     w16(p + 14, 32);
     w16(p + 16, 22);
     w16(p + 18, 32);
@@ -206,10 +289,13 @@ fn mix_format() -> u32 {
 pub(crate) const MAX_CHANNELS: usize = 32;
 /// The longest shared-mode buffer Initialize takes (20 s; Wine's exclusive-mode limit is 2 s).
 const MAX_DURATION: u64 = 200_000_000;
-const AUDCLNT_E_BUFFER_SIZE_ERROR: u32 = 0x8889_0016;
 
 pub(crate) fn buffer_frames(rate: u32, duration: u64) -> u32 {
-    let frames = |d: u64| ((d as u128 * rate as u128 + 5_000_000) / 10_000_000) as u32;
+    // (as MulDiv: past u32, its low bits)
+    let frames = |d: u64| {
+        let f = (u128::from(d) * u128::from(rate) + 5_000_000) / 10_000_000;
+        u32::try_from(f & 0xffff_ffff).unwrap_or(0)
+    };
     frames(duration).max(frames(2 * PERIOD))
 }
 
@@ -219,7 +305,7 @@ pub(crate) fn buffer_frames(rate: u32, duration: u64) -> u32 {
 struct Client {
     refs: u32,
     fmt: Option<Fmt>,
-    flags: u32,
+    flags: Flags,
     frames: u32,
     event: u32,
     running: bool,
@@ -245,7 +331,8 @@ struct Client {
 
 impl Client {
     fn padding(&self) -> u32 {
-        self.queue.len() as u32
+        // (the queue is at most the buffer's frames, a u32)
+        u32::try_from(self.queue.len()).unwrap_or(u32::MAX)
     }
 }
 
@@ -288,7 +375,8 @@ fn client<R>(this: u32, f: impl FnOnce(&mut Client) -> R) -> Option<R> {
 /// A grouping GUID for a new session (not GUID_NULL, as Windows gives)
 fn new_guid(seed: u32) -> [u32; 4] {
     let t = crate::k32::qpc();
-    [0x5a4b_0000 | (seed & 0xffff), t as u32 | 1, (t >> 32) as u32, 0x8000_0000 | seed]
+    let [a, b, c, d, e, f, g, h] = t.to_le_bytes();
+    [0x5a4b_0000 | (seed & 0xffff), u32::from_le_bytes([a, b, c, d]) | 1, u32::from_le_bytes([e, f, g, h]), 0x8000_0000 | seed]
 }
 
 /// The session of `guid` (all zeros: the process's default session, as NULL is), made the
@@ -298,11 +386,11 @@ fn session_of(e: &mut Engine, guid: [u32; 4]) -> usize {
         return i;
     }
     let n = e.sessions.len();
-    e.sessions.push(Session { guid, name: Vec::new(), icon: Vec::new(), group: new_guid(n as u32), volume: 1.0, mute: false, channel: [1.0; 8] });
+    e.sessions.push(Session { guid, name: Vec::new(), icon: Vec::new(), group: new_guid(u32::try_from(n).unwrap_or(u32::MAX)), volume: 1.0, mute: false, channel: [1.0; 8] });
     n
 }
 fn guid_arg(p: u32) -> [u32; 4] {
-    if p == 0 { [0; 4] } else { std::array::from_fn(|i| r32(p + 4 * i as u32)) }
+    if p == 0 { [0; 4] } else { [r32(p), r32(p + 4), r32(p + 8), r32(p + 12)] }
 }
 
 fn endpoint_gain(ep: &Endpoint, ch: usize) -> f32 {
@@ -314,8 +402,8 @@ fn endpoint_gain(ep: &Endpoint, ch: usize) -> f32 {
 /// `gain` (left, right); returns whether it ran dry.
 fn render(c: &mut Client, gain: [f32; 2], out: &mut [f32]) -> bool {
     let Some(f) = c.fmt else { return false };
-    let rate = if c.rate > 0.0 { c.rate as f64 } else { f.rate as f64 };
-    let step = rate / RATE as f64;
+    let rate = if c.rate > 0.0 { f64::from(c.rate) } else { f64::from(f.rate) };
+    let step = rate / f64::from(RATE);
     let mut dry = false;
     for o in out.chunks_exact_mut(2) {
         let Some(&a) = c.queue.front() else {
@@ -379,7 +467,7 @@ fn start_engine() {
 }
 
 fn spawn_engine() {
-    std::thread::Builder::new()
+    let started = std::thread::Builder::new()
         .name("wasapi".into())
         .spawn(|| {
             kura::snap::register("wasapi", false, 0);
@@ -387,7 +475,8 @@ fn spawn_engine() {
             let lock = Mutex::new(());
             loop {
                 kura::snap::idle();
-                drop(WAKE.wait_timeout(lock.lock().unwrap(), Duration::from_millis(10)).unwrap());
+                let held = lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                drop(WAKE.wait_timeout(held, Duration::from_millis(10)));
                 kura::snap::busy();
                 let id = with(|e| e.stream);
                 while kura::audio::queued(id) < AHEAD {
@@ -400,7 +489,11 @@ fn spawn_engine() {
                 }
             }
         })
-        .expect("wasapi thread");
+        ;
+    // (no thread: no WASAPI output, as with no audio device; the guest's calls still answer)
+    if let Err(e) = started {
+        eprintln!("[sake] wasapi: no engine thread: {e}");
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -411,24 +504,25 @@ fn guid_is(p: u32, g: Iid) -> bool {
     p != 0 && r32(p) == g.0 && r16(p + 4) == g.1 && r16(p + 6) == g.2
 }
 fn is_unknown(iid: u32) -> bool {
-    iid != 0 && (0..4).all(|i| r32(iid + 4 * i) == [0, 0, 0xc0, 0x4600_0000][i as usize])
+    iid != 0 && mem::slice(iid, 16) == [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]
 }
+/// A float argument (x64: XMM`i`'s low 32 bits)
 fn farg(c: &Ctx, i: u32) -> f32 {
-    f32::from_bits(if mem::x64() { c.xmm(i) as u32 } else { c.a(i) })
+    let [a, b, cc, d, ..] = c.xmm(i).to_le_bytes();
+    f32::from_bits(if mem::x64() { u32::from_le_bytes([a, b, cc, d]) } else { c.a(i) })
 }
 fn put_f32(p: u32, v: f32) {
     w32(p, v.to_bits());
 }
 /// A REFERENCE_TIME argument: x86 two stack slots from `i`, x64 argument `x64`
 fn time_arg(c: &Ctx, i: u32, x64: u32) -> u64 {
-    if mem::x64() { c.a64(x64) } else { c.a(i) as u64 | (c.a(i + 1) as u64) << 32 }
+    if mem::x64() { c.a64(x64) } else { u64::from(c.a(i)) | u64::from(c.a(i + 1)) << 32 }
 }
 /// A CoTaskMemAlloc'd copy of `s` (NUL-terminated)
 fn task_wstr(s: &[u16]) -> u32 {
-    let p = mem::heap_alloc(2 * s.len() as u32 + 2, true);
-    for (i, &v) in s.iter().enumerate() {
-        w16(p + 2 * i as u32, v);
-    }
+    let b: Vec<u8> = s.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let p = mem::heap_alloc(u32::try_from(b.len()).unwrap_or(0).saturating_add(2), true);
+    mem::write(p, &b);
     p
 }
 
@@ -454,9 +548,9 @@ fn service(vtbl: u32, owner: u32, session: usize) -> u32 {
     wp(o, vtbl);
     wp(o + ps(), owner);
     w32(o + 2 * ps(), 1);
-    w32(o + 3 * ps(), session as u32);
+    w32(o + 3 * ps(), u32::try_from(session).unwrap_or(u32::MAX));
     if owner != 0 {
-        client(owner, |c| c.refs += 1);
+        client(owner, |c| c.refs = c.refs.wrapping_add(1));
     }
     o
 }
@@ -464,7 +558,7 @@ fn owner(this: u32) -> u32 {
     rp(this + ps())
 }
 fn session_idx(this: u32) -> usize {
-    r32(this + 3 * ps()) as usize
+    usize::try_from(r32(this + 3 * ps())).unwrap_or(usize::MAX)
 }
 fn svc_addref(c: &mut Ctx) -> u32 {
     addref_obj(c.a(0))
@@ -570,7 +664,7 @@ pub(crate) fn new_client() -> u32 {
         let session = session_of(e, [0; 4]);
         e.clients.insert(
             o,
-            Client { refs: 1, fmt: None, flags: 0, frames: 0, event: 0, running: false, started: false, queue: VecDeque::new(), frac: 0.0, rate: 0.0, played: 0, taken: None, mem: 0, channel: [1.0; MAX_CHANNELS], session, ctl: 0 },
+            Client { refs: 1, fmt: None, flags: Flags::default(), frames: 0, event: 0, running: false, started: false, queue: VecDeque::new(), frac: 0.0, rate: 0.0, played: 0, taken: None, mem: 0, channel: [1.0; MAX_CHANNELS], session, ctl: 0 },
         )
     });
     o
@@ -621,19 +715,17 @@ fn adj_release(c: &mut Ctx) -> u32 {
 /// SetSampleRate(float): the rate the stream's frames are taken at (RATEADJUST streams)
 fn adj_rate(c: &mut Ctx) -> u32 {
     let r = farg(c, 1);
-    client(c.a(0) - ps(), |cl| {
+    hr(client(c.a(0).wrapping_sub(ps()), |cl| {
         if cl.fmt.is_none() {
-            NOT_INITIALIZED
-        } else if cl.flags & RATEADJUST == 0 {
-            E_INVALIDARG
-        } else if !(r > 0.0 && r <= 384_000.0) {
-            E_INVALIDARG
+            Err(Hr::NotInitialized)
+        } else if !cl.flags.has(RATEADJUST) || !(r > 0.0 && r <= 384_000.0) {
+            Err(Hr::InvalidArg)
         } else {
             cl.rate = r;
-            S_OK
+            Ok(Done::Ok)
         }
     })
-    .unwrap_or(E_INVALIDARG)
+    .unwrap_or(Err(Hr::InvalidArg)))
 }
 
 /// Initialize(share mode, stream flags, buffer duration, periodicity, format, session guid)
@@ -641,57 +733,57 @@ fn ac_initialize(c: &mut Ctx) -> u32 {
     let (this, mode, flags) = (c.a(0), c.a(1), c.a(2));
     let duration = time_arg(c, 3, 3);
     let (fmt, guid) = if mem::x64() { (c.a(5), c.a(6)) } else { (c.a(7), c.a(8)) };
-    if mode > 1 {
-        return E_INVALIDARG;
+    let r = initialize(this, mode, flags, duration, fmt, guid);
+    if r.is_ok() {
+        start_engine();
     }
+    hr(r)
+}
+fn initialize(this: u32, mode: u32, flags: u32, duration: u64, fmt: u32, guid: u32) -> Result<Done, Hr> {
+    let mode = ShareMode::of(mode).ok_or(Hr::InvalidArg)?;
     if flags & !VALID_FLAGS != 0 {
-        return INVALID_STREAM_FLAG;
+        return Err(Hr::InvalidStreamFlag);
     }
+    let flags = Flags(flags);
     if fmt == 0 {
-        return E_POINTER;
+        return Err(Hr::Pointer);
     }
     let w = read_wave(fmt);
     let guid = guid_arg(guid);
-    let r = with(|e| {
-        let Some(cl) = e.clients.get(&this) else { return E_INVALIDARG };
+    with(|e| {
+        let Some(cl) = e.clients.get(&this) else { return Err(Hr::InvalidArg) };
         if cl.fmt.is_some() {
-            return ALREADY_INITIALIZED;
+            return Err(Hr::AlreadyInitialized);
         }
-        if mode == 1 {
-            return if flags & AUTOCONVERTPCM != 0 { E_INVALIDARG } else { EXCLUSIVE_MODE_NOT_ALLOWED };
+        match mode {
+            ShareMode::Exclusive => return Err(if flags.has(AUTOCONVERTPCM) { Hr::InvalidArg } else { Hr::ExclusiveModeNotAllowed }),
+            ShareMode::Shared => {}
         }
         // (no capture endpoint to loop back)
-        if flags & LOOPBACK != 0 {
-            return 0x8889_000a;
+        if flags.has(LOOPBACK) {
+            return Err(Hr::EndpointCreateFailed);
         }
-        let f = match shared_initialize(&w, flags) {
-            Ok(f) => f,
-            Err(hr) => return hr,
-        };
+        let f = shared_initialize(&w, flags)?;
         let session = session_of(e, guid);
-        let cl = e.clients.get_mut(&this).unwrap();
         // (a guest-chosen duration: frames * block wrapped in u32 to a small buffer that
         // GetBuffer then handed out in full; and no buffer is no S_OK)
         if duration > MAX_DURATION {
-            return AUDCLNT_E_BUFFER_SIZE_ERROR;
+            return Err(Hr::BufferSizeError);
         }
         let frames = buffer_frames(f.rate, duration);
-        let Some(bytes) = frames.checked_mul(f.block()) else { return E_OUTOFMEMORY };
+        let bytes = frames.checked_mul(f.block()).ok_or(Hr::OutOfMemory)?;
+        let Some(cl) = e.clients.get_mut(&this) else { return Err(Hr::InvalidArg) };
         let m = mem::heap_alloc(bytes, true);
         if m == 0 {
-            return E_OUTOFMEMORY;
+            return Err(Hr::OutOfMemory);
         }
         cl.fmt = Some(f);
         cl.flags = flags;
         cl.frames = frames;
         cl.mem = m;
         cl.session = session;
-        S_OK
-    });
-    if r == S_OK {
-        start_engine();
-    }
-    r
+        Ok(Done::Ok)
+    })
 }
 
 /// a getter of an initialized client's value into `*out`
@@ -739,13 +831,13 @@ fn ac_supported(c: &mut Ctx) -> u32 {
         return E_POINTER;
     }
     if mode == 1 {
-        return EXCLUSIVE_MODE_NOT_ALLOWED;
+        return Hr::ExclusiveModeNotAllowed.code();
     }
-    let hr = shared_supported(&read_wave(fmt));
-    if hr == S_FALSE {
+    let r = shared_supported(&read_wave(fmt));
+    if r == Ok(Done::False) {
         putp(closest, mix_format());
     }
-    hr
+    hr(r)
 }
 fn ac_mix_format(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
@@ -771,11 +863,11 @@ fn ac_period(c: &mut Ctx) -> u32 {
 fn ac_start(c: &mut Ctx) -> u32 {
     let r = client(c.a(0), |cl| {
         if cl.fmt.is_none() {
-            Err(NOT_INITIALIZED)
+            Err(Hr::NotInitialized)
         } else if cl.running {
-            Err(NOT_STOPPED)
-        } else if cl.flags & EVENTCALLBACK != 0 && cl.event == 0 {
-            Err(EVENTHANDLE_NOT_SET)
+            Err(Hr::NotStopped)
+        } else if cl.flags.has(EVENTCALLBACK) && cl.event == 0 {
+            Err(Hr::EventHandleNotSet)
         } else {
             cl.running = true;
             cl.started = true;
@@ -791,58 +883,58 @@ fn ac_start(c: &mut Ctx) -> u32 {
             WAKE.notify_all();
             S_OK
         }
-        Some(Err(hr)) => hr,
+        Some(Err(e)) => e.code(),
         None => E_INVALIDARG,
     }
 }
 fn ac_stop(c: &mut Ctx) -> u32 {
-    client(c.a(0), |cl| {
+    hr(client(c.a(0), |cl| {
         if cl.fmt.is_none() {
-            NOT_INITIALIZED
+            Err(Hr::NotInitialized)
         } else if !cl.running {
-            S_FALSE
+            Ok(Done::False)
         } else {
             cl.running = false;
-            S_OK
+            Ok(Done::Ok)
         }
     })
-    .unwrap_or(E_INVALIDARG)
+    .unwrap_or(Err(Hr::InvalidArg)))
 }
 /// Reset: a stopped stream's queued frames and position go
 fn ac_reset(c: &mut Ctx) -> u32 {
-    client(c.a(0), |cl| {
+    hr(client(c.a(0), |cl| {
         if cl.fmt.is_none() {
-            NOT_INITIALIZED
+            Err(Hr::NotInitialized)
         } else if cl.running {
-            NOT_STOPPED
+            Err(Hr::NotStopped)
         } else if cl.taken.is_some() {
-            BUFFER_OPERATION_PENDING
+            Err(Hr::BufferOperationPending)
         } else {
             cl.queue.clear();
             cl.frac = 0.0;
             cl.played = 0;
-            S_OK
+            Ok(Done::Ok)
         }
     })
-    .unwrap_or(E_INVALIDARG)
+    .unwrap_or(Err(Hr::InvalidArg)))
 }
 fn ac_set_event(c: &mut Ctx) -> u32 {
     let (this, h) = (c.a(0), c.a(1));
-    client(this, |cl| {
+    hr(client(this, |cl| {
         if cl.fmt.is_none() {
-            NOT_INITIALIZED
+            Err(Hr::NotInitialized)
         } else if h == 0 {
-            E_INVALIDARG
-        } else if cl.flags & EVENTCALLBACK == 0 {
-            EVENTHANDLE_NOT_EXPECTED
+            Err(Hr::InvalidArg)
+        } else if !cl.flags.has(EVENTCALLBACK) {
+            Err(Hr::EventHandleNotExpected)
         } else if cl.event != 0 {
-            E_UNEXPECTED
+            Err(Hr::Unexpected)
         } else {
             cl.event = h;
-            S_OK
+            Ok(Done::Ok)
         }
     })
-    .unwrap_or(E_INVALIDARG)
+    .unwrap_or(Err(Hr::InvalidArg)))
 }
 /// GetService(riid, void**)
 fn ac_service(c: &mut Ctx) -> u32 {
@@ -874,11 +966,11 @@ fn ac_service(c: &mut Ctx) -> u32 {
             o
         }
     } else if is(IID_CLOCK_ADJUST) {
-        if flags & RATEADJUST == 0 {
+        if !flags.has(RATEADJUST) {
             return E_INVALIDARG;
         }
-        client(this, |c| c.refs += 1);
-        this + ps()
+        client(this, |c| c.refs = c.refs.wrapping_add(1));
+        this.wrapping_add(ps())
     } else {
         return E_NOINTERFACE;
     };
@@ -905,17 +997,17 @@ fn rc_get(c: &mut Ctx) -> u32 {
     }
     let r = client(owner(this), |cl| {
         if cl.taken.is_some() {
-            return Err(OUT_OF_ORDER);
+            return Err(Hr::OutOfOrder);
         }
-        if n > cl.frames - cl.padding().min(cl.frames) {
-            return Err(BUFFER_TOO_LARGE);
+        if n > cl.frames.saturating_sub(cl.padding()) {
+            return Err(Hr::BufferTooLarge);
         }
         if n == 0 {
             return Ok((0, 0, false));
         }
         cl.taken = Some(n);
         let f = cl.fmt.unwrap_or(MIX);
-        Ok((cl.mem, n * f.block(), f.bits == 8 && !f.float))
+        Ok((cl.mem, n.saturating_mul(f.block()), f.bits == 8 && !f.float))
     });
     match r {
         Some(Ok((p, bytes, u8))) => {
@@ -925,9 +1017,9 @@ fn rc_get(c: &mut Ctx) -> u32 {
             putp(out, p);
             S_OK
         }
-        Some(Err(hr)) => {
+        Some(Err(e)) => {
             putp(out, 0);
-            hr
+            e.code()
         }
         None => NOT_INITIALIZED,
     }
@@ -935,27 +1027,27 @@ fn rc_get(c: &mut Ctx) -> u32 {
 /// ReleaseBuffer(frames, flags): the first `frames` of what GetBuffer handed out are queued
 fn rc_release(c: &mut Ctx) -> u32 {
     let (this, n, flags) = (c.a(0), c.a(1), c.a(2));
-    client(owner(this), |cl| {
+    hr(client(owner(this), |cl| {
         if n == 0 {
             cl.taken = None;
-            return S_OK;
+            return Ok(Done::Ok);
         }
-        let Some(taken) = cl.taken else { return OUT_OF_ORDER };
+        let Some(taken) = cl.taken else { return Err(Hr::OutOfOrder) };
         if n > taken {
-            return INVALID_SIZE;
+            return Err(Hr::InvalidSize);
         }
         if flags & !SILENT != 0 {
-            return E_INVALIDARG;
+            return Err(Hr::InvalidArg);
         }
         cl.taken = None;
         let f = cl.fmt.unwrap_or(MIX);
-        for i in 0..n as usize {
+        for i in 0..usize::try_from(n).unwrap_or(0) {
             let (l, r) = if flags & SILENT != 0 { (0.0, 0.0) } else { sample_at(cl.mem, &f, i) };
             cl.queue.push_back([l, r]);
         }
-        S_OK
+        Ok(Done::Ok)
     })
-    .unwrap_or(NOT_INITIALIZED)
+    .unwrap_or(Err(Hr::NotInitialized)))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1032,7 +1124,7 @@ fn st_set(c: &mut Ctx) -> u32 {
     if i >= channels_of(this) || !ok_volume(v) {
         return E_INVALIDARG;
     }
-    client(owner(this), |cl| cl.channel[i as usize] = v);
+    client(owner(this), |cl| cl.channel.get_mut(us(i)).map(|c| *c = v));
     S_OK
 }
 fn st_get(c: &mut Ctx) -> u32 {
@@ -1043,7 +1135,7 @@ fn st_get(c: &mut Ctx) -> u32 {
     if i >= channels_of(this) {
         return E_INVALIDARG;
     }
-    put_f32(out, client(owner(this), |cl| cl.channel[i as usize]).unwrap_or(1.0));
+    put_f32(out, client(owner(this), |cl| cl.channel.get(us(i)).copied()).flatten().unwrap_or(1.0));
     S_OK
 }
 fn st_set_all(c: &mut Ctx) -> u32 {
@@ -1070,8 +1162,8 @@ fn st_get_all(c: &mut Ctx) -> u32 {
         return E_INVALIDARG;
     }
     let v = client(owner(this), |cl| cl.channel).unwrap_or([1.0; MAX_CHANNELS]);
-    for i in 0..n {
-        put_f32(p + 4 * i, v[i as usize]);
+    for (at, x) in (p..).step_by(4).zip(v.iter().take(us(n))) {
+        put_f32(at, *x);
     }
     S_OK
 }
@@ -1128,7 +1220,7 @@ fn sv_get_mute(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return NULL_REF;
     }
-    w32(c.a(1), sess(c.a(0), |s| s.mute) as u32);
+    w32(c.a(1), u32::from(sess(c.a(0), |s| s.mute)));
     S_OK
 }
 
@@ -1157,7 +1249,7 @@ fn cv_set(c: &mut Ctx) -> u32 {
     if i >= MIX.channels || !ok_volume(v) {
         return E_INVALIDARG;
     }
-    sess(this, |s| s.channel[i as usize] = v);
+    sess(this, |s| s.channel.get_mut(us(i)).map(|c| *c = v));
     S_OK
 }
 fn cv_get(c: &mut Ctx) -> u32 {
@@ -1168,7 +1260,7 @@ fn cv_get(c: &mut Ctx) -> u32 {
     if i >= MIX.channels {
         return E_INVALIDARG;
     }
-    put_f32(out, sess(this, |s| s.channel[i as usize]));
+    put_f32(out, sess(this, |s| s.channel.get(us(i)).copied().unwrap_or(1.0)));
     S_OK
 }
 /// SetAllVolumes(count, levels, event context)
@@ -1196,8 +1288,8 @@ fn cv_get_all(c: &mut Ctx) -> u32 {
         return E_INVALIDARG;
     }
     let v = sess(this, |s| s.channel);
-    for i in 0..n {
-        put_f32(p + 4 * i, v[i as usize]);
+    for (at, x) in (p..).step_by(4).zip(v.iter().take(us(n))) {
+        put_f32(at, *x);
     }
     S_OK
 }
@@ -1253,7 +1345,7 @@ fn se_state(c: &mut Ctx) -> u32 {
     }
     let i = session_idx(this);
     let on = with(|e| e.clients.values().any(|cl| cl.session == i && cl.running));
-    w32(out, on as u32);
+    w32(out, u32::from(on));
     S_OK
 }
 fn get_str(out: u32, f: impl FnOnce(&Session) -> Vec<u16>, this: u32) -> u32 {
@@ -1293,8 +1385,8 @@ fn se_get_group(c: &mut Ctx) -> u32 {
         return NULL_REF;
     }
     let g = sess(c.a(0), |s| s.group);
-    for (i, w) in g.iter().enumerate() {
-        w32(out + 4 * i as u32, *w);
+    for (at, w) in (out..).step_by(4).zip(g) {
+        w32(at, w);
     }
     S_OK
 }
@@ -1433,9 +1525,8 @@ fn sm_enum(c: &mut Ctx) -> u32 {
     }
     static V: OnceLock<u32> = OnceLock::new();
     let v = *V.get_or_init(|| vtable("IAudioSessionEnumerator", &[(en_qi, b(3)), (svc_addref, b(1)), (svc_release, b(1)), (en_count, b(2)), (en_get, b(3))]));
-    let n = with(|e| e.sessions.len()) as u32;
     // (the count where the session index goes)
-    let o = service(v, 0, n as usize);
+    let o = service(v, 0, with(|e| e.sessions.len()));
     putp(out, o);
     S_OK
 }
@@ -1453,7 +1544,7 @@ fn en_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return NULL_REF;
     }
-    w32(c.a(1), session_idx(c.a(0)) as u32);
+    w32(c.a(1), u32::try_from(session_idx(c.a(0))).unwrap_or(u32::MAX));
     S_OK
 }
 /// GetSession(index, IAudioSessionControl**)
@@ -1462,10 +1553,10 @@ fn en_get(c: &mut Ctx) -> u32 {
     if out == 0 {
         return NULL_REF;
     }
-    if i as usize >= session_idx(this) {
+    if us(i) >= session_idx(this) {
         return E_INVALIDARG;
     }
-    putp(out, service(session_vtbl(), 0, i as usize));
+    putp(out, service(session_vtbl(), 0, us(i)));
     S_OK
 }
 
@@ -1572,7 +1663,7 @@ fn set_ch_db(i: u32, db: f32) -> u32 {
     if i >= MIX.channels || !ok_db(db) {
         return E_INVALIDARG;
     }
-    with(|e| e.endpoint.channel[i as usize] = db);
+    with(|e| e.endpoint.channel.get_mut(us(i)).map(|c| *c = db));
     S_OK
 }
 fn ev_set_ch_db(c: &mut Ctx) -> u32 {
@@ -1593,7 +1684,7 @@ fn get_ch(c: &mut Ctx, f: fn(f32) -> f32) -> u32 {
     if i >= MIX.channels {
         return E_INVALIDARG;
     }
-    put_f32(out, f(with(|e| e.endpoint.channel[i as usize])));
+    put_f32(out, f(with(|e| e.endpoint.channel.get(us(i)).copied().unwrap_or(MAX_DB))));
     S_OK
 }
 fn ev_get_ch_db(c: &mut Ctx) -> u32 {
@@ -1611,7 +1702,7 @@ fn ev_get_mute(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return E_POINTER;
     }
-    w32(c.a(1), with(|e| e.endpoint.mute) as u32);
+    w32(c.a(1), u32::from(with(|e| e.endpoint.mute)));
     S_OK
 }
 fn steps() -> u32 {
@@ -1680,36 +1771,36 @@ mod tests {
     fn shared_mode_format_rules() {
         let r = RATE;
         // the mix format, extensible and not; another bit width at the mix rate and channels
-        assert_eq!(shared_supported(&ext(2, r, 32, 32, 3)), S_OK);
-        assert_eq!(shared_supported(&wave(3, 2, r, 32, 0, None)), S_OK);
-        assert_eq!(shared_supported(&ext(2, r, 32, 32, 1)), S_OK);
-        assert_eq!(shared_supported(&wave(1, 2, r, 16, 0, None)), S_OK);
-        assert_eq!(shared_supported(&ext(2, r, 32, 24, 1)), S_OK);
-        assert_eq!(shared_supported(&ext(2, r, 24, 24, 1)), S_OK);
-        assert_eq!(shared_supported(&ext(2, r, 8, 8, 1)), S_OK);
+        assert_eq!(hr(shared_supported(&ext(2, r, 32, 32, 3))), S_OK);
+        assert_eq!(hr(shared_supported(&wave(3, 2, r, 32, 0, None))), S_OK);
+        assert_eq!(hr(shared_supported(&ext(2, r, 32, 32, 1))), S_OK);
+        assert_eq!(hr(shared_supported(&wave(1, 2, r, 16, 0, None))), S_OK);
+        assert_eq!(hr(shared_supported(&ext(2, r, 32, 24, 1))), S_OK);
+        assert_eq!(hr(shared_supported(&ext(2, r, 24, 24, 1))), S_OK);
+        assert_eq!(hr(shared_supported(&ext(2, r, 8, 8, 1))), S_OK);
         // valid formats of another rate or channel count: S_FALSE (a closest match)
         for w in [ext(2, 48000, 32, 32, 3), ext(1, r, 32, 32, 3), ext(6, r, 16, 16, 1), wave(1, 1, 22050, 16, 0, None), ext(8, 96000, 32, 32, 3)] {
-            assert_eq!(shared_supported(&w), S_FALSE, "{w:?}");
+            assert_eq!(hr(shared_supported(&w)), S_FALSE, "{w:?}");
         }
         // malformed: E_INVALIDARG
         let mut bad = ext(2, r, 32, 32, 3);
         bad.avg += 1;
-        assert_eq!(shared_supported(&bad), E_INVALIDARG);
+        assert_eq!(hr(shared_supported(&bad)), E_INVALIDARG);
         let mut bad = ext(2, r, 32, 32, 3);
         bad.block -= 1;
-        assert_eq!(shared_supported(&bad), E_INVALIDARG);
+        assert_eq!(hr(shared_supported(&bad)), E_INVALIDARG);
         let mut bad = ext(2, r, 32, 32, 3);
         bad.cb = 21;
-        assert_eq!(shared_supported(&bad), E_INVALIDARG);
+        assert_eq!(hr(shared_supported(&bad)), E_INVALIDARG);
         // (another SubFormat: malformed fields first; A-law with no valid bits)
-        assert_eq!(shared_supported(&ext(2, r, 8, 0, 6)), E_INVALIDARG);
-        assert_eq!(shared_supported(&ext(2, r, 16, 17, 7)), E_INVALIDARG);
+        assert_eq!(hr(shared_supported(&ext(2, r, 8, 0, 6))), E_INVALIDARG);
+        assert_eq!(hr(shared_supported(&ext(2, r, 16, 17, 7))), E_INVALIDARG);
         for w in [ext(0, r, 32, 32, 3), ext(2, 0, 32, 32, 3), ext(2, r, 32, 0, 3), ext(2, r, 32, 33, 3), ext(2, r, 15, 15, 1), ext(2, r, 16, 16, 3), ext(2, r, 96, 96, 3), wave(1, 4, r, 16, 0, None)] {
-            assert_eq!(shared_supported(&w), E_INVALIDARG, "{w:?}");
+            assert_eq!(hr(shared_supported(&w)), E_INVALIDARG, "{w:?}");
         }
         // well-formed but not played: AUDCLNT_E_UNSUPPORTED_FORMAT
         for w in [ext(2, r, 16, 15, 1), ext(2, r, 32, 16, 1), ext(2, r, 32, 31, 3), ext(2, r, 64, 64, 3), ext(2, r, 8, 8, 6), wave(6, 2, r, 8, 0, None), wave(2, 2, r, 16, 0, None)] {
-            assert_eq!(shared_supported(&w), UNSUPPORTED_FORMAT, "{w:?}");
+            assert_eq!(hr(shared_supported(&w)), Hr::UnsupportedFormat.code(), "{w:?}");
         }
     }
 
@@ -1717,14 +1808,14 @@ mod tests {
     fn initialize_flags_widen_what_shared_mode_takes() {
         let other_rate = ext(2, 48000, 16, 16, 1);
         let mono = ext(1, RATE, 32, 32, 3);
-        assert_eq!(shared_initialize(&other_rate, 0).err(), Some(UNSUPPORTED_FORMAT));
+        assert_eq!(shared_initialize(&other_rate, Flags::default()).err(), Some(Hr::UnsupportedFormat));
         assert!(shared_initialize(&other_rate, RATEADJUST).is_ok());
         assert!(shared_initialize(&other_rate, AUTOCONVERTPCM).is_ok());
-        assert_eq!(shared_initialize(&mono, RATEADJUST).err(), Some(UNSUPPORTED_FORMAT));
+        assert_eq!(shared_initialize(&mono, RATEADJUST).err(), Some(Hr::UnsupportedFormat));
         assert!(shared_initialize(&mono, AUTOCONVERTPCM).is_ok());
         // (not a valid format: the same error with any flags)
-        assert_eq!(shared_initialize(&ext(2, RATE, 32, 31, 3), AUTOCONVERTPCM).err(), Some(UNSUPPORTED_FORMAT));
-        assert_eq!(shared_initialize(&ext(2, 0, 32, 32, 3), AUTOCONVERTPCM).err(), Some(E_INVALIDARG));
+        assert_eq!(shared_initialize(&ext(2, RATE, 32, 31, 3), AUTOCONVERTPCM).err(), Some(Hr::UnsupportedFormat));
+        assert_eq!(shared_initialize(&ext(2, 0, 32, 32, 3), AUTOCONVERTPCM).err(), Some(Hr::InvalidArg));
         let f = shared_initialize(&ext(6, 22050, 24, 24, 1), AUTOCONVERTPCM).unwrap();
         assert_eq!((f.rate, f.channels, f.bits, f.float, f.block()), (22050, 6, 24, false, 18));
     }
@@ -1747,7 +1838,7 @@ mod tests {
         Client {
             refs: 1,
             fmt: Some(Fmt { rate, channels: 2, bits: 32, float: true, law: 0 }),
-            flags: 0,
+            flags: Flags::default(),
             frames: 0,
             event: 0,
             running: true,

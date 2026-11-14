@@ -581,7 +581,7 @@ mod tests {
             sub: (f[28..40] == [0, 0, 0x10, 0, 0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71]).then(|| u32_(24)),
         };
         assert_eq!((w.tag, w.cb, w.sub, u32_(20)), (0xfffe, 22, Some(1), 3));
-        assert_eq!(crate::wasapi::shared_supported(&w), 0);
+        assert_eq!(crate::wasapi::shared_supported(&w), Ok(crate::wasapi::Done::Ok));
     }
 }
 

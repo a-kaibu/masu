@@ -47,10 +47,10 @@ fn seeded_wave(r: &mut Rng) -> Wave {
     Wave { tag, channels, rate, avg, block, bits, cb, valid: if tag == 0xfffe { valid } else { 0 }, sub }
 }
 
-fn res(r: Result<Fmt, u32>) -> String {
+fn res(r: Result<Fmt, Hr>) -> String {
     match r {
         Ok(f) => format!("ok({},{},{},{})", f.rate, f.channels, f.bits, f.float),
-        Err(e) => format!("{e:#x}"),
+        Err(e) => format!("{:#x}", e.code()),
     }
 }
 
@@ -62,11 +62,11 @@ fn wave_text(w: &Wave) -> String {
 fn wasapi_formats_snapshot() {
     let mut out = String::new();
     let mut r = Rng(0xa5a_91);
-    let flag_sets = [0u32, RATEADJUST, AUTOCONVERTPCM, AUTOCONVERTPCM | 0x800_0000, EVENTCALLBACK];
+    let flag_sets = [Flags(0), RATEADJUST, AUTOCONVERTPCM, Flags(AUTOCONVERTPCM.0 | 0x800_0000), EVENTCALLBACK];
     for _ in 0..3000 {
         let w = seeded_wave(&mut r);
         let inits: Vec<String> = flag_sets.iter().map(|&f| res(shared_initialize(&w, f))).collect();
-        writeln!(out, "{}: check {} / {}; init {}; supported {:#x}", wave_text(&w), res(check(&w, true)), res(check(&w, false)), inits.join(" "), shared_supported(&w)).unwrap();
+        writeln!(out, "{}: check {} / {}; init {}; supported {:#x}", wave_text(&w), res(check(&w, true)), res(check(&w, false)), inits.join(" "), hr(shared_supported(&w))).unwrap();
     }
     for _ in 0..500 {
         let rate = r.pick(&[RATE, 48000, 8000, 1, 0, 384_000, u32::MAX]);
@@ -81,7 +81,7 @@ fn bare_client(rate: u32, channels: u32) -> Client {
     Client {
         refs: 1,
         fmt: Some(Fmt { rate, channels, bits: 32, float: true, law: 0 }),
-        flags: 0,
+        flags: Flags::default(),
         frames: 0,
         event: 0,
         running: true,
@@ -202,7 +202,7 @@ fn wasapi_api_snapshot() {
                 let w = if r.below(2) == 0 { Wave { tag: 0xfffe, channels: 2, rate: RATE, avg: RATE * 8, block: 8, bits: 32, cb: 22, valid: 32, sub: Some(3) } } else { w };
                 put_wave(fmt, &w, 3, w.sub.is_some());
                 let mode = r.pick(&[0u32, 0, 0, 1, 2]);
-                let flags = r.pick(&[0u32, 0, RATEADJUST, AUTOCONVERTPCM, EVENTCALLBACK, LOOPBACK, 0x1, 0x100_0000]);
+                let flags = r.pick(&[0u32, 0, RATEADJUST.0, AUTOCONVERTPCM.0, EVENTCALLBACK.0, LOOPBACK.0, 0x1, 0x100_0000]);
                 let d = r.pick(&[0u64, 100_000, 1_000_000, 10_000_000, MAX_DURATION + 1]);
                 let guid = if r.below(3) == 0 {
                     mem::fill(sg, 16, 0);
@@ -218,9 +218,9 @@ fn wasapi_api_snapshot() {
                 let sess = with(|e| e.clients.get(&cl).map(|c| sess_name(c.session)));
                 format!("initialize {} mode={mode} flags={flags:#x} d={d} guid={}: {hr:#x} session={sess:?}", wave_text(&w), guid != 0)
             }
-            5 => format!("buffer size: {:#x} {}", call(ac_buffer_size, &[cl, o]), r32(po)),
-            6 => format!("latency: {:#x} {}", call(ac_latency, &[cl, o]), r32(po)),
-            7 => format!("padding: {:#x} {}", call(ac_padding, &[cl, o]), r32(po)),
+            5 => format!("buffer size: {:#x} {}", call(ac_buffer_size, &[cl, o]), if o != 0 { r32(po) } else { 0 }),
+            6 => format!("latency: {:#x} {}", call(ac_latency, &[cl, o]), if o != 0 { r32(po) } else { 0 }),
+            7 => format!("padding: {:#x} {}", call(ac_padding, &[cl, o]), if o != 0 { r32(po) } else { 0 }),
             8 => {
                 let w = seeded_wave(&mut r);
                 put_wave(fmt, &w, 3, w.sub.is_some());
@@ -253,7 +253,7 @@ fn wasapi_api_snapshot() {
             14 => {
                 // (an event handle only on a stream that does not take one, or none: no event
                 // is ever signalled)
-                let ev_ok = with(|e| e.clients.get(&cl).is_some_and(|c| c.flags & EVENTCALLBACK != 0));
+                let ev_ok = with(|e| e.clients.get(&cl).is_some_and(|c| c.flags.has(EVENTCALLBACK)));
                 let h = if ev_ok || r.below(2) == 0 { 0 } else { 0x44 };
                 format!("set event {h:#x}: {:#x}", call(ac_set_event, &[cl, h]))
             }
@@ -365,11 +365,11 @@ fn wasapi_api_snapshot() {
                 let v = r.pick(&[0.5f32, 0.0, 1.0, 1.5, f32::NAN]);
                 let a = call(sv_set_volume, &[s, v.to_bits(), 0]);
                 let b = call(sv_get_volume, &[s, o]);
-                let gv = r32(po);
+                let gv = if b == 0 { r32(po) } else { 0 };
                 let m = r.pick(&[0u32, 1, 7]);
                 let c = call(sv_set_mute, &[s, m, 0]);
                 let d = call(sv_get_mute, &[s, o]);
-                format!("simple vol {v}: {a:#x} get {b:#x} {gv:#x}; mute {m}: {c:#x} get {d:#x} {}", r32(po))
+                format!("simple vol {v}: {a:#x} get {b:#x} {gv:#x}; mute {m}: {c:#x} get {d:#x} {}", if d == 0 { r32(po) } else { 0 })
             }
             25 => {
                 let Some(&(_, s)) = svcs.iter().rev().find(|s| s.0 == Svc::Channel) else { continue };
@@ -399,7 +399,7 @@ fn wasapi_api_snapshot() {
                     }
                 };
                 match r.below(8) {
-                    0 => format!("session state: {:#x} {}", call(se_state, &[s, o]), r32(po)),
+                    0 => format!("session state: {:#x} {}", call(se_state, &[s, o]), if o != 0 { r32(po) } else { 0 }),
                     1 => {
                         let txt = r.pick(&["", "Game", "音楽"]);
                         mem::put_wstr(blk, 64, &txt.encode_utf16().collect::<Vec<_>>());
