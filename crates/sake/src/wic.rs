@@ -1170,14 +1170,36 @@ fn scaler_init(c: &mut Ctx) -> u32 {
     if image_bytes(w, h).is_none() {
         return E_OUTOFMEMORY;
     }
-    set_source(this, Arc::new(scale(&img, w, h, mode)), f);
+    set_source(this, Arc::new(scale(&img, w, h, Interp::of(mode))), f);
     0
+}
+
+/// A WICBitmapInterpolationMode; values past Fant keep the plain float taps they always had
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Interp {
+    Nearest,
+    Linear,
+    Cubic,
+    Fant,
+    Other(u32),
+}
+
+impl Interp {
+    fn of(v: u32) -> Self {
+        match v {
+            0 => Self::Nearest,
+            1 => Self::Linear,
+            2 => Self::Cubic,
+            3 => Self::Fant,
+            v => Self::Other(v),
+        }
+    }
 }
 
 /// The source taps of each of `d` destination pixels from `s` for an interpolation mode:
 /// linear (1) two taps at the pixel's center, cubic (2) four quantized Catmull-Rom taps, Fant (3) the
 /// source area with a linearly interpolated first partial sample (also when growing).
-fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
+fn taps(s: u32, d: u32, mode: Interp) -> Vec<Vec<(u32, f32)>> {
     let ratio = s as f32 / d as f32;
     (0..d)
         .map(|i| {
@@ -1189,7 +1211,7 @@ fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
                     None => t.push((j, w)),
                 }
             };
-            if mode == 3 {
+            if mode == Interp::Fant {
                 // Windows' Fant integrates intervals starting at i*s/d. The first
                 // partial source pixel is interpolated at that start, rather than
                 // taking its constant color. Use integer positions to keep exact
@@ -1208,7 +1230,7 @@ fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
                 }
                 return t;
             }
-            if mode == 1 {
+            if mode == Interp::Linear {
                 // Windows' bilinear: 16.16 positions, weights in 256ths (each pass floors)
                 let step = (u64::from(s) << 16) / u64::from(d);
                 let p = (step / 2 + u64::from(i) * step).saturating_sub(0x8000);
@@ -1217,7 +1239,7 @@ fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
                 add((p >> 16) as i64 + 1, x / 256.0);
                 return t;
             }
-            let f = if mode == 2 {
+            let f = if mode == Interp::Cubic {
                 // Windows advances in 16.16, then indexes 64 cubic phases.
                 // Keep negative edge positions: clamp the taps, not the center,
                 // so the negative outer lobe still contributes at the border.
@@ -1228,7 +1250,7 @@ fn taps(s: u32, d: u32, mode: u32) -> Vec<Vec<(u32, f32)>> {
                 ((i as f32 + 0.5) * ratio - 0.5).max(0.0)
             };
             let (j0, x) = (f.floor() as i64, f - f.floor());
-            if mode == 2 {
+            if mode == Interp::Cubic {
                 // Exact 19-bit coefficients for the 64 phases. Evaluating the
                 // polynomial in floats can make an opaque alpha round to 254.
                 let cr = |d: f32| {
@@ -1328,7 +1350,7 @@ fn filter_cubic(pm: &[u8], sw: u32, sh: u32, w: u32, h: u32,
 
 /// `img` scaled to `w x h` with a WICBitmapInterpolationMode, filtered premultiplied (as
 /// Windows does: no color bleeds from transparent pixels) and straight again.
-fn scale(img: &Img, w: u32, h: u32, mode: u32) -> Img {
+fn scale(img: &Img, w: u32, h: u32, mode: Interp) -> Img {
     let mut px = vec![0u8; (w * h * 4) as usize];
     if img.px.is_empty() {
         return Img { w, h, px, palette: img.palette.clone(), dpi: img.dpi };
@@ -1336,7 +1358,7 @@ fn scale(img: &Img, w: u32, h: u32, mode: u32) -> Img {
     let (sw, sh) = (img.w, img.h);
     let mut pm = vec![0u8; img.px.len()];
     picture::from_bgra(&img.px, img.w, Fmt::Pbgra, (0, 0, img.w, img.h), img.w * 4, &mut pm, &[]);
-    if mode == 0 {
+    if mode == Interp::Nearest {
         // Windows' pick: (x * sw + sw - 1) / w
         for y in 0..h {
             for x in 0..w {
@@ -1351,10 +1373,10 @@ fn scale(img: &Img, w: u32, h: u32, mode: u32) -> Img {
         // Specialize rounding outside the pixel loops: nearest/linear must not
         // pay a per-channel branch for Fant's different arithmetic.
         match mode {
-            1 => filter::<1>(&pm, sw, sh, w, h, &tx, &ty, &mut px),
-            2 => filter_cubic(&pm, sw, sh, w, h, &tx, &ty, &mut px),
-            3 => filter::<3>(&pm, sw, sh, w, h, &tx, &ty, &mut px),
-            _ => filter::<0>(&pm, sw, sh, w, h, &tx, &ty, &mut px),
+            Interp::Linear => filter::<1>(&pm, sw, sh, w, h, &tx, &ty, &mut px),
+            Interp::Cubic => filter_cubic(&pm, sw, sh, w, h, &tx, &ty, &mut px),
+            Interp::Fant => filter::<3>(&pm, sw, sh, w, h, &tx, &ty, &mut px),
+            Interp::Nearest | Interp::Other(_) => filter::<0>(&pm, sw, sh, w, h, &tx, &ty, &mut px),
         }
     }
     let px = picture::to_bgra(Fmt::Pbgra, w, h, w * 4, &px, &[]);
@@ -1813,7 +1835,7 @@ mod tests {
                         pixels.extend_from_slice(&[v, v, v, 255]);
                     }
                 }
-                let scaled = scale(&Img::new(8, 4, pixels), w, h, mode);
+                let scaled = scale(&Img::new(8, 4, pixels), w, h, Interp::of(mode));
                 assert!(scaled.px.chunks_exact(4).all(|p| p[3] == 255), "opaque alpha: {line}");
                 let actual: Vec<_> = (0..if across { w } else { h })
                     .map(|i| scaled.px[(if across { i } else { i * w }) as usize * 4]).collect();
@@ -1832,7 +1854,7 @@ mod tests {
     #[test]
     fn scale_and_crop() {
         let img = Img::new(2, 1, vec![0, 0, 0, 255, 200, 200, 200, 255]);
-        let s = scale(&img, 4, 2, 0);
+        let s = scale(&img, 4, 2, Interp::Nearest);
         assert_eq!((s.w, s.h), (4, 2));
         assert_eq!(&s.px[0..4], &[0, 0, 0, 255]);
         assert_eq!(&s.px[12..16], &[200, 200, 200, 255]);

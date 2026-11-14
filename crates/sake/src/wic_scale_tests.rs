@@ -121,7 +121,7 @@ proptest! {
         let px: Vec<u8> = (0..sw * sh * 4).map(|i| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; if opaque && i % 4 == 3 { 255 } else { x as u8 } }).collect();
         let img = Img::new(sw, sh, px);
         let want = old_scale(&img, w, h, mode);
-        let got = scale(&img, w, h, mode);
+        let got = scale(&img, w, h, Interp::of(mode));
         prop_assert!(want.px == got.px && (want.w, want.h) == (got.w, got.h));
     }
 }
