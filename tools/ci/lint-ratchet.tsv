@@ -925,7 +925,6 @@ file	crates/masu/src/webassets.rs	let_underscore_must_use	4
 file	crates/masu/src/webassets.rs	same_name_method	1
 file	crates/masu/src/webassets.rs	string_slice	1
 file	crates/masu/src/webassets.rs	unwrap_used	2
-file	crates/mpeg1/examples/dump.rs	unwrap_used	6
 file	crates/mpeg1/src/audio.rs	arithmetic_side_effects	98
 file	crates/mpeg1/src/audio.rs	as_conversions	1
 file	crates/mpeg1/src/audio.rs	cast_precision_loss	1
@@ -1121,8 +1120,8 @@ file	crates/sake/src/cng.rs	undocumented_unsafe_blocks	1
 file	crates/sake/src/cng.rs	unwrap_in_result	2
 file	crates/sake/src/cng.rs	unwrap_used	26
 file	crates/sake/src/cng.rs	wildcard_enum_match_arm	3
-file	crates/sake/src/collate.rs	arithmetic_side_effects	9
-file	crates/sake/src/collate.rs	as_conversions	17
+file	crates/sake/src/collate.rs	arithmetic_side_effects	8
+file	crates/sake/src/collate.rs	as_conversions	2
 file	crates/sake/src/collate.rs	cast_possible_truncation	1
 file	crates/sake/src/collate.rs	indexing_slicing	4
 file	crates/sake/src/com.rs	arithmetic_side_effects	12
@@ -2417,9 +2416,6 @@ file	crates/waits/src/uni.rs	arithmetic_side_effects	3
 file	crates/waits/src/uni.rs	as_conversions	1
 file	crates/waits/src/uni.rs	cast_possible_truncation	1
 file	crates/waits/src/wake.rs	arithmetic_side_effects	2
-file	crates/wmcodec/examples/bench.rs	as_conversions	4
-file	crates/wmcodec/examples/bench.rs	expect_used	1
-file	crates/wmcodec/examples/bench.rs	unwrap_used	6
 file	crates/wmcodec/src/bits.rs	arithmetic_side_effects	10
 file	crates/wmcodec/src/bits.rs	as_conversions	5
 file	crates/wmcodec/src/bits.rs	cast_possible_truncation	1

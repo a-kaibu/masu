@@ -3,9 +3,12 @@
 use mpeg1::{ps, Audio, Video};
 use std::io::Write;
 
-fn main() {
-    let a: Vec<String> = std::env::args().collect();
-    let s = std::fs::read(&a[1]).unwrap();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut a = std::env::args().skip(1);
+    let (Some(inp), Some(out_yuv), Some(out_pcm)) = (a.next(), a.next(), a.next()) else {
+        return Err("usage: dump IN.mpg OUT.yuv OUT.f32".into());
+    };
+    let s = std::fs::read(inp)?;
     let mut v = Video::new();
     let mut au = Audio::new();
     for p in ps::packets(&s) {
@@ -17,21 +20,22 @@ fn main() {
     }
     v.end();
     au.end();
-    let mut yuv = std::fs::File::create(&a[2]).unwrap();
+    let mut yuv = std::io::BufWriter::new(std::fs::File::create(out_yuv)?);
     while let Some(f) = v.decode() {
-        for y in 0..f.height {
-            yuv.write_all(&f.y[y * f.y_stride..y * f.y_stride + f.width]).unwrap();
+        for y in f.y.chunks(f.y_stride).take(f.height) {
+            yuv.write_all(y.get(..f.width).ok_or("short luma row")?)?;
         }
         for p in [&f.cb, &f.cr] {
-            for y in 0..f.height / 2 {
-                yuv.write_all(&p[y * f.c_stride..y * f.c_stride + f.width / 2]).unwrap();
+            for y in p.chunks(f.c_stride).take(f.height / 2) {
+                yuv.write_all(y.get(..f.width / 2).ok_or("short chroma row")?)?;
             }
         }
     }
-    let mut pcm = std::fs::File::create(&a[3]).unwrap();
+    let mut pcm = std::io::BufWriter::new(std::fs::File::create(out_pcm)?);
     while au.decode() {
         for x in &au.out {
-            pcm.write_all(&x.to_le_bytes()).unwrap();
+            pcm.write_all(&x.to_le_bytes())?;
         }
     }
+    Ok(())
 }
