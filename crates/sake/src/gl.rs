@@ -454,3 +454,25 @@ mod fit_tests {
         }
     }
 }
+
+/// Every GL function's argument kinds, return kind and stack bytes, pinned in
+/// gl_sigs_golden.txt (MASU_UPDATE_GOLDEN=1 rewrites it)
+#[cfg(test)]
+mod sig_golden_tests {
+    use super::{gl_sigs, stack_bytes};
+
+    #[test]
+    fn functions_keep_their_signatures() {
+        let mut out = String::new();
+        for &(name, sig) in gl_sigs::FUNCS {
+            let (kinds, ret) = gl_sigs::SIGS[sig as usize];
+            out += &format!("{name} {kinds:?} {ret} {}\n", stack_bytes(sig));
+        }
+        let golden = concat!(env!("CARGO_MANIFEST_DIR"), "/src/gl_sigs_golden.txt");
+        if std::env::var_os("MASU_UPDATE_GOLDEN").is_some() {
+            std::fs::write(golden, &out).unwrap();
+            return;
+        }
+        assert_eq!(std::fs::read_to_string(golden).unwrap_or_default(), out, "gl_sigs_golden.txt (MASU_UPDATE_GOLDEN=1 rewrites it)");
+    }
+}
