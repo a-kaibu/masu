@@ -107,7 +107,6 @@ file	crates/hlslc/src/fx.rs	arithmetic_side_effects	13
 file	crates/hlslc/src/fx.rs	as_conversions	11
 file	crates/hlslc/src/fx.rs	cast_possible_truncation	8
 file	crates/hlslc/src/fx.rs	cast_precision_loss	4
-file	crates/hlslc/src/fx.rs	cast_sign_loss	1
 file	crates/hlslc/src/fx.rs	indexing_slicing	9
 file	crates/hlslc/src/intrinsics.rs	arithmetic_side_effects	14
 file	crates/hlslc/src/intrinsics.rs	as_conversions	1
@@ -1766,12 +1765,10 @@ file	crates/sake/src/misc.rs	undocumented_unsafe_blocks	2
 file	crates/sake/src/misc.rs	unwrap_in_result	1
 file	crates/sake/src/misc.rs	unwrap_used	44
 file	crates/sake/src/misc.rs	wildcard_enum_match_arm	3
-file	crates/sake/src/mixer.rs	arithmetic_side_effects	59
-file	crates/sake/src/mixer.rs	as_conversions	11
-file	crates/sake/src/mixer.rs	cast_possible_truncation	4
-file	crates/sake/src/mixer.rs	cast_precision_loss	1
+file	crates/sake/src/mixer.rs	arithmetic_side_effects	51
+file	crates/sake/src/mixer.rs	as_conversions	5
+file	crates/sake/src/mixer.rs	cast_possible_truncation	2
 file	crates/sake/src/mixer.rs	cast_sign_loss	1
-file	crates/sake/src/mixer.rs	indexing_slicing	8
 file	crates/sake/src/mmdevapi.rs	arithmetic_side_effects	23
 file	crates/sake/src/mmdevapi.rs	as_conversions	9
 file	crates/sake/src/mmdevapi.rs	cast_possible_truncation	5
@@ -2355,10 +2352,10 @@ file	crates/sake/src/xof.rs	unwrap_in_result	4
 file	crates/sake/src/xof.rs	unwrap_used	5
 file	crates/sake/src/xof.rs	wildcard_enum_match_arm	10
 file	crates/shaderconf/src/cases.rs	arithmetic_side_effects	19
-file	crates/shaderconf/src/cases.rs	as_conversions	21
+file	crates/shaderconf/src/cases.rs	as_conversions	18
 file	crates/shaderconf/src/cases.rs	cast_possible_truncation	5
 file	crates/shaderconf/src/cases.rs	cast_precision_loss	12
-file	crates/shaderconf/src/cases.rs	cast_sign_loss	5
+file	crates/shaderconf/src/cases.rs	cast_sign_loss	4
 file	crates/shaderconf/src/cases.rs	float_cmp	3
 file	crates/shaderconf/src/cases.rs	indexing_slicing	25
 file	crates/shaderconf/src/cases.rs	lossy_float_literal	3
@@ -2395,9 +2392,8 @@ file	crates/shaderconf/src/random.rs	cast_precision_loss	2
 file	crates/shaderconf/src/random.rs	cast_sign_loss	1
 file	crates/shaderconf/src/random.rs	indexing_slicing	33
 file	crates/shaderconf/src/ref_d3d9.rs	arithmetic_side_effects	23
-file	crates/shaderconf/src/ref_d3d9.rs	as_conversions	7
+file	crates/shaderconf/src/ref_d3d9.rs	as_conversions	6
 file	crates/shaderconf/src/ref_d3d9.rs	cast_precision_loss	5
-file	crates/shaderconf/src/ref_d3d9.rs	cast_sign_loss	1
 file	crates/shaderconf/src/ref_d3d9.rs	float_cmp	2
 file	crates/shaderconf/src/ref_d3d9.rs	indexing_slicing	75
 file	crates/shaderconf/src/ref_dxbc.rs	arithmetic_side_effects	41

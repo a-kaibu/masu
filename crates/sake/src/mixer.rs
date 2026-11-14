@@ -17,18 +17,55 @@ use crate::api::{implement, Ctx};
 use crate::mem::{self, ps, r32, w16, w32};
 
 pub(crate) const NOERROR: u32 = 0;
-pub(crate) const ERROR: u32 = 1;
-pub(crate) const BADDEVICEID: u32 = 2;
-pub(crate) const INVALHANDLE: u32 = 5;
-pub(crate) const NOTSUPPORTED: u32 = 8;
-pub(crate) const INVALFLAG: u32 = 10;
-pub(crate) const INVALPARAM: u32 = 11;
-pub(crate) const INVALLINE: u32 = 1024;
-pub(crate) const INVALCONTROL: u32 = 1025;
+
+/// The errors the mixer answers (MMSYSERR_*, MIXERR_*)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MmErr {
+    BadDeviceId,
+    InvalHandle,
+    NotSupported,
+    InvalFlag,
+    InvalParam,
+    InvalLine,
+    InvalControl,
+}
+impl MmErr {
+    pub(crate) const fn code(self) -> u32 {
+        match self {
+            MmErr::BadDeviceId => 2,
+            MmErr::InvalHandle => 5,
+            MmErr::NotSupported => 8,
+            MmErr::InvalFlag => 10,
+            MmErr::InvalParam => 11,
+            MmErr::InvalLine => 1024,
+            MmErr::InvalControl => 1025,
+        }
+    }
+}
+/// A call's MMRESULT
+fn mm(r: Result<(), MmErr>) -> u32 {
+    r.err().map_or(NOERROR, MmErr::code)
+}
 
 /// the destination line (Speakers) and the source (Wave out)
 pub(crate) const DEST_LINE: u32 = 0xFFFF_0000;
 pub(crate) const SRC_LINE: u32 = 0;
+
+/// The mixer's two lines
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LineId {
+    Dest,
+    Src,
+}
+impl LineId {
+    pub(crate) fn of(id: u32) -> Option<LineId> {
+        match id {
+            DEST_LINE => Some(LineId::Dest),
+            SRC_LINE => Some(LineId::Src),
+            _ => None,
+        }
+    }
+}
 const DST_SPEAKERS: u32 = 4;
 const SRC_WAVEOUT: u32 = 0x1008;
 const TARGET_WAVEOUT: u32 = 1;
@@ -46,6 +83,28 @@ const OBJ_MIXER: u32 = 0;
 const OBJ_HMIXER: u32 = 0x8000_0000;
 const OBJ_WAVEOUT: u32 = 0x1000_0000;
 const OBJ_HWAVEOUT: u32 = 0x9000_0000;
+
+/// What a call's hmix is, by the flags' MIXER_OBJECTF_* (the kinds of devices sake has; waveIn,
+/// MIDI and aux objects name none)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Object {
+    Mixer,
+    HMixer,
+    WaveOut,
+    HWaveOut,
+    Other,
+}
+impl Object {
+    fn of(flags: u32) -> Object {
+        match flags & 0xF000_0000 {
+            OBJ_MIXER => Object::Mixer,
+            OBJ_HMIXER => Object::HMixer,
+            OBJ_WAVEOUT => Object::WaveOut,
+            OBJ_HWAVEOUT => Object::HWaveOut,
+            _ => Object::Other,
+        }
+    }
+}
 
 /// The device name (as waveOutGetDevCaps gives it)
 pub(crate) const NAME: &str = "sake WebAudio";
@@ -87,24 +146,56 @@ pub(crate) struct LineQuery {
     pub component: u32,
 }
 
-/// mixerGetLineInfo's answer for a valid mixer: the line, or the error
-pub(crate) fn line_info(flags: u32, q: LineQuery) -> Result<Line, u32> {
-    // DESTINATION 0, SOURCE 1, LINEID 2, COMPONENTTYPE 3, TARGETTYPE 4
-    match flags & 0xF {
-        0 if q.dest == 0 => Ok(destination()),
-        1 if q.source == 0 => Ok(source()),
-        2 if q.id == DEST_LINE => Ok(destination()),
-        2 if q.id == SRC_LINE => Ok(source()),
-        3 if q.component == DST_SPEAKERS => Ok(destination()),
-        3 if q.component == SRC_WAVEOUT => Ok(source()),
-        0..=4 => Err(INVALLINE),
-        _ => Err(INVALFLAG),
+/// MIXER_GETLINEINFOF_* (low 4 bits of the flags)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LineBy {
+    Destination,
+    Source,
+    LineId,
+    ComponentType,
+    TargetType,
+}
+impl LineBy {
+    fn of(flags: u32) -> Option<LineBy> {
+        match flags & 0xF {
+            0 => Some(LineBy::Destination),
+            1 => Some(LineBy::Source),
+            2 => Some(LineBy::LineId),
+            3 => Some(LineBy::ComponentType),
+            4 => Some(LineBy::TargetType),
+            _ => None,
+        }
     }
+}
+
+fn line(id: LineId) -> Line {
+    match id {
+        LineId::Dest => destination(),
+        LineId::Src => source(),
+    }
+}
+
+/// mixerGetLineInfo's answer for a valid mixer: the line, or the error
+pub(crate) fn line_info(flags: u32, q: LineQuery) -> Result<Line, MmErr> {
+    let by = LineBy::of(flags).ok_or(MmErr::InvalFlag)?;
+    let id = match by {
+        LineBy::Destination => (q.dest == 0).then_some(LineId::Dest),
+        LineBy::Source => (q.source == 0).then_some(LineId::Src),
+        LineBy::LineId => LineId::of(q.id),
+        LineBy::ComponentType => match q.component {
+            DST_SPEAKERS => Some(LineId::Dest),
+            SRC_WAVEOUT => Some(LineId::Src),
+            _ => None,
+        },
+        // (as Wine: not answered)
+        LineBy::TargetType => None,
+    };
+    id.map(line).ok_or(MmErr::InvalLine)
 }
 
 /// mixerGetLineInfo's flags beyond the query and the object kinds
 pub(crate) fn line_flags_ok(flags: u32) -> bool {
-    flags & !(0xF | 0xF000_0000) == 0 && flags & 0xF <= 4
+    flags & !(0xF | 0xF000_0000) == 0 && LineBy::of(flags).is_some()
 }
 
 /// A control, as MIXERCONTROL has it (names by kind)
@@ -117,11 +208,61 @@ pub(crate) struct Control {
     pub steps: u32,
 }
 
+/// The four controls: each line's volume and mute (their ids 0..=3)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ControlId {
+    DestVolume,
+    DestMute,
+    SrcVolume,
+    SrcMute,
+}
+impl ControlId {
+    pub(crate) fn of(id: u32) -> Option<ControlId> {
+        match id {
+            0 => Some(ControlId::DestVolume),
+            1 => Some(ControlId::DestMute),
+            2 => Some(ControlId::SrcVolume),
+            3 => Some(ControlId::SrcMute),
+            _ => None,
+        }
+    }
+    pub(crate) const fn id(self) -> u32 {
+        match self {
+            ControlId::DestVolume => 0,
+            ControlId::DestMute => 1,
+            ControlId::SrcVolume => 2,
+            ControlId::SrcMute => 3,
+        }
+    }
+}
+
+/// A line's volume control (any line id but the destination's names the source's, as the
+/// controls it answers for are)
 pub(crate) fn volume_control(line: u32) -> Control {
-    Control { id: if line == DEST_LINE { 0 } else { 2 }, kind: CONTROL_VOLUME, min: 0, max: 0xFFFF, steps: 192 }
+    let id = if line == DEST_LINE { ControlId::DestVolume } else { ControlId::SrcVolume };
+    Control { id: id.id(), kind: CONTROL_VOLUME, min: 0, max: 0xFFFF, steps: 192 }
 }
 pub(crate) fn mute_control(line: u32) -> Control {
-    Control { id: if line == DEST_LINE { 1 } else { 3 }, kind: CONTROL_MUTE, min: 0, max: 1, steps: 0 }
+    let id = if line == DEST_LINE { ControlId::DestMute } else { ControlId::SrcMute };
+    Control { id: id.id(), kind: CONTROL_MUTE, min: 0, max: 1, steps: 0 }
+}
+
+/// MIXER_GETLINECONTROLSF_* (low 4 bits of the flags)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ControlsBy {
+    All,
+    OneById,
+    OneByType,
+}
+impl ControlsBy {
+    fn of(flags: u32) -> Option<ControlsBy> {
+        match flags & 0xF {
+            0 => Some(ControlsBy::All),
+            1 => Some(ControlsBy::OneById),
+            2 => Some(ControlsBy::OneByType),
+            _ => None,
+        }
+    }
 }
 
 /// What mixerGetLineControls asks: ALL 0, ONEBYID 1, ONEBYTYPE 2 (low 4 bits) and the caller's
@@ -135,26 +276,31 @@ pub(crate) struct ControlsQuery {
 }
 
 /// mixerGetLineControls' answer for a valid mixer
-pub(crate) fn line_controls(flags: u32, q: ControlsQuery) -> Result<Vec<Control>, u32> {
-    let want = match flags & 0xF {
-        0 => 2,
-        1 | 2 => 1,
-        _ => return Err(NOTSUPPORTED),
+pub(crate) fn line_controls(flags: u32, q: ControlsQuery) -> Result<Vec<Control>, MmErr> {
+    let by = ControlsBy::of(flags).ok_or(MmErr::NotSupported)?;
+    let want = match by {
+        ControlsBy::All => 2,
+        ControlsBy::OneById | ControlsBy::OneByType => 1,
     };
     if q.count != want || !q.size_ok {
-        return Err(INVALPARAM);
+        return Err(MmErr::InvalParam);
     }
-    if q.line != DEST_LINE && q.line != SRC_LINE {
-        return Err(INVALLINE);
+    if LineId::of(q.line).is_none() {
+        return Err(MmErr::InvalLine);
     }
-    match flags & 0xF {
-        0 => Ok(vec![volume_control(q.line), mute_control(q.line)]),
+    match by {
+        ControlsBy::All => Ok(vec![volume_control(q.line), mute_control(q.line)]),
         // (by id: 0 and 1 name the line's volume and mute, whichever line; Wine's answer)
-        1 if q.id_or_type == 0 => Ok(vec![volume_control(q.line)]),
-        1 if q.id_or_type == 1 => Ok(vec![mute_control(q.line)]),
-        2 if q.id_or_type == CONTROL_VOLUME => Ok(vec![volume_control(q.line)]),
-        2 if q.id_or_type == CONTROL_MUTE => Ok(vec![mute_control(q.line)]),
-        _ => Err(NOTSUPPORTED),
+        ControlsBy::OneById => match ControlId::of(q.id_or_type) {
+            Some(ControlId::DestVolume) => Ok(vec![volume_control(q.line)]),
+            Some(ControlId::DestMute) => Ok(vec![mute_control(q.line)]),
+            Some(ControlId::SrcVolume | ControlId::SrcMute) | None => Err(MmErr::NotSupported),
+        },
+        ControlsBy::OneByType => match q.id_or_type {
+            CONTROL_VOLUME => Ok(vec![volume_control(q.line)]),
+            CONTROL_MUTE => Ok(vec![mute_control(q.line)]),
+            _ => Err(MmErr::NotSupported),
+        },
     }
 }
 
@@ -185,29 +331,27 @@ impl Session {
         if self.muted() { 0.0 } else { self.level() }
     }
     /// mixerGetControlDetails: the control's value (None: a source control, which writes nothing)
-    pub(crate) fn get(&self, id: u32) -> Result<Option<u32>, u32> {
-        match id {
-            // (as Wine and Windows: the level times 0xFFFF, truncated)
-            0 => Ok(Some((self.level() * 65535.0) as u32)),
-            1 => Ok(Some(self.muted() as u32)),
-            2 | 3 => Ok(None),
-            _ => Err(INVALCONTROL),
+    pub(crate) fn get(&self, id: u32) -> Result<Option<u32>, MmErr> {
+        match ControlId::of(id).ok_or(MmErr::InvalControl)? {
+            // (as Wine and Windows: the level times 0xFFFF, truncated; the level is in 0..=1)
+            ControlId::DestVolume => Ok(Some((self.level() * 65535.0) as u32)),
+            ControlId::DestMute => Ok(Some(u32::from(self.muted()))),
+            ControlId::SrcVolume | ControlId::SrcMute => Ok(None),
         }
     }
     /// mixerSetControlDetails with the control's first value
-    pub(crate) fn set(&self, id: u32, v: u32) -> Result<(), u32> {
-        match id {
-            0 if v > 0xFFFF => Err(INVALPARAM),
-            0 => {
-                self.level.store((v as f32 / 65535.0).to_bits(), Ordering::Relaxed);
+    pub(crate) fn set(&self, id: u32, v: u32) -> Result<(), MmErr> {
+        match ControlId::of(id).ok_or(MmErr::InvalControl)? {
+            ControlId::DestVolume => {
+                let v = u16::try_from(v).ok().ok_or(MmErr::InvalParam)?;
+                self.level.store((f32::from(v) / 65535.0).to_bits(), Ordering::Relaxed);
                 Ok(())
             }
-            1 => {
-                self.mute.store((v != 0) as u32, Ordering::Relaxed);
+            ControlId::DestMute => {
+                self.mute.store(u32::from(v != 0), Ordering::Relaxed);
                 Ok(())
             }
-            2 | 3 => Ok(()),
-            _ => Err(INVALCONTROL),
+            ControlId::SrcVolume | ControlId::SrcMute => Ok(()),
         }
     }
 }
@@ -219,28 +363,28 @@ pub(crate) static SESSION: Session = Session::new();
 /// mixer or waveOut device id, a handle mixerOpen gave, an open waveOut handle.
 pub(crate) fn names_device(hmix: u32, flags: u32, is_wave: impl Fn(u32) -> bool) -> bool {
     let handle = |h: u32| h & 0xFFFF_0000 == HMIXER_BASE;
-    match flags & 0xF000_0000 {
+    match Object::of(flags) {
         // (not a device id: a handle, as Windows accepts too)
-        OBJ_MIXER => hmix == 0 || handle(hmix) || is_wave(hmix),
-        OBJ_HMIXER | OBJ_HWAVEOUT => handle(hmix) || is_wave(hmix),
-        OBJ_WAVEOUT => hmix == 0,
-        _ => false,
+        Object::Mixer => hmix == 0 || handle(hmix) || is_wave(hmix),
+        Object::HMixer | Object::HWaveOut => handle(hmix) || is_wave(hmix),
+        Object::WaveOut => hmix == 0,
+        Object::Other => false,
     }
 }
 
 /// mixerOpen's checks: the device id and the callback kind (CALLBACK_TYPEMASK 0x70000)
-pub(crate) fn open_check(id: u32, callback: u32, flags: u32, is_window: impl Fn(u32) -> bool) -> u32 {
+pub(crate) fn open_check(id: u32, callback: u32, flags: u32, is_window: impl Fn(u32) -> bool) -> Result<(), MmErr> {
     match flags & 0x7_0000 {
         // CALLBACK_WINDOW: a window or none
-        0x1_0000 if callback != 0 && !is_window(callback) => return INVALPARAM,
+        0x1_0000 if callback != 0 && !is_window(callback) => return Err(MmErr::InvalParam),
         // CALLBACK_FUNCTION: not for mixers
-        0x3_0000 => return INVALFLAG,
+        0x3_0000 => return Err(MmErr::InvalFlag),
         _ => {}
     }
     if id != 0 {
-        return BADDEVICEID;
+        return Err(MmErr::BadDeviceId);
     }
-    NOERROR
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -260,34 +404,38 @@ fn mixerGetNumDevs(_: &mut Ctx) -> u32 {
 fn caps(c: &mut Ctx, wide: bool) -> u32 {
     let (id, p, size) = (c.a(0), c.a(1), c.a(2));
     if p == 0 {
-        return INVALPARAM;
+        return MmErr::InvalParam.code();
     }
     if size == 0 {
         return NOERROR;
     }
     if id != 0 && !names_device(id, OBJ_HMIXER, is_wave) {
-        return BADDEVICEID;
+        return MmErr::BadDeviceId.code();
     }
-    let name_len = if wide { 64 } else { 32 };
-    let mut b = vec![0u8; 8 + name_len + 8];
-    b[0] = 0xFF;
-    b[2] = 0xFF;
-    b[4..8].copy_from_slice(&0x0001_0001u32.to_le_bytes());
-    put_name(&mut b[8..8 + name_len], NAME, wide);
-    b[8 + name_len + 4..].copy_from_slice(&1u32.to_le_bytes());
-    let n = size.min(b.len() as u32) as usize;
-    mem::write(p, &b[..n]);
+    // wMid, wPid (0xFF each), vDriverVersion, szPname, fdwSupport 0, cDestinations 1
+    let mut name = vec![0u8; if wide { 64 } else { 32 }];
+    put_name(&mut name, NAME, wide);
+    let mut b = vec![0xFF, 0, 0xFF, 0];
+    b.extend_from_slice(&0x0001_0001u32.to_le_bytes());
+    b.extend_from_slice(&name);
+    b.extend_from_slice(&0u32.to_le_bytes());
+    b.extend_from_slice(&1u32.to_le_bytes());
+    let n = usize::try_from(size).map_or(b.len(), |s| s.min(b.len()));
+    mem::write(p, b.get(..n).unwrap_or_default());
     NOERROR
 }
 
+/// `s` into `dst` (bytes or UTF-16), cut to leave room for the terminator
 fn put_name(dst: &mut [u8], s: &str, wide: bool) {
     if wide {
-        for (i, u) in s.encode_utf16().take(dst.len() / 2 - 1).enumerate() {
-            dst[2 * i..2 * i + 2].copy_from_slice(&u.to_le_bytes());
+        let n = (dst.len() / 2).saturating_sub(1);
+        for (d, u) in dst.chunks_exact_mut(2).zip(s.encode_utf16().take(n)) {
+            d.copy_from_slice(&u.to_le_bytes());
         }
     } else {
-        for (i, ch) in s.bytes().take(dst.len() - 1).enumerate() {
-            dst[i] = ch;
+        let n = dst.len().saturating_sub(1);
+        for (d, ch) in dst.iter_mut().zip(s.bytes().take(n)) {
+            *d = ch;
         }
     }
 }
@@ -296,11 +444,10 @@ fn put_name(dst: &mut [u8], s: &str, wide: bool) {
 fn mixerOpen(c: &mut Ctx) -> u32 {
     let (out, id, cb, flags) = (c.a(0), c.a(1), c.a(2), c.a(4));
     if out == 0 {
-        return INVALPARAM;
+        return MmErr::InvalParam.code();
     }
-    let r = open_check(id, cb, flags, crate::user::is_window);
-    if r != NOERROR {
-        return r;
+    if let Err(e) = open_check(id, cb, flags, crate::user::is_window) {
+        return e.code();
     }
     mem::wp(out, HMIXER_BASE | (OPENS.fetch_add(1, Ordering::Relaxed) & 0xFFFF));
     NOERROR
@@ -312,16 +459,16 @@ fn mixerClose(_: &mut Ctx) -> u32 {
 fn mixerGetID(c: &mut Ctx) -> u32 {
     let (h, out, flags) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return INVALPARAM;
+        return MmErr::InvalParam.code();
     }
     if !names_device(h, flags, is_wave) {
-        return INVALHANDLE;
+        return MmErr::InvalHandle.code();
     }
     w32(out, 0);
     NOERROR
 }
 fn mixerMessage(_: &mut Ctx) -> u32 {
-    NOTSUPPORTED
+    MmErr::NotSupported.code()
 }
 
 /// MIXERLINE offsets (mmsystem.h packs to 1; dwUser is a DWORD_PTR): (user, rest, size) where
@@ -347,8 +494,8 @@ fn line_at_for(wide: bool, ps: u32) -> LineAt {
     LineAt { user: 20, comp, short, name, target, size: target + 16 + 32 * ch, wide }
 }
 
-fn put_str(at: u32, chars: u32, s: &str, wide: bool) {
-    let mut b = vec![0u8; (chars * if wide { 2 } else { 1 }) as usize];
+fn put_str(at: u32, chars: usize, s: &str, wide: bool) {
+    let mut b = vec![0u8; chars * if wide { 2 } else { 1 }];
     put_name(&mut b, s, wide);
     mem::write(at, &b);
 }
@@ -356,26 +503,24 @@ fn put_str(at: u32, chars: u32, s: &str, wide: bool) {
 /// mixerGetLineInfo(hmix, MIXERLINE*, flags)
 fn line_info_api(c: &mut Ctx, wide: bool) -> u32 {
     let (h, p, flags) = (c.a(0), c.a(1), c.a(2));
+    mm(line_info_at(h, p, flags, wide))
+}
+fn line_info_at(h: u32, p: u32, flags: u32, wide: bool) -> Result<(), MmErr> {
     let at = line_at(wide);
     // (the A form wants its exact size; the W form at least its own)
     if p == 0 || if wide { r32(p) < at.size } else { r32(p) != at.size } {
-        return INVALPARAM;
+        return Err(MmErr::InvalParam);
     }
     if !line_flags_ok(flags) {
-        return INVALFLAG;
+        return Err(MmErr::InvalFlag);
     }
     if !names_device(h, flags, is_wave) {
-        return INVALHANDLE;
+        return Err(MmErr::InvalHandle);
     }
     mem::wp(p + at.user, 0);
     let q = LineQuery { dest: r32(p + 4), source: r32(p + 8), id: r32(p + 12), component: r32(p + at.comp) };
-    match line_info(flags, q) {
-        Ok(l) => {
-            put_line(p, &at, &l);
-            NOERROR
-        }
-        Err(e) => e,
-    }
+    put_line(p, &at, &line_info(flags, q)?);
+    Ok(())
 }
 
 fn put_line(p: u32, at: &LineAt, l: &Line) {
@@ -416,38 +561,36 @@ fn control_size(wide: bool) -> u32 {
 /// mixerGetLineControls(hmix, MIXERLINECONTROLS*, flags)
 fn line_controls_api(c: &mut Ctx, wide: bool) -> u32 {
     let (h, p, flags) = (c.a(0), c.a(1), c.a(2));
+    mm(line_controls_at(h, p, flags, wide))
+}
+fn line_controls_at(h: u32, p: u32, flags: u32, wide: bool) -> Result<(), MmErr> {
     let size = lines_controls_size();
     if !controls_flags_ok(flags) {
         // (the A form checks the structure first)
         if !wide && (p == 0 || r32(p) != size) {
-            return INVALPARAM;
+            return Err(MmErr::InvalParam);
         }
-        return INVALFLAG;
+        return Err(MmErr::InvalFlag);
     }
     if p == 0 || if wide { r32(p) < size } else { r32(p) != size } {
-        return INVALPARAM;
+        return Err(MmErr::InvalParam);
     }
     let (cb, arr) = (r32(p + 16), mem::rp(p + 20));
     let csize = control_size(wide);
     // (a null array: refused by both forms; the A form wrote its controls at address 0)
     if arr == 0 || !wide && cb != csize {
-        return INVALPARAM;
+        return Err(MmErr::InvalParam);
     }
     if !names_device(h, flags, is_wave) {
-        return INVALHANDLE;
+        return Err(MmErr::InvalHandle);
     }
     // (ONEBYTYPE through the A form: one control whatever cControls says, as Windows does)
-    let count = if !wide && flags & 0xF == 2 { 1 } else { r32(p + 12) };
+    let count = if !wide && ControlsBy::of(flags) == Some(ControlsBy::OneByType) { 1 } else { r32(p + 12) };
     let q = ControlsQuery { line: r32(p + 4), id_or_type: r32(p + 8), count, size_ok: cb >= csize };
-    match line_controls(flags, q) {
-        Ok(v) => {
-            for (i, ctl) in v.iter().enumerate() {
-                put_control(arr + i as u32 * cb, ctl, wide);
-            }
-            NOERROR
-        }
-        Err(e) => e,
+    for (at, ctl) in (arr..).step_by(usize::try_from(cb).unwrap_or(1).max(1)).zip(&line_controls(flags, q)?) {
+        put_control(at, ctl, wide);
     }
+    Ok(())
 }
 
 fn put_control(p: u32, ctl: &Control, wide: bool) {
@@ -478,62 +621,64 @@ fn details_at_for(ps: u32) -> (u32, u32, u32) {
 /// mixerGetControlDetails(hmix, MIXERCONTROLDETAILS*, flags)
 fn get_details(c: &mut Ctx, wide: bool) -> u32 {
     let (h, p, flags) = (c.a(0), c.a(1), c.a(2));
+    mm(get_details_at(h, p, flags, wide))
+}
+/// A destination control (its value is a DWORD the caller must have room for)
+fn dest_control(id: u32) -> bool {
+    matches!(ControlId::of(id), Some(ControlId::DestVolume | ControlId::DestMute))
+}
+fn get_details_at(h: u32, p: u32, flags: u32, wide: bool) -> Result<(), MmErr> {
     let (cb_at, pa_at, size) = details_at();
     if p == 0 || !wide && r32(p) != size {
-        return INVALPARAM;
+        return Err(MmErr::InvalParam);
     }
     // MIXER_GETCONTROLDETAILSF_VALUE 0, LISTTEXT 1
     if !wide && flags & 0xF > 1 {
-        return NOTSUPPORTED;
+        return Err(MmErr::NotSupported);
     }
     let (cb, pa) = (r32(p + cb_at), mem::rp(p + pa_at));
     if pa == 0 {
-        return INVALPARAM;
+        return Err(MmErr::InvalParam);
     }
     if !names_device(h, flags, is_wave) {
-        return INVALHANDLE;
+        return Err(MmErr::InvalHandle);
     }
     let id = r32(p + 4);
-    if id <= 1 && cb < 4 {
-        return INVALPARAM;
+    if dest_control(id) && cb < 4 {
+        return Err(MmErr::InvalParam);
     }
-    match SESSION.get(id) {
-        Ok(Some(v)) => {
-            w32(pa, v);
-            NOERROR
-        }
-        Ok(None) => NOERROR,
-        Err(e) => e,
+    if let Some(v) = SESSION.get(id)? {
+        w32(pa, v);
     }
+    Ok(())
 }
 
 /// mixerSetControlDetails(hmix, MIXERCONTROLDETAILS*, flags)
 fn mixerSetControlDetails(c: &mut Ctx) -> u32 {
     let (h, p, flags) = (c.a(0), c.a(1), c.a(2));
+    mm(set_details_at(h, p, flags))
+}
+fn set_details_at(h: u32, p: u32, flags: u32) -> Result<(), MmErr> {
     let (cb_at, pa_at, _) = details_at();
     // MIXER_SETCONTROLDETAILSF_CUSTOM
     if flags & 0xF == 1 {
-        return NOTSUPPORTED;
+        return Err(MmErr::NotSupported);
     }
     if p == 0 {
-        return INVALPARAM;
+        return Err(MmErr::InvalParam);
     }
     if !names_device(h, flags, is_wave) {
-        return INVALHANDLE;
+        return Err(MmErr::InvalHandle);
     }
     let (id, cb, pa) = (r32(p + 4), r32(p + cb_at), mem::rp(p + pa_at));
-    if id <= 1 && (pa == 0 || cb < 4) {
-        return INVALPARAM;
+    if dest_control(id) && (pa == 0 || cb < 4) {
+        return Err(MmErr::InvalParam);
     }
     let v = if pa != 0 { r32(pa) } else { 0 };
-    match SESSION.set(id, v) {
-        Ok(()) => NOERROR,
-        Err(e) => e,
-    }
+    SESSION.set(id, v)
 }
 
 pub fn init() {
-    let _ = ERROR;
     implement("winmm", "mixerGetNumDevs", mixerGetNumDevs);
     implement("winmm", "mixerGetDevCapsA", |c| caps(c, false));
     implement("winmm", "mixerGetDevCapsW", |c| caps(c, true));
@@ -562,19 +707,19 @@ mod tests {
     #[test]
     fn lines_by_each_query() {
         assert_eq!(line_info(0, q(0, 9, 9, 9)), Ok(destination()));
-        assert_eq!(line_info(0, q(1, 0, 0, 0)), Err(INVALLINE));
+        assert_eq!(line_info(0, q(1, 0, 0, 0)), Err(MmErr::InvalLine));
         assert_eq!(line_info(1, q(0, 0, 9, 9)), Ok(source()));
-        assert_eq!(line_info(1, q(0, 1, 0, 0)), Err(INVALLINE));
+        assert_eq!(line_info(1, q(0, 1, 0, 0)), Err(MmErr::InvalLine));
         assert_eq!(line_info(2, q(9, 9, DEST_LINE, 9)), Ok(destination()));
         assert_eq!(line_info(2, q(9, 9, SRC_LINE, 9)), Ok(source()));
-        assert_eq!(line_info(2, q(9, 9, 5, 9)), Err(INVALLINE));
+        assert_eq!(line_info(2, q(9, 9, 5, 9)), Err(MmErr::InvalLine));
         assert_eq!(line_info(3, q(9, 9, 9, DST_SPEAKERS)), Ok(destination()));
         assert_eq!(line_info(3, q(9, 9, 9, SRC_WAVEOUT)), Ok(source()));
         // a capture device's lines: there is none
-        assert_eq!(line_info(3, q(9, 9, 9, 7)), Err(INVALLINE));
-        assert_eq!(line_info(3, q(9, 9, 9, 0x1003)), Err(INVALLINE));
+        assert_eq!(line_info(3, q(9, 9, 9, 7)), Err(MmErr::InvalLine));
+        assert_eq!(line_info(3, q(9, 9, 9, 0x1003)), Err(MmErr::InvalLine));
         // TARGETTYPE: not answered (as Wine)
-        assert_eq!(line_info(4, q(0, 0, 0, 0)), Err(INVALLINE));
+        assert_eq!(line_info(4, q(0, 0, 0, 0)), Err(MmErr::InvalLine));
         assert!(!line_flags_ok(0xFFFF_FFFF));
         assert!(line_flags_ok(0x8000_0003));
     }
@@ -594,16 +739,16 @@ mod tests {
         let all = |line| line_controls(0, ControlsQuery { line, id_or_type: 0, count: 2, size_ok: true });
         assert_eq!(all(DEST_LINE).unwrap().iter().map(|c| c.id).collect::<Vec<_>>(), [0, 1]);
         assert_eq!(all(SRC_LINE).unwrap().iter().map(|c| c.id).collect::<Vec<_>>(), [2, 3]);
-        assert_eq!(all(7), Err(INVALLINE));
+        assert_eq!(all(7), Err(MmErr::InvalLine));
         // ALL wants exactly the line's 2 controls
-        assert_eq!(line_controls(0, ControlsQuery { line: DEST_LINE, id_or_type: 0, count: 1, size_ok: true }), Err(INVALPARAM));
-        assert_eq!(line_controls(0, ControlsQuery { line: DEST_LINE, id_or_type: 0, count: 2, size_ok: false }), Err(INVALPARAM));
+        assert_eq!(line_controls(0, ControlsQuery { line: DEST_LINE, id_or_type: 0, count: 1, size_ok: true }), Err(MmErr::InvalParam));
+        assert_eq!(line_controls(0, ControlsQuery { line: DEST_LINE, id_or_type: 0, count: 2, size_ok: false }), Err(MmErr::InvalParam));
         let by_type = |t| line_controls(2, ControlsQuery { line: DEST_LINE, id_or_type: t, count: 1, size_ok: true });
         assert_eq!(by_type(CONTROL_MUTE).unwrap()[0], mute_control(DEST_LINE));
-        assert_eq!(by_type(0x5003_0002), Err(NOTSUPPORTED));
+        assert_eq!(by_type(0x5003_0002), Err(MmErr::NotSupported));
         let by_id = |id| line_controls(1, ControlsQuery { line: SRC_LINE, id_or_type: id, count: 1, size_ok: true });
         assert_eq!(by_id(0).unwrap()[0], volume_control(SRC_LINE));
-        assert_eq!(by_id(2), Err(NOTSUPPORTED));
+        assert_eq!(by_id(2), Err(MmErr::NotSupported));
     }
 
     #[test]
@@ -612,7 +757,7 @@ mod tests {
         assert_eq!(s.get(0), Ok(Some(0xFFFF)));
         assert_eq!(s.get(1), Ok(Some(0)));
         assert_eq!(s.gain(), 1.0);
-        assert_eq!(s.set(0, 0x10000), Err(INVALPARAM));
+        assert_eq!(s.set(0, 0x10000), Err(MmErr::InvalParam));
         assert_eq!(s.set(0, 0x8000), Ok(()));
         assert!((s.gain() - 0.5).abs() < 1e-4);
         assert_eq!(s.set(1, 5), Ok(()));
@@ -623,23 +768,23 @@ mod tests {
         assert_eq!(s.set(2, 0), Ok(()));
         assert_eq!(s.get(3), Ok(None));
         assert!((s.gain() - 0.5).abs() < 1e-4);
-        assert_eq!(s.get(4), Err(INVALCONTROL));
-        assert_eq!(s.set(9, 0), Err(INVALCONTROL));
+        assert_eq!(s.get(4), Err(MmErr::InvalControl));
+        assert_eq!(s.set(9, 0), Err(MmErr::InvalControl));
     }
 
     #[test]
     fn opens_and_objects() {
         let no_window = |_| false;
-        assert_eq!(open_check(0, 0, 0, no_window), NOERROR);
-        assert_eq!(open_check(1, 0, 0, no_window), BADDEVICEID);
-        assert_eq!(open_check(u32::MAX, 0, 0, no_window), BADDEVICEID);
-        assert_eq!(open_check(0, 0, 0x3_0000, no_window), INVALFLAG);
-        assert_eq!(open_check(0, 0xdead_beef, 0x1_0000, no_window), INVALPARAM);
-        assert_eq!(open_check(0, 0, 0x1_0000, no_window), NOERROR);
-        assert_eq!(open_check(0, 0x1234, 0x1_0000, |h| h == 0x1234), NOERROR);
+        assert_eq!(open_check(0, 0, 0, no_window), Ok(()));
+        assert_eq!(open_check(1, 0, 0, no_window), Err(MmErr::BadDeviceId));
+        assert_eq!(open_check(u32::MAX, 0, 0, no_window), Err(MmErr::BadDeviceId));
+        assert_eq!(open_check(0, 0, 0x3_0000, no_window), Err(MmErr::InvalFlag));
+        assert_eq!(open_check(0, 0xdead_beef, 0x1_0000, no_window), Err(MmErr::InvalParam));
+        assert_eq!(open_check(0, 0, 0x1_0000, no_window), Ok(()));
+        assert_eq!(open_check(0, 0x1234, 0x1_0000, |h| h == 0x1234), Ok(()));
         // CALLBACK_THREAD / EVENT: accepted since Windows 2000
-        assert_eq!(open_check(0, 0, 0x2_0000, no_window), NOERROR);
-        assert_eq!(open_check(0, 0, 0x5_0000, no_window), NOERROR);
+        assert_eq!(open_check(0, 0, 0x2_0000, no_window), Ok(()));
+        assert_eq!(open_check(0, 0, 0x5_0000, no_window), Ok(()));
         let no_wave = |_| false;
         assert!(names_device(0, OBJ_MIXER, no_wave));
         assert!(names_device(HMIXER_BASE | 3, OBJ_MIXER, no_wave));
@@ -665,7 +810,7 @@ mod tests {
             w32(p + 16, control_size(wide));
             mem::wp(p + 20, 0);
             let f = if wide { (|c: &mut Ctx| line_controls_api(c, true)) as crate::api::Handler } else { |c: &mut Ctx| line_controls_api(c, false) };
-            assert_eq!(crate::test_guest::call(f, &[0, p, 0]), INVALPARAM, "wide {wide}");
+            assert_eq!(crate::test_guest::call(f, &[0, p, 0]), MmErr::InvalParam.code(), "wide {wide}");
         }
         mem::heap_free(p);
     }
@@ -696,7 +841,7 @@ mod tests {
                     if flags & 0xF == 2 { prop_assert_eq!(l.id, id); }
                     if flags & 0xF == 3 { prop_assert_eq!(l.component, comp); }
                 }
-                Err(e) => prop_assert!(e == INVALLINE || e == INVALFLAG),
+                Err(e) => prop_assert!(e == MmErr::InvalLine || e == MmErr::InvalFlag),
             }
         }
 
@@ -731,7 +876,7 @@ mod tests {
         fn volume_out_of_range(v in 0x10000u32..) {
             let s = Session::new();
             s.set(0, 0x1234).unwrap();
-            prop_assert_eq!(s.set(0, v), Err(INVALPARAM));
+            prop_assert_eq!(s.set(0, v), Err(MmErr::InvalParam));
             prop_assert_eq!(s.get(0).unwrap().unwrap().abs_diff(0x1234) <= 1, true);
         }
     }
