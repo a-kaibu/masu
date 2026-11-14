@@ -250,7 +250,7 @@ file	crates/koji/src/interp/sse.rs	cast_sign_loss	13
 file	crates/koji/src/interp/sse.rs	float_cmp	10
 file	crates/koji/src/interp/sse.rs	indexing_slicing	5
 file	crates/koji/src/interp/sse.rs	lossy_float_literal	3
-file	crates/koji/src/interp/sse.rs	wildcard_enum_match_arm	34
+file	crates/koji/src/interp/sse.rs	wildcard_enum_match_arm	27
 file	crates/koji/src/interp/vex.rs	arithmetic_side_effects	36
 file	crates/koji/src/interp/vex.rs	as_conversions	42
 file	crates/koji/src/interp/vex.rs	cast_possible_truncation	13
@@ -369,7 +369,7 @@ file	crates/koji/src/round.rs	cast_precision_loss	2
 file	crates/koji/src/round.rs	cast_sign_loss	7
 file	crates/koji/src/round.rs	float_cmp	2
 file	crates/koji/src/round.rs	indexing_slicing	1
-file	crates/koji/src/round.rs	wildcard_enum_match_arm	4
+file	crates/koji/src/round.rs	wildcard_enum_match_arm	2
 file	crates/kura/src/adec.rs	arithmetic_side_effects	12
 file	crates/kura/src/adec.rs	as_conversions	32
 file	crates/kura/src/adec.rs	cast_possible_truncation	11
