@@ -124,7 +124,6 @@ file	crates/hlslc/src/ast.rs	arithmetic_side_effects	1
 file	crates/hlslc/src/ast.rs	as_conversions	3
 file	crates/hlslc/src/ast.rs	cast_possible_truncation	1
 file	crates/hlslc/src/ast.rs	unwrap_used	1
-file	crates/hlslc/src/ast.rs	wildcard_enum_match_arm	4
 file	crates/hlslc/src/d3d9asm.rs	arithmetic_side_effects	12
 file	crates/hlslc/src/d3d9asm.rs	as_conversions	5
 file	crates/hlslc/src/d3d9asm.rs	cast_possible_truncation	3
@@ -140,17 +139,14 @@ file	crates/hlslc/src/fx.rs	cast_precision_loss	4
 file	crates/hlslc/src/fx.rs	cast_sign_loss	2
 file	crates/hlslc/src/fx.rs	indexing_slicing	9
 file	crates/hlslc/src/fx.rs	unwrap_used	1
-file	crates/hlslc/src/fx.rs	wildcard_enum_match_arm	8
 file	crates/hlslc/src/intrinsics.rs	arithmetic_side_effects	15
 file	crates/hlslc/src/intrinsics.rs	as_conversions	30
 file	crates/hlslc/src/intrinsics.rs	cast_possible_truncation	10
 file	crates/hlslc/src/intrinsics.rs	cast_possible_wrap	1
 file	crates/hlslc/src/intrinsics.rs	cast_sign_loss	1
 file	crates/hlslc/src/intrinsics.rs	indexing_slicing	124
-file	crates/hlslc/src/intrinsics.rs	match_wildcard_for_single_variants	2
 file	crates/hlslc/src/intrinsics.rs	string_slice	1
 file	crates/hlslc/src/intrinsics.rs	unreachable	2
-file	crates/hlslc/src/intrinsics.rs	wildcard_enum_match_arm	4
 file	crates/hlslc/src/lib.rs	indexing_slicing	5
 file	crates/hlslc/src/lib.rs	map_err_ignore	1
 file	crates/hlslc/src/lower.rs	arithmetic_side_effects	99
@@ -164,7 +160,6 @@ file	crates/hlslc/src/lower.rs	indexing_slicing	124
 file	crates/hlslc/src/lower.rs	string_slice	2
 file	crates/hlslc/src/lower.rs	unreachable	6
 file	crates/hlslc/src/lower.rs	unwrap_used	16
-file	crates/hlslc/src/lower.rs	wildcard_enum_match_arm	37
 file	crates/hlslc/src/parse.rs	arithmetic_side_effects	70
 file	crates/hlslc/src/parse.rs	as_conversions	13
 file	crates/hlslc/src/parse.rs	cast_possible_truncation	6
@@ -176,7 +171,6 @@ file	crates/hlslc/src/parse.rs	manual_ignore_case_cmp	1
 file	crates/hlslc/src/parse.rs	map_err_ignore	1
 file	crates/hlslc/src/parse.rs	string_slice	2
 file	crates/hlslc/src/parse.rs	unwrap_used	1
-file	crates/hlslc/src/parse.rs	wildcard_enum_match_arm	4
 file	crates/hlslc/src/pp.rs	arithmetic_side_effects	73
 file	crates/hlslc/src/pp.rs	as_conversions	15
 file	crates/hlslc/src/pp.rs	cast_possible_truncation	4
@@ -188,7 +182,6 @@ file	crates/hlslc/src/pp.rs	let_underscore_must_use	1
 file	crates/hlslc/src/pp.rs	map_err_ignore	3
 file	crates/hlslc/src/pp.rs	string_slice	14
 file	crates/hlslc/src/pp.rs	unwrap_used	5
-file	crates/hlslc/src/pp.rs	wildcard_enum_match_arm	2
 file	crates/hlslc/src/sm3.rs	arithmetic_side_effects	28
 file	crates/hlslc/src/sm3.rs	as_conversions	19
 file	crates/hlslc/src/sm3.rs	cast_possible_truncation	13
@@ -196,7 +189,6 @@ file	crates/hlslc/src/sm3.rs	indexing_slicing	16
 file	crates/hlslc/src/sm3.rs	string_slice	2
 file	crates/hlslc/src/sm3.rs	unwrap_in_result	1
 file	crates/hlslc/src/sm3.rs	unwrap_used	4
-file	crates/hlslc/src/sm3.rs	wildcard_enum_match_arm	6
 file	crates/hlslc/src/sm4.rs	arithmetic_side_effects	56
 file	crates/hlslc/src/sm4.rs	as_conversions	67
 file	crates/hlslc/src/sm4.rs	cast_possible_truncation	26
@@ -204,7 +196,6 @@ file	crates/hlslc/src/sm4.rs	cast_sign_loss	1
 file	crates/hlslc/src/sm4.rs	indexing_slicing	34
 file	crates/hlslc/src/sm4.rs	iter_over_hash_type	1
 file	crates/hlslc/src/sm4.rs	unwrap_used	6
-file	crates/hlslc/src/sm4.rs	wildcard_enum_match_arm	2
 file	crates/koji/examples/corpus.rs	as_conversions	9
 file	crates/koji/examples/corpus.rs	unwrap_used	6
 file	crates/koji/examples/ibench.rs	as_conversions	3
