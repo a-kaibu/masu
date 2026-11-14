@@ -2709,8 +2709,9 @@ mod blit_tests {
         (-6i32..26, -6i32..26, 0i32..34, 0i32..34).prop_map(|(l, t, w, h)| Rect { l, t, r: l + w, b: t + h })
     }
 
-    const SRC: u32 = 0x0100_0000;
-    const DST: u32 = 0x0110_0000;
+    /// (each surface's bits in a block of its own, released after the case: never at a fixed
+    /// address, which another test's reservation may hold, #242)
+    const BITS: u32 = 0x10_0000;
 
     /// (a source key, flags of Blt / BltFast and their rectangles, for the key checks)
     #[derive(Debug, Clone)]
@@ -2740,16 +2741,18 @@ mod blit_tests {
         /// fails writes nothing.
         #[test]
         fn sysmem_color_keys_as_windows(k in key_call(), seed: u32) {
-            let _g = crate::test_guest::enter();
+            let g = crate::test_guest::enter();
+            let (sblk, dblk) = (crate::test_guest::Block::new(&g, BITS), crate::test_guest::Block::new(&g, BITS));
+            let (src_at, dst_at) = (sblk.at, dblk.at);
             let (sw, sh, dw, dh) = (16, 12, 20, 14);
             let (sb, db) = (0x7_0001u32, 0x7_0002u32);
-            let mut src = surf_at(SRC, sw, sh, k.bpp);
-            let mut dst = surf_at(DST, dw, dh, k.bpp);
+            let mut src = surf_at(src_at, sw, sh, k.bpp);
+            let mut dst = surf_at(dst_at, dw, dh, k.bpp);
             src.caps = CAPS_SYSTEMMEMORY | CAPS_OFFSCREENPLAIN;
             dst.caps = CAPS_SYSTEMMEMORY | CAPS_OFFSCREENPLAIN;
             let (sn, dn) = (src.pitch * sh as u32, dst.pitch * dh as u32);
             let mut x = seed | 1;
-            for (at, n) in [(SRC, sn), (DST, dn)] {
+            for (at, n) in [(src_at, sn), (dst_at, dn)] {
                 for b in mem::guest_mut(at, n).unwrap() {
                     x ^= x << 13; x ^= x >> 17; x ^= x << 5;
                     *b = x as u8;
@@ -2783,7 +2786,7 @@ mod blit_tests {
             let src_b = if k.same { db } else { sb };
             let (s_w, s_h, s_key) = if k.same { (dw, dh, None) } else { (sw, sh, k.src_key) };
             let rect_ok_ = |r: Rect, w: i32, h: i32| r.l < r.r && r.t < r.b && r.l >= 0 && r.t >= 0 && r.r <= w && r.b <= h;
-            let before = mem::slice(DST, dn).to_vec();
+            let before = mem::slice(dst_at, dn).to_vec();
             let (got, want) = if k.fast {
                 let trans = u32::from(k.flags[0]) | u32::from(k.flags[1]) << 1 | 0x10;
                 let (x0, y0) = (k.dr.l, k.dr.t);
@@ -2812,7 +2815,7 @@ mod blit_tests {
             };
             prop_assert_eq!(got, want, "{:?}", k);
             if got != DD_OK {
-                prop_assert!(mem::slice(DST, dn) == &before[..]);
+                prop_assert!(mem::slice(dst_at, dn) == &before[..]);
             }
             for p in [ck, rp, fx] {
                 mem::heap_free(p);
@@ -2828,9 +2831,11 @@ mod blit_tests {
             dr in rect(), sr in rect(), key in prop::option::of((any::<u32>(), any::<u32>(), 0u32..64)), mirror: (bool, bool),
             one in any::<bool>(), seed: u64,
         ) {
-            let _g = crate::test_guest::enter();
-            let src = surf_at(SRC, sw, sh, bpp);
-            let dst = if one { src.clone() } else { surf_at(DST, dw, dh, bpp) };
+            let g = crate::test_guest::enter();
+            let (sblk, dblk) = (crate::test_guest::Block::new(&g, BITS), crate::test_guest::Block::new(&g, BITS));
+            let (src_at, dst_at) = (sblk.at, dblk.at);
+            let src = surf_at(src_at, sw, sh, bpp);
+            let dst = if one { src.clone() } else { surf_at(dst_at, dw, dh, bpp) };
             let (sn, dn) = ((src.pitch * sh as u32) as usize, (dst.pitch * dst.h as u32) as usize);
             let mut rng = seed | 1;
             let mut next = || { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; rng as u8 };
@@ -2841,9 +2846,9 @@ mod blit_tests {
             let key = key.map(|(lo, _, span)| { let lo = lo & 0x8383_8383; (lo, lo.wrapping_add(span)) });
             let mut out = vec![];
             for fast in [false, true] {
-                mem::guest_mut(SRC, sn as u32).unwrap().copy_from_slice(&sbytes);
+                mem::guest_mut(src_at, sn as u32).unwrap().copy_from_slice(&sbytes);
                 if !one {
-                    mem::guest_mut(DST, dn as u32).unwrap().copy_from_slice(&dbytes);
+                    mem::guest_mut(dst_at, dn as u32).unwrap().copy_from_slice(&dbytes);
                 }
                 if fast { blit(&dst, dr, &src, sr, key, mirror) } else { blit_ref(&dst, dr, &src, sr, key, mirror) }
                 out.push(mem::slice(dst.bits, dn as u32).to_vec());

@@ -10,6 +10,7 @@ pub fn enter() -> MutexGuard<'static, ()> {
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE | libc::MAP_NORESERVE, -1, 0);
         assert_eq!(p as usize, mem::LO as usize, "guest memory: {}", std::io::Error::last_os_error());
+        mem::TEST_MAPPED.store(true, std::sync::atomic::Ordering::Relaxed);
     });
     assert_eq!(mem::ps(), 4);
     guard
@@ -80,4 +81,26 @@ pub fn call_stacked(f: Handler, args: &[u32]) -> u32 {
     mem::heap_free(sp);
     mem::heap_free(stack);
     result
+}
+
+/// Guest memory a test owns: reserved and committed while it lives, released (and so zeroed)
+/// when it is dropped. Borrowing the guard of `enter` it cannot outlive the test's hold on the
+/// guest. A test that wrote at a fixed address instead (ddraw's blit tests at 0x0100_0000)
+/// left its bytes in free space, which the next reservation there showed as its contents
+/// (#242: a new pagefile section read 0xdd513c44 in k32::mapping_names::model).
+pub struct Block<'g> {
+    pub at: u32,
+    _guest: std::marker::PhantomData<&'g MutexGuard<'static, ()>>,
+}
+impl<'g> Block<'g> {
+    pub fn new(_guest: &'g MutexGuard<'static, ()>, size: u32) -> Self {
+        let Some(at) = mem::reserve(0, size, 4, 0x2_0000, false) else { panic!("test block of {size:#x} bytes: no room") };
+        mem::commit(at, 4);
+        Block { at, _guest: std::marker::PhantomData }
+    }
+}
+impl Drop for Block<'_> {
+    fn drop(&mut self) {
+        assert!(mem::release(self.at), "test block {:#x} was released by someone else", self.at);
+    }
 }

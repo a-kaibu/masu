@@ -452,7 +452,20 @@ fn holes(sp: &BTreeMap<u32, Region>, size: u32) -> Vec<(u32, u32)> {
     holes
 }
 
+/// (tests: test_guest::enter mapped the guest's address space)
+#[cfg(test)]
+pub static TEST_MAPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn insert(sp: &mut BTreeMap<u32, Region>, base: u32, size: u32, prot: u32, kind: u32) {
+    // (tests: free space is zero, as release leaves it; bytes there were written by someone
+    // who did not own them, and a new reservation would show them as its contents, #242)
+    #[cfg(test)]
+    {
+        let n = size.min(16 * PAGE);
+        if TEST_MAPPED.load(std::sync::atomic::Ordering::Relaxed) && in_guest(base, n) {
+            assert!(is_zero(slice(base, n)), "free guest memory at {base:#x} is not zero: something wrote there without reserving it");
+        }
+    }
     sp.insert(base, Region { size, prot, state: 0x2000, alloc_base: base, alloc_prot: prot, kind, hi: 0 });
     PAGES.lock().unwrap().insert(base, vec![0; (size / PAGE) as usize]);
 }
