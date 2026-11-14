@@ -152,6 +152,7 @@ pub mod mmio;
 pub mod mixer;
 pub mod gl;
 pub mod glu;
+pub mod num;
 pub mod cryptstr;
 pub mod diskspace;
 pub mod cfgmgr;
