@@ -1,9 +1,9 @@
 //! MMX, SSE, SSE2, SSE3, SSSE3 and SSE4.1 (all but DPPS/DPPD, MPSADBW, PHMINPOSUW).
 
-use super::X;
+use super::{Stop, X};
 use crate::flags::STATUS;
 use crate::round::{self, Op};
-use crate::{fpu, Exit, Fault, Memory};
+use crate::{fpu, Exit, Memory};
 use iced_x86::{Mnemonic, OpKind, Register};
 
 /// Apply `f` to each `lane`-bit element of a and b.
@@ -110,7 +110,7 @@ impl<'a, M: Memory> X<'a, M> {
         }
     }
 
-    pub(super) fn read_v(&mut self, i: u32) -> Result<u128, Fault> {
+    pub(super) fn read_v(&mut self, i: u32) -> Result<u128, Stop> {
         let v = self.read_raw(i)?;
         Ok(match self.daz {
             Some(f) if i == 1 || (i == 0 && f.op0) => f.zero_denormals(v, f.bits, f.lanes),
@@ -118,7 +118,7 @@ impl<'a, M: Memory> X<'a, M> {
         })
     }
 
-    fn read_raw(&mut self, i: u32) -> Result<u128, Fault> {
+    fn read_raw(&mut self, i: u32) -> Result<u128, Stop> {
         match self.ins.op_kind(i) {
             OpKind::Register => {
                 let r = self.ins.op_register(i);
@@ -133,18 +133,41 @@ impl<'a, M: Memory> X<'a, M> {
             OpKind::Memory => {
                 let a = self.addr();
                 Ok(match self.ins.memory_size().size() {
-                    1 => self.mem.read8(a)? as u128,
-                    2 => self.mem.read16(a)? as u128,
-                    4 => self.mem.read32(a)? as u128,
-                    8 => self.mem.read64(a)? as u128,
-                    _ => self.mem.read64(a)? as u128 | (self.mem.read64(a.wrapping_add(8))? as u128) << 64,
+                    1 => u128::from(self.mem.read8(a)?),
+                    2 => u128::from(self.mem.read16(a)?),
+                    4 => u128::from(self.mem.read32(a)?),
+                    8 => u128::from(self.mem.read64(a)?),
+                    // (16, and the low half of what read_y does not take whole)
+                    _ => u128::from(self.mem.read64(a)?) | u128::from(self.mem.read64(a.wrapping_add(8))?) << 64,
                 })
             }
-            _ => Ok(self.ins.immediate(i) as u128),
+            OpKind::Immediate8
+            | OpKind::Immediate8_2nd
+            | OpKind::Immediate16
+            | OpKind::Immediate32
+            | OpKind::Immediate64
+            | OpKind::Immediate8to16
+            | OpKind::Immediate8to32
+            | OpKind::Immediate8to64
+            | OpKind::Immediate32to64 => Ok(u128::from(self.ins.immediate(i))),
+            OpKind::NearBranch16
+            | OpKind::NearBranch32
+            | OpKind::NearBranch64
+            | OpKind::FarBranch16
+            | OpKind::FarBranch32
+            | OpKind::MemorySegSI
+            | OpKind::MemorySegESI
+            | OpKind::MemorySegRSI
+            | OpKind::MemorySegDI
+            | OpKind::MemorySegEDI
+            | OpKind::MemorySegRDI
+            | OpKind::MemoryESDI
+            | OpKind::MemoryESEDI
+            | OpKind::MemoryESRDI => Err(Stop::Ud),
         }
     }
 
-    pub(super) fn write_v(&mut self, i: u32, v: u128) -> Result<(), Fault> {
+    pub(super) fn write_v(&mut self, i: u32, v: u128) -> Result<(), Stop> {
         match self.ins.op_kind(i) {
             OpKind::Register => {
                 let r = self.ins.op_register(i);
@@ -157,9 +180,9 @@ impl<'a, M: Memory> X<'a, M> {
                 }
                 Ok(())
             }
-            _ => {
+            OpKind::Memory => {
                 let a = self.addr();
-                match self.ins.memory_size().size() {
+                Ok(match self.ins.memory_size().size() {
                     1 => self.mem.write8(a, v as u8),
                     2 => self.mem.write16(a, v as u16),
                     4 => self.mem.write32(a, v as u32),
@@ -168,13 +191,36 @@ impl<'a, M: Memory> X<'a, M> {
                         self.mem.write64(a, v as u64)?;
                         self.mem.write64(a.wrapping_add(8), (v >> 64) as u64)
                     }
-                }
+                }?)
             }
+            OpKind::Immediate8
+            | OpKind::Immediate8_2nd
+            | OpKind::Immediate16
+            | OpKind::Immediate32
+            | OpKind::Immediate64
+            | OpKind::Immediate8to16
+            | OpKind::Immediate8to32
+            | OpKind::Immediate8to64
+            | OpKind::Immediate32to64
+            | OpKind::NearBranch16
+            | OpKind::NearBranch32
+            | OpKind::NearBranch64
+            | OpKind::FarBranch16
+            | OpKind::FarBranch32
+            | OpKind::MemorySegSI
+            | OpKind::MemorySegESI
+            | OpKind::MemorySegRSI
+            | OpKind::MemorySegDI
+            | OpKind::MemorySegEDI
+            | OpKind::MemorySegRDI
+            | OpKind::MemoryESDI
+            | OpKind::MemoryESEDI
+            | OpKind::MemoryESRDI => Err(Stop::Ud),
         }
     }
 
     /// Merge the low `bits` of v into operand 0 (MOVSS/MOVSD/MOVLPS register forms).
-    fn write_low(&mut self, v: u128, bits: u32) -> Result<(), Fault> {
+    fn write_low(&mut self, v: u128, bits: u32) -> Result<(), Stop> {
         if self.ins.op_kind(0) == OpKind::Memory {
             return self.write_v(0, v);
         }

@@ -7,6 +7,7 @@
 //! cross lanes (broadcasts, permutes, inserts and extracts, widening and narrowing
 //! conversions, mask extraction, PTEST) are done here directly.
 
+use super::Stop;
 use super::X;
 use crate::{Exit, Fault, Memory};
 use alloc::boxed::Box;
@@ -92,7 +93,7 @@ fn bcast(v: u128, bits: u32) -> u128 {
 
 impl<'a, M: Memory> X<'a, M> {
     /// Operand `i` as 256 bits (an XMM register or a smaller memory operand: the low half).
-    fn read_y(&mut self, i: u32) -> Result<[u128; 2], Fault> {
+    fn read_y(&mut self, i: u32) -> Result<[u128; 2], Stop> {
         match self.ins.op_kind(i) {
             OpKind::Register if self.ins.op_register(i).is_ymm() => Ok(self.cpu.ymm(vi(self.ins.op_register(i)))),
             OpKind::Memory if self.ins.memory_size().size() == 32 => {
