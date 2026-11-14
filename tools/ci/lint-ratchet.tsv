@@ -238,7 +238,7 @@ file	crates/koji/src/interp/mod.rs	undocumented_unsafe_blocks	2
 file	crates/koji/src/interp/mod.rs	unwrap_used	1
 file	crates/koji/src/interp/mod.rs	wildcard_enum_match_arm	26
 file	crates/koji/src/interp/sse.rs	arithmetic_side_effects	152
-file	crates/koji/src/interp/sse.rs	as_conversions	206
+file	crates/koji/src/interp/sse.rs	as_conversions	199
 file	crates/koji/src/interp/sse.rs	cast_possible_truncation	69
 file	crates/koji/src/interp/sse.rs	cast_possible_wrap	29
 file	crates/koji/src/interp/sse.rs	cast_precision_loss	2
@@ -246,7 +246,7 @@ file	crates/koji/src/interp/sse.rs	cast_sign_loss	13
 file	crates/koji/src/interp/sse.rs	float_cmp	10
 file	crates/koji/src/interp/sse.rs	indexing_slicing	5
 file	crates/koji/src/interp/sse.rs	lossy_float_literal	3
-file	crates/koji/src/interp/sse.rs	wildcard_enum_match_arm	27
+file	crates/koji/src/interp/sse.rs	wildcard_enum_match_arm	25
 file	crates/koji/src/interp/vex.rs	arithmetic_side_effects	36
 file	crates/koji/src/interp/vex.rs	as_conversions	42
 file	crates/koji/src/interp/vex.rs	cast_possible_truncation	13
