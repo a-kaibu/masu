@@ -3579,12 +3579,69 @@ fn alpha_rows(sv: &View, dv: &View, r: &Rect, o: (i32, i32), k: u32, per_pixel: 
                 continue; // (sc 0 and the destination times 255 / 255)
             }
             let q = unsafe { pd.read_unaligned() };
-            let ia = 255 - a;
-            let ch = |sh: u32| {
-                let sc = if k == 255 { p >> sh & 255 } else { div255((p >> sh & 255) * k) };
-                (sc + div255((q >> sh & 255) * ia)).min(255) << sh
-            };
-            unsafe { pd.write_unaligned(ch(24) | ch(16) | ch(8) | ch(0)) };
+            unsafe { pd.write_unaligned(blend_px(p, q, a, k)) };
+        }
+    }
+}
+
+/// div255 of two 16-bit lanes at once (bits 0..16 and 16..32, each up to 255 * 255): the
+/// lanes' sums stay below 65536, so nothing carries from one into the other.
+#[inline(always)]
+fn div255x2(x: u32) -> u32 {
+    (x + 0x0001_0001 + (x >> 8 & 0x00ff_00ff)) >> 8 & 0x00ff_00ff
+}
+
+/// Two lanes of up to 510 each, each clamped to 255.
+#[inline(always)]
+fn sat255x2(x: u32) -> u32 {
+    let m = x & 0x0100_0100;
+    (x | (m - (m >> 8))) & 0x00ff_00ff
+}
+
+/// One pixel of AlphaBlend: source `p` (premultiplied) scaled by `k` over destination `q`
+/// with the source's alpha `a`, each channel (sc + d * (255 - a) / 255) clamped to 255, two
+/// channels per multiply (tests: alpha_pixel_is_per_channel).
+#[inline(always)]
+fn blend_px(p: u32, q: u32, a: u32, k: u32) -> u32 {
+    let ia = 255 - a;
+    let (s_rb, s_ag) = if k == 255 { (p & 0x00ff_00ff, p >> 8 & 0x00ff_00ff) } else { (div255x2((p & 0x00ff_00ff) * k), div255x2((p >> 8 & 0x00ff_00ff) * k)) };
+    let d_rb = div255x2((q & 0x00ff_00ff) * ia);
+    let d_ag = div255x2((q >> 8 & 0x00ff_00ff) * ia);
+    sat255x2(s_rb + d_rb) | sat255x2(s_ag + d_ag) << 8
+}
+
+#[cfg(test)]
+mod alpha_px_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// (the per-channel formula blend_px replaced, AlphaBlend's stretching loop's)
+    fn per_channel(p: u32, q: u32, a: u32, k: u32) -> u32 {
+        let ch = |sh: u32| ((p >> sh & 255) * k / 255 + (q >> sh & 255) * (255 - a) / 255).min(255) << sh;
+        ch(24) | ch(16) | ch(8) | ch(0)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20000))]
+        #[test]
+        fn alpha_pixel_is_per_channel(p: u32, q: u32, a in 0u32..=255, k in prop_oneof![Just(255u32), 0u32..=255]) {
+            prop_assert_eq!(blend_px(p, q, a, k), per_channel(p, q, a, k));
+        }
+    }
+
+    /// every channel value against every alpha and factor (the lanes' carries)
+    #[test]
+    fn alpha_pixel_exhaustive_channels() {
+        for a in 0..=255u32 {
+            for k in [0u32, 1, 127, 128, 254, 255] {
+                for v in 0..=255u32 {
+                    let (p, q) = (v * 0x0101_0101, (255 - v) * 0x0101_0101);
+                    assert_eq!(blend_px(p, q, a, k), per_channel(p, q, a, k));
+                    assert_eq!(blend_px(q, p, a, k), per_channel(q, p, a, k));
+                    let (p, q) = (v << 24 | 0xff, v | 0xff00_0000);
+                    assert_eq!(blend_px(p, q, a, k), per_channel(p, q, a, k));
+                }
+            }
         }
     }
 }
