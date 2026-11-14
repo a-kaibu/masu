@@ -728,15 +728,15 @@ fn AccessCheck(c: &mut Ctx) -> u32 {
 
 static IMPERSONATING: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
 
-fn new_token(kind: &'static str) -> u32 {
+fn new_token(kind: obj::Other) -> u32 {
     obj::add(Obj::Other(kind))
 }
 fn is_token(h: u32) -> bool {
     // (GetCurrentProcessToken, GetCurrentThreadToken, GetCurrentThreadEffectiveToken)
-    matches!(h as i32, -4 | -5 | -6) || obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other("token" | "impersonation token"), _))))
+    matches!(h as i32, -4 | -5 | -6) || obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other(crate::obj::Other::Token | crate::obj::Other::ImpersonationToken), _))))
 }
 fn impersonation_token(h: u32) -> bool {
-    obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other("impersonation token"), _))))
+    obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other(crate::obj::Other::ImpersonationToken), _))))
 }
 
 fn OpenProcessToken(c: &mut Ctx) -> u32 {
@@ -745,7 +745,7 @@ fn OpenProcessToken(c: &mut Ctx) -> u32 {
         last_error(998); // ERROR_NOACCESS
         return 0;
     }
-    putp(out, new_token("token"));
+    putp(out, new_token(obj::Other::Token));
     1
 }
 fn OpenThreadToken(c: &mut Ctx) -> u32 {
@@ -760,7 +760,7 @@ fn OpenThreadToken(c: &mut Ctx) -> u32 {
         last_error(ERROR_NO_TOKEN);
         return 0;
     }
-    putp(out, new_token("impersonation token"));
+    putp(out, new_token(obj::Other::ImpersonationToken));
     1
 }
 fn ImpersonateSelf(_: &mut Ctx) -> u32 {
@@ -784,7 +784,7 @@ fn DuplicateToken(c: &mut Ctx) -> u32 {
         last_error(ERROR_INVALID_HANDLE);
         return 0;
     }
-    putp(c.a(2), new_token("impersonation token"));
+    putp(c.a(2), new_token(obj::Other::ImpersonationToken));
     1
 }
 fn DuplicateTokenEx(c: &mut Ctx) -> u32 {
@@ -793,7 +793,7 @@ fn DuplicateTokenEx(c: &mut Ctx) -> u32 {
         return 0;
     }
     // TokenType: 1 primary, 2 impersonation
-    putp(c.a(5), new_token(if c.a(4) == 2 { "impersonation token" } else { "token" }));
+    putp(c.a(5), new_token(if c.a(4) == 2 { obj::Other::ImpersonationToken } else { obj::Other::Token }));
     1
 }
 

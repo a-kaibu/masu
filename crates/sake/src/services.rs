@@ -57,13 +57,13 @@ fn open_manager(c: &mut Ctx, wide: bool) -> u32 {
     let machine = string(c.a(0), wide);
     if !machine.is_empty() && machine != "." && !machine.eq_ignore_ascii_case("localhost") { return fail(1722); }
     let access = c.a(2);
-    let h = obj::add(Obj::Other("service manager"));
+    let h = obj::add(Obj::Other(crate::obj::Other::ServiceManager));
     handles(|m| m.managers.insert(h, access)); h
 }
 fn OpenSCManagerA(c: &mut Ctx) -> u32 { open_manager(c, false) }
 fn OpenSCManagerW(c: &mut Ctx) -> u32 { open_manager(c, true) }
 fn new_handle(name: String, access: u32) -> u32 {
-    let h = obj::add(Obj::Other("service"));
+    let h = obj::add(Obj::Other(crate::obj::Other::Service));
     let opened = kern::with(|k| {
         let s = k.services.get_mut(&name).ok_or(1060u32)?;
         if s.deleted { return Err(1072); }
@@ -355,7 +355,7 @@ fn register(c: &mut Ctx, wide: bool, extended: bool) -> u32 {
     if !requested.eq_ignore_ascii_case(&a.name) { return fail(1083); }
     if c.a(1) == 0 { return fail(87); }
     a.handler = c.a(1); a.extended = extended; a.context = if extended { c.a(2) } else { 0 };
-    if a.token == 0 { a.token = obj::add(Obj::Other("service status")); }
+    if a.token == 0 { a.token = obj::add(Obj::Other(crate::obj::Other::ServiceStatus)); }
     a.token
 }
 fn RegisterServiceCtrlHandlerA(c: &mut Ctx) -> u32 { register(c, false, false) }

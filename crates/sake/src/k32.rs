@@ -6971,7 +6971,7 @@ fn SizeofResource(c: &mut Ctx) -> u32 {
 
 /// The handle of standard stream `i` (0 in, 1 out, 2 error).
 pub(crate) fn std_handle(i: usize) -> u32 {
-    STD.get_or_init(|| [obj::add(Obj::Other("stdin")), obj::add(Obj::Other("stdout")), obj::add(Obj::Other("stderr"))])[i]
+    STD.get_or_init(|| [obj::add(Obj::Other(crate::obj::Other::Stdin)), obj::add(Obj::Other(crate::obj::Other::Stdout)), obj::add(Obj::Other(crate::obj::Other::Stderr))])[i]
 }
 static STD: OnceLock<[u32; 3]> = OnceLock::new();
 static STD_GIVEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -7034,8 +7034,12 @@ pub(crate) fn is_console_out(h: u32) -> bool {
     obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other(k), _)) if console_out_kind(k)))
 }
 /// The kinds of `Obj::Other` that are the console's output: standard output and error, CONOUT$.
-pub(crate) fn console_out_kind(k: &str) -> bool {
-    matches!(k, "stdout" | "stderr" | "console")
+pub(crate) fn console_out_kind(k: &obj::Other) -> bool {
+    use obj::Other::*;
+    match k {
+        Stdout | Stderr | Console => true,
+        Iocp | Afd | Snapshot | Nul | IpChangeNotify | Volume | Stdin | Socket | Service | ServiceStatus | ServiceManager | ProviderChange | Token | ImpersonationToken => false,
+    }
 }
 fn console_fail(written: u32) -> u32 {
     put32(written, 0);
@@ -7070,11 +7074,11 @@ fn open_file(name: String, access: u32, share: u32, disp: u32, attrs: u32) -> u3
         eprintln!("sake: CreateFile({name}, {access:#x}, {disp})");
     }
     if name.eq_ignore_ascii_case("CONOUT$") || name.eq_ignore_ascii_case("CONIN$") {
-        return obj::add(Obj::Other("console"));
+        return obj::add(Obj::Other(crate::obj::Other::Console));
     }
     if is_nul_device(&name) {
         last_error(0);
-        return obj::add(Obj::Other("nul"));
+        return obj::add(Obj::Other(crate::obj::Other::Nul));
     }
     if let Some(n) = crate::kern::pipe_name(&name) {
         return crate::pipe::open(&n, access, attrs);
@@ -7126,7 +7130,7 @@ fn device_open(name: &str) -> Option<Result<u32, u32>> {
     let b = rest.as_bytes();
     if b.len() == 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
         let bit = 1u32 << (b[0].to_ascii_uppercase() - b'A');
-        return Some(if logical_drives() & bit != 0 { last_error(0); Ok(obj::add(Obj::Other("volume"))) } else { Err(2) });
+        return Some(if logical_drives() & bit != 0 { last_error(0); Ok(obj::add(Obj::Other(crate::obj::Other::Volume))) } else { Err(2) });
     }
     // (devices sake has: the console's, COM ports and the like are not)
     if rest.eq_ignore_ascii_case("CONOUT$") || rest.eq_ignore_ascii_case("CONIN$") {
@@ -7328,7 +7332,7 @@ fn ReadFile(c: &mut Ctx) -> u32 {
     if crate::ws2::is_socket(h) {
         return socket_io(h, buf, n, pread, ov, false);
     }
-    if obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other("nul"), _)))) {
+    if obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other(crate::obj::Other::Nul), _)))) {
         // (the null device: at its end at once)
         put32(pread, 0);
         return 1;
@@ -7398,7 +7402,7 @@ fn WriteFile(c: &mut Ctx) -> u32 {
     });
     if let Some(k) = kind {
         // (the null device takes everything; the console writes it to stderr)
-        if k != "nul" {
+        if k != obj::Other::Nul {
             let Some(b) = guest_bytes(buf, n) else { return 0 };
             console_write(&a2s(&b));
         }
@@ -9382,7 +9386,7 @@ fn CreateToolhelp32Snapshot(c: &mut Ctx) -> u32 {
         return 0xffff_ffff;
     }
     let modules = if flags & TH32CS_MODULES != 0 { snapshot_modules() } else { vec![] };
-    let h = obj::add(Obj::Other("Section"));
+    let h = obj::add(Obj::Other(crate::obj::Other::Snapshot));
     SNAPSHOTS.lock().unwrap().get_or_insert_with(HashMap::default).insert(h, Snapshot { modules, next_module: 0 });
     h
 }
@@ -9412,7 +9416,7 @@ fn module_entry(c: &mut Ctx, wide: bool, first: bool) -> u32 {
         (true, true) => (48, 48 + 512 + 520),
     };
     // (a closed snapshot's handle: gone, though its list is kept until the handle is reused)
-    let open = obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other("Section"), _))));
+    let open = obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other(crate::obj::Other::Snapshot), _))));
     let mut snaps = SNAPSHOTS.lock().unwrap();
     let Some(s) = snaps.as_mut().filter(|_| open).and_then(|m| m.get_mut(&h)) else {
         last_error(6);

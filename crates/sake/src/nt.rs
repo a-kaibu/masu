@@ -1528,7 +1528,7 @@ fn type_name(o: &crate::obj::Obj) -> &'static str {
         Obj::Mapping { .. } => "Section",
         Obj::Key(_) => "Key",
         Obj::DebugObject(_) => "DebugObject",
-        Obj::Other(n) => n,
+        Obj::Other(n) => n.name(),
     }
 }
 
@@ -2044,23 +2044,23 @@ mod other_kind_tests {
         let _g = enter();
         // (the object, its type name, GetFileType, a console output handle)
         let kinds: [(Obj, &str, u32, bool); 17] = [
-            (Obj::Other("iocp"), "iocp", 2, false),
-            (Obj::Other("afd"), "afd", 2, false),
-            (Obj::Other("Section"), "Section", 2, false),
-            (Obj::Other("nul"), "nul", 2, false),
-            (Obj::Other("ip change notify"), "ip change notify", 2, false),
-            (Obj::Other("volume"), "volume", 2, false),
-            (Obj::Other("stdin"), "stdin", 2, false),
-            (Obj::Other("stdout"), "stdout", 2, true),
-            (Obj::Other("stderr"), "stderr", 2, true),
-            (Obj::Other("console"), "console", 2, true),
-            (Obj::Other("socket"), "socket", 2, false),
-            (Obj::Other("service"), "service", 2, false),
-            (Obj::Other("service status"), "service status", 2, false),
-            (Obj::Other("service manager"), "service manager", 2, false),
-            (Obj::Other("provider change"), "provider change", 2, false),
-            (Obj::Other("token"), "token", 2, false),
-            (Obj::Other("impersonation token"), "impersonation token", 2, false),
+            (Obj::Other(crate::obj::Other::Iocp), "iocp", 2, false),
+            (Obj::Other(crate::obj::Other::Afd), "afd", 2, false),
+            (Obj::Other(crate::obj::Other::Snapshot), "Section", 2, false),
+            (Obj::Other(crate::obj::Other::Nul), "nul", 2, false),
+            (Obj::Other(crate::obj::Other::IpChangeNotify), "ip change notify", 2, false),
+            (Obj::Other(crate::obj::Other::Volume), "volume", 2, false),
+            (Obj::Other(crate::obj::Other::Stdin), "stdin", 2, false),
+            (Obj::Other(crate::obj::Other::Stdout), "stdout", 2, true),
+            (Obj::Other(crate::obj::Other::Stderr), "stderr", 2, true),
+            (Obj::Other(crate::obj::Other::Console), "console", 2, true),
+            (Obj::Other(crate::obj::Other::Socket), "socket", 2, false),
+            (Obj::Other(crate::obj::Other::Service), "service", 2, false),
+            (Obj::Other(crate::obj::Other::ServiceStatus), "service status", 2, false),
+            (Obj::Other(crate::obj::Other::ServiceManager), "service manager", 2, false),
+            (Obj::Other(crate::obj::Other::ProviderChange), "provider change", 2, false),
+            (Obj::Other(crate::obj::Other::Token), "token", 2, false),
+            (Obj::Other(crate::obj::Other::ImpersonationToken), "impersonation token", 2, false),
         ];
         for (o, name, file_type, console) in kinds {
             assert_eq!(super::type_name(&o), name);

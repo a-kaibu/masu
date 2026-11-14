@@ -33,7 +33,65 @@ pub enum Obj {
     Key(crate::misc::Key),
     /// a debug object (NtCreateDebugObject): crate::kern's debug port
     DebugObject(u32),
-    Other(&'static str),
+    Other(Other),
+}
+
+/// The objects with nothing of their own to keep here (their module keeps it, by handle or
+/// obj::Key): a closed set, so a misspelt kind does not build (they were strings) and every match
+/// on them names each one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Other {
+    /// a completion port (crate::iocp)
+    Iocp,
+    /// \\Device\\Afd (crate::afd)
+    Afd,
+    /// a CreateToolhelp32Snapshot (crate::k32)
+    Snapshot,
+    /// NUL
+    Nul,
+    /// NotifyAddrChange / NotifyRouteChange (crate::iphlp)
+    IpChangeNotify,
+    /// a volume (\\.\\C:)
+    Volume,
+    Stdin,
+    Stdout,
+    Stderr,
+    /// CONOUT$ / CONIN$
+    Console,
+    /// a Winsock socket (crate::ws2)
+    Socket,
+    Service,
+    ServiceStatus,
+    ServiceManager,
+    /// WSAProviderConfigChange
+    ProviderChange,
+    Token,
+    ImpersonationToken,
+}
+
+impl Other {
+    /// Its name as NtQueryObject's ObjectTypeInformation gives it
+    pub fn name(self) -> &'static str {
+        match self {
+            Other::Iocp => "iocp",
+            Other::Afd => "afd",
+            Other::Snapshot => "Section",
+            Other::Nul => "nul",
+            Other::IpChangeNotify => "ip change notify",
+            Other::Volume => "volume",
+            Other::Stdin => "stdin",
+            Other::Stdout => "stdout",
+            Other::Stderr => "stderr",
+            Other::Console => "console",
+            Other::Socket => "socket",
+            Other::Service => "service",
+            Other::ServiceStatus => "service status",
+            Other::ServiceManager => "service manager",
+            Other::ProviderChange => "provider change",
+            Other::Token => "token",
+            Other::ImpersonationToken => "impersonation token",
+        }
+    }
 }
 
 /// An object (not a handle to it): the number of its first handle, which stays its name in the
@@ -306,7 +364,7 @@ pub fn close(h: u32) -> bool {
         t.objs.access.remove(&h);
         // (a completion port is closed with its last handle, though waits still hold it:
         // they end, signaled, as on Windows)
-        let port = (matches!(t.objs.map.get(&k), Some((Obj::Other("iocp"), _))) && !t.objs.handles.values().any(|&v| v == k)).then_some(k);
+        let port = (matches!(t.objs.map.get(&k), Some((Obj::Other(Other::Iocp), _))) && !t.objs.handles.values().any(|&v| v == k)).then_some(k);
         (true, unref(t, k).map(|o| (k, o)), port)
     });
     if let Some(k) = port {
@@ -343,15 +401,15 @@ fn gone_object(k: Key, gone: Obj) {
     let h = k.first_handle();
     match gone {
         Obj::Pipe(p) => crate::pipe::closed(p),
-        Obj::Other("iocp") => crate::iocp::gone(k),
-        Obj::Other("ip change notify") => crate::iphlp::forget(h),
-        Obj::Other("afd") => crate::afd::closed(h),
+        Obj::Other(Other::Iocp) => crate::iocp::gone(k),
+        Obj::Other(Other::IpChangeNotify) => crate::iphlp::forget(h),
+        Obj::Other(Other::Afd) => crate::afd::closed(h),
         Obj::Shared(id) => {
             crate::kern::with(|kern| kern.release_sync(id, crate::pid()));
         }
         Obj::DebugObject(port) => crate::dbg::port_closed(port),
         Obj::Mapping { file: None, view, .. } if view != 0 => crate::k32::section_closed(view),
-        Obj::Other("Section") => crate::k32::snapshot_closed(h),
+        Obj::Other(Other::Snapshot) => crate::k32::snapshot_closed(h),
         Obj::Event { .. }
         | Obj::Timer { .. }
         | Obj::Mutex { .. }
@@ -458,7 +516,7 @@ fn try_take(t: &mut Table, k: Option<Key>, tid: u32, take: bool) -> Option<bool>
         Obj::Process { pid, .. } => crate::process::ended(*pid),
         Obj::RemoteThread { pid, tid } => crate::kern::with(|k| k.thread_exit(*pid, *tid)).0.is_some(),
         // a completion port: while it holds packets (waiting on it takes none)
-        Obj::Other("iocp") => crate::iocp::has_packets(k),
+        Obj::Other(Other::Iocp) => crate::iocp::has_packets(k),
         // files and the like count as signaled
         Obj::File(_) | Obj::Pipe(_) | Obj::Find(_) | Obj::Mapping { .. } | Obj::Key(_) | Obj::DebugObject(_) | Obj::Other(_) => true,
     })

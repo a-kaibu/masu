@@ -1739,7 +1739,7 @@ fn NotifyChange(c: &mut Ctx) -> u32 {
         // (a synchronous wait for a change that never comes would block forever)
         return ERROR_NOT_SUPPORTED;
     }
-    let h = crate::obj::add(crate::obj::Obj::Other("ip change notify"));
+    let h = crate::obj::add(crate::obj::Obj::Other(crate::obj::Other::IpChangeNotify));
     if hp != 0 {
         wp(hp, h);
     }

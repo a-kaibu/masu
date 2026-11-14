@@ -114,13 +114,13 @@ pub fn fired(asked: &[(u32, u32)], now: impl Fn(u32) -> u32) -> Vec<(u32, u32)> 
 }
 
 fn is_afd(h: u32) -> bool {
-    obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other("afd"), _))))
+    obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Other(crate::obj::Other::Afd), _))))
 }
 
 /// NtCreateFile of "\Device\Afd..." (path without the "\??\"): a handle, or None for another name
 pub fn open(name: &str) -> Option<u32> {
     let n = name.to_ascii_lowercase();
-    (n == "\\device\\afd" || n.starts_with("\\device\\afd\\")).then(|| obj::add(Obj::Other("afd")))
+    (n == "\\device\\afd" || n.starts_with("\\device\\afd\\")).then(|| obj::add(Obj::Other(crate::obj::Other::Afd)))
 }
 
 /// Writes the answer of a poll that ended (status, the fired handles) and tells its waiter

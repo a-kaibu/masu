@@ -514,7 +514,7 @@ const MAX_BUFS: u32 = 1 << 16;
 const MAX_OV_FLAGS: usize = 4096;
 
 fn new_handle() -> u32 {
-    obj::add(Obj::Other("socket"))
+    obj::add(Obj::Other(crate::obj::Other::Socket))
 }
 
 impl State {
@@ -3403,7 +3403,7 @@ pub fn init() {
         }
         // a handle that would complete when the provider catalog changes (it never does)
         if mem::rp(c.a(0)) == 0 {
-            wp(c.a(0), obj::add(Obj::Other("provider change")));
+            wp(c.a(0), obj::add(Obj::Other(crate::obj::Other::ProviderChange)));
         }
         res(Ok(0))
     });

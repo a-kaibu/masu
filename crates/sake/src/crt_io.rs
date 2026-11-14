@@ -383,12 +383,13 @@ fn _open_osfhandle(c: &mut Ctx) -> u32 {
     let kind = obj::with(|t| match t.objs.get(&h) {
         Some((Obj::File(f), _)) => Some(Kind::File(f.clone())),
         Some((Obj::Pipe(p), _)) => Some(Kind::Pipe(*p)),
-        Some((Obj::Other(k), _)) => Some(Kind::Std(if *k == "stdin" {
-            0
-        } else if *k == "stderr" {
-            2
-        } else {
-            1
+        Some((Obj::Other(k), _)) => Some(Kind::Std({
+            use crate::obj::Other::*;
+            match k {
+                Stdin => 0,
+                Stderr => 2,
+                Stdout | Console | Iocp | Afd | Snapshot | Nul | IpChangeNotify | Volume | Socket | Service | ServiceStatus | ServiceManager | ProviderChange | Token | ImpersonationToken => 1,
+            }
         })),
         _ => None,
     });

@@ -249,7 +249,7 @@ pub fn has_packets(k: Key) -> bool {
 
 /// A new port's handle
 pub fn new_port() -> u32 {
-    let p = obj::add(Obj::Other("iocp"));
+    let p = obj::add(Obj::Other(crate::obj::Other::Iocp));
     if let Some(k) = obj::key_of(p) {
         with(|s| s.ports.insert(k, VecDeque::new()));
     }
@@ -259,7 +259,7 @@ pub fn new_port() -> u32 {
 /// The port handle `h` is to (None: not a port)
 pub fn port_of(h: u32) -> Option<Port> {
     obj::with(|t| match t.objs.get(&obj::norm(h)) {
-        Some((Obj::Other("iocp"), _)) => t.objs.key(&obj::norm(h)).map(Port),
+        Some((Obj::Other(crate::obj::Other::Iocp), _)) => t.objs.key(&obj::norm(h)).map(Port),
         _ => None,
     })
 }
@@ -659,7 +659,7 @@ mod tests {
     fn a_files_association_holds_through_any_of_its_handles() {
         let _g = enter();
         guest_thread();
-        let f = obj::add(Obj::Other("nul"));
+        let f = obj::add(Obj::Other(crate::obj::Other::Nul));
         let p = call(CreateIoCompletionPort, &[f, 0, 0x55, 1]);
         assert_ne!(p, 0);
         let d = obj::dup(f);
