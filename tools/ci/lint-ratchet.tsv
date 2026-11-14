@@ -1059,7 +1059,6 @@ file	crates/sake/src/api.rs	masu-transmute	1
 file	crates/sake/src/api.rs	masu-uninit	2
 file	crates/sake/src/api.rs	multiple_unsafe_ops_per_block	1
 file	crates/sake/src/api.rs	undocumented_unsafe_blocks	4
-file	crates/sake/src/api.rs	unwrap_used	19
 file	crates/sake/src/asfmovie.rs	arithmetic_side_effects	18
 file	crates/sake/src/asfmovie.rs	as_conversions	68
 file	crates/sake/src/asfmovie.rs	cast_possible_truncation	15

@@ -1,7 +1,7 @@
 //! ntdll's native file API (Nt*/Zw*File), for programs that call it directly (Enigma
 //! Protector's loader does). Each one goes through the kernel32 function that does the same.
 
-use crate::locks::{Lock as _, Rw as _};
+use crate::locks::Lock as _;
 use crate::api::{export, implement, Ctx};
 use crate::mem::{self, put32, r16, r32, w32};
 

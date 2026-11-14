@@ -2,6 +2,7 @@
 //! there leaves the translated code; `dispatch` runs the Rust implementation with the
 //! arguments still on the guest stack and returns to the caller as stdcall/cdecl would.
 
+use crate::locks::{Lock as _, Rw as _};
 use crate::{HashMap, HashSet};
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
@@ -320,7 +321,7 @@ pub fn exported_by(dll: &str, name: &str) -> bool {
     let sp = specs();
     !sp.dlls.contains(d.as_str())
         || sp.by_name.contains_key(&(d.as_str(), name))
-        || IMPLS.read().unwrap().as_ref().is_some_and(|m| m.contains_key(&format!("{d}!{name}")))
+        || IMPLS.r().as_ref().is_some_and(|m| m.contains_key(&format!("{d}!{name}")))
 }
 
 /// "KERNEL32.dll" -> "kernel32"
@@ -381,11 +382,11 @@ pub fn is_core(dll: &str) -> bool {
 }
 
 pub fn implement(dll: &str, name: &str, f: Handler) {
-    IMPLS.write().unwrap().get_or_insert_with(HashMap::default).insert(format!("{dll}!{name}"), f);
+    IMPLS.w().get_or_insert_with(HashMap::default).insert(format!("{dll}!{name}"), f);
 }
 
 pub fn find_impl(dll: &str, name: &str) -> Option<Handler> {
-    let g = IMPLS.read().unwrap();
+    let g = IMPLS.r();
     let m = g.as_ref()?;
     if let Some(f) = m.get(&format!("{dll}!{name}")) {
         return Some(*f);
@@ -445,7 +446,7 @@ macro_rules! export_once {
 pub fn export(dll: &str, name: &str) -> u32 {
     let d = dll_key(dll);
     let key = (d.clone(), name.to_string());
-    let mut idx = INDEX.lock().unwrap();
+    let mut idx = INDEX.locked();
     let idx = idx.get_or_insert_with(HashMap::default);
     if let Some(&i) = idx.get(&key) {
         return TRAP_LO + 4 * i;
@@ -455,7 +456,7 @@ pub fn export(dll: &str, name: &str) -> u32 {
         forwards(&d).iter().chain(&["kernel32", "kernelbase", "ntdll"]).find_map(|k| sp.by_name.get(&(*k, name)).copied())
     });
     let f = find_impl(&d, name);
-    let mut e = ENTRIES.write().unwrap();
+    let mut e = ENTRIES.w();
     let i = e.len() as u32;
     assert!((i as usize) < MAX_ENTRIES, "sake: more than {MAX_ENTRIES} distinct imports ({dll}!{name})");
     let this_arg = spec.is_some_and(|s| s.2) && THIS_ARG0.contains(&d.as_str());
@@ -481,7 +482,7 @@ const THIS_ARG0: [&str; 2] = ["msvcp140", "msvcp120"];
 /// "dll!name" of a trap address (for logs).
 pub fn name_of(addr: u32) -> Option<String> {
     let i = addr.checked_sub(TRAP_LO)? / 4;
-    ENTRIES.read().unwrap().get(i as usize).map(|e| format!("{}!{}", e.dll, e.name))
+    ENTRIES.r().get(i as usize).map(|e| format!("{}!{}", e.dll, e.name))
 }
 
 /// Whether the function at a trap address is cdecl, and its stdcall argument bytes.
@@ -493,7 +494,7 @@ pub fn args_of(addr: u32) -> (bool, u32) {
 /// The DLL key ("ucrtbase", "msvcrt"...) of a trap address.
 pub fn dll_of(addr: u32) -> Option<String> {
     let i = addr.checked_sub(TRAP_LO)? / 4;
-    ENTRIES.read().unwrap().get(i as usize).map(|e| e.dll.clone())
+    ENTRIES.r().get(i as usize).map(|e| e.dll.clone())
 }
 
 /// Whether the API at trap address `addr` has an implementation.
@@ -529,13 +530,13 @@ fn stats_on() -> bool {
         let Some(s) = std::env::var("SAKE_API_STATS").ok().and_then(|s| s.parse::<f64>().ok()) else { return false };
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs_f64(s));
-            let m = COUNTS.lock().unwrap().take().unwrap_or_default();
+            let m = COUNTS.locked().take().unwrap_or_default();
             let mut v: Vec<(u32, u64)> = m.into_iter().collect();
             v.sort_by(|a, b| b.1.cmp(&a.1));
             let total: u64 = v.iter().map(|x| x.1).sum();
             let top: Vec<String> = v.iter().take(40).map(|(i, n)| format!("{}={n}", name_of(TRAP_LO + 4 * i).unwrap_or_default())).collect();
             eprintln!("sake api {total} calls/{s}s: {}", top.join(" "));
-            let m = TIMES.lock().unwrap().take().unwrap_or_default();
+            let m = TIMES.locked().take().unwrap_or_default();
             let mut v: Vec<(u32, u64)> = m.into_iter().collect();
             v.sort_by(|a, b| b.1.cmp(&a.1));
             let total: u64 = v.iter().map(|x| x.1).sum();
@@ -608,7 +609,7 @@ fn trace_match(i: u32) -> bool {
         return true;
     }
     static HIT: Mutex<Option<HashMap<u32, bool>>> = Mutex::new(None);
-    let mut g = HIT.lock().unwrap();
+    let mut g = HIT.locked();
     *g.get_or_insert_with(HashMap::default).entry(i).or_insert_with(|| {
         let n = name_of(TRAP_LO + 4 * i).unwrap_or_default();
         f.iter().any(|x| n.contains(x.as_str()))
@@ -638,11 +639,11 @@ static USAGE: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
 fn usage(i: u32) {
     {
-        let mut u = USAGE.lock().unwrap();
+        let mut u = USAGE.locked();
         if u.is_empty() {
             kura::usage::more(|| {
-                let u = USAGE.lock().unwrap().clone();
-                let e = ENTRIES.read().unwrap();
+                let u = USAGE.locked().clone();
+                let e = ENTRIES.r();
                 u.iter()
                     .enumerate()
                     .filter(|x| *x.1 > 0)
@@ -702,7 +703,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
         None => unimplemented_call(&mut c, i, known),
     };
     if let Some(t0) = t0 {
-        *TIMES.lock().unwrap().get_or_insert_with(HashMap::default).entry(i).or_default() += t0.elapsed().as_micros() as u64;
+        *TIMES.locked().get_or_insert_with(HashMap::default).entry(i).or_default() += t0.elapsed().as_micros() as u64;
     }
     if top {
         crate::snap::api_leave();
@@ -785,7 +786,7 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
         usage(i);
     }
     if sw & SW_STATS != 0 {
-        *COUNTS.lock().unwrap().get_or_insert_with(HashMap::default).entry(i).or_default() += 1;
+        *COUNTS.locked().get_or_insert_with(HashMap::default).entry(i).or_default() += 1;
     }
     if sw & SW_THREADS != 0 {
         if let Some(k) = recent_slot(crate::cur().tid) {
@@ -840,7 +841,7 @@ fn unimplemented_call(c: &mut Ctx, i: u32, known: bool) -> u32 {
     }
     static SEEN: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
     let r = unimplemented_result(&n);
-    if SEEN.lock().unwrap().get_or_insert_with(HashSet::default).insert(i) {
+    if SEEN.locked().get_or_insert_with(HashSet::default).insert(i) {
         eprintln!("sake: unimplemented {n} (returns {r:#x}), from {:#x}", r32(c.esp));
     }
     r
@@ -882,7 +883,7 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
 /// Writes a small x86 stub `code` into guest memory; returns its address.
 pub fn stub(code: &[u8]) -> u32 {
     static AT: Mutex<(u32, u32)> = Mutex::new((0, 0));
-    let mut g = AT.lock().unwrap();
+    let mut g = AT.locked();
     if g.1 < code.len() as u32 {
         let b = crate::mem::alloc(0x10000).expect("stub page");
         crate::mem::commit(b, 0x40);
@@ -901,7 +902,7 @@ pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
     implement("sake", name, f);
     let a = export("sake", name);
     let i = (a - TRAP_LO) / 4;
-    let mut e = ENTRIES.write().unwrap();
+    let mut e = ENTRIES.w();
     e[i as usize].bytes = bytes;
     e[i as usize].known = true;
     publish(i as usize, &e[i as usize]);
@@ -914,7 +915,7 @@ pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
 pub fn host_fn_this(name: &str, f: Handler, bytes: u32) -> u32 {
     let a = host_fn(name, f, bytes);
     let i = ((a - TRAP_LO) / 4) as usize;
-    let mut e = ENTRIES.write().unwrap();
+    let mut e = ENTRIES.w();
     e[i].this_arg = true;
     publish(i, &e[i]);
     a
@@ -1197,7 +1198,7 @@ mod hot_tests {
 
     /// Every entry's hot slot against the entry itself
     fn check_all() {
-        let e = ENTRIES.read().unwrap();
+        let e = ENTRIES.r();
         for (i, x) in e.iter().enumerate() {
             let (f, m) = hot(i).expect("published");
             assert_eq!(m, Meta::of(x), "{}!{}", x.dll, x.name);
