@@ -151,10 +151,10 @@ fn xapo_snapshot() {
             putp(po, 0xdead_beef);
             let hr = call(f, &[pg, po, 0, 0]);
             let o = rp(po);
-            let k = if hr == 0 { with(o, |x| format!("{:?}", x.kind)) } else { None };
-            writeln!(out, "createfx class#{i} {form}: {hr:#x} out={} kind={k:?} builtin={:?}", if o == 0xdead_beef { "untouched".into() } else if o == 0 { "0".into() } else { "obj".to_string() }, builtin(o).map(|b| b == o)).unwrap();
+            let k = if hr == 0 { with_this(o, |x| format!("{:?}", x.kind)) } else { None };
+            writeln!(out, "createfx class#{i} {form}: {hr:#x} out={} kind={k:?} builtin={:?}", if o == 0xdead_beef { "untouched".into() } else if o == 0 { "0".into() } else { "obj".to_string() }, builtin(o).map(|b| b.addr() == o)).unwrap();
             if hr == 0 {
-                writeln!(out, "  builtin(obj+ps)={:?} create_instance={:?}", builtin(o + ps()).map(|b| b == o), create_instance(pg).is_some()).unwrap();
+                writeln!(out, "  builtin(obj+ps)={:?} create_instance={:?}", builtin(o + ps()).map(|b| b.addr() == o), create_instance(pg).is_some()).unwrap();
                 call(Release, &[o]);
             }
         }
@@ -187,7 +187,7 @@ fn xapo_snapshot() {
 
     // GetRegistrationProperties of every class
     for (i, g) in clsids().iter().enumerate() {
-        let Some(o) = create(g) else { continue };
+        let Some(o) = create(g).map(Obj::addr) else { continue };
         putp(po, 0);
         let hr = call(GetRegistrationProperties, &[o, po]);
         let p = rp(po);

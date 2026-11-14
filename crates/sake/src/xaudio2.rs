@@ -416,7 +416,9 @@ fn run_chain(c: &mut Ctx, id: u32, buf: &mut [f32]) {
     let k = ps();
     for fx in chain {
         if fx.builtin {
-            crate::xapo::process_builtin(crate::xapo::builtin(fx.xapo).unwrap_or(fx.xapo), buf, 2, RATE, fx.enabled);
+            if let Some(o) = crate::xapo::builtin(fx.xapo) {
+                crate::xapo::process_builtin(o, buf, 2, RATE, fx.enabled);
+            }
             continue;
         }
         // a game's XAPO: in place in its buffer

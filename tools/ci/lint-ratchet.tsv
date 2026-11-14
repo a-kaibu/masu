@@ -153,7 +153,6 @@ file	crates/hlslc/src/pp.rs	map_err_ignore	3
 file	crates/hlslc/src/pp.rs	string_slice	14
 file	crates/hlslc/src/sm3.rs	arithmetic_side_effects	27
 file	crates/hlslc/src/sm3.rs	indexing_slicing	15
-file	crates/hlslc/src/sm3.rs	map_err_ignore	1
 file	crates/hlslc/src/sm3.rs	string_slice	1
 file	crates/hlslc/src/sm4.rs	arithmetic_side_effects	56
 file	crates/hlslc/src/sm4.rs	indexing_slicing	22
@@ -2363,14 +2362,11 @@ file	crates/sake/src/x3daudio.rs	as_conversions	19
 file	crates/sake/src/x3daudio.rs	cast_possible_truncation	5
 file	crates/sake/src/x3daudio.rs	cast_precision_loss	3
 file	crates/sake/src/x3daudio.rs	indexing_slicing	47
-file	crates/sake/src/xapo.rs	arithmetic_side_effects	37
-file	crates/sake/src/xapo.rs	as_conversions	25
-file	crates/sake/src/xapo.rs	cast_possible_truncation	7
-file	crates/sake/src/xapo.rs	cast_precision_loss	2
-file	crates/sake/src/xapo.rs	indexing_slicing	7
+file	crates/sake/src/xapo.rs	arithmetic_side_effects	28
+file	crates/sake/src/xapo.rs	as_conversions	6
+file	crates/sake/src/xapo.rs	cast_possible_truncation	2
+file	crates/sake/src/xapo.rs	indexing_slicing	4
 file	crates/sake/src/xapo.rs	large_enum_variant	1
-file	crates/sake/src/xapo.rs	unwrap_used	8
-file	crates/sake/src/xapo.rs	wildcard_enum_match_arm	1
 file	crates/sake/src/xaudio2.rs	arithmetic_side_effects	76
 file	crates/sake/src/xaudio2.rs	as_conversions	68
 file	crates/sake/src/xaudio2.rs	cast_possible_truncation	16
