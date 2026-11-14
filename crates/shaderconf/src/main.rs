@@ -21,6 +21,7 @@ mod oracle;
 mod random;
 mod ref_d3d9;
 mod ref_dxbc;
+mod snapshot;
 #[cfg(test)]
 mod ref_tests;
 #[cfg(test)]
@@ -71,6 +72,21 @@ fn main() {
                 std::process::exit(1);
             }
         }
+        return;
+    }
+    if std::env::args().any(|a| a == "--snapshot") {
+        for l in snapshot::lines(snapshot::FUZZ_N, snapshot::ORACLE_N) {
+            println!("{l}");
+        }
+        return;
+    }
+    if std::env::args().any(|a| a == "--snapshot-update") {
+        let l = snapshot::lines(snapshot::FUZZ_N, snapshot::ORACLE_N);
+        if let Err(e) = std::fs::write(snapshot::path(), snapshot::digest(&l)) {
+            eprintln!("shaderconf: {}: {e}", snapshot::path().display());
+            std::process::exit(1);
+        }
+        eprintln!("shaderconf: wrote {} ({} lines)", snapshot::path().display(), l.len());
         return;
     }
     let list = std::env::args().any(|a| a == "--list");

@@ -238,7 +238,8 @@ fn d3d9_wgsl(w: &[u32]) -> Option<Vec<String>> {
     Some(vec![if s.pixel { g.pixel(&o) } else { g.vertex(&o) }])
 }
 
-pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
+/// The inputs mutation starts from: each case's source and bytecode, and the compute shaders.
+fn seeds(cases: &[Case]) -> Vec<Input> {
     let mut seeds: Vec<Input> = Vec::new();
     let mut inc = |_: &str, _: bool| None;
     for c in cases {
@@ -275,6 +276,35 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
             seeds.push(Input::Hlsl(s.clone(), "cs_5_0"));
         }
     }
+    seeds
+}
+
+/// The next mutated input (the generator `run` and `traces` share).
+fn next_input(r: &mut Rng, seeds: &[Input]) -> Input {
+    let i = r.below(seeds.len());
+    let o = r.below(seeds.len());
+    let other = match &seeds[o] {
+        Input::Hlsl(s, _) | Input::Asm(s) | Input::Glsl(s) => s.as_str(),
+        _ => "",
+    };
+    match &seeds[i] {
+        Input::Hlsl(s, t) => Input::Hlsl(mutate_text(r, s, other), t),
+        Input::Asm(s) => Input::Asm(mutate_text(r, s, other)),
+        Input::Glsl(s) => Input::Glsl(mutate_text(r, s, other)),
+        // (the DXBC container header, the D3D9 version token kept most of the time)
+        Input::Dxbc(b) => {
+            let keep = if r.below(8) == 0 { 0 } else { 8 };
+            Input::Dxbc(bytes(&mutate_words(r, &words(b), keep)))
+        }
+        Input::D3d9(w) => {
+            let keep = if r.below(8) == 0 { 0 } else { 1 };
+            Input::D3d9(mutate_words(r, w, keep))
+        }
+    }
+}
+
+pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
+    let seeds = seeds(cases);
     // (a panic is caught and reported, not printed by the default hook)
     let msg = Arc::new(Mutex::new(String::new()));
     let m2 = msg.clone();
@@ -303,26 +333,7 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
         let mut bad = 0usize;
         let (mut accepted, mut seen) = (0usize, std::collections::HashSet::new());
         for k in 0..n {
-            let i = r.below(seeds.len());
-            let o = r.below(seeds.len());
-            let other = match &seeds[o] {
-                Input::Hlsl(s, _) | Input::Asm(s) | Input::Glsl(s) => s.as_str(),
-                _ => "",
-            };
-            let input = match &seeds[i] {
-                Input::Hlsl(s, t) => Input::Hlsl(mutate_text(&mut r, s, other), t),
-                Input::Asm(s) => Input::Asm(mutate_text(&mut r, s, other)),
-                Input::Glsl(s) => Input::Glsl(mutate_text(&mut r, s, other)),
-                // (the DXBC container header, the D3D9 version token kept most of the time)
-                Input::Dxbc(b) => {
-                    let keep = if r.below(8) == 0 { 0 } else { 8 };
-                    Input::Dxbc(bytes(&mutate_words(&mut r, &words(b), keep)))
-                }
-                Input::D3d9(w) => {
-                    let keep = if r.below(8) == 0 { 0 } else { 1 };
-                    Input::D3d9(mutate_words(&mut r, w, keep))
-                }
-            };
+            let input = next_input(&mut r, &seeds);
             *current.lock().unwrap() = input.show();
             *CURRENT.lock().unwrap() = input.show();
             if let Some(p) = &last {
@@ -345,6 +356,55 @@ pub fn run(cases: &[Case], n: usize, seed: u64) -> bool {
         println!("fuzz: {n} inputs from {} seeds, {accepted} accepted, {bad} failed ({} distinct)", seeds.len(), seen.len());
         bad == 0
     }
+}
+
+impl Input {
+    /// What each translator stage makes of the input, in full (crate::snapshot): a refactor of
+    /// a translator must leave every line as it was.
+    fn trace(&self) -> String {
+        use crate::snapshot as sn;
+        let mut inc = |_: &str, _: bool| None;
+        match self {
+            Input::Hlsl(s, t) => {
+                let entry = if t.starts_with("cs") { "main" } else { "ps" };
+                let mut o = format!("hlsl {t} {}", sn::hash(s.as_bytes()));
+                match sn::quiet(|| hlslc::compile(s, &[], &mut inc, entry, t, 0)) {
+                    None => o.push_str(" panic"),
+                    Some(Err(e)) => o.push_str(&format!(" {}", sn::err(&e))),
+                    Some(Ok(code)) => {
+                        o.push_str(&format!(" C:{}", sn::hash(&code)));
+                        if t.starts_with("ps_3") || t.starts_with("ps_2") {
+                            o.push_str(&format!(" asm:{}", sn::result(sn::quiet(|| hlslc::assembly(s, &[], &mut |_: &str, _: bool| None, entry, t, 0)).map(|r| r.map(|a| sn::hash(a.as_bytes()))))));
+                            o.push_str(&sn::d3d9(&words(&code)));
+                        } else {
+                            o.push_str(&sn::dxbc(&code));
+                        }
+                    }
+                }
+                o
+            }
+            Input::Asm(s) => {
+                let mut o = format!("asm {}", sn::hash(s.as_bytes()));
+                match sn::quiet(|| hlslc::d3d9asm::assemble(s)) {
+                    None => o.push_str(" panic"),
+                    Some(Err(e)) => o.push_str(&format!(" {}", sn::err(&e))),
+                    Some(Ok(w)) => o.push_str(&sn::d3d9(&w)),
+                }
+                o
+            }
+            Input::Dxbc(b) => format!("dxbc {}{}", sn::hash(b), sn::dxbc(b)),
+            Input::D3d9(w) => format!("d3d9 {}{}", sn::hash(&bytes(w)), sn::d3d9(w)),
+            Input::Glsl(s) => format!("glsl {}{}", sn::hash(s.as_bytes()), sn::glsl(s)),
+        }
+    }
+}
+
+/// `trace` of `n` inputs of the generator `run` uses (the same sequence for a seed).
+pub fn traces(cases: &[Case], n: usize, seed: u64) -> Vec<String> {
+    let seeds = seeds(cases);
+    let mut r = Rng(seed | 1);
+    let inputs: Vec<Input> = (0..n).map(|_| next_input(&mut r, &seeds)).collect();
+    crate::snapshot::par_map(&inputs, |k, i| format!("fuzz#{k}\t{}", i.trace()))
 }
 
 /// The inputs fuzzing found that broke a translator (crates/shaderconf/regress, as `show` prints
