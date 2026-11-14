@@ -114,7 +114,7 @@ impl World {
         h
     }
     fn show(&self, v: u32) -> String {
-        match self.names.iter().find(|(h, _)| *h == v) {
+        match self.names.iter().rev().find(|(h, _)| *h == v) {
             Some((_, n)) => n.clone(),
             None if LIVE.with(|l| l.borrow().contains(&v)) => "ptr".into(),
             None if (STOCK..=DEFAULT_BITMAP).contains(&v) => format!("stock{}", (v - STOCK) / 4),

@@ -889,3 +889,9 @@ mod review_b06_tests {
         assert!(!mem::heap_owns(buf), "the lock's buffer was left");
     }
 }
+
+/// GDI+ as a whole, pinned before gdiplus*.rs are rewritten with types: seeded random programs
+/// through the flat API, each answer and every bitmap's pixels after it (gdiplus_api_golden.txt)
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+#[path = "gdiplus_api_tests.rs"]
+mod api_tests;
