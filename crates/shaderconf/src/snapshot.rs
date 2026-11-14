@@ -189,6 +189,66 @@ fn hlsl_more(c: &Case) -> String {
     o
 }
 
+/// HLSL sources that walk hlslc's numeric types: every matrix size cast to every other, its
+/// transpose, mul by vectors and matrices, members and indexing; every vector width with
+/// casts, swizzles, comparisons and selects (the cases above use few of them)
+fn type_sources() -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let dims: Vec<(u8, u8)> = (1..=4).flat_map(|r| (1..=4).map(move |c| (r, c))).collect();
+    for &(r, c) in &dims {
+        for &(r2, c2) in &dims {
+            // (a cast only narrows; a wider one starts from a component)
+            let from = if r2 <= r && c2 <= c { "a" } else { "a._m00" };
+            let src = format!(
+                "float4 main(float4 p : TEXCOORD0, uint i : TEXCOORD1) : SV_Target {{
+    float{r}x{c} a = (float{r}x{c})p.x + p.y;
+    float{r2}x{c2} b = (float{r2}x{c2}){from};
+    float{c}x{r} t = transpose(a);
+    float{r}x{c2} m = mul(a, (float{c}x{c2})p.z);
+    float{c} v = mul((float{r})p, a);
+    float{r} w = mul(a, (float{c})p);
+    matrix<float, {r2}, {c2}> n = b * 2;
+    return float4(b._m00 + n._11, dot(t[i % {c}], t[0]), m._11, dot(v, v) + dot(w, w)) + dot(a[i % {r}], a[0]);
+}}"
+            );
+            out.push((format!("m{r}x{c}-{r2}x{c2}"), src));
+        }
+    }
+    for n in 1..=4 {
+        for k in 1..=4 {
+            for swz in ["x", "xy", "yx", "xyz", "zyx", "wzyx", "xxxx"] {
+                let x = if swz.len() >= n { format!("p.{swz}") } else { format!("p.{swz}.x") };
+                let y = if k <= n { "x" } else { "x.x" };
+                let src = format!(
+                    "float4 main(float4 p : TEXCOORD0, uint i : TEXCOORD1) : SV_Target {{
+    float{n} x = (float{n}){x};
+    float{k} y = (float{k}){y};
+    vector<float, {n}> z = x * 3;
+    bool{n} c = x > z;
+    float{n} s = c ? x : -z;
+    int{k} q = (int{k})y + i;
+    return (float4)dot(s, s) + (float)dot(q, q) + dot(y, y);
+}}"
+                );
+                out.push((format!("v{n}-{k}-{swz}"), src));
+            }
+        }
+    }
+    out
+}
+
+fn types() -> Vec<String> {
+    par_map(&type_sources(), |_, (name, src)| {
+        let mut o = format!("types {name}\t");
+        for t in ["ps_4_0", "ps_5_0", "ps_3_0"] {
+            for flags in [0, hlslc::PACK_MATRIX_ROW_MAJOR] {
+                o.push_str(&format!(" {t}/{flags:x}:{}", result(quiet(|| hlslc::compile(src, &[], &mut |_: &str, _: bool| None, "main", t, flags)).map(|r| r.map(|b| hash(&b))))));
+            }
+        }
+        o
+    })
+}
+
 /// `f` of each item with its index, on all cores, in order (the translators share no state)
 pub fn par_map<T: Sync>(items: &[T], f: impl Fn(usize, &T) -> String + Sync) -> Vec<String> {
     let threads = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
@@ -229,6 +289,7 @@ pub fn lines(fuzz_n: usize, oracle_n: usize) -> Vec<String> {
         l.push(case(&m));
     }
     l.extend(crate::fuzz::traces(&out, fuzz_n, 7));
+    l.extend(types());
     panic::set_hook(hook);
     l
 }
