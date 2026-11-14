@@ -1101,3 +1101,7 @@ mod tests {
         assert_eq!(next(0, 0, (30, 1), 30, None), Next::End);
     }
 }
+
+#[cfg(test)]
+#[path = "amstream_snapshot_tests.rs"]
+mod snapshot_tests;
