@@ -154,7 +154,7 @@ fn x3daudio_snapshot() {
         put_f(ep + 92, r.pick(&[1.0f32, 1.0, 0.0, 5.0, 20.0, -1.0]));
         put_f(ep + 96, r.pick(&[1.0f32, 1.0, 0.0, 2.0, -1.0]));
         // the settings
-        let flags = flag_bits.iter().fold(0, |a, &b| if r.below(2) == 0 { a | b } else { a });
+        let flags = flag_bits.iter().fold(0, |a, b| if r.below(2) == 0 { a | b.0 } else { a });
         let dst = r.pick(&[1u32, 2, 2, 6, 8, 0, 0xcccc_cccc, 64]);
         let (src, d) = counts(channels, dst);
         let pm = mem::heap_alloc(4 * 64 * 64, true);

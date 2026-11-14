@@ -17,26 +17,34 @@ use crate::mem::{self, ps, r32, rp, w32};
 
 pub type V3 = [f32; 3];
 
-fn sub(a: V3, b: V3) -> V3 {
-    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+fn sub([ax, ay, az]: V3, [bx, by, bz]: V3) -> V3 {
+    [ax - bx, ay - by, az - bz]
 }
-fn dot(a: V3, b: V3) -> f32 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+fn dot([ax, ay, az]: V3, [bx, by, bz]: V3) -> f32 {
+    ax * bx + ay * by + az * bz
 }
-fn cross(a: V3, b: V3) -> V3 {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+fn cross([ax, ay, az]: V3, [bx, by, bz]: V3) -> V3 {
+    [ay * bz - az * by, az * bx - ax * bz, ax * by - ay * bx]
 }
-fn scale(a: V3, k: f32) -> V3 {
-    [a[0] * k, a[1] * k, a[2] * k]
+fn scale([ax, ay, az]: V3, k: f32) -> V3 {
+    [ax * k, ay * k, az * k]
 }
-fn add(a: V3, b: V3) -> V3 {
-    [a[0] + b[0], a[1] + b[1], a[2] + b[2]]
+fn add([ax, ay, az]: V3, [bx, by, bz]: V3) -> V3 {
+    [ax + bx, ay + by, az + bz]
+}
+
+/// A small count (channels, speakers: at most a few dozen) as a float
+fn count_f32(n: usize) -> f32 {
+    f32::from(u16::try_from(n).unwrap_or(u16::MAX))
 }
 fn len(a: V3) -> f32 {
     dot(a, a).sqrt()
 }
 
 pub const TWO_PI: f32 = 2.0 * PI;
+
+/// SPEAKER_LOW_FREQUENCY
+const LFE: u32 = 0x8;
 
 /// Speaker bits (SPEAKER_*) and their azimuths, in channel order.
 const SPEAKERS: [(u32, f32); 11] = [
@@ -55,7 +63,7 @@ const SPEAKERS: [(u32, f32); 11] = [
 
 /// The output channels of a speaker mask: (azimuth, is LFE), in channel order.
 pub fn layout(mask: u32) -> Vec<(f32, bool)> {
-    let mut v: Vec<(f32, bool)> = SPEAKERS.iter().filter(|s| mask & s.0 != 0).map(|s| (s.1, s.0 == 0x8)).collect();
+    let mut v: Vec<(f32, bool)> = SPEAKERS.iter().filter(|s| mask & s.0 != 0).map(|s| (s.1, s.0 == LFE)).collect();
     // (bits past SPEAKER_SIDE_RIGHT: the top speakers, taken as centre)
     for b in 11..18 {
         if mask & (1 << b) != 0 {
@@ -65,15 +73,32 @@ pub fn layout(mask: u32) -> Vec<(f32, bool)> {
     v
 }
 
-pub const MATRIX: u32 = 0x1;
-pub const DELAY: u32 = 0x2;
-pub const LPF_DIRECT: u32 = 0x4;
-pub const LPF_REVERB: u32 = 0x8;
-pub const REVERB: u32 = 0x10;
-pub const DOPPLER: u32 = 0x20;
-pub const EMITTER_ANGLE: u32 = 0x40;
-pub const ZEROCENTER: u32 = 0x10000;
-pub const REDIRECT_TO_LFE: u32 = 0x20000;
+/// X3DAudioCalculate's Flags (X3DAUDIO_CALCULATE_*): what to compute
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Flags(u32);
+impl Flags {
+    pub const fn new(bits: u32) -> Flags {
+        Flags(bits)
+    }
+    pub const fn has(self, f: Flags) -> bool {
+        self.0 & f.0 != 0
+    }
+}
+impl std::ops::BitOr for Flags {
+    type Output = Flags;
+    fn bitor(self, o: Flags) -> Flags {
+        Flags(self.0 | o.0)
+    }
+}
+pub const MATRIX: Flags = Flags(0x1);
+pub const DELAY: Flags = Flags(0x2);
+pub const LPF_DIRECT: Flags = Flags(0x4);
+pub const LPF_REVERB: Flags = Flags(0x8);
+pub const REVERB: Flags = Flags(0x10);
+pub const DOPPLER: Flags = Flags(0x20);
+pub const EMITTER_ANGLE: Flags = Flags(0x40);
+pub const ZEROCENTER: Flags = Flags(0x10000);
+pub const REDIRECT_TO_LFE: Flags = Flags(0x20000);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Cone {
@@ -140,12 +165,12 @@ pub fn curve(points: &[(f32, f32)], d: f32) -> f32 {
         return first.1;
     }
     for w in points.windows(2) {
-        let ((d0, v0), (d1, v1)) = (w[0], w[1]);
+        let &[(d0, v0), (d1, v1)] = w else { continue };
         if d <= d1 {
             return if d1 > d0 { v0 + (v1 - v0) * (d - d0) / (d1 - d0) } else { v1 };
         }
     }
-    points[points.len() - 1].1
+    points.last().map_or(first.1, |p| p.1)
 }
 
 /// The cone's (volume, lpf, reverb) at `angle` (radians off its axis): inner values inside half
@@ -259,12 +284,13 @@ pub const MAX_CHANNELS: u32 = 64;
 /// them: 1 to 64 each (review 2026-11-14: a garbage count, such as an uninitialised 0xCCCCCCCC,
 /// sized the matrix and the write-back loops: an allocation abort or zeros written across memory).
 pub fn counts(channels: u32, dst: u32) -> (usize, usize) {
-    (channels.clamp(1, MAX_CHANNELS) as usize, dst.clamp(1, MAX_CHANNELS) as usize)
+    let n = |c: u32| usize::try_from(c.clamp(1, MAX_CHANNELS)).unwrap_or(1);
+    (n(channels), n(dst))
 }
 
 /// X3DAudioCalculate
-pub fn calculate(mask: u32, speed: f32, l: &Listener, e: &Emitter, flags: u32, dst: usize) -> Dsp {
-    let (src, dst) = counts(e.channels, dst.min(MAX_CHANNELS as usize) as u32);
+pub fn calculate(mask: u32, speed: f32, l: &Listener, e: &Emitter, flags: Flags, dst: usize) -> Dsp {
+    let (src, dst) = counts(e.channels, u32::try_from(dst).unwrap_or(MAX_CHANNELS));
     let scaler = if e.curve_scaler > 0.0 { e.curve_scaler } else { 1.0 };
     let to_e = sub(e.pos, l.pos);
     let dist = len(to_e);
@@ -290,12 +316,12 @@ pub fn calculate(mask: u32, speed: f32, l: &Listener, e: &Emitter, flags: u32, d
         cr *= r;
     }
 
-    if flags & MATRIX != 0 {
+    if flags.has(MATRIX) {
         let outs = layout(mask);
         let dst = dst.min(outs.len()).max(1);
         let outs = &outs[..dst.min(outs.len())];
         let lfe = outs.iter().position(|o| o.1);
-        let zero_center = flags & ZEROCENTER != 0;
+        let zero_center = flags.has(ZEROCENTER);
         let speakers: Vec<usize> = (0..outs.len()).filter(|&i| !outs[i].1 && !(zero_center && outs[i].0 == 0.0 && outs.len() > 2)).collect();
         let azs: Vec<f32> = speakers.iter().map(|&i| outs[i].0).collect();
         let mut m = vec![0.0f32; dst * src];
@@ -318,11 +344,11 @@ pub fn calculate(mask: u32, speed: f32, l: &Listener, e: &Emitter, flags: u32, d
             let v = sub(p, l.pos);
             let d = len(v);
             let g = vol_at(d / scaler) * cv;
-            let mut gains = if d > f32::MIN_POSITIVE { pan(azimuth(v, l.front, l.top), &azs) } else { vec![1.0 / (azs.len().max(1) as f32).sqrt(); azs.len()] };
+            let mut gains = if d > f32::MIN_POSITIVE { pan(azimuth(v, l.front, l.top), &azs) } else { vec![1.0 / count_f32(azs.len().max(1)).sqrt(); azs.len()] };
             // inside the inner radius the sound spreads to every speaker
             if e.inner_radius > 0.0 && d < e.inner_radius && !azs.is_empty() {
                 let t = 1.0 - d / e.inner_radius;
-                let even = 1.0 / (azs.len() as f32).sqrt();
+                let even = 1.0 / count_f32(azs.len()).sqrt();
                 for x in gains.iter_mut() {
                     *x = ((1.0 - t) * *x * *x + t * even * even).sqrt();
                 }
@@ -330,25 +356,25 @@ pub fn calculate(mask: u32, speed: f32, l: &Listener, e: &Emitter, flags: u32, d
             for (k, &i) in speakers.iter().enumerate() {
                 m[i * src + ch] = gains[k] * g;
             }
-            if let (Some(k), true) = (lfe, flags & REDIRECT_TO_LFE != 0) {
-                m[k * src + ch] += lfe_at(nd) / src as f32;
+            if let (Some(k), true) = (lfe, flags.has(REDIRECT_TO_LFE)) {
+                m[k * src + ch] += lfe_at(nd) / count_f32(src);
             }
         }
         out.matrix = m;
     }
-    if flags & DELAY != 0 {
+    if flags.has(DELAY) {
         out.delays = vec![0.0; dst];
     }
-    if flags & LPF_DIRECT != 0 {
+    if flags.has(LPF_DIRECT) {
         out.lpf_direct = e.lpf_direct_curve.as_deref().map_or_else(|| curve(&[(0.0, 1.0), (1.0, 0.75)], nd), |c| curve(c, nd)) * cl;
     }
-    if flags & LPF_REVERB != 0 {
+    if flags.has(LPF_REVERB) {
         out.lpf_reverb = e.lpf_reverb_curve.as_deref().map_or_else(|| curve(&[(0.0, 0.75), (1.0, 0.75)], nd), |c| curve(c, nd)) * cl;
     }
-    if flags & REVERB != 0 {
+    if flags.has(REVERB) {
         out.reverb = e.reverb_curve.as_deref().map_or_else(|| curve(&[(0.0, 1.0), (1.0, 0.0)], nd), |c| curve(c, nd)) * cr;
     }
-    if flags & DOPPLER != 0 {
+    if flags.has(DOPPLER) {
         // velocities along the emitter -> listener direction
         let u = if dist > f32::MIN_POSITIVE { scale(e_to_l, 1.0 / dist) } else { [0.0; 3] };
         let (ev, lv) = (dot(e.vel, u), dot(l.vel, u));
@@ -361,7 +387,7 @@ pub fn calculate(mask: u32, speed: f32, l: &Listener, e: &Emitter, flags: u32, d
         let ls = (lv * ds).min(c * 0.5);
         out.doppler = ((c - ls) / (c - es)).clamp(0.0, 4.0);
     }
-    if flags & EMITTER_ANGLE != 0 {
+    if flags.has(EMITTER_ANGLE) {
         out.angle = angle_between(e.front, e_to_l);
     }
     out
@@ -370,19 +396,26 @@ pub fn calculate(mask: u32, speed: f32, l: &Listener, e: &Emitter, flags: u32, d
 // ---------------------------------------------------------------------------------------------
 // the guest side
 
+const X3DAUDIO_E_INVALID_CALL: u32 = 0x8878_0001;
+
+/// X3DAUDIO_HANDLE's mark: "3XD3"
+const HANDLE_MARK: u32 = 0x3344_5833;
+
 /// X3DAudioInitialize(SpeakerChannelMask, SpeedOfSound, X3DAUDIO_HANDLE): the handle (20 bytes)
 /// keeps the mask, the speed and a mark.
 fn X3DAudioInitialize(c: &mut Ctx) -> u32 {
     let mask = c.a(0);
-    let speed = f32::from_bits(if mem::x64() { c.xmm(1) as u32 } else { c.a(1) });
+    // (x64: the float in XMM1's low 32 bits)
+    let [b0, b1, b2, b3, ..] = c.xmm(1).to_le_bytes();
+    let speed = f32::from_bits(if mem::x64() { u32::from_le_bytes([b0, b1, b2, b3]) } else { c.a(1) });
     let h = c.a(2);
     if h == 0 || !(speed >= f32::MIN_POSITIVE) || !speed.is_finite() {
-        return 0x8878_0001; // X3DAUDIO_E_INVALID_CALL
+        return X3DAUDIO_E_INVALID_CALL;
     }
     w32(h, mask);
     w32(h + 4, speed.to_bits());
-    w32(h + 8, layout(mask).len() as u32);
-    w32(h + 12, 0x3344_5833); // "3XD3"
+    w32(h + 8, u32::try_from(layout(mask).len()).unwrap_or(0));
+    w32(h + 12, HANDLE_MARK);
     w32(h + 16, 0);
     0
 }
@@ -393,12 +426,12 @@ struct Rd {
 impl Rd {
     fn f(&mut self) -> f32 {
         let v = f32::from_bits(r32(self.p));
-        self.p += 4;
+        self.p = self.p.wrapping_add(4);
         v
     }
     fn u(&mut self) -> u32 {
         let v = r32(self.p);
-        self.p += 4;
+        self.p = self.p.wrapping_add(4);
         v
     }
     fn v3(&mut self) -> V3 {
@@ -406,7 +439,7 @@ impl Rd {
     }
     fn ptr(&mut self) -> u32 {
         let v = rp(self.p);
-        self.p += ps();
+        self.p = self.p.wrapping_add(ps());
         v
     }
 }
@@ -443,7 +476,7 @@ fn read_curve(p: u32) -> Option<Vec<(f32, f32)>> {
 
 /// X3DAudioCalculate(handle, pListener, pEmitter, Flags, pDSPSettings)
 fn X3DAudioCalculate(c: &mut Ctx) -> u32 {
-    let (h, lp, ep, flags, dp) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let (h, lp, ep, flags, dp) = (c.a(0), c.a(1), c.a(2), Flags(c.a(3)), c.a(4));
     if h == 0 || lp == 0 || ep == 0 || dp == 0 {
         return 0;
     }
@@ -457,9 +490,10 @@ fn X3DAudioCalculate(c: &mut Ctx) -> u32 {
     let channels = r.u();
     let channel_radius = r.f();
     let paz = r.ptr();
-    let curves: Vec<u32> = (0..5).map(|_| r.ptr()).collect();
+    let curves: [u32; 5] = std::array::from_fn(|_| r.ptr());
     let (curve_scaler, doppler_scaler) = (r.f(), r.f());
     let azimuths = if paz != 0 { (0..channels.min(MAX_CHANNELS)).map(|i| f32::from_bits(r32(paz + 4 * i))).collect() } else { Vec::new() };
+    let [volume, lfe, lpf_direct, lpf_reverb, reverb] = curves;
     let e = Emitter {
         cone,
         front,
@@ -471,11 +505,11 @@ fn X3DAudioCalculate(c: &mut Ctx) -> u32 {
         channels,
         channel_radius,
         azimuths,
-        volume_curve: read_curve(curves[0]),
-        lfe_curve: read_curve(curves[1]),
-        lpf_direct_curve: read_curve(curves[2]),
-        lpf_reverb_curve: read_curve(curves[3]),
-        reverb_curve: read_curve(curves[4]),
+        volume_curve: read_curve(volume),
+        lfe_curve: read_curve(lfe),
+        lpf_direct_curve: read_curve(lpf_direct),
+        lpf_reverb_curve: read_curve(lpf_reverb),
+        reverb_curve: read_curve(reverb),
         curve_scaler,
         doppler_scaler,
     };
@@ -484,32 +518,32 @@ fn X3DAudioCalculate(c: &mut Ctx) -> u32 {
     let f = dp + 2 * ps();
     let (src, dst) = counts(channels, r32(f + 4));
     let d = calculate(mask, speed, &l, &e, flags, dst);
-    if flags & MATRIX != 0 && pm != 0 {
-        for i in 0..dst * src {
-            w32(pm + 4 * i as u32, d.matrix.get(i).copied().unwrap_or(0.0).to_bits());
+    if flags.has(MATRIX) && pm != 0 {
+        for (i, at) in (0..dst * src).zip((pm..).step_by(4)) {
+            w32(at, d.matrix.get(i).copied().unwrap_or(0.0).to_bits());
         }
     }
-    if flags & DELAY != 0 && pd != 0 {
-        for i in 0..dst {
-            w32(pd + 4 * i as u32, d.delays.get(i).copied().unwrap_or(0.0).to_bits());
+    if flags.has(DELAY) && pd != 0 {
+        for (i, at) in (0..dst).zip((pd..).step_by(4)) {
+            w32(at, d.delays.get(i).copied().unwrap_or(0.0).to_bits());
         }
     }
     let put = |o: u32, v: f32| w32(f + o, v.to_bits());
-    if flags & LPF_DIRECT != 0 {
+    if flags.has(LPF_DIRECT) {
         put(8, d.lpf_direct);
     }
-    if flags & LPF_REVERB != 0 {
+    if flags.has(LPF_REVERB) {
         put(12, d.lpf_reverb);
     }
-    if flags & REVERB != 0 {
+    if flags.has(REVERB) {
         put(16, d.reverb);
     }
-    if flags & DOPPLER != 0 {
+    if flags.has(DOPPLER) {
         put(20, d.doppler);
         put(32, d.emitter_velocity);
         put(36, d.listener_velocity);
     }
-    if flags & EMITTER_ANGLE != 0 {
+    if flags.has(EMITTER_ANGLE) {
         put(24, d.angle);
     }
     put(28, d.distance);
@@ -534,7 +568,7 @@ mod tests {
         Emitter { front: [0.0, 0.0, 1.0], top: [0.0, 1.0, 0.0], pos, channels: 1, curve_scaler: 1.0, doppler_scaler: 1.0, ..Default::default() }
     }
     const STEREO: u32 = 0x3;
-    const ALL: u32 = MATRIX | LPF_DIRECT | LPF_REVERB | REVERB | DOPPLER | EMITTER_ANGLE;
+    const ALL: Flags = Flags(MATRIX.0 | LPF_DIRECT.0 | LPF_REVERB.0 | REVERB.0 | DOPPLER.0 | EMITTER_ANGLE.0);
 
     /// a tiny xorshift, for the property tests
     struct Rng(u64);
@@ -572,7 +606,7 @@ mod tests {
             proptest::prop_assert_eq!(d, dst.clamp(1, 64) as usize);
             let mut e = emitter([0.5, 0.25, 1.0]);
             e.channels = ch;
-            let out = calculate(mask, 343.5, &listener(), &e, flags, dst as usize);
+            let out = calculate(mask, 343.5, &listener(), &e, Flags::new(flags), dst as usize);
             proptest::prop_assert!(out.matrix.len() <= s * d && out.delays.len() <= d);
         }
     }
