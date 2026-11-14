@@ -336,7 +336,7 @@ test("vnkern: the lock a thread of an ended process took after its exit is let g
   lib.vnhost_kern_lock(0x10);
   assert.equal(Atomics.load(h, 0) >>> 1, 0x10);
   assert.ok(Date.now() - t < 5000);
-  lib.vnhost_kern_unlock();
+  lib.vnhost_kern_unlock(0x10);
   assert.equal(Atomics.load(h, 0), 0);
 });
 
@@ -399,21 +399,22 @@ async function kernWorker(kernel, job, data) {
   return new Worker(src, { eval: true, workerData: { kernel, code: read("vnkern.js"), data } });
 }
 
-test("vnkern: a thread waiting for a live holder waits, then takes the lock once it is let go", async () => {
+test("vnkern: a thread waiting for a live holder waits, then takes the lock once it is let go", { timeout: 60000 }, async () => {
   const { lib, h, kernel } = kernLock();
   lib.vnhost_kern_lock(0x10);
-  const w = await kernWorker(kernel, `(lib, _, post) => { lib.vnhost_kern_lock(0x20010); post("took"); lib.vnhost_kern_unlock(); }`);
+  const w = await kernWorker(kernel, `(lib, _, post) => { lib.vnhost_kern_lock(0x20010); lib.vnhost_kern_unlock(0x20010); post("took"); }`);
+  // (posted once it let go too: terminated after the message, it might have held the lock still)
   let took = false;
   const done = new Promise((r) => w.on("message", () => { took = true; r(); }));
   await new Promise((r) => setTimeout(r, 600));
   assert.equal(took, false, "took a live holder's lock");
-  lib.vnhost_kern_unlock();
+  lib.vnhost_kern_unlock(0x10);
   await done;
   await w.terminate();
   assert.equal(Atomics.load(h, 0), 0);
 });
 
-test("vnkern: threads of several processes counting under the lock never overlap (stress)", async () => {
+test("vnkern: threads of several processes counting under the lock never overlap (stress)", { timeout: 60000 }, async () => {
   const { h, kernel } = kernLock();
   const shared = new Int32Array(new SharedArrayBuffer(8));
   const job = `(lib, d, post) => {
@@ -422,7 +423,7 @@ test("vnkern: threads of several processes counting under the lock never overlap
       lib.vnhost_kern_lock(d.pid);
       const v = s[0]; if (s[1]++ !== 0) throw new Error("two holders");
       s[0] = v + 1; s[1]--;
-      lib.vnhost_kern_unlock();
+      lib.vnhost_kern_unlock(d.pid);
     }
     post("done");
   }`;
@@ -433,16 +434,16 @@ test("vnkern: threads of several processes counting under the lock never overlap
   assert.equal(Atomics.load(h, 0), 0);
 });
 
-test("vnkern: a process stopped while holding the lock, at any moment, does not stop the others", async () => {
+test("vnkern: a process stopped while holding the lock, at any moment, does not stop the others", { timeout: 60000 }, async () => {
   const { h, kernel, end } = kernLock();
   for (let round = 0; round < 6; round++) {
     const victim = 0x50010 + 0x10000 * round;
-    const dying = await kernWorker(kernel, `(lib, d, post) => { post("up"); for (;;) { lib.vnhost_kern_lock(d.pid); lib.vnhost_kern_unlock(); } }`, { pid: victim });
+    const dying = await kernWorker(kernel, `(lib, d, post) => { post("up"); for (;;) { lib.vnhost_kern_lock(d.pid); lib.vnhost_kern_unlock(d.pid); } }`, { pid: victim });
     await new Promise((r) => dying.on("message", r));
     await new Promise((r) => setTimeout(r, 5 + round * 7));
     await dying.terminate();
     end(victim);
-    const other = await kernWorker(kernel, `(lib, _, post) => { lib.vnhost_kern_lock(0x10); lib.vnhost_kern_unlock(); post("ok"); }`);
+    const other = await kernWorker(kernel, `(lib, _, post) => { lib.vnhost_kern_lock(0x10); lib.vnhost_kern_unlock(0x10); post("ok"); }`);
     const ok = await Promise.race([new Promise((r) => other.on("message", () => r(true))), new Promise((r) => setTimeout(() => r(false), 5000))]);
     await other.terminate();
     assert.ok(ok, `round ${round}: the lock stayed with the stopped process`);
