@@ -9,7 +9,7 @@
 #![allow(non_snake_case)]
 
 use crate::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use ab_glyph::{Font as _, FontVec, PxScale, ScaleFont as _};
 
@@ -255,7 +255,9 @@ pub fn init() {
         for (i, o) in stock.into_iter().enumerate() {
             t.m.insert(STOCK + 4 * i as u32, o);
         }
-        t.m.insert(DEFAULT_BITMAP, G::Bitmap(new_bitmap_raw(1, 1, 1, 0).expect("the 1x1 default bitmap")));
+        if let Some(b) = new_bitmap_raw(1, 1, 1, 0) {
+            t.m.insert(DEFAULT_BITMAP, G::Bitmap(b));
+        }
     });
     register();
 }
@@ -755,7 +757,7 @@ pub fn get_dce(hwnd: u32, win: Option<(u32, usize)>, rgn: u32, flags: u32) -> u3
                     d
                 }
             },
-            _ => {
+            Dce::None | Dce::Cache { .. } => {
                 let free = t.dce.cache.iter().copied().find(|d| matches!(t.m.get(d), Some(G::Dc(x)) if x.dce == Dce::Cache { busy: false, noreset: false }));
                 match free {
                     Some(d) => d,
@@ -813,8 +815,8 @@ fn release_in(t: &mut Objs, dc: u32) -> u32 {
             drop_region(t, r);
             1
         }
-        Dce::Own | Dce::Class(_) => (d.kind != Kind::Window(0)) as u32,
-        _ => 0,
+        Dce::Own | Dce::Class(_) => u32::from(d.kind != Kind::Window(0)),
+        Dce::None | Dce::Cache { busy: false, .. } => 0,
     }
 }
 
@@ -902,7 +904,7 @@ pub fn dc_window(dc: u32) -> u32 {
         Some(G::Dc(d)) if d.disabled => 0,
         Some(G::Dc(d)) => match d.kind {
             Kind::Window(h) => h,
-            _ => 0,
+            Kind::Mem | Kind::Screen => 0,
         },
         _ => 0,
     })
@@ -994,7 +996,7 @@ fn draw(dc: u32, mut f: impl FnMut(&Objs, &DcState, &mut Canvas) -> Rect) -> boo
                 }
             }
             Tgt::Win { surf, top, x, y, clip } => {
-                let mut sg = surf.lock().unwrap();
+                let mut sg = surf.lock().unwrap_or_else(PoisonError::into_inner);
                 let (w, h) = (sg.w, sg.h);
                 let v = View::surface(&mut sg.px, w, h);
                 // (a source on this same surface reads it from here: locking it again from
@@ -1063,11 +1065,18 @@ fn source(t: &Objs, dc: u32) -> Option<(View, i32, i32, DcState)> {
             // (the surface this thread's draw holds: read from its view, not locked again)
             let p = std::sync::Arc::as_ptr(&surf) as *const () as usize;
             let held = HELD.with(|h| h.borrow().as_ref().filter(|x| x.0 == p).map(|x| x.1.clone()));
-            let g = if held.is_none() { Some(surf.lock().unwrap()) } else { None };
-            let (w, h) = match (&g, &held) {
-                (Some(g), _) => (g.w, g.h),
-                (None, Some(v)) => (v.w, v.h),
-                _ => unreachable!(),
+            /// what the pixels are read from: the surface, locked, or the view this thread holds
+            enum Pixels<G> {
+                Locked(G),
+                Held(View),
+            }
+            let g = match held {
+                Some(v) => Pixels::Held(v),
+                None => Pixels::Locked(surf.lock().unwrap_or_else(PoisonError::into_inner)),
+            };
+            let (w, h) = match &g {
+                Pixels::Locked(g) => (g.w, g.h),
+                Pixels::Held(v) => (v.w, v.h),
             };
             // a copy (the blit may draw into the same surface), kept until this thread's
             // source after next: one blit reads two sources at most
@@ -1075,18 +1084,19 @@ fn source(t: &Objs, dc: u32) -> Option<(View, i32, i32, DcState)> {
                 let mut k = k.borrow_mut();
                 let mut px = if k.len() >= 2 { k.remove(0) } else { Vec::new() };
                 px.clear();
-                match (&g, &held) {
-                    (Some(g), _) => px.extend_from_slice(&g.px),
-                    (None, Some(hv)) => {
+                match &g {
+                    Pixels::Locked(g) => px.extend_from_slice(&g.px),
+                    Pixels::Held(hv) => {
                         px.resize((w.max(0) * h.max(0)) as usize, 0);
                         for y in 0..h {
-                            unsafe { std::ptr::copy_nonoverlapping(hv.row(y), px.as_mut_ptr().add((y * w) as usize) as *mut u8, 4 * w as usize) };
+                            unsafe { std::ptr::copy_nonoverlapping(hv.row(y), px.as_mut_ptr().add((y * w) as usize).cast::<u8>(), 4 * w as usize) };
                         }
                     }
-                    _ => {}
                 }
+                // (the view points into the Vec's buffer, which moving the Vec does not move)
+                let v = View::surface(&mut px, w, h);
                 k.push(px);
-                View::surface(k.last_mut().unwrap(), w, h)
+                v
             });
             drop(g);
             Some((v, org.0 + x, org.1 + y, s))
@@ -1417,7 +1427,7 @@ fn blit_fast(d: &View, sv: &View, r: Rect, xs: &[i32], map_y: &dyn Fn(i32) -> i3
         return false;
     }
     let Some(k0) = xs.iter().position(|&x| x >= 0 && x < sv.w) else { return true };
-    let k1 = xs.iter().rposition(|&x| x >= 0 && x < sv.w).unwrap() + 1;
+    let k1 = xs.iter().rposition(|&x| x >= 0 && x < sv.w).unwrap_or(k0) + 1;
     let xs = &xs[k0..k1];
     let x0 = r.l + k0 as i32;
     // each destination row from its source row
@@ -1634,7 +1644,7 @@ const FACES: &[Face] = &[
 /// so the rest reads every font as face 0.
 fn ttc_face(d: &[u8], index: u32) -> Option<Vec<u8>> {
     let be16 = |o: usize| d.get(o..o + 2).map(|b| u16::from_be_bytes([b[0], b[1]]));
-    let be32 = |o: usize| d.get(o..o + 4).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
+    let be32 = |o: usize| d.get(o..).and_then(|b| b.first_chunk::<4>()).copied().map(u32::from_be_bytes);
     if d.get(..4)? != b"ttcf" || index >= be32(8)? {
         return None;
     }
@@ -1667,7 +1677,7 @@ fn add_font(data: Vec<u8>) -> u32 {
     if names.is_empty() {
         return 0;
     }
-    let mut g = ADDED.lock().unwrap();
+    let mut g = ADDED.lock().unwrap_or_else(PoisonError::into_inner);
     if !g.iter().any(|(n, _)| n == &names) {
         g.push((names, Arc::new(f)));
     }
@@ -1703,16 +1713,16 @@ fn font_names(data: &[u8]) -> Vec<String> {
 fn face_name(i: usize) -> String {
     match FACES.get(i) {
         Some(f) => f.names[0].to_string(),
-        None => ADDED.lock().unwrap().get(i - FACES.len()).map_or_else(String::new, |(n, _)| n[0].clone()),
+        None => ADDED.lock().unwrap_or_else(PoisonError::into_inner).get(i - FACES.len()).map_or_else(String::new, |(n, _)| n[0].clone()),
     }
 }
 
 fn font_file(i: usize) -> Option<Arc<FontVec>> {
     if i >= FACES.len() {
-        return ADDED.lock().unwrap().get(i - FACES.len()).map(|(_, f)| f.clone());
+        return ADDED.lock().unwrap_or_else(PoisonError::into_inner).get(i - FACES.len()).map(|(_, f)| f.clone());
     }
     let m = FILES.get_or_init(|| Mutex::new(HashMap::default()));
-    if let Some(f) = m.lock().unwrap().get(&i) {
+    if let Some(f) = m.lock().unwrap_or_else(PoisonError::into_inner).get(&i) {
         return Some(f.clone());
     }
     // (read with no lock held: a multi-MB file, maybe fetched; and a face not found is looked
@@ -1720,7 +1730,7 @@ fn font_file(i: usize) -> Option<Arc<FontVec>> {
     // fetched yet left that face without text for good)
     // (looked for again at most every 2 s: a text call each did a failing read)
     static MISSED: Mutex<Vec<(usize, std::time::Instant)>> = Mutex::new(Vec::new());
-    if MISSED.lock().unwrap().iter().any(|&(k, t)| k == i && t.elapsed() < std::time::Duration::from_secs(2)) {
+    if MISSED.lock().unwrap_or_else(PoisonError::into_inner).iter().any(|&(k, t)| k == i && t.elapsed() < std::time::Duration::from_secs(2)) {
         return None;
     }
     let dirs = [std::env::var("SAKE_FONTS").ok(), crate::files::resolve("C:\\windows\\Fonts\\")];
@@ -1732,10 +1742,10 @@ fn font_file(i: usize) -> Option<Arc<FontVec>> {
             Err(_) => kura::fs::read(format!("{d}/{}", FACES[i].file)).ok(),
         };
         if let Some(f) = data.and_then(|v| FontVec::try_from_vec(v).ok()) {
-            return Some(m.lock().unwrap().entry(i).or_insert_with(|| Arc::new(f)).clone());
+            return Some(m.lock().unwrap_or_else(PoisonError::into_inner).entry(i).or_insert_with(|| Arc::new(f)).clone());
         }
     }
-    let mut g = MISSED.lock().unwrap();
+    let mut g = MISSED.lock().unwrap_or_else(PoisonError::into_inner);
     if !g.iter().any(|x| x.0 == i) {
         eprintln!("sake: font {} not found", FACES[i].file);
     }
@@ -1754,7 +1764,7 @@ pub fn sys_face_names(i: usize) -> &'static [&'static str] {
 }
 pub fn sys_face_file(i: usize) -> (String, u32) {
     static KNOWN: Mutex<Vec<Option<(String, u32)>>> = Mutex::new(Vec::new());
-    if let Some(Some(k)) = KNOWN.lock().unwrap().get(i) {
+    if let Some(Some(k)) = KNOWN.lock().unwrap_or_else(PoisonError::into_inner).get(i) {
         return k.clone();
     }
     let (ttc, index) = FACES[i].ttc;
@@ -1763,7 +1773,7 @@ pub fn sys_face_file(i: usize) -> (String, u32) {
         Some(d) => (p, ttc_index(&d, FACES[i].names).unwrap_or(index)),
         None => (format!("C:\\Windows\\Fonts\\{}", FACES[i].file), 0),
     };
-    let mut g = KNOWN.lock().unwrap();
+    let mut g = KNOWN.lock().unwrap_or_else(PoisonError::into_inner);
     if g.len() <= i {
         g.resize(i + 1, None);
     }
@@ -1797,16 +1807,16 @@ pub fn sys_face_design_metrics(i: usize) -> Option<[u16; 10]> {
 /// names (the Japanese one first), the face of a family name (no fallback), and a font's data
 /// added as AddFontMemResourceEx does (its face, None: no font in it).
 pub fn face_count() -> usize {
-    FACES.len() + ADDED.lock().unwrap().len()
+    FACES.len() + ADDED.lock().unwrap_or_else(PoisonError::into_inner).len()
 }
 pub fn face_names(i: usize) -> Vec<String> {
     match FACES.get(i) {
         Some(f) => f.names.iter().map(|s| s.to_string()).collect(),
-        None => ADDED.lock().unwrap().get(i - FACES.len()).map_or_else(Vec::new, |(n, _)| n.clone()),
+        None => ADDED.lock().unwrap_or_else(PoisonError::into_inner).get(i - FACES.len()).map_or_else(Vec::new, |(n, _)| n.clone()),
     }
 }
 pub fn find_face(name: &str) -> Option<usize> {
-    let added = ADDED.lock().unwrap().iter().position(|(n, _)| n.iter().any(|n| n.eq_ignore_ascii_case(name)));
+    let added = ADDED.lock().unwrap_or_else(PoisonError::into_inner).iter().position(|(n, _)| n.iter().any(|n| n.eq_ignore_ascii_case(name)));
     added.map(|i| FACES.len() + i).or_else(|| FACES.iter().position(|f| f.names.iter().any(|n| n.eq_ignore_ascii_case(name))))
 }
 pub fn add_font_data(data: Vec<u8>) -> Option<usize> {
@@ -1814,7 +1824,7 @@ pub fn add_font_data(data: Vec<u8>) -> Option<usize> {
     if add_font(data) == 0 {
         return None;
     }
-    let g = ADDED.lock().unwrap();
+    let g = ADDED.lock().unwrap_or_else(PoisonError::into_inner);
     g.iter().position(|(n, _)| *n == names).map(|i| FACES.len() + i)
 }
 
@@ -1826,7 +1836,7 @@ pub fn sys_face_has(i: usize, ch: u32) -> bool {
 /// The face for a LOGFONT face name (the Japanese and English names, '@' for vertical).
 fn face_index(lf: &LogFont) -> usize {
     let name = lf.face.trim_start_matches('@');
-    for (i, (names, _)) in ADDED.lock().unwrap().iter().enumerate() {
+    for (i, (names, _)) in ADDED.lock().unwrap_or_else(PoisonError::into_inner).iter().enumerate() {
         if names.iter().any(|n| n.eq_ignore_ascii_case(name)) {
             return FACES.len() + i;
         }
@@ -1883,7 +1893,7 @@ struct FontMetrics {
 
 fn font_metrics(face: usize, font: &FontVec) -> FontMetrics {
     static M: Mutex<Vec<Option<FontMetrics>>> = Mutex::new(Vec::new());
-    if let Some(Some(m)) = M.lock().unwrap().get(face) {
+    if let Some(Some(m)) = M.lock().unwrap_or_else(PoisonError::into_inner).get(face) {
         return *m;
     }
     let upem = font.units_per_em().unwrap_or(1000.0);
@@ -1907,7 +1917,7 @@ fn font_metrics(face: usize, font: &FontVec) -> FontMetrics {
             }
         }
     }
-    let mut g = M.lock().unwrap();
+    let mut g = M.lock().unwrap_or_else(PoisonError::into_inner);
     if g.len() <= face {
         g.resize(face + 1, None);
     }
@@ -2002,11 +2012,11 @@ const GLYPH_INDEX: u32 = 0x8000_0000;
 
 fn glyph(r: &Real, ch: u32) -> Arc<Glyph> {
     let key = (r.face, r.em.to_bits(), ch, r.bold);
-    if let Some(g) = GLYPHS.lock().unwrap().get_or_insert_with(Glyphs::default).get(&key) {
+    if let Some(g) = GLYPHS.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert_with(Glyphs::default).get(&key) {
         return g;
     }
     let g = Arc::new(raster(r, ch));
-    GLYPHS.lock().unwrap().get_or_insert_with(Glyphs::default).put(key, g.clone(), GLYPH_CACHE_BYTES);
+    GLYPHS.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert_with(Glyphs::default).put(key, g.clone(), GLYPH_CACHE_BYTES);
     g
 }
 
@@ -2569,7 +2579,7 @@ fn bitmap_from_file(data: &[u8], section: bool) -> Option<u32> {
     if data.len() < 14 + 12 || &data[..2] != b"BM" {
         return None;
     }
-    let off = u32::from_le_bytes(data[10..14].try_into().unwrap()) as usize;
+    let off = u32::from_le_bytes([data[10], data[11], data[12], data[13]]) as usize;
     let dib = &data[14..];
     let tmp = mem::heap_alloc(dib.len() as u32, false);
     mem::write(tmp, dib);
@@ -3829,7 +3839,7 @@ pub(crate) fn GetPixel(c: &mut Ctx) -> u32 {
         if let Some(G::Dc(d)) = t.m.get(&dc) {
             if let Tgt::Win { surf, x: wx, y: wy, .. } = target_of(t, d) {
                 let (ox, oy) = (d.s.vp.0 - d.s.win.0 + wx, d.s.vp.1 - d.s.win.1 + wy);
-                let g = surf.lock().unwrap();
+                let g = surf.lock().unwrap_or_else(PoisonError::into_inner);
                 let (x, y) = (x + ox, y + oy);
                 if x >= 0 && y >= 0 && x < g.w && y < g.h {
                     let p = g.px[(y * g.w + x) as usize];
@@ -4055,7 +4065,7 @@ fn PolylineTo(c: &mut Ctx) -> u32 {
     let Some(s) = dc_state(dc) else { return 0 };
     let mut pts = vec![s.pos];
     pts.extend(read_pts(p, n));
-    let last = *pts.last().unwrap();
+    let last = pts.last().copied().unwrap_or(s.pos);
     polyline(dc, pts);
     with_dc(dc, |d| d.s.pos = last);
     1
@@ -4094,7 +4104,7 @@ fn PolyBezierTo(c: &mut Ctx) -> u32 {
     let Some(s) = dc_state(dc) else { return 0 };
     let mut pts = vec![s.pos];
     pts.extend(read_pts(p, n));
-    let last = *pts.last().unwrap();
+    let last = pts.last().copied().unwrap_or(s.pos);
     polyline(dc, bezier_path(&pts));
     with_dc(dc, |d| d.s.pos = last);
     1
@@ -5132,7 +5142,7 @@ fn GetFontData(c: &mut Ctx) -> u32 {
     let (dc, table, off, buf, cap) = (c.a(0), c.a(1), c.a(2) as usize, c.a(3), c.a(4) as usize);
     let Some((r, _, _)) = real_of(dc) else { return 0xffff_ffff };
     let d = r.font.as_slice();
-    let be32 = |o: usize| d.get(o..o + 4).map(|b| u32::from_be_bytes(b.try_into().unwrap()));
+    let be32 = |o: usize| d.get(o..).and_then(|b| b.first_chunk::<4>()).copied().map(u32::from_be_bytes);
     let part = if table == 0 || table == u32::from_le_bytes(*b"ttcf") {
         Some(d)
     } else {
@@ -5368,7 +5378,7 @@ fn enum_fonts(c: &mut Ctx, filter: Option<String>, proc_: u32, lp: u32, wide: bo
         }
     }
     // (a font the game added under any of its names: Siglus asks for the Japanese one)
-    for (n, _) in ADDED.lock().unwrap().iter() {
+    for (n, _) in ADDED.lock().unwrap_or_else(PoisonError::into_inner).iter() {
         let hit = filter.as_ref().and_then(|fl| n.iter().find(|x| x.eq_ignore_ascii_case(fl)));
         names.push((hit.unwrap_or(&n[0]).clone(), face_pitch(false, false)));
     }
