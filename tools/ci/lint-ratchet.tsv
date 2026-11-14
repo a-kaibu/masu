@@ -1532,8 +1532,8 @@ file	crates/sake/src/jscript.rs	masu-static_mut	1
 file	crates/sake/src/jscript.rs	ptr_as_ptr	1
 file	crates/sake/src/jscript.rs	unused_result_ok	1
 file	crates/sake/src/k32.rs	arithmetic_side_effects	553
-file	crates/sake/src/k32.rs	as_conversions	351
-file	crates/sake/src/k32.rs	cast_possible_truncation	207
+file	crates/sake/src/k32.rs	as_conversions	295
+file	crates/sake/src/k32.rs	cast_possible_truncation	151
 file	crates/sake/src/k32.rs	cast_possible_wrap	24
 file	crates/sake/src/k32.rs	cast_sign_loss	46
 file	crates/sake/src/k32.rs	indexing_slicing	72
@@ -1863,8 +1863,8 @@ file	crates/sake/src/netaddr.rs	cast_possible_truncation	26
 file	crates/sake/src/netaddr.rs	indexing_slicing	9
 file	crates/sake/src/netaddr.rs	unwrap_used	5
 file	crates/sake/src/nt.rs	arithmetic_side_effects	170
-file	crates/sake/src/nt.rs	as_conversions	78
-file	crates/sake/src/nt.rs	cast_possible_truncation	46
+file	crates/sake/src/nt.rs	as_conversions	63
+file	crates/sake/src/nt.rs	cast_possible_truncation	31
 file	crates/sake/src/nt.rs	cast_possible_wrap	5
 file	crates/sake/src/nt.rs	cast_sign_loss	2
 file	crates/sake/src/nt.rs	indexing_slicing	49

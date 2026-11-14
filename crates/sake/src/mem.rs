@@ -30,6 +30,13 @@ fn host<T>(a: u32) -> *mut T {
 fn len(n: u32) -> usize {
     n as usize
 }
+/// A host length (a string's, a buffer's) as a guest one: every length the guest sees fits its
+/// 32-bit address space; one that does not (only a 64-bit host can hold it) is u32::MAX, not its
+/// low bits.
+#[inline]
+pub fn len32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
 
 // ---------------------------------------------------------------------------------------------
 // 64-bit programs (PE32+): pointers, handles and SIZE_Ts are 8 bytes in their structures. Guest

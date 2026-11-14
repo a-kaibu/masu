@@ -41,3 +41,15 @@ proptest! {
         heap_free(p);
     }
 }
+
+proptest! {
+    // (len32 is `as u32` wherever the length fits, and saturates past it)
+    #[test]
+    fn len32_is_the_cast_below_4g(n in any::<usize>()) {
+        if n <= u32::MAX as usize {
+            prop_assert_eq!(len32(n), n as u32);
+        } else {
+            prop_assert_eq!(len32(n), u32::MAX);
+        }
+    }
+}

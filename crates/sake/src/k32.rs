@@ -56,14 +56,14 @@ fn put_name(dst: u32, cap: u32, s: &str, wide: bool) -> u32 {
 pub fn ret_str(dst: u32, cap: u32, s: &str, wide: bool) -> u32 {
     if wide {
         let v: Vec<u16> = s.encode_utf16().collect();
-        if (v.len() as u32) >= cap {
-            return v.len() as u32 + 1;
+        if (mem::len32(v.len())) >= cap {
+            return mem::len32(v.len()) + 1;
         }
         put_wstr(dst, cap, &v)
     } else {
         let v = crate::text::s2a(s);
-        if (v.len() as u32) >= cap {
-            return v.len() as u32 + 1;
+        if (mem::len32(v.len())) >= cap {
+            return mem::len32(v.len()) + 1;
         }
         put_cstr(dst, cap, &v)
     }
@@ -114,10 +114,10 @@ pub fn set_command_line(exe: &str, args: &[String]) {
 pub fn set_command_line_raw(s: &str) {
     let a = crate::text::s2a(&s);
     let w: Vec<u16> = s.encode_utf16().collect();
-    let pa = mem::heap_alloc(a.len() as u32 + 1, true);
+    let pa = mem::heap_alloc(mem::len32(a.len()) + 1, true);
     mem::write(pa, &a);
-    let pw = mem::heap_alloc(2 * w.len() as u32 + 2, true);
-    put_wstr(pw, w.len() as u32 + 1, &w);
+    let pw = mem::heap_alloc(2 * mem::len32(w.len()) + 2, true);
+    put_wstr(pw, mem::len32(w.len()) + 1, &w);
     *CMDLINE.locked() = (pa, pw);
 }
 
@@ -224,14 +224,14 @@ fn env_block(wide: bool) -> u32 {
     let s: String = with_env(|e| e.iter().map(|(k, v)| format!("{k}={v}\0")).collect::<String>()) + "\0";
     if wide {
         let w: Vec<u16> = s.encode_utf16().collect();
-        let p = mem::heap_alloc(2 * w.len() as u32, true);
+        let p = mem::heap_alloc(2 * mem::len32(w.len()), true);
         for (i, c) in w.iter().enumerate() {
             w16(p + 2 * i as u32, *c);
         }
         p
     } else {
         let a = crate::text::s2a(&s);
-        let p = mem::heap_alloc(a.len() as u32, true);
+        let p = mem::heap_alloc(mem::len32(a.len()), true);
         mem::write(p, &a);
         p
     }
@@ -656,7 +656,7 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
         2 => (312, false),
         5 => {
             let (fixed, ti) = if x64 { (0x100, 0x50) } else { (0xb8, 0x40) };
-            (fixed + ti * tids.len() as u32 + 2 * (name.len() as u32 + 1), false)
+            (fixed + ti * mem::len32(tids.len()) + 2 * (mem::len32(name.len()) + 1), false)
         }
         _ => return 0xc000_0003,
     };
@@ -678,8 +678,8 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
         }
         _ => {
             let (fixed, ti) = if x64 { (0x100, 0x50) } else { (0xb8, 0x40) };
-            w32(p + 4, tids.len() as u32);
-            let s = p + fixed + ti * tids.len() as u32;
+            w32(p + 4, mem::len32(tids.len()));
+            let s = p + fixed + ti * mem::len32(tids.len());
             for (i, &u) in name.iter().enumerate() {
                 mem::w16(s + 2 * i as u32, u);
             }
@@ -744,7 +744,7 @@ fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
         last_error(998);
         return 0;
     }
-    w32(pn, all.len() as u32 * ps);
+    w32(pn, mem::len32(all.len()) * ps);
     1
 }
 /// EnumProcessModulesEx(.., filter): a process of one kind has its own modules only
@@ -848,8 +848,8 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
             return cap;
         }
         mem::write(dst, &v);
-        mem::w8(dst + v.len() as u32, 0);
-        v.len() as u32
+        mem::w8(dst + mem::len32(v.len()), 0);
+        mem::len32(v.len())
     }
 }
 fn K32GetModuleBaseNameA(c: &mut Ctx) -> u32 {
@@ -2800,9 +2800,9 @@ fn output_debug_string(p: u32, wide: bool) {
     if wide {
         let w: Vec<u16> = s.encode_utf16().collect();
         let a = crate::text::w2mb(0, &w);
-        let b = mem::heap_alloc(a.len() as u32 + 1, true);
+        let b = mem::heap_alloc(mem::len32(a.len()) + 1, true);
         mem::write(b, &a);
-        crate::dbg::output(b, a.len() as u32 + 1);
+        crate::dbg::output(b, mem::len32(a.len()) + 1);
         mem::heap_free(b);
     } else {
         crate::dbg::output(p, mem::cstr(p).len() as u32 + 1);
@@ -3365,7 +3365,7 @@ fn GetUserDefaultLocaleName(c: &mut Ctx) -> u32 {
     for (i, &u) in w.iter().enumerate() {
         w16(out + 2 * i as u32, u);
     }
-    w.len() as u32
+    mem::len32(w.len())
 }
 const LOCALES: [(u32, &str); 16] = [
     (0x409, "en-US"), (0x411, "ja-JP"), (0x804, "zh-CN"), (0x404, "zh-TW"), (0x412, "ko-KR"), (0x809, "en-GB"),
@@ -3399,7 +3399,7 @@ fn LCIDToLocaleName(c: &mut Ctx) -> u32 {
     };
     let w: Vec<u16> = name.encode_utf16().chain([0]).collect();
     if c.a(2) == 0 {
-        return w.len() as u32;
+        return mem::len32(w.len());
     }
     if (c.a(2) as usize) < w.len() {
         last_error(122);
@@ -3408,7 +3408,7 @@ fn LCIDToLocaleName(c: &mut Ctx) -> u32 {
     for (i, &u) in w.iter().enumerate() {
         w16(c.a(1) + 2 * i as u32, u);
     }
-    w.len() as u32
+    mem::len32(w.len())
 }
 /// LdrGetDllHandle(path, flags, UNICODE_STRING *name, HMODULE *out)
 fn LdrGetDllHandle(c: &mut Ctx) -> u32 {
@@ -3457,7 +3457,7 @@ fn RtlFreeUnicodeString(c: &mut Ctx) -> u32 {
 }
 /// Stores `v` (code units of `unit` bytes) in counted string `us`, allocating if asked.
 fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
-    let n = unit * v.len() as u32;
+    let n = unit * mem::len32(v.len());
     let buf = if alloc {
         let b = mem::heap_alloc(n + unit, true);
         put_counted(us, n, n + unit, b);
@@ -3519,7 +3519,7 @@ fn RtlUnicodeToMultiByteN(c: &mut Ctx) -> u32 {
     }
     mem::write(dst, &out);
     if pw != 0 {
-        w32(pw, out.len() as u32);
+        w32(pw, mem::len32(out.len()));
     }
     0
 }
@@ -3632,7 +3632,7 @@ fn NtQueryVirtualMemory(c: &mut Ctx) -> u32 {
             };
             let w: Vec<u16> = name.encode_utf16().collect();
             let us = 2 * mem::ps();
-            let need = us + 2 * w.len() as u32 + 2;
+            let need = us + 2 * mem::len32(w.len()) + 2;
             if ret != 0 {
                 mem::wp(ret, need);
             }
@@ -3642,7 +3642,7 @@ fn NtQueryVirtualMemory(c: &mut Ctx) -> u32 {
             mem::w16(info, 2 * w.len() as u16);
             mem::w16(info + 2, 2 * w.len() as u16 + 2);
             mem::wp(info + mem::ps(), info + us);
-            put_wstr(info + us, w.len() as u32 + 1, &w);
+            put_wstr(info + us, mem::len32(w.len()) + 1, &w);
             0
         }
         _ => 0xc000_0003,
@@ -5296,7 +5296,7 @@ fn ui_languages(c: &mut Ctx, process: bool) -> u32 {
         w32(c.a(1), 1);
     }
     let (buf, cap) = (c.a(2), r32(c.a(3)));
-    w32(c.a(3), w.len() as u32);
+    w32(c.a(3), mem::len32(w.len()));
     if buf == 0 {
         return 1;
     }
@@ -5512,7 +5512,7 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
         return 0;
     }
     if cap == 0 {
-        return w.len() as u32;
+        return mem::len32(w.len());
     }
     // Conversion can fill the supplied buffer before discovering that the
     // terminating NUL does not fit. MFC's ANSI CString -> CStringW conversion
@@ -5527,11 +5527,11 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     for (i, ch) in w[..written].iter().enumerate() {
         w16(dst + 2 * i as u32, *ch);
     }
-    if w.len() as u32 > cap {
+    if mem::len32(w.len()) > cap {
         last_error(122);
         return 0;
     }
-    w.len() as u32
+    mem::len32(w.len())
 }
 fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
     let (cp, src, n, dst, cap) = (c.a(0), c.a(2), c.i(3), c.a(4), c.a(5));
@@ -5560,9 +5560,9 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
     let (a, used) = crate::text::w2mb_flags(cp, &s, &d, c.a(1) & 0x400 == 0);
     put32(pused, u32::from(used));
     if cap == 0 {
-        return a.len() as u32;
+        return mem::len32(a.len());
     }
-    if a.len() as u32 > cap {
+    if mem::len32(a.len()) > cap {
         // (as MultiByteToWideChar: the whole characters that fit are written before the failure)
         let utf8 = cp == 65001 || matches!(cp, 0 | 1 | 3) && crate::text::acp() == 65001;
         let mut fit = 0;
@@ -5579,7 +5579,7 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
         return 0;
     }
     mem::write(dst, &a);
-    a.len() as u32
+    mem::len32(a.len())
 }
 
 /// CT_CTYPE1, with C1_DEFINED (0x200) on every character but the surrogates
@@ -5758,7 +5758,7 @@ fn LCMapStringA(c: &mut Ctx) -> u32 {
         crate::text::case_a(&mut s, flags & 0x200 != 0);
     }
     if cap == 0 {
-        return s.len() as u32;
+        return mem::len32(s.len());
     }
     let k = s.len().min(cap as usize);
     mem::write(dst, &s[..k]);
@@ -5776,7 +5776,7 @@ pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
     };
     let w = lcmap(&w, flags);
     if cap == 0 {
-        return w.len() as u32;
+        return mem::len32(w.len());
     }
     let k = w.len().min(cap as usize);
     for (i, ch) in w[..k].iter().enumerate() {
@@ -6023,12 +6023,12 @@ fn lstrlenW(c: &mut Ctx) -> u32 {
 fn lstrcpyA(c: &mut Ctx) -> u32 {
     let s = cstr(c.a(1));
     mem::write(c.a(0), &s);
-    w8(c.a(0) + s.len() as u32, 0);
+    w8(c.a(0) + mem::len32(s.len()), 0);
     c.a(0)
 }
 fn lstrcpyW(c: &mut Ctx) -> u32 {
     let s = wstr(c.a(1));
-    put_wstr(c.a(0), s.len() as u32 + 1, &s);
+    put_wstr(c.a(0), mem::len32(s.len()) + 1, &s);
     c.a(0)
 }
 fn lstrcpynA(c: &mut Ctx) -> u32 {
@@ -6044,14 +6044,14 @@ fn lstrcpynW(c: &mut Ctx) -> u32 {
 fn lstrcatA(c: &mut Ctx) -> u32 {
     let d = cstr(c.a(0));
     let s = cstr(c.a(1));
-    mem::write(c.a(0) + d.len() as u32, &s);
+    mem::write(c.a(0) + mem::len32(d.len()), &s);
     w8(c.a(0) + (d.len() + s.len()) as u32, 0);
     c.a(0)
 }
 fn lstrcatW(c: &mut Ctx) -> u32 {
     let d = wstr(c.a(0));
     let s = wstr(c.a(1));
-    put_wstr(c.a(0) + 2 * d.len() as u32, s.len() as u32 + 1, &s);
+    put_wstr(c.a(0) + 2 * mem::len32(d.len()), mem::len32(s.len()) + 1, &s);
     c.a(0)
 }
 fn lstrcmpA(c: &mut Ctx) -> u32 {
@@ -6904,7 +6904,7 @@ fn enum_resources(c: &mut Ctx, level: usize, wide: bool) -> u32 {
                     a.push(0);
                     a
                 };
-                let p = mem::heap_alloc(bytes.len() as u32, false);
+                let p = mem::heap_alloc(mem::len32(bytes.len()), false);
                 mem::write(p, &bytes);
                 (p, p)
             }
@@ -8461,14 +8461,14 @@ fn query_dos_device(c: &mut Ctx, wide: bool) -> u32 {
         units.push(0);
     }
     units.push(0);
-    if units.len() as u32 > max {
+    if mem::len32(units.len()) > max {
         last_error(122);
         return 0;
     }
     for (i, &u) in units.iter().enumerate() {
         if wide { w16(out + 2 * i as u32, u) } else { w8(out + i as u32, u as u8) }
     }
-    units.len() as u32
+    mem::len32(units.len())
 }
 fn QueryDosDeviceA(c: &mut Ctx) -> u32 {
     query_dos_device(c, false)
@@ -8490,13 +8490,13 @@ pub(crate) fn drive_strings() -> Vec<u8> {
 fn logical_drive_strings(c: &mut Ctx, wide: bool) -> u32 {
     let (len, out) = (c.a(0), c.a(1));
     let s = drive_strings();
-    if len < s.len() as u32 {
-        return s.len() as u32;
+    if len < mem::len32(s.len()) {
+        return mem::len32(s.len());
     }
     for (i, &b) in s.iter().enumerate() {
         if wide { w16(out + 2 * i as u32, u16::from(b)) } else { w8(out + i as u32, b) }
     }
-    s.len() as u32 - 1
+    mem::len32(s.len()) - 1
 }
 fn GetLogicalDriveStringsA(c: &mut Ctx) -> u32 {
     logical_drive_strings(c, false)
@@ -9110,9 +9110,9 @@ fn startup_info(p: u32, wide: bool) -> u32 {
     static DESKTOP: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
     let (da, dw) = *DESKTOP.get_or_init(|| {
         let t = "Winsta0\\Default";
-        let a = mem::heap_alloc(t.len() as u32 + 1, true);
+        let a = mem::heap_alloc(mem::len32(t.len()) + 1, true);
         mem::write(a, t.as_bytes());
-        let w = mem::heap_alloc(2 * t.len() as u32 + 2, true);
+        let w = mem::heap_alloc(2 * mem::len32(t.len()) + 2, true);
         for (i, u) in t.encode_utf16().enumerate() {
             w16(w + 2 * i as u32, u);
         }
@@ -9152,7 +9152,7 @@ fn put_sized_name(buf: u32, sizep: u32, name: &str, wide: bool, short_err: u32) 
         last_error(87);
         return 0;
     }
-    let n = name.len() as u32;
+    let n = mem::len32(name.len());
     if r32(sizep) <= n || buf == 0 {
         w32(sizep, n + 1);
         last_error(short_err);
@@ -10145,7 +10145,7 @@ mod mapping_names {
     const ALL: u32 = 0xf001f; // FILE_MAP_ALL_ACCESS
 
     fn cstr_arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(s.len() as u32 + 1, true);
+        let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
             mem::w8(p + i as u32, b);
         }
@@ -10153,7 +10153,7 @@ mod mapping_names {
     }
     fn wstr_arg(s: &str) -> u32 {
         let w: Vec<u16> = s.encode_utf16().chain([0]).collect();
-        let p = mem::heap_alloc(2 * w.len() as u32, true);
+        let p = mem::heap_alloc(2 * mem::len32(w.len()), true);
         for (i, c) in w.iter().enumerate() {
             mem::w16(p + 2 * i as u32, *c);
         }
@@ -10457,7 +10457,7 @@ mod find_system_dlls {
         g
     }
     fn cstr_arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(s.len() as u32 + 1, true);
+        let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
             mem::w8(p + i as u32, b);
         }
@@ -10623,7 +10623,7 @@ mod drive_tests {
     use proptest::prelude::*;
 
     fn guest_str(s: &[u8]) -> u32 {
-        let a = mem::heap_alloc(s.len() as u32 + 1, true);
+        let a = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, &b) in s.iter().enumerate() {
             mem::w8(a + i as u32, b);
         }
@@ -10693,7 +10693,7 @@ mod drive_tests {
             prop_assert!(strings.ends_with(&[0, 0]));
             let names: Vec<&[u8]> = strings[..strings.len() - 1].split(|&b| b == 0).filter(|s| !s.is_empty()).collect();
             prop_assert_eq!(names.iter().any(|n| *n == [b'A' + l, b':', b'\\']), listed);
-            prop_assert_eq!(names.len() as u32, logical_drives().count_ones());
+            prop_assert_eq!(mem::len32(names.len()), logical_drives().count_ones());
             // QueryDosDevice knows each listed drive
             prop_assert_eq!(drive_device(c).is_some(), listed);
         }
@@ -10743,7 +10743,7 @@ mod empty_name_tests {
     use proptest::prelude::*;
 
     fn guest_str(s: &str) -> u32 {
-        let p = mem::heap_alloc(s.len() as u32 + 1, true);
+        let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, b) in s.bytes().enumerate() {
             mem::w8(p + i as u32, b);
         }
@@ -10803,7 +10803,7 @@ mod wow64_tests {
         g
     }
     fn arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(s.len() as u32 + 1, true);
+        let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
             mem::w8(p + i as u32, b);
         }
@@ -10887,7 +10887,7 @@ mod wow64_tests {
         fn wow64_directory_sizes(cap in 0u32..48, wide in any::<bool>()) {
             let _g = enter();
             let want = "C:\\windows\\SysWOW64";
-            let n = want.len() as u32;
+            let n = mem::len32(want.len());
             let buf = mem::heap_alloc(2 * 48 + 2, true);
             mem::fill(buf, 2 * 48 + 2, 0xcc);
             let f: crate::api::Handler = if wide { GetSystemWow64DirectoryW } else { GetSystemWow64DirectoryA };
