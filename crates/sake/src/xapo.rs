@@ -190,7 +190,7 @@ fn obj(this: u32) -> u32 {
     if with(this, |_| ()).is_some() {
         this
     } else {
-        this - ps()
+        this.wrapping_sub(ps())
     }
 }
 
@@ -591,6 +591,14 @@ mod tests {
         assert_eq!(process_frames(5, 0), 0);
     }
 
+    /// builtin() of a pointer under one word (a null `this`) is not an object, not an underflow
+    #[test]
+    fn builtin_of_low_pointers() {
+        for p in 0..8 {
+            assert_eq!(builtin(p), None);
+        }
+    }
+
     mod proptests {
         use super::super::*;
         use proptest::prelude::*;
@@ -607,3 +615,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "xapo_snapshot_tests.rs"]
+mod snapshot_tests;
