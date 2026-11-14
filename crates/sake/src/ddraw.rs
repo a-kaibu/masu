@@ -1213,6 +1213,25 @@ fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mir
     // overlapping copies within one surface go bottom-up / right-to-left as needed
     let overlap = dst.bits == src.bits;
     let rows: Box<dyn Iterator<Item = i32>> = if overlap && dr.t > sr.t { Box::new((0..dh).rev()) } else { Box::new(0..dh) };
+    // (the pixel-by-pixel rows' columns, worked out once: the destination and source byte
+    // offsets of the columns inside both surfaces; the key range masked once)
+    let cols: Vec<(u32, u32)> = if same && key.is_none() {
+        Vec::new()
+    } else {
+        (0..dw)
+            .filter_map(|x| {
+                let dx = dr.l + x;
+                let sx = if same {
+                    sr.l + x
+                } else {
+                    let k = if dw == sw { x } else { stretch_pick(x, sw, dw, true) };
+                    if mirror.0 { sr.r - 1 - k } else { sr.l + k }
+                };
+                (dx >= 0 && dx < dst.w && sx >= 0 && sx < src.w).then(|| (dx as u32 * bpp, sx as u32 * bpp))
+            })
+            .collect()
+    };
+    let key = key.map(|(lo, hi)| (lo & mask, hi.max(lo) & mask));
     for y in rows {
         let dy = dr.t + y;
         let sy = if same {
@@ -1246,25 +1265,35 @@ fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mir
             }
             continue;
         }
-        for x in 0..dw {
-            let dx = dr.l + x;
-            let sx = if same {
-                sr.l + x
-            } else {
-                let k = if dw == sw { x } else { stretch_pick(x, sw, dw, true) };
-                if mirror.0 { sr.r - 1 - k } else { sr.l + k }
-            };
-            if dx < 0 || dx >= dst.w || sx < 0 || sx >= src.w {
-                continue;
+        match bpp {
+            1 => blit_row::<1>(drow, srow, &cols, key, mask),
+            2 => blit_row::<2>(drow, srow, &cols, key, mask),
+            3 => blit_row::<3>(drow, srow, &cols, key, mask),
+            _ => blit_row::<4>(drow, srow, &cols, key, mask),
+        }
+    }
+}
+
+/// One row of blit's pixel by pixel copy: `cols` the (destination, source) byte offsets of the
+/// columns inside both surfaces, in order; source pixels in the key range (already masked)
+/// skipped. The depth is a constant here, so each pixel is one load and one store.
+#[inline(always)]
+fn blit_row<const B: u32>(drow: *mut u8, srow: *const u8, cols: &[(u32, u32)], key: Option<(u32, u32)>, mask: u32) {
+    match key {
+        None => {
+            for &(d, s) in cols {
+                unsafe { write_px(drow.add(d as usize), B, read_px(srow.add(s as usize), B)) };
             }
-            let v = read_px(unsafe { srow.add((sx as u32 * bpp) as usize) }, bpp);
-            if let Some((lo, hi)) = key {
+        }
+        Some((lo, hi)) => {
+            for &(d, s) in cols {
+                let v = read_px(unsafe { srow.add(s as usize) }, B);
                 let m = v & mask;
-                if m >= lo & mask && m <= hi.max(lo) & mask {
+                if m >= lo && m <= hi {
                     continue;
                 }
+                unsafe { write_px(drow.add(d as usize), B, v) };
             }
-            write_px(unsafe { drow.add((dx as u32 * bpp) as usize) }, bpp, v);
         }
     }
 }
@@ -2519,5 +2548,128 @@ mod tests {
     fn device_identifier_sizes() {
         assert_eq!(ident_size(2), 1064);
         assert_eq!(ident_size(3), 1068);
+    }
+}
+
+/// blit against the pixel loop it had before (each pixel's depth, bounds and stretch worked
+/// out as it went): the same bytes in the destination for random surfaces of 1..4 bytes a
+/// pixel, rectangles partly outside, stretching, mirroring and color keys, and for copies
+/// within one surface (overlapping, either direction).
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod blit_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn blit_ref(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mirror: (bool, bool)) {
+        let bpp = dst.bpp as u32 / 8;
+        let (dw, dh, sw, sh) = (dr.r - dr.l, dr.b - dr.t, sr.r - sr.l, sr.b - sr.t);
+        if dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 {
+            return;
+        }
+        let base_d = dst.bits as usize as *mut u8;
+        let base_s = src.bits as usize as *const u8;
+        let mask = px_mask(bpp);
+        let same = dw == sw && dh == sh && !mirror.0 && !mirror.1;
+        let overlap = dst.bits == src.bits;
+        let rows: Box<dyn Iterator<Item = i32>> = if overlap && dr.t > sr.t { Box::new((0..dh).rev()) } else { Box::new(0..dh) };
+        for y in rows {
+            let dy = dr.t + y;
+            let sy = if same {
+                sr.t + y
+            } else {
+                let k = if dh == sh { y } else { stretch_pick(y, sh, dh, false) };
+                if mirror.1 { sr.b - 1 - k } else { sr.t + k }
+            };
+            if dy < 0 || dy >= dst.h || sy < 0 || sy >= src.h {
+                continue;
+            }
+            let drow = unsafe { base_d.add((dy as u32 * dst.pitch) as usize) };
+            let srow = unsafe { base_s.add((sy as u32 * src.pitch) as usize) };
+            if same && key.is_none() {
+                let (mut x0, mut sx0, mut n) = (dr.l, sr.l, dw);
+                if x0 < 0 {
+                    sx0 -= x0;
+                    n += x0;
+                    x0 = 0;
+                }
+                if sx0 < 0 {
+                    x0 -= sx0;
+                    n += sx0;
+                    sx0 = 0;
+                }
+                n = n.min(dst.w - x0).min(src.w - sx0);
+                if n > 0 {
+                    unsafe { std::ptr::copy(srow.add((sx0 as u32 * bpp) as usize), drow.add((x0 as u32 * bpp) as usize), (n as u32 * bpp) as usize) };
+                }
+                continue;
+            }
+            for x in 0..dw {
+                let dx = dr.l + x;
+                let sx = if same {
+                    sr.l + x
+                } else {
+                    let k = if dw == sw { x } else { stretch_pick(x, sw, dw, true) };
+                    if mirror.0 { sr.r - 1 - k } else { sr.l + k }
+                };
+                if dx < 0 || dx >= dst.w || sx < 0 || sx >= src.w {
+                    continue;
+                }
+                let v = read_px(unsafe { srow.add((sx as u32 * bpp) as usize) }, bpp);
+                if let Some((lo, hi)) = key {
+                    let m = v & mask;
+                    if m >= lo & mask && m <= hi.max(lo) & mask {
+                        continue;
+                    }
+                }
+                write_px(unsafe { drow.add((dx as u32 * bpp) as usize) }, bpp, v);
+            }
+        }
+    }
+
+    fn surf_at(bits: u32, w: i32, h: i32, bpp: u16) -> Surf {
+        Surf {
+            w, h, bpp, pf: [0; 5], pitch: ((w as u32 * bpp as u32 / 8) + 3) & !3, bits, hbm: 0, caps: 0, ck_src: None, ck_dst: None, next: 0,
+            clipper: 0, palette: 0, dc: 0, refs: 1, blocks: [0; 5], lock: None, zbuf: 0, dd: 0, v7: false, dd_held: 0, mip: 0, mips: 0,
+            sub: false, implicit: false, parent: 0, added: 0, caps2: 0, faces: Vec::new(), private: Vec::new(),
+        }
+    }
+
+    fn rect() -> impl Strategy<Value = Rect> {
+        (-6i32..26, -6i32..26, 0i32..34, 0i32..34).prop_map(|(l, t, w, h)| Rect { l, t, r: l + w, b: t + h })
+    }
+
+    const SRC: u32 = 0x0100_0000;
+    const DST: u32 = 0x0110_0000;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(800))]
+        #[test]
+        fn blit_is_the_pixel_loop(
+            bpp in prop::sample::select(vec![8u16, 16, 24, 32]), sw in 1i32..24, sh in 1i32..24, dw in 1i32..28, dh in 1i32..28,
+            dr in rect(), sr in rect(), key in prop::option::of((any::<u32>(), any::<u32>(), 0u32..64)), mirror: (bool, bool),
+            one in any::<bool>(), seed: u64,
+        ) {
+            let _g = crate::test_guest::enter();
+            let src = surf_at(SRC, sw, sh, bpp);
+            let dst = if one { src.clone() } else { surf_at(DST, dw, dh, bpp) };
+            let (sn, dn) = ((src.pitch * sh as u32) as usize, (dst.pitch * dst.h as u32) as usize);
+            let mut rng = seed | 1;
+            let mut next = || { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; rng as u8 };
+            // (few distinct values, so that the key range catches some)
+            let sbytes: Vec<u8> = (0..sn).map(|_| next() & 0x83).collect();
+            let dbytes: Vec<u8> = (0..dn).map(|_| next()).collect();
+            // a key range near the pixels' values: lo, lo + span
+            let key = key.map(|(lo, _, span)| { let lo = lo & 0x8383_8383; (lo, lo.wrapping_add(span)) });
+            let mut out = vec![];
+            for fast in [false, true] {
+                mem::guest_mut(SRC, sn as u32).unwrap().copy_from_slice(&sbytes);
+                if !one {
+                    mem::guest_mut(DST, dn as u32).unwrap().copy_from_slice(&dbytes);
+                }
+                if fast { blit(&dst, dr, &src, sr, key, mirror) } else { blit_ref(&dst, dr, &src, sr, key, mirror) }
+                out.push(mem::slice(dst.bits, dn as u32).to_vec());
+            }
+            prop_assert!(out[0] == out[1]);
+        }
     }
 }
