@@ -425,7 +425,7 @@ jobs:
         run: |
           export PLAYWRIGHT="$RUNNER_TEMP/pw/node_modules/playwright/index.js"
           [ -f mirror/mirror-trials.json ] && export MIRROR=$PWD/mirror/mirror-trials.json
-          ONLY="$IDS" SAKE_ENV="SAKE_SHIRUSU=1" STORY=30 STUCK_STACK=1 RTP="$RUNNER_TEMP/rtp" tests/corpus/ci.sh "$RUNNER_TEMP/dist" "$RUNNER_TEMP/fonts" results || true
+          ONLY="$IDS" SAKE_ENV="SAKE_SHIRUSU=1" STORY=30 STUCK_STACK=1 STUCK_TRACE=1 RTP="$RUNNER_TEMP/rtp" tests/corpus/ci.sh "$RUNNER_TEMP/dist" "$RUNNER_TEMP/fonts" results || true
       - uses: actions/upload-artifact@v7.0.2
         if: always()
         with:
@@ -436,6 +436,7 @@ jobs:
             results/**/console.log
             results/**/shirusu.log
             results/**/stuck.txt
+            results/**/trace.json.gz
             results/**/run.log
             results/**/title.png
             results/**/last.png

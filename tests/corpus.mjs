@@ -10,7 +10,7 @@
 // env: PRE=x,y / PRE_KEYS=0 (see below), TITLE_STILL=2 (seconds the title holds still), STORY=60 (story seconds), TITLE_MAX=120 (give up on the title),
 // TITLE_AT=s (the title from then on even with few colours: 操心術外伝's dark menu on black), STORY_AT=x,y (story clicks,
 // default centre of the bottom fifth), IDLE=s (that long more without a click: idleCores, a still screen's CPU), CHROME_ARGS, PLAYWRIGHT,
-// TITLE_SIG / STORY_SIG (the screens expected: tests/corpus/sig.mjs; titleMatch, storyMatch), STUCK_S=30 (no answer from the page that long: pageStuck, stuck.txt, out), STUCK_STACK=1 (the debugger on, for stuck.txt's stack)
+// TITLE_SIG / STORY_SIG (the screens expected: tests/corpus/sig.mjs; titleMatch, storyMatch), STUCK_S=30 (no answer from the page that long: pageStuck, stuck.txt, out), STUCK_STACK=1 (the debugger on, for stuck.txt's stack), STUCK_TRACE=1 (Chrome's trace then: trace.json.gz)
 const pw = await import(process.env.PLAYWRIGHT ?? "playwright");
 const { chromium } = pw.default ?? pw;
 import { mkdirSync, appendFileSync, writeFileSync } from "node:fs";
@@ -72,9 +72,44 @@ const watchdog = setInterval(async () => {
   res.errors.push(`page stopped answering at ${res.pageStuck} s`);
   save();
   writeFileSync(`${out}/stuck.txt`, `the page's thread at ${now().toFixed(1)} s (last answer at ${res.pageStuck} s):\n${await stuckStack()}\n`);
+  await stuckTrace();
   await Promise.race([browser.close().catch(() => {}), later(10)]);
   process.exit(0);
 }, 2000);
+// (STUCK_TRACE=1: Chrome's trace of every process, kept as a ring from the start, written as
+// trace.json.gz when the page is stuck: what the page's thread was doing outside scripts, a
+// wait for another process, for one)
+const traceEarly = process.env.STUCK_TRACE === "1"
+  ? browser.newBrowserCDPSession().then(async (c) => {
+      await c.send("Tracing.start", {
+        transferMode: "ReturnAsStream", streamCompression: "gzip",
+        traceConfig: {
+          recordMode: "recordContinuously", traceBufferSizeInKb: 400_000,
+          includedCategories: ["toplevel", "ipc", "mojom", "blink", "v8", "v8.wasm", "gpu", "base", "renderer.scheduler",
+            "devtools.timeline", "disabled-by-default-devtools.timeline", "disabled-by-default-ipc.flow", "loading", "netlog"],
+        },
+      });
+      return c;
+    }).catch((e) => (appendFileSync(logFile, `[trace] not started: ${e}\n`), null))
+  : Promise.resolve(null);
+async function stuckTrace() {
+  const c = await traceEarly;
+  if (!c) return;
+  const go = async () => {
+    const done = new Promise((r) => c.once("Tracing.tracingComplete", r));
+    await c.send("Tracing.end");
+    const { stream } = await done;
+    const parts = [];
+    for (;;) {
+      const r = await c.send("IO.read", { handle: stream, size: 1 << 20 });
+      parts.push(Buffer.from(r.data, r.base64Encoded ? "base64" : "utf8"));
+      if (r.eof) break;
+    }
+    await c.send("IO.close", { handle: stream });
+    writeFileSync(`${out}/trace.json.gz`, Buffer.concat(parts));
+  };
+  await Promise.race([go().catch((e) => appendFileSync(logFile, `[trace] not written: ${e}\n`)), later(60)]);
+}
 // (pause the page's thread: its frames, innermost first. DevTools' pause reaches a thread
 // that runs on and on, but turning the debugger on needs the thread itself: STUCK_STACK=1 turns
 // it on as the run starts, before it is needed)
