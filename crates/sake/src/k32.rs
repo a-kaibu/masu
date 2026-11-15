@@ -733,7 +733,7 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
         return 0;
     }
     if !base_only {
-        let n = if wide { name.encode_utf16().count() } else { crate::text::s2a(&name).len() } as u32;
+        let n = kome::num::u32_of(if wide { name.encode_utf16().count() } else { crate::text::s2a(&name).len() });
         put_name(dst, cap, &name, wide);
         // (the ANSI one cut short counts what it kept before its 0, as Windows 10)
         return if !wide && n >= cap { cap - 1 } else { n.min(cap) };
@@ -753,7 +753,7 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
         // answers; the wide name is converted into the caller's buffer)
         let v = crate::text::s2a(&name);
         if v.len() >= kome::num::us(cap) {
-            mem::write(dst, &v[..cap as usize - 1]);
+            mem::write(dst, &v[..kome::num::us(cap) - 1]);
             mem::w8(dst + cap - 1, 0);
             return cap;
         }
@@ -1353,7 +1353,7 @@ fn GetThreadPriority(c: &mut Ctx) -> u32 {
     if thread_denied(c.a(0), THREAD_QUERY_ANY) {
         return 0x7fff_ffff; // THREAD_PRIORITY_ERROR_RETURN
     }
-    PRIORITY.locked().get_or_insert_with(HashMap::default).get(&thread_key(c.a(0))).copied().unwrap_or(0) as u32
+    PRIORITY.locked().get_or_insert_with(HashMap::default).get(&thread_key(c.a(0))).copied().map_or(0, kome::num::lo32)
 }
 fn SetThreadPriority(c: &mut Ctx) -> u32 {
     if thread_denied(c.a(0), THREAD_SET_ANY) {
@@ -1691,11 +1691,11 @@ fn OpenWaitableTimerW(c: &mut Ctx) -> u32 {
 /// positive = an absolute FILETIME. (The completion routine is not called.)
 fn SetWaitableTimer(c: &mut Ctx) -> u32 {
     use std::time::{Duration, Instant, SystemTime};
-    let v = get64(c.a(1)) as i64;
+    let v = get64(c.a(1)).cast_signed();
     let after = if v < 0 {
         Duration::from_nanos(v.unsigned_abs() * 100)
     } else {
-        let now = files::filetime(SystemTime::now()) as i64;
+        let now = files::filetime(SystemTime::now()).cast_signed();
         Duration::from_nanos((v - now).max(0).cast_unsigned() * 100)
     };
     let period = Duration::from_millis(u64::from(c.a(2)));
@@ -1930,7 +1930,7 @@ pub(crate) fn release_semaphore(h: u32, n: i32) -> Result<i32, u32> {
     if let Some(id) = shared_id(h) {
         let r = if n <= 0 { Err(87) } else { crate::kern::with(|k| k.release_semaphore(id, n)).0 };
         obj::signal();
-        return r.map(|p| p as i32);
+        return r;
     }
     let r = obj::with(|t| match t.objs.get_mut(&h) {
         Some(_) if n <= 0 => Err(87),
@@ -2089,7 +2089,7 @@ static CS: waits::Cs = waits::Cs::new();
 /// atomic: it gets an aligned stand-in of its own, the guest's bytes there left as they are.
 fn atomic(a: u32) -> &'static AtomicU32 {
     if a % 4 == 0 {
-        return unsafe { &*(kome::num::us(a) as *const AtomicU32) };
+        return unsafe { &*std::ptr::with_exposed_provenance::<AtomicU32>(kome::num::us(a)) };
     }
     static SHADOW: Mutex<Option<HashMap<u32, &'static AtomicU32>>> = Mutex::new(None);
     let mut g = SHADOW.lock().unwrap_or_else(|e| e.into_inner());
@@ -2482,7 +2482,7 @@ static TEBS: Mutex<Vec<(u32, u32, usize)>> = Mutex::new(Vec::new());
 
 pub fn tls_thread_init(teb: u32) {
     let t = crate::cur();
-    TEBS.locked().push((t.tid, teb, t as *mut crate::Thread as usize));
+    TEBS.locked().push((t.tid, teb, std::ptr::from_mut(t).expose_provenance()));
     // (the first thread's comes once its image says 32 or 64 bit: crate::run)
     if crate::fiber::READY.load(std::sync::atomic::Ordering::Acquire) {
         crate::fiber::thread_start(teb);
@@ -2503,7 +2503,7 @@ pub(crate) fn teb_of(tid: u32) -> Option<u32> {
 pub(crate) fn thread_cpu(tid: u32) -> Option<(*mut koji::Cpu, (u32, u32))> {
     let g = TEBS.locked();
     let &(_, _, t) = g.iter().find(|e| e.0 == tid)?;
-    let t = unsafe { &*(t as *const crate::Thread) };
+    let t = unsafe { &*std::ptr::with_exposed_provenance::<crate::Thread>(t) };
     Some((t.cpu, t.api))
 }
 /// How many threads run
@@ -3239,7 +3239,7 @@ fn NtQuerySystemTime(c: &mut Ctx) -> u32 {
     0
 }
 fn RtlTimeToSecondsSince1970(c: &mut Ctx) -> u32 {
-    let s = (get64(c.a(0)) / 10_000_000) as i64 - 11_644_473_600;
+    let s = (get64(c.a(0)) / 10_000_000).cast_signed() - 11_644_473_600;
     if !(0..=i64::from(u32::MAX)).contains(&s) {
         return 0;
     }
@@ -3441,10 +3441,10 @@ fn RtlCompareUnicodeString(c: &mut Ctx) -> u32 {
     for (x, y) in a.iter().zip(&b) {
         let (x, y) = (f(*x), f(*y));
         if x != y {
-            return (i32::from(x) - i32::from(y)) as u32;
+            return (i32::from(x) - i32::from(y)).cast_unsigned();
         }
     }
-    (a.len() as i32 - b.len() as i32) as u32
+    kome::num::lo32(a.len().cast_signed() - b.len().cast_signed())
 }
 /// RtlEqualUnicodeString(a, b, case insensitive)
 fn RtlEqualUnicodeString(c: &mut Ctx) -> u32 {
@@ -4293,12 +4293,12 @@ fn tp_close(h: u32) {
 }
 /// FILETIME* due time -> ms from now (negative: relative 100 ns units)
 fn due_ms(p: u32) -> u64 {
-    let v = get64(p) as i64;
+    let v = get64(p).cast_signed();
     if v < 0 {
         (-v / 10_000).cast_unsigned()
     } else {
-        let now = files::filetime(std::time::SystemTime::now()) as i64;
-        ((v - now).max(0) / 10_000) as u64
+        let now = files::filetime(std::time::SystemTime::now()).cast_signed();
+        ((v - now).max(0) / 10_000).cast_unsigned()
     }
 }
 
@@ -5610,13 +5610,13 @@ fn GetStringTypeExA(c: &mut Ctx) -> u32 {
 }
 fn GetStringTypeW(c: &mut Ctx) -> u32 {
     let (ty, src, n, out) = (c.a(0), c.a(1), c.i(2), c.a(3));
-    let w: Vec<u16> = if n < 0 { wstr(src) } else { (0..n as u32).map(|i| r16(src + 2 * i)).collect() };
+    let w: Vec<u16> = if n < 0 { wstr(src) } else { (0..n.cast_unsigned()).map(|i| r16(src + 2 * i)).collect() };
     string_type(ty, &w, out);
     1
 }
 fn GetStringTypeExW(c: &mut Ctx) -> u32 {
     let (ty, src, n, out) = (c.a(1), c.a(2), c.i(3), c.a(4));
-    let w: Vec<u16> = if n < 0 { wstr(src) } else { (0..n as u32).map(|i| r16(src + 2 * i)).collect() };
+    let w: Vec<u16> = if n < 0 { wstr(src) } else { (0..n.cast_unsigned()).map(|i| r16(src + 2 * i)).collect() };
     string_type(ty, &w, out);
     1
 }
@@ -5727,7 +5727,7 @@ fn CompareStringOrdinal(c: &mut Ctx) -> u32 {
         v.into_iter().map(|u| char::from_u32(u32::from(u)).filter(|ch| !ch.is_ascii() || ch.is_ascii_lowercase()).and_then(|ch| {
             let mut it = ch.to_uppercase();
             match (it.next(), it.next()) {
-                (Some(x), None) if (x as u32) < 0x10000 => Some(x as u16),
+                (Some(x), None) if u32::from(x) < 0x10000 => Some(kome::num::lo16(u32::from(x))),
                 _ => None,
             }
         }).unwrap_or(u)).collect()
@@ -5736,14 +5736,14 @@ fn CompareStringOrdinal(c: &mut Ctx) -> u32 {
 }
 fn CompareStringW(c: &mut Ctx) -> u32 {
     let (flags, s1, n1, s2, n2) = (c.a(1), c.a(2), c.i(3), c.a(4), c.i(5));
-    let rd = |p: u32, n: i32| -> Vec<u16> { if n < 0 { wstr(p) } else { (0..n as u32).map(|i| r16(p + 2 * i)).take_while(|&x| x != 0).collect() } };
+    let rd = |p: u32, n: i32| -> Vec<u16> { if n < 0 { wstr(p) } else { (0..n.cast_unsigned()).map(|i| r16(p + 2 * i)).take_while(|&x| x != 0).collect() } };
     csr(crate::collate::compare(&rd(s1, n1), &rd(s2, n2), flags))
 }
 /// A date/time picture (GetDateFormat/GetTimeFormat) into text: fields are runs of one letter,
 /// '...' is literal text ('' a quote). `skip` drops fields of those letters with the literal
 /// text before them (TIME_NOSECONDS and the like).
 fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> String {
-    let (y, mo, dow, d, h, mi, sec) = (u32::from(st[0]), u32::from(st[1]), st[2] as usize % 7, u32::from(st[3]), u32::from(st[4]), u32::from(st[5]), u32::from(st[6]));
+    let (y, mo, dow, d, h, mi, sec) = (u32::from(st[0]), u32::from(st[1]), usize::from(st[2]) % 7, u32::from(st[3]), u32::from(st[4]), u32::from(st[5]), u32::from(st[6]));
     enum Item {
         Lit(String),
         Field(char, usize),
@@ -5819,8 +5819,8 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
                     'd' if n >= 4 => if ja { format!("{}曜日", JA_DAYS[dow]) } else { EN_DAYS[dow].into() },
                     'd' if n == 3 => if ja { JA_DAYS[dow].into() } else { EN_DAYS[dow][..3].into() },
                     'd' => num(d),
-                    'M' if n >= 4 => if ja { format!("{mo}月") } else { EN_MONTHS[(mo as usize + 11) % 12].into() },
-                    'M' if n == 3 => if ja { mo.to_string() } else { EN_MONTHS[(mo as usize + 11) % 12][..3].into() },
+                    'M' if n >= 4 => if ja { format!("{mo}月") } else { EN_MONTHS[kome::num::us(mo).wrapping_add(11) % 12].into() },
+                    'M' if n == 3 => if ja { mo.to_string() } else { EN_MONTHS[kome::num::us(mo).wrapping_add(11) % 12][..3].into() },
                     'M' => num(mo),
                     'y' if n == 1 => (y % 100).to_string(),
                     'y' if n == 2 => format!("{:02}", y % 100),
@@ -5897,7 +5897,7 @@ fn date_time_format(c: &mut Ctx, date: bool, wide: bool) -> u32 {
         }
     }
     let text = format_picture(&picture, st, ja, &skip, !date && flags & 8 != 0);
-    let n = if wide { text.encode_utf16().count() } else { crate::text::s2a(&text).len() } as u32 + 1;
+    let n = kome::num::u32_of(if wide { text.encode_utf16().count() } else { crate::text::s2a(&text).len() }) + 1;
     if cap == 0 {
         return n;
     }
@@ -5962,7 +5962,7 @@ fn lstrcatA(c: &mut Ctx) -> u32 {
     let d = cstr(c.a(0));
     let s = cstr(c.a(1));
     mem::write(c.a(0) + kome::num::u32_of(d.len()), &s);
-    w8(c.a(0) + (d.len() + s.len()) as u32, 0);
+    w8(c.a(0) + kome::num::u32_of(d.len() + s.len()), 0);
     c.a(0)
 }
 fn lstrcatW(c: &mut Ctx) -> u32 {
@@ -6074,7 +6074,7 @@ impl Atoms {
     fn name(&self, a: u32) -> Option<String> {
         match a {
             1..=0xbfff => Some(format!("#{a}")),
-            _ => self.0.get(a.checked_sub(0xc000)? as usize)?.as_ref().map(|(n, _)| n.clone()),
+            _ => self.0.get(kome::num::us(a.checked_sub(0xc000)?))?.as_ref().map(|(n, _)| n.clone()),
         }
     }
 }
@@ -6244,7 +6244,7 @@ pub(crate) fn write_systemtime(p: u32, secs: i64, ms: u32) {
     let y = if m <= 2 { y + 1 } else { y };
     w16(p, kome::num::lo16(y));
     w16(p + 2, kome::num::lo16(m));
-    w16(p + 4, ((days + 4).rem_euclid(7)) as u16);
+    w16(p + 4, kome::num::lo16((days + 4).rem_euclid(7)));
     w16(p + 6, kome::num::lo16(d));
     w16(p + 8, kome::num::lo16(rem / 3600));
     w16(p + 10, kome::num::lo16(rem / 60 % 60));
@@ -6341,8 +6341,8 @@ fn tz_transition(p: u32, year: i64) -> Option<i64> {
 }
 /// The bias (minutes, UTC = local + bias) in effect at `t` (a FILETIME, UTC or local).
 fn tz_bias_at(z: u32, t: i64, utc: bool) -> i64 {
-    let bias = i64::from(r32(z) as i32);
-    let (std_b, dst_b) = (i64::from(r32(z + 84) as i32), i64::from(r32(z + 168) as i32));
+    let bias = i64::from(r32(z).cast_signed());
+    let (std_b, dst_b) = (i64::from(r32(z + 84).cast_signed()), i64::from(r32(z + 168).cast_signed()));
     let st = mem::heap_alloc(16, true);
     write_systemtime(st, t.div_euclid(10_000_000) - 11_644_473_600, 0);
     let year = i64::from(r16(st));
@@ -6526,7 +6526,7 @@ fn module_name(h: u32, wide: bool, dst: u32, cap: u32) -> u32 {
         last_error(126);
         return 0;
     };
-    let n = if wide { path.encode_utf16().count() } else { crate::text::s2a(&path).len() } as u32;
+    let n = kome::num::u32_of(if wide { path.encode_utf16().count() } else { crate::text::s2a(&path).len() });
     if n >= cap {
         // cut short: cap-1 characters and a 0, and cap (Windows Server 2025, winref fmt;
         // Windows XP left A without the 0)
@@ -7405,7 +7405,7 @@ fn SetFilePointer(c: &mut Ctx) -> u32 {
         last_error(6);
         return 0xffff_ffff;
     };
-    let off = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo.cast_signed()) };
+    let off = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32).cast_signed() } else { i64::from(lo.cast_signed()) };
     let pos = match how {
         0 => SeekFrom::Start(off.cast_unsigned()),
         1 => SeekFrom::Current(off),
@@ -7430,7 +7430,7 @@ fn SetFilePointerEx(c: &mut Ctx) -> u32 {
     let (h, off, out, how) = if mem::x64() {
         (c.a(0), c.a64(1).cast_signed(), c.a(2), c.a(3))
     } else {
-        (c.a(0), (u64::from(c.a(1)) | u64::from(c.a(2)) << 32) as i64, c.a(3), c.a(4))
+        (c.a(0), (u64::from(c.a(1)) | u64::from(c.a(2)) << 32).cast_signed(), c.a(3), c.a(4))
     };
     let Some(f) = obj::file(h) else { return 0 };
     let pos = match how {
@@ -8532,7 +8532,7 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
             let r = ret_str(buf, cap, &w, wide);
             if part != 0 {
                 let dir = &w[..w.rfind('\\').map_or(0, |i| i + 1)];
-                let off = if wide { 2 * dir.encode_utf16().count() } else { crate::text::s2a(dir).len() } as u32;
+                let off = kome::num::u32_of(if wide { 2 * dir.encode_utf16().count() } else { crate::text::s2a(dir).len() });
                 // (pointer-sized; only when the name fitted)
                 if r < cap {
                     mem::putp(part, buf + off);
@@ -8828,7 +8828,7 @@ fn mapped_file_name(c: &mut Ctx, wide: bool) -> u32 {
     match found {
         Ok(p) => {
             let p = device_path(&p);
-            let n = if wide { p.encode_utf16().count() } else { crate::text::s2a(&p).len() } as u32;
+            let n = kome::num::u32_of(if wide { p.encode_utf16().count() } else { crate::text::s2a(&p).len() });
             put_name(dst, cap, &p, wide);
             n.min(cap)
         }
@@ -8853,7 +8853,7 @@ fn image_file_name(c: &mut Ctx, wide: bool) -> u32 {
     }
     let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
     let p = device_path(&exe);
-    let n = if wide { p.encode_utf16().count() } else { crate::text::s2a(&p).len() } as u32;
+    let n = kome::num::u32_of(if wide { p.encode_utf16().count() } else { crate::text::s2a(&p).len() });
     if n >= cap || dst == 0 {
         last_error(122);
         return 0;
@@ -8877,7 +8877,7 @@ fn full_image_name(c: &mut Ctx, wide: bool) -> u32 {
         return 0;
     }
     let p = exe_path(flags == 1);
-    let n = if wide { p.encode_utf16().count() } else { crate::text::s2a(&p).len() } as u32;
+    let n = kome::num::u32_of(if wide { p.encode_utf16().count() } else { crate::text::s2a(&p).len() });
     if n >= r32(psize) || dst == 0 {
         last_error(122);
         return 0;
@@ -9516,7 +9516,7 @@ pub fn init() {
         implement(d, "QueryFullProcessImageNameW", QueryFullProcessImageNameW);
     }
     for (n, f) in [
-        ("EnumProcessModules", K32EnumProcessModules as crate::api::Handler),
+        ("EnumProcessModules", crate::api::handler(K32EnumProcessModules)),
         ("EnumProcessModulesEx", K32EnumProcessModulesEx),
         ("EnumProcesses", K32EnumProcesses),
         ("GetPerformanceInfo", K32GetPerformanceInfo),
@@ -9725,7 +9725,7 @@ pub fn init() {
     implement("ntdll", "TpReleasePool", CloseThreadpool);
     implement("ntdll", "TpSetPoolMaxThreads", SetThreadpoolThreadMaximum);
     implement("ntdll", "TpSetPoolMinThreads", TpSetPoolMinThreads);
-    for (n, f) in [("SuspendThread", NtSuspendThread as crate::api::Handler), ("ResumeThread", NtResumeThread), ("SuspendProcess", NtSuspendProcess), ("ResumeProcess", NtResumeProcess), ("ReadVirtualMemory", NtReadVirtualMemory), ("WriteVirtualMemory", NtWriteVirtualMemory)] {
+    for (n, f) in [("SuspendThread", crate::api::handler(NtSuspendThread)), ("ResumeThread", NtResumeThread), ("SuspendProcess", NtSuspendProcess), ("ResumeProcess", NtResumeProcess), ("ReadVirtualMemory", NtReadVirtualMemory), ("WriteVirtualMemory", NtWriteVirtualMemory)] {
         implement("ntdll", &format!("Nt{n}"), f);
         implement("ntdll", &format!("Zw{n}"), f);
     }
@@ -9893,7 +9893,8 @@ mod version_tests {
         /// The other fields are compared on their own.
         #[test]
         fn single_fields(cur in 0u32..5, want in 0u32..5, c in 0u8..8, field in 0usize..3) {
-            let (bit, set): (u32, fn(&mut OsVer, u32)) = [(4u32, (|v: &mut OsVer, x| v.build = x) as fn(&mut OsVer, u32)), (8, |v, x| v.platform = x), (0x80, |v, x| v.product = kome::num::lo8(x))][field];
+            let sets: [(u32, fn(&mut OsVer, u32)); 3] = [(4u32, |v, x| v.build = x), (8, |v, x| v.platform = x), (0x80, |v, x| v.product = kome::num::lo8(x))];
+            let (bit, set) = sets[field];
             let (mut a, mut b) = (OS_VERSION, OS_VERSION);
             set(&mut a, cur);
             set(&mut b, want);
@@ -10512,7 +10513,7 @@ mod virtual_ex {
             let buf = mem::heap_alloc(64, true);
             let a = call(VirtualAlloc, &[0, mem::PAGE, 0x3000, 4]);
             let before = state(a, buf);
-            for (f, args) in [(VirtualAllocEx as crate::api::Handler, vec![h, 0, mem::PAGE, 0x3000, 4]), (VirtualProtectEx, vec![h, a, mem::PAGE, PROTS[p], buf + 40]), (VirtualFreeEx, vec![h, a, 0, 0x8000])] {
+            for (f, args) in [(crate::api::handler(VirtualAllocEx), vec![h, 0, mem::PAGE, 0x3000, 4]), (VirtualProtectEx, vec![h, a, mem::PAGE, PROTS[p], buf + 40]), (VirtualFreeEx, vec![h, a, 0, 0x8000])] {
                 last_error(0);
                 prop_assert_eq!(call(f, &args), 0);
                 prop_assert_eq!(get_last_error(), 6);
@@ -10593,7 +10594,7 @@ mod drive_tests {
         #[test]
         fn drive_answers_agree(root in "\\PC{0,8}", l in 0u8..26, lower in any::<bool>()) {
             prop_assert!([DRIVE_NO_ROOT_DIR, DRIVE_FIXED, DRIVE_CDROM].contains(&drive_type(Some(&root))));
-            let c = if lower { b'a' + l } else { b'A' + l } as char;
+            let c = char::from(if lower { b'a' + l } else { b'A' + l });
             let listed = logical_drives() & (1 << l) != 0;
             prop_assert_eq!(drive_type(Some(&format!("{c}:\\"))) != DRIVE_NO_ROOT_DIR, listed);
             let strings = drive_strings();

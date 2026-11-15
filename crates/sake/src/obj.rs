@@ -848,7 +848,7 @@ mod wait_tests {
             .iter()
             .map(|s| match *s {
                 Spec::Event { manual, set } => add(Obj::Event { manual, set }),
-                Spec::Mutex(k) => add(Obj::Mutex { owner: [0, me, me + 0x1000, ABANDONED][kome::num::us(k)], count: (k == 1) as u32 }),
+                Spec::Mutex(k) => add(Obj::Mutex { owner: [0, me, me + 0x1000, ABANDONED][kome::num::us(k)], count: u32::from(k == 1) }),
                 Spec::Sem(count) => add(Obj::Semaphore { count, max: 4 }),
                 Spec::Bad => 0x7ff0_0000,
                 Spec::NoSync => {

@@ -24,6 +24,10 @@ pub const EXIT_TRAP: u32 = 0xffff_0020;
 pub const SEH64_TRAP: u32 = 0xffff_0030;
 
 pub type Handler = fn(&mut Ctx) -> u32;
+/// `f` as a Handler (a fn item coerced: the first of a list of them gives the list its type)
+pub const fn handler(f: Handler) -> Handler {
+    f
+}
 
 pub struct Ctx<'a> {
     pub cpu: &'a mut Cpu,
@@ -102,7 +106,7 @@ impl Ctx<'_> {
     pub fn pt(&self, i: u32) -> (i32, i32) {
         if crate::mem::x64() {
             let v = self.a64(i);
-            return (kome::num::lo32(v) as i32, kome::num::lo32(v >> 32) as i32);
+            return (kome::num::lo32(v).cast_signed(), kome::num::lo32(v >> 32).cast_signed());
         }
         (self.i(i), self.i(i + 1))
     }
@@ -135,7 +139,7 @@ impl Ctx<'_> {
         crate::call(self.cpu, f, args)
     }
     pub fn i(&self, i: u32) -> i32 {
-        self.a(i) as i32
+        self.a(i).cast_signed()
     }
     /// The double at 32-bit stack slots i, i+1 (x64: argument i/2, the double's register)
     pub fn f64(&self, i: u32) -> f64 {
@@ -179,7 +183,25 @@ fn yields(name: &str) -> u8 {
 static ENTRIES: RwLock<Vec<Entry>> = RwLock::new(Vec::new());
 
 /// Entries at most: their traps stay below RET_TRAP (the traps past it are the run loop's own).
-const MAX_ENTRIES: usize = ((RET_TRAP - TRAP_LO) / 4) as usize;
+const MAX_ENTRIES: usize = const_us((RET_TRAP - TRAP_LO) / 4);
+/// A u32 as usize in a const (kome::num::us is not a const fn): its bytes, little-endian.
+const fn const_us(x: u32) -> usize {
+    const _: () = assert!(std::mem::size_of::<usize>() >= 4);
+    let [a, b, c, d] = x.to_le_bytes();
+    let mut w = [0u8; std::mem::size_of::<usize>()];
+    w[0] = a;
+    w[1] = b;
+    w[2] = c;
+    w[3] = d;
+    usize::from_le_bytes(w)
+}
+#[cfg(test)]
+#[test]
+fn const_us_is_us() {
+    for x in [0, 1, 0xff, 0x100, 0xdead_beef, u32::MAX, (RET_TRAP - TRAP_LO) / 4] {
+        assert_eq!(const_us(x), kome::num::us(x));
+    }
+}
 
 /// What `dispatch` reads of an entry, without a lock (review C-1: the RwLock's reader count,
 /// one cache line written by every call of every guest thread). Slots in chunks of
@@ -187,7 +209,8 @@ const MAX_ENTRIES: usize = ((RET_TRAP - TRAP_LO) / 4) as usize;
 /// only under ENTRIES' write lock (`publish`), read with Acquire. `tag` and `data` are the
 /// handler's own (`set_tag`: a COM method's id, a GL function), 0 when none.
 struct Hot {
-    f: AtomicUsize,
+    /// (a leaked Box: a handler a reader may still be calling is never freed; null: none)
+    f: AtomicPtr<Handler>,
     meta: AtomicU32,
     tag: AtomicU32,
     data: AtomicUsize,
@@ -230,7 +253,7 @@ fn hot_slot(i: usize, make: bool) -> Option<&'static Hot> {
         if !make {
             return None;
         }
-        let chunk: Box<[Hot]> = (0..HOT_CHUNK).map(|_| Hot { f: AtomicUsize::new(0), meta: AtomicU32::new(0), tag: AtomicU32::new(0), data: AtomicUsize::new(0) }).collect();
+        let chunk: Box<[Hot]> = (0..HOT_CHUNK).map(|_| Hot { f: AtomicPtr::new(std::ptr::null_mut()), meta: AtomicU32::new(0), tag: AtomicU32::new(0), data: AtomicUsize::new(0) }).collect();
         p = Box::leak(chunk).as_mut_ptr();
         c.store(p, Ordering::Release);
     }
@@ -240,7 +263,8 @@ fn hot_slot(i: usize, make: bool) -> Option<&'static Hot> {
 /// Entry `i` (of `e`, ENTRIES write-locked) into the hot table.
 fn publish(i: usize, e: &Entry) {
     let s = hot_slot(i, true).expect("trap index in range");
-    s.f.store(e.f.map_or(0, |f| f as usize), Ordering::Relaxed);
+    // (Release: the Box's handler is written before a reader that sees its pointer reads it)
+    s.f.store(e.f.map_or(std::ptr::null_mut(), |f| Box::into_raw(Box::new(f))), Ordering::Release);
     s.meta.store(Meta::of(e).pack(), Ordering::Release);
 }
 
@@ -248,9 +272,10 @@ fn publish(i: usize, e: &Entry) {
 fn hot(i: usize) -> Option<(Option<Handler>, Meta)> {
     let s = hot_slot(i, false)?;
     let m = Meta::unpack(s.meta.load(Ordering::Acquire))?;
-    let f = s.f.load(Ordering::Relaxed);
-    // (only ever stored from a Handler)
-    let f = (f != 0).then(|| unsafe { std::mem::transmute::<usize, Handler>(f) });
+    let f = s.f.load(Ordering::Acquire);
+    // SAFETY: non-null only from Box::into_raw in publish, never freed (Acquire above pairs
+    // with its Release store)
+    let f = (!f.is_null()).then(|| unsafe { *f });
     Some((f, m))
 }
 
@@ -568,7 +593,7 @@ fn threads_on() -> bool {
             use std::sync::atomic::Ordering::Relaxed;
             let mut out = format!("sake threads at {} ms:", crate::k32::ticks_ms() - 60_000);
             for k in 0..RECENT_THREADS {
-                let pos = RECENT_POS[k].load(Relaxed) as usize;
+                let pos = kome::num::us(RECENT_POS[k].load(Relaxed));
                 if pos == 0 {
                     continue;
                 }
@@ -654,7 +679,7 @@ fn usage(i: u32) {
             });
         }
         if u.len() <= kome::num::us(i) {
-            u.resize(i as usize + 1, 0);
+            u.resize(kome::num::us(i).saturating_add(1), 0);
         }
         u[kome::num::us(i)] += 1;
     }
@@ -710,7 +735,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     if let Some(o) = shirusu.filter(|_| !c.jumped) {
         let ret = match c.edx {
             Some(d) => u64::from(d) << 32 | u64::from(r),
-            None if crate::mem::x64() && r >= 0xffff_f000 => kome::num::lo64(i64::from(r as i32)),
+            None if crate::mem::x64() && r >= 0xffff_f000 => kome::num::lo64(i64::from(r.cast_signed())),
             None if crate::mem::x64() => crate::mem::widen(r),
             None => u64::from(r),
         };
@@ -788,7 +813,7 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
     }
     if sw & SW_THREADS != 0 && let Some(k) = recent_slot(crate::cur().tid) {
         use std::sync::atomic::Ordering::Relaxed;
-        let n = RECENT_POS[k].load(Relaxed) as usize;
+        let n = kome::num::us(RECENT_POS[k].load(Relaxed));
         let r = [i, r32(esp + 4), r32(esp + 8), r32(esp + 12), r32(esp), crate::k32::ticks_ms() - 60_000];
         for (x, v) in RECENT[k][n % RECENT_N].iter().zip(r) {
             x.store(v, Relaxed);
@@ -850,7 +875,7 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
         // pseudo-handles) sign-extended, an address in an image above 4G widened
         let rax = match edx {
             Some(d) => u64::from(d) << 32 | u64::from(r),
-            None if r >= 0xffff_f000 => kome::num::lo64(i64::from(r as i32)),
+            None if r >= 0xffff_f000 => kome::num::lo64(i64::from(r.cast_signed())),
             None => crate::mem::widen(r),
         };
         cpu.set_gpr(EAX, rax);
@@ -1115,7 +1140,7 @@ mod ordinal_tests {
         let mut missing = Vec::new();
         for path in list.split(':') {
             let f = std::fs::read(path).unwrap();
-            let u32at = |o: usize| u32::from_le_bytes(f[o..o + 4].try_into().unwrap()) as usize;
+            let u32at = |o: usize| kome::num::us(u32::from_le_bytes(f[o..o + 4].try_into().unwrap()));
             let u64at = |o: usize| u64::from_le_bytes(f[o..o + 8].try_into().unwrap());
             let pe = u32at(0x3c);
             let wide = u16::from_le_bytes([f[pe + 24], f[pe + 25]]) == 0x20b;
@@ -1198,7 +1223,7 @@ mod hot_tests {
         for (i, x) in e.iter().enumerate() {
             let (f, m) = hot(i).expect("published");
             assert_eq!(m, Meta::of(x), "{}!{}", x.dll, x.name);
-            assert_eq!(f.map(|f| f as usize), x.f.map(|f| f as usize), "{}!{}", x.dll, x.name);
+            assert!(match (f, x.f) { (Some(a), Some(b)) => std::ptr::fn_addr_eq(a, b), (None, None) => true, (Some(_), None) | (None, Some(_)) => false }, "{}!{}", x.dll, x.name);
         }
         // (nothing past them: an entry is published under the write lock)
         assert!(hot(e.len()).is_none());
@@ -1210,7 +1235,7 @@ mod hot_tests {
         let b = host_fn_this("hot_tests_b", h2, 8);
         assert_eq!(args_of(a), (false, 12));
         assert!(is_known(a) && implemented(a));
-        assert_eq!(handler_of(b).map(|f| f as usize), Some(h2 as *const () as usize));
+        assert!(handler_of(b).is_some_and(|f| std::ptr::fn_addr_eq(f, handler(h2))));
         let (_, m) = hot(kome::num::us((b - TRAP_LO) / 4)).unwrap();
         assert!(m.this_arg);
         // (made again: the same trap, its bytes updated)
@@ -1256,7 +1281,7 @@ mod hot_tests {
                         let a = host_fn(&format!("hot_tests_c{w}_{k}"), if k % 2 == 0 { h1 } else { h2 }, 4 * (k % 9));
                         let (f, m) = hot(kome::num::us((a - TRAP_LO) / 4)).unwrap();
                         assert_eq!(m.bytes, 4 * (k % 9));
-                        assert_eq!(f.map(|f| f as usize), Some(if k % 2 == 0 { h1 as *const () as usize } else { h2 as *const () as usize }));
+                        assert!(f.is_some_and(|f| std::ptr::fn_addr_eq(f, handler(if k % 2 == 0 { h1 } else { h2 }))));
                         set_tag(a, k + 1, kome::num::us(k));
                         assert_eq!(tag_of(a), (k + 1, kome::num::us(k)));
                     }

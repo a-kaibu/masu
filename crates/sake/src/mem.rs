@@ -247,7 +247,7 @@ pub fn zero(a: u32, n: u32) {
     while p < end {
         let next = ((p | (u64::from(PAGE) - 1)) + 1).min(end);
         // (inside guest memory: checked above)
-        let s = unsafe { std::slice::from_raw_parts_mut(kome::num::us(p) as *mut u8, kome::num::us(next - p)) };
+        let s = unsafe { std::slice::from_raw_parts_mut(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(p)), kome::num::us(next - p)) };
         if !is_zero(s) {
             s.fill(0);
         }
@@ -535,7 +535,7 @@ fn jit_prot(a: u32, n: u32, prot: u32) {
 pub(crate) fn page_span(off: u32, n: u32, size: u32) -> (u32, u32) {
     let pages = size / PAGE;
     let first = (off / PAGE).min(pages);
-    let last = (u64::from(off) + u64::from(n)).div_ceil(u64::from(PAGE)).min(u64::from(pages)) as u32;
+    let last = kome::num::lo32((u64::from(off) + u64::from(n)).div_ceil(u64::from(PAGE)).min(u64::from(pages)));
     (first, last.max(first))
 }
 
@@ -620,7 +620,7 @@ pub fn accessible(a: u32, n: u32, write: bool, code_too: bool) -> u32 {
         }
         at = u64::from(run) + u64::from(size);
     }
-    (at.min(end) - u64::from(a)) as u32
+    kome::num::lo32(at.min(end) - u64::from(a))
 }
 
 /// Protection of the page at `a` (VirtualProtect), changing it to `prot` for [a, a+n).
@@ -763,7 +763,7 @@ unsafe impl dlmalloc::Allocator for Sys {
         false
     }
     fn free(&self, ptr: *mut u8, _size: usize) -> bool {
-        release(ptr as usize as u32)
+        release(kome::num::lo32(ptr.expose_provenance()))
     }
     fn can_release_part(&self, _flags: u32) -> bool {
         false
@@ -980,7 +980,8 @@ pub fn heap_destroy(heap: u32) -> usize {
 
 pub fn heap_alloc(size: u32, zero: bool) -> u32 {
     let Some(total) = size.checked_add(HDR) else { return 0 };
-    let p = unsafe { HEAP.locked().malloc(us(total), 16) } as usize as u32;
+    let p = unsafe { HEAP.locked().malloc(us(total), 16) }.expose_provenance();
+    let p = kome::num::lo32(p);
     if p == 0 {
         return 0;
     }
@@ -1020,7 +1021,7 @@ pub fn heap_free(p: u32) -> bool {
     w32(p - 4, 0);
     // (c_free: the header's size may be below the chunk's after an in-place shrink)
     let _ = size;
-    unsafe { HEAP.locked().c_free(kome::num::us(p - HDR) as *mut u8) };
+    unsafe { HEAP.locked().c_free(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(p - HDR))) };
     true
 }
 
@@ -1076,12 +1077,12 @@ pub(crate) fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::SeqCst};
     unsafe {
         if p % 4 == 0 {
-            let a = &*(p as *const AtomicU32);
+            let a = &*std::ptr::with_exposed_provenance::<AtomicU32>(p);
             return a.fetch_update(SeqCst, SeqCst, |v| Some(f(v))).unwrap_or_else(|v| v);
         }
         let word = p & !7;
         if p - word <= 4 {
-            let w = &*(word as *const AtomicU64);
+            let w = &*std::ptr::with_exposed_provenance::<AtomicU64>(word);
             let sh = kome::num::lo32(p - word) * 8;
             let m = 0xffff_ffffu64 << sh;
             let mut old = 0;
@@ -1093,8 +1094,8 @@ pub(crate) fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
         }
         static SPLIT: Mutex<()> = Mutex::new(());
         let _g = SPLIT.lock().unwrap_or_else(|e| e.into_inner());
-        let old = (p as *const u32).read_unaligned();
-        (p as *mut u32).write_unaligned(f(old));
+        let old = std::ptr::with_exposed_provenance::<u32>(p).read_unaligned();
+        std::ptr::with_exposed_provenance_mut::<u32>(p).write_unaligned(f(old));
         old
     }
 }
@@ -1416,7 +1417,7 @@ mod tests {
         for off in 0..=12usize {
             let mut b = B([0xaa; 16]);
             b.0[off..off + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
-            let p = b.0.as_mut_ptr() as usize + off;
+            let p = b.0.as_mut_ptr().expose_provenance() + off;
             assert_eq!(rmw32_at(p, |v| v.wrapping_add(0x0101_0101)), 0x1122_3344);
             assert_eq!(u32::from_le_bytes(b.0[off..off + 4].try_into().unwrap()), 0x1223_3445, "offset {off}");
             assert!(b.0[..off].iter().chain(&b.0[off + 4..]).all(|&x| x == 0xaa), "offset {off}");
@@ -1429,13 +1430,13 @@ mod tests {
         #[repr(align(8))]
         struct B([u8; 24]);
         let mut b = Box::new(B([0; 24]));
-        let base = b.0.as_mut_ptr() as usize;
+        let base = b.0.as_mut_ptr().expose_provenance();
         for off in [1usize, 2, 6] {
             let p = base + off;
             let hs: Vec<_> = (0..4).map(|_| std::thread::spawn(move || (0..20000).for_each(|_| { rmw32_at(p, |v| v + 1); }))).collect();
             hs.into_iter().for_each(|h| h.join().unwrap());
-            assert_eq!(unsafe { (p as *const u32).read_unaligned() }, 80000, "offset {off}");
-            unsafe { (p as *mut u32).write_unaligned(0) };
+            assert_eq!(unsafe { std::ptr::with_exposed_provenance::<u32>(p).read_unaligned() }, 80000, "offset {off}");
+            unsafe { std::ptr::with_exposed_provenance_mut::<u32>(p).write_unaligned(0) };
         }
     }
 }

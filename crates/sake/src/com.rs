@@ -383,7 +383,7 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
         assert!(t.2.contains(&m.0.of.0), "com: {}::{} is not a method of {}", m.0.of.0, m.0.name, iface.0);
     }
     let k = mem::ps();
-    let v = mem::heap_alloc(k * t.1.len() as u32, true);
+    let v = mem::heap_alloc(k * kome::num::u32_of(t.1.len()), true);
     for (i, &(name, dwords, kind)) in t.1.iter().enumerate() {
         let found = slot_impl(i, name, impls).map(|m| m.1);
         let f = slot_handler(i, found);
@@ -613,7 +613,7 @@ mod lifetime_tests {
                     prop_assert_eq!(release_obj(o), model[i]);
                 }
                 prop_assert_eq!(refs(o), (model[i] > 0).then_some(model[i]));
-                prop_assert_eq!(freed(o), (model[i] == 0) as usize);
+                prop_assert_eq!(freed(o), usize::from(model[i] == 0));
             }
             for (i, &o) in objs.iter().enumerate() {
                 while model[i] > 0 {

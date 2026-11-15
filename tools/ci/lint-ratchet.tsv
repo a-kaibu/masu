@@ -973,15 +973,11 @@ file	crates/sake/src/apc.rs	cast_possible_truncation	1
 file	crates/sake/src/apc.rs	indexing_slicing	2
 file	crates/sake/src/apc.rs	unwrap_used	4
 file	crates/sake/src/api.rs	arithmetic_side_effects	47
-file	crates/sake/src/api.rs	as_conversions	18
-file	crates/sake/src/api.rs	cast_possible_wrap	5
 file	crates/sake/src/api.rs	expect_used	2
-file	crates/sake/src/api.rs	fn_to_numeric_cast_any	5
 file	crates/sake/src/api.rs	indexing_slicing	28
-file	crates/sake/src/api.rs	masu-transmute	1
 file	crates/sake/src/api.rs	masu-uninit	2
 file	crates/sake/src/api.rs	multiple_unsafe_ops_per_block	1
-file	crates/sake/src/api.rs	undocumented_unsafe_blocks	4
+file	crates/sake/src/api.rs	undocumented_unsafe_blocks	3
 file	crates/sake/src/asfmovie.rs	arithmetic_side_effects	16
 file	crates/sake/src/asfmovie.rs	as_conversions	68
 file	crates/sake/src/asfmovie.rs	cast_possible_truncation	15
@@ -1045,8 +1041,6 @@ file	crates/sake/src/collate.rs	as_conversions	2
 file	crates/sake/src/collate.rs	cast_possible_truncation	1
 file	crates/sake/src/collate.rs	indexing_slicing	4
 file	crates/sake/src/com.rs	arithmetic_side_effects	11
-file	crates/sake/src/com.rs	as_conversions	2
-file	crates/sake/src/com.rs	cast_possible_truncation	1
 file	crates/sake/src/com.rs	indexing_slicing	6
 file	crates/sake/src/com.rs	panic	2
 file	crates/sake/src/comrpc.rs	arithmetic_side_effects	64
@@ -1441,10 +1435,6 @@ file	crates/sake/src/jscript.rs	masu-static_mut	1
 file	crates/sake/src/jscript.rs	ptr_as_ptr	1
 file	crates/sake/src/jscript.rs	unused_result_ok	1
 file	crates/sake/src/k32.rs	arithmetic_side_effects	546
-file	crates/sake/src/k32.rs	as_conversions	44
-file	crates/sake/src/k32.rs	cast_possible_truncation	11
-file	crates/sake/src/k32.rs	cast_possible_wrap	12
-file	crates/sake/src/k32.rs	cast_sign_loss	7
 file	crates/sake/src/k32.rs	indexing_slicing	69
 file	crates/sake/src/k32.rs	let_underscore_must_use	5
 file	crates/sake/src/k32.rs	masu-set_len	3
@@ -1507,8 +1497,6 @@ file	crates/sake/src/mci.rs	let_underscore_must_use	1
 file	crates/sake/src/mci.rs	map_err_ignore	2
 file	crates/sake/src/mci.rs	wildcard_enum_match_arm	4
 file	crates/sake/src/mem.rs	arithmetic_side_effects	126
-file	crates/sake/src/mem.rs	as_conversions	14
-file	crates/sake/src/mem.rs	cast_possible_truncation	4
 file	crates/sake/src/mem.rs	indexing_slicing	12
 file	crates/sake/src/mem.rs	iter_over_hash_type	1
 file	crates/sake/src/mem.rs	let_underscore_must_use	1
@@ -1726,9 +1714,6 @@ file	crates/sake/src/netaddr.rs	cast_possible_truncation	26
 file	crates/sake/src/netaddr.rs	indexing_slicing	9
 file	crates/sake/src/netaddr.rs	unwrap_used	5
 file	crates/sake/src/nt.rs	arithmetic_side_effects	170
-file	crates/sake/src/nt.rs	as_conversions	34
-file	crates/sake/src/nt.rs	cast_possible_truncation	13
-file	crates/sake/src/nt.rs	cast_possible_wrap	4
 file	crates/sake/src/nt.rs	indexing_slicing	49
 file	crates/sake/src/nt.rs	string_slice	1
 file	crates/sake/src/nt.rs	unwrap_used	1
@@ -1738,7 +1723,6 @@ file	crates/sake/src/ntsync.rs	cast_possible_truncation	1
 file	crates/sake/src/ntsync.rs	cast_possible_wrap	7
 file	crates/sake/src/ntsync.rs	cast_sign_loss	6
 file	crates/sake/src/obj.rs	arithmetic_side_effects	14
-file	crates/sake/src/obj.rs	as_conversions	1
 file	crates/sake/src/obj.rs	indexing_slicing	1
 file	crates/sake/src/obj.rs	unwrap_used	4
 file	crates/sake/src/ole.rs	arithmetic_side_effects	72

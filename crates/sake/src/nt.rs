@@ -319,8 +319,8 @@ pub mod via {
         let base = match how {
             0 => 0,
             // FilePositionInformation, FileStandardInformation's EndOfFile
-            1 => mem::r64(query(c, h, 14, 8, &mut s).map_err(file_error)?) as i64,
-            2 => mem::r64(query(c, h, 5, 24, &mut s).map_err(file_error)? + 8) as i64,
+            1 => mem::r64(query(c, h, 14, 8, &mut s).map_err(file_error)?).cast_signed(),
+            2 => mem::r64(query(c, h, 5, 24, &mut s).map_err(file_error)? + 8).cast_signed(),
             _ => return Err(87),
         };
         let p = base.wrapping_add(d);
@@ -340,7 +340,7 @@ pub mod via {
     pub fn set_file_pointer(c: &mut Ctx) -> Option<u32> {
         hooked("NtSetInformationFile").or_else(|| hooked("NtQueryInformationFile"))?;
         let (h, lo, phi, how) = (c.a(0), c.a(1), c.a(2), c.a(3));
-        let d = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo.cast_signed()) };
+        let d = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32).cast_signed() } else { i64::from(lo.cast_signed()) };
         Some(match seek(c, h, d, how) {
             Ok(p) => {
                 put32(phi, kome::num::lo32(p >> 32));
@@ -355,7 +355,7 @@ pub mod via {
     /// SetFilePointerEx(h, distance (2 dwords), &new, method)
     pub fn set_file_pointer_ex(c: &mut Ctx) -> Option<u32> {
         hooked("NtSetInformationFile").or_else(|| hooked("NtQueryInformationFile"))?;
-        let (h, d, out, how) = (c.a(0), (u64::from(c.a(1)) | u64::from(c.a(2)) << 32) as i64, c.a(3), c.a(4));
+        let (h, d, out, how) = (c.a(0), (u64::from(c.a(1)) | u64::from(c.a(2)) << 32).cast_signed(), c.a(3), c.a(4));
         Some(match seek(c, h, d, how) {
             Ok(p) => {
                 if out != 0 {
@@ -487,7 +487,7 @@ fn path_of(oa: u32) -> Option<u32> {
     for (d, dev) in ['C', 'D', 'Z'].into_iter().filter_map(|d| Some((d, crate::k32::drive_device(d)?))) {
         // (s may hold Japanese: compare bytes, the device name is ASCII)
         if s.as_bytes().get(..dev.len()).is_some_and(|p| p.eq_ignore_ascii_case(dev.as_bytes())) {
-            w.splice(0..dev.len(), [d as u16, u16::from(b':')]);
+            w.splice(0..dev.len(), [kome::num::lo16(u32::from(d)), u16::from(b':')]);
         }
     }
     // relative to RootDirectory (a directory handle): under that directory
@@ -702,7 +702,7 @@ fn nt_query_volume_information_file(c: &mut Ctx) -> u32 {
         return 0xc000_0004; // STATUS_INFO_LENGTH_MISMATCH
     }
     let n = (kome::num::u32_of(v.len())).min(len);
-    for (i, b) in v[..n as usize].iter().enumerate() {
+    for (i, b) in v[..kome::num::us(n)].iter().enumerate() {
         mem::w8(out + kome::num::u32_of(i), *b);
     }
     let st = if n < kome::num::u32_of(v.len()) { 0x8000_0005 } else { 0 }; // STATUS_BUFFER_OVERFLOW
@@ -1203,7 +1203,7 @@ pub fn up(u: u16) -> u16 {
         Some(c) => {
             let mut it = c.to_uppercase();
             match (it.next(), it.next()) {
-                (Some(x), None) if (x as u32) < 0x10000 => x as u32 as u16,
+                (Some(x), None) if u32::from(x) < 0x10000 => kome::num::lo16(u32::from(x)),
                 _ => u,
             }
         }
@@ -1291,9 +1291,9 @@ pub fn nt_match(expr: &[u16], name: &[u16]) -> bool {
 /// nt_match as it was (recursive, memoized): the reference of the tests.
 #[cfg(test)]
 fn nt_match_reference(expr: &[u16], name: &[u16]) -> bool {
-    let name = if name == [b'.' as u16, b'.' as u16] { &name[..1] } else { name };
+    let name = if name == [u16::from(b'.'), u16::from(b'.')] { &name[..1] } else { name };
     let (e, n) = (expr.len(), name.len());
-    let lead = name.iter().take_while(|&&c| c == b'.' as u16).count();
+    let lead = name.iter().take_while(|&&c| c == u16::from(b'.')).count();
     // memo[i][j]: expr[i..] against name[j..]
     let mut memo = vec![None::<bool>; (e + 1) * (n + 1)];
     fn go(i: usize, j: usize, x: &[u16], s: &[u16], lead: usize, memo: &mut Vec<Option<bool>>) -> bool {
@@ -1301,7 +1301,7 @@ fn nt_match_reference(expr: &[u16], name: &[u16]) -> bool {
         if let Some(r) = memo[i * (n + 1) + j] {
             return r;
         }
-        let dot = b'.' as u16;
+        let dot = u16::from(b'.');
         let r = if i == e {
             j == n
         } else {
@@ -1398,7 +1398,7 @@ fn dir_entry(p: u32, dc: DirClass, name: &str, m: &kura::fs::Metadata, attrs: u3
     let w: Vec<u16> = name.encode_utf16().collect();
     w32(p + len_at, 2 * kome::num::u32_of(w.len()));
     let n = (2 * kome::num::u32_of(w.len())).min(room.saturating_sub(name_at)) / 2;
-    for (i, &u) in w[..n as usize].iter().enumerate() {
+    for (i, &u) in w[..kome::num::us(n)].iter().enumerate() {
         mem::w16(p + name_at + 2 * kome::num::u32_of(i), u);
     }
     2 * n
@@ -1615,7 +1615,7 @@ pub fn init() {
     implement("ntdll", "RtlNtStatusToDosError", rtl_nt_status_to_dos_error);
     implement("ntdll", "RtlNtStatusToDosErrorNoTeb", rtl_nt_status_to_dos_error);
     for (n, f) in [
-        ("SetInformationThread", nt_set_information_thread as crate::api::Handler),
+        ("SetInformationThread", crate::api::handler(nt_set_information_thread)),
         ("QueryInformationThread", nt_query_information_thread),
         ("QueryInformationProcess", nt_query_information_process),
         ("QueryObject", nt_query_object),
@@ -1625,7 +1625,7 @@ pub fn init() {
     }
     for d in ["ntdll"] {
         for (n, f) in [
-            ("CreateFile", nt_create_file as crate::api::Handler),
+            ("CreateFile", crate::api::handler(nt_create_file)),
             ("OpenFile", nt_open_file),
             ("Close", nt_close),
             ("ReadFile", nt_read_file),
@@ -1908,20 +1908,20 @@ mod dir_class_tests {
 
     #[test]
     fn layouts_as_the_headers() {
-        let len_at = offset_of!(Head, name_len) as u32;
+        let len_at = kome::num::u32_of(offset_of!(Head, name_len));
         assert_eq!(len_at, 60);
         for (class, name_at) in [
-            (1, offset_of!(Dir, name) as u32),
-            (2, offset_of!(Full, name) as u32),
-            (3, offset_of!(Both, name) as u32),
-            (37, offset_of!(IdBoth, name) as u32),
-            (38, offset_of!(IdFull, name) as u32),
-            (60, offset_of!(IdExtd, name) as u32),
-            (63, offset_of!(IdExtdBoth, name) as u32),
-            (78, offset_of!(Id64Extd, name) as u32),
-            (79, offset_of!(Id64ExtdBoth, name) as u32),
-            (80, offset_of!(IdAllExtd, name) as u32),
-            (81, offset_of!(IdAllExtdBoth, name) as u32),
+            (1, kome::num::u32_of(offset_of!(Dir, name))),
+            (2, kome::num::u32_of(offset_of!(Full, name))),
+            (3, kome::num::u32_of(offset_of!(Both, name))),
+            (37, kome::num::u32_of(offset_of!(IdBoth, name))),
+            (38, kome::num::u32_of(offset_of!(IdFull, name))),
+            (60, kome::num::u32_of(offset_of!(IdExtd, name))),
+            (63, kome::num::u32_of(offset_of!(IdExtdBoth, name))),
+            (78, kome::num::u32_of(offset_of!(Id64Extd, name))),
+            (79, kome::num::u32_of(offset_of!(Id64ExtdBoth, name))),
+            (80, kome::num::u32_of(offset_of!(IdAllExtd, name))),
+            (81, kome::num::u32_of(offset_of!(IdAllExtdBoth, name))),
         ] {
             assert_eq!(dir_class_layout(class), Some((name_at, len_at, name_at)), "class {class}");
         }
@@ -1948,16 +1948,16 @@ mod match_review_tests {
     #[test]
     fn longest_masks() {
         let name: Vec<u16> = "a.txt".encode_utf16().collect();
-        let stars = vec![b'*' as u16; 32767];
+        let stars = vec![u16::from(b'*'); 32767];
         assert!(nt_match(&stars, &name));
-        let mut lt = vec![b'<' as u16; 32766];
-        lt.push(b't' as u16);
+        let mut lt = vec![u16::from(b'<'); 32766];
+        lt.push(u16::from(b't'));
         assert!(nt_match(&lt, &name));
-        let q = vec![b'?' as u16; 32767];
+        let q = vec![u16::from(b'?'); 32767];
         assert!(!nt_match(&q, &name));
         // (run on a thread with a small stack, as a wasm worker's: the recursion overflowed it)
         let t = std::thread::Builder::new().stack_size(256 << 10).spawn(move || {
-            let mut m = vec![b'*' as u16; 20000];
+            let mut m = vec![u16::from(b'*'); 20000];
             m.extend("a.txt".encode_utf16());
             nt_match(&m, &"a.txt".encode_utf16().collect::<Vec<_>>())
         });
@@ -1970,8 +1970,8 @@ mod match_review_tests {
         /// periods: the table answers as the recursive matcher did.
         #[test]
         fn table_is_the_recursive_matcher(e in proptest::collection::vec(prop::sample::select(vec!['*', '<', '>', '?', '"', '.', 'a', 'B', 'c']), 0..10), n in proptest::collection::vec(prop::sample::select(vec!['.', 'a', 'b', 'C']), 0..10)) {
-            let e: Vec<u16> = e.iter().map(|&c| c as u16).collect();
-            let n: Vec<u16> = n.iter().map(|&c| c as u16).collect();
+            let e: Vec<u16> = e.iter().map(|&c| kome::num::lo16(u32::from(c))).collect();
+            let n: Vec<u16> = n.iter().map(|&c| kome::num::lo16(u32::from(c))).collect();
             prop_assert_eq!(nt_match(&e, &n), nt_match_reference(&e, &n), "{:?} {:?}", String::from_utf16_lossy(&e), String::from_utf16_lossy(&n));
         }
     }
