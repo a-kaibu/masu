@@ -2475,7 +2475,7 @@ fn InterlockedCompareExchange(c: &mut Ctx) -> u32 {
 }
 
 // TLS slots: TEB+0xE10 (64), then TEB+0xF94 -> 1024 more
-static TLS_USED: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+static TLS_USED: Mutex<Option<crate::tls::Slots>> = Mutex::new(None);
 
 /// The TEBs of the running threads (TlsFree clears its slot in each)
 /// (by thread id)
@@ -2484,33 +2484,33 @@ static TEBS: Mutex<Vec<(u32, u32, usize)>> = Mutex::new(Vec::new());
 
 pub fn tls_thread_init(teb: u32) {
     let t = crate::cur();
-    TEBS.lock().unwrap_or_else(|e| e.into_inner()).push((t.tid, teb, t as *mut crate::Thread as usize));
+    TEBS.locked().push((t.tid, teb, t as *mut crate::Thread as usize));
     // (the first thread's comes once its image says 32 or 64 bit: crate::run)
     if crate::fiber::READY.load(std::sync::atomic::Ordering::Acquire) {
         crate::fiber::thread_start(teb);
     }
 }
 pub(crate) fn tls_thread_exit(teb: u32) {
-    TEBS.lock().unwrap_or_else(|e| e.into_inner()).retain(|&(_, t, _)| t != teb);
+    TEBS.locked().retain(|&(_, t, _)| t != teb);
 }
 /// The running threads: (tid, TEB, crate::Thread)
 pub(crate) fn thread_list() -> Vec<(u32, u32, usize)> {
-    TEBS.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    TEBS.locked().clone()
 }
 /// The TEB of running thread `tid`
 pub(crate) fn teb_of(tid: u32) -> Option<u32> {
-    TEBS.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|e| e.0 == tid).map(|e| e.1)
+    TEBS.locked().iter().find(|e| e.0 == tid).map(|e| e.1)
 }
 /// Running thread `tid`'s CPU and the API call it is in (crate::Thread's `api`)
 pub(crate) fn thread_cpu(tid: u32) -> Option<(*mut koji::Cpu, (u32, u32))> {
-    let g = TEBS.lock().unwrap_or_else(|e| e.into_inner());
+    let g = TEBS.locked();
     let &(_, _, t) = g.iter().find(|e| e.0 == tid)?;
     let t = unsafe { &*(t as *const crate::Thread) };
     Some((t.cpu, t.api))
 }
 /// How many threads run
 pub(crate) fn thread_count() -> usize {
-    TEBS.lock().unwrap_or_else(|e| e.into_inner()).len()
+    TEBS.locked().len()
 }
 
 fn tls_slot(i: u32) -> u32 {
@@ -2519,59 +2519,43 @@ fn tls_slot(i: u32) -> u32 {
 /// Where TLS slot `i` of the thread of `teb` is (its expansion slots made if `make`; else 0
 /// when there are none)
 fn tls_slot_of(teb: u32, i: u32, make: bool) -> u32 {
-    let (slots, exp, k) = if mem::x64() { (0x1480, 0x1780, 8) } else { (0xe10, 0xf94, 4) };
-    if i < 64 {
-        return teb + slots + k * i;
-    }
-    let mut ex = r32(teb + exp);
-    if ex == 0 {
-        if !make {
-            return 0;
+    match crate::tls::place(mem::x64(), i) {
+        crate::tls::Place::Teb(off) => teb + off,
+        crate::tls::Place::Expansion { table, off } => {
+            let mut ex = r32(teb + table);
+            if ex == 0 {
+                if !make {
+                    return 0;
+                }
+                ex = mem::heap_alloc(1024 * mem::ps(), true);
+                mem::wp(teb + table, ex);
+            }
+            ex + off
         }
-        ex = mem::heap_alloc(1024 * k, true);
-        mem::wp(teb + exp, ex);
     }
-    ex + k * (i - 64)
 }
-/// (slot 0 is never given out, as on XP SP2 and later: kernel32:thread test_reserved_tls)
 fn TlsAlloc(_: &mut Ctx) -> u32 {
-    let mut u = TLS_USED.locked();
-    if u.is_empty() {
-        u.resize(1088, false);
-        u[0] = true;
-    }
-    match u.iter().position(|x| !x) {
-        Some(i) => {
-            u[i] = true;
-            i as u32
-        }
-        None => 0xffff_ffff,
-    }
+    TLS_USED.locked().get_or_insert_with(Default::default).alloc().unwrap_or(0xffff_ffff)
 }
 /// TlsFree: the slot is cleared in every thread (ThreadZeroTlsCell); freeing one that is not
 /// allocated (twice, say) is ERROR_INVALID_PARAMETER.
 fn TlsFree(c: &mut Ctx) -> u32 {
     let i = c.a(0);
-    match TLS_USED.locked().get_mut(i as usize) {
-        Some(x) if *x && i != 0 => {
-            *x = false;
-            for &(_, teb, _) in TEBS.lock().unwrap_or_else(|e| e.into_inner()).iter() {
-                let p = tls_slot_of(teb, i, false);
-                if p != 0 {
-                    mem::wp(p, 0);
-                }
-            }
-            1
-        }
-        _ => {
-            last_error(87);
-            0
+    if !TLS_USED.locked().get_or_insert_with(Default::default).free(i) {
+        last_error(87);
+        return 0;
+    }
+    for &(_, teb, _) in TEBS.locked().iter() {
+        let p = tls_slot_of(teb, i, false);
+        if p != 0 {
+            mem::wp(p, 0);
         }
     }
+    1
 }
 fn TlsGetValue(c: &mut Ctx) -> u32 {
     let i = c.a(0);
-    if i >= 1088 {
+    if i >= crate::tls::SLOTS {
         last_error(87);
         return 0;
     }
@@ -2580,7 +2564,7 @@ fn TlsGetValue(c: &mut Ctx) -> u32 {
 }
 fn TlsSetValue(c: &mut Ctx) -> u32 {
     let i = c.a(0);
-    if i >= 1088 {
+    if i >= crate::tls::SLOTS {
         last_error(87);
         return 0;
     }
