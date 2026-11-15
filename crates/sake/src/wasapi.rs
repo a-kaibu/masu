@@ -30,7 +30,6 @@ use crate::HashMap;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Hr {
     Pointer,
-    NoInterface,
     InvalidArg,
     Unexpected,
     /// HRESULT_FROM_WIN32(RPC_X_NULL_REF_POINTER): the session interfaces' NULL pointer error
@@ -57,7 +56,6 @@ impl Hr {
     pub(crate) const fn code(self) -> u32 {
         match self {
             Hr::Pointer => crate::hresult::E_POINTER,
-            Hr::NoInterface => crate::hresult::E_NOINTERFACE,
             Hr::InvalidArg => crate::hresult::E_INVALIDARG,
             Hr::Unexpected => crate::hresult::E_UNEXPECTED,
             Hr::NullRef => 0x8007_06f4,
