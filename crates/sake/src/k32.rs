@@ -10198,8 +10198,8 @@ mod mapping_names {
     fn host_file(bytes: &[u8]) -> (std::path::PathBuf, u32) {
         static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let p = std::env::temp_dir().join(format!("sake-map-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-        std::fs::write(&p, bytes).unwrap();
-        let win = format!("Z:{}", p.to_str().unwrap().replace('/', "\\"));
+        assert!(std::fs::write(&p, bytes).is_ok(), "write {}", p.display());
+        let win = format!("Z:{}", p.display().to_string().replace('/', "\\"));
         (p, cstr_arg(&win))
     }
     fn open_file(name: u32) -> u32 {
@@ -10396,7 +10396,7 @@ mod mapping_names {
                         mem::w32(view(h), v);
                         sections[s].1 = v;
                     }
-                    _ => {}
+                    Op::Close(_) | Op::Write(..) => {}
                 }
             }
             for (h, _) in handles { obj::close(h); }
