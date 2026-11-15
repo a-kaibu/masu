@@ -6,7 +6,6 @@
 //! per table (a `br_table` on the index). Edges that would make the graph irreducible leave
 //! the function.
 
-use kome::num::*;
 use super::*;
 
 /// The jump table of `jmp [index*4 + table]`.

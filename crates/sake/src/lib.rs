@@ -53,6 +53,7 @@ pub mod guest;
 pub mod crt;
 pub mod com;
 pub mod hresult;
+mod env;
 pub mod d2d;
 pub mod d3dx9;
 pub mod d3dxof;

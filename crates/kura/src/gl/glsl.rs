@@ -3,7 +3,6 @@
 //! values are kept by name and laid out into each stage's block at every draw.
 
 
-use kome::num::*;
 use super::*;
 
 pub(crate) struct Shader {

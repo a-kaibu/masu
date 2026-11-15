@@ -2,6 +2,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::env::Env;
 use kome::locks::{Lock as _, Rw as _};
 use crate::xmem;
 use crate::HashMap;
@@ -133,95 +134,24 @@ fn GetCommandLineW(_: &mut Ctx) -> u32 {
     CMDLINE.locked().1
 }
 
-/// The process environment, in the order Windows keeps it (sorted, case-insensitively).
-/// Besides the defaults, the guest sees the host's WINETEST_* variables (what Wine passes its
-/// tests) and the NAME=VALUE pairs of SAKE_GUEST_ENV (`;` between them).
-static ENV: Mutex<Option<Vec<(String, String)>>> = Mutex::new(None);
+/// The process environment (crate::env::Env: the rules are pure functions there). Besides the
+/// defaults, the guest sees the host's WINETEST_* variables (what Wine passes its tests) and the
+/// NAME=VALUE pairs of SAKE_GUEST_ENV (`;` between them).
+static ENV: Mutex<Option<Env>> = Mutex::new(None);
 
-fn with_env<R>(f: impl FnOnce(&mut Vec<(String, String)>) -> R) -> R {
+fn with_env<R>(f: impl FnOnce(&mut Env) -> R) -> R {
     let mut g = ENV.locked();
-    let e = g.get_or_insert_with(|| {
-        let mut e: Vec<(String, String)> = [
-            ("PATH", "C:\\windows\\system32;C:\\windows"),
-            ("TEMP", "C:\\windows\\temp"),
-            ("TMP", "C:\\windows\\temp"),
-            ("windir", "C:\\windows"),
-            ("SystemRoot", "C:\\windows"),
-            ("OS", "Windows_NT"),
-            ("COMPUTERNAME", "SAKE"),
-            ("USERNAME", "user"),
-            // (where SHGetFolderPath's folders are)
-            ("USERPROFILE", "C:\\users\\user"),
-            ("HOMEDRIVE", "C:"),
-            ("HOMEPATH", "\\users\\user"),
-            ("APPDATA", "C:\\users\\user\\AppData\\Roaming"),
-            ("LOCALAPPDATA", "C:\\users\\user\\AppData\\Local"),
-            ("PUBLIC", "C:\\users\\Public"),
-            ("ProgramData", "C:\\ProgramData"),
-            ("ALLUSERSPROFILE", "C:\\ProgramData"),
-            ("SystemDrive", "C:"),
-        ]
-        .iter()
-        .map(|&(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-        e.extend(wow64_env().iter().map(|&(k, v)| (k.to_string(), v.to_string())));
+    f(g.get_or_insert_with(|| {
         let mut extra: Vec<(String, String)> = std::env::vars().filter(|(k, _)| k.starts_with("WINETEST_")).collect();
         if let Ok(list) = std::env::var("SAKE_GUEST_ENV") {
             extra.extend(list.split(';').filter_map(|kv| kv.split_once('=')).filter(|(k, _)| !k.is_empty()).map(|(k, v)| (k.to_string(), v.to_string())));
         }
-        for (k, v) in extra {
-            env_put(&mut e, &k, Some(&v));
-        }
-        e.sort_by_key(|(k, _)| k.to_ascii_uppercase());
-        e
-    });
-    f(e)
-}
-
-/// The variables 64-bit Windows gives a process by its machine: a 32-bit (WoW64) one has the
-/// 32-bit Program Files as ProgramFiles and the 64-bit one as ProgramW6432.
-pub(crate) fn wow64_env() -> &'static [(&'static str, &'static str)] {
-    const BOTH: [(&str, &str); 4] = [
-        ("ProgramFiles(x86)", "C:\\Program Files (x86)"),
-        ("ProgramW6432", "C:\\Program Files"),
-        ("CommonProgramFiles(x86)", "C:\\Program Files (x86)\\Common Files"),
-        ("CommonProgramW6432", "C:\\Program Files\\Common Files"),
-    ];
-    const X64: [(&str, &str); 7] = [
-        BOTH[0], BOTH[1], BOTH[2], BOTH[3],
-        ("ProgramFiles", "C:\\Program Files"),
-        ("CommonProgramFiles", "C:\\Program Files\\Common Files"),
-        ("PROCESSOR_ARCHITECTURE", "AMD64"),
-    ];
-    const X86: [(&str, &str); 8] = [
-        BOTH[0], BOTH[1], BOTH[2], BOTH[3],
-        ("ProgramFiles", "C:\\Program Files (x86)"),
-        ("CommonProgramFiles", "C:\\Program Files (x86)\\Common Files"),
-        ("PROCESSOR_ARCHITECTURE", "x86"),
-        ("PROCESSOR_ARCHITEW6432", "AMD64"),
-    ];
-    if mem::x64() { &X64 } else { &X86 }
-}
-
-/// Sets (or with None removes) a variable, keeping the order.
-fn env_put(e: &mut Vec<(String, String)>, name: &str, value: Option<&str>) {
-    let key = name.to_ascii_uppercase();
-    let at = e.iter().position(|(k, _)| k.to_ascii_uppercase() == key);
-    match (at, value) {
-        (Some(i), Some(v)) => e[i].1 = v.to_string(),
-        (Some(i), None) => {
-            e.remove(i);
-        }
-        (None, Some(v)) => {
-            let i = e.iter().position(|(k, _)| k.to_ascii_uppercase() > key).unwrap_or(e.len());
-            e.insert(i, (name.to_string(), v.to_string()));
-        }
-        (None, None) => {}
-    }
+        Env::initial(mem::x64(), extra)
+    }))
 }
 
 fn env_block(wide: bool) -> u32 {
-    let s: String = with_env(|e| e.iter().map(|(k, v)| format!("{k}={v}\0")).collect::<String>()) + "\0";
+    let s = with_env(|e| e.block());
     if wide {
         let w: Vec<u16> = s.encode_utf16().collect();
         let p = mem::heap_alloc(2 * mem::len32(w.len()), true);
@@ -255,19 +185,17 @@ fn FreeEnvironmentStringsW(c: &mut Ctx) -> u32 {
 }
 /// The environment as the C runtime sees it: get, set (None removes), all variables.
 pub(crate) fn env_set(name: &str, value: Option<&str>) {
-    with_env(|e| env_put(e, name, value));
+    with_env(|e| e.put(name, value));
 }
-/// The whole environment replaced (a child's, from its parent), kept in Windows' order.
-pub(crate) fn env_replace(mut vars: Vec<(String, String)>) {
-    vars.sort_by_key(|(k, _)| k.to_ascii_uppercase());
-    *ENV.locked() = Some(vars);
+/// The whole environment replaced (a child's, from its parent).
+pub(crate) fn env_replace(vars: Vec<(String, String)>) {
+    *ENV.locked() = Some(Env::of(vars));
 }
 pub(crate) fn env_vars() -> Vec<(String, String)> {
-    with_env(|e| e.clone())
+    with_env(|e| e.vars().to_vec())
 }
 pub fn env_get(name: &str) -> Option<String> {
-    let key = name.to_ascii_uppercase();
-    with_env(|e| e.iter().find(|(k, _)| k.to_ascii_uppercase() == key).map(|(_, v)| v.clone()))
+    with_env(|e| e.get(name).map(str::to_string))
 }
 fn GetEnvironmentVariableA(c: &mut Ctx) -> u32 {
     match env_get(&arg_str(c.a(0), false)) {
@@ -300,7 +228,7 @@ fn set_env(c: &mut Ctx, wide: bool) -> u32 {
         return 0;
     }
     let value = (c.a(1) != 0).then(|| arg_str(c.a(1), wide));
-    with_env(|e| env_put(e, &name, value.as_deref()));
+    with_env(|e| e.put(&name, value.as_deref()));
     1
 }
 fn SetEnvironmentVariableA(c: &mut Ctx) -> u32 {
@@ -311,23 +239,7 @@ fn SetEnvironmentVariableW(c: &mut Ctx) -> u32 {
 }
 /// %NAME% replaced by its value (unknown names stay as written)
 pub(crate) fn expand_env(s: &str) -> String {
-    let mut out = String::new();
-    let mut rest = s;
-    while let Some(i) = rest.find('%') {
-        out += &rest[..i];
-        let after = &rest[i + 1..];
-        match after.find('%').and_then(|j| env_get(&after[..j]).map(|v| (j, v))) {
-            Some((j, v)) => {
-                out += &v;
-                rest = &after[j + 1..];
-            }
-            None => {
-                out.push('%');
-                rest = after;
-            }
-        }
-    }
-    out + rest
+    with_env(|e| e.expand(s))
 }
 /// ExpandEnvironmentStrings(src, dst, size): characters with the terminator, needed or written
 fn expand_env_strings(c: &mut Ctx, wide: bool) -> u32 {

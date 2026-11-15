@@ -959,7 +959,7 @@ fn RegFlushKey(_: &mut Ctx) -> u32 {
 }
 
 /// The values 64-bit Windows keeps apart in its two views of the same key (wow64_key): the
-/// Program Files folders of the view's kind (k32::wow64_env)
+/// Program Files folders of the view's kind (env::wow64)
 fn wow64_value(path: &str, lname: &str, view64: bool) -> Option<&'static str> {
     if path != "hklm\\software\\microsoft\\windows\\currentversion" {
         return None;
@@ -3090,7 +3090,7 @@ pub(crate) fn special_folder(csidl: u32) -> Option<&'static str> {
         0x23 => "C:\\ProgramData",
         0x24 => "C:\\windows",
         // (64-bit Windows: SYSTEMX86 is SysWOW64, PROGRAM_FILES(X86) and their COMMON ones the
-        // 32-bit folders, PROGRAM_FILES the process's own kind's: k32::wow64_env)
+        // 32-bit folders, PROGRAM_FILES the process's own kind's: env::wow64)
         0x25 => "C:\\windows\\system32",
         0x29 => crate::k32::SYSWOW64,
         0x26 if mem::x64() => "C:\\Program Files",
