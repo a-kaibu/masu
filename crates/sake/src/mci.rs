@@ -471,7 +471,7 @@ struct Dev {
     /// `repeat`: from the start again at the end
     repeat: bool,
     /// bumped by every command that changes when the end comes (the waiter's stale check)
-    gen: u32,
+    generation: u32,
     /// paused (not stopped): a play is under way but held (it was the top bit of `gen`)
     paused: bool,
     /// the movie's window (MCI_WINDOW, the open's parent, an MCIWnd) and its place in it
@@ -601,34 +601,34 @@ fn sync_movie(id: DevId) {
 /// the device meanwhile) reports it (notify, repeat, MCIWnd's mode). Each play used to start a
 /// guest thread of its own (and leave its handle open).
 fn arm(id: DevId) {
-    let Some(gen) = dev(id, |d| {
-        d.gen = d.gen.wrapping_add(1);
+    let Some(generation) = dev(id, |d| {
+        d.generation = d.generation.wrapping_add(1);
         d.paused = false;
-        d.gen
+        d.generation
     }) else {
         return;
     };
-    end_check(id, gen);
+    end_check(id, generation);
 }
 
 /// Bumps the generation (a wait in flight gives up), keeping the paused flag.
 fn disarm(id: DevId) {
-    dev(id, |d| d.gen = d.gen.wrapping_add(1));
+    dev(id, |d| d.generation = d.generation.wrapping_add(1));
     crate::pool::TIMERS.cancel(crate::pool::key::MCI | u64::from(id.0));
 }
 
 /// Device `id` under generation `gen`: its end now, or a look again when it is due (in 250 ms
 /// at most: the timeline may change under it).
-fn end_check(id: DevId, gen: u32) {
+fn end_check(id: DevId, generation: u32) {
     loop {
-        let live = dev(id, |d| d.gen == gen && !d.paused()).unwrap_or(false);
+        let live = dev(id, |d| d.generation == generation && !d.paused()).unwrap_or(false);
         if !live {
             return;
         }
         let Some(left) = timeline(id, |tl, t| tl.until_end(t)).flatten() else { return };
         if left > 0 {
             let d = Duration::from_nanos(left * 100).min(Duration::from_millis(250));
-            crate::pool::TIMERS.after(crate::pool::key::MCI | u64::from(id.0), d, Box::new(move |_| end_check(id, gen)));
+            crate::pool::TIMERS.after(crate::pool::key::MCI | u64::from(id.0), d, Box::new(move |_| end_check(id, generation)));
             return;
         }
         // the end: once (a movie's may come from the movie thread first: `ended`)
@@ -732,7 +732,7 @@ fn open(kind: Option<Kind>, element: &str, alias: Option<&str>) -> Result<DevId,
         s.next += 1;
         s.devs.insert(
             id,
-            Dev { kind, alias, element: element.to_string(), media, key, tl: Timeline::new(duration), duration, format: TimeFormat::Ms, notes: Notes::default(), repeat: false, gen: 0, paused: false, hwnd: 0, dst: None, volume: 0, mciwnd: 0 },
+            Dev { kind, alias, element: element.to_string(), media, key, tl: Timeline::new(duration), duration, format: TimeFormat::Ms, notes: Notes::default(), repeat: false, generation: 0, paused: false, hwnd: 0, dst: None, volume: 0, mciwnd: 0 },
         );
         id
     });

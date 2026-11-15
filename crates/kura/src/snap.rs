@@ -107,7 +107,7 @@ pub fn gpu_answer(word: u32, ok: bool) -> bool {
     gpu_state(word) == GPU_DUMP && VNHOST_SNAP.gpu.compare_exchange(word, to, SeqCst, SeqCst).is_ok()
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub static VNHOST_SNAP: Ctl = Ctl {
     magic: u32::from_le_bytes(*b"SNAP"),
     version: 1,
@@ -130,7 +130,7 @@ pub static VNHOST_SNAP: Ctl = Ctl {
 };
 
 /// The page: where [`Ctl`] is.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_snap_ctl() -> *const Ctl {
     &VNHOST_SNAP
 }
@@ -176,7 +176,7 @@ fn add_offset(i: usize, ms: f64) {
 fn raw_clocks() -> [f64; 2] {
     #[cfg(target_os = "emscripten")]
     unsafe {
-        extern "C" {
+        unsafe extern "C" {
             fn emscripten_get_now() -> f64;
             fn emscripten_date_now() -> f64;
         }
@@ -411,7 +411,7 @@ pub fn set_ranges(f: fn(&mut Vec<(u32, u32)>)) {
 fn host_range() -> (u32, u32) {
     #[cfg(target_os = "emscripten")]
     {
-        extern "C" {
+        unsafe extern "C" {
             fn sbrk(n: isize) -> *mut std::ffi::c_void;
         }
         let top = unsafe { sbrk(0) } as usize as u64;
@@ -488,7 +488,7 @@ pub fn start() {
 }
 
 #[cfg(target_arch = "wasm32")]
-extern "C" {
+unsafe extern "C" {
     fn emscripten_futex_wait(addr: *const std::ffi::c_void, val: u32, max_ms: f64) -> i32;
     fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
 }

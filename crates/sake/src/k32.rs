@@ -4246,7 +4246,7 @@ struct Tp {
     queued: u32,
     /// set by every Set / cancel (from one counter for all): a callback queued or a timer or
     /// wait armed under another generation calls nothing
-    gen: u32,
+    generation: u32,
 }
 static TPS: Mutex<Option<HashMap<u32, Tp>>> = Mutex::new(None);
 /// told when a callback ends or a queued one is dropped (WaitForThreadpoolWorkCallbacks)
@@ -4260,8 +4260,8 @@ fn tp_with<R>(f: impl FnOnce(&mut HashMap<u32, Tp>) -> R) -> R {
     f(tp_lock().get_or_insert_with(HashMap::default))
 }
 fn tp_insert(h: u32, cb: u32, ctx: u32) {
-    let gen = TP_GEN.fetch_add(1, Ordering::Relaxed);
-    tp_with(|m| m.insert(h, Tp { cb, ctx, gen, running: 0, queued: 0 }));
+    let generation = TP_GEN.fetch_add(1, Ordering::Relaxed);
+    tp_with(|m| m.insert(h, Tp { cb, ctx, generation, running: 0, queued: 0 }));
 }
 fn tp_new(c: &mut Ctx) -> u32 {
     let h = mem::heap_alloc(16, true);
@@ -4270,19 +4270,19 @@ fn tp_new(c: &mut Ctx) -> u32 {
 }
 /// A new generation for `h` (what was queued or armed before calls nothing); it.
 fn tp_bump(h: u32) -> Option<u32> {
-    let gen = TP_GEN.fetch_add(1, Ordering::Relaxed);
+    let generation = TP_GEN.fetch_add(1, Ordering::Relaxed);
     let r = tp_with(|m| {
         m.get_mut(&h).map(|t| {
-            t.gen = gen;
+            t.generation = generation;
             t.queued = 0;
-            gen
+            generation
         })
     });
     TP_CV.notify_all();
     r
 }
-fn tp_current(h: u32, gen: u32) -> bool {
-    tp_with(|m| m.get(&h).is_some_and(|t| t.gen == gen))
+fn tp_current(h: u32, generation: u32) -> bool {
+    tp_with(|m| m.get(&h).is_some_and(|t| t.generation == generation))
 }
 /// Close*: the object goes (its handle block too; a callback queued for it calls nothing).
 fn tp_close(h: u32) {
@@ -4318,18 +4318,18 @@ enum TpCall {
 }
 
 /// `h`'s callback for a worker, under generation `gen`. False: no worker (nothing queued).
-fn tp_queue(h: u32, gen: u32, call: TpCall) -> bool {
+fn tp_queue(h: u32, generation: u32, call: TpCall) -> bool {
     tp_with(|m| m.get_mut(&h).map(|t| t.queued += 1));
-    if crate::pool::submit(Box::new(move |c| tp_run(c, h, gen, call))) {
+    if crate::pool::submit(Box::new(move |c| tp_run(c, h, generation, call))) {
         return true;
     }
     tp_with(|m| m.get_mut(&h).map(|t| t.queued = t.queued.saturating_sub(1)));
     false
 }
-fn tp_run(c: &mut Ctx, h: u32, gen: u32, call: TpCall) {
+fn tp_run(c: &mut Ctx, h: u32, generation: u32, call: TpCall) {
     let go = tp_with(|m| {
         let t = m.get_mut(&h)?;
-        if t.gen != gen {
+        if t.generation != generation {
             return None;
         }
         t.queued = t.queued.saturating_sub(1);
@@ -4360,8 +4360,8 @@ static ONE_OFF: AtomicU32 = AtomicU32::new(1);
 fn one_off(cb: u32, ctx: u32, call: TpCall) -> u32 {
     let h = ONE_OFF.fetch_add(2, Ordering::Relaxed) | 1;
     tp_insert(h, cb, ctx);
-    let gen = tp_with(|m| m[&h].gen);
-    if tp_queue(h, gen, call) {
+    let generation = tp_with(|m| m[&h].generation);
+    if tp_queue(h, generation, call) {
         return 1;
     }
     tp_with(|m| m.remove(&h));
@@ -4375,22 +4375,22 @@ static WAIT_RUNNING: Mutex<Vec<(u32, u32)>> = Mutex::new(Vec::new());
 /// out) once `obj` is signaled or `ms` passed; again after the callback returns unless
 /// WT_EXECUTEONLYONCE (8); in the wait thread itself with WT_EXECUTEINWAITTHREAD (4), as
 /// Windows runs those, one after the other.
-fn rw_arm(h: u32, gen: u32, obj_h: u32, ms: u32, flags: u32) {
+fn rw_arm(h: u32, generation: u32, obj_h: u32, ms: u32, flags: u32) {
     crate::pool::wait_add(
         u64::from(h),
         obj_h,
         ms,
         Box::new(move |c, r| {
-            if !tp_current(h, gen) {
+            if !tp_current(h, generation) {
                 return;
             }
             let run = move |c: &mut Ctx| {
-                let Some((cb, ctx)) = tp_with(|m| m.get(&h).filter(|t| t.gen == gen).map(|t| (t.cb, t.ctx))) else { return };
+                let Some((cb, ctx)) = tp_with(|m| m.get(&h).filter(|t| t.generation == generation).map(|t| (t.cb, t.ctx))) else { return };
                 WAIT_RUNNING.locked().push((h, crate::cur().tid));
                 c.call(cb, &[ctx, u32::from(r != 0)]);
                 WAIT_RUNNING.locked().retain(|x| x.0 != h);
-                if flags & 8 == 0 && tp_current(h, gen) {
-                    rw_arm(h, gen, obj_h, ms, flags);
+                if flags & 8 == 0 && tp_current(h, generation) {
+                    rw_arm(h, generation, obj_h, ms, flags);
                 }
             };
             if flags & 4 != 0 {
@@ -4407,8 +4407,8 @@ fn RegisterWaitForSingleObject(c: &mut Ctx) -> u32 {
     let h = mem::heap_alloc(16, true);
     tp_insert(h, cb, ctx);
     mem::putp(out, h);
-    let gen = tp_with(|m| m[&h].gen);
-    rw_arm(h, gen, obj_h, ms, flags);
+    let generation = tp_with(|m| m[&h].generation);
+    rw_arm(h, generation, obj_h, ms, flags);
     1
 }
 /// QueueUserWorkItem(function, context, flags): function(context) on a pool worker
@@ -4449,8 +4449,8 @@ fn CreateThreadpoolWork(c: &mut Ctx) -> u32 {
 }
 fn SubmitThreadpoolWork(c: &mut Ctx) -> u32 {
     let h = c.a(0);
-    if let Some(gen) = tp_with(|m| m.get(&h).map(|t| t.gen)) {
-        tp_queue(h, gen, TpCall::Object);
+    if let Some(generation) = tp_with(|m| m.get(&h).map(|t| t.generation)) {
+        tp_queue(h, generation, TpCall::Object);
     }
     0
 }
@@ -4535,20 +4535,20 @@ fn CreateThreadpoolTimer(c: &mut Ctx) -> u32 {
 }
 /// Timer `h` (generation `gen`) due at `at`: its callback for a worker then, and every
 /// `period` ms after (a period missed by far starts over from now).
-fn tp_timer_arm(h: u32, gen: u32, at: std::time::Instant, period: u32) {
+fn tp_timer_arm(h: u32, generation: u32, at: std::time::Instant, period: u32) {
     crate::pool::TIMERS.set(
         crate::pool::key::TP | u64::from(h),
         at,
         Box::new(move |_| {
-            if !tp_current(h, gen) {
+            if !tp_current(h, generation) {
                 return;
             }
-            tp_queue(h, gen, TpCall::Object);
+            tp_queue(h, generation, TpCall::Object);
             if period != 0 {
                 let p = std::time::Duration::from_millis(u64::from(period));
                 let now = std::time::Instant::now();
                 let next = if at + p * 4 < now { now + p } else { at + p };
-                tp_timer_arm(h, gen, next, period);
+                tp_timer_arm(h, generation, next, period);
             }
         }),
     );
@@ -4556,10 +4556,10 @@ fn tp_timer_arm(h: u32, gen: u32, at: std::time::Instant, period: u32) {
 /// SetThreadpoolTimer(timer, due FILETIME* or NULL (cancel), period ms, window)
 fn SetThreadpoolTimer(c: &mut Ctx) -> u32 {
     let (h, due, period) = (c.a(0), c.a(1), c.a(2));
-    let Some(gen) = tp_bump(h) else { return 0 };
+    let Some(generation) = tp_bump(h) else { return 0 };
     if due != 0 {
         let at = std::time::Instant::now() + std::time::Duration::from_millis(due_ms(due));
-        tp_timer_arm(h, gen, at, period);
+        tp_timer_arm(h, generation, at, period);
     } else {
         crate::pool::TIMERS.cancel(crate::pool::key::TP | u64::from(h));
     }
@@ -4585,7 +4585,7 @@ fn CreateThreadpoolWait(c: &mut Ctx) -> u32 {
 /// SetThreadpoolWait(wait, handle or NULL (cancel), timeout FILETIME* or NULL (infinite))
 fn SetThreadpoolWait(c: &mut Ctx) -> u32 {
     let (h, obj_h, due) = (c.a(0), c.a(1), c.a(2));
-    let Some(gen) = tp_bump(h) else { return 0 };
+    let Some(generation) = tp_bump(h) else { return 0 };
     if obj_h != 0 {
         let ms = if due == 0 { u32::MAX } else { due_ms(due).min(u64::from(u32::MAX) - 1) as u32 };
         crate::pool::wait_add(
@@ -4593,8 +4593,8 @@ fn SetThreadpoolWait(c: &mut Ctx) -> u32 {
             obj_h,
             ms,
             Box::new(move |_, r| {
-                if tp_current(h, gen) {
-                    tp_queue(h, gen, TpCall::Wait(r));
+                if tp_current(h, generation) {
+                    tp_queue(h, generation, TpCall::Wait(r));
                 }
             }),
         );
@@ -8705,7 +8705,7 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
     // a view of a pagefile section: one view fewer; the block goes with the last view of a
     // section no handle holds
     let section = section_views(|m| {
-        let (&b, s) = m.iter_mut().find(|(&b, s)| a >= b && a - b < s.size)?;
+        let (&b, s) = m.iter_mut().find(|&(&b, ref s)| a >= b && a - b < s.size)?;
         s.views = s.views.saturating_sub(1);
         let last = s.views == 0 && !s.open;
         if last {

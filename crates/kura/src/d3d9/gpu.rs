@@ -68,7 +68,7 @@ pub struct Batch {
     /// the rest (texture pixels, shader text)
     pub blob: Vec<u8>,
     presents: u32,
-    gen: u64,
+    generation: u64,
     /// where its WRITE_TEXTURE_MEM commands are in `cmds`
     mems: Vec<usize>,
 }
@@ -152,7 +152,7 @@ struct Queue {
     /// readbacks whose waiter gave up: the page must not write their pixels any more (the
     /// guest may have freed that memory already)
     readbacks_dropped: Vec<u32>,
-    gen: u64,
+    generation: u64,
     /// batches up to this one are done (the page ran them, or nobody will)
     done: u64,
 }
@@ -178,7 +178,7 @@ fn queue(g: &mut Option<Queue>) -> &mut Queue {
         readbacks_done: Vec::new(),
         readbacks_writing: Vec::new(),
         readbacks_dropped: Vec::new(),
-        gen: 0,
+        generation: 0,
         done: 0,
     })
 }
@@ -253,7 +253,7 @@ pub fn run_next(f: impl FnOnce(&[u32], &[u8], &[u8])) -> bool {
         return false;
     };
     f(&b.cmds, &b.data, &b.blob);
-    with(|q| q.done = q.done.max(b.gen + 1));
+    with(|q| q.done = q.done.max(b.generation + 1));
     WAKE.notify_all();
     true
 }
@@ -298,11 +298,11 @@ fn close_if_big(q: &mut Queue) -> bool {
         return false;
     }
     let mut b = std::mem::take(&mut q.open);
-    b.gen = q.gen;
-    q.gen += 1;
+    b.generation = q.generation;
+    q.generation += 1;
     if q.last_poll.is_none() {
         // node: nobody draws
-        q.done = q.gen;
+        q.done = q.generation;
     } else {
         q.closed.push_back(b);
     }
@@ -324,7 +324,7 @@ pub fn record<R>(f: impl FnOnce(&mut Batch) -> R) -> R {
 /// Records into the open batch; also returns its generation (see `wait_done`).
 pub fn record_gen<R>(f: impl FnOnce(&mut Batch) -> R) -> (R, u64) {
     let (r, closed) = with(|q| {
-        let r = (f(&mut q.open), q.gen);
+        let r = (f(&mut q.open), q.generation);
         (r, close_if_big(q))
     });
     if closed {
@@ -353,12 +353,12 @@ fn may_go(behind: u64, bytes: usize, past_deadline: bool, attached: bool) -> boo
 
 /// The open batch's generation and how many command words it has (where the next command goes)
 pub fn batch_end() -> (u64, usize) {
-    with(|q| (q.gen, q.open.cmds.len()))
+    with(|q| (q.generation, q.open.cmds.len()))
 }
 
 /// Changes whenever a new batch opens (what the page knows of draw state is per batch).
 pub fn batch_gen() -> u64 {
-    with(|q| q.gen)
+    with(|q| q.generation)
 }
 
 /// Closes the open batch (if it has anything), and waits for the page when too much is queued.
@@ -371,9 +371,9 @@ fn flush_now() {
     with(|q| {
         if !q.open.cmds.is_empty() {
             let mut b = std::mem::take(&mut q.open);
-            b.gen = q.gen;
+            b.generation = q.generation;
             q.closed.push_back(b);
-            q.gen += 1;
+            q.generation += 1;
         }
     });
 }
@@ -393,14 +393,14 @@ pub fn present(hwnd: u32) {
         q.open.presents += 1;
         q.presented += 1;
         let mut b = std::mem::take(&mut q.open);
-        b.gen = q.gen;
-        q.gen += 1;
+        b.generation = q.generation;
+        q.generation += 1;
         q.closed.push_back(b);
         if q.last_poll.is_none() {
             // node: nobody draws
             q.closed.clear();
             q.shown = q.presented;
-            q.done = q.gen;
+            q.done = q.generation;
             return;
         }
     }
@@ -422,25 +422,25 @@ pub fn present(hwnd: u32) {
 
 /// Waits until the batch recorded in generation `gen` (see `batch_gen`) is done: guest memory
 /// its commands read (WRITE_TEXTURE_MEM) may change after that.
-pub fn wait_done(gen: u64) {
+pub fn wait_done(generation: u64) {
     #[cfg(test)]
     pump();
     let mut g = QUEUE.lock().unwrap_or_else(|e| e.into_inner());
     let deadline = now() + 1000.0;
     loop {
         let q = queue(&mut g);
-        if q.done > gen || q.last_poll.is_none() || !page_attached(q) || now() >= deadline {
+        if q.done > generation || q.last_poll.is_none() || !page_attached(q) || now() >= deadline {
             if q.last_poll.is_none() {
-                q.done = q.done.max(gen + 1);
+                q.done = q.done.max(generation + 1);
             }
             return;
         }
-        if q.gen == gen && !q.open.cmds.is_empty() {
+        if q.generation == generation && !q.open.cmds.is_empty() {
             // still open: close it
             let mut b = std::mem::take(&mut q.open);
-            b.gen = q.gen;
+            b.generation = q.generation;
             q.closed.push_back(b);
-            q.gen += 1;
+            q.generation += 1;
         }
         g = WAKE.wait_timeout(g, Duration::from_millis(5)).unwrap_or_else(|e| e.into_inner()).0;
     }
@@ -456,21 +456,21 @@ pub fn detach_mem(lo: u32, hi: u32) -> Option<u64> {
         }
         q.open.detach(lo, hi);
         let done = q.done;
-        q.reading.as_ref().filter(|b| b.gen >= done && b.reads(lo, hi)).map(|b| b.gen)
+        q.reading.as_ref().filter(|b| b.generation >= done && b.reads(lo, hi)).map(|b| b.generation)
     })
 }
 
 /// Whether the batch of generation `gen` is done (see `wait_done`).
-pub fn is_done(gen: u64) -> bool {
-    with(|q| q.done > gen || q.last_poll.is_none())
+pub fn is_done(generation: u64) -> bool {
+    with(|q| q.done > generation || q.last_poll.is_none())
 }
 
 /// The page ran the batch it took last.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_d3d9_done() {
     with(|q| {
         if let Some(b) = &q.reading {
-            q.done = q.done.max(b.gen + 1);
+            q.done = q.done.max(b.generation + 1);
         }
     });
     WAKE.notify_all();
@@ -510,7 +510,7 @@ pub fn wait_readback(id: u32) -> bool {
 /// The page: takes the next closed batch. `out` gets [cmds ptr, cmd words, data ptr, data bytes,
 /// blob ptr, blob bytes];
 /// returns 0 when there is none. The batch stays valid until the next call.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_d3d9_poll(out: *mut [u32; 6]) -> u32 {
     let out = &mut *out;
     let r = with(|q| {
@@ -532,7 +532,7 @@ pub unsafe extern "C" fn vnhost_d3d9_poll(out: *mut [u32; 6]) -> u32 {
 }
 
 /// The page wrote the pixels of readback `id`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_d3d9_readback_done(id: u32) {
     with(|q| {
         q.readbacks_writing.retain(|&r| r != id);
@@ -547,7 +547,7 @@ pub extern "C" fn vnhost_d3d9_readback_done(id: u32) {
 
 /// The page: whether it may now write readback `id`'s pixels into guest memory (0: its waiter
 /// gave up, skip the copy). Until readback_done, the waiter keeps waiting.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_d3d9_readback_begin(id: u32) -> u32 {
     with(|q| {
         if q.readbacks_dropped.contains(&id) {

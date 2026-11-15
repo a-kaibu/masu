@@ -7,7 +7,7 @@ pub type Id = u32;
 
 mod ffi {
     use super::Id;
-    extern "C" {
+    unsafe extern "C" {
         pub fn vngpu_attach(thread: usize) -> i32;
         pub fn vngpu_start();
         pub fn vngpu_reset();
@@ -186,7 +186,7 @@ impl PipelineStats {
 
 /// The pipeline counters into `out` (f64 each): cache hits, pipelines created, their creation
 /// time in all, the longest, p50 and p95 of the recent ones (ms).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_gpu_pipelines(out: *mut [f64; 6]) {
     let s = PIPELINES.lock().unwrap_or_else(|e| e.into_inner());
     let v = [

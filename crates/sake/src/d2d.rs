@@ -900,7 +900,7 @@ fn DrawBitmap(c: &mut Ctx) -> u32 {
     // another context's target (a compatible render target's bitmap, a texture drawn by D2D):
     // what was drawn into it first
     let surface = st(|s| s.bitmaps.get(&bmp).map(|b| b.0));
-    if let Some(owner) = st(|s| s.dcs.iter().find(|(&k, d)| k != dc && (d.target == bmp || surface.is_some_and(|t| t != 0 && d.surface == t)) && !d.items.is_empty()).map(|(&k, _)| k)) {
+    if let Some(owner) = st(|s| s.dcs.iter().find(|&(&k, ref d)| k != dc && (d.target == bmp || surface.is_some_and(|t| t != 0 && d.surface == t)) && !d.items.is_empty()).map(|(&k, _)| k)) {
         flush(owner);
     }
     let src = if ps != 0 { [rf(ps, 0), rf(ps, 1), rf(ps, 2), rf(ps, 3)] } else { [0.0, 0.0, to_f32(im.w), to_f32(im.h)] };

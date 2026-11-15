@@ -4,7 +4,7 @@ members = ["crates/apitrace", "crates/kome", "crates/foresee", "crates/crt", "cr
 exclude = ["fuzz", "vendor/ring", "vendor/naga"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 
 # (naga validates every shader the tests translate: unoptimized, a big compute shader takes

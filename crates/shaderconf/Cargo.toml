@@ -13,3 +13,8 @@ dxwgsl = { path = "../dxwgsl" }
 glwgsl = { path = "../glwgsl" }
 half = "2"
 naga = { version = "30", features = ["wgsl-in"] }
+
+[lints.rust]
+# (unsafe operations in an unsafe fn without an unsafe block: edition 2024 warns; tools/ci/
+# lint-ratchet.py counts them per file instead, so they only go down)
+unsafe_op_in_unsafe_fn = "allow"

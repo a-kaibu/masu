@@ -254,14 +254,14 @@ fn watch() {
         return;
     }
     std::thread::spawn(|| loop {
-        let gen = kern::with(|_| ()).1;
+        let generation = kern::with(|_| ()).1;
         if PENDING_IO.lock().unwrap().is_empty() {
             WATCHING.store(false, Ordering::Release);
             if PENDING_IO.lock().unwrap().is_empty() || WATCHING.swap(true, Ordering::AcqRel) {
                 return;
             }
         }
-        kern::wait_change(gen, Some(Instant::now() + Duration::from_millis(100)));
+        kern::wait_change(generation, Some(Instant::now() + Duration::from_millis(100)));
         pump();
     });
 }
@@ -635,7 +635,7 @@ fn call_named(c: &mut Ctx, wide: bool) -> u32 {
 fn wait_named_for(name: &str, ms: u32) -> u32 {
     let mut until: Option<Option<Instant>> = None;
     loop {
-        let (r, gen) = kern::with(|k| k.wait_named(name));
+        let (r, generation) = kern::with(|k| k.wait_named(name));
         let def = match r {
             Ok(None) => return SUCCESS,
             Ok(Some(def)) => def,
@@ -652,7 +652,7 @@ fn wait_named_for(name: &str, ms: u32) -> u32 {
             fail(kern::IO_TIMEOUT);
             return kern::IO_TIMEOUT;
         }
-        kern::wait_change(gen, until);
+        kern::wait_change(generation, until);
     }
 }
 fn CallNamedPipeA(c: &mut Ctx) -> u32 {

@@ -974,7 +974,7 @@ mod tests {
 
     /// A temporary root seen through the Z: drive (the host's /), and `w` mapping a Windows
     /// path under it.
-    fn z_root(tag: &str) -> (std::path::PathBuf, impl Fn(&str) -> String) {
+    fn z_root(tag: &str) -> (std::path::PathBuf, impl Fn(&str) -> String + use<>) {
         use std::sync::atomic::{AtomicU32, Ordering};
         static N: AtomicU32 = AtomicU32::new(0);
         let root = std::env::temp_dir().join(format!("sake-{tag}-{}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));

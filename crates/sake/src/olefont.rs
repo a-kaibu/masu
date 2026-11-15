@@ -599,7 +599,7 @@ mod hfont_tests {
                         *held.entry(h).or_default() += 1;
                     }
                     _ => {
-                        let mut hs: Vec<u32> = held.iter().filter(|(_, &n)| n > 0).map(|(&h, _)| h).collect();
+                        let mut hs: Vec<u32> = held.iter().filter(|&(_, &n)| n > 0).map(|(&h, _)| h).collect();
                         hs.sort();
                         if let Some(&h) = hs.get(k % hs.len().max(1)) {
                             *f.handles.get_mut(&h).unwrap() -= 1;

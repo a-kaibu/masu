@@ -435,7 +435,7 @@ pub fn watch() {
     let me = crate::pid();
     crate::user::publish();
     std::thread::spawn(move || loop {
-        let (kill, gen) = kern::with(|k| k.proc(me).and_then(|p| p.kill));
+        let (kill, generation) = kern::with(|k| k.proc(me).and_then(|p| p.kill));
         if let Some(code) = kill {
             if crate::env_on!("SAKE_TRACE_EXIT") {
                 eprintln!("sake: terminated by another process ({code})");
@@ -448,7 +448,7 @@ pub fn watch() {
         crate::pipe::pump();
         crate::user::deliver_remote();
         crate::comrpc::wake();
-        kern::wait_change(gen, None);
+        kern::wait_change(generation, None);
     });
 }
 
@@ -496,7 +496,7 @@ pub fn resume(pid: u32) -> u32 {
 pub fn running() -> Vec<u32> {
     let me = crate::pid();
     let mut v = vec![me];
-    v.extend(kern::with(|k| k.procs.iter().filter(|(&p, r)| p != me && r.exit.is_none()).map(|(&p, _)| p).collect::<Vec<_>>()).0);
+    v.extend(kern::with(|k| k.procs.iter().filter(|&(&p, ref r)| p != me && r.exit.is_none()).map(|(&p, _)| p).collect::<Vec<_>>()).0);
     v
 }
 

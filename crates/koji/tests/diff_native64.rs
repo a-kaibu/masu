@@ -212,7 +212,7 @@ fn reg(rng: &mut Rng) -> u8 {
     }
 }
 
-fn gen(rng: &mut Rng) -> (Gen, bool) {
+fn random_insn(rng: &mut Rng) -> (Gen, bool) {
     let mut g = Gen { p66: false, pfx: None, w: rng.below(3) != 0, rex: rng.below(4) == 0, op: vec![], reg: reg(rng), rm: Some(reg(rng)),
         imm: vec![], mem: None, rip: false, raw: None };
     if !g.w && rng.below(6) == 0 { g.p66 = true; }
@@ -525,7 +525,7 @@ fn random_long_mode_integer_ops_match_the_host_cpu() {
     let mut done = 0;
     let mut failures = Vec::new();
     for _ in 0..150_000 {
-        let (g, byte) = gen(&mut rng);
+        let (g, byte) = random_insn(&mut rng);
         let mut st = random_state(&mut rng);
         let insn = match &g.raw {
             Some(v) => v.clone(),

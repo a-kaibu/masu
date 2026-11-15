@@ -3059,7 +3059,7 @@ fn structure64(blocks: &[Block], (index, copy_index): (&BTreeMap<u64, usize>, &B
     let mut succ2 = succ.clone();
     if !DEBUG_NO_SIDE.load(Relaxed) {
         for e in (1..n).filter(|&k| reached[k] && wanted(k) && !direct.contains(&k)) {
-            let mut chain: Vec<(usize, usize)> = bodies.iter().filter(|(&h, b)| h != e && b[e]).map(|(&h, b)| (h, b.iter().filter(|&&x| x).count())).collect();
+            let mut chain: Vec<(usize, usize)> = bodies.iter().filter(|&(&h, ref b)| h != e && b[e]).map(|(&h, b)| (h, b.iter().filter(|&&x| x).count())).collect();
             chain.sort_by(|a, b| b.1.cmp(&a.1));
             let Some(&(h0, _)) = chain.first() else { continue };
             if !outer.contains(&h0) && h0 != 0 {

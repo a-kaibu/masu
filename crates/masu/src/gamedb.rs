@@ -797,7 +797,8 @@ mod tests {
 
     fn no_proxy() {
         for k in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
-            std::env::remove_var(k);
+            // SAFETY: a test: no other thread reads these variables meanwhile
+            unsafe { std::env::remove_var(k) };
         }
     }
 

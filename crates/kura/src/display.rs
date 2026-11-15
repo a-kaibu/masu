@@ -362,13 +362,13 @@ const MAX_EXTENT: i32 = 8192;
 pub const HMONITOR: u32 = 0x10001;
 
 /// A display mode change (ChangeDisplaySettings): the screen takes the new size.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_display_set_size(w: c_int, h: c_int) {
     with(|d| d.set_size(w, h))
 }
 
 /// The part of the screen the page shows (see `Display::view`): `out` gets l, t, r, b.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_display_view(out: *mut [i32; 4]) {
     let v = with(|d| d.view());
     *out = [v.l, v.t, v.r, v.b];
@@ -376,7 +376,7 @@ pub unsafe extern "C" fn vnhost_display_view(out: *mut [i32; 4]) {
 
 /// The visible top-level windows, topmost first: `out` gets l, t, r, b of up to `max` of them;
 /// returns how many. (The page draws the ones above a Direct3D window over its frames.)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_display_windows(out: *mut i32, max: c_int) -> c_int {
     // (a `max` whose words overflow the address space lists nothing)
     let Some(words) = usize::try_from(max).unwrap_or(0).checked_mul(4) else { return 0 };
@@ -392,13 +392,13 @@ pub fn windows_above(hwnd: u32, out: &mut [i32]) -> Option<usize> {
 
 /// What `vnhost_display_frame`'s buffer holds, in screen coordinates (l t r b): the screen and
 /// the windows shown on it, whole (a game's window partly off the screen too).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_display_extent(out: *mut [i32; 4]) {
     let e = with(|d| d.ext);
     *out = [e.l, e.t, e.r, e.b];
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_display_size(w: *mut c_int, h: *mut c_int) {
     with(|d| {
         *w = d.w;
@@ -409,7 +409,7 @@ pub unsafe extern "C" fn vnhost_display_size(w: *mut c_int, h: *mut c_int) {
 /// A top-level window moved, resized, was shown/hidden or changed its z-order. `rect` is where
 /// its surface is on the screen, then its client area; with `restack`, it goes just below
 /// `above` (0: on top).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_window_pos(hwnd: u32, rect: *const [i32; 8], visible: c_int, restack: c_int, above: u32) {
     start_screenshots();
     start_scripted_input();
@@ -523,7 +523,7 @@ fn pace() {
     }
     #[cfg(target_os = "emscripten")]
     {
-        extern "C" {
+        unsafe extern "C" {
             fn emscripten_is_main_browser_thread() -> c_int;
         }
         if unsafe { emscripten_is_main_browser_thread() } != 0 {
@@ -543,7 +543,7 @@ fn pace() {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_window_draw(hwnd: u32, dirty: *const [i32; 4], bits: *const u32, stride: c_int, ox: c_int, oy: c_int) {
     let r = &*dirty;
     let dirty = Rect { l: r[0], t: r[1], r: r[2], b: r[3] };
@@ -722,7 +722,7 @@ fn update_changed<'a>(px: &mut [u32], ww: usize, dirty: Rect, src: impl Fn(i32) 
 /// sake: like `vnhost_window_draw`, but `bits` is the window's whole surface (`w`*`h` pixels),
 /// which the window then shows directly instead of copying it (one copy of each frame less).
 /// The caller keeps `bits` alive and unmoved until `vnhost_window_unshare`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_window_draw_shared(hwnd: u32, dirty: *const [i32; 4], bits: *const u32, w: c_int, h: c_int) {
     let r = &*dirty;
     with(|d| d.draw_shared(hwnd, Rect { l: r[0], t: r[1], r: r[2], b: r[3] }, bits, w, h))
@@ -730,12 +730,12 @@ pub unsafe extern "C" fn vnhost_window_draw_shared(hwnd: u32, dirty: *const [i32
 
 /// sake: the window stops showing the surface `vnhost_window_draw_shared` gave it (about to be
 /// freed or moved): it keeps a copy of it. When this returns, nothing reads the surface.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_window_unshare(hwnd: u32) {
     with(|d| d.unshare(hwnd))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_window_destroy(hwnd: u32) {
     with(|d| d.destroy(hwnd))
 }
@@ -783,7 +783,7 @@ impl Display {
 /// of them are one window's (a game redrawing its window; `screen` was not updated for them),
 /// `io[3]` stays 1 and `io[4..10]` = the surface's address, its row length in pixels and the
 /// window's rect on the screen (l t r b). Otherwise `io[3]` = 0 and `screen` has them.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_display_frame(io: *mut [u32; 12]) -> *const u32 {
     let io = &mut *io;
     let direct_ok = io[3] == 1;
@@ -889,7 +889,7 @@ fn input_add(q: &mut VecDeque<[u32; 4]>, rec: [u32; 4]) {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_input_push(kind: u32, x: i32, y: i32, data: u32) -> c_int {
     // (nothing changes while a save state is taken: what comes meanwhile is dropped)
     if crate::snap::pausing() {

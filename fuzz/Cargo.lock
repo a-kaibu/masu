@@ -82,6 +82,9 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 [[package]]
 name = "asf"
 version = "0.1.0"
+dependencies = [
+ "kome",
+]
 
 [[package]]
 name = "async-channel"
@@ -335,24 +338,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
-]
-
-[[package]]
-name = "byteorder"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
-
-[[package]]
-name = "cab"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "171228650e6721d5acc0868a462cd864f49ac5f64e4a42cde270406e64e404d2"
-dependencies = [
- "byteorder",
- "flate2",
- "lzxd",
- "time",
 ]
 
 [[package]]
@@ -743,6 +728,9 @@ dependencies = [
 [[package]]
 name = "dxwgsl"
 version = "0.1.0"
+dependencies = [
+ "kome",
+]
 
 [[package]]
 name = "dynify"
@@ -1113,6 +1101,7 @@ dependencies = [
 name = "glwgsl"
 version = "0.1.0"
 dependencies = [
+ "kome",
  "naga",
  "pp-rs",
 ]
@@ -1183,6 +1172,10 @@ dependencies = [
 [[package]]
 name = "hlslc"
 version = "0.1.0"
+dependencies = [
+ "dxwgsl",
+ "kome",
+]
 
 [[package]]
 name = "hmac"
@@ -1413,8 +1406,13 @@ name = "koji"
 version = "0.1.0"
 dependencies = [
  "iced-x86",
+ "kome",
  "libm",
 ]
+
+[[package]]
+name = "kome"
+version = "0.1.0"
 
 [[package]]
 name = "kura"
@@ -1425,6 +1423,7 @@ dependencies = [
  "foresee",
  "glwgsl",
  "koji",
+ "kome",
  "libc",
  "miniz_oxide 0.8.9",
  "waits",
@@ -1613,6 +1612,9 @@ dependencies = [
 [[package]]
 name = "mpeg1"
 version = "0.1.0"
+dependencies = [
+ "kome",
+]
 
 [[package]]
 name = "msidb"
@@ -2306,7 +2308,6 @@ dependencies = [
  "ab_glyph",
  "asf",
  "boa_engine",
- "cab",
  "crt",
  "dlmalloc",
  "dxwgsl",
@@ -2316,6 +2317,7 @@ dependencies = [
  "icu_segmenter",
  "jpeg-decoder",
  "koji",
+ "kome",
  "kura",
  "libc",
  "libm",
@@ -2865,6 +2867,9 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vorbis"
 version = "0.1.0"
+dependencies = [
+ "kome",
+]
 
 [[package]]
 name = "waits"
@@ -3325,6 +3330,9 @@ dependencies = [
 [[package]]
 name = "wmcodec"
 version = "0.1.0"
+dependencies = [
+ "kome",
+]
 
 [[package]]
 name = "write16"

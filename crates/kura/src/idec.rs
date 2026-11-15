@@ -53,7 +53,7 @@ fn ring() {
     DOORBELL.fetch_add(1, Ordering::SeqCst);
     #[cfg(target_os = "emscripten")]
     unsafe {
-        extern "C" {
+        unsafe extern "C" {
             fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
         }
         emscripten_futex_wake(DOORBELL.as_ptr() as *const std::ffi::c_void, i32::MAX);
@@ -401,7 +401,7 @@ mod simd {
 // the page
 
 /// The doorbell's address (the page waits on it with Atomics.waitAsync).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_idec_doorbell() -> u32 {
     lo32(DOORBELL.as_ptr().expose_provenance())
 }
@@ -411,7 +411,7 @@ pub extern "C" fn vnhost_idec_doorbell() -> u32 {
 ///
 /// # Safety
 /// `out` must hold `max * 3` words.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_idec_list(out: *mut u32, max: u32) -> u32 {
     // (a `max` whose words overflow the address space lists nothing, as in vnhost_adec_list)
     let Some(words) = usize::try_from(max).ok().and_then(|m| m.checked_mul(3)) else { return 0 };
@@ -440,7 +440,7 @@ fn list(max: usize) -> Vec<(u32, usize, usize)> {
 /// Room for the planes of file `id`, `w` x `h` pixels in `layout` (`Layout` as a number; stays
 /// put until `vnhost_idec_done`); 0 when the guest no longer waits for it, or the layout is not
 /// one of ours or the size is out of reach.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_idec_begin(id: u32, w: u32, h: u32, layout: u32) -> u32 {
     lo32(begin(id, w, h, layout).unwrap_or(0))
 }
@@ -476,7 +476,7 @@ fn zeroed(n: usize) -> Option<Vec<u8>> {
 }
 
 /// The page is done with file `id`: its pixels written (`ok`), or it could not decode it.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_idec_done(id: u32, ok: u32) {
     with(|m| {
         if m.get(&id).is_some_and(|r| r.abandoned) {

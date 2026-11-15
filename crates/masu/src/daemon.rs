@@ -127,7 +127,7 @@ fn tail_of(f: &mut (impl Read + Seek), len: u64, lines: usize, step: u64) -> std
         chunks.push(buf);
     }
     let tail: Vec<u8> = chunks.into_iter().rev().flatten().collect();
-    let nl: Vec<usize> = tail.iter().enumerate().filter(|(_, &b)| b == b'\n').map(|(i, _)| i).collect();
+    let nl: Vec<usize> = tail.iter().enumerate().filter(|&(_, &b)| b == b'\n').map(|(i, _)| i).collect();
     let cut = if nl.len() > lines { nl[nl.len() - lines - 1] + 1 } else { 0 };
     Ok(tail[cut..].to_vec())
 }
@@ -302,7 +302,7 @@ mod tests {
 
     /// the last lines as a split of the whole text gives them, for any text, count and step
     fn tail_model(text: &[u8], lines: usize) -> Vec<u8> {
-        let nl: Vec<usize> = text.iter().enumerate().filter(|(_, &b)| b == b'\n').map(|(i, _)| i).collect();
+        let nl: Vec<usize> = text.iter().enumerate().filter(|&(_, &b)| b == b'\n').map(|(i, _)| i).collect();
         let cut = if nl.len() > lines { nl[nl.len() - lines - 1] + 1 } else { 0 };
         text[cut..].to_vec()
     }

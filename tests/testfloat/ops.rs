@@ -271,14 +271,14 @@ pub fn skipped(op: &Op, c: &Case) -> bool {
 
 /// Runs testfloat_gen for `op` at `rc`, `f` on each output line (the first `op.n` lines when
 /// limited: testfloat_gen's own -n can't go below the level's count)
-pub fn generate(gen: &std::path::Path, op: &Op, rc: u32, level: u32, mut f: impl FnMut(&str)) {
+pub fn generate(gen_bin: &std::path::Path, op: &Op, rc: u32, level: u32, mut f: impl FnMut(&str)) {
     use std::io::BufRead;
     // (truncating conversions: testfloat_gen's <float>_to_<int> toward zero)
     let (tf, rc) = match op.tf.strip_suffix("_r_minMag") {
         Some(t) => (t, 3),
         None => (op.tf, rc),
     };
-    let mut child = std::process::Command::new(gen)
+    let mut child = std::process::Command::new(gen_bin)
         .arg(RC[rc as usize])
         .args(op.opts)
         .arg("-level")

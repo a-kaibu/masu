@@ -128,8 +128,8 @@ fn a_lost_device_gets_what_the_guest_keeps() {
         *p = Some(old.renew());
     }
     assert_eq!(page_cells(level, 0x6c00_0004), all(-2));
-    let gen = crate::render::lost_gen();
-    crate::render::set_lost_gen(gen + 1);
+    let generation = crate::render::lost_gen();
+    crate::render::set_lost_gen(generation + 1);
     // (the guest's next call, whatever it is)
     assert_eq!(call(IF_DEVICE, 3, &[dev]), 0);
     gpu::pump();
@@ -144,8 +144,8 @@ fn a_lost_device_gets_what_the_guest_keeps() {
     assert_eq!(model::with(|m| m.calls.get("write_texture").copied().unwrap_or(0)), sent);
 
     gpu::set_pump(None);
-    crate::render::set_lost_gen(gen);
-    with(|d| d.lost_seen = gen);
+    crate::render::set_lost_gen(generation);
+    with(|d| d.lost_seen = generation);
     let errors = model::with(|m| std::mem::take(&mut m.errors));
     assert!(errors.is_empty(), "WebGPU errors {errors:?}");
 }

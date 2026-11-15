@@ -4291,7 +4291,7 @@ fn drop_all<K>(m: &mut HashMap<K, Id>) {
 }
 
 pub(crate) fn now() -> f64 {
-    extern "C" {
+    unsafe extern "C" {
         fn emscripten_get_now() -> f64;
     }
     unsafe { emscripten_get_now() }

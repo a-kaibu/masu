@@ -417,7 +417,8 @@ mod tests {
         let tgz = archive(&[("masu", b"new binary"), ("README.md", b"r"), ("fonts/msgothic.ttc", b"font"), ("bench/bench.exe", b"MZ"), ("bench/VERSION", b"v9")]);
         std::fs::create_dir_all(dir.join("data/bench")).unwrap();
         std::fs::write(dir.join("data/bench/old.exe"), b"old").unwrap();
-        std::env::set_var("MASU_UPDATE_URL", releases("9.8.7", tgz.clone(), true).await);
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", releases("9.8.7", tgz.clone(), true).await) };
         assert_eq!(tokio::task::spawn_blocking(latest).await.unwrap().unwrap(), "9.8.7");
         let (e2, f2) = (exe.clone(), fonts.clone());
         let r = tokio::task::spawn_blocking(move || install("9.8.7", &e2, &f2)).await.unwrap();
@@ -425,17 +426,20 @@ mod tests {
         assert_eq!(std::fs::read(&exe).unwrap(), b"old binary");
         assert!(fonts.join("old.ttf").exists());
         // no masu in it
-        std::env::set_var("MASU_UPDATE_URL", releases("9.8.7", archive(&[("README.md", b"r")]), false).await);
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", releases("9.8.7", archive(&[("README.md", b"r")]), false).await) };
         let (e2, f2) = (exe.clone(), fonts.clone());
         assert!(tokio::task::spawn_blocking(move || install("9.8.7", &e2, &f2)).await.unwrap().is_err());
         assert_eq!(std::fs::read(&exe).unwrap(), b"old binary");
         // a path out of the directory
-        std::env::set_var("MASU_UPDATE_URL", releases("9.8.7", raw_tar_with("../escape", b"x"), false).await);
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", releases("9.8.7", raw_tar_with("../escape", b"x"), false).await) };
         let (e2, f2) = (exe.clone(), fonts.clone());
         assert!(tokio::task::spawn_blocking(move || install("9.8.7", &e2, &f2)).await.unwrap().is_err());
         assert!(!dir.join("escape").exists() && !dir.join("bin/../escape").exists());
         // the right one
-        std::env::set_var("MASU_UPDATE_URL", releases("9.8.7", tgz, false).await);
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", releases("9.8.7", tgz, false).await) };
         let (e2, f2) = (exe.clone(), fonts.clone());
         tokio::task::spawn_blocking(move || install("9.8.7", &e2, &f2)).await.unwrap().unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), b"new binary");
@@ -451,7 +455,8 @@ mod tests {
         }
         // nothing left of the unpacking
         assert_eq!(std::fs::read_dir(dir.join("bin")).unwrap().count(), 2);
-        std::env::remove_var("MASU_UPDATE_URL");
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::remove_var("MASU_UPDATE_URL") };
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -481,8 +486,10 @@ mod tests {
                 let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                 let a = l.local_addr().unwrap();
                 tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
-                std::env::set_var("MASU_UPDATE_URL", format!("http://{a}/r"));
-                std::env::set_var("MASU_UPDATE_API", format!("http://{a}/api"));
+                // SAFETY: a test: no other thread reads these variables meanwhile
+                unsafe { std::env::set_var("MASU_UPDATE_URL", format!("http://{a}/r")) };
+                // SAFETY: a test: no other thread reads these variables meanwhile
+                unsafe { std::env::set_var("MASU_UPDATE_API", format!("http://{a}/api")) };
             }
         };
         let try_install = || {
@@ -497,8 +504,10 @@ mod tests {
         serve(Some(sum)).await;
         try_install().await.unwrap().unwrap();
         assert_eq!(std::fs::read(&exe).unwrap(), b"new binary");
-        std::env::remove_var("MASU_UPDATE_URL");
-        std::env::remove_var("MASU_UPDATE_API");
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::remove_var("MASU_UPDATE_URL") };
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::remove_var("MASU_UPDATE_API") };
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -535,22 +544,26 @@ mod tests {
         let app = router(exe.clone(), dir.join("fonts"));
         let call = |m: &str| axum::http::Request::builder().method(m).uri("/api/update").body(axum::body::Body::empty()).unwrap();
         let json = |b: axum::body::Bytes| serde_json::from_slice::<serde_json::Value>(&b).unwrap();
-        std::env::set_var("MASU_UPDATE_URL", releases("999.0.0", archive(&[("masu", b"x")]), false).await);
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", releases("999.0.0", archive(&[("masu", b"x")]), false).await) };
         let r = app.clone().oneshot(call("GET")).await.unwrap();
         let v = json(axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap());
         assert_eq!((v["current"].as_str(), v["latest"].as_str(), v["newer"].as_bool()), (Some(env!("MASU_VERSION")), Some("999.0.0"), Some(true)));
-        std::env::set_var("MASU_UPDATE_URL", releases("0.0.1", archive(&[("masu", b"x")]), false).await);
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", releases("0.0.1", archive(&[("masu", b"x")]), false).await) };
         let r = app.clone().oneshot(call("GET")).await.unwrap();
         assert_eq!(json(axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap())["newer"], false);
         let r = app.clone().oneshot(call("POST")).await.unwrap();
         assert_eq!(r.status(), StatusCode::CONFLICT);
         assert_eq!(std::fs::read(&exe).unwrap(), b"old");
         // releases that cannot be read: no latest, an error
-        std::env::set_var("MASU_UPDATE_URL", "http://127.0.0.1:9/none");
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", "http://127.0.0.1:9/none") };
         let r = app.clone().oneshot(call("GET")).await.unwrap();
         let v = json(axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap());
         assert!(v["latest"].is_null() && v["error"].is_string() && v["newer"] == false);
-        std::env::remove_var("MASU_UPDATE_URL");
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::remove_var("MASU_UPDATE_URL") };
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -622,16 +635,20 @@ mod tests {
         let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let at = l.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
-        std::env::set_var("MASU_UPDATE_URL", format!("http://{at}/r"));
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", format!("http://{at}/r")) };
         let rs = tokio::task::spawn_blocking(|| (0..20).map(|_| latest_kept()).collect::<Vec<_>>()).await.unwrap();
         assert!(rs.iter().all(|r| r.as_deref() == Ok("5.4.3")), "{rs:?}");
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
-        std::env::set_var("MASU_UPDATE_URL", format!("http://{at}/r/"));
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", format!("http://{at}/r/")) };
         tokio::task::spawn_blocking(latest_kept).await.unwrap().unwrap();
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1, "the same address, written with a slash");
-        std::env::set_var("MASU_UPDATE_URL", format!("http://localhost:{}/r", at.port()));
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_UPDATE_URL", format!("http://localhost:{}/r", at.port())) };
         tokio::task::spawn_blocking(latest_kept).await.unwrap().unwrap();
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
-        std::env::remove_var("MASU_UPDATE_URL");
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::remove_var("MASU_UPDATE_URL") };
     }
 }

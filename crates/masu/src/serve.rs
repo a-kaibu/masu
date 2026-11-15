@@ -1338,7 +1338,7 @@ fn dump_threads() {
     static LENS: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
     static TIDS: [AtomicI64; SLOTS] = [const { AtomicI64::new(0) }; SLOTS];
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    extern "C" {
+    unsafe extern "C" {
         fn backtrace(buf: *mut *mut libc::c_void, size: libc::c_int) -> libc::c_int;
     }
     extern "C" fn on_signal(_: libc::c_int) {

@@ -267,7 +267,7 @@ pub const PID_STEP: u32 = 0x1_0000;
 #[derive(Default)]
 pub struct Kern {
     /// changes with every change anyone may wait for
-    pub gen: u64,
+    pub generation: u64,
     next: u32,
     ends: BTreeMap<u32, End>,
     pipes: BTreeMap<String, Pipe>,
@@ -354,7 +354,7 @@ pub struct NewPipe {
 
 impl Kern {
     pub(crate) fn changed(&mut self) {
-        self.gen += 1;
+        self.generation += 1;
     }
     fn new_end(&mut self, e: End) -> u32 {
         self.next += 1;
@@ -921,7 +921,7 @@ impl Kern {
         }
         // (the answers it was waiting for: nobody will take them; what it asked of others
         // is dropped too)
-        let mine: Vec<u32> = self.askers.iter().filter(|(_, &a)| a == pid).map(|(&id, _)| id).collect();
+        let mine: Vec<u32> = self.askers.iter().filter(|&(_, &a)| a == pid).map(|(&id, _)| id).collect();
         for id in mine {
             self.askers.remove(&id);
             self.replies.remove(&id);
@@ -1256,7 +1256,7 @@ pub fn with<R>(f: impl FnOnce(&mut Kern) -> R) -> (R, u64) {
     let mut now = 0;
     if shared {
         host::lock();
-        now = host::gen();
+        now = host::generation();
         if l.loaded != Some(now) {
             if let Some(k) = host::load() {
                 l.k = k;
@@ -1264,7 +1264,7 @@ pub fn with<R>(f: impl FnOnce(&mut Kern) -> R) -> (R, u64) {
             l.loaded = Some(now);
         }
     }
-    let before = l.k.gen;
+    let before = l.k.generation;
     if shared {
         // (the processes that ended since: the host lists them)
         while let Some(d) = host::dead(l.k.dead_seen) {
@@ -1275,8 +1275,8 @@ pub fn with<R>(f: impl FnOnce(&mut Kern) -> R) -> (R, u64) {
         }
     }
     let r = f(&mut l.k);
-    let changed = l.k.gen != before;
-    let gen = if shared {
+    let changed = l.k.generation != before;
+    let generation = if shared {
         if changed {
             if host::store(&l.k) {
                 now = host::bump();
@@ -1292,7 +1292,7 @@ pub fn with<R>(f: impl FnOnce(&mut Kern) -> R) -> (R, u64) {
         host::unlock();
         now as u64
     } else {
-        l.k.gen
+        l.k.generation
     };
     drop(g);
     if changed {
@@ -1301,7 +1301,7 @@ pub fn with<R>(f: impl FnOnce(&mut Kern) -> R) -> (R, u64) {
             host::notify();
         }
     }
-    (r, gen)
+    (r, generation)
 }
 
 /// Shares the kernel with the processes this one starts: false if the host can't run another
@@ -1341,7 +1341,7 @@ pub fn poke() {
 pub fn wait_change(seen: u64, until: Option<Instant>) -> bool {
     if host::shared() {
         loop {
-            if host::gen() != seen as u32 {
+            if host::generation() != seen as u32 {
                 return true;
             }
             let ms = match until {
@@ -1359,7 +1359,7 @@ pub fn wait_change(seen: u64, until: Option<Instant>) -> bool {
     }
     let mut g = local();
     loop {
-        if g.as_ref().map_or(0, |l| l.k.gen) != seen {
+        if g.as_ref().map_or(0, |l| l.k.generation) != seen {
             return true;
         }
         // (sharing began meanwhile: wait the shared way)
@@ -1384,13 +1384,13 @@ pub fn wait_change(seen: u64, until: Option<Instant>) -> bool {
 /// `cancelled` says so.
 pub fn block<T>(until: Option<Instant>, cancelled: &dyn Fn() -> bool, mut f: impl FnMut(&mut Kern) -> Result<T, u32>) -> Result<T, u32> {
     loop {
-        let (r, gen) = with(&mut f);
+        let (r, generation) = with(&mut f);
         match r {
             Err(PENDING) => {
                 if cancelled() {
                     return Err(CANCELLED);
                 }
-                if !wait_change(gen, until) {
+                if !wait_change(generation, until) {
                     return Err(IO_TIMEOUT);
                 }
             }
@@ -1492,7 +1492,7 @@ crate::enc_struct!(KWin { hwnd, pid, tid, class, title });
 crate::enc_struct!(XMsg { id, to, hwnd, msg, w, l, data, send, from });
 crate::enc_struct!(VmReq { id, to, op, args, data, from });
 crate::enc_struct!(VmReply { status, vals, data });
-crate::enc_struct!(Kern { gen, next, ends, pipes, procs, next_pid, sync, sync_names, dead_seen, wins, xmsgs, replies, askers, next_msg, services, com, vm, vm_replies, rthreads, dbg });
+crate::enc_struct!(Kern { generation, next, ends, pipes, procs, next_pid, sync, sync_names, dead_seen, wins, xmsgs, replies, askers, next_msg, services, com, vm, vm_replies, rthreads, dbg });
 
 #[cfg(test)]
 mod tests;

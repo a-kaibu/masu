@@ -690,11 +690,15 @@ mod egs_games_tests {
         // (the only test that sets these: meta.rs and gamedb.rs read them on each request; and
         // no proxy, which ureq would send these local requests through)
         for k in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
-            std::env::remove_var(k);
+            // SAFETY: a test: no other thread reads these variables meanwhile
+            unsafe { std::env::remove_var(k) };
         }
-        std::env::set_var("MASU_META_EGS_SQL", format!("{at}/egs"));
-        std::env::set_var("MASU_META_SEED", format!("{at}/seed"));
-        std::env::set_var("MASU_GAMEDB_REF", format!("{}/t/gamedb", at.trim_start_matches("http://")));
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_META_EGS_SQL", format!("{at}/egs")) };
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_META_SEED", format!("{at}/seed")) };
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_GAMEDB_REF", format!("{}/t/gamedb", at.trim_start_matches("http://"))) };
         let dir = std::env::temp_dir().join(format!("masu-test-{}", uuid::Uuid::new_v4()));
         let db = Library::new(&dir).unwrap();
         let q = |idx: &crate::egs_match::Index, s: &str| idx.best(&[s.to_string()]).map(|h| (h.id, h.votes));

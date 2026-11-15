@@ -17,7 +17,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-fn gen() -> Option<PathBuf> {
+fn gen_bin() -> Option<PathBuf> {
     let p = std::env::var("TF_GEN").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/testfloat/testfloat_gen")));
     p.exists().then_some(p)
 }
@@ -64,7 +64,7 @@ fn same(a: F80, b: F80) -> bool {
 /// The F80 functions themselves.
 #[test]
 fn extf80_against_testfloat() {
-    let Some(g) = gen() else {
+    let Some(g) = gen_bin() else {
         eprintln!("no testfloat_gen (tests/testfloat/build.sh): skipped");
         return;
     };
@@ -214,7 +214,7 @@ fn asm(f: impl Fn(&mut CodeAssembler) -> Result<(), IcedError>) -> Vec<u8> {
 /// interpreter (a sample per mode: the F80 functions above take all of them).
 #[test]
 fn x87_instructions_in_the_precise_mode() {
-    let Some(g) = gen() else { return };
+    let Some(g) = gen_bin() else { return };
     koji::fpu::X87_80.store(true, std::sync::atomic::Ordering::Relaxed);
     let bin = |f: fn(&mut CodeAssembler) -> Result<(), IcedError>| asm(move |a| {
         a.fld(tword_ptr(esi))?;

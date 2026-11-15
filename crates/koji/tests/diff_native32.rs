@@ -343,7 +343,7 @@ fn addr_regs(v: &[u8]) -> Vec<u8> {
 }
 
 /// One random instruction (bytes) and the state it runs from; None when the draw is not usable.
-fn gen(rng: &mut Rng, st: &mut State, data: &[u8]) -> Option<Vec<u8>> {
+fn random_insn(rng: &mut Rng, st: &mut State, data: &[u8]) -> Option<Vec<u8>> {
     let load = |a: u32, n: usize| -> u64 {
         let o = (a - DATA) as usize;
         let mut b = [0u8; 8];
@@ -594,7 +594,7 @@ fn random_protected_mode_ops_match_the_host_cpu() {
             *b = if rng.below(4) == 0 { 0x41 } else { rng.next() as u8 };
         }
         let mut st = random_state(&mut rng);
-        let Some(insn) = gen(&mut rng, &mut st, &data) else { continue };
+        let Some(insn) = random_insn(&mut rng, &mut st, &data) else { continue };
         match compare(&insn, &st, &data) {
             Ok(true) => {
                 done += 1;

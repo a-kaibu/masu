@@ -272,7 +272,7 @@ pub const SRW_WRITER_WAITS: u32 = 0x1_0000;
 /// (the entry goes with the last of them: a CV in a short-lived heap object leaves nothing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CvState {
-    pub gen: u32,
+    pub generation: u32,
     pub waiters: u32,
 }
 
@@ -478,15 +478,15 @@ impl Sync {
         let p = self.park(cv as usize);
         let gen0 = {
             let mut g = relock(&p.lock);
-            let e = g.entry(cv).or_insert(CvState { gen: 0, waiters: 0 });
+            let e = g.entry(cv).or_insert(CvState { generation: 0, waiters: 0 });
             e.waiters += 1;
-            e.gen
+            e.generation
         };
         release();
         let mut g = relock(&p.lock);
         let end = (ms != u32::MAX).then(|| Instant::now() + Duration::from_millis(ms as u64));
         let mut woke = true;
-        while g.get(&cv).map(|e| e.gen) == Some(gen0) {
+        while g.get(&cv).map(|e| e.generation) == Some(gen0) {
             if h.pausing() {
                 drop(g);
                 h.point();
@@ -522,7 +522,7 @@ impl Sync {
         let p = self.park(cv as usize);
         let mut g = relock(&p.lock);
         if let Some(e) = g.get_mut(&cv) {
-            e.gen = e.gen.wrapping_add(1);
+            e.generation = e.generation.wrapping_add(1);
             p.cv.notify_all();
         }
     }

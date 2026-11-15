@@ -49,7 +49,7 @@ impl Rng {
     }
 }
 
-fn gen(rng: &mut Rng) -> Result<Vec<u8>, IcedError> {
+fn random_insn(rng: &mut Rng) -> Result<Vec<u8>, IcedError> {
     let mut a = CodeAssembler::new(32)?;
     a.fninit()?;
     a.xor(eax, eax)?; // same EFLAGS and EAX on both sides
@@ -183,7 +183,7 @@ fn precise_x87_matches_the_host_cpu() {
     let mut failures = Vec::new();
     let mut fails = 0;
     for _ in 0..n {
-        let body = gen(&mut rng).unwrap();
+        let body = random_insn(&mut rng).unwrap();
         let mut d = vec![0u8; PAGE];
         fill(&mut rng, &mut d);
         let mut c = vec![0x53, 0x48, 0x89, 0xfb];

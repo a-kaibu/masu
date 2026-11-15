@@ -4191,12 +4191,12 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     tw.extend_from_slice(&colors);
     let (dt, dl, dly) = depth.unwrap_or((0, 0, 0));
     tw.extend_from_slice(&[dt, dl, dly]);
-    let gen = gpu::batch_gen();
-    if d.targets.as_ref().is_none_or(|(g, t)| *g != gen || *t != tw) {
+    let generation = gpu::batch_gen();
+    if d.targets.as_ref().is_none_or(|(g, t)| *g != generation || *t != tw) {
         let mut c = vec![gpu::SET_TARGETS2];
         c.extend_from_slice(&tw);
         gpu::record(|q| q.cmd(&c));
-        d.targets = Some((gen, tw));
+        d.targets = Some((generation, tw));
     }
     // pipeline
     let layout = match d.objs.get(&st.layout).map(|o| &o.data) {

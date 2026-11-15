@@ -434,7 +434,7 @@ fn ring() {
     DOORBELL.fetch_add(1, Ordering::SeqCst);
     #[cfg(target_os = "emscripten")]
     unsafe {
-        extern "C" {
+        unsafe extern "C" {
             fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
         }
         emscripten_futex_wake(DOORBELL.as_ptr() as *const std::ffi::c_void, i32::MAX);
@@ -961,7 +961,7 @@ fn rgb_to_ycc(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
 // the page
 
 /// The doorbell's address (the page waits on it with Atomics.waitAsync).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_video_doorbell() -> u32 {
     DOORBELL.as_ptr() as u32
 }
@@ -973,7 +973,7 @@ pub extern "C" fn vnhost_video_doorbell() -> u32 {
 ///
 /// # Safety
 /// `out` must hold `max * 6` words.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_video_list(out: *mut u32, max: u32) -> u32 {
     PAGE.store(true, Ordering::Relaxed);
     // (the headers handed out by the last list are read by now)
@@ -1028,7 +1028,7 @@ pub fn chunk_into(id: u32, t: u32, n: u32, c: &mut Vec<u8>) -> Option<u32> {
 /// `size` must hold two writable words. (Typed as two words, not one `*mut u32`: a caller in
 /// Rust that passes the address of one word does not compile; #241 was such a caller, a test
 /// with `let mut size = 0u32`, and ASan saw the second word written past it.)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_video_chunk(id: u32, t: u32, n: u32, size: *mut [u32; 2]) -> u32 {
     let mut c = CHUNK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(pts) = chunk_into(id, t, n, &mut c) else { return 0 };
@@ -1042,7 +1042,7 @@ pub unsafe extern "C" fn vnhost_video_chunk(id: u32, t: u32, n: u32, size: *mut 
 
 /// The page cannot decode stream `id`. (An uncompressed one needs no page: the page's WebCodecs
 /// has no "raw-i420", and its frames still come from the file.)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_video_fail(id: u32) {
     with(|m| {
         if let Some(s) = m.get_mut(&id).filter(|s| !s.raw) {
@@ -1053,7 +1053,7 @@ pub extern "C" fn vnhost_video_fail(id: u32) {
 }
 
 /// Whether stream `id` holds frame `n` in a slot.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_video_has(id: u32, n: i32) -> u32 {
     with(|m| m.get(&id).is_some_and(|s| s.slots.iter().any(|sl| sl.frame == n)) as u32)
 }
@@ -1064,7 +1064,7 @@ pub extern "C" fn vnhost_video_has(id: u32, n: i32) -> u32 {
 ///
 /// # Safety
 /// `size` must be writable.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_video_begin(id: u32, n: i32, size: *mut u32) -> u32 {
     with(|m| {
         let Some(s) = m.get_mut(&id).filter(|s| !s.closed) else { return 0 };
@@ -1147,7 +1147,7 @@ fn fit_rows(layout: &[[u32; 7]; 2], tracks: u32, w: u32, h: u32, len: usize) -> 
 ///
 /// # Safety
 /// `layout` must hold 14 words.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_video_ready(id: u32, buf: u32, layout: *const [u32; 14], ok: u32) {
     let l = &*layout;
     with(|m| {

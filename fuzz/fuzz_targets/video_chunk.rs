@@ -74,13 +74,13 @@ fuzz_target!(|data: &[u8]| {
 
 // What the page or emscripten gives kura (as in profile_cache.rs): no store to fetch from, and
 // a clock at 0
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnvm_fetch(_name: *const std::ffi::c_char, _len: *mut usize) -> *mut u8 {
     std::ptr::null_mut()
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnvm_fetch_hint(_names: *const std::ffi::c_char, _len: usize) {}
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn emscripten_get_now() -> f64 {
     0.0
 }

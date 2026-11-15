@@ -119,7 +119,7 @@ pub struct Buffer {
     /// its writable locks and their unlocks, `sent` is the `gen` the page has, `dirty` the
     /// bytes locked for writing since.
     pub gpu: u32,
-    pub gen: u64,
+    pub generation: u64,
     pub sent: u64,
     pub dirty: Option<(u32, u32)>,
     pub locked: bool,
@@ -185,7 +185,7 @@ pub(crate) fn page_buffer(objs: &mut HashMap<u32, super::Obj, super::FastHash>, 
         });
         RESIDENT_SENT.fetch_add(u64::from(size), std::sync::atomic::Ordering::Relaxed);
         b.dirty = None;
-        b.sent = b.gen;
+        b.sent = b.generation;
     }
     if let Some((lo, hi)) = b.dirty.take() {
         // (whole words; only from the first to the last that changed)
@@ -217,7 +217,7 @@ pub(crate) fn page_buffer(objs: &mut HashMap<u32, super::Obj, super::FastHash>, 
             }
         }
     }
-    b.sent = b.gen;
+    b.sent = b.generation;
     (b.gpu, b.cgen)
 }
 
@@ -1525,7 +1525,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             if mem == 0 {
                 return super::E_OUTOFMEMORY;
             }
-            let b = Buffer { len, usage, fmt: f, pool, mem, gpu: 0, gen: 0, sent: 0, dirty: None, locked: false, shadow: Vec::new(), cgen: 0 };
+            let b = Buffer { len, usage, fmt: f, pool, mem, gpu: 0, generation: 0, sent: 0, dirty: None, locked: false, shadow: Vec::new(), cgen: 0 };
             let o = d.new_obj(if m == 26 { IF_VB } else { IF_IB }, 0, Data::Buffer(b));
             wrp(out, 0, o);
             S_OK
@@ -2729,10 +2729,10 @@ unsafe fn upload_keep(d: &mut D3d, s: u32, r: [u32; 4]) {
 /// guest copies, so a draw shows the palette current at the draw, as Direct3D 9 does.
 unsafe fn refresh_p8(d: &mut D3d) {
     let Some(dev) = d.dev.as_mut() else { return };
-    let gen = dev.pal_gen;
+    let generation = dev.pal_gen;
     // (every upload of a P8 surface makes it with the palette of now: nothing goes stale until
     // the palette or what is bound changes)
-    let key = (gen, dev.st.textures);
+    let key = (generation, dev.st.textures);
     if dev.p8_seen == Some(key) {
         return;
     }
@@ -2746,7 +2746,7 @@ unsafe fn refresh_p8(d: &mut D3d) {
         }
         for &s in &tx.levels {
             if let Some(Data::Surface(sf)) = d.objs.get(&s).map(|o| &o.data) {
-                if sf.pal_gen != gen && sf.mem != 0 && sf.gpu != 0 {
+                if sf.pal_gen != generation && sf.mem != 0 && sf.gpu != 0 {
                     stale.push((s, sf.w, sf.h));
                 }
             }
@@ -3053,7 +3053,7 @@ unsafe fn buffer_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usi
             if a(4) & 0x10 == 0 {
                 let end = if a(2) == 0 { b.len } else { off.saturating_add(a(2)).min(b.len) };
                 b.dirty = Some(b.dirty.map_or((off, end), |(lo, hi)| (lo.min(off), hi.max(end))));
-                b.gen += 1;
+                b.generation += 1;
                 b.locked = true;
             }
             S_OK
@@ -3062,7 +3062,7 @@ unsafe fn buffer_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usi
             // (what it wrote while locked: sent at the next draw)
             if let Some(Data::Buffer(b)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
                 if std::mem::take(&mut b.locked) {
-                    b.gen += 1;
+                    b.generation += 1;
                 }
             }
             S_OK
@@ -3656,12 +3656,12 @@ fn ensure_target(d: &mut D3d, rt: u32, ds: u32) {
     // (a depth buffer of another size than the target: the page draws with one of the
     // target's size, render/d3d.rs depth_for; Windows uses a smaller one too)
     let key = (t.0, t.1, z.map_or(0, |z| z.0));
-    let gen = gpu::batch_gen();
+    let generation = gpu::batch_gen();
     let Some(dev) = d.dev.as_mut() else { return };
-    if dev.batch_target != Some(key) || dev.batch_gen != gen {
+    if dev.batch_target != Some(key) || dev.batch_gen != generation {
         gpu::record(|b| b.cmd(&[gpu::SET_TARGET, key.0, key.1, key.2]));
         dev.batch_target = Some(key);
-        dev.batch_gen = gen;
+        dev.batch_gen = generation;
     }
 }
 
@@ -4101,7 +4101,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 return D3DERR_INVALIDCALL;
             }
             // (a resident buffer changes only through its locks, `gen`: see page_buffer)
-            let key = (st.indices, ib.gen, *start, nverts);
+            let key = (st.indices, ib.generation, *start, nverts);
             let cache = resident(ib) && !ib.locked;
             let slot = us(st.indices ^ start.wrapping_mul(31) ^ nverts.wrapping_mul(131)) & 63;
             let (lo, n, f) = match dev.ranges[slot].get() {
@@ -4157,7 +4157,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         *m = g.4;
     }
     let pkey = PrepKey {
-        gen: dev.prep_gen,
+        generation: dev.prep_gen,
         prim,
         kind: match src {
             Src::Streams(_) => 0,
@@ -4798,7 +4798,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     // the last draw)
     let join = merging() && index.is_none() && matches!(prim, 1 | 2 | 4) && instances == 1 && streams.len() == 1;
     let merge = dev.merge.map(|(a, l, e, g)| (a, l, e, g));
-    let ((cmd, ok), gen) = gpu::record_gen(|b| {
+    let ((cmd, ok), generation) = gpu::record_gen(|b| {
         // uniforms (the same block as the last draw's when nothing changed; before the vertices, which the next draw's may follow, #120)
         let (vsu, psu) = (&uni.vsu, &uni.psu);
         let vso = if dev.last_vs.0 == *vsu && same_batch && !b.data.is_empty() { dev.last_vs.1 } else { b.data(vsu, 256) };
@@ -4935,7 +4935,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         b.cmd(&c);
         ((vso, pso), joinable.then_some((at, c.len(), vend)))
     });
-    dev.merge = ok.map(|(a, l, e)| (a, l, e, gen));
+    dev.merge = ok.map(|(a, l, e)| (a, l, e, generation));
     for (last, now, off) in [(&mut dev.last_vs, &uni.vsu, cmd.0), (&mut dev.last_ps, &uni.psu, cmd.1)] {
         if last.0 != *now {
             last.0.clear();
@@ -4945,7 +4945,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     }
     dev.uni = Some(uni);
     dev.prep = Some(prep);
-    dev.uniform_gen = gen;
+    dev.uniform_gen = generation;
     // mark the targets rendered
     mark_rendered(d, rt);
     for r in more_rts {
@@ -4967,7 +4967,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
 /// `prep_gen` prepares the same (#118).
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 struct PrepKey {
-    gen: u64,
+    generation: u64,
     prim: u32,
     /// 0 DrawPrimitive, 1 DrawIndexedPrimitive, 2 DrawPrimitiveUP, 3 DrawIndexedPrimitiveUP
     kind: u8,

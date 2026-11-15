@@ -2736,7 +2736,7 @@ fn DestroyWindow(c: &mut Ctx) -> u32 {
     }
     // the active window gone: another visible top-level window takes over, as on Windows
     if ok && was_active {
-        let next = with(|s| s.wins.iter().filter(|(&k, w)| k != DESKTOP && w.parent == 0 && w.visible).map(|(&k, _)| k).max());
+        let next = with(|s| s.wins.iter().filter(|&(&k, ref w)| k != DESKTOP && w.parent == 0 && w.visible).map(|(&k, _)| k).max());
         if let Some(n) = next {
             activate(c, n);
         }
@@ -2813,7 +2813,7 @@ fn activate(c: &mut Ctx, h: u32) {
         let (old_tid, new_tid, tops) = with(|s| {
             let tid = |h: u32| s.wins.get(&h).map(|w| w.tid);
             let mut tops: Vec<crate::activation::Top> =
-                s.wins.iter().filter(|(&k, w)| k != DESKTOP && w.parent == 0).map(|(&k, w)| (k, w.tid, w.owner == HWND_MESSAGE)).collect();
+                s.wins.iter().filter(|&(&k, ref w)| k != DESKTOP && w.parent == 0).map(|(&k, w)| (k, w.tid, w.owner == HWND_MESSAGE)).collect();
             // (Z order approximated as newest first, as FindWindow lists them)
             tops.sort_unstable_by(|a, b| b.0.cmp(&a.0));
             (if old != 0 { tid(old) } else { None }, tid(h), tops)
@@ -4431,7 +4431,7 @@ fn take_msg(hwnd: u32, lo: u32, hi: u32, remove: bool) -> Option<Msg> {
             let mut ws: Vec<u32> = s
                 .wins
                 .iter()
-                .filter(|(&h, w)| w.tid == me && !w.update.empty() && (hwnd == 0 || hwnd == h) && shown_tree(s, h))
+                .filter(|&(&h, ref w)| w.tid == me && !w.update.empty() && (hwnd == 0 || hwnd == h) && shown_tree(s, h))
                 .map(|(&h, _)| h)
                 .collect();
             ws.sort();

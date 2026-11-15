@@ -31,7 +31,7 @@ struct Stream {
     rate: u32,
     channels: u32,
     /// bumped by `reset`: the page's decoder for an older one is thrown away
-    gen: u32,
+    generation: u32,
     /// chunks not taken by the page yet (their sequence numbers follow `taken`), and their bytes
     queue: VecDeque<Vec<u8>>,
     queued: usize,
@@ -74,7 +74,7 @@ fn ring() {
     DOORBELL.fetch_add(1, Ordering::SeqCst);
     #[cfg(target_os = "emscripten")]
     unsafe {
-        extern "C" {
+        unsafe extern "C" {
             fn emscripten_futex_wake(addr: *const std::ffi::c_void, count: i32) -> i32;
         }
         emscripten_futex_wake(DOORBELL.as_ptr() as *const std::ffi::c_void, i32::MAX);
@@ -99,7 +99,7 @@ pub fn open(codec: &str, rate: u32, channels: u32, desc: &[u8]) -> Option<u32> {
         desc: desc.to_vec(),
         rate,
         channels,
-        gen: 0,
+        generation: 0,
         queue: VecDeque::new(),
         queued: 0,
         pushed: 0,
@@ -135,7 +135,7 @@ pub fn close(id: u32) {
 pub fn reset(id: u32) {
     with(|m| {
         if let Some(s) = m.get_mut(&id) {
-            s.gen = s.gen.wrapping_add(1);
+            s.generation = s.generation.wrapping_add(1);
             s.queue.clear();
             s.queued = 0;
             s.pcm.clear();
@@ -226,7 +226,7 @@ pub fn decode<'a>(id: u32, chunks: impl IntoIterator<Item = &'a [u8]>, timeout: 
 // the page
 
 /// The doorbell's address (the page waits on it with Atomics.waitAsync).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_adec_doorbell() -> u32 {
     lo32(DOORBELL.as_ptr().expose_provenance())
 }
@@ -238,7 +238,7 @@ pub extern "C" fn vnhost_adec_doorbell() -> u32 {
 ///
 /// # Safety
 /// `out` must hold `max * 10` words.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_adec_list(out: *mut u32, max: u32) -> u32 {
     let Some(words) = (us(max)).checked_mul(10) else { return 0 };
     let out = std::slice::from_raw_parts_mut(out, words);
@@ -246,7 +246,7 @@ pub unsafe extern "C" fn vnhost_adec_list(out: *mut u32, max: u32) -> u32 {
     for (n, r) in rows.iter().enumerate() {
         out[n * 10..n * 10 + 10].copy_from_slice(&[
             r.id,
-            r.gen,
+            r.generation,
             lo32(r.codec.0),
             lo32(r.codec.1),
             r.rate,
@@ -263,7 +263,7 @@ pub unsafe extern "C" fn vnhost_adec_list(out: *mut u32, max: u32) -> u32 {
 /// A stream as the page lists it (address and length of its codec string and description).
 struct Row {
     id: u32,
-    gen: u32,
+    generation: u32,
     codec: (usize, usize),
     rate: u32,
     channels: u32,
@@ -290,7 +290,7 @@ fn rows(max: usize) -> Vec<Row> {
             .map(|id| (*id, &m[id]))
             .map(|(id, s)| Row {
                 id,
-                gen: s.gen,
+                generation: s.generation,
                 codec: (s.codec.as_ptr().expose_provenance(), s.codec.len()),
                 rate: s.rate,
                 channels: s.channels,
@@ -310,9 +310,9 @@ static CHUNK: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 ///
 /// # Safety
 /// `size` and `seq` must be writable.
-#[no_mangle]
-pub unsafe extern "C" fn vnhost_adec_chunk(id: u32, gen: u32, size: *mut u32, seq: *mut u32) -> u32 {
-    let Some((b, n)) = next_chunk(id, gen) else { return 0 };
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vnhost_adec_chunk(id: u32, generation: u32, size: *mut u32, seq: *mut u32) -> u32 {
+    let Some((b, n)) = next_chunk(id, generation) else { return 0 };
     let mut c = CHUNK.lock().unwrap_or_else(|e| e.into_inner());
     *c = b;
     *size = lo32(c.len());
@@ -322,9 +322,9 @@ pub unsafe extern "C" fn vnhost_adec_chunk(id: u32, gen: u32, size: *mut u32, se
 }
 
 /// The next chunk of stream `id` (generation `gen`) and its sequence number.
-fn next_chunk(id: u32, gen: u32) -> Option<(Vec<u8>, u32)> {
+fn next_chunk(id: u32, generation: u32) -> Option<(Vec<u8>, u32)> {
     with(|m| {
-        let s = m.get_mut(&id).filter(|s| s.gen == gen && !s.closed)?;
+        let s = m.get_mut(&id).filter(|s| s.generation == generation && !s.closed)?;
         let b = s.queue.pop_front()?;
         s.queued -= b.len();
         s.taken += 1;
@@ -338,11 +338,11 @@ fn next_chunk(id: u32, gen: u32) -> Option<(Vec<u8>, u32)> {
 ///
 /// # Safety
 /// `pcm` must hold `frames * channels` floats.
-#[no_mangle]
-pub unsafe extern "C" fn vnhost_adec_pcm(id: u32, gen: u32, pcm: *const f32, frames: u32, channels: u32) {
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vnhost_adec_pcm(id: u32, generation: u32, pcm: *const f32, frames: u32, channels: u32) {
     let Some(n) = (us(frames)).checked_mul(us(channels)).filter(|_| channels != 0 && !pcm.is_null()) else { return };
     let failed = with(|m| {
-        let Some(s) = m.get_mut(&id).filter(|s| s.gen == gen && !s.closed) else { return false };
+        let Some(s) = m.get_mut(&id).filter(|s| s.generation == generation && !s.closed) else { return false };
         if s.pcm.len() + (us(frames)).saturating_mul(us(s.channels)) > MAX_PCM {
             // (the guest is not taking them: see MAX_PCM)
             s.failed = true;
@@ -374,10 +374,10 @@ fn put(dst: &mut VecDeque<f32>, src: &[f32], from: usize, to: usize) {
 
 /// Every chunk of stream `id` (generation `gen`) up to sequence number `seq` is decoded and its
 /// samples handed back.
-#[no_mangle]
-pub extern "C" fn vnhost_adec_done(id: u32, gen: u32, seq: u32) {
+#[unsafe(no_mangle)]
+pub extern "C" fn vnhost_adec_done(id: u32, generation: u32, seq: u32) {
     with(|m| {
-        if let Some(s) = m.get_mut(&id).filter(|s| s.gen == gen) {
+        if let Some(s) = m.get_mut(&id).filter(|s| s.generation == generation) {
             s.done = s.done.max(u64::from(seq).min(s.taken));
         }
     });
@@ -385,10 +385,10 @@ pub extern "C" fn vnhost_adec_done(id: u32, gen: u32, seq: u32) {
 }
 
 /// The page cannot decode stream `id` (generation `gen`): its waits end, and it takes no chunks.
-#[no_mangle]
-pub extern "C" fn vnhost_adec_fail(id: u32, gen: u32) {
+#[unsafe(no_mangle)]
+pub extern "C" fn vnhost_adec_fail(id: u32, generation: u32) {
     with(|m| {
-        if let Some(s) = m.get_mut(&id).filter(|s| s.gen == gen) {
+        if let Some(s) = m.get_mut(&id).filter(|s| s.generation == generation) {
             s.failed = true;
             s.queue.clear();
             s.queued = 0;
@@ -403,13 +403,13 @@ pub extern "C" fn vnhost_adec_fail(id: u32, gen: u32) {
 pub fn test_page_pass(dec: &mut dyn FnMut(&[u8], u32) -> Vec<f32>) {
     for r in rows(usize::MAX) {
         let mut last = 0;
-        while let Some((b, seq)) = next_chunk(r.id, r.gen) {
+        while let Some((b, seq)) = next_chunk(r.id, r.generation) {
             let pcm = dec(&b, r.channels);
-            unsafe { vnhost_adec_pcm(r.id, r.gen, pcm.as_ptr(), lo32(pcm.len() / us(r.channels.max(1))), r.channels) };
+            unsafe { vnhost_adec_pcm(r.id, r.generation, pcm.as_ptr(), lo32(pcm.len() / us(r.channels.max(1))), r.channels) };
             last = seq;
         }
         if last > 0 {
-            vnhost_adec_done(r.id, r.gen, last);
+            vnhost_adec_done(r.id, r.generation, last);
         }
     }
 }
@@ -435,8 +435,8 @@ pub(crate) mod tests {
         rows(64)
     }
 
-    fn chunk(id: u32, gen: u32) -> Option<(Vec<u8>, u32)> {
-        next_chunk(id, gen)
+    fn chunk(id: u32, generation: u32) -> Option<(Vec<u8>, u32)> {
+        next_chunk(id, generation)
     }
 
     /// A page in a thread: takes every chunk, "decodes" chunk k (its bytes b) to b.len() frames
@@ -445,15 +445,15 @@ pub(crate) mod tests {
         std::thread::spawn(move || {
             while !stop.load(Ordering::Relaxed) {
                 for row in list() {
-                    let (id, gen) = (row.id, row.gen);
+                    let (id, generation) = (row.id, row.generation);
                     let mut last = 0;
-                    while let Some((b, seq)) = chunk(id, gen) {
+                    while let Some((b, seq)) = chunk(id, generation) {
                         let pcm: Vec<f32> = b.iter().flat_map(|&v| (0..ch).map(move |_| to_f32(v) / 256.0 + to_f32(seq))).collect();
-                        unsafe { vnhost_adec_pcm(id, gen, pcm.as_ptr(), lo32(b.len()), ch) };
+                        unsafe { vnhost_adec_pcm(id, generation, pcm.as_ptr(), lo32(b.len()), ch) };
                         last = seq;
                     }
                     if last > 0 {
-                        vnhost_adec_done(id, gen, last);
+                        vnhost_adec_done(id, generation, last);
                     }
                 }
                 std::thread::sleep(Duration::from_micros(200));
@@ -482,10 +482,10 @@ pub(crate) mod tests {
         let codec = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(row.codec.0), row.codec.1) };
         let desc = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(row.desc.0), row.desc.1) };
         assert_eq!((codec, desc, row.rate, row.channels, row.queued, row.failed), (&b"opus"[..], &[1u8, 2, 3][..], 48000, 2, 2, false));
-        assert_eq!(chunk(id, row.gen), Some((vec![9, 9], 1)));
-        assert_eq!(chunk(id, row.gen + 1), None, "another generation's page takes nothing");
-        assert_eq!(chunk(id, row.gen), Some((vec![8], 2)));
-        assert_eq!(chunk(id, row.gen), None);
+        assert_eq!(chunk(id, row.generation), Some((vec![9, 9], 1)));
+        assert_eq!(chunk(id, row.generation + 1), None, "another generation's page takes nothing");
+        assert_eq!(chunk(id, row.generation), Some((vec![8], 2)));
+        assert_eq!(chunk(id, row.generation), None);
         close(id);
         assert!(list().iter().all(|r| r.id != id), "a closed stream is not listed");
         assert_eq!(chunk(id, 0), None);

@@ -634,7 +634,7 @@ fn learn(c: &mut Ctx, tramp: u32, vb: u32, map: u32, fastcall: bool, shapes: &[(
         return r;
     }
     let diffs: Vec<f32> = shapes.iter().map(|(_, b)| largest_diff(b, outs).0).collect();
-    let s = match shapes.iter().zip(&diffs).find(|((_, _), &d)| d < 1e-4 * peak.max(1.0)) {
+    let s = match shapes.iter().zip(&diffs).find(|&(&(_, _), &d)| d < 1e-4 * peak.max(1.0)) {
         Some(((s, _), _)) => *s,
         None if misses >= 3 => Shape::Off,
         None => Shape::Unknown(misses + 1),

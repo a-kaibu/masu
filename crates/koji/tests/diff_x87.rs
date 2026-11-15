@@ -46,7 +46,7 @@ impl Rng {
     }
 }
 
-fn gen(rng: &mut Rng) -> Result<Vec<u8>, IcedError> {
+fn random_insn(rng: &mut Rng) -> Result<Vec<u8>, IcedError> {
     let mut a = CodeAssembler::new(32)?;
     a.fninit()?;
     a.xor(eax, eax)?; // same EFLAGS and EAX on both sides
@@ -147,7 +147,7 @@ fn random_x87_sequences_match_the_host_cpu() {
     let mut rng = Rng(0xdead_beef_1234_5678);
     let mut failures = Vec::new();
     for _ in 0..30_000 {
-        let body = gen(&mut rng).unwrap();
+        let body = random_insn(&mut rng).unwrap();
         let mut d = vec![0u8; PAGE];
         fill(&mut rng, &mut d);
         // native: push rbx; mov rbx, rdi; body; pop rbx; ret

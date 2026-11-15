@@ -353,7 +353,7 @@ pub const BUDGET: i32 = 1 << 14;
 const MAX_BLOCKS: usize = 1024;
 
 #[cfg(target_os = "emscripten")]
-extern "C" {
+unsafe extern "C" {
     fn vnvm_jit_init(ptr: *const u8, len: usize);
     fn vnvm_jit_load(ptr: *const u8, len: usize, n: u32) -> i32;
     fn vnvm_jit_free(base: u32, n: u32);
@@ -1497,7 +1497,7 @@ static LATE: Inbox = Inbox::new();
 
 /// The page: a saved part that came after the module started, its module and index in memory
 /// from malloc, kura's from now on (never freed). 0 taken, -1 refused (no room).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_jit_late(wasm: *const u8, wasm_len: u32, idx: *const u8, idx_len: u32) -> i32 {
     if wasm.is_null() || idx.is_null() || !LATE.push([wasm.expose_provenance(), us(wasm_len), idx.expose_provenance(), us(idx_len)]) {
         return -1;
@@ -1743,7 +1743,7 @@ fn ack(id: u32, a: Ack) {
 }
 
 /// host/vnjit.js, when the server answered save `id` (or the request failed): `ack` an [`Ack`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_jit_saved(id: u32, a: u32) {
     // (a trace's: no save waits for it, and its slot is another save's)
     if id == NO_ACK {
@@ -3151,7 +3151,7 @@ pub(crate) fn step(cpu: &mut Cpu, mem: &mut Linear) -> (Exit, bool) {
 /// A call site's miss in the call cache (function mode): the hash table's entry for `target`
 /// if it is a function's (also put in the cache slot at `slot`), else 0 with (FN_TAG, target)
 /// in the ring (a callee called often becomes a function, see merge_hot).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_jit_callmiss(cpu: u32, slot: u32, target: u32) -> u32 {
     let cpu = &*(us(cpu) as *const Cpu);
     let hash = std::slice::from_raw_parts(us(cpu.jit_hash) as *const [u32; 2], us(cpu.jit_mask) + 1);
@@ -3183,7 +3183,7 @@ pub unsafe extern "C" fn vnhost_jit_callmiss(cpu: u32, slot: u32, target: u32) -
 
 /// One instruction run by the interpreter for a block: 0 if it completed, else 2 with the exit
 /// kept for [`run`].
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_jit_step(cpu: u32) -> i32 {
     // (u32: an i32 in the region modules' imports, the 64-bit build too)
     let cpu = us(cpu) as *mut Cpu;
@@ -3228,7 +3228,7 @@ pub unsafe extern "C" fn vnhost_jit_step(cpu: u32) -> i32 {
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_jit_eflags(cpu: u32) -> u32 {
     let cpu = &mut *(us(cpu) as *mut Cpu);
     cpu.materialize();
@@ -3236,14 +3236,14 @@ pub unsafe extern "C" fn vnhost_jit_eflags(cpu: u32) -> u32 {
 }
 
 /// A region leaving with its x87 cache (koji::jit::x87_out).
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn vnhost_jit_x87(cpu: u32, top: u32, info: u32, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64) {
     let cpu = us(cpu) as *mut Cpu;
     jit::x87_out(&mut (*cpu).fpu, top, info, [a, b, c, d, e, f, g, h]);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_jit_status(op: u32, a: u32, b: u32, r: u32, c: u32) -> u32 {
     if op == 0xdead {
         // (jit::long's MASU_JIT64_CHECK: a lazy condition that disagrees with the flags)
@@ -3285,7 +3285,7 @@ fn keep_profile(region: &mut jit::Region) {
 
 /// Prints the executed instruction counts so far (blocks entered times their instructions:
 /// a block left early still counts whole; the interpreter's own steps are not in it).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_jit_profile() {
     let prof = PROF.locked();
     let mut by_key: HashMap<&str, u64> = HashMap::new();
@@ -3630,11 +3630,14 @@ mod save_tests {
     fn chunks_url_is_the_pages() {
         let url = std::ffi::CString::new("http://h/jit-save/sake-x-1").unwrap();
         // (one test changes the variable: no other reads it)
-        std::env::remove_var("MASU_CHUNKS_URL");
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::remove_var("MASU_CHUNKS_URL") };
         assert_eq!(chunks_url(&url).to_str().unwrap(), "http://h/jit-save/sake-x-1.chunks");
-        std::env::set_var("MASU_CHUNKS_URL", "http://h/jit-save/sake-x-1.kinkoi.chunks");
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::set_var("MASU_CHUNKS_URL", "http://h/jit-save/sake-x-1.kinkoi.chunks") };
         assert_eq!(chunks_url(&url).to_str().unwrap(), "http://h/jit-save/sake-x-1.kinkoi.chunks");
-        std::env::remove_var("MASU_CHUNKS_URL");
+        // SAFETY: a test: no other thread reads these variables meanwhile
+        unsafe { std::env::remove_var("MASU_CHUNKS_URL") };
     }
 
     /// A trace's answer (NO_ACK) takes no save's slot.

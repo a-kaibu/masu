@@ -83,7 +83,7 @@ static INFO: Info = Info(UnsafeCell::new([0; 16]));
 /// Where the page finds everything: magic "VNCL", version, then (address, size, address of
 /// the head) for EV and OUT, (address, size, address of the length) for SNAP, the address of
 /// the crash counter, of the reason (NUL-terminated) and its size.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_crashlog_info() -> u32 {
     let i = unsafe { &mut *INFO.0.get() };
     *i = [
@@ -740,7 +740,7 @@ pub fn exception(cpu: &Cpu, what: &str, access: Option<(u32, bool)>, from_jit: b
 }
 
 /// Writes every guest thread's state into SNAP; returns its length (0 if busy).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_crashlog_snapshot() -> u32 {
     if SNAP_BUSY.swap(true, Acquire) {
         return 0;

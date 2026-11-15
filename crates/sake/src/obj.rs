@@ -209,7 +209,7 @@ pub struct Table {
     named: std::collections::HashSet<Key>,
     /// the handle numbers have passed HANDLE_LIMIT: closed ones are given again
     reuse: u32,
-    pub gen: u64,
+    pub generation: u64,
     /// the waiting threads, by the object keys they wait on, and each one's condition variable
     waits: waits::wake::WaitList<Key>,
     cvs: HashMap<u64, Arc<Condvar>>,
@@ -245,7 +245,7 @@ impl Table {
         }
     }
     fn new() -> Self {
-        Table { objs: Objs::default(), next: 0x100, names: HashMap::default(), named: Default::default(), reuse: 0, gen: 0, waits: Default::default(), cvs: HashMap::default() }
+        Table { objs: Objs::default(), next: 0x100, names: HashMap::default(), named: Default::default(), reuse: 0, generation: 0, waits: Default::default(), cvs: HashMap::default() }
     }
     fn notify(&self, ids: &[u64]) {
         for id in ids {
@@ -436,7 +436,7 @@ pub fn file(h: u32) -> Option<Arc<crate::files::File>> {
 /// Wakes every waiter (after changing anything they may wait for).
 pub fn signal() {
     with(|t| {
-        t.gen += 1;
+        t.generation += 1;
         let mut out = Vec::new();
         t.waits.wake_all(&mut out);
         t.notify(&out);
@@ -447,7 +447,7 @@ pub fn signal() {
 /// 1, a semaphore the count released, a manual-reset event all): wakes only its waiters.
 pub fn signal_obj(h: u32, n: usize) {
     with(|t| {
-        t.gen += 1;
+        t.generation += 1;
         let Some(k) = t.objs.key(&norm(h)) else { return };
         let mut out = Vec::new();
         t.waits.wake(&k, n, &mut out);

@@ -115,9 +115,9 @@ const RC_NAME: [&str; 4] = ["near", "down", "up", "zero"];
 
 #[test]
 fn testfloat() {
-    let gen = gen_path();
-    if !gen.exists() {
-        eprintln!("testfloat: no {} (tests/testfloat/build.sh)", gen.display());
+    let gen_bin = gen_path();
+    if !gen_bin.exists() {
+        eprintln!("testfloat: no {} (tests/testfloat/build.sh)", gen_bin.display());
         return;
     }
     let filter = std::env::var("TF_FILTER").unwrap_or_default();
@@ -147,7 +147,7 @@ fn testfloat() {
                     let (code, end) = program(op, rc);
                     let (mut ok, mut n, mut shown) = (0, 0, 0);
                     let mut log = String::new();
-                    generate(&gen, op, rc, level, |l| {
+                    generate(&gen_bin, op, rc, level, |l| {
                         let Some(c) = parse_line(op, l) else { return };
                         if skipped(op, &c) {
                             return;

@@ -800,8 +800,8 @@ fn a_lost_device_gets_the_kept_bits_and_buffers() {
             }
         }
     });
-    let gen = crate::render::lost_gen();
-    crate::render::set_lost_gen(gen + 1);
+    let generation = crate::render::lost_gen();
+    crate::render::set_lost_gen(generation + 1);
     // (the guest's next call, whatever it is)
     call1(m(IF_DEVICE, 1), &[dev.dev]);
     call1(m(IF_DEVICE, 2), &[dev.dev]);
@@ -812,8 +812,8 @@ fn a_lost_device_gets_the_kept_bits_and_buffers() {
         let d = g.as_ref().unwrap();
         assert!(matches!(&d.objs[&d.id_of(buf)].data, Data::Buffer(b) if b.dirty), "the buffer goes up again");
     }
-    crate::render::set_lost_gen(gen);
-    D11S.lock().unwrap().as_mut().unwrap().lost_seen = gen;
+    crate::render::set_lost_gen(generation);
+    D11S.lock().unwrap().as_mut().unwrap().lost_seen = generation;
     call1(m(IF_BUFFER, 2), &[buf]);
     dev.release(kt);
     dev.release(ht);

@@ -446,7 +446,7 @@ fn exit_flush(shared: bool, page_thread: bool) -> ExitFlush {
 fn on_page_thread() -> bool {
     #[cfg(target_os = "emscripten")]
     {
-        extern "C" {
+        unsafe extern "C" {
             fn emscripten_is_main_browser_thread() -> std::ffi::c_int;
         }
         unsafe { emscripten_is_main_browser_thread() != 0 }

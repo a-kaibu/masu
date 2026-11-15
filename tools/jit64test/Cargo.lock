@@ -348,8 +348,13 @@ name = "koji"
 version = "0.1.0"
 dependencies = [
  "iced-x86",
+ "kome",
  "libm",
 ]
+
+[[package]]
+name = "kome"
+version = "0.1.0"
 
 [[package]]
 name = "lazy_static"

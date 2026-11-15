@@ -28,7 +28,7 @@ struct Dmo {
     tl: Timeline,
     flushing: bool,
     /// stops and flushes so far: a picture waiting goes
-    gen: u32,
+    generation: u32,
     /// a picture went to the renderer since the last stop or flush (the paused graph's one)
     shown: bool,
 }
@@ -39,7 +39,7 @@ fn dwith<R>(b: u32, f: impl FnOnce(&mut Dmo) -> R) -> Option<R> {
 }
 
 pub(super) fn created(b: u32) {
-    let d = Dmo { clsid: [0; 16], codec: None, w: 0, h: 0, frame: SEC / 30, tl: Timeline::new(u64::MAX / 4), flushing: false, gen: 0, shown: false };
+    let d = Dmo { clsid: [0; 16], codec: None, w: 0, h: 0, frame: SEC / 30, tl: Timeline::new(u64::MAX / 4), flushing: false, generation: 0, shown: false };
     DMOS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, d);
 }
 pub(super) fn gone(b: u32) {
@@ -114,7 +114,7 @@ pub(super) fn state(b: u32, s: State) {
         State::Stopped => {
             d.tl.stop(t);
             d.tl.seek(t, 0);
-            d.gen += 1;
+            d.generation += 1;
             d.shown = false;
         }
         State::Paused => d.tl.pause(t),
@@ -128,12 +128,12 @@ pub(super) fn state(b: u32, s: State) {
 pub(super) fn downstream(c: &mut Ctx, b: u32, slot: u32) -> u32 {
     if slot == 14 {
         // the end: what the codec still holds (WMV3's last I / P picture behind B ones) first
-        if let Some((mut codec, gen)) = dwith(b, |d| (d.codec.take(), d.gen)) {
+        if let Some((mut codec, generation)) = dwith(b, |d| (d.codec.take(), d.generation)) {
             let frames = codec.as_mut().map(|x| x.drain()).unwrap_or_default();
             dwith(b, |d| d.codec = codec);
             for f in frames {
                 if let Frame::Picture { time, w, h, bgra } = f {
-                    if !show(c, b, gen, time, w, h, &bgra) {
+                    if !show(c, b, generation, time, w, h, &bgra) {
                         break;
                     }
                 }
@@ -144,7 +144,7 @@ pub(super) fn downstream(c: &mut Ctx, b: u32, slot: u32) -> u32 {
         15 => {
             dwith(b, |d| {
                 d.flushing = true;
-                d.gen += 1;
+                d.generation += 1;
             });
             WAKE.notify_all();
         }
@@ -239,14 +239,14 @@ fn receive(c: &mut Ctx, b: u32, sample: u32) -> u32 {
     }
     // (the sample's bytes as they are: the caller holds it until Receive returns)
     let data = mem::slice(ptr, len);
-    let Some((mut codec, gen)) = dwith(b, |d| (d.codec.take(), d.gen)) else { return Hr::Unexpected.code() };
+    let Some((mut codec, generation)) = dwith(b, |d| (d.codec.take(), d.generation)) else { return Hr::Unexpected.code() };
     let t0 = std::time::Instant::now();
     let frames = codec.as_mut().map(|x| x.decode(&data, if time == u64::MAX { 0 } else { time }, key)).unwrap_or_default();
     stats(Stat::Decoded(t0.elapsed()));
     dwith(b, |d| d.codec = codec);
     for f in frames {
         if let Frame::Picture { time, w, h, bgra } = f {
-            if !show(c, b, gen, time, w, h, &bgra) {
+            if !show(c, b, generation, time, w, h, &bgra) {
                 break;
             }
         }
@@ -255,12 +255,12 @@ fn receive(c: &mut Ctx, b: u32, sample: u32) -> u32 {
 }
 
 /// One picture to the renderer once the clock is there (false: stopped or flushed meanwhile).
-fn show(c: &mut Ctx, b: u32, gen: u32, time: u64, w: u32, h: u32, bgra: &[u8]) -> bool {
+fn show(c: &mut Ctx, b: u32, generation: u32, time: u64, w: u32, h: u32, bgra: &[u8]) -> bool {
     loop {
         let t = now();
-        let Some((g, flushing, pos, running, shown, frame)) = dwith(b, |d| (d.gen, d.flushing, d.tl.position(t), d.tl.running(), d.shown, d.frame)) else { return false };
+        let Some((g, flushing, pos, running, shown, frame)) = dwith(b, |d| (d.generation, d.flushing, d.tl.position(t), d.tl.running(), d.shown, d.frame)) else { return false };
         let stopped = fwith(b, |f| f.state).is_none_or(|s| s == State::Stopped);
-        if g != gen || flushing || stopped {
+        if g != generation || flushing || stopped {
             return false;
         }
         if running && time <= pos {

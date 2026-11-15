@@ -5516,7 +5516,7 @@ fn safe_in(g: &Gen, blocks: &[(u32, Vec<Instruction>)], l: &structure::Layout) -
             if g.hle.contains_key(&blocks[k].0) {
                 return (0, 0xff);
             }
-            let (mut gen, mut kill) = (0u8, 0u8);
+            let (mut gens, mut kill) = (0u8, 0u8);
             for ins in &blocks[k].1 {
                 let base = ins.memory_base();
                 let checks = (0..ins.op_count()).any(|i| ins.op_kind(i) == OpKind::Memory)
@@ -5528,19 +5528,19 @@ fn safe_in(g: &Gen, blocks: &[(u32, Vec<Instruction>)], l: &structure::Layout) -
                     && !matches!(ins.memory_segment(), Register::FS | Register::GS)
                     && (lo32(ins.memory_displacement32()).cast_signed()).unsigned_abs() < lo32(SAFE_MARGIN) / 2;
                 if checks {
-                    gen |= 1 << base.number();
+                    gens |= 1 << base.number();
                     kill &= !(1 << base.number());
                 }
                 for u in info.info(ins).used_registers() {
                     use iced_x86::OpAccess::*;
                     if matches!(u.access(), Write | CondWrite | ReadWrite | ReadCondWrite) && u.register().is_gpr() {
                         let b = 1u8 << u.register().full_register32().number();
-                        gen &= !b;
+                        gens &= !b;
                         kill |= b;
                     }
                 }
             }
-            (gen & !(1 << 4), kill)
+            (gens & !(1 << 4), kill)
         })
         .collect();
     let check_base = |ins: &Instruction| {
@@ -5891,7 +5891,7 @@ fn translate_seen<M: Memory>(
     let mut returns: Vec<u32> = blocks
         .iter()
         .zip(&ctxs)
-        .filter(|(_, &c)| c == 0)
+        .filter(|&(_, &c)| c == 0)
         .filter_map(|((_, l), _)| l.last())
         .filter(|l| l.flow_control() == FlowControl::Call || l.flow_control() == FlowControl::IndirectCall)
         .map(|l| l.next_ip32())

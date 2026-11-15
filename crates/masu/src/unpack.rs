@@ -794,7 +794,7 @@ fn own_group(c: &mut Command) {
 fn kill_group(c: &mut Child) {
     #[cfg(unix)]
     {
-        extern "C" {
+        unsafe extern "C" {
             fn kill(pid: i32, sig: i32) -> i32;
         }
         const SIGKILL: i32 = 9;

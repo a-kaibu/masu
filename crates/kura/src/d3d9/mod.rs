@@ -336,7 +336,7 @@ fn with<R>(f: impl FnOnce(&mut D3d) -> R) -> R {
     f(g.as_mut().expect("d3d9 not initialized"))
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_d3d9_init(vtbls: *const u32, count: u32) -> u32 {
     // (an array of pointers: 8 bytes each for 64-bit programs, all below 4GB)
     let k = us(device::ptr() / 4);
@@ -373,7 +373,7 @@ pub unsafe extern "C" fn vnhost_d3d9_init(vtbls: *const u32, count: u32) -> u32 
     0
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_d3d9_create(sdk: u32, out: *mut u32, calls: *const HostCalls) -> u32 {
     with(|d| {
         d.calls = calls;
@@ -386,7 +386,7 @@ pub unsafe extern "C" fn vnhost_d3d9_create(sdk: u32, out: *mut u32, calls: *con
     })
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_d3d9_call(id: u32, args: *const u32, calls: *const HostCalls) -> u32 {
     if (crate::d3d11::INIT..=crate::d3d11::CREATE_FACTORY).contains(&id) || (64..0xffff).contains(&(id >> 8)) {
         return crate::d3d11::call(id, args, calls);

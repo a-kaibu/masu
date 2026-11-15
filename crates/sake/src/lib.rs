@@ -32,13 +32,13 @@ pub mod audiofile;
 /// reach kura::fs: no store to fetch from, and a clock at 0
 #[cfg(all(test, not(target_os = "emscripten")))]
 mod host_stubs {
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     extern "C" fn vnvm_fetch(_name: *const std::ffi::c_char, _len: *mut usize) -> *mut u8 {
         std::ptr::null_mut()
     }
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     extern "C" fn vnvm_fetch_hint(_names: *const std::ffi::c_char, _len: usize) {}
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     extern "C" fn emscripten_get_now() -> f64 {
         0.0
     }
@@ -1160,7 +1160,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
 }
 
 /// C entry: `sake_main(argc, argv)`; argv[1] is the exe's host path.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn sake_main(argc: i32, argv: *const *const libc::c_char) -> i32 {
     let args: Vec<String> =
         (0..argc as usize).map(|i| std::ffi::CStr::from_ptr(*argv.add(i)).to_string_lossy().into_owned()).collect();

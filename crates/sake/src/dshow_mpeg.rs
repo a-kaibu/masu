@@ -993,13 +993,13 @@ fn p_receive_connection(c: &mut Ctx) -> u32 {
     // (connected again: the thread there was goes on with the new stream)
     let mut pipes = PIPES.lock().unwrap_or_else(|e| e.into_inner());
     let m = pipes.get_or_insert_with(HashMap::new);
-    let (thread, gen, calls) = m.get(&b).map_or((false, 0, None), |p| (p.thread, p.gen + 1, Some(p.calls.clone())));
+    let (thread, generation, calls) = m.get(&b).map_or((false, 0, None), |p| (p.thread, p.generation + 1, Some(p.calls.clone())));
     let calls = calls.unwrap_or_default();
     // (connected again while it runs: the calls go on)
     if fwith(b, |f| f.state).is_some_and(|s| s != State::Stopped) {
         calls.run();
     }
-    m.insert(b, Pipe { reader, len, info, tl, thread, dead: false, ended: false, gen, calls });
+    m.insert(b, Pipe { reader, len, info, tl, thread, dead: false, ended: false, generation, calls });
     drop(pipes);
     eprintln!("sake: MPEG-1 splitter: {}x{} {:.3} fps, sound {} Hz, {:.2} s, {} bytes", info.width, info.height, info.rate, info.audio_rate, info.duration, len);
     0
@@ -2123,7 +2123,7 @@ struct Pipe {
     /// EC_COMPLETE went out (until a seek or a stop)
     ended: bool,
     /// stops and seeks so far: the thread starts the stream again from the position
-    gen: u32,
+    generation: u32,
     /// the thread's calls into the game's objects (the reader, the renderer's pin): a stop
     /// waits them out, as Windows' source filters do, before the game takes those apart
     calls: Arc<Calls>,
@@ -2164,7 +2164,7 @@ pub fn timeline<R>(g: u32, f: impl FnOnce(&mut Timeline, u64) -> R) -> Option<R>
 pub fn seeked(g: u32) {
     if let Some(b) = in_graph(g) {
         pwith(b, |p| {
-            p.gen += 1;
+            p.generation += 1;
             p.ended = false;
         });
         WAKE.notify_all();
@@ -2235,7 +2235,7 @@ fn streaming(b: u32, s: State) {
         match s {
             State::Stopped => {
                 p.tl.stop(t);
-                p.gen += 1;
+                p.generation += 1;
                 p.ended = false;
             }
             State::Paused => p.tl.pause(t),
@@ -2264,7 +2264,7 @@ const AHEAD: u64 = 4410;
 
 /// What the thread works on (its own: no other thread touches it).
 struct Dec {
-    gen: u32,
+    generation: u32,
     pos: u64,
     demux: mpeg1::Demux,
     video: Option<mpeg1::Video>,
@@ -2287,9 +2287,9 @@ struct Dec {
 }
 
 impl Dec {
-    fn new(gen: u32, video: bool, audio: bool, rate: u32) -> Dec {
+    fn new(generation: u32, video: bool, audio: bool, rate: u32) -> Dec {
         Dec {
-            gen,
+            generation,
             pos: 0,
             demux: mpeg1::Demux::new(),
             video: video.then(mpeg1::Video::new),
@@ -2404,7 +2404,7 @@ fn stream_thread(c: &mut Ctx) -> u32 {
         let Some(calls) = pwith(b, |p| p.calls.clone()) else { break };
         let epoch = calls.epoch();
         let t = now();
-        let Some((dead, gen, pos, running, stop, reader, len, info)) = pwith(b, |p| (p.dead, p.gen, p.tl.position(t), p.tl.running(), p.tl.stop, p.reader, p.len, p.info)) else { break };
+        let Some((dead, generation, pos, running, stop, reader, len, info)) = pwith(b, |p| (p.dead, p.generation, p.tl.position(t), p.tl.running(), p.tl.stop, p.reader, p.len, p.info)) else { break };
         if dead {
             break;
         }
@@ -2422,7 +2422,7 @@ fn stream_thread(c: &mut Ctx) -> u32 {
         }
         let (video, audio) = chain(b);
         // (a seek or a stop: the stream again from the start, to the position)
-        if d.as_ref().is_none_or(|d| d.gen != gen) {
+        if d.as_ref().is_none_or(|d| d.generation != generation) {
             if let Some(old) = d.take() {
                 old.close();
                 if let Some((_, _, rpin)) = video {
@@ -2433,7 +2433,7 @@ fn stream_thread(c: &mut Ctx) -> u32 {
                 }
             }
         }
-        let s = d.get_or_insert_with(|| Dec::new(gen, video.is_some(), audio, info.audio_rate));
+        let s = d.get_or_insert_with(|| Dec::new(generation, video.is_some(), audio, info.audio_rate));
         let frame = if info.rate > 0.0 { time(float(SEC) / info.rate) } else { SEC / 30 };
         // the sound to kura, up to a little ahead of the clock
         let want = u64::try_from(u128::from(pos) * u128::from(kura::audio::RATE) / u128::from(SEC)).unwrap_or(u64::MAX);
@@ -2528,7 +2528,7 @@ fn stream_thread(c: &mut Ctx) -> u32 {
         let sound_end = if audio { (s.pcm_at + wide(s.pcm.len())) * SEC / u64::from(kura::audio::RATE) } else { 0 };
         let last = (s.pictures * frame).max(sound_end).min(stop);
         if running && pos >= last && (s.pcm.is_empty() || s.past_stop) {
-            let tell = pwith(b, |p| p.gen == gen && !std::mem::replace(&mut p.ended, true)).unwrap_or(false);
+            let tell = pwith(b, |p| p.generation == generation && !std::mem::replace(&mut p.ended, true)).unwrap_or(false);
             if tell && g != 0 {
                 crate::dshow::completed(g);
             }

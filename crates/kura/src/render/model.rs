@@ -2755,207 +2755,207 @@ fn count(name: &'static str) {
     with(|m| *m.calls.entry(name).or_insert(0) += 1);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_attach(_t: usize) -> i32 {
     1
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_start() {}
 /// A new device: nothing of the old one is left (its objects, what was encoded, maps on their
 /// way); the calls counted go on.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_reset() {
     let calls = with(|m| std::mem::take(&mut m.calls));
     reset();
     with(|m| m.calls = calls);
     count("reset");
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_canvas_format() -> u32 {
     0
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_canvas_size(_w: u32, _h: u32) {}
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_canvas_view() -> u32 {
     with(|m| {
         let t = m.texture(r#"{"size":[64,64],"format":"bgra8unorm","usage":16}"#);
         m.view(t, "")
     })
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_has_feature(_p: *const u8, _n: usize) -> i32 {
     0
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_drop(i: u32) {
     count("drop");
     with(|m| m.drop_obj(i))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_destroy(i: u32) {
     count("destroy");
     with(|m| m.destroy(i))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_texture(p: *const u8, n: usize) -> u32 {
     count("texture");
     with(|m| m.texture(s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_view(t: u32, p: *const u8, n: usize) -> u32 {
     count("view");
     with(|m| m.view(t, s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_buffer(size: u32, usage: u32) -> u32 {
     count("buffer");
     with(|m| m.buffer(size, usage))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_sampler(p: *const u8, n: usize) -> u32 {
     count("sampler");
     with(|m| m.sampler(s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_shader(p: *const u8, n: usize) -> u32 {
     count("shader");
     with(|m| m.shader(s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_bind_group_layout(p: *const u8, n: usize) -> u32 {
     count("bind_group_layout");
     with(|m| m.bind_group_layout(s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_pipeline_layout(p: *const u8, n: usize) -> u32 {
     count("pipeline_layout");
     with(|m| m.pipeline_layout(s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_render_pipeline(p: *const u8, n: usize) -> u32 {
     count("render_pipeline");
     with(|m| m.render_pipeline(s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_compute_pipeline(p: *const u8, n: usize) -> u32 {
     count("compute_pipeline");
     with(|m| m.compute_pipeline(s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_dispatch(p: u32, g: u32, x: u32, y: u32, z: u32) {
     count("dispatch");
     with(|m| m.dispatch(p, g, [x, y, z]))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_pipeline_group_layout(p: u32, i: u32) -> u32 {
     count("pipeline_group_layout");
     with(|m| m.pipeline_group_layout(p, i))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_bind_group(layout: u32, entries: *const u32, n: u32) -> u32 {
     count("bind_group");
     let w = unsafe { std::slice::from_raw_parts(entries, us(n) * 5) };
     with(|m| m.bind_group(layout, w))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_write_buffer(buf: u32, at: u32, p: *const u8, n: usize) {
     count("write_buffer");
     let b = unsafe { std::slice::from_raw_parts(p, n) };
     with(|m| m.write_buffer(buf, at, b))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_write_texture(tex: u32, mip: u32, x: u32, y: u32, z: u32, p: *const u8, n: usize, bpr: u32, rows: u32, w: u32, h: u32, d: u32) {
     count("write_texture");
     with(|m| m.write_texture(tex, mip, [x, y, z], p, n, bpr, rows, [w, h, d]))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_submit() {
     count("submit");
     with(|m| m.submit())
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_on_done(_token: u32) {}
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_read_buffer(buf: u32, size: u32, dst: *mut u8, token: u32) {
     count("read_buffer");
     with(|m| m.read_buffer(buf, size, dst, token))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_copy_texture(src: u32, smip: u32, sx: u32, sy: u32, sz: u32, dst: u32, dmip: u32, dx: u32, dy: u32, dz: u32, w: u32, h: u32, d: u32) {
     count("copy_texture");
     with(|m| m.copy_texture(src, smip, [sx, sy, sz], dst, dmip, [dx, dy, dz], [w, h, d]))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_copy_to_buffer(tex: u32, mip: u32, x: u32, y: u32, z: u32, buf: u32, bpr: u32, w: u32, h: u32) {
     count("copy_to_buffer");
     with(|m| m.copy_to_buffer(tex, mip, [x, y, z], buf, bpr, w, h))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_copy_buffer(src: u32, dst: u32, size: u32) {
     count("copy_buffer");
     with(|m| m.copy_buffer(src, dst, size))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub extern "C" fn vngpu_copy_from_buffer(buf: u32, bpr: u32, tex: u32, mip: u32, x: u32, y: u32, z: u32, w: u32, h: u32) {
     count("copy_from_buffer");
     with(|m| m.copy_from_buffer(buf, bpr, tex, mip, x, y, z, w, h))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_begin_pass(p: *const u8, n: usize) {
     count("begin_pass");
     with(|m| m.begin_pass(s(p, n)))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_end_pass() {
     count("end_pass");
     with(|m| m.end_pass())
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_set_pipeline(p: u32) {
     with(|m| m.set_pipeline(p))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_set_bind_group(i: u32, g: u32, offs: *const u32, n: u32) {
     let o = if n == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(offs, us(n)) } };
     with(|m| m.set_bind_group(i, g, o))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_set_vertex_buffer(slot: u32, buf: u32, off: u32) {
     with(|m| m.set_vertex_buffer(slot, buf, off))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_set_index_buffer(buf: u32, u32_: u32, off: u32) {
     with(|m| m.set_index_buffer(buf, u32_ != 0, off))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_set_viewport(x: f32, y: f32, w: f32, h: f32, z0: f32, z1: f32) {
     with(|m| m.set_viewport([x, y, w, h, z0, z1]))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_set_scissor(x: u32, y: u32, w: u32, h: u32) {
     with(|m| m.set_scissor([x, y, w, h]))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_set_blend_constant(r: f64, g: f64, b: f64, a: f64) {
     with(|m| m.set_blend([r, g, b, a]))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_set_stencil_ref(v: u32) {
     with(|m| m.set_stencil_ref(v))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_draw(n: u32, inst: u32, first: u32, first_inst: u32) {
     count("draw");
     with(|m| m.draw([n, inst, first, 0, first_inst], false))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngpu_draw_indexed(n: u32, inst: u32, first: u32, base: i32, first_inst: u32) {
     count("draw_indexed");
     with(|m| m.draw([n, inst, first, lo32(base), first_inst], true))
 }
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn emscripten_get_now() -> f64 {
     0.0
 }

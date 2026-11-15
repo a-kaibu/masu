@@ -234,7 +234,7 @@ fn host_link(a: &Path, b: &Path) -> io::Result<()> {
 /// (node's own fs: NODERAWFS has no link; the page has no host files: Unsupported)
 #[cfg(target_os = "emscripten")]
 fn host_link(a: &Path, b: &Path) -> io::Result<()> {
-    extern "C" {
+    unsafe extern "C" {
         fn vnhost_hard_link(a: *const std::ffi::c_char, b: *const std::ffi::c_char) -> i32;
     }
     let c = |p: &Path| std::ffi::CString::new(p.to_string_lossy().into_owned()).map_err(|_| io::Error::from(io::ErrorKind::InvalidInput));

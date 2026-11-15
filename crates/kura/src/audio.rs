@@ -167,7 +167,7 @@ fn ring_put(out: &mut VecDeque<[f32; 2]>) {
 
 /// The page: from now on mixed frames go to the ring; returns its address (head at +0, frames
 /// from +8) and writes its size in frames to `frames`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_audio_ring(frames: *mut u32) -> *const u8 {
     *frames = lo32(RING_FRAMES);
     RING_ON.store(true, Ordering::Relaxed);

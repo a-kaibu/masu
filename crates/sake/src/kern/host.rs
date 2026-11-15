@@ -7,7 +7,7 @@ use super::Kern;
 
 #[cfg(target_os = "emscripten")]
 mod sys {
-    extern "C" {
+    unsafe extern "C" {
         pub fn vnhost_kern_shared() -> i32;
         pub fn vnhost_kern_can_share() -> i32;
         pub fn vnhost_kern_start_sharing();
@@ -56,7 +56,7 @@ pub fn unlock() {
         sys::vnhost_kern_unlock(crate::pid())
     }
 }
-pub fn gen() -> u32 {
+pub fn generation() -> u32 {
     #[cfg(target_os = "emscripten")]
     return unsafe { sys::vnhost_kern_gen() };
     #[cfg(not(target_os = "emscripten"))]

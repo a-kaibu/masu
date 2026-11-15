@@ -26,7 +26,7 @@ fn old_parse(data: &[u8]) -> Option<Dds> {
     let max = 32 - w.max(h).max(depth).leading_zeros();
     let levels = g(28).clamp(1, max.max(1));
     let faces = if caps2 & CUBEMAP != 0 {
-        FACES.iter().enumerate().filter(|(_, &b)| caps2 & b != 0).fold(0, |m, (k, _)| m | 1 << k)
+        FACES.iter().enumerate().filter(|&(_, &b)| caps2 & b != 0).fold(0, |m, (k, _)| m | 1 << k)
     } else {
         0
     };

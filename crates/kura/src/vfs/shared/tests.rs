@@ -120,13 +120,13 @@ fn a_buffer_too_small_keeps_the_last_namespace() {
     let (mut a, root) = rooted();
     let mut m = Mem::new(400);
     op(&mut a, &mut m, |fs| fs.put_file("/x", vec![1; 10], 1));
-    let gen = m.generation;
+    let generation = m.generation;
     a.dirt.on = true;
     a.sync_in(&m);
     let ino = a.walk(root, "x").unwrap();
     a.write_upper(ino, &[2; 1000], 0).unwrap();
     assert!(!a.sync_out(&mut m));
-    assert_eq!(m.generation, gen);
+    assert_eq!(m.generation, generation);
     let mut b = Fs::default();
     b.sync_in(&m);
     assert_eq!(b.file_size(ino), 10);

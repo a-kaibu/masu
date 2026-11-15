@@ -1,7 +1,7 @@
 [package]
 name = "jit32test"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 publish = false
 description = "Differential test of koji's 32-bit JIT (jit/mod.rs: regions and function mode) against its interpreter, the wasm run by wasmtime"
 
@@ -12,3 +12,7 @@ description = "Differential test of koji's 32-bit JIT (jit/mod.rs: regions and f
 koji = { path = "../../crates/koji" }
 iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info", "encoder", "code_asm", "op_code_info", "fast_fmt"] }
 wasmtime = { version = "29", default-features = false, features = ["cranelift", "runtime", "threads"] }
+
+[lints.rust]
+# (as in crates/: edition 2024 warns on unsafe operations in an unsafe fn without a block)
+unsafe_op_in_unsafe_fn = "allow"

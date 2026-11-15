@@ -259,7 +259,7 @@ fn wait_thread(c: &mut Ctx) -> u32 {
     // (where the list starts this time: a signaled object first in it doesn't starve the rest)
     let mut turn = 0usize;
     loop {
-        let gen = REG_GEN.load(Ordering::SeqCst);
+        let generation = REG_GEN.load(Ordering::SeqCst);
         let (keys, handles, ms) = {
             let r = regs();
             let n = r.len().max(1);
@@ -273,7 +273,7 @@ fn wait_thread(c: &mut Ctx) -> u32 {
             (order.iter().map(|x| (x.0, x.1.deadline)).collect::<Vec<_>>(), order.iter().map(|x| x.1.obj).collect::<Vec<_>>(), ms)
         };
         turn = turn.wrapping_add(1);
-        let r = crate::obj::wait(&handles, false, ms, Some(&|| REG_GEN.load(Ordering::SeqCst) != gen));
+        let r = crate::obj::wait(&handles, false, ms, Some(&|| REG_GEN.load(Ordering::SeqCst) != generation));
         let bad = |i: usize| crate::obj::wait(&handles[i..i + 1], false, 0, None) == u32::MAX;
         for (k, res) in fired(&keys, r, Instant::now(), &bad) {
             let reg = {

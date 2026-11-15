@@ -407,7 +407,7 @@ impl Database {
 
     fn release_row(&mut self, ti: usize, row: &Row) {
         let t = &self.tables[ti];
-        let ids: Vec<u32> = t.cols.iter().zip(&row.v).filter(|(c, &v)| c.is_string() && v != 0).map(|(_, &v)| v).collect();
+        let ids: Vec<u32> = t.cols.iter().zip(&row.v).filter(|&(ref c, &v)| c.is_string() && v != 0).map(|(_, &v)| v).collect();
         for id in ids {
             self.pool.release(id, row.persistent);
         }

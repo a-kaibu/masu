@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use libc::{iovec, size_t, ssize_t};
 
-extern "C" {
+unsafe extern "C" {
     fn __real_write(fd: c_int, buf: *const c_void, len: size_t) -> ssize_t;
     fn __real_writev(fd: c_int, iov: *const iovec, cnt: c_int) -> ssize_t;
 }
@@ -22,20 +22,20 @@ static OUT_Q: waits::outq::OutQ<{ 1 << 20 }> = waits::outq::OutQ::new();
 
 /// Called by the page's thread (host/pre.js) before the program starts: from then on the other
 /// threads' output goes through the queue.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_output_queue() {
     OUT_QUEUED.store(true, Ordering::Release);
 }
 
 /// The queued output, as records (fd, u16 length, bytes; waits::outq), into `buf`: the bytes
 /// written, 0 when nothing is queued or a thread is adding to it right now.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_output_take(buf: *mut u8, cap: u32) -> u32 {
     lo32(OUT_Q.take(std::slice::from_raw_parts_mut(buf, us(cap))))
 }
 
 fn on_page_thread() -> bool {
-    extern "C" {
+    unsafe extern "C" {
         fn emscripten_is_main_browser_thread() -> c_int;
     }
     unsafe { emscripten_is_main_browser_thread() != 0 }
@@ -50,7 +50,7 @@ fn queued(f: c_int, b: &[u8]) -> bool {
     true
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __wrap_write(f: c_int, buf: *const c_void, len: size_t) -> ssize_t {
     if (f == 1 || f == 2) && !buf.is_null() {
         let b = std::slice::from_raw_parts(buf.cast::<u8>(), len);
@@ -62,7 +62,7 @@ pub unsafe extern "C" fn __wrap_write(f: c_int, buf: *const c_void, len: size_t)
     __real_write(f, buf, len)
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __wrap_writev(f: c_int, iov: *const iovec, cnt: c_int) -> ssize_t {
     if (f == 1 || f == 2) && !iov.is_null() {
         // (one record for the pieces of one line)
@@ -91,7 +91,7 @@ pub unsafe extern "C" fn __wrap_writev(f: c_int, iov: *const iovec, cnt: c_int) 
 // ---------------------------------------------------------------------------------------------
 // clocks
 
-extern "C" {
+unsafe extern "C" {
     fn __real_clock_gettime(clk: libc::clockid_t, ts: *mut libc::timespec) -> c_int;
     fn emscripten_get_now() -> f64;
     fn emscripten_date_now() -> f64;
@@ -101,7 +101,7 @@ extern "C" {
 /// emscripten's clock_gettime goes through WASI's clock_time_get, whose 64-bit arguments make
 /// every call box BigInts in JS. Every wait reads the clock, thousands of times
 /// a second.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __wrap_clock_gettime(clk: libc::clockid_t, ts: *mut libc::timespec) -> c_int {
     // (plus what a restored save state adds: the program's time goes on from the save, see snap.rs)
     let ms = match clk {
@@ -115,7 +115,7 @@ pub unsafe extern "C" fn __wrap_clock_gettime(clk: libc::clockid_t, ts: *mut lib
     0
 }
 
-extern "C" {
+unsafe extern "C" {
     fn __real_emscripten_futex_wait(addr: *mut c_void, val: u32, max_ms: f64) -> c_int;
 }
 
@@ -208,9 +208,9 @@ pub fn load_init() {
     LOAD_ON.store(on, Ordering::Release);
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __wrap_emscripten_futex_wait(addr: *mut c_void, val: u32, max_ms: f64) -> c_int {
-    extern "C" {
+    unsafe extern "C" {
         fn emscripten_is_main_browser_thread() -> c_int;
     }
     // (not the page's own thread: it waits in its event loop, not here, so all of its time
@@ -287,7 +287,7 @@ pub fn load_idle<R>(f: impl FnOnce() -> R) -> R {
 thread_local!(static LOAD_IDLE: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) });
 
 /// CPU time (ms) all threads that ever waited used so far.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_load_busy() -> f64 {
     let now = emscripten_date_now();
     let n = LOAD_N.load(Ordering::Relaxed).min(LOAD_THREADS);
@@ -304,7 +304,7 @@ pub unsafe extern "C" fn vnhost_load_busy() -> f64 {
 
 /// Thread `i` of vnhost_load_busy's count (in order of their first wait): its CPU time (ms) and
 /// waits so far to `out[0..2]`; false past the last thread.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_load_slot(i: u32, out: *mut [f64; 2]) -> bool {
     let n = LOAD_N.load(Ordering::Relaxed).min(LOAD_THREADS);
     let Some(l) = LOAD[..n].get(us(i)) else { return false };
@@ -333,7 +333,7 @@ struct Mallinfo {
 }
 
 #[cfg(target_os = "emscripten")]
-extern "C" {
+unsafe extern "C" {
     fn sbrk(increment: isize) -> *mut c_void;
     fn mallinfo() -> Mallinfo;
 }
@@ -342,9 +342,9 @@ extern "C" {
 /// mark: the 4 GB memory is reserved at the start, so its size says nothing) and what malloc
 /// has handed out now.
 #[cfg(target_os = "emscripten")]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_mem_info(out: *mut [f64; 2]) {
-    extern "C" {
+    unsafe extern "C" {
         static __heap_base: u8;
     }
     let top = sbrk(0).expose_provenance();

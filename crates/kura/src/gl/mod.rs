@@ -591,7 +591,7 @@ fn bytes<T>(v: &[T]) -> &[u8] {
 
 // ---- the WGL entries (contexts, current context, swap) ----
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngl_context_create(_share: u32) -> u32 {
     let mut g = lock();
     let g = g.as_mut().unwrap();
@@ -601,7 +601,7 @@ pub extern "C" fn vngl_context_create(_share: u32) -> u32 {
     id
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngl_context_destroy(id: u32) {
     let mut g = lock();
     g.as_mut().unwrap().ctxs.remove(&id);
@@ -626,7 +626,7 @@ pub extern "C" fn vngl_context_destroy(id: u32) {
 }
 
 /// Makes `ctx` current on this thread, drawing to window `hwnd` (`w` x `h`); 0: none.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vngl_make_current(ctx: u32, hwnd: u32, w: u32, h: u32) -> i32 {
     CURRENT.with(|c| c.set(ctx));
     if ctx == 0 {
@@ -670,7 +670,7 @@ fn drawable(g: &mut Gl, hwnd: u32, w: u32, h: u32) -> &Drawable {
 }
 
 /// SwapBuffers of window `hwnd`; `rect`: its client area on the screen.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vngl_swap(hwnd: u32, rect: *const i32) {
     let tex = {
         let g = lock();
@@ -685,7 +685,7 @@ pub unsafe extern "C" fn vngl_swap(hwnd: u32, rect: *const i32) {
 }
 
 /// A GL function by name (null: not ours; the driver has a do-nothing one).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vngl_proc(name: *const c_char) -> *const c_void {
     let Ok(n) = CStr::from_ptr(name).to_str() else { return std::ptr::null() };
     // (ARB/EXT names of the core functions)
@@ -988,9 +988,9 @@ extern "C" fn glFlush() {
     gpu::flush();
 }
 extern "C" fn glFinish() {
-    let gen = gpu::batch_gen();
+    let generation = gpu::batch_gen();
     gpu::flush();
-    gpu::wait_done(gen);
+    gpu::wait_done(generation);
 }
 extern "C" fn glPixelStorei(p: u32, v: i32) {
     with(|_, c| match p {
@@ -1742,14 +1742,14 @@ extern "C" fn glClear(mask: u32) {
 // ---- textures ----
 
 unsafe extern "C" fn glGenTextures(n: i32, out: *mut u32) {
-    gen(K_TEX, n, out, |g, id| {
+    gen_names(K_TEX, n, out, |g, id| {
         g.textures.insert(id, Texture { min: 0x2702, mag: 0x2601, wrap_s: 0x2901, wrap_t: 0x2901, ..Default::default() });
     })
 }
 
 /// glGen*: `n` names in use by nothing (not even a name the application bound without a Gen),
 /// reserved until their first Bind.
-pub(crate) unsafe fn gen(kind: u8, n: i32, out: *mut u32, f: impl Fn(&mut Gl, u32)) {
+pub(crate) unsafe fn gen_names(kind: u8, n: i32, out: *mut u32, f: impl Fn(&mut Gl, u32)) {
     if n < 0 {
         return with(|_, c| c.err(GL_INVALID_VALUE));
     }
@@ -2088,11 +2088,11 @@ fn unpack_ptr(g: &Gl, c: &Ctx, p: *const u8) -> *const u8 {
 
 unsafe fn upload(t: &mut Texture, level: u32, x: u32, y: u32, w: u32, h: u32, src: *const u8, format: u32, ty: u32, unpack: [i32; 4]) {
     let rgba = to_rgba(src, w, h, format, ty, t.base, unpack);
-    let (id, gen) = (t.gpu, t.gen_mips && level == 0);
+    let (id, mips) = (t.gpu, t.gen_mips && level == 0);
     gpu::record(|q| {
         let off = q.blob(&rgba);
         q.cmd(&[gpu::WRITE_TEXTURE2, id, level, 0, x, y, w, h, w * 4, off]);
-        if gen {
+        if mips {
             q.cmd(&[gpu::GEN_MIPS, id]);
         }
     });
@@ -2311,7 +2311,7 @@ unsafe extern "C" fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, t
 // ---- buffers ----
 
 unsafe extern "C" fn glGenBuffers(n: i32, out: *mut u32) {
-    gen(K_BUF, n, out, |g, id| {
+    gen_names(K_BUF, n, out, |g, id| {
         g.buffers.insert(id, Buffer::default());
     })
 }
@@ -2421,7 +2421,7 @@ extern "C" fn glUnmapBuffer(target: u32) -> u8 {
 // ---- framebuffers ----
 
 unsafe extern "C" fn glGenFramebuffers(n: i32, out: *mut u32) {
-    gen(K_FBO, n, out, |g, id| {
+    gen_names(K_FBO, n, out, |g, id| {
         g.fbos.insert(id, Fbo::default());
     })
 }
@@ -2505,7 +2505,7 @@ unsafe extern "C" fn glGetFramebufferAttachmentParameteriv(target: u32, point: u
     })
 }
 unsafe extern "C" fn glGenRenderbuffers(n: i32, out: *mut u32) {
-    gen(K_RB, n, out, |g, id| {
+    gen_names(K_RB, n, out, |g, id| {
         g.rbs.insert(id, Renderbuffer::default());
     })
 }

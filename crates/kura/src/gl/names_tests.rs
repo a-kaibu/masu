@@ -23,7 +23,7 @@ struct Step {
     got: i64,
 }
 
-unsafe fn gen(kind: u32, n: i32, out: *mut u32) {
+unsafe fn generation(kind: u32, n: i32, out: *mut u32) {
     match kind {
         0 => glGenTextures(n, out),
         1 => glGenBuffers(n, out),
@@ -70,7 +70,7 @@ fn run(seed: u64) {
             0 | 1 => {
                 let n = if r.chance(5) { -1 } else { r.below(3) as i32 };
                 let mut out = [0u32; 4];
-                unsafe { gen(kind, n, out.as_mut_ptr()) };
+                unsafe { generation(kind, n, out.as_mut_ptr()) };
                 let got = &out[..n.max(0) as usize];
                 seen.extend(got);
                 (t.op, t.v, t.names) = ("Gen", n as i64, got.iter().map(|&x| x as i64).collect());

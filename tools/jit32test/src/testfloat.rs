@@ -43,9 +43,9 @@ fn program(op: &Op, rc: u32) -> Result<Vec<Instruction>, IcedError> {
 }
 
 pub fn run(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usize) -> usize {
-    let gen = std::env::var_os("TF_GEN").map(std::path::PathBuf::from).unwrap_or_else(|| concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/testfloat/testfloat_gen").into());
-    if !gen.exists() {
-        println!("testfloat: no {} (tests/testfloat/build.sh)", gen.display());
+    let gen_bin = std::env::var_os("TF_GEN").map(std::path::PathBuf::from).unwrap_or_else(|| concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/testfloat/testfloat_gen").into());
+    if !gen_bin.exists() {
+        println!("testfloat: no {} (tests/testfloat/build.sh)", gen_bin.display());
         return 1;
     }
     let want_n: usize = std::env::var("TF_N").ok().and_then(|s| s.parse().ok()).unwrap_or(2000);
@@ -56,7 +56,7 @@ pub fn run(engine: &Engine, dispatch: &Module, memory: &SharedMemory, base: usiz
         for rc in 0..if op.rounds { 4 } else { 1 } {
             let list = program(op, rc).unwrap();
             let mut all = Vec::new();
-            generate(&gen, op, rc, 1, |l| {
+            generate(&gen_bin, op, rc, 1, |l| {
                 if let Some(c) = parse_line(op, l) {
                     if !skipped(op, &c) {
                         all.push(c);

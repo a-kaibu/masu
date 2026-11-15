@@ -207,7 +207,7 @@ mod tests {
         ], 1..60)) {
             let mut cache = None;
             // the files: keyset generation + stamp, key files (spec -> key n, stamp)
-            let (mut gen, mut gen_stamp) = (vec![0u8], 1u64);
+            let (mut generation, mut gen_stamp) = (vec![0u8], 1u64);
             let mut files: HashMap<u32, (u8, u64)> = HashMap::new();
             let mut tick = 10u64;
             let mut loads = 0;
@@ -215,12 +215,12 @@ mod tests {
                 tick += 1;
                 match op {
                     Op::Write(s, n, recent) => { files.insert(s, (n, if recent { 0 } else { tick })); }
-                    Op::Keyset(recent) => { gen = vec![gen[0].wrapping_add(1)]; gen_stamp = if recent { 0 } else { tick }; }
+                    Op::Keyset(recent) => { generation = vec![generation[0].wrapping_add(1)]; gen_stamp = if recent { 0 } else { tick }; }
                     Op::Get(s, g) => {
                         // (a provider opened at this generation or one before)
-                        let asked = vec![gen[0].wrapping_sub(g % 2)];
+                        let asked = vec![generation[0].wrapping_sub(g % 2)];
                         let read = || -> Result<Key, u32> {
-                            if asked != gen { return Err(cng::NTE_BAD_KEYSET); }
+                            if asked != generation { return Err(cng::NTE_BAD_KEYSET); }
                             files.get(&s).map(|&(n, _)| key(n)).ok_or(cng::NTE_NO_KEY)
                         };
                         let want = read().map(|k| (k.exportable, k.rsa.to_blob(Blob::FullPrivate, 512).unwrap()));

@@ -119,7 +119,7 @@ static CHANGES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new
 
 /// A number that changes whenever the file system may have changed: the page exports the saves
 /// only then (an export holds the file system's lock and copies every written file).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_vfs_changes() -> u32 {
     before_export_run();
     change_count()
@@ -155,7 +155,7 @@ fn before_export_run() {
 /// The files written under ROOTS (':'-separated; a root may be one file), as the page's saves
 /// records. Sized first and written straight into the one buffer handed back: an installer's
 /// temp files can be hundreds of MB, and a doubling Vec plus a copy would need 3x that (#234).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_vfs_export(roots: *const c_char, len: *mut size_t) -> *mut u8 {
     before_export_run();
     let roots = CStr::from_ptr(roots).to_string_lossy().into_owned();
@@ -183,7 +183,7 @@ pub unsafe extern "C" fn vnhost_vfs_export(roots: *const c_char, len: *mut size_
 /// The files written under ROOTS, each as path length (u32), path and size (u64): what the
 /// page picks from before exporting (saves.ts exportFiles), so files it would drop are never
 /// copied out.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_vfs_list(roots: *const c_char, len: *mut size_t) -> *mut u8 {
     before_export_run();
     let roots = CStr::from_ptr(roots).to_string_lossy().into_owned();
@@ -264,7 +264,7 @@ pub fn share() {
 
 static LOADING: Mutex<()> = Mutex::new(());
 
-extern "C" {
+unsafe extern "C" {
     /// host/vnfs.js: reads `name` from the store into a malloc'ed buffer (NULL if missing)
     fn vnvm_fetch(name: *const c_char, len: *mut size_t) -> *mut u8;
     /// host/vnfs.js: store files (newline-separated) the game reads soon: fetched onto the
@@ -304,7 +304,7 @@ mod net {
 /// threads' wait for chunks (ms), the longest such wait and the longest request since the
 /// last call (ms), the chunk cache (bytes), chunks a read fetched again after the cache dropped
 /// them.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_net_stats(out: *mut [f64; 12]) {
     use std::sync::atomic::Ordering::Relaxed;
     let ms = |us: u64| us as f64 / 1000.0;
@@ -328,14 +328,14 @@ pub unsafe extern "C" fn vnhost_net_stats(out: *mut [f64; 12]) {
 
 /// Store requests on their way now (the page holds its read-ahead back meanwhile: the game's
 /// threads wait for theirs).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_net_busy() -> u32 {
     net::INFLIGHT.load(std::sync::atomic::Ordering::Relaxed) as u32
 }
 
 /// host/vnfs.js: a store request's bytes over the network (its resource timing entry), and
 /// whether the browser's HTTP cache had it instead.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_net_wire(bytes: u32, cached: bool) {
     use std::sync::atomic::Ordering::Relaxed;
     net::WIRE.fetch_add(bytes as u64, Relaxed);
@@ -1316,7 +1316,7 @@ fn cached(k: &Key) -> bool {
 /// A chunk the page fetched ahead: `hash` (16 bytes) and the `data` it malloc'ed, which this
 /// takes (the system allocator is malloc), kept as blocks (the chunk's length is not known
 /// here: the last block as stored, padded when read).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_vfs_put_chunk(hash: *const u8, data: *mut u8, len: size_t) {
     let h: Hash = std::slice::from_raw_parts(hash, 16).try_into().unwrap();
     if len == 0 {
@@ -1510,7 +1510,7 @@ const FORESEE_DEPTH: usize = 1;
 /// The page hands a tree's table (text, `len` bytes at `text`: foresee::parse_table), read by
 /// masu serve from all its scripts ahead: a script read then foresees what it names and what
 /// the scripts it goes on to name, without reading it here (scripts this cannot read, too).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_vfs_foresee(text: *const u8, len: size_t) {
     let text = String::from_utf8_lossy(std::slice::from_raw_parts(text, len)).into_owned();
     foresee_table(&text);
@@ -2414,7 +2414,7 @@ pub(crate) fn h_set_len(h: u32, size: u64) -> Result<(), c_int> {
 }
 
 /// The page: frees what `vnhost_vfs_export` returned.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_free(p: *mut c_void) {
     libc::free(p)
 }
@@ -2591,13 +2591,13 @@ pub(crate) mod tests {
     /// The hints these tests' reads sent (host/vnfs.js vnvm_fetch_hint's names).
     static HINTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     extern "C" fn vnvm_fetch_hint(names: *const c_char, len: size_t) {
         let s = unsafe { std::slice::from_raw_parts(names as *const u8, len) };
         HINTS.lock().unwrap().extend(String::from_utf8_lossy(s).split('\n').map(String::from));
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     extern "C" fn vnvm_fetch(name: *const c_char, len: *mut size_t) -> *mut u8 {
         let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned();
         let mut g = STORE.lock().unwrap();

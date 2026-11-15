@@ -393,9 +393,9 @@ fn windows_of_other_processes() {
     let w = KWin { hwnd: 0x10020, pid: ROOT_PID, tid: 0x20, class: "masu_procs_class".into(), title: "masu procs".into() };
     k.set_wins(ROOT_PID, vec![w.clone()]);
     // (the same list again changes nothing)
-    let g = k.gen;
+    let g = k.generation;
     k.set_wins(ROOT_PID, vec![w.clone()]);
-    assert_eq!(k.gen, g);
+    assert_eq!(k.generation, g);
     // FindWindow: not among its own windows; class and title match whole
     assert_eq!(k.find_win(child, Some("masu_procs_class"), Some("masu procs")), Some(&w));
     assert_eq!(k.find_win(child, None, Some("masu procs")), Some(&w));

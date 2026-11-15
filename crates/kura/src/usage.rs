@@ -65,7 +65,7 @@ pub fn tick() {
                 None => eprintln!("{l}"),
             }
         }
-        extern "C" {
+        unsafe extern "C" {
             fn atexit(f: extern "C" fn()) -> i32;
         }
         unsafe { atexit(at_exit) };

@@ -300,8 +300,8 @@ fn d3d8_sprite_draws_join() {
         }
         // the same shader and base vertex again: nothing to prepare again (prep_gen kept); a
         // getter neither; another base vertex does
-        let gen = || D3D.lock().unwrap().as_ref().unwrap().dev.as_ref().unwrap().prep_gen;
-        let g0 = gen();
+        let generation = || D3D.lock().unwrap().as_ref().unwrap().dev.as_ref().unwrap().prep_gen;
+        let g0 = generation();
         assert_eq!(devc(76, &[0x44]), 0);
         assert_eq!(devc(85, &[ib, 0]), 0);
         let (o, b) = (out(), out());
@@ -309,9 +309,9 @@ fn d3d8_sprite_draws_join() {
         call(IF_IB + V8, 2, &[rd(o)]);
         assert_eq!(devc(77, &[out()]), 0);
         assert_eq!(devc(89, &[out()]), 0);
-        assert_eq!(gen(), g0, "SetVertexShader / SetIndices / getters staled the preparation");
+        assert_eq!(generation(), g0, "SetVertexShader / SetIndices / getters staled the preparation");
         assert_eq!(devc(85, &[ib, 3]), 0);
-        assert_ne!(gen(), g0, "another base vertex must prepare again");
+        assert_ne!(generation(), g0, "another base vertex must prepare again");
         devc(35, &[]);
         let joined = JOINED_HERE.with(|j| j.get());
         gpu::flush();

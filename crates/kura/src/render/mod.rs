@@ -74,7 +74,7 @@ thread_local! {
 }
 
 /// The page, once its module runs: starts the thread that draws into `Module.vnvmCanvas`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_start() {
     start_with(|main| {
         let mut t: libc::pthread_t = unsafe { std::mem::zeroed() };
@@ -94,7 +94,7 @@ fn start_with(create: impl FnOnce(ThreadMain) -> i32) {
         return;
     }
     extern "C" fn main(_: *mut libc::c_void) -> *mut libc::c_void {
-        extern "C" {
+        unsafe extern "C" {
             fn emscripten_exit_with_live_runtime() -> !;
         }
         // (its time is between animation frames: not the game's CPU)
@@ -131,14 +131,14 @@ pub(crate) fn snap_restore() {
 }
 
 /// The page's canvas is `w`×`h` device pixels.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_resize(w: u32, h: u32) {
     CANVAS.store(w.clamp(1, 16384) << 16 | h.clamp(1, 16383), Relaxed);
 }
 
 /// A pointer event at canvas pixel x, y (device pixels): pushed as input at the screen pixel
 /// under it (kinds as `vnhost_input_push`; key events take no position).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_input(kind: u32, x: i32, y: i32, data: u32) -> i32 {
     let layout = *LAYOUT.lock().unwrap_or_else(|e| e.into_inner());
     let (fx, fy) = to_screen(&layout, x, y);
@@ -156,7 +156,7 @@ fn to_screen(layout: &[i32; 12], x: i32, y: i32) -> (i32, i32) {
 
 /// Where the shown part of the screen is on the canvas: `out` = x y w h (canvas pixels), the
 /// view l t r b (screen pixels), the screen's buffer's w h.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_render_layout(out: *mut [i32; 10]) {
     let l = *LAYOUT.lock().unwrap_or_else(|e| e.into_inner());
     *out = [l[0], l[1], l[2], l[3], l[4], l[5], l[6], l[7], l[10] - l[8], l[11] - l[9]];
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn vnhost_render_layout(out: *mut [i32; 10]) {
 
 /// Tests: asks for the picture shown (at the screen's pixels) and gives the last one taken:
 /// `out` = pixels (BGRA rows), width, height; returns its serial (0: none yet).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_render_shot(out: *mut [u32; 3]) -> u32 {
     SHOT_WANT.fetch_add(1, Relaxed);
     let s = *SHOT.lock().unwrap_or_else(|e| e.into_inner());
@@ -174,7 +174,7 @@ pub unsafe extern "C" fn vnhost_render_shot(out: *mut [u32; 3]) -> u32 {
 
 /// The page: the screen's latest frame (serial, pixels, row length, rows) and counters
 /// (Direct3D frames, batch ms, passes, MB uploaded) into `out` (8 words).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_render_info(out: *mut [u32; 8]) {
     let f = *FRAME.lock().unwrap_or_else(|e| e.into_inner());
     let out = &mut *out;
@@ -186,7 +186,7 @@ pub unsafe extern "C" fn vnhost_render_info(out: *mut [u32; 8]) {
 }
 
 /// host/vngpu.js: every animation frame (of the drawing thread's worker).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_frame(t: f64) {
     let t0 = d3d::now();
     R.with(|r| {
@@ -202,7 +202,7 @@ pub extern "C" fn vnhost_render_frame(t: f64) {
 /// host/vngpu.js: while no animation frame comes (a hidden tab), every 50 ms: a frame only
 /// while a state is taken, so that the GPU is read back then and threads that wait for a frame
 /// while stopping get it; nothing otherwise (a hidden page draws nothing: d3d9's pacing).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_snap_tick(t: f64) {
     if crate::snap::pausing() || crate::snap::restoring() {
         vnhost_render_frame(t);
@@ -210,7 +210,7 @@ pub extern "C" fn vnhost_render_snap_tick(t: f64) {
 }
 
 /// host/vngpu.js: the GPU time (timestamp-query) of `passes` render passes of one submit, in µs.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_gpu_time(us: f64, passes: u32) {
     GPU_NS.fetch_add((us * 1000.0) as u64, Relaxed);
     GPU_PASSES.fetch_add(u64::from(passes), Relaxed);
@@ -218,7 +218,7 @@ pub extern "C" fn vnhost_gpu_time(us: f64, passes: u32) {
 
 /// The GPU time of every render pass so far, in ms (tests/bench reads it from the page's thread);
 /// -1 without timestamp-query.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_gpu_total() -> f64 {
     if GPU_PASSES.load(Relaxed) == 0 {
         return -1.0;
@@ -254,20 +254,20 @@ pub fn set_lost_gen(n: u32) {
 
 /// host/vngpu.js: the device was lost (`device.lost`); the drawing stops until a new one
 /// comes (`vnhost_render_lost`, or `vnhost_render_lost_for_good` when none does).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_losing() {
     LOST.fetch_or(1, SeqCst);
 }
 
 /// host/vngpu.js: no new device after a lost one: the drawing stays stopped (the page asks for
 /// a reload).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_lost_for_good() {
     LOST.fetch_or(3, SeqCst);
 }
 
 /// The page: `LOST` (losses come back from << 2 | 2 for good | 1 stopped now).
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_lost_state() -> u32 {
     LOST.load(SeqCst)
 }
@@ -279,7 +279,7 @@ pub extern "C" fn vnhost_render_lost_state() -> u32 {
 /// read back fails. Then the guest uploads again what it has (`lost_gen`).
 // (fetch_update is try_update on newer toolchains, as in sake mem.rs)
 #[allow(deprecated)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_lost() {
     R.with(|r| {
         let mut r = r.borrow_mut();
@@ -299,7 +299,7 @@ pub extern "C" fn vnhost_render_lost() {
 }
 
 /// host/vngpu.js: the GPU finished the work submitted before `on_done(token)`.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_done(token: u32, ms: f64) {
     R.with(|r| {
         if let Some(r) = r.borrow_mut().as_mut() {
@@ -309,7 +309,7 @@ pub extern "C" fn vnhost_render_done(token: u32, ms: f64) {
 }
 
 /// host/vngpu.js: a buffer `read_buffer` asked for was copied (ok) or not.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn vnhost_render_mapped(token: u32, ok: u32) {
     R.with(|r| {
         if let Some(r) = r.borrow_mut().as_mut() {
@@ -832,7 +832,7 @@ fn write_f32(buf: Id, v: &[f32]) {
 /// (host tests: the drawing thread's main names emscripten's exit, which only the wasm build
 /// links; start_tests' failing creates never run it)
 #[cfg(all(test, not(target_os = "emscripten")))]
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn emscripten_exit_with_live_runtime() -> ! {
     loop {
         std::thread::park();

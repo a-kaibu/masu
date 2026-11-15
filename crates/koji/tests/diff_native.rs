@@ -113,7 +113,7 @@ fn modrm_ext(rng: &mut Rng, ext: u8, byte: bool) -> u8 {
     0xc0 | ext << 3 | reg(rng, byte)
 }
 
-fn gen(rng: &mut Rng) -> Vec<u8> {
+fn random_insn(rng: &mut Rng) -> Vec<u8> {
     let mut v = Vec::new();
     let op16 = rng.below(6) == 0;
     if op16 {
@@ -299,7 +299,7 @@ fn random_integer_ops_match_the_host_cpu() {
     let mut done = 0;
     let mut failures = Vec::new();
     for _ in 0..200_000 {
-        let insn = gen(&mut rng);
+        let insn = random_insn(&mut rng);
         let mut cpu = Cpu::default();
         for (i, r) in cpu.regs.iter_mut().enumerate() {
             if i != 4 { *r = rng.value(); }
