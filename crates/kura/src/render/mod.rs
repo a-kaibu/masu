@@ -11,6 +11,7 @@ pub mod gpu;
 #[cfg(test)]
 pub mod model;
 
+use crate::guest::{lo32, lo32w, us};
 #[cfg(test)]
 use crate::locks::Lock;
 use std::cell::RefCell;
@@ -149,7 +150,7 @@ fn to_screen(layout: &[i32; 12], x: i32, y: i32) -> (i32, i32) {
     let [rx, ry, rw, rh, l, t, r, b, el, et, er, eb] = *layout;
     let fx = i64::from(l) + (i64::from(x - rx) * i64::from(r - l)).div_euclid(i64::from(rw.max(1)));
     let fy = i64::from(t) + (i64::from(y - ry) * i64::from(b - t)).div_euclid(i64::from(rh.max(1)));
-    (fx.clamp(i64::from(el), (i64::from(er) - 1).max(i64::from(el))) as i32, fy.clamp(i64::from(et), (i64::from(eb) - 1).max(i64::from(et))) as i32)
+    ((fx.clamp(i64::from(el), (i64::from(er) - 1).max(i64::from(el)))) as i32, (fy.clamp(i64::from(et), (i64::from(eb) - 1).max(i64::from(et)))) as i32)
 }
 
 /// Where the shown part of the screen is on the canvas: `out` = x y w h (canvas pixels), the
@@ -166,7 +167,7 @@ pub unsafe extern "C" fn vnhost_render_layout(out: *mut [i32; 10]) {
 pub unsafe extern "C" fn vnhost_render_shot(out: *mut [u32; 3]) -> u32 {
     SHOT_WANT.fetch_add(1, Relaxed);
     let s = *SHOT.lock().unwrap_or_else(|e| e.into_inner());
-    *out = [s.1 as u32, s.2, s.3];
+    *out = [lo32(s.1), s.2, s.3];
     s.0
 }
 
@@ -177,10 +178,10 @@ pub unsafe extern "C" fn vnhost_render_info(out: *mut [u32; 8]) {
     let f = *FRAME.lock().unwrap_or_else(|e| e.into_inner());
     let out = &mut *out;
     out[..4].copy_from_slice(&f);
-    out[4] = STATS[0].load(Relaxed) as u32;
-    out[5] = (STATS[1].load(Relaxed) / 1000) as u32;
-    out[6] = STATS[2].load(Relaxed) as u32;
-    out[7] = (STATS[3].load(Relaxed) >> 20) as u32;
+    out[4] = lo32w(STATS[0].load(Relaxed));
+    out[5] = lo32w(STATS[1].load(Relaxed) / 1000);
+    out[6] = lo32w(STATS[2].load(Relaxed));
+    out[7] = lo32w(STATS[3].load(Relaxed) >> 20);
 }
 
 /// host/vngpu.js: every animation frame (of the drawing thread's worker).
@@ -634,30 +635,30 @@ impl Render {
     /// `upload_screen`'s rows of frame `io` (the screen buffer `bits`), under the display's lock.
     fn upload_rows(&mut self, io: &[u32; 12], bits: *const u32, new_tex: bool) {
         let (width, height) = (self.width, self.height);
-        let (mut y0, mut y1) = (io[1] as i32, io[2] as i32);
-        let (mut x0, mut x1) = (io[10] as i32, (io[11] as i32).min(width));
+        let (mut y0, mut y1) = (io[1].cast_signed(), io[2].cast_signed());
+        let (mut x0, mut x1) = (io[10].cast_signed(), (io[11].cast_signed()).min(width));
         if new_tex {
             (x0, x1, y0, y1) = (0, width, 0, height);
         }
-        let mut frame = [io[0], bits as u32, width as u32, height as u32];
+        let mut frame = [io[0], lo32(bits.expose_provenance()), width.cast_unsigned(), height.cast_unsigned()];
         if io[3] == 1 {
-            let (ptr, stride) = (io[4] as usize, io[5] as i32);
-            let [l, t, r, b] = [io[6] as i32, io[7] as i32, io[8] as i32, io[9] as i32];
+            let (ptr, stride) = (us(io[4]), io[5].cast_signed());
+            let [l, t, r, b] = [io[6].cast_signed(), io[7].cast_signed(), io[8].cast_signed(), io[9].cast_signed()];
             let (x0, x1) = (l.max(x0).max(0), r.min(x1).min(width));
             let (t2, b2) = (y0.max(t).max(0), y1.min(b).min(height));
             if x1 > x0 && b2 > t2 {
                 let off = ptr + (((t2 - t) * stride + (x0 - l)) * 4) as usize;
-                let bpr = (stride * 4) as u32;
+                let bpr = (stride * 4).cast_unsigned();
                 let n = ((b2 - t2 - 1) * stride * 4 + (x1 - x0) * 4) as usize;
-                gpu::write_texture(self.tex, 0, [x0 as u32, t2 as u32, 0], off as *const u8, n, bpr, (b2 - t2) as u32, [(x1 - x0) as u32, (b2 - t2) as u32, 1]);
+                gpu::write_texture(self.tex, 0, [x0.cast_unsigned(), t2.cast_unsigned(), 0], std::ptr::with_exposed_provenance::<u8>(off), n, bpr, (b2 - t2).cast_unsigned(), [(x1 - x0).cast_unsigned(), (b2 - t2).cast_unsigned(), 1]);
                 SCREEN_STATS[1].fetch_add(((x1 - x0) * (b2 - t2) * 4) as u64, Relaxed);
             }
-            frame = [io[0], ptr as u32, stride as u32, (b - t) as u32];
+            frame = [io[0], lo32(ptr), stride.cast_unsigned(), (b - t).cast_unsigned()];
         } else if y1 > y0 && x1 > x0 {
             let stride = width * 4;
-            let p = bits as usize + (y0 * stride + x0 * 4) as usize;
+            let p = bits.expose_provenance() + (y0 * stride + x0 * 4) as usize;
             let n = ((y1 - y0 - 1) * stride + (x1 - x0) * 4) as usize;
-            gpu::write_texture(self.tex, 0, [x0 as u32, y0 as u32, 0], p as *const u8, n, stride as u32, (y1 - y0) as u32, [(x1 - x0) as u32, (y1 - y0) as u32, 1]);
+            gpu::write_texture(self.tex, 0, [x0.cast_unsigned(), y0.cast_unsigned(), 0], std::ptr::with_exposed_provenance::<u8>(p), n, stride.cast_unsigned(), (y1 - y0).cast_unsigned(), [(x1 - x0).cast_unsigned(), (y1 - y0).cast_unsigned(), 1]);
             SCREEN_STATS[1].fetch_add(((x1 - x0) * (y1 - y0) * 4) as u64, Relaxed);
         }
         self.serial = Some(io[0]);
@@ -747,7 +748,7 @@ impl Render {
         if r <= l || b <= t {
             return;
         }
-        let (w, h) = ((vr - vl) as u32, (vb - vt) as u32);
+        let (w, h) = ((vr - vl).cast_unsigned(), (vb - vt).cast_unsigned());
         let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":"bgra8unorm","usage":{}}}"#, usage::T_RENDER | usage::T_COPY_SRC));
         let view = gpu::view(tex, "");
         self.draw(view, "bgra8unorm", Rect { x: 0.0, y: 0.0, w: w as f32, h: h as f32 }, w, h);
@@ -756,7 +757,7 @@ impl Render {
         let buf = gpu::buffer(bpr * h, usage::COPY_DST | usage::MAP_READ);
         gpu::copy_to_buffer(tex, 0, 0, 0, buf, bpr, w, h);
         gpu::submit();
-        let mut px = vec![0u8; (bpr * h) as usize];
+        let mut px = vec![0u8; us(bpr * h)];
         gpu::read_buffer(buf, bpr * h, px.as_mut_ptr(), SHOT_TOKEN);
         self.shot = Some((buf, tex, w, h, px, bpr));
     }
@@ -768,16 +769,16 @@ impl Render {
         if !ok {
             return;
         }
-        let mut out = vec![0u8; (w * h * 4) as usize];
-        for y in 0..h as usize {
-            out[y * w as usize * 4..(y + 1) * w as usize * 4].copy_from_slice(&px[y * bpr as usize..y * bpr as usize + w as usize * 4]);
+        let mut out = vec![0u8; us(w * h * 4)];
+        for y in 0..us(h) {
+            out[y * us(w) * 4..(y + 1) * us(w) * 4].copy_from_slice(&px[y * us(bpr)..y * us(bpr) + us(w) * 4]);
         }
         let mut s = SHOT.lock().unwrap_or_else(|e| e.into_inner());
         if s.1 != 0 {
-            unsafe { drop(Vec::from_raw_parts(s.1 as *mut u8, (s.2 * s.3 * 4) as usize, (s.2 * s.3 * 4) as usize)) };
+            unsafe { drop(Vec::from_raw_parts(std::ptr::with_exposed_provenance_mut::<u8>(s.1), us(s.2 * s.3 * 4), us(s.2 * s.3 * 4))) };
         }
         let mut out = std::mem::ManuallyDrop::new(out.into_boxed_slice());
-        *s = (s.0 + 1, out.as_mut_ptr() as usize, w, h);
+        *s = (s.0 + 1, out.as_mut_ptr().expose_provenance(), w, h);
     }
 
     /// &d3dstats: every 5 s, frames, slow ones (>34 ms apart), Direct3D frames and batch time.

@@ -16,6 +16,7 @@
 //! no interpreter warm-up and no translation, and in Chromium the browser's code cache of the
 //! module keeps V8's optimized code too.
 
+use crate::guest::{gc, lo32, lo32w, us};
 use crate::locks::{Lock, Rw};
 use crate::cpu::Linear;
 use std::cell::{Cell, RefCell};
@@ -58,7 +59,7 @@ static EXE_PAGES: [AtomicU32; 1 << 14] = [const { AtomicU32::new(0) }; 1 << 14];
 /// and the range lo..=hi then ran backwards).
 fn page_span(addr: u32, len: u32) -> (usize, usize) {
     let end = (u64::from(addr) + u64::from(len) - 1) >> 12;
-    ((addr >> 12) as usize, end.min((1 << 19) - 1) as usize)
+    (us(addr >> 12), (end.min((1 << 19) - 1)) as usize)
 }
 
 #[cfg(kani)]
@@ -106,7 +107,7 @@ fn set_pages(map: &[AtomicU32], addr: usize, len: usize, on: bool) {
 }
 
 fn page_set(map: &[AtomicU32], a: u32) -> bool {
-    let p = (a >> 12) as usize;
+    let p = us(a >> 12);
     p < 1 << 19 && map[p >> 5].load(Ordering::Relaxed) & (1 << (p & 31)) != 0
 }
 
@@ -161,11 +162,11 @@ pub(crate) fn smc_hit(a: u32) {
     if !in_code(a) {
         return;
     }
-    set_pages(&SMC_PAGES, a as usize, 1, true);
+    set_pages(&SMC_PAGES, us(a), 1, true);
     if stats() {
         eprintln!("vnjit: code at {a:#x} rewritten");
     }
-    code_changed(a as usize, 1);
+    code_changed(us(a), 1);
 }
 
 /// Code checked on entry (see [`wx_page`]) found rewritten at `a`, a block's start: the
@@ -181,7 +182,7 @@ pub(crate) fn stale_hit(a: u32) {
     });
     if !parked {
         note_stale(a, "since translated");
-        drop_states(a as usize >> 12, a as usize >> 12);
+        drop_states(us(a) >> 12, us(a) >> 12);
     } else if new {
         // (code not seen before: counted, as one that keeps changing goes to the interpreter)
         note_stale(a, "since translated");
@@ -263,7 +264,7 @@ fn note_stale(a: u32, how: &str) {
         eprintln!("vnjit: code at {a:#x} changed {how} ({n})");
     }
     if n == STALE_LIMIT {
-        set_pages(&SMC_PAGES, a as usize, 1, true);
+        set_pages(&SMC_PAGES, us(a), 1, true);
         if stats() {
             eprintln!("vnjit: page of {a:#x} keeps changing: interpreted from now on");
         }
@@ -284,7 +285,7 @@ fn code_kept(code: &[(u32, u32)]) -> bool {
 /// handled by [`smc_hit`]).
 #[inline(always)]
 pub(crate) fn interp_write(a: u32) -> bool {
-    let p = (a >> 12) as usize;
+    let p = us(a >> 12);
     if p >= 1 << 19 || CODE_PAGES[p >> 5].load(Ordering::Relaxed) & (1 << (p & 31)) == 0 {
         return false;
     }
@@ -307,7 +308,7 @@ pub fn pages_protected(addr: usize, len: usize, prot: i32) {
 
 /// The loader mapped a main executable (not a DLL) there.
 pub fn exe_image(addr: u32, size: u32) {
-    set_pages(&EXE_PAGES, addr as usize, size as usize, true);
+    set_pages(&EXE_PAGES, us(addr), us(size), true);
 }
 
 fn debug_range(a: u32) -> bool {
@@ -480,7 +481,7 @@ fn reclaim(st: &mut State) {
 /// Notes a module loaded at `base` (by itself: reclaim may free it once nothing refers to it).
 fn note_load(st: &mut State, base: i32, n: u32, bytes: usize) {
     if base >= 0 {
-        st.loads.push((base as u32, n, bytes as u32));
+        st.loads.push((base.cast_unsigned(), n, lo32(bytes)));
         st.since_reclaim += 1;
     }
 }
@@ -499,7 +500,7 @@ const FN_BUILDS: u32 = 8;
 const MAX_MERGES: u32 = 512;
 /// The hops of `n` samples out of a ring of `len`, `hops` hops since the last one.
 fn hop_share(hops: u32, n: usize, len: usize) -> u32 {
-    (u64::from(hops) * n as u64 / len.max(1) as u64).min(u64::from(u32::MAX)) as u32
+    lo32w((u64::from(hops) * n as u64 / len.max(1) as u64).min(u64::from(u32::MAX)))
 }
 
 /// Hops out of a long-mode region that make merge_hot64 merge it with where they go
@@ -649,8 +650,8 @@ fn code_bytes(mem: &mut Linear, code: &[(u32, u32)]) -> Option<Vec<u8>> {
     let mut text = Vec::new();
     for &(a, n) in code {
         let at = text.len();
-        text.resize(at + n as usize, 0);
-        if koji::Memory::fetch(mem, a, &mut text[at..]) != n as usize {
+        text.resize(at + us(n), 0);
+        if koji::Memory::fetch(mem, a, &mut text[at..]) != us(n) {
             return None;
         }
     }
@@ -774,7 +775,7 @@ fn mark_code(code: &[(u32, u32)]) {
     }
     for &(a, n) in code {
         for p in (a >> 12)..=(a.saturating_add(n.max(1) - 1) >> 12) {
-            if let Some(w) = CODE_PAGES.get(p as usize >> 5) {
+            if let Some(w) = CODE_PAGES.get(us(p) >> 5) {
                 w.fetch_or(1 << (p & 31), Ordering::Relaxed);
             }
         }
@@ -811,7 +812,7 @@ pub fn fault_pages(addr: u32, len: u32, kind: u8, checks: bool) {
         b.store(kind, Ordering::Relaxed);
     }
     if kind != 0 && checks && jit::PAGE_MAP.load(Ordering::Relaxed) == 0 {
-        jit::PAGE_MAP.store(map.as_ptr() as usize, Ordering::SeqCst);
+        jit::PAGE_MAP.store(map.as_ptr().expose_provenance(), Ordering::SeqCst);
         drop_translations();
         if stats() {
             eprintln!("vnjit pages {addr:#x}+{len:#x} fault: accesses check pages from now on");
@@ -823,7 +824,7 @@ pub fn fault_pages(addr: u32, len: u32, kind: u8, checks: bool) {
 #[inline(always)]
 pub(crate) fn faults(addr: u32, len: u32, write: bool) -> bool {
     let Some(map) = FAULT_MAP.get() else { return false };
-    let (lo, hi) = (addr as usize >> 12, (addr as usize + len.max(1) as usize - 1) >> 12);
+    let (lo, hi) = (us(addr) >> 12, (us(addr) + us(len.max(1)) - 1) >> 12);
     let m = if write { READ_FAULTS | WRITE_FAULTS } else { READ_FAULTS };
     map.get(lo).is_some_and(|b| b.load(Ordering::Relaxed) & m != 0) || map.get(hi).is_some_and(|b| b.load(Ordering::Relaxed) & m != 0)
 }
@@ -885,7 +886,7 @@ fn drop_states(lo: usize, hi: usize) {
         let (a, e) = ((lo as u64) << 12, ((hi as u64) + 1) << 12);
         CODE_RANGES.locked().retain(|&s, &mut end| u64::from(end) <= a || u64::from(s) >= e);
     }
-    changed(lo as u32, hi as u32);
+    changed(lo32(lo), lo32(hi));
 }
 
 /// The code changes since a thread last looked: (generation, first page, last page), the
@@ -908,7 +909,7 @@ fn changed(lo: u32, hi: u32) {
 fn changes_since(seen: u32, now: u32) -> Option<Vec<(u32, u32)>> {
     let c = CHANGES.locked();
     // (every generation in between must still be listed)
-    if !c.front().is_some_and(|f| f.0.wrapping_sub(seen) as i32 <= 1) {
+    if !c.front().is_some_and(|f| f.0.wrapping_sub(seen).cast_signed() <= 1) {
         return None;
     }
     let mut out = Vec::new();
@@ -1001,7 +1002,7 @@ fn drop_pages(st: &mut State, pages: &[(u32, u32)]) -> bool {
 /// Takes the jumps to code on pages `hit` says out of the ring (the whole of it, as merge_hot
 /// reads it; zeros, as the ring starts) and out of the hot counts.
 fn forget_hot(st: &mut State, hit: &dyn Fn(u32, u32) -> bool) {
-    for i in 0..jit::RING_SIZE as usize {
+    for i in 0..us(jit::RING_SIZE) {
         if hit(st.ring[2 + 2 * i], 1) {
             // (a jump from nowhere to nowhere: not sampled again, see merge_hot)
             st.ring[1 + 2 * i] = 0;
@@ -1198,13 +1199,13 @@ pub fn run(cpu: &mut Cpu) -> Ran {
                 merge_hot(st, cpu);
             }
         }
-        cpu.jit_hash = st.hash.as_ptr() as usize as u32;
-        cpu.jit_mask = st.hash.len() as u32 - 1;
-        cpu.jit_ring = st.ring.as_mut_ptr() as usize as u32;
-        cpu.jit_calls = st.calls.as_mut_ptr() as usize as u32;
+        cpu.jit_hash = lo32(st.hash.as_ptr().expose_provenance());
+        cpu.jit_mask = lo32(st.hash.len()) - 1;
+        cpu.jit_ring = lo32(st.ring.as_mut_ptr().expose_provenance());
+        cpu.jit_calls = lo32(st.calls.as_mut_ptr().expose_provenance());
     });
     cpu.jit_budget = BUDGET;
-    cpu.jit_code_pages = CODE_PAGES.as_ptr() as usize as u32;
+    cpu.jit_code_pages = lo32(CODE_PAGES.as_ptr().expose_provenance());
     let depth = cpu.jit_depth;
     #[cfg(target_os = "emscripten")]
     let expect = {
@@ -1353,10 +1354,10 @@ fn check64(before: &Cpu, states: &[(Cpu, usize)], got: &Cpu, writes: &[(u32, u8)
 /// Sets the entry of `eip`; true if it is new.
 /// Whether `eip` has a block in the hash table.
 fn compiled(hash: &[[u32; 2]], eip: u32) -> bool {
-    let mask = hash.len() as u32 - 1;
+    let mask = lo32(hash.len()) - 1;
     let mut h = jit::dispatch::slot(eip, mask);
-    while hash[h as usize][0] != 0 {
-        if hash[h as usize][0] == eip {
+    while hash[us(h)][0] != 0 {
+        if hash[us(h)][0] == eip {
             return true;
         }
         h = (h + 1) & mask;
@@ -1365,13 +1366,13 @@ fn compiled(hash: &[[u32; 2]], eip: u32) -> bool {
 }
 
 fn insert(hash: &mut [[u32; 2]], eip: u32, idx: u32) -> bool {
-    let mask = hash.len() as u32 - 1;
+    let mask = lo32(hash.len()) - 1;
     let mut h = jit::dispatch::slot(eip, mask);
-    while hash[h as usize][0] != 0 && hash[h as usize][0] != eip {
+    while hash[us(h)][0] != 0 && hash[us(h)][0] != eip {
         h = (h + 1) & mask;
     }
-    let new = hash[h as usize][0] == 0;
-    hash[h as usize] = [eip, idx];
+    let new = hash[us(h)][0] == 0;
+    hash[us(h)] = [eip, idx];
     new
 }
 
@@ -1389,7 +1390,7 @@ fn load(st: &mut State, bytes: &[u8], roots: Vec<u32>, starts: &[(u32, u32)], co
         return false;
     }
     note_load(st, base, 1, bytes.len());
-    let base = base as u32;
+    let base = base.cast_unsigned();
     let entries: Vec<(u32, u32)> = starts.iter().filter(|s| !st.fns.contains(&s.0)).map(|&(a, i)| (a, base | i << jit::ENTRY_SHIFT)).collect();
     enter(st, base, roots.clone(), starts, code);
     track_wx(st, base, entries, roots, None, code);
@@ -1497,7 +1498,7 @@ static LATE: Inbox = Inbox::new();
 /// from malloc, kura's from now on (never freed). 0 taken, -1 refused (no room).
 #[no_mangle]
 pub extern "C" fn vnhost_jit_late(wasm: *const u8, wasm_len: u32, idx: *const u8, idx_len: u32) -> i32 {
-    if wasm.is_null() || idx.is_null() || !LATE.push([wasm as usize, wasm_len as usize, idx as usize, idx_len as usize]) {
+    if wasm.is_null() || idx.is_null() || !LATE.push([wasm.expose_provenance(), us(wasm_len), idx.expose_provenance(), us(idx_len)]) {
         return -1;
     }
     0
@@ -1542,7 +1543,7 @@ fn take_late(s: &mut Saved, inbox: &Inbox, n: usize) {
         let k = s.late.len();
         let [w, wl, i, il] = inbox.get(k);
         // SAFETY: the page gave both to kura for good (vnhost_jit_late), written before the count
-        let (wasm, idx): (&'static [u8], &[u8]) = unsafe { (std::slice::from_raw_parts(w as *const u8, wl), std::slice::from_raw_parts(i as *const u8, il)) };
+        let (wasm, idx): (&'static [u8], &[u8]) = unsafe { (std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(w), wl), std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(i), il)) };
         let entries = jit::saved::decode_all(idx).unwrap_or_default();
         let funcs = entries.iter().map(|e| e.width()).sum();
         s.late.push((wasm, funcs));
@@ -1597,13 +1598,13 @@ fn load_saved(st: &mut State, i: usize) -> bool {
     #[cfg(target_os = "emscripten")]
     let base = part_base(st, &s, s.part[i]);
     #[cfg(not(target_os = "emscripten"))]
-    let base = -1;
+    let base: i32 = -1;
     if base < 0 {
         return false;
     }
     let e = &s.entries[i];
     mark_code(&e.code);
-    enter(st, base as u32 + s.offsets[i], e.roots.clone(), &e.starts, &e.code);
+    enter(st, base.cast_unsigned() + s.offsets[i], e.roots.clone(), &e.starts, &e.code);
     true
 }
 
@@ -1627,13 +1628,13 @@ fn load_saved_fn(st: &mut State, i: usize) -> bool {
     #[cfg(target_os = "emscripten")]
     let base = part_base(st, &s, s.part[i]);
     #[cfg(not(target_os = "emscripten"))]
-    let base = -1;
+    let base: i32 = -1;
     if base < 0 {
         return false;
     }
     let e = &s.entries[i];
     st.fn_builds.insert(e.roots[0], e.build);
-    enter_fn(st, base as u32 + s.offsets[i], e.roots[0], &e.starts, &e.sites, &e.code);
+    enter_fn(st, base.cast_unsigned() + s.offsets[i], e.roots[0], &e.starts, &e.sites, &e.code);
     true
 }
 
@@ -1737,7 +1738,7 @@ static SAVE_ACKS: [std::sync::atomic::AtomicU64; 32] = [const { std::sync::atomi
 const NO_ACK: u32 = u32::MAX;
 
 fn ack(id: u32, a: Ack) {
-    SAVE_ACKS[id as usize % 32].store(1 << 63 | u64::from(id) << 8 | a as u64, Ordering::Release);
+    SAVE_ACKS[us(id) % 32].store(1 << 63 | u64::from(id) << 8 | a as u64, Ordering::Release);
 }
 
 /// host/vnjit.js, when the server answered save `id` (or the request failed): `ack` an [`Ack`].
@@ -1758,8 +1759,8 @@ pub extern "C" fn vnhost_jit_saved(id: u32, a: u32) {
 fn take_acks(book: &mut SaveBook) {
     let ids: Vec<u32> = book.inflight.keys().copied().collect();
     for id in ids {
-        let v = SAVE_ACKS[id as usize % 32].load(Ordering::Acquire);
-        if v >> 63 == 1 && (v >> 8) as u32 == id {
+        let v = SAVE_ACKS[us(id) % 32].load(Ordering::Acquire);
+        if v >> 63 == 1 && lo32w(v >> 8) == id {
             book.answer(id, match v & 0xff {
                 1 => Ack::Taken,
                 2 => Ack::Refused,
@@ -1929,7 +1930,7 @@ fn save((url, id, new, chunks): Save) {
     if stats() || crate::env_on!("MASU_JIT_SAVE_LOG") {
         eprintln!("vnjit: saving {} regions ({} bytes)", entries.len(), wasm.len());
     }
-    let mut body = (wasm.len() as u32).to_le_bytes().to_vec();
+    let mut body = (lo32(wasm.len())).to_le_bytes().to_vec();
     body.extend_from_slice(&wasm);
     body.extend_from_slice(&idx);
     #[cfg(target_os = "emscripten")]
@@ -1995,7 +1996,7 @@ fn merge_hot(st: &mut State, cpu: &Cpu) {
             PAIRS.with(|p| {
                 let mut p = p.borrow_mut();
                 for j in &jumps {
-                    let from = st.roots.get(&((j >> 32) as u32)).map_or(0, |r| r[0]);
+                    let from = st.roots.get(&(lo32w(j >> 32))).map_or(0, |r| r[0]);
                     *p.entry((from, *j as u32)).or_default() += 1;
                 }
                 if n - last > 50_000_000 {
@@ -2041,7 +2042,7 @@ fn merge_hot(st: &mut State, cpu: &Cpu) {
     // functions (jit::FN): a call or tail jump that found no function there, or a function
     // left often (built again with the blocks that ran since)
     for &(c, p) in &runs {
-        let (from, to) = ((p >> 32) as u32, p as u32);
+        let (from, to) = (lo32w(p >> 32), lo32w(p));
         if c < FN_SAMPLES {
             break;
         }
@@ -2094,12 +2095,12 @@ fn merge_hot(st: &mut State, cpu: &Cpu) {
     }
     // regions: the most frequent pair between them
     let Some(&(c, best)) = runs.iter().find(|r| {
-        let (from, to) = ((r.1 >> 32) as u32, r.1 as u32);
+        let (from, to) = (lo32w(r.1 >> 32), lo32w(r.1));
         from & jit::FN_TAG == 0 && !st.fns.contains(&from) && !st.fns.contains(&to)
     }) else {
         return;
     };
-    let (from, to) = ((best >> 32) as u32, best as u32);
+    let (from, to) = (lo32w(best >> 32), lo32w(best));
     if c < MERGE_SAMPLES || st.merges >= MAX_MERGES || st.fns.contains(&to) {
         return;
     }
@@ -2166,8 +2167,8 @@ fn merge_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64], hops: u32) {
     let mut best = (0, 0u32);
     let mut i = 0;
     while i < jumps.len() {
-        let from = (jumps[i] >> 32) as u32;
-        let k = i + jumps[i..].iter().take_while(|j| (**j >> 32) as u32 == from).count();
+        let from = lo32w(jumps[i] >> 32);
+        let k = i + jumps[i..].iter().take_while(|j| lo32w(**j >> 32) == from).count();
         if k - i > best.0 {
             best = (k - i, from);
         }
@@ -2198,8 +2199,8 @@ fn merge_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64], hops: u32) {
     let mut i = 0;
     while i < jumps.len() {
         let k = i + jumps[i..].iter().take_while(|j| **j == jumps[i]).count();
-        let to = jumps[i] as u32;
-        if (jumps[i] >> 32) as u32 == from && k - i >= 2 && !roots.contains(&to) && st.merged.insert((from, to)) {
+        let to = lo32w(jumps[i]);
+        if lo32w(jumps[i] >> 32) == from && k - i >= 2 && !roots.contains(&to) && st.merged.insert((from, to)) {
             new.push(to);
         }
         i = k;
@@ -2229,7 +2230,7 @@ fn fn_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64]) {
     let mut i = 0;
     while i < jumps.len() {
         let k = i + jumps[i..].iter().take_while(|j| **j == jumps[i]).count();
-        let (from, to) = ((jumps[i] >> 32) as u32, jumps[i] as u32);
+        let (from, to) = (lo32w(jumps[i] >> 32), lo32w(jumps[i]));
         let n = k - i;
         i = k;
         // (a call's miss: the target becomes a function; a function's jump out: built again,
@@ -2374,7 +2375,7 @@ fn fn_span(c: &[(u32, u32)], root: u32) -> Option<(u32, u64)> {
         }
         lo = lo.min(s);
     }
-    Some((lo as u32, hi))
+    Some((lo32w(lo), hi))
 }
 
 /// Translates the x64 function at `eip` (jit::long::FN64, in the 4GB alias cpu.rip_hi) and
@@ -2419,7 +2420,7 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
         return false;
     }
     note_load(st, base, 2, bytes.len());
-    enter_fn_as(st, base as u32, eip, &region.starts, &[], &region.code, true);
+    enter_fn_as(st, base.cast_unsigned(), eip, &region.starts, &[], &region.code, true);
     count_compile(1, t0);
     if build > 1 {
         count_compile(2, t0);
@@ -2941,14 +2942,14 @@ fn take_built(st: &mut State, mem: &mut Linear) {
             Some(m) if kept.iter().all(|&k| k) => {
                 let n = 2 * items.iter().filter(|i| i.2.is_some()).count();
                 #[cfg(target_os = "emscripten")]
-                let b = load_module(&m, n as u32);
+                let b = load_module(&m, lo32(n));
                 #[cfg(not(target_os = "emscripten"))]
                 let b = { let _ = (&m, n); -1 };
-                note_load(st, b, n as u32, m.len());
+                note_load(st, b, lo32(n), m.len());
                 if crate::env_on!("MASU_JIT_TIME") {
                     eprintln!("vnjit time batch of {}: load {:?}", n / 2, t0.elapsed());
                 }
-                (b >= 0).then_some(b as u32)
+                (b >= 0).then_some(b.cast_unsigned())
             }
             _ => None,
         };
@@ -3035,7 +3036,7 @@ fn install_fn(st: &mut State, eip: u32, bytes: &[u8], starts: &[(u32, u32)], sit
         return false;
     }
     note_load(st, base, 2, bytes.len());
-    enter_fn(st, base as u32, eip, starts, sites, code);
+    enter_fn(st, base.cast_unsigned(), eip, starts, sites, code);
     true
 }
 
@@ -3059,12 +3060,12 @@ fn enter_fn_as(st: &mut State, base: u32, eip: u32, starts: &[(u32, u32)], sites
     for &(a, _) in starts {
         st.known.insert(a);
     }
-    enter(st, base as u32, vec![eip], &[], code);
+    enter(st, base, vec![eip], &[], code);
     grow(st, starts.len());
     let mut entries = Vec::new();
     for (i, &(a, k)) in starts.iter().enumerate() {
         // (which entry: 0 the root, the first start)
-        let v = base as u32 | (if by_block { k } else { i as u32 }) << jit::ENTRY_SHIFT | jit::FN_TAG;
+        let v = base | (if by_block { k } else { lo32(i) }) << jit::ENTRY_SHIFT | jit::FN_TAG;
         if insert(&mut st.hash, a, v) {
             st.used += 1;
         }
@@ -3097,17 +3098,17 @@ pub(crate) fn step(cpu: &mut Cpu, mem: &mut Linear) -> (Exit, bool) {
 /// in the ring (a callee called often becomes a function, see merge_hot).
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_jit_callmiss(cpu: u32, slot: u32, target: u32) -> u32 {
-    let cpu = &*(cpu as usize as *const Cpu);
-    let hash = std::slice::from_raw_parts(cpu.jit_hash as usize as *const [u32; 2], cpu.jit_mask as usize + 1);
+    let cpu = &*(us(cpu) as *const Cpu);
+    let hash = std::slice::from_raw_parts(us(cpu.jit_hash) as *const [u32; 2], us(cpu.jit_mask) + 1);
     let mut h = jit::dispatch::slot(target, cpu.jit_mask);
-    while hash[h as usize][0] != 0 {
-        if hash[h as usize][0] == target {
-            let v = hash[h as usize][1];
+    while hash[us(h)][0] != 0 {
+        if hash[us(h)][0] == target {
+            let v = hash[us(h)][1];
             // (a call goes to a function's root only)
             if v & jit::FN_TAG == 0 || v >> jit::ENTRY_SHIFT & 0x7ff != 0 {
                 break;
             }
-            *(slot as usize as *mut [u32; 2]) = [target, v];
+            *(us(slot) as *mut [u32; 2]) = [target, v];
             return v;
         }
         h = (h + 1) & cpu.jit_mask;
@@ -3116,10 +3117,10 @@ pub unsafe extern "C" fn vnhost_jit_callmiss(cpu: u32, slot: u32, target: u32) -
     if target >= cpu.trap_lo && target < cpu.trap_hi {
         return 0;
     }
-    let ring = cpu.jit_ring as usize as *mut u32;
+    let ring = std::ptr::with_exposed_provenance_mut::<u32>(us(cpu.jit_ring));
     let n = *ring;
     *ring = n.wrapping_add(1);
-    let i = (n & (jit::RING_SIZE - 1)) as usize;
+    let i = us(n & (jit::RING_SIZE - 1));
     *ring.add(1 + 2 * i) = jit::FN_TAG;
     *ring.add(2 + 2 * i) = target;
     0
@@ -3130,7 +3131,7 @@ pub unsafe extern "C" fn vnhost_jit_callmiss(cpu: u32, slot: u32, target: u32) -
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_jit_step(cpu: u32) -> i32 {
     // (u32: an i32 in the region modules' imports, the 64-bit build too)
-    let cpu = cpu as usize as *mut Cpu;
+    let cpu = us(cpu) as *mut Cpu;
     if stats() {
         count_step(&*cpu);
     }
@@ -3174,7 +3175,7 @@ pub unsafe extern "C" fn vnhost_jit_step(cpu: u32) -> i32 {
 
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_jit_eflags(cpu: u32) -> u32 {
-    let cpu = &mut *(cpu as usize as *mut Cpu);
+    let cpu = &mut *(us(cpu) as *mut Cpu);
     cpu.materialize();
     cpu.eflags
 }
@@ -3183,7 +3184,7 @@ pub unsafe extern "C" fn vnhost_jit_eflags(cpu: u32) -> u32 {
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn vnhost_jit_x87(cpu: u32, top: u32, info: u32, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64) {
-    let cpu = cpu as usize as *mut Cpu;
+    let cpu = us(cpu) as *mut Cpu;
     jit::x87_out(&mut (*cpu).fpu, top, info, [a, b, c, d, e, f, g, h]);
 }
 
@@ -3237,7 +3238,7 @@ pub extern "C" fn vnhost_jit_profile() {
     let mut blocks: Vec<(u64, u32, usize)> = Vec::new();
     let mut total = 0u64;
     for (a, at, keys) in prof.iter() {
-        let n = u64::from(unsafe { (*at as usize as *const u32).read_volatile() });
+        let n = u64::from(unsafe { gc::<u32>(*at).read_volatile() });
         if n == 0 {
             continue;
         }
@@ -3553,13 +3554,13 @@ mod save_tests {
         let mut longest = 10 + CHUNKS_STEP;
         for i in 0..2000 {
             seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-            let n = (seed >> 8) as usize % 400;
+            let n = us(seed >> 8) % 400;
             if !b.chunks_due(n) {
                 continue;
             }
             let c = b.send(t0, Vec::new(), Some(n));
             assert!(!b.chunks_due(n + 1000), "one at a time ({i})");
-            let a = [Ack::Taken, Ack::Refused, Ack::Failed][(seed >> 20) as usize % 3];
+            let a = [Ack::Taken, Ack::Refused, Ack::Failed][us(seed >> 20) % 3];
             b.answer(c, a);
             if a != Ack::Failed {
                 longest = longest.max(n);
@@ -3660,7 +3661,7 @@ mod late_tests {
     fn hand(inbox: &Inbox, entries: &[Entry]) -> bool {
         let idx: &'static [u8] = Vec::leak(jit::saved::encode(entries));
         let wasm: &'static [u8] = Vec::leak(vec![0u8, 0x61, 0x73, 0x6d]);
-        inbox.push([wasm.as_ptr() as usize, wasm.len(), idx.as_ptr() as usize, idx.len()])
+        inbox.push([wasm.as_ptr().expose_provenance(), wasm.len(), idx.as_ptr().expose_provenance(), idx.len()])
     }
 
     proptest! {
@@ -3715,7 +3716,7 @@ mod late_tests {
             let saved = std::sync::RwLock::new(Saved::default());
             std::thread::scope(|sc| {
                 sc.spawn(|| {
-                    for k in 0..LATE_MAX as u32 {
+                    for k in 0..lo32(LATE_MAX) {
                         assert!(hand(inbox, &[entry(0x1000 * (k + 1), 0), entry(0x1000 * (k + 1) + 8, 1)]));
                         std::thread::yield_now();
                     }
@@ -3738,7 +3739,7 @@ mod late_tests {
             for (i, e) in s.entries.iter().enumerate() {
                 let k = i / 2;
                 assert_eq!(s.part[i] as usize, k + 1);
-                assert_eq!(e.roots[0], 0x1000 * (k as u32 + 1) + if i % 2 == 1 { 8 } else { 0 });
+                assert_eq!(e.roots[0], 0x1000 * (lo32(k) + 1) + if i % 2 == 1 { 8 } else { 0 });
                 assert_eq!(s.offsets[i], if i % 2 == 1 { 1 } else { 0 });
             }
         }
@@ -3752,16 +3753,16 @@ mod invalidate_tests {
 
     /// A region at table index `base`: entries at `starts`, made from `code`.
     fn put(st: &mut State, base: u32, starts: &[u32], code: &[(u32, u32)]) {
-        let s: Vec<(u32, u32)> = starts.iter().enumerate().map(|(i, &a)| (a, i as u32)).collect();
+        let s: Vec<(u32, u32)> = starts.iter().enumerate().map(|(i, &a)| (a, lo32(i))).collect();
         enter(st, base, vec![starts[0]], &s, code);
     }
 
     fn slot_of(st: &State, a: u32) -> Option<u32> {
-        let mask = st.hash.len() as u32 - 1;
+        let mask = lo32(st.hash.len()) - 1;
         let mut h = jit::dispatch::slot(a, mask);
-        while st.hash[h as usize][0] != 0 {
-            if st.hash[h as usize][0] == a {
-                return Some(st.hash[h as usize][1] & ((1 << jit::ENTRY_SHIFT) - 1));
+        while st.hash[us(h)][0] != 0 {
+            if st.hash[us(h)][0] == a {
+                return Some(st.hash[us(h)][1] & ((1 << jit::ENTRY_SHIFT) - 1));
             }
             h = (h + 1) & mask;
         }
@@ -3803,13 +3804,13 @@ mod invalidate_tests {
     #[test]
     fn a_page_changed_forgets_the_jumps_sampled_into_it() {
         with_state(|st| {
-            let n = jit::RING_SIZE as usize;
+            let n = us(jit::RING_SIZE);
             for i in 0..n {
-                let to = if i % 3 == 0 { 0x1000_1390 } else { 0x40_1000 + i as u32 };
+                let to = if i % 3 == 0 { 0x1000_1390 } else { 0x40_1000 + lo32(i) };
                 st.ring[1 + 2 * i] = jit::FN_TAG;
                 st.ring[2 + 2 * i] = to;
             }
-            st.ring[0] = n as u32 + 5;
+            st.ring[0] = lo32(n) + 5;
             st.hot.insert((jit::FN_TAG, 0x1000_1390), 3);
             st.hot.insert((jit::FN_TAG, 0x40_1004), 3);
             assert!(drop_pages(st, &[(0x10001, 0x10001)]));
@@ -3818,7 +3819,7 @@ mod invalidate_tests {
                 if i % 3 == 0 {
                     assert_eq!(e, (0, 0), "entry {i}");
                 } else {
-                    assert_eq!(e, (jit::FN_TAG, 0x40_1000 + i as u32));
+                    assert_eq!(e, (jit::FN_TAG, 0x40_1000 + lo32(i)));
                 }
             }
             assert!(!st.hot.contains_key(&(jit::FN_TAG, 0x1000_1390)));
@@ -3831,7 +3832,7 @@ mod invalidate_tests {
         /// After drop_pages no ring entry or hot count goes into a changed page, and every
         /// other one is as it was.
         #[test]
-        fn forget_hot_property(tos in proptest::collection::vec(0u32..0x40_0000, jit::RING_SIZE as usize), pages in proptest::collection::vec((0u32..0x400, 0u32..4), 1..4)) {
+        fn forget_hot_property(tos in proptest::collection::vec(0u32..0x40_0000, us(jit::RING_SIZE)), pages in proptest::collection::vec((0u32..0x400, 0u32..4), 1..4)) {
             let pages: Vec<(u32, u32)> = pages.iter().map(|&(lo, n)| (lo, lo + n)).collect();
             let inside = |a: u32| pages.iter().any(|&(lo, hi)| a >> 12 >= lo && a >> 12 <= hi);
             with_state(|st| {
@@ -3967,9 +3968,9 @@ mod invalidate_tests {
             with_state(|st| {
                 let mut all = Vec::new();
                 for (i, r) in regions.iter().enumerate() {
-                    let base = 1 + i as u32;
+                    let base = 1 + lo32(i);
                     // (distinct entry addresses per region)
-                    let code: Vec<(u32, u32)> = r.iter().map(|&(p, n)| (0x40_0000 + p * 0x1000 + i as u32 * 16, n)).collect();
+                    let code: Vec<(u32, u32)> = r.iter().map(|&(p, n)| (0x40_0000 + p * 0x1000 + lo32(i) * 16, n)).collect();
                     let starts: Vec<u32> = code.iter().map(|c| c.0).collect();
                     put(st, base, &starts, &code);
                     all.push((base, starts, code));

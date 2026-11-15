@@ -2,6 +2,7 @@
 //! (crates/kura/src/d3d9/gpu.rs, where the command words are listed) with WebGPU, on the
 //! drawing thread, every frame.
 
+use crate::guest::{lo32, us};
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering::Relaxed;
@@ -444,7 +445,7 @@ const BLEND_ALPHA: [&str; 16] = [
 const ADDRESS: [&str; 6] = ["repeat", "repeat", "mirror-repeat", "clamp-to-edge", "clamp-to-edge", "mirror-repeat"];
 
 fn pick<'a>(t: &[&'a str], i: u32, or: &'a str) -> &'a str {
-    t.get(i as usize).copied().unwrap_or(or)
+    t.get(us(i)).copied().unwrap_or(or)
 }
 /// One enum of the pipeline key's states: each value's code in the key (d3d11's and gl's draws
 /// write them; d3d9's states are the same numbers), the value of a code, and its WebGPU name.
@@ -1117,9 +1118,9 @@ impl D3d {
             }
             let t0 = now();
             unsafe {
-                let c = std::slice::from_raw_parts(io[0] as usize as *const u32, io[1] as usize);
-                let data = std::slice::from_raw_parts(io[2] as usize as *const u8, io[3] as usize);
-                let blob = std::slice::from_raw_parts(io[4] as usize as *const u8, io[5] as usize);
+                let c = std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u32>(us(io[0])), us(io[1]));
+                let data = std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(us(io[2])), us(io[3]));
+                let blob = std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(us(io[4])), us(io[5]));
                 self.run(c, data, blob);
             }
             // (guest memory the batch read may change now)
@@ -1154,17 +1155,17 @@ impl D3d {
         let Some(r) = self.readbacks.remove(&token) else { return };
         // (not after the guest stopped waiting: it may have freed dst)
         if ok && vnhost_d3d9_readback_begin(r.req) != 0 {
-            for y in 0..r.h as usize {
-                let src = &r.data[y * r.bpr as usize..y * r.bpr as usize + r.row as usize];
+            for y in 0..us(r.h) {
+                let src = &r.data[y * us(r.bpr)..y * us(r.bpr) + us(r.row)];
                 if r.halved {
                     let f: Vec<u8> = src.chunks_exact(2).flat_map(|h| f16_to_f32(u16::from_le_bytes([h[0], h[1]])).to_le_bytes()).collect();
                     unsafe {
-                        std::ptr::copy_nonoverlapping(f.as_ptr(), (r.dst as usize + y * r.pitch as usize) as *mut u8, f.len());
+                        std::ptr::copy_nonoverlapping(f.as_ptr(), std::ptr::with_exposed_provenance_mut::<u8>(us(r.dst) + y * us(r.pitch)), f.len());
                     }
                     continue;
                 }
                 unsafe {
-                    std::ptr::copy_nonoverlapping(src.as_ptr(), (r.dst as usize + y * r.pitch as usize) as *mut u8, r.row as usize);
+                    std::ptr::copy_nonoverlapping(src.as_ptr(), std::ptr::with_exposed_provenance_mut::<u8>(us(r.dst) + y * us(r.pitch)), us(r.row));
                 }
             }
         }
@@ -1231,7 +1232,7 @@ impl D3d {
         self.open = true;
         gpu::copy_to_buffer(id, 0, 0, 0, buf, bpr, w, h);
         self.submit();
-        let mut data = vec![0u8; (bpr * h) as usize];
+        let mut data = vec![0u8; us(bpr * h)];
         let token = self.next_token;
         self.next_token = self.next_token.wrapping_add(1).max(1);
         gpu::read_buffer(buf, bpr * h, data.as_mut_ptr(), token);
@@ -1240,7 +1241,7 @@ impl D3d {
 
     fn run_batch(&mut self, c: &[u32], data: &[u8], blob: &[u8]) {
         if !data.is_empty() {
-            let size = (data.len().div_ceil(4) * 4 + 65536) as u32;
+            let size = lo32(data.len().div_ceil(4) * 4 + 65536);
             if self.data_buf == 0 || self.data_size < size {
                 gpu::destroy(self.data_buf);
                 self.data_size = size.max(self.data_size * 2).max(1 << 20);
@@ -1328,10 +1329,10 @@ impl D3d {
                         if cw > 0 && ch > 0 && u64::from(bpr) >= u64::from(cw) * u64::from(src_bpp) && bpr % 4 == 0 {
                             STATS[3].fetch_add(len as u64, Relaxed);
                             if halved {
-                                let half = halves(&blob[off as usize..off as usize + len]);
+                                let half = halves(&blob[us(off)..us(off) + len]);
                                 gpu::write_texture(tex, level, [x, y, 0], half.as_ptr(), len / 2, bpr / 2, ch, [cw, ch, 1]);
                             } else {
-                                gpu::write_texture(tex, level, [x, y, 0], blob[off as usize..].as_ptr(), len, bpr, ch, [cw, ch, 1]);
+                                gpu::write_texture(tex, level, [x, y, 0], blob[us(off)..].as_ptr(), len, bpr, ch, [cw, ch, 1]);
                             }
                         }
                     }
@@ -1350,29 +1351,29 @@ impl D3d {
                         if let Some(len) = rows_at(ptr, pitch, ch, cw, bpp).filter(|_| cw > 0 && ch > 0) {
                             STATS[3].fetch_add(len as u64, Relaxed);
                             if halved {
-                                let mut half = Vec::with_capacity((cw * 8 * ch) as usize);
-                                for r in 0..ch as usize {
-                                    let row = unsafe { std::slice::from_raw_parts((ptr as usize + r * pitch as usize) as *const u8, (cw * 16) as usize) };
+                                let mut half = Vec::with_capacity(us(cw * 8 * ch));
+                                for r in 0..us(ch) {
+                                    let row = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(us(ptr) + r * us(pitch)), us(cw * 16)) };
                                     half.extend(halves(row));
                                 }
                                 gpu::write_texture(tex, level, [x, y, 0], half.as_ptr(), half.len(), cw * 8, ch, [cw, ch, 1]);
                             } else {
-                                gpu::write_texture(tex, level, [x, y, 0], ptr as usize as *const u8, len, pitch, ch, [cw, ch, 1]);
+                                gpu::write_texture(tex, level, [x, y, 0], std::ptr::with_exposed_provenance::<u8>(us(ptr)), len, pitch, ch, [cw, ch, 1]);
                             }
                         }
                     }
                     i += 9;
                 }
                 CREATE_SHADER => {
-                    let (id, off, len) = (a(1) as usize, a(2) as usize, a(3) as usize);
+                    let (id, off, len) = (us(a(1)), us(a(2)), us(a(3)));
                     let code = String::from_utf8_lossy(&blob[off..off + len]);
                     // (a storage texture of 32-bit floats, kept as halves: a module that says so)
                     let halves = code.contains("@compute") && halved(P_RGBA32F);
                     let code = if halves { code.replace("<rgba32float, write>", "<rgba16float, write>").into() } else { code };
-                    if let Some(old) = self.shaders.insert(id as u32, gpu::shader(&code)) {
+                    if let Some(old) = self.shaders.insert(lo32(id), gpu::shader(&code)) {
                         gpu::drop(old);
                         self.computes.retain(|k, &mut (p, l)| {
-                            let keep = k[0] != id as u32;
+                            let keep = k[0] != lo32(id);
                             if !keep {
                                 gpu::drop(p);
                                 gpu::drop(l);
@@ -1380,12 +1381,12 @@ impl D3d {
                             keep
                         });
                     }
-                    self.shader_dims.insert(id as u32, slot_dims(&code));
-                    self.shader_src.insert(id as u32, code.into_owned());
+                    self.shader_dims.insert(lo32(id), slot_dims(&code));
+                    self.shader_src.insert(lo32(id), code.into_owned());
                     i += 4;
                 }
                 CREATE_PIPELINE => {
-                    let (id, n) = (a(1), a(2) as usize);
+                    let (id, n) = (a(1), us(a(2)));
                     let p = self.create_pipeline(&c[i + 3..i + 3 + n]);
                     if let Some(old) = self.pipelines.insert(id, p) {
                         gpu::drop(old.pipeline);
@@ -1421,7 +1422,7 @@ impl D3d {
                 }
                 DRAW => i = self.draw(c, i),
                 PRESENT | PRESENT_FLIP => {
-                    let (tex, rect) = (a(1), [a(2) as i32, a(3) as i32, a(4) as i32, a(5) as i32]);
+                    let (tex, rect) = (a(1), [a(2).cast_signed(), a(3).cast_signed(), a(4).cast_signed(), a(5).cast_signed()]);
                     self.end_pass();
                     self.submit();
                     if self.textures.contains_key(&tex) {
@@ -1483,14 +1484,14 @@ impl D3d {
                         self.flush_if_used(id);
                         let (lw, lh) = ((tw >> level).max(1), (th >> level).max(1));
                         let (cw, ch) = (w.min(lw.saturating_sub(x)), h.min(lh.saturating_sub(y)));
-                        let len = (bpr * h) as usize;
-                        if cw > 0 && ch > 0 && level < levels && off as usize + len <= blob.len() {
+                        let len = us(bpr * h);
+                        if cw > 0 && ch > 0 && level < levels && us(off) + len <= blob.len() {
                             STATS[3].fetch_add(len as u64, Relaxed);
                             if halved {
-                                let half = halves(&blob[off as usize..off as usize + len]);
+                                let half = halves(&blob[us(off)..us(off) + len]);
                                 gpu::write_texture(tex, level, [x, y, layer], half.as_ptr(), len / 2, bpr / 2, h, [cw, ch, 1]);
                             } else {
-                                gpu::write_texture(tex, level, [x, y, layer], blob[off as usize..].as_ptr(), len, bpr, h, [cw, ch, 1]);
+                                gpu::write_texture(tex, level, [x, y, layer], blob[us(off)..].as_ptr(), len, bpr, h, [cw, ch, 1]);
                             }
                         }
                     }
@@ -1498,7 +1499,7 @@ impl D3d {
                 }
                 CREATE_BUFFER | DESTROY_BUFFER | WRITE_BUFFER => i += self.buffer_cmd(&c[i..], blob),
                 CREATE_PIPELINE2 => {
-                    let (id, n) = (a(1), a(2) as usize);
+                    let (id, n) = (a(1), us(a(2)));
                     if let Some(old) = self.pipelines2.insert(id, Pipe2 { key: c[i + 3..i + 3 + n].to_vec(), pipeline: 0, layouts: Vec::new(), kinds: Vec::new(), zuse: 0 }) {
                         gpu::drop(old.pipeline);
                         old.layouts.iter().for_each(|&l| gpu::drop(l));
@@ -1506,8 +1507,8 @@ impl D3d {
                     i += 3 + n;
                 }
                 SET_TARGETS2 => {
-                    let n = a(1) as usize;
-                    let mut t = vec![n as u32];
+                    let n = us(a(1));
+                    let mut t = vec![lo32(n)];
                     t.extend_from_slice(&c[i + 2..i + 2 + n * 3 + 3]);
                     if self.targets2.as_ref() != Some(&t) {
                         self.end_pass();
@@ -1650,9 +1651,9 @@ impl D3d {
     /// this batch, and when the textures it samples last changed. The draw's tail: the guest's
     /// hash of what it read, its box (4), what it is (5: d3d9/device.rs rect_draw).
     fn draw_key(&self, c: &[u32], i: usize) -> (DrawKey, usize) {
-        let ntex = c[i + 17] as usize;
+        let ntex = us(c[i + 17]);
         let p = i + 18 + 3 * ntex;
-        let nbuf = c[p] as usize;
+        let nbuf = us(c[p]);
         let end = p + 1 + nbuf + 4 + 5 + 5;
         let add = |h: u64, w: u64| (h ^ w).wrapping_mul(0x0100_0000_01b3);
         let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -1929,7 +1930,7 @@ impl D3d {
         let mut gone: Vec<u32> = Vec::new();
         // textures draws read, and whether they had been cleared then
         let mut reads: Vec<(u32, bool)> = Vec::new();
-        let renum = |id: u32, made: &[u32]| made.iter().position(|&m| m == id).map(|k| 0x8000_0000 | k as u32);
+        let renum = |id: u32, made: &[u32]| made.iter().position(|&m| m == id).map(|k| 0x8000_0000 | lo32(k));
         let mut i = 0;
         while i < c.len() {
             match c[i] {
@@ -1939,7 +1940,7 @@ impl D3d {
                     i += 4;
                 }
                 SET_TARGETS2 => {
-                    let n = c[i + 1] as usize;
+                    let n = us(c[i + 1]);
                     targets2 = Some(&c[i + 1..i + 2 + n * 3 + 3]);
                     i += 2 + n * 3 + 3;
                 }
@@ -1966,19 +1967,19 @@ impl D3d {
                     if !cleared.contains(&(target[0], target[1], 0)) || (target[2] != 0 && !cleared.contains(&(target[2], 0, 0))) {
                         return None;
                     }
-                    let ntex = c[i + 17] as usize;
+                    let ntex = us(c[i + 17]);
                     for t in 0..ntex {
                         let tex = c[i + 18 + 3 * t + 1];
                         reads.push((tex, all_clear(&cleared, tex)));
                     }
                     drawn.push(target[0]);
                     let p = i + 18 + 3 * ntex;
-                    i = p + 1 + c[p] as usize + 4 + 5 + 5;
+                    i = p + 1 + us(c[p]) + 4 + 5 + 5;
                 }
                 DRAW2 => {
                     let tg = targets2?;
                     let pipe = self.pipelines2.get(&c[i + 1]).filter(|p| p.pipeline != 0)?;
-                    let n = tg[0] as usize;
+                    let n = us(tg[0]);
                     let sub = |k: usize| (tg[1 + k * 3], tg[2 + k * 3], tg[3 + k * 3]);
                     if (0..n).any(|k| !cleared.contains(&sub(k))) {
                         return None;
@@ -1988,7 +1989,7 @@ impl D3d {
                         return None;
                     }
                     let mut q = i + 2 + 6 + 5 + 4 + 1;
-                    let nvb = c[q] as usize;
+                    let nvb = us(c[q]);
                     for b in 0..nvb {
                         if let Some(k) = renum(c[q + 1 + 2 * b], &made) {
                             norm[q + 1 + 2 * b] = k;
@@ -2001,7 +2002,7 @@ impl D3d {
                     }
                     q += 3;
                     for _ in 0..2 {
-                        let m = c[q] as usize;
+                        let m = us(c[q]);
                         for (j, e) in c[q + 1..q + 1 + m * 8].chunks(8).enumerate() {
                             if e[1] == 1 || e[1] >= 4 {
                                 reads.push((e[2], all_clear(&cleared, e[2])));
@@ -2074,7 +2075,7 @@ impl D3d {
                         Some(k) => k,
                         None => {
                             gone.push(c[i + 1]);
-                            0x4000_0000 | gone.len() as u32
+                            0x4000_0000 | lo32(gone.len())
                         }
                     };
                     i += 2;
@@ -2083,7 +2084,7 @@ impl D3d {
                     // (a buffer from before: the last run wrote the same to it)
                     bufs.push(i);
                     norm[i + 1] = renum(c[i + 1], &made).unwrap_or(c[i + 1]);
-                    loose.push((c[i + 3] as usize, c[i + 4] as usize));
+                    loose.push((us(c[i + 3]), us(c[i + 4])));
                     i += 5;
                 }
                 _ => return None,
@@ -2121,16 +2122,16 @@ impl D3d {
                 2
             }
             _ => {
-                let (id, at, off, len) = (a(1), a(2) & !WRITE_UNUSED, a(3) as usize, a(4));
+                let (id, at, off, len) = (a(1), a(2) & !WRITE_UNUSED, us(a(3)), a(4));
                 // (WRITE_UNUSED: bytes no draw recorded before reads, a D3D11 Map NO_OVERWRITE's:
                 // written in place, the pass goes on)
                 let unused = a(2) & WRITE_UNUSED != 0;
                 if let Some(&(mut b, size)) = self.buffers.get(&id) {
                     // (the bytes the command names that the blob and the buffer hold)
-                    let n = (len as usize).min(size.saturating_sub(at) as usize).min(blob.len().saturating_sub(off));
+                    let n = (us(len)).min(us(size.saturating_sub(at))).min(blob.len().saturating_sub(off));
                     if n > 0 {
                         if self.bused.contains(&id) && !unused {
-                            if at == 0 && n as u32 + 16 > size {
+                            if at == 0 && lo32(n) + 16 > size {
                                 // all of it (but the padding to 16): a new GPU buffer, draws before keep the old one
                                 self.doomed.push(b);
                                 b = gpu::buffer(size, usage::VERTEX | usage::INDEX | usage::UNIFORM | usage::COPY_DST | usage::COPY_SRC);
@@ -2301,7 +2302,7 @@ impl D3d {
     /// Whether the open pass draws to this texture.
     fn pass_draws_to(&self, tex: u32) -> bool {
         match &self.targets2 {
-            Some(tg) => (0..=tg[0] as usize).any(|k| tg[1 + k * 3] == tex),
+            Some(tg) => (0..=us(tg[0])).any(|k| tg[1 + k * 3] == tex),
             None => self.target[0] == tex || self.target[2] == tex,
         }
     }
@@ -2435,7 +2436,7 @@ impl D3d {
         // (the views: the D3D9 target, or the first color and the depth of a `SET_TARGETS2` set)
         let (rt, ds, (tw, th)) = match &self.targets2 {
             Some(tg) if tg[0] > 1 => return,
-            Some(tg) => (if tg[0] == 1 { tg[1] } else { 0 }, tg[1 + tg[0] as usize * 3], self.target_size2()),
+            Some(tg) => (if tg[0] == 1 { tg[1] } else { 0 }, tg[1 + us(tg[0]) * 3], self.target_size2()),
             None => (self.target[0], self.target[2], self.target_size()),
         };
         let (x0, y0) = (x.min(tw), y.min(th));
@@ -2537,7 +2538,7 @@ impl D3d {
         let stencil = (k.get(p) == Some(&1) && k.len() >= p + 12).then(|| &k[p + 1..p + 12]);
         let q_ = p + if stencil.is_some() { 12 } else { 1 };
         let more: Vec<(u32, u32)> = match k.get(q_) {
-            Some(&n) if k.len() >= q_ + 1 + 2 * n as usize => (0..n as usize).map(|t| (k[q_ + 1 + 2 * t], k[q_ + 2 + 2 * t] & 0xf)).collect(),
+            Some(&n) if k.len() >= q_ + 1 + 2 * us(n) => (0..us(n)).map(|t| (k[q_ + 1 + 2 * t], k[q_ + 2 + 2 * t] & 0xf)).collect(),
             _ => Vec::new(),
         };
         let format = tex_format(color_fmt);
@@ -2657,7 +2658,7 @@ impl D3d {
         if dim == 0 {
             return self.white;
         }
-        let k = dim as usize - 1;
+        let k = us(dim) - 1;
         if self.white_dims[k] == 0 {
             let (size, d) = if dim == 1 { ("[1,1,1]", "3d") } else { ("[1,1,6]", "2d") };
             let tex = gpu::texture(&format!(r#"{{"size":{size},"dimension":{},"format":"bgra8unorm","usage":{}}}"#, q(d), usage::T_BINDING | usage::T_COPY_DST));
@@ -2694,18 +2695,18 @@ impl D3d {
         let (sx, sy, sw, sh) = (c[i + 8], c[i + 9], c[i + 10], c[i + 11]);
         let (vso, vss, pso, pss) = (c[i + 12], c[i + 13], c[i + 14], c[i + 15]);
         let blend_factor = c[i + 16];
-        let ntex = c[i + 17] as usize;
+        let ntex = us(c[i + 17]);
         let mut p = i + 18;
         // (texture triples: slot, texture, sampler key; read from the command, not copied)
         let texs = &c[p..p + 3 * ntex];
         p += 3 * ntex;
         // (streams: (buffer, offset) pairs, DATA the data block; INDEX_PAIR | buffer: the indices
         // from that buffer, d3d9/device.rs page_buffer)
-        let nbuf = c[p] as usize;
+        let nbuf = us(c[p]);
         p += 1;
         let pairs = &c[p..p + nbuf];
         p += nbuf;
-        let (ifmt, ioff, count, base) = (c[p], c[p + 1], c[p + 2], c[p + 3] as i32);
+        let (ifmt, ioff, count, base) = (c[p], c[p + 1], c[p + 2], c[p + 3].cast_signed());
         // (instances above the index format)
         let (ifmt, instances) = (ifmt & 0xff, (ifmt >> 8).max(1));
         p += 4 + 5 + 5;
@@ -2722,7 +2723,7 @@ impl D3d {
         }
         // (more render targets: the depth buffer kept from pass to pass, see begin_pass2)
         if let Some(tg) = &self.targets2 {
-            let zid = tg[1 + tg[0] as usize * 3];
+            let zid = tg[1 + us(tg[0]) * 3];
             if let Some(z) = self.textures.get_mut(&zid).filter(|z| z.zused != 3) {
                 z.zused = 3;
                 self.end_pass();
@@ -2760,7 +2761,7 @@ impl D3d {
         // (sampling the texture being drawn to is not allowed in WebGPU: it reads as white)
         let mut atts = [0u32; 8];
         match &self.targets2 {
-            Some(tg) => (0..(tg[0] as usize).min(8)).for_each(|k| atts[k] = tg[1 + k * 3]),
+            Some(tg) => (0..(us(tg[0])).min(8)).for_each(|k| atts[k] = tg[1 + k * 3]),
             None => atts[0] = self.target[0],
         }
         let drawn_to = |id: u32| id != 0 && atts.contains(&id);
@@ -2989,7 +2990,7 @@ impl D3d {
                     return;
                 }
                 let view = self.view2(st, 1, sl, 1, sz, 1, false);
-                self.draw_depth(dt, dl, dz, [dx, dy, sw, sh], view, kind, [dx as i32 - sx as i32, dy as i32 - sy as i32]);
+                self.draw_depth(dt, dl, dz, [dx, dy, sw, sh], view, kind, [dx.cast_signed() - sx.cast_signed(), dy.cast_signed() - sy.cast_signed()]);
                 self.use_tex(st);
                 return;
             }
@@ -3063,7 +3064,7 @@ impl D3d {
         self.open = true;
         gpu::copy_layer_to_buffer(tex, level, [x, y, z], buf, bpr, w, h);
         self.submit();
-        let mut data = vec![0u8; (bpr * h) as usize];
+        let mut data = vec![0u8; us(bpr * h)];
         let token = self.next_token;
         self.next_token = self.next_token.wrapping_add(1).max(1);
         gpu::read_buffer(buf, bpr * h, data.as_mut_ptr(), token);
@@ -3175,7 +3176,7 @@ impl D3d {
             _ => {
                 self.next_twin -= 1;
                 let tid = self.next_twin;
-                let r32 = TEX_FORMATS.iter().position(|&f| f == Tf::R32Float).unwrap() as u32;
+                let r32 = lo32(TEX_FORMATS.iter().position(|&f| f == Tf::R32Float).unwrap());
                 self.create_texture2([tid, w, h, layers, 1, r32, 0]);
                 // (not kept in save states: made again from the depth texture)
                 self.textures.get_mut(&tid)?.make.clear();
@@ -3371,7 +3372,7 @@ impl D3d {
     /// The sample count of the Direct3D 11 targets `tg`; None when they differ (an invalid
     /// pass: Direct3D 11 draws nothing either).
     fn samples_of2(&self, tg: &[u32]) -> Option<u32> {
-        let n = tg[0] as usize;
+        let n = us(tg[0]);
         let mut ids: Vec<u32> = (0..n).map(|k| tg[1 + k * 3]).collect();
         ids.push(tg[1 + n * 3]);
         let mut it = ids.iter().filter_map(|id| self.textures.get(id)).map(|t| t.samples);
@@ -3380,7 +3381,7 @@ impl D3d {
     }
 
     fn begin_pass2(&mut self, tg: &[u32]) -> bool {
-        let n = tg[0] as usize;
+        let n = us(tg[0]);
         if self.samples_of2(tg).is_none() {
             return false;
         }
@@ -3480,7 +3481,7 @@ impl D3d {
     /// The size of the Direct3D 11 targets' first level.
     fn target_size2(&self) -> (u32, u32) {
         let Some(tg) = &self.targets2 else { return (0, 0) };
-        let n = tg[0] as usize;
+        let n = us(tg[0]);
         let (id, level) = if n > 0 { (tg[1], tg[2]) } else { (tg[1 + n * 3], tg[2 + n * 3]) };
         match self.textures.get(&id) {
             Some(t) => ((t.w >> level).max(1), (t.h >> level).max(1)),
@@ -3689,7 +3690,7 @@ impl D3d {
             k.get(q_ - 1).copied().unwrap_or(0)
         };
         let (vs, ps, topo, strip) = (next(), next(), next(), next());
-        let (cull, ccw, bias, slope, clamp) = (next(), next(), next() as i32, f32of(next()), f32of(next()));
+        let (cull, ccw, bias, slope, clamp) = (next(), next(), next().cast_signed(), f32of(next()), f32of(next()));
         let mut qi = 9;
         let mut ds = String::new();
         let mut zuse = 0;
@@ -3711,7 +3712,7 @@ impl D3d {
                     "{}".into()
                 }
             };
-            let format = TEX_FORMATS.get(fmt as usize).copied().unwrap_or(DS);
+            let format = TEX_FORMATS.get(us(fmt)).copied().unwrap_or(DS);
             let tri = topo >= 3;
             let stencil = if format == DS {
                 format!(
@@ -3832,7 +3833,7 @@ impl D3d {
     /// reads (binding 8 texture view-dimension mip sample-type layer layers: what it held before
     /// the dispatch, a copy, as WebGPU has no read-write storage textures of most formats).
     fn dispatch(&mut self, c: &[u32], i: usize) -> usize {
-        let (sid, x, y, z, n) = (c[i + 1], c[i + 2], c[i + 3], c[i + 4], c[i + 5] as usize);
+        let (sid, x, y, z, n) = (c[i + 1], c[i + 2], c[i + 3], c[i + 4], us(c[i + 5]));
         let next = i + 6 + n * 8;
         let es = &c[i + 6..next];
         let Some(&module) = self.shaders.get(&sid) else { return next };
@@ -4009,7 +4010,7 @@ impl D3d {
         q_ += 4;
         let stencil_ref = c[q_];
         q_ += 1;
-        let nvb = c[q_] as usize;
+        let nvb = us(c[q_]);
         q_ += 1;
         // ((buffer, offset) pairs, read from the command)
         let vbs = &c[q_..q_ + 2 * nvb];
@@ -4018,12 +4019,12 @@ impl D3d {
         q_ += 3;
         let mut groups: [&[u32]; 2] = [&[], &[]];
         for g in &mut groups {
-            let n = c[q_] as usize;
+            let n = us(c[q_]);
             q_ += 1;
             *g = &c[q_..q_ + n * 8];
             q_ += n * 8;
         }
-        let (indexed, count, instances, start, base, first) = (c[q_], c[q_ + 1], c[q_ + 2], c[q_ + 3], c[q_ + 4] as i32, c[q_ + 5]);
+        let (indexed, count, instances, start, base, first) = (c[q_], c[q_ + 1], c[q_ + 2], c[q_ + 3], c[q_ + 4].cast_signed(), c[q_ + 5]);
         // (and the hash of what it reads from its buffers)
         q_ += 7;
         if !self.pipelines2.contains_key(&pid) || count == 0 || instances == 0 {
@@ -4051,7 +4052,7 @@ impl D3d {
         // the first draw that uses the depth buffer's depth or stencil: a pass that keeps it
         // (it starts from what the last clear left)
         let zuse = self.pipelines2[&pid].zuse;
-        let zid = self.targets2.as_ref().map_or(0, |tg| tg[1 + tg[0] as usize * 3]);
+        let zid = self.targets2.as_ref().map_or(0, |tg| tg[1 + us(tg[0]) * 3]);
         if zuse != 0 {
             if let Some(z) = self.textures.get_mut(&zid) {
                 let new = zuse & !z.zused;
@@ -4062,7 +4063,7 @@ impl D3d {
                     self.end_pass();
                     if !self.no_pass_opt && !fits {
                         let tg = self.targets2.as_ref().unwrap();
-                        let zi = 1 + tg[0] as usize * 3;
+                        let zi = 1 + us(tg[0]) * 3;
                         let c = Clear { level: tg[zi + 1], layer: tg[zi + 2], flags: new << 1, color: [0.0; 4], z: zd, stencil: zs };
                         match self.clears.get_mut(&zid) {
                             None => {
@@ -4110,7 +4111,7 @@ impl D3d {
             key.clear();
             if !has_data {
                 key.push(pid);
-                key.push(gi as u32);
+                key.push(lo32(gi));
                 key.extend_from_slice(g);
                 if let Some((l, grp, used)) = self.groups2.get_mut(key.as_slice()) {
                     if *l == layout {
@@ -4122,7 +4123,7 @@ impl D3d {
                             e.2 = used;
                         }
                         self.k2 = key;
-                        gpu::set_bind_group(gi as u32, grp, &[]);
+                        gpu::set_bind_group(lo32(gi), grp, &[]);
                         continue;
                     }
                 }
@@ -4186,7 +4187,7 @@ impl D3d {
                 self.groups2.insert(key.clone(), (layout, group, used));
             }
             self.k2 = key;
-            gpu::set_bind_group(gi as u32, group, &[]);
+            gpu::set_bind_group(lo32(gi), group, &[]);
             if !has_data {
                 // (kept in the cache)
             } else {
@@ -4199,10 +4200,10 @@ impl D3d {
             }
             let buf = if b == DATA { Some((self.data_buf, self.data_size)) } else { self.buffers.get(&b).copied() };
             match buf {
-                Some((buf, size)) => gpu::set_vertex_buffer(k as u32, buf, off.min(size)),
+                Some((buf, size)) => gpu::set_vertex_buffer(lo32(k), buf, off.min(size)),
                 None => {
                     let z = self.zero();
-                    gpu::set_vertex_buffer(k as u32, z, 0);
+                    gpu::set_vertex_buffer(lo32(k), z, 0);
                 }
             }
         }
@@ -4297,8 +4298,8 @@ pub(crate) fn now() -> f64 {
 
 /// The flags of the Direct3D 9 draw at `c[i]` (d3d9/device.rs rect_draw).
 fn draw_flags(c: &[u32], i: usize) -> u32 {
-    let p = i + 18 + 3 * c[i + 17] as usize;
-    c[p + 1 + c[p] as usize + 4 + 5]
+    let p = i + 18 + 3 * us(c[i + 17]);
+    c[p + 1 + us(c[p]) + 4 + 5]
 }
 
 /// The longest run of draws `a` and `b` share in order: which of each are in it. A common
@@ -4373,12 +4374,13 @@ fn padded_words(at: u32, bytes: &[u8], mut write: impl FnMut(u32, &[u8])) {
     if !tail.is_empty() {
         let mut word = [0u8; 4];
         word[..tail.len()].copy_from_slice(tail);
-        write(at + head.len() as u32, &word);
+        write(at + lo32(head.len()), &word);
     }
 }
 
 #[cfg(test)]
 mod padded_tests {
+    use crate::guest::us;
     #[test]
     fn same_finds_every_byte() {
         let a: Vec<u8> = (0..200u32).map(|i| (i * 13) as u8).collect();
@@ -4399,7 +4401,7 @@ mod padded_tests {
             super::padded_words(4, &data, |at, b| {
                 assert_eq!(b.len() % 4, 0);
                 assert_eq!(at % 4, 0);
-                out[at as usize..at as usize + b.len()].copy_from_slice(b);
+                out[us(at)..us(at) + b.len()].copy_from_slice(b);
             });
             let padded = len.div_ceil(4) * 4;
             assert_eq!(&out[4..4 + len], &data[..]);
