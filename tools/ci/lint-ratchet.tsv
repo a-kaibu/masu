@@ -1440,11 +1440,11 @@ file	crates/sake/src/jscript.rs	let_underscore_must_use	9
 file	crates/sake/src/jscript.rs	masu-static_mut	1
 file	crates/sake/src/jscript.rs	ptr_as_ptr	1
 file	crates/sake/src/jscript.rs	unused_result_ok	1
-file	crates/sake/src/k32.rs	arithmetic_side_effects	549
-file	crates/sake/src/k32.rs	as_conversions	55
-file	crates/sake/src/k32.rs	cast_possible_truncation	14
+file	crates/sake/src/k32.rs	arithmetic_side_effects	546
+file	crates/sake/src/k32.rs	as_conversions	46
+file	crates/sake/src/k32.rs	cast_possible_truncation	11
 file	crates/sake/src/k32.rs	cast_possible_wrap	12
-file	crates/sake/src/k32.rs	cast_sign_loss	18
+file	crates/sake/src/k32.rs	cast_sign_loss	9
 file	crates/sake/src/k32.rs	indexing_slicing	69
 file	crates/sake/src/k32.rs	let_underscore_must_use	5
 file	crates/sake/src/k32.rs	masu-set_len	3

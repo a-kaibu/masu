@@ -5676,6 +5676,30 @@ pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
     }
     kome::num::u32_of(k)
 }
+/// CompareString's answer for an ordering: CSTR_LESS_THAN 1, CSTR_EQUAL 2, CSTR_GREATER_THAN 3
+fn csr(o: std::cmp::Ordering) -> u32 {
+    match o {
+        std::cmp::Ordering::Less => 1,
+        std::cmp::Ordering::Equal => 2,
+        std::cmp::Ordering::Greater => 3,
+    }
+}
+/// lstrcmp's (and CompareFileTime's) answer for an ordering: -1, 0 or 1 in a DWORD
+fn ord_dword(o: std::cmp::Ordering) -> u32 {
+    match o {
+        std::cmp::Ordering::Less => u32::MAX,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+#[cfg(test)]
+#[test]
+fn csr_and_ord_dword_are_the_casts() {
+    for o in [std::cmp::Ordering::Less, std::cmp::Ordering::Equal, std::cmp::Ordering::Greater] {
+        assert_eq!(csr(o), (o as i32 as u32).wrapping_add(2));
+        assert_eq!(ord_dword(o), o as i32 as u32);
+    }
+}
 fn cmp_w(a: &[u16], b: &[u16], nocase: bool) -> std::cmp::Ordering {
     crate::collate::compare(a, b, if nocase { crate::collate::NORM_IGNORECASE } else { 0 })
 }
@@ -5683,7 +5707,7 @@ fn CompareStringA(c: &mut Ctx) -> u32 {
     let (flags, s1, n1, s2, n2) = (c.a(1), c.a(2), c.i(3), c.a(4), c.i(5));
     let a = if n1 < 0 { cstr(s1) } else { mem::cstrn(s1, n1.cast_unsigned()) };
     let b = if n2 < 0 { cstr(s2) } else { mem::cstrn(s2, n2.cast_unsigned()) };
-    crate::collate::compare(&a2w(&a), &a2w(&b), flags) as i32 as u32 + 2
+    csr(crate::collate::compare(&a2w(&a), &a2w(&b), flags))
 }
 /// CompareStringOrdinal(s1, n1, s2, n2, ignore case): code unit order (with the case
 /// ignored, of the upper case letters), CSTR_LESS_THAN 1 / EQUAL 2 / GREATER_THAN 3.
@@ -5707,12 +5731,12 @@ fn CompareStringOrdinal(c: &mut Ctx) -> u32 {
             }
         }).unwrap_or(u)).collect()
     };
-    up(a).cmp(&up(b)) as i32 as u32 + 2
+    csr(up(a).cmp(&up(b)))
 }
 fn CompareStringW(c: &mut Ctx) -> u32 {
     let (flags, s1, n1, s2, n2) = (c.a(1), c.a(2), c.i(3), c.a(4), c.i(5));
     let rd = |p: u32, n: i32| -> Vec<u16> { if n < 0 { wstr(p) } else { (0..n as u32).map(|i| r16(p + 2 * i)).take_while(|&x| x != 0).collect() } };
-    crate::collate::compare(&rd(s1, n1), &rd(s2, n2), flags) as i32 as u32 + 2
+    csr(crate::collate::compare(&rd(s1, n1), &rd(s2, n2), flags))
 }
 /// A date/time picture (GetDateFormat/GetTimeFormat) into text: fields are runs of one letter,
 /// '...' is literal text ('' a quote). `skip` drops fields of those letters with the literal
@@ -5902,7 +5926,7 @@ fn MulDiv(c: &mut Ctx) -> u32 {
     }
     let n = a * b;
     let r = if (n < 0) != (d < 0) { (n - d / 2) / d } else { (n + d / 2) / d };
-    r as i32 as u32
+    kome::num::lo32(r)
 }
 
 // lstr*
@@ -5947,16 +5971,16 @@ fn lstrcatW(c: &mut Ctx) -> u32 {
     c.a(0)
 }
 fn lstrcmpA(c: &mut Ctx) -> u32 {
-    cmp_w(&a2w(&cstr(c.a(0))), &a2w(&cstr(c.a(1))), false) as i32 as u32
+    ord_dword(cmp_w(&a2w(&cstr(c.a(0))), &a2w(&cstr(c.a(1))), false))
 }
 fn lstrcmpiA(c: &mut Ctx) -> u32 {
-    cmp_w(&a2w(&cstr(c.a(0))), &a2w(&cstr(c.a(1))), true) as i32 as u32
+    ord_dword(cmp_w(&a2w(&cstr(c.a(0))), &a2w(&cstr(c.a(1))), true))
 }
 fn lstrcmpW(c: &mut Ctx) -> u32 {
-    cmp_w(&wstr(c.a(0)), &wstr(c.a(1)), false) as i32 as u32
+    ord_dword(cmp_w(&wstr(c.a(0)), &wstr(c.a(1)), false))
 }
 fn lstrcmpiW(c: &mut Ctx) -> u32 {
-    cmp_w(&wstr(c.a(0)), &wstr(c.a(1)), true) as i32 as u32
+    ord_dword(cmp_w(&wstr(c.a(0)), &wstr(c.a(1)), true))
 }
 
 // atoms
@@ -6336,7 +6360,7 @@ fn tz_info(c: &mut Ctx) -> u32 {
         return z;
     }
     let tmp = mem::heap_alloc(172, true);
-    w32(tmp, (-tz_bias() / 60) as i32 as u32);
+    w32(tmp, kome::num::lo32(-tz_bias() / 60));
     tmp
 }
 fn SystemTimeToTzSpecificLocalTime(c: &mut Ctx) -> u32 {
@@ -6412,7 +6436,7 @@ fn FileTimeToDosDateTime(c: &mut Ctx) -> u32 {
     1
 }
 fn CompareFileTime(c: &mut Ctx) -> u32 {
-    get64(c.a(0)).cmp(&get64(c.a(1))) as i32 as u32
+    ord_dword(get64(c.a(0)).cmp(&get64(c.a(1))))
 }
 /// DYNAMIC_TIME_ZONE_INFORMATION's TimeZoneKeyName: the zone's key under HKLM\SOFTWARE\
 /// Microsoft\Windows NT\CurrentVersion\Time Zones (the zone tz_bias gives: Tokyo or UTC)
@@ -6452,7 +6476,7 @@ fn GetTimeZoneInformation(c: &mut Ctx) -> u32 {
 /// TIME_ZONE_INFORMATION of the zone (TIME_ZONE_ID_UNKNOWN: no daylight saving)
 fn write_tzi(p: u32) {
     mem::fill(p, 172, 0);
-    w32(p, (-tz_bias() / 60) as i32 as u32);
+    w32(p, kome::num::lo32(-tz_bias() / 60));
     // (Japanese Windows' names: RealLive and Siglus refuse to run elsewhere)
     if tz_bias() == 9 * 3600 {
         for (off, name) in [(4, "東京 (標準時)"), (88, "東京 (夏時間)")] {
