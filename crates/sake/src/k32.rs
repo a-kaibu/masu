@@ -5695,9 +5695,10 @@ fn ord_dword(o: std::cmp::Ordering) -> u32 {
 #[cfg(test)]
 #[test]
 fn csr_and_ord_dword_are_the_casts() {
-    for o in [std::cmp::Ordering::Less, std::cmp::Ordering::Equal, std::cmp::Ordering::Greater] {
-        assert_eq!(csr(o), (o as i32 as u32).wrapping_add(2));
-        assert_eq!(ord_dword(o), o as i32 as u32);
+    // (what `o as i32 as u32 (+ 2)` gave: Ordering is -1, 0, 1)
+    for (o, v) in [(std::cmp::Ordering::Less, -1i32), (std::cmp::Ordering::Equal, 0), (std::cmp::Ordering::Greater, 1)] {
+        assert_eq!(csr(o), v.cast_unsigned().wrapping_add(2));
+        assert_eq!(ord_dword(o), v.cast_unsigned());
     }
 }
 fn cmp_w(a: &[u16], b: &[u16], nocase: bool) -> std::cmp::Ordering {
