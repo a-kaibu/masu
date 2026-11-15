@@ -1482,7 +1482,6 @@ file	crates/sake/src/mci.rs	let_underscore_must_use	1
 file	crates/sake/src/mci.rs	map_err_ignore	2
 file	crates/sake/src/mci.rs	wildcard_enum_match_arm	4
 file	crates/sake/src/mem.rs	masu-from_raw_parts	3
-file	crates/sake/src/mem.rs	wildcard_enum_match_arm	1
 file	crates/sake/src/mf.rs	arithmetic_side_effects	62
 file	crates/sake/src/mf.rs	as_conversions	6
 file	crates/sake/src/mf.rs	float_cmp	2

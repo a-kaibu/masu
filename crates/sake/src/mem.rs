@@ -1723,7 +1723,7 @@ mod heap_destroy_tests {
                         }
                         blocks.retain(|b| b.1 != h);
                     }
-                    _ => {}
+                    Op::Free(_) | Op::Realloc(..) => {}
                 }
                 for b in &blocks {
                     prop_assert!(live(b.0));
