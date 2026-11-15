@@ -53,11 +53,11 @@ pub(crate) enum Place {
 
 /// Where slot `i` (< SLOTS) is in a 32-bit or 64-bit TEB: TlsSlots, then TlsExpansionSlots.
 pub(crate) fn place(x64: bool, i: u32) -> Place {
-    let (slots, table, k) = if x64 { (0x1480, 0x1780, 8) } else { (0xe10, 0xf94, 4) };
+    let (slots, table, k) = if x64 { (0x1480u32, 0x1780u32, 8u32) } else { (0xe10, 0xf94, 4) };
     if i < INLINE {
-        Place::Teb(slots + k * i)
+        Place::Teb(slots.saturating_add(k.saturating_mul(i)))
     } else {
-        Place::Expansion { table, off: k * (i - INLINE) }
+        Place::Expansion { table, off: k.saturating_mul(i.saturating_sub(INLINE)) }
     }
 }
 
