@@ -2,6 +2,8 @@
 //! makes WGSL of the sources (built-ins become `vn_*` inputs and uniforms, filled here). Uniform
 //! values are kept by name and laid out into each stage's block at every draw.
 
+use crate::guest::{lo32, us};
+use kome::num::to_f32;
 use super::*;
 
 pub(crate) struct Shader {
@@ -174,14 +176,14 @@ unsafe extern "C" fn glShaderSource(sh: u32, count: i32, strings: *const *const 
     }
     let mut s = String::new();
     // (a 64-bit guest's array holds 8-byte pointers: their low halves are the addresses)
-    let stride = crate::d3d9::device::ptr() as usize / 4;
+    let stride = us(crate::d3d9::device::ptr()) / 4;
     for k in 0..count.max(0) as usize {
-        let p = *(strings as *const u32).add(k * stride) as usize as *const c_char;
+        let p = *strings.cast::<u32>().add(k * stride) as usize as *const c_char;
         if p.is_null() {
             continue;
         }
         let len = if lengths.is_null() || *lengths.add(k) < 0 { CStr::from_ptr(p).to_bytes().len() } else { *lengths.add(k) as usize };
-        s.push_str(&String::from_utf8_lossy(std::slice::from_raw_parts(p as *const u8, len)));
+        s.push_str(&String::from_utf8_lossy(std::slice::from_raw_parts(p.cast::<u8>(), len)));
     }
     if let Some(x) = gl().as_mut().unwrap().shaders.get_mut(&sh) {
         x.source = s;
@@ -463,7 +465,7 @@ unsafe extern "C" fn glGetAttribLocation(p: u32, name: *const c_char) -> i32 {
     let n = CStr::from_ptr(name).to_string_lossy().into_owned();
     let g = gl();
     let Some(x) = g.as_ref().unwrap().programs.get(&p) else { return -1 };
-    x.linked.as_ref().and_then(|l| l.attribs.iter().find(|a| a.0 == n)).map_or(-1, |a| a.1 as i32)
+    x.linked.as_ref().and_then(|l| l.attribs.iter().find(|a| a.0 == n)).map_or(-1, |a| a.1.cast_signed())
 }
 
 /// glUniform*: `n` words per element, `count` elements.
@@ -475,9 +477,9 @@ fn uniform(loc: i32, n: usize, count: usize, v: &[u32]) {
         let Some(x) = g.programs.get_mut(&c.program) else { return c.err(GL_INVALID_OPERATION) };
         let Some((name, elem)) = x.locations.get(loc as usize) else { return };
         let Some(l) = x.linked.as_ref() else { return };
-        let per = l.sizes.get(name).copied().unwrap_or(n as u32) as usize;
+        let per = us(l.sizes.get(name).copied().unwrap_or(lo32(n)));
         // (elements past the array's end are ignored)
-        let count = count.min(l.counts.get(name).copied().unwrap_or(1).saturating_sub(*elem) as usize);
+        let count = count.min(us(l.counts.get(name).copied().unwrap_or(1).saturating_sub(*elem)));
         let at = *elem as usize * per;
         if !x.values.contains_key(name) {
             x.values.insert(name.clone(), Vec::new());
@@ -493,16 +495,16 @@ fn uniform(loc: i32, n: usize, count: usize, v: &[u32]) {
     })
 }
 extern "C" fn glUniform1i(l: i32, a: i32) {
-    uniform(l, 1, 1, &[a as u32])
+    uniform(l, 1, 1, &[lo32(a)])
 }
 extern "C" fn glUniform2i(l: i32, a: i32, b: i32) {
-    uniform(l, 2, 1, &[a as u32, b as u32])
+    uniform(l, 2, 1, &[lo32(a), lo32(b)])
 }
 extern "C" fn glUniform3i(l: i32, a: i32, b: i32, c: i32) {
-    uniform(l, 3, 1, &[a as u32, b as u32, c as u32])
+    uniform(l, 3, 1, &[lo32(a), lo32(b), lo32(c)])
 }
 extern "C" fn glUniform4i(l: i32, a: i32, b: i32, c: i32, d: i32) {
-    uniform(l, 4, 1, &[a as u32, b as u32, c as u32, d as u32])
+    uniform(l, 4, 1, &[lo32(a), lo32(b), lo32(c), lo32(d)])
 }
 extern "C" fn glUniform1f(l: i32, a: f32) {
     uniform(l, 1, 1, &[a.to_bits()])
@@ -546,7 +548,7 @@ unsafe extern "C" fn glUniform4fv(l: i32, c: i32, p: *const f32) {
 }
 unsafe fn umat(l: i32, n: usize, count: i32, transpose: u8, p: *const f32) {
     let k = count.max(0) as usize;
-    let mut v: Vec<u32> = std::slice::from_raw_parts(p as *const u32, n * n * k).to_vec();
+    let mut v: Vec<u32> = std::slice::from_raw_parts(p.cast::<u32>(), n * n * k).to_vec();
     if transpose != 0 {
         for m in 0..k {
             for i in 0..n {
@@ -569,14 +571,14 @@ unsafe extern "C" fn glUniformMatrix4fv(l: i32, c: i32, t: u8, p: *const f32) {
 }
 extern "C" fn glVertexAttribPointer(i: u32, size: i32, ty: u32, norm: u8, stride: i32, ptr: u32) {
     with(|_, c| {
-        if let Some(a) = c.attribs.get_mut(i as usize) {
+        if let Some(a) = c.attribs.get_mut(us(i)) {
             *a = Array { on: a.on, size, ty, stride, ptr, buffer: c.array_buffer, normalized: norm != 0 };
         }
     })
 }
 fn attrib_on(i: u32, on: bool) {
     with(|_, c| {
-        if let Some(a) = c.attribs.get_mut(i as usize) {
+        if let Some(a) = c.attribs.get_mut(us(i)) {
             a.on = on;
         }
     })
@@ -589,7 +591,7 @@ extern "C" fn glDisableVertexAttribArray(i: u32) {
 }
 fn attrib(i: u32, v: [f32; 4]) {
     with(|_, c| {
-        if let Some(a) = c.attrib_values.get_mut(i as usize) {
+        if let Some(a) = c.attrib_values.get_mut(us(i)) {
             *a = v;
         }
     })
@@ -653,7 +655,7 @@ fn normal_matrix(mv: &[f32; 16]) -> [f32; 9] {
     };
     let det = m(0, 0) * cof(0, 0) + m(1, 0) * cof(1, 0) + m(2, 0) * cof(2, 0);
     let det = if det == 0.0 { 1.0 } else { det };
-    std::array::from_fn(|i| (cof(i / 3, i % 3) / det) as f32)
+    std::array::from_fn(|i| to_f32(cof(i / 3, i % 3) / det))
 }
 
 /// A built-in uniform's value (gl_ModelViewProjectionMatrix, gl_ModelViewMatrix,
@@ -712,13 +714,13 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
                 (Src::Immediate(v, _), Some(b)) if b < 4 => v[o][b * 4..b * 4 + 4].try_into().unwrap(),
                 (Src::Immediate(_, more), Some(10)) => [more[o][24], more[o][25], more[o][26], 1.0],
                 (Src::Immediate(_, more), Some(b)) => more[o][(b - 4) * 4..(b - 3) * 4].try_into().unwrap(),
-                (Src::Immediate(..), None) => c.attrib_values.get(loc as usize).copied().unwrap_or(none),
+                (Src::Immediate(..), None) => c.attrib_values.get(us(loc)).copied().unwrap_or(none),
                 (Src::Indices(ix), b) => match (arr, b) {
                     (Some(a), _) => fetch(g, &a, ix[o], none),
                     (_, Some(1)) => c.color,
                     (_, Some(10)) => [c.normal[0], c.normal[1], c.normal[2], 1.0],
                     (_, Some(t)) if t >= 2 => c.units[t - 2].coords,
-                    _ => c.attrib_values.get(loc as usize).copied().unwrap_or(none),
+                    _ => c.attrib_values.get(us(loc)).copied().unwrap_or(none),
                 },
             };
             verts.extend_from_slice(&v);
@@ -727,9 +729,9 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
             verts.extend_from_slice(&[0.0; 4]);
         }
     }
-    let mut vertex = vec![1, (na * 16) as u32, 0, attribs.len() as u32];
+    let mut vertex = vec![1, lo32(na * 16), 0, lo32(attribs.len())];
     for (k, &(_, loc, _)) in attribs.iter().enumerate() {
-        vertex.extend_from_slice(&[3, k as u32 * 16, loc]);
+        vertex.extend_from_slice(&[3, lo32(k) * 16, loc]);
     }
     let pipe = pipeline(g, pipeline_key(c, vs, ps, topo, depth != 0, &vertex));
     // uniform blocks and textures
@@ -740,7 +742,7 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
     for st in [&l.vs, &l.ps] {
         let mut block = Vec::new();
         if let Some(b) = &st.block {
-            block = vec![0u8; (b.size as usize).max(16)];
+            block = vec![0u8; (us(b.size)).max(16)];
             for m in &b.members {
                 // (a uniform's value put from where it is, not cloned)
                 if let Some(v) = builtin_value(&m.name) {
@@ -752,11 +754,11 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
         }
         let mut entries = Vec::new();
         for (k, s) in st.samplers.iter().enumerate() {
-            let unit = p.values.get(s).and_then(|v| v.first()).copied().unwrap_or(0) as usize;
+            let unit = us(p.values.get(s).and_then(|v| v.first()).copied().unwrap_or(0));
             let t = c.units.get(unit).and_then(|u| g.textures.get(&u.bound)).filter(|t| t.gpu != 0 && t.base != super::Base::Depth);
             let (key, maxlod) = sampler(t);
-            entries.push([16 + k as u32, 1, t.map_or(0, |t| t.gpu), 1, 0, t.map_or(1, |t| t.levels), 0, 1]);
-            entries.push([160 + k as u32, 2, key, 0, maxlod, 0, 0, 0]);
+            entries.push([16 + lo32(k), 1, t.map_or(0, |t| t.gpu), 1, 0, t.map_or(1, |t| t.levels), 0, 1]);
+            entries.push([160 + lo32(k), 2, key, 0, maxlod, 0, 0, 0]);
         }
         groups.push((block, entries));
     }
@@ -773,16 +775,16 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
         wds.extend_from_slice(&[1, DATA, vo, 0, 0, 0]);
         for (block, entries) in &groups {
             let nb = u32::from(!block.is_empty());
-            wds.push(nb + entries.len() as u32);
+            wds.push(nb + lo32(entries.len()));
             if nb != 0 {
                 let off = q.data(block, 256);
-                wds.extend_from_slice(&[0, 0, DATA, off, block.len() as u32, block.len() as u32, 0, 0]);
+                wds.extend_from_slice(&[0, 0, DATA, off, lo32(block.len()), lo32(block.len()), 0, 0]);
             }
             for e in entries {
                 wds.extend_from_slice(e);
             }
         }
-        wds.extend_from_slice(&[0, order.len() as u32, 1, 0, 0, 0, 0]);
+        wds.extend_from_slice(&[0, lo32(order.len()), 1, 0, 0, 0, 0]);
         q.cmd(&wds);
     });
 }

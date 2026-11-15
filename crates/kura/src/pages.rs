@@ -125,7 +125,7 @@ impl Pages {
     pub fn for_each(&self, mut f: impl FnMut(&[u8])) {
         let zeros = [0u8; 4096];
         for (i, page) in self.pages.iter().enumerate() {
-            let size = (self.len - i as u64 * PAGE as u64).min(PAGE as u64) as usize;
+            let size = ((self.len - i as u64 * PAGE as u64).min(PAGE as u64)) as usize;
             f(page);
             let mut rest = size - page.len();
             while rest > 0 {
@@ -150,6 +150,7 @@ impl Pages {
 
 #[cfg(test)]
 mod tests {
+    use crate::guest::us;
     use super::*;
     use proptest::prelude::*;
 
@@ -313,7 +314,7 @@ mod proofs {
         let mut steps = 0;
         while done < n {
             let at = off + done as u64;
-            let (i, o) = ((at / PAGE as u64) as usize, (at % PAGE as u64) as usize);
+            let (i, o) = (us(at / PAGE as u64), us(at % PAGE as u64));
             let k = (PAGE - o).min(n - done);
             assert!(k > 0 && o + k <= PAGE);
             assert_eq!(i as u64 * PAGE as u64 + o as u64, at);

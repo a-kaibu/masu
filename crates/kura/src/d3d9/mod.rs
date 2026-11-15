@@ -58,6 +58,7 @@ mod merge_tests;
 #[cfg(test)]
 mod format_golden_tests;
 
+use crate::guest::{gc, gp, lo32, us};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -171,12 +172,12 @@ impl D3d {
     }
 
     pub fn guest_alloc(&self, size: u32) -> u32 {
-        unsafe { (self.calls().alloc)(size) as u32 }
+        unsafe { lo32(((self.calls().alloc)(size)).expose_provenance()) }
     }
 
     pub fn guest_free(&self, p: u32) {
         if p != 0 {
-            unsafe { (self.calls().free)(p as *mut u8) }
+            unsafe { (self.calls().free)(gp::<u8>(p)) }
         }
     }
 
@@ -195,9 +196,9 @@ impl D3d {
         self.next += 1;
         let id = self.next;
         unsafe {
-            let v8 = if self.v8 { self.vtbls.get(iface as usize + 16).copied().unwrap_or(0) } else { 0 };
-            device::wrp(addr, 0, if v8 != 0 { v8 } else { self.vtbls[iface as usize] });
-            *((addr + device::ptr()) as *mut u32) = id;
+            let v8 = if self.v8 { self.vtbls.get(us(iface) + 16).copied().unwrap_or(0) } else { 0 };
+            device::wrp(addr, 0, if v8 != 0 { v8 } else { self.vtbls[us(iface)] });
+            *gp::<u32>(addr + device::ptr()) = id;
         }
         let owner = if iface == IF_DEVICE { id } else { self.dev.as_ref().map_or(0, |d| d.obj) };
         self.objs.insert(id, Obj { iface, refs: 1, binds: 0, parent, addr, data, private: Vec::new(), owner });
@@ -223,7 +224,7 @@ impl D3d {
         if addr == 0 {
             return 0;
         }
-        let id = unsafe { *((addr + device::ptr()) as *const u32) };
+        let id = unsafe { *gc::<u32>(addr + device::ptr()) };
         if self.objs.get(&id).is_some_and(|o| o.addr == addr) { id } else { 0 }
     }
 
@@ -280,7 +281,7 @@ impl D3d {
     fn destroy(&mut self, id: u32) {
         let Some(o) = self.objs.remove(&id) else { return };
         self.free_blocks.push(o.addr);
-        unsafe { *((o.addr + device::ptr()) as *mut u32) = 0 };
+        unsafe { *gp::<u32>(o.addr + device::ptr()) = 0 };
         match o.data {
             Data::Texture(t) => {
                 for l in t.levels {
@@ -337,8 +338,8 @@ fn with<R>(f: impl FnOnce(&mut D3d) -> R) -> R {
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_d3d9_init(vtbls: *const u32, count: u32) -> u32 {
     // (an array of pointers: 8 bytes each for 64-bit programs, all below 4GB)
-    let k = (device::ptr() / 4) as usize;
-    let v: Vec<u32> = (0..count as usize).map(|i| *vtbls.add(i * k)).collect();
+    let k = us(device::ptr() / 4);
+    let v: Vec<u32> = (0..us(count)).map(|i| *vtbls.add(i * k)).collect();
     let mut g = D3D.lock().unwrap_or_else(|e| e.into_inner());
     if g.is_none() {
         *g = Some(D3d {
@@ -379,7 +380,7 @@ pub unsafe extern "C" fn vnhost_d3d9_create(sdk: u32, out: *mut u32, calls: *con
             eprintln!("d3d9: Direct3DCreate9({sdk:#x})");
         }
         let o = d.new_obj(IF_D3D9, 0, Data::D3d);
-        device::wrp(out as u32, 0, o);
+        device::wrp(lo32(out.expose_provenance()), 0, o);
         if o == 0 { E_OUTOFMEMORY } else { 0 }
     })
 }
@@ -445,7 +446,7 @@ pub unsafe extern "C" fn vnhost_d3d9_call(id: u32, args: *const u32, calls: *con
         } else {
             match method {
                 _ if iface > 16 => d3d8::call(d, iface - 16, method, this, args, &mut after),
-                0 => query_interface(d, this, iface, a(1) as *const u8, a(2) as *mut u32),
+                0 => query_interface(d, this, iface, gc::<u8>(a(1)), gp::<u32>(a(2))),
                 1 => d.add_ref(this),
                 2 => {
                     // (what draws prepared goes only when an object goes: one that stays, or
@@ -496,17 +497,17 @@ pub unsafe extern "C" fn vnhost_d3d9_call(id: u32, args: *const u32, calls: *con
         }
         After::ReadbackAs { req, staging, fmt, w, h, dst, pitch } => {
             given_up(gpu::wait_readback(req));
-            let page = format::page_bpp(fmt) as usize;
+            let page = us(format::page_bpp(fmt));
             let (bpp, _) = format::layout(fmt).unwrap_or((4, 1));
-            for y in 0..h as usize {
-                let src = unsafe { std::slice::from_raw_parts((staging as usize + y * w as usize * page) as *const u8, w as usize * page) };
-                let row = unsafe { std::slice::from_raw_parts_mut((dst as usize + y * pitch as usize) as *mut u8, (w * bpp) as usize) };
-                for (t, out) in src.chunks_exact(page).zip(row.chunks_exact_mut(bpp as usize)) {
+            for y in 0..us(h) {
+                let src = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(us(staging) + y * us(w) * page), us(w) * page) };
+                let row = unsafe { std::slice::from_raw_parts_mut(std::ptr::with_exposed_provenance_mut::<u8>(us(dst) + y * us(pitch)), us(w * bpp)) };
+                for (t, out) in src.chunks_exact(page).zip(row.chunks_exact_mut(us(bpp))) {
                     format::pack(fmt, format::page_texel(fmt, t), out);
                 }
             }
             // (the lock is let go: calls is the guest's allocator still)
-            unsafe { ((*calls).free)(staging as usize as *mut u8) };
+            unsafe { ((*calls).free)(gp::<u8>(staging)) };
         }
     }
     if let Some(t0) = t0 {
@@ -601,7 +602,7 @@ unsafe fn query_interface(d: &mut D3d, id: u32, iface: u32, riid: *const u8, out
     if out.is_null() {
         return D3DERR_INVALIDCALL;
     }
-    let first = (riid as *const u32).read_unaligned();
+    let first = riid.cast::<u32>().read_unaligned();
     let ok = match first {
         IID_IUNKNOWN => true,
         IID_D3D9 => iface == IF_D3D9,
@@ -619,14 +620,14 @@ unsafe fn query_interface(d: &mut D3d, id: u32, iface: u32, riid: *const u8, out
         _ => false,
     };
     if !ok {
-        device::wrp(out as u32, 0, 0);
+        device::wrp(lo32(out.expose_provenance()), 0, 0);
         if d.trace {
             eprintln!("d3d9: QueryInterface({first:08x}) on interface {iface}: no");
         }
         return E_NOINTERFACE;
     }
     d.add_ref(id);
-    device::wrp(out as u32, 0, d.addr_of(id));
+    device::wrp(lo32(out.expose_provenance()), 0, d.addr_of(id));
     S_OK
 }
 
@@ -674,10 +675,10 @@ pub fn name(iface: u32, m: u32) -> String {
         "?", "IDirect3D9", "Device", "SwapChain", "Surface", "Texture", "CubeTexture", "VolumeTexture", "VertexBuffer",
         "IndexBuffer", "VertexDeclaration", "VertexShader", "PixelShader", "StateBlock", "Query", "Volume",
     ]
-    .get(iface as usize)
+    .get(us(iface))
     .copied()
     .unwrap_or("?");
-    let m = m as usize;
+    let m = us(m);
     let n: Option<&str> = if m < 3 {
         Some(UNK[m])
     } else {
