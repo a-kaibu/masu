@@ -24,10 +24,12 @@ static DWORD WINAPI spin(void *arg) {
     return 0;
 }
 
-/* the debuggee: busy threads until `go` is set, then exits 7 */
-static int child(HANDLE ev) {
+/* the debuggee: busy threads until `go` is set, then exits 7; `ready` (if any) set once its
+   threads run */
+static int child(HANDLE ev, HANDLE ready) {
     go = ev;
     for (int i = 0; i < 3; i++) CloseHandle(CreateThread(NULL, 0, spin, NULL, 0, NULL));
+    if (ready) SetEvent(ready);
     for (;;) {
         if (WaitForSingleObject(go, 1) == WAIT_OBJECT_0) ExitProcess(7);
     }
@@ -70,15 +72,19 @@ static void drain(DWORD ms) {
     while (WaitForDebugEvent(&ev, ms)) ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, DBG_CONTINUE);
 }
 
-static BOOL start(const char *exe, HANDLE ev, DWORD flags, PROCESS_INFORMATION *pi) {
+static BOOL start_ready(const char *exe, HANDLE ev, HANDLE ready, DWORD flags, PROCESS_INFORMATION *pi) {
     char cmd[MAX_PATH + 64];
     STARTUPINFOA si = { sizeof si };
-    snprintf(cmd, sizeof cmd, "\"%s\" child %lu", exe, (unsigned long)(ULONG_PTR)ev);
+    snprintf(cmd, sizeof cmd, "\"%s\" child %lu %lu", exe, (unsigned long)(ULONG_PTR)ev, (unsigned long)(ULONG_PTR)ready);
     return CreateProcessA(NULL, cmd, NULL, NULL, TRUE, flags, NULL, NULL, &si, pi);
 }
 
+static BOOL start(const char *exe, HANDLE ev, DWORD flags, PROCESS_INFORMATION *pi) {
+    return start_ready(exe, ev, NULL, flags, pi);
+}
+
 int main(int argc, char **argv) {
-    if (argc == 3 && !strcmp(argv[1], "child")) return child((HANDLE)(ULONG_PTR)strtoul(argv[2], NULL, 10));
+    if (argc == 4 && !strcmp(argv[1], "child")) return child((HANDLE)(ULONG_PTR)strtoul(argv[2], NULL, 10), (HANDLE)(ULONG_PTR)strtoul(argv[3], NULL, 10));
     HMODULE nt = GetModuleHandleA("ntdll.dll");
     pDbgUiConnectToDbg = (connect_fn)GetProcAddress(nt, "DbgUiConnectToDbg");
     pDbgUiGetThreadDebugObject = (get_fn)GetProcAddress(nt, "DbgUiGetThreadDebugObject");
@@ -131,10 +137,13 @@ int main(int argc, char **argv) {
         ResetEvent(ev);
     }
 
-    /* attaching: the reported threads wait suspended for their event, detaching lets go */
+    /* attaching: the reported threads wait suspended for their event, detaching lets go (once the
+       child runs: attaching while it still starts is the next case) */
     {
-        BOOL ok = start(exe, ev, 0, &pi);
-        Sleep(300);
+        HANDLE ready = CreateEventA(&sa, TRUE, FALSE, NULL);
+        BOOL ok = start_ready(exe, ev, ready, 0, &pi);
+        WaitForSingleObject(ready, 10000);
+        CloseHandle(ready);
         BOOL at = DebugActiveProcess(pi.dwProcessId);
         DEBUG_EVENT e;
         BOOL got = WaitForDebugEvent(&e, 10000);
@@ -152,6 +161,33 @@ int main(int argc, char **argv) {
         DWORD w = WaitForSingleObject(pi.hProcess, 10000);
         GetExitCodeProcess(pi.hProcess, &code);
         printf("attach: started %d attached %d first %s suspended %d then %ld detached %d ended %d code %lu\n", ok, at, name(kind), before > 0 && before != (DWORD)-1, (long)after, stop, w == WAIT_OBJECT_0, code);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        ResetEvent(ev);
+    }
+
+    /* attaching while the child still starts: its start told once, whoever tells it (the
+       starting thread or the attach), and nothing left suspended: it ends when let go */
+    {
+        BOOL ok = start(exe, ev, 0, &pi);
+        BOOL at = DebugActiveProcess(pi.dwProcessId);
+        DEBUG_EVENT e;
+        int creates = 0, events = 0;
+        DWORD until = GetTickCount() + 1500;
+        while (GetTickCount() < until && WaitForDebugEvent(&e, 300)) {
+            events++;
+            if (e.dwDebugEventCode == CREATE_PROCESS_DEBUG_EVENT) {
+                creates++;
+                CloseHandle(e.u.CreateProcessInfo.hFile);
+            }
+            if (e.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT) CloseHandle(e.u.LoadDll.hFile);
+            ContinueDebugEvent(e.dwProcessId, e.dwThreadId, DBG_CONTINUE);
+        }
+        BOOL stop = DebugActiveProcessStop(pi.dwProcessId);
+        SetEvent(ev);
+        DWORD w = WaitForSingleObject(pi.hProcess, 10000);
+        GetExitCodeProcess(pi.hProcess, &code);
+        printf("attach at start: started %d attached %d create process events %d some %d detached %d ended %d code %lu\n", ok, at, creates, events > 0, stop, w == WAIT_OBJECT_0, code);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         ResetEvent(ev);

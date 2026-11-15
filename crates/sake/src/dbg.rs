@@ -36,6 +36,38 @@ const DBG_EXCEPTION_HANDLED: u32 = 0x0001_0001;
 /// The process has told its debugger of its start (later loads and threads are reported)
 static STARTED: AtomicBool = AtomicBool::new(false);
 
+/// Who tells the debugger of the process's start (CREATE_PROCESS, the DLLs): once, by
+/// whichever comes first. A debugger attaching while the process still starts (DebugActiveProcess
+/// under load, debugkill's attach) had it twice: the first thread reported its start, seeing
+/// the debugger, and the attach posted it again, leaving that thread suspended for an event
+/// no one would answer before the detach.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StartBy {
+    Nobody,
+    /// process_start, on the first thread
+    Process,
+    /// attached(), on the watcher
+    Attach,
+}
+
+impl StartBy {
+    /// Its value in START_BY.
+    const fn bits(self) -> u8 {
+        match self {
+            StartBy::Nobody => 0,
+            StartBy::Process => 1,
+            StartBy::Attach => 2,
+        }
+    }
+}
+
+static START_BY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(StartBy::Nobody.bits());
+
+/// Claims the start's report for `who`: whether it is theirs (nobody had it).
+fn claim_start(who: StartBy) -> bool {
+    START_BY.compare_exchange(StartBy::Nobody.bits(), who.bits(), Ordering::AcqRel, Ordering::Acquire).is_ok()
+}
+
 fn shared() -> bool {
     kern::host::shared()
 }
@@ -246,6 +278,11 @@ pub fn process_start(cpu: &mut koji::Cpu, base: u32, entry: u32) {
         return;
     }
     set_being_debugged(true);
+    if !claim_start(StartBy::Process) {
+        // (an attach told the debugger already, and breaks in itself: no loader breakpoint)
+        STARTED.store(true, Ordering::Release);
+        return;
+    }
     let teb = crate::cur().teb as u64;
     report(CREATE_PROCESS, vec![base as u64, teb, entry as u64], vec![], Some(cpu));
     for b in dlls() {
@@ -427,6 +464,10 @@ pub fn attached() {
     }
     MAYBE_DEBUGGED.store(true, Ordering::Release);
     set_being_debugged(true);
+    if !claim_start(StartBy::Attach) {
+        // (the first thread is telling of the start, the loader's breakpoint after it)
+        return;
+    }
     let main = crate::process::first_tid(crate::pid());
     let threads = crate::k32::thread_list();
     let teb = |tid: u32| threads.iter().find(|t| t.0 == tid).map_or(0, |t| t.1) as u64;
@@ -452,6 +493,8 @@ pub fn break_in() {
 }
 pub fn detached() {
     set_being_debugged(false);
+    // (a debugger attaching later is told of the start again)
+    START_BY.store(StartBy::Nobody.bits(), Ordering::Release);
 }
 
 // ---------------------------------------------------------------------------------------------
