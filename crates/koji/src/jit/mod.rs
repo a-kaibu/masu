@@ -1030,7 +1030,7 @@ fn touches_fpu(ins: &Instruction) -> bool {
 }
 
 fn st_index(r: Register) -> u32 {
-    r as u32 - Register::ST0 as u32
+    lo32(r.number())
 }
 
 fn op_bits(ins: &Instruction, i: u32) -> u32 {
@@ -1558,7 +1558,7 @@ impl<'a> Gen<'a> {
 
     /// The local holding XMM register `r`, loaded from the Cpu the first time in the block.
     fn xmm_get(&mut self, r: Register) -> u32 {
-        let i = r as u32 - Register::XMM0 as u32;
+        let i = lo32(r.number());
         if self.xmm.0 & (1 << i) == 0 {
             self.c.get(L_CPU).v128load(Off::xmm(r)).set(L_XMM + i);
             self.xmm.0 |= 1 << i;
@@ -1568,7 +1568,7 @@ impl<'a> Gen<'a> {
 
     /// Sets XMM register `r` from the v128 on the stack.
     fn xmm_set(&mut self, r: Register) {
-        let i = r as u32 - Register::XMM0 as u32;
+        let i = lo32(r.number());
         self.c.set(L_XMM + i);
         self.xmm.0 |= 1 << i;
         self.xmm.1 |= 1 << i;
@@ -1592,7 +1592,7 @@ impl<'a> Gen<'a> {
         }
         self.fc_moves(fc.src);
         self.c.get(L_CPU).get(L_FTOP);
-        let info = u32::from(fc.dirty) | u32::from(fc.valid) << 8 | u32::from(fc.empty) << 16 | (fc.delta.rem_euclid(8) as u32) << 24;
+        let info = u32::from(fc.dirty) | u32::from(fc.valid) << 8 | u32::from(fc.empty) << 16 | (lo32(fc.delta.rem_euclid(8))) << 24;
         self.c.u32c(info);
         for r in 0..8 {
             self.c.get(L_FREG + r);
@@ -1924,7 +1924,7 @@ impl<'a> Gen<'a> {
             }
         };
         let lo = off + disp;
-        lo > -SAFE_MARGIN && lo + (size as i32) < SAFE_MARGIN
+        lo > -SAFE_MARGIN && lo + (lo32(size).cast_signed()) < SAFE_MARGIN
     }
 
     /// Leaves the block unless [local `t`, + local `n`) is inside the guest range.
@@ -3761,7 +3761,7 @@ impl<'a> Gen<'a> {
                 let ret = self.temp();
                 self.c.u32c(next).set(ret);
                 self.push32(ret);
-                if let Some(&(entry, _)) = self.inlined.get(&(self.block_index as usize)) {
+                if let Some(&(entry, _)) = self.inlined.get(&(us(self.block_index))) {
                     self.goto_block(entry, ins.near_branch32());
                     return false;
                 }
@@ -3788,7 +3788,7 @@ impl<'a> Gen<'a> {
                 self.c.set(t);
                 self.c.u32c(next).set(ret);
                 self.push32(ret);
-                if let Some(&(entry, Some(f))) = self.inlined.get(&(self.block_index as usize)) {
+                if let Some(&(entry, Some(f))) = self.inlined.get(&(us(self.block_index))) {
                     self.c.get(t).u32c(f).eq().if_();
                     self.depth += 1;
                     self.goto_block(entry, f);
@@ -3804,9 +3804,9 @@ impl<'a> Gen<'a> {
                 self.jump_dyn();
                 return false;
             }
-            Jmp if self.structured && self.jnode.contains_key(&(self.block_index as usize)) => {
+            Jmp if self.structured && self.jnode.contains_key(&(us(self.block_index))) => {
                 // to the table's dispatch node: the index in L_BLK, the target in L_NEXT
-                let d = self.jnode[&(self.block_index as usize)];
+                let d = self.jnode[&(us(self.block_index))];
                 if ins.op0_kind() == OpKind::Register {
                     self.get_reg(ins.op0_register());
                     self.c.set(L_NEXT);
@@ -3825,7 +3825,7 @@ impl<'a> Gen<'a> {
                 self.read_op(0, addr);
                 let t = self.temp();
                 self.c.set(t);
-                if let Some(&(entry, Some(f))) = self.inlined.get(&(self.block_index as usize)) {
+                if let Some(&(entry, Some(f))) = self.inlined.get(&(us(self.block_index))) {
                     // an inlined callee's tail jump to the function it wraps
                     self.c.get(t).u32c(f).eq().if_();
                     self.depth += 1;
@@ -4715,7 +4715,7 @@ fn callee(blocks: &[(u32, Vec<Instruction>)], targets: &BTreeMap<u32, u32>, f: u
             }
             return None;
         };
-        if body.contains(&(k as usize)) {
+        if body.contains(&(us(k))) {
             continue;
         }
         if tail.is_some() && hint == Some(a) && split == usize::MAX {
@@ -5176,7 +5176,7 @@ fn xmm_names(list: &[Instruction]) -> u8 {
                 if !xmm_cached(ins) {
                     return 0;
                 }
-                m |= 1 << (ins.op_register(o) as u32 - Register::XMM0 as u32);
+                m |= 1 << (lo32(ins.op_register(o).number()));
             }
         }
     }
@@ -5193,7 +5193,7 @@ fn mm_names(list: &[Instruction]) -> u8 {
         }
         for o in 0..ins.op_count() {
             if ins.op_kind(o) == OpKind::Register && ins.op_register(o).is_mm() {
-                m |= 1 << (ins.op_register(o) as u32 - Register::MM0 as u32);
+                m |= 1 << (lo32(ins.op_register(o).number()));
             }
         }
     }
@@ -5212,7 +5212,7 @@ fn reg_writes(info: &mut iced_x86::InstructionInfoFactory, ins: &Instruction) ->
         }
         // (what the instruction writes: anything but a read)
         if r.is_xmm() && !matches!(u.access(), Read | CondRead | None) {
-            xmm |= 1 << (r as u32 - Register::XMM0 as u32);
+            xmm |= 1 << (lo32(r.number()));
         }
     }
     (gpr, xmm)
@@ -5227,7 +5227,7 @@ fn small_after(info: &mut iced_x86::InstructionInfoFactory, small: &mut [Option<
     if ins.op_count() == 2 && ins.op_kind(0) == OpKind::Register && ins.op_register(0).is_gpr32() {
         let r = ins.op_register(0).number();
         let m = match ins.mnemonic() {
-            Mnemonic::And if matches!(ins.op_kind(1), OpKind::Immediate32 | OpKind::Immediate8to32) && (ins.immediate32() as i32) >= 0 => Some(ins.immediate32()),
+            Mnemonic::And if matches!(ins.op_kind(1), OpKind::Immediate32 | OpKind::Immediate8to32) && (lo32(ins.immediate32()).cast_signed()) >= 0 => Some(ins.immediate32()),
             Mnemonic::Movzx if op_bits(ins, 1) == 8 => Some(0xff),
             Mnemonic::Movzx if op_bits(ins, 1) == 16 => Some(0xffff),
             _ => None,
@@ -5526,7 +5526,7 @@ fn safe_in(g: &Gen, blocks: &[(u32, Vec<Instruction>)], l: &structure::Layout) -
                     && base != Register::ESP
                     && ins.memory_index() == Register::None
                     && !matches!(ins.memory_segment(), Register::FS | Register::GS)
-                    && (ins.memory_displacement32() as i32).unsigned_abs() < lo32(SAFE_MARGIN) / 2;
+                    && (lo32(ins.memory_displacement32()).cast_signed()).unsigned_abs() < lo32(SAFE_MARGIN) / 2;
                 if checks {
                     gen |= 1 << base.number();
                     kill &= !(1 << base.number());
@@ -5552,7 +5552,7 @@ fn safe_in(g: &Gen, blocks: &[(u32, Vec<Instruction>)], l: &structure::Layout) -
             && base != Register::ESP
             && ins.memory_index() == Register::None
             && !matches!(ins.memory_segment(), Register::FS | Register::GS)
-            && (ins.memory_displacement32() as i32).unsigned_abs() < lo32(SAFE_MARGIN) / 2
+            && (lo32(ins.memory_displacement32()).cast_signed()).unsigned_abs() < lo32(SAFE_MARGIN) / 2
     };
     let mut hoist: BTreeMap<usize, (u8, Vec<bool>)> = BTreeMap::new();
     if HOIST.load(core::sync::atomic::Ordering::Relaxed) {

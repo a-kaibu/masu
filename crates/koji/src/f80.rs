@@ -101,11 +101,11 @@ impl F80 {
         let s = u64::from(self.sign()) << (mbits + ebits);
         if self.exp() == 0x7fff || self.unsupported() {
             if self.is_inf() {
-                return s | (emax as u64) << mbits;
+                return s | (lo64(emax)) << mbits;
             }
             let m = if self.unsupported() { INDEFINITE.m } else { self.m };
             let sign = if self.unsupported() { 1u64 << (mbits + ebits) } else { s };
-            return sign | (emax as u64) << mbits | 1 << (mbits - 1) | (m << 1 >> (64 - mbits));
+            return sign | (lo64(emax)) << mbits | 1 << (mbits - 1) | (m << 1 >> (64 - mbits));
         }
         if self.is_zero() {
             return s;
@@ -125,9 +125,9 @@ impl F80 {
         if q >> mbits != 0 && field >= emax {
             // overflow: infinity, or the largest finite value when rounding toward zero/away
             let inf = rc == 0 || (rc == 1 && sign) || (rc == 2 && !sign);
-            return s | if inf { (emax as u64) << mbits } else { ((emax as u64) << mbits) - 1 };
+            return s | if inf { (lo64(emax)) << mbits } else { ((lo64(emax)) << mbits) - 1 };
         }
-        let bits = if q >> mbits == 0 { q } else { (field as u64) << mbits | (q & ((1 << mbits) - 1)) };
+        let bits = if q >> mbits == 0 { q } else { (lo64(field)) << mbits | (q & ((1 << mbits) - 1)) };
         s | bits
     }
     pub fn to_f64(self, rc: u32) -> f64 {

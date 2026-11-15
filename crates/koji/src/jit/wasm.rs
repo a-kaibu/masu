@@ -64,7 +64,7 @@ impl Drop for MemSite {
 pub fn mem_count_slot(store: bool, cpu: bool, off: u32) -> usize {
     let site = MEM_SITE.load(core::sync::atomic::Ordering::Relaxed).min(MEM_SITES.len() - 1) * MEM_SITE_SLOTS;
     site + if cpu {
-        usize::from(store) * MEM_CPU_SLOTS + (off as usize).min(MEM_CPU_SLOTS - 1)
+        usize::from(store) * MEM_CPU_SLOTS + (us(off)).min(MEM_CPU_SLOTS - 1)
     } else {
         2 * MEM_CPU_SLOTS + usize::from(store)
     }

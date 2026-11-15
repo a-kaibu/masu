@@ -2761,7 +2761,7 @@ fn index_bound(ins: &[Instruction]) -> Option<(Register, u64, usize)> {
         }
         return match i.mnemonic() {
             Mnemonic::Movzx if i.memory_size().size() == 1 || (i.op1_kind() == OpKind::Register && i.op1_register().size() == 1) => Some((idx, 256, k)),
-            Mnemonic::And if matches!(i.op1_kind(), OpKind::Immediate8to32 | OpKind::Immediate32 | OpKind::Immediate8to64 | OpKind::Immediate32to64) && (i.immediate(1) as i64) >= 0 => Some((idx, (i.immediate(1) + 1).min(MAX_TABLE), k)),
+            Mnemonic::And if matches!(i.op1_kind(), OpKind::Immediate8to32 | OpKind::Immediate32 | OpKind::Immediate8to64 | OpKind::Immediate32to64) && (lo64(i.immediate(1)).cast_signed()) >= 0 => Some((idx, (i.immediate(1) + 1).min(MAX_TABLE), k)),
             _ => None,
         };
     }
@@ -2789,7 +2789,7 @@ fn leaf64<M: Memory>(mem: &mut M, f: u64, trap: (u32, u32)) -> bool {
         if seen.contains(&a) {
             continue;
         }
-        if seen.len() >= LEAF_BLOCKS || (a as u32) >= trap.0 && (a as u32) < trap.1 {
+        if seen.len() >= LEAF_BLOCKS || (lo32(a)) >= trap.0 && (lo32(a)) < trap.1 {
             return false;
         }
         seen.push(a);
@@ -3172,7 +3172,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let fnm = fn_ins.is_some();
     // (a host trap's address is no code: a function or region never starts there, a call
     // cache miss on an import's slot names one)
-    if roots.iter().any(|&r| (r as u32) >= trap.0 && (r as u32) < trap.1) {
+    if roots.iter().any(|&r| (lo32(r)) >= trap.0 && (lo32(r)) < trap.1) {
         return None;
     }
     let (max_blocks, max_ins) = match fn_ins {

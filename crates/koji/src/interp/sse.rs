@@ -24,7 +24,7 @@ fn lanes(a: u128, b: u128, lane: u32, f: impl Fn(u64, u64) -> u64) -> u128 {
 
 #[inline]
 fn sx(v: u64, bits: u32) -> i64 {
-    ((v << (64 - bits)) as i64) >> (64 - bits)
+    (lo64(v << (64 - bits)).cast_signed()) >> (64 - bits)
 }
 
 fn sat_s(v: i64, bits: u32) -> u64 {
@@ -487,7 +487,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let mut r = 0u128;
                 for (k, v) in [a, b].iter().enumerate() {
                     for i in 0..n {
-                        let e = sx(((v >> (i * src)) as u64) & ((1u64 << src) - 1), src);
+                        let e = sx((lo64(v >> (i * src))) & ((1u64 << src) - 1), src);
                         let s = if mn == Packuswb { sat_u(e, dst) } else { sat_s(e, dst) };
                         r |= (u128::from(s) & ((1u128 << dst) - 1)) << ((lo32(k) * n + i) * dst);
                     }
@@ -560,7 +560,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let n = self.vbits(1) / 8;
                 let mut m = 0u32;
                 for i in 0..n {
-                    m |= (((v >> (8 * i + 7)) & 1) as u32) << i;
+                    m |= (lo32((v >> (8 * i + 7)) & 1)) << i;
                 }
                 tryf!(self.write_v(0, u128::from(m)));
                 self.done()
@@ -570,7 +570,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let lane = if mn == Movmskps { 32 } else { 64 };
                 let mut m = 0u32;
                 for i in 0..128 / lane {
-                    m |= (((v >> (lane * i + lane - 1)) & 1) as u32) << i;
+                    m |= (lo32((v >> (lane * i + lane - 1)) & 1)) << i;
                 }
                 tryf!(self.write_v(0, u128::from(m)));
                 self.done()
@@ -795,7 +795,7 @@ impl<'a, M: Memory> X<'a, M> {
                 binop(self, &|a, b| set64(set64(0, 0, nan_op64(Op::Sub, f64x(a, 0), f64x(b, 0), mx).to_bits()), 1, nan_op64(Op::Add, f64x(a, 1), f64x(b, 1), mx).to_bits()))
             }
             // (SSE4.2)
-            Pcmpgtq => binop(self, &|a, b| lanes(a, b, 64, |x, y| if (x as i64) > (y as i64) { u64::MAX } else { 0 })),
+            Pcmpgtq => binop(self, &|a, b| lanes(a, b, 64, |x, y| if (lo64(x).cast_signed()) > (lo64(y).cast_signed()) { u64::MAX } else { 0 })),
 
             // ---- SSSE3
             Pshufb => binop(self, &|a, b| {
@@ -1699,7 +1699,7 @@ fn pcmpstr(a: u128, b: u128, imm: u32, lens: Option<(u32, u32)>) -> (u32, u32, u
         }
     };
     let len = |v: u128, r: Option<u32>| match r {
-        Some(r) => (r as i32).unsigned_abs().min(n),
+        Some(r) => (lo32(r).cast_signed()).unsigned_abs().min(n),
         None => (0..n).find(|&i| el(v, i) == 0).unwrap_or(n),
     };
     let (la, lb) = (len(a, lens.map(|l| l.0)), len(b, lens.map(|l| l.1)));

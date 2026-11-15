@@ -926,7 +926,7 @@ impl Gen<'_> {
                     }
                 }
                 Pslldq | Psrldq => {
-                    let n = (ins.immediate8() as usize).min(16);
+                    let n = (us(ins.immediate8())).min(16);
                     let l: [u8; 16] = core::array::from_fn(|k| {
                         lo8(if m == Pslldq { if k >= n { k - n } else { 16 } } else if k + n < 16 { k + n } else { 16 })
                     });

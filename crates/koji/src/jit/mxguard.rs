@@ -19,7 +19,7 @@
 //! that, translated code has no checks (SSE float loops run 2-3x faster) and what it raised is
 //! not in MXCSR.
 
-use crate::cvt::{lo8, us};
+use crate::cvt::{lo8, lo32, us};
 use super::wasm::Code;
 use iced_x86::{Instruction, Mnemonic, OpKind};
 
@@ -128,7 +128,7 @@ fn vconst(c: &mut Code, b64: bool, v: i64) {
         if b64 {
             c.b.extend_from_slice(&v.to_le_bytes());
         } else {
-            c.b.extend_from_slice(&(v as i32).to_le_bytes());
+            c.b.extend_from_slice(&(lo32(v).cast_signed()).to_le_bytes());
         }
     }
 }

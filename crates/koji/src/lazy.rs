@@ -192,7 +192,7 @@ impl Lazy {
                 flags::szp(r, bits) | cf * CF | of * OF
             }
             Kind::Sar => {
-                let sx = ((a << (32 - bits)) as i32) >> (32 - bits);
+                let sx = (lo32(a << (32 - bits)).cast_signed()) >> (32 - bits);
                 let k = b.min(31);
                 let r = lo32(sx >> k) & flags::mask(bits);
                 let cf = if b > 31 { u32::from(sx < 0) } else { lo32((sx >> (k - 1).min(31)) & 1) };

@@ -97,7 +97,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Sarx => {
                 let c = lo32(b) & (bits - 1);
-                let sx = ((a << (64 - bits)) as i64) >> (64 - bits);
+                let sx = (lo64(a << (64 - bits)).cast_signed()) >> (64 - bits);
                 (lo64(sx >> c) & m, None)
             }
             Shlx => ((a << (lo32(b) & (bits - 1))) & m, None),

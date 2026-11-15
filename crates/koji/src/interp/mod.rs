@@ -98,7 +98,7 @@ pub fn step_cached<M: Memory>(cpu: &mut Cpu, mem: &mut M, cache: Option<&mut Dec
         &mut c.0[i]
     });
     let ins = match slot {
-        Some(e) if e.0 == pc && e.3.ip() >> 32 == u64::from(cpu.rip_hi) && lo32(e.3.ip()) == cpu.eip && (e.2 as usize) <= n && e.1[..us(e.2)] == buf[..us(e.2)] => e.3,
+        Some(e) if e.0 == pc && e.3.ip() >> 32 == u64::from(cpu.rip_hi) && lo32(e.3.ip()) == cpu.eip && (us(e.2)) <= n && e.1[..us(e.2)] == buf[..us(e.2)] => e.3,
         slot => {
             let bitness = if cpu.mode64 != 0 { 64 } else if cpu.mode16 != 0 { 16 } else { 32 };
             let rip = u64::from(cpu.eip) | u64::from(cpu.rip_hi) << 32;
@@ -667,7 +667,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Bswap => {
                 let v = tryf!(self.read_op(0));
-                let r = if self.op_bits(0) == 64 { v.swap_bytes() } else { u64::from((v as u32).swap_bytes()) };
+                let r = if self.op_bits(0) == 64 { v.swap_bytes() } else { u64::from((lo32(v)).swap_bytes()) };
                 tryf!(self.write_op(0, r));
                 self.done()
             }
@@ -762,12 +762,12 @@ impl<'a, M: Memory> X<'a, M> {
                 self.done()
             }
             Cdq => {
-                let v = u64::from(((lo32(self.get_reg(Register::EAX)) as i32) >> 31) as u32);
+                let v = u64::from(lo32((lo32(lo32(self.get_reg(Register::EAX))).cast_signed()) >> 31));
                 self.set_reg(Register::EDX, v);
                 self.done()
             }
             Cqo => {
-                let v = ((self.get_reg(Register::RAX) as i64) >> 63) as u64;
+                let v = lo64((lo64(self.get_reg(Register::RAX)).cast_signed()) >> 63);
                 self.set_reg(Register::RDX, v);
                 self.done()
             }
@@ -1323,7 +1323,7 @@ impl<'a, M: Memory> X<'a, M> {
                 (r, flags::szp64(r, bits) | cf * CF | of * OF, STATUS)
             }
             Sar => {
-                let sx = ((a << (64 - bits)) as i64) >> (64 - bits);
+                let sx = (lo64(a << (64 - bits)).cast_signed()) >> (64 - bits);
                 let c = count.min(63);
                 let r = lo64(sx >> c) & m;
                 let cf = lo32((sx >> (c - 1).min(63)) & 1);
@@ -1475,7 +1475,7 @@ impl<'a, M: Memory> X<'a, M> {
                 self.set_reg(Register::AX, u64::from((q & 0xff) | (rem & 0xff) << 8));
             }
             16 => {
-                let a = (self.get_reg(Register::DX) as u32) << 16 | lo32(self.get_reg(Register::AX));
+                let a = (lo32(self.get_reg(Register::DX))) << 16 | lo32(self.get_reg(Register::AX));
                 let s = lo32(s);
                 let (q, rem) = if signed {
                     let d = i32::from(lo16(lo16(s)).cast_signed());
@@ -1615,7 +1615,7 @@ impl<'a, M: Memory> X<'a, M> {
             return false;
         }
         let len = n * size;
-        let back = (step as i64) < 0;
+        let back = (lo64(step).cast_signed()) < 0;
         let m64 = self.m64();
         // lowest address of each range
         let lo = |p: u64| if back { p.wrapping_sub(len - size) } else { p };
@@ -1625,7 +1625,7 @@ impl<'a, M: Memory> X<'a, M> {
         }
         let (di, len32) = (lo32(di), lo32(len));
         let Some(d) = self.mem.host_range(di, len32) else { return false };
-        let adv = (step as i64).wrapping_mul(lo64(n).cast_signed()) as u64;
+        let adv = lo64((lo64(step).cast_signed()).wrapping_mul(lo64(n).cast_signed()));
         match mn {
             Movsb | Movsw | Movsd | Movsq => {
                 let si = lo(self.get_reg(rs).wrapping_add(src_seg));

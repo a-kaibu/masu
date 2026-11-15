@@ -3,7 +3,7 @@
 //! One exception is kept exact: FILD m64 followed by FISTP m64 (old MSVC
 //! CRTs copy 8 bytes that way), via a per-register exact integer shadow.
 
-use crate::cvt::{lo16, lo32, us};
+use crate::cvt::{lo16, lo32, lo64, us};
 use crate::f80::F80;
 use crate::flags::{CF, PF, ZF};
 use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
@@ -194,7 +194,7 @@ impl Fpu {
         self.empty = (self.empty & !(1 << a | 1 << b)) | mb << a | ma << b;
     }
     pub fn status(&self) -> u16 {
-        (self.sw & !(7 << 11)) | ((self.top as u16) << 11)
+        (self.sw & !(7 << 11)) | ((lo16(self.top)) << 11)
     }
     pub fn set_status(&mut self, v: u16) {
         self.sw = v & !(7 << 11);
@@ -346,5 +346,5 @@ pub fn from_f80(b: &[u8; 10]) -> f64 {
 }
 
 fn pow2(n: i32) -> f64 {
-    f64::from_bits(((n + 1023) as u64) << 52)
+    f64::from_bits((lo64(n + 1023)) << 52)
 }

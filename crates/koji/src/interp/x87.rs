@@ -10,7 +10,7 @@ use crate::{Exit, Memory, EAX};
 use iced_x86::{MemorySize, Mnemonic, OpKind, Register};
 
 fn st_index(r: Register) -> u32 {
-    r as u32 - Register::ST0 as u32
+    lo32(r.number())
 }
 
 impl<'a, M: Memory> X<'a, M> {
@@ -429,7 +429,7 @@ impl<'a, M: Memory> X<'a, M> {
                 } else {
                     let mut n = r.abs() as u64;
                     for x in b.iter_mut().take(9) {
-                        *x = lo8(n % 10) | (((n / 10) % 10) as u8) << 4;
+                        *x = lo8(n % 10) | (lo8((n / 10) % 10)) << 4;
                         n /= 100;
                     }
                     if r.is_sign_negative() {

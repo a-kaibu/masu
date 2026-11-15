@@ -445,7 +445,7 @@ impl<'a, M: Memory> X<'a, M> {
                     Vpsllvq => lanes(64, &|_, x, y| if y < 64 { x << y } else { 0 }),
                     Vpsrlvd => lanes(32, &|_, x, y| if y < 32 { x >> y } else { 0 }),
                     Vpsrlvq => lanes(64, &|_, x, y| if y < 64 { x >> y } else { 0 }),
-                    Vpsravd => lanes(32, &|_, x, y| u64::from(((lo32(x) as i32) >> y.min(31)) as u32)),
+                    Vpsravd => lanes(32, &|_, x, y| u64::from(lo32((lo32(lo32(x)).cast_signed()) >> y.min(31)))),
                     Vpermilps if n == 3 && ins.op_kind(2) == OpKind::Immediate8 => {
                         lanes(32, &|i, _, _| u64::from(lo32(a >> (32 * ((imm >> (2 * i)) & 3)))))
                     }

@@ -218,7 +218,7 @@ impl Gen<'_> {
 
     /// The local holding MMX register `r`, loaded from the Cpu the first time in the block.
     fn mm_get(&mut self, r: Register) -> u32 {
-        let i = r as u32 - Register::MM0 as u32;
+        let i = lo32(r.number());
         if self.mmx.0 & (1 << i) == 0 {
             self.c.get(L_CPU).v128load64(Off::mm(r)).set(L_MMX + i);
             self.mmx.0 |= 1 << i;
@@ -229,7 +229,7 @@ impl Gen<'_> {
     /// Sets MMX register `r` from the v128 on the stack (only its low half counts: every use of
     /// an MMX register reads lanes that come from the low halves of its operands).
     fn mm_set(&mut self, r: Register) {
-        let i = r as u32 - Register::MM0 as u32;
+        let i = lo32(r.number());
         self.c.set(L_MMX + i);
         self.mmx.0 |= 1 << i;
         self.mmx.1 |= 1 << i;
@@ -551,7 +551,7 @@ impl Gen<'_> {
             self.c.v128zero().shuffle(l);
         } else {
             // Pslldq / Psrldq: bytes in from zeros
-            let n = (ins.immediate8() as usize).min(16);
+            let n = (us(ins.immediate8())).min(16);
             let mut l = [16u8; 16];
             for (k, x) in l.iter_mut().enumerate() {
                 if m == Pslldq && k >= n {
@@ -904,7 +904,7 @@ impl Gen<'_> {
             }
             if d.is_mm() {
                 self.c.simd(0x1e).b.push(0); // i64x2.replace_lane 0
-                let i = d as u32 - Register::MM0 as u32;
+                let i = lo32(d.number());
                 self.c.set(L_MMX + i);
                 self.mmx.0 |= 1 << i;
                 self.mmx.1 |= 1 << i;

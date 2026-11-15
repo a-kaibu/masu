@@ -1,6 +1,6 @@
 //! EFLAGS bits and the arithmetic helpers that produce them.
 
-use crate::cvt::{lo32, lo64};
+use crate::cvt::{lo8, lo32, lo64};
 pub const CF: u32 = 1 << 0;
 pub const PF: u32 = 1 << 2;
 pub const AF: u32 = 1 << 4;
@@ -30,7 +30,7 @@ pub fn sign(bits: u32) -> u32 {
 
 #[inline]
 fn parity(v: u32) -> u32 {
-    if (v as u8).count_ones() & 1 == 0 { PF } else { 0 }
+    if (lo8(v)).count_ones() & 1 == 0 { PF } else { 0 }
 }
 
 /// SF, ZF and PF of a result.
