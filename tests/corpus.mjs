@@ -10,7 +10,7 @@
 // env: PRE=x,y / PRE_KEYS=0 (see below), TITLE_STILL=2 (seconds the title holds still), STORY=60 (story seconds), TITLE_MAX=120 (give up on the title),
 // TITLE_AT=s (the title from then on even with few colours: 操心術外伝's dark menu on black), STORY_AT=x,y (story clicks,
 // default centre of the bottom fifth), IDLE=s (that long more without a click: idleCores, a still screen's CPU), CHROME_ARGS, PLAYWRIGHT,
-// TITLE_SIG / STORY_SIG (the screens expected: tests/corpus/sig.mjs; titleMatch, storyMatch)
+// TITLE_SIG / STORY_SIG (the screens expected: tests/corpus/sig.mjs; titleMatch, storyMatch), STUCK_S=30 (no answer from the page that long: pageStuck, stuck.txt, out), STUCK_STACK=1 (the debugger on, for stuck.txt's stack)
 const pw = await import(process.env.PLAYWRIGHT ?? "playwright");
 const { chromium } = pw.default ?? pw;
 import { mkdirSync, appendFileSync, writeFileSync } from "node:fs";
@@ -46,13 +46,56 @@ page.on("crash", () => { crashed = true; res.errors.push("page crashed"); });
 await page.goto(url);
 // (SAKE_SHIRUSU=1: the page keeps sake's shirusu lines apart from the console,
 // web/src/shirusu.ts; they are taken every 2 s, in order, into shirusu.log)
+const later = (s, v) => new Promise((r) => setTimeout(() => r(v), s * 1000));
 let shirusuChain = Promise.resolve();
 const drainShirusu = () =>
   (shirusuChain = shirusuChain.then(async () => {
-    const s = await page.evaluate(() => window.masuShirusuTake?.() ?? "").catch(() => "");
+    // (at most 10 s: a stuck page has nothing more to give)
+    const s = await Promise.race([page.evaluate(() => window.masuShirusuTake?.() ?? "").catch(() => ""), later(10, "")]);
     if (s) appendFileSync(`${out}/shirusu.log`, s + "\n");
   }));
 const shirusuTimer = setInterval(() => void drainShirusu(), 2000);
+// (a page that stops answering, its thread stuck inside sake or a script: every wait above
+// would wait for good and the title leave no result. After STUCK_S seconds without an answer:
+// where the page's thread is (DevTools' pause, stuck.txt), the result so far, and out)
+const STUCK_S = Number(process.env.STUCK_S ?? 30);
+let answered = Date.now(), stuck = false;
+const watchdog = setInterval(async () => {
+  if (stuck) return;
+  if (await Promise.race([page.evaluate(() => 1).then(() => true, () => true), later(5, false)])) answered = Date.now();
+  if (stuck || Date.now() - answered < STUCK_S * 1000) return;
+  stuck = true;
+  // (the run's own waits fail once the browser is closed below: this ends it instead)
+  process.on("uncaughtException", () => {});
+  process.on("unhandledRejection", () => {});
+  res.pageStuck = Number(((answered - t0) / 1000).toFixed(1));
+  res.errors.push(`page stopped answering at ${res.pageStuck} s`);
+  save();
+  writeFileSync(`${out}/stuck.txt`, `the page's thread at ${now().toFixed(1)} s (last answer at ${res.pageStuck} s):\n${await stuckStack()}\n`);
+  await Promise.race([browser.close().catch(() => {}), later(10)]);
+  process.exit(0);
+}, 2000);
+// (pause the page's thread: its frames, innermost first. DevTools' pause reaches a thread
+// that runs on and on, but turning the debugger on needs the thread itself: STUCK_STACK=1 turns
+// it on as the run starts, before it is needed)
+const cdpEarly = process.env.STUCK_STACK === "1"
+  ? page.context().newCDPSession(page).then(async (c) => (await c.send("Debugger.enable"), c)).catch(() => null)
+  : Promise.resolve(null);
+async function stuckStack() {
+  try {
+    const cdp = await cdpEarly;
+    if (!cdp) return "(no stack: STUCK_STACK=1 not set)";
+    const paused = new Promise((r) => cdp.once("Debugger.paused", r));
+    const go = async () => {
+      await cdp.send("Debugger.pause");
+      const p = await paused;
+      return p.callFrames.map((f) => `  ${f.functionName || "(anonymous)"} ${f.url || f.location.scriptId}:${f.location.lineNumber + 1}:${(f.location.columnNumber ?? 0) + 1}`).join("\n");
+    };
+    return await Promise.race([go(), later(15, "(it did not pause in 15 s: waiting outside scripts)")]);
+  } catch (e) {
+    return `(no stack: ${e})`;
+  }
+}
 
 const CRC = new Int32Array(256).map((_, n) => {
   for (let k = 0; k < 8; k++) n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1;
@@ -254,6 +297,7 @@ if (res.title === null) {
   res.d3d = last?.d3d ?? false;
   save();
   clearInterval(shirusuTimer);
+  clearInterval(watchdog);
   await drainShirusu();
   await browser.close();
   process.exit(0);
@@ -317,5 +361,6 @@ res.crashed = crashed;
 res.end = now();
 save();
 clearInterval(shirusuTimer);
+clearInterval(watchdog);
 await drainShirusu();
 await browser.close();

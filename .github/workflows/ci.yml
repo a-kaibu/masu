@@ -125,6 +125,10 @@ jobs:
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
         run: node tests/webcodecs-snap-browser.mjs
+      - name: A corpus run gives up on a page that stops answering, with where its thread was (corpus.mjs STUCK_S)
+        env:
+          PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
+        run: node tests/corpus-stuck-browser.mjs
       - name: The chunk cache trimmed by the chunks' real sizes (net.ts trimChunks)
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
