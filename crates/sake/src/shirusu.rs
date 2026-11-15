@@ -58,7 +58,7 @@ fn name_of(i: u32) -> Option<String> {
     let mut g = M.lock().unwrap();
     g.get_or_insert_with(HashMap::default)
         .entry(i)
-        .or_insert_with(|| trap_api(crate::api::TRAP_LO + 4 * i))
+        .or_insert_with(|| trap_api(crate::api::trap_at(i)))
         .clone()
 }
 

@@ -121,7 +121,7 @@ const fn slot_is(ms: &[(&str, u8, u8)], i: usize, name: &str) -> bool {
         if k == i {
             return str_eq(m, name);
         }
-        k += 1;
+        k = k.saturating_add(1);
         rest = more;
     }
     false
@@ -235,9 +235,9 @@ pub fn iid(iface: &str) -> Option<Guid> {
 pub fn read_guid(p: u32) -> Guid {
     let mut b = [0u8; 8];
     for (i, v) in b.iter_mut().enumerate() {
-        *v = mem::r8(p + 8 + kome::num::u32_of(i));
+        *v = (mem::ga(p) + 8 + kome::num::u32_of(i)).r8();
     }
-    (mem::r32(p), mem::r16(p + 4), mem::r16(p + 6), b)
+    (mem::r32(p), mem::r16((crate::mem::ga(p) + 4).get()), mem::r16((crate::mem::ga(p) + 6).get()), b)
 }
 
 fn fmt_guid(g: Guid) -> String {
@@ -286,7 +286,7 @@ fn query_interface(c: &mut Ctx) -> u32 {
         let o = m.get_mut(&this)?;
         let hit = iids_of(o.iface.name()).contains(&want).then_some(this);
         if hit.is_some() {
-            o.refs += 1;
+            o.refs = o.refs.saturating_add(1);
         }
         hit
     });
@@ -307,7 +307,7 @@ fn query_interface(c: &mut Ctx) -> u32 {
 fn add_ref(c: &mut Ctx) -> u32 {
     let this = c.a(0);
     objs(|m| m.get_mut(&this).map_or(1, |o| {
-        o.refs += 1;
+        o.refs = o.refs.saturating_add(1);
         o.refs
     }))
 }
@@ -421,7 +421,7 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
         assert!(t.2.contains(&m.0.of.name()), "com: {}::{} is not a method of {}", m.0.of.name(), m.0.name, iface.name());
     }
     let k = mem::ps();
-    let v = mem::heap_alloc(k * kome::num::u32_of(t.1.len()), true);
+    let v = mem::heap_alloc(k.saturating_mul(kome::num::u32_of(t.1.len())), true);
     for (i, &(name, dwords, kind)) in t.1.iter().enumerate() {
         let found = slot_impl(i, name, impls).map(|m| m.1);
         let f = slot_handler(i, found);
@@ -430,7 +430,7 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
             STUBS.locked().get_or_insert_with(HashMap::new).insert(a, (iface.name(), name, kind));
         }
         NAMES.locked().get_or_insert_with(HashMap::new).insert(a, (name, dwords));
-        mem::wp(v + k * kome::num::u32_of(i), a);
+        mem::ga(v).at(kome::num::u32_of(i), k).wp(a);
     }
     VTBLS.locked().get_or_insert_with(HashMap::new).insert(iface, v);
     v
@@ -498,7 +498,7 @@ pub fn object(iface: Iface, impls: Impls, size: u32) -> u32 {
 pub fn add_ref_obj(obj: u32) {
     objs(|m| {
         if let Some(o) = m.get_mut(&obj) {
-            o.refs += 1;
+            o.refs = o.refs.saturating_add(1);
         }
     });
 }

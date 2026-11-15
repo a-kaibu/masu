@@ -972,7 +972,6 @@ file	crates/sake/src/apc.rs	as_conversions	1
 file	crates/sake/src/apc.rs	cast_possible_truncation	1
 file	crates/sake/src/apc.rs	indexing_slicing	2
 file	crates/sake/src/apc.rs	unwrap_used	4
-file	crates/sake/src/api.rs	arithmetic_side_effects	47
 file	crates/sake/src/api.rs	expect_used	1
 file	crates/sake/src/asfmovie.rs	arithmetic_side_effects	16
 file	crates/sake/src/asfmovie.rs	as_conversions	68
@@ -1036,7 +1035,6 @@ file	crates/sake/src/collate.rs	arithmetic_side_effects	8
 file	crates/sake/src/collate.rs	as_conversions	2
 file	crates/sake/src/collate.rs	cast_possible_truncation	1
 file	crates/sake/src/collate.rs	indexing_slicing	4
-file	crates/sake/src/com.rs	arithmetic_side_effects	9
 file	crates/sake/src/comrpc.rs	arithmetic_side_effects	64
 file	crates/sake/src/comrpc.rs	as_conversions	54
 file	crates/sake/src/comrpc.rs	cast_possible_truncation	19
@@ -1409,7 +1407,6 @@ file	crates/sake/src/ini.rs	let_underscore_must_use	2
 file	crates/sake/src/ini.rs	map_err_ignore	1
 file	crates/sake/src/ini.rs	string_slice	1
 file	crates/sake/src/ini.rs	unwrap_used	5
-file	crates/sake/src/iocp.rs	arithmetic_side_effects	17
 file	crates/sake/src/iphlp.rs	arithmetic_side_effects	321
 file	crates/sake/src/iphlp.rs	as_conversions	119
 file	crates/sake/src/iphlp.rs	cast_possible_truncation	77
@@ -1701,7 +1698,6 @@ file	crates/sake/src/ntsync.rs	as_conversions	21
 file	crates/sake/src/ntsync.rs	cast_possible_truncation	1
 file	crates/sake/src/ntsync.rs	cast_possible_wrap	7
 file	crates/sake/src/ntsync.rs	cast_sign_loss	6
-file	crates/sake/src/obj.rs	arithmetic_side_effects	14
 file	crates/sake/src/ole.rs	arithmetic_side_effects	72
 file	crates/sake/src/ole.rs	as_conversions	69
 file	crates/sake/src/ole.rs	cast_possible_truncation	24
@@ -1838,7 +1834,7 @@ file	crates/sake/src/shelllink.rs	cast_possible_wrap	2
 file	crates/sake/src/shelllink.rs	cast_sign_loss	1
 file	crates/sake/src/shelllink.rs	indexing_slicing	8
 file	crates/sake/src/shelllink.rs	unwrap_used	1
-file	crates/sake/src/shirusu.rs	arithmetic_side_effects	4
+file	crates/sake/src/shirusu.rs	arithmetic_side_effects	3
 file	crates/sake/src/shirusu.rs	as_conversions	8
 file	crates/sake/src/shirusu.rs	cast_possible_truncation	8
 file	crates/sake/src/shirusu.rs	unwrap_used	1

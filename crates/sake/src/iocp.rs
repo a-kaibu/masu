@@ -97,8 +97,8 @@ pub fn complete(h: u32, ov: u32, status: u32, bytes: u32, sync: bool) {
     }
     let k = ps();
     wp(ov, status);
-    wp(ov + k, bytes);
-    let ev = rp(ov + 2 * k + 8);
+    (crate::mem::ga(ov) + k).wp(bytes);
+    let ev = (mem::ga(ov).at(2, k) + 8).rp();
     let file = obj::key_of(h);
     let (assoc, mode) = with(|s| file.map_or((None, 0), |f| (s.assoc.get(&f).copied(), s.modes.get(&f).copied().unwrap_or(0))));
     let mut told = false;
@@ -299,7 +299,7 @@ fn take(port: Port) -> Option<Packet> {
 fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<(Packet, Port), u32> {
     let Some(port) = port_of(port) else { return Err(6) };
     let tid = crate::cur().tid;
-    let deadline = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms)));
+    let deadline = (ms != u32::MAX).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));
     loop {
         // (AFD polls end here: a socket that changed is looked at by the port's waiter)
         crate::afd::check();
@@ -320,7 +320,7 @@ fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<(Pack
                 if now >= d {
                     return Err(258); // WAIT_TIMEOUT
                 }
-                kome::num::lo32((d - now).as_millis().max(1))
+                kome::num::lo32(d.saturating_duration_since(now).as_millis().max(1))
             }
         };
         let ready = || with(|s| s.ports.get(&port.0).is_none_or(|q| !q.is_empty())) || (alertable && crate::apc::pending(tid));
@@ -377,16 +377,16 @@ fn GetQueuedCompletionStatusEx(c: &mut Ctx) -> u32 {
             let mut n = 0;
             let mut p = Some(first);
             while let Some((bytes, key, ov, status)) = p {
-                let e = ents + 4 * k * n;
+                let e = mem::ga(ents).at(n, k.saturating_mul(4)).get();
                 if mem::x64() {
                     mem::w64(e, key);
                 } else {
                     w32(e, kome::num::lo32(key));
                 }
-                wp(e + k, ov);
-                wp(e + 2 * k, status);
-                w32(e + 3 * k, bytes);
-                n += 1;
+                (crate::mem::ga(e) + k).wp(ov);
+                crate::mem::ga(e).at(k, 2).wp(status);
+                crate::mem::ga(e).at(k, 3).w32(bytes);
+                n = n.saturating_add(1);
                 p = if n < count { take(port) } else { None };
             }
             mem::put32(rp_, n);
@@ -414,7 +414,7 @@ fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
 /// Waits until the OVERLAPPED is no longer pending (on its event when it has one)
 pub fn wait_overlapped(c: &mut Ctx, ov: u32, ms: u32, alertable: bool) -> u32 {
     let k = ps();
-    let ev = rp(ov + 2 * k + 8) & !1;
+    let ev = (mem::ga(ov).at(2, k) + 8).rp() & !1;
     if rp(ov) != STATUS_PENDING {
         return 0;
     }
@@ -459,7 +459,7 @@ fn overlapped_result(c: &mut Ctx, ex: bool) -> u32 {
         }
     }
     let k = ps();
-    mem::put32(bp, rp(ov + k));
+    mem::put32(bp, (crate::mem::ga(ov) + k).rp());
     let s = rp(ov);
     if s != 0 {
         last_error(nt_to_win32(s));
@@ -511,7 +511,7 @@ pub fn init_nt() {
                 }
                 wp(pval, ov);
                 wp(iosb, status);
-                wp(iosb + ps(), bytes);
+                (crate::mem::ga(iosb) + ps()).wp(bytes);
                 0
             }
             Err(e) => status_of(e),
@@ -524,15 +524,15 @@ pub fn init_nt() {
             Ok((first, port)) => {
                 let (mut n, mut p) = (0, Some(first));
                 while let Some((bytes, key, ov, status)) = p {
-                    let e = info + 4 * k * n;
+                    let e = mem::ga(info).at(n, k.saturating_mul(4)).get();
                     wp(e, kome::num::lo32(key));
                     if mem::x64() {
                         mem::w64(e, key);
                     }
-                    wp(e + k, ov);
-                    wp(e + 2 * k, status);
-                    wp(e + 3 * k, bytes);
-                    n += 1;
+                    (crate::mem::ga(e) + k).wp(ov);
+                    crate::mem::ga(e).at(k, 2).wp(status);
+                    crate::mem::ga(e).at(k, 3).wp(bytes);
+                    n = n.saturating_add(1);
                     p = if n < count { take(port) } else { None };
                 }
                 mem::put32(removed, n);
@@ -605,7 +605,7 @@ mod tests {
     fn get(port: u32) -> Result<(u32, u32, u32), u32> {
         let out = mem::heap_alloc(12, true);
         let ok = call(GetQueuedCompletionStatus, &[port, out, out + 4, out + 8, 0]);
-        let r = if ok != 0 { Ok((r32(out), r32(out + 4), r32(out + 8))) } else { Err(crate::k32::get_last_error()) };
+        let r = if ok != 0 { Ok((r32(out), (crate::mem::ga(out) + 4).r32(), (crate::mem::ga(out) + 8).r32())) } else { Err(crate::k32::get_last_error()) };
         mem::heap_free(out);
         r
     }

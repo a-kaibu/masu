@@ -230,7 +230,7 @@ impl Table {
     fn new_handle(&mut self) -> u32 {
         if self.next < HANDLE_LIMIT {
             let h = self.next;
-            self.next += 4;
+            self.next = self.next.saturating_add(4);
             return h;
         }
         loop {
@@ -238,7 +238,7 @@ impl Table {
                 self.reuse = 0x100;
             }
             let h = self.reuse;
-            self.reuse += 4;
+            self.reuse = self.reuse.saturating_add(4);
             // (an object's key is its first handle's number: neither may be taken again)
             if !self.objs.handles.contains_key(&h) && !self.objs.map.contains_key(&Key(h)) {
                 return h;
@@ -339,7 +339,7 @@ pub fn dup(h: u32) -> u32 {
     with(|t| {
         let Some(k) = t.objs.key(&h) else { return 0 };
         let Some(o) = t.objs.map.get_mut(&k) else { return 0 };
-        o.1 += 1;
+        o.1 = o.1.saturating_add(1);
         let n = t.new_handle();
         t.objs.handles.insert(n, k);
         n
@@ -350,7 +350,7 @@ pub fn dup(h: u32) -> u32 {
 pub fn dup_key(k: Key) -> u32 {
     with(|t| {
         let Some(o) = t.objs.map.get_mut(&k) else { return 0 };
-        o.1 += 1;
+        o.1 = o.1.saturating_add(1);
         let n = t.new_handle();
         t.objs.handles.insert(n, k);
         n
@@ -380,7 +380,7 @@ pub fn close(h: u32) -> bool {
 /// One reference to object `k` less: the object when that was its last
 fn unref(t: &mut Table, k: Key) -> Option<Obj> {
     let rc = &mut t.objs.map.get_mut(&k)?.1;
-    *rc -= 1;
+    *rc = rc.saturating_sub(1);
     if *rc == 0 {
         if t.named.remove(&k) {
             t.names.retain(|_, v| *v != k);
@@ -437,7 +437,7 @@ pub fn file(h: u32) -> Option<Arc<crate::files::File>> {
 /// Wakes every waiter (after changing anything they may wait for).
 pub fn signal() {
     with(|t| {
-        t.generation += 1;
+        t.generation = t.generation.saturating_add(1);
         let mut out = Vec::new();
         t.waits.wake_all(&mut out);
         t.notify(&out);
@@ -448,7 +448,7 @@ pub fn signal() {
 /// 1, a semaphore the count released, a manual-reset event all): wakes only its waiters.
 pub fn signal_obj(h: u32, n: usize) {
     with(|t| {
-        t.generation += 1;
+        t.generation = t.generation.saturating_add(1);
         let Some(k) = t.objs.key(&norm(h)) else { return };
         let mut out = Vec::new();
         t.waits.wake(&k, n, &mut out);
@@ -481,7 +481,7 @@ fn try_take(t: &mut Table, k: Option<Key>, tid: u32, take: bool) -> Option<bool>
         Obj::Timer { manual, set, due, period } => {
             if let Some(d) = *due && Instant::now() >= d {
                 *set = true;
-                *due = (!period.is_zero()).then(|| d + *period);
+                *due = (!period.is_zero()).then(|| kome::time::after(d, *period));
             }
             let s = *set;
             if s && take && !*manual {
@@ -493,7 +493,7 @@ fn try_take(t: &mut Table, k: Option<Key>, tid: u32, take: bool) -> Option<bool>
             if *owner == 0 || *owner == tid || *owner == ABANDONED {
                 if take {
                     *owner = tid;
-                    *count += 1;
+                    *count = (*count).saturating_add(1);
                 }
                 true
             } else {
@@ -503,7 +503,7 @@ fn try_take(t: &mut Table, k: Option<Key>, tid: u32, take: bool) -> Option<bool>
         Obj::Semaphore { count, .. } => {
             if *count > 0 {
                 if take {
-                    *count -= 1;
+                    *count = count.saturating_sub(1);
                 }
                 true
             } else {
@@ -633,7 +633,8 @@ pub fn wait(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool
     let keys: Vec<Option<Key>> = with(|t| {
         handles.iter().map(|h| {
             let k = t.objs.key(h)?;
-            t.objs.map.get_mut(&k)?.1 += 1;
+            let rc = &mut t.objs.map.get_mut(&k)?.1;
+            *rc = rc.saturating_add(1);
             Some(k)
         }).collect()
     });
@@ -690,7 +691,7 @@ fn attempt(t: &mut Table, handles: &[Option<Key>], all: bool, tid: u32, blocked:
             Some(true) => {
                 // (woken by another thread's SetEvent: it runs on to its next call first)
                 let m = if blocked { h.and_then(signal_of) } else { None };
-                return Attempt::Done(kome::num::u32_of(i) + if ab { 0x80 } else { 0 }, m.into_iter().collect());
+                return Attempt::Done(kome::num::u32_of(i).saturating_add(if ab { 0x80 } else { 0 }), m.into_iter().collect());
             }
             Some(false) => {}
         }
@@ -707,7 +708,7 @@ fn wait_held(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> boo
 /// wait_held, `ending` run before this thread ends in it (TerminateThread).
 fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool>, ending: &dyn Fn()) -> u32 {
     let tid = crate::cur().tid;
-    let deadline = (ms != 0xffff_ffff).then(|| Instant::now() + Duration::from_millis(u64::from(ms)));
+    let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(Duration::from_millis(u64::from(ms))));
     let cv = CV.with(Arc::clone);
     let mut g = lock();
     // (whether it waited: only a waiter that was woken defers to its signaler)
@@ -802,7 +803,7 @@ fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dy
             Some(d) => {
                 let now = Instant::now();
                 if now < d {
-                    g = cv.wait_timeout(g, d - now).unwrap_or_else(|e| e.into_inner()).0;
+                    g = cv.wait_timeout(g, d.saturating_duration_since(now)).unwrap_or_else(|e| e.into_inner()).0;
                 }
             }
         }

@@ -13,6 +13,14 @@ use crate::mem::{r32, w32};
 
 /// Trap range of the x86 core: [TRAP_LO, TRAP_HI).
 pub const TRAP_LO: u32 = 0xfe00_0000;
+/// The address of trap `i` (4 bytes each from TRAP_LO)
+pub fn trap_at(i: u32) -> u32 {
+    crate::mem::ga(TRAP_LO).at(i, 4).get()
+}
+/// The trap number of trap address `a` (trap_at's inverse; below TRAP_LO wraps far past any)
+pub fn trap_no(a: u32) -> u32 {
+    crate::mem::ga(a).since(crate::mem::ga(TRAP_LO)) / 4
+}
 pub const TRAP_HI: u32 = 0xffff_1000;
 /// Return address of calls from Rust into guest code.
 pub const RET_TRAP: u32 = 0xffff_0000;
@@ -53,8 +61,8 @@ impl Ctx<'_> {
         }
         match self.this {
             Some(t) if i == 0 => t,
-            Some(_) => r32(self.esp + 4 * i),
-            None => r32(self.esp + 4 + 4 * i),
+            Some(_) => crate::mem::ga(self.esp).at(i, 4).r32(),
+            None => (crate::mem::ga(self.esp) + 4).at(i, 4).r32(),
         }
     }
     /// A pointer-sized argument (size_t, ptrdiff_t): x64 all 64 bits, x86 the slot.
@@ -66,7 +74,7 @@ impl Ctx<'_> {
         if crate::mem::x64() {
             return self.a64(i);
         }
-        u64::from(self.a(i)) | u64::from(self.a(i + 1)) << 32
+        u64::from(self.a(i)) | u64::from(self.a(i.saturating_add(1))) << 32
     }
     /// The double argument `i` (x64: XMM `i` or its stack slot; x86: the slots `i`, `i + 1`).
     pub fn d(&self, i: u32) -> f64 {
@@ -89,8 +97,8 @@ impl Ctx<'_> {
             return self.a(i);
         }
         match self.this {
-            Some(_) => self.esp + 4 * i,
-            None => self.esp + 4 + 4 * i,
+            Some(_) => crate::mem::ga(self.esp).at(i, 4).get(),
+            None => (crate::mem::ga(self.esp) + 4).at(i, 4).get(),
         }
     }
     /// x64: the whole argument `i` (RCX, RDX, R8, R9, then the stack past the home space).
@@ -100,12 +108,12 @@ impl Ctx<'_> {
             1 => self.cpu.gpr(2),
             2 => self.cpu.gpr(8),
             3 => self.cpu.gpr(9),
-            _ => crate::mem::r64(self.esp + 8 + 8 * i),
+            _ => (crate::mem::ga(self.esp) + 8).at(i, 8).r64(),
         }
     }
     /// x64: floating-point argument `i` (XMM0-3, then the stack), as a double's bits.
     pub fn xmm(&self, i: u32) -> u64 {
-        if i < 4 { kome::num::lo64(self.cpu.xmm(kome::num::us(i))) } else { crate::mem::r64(self.esp + 8 + 8 * i) }
+        if i < 4 { kome::num::lo64(self.cpu.xmm(kome::num::us(i))) } else { (crate::mem::ga(self.esp) + 8).at(i, 8).r64() }
     }
     /// A POINT passed by value at slots `i`, `i + 1` (x64: the one 8-byte argument `i`; the
     /// index is the same when only 4-byte arguments come before it).
@@ -114,7 +122,7 @@ impl Ctx<'_> {
             let v = self.a64(i);
             return (kome::num::lo32(v).cast_signed(), kome::num::lo32(v >> 32).cast_signed());
         }
-        (self.i(i), self.i(i + 1))
+        (self.i(i), self.i(i.saturating_add(1)))
     }
     /// The float argument `i` (x64: XMM0-3, then the stack slot's low half).
     pub fn f(&self, i: u32) -> f32 {
@@ -128,9 +136,9 @@ impl Ctx<'_> {
     pub fn pt_f(&self, i: u32) -> ((f32, f32), u32) {
         if crate::mem::x64() {
             let v = self.a64(i);
-            return ((f32::from_bits(kome::num::lo32(v)), f32::from_bits(kome::num::lo32(v >> 32))), i + 1);
+            return ((f32::from_bits(kome::num::lo32(v)), f32::from_bits(kome::num::lo32(v >> 32))), i.saturating_add(1));
         }
-        ((f32::from_bits(self.a(i)), f32::from_bits(self.a(i + 1))), i + 2)
+        ((f32::from_bits(self.a(i)), f32::from_bits(self.a(i.saturating_add(1)))), i.saturating_add(2))
     }
     /// Calls guest code at `f` with `args`; the float arguments `floats` (their indexes in
     /// `args`, which hold their bits) go in XMM registers as well on x64.
@@ -152,7 +160,7 @@ impl Ctx<'_> {
         if crate::mem::x64() {
             return f64::from_bits(self.xmm(i / 2));
         }
-        f64::from_bits(u64::from(self.a(i)) | u64::from(self.a(i + 1)) << 32)
+        f64::from_bits(u64::from(self.a(i)) | u64::from(self.a(i.saturating_add(1))) << 32)
     }
     /// Calls guest code at `f` with `args` (stdcall or cdecl alike); returns EAX.
     pub fn call(&mut self, f: u32, args: &[u32]) -> u32 {
@@ -483,7 +491,7 @@ pub fn export(dll: &str, name: &str) -> u32 {
     let mut idx = INDEX.locked();
     let idx = idx.get_or_insert_with(HashMap::default);
     if let Some(&i) = idx.get(&key) {
-        return TRAP_LO + 4 * i;
+        return trap_at(i);
     }
     let sp = specs();
     let spec = sp.by_name.get(&(d.as_str(), name)).copied().or_else(|| {
@@ -508,7 +516,7 @@ pub fn export(dll: &str, name: &str) -> u32 {
         publish(kome::num::us(i), x);
     }
     idx.insert(key, i);
-    TRAP_LO + 4 * i
+    trap_at(i)
 }
 
 /// The DLLs whose thiscall functions take `this` as argument 0 on x86 (Ctx::this): their
@@ -570,13 +578,13 @@ fn stats_on() -> bool {
             let mut v: Vec<(u32, u64)> = m.into_iter().collect();
             v.sort_by(|a, b| b.1.cmp(&a.1));
             let total: u64 = v.iter().map(|x| x.1).sum();
-            let top: Vec<String> = v.iter().take(40).map(|(i, n)| format!("{}={n}", name_of(TRAP_LO + 4 * i).unwrap_or_default())).collect();
+            let top: Vec<String> = v.iter().take(40).map(|(i, n)| format!("{}={n}", name_of(trap_at(*i)).unwrap_or_default())).collect();
             eprintln!("sake api {total} calls/{s}s: {}", top.join(" "));
             let m = TIMES.locked().take().unwrap_or_default();
             let mut v: Vec<(u32, u64)> = m.into_iter().collect();
             v.sort_by(|a, b| b.1.cmp(&a.1));
             let total: u64 = v.iter().map(|x| x.1).sum();
-            let top: Vec<String> = v.iter().take(40).map(|(i, us)| format!("{}={}ms", name_of(TRAP_LO + 4 * i).unwrap_or_default(), us / 1000)).collect();
+            let top: Vec<String> = v.iter().take(40).map(|(i, us)| format!("{}={}ms", name_of(trap_at(*i)).unwrap_or_default(), us / 1000)).collect();
             eprintln!("sake api time {}ms/{s}s: {}", total / 1000, top.join(" "));
         });
         true
@@ -604,23 +612,23 @@ fn threads_on() -> bool {
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs_f64(s));
             use std::sync::atomic::Ordering::Relaxed;
-            let mut out = format!("sake threads at {} ms:", crate::k32::ticks_ms() - 60_000);
+            let mut out = format!("sake threads at {} ms:", crate::k32::ticks_ms().wrapping_sub(60_000));
             for (k, (slots, at)) in RECENT.iter().zip(&RECENT_POS).enumerate() {
                 let pos = kome::num::us(at.load(Relaxed));
                 if pos == 0 {
                     continue;
                 }
-                out += &format!("\n  {:04x}:", 0x20 + 4 * k);
+                out += &format!("\n  {:04x}:", k.saturating_mul(4).saturating_add(0x20));
                 for n in pos.saturating_sub(RECENT_N)..pos {
                     let Some(slot) = slots.get(n % RECENT_N) else { continue };
                     let [f, a1, a2, a3, ret, ms] = slot.each_ref().map(|x| x.load(Relaxed));
-                    out += &format!(" {}({a1:x},{a2:x},{a3:x})@{ret:x}/{ms}", name_of(TRAP_LO + 4 * f).unwrap_or_default());
+                    out += &format!(" {}({a1:x},{a2:x},{a3:x})@{ret:x}/{ms}", name_of(trap_at(f)).unwrap_or_default());
                 }
                 // (waiting for a critical section: its LockCount, RecursionCount, OwningThread, LockSemaphore)
-                if let Some(slot) = slots.get((pos - 1) % RECENT_N) {
+                if let Some(slot) = slots.get(pos.saturating_sub(1) % RECENT_N) {
                     let [f, cs, ..] = slot.each_ref().map(|x| x.load(Relaxed));
-                    if name_of(TRAP_LO + 4 * f).is_some_and(|n| n.contains("EnterCriticalSection")) && cs >= 0x10000 {
-                        out += &format!(" [cs {cs:x}: {:x} {:x} owner {:x} {:x}]", r32(cs + 4), r32(cs + 8), r32(cs + 12), r32(cs + 16));
+                    if name_of(trap_at(f)).is_some_and(|n| n.contains("EnterCriticalSection")) && cs >= 0x10000 {
+                        out += &format!(" [cs {cs:x}: {:x} {:x} owner {:x} {:x}]", (crate::mem::ga(cs) + 4).r32(), (crate::mem::ga(cs) + 8).r32(), (crate::mem::ga(cs) + 12).r32(), (crate::mem::ga(cs) + 16).r32());
                     }
                 }
             }
@@ -639,7 +647,7 @@ fn trace_match(i: u32) -> bool {
     // SAKE_TRACE_AFTER=<ms>: only from then on
     static AFTER: OnceLock<u32> = OnceLock::new();
     let after = *AFTER.get_or_init(|| std::env::var("SAKE_TRACE_AFTER").ok().and_then(|s| s.parse().ok()).unwrap_or(0));
-    if after > 0 && crate::k32::ticks_ms() - 60_000 < after {
+    if after > 0 && crate::k32::ticks_ms().wrapping_sub(60_000) < after {
         return false;
     }
     static F: OnceLock<Vec<String>> = OnceLock::new();
@@ -650,7 +658,7 @@ fn trace_match(i: u32) -> bool {
     static HIT: Mutex<Option<HashMap<u32, bool>>> = Mutex::new(None);
     let mut g = HIT.locked();
     *g.get_or_insert_with(HashMap::default).entry(i).or_insert_with(|| {
-        let n = name_of(TRAP_LO + 4 * i).unwrap_or_default();
+        let n = name_of(trap_at(i)).unwrap_or_default();
         f.iter().any(|x| n.contains(x.as_str()))
     })
 }
@@ -688,7 +696,7 @@ fn usage(i: u32) {
                     .filter(|x| *x.1 > 0)
                     .filter_map(|(i, &n)| {
                         let x = e.get(i)?;
-                        let stub = x.f.is_none() || crate::com::is_stub(TRAP_LO + 4 * kome::num::u32_of(i));
+                        let stub = x.f.is_none() || crate::com::is_stub(trap_at(kome::num::u32_of(i)));
                         Some((format!("{}:{}!{}", if stub { "stub" } else { "api" }, x.dll, x.name), n))
                     })
                     .collect()
@@ -698,7 +706,7 @@ fn usage(i: u32) {
             u.resize(kome::num::us(i).saturating_add(1), 0);
         }
         if let Some(n) = u.get_mut(kome::num::us(i)) {
-            *n += 1;
+            *n = (*n).saturating_add(1);
         }
     }
     kura::usage::tick();
@@ -708,7 +716,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     // (a process on one processor: the call lets it go, the program's code after takes it back)
     let _uni = crate::uni::Api::new();
     crate::comrpc::pump(cpu, false);
-    let i = (addr - TRAP_LO) / 4;
+    let i = trap_no(addr);
     let Some((f, Meta { bytes, cdecl, known, this_arg, yields })) = hot(kome::num::us(i)) else {
         crate::fatal(cpu, &format!("jump to unknown trap address {addr:#x}"));
     };
@@ -723,7 +731,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     crate::obj::HANDOFF.entered(me.tid);
     let outer = me.api;
     let tid = me.tid;
-    me.api = (esp, if crate::mem::x64() { 8 } else { 4 + if cdecl { 0 } else { bytes } });
+    me.api = (esp, if crate::mem::x64() { 8 } else { (if cdecl { 0 } else { bytes }).saturating_add(4) });
     let this = (this_arg && !crate::mem::x64()).then(|| cpu.regs[koji::ECX]);
     let mut c = Ctx { cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this };
     if yields == 0 || (yields == 2 && c.a(0) != 0) {
@@ -744,7 +752,9 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
         None => unimplemented_call(&mut c, i, known),
     };
     if let Some(t0) = t0 {
-        *TIMES.locked().get_or_insert_with(HashMap::default).entry(i).or_default() += kome::num::lo64(t0.elapsed().as_micros());
+        let mut times = TIMES.locked();
+        let t = times.get_or_insert_with(HashMap::default).entry(i).or_default();
+        *t = t.saturating_add(kome::num::lo64(t0.elapsed().as_micros()));
     }
     if top {
         crate::snap::api_leave();
@@ -827,17 +837,19 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
         usage(i);
     }
     if sw & SW_STATS != 0 {
-        *COUNTS.locked().get_or_insert_with(HashMap::default).entry(i).or_default() += 1;
+        let mut counts = COUNTS.locked();
+        let n = counts.get_or_insert_with(HashMap::default).entry(i).or_default();
+        *n = n.saturating_add(1);
     }
     if sw & SW_THREADS != 0 && let Some(k) = recent_slot(crate::cur().tid) {
         use std::sync::atomic::Ordering::Relaxed;
         if let (Some(slots), Some(at)) = (RECENT.get(k), RECENT_POS.get(k)) {
             let n = kome::num::us(at.load(Relaxed));
-            let r = [i, r32(esp + 4), r32(esp + 8), r32(esp + 12), r32(esp), crate::k32::ticks_ms() - 60_000];
+            let r = [i, (crate::mem::ga(esp) + 4).r32(), (crate::mem::ga(esp) + 8).r32(), (crate::mem::ga(esp) + 12).r32(), r32(esp), crate::k32::ticks_ms().wrapping_sub(60_000)];
             for (x, v) in slots.get(n % RECENT_N).into_iter().flatten().zip(r) {
                 x.store(v, Relaxed);
             }
-            at.store(kome::num::u32_of(n) + 1, Relaxed);
+            at.store(kome::num::u32_of(n).saturating_add(1), Relaxed);
         }
     }
     if sw & SW_WATCH != 0 {
@@ -854,10 +866,10 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
         let x64 = crate::mem::x64();
         let nargs = if x64 { 4.max(bytes / 4).min(8) } else { (bytes / 4).min(8) };
         let args: Vec<String> = (0..nargs)
-            .map(|k| if x64 { format!("{:x}", Ctx { cpu: &mut *cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this: None }.a64(k)) } else { format!("{:x}", r32(esp + 4 + 4 * k)) })
+            .map(|k| if x64 { format!("{:x}", Ctx { cpu: &mut *cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this: None }.a64(k)) } else { format!("{:x}", (crate::mem::ga(esp) + 4).at(k, 4).r32()) })
             .collect();
         let from = if x64 { crate::mem::r64(esp) } else { u64::from(r32(esp)) };
-        let line = format!("sake {:04x} {}: {n}({}) from {:x}", crate::cur().tid, crate::k32::ticks_ms() - 60_000, args.join(","), from);
+        let line = format!("sake {:04x} {}: {n}({}) from {:x}", crate::cur().tid, crate::k32::ticks_ms().wrapping_sub(60_000), args.join(","), from);
         if tr == 3 {
             RING.with(|r| {
                 let mut r = r.borrow_mut();
@@ -917,7 +929,7 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
         cpu.fpu.push(v);
     }
     cpu.eip = r32(esp);
-    cpu.regs[ESP] = esp + 4 + if cdecl { 0 } else { bytes };
+    cpu.regs[ESP] = (crate::mem::ga(esp) + 4 + if cdecl { 0 } else { bytes }).get();
     crate::tctx::apply_pending_after_call(cpu);
 }
 
@@ -932,8 +944,8 @@ pub fn stub(code: &[u8]) -> u32 {
     }
     let a = g.0;
     crate::mem::write(a, code);
-    let n = (kome::num::lo32(code.len()) + 15) & !15;
-    g.0 += n;
+    let n = kome::num::lo32(code.len()).saturating_add(15) & !15;
+    g.0 = g.0.saturating_add(n);
     g.1 = g.1.saturating_sub(n);
     a
 }
@@ -942,7 +954,7 @@ pub fn stub(code: &[u8]) -> u32 {
 pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
     implement("sake", name, f);
     let a = export("sake", name);
-    let i = (a - TRAP_LO) / 4;
+    let i = trap_no(a);
     let mut e = ENTRIES.w();
     // (export made entry i)
     if let Some(x) = e.get_mut(kome::num::us(i)) {
@@ -958,7 +970,7 @@ pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
 /// the callee pops `bytes` of stack arguments; x64: the plain convention).
 pub fn host_fn_this(name: &str, f: Handler, bytes: u32) -> u32 {
     let a = host_fn(name, f, bytes);
-    let i = kome::num::us((a - TRAP_LO) / 4);
+    let i = kome::num::us(trap_no(a));
     let mut e = ENTRIES.w();
     if let Some(x) = e.get_mut(i) {
         x.this_arg = true;
@@ -970,9 +982,9 @@ pub fn host_fn_this(name: &str, f: Handler, bytes: u32) -> u32 {
 /// A COM vtable of traps (x64: 8-byte entries).
 pub fn vtable(name: &str, methods: &[(Handler, u32)]) -> u32 {
     let k = crate::mem::ps();
-    let v = crate::mem::heap_alloc(k * kome::num::lo32(methods.len()), true);
+    let v = crate::mem::heap_alloc(k.saturating_mul(kome::num::lo32(methods.len())), true);
     for (i, (f, bytes)) in methods.iter().enumerate() {
-        crate::mem::wp(v + k * kome::num::u32_of(i), host_fn(&format!("{name}::{i}"), *f, *bytes));
+        crate::mem::ga(v).at(kome::num::u32_of(i), k).wp( host_fn(&format!("{name}::{i}"), *f, *bytes));
     }
     v
 }
@@ -1224,6 +1236,13 @@ mod hot_tests {
             let m = Meta { bytes, cdecl, known, this_arg, yields };
             prop_assert_eq!(Meta::unpack(m.pack()), Some(m));
         }
+        /// trap_at / trap_no are the old TRAP_LO + 4 * i and (a - TRAP_LO) / 4, wrapping
+        #[test]
+        fn trap_at_and_no_are_the_old_sums(i in any::<u32>(), a in any::<u32>()) {
+            prop_assert_eq!(trap_at(i), TRAP_LO.wrapping_add(i.wrapping_mul(4)));
+            prop_assert_eq!(trap_no(a), a.wrapping_sub(TRAP_LO) / 4);
+            prop_assert_eq!(trap_no(trap_at(i)), i & 0x3fff_ffff);
+        }
     }
 
     #[test]
@@ -1232,7 +1251,7 @@ mod hot_tests {
         assert!(hot(MAX_ENTRIES).is_none());
         assert!(hot(MAX_ENTRIES - 1).is_none());
         assert_eq!(tag_of(TRAP_LO - 4), (0, 0));
-        assert_eq!(tag_of(TRAP_LO + 4 * kome::num::lo32(MAX_ENTRIES)), (0, 0));
+        assert_eq!(tag_of(trap_at(kome::num::lo32(MAX_ENTRIES))), (0, 0));
     }
 
     fn h1(_: &mut Ctx) -> u32 {
@@ -1304,7 +1323,7 @@ mod hot_tests {
                 std::thread::spawn(move || {
                     for k in 0..3000 {
                         let a = host_fn(&format!("hot_tests_c{w}_{k}"), if k % 2 == 0 { h1 } else { h2 }, 4 * (k % 9));
-                        let (f, m) = hot(kome::num::us((a - TRAP_LO) / 4)).unwrap();
+                        let (f, m) = hot(kome::num::us(trap_no(a))).unwrap();
                         assert_eq!(m.bytes, 4 * (k % 9));
                         assert!(f.is_some_and(|f| std::ptr::fn_addr_eq(f, handler(if k % 2 == 0 { h1 } else { h2 }))));
                         set_tag(a, k + 1, kome::num::us(k));
