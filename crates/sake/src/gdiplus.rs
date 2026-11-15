@@ -80,8 +80,8 @@ pub(crate) fn pixels(h: u32) -> Option<(u32, u32, Vec<u8>)> {
 }
 
 /// A new w x h bitmap of `fmt`, zeroed (gdiplus_text's GdipCreateBitmapFromGraphics)
-pub(crate) fn new_bitmap(w: u32, h: u32, fmt: u32, out: u32) -> u32 {
-    if w == 0 || h == 0 || out == 0 || w.checked_mul(h).is_none_or(|n| n > 1 << 26) {
+pub(crate) fn new_bitmap(w: u32, h: u32, fmt: u32, out: crate::api::Out) -> u32 {
+    if w == 0 || h == 0 || out.is_null() || w.checked_mul(h).is_none_or(|n| n > 1 << 26) {
         return INVALID_PARAMETER;
     }
     let alpha = if has_alpha(fmt) { 0 } else { 0xff };
@@ -201,10 +201,10 @@ fn with<R>(f: impl FnOnce(&mut HashMap<u32, Bitmap>) -> R) -> R {
     f(IMAGES.lock().unwrap().get_or_insert_with(HashMap::default))
 }
 
-fn add(b: Bitmap, out: u32) -> u32 {
+fn add(b: Bitmap, out: crate::api::Out) -> u32 {
     let o = mem::heap_alloc(16, true);
     with(|m| m.insert(o, b));
-    mem::putp(out, o);
+    out.put(o);
     OK
 }
 
@@ -249,7 +249,7 @@ fn decoded_flags(pic: &crate::picture::Picture, data: &[u8], fmt: u32) -> u32 {
     FLAG_READ_ONLY | FLAG_REAL_SIZE | if dpi { FLAG_REAL_DPI } else { 0 } | space | if has_alpha(fmt) { FLAG_HAS_ALPHA } else { 0 }
 }
 
-fn new_image(data: &[u8], out: u32, bad: u32) -> u32 {
+fn new_image(data: &[u8], out: crate::api::Out, bad: u32) -> u32 {
     let Some(pic) = crate::picture::decode(data) else { return bad };
     let fmt = pic.gdiplus_format();
     let flags = decoded_flags(&pic, data, fmt);
@@ -300,7 +300,7 @@ fn from_stream(c: &mut Ctx) -> u32 {
         return INVALID_PARAMETER;
     }
     // (the out pointer read first: on x64 calling the stream's Read clobbers the argument registers)
-    let out = c.a(1);
+    let out = c.out(1);
     let data = crate::wic::read_stream(c, c.a(0));
     new_image(&data, out, INVALID_PARAMETER)
 }
@@ -308,7 +308,7 @@ fn from_stream(c: &mut Ctx) -> u32 {
 fn from_file(c: &mut Ctx) -> u32 {
     let name = String::from_utf16_lossy(&mem::wstr(c.a(0)));
     let Some(data) = crate::files::resolve(&name).and_then(|h| kura::fs::read(h).ok()) else { return FILE_NOT_FOUND };
-    new_image(&data, c.a(1), UNKNOWN_IMAGE_FORMAT)
+    new_image(&data, c.out(1), UNKNOWN_IMAGE_FORMAT)
 }
 
 pub(crate) fn size_of(img: u32) -> Option<(u32, u32)> {
@@ -441,7 +441,7 @@ fn GdipDisposeImage(c: &mut Ctx) -> u32 {
 }
 fn GdipCloneImage(c: &mut Ctx) -> u32 {
     let Some(b) = with(|m| m.get(&c.a(0)).map(|b| Bitmap { w: b.w, h: b.h, px: b.px.clone(), fmt: b.fmt, flags: b.flags, palette: b.palette.clone(), idx: b.idx.clone(), locked: None })) else { return INVALID_PARAMETER };
-    add(b, c.out(1).addr())
+    add(b, c.out(1))
 }
 
 impl Bitmap {
@@ -663,7 +663,7 @@ fn GdipCreateBitmapFromScan0(c: &mut Ctx) -> u32 {
         }
     }
     b.px = px;
-    add(b, out.addr())
+    add(b, out)
 }
 
 /// straight BGRA `p` over the background `bg`, keeping p's alpha: the pixel premultiplied plus
@@ -906,7 +906,7 @@ mod review_b06_tests {
             let n = px.len();
             let bytes: Vec<u8> = px.iter().flat_map(|p| [premul(p[0], p[3]), premul(p[1], p[3]), premul(p[2], p[3]), p[3]]).collect();
             let out = mem::heap_alloc(8, true);
-            add(Bitmap { w: n as u32, h: 1, px: bytes.clone(), fmt: FMT_32PARGB, flags: 0, palette: Vec::new(), idx: Vec::new(), locked: None }, out);
+            add(Bitmap { w: n as u32, h: 1, px: bytes.clone(), fmt: FMT_32PARGB, flags: 0, palette: Vec::new(), idx: Vec::new(), locked: None }, crate::api::Out::at(out));
             let h = mem::rp(out);
             let i = touch.index(n);
             with_pixels(h, |_, _, p| p[4 * i..4 * i + 4].copy_from_slice(&col));
@@ -927,7 +927,7 @@ mod review_b06_tests {
     fn disposing_a_locked_bitmap_frees_its_lock() {
         let _g = crate::test_guest::enter();
         let out = mem::heap_alloc(8, true);
-        add(Bitmap { w: 2, h: 2, px: vec![7; 16], fmt: FMT_32ARGB, flags: 0, palette: Vec::new(), idx: Vec::new(), locked: None }, out);
+        add(Bitmap { w: 2, h: 2, px: vec![7; 16], fmt: FMT_32ARGB, flags: 0, palette: Vec::new(), idx: Vec::new(), locked: None }, crate::api::Out::at(out));
         let h = mem::rp(out);
         let buf = mem::heap_alloc(4096, true);
         with(|m| m.get_mut(&h).unwrap().locked = Some(Lock { buf, x: 0, y: 0, w: 2, fmt: LockFmt::Argb32 }));

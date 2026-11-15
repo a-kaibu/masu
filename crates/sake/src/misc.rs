@@ -834,7 +834,7 @@ pub(crate) fn wow64_key(p: String) -> String {
 }
 
 /// RegCreateKeyEx: opens or creates, and says which (REG_CREATED_NEW_KEY 1, REG_OPENED_EXISTING_KEY 2).
-fn create_key_ex(h: u32, sub: &str, out: u32, disp: u32, sam: u32) -> u32 {
+fn create_key_ex(h: u32, sub: &str, out: crate::api::Out, disp: u32, sam: u32) -> u32 {
     let existed = key_path(h).is_some_and(|base| {
         let path = join(&base, sub);
         let pre = format!("{path}\\");
@@ -847,7 +847,7 @@ fn create_key_ex(h: u32, sub: &str, out: u32, disp: u32, sam: u32) -> u32 {
     r
 }
 
-fn open_key(h: u32, sub: &str, create: bool, out: u32) -> u32 {
+fn open_key(h: u32, sub: &str, create: bool, out: crate::api::Out) -> u32 {
     open_key_view(h, sub, create, out, 0)
 }
 /// The view a key opened from `h` with access `sam` is in: KEY_WOW64_64KEY (0x100) or
@@ -863,10 +863,10 @@ fn view64(h: u32, sam: u32) -> bool {
         .unwrap_or_else(mem::x64),
     }
 }
-fn open_key_view(h: u32, sub: &str, create: bool, out: u32, sam: u32) -> u32 {
+fn open_key_view(h: u32, sub: &str, create: bool, out: crate::api::Out, sam: u32) -> u32 {
     let Some(base) = key_path(h) else { return 6 };
     if sub.starts_with('\\') {
-        mem::putp(out, 0);
+        out.put(0);
         return 161; // ERROR_BAD_PATHNAME
     }
     let path = join(&base, sub);
@@ -903,45 +903,45 @@ fn open_key_view(h: u32, sub: &str, create: bool, out: u32, sam: u32) -> u32 {
         m.keys().any(|k| k.starts_with(&pre))
     });
     if !exists {
-        mem::putp(out, 0);
+        out.put(0);
         return 2;
     }
     let view64 = view64(h, sam);
-    mem::putp(out, obj::add(Obj::Key(Key { path, view64 })));
+    out.put(obj::add(Obj::Key(Key { path, view64 })));
     0
 }
 
 fn RegOpenKeyExA(c: &mut Ctx) -> u32 {
     let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), false) };
-    open_key_view(c.a(0), &s, false, c.out(4).addr(), c.a(3))
+    open_key_view(c.a(0), &s, false, c.out(4), c.a(3))
 }
 fn RegOpenKeyExW(c: &mut Ctx) -> u32 {
     let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), true) };
-    open_key_view(c.a(0), &s, false, c.out(4).addr(), c.a(3))
+    open_key_view(c.a(0), &s, false, c.out(4), c.a(3))
 }
 fn RegOpenKeyA(c: &mut Ctx) -> u32 {
     let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), false) };
-    open_key(c.a(0), &s, false, c.out(2).addr())
+    open_key(c.a(0), &s, false, c.out(2))
 }
 fn RegOpenKeyW(c: &mut Ctx) -> u32 {
     let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), true) };
-    open_key(c.a(0), &s, false, c.out(2).addr())
+    open_key(c.a(0), &s, false, c.out(2))
 }
 fn RegCreateKeyExA(c: &mut Ctx) -> u32 {
     let s = arg_str(c.a(1), false);
-    create_key_ex(c.a(0), &s, c.out(7).addr(), c.a(8), c.a(5))
+    create_key_ex(c.a(0), &s, c.out(7), c.a(8), c.a(5))
 }
 fn RegCreateKeyExW(c: &mut Ctx) -> u32 {
     let s = arg_str(c.a(1), true);
-    create_key_ex(c.a(0), &s, c.out(7).addr(), c.a(8), c.a(5))
+    create_key_ex(c.a(0), &s, c.out(7), c.a(8), c.a(5))
 }
 fn RegCreateKeyA(c: &mut Ctx) -> u32 {
     let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), false) };
-    open_key(c.a(0), &s, true, c.out(2).addr())
+    open_key(c.a(0), &s, true, c.out(2))
 }
 fn RegCreateKeyW(c: &mut Ctx) -> u32 {
     let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), true) };
-    open_key(c.a(0), &s, true, c.out(2).addr())
+    open_key(c.a(0), &s, true, c.out(2))
 }
 fn RegCloseKey(c: &mut Ctx) -> u32 {
     if root_name(c.a(0)).is_none() && !obj::close(c.a(0)) {
@@ -1031,7 +1031,7 @@ fn RegQueryValueA(c: &mut Ctx) -> u32 {
     let mut h = k;
     if sub != 0 && r8(sub) != 0 {
         let tmp = mem::heap_alloc(8, true);
-        let r = open_key(k, &arg_str(sub, false), false, tmp);
+        let r = open_key(k, &arg_str(sub, false), false, crate::api::Out::at(tmp));
         h = mem::rp(tmp);
         mem::heap_free(tmp);
         if r != 0 {
@@ -1050,7 +1050,7 @@ fn reg_get_value(c: &mut Ctx, wide: bool) -> u32 {
     if sub != 0 && r8(sub) != 0 {
         let tmp = mem::heap_alloc(8, true);
         // (RRF_SUBKEY_WOW6464KEY 0x10000, RRF_SUBKEY_WOW6432KEY 0x20000: KEY_WOW64_64KEY, _32KEY)
-        let r = open_key_view(k, &arg_str(sub, wide), false, tmp, c.a(3) >> 8 & 0x300);
+        let r = open_key_view(k, &arg_str(sub, wide), false, crate::api::Out::at(tmp), c.a(3) >> 8 & 0x300);
         h = mem::rp(tmp);
         mem::heap_free(tmp);
         if r != 0 {
@@ -1136,7 +1136,7 @@ fn RegSetValueA(c: &mut Ctx) -> u32 {
     let mut h = k;
     if sub != 0 && r8(sub) != 0 {
         let tmp = mem::heap_alloc(8, true);
-        let r = open_key(k, &arg_str(sub, false), true, tmp);
+        let r = open_key(k, &arg_str(sub, false), true, crate::api::Out::at(tmp));
         h = mem::rp(tmp);
         mem::heap_free(tmp);
         if r != 0 {
@@ -1858,20 +1858,20 @@ fn dxdiag_provider() -> u32 {
 fn CoCreateInstance(c: &mut Ctx) -> u32 {
     let (clsid, iid, out) = (c.a(0), c.a(3), c.out(4));
     // (the VMR-9 can be aggregated)
-    if let Some(hr) = crate::vmr9::create_instance(c, clsid, c.a(1), iid, out.addr()) {
+    if let Some(hr) = crate::vmr9::create_instance(c, clsid, c.a(1), iid, out) {
         return hr;
     }
     // (DirectMusic refuses an outer object)
-    if let Some(hr) = crate::dmusic::create_instance(clsid, c.a(1), iid, out.addr()) {
+    if let Some(hr) = crate::dmusic::create_instance(clsid, c.a(1), iid, out) {
         return hr;
     }
-    if let Some(hr) = crate::dmime::create_instance(clsid, c.a(1), iid, out.addr()) {
+    if let Some(hr) = crate::dmime::create_instance(clsid, c.a(1), iid, out) {
         return hr;
     }
-    let hr = create_object(c, clsid, iid, out.addr());
+    let hr = create_object(c, clsid, iid, out);
     if hr == 0x8004_0154 {
         let (context, outer) = (c.a(2), c.a(1));
-        crate::comrpc::create(c.cpu, clsid, iid, out.addr(), context, outer)
+        crate::comrpc::create(c.cpu, clsid, iid, out, context, outer)
     } else { hr }
 }
 fn CoGetClassObject(c: &mut Ctx) -> u32 {
@@ -1879,7 +1879,7 @@ fn CoGetClassObject(c: &mut Ctx) -> u32 {
     if out.is_null() || clsid == 0 || iid == 0 { return 0x8000_4003; }
     out.put(0);
     if reserved != 0 { return 0x8007_0057; }
-    let hr = crate::comrpc::get_class(c.cpu, clsid, iid, out.addr(), context);
+    let hr = crate::comrpc::get_class(c.cpu, clsid, iid, out, context);
     if hr != 0 && crate::api::trace() != 0 {
         eprintln!("sake: CoGetClassObject {} iid {} context {context:x}: {hr:08x}",
             crate::comrpc::text(&mem::array::<16>(clsid)), crate::comrpc::text(&mem::array::<16>(iid)));
@@ -1889,38 +1889,38 @@ fn CoGetClassObject(c: &mut Ctx) -> u32 {
 
 /// The object of class `clsid` into *out (what CoCreateInstance and the class factories of
 /// DllGetClassObject make): S_OK, or REGDB_E_CLASSNOTREG with *out NULL.
-fn create_object(c: &mut Ctx, clsid: u32, iid: u32, out: u32) -> u32 {
+fn create_object(c: &mut Ctx, clsid: u32, iid: u32, out: crate::api::Out) -> u32 {
     if r32(clsid) == 0xa65b_8071 {
-        mem::putp(out, dxdiag_provider());
+        out.put(dxdiag_provider());
         return 0;
     }
-    if let Some(hr) = crate::shelllink::create_instance(clsid, iid, out) {
+    if let Some(hr) = crate::shelllink::create_instance(clsid, iid, out.addr()) {
         return hr;
     }
-    if let Some(hr) = crate::webbrowser::create_instance(clsid, iid, out) {
+    if let Some(hr) = crate::webbrowser::create_instance(clsid, iid, out.addr()) {
         return hr;
     }
     if let Some(obj) = crate::ddraw::create_instance(clsid, iid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return 0;
     }
     if let Some(obj) = crate::mf::create_instance(clsid, iid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return if obj == 0 { 0x8000_4002 } else { 0 };
     }
     if let Some(hr) = crate::vmr9::create_instance(c, clsid, 0, iid, out) {
         return hr;
     }
     if let Some(obj) = crate::dshow_mpeg::create_instance(clsid, iid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return if obj == 0 { 0x8000_4002 } else { 0 };
     }
     if let Some(obj) = crate::dshow::create_instance(clsid, iid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return 0;
     }
     if let Some(obj) = crate::amstream::create_instance(clsid, iid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return if obj == 0 { 0x8000_4002 } else { 0 };
     }
     if let Some(hr) = crate::dmusic::create_instance(clsid, 0, iid, out) {
@@ -1930,7 +1930,7 @@ fn create_object(c: &mut Ctx, clsid: u32, iid: u32, out: u32) -> u32 {
         return hr;
     }
     if let Some(obj) = crate::dinput::create_instance(clsid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return 0;
     }
     if let Some(obj) = crate::mmdevapi::create_instance(clsid) {
@@ -1938,26 +1938,26 @@ fn create_object(c: &mut Ctx, clsid: u32, iid: u32, out: u32) -> u32 {
         return 0;
     }
     if let Some(obj) = crate::com::create_instance(clsid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return 0;
     }
     if let Some(obj) = crate::xaudio2::create_instance(clsid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return 0;
     }
     if let Some(obj) = crate::xapo::create_instance(clsid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return 0;
     }
     if let Some(obj) = crate::jscript::create_instance(clsid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return 0;
     }
     if let Some(obj) = crate::sound::create_instance(c, clsid, iid) {
-        mem::putp(out, obj);
+        out.put(obj);
         return 0;
     }
-    mem::putp(out, 0);
+    out.put(0);
     0x8004_0154
 }
 
@@ -2020,12 +2020,12 @@ fn class_factory(clsid: u32) -> u32 {
     }
     /// CreateInstance(this, outer, riid, ppv)
     fn create(c: &mut Ctx) -> u32 {
-        let (this, outer, iid, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
-        if out == 0 {
+        let (this, outer, iid, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+        if out.is_null() {
             return 0x8000_4003;
         }
         if outer != 0 {
-            mem::putp(out, 0);
+            out.put(0);
             return 0x8004_0110; // CLASS_E_NOAGGREGATION
         }
         create_object(c, this + mem::ps() + 4, iid, out)

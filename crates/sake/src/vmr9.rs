@@ -1858,28 +1858,28 @@ fn vtables() -> &'static [u32; N as usize] {
 }
 
 /// CoCreateInstance(CLSID_VideoMixingRenderer9, outer, ..., iid, &out); None: not this class
-pub fn create_instance(c: &mut Ctx, clsid: u32, outer: u32, iid: u32, out: u32) -> Option<u32> {
+pub fn create_instance(c: &mut Ctx, clsid: u32, outer: u32, iid: u32, out: crate::api::Out) -> Option<u32> {
     if clsid != 0 && read_guid(clsid) == CLSID_MEMORY_ALLOCATOR {
-        if out == 0 {
+        if out.is_null() {
             return Some(E_POINTER);
         }
         let g = read_guid(iid);
         if outer != 0 || (g != IID_IUNKNOWN && g != IID_IMEMALLOCATOR) {
-            mem::putp(out, 0);
+            out.put(0);
             return Some(if outer != 0 { CLASS_E_NOAGGREGATION } else { E_NOINTERFACE });
         }
-        mem::putp(out, alloc_new());
+        out.put(alloc_new());
         return Some(0);
     }
     if clsid == 0 || read_guid(clsid) != CLSID_VMR9 {
         return None;
     }
-    if out == 0 {
+    if out.is_null() {
         return Some(E_POINTER);
     }
     // (aggregated: only its IUnknown can be asked for)
     if outer != 0 && read_guid(iid) != IID_IUNKNOWN {
-        mem::putp(out, 0);
+        out.put(0);
         return Some(E_NOINTERFACE);
     }
     let b = mem::heap_alloc(ps() * N, true);
@@ -1911,7 +1911,7 @@ pub fn create_instance(c: &mut Ctx, clsid: u32, outer: u32, iid: u32, out: u32) 
         },
     );
     crate::dshow::vmr_evr(b + ps() * BF, Some(false));
-    let r = qi_inner_out(c, b, iid, out);
+    let r = qi_inner_out(c, b, iid, out.addr());
     if r != 0 {
         vmr_with(b, |v| v.refs = 1);
         inner_release(c, b);

@@ -217,11 +217,11 @@ fn unsupported(_: &mut Ctx) -> u32 {
 
 /// A DirectInput object: its vtable, then (at 4 in the block, not a field the program sees)
 /// 1 ANSI, 2 wide, 0 not known.
-fn create_di(out: u32, v7: bool, wide: Option<bool>) -> u32 {
+fn create_di(out: crate::api::Out, v7: bool, wide: Option<bool>) -> u32 {
     let o = mem::heap_alloc(12, true);
     mem::wp(o, di_vtbl(v7));
     w32(o + mem::ps(), wide.map_or(0, |w| 1 + w as u32));
-    mem::putp(out, o);
+    out.put(o);
     0
 }
 fn di_wide(o: u32) -> Option<bool> {
@@ -241,16 +241,16 @@ fn iid_wide(iid: u32) -> Option<bool> {
 }
 
 fn DirectInput8Create(c: &mut Ctx) -> u32 {
-    create_di(c.out(3).addr(), false, iid_wide(c.a(2)))
+    create_di(c.out(3), false, iid_wide(c.a(2)))
 }
 fn DirectInputCreateA(c: &mut Ctx) -> u32 {
-    create_di(c.a(2), true, Some(false))
+    create_di(c.out(2), true, Some(false))
 }
 fn DirectInputCreateW(c: &mut Ctx) -> u32 {
-    create_di(c.a(2), true, Some(true))
+    create_di(c.out(2), true, Some(true))
 }
 fn DirectInputCreateEx(c: &mut Ctx) -> u32 {
-    create_di(c.a(3), true, iid_wide(c.a(2)))
+    create_di(c.out(3), true, iid_wide(c.a(2)))
 }
 
 /// CoCreateInstance of CLSID_DirectInput / CLSID_DirectInput8 (then Initialize).
@@ -261,7 +261,7 @@ pub fn create_instance(clsid: u32) -> Option<u32> {
         _ => return None,
     };
     let out = mem::heap_alloc(8, true);
-    create_di(out, v7, None);
+    create_di(crate::api::Out::at(out), v7, None);
     let o = mem::r32(out);
     mem::heap_free(out);
     Some(o)

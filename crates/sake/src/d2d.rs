@@ -293,7 +293,7 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
         return if hr != 0 { hr } else { 0x8000_4005 };
     }
     let dev_out = mem::heap_alloc(8, true);
-    new_device(factory, dev_out);
+    new_device(factory, crate::api::Out::at(dev_out));
     let device = mem::rp(dev_out);
     mem::heap_free(dev_out);
     let o = com::object(com::iface!(ID2D1HwndRenderTarget), &hwnd_methods(), 8);
@@ -415,7 +415,7 @@ fn D2D1CreateFactory(c: &mut Ctx) -> u32 {
 }
 
 /// A device of `factory` (which it keeps).
-fn new_device(factory: u32, out: u32) -> u32 {
+fn new_device(factory: u32, out: crate::api::Out) -> u32 {
     let d = com::object(
         DEVICE,
         &com::impls!(ID2D1Device6 { CreateDeviceContext: CreateDeviceContext, GetFactory: GetFactory, ClearResources: ok, SetMaximumTextureMemory: ok }),
@@ -424,7 +424,7 @@ fn new_device(factory: u32, out: u32) -> u32 {
     com::add_ref_obj(factory);
     st(|s| s.parents.insert(d, factory));
     com::on_free(d, free_device);
-    mem::putp(out, d);
+    out.put(d);
     0
 }
 fn free_device(d: u32) {
@@ -434,11 +434,11 @@ fn free_device(d: u32) {
 }
 
 fn CreateDevice(c: &mut Ctx) -> u32 {
-    new_device(c.a(0), c.a(2))
+    new_device(c.a(0), c.out(2))
 }
 
 /// A device of a factory of its own (the device's reference alone).
-fn device_of_new_factory(out: u32) -> u32 {
+fn device_of_new_factory(out: crate::api::Out) -> u32 {
     let f = factory();
     let r = new_device(f, out);
     com::release_obj(f);
@@ -446,7 +446,7 @@ fn device_of_new_factory(out: u32) -> u32 {
 }
 
 fn D2D1CreateDevice(c: &mut Ctx) -> u32 {
-    device_of_new_factory(c.out(2).addr())
+    device_of_new_factory(c.out(2))
 }
 
 fn GetFactory(c: &mut Ctx) -> u32 {
@@ -542,7 +542,7 @@ fn CreateDeviceContext(c: &mut Ctx) -> u32 {
 fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
     // (dxgi surface, properties, out): a device and a context targeting the surface
     let dev_out = mem::heap_alloc(8, true);
-    device_of_new_factory(dev_out);
+    device_of_new_factory(crate::api::Out::at(dev_out));
     let device = mem::rp(dev_out);
     mem::heap_free(dev_out);
     let o = com::object(CONTEXT, &context_methods(), 8);
@@ -561,7 +561,7 @@ fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
 fn CreateDxgiSurfaceRenderTarget(c: &mut Ctx) -> u32 {
     // (this, surface, properties, out): a context of a device of this factory
     let dev_out = mem::heap_alloc(8, true);
-    new_device(c.a(0), dev_out);
+    new_device(c.a(0), crate::api::Out::at(dev_out));
     let device = mem::rp(dev_out);
     mem::heap_free(dev_out);
     let o = com::object(CONTEXT, &context_methods(), 8);

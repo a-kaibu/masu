@@ -286,7 +286,7 @@ fn kind_of(o: u32) -> Option<Kind> {
 }
 
 /// CoCreateInstance / CoGetClassObject of the performance or the loader: None for another class.
-pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: u32) -> Option<u32> {
+pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: crate::api::Out) -> Option<u32> {
     /// the classes made here
     #[derive(Clone, Copy)]
     enum Class {
@@ -305,10 +305,10 @@ pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: u32) -> Option<u32
         Class::Loader => Kind::Loader,
         Class::Segment => Kind::Segment,
     };
-    if out == 0 {
+    if out.is_null() {
         return Some(Hr::Pointer.code());
     }
-    mem::putp(out, 0);
+    out.put(0);
     if outer != 0 {
         return Some(Hr::NoAggregation.code());
     }
@@ -320,7 +320,7 @@ pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: u32) -> Option<u32
         Class::Loader => new_loader(),
         Class::Segment => new_segment(None, 0),
     };
-    mem::putp(out, o);
+    out.put(o);
     Some(0)
 }
 
@@ -1452,14 +1452,14 @@ mod tests {
             p
         };
         let out = mem::heap_alloc(16, true);
-        assert_eq!(create_instance(g(&CLSID_PERFORMANCE), 0, g(&PERF_IIDS[2]), out), Some(0));
+        assert_eq!(create_instance(g(&CLSID_PERFORMANCE), 0, g(&PERF_IIDS[2]), crate::api::Out::at(out)), Some(0));
         let perf = mem::r32(out);
-        assert_eq!(create_instance(g(&CLSID_LOADER), 0, g(&LOADER_IIDS[1]), out), Some(0));
+        assert_eq!(create_instance(g(&CLSID_LOADER), 0, g(&LOADER_IIDS[1]), crate::api::Out::at(out)), Some(0));
         let loader = mem::r32(out);
         // aggregation and other interfaces refused
-        assert_eq!(create_instance(g(&CLSID_LOADER), 1, g(&LOADER_IIDS[1]), out), Some(Hr::NoAggregation.code()));
-        assert_eq!(create_instance(g(&CLSID_LOADER), 0, g(&PERF_IIDS[2]), out), Some(Hr::NoInterface.code()));
-        assert_eq!(create_instance(g(&IID_UNKNOWN), 0, g(&PERF_IIDS[2]), out), None);
+        assert_eq!(create_instance(g(&CLSID_LOADER), 1, g(&LOADER_IIDS[1]), crate::api::Out::at(out)), Some(Hr::NoAggregation.code()));
+        assert_eq!(create_instance(g(&CLSID_LOADER), 0, g(&PERF_IIDS[2]), crate::api::Out::at(out)), Some(Hr::NoInterface.code()));
+        assert_eq!(create_instance(g(&IID_UNKNOWN), 0, g(&PERF_IIDS[2]), crate::api::Out::at(out)), None);
 
         // InitAudio(&dm, &ds, hwnd, DMUS_APATH_SHARED_STEREOPLUSREVERB, 64, DMUS_AUDIOF_ALL, NULL)
         assert_eq!(call(p_init_audio, &[perf, 0, 0, 0, 1, 64, 0x3f, 0]), 0);
@@ -1567,7 +1567,7 @@ mod tests {
                 let _g = enter();
                 unsafe { std::env::set_var("SAKE_NO_MIXER", "1") };
                 let out = mem::heap_alloc(16, true);
-                prop_assert_eq!(create_instance(guid(&CLSID_PERFORMANCE), 0, guid(&PERF_IIDS[2]), out), Some(0));
+                prop_assert_eq!(create_instance(guid(&CLSID_PERFORMANCE), 0, guid(&PERF_IIDS[2]), crate::api::Out::at(out)), Some(0));
                 let perf = mem::r32(out);
                 let orig = segment_of_bytes(&wav(22050, 1, 16, 400));
                 let file = with(|w| w.segments[&orig].file);

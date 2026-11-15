@@ -1745,7 +1745,7 @@ fn k_processing() -> [Guid; 2] {
 }
 
 /// A reader of `media` (whose bytes are `data`), made of media source `source` (0: none).
-fn new_reader(c: &mut Ctx, attributes: u32, data: Arc<Data>, media: &Media, source: u32, out: u32) -> u32 {
+fn new_reader(c: &mut Ctx, attributes: u32, data: Arc<Data>, media: &Media, source: u32, out: crate::api::Out) -> u32 {
     // (Ogg / ASF: the streams read the packets copied out of the file)
     let sdata = media.packed.clone().unwrap_or_else(|| data.clone());
     let at = store_of(attributes);
@@ -1801,11 +1801,11 @@ fn new_reader(c: &mut Ctx, attributes: u32, data: Arc<Data>, media: &Media, sour
             taken: 0,
         },
     );
-    putp(out, b);
+    out.put(b);
     0
 }
 /// A reader of the file in `data`, or why none.
-fn reader_of(c: &mut Ctx, attributes: u32, data: Data, out: u32) -> u32 {
+fn reader_of(c: &mut Ctx, attributes: u32, data: Data, out: crate::api::Out) -> u32 {
     let Some(media) = source::open_media(Some(c), &data) else {
         release(c, data.guest_stream());
         return Hr::UnsupportedByteStreamType.code();
@@ -1826,7 +1826,7 @@ fn MFCreateSourceReaderFromURL(c: &mut Ctx) -> u32 {
     let missing = || 0x8007_0000 | crate::files::missing(&path);
     let Some(host) = crate::files::resolve(&path) else { return missing() };
     let Some(d) = kura::fs::File::open(&host).ok().and_then(Data::host) else { return missing() };
-    reader_of(c, at, d, out.addr())
+    reader_of(c, at, d, out)
 }
 
 /// A file: URL's path ("file:///C:/a%20b.mp3" -> "C:\a b.mp3"); anything else as it is.
@@ -1858,7 +1858,7 @@ fn MFCreateSourceReaderFromByteStream(c: &mut Ctx) -> u32 {
     }
     out.put(0);
     let Some(d) = Data::guest(c, bs) else { return Hr::InvalidArg.code() };
-    reader_of(c, at, d, out.addr())
+    reader_of(c, at, d, out)
 }
 
 /// MFCreateSourceReaderFromMediaSource(IMFMediaSource *, IMFAttributes *, IMFSourceReader **):
@@ -1870,7 +1870,7 @@ fn MFCreateSourceReaderFromMediaSource(c: &mut Ctx) -> u32 {
     }
     out.put(0);
     let Some((data, media)) = source::source_of(src) else { return Hr::NotImpl.code() };
-    new_reader(c, at, data, &media, src, out.addr())
+    new_reader(c, at, data, &media, src, out)
 }
 
 pub fn init() {

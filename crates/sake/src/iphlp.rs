@@ -316,8 +316,8 @@ fn GetIfEntry2(c: &mut Ctx) -> u32 {
     }
 }
 /// A MIB_*_TABLE2: NumEntries, then the rows from offset 8, freed by FreeMibTable
-fn table2(out: u32, row: u32, n: usize, fill: impl Fn(u32, usize)) -> u32 {
-    if out == 0 {
+fn table2(out: crate::api::Out, row: u32, n: usize, fill: impl Fn(u32, usize)) -> u32 {
+    if out.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
     let t = mem::heap_alloc(8 + row * n.max(1) as u32, true);
@@ -328,19 +328,19 @@ fn table2(out: u32, row: u32, n: usize, fill: impl Fn(u32, usize)) -> u32 {
     for i in 0..n {
         fill(t + 8 + row * i as u32, i);
     }
-    wp(out, t);
+    out.put(t);
     NO_ERROR
 }
 fn GetIfTable2(c: &mut Ctx) -> u32 {
     let v = sorted();
-    table2(c.out(0).addr(), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
+    table2(c.out(0), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
 }
 fn GetIfTable2Ex(c: &mut Ctx) -> u32 {
     if c.a(0) > 2 {
         return ERROR_INVALID_PARAMETER;
     }
     let v = sorted();
-    table2(c.out(1).addr(), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
+    table2(c.out(1), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
 }
 
 // ---- IPv4 address and route tables ----
@@ -460,7 +460,7 @@ fn GetIpForwardTable2(c: &mut Ctx) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let v = routes(f);
-    table2(c.out(1).addr(), 104, v.len(), |p, i| fill_forward_row2(p, &v[i]))
+    table2(c.out(1), 104, v.len(), |p, i| fill_forward_row2(p, &v[i]))
 }
 
 fn GetIpNetTable(c: &mut Ctx) -> u32 {
@@ -477,7 +477,7 @@ fn GetIpNetTable2(c: &mut Ctx) -> u32 {
     if !family_ok(c.a(0) & 0xffff) {
         return ERROR_INVALID_PARAMETER;
     }
-    table2(c.out(1).addr(), 88, 0, |_, _| {})
+    table2(c.out(1), 88, 0, |_, _| {})
 }
 
 // ---- statistics ----
@@ -822,7 +822,7 @@ fn GetUnicastIpAddressTable(c: &mut Ctx) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let v = addrs(f);
-    table2(c.out(1).addr(), 80, v.len(), |p, i| fill_unicast_row(p, &v[i]))
+    table2(c.out(1), 80, v.len(), |p, i| fill_unicast_row(p, &v[i]))
 }
 /// GetUnicastIpAddressEntry(row): by Address and InterfaceLuid (or InterfaceIndex)
 fn GetUnicastIpAddressEntry(c: &mut Ctx) -> u32 {
@@ -892,7 +892,7 @@ fn GetIpInterfaceTable(c: &mut Ctx) -> u32 {
             }
         }
     }
-    table2(c.out(1).addr(), 168, v.len(), |p, i| fill_ipif_row(p, v[i].0, v[i].1))
+    table2(c.out(1), 168, v.len(), |p, i| fill_ipif_row(p, v[i].0, v[i].1))
 }
 fn GetIpInterfaceEntry(c: &mut Ctx) -> u32 {
     let p = c.a(0);
@@ -2071,7 +2071,7 @@ pub fn init() {
         if !family_ok(c.a(0) & 0xffff) {
             return ERROR_INVALID_PARAMETER;
         }
-        table2(c.a(1), 48, 0, |_, _| {})
+        table2(c.out(1), 48, 0, |_, _| {})
     });
     implement(d, "GetIpInterfaceTable", GetIpInterfaceTable);
     implement(d, "GetIpInterfaceEntry", GetIpInterfaceEntry);

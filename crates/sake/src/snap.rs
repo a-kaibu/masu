@@ -195,7 +195,7 @@ impl Reacquire {
     }
     pub fn call(self, a: u64, b: u64) {
         match self {
-            Reacquire::Srw => crate::k32::srw_acquire(a as u32, b != 0),
+            Reacquire::Srw => crate::k32::srw_acquire(crate::api::Out::at(a as u32), b != 0),
             Reacquire::Cs => crate::k32::cs_reacquire(a, b),
             Reacquire::MsvcpMtx => crate::msvcp_thr::mtx_reacquire(a, b),
         }

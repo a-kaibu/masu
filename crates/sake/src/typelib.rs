@@ -1084,32 +1084,32 @@ fn load(path: &str) -> Option<Lib> {
     parse(&data)
 }
 
-fn load_arg(c: &mut Ctx, out: u32) -> u32 {
+fn load_arg(c: &mut Ctx, out: crate::api::Out) -> u32 {
     let path = String::from_utf16_lossy(&mem::wstr(c.a(0)));
     // (the objects here are laid out for x86: 4-byte pointers, x86 VARIANT arrays and vtable
     // calls; a 64-bit program gets the error, not an ITypeLib it would crash in)
     if mem::x64() {
         crate::com::warn_once("sake: LoadTypeLib in a 64-bit program: not supported (TYPE_E_CANTLOADLIBRARY)");
-        mem::putp(out, 0);
+        out.put(0);
         return TYPE_E_CANTLOADLIBRARY;
     }
     match load(&path) {
         Some(l) => {
-            put32(out, add(l));
+            out.put(add(l));
             S_OK
         }
         None => {
             eprintln!("sake: LoadTypeLib {path}: no MSFT type library");
-            put32(out, 0);
+            out.put(0);
             TYPE_E_CANTLOADLIBRARY
         }
     }
 }
 fn LoadTypeLib(c: &mut Ctx) -> u32 {
-    load_arg(c, c.out(1).addr())
+    load_arg(c, c.out(1))
 }
 fn LoadTypeLibEx(c: &mut Ctx) -> u32 {
-    load_arg(c, c.out(2).addr())
+    load_arg(c, c.out(2))
 }
 /// LoadRegTypeLib(guid, major, minor, lcid, &lib): a library loaded before, by its GUID.
 fn LoadRegTypeLib(c: &mut Ctx) -> u32 {

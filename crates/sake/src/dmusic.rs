@@ -75,14 +75,14 @@ fn read16(p: u32) -> [u8; 16] {
 }
 
 /// CoCreateInstance(CLSID_DirectMusic, outer, context, iid, &out): None for another class.
-pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: u32) -> Option<u32> {
+pub fn create_instance(clsid: u32, outer: u32, iid: u32, out: crate::api::Out) -> Option<u32> {
     (read16(clsid) == CLSID_DIRECTMUSIC).then(|| create(outer, iid, out).code())
 }
-fn create(outer: u32, iid: u32, out: u32) -> Hr {
-    if out == 0 {
+fn create(outer: u32, iid: u32, out: crate::api::Out) -> Hr {
+    if out.is_null() {
         return Hr::Pointer;
     }
-    mem::putp(out, 0);
+    out.put(0);
     // (dmusic does not aggregate)
     if outer != 0 {
         return Hr::NoAggregation;
@@ -90,7 +90,7 @@ fn create(outer: u32, iid: u32, out: u32) -> Hr {
     if iid == 0 || !answers(&read16(iid)) {
         return Hr::NoInterface;
     }
-    mem::putp(out, new_object());
+    out.put(new_object());
     Hr::Ok
 }
 

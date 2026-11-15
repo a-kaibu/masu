@@ -94,7 +94,7 @@ fn mtx_lock(m: u32, wait: Wait) -> u32 {
     let me = owner_is_me(m);
     if ty & !MTX_RECURSIVE == MTX_PLAIN {
         if !me {
-            srw_acquire(m + LOCK(), false);
+            srw_acquire(crate::api::Out::at(m + LOCK()), false);
             w32(m + OWNER(), tid());
         }
         w32(m + COUNT(), r32(m + COUNT()) + 1);
@@ -103,10 +103,10 @@ fn mtx_lock(m: u32, wait: Wait) -> u32 {
     let got = me
         || match wait {
             Wait::Forever => {
-                srw_acquire(m + LOCK(), false);
+                srw_acquire(crate::api::Out::at(m + LOCK()), false);
                 true
             }
-            Wait::Try | Wait::Ms(0) => srw_try(m + LOCK(), false),
+            Wait::Try | Wait::Ms(0) => srw_try(crate::api::Out::at(m + LOCK()), false),
             // (a wait on the lock word with a deadline, woken by the release)
             Wait::Ms(ms) => crate::k32::srw_acquire_for(m + LOCK(), false, ms),
         };
@@ -131,7 +131,7 @@ fn mtx_unlock(m: u32) {
     w32(m + COUNT(), n);
     if n == 0 {
         w32(m + OWNER(), u32::MAX);
-        srw_release(m + LOCK(), false);
+        srw_release(crate::api::Out::at(m + LOCK()), false);
     }
 }
 
@@ -221,7 +221,7 @@ fn cnd_init_in_situ(c: &mut Ctx) -> u32 {
 /// cnd_wait's lock back: mutex `m` held `n` times
 pub(crate) fn mtx_reacquire(m: u64, n: u64) {
     let m = m as u32;
-    srw_acquire(m + LOCK(), false);
+    srw_acquire(crate::api::Out::at(m + LOCK()), false);
     w32(m + OWNER(), tid());
     w32(m + COUNT(), (n as u32).max(1));
 }
@@ -230,13 +230,13 @@ pub(crate) fn mtx_reacquire(m: u64, n: u64) {
 fn cnd_wait(cv: u32, m: u32, ms: u32) -> u32 {
     let n = r32(m + COUNT());
     let woke = cv_wait(
-        cv + CV(),
+        crate::api::Out::at(cv + CV()),
         ms,
         |m, _| {
             let m = m as u32;
             w32(m + OWNER(), u32::MAX);
             w32(m + COUNT(), 0);
-            srw_release(m + LOCK(), false);
+            srw_release(crate::api::Out::at(m + LOCK()), false);
         },
         crate::snap::Reacquire::MsvcpMtx,
         m as u64,
@@ -260,7 +260,7 @@ fn _Cnd_timedwait_for(c: &mut Ctx) -> u32 {
 }
 /// _Cnd_signal / _Cnd_broadcast (a signal wakes all waiters: they recheck their predicate)
 fn _Cnd_signal(c: &mut Ctx) -> u32 {
-    cv_wake(c.a(0) + CV());
+    cv_wake(crate::api::Out::at(c.a(0) + CV()));
     SUCCESS
 }
 
@@ -294,7 +294,7 @@ fn _Cnd_do_broadcast_at_thread_exit(_: &mut Ctx) -> u32 {
             w32(done, 1);
         }
         mtx_unlock(m);
-        cv_wake(cnd + CV());
+        cv_wake(crate::api::Out::at(cnd + CV()));
     }
     0
 }

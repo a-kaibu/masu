@@ -26,7 +26,7 @@ fn dmusic_snapshot() {
                 for (iid_p, out_p) in [(iid, po), (0, po), (iid, 0)] {
                     mem::write(iid, g);
                     w32(po, 0xdead_beef);
-                    let hr = create_instance(cls, outer, iid_p, out_p);
+                    let hr = create_instance(cls, outer, iid_p, crate::api::Out::at(out_p));
                     let o = rp(po);
                     if hr == Some(0) {
                         objs.push(o);

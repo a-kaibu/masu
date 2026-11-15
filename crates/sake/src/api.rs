@@ -61,10 +61,19 @@ pub struct Ctx<'a> {
 /// ```compile_fail
 /// fn f(c: &mut sake::api::Ctx) { sake::mem::w32(c.out(1), 0) }
 /// ```
+/// ```compile_fail
+/// let _ = sake::api::Out::at(0x1000); // only sake itself names a slot of its own
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Out(u32);
 
 impl Out {
+    /// The pointer-sized slot at `a` that the caller found itself (inside a structure of its own:
+    /// a std::mutex's SRWLOCK, a local the result goes to). Handlers take theirs from `c.out(i)`.
+    #[inline]
+    pub(crate) fn at(a: u32) -> Out {
+        Out(a)
+    }
     /// `v` as a pointer-sized value (mem::putp: NULL skipped; small negatives sign-extended)
     #[inline]
     pub fn put(self, v: u32) {
@@ -89,8 +98,9 @@ impl Out {
     pub fn is_null(self) -> bool {
         self.0 == 0
     }
-    /// Its address, for a helper that writes it as what it is (an SRWLOCK's word, a structure
-    /// with this one inside): named at the call, so a 32-bit write through it is a choice
+    /// Its address, where it is no slot this code writes: an SRWLOCK's word, an array of them, an
+    /// argument handed on to guest or host code (which writes it whole itself), an opaque object
+    /// pointer the metadata counts as pointer-sized. Helpers that write it take the Out.
     #[inline]
     pub fn addr(self) -> u32 {
         self.0

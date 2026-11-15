@@ -171,7 +171,7 @@ fn class_name(h: u32) -> String {
 fn RoGetActivationFactory(c: &mut Ctx) -> u32 {
     if let (Some(k), true) = (ui::Class::named(&class_name(c.a(0))), !c.out(2).is_null()) {
         let f = ui::factory(k);
-        return ui::qi_into(f, c.a(1), c.out(2).addr());
+        return ui::qi_into(f, c.a(1), c.out(2));
     }
     if crate::env_on!("SAKE_TRACE_COM") {
         eprintln!("sake: RoGetActivationFactory {}: not registered", class_name(c.a(0)));
@@ -291,11 +291,11 @@ mod ui {
     }
 
     fn qi(c: &mut Ctx) -> u32 {
-        let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
+        let (this, iid, out) = (c.a(0), c.a(1), c.out(2));
         qi_into(split(this).0, iid, out)
     }
     /// QueryInterface on the object at `block` into `out`
-    pub fn qi_into(block: u32, iid: u32, out: u32) -> u32 {
+    pub fn qi_into(block: u32, iid: u32, out: crate::api::Out) -> u32 {
         let want = crate::com::read_guid(iid);
         let k = if [IUNKNOWN, IINSPECTABLE, IAGILE].contains(&want) {
             Some(0)
@@ -306,11 +306,11 @@ mod ui {
             if crate::env_on!("SAKE_TRACE_COM") {
                 eprintln!("sake: {:?}: no interface {want:x?}", kind(block));
             }
-            mem::putp(out, 0);
+            out.put(0);
             return E_NOINTERFACE;
         };
         w32(refs(block), r32(refs(block)) + 1);
-        mem::putp(out, block + k * ps());
+        out.put(block + k * ps());
         S_OK
     }
     fn add_ref(c: &mut Ctx) -> u32 {

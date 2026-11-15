@@ -2285,45 +2285,45 @@ fn RtlLeaveCriticalSection(c: &mut Ctx) -> u32 {
 // (a generation per address) and one-time init, all waiting on one Condvar (crates/waits)
 static SYNC: waits::Sync = waits::Sync::new();
 
-pub(crate) fn srw_try(l: u32, shared: bool) -> bool {
-    waits::Sync::srw_try(atomic(l), shared)
+pub(crate) fn srw_try(l: crate::api::Out, shared: bool) -> bool {
+    waits::Sync::srw_try(atomic(l.addr()), shared)
 }
-pub(crate) fn srw_acquire(l: u32, shared: bool) {
-    SYNC.srw_acquire(atomic(l), shared, &Pause)
+pub(crate) fn srw_acquire(l: crate::api::Out, shared: bool) {
+    SYNC.srw_acquire(atomic(l.addr()), shared, &Pause)
 }
 /// srw_acquire for at most `ms` milliseconds: whether it got the lock.
 pub(crate) fn srw_acquire_for(l: u32, shared: bool, ms: u32) -> bool {
     let end = kome::time::from_now(std::time::Duration::from_millis(u64::from(ms)));
     SYNC.srw_acquire_until(atomic(l), shared, &Pause, || Some(kome::num::lo64(end.saturating_duration_since(std::time::Instant::now()).as_nanos().div_ceil(1_000_000))))
 }
-pub(crate) fn srw_release(l: u32, shared: bool) {
-    SYNC.srw_release(atomic(l), shared)
+pub(crate) fn srw_release(l: crate::api::Out, shared: bool) {
+    SYNC.srw_release(atomic(l.addr()), shared)
 }
 fn InitializeSRWLock(c: &mut Ctx) -> u32 {
     c.out(0).put(0);
     0
 }
 fn AcquireSRWLockExclusive(c: &mut Ctx) -> u32 {
-    srw_acquire(c.out(0).addr(), false);
+    srw_acquire(c.out(0), false);
     0
 }
 fn AcquireSRWLockShared(c: &mut Ctx) -> u32 {
-    srw_acquire(c.out(0).addr(), true);
+    srw_acquire(c.out(0), true);
     0
 }
 fn ReleaseSRWLockExclusive(c: &mut Ctx) -> u32 {
-    srw_release(c.out(0).addr(), false);
+    srw_release(c.out(0), false);
     0
 }
 fn ReleaseSRWLockShared(c: &mut Ctx) -> u32 {
-    srw_release(c.out(0).addr(), true);
+    srw_release(c.out(0), true);
     0
 }
 fn TryAcquireSRWLockExclusive(c: &mut Ctx) -> u32 {
-    u32::from(srw_try(c.out(0).addr(), false))
+    u32::from(srw_try(c.out(0), false))
 }
 fn TryAcquireSRWLockShared(c: &mut Ctx) -> u32 {
-    u32::from(srw_try(c.out(0).addr(), true))
+    u32::from(srw_try(c.out(0), true))
 }
 fn InitializeConditionVariable(c: &mut Ctx) -> u32 {
     c.out(0).put(0);
@@ -2334,7 +2334,7 @@ fn InitializeConditionVariable(c: &mut Ctx) -> u32 {
 /// it again (plain functions: a save state taken meanwhile has a restored copy call
 /// `reacquire` and return `woken` from the API, a wake without a signal).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn cv_wait(cv: u32, ms: u32, release: fn(u64, u64), reacquire: crate::snap::Reacquire, a: u64, b: u64, woken: u32) -> bool {
+pub(crate) fn cv_wait(cv: crate::api::Out, ms: u32, release: fn(u64, u64), reacquire: crate::snap::Reacquire, a: u64, b: u64, woken: u32) -> bool {
     struct Return(crate::snap::Reacquire, u64, u64, u32);
     impl waits::Host for Return {
         fn pausing(&self) -> bool {
@@ -2344,25 +2344,25 @@ pub(crate) fn cv_wait(cv: u32, ms: u32, release: fn(u64, u64), reacquire: crate:
             crate::snap::point_return(self.3, self.0, self.1, self.2);
         }
     }
-    let woke = SYNC.cv_wait(cv, ms, || release(a, b), || reacquire.call(a, b), &Return(reacquire, a, b, woken));
+    let woke = SYNC.cv_wait(cv.addr(), ms, || release(a, b), || reacquire.call(a, b), &Return(reacquire, a, b, woken));
     if !woke {
         last_error(1460);
     }
     woke
 }
-pub(crate) fn cv_wake(cv: u32) {
-    SYNC.cv_wake(cv);
+pub(crate) fn cv_wake(cv: crate::api::Out) {
+    SYNC.cv_wake(cv.addr());
 }
 fn SleepConditionVariableSRW(c: &mut Ctx) -> u32 {
     let (cv, l, ms, shared) = (c.out(0), c.out(1), c.a(2), c.a(3) & 1 != 0);
-    u32::from(cv_wait(cv.addr(), ms, |l, s| srw_release(kome::num::lo32(l), s != 0), crate::snap::Reacquire::Srw, u64::from(l.addr()), u64::from(shared), 1))
+    u32::from(cv_wait(cv, ms, |l, s| srw_release(crate::api::Out::at(kome::num::lo32(l)), s != 0), crate::snap::Reacquire::Srw, u64::from(l.addr()), u64::from(shared), 1))
 }
 fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
     let (cv, cs, ms) = (c.out(0), c.a(1), c.a(2));
     // a recursively entered section is left and entered again as a whole
     let depth = crate::mem::r32(mem::ga(cs) + cs_off(REC)).max(1);
     u32::from(cv_wait(
-        cv.addr(),
+        cv,
         ms,
         |cs, _| {
             crate::mem::w32(mem::ga(kome::num::lo32(cs)) + cs_off(REC), 1);
@@ -2380,11 +2380,11 @@ pub(crate) fn cs_reacquire(cs: u64, depth: u64) {
     crate::mem::w32(mem::ga(kome::num::lo32(cs)) + cs_off(REC), kome::num::lo32(depth))
 }
 fn WakeConditionVariable(c: &mut Ctx) -> u32 {
-    cv_wake(c.out(0).addr());
+    cv_wake(c.out(0));
     0
 }
 fn WakeAllConditionVariable(c: &mut Ctx) -> u32 {
-    cv_wake(c.out(0).addr());
+    cv_wake(c.out(0));
     0
 }
 /// InitOnceExecuteOnce(once, fn, param, context): the word is 0 (new), 1 (running), 2 (done).
@@ -9300,24 +9300,24 @@ fn InterlockedFlushSList(c: &mut Ctx) -> u32 {
 fn QueryDepthSList(c: &mut Ctx) -> u32 {
     slist_get(c.a(0)).1
 }
-fn push_list(h: u32, first: u32, last: u32, n: u32) -> u32 {
+fn push_list(h: u32, first: u32, last: crate::api::Out, n: u32) -> u32 {
     let _g = SLIST.locked();
     let (old, d) = slist_get(h);
-    mem::wp(last, old);
+    last.put(old);
     slist_set(h, first, d.saturating_add(n));
     old
 }
 /// InterlockedPushListSListEx(head, first, last, count)
 fn InterlockedPushListSListEx(c: &mut Ctx) -> u32 {
-    push_list(c.a(0), c.out(1).addr(), c.out(2).addr(), c.a(3))
+    push_list(c.a(0), c.out(1).addr(), c.out(2), c.a(3))
 }
 /// InterlockedPushListSList(head, first, last, count): fastcall on x86 (head in ECX, first
 /// in EDX)
 fn InterlockedPushListSList(c: &mut Ctx) -> u32 {
     if mem::x64() {
-        return push_list(c.a(0), c.a(1), c.a(2), c.a(3));
+        return push_list(c.a(0), c.a(1), crate::api::Out::at(c.a(2)), c.a(3));
     }
-    push_list(c.cpu.regs[1], c.cpu.regs[2], c.a(0), c.a(1))
+    push_list(c.cpu.regs[1], c.cpu.regs[2], crate::api::Out::at(c.a(0)), c.a(1))
 }
 fn RtlFirstEntrySList(c: &mut Ctx) -> u32 {
     slist_get(c.a(0)).0

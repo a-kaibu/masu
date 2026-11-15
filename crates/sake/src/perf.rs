@@ -84,22 +84,22 @@ fn guid(p: u32) -> [u8; 16] {
     mem::array::<16>(p)
 }
 
-fn start(c: &mut Ctx, g: u32, out: u32) -> u32 {
-    if g == 0 || out == 0 {
+fn start(c: &mut Ctx, g: u32, out: crate::api::Out) -> u32 {
+    if g == 0 || out.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
     // (a block of the provider's own: its GUID)
     let h = mem::heap_alloc(32, true);
     mem::write(h, &mem::array::<16>(g));
     with(|m| m.insert(h, Provider::default()));
-    mem::putp(out, h);
+    out.put(h);
     let _ = c;
     0
 }
 /// PerfStartProvider(provider GUID, callback, &handle)
 fn PerfStartProvider(c: &mut Ctx) -> u32 {
     let (g, out) = (c.a(0), c.out(2));
-    start(c, g, out.addr())
+    start(c, g, out)
 }
 /// PerfStartProviderEx(provider GUID, PERF_PROVIDER_CONTEXT, &handle)
 fn PerfStartProviderEx(c: &mut Ctx) -> u32 {
@@ -108,7 +108,7 @@ fn PerfStartProviderEx(c: &mut Ctx) -> u32 {
     if ctx == 0 || r32(ctx) < need {
         return ERROR_INVALID_PARAMETER;
     }
-    start(c, g, out.addr())
+    start(c, g, out)
 }
 fn PerfStopProvider(c: &mut Ctx) -> u32 {
     let h = c.a(0);

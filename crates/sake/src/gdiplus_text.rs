@@ -39,13 +39,13 @@ static OBJS: Mutex<Option<HashMap<u32, Obj>>> = Mutex::new(None);
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
     f(OBJS.lock().unwrap().get_or_insert_with(HashMap::default))
 }
-fn new_obj(o: Obj, out: u32) -> u32 {
-    if out == 0 {
+fn new_obj(o: Obj, out: crate::api::Out) -> u32 {
+    if out.is_null() {
         return INVALID_PARAMETER;
     }
     let h = mem::heap_alloc(16, true);
     with(|m| m.insert(h, o));
-    mem::putp(out, h);
+    out.put(h);
     OK
 }
 fn delete(c: &mut Ctx) -> u32 {
@@ -63,24 +63,24 @@ fn fl(v: u32) -> f32 {
 
 // ---- graphics ----
 
-fn new_graphics(img: u32, hdc: u32, out: u32) -> u32 {
+fn new_graphics(img: u32, hdc: u32, out: crate::api::Out) -> u32 {
     new_obj(Obj::Graphics { img, hdc, unit: 1, scale: 1.0, origin: (0, 0) }, out)
 }
 fn GdipCreateFromHDC(c: &mut Ctx) -> u32 {
     if c.a(0) == 0 {
         return OUT_OF_MEMORY;
     }
-    new_graphics(0, c.a(0), c.out(1).addr())
+    new_graphics(0, c.a(0), c.out(1))
 }
 fn GdipCreateFromHWND(c: &mut Ctx) -> u32 {
-    new_graphics(0, 0, c.out(1).addr())
+    new_graphics(0, 0, c.out(1))
 }
 /// GdipCreateBitmapFromGraphics(width, height, graphics, &bitmap): a 32bppPARGB bitmap
 fn GdipCreateBitmapFromGraphics(c: &mut Ctx) -> u32 {
     if graphics(c.a(2)).is_none() || c.i(0) <= 0 || c.i(1) <= 0 {
         return INVALID_PARAMETER;
     }
-    crate::gdiplus::new_bitmap(c.a(0), c.a(1), 0x000e_200b, c.out(3).addr())
+    crate::gdiplus::new_bitmap(c.a(0), c.a(1), 0x000e_200b, c.out(3))
 }
 fn GdipGetRenderingOrigin(c: &mut Ctx) -> u32 {
     let (xp, yp) = (c.a(1), c.a(2));
@@ -107,7 +107,7 @@ fn GdipGetImageGraphicsContext(c: &mut Ctx) -> u32 {
     if !crate::gdiplus::is_image(c.a(0)) {
         return INVALID_PARAMETER;
     }
-    new_graphics(c.a(0), 0, c.out(1).addr())
+    new_graphics(c.a(0), 0, c.out(1))
 }
 fn GdipSetPageUnit(c: &mut Ctx) -> u32 {
     let u = c.a(1);
@@ -188,8 +188,8 @@ fn charset_of(family: u32) -> u8 {
 /// and descent in it), unit World. A face GDI+ does not have is Arial, unless the LOGFONT
 /// has neither a weight nor a charset (NotTrueTypeFont; Wine's tests)
 fn font_from_logfont(c: &mut Ctx, wide: bool) -> u32 {
-    let (lp, out) = (c.a(1), c.a(2));
-    if c.a(0) == 0 || lp == 0 || out == 0 {
+    let (lp, out) = (c.a(1), c.out(2));
+    if c.a(0) == 0 || lp == 0 || out.is_null() {
         return INVALID_PARAMETER;
     }
     let lf = crate::gdi::read_logfont(lp, wide);
@@ -221,7 +221,7 @@ fn GdipCreateFont(c: &mut Ctx) -> u32 {
     }
     let em = size * px_per_unit(unit, 1.0);
     let lf = logfont_of(family, em, style, charset_of(family));
-    new_obj(Obj::Font { lf, em, family, size, unit, style }, out.addr())
+    new_obj(Obj::Font { lf, em, family, size, unit, style }, out)
 }
 fn GdipCloneFont(c: &mut Ctx) -> u32 {
     let o = with(|m| match m.get(&c.a(0)) {
@@ -229,7 +229,7 @@ fn GdipCloneFont(c: &mut Ctx) -> u32 {
         _ => None,
     });
     let Some(o) = o else { return INVALID_PARAMETER };
-    new_obj(o, c.out(1).addr())
+    new_obj(o, c.out(1))
 }
 fn GdipDeleteFont(c: &mut Ctx) -> u32 {
     if font(c.a(0)).is_none() {
@@ -354,7 +354,7 @@ fn line_height(tf: &TextFont) -> f32 {
 
 /// GdipCreatePen1(argb, width, unit, &pen)
 fn GdipCreatePen1(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Pen { argb: c.a(0), width: c.f(1) }, c.out(3).addr())
+    new_obj(Obj::Pen { argb: c.a(0), width: c.f(1) }, c.out(3))
 }
 /// a brush's (gdiplus_brush) or pen's color
 fn color_of(b: u32) -> Option<u32> {
@@ -394,7 +394,7 @@ fn edit_format(h: u32, f: impl FnOnce(&mut StringFormat) -> u32) -> u32 {
     })
 }
 fn GdipCreateStringFormat(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Format(StringFormat::new(c.a(0))), c.out(2).addr())
+    new_obj(Obj::Format(StringFormat::new(c.a(0))), c.out(2))
 }
 fn GdipCloneStringFormat(c: &mut Ctx) -> u32 {
     let v = with(|m| match m.get(&c.a(0)) {
@@ -402,7 +402,7 @@ fn GdipCloneStringFormat(c: &mut Ctx) -> u32 {
     });
     let Some(mut v) = v else { return INVALID_PARAMETER };
     v.generic = false;
-    new_obj(Obj::Format(v), c.out(1).addr())
+    new_obj(Obj::Format(v), c.out(1))
 }
 fn GdipDeleteStringFormat(c: &mut Ctx) -> u32 {
     with(|m| {
@@ -512,18 +512,18 @@ fn format(f: u32) -> (u32, u32) {
 // ---- regions ----
 
 fn GdipCreateRegion(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Region { r: [-4194304.0, -4194304.0, 8388608.0, 8388608.0] }, c.out(0).addr())
+    new_obj(Obj::Region { r: [-4194304.0, -4194304.0, 8388608.0, 8388608.0] }, c.out(0))
 }
 /// GdipCreateRegionRect(RectF*, &region) / GdipCreateRegionRectI(Rect*, &region)
 fn GdipCreateRegionRect(c: &mut Ctx) -> u32 {
     let p = c.a(0);
     let r = [0, 4, 8, 12].map(|o| fl(r32(p + o)));
-    new_obj(Obj::Region { r }, c.out(1).addr())
+    new_obj(Obj::Region { r }, c.out(1))
 }
 fn GdipCreateRegionRectI(c: &mut Ctx) -> u32 {
     let p = c.a(0);
     let r = [0, 4, 8, 12].map(|o| r32(p + o) as i32 as f32);
-    new_obj(Obj::Region { r }, c.out(1).addr())
+    new_obj(Obj::Region { r }, c.out(1))
 }
 fn region(g: u32) -> Option<[f32; 4]> {
     with(|m| match m.get(&g) {

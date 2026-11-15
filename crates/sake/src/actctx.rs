@@ -2004,13 +2004,13 @@ fn wlen(s: &str) -> u32 {
     s.encode_utf16().count() as u32
 }
 
-fn query(flags: u32, mut h: u32, sub: u32, class: u32, buf: u32, size: u32, retlen: u32) -> u32 {
-    if retlen != 0 {
-        mem::wp(retlen, 0);
+fn query(flags: u32, mut h: u32, sub: u32, class: u32, buf: u32, size: u32, retlen: crate::api::Out) -> u32 {
+    if !retlen.is_null() {
+        retlen.put(0);
     }
     let set_ret = |n: u32| {
-        if retlen != 0 {
-            mem::wp(retlen, n);
+        if !retlen.is_null() {
+            retlen.put(n);
         }
     };
     if flags & QUERY_ACTCTX_FLAG_USE_ACTIVE_ACTCTX != 0 {
@@ -2184,7 +2184,7 @@ fn query(flags: u32, mut h: u32, sub: u32, class: u32, buf: u32, size: u32, retl
 }
 
 /// RtlQueryActivationContextApplicationSettings
-fn settings(flags: u32, h: u32, ns: u32, name: u32, buf: u32, size: u32, written: u32) -> u32 {
+fn settings(flags: u32, h: u32, ns: u32, name: u32, buf: u32, size: u32, written: crate::api::Out) -> u32 {
     if flags != 0 || name == 0 {
         return STATUS_INVALID_PARAMETER;
     }
@@ -2199,8 +2199,8 @@ fn settings(flags: u32, h: u32, ns: u32, name: u32, buf: u32, size: u32, written
         return STATUS_SXS_KEY_NOT_FOUND;
     };
     let w = w16s(&v);
-    if written != 0 {
-        mem::wp(written, w.len() as u32 + 1);
+    if !written.is_null() {
+        written.put(w.len() as u32 + 1);
     }
     if (size as usize) < w.len() {
         return STATUS_BUFFER_TOO_SMALL;
@@ -2414,21 +2414,21 @@ fn ret_bool(st: u32) -> u32 {
 
 /// QueryActCtxW(flags, context, subinstance, class, buffer, size, returned)
 fn QueryActCtxW(c: &mut Ctx) -> u32 {
-    ret_bool(query(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(6).addr()))
+    ret_bool(query(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(6)))
 }
 fn RtlQueryInformationActivationContext(c: &mut Ctx) -> u32 {
-    query(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6))
+    query(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(6))
 }
 /// RtlQueryInformationActiveActivationContext(class, buffer, size, returned)
 fn RtlQueryInformationActiveActivationContext(c: &mut Ctx) -> u32 {
-    query(QUERY_ACTCTX_FLAG_USE_ACTIVE_ACTCTX, 0, 0, c.a(0), c.a(1), c.a(2), c.a(3))
+    query(QUERY_ACTCTX_FLAG_USE_ACTIVE_ACTCTX, 0, 0, c.a(0), c.a(1), c.a(2), c.out(3))
 }
 /// QueryActCtxSettingsW(flags, context, namespace, name, buffer, size, written)
 fn QueryActCtxSettingsW(c: &mut Ctx) -> u32 {
-    ret_bool(settings(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(6).addr()))
+    ret_bool(settings(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(6)))
 }
 fn RtlQueryActivationContextApplicationSettings(c: &mut Ctx) -> u32 {
-    settings(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6))
+    settings(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(6))
 }
 
 fn find_api(flags: u32, id: u32, key: Option<Key>, data: u32) -> u32 {

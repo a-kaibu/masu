@@ -456,33 +456,33 @@ fn class_for(cpu: &mut koji::Cpu, clsid: &[u8], context: u32) -> Result<Class, u
     }
 }
 /// Load a registered in-process server and ask its original DllGetClassObject.
-pub(crate) fn get_class(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: u32, context: u32) -> u32 {
-    if out == 0 || clsid == 0 || iid == 0 { return POINTER; }
-    wp(out, 0);
+pub(crate) fn get_class(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api::Out, context: u32) -> u32 {
+    if out.is_null() || clsid == 0 || iid == 0 { return POINTER; }
+    out.put(0);
     if context & 3 != 0 && let Some(path) = crate::misc::registry_string(&format!("hkcr\\clsid\\{}\\inprocserver32", text(&guid(clsid))), "") {
         let base = crate::pe::load_library(cpu, &path);
         if base == 0 { return 0x8007_007e; }
         let Some(entry) = crate::pe::proc_address(base, crate::pe::Import::Name("DllGetClassObject")) else { return 0x8007_007f };
-        return crate::call(cpu, entry, &[clsid, iid, out]);
+        return crate::call(cpu, entry, &[clsid, iid, out.addr()]);
     }
     // Remote factory interfaces need a dedicated activation protocol. Never
     // report success with a null factory when that protocol is unavailable.
     CLASSNOTREG
 }
 /// Try the registered local-server path after the built-in COM classes.
-pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: u32, context: u32, outer: u32) -> u32 {
-    if out == 0 || clsid == 0 || iid == 0 { return POINTER; } wp(out, 0);
+pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api::Out, context: u32, outer: u32) -> u32 {
+    if out.is_null() || clsid == 0 || iid == 0 { return POINTER; } out.put(0);
     if outer != 0 { return 0x8004_0110; }
     if context & 3 != 0 {
         let factory_iid = mem::heap_alloc(16 + ps(), true);
         let mut iid_bytes = UNKNOWN; iid_bytes[0] = 1;
         mem::write(factory_iid, &iid_bytes);
-        let hr = get_class(cpu, clsid, factory_iid, factory_iid + 16, context & 3);
+        let hr = get_class(cpu, clsid, factory_iid, crate::api::Out::at(factory_iid + 16), context & 3);
         let factory = rp(factory_iid + 16); mem::heap_free(factory_iid);
         if hr != CLASSNOTREG {
             if hr != 0 { return hr; }
             if factory == 0 { return NOINTERFACE; }
-            let result = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, outer, iid, out]);
+            let result = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, outer, iid, out.addr()]);
             refcall(cpu, factory, 2); return result;
         }
     }
@@ -491,7 +491,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: u32, contex
     if target.pid == crate::pid() {
         let Some((factory, _)) = FACTORIES.lock().unwrap().as_ref().and_then(|f| f.get(&target.cookie)).copied() else { return CLASSNOTREG };
         let p = mem::heap_alloc(16, true); mem::write(p, &iid);
-        let hr = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, 0, p, out]); mem::heap_free(p); return hr;
+        let hr = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, 0, p, out.addr()]); mem::heap_free(p); return hr;
     }
     // Read the signature before activation so unsupported interfaces do not leak
     // a server reference when the local proxy cannot be constructed.
@@ -500,7 +500,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: u32, contex
         class: text(&class), iid: iid.clone(), ..Default::default() });
     if reply.hr != 0 { return reply.hr; }
     let Some(object) = reply.data.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap())) else { return BAD_DATA };
-    match make_proxy(cpu, target.pid, target.tid, object, &iid) { Ok(p) => { wp(out, p); 0 }, Err(hr) => hr }
+    match make_proxy(cpu, target.pid, target.tid, object, &iid) { Ok(p) => { out.put(p); 0 }, Err(hr) => hr }
 }
 fn CoRegisterClassObject(c: &mut Ctx) -> u32 {
     let (class, object, context, flags, out) = (guid(c.a(0)), c.a(1), c.a(2), c.a(3), c.a(4));

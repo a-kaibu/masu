@@ -492,11 +492,11 @@ const STATUS_TOO_MANY_SIDS: u32 = 0xC000_017E;
 /// LsaLookupNames2(policy, flags, count, names, &domains, &sids): LSA_TRANSLATED_SID2
 /// {Use; PSID Sid; LONG DomainIndex; ULONG Flags} per name. LsaLookupNames (v1) gives
 /// LSA_TRANSLATED_SID {Use; ULONG RelativeId; LONG DomainIndex} instead.
-fn lookup_names(h: u32, count: u32, names: u32, domsp: u32, sidsp: u32, v2: bool) -> u32 {
+fn lookup_names(h: u32, count: u32, names: u32, domsp: crate::api::Out, sidsp: crate::api::Out, v2: bool) -> u32 {
     if !policy_ok(h) {
         return STATUS_INVALID_HANDLE;
     }
-    if domsp == 0 || sidsp == 0 || count != 0 && names == 0 {
+    if domsp.is_null() || sidsp.is_null() || count != 0 && names == 0 {
         return STATUS_INVALID_PARAMETER;
     }
     if count > MAX_LOOKUP {
@@ -527,8 +527,8 @@ fn lookup_names(h: u32, count: u32, names: u32, domsp: u32, sidsp: u32, v2: bool
             }
         }
     }
-    mem::putp(sidsp, b.put());
-    mem::putp(domsp, doms.put());
+    sidsp.put(b.put());
+    domsp.put(doms.put());
     let hits = found.iter().filter(|a| a.is_some()).count();
     if hits == 0 && count != 0 {
         STATUS_NONE_MAPPED
@@ -539,10 +539,10 @@ fn lookup_names(h: u32, count: u32, names: u32, domsp: u32, sidsp: u32, v2: bool
     }
 }
 fn LsaLookupNames2(c: &mut Ctx) -> u32 {
-    lookup_names(c.a(0), c.a(2), c.a(3), c.out(4).addr(), c.out(5).addr(), true)
+    lookup_names(c.a(0), c.a(2), c.a(3), c.out(4), c.out(5), true)
 }
 fn LsaLookupNames(c: &mut Ctx) -> u32 {
-    lookup_names(c.a(0), c.a(1), c.a(2), c.out(3).addr(), c.out(4).addr(), false)
+    lookup_names(c.a(0), c.a(1), c.a(2), c.out(3), c.out(4), false)
 }
 
 /// LsaLookupSids(policy, count, sids, &domains, &names): LSA_TRANSLATED_NAME {Use;

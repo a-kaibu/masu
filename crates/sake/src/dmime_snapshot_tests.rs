@@ -102,7 +102,7 @@ fn dmime_snapshot() {
                 let c = r.pick(&[CLSID_PERFORMANCE, CLSID_LOADER, CLSID_SEGMENT, CLSID_SEGMENT_STATE]);
                 mem::write(cls, &c);
                 let outer = if r.below(15) == 0 { 0x1234 } else { 0 };
-                let hr = create_instance(cls, outer, if r.below(15) == 0 { 0 } else { iid }, o_p);
+                let hr = create_instance(cls, outer, if r.below(15) == 0 { 0 } else { iid }, crate::api::Out::at(o_p));
                 let o = rp(po);
                 let shown = if hr == Some(0) {
                     match kind_of(o) {
