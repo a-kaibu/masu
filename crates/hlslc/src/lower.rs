@@ -2056,7 +2056,6 @@ impl<'a> L<'a> {
     }
 
     pub fn expr(&mut self, e: &Expr) -> R<Val> {
-        use sm4::*;
         Ok(match e {
             Expr::Int(v, u) => self.lit_int(*v, *u),
             Expr::Float(f) => Val::num(Ty::Scalar(B::Float), vec![C::I(fbits(kome::num::to_f32(*f)))]),
@@ -2071,153 +2070,190 @@ impl<'a> L<'a> {
             }
             Expr::List(_) => return Err("initializer list in an expression".into()),
             Expr::Str(_) => return Err("a string in an expression".into()),
-            Expr::Construct(t, args) => {
-                let mut flat = Vec::new();
-                for a in args {
-                    flat.push(self.expr(a)?);
-                }
-                let mut tb = Vec::new();
-                leaf_bases(self.prog, t, &mut tb);
-                let n: usize = flat.iter().map(|v| v.c.len()).sum();
-                // (float4(x): every component x)
-                if n == 1 && tb.len() > 1 && let Some(x) = flat.pop() {
-                    return self.cast(x, t);
-                }
-                if n != tb.len() {
-                    return Err(format!("constructor of {t:?} with {n} components"));
-                }
-                let mut comps = Vec::new();
-                for v in &flat {
-                    let mut fb = Vec::new();
-                    leaf_bases(self.prog, &v.ty, &mut fb);
-                    for (k, c) in v.c.iter().enumerate() {
-                        let to = tb[comps.len()];
-                        comps.extend(self.conv_base(&[*c], fb[k], to));
-                    }
-                }
-                Val::num(t.clone(), comps)
-            }
+            Expr::Construct(t, args) => self.expr_construct(t, args)?,
             Expr::Cast(t, a) => {
                 let v = self.expr(a)?;
                 self.cast(v, t)?
             }
-            Expr::Un(op, a) => match op {
-                Un::Neg => {
-                    let v = self.expr(a)?;
-                    let b = if v.ty.base() == B::Bool { B::Int } else { v.ty.base() };
-                    let v = self.cast(v.clone(), &v.ty.with_base(b))?;
-                    let c = if b == B::Float {
-                        self.alu_m(MOV, b, &[(&v.c, 1)])
-                    } else {
-                        self.alu(INEG, b, &[&v.c])
-                    };
-                    Val::num(v.ty, c)
-                }
-                Un::Not => {
-                    let v = self.expr(a)?;
-                    let v = self.cast(v.clone(), &v.ty.with_base(B::Bool))?;
-                    let c = self.alu(IEQ, B::Bool, &[&v.c, &Self::imm(0, v.c.len())]);
-                    Val::num(v.ty, c)
-                }
-                Un::BitNot => {
-                    if self.sm3() {
-                        return Err("bitwise operators need shader model 4".into());
-                    }
-                    let v = self.expr(a)?;
-                    let c = self.alu(NOT, v.ty.base(), &[&v.c]);
-                    Val::num(v.ty, c)
-                }
-                Un::PreInc | Un::PreDec | Un::PostInc | Un::PostDec => {
-                    let mark = self.wbs.len();
-                    self.place_reads = true;
-                    let p = self.place(a);
-                    self.place_reads = false;
-                    let p = p?;
-                    let old = self.copy(&p.c);
-                    let fl = p.ty.base() == B::Float || self.sm3();
-                    let one = if fl { fbits(1.0) } else { 1 };
-                    let dec = matches!(op, Un::PreDec | Un::PostDec);
-                    let c = if fl {
-                        self.alu_m(ADD, B::Float, &[(&old, 0), (&Self::imm(one, old.len()), u8::from(dec))])
-                    } else {
-                        let v = if dec { one.wrapping_neg() } else { one };
-                        self.alu(IADD, p.ty.base(), &[&old, &Self::imm(v, old.len())])
-                    };
-                    self.assign(&p.c, &c);
-                    self.write_back(mark);
-                    if matches!(op, Un::PostInc | Un::PostDec) {
-                        Val::num(p.ty, old)
-                    } else {
-                        Val::num(p.ty, c)
-                    }
-                }
-            },
-            Expr::Bin(op, a, b) => {
-                let x = self.expr(a)?;
-                let y = self.expr(b)?;
-                self.binary(*op, x, y)?
-            }
-            Expr::Assign(op, a, b) => {
-                let mark = self.wbs.len();
-                self.place_reads = op.is_some();
-                let p = self.place(a);
-                self.place_reads = false;
-                let p = p?;
-                let mut v = self.expr(b)?;
-                if let Some(op) = op {
-                    let cur = Val::num(p.ty.clone(), p.c.clone());
-                    v = self.binary(*op, cur, v)?;
-                }
-                let v = self.cast(v, &p.ty)?;
-                self.assign(&p.c, &v.c);
-                self.write_back(mark);
-                Val::num(p.ty, p.c)
-            }
-            Expr::Cond(c, a, b) => {
-                let cv = self.expr(c)?;
-                if !cv.ty.numeric() || cv.c.is_empty() {
-                    return Err("the condition of ?: must be a number".into());
-                }
-                let x = self.expr(a)?;
-                let y = self.expr(b)?;
-                let t = if x.ty.numeric() && y.ty.numeric() { self.common(&x.ty, &y.ty)? } else { x.ty.clone() };
-                // (a vector condition picks per component)
-                let t = if cv.ty.comps() > 1 && t.comps() == 1 { Ty::vec_of(t.base(), cv.ty.comps()).ok_or("a condition of more than 4 components")? } else { t };
-                // (a narrower vector condition: the values truncated to it, as fxc does)
-                let t = match t {
-                    Ty::Vec(b, n) if cv.ty.comps() > 1 && kome::num::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec_of(b, cv.ty.comps()).ok_or("a condition of more than 4 components")?,
-                    t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
-                         | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
-                };
-                let x = self.cast(x, &t)?;
-                let y = self.cast(y, &t)?;
-                let cb = self.cast(cv.clone(), &cv.ty.with_base(B::Bool))?;
-                let n = x.c.len();
-                let cc: Vec<C> = if cb.c.len() == 1 { vec![cb.c[0]; n] } else { cb.c[..n.min(cb.c.len())].to_vec() };
-                // (a vector condition for a matrix: as many components as the values, or the
-                // result would be typed with more components than it has, review A-6)
-                if cc.len() != n {
-                    return Err("the condition of ?: and its values differ in size".into());
-                }
-                if let Some(C::I(v)) = cc.first().filter(|_| cc.iter().all(|c| *c == cc[0])) {
-                    return Ok(if *v != 0 { x } else { y });
-                }
-                let r = self.alu(MOVC, t.base(), &[&cc, &x.c, &y.c]);
-                Val::num(t, r)
-            }
-            Expr::Member(a, name) => {
-                let v = self.expr_place_or_value(a)?;
-                let v = self.member(v, name)?;
-                self.shared_value(v)
-            }
-            Expr::Index(a, i) => {
-                let v = self.expr_place_or_value(a)?;
-                let iv = self.expr(i)?;
-                let v = self.index(v, iv)?;
-                self.shared_value(v)
-            }
+            Expr::Un(op, a) => self.expr_un(op, a)?,
+            Expr::Bin(op, a, b) => self.expr_bin(op, a, b)?,
+            Expr::Assign(op, a, b) => self.expr_assign(op, a, b)?,
+            Expr::Cond(c, a, b) => self.expr_cond(c, a, b)?,
+            Expr::Member(a, name) => self.expr_member(a, name)?,
+            Expr::Index(a, i) => self.expr_index(a, i)?,
             Expr::Call(name, args, line) => self.call(name, args, *line)?,
             Expr::Method(o, name, args) => self.method(o, name, args)?,
+        })
+    }
+
+    #[inline(never)]
+    fn expr_construct(&mut self, t: &Ty, args: &[Expr]) -> R<Val> {
+        Ok({
+            let mut flat = Vec::new();
+            for a in args {
+                flat.push(self.expr(a)?);
+            }
+            let mut tb = Vec::new();
+            leaf_bases(self.prog, t, &mut tb);
+            let n: usize = flat.iter().map(|v| v.c.len()).sum();
+            // (float4(x): every component x)
+            if n == 1 && tb.len() > 1 && let Some(x) = flat.pop() {
+                return self.cast(x, t);
+            }
+            if n != tb.len() {
+                return Err(format!("constructor of {t:?} with {n} components"));
+            }
+            let mut comps = Vec::new();
+            for v in &flat {
+                let mut fb = Vec::new();
+                leaf_bases(self.prog, &v.ty, &mut fb);
+                for (k, c) in v.c.iter().enumerate() {
+                    let to = tb[comps.len()];
+                    comps.extend(self.conv_base(&[*c], fb[k], to));
+                }
+            }
+            Val::num(t.clone(), comps)
+        })
+    }
+
+    #[inline(never)]
+    fn expr_un(&mut self, op: &Un, a: &Expr) -> R<Val> {
+        use sm4::*;
+        Ok(match op {
+        Un::Neg => {
+            let v = self.expr(a)?;
+            let b = if v.ty.base() == B::Bool { B::Int } else { v.ty.base() };
+            let v = self.cast(v.clone(), &v.ty.with_base(b))?;
+            let c = if b == B::Float {
+                self.alu_m(MOV, b, &[(&v.c, 1)])
+            } else {
+                self.alu(INEG, b, &[&v.c])
+            };
+            Val::num(v.ty, c)
+        }
+        Un::Not => {
+            let v = self.expr(a)?;
+            let v = self.cast(v.clone(), &v.ty.with_base(B::Bool))?;
+            let c = self.alu(IEQ, B::Bool, &[&v.c, &Self::imm(0, v.c.len())]);
+            Val::num(v.ty, c)
+        }
+        Un::BitNot => {
+            if self.sm3() {
+                return Err("bitwise operators need shader model 4".into());
+            }
+            let v = self.expr(a)?;
+            let c = self.alu(NOT, v.ty.base(), &[&v.c]);
+            Val::num(v.ty, c)
+        }
+        Un::PreInc | Un::PreDec | Un::PostInc | Un::PostDec => {
+            let mark = self.wbs.len();
+            self.place_reads = true;
+            let p = self.place(a);
+            self.place_reads = false;
+            let p = p?;
+            let old = self.copy(&p.c);
+            let fl = p.ty.base() == B::Float || self.sm3();
+            let one = if fl { fbits(1.0) } else { 1 };
+            let dec = matches!(op, Un::PreDec | Un::PostDec);
+            let c = if fl {
+                self.alu_m(ADD, B::Float, &[(&old, 0), (&Self::imm(one, old.len()), u8::from(dec))])
+            } else {
+                let v = if dec { one.wrapping_neg() } else { one };
+                self.alu(IADD, p.ty.base(), &[&old, &Self::imm(v, old.len())])
+            };
+            self.assign(&p.c, &c);
+            self.write_back(mark);
+            if matches!(op, Un::PostInc | Un::PostDec) {
+                Val::num(p.ty, old)
+            } else {
+                Val::num(p.ty, c)
+            }
+        }
+        })
+    }
+
+    #[inline(never)]
+    fn expr_bin(&mut self, op: &Bin, a: &Expr, b: &Expr) -> R<Val> {
+        Ok({
+            let x = self.expr(a)?;
+            let y = self.expr(b)?;
+            self.binary(*op, x, y)?
+        })
+    }
+
+    #[inline(never)]
+    fn expr_assign(&mut self, op: &Option<Bin>, a: &Expr, b: &Expr) -> R<Val> {
+        Ok({
+            let mark = self.wbs.len();
+            self.place_reads = op.is_some();
+            let p = self.place(a);
+            self.place_reads = false;
+            let p = p?;
+            let mut v = self.expr(b)?;
+            if let Some(op) = op {
+                let cur = Val::num(p.ty.clone(), p.c.clone());
+                v = self.binary(*op, cur, v)?;
+            }
+            let v = self.cast(v, &p.ty)?;
+            self.assign(&p.c, &v.c);
+            self.write_back(mark);
+            Val::num(p.ty, p.c)
+        })
+    }
+
+    #[inline(never)]
+    fn expr_cond(&mut self, c: &Expr, a: &Expr, b: &Expr) -> R<Val> {
+        use sm4::*;
+        Ok({
+            let cv = self.expr(c)?;
+            if !cv.ty.numeric() || cv.c.is_empty() {
+                return Err("the condition of ?: must be a number".into());
+            }
+            let x = self.expr(a)?;
+            let y = self.expr(b)?;
+            let t = if x.ty.numeric() && y.ty.numeric() { self.common(&x.ty, &y.ty)? } else { x.ty.clone() };
+            // (a vector condition picks per component)
+            let t = if cv.ty.comps() > 1 && t.comps() == 1 { Ty::vec_of(t.base(), cv.ty.comps()).ok_or("a condition of more than 4 components")? } else { t };
+            // (a narrower vector condition: the values truncated to it, as fxc does)
+            let t = match t {
+                Ty::Vec(b, n) if cv.ty.comps() > 1 && kome::num::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec_of(b, cv.ty.comps()).ok_or("a condition of more than 4 components")?,
+                t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
+                     | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
+            };
+            let x = self.cast(x, &t)?;
+            let y = self.cast(y, &t)?;
+            let cb = self.cast(cv.clone(), &cv.ty.with_base(B::Bool))?;
+            let n = x.c.len();
+            let cc: Vec<C> = if cb.c.len() == 1 { vec![cb.c[0]; n] } else { cb.c[..n.min(cb.c.len())].to_vec() };
+            // (a vector condition for a matrix: as many components as the values, or the
+            // result would be typed with more components than it has, review A-6)
+            if cc.len() != n {
+                return Err("the condition of ?: and its values differ in size".into());
+            }
+            if let Some(C::I(v)) = cc.first().filter(|_| cc.iter().all(|c| *c == cc[0])) {
+                return Ok(if *v != 0 { x } else { y });
+            }
+            let r = self.alu(MOVC, t.base(), &[&cc, &x.c, &y.c]);
+            Val::num(t, r)
+        })
+    }
+
+    #[inline(never)]
+    fn expr_member(&mut self, a: &Expr, name: &str) -> R<Val> {
+        Ok({
+            let v = self.expr_place_or_value(a)?;
+            let v = self.member(v, name)?;
+            self.shared_value(v)
+        })
+    }
+
+    #[inline(never)]
+    fn expr_index(&mut self, a: &Expr, i: &Expr) -> R<Val> {
+        Ok({
+            let v = self.expr_place_or_value(a)?;
+            let iv = self.expr(i)?;
+            let v = self.index(v, iv)?;
+            self.shared_value(v)
         })
     }
 

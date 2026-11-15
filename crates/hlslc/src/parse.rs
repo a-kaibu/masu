@@ -879,93 +879,24 @@ impl Parser {
         if self.eat(";") {
             return Ok(Stmt::Block(Vec::new()));
         }
+        self.stmt_rest()
+    }
+
+    /// The statements other than a block and `;`. It and each kind of statement are functions of
+    /// their own (inline(never)): a nesting's recursion (stmt, block, if_stmt, ..) then carries
+    /// only small frames. As one function its frame was 2.7 KiB under Rust 1.100, and MAX_NEST
+    /// nested blocks or ifs overran a guest thread's 1 MiB stack
+    /// (tests::deep_nesting_is_an_error_not_a_stack_overflow).
+    #[inline(never)]
+    fn stmt_rest(&mut self) -> R<Stmt> {
         let line = self.line();
         if let Some(Tok::Ident(s)) = self.peek() {
             match s.as_str() {
-                "if" => {
-                    self.p += 1;
-                    self.expect("(")?;
-                    let c = self.expr()?;
-                    self.expect(")")?;
-                    let a = self.stmt()?;
-                    let b = if self.is_id("else") {
-                        self.p += 1;
-                        Some(Box::new(self.stmt()?))
-                    } else {
-                        None
-                    };
-                    return Ok(Stmt::If(c, Box::new(a), b));
-                }
-                "for" => {
-                    self.p += 1;
-                    self.expect("(")?;
-                    let init = if self.eat(";") {
-                        None
-                    } else if self.starts_decl() {
-                        Some(Box::new(Stmt::Decl(self.decl()?)))
-                    } else {
-                        let e = self.expr()?;
-                        self.expect(";")?;
-                        Some(Box::new(Stmt::Expr(e)))
-                    };
-                    let cond = if self.is(";") { None } else { Some(self.expr()?) };
-                    self.expect(";")?;
-                    let step = if self.is(")") { None } else { Some(self.expr()?) };
-                    self.expect(")")?;
-                    let body = self.stmt()?;
-                    return Ok(Stmt::For(init, cond, step, Box::new(body)));
-                }
-                "while" => {
-                    self.p += 1;
-                    self.expect("(")?;
-                    let c = self.expr()?;
-                    self.expect(")")?;
-                    return Ok(Stmt::While(c, Box::new(self.stmt()?)));
-                }
-                "do" => {
-                    self.p += 1;
-                    let body = self.stmt()?;
-                    if !self.is_id("while") {
-                        return self.err("expected 'while'");
-                    }
-                    self.p += 1;
-                    self.expect("(")?;
-                    let c = self.expr()?;
-                    self.expect(")")?;
-                    self.expect(";")?;
-                    return Ok(Stmt::Do(Box::new(body), c));
-                }
-                "switch" => {
-                    self.p += 1;
-                    self.expect("(")?;
-                    let v = self.expr()?;
-                    self.expect(")")?;
-                    self.expect("{")?;
-                    let mut cases: Vec<(Vec<Option<Expr>>, Vec<Stmt>)> = Vec::new();
-                    while !self.eat("}") {
-                        if self.is_id("case") || self.is_id("default") {
-                            let mut labels = Vec::new();
-                            while self.is_id("case") || self.is_id("default") {
-                                if self.is_id("case") {
-                                    self.p += 1;
-                                    labels.push(Some(self.expr()?));
-                                } else {
-                                    self.p += 1;
-                                    labels.push(None);
-                                }
-                                self.expect(":")?;
-                            }
-                            cases.push((labels, Vec::new()));
-                        } else {
-                            let s = self.stmt()?;
-                            match cases.last_mut() {
-                                Some(c) => c.1.push(s),
-                                None => return self.err("statement before case"),
-                            }
-                        }
-                    }
-                    return Ok(Stmt::Switch(v, cases));
-                }
+                "if" => return self.if_stmt(),
+                "for" => return self.for_stmt(),
+                "while" => return self.while_stmt(),
+                "do" => return self.do_stmt(),
+                "switch" => return self.switch_stmt(),
                 "break" => {
                     self.p += 1;
                     self.expect(";")?;
@@ -987,23 +918,130 @@ impl Parser {
                     self.expect(";")?;
                     return Ok(Stmt::Return(e, line));
                 }
-                "struct" if matches!(self.peek_at(2), Some(Tok::Punct("{"))) => {
-                    self.p += 1;
-                    let i = self.struct_def()?;
-                    if self.eat(";") {
-                        return Ok(Stmt::Block(Vec::new()));
-                    }
-                    return Ok(Stmt::Decl(self.declarators(Ty::Struct(i), Mods { is_in: true, ..Default::default() }, line)?));
-                }
+                "struct" if matches!(self.peek_at(2), Some(Tok::Punct("{"))) => return self.struct_stmt(line),
                 _ => {}
             }
         }
         if self.starts_decl() {
-            return Ok(Stmt::Decl(self.decl()?));
+            return self.decl_stmt();
         }
+        self.expr_stmt()
+    }
+
+    #[inline(never)]
+    fn expr_stmt(&mut self) -> R<Stmt> {
         let e = self.expr()?;
         self.expect(";")?;
         Ok(Stmt::Expr(e))
+    }
+
+    #[inline(never)]
+    fn if_stmt(&mut self) -> R<Stmt> {
+        self.p += 1;
+        self.expect("(")?;
+        let c = self.expr()?;
+        self.expect(")")?;
+        let a = self.stmt()?;
+        let b = if self.is_id("else") {
+            self.p += 1;
+            Some(Box::new(self.stmt()?))
+        } else {
+            None
+        };
+        Ok(Stmt::If(c, Box::new(a), b))
+    }
+
+    #[inline(never)]
+    fn for_stmt(&mut self) -> R<Stmt> {
+        self.p += 1;
+        self.expect("(")?;
+        let init = if self.eat(";") {
+            None
+        } else if self.starts_decl() {
+            Some(Box::new(self.decl_stmt()?))
+        } else {
+            let e = self.expr()?;
+            self.expect(";")?;
+            Some(Box::new(Stmt::Expr(e)))
+        };
+        let cond = if self.is(";") { None } else { Some(self.expr()?) };
+        self.expect(";")?;
+        let step = if self.is(")") { None } else { Some(self.expr()?) };
+        self.expect(")")?;
+        let body = self.stmt()?;
+        Ok(Stmt::For(init, cond, step, Box::new(body)))
+    }
+
+    #[inline(never)]
+    fn while_stmt(&mut self) -> R<Stmt> {
+        self.p += 1;
+        self.expect("(")?;
+        let c = self.expr()?;
+        self.expect(")")?;
+        Ok(Stmt::While(c, Box::new(self.stmt()?)))
+    }
+
+    #[inline(never)]
+    fn do_stmt(&mut self) -> R<Stmt> {
+        self.p += 1;
+        let body = self.stmt()?;
+        if !self.is_id("while") {
+            return self.err("expected 'while'");
+        }
+        self.p += 1;
+        self.expect("(")?;
+        let c = self.expr()?;
+        self.expect(")")?;
+        self.expect(";")?;
+        Ok(Stmt::Do(Box::new(body), c))
+    }
+
+    #[inline(never)]
+    fn switch_stmt(&mut self) -> R<Stmt> {
+        self.p += 1;
+        self.expect("(")?;
+        let v = self.expr()?;
+        self.expect(")")?;
+        self.expect("{")?;
+        let mut cases: Vec<(Vec<Option<Expr>>, Vec<Stmt>)> = Vec::new();
+        while !self.eat("}") {
+            if self.is_id("case") || self.is_id("default") {
+                let mut labels = Vec::new();
+                while self.is_id("case") || self.is_id("default") {
+                    if self.is_id("case") {
+                        self.p += 1;
+                        labels.push(Some(self.expr()?));
+                    } else {
+                        self.p += 1;
+                        labels.push(None);
+                    }
+                    self.expect(":")?;
+                }
+                cases.push((labels, Vec::new()));
+            } else {
+                let s = self.stmt()?;
+                match cases.last_mut() {
+                    Some(c) => c.1.push(s),
+                    None => return self.err("statement before case"),
+                }
+            }
+        }
+        Ok(Stmt::Switch(v, cases))
+    }
+
+    #[inline(never)]
+    fn struct_stmt(&mut self, line: u32) -> R<Stmt> {
+        self.p += 1;
+        let i = self.struct_def()?;
+        if self.eat(";") {
+            return Ok(Stmt::Block(Vec::new()));
+        }
+        Ok(Stmt::Decl(self.declarators(Ty::Struct(i), Mods { is_in: true, ..Default::default() }, line)?))
+    }
+
+    #[inline(never)]
+    fn decl_stmt(&mut self) -> R<Stmt> {
+        Ok(Stmt::Decl(self.decl()?))
     }
 
     fn starts_decl(&self) -> bool {
