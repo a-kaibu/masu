@@ -2440,7 +2440,6 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
     }
     *st.fn_builds.entry(eip).or_insert(0) += 1;
     let build = st.fn_builds[&eip];
-    let mut m = Module { name: Some(format!("x64_{:x}{eip:08x}_fn{build}", cpu.rip_hi)), ..Module::default() };
     let (lo, hi) = (cpu.trap_lo, cpu.trap_hi);
     let entry = u64::from(eip) | u64::from(cpu.rip_hi) << 32;
     if crate::env_on!("MASU_JIT_LAYOUT") {
@@ -2455,7 +2454,9 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
     // (an indirect call's hint: its usual target, in this 4GB alias)
     let (hints, hi_half) = (&st.hints, u64::from(cpu.rip_hi).wrapping_shl(32));
     let hint = |a: u64| u32::try_from(a & 0xffff_ffff).ok().and_then(|a| hints.get(&a)).map(|&t| u64::from(t) | hi_half);
-    let Some(region) = jit::long::translate_function64_with(&mut m, mem, entry, &also, (lo, hi), base_ins << (build.min(4) - 1), &hint, |a, sure| debug_allowed(a) && !(a >= lo && a < hi) && (a == eip || sure || ran(misses, known, a))) else {
+    // (less again when a body gets too big for V8's optimizing compiler: jit::MAX_FN_BODY)
+    let name = Some(format!("x64_{:x}{eip:08x}_fn{build}", cpu.rip_hi));
+    let Some((m, region)) = jit::long::translate_function64_fit(name, mem, entry, &also, (lo, hi), base_ins << (build.min(4) - 1), base_ins / 4, &hint, |a, sure| debug_allowed(a) && !(a >= lo && a < hi) && (a == eip || sure || ran(misses, known, a))) else {
         st.known.insert(eip);
         return false;
     };

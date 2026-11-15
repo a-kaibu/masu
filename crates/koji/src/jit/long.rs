@@ -3277,6 +3277,22 @@ pub fn translate_region64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[
 /// x64 functions (`MASU_JIT64_FN`, on unless it is 0; kura sets it at start).
 pub static FN64: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+/// [`translate_function64_with`] into a module of its own named `name`, translated again with
+/// half the instructions while a body is over [`super::MAX_FN_BODY`] (V8's optimizing compiler
+/// ran out of memory on bigger ones and ended the page, 3e424b3d), down to `min_ins`.
+#[allow(clippy::too_many_arguments)]
+pub fn translate_function64_fit<M: Memory, A: FnMut(u32, bool) -> bool + Clone>(name: Option<alloc::string::String>, mem: &mut M, entry: u64, also: &[u64], trap: (u32, u32), max_ins: usize, min_ins: usize, hints: &dyn Fn(u64) -> Option<u64>, accept: A) -> Option<(Module, Region)> {
+    let mut ins = max_ins;
+    loop {
+        let mut m = Module { name: name.clone(), ..Module::default() };
+        let r = translate_function64_with(&mut m, mem, entry, also, trap, ins, hints, accept.clone())?;
+        if m.largest_body() <= super::MAX_FN_BODY || ins / 2 < min_ins {
+            return Some((m, r));
+        }
+        ins /= 2;
+    }
+}
+
 /// The function at `entry` (FN64) as one wasm function of the region type: its blocks are
 /// the ones its own jumps reach (accept(a, false)), its calls' return addresses and jump
 /// tables' targets (accept(a, true)), never a call's target. A CALL is a wasm call of the
@@ -3811,6 +3827,66 @@ mod tests {
         outer.insert(Register::R13, Some(0x1100u64));
         let ins2 = decode(&[0x4d, 0x89, 0xe5, 0x89, 0xd8, 0x83, 0xe0, 0x7f, 0x41, 0xff, 0x64, 0xc5, 0x00]); // mov r13, r12; ...
         assert!(jump_table_in(&mut Img(img), &ins2, None, &outer).is_empty());
+    }
+
+    /// A straight run of `ops` (indices into a few memory-heavy x64 instructions), then RET, at
+    /// 0x1000: wasm grows fast with these.
+    struct Heavy(Vec<u8>);
+    impl Memory for Heavy {
+        fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
+            a.checked_sub(0x1000).and_then(|o| self.0.get(usize::try_from(o).ok()?).copied()).ok_or(crate::Fault { addr: a, write: false })
+        }
+        fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
+            Err(crate::Fault { addr: a, write: true })
+        }
+    }
+    fn heavy(ops: &[u8]) -> Heavy {
+        const INS: [&[u8]; 5] = [
+            &[0x48, 0x89, 0x94, 0xc8, 0x34, 0x12, 0x00, 0x00], // mov [rax+rcx*8+0x1234], rdx
+            &[0x48, 0x8b, 0x84, 0xca, 0x78, 0x56, 0x00, 0x00], // mov rax, [rdx+rcx*8+0x5678]
+            &[0x48, 0x01, 0xc8],                               // add rax, rcx
+            &[0x48, 0x0f, 0xaf, 0xc1],                         // imul rax, rcx
+            &[0x48, 0xff, 0xc0],                               // inc rax
+        ];
+        let mut v: Vec<u8> = ops.iter().flat_map(|&k| INS[usize::from(k) % INS.len()].iter().copied()).collect();
+        v.push(0xc3);
+        Heavy(v)
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(48))]
+        /// translate_function64_fit: every body within MAX_FN_BODY, valid wasm, never more
+        /// instructions than translate_function64 takes; and when the first translation already
+        /// fits, the very same module as translate_function64's.
+        #[test]
+        fn fit64_keeps_bodies_small(ops in proptest::collection::vec(0u8..5, 200..9000), max_ins in 100usize..9000) {
+            let (m, r) = translate_function64_fit(None, &mut heavy(&ops), 0x1000, &[], (0, 0), max_ins, 50, &|_| None, |_, _| true).unwrap();
+            proptest::prop_assert!(m.largest_body() <= super::super::MAX_FN_BODY, "{} > {}", m.largest_body(), super::super::MAX_FN_BODY);
+            let bytes = m.finish();
+            let mut f = wasmparser::WasmFeatures::default();
+            f.insert(wasmparser::WasmFeatures::THREADS | wasmparser::WasmFeatures::TAIL_CALL);
+            proptest::prop_assert!(wasmparser::Validator::new_with_features(f).validate_all(&bytes).is_ok());
+            let mut one = Module::default();
+            let r1 = translate_function64(&mut one, &mut heavy(&ops), 0x1000, (0, 0), max_ins, |_, _| true).unwrap();
+            if one.largest_body() <= super::super::MAX_FN_BODY {
+                proptest::prop_assert_eq!(one.finish(), bytes);
+                proptest::prop_assert_eq!(r1.instructions, r.instructions);
+            } else {
+                proptest::prop_assert!(r.instructions < r1.instructions, "{} !< {}", r.instructions, r1.instructions);
+            }
+        }
+    }
+
+    /// At the largest build's limit (8000 instructions) the cap is needed: the property above is
+    /// not true for nothing.
+    #[test]
+    fn fit64_cuts_the_biggest_builds() {
+        let ops: Vec<u8> = (0..9000u32).map(|i| u8::from(i % 2 == 1)).collect();
+        let mut one = Module::default();
+        translate_function64(&mut one, &mut heavy(&ops), 0x1000, (0, 0), 8000, |_, _| true).unwrap();
+        assert!(one.largest_body() > super::super::MAX_FN_BODY, "{}", one.largest_body());
+        let (m, _) = translate_function64_fit(None, &mut heavy(&ops), 0x1000, &[], (0, 0), 8000, 250, &|_| None, |_, _| true).unwrap();
+        assert!(m.largest_body() <= super::super::MAX_FN_BODY, "{}", m.largest_body());
     }
 
     /// A block running into another block's start ends there (split_blocks): the loop of
