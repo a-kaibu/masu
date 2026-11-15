@@ -83,13 +83,13 @@ impl Scratch {
         if w.len() > 0x7ffe {
             w.clear();
         }
-        let buf = self.alloc(2 * mem::len32(w.len()) + 2);
+        let buf = self.alloc(2 * kome::num::u32_of(w.len()) + 2);
         for (i, &x) in w.iter().enumerate() {
-            mem::w16(buf + 2 * mem::len32(i), x);
+            mem::w16(buf + 2 * kome::num::u32_of(i), x);
         }
         let us = self.alloc(8);
-        mem::w16(us, 2 * w.len() as u16);
-        mem::w16(us + 2, 2 * w.len() as u16 + 2);
+        mem::w16(us, 2 * kome::num::lo16(w.len()));
+        mem::w16(us + 2, 2 * kome::num::lo16(w.len()) + 2);
         w32(us + 4, buf);
         let oa = self.alloc(24);
         w32(oa, 24);
@@ -502,9 +502,9 @@ fn path_of(oa: u32) -> Option<u32> {
             w.splice(0..0, pre);
         }
     }
-    let p = mem::heap_alloc(2 * mem::len32(w.len()) + 2, true);
+    let p = mem::heap_alloc(2 * kome::num::u32_of(w.len()) + 2, true);
     for (i, &x) in w.iter().enumerate() {
-        mem::w16(p + 2 * mem::len32(i), x);
+        mem::w16(p + 2 * kome::num::u32_of(i), x);
     }
     Some(p)
 }
@@ -632,7 +632,7 @@ pub fn fs_info(class: u32, ty: u32) -> Result<Vec<u8>, u32> {
             let label = w("SAKE");
             v.extend(0u64.to_le_bytes());
             v.extend(0x1234_5678u32.to_le_bytes());
-            v.extend((mem::len32(label.len())).to_le_bytes());
+            v.extend((kome::num::u32_of(label.len())).to_le_bytes());
             v.extend([0, 0]);
             v.extend(label);
         }
@@ -658,7 +658,7 @@ pub fn fs_info(class: u32, ty: u32) -> Result<Vec<u8>, u32> {
             let name = w("NTFS");
             v.extend(3u32.to_le_bytes());
             v.extend(255u32.to_le_bytes());
-            v.extend((mem::len32(name.len())).to_le_bytes());
+            v.extend((kome::num::u32_of(name.len())).to_le_bytes());
             v.extend(name);
         }
         // FileFsFullSizeInformation: total, caller's and actual available clusters, geometry
@@ -701,11 +701,11 @@ fn nt_query_volume_information_file(c: &mut Ctx) -> u32 {
     if len < fs_info_fixed(class) {
         return 0xc000_0004; // STATUS_INFO_LENGTH_MISMATCH
     }
-    let n = (mem::len32(v.len())).min(len);
+    let n = (kome::num::u32_of(v.len())).min(len);
     for (i, b) in v[..n as usize].iter().enumerate() {
-        mem::w8(out + mem::len32(i), *b);
+        mem::w8(out + kome::num::u32_of(i), *b);
     }
-    let st = if n < mem::len32(v.len()) { 0x8000_0005 } else { 0 }; // STATUS_BUFFER_OVERFLOW
+    let st = if n < kome::num::u32_of(v.len()) { 0x8000_0005 } else { 0 }; // STATUS_BUFFER_OVERFLOW
     iosb(io, st, n);
     st
 }
@@ -904,14 +904,14 @@ fn file_all_information(c: &mut Ctx, h: u32, io: u32, out: u32, len: u32) -> u32
 fn file_name_info(win: &str, len: u32) -> (u32, u32, Vec<u8>) {
     let name = win.get(2..).filter(|_| win.as_bytes().get(1) == Some(&b':')).unwrap_or(win);
     let name: Vec<u16> = if name.is_empty() { vec![u16::from(b'\\')] } else { name.encode_utf16().collect() };
-    let bytes = 2 * mem::len32(name.len());
+    let bytes = 2 * kome::num::u32_of(name.len());
     let mut w = bytes.to_le_bytes().to_vec();
     let room = ((len - 4) / 2) as usize;
     for c in name.iter().take(room) {
         w.extend(c.to_le_bytes());
     }
     if room < name.len() {
-        let n = mem::len32(w.len());
+        let n = kome::num::u32_of(w.len());
         (0x8000_0005, n, w) // STATUS_BUFFER_OVERFLOW
     } else {
         (0, 4 + bytes, w)
@@ -1069,9 +1069,9 @@ fn get_thread_description(c: &mut Ctx) -> u32 {
         return 0x1000_0000 | 0xC000_0022;
     }
     let name = thread_name(tid);
-    let p = crate::k32::global_alloc(0x40, 2 * mem::len32(name.len()) + 2);
+    let p = crate::k32::global_alloc(0x40, 2 * kome::num::u32_of(name.len()) + 2);
     for (i, &u) in name.iter().enumerate() {
-        mem::w16(p + 2 * mem::len32(i), u);
+        mem::w16(p + 2 * kome::num::u32_of(i), u);
     }
     mem::putp(out, p);
     0x1000_0000
@@ -1101,19 +1101,19 @@ fn nt_query_information_thread(c: &mut Ctx) -> u32 {
     if class == 38 {
         // THREAD_NAME_INFORMATION: a UNICODE_STRING, its characters after it
         let name = thread_name(tid);
-        let need = 2 * ps + 2 * mem::len32(name.len());
+        let need = 2 * ps + 2 * kome::num::u32_of(name.len());
         if ret != 0 {
             w32(ret, need);
         }
         if len < need {
             return 0xC000_0023; // STATUS_BUFFER_TOO_SMALL
         }
-        let n = 2 * name.len() as u16;
+        let n = 2 * kome::num::lo16(name.len());
         mem::w16(out, n);
         mem::w16(out + 2, n);
         mem::wp(out + ps, out + 2 * ps);
         for (i, &u) in name.iter().enumerate() {
-            mem::w16(out + 2 * ps + 2 * mem::len32(i), u);
+            mem::w16(out + 2 * ps + 2 * kome::num::u32_of(i), u);
         }
         return 0;
     }
@@ -1396,10 +1396,10 @@ fn dir_entry(p: u32, dc: DirClass, name: &str, m: &kura::fs::Metadata, attrs: u3
         w32(p + 56, attrs);
     }
     let w: Vec<u16> = name.encode_utf16().collect();
-    w32(p + len_at, 2 * mem::len32(w.len()));
-    let n = (2 * mem::len32(w.len())).min(room.saturating_sub(name_at)) / 2;
+    w32(p + len_at, 2 * kome::num::u32_of(w.len()));
+    let n = (2 * kome::num::u32_of(w.len())).min(room.saturating_sub(name_at)) / 2;
     for (i, &u) in w[..n as usize].iter().enumerate() {
-        mem::w16(p + name_at + 2 * mem::len32(i), u);
+        mem::w16(p + name_at + 2 * kome::num::u32_of(i), u);
     }
     2 * n
 }
@@ -1481,7 +1481,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
     let (mut at, mut prev) = (0u32, None::<u32>);
     while s.at < s.entries.len() {
         let (name, m) = &s.entries[s.at];
-        let need = fixed + 2 * mem::len32(name.encode_utf16().count());
+        let need = fixed + 2 * kome::num::u32_of(name.encode_utf16().count());
         if at + need > len {
             if prev.is_none() {
                 // (not even the first: its fixed part and what fits of the name, kept for next time)
@@ -1571,17 +1571,17 @@ fn nt_query_object(c: &mut Ctx) -> u32 {
         let mut w: Vec<u16> = s.encode_utf16().collect();
         // (cut at a UNICODE_STRING's 32767 characters, its length no longer wrapping)
         w.truncate(0x7ffe);
-        mem::w16(at, 2 * w.len() as u16);
-        mem::w16(at + 2, if w.is_empty() { 0 } else { 2 * w.len() as u16 + 2 });
+        mem::w16(at, 2 * kome::num::lo16(w.len()));
+        mem::w16(at + 2, if w.is_empty() { 0 } else { 2 * kome::num::lo16(w.len()) + 2 });
         mem::wp(at + ps, if w.is_empty() { 0 } else { base });
         for (i, &x) in w.iter().enumerate() {
-            mem::w16(base + 2 * mem::len32(i), x);
+            mem::w16(base + 2 * kome::num::u32_of(i), x);
         }
         if !w.is_empty() {
-            mem::w16(base + 2 * mem::len32(w.len()), 0);
+            mem::w16(base + 2 * kome::num::u32_of(w.len()), 0);
         }
     };
-    let chars = |s: &str| 2 * mem::len32(s.encode_utf16().count());
+    let chars = |s: &str| 2 * kome::num::u32_of(s.encode_utf16().count());
     let us = 2 * ps; // sizeof(UNICODE_STRING)
     let need = match class {
         0 => 56,
@@ -1756,7 +1756,7 @@ mod fs_info_tests {
         fn consistent(class in 0u32..12, ty in 0u32..4) {
             match fs_info(class, ty) {
                 Ok(v) => {
-                    prop_assert!(crate::mem::len32(v.len()) >= fs_info_fixed(class));
+                    prop_assert!(kome::num::u32_of(v.len()) >= fs_info_fixed(class));
                     let u32at = |o: usize| u32::from_le_bytes(v[o..o + 4].try_into().unwrap());
                     let u64at = |o: usize| u64::from_le_bytes(v[o..o + 8].try_into().unwrap());
                     match class {
@@ -2041,9 +2041,9 @@ mod file_name_tests {
         #[test]
         fn never_past_the_buffer(name in "[a-zA-Z0-9\\\\ .]{0,80}", len in 8u32..400) {
             let (st, n, w) = file_name_info(&format!("C:{name}"), len);
-            prop_assert!(crate::mem::len32(w.len()) <= len);
+            prop_assert!(kome::num::u32_of(w.len()) <= len);
             prop_assert_eq!(u32::from_le_bytes(w[..4].try_into().unwrap()), 2 * name.len().max(1) as u32);
-            if st == 0 { prop_assert_eq!(n as usize, w.len()); } else { prop_assert_eq!(n as usize, w.len()); prop_assert!(n <= len); }
+            if st == 0 { prop_assert_eq!(kome::num::us(n), w.len()); } else { prop_assert_eq!(kome::num::us(n), w.len()); prop_assert!(n <= len); }
         }
     }
 }

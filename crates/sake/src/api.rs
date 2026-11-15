@@ -91,11 +91,11 @@ impl Ctx<'_> {
     }
     /// x64: the whole argument `i` (RCX, RDX, R8, R9, then the stack past the home space).
     pub fn a64(&self, i: u32) -> u64 {
-        if i < 4 { self.cpu.gpr([1, 2, 8, 9][i as usize]) } else { crate::mem::r64(self.esp + 8 + 8 * i) }
+        if i < 4 { self.cpu.gpr([1, 2, 8, 9][kome::num::us(i)]) } else { crate::mem::r64(self.esp + 8 + 8 * i) }
     }
     /// x64: floating-point argument `i` (XMM0-3, then the stack), as a double's bits.
     pub fn xmm(&self, i: u32) -> u64 {
-        if i < 4 { self.cpu.xmm(i as usize) as u64 } else { crate::mem::r64(self.esp + 8 + 8 * i) }
+        if i < 4 { self.cpu.xmm(kome::num::us(i)) as u64 } else { crate::mem::r64(self.esp + 8 + 8 * i) }
     }
     /// A POINT passed by value at slots `i`, `i + 1` (x64: the one 8-byte argument `i`; the
     /// index is the same when only 4-byte arguments come before it).
@@ -259,14 +259,14 @@ fn hot(i: usize) -> Option<(Option<Handler>, Meta)> {
 /// locked HashMap by trap address: review C-2).
 pub fn set_tag(addr: u32, tag: u32, data: usize) {
     debug_assert!(tag != 0);
-    let Some(s) = addr.checked_sub(TRAP_LO).and_then(|o| hot_slot(o as usize / 4, false)) else { return };
+    let Some(s) = addr.checked_sub(TRAP_LO).and_then(|o| hot_slot(kome::num::us(o) / 4, false)) else { return };
     s.data.store(data, Ordering::Relaxed);
     s.tag.store(tag, Ordering::Release);
 }
 
 /// The trap's [`set_tag`] tag and data; tag 0 when it has none.
 pub fn tag_of(addr: u32) -> (u32, usize) {
-    let Some(s) = addr.checked_sub(TRAP_LO).and_then(|o| hot_slot(o as usize / 4, false)) else { return (0, 0) };
+    let Some(s) = addr.checked_sub(TRAP_LO).and_then(|o| hot_slot(kome::num::us(o) / 4, false)) else { return (0, 0) };
     let t = s.tag.load(Ordering::Acquire);
     (t, if t != 0 { s.data.load(Ordering::Relaxed) } else { 0 })
 }
@@ -456,7 +456,7 @@ pub fn export(dll: &str, name: &str) -> u32 {
     let f = find_impl(&d, name);
     let mut e = ENTRIES.w();
     let i = e.len() as u32;
-    assert!((i as usize) < MAX_ENTRIES, "sake: more than {MAX_ENTRIES} distinct imports ({dll}!{name})");
+    assert!((kome::num::us(i)) < MAX_ENTRIES, "sake: more than {MAX_ENTRIES} distinct imports ({dll}!{name})");
     let this_arg = spec.is_some_and(|s| s.2) && THIS_ARG0.contains(&d.as_str());
     e.push(Entry {
         dll: d,
@@ -468,7 +468,7 @@ pub fn export(dll: &str, name: &str) -> u32 {
         this_arg,
         yields: yields(name),
     });
-    publish(i as usize, &e[i as usize]);
+    publish(kome::num::us(i), &e[kome::num::us(i)]);
     idx.insert(key, i);
     TRAP_LO + 4 * i
 }
@@ -480,7 +480,7 @@ const THIS_ARG0: [&str; 2] = ["msvcp140", "msvcp120"];
 /// "dll!name" of a trap address (for logs).
 pub fn name_of(addr: u32) -> Option<String> {
     let i = addr.checked_sub(TRAP_LO)? / 4;
-    ENTRIES.r().get(i as usize).map(|e| format!("{}!{}", e.dll, e.name))
+    ENTRIES.r().get(kome::num::us(i)).map(|e| format!("{}!{}", e.dll, e.name))
 }
 
 /// Whether the function at a trap address is cdecl, and its stdcall argument bytes.
@@ -492,7 +492,7 @@ pub fn args_of(addr: u32) -> (bool, u32) {
 /// The DLL key ("ucrtbase", "msvcrt"...) of a trap address.
 pub fn dll_of(addr: u32) -> Option<String> {
     let i = addr.checked_sub(TRAP_LO)? / 4;
-    ENTRIES.r().get(i as usize).map(|e| e.dll.clone())
+    ENTRIES.r().get(kome::num::us(i)).map(|e| e.dll.clone())
 }
 
 /// Whether the API at trap address `addr` has an implementation.
@@ -647,16 +647,16 @@ fn usage(i: u32) {
                     .filter(|x| *x.1 > 0)
                     .filter_map(|(i, &n)| {
                         let x = e.get(i)?;
-                        let stub = x.f.is_none() || crate::com::is_stub(TRAP_LO + 4 * i as u32);
+                        let stub = x.f.is_none() || crate::com::is_stub(TRAP_LO + 4 * kome::num::u32_of(i));
                         Some((format!("{}:{}!{}", if stub { "stub" } else { "api" }, x.dll, x.name), n))
                     })
                     .collect()
             });
         }
-        if u.len() <= i as usize {
+        if u.len() <= kome::num::us(i) {
             u.resize(i as usize + 1, 0);
         }
-        u[i as usize] += 1;
+        u[kome::num::us(i)] += 1;
     }
     kura::usage::tick();
 }
@@ -666,7 +666,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     let _uni = crate::uni::Api::new();
     crate::comrpc::pump(cpu, false);
     let i = (addr - TRAP_LO) / 4;
-    let Some((f, Meta { bytes, cdecl, known, this_arg, yields })) = hot(i as usize) else {
+    let Some((f, Meta { bytes, cdecl, known, this_arg, yields })) = hot(kome::num::us(i)) else {
         crate::fatal(cpu, &format!("jump to unknown trap address {addr:#x}"));
     };
     let esp = cpu.regs[ESP];
@@ -793,7 +793,7 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
         for (x, v) in RECENT[k][n % RECENT_N].iter().zip(r) {
             x.store(v, Relaxed);
         }
-        RECENT_POS[k].store(n as u32 + 1, Relaxed);
+        RECENT_POS[k].store(kome::num::u32_of(n) + 1, Relaxed);
     }
     if sw & SW_WATCH != 0 {
         static LAST: AtomicU32 = AtomicU32::new(0);
@@ -899,9 +899,9 @@ pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
     let a = export("sake", name);
     let i = (a - TRAP_LO) / 4;
     let mut e = ENTRIES.w();
-    e[i as usize].bytes = bytes;
-    e[i as usize].known = true;
-    publish(i as usize, &e[i as usize]);
+    e[kome::num::us(i)].bytes = bytes;
+    e[kome::num::us(i)].known = true;
+    publish(kome::num::us(i), &e[kome::num::us(i)]);
     let _ = w32;
     a
 }
@@ -922,7 +922,7 @@ pub fn vtable(name: &str, methods: &[(Handler, u32)]) -> u32 {
     let k = crate::mem::ps();
     let v = crate::mem::heap_alloc(k * methods.len() as u32, true);
     for (i, (f, bytes)) in methods.iter().enumerate() {
-        crate::mem::wp(v + k * i as u32, host_fn(&format!("{name}::{i}"), *f, *bytes));
+        crate::mem::wp(v + k * kome::num::u32_of(i), host_fn(&format!("{name}::{i}"), *f, *bytes));
     }
     v
 }
@@ -1257,8 +1257,8 @@ mod hot_tests {
                         let (f, m) = hot(((a - TRAP_LO) / 4) as usize).unwrap();
                         assert_eq!(m.bytes, 4 * (k % 9));
                         assert_eq!(f.map(|f| f as usize), Some(if k % 2 == 0 { h1 as *const () as usize } else { h2 as *const () as usize }));
-                        set_tag(a, k + 1, k as usize);
-                        assert_eq!(tag_of(a), (k + 1, k as usize));
+                        set_tag(a, k + 1, kome::num::us(k));
+                        assert_eq!(tag_of(a), (k + 1, kome::num::us(k)));
                     }
                 })
             })

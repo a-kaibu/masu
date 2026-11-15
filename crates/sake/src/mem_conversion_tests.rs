@@ -42,23 +42,3 @@ proptest! {
     }
 }
 
-proptest! {
-    // (len32 is `as u32` wherever the length fits, and saturates past it)
-    #[test]
-    fn len32_is_the_cast_below_4g(n in any::<usize>()) {
-        if n <= u32::MAX as usize {
-            prop_assert_eq!(len32(n), n as u32);
-        } else {
-            prop_assert_eq!(len32(n), u32::MAX);
-        }
-    }
-}
-
-proptest! {
-    // (lo16/lo8 are `as u16`/`as u8`: the low bits)
-    #[test]
-    fn lo16_lo8_are_the_truncating_casts(x in any::<u32>()) {
-        prop_assert_eq!(lo16(x), x as u16);
-        prop_assert_eq!(lo8(x), x as u8);
-    }
-}

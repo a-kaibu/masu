@@ -4,6 +4,7 @@
 //! data starts at 0x80000000), so reserving and committing is bookkeeping only. Pages are
 //! zero when first handed out; released ones are zeroed again before reuse.
 
+use kome::locks::Lock as _;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -15,6 +16,7 @@ pub const HI: u32 = 0x7ff0_0000;
 /// Where sake's own data starts (crates/sake/build.sh GLOBAL_BASE, koji::jit::GUEST_HI)
 pub const GUEST_TOP: u32 = 0x8000_0000;
 const GRAN: u32 = 0x1_0000;
+use kome::num::us;
 pub const PAGE: u32 = 0x1000;
 
 // (usize holds every u32: wasm32 and 64-bit hosts; the two conversions below are the only casts
@@ -23,30 +25,7 @@ const _: () = assert!(std::mem::size_of::<usize>() >= std::mem::size_of::<u32>()
 /// The host pointer of guest address `a` (guest address = host address)
 #[inline(always)]
 fn host<T>(a: u32) -> *mut T {
-    std::ptr::with_exposed_provenance_mut(a as usize)
-}
-/// A guest length as a host one (lossless: see the assert above)
-#[inline(always)]
-pub fn len(n: u32) -> usize {
-    n as usize
-}
-/// The low 16 bits of a guest value, as Windows reads a WORD from a DWORD argument or register
-#[inline]
-pub fn lo16(x: u32) -> u16 {
-    let [a, b, _, _] = x.to_le_bytes();
-    u16::from_le_bytes([a, b])
-}
-/// The low 8 bits of a guest value, as Windows reads a BYTE from a DWORD argument or register
-#[inline]
-pub fn lo8(x: u32) -> u8 {
-    x.to_le_bytes()[0]
-}
-/// A host length (a string's, a buffer's) as a guest one: every length the guest sees fits its
-/// 32-bit address space; one that does not (only a 64-bit host can hold it) is u32::MAX, not its
-/// low bits.
-#[inline]
-pub fn len32(n: usize) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
+    std::ptr::with_exposed_provenance_mut(kome::num::us(a))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -115,7 +94,7 @@ static HIGH: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0)
 /// Memory is addressed modulo 4G (koji), so allocations above 4G can't share a low half; two
 /// of them (or one and a plain low allocation) that would are refused by `reserve` already.
 pub fn set_high(base: u32, hi: u32) -> bool {
-    let mut sp = SPACE.lock().unwrap();
+    let mut sp = SPACE.locked();
     let Some(r) = sp.get_mut(&base) else { return false };
     if r.hi == 0 && hi != 0 {
         HIGH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -221,7 +200,7 @@ pub fn put32(a: u32, v: u32) {
     }
 }
 pub fn slice<'a>(a: u32, n: u32) -> &'a [u8] {
-    unsafe { std::slice::from_raw_parts(host::<u8>(a).cast_const(), len(n)) }
+    unsafe { std::slice::from_raw_parts(host::<u8>(a).cast_const(), us(n)) }
 }
 /// Guest memory `a..a + n` for sake to write into, or None where that is not the guest's: in
 /// the NULL pages (a failed allocation, a NULL pointer with a length) or reaching past
@@ -236,7 +215,7 @@ pub fn guest_mut<'a>(a: u32, n: u32) -> Option<&'a mut [u8]> {
         }
         return None;
     }
-    Some(unsafe { std::slice::from_raw_parts_mut(host::<u8>(a), len(n)) })
+    Some(unsafe { std::slice::from_raw_parts_mut(host::<u8>(a), us(n)) })
 }
 /// Whether `a..a + n` is guest memory sake may write for the program (guest_mut's rule).
 #[inline]
@@ -247,7 +226,7 @@ pub fn guest_range(a: u32, n: u32) -> bool {
 pub const NULL_TOP: u32 = 0x1_0000;
 pub fn fill(a: u32, n: u32, v: u8) {
     if guest(a, n) {
-        unsafe { std::ptr::write_bytes(host::<u8>(a), v, len(n)) }
+        unsafe { std::ptr::write_bytes(host::<u8>(a), v, us(n)) }
     }
 }
 /// Zeroes [a, a+n) without writing to the pages in it that are zero already. The browser backs
@@ -268,7 +247,7 @@ pub fn zero(a: u32, n: u32) {
     while p < end {
         let next = ((p | (u64::from(PAGE) - 1)) + 1).min(end);
         // (inside guest memory: checked above)
-        let s = unsafe { std::slice::from_raw_parts_mut(p as usize as *mut u8, (next - p) as usize) };
+        let s = unsafe { std::slice::from_raw_parts_mut(kome::num::us(p) as *mut u8, (next - p) as usize) };
         if !is_zero(s) {
             s.fill(0);
         }
@@ -292,7 +271,7 @@ pub fn is_zero(s: &[u8]) -> bool {
 
 pub fn copy(dst: u32, src: u32, n: u32) {
     if guest(dst, n) {
-        unsafe { std::ptr::copy(host::<u8>(src).cast_const(), host::<u8>(dst), len(n)) }
+        unsafe { std::ptr::copy(host::<u8>(src).cast_const(), host::<u8>(dst), us(n)) }
     }
 }
 pub fn write(dst: u32, data: &[u8]) {
@@ -373,7 +352,7 @@ pub fn put_cstr(dst: u32, cap: u32, s: &[u8]) -> u32 {
         return 0;
     }
     let n = (s.len() as u32).min(cap - 1);
-    write(dst, &s[..len(n)]);
+    write(dst, &s[..us(n)]);
     w8(dst + n, 0);
     n
 }
@@ -383,7 +362,7 @@ pub fn put_wstr(dst: u32, cap: u32, s: &[u16]) -> u32 {
     }
     let n = (s.len() as u32).min(cap - 1);
     for i in 0..n {
-        w16(dst + 2 * i, s[len(i)]);
+        w16(dst + 2 * i, s[us(i)]);
     }
     w16(dst + 2 * n, 0);
     n
@@ -429,7 +408,7 @@ fn page_size(size: u32) -> Option<u32> {
 /// Reserves `size` bytes at `want` (0 = anywhere, lowest first; `top` = highest first).
 pub fn reserve(want: u32, size: u32, prot: u32, kind: u32, top: bool) -> Option<u32> {
     let size = page_size(size)?;
-    let mut sp = SPACE.lock().unwrap();
+    let mut sp = SPACE.locked();
     let base = if want != 0 {
         let b = want & !(GRAN - 1);
         let end = b.checked_add(size)?;
@@ -485,7 +464,7 @@ fn insert(sp: &mut BTreeMap<u32, Region>, base: u32, size: u32, prot: u32, kind:
         }
     }
     sp.insert(base, Region { size, prot, state: 0x2000, alloc_base: base, alloc_prot: prot, kind, hi: 0 });
-    PAGES.lock().unwrap().insert(base, vec![0; (size / PAGE) as usize]);
+    PAGES.locked().insert(base, vec![0; (size / PAGE) as usize]);
 }
 
 /// Reserves `size` bytes at an `align`-aligned address (a power of two, at least GRAN), the
@@ -495,7 +474,7 @@ fn insert(sp: &mut BTreeMap<u32, Region>, base: u32, size: u32, prot: u32, kind:
 /// 6000.4.)
 pub fn reserve_aligned(size: u32, align: u32, prot: u32, kind: u32) -> Option<u32> {
     let size = page_size(size)?;
-    let mut sp = SPACE.lock().unwrap();
+    let mut sp = SPACE.locked();
     let base = aligned_fit(&holes(&sp, size), size, align)?;
     insert(&mut sp, base, size, prot, kind);
     Some(base)
@@ -545,7 +524,7 @@ fn jit_prot(a: u32, n: u32, prot: u32) {
     kura::jit::fault_pages(a, n, kind, none);
     let wx = prot & (0x40 | 0x80) != 0;
     let p = if prot == 0 { 0 } else if wx { libc::PROT_READ | libc::PROT_WRITE | libc::PROT_EXEC } else { libc::PROT_READ };
-    kura::jit::pages_protected(len(a), len(n), p);
+    kura::jit::pages_protected(us(a), us(n), p);
 }
 
 /// The pages [first, last) of an allocation of `size` bytes that [off, off + n) touches (`off`
@@ -562,7 +541,7 @@ pub(crate) fn page_span(off: u32, n: u32, size: u32) -> (u32, u32) {
 
 /// Commits a whole allocation.
 pub fn commit(base: u32, prot: u32) {
-    let size = SPACE.lock().unwrap().get(&base).map(|r| r.size);
+    let size = SPACE.locked().get(&base).map(|r| r.size);
     if let Some(n) = size {
         commit_range(base, n, prot);
     }
@@ -572,12 +551,12 @@ pub fn commit(base: u32, prot: u32) {
 pub fn commit_range(a: u32, n: u32, prot: u32) -> bool {
     let Some((b, r)) = find(a) else { return false };
     let (first, last) = page_span(a - b, n.max(1), r.size);
-    if let Some(p) = PAGES.lock().unwrap().get_mut(&b) {
-        for x in &mut p[len(first)..len(last)] {
+    if let Some(p) = PAGES.locked().get_mut(&b) {
+        for x in &mut p[us(first)..us(last)] {
             *x = COMMITTED | prot;
         }
     }
-    if let Some(r) = SPACE.lock().unwrap().get_mut(&b) {
+    if let Some(r) = SPACE.locked().get_mut(&b) {
         r.state = 0x1000;
         r.prot = prot;
     }
@@ -589,14 +568,14 @@ pub fn commit_range(a: u32, n: u32, prot: u32) -> bool {
 pub fn decommit_range(a: u32, n: u32) -> bool {
     let Some((b, r)) = find(a) else { return false };
     let (first, last) = if n == 0 { ((a - b) / PAGE, r.size / PAGE) } else { page_span(a - b, n, r.size) };
-    let mut g = PAGES.lock().unwrap();
+    let mut g = PAGES.locked();
     if let Some(p) = g.get_mut(&b) {
         for i in first..last {
-            if p[len(i)] != 0 {
+            if p[us(i)] != 0 {
                 if !is_zero(slice(b + i * PAGE, PAGE)) {
                     fill(b + i * PAGE, PAGE, 0);
                 }
-                p[len(i)] = 0;
+                p[us(i)] = 0;
             }
         }
     }
@@ -610,7 +589,7 @@ pub fn decommit_range(a: u32, n: u32) -> bool {
 /// VirtualQuery: (allocation base, region, run start, run size, MEM_COMMIT/MEM_RESERVE, protection).
 pub fn query(a: u32) -> Option<(u32, Region, u32, u32, u32, u32)> {
     let (b, r) = find(a)?;
-    let g = PAGES.lock().unwrap();
+    let g = PAGES.locked();
     let p = g.get(&b)?;
     let i = ((a - b) / PAGE) as usize;
     let v = p[i];
@@ -619,7 +598,7 @@ pub fn query(a: u32) -> Option<(u32, Region, u32, u32, u32, u32)> {
         j += 1;
     }
     let state = if v & COMMITTED != 0 { 0x1000 } else { 0x2000 };
-    Some((b, r, b + i as u32 * PAGE, (j - i) as u32 * PAGE, state, if v & COMMITTED != 0 { v & !COMMITTED } else { 0 }))
+    Some((b, r, b + kome::num::u32_of(i) * PAGE, (j - i) as u32 * PAGE, state, if v & COMMITTED != 0 { v & !COMMITTED } else { 0 }))
 }
 
 /// How many of the `n` bytes from `a` on can be read (`write` false) or written: committed pages
@@ -647,11 +626,11 @@ pub fn accessible(a: u32, n: u32, write: bool, code_too: bool) -> u32 {
 /// Protection of the page at `a` (VirtualProtect), changing it to `prot` for [a, a+n).
 pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
     let (b, r) = find(a)?;
-    let mut g = PAGES.lock().unwrap();
+    let mut g = PAGES.locked();
     let p = g.get_mut(&b)?;
     let (first, last) = page_span(a - b, n.max(1), r.size);
-    let old = p[len(first)] & !COMMITTED;
-    for x in &mut p[len(first)..len(last)] {
+    let old = p[us(first)] & !COMMITTED;
+    for x in &mut p[us(first)..us(last)] {
         if *x & COMMITTED != 0 {
             *x = COMMITTED | prot;
         }
@@ -661,7 +640,7 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
     // writable code may be rewritten: the JIT drops what it translated there (QLIE patches its
     // code with VirtualProtect)
     if prot & 0xcc != 0 {
-        kura::jit::code_changed(len(a), (b + last * PAGE - a) as usize);
+        kura::jit::code_changed(us(a), (b + last * PAGE - a) as usize);
     }
     Some(if old == 0 { r.prot } else { old })
 }
@@ -671,7 +650,7 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
 pub fn guard_hit(a: u32) -> bool {
     let Some((b, _)) = find(a) else { return false };
     let i = ((a - b) / PAGE) as usize;
-    let mut g = PAGES.lock().unwrap();
+    let mut g = PAGES.locked();
     let Some(x) = g.get_mut(&b).and_then(|p| p.get_mut(i)) else { return false };
     if *x & COMMITTED == 0 || *x & 0x100 == 0 {
         return false;
@@ -679,7 +658,7 @@ pub fn guard_hit(a: u32) -> bool {
     *x &= !0x100;
     let prot = *x & !COMMITTED;
     drop(g);
-    jit_prot(b + i as u32 * PAGE, PAGE, prot);
+    jit_prot(b + kome::num::u32_of(i) * PAGE, PAGE, prot);
     true
 }
 
@@ -710,7 +689,7 @@ pub fn stack_floor(teb: u32, a: u32) -> bool {
 
 /// The allocation holding `a`.
 pub fn find(a: u32) -> Option<(u32, Region)> {
-    let sp = SPACE.lock().unwrap();
+    let sp = SPACE.locked();
     let (&b, r) = sp.range(..=a).next_back()?;
     (a < b + r.size).then_some((b, *r))
 }
@@ -718,24 +697,24 @@ pub fn find(a: u32) -> Option<(u32, Region)> {
 pub fn release(base: u32) -> bool {
     // zeroed before it leaves the map: once out, another thread may reserve it (a new thread's
     // stack was zeroed under it)
-    let mut sp = SPACE.lock().unwrap();
+    let mut sp = SPACE.locked();
     let Some(r) = sp.get(&base).copied() else { return false };
-    kura::jit::code_changed(len(base), len(r.size));
+    kura::jit::code_changed(us(base), us(r.size));
     jit_prot(base, r.size, 0);
     zero(base, r.size);
     if r.hi != 0 {
         HIGH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
     sp.remove(&base);
-    PAGES.lock().unwrap().remove(&base);
+    PAGES.locked().remove(&base);
     true
 }
 
 /// The allocations, for logs (SAKE_TRACE_MEM): base, size, kind; adjacent small ones merged.
 pub fn dump() -> String {
-    let sp = SPACE.lock().unwrap();
+    let sp = SPACE.locked();
     let mut out = String::new();
-    let pages = PAGES.lock().unwrap();
+    let pages = PAGES.locked();
     for (&b, r) in sp.iter() {
         // (pages committed, and the end of the last one, in KB from the start)
         let (n, top) = pages.get(&b).map_or((0, 0), |p| {
@@ -748,7 +727,7 @@ pub fn dump() -> String {
 
 /// The free range at `a` (for VirtualQuery): (start, size).
 pub fn free_at(a: u32) -> (u32, u32) {
-    let sp = SPACE.lock().unwrap();
+    let sp = SPACE.locked();
     let lo = sp.range(..=a).next_back().map_or(0, |(&b, r)| b + r.size);
     let hi = sp.range(a..).next().map_or(GUEST_TOP, |(&b, _)| b);
     (lo & !(PAGE - 1), hi - (lo & !(PAGE - 1)))
@@ -773,7 +752,7 @@ unsafe impl dlmalloc::Allocator for Sys {
             return (std::ptr::null_mut(), 0, 0);
         };
         match alloc(size) {
-            Some(b) => (host::<u8>(b), len(size), 0),
+            Some(b) => (host::<u8>(b), us(size), 0),
             None => (std::ptr::null_mut(), 0, 0),
         }
     }
@@ -793,7 +772,7 @@ unsafe impl dlmalloc::Allocator for Sys {
         true
     }
     fn page_size(&self) -> usize {
-        PAGE as usize
+        kome::num::us(PAGE)
     }
 }
 
@@ -1001,7 +980,7 @@ pub fn heap_destroy(heap: u32) -> usize {
 
 pub fn heap_alloc(size: u32, zero: bool) -> u32 {
     let Some(total) = size.checked_add(HDR) else { return 0 };
-    let p = unsafe { HEAP.lock().unwrap().malloc(len(total), 16) } as usize as u32;
+    let p = unsafe { HEAP.locked().malloc(us(total), 16) } as usize as u32;
     if p == 0 {
         return 0;
     }
@@ -1041,7 +1020,7 @@ pub fn heap_free(p: u32) -> bool {
     w32(p - 4, 0);
     // (c_free: the header's size may be below the chunk's after an in-place shrink)
     let _ = size;
-    unsafe { HEAP.lock().unwrap().c_free((p - HDR) as usize as *mut u8) };
+    unsafe { HEAP.locked().c_free((p - HDR) as usize as *mut u8) };
     true
 }
 
@@ -1089,7 +1068,7 @@ pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
 /// packed structures) but wasm atomics fault on it: an unaligned one inside an aligned qword
 /// swaps that qword, one that straddles two takes a lock (atomic against the others that do).
 pub fn atomic_rmw32(a: u32, f: impl Fn(u32) -> u32) -> u32 {
-    rmw32_at(len(a), f)
+    rmw32_at(us(a), f)
 }
 // (fetch_update is try_update on newer toolchains, which the one pinned here lacks)
 #[allow(deprecated)]
@@ -1343,7 +1322,7 @@ mod tests {
                 let after = slice(b, 10 * PAGE);
                 for i in 0..10 * PAGE {
                     let inside = i >= start && i < start + len;
-                    prop_assert_eq!(after[i as usize], if inside { 0 } else { before[i as usize] }, "byte {:#x}", i);
+                    prop_assert_eq!(after[kome::num::us(i)], if inside { 0 } else { before[kome::num::us(i)] }, "byte {:#x}", i);
                 }
                 release(b);
             }
@@ -1479,13 +1458,13 @@ mod heap_destroy_tests {
         let other: Vec<u32> = (0..50).map(|i| heap_alloc_in(b, [16, 4000][i % 2], false)).collect();
         let plain: Vec<u32> = (0..50).map(|i| heap_alloc_small([24, 9000][i % 2], false)).collect();
         for (i, &p) in other.iter().chain(&plain).enumerate() {
-            w32(p, i as u32 ^ 0x5a5a_0000);
+            w32(p, kome::num::u32_of(i) ^ 0x5a5a_0000);
         }
         assert_eq!(heap_destroy(a), mine.len());
         assert!(mine.iter().all(|&p| !live(p)), "every block of the heap went");
         for (i, &p) in other.iter().chain(&plain).enumerate() {
             assert!(live(p), "{p:#x} of another heap");
-            assert_eq!(r32(p), i as u32 ^ 0x5a5a_0000, "{p:#x} kept its bytes");
+            assert_eq!(r32(p), kome::num::u32_of(i) ^ 0x5a5a_0000, "{p:#x} kept its bytes");
         }
         // (again: nothing left)
         assert_eq!(heap_destroy(a), 0);
@@ -1669,7 +1648,7 @@ mod review_b07_tests {
                 v[nul] = 0;
             }
             for (i, &c) in v.iter().enumerate() {
-                w8(b + at + i as u32, c);
+                w8(b + at + kome::num::u32_of(i), c);
             }
             prop_assert_eq!(cstr(b + at), cstr_ref(b + at));
             prop_assert_eq!(wstr(b + at), wstr_ref(b + at));

@@ -5,6 +5,7 @@
 //! the waiters of their object, as many as they let through (`signal_obj`, waits::wake); any
 //! other change wakes every waiter (`signal`), which then rechecks.
 
+use kome::locks::Lock as _;
 use crate::HashMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -295,7 +296,7 @@ pub fn note_signal(t: &Table, h: u32) {
     }
     if let Some(k) = t.objs.key(&h) {
         let m = HANDOFF.mark(crate::cur().tid);
-        SIGNALS.lock().unwrap().get_or_insert_with(HashMap::default).insert(k, m);
+        SIGNALS.locked().get_or_insert_with(HashMap::default).insert(k, m);
     }
 }
 /// A woken waiter lets its signaler reach its next API call (SAKE_TRACE_HANDOFF: the waits
@@ -309,7 +310,7 @@ fn defer_to(m: waits::handoff::Mark, tid: u32) {
 }
 /// The signal that left object `k` signaled (by a guest thread)
 fn signal_of(k: Key) -> Option<waits::handoff::Mark> {
-    SIGNALS.lock().unwrap().as_ref()?.get(&k).copied()
+    SIGNALS.locked().as_ref()?.get(&k).copied()
 }
 
 pub fn lock() -> MutexGuard<'static, Option<Table>> {
@@ -384,7 +385,7 @@ fn unref(t: &mut Table, k: Key) -> Option<Obj> {
         if t.named.remove(&k) {
             t.names.retain(|_, v| *v != k);
         }
-        if let Some(m) = SIGNALS.lock().unwrap().as_mut() {
+        if let Some(m) = SIGNALS.locked().as_mut() {
             m.remove(&k);
         }
         return t.objs.map.remove(&k).map(|o| o.0);
@@ -689,7 +690,7 @@ fn attempt(t: &mut Table, handles: &[Option<Key>], all: bool, tid: u32, blocked:
             Some(true) => {
                 // (woken by another thread's SetEvent: it runs on to its next call first)
                 let m = if blocked { h.and_then(signal_of) } else { None };
-                return Attempt::Done(i as u32 + if ab { 0x80 } else { 0 }, m.into_iter().collect());
+                return Attempt::Done(kome::num::u32_of(i) + if ab { 0x80 } else { 0 }, m.into_iter().collect());
             }
             Some(false) => {}
         }
@@ -847,7 +848,7 @@ mod wait_tests {
             .iter()
             .map(|s| match *s {
                 Spec::Event { manual, set } => add(Obj::Event { manual, set }),
-                Spec::Mutex(k) => add(Obj::Mutex { owner: [0, me, me + 0x1000, ABANDONED][k as usize], count: (k == 1) as u32 }),
+                Spec::Mutex(k) => add(Obj::Mutex { owner: [0, me, me + 0x1000, ABANDONED][kome::num::us(k)], count: (k == 1) as u32 }),
                 Spec::Sem(count) => add(Obj::Semaphore { count, max: 4 }),
                 Spec::Bad => 0x7ff0_0000,
                 Spec::NoSync => {

@@ -7,6 +7,7 @@
 //! OVERLAPPED { Internal (the NTSTATUS), InternalHigh (bytes), Offset, OffsetHigh, hEvent };
 //! an hEvent with its low bit set asks for no completion packet.
 
+use kome::locks::Lock as _;
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
 use crate::mem::{self, ps, r32, rp, w32, wp};
@@ -45,7 +46,7 @@ struct State {
 static ST: Mutex<Option<State>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    f(ST.lock().unwrap().get_or_insert_with(State::default))
+    f(ST.locked().get_or_insert_with(State::default))
 }
 
 /// NTSTATUS -> Win32 error, for the statuses IO here ends with
@@ -182,7 +183,7 @@ fn BindIoCompletionCallback(c: &mut Ctx) -> u32 {
 fn bind_port() -> u32 {
     static PORT: Mutex<u32> = Mutex::new(0);
     static ENTRY: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    let mut p = PORT.lock().unwrap();
+    let mut p = PORT.locked();
     if *p == 0 {
         let port = new_port();
         let entry = *ENTRY.get_or_init(|| crate::api::host_fn("pool_io_thread", bind_io_thread, 4));

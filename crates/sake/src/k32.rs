@@ -57,14 +57,14 @@ fn put_name(dst: u32, cap: u32, s: &str, wide: bool) -> u32 {
 pub fn ret_str(dst: u32, cap: u32, s: &str, wide: bool) -> u32 {
     if wide {
         let v: Vec<u16> = s.encode_utf16().collect();
-        if (mem::len32(v.len())) >= cap {
-            return mem::len32(v.len()) + 1;
+        if (kome::num::u32_of(v.len())) >= cap {
+            return kome::num::u32_of(v.len()) + 1;
         }
         put_wstr(dst, cap, &v)
     } else {
         let v = crate::text::s2a(s);
-        if (mem::len32(v.len())) >= cap {
-            return mem::len32(v.len()) + 1;
+        if (kome::num::u32_of(v.len())) >= cap {
+            return kome::num::u32_of(v.len()) + 1;
         }
         put_cstr(dst, cap, &v)
     }
@@ -115,10 +115,10 @@ pub fn set_command_line(exe: &str, args: &[String]) {
 pub fn set_command_line_raw(s: &str) {
     let a = crate::text::s2a(&s);
     let w: Vec<u16> = s.encode_utf16().collect();
-    let pa = mem::heap_alloc(mem::len32(a.len()) + 1, true);
+    let pa = mem::heap_alloc(kome::num::u32_of(a.len()) + 1, true);
     mem::write(pa, &a);
-    let pw = mem::heap_alloc(2 * mem::len32(w.len()) + 2, true);
-    put_wstr(pw, mem::len32(w.len()) + 1, &w);
+    let pw = mem::heap_alloc(2 * kome::num::u32_of(w.len()) + 2, true);
+    put_wstr(pw, kome::num::u32_of(w.len()) + 1, &w);
     *CMDLINE.locked() = (pa, pw);
 }
 
@@ -154,14 +154,14 @@ fn env_block(wide: bool) -> u32 {
     let s = with_env(|e| e.block());
     if wide {
         let w: Vec<u16> = s.encode_utf16().collect();
-        let p = mem::heap_alloc(2 * mem::len32(w.len()), true);
+        let p = mem::heap_alloc(2 * kome::num::u32_of(w.len()), true);
         for (i, c) in w.iter().enumerate() {
-            w16(p + 2 * mem::len32(i), *c);
+            w16(p + 2 * kome::num::u32_of(i), *c);
         }
         p
     } else {
         let a = crate::text::s2a(&s);
-        let p = mem::heap_alloc(mem::len32(a.len()), true);
+        let p = mem::heap_alloc(kome::num::u32_of(a.len()), true);
         mem::write(p, &a);
         p
     }
@@ -209,9 +209,9 @@ fn GetEnvironmentVariableA(c: &mut Ctx) -> u32 {
 fn GetEnvironmentVariableW(c: &mut Ctx) -> u32 {
     match env_get(&arg_str(c.a(0), true)) {
         // (a buffer too short gets an empty string, as Windows' W one: winref envvars)
-        Some(v) if mem::len32(v.encode_utf16().count()) >= c.a(2) && c.a(1) != 0 && c.a(2) != 0 => {
+        Some(v) if kome::num::u32_of(v.encode_utf16().count()) >= c.a(2) && c.a(1) != 0 && c.a(2) != 0 => {
             w16(c.a(1), 0);
-            mem::len32(v.encode_utf16().count()) + 1
+            kome::num::u32_of(v.encode_utf16().count()) + 1
         }
         Some(v) => ret_str(c.a(1), c.a(2), &v, true),
         None => {
@@ -541,7 +541,7 @@ fn K32GetPerformanceInfo(c: &mut Ctx) -> u32 {
     let [phys, avail, commit, limit, peak, paged, nonpaged] = perf_pages();
     let at = |i: u32| p + ps + i * ps; // the SIZE_T fields after cb
     for (i, v) in [commit, limit, peak, phys, avail, phys / 8, paged + nonpaged, paged, nonpaged, 4096].into_iter().enumerate() {
-        mem::wp(at(mem::len32(i)), v);
+        mem::wp(at(kome::num::u32_of(i)), v);
     }
     let (tids, handles) = counts();
     w32(at(10), handles);
@@ -566,7 +566,7 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
         2 => (312, false),
         5 => {
             let (fixed, ti) = if x64 { (0x100, 0x50) } else { (0xb8, 0x40) };
-            (fixed + ti * mem::len32(tids.len()) + 2 * (mem::len32(name.len()) + 1), false)
+            (fixed + ti * kome::num::u32_of(tids.len()) + 2 * (kome::num::u32_of(name.len()) + 1), false)
         }
         _ => return 0xc000_0003,
     };
@@ -588,13 +588,13 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
         }
         _ => {
             let (fixed, ti) = if x64 { (0x100, 0x50) } else { (0xb8, 0x40) };
-            w32(p + 4, mem::len32(tids.len()));
-            let s = p + fixed + ti * mem::len32(tids.len());
+            w32(p + 4, kome::num::u32_of(tids.len()));
+            let s = p + fixed + ti * kome::num::u32_of(tids.len());
             for (i, &u) in name.iter().enumerate() {
-                mem::w16(s + 2 * mem::len32(i), u);
+                mem::w16(s + 2 * kome::num::u32_of(i), u);
             }
-            mem::w16(p + 0x38, 2 * name.len() as u16);
-            mem::w16(p + 0x3a, 2 * name.len() as u16 + 2);
+            mem::w16(p + 0x38, 2 * kome::num::lo16(name.len()));
+            mem::w16(p + 0x3a, 2 * kome::num::lo16(name.len()) + 2);
             mem::wp(p + 0x38 + ps, s);
             let (pid_at, hc_at) = if x64 { (0x50, 0x60) } else { (0x44, 0x4c) };
             w32(p + pid_at - ps, 8); // base priority: normal
@@ -602,7 +602,7 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
             w32(p + hc_at, handles);
             w32(p + hc_at + 4, 1); // session
             for (i, &tid) in tids.iter().enumerate() {
-                let t = p + fixed + ti * mem::len32(i);
+                let t = p + fixed + ti * kome::num::u32_of(i);
                 let cid = if x64 { 0x28 } else { 0x20 };
                 mem::wp(t + cid, crate::pid());
                 mem::wp(t + cid + ps, tid);
@@ -648,13 +648,13 @@ fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
         return 0;
     }
     for (i, &b) in all.iter().enumerate().take((cb / ps) as usize) {
-        mem::wp(p + mem::len32(i) * ps, b);
+        mem::wp(p + kome::num::u32_of(i) * ps, b);
     }
     if pn == 0 {
         last_error(998);
         return 0;
     }
-    w32(pn, mem::len32(all.len()) * ps);
+    w32(pn, kome::num::u32_of(all.len()) * ps);
     1
 }
 /// EnumProcessModulesEx(.., filter): a process of one kind has its own modules only
@@ -740,26 +740,26 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
     }
     if wide {
         let v: Vec<u16> = name.encode_utf16().collect();
-        let n = v.len().min(mem::len(cap));
+        let n = v.len().min(kome::num::us(cap));
         for (i, &u) in v[..n].iter().enumerate() {
-            mem::w16(dst + 2 * mem::len32(i), u);
+            mem::w16(dst + 2 * kome::num::u32_of(i), u);
         }
-        if n < mem::len(cap) {
-            mem::w16(dst + 2 * mem::len32(n), 0);
+        if n < kome::num::us(cap) {
+            mem::w16(dst + 2 * kome::num::u32_of(n), 0);
         }
-        mem::len32(n)
+        kome::num::u32_of(n)
     } else {
         // (cut short: what fits before a 0, yet the count of characters asked for, as Windows 10
         // answers; the wide name is converted into the caller's buffer)
         let v = crate::text::s2a(&name);
-        if v.len() >= mem::len(cap) {
+        if v.len() >= kome::num::us(cap) {
             mem::write(dst, &v[..cap as usize - 1]);
             mem::w8(dst + cap - 1, 0);
             return cap;
         }
         mem::write(dst, &v);
-        mem::w8(dst + mem::len32(v.len()), 0);
-        mem::len32(v.len())
+        mem::w8(dst + kome::num::u32_of(v.len()), 0);
+        kome::num::u32_of(v.len())
     }
 }
 fn K32GetModuleBaseNameA(c: &mut Ctx) -> u32 {
@@ -1467,7 +1467,7 @@ pub(crate) fn wait_on_address(a: u32, cmp: u32, size: u32, ms: u32) -> Result<()
         return Err(87);
     };
     // (the value is looked at under the lock: a waker changes it, then takes it to wake)
-    if ADDR.wait(mem::len(a), || value_at(a, size) == Some(want), ms, &Pause) { Ok(()) } else { Err(1460) }
+    if ADDR.wait(kome::num::us(a), || value_at(a, size) == Some(want), ms, &Pause) { Ok(()) } else { Err(1460) }
 }
 fn WakeByAddressAll(c: &mut Ctx) -> u32 {
     ADDR.wake(c.a(0) as usize);
@@ -1945,7 +1945,7 @@ pub(crate) fn release_semaphore(h: u32, n: i32) -> Result<i32, u32> {
         _ => Err(6),
     });
     if r.is_ok() {
-        obj::signal_obj(h, n as usize);
+        obj::signal_obj(h, kome::num::us(n));
     }
     r
 }
@@ -2089,7 +2089,7 @@ static CS: waits::Cs = waits::Cs::new();
 /// atomic: it gets an aligned stand-in of its own, the guest's bytes there left as they are.
 fn atomic(a: u32) -> &'static AtomicU32 {
     if a % 4 == 0 {
-        return unsafe { &*(mem::len(a) as *const AtomicU32) };
+        return unsafe { &*(kome::num::us(a) as *const AtomicU32) };
     }
     static SHADOW: Mutex<Option<HashMap<u32, &'static AtomicU32>>> = Mutex::new(None);
     let mut g = SHADOW.lock().unwrap_or_else(|e| e.into_inner());
@@ -2694,9 +2694,9 @@ fn output_debug_string(p: u32, wide: bool) {
     if wide {
         let w: Vec<u16> = s.encode_utf16().collect();
         let a = crate::text::w2mb(0, &w);
-        let b = mem::heap_alloc(mem::len32(a.len()) + 1, true);
+        let b = mem::heap_alloc(kome::num::u32_of(a.len()) + 1, true);
         mem::write(b, &a);
-        crate::dbg::output(b, mem::len32(a.len()) + 1);
+        crate::dbg::output(b, kome::num::u32_of(a.len()) + 1);
         mem::heap_free(b);
     } else {
         crate::dbg::output(p, mem::cstr(p).len() as u32 + 1);
@@ -3157,7 +3157,7 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
     } else {
         for (off, len) in xmem::pieces(k) {
             match remote_bytes(c.a(0), xmem::READ, vec![a.wrapping_add(off), len], vec![]) {
-                Some(Ok((_, bytes))) => mem::write(b + off, &bytes[..(mem::len(len)).min(bytes.len())]),
+                Some(Ok((_, bytes))) => mem::write(b + off, &bytes[..(kome::num::us(len)).min(bytes.len())]),
                 Some(Err(e)) => {
                     // (it changed meanwhile: what was copied so far)
                     mem::putp(done, off);
@@ -3208,7 +3208,7 @@ fn WriteProcessMemory(c: &mut Ctx) -> u32 {
                 return 0;
             }
             mem::copy(a, b, k);
-            kura::jit::code_changed(mem::len(a), k.max(1) as usize);
+            kura::jit::code_changed(kome::num::us(a), k.max(1) as usize);
             k
         }
     };
@@ -3252,14 +3252,14 @@ fn locale_name() -> &'static str {
 fn GetUserDefaultLocaleName(c: &mut Ctx) -> u32 {
     let (out, n) = (c.a(0), c.a(1));
     let w: Vec<u16> = locale_name().encode_utf16().chain([0]).collect();
-    if (mem::len(n)) < w.len() {
+    if (kome::num::us(n)) < w.len() {
         last_error(122);
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(out + 2 * mem::len32(i), u);
+        w16(out + 2 * kome::num::u32_of(i), u);
     }
-    mem::len32(w.len())
+    kome::num::u32_of(w.len())
 }
 const LOCALES: [(u32, &str); 16] = [
     (0x409, "en-US"), (0x411, "ja-JP"), (0x804, "zh-CN"), (0x404, "zh-TW"), (0x412, "ko-KR"), (0x809, "en-GB"),
@@ -3293,16 +3293,16 @@ fn LCIDToLocaleName(c: &mut Ctx) -> u32 {
     };
     let w: Vec<u16> = name.encode_utf16().chain([0]).collect();
     if c.a(2) == 0 {
-        return mem::len32(w.len());
+        return kome::num::u32_of(w.len());
     }
     if (c.a(2) as usize) < w.len() {
         last_error(122);
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(c.a(1) + 2 * mem::len32(i), u);
+        w16(c.a(1) + 2 * kome::num::u32_of(i), u);
     }
-    mem::len32(w.len())
+    kome::num::u32_of(w.len())
 }
 /// LdrGetDllHandle(path, flags, UNICODE_STRING *name, HMODULE *out)
 fn LdrGetDllHandle(c: &mut Ctx) -> u32 {
@@ -3315,8 +3315,8 @@ fn LdrGetDllHandle(c: &mut Ctx) -> u32 {
 }
 // ntdll's counted strings: UNICODE_STRING / ANSI_STRING = { u16 Length, u16 MaximumLength, PTR Buffer }
 fn put_counted(us: u32, len: u32, max: u32, buf: u32) {
-    w16(us, mem::lo16(len));
-    w16(us + 2, mem::lo16(max));
+    w16(us, kome::num::lo16(len));
+    w16(us + 2, kome::num::lo16(max));
     // (UNICODE_STRING / ANSI_STRING: Buffer after the two lengths, pointer-aligned)
     mem::wp(us + mem::ps(), buf);
 }
@@ -3351,7 +3351,7 @@ fn RtlFreeUnicodeString(c: &mut Ctx) -> u32 {
 }
 /// Stores `v` (code units of `unit` bytes) in counted string `us`, allocating if asked.
 fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
-    let n = unit * mem::len32(v.len());
+    let n = unit * kome::num::u32_of(v.len());
     let buf = if alloc {
         let b = mem::heap_alloc(n + unit, true);
         put_counted(us, n, n + unit, b);
@@ -3360,11 +3360,11 @@ fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
         if n + unit > u32::from(r16(us + 2)) {
             return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
         }
-        w16(us, mem::lo16(n));
+        w16(us, kome::num::lo16(n));
         mem::rp(us + mem::ps())
     };
     for (i, &x) in v.iter().enumerate() {
-        if unit == 2 { w16(buf + 2 * mem::len32(i), x) } else { w8(buf + mem::len32(i), x as u8) }
+        if unit == 2 { w16(buf + 2 * kome::num::u32_of(i), x) } else { w8(buf + kome::num::u32_of(i), kome::num::lo8(x)) }
     }
     if unit == 2 { w16(buf + n, 0) } else { w8(buf + n, 0) }
     0
@@ -3389,12 +3389,12 @@ fn RtlMultiByteToUnicodeN(c: &mut Ctx) -> u32 {
     let (dst, cap, pw, src, n) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     let b: Vec<u8> = (0..n).map(|i| mem::r8(src + i)).collect();
     let w = a2w(&b);
-    let k = w.len().min(mem::len(cap) / 2);
+    let k = w.len().min(kome::num::us(cap) / 2);
     for (i, &u) in w[..k].iter().enumerate() {
-        w16(dst + 2 * mem::len32(i), u);
+        w16(dst + 2 * kome::num::u32_of(i), u);
     }
     if pw != 0 {
-        w32(pw, 2 * mem::len32(k));
+        w32(pw, 2 * kome::num::u32_of(k));
     }
     0
 }
@@ -3406,14 +3406,14 @@ fn RtlUnicodeToMultiByteN(c: &mut Ctx) -> u32 {
     // (whole characters: a double-byte one that does not fit is left out)
     for &u in &w {
         let b = crate::text::w2a(&[u]);
-        if out.len() + b.len() > mem::len(cap) {
+        if out.len() + b.len() > kome::num::us(cap) {
             break;
         }
         out.extend(b);
     }
     mem::write(dst, &out);
     if pw != 0 {
-        w32(pw, mem::len32(out.len()));
+        w32(pw, kome::num::u32_of(out.len()));
     }
     0
 }
@@ -3431,7 +3431,7 @@ fn RtlUnicodeToMultiByteSize(c: &mut Ctx) -> u32 {
 }
 /// RtlUpcaseUnicodeChar(c): Windows' upper case of one UTF-16 unit
 fn RtlUpcaseUnicodeChar(c: &mut Ctx) -> u32 {
-    u32::from(crate::nt::up(mem::lo16(c.a(0))))
+    u32::from(crate::nt::up(kome::num::lo16(c.a(0))))
 }
 /// RtlCompareUnicodeString(a, b, case insensitive): the difference of the first units that
 /// differ (in upper case when asked), else of the lengths
@@ -3459,7 +3459,7 @@ fn RtlDosPathNameToNtPathName_U(c: &mut Ctx) -> u32 {
     counted_out(nt, &w, 2, true);
     if part != 0 {
         let at = w.iter().rposition(|&x| x == u16::from(b'\\')).map_or(0, |i| i + 1);
-        mem::wp(part, if at < w.len() { mem::rp(nt + mem::ps()) + 2 * mem::len32(at) } else { 0 });
+        mem::wp(part, if at < w.len() { mem::rp(nt + mem::ps()) + 2 * kome::num::u32_of(at) } else { 0 });
     }
     1
 }
@@ -3526,17 +3526,17 @@ fn NtQueryVirtualMemory(c: &mut Ctx) -> u32 {
             };
             let w: Vec<u16> = name.encode_utf16().collect();
             let us = 2 * mem::ps();
-            let need = us + 2 * mem::len32(w.len()) + 2;
+            let need = us + 2 * kome::num::u32_of(w.len()) + 2;
             if ret != 0 {
                 mem::wp(ret, need);
             }
             if len < need {
                 return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
             }
-            mem::w16(info, 2 * w.len() as u16);
-            mem::w16(info + 2, 2 * w.len() as u16 + 2);
+            mem::w16(info, 2 * kome::num::lo16(w.len()));
+            mem::w16(info + 2, 2 * kome::num::lo16(w.len()) + 2);
             mem::wp(info + mem::ps(), info + us);
-            put_wstr(info + us, mem::len32(w.len()) + 1, &w);
+            put_wstr(info + us, kome::num::u32_of(w.len()) + 1, &w);
             0
         }
         _ => 0xc000_0003,
@@ -4051,7 +4051,7 @@ fn GlobalMemoryStatus(c: &mut Ctx) -> u32 {
     w32(p, 8 + 6 * ps);
     w32(p + 4, 30);
     for (i, v) in [PHYS, PHYS / 4 * 3, 2 * PHYS, 2 * PHYS, 0x7ffe_0000, 0x6000_0000].into_iter().enumerate() {
-        let at = p + 8 + ps * mem::len32(i);
+        let at = p + 8 + ps * kome::num::u32_of(i);
         if x64 { mem::w64(at, clamp(v)) } else { w32(at, clamp(v) as u32) }
     }
     0
@@ -5089,7 +5089,7 @@ fn RtlVerifyVersionInfo(c: &mut Ctx) -> u32 {
 }
 fn VerSetConditionMask(c: &mut Ctx) -> u32 {
     let (m, t, k) = if mem::x64() { (c.a64(0), c.a(1), c.a(2)) } else { (u64::from(c.a(0)) | u64::from(c.a(1)) << 32, c.a(2), c.a(3)) };
-    let v = ver_set_condition_mask(m, t, mem::lo8(k));
+    let v = ver_set_condition_mask(m, t, kome::num::lo8(k));
     c.ret64(v)
 }
 
@@ -5188,16 +5188,16 @@ fn ui_languages(c: &mut Ctx, process: bool) -> u32 {
         w32(c.a(1), 1);
     }
     let (buf, cap) = (c.a(2), r32(c.a(3)));
-    w32(c.a(3), mem::len32(w.len()));
+    w32(c.a(3), kome::num::u32_of(w.len()));
     if buf == 0 {
         return 1;
     }
-    if (mem::len(cap)) < w.len() {
+    if (kome::num::us(cap)) < w.len() {
         last_error(122);
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(buf + 2 * mem::len32(i), u);
+        w16(buf + 2 * kome::num::u32_of(i), u);
     }
     1
 }
@@ -5326,7 +5326,7 @@ fn GetLocaleInfoW(c: &mut Ctx) -> u32 {
     }
     let s = locale_info(c.a(1));
     if c.a(3) == 0 {
-        return mem::len32(s.encode_utf16().count()) + 1;
+        return kome::num::u32_of(s.encode_utf16().count()) + 1;
     }
     ret_str(c.a(2), c.a(3), &s, true) + 1
 }
@@ -5353,10 +5353,10 @@ fn GetCPInfoExA(c: &mut Ctx) -> u32 {
     GetCPInfo(c)
 }
 fn IsDBCSLeadByte(c: &mut Ctx) -> u32 {
-    ok(crate::text::is_lead(mem::lo8(c.a(0))))
+    ok(crate::text::is_lead(kome::num::lo8(c.a(0))))
 }
 fn IsDBCSLeadByteEx(c: &mut Ctx) -> u32 {
-    ok(crate::text::is_lead_cp(c.a(0), mem::lo8(c.a(1))))
+    ok(crate::text::is_lead_cp(c.a(0), kome::num::lo8(c.a(1))))
 }
 
 /// The `n` guest bytes at `p` (a string a caller sized), or None (ERROR_NOACCESS set) where they
@@ -5404,7 +5404,7 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
         return 0;
     }
     if cap == 0 {
-        return mem::len32(w.len());
+        return kome::num::u32_of(w.len());
     }
     // Conversion can fill the supplied buffer before discovering that the
     // terminating NUL does not fit. MFC's ANSI CString -> CStringW conversion
@@ -5412,18 +5412,18 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     // and supplies its own terminator in ReleaseBuffer. Leaving the entire
     // buffer untouched here silently turned its Automation strings into empty
     // BSTRs. Preserve the failure result while retaining the converted prefix.
-    let mut written = w.len().min(mem::len(cap));
+    let mut written = w.len().min(kome::num::us(cap));
     if written < w.len() && written > 0 && (0xd800..=0xdbff).contains(&w[written - 1]) && (0xdc00..=0xdfff).contains(&w[written]) {
         written -= 1;
     }
     for (i, ch) in w[..written].iter().enumerate() {
-        w16(dst + 2 * mem::len32(i), *ch);
+        w16(dst + 2 * kome::num::u32_of(i), *ch);
     }
-    if mem::len32(w.len()) > cap {
+    if kome::num::u32_of(w.len()) > cap {
         last_error(122);
         return 0;
     }
-    mem::len32(w.len())
+    kome::num::u32_of(w.len())
 }
 fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
     let (cp, src, n, dst, cap) = (c.a(0), c.a(2), c.i(3), c.a(4), c.a(5));
@@ -5452,9 +5452,9 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
     let (a, used) = crate::text::w2mb_flags(cp, &s, &d, c.a(1) & 0x400 == 0);
     put32(pused, u32::from(used));
     if cap == 0 {
-        return mem::len32(a.len());
+        return kome::num::u32_of(a.len());
     }
-    if mem::len32(a.len()) > cap {
+    if kome::num::u32_of(a.len()) > cap {
         // (as MultiByteToWideChar: the whole characters that fit are written before the failure)
         let utf8 = cp == 65001 || matches!(cp, 0 | 1 | 3) && crate::text::acp() == 65001;
         let mut fit = 0;
@@ -5462,7 +5462,7 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
         while at < a.len() {
             let n = if utf8 { 1 + a[at + 1..].iter().take_while(|b| **b & 0xc0 == 0x80).count() }
                 else if crate::text::is_lead_cp(cp, a[at]) { 2 } else { 1 };
-            if at + n > mem::len(cap) { break; }
+            if at + n > kome::num::us(cap) { break; }
             at += n;
             fit = at;
         }
@@ -5471,7 +5471,7 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
         return 0;
     }
     mem::write(dst, &a);
-    mem::len32(a.len())
+    kome::num::u32_of(a.len())
 }
 
 /// CT_CTYPE1, with C1_DEFINED (0x200) on every character but the surrogates
@@ -5577,7 +5577,7 @@ fn string_type(ty: u32, w: &[u16], out: u32) {
             4 => ctype3(*ch),
             _ => 0,
         };
-        w16(out + 2 * mem::len32(i), v);
+        w16(out + 2 * kome::num::u32_of(i), v);
     }
 }
 fn GetStringTypeA(c: &mut Ctx) -> u32 {
@@ -5650,11 +5650,11 @@ fn LCMapStringA(c: &mut Ctx) -> u32 {
         crate::text::case_a(&mut s, flags & 0x200 != 0);
     }
     if cap == 0 {
-        return mem::len32(s.len());
+        return kome::num::u32_of(s.len());
     }
-    let k = s.len().min(mem::len(cap));
+    let k = s.len().min(kome::num::us(cap));
     mem::write(dst, &s[..k]);
-    mem::len32(k)
+    kome::num::u32_of(k)
 }
 pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
     let (flags, src, n, dst, cap) = (c.a(1), c.a(2), c.i(3), c.a(4), c.a(5));
@@ -5668,13 +5668,13 @@ pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
     };
     let w = lcmap(&w, flags);
     if cap == 0 {
-        return mem::len32(w.len());
+        return kome::num::u32_of(w.len());
     }
-    let k = w.len().min(mem::len(cap));
+    let k = w.len().min(kome::num::us(cap));
     for (i, ch) in w[..k].iter().enumerate() {
-        w16(dst + 2 * mem::len32(i), *ch);
+        w16(dst + 2 * kome::num::u32_of(i), *ch);
     }
-    mem::len32(k)
+    kome::num::u32_of(k)
 }
 fn cmp_w(a: &[u16], b: &[u16], nocase: bool) -> std::cmp::Ordering {
     crate::collate::compare(a, b, if nocase { crate::collate::NORM_IGNORECASE } else { 0 })
@@ -5823,7 +5823,7 @@ fn read_systemtime(p: u32, date: bool) -> Option<[u16; 8]> {
         system_time(t, true);
     }
     let q = tmp.unwrap_or(p);
-    let st: [u16; 8] = std::array::from_fn(|i| r16(q + 2 * mem::len32(i)));
+    let st: [u16; 8] = std::array::from_fn(|i| r16(q + 2 * kome::num::u32_of(i)));
     if let Some(t) = tmp {
         mem::heap_free(t);
     }
@@ -5831,7 +5831,7 @@ fn read_systemtime(p: u32, date: bool) -> Option<[u16; 8]> {
     let good = if date { (1601..=30827).contains(&y) && (1..=12).contains(&m) && d >= 1 && d <= days_in_month(y, m) } else { st[4] < 24 && st[5] < 60 && st[6] < 60 && st[7] < 1000 };
     let mut st = st;
     if date {
-        st[2] = (days_from_civil(y, m, d) + 4).rem_euclid(7) as u16;
+        st[2] = kome::num::lo16((days_from_civil(y, m, d) + 4).rem_euclid(7));
     }
     good.then_some(st)
 }
@@ -5915,12 +5915,12 @@ fn lstrlenW(c: &mut Ctx) -> u32 {
 fn lstrcpyA(c: &mut Ctx) -> u32 {
     let s = cstr(c.a(1));
     mem::write(c.a(0), &s);
-    w8(c.a(0) + mem::len32(s.len()), 0);
+    w8(c.a(0) + kome::num::u32_of(s.len()), 0);
     c.a(0)
 }
 fn lstrcpyW(c: &mut Ctx) -> u32 {
     let s = wstr(c.a(1));
-    put_wstr(c.a(0), mem::len32(s.len()) + 1, &s);
+    put_wstr(c.a(0), kome::num::u32_of(s.len()) + 1, &s);
     c.a(0)
 }
 fn lstrcpynA(c: &mut Ctx) -> u32 {
@@ -5936,14 +5936,14 @@ fn lstrcpynW(c: &mut Ctx) -> u32 {
 fn lstrcatA(c: &mut Ctx) -> u32 {
     let d = cstr(c.a(0));
     let s = cstr(c.a(1));
-    mem::write(c.a(0) + mem::len32(d.len()), &s);
+    mem::write(c.a(0) + kome::num::u32_of(d.len()), &s);
     w8(c.a(0) + (d.len() + s.len()) as u32, 0);
     c.a(0)
 }
 fn lstrcatW(c: &mut Ctx) -> u32 {
     let d = wstr(c.a(0));
     let s = wstr(c.a(1));
-    put_wstr(c.a(0) + 2 * mem::len32(d.len()), mem::len32(s.len()) + 1, &s);
+    put_wstr(c.a(0) + 2 * kome::num::u32_of(d.len()), kome::num::u32_of(s.len()) + 1, &s);
     c.a(0)
 }
 fn lstrcmpA(c: &mut Ctx) -> u32 {
@@ -6011,7 +6011,7 @@ impl Atoms {
     fn add(&mut self, s: String) -> u32 {
         if let Some((i, Some(e))) = self.find(&s).and_then(|i| Some((i, self.0.get_mut(i)?.as_mut()))) {
             e.1 += 1;
-            return 0xc000 + mem::len32(i);
+            return 0xc000 + kome::num::u32_of(i);
         }
         let i = self.2.first().copied().unwrap_or(self.0.len());
         if i >= 0x4000 {
@@ -6023,15 +6023,15 @@ impl Atoms {
         self.2.remove(&i);
         self.1.get_or_insert_with(HashMap::default).insert(s.to_lowercase(), i);
         self.0[i] = Some((s, 1));
-        0xc000 + mem::len32(i)
+        0xc000 + kome::num::u32_of(i)
     }
     /// 0 once deleted (or an integer atom), else the atom (not one)
     fn delete(&mut self, a: u32) -> u32 {
         if (1..0xc000).contains(&a) {
             return 0;
         }
-        let Some(i) = a.checked_sub(0xc000).filter(|&i| (mem::len(i)) < self.0.len()) else { return a };
-        let i = mem::len(i);
+        let Some(i) = a.checked_sub(0xc000).filter(|&i| (kome::num::us(i)) < self.0.len()) else { return a };
+        let i = kome::num::us(i);
         let e = &mut self.0[i];
         match e {
             Some((_, n)) if *n > 1 => *n -= 1,
@@ -6078,7 +6078,7 @@ fn find_atom(c: &mut Ctx, wide: bool, global: bool) -> u32 {
     match atom_arg(c.a(0), wide) {
         AtomArg::Int(n) => n,
         AtomArg::Name(s) => match atoms(global).find(&s) {
-            Some(i) => 0xc000 + mem::len32(i),
+            Some(i) => 0xc000 + kome::num::u32_of(i),
             None => {
                 last_error(2);
                 0
@@ -6111,19 +6111,19 @@ fn atom_name_into(a: u32, buf: u32, size: u32, wide: bool, global: bool) -> u32 
     let text: Vec<u16> = if wide { name.encode_utf16().collect() } else { crate::text::s2a(&name).into_iter().map(u16::from).collect() };
     let put = |n: usize, nul: bool| {
         for (i, &ch) in text[..n].iter().enumerate() {
-            if wide { mem::w16(buf + 2 * mem::len32(i), ch) } else { w8(buf + mem::len32(i), ch as u8) }
+            if wide { mem::w16(buf + 2 * kome::num::u32_of(i), ch) } else { w8(buf + kome::num::u32_of(i), kome::num::lo8(ch)) }
         }
         if nul {
-            if wide { mem::w16(buf + 2 * mem::len32(n), 0) } else { w8(buf + mem::len32(n), 0) }
+            if wide { mem::w16(buf + 2 * kome::num::u32_of(n), 0) } else { w8(buf + kome::num::u32_of(n), 0) }
         }
     };
     let len = text.len();
     if global && wide {
-        let n = len.min(mem::len(size));
-        put(n, n < mem::len(size));
-        return mem::len32(n);
+        let n = len.min(kome::num::us(size));
+        put(n, n < kome::num::us(size));
+        return kome::num::u32_of(n);
     }
-    let n = len.min(mem::len(size) - 1);
+    let n = len.min(kome::num::us(size) - 1);
     put(n, true);
     if global && n < len {
         last_error(234);
@@ -6132,7 +6132,7 @@ fn atom_name_into(a: u32, buf: u32, size: u32, wide: bool, global: bool) -> u32 
     if n == 0 && len != 0 {
         last_error(122);
     }
-    mem::len32(n)
+    kome::num::u32_of(n)
 }
 /// The name of a global string atom (a window class's, a registered message's...).
 pub fn atom_name(a: u32) -> Option<String> {
@@ -6217,14 +6217,14 @@ pub(crate) fn write_systemtime(p: u32, secs: i64, ms: u32) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    w16(p, y as u16);
-    w16(p + 2, m as u16);
+    w16(p, kome::num::lo16(y));
+    w16(p + 2, kome::num::lo16(m));
     w16(p + 4, ((days + 4).rem_euclid(7)) as u16);
-    w16(p + 6, d as u16);
+    w16(p + 6, kome::num::lo16(d));
     w16(p + 8, (rem / 3600) as u16);
     w16(p + 10, (rem / 60 % 60) as u16);
     w16(p + 12, (rem % 60) as u16);
-    w16(p + 14, mem::lo16(ms));
+    w16(p + 14, kome::num::lo16(ms));
 }
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -6767,10 +6767,10 @@ fn FindResourceExW(c: &mut Ctx) -> u32 {
 /// until it returns FALSE; ERROR_RESOURCE_DATA/TYPE/NAME_NOT_FOUND when there is nothing.
 fn enum_resources(c: &mut Ctx, level: usize, wide: bool) -> u32 {
     let m = if c.a(0) == 0 { module_handle(0, false) } else { c.a(0) };
-    let path: Vec<crate::pe::ResId> = (0..level).map(|i| crate::pe::ResId::from_arg(c.a(1 + mem::len32(i)), wide)).collect();
-    let (cb, param) = (c.a(1 + mem::len32(level)), c.a(2 + mem::len32(level)));
+    let path: Vec<crate::pe::ResId> = (0..level).map(|i| crate::pe::ResId::from_arg(c.a(1 + kome::num::u32_of(i)), wide)).collect();
+    let (cb, param) = (c.a(1 + kome::num::u32_of(level)), c.a(2 + kome::num::u32_of(level)));
     // (read before the callbacks: on x64 the arguments are registers a call clobbers)
-    let given: Vec<u32> = (0..level).map(|i| c.a(1 + mem::len32(i))).collect();
+    let given: Vec<u32> = (0..level).map(|i| c.a(1 + kome::num::u32_of(i))).collect();
     let Some(ids) = crate::pe::resource_ids(m, &path) else {
         last_error([1812, 1813, 1814][level.min(2)]);
         return 0;
@@ -6790,7 +6790,7 @@ fn enum_resources(c: &mut Ctx, level: usize, wide: bool) -> u32 {
                     a.push(0);
                     a
                 };
-                let p = mem::heap_alloc(mem::len32(bytes.len()), false);
+                let p = mem::heap_alloc(kome::num::u32_of(bytes.len()), false);
                 mem::write(p, &bytes);
                 (p, p)
             }
@@ -7094,7 +7094,7 @@ fn OpenFile(c: &mut Ctx) -> u32 {
         if of != 0 {
             mem::w8(of, 136);
             mem::w8(of + 1, 1);
-            mem::w16(of + 2, mem::lo16(err));
+            mem::w16(of + 2, kome::num::lo16(err));
             if err == 0 {
                 mem::w32(of + 4, 0);
                 mem::put_cstr(of + 8, 128, &crate::text::s2a(path));
@@ -7246,7 +7246,7 @@ fn ReadFile(c: &mut Ctx) -> u32 {
     let got = if ov != 0 {
         let start = files::io_start(r32(ov + 2 * k), r32(ov + 2 * k + 4), false);
         match f.read_at(start, crate::iocp::is_overlapped(h), dst) {
-            Ok(got) => mem::len32(got),
+            Ok(got) => kome::num::u32_of(got),
             Err(()) => {
                 // (at or past the end: STATUS_END_OF_FILE in the OVERLAPPED, its event set,
                 // and FALSE with ERROR_HANDLE_EOF, the handle synchronous or not)
@@ -7650,7 +7650,7 @@ fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
     } else {
         return 0x8007_0057;
     };
-    mem::wp(out, p + 2 * mem::len32(n));
+    mem::wp(out, p + 2 * kome::num::u32_of(n));
     0
 }
 fn VerifyConsoleIoHandle(c: &mut Ctx) -> u32 {
@@ -8177,7 +8177,7 @@ fn full_path_name(c: &mut Ctx, wide: bool) -> u32 {
     } else if c.a(3) != 0 && r < c.a(1) {
         let pos = full.rfind('\\').map_or(0, |i| i + 1);
         let off = if wide { full[..pos].encode_utf16().count() * 2 } else { crate::text::s2a(&full[..pos]).len() };
-        mem::wp(c.a(3), c.a(2) + mem::len32(off));
+        mem::wp(c.a(3), c.a(2) + kome::num::u32_of(off));
     }
     r
 }
@@ -8347,14 +8347,14 @@ fn query_dos_device(c: &mut Ctx, wide: bool) -> u32 {
         units.push(0);
     }
     units.push(0);
-    if mem::len32(units.len()) > max {
+    if kome::num::u32_of(units.len()) > max {
         last_error(122);
         return 0;
     }
     for (i, &u) in units.iter().enumerate() {
-        if wide { w16(out + 2 * mem::len32(i), u) } else { w8(out + mem::len32(i), u as u8) }
+        if wide { w16(out + 2 * kome::num::u32_of(i), u) } else { w8(out + kome::num::u32_of(i), kome::num::lo8(u)) }
     }
-    mem::len32(units.len())
+    kome::num::u32_of(units.len())
 }
 fn QueryDosDeviceA(c: &mut Ctx) -> u32 {
     query_dos_device(c, false)
@@ -8376,13 +8376,13 @@ pub(crate) fn drive_strings() -> Vec<u8> {
 fn logical_drive_strings(c: &mut Ctx, wide: bool) -> u32 {
     let (len, out) = (c.a(0), c.a(1));
     let s = drive_strings();
-    if len < mem::len32(s.len()) {
-        return mem::len32(s.len());
+    if len < kome::num::u32_of(s.len()) {
+        return kome::num::u32_of(s.len());
     }
     for (i, &b) in s.iter().enumerate() {
-        if wide { w16(out + 2 * mem::len32(i), u16::from(b)) } else { w8(out + mem::len32(i), b) }
+        if wide { w16(out + 2 * kome::num::u32_of(i), u16::from(b)) } else { w8(out + kome::num::u32_of(i), b) }
     }
-    mem::len32(s.len()) - 1
+    kome::num::u32_of(s.len()) - 1
 }
 fn GetLogicalDriveStringsA(c: &mut Ctx) -> u32 {
     logical_drive_strings(c, false)
@@ -8947,9 +8947,9 @@ fn K32EnumProcesses(c: &mut Ctx) -> u32 {
     let ids = crate::process::running();
     let n = ((cb / 4) as usize).min(ids.len());
     for (i, &id) in ids[..n].iter().enumerate() {
-        w32(p + 4 * mem::len32(i), id);
+        w32(p + 4 * kome::num::u32_of(i), id);
     }
-    w32(pu, 4 * mem::len32(n));
+    w32(pu, 4 * kome::num::u32_of(n));
     1
 }
 /// OpenThread(access, inherit, id): a handle of the thread with that id (mono opens its own
@@ -8992,11 +8992,11 @@ fn startup_info(p: u32, wide: bool) -> u32 {
     static DESKTOP: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
     let (da, dw) = *DESKTOP.get_or_init(|| {
         let t = "Winsta0\\Default";
-        let a = mem::heap_alloc(mem::len32(t.len()) + 1, true);
+        let a = mem::heap_alloc(kome::num::u32_of(t.len()) + 1, true);
         mem::write(a, t.as_bytes());
-        let w = mem::heap_alloc(2 * mem::len32(t.len()) + 2, true);
+        let w = mem::heap_alloc(2 * kome::num::u32_of(t.len()) + 2, true);
         for (i, u) in t.encode_utf16().enumerate() {
-            w16(w + 2 * mem::len32(i), u);
+            w16(w + 2 * kome::num::u32_of(i), u);
         }
         (a, w)
     });
@@ -9007,7 +9007,7 @@ fn startup_info(p: u32, wide: bool) -> u32 {
     if STD_GIVEN.load(Ordering::Relaxed) {
         w32(p + flags, 0x100);
         for i in 0..3 {
-            mem::wp(p + std + i * mem::ps(), std_handle(mem::len(i)));
+            mem::wp(p + std + i * mem::ps(), std_handle(kome::num::us(i)));
         }
     }
     0
@@ -9034,7 +9034,7 @@ fn put_sized_name(buf: u32, sizep: u32, name: &str, wide: bool, short_err: u32) 
         last_error(87);
         return 0;
     }
-    let n = mem::len32(name.len());
+    let n = kome::num::u32_of(name.len());
     if r32(sizep) <= n || buf == 0 {
         w32(sizep, n + 1);
         last_error(short_err);
@@ -9163,7 +9163,7 @@ fn RtlMoveMemory(c: &mut Ctx) -> u32 {
     0
 }
 fn RtlFillMemory(c: &mut Ctx) -> u32 {
-    mem::fill(c.a(0), c.a(1), mem::lo8(c.a(2)));
+    mem::fill(c.a(0), c.a(1), kome::num::lo8(c.a(2)));
     0
 }
 fn InitializeSListHead(c: &mut Ctx) -> u32 {
@@ -9190,7 +9190,7 @@ fn slist_set(h: u32, next: u32, depth: u32) {
         return;
     }
     w32(h, next);
-    w16(h + 4, mem::lo16(depth));
+    w16(h + 4, kome::num::lo16(depth));
     w16(h + 6, r16(h + 6).wrapping_add(1));
 }
 fn InterlockedPushEntrySList(c: &mut Ctx) -> u32 {
@@ -9868,7 +9868,7 @@ mod version_tests {
         /// The other fields are compared on their own.
         #[test]
         fn single_fields(cur in 0u32..5, want in 0u32..5, c in 0u8..8, field in 0usize..3) {
-            let (bit, set): (u32, fn(&mut OsVer, u32)) = [(4u32, (|v: &mut OsVer, x| v.build = x) as fn(&mut OsVer, u32)), (8, |v, x| v.platform = x), (0x80, |v, x| v.product = mem::lo8(x))][field];
+            let (bit, set): (u32, fn(&mut OsVer, u32)) = [(4u32, (|v: &mut OsVer, x| v.build = x) as fn(&mut OsVer, u32)), (8, |v, x| v.platform = x), (0x80, |v, x| v.product = kome::num::lo8(x))][field];
             let (mut a, mut b) = (OS_VERSION, OS_VERSION);
             set(&mut a, cur);
             set(&mut b, want);
@@ -9931,7 +9931,7 @@ mod atom_tests {
             let mut m: Vec<Option<(String, u32)>> = vec![];
             let names = ["a", "A", "b", "Bb", "bB", "ccc", "Straße", "STRASSE", "x1", "X1", "émile", "ÉMILE"];
             for (add, k, up) in ops {
-                let name = if up { names[k as usize].to_uppercase() } else { names[k as usize].to_string() };
+                let name = if up { names[kome::num::us(k)].to_uppercase() } else { names[kome::num::us(k)].to_string() };
                 let low = name.to_lowercase();
                 let found = m.iter().position(|e| e.as_ref().is_some_and(|(n, _)| n.to_lowercase() == low));
                 proptest::prop_assert_eq!(t.find(&name), found);
@@ -9939,7 +9939,7 @@ mod atom_tests {
                     let want = match found {
                         Some(i) => {
                             m[i].as_mut().unwrap().1 += 1;
-                            0xc000 + i as u32
+                            0xc000 + kome::num::u32_of(i)
                         }
                         None => {
                             let i = m.iter().position(|e| e.is_none()).unwrap_or(m.len());
@@ -9947,12 +9947,12 @@ mod atom_tests {
                                 m.push(None);
                             }
                             m[i] = Some((name.clone(), 1));
-                            0xc000 + i as u32
+                            0xc000 + kome::num::u32_of(i)
                         }
                     };
                     proptest::prop_assert_eq!(t.add(name), want);
                 } else if let Some(i) = found {
-                    let a = 0xc000 + i as u32;
+                    let a = 0xc000 + kome::num::u32_of(i);
                     match &mut m[i] {
                         Some((_, n)) if *n > 1 => *n -= 1,
                         e => *e = None,
@@ -10027,17 +10027,17 @@ mod mapping_names {
     const ALL: u32 = 0xf001f; // FILE_MAP_ALL_ACCESS
 
     fn cstr_arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
+        let p = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + mem::len32(i), b);
+            mem::w8(p + kome::num::u32_of(i), b);
         }
         p
     }
     fn wstr_arg(s: &str) -> u32 {
         let w: Vec<u16> = s.encode_utf16().chain([0]).collect();
-        let p = mem::heap_alloc(2 * mem::len32(w.len()), true);
+        let p = mem::heap_alloc(2 * kome::num::u32_of(w.len()), true);
         for (i, c) in w.iter().enumerate() {
-            mem::w16(p + 2 * mem::len32(i), *c);
+            mem::w16(p + 2 * kome::num::u32_of(i), *c);
         }
         p
     }
@@ -10143,7 +10143,7 @@ mod mapping_names {
         let v = view(m);
         assert_eq!(mem::r8(v), b'h');
         for (i, b) in b"WORLD".iter().enumerate() {
-            mem::w8(v + 0x1000 + mem::len32(i), *b);
+            mem::w8(v + 0x1000 + kome::num::u32_of(i), *b);
         }
         assert_eq!(call(FlushViewOfFile, &[v + 0x1000, 5]), 1);
         assert_eq!(&std::fs::read(&path).unwrap()[0x1000..0x1005], b"WORLD");
@@ -10181,14 +10181,14 @@ mod mapping_names {
             let f = open_file(name);
             let m = call(CreateFileMappingA, &[f, 0, RW, 0, 0, 0]);
             // (an offset inside the file: a view at its end would have nothing to write)
-            let off = (off_pages * 0x1000).min((mem::len32(len) - 1) & !0xfff);
+            let off = (off_pages * 0x1000).min((kome::num::u32_of(len) - 1) & !0xfff);
             let v = call(MapViewOfFile, &[m, 2, 0, off, 0]);
             prop_assert_ne!(v, 0);
             let mut want = init.clone();
             for (at, b) in writes {
-                let at = at % (len - mem::len(off));
-                mem::w8(v + mem::len32(at), b);
-                want[mem::len(off) + at] = b;
+                let at = at % (len - kome::num::us(off));
+                mem::w8(v + kome::num::u32_of(at), b);
+                want[kome::num::us(off) + at] = b;
             }
             call(UnmapViewOfFile, &[v]);
             prop_assert_eq!(std::fs::read(&path).unwrap(), want);
@@ -10207,7 +10207,7 @@ mod mapping_names {
         let all = call(MapViewOfFile, &[m, ALL, 0, 0, 0x49c47]);
         assert_ne!(all, 0);
         for (i, b) in b"startmes.mes".iter().enumerate() {
-            mem::w8(all + 0x40000 + 0x9215 + mem::len32(i), *b);
+            mem::w8(all + 0x40000 + 0x9215 + kome::num::u32_of(i), *b);
         }
         let part = call(MapViewOfFile, &[m, 4, 0, 0x40000, 0x931a]);
         assert_ne!(part, 0);
@@ -10235,17 +10235,17 @@ mod mapping_names {
             let _g = enter();
             let m = call(CreateFileMappingA, &[u32::MAX, 0, RW, 0, size, 0]);
             let grains: Vec<u32> = (0..size).step_by(0x10000).collect();
-            let mut model = vec![0u8; mem::len(size)];
+            let mut model = vec![0u8; kome::num::us(size)];
             for (at, b, g) in writes {
                 let at = at % size;
-                let g = grains[mem::len(g) % grains.len()].min(at & !0xffff);
+                let g = grains[kome::num::us(g) % grains.len()].min(at & !0xffff);
                 let v = call(MapViewOfFile, &[m, ALL, 0, g, 0]);
                 prop_assert_ne!(v, 0);
                 mem::w8(v + (at - g), b);
-                model[mem::len(at)] = b;
-                let g2 = grains[(mem::len(at)) % grains.len()].min(at & !0xffff);
+                model[kome::num::us(at)] = b;
+                let g2 = grains[(kome::num::us(at)) % grains.len()].min(at & !0xffff);
                 let v2 = call(MapViewOfFile, &[m, 4, 0, g2, 0]);
-                prop_assert_eq!(mem::r8(v2 + (at - g2)), model[mem::len(at)]);
+                prop_assert_eq!(mem::r8(v2 + (at - g2)), model[kome::num::us(at)]);
             }
             obj::close(m);
         }
@@ -10339,9 +10339,9 @@ mod find_system_dlls {
         g
     }
     fn cstr_arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
+        let p = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + mem::len32(i), b);
+            mem::w8(p + kome::num::u32_of(i), b);
         }
         p
     }
@@ -10505,9 +10505,9 @@ mod drive_tests {
     use proptest::prelude::*;
 
     fn guest_str(s: &[u8]) -> u32 {
-        let a = mem::heap_alloc(mem::len32(s.len()) + 1, true);
+        let a = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
         for (i, &b) in s.iter().enumerate() {
-            mem::w8(a + mem::len32(i), b);
+            mem::w8(a + kome::num::u32_of(i), b);
         }
         a
     }
@@ -10575,7 +10575,7 @@ mod drive_tests {
             prop_assert!(strings.ends_with(&[0, 0]));
             let names: Vec<&[u8]> = strings[..strings.len() - 1].split(|&b| b == 0).filter(|s| !s.is_empty()).collect();
             prop_assert_eq!(names.iter().any(|n| *n == [b'A' + l, b':', b'\\']), listed);
-            prop_assert_eq!(mem::len32(names.len()), logical_drives().count_ones());
+            prop_assert_eq!(kome::num::u32_of(names.len()), logical_drives().count_ones());
             // QueryDosDevice knows each listed drive
             prop_assert_eq!(drive_device(c).is_some(), listed);
         }
@@ -10625,9 +10625,9 @@ mod empty_name_tests {
     use proptest::prelude::*;
 
     fn guest_str(s: &str) -> u32 {
-        let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
+        let p = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
         for (i, b) in s.bytes().enumerate() {
-            mem::w8(p + mem::len32(i), b);
+            mem::w8(p + kome::num::u32_of(i), b);
         }
         p
     }
@@ -10685,9 +10685,9 @@ mod wow64_tests {
         g
     }
     fn arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
+        let p = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + mem::len32(i), b);
+            mem::w8(p + kome::num::u32_of(i), b);
         }
         p
     }
@@ -10769,7 +10769,7 @@ mod wow64_tests {
         fn wow64_directory_sizes(cap in 0u32..48, wide in any::<bool>()) {
             let _g = enter();
             let want = "C:\\windows\\SysWOW64";
-            let n = mem::len32(want.len());
+            let n = kome::num::u32_of(want.len());
             let buf = mem::heap_alloc(2 * 48 + 2, true);
             mem::fill(buf, 2 * 48 + 2, 0xcc);
             let f: crate::api::Handler = if wide { GetSystemWow64DirectoryW } else { GetSystemWow64DirectoryA };

@@ -4,6 +4,7 @@
 //! result pointer for structure results). QueryInterface, AddRef and Release come for free:
 //! QueryInterface answers the interface and every interface it derives from.
 
+use kome::locks::Lock as _;
 use crate::api::{host_fn, Ctx, Handler};
 use crate::mem;
 use std::collections::HashMap;
@@ -162,16 +163,16 @@ static NAMES: Mutex<Option<HashMap<u32, (&'static str, u8)>>> = Mutex::new(None)
 
 /// The name of the method whose trap `trap` is.
 pub fn method_name(trap: u32) -> Option<&'static str> {
-    NAMES.lock().unwrap().as_ref()?.get(&trap).map(|m| m.0)
+    NAMES.locked().as_ref()?.get(&trap).map(|m| m.0)
 }
 /// Its argument count (dwords, with `this` and a hidden result pointer).
 pub fn method_dwords(trap: u32) -> Option<u32> {
-    NAMES.lock().unwrap().as_ref()?.get(&trap).map(|m| u32::from(m.1))
+    NAMES.locked().as_ref()?.get(&trap).map(|m| u32::from(m.1))
 }
 static VTBLS: Mutex<Option<HashMap<Iface, u32>>> = Mutex::new(None);
 
 fn objs<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
-    f(OBJS.lock().unwrap().get_or_insert_with(HashMap::new))
+    f(OBJS.locked().get_or_insert_with(HashMap::new))
 }
 
 fn table(iface: Iface) -> &'static Table {
@@ -196,7 +197,7 @@ pub fn iid(iface: &str) -> Option<Guid> {
 pub fn read_guid(p: u32) -> Guid {
     let mut b = [0u8; 8];
     for (i, v) in b.iter_mut().enumerate() {
-        *v = mem::r8(p + 8 + i as u32);
+        *v = mem::r8(p + 8 + kome::num::u32_of(i));
     }
     (mem::r32(p), mem::r16(p + 4), mem::r16(p + 6), b)
 }
@@ -207,7 +208,7 @@ fn fmt_guid(g: Guid) -> String {
 
 pub fn warn_once(msg: &str) {
     static SEEN: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
-    if SEEN.lock().unwrap().get_or_insert_with(Default::default).insert(msg.to_string()) {
+    if SEEN.locked().get_or_insert_with(Default::default).insert(msg.to_string()) {
         eprintln!("{msg}");
     }
 }
@@ -220,9 +221,9 @@ const STUB_WARNED: u32 = 1 << 30;
 fn stub(c: &mut Ctx) -> u32 {
     let (tag, _) = crate::api::tag_of(c.trap);
     let kind = if tag & STUB_WARNED != 0 {
-        tag as u8
+        kome::num::lo8(tag)
     } else {
-        let (iface, name, kind) = STUBS.lock().unwrap().as_ref().and_then(|m| m.get(&c.trap).copied()).unwrap_or(("?", "?", 0));
+        let (iface, name, kind) = STUBS.locked().as_ref().and_then(|m| m.get(&c.trap).copied()).unwrap_or(("?", "?", 0));
         warn_once(&format!("sake: com {iface}::{name} not implemented"));
         crate::api::set_tag(c.trap, STUB_TAG | STUB_WARNED | u32::from(kind), 0);
         kind
@@ -339,7 +340,7 @@ pub fn refs(obj: u32) -> Option<u32> {
 
 /// Whether trap `a` is a COM method sake does not implement.
 pub fn is_stub(a: u32) -> bool {
-    STUBS.lock().unwrap().as_ref().is_some_and(|m| m.contains_key(&a))
+    STUBS.locked().as_ref().is_some_and(|m| m.contains_key(&a))
 }
 
 /// What slot `i` (method `name`) of a vtable gets from `impls`: an entry for that slot (where an
@@ -367,14 +368,14 @@ fn slot_handler(i: usize, found: Option<Handler>) -> Handler {
 pub fn vtable(iface: Iface, impls: Impls) -> u32 {
     #[cfg(test)]
     CALLS.with(|c| c.borrow_mut().push((iface, impls.to_vec())));
-    if let Some(&v) = VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).get(&iface) {
+    if let Some(&v) = VTBLS.locked().get_or_insert_with(HashMap::new).get(&iface) {
         return v;
     }
     // (one builder at a time, looking again under it: two threads making the first object of an
     // interface at once each built a table, and the loser's and its host functions stayed)
     static BUILD: Mutex<()> = Mutex::new(());
     let _b = BUILD.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(&v) = VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).get(&iface) {
+    if let Some(&v) = VTBLS.locked().get_or_insert_with(HashMap::new).get(&iface) {
         return v;
     }
     let t = table(iface);
@@ -388,12 +389,12 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
         let f = slot_handler(i, found);
         let a = host_fn(&format!("{}::{i}:{name}", iface.0), f, 4 * u32::from(dwords));
         if i > 2 && found.is_none() {
-            STUBS.lock().unwrap().get_or_insert_with(HashMap::new).insert(a, (iface.0, name, kind));
+            STUBS.locked().get_or_insert_with(HashMap::new).insert(a, (iface.0, name, kind));
         }
-        NAMES.lock().unwrap().get_or_insert_with(HashMap::new).insert(a, (name, dwords));
-        mem::wp(v + k * i as u32, a);
+        NAMES.locked().get_or_insert_with(HashMap::new).insert(a, (name, dwords));
+        mem::wp(v + k * kome::num::u32_of(i), a);
     }
-    VTBLS.lock().unwrap().get_or_insert_with(HashMap::new).insert(iface, v);
+    VTBLS.locked().get_or_insert_with(HashMap::new).insert(iface, v);
     v
 }
 
@@ -543,10 +544,10 @@ mod lifetime_tests {
 
     static FREED_OBJS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
     fn note(o: u32) {
-        FREED_OBJS.lock().unwrap().push(o);
+        FREED_OBJS.locked().push(o);
     }
     fn freed(o: u32) -> usize {
-        FREED_OBJS.lock().unwrap().iter().filter(|&&x| x == o).count()
+        FREED_OBJS.locked().iter().filter(|&&x| x == o).count()
     }
     fn new() -> u32 {
         let o = object(iface!(ID2D1StrokeStyle1), &[], 8);
@@ -557,7 +558,7 @@ mod lifetime_tests {
     #[test]
     fn last_release_frees_after_the_quarantine() {
         let _g = enter();
-        FREED_OBJS.lock().unwrap().clear();
+        FREED_OBJS.locked().clear();
         let o = new();
         add_ref_obj(o);
         assert_eq!(release_obj(o), 1);
@@ -579,7 +580,7 @@ mod lifetime_tests {
     #[test]
     fn kept_objects_stay() {
         let _g = enter();
-        FREED_OBJS.lock().unwrap().clear();
+        FREED_OBJS.locked().clear();
         let o = new();
         keep(o);
         assert_eq!(release_obj(o), 0);
@@ -596,7 +597,7 @@ mod lifetime_tests {
         #[test]
         fn counts_as_a_model(ops in proptest::collection::vec((0usize..4, any::<bool>()), 0..60)) {
             let _g = enter();
-            FREED_OBJS.lock().unwrap().clear();
+            FREED_OBJS.locked().clear();
             let objs: Vec<u32> = (0..4).map(|_| new()).collect();
             let mut model = [1u32; 4];
             for (i, up) in ops {
