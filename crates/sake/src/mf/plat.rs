@@ -384,8 +384,8 @@ fn read_into(b: u32, p: u32, n: u32) -> Result2 {
                 Err(_) => return Err(Hr::Fail.code()),
             }
         }
-        s.pos += got as u64;
-        Ok(got as u32)
+        s.pos += lo64(got);
+        Ok(lo32(got))
     })
     .unwrap_or(Err(Hr::InvalidArg.code()))
 }
@@ -461,15 +461,15 @@ fn bs_end(c: &mut Ctx) -> u32 {
 }
 /// Seek(MFBYTESTREAM_SEEK_ORIGIN, LONGLONG, DWORD flags, QWORD *current)
 fn bs_seek(c: &mut Ctx) -> u32 {
-    let (origin, off, out) = if mem::x64() { (c.a(1), c.a64(2) as i64, c.a(4)) } else { (c.a(1), c.q(2) as i64, c.a(5)) };
+    let (origin, off, out) = if mem::x64() { (c.a(1), lo64(c.a64(2)).cast_signed(), c.a(4)) } else { (c.a(1), lo64(c.q(2)).cast_signed(), c.a(5)) };
     let r = bs(c.a(0), |s| {
         let base = match origin {
             0 => 0i64,
-            1 => s.pos as i64,
+            1 => lo64(s.pos).cast_signed(),
             _ => return Err(Hr::InvalidArg.code()),
         };
         let p = base.checked_add(off).filter(|&p| p >= 0).ok_or(Hr::InvalidArg.code())?;
-        s.pos = p as u64;
+        s.pos = lo64(p);
         Ok(s.pos)
     })
     .unwrap_or(Err(Hr::InvalidArg.code()));
@@ -552,7 +552,7 @@ fn MFCreateFile(c: &mut Ctx) -> u32 {
     let f = match (mode, exists) {
         (0, false) => return 0x8007_0000 | crate::files::missing(&path),
         (1, true) => return Hr::FileExists.code(),
-        (0 | 3, true) if !wr => kura::fs::File::open(host.unwrap()),
+        (0 | 3, true) if !wr && let Some(h) = &host => kura::fs::File::open(h),
         (0..=4, _) => {
             let h = host.unwrap_or_else(|| crate::files::resolve_new(&path));
             kura::fs::OpenOptions::new()
@@ -608,13 +608,14 @@ pub fn video_format(d1: u32) -> Option<(u32, u32, bool)> {
 /// The stride of a row `width` pixels wide (negative: bottom-up), as MFGetStrideForBitmapInfoHeader.
 pub fn stride_for(d1: u32, width: u32) -> Option<i32> {
     let (bpp, align, up) = video_format(d1)?;
-    let s = if bpp < 8 {
+    let s = (if bpp < 8 {
         width * bpp / 8
     } else if d1 == u32::from_le_bytes(*b"P010") {
         width * 2
     } else {
         (width * (bpp / 8) + align) & !align
-    } as i32;
+    })
+    .cast_signed();
     Some(if up { -s } else { s })
 }
 /// MFGetStrideForBitmapInfoHeader(DWORD format, DWORD width, LONG *stride)
@@ -622,7 +623,7 @@ fn MFGetStrideForBitmapInfoHeader(c: &mut Ctx) -> u32 {
     let (f, w, out) = (c.a(0), c.a(1), c.a(2));
     match stride_for(f, w) {
         Some(s) => {
-            w32(out, s as u32);
+            w32(out, lo32(s));
             0
         }
         None => {
@@ -655,7 +656,7 @@ fn MFCalculateImageSize(c: &mut Ctx) -> u32 {
         return Hr::InvalidArg.code();
     }
     let g = guid_at(g);
-    let d1 = u32::from_le_bytes(g[0..4].try_into().unwrap());
+    let d1 = data1(&g);
     match video_format(d1).and(image_size(d1, w, h)) {
         Some(s) => {
             w32(out, s);
@@ -695,7 +696,7 @@ pub fn frame_rate(avg: u64) -> (u32, u32) {
     }
     let t = avg.min(100_000_000);
     let g = gcd(10_000_000, t);
-    ((10_000_000 / g) as u32, (t / g) as u32)
+    (lo32(10_000_000 / g), lo32(t / g))
 }
 /// The known rate nearest a frame time measured to within `tol` (100 ns), else frame_rate's.
 pub fn frame_rate_near(avg: u64, tol: u64) -> (u32, u32) {
@@ -742,8 +743,8 @@ fn k_friendly() -> Guid {
 pub fn decoders(cat: &Guid, input: Option<&Guid>) -> Vec<&'static str> {
     DECODERS
         .iter()
-        .filter(|d| u32::from_le_bytes(cat[0..4].try_into().unwrap()) == d.0)
-        .filter(|d| input.is_none_or(|g| u32::from_le_bytes(g[0..4].try_into().unwrap()) == d.1))
+        .filter(|d| data1(cat) == d.0)
+        .filter(|d| input.is_none_or(|g| data1(g) == d.1))
         .map(|d| d.2)
         .collect()
 }
@@ -787,14 +788,14 @@ fn MFTEnumEx(c: &mut Ctx) -> u32 {
     // MFT_REGISTER_TYPE_INFO: major type, subtype
     let sub = (input != 0).then(|| guid_at(input + 16));
     let found = decoders(&cat, sub.as_ref());
-    w32(count, found.len() as u32);
+    w32(count, lo32(found.len()));
     if found.is_empty() {
         putp(list, 0);
         return 0;
     }
-    let arr = mem::heap_alloc(ps() * found.len() as u32, true);
+    let arr = mem::heap_alloc(ps() * lo32(found.len()), true);
     for (i, n) in found.iter().enumerate() {
-        wp(arr + ps() * i as u32, new_activate(n));
+        wp(arr + ps() * lo32(i), new_activate(n));
     }
     putp(list, arr);
     0

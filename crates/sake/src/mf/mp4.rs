@@ -8,6 +8,7 @@
 //! the `avcC` before each key frame), so the page needs no description.
 
 use crate::audiofile;
+use kome::num::*;
 
 /// A video sample: where it is, its presentation and decode times and duration (100 ns), and
 /// whether it is a sync sample.
@@ -80,7 +81,7 @@ pub fn open(len: u64, at: &mut dyn FnMut(u64, usize) -> Option<Vec<u8>>) -> Opti
     let mut o = 0u64;
     let mut first = true;
     while o + 8 <= len {
-        let h = at(o, 16.min((len - o) as usize))?;
+        let h = at(o, 16.min(us(len - o)))?;
         let size = u64::from(u32be(&h, 0)?);
         let kind = &h[4..8];
         if first && kind != b"ftyp" {
@@ -100,8 +101,8 @@ pub fn open(len: u64, at: &mut dyn FnMut(u64, usize) -> Option<Vec<u8>>) -> Opti
             if end - o > MOOV_MAX {
                 return None;
             }
-            let m = at(o, (end - o) as usize)?;
-            return parse(&m, (body - o) as usize, len);
+            let m = at(o, us(end - o))?;
+            return parse(&m, us(body - o), len);
         }
         o = end;
     }
@@ -158,9 +159,9 @@ fn edit_shift(b: &[u8], ts: usize, te: usize) -> i64 {
     let Some((es, ee)) = child(b, ts, te, b"edts") else { return 0 };
     let Some((ls, _)) = child(b, es, ee, b"elst") else { return 0 };
     let v1 = b.get(ls) == Some(&1);
-    let n = u32be(b, ls + 4).unwrap_or(0) as usize;
+    let n = us(u32be(b, ls + 4).unwrap_or(0));
     for i in 0..n.min(16) {
-        let t = if v1 { u64be(b, ls + 8 + 20 * i + 8).map(|v| v as i64) } else { u32be(b, ls + 8 + 12 * i + 4).map(|v| i64::from(v as i32)) };
+        let t = if v1 { u64be(b, ls + 8 + 20 * i + 8).map(|v| lo64(v).cast_signed()) } else { u32be(b, ls + 8 + 12 * i + 4).map(|v| i64::from(lo32(v).cast_signed())) };
         match t {
             // (-1: an empty edit, a delay before the media)
             Some(-1) => continue,
@@ -193,10 +194,10 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     let mut head = Vec::new();
     let mut p = 5;
     for (count_mask, _) in [(0x1f, "sps"), (0xff, "pps")] {
-        let n = (*c.get(p)? & count_mask) as usize;
+        let n = us(*c.get(p)? & count_mask);
         p += 1;
         for _ in 0..n {
-            let l = u16be(c, p)? as usize;
+            let l = us(u16be(c, p)?);
             head.extend_from_slice(&[0, 0, 0, 1]);
             head.extend_from_slice(c.get(p + 2..p + 2 + l)?);
             p += 2 + l;
@@ -205,24 +206,24 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     // the sample table: sizes, chunk offsets, samples per chunk, durations, composition offsets,
     // sync samples
     let (zs, _) = child(b, ss, se, b"stsz")?;
-    let (fixed, count) = (u32be(b, zs + 4)?, u32be(b, zs + 8)? as usize);
+    let (fixed, count) = (u32be(b, zs + 4)?, us(u32be(b, zs + 8)?));
     if count == 0 || count > b.len() {
         return None;
     }
     let sizes: Vec<u32> = if fixed != 0 { vec![fixed; count] } else { (0..count).map(|i| u32be(b, zs + 12 + 4 * i)).collect::<Option<_>>()? };
     let chunks: Vec<u64> = if let Some((cs, _)) = child(b, ss, se, b"stco") {
-        let n = u32be(b, cs + 4)? as usize;
+        let n = us(u32be(b, cs + 4)?);
         (0..n.min(b.len())).map(|i| u32be(b, cs + 8 + 4 * i).map(|v| u64::from(v))).collect::<Option<_>>()?
     } else {
         let (cs, _) = child(b, ss, se, b"co64")?;
-        let n = u32be(b, cs + 4)? as usize;
+        let n = us(u32be(b, cs + 4)?);
         (0..n.min(b.len())).map(|i| u64be(b, cs + 8 + 8 * i)).collect::<Option<_>>()?
     };
     let (scs, _) = child(b, ss, se, b"stsc")?;
-    let runs: Vec<(u32, u32)> = (0..(u32be(b, scs + 4)? as usize).min(b.len())).map(|i| Some((u32be(b, scs + 8 + 12 * i)?, u32be(b, scs + 12 + 12 * i)?))).collect::<Option<_>>()?;
+    let runs: Vec<(u32, u32)> = (0..(us(u32be(b, scs + 4)?)).min(b.len())).map(|i| Some((u32be(b, scs + 8 + 12 * i)?, u32be(b, scs + 12 + 12 * i)?))).collect::<Option<_>>()?;
     let mut place = Vec::with_capacity(count);
     for (ci, &off) in chunks.iter().enumerate() {
-        let per = runs.iter().rev().find(|r| r.0 as usize <= ci + 1).map_or(0, |r| r.1);
+        let per = runs.iter().rev().find(|r| us(r.0) <= ci + 1).map_or(0, |r| r.1);
         let mut o = off;
         for _ in 0..per {
             let Some(&s) = sizes.get(place.len()) else { break };
@@ -235,18 +236,18 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     }
     let (ts, _) = child(b, ss, se, b"stts")?;
     let mut durs = Vec::with_capacity(count);
-    for i in 0..(u32be(b, ts + 4)? as usize).min(count) {
+    for i in 0..(us(u32be(b, ts + 4)?)).min(count) {
         let (n, d) = (u32be(b, ts + 8 + 8 * i)?, u32be(b, ts + 12 + 8 * i)?);
-        durs.extend(std::iter::repeat_n(d, (n as usize).min(count - durs.len())));
+        durs.extend(std::iter::repeat_n(d, (us(n)).min(count - durs.len())));
     }
     durs.resize(count, *durs.last().unwrap_or(&1));
     let mut cts = vec![0i64; count];
     if let Some((os, _)) = child(b, ss, se, b"ctts") {
         let v1 = b.get(os) == Some(&1);
         let mut k = 0usize;
-        for i in 0..(u32be(b, os + 4)? as usize).min(count) {
+        for i in 0..(us(u32be(b, os + 4)?)).min(count) {
             let (n, d) = (u32be(b, os + 8 + 8 * i)?, u32be(b, os + 12 + 8 * i)?);
-            let d = if v1 { i64::from(d as i32) } else { i64::from(d) };
+            let d = if v1 { i64::from(lo32(d).cast_signed()) } else { i64::from(d) };
             // (a run past the samples ends with them: a damaged count of 2^32 took 18 s)
             let run = usize::try_from(n).unwrap_or(usize::MAX);
             cts.iter_mut().skip(k).take(run).for_each(|x| *x = d);
@@ -256,13 +257,13 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     let mut key = vec![true; count];
     if let Some((ys, _)) = child(b, ss, se, b"stss") {
         key = vec![false; count];
-        for i in 0..(u32be(b, ys + 4)? as usize).min(count) {
-            if let Some(k) = u32be(b, ys + 8 + 4 * i).and_then(|n| (n as usize).checked_sub(1)) && k < count {
+        for i in 0..(us(u32be(b, ys + 4)?)).min(count) {
+            if let Some(k) = u32be(b, ys + 8 + 4 * i).and_then(|n| (us(n)).checked_sub(1)) && k < count {
                 key[k] = true;
             }
         }
     }
-    let t100 = |v: i64| (i128::from(v) * 10_000_000 / i128::from(timescale)) as i64;
+    let t100 = |v: i64| lo64(i128::from(v) * 10_000_000 / i128::from(timescale)).cast_signed();
     let mut dts = 0i64;
     let mut samples = Vec::with_capacity(count);
     for i in 0..count {
@@ -271,7 +272,7 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
             size: place[i].1,
             pts: t100(dts + cts[i] - shift),
             dts: t100(dts - shift),
-            dur: t100(i64::from(durs[i])).max(0) as u64,
+            dur: lo64(t100(i64::from(durs[i])).max(0)),
             key: key[i],
             order: 0,
         });
@@ -280,10 +281,10 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     let mut by_pts: Vec<usize> = (0..count).collect();
     by_pts.sort_by_key(|&i| (samples[i].pts, i));
     for (n, &i) in by_pts.iter().enumerate() {
-        samples[i].order = n as u32;
+        samples[i].order = lo32(n);
     }
-    let total = t100(dts).max(1) as u64;
-    let rate = super::plat::frame_rate(total / count as u64);
+    let total = lo64(t100(dts).max(1));
+    let rate = super::plat::frame_rate(total / lo64(count));
     let bytes: u64 = sizes.iter().map(|&s| u64::from(s)).sum();
     Some(Video {
         codec: format!("avc1.{:02x}{:02x}{:02x}", c[1], c[2], c[3]),
@@ -295,7 +296,7 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
         head,
         samples,
         rate,
-        bitrate: (u128::from(bytes) * 8 * 10_000_000 / u128::from(total)) as u32,
+        bitrate: lo32(u128::from(bytes) * 8 * 10_000_000 / u128::from(total)),
         wm: None,
     })
 }
@@ -315,7 +316,7 @@ pub fn annexb(v: &Video, key: bool, s: &[u8]) -> Option<Vec<u8>> {
     }
     let mut p = 0;
     while p < s.len() {
-        let l = s.get(p..p + n)?.iter().fold(0usize, |a, &x| a << 8 | x as usize);
+        let l = s.get(p..p + n)?.iter().fold(0usize, |a, &x| a << 8 | us(x));
         let nal = s.get(p + n..p + n + l)?;
         out.extend_from_slice(&[0, 0, 0, 1]);
         out.extend_from_slice(nal);
@@ -343,7 +344,7 @@ mod tests {
     use proptest::prelude::*;
 
     fn bx(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
-        let mut v = ((body.len() + 8) as u32).to_be_bytes().to_vec();
+        let mut v = (lo32(body.len() + 8)).to_be_bytes().to_vec();
         v.extend_from_slice(kind);
         v.extend_from_slice(body);
         v
@@ -364,12 +365,12 @@ mod tests {
         let ftyp = bx(b"ftyp", b"isom\0\0\0\0isom");
         let mut data = Vec::new();
         let mut offs = Vec::new();
-        let base = ftyp.len() as u32 + 8;
+        let base = lo32(ftyp.len()) + 8;
         for (i, &s) in sizes.iter().enumerate() {
-            offs.push(base + data.len() as u32);
+            offs.push(base + lo32(data.len()));
             // a sample of one NAL unit: 4-byte length, then the bytes
             data.extend_from_slice(&(s - 4).to_be_bytes());
-            data.extend(std::iter::repeat_n(i as u8, s as usize - 4));
+            data.extend(std::iter::repeat_n(lo8(i), us(s) - 4));
         }
         let mdat = bx(b"mdat", &data);
         let avcc = bx(b"avcC", &[1, 0x4d, 0x40, 0x29, 0xff, 0xe1, 0, 3, 0x67, 1, 2, 1, 0, 2, 0x68, 3]);
@@ -380,42 +381,42 @@ mod tests {
         entry.extend_from_slice(&avcc);
         let stsd = full(b"stsd", 0, &[be(&[1]), bx(b"avc1", &entry)].concat());
         let mut stbl = stsd;
-        stbl.extend(full(b"stts", 0, &be(&[1, sizes.len() as u32, dur])));
+        stbl.extend(full(b"stts", 0, &be(&[1, lo32(sizes.len()), dur])));
         if !ctts.is_empty() {
-            let mut t = be(&[ctts.len() as u32]);
+            let mut t = be(&[lo32(ctts.len())]);
             for &c in ctts {
-                t.extend(be(&[1, c as u32]));
+                t.extend(be(&[1, lo32(c)]));
             }
             stbl.extend(full(b"ctts", 1, &t));
         }
         if let Some(s) = sync {
-            let mut t = be(&[s.len() as u32]);
+            let mut t = be(&[lo32(s.len())]);
             t.extend(be(s));
             stbl.extend(full(b"stss", 0, &t));
         }
         stbl.extend(full(b"stsc", 0, &be(&[1, 1, 1, 1])));
-        let mut z = be(&[0, sizes.len() as u32]);
+        let mut z = be(&[0, lo32(sizes.len())]);
         z.extend(be(sizes));
         stbl.extend(full(b"stsz", 0, &z));
-        let mut co = be(&[offs.len() as u32]);
+        let mut co = be(&[lo32(offs.len())]);
         co.extend(be(&offs));
         stbl.extend(full(b"stco", 0, &co));
         let minf = bx(b"minf", &bx(b"stbl", &stbl));
-        let mut mdhd = be(&[0, 0, 1000, sizes.len() as u32 * dur]);
+        let mut mdhd = be(&[0, 0, 1000, lo32(sizes.len()) * dur]);
         mdhd.extend([0u8; 4]);
         let hdlr = full(b"hdlr", 0, &[be(&[0]), b"vide".to_vec(), vec![0; 13]].concat());
         let mdia = bx(b"mdia", &[full(b"mdhd", 0, &mdhd), hdlr, minf].concat());
         let mut trak = Vec::new();
         if let Some(s) = shift {
-            trak.extend(bx(b"edts", &full(b"elst", 0, &be(&[1, sizes.len() as u32 * dur, s, 0x10000]))));
+            trak.extend(bx(b"edts", &full(b"elst", 0, &be(&[1, lo32(sizes.len()) * dur, s, 0x10000]))));
         }
         trak.extend(mdia);
-        let mvhd = full(b"mvhd", 0, &[be(&[0, 0, 1000, sizes.len() as u32 * dur]), vec![0; 80]].concat());
+        let mvhd = full(b"mvhd", 0, &[be(&[0, 0, 1000, lo32(sizes.len()) * dur]), vec![0; 80]].concat());
         let moov = bx(b"moov", &[mvhd, bx(b"trak", &trak)].concat());
         [ftyp, mdat, moov].concat()
     }
     fn open_mem(f: &[u8]) -> Option<Movie> {
-        open(f.len() as u64, &mut |o, n| f.get(o as usize..o as usize + n).map(|b| b.to_vec()))
+        open(lo64(f.len()), &mut |o, n| f.get(us(o)..us(o) + n).map(|b| b.to_vec()))
     }
 
     #[test]
@@ -433,11 +434,11 @@ mod tests {
         assert_eq!(v.rate, (25, 1));
         // the bytes: each sample where the table says
         for (i, s) in v.samples.iter().enumerate() {
-            assert_eq!(f[s.off as usize + 4], i as u8);
-            let a = annexb(v, s.key, &f[s.off as usize..(s.off + s.size as u64) as usize]).unwrap();
+            assert_eq!(f[us(s.off) + 4], lo8(i));
+            let a = annexb(v, s.key, &f[us(s.off)..us(s.off + lo64(s.size))]).unwrap();
             let mut want = if s.key { v.head.clone() } else { vec![] };
             want.extend_from_slice(&[0, 0, 0, 1]);
-            want.extend(std::iter::repeat_n(i as u8, s.size as usize - 4));
+            want.extend(std::iter::repeat_n(lo8(i), us(s.size) - 4));
             assert_eq!(a, want);
         }
         // no stss: every sample a sync sample; no edit list: times as they are
@@ -471,16 +472,16 @@ mod tests {
         let mut by_order: Vec<&Sample> = v.samples.iter().collect();
         by_order.sort_by_key(|s| s.order);
         for (k, s) in by_order.iter().enumerate() {
-            assert_eq!(s.order, k as u32);
-            assert_eq!(s.pts, k as i64 * 10_000_000 / 24, "frame {k}");
+            assert_eq!(s.order, lo32(k));
+            assert_eq!(s.pts, lo64(k).cast_signed() * 10_000_000 / 24, "frame {k}");
             assert_eq!(s.key, k % 6 == 0, "frame {k}");
         }
         // decode order differs from presentation order (B-frames), and decode times rise
-        assert!(v.samples.iter().enumerate().any(|(i, s)| s.order != i as u32));
+        assert!(v.samples.iter().enumerate().any(|(i, s)| s.order != lo32(i)));
         assert!(v.samples.windows(2).all(|w| w[0].dts < w[1].dts));
         assert!(v.samples.iter().all(|s| s.dts <= s.pts));
         for s in &v.samples {
-            let b = annexb(v, s.key, &f[s.off as usize..(s.off + s.size as u64) as usize]).unwrap();
+            let b = annexb(v, s.key, &f[us(s.off)..us(s.off + lo64(s.size))]).unwrap();
             assert_eq!(&b[..4], &[0, 0, 0, 1]);
             // a key frame carries the SPS (7) and PPS (8) first
             if s.key {
@@ -501,7 +502,7 @@ mod tests {
                 Track::Video(v) => {
                     eprintln!("{} {}x{} {} samples {:?} fps {} bit/s, {} key", v.codec, v.w, v.h, v.samples.len(), v.rate, v.bitrate, v.samples.iter().filter(|s| s.key).count());
                     for s in &v.samples {
-                        assert!(annexb(v, s.key, &f[s.off as usize..(s.off + s.size as u64) as usize]).is_some());
+                        assert!(annexb(v, s.key, &f[us(s.off)..us(s.off + lo64(s.size))]).is_some());
                     }
                 }
                 Track::Audio(a) => eprintln!("{:?} {} Hz {} ch {} packets", a.codec, a.rate, a.channels, a.packets.len()),
@@ -523,8 +524,8 @@ mod tests {
             let mut seen = vec![false; sizes.len()];
             for (i, s) in v.samples.iter().enumerate() {
                 prop_assert_eq!(s.size, sizes[i]);
-                prop_assert_eq!(f[s.off as usize + 4], i as u8);
-                seen[s.order as usize] = true;
+                prop_assert_eq!(f[us(s.off) + 4], lo8(i));
+                seen[us(s.order)] = true;
             }
             prop_assert!(seen.iter().all(|&x| x));
             let mut by: Vec<&Sample> = v.samples.iter().collect();
@@ -541,8 +542,8 @@ mod tests {
             let mut s = Vec::new();
             let mut want = vec![9, 9];
             for u in &units {
-                let l = (u.len() as u32).to_be_bytes();
-                s.extend_from_slice(&l[4 - nal as usize..]);
+                let l = (lo32(u.len())).to_be_bytes();
+                s.extend_from_slice(&l[4 - us(nal)..]);
                 s.extend_from_slice(u);
                 want.extend_from_slice(&[0, 0, 0, 1]);
                 want.extend_from_slice(u);

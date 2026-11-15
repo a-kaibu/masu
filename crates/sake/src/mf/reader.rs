@@ -48,7 +48,7 @@ pub fn major_audio() -> Guid {
     audio_format(0x7364_7561)
 }
 fn tag_of(g: &Guid) -> Option<u32> {
-    (g[4..] == audio_format(0)[4..]).then(|| u32::from_le_bytes(g[0..4].try_into().unwrap()))
+    (g[4..] == audio_format(0)[4..]).then(|| data1(g))
 }
 
 pub fn k_major() -> Guid {
@@ -132,7 +132,7 @@ impl Native {
         match c {
             Codec::Vorbis { ident, setup } => Some(Native::Vorbis(Box::new(vorbis::Decoder::new(ident, setup).ok()?))),
             Codec::Wma { info } => Some(Native::Wma(crate::wmdec::codec(info)?)),
-            _ => None,
+            Codec::Pcm { .. } | Codec::Page { .. } => None,
         }
     }
     fn decode(&mut self, p: &[u8], out: &mut Vec<f32>) {
@@ -261,8 +261,8 @@ struct Resample {
 impl Resample {
     fn new(from: (u32, u32), to: (u32, u32)) -> Resample {
         Resample {
-            from_ch: from.1.max(1) as usize,
-            to_ch: to.1.max(1) as usize,
+            from_ch: us(from.1.max(1)),
+            to_ch: us(to.1.max(1)),
             step: f64::from(from.0) / f64::from(to.0.max(1)),
             t: 0.0,
             prev: Vec::new(),
@@ -273,7 +273,7 @@ impl Resample {
         let (fc, tc) = (self.from_ch, self.to_ch);
         let mixed: Vec<f32> = match (fc, tc) {
             (a, b) if a == b => v.to_vec(),
-            (_, 1) => v.chunks_exact(fc).map(|f| f.iter().sum::<f32>() / fc as f32).collect(),
+            (_, 1) => v.chunks_exact(fc).map(|f| f.iter().sum::<f32>() / to_f32(fc)).collect(),
             (1, _) => v.iter().flat_map(|&x| std::iter::repeat_n(x, tc)).collect(),
             _ => v.chunks_exact(fc).flat_map(|f| (0..tc).map(move |c| f[c.min(fc - 1)])).collect(),
         };
@@ -282,20 +282,20 @@ impl Resample {
         }
         let n = mixed.len() / tc;
         let mut out = Vec::new();
-        let get = |prev: &[f32], i: i64, c: usize| if i < 0 { prev[c] } else { mixed[i as usize * tc + c] };
+        let get = |prev: &[f32], i: i64, c: usize| if i < 0 { prev[c] } else { mixed[us(i) * tc + c] };
         loop {
-            let i0 = self.t.floor() as i64;
-            if i0 + 1 >= n as i64 || i0 < 0 && self.prev.is_empty() {
+            let i0 = trunc_i64(self.t.floor());
+            if i0 + 1 >= lo64(n).cast_signed() || i0 < 0 && self.prev.is_empty() {
                 break;
             }
-            let f = (self.t - i0 as f64) as f32;
+            let f = to_f32(self.t - to_f64(i0));
             for c in 0..tc {
                 out.push(get(&self.prev, i0, c) * (1.0 - f) + get(&self.prev, i0 + 1, c) * f);
             }
             self.t += self.step;
         }
         if n > 0 {
-            self.t -= n as f64;
+            self.t -= to_f64(n);
             self.prev = mixed[(n - 1) * tc..].to_vec();
         }
         out
@@ -361,7 +361,7 @@ impl Stream {
     }
 
     fn time(&self, frames: u64) -> u64 {
-        (u128::from(frames) * 10_000_000 / u128::from(self.track.rate.max(1))) as u64
+        lo64(u128::from(frames) * 10_000_000 / u128::from(self.track.rate.max(1)))
     }
 
     pub fn duration(&self) -> u64 {
@@ -370,7 +370,7 @@ impl Stream {
 
     /// The time of the next sample.
     pub fn next_time(&self) -> i64 {
-        self.time(self.at) as i64
+        lo64(self.time(self.at)).cast_signed()
     }
 
     /// Sets what reads hand out.
@@ -378,7 +378,7 @@ impl Stream {
         self.out = out;
         self.rs = match out {
             Out::Pcm { rate, channels, .. } if (rate, channels) != (self.track.rate, self.track.channels) => Some(Resample::new((self.track.rate, self.track.channels), (rate, channels))),
-            _ => None,
+            Out::Pcm { .. } | Out::Native => None,
         };
     }
 
@@ -387,7 +387,7 @@ impl Stream {
     pub fn seek(&mut self, t: u64) {
         let pcm = matches!(self.track.codec, Codec::Pcm { .. });
         let exact = u128::from(t) * u128::from(self.track.rate);
-        let want = if pcm { exact.div_ceil(10_000_000) } else { exact / 10_000_000 } as u64;
+        let want = lo64(if pcm { exact.div_ceil(10_000_000) } else { exact / 10_000_000 });
         let mut f = 0u64;
         let mut k = 0;
         while k < self.track.frames.len() && f + u64::from(self.track.frames[k]) <= want {
@@ -424,7 +424,7 @@ impl Stream {
     /// bytes could not be read: a program's byte stream is read on `c`'s thread).
     pub fn read_in(&mut self, mut c: Option<&mut Ctx>) -> Result<Option<Piece>, u32> {
         let t = &self.track;
-        let ch = t.channels.max(1) as usize;
+        let ch = us(t.channels.max(1));
         match (self.out, &t.codec) {
             (Out::Native, _) | (Out::Pcm { .. }, Codec::Pcm { .. }) => {
                 let Some(&(o, n)) = t.packets.get(self.next) else {
@@ -436,7 +436,7 @@ impl Stream {
                 let frames = all - skip;
                 let per = if all > 0 { u64::from(n) / all } else { 0 };
                 let from = o + skip * per;
-                let raw = self.data.read(c, from, (o + u64::from(n) - from) as usize).ok_or(Hr::Fail.code())?;
+                let raw = self.data.read(c, from, us(o + u64::from(n) - from)).ok_or(Hr::Fail.code())?;
                 let raw = &raw[..];
                 let bytes = match (self.out, &t.codec) {
                     (Out::Pcm { bits, float, .. }, Codec::Pcm { bits: from, float: ffloat }) if (bits, float) != (u32::from(*from), *ffloat) || self.rs.is_some() => {
@@ -460,7 +460,7 @@ impl Stream {
                 Ok(Some(p))
             }
             (Out::Pcm { bits, float, .. }, Codec::Vorbis { .. } | Codec::Wma { .. }) => {
-                let per = t.frames.iter().copied().max().unwrap_or(1024).max(1) as usize;
+                let per = us(t.frames.iter().copied().max().unwrap_or(1024).max(1));
                 let mut nat = match self.native.take() {
                     Some(n) => n,
                     None => Native::open(&t.codec).ok_or(Hr::InvalidMediaType.code())?,
@@ -468,14 +468,14 @@ impl Stream {
                 let mut got = Vec::new();
                 while self.pending.len() < per * ch && self.next < t.packets.len() {
                     let (o, n) = t.packets[self.next];
-                    let b = self.data.read(c.as_deref_mut(), o, n as usize).ok_or(Hr::Fail.code())?;
+                    let b = self.data.read(c.as_deref_mut(), o, us(n)).ok_or(Hr::Fail.code())?;
                     nat.decode(&b, &mut got);
                     if self.next + 1 == t.packets.len() {
                         nat.finish(&mut got);
                     }
                     // (Vorbis: the last packet ends at the final granule position)
                     if matches!(t.codec, Codec::Vorbis { .. }) {
-                        got.truncate(t.frames[self.next] as usize * ch);
+                        got.truncate(us(t.frames[self.next]) * ch);
                     }
                     self.pending.extend(got.drain(..));
                     self.next += 1;
@@ -488,7 +488,7 @@ impl Stream {
                 let n = (per * ch).min(self.pending.len()) / ch * ch;
                 let n = if n == 0 { self.pending.len() } else { n };
                 let mut v: Vec<f32> = self.pending.drain(..n).collect();
-                let frames = (n / ch) as u64;
+                let frames = lo64(n / ch);
                 if let Some(r) = &mut self.rs {
                     v = r.run(&v);
                 }
@@ -502,10 +502,10 @@ impl Stream {
             }
             (Out::Pcm { bits, float, .. }, Codec::Page { codec, desc, .. }) => {
                 let per = out_frames(codec, t.frames.first().copied().unwrap_or(1152));
-                if self.dec.is_none() {
-                    self.dec = Some(kura::adec::open(codec, t.rate, t.channels, desc).ok_or(Hr::InvalidMediaType.code())?);
-                }
-                let dec = self.dec.unwrap();
+                let dec = match self.dec {
+                    Some(d) => d,
+                    None => *self.dec.insert(kura::adec::open(codec, t.rate, t.channels, desc).ok_or(Hr::InvalidMediaType.code())?),
+                };
                 let mut got = Vec::new();
                 // (what a wait that timed out did not see may have come since)
                 kura::adec::take(dec, usize::MAX, &mut got);
@@ -513,7 +513,7 @@ impl Stream {
                 // decode a few packets ahead of what is wanted
                 while self.pending.len() < per * ch && self.next < t.packets.len() {
                     let end = (self.next + 8).min(t.packets.len());
-                    let bufs: Vec<Vec<u8>> = t.packets[self.next..end].iter().map(|&(o, n)| self.data.read(c.as_deref_mut(), o, n as usize)).collect::<Option<_>>().ok_or(Hr::Fail.code())?;
+                    let bufs: Vec<Vec<u8>> = t.packets[self.next..end].iter().map(|&(o, n)| self.data.read(c.as_deref_mut(), o, us(n))).collect::<Option<_>>().ok_or(Hr::Fail.code())?;
                     let chunks: Vec<&[u8]> = bufs.iter().map(|b| &b[..]).collect();
                     let ok = kura::adec::decode(dec, chunks, wait_time(), &mut got);
                     self.pending.extend(got.drain(..));
@@ -545,7 +545,7 @@ impl Stream {
                 let n = (per * ch).min(self.pending.len()) / ch * ch;
                 let n = if n == 0 { self.pending.len() } else { n };
                 let mut v: Vec<f32> = self.pending.drain(..n).collect();
-                let frames = (n / ch) as u64;
+                let frames = lo64(n / ch);
                 if let Some(r) = &mut self.rs {
                     v = r.run(&v);
                 }
@@ -565,17 +565,17 @@ impl Stream {
 /// Windows' MP3 decoder gives 26 MP3 frames a sample (0.68 s at 44.1 kHz; mfreader.c), its
 /// AAC decoder one packet.
 fn out_frames(codec: &str, frame: u32) -> usize {
-    frame.max(1) as usize * if codec == "mp3" { 26 } else { 1 }
+    us(frame.max(1)) * if codec == "mp3" { 26 } else { 1 }
 }
 
 /// PCM bytes as floats in [-1, 1).
 fn decode_pcm(b: &[u8], bits: u16, float: bool, out: &mut Vec<f32>) {
     match (bits, float) {
-        (32, true) => out.extend(b.chunks_exact(4).map(|x| f32::from_le_bytes(x.try_into().unwrap()))),
+        (32, true) => out.extend(b.as_chunks::<4>().0.iter().map(|&x| f32::from_le_bytes(x))),
         (8, _) => out.extend(b.iter().map(|&x| (f32::from(x) - 128.0) / 128.0)),
         (16, _) => out.extend(b.chunks_exact(2).map(|x| f32::from(i16::from_le_bytes([x[0], x[1]])) / 32768.0)),
-        (24, _) => out.extend(b.chunks_exact(3).map(|x| (i32::from_le_bytes([0, x[0], x[1], x[2]]) >> 8) as f32 / 8_388_608.0)),
-        _ => out.extend(b.chunks_exact(4).map(|x| i32::from_le_bytes(x.try_into().unwrap()) as f32 / 2_147_483_648.0)),
+        (24, _) => out.extend(b.chunks_exact(3).map(|x| to_f32(i32::from_le_bytes([0, x[0], x[1], x[2]]) >> 8) / 8_388_608.0)),
+        _ => out.extend(b.as_chunks::<4>().0.iter().map(|&x| to_f32(i32::from_le_bytes(x)) / 2_147_483_648.0)),
     }
 }
 
@@ -584,12 +584,12 @@ pub fn encode(v: &[f32], bits: u32, float: bool) -> Vec<u8> {
     if float {
         return v.iter().flat_map(|x| x.to_le_bytes()).collect();
     }
-    let q = |x: f32, scale: f64, lo: f64, hi: f64| (f64::from(x) * scale).round().clamp(lo, hi) as i64;
+    let q = |x: f32, scale: f64, lo: f64, hi: f64| trunc_i64((f64::from(x) * scale).round().clamp(lo, hi));
     match bits {
-        8 => v.iter().map(|&x| (q(x, 128.0, -128.0, 127.0) + 128) as u8).collect(),
+        8 => v.iter().map(|&x| lo8(q(x, 128.0, -128.0, 127.0) + 128)).collect(),
         24 => v.iter().flat_map(|&x| q(x, 8_388_608.0, -8_388_608.0, 8_388_607.0).to_le_bytes()[..3].to_vec()).collect(),
-        32 => v.iter().flat_map(|&x| (q(x, 2_147_483_648.0, -2_147_483_648.0, 2_147_483_647.0) as i32).to_le_bytes()).collect(),
-        _ => v.iter().flat_map(|&x| (q(x, 32768.0, -32768.0, 32767.0) as i16).to_le_bytes()).collect(),
+        32 => v.iter().flat_map(|&x| (lo32(q(x, 2_147_483_648.0, -2_147_483_648.0, 2_147_483_647.0)).cast_signed()).to_le_bytes()).collect(),
+        _ => v.iter().flat_map(|&x| (lo16s(q(x, 32768.0, -32768.0, 32767.0))).to_le_bytes()).collect(),
     }
 }
 
@@ -797,15 +797,15 @@ pub fn wave_format(s: &Store, force_ext: bool) -> Option<Vec<u8>> {
         _ => Vec::new(),
     };
     let mut w = Vec::new();
-    w.extend((if ext { 0xfffe } else { tag as u16 }).to_le_bytes());
-    w.extend((ch as u16).to_le_bytes());
+    w.extend((if ext { 0xfffe } else { lo16(tag) }).to_le_bytes());
+    w.extend((lo16(ch)).to_le_bytes());
     w.extend(rate.to_le_bytes());
     w.extend(avg.to_le_bytes());
-    w.extend((align as u16).to_le_bytes());
-    w.extend((bits as u16).to_le_bytes());
+    w.extend((lo16(align)).to_le_bytes());
+    w.extend((lo16(bits)).to_le_bytes());
     if ext {
         w.extend(22u16.to_le_bytes());
-        w.extend((bits as u16).to_le_bytes());
+        w.extend((lo16(bits)).to_le_bytes());
         let mask = u32_of(s, &k_mask()).unwrap_or(match ch {
             1 => 4,
             2 => 3,
@@ -817,7 +817,7 @@ pub fn wave_format(s: &Store, force_ext: bool) -> Option<Vec<u8>> {
         w.extend(mask.to_le_bytes());
         w.extend(audio_format(tag));
     } else {
-        w.extend((user.len() as u16).to_le_bytes());
+        w.extend((lo16(user.len())).to_le_bytes());
         w.extend(user);
     }
     Some(w)
@@ -832,11 +832,11 @@ fn MFCreateWaveFormatExFromMFMediaType(c: &mut Ctx) -> u32 {
     let Some(w) = store_of(t).and_then(|s| wave_format(&s, flags & 1 != 0)) else {
         return Hr::InvalidMediaType.code();
     };
-    let p = mem::heap_alloc(w.len() as u32, false);
+    let p = mem::heap_alloc(lo32(w.len()), false);
     mem::write(p, &w);
     putp(out, p);
     if size != 0 {
-        w32(size, w.len() as u32);
+        w32(size, lo32(w.len()));
     }
     0
 }
@@ -844,10 +844,10 @@ fn MFCreateWaveFormatExFromMFMediaType(c: &mut Ctx) -> u32 {
 /// A WAVEFORMATEX as a type's store.
 pub fn from_wave_format(w: &[u8]) -> Option<Store> {
     let r16 = |o: usize| w.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
-    let r32 = |o: usize| w.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let r32 = |o: usize| w.get(o..)?.first_chunk::<4>().map(|&b| u32::from_le_bytes(b));
     let mut tag = u32::from(r16(0)?);
     let (ch, rate, avg, align, bits) = (u32::from(r16(2)?), r32(4)?, r32(8)?, u32::from(r16(12)?), u32::from(r16(14)?));
-    let extra = r16(16).unwrap_or(0) as usize;
+    let extra = us(r16(16).unwrap_or(0));
     let mut s = Store::default();
     if tag == 0xfffe {
         tag = u32::from(r16(24)?);
@@ -1000,14 +1000,14 @@ fn new_buffer(max: u32, bytes: &[u8]) -> u32 {
     });
     let b = object(vt, 1);
     let data = mem::heap_alloc(max.max(1), true);
-    mem::write(data, &bytes[..bytes.len().min(max as usize)]);
+    mem::write(data, &bytes[..bytes.len().min(us(max))]);
     BUFS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(
         b,
         Buf {
             refs: 1,
             data,
             max,
-            len: bytes.len().min(max as usize) as u32,
+            len: lo32(bytes.len().min(us(max))),
         },
     );
     b
@@ -1104,7 +1104,7 @@ fn sm_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    w32(c.a(1), sample(c.a(0), |s| s.bufs.len() as u32).unwrap_or(0));
+    w32(c.a(1), sample(c.a(0), |s| lo32(s.bufs.len())).unwrap_or(0));
     0
 }
 /// GetBufferByIndex(DWORD, IMFMediaBuffer **)
@@ -1113,7 +1113,7 @@ fn sm_by_index(c: &mut Ctx) -> u32 {
     if out == 0 {
         return Hr::Pointer.code();
     }
-    let Some(b) = sample(c.a(0), |s| s.bufs.get(i as usize).copied()).flatten() else {
+    let Some(b) = sample(c.a(0), |s| s.bufs.get(us(i)).copied()).flatten() else {
         return Hr::InvalidArg.code();
     };
     add_ref(c, b);
@@ -1139,7 +1139,7 @@ fn sm_contiguous(c: &mut Ctx) -> u32 {
     for &b in &bufs {
         all.extend(buffer_bytes(b).unwrap_or_default());
     }
-    let nb = new_buffer(all.len() as u32, &all);
+    let nb = new_buffer(lo32(all.len()), &all);
     for b in bufs {
         release(c, b);
     }
@@ -1158,7 +1158,7 @@ fn sm_add(c: &mut Ctx) -> u32 {
     0
 }
 fn sm_remove(c: &mut Ctx) -> u32 {
-    let i = c.a(1) as usize;
+    let i = us(c.a(1));
     let Some(b) = sample(c.a(0), |s| (i < s.bufs.len()).then(|| s.bufs.remove(i))).flatten() else {
         return Hr::InvalidArg.code();
     };
@@ -1187,11 +1187,11 @@ fn sm_copy_to(c: &mut Ctx) -> u32 {
         all.extend(buffer_bytes(b).unwrap_or_default());
     }
     buf(to, |x| {
-        if all.len() as u32 > x.max {
+        if lo32(all.len()) > x.max {
             return Hr::NotAccepting.code();
         }
         mem::write(x.data, &all);
-        x.len = all.len() as u32;
+        x.len = lo32(all.len());
         0
     })
     .unwrap_or(Hr::InvalidArg.code())
@@ -1224,7 +1224,7 @@ pub(super) fn new_sample(time: Option<u64>, dur: Option<u64>, bytes: Option<&[u8
     });
     let b = object(vt, 1);
     ATTRS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, (1, Store::default()));
-    let bufs = bytes.map(|x| vec![new_buffer(x.len() as u32, x)]).unwrap_or_default();
+    let bufs = bytes.map(|x| vec![new_buffer(lo32(x.len()), x)]).unwrap_or_default();
     SAMPLES
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -1304,7 +1304,7 @@ fn index(r: &Reader, i: u32) -> Option<usize> {
     match i {
         FIRST_VIDEO => r.streams.iter().position(|s| matches!(s.kind, Kind::Video(_))),
         FIRST_AUDIO => r.streams.iter().position(|s| matches!(s.kind, Kind::Audio(_))),
-        _ => ((i as usize) < r.streams.len()).then_some(i as usize),
+        _ => ((us(i)) < r.streams.len()).then_some(us(i)),
     }
 }
 /// `f` on reader `this`'s stream `i`; MF_E_INVALIDSTREAMNUMBER when there is none.
@@ -1385,7 +1385,7 @@ fn video_out(v: &mp4::Video, want: &Store, processing: bool) -> Option<(VOut, St
         return None;
     }
     let sub = guid_of(want, &k_subtype())?;
-    let d1 = u32::from_le_bytes(sub[0..4].try_into().unwrap());
+    let d1 = data1(&sub);
     if sub != source::video_format(d1) {
         return None;
     }
@@ -1395,7 +1395,7 @@ fn video_out(v: &mp4::Video, want: &Store, processing: bool) -> Option<(VOut, St
     }
     let wm = v.wm.as_ref().and_then(|i| match i {
         crate::wmdec::Info::Video { fourcc, .. } => Some(*fourcc),
-        _ => None,
+        crate::wmdec::Info::Audio { .. } => None,
     });
     if wm.map_or(d1 == source::H264, |f| d1 == f) {
         return Some((VOut::Native, source::video_native(v)));
@@ -1456,7 +1456,7 @@ fn sr_seek(c: &mut Ctx) -> u32 {
     if guid_at(g) != [0; 16] || r16(p) != 20 {
         return Hr::InvalidArg.code();
     }
-    let t = mem::r64(p + 8) as i64;
+    let t = lo64(mem::r64(p + 8)).cast_signed();
     // (asynchronous: not while reads are pending)
     if reader(c.a(0), |r| pending(r)).unwrap_or(false) {
         return Hr::InvalidRequest.code();
@@ -1464,7 +1464,7 @@ fn sr_seek(c: &mut Ctx) -> u32 {
     let kinds = reader(c.a(0), |r| r.streams.iter().map(|s| clone_kind(&s.kind)).collect::<Vec<_>>()).unwrap_or_default();
     for k in kinds {
         match k {
-            Kind::Audio(s) => s.lock().unwrap_or_else(|e| e.into_inner()).seek(t.max(0) as u64),
+            Kind::Audio(s) => s.lock().unwrap_or_else(|e| e.into_inner()).seek(lo64(t.max(0))),
             Kind::Video(s) => s.lock().unwrap_or_else(|e| e.into_inner()).seek(t.max(0)),
         }
     }
@@ -1541,7 +1541,7 @@ fn read_one(c: &mut Ctx, this: u32, i: u32) -> (u32, u32, u32, u64, u32) {
     .flatten();
     let Some((k, on, kind, dur)) = pick else { return (Hr::InvalidStreamNumber.code(), 0, 0, 0, 0) };
     if !on {
-        return (Hr::InvalidRequest.code(), k as u32, 0, 0, 0);
+        return (Hr::InvalidRequest.code(), lo32(k), 0, 0, 0);
     }
     // (RGB frames of a reader with a device: textures)
     let mut tex = None;
@@ -1555,10 +1555,10 @@ fn read_one(c: &mut Ctx, this: u32, i: u32) -> (u32, u32, u32, u64, u32) {
             v.read(Some(c))
         }
     };
-    let d3d = if tex.is_some() { reader(this, |r| r.d3d).unwrap_or(0) } else { 0 };
-    match got {
-        Ok(Some(p)) if d3d != 0 => {
-            let (fmt, w, h) = tex.unwrap();
+    // (a texture's format and size, and the reader's DXGI manager: both, or a sample of bytes)
+    let hw = tex.and_then(|t| reader(this, |r| r.d3d).filter(|&d| d != 0).map(|d| (t, d)));
+    match (got, hw) {
+        (Ok(Some(p)), Some(((fmt, w, h), d3d))) => {
             let dev = super::dxgi::manager_device(c, d3d);
             let b = if dev != 0 { super::dxgi::frame_buffer(c, dev, w, h, fmt, &p.bytes) } else { None };
             release(c, dev);
@@ -1566,12 +1566,12 @@ fn read_one(c: &mut Ctx, this: u32, i: u32) -> (u32, u32, u32, u64, u32) {
                 Some(b) => new_sample_of(Some(p.time), Some(p.dur), b),
                 None => new_sample(Some(p.time), Some(p.dur), Some(&p.bytes)),
             };
-            (0, k as u32, 0, p.time, s)
+            (0, lo32(k), 0, p.time, s)
         }
-        Ok(Some(p)) => (0, k as u32, 0, p.time, new_sample(Some(p.time), Some(p.dur), Some(&p.bytes))),
-        Ok(None) => (0, k as u32, ENDOFSTREAM, dur, 0),
+        (Ok(Some(p)), None) => (0, lo32(k), 0, p.time, new_sample(Some(p.time), Some(p.dur), Some(&p.bytes))),
+        (Ok(None), _) => (0, lo32(k), ENDOFSTREAM, dur, 0),
         // MF_SOURCE_READERF_ERROR
-        Err(e) => (e, k as u32, 1, 0, 0),
+        (Err(e), _) => (e, lo32(k), 1, 0, 0),
     }
 }
 
@@ -1626,7 +1626,7 @@ fn worker(c: &mut Ctx) -> u32 {
                 if mem::x64() {
                     crate::call64(c.cpu, mem::widen(f), &[mem::widen(cb), u64::from(hr), u64::from(k), u64::from(flags), t, u64::from(sample)]);
                 } else {
-                    c.call(f, &[cb, hr, k, flags, t as u32, (t >> 32) as u32, sample]);
+                    c.call(f, &[cb, hr, k, flags, lo32(t), lo32(t >> 32), sample]);
                 }
                 release(c, sample);
             }
@@ -1919,13 +1919,13 @@ mod tests {
                 let mut cross = 0;
                 let mut sq = 0.0;
                 for i in from..to {
-                    let x = v[i * ch + c] as f64;
+                    let x = f64::from(v[i * ch + c]);
                     if i > from && (v[(i - 1) * ch + c] < 0.0) != (x < 0.0) {
                         cross += 1;
                     }
                     sq += x * x;
                 }
-                (cross as f64 / 2.0 * rate as f64 / (to - from) as f64, (sq / (to - from) as f64).sqrt())
+                (to_f64(cross) / 2.0 * to_f64(rate) / to_f64(to - from), (sq / to_f64(to - from)).sqrt())
             })
             .collect()
     }
@@ -1956,7 +1956,7 @@ mod tests {
             let want = pcm_type_at(t.rate, t.channels, 32, true);
             s.set_out(out_for(&t, &want).unwrap());
             let (all, times) = read_f32(&mut s);
-            let frames = all.len() as u64 / 2;
+            let frames = lo64(all.len()) / 2;
             assert_eq!(frames, want_frames, "{name}");
             for w in times.windows(2) {
                 assert_eq!(w[0].0 + w[0].1, w[1].0, "{name}");
@@ -1969,7 +1969,7 @@ mod tests {
             let p = s.read().unwrap().unwrap();
             assert!(p.time <= 2_500_000 && p.time + 1_000_000 > 2_500_000, "{name}: {}", p.time);
             let (rest, _) = read_f32(&mut s);
-            let total = rest.len() as u64 / 2 + p.bytes.len() as u64 / 8;
+            let total = lo64(rest.len()) / 2 + lo64(p.bytes.len()) / 8;
             assert!((p.time * 44100 / 10_000_000 + total).abs_diff(frames) <= 2048, "{name}");
         }
     }
@@ -1983,14 +1983,14 @@ mod tests {
         s.set_out(out_for(&t, &pcm_type_at(t.rate, t.channels, 32, true)).unwrap());
         let (all, _) = read_f32(&mut s);
         for k in 0..t.frames.len() {
-            let f = t.frames[..k].iter().map(|&x| x as u64).sum::<u64>();
+            let f = t.frames[..k].iter().map(|&x| lo64(x)).sum::<u64>();
             if t.frames[k] == 0 {
                 continue;
             }
             // (the time of the packet's first frame, rounded up: it falls in that packet)
             s.seek((f * 10_000_000).div_ceil(44100));
             let (rest, _) = read_f32(&mut s);
-            let tail = &all[f as usize * 2..];
+            let tail = &all[us(f) * 2..];
             assert_eq!(rest.len(), tail.len(), "packet {k}");
             assert!(rest.iter().zip(tail).all(|(a, b)| (a - b).abs() < 1e-6), "packet {k}");
         }
@@ -2011,12 +2011,12 @@ mod tests {
         assert_eq!(desc.len(), 4 + 4 + 34);
         assert_eq!(t.total_frames(), 8820);
         for (i, w) in t.packets.windows(2).enumerate() {
-            assert_eq!(w[0].0 + w[0].1 as u64, w[1].0, "frame {i}");
+            assert_eq!(w[0].0 + lo64(w[0].1), w[1].0, "frame {i}");
         }
         let last = t.packets.last().unwrap();
-        assert_eq!(last.0 + last.1 as u64, b.len() as u64);
+        assert_eq!(last.0 + lo64(last.1), lo64(b.len()));
         for (i, &(o, _)) in t.packets.iter().enumerate() {
-            assert_eq!(audiofile::flac_frame(&b, o as usize).map(|f| f.1), Some(i as u64));
+            assert_eq!(audiofile::flac_frame(&b, us(o)).map(|f| f.1), Some(lo64(i)));
         }
         assert_eq!(guid_of(&native_type(&t), &k_subtype()), Some(audio_format(0xf1ac)));
     }
@@ -2036,7 +2036,7 @@ mod tests {
             if let Some((t, packed)) = audiofile::open_more(&b) {
                 let d = packed.unwrap_or(b);
                 for &(o, n) in &t.packets {
-                    proptest::prop_assert!(o + n as u64 <= d.len() as u64);
+                    proptest::prop_assert!(o + lo64(n) <= lo64(d.len()));
                 }
                 proptest::prop_assert_eq!(t.packets.len(), t.frames.len());
                 if !matches!(t.codec, Codec::Page { .. }) {
@@ -2056,13 +2056,13 @@ mod tests {
     }
 
     fn pcm_track(frames: u32, ch: u32) -> (Track, Arc<Vec<u8>>) {
-        let data: Vec<u8> = (0..frames * ch).flat_map(|i| ((i as i16).wrapping_mul(7)).to_le_bytes()).collect();
+        let data: Vec<u8> = (0..frames * ch).flat_map(|i| ((lo16s(i)).wrapping_mul(7)).to_le_bytes()).collect();
         let mut packets = Vec::new();
         let mut fr = Vec::new();
         let mut at = 0;
         while at < frames {
             let n = (frames - at).min(4096);
-            packets.push(((at * ch * 2) as u64, n * ch * 2));
+            packets.push((lo64(at * ch * 2), n * ch * 2));
             fr.push(n);
             at += n;
         }
@@ -2122,7 +2122,7 @@ mod tests {
         let page = std::thread::spawn(move || {
             while !st.load(Ordering::Relaxed) {
                 // a packet [k, ...] decodes to 1152 frames of k / 256
-                kura::adec::test_page_pass(&mut |b, ch| vec![b[0] as f32 / 256.0; 1152 * ch as usize]);
+                kura::adec::test_page_pass(&mut |b, ch| vec![to_f32(b[0]) / 256.0; 1152 * us(ch)]);
                 std::thread::sleep(std::time::Duration::from_micros(200));
             }
         });
@@ -2145,8 +2145,8 @@ mod tests {
         let mut n = 0;
         while let Some(p) = s.read().unwrap() {
             assert_eq!(p.bytes.len(), 1152 * 4);
-            assert_eq!(p.time, (n as u128 * 1152 * 10_000_000 / 44100) as u64);
-            assert_eq!(i16::from_le_bytes([p.bytes[0], p.bytes[1]]), (n * 128) as i16);
+            assert_eq!(p.time, lo64(n as u128 * 1152 * 10_000_000 / 44100));
+            assert_eq!(i16::from_le_bytes([p.bytes[0], p.bytes[1]]), lo16s(n * 128));
             n += 1;
         }
         assert_eq!(n, 20);
@@ -2175,7 +2175,7 @@ mod tests {
         let b = s.read().unwrap().unwrap();
         assert!(s.read().unwrap().is_none());
         assert_eq!((a.bytes.len(), b.bytes.len()), (26 * 1152 * 4, 4 * 1152 * 4));
-        assert_eq!((a.time, b.time), (0, (26u128 * 1152 * 10_000_000 / 44100) as u64));
+        assert_eq!((a.time, b.time), (0, lo64(26u128 * 1152 * 10_000_000 / 44100)));
         assert_eq!(i16::from_le_bytes([b.bytes[0], b.bytes[1]]), 26 * 128);
         stop.store(true, Ordering::Relaxed);
         page.join().unwrap();
@@ -2197,7 +2197,7 @@ mod tests {
         while let Some(p) = s.read().unwrap() {
             if n == 0 {
                 for (j, x) in p.bytes.chunks(4).take(1000).enumerate() {
-                    let want = (8 * j + 1) as f32 * 3.5 / 32768.0;
+                    let want = to_f32(8 * j + 1) * 3.5 / 32768.0;
                     assert!((f32::from_le_bytes(x.try_into().unwrap()) - want).abs() < 1e-6, "{j}");
                 }
             }
@@ -2205,14 +2205,14 @@ mod tests {
         }
         assert!((4999..=5000).contains(&n), "{n}");
         let mut r = Resample::new((48000, 1), (96000, 1));
-        let v: Vec<f32> = (0..100).map(|i| i as f32).collect();
+        let v: Vec<f32> = (0..100).map(|i| to_f32(i)).collect();
         let mut got = r.run(&v[..37]);
         got.extend(r.run(&v[37..]));
         // (the last input frame waits for the next piece: the line to it is not known yet)
-        let want: Vec<f32> = (0..198).map(|i| i as f32 / 2.0).collect();
+        let want: Vec<f32> = (0..198).map(|i| to_f32(i) / 2.0).collect();
         assert_eq!(got, want);
         let mut r = Resample::new((44100, 1), (8000, 1));
-        let v: Vec<f32> = (0..44100).map(|i| i as f32).collect();
+        let v: Vec<f32> = (0..44100).map(|i| to_f32(i)).collect();
         let a = r.run(&v);
         assert!((7999..=8000).contains(&a.len()));
         assert!(a.windows(2).all(|w| (w[1] - w[0] - 44100.0 / 8000.0).abs() < 1e-2));
@@ -2391,17 +2391,17 @@ mod tests {
             while !stop.load(Ordering::Relaxed) {
                 std::thread::sleep(std::time::Duration::from_millis(delays[i % delays.len()]));
                 i += 1;
-                kura::adec::test_page_pass(&mut |b, ch| vec![b[0] as f32 / 256.0; 1152 * ch as usize]);
+                kura::adec::test_page_pass(&mut |b, ch| vec![to_f32(b[0]) / 256.0; 1152 * us(ch)]);
             }
         })
     }
     fn aac_track(n: usize) -> (Track, Arc<Vec<u8>>) {
-        let data: Vec<u8> = (0..n).flat_map(|k| vec![k as u8; 10]).collect();
+        let data: Vec<u8> = (0..n).flat_map(|k| vec![lo8(k); 10]).collect();
         let t = Track {
             codec: Codec::Page { codec: "aac".into(), desc: vec![], subtype: audiofile::AAC },
             rate: 44100,
             channels: 2,
-            packets: (0..n as u64).map(|k| (k * 10, 10)).collect(),
+            packets: (0..lo64(n)).map(|k| (k * 10, 10)).collect(),
             frames: vec![1152; n],
             avg: 16000,
             duration: None,
@@ -2472,7 +2472,7 @@ mod tests {
             stop.store(true, Ordering::Relaxed);
             page.join().unwrap();
             WAIT_MS.store(2000, Ordering::Relaxed);
-            proptest::prop_assert_eq!(got, Ok((0..n as i16).map(|k| k * 128).collect::<Vec<i16>>()));
+            proptest::prop_assert_eq!(got, Ok((0..lo16s(n)).map(|k| k * 128).collect::<Vec<i16>>()));
             proptest::prop_assert!(s.ended);
         }
     }

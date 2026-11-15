@@ -167,6 +167,11 @@ fn guid_at(p: u32) -> Guid {
     mem::slice(p, 16).first_chunk::<16>().copied().unwrap_or([0; 16])
 }
 /// The first fields of a GUID: (Data1, Data2, Data3)
+/// Data1 of a GUID (its first field)
+fn data1(g: &Guid) -> u32 {
+    let [a, b, c, d, ..] = *g;
+    u32::from_le_bytes([a, b, c, d])
+}
 fn is(g: &Guid, d1: u32, d2: u16, d3: u16) -> bool {
     u32::from_le_bytes([g[0], g[1], g[2], g[3]]) == d1 && u16::from_le_bytes([g[4], g[5]]) == d2 && u16::from_le_bytes([g[6], g[7]]) == d3
 }

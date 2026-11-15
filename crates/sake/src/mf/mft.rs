@@ -264,9 +264,9 @@ pub fn frames_of(ty: &Store, attrs: Option<&Store>) -> Result<Frames, u32> {
         Some(Val::U64(v)) => *v,
         _ => return Err(Hr::InvalidMediaType.code()),
     };
-    let (w, h) = ((size >> 32) as u32, size as u32);
+    let (w, h) = (lo32(size >> 32), lo32(size));
     let fmt = match ty.get(&super::reader::k_subtype()) {
-        Some(Val::Guid(g)) => super::dxgi::format_of(u32::from_le_bytes(g[0..4].try_into().unwrap())),
+        Some(Val::Guid(g)) => super::dxgi::format_of(data1(g)),
         _ => None,
     };
     let Some(fmt) = fmt else { return Err(Hr::InvalidMediaType.code()) };
@@ -369,7 +369,7 @@ fn al_allocate(c: &mut Ctx) -> u32 {
     let Some((manager, frames)) = alloc(this, |a| (a.manager, a.frames)) else { return Hr::InvalidArg.code() };
     let Some(f) = frames else { return Hr::NotInitialized.code() };
     let Some(n) = super::dxgi::frame_bytes(f.fmt, f.w, f.h) else { return Hr::InvalidMediaType.code() };
-    let zero = vec![0u8; n as usize];
+    let zero = vec![0u8; us(n)];
     if manager == 0 {
         putp(out, super::reader::new_sample(None, None, Some(&zero)));
         return 0;
@@ -437,7 +437,7 @@ mod tests {
         fn frames_of_types(w in 0u32..2050, h in 0u32..2050, which in 0usize..5, usage in proptest::option::of(0u32..5), bind in proptest::option::of(any::<u32>())) {
             let fourcc = [super::super::source::NV12, super::super::source::RGB32, super::super::source::ARGB32, u32::from_le_bytes(*b"YUY2"), 0][which];
             let mut t = Store::default();
-            t.set(super::super::source::k_frame_size(), Val::U64((w as u64) << 32 | h as u64));
+            t.set(super::super::source::k_frame_size(), Val::U64((lo64(w)) << 32 | lo64(h)));
             t.set(super::super::reader::k_subtype(), sub(fourcc));
             let mut a = Store::default();
             if let Some(u) = usage {

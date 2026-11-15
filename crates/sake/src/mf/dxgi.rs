@@ -140,7 +140,7 @@ fn device_context(c: &mut Ctx, tex: u32) -> Option<(u32, u32)> {
 fn desc(c: &mut Ctx, tex: u32) -> [u32; 11] {
     let p = mem::heap_alloc(44, true);
     com(c, tex, TEX_GET_DESC, &[p]);
-    let d = std::array::from_fn(|i| r32(p + 4 * i as u32));
+    let d = std::array::from_fn(|i| r32(p + 4 * lo32(i)));
     mem::heap_free(p);
     d
 }
@@ -151,7 +151,7 @@ fn new_texture(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, usage: u32, bind
     // (the desc at 0, the D3D11_SUBRESOURCE_DATA at 48, the texture out at 80)
     let p = mem::heap_alloc(96, true);
     for (i, v) in [w, h, 1, 1, fmt, 1, 0, usage, bind, cpu, misc].into_iter().enumerate() {
-        w32(p + 4 * i as u32, v);
+        w32(p + 4 * lo32(i), v);
     }
     let (sd, out) = (p + 48, p + 80);
     let mut arg = 0;
@@ -349,9 +349,9 @@ fn db_set_unknown(c: &mut Ctx) -> u32 {
 /// The first row's address and the pitch (negative for a bottom-up buffer).
 fn scan0(d: &Dx) -> (u32, i32) {
     if d.bottom_up {
-        (d.data + (d.rows.max(1) - 1) * d.pitch, -(d.pitch as i32))
+        (d.data + (d.rows.max(1) - 1) * d.pitch, -(lo32(d.pitch).cast_signed()))
     } else {
-        (d.data, d.pitch as i32)
+        (d.data, lo32(d.pitch).cast_signed())
     }
 }
 /// Lock2D(BYTE **scanline0, LONG *pitch)
@@ -364,7 +364,7 @@ fn b2_lock(c: &mut Ctx) -> u32 {
     lock(c, b);
     let (s, p) = dx(b, |d| scan0(d)).unwrap_or_default();
     putp(pp, s);
-    w32(ppitch, p as u32);
+    w32(ppitch, lo32(p));
     0
 }
 fn b2_unlock(c: &mut Ctx) -> u32 {
@@ -380,7 +380,7 @@ fn b2_scan0(c: &mut Ctx) -> u32 {
     let Some(x) = with(c.a(0), |d| (d.locks > 0).then(|| scan0(d))) else { return Hr::InvalidArg.code() };
     let Some((s, p)) = x else { return Hr::WasUnlocked.code() };
     putp(pp, s);
-    w32(ppitch, p as u32);
+    w32(ppitch, lo32(p));
     0
 }
 /// IsContiguousFormat(BOOL *)
@@ -469,7 +469,7 @@ fn layout(fmt: u32, w: u32, h: u32) -> Option<(u32, u32)> {
     let size = kura::d3d11::format::texture_bytes(fmt, w, h, 1, 1, 1, 1);
     // (rows of blocks; NV12's luma then chroma rows)
     let rows = kura::d3d11::format::pitch_rows(fmt, w, h).1;
-    (size > 0 && size <= u64::from(MAX_BLOB) && rows > 0).then(|| (size as u32, rows))
+    (size > 0 && size <= u64::from(MAX_BLOB) && rows > 0).then(|| (lo32(size), rows))
 }
 
 /// A buffer of ours over texture `tex` (whose reference it takes), subresource `sub`; `len`
@@ -482,7 +482,7 @@ fn new_buffer(c: &mut Ctx, tex: u32, sub: u32, bottom_up: bool, len_is_max: bool
     let vt = vtables();
     let b = mem::heap_alloc(3 * ps(), true);
     for (k, v) in vt.into_iter().enumerate() {
-        wp(b + k as u32 * ps(), v);
+        wp(b + lo32(k) * ps(), v);
     }
     let data = init.unwrap_or_else(|| mem::heap_alloc(max, true));
     let dxo = Dx {
@@ -568,12 +568,12 @@ pub fn frame_buffer(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, bytes: &[u8
 /// flags `bind`) made of top-down rows `bytes`; None: the device refused it.
 pub fn texture_buffer(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, usage: u32, bind: u32, bytes: &[u8]) -> Option<u32> {
     let (max, rows) = layout(fmt, w, h)?;
-    if bytes.len() < max as usize {
+    if bytes.len() < us(max) {
         return None;
     }
     // (the initial data stays the buffer's copy: kura may read it after CreateTexture2D)
     let data = mem::heap_alloc(max, false);
-    mem::write(data, &bytes[..max as usize]);
+    mem::write(data, &bytes[..us(max)]);
     let cpu = match usage {
         // (dynamic: CPU write; staging: read and write)
         2 => 0x10000,
@@ -630,12 +630,12 @@ mod tests {
             let x = d(w, h, bottom_up);
             let (s, p) = scan0(&x);
             if bottom_up {
-                prop_assert_eq!((s, p), (0x1000 + (h - 1) * w * 4, -((w * 4) as i32)));
+                prop_assert_eq!((s, p), (0x1000 + (h - 1) * w * 4, -(lo32(w * 4).cast_signed())));
             } else {
-                prop_assert_eq!((s, p), (0x1000, (w * 4) as i32));
+                prop_assert_eq!((s, p), (0x1000, lo32(w * 4).cast_signed()));
             }
             // (the last row ends at the copy's end either way)
-            prop_assert_eq!((s as i64 + if bottom_up { 0 } else { p as i64 * (h as i64 - 1) }) + (w * 4) as i64, if bottom_up { 0x1000 + x.max as i64 } else { 0x1000 + x.max as i64 });
+            prop_assert_eq!((lo64(s).cast_signed() + if bottom_up { 0 } else { lo64(p).cast_signed() * (lo64(h).cast_signed() - 1) }) + lo64(w * 4).cast_signed(), if bottom_up { 0x1000 + lo64(x.max).cast_signed() } else { 0x1000 + lo64(x.max).cast_signed() });
         }
     }
 

@@ -33,7 +33,7 @@ pub struct Data {
 
 impl Data {
     pub fn mem_arc(v: Arc<Vec<u8>>) -> Data {
-        Data { len: v.len() as u64, src: Src::Mem(v), lock: Mutex::new(()) }
+        Data { len: lo64(v.len()), src: Src::Mem(v), lock: Mutex::new(()) }
     }
     pub fn host(f: kura::fs::File) -> Option<Data> {
         let len = f.metadata().ok()?.len();
@@ -54,15 +54,15 @@ impl Data {
     pub fn guest_stream(&self) -> u32 {
         match self.src {
             Src::Guest(b) => b,
-            _ => 0,
+            Src::Mem(_) | Src::Host(_) => 0,
         }
     }
     /// `n` bytes at `off` (fewer at the end); None when they could not be read (a guest
     /// stream without a guest thread to call it on, `c` None).
     pub fn read(&self, c: Option<&mut Ctx>, off: u64, n: usize) -> Option<Vec<u8>> {
-        let n = n.min(self.len.saturating_sub(off) as usize);
+        let n = n.min(us(self.len.saturating_sub(off)));
         match &self.src {
-            Src::Mem(v) => v.get(off as usize..off as usize + n).map(|b| b.to_vec()),
+            Src::Mem(v) => v.get(us(off)..us(off) + n).map(|b| b.to_vec()),
             Src::Host(f) => {
                 let mut f = f.lock().unwrap_or_else(|e| e.into_inner());
                 let mut b = vec![0; n];
@@ -85,14 +85,14 @@ fn guest_read(c: &mut Ctx, bs: u32, off: u64, n: usize) -> Option<Vec<u8>> {
         let f = rp(rp(bs) + ps() * 7);
         crate::call64(c.cpu, mem::widen(f), &[mem::widen(bs), off]);
     } else {
-        com(c, bs, 7, &[off as u32, (off >> 32) as u32]);
+        com(c, bs, 7, &[lo32(off), lo32(off >> 32)]);
     }
     const PIECE: usize = 1 << 20;
-    let b = mem::heap_alloc(PIECE.min(n.max(1)) as u32, false);
+    let b = mem::heap_alloc(lo32(PIECE.min(n.max(1))), false);
     let got_at = mem::heap_alloc(4, true);
     let mut out = Vec::with_capacity(n);
     while out.len() < n {
-        let want = (n - out.len()).min(PIECE) as u32;
+        let want = lo32((n - out.len()).min(PIECE));
         w32(got_at, 0);
         let hr = com(c, bs, 9, &[b, want, got_at]);
         let got = r32(got_at).min(want);
@@ -129,7 +129,7 @@ pub fn open_media(c: Option<&mut Ctx>, d: &Data) -> Option<Media> {
     if d.len > 1 << 30 {
         return None;
     }
-    let all = d.read(c, 0, d.len as usize)?;
+    let all = d.read(c, 0, us(d.len))?;
     if all.starts_with(&ASF_HEADER) && let Some(m) = open_asf(&all) {
         return Some(m);
     }
@@ -139,7 +139,7 @@ pub fn open_media(c: Option<&mut Ctx>, d: &Data) -> Option<Media> {
         audiofile::Codec::Vorbis { .. } => "audio/ogg",
         audiofile::Codec::Wma { .. } => "audio/x-ms-wma",
         audiofile::Codec::Page { subtype: audiofile::FLAC, .. } => "audio/flac",
-        _ => "audio/mpeg",
+        audiofile::Codec::Pcm { .. } | audiofile::Codec::Page { .. } => "audio/mpeg",
     };
     let packed = packed.map(|d| Arc::new(Data::mem_arc(Arc::new(d))));
     Some(Media { duration: t.duration, tracks: vec![mp4::Track::Audio(t)], mime, packed })
@@ -177,21 +177,21 @@ pub fn open_asf(all: &[u8]) -> Option<Media> {
     let mut dur = vec![0u64; vo.len()];
     // (the frame time by the samples' times, which ASF has in ms; the header's when one frame)
     let span = by_time.last().map_or(0, |&l| vo[l].time - vo[by_time[0]].time);
-    let avg = match (vo.len() as u64).checked_sub(1).filter(|&n| n > 0 && span > 0) {
+    let avg = match (lo64(vo.len())).checked_sub(1).filter(|&n| n > 0 && span > 0) {
         Some(n) => (span + n / 2) / n,
         None if vs.avg_time_per_frame != 0 => vs.avg_time_per_frame,
         None => SEC_ / 30,
     };
     for (k, &i) in by_time.iter().enumerate() {
-        order[i] = k as u32;
+        order[i] = lo32(k);
         dur[i] = by_time.get(k + 1).map_or(avg, |&n| vo[n].time.saturating_sub(vo[i].time).max(1));
     }
     let samples = vo
         .iter()
         .enumerate()
-        .map(|(i, o)| mp4::Sample { off: vat[i].0, size: vat[i].1, pts: o.time as i64, dts: i as i64, dur: dur[i], key: o.key, order: order[i] })
+        .map(|(i, o)| mp4::Sample { off: vat[i].0, size: vat[i].1, pts: lo64(o.time).cast_signed(), dts: lo64(i).cast_signed(), dur: dur[i], key: o.key, order: order[i] })
         .collect();
-    let name: String = fourcc.to_le_bytes().iter().map(|&b| (b as char).to_ascii_lowercase()).collect();
+    let name: String = fourcc.to_le_bytes().iter().map(|&b| char::from(b).to_ascii_lowercase()).collect();
     let video = mp4::Video {
         codec: name,
         w: width,
@@ -202,7 +202,7 @@ pub fn open_asf(all: &[u8]) -> Option<Media> {
         head: Vec::new(),
         samples,
         // (ms times: 1 ms over the frames apart)
-        rate: plat::frame_rate_near(avg, 10_000 / (vo.len() as u64).max(1) + 30),
+        rate: plat::frame_rate_near(avg, 10_000 / (lo64(vo.len())).max(1) + 30),
         bitrate: vs.bitrate,
         wm: Some(vinfo),
     };
@@ -210,10 +210,10 @@ pub fn open_asf(all: &[u8]) -> Option<Media> {
     if let Some(info) = au.and_then(|a| Info::of_stream(a)).filter(|_| !ao.is_empty()) {
         let Info::Audio { channels, rate, bytes_per_sec, .. } = info else { return None };
         if rate > 0 {
-            let at = |t: u64| (u128::from(t) * u128::from(rate) / u128::from(SEC_)) as u64;
+            let at = |t: u64| lo64(u128::from(t) * u128::from(rate) / u128::from(SEC_));
             let end = at(h.duration.max(ao.last()?.time));
-            let frames = (0..ao.len()).map(|i| ao.get(i + 1).map_or(end, |n| at(n.time)).saturating_sub(at(ao[i].time)) as u32).collect();
-            let base = packed.len() as u64;
+            let frames = (0..ao.len()).map(|i| lo32(ao.get(i + 1).map_or(end, |n| at(n.time)).saturating_sub(at(ao[i].time)))).collect();
+            let base = lo64(packed.len());
             let (d, at2) = audiofile::repack(ao.iter().map(|o| &o.data[..]));
             packed.extend_from_slice(&d);
             let packets = at2.into_iter().map(|(o, n)| (o + base, n)).collect();
@@ -227,56 +227,56 @@ const SEC_: u64 = 10_000_000;
 // --- media types of video -----------------------------------------------------------------
 
 pub fn k_frame_size() -> Guid {
-    g("1652c33d-d6b2-4012-b834-72030849a37d")
+    const { g("1652c33d-d6b2-4012-b834-72030849a37d") }
 }
 pub fn k_frame_rate() -> Guid {
-    g("c459a2e8-3d2c-4e44-b132-fee5156c7bb0")
+    const { g("c459a2e8-3d2c-4e44-b132-fee5156c7bb0") }
 }
 pub fn k_aspect() -> Guid {
-    g("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6")
+    const { g("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6") }
 }
 pub fn k_interlace() -> Guid {
-    g("e2724bb8-e676-4806-b4b2-a8d6efb44ccd")
+    const { g("e2724bb8-e676-4806-b4b2-a8d6efb44ccd") }
 }
 pub fn k_stride() -> Guid {
-    g("644b4e48-1e02-4516-b0eb-c01ca9d49ac6")
+    const { g("644b4e48-1e02-4516-b0eb-c01ca9d49ac6") }
 }
 pub fn k_fixed_size() -> Guid {
-    g("b8ebefaf-b718-4e04-b0a9-116775e3321b")
+    const { g("b8ebefaf-b718-4e04-b0a9-116775e3321b") }
 }
 pub fn k_sample_size() -> Guid {
-    g("dad3ab78-1990-408b-bce2-eba673dacc10")
+    const { g("dad3ab78-1990-408b-bce2-eba673dacc10") }
 }
 pub fn k_profile() -> Guid {
-    g("ad76a80b-2d5c-4e0b-b375-64e520137036")
+    const { g("ad76a80b-2d5c-4e0b-b375-64e520137036") }
 }
 pub fn k_level() -> Guid {
-    g("96f66574-11c5-4015-8666-bff516436da7")
+    const { g("96f66574-11c5-4015-8666-bff516436da7") }
 }
 pub fn k_seq_header() -> Guid {
-    g("3c036de7-3ad0-4c9e-9216-ee6d6ac21cb3")
+    const { g("3c036de7-3ad0-4c9e-9216-ee6d6ac21cb3") }
 }
 pub fn k_bitrate() -> Guid {
-    g("20332624-fb0d-4d9e-bd0d-cbf6786c102e")
+    const { g("20332624-fb0d-4d9e-bd0d-cbf6786c102e") }
 }
 pub fn k_matrix() -> Guid {
-    g("3e23d450-2c75-4d25-a00e-b91670d12327")
+    const { g("3e23d450-2c75-4d25-a00e-b91670d12327") }
 }
 pub fn k_nominal_range() -> Guid {
-    g("c21b8ee5-b956-4071-8daf-325edf5cab11")
+    const { g("c21b8ee5-b956-4071-8daf-325edf5cab11") }
 }
 fn k_pd_duration() -> Guid {
-    g("6c990d33-bb8e-477a-8598-0d5d96fcd88a")
+    const { g("6c990d33-bb8e-477a-8598-0d5d96fcd88a") }
 }
 fn k_pd_mime() -> Guid {
-    g("6c990d37-bb8e-477a-8598-0d5d96fcd88a")
+    const { g("6c990d37-bb8e-477a-8598-0d5d96fcd88a") }
 }
 pub fn major_video() -> Guid {
-    g("73646976-0000-0010-8000-00aa00389b71")
+    const { g("73646976-0000-0010-8000-00aa00389b71") }
 }
 /// MFVideoFormat_* by FOURCC (or D3DFORMAT) in Data1
 pub fn video_format(fourcc: u32) -> Guid {
-    let mut b = g("00000000-0000-0010-8000-00aa00389b71");
+    let mut b = const { g("00000000-0000-0010-8000-00aa00389b71") };
     b[0..4].copy_from_slice(&fourcc.to_le_bytes());
     b
 }
@@ -289,8 +289,31 @@ pub const YUY2: u32 = u32::from_le_bytes(*b"YUY2");
 pub const RGB32: u32 = 22;
 pub const ARGB32: u32 = 21;
 
-pub fn g(s: &str) -> Guid {
-    crate::actctx::parse_guid(s).unwrap()
+/// A GUID from its text "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", for `const { g(..) }`: a malformed
+/// one fails the build.
+pub const fn g(s: &str) -> Guid {
+    let mut rest = s.as_bytes();
+    // (the 32 hex digits as one big-endian number, the dashes where they belong)
+    let (mut v, mut at) = (0u128, 0u32);
+    while let Some((&c, tail)) = rest.split_first() {
+        let d = match c {
+            b'0'..=b'9' => c.wrapping_sub(b'0'),
+            b'a'..=b'f' => c.wrapping_sub(b'a').wrapping_add(10),
+            b'A'..=b'F' => c.wrapping_sub(b'A').wrapping_add(10),
+            b'-' => 16,
+            _ => 17,
+        };
+        assert!(d != 17, "a GUID's text is hex digits and dashes");
+        assert!((d == 16) == matches!(at, 8 | 13 | 18 | 23), "a GUID's dashes are at 8, 13, 18 and 23");
+        if d != 16 {
+            v = v.wrapping_shl(4) | u128::from_le_bytes([d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        }
+        at = at.wrapping_add(1);
+        rest = tail;
+    }
+    assert!(at == 36, "a GUID's text is 36 characters");
+    let [a0, a1, a2, a3, b0, b1, c0, c1, d0, d1, d2, d3, d4, d5, d6, d7] = v.to_be_bytes();
+    [a3, a2, a1, a0, b1, b0, c1, c0, d0, d1, d2, d3, d4, d5, d6, d7]
 }
 fn ratio(a: u32, b: u32) -> Val {
     Val::U64(u64::from(a) << 32 | u64::from(b))
@@ -538,12 +561,12 @@ fn pd_count(c: &mut Ctx) -> u32 {
     if out == 0 {
         return Hr::Pointer.code();
     }
-    w32(out, side(c.a(0)).map_or(0, |s| s.media.tracks.len() as u32));
+    w32(out, side(c.a(0)).map_or(0, |s| lo32(s.media.tracks.len())));
     0
 }
 /// GetStreamDescriptorByIndex(DWORD, BOOL *selected, IMFStreamDescriptor **)
 fn pd_by_index(c: &mut Ctx) -> u32 {
-    let (i, sel, out) = (c.a(1) as usize, c.a(2), c.a(3));
+    let (i, sel, out) = (us(c.a(1)), c.a(2), c.a(3));
     if sel == 0 || out == 0 {
         return Hr::Pointer.code();
     }
@@ -556,7 +579,7 @@ fn pd_by_index(c: &mut Ctx) -> u32 {
     0
 }
 fn pd_select(c: &mut Ctx, on: bool) -> u32 {
-    let i = c.a(1) as usize;
+    let i = us(c.a(1));
     let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
     let mut v = s.selected.lock().unwrap_or_else(|e| e.into_inner());
     match v.get_mut(i) {
@@ -610,7 +633,7 @@ fn sd_id(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     // (the MP4 source names a stream by its track: 1, 2, ...)
-    w32(out, side(c.a(0)).map_or(0, |s| s.stream as u32 + 1));
+    w32(out, side(c.a(0)).map_or(0, |s| lo32(s.stream) + 1));
     0
 }
 fn sd_handler(c: &mut Ctx) -> u32 {

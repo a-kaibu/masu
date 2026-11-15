@@ -65,13 +65,13 @@ impl VStream {
     pub fn new(v: mp4::Video, data: Arc<Data>) -> VStream {
         let mut by_order = vec![0; v.samples.len()];
         for (i, s) in v.samples.iter().enumerate() {
-            by_order[s.order as usize] = i;
+            by_order[us(s.order)] = i;
         }
         VStream { v, data, out: VOut::Native, next: 0, by_order, id: None, pushed: 0..0, ended: false, soft: None }
     }
 
     pub fn duration(&self) -> u64 {
-        self.v.samples.iter().map(|s| (s.pts.max(0) as u64) + s.dur).max().unwrap_or(0)
+        self.v.samples.iter().map(|s| (lo64(s.pts.max(0))) + s.dur).max().unwrap_or(0)
     }
 
     /// The time of the next sample (for reads of any stream: the earliest goes first).
@@ -99,7 +99,7 @@ impl VStream {
     fn seek_index(&mut self, k: usize) {
         self.next = match self.out {
             VOut::Native => k,
-            VOut::Decoded(_) => self.v.samples.get(k).map_or(0, |s| s.order as usize),
+            VOut::Decoded(_) => self.v.samples.get(k).map_or(0, |s| us(s.order)),
         };
         self.ended = false;
     }
@@ -112,7 +112,7 @@ impl VStream {
     /// Sample `i` (decode order) as Annex B.
     fn sample(&self, c: Option<&mut Ctx>, i: usize) -> Result<Vec<u8>, u32> {
         let s = &self.v.samples[i];
-        let b = self.data.read(c, s.off, s.size as usize).ok_or(Hr::Fail.code())?;
+        let b = self.data.read(c, s.off, us(s.size)).ok_or(Hr::Fail.code())?;
         if self.v.wm.is_some() {
             return Ok(b);
         }
@@ -139,13 +139,13 @@ impl VStream {
             let bytes = self.sample(c, i)?;
             let s = &self.v.samples[i];
             self.next += 1;
-            return Ok(Some(Piece { time: s.pts.max(0) as u64, dur: s.dur, bytes }));
+            return Ok(Some(Piece { time: lo64(s.pts.max(0)), dur: s.dur, bytes }));
         };
         if self.v.wm.is_some() {
             let p = self.next;
             let bgra = self.soft_picture(c, p)?;
             let s = &self.v.samples[self.by_order[p]];
-            let (time, dur) = (s.pts.max(0) as u64, s.dur);
+            let (time, dur) = (lo64(s.pts.max(0)), s.dur);
             self.next += 1;
             return Ok(Some(Piece { time, dur, bytes: soft_convert(&bgra, self.v.w, self.v.h, sub) }));
         }
@@ -170,14 +170,14 @@ impl VStream {
         }
         for i in self.pushed.end..to {
             let b = self.sample(c.as_deref_mut(), i)?;
-            kura::video::put(id, i as u32, b);
+            kura::video::put(id, lo32(i), b);
         }
         self.pushed.end = self.pushed.end.max(to);
-        kura::video::keep_chunks(id, from as u32..self.pushed.end as u32);
+        kura::video::keep_chunks(id, lo32(from)..lo32(self.pushed.end));
         self.pushed.start = from;
         let (w, h) = (self.v.w, self.v.h);
         let mut bytes = Vec::new();
-        let got = kura::video::frame_exact(id, p as i32, if first { FIRST } else { EACH }, |layout, buf| {
+        let got = kura::video::frame_exact(id, lo32(p).cast_signed(), if first { FIRST } else { EACH }, |layout, buf| {
             bytes = unsafe { convert(layout, buf, w, h, sub) };
         });
         if !got {
@@ -186,7 +186,7 @@ impl VStream {
         }
         let s = &self.v.samples[d];
         self.next += 1;
-        Ok(Some(Piece { time: s.pts.max(0) as u64, dur: s.dur, bytes }))
+        Ok(Some(Piece { time: lo64(s.pts.max(0)), dur: s.dur, bytes }))
     }
 }
 
@@ -195,7 +195,7 @@ impl VStream {
     /// frame before it when going back or past a key frame, else on from where decoding is.
     fn soft_picture(&mut self, mut c: Option<&mut Ctx>, p: usize) -> Result<Arc<Vec<u8>>, u32> {
         let d = self.by_order[p];
-        let t = self.v.samples[d].pts.max(0) as u64;
+        let t = lo64(self.v.samples[d].pts.max(0));
         let key = self.key_before(d);
         let restart = match &self.soft {
             None => true,
@@ -212,7 +212,7 @@ impl VStream {
         }
         let n = self.v.samples.len();
         loop {
-            let s = self.soft.as_mut().unwrap();
+            let Some(s) = self.soft.as_mut() else { return Err(Hr::Fail.code()) };
             while s.pics.len() > 1 && s.pics[1].0 <= t {
                 s.pics.pop_front();
             }
@@ -235,10 +235,12 @@ impl VStream {
             let i = s.next;
             s.next += 1;
             let smp = &self.v.samples[i];
-            let (time, key) = (smp.pts.max(0) as u64, smp.key);
-            let b = self.data.read(c.as_deref_mut(), smp.off, smp.size as usize).ok_or(Hr::Fail.code())?;
-            let s = self.soft.as_mut().unwrap();
+            let (time, key) = (lo64(smp.pts.max(0)), smp.key);
+            let b = self.data.read(c.as_deref_mut(), smp.off, us(smp.size)).ok_or(Hr::Fail.code())?;
+            let Some(s) = self.soft.as_mut() else { return Err(Hr::Fail.code()) };
             let fs = s.codec.decode(&b, time, key);
+
+
             push_pictures(s, fs);
         }
     }
@@ -260,7 +262,7 @@ fn push_pictures(s: &mut Soft, fs: Vec<crate::wmdec::Frame>) -> bool {
 /// A B G R A picture (top-down) as a sample of FOURCC `sub`: RGB32 as it is, the YUV formats
 /// by BT.601 video range (convert's RGBA planes).
 fn soft_convert(bgra: &[u8], w: u32, h: u32, sub: u32) -> Vec<u8> {
-    let n = 4 * w as usize * h as usize;
+    let n = 4 * us(w) * us(h);
     let bgra = &bgra[..n.min(bgra.len())];
     if sub == source::RGB32 || sub == source::ARGB32 {
         let mut v = bgra.to_vec();
@@ -281,14 +283,14 @@ fn soft_convert(bgra: &[u8], w: u32, h: u32, sub: u32) -> Vec<u8> {
 /// `buf` must hold the planes `layout` says.
 pub unsafe fn convert(layout: &[[u32; 7]; 2], buf: *const u8, w: u32, h: u32, sub: u32) -> Vec<u8> {
     let l = &layout[0];
-    let (w, h) = (w as usize, h as usize);
+    let (w, h) = (us(w), us(h));
     let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
-    let plane = |i: usize| buf.add(l[1 + 2 * i] as usize);
-    let stride = |i: usize| l[2 + 2 * i] as usize;
+    let plane = |i: usize| buf.add(us(l[1 + 2 * i]));
+    let stride = |i: usize| us(l[2 + 2 * i]);
     if sub == source::RGB32 || sub == source::ARGB32 {
         let mut out = vec![0u8; 4 * w * h];
         let m = if h >= 720 { kura::video::Out::Rgb709 } else { kura::video::Out::Rgb601 };
-        kura::video::convert(buf, layout, 1, w as u32, h as u32, out.as_mut_ptr(), 4 * w, w as u32, h as u32, m);
+        kura::video::convert(buf, layout, 1, lo32(w), lo32(h), out.as_mut_ptr(), 4 * w, lo32(w), lo32(h), m);
         return out;
     }
     // Y, Cb, Cr of pixel (x, y), and of the chroma sample (x, y) (x, y < cw, ch)
@@ -365,7 +367,7 @@ pub unsafe fn convert(layout: &[[u32; 7]; 2], buf: *const u8, w: u32, h: u32, su
 fn rgb_ycc(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
     let (r, g, b) = (f64::from(r), f64::from(g), f64::from(b));
     let y = 0.299 * r + 0.587 * g + 0.114 * b;
-    let c = |x: f64| x.round().clamp(0.0, 255.0) as u8;
+    let c = |x: f64| trunc_u8(x.round().clamp(0.0, 255.0));
     (c(16.0 + y * 219.0 / 255.0), c(128.0 + (b - y) / 1.772 * 224.0 / 255.0), c(128.0 + (r - y) / 1.402 * 224.0 / 255.0))
 }
 
@@ -383,19 +385,19 @@ mod tests {
             x ^= x << 13;
             x ^= x >> 7;
             x ^= x << 17;
-            x as u8
+            lo8(x)
         };
         let (n, layout) = if nv12 {
             let cs = 2 * cw + pad;
-            (ys * h + cs * ch, [1, 0, ys as u32, (ys * h) as u32, cs as u32, 0, 0])
+            (ys * h + cs * ch, [1, 0, lo32(ys), lo32(ys * h), lo32(cs), 0, 0])
         } else {
             let cs = cw + pad;
-            (ys * h + 2 * cs * ch, [0, 0, ys as u32, (ys * h) as u32, cs as u32, (ys * h + cs * ch) as u32, cs as u32])
+            (ys * h + 2 * cs * ch, [0, 0, lo32(ys), lo32(ys * h), lo32(cs), lo32(ys * h + cs * ch), lo32(cs)])
         };
         ((0..n).map(|_| rnd()).collect(), [layout, [0; 7]])
     }
     fn at(b: &[u8], l: &[u32; 7], i: usize, x: usize, y: usize) -> u8 {
-        b[l[1 + 2 * i] as usize + y * l[2 + 2 * i] as usize + x]
+        b[us(l[1 + 2 * i]) + y * us(l[2 + 2 * i]) + x]
     }
 
     proptest! {
@@ -409,7 +411,7 @@ mod tests {
             let cb = |x: usize, y: usize| if nv12 { at(&b, l, 1, 2 * x, y) } else { at(&b, l, 1, x, y) };
             let cr = |x: usize, y: usize| if nv12 { at(&b, l, 1, 2 * x + 1, y) } else { at(&b, l, 2, x, y) };
             for sub in [source::NV12, source::I420, source::IYUV, source::YV12, source::YUY2] {
-                let o = unsafe { convert(&layout, b.as_ptr(), w as u32, h as u32, sub) };
+                let o = unsafe { convert(&layout, b.as_ptr(), lo32(w), lo32(h), sub) };
                 if sub != source::YUY2 {
                     for y in 0..h {
                         for x in 0..w {
@@ -435,7 +437,7 @@ mod tests {
                     }
                 }
                 if w % 2 == 0 && h % 2 == 0 {
-                    prop_assert_eq!(Some(o.len() as u32), plat::image_size(sub, w as u32, h as u32), "{}", sub);
+                    prop_assert_eq!(Some(lo32(o.len())), plat::image_size(sub, lo32(w), lo32(h)), "{}", sub);
                 }
             }
         }
@@ -448,8 +450,8 @@ mod tests {
             let mut b = vec![81u8; w * h];
             b.extend(std::iter::repeat_n(90u8, w * h / 4));
             b.extend(std::iter::repeat_n(240u8, w * h / 4));
-            let layout = [[0, 0, w as u32, (w * h) as u32, (w / 2) as u32, (w * h + w * h / 4) as u32, (w / 2) as u32], [0; 7]];
-            let o = unsafe { convert(&layout, b.as_ptr(), w as u32, h as u32, source::RGB32) };
+            let layout = [[0, 0, lo32(w), lo32(w * h), lo32(w / 2), lo32(w * h + w * h / 4), lo32(w / 2)], [0; 7]];
+            let o = unsafe { convert(&layout, b.as_ptr(), lo32(w), lo32(h), source::RGB32) };
             let (r, g, bl) = f(81, 90, 240);
             assert_eq!(&o[..4], &[bl, g, r, 255], "{h}");
             assert_eq!(o.len(), 4 * w * h);
@@ -465,7 +467,7 @@ mod tests {
     /// The colour of a B G R A picture's middle: 0 red, 1 lime, 2 blue (testdata/colors_gen.sh).
     fn colour(bgra: &[u8]) -> usize {
         let o = 4 * (24 * 64 + 32);
-        let (b, g, r) = (bgra[o] as i32, bgra[o + 1] as i32, bgra[o + 2] as i32);
+        let (b, g, r) = (lo32(bgra[o]).cast_signed(), lo32(bgra[o + 1]).cast_signed(), lo32(bgra[o + 2]).cast_signed());
         let near = |x: [i32; 3]| (x[0] - r).abs() + (x[1] - g).abs() + (x[2] - b).abs();
         let d = [near([255, 0, 0]), near([0, 255, 0]), near([0, 0, 255])];
         let k = (0..3).min_by_key(|&k| d[k]).unwrap();
@@ -483,7 +485,7 @@ mod tests {
         assert_eq!((s.v.codec.as_str(), s.v.w, s.v.h, s.v.samples.len()), ("wmv2", 64, 48, 18));
         assert!(s.v.samples[0].key && s.v.samples[6].key);
         assert_eq!(s.v.rate, (24, 1));
-        let t0 = s.v.samples[0].pts as u64;
+        let t0 = lo64(s.v.samples[0].pts);
         assert!(t0 < 1_000_000 && s.duration() - t0 >= 7_400_000 && s.duration() - t0 <= 7_600_000, "{t0} {}", s.duration());
         s.set_out(VOut::Decoded(source::RGB32));
         let mut last = None;
@@ -492,7 +494,7 @@ mod tests {
             assert_eq!(p.bytes.len(), 64 * 48 * 4);
             assert_eq!(colour(&p.bytes), i / 6, "frame {i}");
             assert!(last.is_none_or(|l| l < p.time) && p.dur > 0);
-            assert!((p.time - t0).abs_diff(i as u64 * 416_667) <= 10_000, "time of frame {i}: {}", p.time);
+            assert!((p.time - t0).abs_diff(lo64(i) * 416_667) <= 10_000, "time of frame {i}: {}", p.time);
             last = Some(p.time);
         }
         assert!(s.read(None).unwrap().is_none());
@@ -518,7 +520,7 @@ mod tests {
                 for t in &m.tracks {
                     if let mp4::Track::Video(v) = t {
                         for x in &v.samples {
-                            prop_assert!(packed.read(None, x.off, x.size as usize).is_some_and(|r| r.len() == x.size as usize));
+                            prop_assert!(packed.read(None, x.off, us(x.size)).is_some_and(|r| r.len() == us(x.size)));
                         }
                         let mut s = VStream::new(v.clone(), packed.clone());
                         s.set_out(VOut::Decoded(if rgb { source::RGB32 } else { source::NV12 }));

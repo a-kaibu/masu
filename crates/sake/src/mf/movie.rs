@@ -47,7 +47,7 @@ pub unsafe fn frame(id: u32, n: i32, dst: *mut u8, pitch: usize, w: u32, h: u32)
         if v.frames == 0 {
             return false;
         }
-        let p = (n.max(0) as usize).min(v.frames - 1);
+        let p = (us(n.max(0))).min(v.frames - 1);
         if v.shown.as_ref().map(|s| s.0) != Some(p) {
             match v.s.frame(None, p) {
                 Ok(Some(piece)) => v.shown = Some((p, piece.bytes)),
@@ -59,9 +59,9 @@ pub unsafe fn frame(id: u32, n: i32, dst: *mut u8, pitch: usize, w: u32, h: u32)
             }
         }
         let Some((_, bgra)) = &v.shown else { return false };
-        let row = 4 * w as usize;
+        let row = us(w).saturating_mul(4);
         let rows = bgra.len() / row.max(1);
-        for y in 0..(h as usize).min(rows) {
+        for y in 0..(us(h)).min(rows) {
             // SAFETY: the caller's rows
             let d = unsafe { std::slice::from_raw_parts_mut(dst.add(y * pitch), row) };
             for (d, s) in d.chunks_exact_mut(4).zip(bgra[y * row..][..row].chunks_exact(4)) {
@@ -102,7 +102,7 @@ impl Audio {
     }
 
     fn seek(&mut self, frame: u64) {
-        self.s.seek((u128::from(frame) * u128::from(SEC) / u128::from(self.rate)) as u64);
+        self.s.seek(lo64(u128::from(frame) * u128::from(SEC) / u128::from(self.rate)));
         self.pcm.clear();
         self.base = None;
         self.ended = false;
@@ -110,11 +110,11 @@ impl Audio {
 
     /// Appends `n` stereo frames from frame `from` to `out` (silence past the end).
     pub fn take(&mut self, from: u64, n: usize, out: &mut Vec<f32>) {
-        let have = self.base.map(|b| (b, b + self.pcm.len() as u64));
+        let have = self.base.map(|b| (b, b + lo64(self.pcm.len())));
         if have.is_none_or(|(b, e)| from < b || from > e + 2 * u64::from(self.rate)) {
             self.seek(from);
         }
-        while !self.ended && self.base.is_none_or(|b| b + (self.pcm.len() as u64) < from + n as u64) {
+        while !self.ended && self.base.is_none_or(|b| b + (lo64(self.pcm.len())) < from + lo64(n)) {
             let p = match self.s.read_in(None) {
                 Ok(Some(p)) => p,
                 _ => {
@@ -123,21 +123,20 @@ impl Audio {
                 }
             };
             // (the piece's time is the frame's, truncated: rounded up it is the frame again)
-            let at = (u128::from(p.time) * u128::from(self.rate)).div_ceil(u128::from(SEC)) as u64;
+            let at = lo64((u128::from(p.time) * u128::from(self.rate)).div_ceil(u128::from(SEC)));
             let base = *self.base.get_or_insert(at);
-            let f = |b: &[u8]| f32::from_le_bytes(b.try_into().unwrap());
-            self.pcm.extend(p.bytes.chunks_exact(8).map(|x| [f(&x[..4]), f(&x[4..])]));
+            self.pcm.extend(p.bytes.as_chunks::<8>().0.iter().map(|&[a, b, c, d, e, f, g, h]| [f32::from_le_bytes([a, b, c, d]), f32::from_le_bytes([e, f, g, h])]));
             // (what is no longer wanted: a second's worth kept behind for small steps back)
             let keep = from.saturating_sub(u64::from(self.rate));
             if keep > base {
-                let k = ((keep - base) as usize).min(self.pcm.len());
+                let k = (us(keep - base)).min(self.pcm.len());
                 self.pcm.drain(..k);
-                self.base = Some(base + k as u64);
+                self.base = Some(base + lo64(k));
             }
         }
         let base = self.base.unwrap_or(u64::MAX);
-        for i in 0..n as u64 {
-            let f = (from + i).checked_sub(base).and_then(|k| self.pcm.get(k as usize)).copied().unwrap_or([0.0; 2]);
+        for i in 0..lo64(n) {
+            let f = (from + i).checked_sub(base).and_then(|k| self.pcm.get(us(k))).copied().unwrap_or([0.0; 2]);
             out.extend(f);
         }
     }
@@ -169,7 +168,7 @@ pub fn open(data: Arc<Data>, media: &Media, video: Option<usize>, audio: Option<
             s.set_out(VOut::Decoded(source::RGB32));
             let len = s.duration();
             videos(|m| m.insert(id, Video { s, frames, shown: None, failed: false }));
-            (w, h, frames.max(1) as u32, rate, len)
+            (w, h, lo32(frames.max(1)), rate, len)
         }
         None => (0, 0, 1, (1, 1), 0),
     };
@@ -234,7 +233,7 @@ mod tests {
             // SAFETY: px is 48 rows of 256 bytes
             assert!(unsafe { frame(mv.stream, n, px.as_mut_ptr(), 256, 64, 48) });
             let o = 4 * (24 * 64 + 32);
-            let near = (0..3).map(|k| (px[o + k] as i32 - want[k] as i32).abs()).sum::<i32>();
+            let near = (0..3).map(|k| (lo32(px[o + k]).cast_signed() - lo32(want[k]).cast_signed()).abs()).sum::<i32>();
             assert!(near < 60, "frame {n}: {:?}", &px[o..o + 4]);
         }
         let Some(crate::dshow_play::Sound::Mf(a)) = &mut mv.sound else { panic!() };
@@ -263,7 +262,7 @@ mod tests {
                 a.take(from, n, &mut out);
                 prop_assert_eq!(out.len(), 2 * n);
                 for i in 0..n {
-                    let f = from as usize + i;
+                    let f = us(from) + i;
                     let want = if f < 22050 { [all[2 * f], all[2 * f + 1]] } else { [0.0; 2] };
                     prop_assert!((out[2 * i] - want[0]).abs() < 1e-6 && (out[2 * i + 1] - want[1]).abs() < 1e-6, "frame {}", f);
                 }

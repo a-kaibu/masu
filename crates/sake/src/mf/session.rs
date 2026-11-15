@@ -170,13 +170,13 @@ impl Model {
 // IMFMediaEvent: an attribute store (the status and caps as its attributes) with more methods
 
 fn k_topology_status() -> Guid {
-    source::g("30c5018d-9a53-454b-ad9e-6d5f8fa7c43b")
+    const { source::g("30c5018d-9a53-454b-ad9e-6d5f8fa7c43b") }
 }
 fn k_caps() -> Guid {
-    source::g("7e5ebcd0-11b8-4abe-afad-10f6599a7f42")
+    const { source::g("7e5ebcd0-11b8-4abe-afad-10f6599a7f42") }
 }
 fn k_caps_delta() -> Guid {
-    source::g("7e5ebcd1-11b8-4abe-afad-10f6599a7f42")
+    const { source::g("7e5ebcd1-11b8-4abe-afad-10f6599a7f42") }
 }
 
 /// The events' type, extended type, status and value, by block.
@@ -369,8 +369,7 @@ fn next(b: u32, wait: std::time::Duration) -> Next {
         if s.shut {
             return Next::Gone;
         }
-        if s.waiter != 0 && !s.m.out.is_empty() {
-            let x = s.m.out.pop_front().unwrap();
+        if s.waiter != 0 && let Some(x) = s.m.out.pop_front() {
             return Next::Event(std::mem::take(&mut s.waiter), x);
         }
         if waited || kura::snap::pausing() {
@@ -438,7 +437,7 @@ fn slot(g: &Guid) -> Option<u32> {
     if is_unknown(g) {
         return Some(0);
     }
-    Some(match u32::from_le_bytes(g[0..4].try_into().unwrap()) {
+    Some(match data1(g) {
         // IMFMediaSession {90377834-21d0-4dee-8214-ba2e3e6c1127}, IMFMediaEventGenerator
         0x9037_7834 if is(g, 0x9037_7834, 0x21d0, 0x4dee) => 0,
         0x2cd0_bd52 if is(g, 0x2cd0_bd52, 0xbcd5, 0x4b89) => 0,
@@ -621,8 +620,8 @@ fn plan(t: u32) -> Option<Plan> {
     let mut p: Option<Plan> = None;
     for n in topology::nodes_of(t, topology::SOURCESTREAM) {
         let Some(st) = store_of(n) else { continue };
-        let Some(Val::Unk(src)) = st.get(&source::g("835c58ec-e075-4bc7-bcba-4de000df9ae6")) else { continue };
-        let Some(Val::Unk(sd)) = st.get(&source::g("835c58ee-e075-4bc7-bcba-4de000df9ae6")) else { continue };
+        let Some(Val::Unk(src)) = st.get(&const { source::g("835c58ec-e075-4bc7-bcba-4de000df9ae6") }) else { continue };
+        let Some(Val::Unk(sd)) = st.get(&const { source::g("835c58ee-e075-4bc7-bcba-4de000df9ae6") }) else { continue };
         let (Some((data, media)), Some((_, i))) = (source::source_of(*src), source::sd_stream(*sd)) else { continue };
         let Some(r) = renderer(n, 0) else { continue };
         let q = p.get_or_insert_with(|| Plan { data, media, video: None, audio: None, hwnd: 0 });
@@ -654,9 +653,9 @@ fn ms_set_topology(c: &mut Ctx) -> u32 {
     let movie = plan(t).and_then(|p| {
         // (a program's own byte stream is read here, on its thread: the movie thread has none)
         let data = match p.data.src {
-            source::Src::Guest(_) if p.data.len <= 1 << 30 => Arc::new(Data::mem_arc(Arc::new(p.data.read(Some(c), 0, p.data.len as usize)?))),
+            source::Src::Guest(_) if p.data.len <= 1 << 30 => Arc::new(Data::mem_arc(Arc::new(p.data.read(Some(c), 0, us(p.data.len))?))),
             source::Src::Guest(_) => return None,
-            _ => p.data.clone(),
+            source::Src::Mem(_) | source::Src::Host(_) => p.data.clone(),
         };
         let m = movie::open(data, &p.media, p.video, p.audio)?;
         Some((m, p.hwnd))
@@ -671,7 +670,7 @@ fn ms_set_topology(c: &mut Ctx) -> u32 {
         let old_evr = std::mem::take(&mut s.evr);
         if let Some((m, hwnd)) = movie {
             eprintln!("sake: movie {}x{} {} frames (Media Session)", m.w, m.h, m.frames);
-            s.video = (m.w as i32, m.h as i32);
+            s.video = (lo32(m.w).cast_signed(), lo32(m.h).cast_signed());
             s.movie = Some(m);
             if hwnd != 0 {
                 s.evr = crate::dshow::session_evr(hwnd);
@@ -729,7 +728,7 @@ fn ms_start(c: &mut Ctx) -> u32 {
     if let Some(was) = run {
         play::timeline(b, now(), |tl, t| {
             if let Some(to) = to {
-                tl.seek(t, to as u64);
+                tl.seek(t, lo64(to));
             } else if was == St::Stopped {
                 tl.seek(t, 0);
             }
@@ -909,7 +908,7 @@ fn MFGetService(c: &mut Ctx) -> u32 {
     }
     putp(out, 0);
     let g = mem::heap_alloc(16 + ps(), true);
-    mem::write(g, &source::g("fa993888-4383-415a-a930-dd472a8cf6f7"));
+    mem::write(g, &const { source::g("fa993888-4383-415a-a930-dd472a8cf6f7") });
     let hr = com(c, o, 0, &[g, g + 16]);
     let gs = rp(g + 16);
     mem::heap_free(g);
@@ -986,7 +985,7 @@ fn ck_time(c: &mut Ctx) -> u32 {
 
 /// A float argument: x86 its stack slot, x64 XMM1.
 fn float_arg(c: &Ctx) -> f32 {
-    f32::from_bits(if mem::x64() { c.xmm(1) as u32 } else { c.a(1) })
+    f32::from_bits(if mem::x64() { lo32(c.xmm(1)) } else { c.a(1) })
 }
 fn sv_set(c: &mut Ctx) -> u32 {
     let (b, v) = (base(c, 3), float_arg(c));
@@ -1081,7 +1080,7 @@ fn MFCreateMediaSession(c: &mut Ctx) -> u32 {
     }
     let b = mem::heap_alloc(4 * ps(), true);
     for (k, v) in vtables().into_iter().enumerate() {
-        wp(b + ps() * k as u32, v);
+        wp(b + ps() * lo32(k), v);
     }
     let s = Session { refs: 1, m: Model::default(), shut: false, waiter: 0, thread: false, topology: 0, movie: None, video: (0, 0), playing: false, evr: 0, volume: 1.0, muted: false };
     SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, s);

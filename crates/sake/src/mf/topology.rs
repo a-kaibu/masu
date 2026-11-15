@@ -153,14 +153,14 @@ fn tn_count(c: &mut Ctx, outputs: bool) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    w32(c.a(1), node(c.a(0), |n| if outputs { n.outputs.len() } else { n.inputs.len() } as u32).unwrap_or(0));
+    w32(c.a(1), node(c.a(0), |n| lo32(if outputs { n.outputs.len() } else { n.inputs.len() })).unwrap_or(0));
     0
 }
 /// Unlinks output `i` of `b` (its downstream node is handed back, still held).
 fn unlink(b: u32, i: usize) -> Option<u32> {
     let (d, di) = node(b, |n| n.outputs.get_mut(i).and_then(|l| l.take())).flatten()?;
     node(d, |dn| {
-        if let Some(l) = dn.inputs.get_mut(di as usize) {
+        if let Some(l) = dn.inputs.get_mut(us(di)) {
             *l = None;
         }
     });
@@ -168,7 +168,7 @@ fn unlink(b: u32, i: usize) -> Option<u32> {
 }
 /// ConnectOutput(DWORD output, IMFTopologyNode *down, DWORD input)
 fn tn_connect(c: &mut Ctx) -> u32 {
-    let (b, i, d, di) = (c.a(0), c.a(1) as usize, c.a(2), c.a(3) as usize);
+    let (b, i, d, di) = (c.a(0), us(c.a(1)), c.a(2), us(c.a(3)));
     if d == 0 {
         return Hr::Pointer.code();
     }
@@ -181,7 +181,7 @@ fn tn_connect(c: &mut Ctx) -> u32 {
         release(c, old);
     }
     // (what was connected to that input of `d` before is let go)
-    if let Some((u, ui)) = node(d, |n| n.inputs.get(di).copied().flatten()).flatten() && let Some(old) = unlink(u, ui as usize) {
+    if let Some((u, ui)) = node(d, |n| n.inputs.get(di).copied().flatten()).flatten() && let Some(old) = unlink(u, us(ui)) {
         release(c, old);
     }
     add_ref(c, d);
@@ -189,18 +189,18 @@ fn tn_connect(c: &mut Ctx) -> u32 {
         if n.outputs.len() <= i {
             n.outputs.resize(i + 1, None);
         }
-        n.outputs[i] = Some((d, di as u32));
+        n.outputs[i] = Some((d, lo32(di)));
     });
     node(d, |n| {
         if n.inputs.len() <= di {
             n.inputs.resize(di + 1, None);
         }
-        n.inputs[di] = Some((b, i as u32));
+        n.inputs[di] = Some((b, lo32(i)));
     });
     0
 }
 fn tn_disconnect(c: &mut Ctx) -> u32 {
-    match unlink(c.a(0), c.a(1) as usize) {
+    match unlink(c.a(0), us(c.a(1))) {
         Some(d) => {
             release(c, d);
             0
@@ -210,7 +210,7 @@ fn tn_disconnect(c: &mut Ctx) -> u32 {
 }
 /// GetInput / GetOutput(DWORD, IMFTopologyNode **, DWORD *other)
 fn tn_link(c: &mut Ctx, outputs: bool) -> u32 {
-    let (i, out, oi) = (c.a(1) as usize, c.a(2), c.a(3));
+    let (i, out, oi) = (us(c.a(1)), c.a(2), c.a(3));
     if out == 0 || oi == 0 {
         return Hr::Pointer.code();
     }
@@ -401,11 +401,11 @@ fn tp_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    w16(c.a(1), topo(c.a(0), |t| t.nodes.len() as u16).unwrap_or(0));
+    w16(c.a(1), topo(c.a(0), |t| lo16(t.nodes.len())).unwrap_or(0));
     0
 }
 fn tp_get(c: &mut Ctx) -> u32 {
-    let (i, out) = (c.a(1) as u16 as usize, c.a(2));
+    let (i, out) = (us(lo16(c.a(1))), c.a(2));
     if out == 0 {
         return Hr::Pointer.code();
     }
@@ -457,8 +457,8 @@ fn tp_clone_from(c: &mut Ctx) -> u32 {
                 x.outputs[i] = Some((dm, di));
             });
             node(dm, |x| {
-                x.inputs.resize(x.inputs.len().max(di as usize + 1), None);
-                x.inputs[di as usize] = Some((m, i as u32));
+                x.inputs.resize(x.inputs.len().max(us(di).saturating_add(1)), None);
+                x.inputs[us(di)] = Some((m, lo32(i)));
             });
         }
     }
@@ -626,12 +626,12 @@ fn co_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    w32(c.a(1), coll(c.a(0), |s| s.1.len() as u32).unwrap_or(0));
+    w32(c.a(1), coll(c.a(0), |s| lo32(s.1.len())).unwrap_or(0));
     0
 }
 /// GetElement(DWORD, IUnknown **) / RemoveElement(DWORD, IUnknown **)
 fn co_get(c: &mut Ctx, remove: bool) -> u32 {
-    let (i, out) = (c.a(1) as usize, c.a(2));
+    let (i, out) = (us(c.a(1)), c.a(2));
     if out == 0 {
         return Hr::Pointer.code();
     }
@@ -653,7 +653,7 @@ fn co_add(c: &mut Ctx) -> u32 {
     0
 }
 fn co_insert(c: &mut Ctx) -> u32 {
-    let (i, e) = (c.a(1) as usize, c.a(2));
+    let (i, e) = (us(c.a(1)), c.a(2));
     add_ref(c, e);
     coll(c.a(0), |s| {
         if s.1.len() < i {
