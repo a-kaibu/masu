@@ -6,7 +6,8 @@ pub fn enter() -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     static MAP: Once = Once::new();
     MAP.call_once(|| unsafe {
-        let p = libc::mmap(mem::LO as usize as *mut _, (mem::HI - mem::LO) as usize,
+        // (up to GUEST_TOP: the stub area above HI too)
+        let p = libc::mmap(mem::LO as usize as *mut _, (mem::GUEST_TOP - mem::LO) as usize,
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE | libc::MAP_NORESERVE, -1, 0);
         assert_eq!(p as usize, mem::LO as usize, "guest memory: {}", std::io::Error::last_os_error());

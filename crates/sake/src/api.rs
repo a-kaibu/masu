@@ -933,21 +933,28 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
     crate::tctx::apply_pending_after_call(cpu);
 }
 
-/// Writes a small x86 stub `code` into guest memory; returns its address.
-pub fn stub(code: &[u8]) -> u32 {
-    static AT: Mutex<(u32, u32)> = Mutex::new((0, 0));
-    let mut g = AT.locked();
-    if g.1 < kome::num::lo32(code.len()) {
-        let b = crate::mem::alloc(0x10000).expect("stub page");
-        crate::mem::commit(b, 0x40);
-        *g = (b, 0x10000);
+/// Writes a small x86 stub `code` into the stub area (mem::stub_area, 16-byte aligned);
+/// its address. None once the area's 1 MiB is used up (sake's stubs and hooks take a few KB).
+pub fn stub(code: &[u8]) -> Option<u32> {
+    stub_in(code)
+}
+/// stub, for code with no way on without it: 0 when the area is full (the guest's call there
+/// faults, an access violation its handlers see, where a panic ended the process)
+pub fn stub_or_0(code: &[u8]) -> u32 {
+    stub_in(code).unwrap_or(0)
+}
+fn stub_in(code: &[u8]) -> Option<u32> {
+    static USED: Mutex<u32> = Mutex::new(0);
+    let (base, size) = crate::mem::stub_area();
+    let mut used = USED.locked();
+    let n = u32::try_from(code.len()).ok()?.checked_add(15)? & !15;
+    if n > size.saturating_sub(*used) {
+        return None;
     }
-    let a = g.0;
+    let a = (crate::mem::ga(base) + *used).get();
     crate::mem::write(a, code);
-    let n = kome::num::lo32(code.len()).saturating_add(15) & !15;
-    g.0 = g.0.saturating_add(n);
-    g.1 = g.1.saturating_sub(n);
-    a
+    *used = used.saturating_add(n);
+    Some(a)
 }
 
 /// A guest "function" that is a trap: an address code can call (callbacks we hand out).
@@ -1235,6 +1242,21 @@ mod hot_tests {
         fn meta_round_trips(bytes in 0u32..=META_BYTES, cdecl in any::<bool>(), known in any::<bool>(), this_arg in any::<bool>(), yields in 0u8..3) {
             let m = Meta { bytes, cdecl, known, this_arg, yields };
             prop_assert_eq!(Meta::unpack(m.pack()), Some(m));
+        }
+        /// stubs: in the stub area, 16-byte aligned, apart, holding their code; too big: None
+        #[test]
+        fn stubs_land_in_the_stub_area(a in proptest::collection::vec(any::<u8>(), 1..64), b in proptest::collection::vec(any::<u8>(), 1..64)) {
+            let _g = crate::test_guest::enter();
+            let (x, y) = (stub(&a).unwrap(), stub(&b).unwrap());
+            for (p, code) in [(x, &a), (y, &b)] {
+                prop_assert!((crate::mem::STUB_LO..crate::mem::GUEST_TOP).contains(&p) && p % 16 == 0);
+                prop_assert_eq!(crate::mem::slice(p, kome::num::u32_of(code.len())), &code[..]);
+            }
+            prop_assert!(y >= x + kome::num::u32_of(a.len()));
+            let (base, r) = crate::mem::find(x).unwrap();
+            prop_assert_eq!((base, r.size, r.state, r.prot), (crate::mem::STUB_LO, crate::mem::STUB_SIZE, 0x1000, 0x40));
+            prop_assert_eq!(stub(&vec![0; 0x10_0001]), None);
+            prop_assert_eq!(stub_or_0(&vec![0; 0x10_0001]), 0);
         }
         /// trap_at / trap_no are the old TRAP_LO + 4 * i and (a - TRAP_LO) / 4, wrapping
         #[test]

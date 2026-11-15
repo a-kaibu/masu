@@ -34,8 +34,8 @@ impl Memory for Guest {
 fn exec() -> u32 {
     static S: OnceLock<u32> = OnceLock::new();
     *S.get_or_init(|| {
-        let nested = crate::api::stub(&[0xb8, 1, 0, 0, 0, 0xc2, 0x10, 0x00]).to_le_bytes();
-        crate::api::stub(&[
+        let nested = crate::api::stub_or_0(&[0xb8, 1, 0, 0, 0, 0xc2, 0x10, 0x00]).to_le_bytes();
+        crate::api::stub_or_0(&[
             0x55, //                                push ebp
             0x8b, 0xec, //                          mov ebp, esp
             0xff, 0x75, 0x0c, //                    push [ebp+0xc]
@@ -62,7 +62,7 @@ fn stub() -> u32 {
     *S.get_or_init(|| {
         let t = SEH_TRAP.to_le_bytes();
         let x = exec().to_le_bytes();
-        crate::api::stub(&[
+        crate::api::stub_or_0(&[
             0x8b, 0x43, 0x08, // mov eax, [ebx+8]      ; the frame
             0x83, 0xf8, 0xff, // cmp eax, -1
             0x74, 0x14, //       je report             ; (eax = -1: none left)
@@ -88,7 +88,7 @@ fn stub() -> u32 {
 /// the same code in a stub page.
 pub fn fallback_top_handler() -> u32 {
     static S: OnceLock<u32> = OnceLock::new();
-    *S.get_or_init(|| crate::api::stub(&[0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3]))
+    *S.get_or_init(|| crate::api::stub_or_0(&[0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3]))
 }
 
 /// Where a thread's last SEH frame goes, for a stack whose top is `top`: 8 bytes below it, above
@@ -494,7 +494,7 @@ pub fn register() {
 fn call_ebp() -> u32 {
     static S: OnceLock<u32> = OnceLock::new();
     *S.get_or_init(|| {
-        crate::api::stub(&[
+        crate::api::stub_or_0(&[
             0x55, 0x53, 0x56, 0x57, //         push ebp, ebx, esi, edi
             0x8b, 0x44, 0x24, 0x14, //         mov eax, [esp+20]
             0x8b, 0x6c, 0x24, 0x18, //         mov ebp, [esp+24]

@@ -92,7 +92,7 @@ pub fn patch(base: u32, size: u32) {
     let mut tr = img[off..off + PROLOGUE].to_vec();
     let back = f + PROLOGUE as u32;
     tr.push(0xe9);
-    let t = api::stub(&[0; PROLOGUE + 5]);
+    let Some(t) = api::stub(&[0; PROLOGUE + 5]) else { return };
     tr.extend((back.wrapping_sub(t + PROLOGUE as u32 + 5)).to_le_bytes());
     crate::mem::write(t, &tr);
     *TRAMPOLINE.lock().unwrap() = t;

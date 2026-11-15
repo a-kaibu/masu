@@ -32,7 +32,7 @@ fn stubs() -> &'static [u32; 4] {
     static S: std::sync::OnceLock<[u32; 4]> = std::sync::OnceLock::new();
     S.get_or_init(|| {
         [
-            crate::api::stub(&[
+            crate::api::stub_or_0(&[
                 0x55, 0x53, 0x56, 0x57, //       push ebp, ebx, esi, edi
                 0x8b, 0x44, 0x24, 0x14, //       mov eax, [esp+20]
                 0x8b, 0x6c, 0x24, 0x18, //       mov ebp, [esp+24]
@@ -40,20 +40,20 @@ fn stubs() -> &'static [u32; 4] {
                 0x5f, 0x5e, 0x5b, 0x5d, //       pop edi, esi, ebx, ebp
                 0xc2, 0x08, 0x00, //             ret 8
             ]),
-            crate::api::stub(&[
+            crate::api::stub_or_0(&[
                 0x8b, 0x44, 0x24, 0x04, //       mov eax, [esp+4]
                 0x8b, 0x4c, 0x24, 0x08, //       mov ecx, [esp+8]
                 0xff, 0xd0, //                   call eax
                 0xc2, 0x08, 0x00, //             ret 8
             ]),
-            crate::api::stub(&[
+            crate::api::stub_or_0(&[
                 0x8b, 0x44, 0x24, 0x04, //       mov eax, [esp+4]
                 0x8b, 0x4c, 0x24, 0x08, //       mov ecx, [esp+8]
                 0xff, 0x74, 0x24, 0x0c, //       push dword [esp+12]
                 0xff, 0xd0, //                   call eax
                 0xc2, 0x0c, 0x00, //             ret 12
             ]),
-            crate::api::stub(&[
+            crate::api::stub_or_0(&[
                 0x8b, 0x44, 0x24, 0x04, //       mov eax, [esp+4]
                 0x8b, 0x4c, 0x24, 0x08, //       mov ecx, [esp+8]
                 0xff, 0x74, 0x24, 0x10, //       push dword [esp+16]

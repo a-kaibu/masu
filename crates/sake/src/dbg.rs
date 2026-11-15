@@ -184,7 +184,7 @@ fn set_being_debugged(on: bool) {
 fn int3_stub(at: &AtomicU32, code: &[u8]) -> u32 {
     match at.load(Ordering::Relaxed) {
         0 => {
-            let a = crate::api::stub(code);
+            let a = crate::api::stub_or_0(code);
             at.store(a, Ordering::Relaxed);
             a
         }
@@ -209,7 +209,7 @@ fn breakin() -> u32 {
     } else {
         vec![0xe8, 0, 0, 0, 0, 0xc3]
     };
-    let a = crate::api::stub(&code);
+    let a = crate::api::stub_or_0(&code);
     let call_at = if mem::x64() { a + 4 } else { a };
     w32(call_at + 1, bp.wrapping_sub(call_at + 5));
     BREAKIN.store(a, Ordering::Relaxed);

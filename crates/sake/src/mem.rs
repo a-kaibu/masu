@@ -867,6 +867,22 @@ pub fn free_at(a: u32) -> (u32, u32) {
     (lo, hi.saturating_sub(lo))
 }
 
+/// sake's own guest code (api::stub): the 1 MiB from HI to GUEST_TOP, where reserve never
+/// looks, so it is always there to take (a stub page allocated on first use could fail)
+pub const STUB_LO: u32 = HI;
+pub const STUB_SIZE: u32 = GUEST_TOP - HI;
+const _: () = assert!(STUB_SIZE == 0x10_0000 && STUB_LO % GRAN == 0);
+/// The stub area: one committed read-write-execute allocation of its own once first asked for
+pub fn stub_area() -> (u32, u32) {
+    let mut sp = SPACE.locked();
+    if !sp.contains_key(&STUB_LO) {
+        insert(&mut sp, STUB_LO, STUB_SIZE, 0x40, 0x20000);
+        drop(sp);
+        commit(STUB_LO, 0x40);
+    }
+    (STUB_LO, STUB_SIZE)
+}
+
 /// Committed read-write memory anywhere.
 pub fn alloc(size: u32) -> Option<u32> {
     let b = reserve(0, size, 4, 0x20000, false)?;

@@ -390,7 +390,7 @@ fn hook(f: u32, kind: Kind) -> Option<()> {
         len += ins.len();
     }
     let mut tr = code[..len].to_vec();
-    let t = api::stub(&vec![0; len + 5]);
+    let t = api::stub(&vec![0; len + 5])?;
     tr.push(0xe9);
     tr.extend((f + len as u32).wrapping_sub(t + len as u32 + 5).to_le_bytes());
     mem::write(t, &tr);

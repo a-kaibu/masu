@@ -967,7 +967,6 @@ file	crates/sake/src/apc.rs	as_conversions	1
 file	crates/sake/src/apc.rs	cast_possible_truncation	1
 file	crates/sake/src/apc.rs	indexing_slicing	2
 file	crates/sake/src/apc.rs	unwrap_used	4
-file	crates/sake/src/api.rs	expect_used	1
 file	crates/sake/src/asfmovie.rs	arithmetic_side_effects	16
 file	crates/sake/src/asfmovie.rs	as_conversions	68
 file	crates/sake/src/asfmovie.rs	cast_possible_truncation	15
