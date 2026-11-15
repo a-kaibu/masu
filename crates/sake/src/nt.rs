@@ -85,7 +85,7 @@ impl Scratch {
         }
         let buf = self.alloc(2 * mem::len32(w.len()) + 2);
         for (i, &x) in w.iter().enumerate() {
-            mem::w16(buf + 2 * i as u32, x);
+            mem::w16(buf + 2 * mem::len32(i), x);
         }
         let us = self.alloc(8);
         mem::w16(us, 2 * w.len() as u16);
@@ -504,7 +504,7 @@ fn path_of(oa: u32) -> Option<u32> {
     }
     let p = mem::heap_alloc(2 * mem::len32(w.len()) + 2, true);
     for (i, &x) in w.iter().enumerate() {
-        mem::w16(p + 2 * i as u32, x);
+        mem::w16(p + 2 * mem::len32(i), x);
     }
     Some(p)
 }
@@ -703,7 +703,7 @@ fn nt_query_volume_information_file(c: &mut Ctx) -> u32 {
     }
     let n = (mem::len32(v.len())).min(len);
     for (i, b) in v[..n as usize].iter().enumerate() {
-        mem::w8(out + i as u32, *b);
+        mem::w8(out + mem::len32(i), *b);
     }
     let st = if n < mem::len32(v.len()) { 0x8000_0005 } else { 0 }; // STATUS_BUFFER_OVERFLOW
     iosb(io, st, n);
@@ -1071,7 +1071,7 @@ fn get_thread_description(c: &mut Ctx) -> u32 {
     let name = thread_name(tid);
     let p = crate::k32::global_alloc(0x40, 2 * mem::len32(name.len()) + 2);
     for (i, &u) in name.iter().enumerate() {
-        mem::w16(p + 2 * i as u32, u);
+        mem::w16(p + 2 * mem::len32(i), u);
     }
     mem::putp(out, p);
     0x1000_0000
@@ -1113,7 +1113,7 @@ fn nt_query_information_thread(c: &mut Ctx) -> u32 {
         mem::w16(out + 2, n);
         mem::wp(out + ps, out + 2 * ps);
         for (i, &u) in name.iter().enumerate() {
-            mem::w16(out + 2 * ps + 2 * i as u32, u);
+            mem::w16(out + 2 * ps + 2 * mem::len32(i), u);
         }
         return 0;
     }
@@ -1399,7 +1399,7 @@ fn dir_entry(p: u32, dc: DirClass, name: &str, m: &kura::fs::Metadata, attrs: u3
     w32(p + len_at, 2 * mem::len32(w.len()));
     let n = (2 * mem::len32(w.len())).min(room.saturating_sub(name_at)) / 2;
     for (i, &u) in w[..n as usize].iter().enumerate() {
-        mem::w16(p + name_at + 2 * i as u32, u);
+        mem::w16(p + name_at + 2 * mem::len32(i), u);
     }
     2 * n
 }
@@ -1481,7 +1481,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
     let (mut at, mut prev) = (0u32, None::<u32>);
     while s.at < s.entries.len() {
         let (name, m) = &s.entries[s.at];
-        let need = fixed + 2 * name.encode_utf16().count() as u32;
+        let need = fixed + 2 * mem::len32(name.encode_utf16().count());
         if at + need > len {
             if prev.is_none() {
                 // (not even the first: its fixed part and what fits of the name, kept for next time)
@@ -1575,13 +1575,13 @@ fn nt_query_object(c: &mut Ctx) -> u32 {
         mem::w16(at + 2, if w.is_empty() { 0 } else { 2 * w.len() as u16 + 2 });
         mem::wp(at + ps, if w.is_empty() { 0 } else { base });
         for (i, &x) in w.iter().enumerate() {
-            mem::w16(base + 2 * i as u32, x);
+            mem::w16(base + 2 * mem::len32(i), x);
         }
         if !w.is_empty() {
             mem::w16(base + 2 * mem::len32(w.len()), 0);
         }
     };
-    let chars = |s: &str| 2 * s.encode_utf16().count() as u32;
+    let chars = |s: &str| 2 * mem::len32(s.encode_utf16().count());
     let us = 2 * ps; // sizeof(UNICODE_STRING)
     let need = match class {
         0 => 56,

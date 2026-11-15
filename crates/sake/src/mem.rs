@@ -27,7 +27,7 @@ fn host<T>(a: u32) -> *mut T {
 }
 /// A guest length as a host one (lossless: see the assert above)
 #[inline(always)]
-fn len(n: u32) -> usize {
+pub fn len(n: u32) -> usize {
     n as usize
 }
 /// A host length (a string's, a buffer's) as a guest one: every length the guest sees fits its

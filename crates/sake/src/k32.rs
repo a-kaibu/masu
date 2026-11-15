@@ -156,7 +156,7 @@ fn env_block(wide: bool) -> u32 {
         let w: Vec<u16> = s.encode_utf16().collect();
         let p = mem::heap_alloc(2 * mem::len32(w.len()), true);
         for (i, c) in w.iter().enumerate() {
-            w16(p + 2 * i as u32, *c);
+            w16(p + 2 * mem::len32(i), *c);
         }
         p
     } else {
@@ -209,9 +209,9 @@ fn GetEnvironmentVariableA(c: &mut Ctx) -> u32 {
 fn GetEnvironmentVariableW(c: &mut Ctx) -> u32 {
     match env_get(&arg_str(c.a(0), true)) {
         // (a buffer too short gets an empty string, as Windows' W one: winref envvars)
-        Some(v) if v.encode_utf16().count() as u32 >= c.a(2) && c.a(1) != 0 && c.a(2) != 0 => {
+        Some(v) if mem::len32(v.encode_utf16().count()) >= c.a(2) && c.a(1) != 0 && c.a(2) != 0 => {
             w16(c.a(1), 0);
-            v.encode_utf16().count() as u32 + 1
+            mem::len32(v.encode_utf16().count()) + 1
         }
         Some(v) => ret_str(c.a(1), c.a(2), &v, true),
         None => {
@@ -541,7 +541,7 @@ fn K32GetPerformanceInfo(c: &mut Ctx) -> u32 {
     let [phys, avail, commit, limit, peak, paged, nonpaged] = perf_pages();
     let at = |i: u32| p + ps + i * ps; // the SIZE_T fields after cb
     for (i, v) in [commit, limit, peak, phys, avail, phys / 8, paged + nonpaged, paged, nonpaged, 4096].into_iter().enumerate() {
-        mem::wp(at(i as u32), v);
+        mem::wp(at(mem::len32(i)), v);
     }
     let (tids, handles) = counts();
     w32(at(10), handles);
@@ -591,7 +591,7 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
             w32(p + 4, mem::len32(tids.len()));
             let s = p + fixed + ti * mem::len32(tids.len());
             for (i, &u) in name.iter().enumerate() {
-                mem::w16(s + 2 * i as u32, u);
+                mem::w16(s + 2 * mem::len32(i), u);
             }
             mem::w16(p + 0x38, 2 * name.len() as u16);
             mem::w16(p + 0x3a, 2 * name.len() as u16 + 2);
@@ -602,7 +602,7 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
             w32(p + hc_at, handles);
             w32(p + hc_at + 4, 1); // session
             for (i, &tid) in tids.iter().enumerate() {
-                let t = p + fixed + ti * i as u32;
+                let t = p + fixed + ti * mem::len32(i);
                 let cid = if x64 { 0x28 } else { 0x20 };
                 mem::wp(t + cid, crate::pid());
                 mem::wp(t + cid + ps, tid);
@@ -648,7 +648,7 @@ fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
         return 0;
     }
     for (i, &b) in all.iter().enumerate().take((cb / ps) as usize) {
-        mem::wp(p + i as u32 * ps, b);
+        mem::wp(p + mem::len32(i) * ps, b);
     }
     if pn == 0 {
         last_error(998);
@@ -740,19 +740,19 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
     }
     if wide {
         let v: Vec<u16> = name.encode_utf16().collect();
-        let n = v.len().min(cap as usize);
+        let n = v.len().min(mem::len(cap));
         for (i, &u) in v[..n].iter().enumerate() {
-            mem::w16(dst + 2 * i as u32, u);
+            mem::w16(dst + 2 * mem::len32(i), u);
         }
-        if n < cap as usize {
-            mem::w16(dst + 2 * n as u32, 0);
+        if n < mem::len(cap) {
+            mem::w16(dst + 2 * mem::len32(n), 0);
         }
-        n as u32
+        mem::len32(n)
     } else {
         // (cut short: what fits before a 0, yet the count of characters asked for, as Windows 10
         // answers; the wide name is converted into the caller's buffer)
         let v = crate::text::s2a(&name);
-        if v.len() >= cap as usize {
+        if v.len() >= mem::len(cap) {
             mem::write(dst, &v[..cap as usize - 1]);
             mem::w8(dst + cap - 1, 0);
             return cap;
@@ -1467,7 +1467,7 @@ pub(crate) fn wait_on_address(a: u32, cmp: u32, size: u32, ms: u32) -> Result<()
         return Err(87);
     };
     // (the value is looked at under the lock: a waker changes it, then takes it to wake)
-    if ADDR.wait(a as usize, || value_at(a, size) == Some(want), ms, &Pause) { Ok(()) } else { Err(1460) }
+    if ADDR.wait(mem::len(a), || value_at(a, size) == Some(want), ms, &Pause) { Ok(()) } else { Err(1460) }
 }
 fn WakeByAddressAll(c: &mut Ctx) -> u32 {
     ADDR.wake(c.a(0) as usize);
@@ -2089,7 +2089,7 @@ static CS: waits::Cs = waits::Cs::new();
 /// atomic: it gets an aligned stand-in of its own, the guest's bytes there left as they are.
 fn atomic(a: u32) -> &'static AtomicU32 {
     if a % 4 == 0 {
-        return unsafe { &*(a as usize as *const AtomicU32) };
+        return unsafe { &*(mem::len(a) as *const AtomicU32) };
     }
     static SHADOW: Mutex<Option<HashMap<u32, &'static AtomicU32>>> = Mutex::new(None);
     let mut g = SHADOW.lock().unwrap_or_else(|e| e.into_inner());
@@ -3157,7 +3157,7 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
     } else {
         for (off, len) in xmem::pieces(k) {
             match remote_bytes(c.a(0), xmem::READ, vec![a.wrapping_add(off), len], vec![]) {
-                Some(Ok((_, bytes))) => mem::write(b + off, &bytes[..(len as usize).min(bytes.len())]),
+                Some(Ok((_, bytes))) => mem::write(b + off, &bytes[..(mem::len(len)).min(bytes.len())]),
                 Some(Err(e)) => {
                     // (it changed meanwhile: what was copied so far)
                     mem::putp(done, off);
@@ -3208,7 +3208,7 @@ fn WriteProcessMemory(c: &mut Ctx) -> u32 {
                 return 0;
             }
             mem::copy(a, b, k);
-            kura::jit::code_changed(a as usize, k.max(1) as usize);
+            kura::jit::code_changed(mem::len(a), k.max(1) as usize);
             k
         }
     };
@@ -3252,12 +3252,12 @@ fn locale_name() -> &'static str {
 fn GetUserDefaultLocaleName(c: &mut Ctx) -> u32 {
     let (out, n) = (c.a(0), c.a(1));
     let w: Vec<u16> = locale_name().encode_utf16().chain([0]).collect();
-    if (n as usize) < w.len() {
+    if (mem::len(n)) < w.len() {
         last_error(122);
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(out + 2 * i as u32, u);
+        w16(out + 2 * mem::len32(i), u);
     }
     mem::len32(w.len())
 }
@@ -3300,7 +3300,7 @@ fn LCIDToLocaleName(c: &mut Ctx) -> u32 {
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(c.a(1) + 2 * i as u32, u);
+        w16(c.a(1) + 2 * mem::len32(i), u);
     }
     mem::len32(w.len())
 }
@@ -3364,7 +3364,7 @@ fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
         mem::rp(us + mem::ps())
     };
     for (i, &x) in v.iter().enumerate() {
-        if unit == 2 { w16(buf + 2 * i as u32, x) } else { w8(buf + i as u32, x as u8) }
+        if unit == 2 { w16(buf + 2 * mem::len32(i), x) } else { w8(buf + mem::len32(i), x as u8) }
     }
     if unit == 2 { w16(buf + n, 0) } else { w8(buf + n, 0) }
     0
@@ -3389,12 +3389,12 @@ fn RtlMultiByteToUnicodeN(c: &mut Ctx) -> u32 {
     let (dst, cap, pw, src, n) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     let b: Vec<u8> = (0..n).map(|i| mem::r8(src + i)).collect();
     let w = a2w(&b);
-    let k = w.len().min(cap as usize / 2);
+    let k = w.len().min(mem::len(cap) / 2);
     for (i, &u) in w[..k].iter().enumerate() {
-        w16(dst + 2 * i as u32, u);
+        w16(dst + 2 * mem::len32(i), u);
     }
     if pw != 0 {
-        w32(pw, 2 * k as u32);
+        w32(pw, 2 * mem::len32(k));
     }
     0
 }
@@ -3406,7 +3406,7 @@ fn RtlUnicodeToMultiByteN(c: &mut Ctx) -> u32 {
     // (whole characters: a double-byte one that does not fit is left out)
     for &u in &w {
         let b = crate::text::w2a(&[u]);
-        if out.len() + b.len() > cap as usize {
+        if out.len() + b.len() > mem::len(cap) {
             break;
         }
         out.extend(b);
@@ -3459,7 +3459,7 @@ fn RtlDosPathNameToNtPathName_U(c: &mut Ctx) -> u32 {
     counted_out(nt, &w, 2, true);
     if part != 0 {
         let at = w.iter().rposition(|&x| x == u16::from(b'\\')).map_or(0, |i| i + 1);
-        mem::wp(part, if at < w.len() { mem::rp(nt + mem::ps()) + 2 * at as u32 } else { 0 });
+        mem::wp(part, if at < w.len() { mem::rp(nt + mem::ps()) + 2 * mem::len32(at) } else { 0 });
     }
     1
 }
@@ -4051,7 +4051,7 @@ fn GlobalMemoryStatus(c: &mut Ctx) -> u32 {
     w32(p, 8 + 6 * ps);
     w32(p + 4, 30);
     for (i, v) in [PHYS, PHYS / 4 * 3, 2 * PHYS, 2 * PHYS, 0x7ffe_0000, 0x6000_0000].into_iter().enumerate() {
-        let at = p + 8 + ps * i as u32;
+        let at = p + 8 + ps * mem::len32(i);
         if x64 { mem::w64(at, clamp(v)) } else { w32(at, clamp(v) as u32) }
     }
     0
@@ -5192,12 +5192,12 @@ fn ui_languages(c: &mut Ctx, process: bool) -> u32 {
     if buf == 0 {
         return 1;
     }
-    if (cap as usize) < w.len() {
+    if (mem::len(cap)) < w.len() {
         last_error(122);
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(buf + 2 * i as u32, u);
+        w16(buf + 2 * mem::len32(i), u);
     }
     1
 }
@@ -5326,7 +5326,7 @@ fn GetLocaleInfoW(c: &mut Ctx) -> u32 {
     }
     let s = locale_info(c.a(1));
     if c.a(3) == 0 {
-        return s.encode_utf16().count() as u32 + 1;
+        return mem::len32(s.encode_utf16().count()) + 1;
     }
     ret_str(c.a(2), c.a(3), &s, true) + 1
 }
@@ -5412,12 +5412,12 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     // and supplies its own terminator in ReleaseBuffer. Leaving the entire
     // buffer untouched here silently turned its Automation strings into empty
     // BSTRs. Preserve the failure result while retaining the converted prefix.
-    let mut written = w.len().min(cap as usize);
+    let mut written = w.len().min(mem::len(cap));
     if written < w.len() && written > 0 && (0xd800..=0xdbff).contains(&w[written - 1]) && (0xdc00..=0xdfff).contains(&w[written]) {
         written -= 1;
     }
     for (i, ch) in w[..written].iter().enumerate() {
-        w16(dst + 2 * i as u32, *ch);
+        w16(dst + 2 * mem::len32(i), *ch);
     }
     if mem::len32(w.len()) > cap {
         last_error(122);
@@ -5462,7 +5462,7 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
         while at < a.len() {
             let n = if utf8 { 1 + a[at + 1..].iter().take_while(|b| **b & 0xc0 == 0x80).count() }
                 else if crate::text::is_lead_cp(cp, a[at]) { 2 } else { 1 };
-            if at + n > cap as usize { break; }
+            if at + n > mem::len(cap) { break; }
             at += n;
             fit = at;
         }
@@ -5577,7 +5577,7 @@ fn string_type(ty: u32, w: &[u16], out: u32) {
             4 => ctype3(*ch),
             _ => 0,
         };
-        w16(out + 2 * i as u32, v);
+        w16(out + 2 * mem::len32(i), v);
     }
 }
 fn GetStringTypeA(c: &mut Ctx) -> u32 {
@@ -5652,9 +5652,9 @@ fn LCMapStringA(c: &mut Ctx) -> u32 {
     if cap == 0 {
         return mem::len32(s.len());
     }
-    let k = s.len().min(cap as usize);
+    let k = s.len().min(mem::len(cap));
     mem::write(dst, &s[..k]);
-    k as u32
+    mem::len32(k)
 }
 pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
     let (flags, src, n, dst, cap) = (c.a(1), c.a(2), c.i(3), c.a(4), c.a(5));
@@ -5670,11 +5670,11 @@ pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
     if cap == 0 {
         return mem::len32(w.len());
     }
-    let k = w.len().min(cap as usize);
+    let k = w.len().min(mem::len(cap));
     for (i, ch) in w[..k].iter().enumerate() {
-        w16(dst + 2 * i as u32, *ch);
+        w16(dst + 2 * mem::len32(i), *ch);
     }
-    k as u32
+    mem::len32(k)
 }
 fn cmp_w(a: &[u16], b: &[u16], nocase: bool) -> std::cmp::Ordering {
     crate::collate::compare(a, b, if nocase { crate::collate::NORM_IGNORECASE } else { 0 })
@@ -5823,7 +5823,7 @@ fn read_systemtime(p: u32, date: bool) -> Option<[u16; 8]> {
         system_time(t, true);
     }
     let q = tmp.unwrap_or(p);
-    let st: [u16; 8] = std::array::from_fn(|i| r16(q + 2 * i as u32));
+    let st: [u16; 8] = std::array::from_fn(|i| r16(q + 2 * mem::len32(i)));
     if let Some(t) = tmp {
         mem::heap_free(t);
     }
@@ -6011,7 +6011,7 @@ impl Atoms {
     fn add(&mut self, s: String) -> u32 {
         if let Some((i, Some(e))) = self.find(&s).and_then(|i| Some((i, self.0.get_mut(i)?.as_mut()))) {
             e.1 += 1;
-            return 0xc000 + i as u32;
+            return 0xc000 + mem::len32(i);
         }
         let i = self.2.first().copied().unwrap_or(self.0.len());
         if i >= 0x4000 {
@@ -6023,15 +6023,15 @@ impl Atoms {
         self.2.remove(&i);
         self.1.get_or_insert_with(HashMap::default).insert(s.to_lowercase(), i);
         self.0[i] = Some((s, 1));
-        0xc000 + i as u32
+        0xc000 + mem::len32(i)
     }
     /// 0 once deleted (or an integer atom), else the atom (not one)
     fn delete(&mut self, a: u32) -> u32 {
         if (1..0xc000).contains(&a) {
             return 0;
         }
-        let Some(i) = a.checked_sub(0xc000).filter(|&i| (i as usize) < self.0.len()) else { return a };
-        let i = i as usize;
+        let Some(i) = a.checked_sub(0xc000).filter(|&i| (mem::len(i)) < self.0.len()) else { return a };
+        let i = mem::len(i);
         let e = &mut self.0[i];
         match e {
             Some((_, n)) if *n > 1 => *n -= 1,
@@ -6078,7 +6078,7 @@ fn find_atom(c: &mut Ctx, wide: bool, global: bool) -> u32 {
     match atom_arg(c.a(0), wide) {
         AtomArg::Int(n) => n,
         AtomArg::Name(s) => match atoms(global).find(&s) {
-            Some(i) => 0xc000 + i as u32,
+            Some(i) => 0xc000 + mem::len32(i),
             None => {
                 last_error(2);
                 0
@@ -6111,19 +6111,19 @@ fn atom_name_into(a: u32, buf: u32, size: u32, wide: bool, global: bool) -> u32 
     let text: Vec<u16> = if wide { name.encode_utf16().collect() } else { crate::text::s2a(&name).into_iter().map(u16::from).collect() };
     let put = |n: usize, nul: bool| {
         for (i, &ch) in text[..n].iter().enumerate() {
-            if wide { mem::w16(buf + 2 * i as u32, ch) } else { w8(buf + i as u32, ch as u8) }
+            if wide { mem::w16(buf + 2 * mem::len32(i), ch) } else { w8(buf + mem::len32(i), ch as u8) }
         }
         if nul {
-            if wide { mem::w16(buf + 2 * n as u32, 0) } else { w8(buf + n as u32, 0) }
+            if wide { mem::w16(buf + 2 * mem::len32(n), 0) } else { w8(buf + mem::len32(n), 0) }
         }
     };
     let len = text.len();
     if global && wide {
-        let n = len.min(size as usize);
-        put(n, n < size as usize);
-        return n as u32;
+        let n = len.min(mem::len(size));
+        put(n, n < mem::len(size));
+        return mem::len32(n);
     }
-    let n = len.min(size as usize - 1);
+    let n = len.min(mem::len(size) - 1);
     put(n, true);
     if global && n < len {
         last_error(234);
@@ -6132,7 +6132,7 @@ fn atom_name_into(a: u32, buf: u32, size: u32, wide: bool, global: bool) -> u32 
     if n == 0 && len != 0 {
         last_error(122);
     }
-    n as u32
+    mem::len32(n)
 }
 /// The name of a global string atom (a window class's, a registered message's...).
 pub fn atom_name(a: u32) -> Option<String> {
@@ -6767,10 +6767,10 @@ fn FindResourceExW(c: &mut Ctx) -> u32 {
 /// until it returns FALSE; ERROR_RESOURCE_DATA/TYPE/NAME_NOT_FOUND when there is nothing.
 fn enum_resources(c: &mut Ctx, level: usize, wide: bool) -> u32 {
     let m = if c.a(0) == 0 { module_handle(0, false) } else { c.a(0) };
-    let path: Vec<crate::pe::ResId> = (0..level).map(|i| crate::pe::ResId::from_arg(c.a(1 + i as u32), wide)).collect();
-    let (cb, param) = (c.a(1 + level as u32), c.a(2 + level as u32));
+    let path: Vec<crate::pe::ResId> = (0..level).map(|i| crate::pe::ResId::from_arg(c.a(1 + mem::len32(i)), wide)).collect();
+    let (cb, param) = (c.a(1 + mem::len32(level)), c.a(2 + mem::len32(level)));
     // (read before the callbacks: on x64 the arguments are registers a call clobbers)
-    let given: Vec<u32> = (0..level).map(|i| c.a(1 + i as u32)).collect();
+    let given: Vec<u32> = (0..level).map(|i| c.a(1 + mem::len32(i))).collect();
     let Some(ids) = crate::pe::resource_ids(m, &path) else {
         last_error([1812, 1813, 1814][level.min(2)]);
         return 0;
@@ -7246,7 +7246,7 @@ fn ReadFile(c: &mut Ctx) -> u32 {
     let got = if ov != 0 {
         let start = files::io_start(r32(ov + 2 * k), r32(ov + 2 * k + 4), false);
         match f.read_at(start, crate::iocp::is_overlapped(h), dst) {
-            Ok(got) => got as u32,
+            Ok(got) => mem::len32(got),
             Err(()) => {
                 // (at or past the end: STATUS_END_OF_FILE in the OVERLAPPED, its event set,
                 // and FALSE with ERROR_HANDLE_EOF, the handle synchronous or not)
@@ -7650,7 +7650,7 @@ fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
     } else {
         return 0x8007_0057;
     };
-    mem::wp(out, p + 2 * n as u32);
+    mem::wp(out, p + 2 * mem::len32(n));
     0
 }
 fn VerifyConsoleIoHandle(c: &mut Ctx) -> u32 {
@@ -8177,7 +8177,7 @@ fn full_path_name(c: &mut Ctx, wide: bool) -> u32 {
     } else if c.a(3) != 0 && r < c.a(1) {
         let pos = full.rfind('\\').map_or(0, |i| i + 1);
         let off = if wide { full[..pos].encode_utf16().count() * 2 } else { crate::text::s2a(&full[..pos]).len() };
-        mem::wp(c.a(3), c.a(2) + off as u32);
+        mem::wp(c.a(3), c.a(2) + mem::len32(off));
     }
     r
 }
@@ -8352,7 +8352,7 @@ fn query_dos_device(c: &mut Ctx, wide: bool) -> u32 {
         return 0;
     }
     for (i, &u) in units.iter().enumerate() {
-        if wide { w16(out + 2 * i as u32, u) } else { w8(out + i as u32, u as u8) }
+        if wide { w16(out + 2 * mem::len32(i), u) } else { w8(out + mem::len32(i), u as u8) }
     }
     mem::len32(units.len())
 }
@@ -8380,7 +8380,7 @@ fn logical_drive_strings(c: &mut Ctx, wide: bool) -> u32 {
         return mem::len32(s.len());
     }
     for (i, &b) in s.iter().enumerate() {
-        if wide { w16(out + 2 * i as u32, u16::from(b)) } else { w8(out + i as u32, b) }
+        if wide { w16(out + 2 * mem::len32(i), u16::from(b)) } else { w8(out + mem::len32(i), b) }
     }
     mem::len32(s.len()) - 1
 }
@@ -8947,9 +8947,9 @@ fn K32EnumProcesses(c: &mut Ctx) -> u32 {
     let ids = crate::process::running();
     let n = ((cb / 4) as usize).min(ids.len());
     for (i, &id) in ids[..n].iter().enumerate() {
-        w32(p + 4 * i as u32, id);
+        w32(p + 4 * mem::len32(i), id);
     }
-    w32(pu, 4 * n as u32);
+    w32(pu, 4 * mem::len32(n));
     1
 }
 /// OpenThread(access, inherit, id): a handle of the thread with that id (mono opens its own
@@ -8996,7 +8996,7 @@ fn startup_info(p: u32, wide: bool) -> u32 {
         mem::write(a, t.as_bytes());
         let w = mem::heap_alloc(2 * mem::len32(t.len()) + 2, true);
         for (i, u) in t.encode_utf16().enumerate() {
-            w16(w + 2 * i as u32, u);
+            w16(w + 2 * mem::len32(i), u);
         }
         (a, w)
     });
@@ -9007,7 +9007,7 @@ fn startup_info(p: u32, wide: bool) -> u32 {
     if STD_GIVEN.load(Ordering::Relaxed) {
         w32(p + flags, 0x100);
         for i in 0..3 {
-            mem::wp(p + std + i * mem::ps(), std_handle(i as usize));
+            mem::wp(p + std + i * mem::ps(), std_handle(mem::len(i)));
         }
     }
     0
@@ -10029,7 +10029,7 @@ mod mapping_names {
     fn cstr_arg(s: &str) -> u32 {
         let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + i as u32, b);
+            mem::w8(p + mem::len32(i), b);
         }
         p
     }
@@ -10037,7 +10037,7 @@ mod mapping_names {
         let w: Vec<u16> = s.encode_utf16().chain([0]).collect();
         let p = mem::heap_alloc(2 * mem::len32(w.len()), true);
         for (i, c) in w.iter().enumerate() {
-            mem::w16(p + 2 * i as u32, *c);
+            mem::w16(p + 2 * mem::len32(i), *c);
         }
         p
     }
@@ -10143,7 +10143,7 @@ mod mapping_names {
         let v = view(m);
         assert_eq!(mem::r8(v), b'h');
         for (i, b) in b"WORLD".iter().enumerate() {
-            mem::w8(v + 0x1000 + i as u32, *b);
+            mem::w8(v + 0x1000 + mem::len32(i), *b);
         }
         assert_eq!(call(FlushViewOfFile, &[v + 0x1000, 5]), 1);
         assert_eq!(&std::fs::read(&path).unwrap()[0x1000..0x1005], b"WORLD");
@@ -10181,14 +10181,14 @@ mod mapping_names {
             let f = open_file(name);
             let m = call(CreateFileMappingA, &[f, 0, RW, 0, 0, 0]);
             // (an offset inside the file: a view at its end would have nothing to write)
-            let off = (off_pages * 0x1000).min((len as u32 - 1) & !0xfff);
+            let off = (off_pages * 0x1000).min((mem::len32(len) - 1) & !0xfff);
             let v = call(MapViewOfFile, &[m, 2, 0, off, 0]);
             prop_assert_ne!(v, 0);
             let mut want = init.clone();
             for (at, b) in writes {
-                let at = at % (len - off as usize);
-                mem::w8(v + at as u32, b);
-                want[off as usize + at] = b;
+                let at = at % (len - mem::len(off));
+                mem::w8(v + mem::len32(at), b);
+                want[mem::len(off) + at] = b;
             }
             call(UnmapViewOfFile, &[v]);
             prop_assert_eq!(std::fs::read(&path).unwrap(), want);
@@ -10207,7 +10207,7 @@ mod mapping_names {
         let all = call(MapViewOfFile, &[m, ALL, 0, 0, 0x49c47]);
         assert_ne!(all, 0);
         for (i, b) in b"startmes.mes".iter().enumerate() {
-            mem::w8(all + 0x40000 + 0x9215 + i as u32, *b);
+            mem::w8(all + 0x40000 + 0x9215 + mem::len32(i), *b);
         }
         let part = call(MapViewOfFile, &[m, 4, 0, 0x40000, 0x931a]);
         assert_ne!(part, 0);
@@ -10235,17 +10235,17 @@ mod mapping_names {
             let _g = enter();
             let m = call(CreateFileMappingA, &[u32::MAX, 0, RW, 0, size, 0]);
             let grains: Vec<u32> = (0..size).step_by(0x10000).collect();
-            let mut model = vec![0u8; size as usize];
+            let mut model = vec![0u8; mem::len(size)];
             for (at, b, g) in writes {
                 let at = at % size;
-                let g = grains[g as usize % grains.len()].min(at & !0xffff);
+                let g = grains[mem::len(g) % grains.len()].min(at & !0xffff);
                 let v = call(MapViewOfFile, &[m, ALL, 0, g, 0]);
                 prop_assert_ne!(v, 0);
                 mem::w8(v + (at - g), b);
-                model[at as usize] = b;
-                let g2 = grains[(at as usize) % grains.len()].min(at & !0xffff);
+                model[mem::len(at)] = b;
+                let g2 = grains[(mem::len(at)) % grains.len()].min(at & !0xffff);
                 let v2 = call(MapViewOfFile, &[m, 4, 0, g2, 0]);
-                prop_assert_eq!(mem::r8(v2 + (at - g2)), model[at as usize]);
+                prop_assert_eq!(mem::r8(v2 + (at - g2)), model[mem::len(at)]);
             }
             obj::close(m);
         }
@@ -10341,7 +10341,7 @@ mod find_system_dlls {
     fn cstr_arg(s: &str) -> u32 {
         let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + i as u32, b);
+            mem::w8(p + mem::len32(i), b);
         }
         p
     }
@@ -10507,7 +10507,7 @@ mod drive_tests {
     fn guest_str(s: &[u8]) -> u32 {
         let a = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, &b) in s.iter().enumerate() {
-            mem::w8(a + i as u32, b);
+            mem::w8(a + mem::len32(i), b);
         }
         a
     }
@@ -10627,7 +10627,7 @@ mod empty_name_tests {
     fn guest_str(s: &str) -> u32 {
         let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, b) in s.bytes().enumerate() {
-            mem::w8(p + i as u32, b);
+            mem::w8(p + mem::len32(i), b);
         }
         p
     }
@@ -10687,7 +10687,7 @@ mod wow64_tests {
     fn arg(s: &str) -> u32 {
         let p = mem::heap_alloc(mem::len32(s.len()) + 1, true);
         for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + i as u32, b);
+            mem::w8(p + mem::len32(i), b);
         }
         p
     }
