@@ -25,11 +25,14 @@ add and panic as they like. GROUPS: clippy's correctness, suspicious and perf gr
 in them (mostly at 0; they stay there). rustc's unsafe_op_in_unsafe_fn (E0133 as a warning) is
 counted as "unsafe_op_in_unsafe_fn".
 
-CUSTOM ("masu-*"): what clippy has no lint for, found line by line in crates/ (comments and test
-files skipped): `static mut`, `unsafe impl Send/Sync`, transmute, Vec::set_len (a `.set_len(` with
-`unsafe` on its line or the 4 before: File::set_len and the like are safe and not counted), mem::zeroed /
-assume_init on uninit, slice::from_raw_parts, and the store's tree format ("vnvm-tree") spelled
-outside crates/kura/src/tree_list.rs (each new reader of a wire format is a second parser to keep in step).
+CUSTOM ("masu-*"): what clippy has no lint of its own for. The unsafe functions are clippy's
+disallowed_methods (clippy.toml), resolved by type, not by name (review 2026-11-15: Vec::set_len was
+"a `.set_len(` with `unsafe` in the 5 lines before"): Vec::set_len, slice::from_raw_parts(_mut),
+mem::transmute(_copy), mem::zeroed / MaybeUninit::assume_init, each counted under its masu-* name
+(DISALLOWED). What is syntax, not a call, is found in each file's code with its comments and
+string literals taken out, across lines: `static mut`, `unsafe impl ... Send/Sync for`; and the
+store's tree format ("vnvm-tree", a string, so searched in the raw text) spelled outside
+crates/kura/src/tree_list.rs (each new reader of a wire format is a second parser to keep in step).
 """
 import collections, json, os, re, subprocess, sys
 
@@ -102,25 +105,31 @@ ROBUST = [
 GROUPS = ["correctness", "suspicious", "perf"]
 RUSTC = {"E0133": "unsafe_op_in_unsafe_fn"}
 TRACKED = re.compile(r"\b(?:clippy::(?:" + "|".join(LINTS + ROBUST + GROUPS) + ")|" + "|".join(RUSTC.values()) + r")\b")
+# (code with comments and strings taken out: across lines, `[^{]*` stops at the impl's body)
 CUSTOM = {
     "masu-static_mut": re.compile(r"\bstatic\s+mut\b"),
-    "masu-unsafe_send_sync": re.compile(r"\bunsafe\s+impl\b[^{]*\b(?:Send|Sync)\s+for\b"),
-    "masu-transmute": re.compile(r"\btransmute(?:_copy)?\s*(?:::<|\()"),
-    "masu-set_len": re.compile(r"\.set_len\s*\("),
-    "masu-uninit": re.compile(r"\bmem::(?:zeroed|uninitialized)\b|\buninit\(\)\s*\.assume_init\b"),
-    "masu-from_raw_parts": re.compile(r"\bfrom_raw_parts(?:_mut)?\s*\("),
-    "masu-wire_tree": re.compile(r"vnvm-tree"),
+    "masu-unsafe_send_sync": re.compile(r"\bunsafe\s+impl\b[^{;]*?\b(?:Send|Sync)\s+for\b"),
 }
+# (searched in the code with its strings: it is one)
+RAW = {"masu-wire_tree": re.compile(r"vnvm-tree")}
 CUSTOM_HOME = {"masu-wire_tree": "crates/kura/src/tree_list.rs"}
-# (counted only inside unsafe code: the unsafe method of that name is Vec::set_len)
-CUSTOM_UNSAFE_ONLY = {"masu-set_len"}
-UNSAFE = re.compile(r"\bunsafe\b")
+# clippy's disallowed_methods (clippy.toml lists the same paths), by the path its message names
+DISALLOWED = {
+    "alloc::vec::Vec::set_len": "masu-set_len",
+    "core::slice::from_raw_parts": "masu-from_raw_parts",
+    "core::slice::from_raw_parts_mut": "masu-from_raw_parts",
+    "core::intrinsics::transmute": "masu-transmute",
+    "core::mem::transmute_copy": "masu-transmute",
+    "core::mem::zeroed": "masu-uninit",
+    "core::mem::MaybeUninit::assume_init": "masu-uninit",
+}
+DISALLOWED_PATH = re.compile(r"`([^`]+)`")
 ALLOW = re.compile(r"#!?\[\s*(?:allow|expect)\s*\(([^\]]*)\)\s*\]")
 
 
 def clippy():
     yield from run_clippy(["--all-targets"], LINTS + ["clippy::" + g for g in GROUPS])
-    yield from run_clippy(["--lib", "--bins"], ROBUST + ["unsafe_op_in_unsafe_fn"])
+    yield from run_clippy(["--lib", "--bins"], ROBUST + ["unsafe_op_in_unsafe_fn", "disallowed_methods"])
 
 
 seen = set()
@@ -148,6 +157,12 @@ def run_clippy(targets, lints):
             code = "clippy::" + RUSTC[code]
         if not code.startswith("clippy::"):
             continue
+        if code == "clippy::disallowed_methods":
+            m = DISALLOWED_PATH.search(msg["message"])
+            name = DISALLOWED.get(m.group(1) if m else "")
+            if not name:
+                sys.exit(f"lint-ratchet: a disallowed method this script does not name: {msg['message']}")
+            code = "clippy::" + name
         sp = [s for s in msg["spans"] if s["is_primary"]]
         if not sp:
             continue
@@ -174,6 +189,52 @@ def allow_attrs():
                             yield (rel, i, m.start() + 1, "allow-attr")
 
 
+def code_only(text, strings=False):
+    """`text` with its comments and string/char literals blanked (newlines kept, so that line
+    numbers stay; `strings`: the string literals kept): a small Rust lexer, enough for raw
+    strings, nested block comments, lifetimes."""
+    out, i, n = [], 0, len(text)
+    def blank(j):
+        out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+    while i < n:
+        c = text[i]
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            blank(j)
+            i = j
+        elif text.startswith("/*", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if text.startswith("/*", j):
+                    depth, j = depth + 1, j + 2
+                elif text.startswith("*/", j):
+                    depth, j = depth - 1, j + 2
+                else:
+                    j += 1
+            blank(j)
+            i = j
+        elif (m := re.match(r'b?r(#*)"', text[i:])) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+            end = '"' + m.group(1)
+            j = text.find(end, i + m.end())
+            j = n if j < 0 else j + len(end)
+            out.append(text[i:j]) if strings else blank(j)
+            i = j
+        elif c == '"' or (c == "b" and text.startswith('b"', i) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_"))):
+            j = i + (2 if c == "b" else 1)
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i:min(j + 1, n)]) if strings else blank(min(j + 1, n))
+            i = min(j + 1, n)
+        elif c == "'" and (m := re.match(r"'(?:\\(?:[^u]|u\{[0-9a-fA-F]+\})[^']*|[^'\\\n])'", text[i:])):
+            blank(i + m.end())
+            i += m.end()
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def custom():
     for d, _, fs in os.walk(os.path.join(ROOT, "crates")):
         for f in fs:
@@ -181,19 +242,13 @@ def custom():
                 continue
             path = os.path.join(d, f)
             rel = os.path.relpath(path, ROOT)
-            recent = collections.deque(maxlen=5)
-            for i, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
-                code = line.split("//", 1)[0] if "//" in line and '"' not in line.split("//", 1)[0] else line
-                if code.lstrip().startswith(("//", "*", "/*")):
-                    continue
-                recent.append(code)
-                for name, rx in CUSTOM.items():
+            text = open(path, encoding="utf-8", errors="replace").read()
+            for src, rules in ((code_only(text), CUSTOM), (code_only(text, strings=True), RAW)):
+                for name, rx in rules.items():
                     if CUSTOM_HOME.get(name) == rel:
                         continue
-                    if name in CUSTOM_UNSAFE_ONLY and not any(UNSAFE.search(c) for c in recent):
-                        continue
-                    for m in rx.finditer(code):
-                        yield (rel, i, m.start() + 1, name)
+                    for m in rx.finditer(src):
+                        yield (rel, src.count("\n", 0, m.start()) + 1, m.start() + 1, name)
 
 
 def count():

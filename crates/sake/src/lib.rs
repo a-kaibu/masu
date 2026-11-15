@@ -211,7 +211,32 @@ pub mod shirusu;
 
 use mem::{r32, w32};
 
+/// A guest thread's record: made by `enter`, freed by `forget_thread` when the thread ends.
+/// It is never lent out (review 2026-11-15: `cur()` gave a `&'static mut Thread`, any number of
+/// them, still there after forget_thread freed it): `cur()` answers a copy of what does not
+/// change ([`Me`]), and what does is atomics another thread may read too (GetThreadContext:
+/// `api`, k32::thread_cpu).
 pub struct Thread {
+    me: Me,
+    /// save states: the host's thread-local state of this thread when it stood still (snap.rs)
+    tls: [AtomicU32; 8],
+    /// the API call it is in: the stack pointer at its return address and what returning
+    /// pops (0 outside one; GetThreadContext from another thread, crate::tctx), as one word
+    api: std::sync::atomic::AtomicU64,
+}
+
+/// What a guest thread's record says that never changes: a copy.
+/// ```compile_fail
+/// // (a copy: writing it changes nothing anyone else sees, and it is not a place)
+/// fn f() { sake::cur().api = (0, 0); }
+/// ```
+/// ```compile_fail
+/// fn f() -> &'static mut sake::Thread { sake::cur() }
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct Me {
+    /// its x86 state (kura::cpu::create; kept for good: kura's pool). Only the thread itself
+    /// uses it while it runs.
     pub cpu: *mut Cpu,
     pub tid: u32,
     pub teb: u32,
@@ -219,15 +244,30 @@ pub struct Thread {
     pub obj: u32,
     /// the guest stack's reservation (released when the thread ends)
     pub stack: u32,
-    /// save states: the host's thread-local state of this thread when it stood still (snap.rs)
-    pub tls: [u32; 8],
-    /// the API call it is in: the stack pointer at its return address and what returning
-    /// pops (0 outside one; GetThreadContext from another thread, crate::tctx)
-    pub api: (u32, u32),
+}
+
+impl Thread {
+    /// The API call it is in (see `api`)
+    pub(crate) fn api(&self) -> (u32, u32) {
+        let v = self.api.load(Ordering::Acquire);
+        (kome::num::lo32(v >> 32), kome::num::lo32(v))
+    }
+    pub(crate) fn cpu(&self) -> *mut Cpu {
+        self.me.cpu
+    }
 }
 
 thread_local! {
-    static CUR: Cell<*mut Thread> = const { Cell::new(std::ptr::null_mut()) };
+    static CUR: Cell<*const Thread> = const { Cell::new(std::ptr::null()) };
+}
+
+/// `f` with the calling host thread's guest thread record, if it runs one. The borrow ends
+/// with `f`; forget_thread (which frees the record) is not called from in it.
+fn with_cur<R>(f: impl FnOnce(&Thread) -> R) -> Option<R> {
+    let p = CUR.with(Cell::get);
+    // SAFETY: CUR holds a record from adopt until forget_thread clears it (before freeing it),
+    // on this host thread; the record is only ever shared (its changing parts are atomics).
+    (!p.is_null()).then(|| f(unsafe { &*p }))
 }
 
 /// Whether this host thread runs a guest thread (cur() would answer)
@@ -236,14 +276,34 @@ pub fn on_guest_thread() -> bool {
 }
 
 /// The guest thread this host thread runs, if any (the watcher runs none)
-pub fn cur_opt() -> Option<&'static mut Thread> {
-    let p = CUR.with(|c| c.get());
-    (!p.is_null()).then(|| unsafe { &mut *p })
+pub fn cur_opt() -> Option<Me> {
+    with_cur(|t| t.me)
 }
-pub fn cur() -> &'static mut Thread {
-    let p = CUR.with(|c| c.get());
-    assert!(!p.is_null(), "sake: not a guest thread");
-    unsafe { &mut *p }
+pub fn cur() -> Me {
+    let me = cur_opt();
+    assert!(me.is_some(), "sake: not a guest thread");
+    me.unwrap_or(Me { cpu: std::ptr::null_mut(), tid: 0, teb: 0, obj: 0, stack: 0 })
+}
+
+/// The calling thread is in an API call now (`api`: see Thread's), and returns the one it was in
+pub(crate) fn swap_api(api: (u32, u32)) -> (u32, u32) {
+    let v = u64::from(api.0) << 32 | u64::from(api.1);
+    with_cur(|t| t.api.swap(v, Ordering::AcqRel)).map_or((0, 0), |o| (kome::num::lo32(o >> 32), kome::num::lo32(o)))
+}
+/// The calling thread's saved host-side state (save states, snap.rs)
+pub(crate) fn thread_tls() -> [u32; 8] {
+    with_cur(|t| std::array::from_fn(|i| t.tls.get(i).map_or(0, |x| x.load(Ordering::Relaxed)))).unwrap_or([0; 8])
+}
+pub(crate) fn set_thread_tls(v: [u32; 8]) {
+    with_cur(|t| {
+        for (d, x) in t.tls.iter().zip(v) {
+            d.store(x, Ordering::Relaxed);
+        }
+    });
+}
+/// The calling thread's record's address (what TEBS and the save states keep)
+pub(crate) fn thread_addr() -> usize {
+    CUR.with(Cell::get).expose_provenance()
 }
 
 static NEXT_TID: AtomicU32 = AtomicU32::new(0x20);
@@ -311,8 +371,9 @@ fn new_teb(tid: u32, stack: u32) -> Option<(u32, u32, u32)> {
     Some((teb, top, st))
 }
 
-/// Makes the calling host thread a guest thread (None: no room for its TEB and stack).
-fn enter(stack: u32) -> Option<&'static mut Thread> {
+/// Makes the calling host thread a guest thread (None: no room for its TEB and stack); `obj`
+/// gives its handle object for its tid.
+fn enter(stack: u32, obj: impl FnOnce(u32) -> u32) -> Option<Me> {
     let tid = NEXT_TID.fetch_add(4, Ordering::Relaxed);
     let (teb, top, st) = new_teb(tid, stack)?;
     let cpu = kura::cpu::create(api::TRAP_LO, api::TRAP_HI);
@@ -328,31 +389,40 @@ fn enter(stack: u32) -> Option<&'static mut Thread> {
             (*cpu).fpu.cw = 0x27f;
         }
     }
-    let t = Box::leak(Box::new(Thread { cpu, tid, teb, obj: 0, stack: st, tls: [0; 8], api: (0, 0) }));
-    adopt(t as *mut Thread);
+    let me = Me { cpu, tid, teb, obj: obj(tid), stack: st };
+    let t = Box::into_raw(Box::new(Thread { me, tls: Default::default(), api: Default::default() }));
+    adopt(t.expose_provenance());
     k32::tls_thread_init(teb);
-    Some(t)
+    Some(me)
 }
 
 /// The calling guest thread's records go (it ends now, running no more guest code).
-pub(crate) fn forget_thread(t: &'static mut Thread) {
-    let t = t as *mut Thread;
-    CUR.with(|c| {
-        if c.get() == t {
-            c.set(std::ptr::null_mut())
-        }
-    });
+pub(crate) fn forget_thread() {
+    let t = CUR.with(|c| c.replace(std::ptr::null()));
+    if t.is_null() {
+        return;
+    }
+    // SAFETY: the calling thread's record (made by Box::into_raw in enter), now out of CUR and
+    // out of TEBS (tls_thread_exit, before) and of the save states (kura::snap::unregister):
+    // nothing holds it. Its Cpu goes back to kura's pool, used by nothing after this.
     unsafe {
-        kura::cpu::destroy((*t).cpu);
-        drop(Box::from_raw(t));
+        let t = Box::from_raw(t.cast_mut());
+        kura::cpu::destroy(t.me.cpu);
     }
 }
 
 /// Makes the calling host thread run guest thread `t` (a new one, or one a restored save
-/// state goes on with): sake's and the save states' records of it.
-pub(crate) fn adopt(t: *mut Thread) {
-    CUR.with(|c| c.set(t));
-    kura::snap::register("guest thread", true, t as usize);
+/// state goes on with, by its address): sake's and the save states' records of it.
+pub(crate) fn adopt(t: usize) {
+    CUR.with(|c| c.set(std::ptr::with_exposed_provenance(t)));
+    kura::snap::register("guest thread", true, t);
+}
+/// What the record at `t` (a guest thread's, adopt) says that never changes
+/// # Safety
+/// `t` is a live record's address (from thread_addr, not forgotten since).
+pub(crate) unsafe fn me_at(t: usize) -> Me {
+    // SAFETY: the caller's.
+    unsafe { (*std::ptr::with_exposed_provenance::<Thread>(t)).me }
 }
 
 /// Runs guest code until it returns to RET_TRAP with ESP at or above `until` (0: forever).
@@ -836,20 +906,19 @@ pub fn spawn_gated(start: u32, param: u32, stack: u32, obj: u32, gated: bool) ->
     let made = std::thread::Builder::new()
         .stack_size(1 << 20)
         .spawn(move || {
-            let Some(t) = enter(stack) else {
+            // (the thread's own reference: the creator closing its handle doesn't end the
+            // object while the thread runs; GetCurrentThread duplicates it, mono's GC does)
+            let Some(t) = enter(stack, |_| obj::dup(obj)) else {
                 let _ = tx.send(0);
                 return;
             };
-            // (the thread's own reference: the creator closing its handle doesn't end the
-            // object while the thread runs; GetCurrentThread duplicates it, mono's GC does)
-            t.obj = obj::dup(obj);
             let _ = tx.send(t.tid);
             crate::actctx::adopt(obj);
             if gated {
                 k32::wait_gate_start(obj, start, param);
             }
             k32::check_terminate();
-            thread_start(t, start, param);
+            thread_start(&t, start, param);
             run(unsafe { &mut *t.cpu }, 0);
         });
     if made.is_err() {
@@ -873,7 +942,7 @@ pub fn spawn_service(start: u32, param: u32) -> Option<u32> {
 pub(crate) static SPAWN_FAILS: AtomicU32 = AtomicU32::new(0);
 
 /// A new thread's first steps: DllMain(THREAD_ATTACH), then `start(param)` set up to run.
-pub(crate) fn thread_start(t: &mut Thread, start: u32, param: u32) {
+pub(crate) fn thread_start(t: &Me, start: u32, param: u32) {
     let cpu = unsafe { &mut *t.cpu };
     if !mem::x64() && !w16::on() {
         seh::top_frame(t.teb);
@@ -1063,8 +1132,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     if let Some(r) = kura::fs::read_head(exe, 1 << 16).ok().as_deref().and_then(pe::stack_reserve) {
         STACK_RESERVE.store(r, Ordering::Relaxed);
     }
-    let t = enter(pe::thread_stack(STACK_RESERVE.load(Ordering::Relaxed), 0, 0)).expect("the main thread's TEB and stack");
-    t.obj = obj::new_thread_obj(t.tid);
+    let t = enter(pe::thread_stack(STACK_RESERVE.load(Ordering::Relaxed), 0, 0), obj::new_thread_obj).expect("the main thread's TEB and stack");
     let cpu = unsafe { &mut *t.cpu };
     let wpath = files::host_to_win(exe);
     k32::set_command_line(&wpath, args);

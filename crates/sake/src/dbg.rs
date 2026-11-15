@@ -105,7 +105,7 @@ fn report(code: u32, vals: Vec<u64>, data: Vec<u8>, cpu: Option<&mut koji::Cpu>)
     let ev = Ev { pid: crate::pid(), tid: t.tid, code, vals, data, wait: true, ..Ev::default() };
     let Some(id) = kern::with(|k| { k.changed(); k.dbg.post(ev) }).0 else { return DBG_CONTINUE };
     // (GetThreadContext of this thread meanwhile: where it stands, not in an API call)
-    let api = std::mem::take(&mut t.api);
+    let api = crate::swap_api((0, 0));
     if crate::env_on!("SAKE_TRACE_DBG") {
         eprintln!("sake: thread {:#x} reports event {code} ({id})", crate::cur().tid);
     }
@@ -113,7 +113,7 @@ fn report(code: u32, vals: Vec<u64>, data: Vec<u8>, cpu: Option<&mut koji::Cpu>)
     if crate::env_on!("SAKE_TRACE_DBG") {
         eprintln!("sake: thread {:#x}: event {id} continued with {r:x?}", crate::cur().tid);
     }
-    crate::cur().api = api;
+    crate::swap_api(api);
     if let Some(cpu) = cpu {
         crate::tctx::apply_pending(cpu);
     }

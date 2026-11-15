@@ -403,7 +403,7 @@ pub fn exit_thread(code: u32) -> ! {
     // and its records: the x86 state and sake's (a game that starts a thread per file or per
     // sound kept ~4 KB of them per thread for ever; review P2-1). Nothing else holds them:
     // its save-state part went above, the crash log's entry goes with the Cpu.
-    crate::forget_thread(t);
+    crate::forget_thread();
     // SAFETY: pthread_exit has no precondition; this thread's records were released above.
     unsafe { libc::pthread_exit(std::ptr::null_mut()) }
 }
@@ -2494,7 +2494,7 @@ static TEBS: Mutex<Vec<(u32, u32, usize)>> = Mutex::new(Vec::new());
 
 pub fn tls_thread_init(teb: u32) {
     let t = crate::cur();
-    TEBS.locked().push((t.tid, teb, std::ptr::from_mut(t).expose_provenance()));
+    TEBS.locked().push((t.tid, teb, crate::thread_addr()));
     // (the first thread's comes once its image says 32 or 64 bit: crate::run)
     if crate::fiber::READY.load(std::sync::atomic::Ordering::Acquire) {
         crate::fiber::thread_start(teb);
@@ -2518,7 +2518,7 @@ pub(crate) fn thread_cpu(tid: u32) -> Option<(*mut koji::Cpu, (u32, u32))> {
     // SAFETY: TEBS holds a thread's record from tls_thread_init until forget_thread takes it out, which
     // happens under the same lock (held here as g).
     let t = unsafe { &*std::ptr::with_exposed_provenance::<crate::Thread>(t) };
-    Some((t.cpu, t.api))
+    Some((t.cpu(), t.api()))
 }
 /// How many threads run
 pub(crate) fn thread_count() -> usize {

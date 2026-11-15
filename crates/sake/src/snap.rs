@@ -22,7 +22,6 @@ use koji::{Cpu, EAX, ESP};
 use kura::snap::Part;
 
 use crate::mem::{self, r32};
-use crate::Thread;
 
 pub const CONTINUE: u64 = 0;
 pub const RESTART: u64 = 1;
@@ -142,11 +141,10 @@ pub fn api_leave() {
     }
 }
 
-/// The thread's record.
-fn me() -> Option<(&'static Part, &'static mut Thread)> {
+/// The thread's part of the save states, if it is a guest thread (its record: crate::cur)
+fn me() -> Option<&'static Part> {
     let p = kura::snap::me()?;
-    let t = p.user.load(Ordering::Relaxed) as *mut Thread;
-    (!t.is_null()).then(|| (p, unsafe { &mut *t }))
+    (p.user.load(Ordering::Relaxed) != 0).then_some(p)
 }
 
 /// The top-level API this thread waits in, if a restored copy may call it again.
@@ -159,8 +157,8 @@ fn restart_point() -> Option<(u32, u32)> {
 }
 
 fn park_as(kind: u64, a: u64, b: u64, c: u64) {
-    let Some((p, t)) = me() else { return };
-    save_tls(t);
+    let Some(p) = me() else { return };
+    save_tls();
     for (i, v) in [kind, a, b, c].into_iter().enumerate() {
         p.resume[i].store(v, Ordering::SeqCst);
     }
@@ -233,8 +231,8 @@ pub fn point_start(start: u32, param: u32) -> bool {
 // ---------------------------------------------------------------------------------------------
 // the thread-local state a guest thread keeps on the host side
 
-fn save_tls(t: &mut Thread) {
-    t.tls = [
+fn save_tls() {
+    crate::set_thread_tls([
         crate::gl::current_pair().0,
         crate::gl::current_pair().1,
         kura::gl::current(),
@@ -243,14 +241,15 @@ fn save_tls(t: &mut Thread) {
         0,
         0,
         0,
-    ];
+    ]);
 }
 
-fn load_tls(t: &Thread) {
-    crate::gl::set_current_pair((t.tls[0], t.tls[1]));
-    kura::gl::set_current(t.tls[2]);
-    crate::k32::set_thread_error_mode(t.tls[3]);
-    crate::k32::set_fs_redirection_off(t.tls[4]);
+fn load_tls() {
+    let [ctx, dc, gl, mode, redir, ..] = crate::thread_tls();
+    crate::gl::set_current_pair((ctx, dc));
+    kura::gl::set_current(gl);
+    crate::k32::set_thread_error_mode(mode);
+    crate::k32::set_fs_redirection_off(redir);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -291,20 +290,23 @@ pub fn restore() -> ! {
     crate::dshow_play::snap_restore();
     let mut main = None;
     for p in parts {
-        let t = p.user.load(Ordering::SeqCst) as *mut Thread;
-        if t.is_null() {
+        // (a guest thread's record, by its address: crate::adopt)
+        let t = p.user.load(Ordering::SeqCst);
+        if t == 0 {
             continue;
         }
         let resume: [u64; 4] = std::array::from_fn(|i| p.resume[i].load(Ordering::SeqCst));
-        let t: &'static mut Thread = unsafe { &mut *t };
-        if t.tid == 0x20 {
+        // SAFETY: a record the state saved with its thread (adopt registered it), freed by
+        // nobody: its thread stood still in the state.
+        let tid = unsafe { crate::me_at(t) }.tid;
+        if tid == 0x20 {
             main = Some((t, resume));
             continue;
         }
-        let (tt, r, tid) = (t as *mut Thread as usize, resume, t.tid);
+        let r = resume;
         // (a worker the browser refuses, out of memory: the restore fails with its reason and
         // an exit code the page reports, not an abort)
-        if let Err(e) = std::thread::Builder::new().stack_size(1 << 20).spawn(move || go_on(unsafe { &mut *(tt as *mut Thread) }, r)) {
+        if let Err(e) = std::thread::Builder::new().stack_size(1 << 20).spawn(move || go_on(t, r)) {
             eprintln!("snap: restore failed: thread {tid:#x} could not start again: {e}");
             std::process::exit(RESTORE_FAILED);
         }
@@ -319,9 +321,10 @@ pub fn restore() -> ! {
 }
 
 /// A restored guest thread goes on from its record.
-fn go_on(t: &'static mut Thread, r: [u64; 4]) -> ! {
-    crate::adopt(t as *mut Thread);
-    load_tls(t);
+fn go_on(t: usize, r: [u64; 4]) -> ! {
+    crate::adopt(t);
+    load_tls();
+    let t = crate::cur();
     let cpu = unsafe { &mut *t.cpu };
     match r[0] {
         RESTART => {
@@ -340,7 +343,7 @@ fn go_on(t: &'static mut Thread, r: [u64; 4]) -> ! {
         }
         START => {
             crate::k32::wait_gate(t.obj);
-            crate::thread_start(t, r[1] as u32, r[2] as u32);
+            crate::thread_start(&t, r[1] as u32, r[2] as u32);
         }
         _ => {}
     }

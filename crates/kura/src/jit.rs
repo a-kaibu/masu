@@ -2526,7 +2526,7 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
     }
     with_state(|st| {
         if !st.pending.is_empty() {
-            crate::crashlog::phase("jit: take_built");
+            crate::crashlog::phase(crate::crashlog::Phase::JitTakeBuilt);
             take_built(st, mem);
         }
         if st.known.contains(&eip) {
@@ -2541,23 +2541,23 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
         // (x64 functions are neither shared nor saved yet)
         if st.misses.get(&eip).is_none() && cpu.mode16 == 0 && !(cpu.mode64 != 0 && jit::long::FN64.load(std::sync::atomic::Ordering::Relaxed)) {
             if jit::FN.load(std::sync::atomic::Ordering::Relaxed) {
-                crate::crashlog::phase("jit: shared fn");
+                crate::crashlog::phase(crate::crashlog::Phase::JitSharedFn);
                 if let Some(r) = shared(mem, &fn_key(eip)) {
                     st.fn_builds.insert(eip, r.build);
                     return install_fn(st, eip, &r.bytes, &r.starts, &r.sites, &r.code);
                 }
-                crate::crashlog::phase("jit: saved fn");
+                crate::crashlog::phase(crate::crashlog::Phase::JitSavedFn);
                 if cpu.mode64 == 0 && let Some(i) = find_saved_fn(mem, eip) && load_saved_fn(st, i) {
                     return true;
                 }
             }
-            crate::crashlog::phase("jit: shared");
+            crate::crashlog::phase(crate::crashlog::Phase::JitShared);
             if let Some(r) = shared(mem, &[eip]) {
                 mark_code(&r.code);
                 return load(st, &r.bytes, vec![eip], &r.starts, &r.code);
             }
             // (a 64-bit region checks the upper half of RIP itself on entry)
-            crate::crashlog::phase("jit: saved");
+            crate::crashlog::phase(crate::crashlog::Phase::JitSaved);
             if let Some(i) = find_saved(mem, &[eip], false, (cpu.trap_lo, cpu.trap_hi)) && load_saved(st, i) {
                 return true;
             }
@@ -2618,7 +2618,7 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
         if cpu.mode16 != 0 {
             return compile16(st, cpu, mem);
         }
-        crate::crashlog::phase("jit: compile");
+        crate::crashlog::phase(crate::crashlog::Phase::JitCompile);
         if fnm {
             // (part: not a function's entry, as where a function's blocks that had not run yet
             // go on: without the blocks compiled already, which it enters through the dispatcher)

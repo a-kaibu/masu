@@ -5,9 +5,10 @@ fn poison(f: impl FnOnce() + Send) {
     std::thread::scope(|s| assert!(s.spawn(f).join().is_err()));
 }
 
-/// A lock a panicking thread held: taken again, with what was written before the panic.
+/// A lock a panicking thread held: locked(), r(), w() and wait() panic too (what the panic
+/// left half changed is not used); locked_anyway() takes it, with what was written before.
 #[test]
-fn a_poisoned_lock_is_taken() {
+fn a_poisoned_lock_is_not_taken() {
     let (m, l) = (Mutex::new(1), RwLock::new(1));
     poison(|| {
         *m.lock().unwrap() = 2;
@@ -16,20 +17,29 @@ fn a_poisoned_lock_is_taken() {
         panic!("held");
     });
     assert!(m.is_poisoned() && l.is_poisoned());
-    assert_eq!(*m.locked(), 2);
-    assert_eq!(*l.r(), 2);
-    *l.w() = 3;
-    assert_eq!(*l.r(), 3);
+    let panics = |f: &mut dyn FnMut()| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).is_err();
+    assert!(panics(&mut || drop(m.locked())));
+    assert!(panics(&mut || drop(l.r())));
+    assert!(panics(&mut || drop(l.w())));
+    assert_eq!(*m.locked_anyway(), 2);
 }
 
-/// wait() comes back with the lock after a notify, poisoned or not.
+/// The panic names what the lock guards
 #[test]
-fn wait_returns_the_guard() {
-    let (m, cv) = (Mutex::new(false), Condvar::new());
+#[should_panic(expected = "a lock of alloc::vec::Vec<u8> was poisoned")]
+fn the_panic_names_the_type() {
+    let m = Mutex::new(Vec::<u8>::new());
     poison(|| {
         let _g = m.lock();
         panic!("held");
     });
+    drop(m.locked());
+}
+
+/// wait() comes back with the lock after a notify.
+#[test]
+fn wait_returns_the_guard() {
+    let (m, cv) = (Mutex::new(false), Condvar::new());
     std::thread::scope(|s| {
         s.spawn(|| {
             *m.locked() = true;

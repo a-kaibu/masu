@@ -4,7 +4,8 @@
 //! The first 64 KiB stay unmapped for the guest so NULL dereferences raise access violations.
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
+use kome::locks::Lock as _;
 
 use koji::{Cpu, Exit, Fault, Memory};
 
@@ -263,20 +264,20 @@ pub fn create(trap_lo: u32, trap_hi: u32) -> *mut Cpu {
     UPPER_OPEN.store(crate::env_on!("MASU_UPPER_OPEN"), Ordering::Relaxed);
     TRAP_LO.store(trap_lo, Ordering::Relaxed);
     TRAP_HI.store(trap_hi, Ordering::Relaxed);
-    let taken = RETIRED.lock().unwrap_or_else(|e| e.into_inner()).take(|| Kept(Box::into_raw(Box::default())));
-    let cpu = match taken {
-        crate::pool::Reuse::Again(Kept(p)) => {
-            unsafe { *p = Cpu::default() };
-            p
-        }
-        crate::pool::Reuse::New(Kept(p)) => p,
-    };
+    let mut pool = RETIRED.locked();
+    let lease = pool.0.take(|| Kept(Box::into_raw(Box::<Cpu>::default()).expose_provenance())).lease();
+    let cpu = std::ptr::with_exposed_provenance_mut::<Cpu>(lease.0);
+    // SAFETY: a Cpu of the pool, out to nobody (lent now): made by Box::into_raw, never freed.
+    unsafe { *cpu = Cpu::default() };
+    pool.1.push(lease);
+    drop(pool);
     unsafe {
         (*cpu).trap_lo = trap_lo;
         (*cpu).trap_hi = trap_hi;
         (*cpu).fpu.cw = 0x27f;
     }
-    crate::crashlog::register(cpu);
+    // SAFETY: the new Cpu, the calling thread's alone (it runs nothing yet).
+    crate::crashlog::register(unsafe { &*cpu });
     cpu
 }
 
@@ -284,23 +285,26 @@ pub fn create(trap_lo: u32, trap_hi: u32) -> *mut Cpu {
 /// snapshot and MASU_TRACE_EIP read another thread's Cpu without a lock (one that ended
 /// meanwhile reads as a stale state, never as freed memory). A program that starts and ends
 /// threads all the time keeps as many as it had threads at once.
-static RETIRED: Mutex<crate::pool::Pool<Kept>> = Mutex::new(crate::pool::Pool::new());
+/// (the pool and the Cpus lent out: destroy gives a Cpu's lease back)
+static RETIRED: Mutex<(crate::pool::Pool<Kept>, Vec<crate::pool::Lease<Kept>>)> = Mutex::new((crate::pool::Pool::new(), Vec::new()));
 
-/// A Cpu kept for good (never freed: see RETIRED)
-struct Kept(*mut Cpu);
-// (only create and destroy touch it, under RETIRED's lock)
-unsafe impl Send for Kept {}
+/// A Cpu kept for good (never freed: see RETIRED), by its address
+struct Kept(usize);
 
 /// # Safety
 /// `cpu` came from [`create`] and is not used after this.
 pub unsafe fn destroy(cpu: *mut Cpu) {
     crate::crashlog::unregister(cpu);
-    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).give(Kept(cpu));
+    let mut pool = RETIRED.locked();
+    let (p, out) = &mut *pool;
+    if let Some(i) = out.iter().position(|l| l.0 == cpu.expose_provenance()) {
+        p.give(out.swap_remove(i));
+    }
 }
 
 /// (tests: the Cpus waiting for reuse, made, the most out at once)
 pub fn retired() -> crate::pool::Counts {
-    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).counts()
+    RETIRED.locked().0.counts()
 }
 
 /// What an [`Exit`] means for the caller of [`run`]; None to keep running.
@@ -389,75 +393,26 @@ fn exit_code(cpu: &Cpu, mem: &mut Linear, exit: Exit, from_jit: bool) -> Option<
 }
 
 /// MASU_TRACE_EIP=<seconds>: every so often, print where each thread's guest code is (the
-/// EIP of its latest exit from the JIT or interpreter step) and whether it is in guest code
-/// or in sake (a syscall, an API call). For finding what a hung or spinning program does.
-fn trace_eip(cpu: *mut Cpu) -> Option<impl Drop> {
-    use std::sync::atomic::AtomicBool;
-    struct Entry {
-        cpu: usize,
-        inside: AtomicBool,
-    }
-    static ON: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
-    static CPUS: Mutex<Vec<(i32, Arc<Entry>)>> = Mutex::new(Vec::new());
-    let secs = (*ON.get_or_init(|| {
-        let s = std::env::var("MASU_TRACE_EIP").ok()?.parse().ok()?;
+/// EIP it showed last: at its latest slice or exit from guest code, crashlog::shown) and
+/// whether it is in guest code or in sake (a syscall, an API call). For finding what a hung or
+/// spinning program does. Another thread's Cpu is not read: the crash log's atomics are.
+fn trace_eip() {
+    static ON: std::sync::Once = std::sync::Once::new();
+    ON.call_once(|| {
+        let Some(s) = std::env::var("MASU_TRACE_EIP").ok().and_then(|s| s.parse::<f64>().ok()) else { return };
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs_f64(s));
-            let list = CPUS.lock().unwrap();
-            let line: Vec<String> = list
-                .iter()
-                .map(|(tid, e)| {
-                    let c = e.cpu as *const Cpu;
-                    let eip = unsafe { std::ptr::read_volatile(std::ptr::addr_of!((*c).eip)) };
-                    let at = if e.inside.load(Ordering::Relaxed) { "" } else { "*" };
-                    // and the return addresses: [esp], then the EBP chain
-                    let rd = |a: u32| -> Option<u32> {
-                        (a >= koji::jit::GUEST_LO && a < koji::jit::GUEST_HI - 4).then(|| unsafe { std::ptr::read_volatile(a as usize as *const u32) })
-                    };
-                    let (esp, mut ebp) = unsafe { ((*c).regs[4], (*c).regs[5]) };
-                    let mut stack = vec![rd(esp).unwrap_or(0)];
-                    for _ in 0..8 {
-                        let (Some(r), Some(next)) = (rd(ebp.wrapping_add(4)), rd(ebp)) else { break };
-                        stack.push(r);
-                        if next <= ebp {
-                            break;
-                        }
-                        ebp = next;
-                    }
-                    let stack: Vec<String> = stack.iter().map(|a| format!("{a:x}")).collect();
-                    format!("{tid}:{eip:08x}{at}<{}>", stack.join(","))
-                })
-                .collect();
-            eprintln!("vnvm eip {}", line.join(" "));
+            eprintln!("vnvm eip {}", crate::crashlog::eip_line());
         });
-        Some(s)
-    }))?;
-    let _ = secs;
-    let tid = tid();
-    let mut list = CPUS.lock().unwrap();
-    let e = match list.iter().find(|(t, _)| *t == tid) {
-        Some((_, e)) => e.clone(),
-        None => {
-            let e = Arc::new(Entry { cpu: cpu as usize, inside: AtomicBool::new(false) });
-            list.push((tid, e.clone()));
-            e
-        }
-    };
-    e.inside.store(true, Ordering::Relaxed);
-    struct TraceGuard(Arc<Entry>);
-    impl Drop for TraceGuard {
-        fn drop(&mut self) {
-            self.0.inside.store(false, Ordering::Relaxed);
-        }
-    }
-    Some(TraceGuard(e))
+    });
 }
 
 /// Runs until the guest reaches a trap address or stops otherwise (fault, INT...).
 pub fn run(cpu: &mut Cpu) -> Stop {
-    let _guest = trace_eip(cpu);
+    trace_eip();
     crate::crashlog::in_guest(true);
     let r = cpu_run(cpu);
+    crate::crashlog::shown(cpu);
     crate::crashlog::in_guest(false);
     r
 }
@@ -525,7 +480,7 @@ fn cpu_run(cpu: &mut Cpu) -> Stop {
         }
         // (a thread another one suspended: SuspendThread, sake's suspend.rs)
         if let Some(park) = PARK.get() {
-            crate::crashlog::phase("park");
+            crate::crashlog::phase(crate::crashlog::Phase::Park);
             if park() {
                 continue;
             }
@@ -543,12 +498,12 @@ fn cpu_run(cpu: &mut Cpu) -> Stop {
             if m16 {
                 crate::jit::to_linear16(cpu);
             }
-            crate::crashlog::phase("jit::run");
+            crate::crashlog::phase(crate::crashlog::Phase::JitRun);
             let ran = crate::jit::run(cpu);
             WORK.set(WORK.get() + 8 * (crate::jit::BUDGET - cpu.jit_budget.max(0)).max(0) as u64);
             let compiled = matches!(ran, crate::jit::Ran::Missed) && {
                 crate::jit::count_miss(cpu.eip);
-                crate::crashlog::phase("jit::maybe_compile");
+                crate::crashlog::phase(crate::crashlog::Phase::JitMaybeCompile);
                 crate::jit::maybe_compile(cpu, &mut mem)
             };
             if m16 {
@@ -557,6 +512,7 @@ fn cpu_run(cpu: &mut Cpu) -> Stop {
             match ran {
                 crate::jit::Ran::Stopped => {
                     crate::jit::count_entry(cpu.eip | 0x8000_0000);
+                    crate::crashlog::shown(cpu);
                     progressed();
                     continue;
                 }
@@ -572,13 +528,14 @@ fn cpu_run(cpu: &mut Cpu) -> Stop {
             }
         }
         // the interpreter: up to the next branch with the JIT, a batch of steps without
-        crate::crashlog::phase("interpreter");
+        crate::crashlog::phase(crate::crashlog::Phase::Interpreter);
         for _ in 0..4096 {
             WORK.set(WORK.get() + 1);
             let (e, branch) = crate::jit::step(cpu, &mut mem);
             stepped += 1;
             if stepped >= INTERP_SLICE {
                 stepped = 0;
+                crate::crashlog::shown(cpu);
                 progressed();
             }
             if let Some(code) = exit_code(cpu, &mut mem, e, false) {

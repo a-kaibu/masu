@@ -12,19 +12,25 @@
 //!   exception" report).
 //! - `SNAP`: every guest thread's state now ([`vnhost_crashlog_snapshot`]), rewritten each time.
 //!
-//! The rings are plain text; a writer reserves its bytes with one `fetch_add`, so lines from
-//! different threads never interleave. Nothing on these paths allocates (the page may ask for a
+//! Everything another thread reads here is an atomic (review 2026-11-15: no `unsafe impl Sync`
+//! left): the rings' bytes, each thread's trap ring, and the registers a thread shows. A writer
+//! reserves its bytes with one `fetch_add`, so lines from different threads do not interleave
+//! while the ring is not lapped; a writer that stops while others go once round the ring leaves
+//! mixed text, never a data race. Another thread's `Cpu` is never read: a guest thread shows its
+//! registers ([`shown`]) at every slice and every exit from guest code, and the snapshot (and
+//! MASU_TRACE_EIP) reads those. Nothing on these paths allocates (the page may ask for a
 //! snapshot while another thread died holding the allocator's lock), except the sake API-name
 //! lookup in a guest thread's own exception record.
 //!
-//! The cost while nothing goes wrong: four stores per syscall (the thread's trap ring), two per
-//! entry into guest code, and a copy of each stderr write.
+//! The cost while nothing goes wrong: four stores per syscall (the thread's trap ring), ~24 per
+//! exit from guest code and per slice, and a copy of each stderr write.
 
 use core::fmt::{self, Write};
-use std::cell::{Cell, UnsafeCell};
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering::*};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, AtomicU64, AtomicUsize, Ordering::*};
 use std::sync::Mutex;
 
+use kome::locks::Lock as _;
 use koji::Cpu;
 
 const EV_SIZE: usize = 1 << 19;
@@ -33,78 +39,105 @@ const SNAP_SIZE: usize = 1 << 19;
 /// Syscalls / API calls kept per thread.
 const TRAPS: usize = 128;
 
+/// The address the page finds `x` at (wasm32: an address is a u32)
+fn addr_of<T: ?Sized>(x: &T) -> u32 {
+    kome::num::lo32(std::ptr::from_ref(x).cast::<u8>().expose_provenance())
+}
+
+/// Bytes the page reads as text: the same layout as `[u8; N]`, every byte an atomic.
+struct Bytes<const N: usize>([AtomicU8; N]);
+
+impl<const N: usize> Bytes<N> {
+    const fn new() -> Self {
+        Bytes([const { AtomicU8::new(0) }; N])
+    }
+    /// Byte `i` (wrapping at N)
+    #[inline]
+    fn put(&self, i: usize, b: u8) {
+        if let Some(x) = self.0.get(i % N) {
+            x.store(b, Relaxed);
+        }
+    }
+    fn get(&self, i: usize) -> u8 {
+        self.0.get(i % N).map_or(0, |x| x.load(Relaxed))
+    }
+    /// The first `n` bytes, copied
+    fn text(&self, n: usize) -> String {
+        let v: Vec<u8> = (0..n.min(N)).map(|i| self.get(i)).collect();
+        String::from_utf8_lossy(&v).into_owned()
+    }
+}
+
+/// A ring of text: `head` counts every byte ever put (the page takes it modulo N).
 struct Ring<const N: usize> {
-    buf: UnsafeCell<[u8; N]>,
+    buf: Bytes<N>,
     head: AtomicU32,
 }
 
-unsafe impl<const N: usize> Sync for Ring<N> {}
-
 impl<const N: usize> Ring<N> {
+    // (N divides 2^32: the byte index wraps with the u32 head)
+    const OK: () = assert!(N.is_power_of_two() && N <= 1 << 31);
+
     const fn new() -> Self {
-        Ring { buf: UnsafeCell::new([0; N]), head: AtomicU32::new(0) }
+        let () = Self::OK;
+        Ring { buf: Bytes::new(), head: AtomicU32::new(0) }
     }
 
     fn put(&self, b: &[u8]) {
-        let b = &b[..b.len().min(N / 4)];
-        let at = self.head.fetch_add(b.len() as u32, Relaxed) as usize & (N - 1);
-        let p = self.buf.get() as *mut u8;
-        let first = b.len().min(N - at);
-        unsafe {
-            std::ptr::copy_nonoverlapping(b.as_ptr(), p.add(at), first);
-            std::ptr::copy_nonoverlapping(b.as_ptr().add(first), p, b.len() - first);
+        let b = b.get(..b.len().min(N / 4)).unwrap_or(b);
+        let at = kome::num::us(self.head.fetch_add(kome::num::u32_of(b.len()), Relaxed));
+        for (i, &c) in b.iter().enumerate() {
+            self.buf.put(at.wrapping_add(i), c);
         }
     }
 
     fn addr(&self) -> u32 {
-        self.buf.get() as usize as u32
+        addr_of(&self.buf)
     }
 }
 
 static EV: Ring<EV_SIZE> = Ring::new();
 static OUT: Ring<OUT_SIZE> = Ring::new();
 
-struct Snap(UnsafeCell<[u8; SNAP_SIZE]>);
-unsafe impl Sync for Snap {}
-static SNAP: Snap = Snap(UnsafeCell::new([0; SNAP_SIZE]));
+static SNAP: Bytes<SNAP_SIZE> = Bytes::new();
 static SNAP_LEN: AtomicU32 = AtomicU32::new(0);
 static SNAP_BUSY: AtomicBool = AtomicBool::new(false);
 
 /// Crashes seen (the page polls it) and the latest one's reason.
 static CRASHES: AtomicU32 = AtomicU32::new(0);
-struct Reason(UnsafeCell<[u8; 256]>);
-unsafe impl Sync for Reason {}
-static REASON: Reason = Reason(UnsafeCell::new([0; 256]));
+const REASON_SIZE: usize = 256;
+static REASON: Bytes<REASON_SIZE> = Bytes::new();
 
-struct Info(UnsafeCell<[u32; 16]>);
-unsafe impl Sync for Info {}
-static INFO: Info = Info(UnsafeCell::new([0; 16]));
+static INFO: [AtomicU32; 16] = [const { AtomicU32::new(0) }; 16];
 
 /// Where the page finds everything: magic "VNCL", version, then (address, size, address of
 /// the head) for EV and OUT, (address, size, address of the length) for SNAP, the address of
 /// the crash counter, of the reason (NUL-terminated) and its size.
 #[unsafe(no_mangle)]
 pub extern "C" fn vnhost_crashlog_info() -> u32 {
-    let i = unsafe { &mut *INFO.0.get() };
-    *i = [
+    let size = kome::num::u32_of;
+    let v = [
         0x4c43_4e56,
         1,
         EV.addr(),
-        EV_SIZE as u32,
-        &EV.head as *const _ as usize as u32,
+        size(EV_SIZE),
+        addr_of(&EV.head),
         OUT.addr(),
-        OUT_SIZE as u32,
-        &OUT.head as *const _ as usize as u32,
-        SNAP.0.get() as usize as u32,
-        SNAP_SIZE as u32,
-        &SNAP_LEN as *const _ as usize as u32,
-        &CRASHES as *const _ as usize as u32,
-        REASON.0.get() as usize as u32,
-        256,
+        size(OUT_SIZE),
+        addr_of(&OUT.head),
+        addr_of(&SNAP),
+        size(SNAP_SIZE),
+        addr_of(&SNAP_LEN),
+        addr_of(&CRASHES),
+        addr_of(&REASON),
+        size(REASON_SIZE),
         0,
         0,
     ];
-    i.as_ptr() as usize as u32
+    for (i, x) in INFO.iter().zip(v) {
+        i.store(x, Relaxed);
+    }
+    addr_of(&INFO)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -121,27 +154,26 @@ impl<const N: usize> Line<N> {
         Line { buf: [0; N], n: 0 }
     }
     pub fn bytes(&self) -> &[u8] {
-        &self.buf[..self.n]
+        self.buf.get(..self.n).unwrap_or(&self.buf)
     }
     pub fn push(&mut self, b: &[u8]) {
-        let k = b.len().min(N - self.n);
-        self.buf[self.n..self.n + k].copy_from_slice(&b[..k]);
-        self.n += k;
+        for (d, &s) in self.buf.iter_mut().skip(self.n).zip(b) {
+            *d = s;
+            self.n = self.n.saturating_add(1);
+        }
     }
 }
 
 impl<const N: usize> Write for Line<N> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        let k = s.len().min(N - self.n);
-        self.buf[self.n..self.n + k].copy_from_slice(&s.as_bytes()[..k]);
-        self.n += k;
+        self.push(s.as_bytes());
         Ok(())
     }
 }
 
 /// "hh:mm:ss.mmm" (UTC) and the thread: the prefix of every record.
 fn stamp(w: &mut impl Write) {
-    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| kome::num::lo64(d.as_millis()));
     let s = ms / 1000;
     let _ = write!(
         w,
@@ -165,10 +197,11 @@ pub fn event(args: fmt::Arguments) {
 
 /// A crash the page should save a report for now.
 pub fn crash(reason: &str) {
-    let r = unsafe { &mut *REASON.0.get() };
-    let n = reason.len().min(r.len() - 1);
-    r[..n].copy_from_slice(&reason.as_bytes()[..n]);
-    r[n] = 0;
+    let n = reason.len().min(REASON_SIZE.saturating_sub(1));
+    for (i, &c) in reason.as_bytes().iter().take(n).enumerate() {
+        REASON.put(i, c);
+    }
+    REASON.put(n, 0);
     event(format_args!("CRASH: {reason}"));
     CRASHES.fetch_add(1, SeqCst);
 }
@@ -194,28 +227,24 @@ pub fn output(fd: i32, b: &[u8]) {
         // the thread writing this is the one whose exception nobody handled: its stack still
         // has the code that raised it
         thread_state("the thread reporting the unhandled exception");
-        let s = String::from_utf8_lossy(&b[..b.len().min(250)]);
+        let s = String::from_utf8_lossy(b.get(..b.len().min(250)).unwrap_or(b));
         crash(s.trim_end());
     }
 }
 
-/// The calling guest thread's state (at its current syscall), deep, in EV.
+/// The calling guest thread's state (as it showed it last: at its current syscall), deep, in EV.
 fn thread_state(why: &str) {
-    let Some(t) = CUR.with(|c| c.get()) else { return };
-    let c = t.cpu.load(Relaxed);
-    if c == 0 {
-        return;
-    }
-    let cpu = unsafe { &*(c as *const Cpu) };
+    let Some(t) = CUR.with(Cell::get) else { return };
+    let r = Regs::of(t);
     let mut l = Line::<16384>::new();
     stamp(&mut l);
     let mods = &mut [Module { base: 0, size: 0, name: [0; 40], len: 0 }; MAX_MODULES];
-    let n = modules(cpu, mods);
-    let mods = &mods[..n];
-    let _ = write!(l, "{why}: at its syscall from {:08x}", rd32(cpu.regs[4]).unwrap_or(0));
-    sym(&mut l, mods, rd32(cpu.regs[4]).unwrap_or(0));
-    regs(&mut l, cpu);
-    detail(&mut l, cpu, mods, true, DEEP);
+    let n = modules(&r, mods);
+    let mods = mods.get(..n).unwrap_or(&[]);
+    let _ = write!(l, "{why}: at its syscall from {:08x}", rd32(r.sp()).unwrap_or(0));
+    sym(&mut l, mods, rd32(r.sp()).unwrap_or(0));
+    regs(&mut l, &r);
+    detail(&mut l, &r, None, Some(t), mods, true, DEEP);
     module_list(&mut l, mods, false);
     let _ = l.write_str("\n");
     EV.put(l.bytes());
@@ -224,31 +253,190 @@ fn thread_state(why: &str) {
 // ---------------------------------------------------------------------------------------------
 // guest threads
 
+/// Where in the run loop a thread is: a thread that stands still outside guest code and outside
+/// an API shows what it waits in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum Phase {
+    Nowhere,
+    Park,
+    JitRun,
+    JitMaybeCompile,
+    Interpreter,
+    JitTakeBuilt,
+    JitSharedFn,
+    JitSavedFn,
+    JitShared,
+    JitSaved,
+    JitCompile,
+}
+
+impl Phase {
+    const ALL: [Phase; 11] = [
+        Phase::Nowhere,
+        Phase::Park,
+        Phase::JitRun,
+        Phase::JitMaybeCompile,
+        Phase::Interpreter,
+        Phase::JitTakeBuilt,
+        Phase::JitSharedFn,
+        Phase::JitSavedFn,
+        Phase::JitShared,
+        Phase::JitSaved,
+        Phase::JitCompile,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Phase::Nowhere => "",
+            Phase::Park => "park",
+            Phase::JitRun => "jit::run",
+            Phase::JitMaybeCompile => "jit::maybe_compile",
+            Phase::Interpreter => "interpreter",
+            Phase::JitTakeBuilt => "jit: take_built",
+            Phase::JitSharedFn => "jit: shared fn",
+            Phase::JitSavedFn => "jit: saved fn",
+            Phase::JitShared => "jit: shared",
+            Phase::JitSaved => "jit: saved",
+            Phase::JitCompile => "jit: compile",
+        }
+    }
+    fn of(v: u8) -> Phase {
+        Phase::ALL.iter().copied().find(|p| *p as u8 == v).unwrap_or(Phase::Nowhere)
+    }
+}
+
+/// The registers a guest thread showed last (its own Cpu is read by it alone).
+struct Shown {
+    gpr: [AtomicU64; 16],
+    eip: AtomicU32,
+    rip_hi: AtomicU32,
+    flags: AtomicU32,
+    fs_base: AtomicU32,
+    gs_base: AtomicU32,
+    long: AtomicBool,
+    jit_ring: AtomicU32,
+}
+
+/// A copy of what a thread showed (or of its own Cpu)
+#[derive(Clone, Copy, Default)]
+struct Regs {
+    gpr: [u64; 16],
+    eip: u32,
+    rip_hi: u32,
+    flags: u32,
+    fs_base: u32,
+    gs_base: u32,
+    long: bool,
+    jit_ring: u32,
+}
+
+impl Regs {
+    fn from_cpu(c: &Cpu) -> Regs {
+        Regs {
+            gpr: std::array::from_fn(|i| c.gpr(i)),
+            eip: c.eip,
+            rip_hi: c.rip_hi,
+            flags: c.flags(),
+            fs_base: c.fs_base,
+            gs_base: c.gs_base,
+            long: c.mode64 != 0,
+            jit_ring: c.jit_ring,
+        }
+    }
+    fn of(t: &ThreadLog) -> Regs {
+        let s = &t.shown;
+        Regs {
+            gpr: std::array::from_fn(|i| s.gpr.get(i).map_or(0, |x| x.load(Relaxed))),
+            eip: s.eip.load(Relaxed),
+            rip_hi: s.rip_hi.load(Relaxed),
+            flags: s.flags.load(Relaxed),
+            fs_base: s.fs_base.load(Relaxed),
+            gs_base: s.gs_base.load(Relaxed),
+            long: s.long.load(Relaxed),
+            jit_ring: s.jit_ring.load(Relaxed),
+        }
+    }
+    /// Register `i`'s low 32 bits
+    fn r(&self, i: usize) -> u32 {
+        self.gpr.get(i).map_or(0, |&v| kome::num::lo32(v))
+    }
+    fn sp(&self) -> u32 {
+        self.r(4)
+    }
+}
+
+impl Shown {
+    const fn new() -> Self {
+        Shown {
+            gpr: [const { AtomicU64::new(0) }; 16],
+            eip: AtomicU32::new(0),
+            rip_hi: AtomicU32::new(0),
+            flags: AtomicU32::new(0),
+            fs_base: AtomicU32::new(0),
+            gs_base: AtomicU32::new(0),
+            long: AtomicBool::new(false),
+            jit_ring: AtomicU32::new(0),
+        }
+    }
+    fn set(&self, r: &Regs) {
+        for (d, &v) in self.gpr.iter().zip(&r.gpr) {
+            d.store(v, Relaxed);
+        }
+        self.eip.store(r.eip, Relaxed);
+        self.rip_hi.store(r.rip_hi, Relaxed);
+        self.flags.store(r.flags, Relaxed);
+        self.fs_base.store(r.fs_base, Relaxed);
+        self.gs_base.store(r.gs_base, Relaxed);
+        self.long.store(r.long, Relaxed);
+        self.jit_ring.store(r.jit_ring, Relaxed);
+    }
+}
+
 struct ThreadLog {
     tid: AtomicI32,
+    /// its Cpu's address: which thread this is, never read through
     cpu: AtomicUsize,
     /// 1 while it runs guest code, 0 in sake (a syscall, an API call)
     guest: AtomicU32,
     /// (trap address, EAX, [ESP], [ESP+4]) of its last syscalls / API calls
-    traps: UnsafeCell<[[u32; 4]; TRAPS]>,
+    traps: [[AtomicU32; 4]; TRAPS],
     n: AtomicU32,
     exceptions: AtomicU32,
-    /// where in the run loop it is (a `&'static str`'s address and length; 0: nowhere marked):
-    /// a thread that stands still outside guest code and outside an API shows what it waits in
-    phase: AtomicUsize,
-    phase_len: AtomicUsize,
+    phase: AtomicU8,
+    shown: Shown,
 }
 
-unsafe impl Sync for ThreadLog {}
+impl ThreadLog {
+    fn new() -> Self {
+        ThreadLog {
+            tid: AtomicI32::new(0),
+            cpu: AtomicUsize::new(0),
+            guest: AtomicU32::new(0),
+            traps: [const { [const { AtomicU32::new(0) }; 4] }; TRAPS],
+            n: AtomicU32::new(0),
+            exceptions: AtomicU32::new(0),
+            phase: AtomicU8::new(0),
+            shown: Shown::new(),
+        }
+    }
+    fn trap(&self, k: u32) -> [u32; 4] {
+        self.traps.get(kome::num::us(k) % TRAPS).map_or([0; 4], |e| std::array::from_fn(|i| e.get(i).map_or(0, |x| x.load(Relaxed))))
+    }
+}
 
-static THREADS: Mutex<Vec<&'static ThreadLog>> = Mutex::new(Vec::new());
+/// The running threads' records (each lent by RETIRED)
+static THREADS: Mutex<Vec<crate::pool::Lease<&'static ThreadLog>>> = Mutex::new(Vec::new());
 
 thread_local! {
     static CUR: Cell<Option<&'static ThreadLog>> = const { Cell::new(None) };
 }
 
+fn id(cpu: *const Cpu) -> usize {
+    cpu.expose_provenance()
+}
+
 /// The calling thread got `cpu` (cpu::create).
-pub fn register(cpu: *mut Cpu) {
+pub fn register(cpu: &Cpu) {
     static HOOK: std::sync::Once = std::sync::Once::new();
     HOOK.call_once(|| {
         let prev = std::panic::take_hook();
@@ -259,32 +447,23 @@ pub fn register(cpu: *mut Cpu) {
             prev(info);
         }));
     });
-    let mut g = THREADS.lock().unwrap_or_else(|e| e.into_inner());
-    let taken = RETIRED.lock().unwrap_or_else(|e| e.into_inner()).take(|| Box::leak(Box::new(ThreadLog {
-        tid: AtomicI32::new(crate::cpu::tid()),
-        cpu: AtomicUsize::new(cpu as usize),
-        guest: AtomicU32::new(0),
-        traps: UnsafeCell::new([[0; 4]; TRAPS]),
-        n: AtomicU32::new(0),
-        exceptions: AtomicU32::new(0),
-        phase: AtomicUsize::new(0),
-        phase_len: AtomicUsize::new(0),
-    })));
-    let t: &'static ThreadLog = match taken {
-        crate::pool::Reuse::New(t) => t,
-        // (only ever the calling thread writes its ring; tid is the next owner's)
-        crate::pool::Reuse::Again(t) => {
-            t.tid.store(crate::cpu::tid(), Relaxed);
-            t.cpu.store(cpu as usize, Relaxed);
-            t.guest.store(0, Relaxed);
-            t.n.store(0, Relaxed);
-            t.exceptions.store(0, Relaxed);
-            t.phase.store(0, Relaxed);
-            t
-        }
-    };
-    CUR.with(|c| c.set(Some(t)));
-    g.retain(|x| x.cpu.load(Relaxed) != cpu as usize);
+    let me = id(cpu);
+    let mut g = THREADS.locked_anyway();
+    // (a record of a thread that ended is the next owner's: only that thread writes it)
+    let t = RETIRED.locked_anyway().take(|| Box::leak(Box::new(ThreadLog::new()))).lease();
+    t.tid.store(crate::cpu::tid(), Relaxed);
+    t.cpu.store(me, Relaxed);
+    t.guest.store(0, Relaxed);
+    t.n.store(0, Relaxed);
+    t.exceptions.store(0, Relaxed);
+    t.phase.store(Phase::Nowhere as u8, Relaxed);
+    t.shown.set(&Regs::from_cpu(cpu));
+    CUR.with(|c| c.set(Some(*t)));
+    let mut r = RETIRED.locked_anyway();
+    for old in g.extract_if(.., |x| x.cpu.load(Relaxed) == me) {
+        r.give(old);
+    }
+    drop(r);
     g.push(t);
 }
 
@@ -295,21 +474,18 @@ static RETIRED: Mutex<crate::pool::Pool<&'static ThreadLog>> = Mutex::new(crate:
 
 /// (tests: the records waiting for reuse, made, the most out at once)
 pub fn counts() -> crate::pool::Counts {
-    RETIRED.lock().unwrap_or_else(|e| e.into_inner()).counts()
+    RETIRED.locked_anyway().counts()
 }
 
 /// `cpu` is going away (cpu::destroy).
-pub fn unregister(cpu: *mut Cpu) {
-    let mut g = THREADS.lock().unwrap_or_else(|e| e.into_inner());
-    let mut r = RETIRED.lock().unwrap_or_else(|e| e.into_inner());
-    g.retain(|x| {
-        let keep = x.cpu.load(Relaxed) != cpu as usize;
-        if !keep {
-            x.cpu.store(0, Relaxed);
-            r.give(*x);
-        }
-        keep
-    });
+pub fn unregister(cpu: *const Cpu) {
+    let me = id(cpu);
+    let mut g = THREADS.locked_anyway();
+    let mut r = RETIRED.locked_anyway();
+    for t in g.extract_if(.., |x| x.cpu.load(Relaxed) == me) {
+        t.cpu.store(0, Relaxed);
+        r.give(t);
+    }
     drop(r);
     CUR.with(|c| {
         if c.get().is_some_and(|t| t.cpu.load(Relaxed) == 0) {
@@ -318,13 +494,12 @@ pub fn unregister(cpu: *mut Cpu) {
     });
 }
 
-/// Where the calling thread is in the run loop now ("" when done), shown in the snapshot.
+/// Where the calling thread is in the run loop now, shown in the snapshot.
 #[inline]
-pub fn phase(what: &'static str) {
+pub fn phase(what: Phase) {
     CUR.with(|c| {
         if let Some(t) = c.get() {
-            t.phase_len.store(what.len(), Relaxed);
-            t.phase.store(what.as_ptr() as usize, Relaxed);
+            t.phase.store(what as u8, Relaxed);
         }
     });
 }
@@ -334,7 +509,18 @@ pub fn phase(what: &'static str) {
 pub fn in_guest(on: bool) {
     CUR.with(|c| {
         if let Some(t) = c.get() {
-            t.guest.store(on as u32, Relaxed);
+            t.guest.store(u32::from(on), Relaxed);
+        }
+    });
+}
+
+/// The calling thread's registers now, for the snapshot and MASU_TRACE_EIP (cpu.rs: at every
+/// slice and every exit from guest code). `cpu` is the calling thread's own.
+#[inline]
+pub fn shown(cpu: &Cpu) {
+    CUR.with(|c| {
+        if let Some(t) = c.get() {
+            t.shown.set(&Regs::from_cpu(cpu));
         }
     });
 }
@@ -346,9 +532,39 @@ pub fn trap(cpu: &Cpu, addr: u32) {
         let Some(t) = c.get() else { return };
         let esp = cpu.regs[4];
         let n = t.n.load(Relaxed);
-        unsafe { (*t.traps.get())[n as usize % TRAPS] = [addr, cpu.regs[0], rd32(esp).unwrap_or(0), rd32(esp.wrapping_add(4)).unwrap_or(0)] };
+        if let Some(e) = t.traps.get(kome::num::us(n) % TRAPS) {
+            for (d, v) in e.iter().zip([addr, cpu.regs[0], rd32(esp).unwrap_or(0), rd32(esp.wrapping_add(4)).unwrap_or(0)]) {
+                d.store(v, Relaxed);
+            }
+        }
         t.n.store(n.wrapping_add(1), Relaxed);
     });
+}
+
+/// MASU_TRACE_EIP's line: each thread's EIP as it showed it last, `*` when it is in sake (a
+/// syscall, an API call), then the return addresses ([esp], the EBP chain).
+pub fn eip_line() -> String {
+    let g = THREADS.locked_anyway();
+    let line: Vec<String> = g
+        .iter()
+        .map(|t| {
+            let r = Regs::of(t);
+            let at = if t.guest.load(Relaxed) != 0 { "" } else { "*" };
+            let mut ebp = r.r(5);
+            let mut stack = vec![rd32(r.sp()).unwrap_or(0)];
+            for _ in 0..8 {
+                let (Some(ret), Some(next)) = (rd32(ebp.wrapping_add(4)), rd32(ebp)) else { break };
+                stack.push(ret);
+                if next <= ebp {
+                    break;
+                }
+                ebp = next;
+            }
+            let stack: Vec<String> = stack.iter().map(|a| format!("{a:x}")).collect();
+            format!("{}:{:08x}{at}<{}>", t.tid.load(Relaxed), r.eip, stack.join(","))
+        })
+        .collect();
+    line.join(" ")
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -366,19 +582,33 @@ fn mem_end() -> u64 {
 }
 
 fn readable(a: u32, n: u32) -> bool {
-    a >= 0x10000 && a as u64 + n as u64 <= mem_end().min(koji::jit::GUEST_HI as u64)
+    a >= 0x10000 && u64::from(a).saturating_add(u64::from(n)) <= mem_end().min(u64::from(koji::jit::GUEST_HI))
+}
+
+/// `N` bytes of guest memory, read as atomics: the guest's threads write it meanwhile (as the
+/// x86 they emulate allows), and a crash report reads whatever is there.
+fn rd<const N: usize>(a: u32) -> Option<[u8; N]> {
+    if !readable(a, kome::num::u32_of(N)) {
+        return None;
+    }
+    Some(std::array::from_fn(|i| {
+        let p = std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(a).wrapping_add(i));
+        // SAFETY: readable() above: guest memory, inside the wasm memory, valid for as long as
+        // it is; any address is aligned for an AtomicU8, and every access here is atomic.
+        unsafe { AtomicU8::from_ptr(p) }.load(Relaxed)
+    }))
 }
 
 fn rd32(a: u32) -> Option<u32> {
-    readable(a, 4).then(|| unsafe { std::ptr::read_volatile(a as usize as *const [u8; 4]) }).map(u32::from_le_bytes)
+    rd::<4>(a).map(u32::from_le_bytes)
 }
 
 fn rd16(a: u32) -> Option<u16> {
-    readable(a, 2).then(|| unsafe { std::ptr::read_volatile(a as usize as *const [u8; 2]) }).map(u16::from_le_bytes)
+    rd::<2>(a).map(u16::from_le_bytes)
 }
 
 fn rd8(a: u32) -> Option<u8> {
-    readable(a, 1).then(|| unsafe { std::ptr::read_volatile(a as usize as *const u8) })
+    rd::<1>(a).map(|[b]| b)
 }
 
 #[derive(Clone, Copy)]
@@ -414,15 +644,15 @@ pub fn add_module(base: u32, path: &str) {
     let size = rd32(base.wrapping_add(rd32(base.wrapping_add(0x3c)).unwrap_or(0)).wrapping_add(0x50)).unwrap_or(0x1000);
     let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let m = make_module(base, size, name.bytes().filter(|c| c.is_ascii_graphic()));
-    let mut g = EXTRA.lock().unwrap_or_else(|e| e.into_inner());
+    let mut g = EXTRA.locked_anyway();
     if g.len() < MAX_MODULES {
         g.push(m);
     }
 }
 
 /// The loaded modules of the process `cpu` runs in: its PEB's loader list.
-fn modules(cpu: &Cpu, out: &mut [Module; MAX_MODULES]) -> usize {
-    let long = cpu.mode64 != 0;
+fn modules(cpu: &Regs, out: &mut [Module; MAX_MODULES]) -> usize {
+    let long = cpu.long;
     let (teb, peb_at, ldr_at, head_at, base_at, size_at, name_at, buf_at) =
         if long { (cpu.gs_base, 0x60, 0x18, 0x10, 0x30, 0x40, 0x58, 0x60) } else { (cpu.fs_base, 0x30, 0x0c, 0x0c, 0x18, 0x20, 0x2c, 0x30) };
     let mut n = 0;
@@ -509,19 +739,19 @@ pub fn set_trap_namer(f: fn(u32) -> Option<String>) {
 // ---------------------------------------------------------------------------------------------
 // records
 
-fn regs(w: &mut impl Write, cpu: &Cpu) {
-    let r = &cpu.regs;
-    if cpu.mode64 != 0 {
+fn regs(w: &mut impl Write, cpu: &Regs) {
+    let r: [u32; 8] = std::array::from_fn(|i| cpu.r(i));
+    if cpu.long {
         const N: [&str; 16] = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"];
         for (i, n) in N.iter().enumerate() {
-            let _ = write!(w, "{}{n} {:016x}", if i % 4 == 0 { "\n  " } else { " " }, cpu.gpr(i));
+            let _ = write!(w, "{}{n} {:016x}", if i % 4 == 0 { "\n  " } else { " " }, cpu.gpr.get(i).copied().unwrap_or(0));
         }
-        let _ = write!(w, "\n  rip {:08x}{:08x} rflags {:08x} gs {:08x} fs {:08x}", cpu.rip_hi, cpu.eip, cpu.flags(), cpu.gs_base, cpu.fs_base);
+        let _ = write!(w, "\n  rip {:08x}{:08x} rflags {:08x} gs {:08x} fs {:08x}", cpu.rip_hi, cpu.eip, cpu.flags, cpu.gs_base, cpu.fs_base);
     } else {
         let _ = write!(
             w,
             "\n  eax {:08x} ecx {:08x} edx {:08x} ebx {:08x} esp {:08x} ebp {:08x} esi {:08x} edi {:08x}\n  eip {:08x} eflags {:08x} fs {:08x}",
-            r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], cpu.eip, cpu.flags(), cpu.fs_base
+            r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], cpu.eip, cpu.flags, cpu.fs_base
         );
     }
 }
@@ -539,19 +769,23 @@ const NORMAL: Depth = Depth { scan: 0x800, found: 24, frames: 16 };
 /// (records, contexts) above the code that raised it.
 const DEEP: Depth = Depth { scan: 0x6000, found: 64, frames: 40 };
 
-fn detail(w: &mut impl Write, cpu: &Cpu, mods: &[Module], own_thread: bool, depth: Depth) {
-    let long = cpu.mode64 != 0;
-    let f = &cpu.fpu;
-    let _ = write!(w, "\n  fpu cw {:04x} sw {:04x} top {} empty {:02x} mxcsr {:08x}", f.cw, f.sw, f.top, f.empty, cpu.mxcsr);
-    for (i, x) in cpu.xmm.iter().enumerate() {
-        if *x != 0 {
-            let _ = write!(w, " xmm{i} {x:032x}");
-        }
-    }
-    if long {
-        for (i, x) in cpu.xmm8.iter().enumerate() {
+/// `own`: the calling thread's own Cpu (its FPU, SSE and JIT state too), None for what a
+/// thread showed (`t`: its record, for its last calls; `name`: with the API names)
+fn detail(w: &mut impl Write, cpu: &Regs, own: Option<&Cpu>, t: Option<&ThreadLog>, mods: &[Module], name: bool, depth: Depth) {
+    let long = cpu.long;
+    if let Some(c) = own {
+        let f = &c.fpu;
+        let _ = write!(w, "\n  fpu cw {:04x} sw {:04x} top {} empty {:02x} mxcsr {:08x}", f.cw, f.sw, f.top, f.empty, c.mxcsr);
+        for (i, x) in c.xmm.iter().enumerate() {
             if *x != 0 {
-                let _ = write!(w, " xmm{} {x:032x}", i + 8);
+                let _ = write!(w, " xmm{i} {x:032x}");
+            }
+        }
+        if long {
+            for (i, x) in c.xmm8.iter().enumerate() {
+                if *x != 0 {
+                    let _ = write!(w, " xmm{} {x:032x}", i.saturating_add(8));
+                }
             }
         }
     }
@@ -566,7 +800,7 @@ fn detail(w: &mut impl Write, cpu: &Cpu, mods: &[Module], own_thread: bool, dept
             }
         }
     }
-    let esp = cpu.regs[4];
+    let esp = cpu.sp();
     let _ = write!(w, "\n  stack @{esp:08x}:");
     for i in 0..32u32 {
         if i % 8 == 0 {
@@ -584,7 +818,7 @@ fn detail(w: &mut impl Write, cpu: &Cpu, mods: &[Module], own_thread: bool, dept
     // the frame chain (32-bit code mostly keeps EBP frames)
     if !long {
         let _ = w.write_str("\n  frames (ebp chain):");
-        let mut ebp = cpu.regs[5];
+        let mut ebp = cpu.r(5);
         for _ in 0..depth.frames {
             let (Some(ret), Some(next)) = (rd32(ebp.wrapping_add(4)), rd32(ebp)) else { break };
             let _ = write!(w, "\n    {ret:08x}");
@@ -614,9 +848,8 @@ fn detail(w: &mut impl Write, cpu: &Cpu, mods: &[Module], own_thread: bool, dept
         a += step;
     }
     // the last syscalls / API calls
-    let t = CUR.with(|c| c.get()).filter(|_| own_thread);
-    if let Some(t) = t.or_else(|| find_thread(cpu)) {
-        traps(w, t, mods, own_thread, 24);
+    if let Some(t) = t {
+        traps(w, t, mods, name, 24);
     }
     // the JIT: its recent jumps between regions (from, to), newest first
     if cpu.jit_ring != 0 {
@@ -632,14 +865,9 @@ fn detail(w: &mut impl Write, cpu: &Cpu, mods: &[Module], own_thread: bool, dept
         }
     }
     let c = crate::jit::compiled_totals();
-    let _ = write!(w, "\n  jit: on {} (x64 {}), regions built {}, functions {}, rebuilt {}, call depth {}", crate::jit::enabled(), crate::jit::enabled64(), c[0], c[1], c[2], cpu.jit_depth);
+    let _ = write!(w, "\n  jit: on {} (x64 {}), regions built {}, functions {}, rebuilt {}, call depth {:?}", crate::jit::enabled(), crate::jit::enabled64(), c[0], c[1], c[2], own.map(|c| c.jit_depth));
     let m = crate::jit::jit_modules();
     let _ = write!(w, "\n  jit modules: loaded {} ({} KiB, {} ms), freed {} ({} KiB), table {}", m[0], m[1] >> 10, m[5] / 1000, m[3], m[4] >> 10, m[2]);
-}
-
-fn find_thread(cpu: &Cpu) -> Option<&'static ThreadLog> {
-    let g = THREADS.try_lock().ok()?;
-    g.iter().find(|t| t.cpu.load(Relaxed) == cpu as *const Cpu as usize).copied()
 }
 
 fn traps(w: &mut impl Write, t: &ThreadLog, mods: &[Module], name: bool, max: u32) {
@@ -650,7 +878,7 @@ fn traps(w: &mut impl Write, t: &ThreadLog, mods: &[Module], name: bool, max: u3
     let mut repeats = 0;
     let mut lines = 0;
     for k in 0..n.min(TRAPS as u32) {
-        let e = unsafe { (*t.traps.get())[(n.wrapping_sub(1 + k)) as usize % TRAPS] };
+        let e = t.trap(n.wrapping_sub(k.wrapping_add(1)));
         if lines > 0 && (e == shown[0] || e == shown[1]) {
             repeats += 1;
             continue;
@@ -685,7 +913,7 @@ static LISTED: Mutex<u32> = Mutex::new(0);
 fn module_list(w: &mut impl Write, mods: &[Module], always: bool) {
     let h = mods.iter().fold(0x811c9dc5u32, |h, m| (h ^ m.base ^ m.size).wrapping_mul(0x0100_0193));
     if !always {
-        let mut g = LISTED.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = LISTED.locked_anyway();
         if *g == h {
             let _ = write!(w, "\n  modules: as listed before ({})", mods.len());
             return;
@@ -701,7 +929,7 @@ fn module_list(w: &mut impl Write, mods: &[Module], always: bool) {
 /// A guest exception as the x86 core stops on it (before sake's SEH sees it).
 /// `what` names it, `access` is (address, write) for access violations.
 pub fn exception(cpu: &Cpu, what: &str, access: Option<(u32, bool)>, from_jit: bool) {
-    let t = CUR.with(|c| c.get());
+    let t = CUR.with(Cell::get);
     let k = t.map_or(0, |t| t.exceptions.fetch_add(1, Relaxed));
     // all of the first ones of a thread, then one in 100 (programs that use exceptions for
     // control flow); the others a line without the modules and symbols, decided first: walking
@@ -709,7 +937,7 @@ pub fn exception(cpu: &Cpu, what: &str, access: Option<(u32, bool)>, from_jit: b
     if !(k < 16 || k % 100 == 0) {
         let mut l = Line::<256>::new();
         stamp(&mut l);
-        let _ = write!(l, "exception #{} {what} at {:08x} [{}]", k + 1, cpu.eip, if from_jit { "jit" } else { "interpreter" });
+        let _ = write!(l, "exception #{} {what} at {:08x} [{}]", k.saturating_add(1), cpu.eip, if from_jit { "jit" } else { "interpreter" });
         if let Some((a, wr)) = access {
             let _ = write!(l, " {} {a:08x}", if wr { "writing" } else { "reading" });
         }
@@ -720,16 +948,17 @@ pub fn exception(cpu: &Cpu, what: &str, access: Option<(u32, bool)>, from_jit: b
     let mut l = Line::<12288>::new();
     stamp(&mut l);
     let mods = &mut [Module { base: 0, size: 0, name: [0; 40], len: 0 }; MAX_MODULES];
-    let n = modules(cpu, mods);
-    let mods = &mods[..n];
-    let _ = write!(l, "exception #{} {what} at {:08x}", k + 1, cpu.eip);
+    let r = Regs::from_cpu(cpu);
+    let n = modules(&r, mods);
+    let mods = mods.get(..n).unwrap_or(&[]);
+    let _ = write!(l, "exception #{} {what} at {:08x}", k.saturating_add(1), cpu.eip);
     sym(&mut l, mods, cpu.eip);
     let _ = write!(l, " [{}]", if from_jit { "jit" } else { "interpreter" });
     if let Some((a, wr)) = access {
         let _ = write!(l, " {} {a:08x}", if wr { "writing" } else { "reading" });
     }
-    regs(&mut l, cpu);
-    detail(&mut l, cpu, mods, true, NORMAL);
+    regs(&mut l, &r);
+    detail(&mut l, &r, Some(cpu), t, mods, true, NORMAL);
     module_list(&mut l, mods, false);
     let _ = l.write_str("\n");
     EV.put(l.bytes());
@@ -751,7 +980,7 @@ pub extern "C" fn vnhost_crashlog_snapshot() -> u32 {
             // (the newest first: the list keeps every thread ever made, so after enough of them
             // the first 256 are long dead and the live, crashing ones would not be in it)
             for (s, t) in list.iter_mut().zip(g.iter().rev()) {
-                *s = Some(*t);
+                *s = Some(**t);
                 count += 1;
             }
         }
@@ -761,15 +990,14 @@ pub extern "C" fn vnhost_crashlog_snapshot() -> u32 {
     }
     let _ = write!(w, "threads now: {count}");
     let mut last_teb = u32::MAX;
-    for t in list.iter().flatten() {
-        let c = t.cpu.load(Relaxed);
-        if c == 0 {
+    for &t in list.iter().flatten() {
+        if t.cpu.load(Relaxed) == 0 {
             continue;
         }
-        let cpu = unsafe { &*(c as *const Cpu) };
+        let cpu = Regs::of(t);
         let mods = &mut [Module { base: 0, size: 0, name: [0; 40], len: 0 }; MAX_MODULES];
-        let n = modules(cpu, mods);
-        let mods = &mods[..n];
+        let n = modules(&cpu, mods);
+        let mods = mods.get(..n).unwrap_or(&[]);
         let _ = write!(
             w,
             "\n\nthread t{} {} at {:08x}",
@@ -777,30 +1005,30 @@ pub extern "C" fn vnhost_crashlog_snapshot() -> u32 {
             if t.guest.load(Relaxed) != 0 { "in guest code" } else { "in a syscall/API (host side)" },
             cpu.eip
         );
-        let (pp, pl) = (t.phase.load(Relaxed), t.phase_len.load(Relaxed));
-        if pp != 0 && pl != 0 {
-            let _ = write!(w, " [run loop: {}]", unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(pp as *const u8, pl)) });
+        let phase = Phase::of(t.phase.load(Relaxed));
+        if phase != Phase::Nowhere {
+            let _ = write!(w, " [run loop: {}]", phase.name());
         }
         sym(&mut w, mods, cpu.eip);
         let _ = write!(w, ", exceptions {}", t.exceptions.load(Relaxed));
-        regs(&mut w, cpu);
-        detail(&mut w, cpu, mods, false, NORMAL);
-        let peb = if cpu.mode64 != 0 { rd32(cpu.gs_base + 0x60) } else { rd32(cpu.fs_base + 0x30) }.unwrap_or(0);
+        regs(&mut w, &cpu);
+        detail(&mut w, &cpu, None, Some(t), mods, false, NORMAL);
+        let peb = if cpu.long { rd32(cpu.gs_base.wrapping_add(0x60)) } else { rd32(cpu.fs_base.wrapping_add(0x30)) }.unwrap_or(0);
         if peb != last_teb {
             last_teb = peb;
             module_list(&mut w, mods, true);
         }
     }
     let _ = w.write_str("\n");
-    SNAP_LEN.store(w.n as u32, Release);
+    let n = kome::num::u32_of(w.n);
+    SNAP_LEN.store(n, Release);
     SNAP_BUSY.store(false, Release);
-    w.n as u32
+    n
 }
 
 /// Every guest thread's state as text (SAKE_THREADS_STACKS in node, where no page reads SNAP).
 pub fn snapshot_text() -> String {
-    let n = vnhost_crashlog_snapshot() as usize;
-    String::from_utf8_lossy(unsafe { &(&*SNAP.0.get())[..n] }).into_owned()
+    SNAP.text(kome::num::us(vnhost_crashlog_snapshot()))
 }
 
 struct SnapWriter {
@@ -809,10 +1037,10 @@ struct SnapWriter {
 
 impl Write for SnapWriter {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        let b = unsafe { &mut *SNAP.0.get() };
-        let k = s.len().min(SNAP_SIZE - self.n);
-        b[self.n..self.n + k].copy_from_slice(&s.as_bytes()[..k]);
-        self.n += k;
+        for &c in s.as_bytes().iter().take(SNAP_SIZE.saturating_sub(self.n)) {
+            SNAP.put(self.n, c);
+            self.n = self.n.saturating_add(1);
+        }
         Ok(())
     }
 }
@@ -838,8 +1066,7 @@ mod tests {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn ev_text() -> String {
-        let b = unsafe { &*EV.buf.get() };
-        String::from_utf8_lossy(&b[..(EV.head.load(Relaxed) as usize).min(EV_SIZE)]).into_owned()
+        EV.buf.text(EV.head.load(Relaxed) as usize)
     }
 
     /// The first 16 exceptions of a thread and every 100th have the registers and modules; the
@@ -850,7 +1077,7 @@ mod tests {
         // (the test's own Cpu, freed once unregistered: LeakSanitizer reports one left, #242)
         let mut owned = Box::new(Cpu { eip: 0x0040_1234, ..Cpu::default() });
         let cpu: *mut Cpu = &mut *owned;
-        register(cpu);
+        register(&owned);
         let before = EV.head.load(Relaxed);
         for _ in 0..120 {
             exception(&owned, "access violation", Some((0x10, false)), true);
@@ -879,7 +1106,7 @@ mod tests {
         let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let mut cpus: Vec<Box<Cpu>> = (0..300).map(|i| Box::new(Cpu { eip: 0x0050_0000 + i, ..Cpu::default() })).collect();
         for c in &mut cpus {
-            register(&mut **c);
+            register(c);
         }
         // (the snapshot only try_locks the thread list, as a crashing thread may hold it, and
         // other tests' Cpus register meanwhile: then it says "(thread list busy)" and a later
@@ -894,13 +1121,100 @@ mod tests {
         });
         assert!(seen, "the newest thread is not in the snapshot");
         for c in &mut cpus {
-            unregister(&mut **c);
+            unregister(&**c);
         }
         // (freed once unregistered, #242)
         drop(cpus);
     }
 
+    /// (no `unsafe impl Sync` makes these shareable: their parts are atomics)
+    const _: fn() = || {
+        fn sync<T: Sync>() {}
+        sync::<ThreadLog>();
+        sync::<Ring<16>>();
+        sync::<Bytes<16>>();
+    };
+
+    /// Threads that write the rings, show registers and trap while others take snapshots and
+    /// trace lines (review 2026-11-15: the rings and the trap ring were plain bytes written by
+    /// several threads, and the snapshot read other threads' Cpus as they ran). Run it under
+    /// ThreadSanitizer (tools/ci sanitize job) to see it race free; here: every line written
+    /// whole while the ring is not lapped, and nothing panics.
+    #[test]
+    fn writers_and_snapshots_at_once() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|s| {
+            for k in 0..4u32 {
+                let stop = &stop;
+                s.spawn(move || {
+                    let mut cpu = Box::new(Cpu { eip: 0x0060_0000 + k, ..Cpu::default() });
+                    register(&cpu);
+                    let mut i = 0u32;
+                    while !stop.load(Relaxed) {
+                        cpu.regs[0] = i;
+                        cpu.eip = 0x0060_0000 + k + (i << 8);
+                        shown(&cpu);
+                        trap(&cpu, 0xfe00_0000 + i);
+                        phase(Phase::ALL[i as usize % Phase::ALL.len()]);
+                        event(format_args!("writer {k} line {i}"));
+                        output(2, format!("writer {k} out {i}\n").as_bytes());
+                        i = i.wrapping_add(1);
+                    }
+                    unregister(&*cpu);
+                });
+            }
+            for _ in 0..200 {
+                let t = snapshot_text();
+                assert!(t.is_empty() || t.contains("threads now: "), "{t}");
+                let _ = eip_line();
+            }
+            stop.store(true, Relaxed);
+        });
+        // (the ring holds the last EV_SIZE bytes; a line not cut by the ring's start reads whole)
+        let text = EV.buf.text(EV_SIZE);
+        let lines: Vec<&str> = text.lines().filter(|l| l.contains(" writer ")).collect();
+        assert!(!lines.is_empty());
+        let whole = lines.iter().filter(|l| l.split(" writer ").nth(1).is_some_and(|r| {
+            let w: Vec<&str> = r.split(' ').collect();
+            w.len() == 3 && w[1] == "line" && w[0].parse::<u32>().is_ok() && w[2].parse::<u32>().is_ok()
+        })).count();
+        // (only the line the ring's start cuts, and lines of other tests' threads, may differ)
+        assert!(whole + 2 >= lines.len(), "{whole} of {} whole", lines.len());
+    }
+
     proptest! {
+        /// Writes that do not lap the ring read back as written, in order, whatever their
+        /// lengths and wherever the head starts (also past 2^32 bytes: the head wraps)
+        #[test]
+        fn ring_keeps_what_fits(start: u32, msgs in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..20), 0..10)) {
+            let r = Ring::<256>::new();
+            r.head.store(start, Relaxed);
+            for m in &msgs {
+                r.put(m);
+            }
+            let all: Vec<u8> = msgs.concat();
+            prop_assume!(all.len() <= 256);
+            let got: Vec<u8> = (0..all.len()).map(|i| r.buf.get((start as usize).wrapping_add(i))).collect();
+            prop_assert_eq!(got, all);
+            prop_assert_eq!(r.head.load(Relaxed), start.wrapping_add(msgs.iter().map(|m| m.len() as u32).sum::<u32>()));
+        }
+
+        /// A write longer than a quarter of the ring is cut to that
+        #[test]
+        fn ring_cuts_long_writes(n in 0usize..1000) {
+            let r = Ring::<256>::new();
+            r.put(&vec![7; n]);
+            prop_assert_eq!(r.head.load(Relaxed) as usize, n.min(64));
+        }
+
+        /// Any phase stored and read back is the same one
+        #[test]
+        fn phase_round_trips(i in 0usize..Phase::ALL.len()) {
+            let p = Phase::ALL[i];
+            prop_assert_eq!(Phase::of(p as u8), p);
+        }
+
         /// Any module and address (a damaged PE header in guest memory, a module at the top
         /// of the address space): no overflow panic (tests check overflow).
         #[test]

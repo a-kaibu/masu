@@ -28,7 +28,7 @@ pub fn call(f: Handler, args: &[u32]) -> u32 {
 pub fn guest_thread() {
     thread_local!(static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
     if !DONE.with(|d| d.replace(true)) {
-        crate::enter(0).expect("TEB and stack");
+        crate::enter(0, |_| 0).expect("TEB and stack");
     }
 }
 /// A behaviour snapshot: `out` against src/golden/<name>.txt, the first differing lines shown.

@@ -729,9 +729,8 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     let top = crate::snap::api_enter(addr, esp);
     let me = crate::cur();
     crate::obj::HANDOFF.entered(me.tid);
-    let outer = me.api;
     let tid = me.tid;
-    me.api = (esp, if crate::mem::x64() { 8 } else { (if cdecl { 0 } else { bytes }).saturating_add(4) });
+    let outer = crate::swap_api((esp, if crate::mem::x64() { 8 } else { (if cdecl { 0 } else { bytes }).saturating_add(4) }));
     let this = (this_arg && !crate::mem::x64()).then(|| cpu.regs[koji::ECX]);
     let mut c = Ctx { cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this };
     if yields == 0 || (yields == 2 && c.a(0) != 0) {
@@ -759,7 +758,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     if top {
         crate::snap::api_leave();
     }
-    crate::cur().api = outer;
+    crate::swap_api(outer);
     if let Some(o) = shirusu.filter(|_| !c.jumped) {
         let ret = match c.edx {
             Some(d) => u64::from(d) << 32 | u64::from(r),
