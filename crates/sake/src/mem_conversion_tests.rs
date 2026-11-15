@@ -42,3 +42,18 @@ proptest! {
     }
 }
 
+
+proptest! {
+    // (Ga's arithmetic is u32's wrapping arithmetic; end() the unwrapped sum)
+    #[test]
+    fn ga_is_wrapping_u32(a in any::<u32>(), o in any::<u32>(), i in any::<u32>(), size in 0u32..64) {
+        prop_assert_eq!((ga(a) + o).get(), a.wrapping_add(o));
+        prop_assert_eq!((ga(a) - o).get(), a.wrapping_sub(o));
+        prop_assert_eq!(ga(a).at(i, size).get(), a.wrapping_add(i.wrapping_mul(size)));
+        prop_assert_eq!(ga(a).since(ga(o)), a.wrapping_sub(o));
+        prop_assert_eq!(u128::from(ga(a).end(o)), u128::from(a) + u128::from(o));
+        let mut x = ga(a);
+        x += o;
+        prop_assert_eq!(u32::from(x), a.wrapping_add(o));
+    }
+}

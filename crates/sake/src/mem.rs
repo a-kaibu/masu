@@ -28,6 +28,108 @@ fn host<T>(a: u32) -> *mut T {
     std::ptr::with_exposed_provenance_mut(kome::num::us(a))
 }
 
+/// A guest address. Its arithmetic wraps at 4 GiB as the x86's does (an offset past the top
+/// comes round to the bottom: what the guest's own code computes); a length or a count is not
+/// one (its arithmetic is checked where it is done). Made from a u32 by `ga(a)`, given back
+/// by `.get()`; reads and writes guest memory as mem's functions do.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub struct Ga(u32);
+
+/// Guest address `a`
+#[inline(always)]
+pub const fn ga(a: u32) -> Ga {
+    Ga(a)
+}
+
+impl Ga {
+    #[inline(always)]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+    /// Element `i` of an array of `size`-byte elements here (wrapping, as the x86 computes it)
+    #[inline(always)]
+    pub const fn at(self, i: u32, size: u32) -> Ga {
+        Ga(self.0.wrapping_add(i.wrapping_mul(size)))
+    }
+    /// How far past `base` this is (wrapping)
+    #[inline(always)]
+    pub const fn since(self, base: Ga) -> u32 {
+        self.0.wrapping_sub(base.0)
+    }
+    /// The end of `n` bytes from here, unwrapped (a range check: past GUEST_TOP or 4 GiB shows)
+    #[inline(always)]
+    pub fn end(self, n: u32) -> u64 {
+        // (two u32s: the sum is below 2^33, never wraps)
+        u64::from(self.0).wrapping_add(u64::from(n))
+    }
+    #[inline(always)]
+    pub fn r8(self) -> u8 {
+        r8(self.0)
+    }
+    #[inline(always)]
+    pub fn r16(self) -> u16 {
+        r16(self.0)
+    }
+    #[inline(always)]
+    pub fn r32(self) -> u32 {
+        r32(self.0)
+    }
+    #[inline(always)]
+    pub fn r64(self) -> u64 {
+        r64(self.0)
+    }
+    #[inline(always)]
+    pub fn rp(self) -> u32 {
+        rp(self.0)
+    }
+    #[inline(always)]
+    pub fn w8(self, v: u8) {
+        w8(self.0, v)
+    }
+    #[inline(always)]
+    pub fn w16(self, v: u16) {
+        w16(self.0, v)
+    }
+    #[inline(always)]
+    pub fn w32(self, v: u32) {
+        w32(self.0, v)
+    }
+    #[inline(always)]
+    pub fn w64(self, v: u64) {
+        w64(self.0, v)
+    }
+    #[inline(always)]
+    pub fn wp(self, v: u32) {
+        wp(self.0, v)
+    }
+}
+impl std::ops::Add<u32> for Ga {
+    type Output = Ga;
+    #[inline(always)]
+    fn add(self, o: u32) -> Ga {
+        Ga(self.0.wrapping_add(o))
+    }
+}
+impl std::ops::Sub<u32> for Ga {
+    type Output = Ga;
+    #[inline(always)]
+    fn sub(self, o: u32) -> Ga {
+        Ga(self.0.wrapping_sub(o))
+    }
+}
+impl std::ops::AddAssign<u32> for Ga {
+    #[inline(always)]
+    fn add_assign(&mut self, o: u32) {
+        self.0 = self.0.wrapping_add(o);
+    }
+}
+impl From<Ga> for u32 {
+    #[inline(always)]
+    fn from(a: Ga) -> u32 {
+        a.0
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // 64-bit programs (PE32+): pointers, handles and SIZE_Ts are 8 bytes in their structures. Guest
 // addresses are still below 4G (and below HI): the upper halves are written as zero and ignored
@@ -64,7 +166,7 @@ pub fn rp(a: u32) -> u32 {
 pub fn wp(a: u32, v: u32) {
     w32(a, v);
     if x64() {
-        w32(a + 4, if v >= 0xffff_f000 { 0xffff_ffff } else { 0 });
+        (ga(a) + 4).w32(if v >= 0xffff_f000 { 0xffff_ffff } else { 0 });
     }
 }
 
@@ -147,7 +249,7 @@ pub fn w64(a: u32, v: u64) {
 /// pass some on purpose) would corrupt sake itself: it is dropped (Windows would fault).
 #[inline(always)]
 pub fn guest(a: u32, n: u32) -> bool {
-    if u64::from(a) + u64::from(n) <= u64::from(GUEST_TOP) {
+    if ga(a).end(n) <= u64::from(GUEST_TOP) {
         return true;
     }
     refused(a, n);
@@ -156,7 +258,7 @@ pub fn guest(a: u32, n: u32) -> bool {
 /// Whether `n` bytes at `a` are all guest memory (a check before reading a guest buffer whose
 /// length the guest gave)
 pub fn in_guest(a: u32, n: u32) -> bool {
-    u64::from(a) + u64::from(n) <= u64::from(GUEST_TOP)
+    ga(a).end(n) <= u64::from(GUEST_TOP)
 }
 #[cold]
 #[inline(never)]
@@ -236,7 +338,7 @@ pub fn guest_mut<'a>(a: u32, n: u32) -> Option<&'a mut [u8]> {
 /// Whether `a..a + n` is guest memory sake may write for the program (guest_mut's rule).
 #[inline]
 pub fn guest_range(a: u32, n: u32) -> bool {
-    n == 0 || (a >= NULL_TOP && u64::from(a) + u64::from(n) <= u64::from(GUEST_TOP))
+    n == 0 || (a >= NULL_TOP && ga(a).end(n) <= u64::from(GUEST_TOP))
 }
 /// The guest's first 64 KiB: never handed out (NULL pointers fault on Windows too).
 pub const NULL_TOP: u32 = 0x1_0000;
@@ -259,13 +361,14 @@ pub fn zero(a: u32, n: u32) {
     if !guest(a, n) {
         return;
     }
-    let end = u64::from(a) + u64::from(n);
+    let end = ga(a).end(n);
     let mut p = u64::from(a);
     while p < end {
-        let next = ((p | (u64::from(PAGE) - 1)) + 1).min(end);
+        // (p < end <= 2^32: the next page boundary is below 2^33)
+        let next = (p | u64::from(PAGE).saturating_sub(1)).saturating_add(1).min(end);
         // (inside guest memory: checked above)
         // SAFETY: p..next is inside a..a+n, which guest() above found guest memory (backed).
-        let s = unsafe { std::slice::from_raw_parts_mut(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(p)), kome::num::us(next - p)) };
+        let s = unsafe { std::slice::from_raw_parts_mut(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(p)), kome::num::us(next.saturating_sub(p))) };
         if !is_zero(s) {
             s.fill(0);
         }
@@ -310,12 +413,12 @@ pub fn cstr(a: u32) -> Vec<u8> {
     // (one scan of the guest memory up to GUEST_TOP: an unterminated string stops there
     // instead of wrapping past 4 GB, review b07)
     if a < GUEST_TOP {
-        let s = slice(a, GUEST_TOP - a);
+        let s = slice(a, GUEST_TOP.saturating_sub(a));
         return s.iter().take_while(|&&c| c != 0).copied().collect();
     }
     let mut n = 0;
-    while r8(a + n) != 0 {
-        n += 1;
+    while (ga(a) + n).r8() != 0 {
+        n = n.wrapping_add(1);
     }
     slice(a, n).to_vec()
 }
@@ -325,7 +428,7 @@ pub fn wstr(a: u32) -> Vec<u16> {
         return Vec::new();
     }
     if a < GUEST_TOP {
-        let s = slice(a, (GUEST_TOP - a) & !1);
+        let s = slice(a, GUEST_TOP.saturating_sub(a) & !1);
         let units = s.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c));
         let n = units.clone().position(|c| c == 0).unwrap_or(s.len() / 2);
         let mut v = Vec::with_capacity(n);
@@ -333,9 +436,9 @@ pub fn wstr(a: u32) -> Vec<u16> {
         return v;
     }
     let mut v = Vec::new();
-    let mut p = a;
+    let mut p = ga(a);
     loop {
-        let c = r16(p);
+        let c = p.r16();
         if c == 0 {
             break;
         }
@@ -348,7 +451,7 @@ pub fn wstr(a: u32) -> Vec<u16> {
 pub fn cstrn(a: u32, n: u32) -> Vec<u8> {
     let mut v = Vec::new();
     for i in 0..n {
-        let c = r8(a + i);
+        let c = (ga(a) + i).r8();
         if c == 0 {
             break;
         }
@@ -360,7 +463,7 @@ pub fn cstrn(a: u32, n: u32) -> Vec<u8> {
 pub fn wstrn(a: u32, n: u32) -> Vec<u16> {
     let mut v = Vec::new();
     for i in 0..n {
-        let c = r16(a + 2 * i);
+        let c = ga(a).at(i, 2).r16();
         if c == 0 {
             break;
         }
@@ -373,20 +476,20 @@ pub fn put_cstr(dst: u32, cap: u32, s: &[u8]) -> u32 {
     if cap == 0 || dst == 0 {
         return 0;
     }
-    let n = (kome::num::lo32(s.len())).min(cap - 1);
+    let n = (kome::num::lo32(s.len())).min(cap.saturating_sub(1));
     write(dst, s.get(..us(n)).unwrap_or(s));
-    w8(dst + n, 0);
+    (ga(dst) + n).w8(0);
     n
 }
 pub fn put_wstr(dst: u32, cap: u32, s: &[u16]) -> u32 {
     if cap == 0 || dst == 0 {
         return 0;
     }
-    let n = (kome::num::lo32(s.len())).min(cap - 1);
+    let n = (kome::num::lo32(s.len())).min(cap.saturating_sub(1));
     for (i, &u) in (0..n).zip(s) {
-        w16(dst + 2 * i, u);
+        ga(dst).at(i, 2).w16(u);
     }
-    w16(dst + 2 * n, 0);
+    ga(dst).at(n, 2).w16(0);
     n
 }
 
@@ -417,13 +520,14 @@ pub fn snap_ranges(v: &mut Vec<(u32, u32)>) {
     v.extend(sp.iter().map(|(&a, r)| (a, r.size)));
 }
 
+/// `v` rounded up to a multiple of `a` (a power of two), wrapping at 4 GiB as an address does
 fn align_up(v: u32, a: u32) -> u32 {
-    (v + a - 1) & !(a - 1)
+    v.wrapping_add(a.wrapping_sub(1)) & !a.wrapping_sub(1)
 }
 /// `size` (at least 1) rounded up to whole pages, None past the guest address space (a size
 /// near 4 GB wrapped to 0 and reserved an empty region the program took for ~4 GB, review b07)
 fn page_size(size: u32) -> Option<u32> {
-    let n = u64::from(size.max(1)).div_ceil(u64::from(PAGE)) * u64::from(PAGE);
+    let n = u64::from(size.max(1)).div_ceil(u64::from(PAGE)).saturating_mul(u64::from(PAGE));
     (n <= u64::from(HI)).then_some(kome::num::lo32(n))
 }
 
@@ -437,7 +541,7 @@ pub fn reserve(want: u32, size: u32, prot: u32, kind: u32, top: bool) -> Option<
         if b < LO || end > HI {
             return None;
         }
-        let clash = sp.range(..end).next_back().is_some_and(|(&a, r)| a + r.size > b);
+        let clash = sp.range(..end).next_back().is_some_and(|(&a, r)| ga(a).end(r.size) > u64::from(b));
         if clash {
             return None;
         }
@@ -445,8 +549,9 @@ pub fn reserve(want: u32, size: u32, prot: u32, kind: u32, top: bool) -> Option<
     } else {
         let holes = holes(&sp, size);
         if top {
-            let &(_, hi) = holes.iter().rev().find(|(lo, hi)| (hi - size) & !(GRAN - 1) >= *lo)?;
-            (hi - size) & !(GRAN - 1)
+            // (each hole holds `size`: hi - size does not go below lo)
+            let &(_, hi) = holes.iter().rev().find(|(lo, hi)| hi.saturating_sub(size) & !(GRAN - 1) >= *lo)?;
+            hi.saturating_sub(size) & !(GRAN - 1)
         } else {
             holes.first()?.0
         }
@@ -463,7 +568,7 @@ fn holes(sp: &BTreeMap<u32, Region>, size: u32) -> Vec<(u32, u32)> {
         if a >= at.saturating_add(size) {
             holes.push((at, a));
         }
-        at = at.max(align_up(a + r.size, GRAN));
+        at = at.max(align_up((ga(a) + r.size).get(), GRAN));
     }
     if HI >= at.saturating_add(size) {
         holes.push((at, HI));
@@ -505,15 +610,15 @@ pub fn reserve_aligned(size: u32, align: u32, prot: u32, kind: u32) -> Option<u3
 /// The lowest `align`-aligned address with `size` bytes free in one of `holes` ([lo, hi))
 fn aligned_fit(holes: &[(u32, u32)], size: u32, align: u32) -> Option<u32> {
     holes.iter().find_map(|&(lo, hi)| {
-        let b = (u64::from(lo) + u64::from(align) - 1) & !(u64::from(align) - 1);
-        (b + u64::from(size) <= u64::from(hi)).then_some(kome::num::lo32(b))
+        let b = ga(lo).end(align).saturating_sub(1) & !u64::from(align).saturating_sub(1);
+        (b.saturating_add(u64::from(size)) <= u64::from(hi)).then_some(kome::num::lo32(b))
     })
 }
 
 /// Whether [a, a+n) lies inside one allocation (VirtualAlloc's MEM_COMMIT of a range that runs
 /// past its reservation's end fails on Windows, ERROR_INVALID_ADDRESS)
 pub fn in_one_allocation(a: u32, n: u32) -> bool {
-    find(a).is_some_and(|(b, r)| u64::from(a) + u64::from(n.max(1)) <= u64::from(b) + u64::from(r.size))
+    find(a).is_some_and(|(b, r)| ga(a).end(n.max(1)) <= ga(b).end(r.size))
 }
 
 /// The size a program reserves to find an aligned block inside (twice the block less a page,
@@ -554,10 +659,14 @@ fn jit_prot(a: u32, n: u32, prot: u32) {
 /// NtProtectVirtualMemory, VirtualFree's size): `off + n + PAGE - 1` in u32 wrapped for n near
 /// 0xFFFFFFFF, `last` came out before `first` and `p[first..last]` panicked, the VM gone, or
 /// `(last - first) * PAGE` underflowed into the JIT's page tables (review A-13).
+/// The bytes of pages first..last (last >= first, both within an allocation below 4 GiB)
+fn span(first: u32, last: u32) -> u32 {
+    last.saturating_sub(first).saturating_mul(PAGE)
+}
 pub(crate) fn page_span(off: u32, n: u32, size: u32) -> (u32, u32) {
     let pages = size / PAGE;
     let first = (off / PAGE).min(pages);
-    let last = kome::num::lo32((u64::from(off) + u64::from(n)).div_ceil(u64::from(PAGE)).min(u64::from(pages)));
+    let last = kome::num::lo32((ga(off).end(n)).div_ceil(u64::from(PAGE)).min(u64::from(pages)));
     (first, last.max(first))
 }
 
@@ -572,7 +681,7 @@ pub fn commit(base: u32, prot: u32) {
 /// Commits the pages of [a, a+n) (inside one allocation); false if they are not reserved.
 pub fn commit_range(a: u32, n: u32, prot: u32) -> bool {
     let Some((b, r)) = find(a) else { return false };
-    let (first, last) = page_span(a - b, n.max(1), r.size);
+    let (first, last) = page_span(ga(a).since(ga(b)), n.max(1), r.size);
     if let Some(p) = PAGES.locked().get_mut(&b) {
         for x in p.iter_mut().take(us(last)).skip(us(first)) {
             *x = COMMITTED | prot;
@@ -582,29 +691,30 @@ pub fn commit_range(a: u32, n: u32, prot: u32) -> bool {
         r.state = 0x1000;
         r.prot = prot;
     }
-    jit_prot(b + first * PAGE, (last - first) * PAGE, prot);
+    jit_prot(ga(b).at(first, PAGE).get(), span(first, last), prot);
     true
 }
 
 /// Decommits (and zeroes) the pages of [a, a+n); n = 0: to the end of the allocation.
 pub fn decommit_range(a: u32, n: u32) -> bool {
     let Some((b, r)) = find(a) else { return false };
-    let (first, last) = if n == 0 { ((a - b) / PAGE, r.size / PAGE) } else { page_span(a - b, n, r.size) };
+    let (first, last) = if n == 0 { (ga(a).since(ga(b)) / PAGE, r.size / PAGE) } else { page_span(ga(a).since(ga(b)), n, r.size) };
     let mut g = PAGES.locked();
     if let Some(p) = g.get_mut(&b) {
         for (i, x) in (first..last).zip(p.iter_mut().skip(us(first))) {
             if *x != 0 {
-                if !is_zero(slice(b + i * PAGE, PAGE)) {
-                    fill(b + i * PAGE, PAGE, 0);
+                let at = ga(b).at(i, PAGE).get();
+                if !is_zero(slice(at, PAGE)) {
+                    fill(at, PAGE, 0);
                 }
                 *x = 0;
             }
         }
     }
     drop(g);
-    jit_prot(b + first * PAGE, (last - first) * PAGE, 0);
+    jit_prot(ga(b).at(first, PAGE).get(), span(first, last), 0);
     // an access to a decommitted page faults
-    kura::jit::fault_pages(b + first * PAGE, (last - first) * PAGE, kura::jit::READ_FAULTS | kura::jit::WRITE_FAULTS, false);
+    kura::jit::fault_pages(ga(b).at(first, PAGE).get(), span(first, last), kura::jit::READ_FAULTS | kura::jit::WRITE_FAULTS, false);
     true
 }
 
@@ -613,11 +723,11 @@ pub fn query(a: u32) -> Option<(u32, Region, u32, u32, u32, u32)> {
     let (b, r) = find(a)?;
     let g = PAGES.locked();
     let p = g.get(&b)?;
-    let i = kome::num::us((a - b) / PAGE);
+    let i = kome::num::us(ga(a).since(ga(b)) / PAGE);
     let &v = p.get(i)?;
-    let j = i + p.iter().skip(i).take_while(|&&x| x == v).count();
+    let run = kome::num::u32_of(p.iter().skip(i).take_while(|&&x| x == v).count());
     let state = if v & COMMITTED != 0 { 0x1000 } else { 0x2000 };
-    Some((b, r, b + kome::num::u32_of(i) * PAGE, kome::num::lo32(j - i) * PAGE, state, if v & COMMITTED != 0 { v & !COMMITTED } else { 0 }))
+    Some((b, r, ga(b).at(kome::num::u32_of(i), PAGE).get(), run.saturating_mul(PAGE), state, if v & COMMITTED != 0 { v & !COMMITTED } else { 0 }))
 }
 
 /// How many of the `n` bytes from `a` on can be read (`write` false) or written: committed pages
@@ -625,7 +735,7 @@ pub fn query(a: u32) -> Option<(u32, Region, u32, u32, u32, u32)> {
 /// as for WriteProcessMemory (it makes them writable for the copy; read-only data it refuses).
 pub fn accessible(a: u32, n: u32, write: bool, code_too: bool) -> u32 {
     let mut at = u64::from(a);
-    let end = u64::from(a) + u64::from(n);
+    let end = ga(a).end(n);
     while at < end {
         if at < u64::from(LO) {
             break;
@@ -637,9 +747,9 @@ pub fn accessible(a: u32, n: u32, write: bool, code_too: bool) -> u32 {
         if !ok {
             break;
         }
-        at = u64::from(run) + u64::from(size);
+        at = ga(run).end(size);
     }
-    kome::num::lo32(at.min(end) - u64::from(a))
+    kome::num::lo32(at.min(end).saturating_sub(u64::from(a)))
 }
 
 /// Protection of the page at `a` (VirtualProtect), changing it to `prot` for [a, a+n).
@@ -647,7 +757,7 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
     let (b, r) = find(a)?;
     let mut g = PAGES.locked();
     let p = g.get_mut(&b)?;
-    let (first, last) = page_span(a - b, n.max(1), r.size);
+    let (first, last) = page_span(ga(a).since(ga(b)), n.max(1), r.size);
     let old = p.get(us(first))? & !COMMITTED;
     for x in p.iter_mut().take(us(last)).skip(us(first)) {
         if *x & COMMITTED != 0 {
@@ -655,11 +765,11 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
         }
     }
     drop(g);
-    jit_prot(b + first * PAGE, (last - first) * PAGE, prot);
+    jit_prot(ga(b).at(first, PAGE).get(), span(first, last), prot);
     // writable code may be rewritten: the JIT drops what it translated there (QLIE patches its
     // code with VirtualProtect)
     if prot & 0xcc != 0 {
-        kura::jit::code_changed(us(a), kome::num::us(b + last * PAGE - a));
+        kura::jit::code_changed(us(a), kome::num::us(ga(b).at(last, PAGE).since(ga(a))));
     }
     Some(if old == 0 { r.prot } else { old })
 }
@@ -668,7 +778,7 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
 /// longer (STATUS_GUARD_PAGE_VIOLATION, once; the next access goes through).
 pub fn guard_hit(a: u32) -> bool {
     let Some((b, _)) = find(a) else { return false };
-    let i = kome::num::us((a - b) / PAGE);
+    let i = kome::num::us(ga(a).since(ga(b)) / PAGE);
     let mut g = PAGES.locked();
     let Some(x) = g.get_mut(&b).and_then(|p| p.get_mut(i)) else { return false };
     if *x & COMMITTED == 0 || *x & 0x100 == 0 {
@@ -677,7 +787,7 @@ pub fn guard_hit(a: u32) -> bool {
     *x &= !0x100;
     let prot = *x & !COMMITTED;
     drop(g);
-    jit_prot(b + kome::num::u32_of(i) * PAGE, PAGE, prot);
+    jit_prot(ga(b).at(kome::num::u32_of(i), PAGE).get(), PAGE, prot);
     true
 }
 
@@ -685,16 +795,16 @@ pub fn guard_hit(a: u32) -> bool {
 /// below becomes the guard page (unless it is the stack's last one) and StackLimit the hit
 /// page's base.
 pub fn stack_grow(teb: u32, a: u32) -> bool {
-    let (dealloc, base) = (r32(teb + 0xe0c), r32(teb + 4));
+    let (dealloc, base) = ((ga(teb) + 0xe0c).r32(), (ga(teb) + 4).r32());
     if dealloc == 0 || !(dealloc..base).contains(&a) {
         return false;
     }
     let page = a & !(PAGE - 1);
-    if page >= dealloc + PAGE {
-        commit_range(page - PAGE, PAGE, 0x04 | 0x100);
+    if u64::from(page) >= ga(dealloc).end(PAGE) {
+        commit_range((ga(page) - PAGE).get(), PAGE, 0x04 | 0x100);
     }
-    if page < r32(teb + 8) {
-        w32(teb + 8, page);
+    if page < (ga(teb) + 8).r32() {
+        (ga(teb) + 8).w32(page);
     }
     true
 }
@@ -702,15 +812,15 @@ pub fn stack_grow(teb: u32, a: u32) -> bool {
 /// Whether `a` is in the lowest page of the thread stack of `teb` (between DeallocationStack
 /// and a page above it), which new_teb leaves inaccessible.
 pub fn stack_floor(teb: u32, a: u32) -> bool {
-    let dealloc = if x64() { r64(teb + 0x1478) } else { u64::from(r32(teb + 0xe0c)) };
-    dealloc != 0 && (dealloc..dealloc + u64::from(PAGE)).contains(&(u64::from(a)))
+    let dealloc = if x64() { (ga(teb) + 0x1478).r64() } else { u64::from((ga(teb) + 0xe0c).r32()) };
+    dealloc != 0 && (dealloc..dealloc.saturating_add(u64::from(PAGE))).contains(&(u64::from(a)))
 }
 
 /// The allocation holding `a`.
 pub fn find(a: u32) -> Option<(u32, Region)> {
     let sp = SPACE.locked();
     let (&b, r) = sp.range(..=a).next_back()?;
-    (a < b + r.size).then_some((b, *r))
+    (u64::from(a) < ga(b).end(r.size)).then_some((b, *r))
 }
 
 pub fn release(base: u32) -> bool {
@@ -737,9 +847,9 @@ pub fn dump() -> String {
     for (&b, r) in sp.iter() {
         // (pages committed, and the end of the last one, in KB from the start)
         let (n, top) = pages.get(&b).map_or((0, 0), |p| {
-            (p.iter().filter(|&&x| x & COMMITTED != 0).count(), p.iter().rposition(|&x| x & COMMITTED != 0).map_or(0, |i| i + 1))
+            (p.iter().filter(|&&x| x & COMMITTED != 0).count(), p.iter().rposition(|&x| x & COMMITTED != 0).map_or(0, |i| i.saturating_add(1)))
         });
-        out += &format!("  {b:08x}-{:08x} {:6} KB kind {:x} state {:x}, committed {} KB up to +{} KB\n", b + r.size, r.size >> 10, r.kind, r.state, n * 4, top * 4);
+        out += &format!("  {b:08x}-{:08x} {:6} KB kind {:x} state {:x}, committed {} KB up to +{} KB\n", ga(b).end(r.size), r.size >> 10, r.kind, r.state, n.saturating_mul(4), top.saturating_mul(4));
     }
     out
 }
@@ -747,9 +857,10 @@ pub fn dump() -> String {
 /// The free range at `a` (for VirtualQuery): (start, size).
 pub fn free_at(a: u32) -> (u32, u32) {
     let sp = SPACE.locked();
-    let lo = sp.range(..=a).next_back().map_or(0, |(&b, r)| b + r.size);
+    let lo = sp.range(..=a).next_back().map_or(0, |(&b, r)| (ga(b) + r.size).get());
     let hi = sp.range(a..).next().map_or(GUEST_TOP, |(&b, _)| b);
-    (lo & !(PAGE - 1), hi - (lo & !(PAGE - 1)))
+    let lo = lo & !(PAGE - 1);
+    (lo, hi.saturating_sub(lo))
 }
 
 /// Committed read-write memory anywhere.
@@ -817,7 +928,7 @@ pub fn slab_table() -> u32 {
 }
 
 fn slab_class(size: u32) -> u32 {
-    ((size + 15) / 16).max(1)
+    size.div_ceil(16).max(1)
 }
 
 /// A small block's class for good (at p-12, tagged): its size word changes with in-place
@@ -828,8 +939,8 @@ pub const SLAB_CAP: u32 = 0x5ca9_0000;
 /// The class of small block `p`: its tagged word, or (a block from before the word, a state
 /// saved earlier) its size's.
 fn slab_cap(p: u32) -> u32 {
-    let k = r32(p - 12).wrapping_sub(SLAB_CAP);
-    if (1..=SLAB_MAX / 16).contains(&k) { k } else { slab_class(r32(p - 8)) }
+    let k = (ga(p) - 12).r32().wrapping_sub(SLAB_CAP);
+    if (1..=SLAB_MAX / 16).contains(&k) { k } else { slab_class((ga(p) - 8).r32()) }
 }
 
 /// (tests: blocks made for the class lists)
@@ -860,7 +971,7 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
     if size > SLAB_MAX {
         let p = heap_alloc(size, zero);
         if p != 0 && heap != 0 {
-            w32(p - 16, heap);
+            (ga(p) - 16).w32(heap);
             BIG.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).entry(heap).or_default().insert(p);
         }
         return p;
@@ -872,33 +983,33 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
     while lock.swap(1, Ordering::Acquire) != 0 {
         std::hint::spin_loop();
     }
-    let head = r32(t + 4 * k);
+    let head = ga(t).at(k, 4).r32();
     let mut made = Vec::new();
     let p = if head != 0 {
-        w32(t + 4 * k, r32(head));
+        ga(t).at(k, 4).w32(r32(head));
         // (its heap goes with it while the lists are held: heap_destroy walks under the lock)
-        w32(head - 16, heap);
+        (ga(head) - 16).w32(heap);
         head
     } else {
         // a new block for the caller and a few for the list
-        let n = (8192 / (k * 16)).clamp(2, 256);
+        let n = 8192u32.checked_div(k.saturating_mul(16)).unwrap_or(0).clamp(2, 256);
         let mut first = 0;
         for i in 0..n {
-            let b = heap_alloc(k * 16, false);
+            let b = heap_alloc(k.saturating_mul(16), false);
             if b == 0 {
                 break;
             }
-            w32(b - 12, SLAB_CAP | k);
-            w32(b - 16, heap);
+            (ga(b) - 12).w32(SLAB_CAP | k);
+            (ga(b) - 16).w32(heap);
             made.push(b);
             #[cfg(test)]
             SLAB_MADE.fetch_add(1, Ordering::Relaxed);
             if i == 0 {
                 first = b;
             } else {
-                w32(b - 4, SLAB_FREE);
-                w32(b, r32(t + 4 * k));
-                w32(t + 4 * k, b);
+                (ga(b) - 4).w32(SLAB_FREE);
+                w32(b, ga(t).at(k, 4).r32());
+                ga(t).at(k, 4).w32(b);
             }
         }
         first
@@ -911,8 +1022,8 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
     if p == 0 {
         return 0;
     }
-    w32(p - 8, size);
-    w32(p - 4, SLAB);
+    (ga(p) - 8).w32(size);
+    (ga(p) - 4).w32(SLAB);
     if zero {
         fill(p, size, 0);
     }
@@ -921,7 +1032,7 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
 
 /// heap_free for HeapFree/free: small blocks back to their class list.
 pub fn heap_free_small(p: u32) -> bool {
-    if p < LO + HDR || r32(p - 4) != SLAB {
+    if p < LO + HDR || (ga(p) - 4).r32() != SLAB {
         return heap_free(p);
     }
     use std::sync::atomic::Ordering;
@@ -931,9 +1042,9 @@ pub fn heap_free_small(p: u32) -> bool {
     while lock.swap(1, Ordering::Acquire) != 0 {
         std::hint::spin_loop();
     }
-    w32(p - 4, SLAB_FREE);
-    w32(p, r32(t + 4 * k));
-    w32(t + 4 * k, p);
+    (ga(p) - 4).w32(SLAB_FREE);
+    w32(p, ga(t).at(k, 4).r32());
+    ga(t).at(k, 4).w32(p);
     lock.store(0, Ordering::Release);
     true
 }
@@ -945,22 +1056,22 @@ pub fn heap_retag(p: u32, heap: u32) {
     if !heap_owns(p) {
         return;
     }
-    if r32(p - 4) == SLAB {
+    if (ga(p) - 4).r32() == SLAB {
         let lock = slab_lock(slab_table());
         while lock.swap(1, Ordering::Acquire) != 0 {
             std::hint::spin_loop();
         }
-        w32(p - 16, heap);
+        (ga(p) - 16).w32(heap);
         lock.store(0, Ordering::Release);
         return;
     }
     let mut m = BIG.lock().unwrap_or_else(|e| e.into_inner());
     let m = m.get_or_insert_with(Default::default);
-    let old = r32(p - 16);
+    let old = (ga(p) - 16).r32();
     if old != 0 {
         m.get_mut(&old).map(|s| s.remove(&p));
     }
-    w32(p - 16, heap);
+    (ga(p) - 16).w32(heap);
     if heap != 0 {
         m.entry(heap).or_default().insert(p);
     }
@@ -974,7 +1085,7 @@ pub fn heap_destroy(heap: u32) -> usize {
     if heap == 0 {
         return 0;
     }
-    let mut n = 0;
+    let mut n: usize = 0;
     let t = slab_table();
     let lock = slab_lock(t);
     let slabs = SLABS.lock().unwrap_or_else(|e| e.into_inner());
@@ -982,12 +1093,12 @@ pub fn heap_destroy(heap: u32) -> usize {
         std::hint::spin_loop();
     }
     for &b in slabs.iter() {
-        if r32(b - 4) == SLAB && r32(b - 16) == heap {
+        if (ga(b) - 4).r32() == SLAB && (ga(b) - 16).r32() == heap {
             let k = slab_cap(b);
-            w32(b - 4, SLAB_FREE);
-            w32(b, r32(t + 4 * k));
-            w32(t + 4 * k, b);
-            n += 1;
+            (ga(b) - 4).w32(SLAB_FREE);
+            w32(b, ga(t).at(k, 4).r32());
+            ga(t).at(k, 4).w32(b);
+            n = n.saturating_add(1);
         }
     }
     lock.store(0, Ordering::Release);
@@ -997,8 +1108,8 @@ pub fn heap_destroy(heap: u32) -> usize {
     let mut big: Vec<u32> = big.into_iter().collect();
     big.sort_unstable();
     for p in big {
-        if r32(p - 4) == MAGIC && r32(p - 16) == heap && heap_free(p) {
-            n += 1;
+        if (ga(p) - 4).r32() == MAGIC && (ga(p) - 16).r32() == heap && heap_free(p) {
+            n = n.saturating_add(1);
         }
     }
     n
@@ -1012,44 +1123,45 @@ pub fn heap_alloc(size: u32, zero: bool) -> u32 {
     if p == 0 {
         return 0;
     }
-    w32(p + HDR - 16, 0);
-    w32(p + HDR - 8, size);
-    w32(p + HDR - 4, MAGIC);
+    let p = ga(p) + HDR;
+    (p - 16).w32(0);
+    (p - 8).w32(size);
+    (p - 4).w32(MAGIC);
     if zero {
-        crate::mem::zero(p + HDR, size);
+        crate::mem::zero(p.get(), size);
     }
-    p + HDR
+    p.get()
 }
 
 pub fn heap_size(p: u32) -> u32 {
     if p == 0 || !heap_owns(p) {
         return u32::MAX;
     }
-    r32(p - 8)
+    (ga(p) - 8).r32()
 }
 
 /// Whether `p` came from heap_alloc (games free pointers of other heaps through ours rarely,
 /// but GlobalFree of a handle and the like do happen).
 pub fn heap_owns(p: u32) -> bool {
-    p >= LO + HDR && matches!(r32(p - 4), MAGIC | SLAB)
+    p >= LO + HDR && matches!((ga(p) - 4).r32(), MAGIC | SLAB)
 }
 
 pub fn heap_free(p: u32) -> bool {
     if !heap_owns(p) {
         return false;
     }
-    let size = r32(p - 8);
-    if r32(p - 4) == MAGIC && r32(p - 16) != 0 {
-        let h = r32(p - 16);
+    let size = (ga(p) - 8).r32();
+    if (ga(p) - 4).r32() == MAGIC && (ga(p) - 16).r32() != 0 {
+        let h = (ga(p) - 16).r32();
         if let Some(m) = BIG.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             m.get_mut(&h).map(|s| s.remove(&p));
         }
     }
-    w32(p - 4, 0);
+    (ga(p) - 4).w32(0);
     // (c_free: the header's size may be below the chunk's after an in-place shrink)
     let _ = size;
     // SAFETY: p - HDR is what malloc returned in heap_alloc (heap_owns(p) above: a live block).
-    unsafe { HEAP.locked().c_free(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(p - HDR))) };
+    unsafe { HEAP.locked().c_free(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us((ga(p) - HDR).get()))) };
     true
 }
 
@@ -1060,7 +1172,7 @@ pub fn heap_fits(p: u32, size: u32) -> bool {
         return false;
     }
     let old = heap_size(p);
-    if r32(p - 4) == SLAB { size <= SLAB_MAX && slab_class(size) <= slab_cap(p) } else { size <= old }
+    if (ga(p) - 4).r32() == SLAB { size <= SLAB_MAX && slab_class(size) <= slab_cap(p) } else { size <= old }
 }
 
 pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
@@ -1075,9 +1187,9 @@ pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
     let old = heap_size(p);
     if heap_fits(p, size) {
         if zero && size > old {
-            crate::mem::zero(p + old, size - old);
+            crate::mem::zero((ga(p) + old).get(), size.saturating_sub(old));
         }
-        w32(p - 8, size);
+        (ga(p) - 8).w32(size);
         return p;
     }
     let n = heap_alloc_small(size, false);
@@ -1086,7 +1198,7 @@ pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
     }
     copy(n, p, old.min(size));
     if zero && size > old {
-        crate::mem::zero(n + old, size - old);
+        crate::mem::zero((ga(n) + old).get(), size.saturating_sub(old));
     }
     heap_free_small(p);
     n
@@ -1110,10 +1222,12 @@ pub(crate) fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
         return a.fetch_update(SeqCst, SeqCst, |v| Some(f(v))).unwrap_or_else(|v| v);
     }
     let word = p & !7;
-    if p - word <= 4 {
+    // (word is p with its low 3 bits cleared: p - word is 0..=7)
+    let into = p.wrapping_sub(word);
+    if into <= 4 {
         // SAFETY: the 8-aligned word holding all 4 bytes, the same memory, atomic as above
         let w = unsafe { &*std::ptr::with_exposed_provenance::<AtomicU64>(word) };
-        let sh = kome::num::lo32(p - word) * 8;
+        let sh = kome::num::lo32(into).wrapping_mul(8);
         let m = 0xffff_ffffu64 << sh;
         let mut old = 0;
         // (the closure always answers Some: fetch_update cannot fail)
@@ -1327,7 +1441,7 @@ mod tests {
     /// (pages that were zero, pages with one byte set anywhere, ranges cut at any byte); and it
     /// leaves pages that were zero unwritten, so that they never become RAM (the RSS tests).
     mod zeroing {
-        use super::super::{is_zero, release, reserve, commit, decommit_range, heap_alloc, heap_free, slice, guest_mut, w8, zero, PAGE};
+        use super::super::{is_zero, release, reserve, commit, decommit_range, heap_alloc, heap_free, slice, guest_mut, ga, zero, PAGE};
         use proptest::prelude::*;
 
         #[test]
@@ -1351,7 +1465,7 @@ mod tests {
                 let b = reserve(0, 10 * PAGE, 4, 0x20000, false).unwrap();
                 commit(b, 4);
                 for &(at, v) in &dirty {
-                    w8(b + at, v);
+                    (ga(b) + at).w8(v);
                 }
                 let before = slice(b, 10 * PAGE).to_vec();
                 zero(b + start, len);
@@ -1483,7 +1597,7 @@ mod heap_destroy_tests {
     use proptest::prelude::*;
 
     fn live(p: u32) -> bool {
-        matches!(r32(p - 4), MAGIC | SLAB)
+        matches!((ga(p) - 4).r32(), MAGIC | SLAB)
     }
 
     #[test]

@@ -1,3 +1,6 @@
 # (tools/ci/lint-ratchet.py: tests may unwrap; the code they test may not)
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
+# (sake::mem::Ga, named as clippy prints it inside sake: a guest address, whose + and - wrap at
+# 4 GiB as the x86's do, by design)
+arithmetic-side-effects-allowed = ["mem::Ga"]
