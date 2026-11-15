@@ -26,7 +26,7 @@ fn guest(text: &str) -> *const *const c_char {
 }
 
 fn program() -> u32 {
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     let ctx = vngl_context_create(0);
     vngl_make_current(ctx, 0, 0, 0);
     let (vs, fs) = (glCreateShader(GL_VERTEX_SHADER), glCreateShader(0x8B30));
@@ -41,7 +41,7 @@ fn program() -> u32 {
     glAttachShader(p, fs);
     glLinkProgram(p);
     glUseProgram(p);
-    assert!(GL.lock().unwrap().as_ref().unwrap().programs[&p].linked.is_some(), "links");
+    assert!(GL.lock().unwrap().programs[&p].linked.is_some(), "links");
     p
 }
 
@@ -85,7 +85,7 @@ proptest! {
             }
         }
         let g = GL.lock().unwrap();
-        let x = &g.as_ref().unwrap().programs[&p];
+        let x = &g.programs[&p];
         for (u, &(name, n, per)) in UNIFORMS.iter().enumerate() {
             let got = x.values.get(name).cloned().unwrap_or_default();
             prop_assert!(got.len() <= n as usize * per, "{} keeps {} words", name, got.len());
@@ -109,7 +109,7 @@ fn far_elements_and_big_counts_allocate_nothing() {
     let one = [1.0f32, 2.0, 3.0, 4.0];
     unsafe { glUniform4fv(location(p, "a[2]"), 1_000_000_000, one.as_ptr()) };
     let g = GL.lock().unwrap();
-    let v = &g.as_ref().unwrap().programs[&p].values["a"];
+    let v = &g.programs[&p].values["a"];
     assert_eq!(v.len(), 12);
     assert_eq!(&v[8..], &one.map(f32::to_bits));
 }
@@ -128,7 +128,7 @@ fn attribute_indices_past_the_limit_are_refused() {
     assert_eq!(glGetError(), 0);
     glLinkProgram(p);
     let g = GL.lock().unwrap();
-    let l = g.as_ref().unwrap().programs[&p].linked.as_ref().expect("links");
+    let l = g.programs[&p].linked.as_ref().expect("links");
     assert_eq!(l.attribs.iter().find(|a| a.0 == "extra").map(|a| a.1), Some(15));
     assert!(l.attribs.iter().all(|a| a.1 < MAX_ATTRIBS), "{:?}", l.attribs);
 }
@@ -141,7 +141,7 @@ fn attribute_indices_past_the_limit_are_refused() {
 fn relinked_and_deleted_programs_leave_nothing_on_the_page() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     crate::d3d9::trace_tests::attach_page();
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     let ctx = vngl_context_create(0);
     vngl_make_current(ctx, 0x1234, 32, 32);
     let settle = || {

@@ -192,7 +192,7 @@ fn err() -> u32 {
 fn upload_errors() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
-        *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
         let ctx = vngl_context_create(0);
         vngl_make_current(ctx, 0, 0, 0);
         let px = [0u8; 256];
@@ -245,7 +245,7 @@ fn upload_errors() {
         }
         glDeleteTextures(1, &t);
         vngl_context_destroy(ctx);
-        *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     }
 }
 

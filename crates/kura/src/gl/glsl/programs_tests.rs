@@ -29,7 +29,7 @@ fn iv(f: unsafe extern "C" fn(u32, u32, *mut i32), n: u32, p: u32) -> i64 {
 
 fn run(seed: u64) {
     let mut r = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 7);
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     let ctx = vngl_context_create(0);
     vngl_make_current(ctx, 0, 0, 0);
     // (sources and the array of their addresses in guest memory: 32-bit addresses)
@@ -310,7 +310,7 @@ fn bad_names_set_an_error_and_return() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
         let ctx = vngl_context_create(0);
         vngl_make_current(ctx, 0, 0, 0);
         let mut got = Vec::new();

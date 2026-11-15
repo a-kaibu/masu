@@ -97,7 +97,7 @@ pub(crate) fn proc_of(n: &str) -> Option<*const c_void> {
     )
 }
 
-fn gl() -> std::sync::MutexGuard<'static, Option<Gl>> {
+fn gl() -> std::sync::MutexGuard<'static, Gl> {
     lock()
 }
 
@@ -159,7 +159,7 @@ fn forget_linked(g: &mut Gl, l: &Linked) {
 
 extern "C" fn glCreateShader(ty: u32) -> u32 {
     let mut g = gl();
-    let g = g.as_mut().unwrap();
+    let g = &mut *g;
     let id = g.next_free();
     g.shaders.insert(id, Shader { pixel: ty != GL_VERTEX_SHADER, source: String::new(), ok: false, log: String::new(), deleted: false });
     id
@@ -169,7 +169,7 @@ extern "C" fn glCreateShaderObject(ty: u32) -> u32 {
 }
 unsafe extern "C" fn glShaderSource(sh: u32, count: i32, strings: *const *const c_char, lengths: *const i32) {
     // (a statement of its own: the lock must be let go before `fail` takes it)
-    let e = kind_err(gl().as_ref().unwrap(), sh, true).or((count < 0).then_some(GL_INVALID_VALUE));
+    let e = kind_err(&gl(), sh, true).or((count < 0).then_some(GL_INVALID_VALUE));
     if let Some(e) = e {
         return fail(e);
     }
@@ -184,21 +184,21 @@ unsafe extern "C" fn glShaderSource(sh: u32, count: i32, strings: *const *const 
         let len = if lengths.is_null() || *lengths.add(k) < 0 { CStr::from_ptr(p).to_bytes().len() } else { *lengths.add(k) as usize };
         s.push_str(&String::from_utf8_lossy(std::slice::from_raw_parts(p.cast::<u8>(), len)));
     }
-    if let Some(x) = gl().as_mut().unwrap().shaders.get_mut(&sh) {
+    if let Some(x) = gl().shaders.get_mut(&sh) {
         x.source = s;
     }
 }
 unsafe extern "C" fn glGetShaderSource(sh: u32, max: i32, len: *mut i32, out: *mut c_char) {
-    let s = gl().as_ref().unwrap().shaders.get(&sh).map(|x| x.source.clone()).unwrap_or_default();
+    let s = gl().shaders.get(&sh).map(|x| x.source.clone()).unwrap_or_default();
     copy_str(&s, max, len, out)
 }
 extern "C" fn glCompileShader(sh: u32) {
     let mut g = gl();
-    if let Some(e) = kind_err(g.as_ref().unwrap(), sh, true) {
+    if let Some(e) = kind_err(&*g, sh, true) {
         drop(g);
         return fail(e);
     }
-    let Some(x) = g.as_mut().unwrap().shaders.get_mut(&sh) else { return };
+    let Some(x) = g.shaders.get_mut(&sh) else { return };
     match glwgsl::check(&x.source, x.pixel) {
         Ok(()) => {
             x.ok = true;
@@ -213,11 +213,11 @@ extern "C" fn glCompileShader(sh: u32) {
 }
 unsafe extern "C" fn glGetShaderiv(sh: u32, p: u32, out: *mut i32) {
     let g = gl();
-    if let Some(e) = kind_err(g.as_ref().unwrap(), sh, true) {
+    if let Some(e) = kind_err(&*g, sh, true) {
         drop(g);
         return fail(e);
     }
-    let x = &g.as_ref().unwrap().shaders[&sh];
+    let x = &g.shaders[&sh];
     *out = match p {
         0x8B4F => if x.pixel { 0x8B30 } else { 0x8B31 },
         // (GL_OBJECT_TYPE_ARB: GL_SHADER_OBJECT_ARB)
@@ -243,7 +243,7 @@ unsafe fn copy_str(s: &str, max: i32, len: *mut i32, out: *mut c_char) {
     }
 }
 unsafe extern "C" fn glGetShaderInfoLog(sh: u32, max: i32, len: *mut i32, out: *mut c_char) {
-    let s = gl().as_ref().unwrap().shaders.get(&sh).map(|x| x.log.clone()).unwrap_or_default();
+    let s = gl().shaders.get(&sh).map(|x| x.log.clone()).unwrap_or_default();
     copy_str(&s, max, len, out)
 }
 /// (a shader attached to a program is only flagged: it goes when no program has it)
@@ -252,20 +252,22 @@ extern "C" fn glDeleteShader(sh: u32) {
         return;
     }
     let mut g = gl();
-    let g2 = g.as_mut().unwrap();
+    let g2 = &mut *g;
     if let Some(e) = kind_err(g2, sh, true) {
         drop(g);
         return fail(e);
     }
-    g2.shaders.get_mut(&sh).unwrap().deleted = true;
+    if let Some(x) = g2.shaders.get_mut(&sh) {
+        x.deleted = true;
+    }
     g2.collect_programs();
 }
 extern "C" fn glIsShader(sh: u32) -> u8 {
-    u8::from(gl().as_ref().unwrap().shaders.contains_key(&sh))
+    u8::from(gl().shaders.contains_key(&sh))
 }
 extern "C" fn glCreateProgram() -> u32 {
     let mut g = gl();
-    let g = g.as_mut().unwrap();
+    let g = &mut *g;
     let id = g.next_free();
     g.programs.insert(id, Program::default());
     id
@@ -275,36 +277,40 @@ extern "C" fn glCreateProgramObject() -> u32 {
 }
 extern "C" fn glAttachShader(p: u32, sh: u32) {
     let mut g = gl();
-    let g2 = g.as_mut().unwrap();
+    let g2 = &mut *g;
     let e = kind_err(g2, p, false).or(kind_err(g2, sh, true));
     let e = e.or_else(|| g2.programs[&p].shaders.contains(&sh).then_some(GL_INVALID_OPERATION));
     if let Some(e) = e {
         drop(g);
         return fail(e);
     }
-    g2.programs.get_mut(&p).unwrap().shaders.push(sh);
+    if let Some(x) = g2.programs.get_mut(&p) {
+        x.shaders.push(sh);
+    }
 }
 extern "C" fn glAttachObject(p: u32, sh: u32) {
     glAttachShader(p, sh)
 }
 extern "C" fn glDetachShader(p: u32, sh: u32) {
     let mut g = gl();
-    let g2 = g.as_mut().unwrap();
+    let g2 = &mut *g;
     let e = kind_err(g2, p, false).or(kind_err(g2, sh, true));
     let e = e.or_else(|| (!g2.programs[&p].shaders.contains(&sh)).then_some(GL_INVALID_OPERATION));
     if let Some(e) = e {
         drop(g);
         return fail(e);
     }
-    g2.programs.get_mut(&p).unwrap().shaders.retain(|&s| s != sh);
+    if let Some(x) = g2.programs.get_mut(&p) {
+        x.shaders.retain(|&s| s != sh);
+    }
     g2.collect_programs();
 }
 unsafe extern "C" fn glGetAttachedShaders(p: u32, max: i32, count: *mut i32, out: *mut u32) {
-    let e = kind_err(gl().as_ref().unwrap(), p, false).or((max < 0).then_some(GL_INVALID_VALUE));
+    let e = kind_err(&gl(), p, false).or((max < 0).then_some(GL_INVALID_VALUE));
     if let Some(e) = e {
         return fail(e);
     }
-    let v = gl().as_ref().unwrap().programs.get(&p).map(|x| x.shaders.clone()).unwrap_or_default();
+    let v = gl().programs.get(&p).map(|x| x.shaders.clone()).unwrap_or_default();
     let n = v.len().min(max.max(0) as usize);
     for (k, s) in v.iter().take(n).enumerate() {
         *out.add(k) = *s;
@@ -319,17 +325,17 @@ unsafe extern "C" fn glBindAttribLocation(p: u32, idx: u32, name: *const c_char)
         return fail(GL_INVALID_VALUE);
     }
     let n = CStr::from_ptr(name).to_string_lossy().into_owned();
-    if let Some(x) = gl().as_mut().unwrap().programs.get_mut(&p) {
+    if let Some(x) = gl().programs.get_mut(&p) {
         x.bound_attribs.insert(n, idx);
     }
 }
 extern "C" fn glLinkProgram(p: u32) {
     let mut g = gl();
-    if let Some(e) = kind_err(g.as_ref().unwrap(), p, false) {
+    if let Some(e) = kind_err(&*g, p, false) {
         drop(g);
         return fail(e);
     }
-    let g = g.as_mut().unwrap();
+    let g = &mut *g;
     let Some(mut x) = g.programs.remove(&p) else { return };
     let old = match link(g, &mut x) {
         Ok(l) => {
@@ -351,11 +357,11 @@ extern "C" fn glLinkProgram(p: u32) {
 extern "C" fn glValidateProgram(_p: u32) {}
 unsafe extern "C" fn glGetProgramiv(p: u32, pname: u32, out: *mut i32) {
     let g = gl();
-    if let Some(e) = kind_err(g.as_ref().unwrap(), p, false) {
+    if let Some(e) = kind_err(&*g, p, false) {
         drop(g);
         return fail(e);
     }
-    let x = &g.as_ref().unwrap().programs[&p];
+    let x = &g.programs[&p];
     *out = match pname {
         0x8B80 => i32::from(x.deleted),
         // (GL_OBJECT_TYPE_ARB: GL_PROGRAM_OBJECT_ARB)
@@ -373,7 +379,7 @@ unsafe extern "C" fn glGetProgramiv(p: u32, pname: u32, out: *mut i32) {
     }
 }
 unsafe extern "C" fn glGetObjectParameteriv(obj: u32, pname: u32, out: *mut i32) {
-    let is_shader = gl().as_ref().unwrap().shaders.contains_key(&obj);
+    let is_shader = gl().shaders.contains_key(&obj);
     let pname = if pname == 0x8B80 && !is_shader { pname } else { pname };
     if is_shader {
         glGetShaderiv(obj, pname, out)
@@ -382,11 +388,11 @@ unsafe extern "C" fn glGetObjectParameteriv(obj: u32, pname: u32, out: *mut i32)
     }
 }
 unsafe extern "C" fn glGetProgramInfoLog(p: u32, max: i32, len: *mut i32, out: *mut c_char) {
-    let s = gl().as_ref().unwrap().programs.get(&p).map(|x| x.log.clone()).unwrap_or_default();
+    let s = gl().programs.get(&p).map(|x| x.log.clone()).unwrap_or_default();
     copy_str(&s, max, len, out)
 }
 unsafe extern "C" fn glGetInfoLog(obj: u32, max: i32, len: *mut i32, out: *mut c_char) {
-    if gl().as_ref().unwrap().shaders.contains_key(&obj) {
+    if gl().shaders.contains_key(&obj) {
         glGetShaderInfoLog(obj, max, len, out)
     } else {
         glGetProgramInfoLog(obj, max, len, out)
@@ -417,7 +423,9 @@ extern "C" fn glDeleteProgram(p: u32) {
         if let Some(e) = kind_err(g, p, false) {
             return c.err(e);
         }
-        g.programs.get_mut(&p).unwrap().deleted = true;
+        if let Some(x) = g.programs.get_mut(&p) {
+            x.deleted = true;
+        }
         g.ctxs_program_hint = Some(c.program);
         g.collect_programs();
         g.ctxs_program_hint = None;
@@ -425,7 +433,7 @@ extern "C" fn glDeleteProgram(p: u32) {
 }
 /// (GL_ARB_shader_objects: shaders and programs alike)
 extern "C" fn glDeleteObject(o: u32) {
-    let is_shader = gl().as_ref().unwrap().shaders.contains_key(&o);
+    let is_shader = gl().shaders.contains_key(&o);
     if is_shader {
         glDeleteShader(o)
     } else {
@@ -433,12 +441,12 @@ extern "C" fn glDeleteObject(o: u32) {
     }
 }
 extern "C" fn glIsProgram(p: u32) -> u8 {
-    u8::from(gl().as_ref().unwrap().programs.contains_key(&p))
+    u8::from(gl().programs.contains_key(&p))
 }
 unsafe extern "C" fn glGetUniformLocation(p: u32, name: *const c_char) -> i32 {
     let n = CStr::from_ptr(name).to_string_lossy().into_owned();
     let mut g = gl();
-    let Some(x) = g.as_mut().unwrap().programs.get_mut(&p) else { return -1 };
+    let Some(x) = g.programs.get_mut(&p) else { return -1 };
     let Some(l) = &x.linked else { return -1 };
     let (base, elem) = match n.find('[') {
         Some(i) => (n[..i].to_string(), n[i + 1..].trim_end_matches(']').parse().unwrap_or(0)),
@@ -461,7 +469,7 @@ unsafe extern "C" fn glGetUniformLocation(p: u32, name: *const c_char) -> i32 {
 unsafe extern "C" fn glGetAttribLocation(p: u32, name: *const c_char) -> i32 {
     let n = CStr::from_ptr(name).to_string_lossy().into_owned();
     let g = gl();
-    let Some(x) = g.as_ref().unwrap().programs.get(&p) else { return -1 };
+    let Some(x) = g.programs.get(&p) else { return -1 };
     x.linked.as_ref().and_then(|l| l.attribs.iter().find(|a| a.0 == n)).map_or(-1, |a| a.1.cast_signed())
 }
 
@@ -478,10 +486,7 @@ fn uniform(loc: i32, n: usize, count: usize, v: &[u32]) {
         // (elements past the array's end are ignored)
         let count = count.min(us(l.counts.get(name).copied().unwrap_or(1).saturating_sub(*elem)));
         let at = *elem as usize * per;
-        if !x.values.contains_key(name) {
-            x.values.insert(name.clone(), Vec::new());
-        }
-        let val = x.values.get_mut(name).unwrap();
+        let val = x.values.entry(name.clone()).or_default();
         for k in 0..count {
             let dst = at + k * per;
             if val.len() < dst + per {
@@ -658,14 +663,14 @@ fn normal_matrix(mv: &[f32; 16]) -> [f32; 9] {
 /// A built-in uniform's value (gl_ModelViewProjectionMatrix, gl_ModelViewMatrix,
 /// gl_ProjectionMatrix, gl_NormalMatrix, gl_TextureMatrix[n]), column-major.
 pub(crate) fn builtin_uniform(c: &Ctx, n: &str) -> Option<Vec<f32>> {
-    let mv = c.modelview.last().unwrap();
+    let mv = &c.modelview.top;
     Some(match n {
-        "vn_MVP" => mul(c.projection.last().unwrap(), mv).to_vec(),
+        "vn_MVP" => mul(&c.projection.top, mv).to_vec(),
         "vn_MV" => mv.to_vec(),
-        "vn_P" => c.projection.last().unwrap().to_vec(),
+        "vn_P" => c.projection.top.to_vec(),
         "vn_NM" => normal_matrix(mv).to_vec(),
         _ => match n.strip_prefix("vn_TM").and_then(|t| t.parse::<usize>().ok()) {
-            Some(t) if t < 8 => c.units[t].matrices.last().unwrap().to_vec(),
+            Some(t) if t < 8 => c.units[t].matrices.top.to_vec(),
             _ => return None,
         },
     })
@@ -708,9 +713,9 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
     for &o in &order {
         for &(b, loc, arr) in &attribs {
             let v: [f32; 4] = match (&src, b) {
-                (Src::Immediate(v, _), Some(b)) if b < 4 => v[o][b * 4..b * 4 + 4].try_into().unwrap(),
+                (Src::Immediate(v, _), Some(b)) if b < 4 => std::array::from_fn(|k| v[o][b * 4 + k]),
                 (Src::Immediate(_, more), Some(10)) => [more[o][24], more[o][25], more[o][26], 1.0],
-                (Src::Immediate(_, more), Some(b)) => more[o][(b - 4) * 4..(b - 3) * 4].try_into().unwrap(),
+                (Src::Immediate(_, more), Some(b)) => std::array::from_fn(|k| more[o][(b - 4) * 4 + k]),
                 (Src::Immediate(..), None) => c.attrib_values.get(us(loc)).copied().unwrap_or(none),
                 (Src::Indices(ix), b) => match (arr, b) {
                     (Some(a), _) => fetch(g, &a, ix[o], none),
@@ -733,7 +738,7 @@ pub(crate) fn draw_from(g: &mut Gl, c: &mut Ctx, mode: u32, src: Src) {
     let pipe = pipeline(g, pipeline_key(c, vs, ps, topo, depth != 0, &vertex));
     // uniform blocks and textures
     let p = &g.programs[&c.program];
-    let l = p.linked.as_ref().unwrap();
+    let Some(l) = p.linked.as_ref() else { return };
     let builtin_value = |n: &str| builtin_uniform(c, n).map(|m| m.iter().map(|f| f.to_bits()).collect::<Vec<u32>>());
     let mut groups: Vec<(Vec<u8>, Vec<[u32; 8]>)> = Vec::new();
     for st in [&l.vs, &l.ps] {

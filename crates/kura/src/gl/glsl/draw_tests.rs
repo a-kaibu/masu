@@ -70,7 +70,7 @@ fn glsl_draws_read_what_gl_reads() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     attach_page();
     model::with(|m| m.prims = Some(Vec::new()));
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     let ctx = vngl_context_create(0);
     vngl_make_current(ctx, 0x1234, 32, 32);
     let mut r = Rng(0x5eed_9157);
@@ -87,7 +87,7 @@ fn glsl_draws_read_what_gl_reads() {
     glLinkProgram(p);
     glUseProgram(p);
     // which input is which (location -> name)
-    let attribs: Vec<(String, u32)> = GL.lock().unwrap().as_ref().unwrap().programs[&p].linked.as_ref().expect("linked").attribs.clone();
+    let attribs: Vec<(String, u32)> = GL.lock().unwrap().programs[&p].linked.as_ref().expect("linked").attribs.clone();
     for n in ["vn_Vertex", "vn_Color", "vn_Normal", "vn_MultiTexCoord0", "vn_MultiTexCoord3", "vn_MultiTexCoord7", "extra"] {
         assert!(attribs.iter().any(|a| a.0 == n), "no input {n}: {attribs:?}");
     }
@@ -243,7 +243,7 @@ fn glsl_draws_read_what_gl_reads() {
         glMatrixMode(0x1702);
         unsafe { glLoadMatrixf(t.as_ptr()) };
         let g = GL.lock().unwrap();
-        let c = g.as_ref().unwrap().ctxs.get(&ctx).unwrap();
+        let c = g.ctxs.get(&ctx).unwrap();
         assert_eq!(builtin_uniform(c, &format!("vn_TM{unit}")).unwrap(), t.to_vec(), "gl_TextureMatrix[{unit}]");
         assert_eq!(builtin_uniform(c, "vn_MV").unwrap(), m.to_vec());
         // gl_NormalMatrix^T * mat3(MV) = I (when MV's 3x3 is invertible)
@@ -268,5 +268,5 @@ fn glsl_draws_read_what_gl_reads() {
     assert!(errors.is_empty(), "WebGPU errors {:?}", &errors[..errors.len().min(10)]);
     model::with(|m| m.prims = None);
     vngl_context_destroy(ctx);
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
 }

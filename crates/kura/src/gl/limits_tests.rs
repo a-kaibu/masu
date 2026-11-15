@@ -15,7 +15,7 @@ fn get(p: u32) -> i32 {
 }
 
 fn fresh() {
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     let ctx = vngl_context_create(0);
     vngl_make_current(ctx, 0, 0, 0);
 }
@@ -179,7 +179,7 @@ fn sizes_past_the_limit_are_refused() {
 fn window_buffers_go_with_their_last_context() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     for seed in 1..=60u64 {
-        *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
         let mut r = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 5);
         // (the model: each live context's window, 0 for none yet)
         let mut model: HashMap<u32, u32> = HashMap::new();
@@ -206,7 +206,7 @@ fn window_buffers_go_with_their_last_context() {
             let mut want: Vec<u32> = model.values().copied().filter(|&h| h != 0).collect();
             want.sort();
             want.dedup();
-            let mut got: Vec<u32> = GL.lock().unwrap().as_ref().map(|g| g.drawables.keys().copied().collect()).unwrap_or_default();
+            let mut got: Vec<u32> = GL.lock().unwrap().drawables.keys().copied().collect();
             got.sort();
             assert!(want.iter().all(|h| got.contains(h)), "seed {seed} step {step}: {got:?} {want:?}");
             if destroyed {
@@ -265,7 +265,7 @@ fn mapped_buffers_live_in_guest_memory() {
                     let src: Vec<u8> = (0..n).map(|_| r.next() as u8).collect();
                     unsafe { glBufferData(T, n as isize, if r.chance(30) { std::ptr::null() } else { src.as_ptr() }, 0x88E4) };
                     // (glBufferData(NULL) is zeros here; the mapping, if any, is gone)
-                    *data = GL.lock().unwrap().as_ref().unwrap().buffers[&id].data.clone();
+                    *data = GL.lock().unwrap().buffers[&id].data.clone();
                     assert_eq!(data.len(), n, "{at}");
                     *mapped = 0;
                 }
@@ -297,12 +297,12 @@ fn mapped_buffers_live_in_guest_memory() {
                 6 => {
                     assert_eq!(glUnmapBuffer(T), 1);
                     *mapped = 0;
-                    assert_eq!(GL.lock().unwrap().as_ref().unwrap().buffers[&id].data, *data, "{at}: after the unmap");
+                    assert_eq!(GL.lock().unwrap().buffers[&id].data, *data, "{at}: after the unmap");
                 }
                 7 => {
                     // (a draw of nothing: buffers still mapped are read as they are now)
                     glDrawArrays(4, 0, 0);
-                    assert_eq!(GL.lock().unwrap().as_ref().unwrap().buffers[&id].data, *data, "{at}: at a draw");
+                    assert_eq!(GL.lock().unwrap().buffers[&id].data, *data, "{at}: at a draw");
                 }
                 8 if r.chance(40) => {
                     unsafe { glDeleteBuffers(1, &id) };
@@ -334,7 +334,7 @@ fn client_arrays_stay_in_guest_memory() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     fresh();
     let g = GL.lock().unwrap();
-    let g = g.as_ref().unwrap();
+    let g = g;
     let mut r = Rng(0xa11a_57e5);
     let def = [9.0, 8.0, 7.0, 6.0];
     for _ in 0..20000 {
@@ -354,7 +354,7 @@ fn client_arrays_stay_in_guest_memory() {
         if a.ptr as u64 + stride * i as u64 + ts * n <= 1 << 31 {
             continue;
         }
-        assert_eq!(fetch(g, &a, i, def), def, "{:?} {} {:#x} vertex {i}", a.size, a.stride, a.ptr);
+        assert_eq!(fetch(&g, &a, i, def), def, "{:?} {} {:#x} vertex {i}", a.size, a.stride, a.ptr);
     }
 }
 
@@ -366,7 +366,7 @@ fn client_arrays_stay_in_guest_memory() {
 fn reads_come_from_the_read_framebuffer() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     crate::d3d9::trace_tests::attach_page();
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     let ctx = vngl_context_create(0);
     vngl_make_current(ctx, 0x1234, 40, 24);
     let mut r = Rng(0xfb0_5eed);
@@ -431,7 +431,7 @@ fn reads_come_from_the_read_framebuffer() {
             _ => {}
         }
         let mut lk = GL.lock().unwrap();
-        let g = lk.as_mut().unwrap();
+        let g = &mut *lk;
         let c = g.ctxs.remove(&ctx).unwrap();
         let got = read_target(g, &c);
         let want = |g: &Gl, f: u32| -> Option<(u32, u32, u32, u32)> {

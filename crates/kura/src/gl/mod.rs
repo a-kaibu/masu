@@ -323,14 +323,14 @@ pub(crate) struct Unit {
     bound: u32,
     env: u32,
     env_color: [f32; 4],
-    matrices: Vec<[f32; 16]>,
+    matrices: Stack,
     coords: [f32; 4],
     array: Array,
 }
 
 impl Default for Unit {
     fn default() -> Self {
-        Unit { tex2d: false, bound: 0, env: 0x2100, env_color: [0.0; 4], matrices: vec![IDENTITY], coords: [0.0, 0.0, 0.0, 1.0], array: Array::default() }
+        Unit { tex2d: false, bound: 0, env: 0x2100, env_color: [0.0; 4], matrices: Stack::new(), coords: [0.0, 0.0, 0.0, 1.0], array: Array::default() }
     }
 }
 
@@ -364,8 +364,8 @@ pub(crate) struct Ctx {
     stencil_ops: [u32; 3],
     stencil_mask: u32,
     matrix_mode: u32,
-    modelview: Vec<[f32; 16]>,
-    projection: Vec<[f32; 16]>,
+    modelview: Stack,
+    projection: Stack,
     active: usize,
     client_active: usize,
     units: [Unit; 8],
@@ -423,8 +423,8 @@ impl Ctx {
             stencil_ops: [0x1E00; 3],
             stencil_mask: 0xff,
             matrix_mode: GL_MODELVIEW,
-            modelview: vec![IDENTITY],
-            projection: vec![IDENTITY],
+            modelview: Stack::new(),
+            projection: Stack::new(),
             active: 0,
             client_active: 0,
             units: Default::default(),
@@ -452,7 +452,7 @@ impl Ctx {
         }
     }
 
-    fn stack(&mut self) -> &mut Vec<[f32; 16]> {
+    fn stack(&mut self) -> &mut Stack {
         match self.matrix_mode {
             GL_PROJECTION => &mut self.projection,
             GL_TEXTURE => &mut self.units[self.active].matrices,
@@ -461,7 +461,7 @@ impl Ctx {
     }
 
     fn top(&mut self) -> &mut [f32; 16] {
-        self.stack().last_mut().unwrap()
+        &mut self.stack().top
     }
 }
 
@@ -487,7 +487,30 @@ pub(crate) struct Gl {
     pub(crate) ctxs_program_hint: Option<u32>,
 }
 
-static GL: Mutex<Option<Gl>> = Mutex::new(None);
+impl Gl {
+    /// No contexts, objects or programs (the state before the first call, and a test's start).
+    pub(crate) fn new() -> Gl {
+        Gl {
+            ctxs: HashMap::new(),
+            next_ctx: 1,
+            textures: HashMap::new(),
+            buffers: HashMap::new(),
+            mapped: HashSet::new(),
+            fbos: HashMap::new(),
+            rbs: HashMap::new(),
+            next_name: 1,
+            reserved: HashSet::new(),
+            drawables: HashMap::new(),
+            ff: None,
+            pipelines: HashMap::new(),
+            shaders: HashMap::new(),
+            programs: HashMap::new(),
+            ctxs_program_hint: None,
+        }
+    }
+}
+
+static GL: std::sync::LazyLock<Mutex<Gl>> = std::sync::LazyLock::new(|| Mutex::new(Gl::new()));
 
 thread_local! {
     static CURRENT: Cell<u32> = const { Cell::new(0) };
@@ -505,28 +528,8 @@ fn page_id() -> u32 {
     crate::d3d11::page_id()
 }
 
-fn lock() -> std::sync::MutexGuard<'static, Option<Gl>> {
-    let mut g = GL.lock().unwrap_or_else(|e| e.into_inner());
-    if g.is_none() {
-        *g = Some(Gl {
-            ctxs: HashMap::new(),
-            next_ctx: 1,
-            textures: HashMap::new(),
-            buffers: HashMap::new(),
-            mapped: HashSet::new(),
-            fbos: HashMap::new(),
-            rbs: HashMap::new(),
-            next_name: 1,
-            reserved: HashSet::new(),
-            drawables: HashMap::new(),
-            ff: None,
-            pipelines: HashMap::new(),
-            shaders: HashMap::new(),
-            programs: HashMap::new(),
-            ctxs_program_hint: None,
-        });
-    }
-    g
+fn lock() -> std::sync::MutexGuard<'static, Gl> {
+    GL.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Where the program's memory ends: client arrays and indices past it are not read.
@@ -554,6 +557,37 @@ const MAX_TEXTURE: u32 = 8192;
 
 /// GL_MAX_MODELVIEW / PROJECTION / TEXTURE_STACK_DEPTH (Mesa's), by the matrix mode or the
 /// glGet name.
+/// A matrix stack: never empty, the top apart from the ones pushed under it.
+#[derive(Clone)]
+struct Stack {
+    top: [f32; 16],
+    below: Vec<[f32; 16]>,
+}
+
+impl Stack {
+    fn new() -> Stack {
+        Stack { top: IDENTITY, below: Vec::new() }
+    }
+    /// Matrices on it, the top too.
+    fn len(&self) -> usize {
+        self.below.len() + 1
+    }
+    /// glPushMatrix: a copy of the top on top.
+    fn push(&mut self) {
+        self.below.push(self.top);
+    }
+    /// glPopMatrix: false (nothing done) with one matrix left.
+    fn pop(&mut self) -> bool {
+        match self.below.pop() {
+            Some(t) => {
+                self.top = t;
+                true
+            }
+            None => false,
+        }
+    }
+}
+
 fn stack_depth(mode: u32) -> usize {
     match mode {
         GL_TEXTURE | 0x0D39 => 10,
@@ -568,7 +602,7 @@ fn with<R: Default>(f: impl FnOnce(&mut Gl, &mut Ctx) -> R) -> R {
         return R::default();
     }
     let mut g = lock();
-    let g = g.as_mut().unwrap();
+    let g = &mut *g;
     let Some(mut c) = g.ctxs.remove(&id) else { return R::default() };
     let r = f(g, &mut *c);
     g.ctxs.insert(id, c);
@@ -594,7 +628,7 @@ fn bytes<T>(v: &[T]) -> &[u8] {
 #[unsafe(no_mangle)]
 pub extern "C" fn vngl_context_create(_share: u32) -> u32 {
     let mut g = lock();
-    let g = g.as_mut().unwrap();
+    let g = &mut *g;
     let id = g.next_ctx;
     g.next_ctx += 1;
     g.ctxs.insert(id, Box::new(Ctx::new()));
@@ -604,15 +638,15 @@ pub extern "C" fn vngl_context_create(_share: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn vngl_context_destroy(id: u32) {
     let mut g = lock();
-    g.as_mut().unwrap().ctxs.remove(&id);
-    g.as_mut().unwrap().collect_programs();
+    g.ctxs.remove(&id);
+    g.collect_programs();
     // (the buffers of the windows no context draws to any more go with it: two textures of the
     // window's size a window, kept for good before)
-    let g2 = g.as_mut().unwrap();
+    let g2 = &mut *g;
     let drawn: HashSet<u32> = g2.ctxs.values().map(|c| c.draw).collect();
     let gone: Vec<u32> = g2.drawables.keys().copied().filter(|h| !drawn.contains(h)).collect();
     for h in gone {
-        let d = g2.drawables.remove(&h).unwrap();
+        let Some(d) = g2.drawables.remove(&h) else { continue };
         gpu::record(|q| {
             q.cmd(&[gpu::DESTROY_TEXTURE, d.color]);
             q.cmd(&[gpu::DESTROY_TEXTURE, d.depth]);
@@ -633,7 +667,7 @@ pub extern "C" fn vngl_make_current(ctx: u32, hwnd: u32, w: u32, h: u32) -> i32 
         return 1;
     }
     let mut g = lock();
-    let g = g.as_mut().unwrap();
+    let g = &mut *g;
     if hwnd != 0 {
         drawable(g, hwnd, w.max(1), h.max(1));
     }
@@ -650,8 +684,7 @@ pub extern "C" fn vngl_make_current(ctx: u32, hwnd: u32, w: u32, h: u32) -> i32 
 
 fn drawable(g: &mut Gl, hwnd: u32, w: u32, h: u32) -> &Drawable {
     let stale = g.drawables.get(&hwnd).is_some_and(|d| d.w != w || d.h != h);
-    if stale {
-        let d = g.drawables.remove(&hwnd).unwrap();
+    if stale && let Some(d) = g.drawables.remove(&hwnd) {
         gpu::record(|q| {
             q.cmd(&[gpu::DESTROY_TEXTURE, d.color]);
             q.cmd(&[gpu::DESTROY_TEXTURE, d.depth]);
@@ -674,7 +707,7 @@ fn drawable(g: &mut Gl, hwnd: u32, w: u32, h: u32) -> &Drawable {
 pub unsafe extern "C" fn vngl_swap(hwnd: u32, rect: *const i32) {
     let tex = {
         let g = lock();
-        match g.as_ref().unwrap().drawables.get(&hwnd) {
+        match g.drawables.get(&hwnd) {
             Some(d) => (d.color, d.w, d.h),
             None => return,
         }
@@ -792,9 +825,9 @@ fn get(g: &Gl, c: &Ctx, pname: u32) -> Option<Vec<f64>> {
         0x8DFB | 0x8DFD => vec![f64::from(UNIFORM_VECTORS)],
         0x8B4B => vec![f64::from(VARYING_VECTORS * 4)],
         0x8DFC => vec![f64::from(VARYING_VECTORS)],
-        0x0BA6 => f(c.modelview.last().unwrap()),
-        0x0BA7 => f(c.projection.last().unwrap()),
-        0x0BA8 => f(c.units[c.active].matrices.last().unwrap()),
+        0x0BA6 => f(&c.modelview.top),
+        0x0BA7 => f(&c.projection.top),
+        0x0BA8 => f(&c.units[c.active].matrices.top),
         0x8069 => vec![f64::from(c.units[c.active].bound)],
         0x0BA0 => vec![f64::from(c.matrix_mode)],
         0x0CF5 => vec![f64::from(c.unpack[0])],
@@ -1045,15 +1078,12 @@ extern "C" fn glPushMatrix() {
         if c.stack().len() >= stack_depth(c.matrix_mode) {
             return c.err(0x0503);
         }
-        let t = *c.top();
-        c.stack().push(t);
+        c.stack().push();
     })
 }
 extern "C" fn glPopMatrix() {
     with(|_, c| {
-        if c.stack().len() > 1 {
-            c.stack().pop();
-        } else {
+        if !c.stack().pop() {
             c.err(0x0504);
         }
     })
@@ -1650,11 +1680,11 @@ fn draw(g: &mut Gl, c: &mut Ctx, mode: u32, v: Vec<[f32; 16]>) {
     let pipe = pipeline(g, pipeline_key(c, vs, ps, topo, depth != 0, &vertex));
     let verts: Vec<[f32; 16]> = order.iter().map(|&i| v[i]).collect();
     // uniforms
-    let mvp = mul(c.projection.last().unwrap(), c.modelview.last().unwrap());
+    let mvp = mul(&c.projection.top, &c.modelview.top);
     let mut vu = Vec::with_capacity(52);
     vu.extend_from_slice(&mvp);
-    vu.extend_from_slice(c.units[0].matrices.last().unwrap());
-    vu.extend_from_slice(c.units[1].matrices.last().unwrap());
+    vu.extend_from_slice(&c.units[0].matrices.top);
+    vu.extend_from_slice(&c.units[1].matrices.top);
     vu.extend_from_slice(&[0.0; 4]);
     let mut texs = [(0u32, 1u32, (0u32, 0u32)); 2];
     let mut fu = [0u32; 20];
@@ -1752,7 +1782,7 @@ pub(crate) unsafe fn gen_names(kind: u8, n: i32, out: *mut u32, f: impl Fn(&mut 
         return with(|_, c| c.err(GL_INVALID_VALUE));
     }
     let mut g = lock();
-    let g = g.as_mut().unwrap();
+    let g = &mut *g;
     for k in 0..n as usize {
         let id = g.next_free();
         f(g, id);
@@ -1832,7 +1862,7 @@ extern "C" fn glBindTexture(target: u32, t: u32) {
 
 extern "C" fn glIsTexture(t: u32) -> u8 {
     let g = lock();
-    let g = g.as_ref().unwrap();
+    let g = &*g;
     u8::from(g.textures.contains_key(&t) && !g.reserved.contains(&(K_TEX, t)))
 }
 
@@ -1951,8 +1981,8 @@ pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u3
                 dst.copy_from_slice(row);
                 continue;
             }
-            for (d, p) in dst.chunks_exact_mut(4).zip(row.chunks_exact(n)) {
-                *d.first_chunk_mut::<4>().unwrap() = [p[o[0]], p[o[1]], p[o[2]], if n == 4 { p[3] } else { 255 }];
+            for (d, p) in dst.as_chunks_mut::<4>().0.iter_mut().zip(row.chunks_exact(n)) {
+                *d = [p[o[0]], p[o[1]], p[o[2]], if n == 4 { p[3] } else { 255 }];
             }
         }
         return out;
@@ -2344,7 +2374,7 @@ extern "C" fn glBindBuffer(target: u32, b: u32) {
 }
 extern "C" fn glIsBuffer(b: u32) -> u8 {
     let g = lock();
-    let g = g.as_ref().unwrap();
+    let g = &*g;
     u8::from(g.buffers.contains_key(&b) && !g.reserved.contains(&(K_BUF, b)))
 }
 fn bound_buffer(c: &Ctx, target: u32) -> u32 {
@@ -2452,7 +2482,7 @@ extern "C" fn glBindFramebuffer(target: u32, f: u32) {
 }
 extern "C" fn glIsFramebuffer(f: u32) -> u8 {
     let g = lock();
-    let g = g.as_ref().unwrap();
+    let g = &*g;
     u8::from(g.fbos.contains_key(&f) && !g.reserved.contains(&(K_FBO, f)))
 }
 fn attach(target: u32, point: u32, a: Att) {
@@ -2524,7 +2554,7 @@ unsafe extern "C" fn glDeleteRenderbuffers(n: i32, names: *const u32) {
 }
 extern "C" fn glIsRenderbuffer(r: u32) -> u8 {
     let g = lock();
-    let g = g.as_ref().unwrap();
+    let g = &*g;
     u8::from(g.rbs.contains_key(&r) && !g.reserved.contains(&(K_RB, r)))
 }
 extern "C" fn glBindRenderbuffer(_target: u32, rb: u32) {

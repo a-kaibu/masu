@@ -49,7 +49,7 @@ fn get(p: u32) -> i64 {
 
 fn run(seed: u64) {
     let mut r = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 5);
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     let ctx = vngl_context_create(0);
     vngl_make_current(ctx, 0, 0, 0);
     let mut steps = Vec::new();

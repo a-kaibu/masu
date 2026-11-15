@@ -109,7 +109,7 @@ fn run(seed: u64) {
     let mut r = Rng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 7);
     attach_page();
     model::with(|m| m.prims = Some(Vec::new()));
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
     let ctx = vngl_context_create(0);
     vngl_make_current(ctx, 0x1234, 32, 32);
     // vertex data: client memory, and the same bytes in a buffer object
@@ -328,7 +328,7 @@ fn run(seed: u64) {
     assert!(errors.is_empty(), "seed {seed}: WebGPU errors {:?}", &errors[..errors.len().min(10)]);
     model::with(|m| m.prims = None);
     vngl_context_destroy(ctx);
-    *GL.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    *GL.lock().unwrap_or_else(|e| e.into_inner()) = Gl::new();
 }
 
 #[test]
