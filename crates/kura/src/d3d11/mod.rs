@@ -497,34 +497,7 @@ unsafe fn rdf(p: u32, i: usize) -> f32 {
 /// Size of the guest's pointers (and HWNDs, SIZE_Ts): 8 for 64-bit programs.
 /// Guest addresses are below 4G either way.
 use crate::d3d9::device::ptr;
-
-/// A guest u32 (address, size, count, index) as a host usize: lossless, usize being 32 bits or
-/// more on every target.
-pub(crate) fn us(v: u32) -> usize {
-    usize::try_from(v).unwrap_or(usize::MAX)
-}
-
-/// Guest address `a` as a host pointer (the guest's memory is the host's, below 4G).
-fn gp<T>(a: u32) -> *mut T {
-    std::ptr::with_exposed_provenance_mut(us(a))
-}
-
-/// Guest address `a` as a host pointer to read.
-fn gc<T>(a: u32) -> *const T {
-    std::ptr::with_exposed_provenance(us(a))
-}
-
-/// A host usize (length, offset, address) as the guest's u32: its low 32 bits, as `as u32` was.
-fn lo32(v: usize) -> u32 {
-    let [b0, b1, b2, b3, ..] = v.to_le_bytes();
-    u32::from_le_bytes([b0, b1, b2, b3])
-}
-
-/// A u64 as a u32: its low 32 bits, as `as u32` was.
-fn lo32w(v: u64) -> u32 {
-    let [b0, b1, b2, b3, ..] = v.to_le_bytes();
-    u32::from_le_bytes([b0, b1, b2, b3])
-}
+use crate::guest::{gc, gp, lo32, lo32w, us};
 
 /// Pointer `i` of an array of pointers.
 unsafe fn rdp(p: u32, i: usize) -> u32 {

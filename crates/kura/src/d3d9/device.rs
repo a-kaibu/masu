@@ -9,6 +9,7 @@ use super::stateblock as sb;
 use super::{IF_CUBE, IF_D3D9, IF_DECL, IF_DEVICE, IF_IB, IF_PS, IF_QUERY, IF_STATEBLOCK, IF_SURFACE, IF_SWAPCHAIN};
 use super::{IF_TEXTURE, IF_VB, IF_VOLUME, IF_VOLUMETEX, IF_VS};
 use std::collections::HashMap;
+use crate::guest::{gc, gp, lo32, lo32w, us};
 
 const POOL_DEFAULT: u32 = 0;
 const POOL_SYSTEMMEM: u32 = 2;
@@ -81,7 +82,7 @@ pub struct Texture {
 impl Texture {
     /// Mip levels (of each face, for a cube).
     pub fn level_count(&self) -> u32 {
-        self.levels.len() as u32 / self.faces.max(1)
+        lo32(self.levels.len()) / self.faces.max(1)
     }
 }
 
@@ -140,7 +141,7 @@ pub struct IndexRange {
 pub(crate) unsafe fn scan_indices(iptr: u32, isize: u32, n: u32) -> (u32, u32, bool) {
     let (mut lo, mut hi, mut ffff) = (u32::MAX, 0, false);
     for k in 0..n {
-        let v = if isize == 4 { *((iptr + 4 * k) as *const u32) } else { u32::from(*((iptr + 2 * k) as *const u16)) };
+        let v = if isize == 4 { *(gc::<u32>(iptr + 4 * k)) } else { u32::from(*(gc::<u16>(iptr + 2 * k))) };
         lo = lo.min(v);
         hi = hi.max(v);
         ffff |= isize == 2 && v == 0xffff;
@@ -165,8 +166,8 @@ pub(crate) fn page_buffer(objs: &mut HashMap<u32, super::Obj, super::FastHash>, 
     // (guest bytes lo..hi as whole words: zeros past the end)
     let words_of = |b: &Buffer, lo: usize, hi: usize| -> Vec<u8> {
         let mut v = vec![0; hi - lo];
-        let n = (b.len as usize).saturating_sub(lo).min(hi - lo);
-        v[..n].copy_from_slice(unsafe { std::slice::from_raw_parts((b.mem as usize + lo) as *const u8, n) });
+        let n = (us(b.len)).saturating_sub(lo).min(hi - lo);
+        v[..n].copy_from_slice(unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(us(b.mem) + lo), n) });
         v
     };
     if b.gpu == 0 {
@@ -176,7 +177,7 @@ pub(crate) fn page_buffer(objs: &mut HashMap<u32, super::Obj, super::FastHash>, 
         // (all of it once, zeros too: the page's buffer starts as zeros, so sent as they are;
         // no copy kept: a buffer filled once and drawn from (a static mesh) is not held a
         // third time, see the shadow below)
-        let all = words_of(b, 0, size as usize);
+        let all = words_of(b, 0, us(size));
         gpu::record(|q| {
             let off = q.blob(&all);
             q.cmd(&[gpu::WRITE_BUFFER, b.gpu, 0, off, size]);
@@ -187,20 +188,20 @@ pub(crate) fn page_buffer(objs: &mut HashMap<u32, super::Obj, super::FastHash>, 
     }
     if let Some((lo, hi)) = b.dirty.take() {
         // (whole words; only from the first to the last that changed)
-        let (lo, hi) = ((lo & !3) as usize, (hi.min(b.len) as usize).next_multiple_of(4).min(size as usize));
+        let (lo, hi) = (us(lo & !3), (us(hi.min(b.len))).next_multiple_of(4).min(us(size)));
         if hi > lo && b.shadow.is_empty() {
             // changed again after its first send: the range as it is, and from now a copy of
             // what the page holds to send only what changes
             let words = words_of(b, lo, hi);
             gpu::record(|q| {
                 let off = q.blob(&words);
-                q.cmd(&[gpu::WRITE_BUFFER, b.gpu, lo as u32, off, words.len() as u32]);
+                q.cmd(&[gpu::WRITE_BUFFER, b.gpu, lo32(lo), off, lo32(words.len())]);
             });
             RESIDENT_SENT.fetch_add(words.len() as u64, std::sync::atomic::Ordering::Relaxed);
             b.cgen += 1;
-            b.shadow = words_of(b, 0, size as usize);
+            b.shadow = words_of(b, 0, us(size));
         } else if hi > lo {
-            let now = unsafe { std::slice::from_raw_parts((b.mem as usize + lo) as *const u8, (hi - lo).min(b.len as usize - lo)) };
+            let now = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(us(b.mem) + lo), (hi - lo).min(us(b.len) - lo)) };
             let old = &b.shadow[lo..lo + now.len()];
             if let (Some(a), Some(z)) = (now.iter().zip(old).position(|(x, y)| x != y), now.iter().zip(old).rposition(|(x, y)| x != y)) {
                 let (a, z) = (a & !3, (z + 1).next_multiple_of(4).min(now.len()));
@@ -208,7 +209,7 @@ pub(crate) fn page_buffer(objs: &mut HashMap<u32, super::Obj, super::FastHash>, 
                 let words = &b.shadow[lo + a..(lo + z).next_multiple_of(4)];
                 gpu::record(|q| {
                     let off = q.blob(words);
-                    q.cmd(&[gpu::WRITE_BUFFER, b.gpu, (lo + a) as u32, off, words.len() as u32]);
+                    q.cmd(&[gpu::WRITE_BUFFER, b.gpu, lo32(lo + a), off, lo32(words.len())]);
                 });
                 RESIDENT_SENT.fetch_add(words.len() as u64, std::sync::atomic::Ordering::Relaxed);
                 b.cgen += 1;
@@ -300,8 +301,8 @@ pub const SAMPLERS: usize = 21;
 /// (257-260)
 pub fn sampler_slot(s: u32) -> Option<usize> {
     match s {
-        0..=15 => Some(s as usize),
-        256..=260 => Some(s as usize - 240),
+        0..=15 => Some(us(s)),
+        256..=260 => Some(us(s) - 240),
         _ => None,
     }
 }
@@ -402,7 +403,7 @@ pub struct Shown {
 /// Windows answers (winref d3d9state)
 pub const RS_VALID: [u64; 4] = [0xfff5_857c_3fd9_c381, 0xffff_ffff_0000_0000, 0xffff_ffef_fdfe_ffff, 0xffff_ffff_ffff_ffcf];
 pub fn rs_valid(i: u32) -> bool {
-    i < 256 && RS_VALID[i as usize / 64] >> (i % 64) & 1 != 0
+    i < 256 && RS_VALID[us(i) / 64] >> (i % 64) & 1 != 0
 }
 /// (what Windows has in the states no one sets: legacy and unused ones)
 const UNSET: u32 = 0xbaad_cafe;
@@ -475,7 +476,7 @@ pub(crate) fn default_state() -> State {
         s[4] = if i == 0 { 2 } else { 1 }; // ALPHAOP
         s[5] = 2;
         s[6] = 1;
-        s[11] = i as u32; // TEXCOORDINDEX
+        s[11] = lo32(i); // TEXCOORDINDEX
         s[26] = 1;
         s[27] = 1;
         s[28] = 1; // RESULTARG current
@@ -574,12 +575,12 @@ impl Device {
 }
 
 unsafe fn rd(p: u32, i: usize) -> u32 {
-    *((p as *const u32).add(i))
+    *((gc::<u32>(p)).add(i))
 }
 
 unsafe fn wr(p: u32, i: usize, v: u32) {
     if p != 0 {
-        *((p as *mut u32).add(i)) = v;
+        *((gp::<u32>(p)).add(i)) = v;
     }
 }
 
@@ -594,7 +595,7 @@ pub(crate) fn ptr() -> u32 {
 
 /// A pointer-sized output (interfaces, mapped memory): 4 or 8 bytes.
 pub(crate) unsafe fn wrp(p: u32, i: usize, v: u32) {
-    wr(p, i * (ptr() / 4) as usize, v);
+    wr(p, i * us(ptr() / 4), v);
     if ptr() == 8 {
         wr(p, i * 2 + 1, 0);
     }
@@ -665,20 +666,20 @@ unsafe fn stale(d: &D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usize) -> u32
         // SetTransform, MultiplyTransform, SetViewport, SetMaterial, SetLight (not which are on),
         // the shader constants
         44 | 46 | 47 | 49 | 51 | 94 | 96 | 98 | 109 | 111 | 113 => UNI,
-        57 => match st.rs.get(a(1) as usize) {
+        57 => match st.rs.get(us(a(1))) {
             Some(&v) if v == a(2) => NONE,
             // ALPHAREF, TEXTUREFACTOR: uniforms; BLENDFACTOR: each draw's own
             Some(_) if a(1) == 24 || a(1) == 60 => UNI,
             Some(_) if a(1) == 193 => NONE,
             _ => BOTH,
         },
-        67 => match st.tss.get(a(1) as usize).and_then(|s| s.get(a(2) as usize)) {
+        67 => match st.tss.get(us(a(1))).and_then(|s| s.get(us(a(2)))) {
             Some(&v) if v == a(3) => NONE,
             // D3DTSS_CONSTANT: a uniform
             Some(_) if a(2) == 32 => UNI,
             _ => BOTH,
         },
-        69 => match sampler_slot(a(1)).and_then(|s| st.ss[s].get(a(2) as usize).map(|&v| (s, v))) {
+        69 => match sampler_slot(a(1)).and_then(|s| st.ss[s].get(us(a(2))).map(|&v| (s, v))) {
             Some((_, v)) if v == a(3) => NONE,
             // (the filters, ADDRESSW, LOD and the rest: each draw's sampler; ADDRESSU/V, BORDERCOLOR
             // and MAGFILTER only when they change the addressing the pixel shader does)
@@ -689,7 +690,7 @@ unsafe fn stale(d: &D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usize) -> u32
                     (f, if f != 0 { ss[4] } else { 0 })
                 };
                 let before = addr(&ss);
-                ss[a(2) as usize] = a(3);
+                ss[us(a(2))] = a(3);
                 if addr(&ss) == before { NONE } else { BOTH }
             }
             None => BOTH,
@@ -710,11 +711,11 @@ unsafe fn stale(d: &D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usize) -> u32
         92 if st.vs == d.id_of(a(1)) => NONE,
         107 if st.ps == d.id_of(a(1)) => NONE,
         // SetStreamSource: another buffer or offset (each draw's own), the same stride
-        100 => match st.streams.get(a(1) as usize) {
+        100 => match st.streams.get(us(a(1))) {
             Some(&(_, _, stride)) if stride == a(4) => NONE,
             _ => BOTH,
         },
-        102 if st.freq.get(a(1) as usize) == Some(&a(2)) => NONE,
+        102 if st.freq.get(us(a(1))) == Some(&a(2)) => NONE,
         // SetIndices: the index format is each draw's own
         104 => NONE,
         _ => BOTH,
@@ -776,9 +777,9 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
                     return D3DERR_INVALIDCALL;
                 }
                 if a(1) != 0 {
-                    std::ptr::copy_nonoverlapping(decl.raw.as_ptr() as *const u32, a(1) as *mut u32, decl.raw.len() * 2);
+                    std::ptr::copy_nonoverlapping(decl.raw.as_ptr().cast::<u32>(), gp::<u32>(a(1)), decl.raw.len() * 2);
                 }
-                wr(a(2), 0, decl.raw.len() as u32);
+                wr(a(2), 0, lo32(decl.raw.len()));
                 S_OK
             }
             _ => E_NOTIMPL,
@@ -792,9 +793,9 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
                 if a(2) == 0 {
                     return D3DERR_INVALIDCALL;
                 }
-                let size = s.code.len() as u32 * 4;
+                let size = lo32(s.code.len()) * 4;
                 if a(1) != 0 {
-                    std::ptr::copy_nonoverlapping(s.code.as_ptr(), a(1) as *mut u32, s.code.len());
+                    std::ptr::copy_nonoverlapping(s.code.as_ptr(), gp::<u32>(a(1)), s.code.len());
                 }
                 wr(a(2), 0, size);
                 S_OK
@@ -843,7 +844,7 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
                 };
                 let n = query_size(t).min(a(2));
                 if a(1) != 0 && n > 0 {
-                    std::ptr::write_bytes(a(1) as *mut u8, 0, n as usize);
+                    std::ptr::write_bytes(gp::<u8>(a(1)), 0, us(n));
                     if t == 8 || t == 9 {
                         // event: done; occlusion: something drawn
                         wr(a(1), 0, 1);
@@ -903,7 +904,7 @@ unsafe fn raster_status(d: &D3d, out: u32) -> u32 {
 unsafe fn adapter_modes() -> Vec<(u32, u32)> {
     let (mut w, mut h) = (0, 0);
     crate::display::vnhost_display_size(&mut w, &mut h);
-    let (w, h) = (w.max(640) as u32, h.max(480) as u32);
+    let (w, h) = (w.max(640).cast_unsigned(), h.max(480).cast_unsigned());
     let mut v: Vec<(u32, u32)> = [(640, 480), (800, 600), (1024, 768), (1280, 720), (1280, 768), (1280, 800), (1280, 960),
         (1280, 1024), (1366, 768), (1600, 900), (1920, 1080)]
         .into_iter()
@@ -919,8 +920,8 @@ unsafe fn adapter_modes() -> Vec<(u32, u32)> {
 unsafe fn display_mode(out: u32) -> u32 {
     let (mut w, mut h) = (0, 0);
     crate::display::vnhost_display_size(&mut w, &mut h);
-    wr(out, 0, w as u32);
-    wr(out, 1, h as u32);
+    wr(out, 0, w.cast_unsigned());
+    wr(out, 1, h.cast_unsigned());
     wr(out, 2, 60);
     wr(out, 3, fmt::X8R8G8B8);
     S_OK
@@ -1019,7 +1020,7 @@ unsafe fn d3d9_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) ->
         4 => 1, // GetAdapterCount
         5 => {
             // GetAdapterIdentifier
-            let p = a(3) as *mut u8;
+            let p = gp::<u8>(a(3));
             if p.is_null() {
                 return D3DERR_INVALIDCALL;
             }
@@ -1029,19 +1030,19 @@ unsafe fn d3d9_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) ->
             put(512, b"masu WebGPU");
             put(1024, b"\\\\.\\DISPLAY1");
             // DriverVersion (1056), VendorId 1064, DeviceId 1068
-            *(p.add(1056) as *mut u32) = 0x0001_0000;
-            *(p.add(1060) as *mut u32) = 0x0006_000e;
-            *(p.add(1064) as *mut u32) = 0x10de;
-            *(p.add(1068) as *mut u32) = 0x1c82;
-            *(p.add(1088) as *mut u32) = 0x5642_4e56;
+            *p.add(1056).cast::<u32>() = 0x0001_0000;
+            *p.add(1060).cast::<u32>() = 0x0006_000e;
+            *p.add(1064).cast::<u32>() = 0x10de;
+            *p.add(1068).cast::<u32>() = 0x1c82;
+            *p.add(1088).cast::<u32>() = 0x5642_4e56;
             S_OK
         }
         6 => {
-            if a(2) == fmt::X8R8G8B8 || a(2) == fmt::A8R8G8B8 { adapter_modes().len() as u32 } else { 0 }
+            if a(2) == fmt::X8R8G8B8 || a(2) == fmt::A8R8G8B8 { lo32(adapter_modes().len()) } else { 0 }
         }
         7 => {
             let modes = adapter_modes();
-            let Some(&(w, h)) = modes.get(a(3) as usize) else { return D3DERR_INVALIDCALL };
+            let Some(&(w, h)) = modes.get(us(a(3))) else { return D3DERR_INVALIDCALL };
             if a(2) != fmt::X8R8G8B8 && a(2) != fmt::A8R8G8B8 {
                 return D3DERR_INVALIDCALL;
             }
@@ -1083,7 +1084,7 @@ unsafe fn d3d9_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) ->
         14 => {
             let mut c = CAPS;
             c[0] = a(2).max(1);
-            std::ptr::copy_nonoverlapping(c.as_ptr(), a(3) as *mut u32, c.len());
+            std::ptr::copy_nonoverlapping(c.as_ptr(), gp::<u32>(a(3)), c.len());
             S_OK
         }
         // GetAdapterMonitor: the one monitor, as MonitorFromWindow
@@ -1166,10 +1167,10 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
     let mut rect = [0i32; 4];
     (d.calls().client_rect)(hwnd, rect.as_mut_ptr());
     if p[0] == 0 {
-        p[0] = (rect[2] - rect[0]).max(1) as u32;
+        p[0] = ((rect[2] - rect[0]).max(1)).cast_unsigned();
     }
     if p[1] == 0 {
-        p[1] = (rect[3] - rect[1]).max(1) as u32;
+        p[1] = ((rect[3] - rect[1]).max(1)).cast_unsigned();
     }
     if p[2] == 0 {
         p[2] = fmt::X8R8G8B8;
@@ -1293,7 +1294,7 @@ fn reset_buffers(d: &mut D3d) {
         dev.st.vsb_more = vec![0; 2048 - 16];
     }
     dev.st.viewport = [0, 0, p[0], p[1], 0, 1f32.to_bits()];
-    dev.st.scissor = [0, 0, p[0] as i32, p[1] as i32];
+    dev.st.scissor = [0, 0, p[0].cast_signed(), p[1].cast_signed()];
     d.bind(bb);
     if ds != 0 {
         d.bind(ds);
@@ -1338,10 +1339,10 @@ unsafe fn create_swap_chain(d: &mut D3d, pp: u32, out: u32) -> u32 {
     let mut rect = [0i32; 4];
     (d.calls().client_rect)(hwnd, rect.as_mut_ptr());
     if p[0] == 0 {
-        p[0] = (rect[2] - rect[0]).max(1) as u32;
+        p[0] = ((rect[2] - rect[0]).max(1)).cast_unsigned();
     }
     if p[1] == 0 {
-        p[1] = (rect[3] - rect[1]).max(1) as u32;
+        p[1] = ((rect[3] - rect[1]).max(1)).cast_unsigned();
     }
     if p[2] == 0 {
         p[2] = fmt::X8R8G8B8;
@@ -1429,7 +1430,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             S_OK
         }
         7 => {
-            std::ptr::copy_nonoverlapping(CAPS.as_ptr(), a(1) as *mut u32, CAPS.len());
+            std::ptr::copy_nonoverlapping(CAPS.as_ptr(), gp::<u32>(a(1)), CAPS.len());
             S_OK
         }
         8 => display_mode(a(2)),
@@ -1473,10 +1474,10 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             let mut rect = [0i32; 4];
             (d.calls().client_rect)(hwnd, rect.as_mut_ptr());
             if p[0] == 0 {
-                p[0] = (rect[2] - rect[0]).max(1) as u32;
+                p[0] = ((rect[2] - rect[0]).max(1)).cast_unsigned();
             }
             if p[1] == 0 {
-                p[1] = (rect[3] - rect[1]).max(1) as u32;
+                p[1] = ((rect[3] - rect[1]).max(1)).cast_unsigned();
             }
             if p[2] == 0 {
                 p[2] = fmt::X8R8G8B8;
@@ -1504,7 +1505,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         21 => S_OK,
         22 => {
             // GetGammaRamp: identity
-            let p = a(3) as *mut u16;
+            let p = gp::<u16>(a(3));
             if !p.is_null() {
                 for c in 0..3 {
                     for i in 0..256 {
@@ -1554,7 +1555,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             S_OK
         }
         37 => {
-            let (i, s) = (a(1) as usize, d.id_of(a(2)));
+            let (i, s) = (us(a(1)), d.id_of(a(2)));
             if i >= 4 || (i == 0 && s == 0) {
                 return D3DERR_INVALIDCALL;
             }
@@ -1567,14 +1568,14 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                     let (w, h) = (sf.w, sf.h);
                     let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
                     dev.st.viewport = [0, 0, w, h, 0, 1f32.to_bits()];
-                    dev.st.scissor = [0, 0, w as i32, h as i32];
+                    dev.st.scissor = [0, 0, w.cast_signed(), h.cast_signed()];
                 }
             }
             set_bound(d, s, old);
             S_OK
         }
         38 => {
-            let i = a(1) as usize;
+            let i = us(a(1));
             let dev = dev!(d);
             let s = if i < 4 { dev.rt[i] } else { 0 };
             if s == 0 {
@@ -1629,7 +1630,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                 return D3DERR_INVALIDCALL;
             }
             let mut mtx = [0f32; 16];
-            std::ptr::copy_nonoverlapping(p as *const f32, mtx.as_mut_ptr(), 16);
+            std::ptr::copy_nonoverlapping(gc::<f32>(p), mtx.as_mut_ptr(), 16);
             let dev = dev!(d);
             if m == 46 {
                 let cur = dev.st.transforms.get(&state).copied().unwrap_or(IDENT);
@@ -1646,32 +1647,32 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             }
             let dev = dev!(d);
             let mtx = dev.st.transforms.get(&a(1)).copied().unwrap_or(IDENT);
-            std::ptr::copy_nonoverlapping(mtx.as_ptr(), a(2) as *mut f32, 16);
+            std::ptr::copy_nonoverlapping(mtx.as_ptr(), gp::<f32>(a(2)), 16);
             S_OK
         }
         47 => {
             let dev = dev!(d);
-            std::ptr::copy_nonoverlapping(a(1) as *const u32, dev.st.viewport.as_mut_ptr(), 6);
+            std::ptr::copy_nonoverlapping(gc::<u32>(a(1)), dev.st.viewport.as_mut_ptr(), 6);
             S_OK
         }
         48 => {
             let dev = dev!(d);
-            std::ptr::copy_nonoverlapping(dev.st.viewport.as_ptr(), a(1) as *mut u32, 6);
+            std::ptr::copy_nonoverlapping(dev.st.viewport.as_ptr(), gp::<u32>(a(1)), 6);
             S_OK
         }
         49 => {
             let dev = dev!(d);
-            std::ptr::copy_nonoverlapping(a(1) as *const f32, dev.st.material.as_mut_ptr(), 17);
+            std::ptr::copy_nonoverlapping(gc::<f32>(a(1)), dev.st.material.as_mut_ptr(), 17);
             S_OK
         }
         50 => {
             let dev = dev!(d);
-            std::ptr::copy_nonoverlapping(dev.st.material.as_ptr(), a(1) as *mut f32, 17);
+            std::ptr::copy_nonoverlapping(dev.st.material.as_ptr(), gp::<f32>(a(1)), 17);
             S_OK
         }
         51 => {
             let dev = dev!(d);
-            let l = std::slice::from_raw_parts(a(2) as *const u8, 104).to_vec();
+            let l = std::slice::from_raw_parts(gc::<u8>(a(2)), 104).to_vec();
             let on = dev.st.lights.get(&a(1)).is_some_and(|x| x.1);
             dev.st.lights.insert(a(1), (l, on));
             S_OK
@@ -1679,7 +1680,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         52 => {
             let dev = dev!(d);
             let Some((l, _)) = dev.st.lights.get(&a(1)) else { return D3DERR_INVALIDCALL };
-            std::ptr::copy_nonoverlapping(l.as_ptr(), a(2) as *mut u8, 104);
+            std::ptr::copy_nonoverlapping(l.as_ptr(), gp::<u8>(a(2)), 104);
             S_OK
         }
         53 => {
@@ -1696,21 +1697,21 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         }
         55 => {
             let dev = dev!(d);
-            if let Some(c) = dev.st.clip.get_mut(a(1) as usize) {
-                std::ptr::copy_nonoverlapping(a(2) as *const f32, c.as_mut_ptr(), 4);
+            if let Some(c) = dev.st.clip.get_mut(us(a(1))) {
+                std::ptr::copy_nonoverlapping(gc::<f32>(a(2)), c.as_mut_ptr(), 4);
             }
             S_OK
         }
         56 => {
             let dev = dev!(d);
             // (past the 6 planes: zeros, as Windows)
-            let c = dev.st.clip.get(a(1) as usize).copied().unwrap_or([0.0; 4]);
-            std::ptr::copy_nonoverlapping(c.as_ptr(), a(2) as *mut f32, 4);
+            let c = dev.st.clip.get(us(a(1))).copied().unwrap_or([0.0; 4]);
+            std::ptr::copy_nonoverlapping(c.as_ptr(), gp::<f32>(a(2)), 4);
             S_OK
         }
         57 => {
             let dev = dev!(d);
-            if let Some(r) = dev.st.rs.get_mut(a(1) as usize) {
+            if let Some(r) = dev.st.rs.get_mut(us(a(1))) {
                 *r = a(2);
             }
             S_OK
@@ -1720,7 +1721,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                 return D3DERR_INVALIDCALL;
             }
             let dev = dev!(d);
-            wr(a(2), 0, dev.st.rs[a(1) as usize]);
+            wr(a(2), 0, dev.st.rs[us(a(1))]);
             S_OK
         }
         59 => {
@@ -1781,10 +1782,10 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             S_OK
         }
         65 => {
-            let stage = a(1) as usize;
+            let stage = us(a(1));
             let t = d.id_of(a(2));
             let dev = dev!(d);
-            let Some(slot) = sampler_slot(stage as u32).map(|s| &mut dev.st.textures[s]) else { return S_OK };
+            let Some(slot) = sampler_slot(lo32(stage)).map(|s| &mut dev.st.textures[s]) else { return S_OK };
             let old = *slot;
             *slot = t;
             set_bound(d, t, old);
@@ -1792,26 +1793,26 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         }
         66 => {
             let dev = dev!(d);
-            let v = dev.st.tss.get(a(1) as usize).and_then(|s| s.get(a(2) as usize)).copied().unwrap_or(0);
+            let v = dev.st.tss.get(us(a(1))).and_then(|s| s.get(us(a(2)))).copied().unwrap_or(0);
             wr(a(3), 0, v);
             S_OK
         }
         67 => {
             let dev = dev!(d);
-            if let Some(v) = dev.st.tss.get_mut(a(1) as usize).and_then(|s| s.get_mut(a(2) as usize)) {
+            if let Some(v) = dev.st.tss.get_mut(us(a(1))).and_then(|s| s.get_mut(us(a(2)))) {
                 *v = a(3);
             }
             S_OK
         }
         68 => {
             let dev = dev!(d);
-            let v = sampler_slot(a(1)).and_then(|s| dev.st.ss[s].get(a(2) as usize)).copied().unwrap_or(0);
+            let v = sampler_slot(a(1)).and_then(|s| dev.st.ss[s].get(us(a(2)))).copied().unwrap_or(0);
             wr(a(3), 0, v);
             S_OK
         }
         69 => {
             let dev = dev!(d);
-            if let Some(v) = sampler_slot(a(1)).and_then(|s| dev.st.ss[s].get_mut(a(2) as usize)) {
+            if let Some(v) = sampler_slot(a(1)).and_then(|s| dev.st.ss[s].get_mut(us(a(2)))) {
                 *v = a(3);
             }
             S_OK
@@ -1827,7 +1828,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             }
             let dev = dev!(d);
             let mut p = Box::new([0u8; 1024]);
-            std::ptr::copy_nonoverlapping(a(2) as *const u8, p.as_mut_ptr(), 1024);
+            std::ptr::copy_nonoverlapping(gc::<u8>(a(2)), p.as_mut_ptr(), 1024);
             if dev.palettes.get(&a(1)) != Some(&p) {
                 if a(1) == dev.cur_palette {
                     dev.pal_gen += 1;
@@ -1841,7 +1842,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             let dev = dev!(d);
             match dev.palettes.get(&a(1)) {
                 Some(p) if a(2) != 0 => {
-                    std::ptr::copy_nonoverlapping(p.as_ptr(), a(2) as *mut u8, 1024);
+                    std::ptr::copy_nonoverlapping(p.as_ptr(), gp::<u8>(a(2)), 1024);
                     S_OK
                 }
                 _ => D3DERR_INVALIDCALL,
@@ -1886,7 +1887,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         81 => draw(d, a(1), Src::Streams(a(2)), a(3), None),
         82 => {
             // DrawIndexedPrimitive(type, base vertex, min index, num vertices, start index, prims)
-            draw(d, a(1), Src::Indexed { base: a(2) as i32, min: a(3), num: a(4), start: a(5) }, a(6), None)
+            draw(d, a(1), Src::Indexed { base: a(2).cast_signed(), min: a(3), num: a(4), start: a(5) }, a(6), None)
         }
         83 => draw(d, a(1), Src::Up { data: a(3), stride: a(4) }, a(2), None),
         84 => {
@@ -1990,10 +1991,10 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         94 | 95 | 109 | 110 => {
             let dev = dev!(d);
             let regs = if m < 100 { &mut dev.st.vsf } else { &mut dev.st.psf };
-            if !regs_fit(a(1) as u32, a(3) as u32, regs.len()) {
+            if !regs_fit(a(1), a(3), regs.len()) {
                 return D3DERR_INVALIDCALL;
             }
-            let (start, n) = (a(1) as usize, a(3) as usize);
+            let (start, n) = (us(a(1)), us(a(3)));
             let p = a(2) as *mut [f32; 4];
             if m == 94 || m == 109 {
                 std::ptr::copy_nonoverlapping(p, regs[start..].as_mut_ptr(), n);
@@ -2006,7 +2007,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             let dev = dev!(d);
             let st = &mut dev.st;
             let more = if m < 100 { st.vsi_more.len() } else { 0 };
-            let (start, n) = (a(1) as usize, a(3) as usize);
+            let (start, n) = (us(a(1)), us(a(3)));
             if start.saturating_add(n) > 16 + more {
                 return D3DERR_INVALIDCALL;
             }
@@ -2031,20 +2032,20 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             let st = &mut dev.st;
             let more = if m < 100 { st.vsb_more.len() } else { 0 };
             let (start, n) = (a(1), a(3));
-            if start.saturating_add(n) > 16 + more as u32 {
+            if start.saturating_add(n) > 16 + lo32(more) {
                 return D3DERR_INVALIDCALL;
             }
-            let p = a(2) as *mut u32;
+            let p = gp::<u32>(a(2));
             for i in 0..n {
                 let r = start + i;
                 let set = m == 98 || m == 113;
-                let v = *p.add(i as usize) != 0;
+                let v = *p.add(us(i)) != 0;
                 if r >= 16 {
-                    let x = &mut st.vsb_more[r as usize - 16];
+                    let x = &mut st.vsb_more[us(r) - 16];
                     if set {
                         *x = u32::from(v);
                     } else {
-                        *p.add(i as usize) = *x;
+                        *p.add(us(i)) = *x;
                     }
                     continue;
                 }
@@ -2057,13 +2058,13 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                         *bits &= !b;
                     }
                 } else {
-                    *p.add(i as usize) = u32::from(*bits & b != 0);
+                    *p.add(us(i)) = u32::from(*bits & b != 0);
                 }
             }
             S_OK
         }
         100 => {
-            let (n, vb, off, stride) = (a(1) as usize, d.id_of(a(2)), a(3), a(4));
+            let (n, vb, off, stride) = (us(a(1)), d.id_of(a(2)), a(3), a(4));
             let dev = dev!(d);
             // (Windows takes streams past 15 and keeps nothing)
             let Some(slot) = dev.st.streams.get_mut(n) else { return S_OK };
@@ -2074,7 +2075,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         }
         101 => {
             let dev = dev!(d);
-            let Some(&(vb, off, stride)) = dev.st.streams.get(a(1) as usize) else { return D3DERR_INVALIDCALL };
+            let Some(&(vb, off, stride)) = dev.st.streams.get(us(a(1))) else { return D3DERR_INVALIDCALL };
             if vb != 0 {
                 d.add_ref(vb);
             }
@@ -2089,14 +2090,14 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
                 return D3DERR_INVALIDCALL;
             }
             let dev = dev!(d);
-            if let Some(f) = dev.st.freq.get_mut(a(1) as usize) {
+            if let Some(f) = dev.st.freq.get_mut(us(a(1))) {
                 *f = a(2);
             }
             S_OK
         }
         103 => {
             let dev = dev!(d);
-            wr(a(2), 0, dev.st.freq.get(a(1) as usize).copied().unwrap_or(1));
+            wr(a(2), 0, dev.st.freq.get(us(a(1))).copied().unwrap_or(1));
             S_OK
         }
         104 => {
@@ -2370,7 +2371,7 @@ unsafe fn volume_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 return D3DERR_INVALIDCALL;
             }
             let desc = [v.fmt, RT_VOLUME, v.usage, v.pool, v.w, v.h, v.depth];
-            std::ptr::copy_nonoverlapping(desc.as_ptr(), a(1) as *mut u32, 7);
+            std::ptr::copy_nonoverlapping(desc.as_ptr(), gp::<u32>(a(1)), 7);
             S_OK
         }
         9 => lock_volume(d, this, a(1), a(2), a(3)),
@@ -2390,7 +2391,7 @@ fn volume_mem(d: &mut D3d, v: u32) -> Option<u32> {
         return None;
     }
     // (zeros, as a new texture reads)
-    unsafe { std::ptr::write_bytes(mem as *mut u8, 0, (vl.slice * vl.depth) as usize) };
+    unsafe { std::ptr::write_bytes(gp::<u8>(mem), 0, us(vl.slice * vl.depth)) };
     if let Some(Data::Volume(vl)) = d.objs.get_mut(&v).map(|o| &mut o.data) {
         vl.mem = mem;
     }
@@ -2451,8 +2452,8 @@ fn upload_volume(d: &mut D3d, v: u32, b: [u32; 6]) {
         gpu::record(|bt: &mut Batch| {
             let at = bt.blob.len().next_multiple_of(4);
             bt.blob.resize(at, 0);
-            unsafe { fmt::convert(f, src as *const u8, pitch as usize, w, h, &mut bt.blob) };
-            bt.cmd(&[gpu::WRITE_TEXTURE2, gpu, level, z, x0, y0, w, h, w * bpp, at as u32]);
+            unsafe { fmt::convert(f, gc::<u8>(src), us(pitch), w, h, &mut bt.blob) };
+            bt.cmd(&[gpu::WRITE_TEXTURE2, gpu, level, z, x0, y0, w, h, w * bpp, lo32(at)]);
         });
     }
 }
@@ -2496,7 +2497,7 @@ fn changed_box(rows: &[u8], pitch: usize, row: usize, h: usize, bpp: usize, shad
             Some(o) => [o[0].min(l), o[1], o[2].max(r), y + 1],
         });
     }
-    b.map(|b| [(b[0] / bpp) as u32, b[1] as u32, b[2].div_ceil(bpp) as u32, b[3] as u32])
+    b.map(|b| [lo32(b[0] / bpp), lo32(b[1]), lo32(b[2].div_ceil(bpp)), lo32(b[3])])
 }
 
 /// The most bytes of whole-lock copies (`Surface::shadow`) kept at a time. Each surface locked
@@ -2528,12 +2529,13 @@ fn shadows_to_drop(mut kept: Vec<(u64, u32, usize)>, need: usize, budget: usize)
 #[cfg(test)]
 mod shadow_tests {
     use proptest::prelude::*;
+    use crate::guest::lo32;
     proptest! {
         /// What stays fits with the new copy, what goes was used before everything that stays,
         /// and nothing goes that did not have to.
         #[test]
         fn the_oldest_copies_go(sizes in proptest::collection::vec(1usize..5000, 0..12), need in 0usize..6000, budget in 0usize..20000) {
-            let kept: Vec<(u64, u32, usize)> = sizes.iter().enumerate().map(|(i, &b)| ((i as u64 * 7919) % 13 * 100 + i as u64, i as u32, b)).collect();
+            let kept: Vec<(u64, u32, usize)> = sizes.iter().enumerate().map(|(i, &b)| ((i as u64 * 7919) % 13 * 100 + i as u64, lo32(i), b)).collect();
             let gone = super::shadows_to_drop(kept.clone(), need, budget);
             if need > budget {
                 prop_assert!(gone.is_empty());
@@ -2560,8 +2562,8 @@ unsafe fn upload_changed(d: &mut D3d, s: u32) {
     let Some(Data::Surface(sf)) = d.objs.get_mut(&s).map(|o| &mut o.data) else { return };
     let (bpb, bs) = fmt::layout(sf.fmt).unwrap_or((4, 1));
     let (w, h) = (sf.w, sf.h);
-    let row = (w * bpb) as usize;
-    if bs != 1 || sf.mem == 0 || sf.gpu == 0 || row * (h as usize) < 1 << 18 || fmt::is_depth(sf.fmt) {
+    let row = us(w * bpb);
+    if bs != 1 || sf.mem == 0 || sf.gpu == 0 || row * (us(h)) < 1 << 18 || fmt::is_depth(sf.fmt) {
         return upload(d, s, [0, 0, w, h]);
     }
     sf.full_locks += 1;
@@ -2572,7 +2574,7 @@ unsafe fn upload_changed(d: &mut D3d, s: u32) {
             Data::Surface(x) if id != s => x.shadow.as_ref().map(|sh| (x.shadow_used, id, sh.len())),
             _ => None,
         }).collect();
-        for id in shadows_to_drop(kept, row * h as usize, SHADOW_BUDGET.load(std::sync::atomic::Ordering::Relaxed)) {
+        for id in shadows_to_drop(kept, row * us(h), SHADOW_BUDGET.load(std::sync::atomic::Ordering::Relaxed)) {
             if let Some(Data::Surface(x)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
                 x.shadow = None;
             }
@@ -2580,15 +2582,15 @@ unsafe fn upload_changed(d: &mut D3d, s: u32) {
     }
     let Some(Data::Surface(sf)) = d.objs.get_mut(&s).map(|o| &mut o.data) else { return };
     sf.shadow_used = tick;
-    let fits = row * h as usize <= SHADOW_BUDGET.load(std::sync::atomic::Ordering::Relaxed);
-    let rows = std::slice::from_raw_parts(sf.mem as *const u8, sf.pitch as usize * (h as usize - 1) + row);
+    let fits = row * us(h) <= SHADOW_BUDGET.load(std::sync::atomic::Ordering::Relaxed);
+    let rows = std::slice::from_raw_parts(gc::<u8>(sf.mem), us(sf.pitch) * (us(h) - 1) + row);
     let r = match sf.shadow.as_mut() {
-        Some(sh) => changed_box(rows, sf.pitch as usize, row, h as usize, bpb as usize, sh),
+        Some(sh) => changed_box(rows, us(sf.pitch), row, us(h), us(bpb), sh),
         None => {
             if sf.full_locks >= 2 && fits {
-                let mut sh = vec![0u8; row * h as usize].into_boxed_slice();
-                for y in 0..h as usize {
-                    sh[y * row..(y + 1) * row].copy_from_slice(&rows[y * sf.pitch as usize..][..row]);
+                let mut sh = vec![0u8; row * us(h)].into_boxed_slice();
+                for y in 0..us(h) {
+                    sh[y * row..(y + 1) * row].copy_from_slice(&rows[y * us(sf.pitch)..][..row]);
                 }
                 sf.shadow = Some(sh);
             }
@@ -2684,10 +2686,10 @@ unsafe fn upload_keep(d: &mut D3d, s: u32, r: [u32; 4]) {
             let at = b.blob.len().next_multiple_of(4);
             b.blob.resize(at, 0);
             match &pal {
-                Some(p) => fmt::convert_p8(src as *const u8, pitch as usize, w, h, p, &mut b.blob),
-                None => fmt::convert(f, src as *const u8, pitch as usize, w, h, &mut b.blob),
+                Some(p) => fmt::convert_p8(gc::<u8>(src), us(pitch), w, h, p, &mut b.blob),
+                None => fmt::convert(f, gc::<u8>(src), us(pitch), w, h, &mut b.blob),
             }
-            b.cmd(&[gpu::WRITE_TEXTURE2, gpu, level, layer, x0, y0, w, h, w * bpp, at as u32]);
+            b.cmd(&[gpu::WRITE_TEXTURE2, gpu, level, layer, x0, y0, w, h, w * bpp, lo32(at)]);
         });
         return;
     }
@@ -2714,10 +2716,10 @@ unsafe fn upload_keep(d: &mut D3d, s: u32, r: [u32; 4]) {
         let at = b.blob.len().next_multiple_of(4);
         b.blob.resize(at, 0);
         match &pal {
-            Some(p) => fmt::convert_p8(src as *const u8, pitch as usize, w, h, p, &mut b.blob),
-            None => fmt::convert(f, src as *const u8, pitch as usize, w, h, &mut b.blob),
+            Some(p) => fmt::convert_p8(gc::<u8>(src), us(pitch), w, h, p, &mut b.blob),
+            None => fmt::convert(f, gc::<u8>(src), us(pitch), w, h, &mut b.blob),
         }
-        b.cmd(&[gpu::WRITE_TEXTURE, gpu, level, x0, y0, w, h, w * bpp, at as u32]);
+        b.cmd(&[gpu::WRITE_TEXTURE, gpu, level, x0, y0, w, h, w * bpp, lo32(at)]);
     });
 }
 
@@ -2837,8 +2839,8 @@ unsafe fn unlock_surface(d: &mut D3d, s: u32) -> u32 {
     let Some(Data::Surface(sf)) = d.objs.get_mut(&s).map(|o| &mut o.data) else { return D3DERR_INVALIDCALL };
     let Some(r) = sf.lock.take() else { return D3DERR_INVALIDCALL };
     if d.trace && sf.mem != 0 {
-        let n = (sf.pitch * sf.h) as usize;
-        let nz = std::slice::from_raw_parts(sf.mem as *const u8, n).iter().filter(|&&b| b != 0).count();
+        let n = us(sf.pitch * sf.h);
+        let nz = std::slice::from_raw_parts(gc::<u8>(sf.mem), n).iter().filter(|&&b| b != 0).count();
         eprintln!("d3d9: unlock surface {s} {}x{} fmt {} pool {} rect {r:?}: {nz} of {n} bytes non-zero", sf.w, sf.h, sf.fmt, sf.pool);
     }
     if r == [0, 0, sf.w, sf.h] {
@@ -2870,7 +2872,7 @@ unsafe fn surface_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32,
         12 => {
             let Some(Data::Surface(sf)) = d.objs.get(&this).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
             let desc = [sf.fmt, RT_SURFACE, sf.usage, sf.pool, 0, 0, sf.w, sf.h];
-            std::ptr::copy_nonoverlapping(desc.as_ptr(), a(1) as *mut u32, 8);
+            std::ptr::copy_nonoverlapping(desc.as_ptr(), gp::<u32>(a(1)), 8);
             S_OK
         }
         13 => lock_surface(d, this, a(1), a(2), a(3), after),
@@ -2898,12 +2900,12 @@ unsafe fn private_data(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
     if a(1) == 0 {
         return D3DERR_INVALIDCALL;
     }
-    std::ptr::copy_nonoverlapping(a(1) as *const u8, guid.as_mut_ptr(), 16);
+    std::ptr::copy_nonoverlapping(gc::<u8>(a(1)), guid.as_mut_ptr(), 16);
     let Some(o) = d.objs.get_mut(&this) else { return D3DERR_INVALIDCALL };
     match m {
         4 => {
             // SetPrivateData(guid, data, size, flags): (IUnknown flag: keeps the pointer only)
-            let data = std::slice::from_raw_parts(a(2) as *const u8, a(3) as usize).to_vec();
+            let data = std::slice::from_raw_parts(gc::<u8>(a(2)), us(a(3))).to_vec();
             o.private.retain(|p| p.0 != guid);
             o.private.push((guid, data));
             S_OK
@@ -2914,15 +2916,15 @@ unsafe fn private_data(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
             if size == 0 {
                 return D3DERR_INVALIDCALL;
             }
-            let have = rd(size, 0) as usize;
-            wr(size, 0, p.1.len() as u32);
+            let have = us(rd(size, 0));
+            wr(size, 0, lo32(p.1.len()));
             if a(2) == 0 {
                 return S_OK;
             }
             if have < p.1.len() {
                 return 0x8876_0868; // D3DERR_MOREDATA
             }
-            std::ptr::copy_nonoverlapping(p.1.as_ptr(), a(2) as *mut u8, p.1.len());
+            std::ptr::copy_nonoverlapping(p.1.as_ptr(), gp::<u8>(a(2)), p.1.len());
             S_OK
         }
         _ => {
@@ -2934,7 +2936,7 @@ unsafe fn private_data(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
 
 unsafe fn texture_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usize) -> u32, after: &mut After) -> u32 {
     let Some(Data::Texture(t)) = d.objs.get_mut(&this).map(|o| &mut o.data) else { return D3DERR_INVALIDCALL };
-    let level = |t: &Texture, l: u32| t.levels.get(l as usize).copied();
+    let level = |t: &Texture, l: u32| t.levels.get(us(l)).copied();
     if iface == IF_CUBE && m >= 17 {
         // GetLevelDesc(level, desc), GetCubeMapSurface(face, level, out), LockRect(face,
         // level, locked, rect, flags), UnlockRect(face, level), AddDirtyRect(face, rect): a
@@ -3073,7 +3075,7 @@ unsafe fn buffer_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usi
             };
             let desc = if iface == IF_VB { [100, desc[1], desc[2], desc[3], desc[4], desc[5]] } else { desc };
             let n = if iface == IF_VB { 6 } else { 5 };
-            std::ptr::copy_nonoverlapping(desc.as_ptr(), a(1) as *mut u32, n);
+            std::ptr::copy_nonoverlapping(desc.as_ptr(), gp::<u32>(a(1)), n);
             S_OK
         }
         _ => E_NOTIMPL,
@@ -3126,7 +3128,7 @@ unsafe fn update_surface(d: &mut D3d, src: u32, srect: u32, dst: u32, dpoint: u3
     for y in 0..h.div_ceil(bs) {
         let sp = sm + (r[1] / bs + y) * a.pitch + (r[0] / bs) * bpb;
         let dp = tm + (dy / bs + y) * b.pitch + (dx / bs) * bpb;
-        std::ptr::copy(sp as *const u8, dp as *mut u8, row as usize);
+        std::ptr::copy(gc::<u8>(sp), gp::<u8>(dp), us(row));
     }
     upload(d, t, [dx, dy, dx + w, dy + h]);
     S_OK
@@ -3148,7 +3150,7 @@ unsafe fn update_texture(d: &mut D3d, src: u32, dst: u32) -> u32 {
         if a.fmt != b.fmt || na < nb || a.w != b.w {
             return D3DERR_INVALIDCALL;
         }
-        let pairs: Vec<(u32, u32)> = (0..6).flat_map(|f| (0..nb).map(move |l| (f, l))).map(|(f, l)| (a.levels[(f * na + l) as usize], b.levels[(f * nb + l) as usize])).collect();
+        let pairs: Vec<(u32, u32)> = (0..6).flat_map(|f| (0..nb).map(move |l| (f, l))).map(|(f, l)| (a.levels[us(f * na + l)], b.levels[us(f * nb + l)])).collect();
         for (x, y) in pairs {
             let (sa, sb) = (d.addr_of(x), d.addr_of(y));
             update_surface(d, sa, 0, sb, 0);
@@ -3165,7 +3167,7 @@ unsafe fn update_texture(d: &mut D3d, src: u32, dst: u32) -> u32 {
             let (Some(xm), Some(ym)) = (volume_mem(d, x), volume_mem(d, y)) else { return D3DERR_INVALIDCALL };
             let Some(Data::Volume(v)) = d.objs.get(&y).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
             let (len, b) = (v.slice * v.depth, [0, 0, 0, v.w, v.h, v.depth]);
-            std::ptr::copy(xm as *const u8, ym as *mut u8, len as usize);
+            std::ptr::copy(gc::<u8>(xm), gp::<u8>(ym), us(len));
             upload_volume(d, y, b);
         }
         return S_OK;
@@ -3305,7 +3307,7 @@ fn clamp_count(d: &D3d, slots: &[(u32, u32, u32); 16], src: &Src, streams: &[(u3
         }
         let end = match src {
             Src::Up { .. } | Src::UpIndexed { .. } => (u64::from(ptr) + UP_MAX).min(1 << 32),
-            _ => match slots.get(s as usize).and_then(|&(vb, _, _)| d.objs.get(&vb)).map(|o| &o.data) {
+            _ => match slots.get(us(s)).and_then(|&(vb, _, _)| d.objs.get(&vb)).map(|o| &o.data) {
                 Some(Data::Buffer(b)) => u64::from(b.mem) + u64::from(b.len),
                 _ => continue,
             },
@@ -3313,7 +3315,7 @@ fn clamp_count(d: &D3d, slots: &[(u32, u32, u32); 16], src: &Src, streams: &[(u3
         let start = u64::from(ptr) + u64::from(first) * u64::from(stride);
         n = n.min(end.saturating_sub(start) / u64::from(stride));
     }
-    n as u32
+    lo32w(n)
 }
 
 /// The vertex declaration of an FVF.
@@ -3368,7 +3370,7 @@ unsafe fn create_shader(d: &mut D3d, pixel: bool, code: u32, out: u32) -> u32 {
         return D3DERR_INVALIDCALL;
     }
     let mut n = 1;
-    let p = code as *const u32;
+    let p = gc::<u32>(code);
     let ver = *p;
     loop {
         let t = *p.add(n);
@@ -3377,7 +3379,7 @@ unsafe fn create_shader(d: &mut D3d, pixel: bool, code: u32, out: u32) -> u32 {
             break;
         }
         if t & 0xffff == 0xfffe {
-            n += ((t >> 16) & 0x7fff) as usize;
+            n += us((t >> 16) & 0x7fff);
         }
         if n > 1 << 20 {
             return D3DERR_INVALIDCALL;
@@ -3421,7 +3423,7 @@ fn regs_fit(start: u32, n: u32, len: usize) -> bool {
 
 /// The viewport (x, y, width, height, ..) as a rectangle, its edges at most i32::MAX.
 fn clear_area(vp: &[u32; 6]) -> [i32; 4] {
-    let edge = |a: u32, b: u32| (u64::from(a) + u64::from(b)).min(i32::MAX as u64) as i32;
+    let edge = |a: u32, b: u32| lo32w((u64::from(a) + u64::from(b)).min(i32::MAX as u64)).cast_signed();
     [edge(vp[0], 0), edge(vp[1], 0), edge(vp[0], vp[2]), edge(vp[1], vp[3])]
 }
 
@@ -3445,7 +3447,7 @@ mod bounds_proofs {
         let len: usize = kani::any_where(|&l| l <= 8192);
         let fit = regs_fit(start, n, len);
         // (what the copy then indexes: both inside the array)
-        assert!(!fit || (start as usize <= len && n as usize <= len - start as usize));
+        assert!(!fit || (us(start) <= len && us(n) <= len - us(start)));
         assert!(fit || start as u128 + n as u128 > len as u128);
     }
 
@@ -3543,8 +3545,8 @@ unsafe fn clear(d: &mut D3d, count: u32, rects: u32, flags: u32, color: u32, z: 
         list.push(area);
     } else {
         // (no more rectangles than a sane list has: a count of garbage reads no gigabytes)
-        for i in 0..count.min(CLEAR_RECTS) as usize {
-            let r = [rd(rects, i * 4) as i32, rd(rects, i * 4 + 1) as i32, rd(rects, i * 4 + 2) as i32, rd(rects, i * 4 + 3) as i32];
+        for i in 0..us(count.min(CLEAR_RECTS)) {
+            let r = [rd(rects, i * 4).cast_signed(), rd(rects, i * 4 + 1).cast_signed(), rd(rects, i * 4 + 2).cast_signed(), rd(rects, i * 4 + 3).cast_signed()];
             list.push([r[0].max(area[0]), r[1].max(area[1]), r[2].min(area[2]), r[3].min(area[3])]);
         }
     }
@@ -3564,16 +3566,16 @@ unsafe fn clear(d: &mut D3d, count: u32, rects: u32, flags: u32, color: u32, z: 
         if r[2] <= r[0] || r[3] <= r[1] {
             continue;
         }
-        let full = r == [0, 0, target.2 as i32, target.3 as i32];
+        let full = r == [0, 0, target.2.cast_signed(), target.3.cast_signed()];
         gpu::record(|b| {
             b.cmd(&[gpu::CLEAR, flags, c[0], c[1], c[2], c[3], f2u(z), stencil]);
             if full {
                 b.cmd(&[0, 0, 0, 0]);
             } else {
-                b.cmd(&[r[0] as u32, r[1] as u32, (r[2] - r[0]) as u32, (r[3] - r[1]) as u32]);
+                b.cmd(&[(r[0]).cast_unsigned(), (r[1]).cast_unsigned(), (r[2] - r[0]).cast_unsigned(), (r[3] - r[1]).cast_unsigned()]);
             }
             for (_, g) in &more {
-                b.cmd(&[gpu::FILL, g.0, g.1, r[0] as u32, r[1] as u32, (r[2] - r[0]) as u32, (r[3] - r[1]) as u32, fmt::target_color(g.4, color)]);
+                b.cmd(&[gpu::FILL, g.0, g.1, (r[0]).cast_unsigned(), (r[1]).cast_unsigned(), (r[2] - r[0]).cast_unsigned(), (r[3] - r[1]).cast_unsigned(), fmt::target_color(g.4, color)]);
             }
         });
     }
@@ -3589,7 +3591,7 @@ unsafe fn clear(d: &mut D3d, count: u32, rects: u32, flags: u32, color: u32, z: 
 /// replay_d3d9clear r483..r515, a D16 of 8x8 under a 16x16 target, #63)
 fn depth_clip(sc: [i32; 4], z: Option<(u32, u32)>) -> [i32; 4] {
     match z {
-        Some((w, h)) => [sc[0], sc[1], sc[2].min(w as i32), sc[3].min(h as i32)],
+        Some((w, h)) => [sc[0], sc[1], sc[2].min(w.cast_signed()), sc[3].min(h.cast_signed())],
         None => sc,
     }
 }
@@ -3614,11 +3616,11 @@ mod depth_clip_tests {
             x ^= x << 13;
             x ^= x >> 17;
             x ^= x << 5;
-            let sc = [(x % 40) as i32, ((x >> 6) % 40) as i32, ((x >> 12) % 80) as i32, ((x >> 19) % 80) as i32];
+            let sc = [(x % 40).cast_signed(), ((x >> 6) % 40).cast_signed(), ((x >> 12) % 80).cast_signed(), ((x >> 19) % 80).cast_signed()];
             let (zw, zh) = (1 + (x >> 3) % 64, 1 + (x >> 9) % 64);
             let c = depth_clip(sc, Some((zw, zh)));
             assert_eq!((c[0], c[1]), (sc[0], sc[1]));
-            assert!(c[2] <= sc[2] && c[3] <= sc[3] && c[2] <= zw as i32 && c[3] <= zh as i32);
+            assert!(c[2] <= sc[2] && c[3] <= sc[3] && c[2] <= zw.cast_signed() && c[3] <= zh.cast_signed());
         }
     }
 }
@@ -3632,7 +3634,7 @@ fn ensure_targets(d: &mut D3d, rt: u32, more: &[u32], ds: u32) {
     // (a depth buffer of another size than the target: the page draws with one of the target's
     // size, render/d3d.rs depth_for)
     let z = surface_gpu(d, ds);
-    let mut c = vec![gpu::SET_TARGETS2, 1 + more.len() as u32, t.0, t.1, 0];
+    let mut c = vec![gpu::SET_TARGETS2, 1 + lo32(more.len()), t.0, t.1, 0];
     for &m in more {
         let g = surface_gpu(d, m).unwrap();
         c.extend_from_slice(&[g.0, g.1, 0]);
@@ -3664,7 +3666,7 @@ fn ensure_target(d: &mut D3d, rt: u32, ds: u32) {
 
 /// The rectangle at `p` (RECT: l t r b), None for NULL.
 unsafe fn rect_at(p: u32) -> Option<[i32; 4]> {
-    (p != 0).then(|| [rd(p, 0) as i32, rd(p, 1) as i32, rd(p, 2) as i32, rd(p, 3) as i32])
+    (p != 0).then(|| [rd(p, 0).cast_signed(), rd(p, 1).cast_signed(), rd(p, 2).cast_signed(), rd(p, 3).cast_signed()])
 }
 
 /// Where a windowed Present shows its frame: `dst` (Present's pDestRect, in the window's client
@@ -3679,7 +3681,7 @@ pub fn present_dest(client: [i32; 4], dst: Option<[i32; 4]>) -> [i32; 4] {
 /// Present's pSourceRect as PRESENT's source words (render/d3d.rs `present_src`): of a `w`x`h`
 /// back buffer, clipped to it; all of it (`w`, `h`) without one.
 pub fn present_src_words(src: Option<[i32; 4]>, w: u32, h: u32) -> (u32, u32) {
-    let clip = |v: i32, m: u32| v.clamp(0, m.min(0xffff) as i32) as u32;
+    let clip = |v: i32, m: u32| (v.clamp(0, m.min(0xffff).cast_signed())).cast_unsigned();
     match src {
         Some([l, t, r, b]) if r > l && b > t && clip(r, w) > clip(l, w) && clip(b, h) > clip(t, h) && clip(b, h) > 0 => {
             (clip(l, w) | clip(t, h) << 16, clip(r, w) | clip(b, h) << 16)
@@ -3694,7 +3696,7 @@ pub fn present_src_words(src: Option<[i32; 4]>, w: u32, h: u32) -> (u32, u32) {
 /// lands in the client area.
 pub fn present_part(words: (u32, u32), w: u32, h: u32, dst: [i32; 4], bound: (u32, u32)) -> Option<([u32; 4], [u32; 4])> {
     let src = if words.1 >> 16 == 0 { [0, 0, w, h] } else { [words.0 & 0xffff, words.0 >> 16, words.1 & 0xffff, words.1 >> 16] };
-    let c = [dst[0].max(0), dst[1].max(0), dst[2].min(bound.0 as i32), dst[3].min(bound.1 as i32)];
+    let c = [dst[0].max(0), dst[1].max(0), dst[2].min(bound.0.cast_signed()), dst[3].min(bound.1.cast_signed())];
     if c[2] <= c[0] || c[3] <= c[1] || src[2] <= src[0] || src[3] <= src[1] {
         return None;
     }
@@ -3704,7 +3706,7 @@ pub fn present_part(words: (u32, u32), w: u32, h: u32, dst: [i32; 4], bound: (u3
     let map = |v: i32, d0: i32, dn: i64, s0: u32, sn: i64, up: bool| {
         let num = i64::from(v - d0) * sn;
         let q = if up { (num + dn - 1).div_euclid(dn) } else { num.div_euclid(dn) };
-        (i64::from(s0) + q).clamp(i64::from(s0), i64::from(s0) + sn) as u32
+        lo32w(((i64::from(s0) + q).clamp(i64::from(s0), i64::from(s0) + sn)).cast_unsigned())
     };
     let mut s = [map(c[0], dst[0], dw, src[0], sw, false), map(c[1], dst[1], dh, src[1], sh, false), map(c[2], dst[0], dw, src[0], sw, true), map(c[3], dst[1], dh, src[1], sh, true)];
     s[2] = s[2].max(s[0] + 1).min(src[2]);
@@ -3712,7 +3714,7 @@ pub fn present_part(words: (u32, u32), w: u32, h: u32, dst: [i32; 4], bound: (u3
     if s[2] <= s[0] || s[3] <= s[1] {
         return None;
     }
-    Some((s, [c[0] as u32, c[1] as u32, c[2] as u32, c[3] as u32]))
+    Some((s, [(c[0]).cast_unsigned(), (c[1]).cast_unsigned(), (c[2]).cast_unsigned(), (c[3]).cast_unsigned()]))
 }
 
 /// Window `hwnd`'s `Shown` for a `cw`x`ch` client area of back buffers of format `f`: its index
@@ -3742,7 +3744,7 @@ fn copy_present(bb: (u32, u32, u32, u32), src: (u32, u32), kept: u32, dst: [i32;
 }
 
 fn client_size(client: [i32; 4]) -> Option<(u32, u32)> {
-    let (cw, ch) = ((client[2] - client[0]).max(0) as u32, (client[3] - client[1]).max(0) as u32);
+    let (cw, ch) = (((client[2] - client[0]).max(0)).cast_unsigned(), ((client[3] - client[1]).max(0)).cast_unsigned());
     (cw > 0 && ch > 0 && cw <= 16384 && ch <= 16384).then_some((cw, ch))
 }
 
@@ -3769,7 +3771,7 @@ fn keep_shown(d: &mut D3d, hwnd: u32, client: [i32; 4], rect: [i32; 4], bb: (u32
     // the whole client area: what the window shows from now on (before the first part, all
     // of the back buffer: what the window showed when the game draws whole frames each time)
     if !part || !dev.shown[i].live {
-        copy_present(b4, if part { (bb.2, bb.3) } else { src }, kept, [0, 0, cw as i32, ch as i32], cw, ch);
+        copy_present(b4, if part { (bb.2, bb.3) } else { src }, kept, [0, 0, cw.cast_signed(), ch.cast_signed()], cw, ch);
     }
     dev.shown[i].live = true;
     dev.batch_target = None;
@@ -3795,7 +3797,7 @@ unsafe fn front_buffer_data(d: &mut D3d, after: &mut After, chain: Option<(u32, 
     let Some(Data::Surface(sf)) = d.objs.get(&t).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
     let pitch = sf.pitch;
     for y in 0..dh {
-        std::slice::from_raw_parts_mut((mem + y * pitch) as *mut u32, dw as usize).fill(0xff00_0000);
+        std::slice::from_raw_parts_mut(gp::<u32>(mem + y * pitch), us(dw)).fill(0xff00_0000);
     }
     let Some(dev) = d.dev.as_ref() else { return D3DERR_INVALIDCALL };
     let (bb, hwnd) = chain.map_or((dev.backbuffer, dev.hwnd), |c| (c.0, c.2));
@@ -3810,20 +3812,20 @@ unsafe fn front_buffer_data(d: &mut D3d, after: &mut After, chain: Option<(u32, 
     let i = shown_for(dev, hwnd, cw, ch, g.4);
     let kept = dev.shown[i].gpu;
     if !dev.shown[i].live {
-        copy_present((g.0, g.1, g.2, g.3), (g.2, g.3), kept, [0, 0, cw as i32, ch as i32], cw, ch);
+        copy_present((g.0, g.1, g.2, g.3), (g.2, g.3), kept, [0, 0, cw.cast_signed(), ch.cast_signed()], cw, ch);
     }
     dev.batch_target = None;
     // (the part of the client area on the screen)
     let (x0, y0) = (client[0].max(0), client[1].max(0));
-    let (x1, y1) = (client[2].min(dw as i32), client[3].min(dh as i32));
+    let (x1, y1) = (client[2].min(dw.cast_signed()), client[3].min(dh.cast_signed()));
     if x1 <= x0 || y1 <= y0 {
         return S_OK;
     }
     dev.readbacks += 1;
     let req = dev.readbacks;
-    let at = mem + y0 as u32 * pitch + x0 as u32 * 4;
-    let (sx, sy) = ((x0 - client[0]) as u32, (y0 - client[1]) as u32);
-    gpu::record(|b| b.cmd(&[gpu::READBACK, req, kept, 0, sx, sy, (x1 - x0) as u32, (y1 - y0) as u32, at, pitch]));
+    let at = mem + y0.cast_unsigned() * pitch + x0.cast_unsigned() * 4;
+    let (sx, sy) = ((x0 - client[0]).cast_unsigned(), (y0 - client[1]).cast_unsigned());
+    gpu::record(|b| b.cmd(&[gpu::READBACK, req, kept, 0, sx, sy, (x1 - x0).cast_unsigned(), (y1 - y0).cast_unsigned(), at, pitch]));
     *after = After::Readback(req);
     S_OK
 }
@@ -3871,8 +3873,8 @@ unsafe fn present_from(d: &mut D3d, after: &mut After, chain: Option<(u32, bool,
         // pixels kept from the first Present on)
         let words = match keep_shown(d, hwnd, client, rect, (g.0, g.1, g.2, g.3, g.4), (s6, s7), part, windowed && copy && !ms) {
             // (the client area's pixels: the part presented over what it showed)
-            Some((kept, w, h)) => [gpu::PRESENT, kept, client[0] as u32, client[1] as u32, client[2] as u32, client[3] as u32, w, h, hwnd],
-            None => [gpu::PRESENT, g.0, rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32, s6, s7, hwnd],
+            Some((kept, w, h)) => [gpu::PRESENT, kept, (client[0]).cast_unsigned(), (client[1]).cast_unsigned(), (client[2]).cast_unsigned(), (client[3]).cast_unsigned(), w, h, hwnd],
+            None => [gpu::PRESENT, g.0, (rect[0]).cast_unsigned(), (rect[1]).cast_unsigned(), (rect[2]).cast_unsigned(), (rect[3]).cast_unsigned(), s6, s7, hwnd],
         };
         gpu::record(|b| b.cmd(&words));
     }
@@ -3961,7 +3963,7 @@ unsafe fn rect_draw(d: &D3d, elems: &[Elem], streams: &[(u32, u32, u32)], first:
     }
     let Some(pe) = elems.iter().find(|e| e.usage == shader::USAGE_POSITIONT && e.stream == 0) else { return none };
     let Some(&(_, ptr, stride)) = streams.first() else { return none };
-    let vtx = |v: u32, off: u32, k: usize| *((ptr + (first + v) * stride + off) as *const f32).add(k);
+    let vtx = |v: u32, off: u32, k: usize| *(gc::<f32>(ptr + (first + v) * stride + off)).add(k);
     let pos: Vec<(f32, f32)> = (0..4).map(|v| (vtx(v, pe.offset, 0), vtx(v, pe.offset, 1))).collect();
     let (x0, x1) = pos.iter().fold((f32::MAX, f32::MIN), |a, p| (a.0.min(p.0), a.1.max(p.0)));
     let (y0, y1) = pos.iter().fold((f32::MAX, f32::MIN), |a, p| (a.0.min(p.1), a.1.max(p.1)));
@@ -4054,7 +4056,7 @@ unsafe fn draw(d: &mut D3d, prim: u32, src: Src, prims: u32, _x: Option<()>) -> 
             for t in 0..prims {
                 let vs = if t % 2 == 0 { [t, t + 1, t + 2] } else { [t + 1, t, t + 2] };
                 for v in vs {
-                    std::ptr::copy_nonoverlapping((data + v * stride) as *const u8, o as *mut u8, stride as usize);
+                    std::ptr::copy_nonoverlapping(gc::<u8>(data + v * stride), gp::<u8>(o), us(stride));
                     o += stride;
                 }
             }
@@ -4100,7 +4102,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             // (a resident buffer changes only through its locks, `gen`: see page_buffer)
             let key = (st.indices, ib.gen, *start, nverts);
             let cache = resident(ib) && !ib.locked;
-            let slot = (st.indices ^ start.wrapping_mul(31) ^ nverts.wrapping_mul(131)) as usize & 63;
+            let slot = us(st.indices ^ start.wrapping_mul(31) ^ nverts.wrapping_mul(131)) & 63;
             let (lo, n, f) = match dev.ranges[slot].get() {
                 r if cache && r.key == key => (r.lo, r.n, r.ffff),
                 _ => scan_indices(iptr, isize, nverts),
@@ -4114,7 +4116,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             if !(0..=i64::from(u32::MAX)).contains(&first) {
                 return D3DERR_INVALIDCALL;
             }
-            (first as u32, n, Some((iptr, isize, lo)))
+            (lo32w(first.cast_unsigned()), n, Some((iptr, isize, lo)))
         }
         Src::Up { .. } => (0, nverts, None),
         Src::UpIndexed { idx, isize, .. } => {
@@ -4127,7 +4129,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     // of INSTANCEDATA | divider step once every `divider` instances; indexed draws only
     let instances = if index.is_some() && st.freq[0] & 0x4000_0000 != 0 { (st.freq[0] & 0x3fff_ffff).max(1) } else { 1 };
     let freq = if index.is_some() && st.freq[0] & 0x4000_0000 != 0 { st.freq } else { [1; 16] };
-    let divider = move |s: u32| -> Option<u32> { Some(freq[s as usize & 15]).filter(|f| f & 0x8000_0000 != 0).map(|f| (f & 0x3fff_ffff).max(1)) };
+    let divider = move |s: u32| -> Option<u32> { Some(freq[us(s) & 15]).filter(|f| f & 0x8000_0000 != 0).map(|f| (f & 0x3fff_ffff).max(1)) };
     // the targets
     let target = surface_gpu(d, rt);
     // (one of another size too: the page draws with one of the target's size, render/d3d.rs depth_for)
@@ -4143,7 +4145,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         }
     }
     let more = &more_at[..nmore];
-    let topo = PRIM_TOPOLOGY[prim as usize];
+    let topo = PRIM_TOPOLOGY[us(prim)];
     // (WebGPU restarts an indexed strip at an index of all ones, Direct3D 9 never does: 16-bit
     // strips with a 0xffff go out as 32-bit indices)
     let widen = matches!(index, Some((_, 2, _)) if (topo == 2 || topo == 4) && ffff);
@@ -4221,7 +4223,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 (*data, *stride)
             }
             _ => {
-                let Some(&(vb, off, stride)) = st.streams.get(s as usize) else { return D3DERR_INVALIDCALL };
+                let Some(&(vb, off, stride)) = st.streams.get(us(s)) else { return D3DERR_INVALIDCALL };
                 let Some(Data::Buffer(b)) = d.objs.get(&vb).map(|o| &o.data) else {
                     if d.trace {
                         eprintln!("d3d9: draw without stream {s}");
@@ -4245,8 +4247,8 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         return S_OK;
     }
     // (no more instances than the instance streams' buffers hold, nor than the command's 24 bits)
-    let instances = streams.iter().fold(instances.min(0xff_ffff), |n, &(s, _, stride)| match (divider(s), d.objs.get(&st.streams[s as usize & 15].0).map(|o| &o.data)) {
-        (Some(dv), Some(Data::Buffer(b))) => instances_that_fit(n, dv, stride, (b.len as u32).saturating_sub(st.streams[s as usize & 15].1)),
+    let instances = streams.iter().fold(instances.min(0xff_ffff), |n, &(s, _, stride)| match (divider(s), d.objs.get(&st.streams[us(s) & 15].0).map(|o| &o.data)) {
+        (Some(dv), Some(Data::Buffer(b))) => instances_that_fit(n, dv, stride, b.len.saturating_sub(st.streams[us(s) & 15].1)),
         _ => n,
     });
     let elems = &prep.elems;
@@ -4266,7 +4268,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             eprintln!("d3d9:   lit: ambient {:#x} material {:?} colorvertex {} sources {} {} {} {} lights {:?}", st.rs[139], st.material, st.rs[141], st.rs[145], st.rs[146], st.rs[147], st.rs[148], on);
         }
         if let Some((iptr, isize, _)) = index {
-            let ix: Vec<u32> = (0..nverts.min(12)).map(|k| if isize == 4 { *((iptr + 4 * k) as *const u32) } else { u32::from(*((iptr + 2 * k) as *const u16)) }).collect();
+            let ix: Vec<u32> = (0..nverts.min(12)).map(|k| if isize == 4 { *(gc::<u32>(iptr + 4 * k)) } else { u32::from(*(gc::<u16>(iptr + 2 * k))) }).collect();
             eprintln!("d3d9:   indices {ix:?}");
         }
         if st.vs != 0 {
@@ -4310,7 +4312,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         None
     };
     let Some(target) = target else { return S_OK };
-    let ntargets = 1 + more.len() as u32;
+    let ntargets = 1 + lo32(more.len());
 
     // vertex inputs: (stream slot index, elem) -> location
     let vs_shader = vs.and_then(|v| match d.objs.get(&v).map(|o| &o.data) {
@@ -4328,20 +4330,20 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         if stride != 0 && e.offset + type_size(e.ty) > stride {
             continue;
         }
-        let slot = used.iter().position(|&s| s == e.stream).unwrap() as u32;
+        let slot = lo32(used.iter().position(|&s| s == e.stream).unwrap());
         match vs_shader {
             Some(sh) => {
                 // vs 1.x without dcl: register = usage order... (vs 1.1 has dcl too)
                 if let Some(&(reg, _, _)) = sh.inputs.iter().find(|i| i.1 == e.usage && i.2 == e.index) {
                     if !vs_inputs.iter().any(|v| v.0 == reg) {
-                        let loc = vs_inputs.len() as u32;
+                        let loc = lo32(vs_inputs.len());
                         vs_inputs.push((reg, loc, kind));
                         attrs.push((slot, pf, e.offset, loc));
                     }
                 }
             }
             None => {
-                let loc = ff_inputs.len() as u32;
+                let loc = lo32(ff_inputs.len());
                 if !ff_inputs.iter().any(|x| x.0 == e.usage && x.1 == e.index) {
                     ff_inputs.push((e.usage, e.index, loc, kind));
                     attrs.push((slot, pf, e.offset, loc));
@@ -4381,7 +4383,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             let light = (st.rs[137] != 0 && !rhw).then(|| {
                 let has = |i: u32| ff_inputs.iter().any(|x| x.0 == shader::USAGE_COLOR && x.1 == i);
                 ff::LightKey {
-                    count: st.lights.values().filter(|l| l.1).count().min(ff::MAX_LIGHTS as usize) as u8,
+                    count: st.lights.values().filter(|l| l.1).count().min(us(ff::MAX_LIGHTS)) as u8,
                     specular: st.rs[29] != 0,
                     local_viewer: st.rs[142] != 0,
                     normalize: st.rs[143] != 0,
@@ -4409,7 +4411,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let mut samplers: Vec<u32> = Vec::new();
     // (samplers addressing as WebGPU's don't: the pixel shader does it)
     let addr_of = |s: u32| {
-        let ss = &st.ss[s as usize];
+        let ss = &st.ss[us(s)];
         let flags = dxwgsl::addr::flags(ss[1], ss[2], ss[5] >= 2);
         (flags != 0).then(|| dxwgsl::addr::Addr::argb(s, flags, ss[4]))
     };
@@ -4448,7 +4450,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 let is2d = t != 0 && matches!(d.objs.get(&t).map(|o| o.iface), Some(IF_TEXTURE));
                 tex[i] = if is2d { 2 } else if t != 0 { 1 } else { 0 };
                 if is2d {
-                    samplers.push(i as u32);
+                    samplers.push(lo32(i));
                 }
                 let projected = u32::from(st.tss[i][24] & 0x100 != 0);
                 stages.push([s[1], s[2], s[3], s[26], s[4], s[5], s[6], s[27], s[28], projected]);
@@ -4507,12 +4509,12 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     key.extend_from_slice(&blend);
     // (a target of fewer channels keeps the others as cleared: format::target_channels)
     key.push(wmask & fmt::target_channels(target.4).0);
-    key.push(streams.len() as u32);
+    key.push(lo32(streams.len()));
     for (i, &(sn, _, stride)) in streams.iter().enumerate() {
-        let list: Vec<&(u32, u32, u32, u32)> = attrs.iter().filter(|a| a.0 == i as u32).collect();
+        let list: Vec<&(u32, u32, u32, u32)> = attrs.iter().filter(|a| a.0 == lo32(i)).collect();
         // (bit 31: a buffer of per-instance data)
         key.push(stride | if divider(sn).is_some() { 0x8000_0000 } else { 0 });
-        key.push(list.len() as u32);
+        key.push(lo32(list.len()));
         for a in list {
             key.extend_from_slice(&[a.1, a.2, a.3]);
         }
@@ -4531,7 +4533,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         key.push(0);
     }
     // the other render targets: (page format, COLORWRITEENABLE1-3)
-    key.push(more.len() as u32);
+    key.push(lo32(more.len()));
     // (only shader model 2+ pixel shaders write them: see dxwgsl::d3d9::Options::targets)
     let writes_more = ps_shader.is_some_and(|s| s.major >= 2);
     for (i, (_, g)) in more.iter().enumerate() {
@@ -4545,7 +4547,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         None => {
             let id = gpu_id();
             gpu::record(|b| {
-                b.cmd(&[gpu::CREATE_PIPELINE, id, key.len() as u32]);
+                b.cmd(&[gpu::CREATE_PIPELINE, id, lo32(key.len())]);
                 b.cmd(&key);
             });
             dev.pipelines.insert(key, id);
@@ -4583,8 +4585,8 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let psu = &mut uni.psu;
     vsu.clear();
     psu.clear();
-    vsu.resize(shader::uniform_size(vs_consts) as usize, 0);
-    psu.resize(shader::uniform_size(ps_consts) as usize, 0);
+    vsu.resize(us(shader::uniform_size(vs_consts)), 0);
+    psu.resize(us(shader::uniform_size(ps_consts)), 0);
     let put = |buf: &mut Vec<u8>, at: usize, v: u32| buf[at..at + 4].copy_from_slice(&v.to_le_bytes());
     put(vsu, 0, f2u(1.0 / vpw));
     put(vsu, 4, f2u(1.0 / vph));
@@ -4600,7 +4602,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     ints(vsu, &st.vsi);
     ints(psu, &st.psi);
     let consts = |buf: &mut Vec<u8>, regs: &[[f32; 4]], n: u32| {
-        for i in 0..(n as usize).min(regs.len()) {
+        for i in 0..(us(n)).min(regs.len()) {
             for j in 0..4 {
                 buf[320 + i * 16 + j * 4..][..4].copy_from_slice(&regs[i][j].to_le_bytes());
             }
@@ -4621,7 +4623,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             regs[r] = [wvp[4 * r], wvp[4 * r + 1], wvp[4 * r + 2], wvp[4 * r + 3]];
         }
         for t in 0..2 {
-            let m = get(16 + t as u32);
+            let m = get(16 + lo32(t));
             for r in 0..4 {
                 regs[4 + t * 4 + r] = [m[4 * r], m[4 * r + 1], m[4 * r + 2], m[4 * r + 3]];
             }
@@ -4675,7 +4677,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let mut alpha_bits = 0u32;
     let mut texs: Vec<(u32, u32, u32)> = Vec::new(); // (binding slot, page texture, sampler key)
     for &s in samplers.iter() {
-        let t = st.textures.get(s as usize).copied().unwrap_or(0);
+        let t = st.textures.get(us(s)).copied().unwrap_or(0);
         let (gpu_tex, f, levels) = match d.objs.get(&t).map(|o| &o.data) {
             Some(Data::Texture(tx)) => (tx.gpu, tx.fmt, tx.level_count()),
             _ => (0, 0, 1),
@@ -4687,7 +4689,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         if fmt::target_channels(f).1 && s < 16 {
             alpha_bits |= 1 << (16 + s);
         }
-        let ss = &st.ss[s as usize];
+        let ss = &st.ss[us(s)];
         let mip = if levels > 1 { ss[7] } else { 0 };
         let am = dxwgsl::addr::sampler_mode;
         let skey = (am(ss[1]) & 7) | (am(ss[2]) & 7) << 3 | (ss[5] & 3) << 6 | (ss[6] & 3) << 8 | (mip & 3) << 10 | (am(ss[3]) & 7) << 12;
@@ -4698,7 +4700,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let scissor = if st.rs[174] != 0 {
         st.scissor
     } else {
-        [0, 0, target.2 as i32, target.3 as i32]
+        [0, 0, target.2.cast_signed(), target.3.cast_signed()]
     };
     let scissor = depth_clip(scissor, zsize);
     let blend_factor = st.rs[193];
@@ -4713,11 +4715,11 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let stream_res: Vec<Option<(u32, u32)>> = streams
         .iter()
         .map(|&(sn, _, stride)| {
-            let (vb, off, _) = st.streams.get(sn as usize).copied()?;
+            let (vb, off, _) = st.streams.get(us(sn)).copied()?;
             let Some(Data::Buffer(b)) = d.objs.get(&vb).map(|o| &o.data) else { return None };
             let at = u64::from(off) + u64::from(first) * u64::from(stride);
             let fits = at % 4 == 0 && stride % 4 == 0 && at + u64::from(count) * u64::from(stride) <= u64::from(b.len);
-            (from_buffer && divider(sn).is_none() && fits && resident(b)).then_some((vb, at as u32))
+            (from_buffer && divider(sn).is_none() && fits && resident(b)).then_some((vb, lo32w(at)))
         })
         .collect();
     let index_res: Option<(u32, u32)> = match (&src, index) {
@@ -4745,8 +4747,8 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             continue;
         }
         match divider(sn) {
-            Some(dv) => h.add(std::slice::from_raw_parts(ptr as *const u8, (instances.div_ceil(dv) * stride) as usize)),
-            None => h.add(std::slice::from_raw_parts((ptr + first * stride) as *const u8, (count * stride) as usize)),
+            Some(dv) => h.add(std::slice::from_raw_parts(gc::<u8>(ptr), us(instances.div_ceil(dv) * stride))),
+            None => h.add(std::slice::from_raw_parts(gc::<u8>(ptr + first * stride), us(count * stride))),
         }
     }
     h.add(&instances.to_le_bytes());
@@ -4757,7 +4759,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 h.add(&w.to_le_bytes());
             }
         }
-        (Some((iptr, isz, _)), None) => h.add(std::slice::from_raw_parts(iptr as *const u8, (nverts * isz) as usize)),
+        (Some((iptr, isz, _)), None) => h.add(std::slice::from_raw_parts(gc::<u8>(iptr), us(nverts * isz))),
         _ => {}
     }
     h.add(&uni.hash.to_le_bytes());
@@ -4767,7 +4769,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         if let Some(&(_, ptr, stride)) = streams.first() {
             let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
             for v in 0..count {
-                let p = (ptr + (first + v) * stride + e.offset) as *const f32;
+                let p = gc::<f32>(ptr + (first + v) * stride + e.offset);
                 let (x, y) = (*p, *p.add(1));
                 x0 = x0.min(x);
                 y0 = y0.min(y);
@@ -4813,16 +4815,16 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 // (instance i reads element i / divider: WebGPU steps once per instance, so
                 // each element goes `divider` times)
                 Some(dv) => {
-                    let mut v = Vec::with_capacity((instances * stride) as usize);
+                    let mut v = Vec::with_capacity(us(instances * stride));
                     for i in 0..instances {
-                        v.extend_from_slice(std::slice::from_raw_parts((ptr + i / dv * stride) as *const u8, stride as usize));
+                        v.extend_from_slice(std::slice::from_raw_parts(gc::<u8>(ptr + i / dv * stride), us(stride)));
                     }
                     offs.push(b.data(&v, 4));
                 }
                 None => {
                     let start = ptr + first * stride;
-                    let len = (count * stride) as usize;
-                    offs.push(b.data(std::slice::from_raw_parts(start as *const u8, len), 4));
+                    let len = us(count * stride);
+                    offs.push(b.data(std::slice::from_raw_parts(gc::<u8>(start), len), 4));
                 }
             }
         }
@@ -4831,9 +4833,9 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 // fan, indexed
                 // (straight into one buffer of bytes)
                 let get = |i: u32| -> u32 {
-                    if *isz == 4 { *((iptr + i * 4) as *const u32) } else { u32::from(*((iptr + i * 2) as *const u16)) }
+                    if *isz == 4 { *(gc::<u32>(iptr + i * 4)) } else { u32::from(*(gc::<u16>(iptr + i * 2))) }
                 };
-                let mut bytes = Vec::with_capacity(prims as usize * 12);
+                let mut bytes = Vec::with_capacity(us(prims) * 12);
                 for t in 0..prims {
                     for v in [get(0), get(t + 1), get(t + 2)] {
                         bytes.extend_from_slice(&v.to_le_bytes());
@@ -4842,9 +4844,9 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 (4, b.data(&bytes, 4), prims * 3, -(*min as i32))
             }
             (Some((iptr, _, min)), _) if widen => {
-                let mut bytes = Vec::with_capacity(nverts as usize * 4);
+                let mut bytes = Vec::with_capacity(us(nverts) * 4);
                 for k in 0..nverts {
-                    bytes.extend_from_slice(&u32::from(*((iptr + 2 * k) as *const u16)).to_le_bytes());
+                    bytes.extend_from_slice(&u32::from(*(gc::<u16>(iptr + 2 * k))).to_le_bytes());
                 }
                 (4, b.data(&bytes, 4), nverts, -(*min as i32))
             }
@@ -4856,11 +4858,11 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 (*isz, 0, nverts, -(*min as i32))
             }
             (Some((iptr, isz, min)), _) => {
-                let len = (nverts * isz) as usize;
+                let len = us(nverts * isz);
                 (*isz, b.data(std::slice::from_raw_parts(*iptr as *const u8, len), 4), nverts, -(*min as i32))
             }
             (None, 6) => {
-                let mut bytes = Vec::with_capacity(prims as usize * 6);
+                let mut bytes = Vec::with_capacity(us(prims) * 6);
                 for t in 0..prims {
                     for v in [0, (t + 1) as u16, (t + 2) as u16] {
                         bytes.extend_from_slice(&v.to_le_bytes());
@@ -4879,24 +4881,24 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             f2u(vp[3] as f32),
             vp[4],
             vp[5],
-            scissor[0].max(0) as u32,
-            scissor[1].max(0) as u32,
-            (scissor[2] - scissor[0]).max(0) as u32,
-            (scissor[3] - scissor[1]).max(0) as u32,
+            (scissor[0].max(0)).cast_unsigned(),
+            (scissor[1].max(0)).cast_unsigned(),
+            ((scissor[2] - scissor[0]).max(0)).cast_unsigned(),
+            ((scissor[3] - scissor[1]).max(0)).cast_unsigned(),
             vso,
-            vsu.len() as u32,
+            lo32(vsu.len()),
             pso,
-            psu.len() as u32,
+            lo32(psu.len()),
             blend_factor,
-            texs.len() as u32,
+            lo32(texs.len()),
         ];
         for t in &texs {
             c.extend_from_slice(&[t.0, t.1, t.2]);
         }
-        c.push(offs.len() as u32);
+        c.push(lo32(offs.len()));
         c.extend_from_slice(&offs);
         // (the index format, instances above it)
-        c.extend_from_slice(&[ifmt | if instances > 1 { instances << 8 } else { 0 }, ioff, icount, base as u32]);
+        c.extend_from_slice(&[ifmt | if instances > 1 { instances << 8 } else { 0 }, ioff, icount, base.cast_unsigned()]);
         c.push(hash);
         c.extend_from_slice(&bbox);
         c.extend_from_slice(&ext);
@@ -5091,7 +5093,7 @@ impl DrawHash {
     fn finish(&self) -> u32 {
         use std::hash::Hasher;
         let h = self.0.finish();
-        h as u32 ^ (h >> 32) as u32
+        lo32w(h) ^ lo32w(h >> 32)
     }
 }
 
@@ -5102,7 +5104,7 @@ fn shader_module(dev: &mut Device, wgsl: String) -> u32 {
     let id = gpu_id();
     gpu::record(|b| {
         let off = b.blob(wgsl.as_bytes());
-        b.cmd(&[gpu::CREATE_SHADER, id, off, wgsl.len() as u32]);
+        b.cmd(&[gpu::CREATE_SHADER, id, off, lo32(wgsl.len())]);
     });
     if crate::env_on!("MASU_D3D_WGSL") {
         eprintln!("d3d9: shader {id}:\n{wgsl}");
