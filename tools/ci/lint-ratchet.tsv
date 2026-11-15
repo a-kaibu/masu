@@ -374,13 +374,10 @@ file	crates/kura/src/d3d11/format.rs	unsafe_op_in_unsafe_fn	19
 file	crates/kura/src/d3d11/format.rs	unwrap_used	2
 file	crates/kura/src/d3d11/hazards.rs	as_conversions	2
 file	crates/kura/src/d3d11/hazards.rs	indexing_slicing	6
-file	crates/kura/src/d3d11/mod.rs	arithmetic_side_effects	243
-file	crates/kura/src/d3d11/mod.rs	as_conversions	273
+file	crates/kura/src/d3d11/mod.rs	arithmetic_side_effects	242
+file	crates/kura/src/d3d11/mod.rs	as_conversions	3
 file	crates/kura/src/d3d11/mod.rs	borrow_as_ptr	2
-file	crates/kura/src/d3d11/mod.rs	cast_possible_truncation	40
-file	crates/kura/src/d3d11/mod.rs	cast_possible_wrap	3
 file	crates/kura/src/d3d11/mod.rs	cast_precision_loss	2
-file	crates/kura/src/d3d11/mod.rs	cast_sign_loss	18
 file	crates/kura/src/d3d11/mod.rs	float_cmp	1
 file	crates/kura/src/d3d11/mod.rs	indexing_slicing	179
 file	crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	13
@@ -389,8 +386,6 @@ file	crates/kura/src/d3d11/mod.rs	missing_safety_doc	4
 file	crates/kura/src/d3d11/mod.rs	multiple_unsafe_ops_per_block	1
 file	crates/kura/src/d3d11/mod.rs	undocumented_unsafe_blocks	13
 file	crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	490
-file	crates/kura/src/d3d11/mod.rs	unwrap_used	7
-file	crates/kura/src/d3d11/mod.rs	wildcard_enum_match_arm	1
 file	crates/kura/src/d3d9/d3d8.rs	arithmetic_side_effects	46
 file	crates/kura/src/d3d9/d3d8.rs	as_conversions	45
 file	crates/kura/src/d3d9/d3d8.rs	borrow_as_ptr	6
