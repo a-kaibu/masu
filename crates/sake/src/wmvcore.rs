@@ -19,22 +19,57 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use crate::api::{implement, vtable, Ctx, Handler};
+use kome::num::*;
 use crate::mem::{self, ps, put32, putp, r16, r32, rp, w16, w32, w64, wp};
 
-pub const E_NOINTERFACE: u32 = 0x8000_4002;
-pub const E_POINTER: u32 = 0x8000_4003;
-pub const E_INVALIDARG: u32 = 0x8007_0057;
-pub const E_UNEXPECTED: u32 = 0x8000_ffff;
-pub const E_NOTIMPL: u32 = 0x8000_4001;
-pub const E_OUTOFMEMORY: u32 = 0x8007_000e;
-pub const NS_E_NO_MORE_SAMPLES: u32 = 0xc00d_0bcf;
-pub const NS_E_INVALID_REQUEST: u32 = 0xc00d_002b;
-pub const NS_E_INVALID_OUTPUT_FORMAT: u32 = 0xc00d_0bc4;
-pub const NS_E_UNRECOGNIZED_STREAM_TYPE: u32 = 0xc00d_002f;
-pub const ASF_E_NOTFOUND: u32 = 0xc00d_07f0;
-pub const ASF_E_BUFFERTOOSMALL: u32 = 0xc00d_07d1;
-const NS_E_FILE_NOT_FOUND: u32 = 0xc00d_001a;
-const NS_E_INVALID_DATA: u32 = 0xc00d_002e;
+/// What a method of these readers fails with (HRESULTs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hr {
+    NoInterface,
+    Pointer,
+    InvalidArg,
+    Unexpected,
+    NotImpl,
+    OutOfMemory,
+    /// NS_E_NO_MORE_SAMPLES
+    NoMoreSamples,
+    /// NS_E_INVALID_REQUEST
+    InvalidRequest,
+    /// NS_E_INVALID_OUTPUT_FORMAT
+    InvalidOutputFormat,
+    /// NS_E_UNRECOGNIZED_STREAM_TYPE
+    UnrecognizedStreamType,
+    /// ASF_E_NOTFOUND
+    NotFound,
+    /// ASF_E_BUFFERTOOSMALL
+    BufferTooSmall,
+    /// NS_E_FILE_NOT_FOUND
+    FileNotFound,
+    /// NS_E_INVALID_DATA
+    InvalidData,
+}
+
+impl Hr {
+    pub const fn code(self) -> u32 {
+        use crate::hresult::{E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, E_OUTOFMEMORY, E_POINTER, E_UNEXPECTED};
+        match self {
+            Hr::NoInterface => E_NOINTERFACE,
+            Hr::Pointer => E_POINTER,
+            Hr::InvalidArg => E_INVALIDARG,
+            Hr::Unexpected => E_UNEXPECTED,
+            Hr::NotImpl => E_NOTIMPL,
+            Hr::OutOfMemory => E_OUTOFMEMORY,
+            Hr::NoMoreSamples => 0xc00d_0bcf,
+            Hr::InvalidRequest => 0xc00d_002b,
+            Hr::InvalidOutputFormat => 0xc00d_0bc4,
+            Hr::UnrecognizedStreamType => 0xc00d_002f,
+            Hr::NotFound => 0xc00d_07f0,
+            Hr::BufferTooSmall => 0xc00d_07d1,
+            Hr::FileNotFound => 0xc00d_001a,
+            Hr::InvalidData => 0xc00d_002e,
+        }
+    }
+}
 
 /// WM_SF_CLEANPOINT, WM_SF_DISCONTINUITY
 const WM_SF_CLEANPOINT: u32 = 1;
@@ -77,7 +112,7 @@ pub const FORMAT_VIDEO_INFO: Guid = guid(0x0558_9f80, 0xc356, 0x11ce, [0xbf, 0x0
 pub const FORMAT_WAVE_FORMAT_EX: Guid = guid(0x0558_9f81, 0xc356, 0x11ce, [0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a]);
 
 fn guid_at(p: u32) -> Option<Guid> {
-    (p != 0).then(|| mem::slice(p, 16).try_into().unwrap())
+    (p != 0).then(|| mem::slice(p, 16).first_chunk::<16>().copied().unwrap_or([0; 16]))
 }
 fn put_guid(p: u32, g: &Guid) {
     mem::write(p, g);
@@ -112,13 +147,13 @@ impl MediaType {
     pub fn write(&self, p: u32, fmt: u32) {
         put_guid(p, &self.major);
         put_guid(p + 16, &self.sub);
-        w32(p + 32, self.fixed as u32);
-        w32(p + 36, self.temporal as u32);
+        w32(p + 32, u32::from(self.fixed));
+        w32(p + 36, u32::from(self.temporal));
         w32(p + 40, self.sample_size);
         put_guid(p + 44, &self.format_type);
         let k = if mem::x64() { 64 } else { 60 };
         wp(p + k, 0);
-        w32(p + k + ps(), self.format.len() as u32);
+        w32(p + k + ps(), lo32(self.format.len()));
         let at = (p + k + ps() + 4).next_multiple_of(ps());
         wp(at, if self.format.is_empty() { 0 } else { fmt });
         if !self.format.is_empty() {
@@ -165,7 +200,7 @@ pub fn stream_type(s: &asf::Stream) -> MediaType {
     match s.kind {
         asf::Kind::Audio => {
             let align = u16::from_le_bytes([s.format.get(12).copied().unwrap_or(1), s.format.get(13).copied().unwrap_or(0)]);
-            MediaType { major: MEDIATYPE_AUDIO, sub: fourcc(s.codec()), fixed: true, temporal: false, sample_size: align as u32, format_type: FORMAT_WAVE_FORMAT_EX, format: s.format.clone() }
+            MediaType { major: MEDIATYPE_AUDIO, sub: fourcc(s.codec()), fixed: true, temporal: false, sample_size: u32::from(align), format_type: FORMAT_WAVE_FORMAT_EX, format: s.format.clone() }
         }
         asf::Kind::Video { width, height } => MediaType {
             major: MEDIATYPE_VIDEO,
@@ -190,7 +225,7 @@ thread_local! {
 
 /// Runs `f` with `c` reachable to GuestStream::read_at.
 fn with_ctx<R>(c: &mut Ctx, f: impl FnOnce() -> R) -> R {
-    let old = CTX.with(|p| p.replace(c as *mut Ctx as *mut ()));
+    let old = CTX.with(|p| p.replace(std::ptr::from_mut(c).cast::<()>()));
     let r = f();
     CTX.with(|p| p.set(old));
     r
@@ -210,26 +245,26 @@ impl GuestStream {
         if p.is_null() {
             return Vec::new();
         }
-        let c = unsafe { &mut *(p as *mut Ctx) };
-        let buf = mem::heap_alloc(n as u32 + 8, false);
+        let c = unsafe { &mut *p.cast::<Ctx>() };
+        let buf = mem::heap_alloc(lo32(n) + 8, false);
         // (the guest heap is full: nothing read, not a read into address 0)
         if buf == 0 {
             return Vec::new();
         }
-        let got = buf + n as u32;
+        let got = buf + lo32(n);
         // IStream::Seek(off, STREAM_SEEK_SET, NULL), Read(buf, n, &got)
         let hr = if mem::x64() {
-            let f = mem::r64(mem::r64(mem::widen(self.stream) as u32) as u32 + 5 * 8);
-            crate::call64(c.cpu, f, &[mem::widen(self.stream), off, 0, 0]) as u32
+            let f = mem::r64(lo32(mem::r64(lo32(mem::widen(self.stream)))) + 5 * 8);
+            lo32(crate::call64(c.cpu, f, &[mem::widen(self.stream), off, 0, 0]))
         } else {
-            crate::dshow::com(c, self.stream, 5, &[off as u32, (off >> 32) as u32, 0, 0])
+            crate::dshow::com(c, self.stream, 5, &[lo32(off), lo32(off >> 32), 0, 0])
         };
         let mut out = Vec::new();
         if hr & 0x8000_0000 == 0 {
             w32(got, 0);
-            let hr = crate::dshow::com(c, self.stream, 3, &[buf, n as u32, got]);
+            let hr = crate::dshow::com(c, self.stream, 3, &[buf, lo32(n), got]);
             if hr & 0x8000_0000 == 0 {
-                let k = r32(got).min(n as u32);
+                let k = r32(got).min(lo32(n));
                 out = mem::slice(buf, k).to_vec();
             }
         }
@@ -241,12 +276,12 @@ impl GuestStream {
 impl asf::Source for GuestStream {
     fn read_at(&mut self, off: u64, buf: &mut [u8]) -> usize {
         let (at, ref data) = self.cache;
-        if off < at || off >= at + data.len() as u64 {
+        if off < at || off >= at + lo64(data.len()) {
             let n = buf.len().max(BLOCK);
             self.cache = (off, self.read_guest(off, n));
         }
         let (at, ref data) = self.cache;
-        let s = (off - at) as usize;
+        let s = us(off - at);
         let n = data.len().saturating_sub(s).min(buf.len());
         buf[..n].copy_from_slice(&data[s..s + n]);
         n
@@ -513,7 +548,7 @@ fn vts() -> &'static Vt {
 }
 
 fn notimpl(_: &mut Ctx) -> u32 {
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 
 /// A new sync reader: its IWMSyncReader2.
@@ -534,9 +569,9 @@ pub fn new_sync_reader() -> u32 {
 fn qi(c: &mut Ctx) -> u32 {
     let (this, riid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(b) = block(this) else { return E_NOINTERFACE };
+    let Some(b) = block(this) else { return Hr::NoInterface.code() };
     let want = guid_at(riid).unwrap_or([0xff; 16]);
     let asy = table(|m| m.get(&b).is_some_and(|o| o.a.is_some()));
     let w = if asy && [IID_IUNKNOWN, asyncr::IID_READER].contains(&want) {
@@ -556,7 +591,7 @@ fn qi(c: &mut Ctx) -> u32 {
             eprintln!("sake: wmvcore reader QueryInterface {:02x?}: no", want);
         }
         putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     };
     table(|m| m.get_mut(&b).map(|o| o.refs += 1));
     putp(out, b + ps() * w);
@@ -612,8 +647,8 @@ fn close(c: &mut Ctx, r: &mut Reader) {
 fn open_src(r: &mut Reader, src: Src) -> u32 {
     let a = match asf::Reader::new(src) {
         Ok(a) => a,
-        Err(asf::Error::NotAsf) => return NS_E_INVALID_DATA,
-        Err(_) => return NS_E_INVALID_DATA,
+        Err(asf::Error::NotAsf) => return Hr::InvalidData.code(),
+        Err(_) => return Hr::InvalidData.code(),
     };
     r.outputs = a
         .header
@@ -634,30 +669,30 @@ fn open_src(r: &mut Reader, src: Src) -> u32 {
 
 /// Open(LPCWSTR)
 fn sr_open(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     if c.a(1) == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let name = String::from_utf16_lossy(&mem::wstr(c.a(1)));
     let mut r = lock(&rr);
     if r.r.is_some() {
-        return E_UNEXPECTED;
+        return Hr::Unexpected.code();
     }
-    let Some(path) = crate::files::resolve(&name) else { return NS_E_FILE_NOT_FOUND };
-    let Ok(f) = kura::fs::File::open(&path) else { return NS_E_FILE_NOT_FOUND };
+    let Some(path) = crate::files::resolve(&name) else { return Hr::FileNotFound.code() };
+    let Ok(f) = kura::fs::File::open(&path) else { return Hr::FileNotFound.code() };
     open_src(&mut r, Box::new(HostFile(f)))
 }
 
 /// OpenStream(IStream *)
 fn sr_open_stream(c: &mut Ctx) -> u32 {
     let (this, stream) = (c.a(0), c.a(1));
-    let Some(rr) = reader(this) else { return E_UNEXPECTED };
+    let Some(rr) = reader(this) else { return Hr::Unexpected.code() };
     if stream == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let mut r = lock(&rr);
     if r.r.is_some() {
-        return E_UNEXPECTED;
+        return Hr::Unexpected.code();
     }
     crate::dshow::com(c, stream, 1, &[]);
     let hr = with_ctx(c, || open_src(&mut r, Box::new(GuestStream { stream, cache: (0, Vec::new()) })));
@@ -671,10 +706,10 @@ fn sr_open_stream(c: &mut Ctx) -> u32 {
 }
 
 fn sr_close(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     let mut r = lock(&rr);
     if r.r.is_none() {
-        return NS_E_INVALID_REQUEST;
+        return Hr::InvalidRequest.code();
     }
     close(c, &mut r);
     0
@@ -685,21 +720,21 @@ fn q(c: &Ctx, i: u32, x: u32) -> u64 {
     if mem::x64() {
         c.a64(x)
     } else {
-        c.a(i) as u64 | (c.a(i + 1) as u64) << 32
+        u64::from(c.a(i)) | u64::from(c.a(i + 1)) << 32
     }
 }
 
 /// SetRange(QWORD start, LONGLONG duration)
 fn sr_set_range(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     let (start, dur) = (q(c, 1, 1), q(c, 3, 2));
     let mut r = lock(&rr);
     let r = &mut *r;
     if r.r.is_none() {
-        return NS_E_INVALID_REQUEST;
+        return Hr::InvalidRequest.code();
     }
-    if (dur as i64) < 0 {
-        return E_INVALIDARG;
+    if (lo64(dur).cast_signed()) < 0 {
+        return Hr::InvalidArg.code();
     }
     seek(c, r, start, dur);
     0
@@ -724,19 +759,19 @@ fn seek(c: &mut Ctx, r: &mut Reader, start: u64, dur: u64) {
 
 /// SetRangeByFrame(WORD stream, QWORD frame, LONGLONG frames): by the stream's frame rate
 fn sr_set_range_by_frame(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (n, frame, count) = (c.a(1) as u8, q(c, 2, 2), q(c, 4, 3));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (n, frame, count) = (lo8(c.a(1)), q(c, 2, 2), q(c, 4, 3));
     let t = {
         let r = lock(&rr);
-        let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-        let Some(s) = asf::StreamNumber::new(n).and_then(|n| h.stream(n)) else { return E_INVALIDARG };
+        let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
+        let Some(s) = asf::StreamNumber::new(n).and_then(|n| h.stream(n)) else { return Hr::InvalidArg.code() };
         let per = if s.avg_time_per_frame != 0 { s.avg_time_per_frame } else { 333_667 };
-        (frame.saturating_mul(per), (count as i64).max(0) as u64 * per)
+        (frame.saturating_mul(per), lo64((lo64(count).cast_signed()).max(0)) * per)
     };
     let mut r = lock(&rr);
     let r = &mut *r;
     // (closed on another thread between the two locks)
-    let Some(a) = r.r.as_mut() else { return NS_E_INVALID_REQUEST };
+    let Some(a) = r.r.as_mut() else { return Hr::InvalidRequest.code() };
     with_ctx(c, || a.seek(t.0));
     r.pending.clear();
     r.range = t;
@@ -761,14 +796,14 @@ fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u
         let pp = mem::heap_alloc(8, true);
         let hr = if mem::x64() {
             let f = rp(rp(a) + ps() * slot);
-            crate::call64(c.cpu, mem::widen(f), &[mem::widen(a), num as u64, data.len() as u64, pp as u64, flags as u64, time, dur, 0]) as u32
+            lo32(crate::call64(c.cpu, mem::widen(f), &[mem::widen(a), u64::from(num), lo64(data.len()), u64::from(pp), u64::from(flags), time, dur, 0]))
         } else {
-            crate::dshow::com(c, a, slot, &[num, data.len() as u32, pp, flags, time as u32, (time >> 32) as u32, dur as u32, (dur >> 32) as u32, 0])
+            crate::dshow::com(c, a, slot, &[num, lo32(data.len()), pp, flags, lo32(time), lo32(time >> 32), lo32(dur), lo32(dur >> 32), 0])
         };
         let b = rp(pp);
         mem::heap_free(pp);
         if hr & 0x8000_0000 != 0 || b == 0 {
-            return if hr & 0x8000_0000 != 0 { hr } else { E_OUTOFMEMORY };
+            return if hr & 0x8000_0000 != 0 { hr } else { Hr::OutOfMemory.code() };
         }
         // GetBuffer(&p), SetLength(n)
         let p = mem::heap_alloc(8, true);
@@ -778,7 +813,7 @@ fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u
         if dst != 0 {
             mem::write(dst, data);
         }
-        crate::dshow::com(c, b, 4, &[data.len() as u32]);
+        crate::dshow::com(c, b, 4, &[lo32(data.len())]);
         putp(out, b);
         return 0;
     }
@@ -788,30 +823,30 @@ fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u
 /// GetNextSample(WORD stream, INSSBuffer **, QWORD *time, QWORD *duration, DWORD *flags,
 /// DWORD *output, WORD *stream)
 fn sr_get_next_sample(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let want = c.a(1) as u16;
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let want = lo16(c.a(1));
     let (pbuf, ptime, pdur, pflags, pout, pnum) = (c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
     if pbuf == 0 || ptime == 0 || pdur == 0 || pflags == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if want == 0 && (pout == 0 && pnum == 0) {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let mut g = lock(&rr);
     let r = &mut *g;
     if r.r.is_none() {
-        return NS_E_INVALID_REQUEST;
+        return Hr::InvalidRequest.code();
     }
     if want != 0 {
-        match r.output_of(want as u8) {
-            None => return E_INVALIDARG,
-            Some(k) if !r.outputs[k].selected => return NS_E_INVALID_REQUEST,
+        match r.output_of(lo8(want)) {
+            None => return Hr::InvalidArg.code(),
+            Some(k) if !r.outputs[k].selected => return Hr::InvalidRequest.code(),
             _ => {}
         }
     }
-    let got = with_ctx(c, || next_sample(r, want as u8));
+    let got = with_ctx(c, || next_sample(r, lo8(want)));
     let Some((k, time, dur, data, key)) = got else {
-        return NS_E_NO_MORE_SAMPLES;
+        return Hr::NoMoreSamples.code();
     };
     let o = &mut r.outputs[k];
     let mut flags = if key { WM_SF_CLEANPOINT } else { 0 };
@@ -821,7 +856,7 @@ fn sr_get_next_sample(c: &mut Ctx) -> u32 {
     let alloc = if o.alloc_stream != 0 && o.compressed {
         (o.alloc_stream, true, u32::from(o.stream))
     } else if o.alloc_output != 0 && !o.compressed {
-        (o.alloc_output, false, k as u32)
+        (o.alloc_output, false, lo32(k))
     } else {
         (0, false, 0)
     };
@@ -834,7 +869,7 @@ fn sr_get_next_sample(c: &mut Ctx) -> u32 {
     w64(ptime, time);
     w64(pdur, dur);
     w32(pflags, flags);
-    put32(pout, k as u32);
+    put32(pout, lo32(k));
     if pnum != 0 {
         w16(pnum, u16::from(stream));
     }
@@ -853,12 +888,10 @@ pub fn next_sample(r: &mut Reader, want: u8) -> Option<(usize, u64, u64, Vec<u8>
         let ready = r.outputs.iter().enumerate().filter(|(_, o)| o.selected && !o.compressed && (want == 0 || o.stream.get() == want)).filter_map(|(k, o)| o.ready.front().map(|s| (k, s.0))).min_by_key(|x| x.1);
         // a sample from the file, of this output, before any later one
         let at = r.pending.iter().position(|s| want == 0 || s.stream.get() == want);
-        if let Some((k, t)) = ready && at.is_none_or(|i| r.pending[i].time >= t) {
-            let (time, dur, data, key) = r.outputs[k].ready.pop_front().unwrap();
+        if let Some((k, t)) = ready && at.is_none_or(|i| r.pending[i].time >= t) && let Some((time, dur, data, key)) = r.outputs[k].ready.pop_front() {
             return Some((k, time, dur, data, key));
         }
-        if let Some(i) = at {
-            let s = r.pending.remove(i).unwrap();
+        if let Some(s) = at.and_then(|i| r.pending.remove(i)) {
             let k = r.output_of(s.stream.get())?;
             let dur = r.header().and_then(|h| h.stream(s.stream)).map(|st| sample_duration(st, &s)).unwrap_or(0);
             let o = &mut r.outputs[k];
@@ -923,28 +956,28 @@ pub fn next_sample(r: &mut Reader, want: u8) -> Option<(usize, u64, u64, Vec<u8>
 
 /// A compressed sample's duration: a frame's (video), its bytes' time (audio).
 pub fn sample_duration(s: &asf::Stream, x: &asf::Sample) -> u64 {
-    let bps = u32::from_le_bytes(s.format.get(8..12).and_then(|b| b.try_into().ok()).unwrap_or([0; 4])) as u64;
+    let bps = u64::from(u32::from_le_bytes(s.format.get(8..12).and_then(|b| b.try_into().ok()).unwrap_or([0; 4])));
     match s.kind {
         asf::Kind::Video { .. } => s.avg_time_per_frame,
-        asf::Kind::Audio if bps != 0 => x.data.len() as u64 * 10_000_000 / bps,
-        _ => 0,
+        asf::Kind::Audio if bps != 0 => lo64(x.data.len()) * 10_000_000 / bps,
+        asf::Kind::Audio | asf::Kind::Other(_) => 0,
     }
 }
 
 /// SetStreamsSelected(WORD count, WORD *numbers, WMT_STREAM_SELECTION *selections)
 fn sr_set_streams_selected(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     let (n, nums, sels) = (c.a(1) & 0xffff, c.a(2), c.a(3));
     if n == 0 || nums == 0 || sels == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let mut r = lock(&rr);
     if r.r.is_none() {
-        return NS_E_INVALID_REQUEST;
+        return Hr::InvalidRequest.code();
     }
     for i in 0..n {
-        let s = r16(nums + 2 * i) as u8;
-        let Some(k) = r.output_of(s) else { return E_INVALIDARG };
+        let s = lo8(r16(nums + 2 * i));
+        let Some(k) = r.output_of(s) else { return Hr::InvalidArg.code() };
         // WMT_OFF 0, WMT_CLEANPOINT_ONLY 1, WMT_ON 2
         r.outputs[k].selected = r32(sels + 4 * i) != 0;
     }
@@ -952,38 +985,38 @@ fn sr_set_streams_selected(c: &mut Ctx) -> u32 {
 }
 
 fn sr_get_stream_selected(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (s, out) = (c.a(1) as u8, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (s, out) = (lo8(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(k) = r.output_of(s) else { return E_INVALIDARG };
+    let Some(k) = r.output_of(s) else { return Hr::InvalidArg.code() };
     w32(out, if r.outputs[k].selected { 2 } else { 0 });
     0
 }
 
 fn sr_set_read_stream_samples(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (s, on) = (c.a(1) as u8, c.a(2) != 0);
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (s, on) = (lo8(c.a(1)), c.a(2) != 0);
     let mut r = lock(&rr);
     if r.r.is_none() {
-        return NS_E_INVALID_REQUEST;
+        return Hr::InvalidRequest.code();
     }
-    let Some(k) = r.output_of(s) else { return E_INVALIDARG };
+    let Some(k) = r.output_of(s) else { return Hr::InvalidArg.code() };
     r.outputs[k].compressed = on;
     0
 }
 
 fn sr_get_read_stream_samples(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (s, out) = (c.a(1) as u8, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (s, out) = (lo8(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(k) = r.output_of(s) else { return E_INVALIDARG };
-    w32(out, r.outputs[k].compressed as u32);
+    let Some(k) = r.output_of(s) else { return Hr::InvalidArg.code() };
+    w32(out, u32::from(r.outputs[k].compressed));
     0
 }
 
@@ -991,7 +1024,7 @@ fn sr_get_read_stream_samples(c: &mut Ctx) -> u32 {
 /// and kept to nothing
 fn sr_get_output_setting(c: &mut Ctx) -> u32 {
     let _ = c;
-    ASF_E_NOTFOUND
+    Hr::NotFound.code()
 }
 fn sr_set_output_setting(c: &mut Ctx) -> u32 {
     let _ = c;
@@ -999,30 +1032,30 @@ fn sr_set_output_setting(c: &mut Ctx) -> u32 {
 }
 
 fn sr_get_output_count(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
     if r.r.is_none() {
-        return NS_E_INVALID_REQUEST;
+        return Hr::InvalidRequest.code();
     }
-    w32(c.a(1), r.outputs.len() as u32);
+    w32(c.a(1), lo32(r.outputs.len()));
     0
 }
 
 /// GetOutputProps(DWORD output, IWMOutputMediaProps **): a copy of its type
 fn sr_get_output_props(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (k, out) = (c.a(1) as usize, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (k, out) = (us(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
     if r.r.is_none() {
-        return NS_E_INVALID_REQUEST;
+        return Hr::InvalidRequest.code();
     }
-    let Some(o) = r.outputs.get(k) else { return E_INVALIDARG };
+    let Some(o) = r.outputs.get(k) else { return Hr::InvalidArg.code() };
     give(out, new_props(Props::Output(o.ty.clone())))
 }
 
@@ -1034,10 +1067,10 @@ pub(crate) fn chosen_format(offered: Vec<MediaType>, ty: &MediaType) -> Option<M
 /// SetOutputProps(DWORD output, IWMOutputMediaProps *): the type it holds, when the output can
 /// give it
 fn sr_set_output_props(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (k, p) = (c.a(1) as usize, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (k, p) = (us(c.a(1)), c.a(2));
     if p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // (the program's props: ask them for their type)
     let ty = match props_type(p) {
@@ -1045,7 +1078,7 @@ fn sr_set_output_props(c: &mut Ctx) -> u32 {
         None => {
             let n = mem::heap_alloc(4, true);
             if n == 0 {
-                return E_OUTOFMEMORY;
+                return Hr::OutOfMemory.code();
             }
             crate::dshow::com(c, p, 4, &[0, n]);
             let size = r32(n);
@@ -1062,18 +1095,18 @@ fn sr_set_output_props(c: &mut Ctx) -> u32 {
             mem::heap_free(n);
             match t {
                 Some(t) => t,
-                None => return E_INVALIDARG,
+                None => return Hr::InvalidArg.code(),
             }
         }
     };
     let mut g = lock(&rr);
     let r = &mut *g;
-    let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-    let Some(n) = r.outputs.get(k).map(|o| o.stream) else { return E_INVALIDARG };
-    let Some(s) = h.stream(n) else { return E_INVALIDARG };
+    let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
+    let Some(n) = r.outputs.get(k).map(|o| o.stream) else { return Hr::InvalidArg.code() };
+    let Some(s) = h.stream(n) else { return Hr::InvalidArg.code() };
     // (only the choice among the formats offered is the program's: the format block stays
     // ours, a program's edited or short VIDEOINFOHEADER is not what pictures are cut to)
-    let Some(f) = chosen_format(crate::wmdec::formats(s), &ty) else { return NS_E_INVALID_OUTPUT_FORMAT };
+    let Some(f) = chosen_format(crate::wmdec::formats(s), &ty) else { return Hr::InvalidOutputFormat.code() };
     let o = &mut r.outputs[k];
     o.ty = f;
     o.dec = None;
@@ -1082,93 +1115,93 @@ fn sr_set_output_props(c: &mut Ctx) -> u32 {
 }
 
 fn sr_get_output_format_count(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (k, out) = (c.a(1) as usize, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (k, out) = (us(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-    let Some(s) = r.outputs.get(k).and_then(|o| h.stream(o.stream)) else { return E_INVALIDARG };
-    w32(out, crate::wmdec::formats(s).len() as u32);
+    let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
+    let Some(s) = r.outputs.get(k).and_then(|o| h.stream(o.stream)) else { return Hr::InvalidArg.code() };
+    w32(out, lo32(crate::wmdec::formats(s).len()));
     0
 }
 
 fn sr_get_output_format(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (k, i, out) = (c.a(1) as usize, c.a(2) as usize, c.a(3));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (k, i, out) = (us(c.a(1)), us(c.a(2)), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-    let Some(s) = r.outputs.get(k).and_then(|o| h.stream(o.stream)) else { return E_INVALIDARG };
-    let Some(f) = crate::wmdec::formats(s).into_iter().nth(i) else { return E_INVALIDARG };
+    let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
+    let Some(s) = r.outputs.get(k).and_then(|o| h.stream(o.stream)) else { return Hr::InvalidArg.code() };
+    let Some(f) = crate::wmdec::formats(s).into_iter().nth(i) else { return Hr::InvalidArg.code() };
     give(out, new_props(Props::Output(f)))
 }
 
 fn sr_get_output_number_for_stream(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (s, out) = (c.a(1) as u8, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (s, out) = (lo8(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(k) = r.output_of(s) else { return E_INVALIDARG };
-    w32(out, k as u32);
+    let Some(k) = r.output_of(s) else { return Hr::InvalidArg.code() };
+    w32(out, lo32(k));
     0
 }
 
 fn sr_get_stream_number_for_output(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (k, out) = (c.a(1) as usize, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (k, out) = (us(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(o) = r.outputs.get(k) else { return E_INVALIDARG };
+    let Some(o) = r.outputs.get(k) else { return Hr::InvalidArg.code() };
     w16(out, u16::from(o.stream));
     0
 }
 
 fn sr_get_max_output_sample_size(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (k, out) = (c.a(1) as usize, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (k, out) = (us(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(o) = r.outputs.get(k) else { return E_INVALIDARG };
+    let Some(o) = r.outputs.get(k) else { return Hr::InvalidArg.code() };
     w32(out, crate::wmdec::sample_size(&o.ty).max(1));
     0
 }
 
 fn sr_get_max_stream_sample_size(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (s, out) = (c.a(1) as u8, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (s, out) = (lo8(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-    let Some(st) = asf::StreamNumber::new(s).and_then(|s| h.stream(s)) else { return E_INVALIDARG };
+    let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
+    let Some(st) = asf::StreamNumber::new(s).and_then(|s| h.stream(s)) else { return Hr::InvalidArg.code() };
     // (the largest object the file can hold: its packets', or a picture's when uncompressed)
     let n = match st.kind {
         // (saturating: a header's width and height are any u32)
         asf::Kind::Video { width, height } => width.saturating_mul(height).saturating_mul(4).max(h.packet_size),
-        _ => h.packet_size.saturating_mul(4),
+        asf::Kind::Audio | asf::Kind::Other(_) => h.packet_size.saturating_mul(4),
     };
     w32(out, n);
     0
 }
 
 fn set_alloc(c: &mut Ctx, by_stream: bool) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     let (n, a) = (c.a(1), c.a(2));
     let old = {
         let mut r = lock(&rr);
-        let k = if by_stream { r.output_of(n as u8) } else { Some(n as usize).filter(|&k| k < r.outputs.len()) };
-        let Some(k) = k else { return E_INVALIDARG };
+        let k = if by_stream { r.output_of(lo8(n)) } else { Some(us(n)).filter(|&k| k < r.outputs.len()) };
+        let Some(k) = k else { return Hr::InvalidArg.code() };
         let o = &mut r.outputs[k];
         let slot = if by_stream { &mut o.alloc_stream } else { &mut o.alloc_output };
         std::mem::replace(slot, a)
@@ -1183,15 +1216,15 @@ fn set_alloc(c: &mut Ctx, by_stream: bool) -> u32 {
 }
 
 fn get_alloc(c: &mut Ctx, by_stream: bool) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     let (n, out) = (c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let a = {
         let r = lock(&rr);
-        let k = if by_stream { r.output_of(n as u8) } else { Some(n as usize).filter(|&k| k < r.outputs.len()) };
-        let Some(k) = k else { return E_INVALIDARG };
+        let k = if by_stream { r.output_of(lo8(n)) } else { Some(us(n)).filter(|&k| k < r.outputs.len()) };
+        let Some(k) = k else { return Hr::InvalidArg.code() };
         if by_stream { r.outputs[k].alloc_stream } else { r.outputs[k].alloc_output }
     };
     if a != 0 {
@@ -1219,7 +1252,7 @@ fn sr_get_allocate_for_stream(c: &mut Ctx) -> u32 {
 /// WMT_VER_9_0
 fn pr_get_version(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), 0x0009_0000);
     0
@@ -1229,7 +1262,7 @@ fn pr_get_version(c: &mut Ctx) -> u32 {
 fn pr_get_name(c: &mut Ctx) -> u32 {
     let (buf, n) = (c.a(1), c.a(2));
     if n == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if buf != 0 && r32(n) >= 1 {
         w16(buf, 0);
@@ -1240,46 +1273,46 @@ fn pr_get_name(c: &mut Ctx) -> u32 {
 
 fn pr_zero_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), 0);
     0
 }
 
 fn pr_get_stream_count(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-    w32(c.a(1), h.streams.len() as u32);
+    let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
+    w32(c.a(1), lo32(h.streams.len()));
     0
 }
 
 fn pr_get_stream(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (i, out) = (c.a(1) as usize, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (i, out) = (us(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
-    let Some(s) = h.streams.get(i) else { return E_INVALIDARG };
+    let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
+    let Some(s) = h.streams.get(i) else { return Hr::InvalidArg.code() };
     give(out, new_props(Props::Stream(s.clone())))
 }
 
 fn pr_get_stream_by_number(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return E_UNEXPECTED };
-    let (n, out) = (c.a(1) as u8, c.a(2));
+    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
+    let (n, out) = (lo8(c.a(1)), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = lock(&rr);
-    let Some(h) = r.header() else { return NS_E_INVALID_REQUEST };
+    let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
     let Some(s) = asf::StreamNumber::new(n).and_then(|n| h.stream(n)) else {
         putp(out, 0);
-        return NS_E_UNRECOGNIZED_STREAM_TYPE;
+        return Hr::UnrecognizedStreamType.code();
     };
     give(out, new_props(Props::Stream(s.clone())))
 }
@@ -1292,7 +1325,7 @@ fn attr_bytes(v: &asf::Value) -> (u32, Vec<u8>) {
         asf::Value::U32(x) => (0, x.to_le_bytes().to_vec()),
         asf::Value::Str(s) => (1, s.encode_utf16().chain([0]).flat_map(|c| c.to_le_bytes()).collect()),
         asf::Value::Bytes(b) => (2, b.clone()),
-        asf::Value::Bool(b) => (3, (*b as u32).to_le_bytes().to_vec()),
+        asf::Value::Bool(b) => (3, u32::from(*b).to_le_bytes().to_vec()),
         asf::Value::U64(x) => (4, x.to_le_bytes().to_vec()),
         asf::Value::U16(x) => (5, x.to_le_bytes().to_vec()),
         asf::Value::Guid(g) => (6, g.to_vec()),
@@ -1334,10 +1367,10 @@ pub fn attributes(h: &asf::Header, stream: u16) -> Vec<(String, asf::Value)> {
 }
 
 fn hi_attrs(c: &Ctx, stream: u16) -> Result<Arc<Vec<(String, asf::Value)>>, u32> {
-    let rr = reader(c.a(0)).ok_or(E_UNEXPECTED)?;
+    let rr = reader(c.a(0)).ok_or(Hr::Unexpected.code())?;
     let mut g = lock(&rr);
     let r = &mut *g;
-    let h = r.r.as_ref().map(|a| &a.header).ok_or(NS_E_INVALID_REQUEST)?;
+    let h = r.r.as_ref().map(|a| &a.header).ok_or(Hr::InvalidRequest.code())?;
     Ok(r.attrs.entry(stream).or_insert_with(|| Arc::new(attributes(h, stream))).clone())
 }
 
@@ -1345,11 +1378,11 @@ fn hi_attrs(c: &Ctx, stream: u16) -> Result<Arc<Vec<(String, asf::Value)>>, u32>
 fn hi_get_attribute_count(c: &mut Ctx) -> u32 {
     let out = c.a(2);
     if out == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    match hi_attrs(c, c.a(1) as u16) {
+    match hi_attrs(c, lo16(c.a(1))) {
         Ok(v) => {
-            w16(out, v.len() as u16);
+            w16(out, lo16(v.len()));
             0
         }
         Err(e) => e,
@@ -1363,7 +1396,7 @@ fn hi_get_attribute_count_ex(c: &mut Ctx) -> u32 {
 
 fn hi_zero_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     w32(c.a(1), 0);
     0
@@ -1374,15 +1407,15 @@ fn put_value(ty_p: u32, value: u32, len_p: u32, v: &asf::Value) -> u32 {
     let (ty, b) = attr_bytes(v);
     put32(ty_p, ty);
     if len_p == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let room = r16(len_p) as usize;
-    w16(len_p, b.len() as u16);
+    let room = us(r16(len_p));
+    w16(len_p, lo16(b.len()));
     if value == 0 {
         return 0;
     }
     if room < b.len() {
-        return ASF_E_BUFFERTOOSMALL;
+        return Hr::BufferTooSmall.code();
     }
     mem::write(value, &b);
     0
@@ -1390,24 +1423,24 @@ fn put_value(ty_p: u32, value: u32, len_p: u32, v: &asf::Value) -> u32 {
 
 /// GetAttributeByIndex(WORD index, WORD *stream, WCHAR *name, WORD *chars, type, value, *len)
 fn hi_get_attribute_by_index(c: &mut Ctx) -> u32 {
-    let (i, ps_, name, chars, ty, value, len) = (c.a(1) as usize, c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
+    let (i, ps_, name, chars, ty, value, len) = (us(c.a(1)), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
     if ps_ == 0 || chars == 0 || len == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let v = match hi_attrs(c, r16(ps_)) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let Some((n, val)) = v.get(i) else { return E_INVALIDARG };
+    let Some((n, val)) = v.get(i) else { return Hr::InvalidArg.code() };
     let w: Vec<u16> = n.encode_utf16().chain([0]).collect();
-    let room = r16(chars) as usize;
-    w16(chars, w.len() as u16);
+    let room = us(r16(chars));
+    w16(chars, lo16(w.len()));
     if name != 0 {
         if room < w.len() {
-            return ASF_E_BUFFERTOOSMALL;
+            return Hr::BufferTooSmall.code();
         }
         for (k, ch) in w.iter().enumerate() {
-            w16(name + 2 * k as u32, *ch);
+            w16(name + 2 * lo32(k), *ch);
         }
     }
     put_value(ty, value, len, val)
@@ -1417,14 +1450,14 @@ fn hi_get_attribute_by_index(c: &mut Ctx) -> u32 {
 fn hi_get_attribute_by_name(c: &mut Ctx) -> u32 {
     let (ps_, name, ty, value, len) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
     if ps_ == 0 || name == 0 || ty == 0 || len == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let want = String::from_utf16_lossy(&mem::wstr(name));
     let v = match hi_attrs(c, r16(ps_)) {
         Ok(v) => v,
         Err(e) => return e,
     };
-    let Some((_, val)) = v.iter().find(|(n, _)| n.eq_ignore_ascii_case(&want)) else { return ASF_E_NOTFOUND };
+    let Some((_, val)) = v.iter().find(|(n, _)| n.eq_ignore_ascii_case(&want)) else { return Hr::NotFound.code() };
     put_value(ty, value, len, val)
 }
 
@@ -1483,9 +1516,9 @@ fn props_type(p: u32) -> Option<MediaType> {
 fn sc_qi(c: &mut Ctx) -> u32 {
     let (this, riid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(b) = props_block(this) else { return E_NOINTERFACE };
+    let Some(b) = props_block(this) else { return Hr::NoInterface.code() };
     let want = guid_at(riid).unwrap_or([0xff; 16]);
     let stream = props(|m| matches!(m.get(&b).map(|o| &o.p), Some(Props::Stream(_))));
     let w = if want == IID_IUNKNOWN {
@@ -1501,7 +1534,7 @@ fn sc_qi(c: &mut Ctx) -> u32 {
     };
     let Some(w) = w else {
         putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     };
     props(|m| m.get_mut(&b).map(|o| o.refs += 1));
     putp(out, b + ps() * w);
@@ -1539,7 +1572,7 @@ fn with_props<R>(p: u32, f: impl FnOnce(&mut Props) -> R) -> Option<R> {
 fn sc_get_stream_type(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match with_props(c.a(0), |p| match p {
         Props::Stream(s) => stream_type(s).major,
@@ -1549,14 +1582,14 @@ fn sc_get_stream_type(c: &mut Ctx) -> u32 {
             put_guid(out, &g);
             0
         }
-        None => E_UNEXPECTED,
+        None => Hr::Unexpected.code(),
     }
 }
 
 fn sc_get_stream_number(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match with_props(c.a(0), |p| match p {
         Props::Stream(s) => u16::from(s.number),
@@ -1566,7 +1599,7 @@ fn sc_get_stream_number(c: &mut Ctx) -> u32 {
             w16(out, n);
             0
         }
-        None => E_UNEXPECTED,
+        None => Hr::Unexpected.code(),
     }
 }
 
@@ -1574,7 +1607,7 @@ fn sc_get_stream_number(c: &mut Ctx) -> u32 {
 fn sc_get_name(c: &mut Ctx) -> u32 {
     let (buf, n) = (c.a(1), c.a(2));
     if n == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if buf != 0 && r16(n) >= 1 {
         w16(buf, 0);
@@ -1586,7 +1619,7 @@ fn sc_get_name(c: &mut Ctx) -> u32 {
 fn sc_get_bitrate(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let v = with_props(c.a(0), |p| match p {
         Props::Stream(s) => s.bitrate,
@@ -1600,7 +1633,7 @@ fn sc_get_bitrate(c: &mut Ctx) -> u32 {
 fn sc_get_buffer_window(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(out, 3000);
     0
@@ -1614,17 +1647,17 @@ fn mp_get_type(c: &mut Ctx) -> u32 {
 fn mp_get_media_type(c: &mut Ctx) -> u32 {
     let (p, n) = (c.a(1), c.a(2));
     if n == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(t) = props_type(c.a(0)) else { return E_UNEXPECTED };
-    let need = mt_size() + t.format.len() as u32;
+    let Some(t) = props_type(c.a(0)) else { return Hr::Unexpected.code() };
+    let need = mt_size() + lo32(t.format.len());
     if p == 0 {
         w32(n, need);
         return 0;
     }
     if r32(n) < need {
         w32(n, need);
-        return ASF_E_BUFFERTOOSMALL;
+        return Hr::BufferTooSmall.code();
     }
     t.write(p, p + mt_size());
     w32(n, need);
@@ -1633,16 +1666,16 @@ fn mp_get_media_type(c: &mut Ctx) -> u32 {
 
 /// SetMediaType(WM_MEDIA_TYPE *)
 fn mp_set_media_type(c: &mut Ctx) -> u32 {
-    let Some(t) = MediaType::read(c.a(1)) else { return E_POINTER };
+    let Some(t) = MediaType::read(c.a(1)) else { return Hr::Pointer.code() };
     match with_props(c.a(0), |p| match p {
         Props::Output(o) => {
             *o = t;
             0
         }
-        Props::Stream(_) => E_NOTIMPL,
+        Props::Stream(_) => Hr::NotImpl.code(),
     }) {
         Some(hr) => hr,
-        None => E_UNEXPECTED,
+        None => Hr::Unexpected.code(),
     }
 }
 
@@ -1666,14 +1699,14 @@ fn bufs<R>(f: impl FnOnce(&mut HashMap<u32, Buf>) -> R) -> R {
     f(BUFS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new))
 }
 
-/// Puts a new object `o` into `out`: S_OK, or E_OUTOFMEMORY when there is none (0)
+/// Puts a new object `o` into `out`: S_OK, or Hr::OutOfMemory.code() when there is none (0)
 fn give(out: u32, o: u32) -> u32 {
     putp(out, o);
-    if o == 0 { E_OUTOFMEMORY } else { 0 }
+    if o == 0 { Hr::OutOfMemory.code() } else { 0 }
 }
 
 pub fn new_buffer(data: &[u8]) -> u32 {
-    let n = data.len() as u32;
+    let n = lo32(data.len());
     let b = mem::heap_alloc(2 * ps(), true);
     let d = if b == 0 { 0 } else { mem::heap_alloc(n.max(1), false) };
     // (the guest heap is full: no buffer, not a write to address 0)
@@ -1690,12 +1723,12 @@ pub fn new_buffer(data: &[u8]) -> u32 {
 fn buf_qi(c: &mut Ctx) -> u32 {
     let (this, riid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let want = guid_at(riid).unwrap_or([0xff; 16]);
     if want != IID_IUNKNOWN && want != IID_NSSBUFFER {
         putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     bufs(|m| m.get_mut(&this).map(|o| o.refs += 1));
     putp(out, this);
@@ -1729,9 +1762,9 @@ fn buf_release(c: &mut Ctx) -> u32 {
 
 fn buf_get_length(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let Some(n) = bufs(|m| m.get(&c.a(0)).map(|o| o.len)) else { return E_UNEXPECTED };
+    let Some(n) = bufs(|m| m.get(&c.a(0)).map(|o| o.len)) else { return Hr::Unexpected.code() };
     w32(c.a(1), n);
     0
 }
@@ -1743,34 +1776,34 @@ fn buf_set_length(c: &mut Ctx) -> u32 {
             o.len = n;
             0
         }
-        Some(_) => E_INVALIDARG,
-        None => E_UNEXPECTED,
+        Some(_) => Hr::InvalidArg.code(),
+        None => Hr::Unexpected.code(),
     })
 }
 
 fn buf_get_max_length(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let Some(n) = bufs(|m| m.get(&c.a(0)).map(|o| o.max)) else { return E_UNEXPECTED };
+    let Some(n) = bufs(|m| m.get(&c.a(0)).map(|o| o.max)) else { return Hr::Unexpected.code() };
     w32(c.a(1), n);
     0
 }
 
 fn buf_get_buffer(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let Some(d) = bufs(|m| m.get(&c.a(0)).map(|o| o.data)) else { return E_UNEXPECTED };
+    let Some(d) = bufs(|m| m.get(&c.a(0)).map(|o| o.data)) else { return Hr::Unexpected.code() };
     putp(c.a(1), d);
     0
 }
 
 fn buf_get_buffer_and_length(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 || c.a(2) == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let Some((d, n)) = bufs(|m| m.get(&c.a(0)).map(|o| (o.data, o.len))) else { return E_UNEXPECTED };
+    let Some((d, n)) = bufs(|m| m.get(&c.a(0)).map(|o| (o.data, o.len))) else { return Hr::Unexpected.code() };
     putp(c.a(1), d);
     w32(c.a(2), n);
     0
@@ -1783,7 +1816,7 @@ pub fn init() {
     implement("wmvcore", "WMCreateSyncReader", |c| {
         let out = c.a(2);
         if out == 0 {
-            return E_INVALIDARG;
+            return Hr::InvalidArg.code();
         }
         give(out, new_sync_reader())
     });
@@ -1791,7 +1824,7 @@ pub fn init() {
     implement("wmvcore", "WMCreateReader", |c| {
         let out = c.a(2);
         if out == 0 {
-            return E_INVALIDARG;
+            return Hr::InvalidArg.code();
         }
         give(out, asyncr::new_reader())
     });

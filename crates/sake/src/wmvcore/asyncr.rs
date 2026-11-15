@@ -109,17 +109,17 @@ impl Async {
         if !self.running || self.cb == 0 {
             return Step::Wait(None);
         }
-        let Some(h) = self.held.as_ref() else { return Step::Read(self.epoch) };
+        let Some(due) = self.held.as_ref().map(|h| h.1) else { return Step::Read(self.epoch) };
         let limit = if self.user_clock { self.deliver } else { self.clock(now) + LEAD };
-        if h.1 <= limit {
-            return Step::Sample(self.cb, self.ctx, self.held.take().unwrap());
+        if due <= limit && let Some(x) = self.held.take() {
+            return Step::Sample(self.cb, self.ctx, x);
         }
         if self.user_clock && !self.told && self.adv != 0 {
             self.told = true;
             return Step::Time(self.adv, self.deliver, self.ctx);
         }
         // (a clock of the program's: until DeliverTime; ours: until the held one is due)
-        Step::Wait(if self.user_clock || self.paused { None } else { Some(h.1 - limit) })
+        Step::Wait(if self.user_clock || self.paused { None } else { Some(due - limit) })
     }
     /// Before a Start's seek: nothing read from before it is kept
     fn seeking(&mut self) {
@@ -272,7 +272,7 @@ fn ok20(_: &mut Ctx) -> u32 {
 }
 fn get_false(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), 0);
     0
@@ -312,15 +312,15 @@ fn set_alloc(c: &mut Ctx, stream: bool) -> u32 {
             v.push(n);
         }
     })
-    .map_or(E_UNEXPECTED, |_| 0)
+    .map_or(Hr::Unexpected.code(), |_| 0)
 }
 fn get_alloc(c: &mut Ctx, stream: bool) -> u32 {
     let (n, out) = (if stream { c.a(1) & 0xffff } else { c.a(1) }, c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let on = asy(c.a(0), |a| if stream { a.alloc_stream.contains(&n) } else { a.alloc_out.contains(&n) }).unwrap_or(false);
-    w32(out, on as u32);
+    w32(out, u32::from(on));
     0
 }
 /// SetAllocateForOutput(DWORD output, BOOL): the callback's AllocateForOutput gives its buffers
@@ -342,7 +342,7 @@ fn get_alloc_stream(c: &mut Ctx) -> u32 {
 /// AllocateForOutput (8)(num, size, INSSBuffer **, context); 0 when it gives none.
 fn callback_buffer(c: &mut Ctx, adv: u32, stream: bool, num: u32, data: &[u8], ctx: u32) -> u32 {
     let pp = mem::heap_alloc(8, true);
-    let hr = crate::dshow::com(c, adv, if stream { 7 } else { 8 }, &[num, data.len() as u32, pp, ctx]);
+    let hr = crate::dshow::com(c, adv, if stream { 7 } else { 8 }, &[num, lo32(data.len()), pp, ctx]);
     let b = rp(pp);
     mem::heap_free(pp);
     if hr & 0x8000_0000 != 0 || b == 0 {
@@ -356,14 +356,14 @@ fn callback_buffer(c: &mut Ctx, adv: u32, stream: bool, num: u32, data: &[u8], c
     if dst != 0 {
         mem::write(dst, data);
     }
-    crate::dshow::com(c, b, 4, &[data.len() as u32]);
+    crate::dshow::com(c, b, 4, &[lo32(data.len())]);
     b
 }
 
 /// IReferenceClock::GetTime(REFERENCE_TIME *): the time movies play by
 fn get_time(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(c.a(1), now());
     0
@@ -418,9 +418,9 @@ fn opened(c: &mut Ctx, b: u32, cb: u32, ctx: u32, hr: u32) {
 /// Open(LPCWSTR url, IWMReaderCallback *, void *context)
 fn open(c: &mut Ctx) -> u32 {
     let (this, url, cb, ctx) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    let Some(b) = block(this) else { return E_UNEXPECTED };
+    let Some(b) = block(this) else { return Hr::Unexpected.code() };
     if url == 0 || cb == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let hr = sr_open(c);
     if hr != 0 {
@@ -433,9 +433,9 @@ fn open(c: &mut Ctx) -> u32 {
 /// OpenStream(IStream *, IWMReaderCallback *, void *context)
 fn open_stream(c: &mut Ctx) -> u32 {
     let (this, cb, ctx) = (c.a(0), c.a(2), c.a(3));
-    let Some(b) = block(this) else { return E_UNEXPECTED };
+    let Some(b) = block(this) else { return Hr::Unexpected.code() };
     if cb == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let hr = sr_open_stream(c);
     if hr != 0 {
@@ -447,11 +447,11 @@ fn open_stream(c: &mut Ctx) -> u32 {
 
 fn r_close(c: &mut Ctx) -> u32 {
     let this = c.a(0);
-    let Some(rr) = reader(this) else { return E_UNEXPECTED };
+    let Some(rr) = reader(this) else { return Hr::Unexpected.code() };
     {
         let mut r = lock(&rr);
         if r.r.is_none() {
-            return NS_E_INVALID_REQUEST;
+            return Hr::InvalidRequest.code();
         }
         close(c, &mut r);
     }
@@ -467,53 +467,53 @@ fn r_close(c: &mut Ctx) -> u32 {
 fn start(c: &mut Ctx) -> u32 {
     let this = c.a(0);
     let (from, dur) = (q(c, 1, 1), q(c, 3, 2));
-    let ctx = if mem::x64() { c.a64(4) as u32 } else { c.a(6) };
-    let Some(rr) = reader(this) else { return E_UNEXPECTED };
+    let ctx = if mem::x64() { lo32(c.a64(4)) } else { c.a(6) };
+    let Some(rr) = reader(this) else { return Hr::Unexpected.code() };
     // (first: a read the thread has begun is thrown away, it is of before the seek)
     asy(this, Async::seeking);
     {
         let mut r = lock(&rr);
         if r.r.is_none() {
-            return NS_E_INVALID_REQUEST;
+            return Hr::InvalidRequest.code();
         }
         // (0: on from where it is, as Windows' "resume")
-        seek(c, &mut r, from, if dur as i64 > 0 { dur } else { 0 });
+        seek(c, &mut r, from, if dur.cast_signed() > 0 { dur } else { 0 });
     }
     asy_wake(this, |a| a.start(from, ctx, now()));
     0
 }
 
 fn stop(c: &mut Ctx) -> u32 {
-    asy_wake(c.a(0), Async::stop).map_or(E_UNEXPECTED, |_| 0)
+    asy_wake(c.a(0), Async::stop).map_or(Hr::Unexpected.code(), |_| 0)
 }
 
 fn pause(c: &mut Ctx) -> u32 {
-    asy_wake(c.a(0), |a| a.pause(now())).map_or(E_UNEXPECTED, |_| 0)
+    asy_wake(c.a(0), |a| a.pause(now())).map_or(Hr::Unexpected.code(), |_| 0)
 }
 
 fn resume(c: &mut Ctx) -> u32 {
-    asy_wake(c.a(0), |a| a.resume(now())).map_or(E_UNEXPECTED, |_| 0)
+    asy_wake(c.a(0), |a| a.resume(now())).map_or(Hr::Unexpected.code(), |_| 0)
 }
 
 /// SetUserProvidedClock(BOOL)
 fn set_user_clock(c: &mut Ctx) -> u32 {
     let on = c.a(1) != 0;
-    asy_wake(c.a(0), |a| a.user_clock = on).map_or(E_UNEXPECTED, |_| 0)
+    asy_wake(c.a(0), |a| a.user_clock = on).map_or(Hr::Unexpected.code(), |_| 0)
 }
 
 fn get_user_clock(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let on = asy(c.a(0), |a| a.user_clock).unwrap_or(false);
-    w32(c.a(1), on as u32);
+    w32(c.a(1), u32::from(on));
     0
 }
 
 /// DeliverTime(QWORD): samples up to this time go out, then OnTime
 fn deliver_time(c: &mut Ctx) -> u32 {
     let t = q(c, 1, 1);
-    asy_wake(c.a(0), |a| if a.deliver_to(t) { 0 } else { NS_E_INVALID_REQUEST }).unwrap_or(E_UNEXPECTED)
+    asy_wake(c.a(0), |a| if a.deliver_to(t) { 0 } else { Hr::InvalidRequest.code() }).unwrap_or(Hr::Unexpected.code())
 }
 
 /// What the delivery thread does next.
@@ -564,12 +564,12 @@ fn thread(c: &mut Ctx) -> u32 {
                     let alloc = if o.alloc_stream != 0 && o.compressed {
                         (o.alloc_stream, true, u32::from(o.stream))
                     } else if o.alloc_output != 0 && !o.compressed {
-                        (o.alloc_output, false, k as u32)
+                        (o.alloc_output, false, lo32(k))
                     } else {
                         (0, false, 0)
                     };
                     // (the callback's own buffers, if it asked to allocate them)
-                    let num = if o.compressed { u32::from(o.stream) } else { k as u32 };
+                    let num = if o.compressed { u32::from(o.stream) } else { lo32(k) };
                     let own = asy(b, |a| if o.compressed { a.alloc_stream.contains(&num) } else { a.alloc_out.contains(&num) }).unwrap_or(false);
                     (alloc, flags, own.then_some((o.compressed, num)))
                 };
@@ -578,7 +578,7 @@ fn thread(c: &mut Ctx) -> u32 {
                     Some((stream, num)) => {
                         let adv = asy(b, |a| a.adv).unwrap_or(0);
                         let buf = if adv != 0 { callback_buffer(c, adv, stream, num, &data, ctx) } else { 0 };
-                        if buf != 0 { putp(p, buf); 0 } else { E_OUTOFMEMORY }
+                        if buf != 0 { putp(p, buf); 0 } else { Hr::OutOfMemory.code() }
                     }
                     None => hand_out(c, alloc, &data, time, dur, flags, p),
                 };
@@ -586,14 +586,14 @@ fn thread(c: &mut Ctx) -> u32 {
                     let buf = rp(p);
                     // OnSample(DWORD output, QWORD time, QWORD duration, DWORD flags,
                     // INSSBuffer *, void *context)
-                    crate::dshow::com(c, cb, 4, &[k as u32, time as u32, (time >> 32) as u32, dur as u32, (dur >> 32) as u32, flags, buf, ctx]);
+                    crate::dshow::com(c, cb, 4, &[lo32(k), lo32(time), lo32(time >> 32), lo32(dur), lo32(dur >> 32), flags, buf, ctx]);
                     crate::dshow::com(c, buf, 2, &[]);
                 }
                 mem::heap_free(p);
             }
             Step::Time(adv, t, ctx) => {
                 // IWMReaderCallbackAdvanced::OnTime(QWORD, void *context)
-                crate::dshow::com(c, adv, 4, &[t as u32, (t >> 32) as u32, ctx]);
+                crate::dshow::com(c, adv, 4, &[lo32(t), lo32(t >> 32), ctx]);
             }
             Step::Read(e) => {
                 let Some(rr) = reader(b) else { continue };
