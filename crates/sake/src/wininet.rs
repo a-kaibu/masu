@@ -447,7 +447,7 @@ fn transport(r: &Request) -> Result<Response, u32> {
                     | CertificateError::NotValidYetContext { .. },
                 )) => 12037,
                 Error::Tls(TlsError::InvalidCertificate(_)) => 12045,
-                Error::Io(e) if e.kind() == std::io::ErrorKind::TimedOut => 12002,
+                Error::Io(e) if crate::files::io_err(&e) == crate::files::IoErr::TimedOut => 12002,
                 Error::InvalidRequest => 87,
                 _ => 12152,
             }

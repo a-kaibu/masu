@@ -125,6 +125,31 @@ pub fn delete_blocked(host: &str) -> bool {
 }
 
 /// Not found: ERROR_PATH_NOT_FOUND when the directory is missing too, else ERROR_FILE_NOT_FOUND.
+/// What sake tells apart in a host I/O error. std's ErrorKind is non_exhaustive, so io_err is
+/// the one match over it that needs a catch-all; callers match IoErr without one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum IoErr {
+    NotFound,
+    Exists,
+    /// the operation is not there (a file system without hard links)
+    Unsupported,
+    TooManyLinks,
+    TimedOut,
+    Other,
+}
+pub fn io_err(e: &std::io::Error) -> IoErr {
+    use std::io::ErrorKind as K;
+    match e.kind() {
+        K::NotFound => IoErr::NotFound,
+        K::AlreadyExists => IoErr::Exists,
+        K::Unsupported => IoErr::Unsupported,
+        K::TooManyLinks => IoErr::TooManyLinks,
+        K::TimedOut => IoErr::TimedOut,
+        // (non_exhaustive: every other kind, today's and those std adds)
+        _ => IoErr::Other,
+    }
+}
+
 pub fn missing(w: &str) -> u32 {
     // (no name at all, as NULL: ERROR_PATH_NOT_FOUND)
     if w.is_empty() {
@@ -532,16 +557,16 @@ pub fn open_shared(w: &str, access: u32, disposition: u32, share: Option<u32>) -
             };
             Ok((File { f: Mutex::new(f), path: host, dir: false, write, scan: Mutex::new(None), share: id, delete: Default::default() }, existing.is_some()))
         }
-        Err(e) => Err(match e.kind() {
-            std::io::ErrorKind::NotFound => {
+        Err(e) => Err(match io_err(&e) {
+            IoErr::NotFound => {
                 if existing.is_none() && disposition != 3 {
                     ERROR_PATH_NOT_FOUND
                 } else {
                     ERROR_FILE_NOT_FOUND
                 }
             }
-            std::io::ErrorKind::AlreadyExists => ERROR_FILE_EXISTS,
-            _ => ERROR_ACCESS_DENIED,
+            IoErr::Exists => ERROR_FILE_EXISTS,
+            IoErr::Unsupported | IoErr::TooManyLinks | IoErr::TimedOut | IoErr::Other => ERROR_ACCESS_DENIED,
         }),
     }
 }
@@ -1258,5 +1283,33 @@ mod wild_tests {
         assert!(!wild("*a*a*a*a*a*a*a*a*a*a*a*a*b", &name));
         assert!(wild("*a*a*a*a*a*a*a*a*a*a*a*a*", &name));
         assert!(t.elapsed() < std::time::Duration::from_millis(500));
+    }
+}
+
+#[cfg(test)]
+mod io_err_tests {
+    use super::*;
+    use std::io::{Error, ErrorKind as K};
+
+    /// each kind sake tells apart, and a spread of the rest (Other)
+    #[test]
+    fn io_err_names_the_kinds() {
+        for (k, want) in [
+            (K::NotFound, IoErr::NotFound),
+            (K::AlreadyExists, IoErr::Exists),
+            (K::Unsupported, IoErr::Unsupported),
+            (K::TooManyLinks, IoErr::TooManyLinks),
+            (K::TimedOut, IoErr::TimedOut),
+            (K::PermissionDenied, IoErr::Other),
+            (K::Other, IoErr::Other),
+            (K::InvalidData, IoErr::Other),
+            (K::Interrupted, IoErr::Other),
+            (K::StorageFull, IoErr::Other),
+        ] {
+            assert_eq!(io_err(&Error::from(k)), want, "{k:?}");
+        }
+        // (from the OS too: ENOENT, EEXIST)
+        assert_eq!(io_err(&Error::from_raw_os_error(2)), IoErr::NotFound);
+        assert_eq!(io_err(&Error::from_raw_os_error(17)), IoErr::Exists);
     }
 }

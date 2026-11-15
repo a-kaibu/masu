@@ -7995,7 +7995,7 @@ pub(crate) fn make_dir(name: &str) -> Result<(), u32> {
     if crate::env_on!("SAKE_TRACE_FILES") {
         eprintln!("sake: CreateDirectory({name}) -> {h}: {r:?}");
     }
-    r.map_err(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { 183 } else { 3 })
+    r.map_err(|e| if files::io_err(&e) == files::IoErr::Exists { 183 } else { 3 })
 }
 fn CreateDirectoryA(c: &mut Ctx) -> u32 {
     mkdir(&arg_str(c.a(0), false))
@@ -8141,13 +8141,12 @@ fn hard_link(new: &str, existing: &str) -> u32 {
         Err(e) => {
             // (a file system without hard links, as FAT on Windows: ERROR_INVALID_FUNCTION;
             // emscripten's node one answers EMLINK)
-            let none = matches!(e.kind(), std::io::ErrorKind::Unsupported | std::io::ErrorKind::TooManyLinks);
             // (the new name's folder missing: ERROR_PATH_NOT_FOUND)
-            let code = match e.kind() {
-                _ if none => 1,
-                std::io::ErrorKind::NotFound => files::missing(new),
-                std::io::ErrorKind::AlreadyExists => 183,
-                _ => 5,
+            let code = match files::io_err(&e) {
+                files::IoErr::Unsupported | files::IoErr::TooManyLinks => 1,
+                files::IoErr::NotFound => files::missing(new),
+                files::IoErr::Exists => 183,
+                files::IoErr::TimedOut | files::IoErr::Other => 5,
             };
             last_error(code);
             0

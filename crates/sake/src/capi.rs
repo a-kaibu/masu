@@ -2,7 +2,7 @@
 //! APIs distinguish opening, creating and deleting a container. RSA material is
 //! generated normally and persisted atomically; missing keys never succeed.
 use std::collections::HashMap;
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 use std::sync::{Arc, Mutex, atomic::{AtomicU32, Ordering}};
 use sha2::Digest;
 use crate::cng::{self, Blob, Rsa};
@@ -62,7 +62,7 @@ pub(crate) fn acquire(container: Option<&str>, name: Option<&str>, ty: u32, flag
           if flags & 8 != 0 {
             kura::fs::create_dir_all(path).map_err(|_| cng::NTE_PERM)?;
             let mut file = kura::fs::OpenOptions::new().write(true).create_new(true).open(&marker)
-                .map_err(|e| if e.kind() == ErrorKind::AlreadyExists { cng::NTE_EXISTS } else { cng::NTE_PERM })?;
+                .map_err(|e| if crate::files::io_err(&e) == crate::files::IoErr::Exists { cng::NTE_EXISTS } else { cng::NTE_PERM })?;
             let mut token = [0u8; 16];
             if unsafe { libc::getentropy(token.as_mut_ptr().cast(), token.len()) } != 0 || file.write_all(&token).is_err() {
                 let _ = kura::fs::remove_file(&marker); return Err(cng::NTE_PERM);
