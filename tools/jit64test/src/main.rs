@@ -800,6 +800,8 @@ thread_local! {
     static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// calls of the `callmiss` import, on this thread
     static CALLMISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// the host's hints for functions' indirect calls (site, target), on this thread
+    static HINTS: std::cell::RefCell<Vec<(u64, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Host trap addresses (as sake's API traps) in the runs that set them: a call there is an
@@ -949,7 +951,8 @@ impl Jit {
         let (lo, hi) = self.range;
         let fnm = self.fnm;
         let region = if fnm {
-            koji::jit::long::translate_function64(&mut m, &mut Mem(base as *mut u8), full, (END, END + 16), 1000, |a, _| a != END && a >= lo && a < hi)
+            let hint = |a: u64| HINTS.with(|h| h.borrow().iter().find(|x| x.0 == a).map(|x| x.1));
+            koji::jit::long::translate_function64_with(&mut m, &mut Mem(base as *mut u8), full, &[], (END, END + 16), 1000, &hint, |a, _| a != END && a >= lo && a < hi)
         } else {
             koji::jit::long::translate_region64(&mut m, &mut Mem(base as *mut u8), &[full], (END, END + 16), |a, _| a != END && a >= lo && a < hi)
         }
@@ -2064,6 +2067,82 @@ fn api_calls_go_straight_to_the_host() {
     assert_eq!(got.eip, END);
     assert_eq!(steps, 0, "no instruction left to the interpreter");
     assert_eq!(CALLMISSES.get(), 0, "callmiss asked for a trap");
+}
+
+/// Indirect calls (FN64) with the host's hint of a small leaf: the leaf inline, guarded by the
+/// target. `call rax` goes where its hint says, `call rsi` elsewhere (the guard's call
+/// instead); both leaves' flags read after the call (`adc`). The interpreter's results, and
+/// fewer call cache misses than without the hints (the hinted site's leaf is no wasm call).
+#[test]
+fn hinted_indirect_calls_inline_their_leaf() {
+    let mut code = vec![0x90u8; 0x60];
+    let mut put = |at: usize, b: &[u8]| code[at..at + b.len()].copy_from_slice(b);
+    let (l, m) = (CODE + 0x40, CODE + 0x50);
+    put(0, &[0xb9, 0xe8, 3, 0, 0]); // mov ecx, 1000
+    put(5, &[0xb8]); // mov eax, L
+    put(6, &l.to_le_bytes());
+    put(10, &[0xbe]); // mov esi, M
+    put(11, &m.to_le_bytes());
+    put(15, &[0xff, 0xd0]); // call rax
+    put(17, &[0x48, 0x83, 0xd7, 0x00]); // adc rdi, 0
+    put(21, &[0xff, 0xd6]); // call rsi
+    put(23, &[0x49, 0x83, 0xd0, 0x00]); // adc r8, 0
+    put(27, &[0xff, 0xc9]); // dec ecx
+    put(29, &[0x75, (15i32 - 31) as u8]); // jne 15
+    put(31, &[0xe9]); // jmp END
+    put(32, &(END as i32 - (CODE as i32 + 36)).to_le_bytes());
+    put(0x40, &[0x48, 0x83, 0xc2, 0x01, 0x48, 0x81, 0xfa, 0xf4, 0x01, 0, 0, 0xc3]); // L: add rdx, 1; cmp rdx, 500; ret
+    put(0x50, &[0x48, 0x83, 0xc3, 0x03, 0x48, 0x81, 0xfb, 0x2c, 0x01, 0, 0, 0xc3]); // M: add rbx, 3; cmp rbx, 300; ret
+    let site = |at: u32| u64::from(CODE + at);
+    let run = |hints: Vec<(u64, u64)>| {
+        HINTS.with(|h| *h.borrow_mut() = hints);
+        let r = run_both_fn(&code, 0);
+        HINTS.with(|h| h.borrow_mut().clear());
+        (r, CALLMISSES.get())
+    };
+    let ((mut want, mut plain, _, _), misses) = run(Vec::new());
+    let ((_, mut got, _, steps), hinted) = run(vec![(site(15), u64::from(l)), (site(21), u64::from(l))]);
+    for c in [&mut want, &mut plain, &mut got] {
+        c.materialize();
+    }
+    assert_eq!((want.gpr(2), want.gpr(3), want.gpr(7), want.gpr(8)), (1000, 3000, 499, 99));
+    for i in 0..16 {
+        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(plain.gpr(i), want.gpr(i), "register {i}, no hints");
+    }
+    assert_eq!((plain.eflags & 0x8d5, got.eip, got.eflags & 0x8d5), (want.eflags & 0x8d5, END, want.eflags & 0x8d5));
+    assert_eq!(steps, 0, "no instruction left to the interpreter");
+    assert!(hinted < misses, "call cache misses: {hinted} with the hints, {misses} without");
+}
+
+/// An indirect call with no hint of its own (FN64) takes the hint of another through the same
+/// operand: two `call rax` (qsort's calls of the comparison), one hinted, and `call rsi`,
+/// another operand. The interpreter's results (koji's long.rs tests count the copies).
+#[test]
+fn calls_through_the_same_operand_share_a_hint() {
+    let mut code = vec![0x90u8; 0x60];
+    let mut put = |at: usize, b: &[u8]| code[at..at + b.len()].copy_from_slice(b);
+    let l = CODE + 0x40;
+    put(0, &[0xb9, 0xe8, 3, 0, 0]); // mov ecx, 1000
+    put(5, &[0xb8]); // mov eax, L
+    put(6, &l.to_le_bytes());
+    put(10, &[0x89, 0xc6]); // mov esi, eax
+    put(12, &[0xff, 0xd0]); // call rax
+    put(14, &[0xff, 0xd0]); // call rax
+    put(16, &[0xff, 0xc9]); // dec ecx
+    put(18, &[0x75, (12i32 - 20) as u8]); // jne 12
+    put(20, &[0xff, 0xd6]); // call rsi
+    put(22, &[0xe9]); // jmp END
+    put(23, &(END as i32 - (CODE as i32 + 27)).to_le_bytes());
+    put(0x40, &[0x48, 0x83, 0xc2, 0x01, 0xc3]); // L: add rdx, 1; ret
+    HINTS.with(|h| *h.borrow_mut() = vec![(u64::from(CODE + 14), u64::from(l))]);
+    let (want, got, _, steps) = run_both_fn(&code, 0);
+    HINTS.with(|h| h.borrow_mut().clear());
+    assert_eq!(want.gpr(2), 2001);
+    for i in 0..16 {
+        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+    }
+    assert_eq!((got.eip, steps), (END, 0));
 }
 
 /// Small leaves (FN64) run inline in their caller: a leaf of three blocks called twice a

@@ -209,12 +209,64 @@ struct Block {
     ins: Vec<Instruction>,
     /// reads the status flags before writing all of them (or may: passes them on)
     flags_in: bool,
+    /// the leaf's copy it is in (NONE: the function's own; else found in the copies' index)
+    copy: LeafCopy,
 }
+
+/// FN64: one call site's own copy of a small leaf, inline: the copy's blocks are found by
+/// (copy, address) (Gen::copy_index), so each site's copy returns to that site alone. One copy shared by every site joined
+/// their loops through it (qsort's partition loops through the comparison: irreducible,
+/// jumps out of the layout, the function built again eight times).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+struct LeafCopy(u64);
+
+impl LeafCopy {
+    /// the function's own blocks
+    const NONE: LeafCopy = LeafCopy(0);
+
+    /// The index in a list of the copies' return addresses (none for NONE).
+    fn slot(self) -> Option<usize> {
+        usize::try_from(self.0).ok()?.checked_sub(1)
+    }
+}
+
+/// An indirect call's operand, as calls through the same one compare: a register, or a
+/// memory operand's (base, index, scale, displacement) (RIP-relative: its address).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CallOperand {
+    Register(Register),
+    Memory(Register, Register, u32, u64),
+    Other,
+}
+
+impl CallOperand {
+    fn of(ins: &Instruction) -> CallOperand {
+        match ins.op0_kind() {
+            OpKind::Register => CallOperand::Register(ins.op0_register()),
+            OpKind::Memory if ins.memory_base() == Register::RIP => CallOperand::Memory(Register::RIP, Register::None, 1, ins.ip_rel_memory_address()),
+            OpKind::Memory => CallOperand::Memory(ins.memory_base(), ins.memory_index(), ins.memory_index_scale(), ins.memory_displacement64()),
+            OpKind::NearBranch16 | OpKind::NearBranch32 | OpKind::NearBranch64 | OpKind::FarBranch16 | OpKind::FarBranch32 | OpKind::Immediate8 | OpKind::Immediate8_2nd | OpKind::Immediate16 | OpKind::Immediate32 | OpKind::Immediate64 | OpKind::Immediate8to16 | OpKind::Immediate8to32 | OpKind::Immediate8to64 | OpKind::Immediate32to64 | OpKind::MemorySegSI | OpKind::MemorySegESI | OpKind::MemorySegRSI | OpKind::MemorySegDI | OpKind::MemorySegEDI | OpKind::MemorySegRDI | OpKind::MemoryESDI | OpKind::MemoryESEDI | OpKind::MemoryESRDI => CallOperand::Other,
+        }
+    }
+}
+
+/// The block at `a`: in `copy` when it has one there, else the function's own.
+fn block_at(index: &BTreeMap<u64, usize>, copy_index: &BTreeMap<(LeafCopy, u64), usize>, copy: LeafCopy, a: u64) -> Option<usize> {
+    match copy {
+        LeafCopy::NONE => index.get(&a).copied(),
+        LeafCopy(_) => copy_index.get(&(copy, a)).copied().or_else(|| index.get(&a).copied()),
+    }
+}
+
+/// The most leaf copies a function has (LeafCopy).
+const MAX_COPIES: usize = 32;
 
 struct Gen<'a> {
     c: Code,
     blocks: &'a [Block],
     index: &'a BTreeMap<u64, usize>,
+    /// the leaves' copies' blocks, by (copy, address) (LeafCopy)
+    copy_index: &'a BTreeMap<(LeafCopy, u64), usize>,
     /// return addresses of the region's calls into it (blocks of it)
     returns: &'a [u64],
     flags: Flags,
@@ -265,6 +317,13 @@ struct Gen<'a> {
     /// direct calls' targets that are `jmp [rip+slot]` (import thunks): (target, slot), the
     /// call going where the slot says
     thunks: &'a BTreeMap<u64, u64>,
+    /// calls with a leaf's copy inline (LeafCopy): (site, (copy, leaf)); an indirect call's
+    /// leaf is the host's hint for it, guarded by the target
+    copies: &'a BTreeMap<u64, (LeafCopy, u64)>,
+    /// each copy's return address (by LeafCopy::slot)
+    copy_ret: &'a [u64],
+    /// the copy the block being emitted is in
+    copy: LeafCopy,
     /// (debugging, MASU_JIT_LAYOUT) jumps the layout has no way for: (from, to)
     unlaid: Vec<(u64, u64)>,
 }
@@ -431,6 +490,9 @@ enum CallTarget {
     Fixed,
     /// read at run time (a register, memory, an import thunk's slot): maybe a host trap
     Read,
+    /// [`CallTarget::Read`] at an indirect call: where it goes sampled into the ring (one
+    /// call in eight), the host's hint of the leaf to guess there next build (Gen's Call)
+    Sampled,
 }
 
 impl<'a> Gen<'a> {
@@ -1081,9 +1143,17 @@ impl<'a> Gen<'a> {
         self.exit_to(ip, RET_INTERP);
     }
 
+    /// Goes into leaf copy `c` at `a` (its entry).
+    fn goto_copy(&mut self, c: LeafCopy, a: u64) {
+        let own = core::mem::replace(&mut self.copy, c);
+        self.goto(a);
+        self.copy = own;
+    }
+
     /// Goes to `target`: a block of the region when it is one, else out.
     fn goto(&mut self, target: u64) {
-        let Some(&k) = self.index.get(&target) else {
+        // (a jump inside a leaf's copy: to the copy's block)
+        let Some(k) = block_at(self.index, self.copy_index, self.copy, target) else {
             self.exit_to(target, 0);
             return;
         };
@@ -1230,12 +1300,26 @@ impl<'a> Gen<'a> {
         self.c.get(L_DEPTH).u32c(MAX_DEPTH).ge_u();
         self.c.get(t).i64c(32).x(I64_SHR_U).x(I32_WRAP).u32c(lo32(self.ins.ip() >> 32)).ne().or();
         self.c.br_if(0);
-        if let CallTarget::Read = target {
+        let read = match target {
+            CallTarget::Fixed => false,
+            CallTarget::Read | CallTarget::Sampled => true,
+        };
+        if read {
             // (an import's host trap, through the IAT or a thunk's slot: straight out, without
             // the cache, the probe and the host's callmiss that find nothing there; API calls
             // went through all three every time)
             self.c.get(t).x(I32_WRAP).get(L_CPU).load32(cpu_off!(trap_lo)).sub();
             self.c.get(L_CPU).load32(cpu_off!(trap_hi)).get(L_CPU).load32(cpu_off!(trap_lo)).sub().lt_u().br_if(0);
+        }
+        // (to the ring: (FN_TAG | site, target), when the budget's hash has its top 3 bits clear)
+        if matches!(target, CallTarget::Sampled) && site & super::FN_TAG == 0 {
+            let ring = cpu_off!(jit_ring);
+            self.c.get(L_CPU).load32(cpu_off!(jit_budget)).u32c(0x9e37_79b1).mul().i32c(29).shr_u().eqz().if_();
+            self.c.get(L_CPU).load32(ring).tee(h).get(h).load32(0).tee(v).i32c(1).add().store32(0);
+            self.c.get(h).get(v).u32c(super::RING_SIZE.wrapping_sub(1)).and().i32c(3).shl().add().tee(h);
+            self.c.u32c(super::FN_TAG | site).store32(4);
+            self.c.get(h).get(t).x(I32_WRAP).store32(8);
+            self.c.end();
         }
         // the call cache: this site's slot holds (target, hash table entry) of the function
         // it called last
@@ -2384,12 +2468,14 @@ impl<'a> Gen<'a> {
                 self.exit_dyn(0);
                 true
             }
-            // (a leaf's call, inline: as a region's)
-            Call if ins.op0_kind() == OpKind::NearBranch64 && self.fnm && self.returns.contains(&ins.next_ip()) && self.index.contains_key(&ins.near_branch64()) => {
+            // (a leaf's call: its copy inline, LeafCopy)
+            Call if ins.op0_kind() == OpKind::NearBranch64 && self.fnm && self.copies.get(&ins.ip()).is_some_and(|&(c, f)| self.copy_index.contains_key(&(c, f))) => {
                 let t = self.temp();
                 self.c.i64c(lo64(ins.next_ip()).cast_signed()).set(t);
                 self.push64(t);
-                self.goto(ins.near_branch64());
+                if let Some(&(c, f)) = self.copies.get(&ins.ip()) {
+                    self.goto_copy(c, f);
+                }
                 true
             }
             Call if ins.op0_kind() == OpKind::NearBranch64 && self.fnm => {
@@ -2427,8 +2513,22 @@ impl<'a> Gen<'a> {
                 self.c.set(t);
                 self.c.i64c(lo64(ins.next_ip()).cast_signed()).set(r);
                 self.push64(r);
+                // (the hint's leaf, inline when the target is it: else the call; qsort's
+                // comparisons were a wasm call each)
+                let guess = self.copies.get(&ins.ip()).copied().filter(|&(c, f)| self.fnm && self.copy_index.contains_key(&(c, f)));
+                if let Some((c, f)) = guess {
+                    self.c.get(t).i64c(f.cast_signed()).x(I64_NE).if_();
+                    self.depth = self.depth.wrapping_add(1);
+                    let fl = self.flags;
+                    self.call_fn(t, ins.next_ip(), CallTarget::Sampled);
+                    self.flags = fl;
+                    self.depth = self.depth.wrapping_sub(1);
+                    self.c.end();
+                    self.goto_copy(c, f);
+                    return true;
+                }
                 if self.fnm {
-                    self.call_fn(t, ins.next_ip(), CallTarget::Read);
+                    self.call_fn(t, ins.next_ip(), CallTarget::Sampled);
                     return true;
                 }
                 self.c.get(t);
@@ -2439,6 +2539,18 @@ impl<'a> Gen<'a> {
                 let extra = if ins.op_count() == 1 { u32::from(ins.immediate16()) } else { 0 };
                 let t = self.temp();
                 self.pop64(t, extra);
+                // (a leaf's copy: back to its call)
+                if let Some(&r) = self.copy.slot().and_then(|i| self.copy_ret.get(i)) {
+                    self.c.get(t).i64c(r.cast_signed()).x(I64_EQ).if_();
+                    self.depth = self.depth.wrapping_add(1);
+                    let f = self.flags;
+                    let copy = core::mem::replace(&mut self.copy, LeafCopy::NONE);
+                    self.goto(r);
+                    self.copy = copy;
+                    self.flags = f;
+                    self.depth = self.depth.wrapping_sub(1);
+                    self.c.end();
+                }
                 // back to a call of the region, or an inline one of the function's: straight
                 // there (else through the exit's lookup, or back to the calling function)
                 for &r in self.returns {
@@ -2770,12 +2882,17 @@ fn index_bound(ins: &[Instruction]) -> Option<(Register, u64, usize)> {
 
 /// Ends each block where another block starts inside it (at one of its instructions), but
 /// for one ending in a jump table (its table read from the whole block, `tables`).
-fn split_blocks(blocks: &mut [Block], index: &BTreeMap<u64, usize>, tables: &BTreeMap<usize, Vec<u64>>) {
+fn split_blocks(blocks: &mut [Block], index: &BTreeMap<u64, usize>, copy_index: &BTreeMap<(LeafCopy, u64), usize>, tables: &BTreeMap<usize, Vec<u64>>) {
     for (k, b) in blocks.iter_mut().enumerate() {
         if tables.contains_key(&k) {
             continue;
         }
-        if let Some(cut) = b.ins.iter().skip(1).position(|i| index.contains_key(&i.ip())) {
+        let copy = b.copy;
+        let inside = |a: u64| match copy {
+            LeafCopy::NONE => index.contains_key(&a),
+            LeafCopy(_) => copy_index.contains_key(&(copy, a)),
+        };
+        if let Some(cut) = b.ins.iter().skip(1).position(|i| inside(i.ip())) {
             b.ins.truncate(cut + 1);
         }
     }
@@ -2853,7 +2970,7 @@ pub static DEBUG_NO_SIDE: core::sync::atomic::AtomicBool = core::sync::atomic::A
 /// per jump table, and one before them all going to the entries) and its entries, the first
 /// block first: the roots, the return addresses of calls and loop headers that are in no loop
 /// but as its header (into the middle of a loop is not a structured way in).
-fn structure64(blocks: &[Block], index: &BTreeMap<u64, usize>, returns: &[u64], (group_of, groups): (&BTreeMap<usize, usize>, &[Vec<u64>]), roots: &[u64], fnm: bool) -> Option<(super::structure::Layout, Vec<usize>, BTreeMap<usize, Vec<(usize, usize, bool)>>)> {
+fn structure64(blocks: &[Block], (index, copy_index): (&BTreeMap<u64, usize>, &BTreeMap<(LeafCopy, u64), usize>), returns: &[u64], (group_of, groups): (&BTreeMap<usize, usize>, &[Vec<u64>]), roots: &[u64], fnm: bool, (copies, copy_ret): (&BTreeMap<u64, (LeafCopy, u64)>, &[u64])) -> Option<(super::structure::Layout, Vec<usize>, BTreeMap<usize, Vec<(usize, usize, bool)>>)> {
     let n = blocks.len();
     let find = |a: u64| index.get(&a).copied();
     let mut succ: Vec<Vec<usize>> = alloc::vec![Vec::new(); n + groups.len() + 1];
@@ -2861,18 +2978,28 @@ fn structure64(blocks: &[Block], index: &BTreeMap<u64, usize>, returns: &[u64], 
     for (k, b) in blocks.iter().enumerate() {
         let last = b.ins.last().unwrap();
         let near = last.op0_kind() == OpKind::NearBranch64;
+        // (in a leaf's copy, its jumps go to the copy's blocks)
+        let own = b.copy;
+        let go = |a: u64| block_at(index, copy_index, own, a);
+        let copy = copies.get(&last.ip()).and_then(|&(c, f)| copy_index.get(&(c, f)).copied());
         let mut s: Vec<usize> = Vec::new();
         match last.flow_control() {
-            FlowControl::Next => s.extend(find(last.next_ip())),
-            FlowControl::UnconditionalBranch if near => s.extend(find(last.near_branch64())),
+            FlowControl::Next => s.extend(go(last.next_ip())),
+            FlowControl::UnconditionalBranch if near => s.extend(go(last.near_branch64())),
             FlowControl::ConditionalBranch if near => {
-                s.extend(find(last.near_branch64()));
+                s.extend(go(last.near_branch64()));
+                s.extend(go(last.next_ip()));
+            }
+            // (a function's calls come back: the return address follows; a leaf's copy
+            // inline, which comes back there; a guessed indirect call: the copy, or the call)
+            FlowControl::Call if fnm && near && copy.is_some() => s.extend(copy),
+            FlowControl::IndirectCall if fnm && copy.is_some() => {
+                s.extend(copy);
                 s.extend(find(last.next_ip()));
             }
-            // (a function's calls come back: the return address follows; a leaf's inline)
-            FlowControl::Call if fnm && near && returns.contains(&last.next_ip()) => s.extend(find(last.near_branch64())),
             FlowControl::Call | FlowControl::IndirectCall if fnm => s.extend(find(last.next_ip())),
             FlowControl::Call if near => s.extend(find(last.near_branch64())),
+            FlowControl::Return if own != LeafCopy::NONE => s.extend(own.slot().and_then(|i| copy_ret.get(i)).and_then(|&r| find(r))),
             FlowControl::Return => s.extend(returns.iter().filter_map(|&r| find(r))),
             FlowControl::IndirectBranch => s.extend(tnode.get(&k).copied()),
             _ => {}
@@ -2898,7 +3025,8 @@ fn structure64(blocks: &[Block], index: &BTreeMap<u64, usize>, returns: &[u64], 
     // (a function's jump tables' targets too: an interpreter's opcodes, where it is left
     // when the budget runs out at its dispatch, or when the dispatcher comes back to one)
     let cases: Vec<usize> = if fnm { groups.iter().flatten().filter_map(|&a| find(a)).collect() } else { Vec::new() };
-    let wanted = |k: usize| k != 0 && (rooted.contains(&k) || rets.contains(&k) || l0.header(k) || cases.contains(&k));
+    // (never a leaf's copy: its keys are no addresses)
+    let wanted = |k: usize| k != 0 && blocks.get(k).is_some_and(|b| b.copy == LeafCopy::NONE) && (rooted.contains(&k) || rets.contains(&k) || l0.header(k) || cases.contains(&k));
     let reached: Vec<bool> = {
         let mut r = alloc::vec![false; n + groups.len() + 1];
         for &v in l0.order_iter() {
@@ -3034,6 +3162,7 @@ fn emit_block64<M: Memory>(g: &mut Gen<'_>, mem: &mut M, k: usize, count: &mut u
     if let Some(side) = g.side.get(&k).cloned() {
         emit_side64(g, &side);
     }
+    g.copy = blocks.get(k).map_or(LeafCopy::NONE, |b| b.copy);
     g.smc = super::WATCH.get().is_some_and(|w| w(lo32(blocks[k].start)));
     let list = &blocks[k].ins;
     g.fresh = None;
@@ -3142,7 +3271,7 @@ fn emit_entries64(g: &mut Gen<'_>, entries: &[usize]) {
 pub fn translate_region64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], trap: (u32, u32), accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
     // (each page read once: the instructions decoded, the bytes blocks check on entry and the
     // region's text agree although other threads may rewrite the code meanwhile)
-    translate_seen64(module, &mut super::Snapshot::new(mem), roots, trap, accept, None)
+    translate_seen64(module, &mut super::Snapshot::new(mem), roots, trap, accept, None, &|_| None)
 }
 
 /// x64 functions (`MASU_JIT64_FN`): off by default for now.
@@ -3157,18 +3286,20 @@ pub static FN64: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool
 /// `max_ins`: instructions it takes at most (a function built again takes more: big
 /// interpreters' loops, whose cases are its blocks).
 pub fn translate_function64<M: Memory>(module: &mut Module, mem: &mut M, entry: u64, trap: (u32, u32), max_ins: usize, accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
-    translate_function64_with(module, mem, entry, &[], trap, max_ins, accept)
+    translate_function64_with(module, mem, entry, &[], trap, max_ins, &|_| None, accept)
 }
 
 /// [`translate_function64`], entered also at `also` (where the dispatcher missed inside it:
-/// a loop the interpreter ran into).
-pub fn translate_function64_with<M: Memory>(module: &mut Module, mem: &mut M, entry: u64, also: &[u64], trap: (u32, u32), max_ins: usize, accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
+/// a loop the interpreter ran into). `hints`: where the indirect call at an address mostly
+/// goes (the ring's samples, [`Region::sites`]): a small leaf there goes inline, guarded.
+#[expect(clippy::too_many_arguments, reason = "the translator's inputs, each its own")]
+pub fn translate_function64_with<M: Memory>(module: &mut Module, mem: &mut M, entry: u64, also: &[u64], trap: (u32, u32), max_ins: usize, hints: &dyn Fn(u64) -> Option<u64>, accept: impl FnMut(u32, bool) -> bool) -> Option<Region> {
     let mut roots = alloc::vec![entry];
     roots.extend(also.iter().filter(|&&a| a != entry && !(trap.0..trap.1).contains(&low_half(a))));
-    translate_seen64(module, &mut super::Snapshot::new(mem), &roots, trap, accept, Some(max_ins))
+    translate_seen64(module, &mut super::Snapshot::new(mem), &roots, trap, accept, Some(max_ins), hints)
 }
 
-fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], trap: (u32, u32), mut accept: impl FnMut(u32, bool) -> bool, fn_ins: Option<usize>) -> Option<Region> {
+fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], trap: (u32, u32), mut accept: impl FnMut(u32, bool) -> bool, fn_ins: Option<usize>, hints: &dyn Fn(u64) -> Option<u64>) -> Option<Region> {
     let fnm = fn_ins.is_some();
     // (a host trap's address is no code: a function or region never starts there, a call
     // cache miss on an import's slot names one)
@@ -3195,8 +3326,12 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let mut thunks: BTreeMap<u64, u64> = BTreeMap::new();
     let mut leas: BTreeMap<Register, Option<u64>> = BTreeMap::new();
     let mut thunk_code: Vec<(u32, u32)> = Vec::new();
-    // (fnm: the return addresses of the calls of leaves, inline)
-    let mut inline: Vec<u64> = Vec::new();
+    // (fnm: indirect calls; the calls a leaf's copy goes inline at, (site, leaf, return))
+    let mut sites: Vec<u32> = Vec::new();
+    let mut leaf_calls: Vec<(u64, u64, u64)> = Vec::new();
+    // (indirect calls with no hint of their own: (site, return, operand); one with the same
+    // operand as a hinted one's guesses its leaf too: qsort's calls of the comparison)
+    let mut unhinted: Vec<(u64, u64, CallOperand)> = Vec::new();
     let mut total = 0;
     while let Some((a, sure)) = todo.pop() {
         if index.contains_key(&a) || blocks.len() >= limit(&DEBUG_BLOCKS, max_blocks) || total >= max_ins {
@@ -3250,9 +3385,8 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
                 todo.push((last.next_ip(), true));
                 // (a small leaf callee goes inline: its RET goes on at the return address when
                 // that is where it returns to, see Gen's Ret)
-                if last.op0_kind() == OpKind::NearBranch64 && leaf64(mem, last.near_branch64(), trap) {
-                    inline.push(last.next_ip());
-                    todo.insert(0, (last.near_branch64(), true));
+                if last.op0_kind() == OpKind::NearBranch64 && leaf_calls.len() < MAX_COPIES && leaf64(mem, last.near_branch64(), trap) {
+                    leaf_calls.push((last.ip(), last.near_branch64(), last.next_ip()));
                 }
                 // (an import thunk, `jmp [rip+slot]`: the call reads the slot itself)
                 if last.op0_kind() == OpKind::NearBranch64 {
@@ -3272,6 +3406,18 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
                 todo.insert(0, (last.near_branch64(), true));
                 todo.push((last.next_ip(), true));
             }
+            FlowControl::IndirectCall if fnm => {
+                todo.push((last.next_ip(), true));
+                sites.push(low_half(last.ip()));
+                match hints(last.ip()) {
+                    Some(f) => {
+                        if leaf_calls.len() < MAX_COPIES && high_half(f) == high_half(last.ip()) && leaf64(mem, f, trap) {
+                            leaf_calls.push((last.ip(), f, last.next_ip()));
+                        }
+                    }
+                    None => unhinted.push((last.ip(), last.next_ip(), CallOperand::of(&last))),
+                }
+            }
             FlowControl::Call | FlowControl::IndirectCall => todo.push((last.next_ip(), true)),
             FlowControl::IndirectBranch => {
                 let n = bounds.iter().find(|b| b.0 == a).map(|b| (b.1, b.2));
@@ -3287,14 +3433,71 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
             _ => {}
         }
         index.insert(a, blocks.len());
-        blocks.push(Block { start: a, ins, flags_in: true });
+        blocks.push(Block { start: a, ins, flags_in: true, copy: LeafCopy::NONE });
+    }
+    // (the hinted calls' operands, then the other calls through them)
+    let hinted: Vec<(CallOperand, u64)> = leaf_calls.iter().filter_map(|&(site, f, _)| blocks.iter().filter_map(|b| b.ins.last()).find(|l| l.ip() == site && l.flow_control() == FlowControl::IndirectCall).map(|l| (CallOperand::of(l), f))).collect();
+    for (site, next, op) in unhinted {
+        if let Some(&(_, f)) = hinted.iter().find(|h| h.0 == op).filter(|_| op != CallOperand::Other && leaf_calls.len() < MAX_COPIES) {
+            leaf_calls.push((site, f, next));
+        }
+    }
+    // each leaf call's copy of the leaf (LeafCopy), when the host takes all of its blocks
+    let mut copies: BTreeMap<u64, (LeafCopy, u64)> = BTreeMap::new();
+    let mut copy_ret: Vec<u64> = Vec::new();
+    let mut copy_index: BTreeMap<(LeafCopy, u64), usize> = BTreeMap::new();
+    for &(site, f, next) in &leaf_calls {
+        // (a call decoded twice: at the end of a block, and as the start of one a jump
+        // reaches, cut off from the first later, split_blocks)
+        if !index.contains_key(&next) || copies.contains_key(&site) {
+            continue;
+        }
+        let c = LeafCopy(u64::try_from(copy_ret.len()).unwrap_or(u64::MAX).wrapping_add(1));
+        let (mut part, mut todo): (Vec<Block>, Vec<u64>) = (Vec::new(), alloc::vec![f]);
+        let mut whole = true;
+        while let Some(a) = todo.pop() {
+            if part.iter().any(|b| b.start == a) {
+                continue;
+            }
+            let ins = decode(mem, a, trap);
+            let Some(last) = ins.last().copied() else {
+                whole = false;
+                break;
+            };
+            if !accept(low_half(a), true) {
+                whole = false;
+                break;
+            }
+            let near = last.op0_kind() == OpKind::NearBranch64;
+            match last.flow_control() {
+                FlowControl::Next => todo.push(last.next_ip()),
+                FlowControl::UnconditionalBranch if near => todo.push(last.near_branch64()),
+                FlowControl::ConditionalBranch if near => todo.extend([last.near_branch64(), last.next_ip()]),
+                FlowControl::Return => {}
+                // (leaf64 let no other end through: the code changed meanwhile)
+                FlowControl::UnconditionalBranch | FlowControl::ConditionalBranch | FlowControl::IndirectBranch | FlowControl::Call | FlowControl::IndirectCall | FlowControl::Interrupt | FlowControl::XbeginXabortXend | FlowControl::Exception => {
+                    whole = false;
+                    break;
+                }
+            }
+            part.push(Block { start: a, ins, flags_in: true, copy: c });
+        }
+        if !whole || blocks.len().saturating_add(part.len()) > limit(&DEBUG_BLOCKS, max_blocks) {
+            continue;
+        }
+        for b in part {
+            copy_index.insert((c, b.start), blocks.len());
+            blocks.push(b);
+        }
+        copies.insert(site, (c, f));
+        copy_ret.push(next);
     }
     // (laid out: a block running into another's start ends there, falling through to it. A
     // jump into the middle of a decoded block made a second block of its tail, and a loop
     // entered there through the first one's copy is irreducible: std::sort's partition loops
     // left the layout at every round)
     if fnm || STRUCTURED.load(Relaxed) {
-        split_blocks(&mut blocks, &index, &tables);
+        split_blocks(&mut blocks, &index, &copy_index, &tables);
     }
     // flags a block reads before writing them all
     for b in &mut blocks {
@@ -3321,7 +3524,8 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     let mut returns: Vec<u64> = blocks
         .iter()
         .filter_map(|b| b.ins.last())
-        .filter(|l| !fnm || inline.contains(&l.next_ip()))
+        // (a function's: none, its leaves' copies know where they go back to)
+        .filter(|_| !fnm)
         .filter(|l| l.flow_control() == FlowControl::Call && l.op0_kind() == OpKind::NearBranch64 && index.contains_key(&l.near_branch64()) && index.contains_key(&l.next_ip()))
         .map(|l| l.next_ip())
         .collect();
@@ -3343,9 +3547,9 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
         };
         group_of.insert(k, g);
     }
-    let lay = if !STRUCTURED.load(Relaxed) && !fnm { None } else { structure64(&blocks, &index, &returns, (&group_of, &groups), roots, fnm) };
+    let lay = if !STRUCTURED.load(Relaxed) && !fnm { None } else { structure64(&blocks, (&index, &copy_index), &returns, (&group_of, &groups), roots, fnm, (&copies, &copy_ret)) };
     let nodes = blocks.len() + groups.len() + 1;
-    let mut g = Gen { c: Code::default(), blocks: &blocks, index: &index, returns: &returns, flags: Flags::Cpu, depth: 0, ins: blocks[0].ins[0], temps: 0, mx_checked: None, mx_seen: [[None; 2]; 16], marks: Vec::new(), hi_swapped: Vec::new(), smc: false, fresh: None, watch_store: false, fell_back: false, bad: false, info: iced_x86::InstructionInfoFactory::new(), structured: lay.is_some(), fwd: alloc::vec![None; nodes], back: alloc::vec![None; nodes], cur: 0, table_node: BTreeMap::new(), side: BTreeMap::new(), fnm, thunks: &thunks, unlaid: Vec::new() };
+    let mut g = Gen { c: Code::default(), blocks: &blocks, index: &index, copy_index: &copy_index, returns: &returns, flags: Flags::Cpu, depth: 0, ins: blocks[0].ins[0], temps: 0, mx_checked: None, mx_seen: [[None; 2]; 16], marks: Vec::new(), hi_swapped: Vec::new(), smc: false, fresh: None, watch_store: false, fell_back: false, bad: false, info: iced_x86::InstructionInfoFactory::new(), structured: lay.is_some(), fwd: alloc::vec![None; nodes], back: alloc::vec![None; nodes], cur: 0, table_node: BTreeMap::new(), side: BTreeMap::new(), fnm, thunks: &thunks, copies: &copies, copy_ret: &copy_ret, copy: LeafCopy::NONE, unlaid: Vec::new() };
     // the dispatcher's key is the low 32 bits: code at another 4GB alias is left to the
     // interpreter (a function's adapter checks, fn_adapter)
     if !fnm {
@@ -3378,6 +3582,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
             if k < nb {
                 emit_block64(g, mem, k, &mut count, &mut layout);
             } else if k < nb + groups.len() {
+                g.copy = LeafCopy::NONE;
                 // (a loop's header may be a table's node: its side dispatch first, as a block's)
                 if let Some(side) = g.side.get(&k).cloned() {
                     g.flags = Flags::Cpu;
@@ -3385,6 +3590,7 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
                 }
                 emit_table64(g, &groups[k - nb], hi);
             } else {
+                g.copy = LeafCopy::NONE;
                 emit_entries64(g, &entries);
             }
         });
@@ -3461,7 +3667,9 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
     .collect();
     // (the bytes translated, as this translation read them)
     let text = super::code_text(mem, &code);
-    Some(Region { starts, instructions: count, code, text, layout, profile: Vec::new(), sites: Vec::new(), exact })
+    sites.sort_unstable();
+    sites.dedup();
+    Some(Region { starts, instructions: count, code, text, layout, profile: Vec::new(), sites, exact })
 }
 
 #[cfg(test)]
@@ -3879,5 +4087,42 @@ mod tests {
             assert_eq!(ops.len(), plain.locs.len() + extra);
             assert_eq!(regs_named(&out).0 & !named, 0);
         }
+    }
+
+    /// Leaf copies (FN64, LeafCopy): each inline call gets the leaf's blocks of its own, the
+    /// hinted `call rax`, the other `call rax` through its hint (the same operand), not
+    /// `call rsi`; the copies are no entries and stay in the layout. No hints: no copy.
+    #[test]
+    fn each_inline_call_has_its_own_copy_of_the_leaf() {
+        struct Img(Vec<u8>);
+        impl Memory for Img {
+            fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
+                a.checked_sub(0x1000).and_then(|o| self.0.get(usize::try_from(o).ok()?).copied()).ok_or(crate::Fault { addr: a, write: false })
+            }
+            fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
+                Err(crate::Fault { addr: a, write: true })
+            }
+        }
+        let mut code = alloc::vec![0x90u8; 0x60];
+        let mut put = |at: usize, b: &[u8]| code.iter_mut().skip(at).zip(b).for_each(|(d, s)| *d = *s);
+        put(0, &[0xb9, 0xe8, 3, 0, 0]); // mov ecx, 1000
+        put(5, &[0xff, 0xd0]); // call rax (hinted)
+        put(7, &[0xff, 0xd0]); // call rax
+        put(9, &[0xff, 0xd6]); // call rsi
+        put(11, &[0xff, 0xc9]); // dec ecx
+        put(13, &[0x75, 0xf6]); // jne 5
+        put(15, &[0xc3]); // ret
+        // L: add rdx, 1; test dl, 1; jz +4; add rbx, 1; ret
+        put(0x40, &[0x48, 0x83, 0xc2, 0x01, 0xf6, 0xc2, 0x01, 0x74, 0x04, 0x48, 0x83, 0xc3, 0x01, 0xc3]);
+        super::super::LAYOUT.store(true, Relaxed);
+        let hint = |a: u64| (a == 0x1005).then_some(0x1040);
+        let r = translate_function64_with(&mut Module::default(), &mut Img(code.clone()), 0x1000, &[], (0, 0), 1000, &hint, |_, _| true).unwrap();
+        let at = |r: &Region, a: u32| r.code.iter().filter(|c| c.0 == a).count();
+        assert_eq!((at(&r, 0x1040), at(&r, 0x1049), at(&r, 0x104d)), (2, 2, 2), "{}", r.layout);
+        assert!(r.starts.iter().all(|s| s.0 < 0x1040), "{:x?}", r.starts);
+        assert!(!r.layout.contains("out of the layout"), "{}", r.layout);
+        assert_eq!(r.sites, alloc::vec![0x1005, 0x1007, 0x1009]);
+        let none = translate_function64_with(&mut Module::default(), &mut Img(code), 0x1000, &[], (0, 0), 1000, &|_| None, |_, _| true).unwrap();
+        assert_eq!(at(&none, 0x1040), 0);
     }
 }

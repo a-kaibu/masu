@@ -115,3 +115,71 @@ pub fn lookup(key: &str, name: &str) -> Option<u32> {
     }
     sym(name)
 }
+
+/// The guest code's function `pc` is in, [start, the next one's) (guest/crt.c has no unwind
+/// table; the JIT builds whole functions from where they start: kura jit::set_fn_start)
+pub fn function_start(pc: u32) -> Option<std::ops::Range<u32>> {
+    if !PLACED.load(Ordering::Relaxed) {
+        return None;
+    }
+    let (at, bytes, funcs) = if mem::x64() { (code64::AT, code64::CODE, code64::FUNCS) } else { (code::AT, code::CODE, code::FUNCS) };
+    start_in(at, bytes, funcs, pc)
+}
+
+/// function_start in code `bytes` at `at` with starts `funcs`
+fn start_in(at: u32, bytes: &[u8], funcs: &[u32], pc: u32) -> Option<std::ops::Range<u32>> {
+    let end = at.checked_add(u32::try_from(bytes.len()).ok()?)?;
+    if !(at..end).contains(&pc) {
+        return None;
+    }
+    let n = funcs.partition_point(|&f| f <= pc);
+    let start = *funcs.get(n.checked_sub(1)?)?;
+    Some(start..funcs.get(n).copied().unwrap_or(end))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn builds() -> [(u32, &'static [u8], &'static [u32], &'static [(&'static str, u32)]); 2] {
+        [(code::AT, code::CODE, code::FUNCS, code::SYMS), (code64::AT, code64::CODE, code64::FUNCS, code64::SYMS)]
+    }
+
+    #[test]
+    fn every_function_starts_where_its_symbol_is() {
+        for (at, bytes, funcs, syms) in builds() {
+            assert!(funcs.windows(2).all(|w| matches!(w, [a, b] if a < b)), "ascending");
+            for name in ["qsort", "bsearch", "memmove", "strlen", "strstr"] {
+                let (_, f) = syms.iter().copied().find(|(n, _)| *n == name).unwrap();
+                for pc in [f, f + 1, f + 7] {
+                    let r = start_in(at, bytes, funcs, pc).unwrap();
+                    assert_eq!(r.start, f, "{name} {pc:#x}");
+                    assert!(r.contains(&pc) && !funcs.iter().any(|g| r.contains(g) && *g != f), "{name}: {r:x?}");
+                }
+            }
+            assert_eq!(start_in(at, bytes, funcs, at.wrapping_sub(1)), None);
+            let end = at + u32::try_from(bytes.len()).unwrap();
+            assert_eq!(start_in(at, bytes, funcs, end), None);
+        }
+    }
+
+    proptest! {
+        /// the start is the last one at or before pc: no function starts between it and pc
+        #[test]
+        fn the_start_is_the_nearest_before(off in 0u32..0x2000, x64 in any::<bool>()) {
+            let (at, bytes, funcs, _) = builds()[usize::from(x64)];
+            let pc = at.wrapping_add(off);
+            match start_in(at, bytes, funcs, pc) {
+                Some(r) => {
+                    let s = r.start;
+                    prop_assert!(r.contains(&pc) && funcs.contains(&s));
+                    prop_assert!(!funcs.iter().any(|&f| f > s && f < r.end));
+                    prop_assert!(r.end == at + u32::try_from(bytes.len()).unwrap() || funcs.contains(&r.end));
+                    prop_assert!(off < u32::try_from(bytes.len()).unwrap());
+                }
+                None => prop_assert!(off >= u32::try_from(bytes.len()).unwrap() || funcs.first().is_none_or(|&f| f > pc)),
+            }
+        }
+    }
+}

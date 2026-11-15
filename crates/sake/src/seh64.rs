@@ -121,9 +121,9 @@ pub fn lookup(pc: u32) -> Option<(u32, u32)> {
     DYNAMIC.lock().unwrap().iter().find_map(|&(t, n, base)| search(t, n, pc.wrapping_sub(base), |a| r32(a)).map(|e| (e, base)))
 }
 
-/// The start of the function `pc` is in (its RUNTIME_FUNCTION's begin, a chained one's
+/// The function `pc` is in (its RUNTIME_FUNCTION's [begin, end), a chained one's
 /// primary's): for the JIT's functions (kura jit::set_fn_start).
-pub fn function_start(pc: u32) -> Option<u32> {
+pub fn function_start(pc: u32) -> Option<std::ops::Range<u32>> {
     let (mut e, base) = lookup(pc)?;
     for _ in 0..CHAIN_MAX {
         let info = base.wrapping_add(r32(e.wrapping_add(8)));
@@ -134,7 +134,7 @@ pub fn function_start(pc: u32) -> Option<u32> {
         // (the chained RUNTIME_FUNCTION after the unwind codes, an even count of them)
         e = info.wrapping_add(4).wrapping_add(count.wrapping_add(1) & !1).wrapping_add(count.wrapping_add(1) & !1);
     }
-    Some(base.wrapping_add(r32(e)))
+    Some(base.wrapping_add(r32(e))..base.wrapping_add(r32(e.wrapping_add(4))))
 }
 
 /// The entry of a RUNTIME_FUNCTION table (`n` of {begin, end, unwind info} at `t`, sorted)

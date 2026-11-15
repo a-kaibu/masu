@@ -22,6 +22,10 @@ LD
     echo "pub const SYMS: &[(&str, u32)] = &["
     nm /tmp/sake-guest-$4.elf | awk '$2 ~ /^[TBDC]$/ { printf "    (\"%s\", 0x%s),\n", $3, substr($1, length($1) - 7) }'
     echo "];"
+    echo "/// where each function starts (the JIT's function starts: kura jit::set_fn_start), ascending"
+    echo "pub const FUNCS: &[u32] = &["
+    nm -n /tmp/sake-guest-$4.elf | awk '$2 ~ /^[Tt]$/ { printf "    0x%s,\n", substr($1, length($1) - 7) }'
+    echo "];"
   } > $OUT/$4.rs
   ls -l $OUT/$4.bin
 }

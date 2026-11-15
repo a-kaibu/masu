@@ -2227,12 +2227,26 @@ fn merge_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64], hops: u32) {
 /// blocks that ran since (jumps: sorted (from, to) pairs, from FN_TAG for a call's miss, else
 /// the table index of the code that jumped).
 fn fn_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64]) {
+    // (the functions new hints build again: once, after every site's samples in the ring)
+    let mut hinted: Vec<u32> = Vec::new();
     let mut i = 0;
     while i < jumps.len() {
         let k = i + jumps[i..].iter().take_while(|j| **j == jumps[i]).count();
         let (from, to) = (lo32(jumps[i] >> 32), lo32(jumps[i]));
         let n = k - i;
         i = k;
+        // (FN_TAG | site, target): an indirect call's (one in eight); a new hint builds the
+        // functions with the site again, the target inline when it is a small leaf
+        if from & jit::FN_TAG != 0 && from != jit::FN_TAG {
+            if n >= FN_SAMPLES {
+                for f in hint_site(st, from & !jit::FN_TAG, to).into_iter().flatten() {
+                    if !hinted.contains(&f) {
+                        hinted.push(f);
+                    }
+                }
+            }
+            continue;
+        }
         // (a call's miss: the target becomes a function; a function's jump out: built again,
         // taking in the target when its jumps reach it, a function of its own or not)
         if n < FN_SAMPLES || (from == jit::FN_TAG && st.fns.contains(&to)) {
@@ -2260,27 +2274,61 @@ fn fn_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64]) {
             if stats() {
                 eprintln!("vnjit64 fn {f:#x} ({}, {from:#x} -> {to:#x})", if from == jit::FN_TAG { "called" } else { "built again" });
             }
+            hinted.retain(|&h| h != f);
             compile_fn64(st, cpu, &mut Linear, f);
-            return;
+            break;
+        }
+    }
+    for f in hinted {
+        if st.fn_builds.get(&f).copied().unwrap_or(0) < FN_BUILDS {
+            compile_fn64(st, cpu, &mut Linear, f);
         }
     }
 }
 
+/// fn_hot64's site samples: the indirect call at `site` went to `to` in another window; at
+/// FN_WINDOWS of them, `to` becomes its hint (once more after that: a site changing targets
+/// stays as it is). The functions with the site, to build again, when it got a new hint.
+fn hint_site(st: &mut State, site: u32, to: u32) -> Option<Vec<u32>> {
+    let fs = st.site_fn.get(&site).cloned()?;
+    if st.hints.get(&site) == Some(&to) || st.rehinted.contains(&site) {
+        return None;
+    }
+    let w = st.hot.entry((jit::FN_TAG | site, to)).or_insert(0);
+    *w = w.saturating_add(1);
+    if *w < FN_WINDOWS {
+        return None;
+    }
+    st.hot.remove(&(jit::FN_TAG | site, to));
+    st.maps_rev = st.maps_rev.wrapping_add(1);
+    if st.hints.insert(site, to).is_some() {
+        st.rehinted.insert(site);
+    }
+    if stats() {
+        eprintln!("vnjit64 hint {site:#x} -> {to:#x} (functions {fs:x?})");
+    }
+    Some(fs)
+}
+
+/// A function (its unwind table's span) this small (bytes) is built from its start when a
+/// loop inside it is entered from the interpreter (maybe_compile).
+const FN_SMALL: u32 = 0x800;
+
 /// The most entries a function (FN64) is built with besides its root ([`State::fn_also`]).
 const FN_ALSO: usize = 32;
 
-/// sake's unwind tables (x64 RUNTIME_FUNCTIONs): the start of the function `a` is in.
-static FN_START: std::sync::OnceLock<fn(u32) -> Option<u32>> = std::sync::OnceLock::new();
+/// sake's unwind tables (x64 RUNTIME_FUNCTIONs): the function `a` is in, [start, end).
+static FN_START: std::sync::OnceLock<fn(u32) -> Option<std::ops::Range<u32>>> = std::sync::OnceLock::new();
 
 /// See [`FN_START`].
-pub fn set_fn_start(f: fn(u32) -> Option<u32>) {
+pub fn set_fn_start(f: fn(u32) -> Option<std::ops::Range<u32>>) {
     // (set once, by sake's start: a second call keeps the first)
     if FN_START.set(f).is_err() {
         eprintln!("kura: set_fn_start called twice (the first stays)");
     }
 }
 
-fn fn_start(a: u32) -> Option<u32> {
+fn fn_start(a: u32) -> Option<std::ops::Range<u32>> {
     FN_START.get().and_then(|f| f(a))
 }
 
@@ -2398,7 +2446,10 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
     // (built again: twice as many instructions each time, as build_fn)
     let base_ins = *FN_INS.get_or_init(|| std::env::var("MASU_JIT_FN_INS").ok().and_then(|v| v.parse().ok()).unwrap_or(1000));
     let also: Vec<u64> = st.fn_also.get(&eip).map_or(Vec::new(), |v| v.iter().map(|&a| u64::from(a) | u64::from(cpu.rip_hi).wrapping_shl(32)).collect());
-    let Some(region) = jit::long::translate_function64_with(&mut m, mem, entry, &also, (lo, hi), base_ins << (build.min(4) - 1), |a, sure| debug_allowed(a) && !(a >= lo && a < hi) && (a == eip || sure || ran(misses, known, a))) else {
+    // (an indirect call's hint: its usual target, in this 4GB alias)
+    let (hints, hi_half) = (&st.hints, u64::from(cpu.rip_hi).wrapping_shl(32));
+    let hint = |a: u64| u32::try_from(a & 0xffff_ffff).ok().and_then(|a| hints.get(&a)).map(|&t| u64::from(t) | hi_half);
+    let Some(region) = jit::long::translate_function64_with(&mut m, mem, entry, &also, (lo, hi), base_ins << (build.min(4) - 1), &hint, |a, sure| debug_allowed(a) && !(a >= lo && a < hi) && (a == eip || sure || ran(misses, known, a))) else {
         st.known.insert(eip);
         return false;
     };
@@ -2420,7 +2471,7 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
         return false;
     }
     note_load(st, base, 2, bytes.len());
-    enter_fn_as(st, base.cast_unsigned(), eip, &region.starts, &[], &region.code, true);
+    enter_fn_as(st, base.cast_unsigned(), eip, &region.starts, &region.sites, &region.code, true);
     count_compile(1, t0);
     if build > 1 {
         count_compile(2, t0);
@@ -2540,8 +2591,11 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
                 // case's loop, eight times, the case running meanwhile in new code each time)
                 // (the unwind table's function first when it is one already: a block of it
                 // goes in it, not in a function built from a case of its switch nearby)
-                let start = fn_start(eip).filter(|&s| s != eip && !(s >= cpu.trap_lo && s < cpu.trap_hi));
-                let start = start.filter(|s| st.fns.contains(s) || ends_in_indirect_jump(eip));
+                // (or a small one's, FN_SMALL: qsort's loops were six functions of it, built
+                // again and again for the jumps between them)
+                let span = fn_start(eip).filter(|r| r.start != eip && !(r.start >= cpu.trap_lo && r.start < cpu.trap_hi));
+                let small = span.as_ref().is_some_and(|r| r.end.wrapping_sub(r.start) <= FN_SMALL);
+                let start = span.map(|r| r.start).filter(|s| small || st.fns.contains(s) || ends_in_indirect_jump(eip));
                 if let Some(f) = start.or_else(|| fn_around(st, eip)).filter(|f| st.fn_builds.get(f).copied().unwrap_or(0) < FN_BUILDS) {
                     if stats() {
                         eprintln!("vnjit64 fn {f:#x} (built again for {eip:#x})");
@@ -3894,6 +3948,30 @@ mod invalidate_tests {
             // (a region's entry, not a function's)
             insert(&mut st.hash, 0x70000, bg);
             assert!(!elsewhere(st, f, bf, 0x70000));
+        });
+        STATE.with(|s| *s.borrow_mut() = None);
+    }
+
+    /// An indirect call's samples (FN64, fn_hot64): its target becomes the site's hint at
+    /// FN_WINDOWS windows, not before; one change of target after that, then none (a site
+    /// going everywhere is built again twice at most); a site of no function, no hint.
+    #[test]
+    fn a_sampled_site_gets_its_hint_after_enough_windows() {
+        with_state(|st| {
+            let (f, site, (a, b, c)) = (0x41000u32, 0x41234u32, (0x50000u32, 0x51000u32, 0x52000u32));
+            st.site_fn.insert(site, vec![f]);
+            let windows = |st: &mut State, to: u32| (0..FN_WINDOWS).map(|_| hint_site(st, site, to) == Some(vec![f])).collect::<Vec<_>>();
+            let mut once = vec![false; usize::try_from(FN_WINDOWS).unwrap()];
+            *once.last_mut().unwrap() = true;
+            assert_eq!(windows(st, a), once);
+            assert_eq!(st.hints.get(&site), Some(&a));
+            assert_eq!(windows(st, a), vec![false; once.len()], "hinted already");
+            assert_eq!(windows(st, b), once);
+            assert_eq!(st.hints.get(&site), Some(&b));
+            assert_eq!(windows(st, c), vec![false; once.len()], "changed once already");
+            assert_eq!(st.hints.get(&site), Some(&b));
+            assert_eq!(hint_site(st, 0x6000, a), None, "no function");
+            assert!(!st.hints.contains_key(&0x6000));
         });
         STATE.with(|s| *s.borrow_mut() = None);
     }

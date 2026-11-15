@@ -1050,7 +1050,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     }
     kura::crashlog::set_trap_namer(api::name_of);
     kura::cpu::set_park(k32::park_suspended);
-    kura::jit::set_fn_start(seh64::function_start);
+    kura::jit::set_fn_start(|pc| guest::function_start(pc).or_else(|| seh64::function_start(pc)));
     // (a thread that runs on without API calls has passed what it stored after a SetEvent)
     kura::cpu::set_progress(|| {
         if let Some(t) = cur_opt() {

@@ -355,7 +355,20 @@
       (kura `elsewhere`、`a_jump_out_to_another_function_far_off_builds_nothing`。std::sort の
       再帰で 2 つの関数が 8 回ずつ作り直されていた)。短いケース (transform 20 ms など) の差は
       翻訳とコンパイルの立ち上がりで、10 倍の長さで回すと FN が速い (transform 131 / 112)。
-      次: Cpu のレジスタを 64 ビット 1 本に、間接 call 先の投機インライン。テスト: jit64test (a_return_to_another_alias_keeps_rip_hi、
+      第 4 段 (sort): (1) 間接 call は 8 回に 1 回、行き先をリングに (FN_TAG | 番地, 行き先) で書き、
+      ホストが FN_WINDOWS 窓そろったらその番地のヒントにして関数を作り直す (32 ビット版と同じ
+      State::hints / site_fn。kura `hint_site`、`a_sampled_site_gets_its_hint_after_enough_windows`)。
+      ヒントの行き先が小さな葉ならインラインにし、行き先が違うときだけ普通の call
+      (jit64test `hinted_indirect_calls_inline_their_leaf`)。同じオペランド (`call rsi` が何か所も)
+      の間接 call はヒントを共有する (`calls_through_the_same_operand_share_a_hint`)。(2) インライン
+      の葉は呼び出しごとに専用のコピー (koji `LeafCopy`: コピーのブロックは (コピー, 番地) の別の
+      索引で引く。各コピーの RET は自分の戻り先だけ)。1 つを全呼び出しで共有していたときは qsort の
+      分割ループ同士が葉を通してつながって既約でなくなり、レイアウト外のジャンプで抜けては 8 回
+      作り直していた (koji `each_inline_call_has_its_own_copy_of_the_leaf`)。(3) guest/crt.c の
+      関数頭の表 (gen-guest.sh が FUNCS を出す、sake `guest::function_start`) と、0x800 バイト以下の
+      小さな関数はループから入っても先頭から作る (kura FN_SMALL)。qsort 1 回 (20 万 int) 90 → 47 ms
+      (リージョンは 90 ms)、bench sort 400 → 270 ms。
+      次: Cpu のレジスタを 64 ビット 1 本に。テスト: jit64test (a_return_to_another_alias_keeps_rip_hi、
       an_indirect_call_over_three_functions、flags_after_a_call_as_the_caller_reads_them、
       a_loop_header_inside_the_block_before も)、koji blocks_end_where_another_starts、kura
       a_function_spans_its_blocks_not_its_thunks と fn_span_property。jit64test
