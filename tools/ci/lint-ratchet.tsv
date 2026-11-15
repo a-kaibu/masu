@@ -316,7 +316,7 @@ file	crates/kura/src/cpu.rs	ptr_as_ptr	4
 file	crates/kura/src/cpu.rs	undocumented_unsafe_blocks	23
 file	crates/kura/src/cpu.rs	unwrap_used	2
 file	crates/kura/src/crashlog.rs	arithmetic_side_effects	44
-file	crates/kura/src/crashlog.rs	as_conversions	47
+file	crates/kura/src/crashlog.rs	as_conversions	46
 file	crates/kura/src/crashlog.rs	borrow_as_ptr	4
 file	crates/kura/src/crashlog.rs	cast_possible_truncation	17
 file	crates/kura/src/crashlog.rs	indexing_slicing	19

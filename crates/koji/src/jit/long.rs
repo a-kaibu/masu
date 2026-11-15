@@ -3274,7 +3274,7 @@ pub fn translate_region64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[
     translate_seen64(module, &mut super::Snapshot::new(mem), roots, trap, accept, None, &|_| None)
 }
 
-/// x64 functions (`MASU_JIT64_FN`): off by default for now.
+/// x64 functions (`MASU_JIT64_FN`, on unless it is 0; kura sets it at start).
 pub static FN64: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// The function at `entry` (FN64) as one wasm function of the region type: its blocks are

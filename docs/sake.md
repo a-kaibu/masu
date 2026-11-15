@@ -301,7 +301,7 @@
       ループ外のヘッダ、ループ内の入口はヘッダの横ディスパッチ、ジャンプテーブルは完全ハッシュ)。
       表・fib・文字列・SQLite は速く、sort/oop は merge_hot64 がほぼ効かなくなり遅いので既定オフ
       (MASU_JIT64_STRUCT=1 で有効、jit64test と fuzz は両方を回す)。本命は x64 の FN モード。
-    - x64 の FN モード (MASU_JIT64_FN=1、まだ既定オフ): 関数を 1 つの wasm 関数に訳す (構造化
+    - x64 の FN モード (2026-11-15 から既定。MASU_JIT64_FN=0 でリージョンに戻す): 関数を 1 つの wasm 関数に訳す (構造化
       レイアウト)。状態は呼び出しの境目で Cpu に置き、直接・間接 call は呼び出しキャッシュ
       (Cpu::jit_calls、外れたら callmiss import) から call_indirect、深さ (L_DEPTH) 128 まで。
       戻ってきて EIP が戻り先と違えば status のまま外へ。RET は深さ 0 なら exit の引き直し。
@@ -374,7 +374,7 @@
       a_function_spans_its_blocks_not_its_thunks と fn_span_property。jit64test
       (JFN または seed の 1/2 で FN、functions_call_each_other、deep_recursion_leaves_and_comes_back、
       rotates_stay_translated、calls_through_import_thunks、leaves_called_inline)、host テスト全部を
-      MASU_JIT64_FN=1 でも通す。
+      MASU_JIT64_FN=0 (リージョン) でも通す。
   - 翻訳の無効化 (review P1-6): コードページへの書き込みは、そのページから作った翻訳だけを落とす
     (kura jit.rs の CHANGES 履歴 1024 件 + code_of、ほかのスレッドは check_generation で差分だけ
     drop_pages)。履歴が切れたら従来どおり全部捨てる。共有キャッシュ (P1-5) は 48 MiB・キーあたり

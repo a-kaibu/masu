@@ -347,6 +347,11 @@ fn fn_allowed(a: u32) -> bool {
     }
     r.is_empty() || r.iter().any(|&(lo, hi)| a >= lo && a < hi)
 }
+/// x64 functions (jit::long::FN64) for MASU_JIT64_FN's value: on unless it is 0 (regions).
+fn fn64_on(v: Option<&str>) -> bool {
+    v.is_none_or(|v| v.trim() != "0")
+}
+
 /// Blocks the dispatcher runs before returning to the run loop.
 pub const BUDGET: i32 = 1 << 14;
 /// Most blocks compiled into one module.
@@ -1156,8 +1161,8 @@ fn init_flags() {
         // (MASU_JIT64_STRUCT=1: a region's blocks nested (jit::long::STRUCTURED), for A/B)
         jit::long::STRUCTURED.store(num("MASU_JIT64_STRUCT") != 0, std::sync::atomic::Ordering::Relaxed);
         jit::long::DEBUG_NO_SIDE.store(num("MASU_JIT64_NO_SIDE") != 0, std::sync::atomic::Ordering::Relaxed);
-        // (MASU_JIT64_FN=1: x64 code translated a function at a time, jit::long::FN64)
-        jit::long::FN64.store(num("MASU_JIT64_FN") != 0, std::sync::atomic::Ordering::Relaxed);
+        // (x64 code translated a function at a time, jit::long::FN64; MASU_JIT64_FN=0: regions)
+        jit::long::FN64.store(fn64_on(std::env::var("MASU_JIT64_FN").ok().as_deref()), std::sync::atomic::Ordering::Relaxed);
         for name in std::env::var("MASU_JIT64_OFF").unwrap_or_default().split(',').filter(|s| !s.is_empty()) {
             if !jit::long::debug_off_named(name) {
                 eprintln!("MASU_JIT64_OFF: no mnemonic {name}");
@@ -3946,6 +3951,17 @@ mod invalidate_tests {
             assert!(!elsewhere(st, f, bf, 0x70000));
         });
         STATE.with(|s| *s.borrow_mut() = None);
+    }
+
+    /// x64 functions are the default (2026-11-15): unset, empty or anything but 0 is on; 0
+    /// (spaces around it too) goes back to regions.
+    #[test]
+    fn x64_functions_unless_set_to_zero() {
+        use proptest::prelude::*;
+        for (v, on) in [(None, true), (Some(""), true), (Some("1"), true), (Some("0"), false), (Some(" 0\n"), false), (Some("00"), true)] {
+            assert_eq!(fn64_on(v), on, "{v:?}");
+        }
+        proptest!(|(v in "[ 0-9a-z]{0,4}")| prop_assert_eq!(fn64_on(Some(&v)), v.trim() != "0"));
     }
 
     /// An indirect call's samples (FN64, fn_hot64): its target becomes the site's hint at
