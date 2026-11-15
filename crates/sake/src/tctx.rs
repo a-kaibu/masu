@@ -180,7 +180,7 @@ pub fn context_of(tid: u32) -> Option<Vec<u8>> {
     let at = (base + 15) & !15;
     capture(unsafe { &mut *cpu }, api, at);
     overlay_pending(tid, at);
-    let v = mem::slice(at, size(mem::x64())).to_vec();
+    let v = mem::bytes(at, size(mem::x64()));
     mem::heap_free(base);
     Some(v)
 }
@@ -236,7 +236,7 @@ fn SetThreadContext(c: &mut Ctx) -> u32 {
     let (h, ctx) = (c.a(0), c.a(1));
     if let Some((pid, tid)) = crate::k32::remote_thread_of(h) {
         let flags = r32(ctx + flags_at(mem::x64()));
-        let bytes = mem::slice(ctx, size(mem::x64())).to_vec();
+        let bytes = mem::bytes(ctx, size(mem::x64()));
         if crate::xmem::call(pid, crate::xmem::SET_CONTEXT, vec![tid, flags], bytes).is_none() {
             crate::k32::last_error(6);
             return 0;
@@ -261,7 +261,7 @@ fn SetThreadContext(c: &mut Ctx) -> u32 {
         c.jumped = true;
         return 1;
     }
-    let bytes = mem::slice(ctx, size(x64)).to_vec();
+    let bytes = mem::bytes(ctx, size(x64));
     PENDING.lock().unwrap().get_or_insert_with(HashMap::default).insert(tid, (flags, bytes));
     ANY.store(true, Ordering::Release);
     1
@@ -384,7 +384,7 @@ mod tests {
         set_context_of(tid, 0x1_0002, &bytes);
         assert!(apply_pending(&mut cpu));
         assert_eq!(cpu.gpr(0), 0x1234);
-        assert!(mem::slice(low, 0x2000).iter().all(|&b| b == 0xee), "nothing written below ESP");
+        assert!(mem::bytes(low, 0x2000).iter().all(|&b| b == 0xee), "nothing written below ESP");
         mem::heap_free(low);
     }
 

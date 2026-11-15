@@ -676,11 +676,11 @@ fn memset(c: &mut Ctx) -> u32 {
 }
 fn memcmp(c: &mut Ctx) -> u32 {
     let n = c.a(2);
-    mem::slice(c.a(0), n).cmp(mem::slice(c.a(1), n)) as i32 as u32
+    mem::view(c.a(0), n, |x| mem::view(c.a(1), n, |y| x.cmp(y))) as i32 as u32
 }
 fn memchr(c: &mut Ctx) -> u32 {
     let (p, ch, n) = (c.a(0), c.a(1) as u8, c.a(2));
-    mem::slice(p, n).iter().position(|&b| b == ch).map_or(0, |i| p + i as u32)
+    mem::bytes(p, n).iter().position(|&b| b == ch).map_or(0, |i| p + i as u32)
 }
 /// The length of the NUL-terminated string at `a` (0 for NULL), read in place: these string
 /// functions looked at copies of whole strings (an allocation per call) before deciding
@@ -2476,7 +2476,7 @@ fn fwrite(c: &mut Ctx) -> u32 {
     if total == 0 {
         return 0;
     }
-    with_file(fp, |s| if s.write(mem::slice(buf, total)) { n } else { 0 })
+    with_file(fp, |s| if s.write(&mem::bytes(buf, total)) { n } else { 0 })
     .unwrap_or(0)
 }
 fn fseek(c: &mut Ctx) -> u32 {
@@ -2810,8 +2810,12 @@ fn mem_s(c: &mut Ctx, f: fn(Option<&mut [u8]>, Option<&[u8]>, usize) -> i32) -> 
     let (d, dn, s, n) = (c.a(0), size(c, 1), c.a(2), size(c, 3));
     let dn = dn.min(mem::GUEST_TOP.saturating_sub(d));
     // (the source as a copy: memmove_s's overlap is then no matter)
-    let src = (s != 0).then(|| mem::slice(s, n.min(dn.saturating_add(1)).min(0u32.wrapping_sub(s))).to_vec());
-    let e = f((d != 0).then(|| mem::guest_mut(d, dn)).flatten(), src.as_deref(), n as usize);
+    let src = (s != 0).then(|| mem::bytes(s, n.min(dn.saturating_add(1)).min(0u32.wrapping_sub(s))));
+    let n = kome::num::us(n);
+    let e = match (d != 0).then(|| mem::view_mut(d, dn, |s| f(Some(s), src.as_deref(), n))).flatten() {
+        Some(e) => e,
+        None => f(None, src.as_deref(), n),
+    };
     errno_of(e);
     e as u32
 }
@@ -4739,7 +4743,7 @@ mod fread_tests {
         let fp = stream(&w, b"rb");
         let buf = mem::heap_alloc(8192, true);
         assert_eq!(fread_to(buf, 1, 0x7fff_ffff, fp), 5000);
-        assert_eq!(mem::slice(buf, 5000), &data[..]);
+        assert_eq!(&mem::bytes(buf, 5000), &data[..]);
         assert_eq!(with_file(fp, |s| s.eof), Some(true));
         // size * n saturates: 0xffffffff bytes asked, none left
         assert_eq!(fread_to(buf, 0x10000, 0x10000, fp), 0);
@@ -4779,7 +4783,7 @@ mod fread_tests {
                 let bytes = want.len().min((size * n) as usize);
                 let expect: Vec<u8> = want.drain(..bytes).collect();
                 prop_assert_eq!(got as usize, bytes / size as usize);
-                prop_assert_eq!(mem::slice(buf, bytes as u32), &expect[..]);
+                prop_assert_eq!(&mem::bytes(buf, bytes as u32), &expect[..]);
             }
             close(fp);
             mem::heap_free(buf);
@@ -4833,7 +4837,7 @@ mod fread_tests {
                         }
                         prop_assert_eq!(r, if line.is_empty() { 0 } else { buf });
                         if !line.is_empty() {
-                            prop_assert_eq!(mem::slice(buf, line.len() as u32 + 1), &[&line[..], &[0]].concat()[..]);
+                            prop_assert_eq!(&mem::bytes(buf, line.len() as u32 + 1), &[&line[..], &[0]].concat()[..]);
                         }
                     }
                     3 => {
@@ -4850,7 +4854,7 @@ mod fread_tests {
                         want.extend_from_slice(&data[rp..rp + k]);
                         rp += k;
                         prop_assert_eq!(got as usize, want.len());
-                        prop_assert_eq!(mem::slice(buf, got), &want[..]);
+                        prop_assert_eq!(&mem::bytes(buf, got), &want[..]);
                     }
                     5 => {
                         let to = arg as usize % (data.len() + 1);

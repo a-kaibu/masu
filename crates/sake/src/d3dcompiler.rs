@@ -16,7 +16,7 @@ fn blob_size(c: &mut Ctx) -> u32 {
 }
 fn blob_qi(c: &mut Ctx) -> u32 {
     // IUnknown and ID3D10Blob {8BA5FB08-5195-40e2-AC58-0D989C3A0102}
-    let g = mem::slice(c.a(1), 16).to_vec();
+    let g = mem::bytes(c.a(1), 16);
     const UNK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46];
     const BLOB: [u8; 16] = [0x08, 0xfb, 0xa5, 0x8b, 0x95, 0x51, 0xe2, 0x40, 0xac, 0x58, 0x0d, 0x98, 0x9c, 0x3a, 0x01, 0x02];
     if g == UNK || g == BLOB {
@@ -140,7 +140,7 @@ pub(crate) fn open_include(c: &mut Ctx, inc: u32, base: &str, name: &str, system
     }
     let data = mem::rp(scratch);
     let n = r32(scratch + k);
-    let text = String::from_utf8_lossy(mem::slice(data, n)).into_owned();
+    let text = String::from_utf8_lossy(&mem::bytes(data, n)).into_owned();
     c.call(close, &[inc, data]);
     mem::heap_free(scratch);
     Some(text)
@@ -196,7 +196,7 @@ fn compile(c: &mut Ctx, src: &[u8], name: &str, defs: u32, inc: u32, entry: u32,
 
 /// D3DCompile(data, size, name, defines, include, entry, target, flags1, flags2, code, errors)
 fn D3DCompile(c: &mut Ctx) -> u32 {
-    let src = mem::slice(c.a(0), c.a(1)).to_vec();
+    let src = mem::bytes(c.a(0), c.a(1));
     let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
     let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(9), c.a(10));
     compile(c, &src, &name, d, i, e, t, f, o, er)
@@ -204,7 +204,7 @@ fn D3DCompile(c: &mut Ctx) -> u32 {
 
 /// D3DCompile2(.., flags2, secondary flags, secondary data, its size, code, errors)
 fn D3DCompile2(c: &mut Ctx) -> u32 {
-    let src = mem::slice(c.a(0), c.a(1)).to_vec();
+    let src = mem::bytes(c.a(0), c.a(1));
     let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
     let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(12), c.a(13));
     compile(c, &src, &name, d, i, e, t, f, o, er)
@@ -224,7 +224,7 @@ fn D3DCompileFromFile(c: &mut Ctx) -> u32 {
 
 /// D3DPreprocess(data, size, name, defines, include, text, errors)
 fn D3DPreprocess(c: &mut Ctx) -> u32 {
-    let src = String::from_utf8_lossy(mem::slice(c.a(0), c.a(1))).into_owned();
+    let src = String::from_utf8_lossy(&mem::bytes(c.a(0), c.a(1))).into_owned();
     let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
     let (defs, inc, out, errs) = (c.a(3), c.a(4), c.a(5), c.a(6));
     let defines = defines(defs);
@@ -283,7 +283,7 @@ fn part(code: &[u8], tags: &[&[u8; 4]]) -> Option<Vec<u8>> {
 }
 
 fn sig_blob(c: &mut Ctx, tags: &[&[u8; 4]], out: u32) -> u32 {
-    let code = mem::slice(c.a(0), c.a(1)).to_vec();
+    let code = mem::bytes(c.a(0), c.a(1));
     match part(&code, tags) {
         Some(b) => {
             mem::putp(out, blob(&b));
@@ -326,7 +326,7 @@ fn D3DGetBlobPart(c: &mut Ctx) -> u32 {
 
 /// D3DStripShader(data, size, flags, blob): nothing of ours to strip
 fn D3DStripShader(c: &mut Ctx) -> u32 {
-    let code = mem::slice(c.a(0), c.a(1)).to_vec();
+    let code = mem::bytes(c.a(0), c.a(1));
     mem::putp(c.a(3), blob(&code));
     0
 }
@@ -353,7 +353,7 @@ fn D3DDisassemble(c: &mut Ctx) -> u32 {
 
 /// D3D10CompileShader(data, size, name, defines, include, entry, profile, flags, code, errors)
 fn D3D10CompileShader(c: &mut Ctx) -> u32 {
-    let src = mem::slice(c.a(0), c.a(1)).to_vec();
+    let src = mem::bytes(c.a(0), c.a(1));
     let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
     let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(8), c.a(9));
     compile(c, &src, &name, d, i, e, t, f | hlslc::D3D10_BLOB, o, er)
@@ -447,7 +447,7 @@ mod blob_tests {
             let _g = enter();
             let o = blob(&vec![3; len]);
             let data = r32(o + 12);
-            prop_assert_eq!(mem::slice(data, len as u32), &vec![3; len][..]);
+            prop_assert_eq!(&mem::bytes(data, len as u32), &vec![3; len][..]);
             for k in 0..n {
                 prop_assert_eq!(call(blob_add_ref, &[o]), k + 2);
             }
@@ -471,7 +471,7 @@ mod blob_tests {
         assert_eq!(call(D3DCreateBlob, &[100, out]), 0);
         let o = r32(out);
         assert_eq!(r32(o + 16), 100);
-        assert!(mem::slice(r32(o + 12), 100).iter().all(|&b| b == 0));
+        assert!(mem::array::<100>(r32(o + 12)).iter().all(|&b| b == 0));
         assert_eq!(call(blob_release, &[o]), 0);
         mem::heap_free(out);
     }

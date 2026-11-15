@@ -315,7 +315,7 @@ pub fn read(p: u32, wide: bool) -> Rec {
     let s = |q: u32| read_str(rp(q), wide).unwrap_or_default();
     let data = match ty {
         1 => Data::A(r32(d).to_le_bytes()),
-        28 => Data::Aaaa(mem::slice(d, 16).try_into().unwrap()),
+        28 => Data::Aaaa(mem::array::<16>(d)),
         t if is_name_type(t) => Data::Name(s(d)),
         14 | 17 => Data::Two(s(d), s(d + k)),
         15 | 18 | 21 => Data::Mx(r16(d + k), s(d)),
@@ -325,7 +325,7 @@ pub fn read(p: u32, wide: bool) -> Rec {
             Data::Txt((0..n).map(|i| s(d + k + k * i)).collect())
         }
         6 => Data::Soa(s(d), s(d + k), std::array::from_fn(|i| r32(d + 2 * k + 4 * i as u32))),
-        _ => Data::Raw(mem::slice(d, data_len as u32).to_vec()),
+        _ => Data::Raw(mem::bytes(d, data_len as u32)),
     };
     Rec { name: read_str(rp(p + k), wide), ty, data_len, flags: r32(p + 2 * k + 4), ttl: r32(p + 2 * k + 8), reserved: r32(p + 2 * k + 12), data }
 }

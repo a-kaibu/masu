@@ -302,7 +302,7 @@ fn to_unicode(c: &mut Ctx, hkl: u32) -> u32 {
     let (vk, state, buf, size) = (c.a(0), c.a(2), c.a(3), c.a(4) as i32);
     let mut st = [0u8; 256];
     if state != 0 {
-        st.copy_from_slice(mem::slice(state, 256));
+        st.copy_from_slice(&mem::array::<256>(state));
     }
     let Some(ch) = translate(layout_of(hkl), vk, &st) else { return 0 };
     if buf == 0 || size <= 0 {
@@ -326,7 +326,7 @@ fn to_ascii(c: &mut Ctx, hkl: u32) -> u32 {
     let (vk, state, out) = (c.a(0), c.a(2), c.a(3));
     let mut st = [0u8; 256];
     if state != 0 {
-        st.copy_from_slice(mem::slice(state, 256));
+        st.copy_from_slice(&mem::array::<256>(state));
     }
     let Some(ch) = translate(layout_of(hkl), vk, &st) else { return 0 };
     if out != 0 {

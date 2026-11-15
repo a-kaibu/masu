@@ -505,7 +505,7 @@ fn update(c: &mut Ctx, wide: bool) -> u32 {
         last_error(998);
         return 0;
     } else {
-        Some(mem::slice(data, size).to_vec())
+        Some(mem::bytes(data, size))
     };
     let (ty, name) = (id_arg(ty, wide), id_arg(name, wide));
     match updates(|u| u.get_mut(&h).map(|x| x.push((ty, name, lang, op)))) {

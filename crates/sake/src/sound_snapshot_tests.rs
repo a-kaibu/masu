@@ -168,7 +168,7 @@ fn sound_pure_snapshot() {
         }).collect();
         // (a block past 64 bytes would read past the data: the first frame only)
         let s = if f.block() > 60 { s[..1].to_vec() } else { s };
-        writeln!(out, "fmt#{i} {:x?} -> {} block={} wrote {:x?} samples {}", mem::slice(p, 28), fmt_str(&f), f.block(), mem::slice(q, 20), s.join(" ")).unwrap();
+        writeln!(out, "fmt#{i} {:x?} -> {} block={} wrote {:x?} samples {}", &mem::array::<28>(p), fmt_str(&f), f.block(), &mem::array::<20>(q), s.join(" ")).unwrap();
     }
     // the header flags
     for f in 0..64u32 {
@@ -407,7 +407,7 @@ fn sound_dsound_snapshot() {
                 let to = if r.below(6) == 0 { 0 } else { po + 8 };
                 mem::fill(po, 64, 0xcc);
                 let hr = call(B_GetFormat, &[buf, to, size, po]);
-                format!("format {} size={size} to={}: {hr:#x} written={} {:x?}", names.of(buf), to != 0, r32(po), mem::slice(po + 8, 18))
+                format!("format {} size={size} to={}: {hr:#x} written={} {:x?}", names.of(buf), to != 0, r32(po), &mem::array::<18>(po + 8))
             }
             13 => {
                 let a = call(B_GetVolume, &[buf, po]);
@@ -610,7 +610,7 @@ fn sound_waveout_snapshot() {
                 } else {
                     format!("{h:#x}")
                 };
-                format!("open dev={dev:#x} flags={flags} fmt={:x?} p={}: {rc} {shown}", mem::slice(wfx, 20), ph != 0)
+                format!("open dev={dev:#x} flags={flags} fmt={:x?} p={}: {rc} {shown}", &mem::array::<20>(wfx), ph != 0)
             }
             2 if open.len() > 0 && headers.len() < 16 => {
                 let n = r.pick(&[0u32, 1, 4, 100, 882, 4410]);

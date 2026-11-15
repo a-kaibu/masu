@@ -5038,20 +5038,24 @@ fn glyph_outline(c: &mut Ctx, wide: bool) -> u32 {
     if size < need {
         return 0xffff_ffff;
     }
-    let Some(out) = mem::guest_mut(buf, need) else { return 0xffff_ffff };
-    out.fill(0);
-    for y in 0..g.h {
-        for x in 0..g.w {
-            let v = u32::from(g.cov[(y * g.w + x) as usize]);
-            let o = (y as u32 * stride) as usize;
-            if f == 1 {
-                if v >= 128 {
-                    out[o + x as usize / 8] |= 0x80 >> (x & 7);
+    let wrote = mem::view_mut(buf, need, |out| {
+        out.fill(0);
+        for y in 0..g.h {
+            for x in 0..g.w {
+                let v = u32::from(g.cov[(y * g.w + x) as usize]);
+                let o = (y as u32 * stride) as usize;
+                if f == 1 {
+                    if v >= 128 {
+                        out[o + x as usize / 8] |= 0x80 >> (x & 7);
+                    }
+                } else {
+                    out[o + x as usize] = ((v * levels + 127) / 255) as u8;
                 }
-            } else {
-                out[o + x as usize] = ((v * levels + 127) / 255) as u8;
             }
         }
+    });
+    if wrote.is_none() {
+        return 0xffff_ffff;
     }
     need
 }
@@ -5261,7 +5265,7 @@ fn RemoveFontResourceExW(_: &mut Ctx) -> u32 {
     1
 }
 fn AddFontMemResourceEx(c: &mut Ctx) -> u32 {
-    add_font(mem::slice(c.a(0), c.a(1)).to_vec());
+    add_font(mem::bytes(c.a(0), c.a(1)));
     put32(c.a(3), 1);
     0x0a7f_0000
 }

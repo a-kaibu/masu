@@ -166,7 +166,7 @@ impl Mmio {
                     return u32::MAX;
                 }
                 let Some(to) = v.get_mut(self.pos as usize..end as usize) else { return u32::MAX };
-                to.copy_from_slice(mem::slice(src, n));
+                to.copy_from_slice(&mem::bytes(src, n));
                 n
             }
             Data::Mem(a, len) => {
@@ -376,7 +376,7 @@ fn read_via(c: &mut Ctx, proc: u32, name: u32, info: u32, flags: u32) -> Option<
             break;
         }
         // (no more than it was asked for: a procedure answering more would copy past `tmp`)
-        v.extend_from_slice(mem::slice(tmp, (n as u32).min(0x10000)));
+        mem::view(tmp, (n as u32).min(0x10000), |s| v.extend_from_slice(s));
     }
     c.call(proc, &[mi, MMIOM_CLOSE, 0, 0]);
     mem::release(tmp);

@@ -544,7 +544,7 @@ fn base_swap_at(this: u32, o: u32) {
     }
     let p = ps();
     for (off, n) in [(STATE(), 4), (EXCEPT(), 4), (FMTFL(), 4), (PREC(), 8), (WIDE(), 8), (ARR(), p), (CALLS(), p), (PLOC(), p)] {
-        let a = mem::slice(this + off, n).to_vec();
+        let a = mem::bytes(this + off, n);
         mem::copy(this + off, o + off, n);
         mem::write(o + off, &a);
     }

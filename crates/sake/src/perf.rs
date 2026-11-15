@@ -81,7 +81,7 @@ pub fn instance_size(counters: u32, name_bytes: u32) -> u32 {
 }
 
 fn guid(p: u32) -> [u8; 16] {
-    mem::slice(p, 16).try_into().unwrap()
+    mem::array::<16>(p)
 }
 
 fn start(c: &mut Ctx, g: u32, out: u32) -> u32 {
@@ -90,7 +90,7 @@ fn start(c: &mut Ctx, g: u32, out: u32) -> u32 {
     }
     // (a block of the provider's own: its GUID)
     let h = mem::heap_alloc(32, true);
-    mem::write(h, mem::slice(g, 16));
+    mem::write(h, &mem::array::<16>(g));
     with(|m| m.insert(h, Provider::default()));
     mem::putp(out, h);
     let _ = c;

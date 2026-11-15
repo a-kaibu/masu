@@ -586,7 +586,7 @@ fn GdipBitmapUnlockBits(c: &mut Ctx) -> u32 {
         let fmt = lf.raw();
         let bits = lock_bits(fmt);
         for j in 0..h.min(b.h - y) {
-            let row = mem::slice(buf + j * stride, (w * bits).div_ceil(8)).to_vec();
+            let row = mem::bytes(buf + j * stride, (w * bits).div_ceil(8));
             for i in 0..w {
                 let s = (i * bits / 8) as usize;
                 let d = ((y + j) * b.w + x + i) as usize;
@@ -646,7 +646,7 @@ fn GdipCreateBitmapFromScan0(c: &mut Ctx) -> u32 {
     if scan0 != 0 {
         let bpp = bytes_per_pixel(fmt);
         for j in 0..h {
-            let row = mem::slice((scan0 as i32 + j as i32 * stride) as u32, w * bpp);
+            let row = &mem::bytes((scan0 as i32 + j as i32 * stride) as u32, w * bpp);
             for i in 0..w {
                 let s = (i * bpp) as usize;
                 let d = ((j * w + i) * 4) as usize;

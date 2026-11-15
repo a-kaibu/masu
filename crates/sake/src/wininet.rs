@@ -496,7 +496,7 @@ fn send_request(c: &mut Ctx, wide: bool) -> u32 {
     let body = if n == 0 {
         vec![]
     } else {
-        mem::slice(c.a(3), n as u32).to_vec()
+        mem::bytes(c.a(3), n as u32)
     };
     if edit(c.a(0), |h| {
         if let Handle::Request(r) = h {
@@ -548,7 +548,7 @@ fn send_ex(c: &mut Ctx, wide: bool) -> u32 {
     let body = if bn == 0 {
         vec![]
     } else {
-        mem::slice(bp, bn).to_vec()
+        mem::bytes(bp, bn)
     };
     if edit(c.a(0), |h| {
         if let Handle::Request(r) = h {
@@ -608,7 +608,7 @@ fn InternetWriteFile(c: &mut Ctx) -> u32 {
             return Err(8);
         }
         if n != 0 {
-            Arc::make_mut(&mut r.body).extend_from_slice(mem::slice(p, n));
+            Arc::make_mut(&mut r.body).extend_from_slice(&mem::bytes(p, n));
         }
         Ok(())
     });

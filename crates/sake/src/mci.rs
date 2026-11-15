@@ -857,10 +857,11 @@ impl Decode {
                 let at = self.data + written * self.channels * 2;
                 let to = written + n;
                 let live = fill.write(to, || {
-                    let Some(out) = mem::guest_mut(at, n * self.channels * 2) else { return };
-                    for (o, x) in out.chunks_exact_mut(2).zip(&pcm) {
-                        o.copy_from_slice(&pcm_i16(*x).to_le_bytes());
-                    }
+                    let _ = mem::view_mut(at, n * self.channels * 2, |out| {
+                        for (o, x) in out.chunks_exact_mut(2).zip(&pcm) {
+                            o.copy_from_slice(&pcm_i16(*x).to_le_bytes());
+                        }
+                    });
                 });
                 if !live {
                     break;
@@ -2142,7 +2143,7 @@ mod decode_tests {
         assert_eq!(fill.frames() as usize, n * 1152);
         // (pushed ahead of what was written: at most DECODE_AHEAD + one batch, never all at once)
         assert_eq!(taken.load(Ordering::Relaxed), n);
-        let pcm = mem::slice(data, size);
+        let pcm = &mem::bytes(data, size);
         for k in [0usize, 1, 299, 599] {
             for c in 0..2 {
                 let at = (k * 1152 + 17) * 4 + c * 2;
@@ -2199,7 +2200,7 @@ mod decode_tests {
             // (what the guest puts there next stays)
             mem::fill(data, size, 0x5a);
             std::thread::sleep(Duration::from_millis(20));
-            assert!(mem::slice(data, size).iter().all(|&b| b == 0x5a));
+            assert!(mem::bytes(data, size).iter().all(|&b| b == 0x5a));
             mem::heap_free(data);
         }
         stop.store(true, Ordering::Relaxed);

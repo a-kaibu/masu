@@ -88,7 +88,7 @@ pub fn exec(op: u32, a: &[u32], data: &[u8]) -> VmReply {
             if arg(2) == 1 {
                 return ok(vec![]);
             }
-            VmReply { status: 0, vals: vec![], data: mem::slice(p, n.min(READ_STEP)).to_vec() }
+            VmReply { status: 0, vals: vec![], data: mem::bytes(p, n.min(READ_STEP)) }
         }
         WRITE => {
             let (p, n) = (arg(0), data.len() as u32);

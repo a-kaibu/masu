@@ -215,7 +215,7 @@ fn _write(c: &mut Ctx) -> u32 {
     match d.kind {
         Kind::Std(0) => bad(),
         Kind::Std(_) => {
-            crate::k32::console_write(&a2s(mem::slice(buf, n)));
+            crate::k32::console_write(&a2s(&mem::bytes(buf, n)));
             n
         }
         Kind::File(f) => {

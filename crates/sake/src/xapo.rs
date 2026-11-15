@@ -237,7 +237,7 @@ fn iface_of(g: &[u8; 16]) -> Option<Iface> {
 
 fn read_guid(p: u32) -> [u8; 16] {
     let mut g = [0u8; 16];
-    g.copy_from_slice(mem::slice(p, 16));
+    g.copy_from_slice(&mem::array::<16>(p));
     g
 }
 
@@ -386,7 +386,7 @@ fn init_data(x: &mut Xapo, data: Vec<u8>) {
 /// Initialize(pData, DataByteSize): the effect's initial parameters
 fn Initialize(c: &mut Ctx) -> u32 {
     let (this, p, n) = (c.a(0), c.a(1), c.a(2));
-    let data = if p != 0 { mem::slice(p, n.min(4096)).to_vec() } else { Vec::new() };
+    let data = if p != 0 { mem::bytes(p, n.min(4096)) } else { Vec::new() };
     with_this(this, |x| init_data(x, data));
     0
 }
@@ -478,7 +478,7 @@ fn Process(c: &mut Ctx) -> u32 {
     let n = usize::try_from(nbytes / 4).unwrap_or(0);
     let ob = rp(pout);
     let mut s: Vec<f32> = if flags == XAPO_BUFFER_VALID && ib != 0 {
-        mem::slice(ib, nbytes).chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
+        mem::bytes(ib, nbytes).chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect()
     } else {
         vec![0.0; n]
     };
@@ -511,7 +511,7 @@ fn SetParameters(c: &mut Ctx) -> u32 {
     if p == 0 {
         return 0;
     }
-    let v = mem::slice(p, n.min(4096)).to_vec();
+    let v = mem::bytes(p, n.min(4096));
     with_this(this, |x| x.params = v);
     0
 }
@@ -604,7 +604,7 @@ fn create_fx(c: &mut Ctx, init: bool) -> u32 {
         return Hr::ClassNotAvailable.code();
     };
     if init && c.a(2) != 0 {
-        let v = mem::slice(c.a(2), c.a(3).min(4096)).to_vec();
+        let v = mem::bytes(c.a(2), c.a(3).min(4096));
         with(o, |x| init_data(x, v));
     }
     putp(out, o.addr());

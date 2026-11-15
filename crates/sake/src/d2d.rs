@@ -721,14 +721,14 @@ fn CreateBitmap(c: &mut Ctx) -> u32 {
     } else {
         None
     };
-    mem::putp(out, new_image(w, h, px.map(|p| (p, pitch)), alpha_ignored(props)));
+    mem::putp(out, new_image(w, h, px.as_deref().map(|p| (p, pitch)), alpha_ignored(props)));
     0
 }
 
 /// The guest's pixel rows (w x h of 4 bytes, `pitch` apart) as one slice, read in place (no
 /// copy of a whole frame per upload); None when the pitch is less than a row or the rows are
 /// not readable memory (the size, from the guest's pitch, was u32 arithmetic that could wrap)
-pub fn pixels<'a>(data: u32, pitch: u32, w: u32, h: u32) -> Option<&'a [u8]> {
+pub fn pixels(data: u32, pitch: u32, w: u32, h: u32) -> Option<Vec<u8>> {
     if h == 0 {
         return None;
     }
@@ -737,7 +737,7 @@ pub fn pixels<'a>(data: u32, pitch: u32, w: u32, h: u32) -> Option<&'a [u8]> {
     if u64::from(pitch) < u64::from(w) * 4 || mem::accessible(data, len, false, false) < len {
         return None;
     }
-    Some(mem::slice(data, len))
+    Some(mem::bytes(data, len))
 }
 
 /// ID2D1DeviceContext::CreateBitmap (D2D1_BITMAP_PROPERTIES1): one made to be drawn into
@@ -758,7 +758,7 @@ fn CreateBitmap1(c: &mut Ctx) -> u32 {
     if data != 0 {
         if let Some(gpu) = gpu2d::texture_gpu(tex) {
             let Some(px) = pixels(data, pitch, w, h) else { return 0x8007_0057 };
-            gpu2d::bitmap_write(gpu, (0, 0, w, h), px, pitch);
+            gpu2d::bitmap_write(gpu, (0, 0, w, h), &&px, pitch);
         }
     } else {
         gpu2d::clear(tex, [0.0; 4]);
@@ -802,7 +802,7 @@ fn CopyFromMemory(c: &mut Ctx) -> u32 {
     }
     let (w, h) = (r - x, b - y);
     let Some(px) = pixels(data, pitch, w, h) else { return 0x8007_0057 };
-    gpu2d::bitmap_write(im.gpu, (x, y, w, h), px, pitch);
+    gpu2d::bitmap_write(im.gpu, (x, y, w, h), &&px, pitch);
     0
 }
 

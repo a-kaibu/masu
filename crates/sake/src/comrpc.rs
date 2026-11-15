@@ -18,7 +18,7 @@ const BAD_DATA: u32 = 0x8007_06f7;
 const DISCONNECTED: u32 = 0x8001_0108;
 const CLASSNOTREG: u32 = 0x8004_0154;
 const UNKNOWN: [u8; 16] = [0,0,0,0,0,0,0,0,0xc0,0,0,0,0,0,0,0x46];
-fn guid(p: u32) -> Vec<u8> { if p == 0 { vec![] } else { mem::slice(p, 16).to_vec() } }
+fn guid(p: u32) -> Vec<u8> { if p == 0 { vec![] } else { mem::bytes(p, 16) } }
 pub(crate) fn text(g: &[u8]) -> String {
     if g.len() != 16 { return String::new(); }
     format!("{{{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}}}",
@@ -37,7 +37,7 @@ fn refcall(cpu: &mut koji::Cpu, object: u32, method: u32) -> u32 {
 fn bounded_bytes(p: u32) -> Option<Vec<u8>> {
     let base = crate::pe::containing(p)?;
     let n = crate::pe::with(base, |m| m.size.checked_sub(p - base))??;
-    Some(mem::slice(p, n.min(65536)).to_vec())
+    Some(mem::bytes(p, n.min(65536)))
 }
 #[derive(Clone)]
 struct Interface { iid: Vec<u8>, count: u32, methods: BTreeMap<u16, Method>, abi: BTreeMap<u16, u32> }
@@ -162,10 +162,10 @@ fn read_value(p: &Param, arg: u64, args: &[u64], input: bool) -> Result<(bool, V
         let p = if p.reference { rp(address) } else { address };
         if p == 0 { return Ok((false, vec![])); }
         let n = r32(p - 4); if n > 8 * 1024 * 1024 { return Err(BAD_DATA); }
-        return Ok((true, mem::slice(p, n).to_vec()));
+        return Ok((true, mem::bytes(p, n)));
     }
     let n = size(p, args)?;
-    if p.reference { Ok((true, mem::slice(address, n).to_vec())) }
+    if p.reference { Ok((true, mem::bytes(address, n))) }
     else if matches!(p.kind, Kind::Scalar(_)) { Ok((true, arg.to_le_bytes()[..n as usize].to_vec())) }
     else { Err(NOTIMPL) }
 }

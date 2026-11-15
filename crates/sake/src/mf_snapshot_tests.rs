@@ -205,7 +205,7 @@ fn mf_attributes_snapshot() {
                     let what = match (j, nth) {
                         // GetAllocatedString / GetAllocatedBlob: the copy's bytes, not where it is
                         (13, 1) if hr == 0 => format!("{:?}", String::from_utf16_lossy(&mem::wstr(w0))),
-                        (16, 1) if hr == 0 => format!("{:02x?}", mem::slice(w0, args.get(3).map_or(0, |&n| if n == 0 { 0 } else { r32(n) }).min(64))),
+                        (16, 1) if hr == 0 => format!("{:02x?}", &mem::bytes(w0, args.get(3).map_or(0, |&n| if n == 0 { 0 } else { r32(n) }).min(64))),
                         (17 | 0, 1) if hr == 0 => names.of(w0),
                         _ => format!("{:x?}", (0..4).map(|k| r32(a + 4 * k)).collect::<Vec<_>>()),
                     };
@@ -215,7 +215,7 @@ fn mf_attributes_snapshot() {
                     let v = get_prop(a).map(|v| val_str(&v, &names));
                     write!(line, " pv={v:?}").unwrap();
                 }
-                'b' => write!(line, " buf={:02x?}", mem::slice(a, 20)).unwrap(),
+                'b' => write!(line, " buf={:02x?}", &mem::array::<20>(a)).unwrap(),
                 _ => {}
             }
         }

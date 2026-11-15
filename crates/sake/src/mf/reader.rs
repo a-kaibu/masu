@@ -878,7 +878,7 @@ fn MFInitMediaTypeFromWaveFormatEx(c: &mut Ctx) -> u32 {
     if t == 0 || w == 0 {
         return Hr::Pointer.code();
     }
-    let Some(s) = from_wave_format(mem::slice(w, n.max(16))) else { return Hr::InvalidArg.code() };
+    let Some(s) = from_wave_format(&mem::bytes(w, n.max(16))) else { return Hr::InvalidArg.code() };
     // (what the type held goes, its objects released as DeleteAllItems does)
     let Some(old) = attrs(t, |a| std::mem::replace(&mut a.1, s)) else { return Hr::InvalidArg.code() };
     for (_, v) in old.items {
@@ -1023,7 +1023,7 @@ fn MFCreateMemoryBuffer(c: &mut Ctx) -> u32 {
 
 /// A buffer's bytes (None: not one of ours).
 fn buffer_bytes(b: u32) -> Option<Vec<u8>> {
-    buf(b, |x| mem::slice(x.data, x.len).to_vec()).or_else(|| super::dxgi::cached(b))
+    buf(b, |x| mem::bytes(x.data, x.len)).or_else(|| super::dxgi::cached(b))
 }
 
 // --- samples ------------------------------------------------------------------------------

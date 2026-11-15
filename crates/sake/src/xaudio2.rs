@@ -1496,7 +1496,7 @@ mod issue88 {
         mem::fill(p, 24, 0xcc);
         assert_eq!(call(S_GetState, &[0, p + 4]), 0);
         assert_eq!(mem::r32(p), 0xcccccccc);
-        assert_eq!(mem::slice(p + 4, 16), &[0; 16]);
+        assert_eq!(&mem::array::<16>(p + 4), &[0; 16]);
         assert_eq!(mem::r32(p + 20), 0xcccccccc);
         mem::heap_free(p);
     }

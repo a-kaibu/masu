@@ -6,7 +6,7 @@
 //! matrices; paths). Every call's answer (objects by the program's names),
 //! what it wrote back and a hash of every bitmap's pixels (read through LockBits as 32bppARGB)
 //! go into gdiplus_api_golden.txt. MASU_UPDATE_GOLDEN=1 rewrites it.
-use crate::mem::{self, slice, w32, w8};
+use crate::mem::{self, bytes, w32, w8};
 use crate::test_guest::{call, enter, guest_thread};
 
 /// The program's own buffers, bumped out of one region at a fixed address (reserved once), so
@@ -101,7 +101,7 @@ impl World {
             if call(h("GdipBitmapLockBits"), &[b, 0, 1, 0x0026_200a, data]) == 0 {
                 let (w, hgt, stride, scan0) = (mem::r32(data), mem::r32(data + 4), mem::r32(data + 8), mem::r32(data + 16));
                 for y in 0..hgt {
-                    fnv(&mut hh, slice(scan0 + y * stride, 4 * w));
+                    fnv(&mut hh, &bytes(scan0 + y * stride, 4 * w));
                 }
                 call(h("GdipBitmapUnlockBits"), &[b, data]);
             }
@@ -134,7 +134,7 @@ impl World {
     fn get(&mut self, what: &str, args: &[u32], n: u32) {
         mem::zero(self.buf, n);
         let r = call(h(what), args);
-        let e = slice(self.buf, n).to_vec();
+        let e = bytes(self.buf, n).to_vec();
         self.log(what, args, r, &e);
     }
     fn any(&mut self, v: &[u32]) -> u32 {
@@ -243,11 +243,11 @@ impl World {
                 let data = buf + 1024;
                 mem::zero(data, 24);
                 let r = call(h("GdipBitmapLockBits"), &[b, rect, flags, fmt, data]);
-                let mut e = slice(data, 16).to_vec();
+                let mut e = bytes(data, 16).to_vec();
                 if r == 0 {
                     let (w, hh, stride, scan0) = (mem::r32(data), mem::r32(data + 4), mem::r32(data + 8), mem::r32(data + 16));
                     for y in 0..hh {
-                        e.extend_from_slice(slice(scan0 + y * stride, stride.min(4 * w)));
+                        e.extend_from_slice(&bytes(scan0 + y * stride, stride.min(4 * w)));
                     }
                     if flags & 2 != 0 {
                         for y in 0..hh {
@@ -363,7 +363,7 @@ impl World {
                             w32(buf + 4 * i, f(self.rng.fl(-10., 10.)));
                         }
                         self.go("GdipTransformMatrixPoints", &[m, buf, 3]);
-                        let e = slice(buf, 24).to_vec();
+                        let e = bytes(buf, 24).to_vec();
                         self.log("points", &[], 0, &e);
                     }
                 }
@@ -428,7 +428,7 @@ impl World {
                 self.get("GdipSetPathGradientSurroundColorsWithCount", &[b, buf + 64, buf], 4);
                 w32(buf, 8);
                 self.get("GdipGetPathGradientSurroundColorsWithCount", &[b, buf + 64, buf], 4);
-                let e = slice(buf + 64, 32).to_vec();
+                let e = bytes(buf + 64, 32).to_vec();
                 self.log("colors", &[], 0, &e);
             }
             27 => {

@@ -1672,7 +1672,7 @@ fn create(req: &Req) -> Result<u32, u32> {
         let path = crate::pe::with(req.module, |m| m.path.clone()).ok_or(ERROR_INVALID_PARAMETER)?;
         let e = crate::pe::find_resource_lang(req.module, &crate::pe::ResId::Int(24), name, lang.map(|l| l as u32))?;
         let (p, n) = crate::pe::resource_data(req.module, e);
-        (mem::slice(p, n).to_vec(), path.clone(), req.asm_dir.clone().unwrap_or_else(|| dir_of(&path)))
+        (mem::bytes(p, n), path.clone(), req.asm_dir.clone().unwrap_or_else(|| dir_of(&path)))
     } else {
         let src = req.source.as_deref().ok_or(ERROR_INVALID_PARAMETER)?;
         let full = match &req.asm_dir {
@@ -1932,7 +1932,7 @@ fn find(flags: u32, id: u32, key: &Key, data: u32) -> u32 {
         }
         searched = true;
         let Some((base, len)) = guest_section(h, id) else { continue };
-        let sec = mem::slice(base, len);
+        let sec = &mem::bytes(base, len);
         let Some((doff, dlen, roster)) = section_find(sec, key) else { continue };
         if data != 0 {
             let cb = r32(data);
@@ -2453,7 +2453,7 @@ fn FindActCtxSectionStringA(c: &mut Ctx) -> u32 {
     find_api(c.a(0), c.a(2), (s != 0).then(|| Key::Str(crate::text::a2w(&cstr(s)))), c.a(4))
 }
 fn guid_at(p: u32) -> Guid {
-    mem::slice(p, 16).try_into().unwrap()
+    mem::array::<16>(p)
 }
 /// FindActCtxSectionGuid(flags, extension guid, section, guid, data)
 fn FindActCtxSectionGuid(c: &mut Ctx) -> u32 {

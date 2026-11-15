@@ -181,7 +181,7 @@ fn qi(c: &mut Ctx) -> u32 {
         return E_POINTER;
     }
     let b = base_of(this);
-    match which(mem::slice(iid, 16)) {
+    match which(&mem::array::<16>(iid)) {
         Some(i) if with(b, |s| s.refs += 1).is_some() => {
             mem::putp(out, b + mem::ps() * i as u32);
             S_OK
@@ -685,7 +685,7 @@ fn FindConnectionPoint(c: &mut Ctx) -> u32 {
     if out == 0 || iid == 0 {
         return E_POINTER;
     }
-    let Some(k) = event_index(mem::slice(iid, 16)) else {
+    let Some(k) = event_index(&mem::array::<16>(iid)) else {
         mem::wp(out, 0);
         return CONNECT_E_NOCONNECTION;
     };
@@ -710,7 +710,7 @@ fn point_qi(c: &mut Ctx) -> u32 {
     if out == 0 {
         return E_POINTER;
     }
-    let g = mem::slice(iid, 16);
+    let g = mem::array::<16>(iid);
     if g == guid(IID_IUNKNOWN) || g == guid(IID_ICONNECTIONPOINT) {
         let owner = points(|m| m.get(&this).map(|p| p.owner)).unwrap_or(0);
         with(owner, |s| s.refs += 1);
@@ -953,11 +953,11 @@ fn point_vtable() -> u32 {
 /// CoCreateInstance(CLSID_WebBrowser): None for another class, else the HRESULT
 pub fn create_instance(clsid: u32, iid: u32, out: u32) -> Option<u32> {
     static CLS: std::sync::OnceLock<[[u8; 16]; 2]> = std::sync::OnceLock::new();
-    let cls = mem::slice(clsid, 16);
+    let cls = &mem::array::<16>(clsid);
     if !CLS.get_or_init(|| [guid(CLSID_WEBBROWSER), guid(CLSID_WEBBROWSER_V1)]).iter().any(|g| g == cls) {
         return None;
     }
-    let Some(i) = which(mem::slice(iid, 16)) else {
+    let Some(i) = which(&mem::array::<16>(iid)) else {
         mem::putp(out, 0);
         return Some(E_NOINTERFACE);
     };

@@ -464,7 +464,7 @@ fn run_loop(cpu: &mut Cpu, until: u32, depth: u32) {
             Stop::Invalid => {
                 let e = cpu.eip;
                 let mut b = [0u8; 8];
-                b.copy_from_slice(mem::slice(e, 8));
+                b.copy_from_slice(&mem::array::<8>(e));
                 if privileged(&b) {
                     raise(cpu, 0xc000_0096, e, &[]);
                     continue;
@@ -584,7 +584,7 @@ fn instruction_at(cpu: &Cpu) -> koji::iced_x86::Instruction {
     let ip = cpu.eip as u64 | (cpu.rip_hi as u64) << 32;
     // (no allocation: protectors fault on purpose thousands of times a second)
     let mut bytes = [0u8; 15];
-    bytes.copy_from_slice(mem::slice(cpu.eip, 15));
+    bytes.copy_from_slice(&mem::array::<15>(cpu.eip));
     Decoder::with_ip(if mem::x64() { 64 } else { 32 }, &bytes, ip, DecoderOptions::NONE).decode()
 }
 

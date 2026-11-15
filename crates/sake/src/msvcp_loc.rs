@@ -530,7 +530,7 @@ fn c16_params(this: u32) -> (u32, u32) {
 fn c16_do_in(c: &mut Ctx) -> u32 {
     let (maxcode, mode) = c16_params(c.a(0));
     let (sp, f, fe, fnext, t, te, tnext) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
-    let src = mem::slice(f, fe.saturating_sub(f)).to_vec();
+    let src = mem::bytes(f, fe.saturating_sub(f));
     let mut dst = vec![0u16; (te.saturating_sub(t) / 2) as usize];
     let mut st = r16(sp);
     let (r, n1, n2) = c16_in(&mut st, mode, maxcode, &src, &mut dst);
@@ -565,7 +565,7 @@ fn c16_unshift(c: &mut Ctx) -> u32 {
 fn c16_length(c: &mut Ctx) -> u32 {
     let (maxcode, mode) = c16_params(c.a(0));
     let (sp, f, fe, max) = (c.a(1), c.a(2), c.a(3), c.z(4));
-    let src = mem::slice(f, fe.saturating_sub(f)).to_vec();
+    let src = mem::bytes(f, fe.saturating_sub(f));
     let mut dst = vec![0u16; max.min(src.len() as u64) as usize];
     let mut st = r16(sp);
     let (_, n1, _) = c16_in(&mut st, mode, maxcode, &src, &mut dst);

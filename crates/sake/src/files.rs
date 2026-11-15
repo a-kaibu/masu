@@ -580,17 +580,19 @@ fn left(f: &mut kura::fs::File) -> usize {
 
 impl File {
     pub fn read_into(&self, dst: u32, n: u32) -> u32 {
-        let Some(buf) = crate::mem::guest_mut(dst, n) else { return 0 };
         let mut f = self.f.lock().unwrap();
-        let mut got = 0;
-        while got < buf.len() {
-            match f.read(&mut buf[got..]) {
-                Ok(0) => break,
-                Ok(k) => got += k,
-                Err(_) => break,
+        crate::mem::view_mut(dst, n, |buf| {
+            let mut got = 0;
+            while got < buf.len() {
+                match f.read(&mut buf[got..]) {
+                    Ok(0) => break,
+                    Ok(k) => got += k,
+                    Err(_) => break,
+                }
             }
-        }
-        got as u32
+            got as u32
+        })
+        .unwrap_or(0)
     }
     /// Up to `n` bytes into host memory (fewer at the end of the file)
     /// The buffer grows with what is read, so a large `n` (fread's "the rest of the file"
@@ -611,7 +613,7 @@ impl File {
     }
     pub fn write_from(&self, src: u32, n: u32) -> u32 {
         let mut f = self.f.lock().unwrap();
-        f.write_all(crate::mem::slice(src, n)).map_or(0, |_| n)
+        crate::mem::view(src, n, |s| f.write_all(s)).map_or(0, |_| n)
     }
     pub fn seek(&self, pos: SeekFrom) -> Option<u64> {
         self.f.lock().unwrap().seek(pos).ok()

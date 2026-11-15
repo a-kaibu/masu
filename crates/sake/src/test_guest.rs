@@ -41,7 +41,7 @@ pub fn snapshot(name: &str, out: &str) {
 pub use kome::golden::Rng;
 /// FNV-1a of guest bytes (a snapshot line for a buffer).
 pub fn hash(a: u32, n: u32) -> u64 {
-    kome::golden::Fnv::of(mem::slice(a, n))
+    kome::golden::Fnv::of(&mem::bytes(a, n))
 }
 /// `call` with a guest stack under the CPU, for a handler that calls back into guest code
 /// (Ctx::call; a host_fn trap stands in for the guest's function).

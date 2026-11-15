@@ -238,7 +238,7 @@ fn wasapi_api_snapshot() {
             10 => {
                 let (d, m) = (if r.below(4) == 0 { 0 } else { po }, if r.below(4) == 0 { 0 } else { po + 8 });
                 mem::fill(po, 16, 0);
-                format!("period: {:#x} {:x?}", call(ac_period, &[cl, d, m]), mem::slice(po, 16))
+                format!("period: {:#x} {:x?}", call(ac_period, &[cl, d, m]), &mem::array::<16>(po))
             }
             11 => {
                 // (only a client with nothing queued: the engine has nothing to take from it)

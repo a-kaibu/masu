@@ -70,7 +70,7 @@ pub fn released(refs: u32) -> (u32, bool) {
 
 fn read16(p: u32) -> [u8; 16] {
     let mut g = [0u8; 16];
-    g.copy_from_slice(mem::slice(p, 16));
+    g.copy_from_slice(&mem::array::<16>(p));
     g
 }
 

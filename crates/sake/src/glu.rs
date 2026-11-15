@@ -670,7 +670,7 @@ fn gluScaleImage(c: &mut Ctx) -> u32 {
     let (Some(n), Some(_), Some(_)) = (image_bytes(wi, hi, comps, ua), image_bytes(wo, ho, comps, ua), image_bytes(wo, ho, comps, pa)) else { return GLU_OUT_OF_MEMORY };
     // (the guest's pixels as they are: no copy; image_bytes keeps sizes below MAX_IMAGE, so
     // every guest offset here fits 32 bits)
-    let src = mem::slice(a[4], lo32(n));
+    let src = &mem::bytes(a[4], lo32(n));
     // (rows unpacked at the unpack alignment, packed at the pack alignment)
     let tight = scale_image(comps, wi, hi, src, wo, ho, ua);
     let (si, so) = (row_bytes(wo, comps, ua), row_bytes(wo, comps, pa));
@@ -711,7 +711,7 @@ fn build_mipmaps(target: u32, internal: u32, w: u32, h: u32, format: u32, ty: u3
         return GLU_OUT_OF_MEMORY;
     }
     // (the guest's pixels as they are: no copy)
-    let src = mem::slice(data, lo32(n));
+    let src = &mem::bytes(data, lo32(n));
     // (the levels are tightly packed: unpack them at alignment 1, as libGLU does)
     call_gl("glPixelStorei", &[0x0cf5, 1]);
     let mut level = 0u32;

@@ -24,7 +24,7 @@ const ERROR_INVALID_PARAMETER: u32 = 87;
 
 fn guid(p: u32) -> [u8; 16] {
     let mut g = [0u8; 16];
-    g.copy_from_slice(mem::slice(p, 16));
+    g.copy_from_slice(&mem::array::<16>(p));
     g
 }
 fn put_guid(p: u32, g: &[u8; 16]) {
@@ -228,7 +228,7 @@ fn dns_extract(c: &mut Ctx, charset: u32) -> u32 {
     if b == 0 || out == 0 {
         return 87;
     }
-    match dnsrec::extract(mem::slice(b, len), charset) {
+    match dnsrec::extract(&mem::bytes(b, len), charset) {
         Ok(v) => {
             let ps: Vec<u32> = v.iter().map(|r| dnsrec::write(r, charset)).collect();
             putp(out, dnsrec::link(&ps));
@@ -366,7 +366,7 @@ fn service_construct(c: &mut Ctx) -> u32 {
     for (i, n) in [(2, 4u32), (3, 16)] {
         if c.a(i) != 0 {
             let q = mem::heap_alloc(n, false);
-            mem::write(q, &mem::slice(c.a(i), n).to_vec());
+            mem::write(q, &mem::bytes(c.a(i), n));
             wp(o + k * i as u32, q);
         }
     }
@@ -925,7 +925,7 @@ fn VS_CreateVideoProcessor(c: &mut Ctx) -> u32 {
     vs_ref(o, 1);
     wp(p + svc, o);
     put_guid(p + gd, &guid(g));
-    mem::write(p + desc, &mem::slice(d, 36).to_vec());
+    mem::write(p + desc, &mem::bytes(d, 36));
     w32(p + rtf, rt);
     w32(p + mx, max);
     putp(out, p);
@@ -980,7 +980,7 @@ fn VP_GetCreationParameters(c: &mut Ctx) -> u32 {
         put_guid(g, &guid(o + fg));
     }
     if d != 0 {
-        mem::write(d, &mem::slice(o + fd, 36).to_vec());
+        mem::write(d, &mem::bytes(o + fd, 36));
     }
     if rt != 0 {
         put32(rt, r32(o + frt));
@@ -1107,7 +1107,7 @@ fn read_types(n: u32, p: u32) -> Vec<[u8; 32]> {
     (0..n.min(1024))
         .map(|i| {
             let mut t = [0u8; 32];
-            t.copy_from_slice(mem::slice(p + 32 * i, 32));
+            t.copy_from_slice(&mem::array::<32>(p + 32 * i));
             t
         })
         .collect()
@@ -1234,7 +1234,7 @@ fn ED_Next(c: &mut Ctx) -> u32 {
     let mut got = 0;
     while got < n && pos + got < count {
         let e = ed_entry(this, pos + got);
-        mem::write(clsids + 16 * got, mem::slice(e, 16));
+        mem::write(clsids + 16 * got, &mem::array::<16>(e));
         if names != 0 {
             let s = wstr(rp(e + 16));
             let p = mem::heap_alloc(2 * s.len() as u32 + 2, true);
@@ -1342,7 +1342,7 @@ fn MoFreeMediaType(c: &mut Ctx) -> u32 {
 }
 fn copy_mt(c: &mut Ctx, dst: u32, src: u32) -> u32 {
     let (unk, cbf, pbf, size) = mt_off();
-    let b = mem::slice(src, size).to_vec();
+    let b = mem::bytes(src, size);
     mem::write(dst, &b);
     let n = r32(src + cbf);
     if n != 0 && rp(src + pbf) != 0 {
@@ -1350,7 +1350,7 @@ fn copy_mt(c: &mut Ctx, dst: u32, src: u32) -> u32 {
         if f == 0 {
             return E_OUTOFMEMORY;
         }
-        let d = mem::slice(rp(src + pbf), n).to_vec();
+        let d = mem::bytes(rp(src + pbf), n);
         mem::write(f, &d);
         wp(dst + pbf, f);
     } else {
@@ -1836,7 +1836,7 @@ mod issue88 {
         std::thread::spawn(move || { tx.send(call(ED_Next, &[p, 3, p + 64, 0, p + 120])).unwrap(); });
         assert_eq!(rx.recv_timeout(std::time::Duration::from_secs(2)).expect("Next must finish"), S_FALSE);
         assert_eq!(r32(p + 120), 2);
-        assert_eq!(mem::slice(p + 64, 32), [&[0x11; 16][..], &[0x22; 16][..]].concat());
+        assert_eq!(mem::array::<32>(p + 64)[..], [&[0x11; 16][..], &[0x22; 16][..]].concat());
         assert_eq!(call(ED_Next, &[p, 1, p + 64, 0, p + 120]), S_FALSE);
         assert_eq!(r32(p + 120), 0);
         mem::heap_free(p);

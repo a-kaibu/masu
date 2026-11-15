@@ -282,7 +282,7 @@ fn open(c: &mut Ctx, h: u32, inst: u32, name: u32, wide: bool) -> u32 {
     // (a clip sake cannot find or read opens too, shown as nothing: programs take a FALSE as
     // an error, and sake's shell32 has only some of Windows' clips)
     let data = match res {
-        Some((p, n)) => mem::slice(p, n).to_vec(),
+        Some((p, n)) => mem::bytes(p, n),
         None if name >= 0x10000 => {
             let path = if wide { String::from_utf16_lossy(&wstr(name)) } else { String::from_utf16_lossy(&a2w(&cstr(name))) };
             crate::files::resolve(&path).and_then(|f| kura::fs::read(f).ok()).unwrap_or_default()

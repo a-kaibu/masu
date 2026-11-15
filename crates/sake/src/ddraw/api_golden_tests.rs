@@ -7,7 +7,7 @@
 //! surface's bytes and of what the call filled go into ddraw/api_golden.txt (addresses left
 //! out). MASU_UPDATE_GOLDEN=1 rewrites the file.
 use super::*;
-use crate::mem::{slice, w16, w32, w8};
+use crate::mem::{bytes, w16, w32, w8};
 use crate::test_guest::{call, enter, guest_thread};
 use crate::api::Handler;
 
@@ -78,7 +78,7 @@ impl World {
         for &(i, _, _) in &self.s {
             let id = with(|st| st.blocks.get(&i).map(|b| b.0));
             if let Some(x) = id.and_then(surf) {
-                fnv(&mut h, slice(x.bits, x.pitch * x.h as u32));
+                fnv(&mut h, &bytes(x.bits, x.pitch * x.h as u32));
                 for v in [x.ck_src, x.ck_dst].into_iter().flatten() {
                     fnv(&mut h, &v.0.to_le_bytes());
                     fnv(&mut h, &v.1.to_le_bytes());
@@ -262,14 +262,14 @@ impl World {
                 let flags = self.rng.pick(&[8, 2, 4, 0x10]);
                 mem::zero(self.buf, 8);
                 let r = call(S_GetColorKey, &[d, flags, self.buf]);
-                self.log("GetColorKey", &[d, flags], r, slice(self.buf, 8));
+                self.log("GetColorKey", &[d, flags], r, &bytes(self.buf, 8));
             }
             10 | 11 => {
                 let r = self.rect(dw, dh);
                 mem::zero(self.buf, 124);
                 w32(self.buf, 124);
                 let v = call(S_Lock, &[d, r, self.buf, 1, 0]);
-                let mut e = slice(self.buf, 124).to_vec();
+                let mut e = bytes(self.buf, 124).to_vec();
                 e[36..40].fill(0);
                 self.log("Lock", &[d, r], v, &e);
                 if v == DD_OK {
@@ -289,19 +289,19 @@ impl World {
             12 => {
                 mem::zero(self.buf, 108);
                 let v = call(S_GetCaps, &[d, self.buf]);
-                self.log("GetCaps", &[d], v, slice(self.buf, 16));
+                self.log("GetCaps", &[d], v, &bytes(self.buf, 16));
             }
             13 => {
                 mem::zero(self.buf, 124);
                 w32(self.buf, self.rng.pick(&[124, 108, 0]));
                 let v = call(S_GetSurfaceDesc, &[d, self.buf]);
-                let mut e = slice(self.buf, 124).to_vec();
+                let mut e = bytes(self.buf, 124).to_vec();
                 e[36..40].fill(0);
                 self.log("GetSurfaceDesc", &[d], v, &e);
                 mem::zero(self.buf, 32);
                 w32(self.buf, 32);
                 let v = call(S_GetPixelFormat, &[d, self.buf]);
-                self.log("GetPixelFormat", &[d], v, slice(self.buf, 32));
+                self.log("GetPixelFormat", &[d], v, &bytes(self.buf, 32));
             }
             14 => {
                 if !self.pals.is_empty() {
@@ -319,7 +319,7 @@ impl World {
                     self.go("SetEntries", P_SetEntries, &[p, 0, s, n, self.buf]);
                     mem::zero(self.buf, 1024);
                     let v = call(P_GetEntries, &[p, 0, 0, 256, self.buf]);
-                    self.log("GetEntries", &[p], v, slice(self.buf, 1024));
+                    self.log("GetEntries", &[p], v, &bytes(self.buf, 1024));
                 }
             }
         }

@@ -1086,7 +1086,7 @@ fn RegGetValueW(c: &mut Ctx) -> u32 {
 
 fn set_value(key: u32, name: &str, ty: u32, data: u32, len: u32, wide: bool) -> u32 {
     let Some(path) = key_path(key) else { return 6 };
-    let mut bytes = mem::slice(data, len).to_vec();
+    let mut bytes = mem::bytes(data, len);
     if is_str(ty) && !wide {
         // all of it converted (MULTI_SZ: every string), with a NUL added when the text has none
         let nul = bytes.last().is_some_and(|&b| b != 0);
@@ -1378,7 +1378,7 @@ fn version_resource(path: &str) -> Option<Vec<u8>> {
         return ours();
     };
     let (p, n) = crate::pe::resource_data(base, e);
-    Some(mem::slice(p, n).to_vec())
+    Some(mem::bytes(p, n))
 }
 
 /// Resource `ty` of the PE file at host path `host`, its headers and resource section read by
@@ -1882,7 +1882,7 @@ fn CoGetClassObject(c: &mut Ctx) -> u32 {
     let hr = crate::comrpc::get_class(c.cpu, clsid, iid, out, context);
     if hr != 0 && crate::api::trace() != 0 {
         eprintln!("sake: CoGetClassObject {} iid {} context {context:x}: {hr:08x}",
-            crate::comrpc::text(mem::slice(clsid, 16)), crate::comrpc::text(mem::slice(iid, 16)));
+            crate::comrpc::text(&mem::array::<16>(clsid)), crate::comrpc::text(&mem::array::<16>(iid)));
     }
     hr
 }
@@ -2197,10 +2197,10 @@ fn CoCreateGuid(c: &mut Ctx) -> u32 {
     0
 }
 fn IsEqualGUID(c: &mut Ctx) -> u32 {
-    (mem::slice(c.a(0), 16) == mem::slice(c.a(1), 16)) as u32
+    (&mem::array::<16>(c.a(0)) == &mem::array::<16>(c.a(1))) as u32
 }
 fn guid_string(p: u32) -> String {
-    let b = mem::slice(p + 8, 8);
+    let b = &mem::array::<8>(p + 8);
     format!(
         "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
         r32(p),
@@ -2404,13 +2404,13 @@ fn UuidEqual(c: &mut Ctx) -> u32 {
     put32(c.a(2), 0);
     let z = [0u8; 16];
     let (a, b) = (c.a(0), c.a(1));
-    let va = if a == 0 { z.to_vec() } else { mem::slice(a, 16).to_vec() };
-    let vb = if b == 0 { z.to_vec() } else { mem::slice(b, 16).to_vec() };
+    let va = if a == 0 { z.to_vec() } else { mem::bytes(a, 16) };
+    let vb = if b == 0 { z.to_vec() } else { mem::bytes(b, 16) };
     (va == vb) as u32
 }
 fn UuidIsNil(c: &mut Ctx) -> u32 {
     put32(c.a(1), 0);
-    (c.a(0) == 0 || mem::slice(c.a(0), 16).iter().all(|&b| b == 0)) as u32
+    (c.a(0) == 0 || mem::array::<16>(c.a(0)).iter().all(|&b| b == 0)) as u32
 }
 // OLE drag and drop: a window's IDropTarget is its property "OleDropTargetInterface"
 const DROP_PROP: &str = "oledroptargetinterface";
@@ -4720,7 +4720,7 @@ fn CryptImportKey(c: &mut Ctx) -> u32 {
     if c.a(3) != 0 || c.a(4) != 0 {
         return crypto_result(Err(crate::cng::NTE_BAD_FLAGS));
     }
-    match PublicRsa::from_blob(mem::slice(c.a(1), c.a(2))) {
+    match PublicRsa::from_blob(&mem::bytes(c.a(1), c.a(2))) {
         Ok(key) => {
             let id = NEXT_HASH.fetch_add(1, Ordering::Relaxed);
             RSA_KEYS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, key);
@@ -4775,7 +4775,7 @@ fn CryptVerifySignatureA(c: &mut Ctx) -> u32 {
         *done = true;
         h.digest()
     };
-    crypto_result(k.verify(alg, &digest, mem::slice(c.a(1), c.a(2)), c.a(5)))
+    crypto_result(k.verify(alg, &digest, &mem::bytes(c.a(1), c.a(2)), c.a(5)))
 }
 fn CryptVerifySignatureW(c: &mut Ctx) -> u32 {
     CryptVerifySignatureA(c)
@@ -4859,7 +4859,7 @@ fn CryptCreateHash(c: &mut Ctx) -> u32 {
     1
 }
 fn CryptHashData(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(1), c.a(2));
+    let data = &mem::bytes(c.a(1), c.a(2));
     let mut g = HASHES.lock().unwrap();
     let Some((h, done)) = g.get_or_insert_with(HashMap::default).get_mut(&c.a(0)) else {
         crate::k32::last_error(87);
@@ -5003,7 +5003,7 @@ fn rc4_call(c: &mut Ctx) -> u32 {
     while data != 0 && at < n {
         let m = (n - at).min(4096);
         let piece = &mut buf[..m as usize];
-        piece.copy_from_slice(mem::slice(data.wrapping_add(at), m));
+        piece.copy_from_slice(&mem::bytes(data.wrapping_add(at), m));
         k.apply(piece);
         mem::write(data.wrapping_add(at), piece);
         at += m;

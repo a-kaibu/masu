@@ -581,12 +581,12 @@ fn effect_from(c: &mut Ctx, dev: u32, data: &[u8], name: &str, defs: u32, inc: u
     }
 }
 fn D3DXCreateEffect(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(1), c.a(2)).to_vec();
+    let data = mem::bytes(c.a(1), c.a(2));
     let (dev, defs, inc, flags, out, errs) = (c.a(0), c.a(3), c.a(4), c.a(5), c.a(7), c.a(8));
     effect_from(c, dev, &data, "", defs, inc, flags, out, errs)
 }
 fn D3DXCreateEffectEx(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(1), c.a(2)).to_vec();
+    let data = mem::bytes(c.a(1), c.a(2));
     let (dev, defs, inc, flags, out, errs) = (c.a(0), c.a(3), c.a(4), c.a(6), c.a(8), c.a(9));
     effect_from(c, dev, &data, "", defs, inc, flags, out, errs)
 }
@@ -621,7 +621,7 @@ pub(crate) fn rcdata(module: u32, name: u32, wide: bool) -> Option<Vec<u8>> {
     let name = crate::pe::ResId::from_arg(name, wide);
     let e = crate::pe::find_resource(m, &crate::pe::ResId::Int(10), &name)?;
     let (at, n) = crate::pe::resource_data(m, e);
-    Some(mem::slice(at, n).to_vec())
+    Some(mem::bytes(at, n))
 }
 /// D3DXCreateEffectFromResource{A,W}(device, module, resource, defines, include, flags, pool,
 /// effect, errors) and the Ex forms (.., include, skip, flags, pool, effect, errors)
@@ -657,7 +657,7 @@ fn D3DXCreateEffectFromResourceExW(c: &mut Ctx) -> u32 {
 pub fn resource_bytes(module: u32, name: u32, wide: bool) -> Option<Vec<u8>> {
     let m = if module == 0 { crate::k32::module_handle(0, false) } else { module };
     let id = crate::pe::ResId::from_arg(name, wide);
-    let data = |e: u32| mem::slice(m + r32(e), r32(e + 4)).to_vec();
+    let data = |e: u32| mem::bytes(m + r32(e), r32(e + 4));
     if let Some(e) = crate::pe::find_resource(m, &crate::pe::ResId::Int(10), &id) {
         return Some(data(e));
     }
@@ -1001,13 +1001,13 @@ fn texture_from(c: &mut Ctx, dev: u32, data: &[u8], a: [u32; 12]) -> u32 {
     0
 }
 fn D3DXCreateTextureFromFileInMemoryEx(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(1), c.a(2)).to_vec();
+    let data = mem::bytes(c.a(1), c.a(2));
     let a = std::array::from_fn(|k| c.a(3 + k as u32));
     let dev = c.a(0);
     texture_from(c, dev, &data, a)
 }
 fn D3DXCreateTextureFromFileInMemory(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(1), c.a(2)).to_vec();
+    let data = mem::bytes(c.a(1), c.a(2));
     let (dev, out) = (c.a(0), c.a(3));
     texture_from(c, dev, &data, [u32::MAX, u32::MAX, u32::MAX, 0, 0, 1, 0, 0, 0, 0, 0, out])
 }
@@ -1114,13 +1114,13 @@ fn cube_from(c: &mut Ctx, dev: u32, data: &[u8], a: [u32; 11]) -> u32 {
     0
 }
 fn D3DXCreateCubeTextureFromFileInMemoryEx(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(1), c.a(2)).to_vec();
+    let data = mem::bytes(c.a(1), c.a(2));
     let a = std::array::from_fn(|k| c.a(3 + k as u32));
     let dev = c.a(0);
     cube_from(c, dev, &data, a)
 }
 fn D3DXCreateCubeTextureFromFileInMemory(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(1), c.a(2)).to_vec();
+    let data = mem::bytes(c.a(1), c.a(2));
     let (dev, out) = (c.a(0), c.a(3));
     cube_from(c, dev, &data, [u32::MAX, u32::MAX, 0, 0, 1, 0, 0, 0, 0, 0, out])
 }
@@ -1250,7 +1250,7 @@ fn surface_from(c: &mut Ctx, surf: u32, dst: u32, data: &[u8], src: u32, key: u3
 /// D3DXLoadSurfaceFromFileInMemory(surface, palette, dst rect, data, length, src rect, filter,
 /// color key, &info)
 fn D3DXLoadSurfaceFromFileInMemory(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(3), c.a(4)).to_vec();
+    let data = mem::bytes(c.a(3), c.a(4));
     let (surf, dst, src, key, info) = (c.a(0), c.a(2), c.a(5), c.a(7), c.a(8));
     surface_from(c, surf, dst, &data, src, key, info)
 }
@@ -1295,7 +1295,7 @@ fn D3DXGetImageInfoFromFileW(c: &mut Ctx) -> u32 {
 }
 /// D3DXGetImageInfoFromFileInMemory(data, length, &info)
 fn D3DXGetImageInfoFromFileInMemory(c: &mut Ctx) -> u32 {
-    let data = mem::slice(c.a(0), c.a(1)).to_vec();
+    let data = mem::bytes(c.a(0), c.a(1));
     if let Some(d) = crate::dds::parse(&data) {
         dds_info(c.a(2), &d);
         return 0;
@@ -1526,7 +1526,7 @@ fn rows_at(bits: u32, pitch: u32, (l, t, r, b): (u32, u32, u32, u32), bpp: u32) 
     for (y, out) in px.chunks_exact_mut(row).enumerate() {
         let at = bits.wrapping_add((t + y as u32).wrapping_mul(pitch)).wrapping_add(l * bpp);
         if mem::accessible(at, row as u32, false, false) >= row as u32 {
-            out.copy_from_slice(mem::slice(at, row as u32));
+            out.copy_from_slice(&mem::bytes(at, row as u32));
         }
     }
     px
@@ -1935,7 +1935,7 @@ mod surface_quat_tests {
             let px = rows_at(p, pitch, (l, t, l + w, t + h), bpp);
             prop_assert_eq!(px.len() as u32, w * h * bpp);
             for y in 0..h {
-                let want = mem::slice(p + (t + y) * pitch + l * bpp, w * bpp).to_vec();
+                let want = mem::bytes(p + (t + y) * pitch + l * bpp, w * bpp);
                 prop_assert_eq!(&px[(y * w * bpp) as usize..((y + 1) * w * bpp) as usize], &want[..]);
             }
             mem::heap_free(p);
@@ -2254,7 +2254,7 @@ mod review_tests {
             mem::fill(m2, n, 0xcd);
             put_scaled(&px, iw, src, fmt, dw, dh, m1, pitch);
             put_scaled_ref(&px, iw, src, fmt, dw, dh, m2, pitch);
-            let same = mem::slice(m1, n) == mem::slice(m2, n);
+            let same = &mem::bytes(m1, n) == &mem::bytes(m2, n);
             mem::heap_free(m1);
             mem::heap_free(m2);
             prop_assert!(same);
@@ -2290,8 +2290,8 @@ mod review_tests {
         let m = mem::heap_alloc(pitch * ih, true);
         put_scaled(&px, iw, (0, 0, iw, ih), 21, iw, ih, m, pitch);
         for y in 0..ih {
-            assert_eq!(mem::slice(m + y * pitch, iw * 4), &px[(y * iw * 4) as usize..][..(iw * 4) as usize]);
-            assert!(mem::slice(m + y * pitch + iw * 4, 12).iter().all(|&b| b == 0));
+            assert_eq!(&mem::bytes(m + y * pitch, iw * 4), &px[(y * iw * 4) as usize..][..(iw * 4) as usize]);
+            assert!(mem::array::<12>(m + y * pitch + iw * 4).iter().all(|&b| b == 0));
         }
         mem::heap_free(m);
     }
@@ -2308,7 +2308,7 @@ mod review_tests {
         assert_eq!(call(D3DXCreateBuffer, &[100, out]), 0);
         let o = r32(out);
         assert_eq!(r32(o + 12), 100);
-        assert!(mem::slice(r32(o + 8), 100).iter().all(|&b| b == 0));
+        assert!(mem::array::<100>(r32(o + 8)).iter().all(|&b| b == 0));
         assert_eq!(release_count(o), (0, true));
         mem::heap_free(r32(o + 8));
         mem::heap_free(o);

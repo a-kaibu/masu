@@ -40,7 +40,7 @@ pub fn capacity(s: u32) -> u32 {
     r32(s + RES)
 }
 pub fn bytes(s: u32) -> Vec<u8> {
-    mem::slice(ptr(s), size(s)).to_vec()
+    mem::bytes(ptr(s), size(s))
 }
 
 fn alloc(n: u32) -> u32 {
@@ -62,7 +62,7 @@ fn tidy(s: u32, built: bool, newsize: u32) {
     } else if capacity(s) > ALLOC_MASK {
         let p = r32(s + BX);
         if newsize > 0 {
-            let keep = mem::slice(p, newsize).to_vec();
+            let keep = mem::bytes(p, newsize);
             mem::write(s + BX, &keep);
         }
         dealloc(p);
@@ -86,7 +86,7 @@ fn copy(s: u32, newsize: u32, oldlen: u32) -> bool {
         return false;
     }
     if oldlen > 0 {
-        let old = mem::slice(ptr(s), oldlen).to_vec();
+        let old = mem::bytes(ptr(s), oldlen);
         mem::write(p, &old);
     }
     tidy(s, true, 0);
@@ -213,7 +213,7 @@ fn substr(c: &mut Ctx) -> u32 {
         crate::fatal(c.cpu, "msvcp90: basic_string::substr position past the end (std::out_of_range is not thrown here)");
     }
     let num = count.min(n - off);
-    let b = mem::slice(ptr(s) + off, num).to_vec();
+    let b = mem::bytes(ptr(s) + off, num);
     w32(out, 0);
     init(out);
     assign_bytes(c, out, &b);

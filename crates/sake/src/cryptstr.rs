@@ -311,7 +311,7 @@ fn binary_to_string(c: &mut Ctx, wide: bool) -> u32 {
         last_error(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    let data = mem::slice(p, n).to_vec();
+    let data = mem::bytes(p, n);
     let cap = mem::r32(plen);
     // (no data: nothing to write, for every format)
     if n == 0 {
@@ -410,7 +410,7 @@ fn string_to_binary(c: &mut Ctx, wide: bool) -> u32 {
         let raw = s.iter().flat_map(|u| u.to_le_bytes()).collect();
         (s, raw)
     } else {
-        let raw = if n == 0 { mem::cstr(p) } else { mem::slice(p, n).to_vec() };
+        let raw = if n == 0 { mem::cstr(p) } else { mem::bytes(p, n) };
         (raw.iter().map(|&b| b as u16).collect(), raw)
     };
     let cap = mem::r32(plen);

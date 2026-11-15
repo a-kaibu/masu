@@ -112,7 +112,7 @@ pub const FORMAT_VIDEO_INFO: Guid = guid(0x0558_9f80, 0xc356, 0x11ce, [0xbf, 0x0
 pub const FORMAT_WAVE_FORMAT_EX: Guid = guid(0x0558_9f81, 0xc356, 0x11ce, [0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a]);
 
 fn guid_at(p: u32) -> Option<Guid> {
-    (p != 0).then(|| mem::slice(p, 16).first_chunk::<16>().copied().unwrap_or([0; 16]))
+    (p != 0).then(|| mem::array::<16>(p).first_chunk::<16>().copied().unwrap_or([0; 16]))
 }
 fn put_guid(p: u32, g: &Guid) {
     mem::write(p, g);
@@ -168,7 +168,7 @@ impl MediaType {
         let n = r32(p + k + ps());
         let at = (p + k + ps() + 4).next_multiple_of(ps());
         let fp = rp(at);
-        let format = if n != 0 && fp != 0 && n < 1 << 20 { mem::slice(fp, n).to_vec() } else { Vec::new() };
+        let format = if n != 0 && fp != 0 && n < 1 << 20 { mem::bytes(fp, n) } else { Vec::new() };
         Some(MediaType {
             major: guid_at(p)?,
             sub: guid_at(p + 16)?,
@@ -265,7 +265,7 @@ impl GuestStream {
             let hr = crate::dshow::com(c, self.stream, 3, &[buf, lo32(n), got]);
             if hr & 0x8000_0000 == 0 {
                 let k = r32(got).min(lo32(n));
-                out = mem::slice(buf, k).to_vec();
+                out = mem::bytes(buf, k);
             }
         }
         mem::heap_free(buf);

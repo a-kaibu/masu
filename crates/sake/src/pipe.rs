@@ -132,7 +132,7 @@ pub fn crt_write(p: Handle, buf: u32, n: u32) -> Result<u32, u32> {
     if !p.write {
         return Err(kern::ACCESS_DENIED);
     }
-    let (e, data) = (p.end, mem::slice(buf, n).to_vec());
+    let (e, data) = (p.end, mem::bytes(buf, n));
     let mut w = kern::Write::default();
     let r = kern::block(None, &|| false, move |k: &mut Kern| k.write(e, &data, &mut w));
     pump();
@@ -380,7 +380,7 @@ pub fn nt_write(h: u32, p: Handle, nt: NtIo, buf: u32, n: u32) -> u32 {
     if !p.write {
         return kern::ACCESS_DENIED;
     }
-    let (e, data) = (p.end, mem::slice(buf, n).to_vec());
+    let (e, data) = (p.end, mem::bytes(buf, n));
     nt_io(h, p, nt, {
         // (the write's progress through the reader's buffer, kept between its tries)
         let mut w = kern::Write::default();
@@ -416,7 +416,7 @@ pub fn write(c: &mut Ctx, h: u32, p: Handle) -> u32 {
         put32(out, 0);
         return fail(kern::ACCESS_DENIED);
     }
-    let (e, data) = (p.end, mem::slice(buf, n).to_vec());
+    let (e, data) = (p.end, mem::bytes(buf, n));
     io(h, p, ov, out, {
         // (the write's progress through the reader's buffer, kept between its tries)
         let mut w = kern::Write::default();
@@ -483,7 +483,7 @@ fn DisconnectNamedPipe(c: &mut Ctx) -> u32 {
 fn TransactNamedPipe(c: &mut Ctx) -> u32 {
     let (inp, n, outp, cap, pread, ov) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6));
     with_pipe(c, |h, p| {
-        let (e, data) = (p.end, mem::slice(inp, n).to_vec());
+        let (e, data) = (p.end, mem::bytes(inp, n));
         let mut sent = false;
         io(
             h,
@@ -603,7 +603,7 @@ fn call_named(c: &mut Ctx, wide: bool) -> u32 {
     let r = match kw(|k| k.set_mode(p.end, Some(true), None)) {
         SUCCESS => {
             let (inp, n, outp, cap, pread) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
-            let data = mem::slice(inp, n).to_vec();
+            let data = mem::bytes(inp, n);
             let e = p.end;
             let mut sent = false;
             io(

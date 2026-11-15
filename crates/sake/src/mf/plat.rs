@@ -375,15 +375,19 @@ fn read_into(b: u32, p: u32, n: u32) -> Result2 {
         let pos = s.pos;
         let Some(f) = s.file.as_mut() else { return Err(Hr::Shutdown.code()) };
         f.seek(SeekFrom::Start(pos)).map_err(|_| Hr::Fail.code())?;
-        let Some(buf) = mem::guest_mut(p, n) else { return Err(Hr::Fail.code()) };
-        let mut got = 0usize;
-        while got < buf.len() {
-            match f.read(&mut buf[got..]) {
-                Ok(0) => break,
-                Ok(k) => got += k,
-                Err(_) => return Err(Hr::Fail.code()),
+        let read = mem::view_mut(p, n, |buf| {
+            let mut got = 0usize;
+            while got < buf.len() {
+                match f.read(&mut buf[got..]) {
+                    Ok(0) => break,
+                    Ok(k) => got += k,
+                    Err(_) => return Err(Hr::Fail.code()),
+                }
             }
-        }
+            Ok(got)
+        });
+        let Some(got) = read else { return Err(Hr::Fail.code()) };
+        let got = got?;
         s.pos += lo64(got);
         Ok(lo32(got))
     })
@@ -399,7 +403,7 @@ fn write_from(b: u32, p: u32, n: u32) -> Result2 {
         let pos = s.pos;
         let Some(f) = s.file.as_mut() else { return Err(Hr::Shutdown.code()) };
         f.seek(SeekFrom::Start(pos)).map_err(|_| Hr::Fail.code())?;
-        f.write_all(mem::slice(p, n)).map_err(|_| Hr::Fail.code())?;
+        mem::view(p, n, |s| f.write_all(s)).map_err(|_| Hr::Fail.code())?;
         s.pos += u64::from(n);
         Ok(n)
     })

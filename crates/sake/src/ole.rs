@@ -399,7 +399,7 @@ fn OleLoadPicture(c: &mut Ctx) -> u32 {
         // (a Read claiming more than it was asked for read no more than the buffer; a stream
         // that never ends stops at what a picture can be)
         let n = r32(got).min(want);
-        data.extend_from_slice(mem::slice(buf, n));
+        mem::view(buf, n, |s| data.extend_from_slice(s));
         if n < want || data.len() >= PICTURE_BYTES_MAX {
             break;
         }
@@ -557,7 +557,7 @@ mod stream_tests {
     fn read(s: u32, n: u32) -> Vec<u8> {
         let (p, got) = (mem::heap_alloc(n + 1, true), mem::heap_alloc(4, true));
         assert_eq!(call(s_read, &[s, p, n, got]), 0);
-        let v = mem::slice(p, r32(got)).to_vec();
+        let v = mem::bytes(p, r32(got));
         mem::heap_free(p);
         mem::heap_free(got);
         v
@@ -632,7 +632,7 @@ mod stream_tests {
                             let old = model.len();
                             model.resize(end, 0);
                             let p = crate::k32::global_ptr(hg(s));
-                            if pos as usize > old { model[old..pos as usize].copy_from_slice(mem::slice(p + old as u32, pos - old as u32)); }
+                            if pos as usize > old { model[old..pos as usize].copy_from_slice(&mem::bytes(p + old as u32, pos - old as u32)); }
                         }
                         model[pos as usize..end].copy_from_slice(&data);
                         streams[i].1 = end as u32;

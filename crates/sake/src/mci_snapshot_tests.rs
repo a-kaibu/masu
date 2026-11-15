@@ -236,7 +236,7 @@ fn mci_command_snapshot() {
         let rc = call(mciSendCommandA, &[id, msg, flags, blk]);
         let info = if msg == MCI_INFO {
             // (the buffer only: an unterminated one shows its 0xcc)
-            let b: Vec<u8> = mem::slice(buf, 256).iter().copied().take_while(|&x| x != 0).collect();
+            let b: Vec<u8> = mem::array::<256>(buf).iter().copied().take_while(|&x| x != 0).collect();
             crate::text::a2s(&b).replace(&path, "PATH")
         } else {
             String::new()

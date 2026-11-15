@@ -791,7 +791,7 @@ fn bytes(a: u32, n: u32) -> Vec<u8> {
     if a == 0 || n == 0 {
         Vec::new()
     } else {
-        mem::slice(a, n).to_vec()
+        mem::bytes(a, n)
     }
 }
 /// Writes `data` to (out, outlen) and its size to *result; out NULL: only the size
@@ -1229,7 +1229,7 @@ fn NCryptSetProperty(c: &mut Ctx) -> u32 {
             if input == 0 {
                 return NTE_INVALID_PARAMETER;
             }
-            let units: Vec<u16> = mem::slice(input, size & !1).chunks(2).map(|b| u16::from_le_bytes([b[0], b[1]])).take_while(|&u| u != 0).collect();
+            let units: Vec<u16> = mem::bytes(input, size & !1).chunks(2).map(|b| u16::from_le_bytes([b[0], b[1]])).take_while(|&u| u != 0).collect();
             let Some(curve) = Curve::from_name(&String::from_utf16_lossy(&units)) else { return NTE_NOT_SUPPORTED };
             set(&|k| {
                 k.curve = Some(curve);

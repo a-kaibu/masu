@@ -92,7 +92,7 @@ fn guid_is(p: u32, g: Iid) -> bool {
 }
 const IID_UNKNOWN: [u8; 16] = guid(0, 0, 0, [0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
 fn is_unknown(iid: u32) -> bool {
-    iid != 0 && mem::slice(iid, 16) == IID_UNKNOWN
+    iid != 0 && mem::array::<16>(iid) == IID_UNKNOWN
 }
 const IID_ENUMERATOR: Iid = (0xa956_64d2, 0x9614, 0x4f35);
 const IID_COLLECTION: Iid = (0x0bd7_a1be, 0x7a1a, 0x44db);
@@ -498,7 +498,7 @@ fn ps_get(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     mem::fill(v, 8 + 2 * ps(), 0);
-    let k = mem::slice(key, 16);
+    let k = &mem::array::<16>(key);
     let pid = r32(key + 16);
     match KEYS.iter().find(|(g, p, _)| g[..] == *k && *p == pid).map(|e| &e.2) {
         Some(Val::Str(s)) => {

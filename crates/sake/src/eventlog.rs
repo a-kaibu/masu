@@ -449,8 +449,8 @@ fn report(c: &mut Ctx, wide: bool) -> u32 {
         return fail(ERROR_INVALID_PARAMETER);
     }
     let strings = (0..ns).map(|i| arg_str(mem::rp(strs + i * mem::ps()), wide)).collect();
-    let sid = if sid == 0 { vec![] } else { mem::slice(sid, 8 + 4 * mem::r8(sid + 1) as u32).to_vec() };
-    let data = if dsize == 0 { vec![] } else { mem::slice(data, dsize).to_vec() };
+    let sid = if sid == 0 { vec![] } else { mem::bytes(sid, 8 + 4 * mem::r8(sid + 1) as u32) };
+    let data = if dsize == 0 { vec![] } else { mem::bytes(data, dsize) };
     let r = Rec { time: now(), id, ty: ty as u16, category: cat as u16, source, computer: COMPUTER.into(), sid, strings, data, number: 0 };
     with(|s| s.logs.entry(log).or_default().report(r));
     last_error(0);
@@ -587,7 +587,7 @@ fn start_trace(c: &mut Ctx, wide: bool) -> u32 {
     let name = arg_str(pn, wide);
     let len = if wide { name.encode_utf16().count() as u32 * 2 } else { crate::text::s2a(&name).len() as u32 };
     let (fo, no) = offs();
-    let e = trace_check(mem::r32(p), len, mem::r32(p + fo), mem::r32(p + no), mem::r32(p + 64), mem::slice(p + 24, 16), name == "NT Kernel Logger");
+    let e = trace_check(mem::r32(p), len, mem::r32(p + fo), mem::r32(p + no), mem::r32(p + 64), &mem::array::<16>(p + 24), name == "NT Kernel Logger");
     if e != 0 {
         return e;
     }

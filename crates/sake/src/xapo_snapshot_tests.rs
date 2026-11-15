@@ -193,7 +193,7 @@ fn xapo_snapshot() {
         let p = rp(po);
         let name = String::from_utf16_lossy(&mem::wstr(p + 16));
         let words: Vec<u32> = (0..7).map(|j| r32(p + 1040 + 4 * j)).collect();
-        writeln!(out, "regprops class#{i}: {hr:#x} clsid={} name={name:?} words={words:?} hash={:#x}", mem::slice(p, 16) == g, hash(p, 1068)).unwrap();
+        writeln!(out, "regprops class#{i}: {hr:#x} clsid={} name={name:?} words={words:?} hash={:#x}", &mem::array::<16>(p) == g, hash(p, 1068)).unwrap();
         writeln!(out, "  null out: {:#x}", call(GetRegistrationProperties, &[o + ps(), 0])).unwrap();
         call(Release, &[o]);
     }
@@ -206,7 +206,7 @@ fn xapo_snapshot() {
         putp(po, 0xdead_beef);
         let hr = call(IsFormatSupported, &[0, 0, f, if with_out { po } else { 0 }]);
         let p = rp(po);
-        let got = if !with_out { "-".to_string() } else if p == 0xdead_beef { "untouched".into() } else if p == 0 { "0".into() } else { format!("{:?}", mem::slice(p, 18)) };
+        let got = if !with_out { "-".to_string() } else if p == 0xdead_beef { "untouched".into() } else if p == 0 { "0".into() } else { format!("{:?}", &mem::array::<18>(p)) };
         writeln!(out, "supported {d} out={with_out}: {hr:#x} {got}").unwrap();
         mem::heap_free(f);
     }

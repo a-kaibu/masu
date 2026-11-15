@@ -261,7 +261,7 @@ fn read_format_check(p: u32, direct: bool) -> Result<(), WaveErr> {
         let cb = r16(p + 16);
         let mut g = [0u8; 16];
         if cb >= 22 {
-            g.copy_from_slice(mem::slice(p + 24, 16));
+            g.copy_from_slice(&mem::array::<16>(p + 24));
         }
         (cb, r16(p + 18), g)
     });
@@ -1276,7 +1276,7 @@ fn GetDeviceID(c: &mut Ctx) -> u32 {
         return Hr::InvalidParam.code();
     }
     let mut g = [0u8; 16];
-    g.copy_from_slice(mem::slice(src, 16));
+    g.copy_from_slice(&mem::array::<16>(src));
     match device_id(g, !no_sound()) {
         Ok(d) => {
             mem::write(dst, &d);
@@ -1853,7 +1853,7 @@ fn sound_image(name: u32, module: u32, flags: u32, wide: bool) -> Option<Vec<u8>
     if flags & SND_RESOURCE == SND_RESOURCE {
         let m = if module == 0 { crate::k32::module_handle(0, false) } else { module };
         let e = crate::pe::find_resource(m, &crate::pe::ResId::Name("WAVE".encode_utf16().collect()), &crate::pe::ResId::from_arg(name, wide))?;
-        return Some(mem::slice(m + r32(e), r32(e + 4)).to_vec());
+        return Some(mem::bytes(m + r32(e), r32(e + 4)));
     }
     let path = crate::k32::arg_str(name, wide);
     let read = |p: &str| crate::files::resolve(p).and_then(|h| kura::fs::read(h).ok());
@@ -1883,7 +1883,7 @@ fn play_sound(name: u32, module: u32, flags: u32, wide: bool) -> u32 {
             return 0;
         }
         let n = r32(name + 4).saturating_add(8);
-        mem::slice(name, mem::accessible(name, n, false, true)).to_vec()
+        mem::bytes(name, mem::accessible(name, n, false, true))
     } else {
         match sound_image(name, module, flags, wide) {
             Some(b) => b,

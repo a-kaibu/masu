@@ -310,7 +310,7 @@ fn _Winerror_message(c: &mut Ctx) -> u32 {
     if n == 0 {
         return 0;
     }
-    let s = mem::slice(tmp.0, n).to_vec();
+    let s = mem::bytes(tmp.0, n);
     while n > 0 && matches!(s[n as usize - 1], b'\r' | b'\n') {
         n -= 1;
     }

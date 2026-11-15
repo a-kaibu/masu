@@ -172,8 +172,8 @@ proptest! {
         prop_assert_eq!(lo as u64 | (c.edx.unwrap() as u64) << 32, old);
         prop_assert_eq!(mem::r64(ios + 32), new);
         // nothing else of the ios_base written
-        prop_assert_eq!(mem::slice(ios, 32).iter().all(|&b| b == 0), true);
-        prop_assert_eq!(mem::slice(ios + 40, 16).iter().all(|&b| b == 0), true);
+        prop_assert_eq!(mem::array::<32>(ios).iter().all(|&b| b == 0), true);
+        prop_assert_eq!(mem::array::<16>(ios + 40).iter().all(|&b| b == 0), true);
         let mut c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: Some(ios) };
         let lo = get(&mut c);
         prop_assert_eq!(lo as u64 | (c.edx.unwrap() as u64) << 32, new);

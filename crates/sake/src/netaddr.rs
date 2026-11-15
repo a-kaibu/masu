@@ -407,7 +407,7 @@ fn v6_s2a(c: &mut Ctx, w: bool, ex: bool) -> u32 {
         return STATUS_INVALID_PARAMETER;
     }
     let s = if w { wide(p) } else { narrow(p) };
-    let mut a: [u8; 16] = mem::slice(out, 16).try_into().unwrap();
+    let mut a: [u8; 16] = mem::array::<16>(out);
     let r = v6_parse(&s, &mut a, ex, !ex);
     mem::write(out, &a);
     if term != 0 {
@@ -451,12 +451,12 @@ fn v4_a2s_ex(c: &mut Ctx, w: bool) -> u32 {
     if a == 0 || out == 0 || sizep == 0 {
         return STATUS_INVALID_PARAMETER;
     }
-    let s = v4_text(mem::slice(a, 4).try_into().unwrap(), port);
+    let s = v4_text(mem::array::<4>(a), port);
     put_text(&s, out, sizep, w, true)
 }
 fn v4_a2s(c: &mut Ctx, w: bool) -> u32 {
     let (a, out) = (c.a(0), c.a(1));
-    let s = v4_text(mem::slice(a, 4).try_into().unwrap(), 0);
+    let s = v4_text(mem::array::<4>(a), 0);
     let ch = if w { 2 } else { 1 };
     put_raw(&s, out, w);
     out + s.len() as u32 * ch
@@ -466,7 +466,7 @@ fn v6_a2s_ex(c: &mut Ctx, w: bool) -> u32 {
     if a == 0 || out == 0 || sizep == 0 {
         return STATUS_INVALID_PARAMETER;
     }
-    let s = v6_text(mem::slice(a, 16).try_into().unwrap(), scope, port);
+    let s = v6_text(&mem::array::<16>(a), scope, port);
     put_text(&s, out, sizep, w, false)
 }
 fn v6_a2s(c: &mut Ctx, w: bool) -> u32 {
@@ -481,7 +481,7 @@ fn v6_a2s(c: &mut Ctx, w: bool) -> u32 {
     } else {
         mem::w8(out + 45, 0);
     }
-    let s = v6_text(mem::slice(a, 16).try_into().unwrap(), 0, 0);
+    let s = v6_text(&mem::array::<16>(a), 0, 0);
     put_raw(&s, out, w);
     out + s.len() as u32 * ch
 }

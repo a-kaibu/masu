@@ -340,7 +340,7 @@ pub(crate) fn read_bgra(obj: u32, surface: bool) -> Option<(u32, u32, Vec<u8>)> 
     let (pitch, bits) = (lr[0], lr[ps() as usize / 4]);
     let mut out = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
-        let row = mem::slice(bits + y * pitch, w * bpp);
+        let row = &mem::bytes(bits + y * pitch, w * bpp);
         out.extend(widen_bgra(&row, fmt));
     }
     d3d_call(unlock_m, &a(&[]));

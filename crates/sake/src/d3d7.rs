@@ -1846,7 +1846,7 @@ impl Raster {
         let z = zs.as_ref().and_then(|z| {
             let bytes = (z.bpp as usize / 8).max(2);
             let mask = if z.pf[2] != 0 { z.pf[2] } else if bytes == 2 { 0xffff } else { 0xff_ffff };
-            Some((mem::guest_mut(z.bits, z.pitch.checked_mul(z.h.max(0) as u32)?)?.as_mut_ptr(), z.pitch as usize, bytes, mask as f32))
+            Some((mem::host_ptr_mut(z.bits, z.pitch.checked_mul(z.h.max(0) as u32)?)?, z.pitch as usize, bytes, mask as f32))
         });
         // (a z-buffer smaller than the target, which AddAttachedSurface lets through: drawing
         // stays inside it, as its rows past its end are other guest memory)
@@ -1858,8 +1858,8 @@ impl Raster {
             if t[TSS_COLOROP] <= 1 {
                 break;
             }
-            let tex = surf(d.tex[i]).filter(|s| s.bpp >= 8 && s.w > 0 && s.h > 0).map(|s| Tex {
-                bits: mem::slice(s.bits, s.pitch * s.h as u32).as_ptr(),
+            let tex = surf(d.tex[i]).filter(|s| s.bpp >= 8 && s.w > 0 && s.h > 0).and_then(|s| Some(Tex {
+                bits: mem::host_ptr(s.bits, s.pitch * s.h as u32)?,
                 w: s.w,
                 h: s.h,
                 pitch: s.pitch as usize,
@@ -1867,7 +1867,7 @@ impl Raster {
                 fmt: Fmt::of(&s),
                 pal: if s.bpp == 8 { Some(pal_of(&s).unwrap_or_else(|| Box::new([0; 256]))) } else { None },
                 key: s.ck_src,
-            });
+            }));
             let tci = (t[TSS_TEXCOORDINDEX] & 7) as usize;
             ntc = ntc.max(tci + 1);
             stages.push(Stage {
@@ -1883,7 +1883,7 @@ impl Raster {
             });
         }
         Some(Raster {
-            rt: mem::guest_mut(rt.bits, rt.pitch.checked_mul(rt.h.max(0) as u32)?)?.as_mut_ptr(),
+            rt: mem::host_ptr_mut(rt.bits, rt.pitch.checked_mul(rt.h.max(0) as u32)?)?,
             pitch: rt.pitch as usize,
             bpp: rt.bpp as usize / 8,
             fmt: Fmt::of(&rt),
@@ -2415,7 +2415,7 @@ fn write_desc3(p: u32, size: u32, dev: usize, empty: bool) {
     for k in 0..9 {
         put(&mut b, 216 + 4 * k, r32(d7 + 152 + 4 * k as u32));
     }
-    b[248..252].copy_from_slice(&mem::slice(d7 + 184, 4));
+    b[248..252].copy_from_slice(&mem::array::<4>(d7 + 184));
     mem::heap_free(d7);
     mem::write(p, &b[..size.min(252) as usize]);
 }

@@ -968,7 +968,7 @@ mod review_tests {
             e.data = vec![0x5a; n];
             e.vals = vec![1];
             fill(de, &e);
-            assert!(mem::slice(de + 96, 64).iter().all(|&b| b == 0xa5), "{n}");
+            assert!(mem::array::<64>(de + 96).iter().all(|&b| b == 0xa5), "{n}");
             assert_eq!(r32(de + 12 + 0x50), 1);
             mem::heap_free(de);
         }

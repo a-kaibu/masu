@@ -30,7 +30,7 @@ pub fn hooked(name: &str) -> Option<u32> {
     let (t, trap) = thunk(name)?;
     // (the thunk: hot-patch prologue `mov edi, edi; push ebp; mov ebp, esp; pop ebp`, then
     // `push trap; ret`)
-    let same = mem::slice(t, 7) == [0x8b, 0xff, 0x55, 0x8b, 0xec, 0x5d, 0x68] && (mem::ga(t) + 7).r32() == trap && (mem::ga(t) + 11).r8() == 0xc3;
+    let same = mem::array::<7>(t) == [0x8b, 0xff, 0x55, 0x8b, 0xec, 0x5d, 0x68] && (mem::ga(t) + 7).r32() == trap && (mem::ga(t) + 11).r8() == 0xc3;
     (!same).then_some(t)
 }
 
@@ -2005,7 +2005,7 @@ mod hooked_tests {
         for name in HOOKABLE {
             let Some(t) = crate::pe::with(base, |m| m.exports.get(name).copied()).flatten() else { continue };
             assert_eq!(hooked(name), None, "{name}");
-            let saved = mem::slice(t, 12).to_vec();
+            let saved = mem::bytes(t, 12);
             mem::w8(t, 0xe9);
             assert_eq!(hooked(name), Some(t), "{name}");
             mem::write(t, &saved);

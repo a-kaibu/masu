@@ -510,7 +510,7 @@ pub fn init() {
         };
         let h = bitmap_from_dib(c.cpu, d, len);
         if h == 0 {
-            eprintln!("sake w16: LoadBitmap: not a bitmap ({len} bytes: {:02x?})", crate::mem::slice(d, len.min(16)));
+            eprintln!("sake w16: LoadBitmap: not a bitmap ({len} bytes: {:02x?})", crate::mem::bytes(d, len.min(16)));
         }
         crate::mem::heap_free(d);
         h16(h) as u32
@@ -528,7 +528,7 @@ pub fn init() {
             for i in 0..16 {
                 let l = crate::mem::r8(p) as u32;
                 if i == id & 15 {
-                    s = crate::mem::slice(p + 1, l.min(len)).to_vec();
+                    s = crate::mem::bytes(p + 1, l.min(len));
                 }
                 p += l + 1;
             }
@@ -809,7 +809,7 @@ fn wave_caps(c: &mut C16) -> u32 {
     let (_, t) = w16::scratch(52);
     let r = call32(c.cpu, "winmm!waveOutGetDevCapsA", &[dev, t, 52]);
     if r == 0 && p != 0 {
-        let s = crate::mem::slice(t, 52).to_vec();
+        let s = crate::mem::bytes(t, 52);
         let mut o = Vec::with_capacity(48);
         o.extend(&s[0..6]); // wMid, wPid, vDriverVersion (low word)
         o.extend(&s[8..46]); // szPname, dwFormats, wChannels
@@ -832,7 +832,7 @@ fn wave_position(c: &mut C16) -> u32 {
     let r = call32(c.cpu, "winmm!waveOutGetPosition", &[hwo, t, 12]);
     if r == 0 {
         w16(p, r32(t) as u16);
-        crate::mem::write(p + 2, &crate::mem::slice(t + 4, 8).to_vec()[..(size - 2).min(8) as usize]);
+        crate::mem::write(p + 2, &crate::mem::bytes(t + 4, 8)[..(size - 2).min(8) as usize]);
     }
     w16::scratch_reset(m);
     r
@@ -1411,7 +1411,7 @@ fn get_object(c: &mut C16) -> u32 {
             for i in 0..5 {
                 t[2 * i..2 * i + 2].copy_from_slice(&(r32(b + 4 * i as u32) as u16).to_le_bytes());
             }
-            t[10..50].copy_from_slice(crate::mem::slice(b + 20, 40));
+            t[10..50].copy_from_slice(&crate::mem::array::<40>(b + 20));
             crate::mem::write(p, &t[..(n.max(0) as usize).min(50)]);
             50
         }
@@ -1436,7 +1436,7 @@ fn get_object(c: &mut C16) -> u32 {
         }
         // (a palette's entry count)
         _ => {
-            crate::mem::write(p, &crate::mem::slice(b, r.min(n.max(0) as u32)).to_vec());
+            crate::mem::write(p, &crate::mem::bytes(b, r.min(n.max(0) as u32)));
             r
         }
     };
@@ -1506,7 +1506,7 @@ pub fn find_resource(ty: u32, id: u32) -> Option<(u32, u32)> {
 /// monochrome one for two colours black and white, else one like the screen's. 0 if it is
 /// not one.
 pub fn bitmap_from_dib(cpu: &mut Cpu, d: u32, len: u32) -> u32 {
-    let Some(info) = dib_info(crate::mem::slice(d, len)) else { return 0 };
+    let Some(info) = dib_info(&crate::mem::bytes(d, len)) else { return 0 };
     let bmi = crate::mem::heap_alloc(info.header.len() as u32, true);
     crate::mem::write(bmi, &info.header);
     let bits = d + info.bits;
@@ -1714,7 +1714,7 @@ fn dialog32(t: u32) -> u32 {
         }
         let extra = crate::mem::r8(p) as u32;
         push16(&mut out, extra as u16);
-        out.extend_from_slice(crate::mem::slice(p + 1, extra));
+        crate::mem::view(p + 1, extra, |s| out.extend_from_slice(s));
         p += 1 + extra;
     }
     let b = crate::mem::heap_alloc(out.len() as u32 + 16, true);

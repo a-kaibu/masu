@@ -258,7 +258,7 @@ fn stream_of(b: u32, id: u32) -> u32 {
 }
 fn purpose(p: u32) -> Option<u32> {
     let mut tail = [0u8; 12];
-    tail.copy_from_slice(mem::slice(p + 4, 12));
+    tail.copy_from_slice(&mem::array::<12>(p + 4));
     let id = r32(p);
     (tail == MSPID_TAIL && matches!(id, VIDEO | AUDIO)).then_some(id)
 }
@@ -582,7 +582,7 @@ fn dd_set_format(c: &mut Ctx) -> u32 {
     }
     if r32(p + 4) & 0x1000 != 0 {
         let mut pf = [0u8; 32];
-        pf.copy_from_slice(mem::slice(p + 72, 32));
+        pf.copy_from_slice(&mem::array::<32>(p + 72));
         stream(c.a(0), |x| x.pf = Some(pf));
     }
     0
@@ -879,9 +879,7 @@ fn update(c: &mut Ctx, b: u32, m: u32, surf: u32, rect: (i32, i32, i32, i32)) ->
                 // (straight into the surface: it was copied out whole and back per frame)
                 // (a surface's rows in guest memory: a 32-bit size)
                 let len = pitch.wrapping_mul(sh.cast_unsigned());
-                if let Some(out) = mem::guest_mut(bits, len) {
-                    draw(&px, w, h, out, usize::try_from(pitch).unwrap_or(0), bpp, [pf[1], pf[2], pf[3]], rect, (sw, sh));
-                }
+                let _ = mem::view_mut(bits, len, |out| draw(&px, w, h, out, usize::try_from(pitch).unwrap_or(0), bpp, [pf[1], pf[2], pf[3]], rect, (sw, sh)));
                 crate::ddraw::drawn(c, surf, crate::user::Rect { l: rect.0, t: rect.1, r: rect.2, b: rect.3 });
                 play::stats(m, n, [t1 - t0, t1.elapsed(), std::time::Duration::ZERO], px.len());
                 return 0;

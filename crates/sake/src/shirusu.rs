@@ -97,7 +97,7 @@ fn bytes(a: u32, n: u32) -> Vec<u8> {
         return Vec::new();
     }
     let n = crate::mem::accessible(a, n.min(MAX_BYTES), false, true);
-    crate::mem::slice(a, n).to_vec()
+    crate::mem::bytes(a, n)
 }
 
 /// A NUL-ended UTF-16 string from `a`, at most MAX_UNITS (+1: shirusu marks one longer cut),

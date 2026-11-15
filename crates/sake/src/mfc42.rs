@@ -69,7 +69,7 @@ fn unit() -> u32 {
 }
 /// `n` TCHARs at `p`
 fn rd(p: u32, n: u32) -> Vec<u16> {
-    if wide() { (0..n).map(|i| r16(p + 2 * i)).collect() } else { mem::slice(p, n).iter().map(|&b| b as u16).collect() }
+    if wide() { (0..n).map(|i| r16(p + 2 * i)).collect() } else { mem::bytes(p, n).iter().map(|&b| b as u16).collect() }
 }
 /// TCHARs written at `p`
 fn wr(p: u32, t: &[u16]) {
@@ -469,7 +469,7 @@ fn cs_ctor_ch<const W: bool>(c: &mut Ctx) -> u32 {
 fn cs_ctor_sz_n<const W: bool>(c: &mut Ctx) -> u32 {
     let (s, p, n) = (this(c), c.a(0), c.i(1).max(0) as u32);
     cs::init(s);
-    let t = if W { from_w(&(0..n).map(|i| r16(p + 2 * i)).collect::<Vec<_>>()) } else { from_a(mem::slice(p, n)) };
+    let t = if W { from_w(&(0..n).map(|i| r16(p + 2 * i)).collect::<Vec<_>>()) } else { from_a(&mem::bytes(p, n)) };
     cs::assign(s, &t);
     s
 }

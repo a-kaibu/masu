@@ -1248,7 +1248,7 @@ fn acmStreamConvert(c: &mut Ctx) -> u32 {
     let room = us(dlen / u32::from(d.align.max(1)));
     let (used_in, used_out) = match (s.tag, mp3) {
         (Tag::Mp3, Some(m)) => {
-            let input = mem::slice(src, if mem::guest(src, slen) { slen } else { 0 });
+            let input = &mem::bytes(src, if mem::guest(src, slen) { slen } else { 0 });
             let n = mp3_native(&s);
             // (the decoder's frames that fit, at its rate)
             let frames = (room as u64 * u64::from(s.rate) / u64::from(d.rate.max(1))).min(usize::MAX as u64 / 4);
@@ -1265,7 +1265,7 @@ fn acmStreamConvert(c: &mut Ctx) -> u32 {
         (Tag::Pcm, _) => {
             let sa = u32::from(s.align.max(1));
             let n = slen / sa * sa;
-            let input = mem::slice(src, if mem::guest(src, n) { n } else { 0 });
+            let input = &mem::bytes(src, if mem::guest(src, n) { n } else { 0 });
             let mut out = pcm_convert(&s, &d, input, room);
             out.truncate(room * usize::from(d.align));
             mem::write(dst, &out);
@@ -1290,7 +1290,7 @@ fn acmStreamConvert(c: &mut Ctx) -> u32 {
             }
             let mut out = Vec::with_capacity(us(blocks * per_block / 2));
             for k in 0..blocks {
-                let b = mem::slice(src + k * align, align);
+                let b = &mem::bytes(src + k * align, align);
                 if s.tag == Tag::Ima {
                     ima_block(b, ch, us(s.spb), &mut out);
                 } else {

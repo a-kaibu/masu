@@ -1404,7 +1404,7 @@ fn rich_stream_in(c: &mut Ctx, h: u32, format: u32, es: u32) -> u32 {
         if err != 0 || n == 0 {
             break;
         }
-        data.extend_from_slice(mem::slice(buf, n));
+        mem::view(buf, n, |s| data.extend_from_slice(s));
     }
     mem::heap_free(buf);
     mem::w32(es + err_at, err);
@@ -2362,7 +2362,7 @@ fn to_remote(w: &crate::kern::KWin, msg: u32, wp: u32, lp: u32, send: bool) -> u
             crate::k32::last_error(87);
             return 0;
         }
-        Some((d, if n == 0 { Vec::new() } else { mem::slice(p, n).to_vec() }))
+        Some((d, if n == 0 { Vec::new() } else { mem::bytes(p, n) }))
     } else {
         None
     };
@@ -5466,7 +5466,7 @@ fn GetKeyboardState(c: &mut Ctx) -> u32 {
 }
 fn SetKeyboardState(c: &mut Ctx) -> u32 {
     let mut k = [0u8; 256];
-    k.copy_from_slice(mem::slice(c.a(0), 256));
+    k.copy_from_slice(&mem::array::<256>(c.a(0)));
     with(|s| s.keys = k);
     1
 }
@@ -7129,7 +7129,7 @@ fn icon_from_resource_call(c: &mut Ctx, version: u32) -> u32 {
         crate::k32::last_error(87);
         return 0;
     }
-    let bits = mem::slice(p, size.min(1 << 24)).to_vec();
+    let bits = mem::bytes(p, size.min(1 << 24));
     let Some(hot) = icon_from_resource(&bits, icon, version) else { return 0 };
     let h = fake_handle();
     if let Some(hot) = hot {
@@ -7473,15 +7473,11 @@ fn CharUpperW(c: &mut Ctx) -> u32 {
 }
 fn CharLowerBuffA(c: &mut Ctx) -> u32 {
     let (p, n) = (c.a(0), c.a(1));
-    let Some(s) = mem::guest_mut(p, n) else { return 0 };
-    crate::text::case_a(s, false);
-    n
+    mem::view_mut(p, n, |s| crate::text::case_a(s, false)).map_or(0, |()| n)
 }
 fn CharUpperBuffA(c: &mut Ctx) -> u32 {
     let (p, n) = (c.a(0), c.a(1));
-    let Some(s) = mem::guest_mut(p, n) else { return 0 };
-    crate::text::case_a(s, true);
-    n
+    mem::view_mut(p, n, |s| crate::text::case_a(s, true)).map_or(0, |()| n)
 }
 fn char_buff_w(c: &mut Ctx, upper: bool) -> u32 {
     let (p, n) = (c.a(0), c.a(1));

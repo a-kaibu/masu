@@ -501,7 +501,7 @@ fn create_path2(c: &mut Ctx, int: bool) -> u32 {
         return OUT_OF_MEMORY;
     }
     let pts = read_pts(pp, n as u32, int);
-    let types = mem::slice(tp, n as u32).to_vec();
+    let types = mem::bytes(tp, n as u32);
     new_obj(Obj::Path { pts, types, fill: c.a(3) }, c.a(4))
 }
 fn GdipCreatePath2(c: &mut Ctx) -> u32 {

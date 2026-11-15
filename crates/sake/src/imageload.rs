@@ -119,7 +119,7 @@ fn map_and_load(name: &str, dll_path: &str, li: u32, dot_dll: bool, read_only: b
         mem::write(view + done, &b);
         done += k;
     }
-    let Some(l) = layout(mem::slice(view, n)) else {
+    let Some(l) = layout(&mem::bytes(view, n)) else {
         free();
         crate::k32::last_error(193);
         return false;

@@ -324,7 +324,7 @@ fn GdipPrivateAddMemoryFont(c: &mut Ctx) -> u32 {
     if p == 0 || n <= 0 || !with(|s| s.private.contains_key(&coll)) {
         return INVALID_PARAMETER;
     }
-    add_private(coll, mem::slice(p, n as u32).to_vec())
+    add_private(coll, mem::bytes(p, n as u32))
 }
 fn GdipGetFontCollectionFamilyCount(c: &mut Ctx) -> u32 {
     let (h, out) = (c.a(0), c.a(1));

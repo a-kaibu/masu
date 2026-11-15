@@ -6,7 +6,7 @@
 //! after it, a hash of every bitmap's bytes and every buffer it filled go into
 //! gdi/api_golden.txt. MASU_UPDATE_GOLDEN=1 rewrites the file.
 use super::*;
-use crate::mem::{slice, w16, w32, w8};
+use crate::mem::{bytes, w16, w32, w8};
 use crate::test_guest::{call, enter, guest_thread};
 use crate::api::Handler;
 
@@ -128,7 +128,7 @@ impl World {
                 _ => None,
             });
             if let Some((bits, n, pal)) = b {
-                fnv(h, slice(bits, n));
+                fnv(h, &bytes(bits, n));
                 for p in pal {
                     fnv(h, &p.to_le_bytes());
                 }
@@ -403,7 +403,7 @@ impl World {
                     1 => {
                         let p = heap_alloc(16, true);
                         let v = call(GetRgnBox, &[r, p]);
-                        self.log("GetRgnBox", &[r], v, slice(p, 16));
+                        self.log("GetRgnBox", &[r], v, &bytes(p, 16));
                         heap_free(p);
                     }
                     2 => {
@@ -418,7 +418,7 @@ impl World {
                     _ => {
                         let n = call(GetRegionData, &[r, 0, 0]);
                         let v = call(GetRegionData, &[r, BUF, self.buf]);
-                        self.log("GetRegionData", &[r, n], v, slice(self.buf, n.min(BUF)));
+                        self.log("GetRegionData", &[r, n], v, &bytes(self.buf, n.min(BUF)));
                     }
                 }
             }
@@ -446,7 +446,7 @@ impl World {
                 _ => {
                     let p = heap_alloc(16, true);
                     let v = call(GetClipBox, &[dc, p]);
-                    self.log("GetClipBox", &[dc], v, slice(p, 16));
+                    self.log("GetClipBox", &[dc], v, &bytes(p, 16));
                     heap_free(p);
                 }
             },
@@ -515,8 +515,8 @@ impl World {
                 let usage = self.rng.below(2);
                 mem::zero(self.buf, BUF);
                 let v = call(GetDIBits, &[dc, bmp, start, lines, self.buf, info, usage]);
-                let mut e = slice(self.buf, (W as u32 * 4) * H as u32).to_vec();
-                e.extend_from_slice(slice(info, 40 + 4 * 256));
+                let mut e = bytes(self.buf, (W as u32 * 4) * H as u32).to_vec();
+                e.extend_from_slice(&bytes(info, 40 + 4 * 256));
                 self.log("GetDIBits", &[dc, bmp, start, lines, u32::from(bpp), usage], v, &e);
                 heap_free(info);
             }
@@ -562,7 +562,7 @@ impl World {
                 } else {
                     mem::zero(self.buf, 1024);
                     let v = call(GetDIBColorTable, &[dc, s, n, self.buf]);
-                    self.log("GetDIBColorTable", &[dc, s, n], v, slice(self.buf, 1024));
+                    self.log("GetDIBColorTable", &[dc, s, n], v, &bytes(self.buf, 1024));
                 }
             }
             41 => {
@@ -570,7 +570,7 @@ impl World {
                 mem::zero(self.buf, 64);
                 let v = call(GetObjectW, &[o, 64, self.buf]);
                 // (a pattern brush's LOGBRUSH names its bitmap: a handle, not pinned)
-                let mut e = slice(self.buf, 64).to_vec();
+                let mut e = bytes(self.buf, 64).to_vec();
                 e[8..12].fill(0);
                 self.log("GetObjectW", &[o], v, &e);
             }
@@ -578,7 +578,7 @@ impl World {
                 let b = self.rng.pick(&self.t.iter().map(|t| t.bmp).collect::<Vec<_>>());
                 mem::zero(self.buf, 128);
                 let v = call(GetObjectW, &[b, self.rng.pick(&[24, 84, 104, 128]), self.buf]);
-                let mut e = slice(self.buf, 128).to_vec();
+                let mut e = bytes(self.buf, 128).to_vec();
                 e[20..24].fill(0);
                 self.log("GetObjectW", &[b], v, &e);
             }
@@ -612,15 +612,15 @@ impl World {
                 self.go(n, f, &[dc]);
                 let p = heap_alloc(8, true);
                 let v = call(GetViewportOrgEx, &[dc, p]);
-                self.log("GetViewportOrgEx", &[dc], v, slice(p, 8));
+                self.log("GetViewportOrgEx", &[dc], v, &bytes(p, 8));
                 let v = call(GetWindowExtEx, &[dc, p]);
-                self.log("GetWindowExtEx", &[dc], v, slice(p, 8));
+                self.log("GetWindowExtEx", &[dc], v, &bytes(p, 8));
                 heap_free(p);
             }
             _ => {
                 let p = self.points(3);
                 let v = call(LPtoDP, &[dc, p, 3]);
-                self.log("LPtoDP", &[dc], v, slice(p, 24));
+                self.log("LPtoDP", &[dc], v, &bytes(p, 24));
                 heap_free(p);
             }
         }

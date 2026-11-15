@@ -458,8 +458,8 @@ fn locinfo_getcoll(c: &mut Ctx) -> u32 {
 /// _Strcoll(s1, end1, s2, end2, collvec): the "C" locale's byte order
 fn _Strcoll(c: &mut Ctx) -> u32 {
     let (a, ae, b, be) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    let x = mem::slice(a, ae.saturating_sub(a));
-    let y = mem::slice(b, be.saturating_sub(b));
+    let x = &mem::bytes(a, ae.saturating_sub(a));
+    let y = &mem::bytes(b, be.saturating_sub(b));
     x.cmp(y) as i32 as u32
 }
 /// _Strxfrm(dst, dst end, src, src end, collvec): the "C" locale's identity; the length needed

@@ -1275,7 +1275,7 @@ fn SetValue(c: &mut Ctx) -> u32 {
         if e.params[p].class == PC_OBJECT && is_texture(e.params[p].ty) {
             return Some(Some(p));
         }
-        let src = mem::slice(data, n).to_vec();
+        let src = mem::bytes(data, n);
         let v = e.value_mut(p);
         let k = v.len().min(src.len());
         v[..k].copy_from_slice(&src[..k]);
@@ -1592,7 +1592,7 @@ fn not_impl(_: &mut Ctx) -> u32 {
 }
 fn SetRawValue(c: &mut Ctx) -> u32 {
     let (h, data, off, n) = (c.a(1), c.a(2), c.a(3), c.a(4));
-    let src = mem::slice(data, n).to_vec();
+    let src = mem::bytes(data, n);
     with(this(c), |e| {
         let p = e.param_of(h)?;
         let v = e.value_mut(p);

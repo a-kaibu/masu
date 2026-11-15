@@ -271,7 +271,7 @@ fn xaudio2_snapshot() {
                     let Some(&v) = sources.get(usize::try_from(r.below(6)).unwrap_or(0)) else { continue };
                     mem::fill(po, 32, 0);
                     let hr = if v28 && r.below(2) == 0 { call_stacked(S_GetState28, &[v, po, 0x100]) } else if v28 { call_stacked(S_GetState28, &[v, po, 0]) } else { call_stacked(S_GetState, &[v, po]) };
-                    format!("state {}: {hr:#x} {:x?} ratio {:#x}", name(v, &voices), mem::slice(po, 16), {
+                    format!("state {}: {hr:#x} {:x?} ratio {:#x}", name(v, &voices), &mem::array::<16>(po), {
                         call_stacked(S_GetFrequencyRatio, &[v, po + 32]);
                         r32(po + 32)
                     })

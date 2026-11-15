@@ -162,7 +162,7 @@ pub(crate) struct Wave {
 }
 
 fn read_wave(p: u32) -> Wave {
-    let base = r16(p + 28) == 0 && r16(p + 30) == 0x10 && mem::slice(p + 32, 8) == [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
+    let base = r16(p + 28) == 0 && r16(p + 30) == 0x10 && mem::array::<8>(p + 32) == [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71];
     let ext = r16(p) == 0xfffe;
     Wave {
         tag: r16(p),
@@ -495,7 +495,7 @@ fn guid_is(p: u32, g: Iid) -> bool {
     p != 0 && r32(p) == g.0 && r16(p + 4) == g.1 && r16(p + 6) == g.2
 }
 fn is_unknown(iid: u32) -> bool {
-    iid != 0 && mem::slice(iid, 16) == [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]
+    iid != 0 && mem::array::<16>(iid) == [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]
 }
 /// A float argument (x64: XMM`i`'s low 32 bits)
 fn farg(c: &Ctx, i: u32) -> f32 {

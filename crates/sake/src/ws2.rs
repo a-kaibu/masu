@@ -1675,7 +1675,7 @@ fn gather(bufs: &[(u32, u32)]) -> Result<Vec<u8>, u32> {
         if n != 0 && !mem::in_guest(p, n) {
             return Err(WSAEFAULT);
         }
-        v.extend_from_slice(mem::slice(p, n));
+        mem::view(p, n, |s| v.extend_from_slice(s));
         left -= n;
     }
     Ok(v)
@@ -2357,7 +2357,7 @@ fn ioctl(st: &mut State, id: u32, h: u32, code: u32, inp: u32, inlen: u32, out: 
             if inp == 0 || inlen < 16 || out == 0 || outlen < k {
                 return Err(WSAEFAULT);
             }
-            let g = mem::slice(inp, 16).to_vec();
+            let g = mem::bytes(inp, 16);
             let f = EXTENSIONS.iter().find(|e| e.0 == g.as_slice()).ok_or(WSAEINVAL)?;
             wp(out, crate::api::host_fn(f.1, f.2, f.3));
             Ok(k)

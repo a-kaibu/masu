@@ -227,7 +227,7 @@ fn amstream_objects_snapshot() {
                 let a = call_stacked(st_get_mms, &[s, o_p]);
                 let m = rp(po);
                 let b = call_stacked(st_info, &[s, if null { 0 } else { po2 }, po3]);
-                format!("stream {}: mms {a:#x} {} info {b:#x} {:#x} {:x?} {:#x}", names.of(s), names.of(m), r32(po2), mem::slice(po2 + 4, 12), r32(po3))
+                format!("stream {}: mms {a:#x} {} info {b:#x} {:#x} {:x?} {:#x}", names.of(s), names.of(m), r32(po2), &mem::array::<12>(po2 + 4), r32(po3))
             }
             11 | 12 => {
                 let s = pick(&mut r, &streams);

@@ -633,6 +633,6 @@ mod tests {
         let size = crate::pe::with(ntdll, |m| m.size).unwrap();
         assert!(h >= ntdll && h < ntdll + size, "handler {h:#x} in ntdll {ntdll:#x}");
         // mov eax, 1 (ExceptionContinueSearch); ret
-        assert_eq!(crate::mem::slice(h, 6), &[0xb8, 1, 0, 0, 0, 0xc3]);
+        assert_eq!(&crate::mem::array::<6>(h), &[0xb8, 1, 0, 0, 0, 0xc3]);
     }
 }

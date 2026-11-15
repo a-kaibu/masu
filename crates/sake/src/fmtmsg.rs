@@ -107,7 +107,7 @@ fn table_message(module: u32, id: u32) -> Option<Vec<u16>> {
         let text: Vec<u16> = if flags & 1 != 0 {
             (0..(len.saturating_sub(4)) / 2).map(|i| r16(body + 2 * i)).take_while(|&c| c != 0).collect()
         } else {
-            a2w(&mem::slice(body, len.saturating_sub(4)).iter().copied().take_while(|&c| c != 0).collect::<Vec<u8>>())
+            a2w(&mem::bytes(body, len.saturating_sub(4)).iter().copied().take_while(|&c| c != 0).collect::<Vec<u8>>())
         };
         return Some(text);
     }

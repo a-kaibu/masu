@@ -396,13 +396,13 @@ fn parse(code: &[u8], fl: u8) -> Option<Refl> {
 
 /// D3DReflect(data, size, iid, reflector)
 pub fn D3DReflect(c: &mut Ctx) -> u32 {
-    let code = mem::slice(c.a(0), c.a(1)).to_vec();
+    let code = mem::bytes(c.a(0), c.a(1));
     reflect(&code, 0, c.a(3))
 }
 
 /// D3D10ReflectShader(data, size, ID3D10ShaderReflection **)
 pub fn D3D10ReflectShader(c: &mut Ctx) -> u32 {
-    let code = mem::slice(c.a(0), c.a(1)).to_vec();
+    let code = mem::bytes(c.a(0), c.a(1));
     reflect(&code, 4, c.a(2))
 }
 

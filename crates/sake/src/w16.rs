@@ -779,7 +779,7 @@ pub fn fatal16(cpu: &mut Cpu, msg: &str) -> ! {
     );
     let pc = cpu.pc16();
     if pc < 0xfe00_0000 {
-        eprintln!("  code: {:02x?}", crate::mem::slice(pc, 12));
+        eprintln!("  code: {:02x?}", crate::mem::array::<12>(pc));
     }
     let sp = cpu.sbase[2] + (r[4] & 0xffff);
     eprintln!("  stack: {:04x?}", (0..12).map(|k| r16(sp + 2 * k)).collect::<Vec<_>>());
@@ -1198,7 +1198,7 @@ fn fix_prologues(d: &[u8], ne: usize, segs: &[u16], dgroup: u16) {
             }
             let Some((b, _)) = sel_base(segs[seg as usize - 1]) else { continue };
             let a = b + off as u32;
-            let code = crate::mem::slice(a, 3).to_vec();
+            let code = crate::mem::bytes(a, 3);
             if code == [0x1e, 0x58, 0x90] || code == [0x8c, 0xd8, 0x90] {
                 crate::mem::write(a, &[0xb8, dgroup as u8, (dgroup >> 8) as u8]);
             }

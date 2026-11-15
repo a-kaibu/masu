@@ -516,7 +516,7 @@ fn write_struct(c: &mut Ctx, wide: bool) -> u32 {
         crate::k32::last_error(998); // ERROR_NOACCESS
         return 0;
     }
-    let v = (buf != 0).then(|| struct_hex(crate::mem::slice(buf, size)));
+    let v = (buf != 0).then(|| struct_hex(&crate::mem::bytes(buf, size)));
     modify(&file, |ini| ini.set(&sec, &key, v.as_deref()))
 }
 

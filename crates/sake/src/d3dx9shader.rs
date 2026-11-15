@@ -18,9 +18,9 @@ const INVALIDCALL: u32 = 0x8876_086c;
 /// The bytes of shader bytecode at `p` (through its end token), where the guest has them (not
 /// copied: D3DXGetShaderSize and friends read up to 4 MB of it on every call); empty when they
 /// are not all readable.
-fn shader_at<'a>(p: u32) -> &'a [u8] {
+fn shader_at(p: u32) -> Vec<u8> {
     if p == 0 {
-        return &[];
+        return Vec::new();
     }
     let ver = r32(p);
     let major = (ver >> 8) & 0xff;
@@ -40,9 +40,9 @@ fn shader_at<'a>(p: u32) -> &'a [u8] {
         }
     }
     if mem::accessible(p, 4 * i, false, false) < 4 * i {
-        return &[];
+        return Vec::new();
     }
-    mem::slice(p, 4 * i)
+    mem::bytes(p, 4 * i)
 }
 
 // ---- the constant table ----
@@ -692,7 +692,7 @@ fn compile(c: &mut Ctx, src: &[u8], name: &str, defs: u32, inc: u32, entry: u32,
 /// D3DXCompileShader(data, length, defines, include, function, profile, flags, shader, errors,
 /// constant table)
 fn D3DXCompileShader(c: &mut Ctx) -> u32 {
-    let src = mem::slice(c.a(0), c.a(1)).to_vec();
+    let src = mem::bytes(c.a(0), c.a(1));
     let a: Vec<u32> = (2..10).map(|i| c.a(i)).collect();
     compile(c, &src, "", a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7])
 }
@@ -720,11 +720,11 @@ fn D3DXCompileShaderFromFileW(c: &mut Ctx) -> u32 {
 
 fn D3DXGetShaderConstantTable(c: &mut Ctx) -> u32 {
     let (code, out) = (shader_at(c.a(0)), c.a(1));
-    get_table(code, out)
+    get_table(&&code, out)
 }
 fn D3DXGetShaderConstantTableEx(c: &mut Ctx) -> u32 {
     let (code, out) = (shader_at(c.a(0)), c.a(2));
-    get_table(code, out)
+    get_table(&&code, out)
 }
 fn get_table(code: &[u8], out: u32) -> u32 {
     if out == 0 {
@@ -773,7 +773,7 @@ fn D3DXGetShaderVersion(c: &mut Ctx) -> u32 {
 fn D3DXFindShaderComment(c: &mut Ctx) -> u32 {
     let (p, four, data, size) = (c.a(0), c.a(1), c.a(2), c.a(3));
     let code = shader_at(p);
-    for (f, d) in crate::d3dx9fx::comments(code) {
+    for (f, d) in crate::d3dx9fx::comments(&&code) {
         if u32::from_le_bytes(f) == four {
             // (the body follows the fourcc in the shader itself; a body cut short by the end of
             // the code is none)
@@ -793,7 +793,7 @@ fn D3DXFindShaderComment(c: &mut Ctx) -> u32 {
 fn D3DXGetShaderSamplers(c: &mut Ctx) -> u32 {
     let (names, count) = (c.a(1), c.a(2));
     let code = shader_at(c.a(0));
-    let Some((_, d)) = crate::d3dx9fx::comments(code).into_iter().find(|(f, _)| f == b"CTAB") else {
+    let Some((_, d)) = crate::d3dx9fx::comments(&&code).into_iter().find(|(f, _)| f == b"CTAB") else {
         if count != 0 {
             w32(count, 0);
         }

@@ -154,7 +154,7 @@ fn cred_in(p: u32, wide: bool) -> Cred {
         .map(|i| {
             let a = ap + i * ae;
             let (kw, fl, n, v) = (rp(a), r32(a + ps()), r32(a + ps() + 4), rp(a + ps() + 8));
-            (text_in(kw, wide).unwrap_or_default(), fl, if v != 0 { mem::slice(v, n).to_vec() } else { Vec::new() })
+            (text_in(kw, wide).unwrap_or_default(), fl, if v != 0 { mem::bytes(v, n) } else { Vec::new() })
         })
         .collect();
     let n = r32(p + o[2]);
@@ -165,7 +165,7 @@ fn cred_in(p: u32, wide: bool) -> Cred {
         target: text_in(rp(p + 8), wide).unwrap_or_default(),
         comment: text_in(rp(p + o[0]), wide),
         written: 0,
-        blob: if b != 0 { mem::slice(b, n).to_vec() } else { Vec::new() },
+        blob: if b != 0 { mem::bytes(b, n) } else { Vec::new() },
         persist: r32(p + o[4]),
         attrs,
         alias: text_in(rp(p + o[7]), wide),
@@ -503,7 +503,7 @@ fn marshal_in(ty: u32, p: u32) -> Option<Marshaled> {
     }
     match ty {
         // CERT_CREDENTIAL_INFO {cbSize; rgbHashOfCert[20]}
-        CERT if r32(p) >= 24 => Some(Marshaled::Cert(mem::slice(p + 4, 20).try_into().unwrap())),
+        CERT if r32(p) >= 24 => Some(Marshaled::Cert(mem::array::<20>(p + 4))),
         // USERNAME_TARGET_CREDENTIAL_INFO {UserName}
         USERNAME => {
             let u = rp(p);
@@ -512,7 +512,7 @@ fn marshal_in(ty: u32, p: u32) -> Option<Marshaled> {
         // BINARY_BLOB_CREDENTIAL_INFO {cbBlob; pbBlob}
         BLOB => {
             let (n, b) = (r32(p), rp(p + ps()));
-            (n != 0 && b != 0).then(|| Marshaled::Blob(mem::slice(b, n).to_vec()))
+            (n != 0 && b != 0).then(|| Marshaled::Blob(mem::bytes(b, n)))
         }
         _ => None,
     }

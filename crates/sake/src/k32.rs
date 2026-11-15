@@ -3197,7 +3197,7 @@ fn WriteProcessMemory(c: &mut Ctx) -> u32 {
             // (xmem::READ_STEP at a time, as reads; a piece the target took only part of ends it)
             let mut done_n = 0u32;
             for (off, len) in xmem::pieces(readable) {
-                let data = mem::slice((mem::ga(b) + off).get(), len).to_vec();
+                let data = mem::bytes((mem::ga(b) + off).get(), len);
                 match remote(c.a(0), xmem::WRITE, vec![a.wrapping_add(off)], data) {
                     Some(Ok(v)) => {
                         let w = v.first().copied().unwrap_or(0);
@@ -4869,7 +4869,7 @@ pub fn os_version() -> OsVer {
     let win10 = |exe: u32| {
         let Some(e) = crate::pe::find_resource(exe, &crate::pe::ResId::Int(24), &crate::pe::ResId::Int(1)) else { return false };
         let (p, n) = crate::pe::resource_data(exe, e);
-        String::from_utf8_lossy(mem::slice(p, n.min(0x10000))).to_ascii_lowercase().contains("8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a")
+        String::from_utf8_lossy(&mem::bytes(p, n.min(0x10000))).to_ascii_lowercase().contains("8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a")
     };
     // (decided once the program is loaded)
     let w = if exe == 0 { false } else { *WIN10.get_or_init(|| win10(exe)) };
@@ -5380,7 +5380,7 @@ fn guest_bytes(p: u32, n: u32) -> Option<Vec<u8>> {
         last_error(998);
         return None;
     }
-    Some(mem::slice(p, n).to_vec())
+    Some(mem::bytes(p, n))
 }
 /// The `n` UTF-16 units at `p`, as guest_bytes
 fn guest_units(p: u32, n: u32) -> Option<Vec<u16>> {
@@ -5392,7 +5392,7 @@ fn guest_units(p: u32, n: u32) -> Option<Vec<u16>> {
         last_error(998);
         return None;
     }
-    Some(mem::slice(p, bytes).as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect())
+    Some(mem::bytes(p, bytes).as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect())
 }
 fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     let (cp, flags, src, n, dst, cap) = (c.a(0), c.a(1), c.a(2), c.i(3), c.a(4), c.a(5));
@@ -7295,16 +7295,16 @@ fn ReadFile(c: &mut Ctx) -> u32 {
         return 0;
     };
     // (a buffer that is not the guest's: the NULL pages, or past 2 GB into sake's memory)
-    let Some(dst) = mem::guest_mut(buf, n) else {
+    if !mem::guest_range(buf, n) {
         put32(pread, 0); // (Windows clears the count first)
         last_error(998); // ERROR_NOACCESS
         return 0;
-    };
+    }
     // OVERLAPPED: Internal, InternalHigh (ULONG_PTRs), Offset, OffsetHigh, hEvent
     let k = mem::ps();
     let got = if ov != 0 {
         let start = files::io_start(mem::ga(ov).at(k, 2).r32(), (mem::ga(ov).at(k, 2) + 4).r32(), false);
-        match f.read_at(start, crate::iocp::is_overlapped(h), dst) {
+        match mem::view_mut(buf, n, |dst| f.read_at(start, crate::iocp::is_overlapped(h), dst)).unwrap_or(Ok(0)) {
             Ok(got) => kome::num::u32_of(got),
             Err(()) => {
                 // (at or past the end: STATUS_END_OF_FILE in the OVERLAPPED, its event set,
@@ -7339,7 +7339,7 @@ fn WriteFile(c: &mut Ctx) -> u32 {
         return 0;
     }
     if crate::env_on!("SAKE_TRACE_WRITES") {
-        let b = mem::slice(buf, n.min(400));
+        let b = &mem::bytes(buf, n.min(400));
         eprintln!("sake: WriteFile({h:x}, {n}): {:?}", String::from_utf16_lossy(&if b.len() > 2 && b.get(1) == Some(&0) {
             b.chunks(2).map(|x| u16::from_le_bytes([x.first().copied().unwrap_or(0), x.get(1).copied().unwrap_or(0)])).collect::<Vec<_>>()
         } else {
@@ -7376,7 +7376,7 @@ fn WriteFile(c: &mut Ctx) -> u32 {
     let w = if ov != 0 {
         let k = mem::ps();
         let start = files::io_start(mem::ga(ov).at(k, 2).r32(), (mem::ga(ov).at(k, 2) + 4).r32(), true);
-        f.write_at(start, crate::iocp::is_overlapped(h), mem::slice(buf, n))
+        f.write_at(start, crate::iocp::is_overlapped(h), &mem::bytes(buf, n))
     } else {
         f.write_from(buf, n)
     };
@@ -7415,7 +7415,7 @@ pub(crate) fn echo_write(path: &str, buf: u32, n: u32) {
     if !path.to_ascii_lowercase().ends_with(name.as_str()) {
         return;
     }
-    let b = mem::slice(buf, n);
+    let b = &mem::bytes(buf, n);
     // (UTF-16 once the file started with a BOM, or when most odd bytes are 0; else the ANSI code page)
     static WIDE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if b.starts_with(&[0xff, 0xfe]) {
@@ -9153,9 +9153,8 @@ fn random_into(p: u32, n: u32) -> bool {
     if mem::accessible(p, n, true, false) < n {
         return false;
     }
-    let Some(b) = mem::guest_mut(p, n) else { return false };
     // SAFETY: getentropy writes at most chunk.len() (<= 256, its limit) bytes into the chunk.
-    b.chunks_mut(256).all(|chunk| unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) } == 0)
+    mem::view_mut(p, n, |b| b.chunks_mut(256).all(|chunk| unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) } == 0)) == Some(true)
 }
 /// BCryptOpenAlgorithmProvider(&alg, id, implementation, flags): any algorithm "opens"; only
 /// BCryptGenRandom does something with it.
@@ -11023,7 +11022,7 @@ mod review_b07 {
         assert_eq!(mem::wstr(dst), "abc".encode_utf16().collect::<Vec<_>>());
         mem::fill(dst, 256, 0);
         assert_eq!(call(BCryptGenRandom, &[0, dst, 256, 2]), 0);
-        assert!(mem::slice(dst, 256).iter().any(|&b| b != 0));
+        assert!(mem::array::<256>(dst).iter().any(|&b| b != 0));
         mem::heap_free(src);
         mem::heap_free(dst);
     }

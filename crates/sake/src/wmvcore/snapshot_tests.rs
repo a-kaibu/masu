@@ -93,7 +93,7 @@ fn fnv(b: &[u8]) -> u64 {
 /// The bytes at `p` (`n` of them), words that point into them made offsets (a media type's
 /// pbFormat), hashed.
 fn norm_hash(p: u32, n: u32) -> String {
-    let mut b = mem::slice(p, n).to_vec();
+    let mut b = mem::bytes(p, n);
     for w in b.chunks_exact_mut(4) {
         let v = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
         if (p..p + n).contains(&v) {
@@ -267,7 +267,7 @@ impl Sweep {
                 'b' => norm_hash(p, 512),
                 'M' => norm_hash(p, 512),
                 'l' => r32(p).to_string(),
-                'p' => format!("{:02x?}", mem::slice(p, 8)),
+                'p' => format!("{:02x?}", &mem::array::<8>(p)),
                 'P' => (if rp(p) == 0 { "null" } else { "ptr" }).into(),
                 'C' => {
                     let o = rp(p);

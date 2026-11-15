@@ -229,10 +229,10 @@ impl Word {
 
 /// The GUID at guest address `p`.
 fn guid_at(p: u32) -> [u8; 16] {
-    mem::slice(p, 16).first_chunk::<16>().copied().unwrap_or([0; 16])
+    mem::array::<16>(p).first_chunk::<16>().copied().unwrap_or([0; 16])
 }
 fn is(p: u32, g: &[u8; 16]) -> bool {
-    p != 0 && mem::slice(p, 16) == g
+    p != 0 && &mem::array::<16>(p) == g
 }
 fn put_guid(p: u32, g: &[u8; 16]) {
     mem::write(p, g);
@@ -660,14 +660,14 @@ fn dup_mt(src: u32) -> u32 {
 /// A copy of media type `src` into `dst` (its format block a new CoTaskMemAlloc one).
 fn copy_mt(src: u32, dst: u32) {
     let n = mt_size();
-    let bytes = mem::slice(src, n).to_vec();
+    let bytes = mem::bytes(src, n);
     mem::write(dst, &bytes);
     let (cb, pb) = mt_fmt_at();
     let len = r32(src + cb);
     let f = mem::heap_alloc(len.max(1), false);
     let from = rp(src + pb);
     if from != 0 && len != 0 {
-        let b = mem::slice(from, len).to_vec();
+        let b = mem::bytes(from, len);
         mem::write(f, &b);
     }
     wp(dst + pb, f);
@@ -1028,7 +1028,7 @@ fn read_at(c: &mut Ctx, reader: u32, pos: u64, n: u32) -> Option<Vec<u8>> {
     let buf = mem::heap_alloc(n.max(1), false);
     let args: Vec<u32> = if mem::x64() { vec![lo32(pos), n, buf] } else { vec![lo32(pos), lo32(pos >> 32), n, buf] };
     let r = com(c, reader, 7, &args);
-    let v = (r & 0x8000_0000 == 0).then(|| mem::slice(buf, n).to_vec());
+    let v = (r & 0x8000_0000 == 0).then(|| mem::bytes(buf, n));
     mem::heap_free(buf);
     v
 }
@@ -1153,7 +1153,7 @@ fn p_accept(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let me = pin_of(p).map(|(b, k)| pin(b, k)).unwrap_or_default();
-    if me.mt != 0 && mem::slice(mt, 32) == mem::slice(me.mt, 32) { 0 } else { Hr::False.code() }
+    if me.mt != 0 && &mem::array::<32>(mt) == &mem::array::<32>(me.mt) { 0 } else { Hr::False.code() }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1350,7 +1350,7 @@ fn fsf_cur_file(c: &mut Ctx) -> u32 {
 /// file's subtype, fixed 1-byte samples, no format) offered through ReceiveConnection.
 fn source_connect(c: &mut Ctx, b: u32, recv: u32, want: u32) -> u32 {
     let Some(sub) = fwith(b, |f| f.src.as_ref().map(|s| s.sub)).flatten() else { return Hr::NotConnected.code() };
-    if want != 0 && !is(want, &MEDIATYPE_STREAM) && mem::slice(want, 16) != GUID_NULL {
+    if want != 0 && !is(want, &MEDIATYPE_STREAM) && mem::array::<16>(want) != GUID_NULL {
         return Hr::NoAcceptableTypes.code();
     }
     let mt = new_mt(&MEDIATYPE_STREAM, &sub, true, 1, &GUID_NULL, &[]);
@@ -1412,10 +1412,11 @@ fn ar_sync_read(c: &mut Ctx) -> u32 {
     // thread behind FILTERS; seek and read are one step under the file's own lock)
     let Some((file, len)) = fwith(b, |f| f.src.as_ref().map(|s| (s.file.clone(), s.len))).flatten() else { return Hr::Unexpected.code() };
     let (at, k) = read_span(pos, n, len);
-    let Some(dst) = mem::guest_mut(buf, k) else { return Hr::Pointer.code() };
-    let got = match file.read_at(Some(std::io::SeekFrom::Start(at)), false, dst) {
+    let Some(got) = mem::view_mut(buf, k, |dst| match file.read_at(Some(std::io::SeekFrom::Start(at)), false, dst) {
         Ok(g) => Some(lo32(g)),
         Err(()) => Some(0),
+    }) else {
+        return Hr::Pointer.code();
     };
     match got {
         None => Hr::Unexpected.code(),
@@ -1651,9 +1652,10 @@ fn vnv_thread(c: &mut Ctx) -> u32 {
                     x.buf
                 })
                 .unwrap_or(0);
-                let Some(dst) = mem::guest_mut(buf, size).filter(|_| buf != 0) else { break };
                 // (bottom-up rows, as RGB32 with a positive height is: straight into the sample)
-                pack_into(&top, (fw, fh), true, (w, h, bits), dst);
+                if buf == 0 || mem::view_mut(buf, size, |dst| pack_into(&top, (fw, fh), true, (w, h, bits), dst)).is_none() {
+                    break;
+                }
                 let sent = call_out(&calls, epoch, || com(c, out.mem, 6, &[sample])).is_some();
                 unref(sample);
                 if sent {
@@ -2472,7 +2474,7 @@ fn stream_thread(c: &mut Ctx) -> u32 {
                     .unwrap_or(0);
                     // (the picture's own size, clipped to the type's: a later sequence header
                     // of another size indexed past the rows)
-                    if buf != 0 && mem::guest_mut(buf, size).is_some_and(|dst| pack_into(&px, (pw, ph), false, (w, h, bits), dst)) {
+                    if buf != 0 && mem::view_mut(buf, size, |dst| pack_into(&px, (pw, ph), false, (w, h, bits), dst)) == Some(true) {
                         com(c, mem_pin, 6, &[sample]);
                     }
                     unref(sample);
@@ -2577,7 +2579,7 @@ fn feed(c: &mut Ctx, s: &mut Dec, reader: u32, len: u64, calls: &Calls, epoch: u
         s.pos = len;
         return true;
     }
-    let bytes = mem::slice(s.buf, n).to_vec();
+    let bytes = mem::bytes(s.buf, n);
     s.demux.push(&bytes);
     s.pos += u64::from(n);
     true
@@ -3142,10 +3144,10 @@ mod tests {
         let b = dup_mt(a);
         assert_ne!(a, b);
         assert_ne!(rp(a + mt_fmt_at().1), rp(b + mt_fmt_at().1));
-        assert_eq!(mem::slice(a, 44), mem::slice(b, 44));
+        assert_eq!(&mem::array::<44>(a), &mem::array::<44>(b));
         let (fa, fb) = (rp(a + mt_fmt_at().1), rp(b + mt_fmt_at().1));
         let n = r32(a + mt_fmt_at().0);
-        assert_eq!(mem::slice(fa, n), mem::slice(fb, n));
+        assert_eq!(&mem::bytes(fa, n), &mem::bytes(fb, n));
         free_mt(a);
         free_mt(b);
         free_mt(0);

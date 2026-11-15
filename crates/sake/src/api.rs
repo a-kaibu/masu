@@ -1250,7 +1250,7 @@ mod hot_tests {
             let (x, y) = (stub(&a).unwrap(), stub(&b).unwrap());
             for (p, code) in [(x, &a), (y, &b)] {
                 prop_assert!((crate::mem::STUB_LO..crate::mem::GUEST_TOP).contains(&p) && p % 16 == 0);
-                prop_assert_eq!(crate::mem::slice(p, kome::num::u32_of(code.len())), &code[..]);
+                prop_assert_eq!(&crate::mem::bytes(p, kome::num::u32_of(code.len())), &code[..]);
             }
             prop_assert!(y >= x + kome::num::u32_of(a.len()));
             let (base, r) = crate::mem::find(x).unwrap();

@@ -158,7 +158,7 @@ fn mmdevapi_snapshot() {
             14 => {
                 let k = r.pick(&[0u32, 3, 6, 7, 0xffff_ffff]);
                 let hr = call(ps_at, &[store(), k, out_p]);
-                format!("ps at {k}: {hr:#x} {:x?} {}", mem::slice(po, 16), r32(po + 16))
+                format!("ps at {k}: {hr:#x} {:x?} {}", &mem::array::<16>(po), r32(po + 16))
             }
             15 => {
                 let (kg, pid) = keys[usize::try_from(r.below(u64::try_from(keys.len()).unwrap_or(1))).unwrap_or(0)];
@@ -171,8 +171,8 @@ fn mmdevapi_snapshot() {
                 let val = match vt {
                     31 => format!("{:?}", String::from_utf16_lossy(&mem::wstr(rp(po + 8)))),
                     19 => format!("{}", r32(po + 8)),
-                    65 => format!("{} {:x?}", r32(po + 8), mem::slice(rp(po + 8 + ps()), r32(po + 8).min(64))),
-                    _ => format!("{:x?}", mem::slice(po, 16)),
+                    65 => format!("{} {:x?}", r32(po + 8), &mem::bytes(rp(po + 8 + ps()), r32(po + 8).min(64))),
+                    _ => format!("{:x?}", &mem::array::<16>(po)),
                 };
                 format!("ps get {:x?},{pid}: {hr:#x} vt={vt} {val}", &kg[..4])
             }

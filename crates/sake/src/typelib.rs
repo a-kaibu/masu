@@ -487,7 +487,7 @@ fn info_block(li: usize, ii: usize) -> Option<u32> {
 }
 
 fn guid_eq(p: u32, g: &[u8; 16]) -> bool {
-    mem::slice(p, 16) == g
+    &mem::array::<16>(p) == g
 }
 
 fn L_QueryInterface(c: &mut Ctx) -> u32 {
@@ -1078,7 +1078,7 @@ fn load(path: &str) -> Option<Lib> {
         let ty = crate::pe::ResId::Name("TYPELIB".encode_utf16().collect());
         let e = crate::pe::find_resource(m, &ty, &crate::pe::ResId::Int(idx))?;
         let (a, n) = crate::pe::resource_data(m, e);
-        return parse(mem::slice(a, n));
+        return parse(&mem::bytes(a, n));
     }
     let data = crate::files::resolve(&file).and_then(|h| kura::fs::read(h).ok())?;
     parse(&data)

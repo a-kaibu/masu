@@ -279,7 +279,7 @@ fn write_desc_mode(p: u32, s: Option<&Surf>, mode: (i32, i32, u16)) {
     let t = mem::heap_alloc(124, true);
     w32(t, n);
     write_desc_x86(t, s, mode);
-    mem::write(p, &desc_to_x64(&mem::slice(t, n).to_vec()));
+    mem::write(p, &desc_to_x64(&mem::bytes(t, n)));
     mem::heap_free(t);
 }
 fn write_desc_x86(p: u32, s: Option<&Surf>, mode: (i32, i32, u16)) {
@@ -856,7 +856,7 @@ fn S_SetPrivateData(c: &mut Ctx) -> u32 {
     if surf(id).is_none() || c.a(1) == 0 || data == 0 {
         return DDERR_INVALIDPARAMS;
     }
-    let guid: [u8; 16] = mem::slice(c.a(1), 16).try_into().unwrap();
+    let guid: [u8; 16] = mem::array::<16>(c.a(1));
     let unk = flags & DDSPD_IUNKNOWNPOINTER != 0;
     if !unk && size > MAX_PRIVATE {
         return DDERR_OUTOFMEMORY;
@@ -871,7 +871,7 @@ fn S_SetPrivateData(c: &mut Ctx) -> u32 {
         c.call(r32(r32(data) + 4), &[data]);
     }
     // (an interface: the pointer itself)
-    let bytes = if unk { data.to_le_bytes().to_vec() } else { mem::slice(data, size).to_vec() };
+    let bytes = if unk { data.to_le_bytes().to_vec() } else { mem::bytes(data, size) };
     take_private(c, id, guid);
     with(|st| st.surfs.get_mut(&id).map(|x| x.private.push((guid, bytes, unk))));
     DD_OK
@@ -884,7 +884,7 @@ fn S_GetPrivateData(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return DDERR_INVALIDPARAMS;
     }
-    let guid: [u8; 16] = mem::slice(c.a(1), 16).try_into().unwrap();
+    let guid: [u8; 16] = mem::array::<16>(c.a(1));
     let Some(d) = with(|st| st.surfs.get(&id)?.private.iter().find(|e| e.0 == guid).map(|e| e.1.clone())) else {
         return DDERR_NOTFOUND;
     };
@@ -907,7 +907,7 @@ fn S_FreePrivateData(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return DDERR_INVALIDPARAMS;
     }
-    let guid: [u8; 16] = mem::slice(c.a(1), 16).try_into().unwrap();
+    let guid: [u8; 16] = mem::array::<16>(c.a(1));
     if take_private(c, id, guid) { DD_OK } else { DDERR_NOTFOUND }
 }
 
@@ -1242,9 +1242,8 @@ fn blit(dst: &Surf, dr: Rect, src: &Surf, sr: Rect, key: Option<(u32, u32)>, mir
     if dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 {
         return;
     }
-    let Some(d) = surf_bytes(dst) else { return };
-    let base_d = d.as_mut_ptr();
-    if surf_bytes(src).is_none() {
+    let Some(base_d) = surf_ptr(dst) else { return };
+    if surf_ptr(src).is_none() {
         return;
     }
     let base_s = src.bits as usize as *const u8;
@@ -1339,17 +1338,16 @@ fn blit_row<const B: u32>(drow: *mut u8, srow: *const u8, cols: &[(u32, u32)], k
     }
 }
 
-/// A surface's bytes (pitch x height) when they are all guest memory.
-fn surf_bytes(s: &Surf) -> Option<&'static mut [u8]> {
+/// A surface's first byte, when its bytes (pitch x height) are all guest memory.
+fn surf_ptr(s: &Surf) -> Option<*mut u8> {
     let n = s.pitch.checked_mul(s.h.max(0) as u32)?;
-    mem::guest_mut(s.bits, n)
+    mem::host_ptr_mut(s.bits, n)
 }
 
 fn fill(dst: &Surf, r: Rect, color: u32) {
     let r = clip_rect(r, dst.w, dst.h);
     let bpp = PxBytes::of(dst.bpp);
-    let Some(all) = surf_bytes(dst) else { return };
-    let base = all.as_mut_ptr();
+    let Some(base) = surf_ptr(dst) else { return };
     for y in r.t..r.b {
         let p = unsafe { base.add((y as u32 * dst.pitch) as usize) };
         for x in r.l..r.r {
@@ -2748,10 +2746,10 @@ mod blit_tests {
             let (sn, dn) = (src.pitch * sh as u32, dst.pitch * dh as u32);
             let mut x = seed | 1;
             for (at, n) in [(src_at, sn), (dst_at, dn)] {
-                for b in mem::guest_mut(at, n).unwrap() {
+                mem::view_mut(at, n, |s| for b in s {
                     x ^= x << 13; x ^= x >> 17; x ^= x << 5;
                     *b = x as u8;
-                }
+                }).unwrap();
             }
             with(|s| {
                 *s = fresh();
@@ -2781,7 +2779,7 @@ mod blit_tests {
             let src_b = if k.same { db } else { sb };
             let (s_w, s_h, s_key) = if k.same { (dw, dh, None) } else { (sw, sh, k.src_key) };
             let rect_ok_ = |r: Rect, w: i32, h: i32| r.l < r.r && r.t < r.b && r.l >= 0 && r.t >= 0 && r.r <= w && r.b <= h;
-            let before = mem::slice(dst_at, dn).to_vec();
+            let before = mem::bytes(dst_at, dn);
             let (got, want) = if k.fast {
                 let trans = u32::from(k.flags[0]) | u32::from(k.flags[1]) << 1 | 0x10;
                 let (x0, y0) = (k.dr.l, k.dr.t);
@@ -2810,7 +2808,7 @@ mod blit_tests {
             };
             prop_assert_eq!(got, want, "{:?}", k);
             if got != DD_OK {
-                prop_assert!(mem::slice(dst_at, dn) == &before[..]);
+                prop_assert!(&mem::bytes(dst_at, dn) == &before[..]);
             }
             for p in [ck, rp, fx] {
                 mem::heap_free(p);
@@ -2841,12 +2839,12 @@ mod blit_tests {
             let key = key.map(|(lo, _, span)| { let lo = lo & 0x8383_8383; (lo, lo.wrapping_add(span)) });
             let mut out = vec![];
             for fast in [false, true] {
-                mem::guest_mut(src_at, sn as u32).unwrap().copy_from_slice(&sbytes);
+                mem::write(src_at, &sbytes);
                 if !one {
-                    mem::guest_mut(dst_at, dn as u32).unwrap().copy_from_slice(&dbytes);
+                    mem::write(dst_at, &dbytes);
                 }
                 if fast { blit(&dst, dr, &src, sr, key, mirror) } else { blit_ref(&dst, dr, &src, sr, key, mirror) }
-                out.push(mem::slice(dst.bits, dn as u32).to_vec());
+                out.push(mem::bytes(dst.bits, dn as u32));
             }
             prop_assert!(out[0] == out[1]);
         }

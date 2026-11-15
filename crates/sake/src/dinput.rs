@@ -576,7 +576,7 @@ mod tests {
             let valid = instance_layout(size, None).is_some();
             prop_assert_eq!(r, if valid { 0 } else { 0x8007_0057 });
             let end = if valid { size } else { 4 };
-            prop_assert!(mem::slice(p + end, 0x480 - end).iter().all(|&b| b == 0xaa), "written past {:#x}", end);
+            prop_assert!(mem::bytes(p + end, 0x480 - end).iter().all(|&b| b == 0xaa), "written past {:#x}", end);
             if valid {
                 prop_assert_eq!(r32(p), size);
                 prop_assert_eq!(r32(p + 4), if mouse { MOUSE } else { KEYBOARD });
@@ -585,8 +585,8 @@ mod tests {
                     let w: Vec<u8> = (0..name.len() as u32).map(|i| mem::r16(p + 40 + 2 * i) as u8).collect();
                     prop_assert_eq!(&w[..], name);
                 } else {
-                    prop_assert_eq!(mem::slice(p + 40, name.len() as u32), name);
-                    prop_assert_eq!(mem::slice(p + 300, name.len() as u32), name);
+                    prop_assert_eq!(&mem::bytes(p + 40, name.len() as u32), name);
+                    prop_assert_eq!(&mem::bytes(p + 300, name.len() as u32), name);
                 }
             }
             mem::heap_free(p);

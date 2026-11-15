@@ -116,14 +116,14 @@ pub fn read_sa(p: u32, len: u32) -> Result<Addr, u32> {
             if len < 16 {
                 return Err(WSAEFAULT);
             }
-            Ok(Addr::v4(mem::slice(p + 4, 4).try_into().unwrap(), u16::from_be(r16(p + 2))))
+            Ok(Addr::v4(mem::array::<4>(p + 4), u16::from_be(r16(p + 2))))
         }
         AF_INET6 => {
             if len < 24 {
                 return Err(WSAEFAULT);
             }
             let scope = if len >= 28 { r32(p + 24) } else { 0 };
-            Ok(Addr { ip: mem::slice(p + 8, 16).to_vec(), port: u16::from_be(r16(p + 2)), flow: r32(p + 4), scope })
+            Ok(Addr { ip: mem::bytes(p + 8, 16), port: u16::from_be(r16(p + 2)), flow: r32(p + 4), scope })
         }
         _ => Err(WSAEAFNOSUPPORT),
     }
@@ -261,7 +261,7 @@ fn pton(c: &mut Ctx, wide: bool) -> u32 {
             pton_ret(r.ok && s.get(r.end).is_none(), wide)
         }
         AF_INET6 => {
-            let mut a: [u8; 16] = mem::slice(out, 16).try_into().unwrap();
+            let mut a: [u8; 16] = mem::array::<16>(out);
             let r = netaddr::v6_parse(&s, &mut a, false, true);
             mem::write(out, &a);
             pton_ret(r.ok && s.get(r.end).is_none(), wide)
@@ -278,8 +278,8 @@ fn ntop(c: &mut Ctx, wide: bool) -> u32 {
         return 0;
     }
     let s = match af {
-        AF_INET => netaddr::v4_text(mem::slice(a, 4).try_into().unwrap(), 0),
-        AF_INET6 => netaddr::v6_text(mem::slice(a, 16).try_into().unwrap(), 0, 0),
+        AF_INET => netaddr::v4_text(mem::array::<4>(a), 0),
+        AF_INET6 => netaddr::v6_text(&mem::array::<16>(a), 0, 0),
         _ => {
             last(WSAEAFNOSUPPORT);
             return 0;
@@ -1058,7 +1058,7 @@ fn host_by_addr(a: u32, len: u32, af: u32) -> u32 {
         last(WSAEFAULT);
         return 0;
     }
-    let ip = mem::slice(a, want).to_vec();
+    let ip = mem::bytes(a, want);
     let addr = Addr { ip: ip.clone(), port: 0, flow: 0, scope: 0 };
     if !addr.loopback() {
         last(WSAHOST_NOT_FOUND);
@@ -1583,7 +1583,7 @@ fn WSCGetProviderPath(c: &mut Ctx) -> u32 {
         w32(errp, WSAEFAULT);
         return SOCKET_ERROR;
     }
-    if mem::slice(id, 16) != PROVIDER {
+    if mem::array::<16>(id) != PROVIDER {
         w32(errp, WSAEINVAL);
         return SOCKET_ERROR;
     }

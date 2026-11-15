@@ -837,7 +837,7 @@ fn GetUnicastIpAddressEntry(c: &mut Ctx) -> u32 {
     let (l, i) = (mem::r64(p + 32), r32(p + 40));
     let iface = if l != 0 { by_luid(l) } else { by_index(i) };
     let Some(iface) = iface else { return ERROR_FILE_NOT_FOUND };
-    let want = if fam == AF_INET { mem::slice(p + 4, 4).to_vec() } else { mem::slice(p + 8, 16).to_vec() };
+    let want = if fam == AF_INET { mem::bytes(p + 4, 4) } else { mem::bytes(p + 8, 16) };
     match addrs(fam).into_iter().find(|a| a.iface.index == iface.index && a.a == want) {
         Some(a) => {
             fill_unicast_row(p, &a);
@@ -1256,8 +1256,8 @@ fn GetBestInterfaceEx(c: &mut Ctx) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let a = match r16(sa) as u32 {
-        AF_INET => mem::slice(sa + 4, 4).to_vec(),
-        AF_INET6 => mem::slice(sa + 8, 16).to_vec(),
+        AF_INET => mem::bytes(sa + 4, 4),
+        AF_INET6 => mem::bytes(sa + 8, 16),
         _ => return ERROR_INVALID_PARAMETER,
     };
     if bad_scope(sa) {
@@ -1303,8 +1303,8 @@ fn GetBestRoute2(c: &mut Ctx) -> u32 {
     mem::write(row, &[0; 104]);
     let fam = r16(dst) as u32;
     let a = match fam {
-        AF_INET => mem::slice(dst + 4, 4).to_vec(),
-        AF_INET6 => mem::slice(dst + 8, 16).to_vec(),
+        AF_INET => mem::bytes(dst + 4, 4),
+        AF_INET6 => mem::bytes(dst + 8, 16),
         _ => return ERROR_INVALID_PARAMETER,
     };
     if bad_scope(dst) {
@@ -1340,7 +1340,7 @@ fn bad_scope(sa: u32) -> bool {
     if r16(sa) as u32 != AF_INET6 || r32(sa + 24) == 0 {
         return false;
     }
-    let a = mem::slice(sa + 8, 2);
+    let a = &mem::array::<2>(sa + 8);
     !(a[0] == 0xfe && a[1] & 0xc0 == 0x80)
 }
 
@@ -1397,7 +1397,7 @@ fn ConvertInterfaceGuidToLuid(c: &mut Ctx) -> u32 {
     if g == 0 || out == 0 {
         return ERROR_INVALID_PARAMETER;
     }
-    let g: [u8; 16] = mem::slice(g, 16).try_into().unwrap();
+    let g: [u8; 16] = mem::array::<16>(g);
     match ifaces().iter().find(|f| f.guid == g) {
         Some(f) => {
             w64(out, f.luid());
@@ -1516,7 +1516,7 @@ fn guid_to_string(c: &mut Ctx, wide: bool) -> u32 {
     if len < 39 {
         return ERROR_NOT_ENOUGH_MEMORY;
     }
-    let s = guid_string(&mem::slice(g, 16).try_into().unwrap());
+    let s = guid_string(&mem::array::<16>(g));
     if wide {
         put_wfixed(buf, len, &s);
     } else {
@@ -1657,7 +1657,7 @@ fn send_echo(c: &mut Ctx, h: u32, e: Echo) -> u32 {
 }
 
 fn echo_data(p: u32, n: u32) -> Vec<u8> {
-    if p == 0 || n == 0 { Vec::new() } else { mem::slice(p, n).to_vec() }
+    if p == 0 || n == 0 { Vec::new() } else { mem::bytes(p, n) }
 }
 /// IP_OPTION_INFORMATION's Ttl, if options are given
 fn echo_ttl(o: u32) -> Option<u8> {
@@ -1689,9 +1689,9 @@ fn Icmp6SendEcho2(c: &mut Ctx) -> u32 {
         last_error(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    let src = mem::slice(sa + 8, 16).to_vec();
+    let src = mem::bytes(sa + 8, 16);
     let src = (!src.iter().all(|&b| b == 0)).then_some(src);
-    let e = Echo { v6: true, dst: mem::slice(da + 8, 16).to_vec(), src, data: echo_data(data, size), ttl: echo_ttl(o), reply, rsize, event, apc, apc_ctx };
+    let e = Echo { v6: true, dst: mem::bytes(da + 8, 16), src, data: echo_data(data, size), ttl: echo_ttl(o), reply, rsize, event, apc, apc_ctx };
     send_echo(c, h, e)
 }
 /// IcmpParseReplies(reply, size): the reply count kept in Reserved (which it clears); with
@@ -1911,7 +1911,7 @@ fn CreateSortedAddressPairs(c: &mut Ctx) -> u32 {
         let ps_ = t + pair * i;
         let sa_src = t + pair * n + 56 * i;
         let sa_dst = sa_src + 28;
-        let v = mem::slice(d, 28).to_vec();
+        let v = mem::bytes(d, 28);
         mem::write(sa_dst, &v);
         // the source: ::1 (or ::ffff:127.0.0.1 for a mapped IPv4 destination)
         let mut s = [0u8; 28];
@@ -2269,8 +2269,8 @@ mod issue88 {
             assert_eq!(conn_fill(p, &conn_rows(false, false, |_| true), false, false, RowKind::Basic), 28);
             assert_eq!(r32(p), 3);
             for i in 0..3 {
-                assert_eq!(mem::slice(p + 4 + 8 * i, 4), &[127, 0, 0, 1]);
-                assert_eq!(mem::slice(p + 8 + 8 * i, 2), &(41000u16 + i as u16).to_be_bytes());
+                assert_eq!(&mem::array::<4>(p + 4 + 8 * i), &[127, 0, 0, 1]);
+                assert_eq!(&mem::array::<2>(p + 8 + 8 * i), &(41000u16 + i as u16).to_be_bytes());
             }
             assert_eq!(r32(p + 28), 0xcccccccc);
             mem::heap_free(p);

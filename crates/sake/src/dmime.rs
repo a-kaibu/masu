@@ -265,7 +265,7 @@ fn with<R>(f: impl FnOnce(&mut World) -> R) -> R {
 
 fn read16(p: u32) -> [u8; 16] {
     let mut g = [0u8; 16];
-    g.copy_from_slice(mem::slice(p, 16));
+    g.copy_from_slice(&mem::array::<16>(p));
     g
 }
 
@@ -1260,7 +1260,7 @@ fn l_get_object(c: &mut Ctx) -> u32 {
         if data == 0 || len == 0 {
             return Hr::Pointer.code();
         }
-        let bytes = mem::slice(data, len).to_vec();
+        let bytes = mem::bytes(data, len);
         return hand_out(segment_of_bytes(&bytes), iid, out);
     }
     if valid & 0x10 == 0 {

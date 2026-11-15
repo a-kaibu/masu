@@ -313,18 +313,61 @@ pub fn put32(a: u32, v: u32) {
         w32(a, v)
     }
 }
-pub fn slice<'a>(a: u32, n: u32) -> &'a [u8] {
-    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
-    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
-    // SAFETY: The slice is read while the guest may write it: sake never keeps it across a guest call.
-    unsafe { std::slice::from_raw_parts(host::<u8>(a).cast_const(), us(n)) }
+/// A copy of guest memory `a..a + n`; empty where that is not all guest memory (an address
+/// past GUEST_TOP read sake's own)
+pub fn bytes(a: u32, n: u32) -> Vec<u8> {
+    view(a, n, <[u8]>::to_vec)
 }
-/// Guest memory `a..a + n` for sake to write into, or None where that is not the guest's: in
-/// the NULL pages (a failed allocation, a NULL pointer with a length) or reaching past
-/// GUEST_TOP into sake's own memory (review 2026-11-14: the unchecked slice_mut wrote there).
-pub fn guest_mut<'a>(a: u32, n: u32) -> Option<&'a mut [u8]> {
+/// The `N` bytes at `a`, copied (a GUID, a key, a header); zeros where that is not guest memory
+pub fn array<const N: usize>(a: u32) -> [u8; N] {
+    view(a, kome::num::u32_of(N), |s| s.try_into().unwrap_or([0; N]))
+}
+/// `f` with guest memory `a..a + n` to read, for where a copy costs (decoders, blits, hashes);
+/// empty where that is not all guest memory. The view lives only inside `f`: it cannot be kept
+/// until the guest runs again and changes it.
+pub fn view<R>(a: u32, n: u32, f: impl FnOnce(&[u8]) -> R) -> R {
+    if !guest(a, n) {
+        return f(&[]);
+    }
+    raw(a, n, f)
+}
+/// The one place guest memory is read as a Rust slice; `a..a + n` checked guest memory by the
+/// caller (guest()).
+fn raw<R>(a: u32, n: u32, f: impl FnOnce(&[u8]) -> R) -> R {
+    debug_assert!(in_guest(a, n));
+    // SAFETY: a..a+n is guest memory (the caller's guest() check; the low 2 GiB of the wasm
+    // memory, all of it backed: the module doc). The guest's own threads may write it meanwhile
+    // (as the x86 they emulate allows); sake reads bytes, not invariants, from it, and the borrow
+    // ends with `f`, before sake runs guest code again on this thread.
+    f(unsafe { std::slice::from_raw_parts(host::<u8>(a).cast_const(), us(n)) })
+}
+/// The one place guest memory is written as a Rust slice; `a..a + n` checked by the caller.
+fn raw_mut<R>(a: u32, n: u32, f: impl FnOnce(&mut [u8]) -> R) -> R {
+    debug_assert!(in_guest(a, n));
+    // SAFETY: as in raw; the borrow ends with `f`.
+    f(unsafe { std::slice::from_raw_parts_mut(host::<u8>(a), us(n)) })
+}
+/// The host pointer of guest memory `a..a + n`, None where that is not all guest memory: for
+/// code that walks it by pointer (the software rasterizers). Reading or writing through it is
+/// the caller's unsafe, inside that range.
+pub fn host_ptr(a: u32, n: u32) -> Option<*const u8> {
+    guest(a, n).then(|| host::<u8>(a).cast_const())
+}
+/// host_ptr for writing: None where guest_range refuses (the NULL pages, past GUEST_TOP)
+pub fn host_ptr_mut(a: u32, n: u32) -> Option<*mut u8> {
+    if !guest_range(a, n) {
+        if a >= NULL_TOP {
+            refused(a, n);
+        }
+        return None;
+    }
+    Some(host::<u8>(a))
+}
+/// `f` with guest memory `a..a + n` to write; None (and `f` not run) where that is not the
+/// guest's to write (guest_range: the NULL pages, past GUEST_TOP)
+pub fn view_mut<R>(a: u32, n: u32, f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
     if n == 0 {
-        return Some(&mut []);
+        return Some(f(&mut []));
     }
     if !guest_range(a, n) {
         if a >= NULL_TOP {
@@ -332,10 +375,10 @@ pub fn guest_mut<'a>(a: u32, n: u32) -> Option<&'a mut [u8]> {
         }
         return None;
     }
-    // SAFETY: guest_range above: a..a+n is guest memory past the NULL pages (backed).
-    Some(unsafe { std::slice::from_raw_parts_mut(host::<u8>(a), us(n)) })
+    // (guest_range above: a..a+n is guest memory past the NULL pages)
+    Some(raw_mut(a, n, f))
 }
-/// Whether `a..a + n` is guest memory sake may write for the program (guest_mut's rule).
+/// Whether `a..a + n` is guest memory sake may write for the program (view_mut's rule).
 #[inline]
 pub fn guest_range(a: u32, n: u32) -> bool {
     n == 0 || (a >= NULL_TOP && ga(a).end(n) <= u64::from(GUEST_TOP))
@@ -366,12 +409,12 @@ pub fn zero(a: u32, n: u32) {
     while p < end {
         // (p < end <= 2^32: the next page boundary is below 2^33)
         let next = (p | u64::from(PAGE).saturating_sub(1)).saturating_add(1).min(end);
-        // (inside guest memory: checked above)
-        // SAFETY: p..next is inside a..a+n, which guest() above found guest memory (backed).
-        let s = unsafe { std::slice::from_raw_parts_mut(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(p)), kome::num::us(next.saturating_sub(p))) };
-        if !is_zero(s) {
-            s.fill(0);
-        }
+        // (p..next is inside a..a+n, guest memory: checked above)
+        raw_mut(kome::num::lo32(p), kome::num::lo32(next.saturating_sub(p)), |s| {
+            if !is_zero(s) {
+                s.fill(0);
+            }
+        });
         p = next;
     }
 }
@@ -413,14 +456,13 @@ pub fn cstr(a: u32) -> Vec<u8> {
     // (one scan of the guest memory up to GUEST_TOP: an unterminated string stops there
     // instead of wrapping past 4 GB, review b07)
     if a < GUEST_TOP {
-        let s = slice(a, GUEST_TOP.saturating_sub(a));
-        return s.iter().take_while(|&&c| c != 0).copied().collect();
+        return view(a, GUEST_TOP.saturating_sub(a), |s| s.iter().take_while(|&&c| c != 0).copied().collect());
     }
     let mut n = 0;
     while (ga(a) + n).r8() != 0 {
         n = n.wrapping_add(1);
     }
-    slice(a, n).to_vec()
+    bytes(a, n)
 }
 /// The bytes of `n` UTF-16 units in guest memory (saturating at 4 GiB)
 pub fn wbytes(n: usize) -> u32 {
@@ -432,12 +474,13 @@ pub fn wstr(a: u32) -> Vec<u16> {
         return Vec::new();
     }
     if a < GUEST_TOP {
-        let s = slice(a, GUEST_TOP.saturating_sub(a) & !1);
-        let units = s.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c));
-        let n = units.clone().position(|c| c == 0).unwrap_or(s.len() / 2);
-        let mut v = Vec::with_capacity(n);
-        v.extend(units.take(n));
-        return v;
+        return view(a, GUEST_TOP.saturating_sub(a) & !1, |s| {
+            let units = s.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c));
+            let n = units.clone().position(|c| c == 0).unwrap_or(s.len() / 2);
+            let mut v = Vec::with_capacity(n);
+            v.extend(units.take(n));
+            v
+        });
     }
     let mut v = Vec::new();
     let mut p = ga(a);
@@ -591,7 +634,7 @@ fn insert(sp: &mut BTreeMap<u32, Region>, base: u32, size: u32, prot: u32, kind:
     {
         let n = size.min(16 * PAGE);
         if TEST_MAPPED.load(std::sync::atomic::Ordering::Relaxed) && in_guest(base, n) {
-            assert!(is_zero(slice(base, n)), "free guest memory at {base:#x} is not zero: something wrote there without reserving it");
+            assert!(view(base, n, is_zero), "free guest memory at {base:#x} is not zero: something wrote there without reserving it");
         }
     }
     sp.insert(base, Region { size, prot, state: 0x2000, alloc_base: base, alloc_prot: prot, kind, hi: 0 });
@@ -708,7 +751,7 @@ pub fn decommit_range(a: u32, n: u32) -> bool {
         for (i, x) in (first..last).zip(p.iter_mut().skip(us(first))) {
             if *x != 0 {
                 let at = ga(b).at(i, PAGE).get();
-                if !is_zero(slice(at, PAGE)) {
+                if !view(at, PAGE, is_zero) {
                     fill(at, PAGE, 0);
                 }
                 *x = 0;
@@ -1318,15 +1361,15 @@ mod tests {
     /// review 2026-11-14: sake wrote program-given (pointer, length) pairs through an unchecked
     /// slice: into the NULL pages after a failed allocation, or past 2 GB into its own heap
     #[test]
-    fn guest_mut_refuses_what_is_not_the_guests() {
-        use super::{guest_mut, guest_range, NULL_TOP};
-        assert!(guest_mut(0, 0).is_some_and(|s| s.is_empty()));
-        assert!(guest_mut(0, 16).is_none());
-        assert!(guest_mut(NULL_TOP - 1, 1).is_none());
-        assert!(guest_mut(GUEST_TOP, 1).is_none());
-        assert!(guest_mut(GUEST_TOP - 4, 5).is_none());
-        assert!(guest_mut(0x40_0000, u32::MAX).is_none());
-        assert!(guest_mut(0xffff_fff0, 0x20).is_none());
+    fn view_mut_refuses_what_is_not_the_guests() {
+        use super::{guest_range, view_mut, NULL_TOP};
+        assert!(view_mut(0, 0, |s| s.is_empty()) == Some(true));
+        assert!(view_mut(0, 16, |_| ()).is_none());
+        assert!(view_mut(NULL_TOP - 1, 1, |_| ()).is_none());
+        assert!(view_mut(GUEST_TOP, 1, |_| ()).is_none());
+        assert!(view_mut(GUEST_TOP - 4, 5, |_| ()).is_none());
+        assert!(view_mut(0x40_0000, u32::MAX, |_| ()).is_none());
+        assert!(view_mut(0xffff_fff0, 0x20, |_| ()).is_none());
         assert!(guest_range(NULL_TOP, 1) && guest_range(GUEST_TOP - 4, 4) && guest_range(0x40_0000, GUEST_TOP - 0x40_0000));
     }
 
@@ -1461,7 +1504,7 @@ mod tests {
     /// (pages that were zero, pages with one byte set anywhere, ranges cut at any byte); and it
     /// leaves pages that were zero unwritten, so that they never become RAM (the RSS tests).
     mod zeroing {
-        use super::super::{is_zero, release, reserve, commit, decommit_range, heap_alloc, heap_free, slice, guest_mut, ga, zero, PAGE};
+        use super::super::{is_zero, release, reserve, commit, decommit_range, heap_alloc, heap_free, bytes, view_mut, ga, zero, PAGE};
         use proptest::prelude::*;
 
         #[test]
@@ -1487,9 +1530,9 @@ mod tests {
                 for &(at, v) in &dirty {
                     (ga(b) + at).w8(v);
                 }
-                let before = slice(b, 10 * PAGE).to_vec();
+                let before = bytes(b, 10 * PAGE);
                 zero(b + start, len);
-                let after = slice(b, 10 * PAGE);
+                let after = bytes(b, 10 * PAGE);
                 for i in 0..10 * PAGE {
                     let inside = i >= start && i < start + len;
                     prop_assert_eq!(after[kome::num::us(i)], if inside { 0 } else { before[kome::num::us(i)] }, "byte {:#x}", i);
@@ -1528,12 +1571,12 @@ mod tests {
             let before = guest_rss_kib();
             let b = reserve(0, BIG, 4, 0x20000, false).unwrap();
             commit(b, 4);
-            guest_mut(b + 0x123_4000, 16).unwrap().fill(7);
+            view_mut(b + 0x123_4000, 16, |s| s.fill(7)).unwrap();
             release(b);
             slack(guest_rss_kib().saturating_sub(before));
             // the page written is zero again for whoever gets the block next
             let b2 = reserve(b, BIG, 4, 0x20000, false).unwrap();
-            assert!(is_zero(slice(b2 + 0x123_4000, PAGE)));
+            assert!(is_zero(&bytes(b2 + 0x123_4000, PAGE)));
             // commit and decommit without writing
             commit(b2, 4);
             decommit_range(b2, 0);
@@ -1542,7 +1585,7 @@ mod tests {
             // HEAP_ZERO_MEMORY / calloc of fresh memory
             let h = heap_alloc(BIG / 2, true);
             assert_ne!(h, 0);
-            assert!(is_zero(slice(h, PAGE)) && is_zero(slice(h + BIG / 2 - PAGE, PAGE)));
+            assert!(is_zero(&bytes(h, PAGE)) && is_zero(&bytes(h + BIG / 2 - PAGE, PAGE)));
             slack(guest_rss_kib().saturating_sub(before));
             heap_free(h);
             slack(guest_rss_kib().saturating_sub(before));

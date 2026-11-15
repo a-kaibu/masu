@@ -64,7 +64,7 @@ fn with<R>(this: u32, f: impl FnOnce(&mut Dx) -> R) -> Option<R> {
 /// The bytes of a buffer of ours as last read (None: not one of ours), for samples that join
 /// buffers (reader.rs).
 pub fn cached(b: u32) -> Option<Vec<u8>> {
-    with(b, |d| mem::slice(d.data, d.len).to_vec())
+    with(b, |d| mem::bytes(d.data, d.len))
 }
 /// Its current length (None: not one of ours).
 pub fn length(b: u32) -> Option<u32> {
@@ -215,7 +215,7 @@ fn lock(c: &mut Ctx, b: u32) -> u32 {
     .unwrap_or(false);
     if first {
         read_back(c, b);
-        dx(b, |d| d.read = Some(mem::slice(d.data, d.max).to_vec()));
+        dx(b, |d| d.read = Some(mem::bytes(d.data, d.max)));
     }
     dx(b, |d| d.data).unwrap_or(0)
 }
@@ -232,7 +232,7 @@ fn unlock(c: &mut Ctx, b: u32) -> u32 {
         return Hr::WasUnlocked.code();
     };
     if last {
-        let changed = dx(b, |d| d.read.take().is_some_and(|r| r[..] != *mem::slice(d.data, d.max))).unwrap_or(false);
+        let changed = dx(b, |d| d.read.take().is_some_and(|r| r[..] != *&mem::bytes(d.data, d.max))).unwrap_or(false);
         if changed {
             write_back(c, b);
         }

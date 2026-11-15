@@ -158,13 +158,13 @@ fn blob(p: u32, n: u32) -> Result<Vec<u8>, u32> {
     if p == 0 {
         return Err(Hr::Pointer.code());
     }
-    Ok(mem::slice(p, n).to_vec())
+    Ok(mem::bytes(p, n))
 }
 
 type Guid = [u8; 16];
 
 fn guid_at(p: u32) -> Guid {
-    mem::slice(p, 16).first_chunk::<16>().copied().unwrap_or([0; 16])
+    mem::array::<16>(p).first_chunk::<16>().copied().unwrap_or([0; 16])
 }
 /// The first fields of a GUID: (Data1, Data2, Data3)
 /// Data1 of a GUID (its first field)

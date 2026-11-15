@@ -50,7 +50,7 @@ fn objs<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
 }
 
 fn guid_at(p: u32) -> Guid {
-    mem::slice(p, 16).try_into().unwrap()
+    mem::array::<16>(p)
 }
 
 fn new_obj(kind: Kind, refs: u32) -> u32 {
@@ -167,7 +167,7 @@ fn register_templates(c: &mut Ctx) -> u32 {
     if data == 0 || size == 0 {
         return xof::BADVALUE;
     }
-    let bytes = mem::slice(data, size).to_vec();
+    let bytes = mem::bytes(data, size);
     let r = xof::register(&bytes, &mut t.lock().unwrap());
     r.err().unwrap_or(0)
 }
@@ -186,14 +186,14 @@ fn source(src: u32, opts: u32) -> Result<Vec<u8>, u32> {
             let (module, name, ty) = (mem::rp(src), mem::rp(src + ps), mem::rp(src + 2 * ps));
             let m = if module == 0 { crate::k32::module_handle(0, false) } else { module };
             let e = crate::pe::find_resource(m, &crate::pe::ResId::from_arg(ty, false), &crate::pe::ResId::from_arg(name, false)).ok_or(xof::RESOURCENOTFOUND)?;
-            Ok(mem::slice(m + mem::r32(e), mem::r32(e + 4)).to_vec())
+            Ok(mem::bytes(m + mem::r32(e), mem::r32(e + 4)))
         }
         2 => {
             let (p, n) = (mem::rp(src), mem::r32(src + ps));
             if p == 0 {
                 return Err(xof::BADVALUE);
             }
-            Ok(mem::slice(p, n).to_vec())
+            Ok(mem::bytes(p, n))
         }
         _ => Err(xof::NOTDONEYET),
     }

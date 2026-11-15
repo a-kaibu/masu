@@ -171,7 +171,7 @@ fn free(this: u32) {
         // (every kind goes: a stream holds the whole file, a source or bitmap its pixels)
         if let Some(Obj::Lock { bitmap, fmt, rect, buf, stride, write, owner }) = with(|m| m.remove(&this)) {
             if write {
-                let data = mem::slice(buf, stride * rect.3).to_vec();
+                let data = mem::bytes(buf, stride * rect.3);
                 lock_into_raw(owner, fmt, rect, stride, &data);
                 let mut g = bitmap.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 let img = Arc::make_mut(&mut *g);
@@ -265,7 +265,7 @@ fn s_write(c: &mut Ctx) -> u32 {
         }
         return STG_E_MEDIUMFULL;
     }
-    let src = mem::slice(pv, cb).to_vec();
+    let src = mem::bytes(pv, cb);
     stream(this, |d, pos| {
         let end = *pos as usize + src.len();
         if d.len() < end {
@@ -326,7 +326,7 @@ fn s_stat(c: &mut Ctx) -> u32 {
 
 fn s_init_memory(c: &mut Ctx) -> u32 {
     let (this, p, n) = (c.a(0), c.a(1), c.a(2));
-    let src = mem::slice(p, n).to_vec();
+    let src = mem::bytes(p, n);
     stream(this, |d, pos| {
         *d = src;
         *pos = 0;
@@ -370,7 +370,7 @@ pub(crate) fn read_stream(c: &mut Ctx, stm: u32) -> Vec<u8> {
         mem::w32(got, 0);
         let hr = c.call(read, &[stm, buf, 0x10000, got]);
         let n = mem::r32(got).min(0x10000);
-        data.extend_from_slice(mem::slice(buf, n));
+        mem::view(buf, n, |s| data.extend_from_slice(s));
         // (a failing Read, or a stream that never ends: at most MAX_IMAGE)
         if n < 0x10000 || hr & 0x8000_0000 != 0 || data.len() as u64 >= MAX_IMAGE {
             break;
@@ -443,7 +443,7 @@ fn read_source(c: &mut Ctx, src: u32) -> Option<(Arc<Img>, Fmt)> {
         return None;
     }
     let r = c.call(mem::rp(vt + 7 * k), &[src, 0, stride, stride * h, buf]);
-    let data = mem::slice(buf, stride * h).to_vec();
+    let data = mem::bytes(buf, stride * h);
     mem::heap_free(buf);
     (r == 0).then(|| (Arc::new(decode(f, w, h, stride, &data, &[])), f))
 }
@@ -542,7 +542,7 @@ fn src_copy(c: &mut Ctx) -> u32 {
     if stride < row || u64::from(size) < u64::from(stride) * u64::from(r.3 - 1) + u64::from(row) {
         return WINCODEC_ERR_INSUFFICIENTBUFFER;
     }
-    let mut out = mem::slice(buf, stride * (r.3 - 1) + row).to_vec();
+    let mut out = mem::bytes(buf, stride * (r.3 - 1) + row);
     match raw_of(this) {
         Some(fr) if fr.fmt == f => picture::copy_rect(f, &fr.bits, fr.stride(), r, stride, &mut out),
         _ => encode(&img, f, r, stride, &mut out),
@@ -1507,7 +1507,7 @@ fn f_bitmap_from_memory(c: &mut Ctx) -> u32 {
     if u64::from(size) < memory_needed(stride, h, row) {
         return WINCODEC_ERR_INSUFFICIENTBUFFER;
     }
-    let data = mem::slice(buf, size).to_vec();
+    let data = mem::bytes(buf, size);
     let img = decode(f, w, h, stride, &data, &[]);
     // (and the bytes as they are, rows packed: Lock and CopyPixels in its own format, a converter to it
     // and an indexed bitmap's SetPalette read them; Windows copies them unchanged, kikizake
@@ -1957,7 +1957,7 @@ mod tests {
             let copied = |src: u32| -> Vec<Vec<u8>> {
                 let o = mem::heap_alloc(row * h, true);
                 assert_eq!(call(src_copy, &[src, 0, row, row * h, o]), 0);
-                let v = (0..h).map(|y| { let mut r = mem::slice(o + y * row, row).to_vec(); pixel_bits(f, w, &mut r); r }).collect();
+                let v = (0..h).map(|y| { let mut r = mem::bytes(o + y * row, row); pixel_bits(f, w, &mut r); r }).collect();
                 mem::heap_free(o);
                 v
             };
@@ -1970,7 +1970,7 @@ mod tests {
             proptest::prop_assert_eq!(call(bm_lock, &[bm, 0, 1, out]), 0);
             let l = mem::rp(out);
             let (ls, lp) = lock(l, |_, _, b, s| (s, b)).unwrap();
-            let locked: Vec<Vec<u8>> = (0..h).map(|y| { let mut r = mem::slice(lp + y * ls, row).to_vec(); pixel_bits(f, w, &mut r); r }).collect();
+            let locked: Vec<Vec<u8>> = (0..h).map(|y| { let mut r = mem::bytes(lp + y * ls, row); pixel_bits(f, w, &mut r); r }).collect();
             proptest::prop_assert_eq!(&locked, &want, "{:?} lock", f);
             call(release, &[l]);
             // (a write lock of columns lx.. (as many as fit) of row 0, bytes inverted)
@@ -1983,7 +1983,7 @@ mod tests {
             let l = mem::rp(out);
             let lp = lock(l, |_, _, b, _| b).unwrap();
             let n = f.row_bytes(lw);
-            let wrote: Vec<u8> = mem::slice(lp, n).iter().map(|b| !b).collect();
+            let wrote: Vec<u8> = mem::bytes(lp, n).iter().map(|b| !b).collect();
             mem::write(lp, &wrote);
             call(release, &[l]);
             let mut after = want.clone();

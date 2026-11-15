@@ -579,7 +579,7 @@ fn eptr_compare(c: &mut Ctx) -> u32 {
 }
 fn eptr_swap(c: &mut Ctx) -> u32 {
     let (a, b) = (c.a(0), c.a(1));
-    let t = mem::slice(a, 2 * ps()).to_vec();
+    let t = mem::bytes(a, 2 * ps());
     mem::copy(a, b, 2 * ps());
     mem::write(b, &t);
     0

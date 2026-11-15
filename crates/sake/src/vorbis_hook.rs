@@ -488,7 +488,7 @@ fn headerin(vi: u32, op: u32) {
     if !(7..1 << 24).contains(&n) || !readable(p, n) {
         return;
     }
-    let pkt = mem::slice(p, n);
+    let pkt = &mem::bytes(p, n);
     if &pkt[1..7] != b"vorbis" {
         return;
     }
@@ -543,7 +543,7 @@ fn headerin(vi: u32, op: u32) {
             let m = g.get_or_insert_with(HashMap::new);
             if m.len() >= MAX_STREAMS {
                 // those whose codec_setup is gone or another's, then the oldest
-                m.retain(|&k, s| s.seen.is_none_or(|seen| readable(k, 36) && mem::slice(k, 36) == seen));
+                m.retain(|&k, s| s.seen.is_none_or(|seen| readable(k, 36) && mem::array::<36>(k) == seen));
                 while m.len() >= MAX_STREAMS {
                     let oldest = *m.iter().min_by_key(|(_, s)| s.born).unwrap().0;
                     m.remove(&oldest);
@@ -695,7 +695,7 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
         if !readable(key, 36) {
             return pass("codec_setup unreadable");
         }
-        let now: [u8; 36] = mem::slice(key, 36).try_into().unwrap();
+        let now: [u8; 36] = mem::array::<36>(key);
         let s = m.get_mut(&key).unwrap();
         let Some(dec) = s.dec.clone() else {
             return pass("no headers for its vorbis_info");
@@ -732,10 +732,11 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
     if !outs.iter().all(|&p| readable(p, 4 * n as u32)) {
         return pass("pcm buffers unreadable");
     }
+    let pkt = mem::bytes(buffer, storage);
     let mut decode_as = |down: bool| {
         st.lines_round_down = down;
         let mut bufs = vec![vec![0f32; n]; ch];
-        let mut b = Bits::at(mem::slice(buffer, storage), endbyte as usize * 8 + endbit as usize);
+        let mut b = Bits::at(&pkt, endbyte as usize * 8 + endbit as usize);
         let mut v: Vec<&mut [f32]> = bufs.iter_mut().map(|b| &mut b[..]).collect();
         decode::mapping_inverse(setup, st, &mut b, mode, &mut v);
         bufs
@@ -786,7 +787,7 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
         if let Some((i, j, ours, theirs)) = bad {
             k.bad += 1;
             if k.bad <= 8 {
-                let pkt = mem::slice(buffer, storage);
+                let pkt = &mem::bytes(buffer, storage);
                 let hex: String = pkt.iter().take(48).map(|b| format!("{b:02x}")).collect();
                 eprintln!("sake: vorbis check: packet {} differs (mode {mode}, n {n}, {} bytes, from bit {}): channel {i} sample {j}: ours {ours} vs {theirs}; {hex}", k.packets, storage, endbyte * 8 + endbit);
             }

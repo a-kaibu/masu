@@ -64,7 +64,7 @@ pub(super) fn receive_connection(c: &mut Ctx, b: u32, from: u32, mt: u32) -> u32
     if !is(mt + 44, &FORMAT_VIDEO_INFO) || len < 88 || fmt == 0 {
         return Hr::TypeNotAccepted.code();
     }
-    let f = mem::slice(fmt, len).to_vec();
+    let f = mem::bytes(fmt, len);
     let Some(info) = wmdec::Info::from_bih(&f[48..]) else { return Hr::TypeNotAccepted.code() };
     let Some(codec) = wmdec::codec(&info) else {
         eprintln!("sake: DMO wrapper: no decoder for {:?} (format {} bytes)", info, len);
@@ -236,7 +236,7 @@ fn receive(c: &mut Ctx, b: u32, sample: u32) -> u32 {
         return Hr::Pointer.code();
     }
     // (the sample's bytes as they are: the caller holds it until Receive returns)
-    let data = mem::slice(ptr, len);
+    let data = &mem::bytes(ptr, len);
     let Some((mut codec, generation)) = dwith(b, |d| (d.codec.take(), d.generation)) else { return Hr::Unexpected.code() };
     let t0 = std::time::Instant::now();
     let frames = codec.as_mut().map(|x| x.decode(&data, if time == u64::MAX { 0 } else { time }, key)).unwrap_or_default();
@@ -289,7 +289,7 @@ fn show(c: &mut Ctx, b: u32, generation: u32, time: u64, w: u32, h: u32, bgra: &
     })
     .unwrap_or(0);
     // (straight into the sample: a picture-sized Vec and a copy of it a picture before)
-    if buf != 0 && mem::guest_mut(buf, size).is_some_and(|dst| wmdec::to_rgb_into(bgra, w, h, ow, oh, 32, dst)) {
+    if buf != 0 && mem::view_mut(buf, size, |dst| wmdec::to_rgb_into(bgra, w, h, ow, oh, 32, dst)) == Some(true) {
         dwith(b, |d| d.shown = true);
         com(c, mem_pin, 6, &[s]);
         stats(Stat::Shown);
