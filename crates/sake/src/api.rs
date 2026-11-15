@@ -398,11 +398,9 @@ pub fn find_impl(dll: &str, name: &str) -> Option<Handler> {
         }
     }
     // the UCRT's _o_ exports (api-ms-win-crt-private, for Windows' own DLLs) are its plain ones
-    if dll == "ucrtbase" {
-        if let Some(plain) = name.strip_prefix("_o_") {
-            drop(g);
-            return find_impl(dll, plain);
-        }
+    if dll == "ucrtbase" && let Some(plain) = name.strip_prefix("_o_") {
+        drop(g);
+        return find_impl(dll, plain);
     }
     None
 }
@@ -788,16 +786,14 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
     if sw & SW_STATS != 0 {
         *COUNTS.locked().get_or_insert_with(HashMap::default).entry(i).or_default() += 1;
     }
-    if sw & SW_THREADS != 0 {
-        if let Some(k) = recent_slot(crate::cur().tid) {
-            use std::sync::atomic::Ordering::Relaxed;
-            let n = RECENT_POS[k].load(Relaxed) as usize;
-            let r = [i, r32(esp + 4), r32(esp + 8), r32(esp + 12), r32(esp), crate::k32::ticks_ms() - 60_000];
-            for (x, v) in RECENT[k][n % RECENT_N].iter().zip(r) {
-                x.store(v, Relaxed);
-            }
-            RECENT_POS[k].store(n as u32 + 1, Relaxed);
+    if sw & SW_THREADS != 0 && let Some(k) = recent_slot(crate::cur().tid) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let n = RECENT_POS[k].load(Relaxed) as usize;
+        let r = [i, r32(esp + 4), r32(esp + 8), r32(esp + 12), r32(esp), crate::k32::ticks_ms() - 60_000];
+        for (x, v) in RECENT[k][n % RECENT_N].iter().zip(r) {
+            x.store(v, Relaxed);
         }
+        RECENT_POS[k].store(n as u32 + 1, Relaxed);
     }
     if sw & SW_WATCH != 0 {
         static LAST: AtomicU32 = AtomicU32::new(0);

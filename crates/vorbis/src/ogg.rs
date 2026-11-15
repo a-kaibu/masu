@@ -93,10 +93,8 @@ impl Reader {
                             self.skipping = true;
                         }
                     }
-                    if l < 255 {
-                        if !std::mem::take(&mut self.skipping) {
-                            self.out.push_back(std::mem::take(&mut self.cur));
-                        }
+                    if l < 255 && !std::mem::take(&mut self.skipping) {
+                        self.out.push_back(std::mem::take(&mut self.cur));
                     }
                 }
                 body = e;

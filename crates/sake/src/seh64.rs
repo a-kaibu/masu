@@ -113,10 +113,8 @@ pub fn lookup(pc: u32) -> Option<(u32, u32)> {
     // (the image's table, then the dynamic ones under their lock: no copies; this runs for
     // every frame of every dispatch and unwind)
     let found = crate::pe::MODULES.read().unwrap().iter().find(|m| pc.wrapping_sub(m.base) < m.size).map(|m| (m.base, m.pdata));
-    if let Some((base, (t, n))) = found {
-        if let Some(e) = search(t, n, pc.wrapping_sub(base), |a| r32(a)) {
-            return Some((e, base));
-        }
+    if let Some((base, (t, n))) = found && let Some(e) = search(t, n, pc.wrapping_sub(base), |a| r32(a)) {
+        return Some((e, base));
     }
     DYNAMIC.lock().unwrap().iter().find_map(|&(t, n, base)| search(t, n, pc.wrapping_sub(base), |a| r32(a)).map(|e| (e, base)))
 }

@@ -251,10 +251,8 @@ pub fn ddraw_window(events: &[u8], cut: bool) -> Result<Option<(i32, i32, u32, u
                 if let Some(o) = out {
                     if primary_desc(&c) {
                         primaries.insert(o);
-                    } else if let Some(d) = d {
-                        if let (Some(w), Some(h)) = (d.member("dwWidth").and_then(|v| v.int()), d.member("dwHeight").and_then(|v| v.int())) {
-                            sizes.insert(o, (w, h));
-                        }
+                    } else if let Some(d) = d && let (Some(w), Some(h)) = (d.member("dwWidth").and_then(|v| v.int()), d.member("dwHeight").and_then(|v| v.int())) {
+                        sizes.insert(o, (w, h));
                     }
                 }
             }
@@ -374,37 +372,25 @@ impl Converter {
             args.push(a);
         }
         // a vertex declaration ends with D3DDECL_END (apitrace may count it out)
-        if method == "CreateVertexDeclaration" {
-            if let Some(Arg::Blob(b)) = args.get_mut(1) {
-                let b = &mut b.bytes;
-                if b.len() < 8 || b[b.len() - 8..b.len() - 6] != [0xff, 0] {
-                    b.extend_from_slice(&[0xff, 0, 0, 0, 17, 0, 0, 0]);
-                }
+        if method == "CreateVertexDeclaration" && let Some(Arg::Blob(b)) = args.get_mut(1) {
+            let b = &mut b.bytes;
+            if b.len() < 8 || b[b.len() - 8..b.len() - 6] != [0xff, 0] {
+                b.extend_from_slice(&[0xff, 0, 0, 0, 17, 0, 0, 0]);
             }
         }
         // apitrace's d3d8 spec records CopyRects' rects and points as one each (a pointer, not
         // an array of cRects): the rest are lost, a replay copies the first only
-        if name == "IDirect3DDevice8::CopyRects" {
-            if let Some(Value::Array(r)) = call.arg("pSourceRectsArray") {
-                if let Some(Arg::Word(n)) = args.get_mut(3) {
-                    if *n > r.len() as u64 {
-                        *self.stats.dropped.entry("IDirect3DDevice8::CopyRects (rects apitrace did not record)".into()).or_default() += *n - r.len() as u64;
-                        *n = r.len() as u64;
-                    }
-                }
-            }
+        if name == "IDirect3DDevice8::CopyRects" && let Some(Value::Array(r)) = call.arg("pSourceRectsArray") && let Some(Arg::Word(n)) = args.get_mut(3) && *n > r.len() as u64 {
+            *self.stats.dropped.entry("IDirect3DDevice8::CopyRects (rects apitrace did not record)".into()).or_default() += *n - r.len() as u64;
+            *n = r.len() as u64;
         }
         // a display mode: the replay's window is the screen
-        if method == "SetDisplayMode" && iface.is_some_and(|i| i.starts_with("IDirectDraw")) {
-            if let (Some(Arg::Word(w)), Some(Arg::Word(h))) = (args.get(1), args.get(2)) {
-                self.winsize = Some((*w as u32, *h as u32));
-            }
+        if method == "SetDisplayMode" && iface.is_some_and(|i| i.starts_with("IDirectDraw")) && let (Some(Arg::Word(w)), Some(Arg::Word(h))) = (args.get(1), args.get(2)) {
+            self.winsize = Some((*w as u32, *h as u32));
         }
         // (no vsync: DDFLIP_NOVSYNC, which IDirectDrawSurface7 takes)
-        if name == "IDirectDrawSurface7::Flip" {
-            if let Some(Arg::Word(f)) = args.get_mut(2) {
-                *f |= 8;
-            }
+        if name == "IDirectDrawSurface7::Flip" && let Some(Arg::Word(f)) = args.get_mut(2) {
+            *f |= 8;
         }
         let ret = call.ret.as_ref();
         let mut flags = 0;
@@ -424,10 +410,8 @@ impl Converter {
             }
             Ty::Int(_) | Ty::F4 | Ty::F8 | Ty::F10 | Ty::Void | Ty::Fn | Ty::Hwnd | Ty::Rec(_) | Ty::Obj(_) | Ty::Ptr(_) | Ty::Arr(..) | Ty::Bits(_) => {}
         }
-        if method == "CreateBuffer" {
-            if let Some(Arg::OutObj(h)) = args.last() {
-                self.buffers.insert(*h);
-            }
+        if method == "CreateBuffer" && let Some(Arg::OutObj(h)) = args.last() {
+            self.buffers.insert(*h);
         }
         let id = self.name(name, index, flags);
         if let Some((w, h)) = self.winsize.take() {
@@ -800,10 +784,8 @@ fn member<'a>(l: &'a Layouts, rec: &'a Layout, name: &str, arch: usize) -> Optio
         return Some((m.off[arch], &m.ty));
     }
     for m in rec.members.iter().filter(|m| m.name == "-") {
-        if let Ty::Rec(r) = &m.ty {
-            if let Some((o, t)) = l.records.get(r).and_then(|r| member(l, r, name, arch)) {
-                return Some((m.off[arch] + o, t));
-            }
+        if let Ty::Rec(r) = &m.ty && let Some((o, t)) = l.records.get(r).and_then(|r| member(l, r, name, arch)) {
+            return Some((m.off[arch] + o, t));
         }
     }
     None

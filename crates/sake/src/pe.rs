@@ -811,10 +811,8 @@ impl ResId {
             return ResId::Int(a);
         }
         let s: Vec<u16> = if wide { mem::wstr(a) } else { crate::text::a2w(&mem::cstr(a)) };
-        if s.first() == Some(&('#' as u16)) {
-            if let Ok(n) = String::from_utf16_lossy(&s[1..]).parse() {
-                return ResId::Int(n);
-            }
+        if s.first() == Some(&('#' as u16)) && let Ok(n) = String::from_utf16_lossy(&s[1..]).parse() {
+            return ResId::Int(n);
         }
         ResId::Name(s.iter().map(|&c| crate::text::upper16(c)).collect())
     }
@@ -1323,10 +1321,8 @@ fn find_dll_file(dll: &str) -> Option<(String, String)> {
     dirs.push(crate::files::cwd().trim_end_matches('\\').to_string());
     // the folders of DLLs loaded by path (LOAD_WITH_ALTERED_SEARCH_PATH finds their dependencies there)
     for m in MODULES.read().unwrap().iter().filter(|m| m.dll && !m.hle) {
-        if let Some((d, _)) = m.path.rsplit_once('\\') {
-            if !dirs.iter().any(|x| x.eq_ignore_ascii_case(d)) {
-                dirs.push(d.to_string());
-            }
+        if let Some((d, _)) = m.path.rsplit_once('\\') && !dirs.iter().any(|x| x.eq_ignore_ascii_case(d)) {
+            dirs.push(d.to_string());
         }
     }
     if !system_dll {
@@ -1504,10 +1500,8 @@ fn hle_data(dll: &str, name: &str) -> Option<u32> {
         crate::mfc42::use_dll(&k);
         return crate::mfc42::data(name);
     }
-    if k == "msvcp90" || k == "msvcp80" {
-        if let Some(a) = crate::msvcp90::data(name) {
-            return Some(a);
-        }
+    if (k == "msvcp90" || k == "msvcp80") && let Some(a) = crate::msvcp90::data(name) {
+        return Some(a);
     }
     if k.starts_with("msvcp") {
         return crate::msvcp::data(name);
@@ -1571,10 +1565,8 @@ pub fn load_library(cpu: &mut Cpu, name: &str) -> u32 {
         }
         let b = hle_module(&key);
         // (a system assembly's DLL, the Visual C++ runtime's: from its WinSxS folder)
-        if let Some(p) = crate::actctx::builtin_dll_path(name) {
-            if with_mut(b, |m| m.path = p).is_some() {
-                ldr_update(b);
-            }
+        if let Some(p) = crate::actctx::builtin_dll_path(name) && with_mut(b, |m| m.path = p).is_some() {
+            ldr_update(b);
         }
         return b;
     }

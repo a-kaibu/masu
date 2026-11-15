@@ -2538,10 +2538,8 @@ fn create_window(c: &mut Ctx, wide: bool) -> u32 {
             base: Base::of_class(&k.name),
         };
         s.wins.insert(h, w);
-        if child {
-            if let Some(p) = s.wins.get_mut(&parent) {
-                p.children.push(h);
-            }
+        if child && let Some(p) = s.wins.get_mut(&parent) {
+            p.children.push(h);
         }
         resize_surface(s.wins.get_mut(&h).unwrap());
         Some((h, s.classes[ci].name.clone(), s.classes[ci].unicode, s.classes[ci].proc_))
@@ -2756,12 +2754,10 @@ fn show(c: &mut Ctx, h: u32, cmd: u32) -> u32 {
         let (l, t, r, b) = frame(style, ex, menu);
         let (sw, sh) = screen();
         with(|s| {
-            if let Some(w) = s.wins.get_mut(&h) {
-                if w.style & WS_MAXIMIZE == 0 {
-                    let r = w.rect;
-                    w.style |= WS_MAXIMIZE;
-                    s.normal.insert(h, r);
-                }
+            if let Some(w) = s.wins.get_mut(&h) && w.style & WS_MAXIMIZE == 0 {
+                let r = w.rect;
+                w.style |= WS_MAXIMIZE;
+                s.normal.insert(h, r);
             }
         });
         set_pos(c, h, 0, -l, -t, sw + l + r, sh + t + b, 0x14);
@@ -3083,11 +3079,9 @@ fn set_pos(c: &mut Ctx, h: u32, after: u32, x: i32, y: i32, cx: i32, cy: i32, fl
             invalidate_tree(s, h);
         }
         // a child hidden: its parent paints where it was (the rectangles are parent-relative)
-        if vis && !now_visible && parent != 0 && parent != DESKTOP {
-            if let Some(pw) = s.wins.get_mut(&parent) {
-                pw.update = pw.update.or(&old);
-                pw.erase = true;
-            }
+        if vis && !now_visible && parent != 0 && parent != DESKTOP && let Some(pw) = s.wins.get_mut(&parent) {
+            pw.update = pw.update.or(&old);
+            pw.erase = true;
         }
         update_display(s, h);
         Some((resized, moved, shown, hidden_all_along, r))
@@ -4418,13 +4412,11 @@ fn take_msg(hwnd: u32, lo: u32, hi: u32, remove: bool) -> Option<Msg> {
             let m = if remove { q.input.remove(i).unwrap() } else { q.input[i] };
             return Some(m);
         }
-        if let Some(code) = q.quit {
-            if lo == 0 && hi == 0 || (lo..=hi).contains(&0x12) {
-                if remove {
-                    q.quit = None;
-                }
-                return Some(Msg { hwnd: 0, msg: 0x12, w: code, l: 0, time: now_ms(), x: 0, y: 0 });
+        if let Some(code) = q.quit && (lo == 0 && hi == 0 || (lo..=hi).contains(&0x12)) {
+            if remove {
+                q.quit = None;
             }
+            return Some(Msg { hwnd: 0, msg: 0x12, w: code, l: 0, time: now_ms(), x: 0, y: 0 });
         }
         // WM_PAINT for a window of ours with an update region
         if lo == 0 && hi == 0 || (lo..=hi).contains(&0xf) {
@@ -5540,10 +5532,8 @@ fn show_box(text: &str, cap: &str, style: u32) -> u32 {
     eprintln!("sake: MessageBox [{cap}] {text}");
     // (SAKE_TRACE=3: what this thread called before it, an engine's error box above all)
     crate::api::dump_ring("the MessageBox");
-    if crate::autopilot::on() {
-        if let Some(a) = crate::autopilot::box_answer(text, style) {
-            return a;
-        }
+    if crate::autopilot::on() && let Some(a) = crate::autopilot::box_answer(text, style) {
+        return a;
     }
     box_answer(style)
 }
@@ -6618,10 +6608,8 @@ fn locate(menus: &HashMap<u32, Menu>, h: u32, item: u32, by_pos: bool) -> Option
             if it.sub == 0 && it.id == item {
                 return Some((h, i));
             }
-            if it.sub != 0 && depth < 16 {
-                if let Some(r) = walk(menus, it.sub, item, depth + 1) {
-                    return Some(r);
-                }
+            if it.sub != 0 && depth < 16 && let Some(r) = walk(menus, it.sub, item, depth + 1) {
+                return Some(r);
             }
         }
         None
@@ -7849,10 +7837,8 @@ fn raw_post(s: &mut State, hwnd: u32, h: u32, t: u32) {
 /// does not pump while the pointer moves loses the oldest, not grows its queue at the event rate
 pub(crate) const RAW_KEPT: usize = 1024;
 pub(crate) fn raw_cap(input: &mut std::collections::VecDeque<Msg>) {
-    if input.iter().filter(|m| m.msg == crate::rawinput::WM_INPUT).count() >= RAW_KEPT {
-        if let Some(i) = input.iter().position(|m| m.msg == crate::rawinput::WM_INPUT) {
-            input.remove(i);
-        }
+    if input.iter().filter(|m| m.msg == crate::rawinput::WM_INPUT).count() >= RAW_KEPT && let Some(i) = input.iter().position(|m| m.msg == crate::rawinput::WM_INPUT) {
+        input.remove(i);
     }
 }
 
@@ -8174,10 +8160,8 @@ fn def_search(kids: &[u32], node: &dyn Fn(u32) -> Option<DefNode>, depth: u32) -
         if n.button {
             return Some((n.id, k));
         }
-        if n.into {
-            if let Some(r) = def_search(&n.children, node, depth + 1) {
-                return Some(r);
-            }
+        if n.into && let Some(r) = def_search(&n.children, node, depth + 1) {
+            return Some(r);
         }
     }
     None

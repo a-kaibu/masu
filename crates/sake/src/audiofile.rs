@@ -221,11 +221,9 @@ fn flac(b: &[u8]) -> Option<Track> {
         let mut q = at + 6;
         cur = None;
         while q + 6 <= b.len() {
-            if b[q] == 0xff {
-                if let Some(f) = flac_frame(b, q).filter(|f| f.1 == num + 1 || f.1 == num + size as u64) {
-                    cur = Some((q, f));
-                    break;
-                }
+            if b[q] == 0xff && let Some(f) = flac_frame(b, q).filter(|f| f.1 == num + 1 || f.1 == num + size as u64) {
+                cur = Some((q, f));
+                break;
             }
             q += 1;
         }
@@ -235,10 +233,8 @@ fn flac(b: &[u8]) -> Option<Track> {
     }
     // (the last frame is shorter than its block size says only through STREAMINFO's total)
     let sum: u64 = frames.iter().map(|&f| f as u64).sum();
-    if total > 0 && sum > total {
-        if let Some(l) = frames.last_mut() {
-            *l = l.saturating_sub((sum - total).min(*l as u64) as u32);
-        }
+    if total > 0 && sum > total && let Some(l) = frames.last_mut() {
+        *l = l.saturating_sub((sum - total).min(*l as u64) as u32);
     }
     let n = total.max(1).min(sum.max(1));
     let bytes: u64 = packets.iter().map(|p| p.1 as u64).sum();

@@ -401,11 +401,9 @@ fn block<R>(mut c: Option<&mut Ctx>, ms: u32, mut f: impl FnMut(&mut State, &mut
             return r;
         }
         let alert = c.is_some();
-        if let Some(c) = c.as_deref_mut() {
-            if crate::apc::pending(tid) {
-                crate::apc::run(c);
-                continue;
-            }
+        if let Some(c) = c.as_deref_mut() && crate::apc::pending(tid) {
+            crate::apc::run(c);
+            continue;
         }
         let left = match deadline {
             None => u32::MAX,
@@ -690,10 +688,8 @@ impl State {
         new.notify = old.notify;
         new.mask = old.mask;
         new.nonblock = old.nonblock;
-        if let Some(c) = new.conn {
-            if let Some(cl) = self.socks.get_mut(&c) {
-                cl.conn = Some(aid);
-            }
+        if let Some(c) = new.conn && let Some(cl) = self.socks.get_mut(&c) {
+            cl.conn = Some(aid);
         }
         self.socks.insert(aid, new);
         // the server side was given a handle of its own when it was made; it goes now
@@ -1756,17 +1752,13 @@ fn recv(c: &mut Ctx) -> u32 {
 }
 fn recvfrom(c: &mut Ctx) -> u32 {
     let (h, b, n, fl, from, lenp) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
-    if from != 0 && (lenp == 0 || (r32(lenp) as i32) < 16) {
-        if is_socket(h) {
-            return err(WSAEFAULT);
-        }
+    if from != 0 && (lenp == 0 || (r32(lenp) as i32) < 16) && is_socket(h) {
+        return err(WSAEFAULT);
     }
     match recv_common(Some(c), h, &[(b, n)], fl) {
         Ok((n, src, trunc)) => {
-            if let (Some(a), true) = (src, from != 0) {
-                if write_sa(from, lenp, &a).is_err() {
-                    return err(WSAEFAULT);
-                }
+            if let (Some(a), true) = (src, from != 0) && write_sa(from, lenp, &a).is_err() {
+                return err(WSAEFAULT);
             }
             if trunc { err(WSAEMSGSIZE) } else { res(Ok(n)) }
         }
@@ -3006,11 +2998,9 @@ fn put_accept_addrs(st: &State, acc: u32, buf: u32, data: u32, llen: u32, rlen: 
     let Ok(id) = st.id(acc) else { return };
     let s = &st.socks[&id];
     let put = |at: u32, room: u32, a: &Option<Addr>| {
-        if let Some(a) = a {
-            if room >= a.size() + 4 {
-                w32(at, a.size());
-                mem::write(at + 4, &a.bytes());
-            }
+        if let Some(a) = a && room >= a.size() + 4 {
+            w32(at, a.size());
+            mem::write(at + 4, &a.bytes());
         }
     };
     put(buf + data, llen, &s.local);

@@ -191,10 +191,8 @@ fn me_qi(c: &mut Ctx) -> u32 {
 }
 fn me_release(c: &mut Ctx) -> u32 {
     let b = c.a(0);
-    if attrs(b, |a| a.0) == Some(1) {
-        if let Some((_, _, _, Some(Val::Unk(u)))) = EVENTS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&b) {
-            release(c, u);
-        }
+    if attrs(b, |a| a.0) == Some(1) && let Some((_, _, _, Some(Val::Unk(u)))) = EVENTS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&b) {
+        release(c, u);
     }
     at_release(c)
 }

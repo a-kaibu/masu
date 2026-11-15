@@ -337,10 +337,8 @@ fn io_proc(name: u32, info: u32, wide: bool) -> Option<u32> {
             return Some(r32(info + 8));
         }
         let f = r32(info + 4);
-        if f != 0 && f != FOURCC_MEM && f != FOURCC_DOS {
-            if let Some(p) = find(f) {
-                return Some(p);
-            }
+        if f != 0 && f != FOURCC_MEM && f != FOURCC_DOS && let Some(p) = find(f) {
+            return Some(p);
         }
     }
     if name != 0 {
@@ -417,10 +415,8 @@ fn mmioClose(c: &mut Ctx) -> u32 {
                 mem::heap_free(b);
             }
             // the DOS I/O procedure closes the program's file too, unless MMIO_FHOPEN (0x10)
-            if let Data::Handle(.., h) = f.data {
-                if c.a(1) & 0x10 == 0 {
-                    crate::obj::close(h);
-                }
+            if let Data::Handle(.., h) = f.data && c.a(1) & 0x10 == 0 {
+                crate::obj::close(h);
             }
             if f.flush() { 0 } else { MMIOERR_CANNOTWRITE }
         }
@@ -518,13 +514,9 @@ fn mmioAscend(c: &mut Ctx) -> u32 {
             }
             if size & 1 != 0 {
                 let z = [0u8];
-                if let Data::File(v) = &mut f.data {
-                    if grow_to(v, u64::from(at) + 1) {
-                        if let Some(b) = v.get_mut(at as usize) {
-                            *b = z[0];
-                            f.dirty = true;
-                        }
-                    }
+                if let Data::File(v) = &mut f.data && grow_to(v, u64::from(at) + 1) && let Some(b) = v.get_mut(at as usize) {
+                    *b = z[0];
+                    f.dirty = true;
                 }
             }
         }

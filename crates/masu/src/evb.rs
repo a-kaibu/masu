@@ -609,10 +609,8 @@ pub(crate) mod tests {
             into.push(T::Dir(parts[0].into(), vec![]));
         }
         for t in into.iter_mut() {
-            if let T::Dir(n, sub) = t {
-                if n == parts[0] {
-                    return insert(sub, &parts[1..], data);
-                }
+            if let T::Dir(n, sub) = t && n == parts[0] {
+                return insert(sub, &parts[1..], data);
             }
         }
     }

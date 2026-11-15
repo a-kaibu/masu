@@ -171,10 +171,8 @@ fn range(h: &str, len: u64) -> Option<Option<(u64, u64)>> {
 
 async fn file(State(s): State<Store>, Path(path): Path<String>, headers: HeaderMap) -> Response {
     // a tree list asked for: a game starts; what it reads first is fetched from S3 meanwhile
-    if let Some(name) = path.strip_prefix("trees/").and_then(|n| n.strip_suffix(".tsv")) {
-        if s.remote.is_some() && !name.contains('/') && s.ahead.lock().unwrap_or_else(|e| e.into_inner()).insert(name.to_string()) {
-            tokio::spawn(fetch_ahead(s.clone(), name.to_string()));
-        }
+    if let Some(name) = path.strip_prefix("trees/").and_then(|n| n.strip_suffix(".tsv")) && s.remote.is_some() && !name.contains('/') && s.ahead.lock().unwrap_or_else(|e| e.into_inner()).insert(name.to_string()) {
+        tokio::spawn(fetch_ahead(s.clone(), name.to_string()));
     }
     // a range of a chunk: of its decoded bytes, sent as they are (206, no Content-Encoding): a
     // game's scattered reads need a few blocks of a chunk, not all of it (crates/kura/src/vfs.rs)

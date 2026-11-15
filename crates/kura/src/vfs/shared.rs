@@ -250,7 +250,7 @@ impl Fs {
         if !r.0.is_empty() { return None; }
         let valid = |ino: Ino| nodes.get(ino as usize).is_some_and(Option::is_some);
         if mounts.iter().any(|(_, ino)| !valid(*ino)) || self.handles.values().any(|h| !valid(h.ino)) { return None; }
-        for node in nodes.iter().flatten() { if let Data::Dir(ch) = &node.data { if ch.values().any(|ino| !valid(*ino)) { return None; } } }
+        for node in nodes.iter().flatten() { if let Data::Dir(ch) = &node.data && ch.values().any(|ino| !valid(*ino)) { return None; } }
         self.nodes = nodes; self.mounts = mounts; self.free = free;
         Some(())
     }
@@ -328,9 +328,7 @@ impl Fs {
         }
         let valid = |ino: Ino| after.get(&ino).copied().unwrap_or_else(|| self.node(ino).is_some());
         for it in &items {
-            if let Item::Node(_, Some(Node { data: Data::Dir(ch), .. })) = it {
-                if ch.values().any(|i| !valid(*i)) { return None; }
-            }
+            if let Item::Node(_, Some(Node { data: Data::Dir(ch), .. })) = it && ch.values().any(|i| !valid(*i)) { return None; }
         }
         if self.mounts.iter().any(|(_, i)| !valid(*i)) || self.handles.values().any(|h| !valid(h.ino)) { return None; }
         let mut slots = false;

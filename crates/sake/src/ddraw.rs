@@ -558,17 +558,15 @@ fn release_surface(c: &mut Ctx, id: u32) -> u32 {
                     at = s.surfs.get(&at).map_or(0, |x| x.mip);
                 }
             }
-            if let Some(f) = s.surfs.get(&id) {
-                if f.caps & CAPS_FRONTBUFFER != 0 {
-                    // (one attached into the chain is not of it: it is let go, below)
-                    let mut at = f.next;
-                    for _ in 0..16 {
-                        let Some(x) = s.surfs.get(&at).filter(|_| at != id) else { break };
-                        if x.implicit {
-                            chain.push(at);
-                        }
-                        at = x.next;
+            if let Some(f) = s.surfs.get(&id) && f.caps & CAPS_FRONTBUFFER != 0 {
+                // (one attached into the chain is not of it: it is let go, below)
+                let mut at = f.next;
+                for _ in 0..16 {
+                    let Some(x) = s.surfs.get(&at).filter(|_| at != id) else { break };
+                    if x.implicit {
+                        chain.push(at);
                     }
+                    at = x.next;
                 }
             }
         });
@@ -638,10 +636,8 @@ fn detach(x: u32) {
         let Some((p, next)) = st.surfs.get(&x).map(|s| (s.parent, s.next)) else { return };
         // (one put into a chain CreateSurface made: the chain closes up again)
         let spliced = next != 0 && st.surfs.get(&next).map_or(true, |n| n.parent != x);
-        if let Some(ps) = st.surfs.get_mut(&p) {
-            if ps.next == x {
-                ps.next = if spliced { next } else { 0 };
-            }
+        if let Some(ps) = st.surfs.get_mut(&p) && ps.next == x {
+            ps.next = if spliced { next } else { 0 };
         }
         if let Some(xs) = st.surfs.get_mut(&x) {
             if spliced {

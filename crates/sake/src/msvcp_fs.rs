@@ -155,12 +155,10 @@ fn entry(fd: u32) -> (u32, bool) {
 /// status_unknown at the end.
 fn next_entry(c: &mut Ctx, h: u32, fd: u32, mut have: bool, dst: u32, ftype: u32) -> bool {
     loop {
-        if !have {
-            if k32(c, "FindNextFileW", &[h, fd]) == 0 {
-                w16(dst, 0);
-                w32(ftype, STATUS_UNKNOWN);
-                return false;
-            }
+        if !have && k32(c, "FindNextFileW", &[h, fd]) == 0 {
+            w16(dst, 0);
+            w32(ftype, STATUS_UNKNOWN);
+            return false;
         }
         have = false;
         let (t, dot) = entry(fd);
@@ -178,10 +176,8 @@ fn next_entry(c: &mut Ctx, h: u32, fd: u32, mut have: bool, dst: u32, ftype: u32
 fn _Open_dir(c: &mut Ctx) -> u32 {
     let (dst, dir, err, ftype) = (c.a(0), c.a(1), c.a(2), c.a(3));
     let mut pat = if dir == 0 { Vec::new() } else { mem::wstr(dir) };
-    if let Some(&l) = pat.last() {
-        if l != b'\\' as u16 && l != b'/' as u16 && l != b':' as u16 {
-            pat.push(b'\\' as u16);
-        }
+    if let Some(&l) = pat.last() && l != b'\\' as u16 && l != b'/' as u16 && l != b':' as u16 {
+        pat.push(b'\\' as u16);
     }
     pat.push(b'*' as u16);
     pat.push(0);

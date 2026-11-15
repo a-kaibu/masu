@@ -395,11 +395,9 @@ fn hints_eval() {
             }
         }
         let fs = foresee_dir.as_ref().map(|_| Foresight::new(&files, &tables, &members));
-        if std::env::var_os("HINTS_DEBUG").is_some() {
-            if let Some(f) = &fs {
-                let ms: usize = f.members.values().map(Vec::len).sum();
-                eprintln!("{id}: files {}, tables {} ({} scripts), members {ms} in {} archives (of {} lines)", files.len(), tables.len(), f.table.len(), f.members.len(), members.iter().map(|m| m.lines().count()).sum::<usize>());
-            }
+        if std::env::var_os("HINTS_DEBUG").is_some() && let Some(f) = &fs {
+            let ms: usize = f.members.values().map(Vec::len).sum();
+            eprintln!("{id}: files {}, tables {} ({} scripts), members {ms} in {} archives (of {} lines)", files.len(), tables.len(), f.table.len(), f.members.len(), members.iter().map(|m| m.lines().count()).sum::<usize>());
         }
         let engine = field(&json, "engine").unwrap_or(engine(&files)).to_string();
         let mut at: HashMap<&str, (usize, usize)> = HashMap::new();

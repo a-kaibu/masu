@@ -1400,20 +1400,18 @@ unsafe fn set_bound(d: &mut D3d, new: u32, old: u32) {
 
 unsafe fn device_call(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &mut After) -> u32 {
     // (while recording a state block, the Set* calls change the recording, not the device)
-    if sb::records(m) {
-        if let Some(rec) = d.dev.as_mut().and_then(|dev| dev.recording.as_mut()) {
-            rec.mask.record(m, a);
-            let swap = |d: &mut D3d| {
-                let Some(dev) = d.dev.as_mut() else { return };
-                if let Some(rec) = dev.recording.as_mut() {
-                    std::mem::swap(&mut dev.st, &mut rec.st);
-                }
-            };
-            swap(d);
-            let r = device_method(d, m, a, after);
-            swap(d);
-            return r;
-        }
+    if sb::records(m) && let Some(rec) = d.dev.as_mut().and_then(|dev| dev.recording.as_mut()) {
+        rec.mask.record(m, a);
+        let swap = |d: &mut D3d| {
+            let Some(dev) = d.dev.as_mut() else { return };
+            if let Some(rec) = dev.recording.as_mut() {
+                std::mem::swap(&mut dev.st, &mut rec.st);
+            }
+        };
+        swap(d);
+        let r = device_method(d, m, a, after);
+        swap(d);
+        return r;
     }
     device_method(d, m, a, after)
 }
@@ -2232,10 +2230,8 @@ unsafe fn create_texture(d: &mut D3d, w: u32, h: u32, levels: u32, usage: u32, f
         let (lw, lh) = ((w >> l).max(1), (h >> l).max(1));
         let s = new_surface(d, lw, lh, f, pool, usage, id, if gpu == 0 { u32::MAX } else { gpu }, l);
         let sid = d.id_of(s);
-        if let Some(Data::Surface(sf)) = d.objs.get_mut(&sid).map(|o| &mut o.data) {
-            if gpu == 0 {
-                sf.gpu = 0;
-            }
+        if let Some(Data::Surface(sf)) = d.objs.get_mut(&sid).map(|o| &mut o.data) && gpu == 0 {
+            sf.gpu = 0;
         }
         // (a level's references are the texture's)
         if let Some(o) = d.objs.get_mut(&sid) {
@@ -2701,10 +2697,8 @@ unsafe fn upload_keep(d: &mut D3d, s: u32, r: [u32; 4]) {
         // the page reads the rows from guest memory itself (no copy here); `mem` stays as it
         // is until the page has run the batch (see lock_surface)
         let r = [x0, y0, x1, y1];
-        if let Some((g, p)) = sf.pending {
-            if g == gpu::batch_gen() && p[0] <= x0 && p[1] <= y0 && p[2] >= x1 && p[3] >= y1 {
-                return; // already in this batch (it reads the newest pixels)
-            }
+        if let Some((g, p)) = sf.pending && g == gpu::batch_gen() && p[0] <= x0 && p[1] <= y0 && p[2] >= x1 && p[3] >= y1 {
+            return; // already in this batch (it reads the newest pixels)
         }
         let ((), g) = gpu::record_gen(|b: &mut Batch| b.cmd_mem(&[gpu::WRITE_TEXTURE_MEM, gpu, level, x0, y0, w, h, pitch, src]));
         sf.pending = Some(match sf.pending {
@@ -2745,10 +2739,8 @@ unsafe fn refresh_p8(d: &mut D3d) {
             continue;
         }
         for &s in &tx.levels {
-            if let Some(Data::Surface(sf)) = d.objs.get(&s).map(|o| &o.data) {
-                if sf.pal_gen != generation && sf.mem != 0 && sf.gpu != 0 {
-                    stale.push((s, sf.w, sf.h));
-                }
+            if let Some(Data::Surface(sf)) = d.objs.get(&s).map(|o| &o.data) && sf.pal_gen != generation && sf.mem != 0 && sf.gpu != 0 {
+                stale.push((s, sf.w, sf.h));
             }
         }
     }
@@ -2760,15 +2752,11 @@ unsafe fn refresh_p8(d: &mut D3d) {
 /// Before the guest copy of a surface changes: the uploads the page has not read yet take a
 /// copy of its rows (waiting only if the page is reading them right now).
 fn settle(d: &mut D3d, s: u32) {
-    if let Some(Data::Surface(sf)) = d.objs.get_mut(&s).map(|o| &mut o.data) {
-        if let Some((g, _)) = sf.pending.take() {
-            if !gpu::is_done(g) {
-                let lo = sf.mem;
-                let hi = sf.mem.saturating_add(sf.pitch.saturating_mul(sf.h));
-                if let Some(r) = gpu::detach_mem(lo, hi) {
-                    gpu::wait_done(r);
-                }
-            }
+    if let Some(Data::Surface(sf)) = d.objs.get_mut(&s).map(|o| &mut o.data) && let Some((g, _)) = sf.pending.take() && !gpu::is_done(g) {
+        let lo = sf.mem;
+        let hi = sf.mem.saturating_add(sf.pitch.saturating_mul(sf.h));
+        if let Some(r) = gpu::detach_mem(lo, hi) {
+            gpu::wait_done(r);
         }
     }
 }
@@ -3060,10 +3048,8 @@ unsafe fn buffer_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usi
         }
         12 => {
             // (what it wrote while locked: sent at the next draw)
-            if let Some(Data::Buffer(b)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
-                if std::mem::take(&mut b.locked) {
-                    b.generation += 1;
-                }
+            if let Some(Data::Buffer(b)) = d.objs.get_mut(&this).map(|o| &mut o.data) && std::mem::take(&mut b.locked) {
+                b.generation += 1;
             }
             S_OK
         }
@@ -4335,12 +4321,10 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         match vs_shader {
             Some(sh) => {
                 // vs 1.x without dcl: register = usage order... (vs 1.1 has dcl too)
-                if let Some(&(reg, _, _)) = sh.inputs.iter().find(|i| i.1 == e.usage && i.2 == e.index) {
-                    if !vs_inputs.iter().any(|v| v.0 == reg) {
-                        let loc = lo32(vs_inputs.len());
-                        vs_inputs.push((reg, loc, kind));
-                        attrs.push((slot, pf, e.offset, loc));
-                    }
+                if let Some(&(reg, _, _)) = sh.inputs.iter().find(|i| i.1 == e.usage && i.2 == e.index) && !vs_inputs.iter().any(|v| v.0 == reg) {
+                    let loc = lo32(vs_inputs.len());
+                    vs_inputs.push((reg, loc, kind));
+                    attrs.push((slot, pf, e.offset, loc));
                 }
             }
             None => {
@@ -4766,22 +4750,20 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     h.add(&uni.hash.to_le_bytes());
     h.add(&alpha_bits.to_le_bytes());
     let mut bbox = [u32::MAX; 4];
-    if let (true, Some(e)) = (pretransformed, elems.iter().find(|e| e.usage == shader::USAGE_POSITIONT && e.stream == 0)) {
-        if let Some(&(_, ptr, stride)) = streams.first() {
-            let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
-            for v in 0..count {
-                let p = gc::<f32>(ptr + (first + v) * stride + e.offset);
-                let (x, y) = (*p, *p.add(1));
-                x0 = x0.min(x);
-                y0 = y0.min(y);
-                x1 = x1.max(x);
-                y1 = y1.max(y);
-            }
-            if x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite() && x1 >= x0 && y1 >= y0 {
-                // (a pixel of margin: sampling and the half-pixel offset)
-                let c = |v: f32| (v.max(0.0).min(65535.0)) as u32;
-                bbox = [c(x0.floor() - 1.0), c(y0.floor() - 1.0), c(x1.ceil() + 1.0), c(y1.ceil() + 1.0)];
-            }
+    if let (true, Some(e)) = (pretransformed, elems.iter().find(|e| e.usage == shader::USAGE_POSITIONT && e.stream == 0)) && let Some(&(_, ptr, stride)) = streams.first() {
+        let (mut x0, mut y0, mut x1, mut y1) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        for v in 0..count {
+            let p = gc::<f32>(ptr + (first + v) * stride + e.offset);
+            let (x, y) = (*p, *p.add(1));
+            x0 = x0.min(x);
+            y0 = y0.min(y);
+            x1 = x1.max(x);
+            y1 = y1.max(y);
+        }
+        if x0.is_finite() && y0.is_finite() && x1.is_finite() && y1.is_finite() && x1 >= x0 && y1 >= y0 {
+            // (a pixel of margin: sampling and the half-pixel offset)
+            let c = |v: f32| (v.max(0.0).min(65535.0)) as u32;
+            bbox = [c(x0.floor() - 1.0), c(y0.floor() - 1.0), c(x1.ceil() + 1.0), c(y1.ceil() + 1.0)];
         }
     }
     let hash = h.finish();

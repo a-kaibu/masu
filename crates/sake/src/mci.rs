@@ -902,10 +902,8 @@ fn close(id: DevId) -> bool {
 /// (else the end).
 fn play_dev(id: DevId, from: Option<u32>, to: Option<u32>, repeat: bool) -> Result<(), McErr> {
     let Some((f, tt, dur)) = dev(id, |d| (from.map(|v| d.from_fmt(v)), to.map(|v| d.from_fmt(v)), d.duration)) else { return Err(McErr::InvalidDeviceId) };
-    if let (Some(a), Some(b)) = (f, tt) {
-        if a > b {
-            return Err(McErr::OutOfRange);
-        }
+    if let (Some(a), Some(b)) = (f, tt) && a > b {
+        return Err(McErr::OutOfRange);
     }
     dev(id, |d| {
         d.repeat = repeat;
@@ -1651,17 +1649,13 @@ fn wnd_open(c: &mut Ctx, h: u32, file: &str) -> u32 {
         d.mciwnd = h;
     });
     // the window takes the movie's size (its client area: the frame stays)
-    if style & MCIWNDF_NOAUTOSIZEWINDOW == 0 {
-        if let Some(size) = dev(id, |d| match d.media { Media::Movie { size, .. } => Some(size), _ => None }).flatten() {
-            if let Some(r) = crate::user::client_rect_screen(h) {
-                let wr = mem::heap_alloc(16, true);
-                gcall(c, "user32", "GetWindowRect", &[h, wr]);
-                let (fw, fh) = ((r32(wr + 8) as i32 - r32(wr) as i32) - (r.r - r.l), (r32(wr + 12) as i32 - r32(wr + 4) as i32) - (r.b - r.t));
-                mem::heap_free(wr);
-                // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
-                gcall(c, "user32", "SetWindowPos", &[h, 0, 0, 0, (size.0 as i32 + fw) as u32, (size.1 as i32 + fh) as u32, 0x2 | 0x4 | 0x10]);
-            }
-        }
+    if style & MCIWNDF_NOAUTOSIZEWINDOW == 0 && let Some(size) = dev(id, |d| match d.media { Media::Movie { size, .. } => Some(size), _ => None }).flatten() && let Some(r) = crate::user::client_rect_screen(h) {
+        let wr = mem::heap_alloc(16, true);
+        gcall(c, "user32", "GetWindowRect", &[h, wr]);
+        let (fw, fh) = ((r32(wr + 8) as i32 - r32(wr) as i32) - (r.r - r.l), (r32(wr + 12) as i32 - r32(wr + 4) as i32) - (r.b - r.t));
+        mem::heap_free(wr);
+        // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
+        gcall(c, "user32", "SetWindowPos", &[h, 0, 0, 0, (size.0 as i32 + fw) as u32, (size.1 as i32 + fh) as u32, 0x2 | 0x4 | 0x10]);
     }
     sync_movie(id);
     wnd_notify(c, h);
@@ -2061,10 +2055,8 @@ mod tests {
         /// Any command string splits without panicking, and unquoted words keep their text
         #[test]
         fn words_never_panic(s in "[ a-z0-9\"\\\\.]{0,40}") {
-            if let Some(w) = words(&s) {
-                if !s.contains('"') {
-                    prop_assert_eq!(w, s.split_whitespace().map(String::from).collect::<Vec<_>>());
-                }
+            if let Some(w) = words(&s) && !s.contains('"') {
+                prop_assert_eq!(w, s.split_whitespace().map(String::from).collect::<Vec<_>>());
             }
         }
     }

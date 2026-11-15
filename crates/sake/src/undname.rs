@@ -713,10 +713,8 @@ impl<'a> P<'a> {
     fn function_text(&self, f: &Func, unq: &Unq, name: &str, suffix: &str) -> String {
         let mut name = name.to_string();
         let cast = matches!(unq, Unq::Cast(_));
-        if cast {
-            if let Some(r) = &f.ret {
-                name = format!("{name} {}{}", self.render(r, ""), if f.ret_cv { " " } else { "" });
-            }
+        if cast && let Some(r) = &f.ret {
+            name = format!("{name} {}{}", self.render(r, ""), if f.ret_cv { " " } else { "" });
         }
         let args = if self.flag(TYPE_ONLY) { String::new() } else { format!("({})", f.args) };
         let decl = format!("{}{name}{suffix}{args}{}", sep_after(&f.cc), f.this_q);

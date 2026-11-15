@@ -285,10 +285,8 @@ impl<'a, M: Memory> X<'a, M> {
         // The instruction's MXCSR flags are found first (sticky, as the hardware sets them:
         // the JIT leaves an instruction that may set one to here, see jit::mxguard); one
         // unmasked traps, leaving the destination alone.
-        if let Some(f) = self.mx_flags() {
-            if self.raise_mx(f) {
-                return Exit::SimdException;
-            }
+        if let Some(f) = self.mx_flags() && self.raise_mx(f) {
+            return Exit::SimdException;
         }
         let w = if ins.op_count() > 0 { self.vbits(0) } else { 128 };
         let w = if w == 32 { 128 } else { w }; // gpr destination: lane math on xmm source

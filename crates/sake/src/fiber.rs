@@ -770,10 +770,8 @@ mod tests {
                         let calls = free(i).unwrap();
                         let mut want: Vec<(u32, u32)> = Vec::new();
                         for f in 0..3 {
-                            if let Some(v) = vals.remove(&(f, i)) {
-                                if v != 0 && cb != 0 {
-                                    want.push((cb, v));
-                                }
+                            if let Some(v) = vals.remove(&(f, i)) && v != 0 && cb != 0 {
+                                want.push((cb, v));
                             }
                         }
                         let (mut a, mut b) = (calls, want);

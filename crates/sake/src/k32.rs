@@ -356,11 +356,9 @@ pub fn exit_thread(code: u32) -> ! {
         }
         // mutexes it still holds are abandoned: the next wait gets WAIT_ABANDONED
         for (o, _) in tb.objs.values_mut() {
-            if let Obj::Mutex { owner, count } = o {
-                if *owner == t.tid {
-                    *owner = obj::ABANDONED;
-                    *count = 0;
-                }
+            if let Obj::Mutex { owner, count } = o && *owner == t.tid {
+                *owner = obj::ABANDONED;
+                *count = 0;
             }
         }
     });
@@ -4966,10 +4964,8 @@ fn ver_update_condition(last: &mut u8, c: u8) -> u8 {
                 return c;
             }
         }
-        4 | 5 => {
-            if c == 1 || (4..=5).contains(&c) {
-                return c;
-            }
+        4 | 5 if (c == 1 || (4..=5).contains(&c)) => {
+            return c;
         }
         _ => {}
     }
@@ -6538,15 +6534,11 @@ pub fn module_handle(name: u32, wide: bool) -> u32 {
     }
     // (a path: the module loaded from that file; a system DLL's, wherever the path says it is)
     let qualified = n.contains(['\\', '/', ':']);
-    if qualified {
-        if let Some(b) = crate::pe::by_path(&crate::files::full_path(&n)) {
-            return b;
-        }
+    if qualified && let Some(b) = crate::pe::by_path(&crate::files::full_path(&n)) {
+        return b;
     }
-    if !qualified || crate::api::is_system(&crate::pe::base_name(&n)) {
-        if let Some(b) = crate::pe::by_name(&n) {
-            return b;
-        }
+    if (!qualified || crate::api::is_system(&crate::pe::base_name(&n))) && let Some(b) = crate::pe::by_name(&n) {
+        return b;
     }
     let k = crate::api::dll_key(&n);
     if matches!(k.as_str(), "kernel32" | "ntdll" | "kernelbase" | "user32" | "gdi32" | "advapi32") {
@@ -6695,13 +6687,11 @@ fn GetProcAddress(c: &mut Ctx) -> u32 {
     // SAKE_PROC_STUBS (tests/winetest): a system DLL's function we know but don't implement
     // is found, as on Windows, and its trap returns 0; programs (games) otherwise see NULL
     // and take the way they have for older Windows
-    if r == 0 && p >= 0x10000 && crate::env_on!("SAKE_PROC_STUBS") {
-        if let Some(dll) = crate::pe::with(h, |m| m.name.clone()).filter(|d| crate::api::is_system(d)) {
-            let name = a2s(&cstr(p));
-            let trap = crate::api::export(&dll, &name);
-            if crate::api::is_known(trap) {
-                r = crate::fast::bind(&dll, &name, trap);
-            }
+    if r == 0 && p >= 0x10000 && crate::env_on!("SAKE_PROC_STUBS") && let Some(dll) = crate::pe::with(h, |m| m.name.clone()).filter(|d| crate::api::is_system(d)) {
+        let name = a2s(&cstr(p));
+        let trap = crate::api::export(&dll, &name);
+        if crate::api::is_known(trap) {
+            r = crate::fast::bind(&dll, &name, trap);
         }
     }
     if crate::env_on!("SAKE_TRACE_LOAD") {
@@ -8552,10 +8542,8 @@ fn create_file_mapping(c: &mut Ctx, wide: bool) -> u32 {
     let write = matches!(protect, 0x04 | 0x40);
     // (a writable mapping larger than its file makes the file that long, as Windows does)
     let want = u64::from(c.a(4)) | u64::from(c.a(3)) << 32;
-    if let (Some(f), true) = (&f, write) {
-        if want > f.size() {
-            let _ = f.f.locked().set_len(want);
-        }
+    if let (Some(f), true) = (&f, write) && want > f.size() {
+        let _ = f.f.locked().set_len(want);
     }
     sa_inherit(c.a(1), create_named(named(c.a(5), wide), Obj::Mapping { file: f, size, view: 0, write }))
 }
@@ -8643,13 +8631,11 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
     // (FILE_MAP_READ alone: FILE_MAP_WRITE and FILE_MAP_COPY views are the program's own)
     let shared = access & 3 == 0;
     let key = (f.path.clone(), off, n, len);
-    if shared {
-        if let Some(b) = READ_VIEWS.locked().iter_mut().find(|v| v.0 == key).map(|v| {
+    if shared && let Some(b) = READ_VIEWS.locked().iter_mut().find(|v| v.0 == key).map(|v| {
             v.2 += 1;
             v.1
         }) {
             return b;
-        }
     }
     let Some(b) = mem::reserve(0, n.max(1), 4, 0x40000, false) else {
         last_error(8);

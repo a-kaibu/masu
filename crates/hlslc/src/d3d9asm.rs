@@ -305,13 +305,11 @@ fn source(s: &str, v: &Ver, out: &mut Vec<u32>) -> Result<(), String> {
         tok |= 1 << 13;
     }
     out.push(tok);
-    if let Some(r) = rel {
-        if v.major >= 2 {
-            let (rr, _, rsel) = split_operand(&r);
-            let (rt, rn) = register(&rr, v)?;
-            let c = rsel.chars().next().and_then(comp).unwrap_or(0);
-            out.push(0x8000_0000 | reg_bits(rt, rn) | (c * 0x55) << 16);
-        }
+    if let Some(r) = rel && v.major >= 2 {
+        let (rr, _, rsel) = split_operand(&r);
+        let (rt, rn) = register(&rr, v)?;
+        let c = rsel.chars().next().and_then(comp).unwrap_or(0);
+        out.push(0x8000_0000 | reg_bits(rt, rn) | (c * 0x55) << 16);
     }
     Ok(())
 }
@@ -452,10 +450,8 @@ pub fn assemble(src: &str) -> Result<Vec<u32>, String> {
                     ctl = 2;
                 }
                 let mut ops = operands.iter();
-                if !no_dest(op) {
-                    if let Some(d) = ops.next() {
-                        dest(d, v, resmod, shift, &mut body)?;
-                    }
+                if !no_dest(op) && let Some(d) = ops.next() {
+                    dest(d, v, resmod, shift, &mut body)?;
                 }
                 for s in ops {
                     source(s, v, &mut body)?;

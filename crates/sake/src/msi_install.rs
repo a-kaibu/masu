@@ -518,10 +518,8 @@ impl Drop for TempFile {
 
 /// A cabinet: "#stream" in the package, or a file beside it (one of a set: `extract_set`).
 fn extract_cab(c: &mut Ctx, p: &Arc<Mutex<Package>>, cab: &str, list: &[(FileRec, String)], cabs: &[String]) -> R<()> {
-    if !cab.starts_with('#') && cab_beside(p, cab).and_then(|h| cab_header(&h)).is_some_and(|h| h.has_prev || h.has_next) {
-        if let Some(vols) = set_volumes(p, cab, cabs) {
-            return extract_set(c, p, cab, &vols, list);
-        }
+    if !cab.starts_with('#') && cab_beside(p, cab).and_then(|h| cab_header(&h)).is_some_and(|h| h.has_prev || h.has_next) && let Some(vols) = set_volumes(p, cab, cabs) {
+        return extract_set(c, p, cab, &vols, list);
     }
     let mut tmp = TempFile(None);
     let host = if let Some(stream) = cab.strip_prefix('#') {
@@ -825,12 +823,10 @@ fn remove_empty(pk: &Package, dirs: Vec<String>) {
         todo.pop()
     } {
         let Some(h) = crate::files::resolve(d.trim_end_matches('\\')) else { continue };
-        if kura::fs::remove_dir(&h).is_ok() {
-            if let Some((parent, _)) = d.trim_end_matches('\\').rsplit_once('\\') {
-                let parent = format!("{parent}\\");
-                if own.contains(&parent.to_lowercase()) && !todo.contains(&parent) {
-                    todo.push(parent);
-                }
+        if kura::fs::remove_dir(&h).is_ok() && let Some((parent, _)) = d.trim_end_matches('\\').rsplit_once('\\') {
+            let parent = format!("{parent}\\");
+            if own.contains(&parent.to_lowercase()) && !todo.contains(&parent) {
+                todo.push(parent);
             }
         }
     }

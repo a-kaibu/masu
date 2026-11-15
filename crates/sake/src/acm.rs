@@ -675,10 +675,8 @@ fn acmDriverRemove(c: &mut Ctx) -> u32 {
 }
 /// Opens added driver i (DRV_OPEN with an ACMDRVOPENDESC); its dwDriverId
 fn open_added(c: &mut Ctx, i: Slot) -> u32 {
-    if let Some(d) = added(i) {
-        if d.id != 0 {
-            return d.id;
-        }
+    if let Some(d) = added(i) && d.id != 0 {
+        return d.id;
     }
     let size = OpenDesc::size(mem::ps());
     let d = mem::heap_alloc(size, true);
@@ -715,11 +713,9 @@ fn acmDriverClose(c: &mut Ctx) -> u32 {
     let h = c.a(0);
     if let Hacm::Opened(_) = Hacm::from(h) {
         let Some(i) = added_index(h) else { return MMSYSERR_INVALHANDLE };
-        if let Some(d) = added(i) {
-            if d.id != 0 {
-                send(c, i, Msg::Close, 0, 0);
-                added_set(i, |d| d.id = 0);
-            }
+        if let Some(d) = added(i) && d.id != 0 {
+            send(c, i, Msg::Close, 0, 0);
+            added_set(i, |d| d.id = 0);
         }
     }
     0

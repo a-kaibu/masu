@@ -240,17 +240,13 @@ fn number(w: &[u8]) -> Option<Tok> {
         let v: i128 = s.parse().ok().or_else(|| Some(if s.starts_with('-') { i128::MIN } else { i128::MAX }))?;
         return Some(Tok::Int(v.clamp(i64::MIN as i128, i64::MAX as i128) as i64 as u32, false));
     }
-    if let Ok(f) = s.parse::<f64>() {
-        if body.bytes().all(|c| c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'-' | b'+')) {
-            return Some(Tok::Float(f, false));
-        }
+    if let Ok(f) = s.parse::<f64>() && body.bytes().all(|c| c.is_ascii_digit() || matches!(c, b'.' | b'e' | b'E' | b'-' | b'+')) {
+        return Some(Tok::Float(f, false));
     }
     // (MSVC's printf of a NaN or infinity: "-1.#IND00", "1.#QNAN0", "1.#INF00")
-    if let Some(i) = s.find(".#") {
-        if s[..i].bytes().all(|c| c.is_ascii_digit() || c == b'-' || c == b'+') {
-            let neg = s.starts_with('-');
-            return Some(Tok::Float(if s[i..].starts_with(".#INF") { if neg { f64::NEG_INFINITY } else { f64::INFINITY } } else { f64::NAN }, false));
-        }
+    if let Some(i) = s.find(".#") && s[..i].bytes().all(|c| c.is_ascii_digit() || c == b'-' || c == b'+') {
+        let neg = s.starts_with('-');
+        return Some(Tok::Float(if s[i..].starts_with(".#INF") { if neg { f64::NEG_INFINITY } else { f64::INFINITY } } else { f64::NAN }, false));
     }
     None
 }
@@ -289,12 +285,10 @@ pub fn text_tokens(d: &[u8]) -> (Vec<Tok>, Option<u32>) {
             continue;
         }
         if c == b'<' {
-            if d.get(i + 37) == Some(&b'>') {
-                if let Some(g) = parse_guid(&d[i + 1..i + 37]) {
-                    t.push(Tok::Guid(g));
-                    i += 38;
-                    continue;
-                }
+            if d.get(i + 37) == Some(&b'>') && let Some(g) = parse_guid(&d[i + 1..i + 37]) {
+                t.push(Tok::Guid(g));
+                i += 38;
+                continue;
             }
             t.push(Tok::OAngle);
             i += 1;

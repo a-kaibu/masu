@@ -169,10 +169,8 @@ impl Saves {
                     Some(remote) => remote.get(&format!("saves/{name}/{r}")).await?.map(|d| d.to_vec()),
                     None => self.read(name).await?.map(|(_, d)| d),
                 };
-                if let (Some(d), Some(hashes)) = (data, set.as_mut()) {
-                    if !state_hashes(&d, hashes) {
-                        *set = None;
-                    }
+                if let (Some(d), Some(hashes)) = (data, set.as_mut()) && !state_hashes(&d, hashes) {
+                    *set = None;
                 }
             }
         }

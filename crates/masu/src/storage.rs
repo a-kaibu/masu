@@ -1746,10 +1746,8 @@ impl Disk {
                     temps += 1;
                     continue;
                 }
-                if let Ok(m) = f.metadata() {
-                    if m.is_file() {
-                        out.push((p, m.len(), m.modified().unwrap_or(std::time::UNIX_EPOCH)));
-                    }
+                if let Ok(m) = f.metadata() && m.is_file() {
+                    out.push((p, m.len(), m.modified().unwrap_or(std::time::UNIX_EPOCH)));
                 }
             }
         }
@@ -1827,11 +1825,9 @@ impl Disk {
     /// Drops object `id` (it did not decrypt: damaged on the disk).
     pub(crate) fn remove(&self, id: Uuid) {
         let p = self.path(id);
-        if let Ok(m) = std::fs::metadata(&p) {
-            if std::fs::remove_file(&p).is_ok() {
-                let mut b = self.bytes.locked();
-                *b = b.saturating_sub(m.len());
-            }
+        if let Ok(m) = std::fs::metadata(&p) && std::fs::remove_file(&p).is_ok() {
+            let mut b = self.bytes.locked();
+            *b = b.saturating_sub(m.len());
         }
     }
 

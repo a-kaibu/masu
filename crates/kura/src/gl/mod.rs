@@ -1626,21 +1626,19 @@ fn flat_order(mode: u32, n: usize) -> Option<(u32, Vec<(usize, usize)>)> {
 }
 
 fn draw(g: &mut Gl, c: &mut Ctx, mode: u32, v: Vec<[f32; 16]>) {
-    if c.flat {
-        if let Some((list, fo)) = flat_order(mode, v.len()) {
-            let nv: Vec<[f32; 16]> = fo
-                .iter()
-                .map(|&(i, p)| {
-                    let mut x = v[i];
-                    x[4..8].copy_from_slice(&v[p][4..8]);
-                    x
-                })
-                .collect();
-            c.flat = false;
-            draw(g, c, list, nv);
-            c.flat = true;
-            return;
-        }
+    if c.flat && let Some((list, fo)) = flat_order(mode, v.len()) {
+        let nv: Vec<[f32; 16]> = fo
+            .iter()
+            .map(|&(i, p)| {
+                let mut x = v[i];
+                x[4..8].copy_from_slice(&v[p][4..8]);
+                x
+            })
+            .collect();
+        c.flat = false;
+        draw(g, c, list, nv);
+        c.flat = true;
+        return;
     }
     let (topo, order) = assemble(mode, v.len());
     if order.is_empty() {
@@ -2207,12 +2205,10 @@ extern "C" fn glGenerateMipmap(target: u32) {
         return;
     }
     with(|g, c| {
-        if let Some(t) = g.textures.get_mut(&bound_texture(c)) {
-            if t.gpu != 0 && t.base != Base::Depth {
-                t.defined = (1u32 << t.levels.min(31)) - 1;
-                let id = t.gpu;
-                gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, id]));
-            }
+        if let Some(t) = g.textures.get_mut(&bound_texture(c)) && t.gpu != 0 && t.base != Base::Depth {
+            t.defined = (1u32 << t.levels.min(31)) - 1;
+            let id = t.gpu;
+            gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, id]));
         }
     })
 }

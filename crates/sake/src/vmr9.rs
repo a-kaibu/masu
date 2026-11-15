@@ -1325,10 +1325,8 @@ const MAX_BUFFERS: u32 = 256;
 /// as every COM block here, so a stale pointer still finds a vtable) and its entry goes.
 fn sample_free(s: u32) {
     let gone = SAMPLES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&s);
-    if let Some(x) = gone {
-        if x.data != 0 {
-            mem::heap_free(x.data);
-        }
+    if let Some(x) = gone && x.data != 0 {
+        mem::heap_free(x.data);
     }
 }
 

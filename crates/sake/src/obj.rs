@@ -478,11 +478,9 @@ fn try_take(t: &mut Table, k: Option<Key>, tid: u32, take: bool) -> Option<bool>
             s
         }
         Obj::Timer { manual, set, due, period } => {
-            if let Some(d) = *due {
-                if Instant::now() >= d {
-                    *set = true;
-                    *due = (!period.is_zero()).then(|| d + *period);
-                }
+            if let Some(d) = *due && Instant::now() >= d {
+                *set = true;
+                *due = (!period.is_zero()).then(|| d + *period);
             }
             let s = *set;
             if s && take && !*manual {
@@ -606,10 +604,8 @@ pub fn wait(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool
             if handles.iter().any(|h| t.objs.access.get(h).is_some_and(|a| a & 0x0010_0000 == 0)) {
                 return Some(Err(5));
             }
-            if let Some(x) = extra {
-                if x() {
-                    return Some(Ok(handles.len() as u32));
-                }
+            if let Some(x) = extra && x() {
+                return Some(Ok(handles.len() as u32));
             }
             let keys: Vec<Option<Key>> = handles.iter().map(|h| t.objs.key(h)).collect();
             match attempt(t, &keys, all, tid, false) {
@@ -748,10 +744,8 @@ fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dy
             continue;
         }
         let t = g.get_or_insert_with(Table::new);
-        if let Some(x) = extra {
-            if x() {
-                break (handles.len() as u32, Vec::new());
-            }
+        if let Some(x) = extra && x() {
+            break (handles.len() as u32, Vec::new());
         }
         match attempt(t, handles, all, tid, blocked) {
             Attempt::Failed => {
@@ -773,13 +767,11 @@ fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dy
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };
-        if let Some(d) = deadline {
-            if Instant::now() >= d {
-                if timer == Some(d) {
-                    continue;
-                }
-                break (WAIT_TIMEOUT, Vec::new());
+        if let Some(d) = deadline && Instant::now() >= d {
+            if timer == Some(d) {
+                continue;
             }
+            break (WAIT_TIMEOUT, Vec::new());
         }
         // sleeps until one of its objects (or anything, `signal`) changes
         let me = match id {

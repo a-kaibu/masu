@@ -36,12 +36,8 @@ async fn table(State(f): State<Foresee>, Path(tree): Path<String>) -> Response {
     let Some(changed) = f.trees.changed(&tree) else { return StatusCode::NOT_FOUND.into_response() };
     let path = f.dir.join(format!("{tree}.tsv"));
     // (made after the tree's list last changed: as is)
-    if let Ok(m) = tokio::fs::metadata(&path).await {
-        if m.modified().is_ok_and(|t| t >= changed) {
-            if let Ok(text) = tokio::fs::read(&path).await {
-                return ([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response();
-            }
-        }
+    if let Ok(m) = tokio::fs::metadata(&path).await && m.modified().is_ok_and(|t| t >= changed) && let Ok(text) = tokio::fs::read(&path).await {
+        return ([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response();
     }
     if f.going.locked().insert(tree.clone()) {
         let g = f.clone();
@@ -70,10 +66,8 @@ pub async fn build(trees: &Trees, tree: &str) -> String {
         if base == "scene.pck" {
             out += &siglus(trees, tree, path, *size, &files).await;
         } else if foresee::is_script(path) {
-            if *size as usize <= foresee::SCRIPT_MAX {
-                if let Some(b) = trees.read(tree, path, 0, *size, &mut cache).await {
-                    out += &foresee::table_line(path, &foresee::names_in(&b));
-                }
+            if *size as usize <= foresee::SCRIPT_MAX && let Some(b) = trees.read(tree, path, 0, *size, &mut cache).await {
+                out += &foresee::table_line(path, &foresee::names_in(&b));
             }
         } else if path.ends_with(".xp3") {
             out += &xp3(trees, tree, path, &mut cache).await;

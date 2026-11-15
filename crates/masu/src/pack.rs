@@ -214,10 +214,8 @@ fn tree_chunks(store: &Path, name: &str) -> Result<std::collections::HashSet<Chu
 /// program's (`sake-<program>-<build>.chunks`, the newest build's; what serve's pre-run saves),
 /// else none. 16 bytes a chunk.
 pub fn read_order_list(store: &Path, jit: &Path, id: &str) -> Vec<u8> {
-    if let Ok(l) = fs::read(jit.join(format!("game.{id}.chunks"))) {
-        if l.len() >= 16 {
-            return l;
-        }
+    if let Ok(l) = fs::read(jit.join(format!("game.{id}.chunks"))) && l.len() >= 16 {
+        return l;
     }
     let Ok(g) = read_game(store, id) else { return Vec::new() };
     // (named as the page names its program: play.ts jitName, serve.rs prerun_games)
@@ -613,10 +611,8 @@ pub fn run(store: &Path, cmd: Cmd) -> Result<()> {
                     root = staged.clone();
                     // (the usual one folder holding the game: its files at the tree's top)
                     let top: Vec<_> = fs::read_dir(&root)?.collect::<Result<_, _>>()?;
-                    if let [one] = &top[..] {
-                        if one.file_type()?.is_dir() {
-                            root = one.path();
-                        }
+                    if let [one] = &top[..] && one.file_type()?.is_dir() {
+                        root = one.path();
                     }
                 } else if !path.is_dir() {
                     bail!("{}: not a folder, archive or installer", dir.display());
@@ -804,10 +800,8 @@ pub fn ensure_prefix(store: &Path, fonts: &Path, rtp: Option<&Path>) -> Result<b
     let rtp = rtp.filter(|d| d.join("drive_c").is_dir());
     let stamp = rtp.map(rtp_stamp).transpose()?;
     let have = fs::read_to_string(&tsv).ok();
-    if let Some(list) = &have {
-        if stamp.as_ref().is_none_or(|s| tree_list::good_lines(list).any(|l| l.path == stamp_path(s))) {
-            return Ok(false);
-        }
+    if let Some(list) = &have && stamp.as_ref().is_none_or(|s| tree_list::good_lines(list).any(|l| l.path == stamp_path(s))) {
+        return Ok(false);
     }
     let files: Vec<PathBuf> = match fs::read_dir(fonts) {
         Ok(entries) => entries.filter_map(|e| e.ok()).filter(|e| e.file_type().is_ok_and(|t| t.is_file())).map(|e| e.path()).collect(),

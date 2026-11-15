@@ -636,12 +636,10 @@ mod tests {
                         running.insert(k, v);
                         ran.push((k, v));
                     }
-                } else if running.remove(&k).is_some() {
-                    if let Some(v) = c.done(&k) {
-                        proptest::prop_assert_eq!(Some(&v), last.get(&k), "not the newest");
-                        running.insert(k, v);
-                        ran.push((k, v));
-                    }
+                } else if running.remove(&k).is_some() && let Some(v) = c.done(&k) {
+                    proptest::prop_assert_eq!(Some(&v), last.get(&k), "not the newest");
+                    running.insert(k, v);
+                    ran.push((k, v));
                 }
                 proptest::prop_assert_eq!(c.running(), running.len());
             }

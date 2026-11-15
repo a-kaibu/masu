@@ -101,13 +101,11 @@ impl Demux {
             }
             let len = usize::from(u16::from_be_bytes([d[i + 4], d[i + 5]]));
             let start = i + 6;
-            if start + len > d.len() {
-                if !self.ended {
-                    self.at = i;
-                    return None;
-                }
-                // (a cut last packet: what there is)
+            if start + len > d.len() && !self.ended {
+                self.at = i;
+                return None;
             }
+                // (a cut last packet: what there is)
             let end = (start + len).min(d.len());
             let body = &d[start..end];
             let mut b = Bits::new(body);

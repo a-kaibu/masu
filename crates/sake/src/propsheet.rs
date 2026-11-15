@@ -926,10 +926,8 @@ fn add_page(c: &mut Ctx, key: u32, at: usize, hpage: u32) -> bool {
     let Some(tab) = sheet(key, |s| {
         let at = at.min(s.pages.len());
         s.pages.insert(at, Page { psp: hpage, hwnd: 0 });
-        if let Some(a) = s.active {
-            if a >= at {
-                s.active = Some(a + 1);
-            }
+        if let Some(a) = s.active && a >= at {
+            s.active = Some(a + 1);
         }
         s.tab
     }) else {

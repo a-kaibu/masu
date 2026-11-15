@@ -342,10 +342,8 @@ impl<'a, M: Memory> X<'a, M> {
         use Mnemonic::*;
         let ins = self.ins;
         let mn = ins.mnemonic();
-        if fpu::x87_80() {
-            if let Some(e) = self.x87_precise() {
-                return e;
-            }
+        if fpu::x87_80() && let Some(e) = self.x87_precise() {
+            return e;
         }
         match mn {
             Fld => {

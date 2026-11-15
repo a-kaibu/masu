@@ -430,28 +430,22 @@ impl Pp<'_> {
                     while k < mb.len() {
                         let t = &mb[k];
                         // #param
-                        if t.t == Tok::Punct("#") {
-                            if let Some(Tok::Ident(p)) = mb.get(k + 1).map(|t| &t.t) {
-                                if let Some(pi) = params.iter().position(|x| x == p) {
-                                    let s = args.get(pi).map_or(String::new(), |a| a.iter().map(text).collect::<Vec<_>>().join(" "));
-                                    body.push(Token { t: Tok::Str(s), line: tk.line });
-                                    k += 2;
-                                    continue;
-                                }
-                            }
+                        if t.t == Tok::Punct("#") && let Some(Tok::Ident(p)) = mb.get(k + 1).map(|t| &t.t) && let Some(pi) = params.iter().position(|x| x == p) {
+                            let s = args.get(pi).map_or(String::new(), |a| a.iter().map(text).collect::<Vec<_>>().join(" "));
+                            body.push(Token { t: Tok::Str(s), line: tk.line });
+                            k += 2;
+                            continue;
                         }
-                        if let Tok::Ident(p) = &t.t {
-                            if let Some(pi) = params.iter().position(|x| x == p) {
-                                // (next to ##: the argument as written)
-                                let raw = mb.get(k + 1).is_some_and(|t| t.t == Tok::Punct("##"))
-                                    || (k > 0 && mb[k - 1].t == Tok::Punct("##"));
-                                let a = if raw { args.get(pi) } else { expanded.get(pi) };
-                                if let Some(a) = a {
-                                    body.extend(a.iter().map(|t| Token { t: t.t.clone(), line: tk.line }));
-                                }
-                                k += 1;
-                                continue;
+                        if let Tok::Ident(p) = &t.t && let Some(pi) = params.iter().position(|x| x == p) {
+                            // (next to ##: the argument as written)
+                            let raw = mb.get(k + 1).is_some_and(|t| t.t == Tok::Punct("##"))
+                                || (k > 0 && mb[k - 1].t == Tok::Punct("##"));
+                            let a = if raw { args.get(pi) } else { expanded.get(pi) };
+                            if let Some(a) = a {
+                                body.extend(a.iter().map(|t| Token { t: t.t.clone(), line: tk.line }));
                             }
+                            k += 1;
+                            continue;
                         }
                         body.push(Token { t: t.t.clone(), line: tk.line });
                         k += 1;
@@ -516,15 +510,13 @@ fn paste(toks: Vec<Token>) -> Vec<Token> {
     let mut out: Vec<Token> = Vec::new();
     let mut i = 0;
     while i < toks.len() {
-        if toks[i].t == Tok::Punct("##") && i + 1 < toks.len() {
-            if let Some(a) = out.pop() {
-                let s = text(&a) + &text(&toks[i + 1]);
-                let mut v = Vec::new();
-                let _ = lex_line(&s, a.line, &mut v);
-                out.extend(v);
-                i += 2;
-                continue;
-            }
+        if toks[i].t == Tok::Punct("##") && i + 1 < toks.len() && let Some(a) = out.pop() {
+            let s = text(&a) + &text(&toks[i + 1]);
+            let mut v = Vec::new();
+            let _ = lex_line(&s, a.line, &mut v);
+            out.extend(v);
+            i += 2;
+            continue;
         }
         out.push(toks[i].clone());
         i += 1;

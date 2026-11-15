@@ -398,10 +398,8 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
     // (also not: getters, and the Set* calls whose Direct3D 9 calls say what they change
     // themselves: SetVertexShader 76, SetPixelShader 88, SetIndices 85 but for its base vertex,
     // below; staling on them defeated the reuse and joining of draws in DirectX 8 engines)
-    if !matches!(m, 3 | 4 | 6 | 9..=12 | 15..=19 | 29 | 32..=52 | 58..=64 | 66..=73 | 76 | 77 | 79 | 80 | 83..=86 | 88 | 89 | 91 | 92) {
-        if let Some(dv) = d.dev.as_mut() {
-            dv.stale_all();
-        }
+    if !matches!(m, 3 | 4 | 6 | 9..=12 | 15..=19 | 29 | 32..=52 | 58..=64 | 66..=73 | 76 | 77 | 79 | 80 | 83..=86 | 88 | 89 | 91 | 92) && let Some(dv) = d.dev.as_mut() {
+        dv.stale_all();
     }
     // the same method in Direct3D 9, arguments unchanged
     let same = |d: &mut D3d, m9: u32, after: &mut After| {
@@ -575,10 +573,8 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
             c9(d, dev, 101, this, &[me, a(1), a(2), lo32((&raw mut off).expose_provenance()), a(3)], after)
         }
         85 => {
-            if d.d8.base_vertex != a(2) {
-                if let Some(dv) = d.dev.as_mut() {
-                    dv.stale_all();
-                }
+            if d.d8.base_vertex != a(2) && let Some(dv) = d.dev.as_mut() {
+                dv.stale_all();
             }
             d.d8.base_vertex = a(2);
             c9(d, dev, 104, this, &[me, a(1)], after)

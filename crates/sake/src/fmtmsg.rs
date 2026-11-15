@@ -296,11 +296,9 @@ fn format(src: &[u16], flags: u32, args: &Args, wide: bool) -> Result<Vec<u16>, 
                 let start = i;
                 let mut idx = (n - ch('0')) as u32;
                 i += 2;
-                if let Some(&d) = src.get(i) {
-                    if (ch('0')..=ch('9')).contains(&d) {
-                        idx = idx * 10 + (d - ch('0')) as u32;
-                        i += 1;
-                    }
+                if let Some(&d) = src.get(i) && (ch('0')..=ch('9')).contains(&d) {
+                    idx = idx * 10 + (d - ch('0')) as u32;
+                    i += 1;
                 }
                 let mut spec: Vec<u16> = "s".encode_utf16().collect();
                 if src.get(i) == Some(&ch('!')) {

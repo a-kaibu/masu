@@ -1050,10 +1050,8 @@ fn I_Invoke(c: &mut Ctx) -> u32 {
                     Some(Var::Empty) | None => write_var(result, &Var::Empty),
                     Some(v) => write_var(result, &v),
                 }
-            } else if let Some((m, t)) = &retval {
-                if *t == Td::Base(VT_BSTR) {
-                    crate::misc::bstr_free(r32(*m));
-                }
+            } else if let Some((m, t)) = &retval && *t == Td::Base(VT_BSTR) {
+                crate::misc::bstr_free(r32(*m));
             }
             S_OK
         }

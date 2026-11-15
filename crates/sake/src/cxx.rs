@@ -68,10 +68,8 @@ fn stubs() -> &'static [u32; 4] {
 /// _CxxThrowException(object, throw info); (0, 0): rethrow the exception being handled
 fn throw(c: &mut Ctx) -> u32 {
     let (mut obj, mut info) = (c.a(0), c.a(1));
-    if obj == 0 && info == 0 {
-        if let Some(&(o, i)) = CURRENT.with(|v| v.borrow().last().copied()).as_ref() {
-            (obj, info) = (o, i);
-        }
+    if obj == 0 && info == 0 && let Some(&(o, i)) = CURRENT.with(|v| v.borrow().last().copied()).as_ref() {
+        (obj, info) = (o, i);
     }
     let ret = r32(c.esp);
     c.cpu.eip = ret;

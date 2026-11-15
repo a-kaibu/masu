@@ -283,10 +283,8 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
     check_registers(w, p)?;
     // compare sampling needs depth textures
     for i in &p.insts {
-        if matches!(i.op, Opcode::SampleC | Opcode::SampleCLz | Opcode::Gather4C) {
-            if let Some(r) = i.ops.get(2).and_then(|o| w.res.get_mut(&o.reg())) {
-                r.depth = true;
-            }
+        if matches!(i.op, Opcode::SampleC | Opcode::SampleCLz | Opcode::Gather4C) && let Some(r) = i.ops.get(2).and_then(|o| w.res.get_mut(&o.reg())) {
+            r.depth = true;
         }
     }
     Ok(())
@@ -324,10 +322,8 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
             }
             tpf::INDEXABLE_TEMP => {
                 let n = w.xs.get(&o.reg()).ok_or(format!("x{} is not declared", o.reg()))?;
-                if let Some(Index::Imm(k)) = o.idx.get(1) {
-                    if k >= n {
-                        return Err(format!("x{}[{k}] past its size", o.reg()));
-                    }
+                if let Some(Index::Imm(k)) = o.idx.get(1) && k >= n {
+                    return Err(format!("x{}[{k}] past its size", o.reg()));
                 }
                 2
             }
@@ -345,10 +341,8 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
             }
             tpf::CONSTANT_BUFFER => {
                 let n = w.cbs.get(&o.reg()).ok_or(format!("cb{} is not declared", o.reg()))?;
-                if let Some(Index::Imm(k)) = o.idx.get(1) {
-                    if k >= n {
-                        return Err(format!("cb{}[{k}] past its size", o.reg()));
-                    }
+                if let Some(Index::Imm(k)) = o.idx.get(1) && k >= n {
+                    return Err(format!("cb{}[{k}] past its size", o.reg()));
                 }
                 2
             }
@@ -384,10 +378,8 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
                 if n == 0 {
                     return Err("icb is not declared".into());
                 }
-                if let Some(Index::Imm(k)) = o.idx.first() {
-                    if *k >= n {
-                        return Err(format!("icb[{k}] past its size"));
-                    }
+                if let Some(Index::Imm(k)) = o.idx.first() && *k >= n {
+                    return Err(format!("icb[{k}] past its size"));
                 }
                 1
             }

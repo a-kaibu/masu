@@ -55,14 +55,8 @@ pub fn nt_name(name: &str, root: bool) -> Result<String, u32> {
     if let Some(n) = rest.strip_prefix("BaseNamedObjects\\") {
         return Ok(n.to_string());
     }
-    if let Some(s) = rest.strip_prefix("Sessions\\") {
-        if let Some((num, tail)) = s.split_once('\\') {
-            if !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) {
-                if let Some(n) = tail.strip_prefix("BaseNamedObjects\\") {
-                    return Ok(n.to_string());
-                }
-            }
-        }
+    if let Some(s) = rest.strip_prefix("Sessions\\") && let Some((num, tail)) = s.split_once('\\') && !num.is_empty() && num.bytes().all(|b| b.is_ascii_digit()) && let Some(n) = tail.strip_prefix("BaseNamedObjects\\") {
+        return Ok(n.to_string());
     }
     Err(STATUS_OBJECT_PATH_NOT_FOUND)
 }

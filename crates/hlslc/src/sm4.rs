@@ -462,10 +462,8 @@ pub(super) fn alloc(code: &mut [Ins], marks: &[(u32, usize)]) -> u32 {
     for (n, i) in code.iter().enumerate() {
         if i.op == LOOP {
             stack.push(n);
-        } else if i.op == ENDLOOP {
-            if let Some(s) = stack.pop() {
-                loops.push((s, n));
-            }
+        } else if i.op == ENDLOOP && let Some(s) = stack.pop() {
+            loops.push((s, n));
         }
     }
     loop {
@@ -579,12 +577,10 @@ impl Enc<'_> {
         }
         for (k, &v) in idx.iter().enumerate() {
             out.push(v);
-            if k == rel_at {
-                if let Some((tr, c)) = r.rel {
-                    // the relative part: a temp's component (select-1)
-                    out.push(2 | (2 << 2) | (u32::from(c) << 4) | ty_bits(tpf::TEMP) | (1 << 20));
-                    out.push(tr);
-                }
+            if k == rel_at && let Some((tr, c)) = r.rel {
+                // the relative part: a temp's component (select-1)
+                out.push(2 | (2 << 2) | (u32::from(c) << 4) | ty_bits(tpf::TEMP) | (1 << 20));
+                out.push(tr);
             }
         }
         Ok(())

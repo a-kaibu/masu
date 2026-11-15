@@ -945,10 +945,8 @@ fn check_row(t: &Table, row: &[Field]) -> R<()> {
         }
         if c.ty & T_STRING == 0 && !c.is_binary() {
             // (an empty string is a NULL)
-            if let Field::Str(s) = f {
-                if !s.is_empty() && crate::record::parse_int(s).is_none() {
-                    return Err(ERROR_DATATYPE_MISMATCH);
-                }
+            if let Field::Str(s) = f && !s.is_empty() && crate::record::parse_int(s).is_none() {
+                return Err(ERROR_DATATYPE_MISMATCH);
             }
         }
     }

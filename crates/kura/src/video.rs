@@ -419,10 +419,8 @@ fn release(m: &mut HashMap<u32, Stream>, id: u32) {
         let s = m.remove(&id);
         // (the page may still be reading the header `vnhost_video_list` pointed it at: the
         // stream goes at the next list, when the page is done with the last one)
-        if PAGE.load(Ordering::Relaxed) {
-            if let Some(s) = s {
-                GRAVE.lock().unwrap_or_else(|e| e.into_inner()).push(s);
-            }
+        if PAGE.load(Ordering::Relaxed) && let Some(s) = s {
+            GRAVE.lock().unwrap_or_else(|e| e.into_inner()).push(s);
         }
     }
 }

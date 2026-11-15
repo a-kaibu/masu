@@ -714,11 +714,9 @@ impl W<'_> {
                 (K::Shader(vs), v) => {
                     let td = Td::object(if vs { PType::VertexShader } else { PType::PixelShader });
                     let id = self.object();
-                    if reference.is_none() {
-                        if let Some(code) = self.shader(v, vs) {
-                            self.shaders += 1;
-                            self.res.push((ti, index, elem, si, 0, code));
-                        }
+                    if reference.is_none() && let Some(code) = self.shader(v, vs) {
+                        self.shaders += 1;
+                        self.res.push((ti, index, elem, si, 0, code));
                     }
                     (td, id.to_le_bytes().to_vec())
                 }

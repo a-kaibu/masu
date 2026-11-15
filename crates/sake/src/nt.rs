@@ -133,10 +133,8 @@ fn cwd_handle() -> Option<(String, u32)> {
     static H: std::sync::Mutex<Option<(String, u32)>> = std::sync::Mutex::new(None);
     let dir = crate::files::cwd();
     let mut g = H.locked();
-    if let Some((d, h)) = &*g {
-        if *d == dir {
-            return Some((dir, *h));
-        }
+    if let Some((d, h)) = &*g && *d == dir {
+        return Some((dir, *h));
     }
     if let Some((_, h)) = g.take() {
         crate::obj::close(h);
@@ -549,11 +547,9 @@ fn create(c: &mut Ctx, out: u32, access: u32, oa: u32, io: u32, attrs: u32, shar
         if existed && disp == 2 {
             return fail(0xc000_0035); // STATUS_OBJECT_NAME_COLLISION
         }
-        if !existed && (disp == 2 || disp == 3) {
-            if k32(c, "CreateDirectoryW", &[path, 0]) == 0 {
-                let st = status();
-                return fail(st);
-            }
+        if !existed && (disp == 2 || disp == 3) && k32(c, "CreateDirectoryW", &[path, 0]) == 0 {
+            let st = status();
+            return fail(st);
         }
     } else if opts & 0x40 != 0 && is_dir {
         return fail(0xc000_00ba); // STATUS_FILE_IS_A_DIRECTORY

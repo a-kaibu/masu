@@ -107,16 +107,14 @@ fn release_(c: &mut Ctx) -> u32 {
         d.refs
     })
     .unwrap_or(0);
-    if n == 0 {
-        if let Some(d) = DXS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&b) {
-            release(c, d.tex);
-            release(c, d.staging);
-            for (_, u) in d.unks {
-                release(c, u);
-            }
-            mem::heap_free(d.data);
-            mem::heap_free(b);
+    if n == 0 && let Some(d) = DXS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&b) {
+        release(c, d.tex);
+        release(c, d.staging);
+        for (_, u) in d.unks {
+            release(c, u);
         }
+        mem::heap_free(d.data);
+        mem::heap_free(b);
     }
     n
 }

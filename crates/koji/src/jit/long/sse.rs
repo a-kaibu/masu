@@ -248,10 +248,8 @@ impl Gen<'_> {
         }
         // the memory operand's address first (it may leave for the interpreter)
         let size = (0..li.op_count()).find(|&i| mem(&li, i)).map(|_| lo32(li.memory_size().size()));
-        if let Some(s) = size {
-            if !self.addr(s.max(1)) {
-                return false;
-            }
+        if let Some(s) = size && !self.addr(s.max(1)) {
+            return false;
         }
         let saved = self.ins;
         self.ins = li;
@@ -297,10 +295,8 @@ impl Gen<'_> {
             }
             let ops = mxguard::operands(&mut self.c, k, a.then_some(L_V0), b.then_some(L_V1), Some(super::L_V2));
             for i in (0..2).filter(|_| !hi) {
-                if let (true, Some(r), Some(w)) = (i == 1 || k.3, reg(i), mxguard::key(k, i)) {
-                    if !self.mx_seen[r].contains(&Some(w)) {
-                        self.mx_seen[r] = [self.mx_seen[r][1], Some(w)];
-                    }
+                if let (true, Some(r), Some(w)) = (i == 1 || k.3, reg(i), mxguard::key(k, i)) && !self.mx_seen[r].contains(&Some(w)) {
+                    self.mx_seen[r] = [self.mx_seen[r][1], Some(w)];
                 }
             }
             // (PE once seen set stays set in this block's straight-line code)

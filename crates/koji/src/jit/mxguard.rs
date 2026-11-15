@@ -144,11 +144,9 @@ pub(super) fn operands(c: &mut Code, (g, bits, lanes, _): (G, u32, u32, bool), a
     if g == G::Inexact || a.is_none() && b.is_none() {
         return false;
     }
-    if let (Some(a), Some(b), Some(t)) = (a, b, scratch) {
-        if lanes * bits <= 64 && ra.abs && rb.abs && ra.lo != 0 && rb.lo != 0 {
-            paired(c, b64, lanes, (a, ra), (b, rb), t);
-            return true;
-        }
+    if let (Some(a), Some(b), Some(t)) = (a, b, scratch) && lanes * bits <= 64 && ra.abs && rb.abs && ra.lo != 0 && rb.lo != 0 {
+        paired(c, b64, lanes, (a, ra), (b, rb), t);
+        return true;
     }
     {
         let (abs, eq, lt, ge) = if b64 { (0xec, 0x47, 0x49, 0x4c) } else { (0xe0, 0x41, 0x43, 0x46) };

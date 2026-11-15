@@ -605,10 +605,8 @@ fn entry_key(e: &saved::Entry) -> [u8; 32] {
 async fn chunk_list(path: &std::path::Path, t: std::time::SystemTime, len: u64) -> Option<Arc<Vec<u8>>> {
     type Kept = std::collections::HashMap<PathBuf, (std::time::SystemTime, u64, Arc<Vec<u8>>)>;
     static KEPT: std::sync::LazyLock<std::sync::Mutex<Kept>> = std::sync::LazyLock::new(Default::default);
-    if let Some((kt, kl, b)) = KEPT.lock().unwrap_or_else(|e| e.into_inner()).get(path) {
-        if *kt == t && *kl == len {
-            return Some(b.clone());
-        }
+    if let Some((kt, kl, b)) = KEPT.lock().unwrap_or_else(|e| e.into_inner()).get(path) && *kt == t && *kl == len {
+        return Some(b.clone());
     }
     let b = Arc::new(tokio::fs::read(path).await.ok()?);
     if b.len() as u64 == len {
@@ -821,12 +819,10 @@ async fn bench_log(State(jit): State<Jit>, body: Bytes) -> StatusCode {
     };
     // (no longer than BENCH_FILE_MAX: the newest half of it kept, whole lines; review b01, it
     // grew for ever and every GET read all of it)
-    if tokio::fs::metadata(&path).await.is_ok_and(|m| m.len() > BENCH_FILE_MAX) {
-        if let Ok(all) = tokio::fs::read(&path).await {
-            let tmp = path.with_extension("trim.tmp");
-            if tokio::fs::write(&tmp, newest_lines(&all, (BENCH_FILE_MAX / 2) as usize)).await.is_ok() {
-                let _ = tokio::fs::rename(&tmp, &path).await;
-            }
+    if tokio::fs::metadata(&path).await.is_ok_and(|m| m.len() > BENCH_FILE_MAX) && let Ok(all) = tokio::fs::read(&path).await {
+        let tmp = path.with_extension("trim.tmp");
+        if tokio::fs::write(&tmp, newest_lines(&all, (BENCH_FILE_MAX / 2) as usize)).await.is_ok() {
+            let _ = tokio::fs::rename(&tmp, &path).await;
         }
     }
     r
@@ -1081,9 +1077,7 @@ async fn games(State(p): State<Arc<Prerun>>) -> Response {
             // (a Siglus game registered with its autorun menu: its engine, engine_exe.rs;
             // what the user set for the game still wins)
             crate::engine_exe::resolve(&store, &mut game);
-            if let Some(db) = &db {
-                if let Err(e) = db.apply_settings(&mut game) { eprintln!("game settings: {e}"); }
-            }
+            if let Some(db) = &db && let Err(e) = db.apply_settings(&mut game) { eprintln!("game settings: {e}"); }
             if body.len() > 1 {
                 body.push(',');
             }

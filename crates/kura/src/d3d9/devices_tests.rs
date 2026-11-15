@@ -140,17 +140,15 @@ fn run(ops: &[Op]) -> Result<(), TestCaseError> {
                 }
             }
             Op::TexDevice(i) => {
-                if let Some(i) = pick(i) {
-                    if let Some(&t) = live[i].textures.last() {
-                        // (GetDevice: the device that made it, with a reference)
-                        prop_assert_eq!(call(IF_TEXTURE, 3, &[t, o]), 0);
-                        prop_assert_eq!(rd(o), live[i].dev);
-                        call(IF_DEVICE, 2, &[live[i].dev]);
-                        // (and its LockRect works whatever the other devices did)
-                        let lr = mem(2);
-                        prop_assert_eq!(call(IF_TEXTURE, 19, &[t, 0, lr, 0, 0]), 0);
-                        prop_assert_eq!(call(IF_TEXTURE, 20, &[t, 0]), 0);
-                    }
+                if let Some(i) = pick(i) && let Some(&t) = live[i].textures.last() {
+                    // (GetDevice: the device that made it, with a reference)
+                    prop_assert_eq!(call(IF_TEXTURE, 3, &[t, o]), 0);
+                    prop_assert_eq!(rd(o), live[i].dev);
+                    call(IF_DEVICE, 2, &[live[i].dev]);
+                    // (and its LockRect works whatever the other devices did)
+                    let lr = mem(2);
+                    prop_assert_eq!(call(IF_TEXTURE, 19, &[t, 0, lr, 0, 0]), 0);
+                    prop_assert_eq!(call(IF_TEXTURE, 20, &[t, 0]), 0);
                 }
             }
         }

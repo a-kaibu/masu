@@ -90,12 +90,10 @@ pub fn png(data: &[u8]) -> Option<Meta> {
             }
             b"tEXt" => {
                 // keyword (1-79 Latin-1 bytes), NUL, text
-                if let Some(z) = body.iter().position(|&b| b == 0) {
-                    if (1..=79).contains(&z) {
-                        block("/tEXt");
-                        let key = String::from_utf8_lossy(&body[..z]);
-                        m.items.push((format!("/tEXt/{{str={key}}}"), Value::Str(body[z + 1..].to_vec())));
-                    }
+                if let Some(z) = body.iter().position(|&b| b == 0) && (1..=79).contains(&z) {
+                    block("/tEXt");
+                    let key = String::from_utf8_lossy(&body[..z]);
+                    m.items.push((format!("/tEXt/{{str={key}}}"), Value::Str(body[z + 1..].to_vec())));
                 }
             }
             b"IEND" => break,

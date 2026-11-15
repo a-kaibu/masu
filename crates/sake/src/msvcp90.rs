@@ -195,10 +195,8 @@ pub fn find_at(hay: &[u8], pat: &[u8], off: u32) -> u32 {
     if k == 0 && off <= n {
         return off as u32;
     }
-    if off < n && k <= n - off {
-        if let Some(i) = hay[off..].windows(k).position(|w| w == pat) {
-            return (off + i) as u32;
-        }
+    if off < n && k <= n - off && let Some(i) = hay[off..].windows(k).position(|w| w == pat) {
+        return (off + i) as u32;
     }
     NPOS
 }

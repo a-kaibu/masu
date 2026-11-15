@@ -1196,11 +1196,9 @@ fn sound_open(b: u32, w: &str, bytes: Vec<u8>) -> bool {
 
 /// The graph's sound file goes (another file rendered, the graph released).
 fn sound_close(b: u32) {
-    if let Some(s) = sounds(|m| m.remove(&b)) {
-        if let Some(p) = s.pcm {
-            crate::sound::music_stop(b);
-            crate::mci::free_pcm(p);
-        }
+    if let Some(s) = sounds(|m| m.remove(&b)) && let Some(p) = s.pcm {
+        crate::sound::music_stop(b);
+        crate::mci::free_pcm(p);
     }
 }
 
@@ -1518,10 +1516,8 @@ fn sync(b: u32) {
     let Some((place, volume)) = with(b, |g| {
         let video = g.video;
         let src = g.src.unwrap_or(R::sized(video.0, video.1));
-        if g.evr != 0 {
-            if let Some(e) = evr_with(g.evr, |e| *e).filter(|e| e.windowless) {
-                return (place_of(&e, video, g.state != State::Stopped || g.visible), g.volume);
-            }
+        if g.evr != 0 && let Some(e) = evr_with(g.evr, |e| *e).filter(|e| e.windowless) {
+            return (place_of(&e, video, g.state != State::Stopped || g.visible), g.volume);
         }
         // the window's place (in its owner's client area, or on the screen), the picture in it
         let win = g.window;

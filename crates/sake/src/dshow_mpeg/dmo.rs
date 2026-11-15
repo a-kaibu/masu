@@ -132,10 +132,8 @@ pub(super) fn downstream(c: &mut Ctx, b: u32, slot: u32) -> u32 {
             let frames = codec.as_mut().map(|x| x.drain()).unwrap_or_default();
             dwith(b, |d| d.codec = codec);
             for f in frames {
-                if let Frame::Picture { time, w, h, bgra } = f {
-                    if !show(c, b, generation, time, w, h, &bgra) {
-                        break;
-                    }
+                if let Frame::Picture { time, w, h, bgra } = f && !show(c, b, generation, time, w, h, &bgra) {
+                    break;
                 }
             }
         }
@@ -245,10 +243,8 @@ fn receive(c: &mut Ctx, b: u32, sample: u32) -> u32 {
     stats(Stat::Decoded(t0.elapsed()));
     dwith(b, |d| d.codec = codec);
     for f in frames {
-        if let Frame::Picture { time, w, h, bgra } = f {
-            if !show(c, b, generation, time, w, h, &bgra) {
-                break;
-            }
+        if let Frame::Picture { time, w, h, bgra } = f && !show(c, b, generation, time, w, h, &bgra) {
+            break;
         }
     }
     0

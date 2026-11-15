@@ -455,10 +455,8 @@ pub unsafe extern "C" fn vnhost_d3d9_call(id: u32, args: *const u32, calls: *con
                     // made the next draw prepare from scratch)
                     let before = d.objs.len();
                     let r = d.release(this);
-                    if d.objs.len() != before {
-                        if let Some(dev) = d.dev.as_mut() {
-                            dev.stale_all();
-                        }
+                    if d.objs.len() != before && let Some(dev) = d.dev.as_mut() {
+                        dev.stale_all();
                     }
                     r
                 }

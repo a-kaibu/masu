@@ -115,10 +115,8 @@ pub fn pick(bases: &[Base], attrs: u32, same: &dyn Fn(&Base) -> bool, is_src: &d
     // visible, unambiguous target in the complete object; else an upcast within the source
     // subobject's own bases
     let src = bases.iter().position(is_src);
-    if src.is_none_or(|s| bases[s].attrs & (1 | 4) == 0) {
-        if let Some(i) = bases.iter().position(|b| same(b) && b.attrs & BCD_HIDDEN == 0) {
-            return Some(i);
-        }
+    if src.is_none_or(|s| bases[s].attrs & (1 | 4) == 0) && let Some(i) = bases.iter().position(|b| same(b) && b.attrs & BCD_HIDDEN == 0) {
+        return Some(i);
     }
     let src = src?;
     let end = (src + bases[src].contained as usize).min(bases.len());

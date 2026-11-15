@@ -466,10 +466,8 @@ pub fn fuzz(data: &[u8]) {
     let info = if sel & 0x80 == 0 { Info::from_bih(head) } else { Info::from_wave(head) };
     let Some(info) = info else { return };
     // (decoders of real sizes only: a fuzzed 65536 x 65536 is refused by the codecs' own checks)
-    if let Info::Video { width, height, .. } = info {
-        if width as usize > 512 || height as usize > 512 {
-            return;
-        }
+    if let Info::Video { width, height, .. } = info && (width as usize > 512 || height as usize > 512) {
+        return;
     }
     let Some(codec) = codec(&info) else { return };
     let (ow, oh) = (u32::from(body.first().copied().unwrap_or(0) % 64), u32::from(body.get(1).copied().unwrap_or(0) % 64));
@@ -667,10 +665,8 @@ mod tests {
                 prop_assert!(extra.len() <= b.len() - 40);
             }
             let _ = Info::from_wave(&b);
-            if let Some(i) = i {
-                if let Some(mut c) = codec_for(&i) {
-                    let _ = c.decode(&b, 0, true);
-                }
+            if let Some(i) = i && let Some(mut c) = codec_for(&i) {
+                let _ = c.decode(&b, 0, true);
             }
         }
 

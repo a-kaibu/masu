@@ -795,15 +795,11 @@ struct Addr {
 fn addrs(family: u32) -> Vec<Addr> {
     let mut v = Vec::new();
     for f in sorted() {
-        if family != AF_INET6 {
-            if let Some((a, l)) = f.v4 {
-                v.push(Addr { iface: f, a: a.to_vec(), len: l });
-            }
+        if family != AF_INET6 && let Some((a, l)) = f.v4 {
+            v.push(Addr { iface: f, a: a.to_vec(), len: l });
         }
-        if family != AF_INET {
-            if let Some((a, l)) = f.v6 {
-                v.push(Addr { iface: f, a: a.to_vec(), len: l });
-            }
+        if family != AF_INET && let Some((a, l)) = f.v6 {
+            v.push(Addr { iface: f, a: a.to_vec(), len: l });
         }
     }
     v
@@ -1822,24 +1818,14 @@ fn v4(s: &str) -> Option<[u8; 4]> {
 
 /// ParseNetworkString's rules for the IP forms (no names): which `types` accept `s`
 pub fn parse_net(s: &str, types: u32) -> Option<Net> {
-    if let Some(a) = v4(s) {
-        if types & NS_IPV4_ADDRESS != 0 {
-            return Some(Net::V4(a, None, None));
-        }
+    if let Some(a) = v4(s) && types & NS_IPV4_ADDRESS != 0 {
+        return Some(Net::V4(a, None, None));
     }
-    if let Some((h, p)) = s.rsplit_once(':') {
-        if let (Some(a), Ok(port)) = (v4(h), p.parse::<u16>()) {
-            if types & NS_IPV4_SERVICE != 0 && port != 0 && p.bytes().all(|b| b.is_ascii_digit()) {
-                return Some(Net::V4(a, Some(port), None));
-            }
-        }
+    if let Some((h, p)) = s.rsplit_once(':') && let (Some(a), Ok(port)) = (v4(h), p.parse::<u16>()) && types & NS_IPV4_SERVICE != 0 && port != 0 && p.bytes().all(|b| b.is_ascii_digit()) {
+        return Some(Net::V4(a, Some(port), None));
     }
-    if let Some((h, l)) = s.split_once('/') {
-        if let (Some(a), Ok(len)) = (v4(h), l.parse::<u8>()) {
-            if types & NS_IPV4_NETWORK != 0 && len <= 32 {
-                return Some(Net::V4(a, None, Some(len)));
-            }
-        }
+    if let Some((h, l)) = s.split_once('/') && let (Some(a), Ok(len)) = (v4(h), l.parse::<u8>()) && types & NS_IPV4_NETWORK != 0 && len <= 32 {
+        return Some(Net::V4(a, None, Some(len)));
     }
     // IPv6: addr, addr%scope, [addr]:port, [addr%scope]:port, addr/len
     let v6 = |t: &str| -> Option<([u8; 16], u32, bool)> {
@@ -1849,26 +1835,14 @@ pub fn parse_net(s: &str, types: u32) -> Option<Net> {
         };
         Some((a.parse::<std::net::Ipv6Addr>().ok()?.octets(), scope, has))
     };
-    if let Some((a, sc, has)) = v6(s) {
-        if types & NS_IPV6_ADDRESS != 0 || (types & NS_IPV6_ADDRESS_NO_SCOPE != 0 && !has) {
-            return Some(Net::V6(a, None, None, sc));
-        }
+    if let Some((a, sc, has)) = v6(s) && (types & NS_IPV6_ADDRESS != 0 || (types & NS_IPV6_ADDRESS_NO_SCOPE != 0 && !has)) {
+        return Some(Net::V6(a, None, None, sc));
     }
-    if let Some(rest) = s.strip_prefix('[') {
-        if let Some((inner, port)) = rest.split_once("]:") {
-            if let (Some((a, sc, has)), Ok(p)) = (v6(inner), port.parse::<u16>()) {
-                if types & NS_IPV6_SERVICE != 0 || (types & NS_IPV6_SERVICE_NO_SCOPE != 0 && !has) {
-                    return Some(Net::V6(a, Some(p), None, sc));
-                }
-            }
-        }
+    if let Some(rest) = s.strip_prefix('[') && let Some((inner, port)) = rest.split_once("]:") && let (Some((a, sc, has)), Ok(p)) = (v6(inner), port.parse::<u16>()) && (types & NS_IPV6_SERVICE != 0 || (types & NS_IPV6_SERVICE_NO_SCOPE != 0 && !has)) {
+        return Some(Net::V6(a, Some(p), None, sc));
     }
-    if let Some((h, l)) = s.split_once('/') {
-        if let (Ok(a), Ok(len)) = (h.parse::<std::net::Ipv6Addr>(), l.parse::<u8>()) {
-            if types & NS_IPV6_NETWORK != 0 && len <= 128 {
-                return Some(Net::V6(a.octets(), None, Some(len), 0));
-            }
-        }
+    if let Some((h, l)) = s.split_once('/') && let (Ok(a), Ok(len)) = (h.parse::<std::net::Ipv6Addr>(), l.parse::<u8>()) && types & NS_IPV6_NETWORK != 0 && len <= 128 {
+        return Some(Net::V6(a.octets(), None, Some(len), 0));
     }
     None
 }

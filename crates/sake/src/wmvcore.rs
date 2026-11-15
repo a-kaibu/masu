@@ -858,11 +858,9 @@ pub fn next_sample(r: &mut Reader, want: u8) -> Option<(usize, u64, u64, Vec<u8>
         let ready = r.outputs.iter().enumerate().filter(|(_, o)| o.selected && !o.compressed && (want == 0 || o.stream.get() == want)).filter_map(|(k, o)| o.ready.front().map(|s| (k, s.0))).min_by_key(|x| x.1);
         // a sample from the file, of this output, before any later one
         let at = r.pending.iter().position(|s| want == 0 || s.stream.get() == want);
-        if let Some((k, t)) = ready {
-            if at.is_none_or(|i| r.pending[i].time >= t) {
-                let (time, dur, data, key) = r.outputs[k].ready.pop_front().unwrap();
-                return Some((k, time, dur, data, key));
-            }
+        if let Some((k, t)) = ready && at.is_none_or(|i| r.pending[i].time >= t) {
+            let (time, dur, data, key) = r.outputs[k].ready.pop_front().unwrap();
+            return Some((k, time, dur, data, key));
         }
         if let Some(i) = at {
             let s = r.pending.remove(i).unwrap();

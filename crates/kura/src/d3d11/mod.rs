@@ -2720,10 +2720,8 @@ fn nv12_push(d: &mut D11, id: u32) {
             unsafe { upload_texture(x, l, now.as_ptr().expose_provenance() + us(l) * chroma, pitch, 0, None) };
         }
     }
-    if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
-        if let Some(n) = t.nv12.as_mut() {
-            n.last = now;
-        }
+    if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) && let Some(n) = t.nv12.as_mut() {
+        n.last = now;
     }
 }
 
@@ -2781,10 +2779,8 @@ fn nv12_target(d: &mut D11, view: u32) {
         return;
     }
     nv12_push(d, id);
-    if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
-        if let Some(n) = t.nv12.as_mut() {
-            n.drawn = true;
-        }
+    if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) && let Some(n) = t.nv12.as_mut() {
+        n.drawn = true;
     }
 }
 
@@ -2844,10 +2840,8 @@ fn buffer_view_sync(d: &mut D11, view: u32) {
     if let Some(Data::Texture(t)) = d.objs.get_mut(&res).map(|o| &mut o.data) {
         unsafe { upload_texture(t, 0, now.as_ptr().expose_provenance(), bytes, 0, None) };
     }
-    if let Some(Data::View(v)) = d.objs.get_mut(&view).map(|o| &mut o.data) {
-        if let Some(b) = v.buf.as_mut() {
-            b.last = now;
-        }
+    if let Some(Data::View(v)) = d.objs.get_mut(&view).map(|o| &mut o.data) && let Some(b) = v.buf.as_mut() {
+        b.last = now;
     }
 }
 
@@ -3131,10 +3125,8 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 }
                 hazards::after_outputs(d, st);
                 // the viewport follows the first target when the game never set one
-                if st.viewport[0][2] == 0.0 {
-                    if let Some((w, h)) = view_size(d, st.rtvs[0]).or_else(|| view_size(d, st.dsv)) {
-                        st.viewport[0] = [0.0, 0.0, w as f32, h as f32, 0.0, 1.0];
-                    }
+                if st.viewport[0][2] == 0.0 && let Some((w, h)) = view_size(d, st.rtvs[0]).or_else(|| view_size(d, st.dsv)) {
+                    st.viewport[0] = [0.0, 0.0, w as f32, h as f32, 0.0, 1.0];
                 }
             }
         }
@@ -3210,11 +3202,9 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         }
         54 => {
             let v = d.id_of(a(1));
-            if let Some(Data::View(v)) = d.objs.get(&v).map(|o| &o.data) {
-                if let Some(Data::Texture(t)) = d.objs.get(&v.res).map(|o| &o.data) {
-                    let g = t.gpu;
-                    gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, g]));
-                }
+            if let Some(Data::View(v)) = d.objs.get(&v).map(|o| &o.data) && let Some(Data::Texture(t)) = d.objs.get(&v.res).map(|o| &o.data) {
+                let g = t.gpu;
+                gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, g]));
             }
         }
         30 => {
@@ -3250,12 +3240,10 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         41 => dispatch(d, st, a(1), a(2), a(3)),
         42 => {
             // DispatchIndirect(args, offset): the group counts from the buffer
-            if let Some(Data::Buffer(b)) = d.objs.get(&d.id_of(a(1))).map(|o| &o.data) {
-                if u64::from(a(2)) + 12 <= u64::from(b.size) {
-                    let p = b.mem + a(2);
-                    let (x, y, z) = (rd(p, 0), rd(p, 1), rd(p, 2));
-                    dispatch(d, st, x, y, z);
-                }
+            if let Some(Data::Buffer(b)) = d.objs.get(&d.id_of(a(1))).map(|o| &o.data) && u64::from(a(2)) + 12 <= u64::from(b.size) {
+                let p = b.mem + a(2);
+                let (x, y, z) = (rd(p, 0), rd(p, 1), rd(p, 2));
+                dispatch(d, st, x, y, z);
             }
         }
         38..=40 => {}
@@ -3541,26 +3529,20 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
 
 unsafe fn unmap(d: &mut D11, res: u32, sub: u32) {
     let id = d.id_of(res);
-    if d.trace {
-        if let Some(Data::Buffer(b)) = d.objs.get(&id).map(|o| &o.data) {
-            if b.size <= 256 {
-                let f: Vec<f32> = (0..b.size / 4).map(|i| *(gc::<f32>(b.mem + 4 * i))).collect();
-                eprintln!("d3d11: buffer {id} = {f:?}");
-            }
-        }
+    if d.trace && let Some(Data::Buffer(b)) = d.objs.get(&id).map(|o| &o.data) && b.size <= 256 {
+        let f: Vec<f32> = (0..b.size / 4).map(|i| *(gc::<f32>(b.mem + 4 * i))).collect();
+        eprintln!("d3d11: buffer {id} = {f:?}");
     }
-    if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
-        if let Some(&(_, mem, pitch, write)) = t.maps.iter().find(|m| m.0 == sub) {
-            if write {
-                let (_, _, lw, lh, _) = sub_size(t, sub);
-                let rows = format::pitch_rows(t.fmt, lw, lh).1;
-                upload_texture(t, sub, us(mem), pitch, pitch * rows, None);
-            }
-            // (the memory holds what the texture has now: read back or kept at the Map, or sent
-            // up here)
-            if t.usage == 3 && (holds_bits(t) || keeps_bits(t)) && !t.clean.contains(&sub) {
-                t.clean.push(sub);
-            }
+    if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) && let Some(&(_, mem, pitch, write)) = t.maps.iter().find(|m| m.0 == sub) {
+        if write {
+            let (_, _, lw, lh, _) = sub_size(t, sub);
+            let rows = format::pitch_rows(t.fmt, lw, lh).1;
+            upload_texture(t, sub, us(mem), pitch, pitch * rows, None);
+        }
+        // (the memory holds what the texture has now: read back or kept at the Map, or sent
+        // up here)
+        if t.usage == 3 && (holds_bits(t) || keeps_bits(t)) && !t.clean.contains(&sub) {
+            t.clean.push(sub);
         }
     }
 }
@@ -3747,10 +3729,8 @@ unsafe fn copy_sub(d: &mut D11, di: u32, dsub: u32, at: [u32; 3], si: u32, ssub:
     // a depth-stencil or multisampled texture is copied whole subresources only (Windows: winref
     // d3d11copy's box of R32_UINT into D32_FLOAT leaves it as it was)
     let whole = at == [0, 0, 0] && [x0, y0, z0, x1, y1, z1] == [0, 0, 0, sw, sh, sd] && (sw, sh, sd) == (dw, dh, dd);
-    if (a.bind | b.bind) & 0x40 != 0 || a.samples.0 > 1 || b.samples.0 > 1 {
-        if !whole {
-            return;
-        }
+    if ((a.bind | b.bind) & 0x40 != 0 || a.samples.0 > 1 || b.samples.0 > 1) && !whole {
+        return;
     }
     // NV12 (to NV12: copy_compatible): a box on even luma texels; the luma plane on the page,
     // both in the bytes (the chroma texture follows them)

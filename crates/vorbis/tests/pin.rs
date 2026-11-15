@@ -159,10 +159,8 @@ fn audio(h: &mut H, ident: &[u8], setup: &[u8], pkts: &[Vec<u8>]) {
         d.packet(q, &mut out);
         h.usize(out.len());
         out.iter().for_each(|v| h.bytes(&v.to_bits().to_le_bytes()));
-        if i % 11 == 9 {
-            if let Some(c) = &saved {
-                d.resume(c);
-            }
+        if i % 11 == 9 && let Some(c) = &saved {
+            d.resume(c);
         }
     }
 }

@@ -1747,10 +1747,8 @@ impl<'a> Gen<'a> {
             self.c.get(L_CPU).load32(Off::sbase(sreg_index(ins.memory_segment()))).add().set(t);
             return self.addr_check(t, size);
         }
-        if !prot {
-            if let Some(t) = self.addr_pair(t, size) {
-                return t;
-            }
+        if !prot && let Some(t) = self.addr_pair(t, size) {
+            return t;
         }
         self.c.u32c(ins.memory_displacement32());
         if ins.memory_base() != Register::None {
@@ -1779,13 +1777,11 @@ impl<'a> Gen<'a> {
         let base = ins.memory_base();
         let seg = ins.memory_segment();
         // [table + r * scale] with r known small: in the guest range whatever r is
-        if !prot && base == Register::None && ins.memory_index().is_gpr32() && seg != Register::FS && seg != Register::GS {
-            if let Some(m) = self.small[ins.memory_index().number()] {
-                let lo = u64::from(ins.memory_displacement32());
-                let hi = lo + u64::from(m) * u64::from(ins.memory_index_scale()) + u64::from(size);
-                if lo >= u64::from(GUEST_LO) && hi <= u64::from(GUEST_HI) {
-                    return t;
-                }
+        if !prot && base == Register::None && ins.memory_index().is_gpr32() && seg != Register::FS && seg != Register::GS && let Some(m) = self.small[ins.memory_index().number()] {
+            let lo = u64::from(ins.memory_displacement32());
+            let hi = lo + u64::from(m) * u64::from(ins.memory_index_scale()) + u64::from(size);
+            if lo >= u64::from(GUEST_LO) && hi <= u64::from(GUEST_HI) {
+                return t;
             }
         }
         if base.is_gpr32() && ins.memory_index() == Register::None && seg != Register::FS && seg != Register::GS {
@@ -2087,10 +2083,8 @@ impl<'a> Gen<'a> {
     /// The checked address of the instruction's memory operand, if it has one.
     /// The checked address of the memory operand, if any, for an access of `size` bytes.
     fn mem_addr_sized(&mut self, size: u32) -> Option<u32> {
-        if let Some((s, t)) = self.mx_addr {
-            if s >= size {
-                return Some(t);
-            }
+        if let Some((s, t)) = self.mx_addr && s >= size {
+            return Some(t);
         }
         let ins = self.ins;
         (0..ins.op_count()).any(|i| ins.op_kind(i) == OpKind::Memory).then(|| self.addr(size))
@@ -4729,11 +4723,9 @@ fn callee(blocks: &[(u32, Vec<Instruction>)], targets: &BTreeMap<u32, u32>, f: u
         }
         let last = list.last().unwrap();
         ret |= last.mnemonic() == Mnemonic::Ret;
-        if last.mnemonic() == Mnemonic::Jmp && last.op0_kind() != OpKind::NearBranch32 && tail.is_none() {
-            if let Some(h) = hint.filter(|&h| h != f && targets.contains_key(&h)) {
-                tail = Some(us(k));
-                queue.insert(0, h); // (last: after the wrapper's own blocks)
-            }
+        if last.mnemonic() == Mnemonic::Jmp && last.op0_kind() != OpKind::NearBranch32 && tail.is_none() && let Some(h) = hint.filter(|&h| h != f && targets.contains_key(&h)) {
+            tail = Some(us(k));
+            queue.insert(0, h); // (last: after the wrapper's own blocks)
         }
         for s in successors(last) {
             if !(last.flow_control() == FlowControl::Call && s == last.near_branch32()) {
@@ -5601,10 +5593,8 @@ fn safe_in(g: &Gen, blocks: &[(u32, Vec<Instruction>)], l: &structure::Layout) -
                 // (out of an inlined callee: maybe by call_rest, which loads them again)
                 let mut o = if (call && inl != Some(w)) || (v < n && w < n && g.ctxs[v] != 0 && g.ctxs[w] == 0) { 0 } else { out };
                 // (into a loop: through its hoisted checks)
-                if let Some((m, body)) = hoist.get(&w) {
-                    if !body[v] {
-                        o |= m;
-                    }
+                if let Some((m, body)) = hoist.get(&w) && !body[v] {
+                    o |= m;
                 }
                 if sin[w] & o != sin[w] {
                     sin[w] &= o;
@@ -5772,12 +5762,10 @@ fn translate_seen<M: Memory>(
             }
             // a small callee comes along to be inlined (see `inline` below)
             let f = if last.op0_kind() == OpKind::NearBranch32 { Some(last.near_branch32()) } else { hints(last.ip32()) };
-            if let (Some(trap), Some(f)) = (fn_trap, f) {
-                if let Some(b) = small_callee(mem, f, trap, hints).or_else(|| hot_callee(mem, f, trap, ran)) {
-                    // (all of them: a wrapper's tail jump has no static successor)
-                    queue.extend(b.iter().copied());
-                    forced.extend(b);
-                }
+            if let (Some(trap), Some(f)) = (fn_trap, f) && let Some(b) = small_callee(mem, f, trap, hints).or_else(|| hot_callee(mem, f, trap, ran)) {
+                // (all of them: a wrapper's tail jump has no static successor)
+                queue.extend(b.iter().copied());
+                forced.extend(b);
             }
         } else {
             queue.extend(successors(last));
@@ -6154,29 +6142,27 @@ fn translate_seen<M: Memory>(
             // a root that is a loop's head keeps the cache around the loop too (it went through
             // the Cpu at every iteration: a function made from a loop's head is one): the way
             // in from the caller loads it as a jump from outside would
-            if extra.is_empty() {
-                if let Some(&to) = g.fc_in.get(&entry).filter(|f| f.on) {
-                    // (nothing cached yet: the emitting above left its last block's caches)
-                    (g.fc, g.mmx, g.xmm) = (FCache::default(), (0, 0), (0, 0));
-                    g.c.get(L_CPU).load32(Off::ftop()).set(L_FTOP);
-                    // (the cache's pending tags must be what the Cpu has: its written registers
-                    // full and not exact, its popped ones empty; else the interpreter starts)
-                    if to.valid | to.empty != 0 {
-                        g.c.get(L_CPU).load8u(Off::fempty());
-                        g.c.get(L_CPU).load8u(Off::fexact()).or();
-                        g.fc_rot(to.valid);
-                        g.c.and();
-                        g.c.get(L_CPU).load8u(Off::fempty()).i32c(-1).xor();
-                        g.fc_rot(to.empty);
-                        g.c.and().or().i32c(0xff).and().if_();
-                        g.depth += 1;
-                        g.c.u32c(blocks[entry].0);
-                        g.exit_with(RET_INTERP);
-                        g.depth -= 1;
-                        g.c.end();
-                    }
-                    g.fc_load(to.have);
+            if extra.is_empty() && let Some(&to) = g.fc_in.get(&entry).filter(|f| f.on) {
+                // (nothing cached yet: the emitting above left its last block's caches)
+                (g.fc, g.mmx, g.xmm) = (FCache::default(), (0, 0), (0, 0));
+                g.c.get(L_CPU).load32(Off::ftop()).set(L_FTOP);
+                // (the cache's pending tags must be what the Cpu has: its written registers
+                // full and not exact, its popped ones empty; else the interpreter starts)
+                if to.valid | to.empty != 0 {
+                    g.c.get(L_CPU).load8u(Off::fempty());
+                    g.c.get(L_CPU).load8u(Off::fexact()).or();
+                    g.fc_rot(to.valid);
+                    g.c.and();
+                    g.c.get(L_CPU).load8u(Off::fempty()).i32c(-1).xor();
+                    g.fc_rot(to.empty);
+                    g.c.and().or().i32c(0xff).and().if_();
+                    g.depth += 1;
+                    g.c.u32c(blocks[entry].0);
+                    g.exit_with(RET_INTERP);
+                    g.depth -= 1;
+                    g.c.end();
                 }
+                g.fc_load(to.have);
             }
         }
         body(&mut g, &l, &blocks, &tables, &entries, &mut count);

@@ -24,10 +24,8 @@ fn interpreters_give_what_the_cases_expect() {
             };
             ran += 1;
             for k in 0..4 {
-                if let Some(w) = &want[k] {
-                    if !w.iter().any(|&w| close(got[k], w, c.tol)) {
-                        bad.push(format!("{} pixel {n} channel {k}: got {} want {:?}", c.name, got[k], w));
-                    }
+                if let Some(w) = &want[k] && !w.iter().any(|&w| close(got[k], w, c.tol)) {
+                    bad.push(format!("{} pixel {n} channel {k}: got {} want {:?}", c.name, got[k], w));
                 }
             }
         }

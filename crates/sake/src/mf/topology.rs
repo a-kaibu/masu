@@ -181,10 +181,8 @@ fn tn_connect(c: &mut Ctx) -> u32 {
         release(c, old);
     }
     // (what was connected to that input of `d` before is let go)
-    if let Some((u, ui)) = node(d, |n| n.inputs.get(di).copied().flatten()).flatten() {
-        if let Some(old) = unlink(u, ui as usize) {
-            release(c, old);
-        }
+    if let Some((u, ui)) = node(d, |n| n.inputs.get(di).copied().flatten()).flatten() && let Some(old) = unlink(u, ui as usize) {
+        release(c, old);
     }
     add_ref(c, d);
     node(b, |n| {
@@ -616,13 +614,11 @@ fn co_release(c: &mut Ctx) -> u32 {
         s.0
     })
     .unwrap_or(0);
-    if n == 0 {
-        if let Some((_, v)) = COLLS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&b) {
-            for u in v {
-                release(c, u);
-            }
-            mem::heap_free(b);
+    if n == 0 && let Some((_, v)) = COLLS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&b) {
+        for u in v {
+            release(c, u);
         }
+        mem::heap_free(b);
     }
     n
 }

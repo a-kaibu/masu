@@ -98,10 +98,8 @@ fn with_scratch<R>(n: u32, f: impl FnOnce(u32) -> R) -> R {
 
 /// A thread's exit: a context set for it that it never took goes
 pub fn thread_gone(tid: u32) {
-    if ANY.load(Ordering::Acquire) {
-        if let Some(m) = PENDING.lock().unwrap().as_mut() {
-            m.remove(&tid);
-        }
+    if ANY.load(Ordering::Acquire) && let Some(m) = PENDING.lock().unwrap().as_mut() {
+        m.remove(&tid);
     }
 }
 

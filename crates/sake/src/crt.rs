@@ -2154,10 +2154,8 @@ impl Stream {
     /// Gives back getc's read-ahead: the file is at the stream's position again
     fn sync(&mut self) {
         let left = self.rbuf.len() - self.rpos;
-        if left > 0 {
-            if let Some(f) = &self.f {
-                f.seek(SeekFrom::Current(-(left as i64)));
-            }
+        if left > 0 && let Some(f) = &self.f {
+            f.seek(SeekFrom::Current(-(left as i64)));
         }
         self.rbuf.clear();
         self.rpos = 0;

@@ -104,10 +104,8 @@ impl Gen<'_> {
         if !supported(&ins) {
             return false;
         }
-        if (0..ins.op_count()).any(|i| mem(&ins, i)) {
-            if !self.addr(lo32(ins.memory_size().size().max(1))) {
-                return false;
-            }
+        if (0..ins.op_count()).any(|i| mem(&ins, i)) && !self.addr(lo32(ins.memory_size().size().max(1))) {
+            return false;
         }
         let m = ins.mnemonic();
         let wide = ymm(&ins, 0);

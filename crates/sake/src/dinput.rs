@@ -463,12 +463,8 @@ fn GetDeviceState(c: &mut Ctx) -> u32 {
     match kind_of(o) {
         KEYBOARD => {
             for vk in 1..256 {
-                if keys[vk] & 0x80 != 0 {
-                    if let Some(d) = dik_of(vk) {
-                        if (d as u32) < n {
-                            mem::w8(p + d as u32, 0x80);
-                        }
-                    }
+                if keys[vk] & 0x80 != 0 && let Some(d) = dik_of(vk) && (d as u32) < n {
+                    mem::w8(p + d as u32, 0x80);
                 }
             }
             0

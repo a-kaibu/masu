@@ -543,10 +543,8 @@ fn find_catch3(c: &mut Ctx, rec: u32, ctx: u32, frame: u64, d: &Disp, f: &Fh3, d
         if level < start || level > end {
             continue;
         }
-        if let Some(ic) = in_catch {
-            if start <= ic.1 || end > ic.2 {
-                continue;
-            }
+        if let Some(ic) = in_catch && (start <= ic.1 || end > ic.2) {
+            continue;
         }
         for j in 0..count.min(MAX_ENTRIES) {
             let cb = blocks.wrapping_add(20 * j);

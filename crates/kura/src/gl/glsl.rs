@@ -396,10 +396,8 @@ unsafe extern "C" fn glGetInfoLog(obj: u32, max: i32, len: *mut i32, out: *mut c
 /// flagged for deletion deletes it)
 extern "C" fn glUseProgram(p: u32) {
     with(|g, c| {
-        if p != 0 {
-            if let Some(e) = kind_err(g, p, false).or_else(|| g.programs[&p].linked.is_none().then_some(GL_INVALID_OPERATION)) {
-                return c.err(e);
-            }
+        if p != 0 && let Some(e) = kind_err(g, p, false).or_else(|| g.programs[&p].linked.is_none().then_some(GL_INVALID_OPERATION)) {
+            return c.err(e);
         }
         c.program = p;
         g.ctxs_program_hint = Some(p);

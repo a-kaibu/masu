@@ -697,10 +697,8 @@ fn typelib(e: &xml::Elem) -> Result<Typelib, ()> {
 impl Reader {
     fn file(&mut self, e: &xml::Elem) -> Result<FileEnt, ()> {
         let mut f = FileEnt { name: e.attr("name").filter(|n| !n.is_empty()).ok_or(())?.to_string(), ..Default::default() };
-        if let Some(h) = e.attr("hash") {
-            if h.len() != 40 || !h.chars().all(|c| c.is_ascii_hexdigit()) {
-                return bad();
-            }
+        if let Some(h) = e.attr("hash") && (h.len() != 40 || !h.chars().all(|c| c.is_ascii_hexdigit())) {
+            return bad();
         }
         for ch in &e.children {
             if ch.ns == WINRT_V1 && ch.name == "activatableClass" {

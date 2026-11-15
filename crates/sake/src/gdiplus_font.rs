@@ -102,10 +102,8 @@ fn installed_family(name: &str) -> Option<u32> {
 fn installed_list() -> Vec<u32> {
     let mut v: Vec<u32> = (0..crate::gdi::face_count()).map(|i| with(|s| face_family(s, i))).collect();
     for (n, _) in ALWAYS {
-        if let Some(h) = installed_family(n) {
-            if !v.contains(&h) {
-                v.push(h);
-            }
+        if let Some(h) = installed_family(n) && !v.contains(&h) {
+            v.push(h);
         }
     }
     v

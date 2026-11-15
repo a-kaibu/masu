@@ -379,10 +379,8 @@ fn release_obj(o: u32) -> u32 {
                 let (seg, states) = with(|w| {
                     let states: Vec<u32> = w.states.iter().filter(|s| s.1 .1.segment == o).map(|s| *s.0).collect();
                     for s in &states {
-                        if let Some((perf, _)) = w.states.remove(s) {
-                            if let Some(p) = w.perfs.get_mut(&perf) {
-                                p.plays.stop(*s);
-                            }
+                        if let Some((perf, _)) = w.states.remove(s) && let Some(p) = w.perfs.get_mut(&perf) {
+                            p.plays.stop(*s);
                         }
                     }
                     (w.segments.remove(&o), states)

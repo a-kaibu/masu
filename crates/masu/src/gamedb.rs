@@ -122,10 +122,8 @@ WHERE pt.game >= {from} AND pt.game < {} AND pt.count >= 2 AND p.system_group IN
 WHERE b.game >= {from} AND b.game < {} ORDER BY b.game, g.id",
             from + 5000
         ))? {
-            if let Some(&i) = col(&r, "game").parse::<u32>().ok().and_then(|id| at.get(&id)) {
-                if !games[i].2.iter().any(|m| col(m, "src") == "series") {
-                    games[i].2.push(r.into_iter().filter(|(k, _)| k != "game").collect());
-                }
+            if let Some(&i) = col(&r, "game").parse::<u32>().ok().and_then(|id| at.get(&id)) && !games[i].2.iter().any(|m| col(m, "src") == "series") {
+                games[i].2.push(r.into_iter().filter(|(k, _)| k != "game").collect());
             }
         }
         from += 5000;

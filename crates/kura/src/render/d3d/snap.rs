@@ -283,14 +283,12 @@ impl D3d {
         for (id, samples) in &s.ms {
             self.samples_in(*id, samples);
         }
-        if let Some((id, rect, flip, hwnd, src)) = s.overlay {
-            if self.textures.contains_key(&id) {
-                // (a multisampled one shows its resolve: of zeros, until the game presents again)
-                let view = self.present_view(id);
-                self.overlay = Some(Overlay { view, rect, flip, hwnd, src });
-                self.overlay_tex = id;
-                self.tex_gen += 1;
-            }
+        if let Some((id, rect, flip, hwnd, src)) = s.overlay && self.textures.contains_key(&id) {
+            // (a multisampled one shows its resolve: of zeros, until the game presents again)
+            let view = self.present_view(id);
+            self.overlay = Some(Overlay { view, rect, flip, hwnd, src });
+            self.overlay_tex = id;
+            self.tex_gen += 1;
         }
     }
 }

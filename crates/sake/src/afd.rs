@@ -153,10 +153,8 @@ fn finish(p: &Poll, status: u32, got: &[(u32, u32)]) {
     if p.event != 0 {
         crate::k32::set_event(p.event);
     }
-    if let Some((port, key)) = crate::iocp::association(p.afd) {
-        if p.ctx != 0 {
-            crate::iocp::post(port, info, key, p.ctx, status);
-        }
+    if let Some((port, key)) = crate::iocp::association(p.afd) && p.ctx != 0 {
+        crate::iocp::post(port, info, key, p.ctx, status);
     }
 }
 

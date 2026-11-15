@@ -387,10 +387,8 @@ fn v4_s2a(c: &mut Ctx, w: bool, ex: bool) -> u32 {
     let s = if w { wide(p) } else { narrow(p) };
     let r = v4_parse(&s, strict, !ex, ex);
     let (term, out, portp) = if ex { (0, c.a(2), c.a(3)) } else { (c.a(2), c.a(3), 0) };
-    if let Some(a) = r.addr {
-        if out != 0 {
-            mem::write(out, &a);
-        }
+    if let Some(a) = r.addr && out != 0 {
+        mem::write(out, &a);
     }
     if term != 0 {
         mem::wp(term, p + r.end as u32 * if w { 2 } else { 1 });

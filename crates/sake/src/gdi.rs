@@ -835,10 +835,8 @@ pub fn end_paint(dc: u32) {
 pub fn window_resized(h: u32) {
     with(|t| {
         for g in t.m.values_mut() {
-            if let G::Dc(d) = g {
-                if d.kind == Kind::Window(h) && d.dce != Dce::None {
-                    d.paint = None;
-                }
+            if let G::Dc(d) = g && d.kind == Kind::Window(h) && d.dce != Dce::None {
+                d.paint = None;
             }
         }
     })
@@ -848,10 +846,8 @@ pub fn window_resized(h: u32) {
 /// on no window (it keeps its state; ReleaseDC fails)
 pub fn window_destroyed(h: u32) {
     with(|t| {
-        if let Some(d) = t.dce.own.remove(&h) {
-            if let Some(G::Dc(x)) = t.m.remove(&d) {
-                drop_region(t, x.rgn);
-            }
+        if let Some(d) = t.dce.own.remove(&h) && let Some(G::Dc(x)) = t.m.remove(&d) {
+            drop_region(t, x.rgn);
         }
         let dcs: Vec<u32> = t.m.iter().filter(|(_, g)| matches!(g, G::Dc(d) if d.kind == Kind::Window(h) && d.dce != Dce::None)).map(|(&k, _)| k).collect();
         for dc in dcs {
@@ -933,10 +929,8 @@ fn target_of(t: &Objs, d: &Dc) -> Tgt {
                 if let Some(p) = d.paint {
                     clip = clip.and(&p.off(tg.x, tg.y));
                 }
-                if let Some(v) = d.vis {
-                    if let Some(cs) = user::client_rect_screen(h) {
-                        clip = clip.and(&v.off(tg.x - cs.l, tg.y - cs.t));
-                    }
+                if let Some(v) = d.vis && let Some(cs) = user::client_rect_screen(h) {
+                    clip = clip.and(&v.off(tg.x - cs.l, tg.y - cs.t));
                 }
                 Tgt::Win { surf: tg.surface, top: tg.top, x: tg.x, y: tg.y, clip }
             }
@@ -1679,12 +1673,8 @@ fn font_names(data: &[u8]) -> Vec<String> {
     let mut names: Vec<String> = Vec::new();
     if let Ok(face) = ttf_parser::Face::parse(data, 0) {
         for n in face.names() {
-            if matches!(n.name_id, 1 | 4 | 16) {
-                if let Some(s) = n.to_string() {
-                    if !s.is_empty() && !names.contains(&s) {
-                        names.push(s);
-                    }
-                }
+            if matches!(n.name_id, 1 | 4 | 16) && let Some(s) = n.to_string() && !s.is_empty() && !names.contains(&s) {
+                names.push(s);
             }
         }
     }
@@ -3826,17 +3816,15 @@ pub(crate) fn GetPixel(c: &mut Ctx) -> u32 {
     with(|t| {
         // (a window DC: its one pixel read under the surface's lock; source() copied the whole
         // top-level surface per GetPixel, a guest loop over a region O(pixels * surface))
-        if let Some(G::Dc(d)) = t.m.get(&dc) {
-            if let Tgt::Win { surf, x: wx, y: wy, .. } = target_of(t, d) {
-                let (ox, oy) = (d.s.vp.0 - d.s.win.0 + wx, d.s.vp.1 - d.s.win.1 + wy);
-                let g = surf.lock().unwrap_or_else(PoisonError::into_inner);
-                let (x, y) = (x + ox, y + oy);
-                if x >= 0 && y >= 0 && x < g.w && y < g.h {
-                    let p = g.px[(y * g.w + x) as usize];
-                    out = (p & 0xff) << 16 | (p & 0xff00) | (p >> 16 & 0xff);
-                }
-                return;
+        if let Some(G::Dc(d)) = t.m.get(&dc) && let Tgt::Win { surf, x: wx, y: wy, .. } = target_of(t, d) {
+            let (ox, oy) = (d.s.vp.0 - d.s.win.0 + wx, d.s.vp.1 - d.s.win.1 + wy);
+            let g = surf.lock().unwrap_or_else(PoisonError::into_inner);
+            let (x, y) = (x + ox, y + oy);
+            if x >= 0 && y >= 0 && x < g.w && y < g.h {
+                let p = g.px[(y * g.w + x) as usize];
+                out = (p & 0xff) << 16 | (p & 0xff00) | (p >> 16 & 0xff);
             }
+            return;
         }
         if let Some((v, ox, oy, _)) = source(t, dc) {
             let (x, y) = (x + ox, y + oy);
@@ -5374,16 +5362,12 @@ fn enum_fonts(c: &mut Ctx, filter: Option<String>, proc_: u32, lp: u32, wide: bo
     }
     // (a family GDI+ stands a face in for, Arial and Tahoma: under its own name, as the face
     // CreateFont gives for it, so GDI and GDI+ agree it is there)
-    if let Some(fl) = filter.as_ref().filter(|fl| !fl.is_empty() && !names.iter().any(|(n, _)| n.eq_ignore_ascii_case(fl))) {
-        if crate::gdiplus_font::stand_in_face(fl).is_some_and(|i| font_file(i).is_some()) {
-            names.push((fl.clone(), face_pitch(false, false)));
-        }
+    if let Some(fl) = filter.as_ref().filter(|fl| !fl.is_empty() && !names.iter().any(|(n, _)| n.eq_ignore_ascii_case(fl))) && crate::gdiplus_font::stand_in_face(fl).is_some_and(|i| font_file(i).is_some()) {
+        names.push((fl.clone(), face_pitch(false, false)));
     }
     for (name, pitch) in names {
-        if let Some(fl) = &filter {
-            if !fl.is_empty() && !fl.eq_ignore_ascii_case(&name) {
-                continue;
-            }
+        if let Some(fl) = &filter && !fl.is_empty() && !fl.eq_ignore_ascii_case(&name) {
+            continue;
         }
         let lf = LogFont { height: 16, weight: 400, pitch, ..stock_font(&name, 16) };
         mem::fill(buf, 1024, 0);

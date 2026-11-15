@@ -274,10 +274,8 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     let (factory, hp, out) = (c.a(0), c.a(2), c.a(3));
     let hwnd = r32(hp);
     let (mut w, mut h) = (r32(hp + 4), r32(hp + 8));
-    if w == 0 || h == 0 {
-        if let Some(r) = crate::user::client_rect_screen(hwnd) {
-            (w, h) = ((r.r - r.l).max(1).cast_unsigned(), (r.b - r.t).max(1).cast_unsigned());
-        }
+    if (w == 0 || h == 0) && let Some(r) = crate::user::client_rect_screen(hwnd) {
+        (w, h) = ((r.r - r.l).max(1).cast_unsigned(), (r.b - r.t).max(1).cast_unsigned());
     }
     // DXGI_SWAP_CHAIN_DESC: w, h, refresh, B8G8R8A8, ..., 1 sample, render target output, 1
     // buffer, the window, windowed, discard
@@ -862,10 +860,8 @@ enum Source {
 fn source(s: &State, dc: u32, bmp: u32) -> Source {
     let surface = s.bitmaps.get(&bmp).copied();
     let target = s.dcs.get(&dc).map(|d| d.surface);
-    if let Some((t, ..)) = surface {
-        if t != 0 && target == Some(t) {
-            return Source::Target;
-        }
+    if let Some((t, ..)) = surface && t != 0 && target == Some(t) {
+        return Source::Target;
     }
     match (s.images.get(&bmp), surface) {
         (Some(&im), _) => Source::Image(im),

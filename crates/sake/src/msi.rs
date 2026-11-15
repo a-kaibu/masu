@@ -40,10 +40,8 @@ impl Drop for DbObj {
     fn drop(&mut self) {
         if self.direct && self.db.dirty {
             let _ = commit(self);
-        } else if self.temp_out {
-            if let Some(h) = crate::files::resolve(&self.out) {
-                let _ = kura::fs::remove_file(h);
-            }
+        } else if self.temp_out && let Some(h) = crate::files::resolve(&self.out) {
+            let _ = kura::fs::remove_file(h);
         }
     }
 }

@@ -826,10 +826,8 @@ fn join(base: &str, sub: &str) -> String {
 pub(crate) fn wow64_key(p: String) -> String {
     const VIEWS: [&str; 4] = ["hklm\\software\\classes", "hkcu\\software\\classes", "hklm\\software", "hkcr"];
     for v in VIEWS {
-        if let Some(rest) = p.strip_prefix(v).and_then(|r| r.strip_prefix("\\wow6432node")) {
-            if rest.is_empty() || rest.starts_with('\\') {
-                return format!("{v}{rest}");
-            }
+        if let Some(rest) = p.strip_prefix(v).and_then(|r| r.strip_prefix("\\wow6432node")) && (rest.is_empty() || rest.starts_with('\\')) {
+            return format!("{v}{rest}");
         }
     }
     p
@@ -1207,11 +1205,9 @@ fn delete_tree(key: u32, sub: Option<&str>) -> u32 {
         for k in doomed {
             m.remove(&k);
         }
-        if sub.is_none() {
-            if let Some(k) = m.get_mut(&p) {
-                k.values.clear();
-                k.ours = true;
-            }
+        if sub.is_none() && let Some(k) = m.get_mut(&p) {
+            k.values.clear();
+            k.ours = true;
         }
         save_reg(m);
         0

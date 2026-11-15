@@ -143,10 +143,8 @@ impl Database {
                 let col = Col { name, ty };
                 if let Some(nt) = new_tables.iter_mut().find(|x| x.0 == t) {
                     nt.1.push(col);
-                } else if let Some(ti) = self.table_index(&t) {
-                    if self.tables[ti].col(&col.name).is_none() {
-                        self.add_column(ti, col);
-                    }
+                } else if let Some(ti) = self.table_index(&t) && self.tables[ti].col(&col.name).is_none() {
+                    self.add_column(ti, col);
                 }
             }
         }

@@ -116,10 +116,8 @@ impl Ini {
     /// it when `val` is None
     pub(crate) fn set(&mut self, sec: &str, key: &str, val: Option<&str>) {
         let Some(val) = val else {
-            if let Some(i) = self.sec(sec) {
-                if let Some(j) = self.secs[i].lines.iter().position(|l| entry(l).is_some_and(|e| e.0.eq_ignore_ascii_case(key.trim()))) {
-                    self.secs[i].lines.remove(j);
-                }
+            if let Some(i) = self.sec(sec) && let Some(j) = self.secs[i].lines.iter().position(|l| entry(l).is_some_and(|e| e.0.eq_ignore_ascii_case(key.trim()))) {
+                self.secs[i].lines.remove(j);
             }
             return;
         };

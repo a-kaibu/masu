@@ -184,18 +184,14 @@ impl Audio {
                 self.at += 1;
                 continue;
             };
-            if let Some(f) = self.first {
-                if (f.bitrate_index, f.rate_index, f.mode) != (h.bitrate_index, h.rate_index, h.mode) {
-                    self.at += 1;
-                    continue;
-                }
+            if let Some(f) = self.first && (f.bitrate_index, f.rate_index, f.mode) != (h.bitrate_index, h.rate_index, h.mode) {
+                self.at += 1;
+                continue;
             }
-            if self.at + h.size > self.es.len() {
-                if !self.ended {
-                    return false;
-                }
+            if self.at + h.size > self.es.len() && !self.ended {
+                return false;
+            }
                 // (a cut last frame: what there is, the rest silence)
-            }
             self.first.get_or_insert(h);
             let end = (self.at + h.size).min(self.es.len());
             // (a last frame cut inside its CRC has no data at all)

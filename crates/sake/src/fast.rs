@@ -521,10 +521,8 @@ mod slab_tests {
     }
 
     fn alloc(n: u32, stub: bool) -> u32 {
-        if stub {
-            if let Some(p) = run(stubs().alloc, &[0, 0, n]) {
-                return p;
-            }
+        if stub && let Some(p) = run(stubs().alloc, &[0, 0, n]) {
+            return p;
         }
         mem::heap_alloc_small(n, false)
     }
@@ -536,10 +534,8 @@ mod slab_tests {
     /// HeapReAlloc; `in_place`: HEAP_REALLOC_IN_PLACE_ONLY (0 when the block cannot stay)
     fn realloc(p: u32, n: u32, stub: bool, in_place: bool) -> u32 {
         let flags = if in_place { 0x10 } else { 0 };
-        if stub {
-            if let Some(q) = run(stubs().realloc, &[0, flags, p, n]) {
-                return q;
-            }
+        if stub && let Some(q) = run(stubs().realloc, &[0, flags, p, n]) {
+            return q;
         }
         if in_place && !mem::heap_fits(p, n) { 0 } else { mem::heap_realloc(p, n, false) }
     }

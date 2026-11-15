@@ -164,12 +164,10 @@ pub(crate) fn parse_avi(b: &[u8]) -> Option<Clip> {
             for (id, d) in chunks(data) {
                 if &id[2..] == b"db" || &id[2..] == b"dc" {
                     take(d, out);
-                } else if &id == b"LIST" {
-                    if let Some((_, inner)) = list(d).filter(|(t, _)| t == b"rec ") {
-                        for (id, d) in chunks(inner) {
-                            if &id[2..] == b"db" || &id[2..] == b"dc" {
-                                take(d, out);
-                            }
+                } else if &id == b"LIST" && let Some((_, inner)) = list(d).filter(|(t, _)| t == b"rec ") {
+                    for (id, d) in chunks(inner) {
+                        if &id[2..] == b"db" || &id[2..] == b"dc" {
+                            take(d, out);
                         }
                     }
                 }

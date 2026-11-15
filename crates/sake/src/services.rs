@@ -283,9 +283,7 @@ fn main_thread(c: &mut Ctx) -> u32 {
     }
     crate::call(c.cpu, main, &[args.len() as u32, argv]);
     for p in allocated { mem::heap_free(p); } mem::heap_free(argv);
-    kern::with(|k| { if let Some(s) = k.services.get_mut(&name) {
-        if s.pid == crate::pid() && s.status[1] != 1 { s.exited(crate::pid()); k.changed(); }
-    }});
+    kern::with(|k| { if let Some(s) = k.services.get_mut(&name) && s.pid == crate::pid() && s.status[1] != 1 { s.exited(crate::pid()); k.changed(); }});
     0
 }
 fn dispatcher(c: &mut Ctx, wide: bool) -> u32 {
@@ -343,7 +341,7 @@ fn dispatcher(c: &mut Ctx, wide: bool) -> u32 {
     // active record alive until the guest thread has completed.
     obj::wait(&[thread], false, u32::MAX, None);
     obj::close(thread);
-    if let Some(a) = ACTIVE.lock().unwrap().take() { if a.token != 0 { obj::close(a.token); } }
+    if let Some(a) = ACTIVE.lock().unwrap().take() && a.token != 0 { obj::close(a.token); }
     1
 }
 fn StartServiceCtrlDispatcherA(c: &mut Ctx) -> u32 { dispatcher(c, false) }

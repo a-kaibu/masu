@@ -600,10 +600,8 @@ impl File {
     pub fn read_at(&self, start: Option<SeekFrom>, keep: bool, buf: &mut [u8]) -> Result<usize, ()> {
         let mut f = self.f.lock().unwrap();
         let was = f.stream_position().unwrap_or(0);
-        if let Some(s) = start {
-            if f.seek(s).is_err() {
-                return Err(());
-            }
+        if let Some(s) = start && f.seek(s).is_err() {
+            return Err(());
         }
         let mut got = 0;
         while got < buf.len() {
@@ -623,10 +621,8 @@ impl File {
     pub fn write_at(&self, start: Option<SeekFrom>, keep: bool, b: &[u8]) -> u32 {
         let mut f = self.f.lock().unwrap();
         let was = f.stream_position().unwrap_or(0);
-        if let Some(s) = start {
-            if f.seek(s).is_err() {
-                return 0;
-            }
+        if let Some(s) = start && f.seek(s).is_err() {
+            return 0;
         }
         let w = f.write_all(b).map_or(0, |_| b.len() as u32);
         if keep {
@@ -731,10 +727,8 @@ pub fn find(w: &str) -> Option<Find> {
     }
     for e in kura::fs::read_dir(&hd).ok()?.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if wild(pat, &name) {
-            if let Ok(m) = e.metadata() {
-                entries.push((name, m));
-            }
+        if wild(pat, &name) && let Ok(m) = e.metadata() {
+            entries.push((name, m));
         }
     }
     if entries.is_empty() {

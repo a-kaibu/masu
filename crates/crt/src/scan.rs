@@ -307,17 +307,15 @@ pub fn scan<T: Unit>(input: &[T], fmt: &[T], m: Mode, k: &mut impl Sink) -> i32 
                         k.w2a(&w).into_iter().map(|u| u as u32).collect()
                     };
                     let need = units.len() + string as usize;
-                    if let Some(cap) = cap {
-                        if (cap as usize) < need {
-                            if cap > 0 {
-                                if wide {
-                                    k.wide(p, &[0]);
-                                } else {
-                                    k.narrow(p, &[0]);
-                                }
+                    if let Some(cap) = cap && (cap as usize) < need {
+                        if cap > 0 {
+                            if wide {
+                                k.wide(p, &[0]);
+                            } else {
+                                k.narrow(p, &[0]);
                             }
-                            break 'run Stop::Matching;
                         }
+                        break 'run Stop::Matching;
                     }
                     if wide {
                         let mut v: Vec<u16> = units.iter().map(|&u| u as u16).collect();

@@ -176,11 +176,9 @@ impl<R: Read + Seek> Set<R> {
         }
         let (mut skip, mut left) = (e.offset as u64 - self.pos(), e.size as u64);
         while skip > 0 || left > 0 {
-            if self.cur.as_ref().is_some_and(|s| s.used == s.buf.len()) {
-                if let Err(x) = self.next_block() {
-                    self.cur = None;
-                    return Err(x);
-                }
+            if self.cur.as_ref().is_some_and(|s| s.used == s.buf.len()) && let Err(x) = self.next_block() {
+                self.cur = None;
+                return Err(x);
             }
             let st = self.cur.as_mut().unwrap();
             let have = (st.buf.len() - st.used) as u64;

@@ -86,10 +86,8 @@ fn engine_cached(cache: &std::sync::Mutex<std::collections::HashMap<String, (std
         cache.locked().remove(name);
         return None;
     };
-    if let Some((t, e)) = cache.locked().get(name) {
-        if *t == mtime {
-            return e.clone();
-        }
+    if let Some((t, e)) = cache.locked().get(name) && *t == mtime {
+        return e.clone();
     }
     let e = siglus_engine(tree_files(&std::fs::read_to_string(&p).ok()?).iter().map(String::as_str));
     cache.locked().insert(name.to_string(), (mtime, e.clone()));

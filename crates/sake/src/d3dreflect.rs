@@ -344,21 +344,19 @@ fn parse(code: &[u8], fl: u8) -> Option<Refl> {
         temps: 0,
         threads: [0; 3],
     };
-    if let Some(s) = shdr {
-        if let Ok(p) = dxwgsl::tpf::decode(s) {
-            for i in &p.insts {
-                use dxwgsl::tpf::{Opcode, Shape};
-                if i.op == Opcode::DclTemps {
-                    r.temps = i.extra.first().copied().unwrap_or(0);
-                }
-                if i.op == Opcode::DclThreadGroup && i.extra.len() >= 3 {
-                    r.threads = [i.extra[0], i.extra[1], i.extra[2]];
-                }
-                // (the instruction count: declarations and custom data left out)
-                match i.op.shape() {
-                    Shape::Decl(_) | Shape::Data => {}
-                    Shape::Ops(_) | Shape::Unchecked => r.insts += 1,
-                }
+    if let Some(s) = shdr && let Ok(p) = dxwgsl::tpf::decode(s) {
+        for i in &p.insts {
+            use dxwgsl::tpf::{Opcode, Shape};
+            if i.op == Opcode::DclTemps {
+                r.temps = i.extra.first().copied().unwrap_or(0);
+            }
+            if i.op == Opcode::DclThreadGroup && i.extra.len() >= 3 {
+                r.threads = [i.extra[0], i.extra[1], i.extra[2]];
+            }
+            // (the instruction count: declarations and custom data left out)
+            match i.op.shape() {
+                Shape::Decl(_) | Shape::Data => {}
+                Shape::Ops(_) | Shape::Unchecked => r.insts += 1,
             }
         }
     }
@@ -560,10 +558,8 @@ fn refl_cb_name(c: &mut Ctx) -> u32 {
     let cbs = with_refl(c, |r| r.cbs.clone()).unwrap_or_default();
     let g = OBJS.lock().unwrap();
     for o in cbs {
-        if let Obj::Cb(cb) = &g[r32(o + 12) as usize] {
-            if cb.name == n {
-                return o;
-            }
+        if let Obj::Cb(cb) = &g[r32(o + 12) as usize] && cb.name == n {
+            return o;
         }
     }
     drop(g);
@@ -644,10 +640,8 @@ fn refl_var_name(c: &mut Ctx) -> u32 {
     for o in cbs {
         if let Obj::Cb(cb) = &g[r32(o + 12) as usize] {
             for &v in &cb.vars {
-                if let Obj::Var(x, _) = &g[r32(v + 12) as usize] {
-                    if x.name == n {
-                        return v;
-                    }
+                if let Obj::Var(x, _) = &g[r32(v + 12) as usize] && x.name == n {
+                    return v;
                 }
             }
         }
@@ -705,10 +699,8 @@ fn cb_var_name(c: &mut Ctx) -> u32 {
     let mut r = None;
     if let Obj::Cb(cb) = &g[id(c)] {
         for &v in &cb.vars {
-            if let Obj::Var(x, _) = &g[r32(v + 12) as usize] {
-                if x.name == n {
-                    r = Some(v);
-                }
+            if let Obj::Var(x, _) = &g[r32(v + 12) as usize] && x.name == n {
+                r = Some(v);
             }
         }
     }

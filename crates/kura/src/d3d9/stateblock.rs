@@ -354,10 +354,8 @@ pub fn differs(dst: &State, src: &State, m: &Mask) -> bool {
         while b != 0 {
             let i = w * 64 + b.trailing_zeros() as usize;
             b &= b - 1;
-            if let (Some(d), Some(s)) = (dst.rs.get(i), src.rs.get(i)) {
-                if d != s {
-                    return true;
-                }
+            if let (Some(d), Some(s)) = (dst.rs.get(i), src.rs.get(i)) && d != s {
+                return true;
             }
         }
     }
@@ -426,10 +424,8 @@ pub fn differs(dst: &State, src: &State, m: &Mask) -> bool {
         return true;
     }
     for l in &m.lights {
-        if let Some(x) = src.lights.get(l) {
-            if dst.lights.get(l) != Some(x) {
-                return true;
-            }
+        if let Some(x) = src.lights.get(l) && dst.lights.get(l) != Some(x) {
+            return true;
         }
     }
     for i in 0..6 {

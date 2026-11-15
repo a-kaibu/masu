@@ -1345,18 +1345,12 @@ mod tests {
             let mut rss = 0;
             let mut inside = false;
             for l in std::fs::read_to_string("/proc/self/smaps").unwrap().lines() {
-                if let Some((range, _)) = l.split_once(' ') {
-                    if let Some((a, b)) = range.split_once('-') {
-                        if let (Ok(a), Ok(b)) = (u64::from_str_radix(a, 16), u64::from_str_radix(b, 16)) {
-                            inside = a < hi && b > lo;
-                            continue;
-                        }
-                    }
+                if let Some((range, _)) = l.split_once(' ') && let Some((a, b)) = range.split_once('-') && let (Ok(a), Ok(b)) = (u64::from_str_radix(a, 16), u64::from_str_radix(b, 16)) {
+                    inside = a < hi && b > lo;
+                    continue;
                 }
-                if inside {
-                    if let Some(v) = l.strip_prefix("Rss:") {
-                        rss += v.trim().trim_end_matches(" kB").trim().parse::<u64>().unwrap();
-                    }
+                if inside && let Some(v) = l.strip_prefix("Rss:") {
+                    rss += v.trim().trim_end_matches(" kB").trim().parse::<u64>().unwrap();
                 }
             }
             rss

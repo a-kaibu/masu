@@ -355,10 +355,8 @@ fn binary_to_string(c: &mut Ctx, wide: bool) -> u32 {
         return 1;
     }
     let (written, need) = too_small(&data, fmt, &s, cap);
-    if !wide {
-        if let Some(w) = written {
-            mem::write(out, &w);
-        }
+    if !wide && let Some(w) = written {
+        mem::write(out, &w);
     }
     mem::w32(plen, need);
     last_error(if wide && cap == 0 { ERROR_INVALID_PARAMETER } else { ERROR_MORE_DATA });

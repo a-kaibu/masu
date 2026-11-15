@@ -125,10 +125,8 @@ fn map_idents(s: &str, f: &mut dyn FnMut(&str, &str) -> Option<String>) -> Strin
                 Some(r) => {
                     out.push_str(&r);
                     // gl_TexCoord[n] -> vn_TexCoordn eats "[n]"
-                    if id == "gl_TexCoord" || id == "gl_TextureMatrix" || id == "gl_FragData" || id == "gl_MultiTexCoord" {
-                        if let Some(close) = b[i..].iter().position(|&c| c == ']') {
-                            i += close + 1;
-                        }
+                    if (id == "gl_TexCoord" || id == "gl_TextureMatrix" || id == "gl_FragData" || id == "gl_MultiTexCoord") && let Some(close) = b[i..].iter().position(|&c| c == ']') {
+                        i += close + 1;
                     }
                 }
                 None => out.push_str(&id),

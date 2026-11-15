@@ -222,10 +222,8 @@ pub fn foreseen(table: &std::collections::HashMap<String, Vec<String>>, stems: &
                 if seen.insert(n.clone()) {
                     out.push(n.clone());
                 }
-                if let Some(k) = find(n) {
-                    if done.insert(k.clone()) {
-                        next.push(k);
-                    }
+                if let Some(k) = find(n) && done.insert(k.clone()) {
+                    next.push(k);
                 }
             }
         }
@@ -270,10 +268,8 @@ pub fn following(table: &std::collections::HashMap<String, Vec<String>>, places:
     let mut seen = std::collections::HashSet::new();
     for k in 0..ahead {
         for l in &lists {
-            if let Some(n) = l.get(k) {
-                if seen.insert(n.clone()) {
-                    out.push(n.clone());
-                }
+            if let Some(n) = l.get(k) && seen.insert(n.clone()) {
+                out.push(n.clone());
             }
         }
     }

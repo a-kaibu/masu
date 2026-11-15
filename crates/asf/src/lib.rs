@@ -275,10 +275,8 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
                 file_props = true;
             }
             STREAM_PROPERTIES => {
-                if let Some(s) = stream_properties(body) {
-                    if !h.streams.iter().any(|t| t.number == s.number) {
-                        h.streams.push(s);
-                    }
+                if let Some(s) = stream_properties(body) && !h.streams.iter().any(|t| t.number == s.number) {
+                    h.streams.push(s);
                 }
             }
             HEADER_EXTENSION => {
@@ -307,12 +305,8 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
                                 }
                                 if let Some(rest) = o.get(at..) {
                                     for (g, sp) in objects(rest) {
-                                        if g == STREAM_PROPERTIES {
-                                            if let Some(s) = stream_properties(sp) {
-                                                if !h.streams.iter().any(|t| t.number == s.number) {
-                                                    h.streams.push(s);
-                                                }
-                                            }
+                                        if g == STREAM_PROPERTIES && let Some(s) = stream_properties(sp) && !h.streams.iter().any(|t| t.number == s.number) {
+                                            h.streams.push(s);
                                         }
                                     }
                                 }
@@ -352,10 +346,8 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
     // the Data Object: its GUID, size, file id, total packets, reserved
     if guid_at(b, size) == Some(DATA) {
         h.data_offset = u64::try_from(size).ok().ok_or(Error::Bad("header size"))? + 50;
-        if let Some(n) = le64(b, size + 40) {
-            if h.packets == 0 {
-                h.packets = n;
-            }
+        if let Some(n) = le64(b, size + 40) && h.packets == 0 {
+            h.packets = n;
         }
     } else {
         return Err(Error::Bad("no data object after the header"));

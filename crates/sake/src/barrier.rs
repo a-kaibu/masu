@@ -87,10 +87,8 @@ impl Bars {
     }
     /// The waiter has gone
     pub fn leave(&mut self, b: u32, t: Ticket) {
-        if let Some(bar) = self.map.get_mut(&b) {
-            if bar.epoch == t.epoch && !t.no_delete {
-                bar.deletable = bar.deletable.saturating_sub(1);
-            }
+        if let Some(bar) = self.map.get_mut(&b) && bar.epoch == t.epoch && !t.no_delete {
+            bar.deletable = bar.deletable.saturating_sub(1);
         }
     }
     /// Whether DeleteSynchronizationBarrier may return

@@ -441,12 +441,10 @@ fn modules(cpu: &Cpu, out: &mut [Module; MAX_MODULES]) -> usize {
         }
         Some(())
     })();
-    if n == 0 {
-        if let Ok(g) = EXTRA.try_lock() {
-            for m in g.iter().take(MAX_MODULES) {
-                out[n] = *m;
-                n += 1;
-            }
+    if n == 0 && let Ok(g) = EXTRA.try_lock() {
+        for m in g.iter().take(MAX_MODULES) {
+            out[n] = *m;
+            n += 1;
         }
     }
     n
@@ -668,10 +666,8 @@ fn traps(w: &mut impl Write, t: &ThreadLog, mods: &[Module], name: bool, max: u3
         lines += 1;
         let [addr, eax, r0, r1] = e;
         let _ = write!(w, "\n    {addr:08x} {eax:08x}");
-        if name {
-            if let Some(s) = NAMER.get().and_then(|f| f(addr)) {
-                let _ = write!(w, " {s}");
-            }
+        if name && let Some(s) = NAMER.get().and_then(|f| f(addr)) {
+            let _ = write!(w, " {s}");
         }
         let _ = write!(w, " | {r0:08x}");
         sym(w, mods, r0);

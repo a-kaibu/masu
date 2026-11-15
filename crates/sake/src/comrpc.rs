@@ -213,17 +213,15 @@ fn invoke(cpu: &mut koji::Cpu, object: &Export, method: &Method, bytes: &[u8]) -
     args[0] = object.pointer as u64;
     // Correlated array lengths can refer to any scalar input argument.
     for (p, (_, bytes)) in params.iter().zip(&values) {
-        if let Kind::Scalar(n) = p.kind {
-            if !p.reference && p.input() {
-                if bytes.len() != n as usize { return Reply { hr: BAD_DATA, data: vec![] }; }
-                let mut b = [0u8; 8]; b[..bytes.len()].copy_from_slice(bytes);
-                let at = p.stack as usize / ps() as usize;
-                if at >= args.len() { return Reply { hr: BAD_DATA, data: vec![] }; }
-                args[at] = u64::from_le_bytes(b);
-                if ps() == 4 && n == 8 {
-                    if at + 1 >= args.len() { return Reply { hr: BAD_DATA, data: vec![] }; }
-                    args[at + 1] = args[at] >> 32;
-                }
+        if let Kind::Scalar(n) = p.kind && !p.reference && p.input() {
+            if bytes.len() != n as usize { return Reply { hr: BAD_DATA, data: vec![] }; }
+            let mut b = [0u8; 8]; b[..bytes.len()].copy_from_slice(bytes);
+            let at = p.stack as usize / ps() as usize;
+            if at >= args.len() { return Reply { hr: BAD_DATA, data: vec![] }; }
+            args[at] = u64::from_le_bytes(b);
+            if ps() == 4 && n == 8 {
+                if at + 1 >= args.len() { return Reply { hr: BAD_DATA, data: vec![] }; }
+                args[at + 1] = args[at] >> 32;
             }
         }
     }
@@ -461,13 +459,11 @@ fn class_for(cpu: &mut koji::Cpu, clsid: &[u8], context: u32) -> Result<Class, u
 pub(crate) fn get_class(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: u32, context: u32) -> u32 {
     if out == 0 || clsid == 0 || iid == 0 { return POINTER; }
     wp(out, 0);
-    if context & 3 != 0 {
-        if let Some(path) = crate::misc::registry_string(&format!("hkcr\\clsid\\{}\\inprocserver32", text(&guid(clsid))), "") {
-            let base = crate::pe::load_library(cpu, &path);
-            if base == 0 { return 0x8007_007e; }
-            let Some(entry) = crate::pe::proc_address(base, crate::pe::Import::Name("DllGetClassObject")) else { return 0x8007_007f };
-            return crate::call(cpu, entry, &[clsid, iid, out]);
-        }
+    if context & 3 != 0 && let Some(path) = crate::misc::registry_string(&format!("hkcr\\clsid\\{}\\inprocserver32", text(&guid(clsid))), "") {
+        let base = crate::pe::load_library(cpu, &path);
+        if base == 0 { return 0x8007_007e; }
+        let Some(entry) = crate::pe::proc_address(base, crate::pe::Import::Name("DllGetClassObject")) else { return 0x8007_007f };
+        return crate::call(cpu, entry, &[clsid, iid, out]);
     }
     // Remote factory interfaces need a dedicated activation protocol. Never
     // report success with a null factory when that protocol is unavailable.

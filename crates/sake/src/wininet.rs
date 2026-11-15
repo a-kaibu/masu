@@ -93,10 +93,8 @@ fn canonical_url(input: &[u8], flags: u32) -> Vec<u8> {
     let hex = |b: u8| (b as char).to_digit(16).map(|v| v as u8);
     let mut i = 0;
     while i < input.len() {
-        if flags & 0x1000_0000 != 0 && input[i] == b'%' && i + 2 < input.len() {
-            if let (Some(a), Some(b)) = (hex(input[i + 1]), hex(input[i + 2])) {
-                decoded.push(a * 16 + b); i += 3; continue;
-            }
+        if flags & 0x1000_0000 != 0 && input[i] == b'%' && i + 2 < input.len() && let (Some(a), Some(b)) = (hex(input[i + 1]), hex(input[i + 2])) {
+            decoded.push(a * 16 + b); i += 3; continue;
         }
         decoded.push(input[i]); i += 1;
     }
@@ -204,10 +202,8 @@ fn crack_url(c: &mut Ctx, wide: bool) -> u32 {
             if ptr == 0 { return fail(87); }
             let mut decoded = Vec::new(); let mut i = 0;
             while i < value.len() {
-                if value[i] == 37 && i + 2 < value.len() {
-                    if let (Some(a), Some(b)) = (char::from_u32(value[i + 1] as u32).and_then(|c| c.to_digit(16)), char::from_u32(value[i + 2] as u32).and_then(|c| c.to_digit(16))) {
-                        decoded.push((a * 16 + b) as u16); i += 3; continue;
-                    }
+                if value[i] == 37 && i + 2 < value.len() && let (Some(a), Some(b)) = (char::from_u32(value[i + 1] as u32).and_then(|c| c.to_digit(16)), char::from_u32(value[i + 2] as u32).and_then(|c| c.to_digit(16))) {
+                    decoded.push((a * 16 + b) as u16); i += 3; continue;
                 }
                 decoded.push(value[i]); i += 1;
             }

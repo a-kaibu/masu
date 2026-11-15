@@ -966,11 +966,9 @@ mod review_tests {
                         }
                     }
                     2 => {
-                        if let Some(&h) = given.get(&tid) {
-                            if !closed_by_us.contains(&h) {
-                                obj::close(h);
-                                closed_by_us.push(h);
-                            }
+                        if let Some(&h) = given.get(&tid) && !closed_by_us.contains(&h) {
+                            obj::close(h);
+                            closed_by_us.push(h);
                         }
                     }
                     _ => {}

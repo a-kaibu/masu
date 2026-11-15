@@ -3393,10 +3393,8 @@ fn translate_seen64<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u64], 
                     let f = last.near_branch64();
                     if let Some(j) = decode(mem, f, trap).first().filter(|j| j.mnemonic() == Mnemonic::Jmp && j.op0_kind() == OpKind::Memory && j.memory_base() == Register::RIP && j.memory_size().size() == 8) {
                         let slot = j.memory_displacement64();
-                        if !super::fresh_at(lo32(f)) && (slot >> 32) == (f >> 32) && (u64::from(GUEST_LO)..u64::from(GUEST_HI) - 8).contains(&(slot & 0xffff_ffff)) {
-                            if thunks.insert(f, slot).is_none() {
-                                thunk_code.push((lo32(f), lo32(j.len())));
-                            }
+                        if !super::fresh_at(lo32(f)) && (slot >> 32) == (f >> 32) && (u64::from(GUEST_LO)..u64::from(GUEST_HI) - 8).contains(&(slot & 0xffff_ffff)) && thunks.insert(f, slot).is_none() {
+                            thunk_code.push((lo32(f), lo32(j.len())));
                         }
                     }
                 }

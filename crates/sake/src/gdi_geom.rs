@@ -407,14 +407,12 @@ fn banded(ys: &[i32], mut row: impl FnMut(i32, i32) -> Vec<(i32, i32)>) -> Vec<R
     for w in ys.windows(2) {
         let iv = row(w[0], w[1]);
         // coalesce with the band above when it is the same and touches
-        if let Some((pb, piv, start)) = &prev {
-            if *pb == w[0] && *piv == iv && !iv.is_empty() {
-                for r in &mut out[*start..] {
-                    r.b = w[1];
-                }
-                prev = Some((w[1], iv, *start));
-                continue;
+        if let Some((pb, piv, start)) = &prev && *pb == w[0] && *piv == iv && !iv.is_empty() {
+            for r in &mut out[*start..] {
+                r.b = w[1];
             }
+            prev = Some((w[1], iv, *start));
+            continue;
         }
         let start = out.len();
         out.extend(iv.iter().map(|&(l, r)| Rect { l, t: w[0], r, b: w[1] }));

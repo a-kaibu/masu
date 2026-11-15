@@ -50,12 +50,10 @@ pub struct Auth {
 /// The token in `path`, made (random, 128 bits, readable by this user only) when there is none
 /// or `new`.
 pub fn token(path: &Path, new: bool) -> Result<String> {
-    if !new {
-        if let Ok(t) = std::fs::read_to_string(path) {
-            let t = t.trim().to_string();
-            if t.len() >= 16 && t.bytes().all(|b| b.is_ascii_alphanumeric()) {
-                return Ok(t);
-            }
+    if !new && let Ok(t) = std::fs::read_to_string(path) {
+        let t = t.trim().to_string();
+        if t.len() >= 16 && t.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return Ok(t);
         }
     }
     let t = hex(&random::<16>()?);

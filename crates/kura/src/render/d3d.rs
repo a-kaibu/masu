@@ -1257,27 +1257,21 @@ impl D3d {
         while i < c.len() {
             let op = c[i];
             let a = |k: usize| c[i + k];
-            if let Some((t, end)) = self.seg_open {
-                if i >= end {
-                    self.seg_close(t);
-                }
+            if let Some((t, end)) = self.seg_open && i >= end {
+                self.seg_close(t);
             }
             if !self.clears.is_empty() {
                 self.settle_for(op, &c[i..]);
             }
             self.touch_for(op, &c[i..]);
-            if op == CLEAR && a(10) == 0 && a(1) & 1 != 0 && self.target[0] != 0 && !self.no_pass_opt && !self.no_seg {
-                if let Some(j) = self.segment(c, i, false) {
-                    i = j;
-                    continue;
-                }
+            if op == CLEAR && a(10) == 0 && a(1) & 1 != 0 && self.target[0] != 0 && !self.no_pass_opt && !self.no_seg && let Some(j) = self.segment(c, i, false) {
+                i = j;
+                continue;
             }
             // (a draw covering a rectangle opaque, not in a segment: one starts there)
-            if op == DRAW && self.seg_open.is_none() && self.target[0] != 0 && self.targets2.is_none() && !self.no_pass_opt && !self.no_seg && draw_flags(c, i) & 1 != 0 {
-                if let Some(j) = self.segment(c, i, true) {
-                    i = j;
-                    continue;
-                }
+            if op == DRAW && self.seg_open.is_none() && self.target[0] != 0 && self.targets2.is_none() && !self.no_pass_opt && !self.no_seg && draw_flags(c, i) & 1 != 0 && let Some(j) = self.segment(c, i, true) {
+                i = j;
+                continue;
             }
             match op {
                 CREATE_TEXTURE => {
@@ -2008,10 +2002,8 @@ impl D3d {
                             if e[1] == 1 || e[1] >= 4 {
                                 reads.push((e[2], all_clear(&cleared, e[2])));
                             }
-                            if e[1] == 0 {
-                                if let Some(k) = renum(e[2], &made) {
-                                    norm[q + 1 + j * 8 + 2] = k;
-                                }
+                            if e[1] == 0 && let Some(k) = renum(e[2], &made) {
+                                norm[q + 1 + j * 8 + 2] = k;
                             }
                         }
                         q += 1 + m * 8;
@@ -2219,14 +2211,12 @@ impl D3d {
     fn defer_clear(&mut self, tex: u32, c: Clear) {
         // (its pixels change now, as far as draws that sample it later know: see `draw_key`)
         self.touch(tex);
-        if let Some(t) = self.textures.get_mut(&tex) {
-            if is_depth(t.format) {
-                if c.flags & 2 != 0 {
-                    t.zclear = Some((c.z, t.zclear.map_or(0, |z| z.1)));
-                }
-                if c.flags & 4 != 0 {
-                    t.zclear = Some((t.zclear.map_or(1.0, |z| z.0), c.stencil));
-                }
+        if let Some(t) = self.textures.get_mut(&tex) && is_depth(t.format) {
+            if c.flags & 2 != 0 {
+                t.zclear = Some((c.z, t.zclear.map_or(0, |z| z.1)));
+            }
+            if c.flags & 4 != 0 {
+                t.zclear = Some((t.zclear.map_or(1.0, |z| z.0), c.stencil));
             }
         }
         if self.pass && self.pass_draws_to(tex) {
@@ -4054,33 +4044,31 @@ impl D3d {
         // (it starts from what the last clear left)
         let zuse = self.pipelines2[&pid].zuse;
         let zid = self.targets2.as_ref().map_or(0, |tg| tg[1 + us(tg[0]) * 3]);
-        if zuse != 0 {
-            if let Some(z) = self.textures.get_mut(&zid) {
-                let new = zuse & !z.zused;
-                if new != 0 {
-                    z.zused |= zuse;
-                    let (zd, zs) = z.zclear.unwrap_or((1.0, 0));
-                    let fits = !z.fits.is_empty();
-                    self.end_pass();
-                    if !self.no_pass_opt && !fits {
-                        let tg = self.targets2.as_ref().unwrap();
-                        let zi = 1 + us(tg[0]) * 3;
-                        let c = Clear { level: tg[zi + 1], layer: tg[zi + 2], flags: new << 1, color: [0.0; 4], z: zd, stencil: zs };
-                        match self.clears.get_mut(&zid) {
-                            None => {
-                                self.clears.insert(zid, c);
-                            }
-                            Some(p) if p.level == c.level && p.layer == c.layer => {
-                                if c.flags & 2 != 0 && p.flags & 2 == 0 {
-                                    p.z = zd;
-                                }
-                                if c.flags & 4 != 0 && p.flags & 4 == 0 {
-                                    p.stencil = zs;
-                                }
-                                p.flags |= c.flags;
-                            }
-                            Some(_) => {}
+        if zuse != 0 && let Some(z) = self.textures.get_mut(&zid) {
+            let new = zuse & !z.zused;
+            if new != 0 {
+                z.zused |= zuse;
+                let (zd, zs) = z.zclear.unwrap_or((1.0, 0));
+                let fits = !z.fits.is_empty();
+                self.end_pass();
+                if !self.no_pass_opt && !fits {
+                    let tg = self.targets2.as_ref().unwrap();
+                    let zi = 1 + us(tg[0]) * 3;
+                    let c = Clear { level: tg[zi + 1], layer: tg[zi + 2], flags: new << 1, color: [0.0; 4], z: zd, stencil: zs };
+                    match self.clears.get_mut(&zid) {
+                        None => {
+                            self.clears.insert(zid, c);
                         }
+                        Some(p) if p.level == c.level && p.layer == c.layer => {
+                            if c.flags & 2 != 0 && p.flags & 2 == 0 {
+                                p.z = zd;
+                            }
+                            if c.flags & 4 != 0 && p.flags & 4 == 0 {
+                                p.stencil = zs;
+                            }
+                            p.flags |= c.flags;
+                        }
+                        Some(_) => {}
                     }
                 }
             }
@@ -4114,19 +4102,17 @@ impl D3d {
                 key.push(pid);
                 key.push(lo32(gi));
                 key.extend_from_slice(g);
-                if let Some((l, grp, used)) = self.groups2.get_mut(key.as_slice()) {
-                    if *l == layout {
-                        let (grp, used) = (*grp, std::mem::take(used));
-                        for &t in &used {
-                            self.use_tex(t);
-                        }
-                        if let Some(e) = self.groups2.get_mut(key.as_slice()) {
-                            e.2 = used;
-                        }
-                        self.k2 = key;
-                        gpu::set_bind_group(lo32(gi), grp, &[]);
-                        continue;
+                if let Some((l, grp, used)) = self.groups2.get_mut(key.as_slice()) && *l == layout {
+                    let (grp, used) = (*grp, std::mem::take(used));
+                    for &t in &used {
+                        self.use_tex(t);
                     }
+                    if let Some(e) = self.groups2.get_mut(key.as_slice()) {
+                        e.2 = used;
+                    }
+                    self.k2 = key;
+                    gpu::set_bind_group(lo32(gi), grp, &[]);
+                    continue;
                 }
             }
             let mut used = Vec::new();

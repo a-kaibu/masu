@@ -813,10 +813,8 @@ fn NCryptOpenStorageProvider(c: &mut Ctx) -> u32 {
     if out == 0 {
         return NULL_REF;
     }
-    if let Some(n) = wname(name) {
-        if !n.eq_ignore_ascii_case(PROVIDER) {
-            return NTE_BAD_KEYSET;
-        }
+    if let Some(n) = wname(name) && !n.eq_ignore_ascii_case(PROVIDER) {
+        return NTE_BAD_KEYSET;
     }
     let h = new_handle();
     with(|s| s.provs.push(h));
@@ -931,10 +929,8 @@ fn NCryptCreatePersistedKey(c: &mut Ctx) -> u32 {
     }
     let Some(info) = alg(&wname(a).unwrap()) else { return NTE_NOT_SUPPORTED };
     let name = wname(name);
-    if let Some(n) = &name {
-        if fl & OVERWRITE == 0 && with(|s| s.store.contains_key(&n.to_lowercase())) {
-            return NTE_EXISTS;
-        }
+    if let Some(n) = &name && fl & OVERWRITE == 0 && with(|s| s.store.contains_key(&n.to_lowercase())) {
+        return NTE_EXISTS;
     }
     let curve = Curve::of_alg(info.0).and_then(|c| c.0);
     let k = Key { prov: p, alg: info.0, bits: info.4, finalized: false, rsa: None, ecc: None, curve, export: 0, usage: 0x00ff_ffff, name };
@@ -955,12 +951,10 @@ fn NCryptFinalizeKey(c: &mut Ctx) -> u32 {
             Err(e) => return e,
         }
     }
-    if let Some((_, ecdsa)) = Curve::of_alg(k.alg) {
-        if k.ecc.is_none() {
-            // (the generic ECDSA / ECDH need ECCCurveName first)
-            let Some(curve) = k.curve else { return NTE_INVALID_PARAMETER };
-            k.ecc = Some(Arc::new(Ecc::generate(curve, ecdsa)));
-        }
+    if let Some((_, ecdsa)) = Curve::of_alg(k.alg) && k.ecc.is_none() {
+        // (the generic ECDSA / ECDH need ECCCurveName first)
+        let Some(curve) = k.curve else { return NTE_INVALID_PARAMETER };
+        k.ecc = Some(Arc::new(Ecc::generate(curve, ecdsa)));
     }
     k.finalized = true;
     with(|s| {
@@ -1085,13 +1079,11 @@ fn NCryptImportKey(c: &mut Ctx) -> u32 {
     }
     let finalize = fl & DO_NOT_FINALIZE == 0;
     let k = Key { prov: p, alg: alg_name, bits, finalized: finalize, rsa: rsa.map(Arc::new), ecc: ecc.map(Arc::new), curve, export: 0, usage: 0x00ff_ffff, name };
-    if finalize {
-        if let Some(n) = &k.name {
-            if fl & OVERWRITE == 0 && with(|s| s.store.contains_key(&n.to_lowercase())) {
-                return NTE_EXISTS;
-            }
-            with(|s| s.store.insert(n.to_lowercase(), k.clone()));
+    if finalize && let Some(n) = &k.name {
+        if fl & OVERWRITE == 0 && with(|s| s.store.contains_key(&n.to_lowercase())) {
+            return NTE_EXISTS;
         }
+        with(|s| s.store.insert(n.to_lowercase(), k.clone()));
     }
     putp(out, add_key(k));
     0
@@ -1438,13 +1430,9 @@ fn crypt(c: &mut Ctx, enc: bool) -> u32 {
 fn NCryptEncrypt(c: &mut Ctx) -> u32 {
     // (an output smaller than the modulus is refused before encrypting)
     let (h, out, outlen, res) = (c.a(0), c.a(4), c.a(5), c.a(6));
-    if out != 0 && res != 0 {
-        if let Ok(r) = rsa_key(h) {
-            if c.a(7) & (PAD_PKCS1 | PAD_OAEP) != 0 && c.a(7) & !(PAD_NONE | PAD_PKCS1 | PAD_OAEP | SILENT) == 0 && (outlen as usize) < r.size() {
-                put32(res, r.size() as u32);
-                return NTE_BUFFER_TOO_SMALL;
-            }
-        }
+    if out != 0 && res != 0 && let Ok(r) = rsa_key(h) && c.a(7) & (PAD_PKCS1 | PAD_OAEP) != 0 && c.a(7) & !(PAD_NONE | PAD_PKCS1 | PAD_OAEP | SILENT) == 0 && (outlen as usize) < r.size() {
+        put32(res, r.size() as u32);
+        return NTE_BUFFER_TOO_SMALL;
     }
     crypt(c, true)
 }

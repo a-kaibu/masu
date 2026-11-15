@@ -606,12 +606,10 @@ mod tests {
             b[at..at + name.len()].copy_from_slice(name);
             let raw = b.len() as u32;
             let mut content = vec![i as u8 + 1; *size as usize];
-            if *name == b".rsrc" {
-                if let Some(t) = rsrc_tree {
-                    content = build(t, va);
-                    w32(&mut b, opt + 96 + 16, va);
-                    w32(&mut b, opt + 96 + 20, content.len() as u32);
-                }
+            if *name == b".rsrc" && let Some(t) = rsrc_tree {
+                content = build(t, va);
+                w32(&mut b, opt + 96 + 16, va);
+                w32(&mut b, opt + 96 + 20, content.len() as u32);
             }
             let rs = align(content.len() as u32, 0x200);
             w32(&mut b, at + 8, content.len() as u32);

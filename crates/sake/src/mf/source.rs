@@ -130,10 +130,8 @@ pub fn open_media(c: Option<&mut Ctx>, d: &Data) -> Option<Media> {
         return None;
     }
     let all = d.read(c, 0, d.len as usize)?;
-    if all.starts_with(&ASF_HEADER) {
-        if let Some(m) = open_asf(&all) {
-            return Some(m);
-        }
+    if all.starts_with(&ASF_HEADER) && let Some(m) = open_asf(&all) {
+        return Some(m);
     }
     let (t, packed) = audiofile::open_more(&all)?;
     let mime = match &t.codec {

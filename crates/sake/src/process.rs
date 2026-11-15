@@ -150,10 +150,8 @@ fn find_program(prog: &str, app: bool) -> Result<(String, String), u32> {
         tries.push(files::full_path(&name));
     }
     for w in &tries {
-        if let Some(h) = files::resolve(w) {
-            if kura::fs::metadata(&h).is_ok_and(|m| m.is_file()) {
-                return Ok((files::host_to_win(&h), h));
-            }
+        if let Some(h) = files::resolve(w) && kura::fs::metadata(&h).is_ok_and(|m| m.is_file()) {
+            return Ok((files::host_to_win(&h), h));
         }
     }
     let full = files::full_path(&name);

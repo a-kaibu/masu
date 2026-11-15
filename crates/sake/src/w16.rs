@@ -262,10 +262,8 @@ pub fn h32(h: u16) -> u32 {
 /// The 32-bit handle is gone (DeleteObject, DestroyWindow...).
 pub fn h_release(h: u16) {
     let mut g = HM.lock().unwrap();
-    if let Some(m) = g.as_mut() {
-        if let Some(v) = m.to32.remove(&h) {
-            m.to16.remove(&v);
-        }
+    if let Some(m) = g.as_mut() && let Some(v) = m.to32.remove(&h) {
+        m.to16.remove(&v);
     }
 }
 
@@ -347,10 +345,8 @@ pub fn local_alloc(ds: u16, size: u16, zero: bool) -> u16 {
         Some(at + 4)
     });
     let Some(off) = r else { return 0 };
-    if zero {
-        if let Some((b, _)) = sel_base(ds) {
-            crate::mem::fill(b + off as u32, size as u32, 0);
-        }
+    if zero && let Some((b, _)) = sel_base(ds) {
+        crate::mem::fill(b + off as u32, size as u32, 0);
     }
     off
 }
@@ -361,10 +357,8 @@ pub fn local_size(ds: u16, off: u16) -> u16 {
 
 pub fn local_free(ds: u16, off: u16) {
     with(|s| {
-        if let Some(h) = s.heaps.get_mut(&ds) {
-            if off != 0 {
-                h.remove(&off);
-            }
+        if let Some(h) = s.heaps.get_mut(&ds) && off != 0 {
+            h.remove(&off);
         }
     })
 }
@@ -397,17 +391,13 @@ thread_local! {
 /// that reaches a 16-bit callback had none, and its first frame went to the top of the 4 GB
 /// memory, inside sake's own heap.
 fn ensure_scratch() {
-    if SCR32.with(|s| s.get()) == 0 {
-        if let Some(b) = crate::mem::alloc(0x40000) {
-            SCR32.with(|s| s.set(b + 0x40000));
-        }
+    if SCR32.with(|s| s.get()) == 0 && let Some(b) = crate::mem::alloc(0x40000) {
+        SCR32.with(|s| s.set(b + 0x40000));
     }
-    if SCR16.with(|s| s.get().0) == 0 {
-        if let Some(b) = crate::mem::alloc(0x10000) {
-            let sel = sel_alloc(b, 0x10000);
-            if sel != 0 {
-                SCR16.with(|s| s.set((sel, b, 0xfff0)));
-            }
+    if SCR16.with(|s| s.get().0) == 0 && let Some(b) = crate::mem::alloc(0x10000) {
+        let sel = sel_alloc(b, 0x10000);
+        if sel != 0 {
+            SCR16.with(|s| s.set((sel, b, 0xfff0)));
         }
     }
 }
@@ -704,10 +694,8 @@ pub fn dispatch(cpu: &mut Cpu, a: u32) -> bool {
     cpu.regs[ESP] = (cpu.regs[ESP] & 0xffff_0000) | nsp;
     set_seg(cpu, 1, ret_cs);
     cpu.eip = ret_ip;
-    if conv == Conv::Register {
-        if let Some(after) = AFTER.with(|a| a.take()) {
-            after(cpu);
-        }
+    if conv == Conv::Register && let Some(after) = AFTER.with(|a| a.take()) {
+        after(cpu);
     }
     false
 }

@@ -695,15 +695,11 @@ fn update_changed<'a>(px: &mut [u32], ww: usize, dirty: Rect, src: impl Fn(i32) 
     let (mut x0, mut x1) = (w, 0);
     for y in t..b {
         let (p, s) = (&px[row(y)], src(y));
-        if x0 > 0 {
-            if let Some(k) = first_diff(&p[..x0], &s[..x0]) {
-                x0 = k;
-            }
+        if x0 > 0 && let Some(k) = first_diff(&p[..x0], &s[..x0]) {
+            x0 = k;
         }
-        if x1 < w {
-            if let Some(k) = last_diff(&p[x1..], &s[x1..]) {
-                x1 += k;
-            }
+        if x1 < w && let Some(k) = last_diff(&p[x1..], &s[x1..]) {
+            x1 += k;
         }
         if x0 == 0 && x1 == w {
             break;
@@ -744,21 +740,17 @@ impl Display {
     /// # Safety
     /// See `vnhost_window_draw_shared`.
     unsafe fn draw_shared(&mut self, hwnd: u32, dirty: Rect, bits: *const u32, w: c_int, h: c_int) {
-        if let Some(win) = self.wins.get_mut(&hwnd) {
-            if win.rect.w() == w && win.rect.h() == h {
-                win.shared = Some(Surface::of(bits));
-            }
+        if let Some(win) = self.wins.get_mut(&hwnd) && win.rect.w() == w && win.rect.h() == h {
+            win.shared = Some(Surface::of(bits));
         }
         self.draw(hwnd, dirty, bits, w, 0, 0)
     }
 
     fn unshare(&mut self, hwnd: u32) {
-        if let Some(win) = self.wins.get_mut(&hwnd) {
-            if win.shared.is_some() {
-                let px = win.px().to_vec();
-                win.pixels = px;
-                win.shared = None;
-            }
+        if let Some(win) = self.wins.get_mut(&hwnd) && win.shared.is_some() {
+            let px = win.px().to_vec();
+            win.pixels = px;
+            win.shared = None;
         }
     }
 

@@ -362,10 +362,8 @@ fn fit(format: &str, v: u64) -> u64 {
 /// A texel's bytes as copyTextureToBuffer writes them (`bpp` of them): those written, for a wide
 /// texel's hash; else the value's bytes over and over.
 fn texel_bytes(v: u64, bpp: usize) -> Vec<u8> {
-    if bpp > 8 {
-        if let Some(b) = WIDE.with(|w| w.borrow().get(&v).filter(|b| b.len() == bpp).cloned()) {
-            return b;
-        }
+    if bpp > 8 && let Some(b) = WIDE.with(|w| w.borrow().get(&v).filter(|b| b.len() == bpp).cloned()) {
+        return b;
     }
     let b = v.to_le_bytes();
     (0..bpp).map(|k| b[k % 8]).collect()
@@ -842,27 +840,21 @@ impl Model {
     pub fn sampler(&mut self, s: &str) -> u32 {
         let j = self.json(s, "createSampler").unwrap_or(J::Null);
         for k in ["addressModeU", "addressModeV", "addressModeW"] {
-            if let Some(m) = j.s(k) {
-                if !matches!(m, "repeat" | "mirror-repeat" | "clamp-to-edge") {
-                    self.err(format!("createSampler: {k} {m}"));
-                }
+            if let Some(m) = j.s(k) && !matches!(m, "repeat" | "mirror-repeat" | "clamp-to-edge") {
+                self.err(format!("createSampler: {k} {m}"));
             }
         }
         for k in ["magFilter", "minFilter", "mipmapFilter"] {
-            if let Some(m) = j.s(k) {
-                if !matches!(m, "nearest" | "linear") {
-                    self.err(format!("createSampler: {k} {m}"));
-                }
+            if let Some(m) = j.s(k) && !matches!(m, "nearest" | "linear") {
+                self.err(format!("createSampler: {k} {m}"));
             }
         }
         let (lo, hi) = (j.num("lodMinClamp").unwrap_or(0.0), j.num("lodMaxClamp").unwrap_or(32.0));
         if lo < 0.0 || hi < lo {
             self.err(format!("createSampler: lod clamps {lo} {hi}"));
         }
-        if let Some(a) = j.u("maxAnisotropy") {
-            if a > 1 && (j.s("magFilter") != Some("linear") || j.s("minFilter") != Some("linear") || j.s("mipmapFilter") != Some("linear")) {
-                self.err("createSampler: anisotropy without linear filters".into());
-            }
+        if let Some(a) = j.u("maxAnisotropy") && a > 1 && (j.s("magFilter") != Some("linear") || j.s("minFilter") != Some("linear") || j.s("mipmapFilter") != Some("linear")) {
+            self.err("createSampler: anisotropy without linear filters".into());
         }
         let h = hash_str(s);
         // (a comparison sampler binds as "comparison", a filtering one as "filtering")
@@ -973,13 +965,9 @@ impl Model {
         let j = self.json(s, "createPipelineLayout").unwrap_or(J::Null);
         let mut g = Vec::new();
         for l in j.arr("bindGroupLayouts").to_vec() {
-            if let J::Num(n) = l {
-                if let Some(a) = self.at(n as u32, "createPipelineLayout") {
-                    if matches!(self.objs[a], Obj::Layout(_)) {
-                        g.push(a);
-                        continue;
-                    }
-                }
+            if let J::Num(n) = l && let Some(a) = self.at(n as u32, "createPipelineLayout") && matches!(self.objs[a], Obj::Layout(_)) {
+                g.push(a);
+                continue;
             }
             self.err("createPipelineLayout: not a bind group layout".into());
         }
@@ -1191,15 +1179,11 @@ impl Model {
         if !matches!(topo, "point-list" | "line-list" | "line-strip" | "triangle-list" | "triangle-strip") {
             self.err(format!("{what}: topology {topo}"));
         }
-        if let Some(sf) = prim.and_then(|p| p.s("stripIndexFormat")) {
-            if !topo.ends_with("strip") || !matches!(sf, "uint16" | "uint32") {
-                self.err(format!("{what}: stripIndexFormat {sf} with {topo}"));
-            }
+        if let Some(sf) = prim.and_then(|p| p.s("stripIndexFormat")) && (!topo.ends_with("strip") || !matches!(sf, "uint16" | "uint32")) {
+            self.err(format!("{what}: stripIndexFormat {sf} with {topo}"));
         }
-        if let Some(c) = prim.and_then(|p| p.s("cullMode")) {
-            if !matches!(c, "none" | "front" | "back") {
-                self.err(format!("{what}: cullMode {c}"));
-            }
+        if let Some(c) = prim.and_then(|p| p.s("cullMode")) && !matches!(c, "none" | "front" | "back") {
+            self.err(format!("{what}: cullMode {c}"));
         }
         let cmp_ok = |c: &str| matches!(c, "never" | "less" | "equal" | "less-equal" | "greater" | "not-equal" | "greater-equal" | "always");
         let depth = j.get("depthStencil").map(|d| {
@@ -1249,10 +1233,8 @@ impl Model {
         if ms.and_then(|m| m.b("alphaToCoverageEnabled")).unwrap_or(false) && (samples == 1 || targets.is_empty()) {
             self.err(format!("{what}: alphaToCoverage with {samples} samples and {} targets", targets.len()));
         }
-        if let Some(m) = ms.and_then(|m| m.num("mask")) {
-            if m < 0.0 || m > u32::MAX as f64 || m.fract() != 0.0 {
-                self.err(format!("{what}: multisample mask {m}"));
-            }
+        if let Some(m) = ms.and_then(|m| m.num("mask")) && (m < 0.0 || m > u32::MAX as f64 || m.fract() != 0.0) {
+            self.err(format!("{what}: multisample mask {m}"));
         }
         if fs.is_none() && j.get("fragment").is_some() {
             // (the error was given)
@@ -1818,39 +1800,37 @@ impl Model {
             colors.push(Attachment { view: a, resolve, load_clear: (load == "clear").then(|| fit(&format, clear_texel(&format, color))), store: store == "store", stencil_clear: None, stencil_store: true });
         }
         let mut depth = None;
-        if let Some(d) = j.get("depthStencilAttachment") {
-            if let Some(a) = d.u("view").and_then(|v| check_view(self, v, false)) {
-                let vw = self.view_of(a).cloned().unwrap();
-                let ro = d.b("depthReadOnly").unwrap_or(false);
-                let (load, store) = (d.s("depthLoadOp"), d.s("depthStoreOp"));
-                if !ro && (!matches!(load, Some("load" | "clear")) || !matches!(store, Some("store" | "discard"))) {
-                    self.err(format!("{what}: depthLoadOp {load:?} depthStoreOp {store:?}"));
-                }
-                let z = d.num("depthClearValue");
-                if load == Some("clear") && !z.is_some_and(|z| (0.0..=1.0).contains(&z)) {
-                    self.err(format!("{what}: depthClearValue {z:?}"));
-                }
-                let (sl, ss) = (d.s("stencilLoadOp"), d.s("stencilStoreOp"));
-                let sro = d.b("stencilReadOnly").unwrap_or(false);
-                if has_stencil(&vw.format) {
-                    if !sro && (!matches!(sl, Some("load" | "clear")) || !matches!(ss, Some("store" | "discard"))) {
-                        self.err(format!("{what}: {} needs stencilLoadOp/StoreOp", vw.format));
-                    }
-                } else if sl.is_some() || ss.is_some() {
-                    self.err(format!("{what}: stencil ops for {}", vw.format));
-                }
-                if d.get("resolveTarget").is_some() {
-                    self.err(format!("{what}: a depth attachment with a resolveTarget"));
-                }
-                depth = Some(Attachment {
-                    view: a,
-                    resolve: None,
-                    load_clear: (load == Some("clear")).then(|| depth_value(&vw.format, z.unwrap_or(0.0) as f32)),
-                    store: store != Some("discard"),
-                    stencil_clear: (sl == Some("clear")).then(|| stencil_value(d.u("stencilClearValue").unwrap_or(0))),
-                    stencil_store: ss != Some("discard"),
-                });
+        if let Some(d) = j.get("depthStencilAttachment") && let Some(a) = d.u("view").and_then(|v| check_view(self, v, false)) {
+            let vw = self.view_of(a).cloned().unwrap();
+            let ro = d.b("depthReadOnly").unwrap_or(false);
+            let (load, store) = (d.s("depthLoadOp"), d.s("depthStoreOp"));
+            if !ro && (!matches!(load, Some("load" | "clear")) || !matches!(store, Some("store" | "discard"))) {
+                self.err(format!("{what}: depthLoadOp {load:?} depthStoreOp {store:?}"));
             }
+            let z = d.num("depthClearValue");
+            if load == Some("clear") && !z.is_some_and(|z| (0.0..=1.0).contains(&z)) {
+                self.err(format!("{what}: depthClearValue {z:?}"));
+            }
+            let (sl, ss) = (d.s("stencilLoadOp"), d.s("stencilStoreOp"));
+            let sro = d.b("stencilReadOnly").unwrap_or(false);
+            if has_stencil(&vw.format) {
+                if !sro && (!matches!(sl, Some("load" | "clear")) || !matches!(ss, Some("store" | "discard"))) {
+                    self.err(format!("{what}: {} needs stencilLoadOp/StoreOp", vw.format));
+                }
+            } else if sl.is_some() || ss.is_some() {
+                self.err(format!("{what}: stencil ops for {}", vw.format));
+            }
+            if d.get("resolveTarget").is_some() {
+                self.err(format!("{what}: a depth attachment with a resolveTarget"));
+            }
+            depth = Some(Attachment {
+                view: a,
+                resolve: None,
+                load_clear: (load == Some("clear")).then(|| depth_value(&vw.format, z.unwrap_or(0.0) as f32)),
+                store: store != Some("discard"),
+                stencil_clear: (sl == Some("clear")).then(|| stencil_value(d.u("stencilClearValue").unwrap_or(0))),
+                stencil_store: ss != Some("discard"),
+            });
         }
         for (i, r) in rsubs.iter().enumerate() {
             if subs.contains(r) || rsubs[..i].contains(r) {
@@ -1918,12 +1898,8 @@ impl Model {
             if o % 256 != 0 {
                 self.err(format!("{what}: dynamic offset {o}"));
             }
-            if let Some((_, Entry::Buffer(b, off, size))) = entries.iter().find(|x| x.0 == e.binding) {
-                if let Obj::Buffer(bf) = &self.objs[*b] {
-                    if *off as u64 + o as u64 + *size as u64 > bf.size as u64 {
-                        self.err(format!("{what}: binding {}: {size} bytes at {off}+{o} of a {}-byte buffer", e.binding, bf.size));
-                    }
-                }
+            if let Some((_, Entry::Buffer(b, off, size))) = entries.iter().find(|x| x.0 == e.binding) && let Obj::Buffer(bf) = &self.objs[*b] && *off as u64 + o as u64 + *size as u64 > bf.size as u64 {
+                self.err(format!("{what}: binding {}: {size} bytes at {off}+{o} of a {}-byte buffer", e.binding, bf.size));
             }
         }
         let st = &mut self.pass.as_mut().unwrap().3;
@@ -2283,16 +2259,14 @@ impl Model {
         // vertices and indices: the bytes it reads
         let (n, inst, first, base, first_inst) = (d.args[0], d.args[1], d.args[2], d.args[3].cast_signed(), d.args[4]);
         let mut max_vertex = first as u64 + n as u64;
-        if d.indexed {
-            if let Some((b, u32_, off)) = d.st.ibuf {
-                let Obj::Buffer(bf) = &self.objs[b] else { unreachable!() };
-                let sz = if u32_ { 4 } else { 2 };
-                let lo = us(off) + us(first) * sz;
-                let hi = (lo + us(n) * sz).min(bf.data.len());
-                let ix = &bf.data[lo.min(hi)..hi];
-                h = hash_bytes(h, ix);
-                max_vertex = ix.chunks(sz).map(|c| if sz == 4 { u32::from_le_bytes(c.try_into().unwrap()) } else { lo32(u16::from_le_bytes(c.try_into().unwrap())) } as i64 + base as i64).max().unwrap_or(0).max(0) as u64 + 1;
-            }
+        if d.indexed && let Some((b, u32_, off)) = d.st.ibuf {
+            let Obj::Buffer(bf) = &self.objs[b] else { unreachable!() };
+            let sz = if u32_ { 4 } else { 2 };
+            let lo = us(off) + us(first) * sz;
+            let hi = (lo + us(n) * sz).min(bf.data.len());
+            let ix = &bf.data[lo.min(hi)..hi];
+            h = hash_bytes(h, ix);
+            max_vertex = ix.chunks(sz).map(|c| if sz == 4 { u32::from_le_bytes(c.try_into().unwrap()) } else { lo32(u16::from_le_bytes(c.try_into().unwrap())) } as i64 + base as i64).max().unwrap_or(0).max(0) as u64 + 1;
         }
         for (k, &stride) in p.buffers.iter().enumerate() {
             if let Some((b, off)) = d.st.vbufs.get(k).copied().flatten() {
@@ -2337,10 +2311,8 @@ impl Model {
             if let Some(v) = a.load_clear {
                 tx.texels[s].fill(v);
             }
-            if let Some(v) = a.stencil_clear {
-                if let Some(st) = tx.stencil.get_mut(s) {
-                    st.fill(v);
-                }
+            if let Some(v) = a.stencil_clear && let Some(st) = tx.stencil.get_mut(s) {
+                st.fill(v);
             }
         }
         for d in draws {
@@ -2406,27 +2378,25 @@ impl Model {
                     }
                 }
             }
-            if let (Some((zt, zs, (w, h, _))), Some(pd)) = (zatt, &p.depth) {
-                if pd.1 {
-                    for y in y0..y1.min(h) {
-                        for x in x0..x1.min(w) {
-                            let at = us(y * w + x);
-                            let oz = self.tex(zt).texels[zs][at];
-                            let nz = match clear {
-                                _ if zsrc.is_some() => {
-                                    // (the bits of a float, as depth holds them: in 0..1)
-                                    let (st, ss, sw, sh, o) = zsrc.unwrap();
-                                    let (sx, sy) = (x as i64 - o[0], y as i64 - o[1]);
-                                    let v = if (0..sw as i64).contains(&sx) && (0..sh as i64).contains(&sy) { self.tex(st).texels[ss][(sy * sw as i64 + sx) as usize] } else { 0 };
-                                    let f = f32::from_bits(lo32(v));
-                                    depth_value(&self.tex(zt).format, if f.is_nan() { 0.0 } else { f })
-                                }
-                                Some((_, z)) if p.clear_shader => depth_value(&self.tex(zt).format, z),
-                                _ => mix(mix(mix(sig ^ 0xde, (x as u64) << 32 | y as u64), oz), if pd.2 != "always" { 1 } else { 0 }),
-                            };
-                            let Obj::Texture(tx) = &mut self.objs[zt] else { continue };
-                            tx.texels[zs][at] = nz;
-                        }
+            if let (Some((zt, zs, (w, h, _))), Some(pd)) = (zatt, &p.depth) && pd.1 {
+                for y in y0..y1.min(h) {
+                    for x in x0..x1.min(w) {
+                        let at = us(y * w + x);
+                        let oz = self.tex(zt).texels[zs][at];
+                        let nz = match clear {
+                            _ if zsrc.is_some() => {
+                                // (the bits of a float, as depth holds them: in 0..1)
+                                let (st, ss, sw, sh, o) = zsrc.unwrap();
+                                let (sx, sy) = (x as i64 - o[0], y as i64 - o[1]);
+                                let v = if (0..sw as i64).contains(&sx) && (0..sh as i64).contains(&sy) { self.tex(st).texels[ss][(sy * sw as i64 + sx) as usize] } else { 0 };
+                                let f = f32::from_bits(lo32(v));
+                                depth_value(&self.tex(zt).format, if f.is_nan() { 0.0 } else { f })
+                            }
+                            Some((_, z)) if p.clear_shader => depth_value(&self.tex(zt).format, z),
+                            _ => mix(mix(mix(sig ^ 0xde, (x as u64) << 32 | y as u64), oz), if pd.2 != "always" { 1 } else { 0 }),
+                        };
+                        let Obj::Texture(tx) = &mut self.objs[zt] else { continue };
+                        tx.texels[zs][at] = nz;
                     }
                 }
             }
@@ -2448,10 +2418,8 @@ impl Model {
             if !a.store {
                 tx.texels[s].fill(0);
             }
-            if !a.stencil_store {
-                if let Some(st) = tx.stencil.get_mut(s) {
-                    st.fill(0);
-                }
+            if !a.stencil_store && let Some(st) = tx.stencil.get_mut(s) {
+                st.fill(0);
             }
         }
     }
@@ -2510,10 +2478,8 @@ impl Model {
                 }
             }
             for b in bufs {
-                if let Obj::Buffer(bf) = &self.objs[b] {
-                    if bf.destroyed || bf.mapped {
-                        bad.push(format!("a {} buffer", if bf.destroyed { "destroyed" } else { "mapped" }));
-                    }
+                if let Obj::Buffer(bf) = &self.objs[b] && (bf.destroyed || bf.mapped) {
+                    bad.push(format!("a {} buffer", if bf.destroyed { "destroyed" } else { "mapped" }));
                 }
             }
         }
@@ -2702,10 +2668,8 @@ fn uses_global(m: &naga::Module, f: &naga::Function, g: naga::Handle<naga::Globa
 
 fn uses_global_in(m: &naga::Module, f: &naga::Function, g: naga::Handle<naga::GlobalVariable>, seen: &mut Vec<naga::Handle<naga::Function>>) -> bool {
     for (_, e) in f.expressions.iter() {
-        if let naga::Expression::GlobalVariable(h) = e {
-            if *h == g {
-                return true;
-            }
+        if let naga::Expression::GlobalVariable(h) = e && *h == g {
+            return true;
         }
     }
     // calls

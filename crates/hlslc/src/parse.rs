@@ -1154,20 +1154,14 @@ impl Parser {
                 }
                 "(" => {
                     // a cast: (type) expr
-                    if let Some(Tok::Ident(s)) = self.peek_at(1) {
-                        if self.is_type_name(s) && s != "struct" {
-                            let save = self.p;
-                            self.p += 1;
-                            if let Ok(t) = self.ty() {
-                                if let Ok(t) = self.array_suffix(t) {
-                                    if self.eat(")") {
-                                        let e = self.unary()?;
-                                        return Ok(Expr::Cast(t, Box::new(e)));
-                                    }
-                                }
-                            }
-                            self.p = save;
+                    if let Some(Tok::Ident(s)) = self.peek_at(1) && self.is_type_name(s) && s != "struct" {
+                        let save = self.p;
+                        self.p += 1;
+                        if let Ok(t) = self.ty() && let Ok(t) = self.array_suffix(t) && self.eat(")") {
+                            let e = self.unary()?;
+                            return Ok(Expr::Cast(t, Box::new(e)));
                         }
+                        self.p = save;
                     }
                     None
                 }

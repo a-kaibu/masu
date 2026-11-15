@@ -43,10 +43,8 @@ impl D {
 
     /// The end of the stream: the picture a decoder with B pictures still holds.
     fn flush(&mut self, out: &mut Vec<Out>) {
-        if let D::V(d) = self {
-            if let Some(p) = d.flush() {
-                out.push(Out { yuv: yuv(&p), key: p.key, conceal: false });
-            }
+        if let D::V(d) = self && let Some(p) = d.flush() {
+            out.push(Out { yuv: yuv(&p), key: p.key, conceal: false });
         }
     }
 }

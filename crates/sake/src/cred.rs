@@ -266,10 +266,8 @@ fn cred_write(c: &mut Ctx, wide: bool) -> u32 {
     }
     let mut cr = cred_in(p, wide);
     cr.written = now();
-    if flags & 1 != 0 {
-        if let Some(old) = read(&cr.target, cr.ty) {
-            cr.blob = old.blob;
-        }
+    if flags & 1 != 0 && let Some(old) = read(&cr.target, cr.ty) {
+        cr.blob = old.blob;
     }
     match write(cr) {
         Ok(()) => {

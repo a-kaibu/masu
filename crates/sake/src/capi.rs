@@ -102,12 +102,8 @@ static KEY_CACHE: Mutex<Option<KeyCache>> = Mutex::new(None);
 /// trust nothing) and the provider's generation is the one it was read for.
 fn cached_key(cache: &mut Option<KeyCache>, at: (String, u32), stamps: (u64, u64), generation: &[u8], load: impl FnOnce() -> Result<Key, u32>) -> Result<Key, u32> {
     let c = cache.get_or_insert_with(HashMap::new);
-    if stamps.0 != 0 && stamps.1 != 0 {
-        if let Some((a, b, g, k)) = c.get(&at) {
-            if (*a, *b) == stamps && g == generation {
-                return Ok(k.clone());
-            }
-        }
+    if stamps.0 != 0 && stamps.1 != 0 && let Some((a, b, g, k)) = c.get(&at) && (*a, *b) == stamps && g == generation {
+        return Ok(k.clone());
     }
     c.remove(&at);
     let k = load()?;

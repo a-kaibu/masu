@@ -931,11 +931,9 @@ fn mb_release(c: &mut Ctx) -> u32 {
         b.refs
     })
     .unwrap_or(0);
-    if n == 0 {
-        if let Some(b) = BUFS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&this) {
-            mem::heap_free(b.data);
-            mem::heap_free(this);
-        }
+    if n == 0 && let Some(b) = BUFS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&this) {
+        mem::heap_free(b.data);
+        mem::heap_free(this);
     }
     n
 }
@@ -1392,10 +1390,8 @@ fn video_out(v: &mp4::Video, want: &Store, processing: bool) -> Option<(VOut, St
         return None;
     }
     // (a size of its own: no scaling here)
-    if let Some(Val::U64(sz)) = want.get(&source::k_frame_size()) {
-        if *sz != (v.w as u64) << 32 | v.h as u64 {
-            return None;
-        }
+    if let Some(Val::U64(sz)) = want.get(&source::k_frame_size()) && *sz != (v.w as u64) << 32 | v.h as u64 {
+        return None;
     }
     let wm = v.wm.as_ref().and_then(|i| match i {
         crate::wmdec::Info::Video { fourcc, .. } => Some(*fourcc),
@@ -1504,10 +1500,8 @@ fn sr_read(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     putp(out, 0);
-    if i != ALL_STREAMS {
-        if let Err(e) = on_stream(this, i, |_, _| ()) {
-            return e;
-        }
+    if i != ALL_STREAMS && let Err(e) = on_stream(this, i, |_, _| ()) {
+        return e;
     }
     let (hr, k, flags, t, sample) = read_one(c, this, i);
     if actual != 0 {
@@ -1650,10 +1644,8 @@ fn worker(c: &mut Ctx) -> u32 {
 /// Flush(DWORD stream): asynchronous, the reads not answered yet are dropped and OnFlush told.
 fn sr_flush(c: &mut Ctx) -> u32 {
     let (this, i) = (c.a(0), c.a(1));
-    if i != ALL_STREAMS {
-        if let Err(e) = on_stream(this, i, |_, _| ()) {
-            return e;
-        }
+    if i != ALL_STREAMS && let Err(e) = on_stream(this, i, |_, _| ()) {
+        return e;
     }
     if reader(this, |r| r.callback != 0).unwrap_or(false) {
         request(this, Req::Flush(i));
@@ -1709,10 +1701,8 @@ fn sr_presentation(c: &mut Ctx) -> u32 {
         w32(p + 8, 6);
         return 0;
     }
-    if i != MEDIASOURCE {
-        if let Err(e) = on_stream(c.a(0), i, |_, _| ()) {
-            return e;
-        }
+    if i != MEDIASOURCE && let Err(e) = on_stream(c.a(0), i, |_, _| ()) {
+        return e;
     }
     Hr::AttributeNotFound.code()
 }
@@ -1848,12 +1838,10 @@ pub fn file_url_path(u: &str) -> String {
     let b = rest.as_bytes();
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 3 <= b.len() {
-            if let Ok(v) = u8::from_str_radix(&rest[i + 1..i + 3], 16) {
-                out.push(v);
-                i += 3;
-                continue;
-            }
+        if b[i] == b'%' && i + 3 <= b.len() && let Ok(v) = u8::from_str_radix(&rest[i + 1..i + 3], 16) {
+            out.push(v);
+            i += 3;
+            continue;
         }
         out.push(if b[i] == b'/' { b'\\' } else { b[i] });
         i += 1;

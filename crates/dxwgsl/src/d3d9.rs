@@ -338,20 +338,16 @@ impl Shader {
                 return false;
             }
             // (once: a register declared twice was two variables of one name, invalid WGSL)
-            if let (DCL, Some(d)) = (i.op, i.dst) {
-                if self.ins.iter().filter(|j| j.op == DCL && j.dst.is_some_and(|e| e.ty == d.ty && e.num == d.num)).count() > 1 {
-                    return false;
-                }
+            if let (DCL, Some(d)) = (i.op, i.dst) && self.ins.iter().filter(|j| j.op == DCL && j.dst.is_some_and(|e| e.ty == d.ty && e.num == d.num)).count() > 1 {
+                return false;
             }
             let params = i.dst.iter().chain(&i.src).chain(&i.predicated);
             for p in params {
                 if !reg_ok(p) {
                     return false;
                 }
-                if let Some((ty, num, _)) = p.rel {
-                    if !matches!(ty, ADDR | LOOP) || (ty == ADDR && (ps || num != 0)) {
-                        return false;
-                    }
+                if let Some((ty, num, _)) = p.rel && (!matches!(ty, ADDR | LOOP) || (ty == ADDR && (ps || num != 0))) {
+                    return false;
                 }
             }
             let rows = match i.op {
@@ -377,10 +373,8 @@ impl Shader {
                     return false;
                 }
             }
-            if let Some(p) = i.predicated {
-                if p.ty != PREDICATE {
-                    return false;
-                }
+            if let Some(p) = i.predicated && p.ty != PREDICATE {
+                return false;
             }
             // sources: values, not booleans, loop counters or integers (those go to if/loop/rep)
             let special = matches!(i.op, IF | CALL_NZ | LOOPOP | REP | BREAKP);
@@ -470,17 +464,13 @@ impl Shader {
                         return false;
                     }
                 }
-                BREAK | BREAKC | BREAKP => {
-                    if !blocks.iter().any(|&b| b == LOOPOP || b == REP) {
-                        return false;
-                    }
+                BREAK | BREAKC | BREAKP if !blocks.iter().any(|&b| b == LOOPOP || b == REP) => {
+                    return false;
                 }
                 _ => {}
             }
-            if i.src.iter().any(|p| p.ty == LOOP) || i.src.iter().any(|p| p.rel.is_some_and(|r| r.0 == LOOP)) {
-                if !blocks.contains(&LOOPOP) {
-                    return false;
-                }
+            if (i.src.iter().any(|p| p.ty == LOOP) || i.src.iter().any(|p| p.rel.is_some_and(|r| r.0 == LOOP))) && !blocks.contains(&LOOPOP) {
+                return false;
             }
         }
         blocks.is_empty()
@@ -521,27 +511,21 @@ impl Shader {
                 M3X2 => 2,
                 _ => 0,
             };
-            if rows > 0 {
-                if let Some(p) = ins.src.get(1) {
-                    if matches!(p.ty, CONST | CONST2 | CONST3 | CONST4) {
-                        max_const = max_const.max(const_index(p) + rows);
-                    }
-                }
+            if rows > 0 && let Some(p) = ins.src.get(1) && matches!(p.ty, CONST | CONST2 | CONST3 | CONST4) {
+                max_const = max_const.max(const_index(p) + rows);
             }
         }
         if self.pixel && self.major < 2 {
             // ps 1.x: texture stages are implicit samplers
             for ins in &self.ins {
-                if ins.op == TEX || (ins.op >= 67 && ins.op <= 87 && ins.op != 78 && ins.op != 79 && ins.op != 80 && ins.op != 81) {
-                    if let Some(d) = ins.dst {
-                        if self.major == 1 && self.minor >= 4 {
-                            if let Some(src) = ins.src.first() {
-                                let _ = src;
-                            }
-                            self.samplers.push((d.num, 2));
-                        } else {
-                            self.samplers.push((d.num, 2));
+                if (ins.op == TEX || (ins.op >= 67 && ins.op <= 87 && ins.op != 78 && ins.op != 79 && ins.op != 80 && ins.op != 81)) && let Some(d) = ins.dst {
+                    if self.major == 1 && self.minor >= 4 {
+                        if let Some(src) = ins.src.first() {
+                            let _ = src;
                         }
+                        self.samplers.push((d.num, 2));
+                    } else {
+                        self.samplers.push((d.num, 2));
                     }
                 }
             }
@@ -555,10 +539,8 @@ impl Shader {
         if self.pixel {
             if self.major >= 3 {
                 for &(reg, usage, index) in &self.decls {
-                    if reg >> 16 == INPUT {
-                        if let Some(l) = location(usage, index) {
-                            self.reads |= 1 << l;
-                        }
+                    if reg >> 16 == INPUT && let Some(l) = location(usage, index) {
+                        self.reads |= 1 << l;
                     }
                 }
             } else {
@@ -566,10 +548,8 @@ impl Shader {
             }
         } else if self.major >= 3 {
             for &(reg, usage, index) in &self.decls {
-                if reg >> 16 == OUTPUT {
-                    if let Some(l) = location(usage, index) {
-                        self.writes |= 1 << l;
-                    }
+                if reg >> 16 == OUTPUT && let Some(l) = location(usage, index) {
+                    self.writes |= 1 << l;
                 }
             }
         } else {
@@ -883,10 +863,8 @@ impl<'a> Gen<'a> {
                             self.loops -= 1;
                         }
                         // (after an inner loop, aL is the enclosing loop's again)
-                        if ins.op == ENDLOOP && self.al.pop().is_some() {
-                            if let Some(outer) = self.al.last().cloned() {
-                                self.line(&format!("aL = {};", outer));
-                            }
+                        if ins.op == ENDLOOP && self.al.pop().is_some() && let Some(outer) = self.al.last().cloned() {
+                            self.line(&format!("aL = {};", outer));
                         }
                         self.tex_level_pop();
                     }
@@ -1142,10 +1120,8 @@ impl<'a> Gen<'a> {
                     OUTPUT => o = o.max(p.num + 1),
                     _ => {}
                 }
-                if let Some((ty, num, _)) = p.rel {
-                    if ty == ADDR {
-                        a = a.max(num + 1);
-                    }
+                if let Some((ty, num, _)) = p.rel && ty == ADDR {
+                    a = a.max(num + 1);
                 }
             }
         }

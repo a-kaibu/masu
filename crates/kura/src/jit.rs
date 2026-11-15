@@ -2541,12 +2541,8 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
                     return install_fn(st, eip, &r.bytes, &r.starts, &r.sites, &r.code);
                 }
                 crate::crashlog::phase("jit: saved fn");
-                if cpu.mode64 == 0 {
-                    if let Some(i) = find_saved_fn(mem, eip) {
-                        if load_saved_fn(st, i) {
-                            return true;
-                        }
-                    }
+                if cpu.mode64 == 0 && let Some(i) = find_saved_fn(mem, eip) && load_saved_fn(st, i) {
+                    return true;
                 }
             }
             crate::crashlog::phase("jit: shared");
@@ -2556,10 +2552,8 @@ pub(crate) fn maybe_compile(cpu: &mut Cpu, mem: &mut Linear) -> bool {
             }
             // (a 64-bit region checks the upper half of RIP itself on entry)
             crate::crashlog::phase("jit: saved");
-            if let Some(i) = find_saved(mem, &[eip], false, (cpu.trap_lo, cpu.trap_hi)) {
-                if load_saved(st, i) {
-                    return true;
-                }
+            if let Some(i) = find_saved(mem, &[eip], false, (cpu.trap_lo, cpu.trap_hi)) && load_saved(st, i) {
+                return true;
             }
         }
         let n = st.misses.entry(eip).or_insert(0);
@@ -2757,11 +2751,9 @@ fn compile_fn(st: &mut State, eip: u32, (lo, hi): (u32, u32), mem: &mut Linear, 
         return false;
     }
     // another thread's build (as new as the one this would be, or newer)
-    if let Some(r) = shared(mem, &fn_key(eip)) {
-        if r.build > st.fn_builds.get(&eip).copied().unwrap_or(0) {
-            st.fn_builds.insert(eip, r.build);
-            return install_fn(st, eip, &r.bytes, &r.starts, &r.sites, &r.code);
-        }
+    if let Some(r) = shared(mem, &fn_key(eip)) && r.build > st.fn_builds.get(&eip).copied().unwrap_or(0) {
+        st.fn_builds.insert(eip, r.build);
+        return install_fn(st, eip, &r.bytes, &r.starts, &r.sites, &r.code);
     }
     *st.fn_builds.entry(eip).or_insert(0) += 1;
     let build = st.fn_builds[&eip];

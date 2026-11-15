@@ -502,15 +502,11 @@ impl Kern {
     fn destroy(&mut self, e: u32) {
         self.disconnect_end(e, PIPE_BROKEN);
         let end = self.ends.remove(&e).unwrap();
-        if end.server {
-            if let Some(name) = &end.pipe {
-                if let Some(p) = self.pipes.get_mut(name) {
-                    p.instances -= 1;
-                    p.listeners.retain(|&x| x != e);
-                    if p.instances == 0 {
-                        self.pipes.remove(name);
-                    }
-                }
+        if end.server && let Some(name) = &end.pipe && let Some(p) = self.pipes.get_mut(name) {
+            p.instances -= 1;
+            p.listeners.retain(|&x| x != e);
+            if p.instances == 0 {
+                self.pipes.remove(name);
             }
         }
         self.changed();
@@ -894,12 +890,10 @@ impl Kern {
         self.release_process(pid);
         // (its threads' mutexes are abandoned, its handles of named objects close)
         for o in self.sync.values_mut() {
-            if let Sync::Mutex { owner, pid: op, count, abandoned } = &mut o.sync {
-                if *owner != 0 && *op == pid {
-                    *owner = 0;
-                    *count = 0;
-                    *abandoned = true;
-                }
+            if let Sync::Mutex { owner, pid: op, count, abandoned } = &mut o.sync && *owner != 0 && *op == pid {
+                *owner = 0;
+                *count = 0;
+                *abandoned = true;
             }
         }
         // (its windows go; what was sent to them is answered 0)
@@ -1205,13 +1199,11 @@ impl Kern {
     pub fn abandon(&mut self, tid: u32) {
         let mut any = false;
         for o in self.sync.values_mut() {
-            if let Sync::Mutex { owner, count, abandoned, .. } = &mut o.sync {
-                if *owner == tid {
-                    *owner = 0;
-                    *count = 0;
-                    *abandoned = true;
-                    any = true;
-                }
+            if let Sync::Mutex { owner, count, abandoned, .. } = &mut o.sync && *owner == tid {
+                *owner = 0;
+                *count = 0;
+                *abandoned = true;
+                any = true;
             }
         }
         if any {

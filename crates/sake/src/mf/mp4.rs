@@ -257,10 +257,8 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     if let Some((ys, _)) = child(b, ss, se, b"stss") {
         key = vec![false; count];
         for i in 0..(u32be(b, ys + 4)? as usize).min(count) {
-            if let Some(k) = u32be(b, ys + 8 + 4 * i).and_then(|n| (n as usize).checked_sub(1)) {
-                if k < count {
-                    key[k] = true;
-                }
+            if let Some(k) = u32be(b, ys + 8 + 4 * i).and_then(|n| (n as usize).checked_sub(1)) && k < count {
+                key[k] = true;
             }
         }
     }

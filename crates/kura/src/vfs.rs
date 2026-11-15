@@ -655,21 +655,19 @@ impl Fs {
                 }
                 return Err(libc::ENOENT);
             };
-            if let Some(Node { data: Data::Link(target), .. }) = self.node(child) {
-                if !last || follow_last {
-                    links += 1;
-                    if links > 40 {
-                        return Err(libc::ELOOP);
-                    }
-                    if target.starts_with('/') {
-                        cur.clear();
-                        node = self.mount_at("/");
-                    }
-                    for (i, t) in target.split('/').filter(|t| !t.is_empty() && *t != ".").enumerate() {
-                        todo.insert(i, t.to_string());
-                    }
-                    continue;
+            if let Some(Node { data: Data::Link(target), .. }) = self.node(child) && (!last || follow_last) {
+                links += 1;
+                if links > 40 {
+                    return Err(libc::ELOOP);
                 }
+                if target.starts_with('/') {
+                    cur.clear();
+                    node = self.mount_at("/");
+                }
+                for (i, t) in target.split('/').filter(|t| !t.is_empty() && *t != ".").enumerate() {
+                    todo.insert(i, t.to_string());
+                }
+                continue;
             }
             cur.push(c);
             node = Some(child);
@@ -741,12 +739,10 @@ impl Fs {
     /// Frees a node once no name or open handle refers to it.
     fn gc(&mut self, ino: Ino) {
         let linked = self.node(ino).is_some_and(|n| n.nlink > 0 && !(matches!(n.data, Data::Dir(_)) && n.nlink < 2));
-        if !linked && self.node(ino).is_none_or(|n| n.open_refs == 0) {
-            if let Some(slot @ Some(_)) = self.nodes.get_mut(ino as usize) {
-                *slot = None;
-                self.free.push(ino);
-                self.dirt.whole(ino);
-            }
+        if !linked && self.node(ino).is_none_or(|n| n.open_refs == 0) && let Some(slot @ Some(_)) = self.nodes.get_mut(ino as usize) {
+            *slot = None;
+            self.free.push(ino);
+            self.dirt.whole(ino);
         }
     }
 }
@@ -1876,13 +1872,11 @@ fn read_lower(ino: Ino, buf: &mut [u8], off: u64, lower: Result<(Layout, Arc<Vec
             None => dst.fill(0),
             Some(h) => {
                 let (b0, b1) = ((from / b) as u32, ((from + n - 1) / b) as u32);
-                if b0 == b1 {
-                    if let Some(blk) = last_block(&(h, b0), block_len(clen, b0)) {
-                        let s = (from - b0 as u64 * b) as usize;
-                        dst.copy_from_slice(&blk[s..s + n as usize]);
-                        at += n;
-                        continue;
-                    }
+                if b0 == b1 && let Some(blk) = last_block(&(h, b0), block_len(clen, b0)) {
+                    let s = (from - b0 as u64 * b) as usize;
+                    dst.copy_from_slice(&blk[s..s + n as usize]);
+                    at += n;
+                    continue;
                 }
                 let blocks = chunk_blocks(&h, clen, b0, b1)?;
                 if let Some(last) = blocks.last() {
@@ -2157,11 +2151,9 @@ pub(crate) fn open_handle(p: &str, flags: c_int, mode: u32) -> At<u32> {
         At::Outside(p) => return At::Outside(p),
     };
     // (truncating may copy from the store: outside the lock, the handle holds the node)
-    if file && flags & libc::O_TRUNC != 0 && flags & libc::O_ACCMODE != libc::O_RDONLY {
-        if let Err(e) = set_size(ino, 0) {
-            release(h);
-            return At::Ours(Err(e));
-        }
+    if file && flags & libc::O_TRUNC != 0 && flags & libc::O_ACCMODE != libc::O_RDONLY && let Err(e) = set_size(ino, 0) {
+        release(h);
+        return At::Ours(Err(e));
     }
     if let (true, Some(path)) = (file, &path) {
         note_name(ino, path);
@@ -3829,10 +3821,8 @@ mod proptests {
                 }
             }
             for (i, n) in fs.nodes.iter().enumerate() {
-                if let Some(n) = n {
-                    if !seen.contains(&(i as Ino)) && n.open_refs == 0 && !roots.contains(&(i as Ino)) {
-                        return Err(format!("inode {i} is live, unnamed and not open"));
-                    }
+                if let Some(n) = n && !seen.contains(&(i as Ino)) && n.open_refs == 0 && !roots.contains(&(i as Ino)) {
+                    return Err(format!("inode {i} is live, unnamed and not open"));
                 }
             }
             Ok(())

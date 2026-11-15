@@ -429,10 +429,8 @@ fn parse(data: &[u8]) -> Result<(Vec<Param>, Vec<usize>, HashMap<usize, Vec<u8>>
         let Some(sp) = st.map(|s| s.param) else { return Err("bad resource state".into()) };
         let kind = match usage {
             0 if matches!(p.params[sp].ty, PT_VERTEXSHADER | PT_PIXELSHADER) => {
-                if let Some(id) = p.params[sp].object {
-                    if let Some(o) = objects.get_mut(id as usize) {
-                        o.data = b;
-                    }
+                if let Some(id) = p.params[sp].object && let Some(o) = objects.get_mut(id as usize) {
+                    o.data = b;
                 }
                 Kind::Const
             }

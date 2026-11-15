@@ -530,10 +530,8 @@ impl Package {
         }
         // (a component with a file in a cabinet is installed, not run from source)
         for f in &self.files {
-            if self.file_compressed(f) {
-                if let Some(c) = self.comps.get_mut(&f.comp).filter(|c| c.enabled) {
-                    c.force_local = true;
-                }
+            if self.file_compressed(f) && let Some(c) = self.comps.get_mut(&f.comp).filter(|c| c.enabled) {
+                c.force_local = true;
             }
         }
         if self.prop("INSTALLLEVEL").is_empty() {

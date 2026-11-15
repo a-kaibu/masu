@@ -696,16 +696,14 @@ impl Gen<'_> {
             self.depth -= 1;
             self.c.end();
         }
-        if super::mxguard::rounds(k.0) {
-            if self.mx_checked != Some(self.depth) {
-                super::mxguard::mode(&mut self.c, L_CPU, Off::mxcsr());
-                self.c.if_();
-                self.depth += 1;
-                self.bail();
-                self.depth -= 1;
-                self.c.end();
-                self.mx_checked = Some(self.depth);
-            }
+        if super::mxguard::rounds(k.0) && self.mx_checked != Some(self.depth) {
+            super::mxguard::mode(&mut self.c, L_CPU, Off::mxcsr());
+            self.c.if_();
+            self.depth += 1;
+            self.bail();
+            self.depth -= 1;
+            self.c.end();
+            self.mx_checked = Some(self.depth);
         }
     }
 

@@ -635,12 +635,10 @@ fn B_Release(c: &mut Ctx) -> u32 {
     let b = c.a(0);
     let n = r32(b + 8).saturating_sub(1);
     w32(b + 8, n);
-    if n == 0 {
-        if let Some((m, ..)) = d3d(|d| d.vbs.remove(&b)) {
-            mem::heap_free(m);
-            // (the object's block too, after a while: com.rs's quarantine of freed objects)
-            crate::com::free_later(b);
-        }
+    if n == 0 && let Some((m, ..)) = d3d(|d| d.vbs.remove(&b)) {
+        mem::heap_free(m);
+        // (the object's block too, after a while: com.rs's quarantine of freed objects)
+        crate::com::free_later(b);
     }
     n
 }
@@ -742,16 +740,14 @@ fn V_Release(c: &mut Ctx) -> u32 {
     let b = c.a(0);
     let n = r32(b + 8).saturating_sub(1);
     w32(b + 8, n);
-    if n == 0 {
-        if let Some(d) = d3d(|d| d.devs.remove(&r32(b + 4))) {
-            let mut held = d.tex.to_vec();
-            held.push(d.rt);
-            release_surfs(c, &held);
-            if d.d3d_held != 0 {
-                dd_release(c, d.d3d_held);
-            }
-            crate::com::free_later(b);
+    if n == 0 && let Some(d) = d3d(|d| d.devs.remove(&r32(b + 4))) {
+        let mut held = d.tex.to_vec();
+        held.push(d.rt);
+        release_surfs(c, &held);
+        if d.d3d_held != 0 {
+            dd_release(c, d.d3d_held);
         }
+        crate::com::free_later(b);
     }
     n
 }
@@ -798,10 +794,8 @@ fn V_EndScene(c: &mut Ctx) -> u32 {
         Some(false) => return D3DERR_SCENE_NOT_IN_SCENE,
         Some(true) => {}
     }
-    if let Some(rt) = dev(c, |d| d.rt) {
-        if let Some(s) = surf(rt) {
-            present_if_primary(c, rt, Rect { l: 0, t: 0, r: s.w, b: s.h });
-        }
+    if let Some(rt) = dev(c, |d| d.rt) && let Some(s) = surf(rt) {
+        present_if_primary(c, rt, Rect { l: 0, t: 0, r: s.w, b: s.h });
     }
     D3D_OK
 }
@@ -1473,12 +1467,8 @@ impl Tex {
     #[inline]
     fn texel(&self, x: i32, y: i32, ck: bool) -> C4 {
         let v = self.raw(x, y);
-        if ck {
-            if let Some((lo, hi)) = self.key {
-                if v >= lo && v <= hi {
-                    return [0.; 4];
-                }
-            }
+        if ck && let Some((lo, hi)) = self.key && v >= lo && v <= hi {
+            return [0.; 4];
         }
         match &self.pal {
             Some(p) => {
@@ -1958,10 +1948,8 @@ impl Raster {
                 cur[i] = f * cur[i] + (1. - f) * fc[i];
             }
         }
-        if let Some((f, r)) = self.atest {
-            if !f.test(cur[3], r) {
-                return None;
-            }
+        if let Some((f, r)) = self.atest && !f.test(cur[3], r) {
+            return None;
         }
         Some(cur)
     }
@@ -1987,10 +1975,8 @@ impl Raster {
             }
         };
         write_px(p, Access::of_bytes(self.bpp), self.fmt.pack(out));
-        if self.zwrite {
-            if let (Some((p, bytes, _)), Some(zv)) = (zp, zv) {
-                write_px(p, Access::of_bytes(bytes.min(4)), zv);
-            }
+        if self.zwrite && let (Some((p, bytes, _)), Some(zv)) = (zp, zv) {
+            write_px(p, Access::of_bytes(bytes.min(4)), zv);
         }
     }
 
@@ -2334,11 +2320,9 @@ fn clear_dev(id: u32, vp: [i32; 4], n: u32, rects: u32, flags: u32, color: u32, 
             let v = Fmt::of(&rt).pack(unpack_argb(color));
             fill(&rt, clip_rect(r, rt.w, rt.h), v);
         }
-        if flags & 2 != 0 {
-            if let Some(zs) = &zs {
-                let max = if zs.pf[2] != 0 { zs.pf[2] } else if zs.bpp == 16 { 0xffff } else { 0xff_ffff };
-                fill(zs, clip_rect(r, zs.w, zs.h), (z.clamp(0., 1.) * max as f32) as u32);
-            }
+        if flags & 2 != 0 && let Some(zs) = &zs {
+            let max = if zs.pf[2] != 0 { zs.pf[2] } else if zs.bpp == 16 { 0xffff } else { 0xff_ffff };
+            fill(zs, clip_rect(r, zs.w, zs.h), (z.clamp(0., 1.) * max as f32) as u32);
         }
     }
     D3D_OK
@@ -2658,12 +2642,10 @@ fn E_QueryInterface(c: &mut Ctx) -> u32 {
 fn E_Release(c: &mut Ctx) -> u32 {
     let id = r32(c.a(0) + 4);
     let n = V_Release(c);
-    if n == 0 {
-        if let Some((vps, cur)) = d3d(|d| d.dev3.remove(&id)) {
-            for v in vps.into_iter().chain((cur != 0).then_some(cur)) {
-                d3d(|d| d.vps.get_mut(&v).map(|x| x.dev = 0));
-                vp_release(v);
-            }
+    if n == 0 && let Some((vps, cur)) = d3d(|d| d.dev3.remove(&id)) {
+        for v in vps.into_iter().chain((cur != 0).then_some(cur)) {
+            d3d(|d| d.vps.get_mut(&v).map(|x| x.dev = 0));
+            vp_release(v);
         }
     }
     n

@@ -1041,10 +1041,8 @@ fn gif(data: &[u8]) -> Option<(Vec<Frame>, Vec<u32>)> {
                 } else {
                     global.clone()
                 };
-                if let Some(t) = transparent.take() {
-                    if let Some(c) = palette.get_mut(t as usize) {
-                        *c &= 0x00ff_ffff;
-                    }
+                if let Some(t) = transparent.take() && let Some(c) = palette.get_mut(t as usize) {
+                    *c &= 0x00ff_ffff;
                 }
                 let min = *data.get(i)?;
                 let (lzw_data, next) = sub_blocks(i + 1);

@@ -453,11 +453,9 @@ impl Render {
         }
         if !snap::pausing() {
             // a state taken in this run (it went on), or the one this module was restored from
-            if let Some((e, s)) = SNAP_GPU.lock().unwrap_or_else(|e| e.into_inner()).take() {
-                if e != snap::epoch() {
-                    self.d3d.snap_restore(&s);
-                    self.d3d_frames = u64::MAX;
-                }
+            if let Some((e, s)) = SNAP_GPU.lock().unwrap_or_else(|e| e.into_inner()).take() && e != snap::epoch() {
+                self.d3d.snap_restore(&s);
+                self.d3d_frames = u64::MAX;
             }
             return false;
         }

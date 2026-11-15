@@ -79,12 +79,10 @@ fn mt_release(c: &mut Ctx) -> u32 {
         m.refs
     })
     .unwrap_or(0);
-    if n == 0 {
-        if let Some(m) = MFTS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&this) {
-            release(c, m.attrs);
-            release(c, m.reader);
-            mem::heap_free(this);
-        }
+    if n == 0 && let Some(m) = MFTS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&this) {
+        release(c, m.attrs);
+        release(c, m.reader);
+        mem::heap_free(this);
     }
     n
 }
@@ -313,11 +311,9 @@ fn al_release(c: &mut Ctx) -> u32 {
         a.refs
     })
     .unwrap_or(0);
-    if n == 0 {
-        if let Some(a) = ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&this) {
-            release(c, a.manager);
-            mem::heap_free(this);
-        }
+    if n == 0 && let Some(a) = ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&this) {
+        release(c, a.manager);
+        mem::heap_free(this);
     }
     n
 }

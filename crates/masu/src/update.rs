@@ -173,10 +173,8 @@ pub fn install(version: &str, exe: &Path, fonts: &Path) -> Result<()> {
 fn checksum(dir: &str, version: &str, file: &str) -> Result<String> {
     let listed = |sums: &str| sums.lines().find_map(|l| l.strip_suffix(&format!(" {file}")).or_else(|| l.strip_suffix(&format!(" *{file}")))).map(|s| s.trim().to_string());
     let sums = download(&format!("{dir}/checksums.txt")).map(|b| String::from_utf8_lossy(&b).into_owned());
-    if let Ok(s) = &sums {
-        if let Some(w) = listed(s) {
-            return Ok(w);
-        }
+    if let Ok(s) = &sums && let Some(w) = listed(s) {
+        return Ok(w);
     }
     let api = std::env::var("MASU_UPDATE_API").unwrap_or_else(|_| API.into());
     let rel: serde_json::Value = get_url(&format!("{}/tags/v{version}", api.trim_end_matches('/'))).context("release API")?.into_json()?;
@@ -224,10 +222,8 @@ fn fresh(age: Duration, ok: bool) -> bool {
 
 fn latest_kept() -> std::result::Result<String, String> {
     let at = base();
-    if let Some((u, t, r)) = LATEST.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
-        if *u == at && fresh(t.elapsed(), r.is_ok()) {
-            return r.clone();
-        }
+    if let Some((u, t, r)) = LATEST.lock().unwrap_or_else(|e| e.into_inner()).as_ref() && *u == at && fresh(t.elapsed(), r.is_ok()) {
+        return r.clone();
     }
     let r = latest().map_err(|e| format!("{e:#}"));
     *LATEST.lock().unwrap_or_else(|e| e.into_inner()) = Some((at, std::time::Instant::now(), r.clone()));

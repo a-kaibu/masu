@@ -594,19 +594,15 @@ fn p_qi(c: &mut Ctx) -> u32 {
         putp(out, p);
         return 0;
     }
-    if let Some((b, PinNo::P1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::Dmo)) {
-        if is(iid, &IID_IMEMINPUTPIN) {
-            add_ref(b);
-            putp(out, Word::MemInput.of(b));
-            return 0;
-        }
+    if let Some((b, PinNo::P1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::Dmo)) && is(iid, &IID_IMEMINPUTPIN) {
+        add_ref(b);
+        putp(out, Word::MemInput.of(b));
+        return 0;
     }
-    if let Some((b, PinNo::P1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::File)) {
-        if is(iid, &IID_IASYNCREADER) {
-            add_ref(b);
-            putp(out, Word::AsyncReader.of(b));
-            return 0;
-        }
+    if let Some((b, PinNo::P1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::File)) && is(iid, &IID_IASYNCREADER) {
+        add_ref(b);
+        putp(out, Word::AsyncReader.of(b));
+        return 0;
     }
     putp(out, 0);
     Hr::NoInterface.code()
@@ -2411,10 +2407,8 @@ fn stream_thread(c: &mut Ctx) -> u32 {
         // (stopped: the game may take its source and renderer apart now; nothing of theirs is
         // touched until it pauses or runs again)
         if fwith(b, |f| f.state).is_none_or(|s| s == State::Stopped) || reader == 0 {
-            if let Some(s) = d.as_mut() {
-                if let Some((a, _)) = s.out.take() {
-                    kura::audio::close(a);
-                }
+            if let Some(s) = d.as_mut() && let Some((a, _)) = s.out.take() {
+                kura::audio::close(a);
             }
             // (a run, a new reader or a release wakes it)
             pause(SEC / 4);
@@ -2422,15 +2416,13 @@ fn stream_thread(c: &mut Ctx) -> u32 {
         }
         let (video, audio) = chain(b);
         // (a seek or a stop: the stream again from the start, to the position)
-        if d.as_ref().is_none_or(|d| d.generation != generation) {
-            if let Some(old) = d.take() {
-                old.close();
-                if let Some((_, _, rpin)) = video {
-                    call_out(&calls, epoch, || {
-                        com(c, rpin, 15, &[]);
-                        com(c, rpin, 16, &[]);
-                    });
-                }
+        if d.as_ref().is_none_or(|d| d.generation != generation) && let Some(old) = d.take() {
+            old.close();
+            if let Some((_, _, rpin)) = video {
+                call_out(&calls, epoch, || {
+                    com(c, rpin, 15, &[]);
+                    com(c, rpin, 16, &[]);
+                });
             }
         }
         let s = d.get_or_insert_with(|| Dec::new(generation, video.is_some(), audio, info.audio_rate));
@@ -2491,24 +2483,20 @@ fn stream_thread(c: &mut Ctx) -> u32 {
             continue;
         }
         // decode: a picture, or more of the stream
-        if !s.past_stop {
-            if let Some(v) = s.video.as_mut() {
-                if let Some(f) = v.decode() {
-                    let n = s.pictures;
-                    // (a picture that will be dropped as late, on the way to a seek's position:
-                    // not converted; the buffer of the last one is used again)
-                    let mut px = std::mem::take(&mut s.spare);
-                    if n * frame + 2 * frame >= pos {
-                        px.resize(f.width * f.height * 4, 0);
-                        mpeg1::video::to_bgrx(f, &mut px, f.width * 4, true);
-                    } else {
-                        px.clear();
-                    }
-                    s.next = Some((n, px, lo32(f.width), lo32(f.height)));
-                    s.pictures += 1;
-                    continue;
-                }
+        if !s.past_stop && let Some(v) = s.video.as_mut() && let Some(f) = v.decode() {
+            let n = s.pictures;
+            // (a picture that will be dropped as late, on the way to a seek's position:
+            // not converted; the buffer of the last one is used again)
+            let mut px = std::mem::take(&mut s.spare);
+            if n * frame + 2 * frame >= pos {
+                px.resize(f.width * f.height * 4, 0);
+                mpeg1::video::to_bgrx(f, &mut px, f.width * 4, true);
+            } else {
+                px.clear();
             }
+            s.next = Some((n, px, lo32(f.width), lo32(f.height)));
+            s.pictures += 1;
+            continue;
         }
         // (only sound: decoded a second ahead)
         let sound_full = s.video.is_none() && s.pcm_at + wide(s.pcm.len()) > want + u64::from(kura::audio::RATE);
@@ -2520,10 +2508,8 @@ fn stream_thread(c: &mut Ctx) -> u32 {
             continue;
         }
         // the end: the renderer told, then the graph once the clock is there and the sound out
-        if let Some((_, _, rpin)) = video {
-            if !s.eos_sent && call_out(&calls, epoch, || com(c, rpin, 14, &[])).is_some() {
-                s.eos_sent = true;
-            }
+        if let Some((_, _, rpin)) = video && !s.eos_sent && call_out(&calls, epoch, || com(c, rpin, 14, &[])).is_some() {
+            s.eos_sent = true;
         }
         let sound_end = if audio { (s.pcm_at + wide(s.pcm.len())) * SEC / u64::from(kura::audio::RATE) } else { 0 };
         let last = (s.pictures * frame).max(sound_end).min(stop);
@@ -2555,12 +2541,10 @@ fn feed(c: &mut Ctx, s: &mut Dec, reader: u32, len: u64, calls: &Calls, epoch: u
             if let Some(v) = s.video.as_mut() {
                 v.push(&p.data);
             }
-        } else if mpeg1::ps::is_audio(p.id) {
-            if let Some(a) = s.audio.as_mut() {
-                a.push(&p.data);
-                while a.decode() {
-                    s.rs.push(&a.out, &mut s.pcm);
-                }
+        } else if mpeg1::ps::is_audio(p.id) && let Some(a) = s.audio.as_mut() {
+            a.push(&p.data);
+            while a.decode() {
+                s.rs.push(&a.out, &mut s.pcm);
             }
         }
         return true;

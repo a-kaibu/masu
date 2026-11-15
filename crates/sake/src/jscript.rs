@@ -307,10 +307,8 @@ fn host_invoke(p: u32, id: u32, flags: u32, args: &[JsValue], named_put: bool, c
     let mut lent = Vec::new();
     for (i, a) in args.iter().enumerate() {
         let v = from_js(a, engine, false);
-        if let Var::Obj(b, _) = v {
-            if t(|t| t.objects.contains_key(&b)) {
-                lent.push(b);
-            }
+        if let Var::Obj(b, _) = v && t(|t| t.objects.contains_key(&b)) {
+            lent.push(b);
         }
         write_var(rg + 16 * (n - 1 - i as u32), &v);
     }

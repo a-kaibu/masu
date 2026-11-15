@@ -689,10 +689,8 @@ impl Decoder {
     }
 
     fn decode_picture(&mut self, r: &mut Bits, buf_size: usize) -> Result<(), Error> {
-        if self.ver == Version::Wmv2 {
-            if self.wmv2_secondary(r)? {
-                return Ok(());
-            }
+        if self.ver == Version::Wmv2 && self.wmv2_secondary(r)? {
+            return Ok(());
         }
         self.mb_x = 0;
         self.mb_y = 0;

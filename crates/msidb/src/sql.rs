@@ -200,11 +200,9 @@ impl P {
         self.t.get(self.i)
     }
     fn kw(&mut self, k: &str) -> bool {
-        if let Some(Tok::Word(w)) = self.peek() {
-            if w.eq_ignore_ascii_case(k) {
-                self.i += 1;
-                return true;
-            }
+        if let Some(Tok::Word(w)) = self.peek() && w.eq_ignore_ascii_case(k) {
+            self.i += 1;
+            return true;
         }
         false
     }
@@ -212,11 +210,9 @@ impl P {
         if self.kw(k) { Ok(()) } else { Err(ERROR_BAD_QUERY_SYNTAX) }
     }
     fn op(&mut self, o: &str) -> bool {
-        if let Some(Tok::Op(x)) = self.peek() {
-            if *x == o {
-                self.i += 1;
-                return true;
-            }
+        if let Some(Tok::Op(x)) = self.peek() && *x == o {
+            self.i += 1;
+            return true;
         }
         false
     }

@@ -125,10 +125,8 @@ impl Suspends {
             waited = true;
             l = ok(self.cv.wait(l));
         }
-        if waited {
-            if let Some(i) = l.parked.iter().position(|&t| t == tid) {
-                l.parked.swap_remove(i);
-            }
+        if waited && let Some(i) = l.parked.iter().position(|&t| t == tid) {
+            l.parked.swap_remove(i);
         }
         waited
     }

@@ -570,16 +570,14 @@ impl<'a> L<'a> {
             }
             return Src::Imm(v, false);
         }
-        if let C::R(r0, _) = cs[0] {
-            if cs.iter().all(|c| matches!(c, C::R(r, _) if *r == r0)) {
-                let mut swz = [0u8; 4];
-                for (k, s) in swz.iter_mut().enumerate() {
-                    if let C::R(_, c) = cs[k.min(n - 1)] {
-                        *s = c.into();
-                    }
+        if let C::R(r0, _) = cs[0] && cs.iter().all(|c| matches!(c, C::R(r, _) if *r == r0)) {
+            let mut swz = [0u8; 4];
+            for (k, s) in swz.iter_mut().enumerate() {
+                if let C::R(_, c) = cs[k.min(n - 1)] {
+                    *s = c.into();
                 }
-                return Src::R { r: r0, swz, neg: false, abs: false, one: false };
             }
+            return Src::R { r: r0, swz, neg: false, abs: false, one: false };
         }
         let t = self.tmp();
         let dst: Vec<C> = Lane::first(n).map(|k| C::R(temp(t), k)).collect();
@@ -1790,13 +1788,11 @@ impl<'a> L<'a> {
     fn stmts(&mut self, ss: &[Stmt]) -> R<()> {
         for (i, s) in ss.iter().enumerate() {
             self.stmt(s)?;
-            if let Some(f) = self.fctx()?.flag {
-                if has_return(s) && i + 1 < ss.len() {
-                    self.cond_op(sm4::IF, C::R(temp(f), Lane::X), false);
-                    self.stmts(&ss[i + 1..])?;
-                    self.flow(sm4::ENDIF);
-                    return Ok(());
-                }
+            if let Some(f) = self.fctx()?.flag && has_return(s) && i + 1 < ss.len() {
+                self.cond_op(sm4::IF, C::R(temp(f), Lane::X), false);
+                self.stmts(&ss[i + 1..])?;
+                self.flow(sm4::ENDIF);
+                return Ok(());
             }
         }
         Ok(())
@@ -1825,10 +1821,8 @@ impl<'a> L<'a> {
     /// enclosing loop too
     fn after_breakable(&mut self, body_returns: bool) -> R<()> {
         let f = self.fctx()?;
-        if let (Some(flag), true) = (f.flag, body_returns) {
-            if f.loops > 0 {
-                self.cond_op(sm4::BREAKC, C::R(temp(flag), Lane::X), true);
-            }
+        if let (Some(flag), true) = (f.flag, body_returns) && f.loops > 0 {
+            self.cond_op(sm4::BREAKC, C::R(temp(flag), Lane::X), true);
         }
         Ok(())
     }
@@ -1863,13 +1857,9 @@ impl<'a> L<'a> {
                         return Err(format!("line {}: array {} without a size or an initializer", v.line, v.name));
                     }
                     // (a constant: no storage)
-                    if v.is_const && !matches!(t, Ty::Array(..)) {
-                        if let Some(i) = &init {
-                            if i.c.iter().all(|c| matches!(c, C::I(_))) {
-                                self.scopes.declare(v.name.clone(), i.clone());
-                                continue;
-                            }
-                        }
+                    if v.is_const && !matches!(t, Ty::Array(..)) && let Some(i) = &init && i.c.iter().all(|c| matches!(c, C::I(_))) {
+                        self.scopes.declare(v.name.clone(), i.clone());
+                        continue;
                     }
                     let st = self.storage(&t);
                     if let Some(i) = init {
@@ -2090,10 +2080,8 @@ impl<'a> L<'a> {
                 leaf_bases(self.prog, t, &mut tb);
                 let n: usize = flat.iter().map(|v| v.c.len()).sum();
                 // (float4(x): every component x)
-                if n == 1 && tb.len() > 1 {
-                    if let Some(x) = flat.pop() {
-                        return self.cast(x, t);
-                    }
+                if n == 1 && tb.len() > 1 && let Some(x) = flat.pop() {
+                    return self.cast(x, t);
                 }
                 if n != tb.len() {
                     return Err(format!("constructor of {t:?} with {n} components"));

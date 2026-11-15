@@ -105,11 +105,9 @@ pub fn complete(h: u32, ov: u32, status: u32, bytes: u32, sync: bool) {
         crate::k32::set_event(ev & !1);
         told = true;
     }
-    if let Some((port, key)) = assoc {
-        if ev & 1 == 0 && !(sync && status == 0 && mode & 1 != 0) {
-            post(port, bytes, key, ov, status);
-            told = true;
-        }
+    if let Some((port, key)) = assoc && ev & 1 == 0 && !(sync && status == 0 && mode & 1 != 0) {
+        post(port, bytes, key, ov, status);
+        told = true;
     }
     // (no event and no port: Windows signals the file handle, which GetOverlappedResult(bWait)
     // with hEvent NULL waits on; its wait here looks at the OVERLAPPED again when woken)

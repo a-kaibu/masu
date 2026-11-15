@@ -232,10 +232,8 @@ fn search_reg(pk: &Package, sig: &Sig) -> Option<String> {
         _ => return None,
     };
     // (a quoted path: what is in the quotes)
-    if let Some(a) = s.find('"') {
-        if let Some(b) = s[a + 1..].find('"') {
-            s = s[a + 1..a + 1 + b].to_string();
-        }
+    if let Some(a) = s.find('"') && let Some(b) = s[a + 1..].find('"') {
+        s = s[a + 1..a + 1 + b].to_string();
     }
     match ty {
         DIRECTORY => search_dir(sig, &s, 0),

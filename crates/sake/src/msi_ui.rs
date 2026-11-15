@@ -471,10 +471,8 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
     refresh(c, key);
     // the first control has the focus
     let first = d.get(7).text();
-    if let Some(h) = with(key, |d| d.ctls.iter().find(|x| x.name == first).map(|x| x.hwnd)).flatten() {
-        if h != 0 {
-            g(c, "user32", "SetFocus", &[h]);
-        }
+    if let Some(h) = with(key, |d| d.ctls.iter().find(|x| x.name == first).map(|x| x.hwnd)).flatten() && h != 0 {
+        g(c, "user32", "SetFocus", &[h]);
     }
 }
 
@@ -526,10 +524,8 @@ fn refresh(c: &mut Ctx, key: u32) {
             _ => None,
         };
         drop(pk);
-        if let Some(v) = v {
-            if get_text(c, x.hwnd) != v {
-                set_text(c, x.hwnd, &v);
-            }
+        if let Some(v) = v && get_text(c, x.hwnd) != v {
+            set_text(c, x.hwnd, &v);
         }
     }
     with(key, |d| d.busy = false);
@@ -798,10 +794,8 @@ pub fn close_modeless(c: &mut Ctx) {
     if key == 0 {
         return;
     }
-    if let Some(h) = with(key, |d| d.hwnd) {
-        if h != 0 {
-            g(c, "user32", "DestroyWindow", &[h]);
-        }
+    if let Some(h) = with(key, |d| d.hwnd) && h != 0 {
+        g(c, "user32", "DestroyWindow", &[h]);
     }
     drop_dlg(c, key);
 }
@@ -920,10 +914,8 @@ pub fn message(c: &mut Ctx, kind: u32, rec: &Record) -> bool {
                 3 => d.progress.1 += n,
                 _ => {}
             });
-            if subs.iter().any(|s| s.0 == "SetProgress") {
-                if let Some(h) = with(key, |d| d.hwnd) {
-                    g(c, "user32", "InvalidateRect", &[h, 0, 0]);
-                }
+            if subs.iter().any(|s| s.0 == "SetProgress") && let Some(h) = with(key, |d| d.hwnd) {
+                g(c, "user32", "InvalidateRect", &[h, 0, 0]);
             }
         }
         _ => {}

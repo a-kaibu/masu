@@ -596,10 +596,8 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
         if operands == 1 && inst.ops.len() != 1 {
             return Err(format!("declaration {code:#x} at {p} without its operand"));
         }
-        if let Some(k) = arity(op) {
-            if inst.ops.len() != k || r.p != r.end {
-                return Err(format!("instruction {code:#x} at {p}: {} operands, {k} wanted", inst.ops.len()));
-            }
+        if let Some(k) = arity(op) && (inst.ops.len() != k || r.p != r.end) {
+            return Err(format!("instruction {code:#x} at {p}: {} operands, {k} wanted", inst.ops.len()));
         }
         p += n;
         insts.push(inst);
