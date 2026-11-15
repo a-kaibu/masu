@@ -165,9 +165,7 @@ pub(super) unsafe fn device(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) ->
     let z = at(&mut zero);
     match m {
         // *SetShader(shader): no class instances
-        5 => ctx(d, 9, &[args[0], args[1], 0, 0], after),
-        7 => ctx(d, 11, &[args[0], args[1], 0, 0], after),
-        17 => ctx(d, 23, &[args[0], args[1], 0, 0], after),
+        5 | 7 | 17 => ctx(d, if m == 5 { 9 } else if m == 7 { 11 } else { 23 }, &[args[0], args[1], 0, 0], after),
         // *GetShader(out)
         41 | 43 | 49 => {
             let m11 = match m {

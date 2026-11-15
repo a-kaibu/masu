@@ -361,7 +361,7 @@ struct Render {
     headless: bool,
     /// the shader of `pipes` (0: not made yet), and per target format
     module: Id,
-    pipes: Vec<(&'static str, Pipe)>,
+    pipes: std::collections::HashMap<&'static str, Pipe>,
     nearest: Id,
     linear: Id,
     /// the screen's texture and its view, size
@@ -416,7 +416,7 @@ impl Render {
             d3d,
             headless,
             module: 0,
-            pipes: Vec::new(),
+            pipes: std::collections::HashMap::new(),
             nearest: gpu::sampler(r#"{"magFilter":"nearest","minFilter":"nearest"}"#),
             linear: gpu::sampler(r#"{"magFilter":"linear","minFilter":"linear"}"#),
             tex: 0,
@@ -488,21 +488,18 @@ impl Render {
     }
 
     fn pipe(&mut self, format: &'static str) -> &Pipe {
-        if let Some(i) = self.pipes.iter().position(|p| p.0 == format) {
-            return &self.pipes[i].1;
-        }
         if self.module == 0 {
             self.module = gpu::shader(SHADER);
         }
         let module = self.module;
-        let pipeline = gpu::render_pipeline(&format!(
-            r#"{{"layout":"auto","vertex":{{"module":{module},"entryPoint":"vs"}},"fragment":{{"module":{module},"entryPoint":"fs","targets":[{{"format":{}}}]}},"primitive":{{"topology":"triangle-list"}}}}"#,
-            q(format)
-        ));
-        let layout = gpu::pipeline_group_layout(pipeline, 0);
-        let at = self.pipes.len();
-        self.pipes.push((format, Pipe { pipeline, layout }));
-        &self.pipes[at].1
+        self.pipes.entry(format).or_insert_with(|| {
+            let pipeline = gpu::render_pipeline(&format!(
+                r#"{{"layout":"auto","vertex":{{"module":{module},"entryPoint":"vs"}},"fragment":{{"module":{module},"entryPoint":"fs","targets":[{{"format":{}}}]}},"primitive":{{"topology":"triangle-list"}}}}"#,
+                q(format)
+            ));
+            let layout = gpu::pipeline_group_layout(pipeline, 0);
+            Pipe { pipeline, layout }
+        })
     }
 
     fn frame(&mut self, t: f64) {

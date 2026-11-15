@@ -2486,7 +2486,7 @@ fn changed_box(rows: &[u8], pitch: usize, row: usize, h: usize, bpp: usize, shad
             None => {
                 // (one of the words differs: the byte at l does)
                 let wi = (0..words).rev().find(|&i| w(a, i) != w(s, i));
-                wi.and_then(|wi| (wi * 8..wi * 8 + 8).rev().find(|&i| a[i] != s[i])).map_or(row, |i| i + 1)
+                wi.and_then(|wi| (wi * 8..wi * 8 + 8).rev().find(|&i| a[i] != s[i])).map_or(row, |i| i.saturating_add(1))
             }
         };
         s[l..r].copy_from_slice(&a[l..r]);
