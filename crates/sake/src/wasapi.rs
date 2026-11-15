@@ -14,6 +14,7 @@
 //! later) renders through this. Behaviour checked by Wine's mmdevapi render tests
 //! (tests/winetest) and host/tests/wasapi.c.
 
+use crate::hresult::{E_INVALIDARG, E_NOINTERFACE, E_POINTER, S_FALSE, S_OK};
 use kome::num::us;
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, OnceLock};
@@ -24,8 +25,6 @@ use crate::mem::{self, ps, put64, putp, r16, r32, rp, w16, w32, wp};
 use crate::sound::{sample_at, Fmt, AHEAD, RATE, STEP};
 use crate::HashMap;
 
-const S_OK: u32 = 0;
-const S_FALSE: u32 = 1;
 
 /// The failures WASAPI answers (E_*, AUDCLNT_E_*)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,12 +56,12 @@ pub(crate) enum Hr {
 impl Hr {
     pub(crate) const fn code(self) -> u32 {
         match self {
-            Hr::Pointer => 0x8000_4003,
-            Hr::NoInterface => 0x8000_4002,
-            Hr::InvalidArg => 0x8007_0057,
-            Hr::Unexpected => 0x8000_ffff,
+            Hr::Pointer => crate::hresult::E_POINTER,
+            Hr::NoInterface => crate::hresult::E_NOINTERFACE,
+            Hr::InvalidArg => crate::hresult::E_INVALIDARG,
+            Hr::Unexpected => crate::hresult::E_UNEXPECTED,
             Hr::NullRef => 0x8007_06f4,
-            Hr::OutOfMemory => 0x8007_000e,
+            Hr::OutOfMemory => crate::hresult::E_OUTOFMEMORY,
             Hr::NotInitialized => 0x8889_0001,
             Hr::AlreadyInitialized => 0x8889_0002,
             Hr::NotStopped => 0x8889_0005,
@@ -94,9 +93,6 @@ fn hr(r: Result<Done, Hr>) -> u32 {
         Err(e) => e.code(),
     }
 }
-const E_POINTER: u32 = Hr::Pointer.code();
-const E_NOINTERFACE: u32 = Hr::NoInterface.code();
-const E_INVALIDARG: u32 = Hr::InvalidArg.code();
 const NULL_REF: u32 = Hr::NullRef.code();
 const NOT_INITIALIZED: u32 = Hr::NotInitialized.code();
 

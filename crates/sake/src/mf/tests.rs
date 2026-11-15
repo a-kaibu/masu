@@ -49,16 +49,16 @@ fn compare_match_types() {
     let mut b = a.clone();
     b.set(key(2), Val::U32(2));
     // a's items are all in b; not the other way round
-    assert_eq!(a.matches(&b, 0), Some(true));
-    assert_eq!(a.matches(&b, 1), Some(false));
-    assert_eq!(a.matches(&b, 2), Some(false));
-    assert_eq!(a.matches(&b, 3), Some(true));
-    assert_eq!(a.matches(&b, 4), Some(true));
-    assert_eq!(b.matches(&a, 4), Some(true));
-    assert_eq!(a.matches(&b, 5), None);
+    assert_eq!(a.matches(&b, Match::Ours), true);
+    assert_eq!(a.matches(&b, Match::Theirs), false);
+    assert_eq!(a.matches(&b, Match::All), false);
+    assert_eq!(a.matches(&b, Match::Intersection), true);
+    assert_eq!(a.matches(&b, Match::Smaller), true);
+    assert_eq!(b.matches(&a, Match::Smaller), true);
+    assert_eq!(Match::try_from(5), Err(Hr::InvalidArg));
     b.set(key(1), Val::U32(9));
-    assert_eq!(a.matches(&b, 3), Some(false));
-    assert_eq!(a.matches(&a.clone(), 2), Some(true));
+    assert_eq!(a.matches(&b, Match::Intersection), false);
+    assert_eq!(a.matches(&a.clone(), Match::All), true);
 }
 
 /// Values of a few keys and kinds.
@@ -127,19 +127,19 @@ proptest! {
             s
         };
         let (x, y) = (build(&a), build(&b));
-        let ours = x.matches(&y, 0).unwrap();
-        let theirs = x.matches(&y, 1).unwrap();
-        prop_assert_eq!(theirs, y.matches(&x, 0).unwrap());
-        prop_assert_eq!(x.matches(&y, 2).unwrap(), ours && theirs);
+        let ours = x.matches(&y, Match::Ours);
+        let theirs = x.matches(&y, Match::Theirs);
+        prop_assert_eq!(theirs, y.matches(&x, Match::Ours));
+        prop_assert_eq!(x.matches(&y, Match::All), ours && theirs);
         let clash = x.items.iter().any(|(k, v)| y.get(k).is_some_and(|w| w != v));
-        prop_assert_eq!(x.matches(&y, 3).unwrap(), !clash);
+        prop_assert_eq!(x.matches(&y, Match::Intersection), !clash);
         let smaller = if x.items.len() <= y.items.len() { ours } else { theirs };
-        prop_assert_eq!(x.matches(&y, 4).unwrap(), smaller);
-        prop_assert!(x.matches(&x, 2).unwrap());
+        prop_assert_eq!(x.matches(&y, Match::Smaller), smaller);
+        prop_assert!(x.matches(&x, Match::All));
     }
 }
 
-fn names(st: &mut State) -> Vec<u32> {
+fn names(st: &mut State) -> Vec<Ev> {
     st.events.drain(..).map(|e| e.0).collect()
 }
 
@@ -148,15 +148,15 @@ fn load_events_in_order() {
     let mut st = State::default();
     st.reset();
     assert!(!st.loaded(2.0, Some((64, 48)), false));
-    use ev::*;
-    assert_eq!(names(&mut st), [LOADSTART, DURATIONCHANGE, LOADEDMETADATA, LOADEDDATA, FIRSTFRAMEREADY, CANPLAY, CANPLAYTHROUGH]);
-    assert_eq!((st.ready, st.network, st.paused, st.ended), (4, 1, true, false));
+    use Ev::*;
+    assert_eq!(names(&mut st), [LoadStart, DurationChange, LoadedMetadata, LoadedData, FirstFrameReady, CanPlay, CanPlayThrough]);
+    assert_eq!((st.ready, st.network, st.paused, st.ended), (Ready::EnoughData, Network::Idle, true, false));
     assert_eq!(st.duration, 2.0);
     // a second source: emptied first
     st.reset();
-    assert_eq!(names(&mut st), [EMPTIED, LOADSTART]);
+    assert_eq!(names(&mut st), [Emptied, LoadStart]);
     assert!(st.duration.is_nan());
-    assert_eq!(st.ready, 0);
+    assert_eq!(st.ready, Ready::Nothing);
 }
 
 #[test]
@@ -164,59 +164,59 @@ fn a_source_that_fails() {
     let mut st = State::default();
     st.reset();
     st.failed(0x8007_0002);
-    assert_eq!(st.events.iter().copied().collect::<Vec<_>>(), [(ev::LOADSTART, 0, 0), (ev::ERROR, 4, 0x8007_0002)]);
-    assert_eq!((st.error, st.network, st.ready), ((4, 0x8007_0002), 3, 0));
+    assert_eq!(st.events.iter().copied().collect::<Vec<_>>(), [(Ev::LoadStart, 0, 0), (Ev::Error, 4, 0x8007_0002)]);
+    assert_eq!((st.error, st.network, st.ready), ((MediaErr::SrcNotSupported, 0x8007_0002), Network::NoSource, Ready::Nothing));
     // nothing to seek in or play
     assert!(!st.seek());
     st.events.clear();
     assert_eq!(st.play(), (false, false));
-    assert_eq!(names(&mut st), [ev::PLAY]);
+    assert_eq!(names(&mut st), [Ev::Play]);
     // a good source clears the error
     st.reset();
-    assert_eq!(st.error, (0, 0));
+    assert_eq!(st.error, (MediaErr::NoError, 0));
 }
 
 #[test]
 fn autoplay_and_play_before_load() {
-    use ev::*;
+    use Ev::*;
     let mut st = State { autoplay: true, ..State::default() };
     st.reset();
     assert!(st.loaded(1.0, Some((2, 2)), true));
-    assert_eq!(names(&mut st), [LOADSTART, DURATIONCHANGE, LOADEDMETADATA, LOADEDDATA, FIRSTFRAMEREADY, CANPLAY, PLAY, PLAYING, CANPLAYTHROUGH]);
+    assert_eq!(names(&mut st), [LoadStart, DurationChange, LoadedMetadata, LoadedData, FirstFrameReady, CanPlay, Play, Playing, CanPlayThrough]);
     let mut st = State::default();
     st.reset();
     st.play();
     assert!(st.loaded(1.0, None, true));
-    assert_eq!(names(&mut st), [LOADSTART, PLAY, DURATIONCHANGE, LOADEDMETADATA, LOADEDDATA, CANPLAY, PLAYING, CANPLAYTHROUGH]);
+    assert_eq!(names(&mut st), [LoadStart, Play, DurationChange, LoadedMetadata, LoadedData, CanPlay, Playing, CanPlayThrough]);
 }
 
 #[test]
 fn play_to_the_end_and_again() {
-    use ev::*;
+    use Ev::*;
     let mut st = State::default();
     st.reset();
     st.loaded(1.25, Some((64, 48)), false);
     st.events.clear();
     assert!(st.seek());
-    assert_eq!(names(&mut st), [SEEKING, TIMEUPDATE, SEEKED]);
+    assert_eq!(names(&mut st), [Seeking, TimeUpdate, Seeked]);
     assert_eq!(st.play(), (false, true));
-    assert_eq!(names(&mut st), [PLAY, PLAYING]);
+    assert_eq!(names(&mut st), [Play, Playing]);
     assert!(!st.end());
-    assert_eq!(names(&mut st), [TIMEUPDATE, PAUSE, ENDED]);
+    assert_eq!(names(&mut st), [TimeUpdate, Pause, Ended]);
     assert!(st.paused && st.ended);
     // from the end: back to the start
     assert_eq!(st.play(), (true, true));
-    assert_eq!(names(&mut st), [SEEKING, TIMEUPDATE, SEEKED, PLAY, PLAYING]);
+    assert_eq!(names(&mut st), [Seeking, TimeUpdate, Seeked, Play, Playing]);
     assert!(!st.ended);
     st.pause();
     st.pause();
-    assert_eq!(names(&mut st), [TIMEUPDATE, PAUSE]);
+    assert_eq!(names(&mut st), [TimeUpdate, Pause]);
     // looping: no end
     st.looping = true;
     st.play();
     st.events.clear();
     assert!(st.end());
-    assert_eq!(names(&mut st), [SEEKING, TIMEUPDATE, SEEKED]);
+    assert_eq!(names(&mut st), [Seeking, TimeUpdate, Seeked]);
     assert!(!st.paused && !st.ended);
 }
 
@@ -248,8 +248,8 @@ fn arb_do() -> impl Strategy<Value = Do> {
 }
 
 proptest! {
-    /// Any calls: PLAY goes out exactly when it stops being paused (and PAUSE when it becomes
-    /// paused, but for the load's reset), PLAYING only with data, ENDED only not looping (paused
+    /// Any calls: Play goes out exactly when it stops being paused (and Pause when it becomes
+    /// paused, but for the load's reset), Playing only with data, Ended only not looping (paused
     /// and ended then), seeking never left on, the ready state 0 or 4.
     #[test]
     fn state_events_match_its_changes(ops in prop::collection::vec(arb_do(), 0..60)) {
@@ -263,39 +263,39 @@ proptest! {
                 Do::Load(video) => { st.reset(); st.loaded(1.0, video.then_some((4, 4)), false); }
                 Do::Play => { st.play(); }
                 Do::Pause => st.pause(),
-                Do::Seek => { prop_assert_eq!(st.seek(), ready > 0); }
-                Do::End => { if ready > 0 { st.end(); } }
+                Do::Seek => { prop_assert_eq!(st.seek(), ready > Ready::Nothing); }
+                Do::End => { if ready > Ready::Nothing { st.end(); } }
                 Do::Loop(v) => st.looping = v,
                 Do::Autoplay(v) => st.autoplay = v,
             }
             let e = names(&mut st);
-            let count = |x: u32| e.iter().filter(|&&y| y == x).count();
+            let count = |x: Ev| e.iter().filter(|&&y| y == x).count();
             let reset = matches!(op, Do::Reset | Do::Fail | Do::Load(_));
-            prop_assert!(count(ev::PLAY) <= 1 && count(ev::PAUSE) <= 1);
+            prop_assert!(count(Ev::Play) <= 1 && count(Ev::Pause) <= 1);
             if !reset {
-                prop_assert_eq!(count(ev::PLAY) == 1, paused && !st.paused, "{:?} {:?}", op, e);
-                prop_assert_eq!(count(ev::PAUSE) == 1, !paused && st.paused, "{:?} {:?}", op, e);
+                prop_assert_eq!(count(Ev::Play) == 1, paused && !st.paused, "{:?} {:?}", op, e);
+                prop_assert_eq!(count(Ev::Pause) == 1, !paused && st.paused, "{:?} {:?}", op, e);
             }
-            if count(ev::PLAYING) > 0 {
-                prop_assert!(st.ready >= 3 && !st.paused);
+            if count(Ev::Playing) > 0 {
+                prop_assert!(st.ready >= Ready::FutureData && !st.paused);
             }
-            if count(ev::ENDED) > 0 {
+            if count(Ev::Ended) > 0 {
                 prop_assert!(!looping && st.paused && st.ended);
-                prop_assert_eq!(e.last(), Some(&ev::ENDED));
+                prop_assert_eq!(e.last(), Some(&Ev::Ended));
             }
-            if count(ev::ERROR) > 0 {
-                prop_assert_eq!(st.error.0, 4);
-                prop_assert_eq!(st.network, 3);
+            if count(Ev::Error) > 0 {
+                prop_assert_eq!(st.error.0, MediaErr::SrcNotSupported);
+                prop_assert_eq!(st.network, Network::NoSource);
             }
             prop_assert!(!st.seeking);
-            prop_assert!(st.ready == 0 || st.ready == 4);
-            prop_assert_eq!(st.duration.is_nan(), st.ready == 0);
+            prop_assert!(st.ready == Ready::Nothing || st.ready == Ready::EnoughData);
+            prop_assert_eq!(st.duration.is_nan(), st.ready == Ready::Nothing);
             if st.ended {
                 prop_assert!(st.paused);
             }
             // seeking and seeked come in pairs, seeking first
-            let s: Vec<_> = e.iter().filter(|&&x| x == ev::SEEKING || x == ev::SEEKED).collect();
-            prop_assert!(s.chunks(2).all(|p| p == [&ev::SEEKING, &ev::SEEKED]));
+            let s: Vec<_> = e.iter().filter(|&&x| x == Ev::Seeking || x == Ev::Seeked).collect();
+            prop_assert!(s.chunks(2).all(|p| p == [&Ev::Seeking, &Ev::Seeked]));
         }
     }
 }

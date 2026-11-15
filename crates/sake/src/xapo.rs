@@ -27,9 +27,9 @@ enum Hr {
 impl Hr {
     const fn code(self) -> u32 {
         match self {
-            Hr::NoInterface => 0x8000_4002,
-            Hr::Pointer => 0x8000_4003,
-            Hr::InvalidArg => 0x8007_0057,
+            Hr::NoInterface => crate::hresult::E_NOINTERFACE,
+            Hr::Pointer => crate::hresult::E_POINTER,
+            Hr::InvalidArg => crate::hresult::E_INVALIDARG,
             Hr::ClassNotAvailable => 0x8004_0111,
             Hr::FormatUnsupported => 0x8897_0001,
         }

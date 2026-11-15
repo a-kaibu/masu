@@ -18,12 +18,13 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 
 use crate::api::{implement, vtable, Ctx, Handler};
-use crate::dshow_play::{self as play, frame_at, letterbox, now, Play, SEC};
+use crate::dshow_play::{self as play, float, frame_at, letterbox, now, time, Play, SEC};
+use crate::num::{Low as _, ToF32 as _, ToUsize as _, Trunc as _};
 use crate::mem::{self, ps, put32, putp, r16, r32, rp, w16, w32, w64, wp};
 
 /// The HRESULTs Media Foundation's objects answer (besides S_OK): winerror.h's and mferror.h's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Hr {
+pub enum Hr {
     /// S_FALSE
     False,
     /// E_FAIL
@@ -100,17 +101,17 @@ pub(crate) enum Hr {
     NoSampleDuration,
 }
 impl Hr {
-    pub(crate) const fn code(self) -> u32 {
+    pub const fn code(self) -> u32 {
         match self {
-            Hr::False => 1,
-            Hr::Fail => 0x8000_4005,
-            Hr::NotImpl => 0x8000_4001,
-            Hr::NoInterface => 0x8000_4002,
-            Hr::Pointer => 0x8000_4003,
-            Hr::InvalidArg => 0x8007_0057,
-            Hr::OutOfMemory => 0x8007_000e,
-            Hr::Unexpected => 0x8000_ffff,
-            Hr::InsufficientBuffer => 0x8007_007a,
+            Hr::False => crate::hresult::S_FALSE,
+            Hr::Fail => crate::hresult::E_FAIL,
+            Hr::NotImpl => crate::hresult::E_NOTIMPL,
+            Hr::NoInterface => crate::hresult::E_NOINTERFACE,
+            Hr::Pointer => crate::hresult::E_POINTER,
+            Hr::InvalidArg => crate::hresult::E_INVALIDARG,
+            Hr::OutOfMemory => crate::hresult::E_OUTOFMEMORY,
+            Hr::Unexpected => crate::hresult::E_UNEXPECTED,
+            Hr::InsufficientBuffer => crate::hresult::E_NOT_SUFFICIENT_BUFFER,
             Hr::Shutdown => 0xc00d_3e85,
             Hr::AttributeNotFound => 0xc00d_36e6,
             Hr::InvalidType => 0xc00d_36bd,
@@ -163,11 +164,11 @@ fn blob(p: u32, n: u32) -> Result<Vec<u8>, u32> {
 type Guid = [u8; 16];
 
 fn guid_at(p: u32) -> Guid {
-    mem::slice(p, 16).try_into().unwrap()
+    mem::slice(p, 16).first_chunk::<16>().copied().unwrap_or([0; 16])
 }
 /// The first fields of a GUID: (Data1, Data2, Data3)
 fn is(g: &Guid, d1: u32, d2: u16, d3: u16) -> bool {
-    u32::from_le_bytes(g[0..4].try_into().unwrap()) == d1 && u16::from_le_bytes([g[4], g[5]]) == d2 && u16::from_le_bytes([g[6], g[7]]) == d3
+    u32::from_le_bytes([g[0], g[1], g[2], g[3]]) == d1 && u16::from_le_bytes([g[4], g[5]]) == d2 && u16::from_le_bytes([g[6], g[7]]) == d3
 }
 fn is_unknown(g: &Guid) -> bool {
     g == &[0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]
@@ -197,7 +198,7 @@ fn dbl(c: &Ctx, slot: u32, arg: u32) -> f64 {
 }
 /// A 64-bit integer argument: x86 slots `slot`, `slot + 1`; x64 argument `arg`.
 fn u64_arg(c: &Ctx, slot: u32, arg: u32) -> u64 {
-    if mem::x64() { c.a64(arg) } else { c.a(slot) as u64 | (c.a(slot + 1) as u64) << 32 }
+    if mem::x64() { c.a64(arg) } else { u64::from(c.a(slot)) | u64::from(c.a(slot + 1)) << 32 }
 }
 
 fn ok(_: &mut Ctx) -> u32 {
@@ -275,22 +276,44 @@ impl Store {
     fn within(&self, other: &Store) -> bool {
         self.items.iter().all(|(k, v)| other.get(k) == Some(v))
     }
-    /// IMFAttributes::Compare's MF_ATTRIBUTES_MATCH_TYPE: 0 our items, 1 their items, 2 all
-    /// items, 3 the intersection, 4 the smaller set's items. None: no such type.
-    pub fn matches(&self, other: &Store, how: u32) -> Option<bool> {
-        Some(match how {
-            0 => self.within(other),
-            1 => other.within(self),
-            2 => self.items.len() == other.items.len() && self.within(other),
-            3 => self.items.iter().all(|(k, v)| other.get(k).is_none_or(|w| w == v)),
-            4 => {
+    /// Whether the stores match the way IMFAttributes::Compare's `how` says.
+    pub fn matches(&self, other: &Store, how: Match) -> bool {
+        match how {
+            Match::Ours => self.within(other),
+            Match::Theirs => other.within(self),
+            Match::All => self.items.len() == other.items.len() && self.within(other),
+            Match::Intersection => self.items.iter().all(|(k, v)| other.get(k).is_none_or(|w| w == v)),
+            Match::Smaller => {
                 if self.items.len() <= other.items.len() {
                     self.within(other)
                 } else {
                     other.within(self)
                 }
             }
-            _ => return None,
+        }
+    }
+}
+
+/// MF_ATTRIBUTES_MATCH_TYPE: our items in theirs, theirs in ours, all of both, the
+/// intersection (no key with two values), the smaller set's items in the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Match {
+    Ours,
+    Theirs,
+    All,
+    Intersection,
+    Smaller,
+}
+impl TryFrom<u32> for Match {
+    type Error = Hr;
+    fn try_from(n: u32) -> Result<Match, Hr> {
+        Ok(match n {
+            0 => Match::Ours,
+            1 => Match::Theirs,
+            2 => Match::All,
+            3 => Match::Intersection,
+            4 => Match::Smaller,
+            _ => return Err(Hr::InvalidArg),
         })
     }
 }
@@ -328,9 +351,9 @@ fn put_prop(c: &mut Ctx, p: u32, v: &Val) {
         }
         Val::Str(s) => wp(p + 8, task_wstr(s)),
         Val::Blob(b) => {
-            let q = mem::heap_alloc(b.len().max(1) as u32, false);
+            let q = mem::heap_alloc(b.len().max(1).low_u32(), false);
             mem::write(q, b);
-            w32(p + 8, b.len() as u32);
+            w32(p + 8, b.len().low_u32());
             wp(p + 8 + ps(), q);
         }
         Val::Unk(u) => {
@@ -353,9 +376,9 @@ fn get_prop(p: u32) -> Result<Val, u32> {
     })
 }
 fn task_wstr(s: &[u16]) -> u32 {
-    let q = mem::heap_alloc(2 * s.len() as u32 + 2, false);
+    let q = mem::heap_alloc(2 * s.len().low_u32() + 2, false);
     for (i, &ch) in s.iter().chain([&0]).enumerate() {
-        w16(q + 2 * i as u32, ch);
+        w16(q + 2 * i.low_u32(), ch);
     }
     q
 }
@@ -406,8 +429,8 @@ getter!(at_get_u32, Val::U32(v) => |o| w32(o, v));
 getter!(at_get_u64, Val::U64(v) => |o| w64(o, v));
 getter!(at_get_f64, Val::F64(v) => |o| w64(o, v.to_bits()));
 getter!(at_get_guid, Val::Guid(g) => |o| mem::write(o, &g));
-getter!(at_get_strlen, Val::Str(s) => |o| w32(o, s.len() as u32));
-getter!(at_get_blobsize, Val::Blob(b) => |o: u32| w32(o, b.len() as u32));
+getter!(at_get_strlen, Val::Str(s) => |o| w32(o, s.len().low_u32()));
+getter!(at_get_blobsize, Val::Blob(b) => |o: u32| w32(o, b.len().low_u32()));
 
 fn at_qi(c: &mut Ctx) -> u32 {
     let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
@@ -471,7 +494,7 @@ fn at_get_type(c: &mut Ctx) -> u32 {
             if out == 0 {
                 return Hr::Pointer.code();
             }
-            w32(out, v.vt() as u32);
+            w32(out, u32::from(v.vt()));
             0
         }
         Err(e) => e,
@@ -487,7 +510,7 @@ fn at_compare_item(c: &mut Ctx) -> u32 {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     };
-    w32(out, same as u32);
+    w32(out, u32::from(same));
     0
 }
 /// Compare(IMFAttributes *theirs, MF_ATTRIBUTES_MATCH_TYPE, BOOL *same): ours only
@@ -497,12 +520,12 @@ fn at_compare(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let (Some(a), Some(b)) = (store_of(c.a(0)), store_of(theirs)) else { return Hr::NotImpl.code() };
-    match a.matches(&b, how) {
-        Some(m) => {
-            w32(out, m as u32);
+    match Match::try_from(how) {
+        Ok(how) => {
+            w32(out, u32::from(a.matches(&b, how)));
             0
         }
-        None => Hr::InvalidArg.code(),
+        Err(hr) => hr.code(),
     }
 }
 /// GetString(key, WCHAR *buf, UINT32 chars, UINT32 *length)
@@ -511,16 +534,16 @@ fn at_get_string(c: &mut Ctx) -> u32 {
     match value(c) {
         Ok(Val::Str(s)) => {
             if len != 0 {
-                w32(len, s.len() as u32);
+                w32(len, s.len().low_u32());
             }
             if buf == 0 {
                 return Hr::Pointer.code();
             }
-            if (cap as usize) < s.len() + 1 {
+            if cap.to_usize() < s.len() + 1 {
                 return Hr::InsufficientBuffer.code();
             }
             for (i, &ch) in s.iter().chain([&0]).enumerate() {
-                w16(buf + 2 * i as u32, ch);
+                w16(buf + 2 * i.low_u32(), ch);
             }
             0
         }
@@ -537,7 +560,7 @@ fn at_get_alloc_string(c: &mut Ctx) -> u32 {
                 return Hr::Pointer.code();
             }
             putp(out, task_wstr(&s));
-            w32(len, s.len() as u32);
+            w32(len, s.len().low_u32());
             0
         }
         Ok(_) => Hr::InvalidType.code(),
@@ -552,12 +575,12 @@ fn at_get_blob(c: &mut Ctx) -> u32 {
             if buf == 0 && !b.is_empty() {
                 return Hr::Pointer.code();
             }
-            if (cap as usize) < b.len() {
+            if cap.to_usize() < b.len() {
                 return Hr::InsufficientBuffer.code();
             }
             mem::write(buf, &b);
             if got != 0 {
-                w32(got, b.len() as u32);
+                w32(got, b.len().low_u32());
             }
             0
         }
@@ -573,10 +596,10 @@ fn at_get_alloc_blob(c: &mut Ctx) -> u32 {
             if out == 0 || size == 0 {
                 return Hr::Pointer.code();
             }
-            let q = mem::heap_alloc(b.len().max(1) as u32, false);
+            let q = mem::heap_alloc(b.len().max(1).low_u32(), false);
             mem::write(q, &b);
             putp(out, q);
-            w32(size, b.len() as u32);
+            w32(size, b.len().low_u32());
             0
         }
         Ok(_) => Hr::InvalidType.code(),
@@ -673,13 +696,13 @@ fn at_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    put32(c.a(1), attrs(c.a(0), |a| a.1.items.len() as u32).unwrap_or(0));
+    put32(c.a(1), attrs(c.a(0), |a| a.1.items.len().low_u32()).unwrap_or(0));
     0
 }
 /// GetItemByIndex(index, GUID *key, PROPVARIANT *v)
 fn at_by_index(c: &mut Ctx) -> u32 {
     let (i, key, out) = (c.a(1), c.a(2), c.a(3));
-    let Some((k, v)) = attrs(c.a(0), |a| a.1.items.get(i as usize).cloned()).flatten() else { return Hr::InvalidArg.code() };
+    let Some((k, v)) = attrs(c.a(0), |a| a.1.items.get(i.to_usize()).cloned()).flatten() else { return Hr::InvalidArg.code() };
     if key != 0 {
         mem::write(key, &k);
     }
@@ -916,7 +939,7 @@ fn new_error(code: u16, hr: u32) -> u32 {
         n
     }
     fn er_code(c: &mut Ctx) -> u32 {
-        r16(c.a(0) + ps()) as u32
+        u32::from(r16(c.a(0) + ps()))
     }
     fn er_hr(c: &mut Ctx) -> u32 {
         r32(c.a(0) + ps() + 4)
@@ -925,7 +948,7 @@ fn new_error(code: u16, hr: u32) -> u32 {
         if c.a(1) > 4 {
             return Hr::InvalidArg.code();
         }
-        w16(c.a(0) + ps(), c.a(1) as u16);
+        w16(c.a(0) + ps(), c.a(1).low_u16());
         0
     }
     fn er_set_hr(c: &mut Ctx) -> u32 {
@@ -946,35 +969,133 @@ fn new_error(code: u16, hr: u32) -> u32 {
 // ---------------------------------------------------------------------------------------------
 // the engine's state, as the HTML media element's
 
-/// MF_MEDIA_ENGINE_EVENT
-pub mod ev {
-    pub const LOADSTART: u32 = 1;
-    pub const ERROR: u32 = 5;
-    pub const EMPTIED: u32 = 6;
-    pub const PLAY: u32 = 8;
-    pub const PAUSE: u32 = 9;
-    pub const LOADEDMETADATA: u32 = 10;
-    pub const LOADEDDATA: u32 = 11;
-    pub const PLAYING: u32 = 13;
-    pub const CANPLAY: u32 = 14;
-    pub const CANPLAYTHROUGH: u32 = 15;
-    pub const SEEKING: u32 = 16;
-    pub const SEEKED: u32 = 17;
-    pub const TIMEUPDATE: u32 = 18;
-    pub const ENDED: u32 = 19;
-    pub const RATECHANGE: u32 = 20;
-    pub const DURATIONCHANGE: u32 = 21;
-    pub const VOLUMECHANGE: u32 = 22;
-    pub const FIRSTFRAMEREADY: u32 = 1009;
+/// MF_MEDIA_ENGINE_EVENT: what the engine tells the game's IMFMediaEngineNotify.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ev {
+    LoadStart,
+    Error,
+    Emptied,
+    Play,
+    Pause,
+    LoadedMetadata,
+    LoadedData,
+    Playing,
+    CanPlay,
+    CanPlayThrough,
+    Seeking,
+    Seeked,
+    TimeUpdate,
+    Ended,
+    RateChange,
+    DurationChange,
+    VolumeChange,
+    FirstFrameReady,
+}
+impl Ev {
+    pub const fn code(self) -> u32 {
+        match self {
+            Ev::LoadStart => 1,
+            Ev::Error => 5,
+            Ev::Emptied => 6,
+            Ev::Play => 8,
+            Ev::Pause => 9,
+            Ev::LoadedMetadata => 10,
+            Ev::LoadedData => 11,
+            Ev::Playing => 13,
+            Ev::CanPlay => 14,
+            Ev::CanPlayThrough => 15,
+            Ev::Seeking => 16,
+            Ev::Seeked => 17,
+            Ev::TimeUpdate => 18,
+            Ev::Ended => 19,
+            Ev::RateChange => 20,
+            Ev::DurationChange => 21,
+            Ev::VolumeChange => 22,
+            Ev::FirstFrameReady => 1009,
+        }
+    }
+}
+
+/// MF_MEDIA_ENGINE_READY
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Ready {
+    Nothing,
+    Metadata,
+    CurrentData,
+    FutureData,
+    EnoughData,
+}
+impl Ready {
+    pub const fn code(self) -> u32 {
+        match self {
+            Ready::Nothing => 0,
+            Ready::Metadata => 1,
+            Ready::CurrentData => 2,
+            Ready::FutureData => 3,
+            Ready::EnoughData => 4,
+        }
+    }
+}
+
+/// MF_MEDIA_ENGINE_NETWORK
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Network {
+    Empty,
+    Idle,
+    Loading,
+    NoSource,
+}
+impl Network {
+    pub const fn code(self) -> u32 {
+        match self {
+            Network::Empty => 0,
+            Network::Idle => 1,
+            Network::Loading => 2,
+            Network::NoSource => 3,
+        }
+    }
+}
+
+/// MF_MEDIA_ENGINE_ERR
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MediaErr {
+    NoError,
+    Aborted,
+    Network,
+    Decode,
+    SrcNotSupported,
+}
+impl MediaErr {
+    pub const fn code(self) -> u16 {
+        match self {
+            MediaErr::NoError => 0,
+            MediaErr::Aborted => 1,
+            MediaErr::Network => 2,
+            MediaErr::Decode => 3,
+            MediaErr::SrcNotSupported => 4,
+        }
+    }
+}
+impl TryFrom<u32> for MediaErr {
+    type Error = Hr;
+    fn try_from(n: u32) -> Result<MediaErr, Hr> {
+        Ok(match n {
+            0 => MediaErr::NoError,
+            1 => MediaErr::Aborted,
+            2 => MediaErr::Network,
+            3 => MediaErr::Decode,
+            4 => MediaErr::SrcNotSupported,
+            _ => return Err(Hr::InvalidArg),
+        })
+    }
 }
 
 /// What the engine says about itself (what its getters answer), and the events to send.
 #[derive(Clone, Debug, PartialEq)]
 pub struct State {
-    /// MF_MEDIA_ENGINE_READY: 0 nothing, 4 enough data
-    pub ready: u16,
+    pub ready: Ready,
     /// MF_MEDIA_ENGINE_NETWORK: 0 empty, 1 idle, 2 loading, 3 no source
-    pub network: u16,
+    pub network: Network,
     pub paused: bool,
     pub ended: bool,
     pub seeking: bool,
@@ -984,21 +1105,21 @@ pub struct State {
     pub volume: f64,
     pub rate: f64,
     pub default_rate: f64,
-    /// MF_MEDIA_ENGINE_ERR (0: none) and its HRESULT
-    pub error: (u16, u32),
+    /// MF_MEDIA_ENGINE_ERR and its HRESULT
+    pub error: (MediaErr, u32),
     /// in seconds (NaN: no movie)
     pub duration: f64,
     pub video: Option<(u32, u32)>,
     pub audio: bool,
     /// (event, param 1, param 2)
-    pub events: VecDeque<(u32, u32, u32)>,
+    pub events: VecDeque<(Ev, u32, u32)>,
 }
 
 impl Default for State {
     fn default() -> State {
         State {
-            ready: 0,
-            network: 0,
+            ready: Ready::Nothing,
+            network: Network::Empty,
             paused: true,
             ended: false,
             seeking: false,
@@ -1008,7 +1129,7 @@ impl Default for State {
             volume: 1.0,
             rate: 1.0,
             default_rate: 1.0,
-            error: (0, 0),
+            error: (MediaErr::NoError, 0),
             duration: f64::NAN,
             video: None,
             audio: false,
@@ -1018,89 +1139,89 @@ impl Default for State {
 }
 
 impl State {
-    fn event(&mut self, e: u32) {
+    fn event(&mut self, e: Ev) {
         self.events.push_back((e, 0, 0));
     }
     /// A new source: what there was goes (the load algorithm).
     pub fn reset(&mut self) {
-        if self.network != 0 {
-            self.event(ev::EMPTIED);
+        if self.network != Network::Empty {
+            self.event(Ev::Emptied);
         }
         self.paused = true;
         self.ended = false;
         self.seeking = false;
-        self.ready = 0;
-        self.error = (0, 0);
+        self.ready = Ready::Nothing;
+        self.error = (MediaErr::NoError, 0);
         self.duration = f64::NAN;
         self.video = None;
         self.audio = false;
-        self.network = 2;
-        self.event(ev::LOADSTART);
+        self.network = Network::Loading;
+        self.event(Ev::LoadStart);
     }
     /// The source could not be played.
     pub fn failed(&mut self, hr: u32) {
-        self.error = (4, hr);
-        self.network = 3;
-        self.events.push_back((ev::ERROR, 4, hr));
+        self.error = (MediaErr::SrcNotSupported, hr);
+        self.network = Network::NoSource;
+        self.events.push_back((Ev::Error, u32::from(MediaErr::SrcNotSupported.code()), hr));
     }
     /// The source loaded (all of it is there at once). Whether it runs now (autoplay).
     pub fn loaded(&mut self, duration: f64, video: Option<(u32, u32)>, audio: bool) -> bool {
         self.duration = duration;
         self.video = video;
         self.audio = audio;
-        self.network = 1;
-        self.event(ev::DURATIONCHANGE);
-        self.event(ev::LOADEDMETADATA);
-        self.ready = 2;
-        self.event(ev::LOADEDDATA);
+        self.network = Network::Idle;
+        self.event(Ev::DurationChange);
+        self.event(Ev::LoadedMetadata);
+        self.ready = Ready::CurrentData;
+        self.event(Ev::LoadedData);
         if video.is_some() {
-            self.event(ev::FIRSTFRAMEREADY);
+            self.event(Ev::FirstFrameReady);
         }
-        self.ready = 4;
-        self.event(ev::CANPLAY);
+        self.ready = Ready::EnoughData;
+        self.event(Ev::CanPlay);
         if self.autoplay && self.paused {
             self.paused = false;
-            self.event(ev::PLAY);
+            self.event(Ev::Play);
         }
         if !self.paused {
-            self.event(ev::PLAYING);
+            self.event(Ev::Playing);
         }
-        self.event(ev::CANPLAYTHROUGH);
+        self.event(Ev::CanPlayThrough);
         !self.paused
     }
     /// Play: (whether it goes back to the start first, whether it runs now)
     pub fn play(&mut self) -> (bool, bool) {
-        let rewind = self.ended && self.ready > 0;
+        let rewind = self.ended && self.ready > Ready::Nothing;
         if rewind {
             self.seek();
         }
         if self.paused {
             self.paused = false;
-            self.event(ev::PLAY);
-            if self.ready >= 3 {
-                self.event(ev::PLAYING);
+            self.event(Ev::Play);
+            if self.ready >= Ready::FutureData {
+                self.event(Ev::Playing);
             }
         }
-        (rewind, self.ready >= 3)
+        (rewind, self.ready >= Ready::FutureData)
     }
     pub fn pause(&mut self) {
         if !self.paused {
             self.paused = true;
-            self.event(ev::TIMEUPDATE);
-            self.event(ev::PAUSE);
+            self.event(Ev::TimeUpdate);
+            self.event(Ev::Pause);
         }
     }
     /// A seek (done at once). False: nothing to seek in.
     pub fn seek(&mut self) -> bool {
-        if self.ready == 0 {
+        if self.ready == Ready::Nothing {
             return false;
         }
         self.ended = false;
         self.seeking = true;
-        self.event(ev::SEEKING);
+        self.event(Ev::Seeking);
         self.seeking = false;
-        self.event(ev::TIMEUPDATE);
-        self.event(ev::SEEKED);
+        self.event(Ev::TimeUpdate);
+        self.event(Ev::Seeked);
         true
     }
     /// The end was reached. Whether it goes on from the start (looping).
@@ -1109,13 +1230,13 @@ impl State {
             self.seek();
             return true;
         }
-        self.event(ev::TIMEUPDATE);
+        self.event(Ev::TimeUpdate);
         if !self.paused {
             self.paused = true;
-            self.event(ev::PAUSE);
+            self.event(Ev::Pause);
         }
         self.ended = true;
-        self.event(ev::ENDED);
+        self.event(Ev::Ended);
         false
     }
 }
@@ -1165,7 +1286,7 @@ fn position(b: u32) -> Option<(u64, (u32, u32), u32, u32, u32, u32)> {
 }
 /// The movie's volume as IBasicAudio's (1/100 dB).
 fn centibels(v: f64, muted: bool) -> i32 {
-    if muted || v <= 0.0 || v.is_nan() { -10000 } else { (2000.0 * v.min(1.0).log10()).round().max(-10000.0) as i32 }
+    if muted || v <= 0.0 || v.is_nan() { -10000 } else { (2000.0 * v.min(1.0).log10()).round().max(-10000.0).trunc_i32() }
 }
 fn apply_volume(b: u32) {
     let Some(v) = engine(b, |e| centibels(e.st.volume, e.st.muted)) else { return };
@@ -1211,7 +1332,7 @@ fn events_thread(c: &mut Ctx) -> u32 {
     loop {
         match next_event(b, std::time::Duration::from_millis(250)) {
             Some(Ok((n, Some((code, p1, p2))))) => {
-                com(c, n, 3, &[code, p1, p2]);
+                com(c, n, 3, &[code.code(), p1, p2]);
             }
             Some(Ok((_, None))) => {
                 crate::snap::point();
@@ -1240,7 +1361,7 @@ pub(crate) fn snap_wake() {
 
 /// The next event of engine `b` for its events thread: Err when it shut down (None: no such
 /// engine), Ok((notify, None)) when none came in `wait` or a save state is being taken.
-fn next_event(b: u32, wait: std::time::Duration) -> Option<Result<(u32, Option<(u32, u32, u32)>), ()>> {
+fn next_event(b: u32, wait: std::time::Duration) -> Option<Result<(u32, Option<(Ev, u32, u32)>), ()>> {
     let mut g = ENGINES.lock().unwrap_or_else(|e| e.into_inner());
     let mut waited = false;
     loop {
@@ -1381,7 +1502,7 @@ fn load(b: u32) {
         return;
     };
     eprintln!("sake: movie {w}: {}x{} {} frames (Media Engine)", movie.w, movie.h, movie.frames);
-    let (dur, video, audio) = (movie.duration as f64 / SEC as f64, Some((movie.w, movie.h)), movie.sound.is_some());
+    let (dur, video, audio) = (float(movie.duration) / float(SEC), Some((movie.w, movie.h)), movie.sound.is_some());
     let mut p = Play::new(movie);
     p.place.visible = false;
     play::start(b, p);
@@ -1417,35 +1538,35 @@ fn en_get_error(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    let (code, hr) = engine(c.a(0), |e| e.st.error).unwrap_or((0, 0));
-    putp(c.a(1), if code == 0 { 0 } else { new_error(code, hr) });
+    let (code, hr) = engine(c.a(0), |e| e.st.error).unwrap_or((MediaErr::NoError, 0));
+    putp(c.a(1), if code == MediaErr::NoError { 0 } else { new_error(code.code(), hr) });
     0
 }
 fn en_set_error(c: &mut Ctx) -> u32 {
-    let code = c.a(1);
-    if code > 4 {
-        return Hr::InvalidArg.code();
-    }
-    engine(c.a(0), |e| e.st.error = (code as u16, 0));
+    let code = match MediaErr::try_from(c.a(1)) {
+        Ok(code) => code,
+        Err(hr) => return hr.code(),
+    };
+    engine(c.a(0), |e| e.st.error = (code, 0));
     0
 }
 fn en_network(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.network as u32).unwrap_or(0)
+    engine(c.a(0), |e| e.st.network.code()).unwrap_or(0)
 }
 fn en_ready(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.ready as u32).unwrap_or(0)
+    engine(c.a(0), |e| e.st.ready.code()).unwrap_or(0)
 }
 fn en_seeking(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.seeking as u32).unwrap_or(0)
+    engine(c.a(0), |e| u32::from(e.st.seeking)).unwrap_or(0)
 }
 fn en_paused(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.paused as u32).unwrap_or(1)
+    engine(c.a(0), |e| u32::from(e.st.paused)).unwrap_or(1)
 }
 fn en_ended(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.ended as u32).unwrap_or(0)
+    engine(c.a(0), |e| u32::from(e.st.ended)).unwrap_or(0)
 }
 fn en_get_autoplay(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.autoplay as u32).unwrap_or(0)
+    engine(c.a(0), |e| u32::from(e.st.autoplay)).unwrap_or(0)
 }
 fn en_set_autoplay(c: &mut Ctx) -> u32 {
     let v = c.a(1) != 0;
@@ -1453,7 +1574,7 @@ fn en_set_autoplay(c: &mut Ctx) -> u32 {
     0
 }
 fn en_get_loop(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.looping as u32).unwrap_or(0)
+    engine(c.a(0), |e| u32::from(e.st.looping)).unwrap_or(0)
 }
 fn en_set_loop(c: &mut Ctx) -> u32 {
     let v = c.a(1) != 0;
@@ -1461,24 +1582,24 @@ fn en_set_loop(c: &mut Ctx) -> u32 {
     0
 }
 fn en_get_muted(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.muted as u32).unwrap_or(0)
+    engine(c.a(0), |e| u32::from(e.st.muted)).unwrap_or(0)
 }
 fn en_set_muted(c: &mut Ctx) -> u32 {
     let (b, v) = (c.a(0), c.a(1) != 0);
     engine(b, |e| {
         if e.st.muted != v {
             e.st.muted = v;
-            e.st.event(ev::VOLUMECHANGE);
+            e.st.event(Ev::VolumeChange);
         }
     });
     apply_volume(b);
     0
 }
 fn en_has_video(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.video.is_some() as u32).unwrap_or(0)
+    engine(c.a(0), |e| u32::from(e.st.video.is_some())).unwrap_or(0)
 }
 fn en_has_audio(c: &mut Ctx) -> u32 {
-    engine(c.a(0), |e| e.st.audio as u32).unwrap_or(0)
+    engine(c.a(0), |e| u32::from(e.st.audio)).unwrap_or(0)
 }
 fn ret_f64(c: &mut Ctx, v: f64) -> u32 {
     c.st0 = Some(v);
@@ -1486,7 +1607,7 @@ fn ret_f64(c: &mut Ctx, v: f64) -> u32 {
 }
 fn en_time(c: &mut Ctx) -> u32 {
     let b = c.a(0);
-    let t = position(b).map_or(0.0, |p| p.0 as f64 / SEC as f64);
+    let t = position(b).map_or(0.0, |p| float(p.0) / float(SEC));
     ret_f64(c, t)
 }
 fn en_set_time(c: &mut Ctx) -> u32 {
@@ -1509,7 +1630,7 @@ fn seek_to(b: u32, to: f64) -> u32 {
         return Hr::InvalidRequest.code();
     };
     let to = if to.is_nan() { 0.0 } else { to.clamp(0.0, if dur.is_nan() { 0.0 } else { dur }) };
-    timeline(b, |tl, t| tl.seek(t, (to * SEC as f64) as u64));
+    timeline(b, |tl, t| tl.seek(t, time(to * float(SEC))));
     0
 }
 fn en_start_time(c: &mut Ctx) -> u32 {
@@ -1527,7 +1648,7 @@ fn en_set_default_rate(c: &mut Ctx) -> u32 {
     let (b, r) = (c.a(0), dbl(c, 1, 1));
     engine(b, |e| {
         e.st.default_rate = r;
-        e.st.event(ev::RATECHANGE);
+        e.st.event(Ev::RateChange);
     });
     0
 }
@@ -1543,7 +1664,7 @@ fn en_set_rate(c: &mut Ctx) -> u32 {
     engine(b, |e| {
         if e.st.rate != r {
             e.st.rate = r;
-            e.st.event(ev::RATECHANGE);
+            e.st.event(Ev::RateChange);
         }
     });
     timeline(b, |tl, t| tl.set_rate(t, r));
@@ -1589,7 +1710,7 @@ fn en_set_volume(c: &mut Ctx) -> u32 {
     engine(b, |e| {
         if e.st.volume != v {
             e.st.volume = v;
-            e.st.event(ev::VOLUMECHANGE);
+            e.st.event(Ev::VolumeChange);
         }
     });
     apply_volume(b);
@@ -1641,8 +1762,8 @@ fn en_tick(c: &mut Ctx) -> u32 {
     if engine(b, |e| e.ticked.replace(n) == Some(n)).unwrap_or(true) {
         return Hr::False.code();
     }
-    let pts = n as u128 * rate.1 as u128 * SEC as u128 / rate.0.max(1) as u128;
-    w64(out, pts as u64);
+    let pts = u128::from(n) * u128::from(rate.1) * u128::from(SEC) / u128::from(rate.0.max(1));
+    w64(out, u64::try_from(pts).unwrap_or(u64::MAX));
     0
 }
 
@@ -1650,10 +1771,10 @@ fn en_tick(c: &mut Ctx) -> u32 {
 /// picture.
 fn src_rect(p: u32, w: u32, h: u32) -> play::R {
     if p == 0 {
-        return play::R::sized(w as i32, h as i32);
+        return play::R::sized(w.cast_signed(), h.cast_signed());
     }
     let f = |i: u32| f32::from_bits(r32(p + 4 * i)).clamp(0.0, 1.0);
-    let (l, t, r, bt) = ((f(0) * w as f32) as i32, (f(1) * h as f32) as i32, (f(2) * w as f32).round() as i32, (f(3) * h as f32).round() as i32);
+    let (l, t, r, bt) = ((f(0) * w.to_f32()).trunc_i32(), (f(1) * h.to_f32()).trunc_i32(), (f(2) * w.to_f32()).round().trunc_i32(), (f(3) * h.to_f32()).round().trunc_i32());
     play::R::new(l, t, (r - l).max(0), (bt - t).max(0))
 }
 
@@ -1686,13 +1807,13 @@ struct Frames {
 impl Frames {
     /// The picture (fw x fh, `frame`) letterboxed onto `dst` with `border` around it into `out`.
     fn compose(&mut self, frame: &[u32], fw: u32, fh: u32, src: play::R, dst: (u32, u32), border: u32, rgba: bool) {
-        let (dw, dh) = (dst.0 as i32, dst.1 as i32);
+        let (dw, dh) = (dst.0.cast_signed(), dst.1.cast_signed());
         let out = &mut self.out;
         out.clear();
-        out.resize((dw * dh) as usize, border);
+        out.resize((dw * dh).to_usize(), border);
         let lb = letterbox(play::R::sized(dw, dh), src.w, src.h);
         if lb.w > 0 && lb.h > 0 {
-            if src == play::R::sized(fw as i32, fh as i32) && lb == src && (dw, dh) == (lb.w, lb.h) && frame.len() >= out.len() {
+            if src == play::R::sized(fw.cast_signed(), fh.cast_signed()) && lb == src && (dw, dh) == (lb.w, lb.h) && frame.len() >= out.len() {
                 // the whole picture at its size: no scaling, straight across
                 for (d, &p) in out.iter_mut().zip(frame) {
                     *d = texel(p, rgba);
@@ -1701,11 +1822,11 @@ impl Frames {
             }
             let part = &mut self.part;
             part.clear();
-            part.resize((lb.w * lb.h) as usize, 0);
-            play::blit(frame, fw as i32, fh as i32, src, part, lb, lb);
+            part.resize((lb.w * lb.h).to_usize(), 0);
+            play::blit(frame, fw.cast_signed(), fh.cast_signed(), src, part, lb, lb);
             for y in 0..lb.h {
-                let o = ((lb.y + y) * dw + lb.x) as usize;
-                out[o..o + lb.w as usize].copy_from_slice(&part[(y * lb.w) as usize..((y + 1) * lb.w) as usize]);
+                let o = ((lb.y + y) * dw + lb.x).to_usize();
+                out[o..o + lb.w.to_usize()].copy_from_slice(&part[(y * lb.w).to_usize()..((y + 1) * lb.w).to_usize()]);
             }
         }
         if rgba {
@@ -1727,8 +1848,8 @@ const MAX_PIXELS: u64 = 16384 * 16384;
 
 /// The pixels of a w x h picture, or None when it is no picture (0, or past `MAX_PIXELS`).
 fn picture_pixels(w: u32, h: u32) -> Option<usize> {
-    let n = w as u64 * h as u64;
-    (n > 0 && n <= MAX_PIXELS).then_some(n as usize)
+    let n = u64::from(w) * u64::from(h);
+    (n > 0 && n <= MAX_PIXELS).then_some(n.to_usize())
 }
 
 /// TransferVideoFrame(IUnknown *texture, MFVideoNormalizedRect *src, RECT *dst, MFARGB *border):
@@ -1745,8 +1866,8 @@ fn en_transfer(c: &mut Ctx) -> u32 {
         28 | 29 => true,            // R8G8B8A8
         _ => return Hr::InvalidMediaType.code(),
     };
-    let (l, t, r, bt) = if dst == 0 { (0, 0, tw as i32, th as i32) } else { (r32(dst) as i32, r32(dst + 4) as i32, r32(dst + 8) as i32, r32(dst + 12) as i32) };
-    let (l, t, r, bt) = (l.max(0), t.max(0), r.min(tw as i32), bt.min(th as i32));
+    let (l, t, r, bt) = if dst == 0 { (0, 0, tw.cast_signed(), th.cast_signed()) } else { (r32(dst).cast_signed(), r32(dst + 4).cast_signed(), r32(dst + 8).cast_signed(), r32(dst + 12).cast_signed()) };
+    let (l, t, r, bt) = (l.max(0), t.max(0), r.min(tw.cast_signed()), bt.min(th.cast_signed()));
     if r <= l || bt <= t {
         return Hr::InvalidArg.code();
     }
@@ -1763,7 +1884,7 @@ fn en_transfer(c: &mut Ctx) -> u32 {
     // later, the game wants it now)
     let mut tries = 0;
     let mut shown = true;
-    while !unsafe { play::frame(stream, n as i32, f.px.as_mut_ptr() as *mut u8, 4 * w as usize, w, h) } {
+    while !unsafe { play::frame(stream, n.cast_signed(), f.px.as_mut_ptr().cast::<u8>(), 4 * w.to_usize(), w, h) } {
         tries += 1;
         if play::failed(stream) || tries > if f.size.is_some() { LATE_TRIES } else { FRAME_TRIES } {
             shown = false;
@@ -1777,9 +1898,9 @@ fn en_transfer(c: &mut Ctx) -> u32 {
         f.size = Some((w, h));
         let border = if border == 0 { 0xff00_0000 } else { r32(border) };
         let px = std::mem::take(&mut f.px);
-        f.compose(&px, w, h, src_rect(src, w, h), ((r - l) as u32, (bt - t) as u32), border, rgba);
+        f.compose(&px, w, h, src_rect(src, w, h), ((r - l).cast_unsigned(), (bt - t).cast_unsigned()), border, rgba);
         f.px = px;
-        let done = unsafe { kura::d3d11::write_texture_from(surf, f.out.as_ptr() as *const u8, 4 * (r - l) as u32, [l as u32, t as u32, r as u32, bt as u32]) };
+        let done = unsafe { kura::d3d11::write_texture_from(surf, f.out.as_ptr().cast::<u8>(), 4 * (r - l).cast_unsigned(), [l.cast_unsigned(), t.cast_unsigned(), r.cast_unsigned(), bt.cast_unsigned()]) };
         if done { 0 } else { Hr::InvalidArg.code() }
     };
     engine(b, |e| e.frames = f);
@@ -1800,7 +1921,7 @@ fn en_streams(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    let n = engine(c.a(0), |e| e.st.video.is_some() as u32 + e.st.audio as u32).unwrap_or(0);
+    let n = engine(c.a(0), |e| u32::from(e.st.video.is_some()) + u32::from(e.st.audio)).unwrap_or(0);
     put32(c.a(1), n);
     0
 }
@@ -1844,7 +1965,7 @@ fn en_can_play(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let t = if c.a(1) == 0 { String::new() } else { String::from_utf16_lossy(&mem::wstr(c.a(1))) };
-    put32(c.a(2), (t.starts_with("video/") || t.starts_with("audio/")) as u32);
+    put32(c.a(2), u32::from(t.starts_with("video/") || t.starts_with("audio/")));
     0
 }
 
@@ -1980,7 +2101,7 @@ fn fa_create(c: &mut Ctx) -> u32 {
     let Some(s) = store_of(attr) else { return Hr::InvalidArg.code() };
     let notify = s.items.iter().find_map(|(k, v)| match v {
         Val::Unk(u) if is_callback(k) && *u != 0 => Some(*u),
-        _ => None,
+        Val::Unk(_) | Val::U32(_) | Val::U64(_) | Val::F64(_) | Val::Guid(_) | Val::Str(_) | Val::Blob(_) => None,
     });
     let Some(notify) = notify else { return Hr::AttributeNotFound.code() };
     let u32_of = |f: fn(&Guid) -> bool| s.items.iter().find_map(|(k, v)| if let (true, Val::U32(x)) = (f(k), v) { Some(*x) } else { None });

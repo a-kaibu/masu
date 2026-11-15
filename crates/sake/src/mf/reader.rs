@@ -745,7 +745,7 @@ pub fn equal_flags(a: &Store, b: &Store) -> u32 {
     let strip = |s: &Store| Store {
         items: s.items.iter().filter(|i| i.0 != ud).cloned().collect(),
     };
-    if strip(a).matches(&strip(b), 2) == Some(true) {
+    if strip(a).matches(&strip(b), Match::All) {
         f |= 4;
     }
     if a.get(&ud) == b.get(&ud) {
@@ -2283,7 +2283,7 @@ mod tests {
         // WAVEFORMATEX both ways
         let w = wave_format(&pcm_type(&t, 16, false), false).unwrap();
         assert_eq!(w, [1, 0, 2, 0, 0x80, 0xbb, 0, 0, 0, 0xee, 2, 0, 4, 0, 16, 0, 0, 0]);
-        assert_eq!(from_wave_format(&w).unwrap().matches(&pcm_type(&t, 16, false), 2), Some(true));
+        assert_eq!(from_wave_format(&w).unwrap().matches(&pcm_type(&t, 16, false), Match::All), true);
         let x = wave_format(&pcm_type(&t, 32, true), true).unwrap();
         assert_eq!((x.len(), u16::from_le_bytes([x[0], x[1]]), x[24]), (40, 0xfffe, 3));
         assert_eq!(equal_flags(&pcm_type(&t, 16, false), &pcm_type(&t, 16, false)), 0xf);

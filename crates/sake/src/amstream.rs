@@ -40,12 +40,12 @@ enum Hr {
 impl Hr {
     const fn code(self) -> u32 {
         match self {
-            Hr::NoInterface => 0x8000_4002,
-            Hr::Pointer => 0x8000_4003,
-            Hr::NotImpl => 0x8000_4001,
-            Hr::InvalidArg => 0x8007_0057,
-            Hr::Fail => 0x8000_4005,
-            Hr::False => 1,
+            Hr::NoInterface => crate::hresult::E_NOINTERFACE,
+            Hr::Pointer => crate::hresult::E_POINTER,
+            Hr::NotImpl => crate::hresult::E_NOTIMPL,
+            Hr::InvalidArg => crate::hresult::E_INVALIDARG,
+            Hr::Fail => crate::hresult::E_FAIL,
+            Hr::False => crate::hresult::S_FALSE,
             Hr::Pending => 0x0004_0001,
             Hr::EndOfStream => 0x0004_0003,
             Hr::PurposeId => 0x8004_0402,

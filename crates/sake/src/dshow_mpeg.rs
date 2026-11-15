@@ -65,11 +65,11 @@ pub(super) enum Hr {
 impl Hr {
     pub(super) const fn code(self) -> u32 {
         match self {
-            Hr::False => 1,
-            Hr::NotImpl => 0x8000_4001,
-            Hr::NoInterface => 0x8000_4002,
-            Hr::Pointer => 0x8000_4003,
-            Hr::Unexpected => 0x8000_ffff,
+            Hr::False => crate::hresult::S_FALSE,
+            Hr::NotImpl => crate::hresult::E_NOTIMPL,
+            Hr::NoInterface => crate::hresult::E_NOINTERFACE,
+            Hr::Pointer => crate::hresult::E_POINTER,
+            Hr::Unexpected => crate::hresult::E_UNEXPECTED,
             Hr::AlreadyConnected => 0x8004_0204,
             Hr::NotConnected => 0x8004_0209,
             Hr::InvalidDirection => 0x8004_0208,

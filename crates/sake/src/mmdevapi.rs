@@ -6,6 +6,7 @@
 //! gives it a second one, as Windows' does); collections are separate objects freed on their
 //! last Release; the device, its endpoint and property store are stateless singletons.
 
+use crate::hresult::S_OK;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -14,7 +15,6 @@ use crate::mem::{self, ps, putp, r16, r32, w16, w32, wp};
 
 use crate::wasapi::Iid;
 
-const S_OK: u32 = 0;
 
 /// The failures the objects answer
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,10 +30,10 @@ enum Hr {
 impl Hr {
     const fn code(self) -> u32 {
         match self {
-            Hr::Pointer => 0x8000_4003,
-            Hr::NoInterface => 0x8000_4002,
-            Hr::InvalidArg => 0x8007_0057,
-            Hr::NotFound => 0x8007_0490,
+            Hr::Pointer => crate::hresult::E_POINTER,
+            Hr::NoInterface => crate::hresult::E_NOINTERFACE,
+            Hr::InvalidArg => crate::hresult::E_INVALIDARG,
+            Hr::NotFound => crate::hresult::E_PROP_ID_UNSUPPORTED,
             Hr::AccessDenied => 0x8003_0005,
         }
     }

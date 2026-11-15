@@ -32,9 +32,9 @@ enum Hr {
 impl Hr {
     const fn code(self) -> u32 {
         match self {
-            Hr::NoInterface => 0x8000_4002,
-            Hr::NotImpl => 0x8000_4001,
-            Hr::InvalidParam => 0x8007_0057,
+            Hr::NoInterface => crate::hresult::E_NOINTERFACE,
+            Hr::NotImpl => crate::hresult::E_NOTIMPL,
+            Hr::InvalidParam => crate::hresult::E_INVALIDARG,
             Hr::NoDriver => 0x8878_0078,
             Hr::AlreadyInitialized => 0x8878_0082,
         }
@@ -2176,6 +2176,16 @@ mod play_sound_tests {
         #[test]
         fn music_keys_never_touch_buffers(ops in proptest::collection::vec((0u8..5, 0u32..3), 1..30)) {
             let _g = crate::test_guest::enter();
+            // (the mixer thread another test started would play the buffers on meanwhile: a
+            // full run failed on their positions)
+            struct Held;
+            impl Drop for Held {
+                fn drop(&mut self) {
+                    MIXER_HELD.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            MIXER_HELD.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _held = Held;
             let keys = [0x7c_0010u32, 0x7c_0020, 0x7c_0030];
             let fmt = Fmt { rate: RATE, channels: 2, bits: 16, float: false, law: 0 };
             let data = mem::heap_alloc(400, true);

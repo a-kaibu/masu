@@ -6,7 +6,6 @@
 
 use super::*;
 use crate::test_guest::{call_st0, call_stacked as call, enter, guest_thread, snapshot, Rng};
-use crate::num::Low as _;
 use std::fmt::Write;
 
 /// The keys the sweeps set and get by (k0..k3), as guest GUIDs.
@@ -385,7 +384,8 @@ fn mf_engine_snapshot() {
         });
         match st {
             Some((ev, refs, shut, s, cat, role, src)) => {
-                write!(line, " | ev={ev:?} refs={refs} shut={shut} ready={} net={} paused={} ended={} seeking={} auto={} loop={} muted={} vol={} rate={}/{} err={:x?} dur={} video={:?} audio={} cat={cat} role={role} src={:?}", s.ready, s.network, s.paused, s.ended, s.seeking, s.autoplay, s.looping, s.muted, s.volume, s.rate, s.default_rate, s.error, s.duration, s.video, s.audio, src.map(|s| s.replace(&host, "<dir>").replace(&*dir.to_string_lossy(), "<dir>"))).unwrap();
+                let ev: Vec<(u32, u32, u32)> = ev.iter().map(|&(e, p1, p2)| (e.code(), p1, p2)).collect();
+                write!(line, " | ev={ev:?} refs={refs} shut={shut} ready={} net={} paused={} ended={} seeking={} auto={} loop={} muted={} vol={} rate={}/{} err={:x?} dur={} video={:?} audio={} cat={cat} role={role} src={:?}", s.ready.code(), s.network.code(), s.paused, s.ended, s.seeking, s.autoplay, s.looping, s.muted, s.volume, s.rate, s.default_rate, (s.error.0.code(), s.error.1), s.duration, s.video, s.audio, src.map(|s| s.replace(&host, "<dir>").replace(&*dir.to_string_lossy(), "<dir>"))).unwrap();
             }
             None => {
                 live.retain(|&x| x != b);
