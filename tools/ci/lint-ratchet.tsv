@@ -1428,7 +1428,6 @@ file	crates/sake/src/jscript.rs	let_underscore_must_use	9
 file	crates/sake/src/jscript.rs	masu-static_mut	1
 file	crates/sake/src/jscript.rs	ptr_as_ptr	1
 file	crates/sake/src/jscript.rs	unused_result_ok	1
-file	crates/sake/src/k32.rs	arithmetic_side_effects	543
 file	crates/sake/src/k32.rs	masu-set_len	3
 file	crates/sake/src/k32.rs	unwrap_used	2
 file	crates/sake/src/k32.rs	wildcard_enum_match_arm	2

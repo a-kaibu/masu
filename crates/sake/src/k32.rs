@@ -14,7 +14,7 @@ use koji::{EAX, ESP};
 
 use crate::api::{implement, Ctx};
 use crate::files;
-use crate::mem::{self, cstr, put32, put_cstr, put_wstr, r16, r32, w16, w32, w8, wstr};
+use crate::mem::{self, cstr, put32, put_cstr, put_wstr, r16, r32, w16, w32, wstr};
 use crate::obj::{self, Obj};
 use crate::text::{a2s, a2w};
 
@@ -25,10 +25,10 @@ macro_rules! reg {
 }
 
 pub fn last_error(e: u32) {
-    w32(crate::cur().teb + crate::teb_last_error(), e);
+    (mem::ga(crate::cur().teb) + crate::teb_last_error()).w32(e);
 }
 pub fn get_last_error() -> u32 {
-    r32(crate::cur().teb + crate::teb_last_error())
+    (mem::ga(crate::cur().teb) + crate::teb_last_error()).r32()
 }
 
 fn ok(b: bool) -> u32 {
@@ -58,13 +58,13 @@ pub fn ret_str(dst: u32, cap: u32, s: &str, wide: bool) -> u32 {
     if wide {
         let v: Vec<u16> = s.encode_utf16().collect();
         if (kome::num::u32_of(v.len())) >= cap {
-            return kome::num::u32_of(v.len()) + 1;
+            return kome::num::u32_of(v.len()).saturating_add(1);
         }
         put_wstr(dst, cap, &v)
     } else {
         let v = crate::text::s2a(s);
         if (kome::num::u32_of(v.len())) >= cap {
-            return kome::num::u32_of(v.len()) + 1;
+            return kome::num::u32_of(v.len()).saturating_add(1);
         }
         put_cstr(dst, cap, &v)
     }
@@ -93,12 +93,12 @@ pub fn clock_ns() -> u64 {
 pub const TSC_HZ: u64 = 2_000_000_000;
 pub fn tsc() -> u64 {
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let t = (clock_ns() + 60_000_000_000) * (TSC_HZ / 1_000_000_000);
+    let t = clock_ns().saturating_add(60_000_000_000).saturating_mul(TSC_HZ / 1_000_000_000);
     LAST.fetch_max(t, Ordering::Relaxed).max(t)
 }
 
 pub fn ticks_ms() -> u32 {
-    kome::num::lo32(clock_ns() / 1_000_000 + 60_000)
+    kome::num::lo32((clock_ns() / 1_000_000).wrapping_add(60_000))
 }
 
 static CMDLINE: Mutex<(u32, u32)> = Mutex::new((0, 0));
@@ -115,10 +115,10 @@ pub fn set_command_line(exe: &str, args: &[String]) {
 pub fn set_command_line_raw(s: &str) {
     let a = crate::text::s2a(&s);
     let w: Vec<u16> = s.encode_utf16().collect();
-    let pa = mem::heap_alloc(kome::num::u32_of(a.len()) + 1, true);
+    let pa = mem::heap_alloc(kome::num::u32_of(a.len()).saturating_add(1), true);
     mem::write(pa, &a);
-    let pw = mem::heap_alloc(2 * kome::num::u32_of(w.len()) + 2, true);
-    put_wstr(pw, kome::num::u32_of(w.len()) + 1, &w);
+    let pw = mem::heap_alloc(kome::num::u32_of(w.len()).saturating_mul(2).saturating_add(2), true);
+    put_wstr(pw, kome::num::u32_of(w.len()).saturating_add(1), &w);
     *CMDLINE.locked() = (pa, pw);
 }
 
@@ -154,9 +154,9 @@ fn env_block(wide: bool) -> u32 {
     let s = with_env(|e| e.block());
     if wide {
         let w: Vec<u16> = s.encode_utf16().collect();
-        let p = mem::heap_alloc(2 * kome::num::u32_of(w.len()), true);
+        let p = mem::heap_alloc(kome::num::u32_of(w.len()).saturating_mul(2), true);
         for (i, c) in w.iter().enumerate() {
-            w16(p + 2 * kome::num::u32_of(i), *c);
+            mem::ga(p).at(kome::num::u32_of(i), 2).w16(*c);
         }
         p
     } else {
@@ -211,7 +211,7 @@ fn GetEnvironmentVariableW(c: &mut Ctx) -> u32 {
         // (a buffer too short gets an empty string, as Windows' W one: winref envvars)
         Some(v) if kome::num::u32_of(v.encode_utf16().count()) >= c.a(2) && c.a(1) != 0 && c.a(2) != 0 => {
             w16(c.a(1), 0);
-            kome::num::u32_of(v.encode_utf16().count()) + 1
+            kome::num::u32_of(v.encode_utf16().count()).saturating_add(1)
         }
         Some(v) => ret_str(c.a(1), c.a(2), &v, true),
         None => {
@@ -248,9 +248,9 @@ fn expand_env_strings(c: &mut Ctx, wide: bool) -> u32 {
     match (n >= c.a(2), wide) {
         // (the ANSI one asks for a character more than it needs when the buffer is short, as
         // Windows' does: winref envvars)
-        (true, false) => n + 1,
+        (true, false) => n.saturating_add(1),
         (true, true) => n,
-        (false, _) => n + 1,
+        (false, _) => n.saturating_add(1),
     }
 }
 fn ExpandEnvironmentStringsA(c: &mut Ctx) -> u32 {
@@ -496,7 +496,7 @@ fn K32GetProcessMemoryInfo(c: &mut Ctx) -> u32 {
         return 0;
     }
     let ps = mem::ps();
-    let (size, ex) = (8 + 8 * ps, 8 + 9 * ps);
+    let (size, ex) = (ps.saturating_mul(8).saturating_add(8), ps.saturating_mul(9).saturating_add(8));
     if cb < size {
         last_error(122);
         return 0;
@@ -504,10 +504,10 @@ fn K32GetProcessMemoryInfo(c: &mut Ctx) -> u32 {
     let n = if cb >= ex { ex } else { size };
     mem::fill(p, n, 0);
     w32(p, n);
-    w32(p + 4, 20_000); // page faults
-    for i in [0, 1, 6, 7, 8] {
-        if 8 + (i + 1) * ps <= n {
-            mem::wp(p + 8 + i * ps, 64 << 20);
+    (mem::ga(p) + 4).w32(20_000); // page faults
+    for i in [0_u32, 1, 6, 7, 8] {
+        if i.saturating_add(1).saturating_mul(ps).saturating_add(8) <= n {
+            (mem::ga(p) + 8).at(i, ps).wp(64 << 20);
         }
     }
     1
@@ -518,7 +518,7 @@ fn K32GetProcessMemoryInfo(c: &mut Ctx) -> u32 {
 /// paged pool, nonpaged pool)
 fn perf_pages() -> [u32; 7] {
     let pages = kome::num::lo32(PHYS / 4096);
-    [pages, pages / 4 * 3, pages / 4, 2 * pages, pages / 4, 0x6000, 0x2000]
+    [pages, (pages / 4).saturating_mul(3), pages / 4, pages.saturating_mul(2), pages / 4, 0x6000, 0x2000]
 }
 /// The threads that run (by id) and the handles open
 fn counts() -> (Vec<u32>, u32) {
@@ -545,14 +545,14 @@ fn K32GetPerformanceInfo(c: &mut Ctx) -> u32 {
     mem::fill(p, size, 0);
     w32(p, size);
     let [phys, avail, commit, limit, peak, paged, nonpaged] = perf_pages();
-    let at = |i: u32| p + ps + i * ps; // the SIZE_T fields after cb
-    for (i, v) in [commit, limit, peak, phys, avail, phys / 8, paged + nonpaged, paged, nonpaged, 4096].into_iter().enumerate() {
+    let at = |i: u32| (mem::ga(p) + ps).at(i, ps).get(); // the SIZE_T fields after cb
+    for (i, v) in [commit, limit, peak, phys, avail, phys / 8, paged.saturating_add(nonpaged), paged, nonpaged, 4096].into_iter().enumerate() {
         mem::wp(at(kome::num::u32_of(i)), v);
     }
     let (tids, handles) = counts();
     w32(at(10), handles);
-    w32(at(10) + 4, 1);
-    w32(at(10) + 8, kome::num::lo32(tids.len().max(1)));
+    (mem::ga(at(10)) + 4).w32(1);
+    (mem::ga(at(10)) + 8).w32(kome::num::lo32(tids.len().max(1)));
     1
 }
 /// NtQuerySystemInformation's classes sysinfo.rs leaves to us (class, buffer, bytes, &needed):
@@ -571,8 +571,8 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
     let (need, exact) = match class {
         2 => (312, false),
         5 => {
-            let (fixed, ti) = if x64 { (0x100, 0x50) } else { (0xb8, 0x40) };
-            (fixed + ti * kome::num::u32_of(tids.len()) + 2 * (kome::num::u32_of(name.len()) + 1), false)
+            let (fixed, ti): (u32, u32) = if x64 { (0x100, 0x50) } else { (0xb8, 0x40) };
+            (ti.saturating_mul(kome::num::u32_of(tids.len())).saturating_add(fixed).saturating_add(kome::num::u32_of(name.len()).saturating_add(1).saturating_mul(2)), false)
         }
         _ => return 0xc000_0003,
     };
@@ -589,32 +589,32 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
     match class {
         2 => {
             for (o, v) in [(44, avail), (48, commit), (52, limit), (56, peak), (112, paged), (116, nonpaged)] {
-                w32(p + o, v);
+                (mem::ga(p) + o).w32(v);
             }
         }
         _ => {
             let (fixed, ti) = if x64 { (0x100, 0x50) } else { (0xb8, 0x40) };
-            w32(p + 4, kome::num::u32_of(tids.len()));
-            let s = p + fixed + ti * kome::num::u32_of(tids.len());
+            (mem::ga(p) + 4).w32(kome::num::u32_of(tids.len()));
+            let s = (mem::ga(p) + fixed).at(kome::num::u32_of(tids.len()), ti).get();
             for (i, &u) in name.iter().enumerate() {
-                mem::w16(s + 2 * kome::num::u32_of(i), u);
+                mem::ga(s).at(kome::num::u32_of(i), 2).w16(u);
             }
-            mem::w16(p + 0x38, 2 * kome::num::lo16(name.len()));
-            mem::w16(p + 0x3a, 2 * kome::num::lo16(name.len()) + 2);
-            mem::wp(p + 0x38 + ps, s);
+            (mem::ga(p) + 0x38).w16(kome::num::lo16(name.len()).wrapping_mul(2));
+            (mem::ga(p) + 0x3a).w16(kome::num::lo16(name.len()).wrapping_mul(2).wrapping_add(2));
+            (mem::ga(p) + 0x38 + ps).wp(s);
             let (pid_at, hc_at) = if x64 { (0x50, 0x60) } else { (0x44, 0x4c) };
-            w32(p + pid_at - ps, 8); // base priority: normal
-            mem::wp(p + pid_at, crate::pid());
-            w32(p + hc_at, handles);
-            w32(p + hc_at + 4, 1); // session
+            (mem::ga(p) + pid_at - ps).w32(8); // base priority: normal
+            (mem::ga(p) + pid_at).wp(crate::pid());
+            (mem::ga(p) + hc_at).w32(handles);
+            (mem::ga(p) + hc_at + 4).w32(1); // session
             for (i, &tid) in tids.iter().enumerate() {
-                let t = p + fixed + ti * kome::num::u32_of(i);
+                let t = (mem::ga(p) + fixed).at(kome::num::u32_of(i), ti);
                 let cid = if x64 { 0x28 } else { 0x20 };
-                mem::wp(t + cid, crate::pid());
-                mem::wp(t + cid + ps, tid);
-                w32(t + cid + 2 * ps, 8);
-                w32(t + cid + 2 * ps + 4, 8);
-                w32(t + cid + 2 * ps + 12, 5); // Waiting
+                (t + cid).wp(crate::pid());
+                (t + cid + ps).wp(tid);
+                (t + cid).at(2, ps).w32(8);
+                ((t + cid).at(2, ps) + 4).w32(8);
+                ((t + cid).at(2, ps) + 12).w32(5); // Waiting
             }
         }
     }
@@ -653,14 +653,14 @@ fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
         last_error(998); // ERROR_NOACCESS
         return 0;
     }
-    for (i, &b) in all.iter().enumerate().take(kome::num::us(cb / ps)) {
-        mem::wp(p + kome::num::u32_of(i) * ps, b);
+    for (i, &b) in all.iter().enumerate().take(kome::num::us(cb.checked_div(ps).unwrap_or(0))) {
+        mem::ga(p).at(kome::num::u32_of(i), ps).wp(b);
     }
     if pn == 0 {
         last_error(998);
         return 0;
     }
-    w32(pn, kome::num::u32_of(all.len()) * ps);
+    w32(pn, kome::num::u32_of(all.len()).saturating_mul(ps));
     1
 }
 /// EnumProcessModulesEx(.., filter): a process of one kind has its own modules only
@@ -699,7 +699,7 @@ fn K32GetModuleInformation(c: &mut Ctx) -> u32 {
     let (p, cb) = (c.a(2), c.a(3));
     let Some(b) = psapi_module(c.a(0), c.a(1)) else { return 0 };
     let ps = mem::ps();
-    if cb < 3 * ps {
+    if cb < ps.saturating_mul(3) {
         last_error(122);
         return 0;
     }
@@ -707,11 +707,11 @@ fn K32GetModuleInformation(c: &mut Ctx) -> u32 {
     let Some((size, entry)) = crate::pe::with(b, |m| (m.size, m.entry)) else { return 0 };
     let (b, size, entry) = module_info(c.a(1), b, size, entry);
     mem::wp(p, b);
-    w32(p + ps, size);
+    (mem::ga(p) + ps).w32(size);
     if mem::x64() {
-        w32(p + 12, 0);
+        (mem::ga(p) + 12).w32(0);
     }
-    mem::wp(p + 2 * ps, entry);
+    mem::ga(p).at(ps, 2).wp(entry);
     1
 }
 /// MODULEINFO for the module asked (0: the exe, `base` its base): the base as asked, the
@@ -742,16 +742,16 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
         let n = kome::num::u32_of(if wide { name.encode_utf16().count() } else { crate::text::s2a(&name).len() });
         put_name(dst, cap, &name, wide);
         // (the ANSI one cut short counts what it kept before its 0, as Windows 10)
-        return if !wide && n >= cap { cap - 1 } else { n.min(cap) };
+        return if !wide && n >= cap { cap.saturating_sub(1) } else { n.min(cap) };
     }
     if wide {
         let v: Vec<u16> = name.encode_utf16().collect();
         let n = v.len().min(kome::num::us(cap));
         for (i, &u) in v.iter().take(n).enumerate() {
-            mem::w16(dst + 2 * kome::num::u32_of(i), u);
+            mem::ga(dst).at(kome::num::u32_of(i), 2).w16(u);
         }
         if n < kome::num::us(cap) {
-            mem::w16(dst + 2 * kome::num::u32_of(n), 0);
+            mem::ga(dst).at(kome::num::u32_of(n), 2).w16(0);
         }
         kome::num::u32_of(n)
     } else {
@@ -759,12 +759,12 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
         // answers; the wide name is converted into the caller's buffer)
         let v = crate::text::s2a(&name);
         if v.len() >= kome::num::us(cap) {
-            mem::write(dst, v.get(..kome::num::us(cap) - 1).unwrap_or(&v));
-            mem::w8(dst + cap - 1, 0);
+            mem::write(dst, v.get(..kome::num::us(cap).saturating_sub(1)).unwrap_or(&v));
+            (mem::ga(dst) + cap - 1).w8(0);
             return cap;
         }
         mem::write(dst, &v);
-        mem::w8(dst + kome::num::u32_of(v.len()), 0);
+        (mem::ga(dst) + kome::num::u32_of(v.len())).w8(0);
         kome::num::u32_of(v.len())
     }
 }
@@ -890,9 +890,9 @@ pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
         if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == h && *n > 0) {
             let old = *n;
             if suspend {
-                *n += 1;
+                *n = (*n).saturating_add(1);
             } else {
-                *n -= 1;
+                *n = (*n).saturating_sub(1);
             }
             drop(g);
             GATE_CV.notify_all();
@@ -1032,7 +1032,7 @@ fn nt_rw_memory(c: &mut Ctx, write: bool) -> u32 {
     let done_at = c.a(4);
     let tmp = mem::heap_alloc(8, true);
     // (the count goes to `tmp` for the moment: argument 4's slot)
-    let slot = if mem::x64() { c.esp + 40 } else { c.esp + 20 };
+    let slot = if mem::x64() { c.esp.saturating_add(40) } else { c.esp.saturating_add(20) };
     let saved = mem::rp(slot);
     mem::wp(slot, tmp);
     let ok = if write { WriteProcessMemory(c) } else { ReadProcessMemory(c) } != 0;
@@ -1071,7 +1071,7 @@ fn ResumeThread(c: &mut Ctx) -> u32 {
         let mut g = GATE.locked();
         if let Some((_, n)) = g.iter_mut().find(|(x, n)| *x == h && *n > 0) {
             let old = *n;
-            *n -= 1;
+            *n = (*n).saturating_sub(1);
             drop(g);
             GATE_CV.notify_all();
             return old;
@@ -1101,7 +1101,7 @@ fn remote_thread_count(h: u32, pid: u32, suspend: bool) -> u32 {
     let early = crate::kern::with(|k| match k.procs.get_mut(&pid) {
         Some(p) if p.suspend > 0 && tid == crate::process::first_tid(pid) => {
             let n = p.suspend;
-            p.suspend = if suspend { n + 1 } else { n - 1 };
+            p.suspend = if suspend { n.saturating_add(1) } else { n.saturating_sub(1) };
             k.changed();
             Some(n)
         }
@@ -1140,8 +1140,8 @@ fn SuspendThread(c: &mut Ctx) -> u32 {
             last_error(ERROR_SIGNAL_REFUSED);
             return u32::MAX;
         }
-        *n += 1;
-        return *n - 1;
+        *n = (*n).saturating_add(1);
+        return (*n).saturating_sub(1);
     }
     let Some(tid) = thread_tid(h) else {
         if obj::with(|t| matches!(t.objs.get(&h), Some((Obj::Thread { .. }, _)))) {
@@ -1400,7 +1400,7 @@ fn Sleep(c: &mut Ctx) -> u32 {
 /// Sleeps `ms` (INFINITE: for good); a save state may be taken meanwhile (the call starts over
 /// in a restored copy).
 pub(crate) fn sleep_ms(ms: u32) {
-    let end = (ms != u32::MAX).then(|| std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms)));
+    let end = (ms != u32::MAX).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));
     loop {
         let left = match end {
             Some(e) => match e.checked_duration_since(std::time::Instant::now()) {
@@ -1663,7 +1663,7 @@ pub(crate) fn open_sync(n: String, want: u8) -> u32 {
 }
 /// SECURITY_ATTRIBUTES `sa`'s bInheritHandle for new handle `h` (CreateEvent and the like)
 fn sa_inherit(sa: u32, h: u32) -> u32 {
-    if h != 0 && sa != 0 && r32(sa + 2 * mem::ps()) != 0 {
+    if h != 0 && sa != 0 && mem::ga(sa).at(2, mem::ps()).r32() != 0 {
         obj::set_inherit(h, true);
     }
     h
@@ -1698,19 +1698,19 @@ fn OpenWaitableTimerW(c: &mut Ctx) -> u32 {
 /// SetWaitableTimer(h, due, period ms, apc, arg, resume): `due` in 100 ns, negative = from now,
 /// positive = an absolute FILETIME. (The completion routine is not called.)
 fn SetWaitableTimer(c: &mut Ctx) -> u32 {
-    use std::time::{Duration, Instant, SystemTime};
+    use std::time::{Duration, SystemTime};
     let v = get64(c.a(1)).cast_signed();
     let after = if v < 0 {
-        Duration::from_nanos(v.unsigned_abs() * 100)
+        Duration::from_nanos(v.unsigned_abs().saturating_mul(100))
     } else {
         let now = files::filetime(SystemTime::now()).cast_signed();
-        Duration::from_nanos((v - now).max(0).cast_unsigned() * 100)
+        Duration::from_nanos(v.saturating_sub(now).max(0).cast_unsigned().saturating_mul(100))
     };
     let period = Duration::from_millis(u64::from(c.a(2)));
     let r = obj::with(|t| match t.objs.get_mut(&c.a(0)) {
         Some((Obj::Timer { set, due, period: p, .. }, _)) => {
             *set = false;
-            *due = Some(Instant::now() + after);
+            *due = Some(kome::time::from_now(after));
             *p = period;
             true
         }
@@ -1774,7 +1774,7 @@ fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
 /// FALSE, WAIT_TIMEOUT and a NULL overlapped (key and bytes as they were)
 fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
     let (port, pbytes, pkey, pov, ms) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
-    let deadline = (ms != 0xffff_ffff).then(|| std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms)));
+    let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));
     loop {
         let got = {
             let mut g = PORTS.locked();
@@ -1886,7 +1886,7 @@ pub(crate) fn release_mutex(h: u32) -> Result<(), u32> {
     }
     let r = obj::with(|t| match t.objs.get_mut(&h) {
         Some((Obj::Mutex { owner, count }, _)) if *owner == tid => {
-            *count -= 1;
+            *count = (*count).saturating_sub(1);
             if *count == 0 {
                 *owner = 0;
             }
@@ -1944,10 +1944,10 @@ pub(crate) fn release_semaphore(h: u32, n: i32) -> Result<i32, u32> {
         Some(_) if n <= 0 => Err(87),
         Some((Obj::Semaphore { count, max }, _)) => {
             let prev = *count;
-            if i64::from(*count) + i64::from(n) > i64::from(*max) {
+            if i64::from(*count).saturating_add(i64::from(n)) > i64::from(*max) {
                 return Err(298); // ERROR_TOO_MANY_POSTS
             }
-            *count += n;
+            *count = (*count).saturating_add(n);
             Ok(prev)
         }
         _ => Err(6),
@@ -1981,7 +1981,7 @@ fn WaitForMultipleObjects(c: &mut Ctx) -> u32 {
         return obj::WAIT_FAILED;
     }
     // (std handle values are taken, as in WaitForSingleObject; the other pseudo-handles not)
-    let hs: Vec<u32> = (0..c.a(0)).map(|i| single_wait_handle(mem::rp(c.a(1) + mem::ps() * i))).collect();
+    let hs: Vec<u32> = (0..c.a(0)).map(|i| single_wait_handle(mem::ga(c.a(1)).at(i, mem::ps()).rp())).collect();
     if hs.iter().any(|&h| obj::is_pseudo(h)) {
         last_error(6);
         return obj::WAIT_FAILED;
@@ -2001,7 +2001,7 @@ fn WaitForMultipleObjectsEx(c: &mut Ctx) -> u32 {
         last_error(87);
         return obj::WAIT_FAILED;
     }
-    let hs: Vec<u32> = (0..c.a(0)).map(|i| single_wait_handle(mem::rp(c.a(1) + mem::ps() * i))).collect();
+    let hs: Vec<u32> = (0..c.a(0)).map(|i| single_wait_handle(mem::ga(c.a(1)).at(i, mem::ps()).rp())).collect();
     if hs.iter().any(|&h| obj::is_pseudo(h)) {
         last_error(6);
         return obj::WAIT_FAILED;
@@ -2109,7 +2109,7 @@ fn atomic(a: u32) -> &'static AtomicU32 {
 /// An RTL_CRITICAL_SECTION_DEBUG for `cs` (Wine's msvcr90 names its locks in DebugInfo->Spare).
 fn cs_debug_info(cs: u32) {
     let d = mem::heap_alloc(32, true);
-    w32(d + 4, cs);
+    (mem::ga(d) + 4).w32(cs);
     w32(cs, d);
 }
 // RTL_CRITICAL_SECTION fields: DebugInfo, LockCount, RecursionCount, OwningThread, LockSemaphore,
@@ -2128,39 +2128,39 @@ fn cs_off(f: usize) -> u32 {
 const CS_LOCKED: u32 = 0xffff_fffe;
 fn cs_init(cs: u32) {
     mem::fill(cs, if mem::x64() { 40 } else { 24 }, 0);
-    w32(cs + cs_off(LOCK), 0xffff_ffff);
+    (mem::ga(cs) + cs_off(LOCK)).w32(0xffff_ffff);
 }
 /// A section that says it is held (LockCount 0) by nobody, with a LockSemaphore that is no
 /// handle: Windows waits on that handle and raises STATUS_INVALID_HANDLE (kernel32:sync
 /// test_initializecriticalsectionex). (Ours keeps its waiter count there: the section of a
 /// guest that set the field itself.)
 fn cs_corrupt(cs: u32) -> bool {
-    let sem = r32(cs + cs_off(SEM));
-    r32(cs + cs_off(LOCK)) == 0 && r32(cs + cs_off(OWNER)) == 0 && r32(cs + cs_off(REC)) == 0 && sem > 0x10000 && !obj::with(|t| t.objs.contains_key(&sem))
+    let sem = (mem::ga(cs) + cs_off(SEM)).r32();
+    (mem::ga(cs) + cs_off(LOCK)).r32() == 0 && (mem::ga(cs) + cs_off(OWNER)).r32() == 0 && (mem::ga(cs) + cs_off(REC)).r32() == 0 && sem > 0x10000 && !obj::with(|t| t.objs.contains_key(&sem))
 }
 pub fn cs_enter(cs: u32) {
     let me = crate::cur().tid;
-    match CS.enter(atomic(cs + cs_off(OWNER)), atomic(cs + cs_off(SEM)), me, &Pause) {
-        waits::Entered::Again => w32(cs + cs_off(REC), r32(cs + cs_off(REC)) + 1),
+    match CS.enter(atomic((mem::ga(cs) + cs_off(OWNER)).get()), atomic((mem::ga(cs) + cs_off(SEM)).get()), me, &Pause) {
+        waits::Entered::Again => (mem::ga(cs) + cs_off(REC)).w32((mem::ga(cs) + cs_off(REC)).r32().saturating_add(1)),
         waits::Entered::First | waits::Entered::Busy => {
-            w32(cs + cs_off(REC), 1);
-            w32(cs + cs_off(LOCK), CS_LOCKED);
+            (mem::ga(cs) + cs_off(REC)).w32(1);
+            (mem::ga(cs) + cs_off(LOCK)).w32(CS_LOCKED);
         }
     }
 }
 pub fn cs_leave(cs: u32) {
-    let n = r32(cs + cs_off(REC));
+    let n = (mem::ga(cs) + cs_off(REC)).r32();
     if n > 1 {
-        w32(cs + cs_off(REC), n - 1);
+        (mem::ga(cs) + cs_off(REC)).w32(n.saturating_sub(1));
         return;
     }
-    w32(cs + cs_off(REC), 0);
-    w32(cs + cs_off(LOCK), 0xffff_ffff);
-    CS.leave(atomic(cs + cs_off(OWNER)), atomic(cs + cs_off(SEM)));
+    (mem::ga(cs) + cs_off(REC)).w32(0);
+    (mem::ga(cs) + cs_off(LOCK)).w32(0xffff_ffff);
+    CS.leave(atomic((mem::ga(cs) + cs_off(OWNER)).get()), atomic((mem::ga(cs) + cs_off(SEM)).get()));
 }
 /// Wakes the waiters of `cs` (fast::leave_cs found some after releasing it).
 pub fn cs_wake(cs: u32) {
-    CS.wake_at(atomic(cs + cs_off(OWNER)));
+    CS.wake_at(atomic((mem::ga(cs) + cs_off(OWNER)).get()));
 }
 fn InitializeCriticalSection(c: &mut Ctx) -> u32 {
     cs_init(c.a(0));
@@ -2170,12 +2170,12 @@ fn InitializeCriticalSection(c: &mut Ctx) -> u32 {
 fn InitializeCriticalSectionAndSpinCount(c: &mut Ctx) -> u32 {
     cs_init(c.a(0));
     cs_debug_info(c.a(0));
-    w32(c.a(0) + cs_off(SPIN), c.a(1) & 0x00ff_ffff);
+    (mem::ga(c.a(0)) + cs_off(SPIN)).w32(c.a(1) & 0x00ff_ffff);
     1
 }
 fn SetCriticalSectionSpinCount(c: &mut Ctx) -> u32 {
-    let old = r32(c.a(0) + cs_off(SPIN));
-    w32(c.a(0) + cs_off(SPIN), c.a(1) & 0x00ff_ffff);
+    let old = (mem::ga(c.a(0)) + cs_off(SPIN)).r32();
+    (mem::ga(c.a(0)) + cs_off(SPIN)).w32(c.a(1) & 0x00ff_ffff);
     old
 }
 fn GetHandleInformation(c: &mut Ctx) -> u32 {
@@ -2200,7 +2200,7 @@ fn InitializeCriticalSectionEx(c: &mut Ctx) -> u32 {
 /// (DebugInfo is NULL after it, ours freed, -1 or the guest's own left alone)
 fn DeleteCriticalSection(c: &mut Ctx) -> u32 {
     let d = r32(c.a(0));
-    if d != 0 && d != u32::MAX && r32(d + 4) == c.a(0) {
+    if d != 0 && d != u32::MAX && (mem::ga(d) + 4).r32() == c.a(0) {
         mem::heap_free(d);
     }
     mem::wp(c.a(0), 0);
@@ -2218,7 +2218,7 @@ pub(crate) fn raise_from_api(c: &mut Ctx, code: u32, flags: u32, nargs: u32) {
     } else {
         let ret = r32(c.esp);
         c.cpu.eip = ret;
-        c.cpu.regs[ESP] = c.esp + 4 + 4 * nargs;
+        c.cpu.regs[ESP] = (mem::ga(c.esp) + 4).at(nargs, 4).get();
         crate::seh::raise(c.cpu, code, flags, ret, &[]);
     }
     c.jumped = true;
@@ -2230,7 +2230,7 @@ fn peb_lock() -> u32 {
         let cs = mem::heap_alloc(if mem::x64() { 40 } else { 24 }, true);
         cs_init(cs);
         let peb = crate::PEB.load(std::sync::atomic::Ordering::Relaxed);
-        mem::wp(peb + if mem::x64() { 0x38 } else { 0x1c }, cs);
+        (mem::ga(peb) + if mem::x64() { 0x38 } else { 0x1c }).wp(cs);
         cs
     })
 }
@@ -2248,7 +2248,7 @@ fn RtlReleasePebLock(_: &mut Ctx) -> u32 {
 fn EnterCriticalSection(c: &mut Ctx) -> u32 {
     if cs_corrupt(c.a(0)) {
         // (counted as a waiter first, as Windows does before it waits)
-        w32(c.a(0) + cs_off(LOCK), 0xffff_fffc);
+        (mem::ga(c.a(0)) + cs_off(LOCK)).w32(0xffff_fffc);
         raise_from_api(c, 0xC000_0008, 1, 1);
         return 0;
     }
@@ -2261,11 +2261,11 @@ fn LeaveCriticalSection(c: &mut Ctx) -> u32 {
 }
 fn TryEnterCriticalSection(c: &mut Ctx) -> u32 {
     let cs = c.a(0);
-    match waits::Cs::try_enter(atomic(cs + cs_off(OWNER)), crate::cur().tid) {
-        waits::Entered::Again => w32(cs + cs_off(REC), r32(cs + cs_off(REC)) + 1),
+    match waits::Cs::try_enter(atomic((mem::ga(cs) + cs_off(OWNER)).get()), crate::cur().tid) {
+        waits::Entered::Again => (mem::ga(cs) + cs_off(REC)).w32((mem::ga(cs) + cs_off(REC)).r32().saturating_add(1)),
         waits::Entered::First => {
-            w32(cs + cs_off(REC), 1);
-            w32(cs + cs_off(LOCK), CS_LOCKED);
+            (mem::ga(cs) + cs_off(REC)).w32(1);
+            (mem::ga(cs) + cs_off(LOCK)).w32(CS_LOCKED);
         }
         waits::Entered::Busy => return 0,
     }
@@ -2291,7 +2291,7 @@ pub(crate) fn srw_acquire(l: u32, shared: bool) {
 }
 /// srw_acquire for at most `ms` milliseconds: whether it got the lock.
 pub(crate) fn srw_acquire_for(l: u32, shared: bool, ms: u32) -> bool {
-    let end = std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms));
+    let end = kome::time::from_now(std::time::Duration::from_millis(u64::from(ms)));
     SYNC.srw_acquire_until(atomic(l), shared, &Pause, || Some(kome::num::lo64(end.saturating_duration_since(std::time::Instant::now()).as_nanos().div_ceil(1_000_000))))
 }
 pub(crate) fn srw_release(l: u32, shared: bool) {
@@ -2358,12 +2358,12 @@ fn SleepConditionVariableSRW(c: &mut Ctx) -> u32 {
 fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
     let (cv, cs, ms) = (c.a(0), c.a(1), c.a(2));
     // a recursively entered section is left and entered again as a whole
-    let depth = r32(cs + cs_off(REC)).max(1);
+    let depth = (mem::ga(cs) + cs_off(REC)).r32().max(1);
     u32::from(cv_wait(
         cv,
         ms,
         |cs, _| {
-            w32(kome::num::lo32(cs) + cs_off(REC), 1);
+            (mem::ga(kome::num::lo32(cs)) + cs_off(REC)).w32(1);
             cs_leave(kome::num::lo32(cs))
         },
         crate::snap::Reacquire::Cs,
@@ -2375,7 +2375,7 @@ fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
 /// SleepConditionVariableCS's lock back: section `cs` entered `depth` times
 pub(crate) fn cs_reacquire(cs: u64, depth: u64) {
     cs_enter(kome::num::lo32(cs));
-    w32(kome::num::lo32(cs) + cs_off(REC), kome::num::lo32(depth))
+    (mem::ga(kome::num::lo32(cs)) + cs_off(REC)).w32(kome::num::lo32(depth))
 }
 fn WakeConditionVariable(c: &mut Ctx) -> u32 {
     cv_wake(c.a(0));
@@ -2532,17 +2532,17 @@ fn tls_slot(i: u32) -> u32 {
 /// when there are none)
 fn tls_slot_of(teb: u32, i: u32, make: bool) -> u32 {
     match crate::tls::place(mem::x64(), i) {
-        crate::tls::Place::Teb(off) => teb + off,
+        crate::tls::Place::Teb(off) => (mem::ga(teb) + off).get(),
         crate::tls::Place::Expansion { table, off } => {
-            let mut ex = r32(teb + table);
+            let mut ex = (mem::ga(teb) + table).r32();
             if ex == 0 {
                 if !make {
                     return 0;
                 }
-                ex = mem::heap_alloc(1024 * mem::ps(), true);
-                mem::wp(teb + table, ex);
+                ex = mem::heap_alloc(mem::ps().saturating_mul(1024), true);
+                (mem::ga(teb) + table).wp(ex);
             }
-            ex + off
+            ex.saturating_add(off)
         }
     }
 }
@@ -2585,7 +2585,7 @@ fn TlsSetValue(c: &mut Ctx) -> u32 {
 }
 
 fn GetLastError(_: &mut Ctx) -> u32 {
-    r32(crate::cur().teb + crate::teb_last_error())
+    (mem::ga(crate::cur().teb) + crate::teb_last_error()).r32()
 }
 fn SetLastError(c: &mut Ctx) -> u32 {
     last_error(c.a(0));
@@ -2680,7 +2680,7 @@ fn SetUnhandledExceptionFilter(c: &mut Ctx) -> u32 {
 /// EXCEPTION_EXECUTE_HANDLER (1) when it has none or it searches on
 fn UnhandledExceptionFilter(c: &mut Ctx) -> u32 {
     let rec = mem::rp(c.a(0));
-    if rec != 0 && r32(rec + 4) & 0x10 != 0 {
+    if rec != 0 && (mem::ga(rec) + 4).r32() & 0x10 != 0 {
         return 0;
     }
     if crate::dbg::debugged() {
@@ -2708,12 +2708,12 @@ fn output_debug_string(p: u32, wide: bool) {
     if wide {
         let w: Vec<u16> = s.encode_utf16().collect();
         let a = crate::text::w2mb(0, &w);
-        let b = mem::heap_alloc(kome::num::u32_of(a.len()) + 1, true);
+        let b = mem::heap_alloc(kome::num::u32_of(a.len()).saturating_add(1), true);
         mem::write(b, &a);
-        crate::dbg::output(b, kome::num::u32_of(a.len()) + 1);
+        crate::dbg::output(b, kome::num::u32_of(a.len()).saturating_add(1));
         mem::heap_free(b);
     } else {
-        crate::dbg::output(p, kome::num::lo32(mem::cstr(p).len()) + 1);
+        crate::dbg::output(p, kome::num::lo32(mem::cstr(p).len()).saturating_add(1));
     }
 }
 fn OutputDebugStringA(c: &mut Ctx) -> u32 {
@@ -2946,9 +2946,9 @@ pub(crate) fn nt_free_r(addr: u32, size: u32, ty: u32) -> Result<(u32, u32), u32
         }
     } else if ty & 0x4000 != 0 {
         let start = addr & !(mem::PAGE - 1);
-        let end = (addr.wrapping_add(size.max(1)) + mem::PAGE - 1) & !(mem::PAGE - 1);
-        if mem::decommit_range(start, end - start) {
-            Ok((start, end - start))
+        let end = addr.wrapping_add(size.max(1)).wrapping_add(mem::PAGE - 1) & !(mem::PAGE - 1);
+        if mem::decommit_range(start, mem::ga(end).since(mem::ga(start))) {
+            Ok((start, mem::ga(end).since(mem::ga(start))))
         } else {
             Err(0xC000_00A0)
         }
@@ -3061,10 +3061,10 @@ pub(crate) fn query_r(a: u32) -> [u32; 7] {
             let dll = crate::api::dll_of(a).unwrap_or_default();
             (page, crate::pe::hle_module(&dll), 0x80, mem::PAGE, 0x1000, 0x20, 0x100_0000)
         }
-        Some((b, r, start, n, state, prot)) => (start.max(page), b, r.alloc_prot, n - (page - start), state, prot, r.kind),
+        Some((b, r, start, n, state, prot)) => (start.max(page), b, r.alloc_prot, n.saturating_sub(page.saturating_sub(start)), state, prot, r.kind),
         None => {
             let (lo, n) = mem::free_at(a);
-            (lo.max(page), 0, 0, n - (page.max(lo) - lo), 0x10000, 1, 0)
+            (lo.max(page), 0, 0, n.saturating_sub(page.max(lo).saturating_sub(lo)), 0x10000, 1, 0)
         }
     };
     [base, alloc, aprot, n, state, prot, kind]
@@ -3074,20 +3074,20 @@ pub(crate) fn write_mbi(mbi: u32, [base, alloc, aprot, n, state, prot, kind]: [u
     if x64 {
         mem::fill(mbi, 48, 0);
         mem::w64(mbi, mem::widen(base));
-        mem::w64(mbi + 8, if alloc != 0 { mem::widen(alloc) } else { 0 });
-        w32(mbi + 16, aprot);
-        mem::w64(mbi + 24, u64::from(n));
-        w32(mbi + 32, state);
-        w32(mbi + 36, prot);
-        w32(mbi + 40, kind);
+        (mem::ga(mbi) + 8).w64(if alloc != 0 { mem::widen(alloc) } else { 0 });
+        (mem::ga(mbi) + 16).w32(aprot);
+        (mem::ga(mbi) + 24).w64(u64::from(n));
+        (mem::ga(mbi) + 32).w32(state);
+        (mem::ga(mbi) + 36).w32(prot);
+        (mem::ga(mbi) + 40).w32(kind);
     } else {
         w32(mbi, base);
-        w32(mbi + 4, alloc);
-        w32(mbi + 8, aprot);
-        w32(mbi + 12, n);
-        w32(mbi + 16, state);
-        w32(mbi + 20, prot);
-        w32(mbi + 24, kind);
+        (mem::ga(mbi) + 4).w32(alloc);
+        (mem::ga(mbi) + 8).w32(aprot);
+        (mem::ga(mbi) + 12).w32(n);
+        (mem::ga(mbi) + 16).w32(state);
+        (mem::ga(mbi) + 20).w32(prot);
+        (mem::ga(mbi) + 24).w32(kind);
     }
 }
 fn VirtualProtect(c: &mut Ctx) -> u32 {
@@ -3113,7 +3113,7 @@ fn virtual_protect(addr: u32, size: u32, prot: u32, old_out: u32) -> u32 {
 fn VirtualLock(c: &mut Ctx) -> u32 {
     let (a, n) = (c.a(0) & !0xfff, c.a(1).saturating_add(c.a(0) & 0xfff));
     let mut hit = false;
-    for p in (0..n.div_ceil(0x1000)).map(|i| a.wrapping_add(i * 0x1000)) {
+    for p in (0..n.div_ceil(0x1000)).map(|i| a.wrapping_add(i.saturating_mul(0x1000))) {
         hit |= mem::guard_hit(p);
     }
     if hit {
@@ -3171,7 +3171,7 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
     } else {
         for (off, len) in xmem::pieces(k) {
             match remote_bytes(c.a(0), xmem::READ, vec![a.wrapping_add(off), len], vec![]) {
-                Some(Ok((_, bytes))) => mem::write(b + off, bytes.get(..kome::num::us(len)).unwrap_or(&bytes)),
+                Some(Ok((_, bytes))) => mem::write((mem::ga(b) + off).get(), bytes.get(..kome::num::us(len)).unwrap_or(&bytes)),
                 Some(Err(e)) => {
                     // (it changed meanwhile: what was copied so far)
                     mem::putp(done, off);
@@ -3197,11 +3197,11 @@ fn WriteProcessMemory(c: &mut Ctx) -> u32 {
             // (xmem::READ_STEP at a time, as reads; a piece the target took only part of ends it)
             let mut done_n = 0u32;
             for (off, len) in xmem::pieces(readable) {
-                let data = mem::slice(b + off, len).to_vec();
+                let data = mem::slice((mem::ga(b) + off).get(), len).to_vec();
                 match remote(c.a(0), xmem::WRITE, vec![a.wrapping_add(off)], data) {
                     Some(Ok(v)) => {
                         let w = v.first().copied().unwrap_or(0);
-                        done_n += w;
+                        done_n = done_n.saturating_add(w);
                         if w < len {
                             break;
                         }
@@ -3253,7 +3253,7 @@ fn NtQuerySystemTime(c: &mut Ctx) -> u32 {
     0
 }
 fn RtlTimeToSecondsSince1970(c: &mut Ctx) -> u32 {
-    let s = (get64(c.a(0)) / 10_000_000).cast_signed() - 11_644_473_600;
+    let s = (get64(c.a(0)) / 10_000_000).cast_signed().saturating_sub(11_644_473_600);
     if !(0..=i64::from(u32::MAX)).contains(&s) {
         return 0;
     }
@@ -3271,7 +3271,7 @@ fn GetUserDefaultLocaleName(c: &mut Ctx) -> u32 {
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(out + 2 * kome::num::u32_of(i), u);
+        mem::ga(out).at(kome::num::u32_of(i), 2).w16(u);
     }
     kome::num::u32_of(w.len())
 }
@@ -3314,14 +3314,14 @@ fn LCIDToLocaleName(c: &mut Ctx) -> u32 {
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(c.a(1) + 2 * kome::num::u32_of(i), u);
+        mem::ga(c.a(1)).at(kome::num::u32_of(i), 2).w16(u);
     }
     kome::num::u32_of(w.len())
 }
 /// LdrGetDllHandle(path, flags, UNICODE_STRING *name, HMODULE *out)
 fn LdrGetDllHandle(c: &mut Ctx) -> u32 {
     let us = c.a(2);
-    let h = if us == 0 { 0 } else { module_handle(mem::rp(us + mem::ps()), true) };
+    let h = if us == 0 { 0 } else { module_handle((mem::ga(us) + mem::ps()).rp(), true) };
     if c.a(3) != 0 {
         mem::wp(c.a(3), h);
     }
@@ -3330,20 +3330,20 @@ fn LdrGetDllHandle(c: &mut Ctx) -> u32 {
 // ntdll's counted strings: UNICODE_STRING / ANSI_STRING = { u16 Length, u16 MaximumLength, PTR Buffer }
 fn put_counted(us: u32, len: u32, max: u32, buf: u32) {
     w16(us, kome::num::lo16(len));
-    w16(us + 2, kome::num::lo16(max));
+    (mem::ga(us) + 2).w16(kome::num::lo16(max));
     // (UNICODE_STRING / ANSI_STRING: Buffer after the two lengths, pointer-aligned)
-    mem::wp(us + mem::ps(), buf);
+    (mem::ga(us) + mem::ps()).wp(buf);
 }
 fn RtlInitUnicodeString(c: &mut Ctx) -> u32 {
     let (us, s) = (c.a(0), c.a(1));
-    let n = if s == 0 { 0 } else { 2 * kome::num::lo32(wstr(s).len()) };
-    put_counted(us, n, if s == 0 { 0 } else { n + 2 }, s);
+    let n = if s == 0 { 0 } else { kome::num::lo32(wstr(s).len()).saturating_mul(2) };
+    put_counted(us, n, if s == 0 { 0 } else { n.saturating_add(2) }, s);
     0
 }
 fn RtlInitAnsiString(c: &mut Ctx) -> u32 {
     let (us, s) = (c.a(0), c.a(1));
     let n = if s == 0 { 0 } else { kome::num::lo32(cstr(s).len()) };
-    put_counted(us, n, if s == 0 { 0 } else { n + 1 }, s);
+    put_counted(us, n, if s == 0 { 0 } else { n.saturating_add(1) }, s);
     0
 }
 /// RtlCreateUnicodeStringFromAsciiz(UNICODE_STRING out, ANSI string): TRUE when made
@@ -3357,37 +3357,37 @@ fn RtlCreateUnicodeStringFromAsciiz(c: &mut Ctx) -> u32 {
 }
 fn RtlFreeUnicodeString(c: &mut Ctx) -> u32 {
     let us = c.a(0);
-    if us != 0 && mem::rp(us + mem::ps()) != 0 {
-        mem::heap_free(mem::rp(us + mem::ps()));
+    if us != 0 && (mem::ga(us) + mem::ps()).rp() != 0 {
+        mem::heap_free((mem::ga(us) + mem::ps()).rp());
         put_counted(us, 0, 0, 0);
     }
     0
 }
 /// Stores `v` (code units of `unit` bytes) in counted string `us`, allocating if asked.
 fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
-    let n = unit * kome::num::u32_of(v.len());
+    let n = unit.saturating_mul(kome::num::u32_of(v.len()));
     let buf = if alloc {
-        let b = mem::heap_alloc(n + unit, true);
-        put_counted(us, n, n + unit, b);
+        let b = mem::heap_alloc(n.saturating_add(unit), true);
+        put_counted(us, n, n.saturating_add(unit), b);
         b
     } else {
-        if n + unit > u32::from(r16(us + 2)) {
+        if n.saturating_add(unit) > u32::from((mem::ga(us) + 2).r16()) {
             return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
         }
         w16(us, kome::num::lo16(n));
-        mem::rp(us + mem::ps())
+        (mem::ga(us) + mem::ps()).rp()
     };
     for (i, &x) in v.iter().enumerate() {
-        if unit == 2 { w16(buf + 2 * kome::num::u32_of(i), x) } else { w8(buf + kome::num::u32_of(i), kome::num::lo8(x)) }
+        if unit == 2 { mem::ga(buf).at(kome::num::u32_of(i), 2).w16(x) } else { (mem::ga(buf) + kome::num::u32_of(i)).w8(kome::num::lo8(x)) }
     }
-    if unit == 2 { w16(buf + n, 0) } else { w8(buf + n, 0) }
+    if unit == 2 { (mem::ga(buf) + n).w16(0) } else { (mem::ga(buf) + n).w8(0) }
     0
 }
 fn counted_bytes(us: u32) -> Vec<u8> {
-    (0..u32::from(r16(us))).map(|i| mem::r8(mem::rp(us + mem::ps()) + i)).collect()
+    (0..u32::from(r16(us))).map(|i| mem::r8((mem::ga(us) + mem::ps()).rp().saturating_add(i))).collect()
 }
 fn counted_wide(us: u32) -> Vec<u16> {
-    (0..u32::from(r16(us)) / 2).map(|i| r16(mem::rp(us + mem::ps()) + 2 * i)).collect()
+    (0..u32::from(r16(us)) / 2).map(|i| mem::ga((mem::ga(us) + mem::ps()).rp()).at(i, 2).r16()).collect()
 }
 fn RtlAnsiStringToUnicodeString(c: &mut Ctx) -> u32 {
     let w = a2w(&counted_bytes(c.a(1)));
@@ -3401,26 +3401,26 @@ fn RtlUnicodeStringToAnsiString(c: &mut Ctx) -> u32 {
 /// text as UTF-16, cut to what fits (whole characters)
 fn RtlMultiByteToUnicodeN(c: &mut Ctx) -> u32 {
     let (dst, cap, pw, src, n) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
-    let b: Vec<u8> = (0..n).map(|i| mem::r8(src + i)).collect();
+    let b: Vec<u8> = (0..n).map(|i| (mem::ga(src) + i).r8()).collect();
     let w = a2w(&b);
     let k = w.len().min(kome::num::us(cap) / 2);
     for (i, &u) in w.iter().take(k).enumerate() {
-        w16(dst + 2 * kome::num::u32_of(i), u);
+        mem::ga(dst).at(kome::num::u32_of(i), 2).w16(u);
     }
     if pw != 0 {
-        w32(pw, 2 * kome::num::u32_of(k));
+        w32(pw, kome::num::u32_of(k).saturating_mul(2));
     }
     0
 }
 /// RtlUnicodeToMultiByteN(dst, dst bytes, &written bytes, src, src bytes)
 fn RtlUnicodeToMultiByteN(c: &mut Ctx) -> u32 {
     let (dst, cap, pw, src, n) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
-    let w: Vec<u16> = (0..n / 2).map(|i| r16(src + 2 * i)).collect();
+    let w: Vec<u16> = (0..n / 2).map(|i| mem::ga(src).at(i, 2).r16()).collect();
     let mut out = Vec::new();
     // (whole characters: a double-byte one that does not fit is left out)
     for &u in &w {
         let b = crate::text::w2a(&[u]);
-        if out.len() + b.len() > kome::num::us(cap) {
+        if out.len().saturating_add(b.len()) > kome::num::us(cap) {
             break;
         }
         out.extend(b);
@@ -3433,13 +3433,13 @@ fn RtlUnicodeToMultiByteN(c: &mut Ctx) -> u32 {
 }
 fn RtlMultiByteToUnicodeSize(c: &mut Ctx) -> u32 {
     let (pw, src, n) = (c.a(0), c.a(1), c.a(2));
-    let b: Vec<u8> = (0..n).map(|i| mem::r8(src + i)).collect();
-    w32(pw, 2 * kome::num::lo32(a2w(&b).len()));
+    let b: Vec<u8> = (0..n).map(|i| (mem::ga(src) + i).r8()).collect();
+    w32(pw, kome::num::lo32(a2w(&b).len()).saturating_mul(2));
     0
 }
 fn RtlUnicodeToMultiByteSize(c: &mut Ctx) -> u32 {
     let (pw, src, n) = (c.a(0), c.a(1), c.a(2));
-    let w: Vec<u16> = (0..n / 2).map(|i| r16(src + 2 * i)).collect();
+    let w: Vec<u16> = (0..n / 2).map(|i| mem::ga(src).at(i, 2).r16()).collect();
     w32(pw, kome::num::lo32(crate::text::w2a(&w).len()));
     0
 }
@@ -3455,10 +3455,10 @@ fn RtlCompareUnicodeString(c: &mut Ctx) -> u32 {
     for (x, y) in a.iter().zip(&b) {
         let (x, y) = (f(*x), f(*y));
         if x != y {
-            return (i32::from(x) - i32::from(y)).cast_unsigned();
+            return i32::from(x).saturating_sub(i32::from(y)).cast_unsigned();
         }
     }
-    kome::num::lo32(a.len().cast_signed() - b.len().cast_signed())
+    kome::num::lo32(a.len().cast_signed().saturating_sub(b.len().cast_signed()))
 }
 /// RtlEqualUnicodeString(a, b, case insensitive)
 fn RtlEqualUnicodeString(c: &mut Ctx) -> u32 {
@@ -3472,8 +3472,8 @@ fn RtlDosPathNameToNtPathName_U(c: &mut Ctx) -> u32 {
     let w: Vec<u16> = format!("\\??\\{full}").encode_utf16().collect();
     counted_out(nt, &w, 2, true);
     if part != 0 {
-        let at = w.iter().rposition(|&x| x == u16::from(b'\\')).map_or(0, |i| i + 1);
-        mem::wp(part, if at < w.len() { mem::rp(nt + mem::ps()) + 2 * kome::num::u32_of(at) } else { 0 });
+        let at = w.iter().rposition(|&x| x == u16::from(b'\\')).map_or(0, |i| i.saturating_add(1));
+        mem::wp(part, if at < w.len() { mem::ga((mem::ga(nt) + mem::ps()).rp()).at(kome::num::u32_of(at), 2).get() } else { 0 });
     }
     1
 }
@@ -3505,9 +3505,9 @@ fn NtProtectVirtualMemory(c: &mut Ctx) -> u32 {
     match mem::protect(base, size, c.a(3)) {
         Some(old) => {
             let start = base & !0xfff;
-            let end = (u64::from(base) + u64::from(size.max(1)) + 0xfff) & !0xfff;
+            let end = mem::ga(base).end(size.max(1)).saturating_add(0xfff) & !0xfff;
             mem::wp(pb, start);
-            mem::wp(ps, kome::num::lo32(end - u64::from(start)));
+            mem::wp(ps, kome::num::lo32(end.saturating_sub(u64::from(start))));
             put32(c.a(4), old);
             0
         }
@@ -3539,18 +3539,18 @@ fn NtQueryVirtualMemory(c: &mut Ctx) -> u32 {
                 Err(_) => return 0xc000_0141,    // STATUS_INVALID_ADDRESS
             };
             let w: Vec<u16> = name.encode_utf16().collect();
-            let us = 2 * mem::ps();
-            let need = us + 2 * kome::num::u32_of(w.len()) + 2;
+            let us = mem::ps().saturating_mul(2);
+            let need = kome::num::u32_of(w.len()).saturating_mul(2).saturating_add(us).saturating_add(2);
             if ret != 0 {
                 mem::wp(ret, need);
             }
             if len < need {
                 return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
             }
-            mem::w16(info, 2 * kome::num::lo16(w.len()));
-            mem::w16(info + 2, 2 * kome::num::lo16(w.len()) + 2);
-            mem::wp(info + mem::ps(), info + us);
-            put_wstr(info + us, kome::num::u32_of(w.len()) + 1, &w);
+            mem::w16(info, kome::num::lo16(w.len()).wrapping_mul(2));
+            (mem::ga(info) + 2).w16(kome::num::lo16(w.len()).wrapping_mul(2).wrapping_add(2));
+            (mem::ga(info) + mem::ps()).wp((mem::ga(info) + us).get());
+            put_wstr((mem::ga(info) + us).get(), kome::num::u32_of(w.len()).saturating_add(1), &w);
             0
         }
         _ => 0xc000_0003,
@@ -3627,7 +3627,7 @@ fn HeapReAlloc(c: &mut Ctx) -> u32 {
     } else {
         // (a block that moved stays the heap's)
         let tag = heap_tag(c.a(0));
-        if r != p || r32(r - 16) != tag {
+        if r != p || (mem::ga(r) - 16).r32() != tag {
             mem::heap_retag(r, tag);
         }
     }
@@ -3688,36 +3688,36 @@ mod handles {
         f(T.locked().get_or_insert_with(Table::default))
     }
     fn size() -> u32 {
-        2 * mem::ps()
+        mem::ps().saturating_mul(2)
     }
     /// A new entry's handle (0: the table is full)
     pub fn new(flags: u32) -> u32 {
         with(|t| {
             if t.base == 0 {
-                t.base = mem::alloc(MAX * size()).unwrap_or(0);
+                t.base = mem::alloc(MAX.saturating_mul(size())).unwrap_or(0);
             }
             let e = match t.free.pop() {
                 Some(e) => e,
                 None if t.base != 0 && t.used < MAX => {
-                    t.used += 1;
-                    t.base + (t.used - 1) * size()
+                    t.used = t.used.saturating_add(1);
+                    mem::ga(t.base).at(t.used.saturating_sub(1), size()).get()
                 }
                 None => return 0,
             };
             mem::wp(e, flags);
-            mem::wp(e + mem::ps(), 0);
-            e + mem::ps()
+            (mem::ga(e) + mem::ps()).wp(0);
+            (mem::ga(e) + mem::ps()).get()
         })
     }
     /// The entry of handle `h` in use
     pub fn entry(h: u32) -> Option<u32> {
         let ps = mem::ps();
-        if h & (2 * ps - 1) != ps {
+        if h & ps.saturating_mul(2).saturating_sub(1) != ps {
             return None;
         }
-        let e = h - ps;
+        let e = (mem::ga(h) - ps).get();
         let base = with(|t| t.base);
-        (base != 0 && e >= base && e < base + MAX * size() && rp(e) & USED != 0).then_some(e)
+        (base != 0 && e >= base && e < mem::ga(base).at(MAX, size()).get() && rp(e) & USED != 0).then_some(e)
     }
     pub fn flags(e: u32) -> u32 {
         rp(e)
@@ -3726,15 +3726,15 @@ mod handles {
         mem::wp(e, f);
     }
     pub fn ptr(e: u32) -> u32 {
-        rp(e + mem::ps())
+        (mem::ga(e) + mem::ps()).rp()
     }
     pub fn set_ptr(e: u32, p: u32) {
         let old = ptr(e);
-        mem::wp(e + mem::ps(), p);
+        (mem::ga(e) + mem::ps()).wp(p);
         with(|t| {
             t.owner.remove(&old);
             if p != 0 {
-                t.owner.insert(p, e + mem::ps());
+                t.owner.insert(p, (mem::ga(e) + mem::ps()).get());
             }
         });
     }
@@ -3754,7 +3754,7 @@ mod handles {
 
 /// a block of the heap: a fixed Global/Local block is its pointer
 fn is_block(h: u32) -> bool {
-    h & (2 * mem::ps() - 1) == 0 && mem::heap_owns(h)
+    h & mem::ps().saturating_mul(2).saturating_sub(1) == 0 && mem::heap_owns(h)
 }
 
 /// The memory of an HGLOBAL: a fixed block's pointer, a moveable one's block (0: discarded or
@@ -3926,11 +3926,11 @@ pub(crate) fn global_lock(h: u32) -> u32 {
                 return 0;
             }
             if f >> 16 & 0xff != 0xff {
-                handles::set_flags(e, f + 0x1_0000);
+                handles::set_flags(e, f.saturating_add(0x1_0000));
             }
             p
         }
-        None if h & (2 * mem::ps() - 1) == 0 => h,
+        None if h & mem::ps().saturating_mul(2).saturating_sub(1) == 0 => h,
         None => {
             last_error(6);
             0
@@ -3941,7 +3941,7 @@ pub(crate) fn global_lock(h: u32) -> u32 {
 /// last unlock clears the error. A fixed block: GlobalUnlock says TRUE, LocalUnlock FALSE
 /// with ERROR_NOT_LOCKED.
 fn global_unlock(h: u32, global: bool) -> u32 {
-    if h & (2 * mem::ps() - 1) == 0 {
+    if h & mem::ps().saturating_mul(2).saturating_sub(1) == 0 {
         if global {
             return 1;
         }
@@ -3957,7 +3957,7 @@ fn global_unlock(h: u32, global: bool) -> u32 {
         last_error(158);
         return 0;
     }
-    handles::set_flags(e, f - 0x1_0000);
+    handles::set_flags(e, f.saturating_sub(0x1_0000));
     if (f >> 16 & 0xff) == 1 {
         last_error(0);
         return 0;
@@ -3967,7 +3967,7 @@ fn global_unlock(h: u32, global: bool) -> u32 {
 /// GMEM_* flags: the lock count, GMEM_DISCARDABLE 0x100, GMEM_DISCARDED 0x4000, GMEM_DDESHARE
 /// 0x2000; a fixed block 0; no handle GMEM_INVALID_HANDLE 0x8000
 fn global_flags(h: u32) -> u32 {
-    if h & (2 * mem::ps() - 1) == 0 {
+    if h & mem::ps().saturating_mul(2).saturating_sub(1) == 0 {
         return 0;
     }
     let Some(e) = handles::entry(h) else {
@@ -4062,10 +4062,10 @@ fn GlobalMemoryStatus(c: &mut Ctx) -> u32 {
     let x64 = mem::x64();
     let clamp = |v: u64| if x64 { v } else { v.min(0x7fff_ffff) };
     let ps = mem::ps();
-    w32(p, 8 + 6 * ps);
-    w32(p + 4, 30);
+    w32(p, ps.saturating_mul(6).saturating_add(8));
+    (mem::ga(p) + 4).w32(30);
     for (i, v) in [PHYS, PHYS / 4 * 3, 2 * PHYS, 2 * PHYS, 0x7ffe_0000, 0x6000_0000].into_iter().enumerate() {
-        let at = p + 8 + ps * kome::num::u32_of(i);
+        let at = (mem::ga(p) + 8).at(kome::num::u32_of(i), ps).get();
         if x64 { mem::w64(at, clamp(v)) } else { w32(at, kome::num::lo32(clamp(v))) }
     }
     0
@@ -4078,10 +4078,10 @@ fn GlobalMemoryStatusEx(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    w32(p + 4, 30);
+    (mem::ga(p) + 4).w32(30);
     let q = |o: u32, v: u64| {
-        w32(p + o, kome::num::lo32(v));
-        w32(p + o + 4, kome::num::lo32(v >> 32));
+        (mem::ga(p) + o).w32(kome::num::lo32(v));
+        (mem::ga(p) + o + 4).w32(kome::num::lo32(v >> 32));
     };
     q(8, PHYS);
     q(16, PHYS / 4 * 3);
@@ -4099,27 +4099,27 @@ fn GetSystemInfo(c: &mut Ctx) -> u32 {
         // (x64: the addresses and the mask 8 bytes; PROCESSOR_ARCHITECTURE_AMD64, 8664)
         mem::fill(p, 48, 0);
         w16(p, 9);
-        w32(p + 4, 0x1000);
-        mem::w64(p + 8, 0x10000);
-        mem::w64(p + 16, 0x7fff_fffe_ffff);
-        mem::w64(p + 24, cpu_mask64());
-        w32(p + 32, ncpu());
-        w32(p + 36, 8664);
-        w32(p + 40, 0x10000);
-        w16(p + 44, 6);
-        w16(p + 46, 0x0f01);
+        (mem::ga(p) + 4).w32(0x1000);
+        (mem::ga(p) + 8).w64(0x10000);
+        (mem::ga(p) + 16).w64(0x7fff_fffe_ffff);
+        (mem::ga(p) + 24).w64(cpu_mask64());
+        (mem::ga(p) + 32).w32(ncpu());
+        (mem::ga(p) + 36).w32(8664);
+        (mem::ga(p) + 40).w32(0x10000);
+        (mem::ga(p) + 44).w16(6);
+        (mem::ga(p) + 46).w16(0x0f01);
         return 0;
     }
     mem::fill(p, 36, 0);
-    w32(p + 4, 0x1000);
-    w32(p + 8, 0x10000);
-    w32(p + 12, 0x7ffe_ffff);
-    w32(p + 16, cpu_mask());
-    w32(p + 20, ncpu());
-    w32(p + 24, 586);
-    w32(p + 28, 0x10000);
-    w16(p + 32, 6);
-    w16(p + 34, 0x0f01);
+    (mem::ga(p) + 4).w32(0x1000);
+    (mem::ga(p) + 8).w32(0x10000);
+    (mem::ga(p) + 12).w32(0x7ffe_ffff);
+    (mem::ga(p) + 16).w32(cpu_mask());
+    (mem::ga(p) + 20).w32(ncpu());
+    (mem::ga(p) + 24).w32(586);
+    (mem::ga(p) + 28).w32(0x10000);
+    (mem::ga(p) + 32).w16(6);
+    (mem::ga(p) + 34).w16(0x0f01);
     0
 }
 // CPU topology: one group, one package, one NUMA node, one core per processor (the MSVC
@@ -4129,7 +4129,7 @@ pub(crate) fn cpu_mask() -> u32 {
 }
 /// One bit per processor (SAKE_NCPU takes up to 64: a shift by 32 or 64 overflowed)
 fn cpu_mask64() -> u64 {
-    u64::MAX >> (64 - ncpu().clamp(1, 64))
+    u64::MAX >> 64_u32.saturating_sub(ncpu().clamp(1, 64))
 }
 fn group_affinity(p: u32, mask: u32) {
     mem::fill(p, 12, 0);
@@ -4144,30 +4144,30 @@ fn GetLogicalProcessorInformationEx(c: &mut Ctx) -> u32 {
     if all || rel == 0 {
         for i in 0..ncpu() {
             items.push((0, 44, Box::new(move |p| {
-                w16(p + 8 + 22, 1);
-                group_affinity(p + 8 + 24, 1 << i);
+                (mem::ga(p) + 8 + 22).w16(1);
+                group_affinity((mem::ga(p) + 8 + 24).get(), 1 << i);
             })));
         }
     }
     if all || rel == 1 {
         items.push((1, 44, Box::new(|p| {
-            w16(p + 8 + 22, 1);
-            group_affinity(p + 8 + 24, cpu_mask());
+            (mem::ga(p) + 8 + 22).w16(1);
+            group_affinity((mem::ga(p) + 8 + 24).get(), cpu_mask());
         })));
     }
     if all || rel == 3 {
         items.push((3, 44, Box::new(|p| {
-            w16(p + 8 + 22, 1);
-            group_affinity(p + 8 + 24, cpu_mask());
+            (mem::ga(p) + 8 + 22).w16(1);
+            group_affinity((mem::ga(p) + 8 + 24).get(), cpu_mask());
         })));
     }
     if all || rel == 4 {
         items.push((4, 76, Box::new(|p| {
-            w16(p + 8, 1);
-            w16(p + 10, 1);
-            w8(p + 8 + 24, kome::num::lo8(ncpu()));
-            w8(p + 8 + 25, kome::num::lo8(ncpu()));
-            w32(p + 8 + 24 + 40, cpu_mask());
+            (mem::ga(p) + 8).w16(1);
+            (mem::ga(p) + 10).w16(1);
+            (mem::ga(p) + 8 + 24).w8(kome::num::lo8(ncpu()));
+            (mem::ga(p) + 8 + 25).w8(kome::num::lo8(ncpu()));
+            (mem::ga(p) + 8 + 24 + 40).w32(cpu_mask());
         })));
     }
     let need: u32 = items.iter().map(|x| x.1).sum();
@@ -4182,9 +4182,9 @@ fn GetLogicalProcessorInformationEx(c: &mut Ctx) -> u32 {
     for (r, size, fill) in &items {
         mem::fill(p, *size, 0);
         w32(p, *r);
-        w32(p + 4, *size);
+        (mem::ga(p) + 4).w32(*size);
         fill(p);
-        p += size;
+        p = (mem::ga(p) + *size).get();
     }
     w32(lenp, need);
     1
@@ -4192,8 +4192,8 @@ fn GetLogicalProcessorInformationEx(c: &mut Ctx) -> u32 {
 /// GetLogicalProcessorInformation(buffer, length*): 24-byte entries
 fn GetLogicalProcessorInformation(c: &mut Ctx) -> u32 {
     let (buf, lenp) = (c.a(0), c.a(1));
-    let n = ncpu() + 2;
-    let need = 24 * n;
+    let n = ncpu().saturating_add(2);
+    let need = n.saturating_mul(24);
     if r32(lenp) < need || buf == 0 {
         w32(lenp, need);
         last_error(122);
@@ -4201,13 +4201,13 @@ fn GetLogicalProcessorInformation(c: &mut Ctx) -> u32 {
     }
     mem::fill(buf, need, 0);
     for i in 0..ncpu() {
-        w32(buf + 24 * i, 1 << i);
+        mem::ga(buf).at(i, 24).w32(1 << i);
     }
-    let q = buf + 24 * ncpu();
+    let q = mem::ga(buf).at(ncpu(), 24).get();
     w32(q, cpu_mask());
-    w32(q + 4, 1);
-    w32(q + 24, cpu_mask());
-    w32(q + 28, 3);
+    (mem::ga(q) + 4).w32(1);
+    (mem::ga(q) + 24).w32(cpu_mask());
+    (mem::ga(q) + 28).w32(3);
     w32(lenp, need);
     1
 }
@@ -4229,7 +4229,7 @@ fn GetNumaNodeProcessorMaskEx(c: &mut Ctx) -> u32 {
 fn GetNumaNodeProcessorMask(c: &mut Ctx) -> u32 {
     let p = c.a(1);
     w32(p, if c.a(0) & 0xff == 0 { cpu_mask() } else { 0 });
-    w32(p + 4, 0);
+    (mem::ga(p) + 4).w32(0);
     1
 }
 fn GetActiveProcessorCount(c: &mut Ctx) -> u32 {
@@ -4309,10 +4309,10 @@ fn tp_close(h: u32) {
 fn due_ms(p: u32) -> u64 {
     let v = get64(p).cast_signed();
     if v < 0 {
-        (-v / 10_000).cast_unsigned()
+        v.unsigned_abs() / 10_000
     } else {
         let now = files::filetime(std::time::SystemTime::now()).cast_signed();
-        ((v - now).max(0) / 10_000).cast_unsigned()
+        (v.saturating_sub(now).max(0) / 10_000).cast_unsigned()
     }
 }
 
@@ -4331,7 +4331,7 @@ enum TpCall {
 
 /// `h`'s callback for a worker, under generation `gen`. False: no worker (nothing queued).
 fn tp_queue(h: u32, generation: u32, call: TpCall) -> bool {
-    tp_with(|m| m.get_mut(&h).map(|t| t.queued += 1));
+    tp_with(|m| m.get_mut(&h).map(|t| t.queued = t.queued.saturating_add(1)));
     if crate::pool::submit(Box::new(move |c| tp_run(c, h, generation, call))) {
         return true;
     }
@@ -4345,7 +4345,7 @@ fn tp_run(c: &mut Ctx, h: u32, generation: u32, call: TpCall) {
             return None;
         }
         t.queued = t.queued.saturating_sub(1);
-        t.running += 1;
+        t.running = t.running.saturating_add(1);
         Some((t.cb, t.ctx))
     });
     if let Some((cb, ctx)) = go {
@@ -4357,7 +4357,7 @@ fn tp_run(c: &mut Ctx, h: u32, generation: u32, call: TpCall) {
         };
         tp_with(|m| {
             if let Some(t) = m.get_mut(&h) {
-                t.running -= 1;
+                t.running = t.running.saturating_sub(1);
             }
             if matches!(call, TpCall::Item | TpCall::Simple) {
                 m.remove(&h);
@@ -4559,7 +4559,7 @@ fn tp_timer_arm(h: u32, generation: u32, at: std::time::Instant, period: u32) {
             if period != 0 {
                 let p = std::time::Duration::from_millis(u64::from(period));
                 let now = std::time::Instant::now();
-                let next = if at + p * 4 < now { now + p } else { at + p };
+                let next = if kome::time::after(at, p.saturating_mul(4)) < now { kome::time::after(now, p) } else { kome::time::after(at, p) };
                 tp_timer_arm(h, generation, next, period);
             }
         }),
@@ -4570,7 +4570,7 @@ fn SetThreadpoolTimer(c: &mut Ctx) -> u32 {
     let (h, due, period) = (c.a(0), c.a(1), c.a(2));
     let Some(generation) = tp_bump(h) else { return 0 };
     if due != 0 {
-        let at = std::time::Instant::now() + std::time::Duration::from_millis(due_ms(due));
+        let at = kome::time::from_now(std::time::Duration::from_millis(due_ms(due)));
         tp_timer_arm(h, generation, at, period);
     } else {
         crate::pool::TIMERS.cancel(crate::pool::key::TP | u64::from(h));
@@ -4599,7 +4599,7 @@ fn SetThreadpoolWait(c: &mut Ctx) -> u32 {
     let (h, obj_h, due) = (c.a(0), c.a(1), c.a(2));
     let Some(generation) = tp_bump(h) else { return 0 };
     if obj_h != 0 {
-        let ms = if due == 0 { u32::MAX } else { kome::num::lo32(due_ms(due).min(u64::from(u32::MAX) - 1)) };
+        let ms = if due == 0 { u32::MAX } else { kome::num::lo32(due_ms(due).min(u64::from(u32::MAX - 1))) };
         crate::pool::wait_add(
             u64::from(h),
             obj_h,
@@ -4638,10 +4638,10 @@ fn CreateSemaphoreExW(c: &mut Ctx) -> u32 {
 fn SetThreadStackGuarantee(c: &mut Ctx) -> u32 {
     let p = c.a(0);
     let teb = crate::cur().teb;
-    let at = teb + if mem::x64() { 0x1748 } else { 0xf78 };
+    let at = (mem::ga(teb) + if mem::x64() { 0x1748 } else { 0xf78 }).get();
     let old = r32(at);
     let want = r32(p);
-    let reserved = mem::rp(teb + mem::ps()).wrapping_sub(r32(teb + if mem::x64() { 0x1478 } else { 0xe0c }));
+    let reserved = (mem::ga(teb) + mem::ps()).rp().wrapping_sub((mem::ga(teb) + if mem::x64() { 0x1478 } else { 0xe0c }).r32());
     if want > reserved {
         put32(p, old);
         last_error(87);
@@ -4649,7 +4649,7 @@ fn SetThreadStackGuarantee(c: &mut Ctx) -> u32 {
     }
     put32(p, old);
     if want != 0 {
-        let min = 4096 * mem::ps() / 4;
+        let min = mem::ps().saturating_mul(1024);
         let new = want.div_ceil(4096).saturating_mul(4096).max(min).max(old);
         w32(at, new);
     }
@@ -4659,8 +4659,8 @@ fn SetThreadStackGuarantee(c: &mut Ctx) -> u32 {
 fn GetCurrentThreadStackLimits(c: &mut Ctx) -> u32 {
     let teb = crate::cur().teb;
     let ps = mem::ps();
-    mem::putp(c.a(0), mem::rp(teb + if mem::x64() { 0x1478 } else { 0xe0c }));
-    mem::putp(c.a(1), mem::rp(teb + ps));
+    mem::putp(c.a(0), (mem::ga(teb) + if mem::x64() { 0x1478 } else { 0xe0c }).rp());
+    mem::putp(c.a(1), (mem::ga(teb) + ps).rp());
     0
 }
 fn FlushProcessWriteBuffers(_: &mut Ctx) -> u32 {
@@ -4699,7 +4699,7 @@ fn GetNativeSystemInfo(c: &mut Ctx) -> u32 {
     GetSystemInfo(c);
     if !mem::x64() {
         w16(c.a(0), 9);
-        w32(c.a(0) + 24, 8664);
+        (mem::ga(c.a(0)) + 24).w32(8664);
     }
     0
 }
@@ -4893,21 +4893,21 @@ fn version_info(p: u32, wide: bool) -> u32 {
     1
 }
 fn fill_version_info(p: u32, wide: bool, v: &OsVer, ext: bool) {
-    w32(p + 4, v.major);
-    w32(p + 8, v.minor);
-    w32(p + 12, v.build);
-    w32(p + 16, v.platform);
+    (mem::ga(p) + 4).w32(v.major);
+    (mem::ga(p) + 8).w32(v.minor);
+    (mem::ga(p) + 12).w32(v.build);
+    (mem::ga(p) + 16).w32(v.platform);
     if wide {
-        put_wstr(p + 20, 128, &"Service Pack 1".encode_utf16().collect::<Vec<_>>());
+        put_wstr((mem::ga(p) + 20).get(), 128, &"Service Pack 1".encode_utf16().collect::<Vec<_>>());
     } else {
-        put_cstr(p + 20, 128, b"Service Pack 1");
+        put_cstr((mem::ga(p) + 20).get(), 128, b"Service Pack 1");
     }
     if ext {
         let o = if wide { 276 } else { 148 };
-        w16(p + o, v.sp_major);
-        w16(p + o + 2, v.sp_minor);
-        w16(p + o + 4, v.suite);
-        w8(p + o + 6, v.product);
+        (mem::ga(p) + o).w16(v.sp_major);
+        (mem::ga(p) + o + 2).w16(v.sp_minor);
+        (mem::ga(p) + o + 4).w16(v.suite);
+        (mem::ga(p) + o + 6).w8(v.product);
     }
 }
 fn GetVersionExA(c: &mut Ctx) -> u32 {
@@ -4935,10 +4935,10 @@ fn RtlGetVersion(c: &mut Ctx) -> u32 {
     }
     fill_version_info(p, true, &os_version(), size == 284);
     // the real version, as Windows 10 gives it to programs without a manifest
-    w32(p + 4, OS_VERSION_REAL.major);
-    w32(p + 8, OS_VERSION_REAL.minor);
-    w32(p + 12, OS_VERSION_REAL.build);
-    put_wstr(p + 20, 128, &[]);
+    (mem::ga(p) + 4).w32(OS_VERSION_REAL.major);
+    (mem::ga(p) + 8).w32(OS_VERSION_REAL.minor);
+    (mem::ga(p) + 12).w32(OS_VERSION_REAL.build);
+    put_wstr((mem::ga(p) + 20).get(), 128, &[]);
     0
 }
 fn RtlGetNtVersionNumbers(c: &mut Ctx) -> u32 {
@@ -5007,7 +5007,7 @@ pub fn verify_version(cur: &OsVer, want: &OsVer, types: u32, cond: u64) -> Resul
     if types == 0 || cond & !(1 << 63) == 0 {
         return Err(VerFail::BadArgs);
     }
-    let c = |k: u32| kome::num::lo8(cond >> (3 * k) & 7);
+    let c = |k: u32| kome::num::lo8(cond >> k.saturating_mul(3) & 7);
     let check = |ok: bool| if ok { Ok(()) } else { Err(VerFail::Mismatch) };
     if types & 0x80 != 0 {
         check(ver_compare(u32::from(cur.product), u32::from(want.product), c(7)))?;
@@ -5056,21 +5056,21 @@ pub fn ver_set_condition_mask(mask: u64, types: u32, cond: u8) -> u64 {
     let c = u64::from(cond & 7);
     // Windows marks this layout with bit 63, even for condition zero. The highest type
     // bit chooses its three-bit slot (including unrecognized types, winref/versions).
-    mask | (1 << 63) | c.wrapping_shl(3 * types.ilog2())
+    mask | (1 << 63) | c.wrapping_shl(types.ilog2().saturating_mul(3))
 }
 
 /// OSVERSIONINFOEX(A/W) at `p`: the fields compared
 fn read_osver(p: u32, wide: bool) -> OsVer {
     let o = if wide { 276 } else { 148 };
     OsVer {
-        major: r32(p + 4),
-        minor: r32(p + 8),
-        build: r32(p + 12),
-        platform: r32(p + 16),
-        sp_major: r16(p + o),
-        sp_minor: r16(p + o + 2),
-        suite: r16(p + o + 4),
-        product: crate::mem::r8(p + o + 6),
+        major: (mem::ga(p) + 4).r32(),
+        minor: (mem::ga(p) + 8).r32(),
+        build: (mem::ga(p) + 12).r32(),
+        platform: (mem::ga(p) + 16).r32(),
+        sp_major: (mem::ga(p) + o).r16(),
+        sp_minor: (mem::ga(p) + o + 2).r16(),
+        suite: (mem::ga(p) + o + 4).r16(),
+        product: (mem::ga(p) + o + 6).r8(),
     }
 }
 /// The condition mask argument (a 64-bit value: two stack slots on x86, after two 32-bit ones)
@@ -5211,7 +5211,7 @@ fn ui_languages(c: &mut Ctx, process: bool) -> u32 {
         return 0;
     }
     for (i, &u) in w.iter().enumerate() {
-        w16(buf + 2 * kome::num::u32_of(i), u);
+        mem::ga(buf).at(kome::num::u32_of(i), 2).w16(u);
     }
     1
 }
@@ -5298,10 +5298,10 @@ fn locale_info(ty: u32) -> String {
         0x1009 => "1".into(),
         0x100b => "1".into(),
         0x1014 => if ja { "¥" } else { "$" }.into(),
-        0x2a..=0x30 => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].get(kome::num::us(ty & 0xffff) - 0x2a).copied().unwrap_or_default().into(),
-        0x31..=0x37 => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].get(kome::num::us(ty & 0xffff) - 0x31).copied().unwrap_or_default().into(),
-        0x38..=0x43 => ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].get(kome::num::us(ty & 0xffff) - 0x38).copied().unwrap_or_default().into(),
-        0x44..=0x4f => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].get(kome::num::us(ty & 0xffff) - 0x44).copied().unwrap_or_default().into(),
+        0x2a..=0x30 => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].get(kome::num::us(ty & 0xffff).saturating_sub(0x2a)).copied().unwrap_or_default().into(),
+        0x31..=0x37 => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].get(kome::num::us(ty & 0xffff).saturating_sub(0x31)).copied().unwrap_or_default().into(),
+        0x38..=0x43 => ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].get(kome::num::us(ty & 0xffff).saturating_sub(0x38)).copied().unwrap_or_default().into(),
+        0x44..=0x4f => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].get(kome::num::us(ty & 0xffff).saturating_sub(0x44)).copied().unwrap_or_default().into(),
         0x50 => "".into(),
         0x51 => "-".into(),
         _ => "".into(),
@@ -5330,9 +5330,9 @@ fn GetLocaleInfoA(c: &mut Ctx) -> u32 {
     }
     let s = locale_info(c.a(1));
     if c.a(3) == 0 {
-        return kome::num::lo32(crate::text::s2a(&s).len()) + 1;
+        return kome::num::lo32(crate::text::s2a(&s).len()).saturating_add(1);
     }
-    ret_str(c.a(2), c.a(3), &s, false) + 1
+    ret_str(c.a(2), c.a(3), &s, false).saturating_add(1)
 }
 fn GetLocaleInfoW(c: &mut Ctx) -> u32 {
     if let Some(n) = locale_number(c, true) {
@@ -5340,9 +5340,9 @@ fn GetLocaleInfoW(c: &mut Ctx) -> u32 {
     }
     let s = locale_info(c.a(1));
     if c.a(3) == 0 {
-        return kome::num::u32_of(s.encode_utf16().count()) + 1;
+        return kome::num::u32_of(s.encode_utf16().count()).saturating_add(1);
     }
-    ret_str(c.a(2), c.a(3), &s, true) + 1
+    ret_str(c.a(2), c.a(3), &s, true).saturating_add(1)
 }
 fn EnumCalendarInfoA(_: &mut Ctx) -> u32 {
     1
@@ -5355,11 +5355,11 @@ fn GetCPInfo(c: &mut Ctx) -> u32 {
     mem::fill(p, 20, 0);
     let dbcs = crate::text::is_dbcs() && matches!(c.a(0), 0 | 1 | 3 | 932 | 936 | 949 | 950);
     w32(p, if c.a(0) == 65001 { 4 } else if dbcs { 2 } else { 1 });
-    w8(p + 4, b'?');
+    (mem::ga(p) + 4).w8(b'?');
     if dbcs && crate::text::acp() == 932 {
-        mem::write(p + 6, &[0x81, 0x9f, 0xe0, 0xfc]);
+        mem::write((mem::ga(p) + 6).get(), &[0x81, 0x9f, 0xe0, 0xfc]);
     } else if dbcs {
-        mem::write(p + 6, &[0x81, 0xfe]);
+        mem::write((mem::ga(p) + 6).get(), &[0x81, 0xfe]);
     }
     1
 }
@@ -5427,11 +5427,11 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     // buffer untouched here silently turned its Automation strings into empty
     // BSTRs. Preserve the failure result while retaining the converted prefix.
     let mut written = w.len().min(kome::num::us(cap));
-    if written > 0 && w.get(written - 1).is_some_and(|c| (0xd800..=0xdbff).contains(c)) && w.get(written).is_some_and(|c| (0xdc00..=0xdfff).contains(c)) {
-        written -= 1;
+    if written > 0 && w.get(written.saturating_sub(1)).is_some_and(|c| (0xd800..=0xdbff).contains(c)) && w.get(written).is_some_and(|c| (0xdc00..=0xdfff).contains(c)) {
+        written = written.saturating_sub(1);
     }
     for (i, ch) in w.iter().take(written).enumerate() {
-        w16(dst + 2 * kome::num::u32_of(i), *ch);
+        mem::ga(dst).at(kome::num::u32_of(i), 2).w16(*ch);
     }
     if kome::num::u32_of(w.len()) > cap {
         last_error(122);
@@ -5474,10 +5474,10 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
         let mut fit = 0;
         let mut at = 0;
         while at < a.len() {
-            let n = if utf8 { 1 + a.iter().skip(at + 1).take_while(|b| **b & 0xc0 == 0x80).count() }
+            let n = if utf8 { a.iter().skip(at.saturating_add(1)).take_while(|b| **b & 0xc0 == 0x80).count().saturating_add(1) }
                 else if a.get(at).is_some_and(|&b| crate::text::is_lead_cp(cp, b)) { 2 } else { 1 };
-            if at + n > kome::num::us(cap) { break; }
-            at += n;
+            if at.saturating_add(n) > kome::num::us(cap) { break; }
+            at = at.saturating_add(n);
             fit = at;
         }
         mem::write(dst, a.get(..fit).unwrap_or(&a));
@@ -5591,7 +5591,7 @@ fn string_type(ty: u32, w: &[u16], out: u32) {
             4 => ctype3(*ch),
             _ => 0,
         };
-        w16(out + 2 * kome::num::u32_of(i), v);
+        mem::ga(out).at(kome::num::u32_of(i), 2).w16(v);
     }
 }
 fn GetStringTypeA(c: &mut Ctx) -> u32 {
@@ -5610,10 +5610,10 @@ fn GetStringTypeA(c: &mut Ctx) -> u32 {
             let x = a2w(&[*b, *b2]);
             w.push(x.first().copied().unwrap_or(0));
             w.push(x.first().copied().unwrap_or(0));
-            i += 2;
+            i = i.saturating_add(2);
         } else if let [b, ..] = rest {
             w.push(a2w(&[*b]).first().copied().unwrap_or(0));
-            i += 1;
+            i = i.saturating_add(1);
         } else {
             break;
         }
@@ -5626,13 +5626,13 @@ fn GetStringTypeExA(c: &mut Ctx) -> u32 {
 }
 fn GetStringTypeW(c: &mut Ctx) -> u32 {
     let (ty, src, n, out) = (c.a(0), c.a(1), c.i(2), c.a(3));
-    let w: Vec<u16> = if n < 0 { wstr(src) } else { (0..n.cast_unsigned()).map(|i| r16(src + 2 * i)).collect() };
+    let w: Vec<u16> = if n < 0 { wstr(src) } else { (0..n.cast_unsigned()).map(|i| mem::ga(src).at(i, 2).r16()).collect() };
     string_type(ty, &w, out);
     1
 }
 fn GetStringTypeExW(c: &mut Ctx) -> u32 {
     let (ty, src, n, out) = (c.a(1), c.a(2), c.i(3), c.a(4));
-    let w: Vec<u16> = if n < 0 { wstr(src) } else { (0..n.cast_unsigned()).map(|i| r16(src + 2 * i)).collect() };
+    let w: Vec<u16> = if n < 0 { wstr(src) } else { (0..n.cast_unsigned()).map(|i| mem::ga(src).at(i, 2).r16()).collect() };
     string_type(ty, &w, out);
     1
 }
@@ -5688,7 +5688,7 @@ pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
     }
     let k = w.len().min(kome::num::us(cap));
     for (i, ch) in w.iter().take(k).enumerate() {
-        w16(dst + 2 * kome::num::u32_of(i), *ch);
+        mem::ga(dst).at(kome::num::u32_of(i), 2).w16(*ch);
     }
     kome::num::u32_of(k)
 }
@@ -5752,7 +5752,7 @@ fn CompareStringOrdinal(c: &mut Ctx) -> u32 {
 }
 fn CompareStringW(c: &mut Ctx) -> u32 {
     let (flags, s1, n1, s2, n2) = (c.a(1), c.a(2), c.i(3), c.a(4), c.i(5));
-    let rd = |p: u32, n: i32| -> Vec<u16> { if n < 0 { wstr(p) } else { (0..n.cast_unsigned()).map(|i| r16(p + 2 * i)).take_while(|&x| x != 0).collect() } };
+    let rd = |p: u32, n: i32| -> Vec<u16> { if n < 0 { wstr(p) } else { (0..n.cast_unsigned()).map(|i| mem::ga(p).at(i, 2).r16()).take_while(|&x| x != 0).collect() } };
     csr(crate::collate::compare(&rd(s1, n1), &rd(s2, n2), flags))
 }
 /// A date/time picture (GetDateFormat/GetTimeFormat) into text: fields are runs of one letter,
@@ -5770,28 +5770,28 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
     while let Some(&ch) = cs.get(i) {
         if ch == '\'' {
             let mut lit = String::new();
-            i += 1;
+            i = i.saturating_add(1);
             while let Some(&x) = cs.get(i) {
                 if x == '\'' {
-                    if cs.get(i + 1) == Some(&'\'') {
+                    if cs.get(i.saturating_add(1)) == Some(&'\'') {
                         lit.push('\'');
-                        i += 2;
+                        i = i.saturating_add(2);
                         continue;
                     }
-                    i += 1;
+                    i = i.saturating_add(1);
                     break;
                 }
                 lit.push(x);
-                i += 1;
+                i = i.saturating_add(1);
             }
             items.push(Item::Lit(lit));
         } else if "yMdgHhmst".contains(ch) {
             let n = cs.iter().skip(i).take_while(|&&x| x == ch).count();
             items.push(Item::Field(ch, n));
-            i += n;
+            i = i.saturating_add(n);
         } else {
             items.push(Item::Lit(ch.to_string()));
-            i += 1;
+            i = i.saturating_add(1);
         }
     }
     // skipped fields take the literal text before them along (after them when first)
@@ -5802,13 +5802,13 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
             let ch = if h24 && ch == 'h' { 'H' } else { ch };
             if skip.contains(ch) {
                 let mut j = k;
-                while j > 0 && lit(j - 1) {
-                    j -= 1;
+                while j > 0 && lit(j.saturating_sub(1)) {
+                    j = j.saturating_sub(1);
                 }
-                let mut end = k + 1;
+                let mut end = k.saturating_add(1);
                 if j == 0 {
                     while lit(end) {
-                        end += 1;
+                        end = end.saturating_add(1);
                     }
                 }
                 keep.iter_mut().take(end).skip(j).for_each(|x| *x = false);
@@ -5862,7 +5862,7 @@ fn read_systemtime(p: u32, date: bool) -> Option<[u16; 8]> {
         system_time(t, true);
     }
     let q = tmp.unwrap_or(p);
-    let st: [u16; 8] = std::array::from_fn(|i| r16(q + 2 * kome::num::u32_of(i)));
+    let st: [u16; 8] = std::array::from_fn(|i| mem::ga(q).at(kome::num::u32_of(i), 2).r16());
     if let Some(t) = tmp {
         mem::heap_free(t);
     }
@@ -5870,7 +5870,7 @@ fn read_systemtime(p: u32, date: bool) -> Option<[u16; 8]> {
     let good = if date { (1601..=30827).contains(&y) && (1..=12).contains(&m) && d >= 1 && d <= days_in_month(y, m) } else { st[4] < 24 && st[5] < 60 && st[6] < 60 && st[7] < 1000 };
     let mut st = st;
     if date {
-        st[2] = kome::num::lo16((days_from_civil(y, m, d) + 4).rem_euclid(7));
+        st[2] = kome::num::lo16(days_from_civil(y, m, d).saturating_add(4).rem_euclid(7));
     }
     good.then_some(st)
 }
@@ -5911,7 +5911,7 @@ fn date_time_format(c: &mut Ctx, date: bool, wide: bool) -> u32 {
         }
     }
     let text = format_picture(&picture, st, ja, &skip, !date && flags & 8 != 0);
-    let n = kome::num::u32_of(if wide { text.encode_utf16().count() } else { crate::text::s2a(&text).len() }) + 1;
+    let n = kome::num::u32_of(if wide { text.encode_utf16().count() } else { crate::text::s2a(&text).len() }).saturating_add(1);
     if cap == 0 {
         return n;
     }
@@ -5939,8 +5939,8 @@ fn MulDiv(c: &mut Ctx) -> u32 {
     if d == 0 {
         return 0xffff_ffff;
     }
-    let n = a * b;
-    let r = if (n < 0) != (d < 0) { (n - d / 2) / d } else { (n + d / 2) / d };
+    let n = a.saturating_mul(b);
+    let Some(r) = (if (n < 0) != (d < 0) { n.saturating_sub(d / 2) } else { n.saturating_add(d / 2) }).checked_div(d) else { return 0xffff_ffff };
     kome::num::lo32(r)
 }
 
@@ -5954,12 +5954,12 @@ fn lstrlenW(c: &mut Ctx) -> u32 {
 fn lstrcpyA(c: &mut Ctx) -> u32 {
     let s = cstr(c.a(1));
     mem::write(c.a(0), &s);
-    w8(c.a(0) + kome::num::u32_of(s.len()), 0);
+    (mem::ga(c.a(0)) + kome::num::u32_of(s.len())).w8(0);
     c.a(0)
 }
 fn lstrcpyW(c: &mut Ctx) -> u32 {
     let s = wstr(c.a(1));
-    put_wstr(c.a(0), kome::num::u32_of(s.len()) + 1, &s);
+    put_wstr(c.a(0), kome::num::u32_of(s.len()).saturating_add(1), &s);
     c.a(0)
 }
 fn lstrcpynA(c: &mut Ctx) -> u32 {
@@ -5975,14 +5975,14 @@ fn lstrcpynW(c: &mut Ctx) -> u32 {
 fn lstrcatA(c: &mut Ctx) -> u32 {
     let d = cstr(c.a(0));
     let s = cstr(c.a(1));
-    mem::write(c.a(0) + kome::num::u32_of(d.len()), &s);
-    w8(c.a(0) + kome::num::u32_of(d.len() + s.len()), 0);
+    mem::write((mem::ga(c.a(0)) + kome::num::u32_of(d.len())).get(), &s);
+    (mem::ga(c.a(0)) + kome::num::u32_of(d.len().saturating_add(s.len()))).w8(0);
     c.a(0)
 }
 fn lstrcatW(c: &mut Ctx) -> u32 {
     let d = wstr(c.a(0));
     let s = wstr(c.a(1));
-    put_wstr(c.a(0) + 2 * kome::num::u32_of(d.len()), kome::num::u32_of(s.len()) + 1, &s);
+    put_wstr(mem::ga(c.a(0)).at(kome::num::u32_of(d.len()), 2).get(), kome::num::u32_of(s.len()).saturating_add(1), &s);
     c.a(0)
 }
 fn lstrcmpA(c: &mut Ctx) -> u32 {
@@ -6049,8 +6049,8 @@ impl Atoms {
     }
     fn add(&mut self, s: String) -> u32 {
         if let Some((i, Some(e))) = self.find(&s).and_then(|i| Some((i, self.0.get_mut(i)?.as_mut()))) {
-            e.1 += 1;
-            return 0xc000 + kome::num::u32_of(i);
+            e.1 = e.1.saturating_add(1);
+            return kome::num::u32_of(i).saturating_add(0xc000);
         }
         let i = self.2.first().copied().unwrap_or(self.0.len());
         if i >= 0x4000 {
@@ -6064,7 +6064,7 @@ impl Atoms {
         if let Some(e) = self.0.get_mut(i) {
             *e = Some((s, 1));
         }
-        0xc000 + kome::num::u32_of(i)
+        kome::num::u32_of(i).saturating_add(0xc000)
     }
     /// 0 once deleted (or an integer atom), else the atom (not one)
     fn delete(&mut self, a: u32) -> u32 {
@@ -6075,7 +6075,7 @@ impl Atoms {
         let i = kome::num::us(i);
         let Some(e) = self.0.get_mut(i) else { return a };
         match e {
-            Some((_, n)) if *n > 1 => *n -= 1,
+            Some((_, n)) if *n > 1 => *n = (*n).saturating_sub(1),
             Some((name, _)) => {
                 if let Some(m) = self.1.as_mut() {
                     m.remove(&name.to_lowercase());
@@ -6119,7 +6119,7 @@ fn find_atom(c: &mut Ctx, wide: bool, global: bool) -> u32 {
     match atom_arg(c.a(0), wide) {
         AtomArg::Int(n) => n,
         AtomArg::Name(s) => match atoms(global).find(&s) {
-            Some(i) => 0xc000 + kome::num::u32_of(i),
+            Some(i) => kome::num::u32_of(i).saturating_add(0xc000),
             None => {
                 last_error(2);
                 0
@@ -6152,10 +6152,10 @@ fn atom_name_into(a: u32, buf: u32, size: u32, wide: bool, global: bool) -> u32 
     let text: Vec<u16> = if wide { name.encode_utf16().collect() } else { crate::text::s2a(&name).into_iter().map(u16::from).collect() };
     let put = |n: usize, nul: bool| {
         for (i, &ch) in text.iter().take(n).enumerate() {
-            if wide { mem::w16(buf + 2 * kome::num::u32_of(i), ch) } else { w8(buf + kome::num::u32_of(i), kome::num::lo8(ch)) }
+            if wide { mem::ga(buf).at(kome::num::u32_of(i), 2).w16(ch) } else { (mem::ga(buf) + kome::num::u32_of(i)).w8(kome::num::lo8(ch)) }
         }
         if nul {
-            if wide { mem::w16(buf + 2 * kome::num::u32_of(n), 0) } else { w8(buf + kome::num::u32_of(n), 0) }
+            if wide { mem::ga(buf).at(kome::num::u32_of(n), 2).w16(0) } else { (mem::ga(buf) + kome::num::u32_of(n)).w8(0) }
         }
     };
     let len = text.len();
@@ -6164,7 +6164,7 @@ fn atom_name_into(a: u32, buf: u32, size: u32, wide: bool, global: bool) -> u32 
         put(n, n < kome::num::us(size));
         return kome::num::u32_of(n);
     }
-    let n = len.min(kome::num::us(size) - 1);
+    let n = len.min(kome::num::us(size).saturating_sub(1));
     put(n, true);
     if global && n < len {
         last_error(234);
@@ -6238,7 +6238,7 @@ fn GetAtomNameW(c: &mut Ctx) -> u32 {
 
 fn system_time(p: u32, local: bool) {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let secs = now.as_secs().cast_signed() + if local { tz_bias() } else { 0 };
+    let secs = now.as_secs().cast_signed().saturating_add(if local { tz_bias() } else { 0 });
     write_systemtime(p, secs, now.subsec_millis());
 }
 pub fn tz_bias() -> i64 {
@@ -6247,34 +6247,39 @@ pub fn tz_bias() -> i64 {
 pub(crate) fn write_systemtime(p: u32, secs: i64, ms: u32) {
     let days = secs.div_euclid(86400);
     let rem = secs.rem_euclid(86400);
-    // civil from days (Howard Hinnant)
-    let z = days + 719468;
-    let era = z.div_euclid(146097);
-    let doe = z - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
+    let (y, m, d) = civil_from_days(days);
     w16(p, kome::num::lo16(y));
-    w16(p + 2, kome::num::lo16(m));
-    w16(p + 4, kome::num::lo16((days + 4).rem_euclid(7)));
-    w16(p + 6, kome::num::lo16(d));
-    w16(p + 8, kome::num::lo16(rem / 3600));
-    w16(p + 10, kome::num::lo16(rem / 60 % 60));
-    w16(p + 12, kome::num::lo16(rem % 60));
-    w16(p + 14, kome::num::lo16(ms));
+    (mem::ga(p) + 2).w16(kome::num::lo16(m));
+    (mem::ga(p) + 4).w16(kome::num::lo16(days.saturating_add(4).rem_euclid(7)));
+    (mem::ga(p) + 6).w16(kome::num::lo16(d));
+    (mem::ga(p) + 8).w16(kome::num::lo16(rem / 3600));
+    (mem::ga(p) + 10).w16(kome::num::lo16(rem / 60 % 60));
+    (mem::ga(p) + 12).w16(kome::num::lo16(rem % 60));
+    (mem::ga(p) + 14).w16(kome::num::lo16(ms));
 }
+/// (year, month, day) of `days` since 1970-01-01 (Howard Hinnant's civil_from_days; inside an
+/// era every value is small, so the saturating ops saturate only for days near i64's ends)
+pub(crate) fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days.saturating_add(719468);
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = doe.saturating_sub(doe / 1460).saturating_add(doe / 36524).saturating_sub(doe / 146096) / 365;
+    let y = era.saturating_mul(400).saturating_add(yoe);
+    let doy = doe.saturating_sub(yoe.saturating_mul(365).saturating_add(yoe / 4).saturating_sub(yoe / 100));
+    let mp = doy.saturating_mul(5).saturating_add(2) / 153;
+    let d = doy.saturating_sub(mp.saturating_mul(153).saturating_add(2) / 5).saturating_add(1);
+    let m = if mp < 10 { mp.saturating_add(3) } else { mp.saturating_sub(9) };
+    (if m <= 2 { y.saturating_add(1) } else { y }, m, d)
+}
+/// Days since 1970-01-01 of (year, month, day) (Hinnant's days_from_civil)
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
+    let y = if m <= 2 { y.saturating_sub(1) } else { y };
     let era = y.div_euclid(400);
-    let yoe = y - era * 400;
-    let mp = (m + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
+    let yoe = y.rem_euclid(400);
+    let mp = m.saturating_add(9) % 12;
+    let doy = (mp.saturating_mul(153).saturating_add(2) / 5).saturating_add(d).saturating_sub(1);
+    let doe = yoe.saturating_mul(365).saturating_add(yoe / 4).saturating_sub(yoe / 100).saturating_add(doy);
+    era.saturating_mul(146097).saturating_add(doe).saturating_sub(719468)
 }
 fn GetSystemTime(c: &mut Ctx) -> u32 {
     system_time(c.a(0), false);
@@ -6286,10 +6291,10 @@ fn GetLocalTime(c: &mut Ctx) -> u32 {
 }
 fn put64(p: u32, v: u64) {
     w32(p, kome::num::lo32(v));
-    w32(p + 4, kome::num::lo32(v >> 32));
+    (mem::ga(p) + 4).w32(kome::num::lo32(v >> 32));
 }
 fn get64(p: u32) -> u64 {
-    u64::from(r32(p)) | u64::from(r32(p + 4)) << 32
+    u64::from(r32(p)) | u64::from((mem::ga(p) + 4).r32()) << 32
 }
 fn GetSystemTimeAsFileTime(c: &mut Ctx) -> u32 {
     put64(c.a(0), files::filetime(std::time::SystemTime::now()));
@@ -6304,9 +6309,23 @@ fn FileTimeToSystemTime(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    let secs = (ft / 10_000_000).cast_signed() - 11_644_473_600;
+    let secs = ft_unix_secs(ft);
     write_systemtime(c.a(1), secs, kome::num::lo32((ft / 10_000) % 1000));
     1
+}
+/// Seconds from 1601-01-01 (FILETIME's start) to 1970-01-01
+const FT_UNIX_SECS: i64 = 11_644_473_600;
+/// The Unix seconds of a FILETIME
+fn ft_unix_secs(ft: u64) -> i64 {
+    (ft / 10_000_000).cast_signed().saturating_sub(FT_UNIX_SECS)
+}
+/// The FILETIME of Unix seconds `secs` and `ms` milliseconds
+fn unix_ft(secs: i64, ms: i64) -> i64 {
+    secs.saturating_add(FT_UNIX_SECS).saturating_mul(10_000_000).saturating_add(ms.saturating_mul(10_000))
+}
+/// The Unix seconds of a civil date and time
+fn civil_secs(y: i64, m: i64, d: i64, h: i64, mi: i64, s: i64) -> i64 {
+    days_from_civil(y, m, d).saturating_mul(86400).saturating_add(h.saturating_mul(3600)).saturating_add(mi.saturating_mul(60)).saturating_add(s)
 }
 fn days_in_month(y: i64, m: i64) -> i64 {
     match m {
@@ -6318,13 +6337,12 @@ fn days_in_month(y: i64, m: i64) -> i64 {
 }
 /// A SYSTEMTIME's FILETIME (day of week ignored), None for fields Windows rejects.
 fn systemtime_ft(p: u32) -> Option<u64> {
-    let f = |o| i64::from(r16(p + o));
+    let f = |o| i64::from((mem::ga(p) + o).r16());
     let (y, m, d, h, mi, s, ms) = (f(0), f(2), f(6), f(8), f(10), f(12), f(14));
     if !(1601..=30827).contains(&y) || !(1..=12).contains(&m) || d < 1 || d > days_in_month(y, m) || h > 23 || mi > 59 || s > 59 || ms > 999 {
         return None;
     }
-    let secs = days_from_civil(y, m, d) * 86400 + h * 3600 + mi * 60 + s;
-    Some(((secs + 11_644_473_600).cast_unsigned()) * 10_000_000 + ms.cast_unsigned() * 10_000)
+    Some(unix_ft(civil_secs(y, m, d, h, mi, s), ms).cast_unsigned())
 }
 fn SystemTimeToFileTime(c: &mut Ctx) -> u32 {
     let Some(ft) = systemtime_ft(c.a(0)) else {
@@ -6338,7 +6356,7 @@ fn SystemTimeToFileTime(c: &mut Ctx) -> u32 {
 /// as local FILETIME: wDay is the week (5: the last) of wDayOfWeek in wMonth; a nonzero wYear is
 /// an absolute date.
 fn tz_transition(p: u32, year: i64) -> Option<i64> {
-    let f = |o| i64::from(r16(p + o));
+    let f = |o| i64::from((mem::ga(p) + o).r16());
     let (m, dow, wk, h, mi, s, ms) = (f(2), f(4), f(6), f(8), f(10), f(12), f(14));
     if m == 0 {
         return None;
@@ -6346,30 +6364,30 @@ fn tz_transition(p: u32, year: i64) -> Option<i64> {
     let day = if f(0) != 0 {
         wk
     } else {
-        let first = (days_from_civil(year, m, 1) + 4).rem_euclid(7);
-        let mut d = 1 + (dow - first).rem_euclid(7) + (wk - 1) * 7;
+        let first = days_from_civil(year, m, 1).saturating_add(4).rem_euclid(7);
+        let mut d = dow.saturating_sub(first).rem_euclid(7).saturating_add(1).saturating_add(wk.saturating_sub(1).saturating_mul(7));
         while d > days_in_month(year, m) {
-            d -= 7;
+            d = d.saturating_sub(7);
         }
         d
     };
-    Some(((days_from_civil(year, m, day) * 86400 + h * 3600 + mi * 60 + s + 11_644_473_600) * 1000 + ms) * 10_000)
+    Some(unix_ft(civil_secs(year, m, day, h, mi, s), ms))
 }
 /// The bias (minutes, UTC = local + bias) in effect at `t` (a FILETIME, UTC or local).
 fn tz_bias_at(z: u32, t: i64, utc: bool) -> i64 {
     let bias = i64::from(r32(z).cast_signed());
-    let (std_b, dst_b) = (i64::from(r32(z + 84).cast_signed()), i64::from(r32(z + 168).cast_signed()));
+    let (std_b, dst_b) = (i64::from((mem::ga(z) + 84).r32().cast_signed()), i64::from((mem::ga(z) + 168).r32().cast_signed()));
     let st = mem::heap_alloc(16, true);
-    write_systemtime(st, t.div_euclid(10_000_000) - 11_644_473_600, 0);
+    write_systemtime(st, t.div_euclid(10_000_000).saturating_sub(FT_UNIX_SECS), 0);
     let year = i64::from(r16(st));
     mem::heap_free(st);
-    let (Some(dst_start), Some(std_start)) = (tz_transition(z + 152, year), tz_transition(z + 68, year)) else {
-        return bias + std_b;
+    let (Some(dst_start), Some(std_start)) = (tz_transition(z.saturating_add(152), year), tz_transition(z.saturating_add(68), year)) else {
+        return bias.saturating_add(std_b);
     };
     // the transitions are in local time of the period before each
-    let (ds, ss) = if utc { (dst_start + (bias + std_b) * 600_000_000, std_start + (bias + dst_b) * 600_000_000) } else { (dst_start, std_start) };
+    let (ds, ss) = if utc { (dst_start.saturating_add(bias.saturating_add(std_b).saturating_mul(600_000_000)), std_start.saturating_add(bias.saturating_add(dst_b).saturating_mul(600_000_000))) } else { (dst_start, std_start) };
     let in_dst = if ds < ss { t >= ds && t < ss } else { !(t >= ss && t < ds) };
-    bias + if in_dst { dst_b } else { std_b }
+    bias.saturating_add(if in_dst { dst_b } else { std_b })
 }
 fn tz_info(c: &mut Ctx) -> u32 {
     let z = c.a(0);
@@ -6377,7 +6395,7 @@ fn tz_info(c: &mut Ctx) -> u32 {
         return z;
     }
     let tmp = mem::heap_alloc(172, true);
-    w32(tmp, kome::num::lo32(-tz_bias() / 60));
+    w32(tmp, kome::num::lo32(tz_bias().saturating_neg() / 60));
     tmp
 }
 fn SystemTimeToTzSpecificLocalTime(c: &mut Ctx) -> u32 {
@@ -6386,7 +6404,7 @@ fn SystemTimeToTzSpecificLocalTime(c: &mut Ctx) -> u32 {
         return 0;
     };
     let z = tz_info(c);
-    let t = ft.cast_signed() - tz_bias_at(z, ft.cast_signed(), true) * 600_000_000;
+    let t = ft.cast_signed().saturating_sub(tz_bias_at(z, ft.cast_signed(), true).saturating_mul(600_000_000));
     if c.a(0) == 0 {
         mem::heap_free(z);
     }
@@ -6394,7 +6412,7 @@ fn SystemTimeToTzSpecificLocalTime(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    write_systemtime(c.a(2), t.div_euclid(10_000_000) - 11_644_473_600, kome::num::lo32(t / 10_000 % 1000));
+    write_systemtime(c.a(2), t.div_euclid(10_000_000).saturating_sub(FT_UNIX_SECS), kome::num::lo32(t / 10_000 % 1000));
     1
 }
 fn TzSpecificLocalTimeToSystemTime(c: &mut Ctx) -> u32 {
@@ -6403,7 +6421,7 @@ fn TzSpecificLocalTimeToSystemTime(c: &mut Ctx) -> u32 {
         return 0;
     };
     let z = tz_info(c);
-    let t = ft.cast_signed() + tz_bias_at(z, ft.cast_signed(), false) * 600_000_000;
+    let t = ft.cast_signed().saturating_add(tz_bias_at(z, ft.cast_signed(), false).saturating_mul(600_000_000));
     if c.a(0) == 0 {
         mem::heap_free(z);
     }
@@ -6411,41 +6429,40 @@ fn TzSpecificLocalTimeToSystemTime(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    write_systemtime(c.a(2), t.div_euclid(10_000_000) - 11_644_473_600, kome::num::lo32(t / 10_000 % 1000));
+    write_systemtime(c.a(2), t.div_euclid(10_000_000).saturating_sub(FT_UNIX_SECS), kome::num::lo32(t / 10_000 % 1000));
     1
 }
 fn DosDateTimeToFileTime(c: &mut Ctx) -> u32 {
     let (d, t) = (i64::from(c.a(0)) & 0xffff, i64::from(c.a(1)) & 0xffff);
-    let (y, m, dd, h, mi, s) = (1980 + (d >> 9), (d >> 5) & 15, d & 31, t >> 11, (t >> 5) & 63, (t & 31) * 2);
+    let (y, m, dd, h, mi, s) = ((d >> 9).saturating_add(1980), (d >> 5) & 15, d & 31, t >> 11, (t >> 5) & 63, (t & 31).saturating_mul(2));
     if !(1..=12).contains(&m) || dd < 1 || dd > days_in_month(y, m) || h > 23 || mi > 59 || s > 59 {
         last_error(87);
         return 0;
     }
-    let secs = days_from_civil(y, m, dd) * 86400 + h * 3600 + mi * 60 + s;
-    put64(c.a(2), ((secs + 11_644_473_600).cast_unsigned()) * 10_000_000);
+    put64(c.a(2), unix_ft(civil_secs(y, m, dd, h, mi, s), 0).cast_unsigned());
     1
 }
 fn FileTimeToLocalFileTime(c: &mut Ctx) -> u32 {
-    put64(c.a(1), get64(c.a(0)).wrapping_add(kome::num::lo64(tz_bias() * 10_000_000)));
+    put64(c.a(1), get64(c.a(0)).wrapping_add(kome::num::lo64(tz_bias().saturating_mul(10_000_000))));
     1
 }
 fn LocalFileTimeToFileTime(c: &mut Ctx) -> u32 {
-    put64(c.a(1), get64(c.a(0)).wrapping_sub(kome::num::lo64(tz_bias() * 10_000_000)));
+    put64(c.a(1), get64(c.a(0)).wrapping_sub(kome::num::lo64(tz_bias().saturating_mul(10_000_000))));
     1
 }
 fn FileTimeToDosDateTime(c: &mut Ctx) -> u32 {
     let ft = get64(c.a(0));
-    let secs = (ft / 10_000_000).cast_signed() - 11_644_473_600;
+    let secs = ft_unix_secs(ft);
     let tmp = mem::heap_alloc(16, true);
     write_systemtime(tmp, secs, 0);
-    let (y, m, d, h, mi, s) = (r16(tmp), r16(tmp + 2), r16(tmp + 6), r16(tmp + 8), r16(tmp + 10), r16(tmp + 12));
+    let (y, m, d, h, mi, s) = (r16(tmp), (mem::ga(tmp) + 2).r16(), (mem::ga(tmp) + 6).r16(), (mem::ga(tmp) + 8).r16(), (mem::ga(tmp) + 10).r16(), (mem::ga(tmp) + 12).r16());
     mem::heap_free(tmp);
     if !(1980..=2107).contains(&y) || ft > kome::num::lo64(i64::MAX) {
         last_error(87);
         return 0;
     }
     if c.a(1) != 0 {
-        w16(c.a(1), (y - 1980) << 9 | m << 5 | d);
+        w16(c.a(1), y.saturating_sub(1980) << 9 | m << 5 | d);
     }
     if c.a(2) != 0 {
         w16(c.a(2), h << 11 | mi << 5 | s / 2);
@@ -6469,7 +6486,7 @@ fn GetDynamicTimeZoneInformation(c: &mut Ctx) -> u32 {
     mem::fill(p, 432, 0);
     let r = GetTimeZoneInformation(c);
     let w: Vec<u16> = tz_key_name(tz_bias()).encode_utf16().collect();
-    mem::put_wstr(p + 172, 128, &w);
+    mem::put_wstr((mem::ga(p) + 172).get(), 128, &w);
     r
 }
 /// GetTimeZoneInformationForYear(year, DYNAMIC_TIME_ZONE_INFORMATION* or NULL for the
@@ -6477,7 +6494,7 @@ fn GetDynamicTimeZoneInformation(c: &mut Ctx) -> u32 {
 fn GetTimeZoneInformationForYear(c: &mut Ctx) -> u32 {
     let dtzi = c.a(1);
     if dtzi != 0 {
-        let key = String::from_utf16_lossy(&mem::wstrn(dtzi + 172, 128));
+        let key = String::from_utf16_lossy(&mem::wstrn(dtzi.saturating_add(172), 128));
         if !key.is_empty() && !key.eq_ignore_ascii_case(tz_key_name(tz_bias())) {
             last_error(2);
             return 0;
@@ -6493,12 +6510,12 @@ fn GetTimeZoneInformation(c: &mut Ctx) -> u32 {
 /// TIME_ZONE_INFORMATION of the zone (TIME_ZONE_ID_UNKNOWN: no daylight saving)
 fn write_tzi(p: u32) {
     mem::fill(p, 172, 0);
-    w32(p, kome::num::lo32(-tz_bias() / 60));
+    w32(p, kome::num::lo32(tz_bias().saturating_neg() / 60));
     // (Japanese Windows' names: RealLive and Siglus refuse to run elsewhere)
     if tz_bias() == 9 * 3600 {
         for (off, name) in [(4, "東京 (標準時)"), (88, "東京 (夏時間)")] {
             let w: Vec<u16> = name.encode_utf16().collect();
-            mem::put_wstr(p + off, 32, &w);
+            mem::put_wstr((mem::ga(p) + off).get(), 32, &w);
         }
     }
 }
@@ -6510,7 +6527,7 @@ fn GetTickCount64(c: &mut Ctx) -> u32 {
     c.ret64(v)
 }
 pub(crate) fn qpc() -> u64 {
-    clock_ns() / 100 + 600_000_000
+    (clock_ns() / 100).saturating_add(600_000_000)
 }
 fn QueryPerformanceCounter(c: &mut Ctx) -> u32 {
     put64(c.a(0), qpc());
@@ -6748,7 +6765,7 @@ fn GetProcAddress(c: &mut Ctx) -> u32 {
 /// DLL on first use and binds one delay-load IAT slot.
 fn ResolveDelayLoadedAPI(c: &mut Ctx) -> u32 {
     let (base, d, thunk) = (c.a(0), c.a(1), c.a(4));
-    let rva = |i: u32| if r32(d) & 1 != 0 { base + r32(d + 4 * i) } else { r32(d + 4 * i) };
+    let rva = |i: u32| if r32(d) & 1 != 0 { (mem::ga(base) + mem::ga(d).at(i, 4).r32()).get() } else { mem::ga(d).at(i, 4).r32() };
     let name = a2s(&cstr(rva(1)));
     let hmod_at = rva(2);
     let mut h = r32(hmod_at);
@@ -6756,9 +6773,9 @@ fn ResolveDelayLoadedAPI(c: &mut Ctx) -> u32 {
         h = crate::pe::load_library(c.cpu, &name);
         w32(hmod_at, h);
     }
-    let i = (thunk - rva(3)) / 4;
-    let e = r32(rva(4) + 4 * i);
-    let what = if e & 0x8000_0000 != 0 { format!("#{}", e & 0xffff) } else { a2s(&cstr(base + e + 2)) };
+    let i = mem::ga(thunk).since(mem::ga(rva(3))) / 4;
+    let e = mem::ga(rva(4)).at(i, 4).r32();
+    let what = if e & 0x8000_0000 != 0 { format!("#{}", e & 0xffff) } else { a2s(&cstr((mem::ga(base) + e + 2).get())) };
     let r = if h == 0 {
         0
     } else if e & 0x8000_0000 != 0 {
@@ -6808,10 +6825,10 @@ fn FindResourceExW(c: &mut Ctx) -> u32 {
 /// until it returns FALSE; ERROR_RESOURCE_DATA/TYPE/NAME_NOT_FOUND when there is nothing.
 fn enum_resources(c: &mut Ctx, level: usize, wide: bool) -> u32 {
     let m = if c.a(0) == 0 { module_handle(0, false) } else { c.a(0) };
-    let path: Vec<crate::pe::ResId> = (0..level).map(|i| crate::pe::ResId::from_arg(c.a(1 + kome::num::u32_of(i)), wide)).collect();
-    let (cb, param) = (c.a(1 + kome::num::u32_of(level)), c.a(2 + kome::num::u32_of(level)));
+    let path: Vec<crate::pe::ResId> = (0..level).map(|i| crate::pe::ResId::from_arg(c.a(kome::num::u32_of(i).saturating_add(1)), wide)).collect();
+    let (cb, param) = (c.a(kome::num::u32_of(level).saturating_add(1)), c.a(kome::num::u32_of(level).saturating_add(2)));
     // (read before the callbacks: on x64 the arguments are registers a call clobbers)
-    let given: Vec<u32> = (0..level).map(|i| c.a(1 + kome::num::u32_of(i))).collect();
+    let given: Vec<u32> = (0..level).map(|i| c.a(kome::num::u32_of(i).saturating_add(1))).collect();
     let Some(ids) = crate::pe::resource_ids(m, &path) else {
         last_error(match level { 0 => 1812, 1 => 1813, _ => 1814 });
         return 0;
@@ -6893,7 +6910,7 @@ fn SizeofResource(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    r32(c.a(1) + 4)
+    (mem::ga(c.a(1)) + 4).r32()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -6987,7 +7004,7 @@ fn WriteConsoleW(c: &mut Ctx) -> u32 {
     if !is_console_out(c.a(0)) {
         return console_fail(c.a(3));
     }
-    let w: Vec<u16> = (0..n).map(|i| mem::r16(buf + 2 * i)).collect();
+    let w: Vec<u16> = (0..n).map(|i| mem::ga(buf).at(i, 2).r16()).collect();
     console_write(&String::from_utf16_lossy(&w));
     put32(c.a(3), n);
     1
@@ -7065,7 +7082,7 @@ fn device_open(name: &str) -> Option<Result<u32, u32>> {
     }
     let b = rest.as_bytes();
     if let &[d, b':'] = b && d.is_ascii_alphabetic() {
-        let bit = 1u32 << (d.to_ascii_uppercase() - b'A');
+        let bit = 1u32 << d.to_ascii_uppercase().saturating_sub(b'A');
         return Some(if logical_drives() & bit != 0 { last_error(0); Ok(obj::add(Obj::Other(crate::obj::Other::Volume))) } else { Err(2) });
     }
     // (devices sake has: the console's, COM ports and the like are not)
@@ -7103,7 +7120,7 @@ fn CreateFileW(c: &mut Ctx) -> u32 {
 /// dwFileAttributes, dwFileFlags, ... (no parameters: no attributes or flags)
 fn CreateFile2(c: &mut Ctx) -> u32 {
     let p = c.a(4);
-    let attrs = if p == 0 { 0 } else { r32(p + 4) | r32(p + 8) };
+    let attrs = if p == 0 { 0 } else { (mem::ga(p) + 4).r32() | (mem::ga(p) + 8).r32() };
     let h = open_file(arg_str(c.a(0), true), c.a(1), c.a(2), c.a(3), attrs);
     if h != 0xffff_ffff && attrs & 0x4000_0000 != 0 {
         crate::iocp::mark_overlapped(h);
@@ -7130,16 +7147,16 @@ fn OpenFile(c: &mut Ctx) -> u32 {
     const OF_EXIST: u32 = 0x4000;
     const OF_REOPEN: u32 = 0x8000;
     let (of, style) = (c.a(1), c.a(2));
-    let name = if style & OF_REOPEN != 0 && of != 0 { arg_str(of + 8, false) } else { arg_str(c.a(0), false) };
+    let name = if style & OF_REOPEN != 0 && of != 0 { arg_str((mem::ga(of) + 8).get(), false) } else { arg_str(c.a(0), false) };
     // (the path only when found: a failure leaves szPathName as it was, as Windows does)
     let done = |path: &str, err: u32| {
         if of != 0 {
             mem::w8(of, 136);
-            mem::w8(of + 1, 1);
-            mem::w16(of + 2, kome::num::lo16(err));
+            (mem::ga(of) + 1).w8(1);
+            (mem::ga(of) + 2).w16(kome::num::lo16(err));
             if err == 0 {
-                mem::w32(of + 4, 0);
-                mem::put_cstr(of + 8, 128, &crate::text::s2a(path));
+                (mem::ga(of) + 4).w32(0);
+                mem::put_cstr((mem::ga(of) + 8).get(), 128, &crate::text::s2a(path));
             }
         }
         if err != 0 {
@@ -7286,7 +7303,7 @@ fn ReadFile(c: &mut Ctx) -> u32 {
     // OVERLAPPED: Internal, InternalHigh (ULONG_PTRs), Offset, OffsetHigh, hEvent
     let k = mem::ps();
     let got = if ov != 0 {
-        let start = files::io_start(r32(ov + 2 * k), r32(ov + 2 * k + 4), false);
+        let start = files::io_start(mem::ga(ov).at(k, 2).r32(), (mem::ga(ov).at(k, 2) + 4).r32(), false);
         match f.read_at(start, crate::iocp::is_overlapped(h), dst) {
             Ok(got) => kome::num::u32_of(got),
             Err(()) => {
@@ -7358,7 +7375,7 @@ fn WriteFile(c: &mut Ctx) -> u32 {
     echo_write(&f.path, buf, n);
     let w = if ov != 0 {
         let k = mem::ps();
-        let start = files::io_start(r32(ov + 2 * k), r32(ov + 2 * k + 4), true);
+        let start = files::io_start(mem::ga(ov).at(k, 2).r32(), (mem::ga(ov).at(k, 2) + 4).r32(), true);
         f.write_at(start, crate::iocp::is_overlapped(h), mem::slice(buf, n))
     } else {
         f.write_from(buf, n)
@@ -7383,7 +7400,7 @@ pub(crate) fn console_write(t: &str) {
     if p.len() > CONSOLE_PIECE {
         let mut at = CONSOLE_PIECE;
         while !p.is_char_boundary(at) {
-            at -= 1;
+            at = at.saturating_sub(1);
         }
         let piece: String = p.drain(..at).collect();
         eprintln!("{piece}");
@@ -7405,7 +7422,7 @@ pub(crate) fn echo_write(path: &str, buf: u32, n: u32) {
         WIDE.store(true, Ordering::Relaxed);
     }
     let zeros = b.iter().skip(1).step_by(2).filter(|&&x| x == 0).count();
-    let t = if WIDE.load(Ordering::Relaxed) || (b.len() >= 2 && zeros * 2 >= b.len() / 2) {
+    let t = if WIDE.load(Ordering::Relaxed) || (b.len() >= 2 && zeros.saturating_mul(2) >= b.len() / 2) {
         let u: Vec<u16> = b.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).filter(|&c| c != 0xfeff).collect();
         String::from_utf16_lossy(&u)
     } else {
@@ -7518,7 +7535,7 @@ fn UnlockFile(c: &mut Ctx) -> u32 {
 /// OVERLAPPED's Offset / OffsetHigh (after Internal, InternalHigh: ULONG_PTRs)
 fn ov_offset(ov: u32) -> u64 {
     let k = mem::ps();
-    u64::from(r32(ov + 2 * k)) | u64::from(r32(ov + 2 * k + 4)) << 32
+    u64::from(mem::ga(ov).at(k, 2).r32()) | u64::from((mem::ga(ov).at(k, 2) + 4).r32()) << 32
 }
 /// LockFileEx(h, flags, reserved, length low, high, overlapped): LOCKFILE_EXCLUSIVE_LOCK (2) or
 /// shared, LOCKFILE_FAIL_IMMEDIATELY (1) or wait until the range is free, at OVERLAPPED's offset.
@@ -7603,17 +7620,17 @@ fn GetFileInformationByHandle(c: &mut Ctx) -> u32 {
     w32(p, files::attrs(&m));
     let t = files::write_time(&f.path, &m);
     for o in [4, 12, 20] {
-        put64(p + o, t);
+        put64((mem::ga(p) + o).get(), t);
     }
-    w32(p + 28, 0x1234);
-    w32(p + 32, kome::num::lo32(m.len() >> 32));
-    w32(p + 36, kome::num::lo32(m.len()));
+    (mem::ga(p) + 28).w32(0x1234);
+    (mem::ga(p) + 32).w32(kome::num::lo32(m.len() >> 32));
+    (mem::ga(p) + 36).w32(kome::num::lo32(m.len()));
     // nNumberOfLinks
-    w32(p + 40, m.links());
+    (mem::ga(p) + 40).w32(m.links());
     // nFileIndexHigh, nFileIndexLow
     let ix = files::file_index(&f.path, &m);
-    w32(p + 44, kome::num::lo32(ix >> 32));
-    w32(p + 48, kome::num::lo32(ix));
+    (mem::ga(p) + 44).w32(kome::num::lo32(ix >> 32));
+    (mem::ga(p) + 48).w32(kome::num::lo32(ix));
     1
 }
 
@@ -7645,22 +7662,22 @@ fn GetFileInformationByHandleEx(c: &mut Ctx) -> u32 {
     match class {
         0 => {
             for o in [0, 8, 16, 24] {
-                put64(p + o, t);
+                put64((mem::ga(p) + o).get(), t);
             }
-            w32(p + 32, files::attrs(&m));
+            (mem::ga(p) + 32).w32(files::attrs(&m));
         }
         1 => {
             put64(p, m.len().next_multiple_of(4096));
-            put64(p + 8, m.len());
-            w32(p + 16, 1);
-            mem::write(p + 21, &[u8::from(m.is_dir())]);
+            put64((mem::ga(p) + 8).get(), m.len());
+            (mem::ga(p) + 16).w32(1);
+            mem::write((mem::ga(p) + 21).get(), &[u8::from(m.is_dir())]);
         }
         9 => w32(p, files::attrs(&m)),
         _ => {
             put64(p, 0x1234);
             // (a file id from the path: os.path.samefile compares them)
             let h = f.path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b.to_ascii_lowercase())).wrapping_mul(0x100_0000_01b3));
-            put64(p + 8, h);
+            put64((mem::ga(p) + 8).get(), h);
         }
     }
     1
@@ -7680,10 +7697,10 @@ fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
         let mut i = 2;
         for _ in 0..2 {
             while i < w.len() && !sep(i) {
-                i += 1;
+                i = i.saturating_add(1);
             }
             if i < w.len() {
-                i += 1;
+                i = i.saturating_add(1);
             }
         }
         i
@@ -7692,7 +7709,7 @@ fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
     } else {
         return 0x8007_0057;
     };
-    mem::wp(out, p + 2 * kome::num::u32_of(n));
+    mem::wp(out, mem::ga(p).at(kome::num::u32_of(n), 2).get());
     0
 }
 fn VerifyConsoleIoHandle(c: &mut Ctx) -> u32 {
@@ -7717,14 +7734,14 @@ fn write_find_raw(p: u32, name: &str, attrs: u32, t: u64, len: u64, wide: bool) 
     mem::fill(p, size, 0);
     w32(p, attrs);
     for o in [4, 12, 20] {
-        put64(p + o, t);
+        put64((mem::ga(p) + o).get(), t);
     }
-    w32(p + 28, kome::num::lo32(len >> 32));
-    w32(p + 32, kome::num::lo32(len));
+    (mem::ga(p) + 28).w32(kome::num::lo32(len >> 32));
+    (mem::ga(p) + 32).w32(kome::num::lo32(len));
     if wide {
-        put_wstr(p + 44, 260, &name.encode_utf16().collect::<Vec<_>>());
+        put_wstr((mem::ga(p) + 44).get(), 260, &name.encode_utf16().collect::<Vec<_>>());
     } else {
-        put_cstr(p + 44, 260, &crate::text::s2a(name));
+        put_cstr((mem::ga(p) + 44).get(), 260, &crate::text::s2a(name));
     }
 }
 fn find_first(c: &mut Ctx, wide: bool) -> u32 {
@@ -7779,7 +7796,7 @@ fn find_next(c: &mut Ctx, wide: bool) -> u32 {
         return 0;
     };
     write_find_data(c.a(1), n, m, wide);
-    f.at += 1;
+    f.at = f.at.saturating_add(1);
     1
 }
 fn FindFirstFileA(c: &mut Ctx) -> u32 {
@@ -7911,12 +7928,12 @@ fn attrs_ex(c: &mut Ctx, wide: bool) -> u32 {
     w32(p, files::attrs_of(&h, &m));
     let t = files::write_time(&h, &m);
     for o in [4, 12, 20] {
-        put64(p + o, t);
+        put64((mem::ga(p) + o).get(), t);
     }
     // (a directory's size is 0)
     let len = if m.is_dir() { 0 } else { m.len() };
-    w32(p + 28, kome::num::lo32(len >> 32));
-    w32(p + 32, kome::num::lo32(len));
+    (mem::ga(p) + 28).w32(kome::num::lo32(len >> 32));
+    (mem::ga(p) + 32).w32(kome::num::lo32(len));
     1
 }
 fn GetFileAttributesExA(c: &mut Ctx) -> u32 {
@@ -8223,10 +8240,10 @@ fn full_path_name(c: &mut Ctx, wide: bool) -> u32 {
         // (no file part in "C:\" or "dir\")
         mem::wp(c.a(3), 0);
     } else if c.a(3) != 0 && r < c.a(1) {
-        let pos = full.rfind('\\').map_or(0, |i| i + 1);
+        let pos = full.rfind('\\').map_or(0, |i| i.saturating_add(1));
         let head = full.get(..pos).unwrap_or_default();
-        let off = if wide { head.encode_utf16().count() * 2 } else { crate::text::s2a(head).len() };
-        mem::wp(c.a(3), c.a(2) + kome::num::u32_of(off));
+        let off = if wide { head.encode_utf16().count().saturating_mul(2) } else { crate::text::s2a(head).len() };
+        mem::wp(c.a(3), (mem::ga(c.a(2)) + kome::num::u32_of(off)).get());
     }
     r
 }
@@ -8402,7 +8419,7 @@ fn query_dos_device(c: &mut Ctx, wide: bool) -> u32 {
         return 0;
     }
     for (i, &u) in units.iter().enumerate() {
-        if wide { w16(out + 2 * kome::num::u32_of(i), u) } else { w8(out + kome::num::u32_of(i), kome::num::lo8(u)) }
+        if wide { mem::ga(out).at(kome::num::u32_of(i), 2).w16(u) } else { (mem::ga(out) + kome::num::u32_of(i)).w8(kome::num::lo8(u)) }
     }
     kome::num::u32_of(units.len())
 }
@@ -8417,7 +8434,7 @@ pub(crate) fn drive_strings() -> Vec<u8> {
     let mut s = Vec::new();
     for l in 0..26u8 {
         if logical_drives() & (1 << l) != 0 {
-            s.extend_from_slice(&[b'A' + l, b':', b'\\', 0]);
+            s.extend_from_slice(&[b'A'.saturating_add(l), b':', b'\\', 0]);
         }
     }
     s.push(0);
@@ -8430,9 +8447,9 @@ fn logical_drive_strings(c: &mut Ctx, wide: bool) -> u32 {
         return kome::num::u32_of(s.len());
     }
     for (i, &b) in s.iter().enumerate() {
-        if wide { w16(out + 2 * kome::num::u32_of(i), u16::from(b)) } else { w8(out + kome::num::u32_of(i), b) }
+        if wide { mem::ga(out).at(kome::num::u32_of(i), 2).w16(u16::from(b)) } else { (mem::ga(out) + kome::num::u32_of(i)).w8(b) }
     }
-    kome::num::u32_of(s.len()) - 1
+    kome::num::u32_of(s.len()).saturating_sub(1)
 }
 fn GetLogicalDriveStringsA(c: &mut Ctx) -> u32 {
     logical_drive_strings(c, false)
@@ -8452,7 +8469,7 @@ pub(crate) const DISK_TOTAL_CLUSTERS: u32 = 0x0200_0000;
 /// (free bytes, total bytes) of the disk sake reports
 pub(crate) fn disk_bytes() -> (u64, u64) {
     let cluster = u64::from(DISK_SECTORS_PER_CLUSTER * DISK_BYTES_PER_SECTOR);
-    (u64::from(DISK_FREE_CLUSTERS) * cluster, u64::from(DISK_TOTAL_CLUSTERS) * cluster)
+    (u64::from(DISK_FREE_CLUSTERS).saturating_mul(cluster), u64::from(DISK_TOTAL_CLUSTERS).saturating_mul(cluster))
 }
 
 fn GetDiskFreeSpaceA(c: &mut Ctx) -> u32 {
@@ -8563,11 +8580,11 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
         if files::resolve(&w).is_some() || is_system_dll_path(&w) {
             let r = ret_str(buf, cap, &w, wide);
             if part != 0 {
-                let dir = w.get(..w.rfind('\\').map_or(0, |i| i + 1)).unwrap_or_default();
-                let off = kome::num::u32_of(if wide { 2 * dir.encode_utf16().count() } else { crate::text::s2a(dir).len() });
+                let dir = w.get(..w.rfind('\\').map_or(0, |i| i.saturating_add(1))).unwrap_or_default();
+                let off = kome::num::u32_of(if wide { dir.encode_utf16().count().saturating_mul(2) } else { crate::text::s2a(dir).len() });
                 // (pointer-sized; only when the name fitted)
                 if r < cap {
-                    mem::putp(part, buf + off);
+                    mem::putp(part, (mem::ga(buf) + off).get());
                 }
             }
             return r;
@@ -8646,13 +8663,13 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
     // ERROR_ACCESS_DENIED. The block goes when its last view is unmapped and its last handle
     // closed (it stayed for good).
     let Some(f) = file else {
-        if off + u64::from(n) > u64::from(size) || off >= u64::from(size.max(1)) {
+        if off.saturating_add(u64::from(n)) > u64::from(size) || off >= u64::from(size.max(1)) {
             last_error(5);
             return 0;
         }
         if view != 0 {
-            section_views(|m| m.get_mut(&view).map(|s| s.views += 1));
-            return view + kome::num::lo32(off);
+            section_views(|m| m.get_mut(&view).map(|s| s.views = s.views.saturating_add(1)));
+            return view.saturating_add(kome::num::lo32(off));
         }
         let Some(b) = mem::reserve(0, size.max(1), 4, 0x40000, false) else {
             last_error(8);
@@ -8666,18 +8683,18 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
                 *view = b;
             }
         });
-        return b + kome::num::lo32(off);
+        return (mem::ga(b) + kome::num::lo32(off)).get();
     };
     // a file's view: the bytes from `off`, as many as asked (0: to the end); the section is the
     // file (a writable mapping made it at least its size), past it ERROR_ACCESS_DENIED; a view
     // bigger than the address space can hold: ERROR_NOT_ENOUGH_MEMORY
     let len = f.size();
     let section = len.max(u64::from(size));
-    if off > section || u64::from(n) > section - off {
+    if off > section || u64::from(n) > section.saturating_sub(off) {
         last_error(5);
         return 0;
     }
-    let want = if n == 0 { section - off } else { u64::from(n) };
+    let want = if n == 0 { section.saturating_sub(off) } else { u64::from(n) };
     if want > 0x7fff_0000 {
         last_error(8);
         return 0;
@@ -8690,7 +8707,7 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
     let shared = access & 3 == 0;
     let key = (f.path.clone(), off, n, len);
     if shared && let Some(b) = READ_VIEWS.locked().iter_mut().find(|v| v.0 == key).map(|v| {
-            v.2 += 1;
+            v.2 = v.2.saturating_add(1);
             v.1
         }) {
             return b;
@@ -8749,7 +8766,7 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
     // a view of a pagefile section: one view fewer; the block goes with the last view of a
     // section no handle holds
     let section = section_views(|m| {
-        let (&b, s) = m.iter_mut().find(|&(&b, ref s)| a >= b && a - b < s.size)?;
+        let (&b, s) = m.iter_mut().find(|&(&b, ref s)| a >= b && (mem::ga(a) - b).get() < s.size)?;
         s.views = s.views.saturating_sub(1);
         let last = s.views == 0 && !s.open;
         if last {
@@ -8773,7 +8790,7 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
         let mut r = READ_VIEWS.locked();
         match r.iter().position(|v| v.1 == a) {
             Some(i) if let Some(v) = r.get_mut(i) && v.2 > 1 => {
-                v.2 -= 1;
+                v.2 = v.2.saturating_sub(1);
                 true
             }
             Some(i) => {
@@ -8794,7 +8811,7 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
 /// the file position stays); `remove`: the view goes away
 fn write_back(a: u32, remove: bool) {
     let mut l = WRITE_BACK.locked();
-    let Some(i) = l.iter().position(|v| a >= v.0 && a - v.0 < v.1.max(1)) else { return };
+    let Some(i) = l.iter().position(|v| a >= v.0 && (mem::ga(a) - v.0).get() < v.1.max(1)) else { return };
     let Some(v) = l.get(i).cloned() else { return };
     let (b, n, f, off) = if remove { l.remove(i) } else { v };
     drop(l);
@@ -8825,12 +8842,12 @@ pub(crate) fn mapped_file(a: u32) -> Result<String, u32> {
     if let Some(p) = crate::pe::containing(a).and_then(|b| crate::pe::with(b, |m| m.path.clone())) {
         return Ok(p);
     }
-    match VIEWS.locked().iter().find(|v| a >= v.0 && a - v.0 < v.1) {
+    match VIEWS.locked().iter().find(|v| a >= v.0 && (mem::ga(a) - v.0).get() < v.1) {
         Some((_, _, Some(p))) => Ok(p.clone()),
         Some(_) => Err(1006),
         None => {
             // (a pagefile section a program shares by name)
-            let named = obj::with(|t| t.objs.values().any(|(o, _)| matches!(o, Obj::Mapping { file: None, view, size, .. } if *view != 0 && a >= *view && a - *view < *size)));
+            let named = obj::with(|t| t.objs.values().any(|(o, _)| matches!(o, Obj::Mapping { file: None, view, size, .. } if *view != 0 && a >= *view && (mem::ga(a) - *view).get() < *size)));
             Err(if named { 1006 } else { 59 })
         }
     }
@@ -9007,9 +9024,9 @@ fn K32EnumProcesses(c: &mut Ctx) -> u32 {
     let ids = crate::process::running();
     let n = (kome::num::us(cb / 4)).min(ids.len());
     for (i, &id) in ids.iter().take(n).enumerate() {
-        w32(p + 4 * kome::num::u32_of(i), id);
+        mem::ga(p).at(kome::num::u32_of(i), 4).w32(id);
     }
-    w32(pu, 4 * kome::num::u32_of(n));
+    w32(pu, kome::num::u32_of(n).saturating_mul(4));
     1
 }
 /// OpenThread(access, inherit, id): a handle of the thread with that id (mono opens its own
@@ -9052,22 +9069,22 @@ fn startup_info(p: u32, wide: bool) -> u32 {
     static DESKTOP: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
     let (da, dw) = *DESKTOP.get_or_init(|| {
         let t = "Winsta0\\Default";
-        let a = mem::heap_alloc(kome::num::u32_of(t.len()) + 1, true);
+        let a = mem::heap_alloc(kome::num::u32_of(t.len()).saturating_add(1), true);
         mem::write(a, t.as_bytes());
-        let w = mem::heap_alloc(2 * kome::num::u32_of(t.len()) + 2, true);
+        let w = mem::heap_alloc(kome::num::u32_of(t.len()).saturating_mul(2).saturating_add(2), true);
         for (i, u) in t.encode_utf16().enumerate() {
-            w16(w + 2 * kome::num::u32_of(i), u);
+            mem::ga(w).at(kome::num::u32_of(i), 2).w16(u);
         }
         (a, w)
     });
     let (size, flags, std) = if mem::x64() { (104, 60, 80) } else { (68, 44, 56) };
     mem::fill(p, size, 0);
     w32(p, size);
-    mem::wp(p + 2 * mem::ps(), if wide { dw } else { da });
+    mem::ga(p).at(mem::ps(), 2).wp(if wide { dw } else { da });
     if STD_GIVEN.load(Ordering::Relaxed) {
-        w32(p + flags, 0x100);
+        (mem::ga(p) + flags).w32(0x100);
         for i in 0..3 {
-            mem::wp(p + std + i * mem::ps(), std_handle(kome::num::us(i)));
+            (mem::ga(p) + std).at(i, mem::ps()).wp(std_handle(kome::num::us(i)));
         }
     }
     0
@@ -9096,14 +9113,14 @@ fn put_sized_name(buf: u32, sizep: u32, name: &str, wide: bool, short_err: u32) 
     }
     let n = kome::num::u32_of(name.len());
     if r32(sizep) <= n || buf == 0 {
-        w32(sizep, n + 1);
+        w32(sizep, n.saturating_add(1));
         last_error(short_err);
         return 0;
     }
     if wide {
-        put_wstr(buf, n + 1, &a2w(name.as_bytes()));
+        put_wstr(buf, n.saturating_add(1), &a2w(name.as_bytes()));
     } else {
-        put_cstr(buf, n + 1, name.as_bytes());
+        put_cstr(buf, n.saturating_add(1), name.as_bytes());
     }
     w32(sizep, n);
     1
@@ -9238,28 +9255,28 @@ static SLIST: Mutex<()> = Mutex::new(());
 /// (first entry, depth) of list `h`
 fn slist_get(h: u32) -> (u32, u32) {
     if mem::x64() {
-        (kome::num::lo32(mem::r64(h + 8) & !0xf), u32::from(r16(h)))
+        (kome::num::lo32((mem::ga(h) + 8).r64() & !0xf), u32::from(r16(h)))
     } else {
-        (r32(h), u32::from(r16(h + 4)))
+        (r32(h), u32::from((mem::ga(h) + 4).r16()))
     }
 }
 fn slist_set(h: u32, next: u32, depth: u32) {
     if mem::x64() {
         let seq = (mem::r64(h) >> 16).wrapping_add(1) & 0xffff_ffff_ffff;
         mem::w64(h, u64::from(depth & 0xffff) | seq << 16);
-        mem::w64(h + 8, u64::from(next) & !0xf | 1);
+        (mem::ga(h) + 8).w64(u64::from(next) & !0xf | 1);
         return;
     }
     w32(h, next);
-    w16(h + 4, kome::num::lo16(depth));
-    w16(h + 6, r16(h + 6).wrapping_add(1));
+    (mem::ga(h) + 4).w16(kome::num::lo16(depth));
+    (mem::ga(h) + 6).w16((mem::ga(h) + 6).r16().wrapping_add(1));
 }
 fn InterlockedPushEntrySList(c: &mut Ctx) -> u32 {
     let (h, e) = (c.a(0), c.a(1));
     let _g = SLIST.locked();
     let (old, n) = slist_get(h);
     mem::wp(e, old);
-    slist_set(h, e, n + 1);
+    slist_set(h, e, n.saturating_add(1));
     old
 }
 fn InterlockedPopEntrySList(c: &mut Ctx) -> u32 {
@@ -9287,7 +9304,7 @@ fn push_list(h: u32, first: u32, last: u32, n: u32) -> u32 {
     let _g = SLIST.locked();
     let (old, d) = slist_get(h);
     mem::wp(last, old);
-    slist_set(h, first, d + n);
+    slist_set(h, first, (mem::ga(d) + n).get());
     old
 }
 /// InterlockedPushListSListEx(head, first, last, count)
@@ -9383,22 +9400,22 @@ fn module_entry(c: &mut Ctx, wide: bool, first: bool) -> u32 {
         last_error(18);
         return 0;
     };
-    s.next_module += 1;
+    s.next_module = s.next_module.saturating_add(1);
     drop(snaps);
-    mem::fill(p + 4, size - 4, 0);
-    w32(p + 4, 1); // th32ModuleID
-    w32(p + 8, crate::pid());
-    w32(p + 12, 0xffff); // GlblcntUsage
-    w32(p + 16, 0xffff); // ProccntUsage
+    mem::fill((mem::ga(p) + 4).get(), size.saturating_sub(4), 0);
+    (mem::ga(p) + 4).w32(1); // th32ModuleID
+    (mem::ga(p) + 8).w32(crate::pid());
+    (mem::ga(p) + 12).w32(0xffff); // GlblcntUsage
+    (mem::ga(p) + 16).w32(0xffff); // ProccntUsage
     let (at_base, at_size, at_h) = if x64 { (24, 32, 40) } else { (20, 24, 28) };
-    mem::wp(p + at_base, base);
-    w32(p + at_size, msize);
-    mem::wp(p + at_h, base);
-    let (mod_cap, path_at) = if wide { (256, names + 512) } else { (256, names + 256) };
+    (mem::ga(p) + at_base).wp(base);
+    (mem::ga(p) + at_size).w32(msize);
+    (mem::ga(p) + at_h).wp(base);
+    let (mod_cap, path_at) = if wide { (256, (mem::ga(names) + 512).get()) } else { (256, (mem::ga(names) + 256).get()) };
     // (the file name as the module has it: the exe's own case from its path)
     let shown = path.rsplit(['\\', '/']).next().filter(|n| n.eq_ignore_ascii_case(&name)).unwrap_or(&name).to_string();
-    ret_str(p + names, mod_cap, &shown, wide);
-    ret_str(p + path_at, 260, &path, wide);
+    ret_str((mem::ga(p) + names).get(), mod_cap, &shown, wide);
+    ret_str((mem::ga(p) + path_at).get(), 260, &path, wide);
     1
 }
 fn Module32First(c: &mut Ctx) -> u32 {
@@ -9416,12 +9433,12 @@ fn Module32NextW(c: &mut Ctx) -> u32 {
 fn process_entry(c: &mut Ctx, wide: bool) -> u32 {
     let p = c.a(1);
     let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.name.clone()).unwrap_or_default();
-    let size = if wide { 36 + 520 } else { 36 + 260 };
-    mem::fill(p + 4, size - 4, 0);
-    w32(p + 8, crate::pid());
-    w32(p + 20, 1);
-    w32(p + 28, 8);
-    ret_str(p + 36, 260, &exe, wide);
+    let size: u32 = if wide { 36 + 520 } else { 36 + 260 };
+    mem::fill((mem::ga(p) + 4).get(), size.saturating_sub(4), 0);
+    (mem::ga(p) + 8).w32(crate::pid());
+    (mem::ga(p) + 20).w32(1);
+    (mem::ga(p) + 28).w32(8);
+    ret_str((mem::ga(p) + 36).get(), 260, &exe, wide);
     1
 }
 fn Process32First(c: &mut Ctx) -> u32 {
@@ -9464,11 +9481,11 @@ fn MakeSureDirectoryPathExists(c: &mut Ctx) -> u32 {
     let s = arg_str(c.a(0), false);
     let dir = s.rsplit_once('\\').map_or("", |(d, _)| d);
     let mut at = 0;
-    while let Some(i) = dir.get(at..).and_then(|r| r.find('\\')).map(|i| i + at) {
+    while let Some(i) = dir.get(at..).and_then(|r| r.find('\\')).map(|i| i.saturating_add(at)) {
         if i > 2 {
             mkdir(dir.get(..i).unwrap_or(dir));
         }
-        at = i + 1;
+        at = i.saturating_add(1);
     }
     if !dir.is_empty() {
         mkdir(dir);
@@ -9492,7 +9509,7 @@ fn SearchTreeForFile(c: &mut Ctx) -> u32 {
         }
         if depth < 16 {
             for (h, g) in dirs {
-                if let Some(r) = walk(&h, &g, base, depth + 1) {
+                if let Some(r) = walk(&h, &g, base, depth.saturating_add(1)) {
                     return Some(r);
                 }
             }
@@ -10128,17 +10145,17 @@ mod mapping_names {
         assert_eq!(e, 0);
         let v = view(h);
         assert_ne!(v, 0);
-        mem::w32(v + 0x18, 0x1234_5678);
+        (mem::ga(v) + 0x18).w32(0x1234_5678);
         let (h2, _) = open(name, false);
         assert_ne!(h2, 0);
         assert_ne!(h2, h);
         let v2 = view(h2);
-        assert_eq!(mem::r32(v2 + 0x18), 0x1234_5678);
+        assert_eq!((mem::ga(v2) + 0x18).r32(), 0x1234_5678);
         // (creating it again opens the same section, ERROR_ALREADY_EXISTS)
         let (h3, e3) = create(name, false);
         assert_ne!(h3, 0);
         assert_eq!(e3, files::ERROR_ALREADY_EXISTS);
-        assert_eq!(mem::r32(view(h3) + 0x18), 0x1234_5678);
+        assert_eq!((mem::ga(view(h3)) + 0x18).r32(), 0x1234_5678);
         // (the wide calls name the same object)
         let wname = wstr_arg("_fandc_native_system_32");
         let (h4, _) = open(wname, true);
@@ -10276,7 +10293,7 @@ mod mapping_names {
         assert_eq!(a2s(&cstr(part + 0x9215)), "startmes.mes");
         // (writes through it show in the first view)
         mem::w8(part, 0x5a);
-        assert_eq!(mem::r8(all + 0x40000), 0x5a);
+        assert_eq!((mem::ga(all) + 0x40000).r8(), 0x5a);
         // (past the end: ERROR_ACCESS_DENIED)
         last_error(0);
         assert_eq!(call(MapViewOfFile, &[m, 4, 0, 0x40000, 0x10000]), 0);
@@ -10284,7 +10301,7 @@ mod mapping_names {
         assert_eq!(call(MapViewOfFile, &[m, 4, 0, 0x50000, 0]), 0);
         // (unmapping the inner view leaves the section)
         assert_eq!(call(UnmapViewOfFile, &[part]), 1);
-        assert_eq!(mem::r8(all + 0x40000), 0x5a);
+        assert_eq!((mem::ga(all) + 0x40000).r8(), 0x5a);
         assert!(obj::close(m));
     }
 
@@ -10414,7 +10431,7 @@ mod find_system_dlls {
         let h = call(FindFirstFileA, &[cstr_arg(path), data]);
         let e = get_last_error();
         let name = a2s(&cstr(data + 44));
-        (h, e, mem::r32(data), mem::r32(data + 32), name)
+        (h, e, mem::r32(data), (mem::ga(data) + 32).r32(), name)
     }
 
     #[test]
@@ -10480,7 +10497,7 @@ mod virtual_ex {
     /// MEMORY_BASIC_INFORMATION's state and protection of the page at `a`
     fn state(a: u32, buf: u32) -> (u32, u32, u32) {
         assert_eq!(call(VirtualQuery, &[a, buf, 28]), 28);
-        (r32(buf + 12), r32(buf + 16), r32(buf + 20))
+        ((mem::ga(buf) + 12).r32(), (mem::ga(buf) + 16).r32(), (mem::ga(buf) + 20).r32())
     }
 
     proptest! {
@@ -10510,11 +10527,11 @@ mod virtual_ex {
                         }
                     }
                     1 => {
-                        w32(buf + 40, 0xdead); w32(buf + 44, 0xdead);
+                        (mem::ga(buf) + 40).w32(0xdead); (mem::ga(buf) + 44).w32(0xdead);
                         last_error(0); ra = call(VirtualProtect, &[a + off, len, PROTS[p], buf + 40]); ea = get_last_error();
                         last_error(0); rb = call(VirtualProtectEx, &[h, b + off, len, PROTS[p], buf + 44]); eb = get_last_error();
                         prop_assert_eq!(ra, rb);
-                        prop_assert_eq!(r32(buf + 40), r32(buf + 44));
+                        prop_assert_eq!((mem::ga(buf) + 40).r32(), (mem::ga(buf) + 44).r32());
                     }
                     2 => {
                         last_error(0); ra = call(VirtualFree, &[a + off, len, 0x4000]); ea = get_last_error();
@@ -10608,11 +10625,11 @@ mod drive_tests {
                 let b = mem::heap_alloc(40, true);
                 assert_eq!(crate::test_guest::call(GetDiskFreeSpaceExA, &[r, b, b + 8, b + 16]), 1);
                 assert_eq!(crate::test_guest::call(GetDiskFreeSpaceA, &[r, b + 24, b + 28, b + 32, b + 36]), 1);
-                let q = |o: u32| kome::num::lo64(r32(b + o)) | (kome::num::lo64(r32(b + o + 4))) << 32;
-                let cluster = kome::num::lo64(r32(b + 24)) * kome::num::lo64(r32(b + 28));
-                assert_eq!(q(0), kome::num::lo64(r32(b + 32)) * cluster);
+                let q = |o: u32| kome::num::lo64((mem::ga(b) + o).r32()) | (kome::num::lo64(r32(b + o + 4))) << 32;
+                let cluster = kome::num::lo64((mem::ga(b) + 24).r32()) * kome::num::lo64((mem::ga(b) + 28).r32());
+                assert_eq!(q(0), kome::num::lo64((mem::ga(b) + 32).r32()) * cluster);
                 assert_eq!(q(16), q(0));
-                assert_eq!(q(8), kome::num::lo64(r32(b + 36)) * cluster);
+                assert_eq!(q(8), kome::num::lo64((mem::ga(b) + 36).r32()) * cluster);
                 assert!(kome::num::lo32(q(0)) > 1 << 30 && (kome::num::lo32(q(0))) < 1 << 31, "low part positive and big");
                 mem::heap_free(b);
             }
@@ -10781,10 +10798,10 @@ mod wow64_tests {
         mem::fill(b, 36, 0xcc);
         call(GetSystemInfo, &[a]);
         call(GetNativeSystemInfo, &[b]);
-        assert_eq!((mem::r16(a), r32(a + 24)), (0, 586), "PROCESSOR_ARCHITECTURE_INTEL, PROCESSOR_INTEL_PENTIUM");
-        assert_eq!((mem::r16(b), r32(b + 24)), (9, 8664), "PROCESSOR_ARCHITECTURE_AMD64, PROCESSOR_AMD_X8664");
+        assert_eq!((mem::r16(a), (mem::ga(a) + 24).r32()), (0, 586), "PROCESSOR_ARCHITECTURE_INTEL, PROCESSOR_INTEL_PENTIUM");
+        assert_eq!((mem::r16(b), (mem::ga(b) + 24).r32()), (9, 8664), "PROCESSOR_ARCHITECTURE_AMD64, PROCESSOR_AMD_X8664");
         for o in (2..36).filter(|o| !(24..28).contains(o)) {
-            assert_eq!(mem::r8(a + o), mem::r8(b + o), "byte {o}");
+            assert_eq!((mem::ga(a) + o).r8(), (mem::ga(b) + o).r8(), "byte {o}");
         }
     }
 
@@ -11054,3 +11071,7 @@ mod review_b07 {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "k32_calendar_tests.rs"]
+mod calendar_tests;

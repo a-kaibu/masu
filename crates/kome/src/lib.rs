@@ -8,7 +8,9 @@
 //! - [`locks`]: a Mutex/RwLock taken without an unwrap at every call (one policy: a poisoned
 //!   lock is taken as it is).
 //! - [`golden`]: golden-file comparison for tests (one env var rewrites them all).
+//! - [`time`]: deadlines that saturate instead of panicking (`Instant + Duration`).
 pub mod golden;
 pub mod le;
 pub mod locks;
 pub mod num;
+pub mod time;
