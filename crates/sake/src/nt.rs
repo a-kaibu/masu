@@ -45,7 +45,7 @@ fn thunk(name: &str) -> Option<(u32, u32)> {
     use std::sync::atomic::Ordering::Relaxed;
     let slot = HOOKABLE.iter().position(|&n| n == name);
     if let Some(v) = slot.map(|i| THUNKS[i].load(Relaxed)).filter(|&v| v != 0) {
-        return Some(((v >> 32) as u32, v as u32));
+        return Some((kome::num::lo32(v >> 32), kome::num::lo32(v)));
     }
     let base = crate::pe::by_name("ntdll.dll")?;
     let t = crate::pe::with(base, |m| m.exports.get(name).copied())??;
@@ -343,7 +343,7 @@ pub mod via {
         let d = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo.cast_signed()) };
         Some(match seek(c, h, d, how) {
             Ok(p) => {
-                put32(phi, (p >> 32) as u32);
+                put32(phi, kome::num::lo32(p >> 32));
                 kome::num::lo32(p)
             }
             Err(e) => {
@@ -381,7 +381,7 @@ pub mod via {
                     mem::put64(p, n);
                     1
                 } else {
-                    put32(p, (n >> 32) as u32);
+                    put32(p, kome::num::lo32(n >> 32));
                     kome::num::lo32(n)
                 }
             }
@@ -906,7 +906,7 @@ fn file_name_info(win: &str, len: u32) -> (u32, u32, Vec<u8>) {
     let name: Vec<u16> = if name.is_empty() { vec![u16::from(b'\\')] } else { name.encode_utf16().collect() };
     let bytes = 2 * kome::num::u32_of(name.len());
     let mut w = bytes.to_le_bytes().to_vec();
-    let room = ((len - 4) / 2) as usize;
+    let room = kome::num::us((len - 4) / 2);
     for c in name.iter().take(room) {
         w.extend(c.to_le_bytes());
     }

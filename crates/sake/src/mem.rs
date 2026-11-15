@@ -247,7 +247,7 @@ pub fn zero(a: u32, n: u32) {
     while p < end {
         let next = ((p | (u64::from(PAGE) - 1)) + 1).min(end);
         // (inside guest memory: checked above)
-        let s = unsafe { std::slice::from_raw_parts_mut(kome::num::us(p) as *mut u8, (next - p) as usize) };
+        let s = unsafe { std::slice::from_raw_parts_mut(kome::num::us(p) as *mut u8, kome::num::us(next - p)) };
         if !is_zero(s) {
             s.fill(0);
         }
@@ -464,7 +464,7 @@ fn insert(sp: &mut BTreeMap<u32, Region>, base: u32, size: u32, prot: u32, kind:
         }
     }
     sp.insert(base, Region { size, prot, state: 0x2000, alloc_base: base, alloc_prot: prot, kind, hi: 0 });
-    PAGES.locked().insert(base, vec![0; (size / PAGE) as usize]);
+    PAGES.locked().insert(base, vec![0; kome::num::us(size / PAGE)]);
 }
 
 /// Reserves `size` bytes at an `align`-aligned address (a power of two, at least GRAN), the
@@ -591,14 +591,14 @@ pub fn query(a: u32) -> Option<(u32, Region, u32, u32, u32, u32)> {
     let (b, r) = find(a)?;
     let g = PAGES.locked();
     let p = g.get(&b)?;
-    let i = ((a - b) / PAGE) as usize;
+    let i = kome::num::us((a - b) / PAGE);
     let v = p[i];
     let mut j = i;
     while j < p.len() && p[j] == v {
         j += 1;
     }
     let state = if v & COMMITTED != 0 { 0x1000 } else { 0x2000 };
-    Some((b, r, b + kome::num::u32_of(i) * PAGE, (j - i) as u32 * PAGE, state, if v & COMMITTED != 0 { v & !COMMITTED } else { 0 }))
+    Some((b, r, b + kome::num::u32_of(i) * PAGE, kome::num::lo32(j - i) * PAGE, state, if v & COMMITTED != 0 { v & !COMMITTED } else { 0 }))
 }
 
 /// How many of the `n` bytes from `a` on can be read (`write` false) or written: committed pages
@@ -640,7 +640,7 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
     // writable code may be rewritten: the JIT drops what it translated there (QLIE patches its
     // code with VirtualProtect)
     if prot & 0xcc != 0 {
-        kura::jit::code_changed(us(a), (b + last * PAGE - a) as usize);
+        kura::jit::code_changed(us(a), kome::num::us(b + last * PAGE - a));
     }
     Some(if old == 0 { r.prot } else { old })
 }
@@ -649,7 +649,7 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
 /// longer (STATUS_GUARD_PAGE_VIOLATION, once; the next access goes through).
 pub fn guard_hit(a: u32) -> bool {
     let Some((b, _)) = find(a) else { return false };
-    let i = ((a - b) / PAGE) as usize;
+    let i = kome::num::us((a - b) / PAGE);
     let mut g = PAGES.locked();
     let Some(x) = g.get_mut(&b).and_then(|p| p.get_mut(i)) else { return false };
     if *x & COMMITTED == 0 || *x & 0x100 == 0 {
@@ -1020,7 +1020,7 @@ pub fn heap_free(p: u32) -> bool {
     w32(p - 4, 0);
     // (c_free: the header's size may be below the chunk's after an in-place shrink)
     let _ = size;
-    unsafe { HEAP.locked().c_free((p - HDR) as usize as *mut u8) };
+    unsafe { HEAP.locked().c_free(kome::num::us(p - HDR) as *mut u8) };
     true
 }
 
@@ -1082,11 +1082,11 @@ pub(crate) fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
         let word = p & !7;
         if p - word <= 4 {
             let w = &*(word as *const AtomicU64);
-            let sh = (p - word) as u32 * 8;
+            let sh = kome::num::lo32(p - word) * 8;
             let m = 0xffff_ffffu64 << sh;
             let mut old = 0;
             let _ = w.fetch_update(SeqCst, SeqCst, |cur| {
-                old = ((cur & m) >> sh) as u32;
+                old = kome::num::lo32((cur & m) >> sh);
                 Some((cur & !m) | (u64::from(f(old)) << sh))
             });
             return old;

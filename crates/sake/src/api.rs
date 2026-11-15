@@ -102,7 +102,7 @@ impl Ctx<'_> {
     pub fn pt(&self, i: u32) -> (i32, i32) {
         if crate::mem::x64() {
             let v = self.a64(i);
-            return (v as u32 as i32, (v >> 32) as u32 as i32);
+            return (kome::num::lo32(v) as i32, kome::num::lo32(v >> 32) as i32);
         }
         (self.i(i), self.i(i + 1))
     }
@@ -118,7 +118,7 @@ impl Ctx<'_> {
     pub fn pt_f(&self, i: u32) -> ((f32, f32), u32) {
         if crate::mem::x64() {
             let v = self.a64(i);
-            return ((f32::from_bits(v as u32), f32::from_bits((v >> 32) as u32)), i + 1);
+            return ((f32::from_bits(kome::num::lo32(v)), f32::from_bits(kome::num::lo32(v >> 32))), i + 1);
         }
         ((f32::from_bits(self.a(i)), f32::from_bits(self.a(i + 1))), i + 2)
     }
@@ -149,7 +149,7 @@ impl Ctx<'_> {
         crate::call(self.cpu, f, args)
     }
     pub fn ret64(&mut self, v: u64) -> u32 {
-        self.edx = Some((v >> 32) as u32);
+        self.edx = Some(kome::num::lo32(v >> 32));
         kome::num::lo32(v)
     }
 }
@@ -218,7 +218,7 @@ impl Meta {
         META_SET | self.bytes.min(META_BYTES) | u32::from(self.cdecl) << 20 | u32::from(self.known) << 21 | u32::from(self.this_arg) << 22 | (u32::from(self.yields) & 3) << 23
     }
     fn unpack(w: u32) -> Option<Meta> {
-        (w & META_SET != 0).then_some(Meta { bytes: w & META_BYTES, cdecl: w >> 20 & 1 != 0, known: w >> 21 & 1 != 0, this_arg: w >> 22 & 1 != 0, yields: (w >> 23 & 3) as u8 })
+        (w & META_SET != 0).then_some(Meta { bytes: w & META_BYTES, cdecl: w >> 20 & 1 != 0, known: w >> 21 & 1 != 0, this_arg: w >> 22 & 1 != 0, yields: kome::num::lo8(w >> 23 & 3) })
     }
 }
 
@@ -485,7 +485,7 @@ pub fn name_of(addr: u32) -> Option<String> {
 
 /// Whether the function at a trap address is cdecl, and its stdcall argument bytes.
 pub fn args_of(addr: u32) -> (bool, u32) {
-    let i = (addr.wrapping_sub(TRAP_LO) / 4) as usize;
+    let i = kome::num::us(addr.wrapping_sub(TRAP_LO) / 4);
     hot(i).map_or((true, 0), |(_, m)| (m.cdecl, m.bytes))
 }
 
@@ -498,17 +498,17 @@ pub fn dll_of(addr: u32) -> Option<String> {
 /// Whether the API at trap address `addr` has an implementation.
 /// The trap is a function of the DLL's spec (implemented or not).
 pub fn is_known(addr: u32) -> bool {
-    let i = (addr.wrapping_sub(TRAP_LO) / 4) as usize;
+    let i = kome::num::us(addr.wrapping_sub(TRAP_LO) / 4);
     hot(i).is_some_and(|(_, m)| m.known)
 }
 /// The handler of a trap address.
 pub fn handler_of(addr: u32) -> Option<Handler> {
-    let i = (addr.wrapping_sub(TRAP_LO) / 4) as usize;
+    let i = kome::num::us(addr.wrapping_sub(TRAP_LO) / 4);
     hot(i).and_then(|(f, _)| f)
 }
 
 pub fn implemented(addr: u32) -> bool {
-    let i = (addr.wrapping_sub(TRAP_LO) / 4) as usize;
+    let i = kome::num::us(addr.wrapping_sub(TRAP_LO) / 4);
     hot(i).is_some_and(|(f, _)| f.is_some())
 }
 
@@ -555,7 +555,7 @@ static RECENT: [[[std::sync::atomic::AtomicU32; 6]; RECENT_N]; RECENT_THREADS] =
 static RECENT_POS: [std::sync::atomic::AtomicU32; RECENT_THREADS] = unsafe { std::mem::zeroed() };
 
 fn recent_slot(tid: u32) -> Option<usize> {
-    let k = (tid.wrapping_sub(0x20) / 4) as usize;
+    let k = kome::num::us(tid.wrapping_sub(0x20) / 4);
     (k < RECENT_THREADS).then_some(k)
 }
 
@@ -859,7 +859,7 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
         }
         let ret = crate::mem::r64(esp);
         cpu.eip = kome::num::lo32(ret);
-        cpu.rip_hi = (ret >> 32) as u32;
+        cpu.rip_hi = kome::num::lo32(ret >> 32);
         cpu.set_gpr(ESP, u64::from(esp) + 8);
         crate::tctx::apply_pending_after_call(cpu);
         return;
@@ -910,7 +910,7 @@ pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
 /// the callee pops `bytes` of stack arguments; x64: the plain convention).
 pub fn host_fn_this(name: &str, f: Handler, bytes: u32) -> u32 {
     let a = host_fn(name, f, bytes);
-    let i = ((a - TRAP_LO) / 4) as usize;
+    let i = kome::num::us((a - TRAP_LO) / 4);
     let mut e = ENTRIES.w();
     e[i].this_arg = true;
     publish(i, &e[i]);
@@ -1148,7 +1148,7 @@ mod ordinal_tests {
                         if v == 0 {
                             break;
                         }
-                        if v & flag != 0 && specs().dlls.contains(dll_key(&dll).as_str()) && ordinal_name(&dll, (v & 0xffff) as u32).is_none() {
+                        if v & flag != 0 && specs().dlls.contains(dll_key(&dll).as_str()) && ordinal_name(&dll, kome::num::lo32(v & 0xffff)).is_none() {
                             missing.push(format!("{path}: {dll} #{}", v & 0xffff));
                         }
                         p += if wide { 8 } else { 4 };
@@ -1211,7 +1211,7 @@ mod hot_tests {
         assert_eq!(args_of(a), (false, 12));
         assert!(is_known(a) && implemented(a));
         assert_eq!(handler_of(b).map(|f| f as usize), Some(h2 as *const () as usize));
-        let (_, m) = hot(((b - TRAP_LO) / 4) as usize).unwrap();
+        let (_, m) = hot(kome::num::us((b - TRAP_LO) / 4)).unwrap();
         assert!(m.this_arg);
         // (made again: the same trap, its bytes updated)
         assert_eq!(host_fn("hot_tests_a", h1, 16), a);
@@ -1254,7 +1254,7 @@ mod hot_tests {
                 std::thread::spawn(move || {
                     for k in 0..3000 {
                         let a = host_fn(&format!("hot_tests_c{w}_{k}"), if k % 2 == 0 { h1 } else { h2 }, 4 * (k % 9));
-                        let (f, m) = hot(((a - TRAP_LO) / 4) as usize).unwrap();
+                        let (f, m) = hot(kome::num::us((a - TRAP_LO) / 4)).unwrap();
                         assert_eq!(m.bytes, 4 * (k % 9));
                         assert_eq!(f.map(|f| f as usize), Some(if k % 2 == 0 { h1 as *const () as usize } else { h2 as *const () as usize }));
                         set_tag(a, k + 1, kome::num::us(k));

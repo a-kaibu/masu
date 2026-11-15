@@ -98,7 +98,7 @@ pub fn tsc() -> u64 {
 }
 
 pub fn ticks_ms() -> u32 {
-    (clock_ns() / 1_000_000 + 60_000) as u32
+    kome::num::lo32(clock_ns() / 1_000_000 + 60_000)
 }
 
 static CMDLINE: Mutex<(u32, u32)> = Mutex::new((0, 0));
@@ -511,7 +511,7 @@ fn K32GetProcessMemoryInfo(c: &mut Ctx) -> u32 {
 /// NtQuerySystemInformation alike: (physical, available, commit total, commit limit, peak,
 /// paged pool, nonpaged pool)
 fn perf_pages() -> [u32; 7] {
-    let pages = (PHYS / 4096) as u32;
+    let pages = kome::num::lo32(PHYS / 4096);
     [pages, pages / 4 * 3, pages / 4, 2 * pages, pages / 4, 0x6000, 0x2000]
 }
 /// The threads that run (by id) and the handles open
@@ -647,7 +647,7 @@ fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
         last_error(998); // ERROR_NOACCESS
         return 0;
     }
-    for (i, &b) in all.iter().enumerate().take((cb / ps) as usize) {
+    for (i, &b) in all.iter().enumerate().take(kome::num::us(cb / ps)) {
         mem::wp(p + kome::num::u32_of(i) * ps, b);
     }
     if pn == 0 {
@@ -2200,7 +2200,7 @@ pub(crate) fn raise_from_api(c: &mut Ctx, code: u32, flags: u32, nargs: u32) {
     if mem::x64() {
         let ret = mem::r64(c.esp);
         c.cpu.eip = kome::num::lo32(ret);
-        c.cpu.rip_hi = (ret >> 32) as u32;
+        c.cpu.rip_hi = kome::num::lo32(ret >> 32);
         c.cpu.set_gpr(4, u64::from(c.esp) + 8);
         crate::seh64::raise(c.cpu, code, flags, kome::num::lo32(ret), &[]);
     } else {
@@ -2734,7 +2734,7 @@ fn VirtualAlloc(c: &mut Ctx) -> u32 {
 /// and stands for the high one (mem::set_high; koji addresses memory modulo 4G), so it is
 /// there only if that low half is free. A commit there needs the reservation made there.
 pub(crate) fn alloc64(a: u64, size: u32, ty: u32, prot: u32) -> Result<u32, u32> {
-    let (lo, hi) = (a as u32, (a >> 32) as u32);
+    let (lo, hi) = (kome::num::lo32(a), kome::num::lo32(a >> 32));
     if hi == 0 {
         return alloc_r(lo, size, ty, prot);
     }
@@ -2945,7 +2945,7 @@ pub(crate) fn nt_free_r(addr: u32, size: u32, ty: u32) -> Result<(u32, u32), u32
 /// Whether address argument `i` is the allocation at its low half's own (x64: above 4G only
 /// one that stands for it, mem::set_high; below 4G only a plain one); else ERROR_INVALID_ADDRESS.
 fn high_ok(c: &Ctx, i: u32) -> bool {
-    if mem::x64() && (c.a64(i) >> 32) as u32 != mem::high_of(c.a(i)) {
+    if mem::x64() && kome::num::lo32(c.a64(i) >> 32) != mem::high_of(c.a(i)) {
         last_error(487);
         return false;
     }
@@ -3006,7 +3006,7 @@ fn VirtualQueryEx(c: &mut Ctx) -> u32 {
 }
 fn VirtualQuery(c: &mut Ctx) -> u32 {
     let (a, mbi, len) = (c.a(0), c.a(1), c.a(2));
-    let hi = if mem::x64() { (c.a64(0) >> 32) as u32 } else { 0 };
+    let hi = if mem::x64() { kome::num::lo32(c.a64(0) >> 32) } else { 0 };
     if hi == mem::high_of(a) {
         return virtual_query(a, mbi, len);
     }
@@ -3493,7 +3493,7 @@ fn NtProtectVirtualMemory(c: &mut Ctx) -> u32 {
             let start = base & !0xfff;
             let end = (u64::from(base) + u64::from(size.max(1)) + 0xfff) & !0xfff;
             mem::wp(pb, start);
-            mem::wp(ps, (end - u64::from(start)) as u32);
+            mem::wp(ps, kome::num::lo32(end - u64::from(start)));
             put32(c.a(4), old);
             0
         }
@@ -4067,7 +4067,7 @@ fn GlobalMemoryStatusEx(c: &mut Ctx) -> u32 {
     w32(p + 4, 30);
     let q = |o: u32, v: u64| {
         w32(p + o, kome::num::lo32(v));
-        w32(p + o + 4, (v >> 32) as u32);
+        w32(p + o + 4, kome::num::lo32(v >> 32));
     };
     q(8, PHYS);
     q(16, PHYS / 4 * 3);
@@ -4993,7 +4993,7 @@ pub fn verify_version(cur: &OsVer, want: &OsVer, types: u32, cond: u64) -> Resul
     if types == 0 || cond & !(1 << 63) == 0 {
         return Err(VerFail::BadArgs);
     }
-    let c = |k: u32| (cond >> (3 * k) & 7) as u8;
+    let c = |k: u32| kome::num::lo8(cond >> (3 * k) & 7);
     let check = |ok: bool| if ok { Ok(()) } else { Err(VerFail::Mismatch) };
     if types & 0x80 != 0 {
         check(ver_compare(u32::from(cur.product), u32::from(want.product), c(7)))?;
@@ -5284,10 +5284,10 @@ fn locale_info(ty: u32) -> String {
         0x1009 => "1".into(),
         0x100b => "1".into(),
         0x1014 => if ja { "¥" } else { "$" }.into(),
-        0x2a..=0x30 => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][(ty & 0xffff) as usize - 0x2a].into(),
-        0x31..=0x37 => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][(ty & 0xffff) as usize - 0x31].into(),
-        0x38..=0x43 => ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][(ty & 0xffff) as usize - 0x38].into(),
-        0x44..=0x4f => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][(ty & 0xffff) as usize - 0x44].into(),
+        0x2a..=0x30 => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][kome::num::us(ty & 0xffff) - 0x2a].into(),
+        0x31..=0x37 => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][kome::num::us(ty & 0xffff) - 0x31].into(),
+        0x38..=0x43 => ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][kome::num::us(ty & 0xffff) - 0x38].into(),
+        0x44..=0x4f => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][kome::num::us(ty & 0xffff) - 0x44].into(),
         0x50 => "".into(),
         0x51 => "-".into(),
         _ => "".into(),
@@ -6221,9 +6221,9 @@ pub(crate) fn write_systemtime(p: u32, secs: i64, ms: u32) {
     w16(p + 2, kome::num::lo16(m));
     w16(p + 4, ((days + 4).rem_euclid(7)) as u16);
     w16(p + 6, kome::num::lo16(d));
-    w16(p + 8, (rem / 3600) as u16);
-    w16(p + 10, (rem / 60 % 60) as u16);
-    w16(p + 12, (rem % 60) as u16);
+    w16(p + 8, kome::num::lo16(rem / 3600));
+    w16(p + 10, kome::num::lo16(rem / 60 % 60));
+    w16(p + 12, kome::num::lo16(rem % 60));
     w16(p + 14, kome::num::lo16(ms));
 }
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
@@ -6245,7 +6245,7 @@ fn GetLocalTime(c: &mut Ctx) -> u32 {
 }
 fn put64(p: u32, v: u64) {
     w32(p, kome::num::lo32(v));
-    w32(p + 4, (v >> 32) as u32);
+    w32(p + 4, kome::num::lo32(v >> 32));
 }
 fn get64(p: u32) -> u64 {
     u64::from(r32(p)) | u64::from(r32(p + 4)) << 32
@@ -6264,7 +6264,7 @@ fn FileTimeToSystemTime(c: &mut Ctx) -> u32 {
         return 0;
     }
     let secs = (ft / 10_000_000).cast_signed() - 11_644_473_600;
-    write_systemtime(c.a(1), secs, ((ft / 10_000) % 1000) as u32);
+    write_systemtime(c.a(1), secs, kome::num::lo32((ft / 10_000) % 1000));
     1
 }
 fn days_in_month(y: i64, m: i64) -> i64 {
@@ -6353,7 +6353,7 @@ fn SystemTimeToTzSpecificLocalTime(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    write_systemtime(c.a(2), t.div_euclid(10_000_000) - 11_644_473_600, (t / 10_000 % 1000) as u32);
+    write_systemtime(c.a(2), t.div_euclid(10_000_000) - 11_644_473_600, kome::num::lo32(t / 10_000 % 1000));
     1
 }
 fn TzSpecificLocalTimeToSystemTime(c: &mut Ctx) -> u32 {
@@ -6370,7 +6370,7 @@ fn TzSpecificLocalTimeToSystemTime(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    write_systemtime(c.a(2), t.div_euclid(10_000_000) - 11_644_473_600, (t / 10_000 % 1000) as u32);
+    write_systemtime(c.a(2), t.div_euclid(10_000_000) - 11_644_473_600, kome::num::lo32(t / 10_000 % 1000));
     1
 }
 fn DosDateTimeToFileTime(c: &mut Ctx) -> u32 {
@@ -6385,11 +6385,11 @@ fn DosDateTimeToFileTime(c: &mut Ctx) -> u32 {
     1
 }
 fn FileTimeToLocalFileTime(c: &mut Ctx) -> u32 {
-    put64(c.a(1), get64(c.a(0)).wrapping_add((tz_bias() * 10_000_000) as u64));
+    put64(c.a(1), get64(c.a(0)).wrapping_add(kome::num::lo64(tz_bias() * 10_000_000)));
     1
 }
 fn LocalFileTimeToFileTime(c: &mut Ctx) -> u32 {
-    put64(c.a(1), get64(c.a(0)).wrapping_sub((tz_bias() * 10_000_000) as u64));
+    put64(c.a(1), get64(c.a(0)).wrapping_sub(kome::num::lo64(tz_bias() * 10_000_000)));
     1
 }
 fn FileTimeToDosDateTime(c: &mut Ctx) -> u32 {
@@ -7388,7 +7388,7 @@ fn SetFilePointer(c: &mut Ctx) -> u32 {
     };
     match f.seek(pos) {
         Some(p) => {
-            put32(phi, (p >> 32) as u32);
+            put32(phi, kome::num::lo32(p >> 32));
             kome::num::lo32(p)
         }
         None => {
@@ -7437,7 +7437,7 @@ fn GetFileSize(c: &mut Ctx) -> u32 {
         return 0xffff_ffff;
     };
     let s = f.size();
-    put32(c.a(1), (s >> 32) as u32);
+    put32(c.a(1), kome::num::lo32(s >> 32));
     kome::num::lo32(s)
 }
 fn GetFileSizeEx(c: &mut Ctx) -> u32 {
@@ -7564,13 +7564,13 @@ fn GetFileInformationByHandle(c: &mut Ctx) -> u32 {
         put64(p + o, t);
     }
     w32(p + 28, 0x1234);
-    w32(p + 32, (m.len() >> 32) as u32);
+    w32(p + 32, kome::num::lo32(m.len() >> 32));
     w32(p + 36, kome::num::lo32(m.len()));
     // nNumberOfLinks
     w32(p + 40, m.links());
     // nFileIndexHigh, nFileIndexLow
     let ix = files::file_index(&f.path, &m);
-    w32(p + 44, (ix >> 32) as u32);
+    w32(p + 44, kome::num::lo32(ix >> 32));
     w32(p + 48, kome::num::lo32(ix));
     1
 }
@@ -7677,7 +7677,7 @@ fn write_find_raw(p: u32, name: &str, attrs: u32, t: u64, len: u64, wide: bool) 
     for o in [4, 12, 20] {
         put64(p + o, t);
     }
-    w32(p + 28, (len >> 32) as u32);
+    w32(p + 28, kome::num::lo32(len >> 32));
     w32(p + 32, kome::num::lo32(len));
     if wide {
         put_wstr(p + 44, 260, &name.encode_utf16().collect::<Vec<_>>());
@@ -7868,7 +7868,7 @@ fn attrs_ex(c: &mut Ctx, wide: bool) -> u32 {
     }
     // (a directory's size is 0)
     let len = if m.is_dir() { 0 } else { m.len() };
-    w32(p + 28, (len >> 32) as u32);
+    w32(p + 28, kome::num::lo32(len >> 32));
     w32(p + 32, kome::num::lo32(len));
     1
 }
@@ -8137,7 +8137,7 @@ fn copy_ex(c: &mut Ctx, wide: bool) -> u32 {
         for q in quads {
             args.push(kome::num::lo32(q));
             if !mem::x64() {
-                args.push((q >> 32) as u32);
+                args.push(kome::num::lo32(q >> 32));
             }
         }
         args.extend([1, reason, 0, 0, data]);
@@ -8945,7 +8945,7 @@ fn GetProcessId(c: &mut Ctx) -> u32 {
 fn K32EnumProcesses(c: &mut Ctx) -> u32 {
     let (p, cb, pu) = (c.a(0), c.a(1), c.a(2));
     let ids = crate::process::running();
-    let n = ((cb / 4) as usize).min(ids.len());
+    let n = (kome::num::us(cb / 4)).min(ids.len());
     for (i, &id) in ids[..n].iter().enumerate() {
         w32(p + 4 * kome::num::u32_of(i), id);
     }
@@ -9177,7 +9177,7 @@ static SLIST: Mutex<()> = Mutex::new(());
 /// (first entry, depth) of list `h`
 fn slist_get(h: u32) -> (u32, u32) {
     if mem::x64() {
-        ((mem::r64(h + 8) & !0xf) as u32, u32::from(r16(h)))
+        (kome::num::lo32(mem::r64(h + 8) & !0xf), u32::from(r16(h)))
     } else {
         (r32(h), u32::from(r16(h + 4)))
     }
@@ -10176,7 +10176,7 @@ mod mapping_names {
         #[test]
         fn file_view_model(len in 1usize..0x3000, off_pages in 0u32..2, writes in proptest::collection::vec((0usize..0x3000, any::<u8>()), 0..32)) {
             let _g = enter();
-            let init: Vec<u8> = (0..len).map(|i| (i * 7) as u8).collect();
+            let init: Vec<u8> = (0..len).map(|i| kome::num::lo8(i * 7)).collect();
             let (path, name) = host_file(&init);
             let f = open_file(name);
             let m = call(CreateFileMappingA, &[f, 0, RW, 0, 0, 0]);
