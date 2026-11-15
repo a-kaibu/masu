@@ -86,6 +86,7 @@ jobs:
         run: |
           python3 tests/shirusu/report_test.py
           python3 tests/shirusu/pick_build_test.py
+          python3 tests/shirusu/workflow_test.py
           list=tests/shirusu/games.txt; [ "$PROBES" = true ] && list=tests/shirusu/probes.txt
           ids=${ONLY:-$(sed -e 's/#.*//' "$list" | awk 'NF { print $1 }')}
           echo "ids=$(python3 -c 'import json, sys; print(json.dumps(sys.argv[1:]))' $ids)" >> "$GITHUB_OUTPUT"
@@ -178,7 +179,7 @@ jobs:
 
   windows:
     needs: [plan, prep, build-shirusu]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: windows-2025
     timeout-minutes: 50
     strategy:
@@ -323,7 +324,7 @@ jobs:
   # finish: the newest successful one of main then)
   sake:
     needs: [plan, windows]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
@@ -441,7 +442,7 @@ jobs:
 
   compare:
     needs: [plan, windows, sake]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
