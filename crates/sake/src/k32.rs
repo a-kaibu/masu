@@ -295,7 +295,7 @@ fn ExitProcess(c: &mut Ctx) -> u32 {
     if crate::env_on!("SAKE_TRACE_EXIT") {
         eprintln!("sake: ExitProcess({code}) from {:#x}", r32(c.esp));
     }
-    unsafe { libc::exit(code as i32) }
+    unsafe { libc::exit(code.cast_signed()) }
 }
 use crate::process::PROCESS_ALL_ACCESS;
 /// The access a handle to this process has (GetCurrentProcess's: all), None for another handle
@@ -312,7 +312,7 @@ fn TerminateProcess(c: &mut Ctx) -> u32 {
             if crate::env_on!("SAKE_TRACE_EXIT") {
                 eprintln!("sake: TerminateProcess({}) of itself", c.a(1));
             }
-            unsafe { libc::exit(c.a(1) as i32) }
+            unsafe { libc::exit(c.a(1).cast_signed()) }
         }
         Some((pid, _)) => u32::from(crate::process::terminate(pid, c.a(1))),
         None => {
@@ -388,7 +388,7 @@ pub fn exit_thread(code: u32) -> ! {
     crate::pe::loader_thread_exit();
     if t.tid == crate::process::first_tid(crate::pid()) {
         // the main thread: the process
-        unsafe { libc::exit(code as i32) }
+        unsafe { libc::exit(code.cast_signed()) }
     }
     // the guest stack and TEB go back to the address space (a game starting a thread per
     // file load ran out of it after ~600)
@@ -1696,7 +1696,7 @@ fn SetWaitableTimer(c: &mut Ctx) -> u32 {
         Duration::from_nanos(v.unsigned_abs() * 100)
     } else {
         let now = files::filetime(SystemTime::now()) as i64;
-        Duration::from_nanos((v - now).max(0) as u64 * 100)
+        Duration::from_nanos((v - now).max(0).cast_unsigned() * 100)
     };
     let period = Duration::from_millis(u64::from(c.a(2)));
     let r = obj::with(|t| match t.objs.get_mut(&c.a(0)) {
@@ -1915,7 +1915,7 @@ fn CreateSemaphoreW(c: &mut Ctx) -> u32 {
 fn ReleaseSemaphore(c: &mut Ctx) -> u32 {
     match release_semaphore(c.a(0), c.i(1)) {
         Ok(p) => {
-            put32(c.a(2), p as u32);
+            put32(c.a(2), p.cast_unsigned());
             1
         }
         Err(e) => {
@@ -4295,7 +4295,7 @@ fn tp_close(h: u32) {
 fn due_ms(p: u32) -> u64 {
     let v = get64(p) as i64;
     if v < 0 {
-        (-v / 10_000) as u64
+        (-v / 10_000).cast_unsigned()
     } else {
         let now = files::filetime(std::time::SystemTime::now()) as i64;
         ((v - now).max(0) / 10_000) as u64
@@ -5393,7 +5393,7 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
         v.push(0);
         v
     } else {
-        let Some(v) = guest_bytes(src, n as u32) else { return 0 };
+        let Some(v) = guest_bytes(src, n.cast_unsigned()) else { return 0 };
         v
     };
     let (w, bad) = crate::text::mb2w_checked(cp, &s);
@@ -5438,7 +5438,7 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
         v.push(0);
         v
     } else {
-        let Some(v) = guest_units(src, n as u32) else { return 0 };
+        let Some(v) = guest_units(src, n.cast_unsigned()) else { return 0 };
         v
     };
     // (lpDefaultChar / lpUsedDefaultChar with UTF-7/8: documented as ERROR_INVALID_PARAMETER,
@@ -5585,7 +5585,7 @@ fn GetStringTypeA(c: &mut Ctx) -> u32 {
     let s = if n < 0 {
         cstr(src)
     } else {
-        let Some(v) = guest_bytes(src, n as u32) else { return 0 };
+        let Some(v) = guest_bytes(src, n.cast_unsigned()) else { return 0 };
         v
     };
     // one result per byte
@@ -5641,7 +5641,7 @@ fn LCMapStringA(c: &mut Ctx) -> u32 {
         v.push(0);
         v
     } else {
-        let Some(v) = guest_bytes(src, n as u32) else { return 0 };
+        let Some(v) = guest_bytes(src, n.cast_unsigned()) else { return 0 };
         v
     };
     if flags & 0xf00000 != 0 {
@@ -5663,7 +5663,7 @@ pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
         v.push(0);
         v
     } else {
-        let Some(v) = guest_units(src, n as u32) else { return 0 };
+        let Some(v) = guest_units(src, n.cast_unsigned()) else { return 0 };
         v
     };
     let w = lcmap(&w, flags);
@@ -5681,8 +5681,8 @@ fn cmp_w(a: &[u16], b: &[u16], nocase: bool) -> std::cmp::Ordering {
 }
 fn CompareStringA(c: &mut Ctx) -> u32 {
     let (flags, s1, n1, s2, n2) = (c.a(1), c.a(2), c.i(3), c.a(4), c.i(5));
-    let a = if n1 < 0 { cstr(s1) } else { mem::cstrn(s1, n1 as u32) };
-    let b = if n2 < 0 { cstr(s2) } else { mem::cstrn(s2, n2 as u32) };
+    let a = if n1 < 0 { cstr(s1) } else { mem::cstrn(s1, n1.cast_unsigned()) };
+    let b = if n2 < 0 { cstr(s2) } else { mem::cstrn(s2, n2.cast_unsigned()) };
     crate::collate::compare(&a2w(&a), &a2w(&b), flags) as i32 as u32 + 2
 }
 /// CompareStringOrdinal(s1, n1, s2, n2, ignore case): code unit order (with the case
@@ -5693,7 +5693,7 @@ fn CompareStringOrdinal(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    let rd = |p: u32, n: i32| -> Option<Vec<u16>> { if n < 0 { Some(wstr(p)) } else { guest_units(p, n as u32) } };
+    let rd = |p: u32, n: i32| -> Option<Vec<u16>> { if n < 0 { Some(wstr(p)) } else { guest_units(p, n.cast_unsigned()) } };
     let (Some(a), Some(b)) = (rd(s1, n1), rd(s2, n2)) else { return 0 };
     let up = |v: Vec<u16>| -> Vec<u16> {
         if !nocase {
@@ -6197,7 +6197,7 @@ fn GetAtomNameW(c: &mut Ctx) -> u32 {
 
 fn system_time(p: u32, local: bool) {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
-    let secs = now.as_secs() as i64 + if local { tz_bias() } else { 0 };
+    let secs = now.as_secs().cast_signed() + if local { tz_bias() } else { 0 };
     write_systemtime(p, secs, now.subsec_millis());
 }
 pub fn tz_bias() -> i64 {
@@ -6263,7 +6263,7 @@ fn FileTimeToSystemTime(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    let secs = (ft / 10_000_000) as i64 - 11_644_473_600;
+    let secs = (ft / 10_000_000).cast_signed() - 11_644_473_600;
     write_systemtime(c.a(1), secs, ((ft / 10_000) % 1000) as u32);
     1
 }
@@ -6283,7 +6283,7 @@ fn systemtime_ft(p: u32) -> Option<u64> {
         return None;
     }
     let secs = days_from_civil(y, m, d) * 86400 + h * 3600 + mi * 60 + s;
-    Some(((secs + 11_644_473_600) as u64) * 10_000_000 + ms as u64 * 10_000)
+    Some(((secs + 11_644_473_600).cast_unsigned()) * 10_000_000 + ms.cast_unsigned() * 10_000)
 }
 fn SystemTimeToFileTime(c: &mut Ctx) -> u32 {
     let Some(ft) = systemtime_ft(c.a(0)) else {
@@ -6345,7 +6345,7 @@ fn SystemTimeToTzSpecificLocalTime(c: &mut Ctx) -> u32 {
         return 0;
     };
     let z = tz_info(c);
-    let t = ft as i64 - tz_bias_at(z, ft as i64, true) * 600_000_000;
+    let t = ft.cast_signed() - tz_bias_at(z, ft.cast_signed(), true) * 600_000_000;
     if c.a(0) == 0 {
         mem::heap_free(z);
     }
@@ -6362,7 +6362,7 @@ fn TzSpecificLocalTimeToSystemTime(c: &mut Ctx) -> u32 {
         return 0;
     };
     let z = tz_info(c);
-    let t = ft as i64 + tz_bias_at(z, ft as i64, false) * 600_000_000;
+    let t = ft.cast_signed() + tz_bias_at(z, ft.cast_signed(), false) * 600_000_000;
     if c.a(0) == 0 {
         mem::heap_free(z);
     }
@@ -6381,7 +6381,7 @@ fn DosDateTimeToFileTime(c: &mut Ctx) -> u32 {
         return 0;
     }
     let secs = days_from_civil(y, m, dd) * 86400 + h * 3600 + mi * 60 + s;
-    put64(c.a(2), ((secs + 11_644_473_600) as u64) * 10_000_000);
+    put64(c.a(2), ((secs + 11_644_473_600).cast_unsigned()) * 10_000_000);
     1
 }
 fn FileTimeToLocalFileTime(c: &mut Ctx) -> u32 {
@@ -6394,7 +6394,7 @@ fn LocalFileTimeToFileTime(c: &mut Ctx) -> u32 {
 }
 fn FileTimeToDosDateTime(c: &mut Ctx) -> u32 {
     let ft = get64(c.a(0));
-    let secs = (ft / 10_000_000) as i64 - 11_644_473_600;
+    let secs = (ft / 10_000_000).cast_signed() - 11_644_473_600;
     let tmp = mem::heap_alloc(16, true);
     write_systemtime(tmp, secs, 0);
     let (y, m, d, h, mi, s) = (r16(tmp), r16(tmp + 2), r16(tmp + 6), r16(tmp + 8), r16(tmp + 10), r16(tmp + 12));
@@ -7380,9 +7380,9 @@ fn SetFilePointer(c: &mut Ctx) -> u32 {
         last_error(6);
         return 0xffff_ffff;
     };
-    let off = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo as i32) };
+    let off = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo.cast_signed()) };
     let pos = match how {
-        0 => SeekFrom::Start(off as u64),
+        0 => SeekFrom::Start(off.cast_unsigned()),
         1 => SeekFrom::Current(off),
         _ => SeekFrom::End(off),
     };
@@ -7403,13 +7403,13 @@ fn SetFilePointerEx(c: &mut Ctx) -> u32 {
     }
     // (x64: the LARGE_INTEGER is one argument)
     let (h, off, out, how) = if mem::x64() {
-        (c.a(0), c.a64(1) as i64, c.a(2), c.a(3))
+        (c.a(0), c.a64(1).cast_signed(), c.a(2), c.a(3))
     } else {
         (c.a(0), (u64::from(c.a(1)) | u64::from(c.a(2)) << 32) as i64, c.a(3), c.a(4))
     };
     let Some(f) = obj::file(h) else { return 0 };
     let pos = match how {
-        0 => SeekFrom::Start(off as u64),
+        0 => SeekFrom::Start(off.cast_unsigned()),
         1 => SeekFrom::Current(off),
         _ => SeekFrom::End(off),
     };

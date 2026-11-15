@@ -328,19 +328,19 @@ pub mod via {
             return Err(131); // ERROR_NEGATIVE_SEEK
         }
         let (io, b) = (s.alloc(8), s.alloc(8));
-        mem::put64(b, p as u64);
+        mem::put64(b, p.cast_unsigned());
         let st = c.call(set, &[h, io, b, 8, 14]);
         if st >= 0xc000_0000 {
             return Err(file_error(st));
         }
-        Ok(p as u64)
+        Ok(p.cast_unsigned())
     }
 
     /// SetFilePointer(h, distance, &high, method)
     pub fn set_file_pointer(c: &mut Ctx) -> Option<u32> {
         hooked("NtSetInformationFile").or_else(|| hooked("NtQueryInformationFile"))?;
         let (h, lo, phi, how) = (c.a(0), c.a(1), c.a(2), c.a(3));
-        let d = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo as i32) };
+        let d = if phi != 0 { (u64::from(lo) | u64::from(r32(phi)) << 32) as i64 } else { i64::from(lo.cast_signed()) };
         Some(match seek(c, h, d, how) {
             Ok(p) => {
                 put32(phi, (p >> 32) as u32);
