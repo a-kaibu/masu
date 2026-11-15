@@ -319,7 +319,7 @@ pub(crate) fn snap_wake() {
 
 /// Where the movie of session `b` is drawn, and how loud: to dshow_play.
 fn sync(b: u32) {
-    let Some((evr, video, st, vol)) = session(b, |s| (s.evr, s.video, s.m.st, centibels(s.volume as f64, s.muted))) else { return };
+    let Some((evr, video, st, vol)) = session(b, |s| (s.evr, s.video, s.m.st, centibels(f64::from(s.volume), s.muted))) else { return };
     let place = if evr != 0 { crate::dshow::evr_place(evr, video, matches!(st, St::Started | St::Paused)) } else { None };
     play::with(|m| {
         if let Some(p) = m.get_mut(&b) {
@@ -1014,7 +1014,7 @@ fn sv_get_mute(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    w32(c.a(1), session(base(c, 3), |s| s.muted).unwrap_or(false) as u32);
+    w32(c.a(1), u32::from(session(base(c, 3), |s| s.muted).unwrap_or(false)));
     0
 }
 

@@ -116,7 +116,7 @@ fn native_subtype(c: &Codec) -> Guid {
         Codec::Pcm { .. } => audio_format(audiofile::PCM),
         Codec::Page { subtype, .. } => audio_format(*subtype),
         Codec::Vorbis { .. } => vorbis_format(),
-        Codec::Wma { info: crate::wmdec::Info::Audio { tag, .. } } => audio_format(*tag as u32),
+        Codec::Wma { info: crate::wmdec::Info::Audio { tag, .. } } => audio_format(u32::from(*tag)),
         Codec::Wma { .. } => audio_format(0),
     }
 }
@@ -150,7 +150,7 @@ impl Native {
     fn sound(fs: Vec<crate::wmdec::Frame>, out: &mut Vec<f32>) {
         for f in fs {
             if let crate::wmdec::Frame::Sound { pcm, .. } = f {
-                out.extend(pcm.iter().map(|&v| v as f32 / 32768.0));
+                out.extend(pcm.iter().map(|&v| f32::from(v) / 32768.0));
             }
         }
     }
@@ -165,8 +165,8 @@ pub fn native_type(t: &Track) -> Store {
     s.set(k_rate(), Val::U32(t.rate));
     match &t.codec {
         Codec::Pcm { bits, .. } => {
-            let align = t.channels * *bits as u32 / 8;
-            s.set(k_bits(), Val::U32(*bits as u32));
+            let align = t.channels * u32::from(*bits) / 8;
+            s.set(k_bits(), Val::U32(u32::from(*bits)));
             s.set(k_align(), Val::U32(align));
             s.set(k_avg(), Val::U32(align * t.rate));
             s.set(k_independent(), Val::U32(1));
@@ -179,8 +179,8 @@ pub fn native_type(t: &Track) -> Store {
             // (Windows' ASF source: the WAVEFORMATEX's block align and the codec data after it)
             if let crate::wmdec::Info::Audio { align, bits, extra, .. } = info {
                 s.set(k_avg(), Val::U32(t.avg));
-                s.set(k_align(), Val::U32(*align as u32));
-                s.set(k_bits(), Val::U32(*bits as u32));
+                s.set(k_align(), Val::U32(u32::from(*align)));
+                s.set(k_bits(), Val::U32(u32::from(*bits)));
                 s.set(k_user_data(), Val::Blob(extra.clone()));
             }
         }
@@ -263,7 +263,7 @@ impl Resample {
         Resample {
             from_ch: from.1.max(1) as usize,
             to_ch: to.1.max(1) as usize,
-            step: from.0 as f64 / to.0.max(1) as f64,
+            step: f64::from(from.0) / f64::from(to.0.max(1)),
             t: 0.0,
             prev: Vec::new(),
         }
@@ -361,7 +361,7 @@ impl Stream {
     }
 
     fn time(&self, frames: u64) -> u64 {
-        (frames as u128 * 10_000_000 / self.track.rate.max(1) as u128) as u64
+        (u128::from(frames) * 10_000_000 / u128::from(self.track.rate.max(1))) as u64
     }
 
     pub fn duration(&self) -> u64 {
@@ -386,12 +386,12 @@ impl Stream {
     /// (Windows' WAVE source: a seek to 250 ms reads from just past it, winref mfreader).
     pub fn seek(&mut self, t: u64) {
         let pcm = matches!(self.track.codec, Codec::Pcm { .. });
-        let exact = t as u128 * self.track.rate as u128;
+        let exact = u128::from(t) * u128::from(self.track.rate);
         let want = if pcm { exact.div_ceil(10_000_000) } else { exact / 10_000_000 } as u64;
         let mut f = 0u64;
         let mut k = 0;
-        while k < self.track.frames.len() && f + self.track.frames[k] as u64 <= want {
-            f += self.track.frames[k] as u64;
+        while k < self.track.frames.len() && f + u64::from(self.track.frames[k]) <= want {
+            f += u64::from(self.track.frames[k]);
             k += 1;
         }
         self.next = k;
@@ -431,15 +431,15 @@ impl Stream {
                     self.ended = true;
                     return Ok(None);
                 };
-                let all = t.frames[self.next] as u64;
+                let all = u64::from(t.frames[self.next]);
                 let skip = self.into.min(all);
                 let frames = all - skip;
-                let per = if all > 0 { n as u64 / all } else { 0 };
+                let per = if all > 0 { u64::from(n) / all } else { 0 };
                 let from = o + skip * per;
-                let raw = self.data.read(c, from, (o + n as u64 - from) as usize).ok_or(Hr::Fail.code())?;
+                let raw = self.data.read(c, from, (o + u64::from(n) - from) as usize).ok_or(Hr::Fail.code())?;
                 let raw = &raw[..];
                 let bytes = match (self.out, &t.codec) {
-                    (Out::Pcm { bits, float, .. }, Codec::Pcm { bits: from, float: ffloat }) if (bits, float) != (*from as u32, *ffloat) || self.rs.is_some() => {
+                    (Out::Pcm { bits, float, .. }, Codec::Pcm { bits: from, float: ffloat }) if (bits, float) != (u32::from(*from), *ffloat) || self.rs.is_some() => {
                         let mut v = Vec::new();
                         decode_pcm(raw, *from, *ffloat, &mut v);
                         if let Some(r) = &mut self.rs {
@@ -572,8 +572,8 @@ fn out_frames(codec: &str, frame: u32) -> usize {
 fn decode_pcm(b: &[u8], bits: u16, float: bool, out: &mut Vec<f32>) {
     match (bits, float) {
         (32, true) => out.extend(b.chunks_exact(4).map(|x| f32::from_le_bytes(x.try_into().unwrap()))),
-        (8, _) => out.extend(b.iter().map(|&x| (x as f32 - 128.0) / 128.0)),
-        (16, _) => out.extend(b.chunks_exact(2).map(|x| i16::from_le_bytes([x[0], x[1]]) as f32 / 32768.0)),
+        (8, _) => out.extend(b.iter().map(|&x| (f32::from(x) - 128.0) / 128.0)),
+        (16, _) => out.extend(b.chunks_exact(2).map(|x| f32::from(i16::from_le_bytes([x[0], x[1]])) / 32768.0)),
         (24, _) => out.extend(b.chunks_exact(3).map(|x| (i32::from_le_bytes([0, x[0], x[1], x[2]]) >> 8) as f32 / 8_388_608.0)),
         _ => out.extend(b.chunks_exact(4).map(|x| i32::from_le_bytes(x.try_into().unwrap()) as f32 / 2_147_483_648.0)),
     }
@@ -584,7 +584,7 @@ pub fn encode(v: &[f32], bits: u32, float: bool) -> Vec<u8> {
     if float {
         return v.iter().flat_map(|x| x.to_le_bytes()).collect();
     }
-    let q = |x: f32, scale: f64, lo: f64, hi: f64| (x as f64 * scale).round().clamp(lo, hi) as i64;
+    let q = |x: f32, scale: f64, lo: f64, hi: f64| (f64::from(x) * scale).round().clamp(lo, hi) as i64;
     match bits {
         8 => v.iter().map(|&x| (q(x, 128.0, -128.0, 127.0) + 128) as u8).collect(),
         24 => v.iter().flat_map(|&x| q(x, 8_388_608.0, -8_388_608.0, 8_388_607.0).to_le_bytes()[..3].to_vec()).collect(),
@@ -712,7 +712,7 @@ fn mt_compressed(c: &mut Ctx) -> u32 {
     let s = store_of(c.a(0)).unwrap_or_default();
     // (as Windows: compressed unless MF_MT_ALL_SAMPLES_INDEPENDENT is set, whatever the
     // subtype; AAC's native type has it, MP3's not: winref mfreader)
-    w32(c.a(1), (u32_of(&s, &k_independent()).unwrap_or(0) == 0) as u32);
+    w32(c.a(1), u32::from(u32_of(&s, &k_independent()).unwrap_or(0) == 0));
     0
 }
 /// IsEqual(IMFMediaType *, DWORD *flags): MF_MEDIATYPE_EQUAL_MAJOR_TYPES 1, FORMAT_TYPES 2,
@@ -845,12 +845,12 @@ fn MFCreateWaveFormatExFromMFMediaType(c: &mut Ctx) -> u32 {
 pub fn from_wave_format(w: &[u8]) -> Option<Store> {
     let r16 = |o: usize| w.get(o..o + 2).map(|b| u16::from_le_bytes([b[0], b[1]]));
     let r32 = |o: usize| w.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
-    let mut tag = r16(0)? as u32;
-    let (ch, rate, avg, align, bits) = (r16(2)? as u32, r32(4)?, r32(8)?, r16(12)? as u32, r16(14)? as u32);
+    let mut tag = u32::from(r16(0)?);
+    let (ch, rate, avg, align, bits) = (u32::from(r16(2)?), r32(4)?, r32(8)?, u32::from(r16(12)?), u32::from(r16(14)?));
     let extra = r16(16).unwrap_or(0) as usize;
     let mut s = Store::default();
     if tag == 0xfffe {
-        tag = r16(24)? as u32;
+        tag = u32::from(r16(24)?);
         if let Some(m) = r32(20) {
             s.set(k_mask(), Val::U32(m));
         }
@@ -1319,7 +1319,7 @@ fn sr_get_selection(c: &mut Ctx) -> u32 {
     }
     match on_stream(c.a(0), i, |r, k| r.streams[k].selected) {
         Ok(on) => {
-            w32(out, on as u32);
+            w32(out, u32::from(on));
             0
         }
         Err(e) => e,
@@ -1390,7 +1390,7 @@ fn video_out(v: &mp4::Video, want: &Store, processing: bool) -> Option<(VOut, St
         return None;
     }
     // (a size of its own: no scaling here)
-    if let Some(Val::U64(sz)) = want.get(&source::k_frame_size()) && *sz != (v.w as u64) << 32 | v.h as u64 {
+    if let Some(Val::U64(sz)) = want.get(&source::k_frame_size()) && *sz != u64::from(v.w) << 32 | u64::from(v.h) {
         return None;
     }
     let wm = v.wm.as_ref().and_then(|i| match i {
@@ -1624,7 +1624,7 @@ fn worker(c: &mut Ctx) -> u32 {
                 let (hr, k, flags, t, sample) = read_one(c, b, i);
                 let f = mem::rp(mem::rp(cb) + ps() * 3);
                 if mem::x64() {
-                    crate::call64(c.cpu, mem::widen(f), &[mem::widen(cb), hr as u64, k as u64, flags as u64, t, sample as u64]);
+                    crate::call64(c.cpu, mem::widen(f), &[mem::widen(cb), u64::from(hr), u64::from(k), u64::from(flags), t, u64::from(sample)]);
                 } else {
                     c.call(f, &[cb, hr, k, flags, t as u32, (t >> 32) as u32, sample]);
                 }

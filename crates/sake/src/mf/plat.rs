@@ -365,7 +365,7 @@ fn bs_eos(c: &mut Ctx) -> u32 {
         return Hr::InvalidArg.code();
     }
     let end = bs(c.a(0), |s| len_of(s).is_none_or(|n| s.pos >= n)).unwrap_or(true);
-    w32(out, end as u32);
+    w32(out, u32::from(end));
     0
 }
 /// Reads `n` bytes at the stream's position into guest memory `p`; the bytes read.
@@ -400,7 +400,7 @@ fn write_from(b: u32, p: u32, n: u32) -> Result2 {
         let Some(f) = s.file.as_mut() else { return Err(Hr::Shutdown.code()) };
         f.seek(SeekFrom::Start(pos)).map_err(|_| Hr::Fail.code())?;
         f.write_all(mem::slice(p, n)).map_err(|_| Hr::Fail.code())?;
-        s.pos += n as u64;
+        s.pos += u64::from(n);
         Ok(n)
     })
     .unwrap_or(Err(Hr::InvalidArg.code()))
@@ -709,7 +709,7 @@ pub fn frame_time(n: u32, d: u32) -> u64 {
     if let Some(&(t, _, _)) = KNOWN_RATES.iter().find(|r| r.1 == n && r.2 == d) {
         return t;
     }
-    if n == 0 { 0 } else { d as u64 * 10_000_000 / n as u64 }
+    if n == 0 { 0 } else { u64::from(d) * 10_000_000 / u64::from(n) }
 }
 /// MFAverageTimePerFrameToFrameRate(UINT64, UINT32 *num, UINT32 *den)
 fn MFAverageTimePerFrameToFrameRate(c: &mut Ctx) -> u32 {

@@ -102,7 +102,7 @@ impl Audio {
     }
 
     fn seek(&mut self, frame: u64) {
-        self.s.seek((frame as u128 * SEC as u128 / self.rate as u128) as u64);
+        self.s.seek((u128::from(frame) * u128::from(SEC) / u128::from(self.rate)) as u64);
         self.pcm.clear();
         self.base = None;
         self.ended = false;
@@ -111,7 +111,7 @@ impl Audio {
     /// Appends `n` stereo frames from frame `from` to `out` (silence past the end).
     pub fn take(&mut self, from: u64, n: usize, out: &mut Vec<f32>) {
         let have = self.base.map(|b| (b, b + self.pcm.len() as u64));
-        if have.is_none_or(|(b, e)| from < b || from > e + 2 * self.rate as u64) {
+        if have.is_none_or(|(b, e)| from < b || from > e + 2 * u64::from(self.rate)) {
             self.seek(from);
         }
         while !self.ended && self.base.is_none_or(|b| b + (self.pcm.len() as u64) < from + n as u64) {
@@ -123,12 +123,12 @@ impl Audio {
                 }
             };
             // (the piece's time is the frame's, truncated: rounded up it is the frame again)
-            let at = (p.time as u128 * self.rate as u128).div_ceil(SEC as u128) as u64;
+            let at = (u128::from(p.time) * u128::from(self.rate)).div_ceil(u128::from(SEC)) as u64;
             let base = *self.base.get_or_insert(at);
             let f = |b: &[u8]| f32::from_le_bytes(b.try_into().unwrap());
             self.pcm.extend(p.bytes.chunks_exact(8).map(|x| [f(&x[..4]), f(&x[4..])]));
             // (what is no longer wanted: a second's worth kept behind for small steps back)
-            let keep = from.saturating_sub(self.rate as u64);
+            let keep = from.saturating_sub(u64::from(self.rate));
             if keep > base {
                 let k = ((keep - base) as usize).min(self.pcm.len());
                 self.pcm.drain(..k);

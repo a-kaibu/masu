@@ -363,7 +363,7 @@ pub unsafe fn convert(layout: &[[u32; 7]; 2], buf: *const u8, w: u32, h: u32, su
 
 /// BT.601 video range of an RGB pixel (frames the page could only give as RGBA).
 fn rgb_ycc(r: u8, g: u8, b: u8) -> (u8, u8, u8) {
-    let (r, g, b) = (r as f64, g as f64, b as f64);
+    let (r, g, b) = (f64::from(r), f64::from(g), f64::from(b));
     let y = 0.299 * r + 0.587 * g + 0.114 * b;
     let c = |x: f64| x.round().clamp(0.0, 255.0) as u8;
     (c(16.0 + y * 219.0 / 255.0), c(128.0 + (b - y) / 1.772 * 224.0 / 255.0), c(128.0 + (r - y) / 1.402 * 224.0 / 255.0))

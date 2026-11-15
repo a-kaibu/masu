@@ -469,7 +469,7 @@ fn layout(fmt: u32, w: u32, h: u32) -> Option<(u32, u32)> {
     let size = kura::d3d11::format::texture_bytes(fmt, w, h, 1, 1, 1, 1);
     // (rows of blocks; NV12's luma then chroma rows)
     let rows = kura::d3d11::format::pitch_rows(fmt, w, h).1;
-    (size > 0 && size <= MAX_BLOB as u64 && rows > 0).then(|| (size as u32, rows))
+    (size > 0 && size <= u64::from(MAX_BLOB) && rows > 0).then(|| (size as u32, rows))
 }
 
 /// A buffer of ours over texture `tex` (whose reference it takes), subresource `sub`; `len`

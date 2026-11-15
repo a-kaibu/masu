@@ -210,14 +210,14 @@ pub fn open_asf(all: &[u8]) -> Option<Media> {
     if let Some(info) = au.and_then(|a| Info::of_stream(a)).filter(|_| !ao.is_empty()) {
         let Info::Audio { channels, rate, bytes_per_sec, .. } = info else { return None };
         if rate > 0 {
-            let at = |t: u64| (t as u128 * rate as u128 / SEC_ as u128) as u64;
+            let at = |t: u64| (u128::from(t) * u128::from(rate) / u128::from(SEC_)) as u64;
             let end = at(h.duration.max(ao.last()?.time));
             let frames = (0..ao.len()).map(|i| ao.get(i + 1).map_or(end, |n| at(n.time)).saturating_sub(at(ao[i].time)) as u32).collect();
             let base = packed.len() as u64;
             let (d, at2) = audiofile::repack(ao.iter().map(|o| &o.data[..]));
             packed.extend_from_slice(&d);
             let packets = at2.into_iter().map(|(o, n)| (o + base, n)).collect();
-            tracks.push(mp4::Track::Audio(audiofile::Track { codec: audiofile::Codec::Wma { info }, rate, channels: channels as u32, packets, frames, avg: bytes_per_sec, duration: Some(h.duration) }));
+            tracks.push(mp4::Track::Audio(audiofile::Track { codec: audiofile::Codec::Wma { info }, rate, channels: u32::from(channels), packets, frames, avg: bytes_per_sec, duration: Some(h.duration) }));
         }
     }
     Some(Media { tracks, duration: Some(h.duration), mime: "video/x-ms-asf", packed: Some(Arc::new(Data::mem_arc(Arc::new(packed)))) })
@@ -293,7 +293,7 @@ pub fn g(s: &str) -> Guid {
     crate::actctx::parse_guid(s).unwrap()
 }
 fn ratio(a: u32, b: u32) -> Val {
-    Val::U64((a as u64) << 32 | b as u64)
+    Val::U64(u64::from(a) << 32 | u64::from(b))
 }
 
 /// The native type of an H.264 track (Windows' MP4 source: H264, size, rate, aspect,
@@ -551,7 +551,7 @@ fn pd_by_index(c: &mut Ctx) -> u32 {
     if i >= s.media.tracks.len() {
         return Hr::InvalidArg.code();
     }
-    w32(sel, s.selected.lock().unwrap_or_else(|e| e.into_inner())[i] as u32);
+    w32(sel, u32::from(s.selected.lock().unwrap_or_else(|e| e.into_inner())[i]));
     putp(out, new_sd(&s.media, i));
     0
 }

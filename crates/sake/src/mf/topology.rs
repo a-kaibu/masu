@@ -62,7 +62,7 @@ fn coll<R>(b: u32, f: impl FnOnce(&mut (u32, Vec<u32>)) -> R) -> Option<R> {
 /// TOPOIDs: the process in the high word (as Windows'), a count below
 fn next_id() -> u64 {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-    (std::process::id() as u64) << 32 | N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    u64::from(std::process::id()) << 32 | N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The out pointer after a 64-bit argument at x86 slots `slot - 2`, `slot - 1`.
