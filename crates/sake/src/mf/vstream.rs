@@ -112,11 +112,11 @@ impl VStream {
     /// Sample `i` (decode order) as Annex B.
     fn sample(&self, c: Option<&mut Ctx>, i: usize) -> Result<Vec<u8>, u32> {
         let s = &self.v.samples[i];
-        let b = self.data.read(c, s.off, s.size as usize).ok_or(E_FAIL)?;
+        let b = self.data.read(c, s.off, s.size as usize).ok_or(Hr::Fail.code())?;
         if self.v.wm.is_some() {
             return Ok(b);
         }
-        mp4::annexb(&self.v, s.key, &b).ok_or(E_FAIL)
+        mp4::annexb(&self.v, s.key, &b).ok_or(Hr::Fail.code())
     }
 
     /// Frame `p` (presentation order) of a Decoded stream, wherever the reads were: the page
@@ -154,7 +154,7 @@ impl VStream {
             Some(id) => id,
             None => {
                 let frames: Vec<(bool, u32)> = self.v.samples.iter().map(|s| (s.key, s.order)).collect();
-                let id = kura::video::open_chunks(&self.v.codec, self.v.w, self.v.h, &frames).ok_or(E_FAIL)?;
+                let id = kura::video::open_chunks(&self.v.codec, self.v.w, self.v.h, &frames).ok_or(Hr::Fail.code())?;
                 self.id = Some(id);
                 id
             }
@@ -182,7 +182,7 @@ impl VStream {
         });
         if !got {
             eprintln!("sake: mf reader: frame {p} of {}x{} {} not decoded", w, h, self.v.codec);
-            return Err(E_FAIL);
+            return Err(Hr::Fail.code());
         }
         let s = &self.v.samples[d];
         self.next += 1;
@@ -202,10 +202,10 @@ impl VStream {
             Some(s) => s.last.is_some_and(|l| t < l) || (key > s.next && s.pics.back().is_none_or(|x| x.0 < t)),
         };
         if restart {
-            let info = self.v.wm.as_ref().ok_or(E_FAIL)?;
+            let info = self.v.wm.as_ref().ok_or(Hr::Fail.code())?;
             let mut codec = match self.soft.take() {
                 Some(s) => s.codec,
-                None => crate::wmdec::codec(info).ok_or(MF_E_INVALIDMEDIATYPE)?,
+                None => crate::wmdec::codec(info).ok_or(Hr::InvalidMediaType.code())?,
             };
             codec.flush();
             self.soft = Some(Soft { codec, next: key, pics: VecDeque::new(), last: None });
@@ -227,7 +227,7 @@ impl VStream {
                 let more = s.codec.drain();
                 let got = push_pictures(s, more);
                 if !got && s.pics.is_empty() {
-                    return Err(E_FAIL);
+                    return Err(Hr::Fail.code());
                 }
                 s.next = n + 1;
                 continue;
@@ -236,7 +236,7 @@ impl VStream {
             s.next += 1;
             let smp = &self.v.samples[i];
             let (time, key) = (smp.pts.max(0) as u64, smp.key);
-            let b = self.data.read(c.as_deref_mut(), smp.off, smp.size as usize).ok_or(E_FAIL)?;
+            let b = self.data.read(c.as_deref_mut(), smp.off, smp.size as usize).ok_or(Hr::Fail.code())?;
             let s = self.soft.as_mut().unwrap();
             let fs = s.codec.decode(&b, time, key);
             push_pictures(s, fs);

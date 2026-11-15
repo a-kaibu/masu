@@ -21,13 +21,127 @@ use crate::api::{implement, vtable, Ctx, Handler};
 use crate::dshow_play::{self as play, frame_at, letterbox, now, Play, SEC};
 use crate::mem::{self, ps, put32, putp, r16, r32, rp, w16, w32, w64, wp};
 
-const S_FALSE: u32 = 1;
-const E_FAIL: u32 = 0x8000_4005;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_POINTER: u32 = 0x8000_4003;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
+/// The HRESULTs Media Foundation's objects answer (besides S_OK): winerror.h's and mferror.h's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Hr {
+    /// S_FALSE
+    False,
+    /// E_FAIL
+    Fail,
+    /// E_NOTIMPL
+    NotImpl,
+    /// E_NOINTERFACE
+    NoInterface,
+    /// E_POINTER
+    Pointer,
+    /// E_INVALIDARG
+    InvalidArg,
+    /// E_OUTOFMEMORY
+    OutOfMemory,
+    /// E_UNEXPECTED
+    Unexpected,
+    /// INSUFFICIENT_BUFFER
+    InsufficientBuffer,
+    /// MF_E_SHUTDOWN (also what Windows answers a closed byte stream with)
+    Shutdown,
+    /// MF_E_ATTRIBUTENOTFOUND
+    AttributeNotFound,
+    /// MF_E_INVALIDTYPE
+    InvalidType,
+    /// MF_E_INVALIDMEDIATYPE
+    InvalidMediaType,
+    /// TransferVideoFrame with nothing loaded (Windows' answer; the SDK's headers do not name it)
+    NoFrameToTransfer,
+    /// MF_E_INVALIDREQUEST
+    InvalidRequest,
+    /// MF_E_UNSUPPORTED_BYTESTREAM_TYPE
+    UnsupportedByteStreamType,
+    /// MF_E_CLOCK_NO_TIME_SOURCE
+    ClockNoTimeSource,
+    /// MF_E_INVALIDINDEX
+    InvalidIndex,
+    /// MF_E_INVALIDSTREAMNUMBER
+    InvalidStreamNumber,
+    /// MF_E_MULTIPLE_SUBSCRIBERS
+    MultipleSubscribers,
+    /// MF_E_NOTACCEPTING
+    NotAccepting,
+    /// MF_E_NOT_FOUND
+    NotFound,
+    /// MF_E_NOT_INITIALIZED (= MF_E_DXGI_DEVICE_NOT_INITIALIZED)
+    NotInitialized,
+    /// MF_E_NO_EVENTS_AVAILABLE
+    NoEventsAvailable,
+    /// MF_E_NO_MORE_TYPES
+    NoMoreTypes,
+    /// MF_E_TOPO_UNSUPPORTED
+    TopoUnsupported,
+    /// MF_E_TRANSFORM_TYPE_NOT_SET
+    TransformTypeNotSet,
+    /// MF_E_UNEXPECTED (mferror.h's, not E_UNEXPECTED)
+    MfUnexpected,
+    /// MF_E_UNSUPPORTED_SERVICE
+    UnsupportedService,
+    /// HRESULT_FROM_WIN32(ERROR_OBJECT_ALREADY_EXISTS)
+    Already,
+    /// HRESULT_FROM_WIN32(ERROR_WAS_LOCKED)
+    WasLocked,
+    /// HRESULT_FROM_WIN32(ERROR_WAS_UNLOCKED)
+    WasUnlocked,
+    /// E_ACCESSDENIED
+    AccessDenied,
+    /// HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+    FileNotFound,
+    /// HRESULT_FROM_WIN32(ERROR_FILE_EXISTS)
+    FileExists,
+    /// MF_E_NO_SAMPLE_TIMESTAMP
+    NoSampleTimestamp,
+    /// MF_E_NO_SAMPLE_DURATION
+    NoSampleDuration,
+}
+impl Hr {
+    pub(crate) const fn code(self) -> u32 {
+        match self {
+            Hr::False => 1,
+            Hr::Fail => 0x8000_4005,
+            Hr::NotImpl => 0x8000_4001,
+            Hr::NoInterface => 0x8000_4002,
+            Hr::Pointer => 0x8000_4003,
+            Hr::InvalidArg => 0x8007_0057,
+            Hr::OutOfMemory => 0x8007_000e,
+            Hr::Unexpected => 0x8000_ffff,
+            Hr::InsufficientBuffer => 0x8007_007a,
+            Hr::Shutdown => 0xc00d_3e85,
+            Hr::AttributeNotFound => 0xc00d_36e6,
+            Hr::InvalidType => 0xc00d_36bd,
+            Hr::InvalidMediaType => 0xc00d_36b4,
+            Hr::NoFrameToTransfer => 0xc00d_4e26,
+            Hr::InvalidRequest => 0xc00d_36b2,
+            Hr::UnsupportedByteStreamType => 0xc00d_36c4,
+            Hr::ClockNoTimeSource => 0xc00d_9c41,
+            Hr::InvalidIndex => 0xc00d_36bf,
+            Hr::InvalidStreamNumber => 0xc00d_36b3,
+            Hr::MultipleSubscribers => 0xc00d_36e3,
+            Hr::NotAccepting => 0xc00d_36b5,
+            Hr::NotFound => 0xc00d_36d5,
+            Hr::NotInitialized => 0xc00d_36b6,
+            Hr::NoEventsAvailable => 0xc00d_3e80,
+            Hr::NoMoreTypes => 0xc00d_36b9,
+            Hr::TopoUnsupported => 0xc00d_5214,
+            Hr::TransformTypeNotSet => 0xc00d_6d60,
+            Hr::MfUnexpected => 0xc00d_36bb,
+            Hr::UnsupportedService => 0xc00d_36ba,
+            Hr::Already => 0x8007_1392,
+            Hr::WasLocked => 0x8007_0717,
+            Hr::WasUnlocked => 0x8007_0716,
+            Hr::AccessDenied => 0x8007_0005,
+            Hr::FileNotFound => 0x8007_0002,
+            Hr::FileExists => 0x8007_0050,
+            Hr::NoSampleTimestamp => 0xc00d_36e7,
+            Hr::NoSampleDuration => 0xc00d_36e8,
+        }
+    }
+}
 /// The largest blob an attribute store takes (MF itself has no limit but memory: a blob past
 /// this is the guest's bug, and copying gigabytes would end sake).
 const MAX_BLOB: u32 = 64 << 20;
@@ -38,22 +152,13 @@ fn blob(p: u32, n: u32) -> Result<Vec<u8>, u32> {
         return Ok(Vec::new());
     }
     if n > MAX_BLOB {
-        return Err(E_OUTOFMEMORY);
+        return Err(Hr::OutOfMemory.code());
     }
     if p == 0 {
-        return Err(E_POINTER);
+        return Err(Hr::Pointer.code());
     }
     Ok(mem::slice(p, n).to_vec())
 }
-const INSUFFICIENT_BUFFER: u32 = 0x8007_007a;
-const MF_E_SHUTDOWN: u32 = 0xc00d_3e85;
-const MF_E_ATTRIBUTENOTFOUND: u32 = 0xc00d_36e6;
-const MF_E_INVALIDTYPE: u32 = 0xc00d_36bd;
-const MF_E_INVALIDMEDIATYPE: u32 = 0xc00d_36b4;
-/// TransferVideoFrame with nothing loaded (Windows' answer; the SDK's headers do not name it)
-const NO_FRAME_TO_TRANSFER: u32 = 0xc00d_4e26;
-const MF_E_INVALIDREQUEST: u32 = 0xc00d_36b2;
-const MF_E_UNSUPPORTED_BYTESTREAM_TYPE: u32 = 0xc00d_36c4;
 
 type Guid = [u8; 16];
 
@@ -99,7 +204,7 @@ fn ok(_: &mut Ctx) -> u32 {
     0
 }
 fn notimpl(_: &mut Ctx) -> u32 {
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 fn zero(_: &mut Ctx) -> u32 {
     0
@@ -244,7 +349,7 @@ fn get_prop(p: u32) -> Result<Val, u32> {
         31 => Val::Str(mem::wstr(rp(p + 8))),
         0x1011 => Val::Blob(blob(rp(p + 8 + ps()), r32(p + 8))?),
         13 => Val::Unk(rp(p + 8)),
-        _ => return Err(MF_E_INVALIDTYPE),
+        _ => return Err(Hr::InvalidType.code()),
     })
 }
 fn task_wstr(s: &[u16]) -> u32 {
@@ -258,15 +363,15 @@ fn task_wstr(s: &[u16]) -> u32 {
 /// The value of key (argument 1) of the store this is, or the error.
 fn value(c: &Ctx) -> Result<Val, u32> {
     if c.a(1) == 0 {
-        return Err(E_POINTER);
+        return Err(Hr::Pointer.code());
     }
     let k = guid_at(c.a(1));
-    attrs(c.a(0), |a| a.1.get(&k).cloned()).flatten().ok_or(MF_E_ATTRIBUTENOTFOUND)
+    attrs(c.a(0), |a| a.1.get(&k).cloned()).flatten().ok_or(Hr::AttributeNotFound.code())
 }
 /// Sets key (argument 1) of this store; the value it replaces is released.
 fn set_value(c: &mut Ctx, v: Val) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let k = guid_at(c.a(1));
     if let Val::Unk(u) = v {
@@ -285,13 +390,13 @@ macro_rules! getter {
             match value(c) {
                 Ok($pat) => {
                     if out == 0 {
-                        return E_POINTER;
+                        return Hr::Pointer.code();
                     }
                     #[allow(clippy::redundant_closure_call)]
                     ($put)(out);
                     0
                 }
-                Ok(_) => MF_E_INVALIDTYPE,
+                Ok(_) => Hr::InvalidType.code(),
                 Err(e) => e,
             }
         }
@@ -307,7 +412,7 @@ getter!(at_get_blobsize, Val::Blob(b) => |o: u32| w32(o, b.len() as u32));
 fn at_qi(c: &mut Ctx) -> u32 {
     let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(iid);
     // IMFAttributes {2cd2d921-c447-44a7-a13c-4adabfc247e3}
@@ -317,7 +422,7 @@ fn at_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn at_add_ref(c: &mut Ctx) -> u32 {
     attrs(c.a(0), |a| {
@@ -364,7 +469,7 @@ fn at_get_type(c: &mut Ctx) -> u32 {
     match value(c) {
         Ok(v) => {
             if out == 0 {
-                return E_POINTER;
+                return Hr::Pointer.code();
             }
             w32(out, v.vt() as u32);
             0
@@ -376,7 +481,7 @@ fn at_get_type(c: &mut Ctx) -> u32 {
 fn at_compare_item(c: &mut Ctx) -> u32 {
     let (pv, out) = (c.a(2), c.a(3));
     if pv == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let same = match (value(c), get_prop(pv)) {
         (Ok(a), Ok(b)) => a == b,
@@ -389,15 +494,15 @@ fn at_compare_item(c: &mut Ctx) -> u32 {
 fn at_compare(c: &mut Ctx) -> u32 {
     let (theirs, how, out) = (c.a(1), c.a(2), c.a(3));
     if theirs == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let (Some(a), Some(b)) = (store_of(c.a(0)), store_of(theirs)) else { return E_NOTIMPL };
+    let (Some(a), Some(b)) = (store_of(c.a(0)), store_of(theirs)) else { return Hr::NotImpl.code() };
     match a.matches(&b, how) {
         Some(m) => {
             w32(out, m as u32);
             0
         }
-        None => E_INVALIDARG,
+        None => Hr::InvalidArg.code(),
     }
 }
 /// GetString(key, WCHAR *buf, UINT32 chars, UINT32 *length)
@@ -409,17 +514,17 @@ fn at_get_string(c: &mut Ctx) -> u32 {
                 w32(len, s.len() as u32);
             }
             if buf == 0 {
-                return E_POINTER;
+                return Hr::Pointer.code();
             }
             if (cap as usize) < s.len() + 1 {
-                return INSUFFICIENT_BUFFER;
+                return Hr::InsufficientBuffer.code();
             }
             for (i, &ch) in s.iter().chain([&0]).enumerate() {
                 w16(buf + 2 * i as u32, ch);
             }
             0
         }
-        Ok(_) => MF_E_INVALIDTYPE,
+        Ok(_) => Hr::InvalidType.code(),
         Err(e) => e,
     }
 }
@@ -429,13 +534,13 @@ fn at_get_alloc_string(c: &mut Ctx) -> u32 {
     match value(c) {
         Ok(Val::Str(s)) => {
             if out == 0 || len == 0 {
-                return E_POINTER;
+                return Hr::Pointer.code();
             }
             putp(out, task_wstr(&s));
             w32(len, s.len() as u32);
             0
         }
-        Ok(_) => MF_E_INVALIDTYPE,
+        Ok(_) => Hr::InvalidType.code(),
         Err(e) => e,
     }
 }
@@ -445,10 +550,10 @@ fn at_get_blob(c: &mut Ctx) -> u32 {
     match value(c) {
         Ok(Val::Blob(b)) => {
             if buf == 0 && !b.is_empty() {
-                return E_POINTER;
+                return Hr::Pointer.code();
             }
             if (cap as usize) < b.len() {
-                return INSUFFICIENT_BUFFER;
+                return Hr::InsufficientBuffer.code();
             }
             mem::write(buf, &b);
             if got != 0 {
@@ -456,7 +561,7 @@ fn at_get_blob(c: &mut Ctx) -> u32 {
             }
             0
         }
-        Ok(_) => MF_E_INVALIDTYPE,
+        Ok(_) => Hr::InvalidType.code(),
         Err(e) => e,
     }
 }
@@ -466,7 +571,7 @@ fn at_get_alloc_blob(c: &mut Ctx) -> u32 {
     match value(c) {
         Ok(Val::Blob(b)) => {
             if out == 0 || size == 0 {
-                return E_POINTER;
+                return Hr::Pointer.code();
             }
             let q = mem::heap_alloc(b.len().max(1) as u32, false);
             mem::write(q, &b);
@@ -474,7 +579,7 @@ fn at_get_alloc_blob(c: &mut Ctx) -> u32 {
             w32(size, b.len() as u32);
             0
         }
-        Ok(_) => MF_E_INVALIDTYPE,
+        Ok(_) => Hr::InvalidType.code(),
         Err(e) => e,
     }
 }
@@ -484,21 +589,21 @@ fn at_get_unknown(c: &mut Ctx) -> u32 {
     match value(c) {
         Ok(Val::Unk(u)) => {
             if out == 0 {
-                return E_POINTER;
+                return Hr::Pointer.code();
             }
             if u == 0 {
                 putp(out, 0);
-                return E_NOINTERFACE;
+                return Hr::NoInterface.code();
             }
             com(c, u, 0, &[iid, out])
         }
-        Ok(_) => MF_E_INVALIDTYPE,
+        Ok(_) => Hr::InvalidType.code(),
         Err(e) => e,
     }
 }
 fn at_set_item(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match get_prop(c.a(2)) {
         Ok(v) => set_value(c, v),
@@ -507,7 +612,7 @@ fn at_set_item(c: &mut Ctx) -> u32 {
 }
 fn at_delete(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let k = guid_at(c.a(1));
     if let Some(Val::Unk(u)) = attrs(c.a(0), |a| a.1.delete(&k)).flatten() {
@@ -538,14 +643,14 @@ fn at_set_f64(c: &mut Ctx) -> u32 {
 }
 fn at_set_guid(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(2));
     set_value(c, Val::Guid(g))
 }
 fn at_set_string(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let s = mem::wstr(c.a(2));
     set_value(c, Val::Str(s))
@@ -553,7 +658,7 @@ fn at_set_string(c: &mut Ctx) -> u32 {
 fn at_set_blob(c: &mut Ctx) -> u32 {
     let (p, n) = (c.a(2), c.a(3));
     if p == 0 && n != 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match blob(p, n) {
         Ok(b) => set_value(c, Val::Blob(b)),
@@ -566,7 +671,7 @@ fn at_set_unknown(c: &mut Ctx) -> u32 {
 }
 fn at_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), attrs(c.a(0), |a| a.1.items.len() as u32).unwrap_or(0));
     0
@@ -574,7 +679,7 @@ fn at_count(c: &mut Ctx) -> u32 {
 /// GetItemByIndex(index, GUID *key, PROPVARIANT *v)
 fn at_by_index(c: &mut Ctx) -> u32 {
     let (i, key, out) = (c.a(1), c.a(2), c.a(3));
-    let Some((k, v)) = attrs(c.a(0), |a| a.1.items.get(i as usize).cloned()).flatten() else { return E_INVALIDARG };
+    let Some((k, v)) = attrs(c.a(0), |a| a.1.items.get(i as usize).cloned()).flatten() else { return Hr::InvalidArg.code() };
     if key != 0 {
         mem::write(key, &k);
     }
@@ -587,11 +692,11 @@ fn at_by_index(c: &mut Ctx) -> u32 {
 fn at_copy_all(c: &mut Ctx) -> u32 {
     let to = c.a(1);
     if to == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(s) = store_of(c.a(0)) else { return E_FAIL };
+    let Some(s) = store_of(c.a(0)) else { return Hr::Fail.code() };
     if store_of(to).is_none() {
-        return E_NOTIMPL;
+        return Hr::NotImpl.code();
     }
     for (_, v) in &s.items {
         if let Val::Unk(u) = v {
@@ -652,7 +757,7 @@ fn attrs_vtable() -> u32 {
 /// MFCreateAttributes(IMFAttributes **out, UINT32 initial size)
 fn MFCreateAttributes(c: &mut Ctx) -> u32 {
     if c.a(0) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(0), new_attrs());
     0
@@ -675,7 +780,7 @@ fn manager<R>(b: u32, f: impl FnOnce(&mut Manager) -> R) -> Option<R> {
 fn mg_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFDXGIDeviceManager {eb533d5d-2db6-40f8-97a9-494692014f07}
@@ -685,7 +790,7 @@ fn mg_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn mg_add_ref(c: &mut Ctx) -> u32 {
     manager(c.a(0), |m| {
@@ -711,9 +816,9 @@ fn mg_release(c: &mut Ctx) -> u32 {
 fn mg_reset(c: &mut Ctx) -> u32 {
     let (b, dev, token) = (c.a(0), c.a(1), c.a(2));
     if dev == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let Some(old) = manager(b, |m| if m.token == token { Some(m.device) } else { None }).flatten() else { return E_INVALIDARG };
+    let Some(old) = manager(b, |m| if m.token == token { Some(m.device) } else { None }).flatten() else { return Hr::InvalidArg.code() };
     add_ref(c, dev);
     manager(b, |m| m.device = dev);
     release(c, old);
@@ -722,10 +827,10 @@ fn mg_reset(c: &mut Ctx) -> u32 {
 /// OpenDeviceHandle(HANDLE *h): one handle, the device's
 fn mg_open(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if manager(c.a(0), |m| m.device).unwrap_or(0) == 0 {
-        return 0xc00d_36b6; // MF_E_DXGI_DEVICE_NOT_INITIALIZED
+        return Hr::NotInitialized.code();
     }
     putp(c.a(1), 1);
     0
@@ -735,12 +840,12 @@ fn mg_open(c: &mut Ctx) -> u32 {
 fn mg_device_qi(c: &mut Ctx) -> u32 {
     let (iid, out) = (c.a(2), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let dev = manager(c.a(0), |m| m.device).unwrap_or(0);
     if dev == 0 {
         putp(out, 0);
-        return 0xc00d_36b6;
+        return Hr::NotInitialized.code();
     }
     com(c, dev, 0, &[iid, out])
 }
@@ -748,7 +853,7 @@ fn mg_device_qi(c: &mut Ctx) -> u32 {
 fn MFCreateDXGIDeviceManager(c: &mut Ctx) -> u32 {
     let (token, out) = (c.a(0), c.a(1));
     if token == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     static VT: OnceLock<u32> = OnceLock::new();
     let vt = *VT.get_or_init(|| {
@@ -784,7 +889,7 @@ fn new_error(code: u16, hr: u32) -> u32 {
     fn er_qi(c: &mut Ctx) -> u32 {
         let (this, out) = (c.a(0), c.a(2));
         if out == 0 {
-            return E_POINTER;
+            return Hr::Pointer.code();
         }
         let g = guid_at(c.a(1));
         // IMFMediaError {fc0e10d2-ab2a-4501-a951-06bb1075184c}
@@ -794,7 +899,7 @@ fn new_error(code: u16, hr: u32) -> u32 {
             return 0;
         }
         putp(out, 0);
-        E_NOINTERFACE
+        Hr::NoInterface.code()
     }
     fn er_add_ref(c: &mut Ctx) -> u32 {
         let p = c.a(0) + ps() + 8;
@@ -818,7 +923,7 @@ fn new_error(code: u16, hr: u32) -> u32 {
     }
     fn er_set_code(c: &mut Ctx) -> u32 {
         if c.a(1) > 4 {
-            return E_INVALIDARG;
+            return Hr::InvalidArg.code();
         }
         w16(c.a(0) + ps(), c.a(1) as u16);
         0
@@ -1188,7 +1293,7 @@ fn start_events(b: u32) {
 fn en_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFMediaEngine {98a1b0bb-03eb-4935-ae7c-93c1fa0e1c93}, IMFMediaEngineEx {83015ead-b1e6-40d0-...}
@@ -1201,7 +1306,7 @@ fn en_qi(c: &mut Ctx) -> u32 {
         eprintln!("sake: IMFMediaEngine QueryInterface {:08x}: no", r32(c.a(1)));
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn en_add_ref(c: &mut Ctx) -> u32 {
     engine(c.a(0), |e| {
@@ -1272,7 +1377,7 @@ fn load(b: u32) {
         if there {
             eprintln!("sake: movie {w}: not played (no .vnv to decode, see masu pack)");
         }
-        engine(b, |e| e.st.failed(if there { MF_E_UNSUPPORTED_BYTESTREAM_TYPE } else { 0x8007_0002 }));
+        engine(b, |e| e.st.failed(if there { Hr::UnsupportedByteStreamType.code() } else { Hr::FileNotFound.code() }));
         return;
     };
     eprintln!("sake: movie {w}: {}x{} {} frames (Media Engine)", movie.w, movie.h, movie.frames);
@@ -1302,7 +1407,7 @@ fn en_load(c: &mut Ctx) -> u32 {
 }
 fn en_get_source(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let s = engine(c.a(0), |e| e.src.clone()).flatten();
     putp(c.a(1), s.map_or(0, |s| crate::misc::bstr_alloc(&s)));
@@ -1310,7 +1415,7 @@ fn en_get_source(c: &mut Ctx) -> u32 {
 }
 fn en_get_error(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let (code, hr) = engine(c.a(0), |e| e.st.error).unwrap_or((0, 0));
     putp(c.a(1), if code == 0 { 0 } else { new_error(code, hr) });
@@ -1319,7 +1424,7 @@ fn en_get_error(c: &mut Ctx) -> u32 {
 fn en_set_error(c: &mut Ctx) -> u32 {
     let code = c.a(1);
     if code > 4 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     engine(c.a(0), |e| e.st.error = (code as u16, 0));
     0
@@ -1401,7 +1506,7 @@ fn seek_to(b: u32, to: f64) -> u32 {
         }
         (ok, e.st.duration)
     }) else {
-        return MF_E_INVALIDREQUEST;
+        return Hr::InvalidRequest.code();
     };
     let to = if to.is_nan() { 0.0 } else { to.clamp(0.0, if dur.is_nan() { 0.0 } else { dur }) };
     timeline(b, |tl, t| tl.seek(t, (to * SEC as f64) as u64));
@@ -1433,7 +1538,7 @@ fn en_rate(c: &mut Ctx) -> u32 {
 fn en_set_rate(c: &mut Ctx) -> u32 {
     let (b, r) = (c.a(0), dbl(c, 1, 1));
     if r.is_nan() || r < 0.0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     engine(b, |e| {
         if e.st.rate != r {
@@ -1478,7 +1583,7 @@ fn en_volume(c: &mut Ctx) -> u32 {
 fn en_set_volume(c: &mut Ctx) -> u32 {
     let (b, v) = (c.a(0), dbl(c, 1, 1));
     if v.is_nan() {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let v = v.clamp(0.0, 1.0);
     engine(b, |e| {
@@ -1503,7 +1608,7 @@ fn video_size(c: &mut Ctx, aspect: bool) -> u32 {
                 put32(p, 0);
             }
         }
-        return E_FAIL;
+        return Hr::Fail.code();
     };
     let (w, h) = if aspect {
         let g = gcd(w, h).max(1);
@@ -1529,12 +1634,12 @@ fn en_aspect(c: &mut Ctx) -> u32 {
 fn en_tick(c: &mut Ctx) -> u32 {
     let (b, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some((pos, rate, frames, ..)) = position(b) else { return S_FALSE };
+    let Some((pos, rate, frames, ..)) = position(b) else { return Hr::False.code() };
     let n = frame_at(pos, rate, frames);
     if engine(b, |e| e.ticked.replace(n) == Some(n)).unwrap_or(true) {
-        return S_FALSE;
+        return Hr::False.code();
     }
     let pts = n as u128 * rate.1 as u128 * SEC as u128 / rate.0.max(1) as u128;
     w64(out, pts as u64);
@@ -1631,24 +1736,24 @@ fn picture_pixels(w: u32, h: u32) -> Option<usize> {
 fn en_transfer(c: &mut Ctx) -> u32 {
     let (b, surf, src, dst, border) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     if surf == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some((pos, rate, frames, stream, w, h)) = position(b) else { return NO_FRAME_TO_TRANSFER };
-    let Some((tw, th, fmt)) = kura::d3d11::texture_desc(surf) else { return E_INVALIDARG };
+    let Some((pos, rate, frames, stream, w, h)) = position(b) else { return Hr::NoFrameToTransfer.code() };
+    let Some((tw, th, fmt)) = kura::d3d11::texture_desc(surf) else { return Hr::InvalidArg.code() };
     let rgba = match fmt {
         87 | 88 | 91 | 93 => false, // B8G8R8A8 / X8 (UNORM, SRGB)
         28 | 29 => true,            // R8G8B8A8
-        _ => return MF_E_INVALIDMEDIATYPE,
+        _ => return Hr::InvalidMediaType.code(),
     };
     let (l, t, r, bt) = if dst == 0 { (0, 0, tw as i32, th as i32) } else { (r32(dst) as i32, r32(dst + 4) as i32, r32(dst + 8) as i32, r32(dst + 12) as i32) };
     let (l, t, r, bt) = (l.max(0), t.max(0), r.min(tw as i32), bt.min(th as i32));
     if r <= l || bt <= t {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let Some(pixels) = picture_pixels(w, h) else { return E_FAIL };
+    let Some(pixels) = picture_pixels(w, h) else { return Hr::Fail.code() };
     let n = frame_at(pos, rate, frames);
     // (taken out of the engine while it decodes: the events thread goes on)
-    let Some(mut f) = engine(b, |e| std::mem::take(&mut e.frames)) else { return NO_FRAME_TO_TRANSFER };
+    let Some(mut f) = engine(b, |e| std::mem::take(&mut e.frames)) else { return Hr::NoFrameToTransfer.code() };
     if f.size != Some((w, h)) {
         f.size = None;
         f.px.clear();
@@ -1667,7 +1772,7 @@ fn en_transfer(c: &mut Ctx) -> u32 {
         kura::snap::sleep(std::time::Duration::from_millis(5));
     }
     let done = if !shown && f.size.is_none() {
-        E_FAIL
+        Hr::Fail.code()
     } else {
         f.size = Some((w, h));
         let border = if border == 0 { 0xff00_0000 } else { r32(border) };
@@ -1675,7 +1780,7 @@ fn en_transfer(c: &mut Ctx) -> u32 {
         f.compose(&px, w, h, src_rect(src, w, h), ((r - l) as u32, (bt - t) as u32), border, rgba);
         f.px = px;
         let done = unsafe { kura::d3d11::write_texture_from(surf, f.out.as_ptr() as *const u8, 4 * (r - l) as u32, [l as u32, t as u32, r as u32, bt as u32]) };
-        if done { 0 } else { E_INVALIDARG }
+        if done { 0 } else { Hr::InvalidArg.code() }
     };
     engine(b, |e| e.frames = f);
     done
@@ -1683,17 +1788,17 @@ fn en_transfer(c: &mut Ctx) -> u32 {
 /// GetResourceCharacteristics(DWORD *): it can seek and pause
 fn en_characteristics(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if engine(c.a(0), |e| e.movie) != Some(true) {
-        return MF_E_INVALIDREQUEST;
+        return Hr::InvalidRequest.code();
     }
     put32(c.a(1), 0x2 | 0x4);
     0
 }
 fn en_streams(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let n = engine(c.a(0), |e| e.st.video.is_some() as u32 + e.st.audio as u32).unwrap_or(0);
     put32(c.a(1), n);
@@ -1701,7 +1806,7 @@ fn en_streams(c: &mut Ctx) -> u32 {
 }
 fn en_false_out(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), 0);
     0
@@ -1711,7 +1816,7 @@ fn en_true(_: &mut Ctx) -> u32 {
 }
 fn en_get_category(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), engine(c.a(0), |e| e.category).unwrap_or(0));
     0
@@ -1723,7 +1828,7 @@ fn en_set_category(c: &mut Ctx) -> u32 {
 }
 fn en_get_role(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     put32(c.a(1), engine(c.a(0), |e| e.role).unwrap_or(0));
     0
@@ -1736,7 +1841,7 @@ fn en_set_role(c: &mut Ctx) -> u32 {
 /// CanPlayType(BSTR type, MF_MEDIA_ENGINE_CANPLAY *answer): "maybe" for video and audio
 fn en_can_play(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let t = if c.a(1) == 0 { String::new() } else { String::from_utf16_lossy(&mem::wstr(c.a(1))) };
     put32(c.a(2), (t.starts_with("video/") || t.starts_with("audio/")) as u32);
@@ -1748,7 +1853,7 @@ macro_rules! hr {
     ($f:expr) => {{
         fn w(c: &mut Ctx) -> u32 {
             if shut(c.a(0)) {
-                return MF_E_SHUTDOWN;
+                return Hr::Shutdown.code();
             }
             ($f)(c)
         }
@@ -1866,18 +1971,18 @@ fn is_role(g: &Guid) -> bool {
 fn fa_create(c: &mut Ctx) -> u32 {
     let (_flags, attr, out) = (c.a(1), c.a(2), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     if attr == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(s) = store_of(attr) else { return E_INVALIDARG };
+    let Some(s) = store_of(attr) else { return Hr::InvalidArg.code() };
     let notify = s.items.iter().find_map(|(k, v)| match v {
         Val::Unk(u) if is_callback(k) && *u != 0 => Some(*u),
         _ => None,
     });
-    let Some(notify) = notify else { return MF_E_ATTRIBUTENOTFOUND };
+    let Some(notify) = notify else { return Hr::AttributeNotFound.code() };
     let u32_of = |f: fn(&Guid) -> bool| s.items.iter().find_map(|(k, v)| if let (true, Val::U32(x)) = (f(k), v) { Some(*x) } else { None });
     let (category, role) = (u32_of(is_category).unwrap_or(0), u32_of(is_role).unwrap_or(0));
     add_ref(c, notify);
@@ -1892,7 +1997,7 @@ fn fa_create(c: &mut Ctx) -> u32 {
 fn fa_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFMediaEngineClassFactory {4d645ace-26aa-4688-9be1-df3516990b93}
@@ -1901,11 +2006,11 @@ fn fa_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn fa_create_error(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(c.a(1), new_error(0, 0));
     0
@@ -1945,7 +2050,7 @@ fn none(c: &mut Ctx, i: u32) -> u32 {
     if p != 0 {
         putp(p, 0);
     }
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 
 pub fn init() {

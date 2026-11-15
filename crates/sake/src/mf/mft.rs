@@ -36,10 +36,6 @@ fn k_usage() -> Guid {
 /// The samples the decoder asks for (MF_SA_MINIMUM_OUTPUT_SAMPLE_COUNT): Unity's own default.
 pub const MIN_SAMPLES: u32 = 6;
 
-const MF_E_NOT_INITIALIZED: u32 = 0xc00d_36b6;
-const MF_E_INVALIDSTREAMNUMBER: u32 = 0xc00d_36b3;
-const MF_E_TRANSFORM_TYPE_NOT_SET: u32 = 0xc00d_6d60;
-const MF_E_NO_MORE_TYPES: u32 = 0xc00d_36b9;
 
 // --- the decoder ------------------------------------------------------------------------------
 
@@ -58,7 +54,7 @@ fn mft<R>(b: u32, f: impl FnOnce(&mut Mft) -> R) -> Option<R> {
 fn mt_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     if is_unknown(&g) || is_transform(&g) {
@@ -67,7 +63,7 @@ fn mt_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn mt_add_ref(c: &mut Ctx) -> u32 {
     mft(c.a(0), |m| {
@@ -96,7 +92,7 @@ fn mt_release(c: &mut Ctx) -> u32 {
 fn mt_limits(c: &mut Ctx) -> u32 {
     for i in 1..=4 {
         if c.a(i) == 0 {
-            return E_POINTER;
+            return Hr::Pointer.code();
         }
     }
     for i in 1..=4 {
@@ -107,7 +103,7 @@ fn mt_limits(c: &mut Ctx) -> u32 {
 /// GetStreamCount(in, out): 1, 1
 fn mt_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 || c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), 1);
     w32(c.a(2), 1);
@@ -117,25 +113,25 @@ fn mt_count(c: &mut Ctx) -> u32 {
 fn mt_attributes(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let a = mft(this, |m| m.attrs).unwrap_or(0);
     add_ref(c, a);
     putp(out, a);
-    if a == 0 { E_NOTIMPL } else { 0 }
+    if a == 0 { Hr::NotImpl.code() } else { 0 }
 }
 /// GetOutputAvailableType(stream, index, IMFMediaType **): the reader's current type, index 0
 fn mt_output_available(c: &mut Ctx) -> u32 {
     let (this, id, i, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     if id != 0 {
-        return MF_E_INVALIDSTREAMNUMBER;
+        return Hr::InvalidStreamNumber.code();
     }
     if i != 0 {
-        return MF_E_NO_MORE_TYPES;
+        return Hr::NoMoreTypes.code();
     }
     current(this, out)
 }
@@ -143,35 +139,35 @@ fn mt_output_available(c: &mut Ctx) -> u32 {
 fn mt_output_current(c: &mut Ctx) -> u32 {
     let (this, id, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     if id != 0 {
-        return MF_E_INVALIDSTREAMNUMBER;
+        return Hr::InvalidStreamNumber.code();
     }
     current(this, out)
 }
 fn current(this: u32, out: u32) -> u32 {
-    let Some((r, k)) = mft(this, |m| (m.reader, m.stream)) else { return E_INVALIDARG };
+    let Some((r, k)) = mft(this, |m| (m.reader, m.stream)) else { return Hr::InvalidArg.code() };
     match super::reader::current_type(r, k) {
         Some(s) => {
             putp(out, super::reader::new_type(s));
             0
         }
-        None => MF_E_TRANSFORM_TYPE_NOT_SET,
+        None => Hr::TransformTypeNotSet.code(),
     }
 }
 /// GetInputStatus / GetOutputStatus: ready (MFT_INPUT_STATUS_ACCEPT_DATA: the reader feeds it)
 fn mt_input_status(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(2), 1);
     0
 }
 fn mt_output_status(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), 0);
     0
@@ -181,7 +177,7 @@ fn mt_stream_attributes(c: &mut Ctx) -> u32 {
     if c.a(2) != 0 {
         putp(c.a(2), 0);
     }
-    E_NOTIMPL
+    Hr::NotImpl.code()
 }
 fn mt_vtable() -> u32 {
     static VT: OnceLock<u32> = OnceLock::new();
@@ -268,16 +264,16 @@ fn is_allocator(g: &Guid) -> bool {
 pub fn frames_of(ty: &Store, attrs: Option<&Store>) -> Result<Frames, u32> {
     let size = match ty.get(&super::source::k_frame_size()) {
         Some(Val::U64(v)) => *v,
-        _ => return Err(MF_E_INVALIDMEDIATYPE),
+        _ => return Err(Hr::InvalidMediaType.code()),
     };
     let (w, h) = ((size >> 32) as u32, size as u32);
     let fmt = match ty.get(&super::reader::k_subtype()) {
         Some(Val::Guid(g)) => super::dxgi::format_of(u32::from_le_bytes(g[0..4].try_into().unwrap())),
         _ => None,
     };
-    let Some(fmt) = fmt else { return Err(MF_E_INVALIDMEDIATYPE) };
+    let Some(fmt) = fmt else { return Err(Hr::InvalidMediaType.code()) };
     if w == 0 || h == 0 || super::dxgi::frame_bytes(fmt, w, h).is_none() || fmt == 103 && (w | h) & 1 != 0 {
-        return Err(MF_E_INVALIDMEDIATYPE);
+        return Err(Hr::InvalidMediaType.code());
     }
     let get = |k: Guid, d: u32| match attrs.and_then(|a| a.get(&k)) {
         Some(Val::U32(v)) => *v,
@@ -285,7 +281,7 @@ pub fn frames_of(ty: &Store, attrs: Option<&Store>) -> Result<Frames, u32> {
     };
     let usage = get(k_usage(), 0);
     if usage > 2 {
-        return Err(E_INVALIDARG);
+        return Err(Hr::InvalidArg.code());
     }
     Ok(Frames { w, h, fmt, usage, bind: get(k_bindflags(), 0x20) })
 }
@@ -293,7 +289,7 @@ pub fn frames_of(ty: &Store, attrs: Option<&Store>) -> Result<Frames, u32> {
 fn al_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if is_allocator(&guid_at(c.a(1))) {
         alloc(this, |a| a.refs += 1);
@@ -301,7 +297,7 @@ fn al_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn al_add_ref(c: &mut Ctx) -> u32 {
     alloc(c.a(0), |a| {
@@ -340,9 +336,9 @@ fn al_uninit(c: &mut Ctx) -> u32 {
 }
 fn init_with(this: u32, ty: u32, attrs: u32) -> u32 {
     if ty == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(t) = store_of(ty) else { return E_INVALIDARG };
+    let Some(t) = store_of(ty) else { return Hr::InvalidArg.code() };
     let a = if attrs != 0 { store_of(attrs) } else { None };
     match frames_of(&t, a.as_ref()) {
         Ok(f) => {
@@ -355,7 +351,7 @@ fn init_with(this: u32, ty: u32, attrs: u32) -> u32 {
 /// InitializeSampleAllocator(count, IMFMediaType *)
 fn al_init(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     init_with(c.a(0), c.a(2), 0)
 }
@@ -363,7 +359,7 @@ fn al_init(c: &mut Ctx) -> u32 {
 fn al_init_ex(c: &mut Ctx) -> u32 {
     let (initial, max) = (c.a(1), c.a(2));
     if max == 0 || initial > max {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     init_with(c.a(0), c.a(4), c.a(3))
 }
@@ -371,12 +367,12 @@ fn al_init_ex(c: &mut Ctx) -> u32 {
 fn al_allocate(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
-    let Some((manager, frames)) = alloc(this, |a| (a.manager, a.frames)) else { return E_INVALIDARG };
-    let Some(f) = frames else { return MF_E_NOT_INITIALIZED };
-    let Some(n) = super::dxgi::frame_bytes(f.fmt, f.w, f.h) else { return MF_E_INVALIDMEDIATYPE };
+    let Some((manager, frames)) = alloc(this, |a| (a.manager, a.frames)) else { return Hr::InvalidArg.code() };
+    let Some(f) = frames else { return Hr::NotInitialized.code() };
+    let Some(n) = super::dxgi::frame_bytes(f.fmt, f.w, f.h) else { return Hr::InvalidMediaType.code() };
     let zero = vec![0u8; n as usize];
     if manager == 0 {
         putp(out, super::reader::new_sample(None, None, Some(&zero)));
@@ -384,7 +380,7 @@ fn al_allocate(c: &mut Ctx) -> u32 {
     }
     let dev = super::dxgi::manager_device(c, manager);
     if dev == 0 {
-        return MF_E_NOT_INITIALIZED;
+        return Hr::NotInitialized.code();
     }
     let b = super::dxgi::texture_buffer(c, dev, f.w, f.h, f.fmt, f.usage, f.bind, &zero);
     release(c, dev);
@@ -393,7 +389,7 @@ fn al_allocate(c: &mut Ctx) -> u32 {
             putp(out, super::reader::new_sample_of(None, None, b));
             0
         }
-        None => E_INVALIDARG,
+        None => Hr::InvalidArg.code(),
     }
 }
 fn al_vtable() -> u32 {
@@ -410,11 +406,11 @@ fn al_vtable() -> u32 {
 fn MFCreateVideoSampleAllocatorEx(c: &mut Ctx) -> u32 {
     let (riid, out) = (c.a(0), c.a(1));
     if riid == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if !is_allocator(&guid_at(riid)) {
         putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     let b = object(al_vtable(), 1);
     ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Alloc { refs: 1, manager: 0, frames: None });
@@ -459,8 +455,8 @@ mod tests {
             let ok_size = w > 0 && h > 0 && (fmt != Some(103) || (w | h) & 1 == 0);
             match fmt {
                 Some(f) if ok_size && usage.unwrap_or(0) <= 2 => prop_assert_eq!(got, Ok(Frames { w, h, fmt: f, usage: usage.unwrap_or(0), bind: bind.unwrap_or(0x20) })),
-                Some(_) if ok_size => prop_assert_eq!(got, Err(E_INVALIDARG)),
-                _ => prop_assert_eq!(got, Err(MF_E_INVALIDMEDIATYPE)),
+                Some(_) if ok_size => prop_assert_eq!(got, Err(Hr::InvalidArg.code())),
+                _ => prop_assert_eq!(got, Err(Hr::InvalidMediaType.code())),
             }
         }
     }
@@ -470,6 +466,6 @@ mod tests {
     fn frames_need_a_size() {
         let mut t = Store::default();
         t.set(super::super::reader::k_subtype(), sub(super::super::source::NV12));
-        assert_eq!(frames_of(&t, None), Err(MF_E_INVALIDMEDIATYPE));
+        assert_eq!(frames_of(&t, None), Err(Hr::InvalidMediaType.code()));
     }
 }

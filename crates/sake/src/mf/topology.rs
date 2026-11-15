@@ -6,9 +6,6 @@
 
 use super::*;
 
-const E_UNEXPECTED: u32 = 0x8000_ffff;
-const MF_E_NOT_FOUND: u32 = 0xc00d_36d5;
-const MF_E_INVALIDINDEX: u32 = 0xc00d_36bf;
 
 /// MF_TOPOLOGY_TYPE (TRANSFORM is 2)
 pub const OUTPUT: u32 = 0;
@@ -95,7 +92,7 @@ fn tn_qi(c: &mut Ctx) -> u32 {
     let g = guid_at(c.a(1));
     if is(&g, 0x83cf_873a, 0xf6da, 0x4bc8) && g[15] != 0x30 {
         putp(c.a(2), 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     reader::typed_qi(c, 0x83cf_873a, 0xf6da, 0x4bc8)
 }
@@ -123,26 +120,26 @@ fn tn_set_object(c: &mut Ctx) -> u32 {
 fn tn_get_object(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let o = node(c.a(0), |n| n.object).unwrap_or(0);
     putp(out, o);
     if o == 0 {
-        return E_FAIL;
+        return Hr::Fail.code();
     }
     add_ref(c, o);
     0
 }
 fn tn_get_type(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), node(c.a(0), |n| n.kind).unwrap_or(0));
     0
 }
 fn tn_get_id(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(c.a(1), node(c.a(0), |n| n.id).unwrap_or(0));
     0
@@ -154,7 +151,7 @@ fn tn_set_id(c: &mut Ctx) -> u32 {
 }
 fn tn_count(c: &mut Ctx, outputs: bool) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), node(c.a(0), |n| if outputs { n.outputs.len() } else { n.inputs.len() } as u32).unwrap_or(0));
     0
@@ -173,12 +170,12 @@ fn unlink(b: u32, i: usize) -> Option<u32> {
 fn tn_connect(c: &mut Ctx) -> u32 {
     let (b, i, d, di) = (c.a(0), c.a(1) as usize, c.a(2), c.a(3) as usize);
     if d == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let (Some(k), Some(dk)) = (node(b, |n| n.kind), node(d, |n| n.kind)) else { return E_INVALIDARG };
+    let (Some(k), Some(dk)) = (node(b, |n| n.kind), node(d, |n| n.kind)) else { return Hr::InvalidArg.code() };
     // (an output node has no outputs; a source node no inputs)
     if k == OUTPUT || dk == SOURCESTREAM {
-        return E_FAIL;
+        return Hr::Fail.code();
     }
     if let Some(old) = unlink(b, i) {
         release(c, old);
@@ -210,19 +207,19 @@ fn tn_disconnect(c: &mut Ctx) -> u32 {
             release(c, d);
             0
         }
-        None => MF_E_NOT_FOUND,
+        None => Hr::NotFound.code(),
     }
 }
 /// GetInput / GetOutput(DWORD, IMFTopologyNode **, DWORD *other)
 fn tn_link(c: &mut Ctx, outputs: bool) -> u32 {
     let (i, out, oi) = (c.a(1) as usize, c.a(2), c.a(3));
     if out == 0 || oi == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let l = node(c.a(0), |n| (if outputs { &n.outputs } else { &n.inputs }).get(i).copied());
     match l.flatten() {
-        None => E_INVALIDARG,
-        Some(None) => MF_E_NOT_FOUND,
+        None => Hr::InvalidArg.code(),
+        Some(None) => Hr::NotFound.code(),
         Some(Some((o, k))) => {
             add_ref(c, o);
             putp(out, o);
@@ -246,7 +243,7 @@ fn tn_set_pref(c: &mut Ctx, outputs: bool) -> u32 {
 fn tn_get_pref(c: &mut Ctx, outputs: bool) -> u32 {
     let (i, out) = (c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let t = node(c.a(0), |n| (if outputs { &n.out_types } else { &n.in_types }).get(&i).copied()).flatten();
     putp(out, t.unwrap_or(0));
@@ -255,7 +252,7 @@ fn tn_get_pref(c: &mut Ctx, outputs: bool) -> u32 {
             add_ref(c, t);
             0
         }
-        None => MF_E_NOT_FOUND,
+        None => Hr::NotFound.code(),
     }
 }
 /// CloneFrom(IMFTopologyNode *): its object, attributes, preferred types and id (not its
@@ -263,11 +260,11 @@ fn tn_get_pref(c: &mut Ctx, outputs: bool) -> u32 {
 fn tn_clone_from(c: &mut Ctx) -> u32 {
     let (b, from) = (c.a(0), c.a(1));
     if from == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some((kind, id, o, it, ot)) = node(from, |n| (n.kind, n.id, n.object, n.in_types.clone(), n.out_types.clone())) else { return E_INVALIDARG };
+    let Some((kind, id, o, it, ot)) = node(from, |n| (n.kind, n.id, n.object, n.in_types.clone(), n.out_types.clone())) else { return Hr::InvalidArg.code() };
     if node(b, |n| n.kind) != Some(kind) {
-        return MF_E_INVALIDREQUEST;
+        return Hr::InvalidRequest.code();
     }
     for &t in it.values().chain(ot.values()) {
         add_ref(c, t);
@@ -342,11 +339,11 @@ fn node_insert(b: u32, n: Node) {
 fn MFCreateTopologyNode(c: &mut Ctx) -> u32 {
     let (k, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if k > TEE {
         putp(out, 0);
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     putp(out, new_node(k));
     0
@@ -359,7 +356,7 @@ fn tp_qi(c: &mut Ctx) -> u32 {
     let g = guid_at(c.a(1));
     if is(&g, 0x83cf_873a, 0xf6da, 0x4bc8) && g[15] != 0x33 {
         putp(c.a(2), 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     }
     reader::typed_qi(c, 0x83cf_873a, 0xf6da, 0x4bc8)
 }
@@ -374,7 +371,7 @@ fn tp_release(c: &mut Ctx) -> u32 {
 }
 fn tp_get_id(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(c.a(1), topo(c.a(0), |t| t.id).unwrap_or(0));
     0
@@ -382,10 +379,10 @@ fn tp_get_id(c: &mut Ctx) -> u32 {
 fn tp_add(c: &mut Ctx) -> u32 {
     let (b, n) = (c.a(0), c.a(1));
     if n == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if node(n, |_| ()).is_none() || topo(b, |t| t.nodes.contains(&n)) != Some(false) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     add_ref(c, n);
     topo(b, |t| t.nodes.push(n));
@@ -399,12 +396,12 @@ fn tp_remove(c: &mut Ctx) -> u32 {
             release(c, n);
             0
         }
-        None => E_INVALIDARG,
+        None => Hr::InvalidArg.code(),
     }
 }
 fn tp_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w16(c.a(1), topo(c.a(0), |t| t.nodes.len() as u16).unwrap_or(0));
     0
@@ -412,7 +409,7 @@ fn tp_count(c: &mut Ctx) -> u32 {
 fn tp_get(c: &mut Ctx) -> u32 {
     let (i, out) = (c.a(1) as u16 as usize, c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let n = topo(c.a(0), |t| t.nodes.get(i).copied()).flatten();
     putp(out, n.unwrap_or(0));
@@ -421,7 +418,7 @@ fn tp_get(c: &mut Ctx) -> u32 {
             add_ref(c, n);
             0
         }
-        None => MF_E_INVALIDINDEX,
+        None => Hr::InvalidIndex.code(),
     }
 }
 fn tp_clear(c: &mut Ctx) -> u32 {
@@ -436,9 +433,9 @@ fn tp_clear(c: &mut Ctx) -> u32 {
 fn tp_clone_from(c: &mut Ctx) -> u32 {
     let (b, from) = (c.a(0), c.a(1));
     if from == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(ns) = topo(from, |t| t.nodes.clone()) else { return E_INVALIDARG };
+    let Some(ns) = topo(from, |t| t.nodes.clone()) else { return Hr::InvalidArg.code() };
     let mut map = HashMap::new();
     for &n in &ns {
         let Some((kind, id, o, it, ot)) = node(n, |x| (x.kind, x.id, x.object, x.in_types.clone(), x.out_types.clone())) else { continue };
@@ -476,7 +473,7 @@ fn tp_by_id(c: &mut Ctx) -> u32 {
     let id = u64_arg(c, 1, 1);
     let out = after64(c, 3);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let ns = topo(c.a(0), |t| t.nodes.clone()).unwrap_or_default();
     let n = ns.into_iter().find(|&n| node(n, |x| x.id) == Some(id));
@@ -486,7 +483,7 @@ fn tp_by_id(c: &mut Ctx) -> u32 {
             add_ref(c, n);
             0
         }
-        None => MF_E_NOT_FOUND,
+        None => Hr::NotFound.code(),
     }
 }
 /// The nodes of topology `b` of type `kind`.
@@ -497,7 +494,7 @@ pub fn nodes_of(b: u32, kind: u32) -> Vec<u32> {
 fn tp_collection(c: &mut Ctx, kind: u32) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let ns = nodes_of(c.a(0), kind);
     for &n in &ns {
@@ -533,7 +530,7 @@ fn topo_vtable() -> u32 {
 fn MFCreateTopology(c: &mut Ctx) -> u32 {
     let out = c.a(0);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let b = new_store(topo_vtable());
     TOPOS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Topo { id: next_id(), nodes: Vec::new() });
@@ -573,7 +570,7 @@ fn new_activate(a: Act) -> u32 {
 fn MFCreateVideoRendererActivate(c: &mut Ctx) -> u32 {
     let (h, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, new_activate(Act::Video(h)));
     0
@@ -582,7 +579,7 @@ fn MFCreateVideoRendererActivate(c: &mut Ctx) -> u32 {
 fn MFCreateAudioRendererActivate(c: &mut Ctx) -> u32 {
     let out = c.a(0);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, new_activate(Act::Audio));
     0
@@ -593,7 +590,7 @@ fn MFCreateAudioRendererActivate(c: &mut Ctx) -> u32 {
 fn co_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFCollection {5bc8a76b-869a-46a3-9b03-fa218a66aebe}
@@ -603,7 +600,7 @@ fn co_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn co_add_ref(c: &mut Ctx) -> u32 {
     coll(c.a(0), |s| {
@@ -631,7 +628,7 @@ fn co_release(c: &mut Ctx) -> u32 {
 }
 fn co_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), coll(c.a(0), |s| s.1.len() as u32).unwrap_or(0));
     0
@@ -640,18 +637,18 @@ fn co_count(c: &mut Ctx) -> u32 {
 fn co_get(c: &mut Ctx, remove: bool) -> u32 {
     let (i, out) = (c.a(1) as usize, c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let e = coll(c.a(0), |s| if i < s.1.len() { Some(if remove { s.1.remove(i) } else { s.1[i] }) } else { None }).flatten();
     let Some(e) = e else {
         putp(out, 0);
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     };
     if !remove {
         add_ref(c, e);
     }
     putp(out, e);
-    if e == 0 { E_UNEXPECTED } else { 0 }
+    if e == 0 { Hr::Unexpected.code() } else { 0 }
 }
 fn co_add(c: &mut Ctx) -> u32 {
     let e = c.a(1);
@@ -704,7 +701,7 @@ pub fn new_collection(items: Vec<u32>) -> u32 {
 fn MFCreateCollection(c: &mut Ctx) -> u32 {
     let out = c.a(0);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, new_collection(Vec::new()));
     0

@@ -28,11 +28,11 @@ fn store_keeps_the_order_and_replaces_in_place() {
 /// wrong type, a missing attribute (no callback for CreateInstance), a bad media type
 #[test]
 fn error_codes_as_windows() {
-    assert_eq!(MF_E_INVALIDTYPE, 0xc00d_36bd);
-    assert_eq!(MF_E_ATTRIBUTENOTFOUND, 0xc00d_36e6);
-    assert_eq!(MF_E_INVALIDMEDIATYPE, 0xc00d_36b4);
-    assert_eq!(MF_E_INVALIDREQUEST, 0xc00d_36b2);
-    assert_ne!(NO_FRAME_TO_TRANSFER, MF_E_INVALIDREQUEST);
+    assert_eq!(Hr::InvalidType.code(), 0xc00d_36bd);
+    assert_eq!(Hr::AttributeNotFound.code(), 0xc00d_36e6);
+    assert_eq!(Hr::InvalidMediaType.code(), 0xc00d_36b4);
+    assert_eq!(Hr::InvalidRequest.code(), 0xc00d_36b2);
+    assert_ne!(Hr::NoFrameToTransfer.code(), Hr::InvalidRequest.code());
 }
 
 #[test]
@@ -259,7 +259,7 @@ proptest! {
             // (a load or failure only follows a reset, as load() does)
             match op {
                 Do::Reset => st.reset(),
-                Do::Fail => { st.reset(); st.failed(MF_E_UNSUPPORTED_BYTESTREAM_TYPE); }
+                Do::Fail => { st.reset(); st.failed(Hr::UnsupportedByteStreamType.code()); }
                 Do::Load(video) => { st.reset(); st.loaded(1.0, video.then_some((4, 4)), false); }
                 Do::Play => { st.play(); }
                 Do::Pause => st.pause(),
@@ -559,8 +559,8 @@ fn the_events_thread_sleeps_until_an_event() {
 #[test]
 fn blobs_past_the_limit_are_out_of_memory() {
     let _g = crate::test_guest::enter();
-    assert_eq!(blob(0x1000, MAX_BLOB + 1), Err(E_OUTOFMEMORY));
-    assert_eq!(blob(0, 4), Err(E_POINTER));
+    assert_eq!(blob(0x1000, MAX_BLOB + 1), Err(Hr::OutOfMemory.code()));
+    assert_eq!(blob(0, 4), Err(Hr::Pointer.code()));
     assert_eq!(blob(0, 0), Ok(Vec::new()));
     let p = mem::heap_alloc(4, true);
     mem::write(p, &[1, 2, 3, 4]);

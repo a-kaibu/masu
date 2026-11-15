@@ -14,8 +14,6 @@
 use super::*;
 use std::collections::VecDeque;
 
-const MF_E_INVALIDMEDIATYPE_: u32 = 0xc00d_36b4;
-const MF_E_UNEXPECTED: u32 = 0xc00d_36bb;
 
 // --- asynchronous results ---------------------------------------------------------------------
 
@@ -44,7 +42,7 @@ pub fn result_callback(b: u32) -> u32 {
 fn ar_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFAsyncResult {ac6b7889-0740-4d51-8619-905994a55cc6}
@@ -54,7 +52,7 @@ fn ar_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn ar_add_ref(c: &mut Ctx) -> u32 {
     result(c.a(0), |r| {
@@ -90,11 +88,11 @@ fn ar_get(c: &mut Ctx, which: fn(&Result) -> u32) -> u32 {
     let out = c.a(1);
     let v = result(c.a(0), |r| which(r)).unwrap_or(0);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if v == 0 {
         putp(out, 0);
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     add_ref(c, v);
     putp(out, v);
@@ -107,7 +105,7 @@ fn ar_object(c: &mut Ctx) -> u32 {
     ar_get(c, |r| r.object)
 }
 fn ar_status(c: &mut Ctx) -> u32 {
-    result(c.a(0), |r| r.status).unwrap_or(E_POINTER)
+    result(c.a(0), |r| r.status).unwrap_or(Hr::Pointer.code())
 }
 fn ar_set_status(c: &mut Ctx) -> u32 {
     let hr = c.a(1);
@@ -175,7 +173,7 @@ pub fn done_of(b: u32) -> Option<(u32, u32)> {
 fn MFCreateAsyncResult(c: &mut Ctx) -> u32 {
     let (o, cb, st, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if out == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let b = new_result(c, o, cb, st);
     putp(out, b);
@@ -232,7 +230,7 @@ fn queue_thread(c: &mut Ctx) -> u32 {
 fn MFInvokeCallback(c: &mut Ctx) -> u32 {
     let r = c.a(0);
     if r == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     invoke(c, r);
     0
@@ -243,7 +241,7 @@ fn MFInvokeCallback(c: &mut Ctx) -> u32 {
 fn MFPutWorkItem(c: &mut Ctx) -> u32 {
     let (cb, st) = (c.a(1), c.a(2));
     if cb == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let r = new_result(c, 0, cb, st);
     invoke(c, r);
@@ -253,7 +251,7 @@ fn MFPutWorkItem(c: &mut Ctx) -> u32 {
 fn MFPutWorkItemEx(c: &mut Ctx) -> u32 {
     let r = c.a(1);
     if r == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     invoke(c, r);
     0
@@ -274,13 +272,11 @@ fn bs<R>(b: u32, f: impl FnOnce(&mut Bs) -> R) -> Option<R> {
 const CAN_READ: u32 = 1;
 const CAN_WRITE: u32 = 2;
 const CAN_SEEK: u32 = 4;
-/// MF_E_INVALID_STREAM_STATE? Windows answers a closed stream with this
-const CLOSED: u32 = MF_E_SHUTDOWN;
 
 fn bs_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFByteStream {ad4c1b00-4bf7-422f-9175-756693d9130d}
@@ -290,7 +286,7 @@ fn bs_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn bs_add_ref(c: &mut Ctx) -> u32 {
     bs(c.a(0), |s| {
@@ -314,7 +310,7 @@ fn bs_release(c: &mut Ctx) -> u32 {
 fn bs_caps(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(out, bs(c.a(0), |s| s.caps).unwrap_or(0));
     0
@@ -325,14 +321,14 @@ fn len_of(s: &Bs) -> Option<u64> {
 fn bs_len(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match bs(c.a(0), |s| len_of(s)).flatten() {
         Some(n) => {
             w64(out, n);
             0
         }
-        None => CLOSED,
+        None => Hr::Shutdown.code(),
     }
 }
 fn bs_set_len(c: &mut Ctx) -> u32 {
@@ -342,18 +338,18 @@ fn bs_set_len(c: &mut Ctx) -> u32 {
             if f.set_len(n).is_ok() {
                 0
             } else {
-                E_FAIL
+                Hr::Fail.code()
             }
         }
-        Some(_) => 0x8007_0005, // E_ACCESSDENIED
-        None => CLOSED,
+        Some(_) => Hr::AccessDenied.code(),
+        None => Hr::Shutdown.code(),
     })
-    .unwrap_or(E_INVALIDARG)
+    .unwrap_or(Hr::InvalidArg.code())
 }
 fn bs_pos(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     w64(out, bs(c.a(0), |s| s.pos).unwrap_or(0));
     0
@@ -366,7 +362,7 @@ fn bs_set_pos(c: &mut Ctx) -> u32 {
 fn bs_eos(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let end = bs(c.a(0), |s| len_of(s).is_none_or(|n| s.pos >= n)).unwrap_or(true);
     w32(out, end as u32);
@@ -377,43 +373,43 @@ fn read_into(b: u32, p: u32, n: u32) -> Result2 {
     use std::io::{Read, Seek, SeekFrom};
     bs(b, |s| {
         let pos = s.pos;
-        let Some(f) = s.file.as_mut() else { return Err(CLOSED) };
-        f.seek(SeekFrom::Start(pos)).map_err(|_| E_FAIL)?;
-        let Some(buf) = mem::guest_mut(p, n) else { return Err(E_FAIL) };
+        let Some(f) = s.file.as_mut() else { return Err(Hr::Shutdown.code()) };
+        f.seek(SeekFrom::Start(pos)).map_err(|_| Hr::Fail.code())?;
+        let Some(buf) = mem::guest_mut(p, n) else { return Err(Hr::Fail.code()) };
         let mut got = 0usize;
         while got < buf.len() {
             match f.read(&mut buf[got..]) {
                 Ok(0) => break,
                 Ok(k) => got += k,
-                Err(_) => return Err(E_FAIL),
+                Err(_) => return Err(Hr::Fail.code()),
             }
         }
         s.pos += got as u64;
         Ok(got as u32)
     })
-    .unwrap_or(Err(E_INVALIDARG))
+    .unwrap_or(Err(Hr::InvalidArg.code()))
 }
 type Result2 = std::result::Result<u32, u32>;
 fn write_from(b: u32, p: u32, n: u32) -> Result2 {
     use std::io::{Seek, SeekFrom, Write};
     bs(b, |s| {
         if s.caps & CAN_WRITE == 0 {
-            return Err(0x8007_0005);
+            return Err(Hr::AccessDenied.code());
         }
         let pos = s.pos;
-        let Some(f) = s.file.as_mut() else { return Err(CLOSED) };
-        f.seek(SeekFrom::Start(pos)).map_err(|_| E_FAIL)?;
-        f.write_all(mem::slice(p, n)).map_err(|_| E_FAIL)?;
+        let Some(f) = s.file.as_mut() else { return Err(Hr::Shutdown.code()) };
+        f.seek(SeekFrom::Start(pos)).map_err(|_| Hr::Fail.code())?;
+        f.write_all(mem::slice(p, n)).map_err(|_| Hr::Fail.code())?;
         s.pos += n as u64;
         Ok(n)
     })
-    .unwrap_or(Err(E_INVALIDARG))
+    .unwrap_or(Err(Hr::InvalidArg.code()))
 }
 /// Read(BYTE *, ULONG, ULONG *read) / Write(const BYTE *, ULONG, ULONG *written)
 fn bs_rw(c: &mut Ctx, f: fn(u32, u32, u32) -> Result2) -> u32 {
     let (b, p, n, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if p == 0 && n != 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     match f(b, p, n) {
         Ok(k) => {
@@ -436,7 +432,7 @@ fn bs_write(c: &mut Ctx) -> u32 {
 fn bs_begin(c: &mut Ctx, f: fn(u32, u32, u32) -> Result2) -> u32 {
     let (b, p, n, cb, st) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     if cb == 0 || (p == 0 && n != 0) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let r = new_result(c, b, cb, st);
     match f(b, p, n) {
@@ -457,9 +453,9 @@ fn bs_begin_write(c: &mut Ctx) -> u32 {
 fn bs_end(c: &mut Ctx) -> u32 {
     let (r, out) = (c.a(1), c.a(2));
     if r == 0 || out == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
-    let Some((n, hr)) = done_of(r) else { return E_INVALIDARG };
+    let Some((n, hr)) = done_of(r) else { return Hr::InvalidArg.code() };
     w32(out, n);
     hr
 }
@@ -470,13 +466,13 @@ fn bs_seek(c: &mut Ctx) -> u32 {
         let base = match origin {
             0 => 0i64,
             1 => s.pos as i64,
-            _ => return Err(E_INVALIDARG),
+            _ => return Err(Hr::InvalidArg.code()),
         };
-        let p = base.checked_add(off).filter(|&p| p >= 0).ok_or(E_INVALIDARG)?;
+        let p = base.checked_add(off).filter(|&p| p >= 0).ok_or(Hr::InvalidArg.code())?;
         s.pos = p as u64;
         Ok(s.pos)
     })
-    .unwrap_or(Err(E_INVALIDARG));
+    .unwrap_or(Err(Hr::InvalidArg.code()));
     match r {
         Ok(p) => {
             if out != 0 {
@@ -541,13 +537,13 @@ pub fn new_file_stream(f: kura::fs::File, caps: u32) -> u32 {
 fn MFCreateFile(c: &mut Ctx) -> u32 {
     let (access, mode, url, out) = (c.a(0), c.a(1), c.a(3), c.a(4));
     if url == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     let path = reader::file_url_path(&String::from_utf16_lossy(&mem::wstr(url)));
     let (rd, wr) = (access & 1 != 0, access & 2 != 0);
     if !rd && !wr {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let host = crate::files::resolve(&path);
     // MF_OPENMODE_FAIL_IF_NOT_EXIST 0, FAIL_IF_EXIST 1, RESET_IF_EXIST 2, APPEND_IF_EXIST 3,
@@ -555,7 +551,7 @@ fn MFCreateFile(c: &mut Ctx) -> u32 {
     let exists = host.as_ref().is_some_and(|h| kura::fs::metadata(h).is_ok_and(|m| m.is_file()));
     let f = match (mode, exists) {
         (0, false) => return 0x8007_0000 | crate::files::missing(&path),
-        (1, true) => return 0x8007_0050, // ERROR_FILE_EXISTS
+        (1, true) => return Hr::FileExists.code(),
         (0 | 3, true) if !wr => kura::fs::File::open(host.unwrap()),
         (0..=4, _) => {
             let h = host.unwrap_or_else(|| crate::files::resolve_new(&path));
@@ -566,9 +562,9 @@ fn MFCreateFile(c: &mut Ctx) -> u32 {
                 .truncate(mode == 2 || mode == 4)
                 .open(h)
         }
-        _ => return E_INVALIDARG,
+        _ => return Hr::InvalidArg.code(),
     };
-    let Ok(f) = f else { return 0x8007_0005 };
+    let Ok(f) = f else { return Hr::AccessDenied.code() };
     let caps = if rd { CAN_READ } else { 0 } | if wr { CAN_WRITE } else { 0 } | CAN_SEEK;
     let b = new_file_stream(f, caps);
     if mode == 3 {
@@ -631,7 +627,7 @@ fn MFGetStrideForBitmapInfoHeader(c: &mut Ctx) -> u32 {
         }
         None => {
             w32(out, 0);
-            MF_E_INVALIDMEDIATYPE_
+            Hr::InvalidMediaType.code()
         }
     }
 }
@@ -656,7 +652,7 @@ pub fn image_size(d1: u32, w: u32, h: u32) -> Option<u32> {
 fn MFCalculateImageSize(c: &mut Ctx) -> u32 {
     let (g, w, h, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if h == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let g = guid_at(g);
     let d1 = u32::from_le_bytes(g[0..4].try_into().unwrap());
@@ -667,7 +663,7 @@ fn MFCalculateImageSize(c: &mut Ctx) -> u32 {
         }
         None => {
             w32(out, 0);
-            E_INVALIDARG
+            Hr::InvalidArg.code()
         }
     }
 }
@@ -759,7 +755,7 @@ fn act_activate(c: &mut Ctx) -> u32 {
     if out != 0 {
         putp(out, 0);
     }
-    MF_E_UNEXPECTED
+    Hr::MfUnexpected.code()
 }
 fn activate_vtable() -> u32 {
     static VT: OnceLock<u32> = OnceLock::new();
@@ -786,7 +782,7 @@ fn MFTEnumEx(c: &mut Ctx) -> u32 {
     let k = if mem::x64() { 1 } else { 4 };
     let (input, list, count) = (c.a(k + 1), c.a(k + 3), c.a(k + 4));
     if list == 0 || count == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // MFT_REGISTER_TYPE_INFO: major type, subtype
     let sub = (input != 0).then(|| guid_at(input + 16));

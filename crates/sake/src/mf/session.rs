@@ -13,12 +13,6 @@ use super::topology::{self, Act};
 use super::*;
 use std::sync::{Arc, Condvar};
 
-const MF_E_TOPO_UNSUPPORTED: u32 = 0xc00d_5214;
-const MF_E_NO_EVENTS_AVAILABLE: u32 = 0xc00d_3e80;
-const MF_E_MULTIPLE_SUBSCRIBERS: u32 = 0xc00d_36e3;
-const MF_E_UNSUPPORTED_SERVICE: u32 = 0xc00d_36ba;
-const MF_E_NOT_FOUND: u32 = 0xc00d_36d5;
-const MF_E_CLOCK_NO_TIME_SOURCE: u32 = 0xc00d_9c41;
 
 /// MediaEventType
 pub mod met {
@@ -92,11 +86,11 @@ impl Model {
     /// Whether the event took `unk` (it was set).
     pub fn set_topology(&mut self, ok: bool, unk: u32) -> bool {
         if self.st == St::Closed {
-            self.out.push_back(e(met::TOPOLOGY_SET, MF_E_INVALIDREQUEST));
+            self.out.push_back(e(met::TOPOLOGY_SET, Hr::InvalidRequest.code()));
             return false;
         }
         if !ok {
-            self.out.push_back(e(met::TOPOLOGY_SET, MF_E_TOPO_UNSUPPORTED));
+            self.out.push_back(e(met::TOPOLOGY_SET, Hr::TopoUnsupported.code()));
             return false;
         }
         self.topo = true;
@@ -109,13 +103,13 @@ impl Model {
         true
     }
     pub fn clear_topologies(&mut self) {
-        let hr = if self.st == St::Closed { MF_E_INVALIDREQUEST } else { 0 };
+        let hr = if self.st == St::Closed { Hr::InvalidRequest.code() } else { 0 };
         self.out.push_back(e(met::TOPOLOGIES_CLEARED, hr));
     }
     /// Start: whether the movie runs now.
     pub fn start(&mut self) -> bool {
         if self.st == St::Closed || !self.topo {
-            self.out.push_back(e(met::STARTED, MF_E_INVALIDREQUEST));
+            self.out.push_back(e(met::STARTED, Hr::InvalidRequest.code()));
             return false;
         }
         if !self.sourced {
@@ -129,7 +123,7 @@ impl Model {
     /// Pause: whether it paused.
     pub fn pause(&mut self) -> bool {
         if self.st != St::Started {
-            self.out.push_back(e(met::PAUSED, MF_E_INVALIDREQUEST));
+            self.out.push_back(e(met::PAUSED, Hr::InvalidRequest.code()));
             return false;
         }
         self.st = St::Paused;
@@ -139,7 +133,7 @@ impl Model {
     /// Stop: whether it stopped (back to the start).
     pub fn stop(&mut self) -> bool {
         if self.st == St::Closed {
-            self.out.push_back(e(met::STOPPED, MF_E_INVALIDREQUEST));
+            self.out.push_back(e(met::STOPPED, Hr::InvalidRequest.code()));
             return false;
         }
         self.st = St::Stopped;
@@ -150,7 +144,7 @@ impl Model {
     /// Close: whether it closed (the movie goes).
     pub fn close(&mut self) -> bool {
         if self.st == St::Closed {
-            self.out.push_back(e(met::CLOSED, MF_E_INVALIDREQUEST));
+            self.out.push_back(e(met::CLOSED, Hr::InvalidRequest.code()));
             return false;
         }
         self.st = St::Closed;
@@ -206,21 +200,21 @@ fn me_release(c: &mut Ctx) -> u32 {
 }
 fn me_type(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), event(c.a(0), |e| e.0).unwrap_or(0));
     0
 }
 fn me_ext(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::write(c.a(1), &event(c.a(0), |e| e.1).unwrap_or_default());
     0
 }
 fn me_status(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), event(c.a(0), |e| e.2).unwrap_or(0));
     0
@@ -229,7 +223,7 @@ fn me_status(c: &mut Ctx) -> u32 {
 fn me_value(c: &mut Ctx) -> u32 {
     let p = c.a(1);
     if p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match event(c.a(0), |e| e.3.clone()).flatten() {
         Some(v) => put_prop(c, p, &v),
@@ -267,7 +261,7 @@ fn new_event(x: E) -> u32 {
 fn MFCreateMediaEvent(c: &mut Ctx) -> u32 {
     let (t, ext, hr, pv, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let val = if pv == 0 || r16(pv) == 0 { None } else { Some(get_prop(pv).unwrap_or(Val::U32(0))) };
     if let Some(Val::Unk(u)) = val {
@@ -463,7 +457,7 @@ fn slot(g: &Guid) -> Option<u32> {
 fn qi(c: &mut Ctx, k: u32) -> u32 {
     let (b, out) = (base(c, k), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // (the clock and volume answer for themselves; the session for all but those)
@@ -476,7 +470,7 @@ fn qi(c: &mut Ctx, k: u32) -> u32 {
         }
         None => {
             putp(out, 0);
-            E_NOINTERFACE
+            Hr::NoInterface.code()
         }
     }
 }
@@ -525,21 +519,21 @@ fn live(b: u32) -> bool {
 fn ms_get_event(c: &mut Ctx) -> u32 {
     let (b, flags, out) = (c.a(0), c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     loop {
         let got = {
             let mut g = SESSIONS.lock().unwrap_or_else(|e| e.into_inner());
-            let Some(s) = g.get_or_insert_with(HashMap::new).get_mut(&b) else { return E_INVALIDARG };
+            let Some(s) = g.get_or_insert_with(HashMap::new).get_mut(&b) else { return Hr::InvalidArg.code() };
             if s.shut {
-                return MF_E_SHUTDOWN;
+                return Hr::Shutdown.code();
             }
             if s.waiter != 0 {
-                return MF_E_MULTIPLE_SUBSCRIBERS;
+                return Hr::MultipleSubscribers.code();
             }
             match s.m.out.pop_front() {
                 Some(x) => Some(x),
-                None if flags & 1 != 0 => return MF_E_NO_EVENTS_AVAILABLE,
+                None if flags & 1 != 0 => return Hr::NoEventsAvailable.code(),
                 None => {
                     let _ = CV.wait_timeout(g, std::time::Duration::from_millis(100)).unwrap_or_else(|e| e.into_inner());
                     None
@@ -563,11 +557,11 @@ fn ms_get_event(c: &mut Ctx) -> u32 {
 fn ms_begin_event(c: &mut Ctx) -> u32 {
     let (b, cb, st) = (c.a(0), c.a(1), c.a(2));
     if cb == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     match session(b, |s| (s.shut, s.waiter != 0)) {
-        Some((true, _)) | None => return MF_E_SHUTDOWN,
-        Some((_, true)) => return MF_E_MULTIPLE_SUBSCRIBERS,
+        Some((true, _)) | None => return Hr::Shutdown.code(),
+        Some((_, true)) => return Hr::MultipleSubscribers.code(),
         _ => {}
     }
     let r = plat::new_result(c, 0, cb, st);
@@ -579,12 +573,12 @@ fn ms_begin_event(c: &mut Ctx) -> u32 {
 fn ms_end_event(c: &mut Ctx) -> u32 {
     let (r, out) = (c.a(1), c.a(2));
     if r == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let o = plat::object_of(r);
     putp(out, o);
     if o == 0 {
-        return plat::done_of(r).map(|d| d.1).filter(|&h| h != 0).unwrap_or(E_FAIL);
+        return plat::done_of(r).map(|d| d.1).filter(|&h| h != 0).unwrap_or(Hr::Fail.code());
     }
     add_ref(c, o);
     0
@@ -593,7 +587,7 @@ fn ms_end_event(c: &mut Ctx) -> u32 {
 fn ms_queue_event(c: &mut Ctx) -> u32 {
     let (b, t, hr, pv) = (c.a(0), c.a(1), c.a(3), c.a(4));
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     let val = if pv == 0 || r16(pv) == 0 { None } else { Some(get_prop(pv).unwrap_or(Val::U32(0))) };
     if let Some(Val::Unk(u)) = val {
@@ -654,10 +648,10 @@ fn media_kind(m: &source::Media, i: usize) -> Option<bool> {
 fn ms_set_topology(c: &mut Ctx) -> u32 {
     let (b, t) = (c.a(0), c.a(2));
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     if t == 0 || topology::topo(t, |_| ()).is_none() {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let movie = plan(t).and_then(|p| {
         // (a program's own byte stream is read here, on its thread: the movie thread has none)
@@ -705,7 +699,7 @@ fn ms_set_topology(c: &mut Ctx) -> u32 {
 fn ms_clear_topologies(c: &mut Ctx) -> u32 {
     let b = c.a(0);
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     session(b, |s| s.m.clear_topologies());
     0
@@ -715,7 +709,7 @@ fn ms_clear_topologies(c: &mut Ctx) -> u32 {
 fn ms_start(c: &mut Ctx) -> u32 {
     let (b, pv) = (c.a(0), c.a(2));
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     let to = (pv != 0 && r16(pv) == 20).then(|| mem::r64(pv + 8));
     let Some((run, movie)) = session(b, |s| {
@@ -727,7 +721,7 @@ fn ms_start(c: &mut Ctx) -> u32 {
         }
         (run.then_some(was), movie)
     }) else {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     };
     if let Some(m) = movie {
         let mut p = Play::new(m);
@@ -750,7 +744,7 @@ fn ms_start(c: &mut Ctx) -> u32 {
 fn ms_pause(c: &mut Ctx) -> u32 {
     let b = c.a(0);
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     if session(b, |s| s.m.pause()) == Some(true) {
         play::timeline(b, now(), |tl, t| tl.pause(t));
@@ -760,7 +754,7 @@ fn ms_pause(c: &mut Ctx) -> u32 {
 fn ms_stop(c: &mut Ctx) -> u32 {
     let b = c.a(0);
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     if session(b, |s| s.m.stop()) == Some(true) {
         play::timeline(b, now(), |tl, t| {
@@ -774,7 +768,7 @@ fn ms_stop(c: &mut Ctx) -> u32 {
 fn ms_close(c: &mut Ctx) -> u32 {
     let b = c.a(0);
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     let closed = session(b, |s| {
         let ok = s.m.close();
@@ -821,7 +815,7 @@ fn shutdown(c: &mut Ctx, b: u32) {
 fn ms_shutdown(c: &mut Ctx) -> u32 {
     let b = c.a(0);
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     shutdown(c, b);
     0
@@ -829,11 +823,11 @@ fn ms_shutdown(c: &mut Ctx) -> u32 {
 fn ms_get_clock(c: &mut Ctx) -> u32 {
     let (b, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if !live(b) {
         putp(out, 0);
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     session(b, |s| s.refs += 1);
     putp(out, b + 2 * ps());
@@ -842,14 +836,14 @@ fn ms_get_clock(c: &mut Ctx) -> u32 {
 fn ms_caps(c: &mut Ctx) -> u32 {
     let (b, out) = (c.a(0), c.a(1));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     match session(b, |s| (!s.shut).then_some(s.m.caps)).flatten() {
         Some(v) => {
             w32(out, v);
             0
         }
-        None => MF_E_SHUTDOWN,
+        None => Hr::Shutdown.code(),
     }
 }
 /// GetFullTopology(DWORD flags, TOPOID, IMFTopology **): the current one (MFSESSION_GETFULLTOPOLOGY_CURRENT) or by id
@@ -858,12 +852,12 @@ fn ms_full_topology(c: &mut Ctx) -> u32 {
     let id = u64_arg(c, 2, 2);
     let out = if mem::x64() { c.a(3) } else { c.a(4) };
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
-    let Some(t) = session(b, |s| (!s.shut).then_some(s.topology)).flatten() else { return MF_E_SHUTDOWN };
+    let Some(t) = session(b, |s| (!s.shut).then_some(s.topology)).flatten() else { return Hr::Shutdown.code() };
     if t == 0 || (flags & 1 == 0 && topology::topo(t, |x| x.id) != Some(id)) {
-        return MF_E_NOT_FOUND;
+        return Hr::NotFound.code();
     }
     add_ref(c, t);
     putp(out, t);
@@ -877,22 +871,22 @@ fn ms_full_topology(c: &mut Ctx) -> u32 {
 fn gs_get_service(c: &mut Ctx) -> u32 {
     let (b, sv, iid, out) = (base(c, 1), c.a(1), c.a(2), c.a(3));
     if sv == 0 || iid == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     let (s, i) = (guid_at(sv), guid_at(iid));
     if !live(b) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     // MR_VIDEO_RENDER_SERVICE {1092a86c-ab1a-459a-a336-831fbc4d11ff}, IMFVideoDisplayControl {a490b1e4-ab84-4d31-...}
     if is(&s, 0x1092_a86c, 0xab1a, 0x459a) {
         if !is(&i, 0xa490_b1e4, 0xab84, 0x4d31) {
-            return E_NOINTERFACE;
+            return Hr::NoInterface.code();
         }
         let evr = session(b, |x| x.evr).unwrap_or(0);
         let dc = if evr != 0 { crate::dshow::evr_display_control(evr) } else { 0 };
         if dc == 0 {
-            return MF_E_UNSUPPORTED_SERVICE;
+            return Hr::UnsupportedService.code();
         }
         putp(out, dc);
         return 0;
@@ -900,20 +894,20 @@ fn gs_get_service(c: &mut Ctx) -> u32 {
     // MR_POLICY_VOLUME_SERVICE {1abaa2ac-9d3b-47c6-ab48-c59506de784d}
     if is(&s, 0x1aba_a2ac, 0x9d3b, 0x47c6) {
         if !is(&i, 0x089e_df13, 0xcf71, 0x4338) {
-            return E_NOINTERFACE;
+            return Hr::NoInterface.code();
         }
         session(b, |x| x.refs += 1);
         putp(out, b + 3 * ps());
         return 0;
     }
-    MF_E_UNSUPPORTED_SERVICE
+    Hr::UnsupportedService.code()
 }
 
 /// MFGetService(IUnknown *, REFGUID service, REFIID, void **): its IMFGetService's
 fn MFGetService(c: &mut Ctx) -> u32 {
     let (o, sv, iid, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
     if o == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     let g = mem::heap_alloc(16 + ps(), true);
@@ -922,7 +916,7 @@ fn MFGetService(c: &mut Ctx) -> u32 {
     let gs = rp(g + 16);
     mem::heap_free(g);
     if hr != 0 || gs == 0 {
-        return MF_E_UNSUPPORTED_SERVICE;
+        return Hr::UnsupportedService.code();
     }
     let hr = com(c, gs, 3, &[sv, iid, out]);
     release(c, gs);
@@ -946,7 +940,7 @@ fn position(b: u32) -> u64 {
 }
 fn ck_chars(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // MFCLOCK_CHARACTERISTICS_FLAG_FREQUENCY_10MHZ
     w32(c.a(1), 2);
@@ -956,7 +950,7 @@ fn ck_chars(c: &mut Ctx) -> u32 {
 fn ck_correlated(c: &mut Ctx) -> u32 {
     let (b, ct, st) = (base(c, 2), c.a(2), c.a(3));
     if ct == 0 || st == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(ct, position(b));
     w64(st, now());
@@ -965,7 +959,7 @@ fn ck_correlated(c: &mut Ctx) -> u32 {
 fn ck_state(c: &mut Ctx) -> u32 {
     let out = c.a(2);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(out, clock_state(base(c, 2)));
     0
@@ -974,7 +968,7 @@ fn ck_state(c: &mut Ctx) -> u32 {
 fn ck_props(c: &mut Ctx) -> u32 {
     let p = c.a(1);
     if p == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     mem::fill(p, 48, 0);
     w64(p, 10_000_000);
@@ -984,7 +978,7 @@ fn ck_props(c: &mut Ctx) -> u32 {
 fn ck_time(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w64(out, position(base(c, 2)));
     0
@@ -999,7 +993,7 @@ fn float_arg(c: &Ctx) -> f32 {
 fn sv_set(c: &mut Ctx) -> u32 {
     let (b, v) = (base(c, 3), float_arg(c));
     if !(0.0..=1.0).contains(&v) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     session(b, |s| s.volume = v);
     sync(b);
@@ -1007,7 +1001,7 @@ fn sv_set(c: &mut Ctx) -> u32 {
 }
 fn sv_get(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), session(base(c, 3), |s| s.volume).unwrap_or(1.0).to_bits());
     0
@@ -1020,7 +1014,7 @@ fn sv_set_mute(c: &mut Ctx) -> u32 {
 }
 fn sv_get_mute(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), session(base(c, 3), |s| s.muted).unwrap_or(false) as u32);
     0
@@ -1054,7 +1048,7 @@ fn vtables() -> [u32; 4] {
             (ck_correlated, 16),
             (|c: &mut Ctx| {
                 if c.a(1) == 0 {
-                    return E_POINTER;
+                    return Hr::Pointer.code();
                 }
                 w32(c.a(1), 0);
                 0
@@ -1066,7 +1060,7 @@ fn vtables() -> [u32; 4] {
                 if c.a(1) != 0 {
                     putp(c.a(1), 0);
                 }
-                MF_E_CLOCK_NO_TIME_SOURCE
+                Hr::ClockNoTimeSource.code()
             }, 8), // GetTimeSource
             (ck_time, 8),
             (ok, 8),  // AddClockStateSink
@@ -1085,7 +1079,7 @@ fn vtables() -> [u32; 4] {
 fn MFCreateMediaSession(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let b = mem::heap_alloc(4 * ps(), true);
     for (k, v) in vtables().into_iter().enumerate() {

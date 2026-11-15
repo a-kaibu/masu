@@ -14,9 +14,6 @@ use std::sync::Arc;
 
 use super::mp4;
 
-const MF_E_NO_EVENTS_AVAILABLE: u32 = 0xc00d_3e80;
-const MF_E_NO_MORE_TYPES_: u32 = 0xc00d_36b9;
-const MF_E_INVALIDMEDIATYPE_: u32 = 0xc00d_36b4;
 
 /// Where a file's bytes are.
 pub enum Src {
@@ -388,7 +385,7 @@ pub fn source_of(b: u32) -> Option<(Arc<Data>, Arc<Media>)> {
 fn ms_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFMediaSource {279a808d-aec7-40c8-9c6b-a6b492c78a66}, IMFMediaEventGenerator
@@ -399,7 +396,7 @@ fn ms_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 fn ms_add_ref(c: &mut Ctx) -> u32 {
     source(c.a(0), |s| {
@@ -441,17 +438,17 @@ fn ms_live(c: &Ctx) -> bool {
 /// ours but a reader)
 fn ms_event(c: &mut Ctx) -> u32 {
     if !ms_live(c) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
-    MF_E_NO_EVENTS_AVAILABLE
+    Hr::NoEventsAvailable.code()
 }
 fn ms_characteristics(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if !ms_live(c) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     // MFMEDIASOURCE_CAN_SEEK | CAN_PAUSE
     w32(out, 6);
@@ -460,15 +457,15 @@ fn ms_characteristics(c: &mut Ctx) -> u32 {
 fn ms_pd(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some((_, m)) = source_of(c.a(0)) else { return MF_E_SHUTDOWN };
+    let Some((_, m)) = source_of(c.a(0)) else { return Hr::Shutdown.code() };
     putp(out, new_pd(&m, None));
     0
 }
 fn ms_start(c: &mut Ctx) -> u32 {
     if !ms_live(c) {
-        return MF_E_SHUTDOWN;
+        return Hr::Shutdown.code();
     }
     0
 }
@@ -541,7 +538,7 @@ pub fn first_selected(m: &Media) -> Vec<bool> {
 fn pd_count(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(out, side(c.a(0)).map_or(0, |s| s.media.tracks.len() as u32));
     0
@@ -550,11 +547,11 @@ fn pd_count(c: &mut Ctx) -> u32 {
 fn pd_by_index(c: &mut Ctx) -> u32 {
     let (i, sel, out) = (c.a(1) as usize, c.a(2), c.a(3));
     if sel == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(s) = side(c.a(0)) else { return E_INVALIDARG };
+    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
     if i >= s.media.tracks.len() {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     w32(sel, s.selected.lock().unwrap_or_else(|e| e.into_inner())[i] as u32);
     putp(out, new_sd(&s.media, i));
@@ -562,22 +559,22 @@ fn pd_by_index(c: &mut Ctx) -> u32 {
 }
 fn pd_select(c: &mut Ctx, on: bool) -> u32 {
     let i = c.a(1) as usize;
-    let Some(s) = side(c.a(0)) else { return E_INVALIDARG };
+    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
     let mut v = s.selected.lock().unwrap_or_else(|e| e.into_inner());
     match v.get_mut(i) {
         Some(x) => {
             *x = on;
             0
         }
-        None => E_INVALIDARG,
+        None => Hr::InvalidArg.code(),
     }
 }
 fn pd_clone(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(s) = side(c.a(0)) else { return E_INVALIDARG };
+    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
     let sel = s.selected.lock().unwrap_or_else(|e| e.into_inner()).clone();
     putp(out, new_pd(&s.media, Some(sel)));
     0
@@ -612,7 +609,7 @@ fn sd_qi(c: &mut Ctx) -> u32 {
 fn sd_id(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     // (the MP4 source names a stream by its track: 1, 2, ...)
     w32(out, side(c.a(0)).map_or(0, |s| s.stream as u32 + 1));
@@ -621,9 +618,9 @@ fn sd_id(c: &mut Ctx) -> u32 {
 fn sd_handler(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(s) = side(c.a(0)) else { return E_INVALIDARG };
+    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
     putp(out, new_handler(&s.media, s.stream));
     0
 }
@@ -645,7 +642,7 @@ fn new_sd(m: &Arc<Media>, i: usize) -> u32 {
 fn mh_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFMediaTypeHandler {e93dcf6c-4b07-4e1e-8123-aa16ed6eadf5}
@@ -655,7 +652,7 @@ fn mh_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 static HANDLER_REFS: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
 fn mh_add_ref(c: &mut Ctx) -> u32 {
@@ -691,17 +688,17 @@ fn mh_supported(c: &mut Ctx) -> u32 {
     if closest != 0 {
         putp(closest, 0);
     }
-    let (Some(s), Some(want)) = (side(c.a(0)), store_of(t)) else { return E_POINTER };
+    let (Some(s), Some(want)) = (side(c.a(0)), store_of(t)) else { return Hr::Pointer.code() };
     let native = native_of(&s.media.tracks[s.stream]);
     if reader::equal_flags(&native, &want) & 3 == 3 {
         0
     } else {
-        MF_E_INVALIDMEDIATYPE_
+        Hr::InvalidMediaType.code()
     }
 }
 fn mh_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), 1);
     0
@@ -709,22 +706,22 @@ fn mh_count(c: &mut Ctx) -> u32 {
 fn mh_by_index(c: &mut Ctx) -> u32 {
     let (i, out) = (c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if i != 0 {
-        return MF_E_NO_MORE_TYPES_;
+        return Hr::NoMoreTypes.code();
     }
-    let Some(s) = side(c.a(0)) else { return E_INVALIDARG };
+    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
     putp(out, reader::new_type(native_of(&s.media.tracks[s.stream])));
     0
 }
 fn mh_set_current(c: &mut Ctx) -> u32 {
     let t = c.a(1);
     if t == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if mh_supported(c) != 0 {
-        return MF_E_INVALIDMEDIATYPE_;
+        return Hr::InvalidMediaType.code();
     }
     add_ref(c, t);
     let old = rp(c.a(0) + ps());
@@ -735,7 +732,7 @@ fn mh_set_current(c: &mut Ctx) -> u32 {
 fn mh_current(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let cur = rp(c.a(0) + ps());
     if cur != 0 {
@@ -746,16 +743,16 @@ fn mh_current(c: &mut Ctx) -> u32 {
     mh_by_index_0(c, out)
 }
 fn mh_by_index_0(c: &mut Ctx, out: u32) -> u32 {
-    let Some(s) = side(c.a(0)) else { return E_INVALIDARG };
+    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
     putp(out, reader::new_type(native_of(&s.media.tracks[s.stream])));
     0
 }
 fn mh_major(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(s) = side(c.a(0)) else { return E_INVALIDARG };
+    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
     let g = match &s.media.tracks[s.stream] {
         mp4::Track::Video(_) => major_video(),
         mp4::Track::Audio(_) => reader::major_audio(),
@@ -787,14 +784,14 @@ const MF_RESOLUTION_BYTESTREAM: u32 = 2;
 fn resolve(c: &mut Ctx, data: Data) -> Result<u32, u32> {
     let Some(media) = open_media(Some(c), &data) else {
         release(c, data.guest_stream());
-        return Err(MF_E_UNSUPPORTED_BYTESTREAM_TYPE);
+        return Err(Hr::UnsupportedByteStreamType.code());
     };
     Ok(new_source(Arc::new(data), media))
 }
 /// The host file of a URL: a byte stream (flag BYTESTREAM) or a source on it
 fn from_url(c: &mut Ctx, url: u32, flags: u32) -> Result<(u32, u32), u32> {
     if url == 0 {
-        return Err(E_POINTER);
+        return Err(Hr::Pointer.code());
     }
     let path = reader::file_url_path(&String::from_utf16_lossy(&mem::wstr(url)));
     let missing = || 0x8007_0000 | crate::files::missing(&path);
@@ -803,17 +800,17 @@ fn from_url(c: &mut Ctx, url: u32, flags: u32) -> Result<(u32, u32), u32> {
     if flags & MF_RESOLUTION_BYTESTREAM != 0 && flags & MF_RESOLUTION_MEDIASOURCE == 0 {
         return Ok((1, plat::new_file_stream(f, 1 | 4)));
     }
-    let d = Data::host(f).ok_or(E_FAIL)?;
+    let d = Data::host(f).ok_or(Hr::Fail.code())?;
     Ok((0, resolve(c, d)?))
 }
 fn from_stream(c: &mut Ctx, bs: u32, flags: u32) -> Result<(u32, u32), u32> {
     if bs == 0 {
-        return Err(E_POINTER);
+        return Err(Hr::Pointer.code());
     }
     if flags & MF_RESOLUTION_MEDIASOURCE == 0 {
-        return Err(E_INVALIDARG);
+        return Err(Hr::InvalidArg.code());
     }
-    let d = Data::guest(c, bs).ok_or(E_FAIL)?;
+    let d = Data::guest(c, bs).ok_or(Hr::Fail.code())?;
     Ok((0, resolve(c, d)?))
 }
 fn put_object(r: Result<(u32, u32), u32>, ty: u32, out: u32) -> u32 {
@@ -835,7 +832,7 @@ fn put_object(r: Result<(u32, u32), u32>, ty: u32, out: u32) -> u32 {
 fn sv_from_url(c: &mut Ctx) -> u32 {
     let (url, flags, ty, out) = (c.a(1), c.a(2), c.a(4), c.a(5));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = from_url(c, url, flags);
     put_object(r, ty, out)
@@ -845,7 +842,7 @@ fn sv_from_url(c: &mut Ctx) -> u32 {
 fn sv_from_stream(c: &mut Ctx) -> u32 {
     let (bs, flags, ty, out) = (c.a(1), c.a(3), c.a(5), c.a(6));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let r = from_stream(c, bs, flags);
     put_object(r, ty, out)
@@ -857,7 +854,7 @@ fn begin(c: &mut Ctx, r: Result<(u32, u32), u32>, cancel: u32, cb: u32, state: u
         if let Ok((_, o)) = r {
             release(c, o);
         }
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     if cancel != 0 {
         putp(cancel, 0);
@@ -891,20 +888,20 @@ fn sv_begin_stream(c: &mut Ctx) -> u32 {
 fn sv_end(c: &mut Ctx) -> u32 {
     let (res, ty, out) = (c.a(1), c.a(2), c.a(3));
     if res == 0 || out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let made = MADE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&res);
-    let hr = plat::done_of(res).map_or(E_INVALIDARG, |d| d.1);
+    let hr = plat::done_of(res).map_or(Hr::InvalidArg.code(), |d| d.1);
     match made {
         Some((t, o)) => put_object(Ok((t, o)), ty, out),
-        None => put_object(Err(if hr == 0 { E_INVALIDARG } else { hr }), ty, out),
+        None => put_object(Err(if hr == 0 { Hr::InvalidArg.code() } else { hr }), ty, out),
     }
 }
 
 fn resolver_qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let g = guid_at(c.a(1));
     // IMFSourceResolver {fbe5a32d-a497-4b61-bb85-97b1a848a6e3}
@@ -913,14 +910,14 @@ fn resolver_qi(c: &mut Ctx) -> u32 {
         return 0;
     }
     putp(out, 0);
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 
 /// MFCreateSourceResolver(IMFSourceResolver **): one resolver (it holds nothing)
 fn MFCreateSourceResolver(c: &mut Ctx) -> u32 {
     let out = c.a(0);
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     static R: OnceLock<u32> = OnceLock::new();
     let r = *R.get_or_init(|| {

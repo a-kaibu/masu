@@ -16,12 +16,6 @@ use super::*;
 
 /// ID3D11Texture2D {6f15aaf2-d208-4e89-9ab4-489535d34f9c}
 const TEX2D: (u32, u16, u16) = (0x6f15_aaf2, 0xd208, 0x4e89);
-const MF_E_NOT_FOUND: u32 = 0xc00d_36d5;
-/// HRESULT_FROM_WIN32(ERROR_OBJECT_ALREADY_EXISTS)
-const ALREADY: u32 = 0x8007_1392;
-/// HRESULT_FROM_WIN32(ERROR_WAS_LOCKED), HRESULT_FROM_WIN32(ERROR_WAS_UNLOCKED)
-const WAS_LOCKED: u32 = 0x8007_0717;
-const WAS_UNLOCKED: u32 = 0x8007_0716;
 
 // (vtable indexes: ID3D11Texture2D, ID3D11Device, ID3D11DeviceContext)
 const TEX_GET_DEVICE: u32 = 3;
@@ -80,9 +74,9 @@ pub fn length(b: u32) -> Option<u32> {
 fn qi(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(b) = base(this) else { return E_INVALIDARG };
+    let Some(b) = base(this) else { return Hr::InvalidArg.code() };
     let g = guid_at(c.a(1));
     // IMFMediaBuffer {045fa593-...}, IMFDXGIBuffer {e7174cfa-...}, IMF2DBuffer {7dc9d5f9-...}
     let slot = if is_unknown(&g) || is(&g, 0x045f_a593, 0x8799, 0x42b8) {
@@ -93,7 +87,7 @@ fn qi(c: &mut Ctx) -> u32 {
         2
     } else {
         putp(out, 0);
-        return E_NOINTERFACE;
+        return Hr::NoInterface.code();
     };
     dx(b, |d| d.refs += 1);
     putp(out, b + slot * ps());
@@ -237,7 +231,7 @@ fn unlock(c: &mut Ctx, b: u32) -> u32 {
         Some(d.locks == 0)
     })
     .flatten() else {
-        return WAS_UNLOCKED;
+        return Hr::WasUnlocked.code();
     };
     if last {
         let changed = dx(b, |d| d.read.take().is_some_and(|r| r[..] != *mem::slice(d.data, d.max))).unwrap_or(false);
@@ -254,9 +248,9 @@ fn unlock(c: &mut Ctx, b: u32) -> u32 {
 fn mb_lock(c: &mut Ctx) -> u32 {
     let (pp, pmax, plen) = (c.a(1), c.a(2), c.a(3));
     if pp == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(b) = base(c.a(0)) else { return E_INVALIDARG };
+    let Some(b) = base(c.a(0)) else { return Hr::InvalidArg.code() };
     let data = lock(c, b);
     putp(pp, data);
     let (m, l) = dx(b, |d| (d.max, d.len)).unwrap_or_default();
@@ -269,12 +263,12 @@ fn mb_lock(c: &mut Ctx) -> u32 {
     0
 }
 fn mb_unlock(c: &mut Ctx) -> u32 {
-    let Some(b) = base(c.a(0)) else { return E_INVALIDARG };
+    let Some(b) = base(c.a(0)) else { return Hr::InvalidArg.code() };
     unlock(c, b)
 }
 fn mb_get_len(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), with(c.a(0), |d| d.len).unwrap_or(0));
     0
@@ -283,17 +277,17 @@ fn mb_set_len(c: &mut Ctx) -> u32 {
     let n = c.a(1);
     with(c.a(0), |d| {
         if n > d.max {
-            E_INVALIDARG
+            Hr::InvalidArg.code()
         } else {
             d.len = n;
             0
         }
     })
-    .unwrap_or(E_INVALIDARG)
+    .unwrap_or(Hr::InvalidArg.code())
 }
 fn mb_get_max(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), with(c.a(0), |d| d.max).unwrap_or(0));
     0
@@ -305,15 +299,15 @@ fn mb_get_max(c: &mut Ctx) -> u32 {
 fn db_resource(c: &mut Ctx) -> u32 {
     let (iid, out) = (c.a(1), c.a(2));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(tex) = with(c.a(0), |d| d.tex) else { return E_INVALIDARG };
+    let Some(tex) = with(c.a(0), |d| d.tex) else { return Hr::InvalidArg.code() };
     com(c, tex, 0, &[iid, out])
 }
 /// GetSubresourceIndex(UINT *)
 fn db_sub(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), with(c.a(0), |d| d.sub).unwrap_or(0));
     0
@@ -322,22 +316,22 @@ fn db_sub(c: &mut Ctx) -> u32 {
 fn db_get_unknown(c: &mut Ctx) -> u32 {
     let (key, iid, out) = (c.a(1), c.a(2), c.a(3));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     let k = guid_at(key);
     let Some(u) = with(c.a(0), |d| d.unks.iter().find(|x| x.0 == k).map(|x| x.1)).flatten() else {
         putp(out, 0);
-        return MF_E_NOT_FOUND;
+        return Hr::NotFound.code();
     };
     com(c, u, 0, &[iid, out])
 }
 /// SetUnknown(REFGUID, IUnknown *): an object kept under a key (NULL: forget it)
 fn db_set_unknown(c: &mut Ctx) -> u32 {
     let (key, u) = (guid_at(c.a(1)), c.a(2));
-    let Some(b) = base(c.a(0)) else { return E_INVALIDARG };
+    let Some(b) = base(c.a(0)) else { return Hr::InvalidArg.code() };
     let had = dx(b, |d| d.unks.iter().position(|x| x.0 == key)).flatten();
     match (had, u) {
-        (Some(_), u) if u != 0 => ALREADY,
+        (Some(_), u) if u != 0 => Hr::Already.code(),
         (Some(i), _) => {
             let old = dx(b, |d| d.unks.remove(i).1).unwrap_or(0);
             release(c, old);
@@ -366,9 +360,9 @@ fn scan0(d: &Dx) -> (u32, i32) {
 fn b2_lock(c: &mut Ctx) -> u32 {
     let (pp, ppitch) = (c.a(1), c.a(2));
     if pp == 0 || ppitch == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(b) = base(c.a(0)) else { return E_INVALIDARG };
+    let Some(b) = base(c.a(0)) else { return Hr::InvalidArg.code() };
     lock(c, b);
     let (s, p) = dx(b, |d| scan0(d)).unwrap_or_default();
     putp(pp, s);
@@ -376,17 +370,17 @@ fn b2_lock(c: &mut Ctx) -> u32 {
     0
 }
 fn b2_unlock(c: &mut Ctx) -> u32 {
-    let Some(b) = base(c.a(0)) else { return E_INVALIDARG };
+    let Some(b) = base(c.a(0)) else { return Hr::InvalidArg.code() };
     unlock(c, b)
 }
 /// GetScanline0AndPitch(BYTE **, LONG *): only while locked
 fn b2_scan0(c: &mut Ctx) -> u32 {
     let (pp, ppitch) = (c.a(1), c.a(2));
     if pp == 0 || ppitch == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
-    let Some(x) = with(c.a(0), |d| (d.locks > 0).then(|| scan0(d))) else { return E_INVALIDARG };
-    let Some((s, p)) = x else { return WAS_UNLOCKED };
+    let Some(x) = with(c.a(0), |d| (d.locks > 0).then(|| scan0(d))) else { return Hr::InvalidArg.code() };
+    let Some((s, p)) = x else { return Hr::WasUnlocked.code() };
     putp(pp, s);
     w32(ppitch, p as u32);
     0
@@ -394,7 +388,7 @@ fn b2_scan0(c: &mut Ctx) -> u32 {
 /// IsContiguousFormat(BOOL *)
 fn b2_contiguous(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), 0);
     0
@@ -402,7 +396,7 @@ fn b2_contiguous(c: &mut Ctx) -> u32 {
 /// GetContiguousLength(DWORD *)
 fn b2_length(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     w32(c.a(1), with(c.a(0), |d| d.max).unwrap_or(0));
     0
@@ -410,13 +404,13 @@ fn b2_length(c: &mut Ctx) -> u32 {
 /// ContiguousCopyTo(BYTE *, DWORD): the rows top-down
 fn b2_copy_to(c: &mut Ctx) -> u32 {
     let (dst, n) = (c.a(1), c.a(2));
-    let Some(b) = base(c.a(0)) else { return E_INVALIDARG };
+    let Some(b) = base(c.a(0)) else { return Hr::InvalidArg.code() };
     let max = dx(b, |d| d.max).unwrap_or(0);
     if n < max {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     if dx(b, |d| d.locks > 0).unwrap_or(false) {
-        return WAS_LOCKED;
+        return Hr::WasLocked.code();
     }
     let data = lock(c, b);
     mem::copy(dst, data, max);
@@ -426,13 +420,13 @@ fn b2_copy_to(c: &mut Ctx) -> u32 {
 /// ContiguousCopyFrom(const BYTE *, DWORD)
 fn b2_copy_from(c: &mut Ctx) -> u32 {
     let (src, n) = (c.a(1), c.a(2));
-    let Some(b) = base(c.a(0)) else { return E_INVALIDARG };
+    let Some(b) = base(c.a(0)) else { return Hr::InvalidArg.code() };
     let max = dx(b, |d| d.max).unwrap_or(0);
     if src == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     if dx(b, |d| d.locks > 0).unwrap_or(false) {
-        return WAS_LOCKED;
+        return Hr::WasLocked.code();
     }
     let data = lock(c, b);
     mem::copy(data, src, n.min(max));
@@ -520,27 +514,27 @@ fn new_buffer(c: &mut Ctx, tex: u32, sub: u32, bottom_up: bool, len_is_max: bool
 fn MFCreateDXGISurfaceBuffer(c: &mut Ctx) -> u32 {
     let (iid, surface, sub, bottom_up, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
     if out == 0 {
-        return E_POINTER;
+        return Hr::Pointer.code();
     }
     putp(out, 0);
     if iid == 0 || surface == 0 {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let g = guid_at(iid);
     if !is(&g, TEX2D.0, TEX2D.1, TEX2D.2) {
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     let p = mem::heap_alloc(ps(), true);
     let hr = com(c, surface, 0, &[iid, p]);
     let tex = rp(p);
     mem::heap_free(p);
     if hr != 0 || tex == 0 {
-        return if hr != 0 { hr } else { E_NOINTERFACE };
+        return if hr != 0 { hr } else { Hr::NoInterface.code() };
     }
     let d = desc(c, tex);
     if sub >= d[2].max(1) * d[3].max(1) {
         release(c, tex);
-        return E_INVALIDARG;
+        return Hr::InvalidArg.code();
     }
     match new_buffer(c, tex, sub, bottom_up != 0, false, None) {
         Some(b) => {
@@ -549,7 +543,7 @@ fn MFCreateDXGISurfaceBuffer(c: &mut Ctx) -> u32 {
         }
         None => {
             release(c, tex);
-            E_INVALIDARG
+            Hr::InvalidArg.code()
         }
     }
 }

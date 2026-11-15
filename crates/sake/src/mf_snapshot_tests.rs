@@ -238,7 +238,7 @@ fn nt_one(_: &mut Ctx) -> u32 {
     1
 }
 fn nt_noint(_: &mut Ctx) -> u32 {
-    E_NOINTERFACE
+    Hr::NoInterface.code()
 }
 
 #[test]
@@ -443,7 +443,7 @@ fn mf_factory_and_manager_snapshot() {
     }
     fn d_qi(c: &mut Ctx) -> u32 {
         putp(c.a(2), 0);
-        E_NOINTERFACE
+        Hr::NoInterface.code()
     }
     let dev = object(vtable("test device", &[(d_qi as Handler, 12), (d_add, 4), (d_rel, 4)]), 1);
     *REFS.lock().unwrap_or_else(|e| e.into_inner()) = 1;
