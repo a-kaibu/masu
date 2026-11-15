@@ -239,14 +239,14 @@ fn new_stream(h: u32, size: u32, del: bool) -> u32 {
 }
 
 fn CreateStreamOnHGlobal(c: &mut Ctx) -> u32 {
-    let (h, del, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let (h, del, out) = (c.a(0), c.a(1), c.out(2));
+    if out.is_null() {
         return 0x8007_0057; // E_INVALIDARG
     }
     // (no HGLOBAL: a new moveable one, empty, as Windows)
     let (h, size) = if h == 0 { (crate::k32::global_alloc(2 | 0x2000, 0), 0) } else { (h, crate::k32::global_size(h)) };
     let s = if h != 0 { new_stream(h, size, del != 0 || c.a(0) == 0) } else { 0 };
-    mem::wp(out, s);
+    out.put(s);
     if s == 0 {
         if c.a(0) == 0 && h != 0 {
             crate::k32::global_free(h);
@@ -273,11 +273,11 @@ fn SHCreateMemStream(c: &mut Ctx) -> u32 {
     s
 }
 fn GetHGlobalFromStream(c: &mut Ctx) -> u32 {
-    let (s, out) = (c.a(0), c.a(1));
+    let (s, out) = (c.a(0), c.out(1));
     if r32(s) != stream_vtbl() {
         return E_FAIL;
     }
-    mem::wp(out, hg(s));
+    out.put(hg(s));
     0
 }
 
@@ -382,8 +382,8 @@ pub fn decode(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 const PICTURE_BYTES_MAX: usize = 256 << 20;
 
 fn OleLoadPicture(c: &mut Ctx) -> u32 {
-    let (stm, size, out) = (c.a(0), c.a(1), c.a(4));
-    put32(out, 0);
+    let (stm, size, out) = (c.a(0), c.a(1), c.out(4));
+    out.put(0);
     // the stream's bytes (through its Read, whoever made it)
     let read = mem::rp(mem::rp(stm) + 3 * mem::ps());
     let buf = mem::heap_alloc(0x10000, false);
@@ -420,15 +420,15 @@ fn OleLoadPicture(c: &mut Ctx) -> u32 {
     w32(o + 12, h);
     w32(o + 16, bits);
     w32(o + 28, 1);
-    put32(out, o);
+    out.put(o);
     0
 }
 fn OleLoadPictureEx(c: &mut Ctx) -> u32 {
     // (stream, size, runmode, riid, x, y, flags, out): as OleLoadPicture
-    let (stm, size, out) = (c.a(0), c.a(1), c.a(7));
+    let (stm, size, out) = (c.a(0), c.a(1), c.out(7));
     let tmp = mem::heap_alloc(8, true);
     let r = gcall(c, "oleaut32", "OleLoadPicture", &[stm, size, 0, 0, tmp]);
-    mem::putp(out, mem::rp(tmp));
+    out.put(mem::rp(tmp));
     mem::heap_free(tmp);
     r
 }

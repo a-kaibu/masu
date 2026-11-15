@@ -167,8 +167,8 @@ fn CreateTimerQueue(_: &mut Ctx) -> u32 {
 
 /// CreateTimerQueueTimer(phandle*, queue, callback, param, due ms, period ms, flags)
 fn CreateTimerQueueTimer(c: &mut Ctx) -> u32 {
-    let (out, q, cb, param, due, period) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
-    if out == 0 || cb == 0 {
+    let (out, q, cb, param, due, period) = (c.out(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    if out.is_null() || cb == 0 {
         last_error(ERROR_INVALID_PARAMETER);
         return 0;
     }
@@ -182,7 +182,7 @@ fn CreateTimerQueueTimer(c: &mut Ctx) -> u32 {
         s.timers.insert(t, Timer::new(q, cb, param, Instant::now(), due, period));
         s.flags.insert(t, flags);
     });
-    mem::putp(out, t);
+    out.put(t);
     settle(t);
     1
 }

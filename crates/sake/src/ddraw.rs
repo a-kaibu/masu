@@ -2279,15 +2279,15 @@ fn D_GetDeviceIdentifier(c: &mut Ctx) -> u32 {
 // exports
 
 fn DirectDrawCreate(c: &mut Ctx) -> u32 {
-    crate::mem::putp(c.a(1), dd_iface(dd_new(false), 0));
+    c.out(1).put(dd_iface(dd_new(false), 0));
     DD_OK
 }
 fn DirectDrawCreateEx(c: &mut Ctx) -> u32 {
-    crate::mem::putp(c.a(1), dd_iface(dd_new(true), 3));
+    c.out(1).put(dd_iface(dd_new(true), 3));
     DD_OK
 }
 fn DirectDrawCreateClipper(c: &mut Ctx) -> u32 {
-    crate::mem::putp(c.a(1), new_clipper());
+    c.out(1).put(new_clipper());
     DD_OK
 }
 /// DirectDrawEnumerate(Ex)A: the primary display only (a NULL GUID); a NULL callback, or flags

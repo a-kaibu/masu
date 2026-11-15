@@ -818,8 +818,8 @@ fn waveOutGetDevCapsW(c: &mut Ctx) -> u32 {
 }
 /// waveOutOpen(phwo, device, format, callback, instance, flags)
 fn waveOutOpen(c: &mut Ctx) -> u32 {
-    let (ph, device, fmtp, cb, inst, flags) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
-    mm(wave_open(c, ph, device, fmtp, WaveCb::of(flags, cb, inst), flags))
+    let (ph, device, fmtp, cb, inst, flags) = (c.out(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    mm(wave_open(c, ph.addr(), device, fmtp, WaveCb::of(flags, cb, inst), flags))
 }
 fn wave_open(c: &mut Ctx, ph: u32, device: u32, fmtp: u32, cbk: WaveCb, flags: u32) -> Result<(), WaveErr> {
     // a device id (not an open handle)
@@ -1185,18 +1185,18 @@ fn no_sound() -> bool {
 
 fn DirectSoundCreate(c: &mut Ctx) -> u32 {
     if no_sound() {
-        crate::mem::putp(c.a(1), 0);
+        c.out(1).put(0);
         return Hr::NoDriver.code();
     }
-    crate::mem::putp(c.a(1), create_device());
+    c.out(1).put(create_device());
     0
 }
 fn DirectSoundCreate8(c: &mut Ctx) -> u32 {
     if no_sound() {
-        crate::mem::putp(c.a(1), 0);
+        c.out(1).put(0);
         return Hr::NoDriver.code();
     }
-    crate::mem::putp(c.a(1), create_device());
+    c.out(1).put(create_device());
     0
 }
 /// The output device DirectSoundEnumerate lists after the primary driver (a GUID of its own, as

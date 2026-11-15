@@ -53,7 +53,56 @@ pub struct Ctx<'a> {
     pub this: Option<u32>,
 }
 
+/// A pointer-sized out-parameter (Win32 metadata: a pointer, a handle, an interface, a SIZE_T, an
+/// SRWLOCK...: 8 bytes on x64), as `c.out(i)` gives it. It is not an address the 32-bit writers
+/// take (it is no u32, no Ga): what it can write is whole, so a handler cannot leave the upper
+/// half on x64 as the caller had it (review 2026-11-15: outptr_audit searched for `w32(c.a(i)`,
+/// which a local variable got past; now it checks that such an argument is only ever c.out(i)).
+/// ```compile_fail
+/// fn f(c: &mut sake::api::Ctx) { sake::mem::w32(c.out(1), 0) }
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Out(u32);
+
+impl Out {
+    /// `v` as a pointer-sized value (mem::putp: NULL skipped; small negatives sign-extended)
+    #[inline]
+    pub fn put(self, v: u32) {
+        crate::mem::putp(self.0, v)
+    }
+    /// Guest address `v` as a pointer (mem::put_addr: x64 widens it)
+    #[inline]
+    pub fn put_addr(self, v: u32) {
+        crate::mem::put_addr(self.0, v)
+    }
+    /// A whole 64-bit value (x64 only callers)
+    #[inline]
+    pub fn put64(self, v: u64) {
+        crate::mem::put64(self.0, v)
+    }
+    /// What it holds now (mem::rp: its low half on x64)
+    #[inline]
+    pub fn get(self) -> u32 {
+        crate::mem::rp(self.0)
+    }
+    #[inline]
+    pub fn is_null(self) -> bool {
+        self.0 == 0
+    }
+    /// Its address, for a helper that writes it as what it is (an SRWLOCK's word, a structure
+    /// with this one inside): named at the call, so a 32-bit write through it is a choice
+    #[inline]
+    pub fn addr(self) -> u32 {
+        self.0
+    }
+}
+
 impl Ctx<'_> {
+    /// Argument `i`, a pointer-sized out-parameter
+    #[inline]
+    pub fn out(&self, i: u32) -> Out {
+        Out(self.a(i))
+    }
     #[inline]
     pub fn a(&self, i: u32) -> u32 {
         if crate::mem::x64() {

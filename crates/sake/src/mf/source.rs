@@ -936,8 +936,8 @@ fn resolver_qi(c: &mut Ctx) -> u32 {
 
 /// MFCreateSourceResolver(IMFSourceResolver **): one resolver (it holds nothing)
 fn MFCreateSourceResolver(c: &mut Ctx) -> u32 {
-    let out = c.a(0);
-    if out == 0 {
+    let out = c.out(0);
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     static R: OnceLock<u32> = OnceLock::new();
@@ -960,7 +960,7 @@ fn MFCreateSourceResolver(c: &mut Ctx) -> u32 {
         );
         object(vt, 1)
     });
-    putp(out, r);
+    out.put(r);
     0
 }
 

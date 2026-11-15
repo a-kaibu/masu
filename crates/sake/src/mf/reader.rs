@@ -771,10 +771,10 @@ pub fn new_type(s: Store) -> u32 {
 }
 
 fn MFCreateMediaType(c: &mut Ctx) -> u32 {
-    if c.a(0) == 0 {
+    if c.out(0).is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(0), new_type(Store::default()));
+    c.out(0).put(new_type(Store::default()));
     0
 }
 
@@ -825,8 +825,8 @@ pub fn wave_format(s: &Store, force_ext: bool) -> Option<Vec<u8>> {
 
 /// MFCreateWaveFormatExFromMFMediaType(type, WAVEFORMATEX **out, UINT32 *size, flags)
 fn MFCreateWaveFormatExFromMFMediaType(c: &mut Ctx) -> u32 {
-    let (t, out, size, flags) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if t == 0 || out == 0 {
+    let (t, out, size, flags) = (c.a(0), c.out(1), c.a(2), c.a(3));
+    if t == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     let Some(w) = store_of(t).and_then(|s| wave_format(&s, flags & 1 != 0)) else {
@@ -834,7 +834,7 @@ fn MFCreateWaveFormatExFromMFMediaType(c: &mut Ctx) -> u32 {
     };
     let p = mem::heap_alloc(lo32(w.len()), false);
     mem::write(p, &w);
-    putp(out, p);
+    out.put(p);
     if size != 0 {
         w32(size, lo32(w.len()));
     }
@@ -1014,10 +1014,10 @@ fn new_buffer(max: u32, bytes: &[u8]) -> u32 {
 }
 
 fn MFCreateMemoryBuffer(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    if c.out(1).is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), new_buffer(c.a(0), &[]));
+    c.out(1).put(new_buffer(c.a(0), &[]));
     0
 }
 
@@ -1241,10 +1241,10 @@ pub(super) fn new_sample_of(time: Option<u64>, dur: Option<u64>, b: u32) -> u32 
 }
 
 fn MFCreateSample(c: &mut Ctx) -> u32 {
-    if c.a(0) == 0 {
+    if c.out(0).is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(0), new_sample(None, None, None));
+    c.out(0).put(new_sample(None, None, None));
     0
 }
 
@@ -1815,18 +1815,18 @@ fn reader_of(c: &mut Ctx, attributes: u32, data: Data, out: u32) -> u32 {
 
 /// MFCreateSourceReaderFromURL(LPCWSTR url, IMFAttributes *, IMFSourceReader **)
 fn MFCreateSourceReaderFromURL(c: &mut Ctx) -> u32 {
-    let (url, at, out) = (c.a(0), c.a(1), c.a(2));
-    if url == 0 || out == 0 {
+    let (url, at, out) = (c.a(0), c.a(1), c.out(2));
+    if url == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let w = String::from_utf16_lossy(&mem::wstr(url));
     let path = file_url_path(&w);
     // (HRESULT_FROM_WIN32: ERROR_PATH_NOT_FOUND when the folder is missing too, winref mfreader)
     let missing = || 0x8007_0000 | crate::files::missing(&path);
     let Some(host) = crate::files::resolve(&path) else { return missing() };
     let Some(d) = kura::fs::File::open(&host).ok().and_then(Data::host) else { return missing() };
-    reader_of(c, at, d, out)
+    reader_of(c, at, d, out.addr())
 }
 
 /// A file: URL's path ("file:///C:/a%20b.mp3" -> "C:\a b.mp3"); anything else as it is.
@@ -1852,25 +1852,25 @@ pub fn file_url_path(u: &str) -> String {
 /// MFCreateSourceReaderFromByteStream(IMFByteStream *, IMFAttributes *, IMFSourceReader **):
 /// the stream read as samples are wanted (GetLength, SetCurrentPosition, Read)
 fn MFCreateSourceReaderFromByteStream(c: &mut Ctx) -> u32 {
-    let (bs, at, out) = (c.a(0), c.a(1), c.a(2));
-    if bs == 0 || out == 0 {
+    let (bs, at, out) = (c.a(0), c.a(1), c.out(2));
+    if bs == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let Some(d) = Data::guest(c, bs) else { return Hr::InvalidArg.code() };
-    reader_of(c, at, d, out)
+    reader_of(c, at, d, out.addr())
 }
 
 /// MFCreateSourceReaderFromMediaSource(IMFMediaSource *, IMFAttributes *, IMFSourceReader **):
 /// a source of ours (MFCreateSourceResolver's)
 fn MFCreateSourceReaderFromMediaSource(c: &mut Ctx) -> u32 {
-    let (src, at, out) = (c.a(0), c.a(1), c.a(2));
-    if src == 0 || out == 0 {
+    let (src, at, out) = (c.a(0), c.a(1), c.out(2));
+    if src == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let Some((data, media)) = source::source_of(src) else { return Hr::NotImpl.code() };
-    new_reader(c, at, data, &media, src, out)
+    new_reader(c, at, data, &media, src, out.addr())
 }
 
 pub fn init() {

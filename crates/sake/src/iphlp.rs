@@ -333,14 +333,14 @@ fn table2(out: u32, row: u32, n: usize, fill: impl Fn(u32, usize)) -> u32 {
 }
 fn GetIfTable2(c: &mut Ctx) -> u32 {
     let v = sorted();
-    table2(c.a(0), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
+    table2(c.out(0).addr(), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
 }
 fn GetIfTable2Ex(c: &mut Ctx) -> u32 {
     if c.a(0) > 2 {
         return ERROR_INVALID_PARAMETER;
     }
     let v = sorted();
-    table2(c.a(1), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
+    table2(c.out(1).addr(), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
 }
 
 // ---- IPv4 address and route tables ----
@@ -460,7 +460,7 @@ fn GetIpForwardTable2(c: &mut Ctx) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let v = routes(f);
-    table2(c.a(1), 104, v.len(), |p, i| fill_forward_row2(p, &v[i]))
+    table2(c.out(1).addr(), 104, v.len(), |p, i| fill_forward_row2(p, &v[i]))
 }
 
 fn GetIpNetTable(c: &mut Ctx) -> u32 {
@@ -477,7 +477,7 @@ fn GetIpNetTable2(c: &mut Ctx) -> u32 {
     if !family_ok(c.a(0) & 0xffff) {
         return ERROR_INVALID_PARAMETER;
     }
-    table2(c.a(1), 88, 0, |_, _| {})
+    table2(c.out(1).addr(), 88, 0, |_, _| {})
 }
 
 // ---- statistics ----
@@ -822,7 +822,7 @@ fn GetUnicastIpAddressTable(c: &mut Ctx) -> u32 {
         return ERROR_INVALID_PARAMETER;
     }
     let v = addrs(f);
-    table2(c.a(1), 80, v.len(), |p, i| fill_unicast_row(p, &v[i]))
+    table2(c.out(1).addr(), 80, v.len(), |p, i| fill_unicast_row(p, &v[i]))
 }
 /// GetUnicastIpAddressEntry(row): by Address and InterfaceLuid (or InterfaceIndex)
 fn GetUnicastIpAddressEntry(c: &mut Ctx) -> u32 {
@@ -892,7 +892,7 @@ fn GetIpInterfaceTable(c: &mut Ctx) -> u32 {
             }
         }
     }
-    table2(c.a(1), 168, v.len(), |p, i| fill_ipif_row(p, v[i].0, v[i].1))
+    table2(c.out(1).addr(), 168, v.len(), |p, i| fill_ipif_row(p, v[i].0, v[i].1))
 }
 fn GetIpInterfaceEntry(c: &mut Ctx) -> u32 {
     let p = c.a(0);
@@ -1894,8 +1894,8 @@ fn ParseNetworkString(c: &mut Ctx) -> u32 {
 /// CreateSortedAddressPairs(sources, nSources, dests, nDests, options, &pairs, &count): each
 /// destination with the loopback address of its family as the source, in the given order
 fn CreateSortedAddressPairs(c: &mut Ctx) -> u32 {
-    let (src, nsrc, dst, n, opts, out, count) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6));
-    if src != 0 || nsrc != 0 || dst == 0 || n == 0 || opts != 0 || out == 0 || count == 0 {
+    let (src, nsrc, dst, n, opts, out, count) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.out(5), c.a(6));
+    if src != 0 || nsrc != 0 || dst == 0 || n == 0 || opts != 0 || out.is_null() || count == 0 {
         return ERROR_INVALID_PARAMETER;
     }
     let k = ps();
@@ -1928,7 +1928,7 @@ fn CreateSortedAddressPairs(c: &mut Ctx) -> u32 {
         wp(ps_, sa_src);
         wp(ps_ + k, sa_dst);
     }
-    wp(out, t);
+    out.put(t);
     w32(count, n);
     NO_ERROR
 }

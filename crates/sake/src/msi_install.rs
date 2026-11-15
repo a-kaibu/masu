@@ -1514,17 +1514,17 @@ pub fn set_ui_level(level: u32) {
 fn MsiSetInternalUI(c: &mut Ctx) -> u32 {
     // (dwUILevel: a level 0..5 and INSTALLUILEVEL_ flags above it; phWnd: the parent window,
     // swapped with the previous one)
-    let (level, phwnd) = (c.a(0), c.a(1));
+    let (level, phwnd) = (c.a(0), c.out(1));
     let base = level & 0x1f;
     if base > INSTALLUILEVEL_FULL || level & !0x1f & !UI_FLAGS != 0 {
         return INSTALLUILEVEL_NOCHANGE;
     }
     let mut u = UI.lock().unwrap();
     let old = u.level;
-    if phwnd != 0 {
+    if !phwnd.is_null() {
         let prev = u.parent;
-        u.parent = mem::rp(phwnd);
-        mem::wp(phwnd, prev);
+        u.parent = phwnd.get();
+        phwnd.put(prev);
     }
     if base != INSTALLUILEVEL_NOCHANGE {
         u.level = level;

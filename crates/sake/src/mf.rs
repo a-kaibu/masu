@@ -784,10 +784,10 @@ fn attrs_vtable() -> u32 {
 
 /// MFCreateAttributes(IMFAttributes **out, UINT32 initial size)
 fn MFCreateAttributes(c: &mut Ctx) -> u32 {
-    if c.a(0) == 0 {
+    if c.out(0).is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(0), new_attrs());
+    c.out(0).put(new_attrs());
     0
 }
 
@@ -879,8 +879,8 @@ fn mg_device_qi(c: &mut Ctx) -> u32 {
 }
 
 fn MFCreateDXGIDeviceManager(c: &mut Ctx) -> u32 {
-    let (token, out) = (c.a(0), c.a(1));
-    if token == 0 || out == 0 {
+    let (token, out) = (c.a(0), c.out(1));
+    if token == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     static VT: OnceLock<u32> = OnceLock::new();
@@ -906,7 +906,7 @@ fn MFCreateDXGIDeviceManager(c: &mut Ctx) -> u32 {
     let t = NEXT.fetch_add(0x101, std::sync::atomic::Ordering::Relaxed);
     MANAGERS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Manager { refs: 1, token: t, device: 0 });
     w32(token, t);
-    putp(out, b);
+    out.put(b);
     0
 }
 

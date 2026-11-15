@@ -3062,15 +3062,15 @@ fn AcceptEx(c: &mut Ctx) -> u32 {
 
 /// GetAcceptExSockaddrs(buf, dataLen, localLen, remoteLen, &local, &localSize, &remote, &remoteSize)
 fn GetAcceptExSockaddrs(c: &mut Ctx) -> u32 {
-    let (buf, data, llen, _rlen, lp, lsp, rpp, rsp) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
+    let (buf, data, llen, _rlen, lp, lsp, rpp, rsp) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4), c.a(5), c.out(6), c.a(7));
     let l = buf + data;
     let r = l + llen;
-    if lp != 0 {
-        wp(lp, l + 4);
+    if !lp.is_null() {
+        lp.put(l + 4);
     }
     mem::put32(lsp, r32(l));
-    if rpp != 0 {
-        wp(rpp, r + 4);
+    if !rpp.is_null() {
+        rpp.put(r + 4);
     }
     mem::put32(rsp, r32(r));
     0

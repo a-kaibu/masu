@@ -70,17 +70,17 @@ fn GdipCreateFromHDC(c: &mut Ctx) -> u32 {
     if c.a(0) == 0 {
         return OUT_OF_MEMORY;
     }
-    new_graphics(0, c.a(0), c.a(1))
+    new_graphics(0, c.a(0), c.out(1).addr())
 }
 fn GdipCreateFromHWND(c: &mut Ctx) -> u32 {
-    new_graphics(0, 0, c.a(1))
+    new_graphics(0, 0, c.out(1).addr())
 }
 /// GdipCreateBitmapFromGraphics(width, height, graphics, &bitmap): a 32bppPARGB bitmap
 fn GdipCreateBitmapFromGraphics(c: &mut Ctx) -> u32 {
     if graphics(c.a(2)).is_none() || c.i(0) <= 0 || c.i(1) <= 0 {
         return INVALID_PARAMETER;
     }
-    crate::gdiplus::new_bitmap(c.a(0), c.a(1), 0x000e_200b, c.a(3))
+    crate::gdiplus::new_bitmap(c.a(0), c.a(1), 0x000e_200b, c.out(3).addr())
 }
 fn GdipGetRenderingOrigin(c: &mut Ctx) -> u32 {
     let (xp, yp) = (c.a(1), c.a(2));
@@ -107,7 +107,7 @@ fn GdipGetImageGraphicsContext(c: &mut Ctx) -> u32 {
     if !crate::gdiplus::is_image(c.a(0)) {
         return INVALID_PARAMETER;
     }
-    new_graphics(c.a(0), 0, c.a(1))
+    new_graphics(c.a(0), 0, c.out(1).addr())
 }
 fn GdipSetPageUnit(c: &mut Ctx) -> u32 {
     let u = c.a(1);
@@ -215,13 +215,13 @@ fn GdipCreateFontFromLogfontW(c: &mut Ctx) -> u32 {
 /// GdipCreateFont(family, size, style, unit, &font): a positive size in a unit other than
 /// UnitDisplay
 fn GdipCreateFont(c: &mut Ctx) -> u32 {
-    let (family, size, style, unit, out) = (c.a(0), c.f(1), c.a(2), c.a(3), c.a(4));
-    if crate::gdiplus_font::family(family).is_none() || out == 0 || !(size > 0.0) || unit == 1 || unit > 6 {
+    let (family, size, style, unit, out) = (c.a(0), c.f(1), c.a(2), c.a(3), c.out(4));
+    if crate::gdiplus_font::family(family).is_none() || out.is_null() || !(size > 0.0) || unit == 1 || unit > 6 {
         return INVALID_PARAMETER;
     }
     let em = size * px_per_unit(unit, 1.0);
     let lf = logfont_of(family, em, style, charset_of(family));
-    new_obj(Obj::Font { lf, em, family, size, unit, style }, out)
+    new_obj(Obj::Font { lf, em, family, size, unit, style }, out.addr())
 }
 fn GdipCloneFont(c: &mut Ctx) -> u32 {
     let o = with(|m| match m.get(&c.a(0)) {
@@ -229,7 +229,7 @@ fn GdipCloneFont(c: &mut Ctx) -> u32 {
         _ => None,
     });
     let Some(o) = o else { return INVALID_PARAMETER };
-    new_obj(o, c.a(1))
+    new_obj(o, c.out(1).addr())
 }
 fn GdipDeleteFont(c: &mut Ctx) -> u32 {
     if font(c.a(0)).is_none() {
@@ -302,11 +302,11 @@ fn GdipGetFontStyle(c: &mut Ctx) -> u32 {
 }
 /// GdipGetFamily(font, &family): the family it was made from, the same object
 fn GdipGetFamily(c: &mut Ctx) -> u32 {
-    let (Some((family, _, _, _)), out) = (font_info(c.a(0)), c.a(1)) else { return INVALID_PARAMETER };
-    if out == 0 {
+    let (Some((family, _, _, _)), out) = (font_info(c.a(0)), c.out(1)) else { return INVALID_PARAMETER };
+    if out.is_null() {
         return INVALID_PARAMETER;
     }
-    mem::putp(out, family);
+    out.put(family);
     OK
 }
 /// The line spacing of a font in pixels at `dpi`: its size in pixels there times the
@@ -354,7 +354,7 @@ fn line_height(tf: &TextFont) -> f32 {
 
 /// GdipCreatePen1(argb, width, unit, &pen)
 fn GdipCreatePen1(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Pen { argb: c.a(0), width: c.f(1) }, c.a(3))
+    new_obj(Obj::Pen { argb: c.a(0), width: c.f(1) }, c.out(3).addr())
 }
 /// a brush's (gdiplus_brush) or pen's color
 fn color_of(b: u32) -> Option<u32> {
@@ -394,7 +394,7 @@ fn edit_format(h: u32, f: impl FnOnce(&mut StringFormat) -> u32) -> u32 {
     })
 }
 fn GdipCreateStringFormat(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Format(StringFormat::new(c.a(0))), c.a(2))
+    new_obj(Obj::Format(StringFormat::new(c.a(0))), c.out(2).addr())
 }
 fn GdipCloneStringFormat(c: &mut Ctx) -> u32 {
     let v = with(|m| match m.get(&c.a(0)) {
@@ -402,7 +402,7 @@ fn GdipCloneStringFormat(c: &mut Ctx) -> u32 {
     });
     let Some(mut v) = v else { return INVALID_PARAMETER };
     v.generic = false;
-    new_obj(Obj::Format(v), c.a(1))
+    new_obj(Obj::Format(v), c.out(1).addr())
 }
 fn GdipDeleteStringFormat(c: &mut Ctx) -> u32 {
     with(|m| {
@@ -512,18 +512,18 @@ fn format(f: u32) -> (u32, u32) {
 // ---- regions ----
 
 fn GdipCreateRegion(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Region { r: [-4194304.0, -4194304.0, 8388608.0, 8388608.0] }, c.a(0))
+    new_obj(Obj::Region { r: [-4194304.0, -4194304.0, 8388608.0, 8388608.0] }, c.out(0).addr())
 }
 /// GdipCreateRegionRect(RectF*, &region) / GdipCreateRegionRectI(Rect*, &region)
 fn GdipCreateRegionRect(c: &mut Ctx) -> u32 {
     let p = c.a(0);
     let r = [0, 4, 8, 12].map(|o| fl(r32(p + o)));
-    new_obj(Obj::Region { r }, c.a(1))
+    new_obj(Obj::Region { r }, c.out(1).addr())
 }
 fn GdipCreateRegionRectI(c: &mut Ctx) -> u32 {
     let p = c.a(0);
     let r = [0, 4, 8, 12].map(|o| r32(p + o) as i32 as f32);
-    new_obj(Obj::Region { r }, c.a(1))
+    new_obj(Obj::Region { r }, c.out(1).addr())
 }
 fn region(g: u32) -> Option<[f32; 4]> {
     with(|m| match m.get(&g) {
@@ -677,7 +677,7 @@ fn GdipMeasureCharacterRanges(c: &mut Ctx) -> u32 {
     let ranges = with(|m| match m.get(&c.a(5)) {
         Some(Obj::Format(v)) => v.ranges.clone(), _ => Vec::new(),
     });
-    let (n, regs) = (c.a(6), c.a(7));
+    let (n, regs) = (c.a(6), c.out(7));
     for (j, &(first, count)) in ranges.iter().enumerate().take(n as usize) {
         let inr: Vec<&Cell> = cells.iter().filter(|c| c.i as i32 >= first && (c.i as i32) < first + count).collect();
         let r = if inr.is_empty() {
@@ -689,7 +689,7 @@ fn GdipMeasureCharacterRanges(c: &mut Ctx) -> u32 {
             let y1 = inr.iter().map(|c| c.y + lh).fold(f32::MIN, f32::max);
             [x0, y0, x1 - x0, y1 - y0].map(|v| v / k)
         };
-        let reg = r32(regs + 4 * j as u32);
+        let reg = r32(regs.addr() + 4 * j as u32);
         with(|m| {
             if let Some(Obj::Region { r: rr }) = m.get_mut(&reg) {
                 *rr = r;

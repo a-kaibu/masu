@@ -510,11 +510,11 @@ fn new_buffer(c: &mut Ctx, tex: u32, sub: u32, bottom_up: bool, len_is_max: bool
 /// MFCreateDXGISurfaceBuffer(REFIID, IUnknown *surface, UINT subresource, BOOL bottomUp,
 /// IMFMediaBuffer **)
 fn MFCreateDXGISurfaceBuffer(c: &mut Ctx) -> u32 {
-    let (iid, surface, sub, bottom_up, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
-    if out == 0 {
+    let (iid, surface, sub, bottom_up, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4));
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     if iid == 0 || surface == 0 {
         return Hr::InvalidArg.code();
     }
@@ -536,7 +536,7 @@ fn MFCreateDXGISurfaceBuffer(c: &mut Ctx) -> u32 {
     }
     match new_buffer(c, tex, sub, bottom_up != 0, false, None) {
         Some(b) => {
-            putp(out, b);
+            out.put(b);
             0
         }
         None => {

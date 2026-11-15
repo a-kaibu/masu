@@ -241,7 +241,7 @@ fn iid_wide(iid: u32) -> Option<bool> {
 }
 
 fn DirectInput8Create(c: &mut Ctx) -> u32 {
-    create_di(c.a(3), false, iid_wide(c.a(2)))
+    create_di(c.out(3).addr(), false, iid_wide(c.a(2)))
 }
 fn DirectInputCreateA(c: &mut Ctx) -> u32 {
     create_di(c.a(2), true, Some(false))

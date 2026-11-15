@@ -306,7 +306,7 @@ fn PowerEnumerate(c: &mut Ctx) -> u32 {
 fn PowerGetActiveScheme(c: &mut Ctx) -> u32 {
     let g = mem::heap_alloc(16, false);
     mem::write(g, &SCHEMES[0].0);
-    mem::putp(c.a(1), g);
+    c.out(1).put(g);
     0
 }
 /// the scheme's name or description into (buffer, size*) as UTF-16 with its NUL, sizes in bytes

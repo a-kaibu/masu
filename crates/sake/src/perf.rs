@@ -98,17 +98,17 @@ fn start(c: &mut Ctx, g: u32, out: u32) -> u32 {
 }
 /// PerfStartProvider(provider GUID, callback, &handle)
 fn PerfStartProvider(c: &mut Ctx) -> u32 {
-    let (g, out) = (c.a(0), c.a(2));
-    start(c, g, out)
+    let (g, out) = (c.a(0), c.out(2));
+    start(c, g, out.addr())
 }
 /// PerfStartProviderEx(provider GUID, PERF_PROVIDER_CONTEXT, &handle)
 fn PerfStartProviderEx(c: &mut Ctx) -> u32 {
-    let (g, ctx, out) = (c.a(0), c.a(1), c.a(2));
+    let (g, ctx, out) = (c.a(0), c.a(1), c.out(2));
     let need = if mem::x64() { 40 } else { 24 };
     if ctx == 0 || r32(ctx) < need {
         return ERROR_INVALID_PARAMETER;
     }
-    start(c, g, out)
+    start(c, g, out.addr())
 }
 fn PerfStopProvider(c: &mut Ctx) -> u32 {
     let h = c.a(0);
@@ -239,13 +239,13 @@ fn PerfSetULongLongCounterValue(c: &mut Ctx) -> u32 {
 static QUERIES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
 fn PerfOpenQueryHandle(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let out = c.out(1);
+    if out.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
     let h = mem::heap_alloc(16, true);
     QUERIES.lock().unwrap().push(h);
-    mem::putp(out, h);
+    out.put(h);
     0
 }
 fn PerfCloseQueryHandle(c: &mut Ctx) -> u32 {

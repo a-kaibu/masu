@@ -335,15 +335,15 @@ fn node_insert(b: u32, n: Node) {
 
 /// MFCreateTopologyNode(MF_TOPOLOGY_TYPE, IMFTopologyNode **)
 fn MFCreateTopologyNode(c: &mut Ctx) -> u32 {
-    let (k, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let (k, out) = (c.a(0), c.out(1));
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if k > TEE {
-        putp(out, 0);
+        out.put(0);
         return Hr::InvalidArg.code();
     }
-    putp(out, new_node(k));
+    out.put(new_node(k));
     0
 }
 
@@ -526,13 +526,13 @@ fn topo_vtable() -> u32 {
 
 /// MFCreateTopology(IMFTopology **)
 fn MFCreateTopology(c: &mut Ctx) -> u32 {
-    let out = c.a(0);
-    if out == 0 {
+    let out = c.out(0);
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let b = new_store(topo_vtable());
     TOPOS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Topo { id: next_id(), nodes: Vec::new() });
-    putp(out, b);
+    out.put(b);
     0
 }
 
@@ -566,20 +566,20 @@ fn new_activate(a: Act) -> u32 {
 }
 /// MFCreateVideoRendererActivate(HWND, IMFActivate **)
 fn MFCreateVideoRendererActivate(c: &mut Ctx) -> u32 {
-    let (h, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let (h, out) = (c.a(0), c.out(1));
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, new_activate(Act::Video(h)));
+    out.put(new_activate(Act::Video(h)));
     0
 }
 /// MFCreateAudioRendererActivate(IMFActivate **)
 fn MFCreateAudioRendererActivate(c: &mut Ctx) -> u32 {
-    let out = c.a(0);
-    if out == 0 {
+    let out = c.out(0);
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, new_activate(Act::Audio));
+    out.put(new_activate(Act::Audio));
     0
 }
 
@@ -695,11 +695,11 @@ pub fn new_collection(items: Vec<u32>) -> u32 {
 }
 /// MFCreateCollection(IMFCollection **)
 fn MFCreateCollection(c: &mut Ctx) -> u32 {
-    let out = c.a(0);
-    if out == 0 {
+    let out = c.out(0);
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, new_collection(Vec::new()));
+    out.put(new_collection(Vec::new()));
     0
 }
 

@@ -44,10 +44,10 @@ fn cache_font(dc: u32, psc: u32) -> Option<u32> {
 }
 
 fn ScriptFreeCache(c: &mut Ctx) -> u32 {
-    let psc = c.a(0);
-    if psc != 0 && r32(psc) != 0 {
-        mem::heap_free(r32(psc));
-        w32(psc, 0);
+    let psc = c.out(0);
+    if !psc.is_null() && psc.get() != 0 {
+        mem::heap_free(psc.get());
+        psc.put(0);
     }
     0
 }
@@ -65,11 +65,11 @@ fn ScriptItemize(c: &mut Ctx) -> u32 {
 }
 
 fn ScriptShape(c: &mut Ctx) -> u32 {
-    let (dc, psc, s, n, max, out, clust, vis, count) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(6), c.a(7), c.a(8), c.a(9));
+    let (dc, psc, s, n, max, out, clust, vis, count) = (c.a(0), c.out(1), c.a(2), c.a(3), c.a(4), c.a(6), c.a(7), c.a(8), c.a(9));
     if n > max {
         return E_OUTOFMEMORY;
     }
-    let Some(f) = cache_font(dc, psc) else { return E_PENDING };
+    let Some(f) = cache_font(dc, psc.addr()) else { return E_PENDING };
     let Some(g) = gdi::font_glyphs(dc, f, &wchars(s, n)) else { return E_PENDING };
     for (i, gi) in g.iter().enumerate() {
         let i = i as u32;
@@ -87,11 +87,11 @@ fn put16(base: u32, i: u32, v: u16) {
 }
 
 fn ScriptPlace(c: &mut Ctx) -> u32 {
-    let (dc, psc, glyphs, n, adv, goff, abc) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(6), c.a(7), c.a(8));
+    let (dc, psc, glyphs, n, adv, goff, abc) = (c.a(0), c.out(1), c.a(2), c.a(3), c.a(6), c.a(7), c.a(8));
     if (n as i32) <= 0 || n > 1 << 20 {
         return E_INVALIDARG;
     }
-    let Some(f) = cache_font(dc, psc) else { return E_PENDING };
+    let Some(f) = cache_font(dc, psc.addr()) else { return E_PENDING };
     let Some(w) = gdi::font_abc(dc, f, &wchars(glyphs, n)) else { return E_PENDING };
     let (mut ta, mut tb, mut tc) = (0, 0, 0);
     for (i, (a, b, cc)) in w.iter().enumerate() {
@@ -116,8 +116,8 @@ fn ScriptPlace(c: &mut Ctx) -> u32 {
 }
 
 fn ScriptGetFontProperties(c: &mut Ctx) -> u32 {
-    let (dc, psc, p) = (c.a(0), c.a(1), c.a(2));
-    let Some(f) = cache_font(dc, psc) else { return E_PENDING };
+    let (dc, psc, p) = (c.a(0), c.out(1), c.a(2));
+    let Some(f) = cache_font(dc, psc.addr()) else { return E_PENDING };
     if p == 0 || r32(p) < 16 {
         return E_INVALIDARG;
     }
@@ -139,7 +139,7 @@ fn ScriptGetProperties(c: &mut Ctx) -> u32 {
         mem::wp(t, props);
         t
     });
-    mem::putp(c.a(0), t);
+    c.out(0).put(t);
     put32(c.a(1), 1);
     0
 }
@@ -199,7 +199,7 @@ fn ScriptTextOut(c: &mut Ctx) -> u32 {
 
 // SCRIPT_STRING_ANALYSIS: {dc, chars (copy), n, SIZE, advances}
 fn ScriptStringAnalyse(c: &mut Ctx) -> u32 {
-    let (dc, s, n, out) = (c.a(0), c.a(1), c.a(2), c.a(12));
+    let (dc, s, n, out) = (c.a(0), c.a(1), c.a(2), c.out(12));
     if n == 0 || (n as i32) < 0 || n > MAX_CHARS || dc == 0 {
         return E_INVALIDARG;
     }
@@ -228,7 +228,7 @@ fn ScriptStringAnalyse(c: &mut Ctx) -> u32 {
     w32(blk + 12, r32(tmb));
     mem::heap_free(tmb);
     w32(blk + 16, advs);
-    put32(out, blk);
+    out.put(blk);
     0
 }
 fn ScriptString_pSize(c: &mut Ctx) -> u32 {
@@ -256,10 +256,10 @@ fn ScriptStringOut(c: &mut Ctx) -> u32 {
     0
 }
 fn ScriptStringFree(c: &mut Ctx) -> u32 {
-    let p = c.a(0);
-    if p != 0 && r32(p) != 0 {
-        mem::heap_free(r32(p));
-        w32(p, 0);
+    let p = c.out(0);
+    if !p.is_null() && p.get() != 0 {
+        mem::heap_free(p.get());
+        p.put(0);
     }
     0
 }

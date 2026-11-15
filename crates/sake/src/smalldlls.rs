@@ -1032,8 +1032,8 @@ fn VP_VideoProcessBlt(c: &mut Ctx) -> u32 {
 
 /// DXVA2CreateDirect3DDeviceManager9(pResetToken, ppDeviceManager)
 fn DXVA2CreateDirect3DDeviceManager9(c: &mut Ctx) -> u32 {
-    let (tok, out) = (c.a(0), c.a(1));
-    if tok == 0 || out == 0 {
+    let (tok, out) = (c.a(0), c.out(1));
+    if tok == 0 || out.is_null() {
         return E_POINTER;
     }
     static VT: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
@@ -1058,7 +1058,7 @@ fn DXVA2CreateDirect3DDeviceManager9(c: &mut Ctx) -> u32 {
     let token = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     MANAGERS.lock().unwrap().push(Manager { obj: o, refs: 1, token, ..Default::default() });
     put32(tok, token);
-    putp(out, o);
+    out.put(o);
     0
 }
 
@@ -1277,8 +1277,8 @@ fn ED_Clone(c: &mut Ctx) -> u32 {
 /// all) that take every requested input type and give every requested output type
 fn DMOEnum(c: &mut Ctx) -> u32 {
     let cat = if c.a(0) == 0 { [0; 16] } else { guid(c.a(0)) };
-    let (ins, outs, out) = (read_types(c.a(2), c.a(3)), read_types(c.a(4), c.a(5)), c.a(6));
-    if out == 0 {
+    let (ins, outs, out) = (read_types(c.a(2), c.a(3)), read_types(c.a(4), c.a(5)), c.out(6));
+    if out.is_null() {
         return E_POINTER;
     }
     let g = DMOS.lock().unwrap();
@@ -1293,7 +1293,7 @@ fn DMOEnum(c: &mut Ctx) -> u32 {
         }
     }
     drop(g);
-    putp(out, enum_dmo(&items, 0));
+    out.put(enum_dmo(&items, 0));
     0
 }
 
@@ -1369,8 +1369,8 @@ fn MoCopyMediaType(c: &mut Ctx) -> u32 {
     copy_mt(c, d, s)
 }
 fn MoCreateMediaType(c: &mut Ctx) -> u32 {
-    let (pp, cb) = (c.a(0), c.a(1));
-    if pp == 0 {
+    let (pp, cb) = (c.out(0), c.a(1));
+    if pp.is_null() {
         return E_POINTER;
     }
     let p = mem::heap_alloc(mt_off().3, true);
@@ -1383,7 +1383,7 @@ fn MoCreateMediaType(c: &mut Ctx) -> u32 {
         wp(p + pbf, f);
     }
     w32(p + cbf, cb);
-    putp(pp, p);
+    pp.put(p);
     0
 }
 fn MoDeleteMediaType(c: &mut Ctx) -> u32 {
@@ -1396,8 +1396,8 @@ fn MoDeleteMediaType(c: &mut Ctx) -> u32 {
     0
 }
 fn MoDuplicateMediaType(c: &mut Ctx) -> u32 {
-    let (pp, s) = (c.a(0), c.a(1));
-    if pp == 0 || s == 0 {
+    let (pp, s) = (c.out(0), c.a(1));
+    if pp.is_null() || s == 0 {
         return E_POINTER;
     }
     let p = mem::heap_alloc(mt_off().3, true);
@@ -1406,7 +1406,7 @@ fn MoDuplicateMediaType(c: &mut Ctx) -> u32 {
         mem::heap_free(p);
         return r;
     }
-    putp(pp, p);
+    pp.put(p);
     0
 }
 
@@ -1479,18 +1479,18 @@ fn wic_proxy(c: &mut Ctx) -> u32 {
 /// WICConvertBitmapSource(dstFormat, pISrc, ppIDst): a format converter of the source
 /// (the source itself, AddRef'd, when it is already in that format)
 fn WICConvertBitmapSource(c: &mut Ctx) -> u32 {
-    let (fmt, src, out) = (c.a(0), c.a(1), c.a(2));
-    if fmt == 0 || src == 0 || out == 0 {
+    let (fmt, src, out) = (c.a(0), c.a(1), c.out(2));
+    if fmt == 0 || src == 0 || out.is_null() {
         return E_INVALIDARG;
     }
-    putp(out, 0);
+    out.put(0);
     let cur = mem::heap_alloc(16, true);
     let hr = call_method(c, src, "IWICBitmapSource", "GetPixelFormat", &[cur]);
     let same = hr == 0 && guid(cur) == guid(fmt);
     mem::heap_free(cur);
     if same {
         add_ref(c, src);
-        putp(out, src);
+        out.put(src);
         return 0;
     }
     let factory = crate::wic::factory();
@@ -1510,7 +1510,7 @@ fn WICConvertBitmapSource(c: &mut Ctx) -> u32 {
         release(c, conv);
         return hr;
     }
-    putp(out, conv);
+    out.put(conv);
     0
 }
 

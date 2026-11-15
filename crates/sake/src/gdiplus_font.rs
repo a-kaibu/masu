@@ -165,8 +165,8 @@ fn members(h: u32) -> Option<Vec<u32>> {
 /// GdipCreateFontFamilyFromName(name, collection, &family): in the collection given, else
 /// the installed one
 fn GdipCreateFontFamilyFromName(c: &mut Ctx) -> u32 {
-    let (np, coll, out) = (c.a(0), c.a(1), c.a(2));
-    if np == 0 || out == 0 {
+    let (np, coll, out) = (c.a(0), c.a(1), c.out(2));
+    if np == 0 || out.is_null() {
         return INVALID_PARAMETER;
     }
     let name = wstr(np);
@@ -176,15 +176,15 @@ fn GdipCreateFontFamilyFromName(c: &mut Ctx) -> u32 {
         None => installed_family(&name),
     };
     let Some(h) = found else { return FONT_FAMILY_NOT_FOUND };
-    mem::putp(out, h);
+    out.put(h);
     OK
 }
 fn GdipCloneFontFamily(c: &mut Ctx) -> u32 {
-    let (h, out) = (c.a(0), c.a(1));
-    if family(h).is_none() || out == 0 {
+    let (h, out) = (c.a(0), c.out(1));
+    if family(h).is_none() || out.is_null() {
         return INVALID_PARAMETER;
     }
-    mem::putp(out, h);
+    out.put(h);
     OK
 }
 fn GdipDeleteFontFamily(c: &mut Ctx) -> u32 {
@@ -257,8 +257,8 @@ fn GdipGetGenericFontFamilyMonospace(c: &mut Ctx) -> u32 {
 
 /// GdipNewInstalledFontCollection(&collection): always the same one
 fn GdipNewInstalledFontCollection(c: &mut Ctx) -> u32 {
-    let out = c.a(0);
-    if out == 0 {
+    let out = c.out(0);
+    if out.is_null() {
         return INVALID_PARAMETER;
     }
     let h = with(|s| {
@@ -267,31 +267,31 @@ fn GdipNewInstalledFontCollection(c: &mut Ctx) -> u32 {
         }
         s.installed
     });
-    mem::putp(out, h);
+    out.put(h);
     OK
 }
 fn GdipNewPrivateFontCollection(c: &mut Ctx) -> u32 {
-    let out = c.a(0);
-    if out == 0 {
+    let out = c.out(0);
+    if out.is_null() {
         return INVALID_PARAMETER;
     }
     let h = mem::heap_alloc(16, true);
     with(|s| s.private.insert(h, Vec::new()));
-    mem::putp(out, h);
+    out.put(h);
     OK
 }
 /// GdipDeletePrivateFontCollection(&collection): NULLs the pointer; its families stay
 fn GdipDeletePrivateFontCollection(c: &mut Ctx) -> u32 {
-    let p = c.a(0);
-    if p == 0 {
+    let p = c.out(0);
+    if p.is_null() {
         return INVALID_PARAMETER;
     }
-    let h = mem::rp(p);
+    let h = p.get();
     if with(|s| s.private.remove(&h)).is_none() {
         return INVALID_PARAMETER;
     }
     mem::heap_free(h);
-    mem::wp(p, 0);
+    p.put(0);
     OK
 }
 /// a font's data into a private collection: a family for it (one per family name)
@@ -334,15 +334,15 @@ fn GdipGetFontCollectionFamilyCount(c: &mut Ctx) -> u32 {
 }
 /// GdipGetFontCollectionFamilyList(collection, sought, families[], &found)
 fn GdipGetFontCollectionFamilyList(c: &mut Ctx) -> u32 {
-    let (h, n, out, found) = (c.a(0), c.i(1), c.a(2), c.a(3));
-    if out == 0 || found == 0 || n < 0 || !is_collection(h) {
+    let (h, n, out, found) = (c.a(0), c.i(1), c.out(2), c.a(3));
+    if out.is_null() || found == 0 || n < 0 || !is_collection(h) {
         return INVALID_PARAMETER;
     }
     let m = members(h).unwrap_or_default();
     let k = m.len().min(n as usize);
     for (i, f) in m.iter().take(k).enumerate() {
         let step = if mem::x64() { 8 } else { 4 };
-        mem::wp(out + step * i as u32, *f);
+        mem::wp(out.addr() + step * i as u32, *f);
     }
     w32(found, k as u32);
     OK

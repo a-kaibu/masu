@@ -21,7 +21,7 @@ use rsa::traits::{PrivateKeyParts, PublicKeyParts};
 use rsa::{BigUint, Oaep, Pkcs1v15Encrypt, Pkcs1v15Sign, Pss, RsaPrivateKey, RsaPublicKey};
 
 use crate::api::{implement, Ctx};
-use crate::mem::{self, ps, put32, putp, r32, rp, w32, wp, wstr};
+use crate::mem::{self, ps, put32, r32, rp, w32, wp, wstr};
 
 pub const NTE_BAD_DATA: u32 = 0x8009_0005;
 pub const NTE_BAD_SIGNATURE: u32 = 0x8009_0006;
@@ -809,8 +809,8 @@ fn give(out: u32, outlen: u32, result: u32, data: &[u8]) -> u32 {
 
 /// NCryptOpenStorageProvider(phProvider, name, flags)
 fn NCryptOpenStorageProvider(c: &mut Ctx) -> u32 {
-    let (out, name) = (c.a(0), c.a(1));
-    if out == 0 {
+    let (out, name) = (c.out(0), c.a(1));
+    if out.is_null() {
         return NULL_REF;
     }
     if let Some(n) = wname(name) && !n.eq_ignore_ascii_case(PROVIDER) {
@@ -818,7 +818,7 @@ fn NCryptOpenStorageProvider(c: &mut Ctx) -> u32 {
     }
     let h = new_handle();
     with(|s| s.provs.push(h));
-    putp(out, h);
+    out.put(h);
     0
 }
 fn NCryptFreeObject(c: &mut Ctx) -> u32 {
@@ -867,11 +867,11 @@ fn NCryptIsAlgSupported(c: &mut Ctx) -> u32 {
 /// NCryptEnumAlgorithms(prov, operations, &count, &list, flags): NCryptAlgorithmName
 /// { pszName, dwClass, dwAlgOperations, dwFlags } in one buffer (NCryptFreeBuffer)
 fn NCryptEnumAlgorithms(c: &mut Ctx) -> u32 {
-    let (p, ops, pcount, plist, fl) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let (p, ops, pcount, plist, fl) = (c.a(0), c.a(1), c.a(2), c.out(3), c.a(4));
     if !is_prov(p) {
         return NTE_INVALID_HANDLE;
     }
-    if pcount == 0 || plist == 0 {
+    if pcount == 0 || plist.is_null() {
         return NULL_REF;
     }
     if fl & !SILENT != 0 || ops & !0x1f != 0 {
@@ -894,14 +894,14 @@ fn NCryptEnumAlgorithms(c: &mut Ctx) -> u32 {
         sp += s.len() as u32;
     }
     put32(pcount, list.len() as u32);
-    putp(plist, buf);
+    plist.put(buf);
     0
 }
 
 /// NCryptEnumStorageProviders(&count, &list, flags): NCryptProviderName { pszName, pszComment }
 fn NCryptEnumStorageProviders(c: &mut Ctx) -> u32 {
-    let (pcount, plist) = (c.a(0), c.a(1));
-    if pcount == 0 || plist == 0 {
+    let (pcount, plist) = (c.a(0), c.out(1));
+    if pcount == 0 || plist.is_null() {
         return NULL_REF;
     }
     let k = ps();
@@ -911,17 +911,17 @@ fn NCryptEnumStorageProviders(c: &mut Ctx) -> u32 {
     wp(buf, buf + 2 * k);
     wp(buf + k, buf + 2 * k);
     put32(pcount, 1);
-    putp(plist, buf);
+    plist.put(buf);
     0
 }
 
 /// NCryptCreatePersistedKey(prov, &key, alg, name, legacySpec, flags)
 fn NCryptCreatePersistedKey(c: &mut Ctx) -> u32 {
-    let (p, out, a, name, fl) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(5));
+    let (p, out, a, name, fl) = (c.a(0), c.out(1), c.a(2), c.a(3), c.a(5));
     if !is_prov(p) {
         return NTE_INVALID_HANDLE;
     }
-    if out == 0 || a == 0 {
+    if out.is_null() || a == 0 {
         return NULL_REF;
     }
     if fl & !(SILENT | OVERWRITE | MACHINE_KEY) != 0 {
@@ -934,7 +934,7 @@ fn NCryptCreatePersistedKey(c: &mut Ctx) -> u32 {
     }
     let curve = Curve::of_alg(info.0).and_then(|c| c.0);
     let k = Key { prov: p, alg: info.0, bits: info.4, finalized: false, rsa: None, ecc: None, curve, export: 0, usage: 0x00ff_ffff, name };
-    putp(out, add_key(k));
+    out.put(add_key(k));
     0
 }
 
@@ -968,18 +968,18 @@ fn NCryptFinalizeKey(c: &mut Ctx) -> u32 {
 
 /// NCryptOpenKey(prov, &key, name, legacySpec, flags): a named key of this process
 fn NCryptOpenKey(c: &mut Ctx) -> u32 {
-    let (p, out, name) = (c.a(0), c.a(1), c.a(2));
+    let (p, out, name) = (c.a(0), c.out(1), c.a(2));
     if !is_prov(p) {
         return NTE_INVALID_HANDLE;
     }
-    if out == 0 || name == 0 {
+    if out.is_null() || name == 0 {
         return NULL_REF;
     }
     let n = wname(name).unwrap().to_lowercase();
     match with(|s| s.store.get(&n).cloned()) {
         Some(mut k) => {
             k.prov = p;
-            putp(out, add_key(k));
+            out.put(add_key(k));
             0
         }
         None => NTE_BAD_KEYSET,
@@ -1000,17 +1000,17 @@ fn NCryptDeleteKey(c: &mut Ctx) -> u32 {
 /// NCryptEnumKeys(prov, scope, &keyName, &enumState, flags): NCryptKeyName { pszName, pszAlgid,
 /// dwLegacyKeySpec, dwFlags }; the state is a cursor (NCryptFreeBuffer)
 fn NCryptEnumKeys(c: &mut Ctx) -> u32 {
-    let (p, pname, pstate) = (c.a(0), c.a(2), c.a(3));
+    let (p, pname, pstate) = (c.a(0), c.out(2), c.out(3));
     if !is_prov(p) {
         return NTE_INVALID_HANDLE;
     }
-    if pname == 0 || pstate == 0 {
+    if pname.is_null() || pstate.is_null() {
         return NULL_REF;
     }
-    let mut st = rp(pstate);
+    let mut st = pstate.get();
     if st == 0 {
         st = mem::heap_alloc(4, true);
-        putp(pstate, st);
+        pstate.put(st);
     }
     let i = r32(st) as usize;
     let mut names: Vec<(String, &str)> = with(|s| s.store.values().map(|k| (k.name.clone().unwrap_or_default(), k.alg)).collect());
@@ -1025,20 +1025,20 @@ fn NCryptEnumKeys(c: &mut Ctx) -> u32 {
     mem::write(s0 + sn.len() as u32, &sa);
     wp(buf, s0);
     wp(buf + k, s0 + sn.len() as u32);
-    putp(pname, buf);
+    pname.put(buf);
     0
 }
 
 /// NCryptImportKey(prov, importKey, blobType, params, &key, data, size, flags)
 fn NCryptImportKey(c: &mut Ctx) -> u32 {
-    let (p, wrap, bt, params, out, data, size, fl) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
+    let (p, wrap, bt, params, out, data, size, fl) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4), c.a(5), c.a(6), c.a(7));
     if !is_prov(p) {
         return NTE_INVALID_HANDLE;
     }
     if fl & !(SILENT | OVERWRITE | MACHINE_KEY | DO_NOT_FINALIZE) != 0 {
         return NTE_BAD_FLAGS;
     }
-    if bt == 0 || out == 0 {
+    if bt == 0 || out.is_null() {
         return NULL_REF;
     }
     if data == 0 || size == 0 {
@@ -1085,7 +1085,7 @@ fn NCryptImportKey(c: &mut Ctx) -> u32 {
         }
         with(|s| s.store.insert(n.to_lowercase(), k.clone()));
     }
-    putp(out, add_key(k));
+    out.put(add_key(k));
     0
 }
 
@@ -1298,11 +1298,11 @@ fn ecc_key(h: u32) -> Option<Result<Arc<Ecc>, u32>> {
 
 /// NCryptSecretAgreement(privKey, pubKey, &secret, flags): ECDH
 fn NCryptSecretAgreement(c: &mut Ctx) -> u32 {
-    let (a, b, out, fl) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (a, b, out, fl) = (c.a(0), c.a(1), c.out(2), c.a(3));
     if key(a).is_none() || key(b).is_none() {
         return NTE_INVALID_HANDLE;
     }
-    if out == 0 {
+    if out.is_null() {
         return NULL_REF;
     }
     if fl & !SILENT != 0 {
@@ -1315,7 +1315,7 @@ fn NCryptSecretAgreement(c: &mut Ctx) -> u32 {
     };
     let h = new_handle();
     with(|s| s.secrets.insert(h, z));
-    putp(out, h);
+    out.put(h);
     0
 }
 
@@ -1554,13 +1554,13 @@ fn alg_of(h: u32) -> Option<String> {
 
 /// BCryptOpenAlgorithmProvider(&alg, name, implementation, flags)
 fn BCryptOpenAlgorithmProvider(c: &mut Ctx) -> u32 {
-    let (out, name) = (c.a(0), c.a(1));
-    if out == 0 || name == 0 {
+    let (out, name) = (c.out(0), c.a(1));
+    if out.is_null() || name == 0 {
         return STATUS_INVALID_PARAMETER;
     }
     let h = new_handle();
     ALG_HANDLES.lock().unwrap().push((h, wname(name).unwrap()));
-    putp(out, h);
+    out.put(h);
     0
 }
 fn BCryptCloseAlgorithmProvider(c: &mut Ctx) -> u32 {
@@ -1584,12 +1584,12 @@ fn asym_alg(h: u32) -> Result<&'static (&'static str, u32, u32, &'static str, u3
 
 /// BCryptGenerateKeyPair(alg, &key, bits, flags): a key BCryptFinalizeKeyPair makes
 fn BCryptGenerateKeyPair(c: &mut Ctx) -> u32 {
-    let (a, out, bits) = (c.a(0), c.a(1), c.a(2));
+    let (a, out, bits) = (c.a(0), c.out(1), c.a(2));
     let a = match asym_alg(a) {
         Ok(a) => a,
         Err(e) => return e,
     };
-    if out == 0 {
+    if out.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
     let curve = Curve::of_alg(a.0).and_then(|(c, _)| c).or_else(|| Curve::ALL.into_iter().find(|c| c.bits() == bits && Curve::of_alg(a.0).is_some()));
@@ -1598,7 +1598,7 @@ fn BCryptGenerateKeyPair(c: &mut Ctx) -> u32 {
         return STATUS_INVALID_PARAMETER;
     }
     let k = Key { prov: c.a(0), alg: a.0, bits, finalized: false, rsa: None, ecc: None, curve, export: ALLOW_PLAINTEXT_EXPORT, usage: 0x00ff_ffff, name: None };
-    putp(out, add_key(k));
+    out.put(add_key(k));
     0
 }
 
@@ -1625,12 +1625,12 @@ fn BCryptFinalizeKeyPair(c: &mut Ctx) -> u32 {
 
 /// BCryptImportKeyPair(alg, importKey, blobType, &key, input, size, flags)
 fn BCryptImportKeyPair(c: &mut Ctx) -> u32 {
-    let (a, wrap, bt, out, data, size) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    let (a, wrap, bt, out, data, size) = (c.a(0), c.a(1), c.a(2), c.out(3), c.a(4), c.a(5));
     let a = match asym_alg(a) {
         Ok(a) => a,
         Err(e) => return e,
     };
-    if bt == 0 || out == 0 || data == 0 || size == 0 {
+    if bt == 0 || out.is_null() || data == 0 || size == 0 {
         return STATUS_INVALID_PARAMETER;
     }
     if wrap != 0 {
@@ -1662,7 +1662,7 @@ fn BCryptImportKeyPair(c: &mut Ctx) -> u32 {
     };
     let curve = ecc.as_ref().map(|e| e.curve);
     let k = Key { prov: c.a(0), alg: a.0, bits, finalized: true, rsa: rsa.map(Arc::new), ecc: ecc.map(Arc::new), curve, export: ALLOW_PLAINTEXT_EXPORT, usage: 0x00ff_ffff, name: None };
-    putp(out, add_key(k));
+    out.put(add_key(k));
     0
 }
 

@@ -3194,13 +3194,13 @@ fn CreateBitmapIndirect(c: &mut Ctx) -> u32 {
 }
 
 fn CreateDIBSection(c: &mut Ctx) -> u32 {
-    let (dc, bmi, usage, pbits, section, offset) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    let (dc, bmi, usage, pbits, section, offset) = (c.a(0), c.a(1), c.a(2), c.out(3), c.a(4), c.a(5));
     let pal = with(|t| match t.m.get(&dc) {
         Some(G::Dc(d)) => dc_palette(t, &d.s),
         _ => default_palette(),
     });
     let Some(i) = dib_info(bmi, usage, &pal) else {
-        put32(pbits, 0);
+        pbits.put(0);
         return 0;
     };
     let size = i.stride * i.h as u32;
@@ -3210,7 +3210,7 @@ fn CreateDIBSection(c: &mut Ctx) -> u32 {
     if bits == 0 {
         return 0;
     }
-    put32(pbits, bits);
+    pbits.put(bits);
     add(G::Bitmap(Bitmap {
         w: i.w,
         h: i.h,

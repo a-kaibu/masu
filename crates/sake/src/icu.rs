@@ -297,7 +297,7 @@ fn ubrk_open(c: &mut Ctx) -> u32 {
 }
 /// ubrk_setText(bi, const UChar *, int32_t, UErrorCode *)
 fn ubrk_setText(c: &mut Ctx) -> u32 {
-    let (b, text, len, status) = (c.a(0), c.a(1), c.a(2) as i32, c.a(3));
+    let (b, text, len, status) = (c.out(0), c.a(1), c.a(2) as i32, c.a(3));
     if failed(status) {
         return 0;
     }
@@ -305,27 +305,27 @@ fn ubrk_setText(c: &mut Ctx) -> u32 {
         fail(status, ILLEGAL_ARGUMENT);
         return 0;
     };
-    if with(b, |k| k.set_text(&t)).is_none() {
+    if with(b.addr(), |k| k.set_text(&t)).is_none() {
         fail(status, ILLEGAL_ARGUMENT);
     }
     0
 }
 /// ubrk_setUText(bi, UText *, UErrorCode *)
 fn ubrk_setUText(c: &mut Ctx) -> u32 {
-    let (b, ut, status) = (c.a(0), c.a(1), c.a(2));
+    let (b, ut, status) = (c.out(0), c.a(1), c.a(2));
     if failed(status) {
         return 0;
     }
     match utext_text(ut) {
-        Some(t) if with(b, |k| k.set_text(&t)).is_some() => {}
+        Some(t) if with(b.addr(), |k| k.set_text(&t)).is_some() => {}
         _ => fail(status, ILLEGAL_ARGUMENT),
     }
     0
 }
 fn ubrk_close(c: &mut Ctx) -> u32 {
-    let b = c.a(0);
-    if BRKS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&b).is_some() {
-        mem::heap_free(b);
+    let b = c.out(0);
+    if BRKS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&b.addr()).is_some() {
+        mem::heap_free(b.addr());
     }
     0
 }
@@ -349,15 +349,15 @@ fn ubrk_last(c: &mut Ctx) -> u32 {
 }
 fn ubrk_following(c: &mut Ctx) -> u32 {
     let off = c.a(1) as i32;
-    with(c.a(0), |b| b.following(off)).unwrap_or(DONE) as u32
+    with(c.out(0).addr(), |b| b.following(off)).unwrap_or(DONE) as u32
 }
 fn ubrk_preceding(c: &mut Ctx) -> u32 {
     let off = c.a(1) as i32;
-    with(c.a(0), |b| b.preceding(off)).unwrap_or(DONE) as u32
+    with(c.out(0).addr(), |b| b.preceding(off)).unwrap_or(DONE) as u32
 }
 fn ubrk_isBoundary(c: &mut Ctx) -> u32 {
     let off = c.a(1) as i32;
-    with(c.a(0), |b| b.is_boundary(off)).unwrap_or(false) as u32
+    with(c.out(0).addr(), |b| b.is_boundary(off)).unwrap_or(false) as u32
 }
 
 /// uloc_getDefault(): a Japanese Windows' "ja_JP"

@@ -312,10 +312,10 @@ fn read_pts(p: u32, n: u32, int: bool) -> Vec<[f32; 2]> {
 // ---- matrices ----
 
 fn GdipCreateMatrix(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Matrix(IDENTITY), c.a(0))
+    new_obj(Obj::Matrix(IDENTITY), c.out(0).addr())
 }
 fn GdipCreateMatrix2(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Matrix(std::array::from_fn(|i| c.f(i as u32))), c.a(6))
+    new_obj(Obj::Matrix(std::array::from_fn(|i| c.f(i as u32))), c.out(6).addr())
 }
 /// GdipCreateMatrix3(rect, dstplg[3], &matrix): the rectangle onto the parallelogram whose
 /// top-left, top-right and bottom-left corners are dstplg's
@@ -341,15 +341,15 @@ fn GdipCreateMatrix3I(c: &mut Ctx) -> u32 {
     create_matrix3(c, true)
 }
 fn GdipCloneMatrix(c: &mut Ctx) -> u32 {
-    let Some(m) = matrix(c.a(0)) else { return INVALID_PARAMETER };
-    new_obj(Obj::Matrix(m), c.a(1))
+    let Some(m) = matrix(c.out(0).addr()) else { return INVALID_PARAMETER };
+    new_obj(Obj::Matrix(m), c.out(1).addr())
 }
 fn GdipDeleteMatrix(c: &mut Ctx) -> u32 {
-    delete_obj(c.a(0), |o| matches!(o, Obj::Matrix(_)))
+    delete_obj(c.out(0).addr(), |o| matches!(o, Obj::Matrix(_)))
 }
 fn GdipSetMatrixElements(c: &mut Ctx) -> u32 {
     let e: M = std::array::from_fn(|i| c.f(i as u32 + 1));
-    on_matrix(c.a(0), |m| {
+    on_matrix(c.out(0).addr(), |m| {
         *m = e;
         OK
     })
@@ -363,33 +363,33 @@ fn GdipGetMatrixElements(c: &mut Ctx) -> u32 {
     OK
 }
 fn GdipMultiplyMatrix(c: &mut Ctx) -> u32 {
-    let Some(b) = matrix(c.a(1)) else { return INVALID_PARAMETER };
+    let Some(b) = matrix(c.out(1).addr()) else { return INVALID_PARAMETER };
     let order = c.a(2);
-    on_matrix(c.a(0), |m| combine(m, &b, order))
+    on_matrix(c.out(0).addr(), |m| combine(m, &b, order))
 }
 fn GdipTranslateMatrix(c: &mut Ctx) -> u32 {
     let op = [1.0, 0.0, 0.0, 1.0, c.f(1), c.f(2)];
     let order = c.a(3);
-    on_matrix(c.a(0), |m| combine(m, &op, order))
+    on_matrix(c.out(0).addr(), |m| combine(m, &op, order))
 }
 fn GdipScaleMatrix(c: &mut Ctx) -> u32 {
     let op = [c.f(1), 0.0, 0.0, c.f(2), 0.0, 0.0];
     let order = c.a(3);
-    on_matrix(c.a(0), |m| combine(m, &op, order))
+    on_matrix(c.out(0).addr(), |m| combine(m, &op, order))
 }
 fn GdipRotateMatrix(c: &mut Ctx) -> u32 {
     let op = rotation(c.f(1));
     let order = c.a(2);
-    on_matrix(c.a(0), |m| combine(m, &op, order))
+    on_matrix(c.out(0).addr(), |m| combine(m, &op, order))
 }
 /// GdipShearMatrix(m, shearX, shearY, order): x' = x + shearX y, y' = shearY x + y
 fn GdipShearMatrix(c: &mut Ctx) -> u32 {
     let op = [1.0, c.f(2), c.f(1), 1.0, 0.0, 0.0];
     let order = c.a(3);
-    on_matrix(c.a(0), |m| combine(m, &op, order))
+    on_matrix(c.out(0).addr(), |m| combine(m, &op, order))
 }
 fn GdipInvertMatrix(c: &mut Ctx) -> u32 {
-    on_matrix(c.a(0), |m| match invert(m) {
+    on_matrix(c.out(0).addr(), |m| match invert(m) {
         Some(i) => {
             *m = i;
             OK
@@ -489,7 +489,7 @@ fn path_points(h: u32) -> Option<Vec<[f32; 2]>> {
     })
 }
 fn GdipCreatePath(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Path { pts: Vec::new(), types: Vec::new(), fill: c.a(0) }, c.a(1))
+    new_obj(Obj::Path { pts: Vec::new(), types: Vec::new(), fill: c.a(0) }, c.out(1).addr())
 }
 /// GdipCreatePath2(points, types, count, fill, &path) / ..I
 fn create_path2(c: &mut Ctx, int: bool) -> u32 {
@@ -512,7 +512,7 @@ fn GdipCreatePath2I(c: &mut Ctx) -> u32 {
 }
 fn GdipClonePath(c: &mut Ctx) -> u32 {
     let Some(o) = with(|m| m.get(&c.a(0)).filter(|o| matches!(o, Obj::Path { .. })).cloned()) else { return INVALID_PARAMETER };
-    new_obj(o, c.a(1))
+    new_obj(o, c.out(1).addr())
 }
 fn GdipDeletePath(c: &mut Ctx) -> u32 {
     delete_obj(c.a(0), |o| matches!(o, Obj::Path { .. }))
@@ -668,7 +668,7 @@ fn GdipCloneBrush(c: &mut Ctx) -> u32 {
         _ => None,
     });
     let Some(b) = b else { return INVALID_PARAMETER };
-    new_obj(Obj::Brush(b), c.a(1))
+    new_obj(Obj::Brush(b), c.out(1).addr())
 }
 fn GdipDeleteBrush(c: &mut Ctx) -> u32 {
     delete_obj(c.a(0), |o| matches!(o, Obj::Brush(_)))
@@ -703,11 +703,11 @@ fn hatch_level(style: u32, x: i32, y: i32) -> usize {
 }
 
 fn GdipCreateHatchBrush(c: &mut Ctx) -> u32 {
-    let (style, out) = (c.a(0), c.a(3));
-    if out == 0 || style > HATCH_MAX {
+    let (style, out) = (c.a(0), c.out(3));
+    if out.is_null() || style > HATCH_MAX {
         return INVALID_PARAMETER;
     }
-    new_obj(Obj::Brush(Brush::Hatch { style, fore: c.a(1), back: c.a(2) }), out)
+    new_obj(Obj::Brush(Brush::Hatch { style, fore: c.a(1), back: c.a(2) }), out.addr())
 }
 fn hatch_get(c: &mut Ctx, f: fn(u32, u32, u32) -> u32) -> u32 {
     let out = c.a(1);
@@ -758,25 +758,25 @@ fn GdipCreateTexture(c: &mut Ctx) -> u32 {
     if wrap > CLAMP {
         return INVALID_PARAMETER;
     }
-    new_texture(c.a(0), wrap, None, c.a(2))
+    new_texture(c.a(0), wrap, None, c.out(2).addr())
 }
 /// GdipCreateTexture2(image, wrap, x, y, w, h, &texture)
 fn GdipCreateTexture2(c: &mut Ctx) -> u32 {
     let r = [2, 3, 4, 5].map(|i| c.f(i));
-    new_texture(c.a(0), c.a(1), Some(r), c.a(6))
+    new_texture(c.a(0), c.a(1), Some(r), c.out(6).addr())
 }
 fn GdipCreateTexture2I(c: &mut Ctx) -> u32 {
     let r = [2, 3, 4, 5].map(|i| c.i(i) as f32);
-    new_texture(c.a(0), c.a(1), Some(r), c.a(6))
+    new_texture(c.a(0), c.a(1), Some(r), c.out(6).addr())
 }
 /// GdipCreateTextureIA(image, attributes, x, y, w, h, &texture): tiled (attributes ignored)
 fn GdipCreateTextureIA(c: &mut Ctx) -> u32 {
     let r = [2, 3, 4, 5].map(|i| c.f(i));
-    new_texture(c.a(0), TILE, Some(r), c.a(6))
+    new_texture(c.a(0), TILE, Some(r), c.out(6).addr())
 }
 fn GdipCreateTextureIAI(c: &mut Ctx) -> u32 {
     let r = [2, 3, 4, 5].map(|i| c.i(i) as f32);
-    new_texture(c.a(0), TILE, Some(r), c.a(6))
+    new_texture(c.a(0), TILE, Some(r), c.out(6).addr())
 }
 
 /// The transform of a texture, linear or path gradient brush
@@ -1329,12 +1329,12 @@ fn GdipCreatePathGradientI(c: &mut Ctx) -> u32 {
     create_path_grad(c, true)
 }
 fn GdipCreatePathGradientFromPath(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    let Some(p) = path_points(c.a(0)).filter(|_| out != 0) else { return INVALID_PARAMETER };
+    let out = c.out(1);
+    let Some(p) = path_points(c.a(0)).filter(|_| !out.is_null()) else { return INVALID_PARAMETER };
     if p.len() < 2 {
         return OUT_OF_MEMORY;
     }
-    path_grad(p, CLAMP, out)
+    path_grad(p, CLAMP, out.addr())
 }
 fn on_pg(h: u32, f: impl FnOnce(&mut Vec<[f32; 2]>, &mut [f32; 2], &mut u32, &mut Vec<u32>, &mut [f32; 2], &mut bool) -> u32) -> u32 {
     on_brush(h, |b| match b {
@@ -1699,22 +1699,22 @@ fn cap_get(h: u32, out: u32, f: impl FnOnce(&Cap) -> u32) -> u32 {
 }
 /// GdipCreateCustomLineCap(fillPath, strokePath, baseCap, baseInset, &cap)
 fn GdipCreateCustomLineCap(c: &mut Ctx) -> u32 {
-    let (fill, stroke, base, inset, out) = (c.a(0), c.a(1), c.a(2), c.f(3), c.a(4));
+    let (fill, stroke, base, inset, out) = (c.a(0), c.a(1), c.a(2), c.f(3), c.out(4));
     let h = if stroke != 0 { stroke } else { fill };
-    if h == 0 || out == 0 {
+    if h == 0 || out.is_null() {
         return INVALID_PARAMETER;
     }
     if !with(|m| matches!(m.get(&h), Some(Obj::Path { .. }))) {
         return INVALID_PARAMETER;
     }
-    new_obj(Obj::Cap(Cap { base, inset, join: 0, scale: 1.0, caps: (0, 0), arrow: None }), out)
+    new_obj(Obj::Cap(Cap { base, inset, join: 0, scale: 1.0, caps: (0, 0), arrow: None }), out.addr())
 }
 /// GdipCreateAdjustableArrowCap(height, width, isFilled, &cap): a triangle base cap, inset
 /// height / width
 fn GdipCreateAdjustableArrowCap(c: &mut Ctx) -> u32 {
-    let (hgt, wid, filled, out) = (c.f(0), c.f(1), c.a(2), c.a(3));
+    let (hgt, wid, filled, out) = (c.f(0), c.f(1), c.a(2), c.out(3));
     let cap = Cap { base: 3, inset: hgt / wid, join: 0, scale: 1.0, caps: (0, 0), arrow: Some((hgt, wid, 0.0, filled != 0)) };
-    new_obj(Obj::Cap(cap), out)
+    new_obj(Obj::Cap(cap), out.addr())
 }
 fn GdipDeleteCustomLineCap(c: &mut Ctx) -> u32 {
     delete_obj(c.a(0), |o| matches!(o, Obj::Cap(_)))
@@ -1726,7 +1726,7 @@ fn GdipCloneCustomLineCap(c: &mut Ctx) -> u32 {
     }) else {
         return INVALID_PARAMETER;
     };
-    new_obj(Obj::Cap(cap), c.a(1))
+    new_obj(Obj::Cap(cap), c.out(1).addr())
 }
 /// CustomLineCapTypeDefault 0, CustomLineCapTypeAdjustableArrow 1
 fn GdipGetCustomLineCapType(c: &mut Ctx) -> u32 {

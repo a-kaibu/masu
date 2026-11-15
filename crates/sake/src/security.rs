@@ -186,7 +186,7 @@ fn sid_alloc(s: &Sid) -> u32 {
 }
 
 fn AllocateAndInitializeSid(c: &mut Ctx) -> u32 {
-    let (auth, n, out) = (c.a(0), c.a(1) & 0xff, c.a(10));
+    let (auth, n, out) = (c.a(0), c.a(1) & 0xff, c.out(10));
     // (more than 8 sub-authorities: ERROR_INVALID_SID, winref security)
     if auth == 0 {
         last_error(ERROR_INVALID_PARAMETER);
@@ -198,7 +198,7 @@ fn AllocateAndInitializeSid(c: &mut Ctx) -> u32 {
     }
     let a = (0..6).fold(0u64, |a, i| a << 8 | r8(auth + i) as u64);
     let sid = Sid(a, (0..n).map(|i| c.a(2 + i)).collect());
-    putp(out, sid_alloc(&sid));
+    out.put(sid_alloc(&sid));
     1
 }
 fn FreeSid(c: &mut Ctx) -> u32 {
@@ -500,7 +500,7 @@ fn GetAclInformation(c: &mut Ctx) -> u32 {
     1
 }
 fn GetAce(c: &mut Ctx) -> u32 {
-    let (acl, i, out) = (c.a(0), c.a(1), c.a(2));
+    let (acl, i, out) = (c.a(0), c.a(1), c.out(2));
     if i >= r16(acl + 4) as u32 {
         last_error(ERROR_INVALID_PARAMETER);
         return 0;
@@ -509,7 +509,7 @@ fn GetAce(c: &mut Ctx) -> u32 {
     for _ in 0..i {
         o += (r16(acl + o + 2) as u32).max(8);
     }
-    mem::putp(out, acl + o);
+    out.put(acl + o);
     1
 }
 
@@ -584,7 +584,7 @@ fn IsValidSecurityDescriptor(c: &mut Ctx) -> u32 {
     }
 }
 fn GetSecurityDescriptorDacl(c: &mut Ctx) -> u32 {
-    let (sd, present, dacl, defaulted) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (sd, present, dacl, defaulted) = (c.a(0), c.a(1), c.out(2), c.a(3));
     if !sd_ok(sd) {
         last_error(ERROR_UNKNOWN_REVISION);
         return 0;
@@ -592,28 +592,28 @@ fn GetSecurityDescriptorDacl(c: &mut Ctx) -> u32 {
     let ctl = r16(sd + 2);
     put32(present, (ctl & 4 != 0) as u32);
     if ctl & 4 != 0 {
-        mem::putp(dacl, sd_field(sd, 3));
+        dacl.put(sd_field(sd, 3));
         put32(defaulted, (ctl & 8 != 0) as u32);
     }
     1
 }
 fn GetSecurityDescriptorOwner(c: &mut Ctx) -> u32 {
-    let (sd, owner, defaulted) = (c.a(0), c.a(1), c.a(2));
+    let (sd, owner, defaulted) = (c.a(0), c.out(1), c.a(2));
     if !sd_ok(sd) {
         last_error(ERROR_UNKNOWN_REVISION);
         return 0;
     }
-    mem::putp(owner, sd_field(sd, 0));
+    owner.put(sd_field(sd, 0));
     put32(defaulted, (r16(sd + 2) & 1 != 0) as u32);
     1
 }
 fn GetSecurityDescriptorGroup(c: &mut Ctx) -> u32 {
-    let (sd, group, defaulted) = (c.a(0), c.a(1), c.a(2));
+    let (sd, group, defaulted) = (c.a(0), c.out(1), c.a(2));
     if !sd_ok(sd) {
         last_error(ERROR_UNKNOWN_REVISION);
         return 0;
     }
-    mem::putp(group, sd_field(sd, 1));
+    group.put(sd_field(sd, 1));
     put32(defaulted, (r16(sd + 2) & 2 != 0) as u32);
     1
 }
@@ -740,27 +740,27 @@ fn impersonation_token(h: u32) -> bool {
 }
 
 fn OpenProcessToken(c: &mut Ctx) -> u32 {
-    let out = c.a(2);
-    if out == 0 {
+    let out = c.out(2);
+    if out.is_null() {
         last_error(998); // ERROR_NOACCESS
         return 0;
     }
-    putp(out, new_token(obj::Other::Token));
+    out.put(new_token(obj::Other::Token));
     1
 }
 fn OpenThreadToken(c: &mut Ctx) -> u32 {
-    let out = c.a(3);
+    let out = c.out(3);
     let tid = crate::cur().tid;
     let imp = IMPERSONATING.lock().unwrap().as_ref().is_some_and(|s| s.contains(&tid));
     if !imp {
         // (the handle is cleared through WoW64's thunk; 64-bit Windows leaves it, winref security)
         if !mem::x64() {
-            putp(out, 0);
+            out.put(0);
         }
         last_error(ERROR_NO_TOKEN);
         return 0;
     }
-    putp(out, new_token(obj::Other::ImpersonationToken));
+    out.put(new_token(obj::Other::ImpersonationToken));
     1
 }
 fn ImpersonateSelf(_: &mut Ctx) -> u32 {
@@ -784,7 +784,7 @@ fn DuplicateToken(c: &mut Ctx) -> u32 {
         last_error(ERROR_INVALID_HANDLE);
         return 0;
     }
-    putp(c.a(2), new_token(obj::Other::ImpersonationToken));
+    c.out(2).put(new_token(obj::Other::ImpersonationToken));
     1
 }
 fn DuplicateTokenEx(c: &mut Ctx) -> u32 {
@@ -793,7 +793,7 @@ fn DuplicateTokenEx(c: &mut Ctx) -> u32 {
         return 0;
     }
     // TokenType: 1 primary, 2 impersonation
-    putp(c.a(5), new_token(if c.a(4) == 2 { obj::Other::ImpersonationToken } else { obj::Other::Token }));
+    c.out(5).put(new_token(if c.a(4) == 2 { obj::Other::ImpersonationToken } else { obj::Other::Token }));
     1
 }
 
@@ -1262,11 +1262,11 @@ fn SetNamedSecurityInfoW(c: &mut Ctx) -> u32 {
 /// GetSecurityInfo(handle, type, info, &owner, &group, &dacl, &sacl, &sd)
 fn GetSecurityInfo(c: &mut Ctx) -> u32 {
     let (h, info) = (c.a(0), c.a(2));
-    let (owner, group, dacl, sacl, sdp) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
+    let (owner, group, dacl, sacl, sdp) = (c.out(3), c.out(4), c.out(5), c.out(6), c.out(7));
     if h == 0 || h == u32::MAX {
         return ERROR_INVALID_HANDLE;
     }
-    give_sd(info, false, owner, group, dacl, sacl, sdp)
+    give_sd(info, false, owner.addr(), group.addr(), dacl.addr(), sacl.addr(), sdp.addr())
 }
 
 // ---------------------------------------------------------------------------------------------

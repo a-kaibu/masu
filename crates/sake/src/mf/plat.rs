@@ -171,12 +171,12 @@ pub fn done_of(b: u32) -> Option<(u32, u32)> {
 
 /// MFCreateAsyncResult(IUnknown *object, IMFAsyncCallback *, IUnknown *state, IMFAsyncResult **)
 fn MFCreateAsyncResult(c: &mut Ctx) -> u32 {
-    let (o, cb, st, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let (o, cb, st, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    if out.is_null() {
         return Hr::InvalidArg.code();
     }
     let b = new_result(c, o, cb, st);
-    putp(out, b);
+    out.put(b);
     0
 }
 
@@ -539,11 +539,11 @@ pub fn new_file_stream(f: kura::fs::File, caps: u32) -> u32 {
 
 /// MFCreateFile(MF_FILE_ACCESSMODE, MF_FILE_OPENMODE, MF_FILE_FLAGS, LPCWSTR url, IMFByteStream **)
 fn MFCreateFile(c: &mut Ctx) -> u32 {
-    let (access, mode, url, out) = (c.a(0), c.a(1), c.a(3), c.a(4));
-    if url == 0 || out == 0 {
+    let (access, mode, url, out) = (c.a(0), c.a(1), c.a(3), c.out(4));
+    if url == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let path = reader::file_url_path(&String::from_utf16_lossy(&mem::wstr(url)));
     let (rd, wr) = (access & 1 != 0, access & 2 != 0);
     if !rd && !wr {
@@ -575,7 +575,7 @@ fn MFCreateFile(c: &mut Ctx) -> u32 {
         let n = bs(b, |s| len_of(s).unwrap_or(0)).unwrap_or(0);
         bs(b, |s| s.pos = n);
     }
-    putp(out, b);
+    out.put(b);
     0
 }
 

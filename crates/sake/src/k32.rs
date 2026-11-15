@@ -642,19 +642,19 @@ fn process_modules() -> Vec<u32> {
 /// EnumProcessModules(process, modules, bytes, &needed): as many handles as fit, and the bytes
 /// all of them take
 fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
-    let (h, p, cb, pn) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (h, p, cb, pn) = (c.a(0), c.out(1), c.a(2), c.a(3));
     if !psapi_access(h, true) {
         return 0;
     }
     let all = process_modules();
     let ps = mem::ps();
     // (the list is written before the count: a NULL count fails after it)
-    if p == 0 && cb >= ps {
+    if p.is_null() && cb >= ps {
         last_error(998); // ERROR_NOACCESS
         return 0;
     }
     for (i, &b) in all.iter().enumerate().take(kome::num::us(cb.checked_div(ps).unwrap_or(0))) {
-        crate::mem::wp(mem::ga(p).at(kome::num::u32_of(i), ps), b);
+        crate::mem::wp(mem::ga(p.addr()).at(kome::num::u32_of(i), ps), b);
     }
     if pn == 0 {
         last_error(998);
@@ -1773,7 +1773,7 @@ fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
 /// GetQueuedCompletionStatus(port, &bytes, &key, &overlapped, ms): the first packet; on a timeout
 /// FALSE, WAIT_TIMEOUT and a NULL overlapped (key and bytes as they were)
 fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
-    let (port, pbytes, pkey, pov, ms) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let (port, pbytes, pkey, pov, ms) = (c.a(0), c.a(1), c.out(2), c.out(3), c.a(4));
     let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));
     loop {
         let got = {
@@ -1791,13 +1791,13 @@ fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
         };
         if let Some((bytes, key, ov)) = got {
             put32(pbytes, bytes);
-            mem::putp(pkey, key);
-            mem::putp(pov, ov);
+            pkey.put(key);
+            pov.put(ov);
             return 1;
         }
         let left = deadline.map_or(0xffff_ffff, |d| kome::num::lo32(d.saturating_duration_since(std::time::Instant::now()).as_millis()));
         if deadline.is_some() && left == 0 || obj::wait(&[port], false, left, None) != 0 {
-            mem::putp(pov, 0);
+            pov.put(0);
             last_error(258);
             return 0;
         }
@@ -2045,7 +2045,7 @@ fn DuplicateHandle(c: &mut Ctx) -> u32 {
         obj::dup(src)
     };
     // (a HANDLE: 8 bytes on x64)
-    mem::putp(c.a(3), h);
+    c.out(3).put(h);
     if h == 0 {
         // (a value that is no handle of this process: a pointer, a closed handle)
         last_error(6);
@@ -2298,33 +2298,33 @@ pub(crate) fn srw_release(l: u32, shared: bool) {
     SYNC.srw_release(atomic(l), shared)
 }
 fn InitializeSRWLock(c: &mut Ctx) -> u32 {
-    crate::mem::wp(c.a(0), 0);
+    c.out(0).put(0);
     0
 }
 fn AcquireSRWLockExclusive(c: &mut Ctx) -> u32 {
-    srw_acquire(c.a(0), false);
+    srw_acquire(c.out(0).addr(), false);
     0
 }
 fn AcquireSRWLockShared(c: &mut Ctx) -> u32 {
-    srw_acquire(c.a(0), true);
+    srw_acquire(c.out(0).addr(), true);
     0
 }
 fn ReleaseSRWLockExclusive(c: &mut Ctx) -> u32 {
-    srw_release(c.a(0), false);
+    srw_release(c.out(0).addr(), false);
     0
 }
 fn ReleaseSRWLockShared(c: &mut Ctx) -> u32 {
-    srw_release(c.a(0), true);
+    srw_release(c.out(0).addr(), true);
     0
 }
 fn TryAcquireSRWLockExclusive(c: &mut Ctx) -> u32 {
-    u32::from(srw_try(c.a(0), false))
+    u32::from(srw_try(c.out(0).addr(), false))
 }
 fn TryAcquireSRWLockShared(c: &mut Ctx) -> u32 {
-    u32::from(srw_try(c.a(0), true))
+    u32::from(srw_try(c.out(0).addr(), true))
 }
 fn InitializeConditionVariable(c: &mut Ctx) -> u32 {
-    crate::mem::wp(c.a(0), 0);
+    c.out(0).put(0);
     0
 }
 /// Waits for a wake of `cv` (after `release`, before `reacquire`); false on timeout.
@@ -2352,15 +2352,15 @@ pub(crate) fn cv_wake(cv: u32) {
     SYNC.cv_wake(cv);
 }
 fn SleepConditionVariableSRW(c: &mut Ctx) -> u32 {
-    let (cv, l, ms, shared) = (c.a(0), c.a(1), c.a(2), c.a(3) & 1 != 0);
-    u32::from(cv_wait(cv, ms, |l, s| srw_release(kome::num::lo32(l), s != 0), crate::snap::Reacquire::Srw, u64::from(l), u64::from(shared), 1))
+    let (cv, l, ms, shared) = (c.out(0), c.out(1), c.a(2), c.a(3) & 1 != 0);
+    u32::from(cv_wait(cv.addr(), ms, |l, s| srw_release(kome::num::lo32(l), s != 0), crate::snap::Reacquire::Srw, u64::from(l.addr()), u64::from(shared), 1))
 }
 fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
-    let (cv, cs, ms) = (c.a(0), c.a(1), c.a(2));
+    let (cv, cs, ms) = (c.out(0), c.a(1), c.a(2));
     // a recursively entered section is left and entered again as a whole
     let depth = crate::mem::r32(mem::ga(cs) + cs_off(REC)).max(1);
     u32::from(cv_wait(
-        cv,
+        cv.addr(),
         ms,
         |cs, _| {
             crate::mem::w32(mem::ga(kome::num::lo32(cs)) + cs_off(REC), 1);
@@ -2378,27 +2378,27 @@ pub(crate) fn cs_reacquire(cs: u64, depth: u64) {
     crate::mem::w32(mem::ga(kome::num::lo32(cs)) + cs_off(REC), kome::num::lo32(depth))
 }
 fn WakeConditionVariable(c: &mut Ctx) -> u32 {
-    cv_wake(c.a(0));
+    cv_wake(c.out(0).addr());
     0
 }
 fn WakeAllConditionVariable(c: &mut Ctx) -> u32 {
-    cv_wake(c.a(0));
+    cv_wake(c.out(0).addr());
     0
 }
 /// InitOnceExecuteOnce(once, fn, param, context): the word is 0 (new), 1 (running), 2 (done).
 fn InitOnceExecuteOnce(c: &mut Ctx) -> u32 {
-    let (once, f, param, ctx) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    let r = SYNC.once_execute(atomic(once), || {
-        let r = c.call(f, &[once, param, ctx]);
+    let (once, f, param, ctx) = (c.out(0), c.a(1), c.a(2), c.out(3));
+    let r = SYNC.once_execute(atomic(once.addr()), || {
+        let r = c.call(f, &[once.addr(), param, ctx.addr()]);
         // (done: the context the function gave, with 2 in its low bits)
-        let got = if ctx != 0 { r32(ctx) & !3 } else { 0 };
+        let got = if !ctx.is_null() { ctx.get() & !3 } else { 0 };
         (r, if r != 0 { got | 2 } else { 0 })
     });
     match r {
         waits::Once::Ran(r) => r,
         waits::Once::Done(v) => {
-            if ctx != 0 {
-                mem::putp(ctx, v & !3);
+            if !ctx.is_null() {
+                ctx.put(v & !3);
             }
             1
         }
@@ -2409,18 +2409,18 @@ fn InitOnceExecuteOnce(c: &mut Ctx) -> u32 {
 /// thread initializes (3 while INIT_ONCE_ASYNC ones do), then the context with 2 in its low
 /// bits (as Windows keeps it).
 fn InitOnceBeginInitialize(c: &mut Ctx) -> u32 {
-    let (once, flags, pending, ctx) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (once, flags, pending, ctx) = (c.out(0), c.a(1), c.a(2), c.out(3));
     const CHECK_ONLY: u32 = 1;
     const ASYNC: u32 = 2;
     if flags & !3 != 0 || flags == CHECK_ONLY | ASYNC {
         last_error(87);
         return 0;
     }
-    match SYNC.once_begin_ex(atomic(once), flags & CHECK_ONLY != 0, flags & ASYNC != 0) {
+    match SYNC.once_begin_ex(atomic(once.addr()), flags & CHECK_ONLY != 0, flags & ASYNC != 0) {
         waits::Begin::Done(v) => {
             put32(pending, 0);
-            if ctx != 0 {
-                mem::putp(ctx, v & !3);
+            if !ctx.is_null() {
+                ctx.put(v & !3);
             }
             1
         }
@@ -2442,13 +2442,13 @@ fn InitOnceBeginInitialize(c: &mut Ctx) -> u32 {
 /// (and takes no context); INIT_ONCE_ASYNC (2) ends an asynchronous initialization (which
 /// cannot fail)
 fn InitOnceComplete(c: &mut Ctx) -> u32 {
-    let (once, flags, ctx) = (c.a(0), c.a(1), c.a(2));
+    let (once, flags, ctx) = (c.out(0), c.a(1), c.a(2));
     let (asynchronous, failed) = (flags & 2 != 0, flags & 4 != 0);
     if flags & !6 != 0 || (asynchronous && failed) || ctx & 3 != 0 || (failed && ctx != 0) {
         last_error(87);
         return 0;
     }
-    match SYNC.once_complete_ex(atomic(once), asynchronous, if failed { 0 } else { ctx | 2 }) {
+    match SYNC.once_complete_ex(atomic(once.addr()), asynchronous, if failed { 0 } else { ctx | 2 }) {
         Ok(()) => 1,
         Err(waits::Complete::Invalid) => {
             last_error(87);
@@ -2461,7 +2461,7 @@ fn InitOnceComplete(c: &mut Ctx) -> u32 {
     }
 }
 fn InitOnceInitialize(c: &mut Ctx) -> u32 {
-    crate::mem::wp(c.a(0), 0);
+    c.out(0).put(0);
     0
 }
 
@@ -3146,20 +3146,20 @@ fn is_bad(p: u32, n: u32) -> bool {
 /// write whose first byte cannot be written is ERROR_NOACCESS with the count left alone.
 /// Executable pages take writes, read-only data does not. The count is a SIZE_T.
 fn ReadProcessMemory(c: &mut Ctx) -> u32 {
-    let (a, b, n, done) = (c.a(1), c.a(2), c.a(3), c.a(4));
+    let (a, b, n, done) = (c.a(1), c.a(2), c.a(3), c.out(4));
     // (another process's memory: first whether all of it can be read, then xmem::READ_STEP at a
     // time into what the destination takes)
     let remote = match remote_bytes(c.a(0), xmem::READ, vec![a, n, 1], vec![]) {
         None => {
             if mem::accessible(a, n, false, false) < n {
-                mem::putp(done, 0);
+                done.put(0);
                 last_error(299);
                 return 0;
             }
             false
         }
         Some(Err(e)) => {
-            mem::putp(done, 0);
+            done.put(0);
             last_error(e);
             return 0;
         }
@@ -3174,7 +3174,7 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
                 Some(Ok((_, bytes))) => mem::write((mem::ga(b) + off).get(), bytes.get(..kome::num::us(len)).unwrap_or(&bytes)),
                 Some(Err(e)) => {
                     // (it changed meanwhile: what was copied so far)
-                    mem::putp(done, off);
+                    done.put(off);
                     last_error(e);
                     return 0;
                 }
@@ -3182,7 +3182,7 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
             }
         }
     }
-    mem::putp(done, k);
+    done.put(k);
     if k < n {
         last_error(299);
         return 0;
@@ -3190,7 +3190,7 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
     1
 }
 fn WriteProcessMemory(c: &mut Ctx) -> u32 {
-    let (a, b, n, done) = (c.a(1), c.a(2), c.a(3), c.a(4));
+    let (a, b, n, done) = (c.a(1), c.a(2), c.a(3), c.out(4));
     let readable = mem::accessible(b, n, false, false);
     let k = match xmem::target(c.a(0)) {
         xmem::Target::Other(_) => {
@@ -3226,7 +3226,7 @@ fn WriteProcessMemory(c: &mut Ctx) -> u32 {
             k
         }
     };
-    mem::putp(done, k);
+    done.put(k);
     if k < n {
         last_error(299);
         return 0;
@@ -4415,10 +4415,10 @@ fn rw_arm(h: u32, generation: u32, obj_h: u32, ms: u32, flags: u32) {
 }
 /// RegisterWaitForSingleObject(phandle*, object, callback, ctx, ms, flags)
 fn RegisterWaitForSingleObject(c: &mut Ctx) -> u32 {
-    let (out, obj_h, cb, ctx, ms, flags) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    let (out, obj_h, cb, ctx, ms, flags) = (c.out(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
     let h = mem::heap_alloc(16, true);
     tp_insert(h, cb, ctx);
-    mem::putp(out, h);
+    out.put(h);
     let generation = tp_with(|m| m[&h].generation);
     rw_arm(h, generation, obj_h, ms, flags);
     1
@@ -4659,8 +4659,8 @@ fn SetThreadStackGuarantee(c: &mut Ctx) -> u32 {
 fn GetCurrentThreadStackLimits(c: &mut Ctx) -> u32 {
     let teb = crate::cur().teb;
     let ps = mem::ps();
-    mem::putp(c.a(0), crate::mem::rp(mem::ga(teb) + if mem::x64() { 0x1478 } else { 0xe0c }));
-    mem::putp(c.a(1), crate::mem::rp(mem::ga(teb) + ps));
+    c.out(0).put(crate::mem::rp(mem::ga(teb) + if mem::x64() { 0x1478 } else { 0xe0c }));
+    c.out(1).put(crate::mem::rp(mem::ga(teb) + ps));
     0
 }
 fn FlushProcessWriteBuffers(_: &mut Ctx) -> u32 {
@@ -4810,12 +4810,12 @@ fn Wow64DisableWow64FsRedirection(c: &mut Ctx) -> u32 {
     if mem::x64() {
         return not_wow64();
     }
-    let old = c.a(0);
-    if old == 0 || is_bad(old, mem::ps()) {
+    let old = c.out(0);
+    if old.is_null() || is_bad(old.addr(), mem::ps()) {
         last_error(998);
         return 0;
     }
-    mem::wp(old, FS_REDIR_OFF.with(|r| r.replace(1)));
+    old.put(FS_REDIR_OFF.with(|r| r.replace(1)));
     1
 }
 /// Wow64RevertWow64FsRedirection(old)
@@ -6614,7 +6614,7 @@ fn GetModuleHandleW(c: &mut Ctx) -> u32 {
 fn GetModuleHandleExW(c: &mut Ctx) -> u32 {
     let flags = c.a(0);
     let h = if flags & 4 != 0 { crate::pe::containing(c.a(1)).unwrap_or(0) } else { module_handle(c.a(1), true) };
-    mem::put_addr(c.a(2), h);
+    c.out(2).put_addr(h);
     // (a reference unless UNCHANGED_REFCOUNT; PIN keeps it loaded)
     if h != 0 && flags & 2 == 0 {
         crate::pe::add_reference(h, flags & 1 != 0);
@@ -6624,7 +6624,7 @@ fn GetModuleHandleExW(c: &mut Ctx) -> u32 {
 fn GetModuleHandleExA(c: &mut Ctx) -> u32 {
     let flags = c.a(0);
     let h = if flags & 4 != 0 { crate::pe::containing(c.a(1)).unwrap_or(0) } else { module_handle(c.a(1), false) };
-    mem::put_addr(c.a(2), h);
+    c.out(2).put_addr(h);
     // (a reference unless UNCHANGED_REFCOUNT; PIN keeps it loaded)
     if h != 0 && flags & 2 == 0 {
         crate::pe::add_reference(h, flags & 1 != 0);
@@ -7684,8 +7684,8 @@ fn GetFileInformationByHandleEx(c: &mut Ctx) -> u32 {
 }
 /// PathCchSkipRoot(path, *root end): past "C:\", "C:", "\\server\share\" or "\"
 fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
-    let (p, out) = (c.a(0), c.a(1));
-    if p == 0 || out == 0 {
+    let (p, out) = (c.a(0), c.out(1));
+    if p == 0 || out.is_null() {
         return 0x8007_0057;
     }
     let w = mem::wstr(p);
@@ -7709,7 +7709,7 @@ fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
     } else {
         return 0x8007_0057;
     };
-    mem::wp(out, mem::ga(p).at(kome::num::u32_of(n), 2).get());
+    out.put(mem::ga(p).at(kome::num::u32_of(n), 2).get());
     0
 }
 fn VerifyConsoleIoHandle(c: &mut Ctx) -> u32 {
@@ -9270,11 +9270,11 @@ fn slist_set(h: u32, next: u32, depth: u32) {
     crate::mem::w16(mem::ga(h) + 6, crate::mem::r16(mem::ga(h) + 6).wrapping_add(1));
 }
 fn InterlockedPushEntrySList(c: &mut Ctx) -> u32 {
-    let (h, e) = (c.a(0), c.a(1));
+    let (h, e) = (c.a(0), c.out(1));
     let _g = SLIST.locked();
     let (old, n) = slist_get(h);
-    mem::wp(e, old);
-    slist_set(h, e, n.saturating_add(1));
+    e.put(old);
+    slist_set(h, e.addr(), n.saturating_add(1));
     old
 }
 fn InterlockedPopEntrySList(c: &mut Ctx) -> u32 {
@@ -9307,7 +9307,7 @@ fn push_list(h: u32, first: u32, last: u32, n: u32) -> u32 {
 }
 /// InterlockedPushListSListEx(head, first, last, count)
 fn InterlockedPushListSListEx(c: &mut Ctx) -> u32 {
-    push_list(c.a(0), c.a(1), c.a(2), c.a(3))
+    push_list(c.a(0), c.out(1).addr(), c.out(2).addr(), c.a(3))
 }
 /// InterlockedPushListSList(head, first, last, count): fastcall on x86 (head in ECX, first
 /// in EDX)
@@ -9449,15 +9449,15 @@ fn Process32FirstW(c: &mut Ctx) -> u32 {
 /// process too, as kernel32 opens it with OpenProcess(pid) and that is ours); another's: not
 /// ours to read (ERROR_INVALID_PARAMETER)
 fn Toolhelp32ReadProcessMemory(c: &mut Ctx) -> u32 {
-    let (pid, a, b, n, done) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let (pid, a, b, n, done) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4));
     if pid != 0 && pid != crate::pid() {
-        mem::putp(done, 0);
+        done.put(0);
         last_error(87);
         return 0;
     }
     let k = mem::accessible(a, n, false, false).min(mem::accessible(b, n, true, false));
     mem::copy(b, a, k);
-    mem::putp(done, k);
+    done.put(k);
     if k < n {
         last_error(299);
         return 0;

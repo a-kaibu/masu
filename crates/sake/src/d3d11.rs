@@ -123,7 +123,7 @@ fn D3D11CreateDeviceAndSwapChain(c: &mut Ctx) -> u32 {
     host(CREATE_DEVICE, &a)
 }
 fn D3D11CreateDevice(c: &mut Ctx) -> u32 {
-    let a = [c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), 0, 0, c.a(7), c.a(8), c.a(9)];
+    let a = [c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), 0, 0, c.out(7).addr(), c.a(8), c.out(9).addr()];
     host(CREATE_DEVICE, &a)
 }
 /// (factory, adapter, flags, levels, count, device)
@@ -134,15 +134,15 @@ fn D3D11CoreCreateDevice(c: &mut Ctx) -> u32 {
 /// d3d10.dll / d3d10_1.dll: the D3D11 device's D3D10 face (crates/kura/src/d3d11/d3d10.rs)
 /// (adapter, driver type, software, flags, sdk, out)
 fn D3D10CreateDevice(c: &mut Ctx) -> u32 {
-    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), 0xa000, c.a(4), 0, 0, c.a(5)])
+    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), 0xa000, c.a(4), 0, 0, c.out(5).addr()])
 }
 /// (adapter, driver type, software, flags, sdk, swap chain desc, swap chain, device)
 fn D3D10CreateDeviceAndSwapChain(c: &mut Ctx) -> u32 {
-    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), 0xa000, c.a(4), c.a(5), c.a(6), c.a(7)])
+    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), 0xa000, c.a(4), c.a(5), c.out(6).addr(), c.out(7).addr()])
 }
 /// (adapter, driver type, software, flags, level, sdk, out)
 fn D3D10CreateDevice1(c: &mut Ctx) -> u32 {
-    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), 0, 0, c.a(6)])
+    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), 0, 0, c.out(6).addr()])
 }
 /// (adapter, driver type, software, flags, level, sdk, swap chain desc, swap chain, device)
 fn D3D10CreateDeviceAndSwapChain1(c: &mut Ctx) -> u32 {
@@ -153,13 +153,13 @@ fn D3D11On12CreateDevice(_: &mut Ctx) -> u32 {
     E_NOTIMPL
 }
 fn CreateDXGIFactory(c: &mut Ctx) -> u32 {
-    host(CREATE_FACTORY, &[0, c.a(0), c.a(1)])
+    host(CREATE_FACTORY, &[0, c.a(0), c.out(1).addr()])
 }
 fn CreateDXGIFactory2(c: &mut Ctx) -> u32 {
-    host(CREATE_FACTORY, &[c.a(0), c.a(1), c.a(2)])
+    host(CREATE_FACTORY, &[c.a(0), c.a(1), c.out(2).addr()])
 }
 fn DXGIGetDebugInterface1(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(2), 0);
+    c.out(2).put(0);
     E_NOTIMPL
 }
 /// d3d12.dll as on a PC whose GPU has no Direct3D 12 driver: it loads (Unity 6 calls into it

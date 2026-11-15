@@ -341,11 +341,11 @@ fn policy_ok(h: u32) -> bool {
 
 /// LsaOpenPolicy(system, attributes, access, &handle)
 fn LsaOpenPolicy(c: &mut Ctx) -> u32 {
-    let (attrs, out) = (c.a(1), c.a(3));
-    if attrs == 0 || out == 0 {
+    let (attrs, out) = (c.a(1), c.out(3));
+    if attrs == 0 || out.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
-    mem::putp(out, POLICY);
+    out.put(POLICY);
     STATUS_SUCCESS
 }
 fn LsaClose(c: &mut Ctx) -> u32 {
@@ -393,16 +393,16 @@ fn policy_info(class: u32) -> Option<Blk> {
 }
 /// LsaQueryInformationPolicy(policy, class, &buffer)
 fn LsaQueryInformationPolicy(c: &mut Ctx) -> u32 {
-    let (h, class, out) = (c.a(0), c.a(1), c.a(2));
+    let (h, class, out) = (c.a(0), c.a(1), c.out(2));
     if !policy_ok(h) {
         return STATUS_INVALID_HANDLE;
     }
-    if out == 0 {
+    if out.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
     match policy_info(class) {
         Some(b) => {
-            mem::putp(out, b.put());
+            out.put(b.put());
             STATUS_SUCCESS
         }
         None => STATUS_INVALID_PARAMETER,
@@ -412,9 +412,9 @@ fn LsaQueryInformationPolicy(c: &mut Ctx) -> u32 {
 /// LsaEnumerateAccountRights(policy, sid, &rights, &count): no account has rights assigned
 /// on its own (they come through groups), so STATUS_OBJECT_NAME_NOT_FOUND with both cleared.
 fn LsaEnumerateAccountRights(c: &mut Ctx) -> u32 {
-    let (h, rights, count) = (c.a(0), c.a(2), c.a(3));
-    if rights != 0 {
-        mem::putp(rights, 0);
+    let (h, rights, count) = (c.a(0), c.out(2), c.a(3));
+    if !rights.is_null() {
+        rights.put(0);
     }
     if count != 0 {
         w32(count, 0);
@@ -539,21 +539,21 @@ fn lookup_names(h: u32, count: u32, names: u32, domsp: u32, sidsp: u32, v2: bool
     }
 }
 fn LsaLookupNames2(c: &mut Ctx) -> u32 {
-    lookup_names(c.a(0), c.a(2), c.a(3), c.a(4), c.a(5), true)
+    lookup_names(c.a(0), c.a(2), c.a(3), c.out(4).addr(), c.out(5).addr(), true)
 }
 fn LsaLookupNames(c: &mut Ctx) -> u32 {
-    lookup_names(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), false)
+    lookup_names(c.a(0), c.a(1), c.a(2), c.out(3).addr(), c.out(4).addr(), false)
 }
 
 /// LsaLookupSids(policy, count, sids, &domains, &names): LSA_TRANSLATED_NAME {Use;
 /// UNICODE_STRING Name; LONG DomainIndex} per SID; an unknown SID is named by its text with
 /// index -1.
 fn LsaLookupSids(c: &mut Ctx) -> u32 {
-    let (h, count, sids, domsp, namesp) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let (h, count, sids, domsp, namesp) = (c.a(0), c.a(1), c.a(2), c.out(3), c.out(4));
     if !policy_ok(h) {
         return STATUS_INVALID_HANDLE;
     }
-    if domsp == 0 || namesp == 0 || count != 0 && sids == 0 {
+    if domsp.is_null() || namesp.is_null() || count != 0 && sids == 0 {
         return STATUS_INVALID_PARAMETER;
     }
     if count > MAX_LOOKUP {
@@ -582,8 +582,8 @@ fn LsaLookupSids(c: &mut Ctx) -> u32 {
             }
         }
     }
-    mem::putp(namesp, b.put());
-    mem::putp(domsp, doms.put());
+    namesp.put(b.put());
+    domsp.put(doms.put());
     if hits == 0 && count != 0 {
         STATUS_NONE_MAPPED
     } else if hits < count {

@@ -2292,8 +2292,8 @@ fn RtlCreateActivationContext(c: &mut Ctx) -> u32 {
 
 fn ActivateActCtx(c: &mut Ctx) -> u32 {
     let f = activate(c.a(0));
-    if c.a(1) != 0 {
-        mem::putp(c.a(1), f);
+    if !c.out(1).is_null() {
+        c.out(1).put(f);
     }
     1
 }
@@ -2347,7 +2347,7 @@ fn RtlFreeThreadActivationContextStack(_: &mut Ctx) -> u32 {
     0
 }
 fn GetCurrentActCtx(c: &mut Ctx) -> u32 {
-    if c.a(0) == 0 {
+    if c.out(0).is_null() {
         last_error(ERROR_INVALID_PARAMETER);
         return 0;
     }
@@ -2355,7 +2355,7 @@ fn GetCurrentActCtx(c: &mut Ctx) -> u32 {
     if valid(h) {
         add_ref(h);
     }
-    mem::putp(c.a(0), h);
+    c.out(0).put(h);
     1
 }
 fn RtlGetActiveActivationContext(c: &mut Ctx) -> u32 {
@@ -2414,7 +2414,7 @@ fn ret_bool(st: u32) -> u32 {
 
 /// QueryActCtxW(flags, context, subinstance, class, buffer, size, returned)
 fn QueryActCtxW(c: &mut Ctx) -> u32 {
-    ret_bool(query(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6)))
+    ret_bool(query(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(6).addr()))
 }
 fn RtlQueryInformationActivationContext(c: &mut Ctx) -> u32 {
     query(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6))
@@ -2425,7 +2425,7 @@ fn RtlQueryInformationActiveActivationContext(c: &mut Ctx) -> u32 {
 }
 /// QueryActCtxSettingsW(flags, context, namespace, name, buffer, size, written)
 fn QueryActCtxSettingsW(c: &mut Ctx) -> u32 {
-    ret_bool(settings(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6)))
+    ret_bool(settings(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(6).addr()))
 }
 fn RtlQueryActivationContextApplicationSettings(c: &mut Ctx) -> u32 {
     settings(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6))

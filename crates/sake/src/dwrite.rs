@@ -123,7 +123,7 @@ fn TranslateColorGlyphRun(c: &mut Ctx) -> u32 {
     0x8898_500c
 }
 fn DWriteCreateFactory(c: &mut Ctx) -> u32 {
-    let (ty, out) = (c.a(0), c.a(2));
+    let (ty, out) = (c.a(0), c.out(2));
     let f = if ty == 0 {
         let mut g = SHARED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if *g == 0 {
@@ -137,7 +137,7 @@ fn DWriteCreateFactory(c: &mut Ctx) -> u32 {
     } else {
         com::object(FACTORY, &factory_methods(), 8)
     };
-    mem::putp(out, f);
+    out.put(f);
     0
 }
 

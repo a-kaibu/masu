@@ -1256,7 +1256,7 @@ fn getaddrinfo(c: &mut Ctx, wide: bool) -> u32 {
 /// GetAddrInfoExW(name, service, namespace, nsid, hints, &result, timeout, overlapped,
 /// completion, &handle): answered at once (an overlapped request completes immediately)
 fn GetAddrInfoExW(c: &mut Ctx) -> u32 {
-    let (n, s, h, res, ov, cb) = (c.a(0), c.a(1), c.a(4), c.a(5), c.a(7), c.a(8));
+    let (n, s, h, res, ov, cb) = (c.a(0), c.a(1), c.a(4), c.out(5), c.a(7), c.a(8));
     let fail = |e: u32| {
         last(e);
         e
@@ -1264,10 +1264,10 @@ fn GetAddrInfoExW(c: &mut Ctx) -> u32 {
     if !started() {
         return fail(WSANOTINITIALISED);
     }
-    if res == 0 {
+    if res.is_null() {
         return fail(WSAEINVAL);
     }
-    wp(res, 0);
+    res.put(0);
     let k = ps();
     if ov != 0 && cb != 0 && mem::rp(ov + 2 * k + 8) != 0 {
         return fail(WSAEINVAL); // (an event and a routine)
@@ -1287,24 +1287,24 @@ fn GetAddrInfoExW(c: &mut Ctx) -> u32 {
         Err(_) => 0,
     };
     if ov == 0 {
-        wp(res, ai);
+        res.put(ai);
         return fail(code);
     }
-    let hp = c.a(9);
-    if hp != 0 {
-        wp(hp, 0x1234);
+    let hp = c.out(9);
+    if !hp.is_null() {
+        hp.put(0x1234);
     }
     // OVERLAPPED { Internal = the result, Pointer (over Offset) = &result, hEvent }
-    wp(ov + 2 * k, res);
+    wp(ov + 2 * k, res.addr());
     if cb != 0 {
         // the routine runs on a thread of its own (a thread pool's, on Windows) once done
         wp(ov, 0x2734); // (WSAEINPROGRESS)
         on_thread(cb, vec![code, 0, ov], move || {
-            wp(res, ai);
+            res.put(ai);
             wp(ov, code);
         });
     } else {
-        wp(res, ai);
+        res.put(ai);
         wp(ov, code);
         let ev = mem::rp(ov + 2 * k + 8);
         if ev != 0 {

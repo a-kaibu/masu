@@ -87,8 +87,8 @@ fn CreatePipe(c: &mut Ctx) -> u32 {
         obj::set_inherit(hr, true);
         obj::set_inherit(hw, true);
     }
-    mem::putp(c.a(0), hr);
-    mem::putp(c.a(1), hw);
+    c.out(0).put(hr);
+    c.out(1).put(hw);
     1
 }
 

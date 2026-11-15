@@ -520,11 +520,11 @@ fn make(props: Properties, scale: (i32, i32)) -> u32 {
     base
 }
 fn OleCreateFontIndirect(c: &mut Ctx) -> u32 {
-    let (desc, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 || iid == 0 {
+    let (desc, iid, out) = (c.a(0), c.a(1), c.out(2));
+    if out.is_null() || iid == 0 {
         return POINTER;
     }
-    wp(out, 0);
+    out.put(0);
     let Some(offset) = iid_offset(iid) else {
         return NOINTERFACE;
     };
@@ -553,7 +553,7 @@ fn OleCreateFontIndirect(c: &mut Ctx) -> u32 {
     if base == 0 {
         return 0x8007000e;
     }
-    wp(out, base + offset);
+    out.put(base + offset);
     0
 }
 pub fn init() {

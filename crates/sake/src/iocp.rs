@@ -333,19 +333,19 @@ fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<(Pack
 
 /// GetQueuedCompletionStatus(port, &bytes, &key, &overlapped, ms)
 fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
-    let (port, bp, kp, op, ms) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let (port, bp, kp, op, ms) = (c.a(0), c.a(1), c.out(2), c.out(3), c.a(4));
     match wait_packet(c, port, ms, false) {
         Ok(((bytes, key, ov, status), _)) => {
             mem::put32(bp, bytes);
-            if kp != 0 {
+            if !kp.is_null() {
                 if mem::x64() {
-                    mem::w64(kp, key);
+                    kp.put64(key);
                 } else {
-                    w32(kp, kome::num::lo32(key));
+                    kp.put(kome::num::lo32(key));
                 }
             }
-            if op != 0 {
-                wp(op, ov);
+            if !op.is_null() {
+                op.put(ov);
             }
             if status != 0 {
                 last_error(nt_to_win32(status));
@@ -354,8 +354,8 @@ fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
             1
         }
         Err(e) => {
-            if op != 0 {
-                wp(op, 0);
+            if !op.is_null() {
+                op.put(0);
             }
             last_error(e);
             0

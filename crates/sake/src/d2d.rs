@@ -410,7 +410,7 @@ fn GetMaximumBitmapSize(_: &mut Ctx) -> u32 {
 }
 
 fn D2D1CreateFactory(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(3), factory());
+    c.out(3).put(factory());
     0
 }
 
@@ -446,7 +446,7 @@ fn device_of_new_factory(out: u32) -> u32 {
 }
 
 fn D2D1CreateDevice(c: &mut Ctx) -> u32 {
-    device_of_new_factory(c.a(2))
+    device_of_new_factory(c.out(2).addr())
 }
 
 fn GetFactory(c: &mut Ctx) -> u32 {
@@ -554,7 +554,7 @@ fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
         s.dcs.insert(o, Dc { device, ..Default::default() })
     });
     set_target(c, o, bmp, true);
-    mem::putp(c.a(2), o);
+    c.out(2).put(o);
     0
 }
 

@@ -442,14 +442,14 @@ fn put_name(dst: &mut [u8], s: &str, wide: bool) {
 
 /// mixerOpen(HMIXER*, id, callback, instance, flags)
 fn mixerOpen(c: &mut Ctx) -> u32 {
-    let (out, id, cb, flags) = (c.a(0), c.a(1), c.a(2), c.a(4));
-    if out == 0 {
+    let (out, id, cb, flags) = (c.out(0), c.a(1), c.a(2), c.a(4));
+    if out.is_null() {
         return MmErr::InvalParam.code();
     }
     if let Err(e) = open_check(id, cb, flags, crate::user::is_window) {
         return e.code();
     }
-    mem::wp(out, HMIXER_BASE | (OPENS.fetch_add(1, Ordering::Relaxed) & 0xFFFF));
+    out.put(HMIXER_BASE | (OPENS.fetch_add(1, Ordering::Relaxed) & 0xFFFF));
     NOERROR
 }
 fn mixerClose(_: &mut Ctx) -> u32 {

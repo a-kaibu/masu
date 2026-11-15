@@ -198,40 +198,40 @@ fn compile(c: &mut Ctx, src: &[u8], name: &str, defs: u32, inc: u32, entry: u32,
 fn D3DCompile(c: &mut Ctx) -> u32 {
     let src = mem::bytes(c.a(0), c.a(1));
     let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
-    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(9), c.a(10));
-    compile(c, &src, &name, d, i, e, t, f, o, er)
+    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.out(9), c.out(10));
+    compile(c, &src, &name, d, i, e, t, f, o.addr(), er.addr())
 }
 
 /// D3DCompile2(.., flags2, secondary flags, secondary data, its size, code, errors)
 fn D3DCompile2(c: &mut Ctx) -> u32 {
     let src = mem::bytes(c.a(0), c.a(1));
     let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
-    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(12), c.a(13));
-    compile(c, &src, &name, d, i, e, t, f, o, er)
+    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.out(12), c.out(13));
+    compile(c, &src, &name, d, i, e, t, f, o.addr(), er.addr())
 }
 
 /// D3DCompileFromFile(file, defines, include, entry, target, flags1, flags2, code, errors)
 fn D3DCompileFromFile(c: &mut Ctx) -> u32 {
     let name = crate::k32::arg_str(c.a(0), true);
     let Some(src) = read_file(&name) else {
-        mem::putp(c.a(7), 0);
-        mem::putp(c.a(8), 0);
+        c.out(7).put(0);
+        c.out(8).put(0);
         return 0x8007_0002;
     };
-    let (d, i, e, t, f, o, er) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(7), c.a(8));
-    compile(c, &src, &name, d, i, e, t, f, o, er)
+    let (d, i, e, t, f, o, er) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(7), c.out(8));
+    compile(c, &src, &name, d, i, e, t, f, o.addr(), er.addr())
 }
 
 /// D3DPreprocess(data, size, name, defines, include, text, errors)
 fn D3DPreprocess(c: &mut Ctx) -> u32 {
     let src = String::from_utf8_lossy(&mem::bytes(c.a(0), c.a(1))).into_owned();
     let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
-    let (defs, inc, out, errs) = (c.a(3), c.a(4), c.a(5), c.a(6));
+    let (defs, inc, out, errs) = (c.a(3), c.a(4), c.out(5), c.out(6));
     let defines = defines(defs);
     let base = dir_of(&name);
     let mut include = |n: &str, sys: bool| open_include(c, inc, &base, n, sys);
     let r = hlslc::preprocess(src.trim_end_matches('\0'), &defines, &mut include);
-    mem::putp(errs, 0);
+    errs.put(0);
     match r {
         Ok(toks) => {
             let mut s = String::new();
@@ -246,12 +246,12 @@ fn D3DPreprocess(c: &mut Ctx) -> u32 {
                 s.push_str(&hlslc::pp::text(&t));
             }
             s.push('\n');
-            mem::putp(out, text_blob(&s));
+            out.put(text_blob(&s));
             0
         }
         Err(e) => {
-            mem::putp(out, 0);
-            mem::putp(errs, text_blob(&e));
+            out.put(0);
+            errs.put(text_blob(&e));
             0x8000_4005
         }
     }
@@ -262,11 +262,11 @@ fn D3DCreateBlob(c: &mut Ctx) -> u32 {
     // on a huge one; no room is E_OUTOFMEMORY)
     match new_blob(blob_vtbl(), c.a(0), |_| ()) {
         Some(o) => {
-            mem::putp(c.a(1), o);
+            c.out(1).put(o);
             0
         }
         None => {
-            mem::putp(c.a(1), 0);
+            c.out(1).put(0);
             0x8007_000e
         }
     }
@@ -297,28 +297,28 @@ fn sig_blob(c: &mut Ctx, tags: &[&[u8; 4]], out: u32) -> u32 {
 }
 
 fn D3DGetInputSignatureBlob(c: &mut Ctx) -> u32 {
-    let o = c.a(2);
-    sig_blob(c, &[b"ISGN"], o)
+    let o = c.out(2);
+    sig_blob(c, &[b"ISGN"], o.addr())
 }
 fn D3DGetOutputSignatureBlob(c: &mut Ctx) -> u32 {
-    let o = c.a(2);
-    sig_blob(c, &[b"OSGN"], o)
+    let o = c.out(2);
+    sig_blob(c, &[b"OSGN"], o.addr())
 }
 fn D3DGetInputAndOutputSignatureBlob(c: &mut Ctx) -> u32 {
-    let o = c.a(2);
-    sig_blob(c, &[b"ISGN", b"OSGN"], o)
+    let o = c.out(2);
+    sig_blob(c, &[b"ISGN", b"OSGN"], o.addr())
 }
 
 /// D3DGetBlobPart(data, size, part, flags, blob): 0 input, 1 output, 2 both signatures, 5 debug
 /// info, 8 private data...
 fn D3DGetBlobPart(c: &mut Ctx) -> u32 {
-    let o = c.a(4);
+    let o = c.out(4);
     match c.a(2) {
-        0 => sig_blob(c, &[b"ISGN"], o),
-        1 => sig_blob(c, &[b"OSGN"], o),
-        2 => sig_blob(c, &[b"ISGN", b"OSGN"], o),
+        0 => sig_blob(c, &[b"ISGN"], o.addr()),
+        1 => sig_blob(c, &[b"OSGN"], o.addr()),
+        2 => sig_blob(c, &[b"ISGN", b"OSGN"], o.addr()),
         _ => {
-            mem::putp(o, 0);
+            o.put(0);
             0x8000_4005
         }
     }
@@ -327,7 +327,7 @@ fn D3DGetBlobPart(c: &mut Ctx) -> u32 {
 /// D3DStripShader(data, size, flags, blob): nothing of ours to strip
 fn D3DStripShader(c: &mut Ctx) -> u32 {
     let code = mem::bytes(c.a(0), c.a(1));
-    mem::putp(c.a(3), blob(&code));
+    c.out(3).put(blob(&code));
     0
 }
 
@@ -335,11 +335,11 @@ fn D3DReadFileToBlob(c: &mut Ctx) -> u32 {
     let name = crate::k32::arg_str(c.a(0), true);
     match read_file(&name) {
         Some(d) => {
-            mem::putp(c.a(1), blob(&d));
+            c.out(1).put(blob(&d));
             0
         }
         None => {
-            mem::putp(c.a(1), 0);
+            c.out(1).put(0);
             0x8007_0002
         }
     }
@@ -347,7 +347,7 @@ fn D3DReadFileToBlob(c: &mut Ctx) -> u32 {
 
 /// D3DDisassemble(data, size, flags, comments, text)
 fn D3DDisassemble(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(4), text_blob("// (no disassembly in sake)\n"));
+    c.out(4).put(text_blob("// (no disassembly in sake)\n"));
     0
 }
 
@@ -355,8 +355,8 @@ fn D3DDisassemble(c: &mut Ctx) -> u32 {
 fn D3D10CompileShader(c: &mut Ctx) -> u32 {
     let src = mem::bytes(c.a(0), c.a(1));
     let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
-    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(8), c.a(9));
-    compile(c, &src, &name, d, i, e, t, f | hlslc::D3D10_BLOB, o, er)
+    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.out(8), c.out(9));
+    compile(c, &src, &name, d, i, e, t, f | hlslc::D3D10_BLOB, o.addr(), er.addr())
 }
 
 /// A string the guest keeps (the D3D10Get*ShaderProfile results).
@@ -382,12 +382,12 @@ fn D3D10GetGeometryShaderProfile(_: &mut Ctx) -> u32 {
 }
 /// D3D10DisassembleShader(data, size, color, comments, text)
 fn D3D10DisassembleShader(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(4), text_blob("// (no disassembly in sake)\n"));
+    c.out(4).put(text_blob("// (no disassembly in sake)\n"));
     0
 }
 /// Not done: effects (Effects 10)
 fn D3D10CreateEffectFromMemory(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(5), 0);
+    c.out(5).put(0);
     0x8000_4001
 }
 

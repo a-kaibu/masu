@@ -691,22 +691,22 @@ fn open_added(c: &mut Ctx, i: Slot) -> u32 {
     id
 }
 fn acmDriverOpen(c: &mut Ctx) -> u32 {
-    let (out, id) = (c.a(0), c.a(1));
-    if out == 0 {
+    let (out, id) = (c.out(0), c.a(1));
+    if out.is_null() {
         return MMSYSERR_INVALPARAM;
     }
     if let Some(i) = added_index(id) {
         if open_added(c, i) == 0 {
             return MMSYSERR_ERROR;
         }
-        putp(out, i.opened());
+        out.put(i.opened());
         return 0;
     }
     if let Hacm::Id(_) = Hacm::from(id) {
         return MMSYSERR_INVALHANDLE;
     }
     // (a built-in driver gives back itself; another id: the first)
-    putp(out, if DRIVERS.iter().any(|d| d.0 == id) { id } else { DRIVER });
+    out.put(if DRIVERS.iter().any(|d| d.0 == id) { id } else { DRIVER });
     0
 }
 fn acmDriverClose(c: &mut Ctx) -> u32 {
@@ -907,7 +907,7 @@ fn acmDriverID(c: &mut Ctx) -> u32 {
     } else {
         DRIVER
     };
-    crate::mem::putp(c.a(1), id);
+    c.out(1).put(id);
     0
 }
 /// ACMDRIVERDETAILS' numbers and hicon, before its strings
@@ -1113,21 +1113,21 @@ fn acmFormatSuggest(c: &mut Ctx) -> u32 {
 }
 /// acmStreamOpen(phas, had, src, dst, filter, cb, inst, flags)
 fn acmStreamOpen(c: &mut Ctx) -> u32 {
-    let (ph, had, src, dst, flags) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(7));
+    let (ph, had, src, dst, flags) = (c.out(0), c.a(1), c.a(2), c.a(3), c.a(7));
     if src == 0 || dst == 0 {
         return MMSYSERR_INVALPARAM;
     }
     // a driver the program added: the one it opened, or with no driver named, any of them
     // before the built-in one (as Windows tries the process's own drivers first)
     if let Some(i) = added_index(had) {
-        return stream_open_added(c, i, ph, src, dst, c.a(4), c.a(5), c.a(6), flags);
+        return stream_open_added(c, i, ph.addr(), src, dst, c.a(4), c.a(5), c.a(6), flags);
     }
     if let Hacm::Id(_) | Hacm::Opened(_) = Hacm::from(had) {
         return MMSYSERR_INVALHANDLE;
     }
     if had == 0 {
         for i in added_slots() {
-            if added(i).is_some() && stream_open_added(c, i, ph, src, dst, c.a(4), c.a(5), c.a(6), flags) == 0 {
+            if added(i).is_some() && stream_open_added(c, i, ph.addr(), src, dst, c.a(4), c.a(5), c.a(6), flags) == 0 {
                 return 0;
             }
         }
@@ -1141,8 +1141,8 @@ fn acmStreamOpen(c: &mut Ctx) -> u32 {
             seen.push((s.tag, d.tag));
             eprintln!("sake: acm: no conversion from format {:#x} ({} Hz, {} ch) to {:#x} ({} bit)", u16::from(s.tag), s.rate, s.channels, u16::from(d.tag), d.bits);
         }
-        if ph != 0 {
-            putp(ph, 0);
+        if !ph.is_null() {
+            ph.put(0);
         }
         return ACMERR_NOTPOSSIBLE;
     }
@@ -1153,7 +1153,7 @@ fn acmStreamOpen(c: &mut Ctx) -> u32 {
     let h = next_has();
     let mp3 = if s.tag == Tag::Mp3 {
         let Some(dec) = kura::adec::open("mp3", s.rate, s.channels as u32, &[]) else {
-            putp(ph, 0);
+            ph.put(0);
             return ACMERR_NOTPOSSIBLE;
         };
         Some(std::sync::Arc::new(Mutex::new(Mp3 { dec, split: Default::default(), pending: Default::default(), due: 0, channels: s.channels as usize, heard: false, late: false })))
@@ -1161,7 +1161,7 @@ fn acmStreamOpen(c: &mut Ctx) -> u32 {
         None
     };
     lock(&STREAMS).get_or_insert_with(HashMap::default).insert(h, Stream { src: s, dst: d, mp3 });
-    putp(ph, h.0);
+    ph.put(h.0);
     0
 }
 fn with<R>(h: Has, f: impl FnOnce(&Stream) -> R) -> Option<R> {

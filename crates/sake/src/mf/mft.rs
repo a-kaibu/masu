@@ -400,17 +400,17 @@ fn al_vtable() -> u32 {
 
 /// MFCreateVideoSampleAllocatorEx(REFIID, void **)
 fn MFCreateVideoSampleAllocatorEx(c: &mut Ctx) -> u32 {
-    let (riid, out) = (c.a(0), c.a(1));
-    if riid == 0 || out == 0 {
+    let (riid, out) = (c.a(0), c.out(1));
+    if riid == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     if !is_allocator(&guid_at(riid)) {
-        putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     }
     let b = object(al_vtable(), 1);
     ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Alloc { refs: 1, manager: 0, frames: None });
-    putp(out, b);
+    out.put(b);
     0
 }
 
