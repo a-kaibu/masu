@@ -80,7 +80,7 @@ fn tool_over_the_cap_is_stopped_and_nothing_added() {
     fs::remove_dir_all(&d).unwrap();
 }
 
-/// `masu --version`: the version and the commit built (deploy.sh prints it after a deploy).
+/// `masu --version`: the version and the commit built (`curl localhost:8656/version` after an update shows it too).
 #[test]
 fn version_line_has_the_commit() {
     let o = Command::new(env!("CARGO_BIN_EXE_masu")).arg("--version").output().unwrap();

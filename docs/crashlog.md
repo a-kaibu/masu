@@ -16,13 +16,13 @@
 | 前のページがゲームの途中で消えていた (Android がメモリ不足でタブを落とした、閉じた) | `<id>-unclean` | 次にページを開いたときにサーバーへ |
 
 `<id>` は `日付-時刻-ゲーム-乱数` です。サーバーは `masu serve --logs <dir>` (既定 `logs/`、
-worker2 では `/home/kota/vnvm/vnvm-bench/logs/`) に `<名前>.txt` で置き、新しい 2000 件を残します。
+worker1 では `~/.local/state/masu/logs/`、[worker1.md](worker1.md)) に `<名前>.txt` で置き、新しい 2000 件を残します。
 
 見るには:
 
 * ブラウザの画面はありません (2026-11-07 に一覧の「ログ」画面は外しました)。OPFS に残ったログは
   次にページを開いたときにサーバーへ送られます。
-* サーバー: `ls -t /home/kota/vnvm/vnvm-bench/logs/`、`GET /log-list` (JSON)、`/logs/<名前>.txt`。
+* サーバー: `ssh worker1 ls -t .local/state/masu/logs/`、`GET /log-list` (JSON)、`/logs/<名前>.txt`。
   保存のたびにサーバーの標準エラーに `log <path>: <KB>, <reason>` が出ます。
 
 ## 中身

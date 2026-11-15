@@ -100,7 +100,7 @@ masu meta sample | masu meta --all
 ストア `~/.local/share/masu/store`、JIT キャッシュ `~/.cache/masu/jit`、ログ `~/.local/state/masu/logs`、
 設定 `~/.config/masu/config.toml` (`store` `cache` `logs` `listen`、どれも任意)、制御用ソケット
 `$XDG_RUNTIME_DIR/masu/server-<ストア>.sock` (ストアごとに 1 つ。同じストアで 2 つ目のサーバーは起動しません)。
-詳しくは `crates/masu/src/dirs.rs`。
+詳しくは `crates/masu/src/dirs.rs`。worker1 での動かし方 (systemd ユーザーユニット `deploy/masu.service`) は [docs/worker1.md](docs/worker1.md)。
 
 Web ゲーム (NW.js / Electron) は管理画面と別オリジンで動かすため、サーバーは `--listen` の次のポート
 (既定 8657、`--game-listen` で変更) でゲームのファイルだけを配信します。リバースプロキシ越しに使うときは

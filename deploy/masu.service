@@ -1,0 +1,15 @@
+# The masu server as a systemd user unit (worker1: ~/.config/systemd/user/masu.service).
+# ~/.config/masu/env holds the bucket's keys and MASU_STORAGE_CONFIG (docs/worker1.md).
+# Web self-update (/api/update) execs the new binary in place, so the unit stays as it is.
+[Unit]
+Description=masu
+After=network-online.target
+
+[Service]
+EnvironmentFile=%h/.config/masu/env
+ExecStart=%h/.local/bin/masu serve --foreground
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
