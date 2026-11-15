@@ -851,11 +851,13 @@ mod tests {
     #[test]
     fn exceptions_past_the_first_are_one_line() {
         let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-        let cpu = Box::leak(Box::new(Cpu { eip: 0x0040_1234, ..Cpu::default() }));
+        // (the test's own Cpu, freed once unregistered: LeakSanitizer reports one left, #242)
+        let mut owned = Box::new(Cpu { eip: 0x0040_1234, ..Cpu::default() });
+        let cpu: *mut Cpu = &mut *owned;
         register(cpu);
         let before = EV.head.load(Relaxed);
         for _ in 0..120 {
-            exception(cpu, "access violation", Some((0x10, false)), true);
+            exception(&owned, "access violation", Some((0x10, false)), true);
         }
         let all = ev_text();
         let ours = &all[before as usize..];
@@ -871,6 +873,7 @@ mod tests {
             }
         }
         unregister(cpu);
+        drop(owned);
     }
 
     /// With more threads made than the snapshot takes (the list keeps every one), the newest
@@ -878,16 +881,18 @@ mod tests {
     #[test]
     fn snapshot_has_the_newest_threads() {
         let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-        let cpus: Vec<&'static mut Cpu> = (0..300).map(|i| Box::leak(Box::new(Cpu { eip: 0x0050_0000 + i, ..Cpu::default() }))).collect();
-        for c in &cpus {
-            register(*c as *const Cpu as *mut Cpu);
+        let mut cpus: Vec<Box<Cpu>> = (0..300).map(|i| Box::new(Cpu { eip: 0x0050_0000 + i, ..Cpu::default() })).collect();
+        for c in &mut cpus {
+            register(&mut **c);
         }
         let n = vnhost_crashlog_snapshot() as usize;
         let snap = String::from_utf8_lossy(&unsafe { &*SNAP.0.get() }[..n]).into_owned();
         assert!(snap.contains(&format!("at {:08x}", 0x0050_0000 + 299)), "the newest thread is not in the snapshot");
-        for c in cpus {
-            unregister(c);
+        for c in &mut cpus {
+            unregister(&mut **c);
         }
+        // (freed once unregistered, #242)
+        drop(cpus);
     }
 
     proptest! {

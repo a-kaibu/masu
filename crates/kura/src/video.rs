@@ -278,9 +278,14 @@ fn key_before(keys: &[u32], n: usize) -> usize {
 /// moves a frame per frame, and each prefetch walks the vfs's pieces of the whole window.
 const PREFETCH_STEP: u64 = 1 << 20;
 
-/// (tests: how many prefetches `fill` asked for)
+/// (tests: how many prefetches `fill` asked for, per stream: other tests' streams prefetch at the
+/// same time, which a count of all made a count of the wrong thing under ASan, #242)
 #[cfg(test)]
-static PREFETCHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+static PREFETCHES: std::sync::Mutex<std::collections::BTreeMap<u32, u32>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+#[cfg(test)]
+fn prefetches(id: u32) -> u32 {
+    PREFETCHES.lock().unwrap_or_else(|e| e.into_inner()).get(&id).copied().unwrap_or(0)
+}
 
 /// Has the bytes of frame `n` of stream `id` read (a file's), from each track's key frame
 /// before it (where its decoder starts) to a few seconds past it; the bytes before go. Reads
@@ -353,7 +358,9 @@ fn fill_as(id: u32, n: i32, ahead: bool) {
     let mut f = file.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(w) = prefetch {
         #[cfg(test)]
-        PREFETCHES.fetch_add(1, Ordering::Relaxed);
+        {
+            *PREFETCHES.lock().unwrap_or_else(|e| e.into_inner()).entry(id).or_default() += 1;
+        }
         f.prefetch(w.0, w.1 - w.0);
     }
     if reads.iter().all(Option::is_none) {
@@ -1867,16 +1874,16 @@ mod tests {
         let f = TempVnv::new(&d);
         let (id, _) = open_file(&f.0).unwrap();
         let mut px = vec![0u8; 64 * 64 * 4];
-        let p0 = PREFETCHES.load(Ordering::Relaxed);
+        let p0 = prefetches(id);
         for n in 0..400 {
             assert!(unsafe { frame(id, n, px.as_mut_ptr(), 256, 64, 64, Out::Ycc) });
             assert_eq!(px[0], 16u8.wrapping_add(n as u8));
         }
-        let seq = PREFETCHES.load(Ordering::Relaxed) - p0;
+        let seq = prefetches(id) - p0;
         // (a frame is 6 KiB: 400 frames move the window 2.4 MiB)
         assert!((1..=6).contains(&seq), "{seq} prefetches for 400 frames");
         assert!(unsafe { frame(id, 3, px.as_mut_ptr(), 256, 64, 64, Out::Ycc) });
-        assert!(PREFETCHES.load(Ordering::Relaxed) - p0 > seq, "a seek back fetches again");
+        assert!(prefetches(id) - p0 > seq, "a seek back fetches again");
         close(id);
     }
 

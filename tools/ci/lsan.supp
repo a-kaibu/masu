@@ -1,3 +1,6 @@
 # iced-x86 keeps its decoder tables in a lazily built static (spin::Once) whose boxed handlers
 # LeakSanitizer cannot reach through the table's encoding: kept for the process's life on purpose.
 leak:iced_x86::decoder::table_de
+# kura's JIT keeps the saved parts the page hands over for the process's life (their bytes and
+# the inbox they come through); its late_tests hand parts over the same way (#242)
+leak:kura::jit::late_tests::
