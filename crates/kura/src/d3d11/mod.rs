@@ -481,12 +481,12 @@ fn trace2() -> bool {
 }
 
 unsafe fn rd(p: u32, i: usize) -> u32 {
-    *((p as *const u32).add(i))
+    *(gc::<u32>(p).add(i))
 }
 
 unsafe fn wr(p: u32, i: usize, v: u32) {
     if p != 0 {
-        *((p as *mut u32).add(i)) = v;
+        *(gp::<u32>(p).add(i)) = v;
     }
 }
 
@@ -498,13 +498,41 @@ unsafe fn rdf(p: u32, i: usize) -> f32 {
 /// Guest addresses are below 4G either way.
 use crate::d3d9::device::ptr;
 
+/// A guest u32 (address, size, count, index) as a host usize: lossless, usize being 32 bits or
+/// more on every target.
+pub(crate) fn us(v: u32) -> usize {
+    usize::try_from(v).unwrap_or(usize::MAX)
+}
+
+/// Guest address `a` as a host pointer (the guest's memory is the host's, below 4G).
+fn gp<T>(a: u32) -> *mut T {
+    std::ptr::with_exposed_provenance_mut(us(a))
+}
+
+/// Guest address `a` as a host pointer to read.
+fn gc<T>(a: u32) -> *const T {
+    std::ptr::with_exposed_provenance(us(a))
+}
+
+/// A host usize (length, offset, address) as the guest's u32: its low 32 bits, as `as u32` was.
+fn lo32(v: usize) -> u32 {
+    let [b0, b1, b2, b3, ..] = v.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
+}
+
+/// A u64 as a u32: its low 32 bits, as `as u32` was.
+fn lo32w(v: u64) -> u32 {
+    let [b0, b1, b2, b3, ..] = v.to_le_bytes();
+    u32::from_le_bytes([b0, b1, b2, b3])
+}
+
 /// Pointer `i` of an array of pointers.
 unsafe fn rdp(p: u32, i: usize) -> u32 {
-    rd(p, i * (ptr() / 4) as usize)
+    rd(p, i * us(ptr() / 4))
 }
 
 unsafe fn wrp(p: u32, i: usize, v: u32) {
-    wr(p, i * (ptr() / 4) as usize, v);
+    wr(p, i * us(ptr() / 4), v);
     if ptr() == 8 {
         wr(p, i * 2 + 1, 0);
     }
@@ -557,12 +585,12 @@ impl D11 {
     }
 
     fn guest_alloc(&self, size: u32) -> u32 {
-        unsafe { (self.calls().alloc)(size.max(16)) as u32 }
+        unsafe { lo32((self.calls().alloc)(size.max(16)).expose_provenance()) }
     }
 
     fn guest_free(&self, p: u32) {
         if p != 0 {
-            unsafe { (self.calls().free)(p as *mut u8) }
+            unsafe { (self.calls().free)(gp::<u8>(p)) }
         }
     }
 
@@ -576,10 +604,10 @@ impl D11 {
                 self.free_blocks.push(page + i * 16);
             }
         }
-        let addr = self.free_blocks.pop().unwrap();
+        let Some(addr) = self.free_blocks.pop() else { return 0 };
         unsafe {
-            wrp(addr, 0, self.vtbls.get(iface as usize).copied().unwrap_or(0));
-            *((addr + ptr()) as *mut u32) = id;
+            wrp(addr, 0, self.vtbls.get(us(iface)).copied().unwrap_or(0));
+            *(gp::<u32>(addr + ptr())) = id;
         }
         addr
     }
@@ -603,7 +631,9 @@ impl D11 {
             return a;
         }
         let a = self.block(iface, id);
-        self.objs.get_mut(&id).unwrap().faces.push((iface, a));
+        if let Some(o) = self.objs.get_mut(&id) {
+            o.faces.push((iface, a));
+        }
         a
     }
 
@@ -611,7 +641,7 @@ impl D11 {
         if addr == 0 {
             return 0;
         }
-        let id = unsafe { *((addr + ptr()) as *const u32) };
+        let id = unsafe { *(gc::<u32>(addr + ptr())) };
         if self.objs.get(&id).is_some_and(|o| o.faces.iter().any(|f| f.1 == addr)) { id } else { 0 }
     }
 
@@ -642,7 +672,7 @@ impl D11 {
         let (iface, binds) = (o.iface, o.binds);
         // (one device per process here: "two" devices, one stored in the other's private data,
         // are one holding itself. Once only those references are left, nobody holds it)
-        let selfs = o.private.iter().filter(|p| p.2 == id).count() as u32;
+        let selfs = lo32(o.private.iter().filter(|p| p.2 == id).count());
         if r > 0 && r == selfs && id == self.device {
             o.private.retain(|p| p.2 != id);
             o.refs = 0;
@@ -700,7 +730,7 @@ impl D11 {
         if !made && matches!(self.objs.get(&id).map(|o| o.iface), Some(IF_DEVICE | IF_CONTEXT | IF_FACTORY | IF_ADAPTER | IF_OUTPUT) | None) {
             return;
         }
-        let o = self.objs.remove(&id).unwrap();
+        let Some(o) = self.objs.remove(&id) else { return };
         self.made_by.remove(&id);
         for &(_, _, held) in &o.private {
             if held != 0 {
@@ -708,7 +738,7 @@ impl D11 {
             }
         }
         for (_, a) in &o.faces {
-            unsafe { *((a + ptr()) as *mut u32) = 0 };
+            unsafe { *(gp::<u32>(a + ptr())) = 0 };
             self.free_blocks.push(*a);
         }
         match o.data {
@@ -767,14 +797,14 @@ impl D11 {
                 // (the reference new_swapchain took)
                 self.release(s.device);
             }
-            _ => {}
+            Data::Factory | Data::Adapter(_) | Data::Output | Data::Device | Data::Context | Data::Layout(_) | Data::State(_) | Data::Query(..) | Data::CtxState(_) | Data::Other => {}
         }
     }
 }
 
 /// d3d11.dll's DllMain: its vtables.
 pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
-    let v: Vec<u32> = (0..count as usize).map(|i| rdp(vtbls as u32, i)).collect();
+    let v: Vec<u32> = (0..us(count)).map(|i| rdp(lo32(vtbls.expose_provenance()), i)).collect();
     let mut g = D11S.lock().unwrap_or_else(|e| e.into_inner());
     match g.as_mut() {
         Some(d) => d.vtbls = v,
@@ -815,7 +845,7 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
 /// The arguments of method `m` of interface `iface` (as many as it has: the caller's array is
 /// no longer), then zeros up to `n`.
 pub(crate) fn args_of(iface: u32, m: u32, a: &dyn Fn(usize) -> u32, n: usize) -> Vec<u32> {
-    let k = names::ARGS.get(iface.wrapping_sub(64) as usize).and_then(|v| v.get(m as usize)).map_or(0, |&k| k as usize);
+    let k = names::ARGS.get(us(iface.wrapping_sub(64))).and_then(|v| v.get(us(m))).map_or(0, |&k| usize::from(k));
     (0..n).map(|i| if i < k { a(i) } else { 0 }).collect()
 }
 
@@ -833,7 +863,7 @@ pub unsafe fn call(id: u32, args: *const u32, calls: *const HostCalls) -> u32 {
         args
     };
     if id == INIT {
-        return init(*args as *const u32, *args.add(1));
+        return init(gc::<u32>(*args), *args.add(1));
     }
     let (r, after) = {
         let mut g = D11S.lock().unwrap_or_else(|e| e.into_inner());
@@ -891,8 +921,8 @@ pub unsafe fn call(id: u32, args: *const u32, calls: *const HostCalls) -> u32 {
 }
 
 pub fn name(iface: u32, m: u32) -> String {
-    match names::NAMES.get(iface.wrapping_sub(64) as usize) {
-        Some((i, ms)) => format!("{i}::{}", ms.get(m as usize).copied().unwrap_or("?")),
+    match names::NAMES.get(us(iface.wrapping_sub(64))) {
+        Some((i, ms)) => format!("{i}::{}", ms.get(us(m)).copied().unwrap_or("?")),
         None => format!("{iface}::{m}"),
     }
 }
@@ -972,7 +1002,9 @@ fn dxgi_objects(d: &mut D11) -> u32 {
         // (the adapters and the output: only the application's references count, as in Windows'
         // "Adapter has N references left")
         for id in [d.adapter, d.warp, d.output] {
-            d.objs.get_mut(&id).unwrap().refs = 0;
+            if let Some(o) = d.objs.get_mut(&id) {
+                o.refs = 0;
+            }
         }
     } else {
         d.add_ref(d.factory);
@@ -1014,7 +1046,7 @@ unsafe fn create_device(d: &mut D11, args: *const u32) -> u32 {
     // feature level: the first asked for that is 11_0 or lower
     let mut level = 0xb000;
     if levels != 0 && nlevels > 0 {
-        match (0..nlevels as usize).map(|i| rd(levels, i)).find(|&l| l <= 0xb000) {
+        match (0..us(nlevels)).map(|i| rd(levels, i)).find(|&l| l <= 0xb000) {
             Some(l) => level = l,
             None => return E_INVALIDARG,
         }
@@ -1027,7 +1059,9 @@ unsafe fn create_device(d: &mut D11, args: *const u32) -> u32 {
         let ctx = d.new_obj(IF_CONTEXT, Data::Context);
         d.context = d.id_of(ctx);
         // (unreferenced until handed out: see `add_ref`)
-        d.objs.get_mut(&d.context).unwrap().refs = 0;
+        if let Some(o) = d.objs.get_mut(&d.context) {
+            o.refs = 0;
+        }
         d.st = default_state();
     } else {
         // (a device nobody holds any more: the new one starts from the default state)
@@ -1211,13 +1245,13 @@ unsafe fn create_device10(d: &mut D11, args: *const u32) -> u32 {
     // native tests, a stack frame under ASan is not)
     let mut dev = vec![0u32; 2];
     let mut level = vec![0u32; 1];
-    let v = [a(0), a(1), a(2), a(3), 0, 0, 7, a(6), a(7), dev.as_mut_ptr() as usize as u32, level.as_mut_ptr() as usize as u32, 0];
+    let v = [a(0), a(1), a(2), a(3), 0, 0, 7, a(6), a(7), lo32(dev.as_mut_ptr().expose_provenance()), lo32(level.as_mut_ptr().expose_provenance()), 0];
     let r = create_device(d, v.as_ptr());
     if r != S_OK {
         return r;
     }
     d.made10 = true;
-    let id = d.id_of(rdp(dev.as_mut_ptr() as usize as u32, 0));
+    let id = d.id_of(rdp(lo32(dev.as_mut_ptr().expose_provenance()), 0));
     if dev_out != 0 {
         let f = d.face(id, d3d10::IF10_DEVICE);
         wrp(dev_out, 0, f);
@@ -1286,8 +1320,8 @@ fn default_state() -> State {
 unsafe fn new_swapchain(d: &mut D11, hwnd: u32, w: u32, h: u32, fmt: u32, samples: (u32, u32)) -> u32 {
     let mut rect = [0i32; 4];
     (d.calls().client_rect)(hwnd, rect.as_mut_ptr());
-    let w = if w == 0 { (rect[2] - rect[0]).max(1) as u32 } else { w };
-    let h = if h == 0 { (rect[3] - rect[1]).max(1) as u32 } else { h };
+    let w = if w == 0 { (rect[2] - rect[0]).max(1).cast_unsigned() } else { w };
+    let h = if h == 0 { (rect[3] - rect[1]).max(1).cast_unsigned() } else { h };
     let fmt = if format::info(fmt).is_some() { fmt } else { 28 };
     let buffer = new_backbuffer(d, w, h, fmt, samples);
     let bid = d.id_of(buffer);
@@ -1377,10 +1411,10 @@ unsafe fn upload_texture(t: &mut Texture, sub: u32, mem: usize, pitch: u32, slic
             return;
         }
         nv12_keep(t, sub, mem, pitch, [x0, y0, w, h]);
-        let src = mem as *const u8;
-        let mut out = Vec::with_capacity((w * h) as usize);
+        let src = std::ptr::with_exposed_provenance::<u8>(mem);
+        let mut out = Vec::with_capacity(us(w * h));
         for y in 0..h {
-            out.extend_from_slice(std::slice::from_raw_parts(src.add((y * pitch) as usize), w as usize));
+            out.extend_from_slice(std::slice::from_raw_parts(src.add(us(y * pitch)), us(w)));
         }
         gpu::record(|q| {
             let off = q.blob(&out);
@@ -1398,7 +1432,7 @@ unsafe fn upload_texture(t: &mut Texture, sub: u32, mem: usize, pitch: u32, slic
     }
     keep_bits(t, sub, mem, pitch, slice, [x0, y0, z0, w, h, z1]);
     for z in z0..z1 {
-        let src = (mem as *const u8).add(((z - z0) * slice) as usize);
+        let src = std::ptr::with_exposed_provenance::<u8>(mem).add(us((z - z0) * slice));
         let (out, bpr) = page_texels(t, &f, src, pitch, w, h);
         let lz = if t.dim == 3 { z } else { layer };
         gpu::record(|q| {
@@ -1433,7 +1467,7 @@ fn after_lost(d: &mut D11) {
                 for (sub, bytes) in subs {
                     let (_, _, lw, lh, _) = sub_size(t, sub);
                     let (pitch, rows) = format::pitch_rows(t.fmt, lw, lh);
-                    unsafe { upload_texture(t, sub, bytes.as_ptr() as usize, pitch, pitch * rows, None) };
+                    unsafe { upload_texture(t, sub, bytes.as_ptr().expose_provenance(), pitch, pitch * rows, None) };
                 }
                 t.clean.clear();
             }
@@ -1449,14 +1483,14 @@ unsafe fn keep_bits(t: &mut Texture, sub: u32, mem: usize, pitch: u32, slice: u3
     let [x0, y0, z0, w, h, z1] = b;
     let (_, _, lw, lh, ld) = sub_size(t, sub);
     let (gp, rows) = format::pitch_rows(t.fmt, lw, lh);
-    let keep = t.bits.entry(sub).or_insert_with(|| vec![0; (gp * rows * ld) as usize]);
+    let keep = t.bits.entry(sub).or_insert_with(|| vec![0; us(gp * rows * ld)]);
     let (bx0, by0) = (x0 / f.block, y0 / f.block);
     let (row, n) = format::pitch_rows(t.fmt, w, h);
     for z in z0..z1 {
         for r in 0..n {
-            let from = (mem as *const u8).add(((z - z0) * slice + r * pitch) as usize);
-            let at = ((z * rows + by0 + r) * gp + bx0 * f.bpp) as usize;
-            keep[at..at + row as usize].copy_from_slice(std::slice::from_raw_parts(from, row as usize));
+            let from = std::ptr::with_exposed_provenance::<u8>(mem).add(us((z - z0) * slice + r * pitch));
+            let at = us((z * rows + by0 + r) * gp + bx0 * f.bpp);
+            keep[at..at + us(row)].copy_from_slice(std::slice::from_raw_parts(from, us(row)));
         }
     }
 }
@@ -1470,7 +1504,7 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
     let a = |i: usize| *args.add(i);
     match iface {
         // IDXGIObject: SetPrivateData, SetPrivateDataInterface, GetPrivateData
-        IF_FACTORY | IF_ADAPTER | IF_OUTPUT | IF_SWAPCHAIN | IF_DXGIDEVICE | IF_SURFACE | IF_DXGIRES if (3..=5).contains(&m) => private_data(d, [5, 6, 4][m as usize - 3], this, &a),
+        IF_FACTORY | IF_ADAPTER | IF_OUTPUT | IF_SWAPCHAIN | IF_DXGIDEVICE | IF_SURFACE | IF_DXGIRES if (3..=5).contains(&m) => private_data(d, [5, 6, 4][us(m) - 3], this, &a),
         IF_FACTORY => factory_call(d, m, this, &a),
         IF_ADAPTER => adapter_call(d, m, this, &a),
         IF_OUTPUT => output_call(d, m, &a, after),
@@ -1505,13 +1539,13 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
                 for i in 0..a(2) {
                     let o = new_texture(d, 2, w, h, 1, 1, fmt, 0, bind, false, 1);
                     let f = d.face(d.id_of(o), IF_SURFACE);
-                    wrp(a(5), i as usize, f);
+                    wrp(a(5), us(i), f);
                 }
                 S_OK
             }
             9 => {
                 // QueryResourceResidency(resources, status, n): all in memory
-                std::ptr::write_bytes(a(2) as *mut u8, 0, 4 * a(3) as usize);
+                std::ptr::write_bytes(gp::<u8>(a(2)), 0, 4 * us(a(3)));
                 S_OK
             }
             10 | 12 => S_OK,
@@ -1523,7 +1557,7 @@ unsafe fn method(d: &mut D11, iface: u32, m: u32, this: u32, args: *const u32, a
             14 | 17 => S_OK,
             15 => {
                 if a(3) != 0 {
-                    std::ptr::write_bytes(a(3) as *mut u8, 0, 4 * a(1) as usize);
+                    std::ptr::write_bytes(gp::<u8>(a(3)), 0, 4 * us(a(1)));
                 }
                 S_OK
             }
@@ -1678,8 +1712,8 @@ unsafe fn adapter_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
                 (false, _) => 512 << 20,
             };
             for (i, v) in [budget, 0, budget / 2, 0].into_iter().enumerate() {
-                wr(a(3), 2 * i, v as u32);
-                wr(a(3), 2 * i + 1, (v >> 32) as u32);
+                wr(a(3), 2 * i, lo32w(v));
+                wr(a(3), 2 * i + 1, lo32w(v >> 32));
             }
             S_OK
         }
@@ -1704,11 +1738,11 @@ unsafe fn adapter_desc(p: u32, warp: bool, luid: u32, m: u32) {
         10 => (at + 12).next_multiple_of(ptr()),
         _ => (at + 20).next_multiple_of(ptr()),
     };
-    std::ptr::write_bytes(p as *mut u8, 0, n as usize);
+    std::ptr::write_bytes(gp::<u8>(p), 0, us(n));
     let (name, vendor, device, dedicated, shared) =
         if warp { ("Microsoft Basic Render Driver", 0x1414, 0x8c, 0, 0xffff_0000) } else { ("masu WebGPU", 0x10de, 0x1c82, 512 << 20, 1024 << 20) };
     for (i, c) in name.encode_utf16().enumerate() {
-        *((p + i as u32 * 2) as *mut u16) = c;
+        *(gp::<u16>(p + lo32(i) * 2)) = c;
     }
     wr(p + 256, 0, vendor);
     wr(p + 256, 1, device);
@@ -1773,7 +1807,7 @@ unsafe fn factory_call(d: &mut D11, m: u32, _this: u32, a: &dyn Fn(usize) -> u32
         6 => E_NOINTERFACE,
         7 | 12 => {
             // EnumAdapters / EnumAdapters1(index, out)
-            let id = adapters(d).get(a(1) as usize).copied().unwrap_or(0);
+            let id = adapters(d).get(us(a(1))).copied().unwrap_or(0);
             give_adapter(d, id, None, a(2))
         }
         8 => S_OK,
@@ -1848,7 +1882,7 @@ unsafe fn factory_call(d: &mut D11, m: u32, _this: u32, a: &dyn Fn(usize) -> u32
             if a(3) == 0 {
                 return E_INVALIDARG;
             }
-            let id = adapters(d).get(a(1) as usize).copied().unwrap_or(0);
+            let id = adapters(d).get(us(a(1))).copied().unwrap_or(0);
             give_adapter(d, id, Some(a(3)), a(4))
         }
         30 => {
@@ -1874,14 +1908,14 @@ unsafe fn output_call(d: &mut D11, m: u32, a: &dyn Fn(usize) -> u32, after: &mut
             // (92 bytes; 96 on x64, where the HMONITOR is 8: writing 96 on x86 overwrote what
             // follows, Unity 2019's factory pointer)
             let p = a(1);
-            std::ptr::write_bytes(p as *mut u8, 0, (88 + ptr()) as usize);
+            std::ptr::write_bytes(gp::<u8>(p), 0, us(88 + ptr()));
             for (i, c) in "\\\\.\\DISPLAY1".encode_utf16().enumerate() {
-                *((p + i as u32 * 2) as *mut u16) = c;
+                *(gp::<u16>(p + lo32(i) * 2)) = c;
             }
             let (mut w, mut h) = (0, 0);
             crate::display::vnhost_display_size(&mut w, &mut h);
-            wr(p + 64, 2, w as u32);
-            wr(p + 64, 3, h as u32);
+            wr(p + 64, 2, w.cast_unsigned());
+            wr(p + 64, 3, h.cast_unsigned());
             wr(p + 64, 4, 1);
             wr(p + 64, 5, 1);
             wr(p + 64, 6, crate::display::HMONITOR);
@@ -1894,16 +1928,16 @@ unsafe fn output_call(d: &mut D11, m: u32, a: &dyn Fn(usize) -> u32, after: &mut
                 return E_INVALIDARG;
             }
             if modes != 0 {
-                let n = rd(count, 0).min(MODES.len() as u32);
-                for (i, (w, h)) in MODES.iter().take(n as usize).enumerate() {
-                    let p = modes + i as u32 * 28;
+                let n = rd(count, 0).min(lo32(MODES.len()));
+                for (i, (w, h)) in MODES.iter().take(us(n)).enumerate() {
+                    let p = modes + lo32(i) * 28;
                     for (k, v) in [*w, *h, 60, 1, a(1), 0, 0].into_iter().enumerate() {
                         wr(p, k, v);
                     }
                 }
                 wr(count, 0, n);
             } else {
-                wr(count, 0, MODES.len() as u32);
+                wr(count, 0, lo32(MODES.len()));
             }
             S_OK
         }
@@ -1911,7 +1945,7 @@ unsafe fn output_call(d: &mut D11, m: u32, a: &dyn Fn(usize) -> u32, after: &mut
             // FindClosestMatchingMode(mode, closest, device)
             let (want, out) = (a(1), a(2));
             let (w, h) = (rd(want, 0), rd(want, 1));
-            let best = MODES.iter().min_by_key(|(x, y)| x.abs_diff(w) + y.abs_diff(h)).unwrap();
+            let best = MODES.into_iter().min_by_key(|(x, y)| x.abs_diff(w) + y.abs_diff(h)).unwrap_or((640, 480));
             let f = if rd(want, 4) != 0 { rd(want, 4) } else { 28 };
             for (k, v) in [best.0, best.1, 60, 1, f, 0, 0].into_iter().enumerate() {
                 wr(out, k, v);
@@ -1932,16 +1966,16 @@ unsafe fn output_call(d: &mut D11, m: u32, a: &dyn Fn(usize) -> u32, after: &mut
                 return E_INVALIDARG;
             }
             if modes != 0 {
-                let n = rd(count, 0).min(MODES.len() as u32);
-                for (i, (w, h)) in MODES.iter().take(n as usize).enumerate() {
-                    let p = modes + i as u32 * 32;
+                let n = rd(count, 0).min(lo32(MODES.len()));
+                for (i, (w, h)) in MODES.iter().take(us(n)).enumerate() {
+                    let p = modes + lo32(i) * 32;
                     for (k, v) in [*w, *h, 60, 1, a(1), 0, 0, 0].into_iter().enumerate() {
                         wr(p, k, v);
                     }
                 }
                 wr(count, 0, n);
             } else {
-                wr(count, 0, MODES.len() as u32);
+                wr(count, 0, lo32(MODES.len()));
             }
             S_OK
         }
@@ -2007,7 +2041,7 @@ unsafe fn swapchain_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u3
                 Some(Data::Texture(t)) => t.gpu,
                 _ => 0,
             };
-            gpu::record(|q| q.cmd(&[gpu::PRESENT, tex, rect[0] as u32, rect[1] as u32, rect[2] as u32, rect[3] as u32, w, h, hwnd]));
+            gpu::record(|q| q.cmd(&[gpu::PRESENT, tex, rect[0].cast_unsigned(), rect[1].cast_unsigned(), rect[2].cast_unsigned(), rect[3].cast_unsigned(), w, h, hwnd]));
             d.targets = None;
             if let Some(Data::SwapChain(sc)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
                 sc.presents += 1;
@@ -2038,8 +2072,8 @@ unsafe fn swapchain_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u3
             // ResizeBuffers(count, w, h, format, flags)
             let mut rect = [0i32; 4];
             (d.calls().client_rect)(hwnd, rect.as_mut_ptr());
-            let nw = if a(2) == 0 { (rect[2] - rect[0]).max(1) as u32 } else { a(2) };
-            let nh = if a(3) == 0 { (rect[3] - rect[1]).max(1) as u32 } else { a(3) };
+            let nw = if a(2) == 0 { (rect[2] - rect[0]).max(1).cast_unsigned() } else { a(2) };
+            let nh = if a(3) == 0 { (rect[3] - rect[1]).max(1).cast_unsigned() } else { a(3) };
             let nf = if a(4) == 0 { fmt } else { a(4) };
             let nb = new_backbuffer(d, nw, nh, nf, samples);
             let nb = d.id_of(nb);
@@ -2117,13 +2151,13 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if mem == 0 {
                 return E_OUTOFMEMORY;
             }
-            std::ptr::write_bytes(mem as *mut u8, 0, size as usize);
+            std::ptr::write_bytes(gp::<u8>(mem), 0, us(size));
             if a(2) != 0 {
-                std::ptr::copy_nonoverlapping(rdp(a(2), 0) as *const u8, mem as *mut u8, size as usize);
+                std::ptr::copy_nonoverlapping(gc::<u8>(rdp(a(2), 0)), gp::<u8>(mem), us(size));
             }
             let o = d.new_obj(IF_BUFFER, Data::Buffer(Buffer { size, usage, bind, cpu, misc, stride, mem, gpu: 0, dirty: true, stream: false, shadow: Vec::new() }));
             if d.trace && size <= 256 {
-                let f: Vec<f32> = (0..size / 4).map(|i| *((mem + 4 * i) as *const f32)).collect();
+                let f: Vec<f32> = (0..size / 4).map(|i| *(gc::<f32>(mem + 4 * i))).collect();
                 eprintln!("d3d11: new buffer {o} bind {bind:#x} usage {usage} = {f:?}");
             }
             wrp(a(3), 0, o);
@@ -2186,7 +2220,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 for sub in 0..t.mips * if dim == 3 { 1 } else { t.layers } {
                     // D3D11_SUBRESOURCE_DATA { pSysMem, SysMemPitch, SysMemSlicePitch }
                     let init = a(2) + sub * (ptr() + 8);
-                    upload_texture(t, sub, rdp(init, 0) as usize, rd(init + ptr(), 0), rd(init + ptr(), 1), None);
+                    upload_texture(t, sub, us(rdp(init, 0)), rd(init + ptr(), 0), rd(init + ptr(), 1), None);
                 }
             }
             wrp(a(3), 0, o);
@@ -2212,12 +2246,12 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 let f = e + ptr();
                 raw.push((rd(f, 0), rd(f, 1), rd(f, 2), rd(f, 4), rd(f, 5)));
                 let (index, fmt, slot, off, class) = (rd(f, 0), rd(f, 1), rd(f, 2) & 15, rd(f, 3), rd(f, 4));
-                let off = if off == 0xffff_ffff { next[slot as usize] } else { off };
+                let off = if off == 0xffff_ffff { next[us(slot)] } else { off };
                 let size = format::vertex_format(fmt).map_or(4, vertex_size);
-                next[slot as usize] = off + size;
+                next[us(slot)] = off + size;
                 v.push(Elem { name, index, fmt, slot, offset: off, instance: class == 1 });
             }
-            let code = if a(3) == 0 { &[][..] } else { std::slice::from_raw_parts(a(3) as *const u8, a(4) as usize) };
+            let code = if a(3) == 0 { &[][..] } else { std::slice::from_raw_parts(gc::<u8>(a(3)), us(a(4))) };
             let names: Vec<(&str, u32)> = v.iter().map(|e| (e.name.as_str(), e.index)).collect();
             let slots: Vec<(u32, bool)> = v.iter().map(|e| (e.slot, e.instance)).collect();
             let elems: Vec<_> = v.iter().zip(&raw).map(|(e, r)| (e.name.as_str(), r.0, r.1, r.2, r.3, r.4)).collect();
@@ -2239,7 +2273,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
         }
         12 | 13 | 15..=18 => {
             // Create*Shader(code, len, linkage, out)
-            let code = std::slice::from_raw_parts(a(1) as *const u8, a(2) as usize).to_vec();
+            let code = std::slice::from_raw_parts(gc::<u8>(a(1)), us(a(2))).to_vec();
             let iface = match m {
                 12 => IF_VS,
                 13 => IF_GS,
@@ -2265,7 +2299,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             // CreateGeometryShaderWithStreamOutput(code, len, decls, n, strides, nstrides, stream,
             // linkage, out): a geometry or vertex shader's bytecode (or none: SO of the VS)
             if a(1) != 0 {
-                let code = std::slice::from_raw_parts(a(1) as *const u8, a(2) as usize);
+                let code = std::slice::from_raw_parts(gc::<u8>(a(1)), us(a(2)));
                 if check::shader(code, 13, d.level).is_err() && check::shader(code, 12, d.level).is_err() {
                     if a(9) != 0 {
                         wrp(a(9), 0, 0);
@@ -2357,7 +2391,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             S_OK
         }
         31 => {
-            std::ptr::write_bytes(a(1) as *mut u8, 0, 12);
+            std::ptr::write_bytes(gp::<u8>(a(1)), 0, 12);
             S_OK
         }
         32 => E_INVALIDARG,
@@ -2375,7 +2409,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 wr(a(2), 1, bits.unwrap_or(0));
                 return if bits.is_some() { S_OK } else { E_FAIL };
             }
-            std::ptr::write_bytes(a(2) as *mut u8, 0, a(3) as usize);
+            std::ptr::write_bytes(gp::<u8>(a(2)), 0, us(a(3)));
             if (a(1) == 0 || a(1) == 4) && a(3) >= 4 {
                 wr(a(2), 0, 1);
             }
@@ -2444,7 +2478,7 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
         }
         47 => {
             // CreateDeviceContextState(flags, levels, count, sdk, iid, level_out, state_out)
-            let level = if a(2) != 0 { (0..a(3) as usize).map(|i| rd(a(2), i)).find(|&l| l <= 0xb000) } else { None };
+            let level = if a(2) != 0 { (0..us(a(3))).map(|i| rd(a(2), i)).find(|&l| l <= 0xb000) } else { None };
             let Some(level) = level else {
                 wr(a(6), 0, 0);
                 wrp(a(7), 0, 0);
@@ -2517,7 +2551,7 @@ unsafe fn private_data(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
     if a(1) == 0 {
         return E_INVALIDARG;
     }
-    std::ptr::copy_nonoverlapping(a(1) as *const u8, guid.as_mut_ptr(), 16);
+    std::ptr::copy_nonoverlapping(gc::<u8>(a(1)), guid.as_mut_ptr(), 16);
     let iface_obj = if m == 6 { d.id_of(a(2)) } else { 0 };
     let Some(o) = d.objs.get_mut(&this) else { return E_FAIL };
     let found = o.private.iter().position(|x| x.0 == guid);
@@ -2533,17 +2567,17 @@ unsafe fn private_data(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
             };
             let (v, held) = (o.private[i].1.clone(), o.private[i].2);
             let room = rd(a(2), 0);
-            wr(a(2), 0, v.len() as u32);
+            wr(a(2), 0, lo32(v.len()));
             if a(3) == 0 {
                 return S_OK;
             }
-            if room < v.len() as u32 {
+            if room < lo32(v.len()) {
                 return 0x887a_0003; // DXGI_ERROR_MORE_DATA
             }
             if held != 0 {
                 d.add_ref(held);
             }
-            std::ptr::copy_nonoverlapping(v.as_ptr(), a(3) as *mut u8, v.len());
+            std::ptr::copy_nonoverlapping(v.as_ptr(), gp::<u8>(a(3)), v.len());
             S_OK
         }
         _ => {
@@ -2558,10 +2592,10 @@ unsafe fn private_data(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
                     }
                     return S_OK;
                 }
-                (std::slice::from_raw_parts(a(3) as *const u8, a(2) as usize).to_vec(), 0)
+                (std::slice::from_raw_parts(gc::<u8>(a(3)), us(a(2))).to_vec(), 0)
             } else {
                 let mut b = a(2).to_le_bytes().to_vec();
-                b.resize(ptr() as usize, 0);
+                b.resize(us(ptr()), 0);
                 (b, iface_obj)
             };
             let old = found.map_or(0, |i| o.private.remove(i).2);
@@ -2580,7 +2614,7 @@ unsafe fn private_data(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
 /// Create{ShaderResource, UnorderedAccess, RenderTarget, DepthStencil}View(resource, desc, out)
 unsafe fn create_view(d: &mut D11, m: u32, res: u32, desc: u32, out: u32) -> u32 {
     let rid = d.id_of(res);
-    let kind = [check::SRV, check::UAV, check::RTV, check::DSV][m as usize - 7];
+    let kind = [check::SRV, check::UAV, check::RTV, check::DSV][us(m) - 7];
     // (the description's words: SRV 6, RTV and UAV 5, DSV 6)
     let words: Option<Vec<u32>> = (desc != 0).then(|| (0..if kind == check::RTV || kind == check::UAV { 5 } else { 6 }).map(|i| rd(desc, i)).collect());
     if let Some(Data::Buffer(b)) = d.objs.get(&rid).map(|o| &o.data) {
@@ -2595,7 +2629,7 @@ unsafe fn create_view(d: &mut D11, m: u32, res: u32, desc: u32, out: u32) -> u32
             return create_buffer_srv(d, rid, bv, out);
         }
         // (buffer UAVs and render targets: kept, not drawn with)
-        let o = d.new_obj([IF_SRV, IF_UAV, IF_RTV, IF_DSV][m as usize - 7], Data::Other);
+        let o = d.new_obj([IF_SRV, IF_UAV, IF_RTV, IF_DSV][us(m) - 7], Data::Other);
         wrp(out, 0, o);
         return S_OK;
     }
@@ -2626,12 +2660,12 @@ unsafe fn create_view(d: &mut D11, m: u32, res: u32, desc: u32, out: u32) -> u32
         d.bind(cid);
         d.bind(rid);
         let buf = Some(BufSrc { buf: rid, off: 0, bytes: 0, last: Vec::new() });
-        let o = d.new_obj([IF_SRV, IF_UAV, IF_RTV, IF_DSV][m as usize - 7], Data::View(View { res: cid, buf, ..v }));
+        let o = d.new_obj([IF_SRV, IF_UAV, IF_RTV, IF_DSV][us(m) - 7], Data::View(View { res: cid, buf, ..v }));
         wrp(out, 0, o);
         return S_OK;
     }
     d.bind(rid);
-    let o = d.new_obj([IF_SRV, IF_UAV, IF_RTV, IF_DSV][m as usize - 7], Data::View(v));
+    let o = d.new_obj([IF_SRV, IF_UAV, IF_RTV, IF_DSV][us(m) - 7], Data::View(v));
     wrp(out, 0, o);
     S_OK
 }
@@ -2685,13 +2719,13 @@ unsafe fn nv12_make(d: &mut D11, id: u32) {
 /// The chroma bytes of every layer of an NV12 texture's bytes (rows of its pitch).
 fn nv12_chroma_bytes(t: &Texture) -> Vec<u8> {
     let (pitch, rows) = format::pitch_rows(t.fmt, t.w, t.h);
-    let luma = (pitch * t.h) as usize;
-    let chroma = (pitch * (rows - t.h)) as usize;
-    let mut now = vec![0u8; chroma * t.layers as usize];
+    let luma = us(pitch * t.h);
+    let chroma = us(pitch * (rows - t.h));
+    let mut now = vec![0u8; chroma * us(t.layers)];
     for l in 0..t.layers {
         if let Some(bits) = t.bits.get(&l) {
             let n = chroma.min(bits.len().saturating_sub(luma));
-            now[l as usize * chroma..l as usize * chroma + n].copy_from_slice(&bits[luma..luma + n]);
+            now[us(l) * chroma..us(l) * chroma + n].copy_from_slice(&bits[luma..luma + n]);
         }
     }
     now
@@ -2706,10 +2740,10 @@ fn nv12_push(d: &mut D11, id: u32) {
         return;
     }
     let (pitch, layers, cid) = (format::pitch_rows(t.fmt, t.w, t.h).0, t.layers, n.chroma);
-    let chroma = now.len() / layers.max(1) as usize;
+    let chroma = now.len() / us(layers.max(1));
     if let Some(Data::Texture(x)) = d.objs.get_mut(&cid).map(|o| &mut o.data) {
         for l in 0..layers {
-            unsafe { upload_texture(x, l, now.as_ptr() as usize + l as usize * chroma, pitch, 0, None) };
+            unsafe { upload_texture(x, l, now.as_ptr().expose_provenance() + us(l) * chroma, pitch, 0, None) };
         }
     }
     if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
@@ -2727,13 +2761,13 @@ unsafe fn nv12_pull(d: &mut D11, id: u32) {
     let (w, h, layers, luma_gpu, chroma_gpu) = (t.w, t.h, t.layers, t.gpu, n.gpu);
     let (pitch, rows) = format::pitch_rows(t.fmt, w, h);
     let size = pitch * rows;
-    let tmp = ((*d.calls).alloc)(size.max(16)) as u32;
+    let tmp = lo32((((*d.calls).alloc)(size.max(16))).expose_provenance());
     if tmp == 0 {
         return;
     }
     let mut got = Vec::new();
     for l in 0..layers {
-        std::ptr::write_bytes(tmp as *mut u8, 0, size as usize);
+        std::ptr::write_bytes(gp::<u8>(tmp), 0, us(size));
         let mut reqs = Vec::new();
         for (g, gw, gh, at) in [(luma_gpu, w, h, tmp), (chroma_gpu, w / 2, h / 2, tmp + pitch * h)] {
             d.next_gpu += 1;
@@ -2745,12 +2779,12 @@ unsafe fn nv12_pull(d: &mut D11, id: u32) {
         for req in reqs {
             gpu::wait_readback(req);
         }
-        got.push(std::slice::from_raw_parts(tmp as *const u8, size as usize).to_vec());
+        got.push(std::slice::from_raw_parts(gc::<u8>(tmp), us(size)).to_vec());
     }
-    ((*d.calls).free)(tmp as *mut u8);
+    ((*d.calls).free)(gp::<u8>(tmp));
     if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
         for (l, b) in got.into_iter().enumerate() {
-            t.bits.insert(l as u32, b);
+            t.bits.insert(lo32(l), b);
         }
         let now = nv12_chroma_bytes(t);
         if let Some(n) = t.nv12.as_mut() {
@@ -2785,29 +2819,29 @@ fn nv12_target(d: &mut D11, view: u32) {
 unsafe fn nv12_keep(t: &mut Texture, sub: u32, mem: usize, pitch: u32, [x0, y0, w, h]: [u32; 4]) {
     let (gp, rows) = format::pitch_rows(t.fmt, t.w, t.h);
     let lh = t.h;
-    let keep = t.bits.entry(sub).or_insert_with(|| vec![0; (gp * rows) as usize]);
+    let keep = t.bits.entry(sub).or_insert_with(|| vec![0; us(gp * rows)]);
     for r in 0..h {
-        let at = ((y0 + r) * gp + x0) as usize;
-        keep[at..at + w as usize].copy_from_slice(std::slice::from_raw_parts((mem + (r * pitch) as usize) as *const u8, w as usize));
+        let at = us((y0 + r) * gp + x0);
+        keep[at..at + us(w)].copy_from_slice(std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(mem + us(r * pitch)), us(w)));
     }
     for r in 0..h / 2 {
-        let at = ((lh + y0 / 2 + r) * gp + x0) as usize;
-        keep[at..at + w as usize].copy_from_slice(std::slice::from_raw_parts((mem + ((h + r) * pitch) as usize) as *const u8, w as usize));
+        let at = us((lh + y0 / 2 + r) * gp + x0);
+        keep[at..at + us(w)].copy_from_slice(std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(mem + us((h + r) * pitch)), us(w)));
     }
 }
 
 /// A box of NV12 bytes of subresource `sub` (see `nv12_keep`), rows `w` apart.
 fn nv12_box(t: &Texture, sub: u32, [x0, y0, w, h]: [u32; 4]) -> Vec<u8> {
     let gp = format::pitch_rows(t.fmt, t.w, t.h).0;
-    let mut out = vec![0u8; (w * (h + h / 2)) as usize];
+    let mut out = vec![0u8; us(w * (h + h / 2))];
     if let Some(b) = t.bits.get(&sub) {
         for r in 0..h {
-            let at = ((y0 + r) * gp + x0) as usize;
-            out[(r * w) as usize..((r + 1) * w) as usize].copy_from_slice(&b[at..at + w as usize]);
+            let at = us((y0 + r) * gp + x0);
+            out[us(r * w)..us((r + 1) * w)].copy_from_slice(&b[at..at + us(w)]);
         }
         for r in 0..h / 2 {
-            let at = ((t.h + y0 / 2 + r) * gp + x0) as usize;
-            out[((h + r) * w) as usize..((h + r + 1) * w) as usize].copy_from_slice(&b[at..at + w as usize]);
+            let at = us((t.h + y0 / 2 + r) * gp + x0);
+            out[us((h + r) * w)..us((h + r + 1) * w)].copy_from_slice(&b[at..at + us(w)]);
         }
     }
     out
@@ -2824,7 +2858,7 @@ fn buffer_view_sync(d: &mut D11, view: u32) {
     if buf.mem == 0 {
         return;
     }
-    let now = unsafe { std::slice::from_raw_parts((buf.mem + b.off) as *const u8, b.bytes as usize) };
+    let now = unsafe { std::slice::from_raw_parts(gc::<u8>(buf.mem + b.off), us(b.bytes)) };
     if now == b.last.as_slice() {
         return;
     }
@@ -2834,7 +2868,7 @@ fn buffer_view_sync(d: &mut D11, view: u32) {
     }
     let (res, bytes) = (v.res, b.bytes);
     if let Some(Data::Texture(t)) = d.objs.get_mut(&res).map(|o| &mut o.data) {
-        unsafe { upload_texture(t, 0, now.as_ptr() as usize, bytes, 0, None) };
+        unsafe { upload_texture(t, 0, now.as_ptr().expose_provenance(), bytes, 0, None) };
     }
     if let Some(Data::View(v)) = d.objs.get_mut(&view).map(|o| &mut o.data) {
         if let Some(b) = v.buf.as_mut() {
@@ -2905,11 +2939,11 @@ unsafe fn child_call(d: &mut D11, iface: u32, m: u32, this: u32, a: &dyn Fn(usiz
                 IF_RASTER => 10,
                 _ => s.len(),
             };
-            std::ptr::copy_nonoverlapping(s.as_ptr(), a(1) as *mut u32, n.min(s.len()));
+            std::ptr::copy_nonoverlapping(s.as_ptr(), gp::<u32>(a(1)), n.min(s.len()));
             0
         }
         (IF_RASTER, 8 | 9, Some(Data::State(s))) => {
-            std::ptr::copy_nonoverlapping(s.as_ptr(), a(1) as *mut u32, if m == 8 { 11 } else { 12 });
+            std::ptr::copy_nonoverlapping(s.as_ptr(), gp::<u32>(a(1)), if m == 8 { 11 } else { 12 });
             0
         }
         (IF_BLEND, 8, Some(Data::State(s))) => {
@@ -2962,11 +2996,11 @@ fn query_size(t: u32) -> u32 {
 /// Sets `n` slots from `start` of a slot array to the objects in `p` (guest addresses).
 unsafe fn set_slots(d: &mut D11, slots: &mut [u32], start: u32, n: u32, p: u32) {
     for i in 0..n {
-        let s = (start + i) as usize;
+        let s = us(start + i);
         if s >= slots.len() {
             break;
         }
-        let new = if p == 0 { 0 } else { d.id_of(rdp(p, i as usize)) };
+        let new = if p == 0 { 0 } else { d.id_of(rdp(p, us(i))) };
         let old = slots[s];
         slots[s] = new;
         d.rebind(new, old);
@@ -2980,11 +3014,11 @@ unsafe fn get_slots(d: &mut D11, slots: &[u32], start: u32, n: u32, p: u32) {
         return;
     }
     for i in 0..n {
-        let id = slots.get((start + i) as usize).copied().unwrap_or(0);
+        let id = slots.get(us(start + i)).copied().unwrap_or(0);
         if id != 0 {
             d.add_ref(id);
         }
-        wrp(p, i as usize, d.addr_of(id));
+        wrp(p, us(i), d.addr_of(id));
     }
 }
 
@@ -3031,7 +3065,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         9 => set_one(d, &mut st.ps, a(1)),
         10 | 26 => set_slots(d, &mut st.samplers[usize::from(m == 10)], a(1), a(2), a(3)),
         11 => set_one(d, &mut st.vs, a(1)),
-        12 => draw(d, st, true, a(1), 1, a(2), a(3) as i32, 0),
+        12 => draw(d, st, true, a(1), 1, a(2), a(3).cast_signed(), 0),
         13 => draw(d, st, false, a(1), 1, a(2), 0, 0),
         14 => return map(d, a(1), a(2), a(3), a(5), false, after),
         15 => unmap(d, a(1), a(2)),
@@ -3039,13 +3073,13 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         18 => {
             // IASetVertexBuffers(start, n, buffers, strides, offsets)
             for i in 0..a(2) {
-                let s = (a(1) + i) as usize;
+                let s = us(a(1) + i);
                 if s >= 32 {
                     break;
                 }
-                let new = if a(3) == 0 { 0 } else { d.id_of(rdp(a(3), i as usize)) };
+                let new = if a(3) == 0 { 0 } else { d.id_of(rdp(a(3), us(i))) };
                 let old = st.vbs[s].0;
-                st.vbs[s] = (new, if a(4) != 0 { rd(a(4), i as usize) } else { 0 }, if a(5) != 0 { rd(a(5), i as usize) } else { 0 });
+                st.vbs[s] = (new, if a(4) != 0 { rd(a(4), us(i)) } else { 0 }, if a(5) != 0 { rd(a(5), us(i)) } else { 0 });
                 d.rebind(new, old);
             }
             hazards::after_buffers(d, st);
@@ -3057,7 +3091,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             d.rebind(new, old);
         }
         // (no instances: nothing drawn)
-        20 => draw(d, st, true, a(1), a(2), a(3), a(4) as i32, a(5)),
+        20 => draw(d, st, true, a(1), a(2), a(3), a(4).cast_signed(), a(5)),
         21 => draw(d, st, false, a(1), a(2), a(3), 0, a(4)),
         24 => st.topology = a(1),
         27 | 28 => {
@@ -3089,13 +3123,13 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             if a(2) == 0 || a(3) != query_size(t) {
                 return E_INVALIDARG;
             }
-            std::ptr::write_bytes(a(2) as *mut u8, 0, a(3) as usize);
+            std::ptr::write_bytes(gp::<u8>(a(2)), 0, us(a(3)));
             match t {
                 0 | 5 => wr(a(2), 0, 1),
                 1 => wr(a(2), 0, 1000),
                 2 => {
-                    wr(a(2), 0, stamp as u32);
-                    wr(a(2), 1, (stamp >> 32) as u32);
+                    wr(a(2), 0, lo32w(stamp));
+                    wr(a(2), 1, lo32w(stamp >> 32));
                 }
                 3 => wr(a(2), 0, 1_000_000_000),
                 _ => {}
@@ -3143,7 +3177,7 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         44 => {
             st.nviewports = if a(2) != 0 { a(1).min(16) } else { 0 };
             if a(2) != 0 {
-                for k in 0..st.nviewports as usize {
+                for k in 0..us(st.nviewports) {
                     for i in 0..6 {
                         st.viewport[k][i] = rdf(a(2), 6 * k + i);
                     }
@@ -3156,9 +3190,9 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         45 => {
             st.nscissors = if a(2) != 0 { a(1).min(16) } else { 0 };
             if a(2) != 0 {
-                for k in 0..st.nscissors as usize {
+                for k in 0..us(st.nscissors) {
                     for i in 0..4 {
-                        st.scissor[k][i] = rd(a(2), 4 * k + i) as i32;
+                        st.scissor[k][i] = rd(a(2), 4 * k + i).cast_signed();
                     }
                 }
             }
@@ -3265,13 +3299,13 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         78 => get_one(d, st.layout, a(1)),
         79 => {
             for i in 0..a(2) {
-                let s = (a(1) + i) as usize;
+                let s = us(a(1) + i);
                 let (b, stride, off) = st.vbs.get(s).copied().unwrap_or_default();
                 if a(3) != 0 {
                     get_one(d, b, a(3) + i * ptr());
                 }
-                wr(a(4), i as usize, stride);
-                wr(a(5), i as usize, off);
+                wr(a(4), us(i), stride);
+                wr(a(5), us(i), off);
             }
         }
         80 => {
@@ -3324,9 +3358,9 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 let room = rd(a(1), 0);
                 wr(a(1), 0, have);
                 if a(2) != 0 {
-                    for k in 0..room as usize {
+                    for k in 0..us(room) {
                         for i in 0..words {
-                            let v = if (k as u32) >= have { 0 } else if m == 95 { st.viewport[k][i].to_bits() } else { st.scissor[k][i] as u32 };
+                            let v = if (lo32(k)) >= have { 0 } else if m == 95 { st.viewport[k][i].to_bits() } else { (st.scissor[k][i]).cast_unsigned() };
                             wr(a(2), k * words + i, v);
                         }
                     }
@@ -3347,8 +3381,8 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         116 => return context_call2(d, st, 48, a, after), // UpdateSubresource1
         117 | 118 | 133 => {}                           // Discard*
         // *SetConstantBuffers1(start, n, buffers, first, count): whole buffers (offsets ignored)
-        119..=124 => return context_call2(d, st, [7, 62, 66, 22, 16, 71][m as usize - 119], a, after),
-        125..=130 => return context_call2(d, st, [72, 100, 104, 81, 77, 109][m as usize - 125], a, after),
+        119..=124 => return context_call2(d, st, [7, 62, 66, 22, 16, 71][us(m) - 119], a, after),
+        125..=130 => return context_call2(d, st, [72, 100, 104, 81, 77, 109][us(m) - 125], a, after),
         131 => swap_state(d, st, a(1), a(2)),
         58 => deferred::execute(d, st, a(1), a(2), after),
         132 => {} // ClearView
@@ -3484,13 +3518,13 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
                 mem
             } else {
                 let p = (*d.calls).alloc;
-                let mem = p(size.max(16)) as u32;
+                let mem = lo32((p(size.max(16))).expose_provenance());
                 if mem == 0 {
                     wrp(out, 0, 0);
                     return E_OUTOFMEMORY;
                 }
                 if t.pristine {
-                    std::ptr::write_bytes(mem as *mut u8, 0, size.max(16) as usize);
+                    std::ptr::write_bytes(gp::<u8>(mem), 0, us(size.max(16)));
                 }
                 if let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) {
                     t.maps.push((sub, mem, pitch, write));
@@ -3515,8 +3549,8 @@ unsafe fn map(d: &mut D11, res: u32, sub: u32, ty: u32, out: u32, dxgi: bool, af
                     }
                 } else if ty != 4 && !t.clean.contains(&sub) {
                     match t.bits.get(&sub) {
-                        Some(b) => std::ptr::copy_nonoverlapping(b.as_ptr(), mem as *mut u8, b.len().min(size as usize)),
-                        None => std::ptr::write_bytes(mem as *mut u8, 0, size as usize),
+                        Some(b) => std::ptr::copy_nonoverlapping(b.as_ptr(), gp::<u8>(mem), b.len().min(us(size))),
+                        None => std::ptr::write_bytes(gp::<u8>(mem), 0, us(size)),
                     }
                 }
             }
@@ -3536,7 +3570,7 @@ unsafe fn unmap(d: &mut D11, res: u32, sub: u32) {
     if d.trace {
         if let Some(Data::Buffer(b)) = d.objs.get(&id).map(|o| &o.data) {
             if b.size <= 256 {
-                let f: Vec<f32> = (0..b.size / 4).map(|i| *((b.mem + 4 * i) as *const f32)).collect();
+                let f: Vec<f32> = (0..b.size / 4).map(|i| *(gc::<f32>(b.mem + 4 * i))).collect();
                 eprintln!("d3d11: buffer {id} = {f:?}");
             }
         }
@@ -3546,7 +3580,7 @@ unsafe fn unmap(d: &mut D11, res: u32, sub: u32) {
             if write {
                 let (_, _, lw, lh, _) = sub_size(t, sub);
                 let rows = format::pitch_rows(t.fmt, lw, lh).1;
-                upload_texture(t, sub, mem as usize, pitch, pitch * rows, None);
+                upload_texture(t, sub, us(mem), pitch, pitch * rows, None);
             }
             // (the memory holds what the texture has now: read back or kept at the Map, or sent
             // up here)
@@ -3585,11 +3619,11 @@ unsafe fn update_subresource(d: &mut D11, res: u32, sub: u32, bx: u32, data: u32
         Some(Data::Buffer(buf)) => {
             let (x0, x1) = b.map_or((0, buf.size), |b| (b[0], b[3].min(buf.size)));
             if x1 > x0 {
-                std::ptr::copy(data as *const u8, (buf.mem + x0) as *mut u8, (x1 - x0) as usize);
+                std::ptr::copy(gc::<u8>(data), gp::<u8>(buf.mem + x0), us(x1 - x0));
                 buf.dirty = true;
                 buf.stream = false;
                 if d.trace && buf.size <= 256 {
-                    let f: Vec<f32> = (0..buf.size / 4).map(|i| *((buf.mem + 4 * i) as *const f32)).collect();
+                    let f: Vec<f32> = (0..buf.size / 4).map(|i| *(gc::<f32>(buf.mem + 4 * i))).collect();
                     eprintln!("d3d11: buffer {id} = {f:?}");
                 }
             }
@@ -3600,8 +3634,8 @@ unsafe fn update_subresource(d: &mut D11, res: u32, sub: u32, bx: u32, data: u32
             t.pristine = false;
             match b {
                 // (upload_texture reads the box's rows from `data` on: the box's first texel)
-                Some(bb) => upload_texture(t, sub, data as usize, pitch, slice, Some(bb)),
-                None => upload_texture(t, sub, data as usize, pitch, slice, None),
+                Some(bb) => upload_texture(t, sub, us(data), pitch, slice, Some(bb)),
+                None => upload_texture(t, sub, us(data), pitch, slice, None),
             }
         }
         _ => {}
@@ -3622,7 +3656,7 @@ pub fn texture_desc(res: u32) -> Option<(u32, u32, u32)> {
 /// Writes guest texels (rows of `pitch` bytes from `data`) into box `bx` (left top right bottom)
 /// of texture `res`'s first subresource, as UpdateSubresource. Whether it is one.
 pub unsafe fn write_texture(res: u32, data: u32, pitch: u32, bx: [u32; 4]) -> bool {
-    write_texture_from(res, data as usize as *const u8, pitch, bx)
+    write_texture_from(res, gc::<u8>(data), pitch, bx)
 }
 
 /// [`write_texture`] from texels anywhere in memory (sake's own frames: no guest copy).
@@ -3633,7 +3667,7 @@ pub unsafe fn write_texture_from(res: u32, data: *const u8, pitch: u32, bx: [u32
     let Some(Data::Texture(t)) = d.objs.get_mut(&id).map(|o| &mut o.data) else { return false };
     t.clean.clear();
     t.pristine = false;
-    upload_texture(t, 0, data as usize, pitch, pitch * (bx[3] - bx[1]), Some([bx[0], bx[1], 0, bx[2], bx[3], 1]));
+    upload_texture(t, 0, data.expose_provenance(), pitch, pitch * (bx[3] - bx[1]), Some([bx[0], bx[1], 0, bx[2], bx[3], 1]));
     true
 }
 
@@ -3642,7 +3676,7 @@ unsafe fn copy_resource(d: &mut D11, dst: u32, src: u32) {
     texture_written(d, di);
     match (d.objs.get(&di).map(|o| &o.data), d.objs.get(&si).map(|o| &o.data)) {
         (Some(Data::Buffer(a)), Some(Data::Buffer(b))) => {
-            std::ptr::copy(b.mem as *const u8, a.mem as *mut u8, a.size.min(b.size) as usize);
+            std::ptr::copy(gc::<u8>(b.mem), gp::<u8>(a.mem), us(a.size.min(b.size)));
             if let Some(Data::Buffer(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
                 a.dirty = true;
                 a.stream = false;
@@ -3694,7 +3728,7 @@ unsafe fn copy_region(d: &mut D11, dst: u32, dsub: u32, x: u32, y: u32, z: u32, 
         (Some(Data::Buffer(a)), Some(Data::Buffer(b))) => {
             let (s0, s1) = if bx != 0 { (rd(bx, 0), rd(bx, 3)) } else { (0, b.size) };
             let n = s1.min(b.size).saturating_sub(s0).min(a.size.saturating_sub(x));
-            std::ptr::copy((b.mem + s0) as *const u8, (a.mem + x) as *mut u8, n as usize);
+            std::ptr::copy(gc::<u8>(b.mem + s0), gp::<u8>(a.mem + x), us(n));
             if let Some(Data::Buffer(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
                 a.dirty = true;
                 a.stream = false;
@@ -3762,7 +3796,7 @@ unsafe fn copy_sub(d: &mut D11, di: u32, dsub: u32, at: [u32; 3], si: u32, ssub:
         let c = [gpu::COPY, bg, slayer << 16, x0, y0, w, h, ag, dlayer << 16, at[0], at[1], w, h, 0];
         gpu::record(|q| q.cmd(&c));
         if let Some(Data::Texture(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
-            nv12_keep(a, dsub, bytes.as_ptr() as usize, w, [at[0], at[1], w, h]);
+            nv12_keep(a, dsub, bytes.as_ptr().expose_provenance(), w, [at[0], at[1], w, h]);
         }
         d.targets = None;
         return;
@@ -3799,12 +3833,12 @@ unsafe fn copy_sub(d: &mut D11, di: u32, dsub: u32, at: [u32; 3], si: u32, ssub:
     };
     if let Some(Data::Texture(a)) = d.objs.get_mut(&di).map(|o| &mut o.data) {
         if on_page {
-            keep_bits(a, dsub, mem as usize, pitch, pitch * rows, [at[0], at[1], dz, w, h, dz + depth]);
+            keep_bits(a, dsub, us(mem), pitch, pitch * rows, [at[0], at[1], dz, w, h, dz + depth]);
         } else {
-            upload_texture(a, dsub, mem as usize, pitch, pitch * rows, Some([at[0], at[1], dz, at[0] + w, at[1] + h, dz + depth]));
+            upload_texture(a, dsub, us(mem), pitch, pitch * rows, Some([at[0], at[1], dz, at[0] + w, at[1] + h, dz + depth]));
         }
     }
-    ((*d.calls).free)(mem as *mut u8);
+    ((*d.calls).free)(gp::<u8>(mem));
     d.targets = None;
 }
 
@@ -3824,12 +3858,12 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
     let (pitch, rows) = format::pitch_rows(t.fmt, w, h);
     // (in 64 bits; past what the allocator gives, or nothing from it: none)
     let size = u32::try_from(u64::from(pitch) * u64::from(rows) * u64::from(depth)).ok().filter(|&n| n < 0x8000_0000)?;
-    let mem = ((*d.calls).alloc)(size.max(16)) as u32;
+    let mem = lo32((((*d.calls).alloc)(size.max(16))).expose_provenance());
     if mem == 0 {
         return None;
     }
     // (what nothing wrote, and what a readback leaves alone: zeros)
-    std::ptr::write_bytes(mem as *mut u8, 0, size as usize);
+    std::ptr::write_bytes(gp::<u8>(mem), 0, us(size));
     let (level, layer, lw, lh, _) = sub_size(t, sub);
     if keeps {
         let (spitch, srows) = format::pitch_rows(t.fmt, lw, lh);
@@ -3837,8 +3871,8 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
         if let Some(kept) = t.bits.get(&sub) {
             for z in 0..depth {
                 for r in 0..rows {
-                    let s0 = (((z0 + z) * srows + by + r) * spitch + bx * f.bpp) as usize;
-                    std::ptr::copy_nonoverlapping(kept.as_ptr().add(s0), (mem + (z * rows + r) * pitch) as *mut u8, pitch as usize);
+                    let s0 = us(((z0 + z) * srows + by + r) * spitch + bx * f.bpp);
+                    std::ptr::copy_nonoverlapping(kept.as_ptr().add(s0), gp::<u8>(mem + (z * rows + r) * pitch), us(pitch));
                 }
             }
         }
@@ -3847,30 +3881,30 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
     if packs {
         let pp = w * format::page_bpp(t.page);
         let Some(n) = u32::try_from(u64::from(pp) * u64::from(h)).ok().filter(|&n| n < 0x8000_0000) else {
-            ((*d.calls).free)(mem as *mut u8);
+            ((*d.calls).free)(gp::<u8>(mem));
             return None;
         };
-        let tmp = ((*d.calls).alloc)(n.max(16)) as u32;
+        let tmp = lo32((((*d.calls).alloc)(n.max(16))).expose_provenance());
         if tmp == 0 {
-            ((*d.calls).free)(mem as *mut u8);
+            ((*d.calls).free)(gp::<u8>(mem));
             return None;
         }
         for z in 0..depth {
-            std::ptr::write_bytes(tmp as *mut u8, 0, n as usize);
+            std::ptr::write_bytes(gp::<u8>(tmp), 0, us(n));
             d.next_gpu += 1;
             let req = 0x4000_0000 | d.next_gpu;
             let c = [gpu::READBACK, req, g, level | (layer + z0 + z) << 16, x0, y0, w, h, tmp, pp];
             gpu::record(|q| q.cmd(&c));
             gpu::wait_readback(req);
-            let page = std::slice::from_raw_parts(tmp as *const u8, n as usize);
+            let page = std::slice::from_raw_parts(gc::<u8>(tmp), us(n));
             if let Some(b) = format::from_page(t.fmt, page, w, h) {
-                let row = (w * f.bpp) as usize;
+                let row = us(w * f.bpp);
                 for r in 0..rows.min(h) {
-                    std::ptr::copy_nonoverlapping(b.as_ptr().add(r as usize * row), (mem + (z * rows + r) * pitch) as *mut u8, row.min(pitch as usize));
+                    std::ptr::copy_nonoverlapping(b.as_ptr().add(us(r) * row), gp::<u8>(mem + (z * rows + r) * pitch), row.min(us(pitch)));
                 }
             }
         }
-        ((*d.calls).free)(tmp as *mut u8);
+        ((*d.calls).free)(gp::<u8>(tmp));
         return Some(mem);
     }
     let mut reqs = Vec::new();
@@ -3899,7 +3933,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
             if let Some(desc) = state_desc(d, id) {
                 let flags = dxwgsl::addr::flags(desc[1], desc[2], desc[0] & 4 != 0 || desc[0] & 0x40 != 0);
                 if flags != 0 {
-                    addr.push(dxwgsl::addr::Addr { sampler: n as u32, flags, border: [desc[7], desc[8], desc[9], desc[10]] });
+                    addr.push(dxwgsl::addr::Addr { sampler: lo32(n), flags, border: [desc[7], desc[8], desc[9], desc[10]] });
                 }
             }
         }
@@ -3926,7 +3960,7 @@ fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u3
             let id = page_id();
             gpu::record(|q| {
                 let off = q.blob(w.code.as_bytes());
-                q.cmd(&[gpu::CREATE_SHADER, id, off, w.code.len() as u32]);
+                q.cmd(&[gpu::CREATE_SHADER, id, off, lo32(w.code.len())]);
             });
             if trace {
                 eprintln!("d3d11: {} shader {sh} -> {} bindings {:?}", if s.pixel { "pixel" } else { "vertex" }, id, w.bindings);
@@ -3982,7 +4016,7 @@ fn buffer_gpu(d: &mut D11, id: u32) -> u32 {
         let (mem, size) = (b.mem, b.size);
         b.gpu = g;
         b.dirty = false;
-        let bytes = unsafe { std::slice::from_raw_parts(mem as *const u8, size as usize) };
+        let bytes = unsafe { std::slice::from_raw_parts(gc::<u8>(mem), us(size)) };
         if made != 0 && b.stream && b.shadow.len() == bytes.len() {
             // (ANGLE streams each draw's vertices into a big dynamic buffer: uploading all of it
             // per draw cost Godot seconds)
@@ -3991,7 +4025,7 @@ fn buffer_gpu(d: &mut D11, id: u32) -> u32 {
                 b.shadow[lo..hi].copy_from_slice(&bytes[lo..hi]);
                 gpu::record(|q| {
                     let off = q.blob(&bytes[lo..hi]);
-                    q.cmd(&[gpu::WRITE_BUFFER, g, lo as u32 | gpu::WRITE_UNUSED, off, (hi - lo) as u32]);
+                    q.cmd(&[gpu::WRITE_BUFFER, g, lo32(lo) | gpu::WRITE_UNUSED, off, lo32(hi - lo)]);
                 });
             }
             return g;
@@ -4018,7 +4052,7 @@ pub(crate) fn changed_range(old: &[u8], new: &[u8]) -> Option<(usize, usize)> {
     let n = new.len().min(old.len());
     // (8 bytes at a time from each end, as words: a slice compare is a memcmp call, and this
     // runs over a megabyte a draw)
-    let word = |b: &[u8], at: usize| u64::from_ne_bytes(b[at..at + 8].try_into().unwrap());
+    let word = |b: &[u8], at: usize| b.get(at..).and_then(<[u8]>::first_chunk::<8>).map_or(0, |w| u64::from_ne_bytes(*w));
     let mut lo = 0;
     while lo + 8 <= n && word(old, lo) == word(new, lo) {
         lo += 8;
@@ -4051,11 +4085,11 @@ fn merge_vertex_buffers(vbs: &[(u32, u32, u32); 32], slots: &mut Vec<(u32, u32, 
     }
     let mut out: Vec<(u32, u32, Vec<[u32; 3]>)> = Vec::new();
     for (slot, step, attrs) in std::mem::take(slots) {
-        let (buf, stride, off) = vbs[slot as usize];
+        let (buf, stride, off) = vbs[us(slot)];
         let limit = if stride == 0 { 2048 } else { stride };
         let fits = |base: u32, list: &[[u32; 3]], from: u32| list.iter().all(|a| from - base + a[1] + vertex_size(a[0]) <= limit);
         let into = out.iter().position(|(s2, st2, a2)| {
-            let (b2, str2, o2) = vbx[*s2 as usize];
+            let (b2, str2, o2) = vbx[us(*s2)];
             if b2 != buf || str2 != stride || *st2 != step || buf == 0 {
                 return false;
             }
@@ -4064,7 +4098,7 @@ fn merge_vertex_buffers(vbs: &[(u32, u32, u32); 32], slots: &mut Vec<(u32, u32, 
         });
         match into {
             Some(i) => {
-                let s2 = out[i].0 as usize;
+                let s2 = us(out[i].0);
                 let o2 = vbx[s2].2;
                 let base = o2.min(off);
                 for a in &mut out[i].2 {
@@ -4091,8 +4125,8 @@ unsafe fn wire_edges(d: &D11, st: &State, indexed: bool, count: u32, start: u32,
         if u64::from(st.ib.2) + (u64::from(start) + u64::from(count)) * isz > u64::from(b.size) {
             return None;
         }
-        let p = b.mem + st.ib.2 + start * isz as u32;
-        (0..count as usize).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*(p as *const u16).add(k)) }).collect()
+        let p = b.mem + st.ib.2 + start * lo32w(isz);
+        (0..us(count)).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*gc::<u16>(p).add(k)) }).collect()
     } else {
         (start..start.saturating_add(count)).collect()
     };
@@ -4135,7 +4169,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         // the first vertices and the vertex shader's constants
         let words = |id: u32, from: u32, n: u32| -> Vec<String> {
             match d.objs.get(&id).map(|o| &o.data) {
-                Some(Data::Buffer(b)) => (0..n).filter(|i| from + i * 4 + 4 <= b.size).map(|i| format!("{:08x}", rd(b.mem + from, i as usize))).collect(),
+                Some(Data::Buffer(b)) => (0..n).filter(|i| from + i * 4 + 4 <= b.size).map(|i| format!("{:08x}", rd(b.mem + from, us(i)))).collect(),
                 _ => Vec::new(),
             }
         };
@@ -4179,7 +4213,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     if colors.is_empty() && depth.is_none() {
         return;
     }
-    let mut tw = vec![(colors.len() / 3) as u32];
+    let mut tw = vec![lo32(colors.len() / 3)];
     tw.extend_from_slice(&colors);
     let (dt, dl, dly) = depth.unwrap_or((0, 0, 0));
     tw.extend_from_slice(&[dt, dl, dly]);
@@ -4255,9 +4289,9 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         _ => key.push(0xffff),
     }
     // vertex buffers
-    key.push(slots.len() as u32);
+    key.push(lo32(slots.len()));
     for s in &slots {
-        key.extend_from_slice(&[vbx[s.0 as usize].1, s.1, s.2.len() as u32]);
+        key.extend_from_slice(&[vbx[us(s.0)].1, s.1, lo32(s.2.len())]);
         for at in &s.2 {
             key.extend_from_slice(at);
         }
@@ -4270,7 +4304,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         }
         v
     });
-    key.push(formats.len() as u32);
+    key.push(lo32(formats.len()));
     for (i, f) in formats.iter().enumerate() {
         let rt = if b[1] != 0 { i } else { 0 };
         let t = &b[2 + rt * 8..2 + rt * 8 + 8];
@@ -4285,7 +4319,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         }
         None => {
             let id = page_id();
-            let mut c = vec![gpu::CREATE_PIPELINE2, id, key.len() as u32];
+            let mut c = vec![gpu::CREATE_PIPELINE2, id, lo32(key.len())];
             c.extend_from_slice(&key);
             gpu::record(|q| q.cmd(&c));
             d.pipelines.insert(key, id);
@@ -4298,14 +4332,14 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     let scissor_on = r.get(7).copied().unwrap_or(0) != 0;
     if scissor_on {
         let s = st.scissor[0];
-        w.extend_from_slice(&[s[0].max(0) as u32, s[1].max(0) as u32, (s[2] - s[0]).max(0) as u32, (s[3] - s[1]).max(0) as u32, 1]);
+        w.extend_from_slice(&[(s[0].max(0)).cast_unsigned(), (s[1].max(0)).cast_unsigned(), (s[2] - s[0]).max(0).cast_unsigned(), (s[3] - s[1]).max(0).cast_unsigned(), 1]);
     } else {
         w.extend_from_slice(&[0, 0, 0, 0, 0]);
     }
     w.extend(st.blend_factor.iter().map(|f| f.to_bits()));
     w.push(st.stencil_ref);
-    w.push(slots.len() as u32);
-    let vbs: Vec<(u32, u32)> = slots.iter().map(|s| (vbx[s.0 as usize].0, vbx[s.0 as usize].2)).collect();
+    w.push(lo32(slots.len()));
+    let vbs: Vec<(u32, u32)> = slots.iter().map(|s| (vbx[us(s.0)].0, vbx[us(s.0)].2)).collect();
     for (buf, off) in vbs {
         let g = buffer_gpu(d, buf);
         w.extend_from_slice(&[g, off]);
@@ -4315,8 +4349,8 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         let bytes: Vec<u8> = e.iter().flat_map(|v| v.to_le_bytes()).collect();
         gpu::record(|q| {
             let off = q.blob(&bytes);
-            q.cmd(&[gpu::CREATE_BUFFER, g, bytes.len() as u32]);
-            q.cmd(&[gpu::WRITE_BUFFER, g, 0, off, bytes.len() as u32]);
+            q.cmd(&[gpu::CREATE_BUFFER, g, lo32(bytes.len())]);
+            q.cmd(&[gpu::WRITE_BUFFER, g, 0, off, lo32(bytes.len())]);
         });
         g
     });
@@ -4355,7 +4389,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
                     entries.push([*bi, 0, d.sprite_view.0, 0, 16, 16, 0, 0]);
                 }
                 dxwgsl::Binding::Uniform(size) => {
-                    let cb = st.cbs[stage].get(*bi as usize).copied().unwrap_or(0);
+                    let cb = st.cbs[stage].get(us(*bi)).copied().unwrap_or(0);
                     let g = if cb != 0 { buffer_gpu(d, cb) } else { 0 };
                     cbs_read.push(cb);
                     let bsize = match d.objs.get(&cb).map(|o| &o.data) {
@@ -4366,7 +4400,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
                 }
                 dxwgsl::Binding::Texture(vdim, sample) => {
                     let t = bi - 16;
-                    let sv = st.srvs[stage].get(t as usize).copied().unwrap_or(0);
+                    let sv = st.srvs[stage].get(us(t)).copied().unwrap_or(0);
                     buffer_view_sync(d, sv);
                     let e = match d.objs.get(&sv).map(|o| &o.data) {
                         Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
@@ -4388,7 +4422,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
                 }
                 dxwgsl::Binding::Sampler(cmp) => {
                     let s = bi - 160;
-                    let id = st.samplers[stage].get(s as usize).copied().unwrap_or(0);
+                    let id = st.samplers[stage].get(us(s)).copied().unwrap_or(0);
                     let desc = state_desc(d, id).cloned().unwrap_or_else(|| vec![0x15, 3, 3, 3, 0, 1, 8, 0, 0, 0, 0, 0, 0x7f7f_ffff]);
                     let key = sampler_key(&desc, *cmp);
                     entries.push([*bi, if *cmp { 3 } else { 2 }, key, desc[11], desc[12], 0, 0, 0]);
@@ -4397,15 +4431,15 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
                 dxwgsl::Binding::Storage(..) => {}
             }
         }
-        w.push(entries.len() as u32);
+        w.push(lo32(entries.len()));
         for e in entries {
             w.extend_from_slice(&e);
         }
     }
     match &wire {
         // (the edges hold the vertex numbers of a draw without indices: no base then)
-        Some(e) => w.extend_from_slice(&[1, e.len() as u32, instances, 0, if indexed { base as u32 } else { 0 }, first_instance]),
-        None => w.extend_from_slice(&[u32::from(indexed), count, instances, start, base as u32, first_instance]),
+        Some(e) => w.extend_from_slice(&[1, lo32(e.len()), instances, 0, if indexed { base.cast_unsigned() } else { 0 }, first_instance]),
+        None => w.extend_from_slice(&[u32::from(indexed), count, instances, start, base.cast_unsigned(), first_instance]),
     }
     // What it reads from its buffers (vertices, indices, constants), hashed: the page tells a
     // frame that draws the same as the last one, though from another place in a ring buffer
@@ -4416,7 +4450,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     };
     let mut h = 0x811c_9dc5u32;
     let mut add = |p: u32, n: u32| {
-        for &b in std::slice::from_raw_parts(p as *const u8, n as usize) {
+        for &b in std::slice::from_raw_parts(gc::<u8>(p), us(n)) {
             h = (h ^ u32::from(b)).wrapping_mul(0x0100_0193);
         }
     };
@@ -4427,8 +4461,8 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         let isz = if st.ib.1 == 42 { 4 } else { 2 };
         match mem(st.ib.0) {
             Some((m, size)) if u64::from(st.ib.2) + (u64::from(start) + u64::from(count)) * isz <= u64::from(size) => {
-                let p = m + st.ib.2 + start * isz as u32;
-                (0..count as usize).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*(p as *const u16).add(k)) }.wrapping_add(base as u32)).collect()
+                let p = m + st.ib.2 + start * lo32w(isz);
+                (0..us(count)).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*gc::<u16>(p).add(k)) }.wrapping_add(base.cast_unsigned())).collect()
             }
             _ => {
                 known = false;
@@ -4439,7 +4473,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         (start..start.saturating_add(count)).collect()
     };
     for s in &slots {
-        let (buf, stride, off) = vbx[s.0 as usize];
+        let (buf, stride, off) = vbx[us(s.0)];
         let Some((m, size)) = mem(buf) else {
             known = false;
             break;
@@ -4451,7 +4485,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
             break;
         }
         for v in vs {
-            add(m + at(v) as u32, stride);
+            add(m + lo32w(at(v)), stride);
         }
     }
     for cb in cbs_read {
@@ -4477,13 +4511,13 @@ fn compute_shader_for(d: &mut D11, cs: u32, fmts: &[(u32, u32)]) -> Option<(u32,
     if let Some(r) = s.wgsl.get(&key) {
         return r.clone();
     }
-    let names: Vec<(u32, &str)> = fmts.iter().map(|&(n, f)| (n, crate::render::d3d::TEX_FORMATS.get(f as usize).map_or("rgba8unorm", |t| t.name()))).collect();
+    let names: Vec<(u32, &str)> = fmts.iter().map(|&(n, f)| (n, crate::render::d3d::TEX_FORMATS.get(us(f)).map_or("rgba8unorm", |t| t.name()))).collect();
     let r = match dxwgsl::translate_compute(&s.code, &names) {
         Ok(w) => {
             let id = page_id();
             gpu::record(|q| {
                 let off = q.blob(w.code.as_bytes());
-                q.cmd(&[gpu::CREATE_SHADER, id, off, w.code.len() as u32]);
+                q.cmd(&[gpu::CREATE_SHADER, id, off, lo32(w.code.len())]);
             });
             if trace {
                 eprintln!("d3d11: compute shader {cs} -> {id} bindings {:?}", w.bindings);
@@ -4530,23 +4564,23 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
     }
     let mut fmts = Vec::new();
     for (n, _, _) in dxwgsl::uav_slots(&code).unwrap_or_default() {
-        let v = st.uavs[1].get(n as usize).copied().unwrap_or(0);
+        let v = st.uavs[1].get(us(n)).copied().unwrap_or(0);
         if let Some((_, page, _)) = tex_of(d, v) {
             fmts.push((n, page));
         }
     }
     let Some((sh, binds)) = compute_shader_for(d, cs, &fmts) else { return };
-    let mut w = vec![gpu::DISPATCH, sh, x, y, z, binds.len() as u32];
+    let mut w = vec![gpu::DISPATCH, sh, x, y, z, lo32(binds.len())];
     for (bi, kind) in &binds {
         let e = match kind {
             dxwgsl::Binding::Uniform(size) => {
-                let cb = st.cbs[5].get(*bi as usize).copied().unwrap_or(0);
+                let cb = st.cbs[5].get(us(*bi)).copied().unwrap_or(0);
                 let g = if cb != 0 { buffer_gpu(d, cb) } else { 0 };
                 [*bi, 0, g, 0, 0, *size, 0, 0]
             }
             dxwgsl::Binding::Storage(vdim, _) => {
                 let n = bi - 200;
-                let v = st.uavs[1].get(n as usize).copied().unwrap_or(0);
+                let v = st.uavs[1].get(us(n)).copied().unwrap_or(0);
                 match tex_of(d, v) {
                     Some((g, page, vv)) => [*bi, 7, g, *vdim, vv.mip, page, vv.layer, vv.layers.max(1)],
                     // (no UAV bound: writes go nowhere, as in Direct3D; nothing to run then)
@@ -4555,7 +4589,7 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             }
             dxwgsl::Binding::Texture(vdim, sample) if *bi >= 300 => {
                 let n = bi - 300;
-                let v = st.uavs[1].get(n as usize).copied().unwrap_or(0);
+                let v = st.uavs[1].get(us(n)).copied().unwrap_or(0);
                 match tex_of(d, v) {
                     Some((g, _, vv)) => [*bi, 8, g, *vdim, vv.mip, *sample, vv.layer, vv.layers.max(1)],
                     None => [*bi, 8, 0, *vdim, 0, *sample, 0, 1],
@@ -4563,7 +4597,7 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             }
             dxwgsl::Binding::Texture(vdim, sample) => {
                 let t = bi - 16;
-                let sv = st.srvs[5].get(t as usize).copied().unwrap_or(0);
+                let sv = st.srvs[5].get(us(t)).copied().unwrap_or(0);
                 buffer_view_sync(d, sv);
                 let mut e = match d.objs.get(&sv).map(|o| &o.data) {
                     Some(Data::View(v)) => match d.objs.get(&v.res).map(|o| &o.data) {
@@ -4579,7 +4613,7 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
             }
             dxwgsl::Binding::Sampler(cmp) => {
                 let s = bi - 160;
-                let id = st.samplers[5].get(s as usize).copied().unwrap_or(0);
+                let id = st.samplers[5].get(us(s)).copied().unwrap_or(0);
                 let desc = state_desc(d, id).cloned().unwrap_or_else(|| vec![0x15, 3, 3, 3, 0, 1, 8, 0, 0, 0, 0, 0, 0x7f7f_ffff]);
                 [*bi, if *cmp { 3 } else { 2 }, sampler_key(&desc, *cmp), desc[11], desc[12], 0, 0, 0]
             }
@@ -4610,7 +4644,7 @@ fn sampler_key(s: &[u32], cmp: bool) -> u32 {
 
 #[cfg(test)]
 mod vb_merge_tests {
-    use super::merge_vertex_buffers;
+    use super::{lo32, merge_vertex_buffers, us};
     use proptest::prelude::*;
 
     #[test]
@@ -4619,12 +4653,12 @@ mod vb_merge_tests {
         let mut vbs = [(0u32, 0u32, 0u32); 32];
         let mut slots = Vec::new();
         for i in 0..9u32 {
-            vbs[i as usize] = (7, 144, 1000 + 16 * i);
+            vbs[us(i)] = (7, 144, 1000 + 16 * i);
             slots.push((i, 0, vec![[3, 0, i]]));
         }
         let vbx = merge_vertex_buffers(&vbs, &mut slots);
         assert_eq!(slots.len(), 1);
-        assert_eq!(vbx[slots[0].0 as usize], (7, 144, 1000));
+        assert_eq!(vbx[us(slots[0].0)], (7, 144, 1000));
         let offs: Vec<u32> = slots[0].2.iter().map(|a| a[1]).collect();
         assert_eq!(offs, (0..9).map(|i| 16 * i).collect::<Vec<_>>());
     }
@@ -4649,13 +4683,13 @@ mod vb_merge_tests {
             let mut slots = Vec::new();
             for i in 0..n {
                 vbs[i] = (bufs[i], strides[i], offs[i]);
-                slots.push((i as u32, 0, vec![[fmts[i], 0, i as u32]]));
+                slots.push((lo32(i), 0, vec![[fmts[i], 0, lo32(i)]]));
             }
-            let want: Vec<(u32, u32, u32, u32)> = (0..n).map(|i| (i as u32, bufs[i], strides[i], offs[i])).collect();
+            let want: Vec<(u32, u32, u32, u32)> = (0..n).map(|i| (lo32(i), bufs[i], strides[i], offs[i])).collect();
             let vbx = merge_vertex_buffers(&vbs, &mut slots);
             let mut got = Vec::new();
             for (s, _, attrs) in &slots {
-                let (b, st, o) = vbx[*s as usize];
+                let (b, st, o) = vbx[us(*s)];
                 for a in attrs {
                     let limit = if st == 0 { 2048 } else { st };
                     prop_assert!(a[1] + super::vertex_size(a[0]) <= limit || attrs.len() == 1);
