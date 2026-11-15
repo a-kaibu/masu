@@ -452,7 +452,7 @@ file	crates/kura/src/fs.rs	cast_possible_wrap	1
 file	crates/kura/src/fs.rs	cast_sign_loss	1
 file	crates/kura/src/fs.rs	indexing_slicing	1
 file	crates/kura/src/fs.rs	masu-set_len	1
-file	crates/kura/src/gl/glsl.rs	arithmetic_side_effects	38
+file	crates/kura/src/gl/glsl.rs	arithmetic_side_effects	36
 file	crates/kura/src/gl/glsl.rs	as_conversions	28
 file	crates/kura/src/gl/glsl.rs	as_underscore	8
 file	crates/kura/src/gl/glsl.rs	cast_possible_truncation	9
@@ -463,8 +463,6 @@ file	crates/kura/src/gl/glsl.rs	masu-from_raw_parts	3
 file	crates/kura/src/gl/glsl.rs	ptr_as_ptr	9
 file	crates/kura/src/gl/glsl.rs	string_slice	2
 file	crates/kura/src/gl/glsl.rs	unsafe_op_in_unsafe_fn	55
-file	crates/kura/src/gl/glsl.rs	unwrap_in_result	4
-file	crates/kura/src/gl/glsl.rs	unwrap_used	40
 file	crates/kura/src/gl/mod.rs	allow-attr	1
 file	crates/kura/src/gl/mod.rs	arithmetic_side_effects	98
 file	crates/kura/src/gl/mod.rs	as_conversions	111
@@ -480,8 +478,6 @@ file	crates/kura/src/gl/mod.rs	multiple_unsafe_ops_per_block	2
 file	crates/kura/src/gl/mod.rs	ptr_as_ptr	2
 file	crates/kura/src/gl/mod.rs	undocumented_unsafe_blocks	10
 file	crates/kura/src/gl/mod.rs	unsafe_op_in_unsafe_fn	110
-file	crates/kura/src/gl/mod.rs	unwrap_in_result	3
-file	crates/kura/src/gl/mod.rs	unwrap_used	23
 file	crates/kura/src/idec.rs	arithmetic_side_effects	47
 file	crates/kura/src/idec.rs	as_conversions	5
 file	crates/kura/src/idec.rs	cast_possible_truncation	3
