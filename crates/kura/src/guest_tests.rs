@@ -1,4 +1,5 @@
 //! Each helper answers what the `as` it replaced did, for any value.
+use kome::num::*;
 use super::*;
 use proptest::prelude::*;
 

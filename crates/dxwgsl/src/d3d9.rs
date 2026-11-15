@@ -223,12 +223,12 @@ impl Shader {
                 break;
             }
             if op == COMMENT {
-                i += 1 + crate::us((t >> 16) & 0x7fff);
+                i += 1 + kome::num::us((t >> 16) & 0x7fff);
                 continue;
             }
             // the instruction's tokens
             let len = if major >= 2 {
-                crate::us((t >> 24) & 0xf)
+                kome::num::us((t >> 24) & 0xf)
             } else if op == DEF {
                 5
             } else {
@@ -693,7 +693,7 @@ impl<'a> Gen<'a> {
             CONST | CONST2 | CONST3 | CONST4 => {
                 let n = const_index(p);
                 if let Some((aty, anum, comp)) = p.rel {
-                    let a = if aty == LOOP { "aL".to_string() } else { format!("a{}.{}", anum, SW[crate::us(comp)]) };
+                    let a = if aty == LOOP { "aL".to_string() } else { format!("a{}.{}", anum, SW[kome::num::us(comp)]) };
                     format!("u.c[clamp({} + {}, 0, {})]", n, a, s.max_const.max(1) - 1)
                 } else if let Some((_, d)) = self.defs.iter().find(|(i, _)| *i == n) {
                     d.clone()
@@ -708,7 +708,7 @@ impl<'a> Gen<'a> {
                     format!("vec4f(a{})", p.num)
                 }
             }
-            RASTOUT => ["opos", "ofog", "opts"][crate::us(p.num.min(2))].to_string(),
+            RASTOUT => ["opos", "ofog", "opts"][kome::num::us(p.num.min(2))].to_string(),
             ATTROUT => format!("od{}", p.num),
             OUTPUT => format!("o{}", p.num),
             CONSTINT => {
@@ -743,7 +743,7 @@ impl<'a> Gen<'a> {
         let r = if sw == 0xe4 {
             r
         } else {
-            let c: String = (0..4).map(|i| SW[crate::us((sw >> (i * 2)) & 3)]).collect();
+            let c: String = (0..4).map(|i| SW[kome::num::us((sw >> (i * 2)) & 3)]).collect();
             format!("{}.{}", paren(&r), c)
         };
         match p.modi {
@@ -820,7 +820,7 @@ impl<'a> Gen<'a> {
                 let set = format!("{}.{} = t.{};", name, SW[i], SW[i]);
                 match cond {
                     Some((sw, neg)) => {
-                        let c = SW[crate::us((sw >> (i * 2)) & 3)];
+                        let c = SW[kome::num::us((sw >> (i * 2)) & 3)];
                         self.line(&format!("  if ({}p0.{}) {{ {} }}", if neg { "!" } else { "" }, c, set));
                     }
                     None => self.line(&format!("  {}", set)),
@@ -1106,7 +1106,7 @@ impl<'a> Gen<'a> {
                 if p.modi == 13 { format!("!{}", b) } else { b }
             }
             PREDICATE => {
-                let c = SW[crate::us(p.mask & 3)];
+                let c = SW[kome::num::us(p.mask & 3)];
                 if p.modi == 13 { format!("!p0.{}", c) } else { format!("p0.{}", c) }
             }
             _ => "false".into(),
@@ -1163,7 +1163,7 @@ impl<'a> Gen<'a> {
         // inputs
         h.push_str("struct In {\n");
         for &(reg, loc, kind) in &opts.vs_inputs {
-            let ty = ["vec4f", "vec4u", "vec4i", "vec4f"].get(crate::us(kind)).copied().unwrap_or("vec4f");
+            let ty = ["vec4f", "vec4u", "vec4i", "vec4f"].get(kome::num::us(kind)).copied().unwrap_or("vec4f");
             let _ = writeln!(h, "  @location({}) v{}: {},", loc, reg, ty);
         }
         if opts.vs_inputs.is_empty() {

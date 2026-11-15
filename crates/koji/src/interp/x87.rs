@@ -1,6 +1,6 @@
 //! x87 instructions (see crate::fpu for the f64 model).
 
-use crate::cvt::{lo8, lo16, lo32, lo64, us};
+use kome::num::*;
 use super::X;
 use crate::flags::{self, *};
 use crate::f80::F80;

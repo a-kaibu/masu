@@ -1,7 +1,7 @@
 //! Lazily computed status flags. The JIT records what the last flag-setting operation was and
 //! its operands; EFLAGS are worked out from them only when something reads them.
 
-use crate::cvt::lo32;
+use kome::num::*;
 use crate::flags::{self, *};
 
 /// `op` = kind * 4 + size (0: 8 bits, 1: 16, 2: 32, 3: 64); 0: EFLAGS are exact. A raw u32

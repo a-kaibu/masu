@@ -5,7 +5,7 @@
 //! convert / unprepare / reset / close, remove) and their results are lines of
 //! golden/acm_driver.txt.
 use super::*;
-use crate::locks::Lock as _;
+use kome::locks::Lock as _;
 use crate::test_guest::{call_stacked as call, enter, guest_thread, snapshot};
 use std::fmt::Write;
 

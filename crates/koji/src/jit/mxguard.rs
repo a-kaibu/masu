@@ -19,7 +19,7 @@
 //! that, translated code has no checks (SSE float loops run 2-3x faster) and what it raised is
 //! not in MXCSR.
 
-use crate::cvt::{lo8, lo32, us};
+use kome::num::*;
 use super::wasm::Code;
 use iced_x86::{Instruction, Mnemonic, OpKind};
 

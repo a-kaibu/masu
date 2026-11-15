@@ -1,6 +1,6 @@
 //! EFLAGS bits and the arithmetic helpers that produce them.
 
-use crate::cvt::{lo8, lo32, lo64};
+use kome::num::*;
 pub const CF: u32 = 1 << 0;
 pub const PF: u32 = 1 << 2;
 pub const AF: u32 = 1 << 4;

@@ -3,7 +3,7 @@
 //! One exception is kept exact: FILD m64 followed by FISTP m64 (old MSVC
 //! CRTs copy 8 bytes that way), via a per-register exact integer shadow.
 
-use crate::cvt::{lo16, lo32, lo64, us};
+use kome::num::*;
 use crate::f80::F80;
 use crate::flags::{CF, PF, ZF};
 use core::sync::atomic::{AtomicBool, Ordering::Relaxed};

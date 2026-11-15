@@ -24,7 +24,7 @@ pub struct Addr {
 impl Addr {
     /// Direct3D 9's: the border a D3DCOLOR (ARGB)
     pub fn argb(sampler: u32, flags: u32, c: u32) -> Addr {
-        let f = |sh: u32| (f32::from(crate::lo8(c >> sh)) / 255.0).to_bits();
+        let f = |sh: u32| (f32::from(kome::num::lo8(c >> sh)) / 255.0).to_bits();
         Addr { sampler, flags, border: [f(16), f(8), f(0), f(24)] }
     }
 }

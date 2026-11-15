@@ -6,7 +6,7 @@
 //! [`link`] takes a program's vertex and fragment source and gives each stage's WGSL, its
 //! uniform block layout ([`Member::put`] writes glUniform data into it) and samplers.
 
-use kome::num::us;
+use kome::num::*;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 

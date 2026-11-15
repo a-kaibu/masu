@@ -118,7 +118,7 @@ impl Td {
             }
             PClass::Object => {}
             PClass::Scalar | PClass::Vector | PClass::MatrixRows | PClass::MatrixColumns => {
-                out.extend(std::iter::repeat_n(self.ty, crate::us(self.rows * self.cols)));
+                out.extend(std::iter::repeat_n(self.ty, kome::num::us(self.rows * self.cols)));
             }
         }
     }
@@ -176,7 +176,7 @@ fn eval(prog: &Program, e: &Expr) -> Option<Vec<f64>> {
 fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
     let eval = |prog: &Program, e: &Expr| eval_at(prog, e, vars);
     Some(match e {
-        Expr::Int(v, _) => vec![dxwgsl::num::to_f64(*v)],
+        Expr::Int(v, _) => vec![kome::num::to_f64(*v)],
         Expr::Float(f) => vec![*f],
         Expr::Bool(b) => vec![f64::from(u32::from(*b))],
         Expr::List(v) | Expr::Construct(_, v) => {
@@ -212,9 +212,9 @@ fn eval_at(prog: &Program, e: &Expr, vars: u32) -> Option<Vec<f64>> {
                         Bin::Sub => p - q,
                         Bin::Mul => p * q,
                         Bin::Div => p / q,
-                        Bin::Or => dxwgsl::num::to_f64(dxwgsl::num::trunc_i64(p) | dxwgsl::num::trunc_i64(q)),
-                        Bin::And => dxwgsl::num::to_f64(dxwgsl::num::trunc_i64(p) & dxwgsl::num::trunc_i64(q)),
-                        Bin::Shl => dxwgsl::num::to_f64(dxwgsl::num::trunc_i64(p).wrapping_shl(crate::lo32(dxwgsl::num::trunc_i64(q)))),
+                        Bin::Or => kome::num::to_f64(kome::num::trunc_i64(p) | kome::num::trunc_i64(q)),
+                        Bin::And => kome::num::to_f64(kome::num::trunc_i64(p) & kome::num::trunc_i64(q)),
+                        Bin::Shl => kome::num::to_f64(kome::num::trunc_i64(p).wrapping_shl(kome::num::lo32(kome::num::trunc_i64(q)))),
                         Bin::Mod | Bin::Shr | Bin::Xor | Bin::LAnd | Bin::LOr | Bin::Lt
                         | Bin::Gt | Bin::Le | Bin::Ge | Bin::Eq | Bin::Ne => return None,
                     })
@@ -470,13 +470,13 @@ const ENUMS: &[(&str, &[(&str, u32)])] = &[
 fn state_op(name: &str) -> Option<(u32, K)> {
     let eq = |a: &str| a.eq_ignore_ascii_case(name);
     if let Some(i) = RS.iter().position(|x| eq(x.0)) {
-        return Some((crate::u32_of(i), RS[i].1));
+        return Some((kome::num::u32_of(i), RS[i].1));
     }
     if let Some(i) = TSS.iter().position(|x| eq(x.0)) {
-        return Some((103 + crate::u32_of(i), TSS[i].1));
+        return Some((103 + kome::num::u32_of(i), TSS[i].1));
     }
     if let Some(i) = SAMP.iter().position(|x| eq(x.0)) {
-        return Some((165 + crate::u32_of(i), SAMP[i].1));
+        return Some((165 + kome::num::u32_of(i), SAMP[i].1));
     }
     Some(match name.to_ascii_lowercase().as_str() {
         "fvf" => (122, K::Int),
@@ -539,14 +539,14 @@ impl W<'_> {
         self.b.extend_from_slice(&v.to_le_bytes());
     }
     fn at(&self) -> u32 {
-        crate::u32_of(self.b.len())
+        kome::num::u32_of(self.b.len())
     }
     fn name(&mut self, s: &str) -> u32 {
         if s.is_empty() {
             return 0;
         }
         let at = self.at();
-        self.put(crate::u32_of(s.len()) + 1);
+        self.put(kome::num::u32_of(s.len()) + 1);
         self.b.extend_from_slice(s.as_bytes());
         self.b.push(0);
         while self.b.len() % 4 != 0 {
@@ -569,7 +569,7 @@ impl W<'_> {
             PClass::Vector => out.extend([t.cols, t.rows]),
             PClass::Scalar | PClass::MatrixRows | PClass::MatrixColumns => out.extend([t.rows, t.cols]),
             PClass::Struct => {
-                out.push(crate::u32_of(t.members.len()));
+                out.push(kome::num::u32_of(t.members.len()));
                 for m in &t.members {
                     Self::td_words(m, names, out);
                 }
@@ -598,16 +598,16 @@ impl W<'_> {
         t.bases(&mut bases);
         let n = bases.len();
         let mut out = Vec::new();
-        for e in 0..crate::us(t.elements.max(1)) {
+        for e in 0..kome::num::us(t.elements.max(1)) {
             for (k, b) in bases.iter().enumerate() {
                 let i = e * n + k;
                 let v = if vals.len() == 1 { vals[0] } else { vals.get(i).copied().unwrap_or(0.0) };
                 let w = match *b {
-                    PType::Float => (dxwgsl::num::to_f32(v)).to_bits(),
+                    PType::Float => (kome::num::to_f32(v)).to_bits(),
                     PType::Bool => u32::from(v != 0.0),
                     PType::Void | PType::Int | PType::String | PType::Texture | PType::Texture1D | PType::Texture3D
                     | PType::TextureCube | PType::Sampler | PType::Sampler1D | PType::Sampler2D | PType::Sampler3D
-                    | PType::SamplerCube | PType::PixelShader | PType::VertexShader => crate::lo32(dxwgsl::num::trunc_i64(v)),
+                    | PType::SamplerCube | PType::PixelShader | PType::VertexShader => kome::num::lo32(kome::num::trunc_i64(v)),
                 };
                 out.extend_from_slice(&w.to_le_bytes());
             }
@@ -621,7 +621,7 @@ impl W<'_> {
             for e in 0..t.elements.max(1) {
                 if t.ty.is_sampler() {
                     let recs = self.states(states, u32::MAX, top, if t.elements > 0 { e } else { u32::MAX }, true)?;
-                    b.extend_from_slice(&(crate::u32_of(recs.len()) / 4).to_le_bytes());
+                    b.extend_from_slice(&(kome::num::u32_of(recs.len()) / 4).to_le_bytes());
                     for w in recs {
                         b.extend_from_slice(&w.to_le_bytes());
                     }
@@ -702,7 +702,7 @@ impl W<'_> {
                 self.warnings.push(format!("line {}: state {} is not supported", st.line, st.name));
                 continue;
             };
-            let si = crate::u32_of(out.len() / 4);
+            let si = kome::num::u32_of(out.len() / 4);
             let idx = st.index.unwrap_or(0);
             // a reference to a parameter: <name>, (name) or name
             let reference = match &st.value {
@@ -732,7 +732,7 @@ impl W<'_> {
                         K::ConstI => PType::Int,
                         K::Int | K::Float | K::Bool | K::E(_) | K::Shader(_) | K::Texture | K::Sampler | K::ConstF => PType::Float,
                     };
-                    let rows = crate::u32_of(v.len().div_ceil(4).max(1));
+                    let rows = kome::num::u32_of(v.len().div_ceil(4).max(1));
                     let td = Td { class: PClass::MatrixRows, rows, cols: 4, ..Td::scalar(ty) };
                     (td.clone(), Self::numbers(&td, &v))
                 }
@@ -787,9 +787,9 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
         let mut t = td_of(prog, v.ty(), v.row_major.unwrap_or(row_major)).named(&v.name);
         t.sem = v.sem.clone().unwrap_or_default();
         let td = w.typedef(&t);
-        let val = w.value(&t, v.init.as_ref(), &v.states, crate::u32_of(k))?;
+        let val = w.value(&t, v.init.as_ref(), &v.states, kome::num::u32_of(k))?;
         let annos = w.annotations(&v.annos)?;
-        recs.extend([td, val, 0, crate::u32_of(annos.len() / 2)]);
+        recs.extend([td, val, 0, kome::num::u32_of(annos.len() / 2)]);
         recs.extend(annos);
         nparams += 1;
     }
@@ -804,7 +804,7 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
         let at = w.at();
         w.put(id);
         let annos = w.annotations(annos)?;
-        recs.extend([td, at, 0, crate::u32_of(annos.len() / 2)]);
+        recs.extend([td, at, 0, kome::num::u32_of(annos.len() / 2)]);
         recs.extend(annos);
         nparams += 1;
     }
@@ -812,13 +812,13 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
     for (ti, t) in prog.techniques.iter().enumerate() {
         let n = w.name(&t.name);
         let annos = w.annotations(&t.annos)?;
-        recs.extend([n, crate::u32_of(annos.len() / 2), crate::u32_of(t.passes.len())]);
+        recs.extend([n, kome::num::u32_of(annos.len() / 2), kome::num::u32_of(t.passes.len())]);
         recs.extend(annos);
         for (pi, p) in t.passes.iter().enumerate() {
             let n = w.name(&p.name);
             let annos = w.annotations(&p.annos)?;
-            let states = w.states(&p.states, crate::u32_of(ti), crate::u32_of(pi), u32::MAX, false)?;
-            recs.extend([n, crate::u32_of(annos.len() / 2), crate::u32_of(states.len() / 4)]);
+            let states = w.states(&p.states, kome::num::u32_of(ti), kome::num::u32_of(pi), u32::MAX, false)?;
+            recs.extend([n, kome::num::u32_of(annos.len() / 2), kome::num::u32_of(states.len() / 4)]);
             recs.extend(annos);
             recs.extend(states);
         }
@@ -829,7 +829,7 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
     let start = w.at();
     let (objects, shaders) = (w.objects, w.shaders);
     w.put(nparams);
-    w.put(crate::u32_of(prog.techniques.len()));
+    w.put(kome::num::u32_of(prog.techniques.len()));
     w.put(shaders);
     w.put(objects);
     for r in recs {
@@ -837,10 +837,10 @@ pub fn effect(prog: &Program, pre: &Program, flags: u32) -> Result<Vec<u8>, Stri
     }
     let strings = std::mem::take(&mut w.strings);
     let res = std::mem::take(&mut w.res);
-    w.put(crate::u32_of(strings.len()));
-    w.put(crate::u32_of(res.len()));
+    w.put(kome::num::u32_of(strings.len()));
+    w.put(kome::num::u32_of(res.len()));
     let blob = |w: &mut W, d: &[u8]| {
-        w.put(crate::u32_of(d.len()));
+        w.put(kome::num::u32_of(d.len()));
         w.b.extend_from_slice(d);
         while w.b.len() % 4 != 0 {
             w.b.push(0);

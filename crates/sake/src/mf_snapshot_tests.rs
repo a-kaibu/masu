@@ -166,7 +166,7 @@ fn mf_attributes_snapshot() {
                 'd' => {
                     let d = r.pick(&[0.0f64, 1.0, -0.5, f64::NAN]);
                     let b = d.to_bits();
-                    (vec![b.low_u32(), (b >> 32).low_u32()], format!("{d}"))
+                    (vec![lo32(b), lo32(b >> 32)], format!("{d}"))
                 }
                 'g' => (vec![if r.below(8) == 0 { 0 } else { guid }], "g".into()),
                 'w' => (vec![if r.below(8) == 0 { 0 } else { wname }], "w".into()),
@@ -256,7 +256,7 @@ fn mf_engine_snapshot() {
         .iter()
         .map(|u| {
             let w: Vec<u16> = u.encode_utf16().chain([0]).collect();
-            let p = mem::heap_alloc(2 * w.len().low_u32() + 2, true);
+            let p = mem::heap_alloc(2 * lo32(w.len()) + 2, true);
             for (i, &ch) in (0u32..).zip(&w) {
                 w16(p + 2 * i, ch);
             }
@@ -317,7 +317,7 @@ fn mf_engine_snapshot() {
                 'd' => {
                     let d = r.pick(&[0.0f64, 0.5, 1.0, 2.0, -1.0, 1e9, f64::NAN]);
                     let x = d.to_bits();
-                    (vec![x.low_u32(), (x >> 32).low_u32()], format!("{d}"))
+                    (vec![lo32(x), lo32(x >> 32)], format!("{d}"))
                 }
                 'w' => {
                     let k = usize::try_from(r.below(5)).unwrap_or(0);

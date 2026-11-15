@@ -610,7 +610,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
             if small {
                 let C::I(e) = c[1][0] else { unreachable!() };
                 let mut r = c[0].clone();
-                for _ in 1..dxwgsl::num::trunc_u32(f32::from_bits(e)) {
+                for _ in 1..kome::num::trunc_u32(f32::from_bits(e)) {
                     r = l.x_alu(MUL, B::Float, &[&r, &c[0]]);
                 }
                 return Ok(Val::num(t, r));
@@ -649,7 +649,7 @@ pub fn call(l: &mut L, name: &str, args: &[Expr], line: u32) -> R<Val> {
                 // (texkill: any component below 0)
                 let o = l.x_opnd(&v.c);
                 let i = l.x_emit(DISCARD, vec![], vec![o]);
-                i.ctl = crate::u32_of(n);
+                i.ctl = kome::num::u32_of(n);
                 return Ok(Val::num(Ty::Void, vec![]));
             }
             let m = l.x_alu(LT, B::Bool, &[&v.c, &imm(0, n)]);

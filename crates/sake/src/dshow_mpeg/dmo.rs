@@ -282,7 +282,7 @@ fn show(c: &mut Ctx, b: u32, gen: u32, time: u64, w: u32, h: u32, bgra: &[u8]) -
     if mem_pin == 0 {
         return true;
     }
-    let size = wmdec::rgb_size(ow, oh, 32).low_u32();
+    let size = lo32(wmdec::rgb_size(ow, oh, 32));
     let s = free_sample(b, size);
     let buf = swith(s, |x| {
         x.len = size;
@@ -331,7 +331,7 @@ fn stats(s: Stat) {
     }
     if since.elapsed() >= Duration::from_secs(5) {
         let ms = |d: Duration| d.as_secs_f64() * 1000.0;
-        eprintln!("sake: DMO wrapper: {} samples decoded, ms avg/max {:.2}/{:.2}; {} pictures shown, {} dropped", n, ms(*sum) / (*n).max(1).to_f64(), ms(*max), shown, dropped);
+        eprintln!("sake: DMO wrapper: {} samples decoded, ms avg/max {:.2}/{:.2}; {} pictures shown, {} dropped", n, ms(*sum) / to_f64((*n).max(1)), ms(*max), shown, dropped);
         *g = None;
     }
 }

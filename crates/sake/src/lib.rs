@@ -25,7 +25,6 @@ pub mod autopilot;
 pub mod acm;
 #[cfg(test)]
 mod outptr_audit;
-mod locks;
 pub mod mp3frame;
 pub mod audiofile;
 /// Tests that run a page for kura::adec (one at a time: its streams are global).
@@ -154,7 +153,6 @@ pub mod mmio;
 pub mod mixer;
 pub mod gl;
 pub mod glu;
-pub mod num;
 pub mod cryptstr;
 pub mod diskspace;
 pub mod cfgmgr;

@@ -18,7 +18,7 @@
 //! `env.eflags(cpu) -> i32` (materializes and returns EFLAGS) and
 //! `env.status(op, a, b, r, c) -> i32` (status flags of a lazy operation).
 
-use crate::cvt::{lo8, lo16, lo32, lo64, us};
+use kome::num::*;
 pub mod wasm;
 pub mod dispatch;
 mod structure;

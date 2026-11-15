@@ -19,7 +19,8 @@ macro_rules! ints_as {
                     prop_assert_eq!(v.low_u8(), v as u8);
                     prop_assert_eq!(v.low_u16(), v as u16);
                     prop_assert_eq!(v.low_i16(), v as i16);
-                    prop_assert_eq!((lo8(v), lo16(v), lo32(v)), (v as u8, v as u16, v as u32));
+                    prop_assert_eq!((lo8(v), lo16(v), lo16s(v), lo32(v), lo64(v), us(v)), (v as u8, v as u16, v as i16, v as u32, v as u64, v as usize));
+                    prop_assert_eq!(to_usize(v), usize::try_from(v).unwrap_or(usize::MAX));
                     prop_assert_eq!(v.low_u32(), v as u32);
                 }
             }
@@ -90,7 +91,6 @@ proptest! {
     #[test]
     fn indices(a: u32, b: i32, c: u64, d: i64, e: u8, f: u16, g: isize, n: usize) {
         prop_assert_eq!(us(a), a as usize);
-        prop_assert_eq!(usize_of(c), c as usize);
         prop_assert_eq!(u64_of(n), n as u64);
         prop_assert_eq!(u32_of(n), if n <= u32::MAX as usize { n as u32 } else { u32::MAX });
         prop_assert_eq!((e.to_usize(), f.to_usize()), (e as usize, f as usize));

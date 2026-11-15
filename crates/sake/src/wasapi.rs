@@ -15,7 +15,7 @@
 //! (tests/winetest) and host/tests/wasapi.c.
 
 use crate::hresult::{E_INVALIDARG, E_NOINTERFACE, E_POINTER, S_FALSE, S_OK};
-use kome::num::us;
+use kome::num::*;
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;

@@ -19,7 +19,7 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::api::{implement, vtable, Ctx, Handler};
 use crate::dshow_play::{self as play, float, frame_at, letterbox, now, time, Play, SEC};
-use crate::num::{Low as _, ToF32 as _, ToUsize as _, Trunc as _};
+use kome::num::*;
 use crate::mem::{self, ps, put32, putp, r16, r32, rp, w16, w32, w64, wp};
 
 /// The HRESULTs Media Foundation's objects answer (besides S_OK): winerror.h's and mferror.h's.
@@ -351,9 +351,9 @@ fn put_prop(c: &mut Ctx, p: u32, v: &Val) {
         }
         Val::Str(s) => wp(p + 8, task_wstr(s)),
         Val::Blob(b) => {
-            let q = mem::heap_alloc(b.len().max(1).low_u32(), false);
+            let q = mem::heap_alloc(lo32(b.len().max(1)), false);
             mem::write(q, b);
-            w32(p + 8, b.len().low_u32());
+            w32(p + 8, lo32(b.len()));
             wp(p + 8 + ps(), q);
         }
         Val::Unk(u) => {
@@ -376,9 +376,9 @@ fn get_prop(p: u32) -> Result<Val, u32> {
     })
 }
 fn task_wstr(s: &[u16]) -> u32 {
-    let q = mem::heap_alloc(2 * s.len().low_u32() + 2, false);
+    let q = mem::heap_alloc(2 * lo32(s.len()) + 2, false);
     for (i, &ch) in s.iter().chain([&0]).enumerate() {
-        w16(q + 2 * i.low_u32(), ch);
+        w16(q + 2 * lo32(i), ch);
     }
     q
 }
@@ -429,8 +429,8 @@ getter!(at_get_u32, Val::U32(v) => |o| w32(o, v));
 getter!(at_get_u64, Val::U64(v) => |o| w64(o, v));
 getter!(at_get_f64, Val::F64(v) => |o| w64(o, v.to_bits()));
 getter!(at_get_guid, Val::Guid(g) => |o| mem::write(o, &g));
-getter!(at_get_strlen, Val::Str(s) => |o| w32(o, s.len().low_u32()));
-getter!(at_get_blobsize, Val::Blob(b) => |o: u32| w32(o, b.len().low_u32()));
+getter!(at_get_strlen, Val::Str(s) => |o| w32(o, lo32(s.len())));
+getter!(at_get_blobsize, Val::Blob(b) => |o: u32| w32(o, lo32(b.len())));
 
 fn at_qi(c: &mut Ctx) -> u32 {
     let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
@@ -534,16 +534,16 @@ fn at_get_string(c: &mut Ctx) -> u32 {
     match value(c) {
         Ok(Val::Str(s)) => {
             if len != 0 {
-                w32(len, s.len().low_u32());
+                w32(len, lo32(s.len()));
             }
             if buf == 0 {
                 return Hr::Pointer.code();
             }
-            if cap.to_usize() < s.len() + 1 {
+            if to_usize(cap) < s.len() + 1 {
                 return Hr::InsufficientBuffer.code();
             }
             for (i, &ch) in s.iter().chain([&0]).enumerate() {
-                w16(buf + 2 * i.low_u32(), ch);
+                w16(buf + 2 * lo32(i), ch);
             }
             0
         }
@@ -560,7 +560,7 @@ fn at_get_alloc_string(c: &mut Ctx) -> u32 {
                 return Hr::Pointer.code();
             }
             putp(out, task_wstr(&s));
-            w32(len, s.len().low_u32());
+            w32(len, lo32(s.len()));
             0
         }
         Ok(_) => Hr::InvalidType.code(),
@@ -575,12 +575,12 @@ fn at_get_blob(c: &mut Ctx) -> u32 {
             if buf == 0 && !b.is_empty() {
                 return Hr::Pointer.code();
             }
-            if cap.to_usize() < b.len() {
+            if to_usize(cap) < b.len() {
                 return Hr::InsufficientBuffer.code();
             }
             mem::write(buf, &b);
             if got != 0 {
-                w32(got, b.len().low_u32());
+                w32(got, lo32(b.len()));
             }
             0
         }
@@ -596,10 +596,10 @@ fn at_get_alloc_blob(c: &mut Ctx) -> u32 {
             if out == 0 || size == 0 {
                 return Hr::Pointer.code();
             }
-            let q = mem::heap_alloc(b.len().max(1).low_u32(), false);
+            let q = mem::heap_alloc(lo32(b.len().max(1)), false);
             mem::write(q, &b);
             putp(out, q);
-            w32(size, b.len().low_u32());
+            w32(size, lo32(b.len()));
             0
         }
         Ok(_) => Hr::InvalidType.code(),
@@ -696,13 +696,13 @@ fn at_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    put32(c.a(1), attrs(c.a(0), |a| a.1.items.len().low_u32()).unwrap_or(0));
+    put32(c.a(1), attrs(c.a(0), |a| lo32(a.1.items.len())).unwrap_or(0));
     0
 }
 /// GetItemByIndex(index, GUID *key, PROPVARIANT *v)
 fn at_by_index(c: &mut Ctx) -> u32 {
     let (i, key, out) = (c.a(1), c.a(2), c.a(3));
-    let Some((k, v)) = attrs(c.a(0), |a| a.1.items.get(i.to_usize()).cloned()).flatten() else { return Hr::InvalidArg.code() };
+    let Some((k, v)) = attrs(c.a(0), |a| a.1.items.get(to_usize(i)).cloned()).flatten() else { return Hr::InvalidArg.code() };
     if key != 0 {
         mem::write(key, &k);
     }
@@ -948,7 +948,7 @@ fn new_error(code: u16, hr: u32) -> u32 {
         if c.a(1) > 4 {
             return Hr::InvalidArg.code();
         }
-        w16(c.a(0) + ps(), c.a(1).low_u16());
+        w16(c.a(0) + ps(), lo16(c.a(1)));
         0
     }
     fn er_set_hr(c: &mut Ctx) -> u32 {
@@ -1286,7 +1286,7 @@ fn position(b: u32) -> Option<(u64, (u32, u32), u32, u32, u32, u32)> {
 }
 /// The movie's volume as IBasicAudio's (1/100 dB).
 fn centibels(v: f64, muted: bool) -> i32 {
-    if muted || v <= 0.0 || v.is_nan() { -10000 } else { (2000.0 * v.min(1.0).log10()).round().max(-10000.0).trunc_i32() }
+    if muted || v <= 0.0 || v.is_nan() { -10000 } else { trunc_i32((2000.0 * v.min(1.0).log10()).round().max(-10000.0)) }
 }
 fn apply_volume(b: u32) {
     let Some(v) = engine(b, |e| centibels(e.st.volume, e.st.muted)) else { return };
@@ -1774,7 +1774,7 @@ fn src_rect(p: u32, w: u32, h: u32) -> play::R {
         return play::R::sized(w.cast_signed(), h.cast_signed());
     }
     let f = |i: u32| f32::from_bits(r32(p + 4 * i)).clamp(0.0, 1.0);
-    let (l, t, r, bt) = ((f(0) * w.to_f32()).trunc_i32(), (f(1) * h.to_f32()).trunc_i32(), (f(2) * w.to_f32()).round().trunc_i32(), (f(3) * h.to_f32()).round().trunc_i32());
+    let (l, t, r, bt) = (trunc_i32(f(0) * to_f32(w)), trunc_i32(f(1) * to_f32(h)), trunc_i32((f(2) * to_f32(w)).round()), trunc_i32((f(3) * to_f32(h)).round()));
     play::R::new(l, t, (r - l).max(0), (bt - t).max(0))
 }
 
@@ -1810,7 +1810,7 @@ impl Frames {
         let (dw, dh) = (dst.0.cast_signed(), dst.1.cast_signed());
         let out = &mut self.out;
         out.clear();
-        out.resize((dw * dh).to_usize(), border);
+        out.resize(to_usize(dw * dh), border);
         let lb = letterbox(play::R::sized(dw, dh), src.w, src.h);
         if lb.w > 0 && lb.h > 0 {
             if src == play::R::sized(fw.cast_signed(), fh.cast_signed()) && lb == src && (dw, dh) == (lb.w, lb.h) && frame.len() >= out.len() {
@@ -1822,11 +1822,11 @@ impl Frames {
             }
             let part = &mut self.part;
             part.clear();
-            part.resize((lb.w * lb.h).to_usize(), 0);
+            part.resize(to_usize(lb.w * lb.h), 0);
             play::blit(frame, fw.cast_signed(), fh.cast_signed(), src, part, lb, lb);
             for y in 0..lb.h {
-                let o = ((lb.y + y) * dw + lb.x).to_usize();
-                out[o..o + lb.w.to_usize()].copy_from_slice(&part[(y * lb.w).to_usize()..((y + 1) * lb.w).to_usize()]);
+                let o = to_usize((lb.y + y) * dw + lb.x);
+                out[o..o + to_usize(lb.w)].copy_from_slice(&part[to_usize(y * lb.w)..to_usize((y + 1) * lb.w)]);
             }
         }
         if rgba {
@@ -1849,7 +1849,7 @@ const MAX_PIXELS: u64 = 16384 * 16384;
 /// The pixels of a w x h picture, or None when it is no picture (0, or past `MAX_PIXELS`).
 fn picture_pixels(w: u32, h: u32) -> Option<usize> {
     let n = u64::from(w) * u64::from(h);
-    (n > 0 && n <= MAX_PIXELS).then_some(n.to_usize())
+    (n > 0 && n <= MAX_PIXELS).then_some(to_usize(n))
 }
 
 /// TransferVideoFrame(IUnknown *texture, MFVideoNormalizedRect *src, RECT *dst, MFARGB *border):
@@ -1884,7 +1884,7 @@ fn en_transfer(c: &mut Ctx) -> u32 {
     // later, the game wants it now)
     let mut tries = 0;
     let mut shown = true;
-    while !unsafe { play::frame(stream, n.cast_signed(), f.px.as_mut_ptr().cast::<u8>(), 4 * w.to_usize(), w, h) } {
+    while !unsafe { play::frame(stream, n.cast_signed(), f.px.as_mut_ptr().cast::<u8>(), 4 * to_usize(w), w, h) } {
         tries += 1;
         if play::failed(stream) || tries > if f.size.is_some() { LATE_TRIES } else { FRAME_TRIES } {
             shown = false;

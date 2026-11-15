@@ -6,7 +6,7 @@
 //! result is the negative "indefinite"), so tests/testfloat's extF80 vectors check it. The status
 //! flags are not kept (koji's x87 keeps none).
 
-use crate::cvt::{lo16, lo32, lo64};
+use kome::num::*;
 /// An 80-bit extended value: sign and 15-bit exponent, 64-bit significand with its explicit
 /// integer bit (as in memory, little-endian: significand then sign/exponent).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]

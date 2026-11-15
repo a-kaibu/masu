@@ -9,7 +9,7 @@
 
 #![allow(non_snake_case)]
 
-use kome::num::us;
+use kome::num::*;
 use crate::HashMap;
 use std::sync::Mutex;
 

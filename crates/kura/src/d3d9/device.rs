@@ -1,5 +1,6 @@
 //! IDirect3D9, the device and its resources.
 
+use kome::num::*;
 use super::format as fmt;
 use super::gpu::{self, Batch};
 use dxwgsl::d3d9::{self as shader, Shader};
@@ -9,7 +10,7 @@ use super::stateblock as sb;
 use super::{IF_CUBE, IF_D3D9, IF_DECL, IF_DEVICE, IF_IB, IF_PS, IF_QUERY, IF_STATEBLOCK, IF_SURFACE, IF_SWAPCHAIN};
 use super::{IF_TEXTURE, IF_VB, IF_VOLUME, IF_VOLUMETEX, IF_VS};
 use std::collections::HashMap;
-use crate::guest::{gc, gp, lo32, us};
+use crate::guest::{gc, gp};
 
 const POOL_DEFAULT: u32 = 0;
 const POOL_SYSTEMMEM: u32 = 2;
@@ -2528,9 +2529,9 @@ fn shadows_to_drop(mut kept: Vec<(u64, u32, usize)>, need: usize, budget: usize)
 
 #[cfg(test)]
 mod shadow_tests {
+    use kome::num::*;
     use proptest::prelude::*;
-    use crate::guest::lo32;
-    proptest! {
+        proptest! {
         /// What stays fits with the new copy, what goes was used before everything that stays,
         /// and nothing goes that did not have to.
         #[test]

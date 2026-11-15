@@ -193,7 +193,7 @@ impl Scopes {
 
 pub fn ncomp(prog: &Program, t: &Ty) -> usize {
     match t {
-        Ty::Array(e, n) => ncomp(prog, e) * crate::us(*n),
+        Ty::Array(e, n) => ncomp(prog, e) * kome::num::us(*n),
         Ty::Struct(i) => prog.structs[*i].fields.iter().map(|f| ncomp(prog, &f.ty)).sum(),
         t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Tex(..) | Ty::Sampler(_)
              | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t.comps(),
@@ -291,13 +291,13 @@ fn mat_swizzle(name: &str, r: usize, c: usize) -> Option<Vec<(usize, usize)>> {
             if b.len() < 2 {
                 return None;
             }
-            (crate::us(char::from(b[0]).to_digit(10)?), crate::us(char::from(b[1]).to_digit(10)?), 3)
+            (kome::num::us(char::from(b[0]).to_digit(10)?), kome::num::us(char::from(b[1]).to_digit(10)?), 3)
         } else {
             let b = rest.as_bytes();
             if b.len() < 2 {
                 return None;
             }
-            (crate::us(char::from(b[0]).to_digit(10)?).checked_sub(1)?, crate::us(char::from(b[1]).to_digit(10)?).checked_sub(1)?, 2)
+            (kome::num::us(char::from(b[0]).to_digit(10)?).checked_sub(1)?, kome::num::us(char::from(b[1]).to_digit(10)?).checked_sub(1)?, 2)
         };
         if a >= r || b >= c {
             return None;
@@ -403,10 +403,10 @@ fn fold(op: sm4::Opcode, a: &[u32], tru: u32) -> Option<u32> {
         ISHL => a[0].wrapping_shl(a[1] & 31),
         ISHR => (i(0) >> (a[1] & 31)).cast_unsigned(),
         USHR => a[0] >> (a[1] & 31),
-        ITOF => fbits(dxwgsl::num::to_f32(i(0))),
-        UTOF => fbits(dxwgsl::num::to_f32(a[0])),
-        FTOI => (dxwgsl::num::trunc_i32(f(0))).cast_unsigned(),
-        FTOU => dxwgsl::num::trunc_u32(f(0)),
+        ITOF => fbits(kome::num::to_f32(i(0))),
+        UTOF => fbits(kome::num::to_f32(a[0])),
+        FTOI => (kome::num::trunc_i32(f(0))).cast_unsigned(),
+        FTOU => kome::num::trunc_u32(f(0)),
         EQ => m(f(0) == f(1)),
         NE => m(f(0) != f(1)),
         LT => m(f(0) < f(1)),
@@ -514,9 +514,9 @@ impl<'a> L<'a> {
     /// an int constant
     fn ival(&self, v: i64) -> u32 {
         if self.sm3() {
-            fbits(dxwgsl::num::to_f32(v))
+            fbits(kome::num::to_f32(v))
         } else {
-            crate::lo32(v)
+            kome::num::lo32(v)
         }
     }
 
@@ -979,12 +979,12 @@ impl<'a> L<'a> {
             Ty::Array(..) => {
                 let mut u = Vec::new();
                 units(self.prog, t, &mut u);
-                let id = crate::u32_of(self.xs.len());
-                self.xs.push(crate::u32_of(u.len().max(1)));
+                let id = kome::num::u32_of(self.xs.len());
+                self.xs.push(kome::num::u32_of(u.len().max(1)));
                 let mut out = Vec::new();
                 for (k, n) in u.iter().enumerate() {
                     for c in Lane::first(*n) {
-                        out.push(C::R(Reg { f: RegF::X(id, crate::u32_of(k)), rel: None }, c));
+                        out.push(C::R(Reg { f: RegF::X(id, kome::num::u32_of(k)), rel: None }, c));
                     }
                 }
                 out
@@ -1032,13 +1032,13 @@ impl<'a> L<'a> {
         match self.globals.get(name).cloned() {
             Some(v) => {
                 match v.obj {
-                    Obj::Tex(t) => self.texs[crate::us(t)].used = true,
-                    Obj::Samp(s) => self.samps[crate::us(s)].used = true,
+                    Obj::Tex(t) => self.texs[kome::num::us(t)].used = true,
+                    Obj::Samp(s) => self.samps[kome::num::us(s)].used = true,
                     Obj::Legacy(t, s) => {
-                        self.texs[crate::us(t)].used = true;
-                        self.samps[crate::us(s)].used = true;
+                        self.texs[kome::num::us(t)].used = true;
+                        self.samps[kome::num::us(s)].used = true;
                     }
-                    Obj::Uav(u) => self.uavs[crate::us(u)].used = true,
+                    Obj::Uav(u) => self.uavs[kome::num::us(u)].used = true,
                     // (arrays: the elements indexed are marked)
                     Obj::None | Obj::TexArr(_) | Obj::SampArr(_) | Obj::LegacyArr(..) | Obj::Shared(..) => {}
                 }
@@ -1060,14 +1060,14 @@ impl<'a> L<'a> {
         let reg = |r: u32| Reg { f: RegF::Cb(sym, r), rel: None };
         match t {
             Ty::Scalar(_) | Ty::Vec(..) => {
-                let n = crate::u32_of(t.comps());
+                let n = kome::num::u32_of(t.comps());
                 // (shader model 2/3: each in registers of its own)
                 if at % 16 + 4 * n > 16 || self.sm3() {
                     at = at.div_ceil(16) * 16;
                 }
                 for k in 0..n {
                     let o = at + 4 * k;
-                    out.push(C::R(reg(o / 16), Lane::of(crate::us(o / 4))));
+                    out.push(C::R(reg(o / 16), Lane::of(kome::num::us(o / 4))));
                 }
                 if self.sm3() {
                     at + 16
@@ -1081,7 +1081,7 @@ impl<'a> L<'a> {
                 for i in 0..r {
                     for j in 0..c {
                         let (rr, cc) = if row_major { (i, j) } else { (j, i) };
-                        out.push(C::R(reg(at / 16 + rr), Lane::of(crate::us(cc))));
+                        out.push(C::R(reg(at / 16 + rr), Lane::of(kome::num::us(cc))));
                     }
                 }
                 let end = if row_major { at + (r - 1) * 16 + c * 4 } else { at + (c - 1) * 16 + r * 4 };
@@ -1187,7 +1187,7 @@ impl<'a> L<'a> {
     }
 
     fn add_cbuffer(&mut self, name: &str, reg: Option<u32>, vars: &[Var]) -> R<()> {
-        let sym = crate::u32_of(self.cbs.len());
+        let sym = kome::num::u32_of(self.cbs.len());
         let mut at = 0;
         let mut rvars = Vec::new();
         for v in vars {
@@ -1210,7 +1210,7 @@ impl<'a> L<'a> {
             let mut rv = self.rdef_var(&v.name, v.ty(), rm, first, end);
             rv.explicit = matches!(v.reg, Some(('c', _)));
             rvars.push(rv);
-            self.cbvar.insert(v.name.clone(), (crate::us(sym), rvars.len() - 1));
+            self.cbvar.insert(v.name.clone(), (kome::num::us(sym), rvars.len() - 1));
             self.globals.insert(v.name.clone(), Val::num(v.ty().clone(), comps));
             at = at.max(end);
         }
@@ -1226,24 +1226,24 @@ impl<'a> L<'a> {
                     return Err(format!("line {}: a RWTexture's register is a u register", v.line));
                 }
                 self.uavs.push(UavD { name: v.name.clone(), dim: *d, el: (**el).clone(), reg, used: false });
-                Obj::Uav(crate::u32_of(self.uavs.len()) - 1)
+                Obj::Uav(kome::num::u32_of(self.uavs.len()) - 1)
             }
             Ty::Tex(d, el) => {
                 self.texs.push(TexD { name: v.name.clone(), dim: *d, el: (**el).clone(), reg, used: false });
-                Obj::Tex(crate::u32_of(self.texs.len()) - 1)
+                Obj::Tex(kome::num::u32_of(self.texs.len()) - 1)
             }
             Ty::Sampler(cmp) => {
                 self.samps.push(SampD { name: v.name.clone(), cmp: *cmp, reg, used: false });
-                Obj::Samp(crate::u32_of(self.samps.len()) - 1)
+                Obj::Samp(kome::num::u32_of(self.samps.len()) - 1)
             }
             Ty::Legacy(d) => {
                 self.texs.push(TexD { name: v.name.clone(), dim: *d, el: Ty::Vec(B::Float, Width::W4), reg, used: false });
                 self.samps.push(SampD { name: v.name.clone(), cmp: false, reg, used: false });
-                Obj::Legacy(crate::u32_of(self.texs.len()) - 1, crate::u32_of(self.samps.len()) - 1)
+                Obj::Legacy(kome::num::u32_of(self.texs.len()) - 1, kome::num::u32_of(self.samps.len()) - 1)
             }
             Ty::Array(e, n) => {
                 // one descriptor per element, on consecutive registers
-                let (t0, s0) = (crate::u32_of(self.texs.len()), crate::u32_of(self.samps.len()));
+                let (t0, s0) = (kome::num::u32_of(self.texs.len()), kome::num::u32_of(self.samps.len()));
                 for i in 0..*n {
                     let name = format!("{}[{i}]", v.name);
                     let reg = reg.map(|r| r + i);
@@ -1286,7 +1286,7 @@ impl<'a> L<'a> {
                     if eb.is_empty() || total == 0 {
                         return Err("an empty initializer for an array without a size".into());
                     }
-                    sized = Ty::Array(el.clone(), crate::u32_of(total.div_ceil(eb.len())));
+                    sized = Ty::Array(el.clone(), kome::num::u32_of(total.div_ceil(eb.len())));
                     &sized
                 }
                 t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
@@ -1343,13 +1343,13 @@ impl<'a> L<'a> {
                 if no_size(v.ty()) {
                     return Err(format!("line {}: groupshared array {} without a size", v.line, v.name));
                 }
-                let bytes = 4 * crate::u32_of(ncomp(prog, v.ty()));
+                let bytes = 4 * kome::num::u32_of(ncomp(prog, v.ty()));
                 // (32 KB per thread group, as Direct3D 11 allows)
                 if self.tgsm.iter().sum::<u32>() + bytes > 32768 {
                     return Err(format!("line {}: more than 32 KB of groupshared memory", v.line));
                 }
                 self.tgsm.push(bytes);
-                let g = crate::u32_of(self.tgsm.len()) - 1;
+                let g = kome::num::u32_of(self.tgsm.len()) - 1;
                 self.globals.insert(v.name.clone(), Val { ty: v.ty().clone(), c: Vec::new(), obj: Obj::Shared(g, C::I(0)) });
             } else if matches!(v.ty(), Ty::Str) {
             } else if v.is_static {
@@ -1376,7 +1376,7 @@ impl<'a> L<'a> {
                     // an immediate constant buffer
                     let mut u = Vec::new();
                     units(self.prog, &t, &mut u);
-                    let base = crate::u32_of(self.icb.len());
+                    let base = kome::num::u32_of(self.icb.len());
                     let mut comps = Vec::new();
                     let mut k = 0;
                     for (n, w) in u.iter().enumerate() {
@@ -1385,7 +1385,7 @@ impl<'a> L<'a> {
                             if let C::I(x) = val.c[k] {
                                 *r = x;
                             }
-                            comps.push(C::R(Reg { f: RegF::Icb(base + crate::u32_of(n)), rel: None }, Lane::of(c)));
+                            comps.push(C::R(Reg { f: RegF::Icb(base + kome::num::u32_of(n)), rel: None }, Lane::of(c)));
                             k += 1;
                         }
                         self.icb.push(row);
@@ -1481,7 +1481,7 @@ impl<'a> L<'a> {
         units(self.prog, t, &mut u);
         // (an array parameter takes a register per element: `float4 a[65536] : TEXCOORD`
         // is past the 32 registers however its first index is)
-        if crate::us(index) + u.len() > crate::us(max) {
+        if kome::num::us(index) + u.len() > kome::num::us(max) {
             return Err(format!("semantic {sem}: {} registers from index {index}, past {max}", u.len()));
         }
         if name == "POSITION" && pixel && !output && self.sm3() {
@@ -1679,7 +1679,7 @@ impl<'a> L<'a> {
                 B::Float => 5,
             };
             tex_map[n] = Some(texs.len());
-            texs.push(sm4::Tex { name: t.name.clone(), dim, ret, comps: crate::u32_of(t.el.comps().max(1)), slot, explicit: t.reg.is_some() });
+            texs.push(sm4::Tex { name: t.name.clone(), dim, ret, comps: kome::num::u32_of(t.el.comps().max(1)), slot, explicit: t.reg.is_some() });
         }
         let mut staken: Vec<u32> = self.samps.iter().filter(|t| t.used).filter_map(|t| t.reg).collect();
         let mut samp_map = vec![None; self.samps.len()];
@@ -1690,7 +1690,7 @@ impl<'a> L<'a> {
             }
             // (a sampler2D: the slot of its texture)
             let legacy = self.globals.values().find_map(|v| match v.obj {
-                Obj::Legacy(t, sm) if crate::us(sm) == n => legacy_slot.get(&crate::us(t)).copied(),
+                Obj::Legacy(t, sm) if kome::num::us(sm) == n => legacy_slot.get(&kome::num::us(t)).copied(),
                 Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::TexArr(_) | Obj::SampArr(_)
                 | Obj::LegacyArr(..) | Obj::Uav(_) | Obj::Shared(..) => None,
             });
@@ -1752,7 +1752,7 @@ impl<'a> L<'a> {
                 B::Float => 5,
             };
             uav_map[n] = Some(uavs.len());
-            uavs.push(sm4::Uav { name: u.name.clone(), dim, ret, comps: crate::u32_of(u.el.comps().max(1)), slot, explicit: u.reg.is_some() });
+            uavs.push(sm4::Uav { name: u.name.clone(), dim, ret, comps: kome::num::u32_of(u.el.comps().max(1)), slot, explicit: u.reg.is_some() });
         }
         Ok(sm4::Shader {
             threads: self.threads,
@@ -2000,7 +2000,7 @@ impl<'a> L<'a> {
                         match l {
                             Some(e) => {
                                 let k = super::parse::const_int(e).ok_or("case label is not a constant")?;
-                                self.emit(CASE, vec![], vec![Src::Imm([crate::lo32(k); 4], true)]);
+                                self.emit(CASE, vec![], vec![Src::Imm([kome::num::lo32(k); 4], true)]);
                             }
                             None => self.flow(DEFAULT),
                         }
@@ -2069,7 +2069,7 @@ impl<'a> L<'a> {
         use sm4::*;
         Ok(match e {
             Expr::Int(v, u) => self.lit_int(*v, *u),
-            Expr::Float(f) => Val::num(Ty::Scalar(B::Float), vec![C::I(fbits(dxwgsl::num::to_f32(*f)))]),
+            Expr::Float(f) => Val::num(Ty::Scalar(B::Float), vec![C::I(fbits(kome::num::to_f32(*f)))]),
             Expr::Bool(b) => Val::num(Ty::Scalar(B::Bool), vec![C::I(if *b { self.tru() } else { 0 })]),
             Expr::Var(n, line) => {
                 let v = self.lookup(n, *line)?;
@@ -2197,7 +2197,7 @@ impl<'a> L<'a> {
                 let t = if cv.ty.comps() > 1 && t.comps() == 1 { Ty::vec_of(t.base(), cv.ty.comps()).ok_or("a condition of more than 4 components")? } else { t };
                 // (a narrower vector condition: the values truncated to it, as fxc does)
                 let t = match t {
-                    Ty::Vec(b, n) if cv.ty.comps() > 1 && crate::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec_of(b, cv.ty.comps()).ok_or("a condition of more than 4 components")?,
+                    Ty::Vec(b, n) if cv.ty.comps() > 1 && kome::num::u32_of(cv.ty.comps()) < u32::from(n) => Ty::vec_of(b, cv.ty.comps()).ok_or("a condition of more than 4 components")?,
                     t @ (Ty::Void | Ty::Scalar(_) | Ty::Vec(..) | Ty::Mat(..) | Ty::Array(..) | Ty::Struct(_)
                          | Ty::Tex(..) | Ty::Sampler(_) | Ty::RwTex(..) | Ty::Legacy(_) | Ty::Str) => t,
                 };
@@ -2354,7 +2354,7 @@ impl<'a> L<'a> {
             match wb {
                 Wb::Sel(elems, iv, cp, b) => {
                     for (k, e) in elems.iter().enumerate() {
-                        let m = self.alu(sm4::IEQ, B::Bool, &[&[iv], &[C::I(self.ival(i64::from(crate::u32_of(k))))]])[0];
+                        let m = self.alu(sm4::IEQ, B::Bool, &[&[iv], &[C::I(self.ival(i64::from(kome::num::u32_of(k))))]])[0];
                         let n = e.len();
                         let v = self.alu(sm4::MOVC, b, &[&vec![m; n], &cp, e]);
                         self.assign(e, &v);
@@ -2411,7 +2411,7 @@ impl<'a> L<'a> {
         let mut out = Vec::new();
         for k in (0..n).step_by(4) {
             let m = (n - k).min(4);
-            let a = self.shared_addr(off, crate::u32_of(k));
+            let a = self.shared_addr(off, kome::num::u32_of(k));
             let a = self.scalar_src(a);
             let t = self.tmp();
             self.emit(sm4::LD_RAW, vec![Dst { r: temp(t), mask: Lane::mask(m) }], vec![a, Src::G(g, [0, 1, 2, 3])]);
@@ -2422,7 +2422,7 @@ impl<'a> L<'a> {
 
     fn shared_store(&mut self, g: u32, off: C, v: &[C]) {
         for (k, ch) in v.chunks(4).enumerate() {
-            let a = self.shared_addr(off, 4 * crate::u32_of(k));
+            let a = self.shared_addr(off, 4 * kome::num::u32_of(k));
             let a = self.scalar_src(a);
             let s = self.opnd(ch);
             self.emit(sm4::STORE_RAW, vec![Dst { r: Reg { f: RegF::G(g), rel: None }, mask: Lane::mask(ch.len()) }], vec![a, s]);
@@ -2436,7 +2436,7 @@ impl<'a> L<'a> {
         for f in &self.prog.structs[*i].fields {
             let n = ncomp(self.prog, &f.ty);
             if f.name == name {
-                let off = self.alu(sm4::IADD, B::Int, &[&[off], &[C::I(crate::u32_of(at))]])[0];
+                let off = self.alu(sm4::IADD, B::Int, &[&[off], &[C::I(kome::num::u32_of(at))]])[0];
                 return Ok(Val { ty: f.ty.clone(), c: Vec::new(), obj: Obj::Shared(g, off) });
             }
             at += n;
@@ -2446,7 +2446,7 @@ impl<'a> L<'a> {
 
     /// A UAV's coordinates (uint, as many as its dimension takes).
     fn uav_coord(&mut self, u: u32, iv: Val) -> R<Vec<C>> {
-        let d = self.uavs[crate::us(u)].dim;
+        let d = self.uavs[kome::num::us(u)].dim;
         let n = d.coords() + usize::from(d.array());
         let iv = self.cast(iv.clone(), &Ty::vec_of(B::Uint, iv.ty.comps().max(1)).ok_or("a UAV coordinate of more than 4 components")?)?;
         if iv.c.len() != n {
@@ -2456,7 +2456,7 @@ impl<'a> L<'a> {
     }
 
     fn uav_load(&mut self, u: u32, coord: &[C]) -> Val {
-        let el = self.uavs[crate::us(u)].el.clone();
+        let el = self.uavs[kome::num::us(u)].el.clone();
         let a = self.opnd(coord);
         let t = self.tmp();
         self.emit(sm4::LD_UAV_TYPED, vec![Dst { r: temp(t), mask: 0xf }], vec![a, Src::Uav(u, [0, 1, 2, 3])]);
@@ -2508,7 +2508,7 @@ impl<'a> L<'a> {
         let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
         let mut c = iv.c[0];
         if stride > 1 && self.sm3() {
-            c = self.alu(sm4::MUL, B::Float, &[&[c], &[C::I(fbits(dxwgsl::num::to_f32(stride)))]])[0];
+            c = self.alu(sm4::MUL, B::Float, &[&[c], &[C::I(fbits(kome::num::to_f32(stride)))]])[0];
         } else if stride > 1 {
             c = if stride.is_power_of_two() {
                 self.alu(sm4::ISHL, B::Int, &[&[c], &[C::I(stride.trailing_zeros())]])[0]
@@ -2528,7 +2528,7 @@ impl<'a> L<'a> {
     /// index, or a select chain
     fn select(&mut self, elems: Vec<Vec<C>>, iv: Val, ty: Ty) -> R<Val> {
         if let Some(C::I(k)) = iv.c.first() {
-            let k = if iv.ty.base() == B::Float || self.sm3() { dxwgsl::num::trunc_i64(flt(*k)) } else { i64::from(k.cast_signed()) };
+            let k = if iv.ty.base() == B::Float || self.sm3() { kome::num::trunc_i64(flt(*k)) } else { i64::from(k.cast_signed()) };
             let e = usize::try_from(k).ok().and_then(|k| elems.get(k)).ok_or(format!("index {k} out of range"))?;
             return Ok(Val::num(ty, e.clone()));
         }
@@ -2547,7 +2547,7 @@ impl<'a> L<'a> {
                     && e.iter().zip(e0).all(|(a, b)| match (a, b) {
                         (C::R(ra, ca), C::R(rb, cb)) => {
                             ca == cb
-                                && regno(a) == regno(b).wrapping_add(stride.wrapping_mul(crate::u32_of(k)))
+                                && regno(a) == regno(b).wrapping_add(stride.wrapping_mul(kome::num::u32_of(k)))
                                 && std::mem::discriminant(&ra.f) == std::mem::discriminant(&rb.f)
                         }
                         _ => false,
@@ -2559,7 +2559,7 @@ impl<'a> L<'a> {
                 for c in e0 {
                     if let C::R(r, k) = c {
                         if let RegF::Cb(s, _) = r.f {
-                            let cb = &mut self.cbs[crate::us(s)];
+                            let cb = &mut self.cbs[kome::num::us(s)];
                             cb.dynamic = true;
                         }
                         out.push(C::R(Reg { f: r.f, rel: Some(rel) }, *k));
@@ -2572,7 +2572,7 @@ impl<'a> L<'a> {
         let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
         let mut cur = elems[0].clone();
         for (k, e) in elems.iter().enumerate().skip(1) {
-            let m = self.alu(sm4::IEQ, B::Bool, &[&iv.c, &[C::I(self.ival(i64::from(crate::u32_of(k))))]])[0];
+            let m = self.alu(sm4::IEQ, B::Bool, &[&iv.c, &[C::I(self.ival(i64::from(kome::num::u32_of(k))))]])[0];
             let n = cur.len();
             cur = self.alu(sm4::MOVC, ty.base(), &[&vec![m; n], e, &cur]);
         }
@@ -2586,7 +2586,7 @@ impl<'a> L<'a> {
                 let v = self.shared_value(v);
                 return self.index(v, iv);
             };
-            let k = crate::u32_of(ncomp(self.prog, e));
+            let k = kome::num::u32_of(ncomp(self.prog, e));
             let iv = self.cast(iv, &Ty::Scalar(B::Int))?;
             if let C::I(i) = iv.c[0] {
                 let i = i.cast_signed();
@@ -2610,16 +2610,16 @@ impl<'a> L<'a> {
             };
             let obj = match v.obj {
                 Obj::TexArr(t) => {
-                    self.texs[crate::us(t + i)].used = true;
+                    self.texs[kome::num::us(t + i)].used = true;
                     Obj::Tex(t + i)
                 }
                 Obj::SampArr(s) => {
-                    self.samps[crate::us(s + i)].used = true;
+                    self.samps[kome::num::us(s + i)].used = true;
                     Obj::Samp(s + i)
                 }
                 Obj::LegacyArr(t, s) => {
-                    self.texs[crate::us(t + i)].used = true;
-                    self.samps[crate::us(s + i)].used = true;
+                    self.texs[kome::num::us(t + i)].used = true;
+                    self.samps[kome::num::us(s + i)].used = true;
                     Obj::Legacy(t + i, s + i)
                 }
                 Obj::None | Obj::Tex(_) | Obj::Samp(_) | Obj::Legacy(..) | Obj::Uav(_) | Obj::Shared(..) => unreachable!(),
@@ -2629,14 +2629,14 @@ impl<'a> L<'a> {
         match &v.ty {
             Ty::Array(e, n) => {
                 let k = ncomp(self.prog, e);
-                let mut elems: Vec<Vec<C>> = (0..crate::us(*n)).map(|i| v.c[i * k..(i + 1) * k].to_vec()).collect();
+                let mut elems: Vec<Vec<C>> = (0..kome::num::us(*n)).map(|i| v.c[i * k..(i + 1) * k].to_vec()).collect();
                 let not_reg = !elems.is_empty()
                     && !elems[0].iter().all(|c| matches!(c, C::R(Reg { f: RegF::X(..) | RegF::Cb(..) | RegF::Icb(_), .. }, _)));
                 if not_reg && !matches!(iv.c.first(), Some(C::I(_))) && *n > 4 && !self.sm3() {
                     // (into an indexable temp first)
                     let st = self.storage(&v.ty);
                     self.assign(&st, &v.c);
-                    elems = (0..crate::us(*n)).map(|i| st[i * k..(i + 1) * k].to_vec()).collect();
+                    elems = (0..kome::num::us(*n)).map(|i| st[i * k..(i + 1) * k].to_vec()).collect();
                 }
                 self.select(elems, iv, (**e).clone())
             }
@@ -2922,11 +2922,11 @@ impl<'a> L<'a> {
         self.cond_op(op, c, nz)
     }
     pub(super) fn x_tex_el(&self, t: u32) -> (Dim, Ty) {
-        let d = &self.texs[crate::us(t)];
+        let d = &self.texs[kome::num::us(t)];
         (d.dim, d.el.clone())
     }
     pub(super) fn x_samp_cmp(&mut self, s: u32) {
-        self.samps[crate::us(s)].cmp = true;
+        self.samps[kome::num::us(s)].cmp = true;
     }
     pub(super) fn x_sm3(&self) -> bool {
         self.sm3()

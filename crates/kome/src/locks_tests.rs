@@ -5,25 +5,41 @@ fn poison(f: impl FnOnce() + Send) {
     std::thread::scope(|s| assert!(s.spawn(f).join().is_err()));
 }
 
+/// A lock a panicking thread held: taken again, with what was written before the panic.
 #[test]
-fn a_poisoned_mutex_still_panics() {
-    let m = Mutex::new(1);
+fn a_poisoned_lock_is_taken() {
+    let (m, l) = (Mutex::new(1), RwLock::new(1));
     poison(|| {
-        let _g = m.locked();
+        *m.lock().unwrap() = 2;
+        *l.write().unwrap() = 2;
+        let _g = (m.lock(), l.write());
         panic!("held");
     });
-    assert!(std::panic::catch_unwind(|| *m.locked()).is_err());
+    assert!(m.is_poisoned() && l.is_poisoned());
+    assert_eq!(*m.locked(), 2);
+    assert_eq!(*l.r(), 2);
+    *l.w() = 3;
+    assert_eq!(*l.r(), 3);
 }
 
+/// wait() comes back with the lock after a notify, poisoned or not.
 #[test]
-fn a_poisoned_rwlock_still_panics() {
-    let l = RwLock::new(1);
+fn wait_returns_the_guard() {
+    let (m, cv) = (Mutex::new(false), Condvar::new());
     poison(|| {
-        let _g = l.w();
+        let _g = m.lock();
         panic!("held");
     });
-    assert!(std::panic::catch_unwind(|| *l.r()).is_err());
-    assert!(std::panic::catch_unwind(|| *l.w()).is_err());
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            *m.locked() = true;
+            cv.notify_all();
+        });
+        let mut g = m.locked();
+        while !*g {
+            g = wait(&cv, g);
+        }
+    });
 }
 
 proptest! {
@@ -44,27 +60,5 @@ proptest! {
         prop_assert_eq!(*a.lock().unwrap(), want);
         prop_assert_eq!(*a.locked(), want);
         prop_assert_eq!(*b.r(), want);
-    }
-}
-
-mod tolerant {
-    use crate::locks::tolerant::{Lock as _, Rw as _};
-    use std::sync::{Mutex, RwLock};
-
-    /// A lock a panicking thread held: tolerant takes it again, with what was written before.
-    #[test]
-    fn tolerant_takes_a_poisoned_lock() {
-        let (m, l) = (Mutex::new(1), RwLock::new(1));
-        super::poison(|| {
-            *m.lock().unwrap() = 2;
-            *l.write().unwrap() = 2;
-            let _g = (m.lock(), l.write());
-            panic!("held");
-        });
-        assert!(m.is_poisoned() && l.is_poisoned());
-        assert_eq!(*m.locked(), 2);
-        assert_eq!(*l.r(), 2);
-        *l.w() = 3;
-        assert_eq!(*l.r(), 3);
     }
 }

@@ -23,7 +23,7 @@ impl Rng {
     }
     /// uniform in [a, b)
     fn f(&mut self, a: f32, b: f32) -> f32 {
-        a + (b - a) * (dxwgsl::num::to_f32(self.next() >> 40) / dxwgsl::num::to_f32(1u64 << 24))
+        a + (b - a) * (kome::num::to_f32(self.next() >> 40) / kome::num::to_f32(1u64 << 24))
     }
     fn v3(&mut self, a: f32, b: f32) -> [f32; 3] {
         [self.f(a, b), self.f(a, b), self.f(a, b)]
@@ -80,10 +80,10 @@ fn scene(r: &mut Rng, count: usize) -> Scene {
     for v in material.iter_mut().take(16) {
         *v *= 0.6;
     }
-    material[16] = [0.0, 1.0, 4.0, r.f(1.0, 40.0)][crate::usize_of(r.below(4))];
+    material[16] = [0.0, 1.0, 4.0, r.f(1.0, 40.0)][kome::num::to_usize(r.below(4))];
     let lights = (0..count)
         .map(|_| {
-            let ty = 1 + crate::lo32(r.below(3));
+            let ty = 1 + kome::num::lo32(r.below(3));
             let theta = r.f(0.2, 1.4);
             let k = |r: &mut Rng| {
                 let c = r.color();
@@ -97,7 +97,7 @@ fn scene(r: &mut Rng, count: usize) -> Scene {
                 position: r.v3(-4.0, 4.0),
                 direction: r.v3(-1.0, 1.0),
                 range: r.f(2.0, 12.0),
-                falloff: [0.0, 1.0, r.f(0.3, 3.0)][crate::usize_of(r.below(3))],
+                falloff: [0.0, 1.0, r.f(0.3, 3.0)][kome::num::to_usize(r.below(3))],
                 attenuation: [r.f(0.2, 1.0), r.f(0.0, 0.3), r.f(0.0, 0.1)],
                 theta,
                 phi: theta + r.f(0.1, 1.2),
@@ -106,7 +106,7 @@ fn scene(r: &mut Rng, count: usize) -> Scene {
         .collect();
     Scene {
         material,
-        ambient: (crate::lo32(r.next())) & 0xff7f7f7f,
+        ambient: (kome::num::lo32(r.next())) & 0xff7f7f7f,
         world: affine(r, (0.5, 2.0), 2.0),
         view: affine(r, (1.0, 1.0), 3.0),
         lights,
@@ -301,7 +301,7 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
         }
         let lk = LightKey { count, specular, local_viewer, normalize, sources: ff::sources(src, true, has) };
         let k = VsKey { inputs, rhw: false, tci: [(0, 0); 8], flat: false, light: Some(lk) };
-        let size = crate::us(dxwgsl::d3d9::uniform_size(ff::VS_CONSTS + 4));
+        let size = kome::num::us(dxwgsl::d3d9::uniform_size(ff::VS_CONSTS + 4));
         for o in 0..2 {
             let mut pixels = Vec::new();
             let mut tries = 0;
@@ -309,20 +309,20 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
                 tries += 1;
                 let s = scene(&mut r, usize::from(count));
                 let Some(want) = reference(&s, &lk, with_normal) else { continue };
-                let mut regs = vec![[0f32; 4]; crate::us(ff::VS_CONSTS + 4)];
+                let mut regs = vec![[0f32; 4]; kome::num::us(ff::VS_CONSTS + 4)];
                 ff::lighting_regs(&mut regs, &s.material, s.ambient, &s.world, &s.view, &s.lights);
                 // (the shader's position transform: anything, the pixel is a color)
-                let n = crate::us(ff::VS_CONSTS);
+                let n = kome::num::us(ff::VS_CONSTS);
                 regs[n] = [s.pos[0], s.pos[1], s.pos[2], 1.0];
                 regs[n + 1] = [s.normal[0], s.normal[1], s.normal[2], 0.0];
                 regs[n + 2] = s.c0;
                 regs[n + 3] = s.c1;
                 let mut d = vec![0u8; size];
-                let at = (crate::us(dxwgsl::d3d9::CONSTS_EXTRA) + 16) * 16;
+                let at = (kome::num::us(dxwgsl::d3d9::CONSTS_EXTRA) + 16) * 16;
                 for (j, v) in regs.iter().flatten().enumerate() {
                     d[at + j * 4..at + j * 4 + 4].copy_from_slice(&v.to_le_bytes());
                 }
-                let w: [Want; 4] = std::array::from_fn(|c| Some(vec![dxwgsl::num::to_f32(want[o][c])]));
+                let w: [Want; 4] = std::array::from_fn(|c| Some(vec![kome::num::to_f32(want[o][c])]));
                 pixels.push((d, w));
             }
             if pixels.len() < 8 {

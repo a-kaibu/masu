@@ -2,7 +2,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::locks::{Lock as _, Rw as _};
+use kome::locks::{Lock as _, Rw as _};
 use crate::xmem;
 use crate::HashMap;
 use std::io::SeekFrom;
@@ -990,7 +990,7 @@ pub(crate) fn suspend_count(tid: u32, suspend: bool) -> Result<u32, u32> {
 pub fn wait_gate(h: u32) {
     let mut g = GATE.locked();
     while g.iter().any(|&(x, n)| x == h && n > 0) {
-        g = crate::locks::wait(&GATE_CV, g);
+        g = kome::locks::wait(&GATE_CV, g);
     }
     g.retain(|&(x, _)| x != h);
 }
@@ -1006,7 +1006,7 @@ pub fn wait_gate_start(h: u32, start: u32, param: u32) {
             g = GATE.locked();
             continue;
         }
-        g = crate::locks::wait(&GATE_CV, g);
+        g = kome::locks::wait(&GATE_CV, g);
     }
     g.retain(|&(x, _)| x != h);
 }

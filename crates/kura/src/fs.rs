@@ -2,7 +2,7 @@
 //! here (vfs, the page's whole file system) directly, and on node whatever is outside them
 //! through std::fs. Paths are absolute host paths.
 
-use crate::guest::lo32;
+use kome::num::*;
 use std::ffi::{c_int, OsString};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};

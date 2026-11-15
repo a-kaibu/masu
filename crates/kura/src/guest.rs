@@ -2,10 +2,8 @@
 //! as a usize, a guest address as a host pointer (the guest's memory is the host's, below 4G),
 //! and a host usize or u64 back as its low 32 bits, as `as u32` was.
 
-/// us: a guest u32 as a host usize (lossless); lo32: a host usize or u64 back as its low 32
-/// bits, as `as u32` was (kome's, one copy for every crate).
-pub(crate) use kome::num::{lo32, us};
 
+use kome::num::*;
 /// Guest address `a` as a host pointer (the guest's memory is the host's, below 4G).
 pub(crate) fn gp<T>(a: u32) -> *mut T {
     std::ptr::with_exposed_provenance_mut(us(a))

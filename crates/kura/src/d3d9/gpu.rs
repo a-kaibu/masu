@@ -8,8 +8,9 @@
 //! Without a page (node) nothing ever polls, and batches are dropped at each Present.
 
 #[cfg(test)]
-use crate::locks::Lock;
-use crate::guest::{gc, lo32, us};
+use kome::locks::Lock;
+use kome::num::*;
+use crate::guest::gc;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -596,7 +597,7 @@ fn pace_wait(next: &mut f64, t: f64, frame: f64) -> f64 {
 
 #[cfg(test)]
 mod pace_tests {
-    use crate::guest::{lo32, us};
+    use kome::num::*;
     use proptest::prelude::*;
     proptest! {
         /// Any clock, stepped back or forward: every wait is between 0 and a frame, and with a

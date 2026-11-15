@@ -15,7 +15,8 @@ use crate::intrax8::{IntraX8, Plane};
 use crate::msmpeg4::{dc_vlc, mb_i_vlc, Error, Picture};
 use crate::msmpeg4_tables as m4;
 use crate::vc1_tables as t;
-use crate::num::{i32z, ix, lo16, lo8, us};
+use crate::num::i32z;
+use kome::num::*;
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
@@ -247,7 +248,7 @@ fn tables() -> &'static Tables {
         let u = |a: &[u8]| a.iter().map(|&x| u32::from(x)).collect::<Vec<u32>>();
         let w = |a: &[u16]| a.iter().map(|&x| u32::from(x)).collect::<Vec<u32>>();
         let ac = |k: usize| {
-            let n = ix(t::FF_VC1_AC_SIZES[k]);
+            let n = us(t::FF_VC1_AC_SIZES[k]);
             let row = &t::VC1_AC_TABLES[k * 372..k * 372 + 2 * n];
             let c: Vec<u32> = (0..n).map(|i| row[2 * i]).collect();
             let l: Vec<u8> = (0..n).map(|i| lo8(row[2 * i + 1])).collect();
@@ -330,14 +331,14 @@ pub(crate) fn inv_trans_8x8_c(b: &mut [i16; 64]) {
         let t3 = 9 * s(8) - 16 * s(24) + 4 * s(40) + 15 * s(56);
         let t4 = 4 * s(8) - 9 * s(24) + 15 * s(40) - 16 * s(56);
         let d = &mut tmp[i * 8..i * 8 + 8];
-        d[0] = lo16((t5 + t1) >> 3);
-        d[1] = lo16((t6 + t2) >> 3);
-        d[2] = lo16((t7 + t3) >> 3);
-        d[3] = lo16((t8 + t4) >> 3);
-        d[4] = lo16((t8 - t4) >> 3);
-        d[5] = lo16((t7 - t3) >> 3);
-        d[6] = lo16((t6 - t2) >> 3);
-        d[7] = lo16((t5 - t1) >> 3);
+        d[0] = lo16s((t5 + t1) >> 3);
+        d[1] = lo16s((t6 + t2) >> 3);
+        d[2] = lo16s((t7 + t3) >> 3);
+        d[3] = lo16s((t8 + t4) >> 3);
+        d[4] = lo16s((t8 - t4) >> 3);
+        d[5] = lo16s((t7 - t3) >> 3);
+        d[6] = lo16s((t6 - t2) >> 3);
+        d[7] = lo16s((t5 - t1) >> 3);
     }
     for i in 0..8 {
         let s = |k: usize| i32::from(tmp[i + k]);
@@ -350,14 +351,14 @@ pub(crate) fn inv_trans_8x8_c(b: &mut [i16; 64]) {
         let t2 = 15 * s(8) - 4 * s(24) - 16 * s(40) - 9 * s(56);
         let t3 = 9 * s(8) - 16 * s(24) + 4 * s(40) + 15 * s(56);
         let t4 = 4 * s(8) - 9 * s(24) + 15 * s(40) - 16 * s(56);
-        b[i] = lo16((t5 + t1) >> 7);
-        b[i + 8] = lo16((t6 + t2) >> 7);
-        b[i + 16] = lo16((t7 + t3) >> 7);
-        b[i + 24] = lo16((t8 + t4) >> 7);
-        b[i + 32] = lo16((t8 - t4 + 1) >> 7);
-        b[i + 40] = lo16((t7 - t3 + 1) >> 7);
-        b[i + 48] = lo16((t6 - t2 + 1) >> 7);
-        b[i + 56] = lo16((t5 - t1 + 1) >> 7);
+        b[i] = lo16s((t5 + t1) >> 7);
+        b[i + 8] = lo16s((t6 + t2) >> 7);
+        b[i + 16] = lo16s((t7 + t3) >> 7);
+        b[i + 24] = lo16s((t8 + t4) >> 7);
+        b[i + 32] = lo16s((t8 - t4 + 1) >> 7);
+        b[i + 40] = lo16s((t7 - t3 + 1) >> 7);
+        b[i + 48] = lo16s((t6 - t2 + 1) >> 7);
+        b[i + 56] = lo16s((t5 - t1 + 1) >> 7);
     }
 }
 
@@ -409,14 +410,14 @@ pub fn inv_trans_8x4(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
         let t3 = 9 * s(1) - 16 * s(3) + 4 * s(5) + 15 * s(7);
         let t4 = 4 * s(1) - 9 * s(3) + 15 * s(5) - 16 * s(7);
         let d = &mut b[i * 8..i * 8 + 8];
-        d[0] = lo16((t5 + t1) >> 3);
-        d[1] = lo16((t6 + t2) >> 3);
-        d[2] = lo16((t7 + t3) >> 3);
-        d[3] = lo16((t8 + t4) >> 3);
-        d[4] = lo16((t8 - t4) >> 3);
-        d[5] = lo16((t7 - t3) >> 3);
-        d[6] = lo16((t6 - t2) >> 3);
-        d[7] = lo16((t5 - t1) >> 3);
+        d[0] = lo16s((t5 + t1) >> 3);
+        d[1] = lo16s((t6 + t2) >> 3);
+        d[2] = lo16s((t7 + t3) >> 3);
+        d[3] = lo16s((t8 + t4) >> 3);
+        d[4] = lo16s((t8 - t4) >> 3);
+        d[5] = lo16s((t7 - t3) >> 3);
+        d[6] = lo16s((t6 - t2) >> 3);
+        d[7] = lo16s((t5 - t1) >> 3);
     }
     for i in 0..8 {
         let s = |k: usize| i32::from(b[i + k]);
@@ -442,10 +443,10 @@ pub fn inv_trans_4x8(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
         let t3 = 22 * s(1) + 10 * s(3);
         let t4 = 22 * s(3) - 10 * s(1);
         let d = &mut b[i * 8..i * 8 + 4];
-        d[0] = lo16((t1 + t3) >> 3);
-        d[1] = lo16((t2 - t4) >> 3);
-        d[2] = lo16((t2 + t4) >> 3);
-        d[3] = lo16((t1 - t3) >> 3);
+        d[0] = lo16s((t1 + t3) >> 3);
+        d[1] = lo16s((t2 - t4) >> 3);
+        d[2] = lo16s((t2 + t4) >> 3);
+        d[3] = lo16s((t1 - t3) >> 3);
     }
     for i in 0..4 {
         let s = |k: usize| i32::from(b[i + k]);
@@ -480,10 +481,10 @@ pub fn inv_trans_4x4(dst: &mut [u8], off: usize, stride: usize, b: &mut [i16]) {
         let t3 = 22 * s(1) + 10 * s(3);
         let t4 = 22 * s(3) - 10 * s(1);
         let d = &mut b[i * 8..i * 8 + 4];
-        d[0] = lo16((t1 + t3) >> 3);
-        d[1] = lo16((t2 - t4) >> 3);
-        d[2] = lo16((t2 + t4) >> 3);
-        d[3] = lo16((t1 - t3) >> 3);
+        d[0] = lo16s((t1 + t3) >> 3);
+        d[1] = lo16s((t2 - t4) >> 3);
+        d[2] = lo16s((t2 + t4) >> 3);
+        d[3] = lo16s((t1 - t3) >> 3);
     }
     for i in 0..4 {
         let s = |k: usize| i32::from(b[i + k]);
@@ -522,10 +523,10 @@ fn h_s_overlap(blk: &mut [[[i16; 64]; 6]], l: (usize, usize, usize), r: (usize, 
         let d = i32::from(blk[r.0][r.1][ro + 1]);
         let d1 = a - d;
         let d2 = a - d + b - c;
-        blk[l.0][l.1][lo + 6] = lo16((a * 8 - d1 + rnd1) >> 3);
-        blk[l.0][l.1][lo + 7] = lo16((b * 8 - d2 + rnd2) >> 3);
-        blk[r.0][r.1][ro] = lo16((c * 8 + d2 + rnd1) >> 3);
-        blk[r.0][r.1][ro + 1] = lo16((d * 8 + d1 + rnd2) >> 3);
+        blk[l.0][l.1][lo + 6] = lo16s((a * 8 - d1 + rnd1) >> 3);
+        blk[l.0][l.1][lo + 7] = lo16s((b * 8 - d2 + rnd2) >> 3);
+        blk[r.0][r.1][ro] = lo16s((c * 8 + d2 + rnd1) >> 3);
+        blk[r.0][r.1][ro + 1] = lo16s((d * 8 + d1 + rnd2) >> 3);
         lo += ls;
         ro += rs;
         if flags & 1 != 0 {
@@ -545,10 +546,10 @@ fn v_s_overlap(blk: &mut [[[i16; 64]; 6]], tp: (usize, usize), bt: (usize, usize
         let d = i32::from(blk[bt.0][bt.1][8 + i]);
         let d1 = a - d;
         let d2 = a - d + b - c;
-        blk[tp.0][tp.1][48 + i] = lo16((a * 8 - d1 + rnd1) >> 3);
-        blk[tp.0][tp.1][56 + i] = lo16((b * 8 - d2 + rnd2) >> 3);
-        blk[bt.0][bt.1][i] = lo16((c * 8 + d2 + rnd1) >> 3);
-        blk[bt.0][bt.1][8 + i] = lo16((d * 8 + d1 + rnd2) >> 3);
+        blk[tp.0][tp.1][48 + i] = lo16s((a * 8 - d1 + rnd1) >> 3);
+        blk[tp.0][tp.1][56 + i] = lo16s((b * 8 - d2 + rnd2) >> 3);
+        blk[bt.0][bt.1][i] = lo16s((c * 8 + d2 + rnd1) >> 3);
+        blk[bt.0][bt.1][8 + i] = lo16s((d * 8 + d1 + rnd2) >> 3);
         rnd2 = 7 - rnd2;
         rnd1 = 7 - rnd1;
     }
@@ -657,7 +658,7 @@ pub(crate) fn mspel_mc_c(dst: &mut [u8], doff: usize, ds: usize, src: &[u8], so:
                 for i in 0..w {
                     let p = so - 1 + j * ss + i;
                     let v = mspel16(|k| i32::from(src[isize::cast_unsigned(usize::cast_signed(p) + k * usize::cast_signed(ss))]), vmode);
-                    tmp[j * w + i] = lo16((v + r) >> shift);
+                    tmp[j * w + i] = lo16s((v + r) >> shift);
                 }
             }
             let r = 64 - rnd;
@@ -1475,7 +1476,7 @@ impl Decoder {
             1 => CS_HIGH_MOT_INTER,
             _ => CS_MID_RATE_INTER,
         };
-        self.y_dc_scale = i32::from(t::WMV3_DC_SCALE_TABLE[ix(self.pq)]);
+        self.y_dc_scale = i32::from(t::WMV3_DC_SCALE_TABLE[us(self.pq)]);
         self.c_dc_scale = self.y_dc_scale;
         self.mb_intra = true;
         self.first_slice_line = true;
@@ -1594,7 +1595,7 @@ impl Decoder {
         let tb = tables();
         let size = t::FF_VC1_AC_SIZES[cs];
         // (i: a code index, not negative here)
-        let idx = |i: i32| (cs * 185 + ix(i)) * 2;
+        let idx = |i: i32| (cs * 185 + us(i)) * 2;
         let index = tb.ac[cs].read(r);
         if index < 0 {
             return Err(Error::Data("AC VLC"));
@@ -1615,7 +1616,7 @@ impl Decoder {
                 let mut ru = i32::from(t::VC1_INDEX_DECODE_TABLE[idx(index)]);
                 let mut le = i32::from(t::VC1_INDEX_DECODE_TABLE[idx(index) + 1]);
                 lst = index >= t::VC1_LAST_DECODE_TABLE[cs];
-                let at = |tab: &[u8], w: usize, k: i32| i32::from(tab.get(cs * w + ix(k)).copied().unwrap_or(0));
+                let at = |tab: &[u8], w: usize, k: i32| i32::from(tab.get(cs * w + us(k)).copied().unwrap_or(0));
                 if escape == 0 {
                     le += if lst { at(&t::VC1_LAST_DELTA_LEVEL_TABLE, 44, ru) } else { at(&t::VC1_DELTA_LEVEL_TABLE, 31, ru) };
                 } else {
@@ -1670,7 +1671,7 @@ impl Decoder {
         let mut c = i32::from(self.dc_val[i - 1]);
         let mut b = i32::from(self.dc_val[i - 1 - wrap]);
         let mut a = i32::from(self.dc_val[i - wrap]);
-        let edge = if self.pq < 9 || !self.overlap { DCPRED[ix(scale)] } else { 0 };
+        let edge = if self.pq < 9 || !self.overlap { DCPRED[us(scale)] } else { 0 };
         if self.first_slice_line && n != 2 && n != 3 {
             b = edge;
             a = edge;
@@ -1688,9 +1689,9 @@ impl Decoder {
         let (pred, left) = self.i_pred_dc(n);
         dcdiff += pred;
         let di = self.dci(n);
-        self.dc_val[di] = lo16(dcdiff);
+        self.dc_val[di] = lo16s(dcdiff);
         let scale = if n < 4 { self.y_dc_scale } else { self.c_dc_scale };
-        block[0] = lo16(dcdiff * scale);
+        block[0] = lo16s(dcdiff * scale);
         let ac2 = di;
         let ac = if left { di - 1 } else { di - self.wrap(n) };
         let scale = self.pq * 2 + self.halfpq;
@@ -1700,11 +1701,11 @@ impl Decoder {
             let mut i = 1usize;
             loop {
                 let (last, skip, value) = self.ac_coeff(r, cs)?;
-                i += ix(skip);
+                i += us(skip);
                 if i > 63 {
                     break;
                 }
-                block[usize::from(zz[i])] = lo16(value);
+                block[usize::from(zz[i])] = lo16s(value);
                 i += 1;
                 if last {
                     break;
@@ -1726,9 +1727,9 @@ impl Decoder {
                 if block[k] != 0 {
                     let mut v = i32::from(block[k]) * scale;
                     if !self.pquantizer {
-                        v += if (lo16(v)) < 0 { -self.pq } else { self.pq };
+                        v += if (lo16s(v)) < 0 { -self.pq } else { self.pq };
                     }
-                    block[k] = lo16(v);
+                    block[k] = lo16s(v);
                 }
             }
         } else {
@@ -1738,9 +1739,9 @@ impl Decoder {
                 let src = self.ac_val[ac];
                 self.ac_val[ac2][o..o + 8].copy_from_slice(&src[o..o + 8]);
                 for k in 1..8 {
-                    let mut v = lo16(i32::from(src[k + o]) * scale);
+                    let mut v = lo16s(i32::from(src[k + o]) * scale);
                     if !self.pquantizer && v != 0 {
-                        v = lo16(i32::from(v) + if v < 0 { -self.pq } else { self.pq });
+                        v = lo16s(i32::from(v) + if v < 0 { -self.pq } else { self.pq });
                     }
                     block[k << sh] = v;
                 }
@@ -1752,7 +1753,7 @@ impl Decoder {
     /// ff_vc1_pred_dc (P pictures' intra blocks)
     fn pred_dc(&self, n: usize, a_avail: bool, c_avail: bool) -> (i32, bool) {
         let mb_pos = self.mb_x + self.mb_y * self.mbs;
-        let dq = |q: i32| u32::from(t::WMV3_DC_SCALE_TABLE[ix(q)]);
+        let dq = |q: i32| u32::from(t::WMV3_DC_SCALE_TABLE[us(q)]);
         let q1 = self.qscale[mb_pos].abs();
         let dqi = u32::cast_signed(dq(q1)) - 1;
         if dqi < 0 {
@@ -1763,7 +1764,7 @@ impl Decoder {
         let mut c = i32::from(self.dc_val[i - 1]);
         let mut b = i32::from(self.dc_val[i - 1 - wrap]);
         let mut a = i32::from(self.dc_val[i - wrap]);
-        let scale = |v: i32, q2: i32| (u32::cast_signed((i32::cast_unsigned(v)).wrapping_mul(dq(q2)).wrapping_mul(i32::cast_unsigned(t::VC1_DQSCALE[ix(dqi)])).wrapping_add(0x20000))) >> 18;
+        let scale = |v: i32, q2: i32| (u32::cast_signed((i32::cast_unsigned(v)).wrapping_mul(dq(q2)).wrapping_mul(i32::cast_unsigned(t::VC1_DQSCALE[us(dqi)])).wrapping_add(0x20000))) >> 18;
         if c_avail && n != 1 && n != 3 {
             let q2 = self.qscale[mb_pos - 1].abs();
             if q2 != 0 && q2 != q1 {
@@ -1805,14 +1806,14 @@ impl Decoder {
         let mut use_pred = self.ac_pred;
         *block = [0; 64];
         let quant = mquant.abs().clamp(0, 31);
-        self.y_dc_scale = i32::from(t::WMV3_DC_SCALE_TABLE[ix(quant)]);
+        self.y_dc_scale = i32::from(t::WMV3_DC_SCALE_TABLE[us(quant)]);
         self.c_dc_scale = self.y_dc_scale;
         let mut dcdiff = self.dc_diff(r, n, quant);
         let (pred, mut left) = self.pred_dc(n, a_avail, c_avail);
         dcdiff += pred;
         let di = self.dci(n);
-        self.dc_val[di] = lo16(dcdiff);
-        block[0] = lo16(dcdiff * if n < 4 { self.y_dc_scale } else { self.c_dc_scale });
+        self.dc_val[di] = lo16s(dcdiff);
+        block[0] = lo16s(dcdiff * if n < 4 { self.y_dc_scale } else { self.c_dc_scale });
         if !a_avail {
             left = true;
         }
@@ -1839,16 +1840,16 @@ impl Decoder {
         let (lsh, tsh) = self.blk_sh();
         let halfpq = self.halfpq;
         let qq = |q: i32| q.abs() * 2 + if q < 0 { 0 } else { halfpq } - 1;
-        let rescale = |v: i16, q2: i32, q1: i32| u32::cast_signed((i32::cast_unsigned(i32::from(v) * q2)).wrapping_mul(i32::cast_unsigned(t::VC1_DQSCALE[ix(q1 - 1)])).wrapping_add(0x20000)) >> 18;
+        let rescale = |v: i16, q2: i32, q1: i32| u32::cast_signed((i32::cast_unsigned(i32::from(v) * q2)).wrapping_mul(i32::cast_unsigned(t::VC1_DQSCALE[us(q1 - 1)])).wrapping_add(0x20000)) >> 18;
         if coded {
             let mut i = 1usize;
             loop {
                 let (last, skip, value) = self.ac_coeff(r, cs)?;
-                i += ix(skip);
+                i += us(skip);
                 if i > 63 {
                     break;
                 }
-                block[usize::from(self.zz()[0][i])] = lo16(value);
+                block[usize::from(self.zz()[0][i])] = lo16s(value);
                 i += 1;
                 if last {
                     break;
@@ -1864,7 +1865,7 @@ impl Decoder {
                 let (sh, o) = if left { (lsh, 0) } else { (tsh, 8) };
                 for k in 1..8 {
                     let p = if q2 != 0 && q1 != q2 { rescale(src[k + o], q2, q1) } else { i32::from(src[k + o]) };
-                    block[k << sh] = lo16(i32::from(block[k << sh]) + p);
+                    block[k << sh] = lo16s(i32::from(block[k << sh]) + p);
                 }
             }
             let a2 = &mut self.ac_val[ac2];
@@ -1876,9 +1877,9 @@ impl Decoder {
                 if block[k] != 0 {
                     let mut v = i32::from(block[k]) * scale;
                     if !self.pquantizer {
-                        v += if (lo16(v)) < 0 { -quant } else { quant };
+                        v += if (lo16s(v)) < 0 { -quant } else { quant };
                     }
-                    block[k] = lo16(v);
+                    block[k] = lo16s(v);
                 }
             }
         } else {
@@ -1894,14 +1895,14 @@ impl Decoder {
                 let q2 = if q2 != 0 { qq(q2) } else { 0 };
                 if q2 != 0 && q1 != q2 {
                     for k in 1..8 {
-                        self.ac_val[ac2][k + o] = lo16(rescale(self.ac_val[ac2][k + o], q2, q1));
+                        self.ac_val[ac2][k + o] = lo16s(rescale(self.ac_val[ac2][k + o], q2, q1));
                     }
                 }
                 let sh = if left { lsh } else { tsh };
                 for k in 1..8 {
-                    let mut v = lo16(i32::from(self.ac_val[ac2][k + o]) * scale);
+                    let mut v = lo16s(i32::from(self.ac_val[ac2][k + o]) * scale);
                     if !self.pquantizer && v != 0 {
-                        v = lo16(i32::from(v) + if v < 0 { -quant } else { quant });
+                        v = lo16s(i32::from(v) + if v < 0 { -quant } else { quant });
                     }
                     block[k << sh] = v;
                 }
@@ -1923,7 +1924,7 @@ impl Decoder {
             if k < 0 {
                 return Err(Error::Data("TTBLK VLC"));
             }
-            tt = TTBLK_TO_TT[self.tt_index][ix(k)];
+            tt = TTBLK_TO_TT[self.tt_index][us(k)];
         }
         if tt == Tt::T4x4 {
             subblkpat = !(tb.subblkpat[self.tt_index].read(r) + 1);
@@ -1955,9 +1956,9 @@ impl Decoder {
         let put = |block: &mut [i16; 64], idx: usize, value: i32, pq: bool| {
             let mut v = value * scale;
             if !pq {
-                v += if (lo16(v)) < 0 { -quant } else { quant };
+                v += if (lo16s(v)) < 0 { -quant } else { quant };
             }
-            block[idx] = lo16(v);
+            block[idx] = lo16s(v);
         };
         let pquant = self.pquantizer;
         let pat;
@@ -1967,7 +1968,7 @@ impl Decoder {
                 let mut i = 0usize;
                 loop {
                     let (last, skip, value) = self.ac_coeff(r, cs)?;
-                    i += ix(skip);
+                    i += us(skip);
                     if i > 63 {
                         break;
                     }
@@ -2001,7 +2002,7 @@ impl Decoder {
                     while !last {
                         let (l, skip, value) = self.ac_coeff(r, cs)?;
                         last = l;
-                        i += ix(skip);
+                        i += us(skip);
                         if i > 15 {
                             break;
                         }
@@ -2031,7 +2032,7 @@ impl Decoder {
                     while !last {
                         let (l, skip, value) = self.ac_coeff(r, cs)?;
                         last = l;
-                        i += ix(skip);
+                        i += us(skip);
                         if i > 31 {
                             break;
                         }
@@ -2061,7 +2062,7 @@ impl Decoder {
                     while !last {
                         let (l, skip, value) = self.ac_coeff(r, cs)?;
                         last = l;
-                        i += ix(skip);
+                        i += us(skip);
                         if i > 31 {
                             break;
                         }
@@ -2159,7 +2160,7 @@ impl Decoder {
                     }
                     d
                 };
-                let index = ix(index.max(0));
+                let index = us(index.max(0));
                 let x = comp(r, index % 6);
                 let y = comp(r, index / 6);
                 (x, y, has)
@@ -2617,8 +2618,8 @@ impl Decoder {
                 }
             }
         }
-        self.motion[xy] = [lo16(self.mv[0][0]), lo16(self.mv[0][1])];
-        self.motion1[xy] = [lo16(self.mv_b[0]), lo16(self.mv_b[1])];
+        self.motion[xy] = [lo16s(self.mv[0][0]), lo16s(self.mv[0][1])];
+        self.motion1[xy] = [lo16s(self.mv_b[0]), lo16s(self.mv_b[1])];
     }
 
     /// a_avail / c_avail of an intra block
@@ -3174,7 +3175,7 @@ impl Decoder {
         let mx = ((px + dmv_x + rx) & ((rx << 1) - 1)) - rx;
         let my = ((py + dmv_y + ry) & ((ry << 1) - 1)) - ry;
         self.mv[n] = [mx, my];
-        let m = [lo16(mx), lo16(my)];
+        let m = [lo16s(mx), lo16s(my)];
         self.motion[xy] = m;
         if mv1 {
             self.motion[xy + 1] = m;
@@ -3232,9 +3233,9 @@ impl Decoder {
         let mut tmp = [0u8; 256];
         let (d, o, ds) = if avg { (&mut tmp[..], 0, n) } else { (&mut cur[..], doff, ls) };
         if mspel {
-            mspel_mc(d, o, ds, s, ss + 1, ss, n, ix(mx & 3), ix(my & 3), rnd);
+            mspel_mc(d, o, ds, s, ss + 1, ss, n, us(mx & 3), us(my & 3), rnd);
         } else {
-            let dxy = ix((my & 2) | ((mx & 2) >> 1));
+            let dxy = us((my & 2) | ((mx & 2) >> 1));
             hpel::hpel(d, o, ds, &s[ss + 1..], ss, n, n, dxy, rnd == 0);
         }
         if avg {
@@ -3275,13 +3276,13 @@ impl Decoder {
         if self.pict == Type::P {
             for i in 0..4 {
                 let k = self.mvi(i);
-                self.motion1[k] = [lo16(mx), lo16(my)];
+                self.motion1[k] = [lo16s(mx), lo16s(my)];
             }
         }
         let mut uvmx = (mx + i32::from((mx & 3) == 3)) >> 1;
         let mut uvmy = (my + i32::from((my & 3) == 3)) >> 1;
         let k = 2 * self.mbs + self.mb_x;
-        self.luma_mv[k] = [lo16(uvmx), lo16(uvmy)];
+        self.luma_mv[k] = [lo16s(uvmx), lo16s(uvmy)];
         uvmx = self.fast_uv(uvmx);
         uvmy = self.fast_uv(uvmy);
         let (bx, by) = (i32z(self.mb_x), i32z(self.mb_y));
@@ -3356,13 +3357,13 @@ impl Decoder {
                 return;
             }
         };
-        let (tx, ty) = (i32::from(lo16(tx)), i32::from(lo16(ty)));
+        let (tx, ty) = (i32::from(lo16s(tx)), i32::from(lo16s(ty)));
         let k = self.mvi(0);
-        self.motion1[k] = [lo16(tx), lo16(ty)];
+        self.motion1[k] = [lo16s(tx), lo16s(ty)];
         let mut uvmx = (tx + i32::from((tx & 3) == 3)) >> 1;
         let mut uvmy = (ty + i32::from((ty & 3) == 3)) >> 1;
         let k = 2 * self.mbs + self.mb_x;
-        self.luma_mv[k] = [lo16(uvmx), lo16(uvmy)];
+        self.luma_mv[k] = [lo16s(uvmx), lo16s(uvmy)];
         uvmx = self.fast_uv(uvmx);
         uvmy = self.fast_uv(uvmy);
         let (bx, by) = (i32z(self.mb_x), i32z(self.mb_y));
@@ -3395,7 +3396,7 @@ pub mod synth {
                     self.0.push(0);
                 }
                 let b = (v >> k) & 1;
-                *self.0.last_mut().unwrap() |= crate::num::lo8(b) << (7 - self.1 % 8);
+                *self.0.last_mut().unwrap() |= kome::num::lo8(b) << (7 - self.1 % 8);
                 self.1 += 1;
             }
         }

@@ -7,7 +7,8 @@
 //! they map to Direct3D 9 objects here (a shader's declaration to a vertex declaration, the
 //! `dcl`s Direct3D 9 needs put in its code).
 
-use crate::guest::{gc, gp, lo32, us};
+use kome::num::*;
+use crate::guest::{gc, gp};
 use super::device;
 use super::format as fmt;
 use super::*;

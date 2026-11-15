@@ -14,7 +14,7 @@
 //! Nothing here trusts the file: lengths are checked, a damaged packet gives what it holds up
 //! to the damage, and objects never grow past their stated size (fuzz/fuzz_targets/asf.rs).
 
-use kome::num::us;
+use kome::num::*;
 use std::collections::{HashMap, VecDeque};
 
 pub type Guid = [u8; 16];

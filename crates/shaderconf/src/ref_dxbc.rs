@@ -184,12 +184,12 @@ fn tokens(code: &[u8]) -> Result<Vec<u32>, String> {
     if code.get(..4) != Some(b"DXBC") {
         return Err("not DXBC".into());
     }
-    let n = crate::us(rd(code, 28)?);
+    let n = kome::num::us(rd(code, 28)?);
     for i in 0..n {
-        let at = crate::us(rd(code, 32 + 4 * i)?);
+        let at = kome::num::us(rd(code, 32 + 4 * i)?);
         let tag = code.get(at..at + 4).ok_or("short")?;
         if tag == b"SHDR" || tag == b"SHEX" {
-            let size = crate::us(rd(code, at + 4)?);
+            let size = kome::num::us(rd(code, at + 4)?);
             let body = code.get(at + 8..at + 8 + size).ok_or("short chunk")?;
             return Ok(body.chunks_exact(4).map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect());
         }
@@ -211,12 +211,12 @@ fn operand(t: &[u32], at: &mut usize) -> Result<Op, String> {
             op.mask = 1;
         }
         2 => match (w >> 2) & 3 {
-            0 => op.mask = crate::lo8((w >> 4) & 0xf),
+            0 => op.mask = kome::num::lo8((w >> 4) & 0xf),
             1 => {
-                op.swz = std::array::from_fn(|i| crate::lo8((w >> (4 + 2 * i)) & 3));
+                op.swz = std::array::from_fn(|i| kome::num::lo8((w >> (4 + 2 * i)) & 3));
             }
             2 => {
-                let c = crate::lo8((w >> 4) & 3);
+                let c = kome::num::lo8((w >> 4) & 3);
                 op.swz = [c; 4];
                 op.mask = 1 << c;
             }
@@ -229,7 +229,7 @@ fn operand(t: &[u32], at: &mut usize) -> Result<Op, String> {
         let e = *t.get(*at).ok_or("short")?;
         *at += 1;
         if e & 0x3f == 1 {
-            op.md = crate::lo8((e >> 6) & 0xff);
+            op.md = kome::num::lo8((e >> 6) & 0xff);
         }
         ext = e >> 31 != 0;
     }
@@ -271,13 +271,13 @@ pub fn parse(code: &[u8]) -> Result<Program, String> {
     if (t[0] >> 16) & 0xffff != 0 {
         return Err("not a pixel shader".into());
     }
-    let end = crate::us(t[1]).min(t.len());
+    let end = kome::num::us(t[1]).min(t.len());
     let mut p = Program { insts: Vec::new(), temps: 0, xs: Vec::new(), icb: Vec::new(), jump: Vec::new() };
     let mut at = 2;
     while at < end {
         let w = t[at];
         let op = w & 0x7ff;
-        let len = if op == 0x35 { crate::us(*t.get(at + 1).ok_or("short")?) } else { crate::us((w >> 24) & 0x7f) };
+        let len = if op == 0x35 { kome::num::us(*t.get(at + 1).ok_or("short")?) } else { kome::num::us((w >> 24) & 0x7f) };
         if len == 0 || at + len > end {
             return Err(format!("instruction {op:#x}: length {len}"));
         }
@@ -290,7 +290,7 @@ pub fn parse(code: &[u8]) -> Result<Program, String> {
                 }
             }
             // dcl_temps, dcl_indexableTemp
-            0x68 => p.temps = crate::us(*body.get(1).ok_or("short")?),
+            0x68 => p.temps = kome::num::us(*body.get(1).ok_or("short")?),
             0x69 => p.xs.push((*body.get(1).ok_or("short")?, *body.get(2).ok_or("short")?)),
             0x58..=0x6a | 0x8f..=0xa2 => {}
             _ => {
@@ -397,10 +397,10 @@ fn fmax(a: f32, c: f32) -> f32 {
 
 /// ftoi: NaN 0, out of range saturates.
 fn ftoi(x: f32) -> u32 {
-    if x.is_nan() { 0 } else { (dxwgsl::num::trunc_i32(x)).cast_unsigned() }
+    if x.is_nan() { 0 } else { (kome::num::trunc_i32(x)).cast_unsigned() }
 }
 fn ftou(x: f32) -> u32 {
-    if x.is_nan() { 0 } else { dxwgsl::num::trunc_u32(x) }
+    if x.is_nan() { 0 } else { kome::num::trunc_u32(x) }
 }
 
 /// f32 -> f16 bits as WARP converts (dxwgsl's d3d_f32tof16): toward zero, finite overflow to
@@ -419,7 +419,7 @@ fn f32tof16(x: f32) -> u32 {
     } else if a < 0x0080_0000 {
         s
     } else {
-        s | dxwgsl::num::trunc_u32(f32::from_bits(a) * 16777216.0)
+        s | kome::num::trunc_u32(f32::from_bits(a) * 16777216.0)
     }
 }
 
@@ -457,20 +457,20 @@ impl Run<'_> {
     fn reg(&self, o: &Op) -> Result<V, String> {
         let i0 = o.idx.first().map(|i| self.index(i)).transpose()?.unwrap_or(0);
         Ok(match o.ty {
-            0 => *self.r.get(crate::us(i0)).ok_or("temp out of range")?,
-            2 => self.o[crate::us(i0) & 7],
+            0 => *self.r.get(kome::num::us(i0)).ok_or("temp out of range")?,
+            2 => self.o[kome::num::us(i0) & 7],
             3 => {
                 let i1 = self.index(o.idx.get(1).ok_or("x# without index")?)?;
                 let x = &self.x.iter().find(|x| x.0 == i0).ok_or("undeclared x#")?.1;
                 // (out of range: 0, as reads of a register past the end)
-                x.get(crate::us(i1)).copied().unwrap_or_else(|| self.taint("x# read out of range"))
+                x.get(kome::num::us(i1)).copied().unwrap_or_else(|| self.taint("x# read out of range"))
             }
             4 => o.imm,
             8 => {
                 let i1 = self.index(o.idx.get(1).ok_or("cb without index")?)?;
-                self.cb.get(crate::us(i0)).and_then(|c| c.get(crate::us(i1))).copied().unwrap_or_else(|| self.taint("cb read out of range"))
+                self.cb.get(kome::num::us(i0)).and_then(|c| c.get(kome::num::us(i1))).copied().unwrap_or_else(|| self.taint("cb read out of range"))
             }
-            9 => self.p.icb.get(crate::us(i0)).copied().unwrap_or_else(|| self.taint("icb read out of range")),
+            9 => self.p.icb.get(kome::num::us(i0)).copied().unwrap_or_else(|| self.taint("icb read out of range")),
             t => return Err(format!("source register type {t}")),
         })
     }
@@ -492,14 +492,14 @@ impl Run<'_> {
         if o.ty == 13 {
             return Ok(());
         }
-        let i0 = crate::us(o.idx.first().map(|i| self.index(i)).transpose()?.unwrap_or(0));
+        let i0 = kome::num::us(o.idx.first().map(|i| self.index(i)).transpose()?.unwrap_or(0));
         let i1 = o.idx.get(1).map(|i| self.index(i)).transpose()?;
         let slot: &mut V = match o.ty {
             0 => self.r.get_mut(i0).ok_or("temp out of range")?,
             2 => self.o.get_mut(i0).ok_or("output out of range")?,
             3 => {
-                let x = &mut self.x.iter_mut().find(|x| x.0 == crate::u32_of(i0)).ok_or("undeclared x#")?.1;
-                match x.get_mut(crate::us(i1.unwrap_or(0))) {
+                let x = &mut self.x.iter_mut().find(|x| x.0 == kome::num::u32_of(i0)).ok_or("undeclared x#")?.1;
+                match x.get_mut(kome::num::us(i1.unwrap_or(0))) {
                     Some(s) => s,
                     // (writes past the end are dropped)
                     None => {
@@ -586,7 +586,7 @@ impl Run<'_> {
                 }
                 Code::Div => self.cw(i, F, |a| b(f(a[0]) / f(a[1])))?,
                 Code::Dp2 | Code::Dp3 | Code::Dp4 => {
-                    let n = crate::us(i.op.code() - 0x0d);
+                    let n = kome::num::us(i.op.code() - 0x0d);
                     let a = self.src(&i.ops[1], F)?;
                     let c = self.src(&i.ops[2], F)?;
                     if a[..n].iter().chain(&c[..n]).any(|&x| f(x).is_subnormal()) {
@@ -621,8 +621,8 @@ impl Run<'_> {
                 Code::Frc => self.cw(i, F, |a| b(if f(a[0]).is_finite() { (f(a[0]) - f(a[0]).floor()).min(f32::from_bits(0x3f7f_ffff)) } else { f32::NAN }))?,
                 Code::Ftoi => self.cw(i, F, |a| ftoi(f(a[0])))?,
                 Code::Ftou => self.cw(i, F, |a| ftou(f(a[0])))?,
-                Code::Itof => self.cw(i, I, |a| b(dxwgsl::num::to_f32(a[0].cast_signed())))?,
-                Code::Utof => self.cw(i, U, |a| b(dxwgsl::num::to_f32(a[0])))?,
+                Code::Itof => self.cw(i, I, |a| b(kome::num::to_f32(a[0].cast_signed())))?,
+                Code::Utof => self.cw(i, U, |a| b(kome::num::to_f32(a[0])))?,
                 Code::Iadd => self.cw(i, I, |a| a[0].wrapping_add(a[1]))?,
                 Code::If => {
                     if !self.cond(i)? {
@@ -645,8 +645,8 @@ impl Run<'_> {
                     let wide: [u64; 4] = std::array::from_fn(|n| {
                         if k == I { (i64::from(a[n].cast_signed()) * i64::from(c[n].cast_signed())).cast_unsigned() } else { u64::from(a[n]) * u64::from(c[n]) }
                     });
-                    self.dst(&i.ops[0], wide.map(|x| crate::lo32(x >> 32)), false)?;
-                    self.dst(&i.ops[1], wide.map(|x| crate::lo32(x)), false)?;
+                    self.dst(&i.ops[0], wide.map(|x| kome::num::lo32(x >> 32)), false)?;
+                    self.dst(&i.ops[1], wide.map(|x| kome::num::lo32(x)), false)?;
                 }
                 Code::Udiv => {
                     let a = self.src(&i.ops[2], U)?;
@@ -744,7 +744,7 @@ impl Run<'_> {
                 }
                 Code::Rcp => self.cw(i, F, |a| b(1.0 / f(a[0])))?,
                 Code::F32ToF16 => self.cw(i, F, |a| f32tof16(f(a[0])))?,
-                Code::F16ToF32 => self.cw(i, U, |a| b(half::f16::from_bits(crate::lo16(a[0])).to_f32()))?,
+                Code::F16ToF32 => self.cw(i, U, |a| b(half::f16::from_bits(kome::num::lo16(a[0])).to_f32()))?,
                 Code::CountBits => self.cw(i, U, |a| a[0].count_ones())?,
                 Code::FirstBitHi => self.cw(i, U, |a| if a[0] == 0 { !0 } else { a[0].leading_zeros() })?,
                 Code::FirstBitLo => self.cw(i, U, |a| if a[0] == 0 { !0 } else { a[0].trailing_zeros() })?,
@@ -767,7 +767,7 @@ impl Run<'_> {
                 })?,
                 Code::Bfi => self.cw(i, U, |a| {
                     let (w, o, x, y) = (a[0] & 31, a[1] & 31, a[2], a[3]);
-                    let m = crate::lo32((1u64 << w) - 1);
+                    let m = kome::num::lo32((1u64 << w) - 1);
                     let m = m.wrapping_shl(o);
                     (x.wrapping_shl(o) & m) | (y & !m)
                 })?,
@@ -794,7 +794,7 @@ pub fn run(p: &Program, cb: &[Vec<V>]) -> Result<([V; 8], Option<String>), Strin
         let mut r = Run {
             p,
             r: vec![[0; 4]; p.temps],
-            x: p.xs.iter().map(|&(n, s)| (n, vec![[0; 4]; crate::us(s)])).collect(),
+            x: p.xs.iter().map(|&(n, s)| (n, vec![[0; 4]; kome::num::us(s)])).collect(),
             o: [[0; 4]; 8],
             cb,
             taint: Default::default(),

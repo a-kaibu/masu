@@ -1,6 +1,6 @@
 //! BMI1 and BMI2 (VEX-encoded general register instructions; TZCNT/LZCNT are in mod.rs).
 
-use crate::cvt::{lo32, lo64};
+use kome::num::*;
 use super::X;
 use crate::flags::{self, CF, SF, ZF};
 use crate::{Exit, Memory};

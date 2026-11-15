@@ -2,7 +2,7 @@
 //! simple_idct.c's 8x4 / 4x8 and wmv2dsp.c), bit for bit, in wrapping 32-bit arithmetic as C
 //! does it. Blocks are 8x8 coefficients in raster order; `put` writes, `add` adds to `dst`.
 
-use crate::num::{lo16, lo8};
+use kome::num::*;
 
 #[inline]
 fn clip(v: i32) -> u8 {
@@ -21,7 +21,7 @@ const COL_SHIFT: u32 = 20;
 
 fn row_cond_dc(row: &mut [i16]) {
     if row[1..8].iter().all(|&x| x == 0) {
-        let t = lo16(i32::from(row[0]).wrapping_mul(8));
+        let t = lo16s(i32::from(row[0]).wrapping_mul(8));
         row[..8].fill(t);
         return;
     }
@@ -49,14 +49,14 @@ fn row_cond_dc(row: &mut [i16]) {
         b3 = b3.wrapping_add(W3.wrapping_mul(r(5))).wrapping_sub(W1.wrapping_mul(r(7)));
     }
     let s = ROW_SHIFT;
-    row[0] = lo16(a0.wrapping_add(b0) >> s);
-    row[7] = lo16(a0.wrapping_sub(b0) >> s);
-    row[1] = lo16(a1.wrapping_add(b1) >> s);
-    row[6] = lo16(a1.wrapping_sub(b1) >> s);
-    row[2] = lo16(a2.wrapping_add(b2) >> s);
-    row[5] = lo16(a2.wrapping_sub(b2) >> s);
-    row[3] = lo16(a3.wrapping_add(b3) >> s);
-    row[4] = lo16(a3.wrapping_sub(b3) >> s);
+    row[0] = lo16s(a0.wrapping_add(b0) >> s);
+    row[7] = lo16s(a0.wrapping_sub(b0) >> s);
+    row[1] = lo16s(a1.wrapping_add(b1) >> s);
+    row[6] = lo16s(a1.wrapping_sub(b1) >> s);
+    row[2] = lo16s(a2.wrapping_add(b2) >> s);
+    row[5] = lo16s(a2.wrapping_sub(b2) >> s);
+    row[3] = lo16s(a3.wrapping_add(b3) >> s);
+    row[4] = lo16s(a3.wrapping_sub(b3) >> s);
 }
 
 /// One column (`b` from its top coefficient, stride 8): the 8 outputs, top to bottom.
@@ -130,7 +130,7 @@ pub fn simple_inplace(b: &mut [i16; 64]) {
     }
     for c in 0..8 {
         for (k, v) in col(b, c).into_iter().enumerate() {
-            b[k * 8 + c] = lo16(v);
+            b[k * 8 + c] = lo16s(v);
         }
     }
 }
@@ -178,10 +178,10 @@ fn idct4row(row: &mut [i16]) {
     let c1 = a1.wrapping_mul(R1).wrapping_add(a3.wrapping_mul(R2));
     let c3 = a1.wrapping_mul(R2).wrapping_sub(a3.wrapping_mul(R1));
     // (unsigned shifts in C: the same low 16 bits)
-    row[0] = lo16(c0.wrapping_add(c1) >> R_SHIFT);
-    row[1] = lo16(c2.wrapping_add(c3) >> R_SHIFT);
-    row[2] = lo16(c2.wrapping_sub(c3) >> R_SHIFT);
-    row[3] = lo16(c0.wrapping_sub(c1) >> R_SHIFT);
+    row[0] = lo16s(c0.wrapping_add(c1) >> R_SHIFT);
+    row[1] = lo16s(c2.wrapping_add(c3) >> R_SHIFT);
+    row[2] = lo16s(c2.wrapping_sub(c3) >> R_SHIFT);
+    row[3] = lo16s(c0.wrapping_sub(c1) >> R_SHIFT);
 }
 
 /// ff_simple_idct84_add: 8 wide, 4 high (the first 4 rows of `b`).
@@ -237,14 +237,14 @@ fn wmv2_row(b: &mut [i16]) {
     let a4 = V0 * r(0) - V0 * r(4);
     let s1 = 181i32.wrapping_mul(a1 - a5 + a7 - a3).wrapping_add(128) >> 8;
     let s2 = 181i32.wrapping_mul(a1 - a5 - a7 + a3).wrapping_add(128) >> 8;
-    b[0] = lo16((a0 + a2 + a1 + a5 + (1 << 7)) >> 8);
-    b[1] = lo16((a4 + a6 + s1 + (1 << 7)) >> 8);
-    b[2] = lo16((a4 - a6 + s2 + (1 << 7)) >> 8);
-    b[3] = lo16((a0 - a2 + a7 + a3 + (1 << 7)) >> 8);
-    b[4] = lo16((a0 - a2 - a7 - a3 + (1 << 7)) >> 8);
-    b[5] = lo16((a4 - a6 - s2 + (1 << 7)) >> 8);
-    b[6] = lo16((a4 + a6 - s1 + (1 << 7)) >> 8);
-    b[7] = lo16((a0 + a2 - a1 - a5 + (1 << 7)) >> 8);
+    b[0] = lo16s((a0 + a2 + a1 + a5 + (1 << 7)) >> 8);
+    b[1] = lo16s((a4 + a6 + s1 + (1 << 7)) >> 8);
+    b[2] = lo16s((a4 - a6 + s2 + (1 << 7)) >> 8);
+    b[3] = lo16s((a0 - a2 + a7 + a3 + (1 << 7)) >> 8);
+    b[4] = lo16s((a0 - a2 - a7 - a3 + (1 << 7)) >> 8);
+    b[5] = lo16s((a4 - a6 - s2 + (1 << 7)) >> 8);
+    b[6] = lo16s((a4 + a6 - s1 + (1 << 7)) >> 8);
+    b[7] = lo16s((a0 + a2 - a1 - a5 + (1 << 7)) >> 8);
 }
 
 fn wmv2_col(b: &mut [i16], c: usize) {
@@ -270,7 +270,7 @@ fn wmv2_col(b: &mut [i16], c: usize) {
         a0 + a2 - a1 - a5,
     ];
     for (k, v) in out.into_iter().enumerate() {
-        b[c + 8 * k] = lo16((v + (1 << 13)) >> 14);
+        b[c + 8 * k] = lo16s((v + (1 << 13)) >> 14);
     }
 }
 

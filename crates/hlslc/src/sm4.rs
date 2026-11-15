@@ -561,14 +561,14 @@ impl Enc<'_> {
     /// `sel`: 0 mask, 1 swizzle, 2 select-1; `num` component count code (0 = none, 1 = one, 2 = four)
     fn reg(&self, out: &mut Vec<u32>, r: &Reg, num: u32, sel: u32, bits: u32, modifier: u32) -> Result<(), String> {
         let (ty, idx) = self.reg_parts(r)?;
-        let mut t = num | ty_bits(ty) | (crate::u32_of(idx.len()) << 20);
+        let mut t = num | ty_bits(ty) | (kome::num::u32_of(idx.len()) << 20);
         if num == 2 {
             t |= (sel << 2) | (bits << 4);
         }
         let rel_at = idx.len().wrapping_sub(1);
         if r.rel.is_some() {
             // last index: immediate + relative
-            t |= 3 << (22 + 3 * crate::u32_of(rel_at));
+            t |= 3 << (22 + 3 * kome::num::u32_of(rel_at));
         }
         if modifier != 0 {
             t |= 1 << 31;
@@ -667,7 +667,7 @@ impl Enc<'_> {
         for s in &i.src {
             self.src(out, s)?;
         }
-        let len = crate::u32_of(out.len() - at);
+        let len = kome::num::u32_of(out.len() - at);
         out[at] = i.op.code() | (i.ctl << 11) | (u32::from(i.sat) << 13) | (u32::from(i.nz) << 18) | (len << 24) | (u32::from(ext) << 31);
         Ok(())
     }
@@ -676,11 +676,11 @@ impl Enc<'_> {
 /// The slot a symbol was bound to (lower.rs binds every symbol an instruction names; an
 /// unbound one is an error, not a panic)
 fn bound<T>(map: &[Option<usize>], v: &[T], sym: u32, slot: impl Fn(&T) -> u32, what: &str) -> Result<u32, String> {
-    map.get(crate::us(sym)).copied().flatten().and_then(|k| v.get(k)).map(slot).ok_or_else(|| format!("an unbound {what} (symbol {sym})"))
+    map.get(kome::num::us(sym)).copied().flatten().and_then(|k| v.get(k)).map(slot).ok_or_else(|| format!("an unbound {what} (symbol {sym})"))
 }
 
 fn decl(out: &mut Vec<u32>, op: Opcode, ctl: u32, body: &[u32]) {
-    out.push(op.code() | (ctl << 11) | (crate::u32_of(body.len() + 1) << 24));
+    out.push(op.code() | (ctl << 11) | (kome::num::u32_of(body.len() + 1) << 24));
     out.extend_from_slice(body);
 }
 
@@ -695,7 +695,7 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
     decl(&mut w, Opcode::DclGlobalFlags, 1 | (u32::from(s.early_depth) << 2), &[]);
     if !s.icb.is_empty() {
         w.push(0x35 | (3 << 11));
-        w.push(2 + 4 * crate::u32_of(s.icb.len()));
+        w.push(2 + 4 * kome::num::u32_of(s.icb.len()));
         for v in &s.icb {
             w.extend_from_slice(v);
         }
@@ -718,7 +718,7 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
         decl(&mut w, Opcode::DclUavTyped, u.dim, &[ty_bits(tpf::UAV) | (1 << 20), u.slot, ret]);
     }
     for (g, &bytes) in s.tgsm.iter().enumerate() {
-        decl(&mut w, Opcode::DclTgsmRaw, 0, &[ty_bits(tpf::TGSM) | (1 << 20), crate::u32_of(g), bytes]);
+        decl(&mut w, Opcode::DclTgsmRaw, 0, &[ty_bits(tpf::TGSM) | (1 << 20), kome::num::u32_of(g), bytes]);
     }
     for &(ty, mask) in &s.sys_inputs {
         // (vThreadIDInGroupFlattened is one component)
@@ -756,7 +756,7 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
         decl(&mut w, Opcode::DclTemps, 0, &[temps]);
     }
     for (n, &size) in s.xs.iter().enumerate() {
-        decl(&mut w, Opcode::DclIndexableTemp, 0, &[crate::u32_of(n), size, 4]);
+        decl(&mut w, Opcode::DclIndexableTemp, 0, &[kome::num::u32_of(n), size, 4]);
     }
     if let Some([x, y, z]) = s.threads {
         decl(&mut w, Opcode::DclThreadGroup, 0, &[x, y, z]);
@@ -764,12 +764,12 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
     for i in &s.code {
         e.ins(&mut w, i)?;
     }
-    w[1] = crate::u32_of(w.len());
+    w[1] = kome::num::u32_of(w.len());
     Ok(w)
 }
 
 fn put_str(b: &mut Vec<u8>, s: &str) -> u32 {
-    let at = crate::u32_of(b.len());
+    let at = kome::num::u32_of(b.len());
     b.extend_from_slice(s.as_bytes());
     b.push(0);
     at
@@ -785,12 +785,12 @@ fn set32(b: &mut [u8], at: usize, v: u32) {
 
 fn signature(els: &[SigEl], used_out: bool, d3d10: bool) -> Vec<u8> {
     let mut b = Vec::new();
-    w32(&mut b, crate::u32_of(els.len()));
+    w32(&mut b, kome::num::u32_of(els.len()));
     w32(&mut b, 8);
     let names_at = 8 + 24 * els.len();
     let mut names = Vec::new();
     for e in els {
-        let off = crate::u32_of(names_at) + crate::u32_of(names.len());
+        let off = kome::num::u32_of(names_at) + kome::num::u32_of(names.len());
         put_str(&mut names, &e.name);
         w32(&mut b, off);
         w32(&mut b, e.index);
@@ -821,7 +821,7 @@ fn rdef_type(b: &mut Vec<u8>, v: &CbVar, sm5: bool, d3d10: bool, fix_names: &mut
     b.resize(ta + if sm5 { 36 } else { 16 }, 0);
     if !v.members.is_empty() {
         let ma = b.len();
-        set32(b, ta + 12, crate::u32_of(ma));
+        set32(b, ta + 12, kome::num::u32_of(ma));
         b.resize(ma + 12 * v.members.len(), 0);
         for (i, m) in v.members.iter().enumerate() {
             let at = ma + 12 * i;
@@ -831,14 +831,14 @@ fn rdef_type(b: &mut Vec<u8>, v: &CbVar, sm5: bool, d3d10: bool, fix_names: &mut
             set32(b, at + 8, m.offset);
         }
     }
-    crate::u32_of(ta)
+    kome::num::u32_of(ta)
 }
 
 fn rdef(s: &Shader) -> Vec<u8> {
     let sm5 = s.major >= 5;
     let header = if sm5 { 60 } else { 28 };
     let mut b = vec![0u8; header];
-    let ncb = crate::u32_of(s.cbs.len());
+    let ncb = kome::num::u32_of(s.cbs.len());
     // bound resources: samplers, textures, cbuffers
     let mut binds: Vec<(String, u32, u32, u32, u32, u32)> = Vec::new(); // name, type, ret, dim, slot, flags
     for sm in &s.samps {
@@ -895,9 +895,9 @@ fn rdef(s: &Shader) -> Vec<u8> {
     for (n, cb) in s.cbs.iter().enumerate() {
         let at = cb_at + 24 * n;
         fix_names.push((at, cb.name.clone()));
-        set32(&mut b, at + 4, crate::u32_of(cb.vars.len()));
+        set32(&mut b, at + 4, kome::num::u32_of(cb.vars.len()));
         let vars_at = b.len();
-        set32(&mut b, at + 8, crate::u32_of(vars_at));
+        set32(&mut b, at + 8, kome::num::u32_of(vars_at));
         set32(&mut b, at + 12, cb.size * 16);
         b.resize(vars_at + var_size * cb.vars.len(), 0);
         for (k, v) in cb.vars.iter().enumerate() {
@@ -922,9 +922,9 @@ fn rdef(s: &Shader) -> Vec<u8> {
     }
     let creator = put_str(&mut b, "sake HLSL compiler");
     set32(&mut b, 0, ncb);
-    set32(&mut b, 4, crate::u32_of(cb_at));
-    set32(&mut b, 8, crate::u32_of(binds.len()));
-    set32(&mut b, 12, crate::u32_of(bind_at));
+    set32(&mut b, 4, kome::num::u32_of(cb_at));
+    set32(&mut b, 8, kome::num::u32_of(binds.len()));
+    set32(&mut b, 12, kome::num::u32_of(bind_at));
     let kind = if s.threads.is_some() { 0x4353 } else if s.pixel { 0xffff } else { 0xfffe };
     set32(&mut b, 16, (kind << 16) | (s.major << 8) | s.minor);
     set32(&mut b, 20, 0x100);
@@ -960,18 +960,18 @@ pub fn container(chunks: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
     b.extend_from_slice(&[0; 16]);
     w32(&mut b, 1);
     w32(&mut b, 0);
-    w32(&mut b, crate::u32_of(chunks.len()));
+    w32(&mut b, kome::num::u32_of(chunks.len()));
     let mut off = 32 + 4 * chunks.len();
     for (_, c) in chunks {
-        w32(&mut b, crate::u32_of(off));
+        w32(&mut b, kome::num::u32_of(off));
         off += 8 + c.len();
     }
     for (t, c) in chunks {
         b.extend_from_slice(t);
-        w32(&mut b, crate::u32_of(c.len()));
+        w32(&mut b, kome::num::u32_of(c.len()));
         b.extend_from_slice(c);
     }
-    let n = crate::u32_of(b.len());
+    let n = kome::num::u32_of(b.len());
     set32(&mut b, 24, n);
     let h = checksum(&b[20..]);
     b[4..20].copy_from_slice(&h);
@@ -1028,7 +1028,7 @@ pub fn checksum(data: &[u8]) -> [u8; 16] {
         md5_block(&mut st, blk);
     }
     let rest = &data[full..];
-    let bits = crate::u32_of(len).wrapping_mul(8);
+    let bits = kome::num::u32_of(len).wrapping_mul(8);
     let mut last = [0u8; 64];
     if rest.len() >= 56 {
         last[..rest.len()].copy_from_slice(rest);

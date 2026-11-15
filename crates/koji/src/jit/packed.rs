@@ -2,7 +2,7 @@
 //! (loaded with v128.load64_zero, stored as its low i64): lane-wise operations give the same
 //! low half either way; packs, unpacks and shuffles pick their lanes for the 8-byte width.
 
-use crate::cvt::{lo8, lo32, us};
+use kome::num::*;
 use super::{rounding, Flags, Gen, Off, L_CPU, L_F0, L_MMX, L_OP, L_V0, L_V1, STATUS_BITS};
 use iced_x86::{Instruction, Mnemonic, OpKind, Register};
 

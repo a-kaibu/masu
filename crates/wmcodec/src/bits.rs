@@ -1,7 +1,7 @@
 //! Bit reading, most significant bit first (FFmpeg's GetBitContext). Reads past the end give
 //! zeros (FFmpeg pads its buffers with zeros); `left` says how far a reader went.
 
-use crate::num::{lo32, us};
+use kome::num::*;
 
 #[derive(Clone)]
 pub struct Bits<'a> {
@@ -83,7 +83,7 @@ impl<'a> Bits<'a> {
     #[inline]
     pub fn u8<const N: u32>(&mut self) -> u8 {
         const { assert!(N <= 8) };
-        crate::num::lo8(self.get(N))
+        kome::num::lo8(self.get(N))
     }
     /// One bit, set or not.
     #[inline]

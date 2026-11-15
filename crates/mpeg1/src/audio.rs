@@ -97,7 +97,7 @@ pub fn header(d: &[u8]) -> Option<Header> {
         Mode::Stereo | Mode::DualChannel => 32,
     };
     let rate = SAMPLE_RATE[rate_index];
-    let size = crate::bits::us(144000 * BIT_RATE[bitrate_index] / rate) + padding;
+    let size = kome::num::us(144000 * BIT_RATE[bitrate_index] / rate) + padding;
     Some(Header { rate, size, bitrate_index, rate_index, mode, bound, crc })
 }
 
@@ -218,7 +218,7 @@ impl Audio {
         let bound = h.bound.min(sblimit);
         let read_allocation = |b: &mut Bits, sb: usize| -> u8 {
             let tab4 = QUANT_LUT_STEP_3[tab3][sb];
-            QUANT_LUT_STEP_4[usize::from(tab4 & 15)][crate::bits::us(b.read(u32::from(tab4 >> 4)))]
+            QUANT_LUT_STEP_4[usize::from(tab4 & 15)][kome::num::us(b.read(u32::from(tab4 >> 4)))]
         };
         for sb in 0..bound {
             self.allocation[0][sb] = read_allocation(&mut b, sb);
@@ -338,7 +338,7 @@ impl Audio {
             sf = 0;
         } else {
             let shift = sf / 3;
-            sf = (SCALEFACTOR_BASE[crate::bits::us((sf % 3).cast_unsigned())] + ((1 << shift) >> 1)) >> shift;
+            sf = (SCALEFACTOR_BASE[kome::num::us((sf % 3).cast_unsigned())] + ((1 << shift) >> 1)) >> shift;
         }
         let mut adj = i32::from(levels);
         if group {

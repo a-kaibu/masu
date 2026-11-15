@@ -13,10 +13,11 @@
 
 #![allow(non_snake_case, clippy::missing_safety_doc, clippy::too_many_arguments)]
 
-use crate::guest::{lo32, us};
+
+use kome::num::*;
 use crate::d3d9::gpu;
 use crate::render::d3d::{BlendOp, Compare, Factor, StencilOp};
-use crate::locks::Lock;
+use kome::locks::Lock;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{c_char, c_void, CStr};

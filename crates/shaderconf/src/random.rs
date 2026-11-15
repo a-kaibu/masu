@@ -22,11 +22,11 @@ impl Rng {
     }
     /// one of `xs` (None only for an empty list)
     fn pick<T, const N: usize>(&mut self, xs: [T; N]) -> Option<T> {
-        let k = crate::usize_of(self.below(crate::u64_of(N)));
+        let k = kome::num::to_usize(self.below(kome::num::u64_of(N)));
         xs.into_iter().nth(k)
     }
     fn int(&mut self, lo: i64, hi: i64) -> f64 {
-        dxwgsl::num::to_f64(lo + self.below((hi - lo + 1).cast_unsigned()).cast_signed())
+        kome::num::to_f64(lo + self.below((hi - lo + 1).cast_unsigned()).cast_signed())
     }
 }
 
@@ -116,8 +116,8 @@ const LIMIT: f64 = 4_194_304.0; // 2^22
 fn expr(r: &mut Rng, depth: u32) -> E {
     if depth == 0 || r.below(4) == 0 {
         return match r.below(3) {
-            0 => E::In(crate::usize_of(r.below(3))),
-            1 => E::Var(crate::usize_of(r.below(crate::u64_of(VARS)))),
+            0 => E::In(kome::num::to_usize(r.below(3))),
+            1 => E::Var(kome::num::to_usize(r.below(kome::num::u64_of(VARS)))),
             _ => E::Const([r.int(-8, 8), r.int(-8, 8), r.int(-8, 8), r.int(-8, 8)]),
         };
     }
@@ -150,9 +150,9 @@ fn expr(r: &mut Rng, depth: u32) -> E {
 fn stmts(r: &mut Rng, depth: u32, n: u32, dynamic: bool) -> Vec<S> {
     (0..n)
         .map(|_| match if depth == 0 { r.below(4) } else { r.below(7) } {
-            0 => S::Set(crate::usize_of(r.below(crate::u64_of(VARS))), expr(r, 3)),
-            1 => S::Add(crate::usize_of(r.below(crate::u64_of(VARS))), expr(r, 2)),
-            2 => S::Mask(crate::usize_of(r.below(crate::u64_of(VARS))), loop {
+            0 => S::Set(kome::num::to_usize(r.below(kome::num::u64_of(VARS))), expr(r, 3)),
+            1 => S::Add(kome::num::to_usize(r.below(kome::num::u64_of(VARS))), expr(r, 2)),
+            2 => S::Mask(kome::num::to_usize(r.below(kome::num::u64_of(VARS))), loop {
                 let m = [r.below(2) == 0, r.below(2) == 0, r.below(2) == 0, r.below(2) == 0];
                 if m.iter().any(|&b| b) {
                     break m;
@@ -161,7 +161,7 @@ fn stmts(r: &mut Rng, depth: u32, n: u32, dynamic: bool) -> Vec<S> {
             3 => S::ArrSet(expr(r, 1), expr(r, 2)),
             4 => S::If(expr(r, 2), expr(r, 2), stmts(r, depth - 1, 2, dynamic), stmts(r, depth - 1, 1, dynamic)),
             5 if dynamic => S::Dyn(expr(r, 1), stmts(r, depth - 1, 2, dynamic)),
-            _ => S::For(1 + crate::lo32(r.below(3)), stmts(r, depth - 1, 2, dynamic)),
+            _ => S::For(1 + kome::num::lo32(r.below(3)), stmts(r, depth - 1, 2, dynamic)),
         })
         .collect()
 }
@@ -177,7 +177,7 @@ struct Ev<'a> {
 
 /// An array index or loop count from a value: its x clamped to 0..3
 fn index(v: V) -> usize {
-    dxwgsl::num::trunc_usize(v[0].clamp(0.0, 3.0))
+    kome::num::trunc_usize(v[0].clamp(0.0, 3.0))
 }
 
 impl Ev<'_> {
@@ -386,13 +386,13 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>, n: u32, seed: u64, d
         // they go to DXBC and GLSL only)
         let dynamic = made % 2 == 1;
         let prog = stmts(&mut r, depth, count, dynamic);
-        let result = crate::usize_of(r.below(crate::u64_of(VARS)));
+        let result = kome::num::to_usize(r.below(kome::num::u64_of(VARS)));
         // six pixels of inputs; programs whose values leave the exact range are drawn again
         let mut pixels = Vec::new();
         let mut ok = true;
         for _ in 0..6 {
             let ins: [V; 3] = std::array::from_fn(|_| [r.int(-20, 20), r.int(-20, 20), r.int(-20, 20), r.int(-20, 20)]);
-            let mut ev = Ev { ins: &ins, vars: [[0.0; 4]; VARS], arr: std::array::from_fn(|i| [dxwgsl::num::to_f64(i), 1.0, 2.0, 3.0]), ok: true };
+            let mut ev = Ev { ins: &ins, vars: [[0.0; 4]; VARS], arr: std::array::from_fn(|i| [kome::num::to_f64(i), 1.0, 2.0, 3.0]), ok: true };
             ev.s(&prog);
             ok &= ev.ok;
             pixels.push((ins, ev.vars[result]));
@@ -401,8 +401,8 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>, n: u32, seed: u64, d
             continue;
         }
         made += 1;
-        let want = |v: &V| -> [Want; 4] { v.map(|x| Some(vec![dxwgsl::num::to_f32(x)])) };
-        let f32s = |ins: &[V; 3]| -> Vec<[f32; 4]> { ins.iter().map(|v| v.map(|x| dxwgsl::num::to_f32(x))).collect() };
+        let want = |v: &V| -> [Want; 4] { v.map(|x| Some(vec![kome::num::to_f32(x)])) };
+        let f32s = |ins: &[V; 3]| -> Vec<[f32; 4]> { ins.iter().map(|v| v.map(|x| kome::num::to_f32(x))).collect() };
         let name = format!("{prefix}{made:03}");
         let hl = Lang { vec: "float4", ins: ["A", "B", "Cc"], glsl: false };
         let b = body(&hl, &prog);

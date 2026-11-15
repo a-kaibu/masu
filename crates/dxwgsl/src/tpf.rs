@@ -447,9 +447,9 @@ impl Reader<'_> {
         };
         let sel = if num == 2 {
             match (t >> 2) & 3 {
-                0 => Sel::Mask(crate::lo8((t >> 4) & 0xf)),
-                1 => Sel::Swizzle([4, 6, 8, 10].map(|sh| crate::lo8((t >> sh) & 3))),
-                _ => Sel::Scalar(crate::lo8((t >> 4) & 3)),
+                0 => Sel::Mask(kome::num::lo8((t >> 4) & 0xf)),
+                1 => Sel::Swizzle([4, 6, 8, 10].map(|sh| kome::num::lo8((t >> sh) & 3))),
+                _ => Sel::Scalar(kome::num::lo8((t >> 4) & 3)),
             }
         } else {
             Sel::None
@@ -464,7 +464,7 @@ impl Reader<'_> {
             let mut e = self.next()?;
             loop {
                 if e & 0x3f == 1 {
-                    modifier = crate::lo8(e >> 6);
+                    modifier = kome::num::lo8(e >> 6);
                 }
                 if e >> 31 == 0 {
                     break;
@@ -515,7 +515,7 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
     }
     let kind = ProgramType(w[0] >> 16);
     let major = (w[0] >> 4) & 0xf;
-    let len = crate::us(w[1]).min(w.len());
+    let len = kome::num::us(w[1]).min(w.len());
     let mut insts = Vec::new();
     let mut p = 2;
     while p < len {
@@ -523,7 +523,7 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
         let code = t & 0x7ff;
         let op = Opcode::from_code(code);
         if op.shape() == Shape::Data {
-            let n = crate::us(*w.get(p + 1).ok_or("truncated customdata")?);
+            let n = kome::num::us(*w.get(p + 1).ok_or("truncated customdata")?);
             // (checked: on wasm32 `p + n` with n near 2^32 wrapped below `len` and the slice
             // below panicked, the VM gone, review A-7)
             if n < 2 || p.checked_add(n).is_none_or(|e| e > len) {
@@ -544,7 +544,7 @@ pub fn decode(chunk: &[u8]) -> Result<Program, String> {
             continue;
         }
         // (bits 24..30: the length in dwords)
-        let n = crate::us((t >> 24) & 0x7f);
+        let n = kome::num::us((t >> 24) & 0x7f);
         if n == 0 || p + n > len {
             return Err(format!("bad instruction length at {p}"));
         }

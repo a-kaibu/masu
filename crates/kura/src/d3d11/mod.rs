@@ -42,6 +42,7 @@ mod compute_tests;
 #[cfg(test)]
 mod dxgi_tests;
 
+use kome::num::*;
 use crate::d3d9::gpu;
 use crate::render::d3d::Factor;
 use crate::d3d9::HostCalls;
@@ -497,7 +498,7 @@ unsafe fn rdf(p: u32, i: usize) -> f32 {
 /// Size of the guest's pointers (and HWNDs, SIZE_Ts): 8 for 64-bit programs.
 /// Guest addresses are below 4G either way.
 use crate::d3d9::device::ptr;
-use crate::guest::{gc, gp, lo32, us};
+use crate::guest::{gc, gp};
 
 /// Pointer `i` of an array of pointers.
 unsafe fn rdp(p: u32, i: usize) -> u32 {
@@ -4617,7 +4618,8 @@ fn sampler_key(s: &[u32], cmp: bool) -> u32 {
 
 #[cfg(test)]
 mod vb_merge_tests {
-    use super::{lo32, merge_vertex_buffers, us};
+    use super::merge_vertex_buffers;
+    use kome::num::*;
     use proptest::prelude::*;
 
     #[test]

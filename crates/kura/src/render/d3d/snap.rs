@@ -9,7 +9,7 @@
 //! sample is drawn into a 1x texture of the format and read back (`samples_out`), and a
 //! restored one is drawn sample by sample (multisample mask) from those (`samples_in`).
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 use super::*;
 
 /// The GPU's part of a state.

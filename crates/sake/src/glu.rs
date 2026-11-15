@@ -14,7 +14,7 @@ use std::sync::{Mutex, OnceLock};
 use crate::api::{implement, Ctx};
 use crate::mem::{self, r32, w32};
 use crate::HashMap;
-use crate::num::{Low, ToF32, Trunc};
+use kome::num::*;
 
 pub type M4 = [f64; 16];
 
@@ -230,47 +230,47 @@ pub fn scale_image(comps: usize, wi: usize, hi: usize, src: &[u8], wo: usize, ho
             for x in 0..wo {
                 for k in 0..comps {
                     let s = px(2 * x, 2 * y, k) + px(2 * x + 1, 2 * y, k) + px(2 * x, 2 * y + 1, k) + px(2 * x + 1, 2 * y + 1, k);
-                    out[y * so + x * comps + k] = (((s + 2) / 4) >> 8).low_u8();
+                    out[y * so + x * comps + k] = lo8(((s + 2) / 4) >> 8);
                 }
             }
         }
         return out;
     }
-    let convy = hi.to_f32() / ho.to_f32();
-    let convx = wi.to_f32() / wo.to_f32();
+    let convy = to_f32(hi) / to_f32(ho);
+    let convx = to_f32(wi) / to_f32(wo);
     let (halfx, halfy) = (convx / 2.0, convy / 2.0);
     for i in 0..ho {
-        let y = convy * (i.to_f32() + 0.5);
+        let y = convy * (to_f32(i) + 0.5);
         let (lowy, highy) = if hi > ho { (y - halfy, y + halfy) } else { (y - 0.5, y + 0.5) };
         for j in 0..wo {
-            let x = convx * (j.to_f32() + 0.5);
+            let x = convx * (to_f32(j) + 0.5);
             let (lowx, highx) = if wi > wo { (x - halfx, x + halfx) } else { (x - 0.5, x + 0.5) };
             let mut totals = [0f32; 4];
             let mut area = 0f32;
             let mut y = lowy;
-            let mut yint = y.floor().trunc_isize();
+            let mut yint = trunc_isize(y.floor());
             while y < highy {
                 let yi = (yint + hi.cast_signed()).rem_euclid(hi.cast_signed()).cast_unsigned();
-                let yp = if highy < (yint + 1).to_f32() { highy - y } else { (yint + 1).to_f32() - y };
+                let yp = if highy < to_f32(yint + 1) { highy - y } else { to_f32(yint + 1) - y };
                 let mut x = lowx;
-                let mut xint = x.floor().trunc_isize();
+                let mut xint = trunc_isize(x.floor());
                 while x < highx {
                     let xi = (xint + wi.cast_signed()).rem_euclid(wi.cast_signed()).cast_unsigned();
-                    let xp = if highx < (xint + 1).to_f32() { highx - x } else { (xint + 1).to_f32() - x };
+                    let xp = if highx < to_f32(xint + 1) { highx - x } else { to_f32(xint + 1) - x };
                     let p = xp * yp;
                     area += p;
                     for (k, t) in totals.iter_mut().enumerate().take(comps) {
-                        *t += px(xi, yi, k).to_f32() * p;
+                        *t += to_f32(px(xi, yi, k)) * p;
                     }
                     xint += 1;
-                    x = xint.to_f32();
+                    x = to_f32(xint);
                 }
                 yint += 1;
-                y = yint.to_f32();
+                y = to_f32(yint);
             }
             for k in 0..comps {
-                let v = ((totals[k] + 0.5) / area).trunc_u32();
-                out[i * so + j * comps + k] = (v.min(65535) >> 8).low_u8();
+                let v = trunc_u32((totals[k] + 0.5) / area);
+                out[i * so + j * comps + k] = lo8(v.min(65535) >> 8);
             }
         }
     }
@@ -303,13 +303,13 @@ pub fn halve_ubyte(comps: usize, w: usize, h: usize, src: &[u8], si: usize) -> V
         if h == 1 {
             for j in 0..w / 2 {
                 for k in 0..comps {
-                    out.push(((at(2 * j * comps + k) + at((2 * j + 1) * comps + k)) / 2).low_u8());
+                    out.push(lo8((at(2 * j * comps + k) + at((2 * j + 1) * comps + k)) / 2));
                 }
             }
         } else {
             for j in 0..h / 2 {
                 for k in 0..comps {
-                    out.push(((at(2 * j * si + k) + at((2 * j + 1) * si + k)) / 2).low_u8());
+                    out.push(lo8((at(2 * j * si + k) + at((2 * j + 1) * si + k)) / 2));
                 }
             }
         }
@@ -319,7 +319,7 @@ pub fn halve_ubyte(comps: usize, w: usize, h: usize, src: &[u8], si: usize) -> V
         for x in 0..w / 2 {
             let t = 2 * y * si + 2 * x * comps;
             for k in 0..comps {
-                out.push(((at(t + k) + at(t + comps + k) + at(t + si + k) + at(t + si + comps + k) + 2) / 4).low_u8());
+                out.push(lo8((at(t + k) + at(t + comps + k) + at(t + si + k) + at(t + si + comps + k) + 2) / 4));
             }
         }
     }
@@ -337,10 +337,10 @@ pub fn scale_ubyte(comps: usize, wi: usize, hi: usize, src: &[u8], si: usize, wo
     let at = |o: isize| if o < 0 { 0.0 } else { f32::from(src.get(o.cast_unsigned()).copied().unwrap_or(0)) };
     let g = comps.cast_signed();
     let ys = si.cast_signed();
-    let convy = hi.to_f32() / ho.to_f32();
-    let convx = wi.to_f32() / wo.to_f32();
-    let (convy_int, convx_int) = (convy.floor().trunc_isize(), convx.floor().trunc_isize());
-    let (convy_f, convx_f) = (convy - convy_int.to_f32(), convx - convx_int.to_f32());
+    let convy = to_f32(hi) / to_f32(ho);
+    let convx = to_f32(wi) / to_f32(wo);
+    let (convy_int, convx_int) = (trunc_isize(convy.floor()), trunc_isize(convx.floor()));
+    let (convy_f, convx_f) = (convy - to_f32(convy_int), convx - to_f32(convx_int));
     let area = convx * convy;
     let mut out = vec![0u8; wo * ho * comps];
     let (mut lowy_int, mut lowy_f, mut highy_int, mut highy_f) = (0isize, 0f32, convy_int, convy_f);
@@ -457,7 +457,7 @@ pub fn scale_ubyte(comps: usize, wi: usize, hi: usize, src: &[u8], si: usize, wo
                 temp0 += ys;
             }
             for k in 0..comps {
-                out[(j + i * wo) * comps + k] = (totals[k] / area).clamp(0.0, 255.0).trunc_u8();
+                out[(j + i * wo) * comps + k] = trunc_u8((totals[k] / area).clamp(0.0, 255.0));
             }
             lowx_int = highx_int;
             lowx_f = highx_f;
@@ -527,7 +527,7 @@ macro_rules! gl {
 
 fn dbl(v: f64) -> [u32; 2] {
     let b = v.to_bits();
-    [b.low_u32(), (b >> 32).low_u32()]
+    [lo32(b), lo32(b >> 32)]
 }
 
 /// glMultMatrixd(m) from a guest copy of `m`
@@ -546,7 +546,7 @@ fn mult(m: &M4) {
 /// Argument at x86 stack slot `slot` (after doubles: 2 slots each) / x64 position `pos`
 fn arg(c: &Ctx, slot: u32, pos: u32) -> u32 {
     if mem::x64() {
-        c.a64(pos).low_u32()
+        lo32(c.a64(pos))
     } else {
         c.a(slot)
     }
@@ -670,12 +670,12 @@ fn gluScaleImage(c: &mut Ctx) -> u32 {
     let (Some(n), Some(_), Some(_)) = (image_bytes(wi, hi, comps, ua), image_bytes(wo, ho, comps, ua), image_bytes(wo, ho, comps, pa)) else { return GLU_OUT_OF_MEMORY };
     // (the guest's pixels as they are: no copy; image_bytes keeps sizes below MAX_IMAGE, so
     // every guest offset here fits 32 bits)
-    let src = mem::slice(a[4], n.low_u32());
+    let src = mem::slice(a[4], lo32(n));
     // (rows unpacked at the unpack alignment, packed at the pack alignment)
     let tight = scale_image(comps, wi, hi, src, wo, ho, ua);
     let (si, so) = (row_bytes(wo, comps, ua), row_bytes(wo, comps, pa));
     for y in 0..ho {
-        mem::write(a[8] + (y * so).low_u32(), &tight[y * si..y * si + wo * comps]);
+        mem::write(a[8] + lo32(y * so), &tight[y * si..y * si + wo * comps]);
     }
     0
 }
@@ -706,12 +706,12 @@ fn build_mipmaps(target: u32, internal: u32, w: u32, h: u32, format: u32, ty: u3
     let (cw, ch) = (nearest_pot(w, max), nearest_pot(h, max));
     let Some(top) = image_bytes(cw, ch, comps, 1) else { return GLU_OUT_OF_MEMORY };
     // (sizes below MAX_IMAGE: they fit 32 bits)
-    let p = mem::heap_alloc(top.max(4).low_u32(), false);
+    let p = mem::heap_alloc(lo32(top.max(4)), false);
     if p == 0 {
         return GLU_OUT_OF_MEMORY;
     }
     // (the guest's pixels as they are: no copy)
-    let src = mem::slice(data, n.low_u32());
+    let src = mem::slice(data, lo32(n));
     // (the levels are tightly packed: unpack them at alignment 1, as libGLU does)
     call_gl("glPixelStorei", &[0x0cf5, 1]);
     let mut level = 0u32;
@@ -719,15 +719,15 @@ fn build_mipmaps(target: u32, internal: u32, w: u32, h: u32, format: u32, ty: u3
         if !(one_d && lh > 1) {
             mem::write(p, px);
             if one_d {
-                call_gl("glTexImage1D", &[target, level, internal, lw.low_u32(), 0, format, ty, p]);
+                call_gl("glTexImage1D", &[target, level, internal, lo32(lw), 0, format, ty, p]);
             } else {
-                call_gl("glTexImage2D", &[target, level, internal, lw.low_u32(), lh.low_u32(), 0, format, ty, p]);
+                call_gl("glTexImage2D", &[target, level, internal, lo32(lw), lo32(lh), 0, format, ty, p]);
             }
         }
         level += 1;
     });
     mem::heap_free(p);
-    call_gl("glPixelStorei", &[0x0cf5, align.low_u32()]);
+    call_gl("glPixelStorei", &[0x0cf5, lo32(align)]);
     0
 }
 
@@ -736,7 +736,7 @@ fn gstr(s: &str, wide: bool) -> u32 {
     static S: Mutex<Option<HashMap<(String, bool), u32>>> = Mutex::new(None);
     *S.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(HashMap::default).entry((s.into(), wide)).or_insert_with(|| {
         let b: Vec<u8> = if wide { s.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect() } else { s.bytes().chain([0]).collect() };
-        let p = mem::heap_alloc(b.len().low_u32(), false);
+        let p = mem::heap_alloc(lo32(b.len()), false);
         mem::write(p, &b);
         p
     })
@@ -817,7 +817,7 @@ fn set_field(c: &Ctx, o: u32) -> u32 {
 
 /// one vertex: normal (unless GLU_NONE), texture coordinate (when on), position
 fn vtx(q: [u32; 4], n: [f64; 3], t: (f64, f64), p: [f64; 3]) {
-    let f = |v: f64| (v.to_f32()).to_bits();
+    let f = |v: f64| (to_f32(v)).to_bits();
     let s = if q[2] == GLU_INSIDE { -1.0 } else { 1.0 };
     if q[1] != GLU_NONE {
         gl!("glNormal3f", &[f(n[0] * s), f(n[1] * s), f(n[2] * s)]);

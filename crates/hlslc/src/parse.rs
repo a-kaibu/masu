@@ -200,7 +200,7 @@ impl Parser {
     /// (wrapping `as u8`) indexed past them and aborted the VM (review A-6).
     fn dim_num(&mut self) -> R<Width> {
         let n = self.template_num()?;
-        match Width::new(crate::us(n)) {
+        match Width::new(kome::num::us(n)) {
             Some(w) => Ok(w),
             None => self.err("vector and matrix dimensions must be between 1 and 4"),
         }
@@ -595,7 +595,7 @@ impl Parser {
             if self.eat("[") {
                 let e = self.expr()?;
                 self.expect("]")?;
-                index = Some(crate::lo32(const_int(&e).ok_or(format!("line {line}: state index is not a constant"))?));
+                index = Some(kome::num::lo32(const_int(&e).ok_or(format!("line {line}: state index is not a constant"))?));
             }
             self.expect("=")?;
             let value = self.fx_value()?;
@@ -1284,7 +1284,7 @@ impl Parser {
 pub fn const_int(e: &Expr) -> Option<i64> {
     Some(match e {
         Expr::Int(v, _) => *v,
-        Expr::Float(f) => dxwgsl::num::trunc_i64(*f),
+        Expr::Float(f) => kome::num::trunc_i64(*f),
         Expr::Bin(op, a, b) => {
             let (a, b) = (const_int(a)?, const_int(b)?);
             match op {

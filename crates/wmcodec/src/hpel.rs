@@ -1,7 +1,8 @@
 //! Motion compensation pixel operations (FFmpeg's hpeldsp put / put_no_rnd and wmv2dsp's
 //! mspel filters). Sources are blocks with the pixels around them (see `window`).
 
-use crate::num::{i32z, ix, lo8};
+use crate::num::i32z;
+use kome::num::*;
 
 /// A `w` x `h` block of `plane` (stride `stride`, `pw` x `ph` pixels) at (x, y), pixels
 /// outside repeated from the edge (emulated_edge_mc).
@@ -9,18 +10,18 @@ pub fn window(plane: &[u8], stride: usize, pw: i32, ph: i32, x: i32, y: i32, w: 
     // columns [i0, i1) are inside the plane; those left of it repeat its first pixel, those
     // right of it its last
     let wi = i32::try_from(w).unwrap_or(i32::MAX);
-    let i0 = ix((-x).clamp(0, wi));
-    let i1 = ix((pw - x).clamp(0, wi));
+    let i0 = us((-x).clamp(0, wi));
+    let i1 = us((pw - x).clamp(0, wi));
     for (sy, o) in (y..).zip(out[..w * h].chunks_exact_mut(w)) {
-        let sy = ix(sy.clamp(0, ph - 1));
-        let row = &plane[sy * stride..sy * stride + ix(pw)];
+        let sy = us(sy.clamp(0, ph - 1));
+        let row = &plane[sy * stride..sy * stride + us(pw)];
         o[..i0].fill(row[0]);
         if i1 > i0 {
             // (i0 is max(-x, 0) here, below w)
-            let sx = ix(x.max(0));
+            let sx = us(x.max(0));
             o[i0..i1].copy_from_slice(&row[sx..sx + i1 - i0]);
         }
-        o[i1.max(i0)..].fill(row[ix(pw) - 1]);
+        o[i1.max(i0)..].fill(row[us(pw) - 1]);
     }
 }
 
@@ -29,7 +30,7 @@ pub fn window(plane: &[u8], stride: usize, pw: i32, ph: i32, x: i32, y: i32, w: 
 pub fn source<'a>(plane: &'a [u8], stride: usize, pw: i32, ph: i32, x: i32, y: i32, w: usize, h: usize, buf: &'a mut [u8]) -> (&'a [u8], usize) {
     let inside = |p: i32, n: usize, max: i32| p >= 0 && p + i32z(n) <= max;
     if inside(x, w, pw) && inside(y, h, ph) {
-        (&plane[ix(y) * stride + ix(x)..], stride)
+        (&plane[us(y) * stride + us(x)..], stride)
     } else {
         window(plane, stride, pw, ph, x, y, w, h, buf);
         (buf, w)

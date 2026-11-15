@@ -27,7 +27,7 @@ impl Rng {
     }
     fn color(&mut self) -> [f64; 4] {
         // (on the 8-bit grid, as vertex colors and TFACTOR are)
-        std::array::from_fn(|_| dxwgsl::num::to_f64(self.below(256)) / 255.0)
+        std::array::from_fn(|_| kome::num::to_f64(self.below(256)) / 255.0)
     }
 }
 
@@ -136,25 +136,25 @@ fn wgsl(k: &PsKey) -> String {
 
 fn stage(r: &mut Rng) -> [u32; 10] {
     let a = |r: &mut Rng| {
-        let base = crate::lo32(r.below(7));
+        let base = kome::num::lo32(r.below(7));
         base | if r.below(4) == 0 { 0x10 } else { 0 } | if r.below(4) == 0 { 0x20 } else { 0 }
     };
-    let cop = COLOR_OPS[crate::usize_of(r.below(crate::u64_of(COLOR_OPS.len())))];
-    let aop = ALPHA_OPS[crate::usize_of(r.below(crate::u64_of(ALPHA_OPS.len())))];
+    let cop = COLOR_OPS[kome::num::to_usize(r.below(kome::num::u64_of(COLOR_OPS.len())))];
+    let aop = ALPHA_OPS[kome::num::to_usize(r.below(kome::num::u64_of(ALPHA_OPS.len())))];
     let res = if r.below(4) == 0 { 5 } else { 1 };
     [cop, a(r), a(r), a(r), aop, a(r), a(r), a(r), res, 0]
 }
 
 pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
     let mut r = Rng(0x2191);
-    let n = crate::us(ff::PS_CONSTS);
-    let size = crate::us(dxwgsl::d3d9::uniform_size(ff::PS_CONSTS + 2));
-    let at = (crate::us(dxwgsl::d3d9::CONSTS_EXTRA) + 16) * 16;
+    let n = kome::num::us(ff::PS_CONSTS);
+    let size = kome::num::us(dxwgsl::d3d9::uniform_size(ff::PS_CONSTS + 2));
+    let at = (kome::num::us(dxwgsl::d3d9::CONSTS_EXTRA) + 16) * 16;
     // the game's: stage 0 SELECTARG1 DIFFUSE (its texture is not bound here), stage 1 MODULATE
     // TEXTURE DIFFUSE with none; then random setups of 1 to 4 stages
     let mut setups = vec![(vec![[2, 0, 1, 1, 2, 0, 1, 1, 1, 0], [4, 2, 0, 1, 4, 2, 0, 1, 1, 0]], false)];
     for _ in 0..60 {
-        let count = 1 + crate::usize_of(r.below(4));
+        let count = 1 + kome::num::to_usize(r.below(4));
         setups.push(((0..count).map(|_| stage(&mut r)).collect(), r.below(2) == 0));
     }
     for (si, (stages, specular)) in setups.iter().enumerate() {
@@ -164,17 +164,17 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
             let g = Regs { diffuse: r.color(), specular: r.color(), tfactor: r.color(), constant: std::array::from_fn(|_| r.color()) };
             let want = reference(stages, *specular, &g);
             let mut regs = vec![[0f32; 4]; n + 2];
-            regs[0] = g.tfactor.map(|x| dxwgsl::num::to_f32(x));
+            regs[0] = g.tfactor.map(|x| kome::num::to_f32(x));
             for s in 0..8 {
-                regs[1 + s] = g.constant[s].map(|x| dxwgsl::num::to_f32(x));
+                regs[1 + s] = g.constant[s].map(|x| kome::num::to_f32(x));
             }
-            regs[n] = g.diffuse.map(|x| dxwgsl::num::to_f32(x));
-            regs[n + 1] = g.specular.map(|x| dxwgsl::num::to_f32(x));
+            regs[n] = g.diffuse.map(|x| kome::num::to_f32(x));
+            regs[n + 1] = g.specular.map(|x| kome::num::to_f32(x));
             let mut d = vec![0u8; size];
             for (j, v) in regs.iter().flatten().enumerate() {
                 d[at + j * 4..at + j * 4 + 4].copy_from_slice(&v.to_le_bytes());
             }
-            let w: [Want; 4] = std::array::from_fn(|c| Some(vec![dxwgsl::num::to_f32(want[c])]));
+            let w: [Want; 4] = std::array::from_fn(|c| Some(vec![kome::num::to_f32(want[c])]));
             pixels.push((d, w));
         }
         if pixels.is_empty() {

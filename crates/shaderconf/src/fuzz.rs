@@ -46,7 +46,7 @@ impl Rng {
         self.0
     }
     fn below(&mut self, n: usize) -> usize {
-        if n == 0 { 0 } else { crate::usize_of(self.next() % crate::u64_of(n)) }
+        if n == 0 { 0 } else { kome::num::to_usize(self.next() % kome::num::u64_of(n)) }
     }
 }
 
@@ -117,7 +117,7 @@ fn mutate_words(r: &mut Rng, w: &[u32], keep: usize) -> Vec<u32> {
         match r.below(7) {
             0 => w[at] ^= 1 << r.below(32),
             1 => w[at] = WORDS[r.below(WORDS.len())],
-            2 => w[at] = crate::lo32(r.next()),
+            2 => w[at] = kome::num::lo32(r.next()),
             3 => w.truncate(at),
             4 => {
                 w.remove(at);
@@ -125,7 +125,7 @@ fn mutate_words(r: &mut Rng, w: &[u32], keep: usize) -> Vec<u32> {
             5 => w.insert(at, WORDS[r.below(WORDS.len())]),
             _ => {
                 // (a low field changed: register numbers, counts, opcodes)
-                w[at] = (w[at] & !0xff) | crate::u32_of(r.below(256));
+                w[at] = (w[at] & !0xff) | kome::num::u32_of(r.below(256));
             }
         }
     }

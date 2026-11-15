@@ -6,7 +6,7 @@
 //! the browser (the wasm linear memory itself, guest address = wasm address).
 
 #![no_std]
-use crate::cvt::{lo8, lo16, lo32, lo64, us};
+use kome::num::*;
 extern crate alloc;
 
 pub(crate) mod interp;
@@ -16,7 +16,6 @@ pub mod jit;
 pub mod f80;
 pub mod fpu;
 pub mod round;
-pub mod cvt;
 
 pub use iced_x86;
 pub use fpu::Fpu;

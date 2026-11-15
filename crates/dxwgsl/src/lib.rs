@@ -6,7 +6,6 @@
 //!
 //! Bytes in, WGSL text and what it binds out; no GPU or OS calls, std only.
 
-pub(crate) use kome::num::{us, u32_of, lo8};
 // (a u32 count or offset as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
 
@@ -14,7 +13,6 @@ pub mod addr;
 pub mod d3d9;
 pub mod d3d9ff;
 pub mod dxbc;
-pub mod num;
 pub mod tpf;
 mod wgsl;
 

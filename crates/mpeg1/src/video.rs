@@ -630,7 +630,7 @@ impl Video {
             self.block[z] = level * i32::from(PREMULTIPLIER[z]);
         }
         // (the macroblock is in the picture: 0 <= row < mb_height, 0 <= col < mb_width)
-        let (row, col) = (crate::bits::us(self.mb_row.cast_unsigned()), crate::bits::us(self.mb_col.cast_unsigned()));
+        let (row, col) = (kome::num::us(self.mb_row.cast_unsigned()), kome::num::us(self.mb_col.cast_unsigned()));
         let lw = self.luma_width;
         let cw = self.chroma_width;
         let cur = self.cur;

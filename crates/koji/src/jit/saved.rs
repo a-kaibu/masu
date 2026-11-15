@@ -9,7 +9,7 @@
 //! (0: a region, else a function's) and the function's indirect call sites (counted list).
 //! "VNJ1" is the same without the last two (regions only).
 
-use crate::cvt::{lo32, lo64, us};
+use kome::num::*;
 use alloc::vec::Vec;
 
 #[derive(Clone, PartialEq, Eq, Debug)]

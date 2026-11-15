@@ -5,7 +5,6 @@
 //!
 //! Source text in, bytecode out; std only. The dxwgsl crate turns the output into WGSL.
 
-pub(crate) use kome::num::{us, u32_of, lo32};
 // (a u32 count or register as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
 

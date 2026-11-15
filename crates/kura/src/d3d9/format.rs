@@ -7,7 +7,7 @@
 //! stay u32 constants (the D3DFORMAT values); the `pub fn`s take those and answer for an unknown
 //! one as they always did (format_golden_tests pins every answer).
 
-use kome::num::{us, lo8, lo16};
+use kome::num::*;
 use super::gpu::{FMT_BGRA8, FMT_DEPTH24S8, FMT_RGBA16F, FMT_RGBA32F};
 
 macro_rules! formats {

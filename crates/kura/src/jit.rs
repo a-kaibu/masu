@@ -16,8 +16,9 @@
 //! no interpreter warm-up and no translation, and in Chromium the browser's code cache of the
 //! module keeps V8's optimized code too.
 
-use crate::guest::{gc, lo32, us};
-use crate::locks::{Lock, Rw};
+use kome::num::*;
+use crate::guest::gc;
+use kome::locks::{Lock, Rw};
 use crate::cpu::Linear;
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};

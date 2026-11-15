@@ -37,12 +37,12 @@ fn config(sharp: f32, iw: u32, ih: u32, ow: u32, oh: u32, hdr: u32) -> Vec<u32> 
         smax - smin,
         lmin,
         lmax - lmin,
-        dxwgsl::num::to_f32(iw) / dxwgsl::num::to_f32(ow),
-        dxwgsl::num::to_f32(ih) / dxwgsl::num::to_f32(oh),
-        1.0 / dxwgsl::num::to_f32(ow),
-        1.0 / dxwgsl::num::to_f32(oh),
-        1.0 / dxwgsl::num::to_f32(iw),
-        1.0 / dxwgsl::num::to_f32(ih),
+        kome::num::to_f32(iw) / kome::num::to_f32(ow),
+        kome::num::to_f32(ih) / kome::num::to_f32(oh),
+        1.0 / kome::num::to_f32(ow),
+        1.0 / kome::num::to_f32(oh),
+        1.0 / kome::num::to_f32(iw),
+        1.0 / kome::num::to_f32(ih),
     ];
     let mut w: Vec<u32> = f.iter().map(|x| x.to_bits()).collect();
     w.extend_from_slice(&[0, 0, iw, ih, 0, 0, ow, oh, 0, 0]);
@@ -55,7 +55,7 @@ fn noise(w: u32, h: u32, seed: u32) -> Vec<u8> {
     (0..w * h * 4)
         .map(|i| {
             x = x.wrapping_mul(1_103_515_245).wrapping_add(12345) & 0x7fff_ffff;
-            if i % 4 == 3 { 255 } else { crate::lo8(x >> 16) }
+            if i % 4 == 3 { 255 } else { kome::num::lo8(x >> 16) }
         })
         .collect()
 }
@@ -152,7 +152,7 @@ pub fn cases() -> Result<String, String> {
         let code = hlslc::compile(&main, &defs, &mut inc, "main", "cs_5_0", 0).map_err(|e| format!("{name}: hlslc: {e}"))?;
         let ours = dxwgsl::translate_compute(&code, &[(0, "rgba8unorm")]).map_err(|e| format!("{name}: dxwgsl: {e}"))?.code;
         let slang = text(&format!("slang/nis_s{sc}_h{hdr}_t{tg}_p{half}_v{vp}.wgsl"))?;
-        let img = noise(iw, ih, 2 * crate::u32_of(k) + 1);
+        let img = noise(iw, ih, 2 * kome::num::u32_of(k) + 1);
         let mut b = vec![format!(r#"{{"binding":0,"uniform":[{}]}}"#, list(&config(sharp, iw, ih, ow, oh, hdr)))];
         b.push(format!(r#"{{"binding":16,"texture":{{"format":"rgba8unorm","w":{iw},"h":{ih},"bytes":[{}]}}}}"#, list(&img)));
         if sc == 1 {

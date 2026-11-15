@@ -1,9 +1,7 @@
 //! What CreateTexture1D/2D/3D and CreateBuffer accept, as Windows decides it (the d3d11api
 //! winref probe's golden output; per-format answers in `winfmt`).
 
-use crate::guest::us;
-#[cfg(test)]
-use crate::guest::lo32;
+use kome::num::*;
 use super::winfmt::{self, FORMATS};
 
 pub const E_INVALIDARG: u32 = 0x8007_0057;

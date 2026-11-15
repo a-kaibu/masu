@@ -10,7 +10,7 @@ use crate::api::{implement, Ctx, Handler};
 use crate::com;
 use crate::dwrite;
 use crate::mem::{self, r32, w32};
-use crate::num::{Low, ToF32, ToUsize, Trunc};
+use kome::num::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use kura::d3d11::d2d::{self as gpu2d, Item};
@@ -148,7 +148,7 @@ impl Paint {
             Paint::Linear { a, d, len2, stops, opacity } => {
                 let mut texels = [0u8; 1024];
                 for k in 0..256 {
-                    let t = k.to_f32() / 255.0;
+                    let t = to_f32(k) / 255.0;
                     let mut c = stops.first().map_or([0.0; 4], |s| s.1);
                     for w in stops.windows(2) {
                         let ((p0, c0), (p1, c1)) = (w[0], w[1]);
@@ -161,7 +161,7 @@ impl Paint {
                     }
                     c[3] *= opacity;
                     for i in 0..4 {
-                        texels[k * 4 + i] = (c[i].clamp(0.0, 1.0) * 255.0).round().trunc_u8();
+                        texels[k * 4 + i] = trunc_u8((c[i].clamp(0.0, 1.0) * 255.0).round());
                     }
                 }
                 let row = gpu2d::ramp(&texels)?;
@@ -329,7 +329,7 @@ fn CreateCompatibleRenderTarget(c: &mut Ctx) -> u32 {
     let (w, h) = if pp != 0 {
         (r32(pp), r32(pp + 4))
     } else if ps != 0 {
-        (rf(ps, 0).ceil().trunc_u32(), rf(ps, 1).ceil().trunc_u32())
+        (trunc_u32(rf(ps, 0).ceil()), trunc_u32(rf(ps, 1).ceil()))
     } else {
         (pw, ph)
     };
@@ -650,7 +650,7 @@ fn GetColor(c: &mut Ctx) -> u32 {
     let out = c.a(1);
     let color = st(|s| s.brushes.get(&c.a(0)).map_or([0.0; 4], |b| b.color));
     for (i, v) in color.iter().enumerate() {
-        w32(out + 4 * i.low_u32(), v.to_bits());
+        w32(out + 4 * lo32(i), v.to_bits());
     }
     out
 }
@@ -665,7 +665,7 @@ fn GetOpacity(c: &mut Ctx) -> u32 {
 }
 fn GetIdentity(c: &mut Ctx) -> u32 {
     for (i, v) in IDENTITY.iter().enumerate() {
-        w32(c.a(1) + 4 * i.low_u32(), v.to_bits());
+        w32(c.a(1) + 4 * lo32(i), v.to_bits());
     }
     0
 }
@@ -903,7 +903,7 @@ fn DrawBitmap(c: &mut Ctx) -> u32 {
     if let Some(owner) = st(|s| s.dcs.iter().find(|(&k, d)| k != dc && (d.target == bmp || surface.is_some_and(|t| t != 0 && d.surface == t)) && !d.items.is_empty()).map(|(&k, _)| k)) {
         flush(owner);
     }
-    let src = if ps != 0 { [rf(ps, 0), rf(ps, 1), rf(ps, 2), rf(ps, 3)] } else { [0.0, 0.0, im.w.to_f32(), im.h.to_f32()] };
+    let src = if ps != 0 { [rf(ps, 0), rf(ps, 1), rf(ps, 2), rf(ps, 3)] } else { [0.0, 0.0, to_f32(im.w), to_f32(im.h)] };
     let dst = if pd != 0 { [rf(pd, 0), rf(pd, 1), rf(pd, 2), rf(pd, 3)] } else { [0.0, 0.0, src[2] - src[0], src[3] - src[1]] };
     let xf = st(|s| s.dcs.get(&dc).and_then(eff));
     if xf.is_some_and(|m| m[1] != 0.0 || m[2] != 0.0) {
@@ -964,8 +964,8 @@ fn bitmap_size(b: u32) -> (u32, u32) {
 }
 fn BitmapSize(c: &mut Ctx) -> u32 {
     let (w, h) = bitmap_size(c.a(0));
-    w32(c.a(1), (w.to_f32()).to_bits());
-    w32(c.a(1) + 4, (h.to_f32()).to_bits());
+    w32(c.a(1), (to_f32(w)).to_bits());
+    w32(c.a(1) + 4, (to_f32(h)).to_bits());
     c.a(1)
 }
 fn BitmapPixelSize(c: &mut Ctx) -> u32 {
@@ -1043,8 +1043,8 @@ fn GetTarget(c: &mut Ctx) -> u32 {
 fn GetSize(c: &mut Ctx) -> u32 {
     // (in DIPs)
     let (w, h, (dx, dy)) = st(|s| s.dcs.get(&c.a(0)).map_or((0, 0, (96.0, 96.0)), |d| (d.w, d.h, d.dpi.unwrap_or((96.0, 96.0)))));
-    w32(c.a(1), (w.to_f32() * 96.0 / dx).to_bits());
-    w32(c.a(1) + 4, (h.to_f32() * 96.0 / dy).to_bits());
+    w32(c.a(1), (to_f32(w) * 96.0 / dx).to_bits());
+    w32(c.a(1) + 4, (to_f32(h) * 96.0 / dy).to_bits());
     c.a(1)
 }
 fn GetPixelSize(c: &mut Ctx) -> u32 {
@@ -1128,7 +1128,7 @@ fn Clear(c: &mut Ctx) -> u32 {
     let clipped = st(|s| s.dcs.get(&dc).is_some_and(|d| !d.clips.is_empty()));
     if clipped {
         // (inside a clip: painted over what is there, an approximation of replacing it)
-        let r = st(|s| s.dcs.get(&dc).map(|d| clip_rect(d, [0.0, 0.0, d.w.to_f32(), d.h.to_f32()])));
+        let r = st(|s| s.dcs.get(&dc).map(|d| clip_rect(d, [0.0, 0.0, to_f32(d.w), to_f32(d.h)])));
         if let Some(r) = r {
             fill(dc, r, &Paint::Solid(color));
         }
@@ -1156,7 +1156,7 @@ fn SetTransform(c: &mut Ctx) -> u32 {
 fn GetTransform(c: &mut Ctx) -> u32 {
     let m = st(|s| s.dcs.get(&c.a(0)).and_then(|d| d.xf)).unwrap_or(IDENTITY);
     for (i, v) in m.iter().enumerate() {
-        w32(c.a(1) + 4 * i.low_u32(), v.to_bits());
+        w32(c.a(1) + 4 * lo32(i), v.to_bits());
     }
     0
 }
@@ -1181,7 +1181,7 @@ fn xf_rect(xf: Option<Xf>, r: [f32; 4]) -> [f32; 4] {
 
 /// Device pixels a rectangle covers inside the target and the clips.
 fn clip_rect(d: &Dc, r: [f32; 4]) -> [f32; 4] {
-    let mut r = [r[0].max(0.0), r[1].max(0.0), r[2].min(d.w.to_f32()), r[3].min(d.h.to_f32())];
+    let mut r = [r[0].max(0.0), r[1].max(0.0), r[2].min(to_f32(d.w)), r[3].min(to_f32(d.h))];
     for c in &d.clips {
         r = [r[0].max(c[0]), r[1].max(c[1]), r[2].min(c[2]), r[3].min(c[3])];
     }
@@ -1241,7 +1241,7 @@ fn CreateGradientStopCollection(c: &mut Ctx) -> u32 {
     0
 }
 fn StopCount(c: &mut Ctx) -> u32 {
-    st(|s| s.stops.get(&c.a(0)).map_or(0, |v| v.len().low_u32()))
+    st(|s| s.stops.get(&c.a(0)).map_or(0, |v| lo32(v.len())))
 }
 
 fn CreateLinearGradientBrush(c: &mut Ctx) -> u32 {
@@ -1412,7 +1412,7 @@ fn draw_text(dc: u32, text: &[u16], fmt: &dwrite::Format, w: f32, h: f32, x: f32
     let Some(font) = dwrite::layout(&[], &f, 0.0, 0.0).font else { return };
     let chars = dwrite::chars(text);
     let clip_extra = if clip_box { Some(xf_rect(xf, [x, y, x + w, y + h])) } else { None };
-    let Some(mut lim) = st(|s| s.dcs.get(&dc).map(|d| clip_rect(d, [0.0, 0.0, d.w.to_f32(), d.h.to_f32()]))) else { return };
+    let Some(mut lim) = st(|s| s.dcs.get(&dc).map(|d| clip_rect(d, [0.0, 0.0, to_f32(d.w), to_f32(d.h)]))) else { return };
     if let Some(c) = clip_extra {
         lim = [lim[0].max(c[0]), lim[1].max(c[1]), lim[2].min(c[2]), lim[3].min(c[3])];
     }
@@ -1423,18 +1423,18 @@ fn draw_text(dc: u32, text: &[u16], fmt: &dwrite::Format, w: f32, h: f32, x: f32
                 continue;
             }
             let (px, py) = apply(xf, x + l.x + laid.pen[i], y + l.baseline);
-            let (px, py) = (px.round().trunc_i32(), py.round().trunc_i32());
+            let (px, py) = (trunc_i32(px.round()), trunc_i32(py.round()));
             font.glyph(ch, |gx, top, gw, gh, cov| {
                 let (ox, oy) = (px + gx, py - top);
-                let (x0, y0) = (ox.max(lim[0].ceil().trunc_i32()), oy.max(lim[1].ceil().trunc_i32()));
-                let (x1, y1) = ((ox + gw).min(lim[2].floor().trunc_i32()), (oy + gh).min(lim[3].floor().trunc_i32()));
+                let (x0, y0) = (ox.max(trunc_i32(lim[0].ceil())), oy.max(trunc_i32(lim[1].ceil())));
+                let (x1, y1) = ((ox + gw).min(trunc_i32(lim[2].floor())), (oy + gh).min(trunc_i32(lim[3].floor())));
                 if x1 <= x0 || y1 <= y0 {
                     return;
                 }
                 let key = font.glyph_key(ch);
                 let at = room(dc, || gpu2d::glyph(key, gw.cast_unsigned(), gh.cast_unsigned(), || cov.to_vec()));
-                let shape = [at[0].to_f32() - ox.to_f32(), at[1].to_f32() - oy.to_f32(), 0.0, 0.0];
-                push(dc, gpu2d::GLYPH, [x0.to_f32(), y0.to_f32(), x1.to_f32(), y1.to_f32()], shape, [0.0; 4], &paint);
+                let shape = [to_f32(at[0]) - to_f32(ox), to_f32(at[1]) - to_f32(oy), 0.0, 0.0];
+                push(dc, gpu2d::GLYPH, [to_f32(x0), to_f32(y0), to_f32(x1), to_f32(y1)], shape, [0.0; 4], &paint);
             });
         }
     }
@@ -1459,7 +1459,7 @@ fn DrawGlyphRun(c: &mut Ctx) -> u32 {
     let n = r32(run + ps + 4).min(MAX_RUN);
     let (idx, adv, off) = (mem::rp(run + ps + 8), mem::rp(run + 2 * ps + 8), mem::rp(run + 3 * ps + 8));
     let mut pen = 0.0;
-    let mut glyphs = Vec::with_capacity(n.to_usize());
+    let mut glyphs = Vec::with_capacity(to_usize(n));
     for i in 0..n {
         let (dx, dy) = if off != 0 { (rf(off, 2 * i), rf(off, 2 * i + 1)) } else { (0.0, 0.0) };
         glyphs.push((mem::r16(idx + 2 * i), x + pen + dx, y - dy));
@@ -1476,26 +1476,26 @@ fn draw_glyphs(dc: u32, face: usize, em: f32, glyphs: &[(u16, f32, f32)], b: u32
     let xf = st(|s| s.dcs.get(&dc).and_then(eff));
     let scale = xf.map_or(1.0, |m| (m[0] * m[3] - m[1] * m[2]).abs().sqrt());
     let Some(font) = crate::gdi::face_font(face, em * scale) else { return };
-    let Some(lim) = st(|s| s.dcs.get(&dc).map(|d| clip_rect(d, [0.0, 0.0, d.w.to_f32(), d.h.to_f32()]))) else { return };
+    let Some(lim) = st(|s| s.dcs.get(&dc).map(|d| clip_rect(d, [0.0, 0.0, to_f32(d.w), to_f32(d.h)]))) else { return };
     for &(gi, gx0, gy0) in glyphs {
         let (px, py) = apply(xf, gx0, gy0);
-        let (px, py) = (px.round().trunc_i32(), py.round().trunc_i32());
+        let (px, py) = (trunc_i32(px.round()), trunc_i32(py.round()));
         font.index_glyph(gi, |gx, top, gw0, gh0, cov| {
             let r = stroke_radius(grow * scale / 2.0);
             // (the dilated size is known up front; the dilation itself only runs when the atlas
             // does not have the glyph yet: it ran on every draw of every outlined glyph)
-            let k = r.ceil().trunc_i32();
+            let k = trunc_i32(r.ceil());
             let (gx, top, gw, gh) = (gx - k, top + k, gw0 + 2 * k, gh0 + 2 * k);
             let (ox, oy) = (px + gx, py - top);
-            let (x0, y0) = (ox.max(lim[0].ceil().trunc_i32()), oy.max(lim[1].ceil().trunc_i32()));
-            let (x1, y1) = ((ox + gw).min(lim[2].floor().trunc_i32()), (oy + gh).min(lim[3].floor().trunc_i32()));
+            let (x0, y0) = (ox.max(trunc_i32(lim[0].ceil())), oy.max(trunc_i32(lim[1].ceil())));
+            let (x1, y1) = ((ox + gw).min(trunc_i32(lim[2].floor())), (oy + gh).min(trunc_i32(lim[3].floor())));
             if x1 <= x0 || y1 <= y0 {
                 return;
             }
             let key = font.index_key(gi) ^ u64::from(r.to_bits()).wrapping_mul(0x9e37_79b9_7f4a_7c15);
             let at = room(dc, || gpu2d::glyph(key, gw.cast_unsigned(), gh.cast_unsigned(), || if r > 0.0 { dilate(cov, gw0, gh0, r).2 } else { cov.to_vec() }));
-            let shape = [at[0].to_f32() - ox.to_f32(), at[1].to_f32() - oy.to_f32(), 0.0, 0.0];
-            push(dc, gpu2d::GLYPH, [x0.to_f32(), y0.to_f32(), x1.to_f32(), y1.to_f32()], shape, [0.0; 4], &paint);
+            let shape = [to_f32(at[0]) - to_f32(ox), to_f32(at[1]) - to_f32(oy), 0.0, 0.0];
+            push(dc, gpu2d::GLYPH, [to_f32(x0), to_f32(y0), to_f32(x1), to_f32(y1)], shape, [0.0; 4], &paint);
         });
     }
 }
@@ -1513,15 +1513,15 @@ pub fn stroke_radius(r: f32) -> f32 {
 }
 pub fn dilate(cov: &[u8], w: i32, h: i32, r: f32) -> (i32, i32, Vec<u8>) {
     let r = stroke_radius(r);
-    let k = r.ceil().trunc_i32();
+    let k = trunc_i32(r.ceil());
     let (w2, h2) = (w + 2 * k, h + 2 * k);
-    let mut out = vec![0u8; (w2 * h2).to_usize()];
+    let mut out = vec![0u8; to_usize(w2 * h2)];
     // the kernel: offsets with their weight
     let mut ker = Vec::new();
     for dy in -k..=k {
         for dx in -k..=k {
             // (the pixel itself keeps all its coverage, however thin the pen)
-            let wgt = if dx == 0 && dy == 0 { 1.0 } else { (r + 0.5 - ((dx * dx + dy * dy).to_f32()).sqrt()).clamp(0.0, 1.0) };
+            let wgt = if dx == 0 && dy == 0 { 1.0 } else { (r + 0.5 - (to_f32(dx * dx + dy * dy)).sqrt()).clamp(0.0, 1.0) };
             if wgt > 0.0 {
                 ker.push((dx, dy, wgt));
             }
@@ -1529,13 +1529,13 @@ pub fn dilate(cov: &[u8], w: i32, h: i32, r: f32) -> (i32, i32, Vec<u8>) {
     }
     for y in 0..h {
         for x in 0..w {
-            let v = cov[(y * w + x).to_usize()];
+            let v = cov[to_usize(y * w + x)];
             if v == 0 {
                 continue;
             }
             for &(dx, dy, wgt) in &ker {
-                let o = ((y + k + dy) * w2 + x + k + dx).to_usize();
-                let nv = (f32::from(v) * wgt).round().trunc_u8();
+                let o = to_usize((y + k + dy) * w2 + x + k + dx);
+                let nv = trunc_u8((f32::from(v) * wgt).round());
                 if nv > out[o] {
                     out[o] = nv;
                 }
@@ -1752,7 +1752,7 @@ fn DrawTextLayout(c: &mut Ctx) -> u32 {
 
 fn put_matrix(out: u32, m: [f32; 6]) {
     for (i, v) in m.iter().enumerate() {
-        w32(out + 4 * i.low_u32(), v.to_bits());
+        w32(out + 4 * lo32(i), v.to_bits());
     }
 }
 /// D2D1MakeRotateMatrix(angle in degrees, center, out)
@@ -1761,7 +1761,7 @@ fn D2D1MakeRotateMatrix(c: &mut Ctx) -> u32 {
     let out = c.a(o);
     // (multiples of 90 degrees exactly, as Windows gives them)
     let (s, co) = if deg % 90.0 == 0.0 {
-        [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)][(deg / 90.0).rem_euclid(4.0).trunc_usize()]
+        [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)][trunc_usize((deg / 90.0).rem_euclid(4.0))]
     } else {
         deg.to_radians().sin_cos()
     };

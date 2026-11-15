@@ -25,10 +25,8 @@
 //! again. The clocks the program reads continue from the moment of the save ([`Ctl::offset`]).
 
 #[cfg(test)]
-use crate::locks::Lock;
-use crate::guest::lo32;
-#[cfg(test)]
-use crate::guest::us;
+use kome::locks::Lock;
+use kome::num::*;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering::*};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;

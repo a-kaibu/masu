@@ -16,7 +16,7 @@
 //! A kept translation still checks its bytes on every entry, so taking one back too eagerly
 //! costs an exit, never wrong code.
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 use std::collections::{HashMap, HashSet};
 
 /// Translations kept per thread after their code changed: two versions of a few loops take

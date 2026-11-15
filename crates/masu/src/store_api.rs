@@ -1,4 +1,4 @@
-use kome::locks::tolerant::Rw as _;
+use kome::locks::Rw as _;
 use crate::storage::Storage;
 use axum::{
     extract::{Path, State},

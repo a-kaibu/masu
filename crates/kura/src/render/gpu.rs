@@ -2,7 +2,7 @@
 //! described in JSON (numbers under "module", "layout", "view", "buffer", "texture", "sampler"
 //! name objects of the table); per-draw calls take plain arguments.
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 pub type Id = u32;
 
 mod ffi {

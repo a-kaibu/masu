@@ -6,7 +6,8 @@
 
 use crate::bits::Bits;
 use crate::mdct::Imdct;
-use crate::num::{i32z, ix, lo8, us};
+use crate::num::i32z;
+use kome::num::*;
 use crate::vlc::Vlc;
 use crate::wma_tables as t;
 
@@ -517,7 +518,7 @@ impl Decoder {
         };
         if self.version == Version::V1 {
             last_exp = r.i::<5>() + 10;
-            let v = ptab[ix(last_exp + 60)];
+            let v = ptab[us(last_exp + 60)];
             max_scale = v;
             let n = bands[bi];
             bi += 1;
@@ -535,7 +536,7 @@ impl Decoder {
             if (last_exp + 60).cast_unsigned() >= 156 {
                 return Err(Error::Data("exponent out of range"));
             }
-            let v = ptab[ix(last_exp + 60)];
+            let v = ptab[us(last_exp + 60)];
             if v > max_scale {
                 max_scale = v;
             }
@@ -597,10 +598,10 @@ impl Decoder {
         while offset < num_coefs {
             let code = tb.vlc.read(r);
             if code > 1 {
-                offset += i32::from(tb.run[ix(code)]);
+                offset += i32::from(tb.run[us(code)]);
                 let neg = !r.bit();
-                let l = tb.level[ix(code)];
-                ptr[ix(offset) & mask] = if neg { -l } else { l };
+                let l = tb.level[us(code)];
+                ptr[us(offset) & mask] = if neg { -l } else { l };
             } else if code == 1 {
                 break;
             } else {
@@ -608,7 +609,7 @@ impl Decoder {
                 let level = r.get(coef_nb_bits).cast_signed();
                 offset += r.get(self.frame_len_bits).cast_signed();
                 let sign = r.i::<1>() - 1;
-                ptr[ix(offset) & mask] = ((level ^ sign) - sign) as f32;
+                ptr[us(offset) & mask] = ((level ^ sign) - sign) as f32;
             }
             offset += 1;
         }
@@ -777,17 +778,17 @@ impl Decoder {
             let out = &mut self.coefs[ch];
             if self.use_noise_coding {
                 let mult1 = mult;
-                for i in 0..ix(self.coefs_start) {
+                for i in 0..us(self.coefs_start) {
                     out[ci] = self.noise_table[self.noise_index] * exps[e_at(i)] * mult1;
                     ci += 1;
                     self.noise_index = (self.noise_index + 1) & (NOISE_TAB_SIZE - 1);
                 }
                 let n1 = self.exponent_high_sizes[bsize];
                 let mut exp_power = [0f32; HIGH_BAND_MAX_SIZE];
-                let mut eb = e_at(ix(self.high_band_start[bsize]));
+                let mut eb = e_at(us(self.high_band_start[bsize]));
                 let mut last_high_band = 0usize;
                 for j in 0..n1 {
-                    let n = ix(self.exponent_high_bands[bsize][j]);
+                    let n = us(self.exponent_high_bands[bsize][j]);
                     if self.high_band_coded[ch][j] {
                         let mut e2 = 0f32;
                         for i in 0..n {
@@ -799,12 +800,12 @@ impl Decoder {
                     }
                     eb += (n << bsize) >> esize;
                 }
-                let mut eb = e_at(ix(self.coefs_start));
+                let mut eb = e_at(us(self.coefs_start));
                 // (the band below the high bands, then each high band)
                 for j in std::iter::once(None).chain((0..n1).map(Some)) {
                     let n = match j {
-                        None => ix(self.high_band_start[bsize] - self.coefs_start),
-                        Some(j) => ix(self.exponent_high_bands[bsize][j]),
+                        None => us(self.high_band_start[bsize] - self.coefs_start),
+                        Some(j) => us(self.exponent_high_bands[bsize][j]),
                     };
                     if let Some(j) = j.filter(|&j| self.high_band_coded[ch][j]) {
                         let mut m1 = (exp_power[j] / exp_power[last_high_band]).sqrt();
@@ -849,7 +850,7 @@ impl Decoder {
                     out[ci] = 0.0;
                     ci += 1;
                 }
-                for i in 0..ix(nb_coefs[ch].max(0)) {
+                for i in 0..us(nb_coefs[ch].max(0)) {
                     if ci < BLOCK_MAX_SIZE {
                         out[ci] = coefs1[i] * exps[e_at(i)] * mult;
                     }

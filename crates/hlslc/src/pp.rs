@@ -247,7 +247,7 @@ impl Pp<'_> {
         let on = |c: &Vec<(bool, bool, bool)>| c.last().is_none_or(|x| x.0 && x.2);
         let mut pending: Vec<Token> = Vec::new();
         for (n, l) in lines.iter().enumerate() {
-            let line = crate::u32_of(n) + 1;
+            let line = kome::num::u32_of(n) + 1;
             let t = l.trim_start();
             if let Some(d) = t.strip_prefix('#') {
                 let d = d.trim_start();
@@ -585,8 +585,8 @@ fn cexpr(t: &[Token], p: &mut usize, min: u32, d: u32) -> Result<i64, String> {
             ">" => i64::from(l > r),
             "<=" => i64::from(l <= r),
             ">=" => i64::from(l >= r),
-            "<<" => l.wrapping_shl(crate::lo32(r)),
-            ">>" => l.wrapping_shr(crate::lo32(r)),
+            "<<" => l.wrapping_shl(kome::num::lo32(r)),
+            ">>" => l.wrapping_shr(kome::num::lo32(r)),
             "+" => l.wrapping_add(r),
             "-" => l.wrapping_sub(r),
             "*" => l.wrapping_mul(r),
@@ -619,7 +619,7 @@ fn cunary(t: &[Token], p: &mut usize, d: u32) -> Result<i64, String> {
     *p += 1;
     Ok(match &tk.t {
         Tok::Int(v, _) => v.cast_signed(),
-        Tok::Float(f) => dxwgsl::num::trunc_i64(*f),
+        Tok::Float(f) => kome::num::trunc_i64(*f),
         Tok::Ident(_) => 0,
         Tok::Punct("(") => {
             let v = cexpr(t, p, 0, d)?;

@@ -15,7 +15,7 @@
 
 #![allow(non_snake_case)]
 
-use kome::num::us;
+use kome::num::*;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 
@@ -2667,7 +2667,7 @@ fn vmr(iid: u32) -> Option<u32> {
 #[cfg(test)]
 mod ends_tests {
     use super::*;
-    use crate::locks::Lock as _;
+    use kome::locks::Lock as _;
     use std::time::{Duration, Instant};
 
     #[test]

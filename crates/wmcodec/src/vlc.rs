@@ -1,9 +1,9 @@
 //! Variable-length code tables (FFmpeg's VLC: vlc_init / ff_vlc_init_from_lengths / get_vlc2):
 //! lookups of `bits` bits, with sub-tables for longer codes.
 
+use kome::num::*;
 use crate::bits::Bits;
 
-use crate::num::us;
 
 #[derive(Clone, Copy, Debug, Default)]
 enum Entry {
@@ -39,7 +39,7 @@ impl Vlc {
             let s = syms.map_or(i, |s| s[us(i.cast_unsigned())]) + offset;
             if l > 0 {
                 let shift = 32 - u32::from(l);
-                cs.push((crate::num::lo32(code >> shift), l, s));
+                cs.push((kome::num::lo32(code >> shift), l, s));
                 code += 1u64 << shift;
             }
         }
@@ -71,14 +71,14 @@ impl Vlc {
                     }
                 }
             } else {
-                let rest = len - crate::num::lo8(nb);
+                let rest = len - kome::num::lo8(nb);
                 let idx = code >> rest;
                 long.entry(idx).or_default().push((code & ((1u32 << rest) - 1), rest, sym));
             }
         }
         for (idx, sub) in long {
             let max = sub.iter().map(|c| c.1).max().unwrap_or(1);
-            let snb = max.min(crate::num::lo8(self.bits));
+            let snb = max.min(kome::num::lo8(self.bits));
             let sbase = self.table.len();
             let Ok(b) = u32::try_from(sbase) else { return };
             self.table[base + us(idx)] = Entry::Sub { base: b, nb: snb };

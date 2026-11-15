@@ -35,12 +35,12 @@ impl<'a> Container<'a> {
         if code.get(..4) != Some(b"DXBC") {
             return Err("not DXBC".into());
         }
-        let n = crate::us(rd(code, 28).ok_or("short DXBC")?);
+        let n = kome::num::us(rd(code, 28).ok_or("short DXBC")?);
         let mut chunks = Vec::new();
         for i in 0..n.min(64) {
-            let off = crate::us(rd(code, 32 + 4 * i).ok_or("short DXBC")?);
+            let off = kome::num::us(rd(code, 32 + 4 * i).ok_or("short DXBC")?);
             let tag = code.get(off..off.checked_add(4).ok_or("bad DXBC chunk")?).ok_or("bad DXBC chunk")?;
-            let size = crate::us(rd(code, off + 4).ok_or("bad DXBC chunk")?);
+            let size = kome::num::us(rd(code, off + 4).ok_or("bad DXBC chunk")?);
             let data = (off + 8).checked_add(size).and_then(|end| code.get(off + 8..end)).ok_or("bad DXBC chunk size")?;
             chunks.push(([tag[0], tag[1], tag[2], tag[3]], data));
         }
@@ -67,7 +67,7 @@ impl<'a> Container<'a> {
 /// Elements of `size` bytes: ISGN/OSGN 24 (name, index, sysval, type, reg, mask), OSG5 28 (a
 /// stream first), ISG1/OSG1 32 (stream first, min precision last).
 fn parse_signature(c: &[u8], size: usize) -> Vec<SigElement> {
-    let n = crate::us(rd(c, 0).unwrap_or(0));
+    let n = kome::num::us(rd(c, 0).unwrap_or(0));
     let mut v = Vec::new();
     for i in 0..n.min(128) {
         let at = 8 + i * size;
@@ -77,7 +77,7 @@ fn parse_signature(c: &[u8], size: usize) -> Vec<SigElement> {
         else {
             break;
         };
-        let name_off = crate::us(name_off);
+        let name_off = kome::num::us(name_off);
         let name = c.get(name_off..).map_or(String::new(), |s| {
             let e = s.iter().position(|&b| b == 0).unwrap_or(s.len());
             String::from_utf8_lossy(&s[..e]).into_owned()

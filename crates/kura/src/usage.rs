@@ -8,7 +8,7 @@
 //! sake, whose output is compared, a line per process): the entry points games use that no
 //! test reaches.
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, OnceLock};

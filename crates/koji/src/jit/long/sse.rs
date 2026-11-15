@@ -7,7 +7,7 @@
 //! alike are their VEX.128 form twice: the lower lanes, then the upper ones with each register's
 //! halves swapped (and memory 16 bytes on); the rest go to the interpreter.
 
-use crate::cvt::{lo8, lo32, us};
+use kome::num::*;
 use super::{Flags, Gen, I64Ops, I32_WRAP, I64_EXT_U, L_A, L_CPU, L_V0, L_V1, STATUS};
 use crate::jit::packed::{binop, farith, shift, unpack};
 use alloc::vec::Vec;

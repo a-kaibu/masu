@@ -7,7 +7,8 @@ use crate::hpel;
 use crate::idct;
 use crate::intrax8::{IntraX8, Plane};
 use crate::msmpeg4_tables as t;
-use crate::num::{i32z, ix, lo16, lo8};
+use crate::num::i32z;
+use kome::num::*;
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
@@ -102,8 +103,8 @@ impl Rl {
             let (s, e) = if l == 0 { (0, last) } else { (last, n) };
             for i in s..e {
                 let (r, v) = (i32::from(run[i]), i32::from(level[i]));
-                max_level[l][ix(r)] = max_level[l][ix(r)].max(v);
-                max_run[l][ix(v)] = max_run[l][ix(v)].max(r);
+                max_level[l][us(r)] = max_level[l][us(r)].max(v);
+                max_run[l][us(v)] = max_run[l][us(v)].max(r);
             }
         }
         Rl { vlc: Vlc::new(9, &codes), n, last, run, level, max_level, max_run }
@@ -114,10 +115,10 @@ impl Rl {
         let s = self.vlc.read(r);
         if s < 0 {
             (MAX_LEVEL_I32, 66)
-        } else if ix(s) == self.n {
+        } else if us(s) == self.n {
             (0, 66)
         } else {
-            let s = ix(s);
+            let s = us(s);
             let run = i32::from(self.run[s]) + 1 + if s >= self.last { 192 } else { 0 };
             (i32::from(self.level[s]) * qmul + qadd, run)
         }
@@ -388,8 +389,8 @@ impl Decoder {
             Version::V3 => (&t::OLD_Y_DC_SCALE_TABLE, &t::WMV1_C_DC_SCALE_TABLE),
             Version::Wmv1 | Version::Wmv2 => (&t::WMV1_Y_DC_SCALE_TABLE, &t::WMV1_C_DC_SCALE_TABLE),
         };
-        self.y_dc_scale = i32::from(y[ix(q)]);
-        self.c_dc_scale = i32::from(c[ix(q)]);
+        self.y_dc_scale = i32::from(y[us(q)]);
+        self.c_dc_scale = i32::from(c[us(q)]);
     }
 
     // flat indices of the dc_val / ac_val tables (dc_val[0] + block_index[n])
@@ -760,7 +761,7 @@ impl Decoder {
     }
 
     fn update_motion_val(&mut self) {
-        let m = if self.mb_intra { [0, 0] } else { [lo16(self.mv[0]), lo16(self.mv[1])] };
+        let m = if self.mb_intra { [0, 0] } else { [lo16s(self.mv[0]), lo16s(self.mv[1])] };
         let xy = self.mvi();
         let w = self.b8;
         for k in [xy, xy + 1, xy + w, xy + w + 1] {
@@ -1000,8 +1001,8 @@ impl Decoder {
             x = 32;
             y = 32;
         } else {
-            x = i32::from(mv.x[ix(code)]);
-            y = i32::from(mv.y[ix(code)]);
+            x = i32::from(mv.x[us(code)]);
+            y = i32::from(mv.y[us(code)]);
         }
         x += *mx - 32;
         y += *my - 32;
@@ -1091,7 +1092,7 @@ impl Decoder {
         let (pred, dir) = self.pred_dc(n);
         level += pred;
         let i = self.dci(n);
-        self.dc_val[i] = lo16(level * if n < 4 { self.y_dc_scale } else { self.c_dc_scale });
+        self.dc_val[i] = lo16s(level * if n < 4 { self.y_dc_scale } else { self.c_dc_scale });
         (level, dir)
     }
 
@@ -1147,7 +1148,7 @@ impl Decoder {
                     return Err(Error::Data("dc overflow"));
                 }
             }
-            self.block[n][0] = lo16(level);
+            self.block[n][0] = lo16s(level);
             run_diff = i32::from(self.ver >= Version::Wmv1);
             i = 0;
             let v3 = self.ver == Version::V3;
@@ -1228,7 +1229,7 @@ impl Decoder {
                             // second escape
                             r.skip(2);
                             (level, run) = rl.get(r, qmul, qadd);
-                            i += run + rl.max_run[ix(run >> 7) & 1][ix(level / qmul).min(MAX_LEVEL)] + run_diff;
+                            i += run + rl.max_run[us(run >> 7) & 1][us(level / qmul).min(MAX_LEVEL)] + run_diff;
                             if r.bit() {
                                 level = -level;
                             }
@@ -1238,7 +1239,7 @@ impl Decoder {
                         r.skip(1);
                         (level, run) = rl.get(r, qmul, qadd);
                         i += run;
-                        level += rl.max_level[ix(run >> 7) & 1][ix((run - 1) & 63)] * qmul;
+                        level += rl.max_level[us(run >> 7) & 1][us((run - 1) & 63)] * qmul;
                         if r.bit() {
                             level = -level;
                         }
@@ -1259,10 +1260,10 @@ impl Decoder {
                         }
                         return Err(Error::Data("ac-tex damaged"));
                     }
-                    self.block[n][usize::from(scan[ix(i)])] = lo16(level);
+                    self.block[n][usize::from(scan[us(i)])] = lo16s(level);
                     break;
                 }
-                self.block[n][usize::from(scan[ix(i)])] = lo16(level);
+                self.block[n][usize::from(scan[us(i)])] = lo16s(level);
             }
         }
         if let Some(dc_dir) = dc_dir {
@@ -1347,12 +1348,12 @@ impl Decoder {
             for n in 0..6 {
                 let b = &mut self.block[n];
                 // dct_unquantize_h263_intra
-                b[0] = lo16(i32::from(b[0]) * if n < 4 { self.y_dc_scale } else { self.c_dc_scale });
+                b[0] = lo16s(i32::from(b[0]) * if n < 4 { self.y_dc_scale } else { self.c_dc_scale });
                 let nc = if self.ac_pred { 63 } else { raster_end(self.ver, self.last_index[n]) };
                 for k in 1..=nc {
                     let l = i32::from(b[k]);
                     if l != 0 {
-                        b[k] = lo16(if l < 0 { l * qmul - qadd } else { l * qmul + qadd });
+                        b[k] = lo16s(if l < 0 { l * qmul - qadd } else { l * qmul + qadd });
                     }
                 }
                 let (plane, off, stride) = match n {
@@ -1375,10 +1376,10 @@ impl Decoder {
         let Some(last) = self.last.as_ref() else { return };
         let [mx, my] = self.mv;
         let rnd = !self.no_rounding;
-        let dxy = ix(((my & 1) << 1) | (mx & 1));
+        let dxy = us(((my & 1) << 1) | (mx & 1));
         let src_x = i32z(self.mb_x) * 16 + (mx >> 1);
         let src_y = i32z(self.mb_y) * 16 + (my >> 1);
-        let uvdxy = dxy | ix(my & 2) | ix((mx & 2) >> 1);
+        let uvdxy = dxy | us(my & 2) | us((mx & 2) >> 1);
         let (uvx, uvy) = (src_x >> 1, src_y >> 1);
         let (pw, ph) = (i32z(self.mb_w * 16), i32z(self.mb_h * 16));
         let mut win = [0u8; 17 * 17];
@@ -1398,7 +1399,7 @@ impl Decoder {
         let Some(last) = self.last.as_ref() else { return };
         let [mx, my] = self.mv;
         let (w, h) = (i32z(self.width), i32z(self.height));
-        let mut dxy = ix((((my & 1) << 1) | (mx & 1)) * 2) + self.hshift;
+        let mut dxy = us((((my & 1) << 1) | (mx & 1)) * 2) + self.hshift;
         let src_x = (i32z(self.mb_x) * 16 + (mx >> 1)).clamp(-16, w);
         let src_y = (i32z(self.mb_y) * 16 + (my >> 1)).clamp(-16, h);
         if src_x <= -16 || src_x >= w {
@@ -1503,7 +1504,7 @@ fn raster_end(ver: Version, last: i32) -> usize {
     }
     let tb = tables();
     let scan = if ver == Version::V3 { &tb.zigzag[0] } else { &tb.scan[1] };
-    usize::from(scan[..=ix(last)].iter().copied().max().unwrap_or(0))
+    usize::from(scan[..=us(last)].iter().copied().max().unwrap_or(0))
 }
 
 fn lf(p0: i32, p1: i32, p2: i32, p3: i32, strength: i32) -> [u8; 4] {
@@ -1534,7 +1535,7 @@ fn lf(p0: i32, p1: i32, p2: i32, p3: i32, strength: i32) -> [u8; 4] {
 
 /// h263_v_loop_filter: the edge above row `off`
 fn v_filter(p: &mut [u8], off: usize, s: usize, q: i32) {
-    let st = i32::from(t::H263_LOOP_FILTER_STRENGTH[ix(q)]);
+    let st = i32::from(t::H263_LOOP_FILTER_STRENGTH[us(q)]);
     for x in 0..8 {
         let o = off + x;
         let v = lf(i32::from(p[o - 2 * s]), i32::from(p[o - s]), i32::from(p[o]), i32::from(p[o + s]), st);
@@ -1544,7 +1545,7 @@ fn v_filter(p: &mut [u8], off: usize, s: usize, q: i32) {
 
 /// h263_h_loop_filter: the edge left of column `off`
 fn h_filter(p: &mut [u8], off: usize, s: usize, q: i32) {
-    let st = i32::from(t::H263_LOOP_FILTER_STRENGTH[ix(q)]);
+    let st = i32::from(t::H263_LOOP_FILTER_STRENGTH[us(q)]);
     for y in 0..8 {
         let o = off + y * s;
         let v = lf(i32::from(p[o - 2]), i32::from(p[o - 1]), i32::from(p[o]), i32::from(p[o + 1]), st);

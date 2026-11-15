@@ -132,7 +132,7 @@ fn rtype(w: u32) -> u32 {
 }
 
 fn src_token(w: u32) -> Src {
-    Src { ty: rtype(w), reg: w & 0x7ff, swz: std::array::from_fn(|i| crate::lo8((w >> (16 + 2 * i)) & 3)), md: (w >> 24) & 0xf, rel: None }
+    Src { ty: rtype(w), reg: w & 0x7ff, swz: std::array::from_fn(|i| kome::num::lo8((w >> (16 + 2 * i)) & 3)), md: (w >> 24) & 0xf, rel: None }
 }
 
 const NO_DST: &[Code] = &[Code::Nop, Code::Call, Code::Callnz, Code::Loop, Code::Ret, Code::EndLoop, Code::Label, Code::Rep, Code::EndRep, Code::If, Code::Ifc, Code::Else, Code::EndIf, Code::Break, Code::Breakc, Code::Breakp];
@@ -154,10 +154,10 @@ pub fn parse(words: &[u32]) -> Result<Program, String> {
         }
         let op = w & 0xffff;
         if op == 0xfffe {
-            at += 1 + crate::us((w >> 16) & 0x7fff);
+            at += 1 + kome::num::us((w >> 16) & 0x7fff);
             continue;
         }
-        let len = crate::us((w >> 24) & 0xf);
+        let len = kome::num::us((w >> 24) & 0xf);
         let body = words.get(at + 1..at + 1 + len).ok_or("instruction past the end")?;
         at += 1 + len;
         if op == 31 {
@@ -215,7 +215,7 @@ pub fn parse(words: &[u32]) -> Result<Program, String> {
             if d & (1 << 13) != 0 {
                 return Err("relative destination".into());
             }
-            i.dst = Some(Dst { ty: rtype(d), reg: d & 0x7ff, mask: crate::lo8((d >> 16) & 0xf), sat: (d >> 20) & 1 != 0 });
+            i.dst = Some(Dst { ty: rtype(d), reg: d & 0x7ff, mask: kome::num::lo8((d >> 16) & 0xf), sat: (d >> 20) & 1 != 0 });
             if (d >> 24) & 0xf != 0 {
                 return Err("shift scale".into());
             }
@@ -231,7 +231,7 @@ pub fn parse(words: &[u32]) -> Result<Program, String> {
             if body[k - 1] & (1 << 13) != 0 {
                 let r = *body.get(k).ok_or("no relative register")?;
                 k += 1;
-                s.rel = Some((rtype(r), r & 0x7ff, crate::lo8((r >> 16) & 3)));
+                s.rel = Some((rtype(r), r & 0x7ff, kome::num::lo8((r >> 16) & 3)));
             }
             i.src.push(s);
         }
@@ -331,7 +331,7 @@ impl Run<'_> {
             Some((t, _, _)) => return Err(format!("relative addressing through register type {t}")),
         };
         let v: V = match s.ty {
-            0 => *self.r.get(crate::us(s.reg)).ok_or("temp out of range")?,
+            0 => *self.r.get(kome::num::us(s.reg)).ok_or("temp out of range")?,
             1 | 17 => [0.0; 4],
             2 => match usize::try_from(s.reg.cast_signed() + off).ok().and_then(|k| self.c.get(k)) {
                 Some(c) => *c,
@@ -339,9 +339,9 @@ impl Run<'_> {
                     return Err("constant out of range".into());
                 }
             },
-            7 => self.i[crate::us(s.reg) & 15].map(|x| dxwgsl::num::to_f32(x)),
-            14 => [if self.b[crate::us(s.reg) & 15] { 1.0 } else { 0.0 }; 4],
-            15 => [dxwgsl::num::to_f32(self.al); 4],
+            7 => self.i[kome::num::us(s.reg) & 15].map(|x| kome::num::to_f32(x)),
+            14 => [if self.b[kome::num::us(s.reg) & 15] { 1.0 } else { 0.0 }; 4],
+            15 => [kome::num::to_f32(self.al); 4],
             19 => self.pr.map(|x| if x { 1.0 } else { 0.0 }),
             t => return Err(format!("source register type {t}")),
         };
@@ -366,7 +366,7 @@ impl Run<'_> {
     }
     fn boolean(&self, s: &Src) -> Result<bool, String> {
         let v = match s.ty {
-            14 => self.b[crate::us(s.reg) & 15],
+            14 => self.b[kome::num::us(s.reg) & 15],
             19 => self.pr[usize::from(s.swz[0])],
             t => return Err(format!("condition register type {t}")),
         };
@@ -391,8 +391,8 @@ impl Run<'_> {
             return Ok(());
         }
         let slot = match d.ty {
-            0 => self.r.get_mut(crate::us(d.reg)).ok_or("temp out of range")?,
-            8 => self.o.get_mut(crate::us(d.reg)).ok_or("oC out of range")?,
+            0 => self.r.get_mut(kome::num::us(d.reg)).ok_or("temp out of range")?,
+            8 => self.o.get_mut(kome::num::us(d.reg)).ok_or("oC out of range")?,
             t => return Err(format!("destination register type {t}")),
         };
         for k in 0..4 {
@@ -440,7 +440,7 @@ impl Run<'_> {
                         Code::Mul => a[k] * b[k],
                         Code::Min => a[k].min(b[k]),
                         Code::Max => a[k].max(b[k]),
-                        Code::Slt => dxwgsl::num::to_f32(u32::from(a[k] < b[k])),
+                        Code::Slt => kome::num::to_f32(u32::from(a[k] < b[k])),
                         Code::Nop | Code::Mov | Code::Mad | Code::Rcp | Code::Rsq | Code::Dp3
                         | Code::Dp4 | Code::Sge | Code::Exp | Code::Log | Code::Lrp | Code::Frc
                         | Code::M4x4 | Code::M4x3 | Code::M3x4 | Code::M3x3 | Code::M3x2 | Code::Call
@@ -448,7 +448,7 @@ impl Run<'_> {
                         | Code::Crs | Code::Abs | Code::Nrm | Code::SinCos | Code::Rep | Code::EndRep
                         | Code::If | Code::Ifc | Code::Else | Code::EndIf | Code::Break | Code::Breakc
                         | Code::Defb | Code::Defi | Code::Expp | Code::Logp | Code::Cnd | Code::Def
-                        | Code::Cmp | Code::Dp2Add | Code::Setp | Code::Breakp => dxwgsl::num::to_f32(u32::from(a[k] >= b[k])),
+                        | Code::Cmp | Code::Dp2Add | Code::Setp | Code::Breakp => kome::num::to_f32(u32::from(a[k] >= b[k])),
                     });
                     self.write(i, v)?
                 }
@@ -488,12 +488,12 @@ impl Run<'_> {
                 }
                 Code::M4x4 | Code::M4x3 | Code::M3x4 | Code::M3x3 | Code::M3x2 => {
                     // m4x4, m4x3, m3x4, m3x3, m3x2: rows from consecutive registers
-                    let (n, rows) = [(4, 4), (4, 3), (3, 4), (3, 3), (3, 2)][crate::us(i.op.code() - 20)];
+                    let (n, rows) = [(4, 4), (4, 3), (3, 4), (3, 3), (3, 2)][kome::num::us(i.op.code() - 20)];
                     let a = self.s(i, 0)?;
                     let mut v = [0.0; 4];
                     for (row, out) in v.iter_mut().enumerate().take(rows) {
                         let mut s = i.src[1].clone();
-                        s.reg += crate::u32_of(row);
+                        s.reg += kome::num::u32_of(row);
                         *out = dp(a, self.read(&s)?, n);
                     }
                     self.write(i, v)?
@@ -536,7 +536,7 @@ impl Run<'_> {
                 }
                 Code::Setp => {
                     let (a, b) = (self.s(i, 0)?, self.s(i, 1)?);
-                    let v = std::array::from_fn(|k| dxwgsl::num::to_f32(u32::from(cmp(i.cmp, a[k], b[k]))));
+                    let v = std::array::from_fn(|k| kome::num::to_f32(u32::from(cmp(i.cmp, a[k], b[k]))));
                     self.write(i, v)?
                 }
                 // (applied before the program runs)
@@ -554,7 +554,7 @@ impl Run<'_> {
                     if n.ty != 7 {
                         return Err("rep/loop count not an i#".into());
                     }
-                    let iv = self.i[crate::us(n.reg) & 15];
+                    let iv = self.i[kome::num::us(n.reg) & 15];
                     let count = iv[0].clamp(0, 255).cast_unsigned();
                     if count == 0 {
                         pc = p.jump[pc - 1] + 1;
@@ -646,12 +646,12 @@ pub fn run(p: &Program, c: &[[f32; 4]]) -> Result<([[f32; 4]; 4], Option<String>
         }
         match i.op {
             Code::Def => {
-                if let Some(c) = r.c.get_mut(crate::us(d.reg)) {
+                if let Some(c) = r.c.get_mut(kome::num::us(d.reg)) {
                     *c = i.raw.map(f32::from_bits);
                 }
             }
-            Code::Defi => r.i[crate::us(d.reg) & 15] = i.raw.map(|x| x.cast_signed()),
-            Code::Defb => r.b[crate::us(d.reg) & 15] = i.raw[0] != 0,
+            Code::Defi => r.i[kome::num::us(d.reg) & 15] = i.raw.map(|x| x.cast_signed()),
+            Code::Defb => r.b[kome::num::us(d.reg) & 15] = i.raw[0] != 0,
             Code::Nop | Code::Mov | Code::Add | Code::Sub | Code::Mad | Code::Mul
             | Code::Rcp | Code::Rsq | Code::Dp3 | Code::Dp4 | Code::Min | Code::Max
             | Code::Slt | Code::Sge | Code::Exp | Code::Log | Code::Lrp | Code::Frc

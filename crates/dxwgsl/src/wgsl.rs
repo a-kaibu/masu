@@ -1619,7 +1619,7 @@ fn texture_type(dim: u32, k: K, depth: bool) -> R<(String, u32)> {
         };
         return Ok((t.into(), vd));
     }
-    let t = ["texture_1d", "texture_2d", "texture_2d_array", "texture_cube", "texture_cube_array", "texture_3d"][crate::us(vd)];
+    let t = ["texture_1d", "texture_2d", "texture_2d_array", "texture_cube", "texture_cube_array", "texture_3d"][kome::num::us(vd)];
     Ok((format!("{t}<{}>", k.s()), vd))
 }
 

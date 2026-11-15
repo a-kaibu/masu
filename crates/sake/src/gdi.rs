@@ -8,6 +8,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::num::*;
 use crate::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
@@ -435,17 +436,6 @@ unsafe fn read24(p: *const u8) -> u32 {
 unsafe fn write24(p: *mut u8, v: u32) {
     let [b, g, r, _] = v.to_le_bytes();
     unsafe { p.cast::<[u8; 3]>().write_unaligned([b, g, r]) }
-}
-/// the low 16 bits
-#[inline]
-const fn lo16(v: u32) -> u16 {
-    let [a, b, _, _] = v.to_le_bytes();
-    u16::from_le_bytes([a, b])
-}
-/// the low 8 bits
-#[inline]
-const fn lo8(v: u32) -> u8 {
-    v.to_le_bytes()[0]
 }
 /// 0xRRGGBB as the 16-bit pixel (5-6-5 or 5-5-5)
 #[inline]

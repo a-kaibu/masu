@@ -5,7 +5,7 @@
 //! touched). Glyph coverage lives in an R8 atlas and gradients in a ramp texture (256 texels a
 //! row), both kept here and uploaded before the draw that reads them.
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 use kome::num::to_f32;
 use super::*;
 

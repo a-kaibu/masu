@@ -1,7 +1,8 @@
 //! An audio packet's spectrum to time: libvorbis's mapping0_inverse (floor 1, residues 0/1/2,
 //! inverse coupling, IMDCT), step for step.
 
-use crate::bits::{i32_len, ilog, ix, us, Bits};
+use kome::num::*;
+use crate::bits::{i32_len, ilog, Bits};
 use crate::floor1_table::INVERSE_DB;
 use crate::imdct::Imdct;
 use crate::setup::{Floor1, Residue, ResidueKind, Setup};
@@ -100,8 +101,8 @@ fn render_line(n: usize, x0: i32, x1: i32, y0: i32, y1: i32, d: &mut [f32], down
         let slope = ((y1 - y0) << 22) / (x1 - x0);
         let mut acc = y0 << 22;
         // (posts' x are >= 0)
-        for x in ix(x0)..ix(i32_len(n).min(x1)) {
-            d[x] *= INVERSE_DB[ix((acc >> 22).clamp(0, 255))];
+        for x in us(x0)..us(i32_len(n).min(x1)) {
+            d[x] *= INVERSE_DB[us((acc >> 22).clamp(0, 255))];
             acc = acc.wrapping_add(slope);
         }
         return;
@@ -112,13 +113,13 @@ fn render_line(n: usize, x0: i32, x1: i32, y0: i32, y1: i32, d: &mut [f32], down
     let base = dy / adx;
     let sy = if dy < 0 { base - 1 } else { base + 1 };
     // (posts' x are >= 0)
-    let mut x = ix(x0);
+    let mut x = us(x0);
     let mut y = y0;
     let mut err = 0;
     ady -= (base * adx).abs();
-    let n = ix(i32_len(n).min(x1));
+    let n = us(i32_len(n).min(x1));
     if x < n {
-        d[x] *= INVERSE_DB[ix(y)];
+        d[x] *= INVERSE_DB[us(y)];
     }
     loop {
         x += 1;
@@ -133,7 +134,7 @@ fn render_line(n: usize, x0: i32, x1: i32, y0: i32, y1: i32, d: &mut [f32], down
             y += base;
         }
         // (a y under 0 is 255: 2^31 or more, clamped)
-        d[x] *= INVERSE_DB[ix(y).min(255)];
+        d[x] *= INVERSE_DB[us(y).min(255)];
     }
 }
 
@@ -153,8 +154,8 @@ fn floor1_apply(f: &Floor1, fit: &[i32], out: &mut [f32], down: bool) {
             ly = hy;
         }
     }
-    for v in out.iter_mut().skip(ix(hx.max(0))) {
-        *v *= INVERSE_DB[ix(ly)];
+    for v in out.iter_mut().skip(us(hx.max(0))) {
+        *v *= INVERSE_DB[us(ly)];
     }
 }
 

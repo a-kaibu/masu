@@ -58,7 +58,8 @@ mod merge_tests;
 #[cfg(test)]
 mod format_golden_tests;
 
-use crate::guest::{gc, gp, lo32, us};
+use kome::num::*;
+use crate::guest::{gc, gp};
 use std::collections::HashMap;
 use std::sync::Mutex;
 

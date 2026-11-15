@@ -1,6 +1,7 @@
 //! The identification and setup headers.
 
-use crate::bits::{ilog, us, Bits};
+use kome::num::*;
+use crate::bits::{ilog, Bits};
 use crate::codebook::Codebook;
 use crate::Error;
 

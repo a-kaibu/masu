@@ -5,8 +5,8 @@
 //! stencil view descriptions, integer viewports, buffer descriptions, Map's results). Objects
 //! the D3D11 calls hand out are turned into their D3D10 faces.
 
-use crate::guest::{gc, gp, lo32, us};
-use kome::num::{to_f32, Trunc};
+use kome::num::*;
+use crate::guest::{gc, gp};
 use super::*;
 
 pub const IF10_DEVICE: u32 = 95;
@@ -211,7 +211,7 @@ pub(super) unsafe fn device(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) ->
                 for k in 0..(us(rd(args[1], 0))).min(16) {
                     for i in 0..4 {
                         let f = f32::from_bits(v[6 * k + i]);
-                        wr(args[2], 6 * k + i, if i < 2 { f.trunc_i32().cast_unsigned() } else { f.trunc_u32() });
+                        wr(args[2], 6 * k + i, if i < 2 { trunc_i32(f).cast_unsigned() } else { trunc_u32(f) });
                     }
                     wr(args[2], 6 * k + 4, v[6 * k + 4]);
                     wr(args[2], 6 * k + 5, v[6 * k + 5]);

@@ -2,7 +2,8 @@
 //! (crates/kura/src/d3d9/gpu.rs, where the command words are listed) with WebGPU, on the
 //! drawing thread, every frame.
 
-use crate::guest::{lo32, us};
+
+use kome::num::*;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::atomic::Ordering::Relaxed;
@@ -4380,8 +4381,8 @@ fn padded_words(at: u32, bytes: &[u8], mut write: impl FnMut(u32, &[u8])) {
 
 #[cfg(test)]
 mod padded_tests {
-    use crate::guest::us;
-    #[test]
+    use kome::num::*;
+        #[test]
     fn same_finds_every_byte() {
         let a: Vec<u8> = (0..200u32).map(|i| (i * 13) as u8).collect();
         assert!(super::same(&a, &a.clone()));

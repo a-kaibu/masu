@@ -7,7 +7,7 @@
 //! upper half of its destination. Results are built in L_V0 (lower) and L_V1 (upper) before
 //! either is stored, so a destination that is also a source reads the old value.
 
-use crate::cvt::{lo8, lo32, us};
+use kome::num::*;
 use super::{Gen, I64Ops, I32_WRAP, I64_EXT_U, L_A, L_CPU, L_V0, L_V1, L_V2};
 use crate::Cpu;
 use core::mem::offset_of;

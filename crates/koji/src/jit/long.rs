@@ -17,7 +17,7 @@
 //! 32-bit lazy record, or computed EFLAGS for 64-bit operations). Instructions the
 //! translator does not handle run through the `step` import.
 
-use crate::cvt::{lo8, lo32, lo64, us};
+use kome::num::*;
 use super::wasm::{Code, Func, Module, I32, I64, V128};
 
 #[path = "long/avx.rs"]

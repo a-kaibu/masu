@@ -8,7 +8,7 @@
 //! `MASU_INPUT="<seconds>:<kind>,<x>,<y>,<data>;..."` sends input that many seconds after the
 //! first window shows up (see `start_scripted_input`).
 
-use kome::num::lo32;
+use kome::num::*;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_int;
 use std::sync::Mutex;
@@ -21,11 +21,6 @@ struct Rect {
     b: i32,
 }
 
-/// A non-negative offset or size as an index (callers make none negative; one that were would
-/// be usize::MAX, out of every slice, as the wrapped `as usize` it replaces).
-fn ix(v: i32) -> usize {
-    usize::try_from(v).unwrap_or(usize::MAX)
-}
 
 /// A count as a C int (saturating; display's counts are of windows and pixels of one screen).
 fn cint(v: usize) -> c_int {
@@ -93,7 +88,7 @@ impl Win {
     fn px(&self) -> &[u32] {
         match self.shared {
             Some(s) => {
-                let n = ix(self.rect.w().max(0)) * ix(self.rect.h().max(0));
+                let n = to_usize(self.rect.w().max(0)) * to_usize(self.rect.h().max(0));
                 unsafe { std::slice::from_raw_parts(s.ptr(), n) }
             }
             None => &self.pixels,
@@ -139,7 +134,7 @@ fn with<R>(f: impl FnOnce(&mut Display) -> R) -> R {
             h,
             wins: HashMap::new(),
             order: Vec::new(),
-            screen: vec![0xff00_0000; ix(w * h)],
+            screen: vec![0xff00_0000; to_usize(w * h)],
             serial: 0,
             bands: Default::default(),
             stale: Rect::default(),
@@ -256,7 +251,7 @@ impl Display {
 
     /// `screen`'s index of screen pixel (x, y) (inside `ext`)
     fn at_index(&self, x: i32, y: i32) -> usize {
-        ix(y - self.ext.t) * ix(self.ext.w()) + ix(x - self.ext.l)
+        to_usize(y - self.ext.t) * to_usize(self.ext.w()) + to_usize(x - self.ext.l)
     }
 
     /// `screen` made to hold `extent_of` when that changed (all of it composed again); whether
@@ -269,7 +264,7 @@ impl Display {
         self.ext = e;
         // (a window moving over the screen's edge moves the extent each frame: the same size
         // keeps its buffer)
-        let n = ix(e.w()) * ix(e.h());
+        let n = to_usize(e.w()) * to_usize(e.h());
         if self.screen.len() == n {
             self.screen.fill(0xff00_0000);
         } else {
@@ -336,7 +331,7 @@ impl Display {
         if first.is_none() {
             for y in area.t..area.b {
                 let row = self.at_index(area.l, y);
-                self.screen[row..row + ix(area.w())].fill(0xff00_0000);
+                self.screen[row..row + to_usize(area.w())].fill(0xff00_0000);
             }
         }
         for id in &self.order[first.unwrap_or(0)..] {
@@ -345,11 +340,11 @@ impl Display {
             if !win.visible || r.empty() || win.px().is_empty() {
                 continue;
             }
-            let ww = ix(win.rect.w());
+            let ww = to_usize(win.rect.w());
             for y in r.t..r.b {
-                let src = ix(y - win.rect.t) * ww + ix(r.l - win.rect.l);
-                let dst = ix(y - self.ext.t) * ix(self.ext.w()) + ix(r.l - self.ext.l);
-                let n = ix(r.w());
+                let src = to_usize(y - win.rect.t) * ww + to_usize(r.l - win.rect.l);
+                let dst = to_usize(y - self.ext.t) * to_usize(self.ext.w()) + to_usize(r.l - self.ext.l);
+                let n = to_usize(r.w());
                 self.screen[dst..dst + n].copy_from_slice(&win.px()[src..src + n]);
             }
         }
@@ -480,7 +475,7 @@ impl Display {
         let win = d.wins.entry(hwnd).or_insert_with(|| Win { rect: Rect::default(), client, visible: false, pixels: Vec::new(), shared: None });
         if win.rect.w() != rect.w() || win.rect.h() != rect.h() {
             win.shared = None;
-            win.pixels = vec![0xff00_0000; ix(rect.w().max(0)) * ix(rect.h().max(0))];
+            win.pixels = vec![0xff00_0000; to_usize(rect.w().max(0)) * to_usize(rect.h().max(0))];
         }
         win.rect = rect;
         win.client = client;
@@ -572,18 +567,18 @@ impl Display {
             win.pixels = win.px().to_vec();
             win.shared = None;
         }
-        let ww = ix(win.rect.w());
+        let ww = to_usize(win.rect.w());
         // Games redraw all of their window every frame, mostly the same pixels (a still screen,
         // a message waiting for a click): only the box that changed goes to the screen, the
         // page uploads and redraws only that, and nothing at all when nothing changed. The new
         // pixels are compared with `pixels` (what the screen has of the window) as they are
         // copied there; a whole new frame costs a row's compare more than the copy.
         // (the alpha byte is whatever the surface has: the page draws the frame opaque)
-        let src = |y: i32| std::slice::from_raw_parts(bits.offset(isize::try_from((y - oy) * stride + (dirty.l - ox)).unwrap_or(isize::MAX)), ix(dirty.w()));
+        let src = |y: i32| std::slice::from_raw_parts(bits.offset(isize::try_from((y - oy) * stride + (dirty.l - ox)).unwrap_or(isize::MAX)), to_usize(dirty.w()));
         let changed = if nodiff() {
             for y in dirty.t..dirty.b {
-                let dst = ix(y) * ww + ix(dirty.l);
-                win.pixels[dst..dst + ix(dirty.w())].copy_from_slice(src(y));
+                let dst = to_usize(y) * ww + to_usize(dirty.l);
+                win.pixels[dst..dst + to_usize(dirty.w())].copy_from_slice(src(y));
             }
             dirty
         } else {
@@ -689,8 +684,8 @@ fn last_diff(a: &[u32], b: &[u32]) -> Option<usize> {
 /// Copies rows `src(y)` (y in `dirty.t..dirty.b`, columns `dirty.l..dirty.r`) into `px` (rows
 /// of `ww`) and returns the box of what was different there (empty: nothing).
 fn update_changed<'a>(px: &mut [u32], ww: usize, dirty: Rect, src: impl Fn(i32) -> &'a [u32]) -> Rect {
-    let (l, w) = (ix(dirty.l), ix(dirty.w()));
-    let row = |y: i32| ix(y) * ww + l..ix(y) * ww + l + w;
+    let (l, w) = (to_usize(dirty.l), to_usize(dirty.w()));
+    let row = |y: i32| to_usize(y) * ww + l..to_usize(y) * ww + l + w;
     // the first and the last row that changed
     let Some(t) = (dirty.t..dirty.b).find(|&y| first_diff(&px[row(y)], src(y)).is_some()) else { return Rect::default() };
     // (row t differs: the search from the bottom ends there at the latest)
@@ -1036,7 +1031,7 @@ mod tests {
     }
 
     fn disp(w: i32, h: i32) -> Display {
-        Display { w, h, wins: HashMap::new(), order: Vec::new(), screen: vec![0xff00_0000; ix(w * h)], serial: 0, bands: Default::default(), stale: Rect::default(), ext: rect(0, 0, w, h) }
+        Display { w, h, wins: HashMap::new(), order: Vec::new(), screen: vec![0xff00_0000; to_usize(w * h)], serial: 0, bands: Default::default(), stale: Rect::default(), ext: rect(0, 0, w, h) }
     }
 
     const BLACK: u32 = 0xff00_0000;

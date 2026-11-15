@@ -11,7 +11,6 @@
 //! functional spec (float, integer and conversion rules), the D3D9 instruction reference
 //! (ps_3_0), the HLSL constant packing rules, the GLSL 1.20 spec and std140 for GL.
 
-pub(crate) use kome::num::{us, u32_of, usize_of, u64_of, lo32, lo16, lo8};
 // (a u32 count or offset as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
 

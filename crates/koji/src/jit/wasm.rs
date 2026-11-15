@@ -1,6 +1,6 @@
 //! A small WebAssembly binary encoder: just what the JIT emits.
 
-use crate::cvt::{lo8, lo32, lo64, us};
+use kome::num::*;
 use alloc::vec::Vec;
 
 pub const I32: u8 = 0x7f;

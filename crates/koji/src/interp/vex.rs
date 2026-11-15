@@ -7,7 +7,7 @@
 //! register XMM16 (`Cpu::vex_tmp`) and the result goes to dst. 256-bit forms aren't supported
 //! (CPUID doesn't report AVX, so only code built for AVX unconditionally uses VEX at all).
 
-use crate::cvt::{lo32, lo64};
+use kome::num::*;
 use super::X;
 use crate::{Exit, Memory};
 use alloc::boxed::Box;

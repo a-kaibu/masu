@@ -5,7 +5,7 @@
 //! page reads from the ring (`vnhost_audio_ring`) into WebAudio. Under node nobody drains it and
 //! `out` just stays capped, so the timing games wait on is the same in both.
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 #[cfg(test)]
 use kome::num::to_f32;
 use std::collections::{HashMap, VecDeque};

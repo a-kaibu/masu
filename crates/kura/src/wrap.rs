@@ -2,7 +2,7 @@
 //! stdout/stderr into the crash log, clocks without BigInts, and the per-thread CPU count
 //! (MASU_LOAD) around futex waits. sched_yield is in c/shim.c.
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 

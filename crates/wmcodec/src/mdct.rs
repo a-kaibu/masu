@@ -1,8 +1,8 @@
 //! The inverse MDCT FFmpeg's WMA decoder uses (the old ff_imdct_calc: pre-rotation, an
 //! n/4-point complex inverse FFT, post-rotation), with its scale.
 
-use crate::num::us;
 
+use kome::num::*;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct C {
     pub re: f32,

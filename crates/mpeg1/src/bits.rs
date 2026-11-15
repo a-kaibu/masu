@@ -2,10 +2,7 @@
 //! end gives 0 and moves nothing, so a cut or corrupt stream decodes to something without
 //! panicking.
 
-pub use kome::num::us;
-// (a u32 read from a stream always fits a usize: `us` widens, it never truncates)
-const _: () = assert!(usize::BITS >= 32);
-
+use kome::num::*;
 pub struct Bits<'a> {
     d: &'a [u8],
     /// in bits

@@ -1,7 +1,8 @@
 //! Codebooks: the Huffman trees (codewords assigned as libvorbis's _make_words does) and the
 //! VQ value vectors (as _book_unquantize).
 
-use crate::bits::{ilog, us, Bits};
+use kome::num::*;
+use crate::bits::{ilog, Bits};
 use crate::Error;
 
 /// Codewords up to this long are found with one table lookup.

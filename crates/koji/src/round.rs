@@ -3,7 +3,7 @@
 //! round the exact result again in any direction and to fewer bits, without wider arithmetic.
 //! Only the sign of `e` and whether it is 0 matter.
 
-use crate::cvt::{lo64, us};
+use kome::num::*;
 /// Rounding control (x87 CW bits 10-11, MXCSR bits 13-14)
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Rc {

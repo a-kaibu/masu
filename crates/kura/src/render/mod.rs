@@ -11,9 +11,10 @@ pub mod gpu;
 #[cfg(test)]
 pub mod model;
 
-use crate::guest::{lo32, us};
+
+use kome::num::*;
 #[cfg(test)]
-use crate::locks::Lock;
+use kome::locks::Lock;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::Relaxed, Ordering::SeqCst};
 use std::sync::Mutex;

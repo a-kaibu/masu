@@ -1,6 +1,6 @@
 //! MMX, SSE, SSE2, SSE3, SSSE3 and SSE4.1 (all but DPPS/DPPD, MPSADBW, PHMINPOSUW).
 
-use crate::cvt::{lo8, lo16, lo32, lo64, us};
+use kome::num::*;
 use super::{Stop, X};
 use crate::flags::STATUS;
 use crate::round::{self, Op};

@@ -6,7 +6,7 @@
 //! slices of the same texture do not conflict. (On WebGPU a texture sampled and rendered in
 //! the same pass is a validation error that loses the pass.)
 
-use crate::guest::us;
+use kome::num::*;
 use super::{Data, State, View, D11};
 
 /// What a view covers: (resource, first mip, mips, first slice, slices); a buffer view covers

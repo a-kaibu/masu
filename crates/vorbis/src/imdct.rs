@@ -52,7 +52,7 @@ impl Imdct {
     fn fft(&mut self) {
         let p = self.buf.len();
         for i in 0..p {
-            let j = crate::bits::us(self.rev[i]);
+            let j = kome::num::us(self.rev[i]);
             if i < j {
                 self.buf.swap(i, j);
             }

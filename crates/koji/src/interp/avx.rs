@@ -7,7 +7,7 @@
 //! cross lanes (broadcasts, permutes, inserts and extracts, widening and narrowing
 //! conversions, mask extraction, PTEST) are done here directly.
 
-use crate::cvt::{lo32, lo64, us};
+use kome::num::*;
 use super::Stop;
 use super::X;
 use crate::{Exit, Fault, Memory};

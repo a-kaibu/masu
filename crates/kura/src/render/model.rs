@@ -22,8 +22,7 @@
 
 #![allow(clippy::too_many_arguments)]
 
-use crate::guest::{lo32, us};
-use kome::num::{to_f32, Trunc};
+use kome::num::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -53,7 +52,7 @@ impl J {
         }
     }
     fn u(&self, k: &str) -> Option<u32> {
-        self.num(k).map(|n| n.trunc_u32())
+        self.num(k).map(|n| trunc_u32(n))
     }
     fn s(&self, k: &str) -> Option<&str> {
         match self.get(k) {
@@ -2360,8 +2359,8 @@ impl Model {
             let Obj::Pipeline(p) = self.objs[d.st.pipeline.unwrap()].clone() else { continue };
             let [vx, vy, vw, vh, _, _] = d.st.viewport;
             let s = d.st.scissor;
-            let (cx0, cy0) = (((vx - 0.5).ceil().max(0.0)).trunc_u32(), ((vy - 0.5).ceil().max(0.0)).trunc_u32());
-            let (cx1, cy1) = (((vx + vw - 0.5).ceil().max(0.0)).trunc_u32(), ((vy + vh - 0.5).ceil().max(0.0)).trunc_u32());
+            let (cx0, cy0) = (trunc_u32((vx - 0.5).ceil().max(0.0)), trunc_u32((vy - 0.5).ceil().max(0.0)));
+            let (cx1, cy1) = (trunc_u32((vx + vw - 0.5).ceil().max(0.0)), trunc_u32((vy + vh - 0.5).ceil().max(0.0)));
             let (mut x0, mut y0, mut x1, mut y1) = (cx0.max(s[0]), cy0.max(s[1]), cx1.min(s[0] + s[2]), cy1.min(s[1] + s[3]));
             if let Some(b) = d.bounds {
                 (x0, y0, x1, y1) = (x0.max(b[0]), y0.max(b[1]), x1.min(b[2]), y1.min(b[3]));

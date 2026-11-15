@@ -1,7 +1,7 @@
 //! The reference interpreter: decode one instruction with iced-x86 and
 //! execute it. Slow but simple; the JIT is checked against it.
 
-use crate::cvt::{lo8, lo16, lo32, lo64, us};
+use kome::num::*;
 use crate::flags::{self, *};
 use crate::{Cpu, Exit, Fault, Memory, Width, ESP, EAX, ECX, EDX, EBP, ESI, EDI};
 use iced_x86::{ConditionCode, Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};

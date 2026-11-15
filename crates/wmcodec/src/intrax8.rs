@@ -7,7 +7,7 @@ use crate::bits::Bits;
 use crate::idct;
 use crate::intrax8_tables as t;
 use crate::msmpeg4_tables as m4;
-use crate::num::{ix, lo16, lo8, us};
+use kome::num::*;
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
@@ -250,7 +250,7 @@ impl IntraX8 {
             let t = 0x01030F >> (l << 3);
             (i & t, l, fin)
         } else if i < 73 {
-            let (eb, mask, ro, lo) = AC_DECODE[ix(i - 46)];
+            let (eb, mask, ro, lo) = AC_DECODE[us(i - 46)];
             let e = r.get(eb).cast_signed();
             let mask = mask.cast_signed();
             (ro + (e & mask), lo + (e & !mask), i - 46 > 58 - 46)
@@ -279,7 +279,7 @@ impl IntraX8 {
         let mut c = (i + 1) >> 1;
         c -= i32::from(c > 1);
         let e = r.get(c.cast_unsigned()).cast_signed();
-        let i = DC_INDEX_OFFSET[ix(i)] + (e >> 1);
+        let i = DC_INDEX_OFFSET[us(i)] + (e >> 1);
         let e = -(e & 1);
         Some(((i ^ e) - e, fin))
     }
@@ -332,7 +332,7 @@ impl IntraX8 {
             if !(0..12).contains(&self.raw_orient) {
                 return None;
             }
-            self.orient = PREDICTION_TABLE[us(self.orient.n())][ix(self.raw_orient)];
+            self.orient = PREDICTION_TABLE[us(self.orient.n())][us(self.raw_orient)];
         }
         Some(())
     }
@@ -395,7 +395,7 @@ impl IntraX8 {
     fn ac_compensation(&mut self, direction: i32, dc_level: i32) {
         let b = &mut self.block;
         let tt = |x: i32| (x * dc_level + 0x8000) >> 16;
-        let mut sub = |x: usize, y: usize, t: i32| b[x + y * 8] = lo16(i32::from(b[x + y * 8]) - t);
+        let mut sub = |x: usize, y: usize, t: i32| b[x + y * 8] = lo16s(i32::from(b[x + y * 8]) - t);
         match direction {
             0 => {
                 let t = tt(3811);
@@ -490,9 +490,9 @@ impl IntraX8 {
                     let sign = -r.i::<1>();
                     level = (level ^ sign) - sign;
                     if use_quant_matrix {
-                        level = (level * QUANT_TABLE[ix(pos)]) >> 8;
+                        level = (level * QUANT_TABLE[us(pos)]) >> 8;
                     }
-                    self.block[usize::from(m4::WMV1_SCANTABLE[scan * 64 + ix(pos)])] = lo16(level);
+                    self.block[usize::from(m4::WMV1_SCANTABLE[scan * 64 + us(pos)])] = lo16s(level);
                     if f {
                         break;
                     }
@@ -507,7 +507,7 @@ impl IntraX8 {
                 }
                 zeros_only = dc_level == 0;
             }
-            self.block[0] = lo16(dc_level * if chroma == 0 { self.quant } else { self.quant_dc_chroma });
+            self.block[0] = lo16s(dc_level * if chroma == 0 { self.quant } else { self.quant_dc_chroma });
             if (dc_level + 1).cast_unsigned() >= 3 && self.edges & 3 != 3 {
                 let direction = (0x6A017Ci32 >> (self.orient.n() * 2)) & 3;
                 if direction != 3 {

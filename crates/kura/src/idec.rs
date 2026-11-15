@@ -13,7 +13,7 @@
 //! answer in time: None, and the caller decodes it itself. A page that once did not answer in
 //! time is not asked again.
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex};

@@ -16,7 +16,7 @@
 //! `reset` starts a stream again (a seek): chunks and samples still here go, and the page makes a
 //! new decoder; what the old one still hands back is dropped (by generation).
 
-use crate::guest::{lo32, us};
+use kome::num::*;
 #[cfg(test)]
 use kome::num::to_f32;
 use std::collections::{HashMap, VecDeque};

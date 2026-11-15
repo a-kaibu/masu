@@ -2,8 +2,8 @@
 //! makes WGSL of the sources (built-ins become `vn_*` inputs and uniforms, filled here). Uniform
 //! values are kept by name and laid out into each stage's block at every draw.
 
-use crate::guest::{lo32, us};
-use kome::num::to_f32;
+
+use kome::num::*;
 use super::*;
 
 pub(crate) struct Shader {

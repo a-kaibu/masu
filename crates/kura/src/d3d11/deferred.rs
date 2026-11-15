@@ -15,7 +15,8 @@
 //! A recorded call keeps copies of what its pointers point to, and private references to the
 //! objects it names, until the list goes.
 
-use crate::guest::{gc, gp, lo32, us};
+use kome::num::*;
+use crate::guest::{gc, gp};
 use super::*;
 
 /// D3D11_ERROR_DEFERRED_CONTEXT_MAP_WITHOUT_INITIAL_DISCARD

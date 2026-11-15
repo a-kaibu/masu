@@ -52,7 +52,6 @@ pub mod filelock;
 pub mod wrap;
 pub mod usage;
 pub mod snap;
-pub mod locks;
 pub(crate) mod guest;
 #[cfg(test)]
 mod host_out_tests;

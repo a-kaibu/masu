@@ -7,7 +7,7 @@
 //! second argument);
 //! eip 0 marks a free entry. Entries are found by linear probing from [`slot`].
 
-use crate::cvt::{lo32, us};
+use kome::num::*;
 use super::wasm::{Code, Func, FuncType, Import, Module, I32};
 use super::Off;
 use crate::Cpu;

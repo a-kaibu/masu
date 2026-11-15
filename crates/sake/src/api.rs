@@ -2,7 +2,7 @@
 //! there leaves the translated code; `dispatch` runs the Rust implementation with the
 //! arguments still on the guest stack and returns to the caller as stdcall/cdecl would.
 
-use crate::locks::{Lock as _, Rw as _};
+use kome::locks::{Lock as _, Rw as _};
 use crate::{HashMap, HashSet};
 use std::sync::atomic::{AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};

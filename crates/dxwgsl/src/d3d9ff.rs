@@ -127,7 +127,7 @@ pub fn lighting_regs(regs: &mut [[f32; 4]], material: &[f32; 17], ambient: u32, 
     for i in 0..4 {
         regs[12 + i] = [material[4 * i], material[4 * i + 1], material[4 * i + 2], material[4 * i + 3]];
     }
-    let ch = |s: u32| f32::from(crate::lo8(ambient >> s)) / 255.0;
+    let ch = |s: u32| f32::from(kome::num::lo8(ambient >> s)) / 255.0;
     regs[16] = [ch(16), ch(8), ch(0), ch(24)];
     regs[17] = [material[16], 0.0, 0.0, 0.0];
     let wv = mat_mul(world, view);
@@ -145,15 +145,15 @@ pub fn lighting_regs(regs: &mut [[f32; 4]], material: &[f32; 17], ambient: u32, 
             let mut v = [0f32; 4];
             for r in 0..3 {
                 let (r1, r2) = ((r + 1) % 3, (r + 2) % 3);
-                v[r] = crate::num::to_f32((m(c1, r1) * m(c2, r2) - m(c1, r2) * m(c2, r1)) / det);
+                v[r] = kome::num::to_f32((m(c1, r1) * m(c2, r2) - m(c1, r2) * m(c2, r1)) / det);
             }
             v
         } else {
             [wv[c], wv[4 + c], wv[8 + c], 0.0]
         };
     }
-    for (i, l) in lights.iter().take(crate::us(MAX_LIGHTS)).enumerate() {
-        let b = crate::us(LIGHT_BASE) + crate::us(LIGHT_REGS) * i;
+    for (i, l) in lights.iter().take(kome::num::us(MAX_LIGHTS)).enumerate() {
+        let b = kome::num::us(LIGHT_BASE) + kome::num::us(LIGHT_REGS) * i;
         let p = row_mul([l.position[0], l.position[1], l.position[2], 1.0], view);
         let d = row_mul([l.direction[0], l.direction[1], l.direction[2], 0.0], view);
         let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
@@ -163,7 +163,7 @@ pub fn lighting_regs(regs: &mut [[f32; 4]], material: &[f32; 17], ambient: u32, 
         regs[b + 2] = l.ambient;
         regs[b + 3] = [p[0], p[1], p[2], l.range];
         regs[b + 4] = [d[0], d[1], d[2], l.falloff];
-        regs[b + 5] = [l.attenuation[0], l.attenuation[1], l.attenuation[2], crate::num::to_f32(l.ty)];
+        regs[b + 5] = [l.attenuation[0], l.attenuation[1], l.attenuation[2], kome::num::to_f32(l.ty)];
         regs[b + 6] = [(l.theta / 2.0).cos(), (l.phi / 2.0).cos(), 0.0, 0.0];
     }
 }
@@ -181,7 +181,7 @@ pub fn lighting_fn(k: &LightKey) -> String {
   var spe = vec3f(0.0);
 ",
     );
-    let _ = writeln!(h, "  for (var i = 0u; i < {}u; i++) {{", k.count.min(crate::lo8(MAX_LIGHTS)));
+    let _ = writeln!(h, "  for (var i = 0u; i < {}u; i++) {{", k.count.min(kome::num::lo8(MAX_LIGHTS)));
     let _ = writeln!(h, "    let b = {}u + i * {}u;", LIGHT_BASE, LIGHT_REGS);
     h.push_str(
         "    let ty = u.c[b + 5u].w;
@@ -233,7 +233,7 @@ pub fn vertex(k: &VsKey) -> String {
     let mut h = uniforms(VS_CONSTS, 0);
     h.push_str("struct In {\n");
     for &(_, _, loc, kind) in &k.inputs {
-        let ty = ["vec4f", "vec4u", "vec4i", "vec4f"].get(crate::us(kind)).copied().unwrap_or("vec4f");
+        let ty = ["vec4f", "vec4u", "vec4i", "vec4f"].get(kome::num::us(kind)).copied().unwrap_or("vec4f");
         let _ = writeln!(h, "  @location({}) i{}: {},", loc, loc, ty);
     }
     if k.inputs.is_empty() {
@@ -418,7 +418,7 @@ pub fn pixel(k: &PsKey) -> String {
             let _ = writeln!(h, "@group(1) @binding({}) var smp{}: sampler;", t * 2 + 1, t);
         }
     }
-    let addr: Vec<_> = k.addr.iter().filter(|a| k.tex.get(crate::us(a.sampler)) == Some(&2) && crate::us(a.sampler) < k.stages.len()).copied().collect();
+    let addr: Vec<_> = k.addr.iter().filter(|a| k.tex.get(kome::num::us(a.sampler)) == Some(&2) && kome::num::us(a.sampler) < k.stages.len()).copied().collect();
     h.push_str(&crate::addr::helpers(&addr));
     let f = if k.flat { "@interpolate(flat) " } else { "" };
     let linked = k.vs_writes.unwrap_or(0x3ff);
@@ -447,13 +447,13 @@ pub fn pixel(k: &PsKey) -> String {
             } else {
                 format!("l{}.xy", 2 + t)
             };
-            let smp = format!("textureSample(tex{0}, smp{0}, {1})", t, crate::addr::coord(&addr, crate::u32_of(t), &coord));
+            let smp = format!("textureSample(tex{0}, smp{0}, {1})", t, crate::addr::coord(&addr, kome::num::u32_of(t), &coord));
             let _ = writeln!(h, "  var t{} = {};", t, smp);
             let _ = writeln!(h, "  if ((u.x[0].z & {}u) != 0u) {{ t{}.w = 1.0; }}", 1u32 << t, t);
             // (bits 16-31: red is the luminance, rgb = r)
             let _ = writeln!(h, "  if ((u.x[0].z & {}u) != 0u) {{ t{t} = vec4f(t{t}.xxx, t{t}.w); }}", 1u32 << (t + 16));
-            if addr.iter().any(|a| a.sampler == crate::u32_of(t)) {
-                let _ = writeln!(h, "  t{t} = {};", crate::addr::wrap(&addr, crate::u32_of(t), &format!("t{t}"), &coord));
+            if addr.iter().any(|a| a.sampler == kome::num::u32_of(t)) {
+                let _ = writeln!(h, "  t{t} = {};", crate::addr::wrap(&addr, kome::num::u32_of(t), &format!("t{t}"), &coord));
             }
         } else {
             // no texture: white (as stage 0's default MODULATE then gives the diffuse color)

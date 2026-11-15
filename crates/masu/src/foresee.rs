@@ -5,7 +5,7 @@
 //! scripts it names and what the scripts it goes on to name, on the game's first run, whichever
 //! way it goes. The first ask starts the reading and is answered 202; the page asks again.
 
-use kome::locks::tolerant::Lock as _;
+use kome::locks::Lock as _;
 use crate::treefiles::Trees;
 use axum::{
     extract::{Path, State},
