@@ -5618,6 +5618,28 @@ pub fn translate_region<M: Memory>(module: &mut Module, mem: &mut M, roots: &[u3
     translate(module, mem, roots, max_blocks, MAX_REGION_INS, accept, None, &|_| None, &|_| false)
 }
 
+/// Code bytes a translated function's body takes at most. V8's optimizing compiler
+/// (Turboshaft) takes memory faster than a function grows: bodies of 190-220 KB took 1.1 GB of
+/// its zone each, and a bigger one (functions built again take up to 8000 instructions,
+/// 370 KB) ended the whole page with "V8 process OOM (Zone)" (Chrome 141, node 24; three
+/// KiriKiri2 / RGSS3 trials, 2026-11-15).
+pub const MAX_FN_BODY: usize = 96 * 1024;
+
+/// [`translate_function`] into a module of its own named `name`, translated again with half
+/// the instructions while a body is over [`MAX_FN_BODY`], down to `min_ins`.
+#[allow(clippy::too_many_arguments)]
+pub fn translate_function_fit<M: Memory, A: FnMut(u32) -> bool + Clone>(name: Option<alloc::string::String>, mem: &mut M, entry: u32, max_blocks: usize, max_ins: usize, min_ins: usize, trap: (u32, u32), hints: &dyn Fn(u32) -> Option<u32>, ran: &dyn Fn(u32) -> bool, accept: A) -> Option<(Module, Region)> {
+    let mut ins = max_ins;
+    loop {
+        let mut m = Module { name: name.clone(), ..Module::default() };
+        let r = translate_function(&mut m, mem, entry, max_blocks, ins, trap, hints, ran, accept.clone())?;
+        if m.largest_body() <= MAX_FN_BODY || ins / 2 < min_ins {
+            return Some((m, r));
+        }
+        ins /= 2;
+    }
+}
+
 /// Adds the function at `entry` (see [`FN`]) to `module`: its adapter for the region calling
 /// convention ("f<n>", entered by the dispatcher and by regions' jumps), then the function
 /// ("f<n+1>"), entered at any of `starts` (table index | block << ENTRY_SHIFT | FN_TAG).
@@ -6379,6 +6401,56 @@ mod tests {
         let mut m = Module::default();
         let r = translate_function(&mut m, &mut code(), 0x10_0000, MAX_BLOCKS, max_ins, (0, 0), &|_| None, &|_| true, |_| true).unwrap();
         r.instructions
+    }
+
+    /// A straight run of `ops` (indices into a few memory-heavy instructions), then RET, at
+    /// 0x100000: wasm grows fast with these.
+    fn heavy(ops: &[u8]) -> Code {
+        const INS: [&[u8]; 5] = [
+            &[0x89, 0x94, 0x88, 0x34, 0x12, 0x00, 0x00], // mov [eax+ecx*4+0x1234], edx
+            &[0x8b, 0x84, 0x8a, 0x78, 0x56, 0x00, 0x00], // mov eax, [edx+ecx*4+0x5678]
+            &[0x01, 0xc8],                               // add eax, ecx
+            &[0x0f, 0xaf, 0xc1],                         // imul eax, ecx
+            &[0x40],                                     // inc eax
+        ];
+        let mut v: Vec<u8> = ops.iter().flat_map(|&k| INS[usize::from(k) % INS.len()].iter().copied()).collect();
+        v.push(0xc3);
+        Code(v)
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(48))]
+        /// translate_function_fit: every body within MAX_FN_BODY (V8's optimizing compiler ran
+        /// out of memory on bigger ones), valid wasm, never more instructions than translate_function takes; and when
+        /// the first translation already fits, the very same module as translate_function's.
+        #[test]
+        fn fit_keeps_bodies_small(ops in proptest::collection::vec(0u8..5, 200..9000), max_ins in 100usize..9000) {
+            let fit = translate_function_fit(None, &mut heavy(&ops), 0x10_0000, MAX_BLOCKS, max_ins, 50, (0, 0), &|_| None, &|_| true, |_| true);
+            let (m, r) = fit.unwrap();
+            proptest::prop_assert!(m.largest_body() <= MAX_FN_BODY, "{} > {MAX_FN_BODY}", m.largest_body());
+            let bytes = m.finish();
+            valid(m);
+            let mut one = Module::default();
+            let r1 = translate_function(&mut one, &mut heavy(&ops), 0x10_0000, MAX_BLOCKS, max_ins, (0, 0), &|_| None, &|_| true, |_| true).unwrap();
+            if one.largest_body() <= MAX_FN_BODY {
+                proptest::prop_assert_eq!(one.finish(), bytes);
+                proptest::prop_assert_eq!(r1.instructions, r.instructions);
+            } else {
+                proptest::prop_assert!(r.instructions < r1.instructions, "{} !< {}", r.instructions, r1.instructions);
+            }
+        }
+    }
+
+    /// Long enough code at the largest build's limit (8000 instructions) needs the cap: the
+    /// property above is not true for nothing.
+    #[test]
+    fn fit_cuts_the_biggest_builds() {
+        let ops: Vec<u8> = (0..9000u32).map(|i| u8::from(i % 2 == 1)).collect();
+        let mut one = Module::default();
+        translate_function(&mut one, &mut heavy(&ops), 0x10_0000, MAX_BLOCKS, 8000, (0, 0), &|_| None, &|_| true, |_| true).unwrap();
+        assert!(one.largest_body() > MAX_FN_BODY, "{}", one.largest_body());
+        let (m, _) = translate_function_fit(None, &mut heavy(&ops), 0x10_0000, MAX_BLOCKS, 8000, 250, (0, 0), &|_| None, &|_| true, |_| true).unwrap();
+        assert!(m.largest_body() <= MAX_FN_BODY, "{}", m.largest_body());
     }
 
     /// A function's instruction limit is its own: threads translating with others at once get

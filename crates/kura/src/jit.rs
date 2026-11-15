@@ -3024,11 +3024,11 @@ fn build_fn(mem: &mut Linear, eip: u32, (lo, hi): (u32, u32), part: bool, build:
         jit::LAYOUT.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     profiling();
-    let mut m = Module { name: Some(format!("x86_{eip:08x}_fn")), ..Module::default() };
     // a function built again (it left its blocks often) may take more: twice per build
-    // (big interpreters' loops, a C library's long switch), from MASU_JIT_FN_INS
+    // (big interpreters' loops, a C library's long switch), from MASU_JIT_FN_INS; less again
+    // when a body gets too big for V8's optimizing compiler (jit::MAX_FN_BODY)
     let base = *FN_INS.get_or_init(|| std::env::var("MASU_JIT_FN_INS").ok().and_then(|v| v.parse().ok()).unwrap_or(1000));
-    let region = jit::translate_function(&mut m, mem, eip, jit::MAX_BLOCKS, base << (build.min(4) - 1), (lo, hi), &|a| hints.get(&a).copied(), &|a| debug_allowed(a) && ran(misses, known, a), |a| debug_allowed(a) && !(a >= lo && a < hi) && (a == eip || if part { !known.contains(&a) && misses.contains_key(&a) } else { ran(misses, known, a) }))?;
+    let (m, region) = jit::translate_function_fit(Some(format!("x86_{eip:08x}_fn")), mem, eip, jit::MAX_BLOCKS, base << (build.min(4) - 1), base / 4, (lo, hi), &|a| hints.get(&a).copied(), &|a| debug_allowed(a) && ran(misses, known, a), |a| debug_allowed(a) && !(a >= lo && a < hi) && (a == eip || if part { !known.contains(&a) && misses.contains_key(&a) } else { ran(misses, known, a) }))?;
     if crate::env_on!("MASU_JIT_LAYOUT") {
         eprintln!("vnjit fn {eip:#x}\n{}", region.layout);
     }

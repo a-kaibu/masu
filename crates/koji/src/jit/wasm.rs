@@ -535,6 +535,12 @@ pub struct Module {
 }
 
 impl Module {
+    /// The code bytes of its largest function body (what V8's optimizing compiler's memory
+    /// grows with: [`super::MAX_FN_BODY`]).
+    pub fn largest_body(&self) -> usize {
+        self.funcs.iter().map(|f| f.code.b.len()).max().unwrap_or(0)
+    }
+
     pub fn imported_funcs(&self) -> u32 {
         lo32(self.imports.iter().filter(|i| matches!(i, Import::Func(..))).count())
     }
