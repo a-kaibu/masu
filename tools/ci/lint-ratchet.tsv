@@ -78,7 +78,6 @@ file	crates/dxwgsl/src/d3d9ff.rs	indexing_slicing	35
 file	crates/dxwgsl/src/d3d9ff.rs	let_underscore_must_use	26
 file	crates/dxwgsl/src/dxbc.rs	arithmetic_side_effects	11
 file	crates/dxwgsl/src/dxbc.rs	indexing_slicing	9
-file	crates/dxwgsl/src/num.rs	allow-attr	3
 file	crates/dxwgsl/src/tpf.rs	arithmetic_side_effects	13
 file	crates/dxwgsl/src/tpf.rs	indexing_slicing	11
 file	crates/dxwgsl/src/wgsl.rs	arithmetic_side_effects	23
@@ -280,6 +279,15 @@ file	crates/koji/src/round.rs	cast_sign_loss	5
 file	crates/koji/src/round.rs	float_cmp	2
 file	crates/koji/src/round.rs	indexing_slicing	1
 file	crates/koji/src/round.rs	wildcard_enum_match_arm	2
+file	crates/kome/src/golden.rs	arithmetic_side_effects	2
+file	crates/kome/src/golden.rs	panic	2
+file	crates/kome/src/le.rs	arithmetic_side_effects	1
+file	crates/kome/src/le.rs	indexing_slicing	1
+file	crates/kome/src/locks.rs	panic	1
+file	crates/kome/src/num.rs	as_conversions	13
+file	crates/kome/src/num.rs	cast_possible_truncation	11
+file	crates/kome/src/num.rs	cast_precision_loss	2
+file	crates/kome/src/num.rs	cast_sign_loss	5
 file	crates/kura/src/adec.rs	arithmetic_side_effects	12
 file	crates/kura/src/adec.rs	as_conversions	30
 file	crates/kura/src/adec.rs	cast_possible_truncation	11
@@ -522,7 +530,6 @@ file	crates/kura/src/jit/park.rs	as_conversions	16
 file	crates/kura/src/jit/park.rs	cast_possible_truncation	5
 file	crates/kura/src/jit/park.rs	indexing_slicing	6
 file	crates/kura/src/jit/park.rs	unwrap_used	1
-file	crates/kura/src/locks.rs	panic	1
 file	crates/kura/src/pages.rs	arithmetic_side_effects	30
 file	crates/kura/src/pages.rs	as_conversions	40
 file	crates/kura/src/pages.rs	cast_possible_truncation	14
@@ -757,8 +764,6 @@ file	crates/masu/src/iscab.rs	arithmetic_side_effects	24
 file	crates/masu/src/iscab.rs	as_conversions	49
 file	crates/masu/src/iscab.rs	cast_possible_truncation	21
 file	crates/masu/src/iscab.rs	indexing_slicing	5
-file	crates/masu/src/le.rs	arithmetic_side_effects	1
-file	crates/masu/src/le.rs	indexing_slicing	1
 file	crates/masu/src/library.rs	arithmetic_side_effects	5
 file	crates/masu/src/library.rs	as_conversions	4
 file	crates/masu/src/library.rs	cast_possible_truncation	4
@@ -1532,7 +1537,6 @@ file	crates/sake/src/listbox.rs	cast_possible_wrap	34
 file	crates/sake/src/listbox.rs	cast_sign_loss	19
 file	crates/sake/src/listbox.rs	indexing_slicing	7
 file	crates/sake/src/listbox.rs	unwrap_used	3
-file	crates/sake/src/locks.rs	panic	1
 file	crates/sake/src/lsa.rs	arithmetic_side_effects	44
 file	crates/sake/src/lsa.rs	as_conversions	28
 file	crates/sake/src/lsa.rs	cast_possible_truncation	16
@@ -1825,10 +1829,6 @@ file	crates/sake/src/ntsync.rs	as_conversions	21
 file	crates/sake/src/ntsync.rs	cast_possible_truncation	1
 file	crates/sake/src/ntsync.rs	cast_possible_wrap	7
 file	crates/sake/src/ntsync.rs	cast_sign_loss	6
-file	crates/sake/src/num.rs	as_conversions	10
-file	crates/sake/src/num.rs	cast_possible_truncation	8
-file	crates/sake/src/num.rs	cast_precision_loss	2
-file	crates/sake/src/num.rs	cast_sign_loss	4
 file	crates/sake/src/obj.rs	arithmetic_side_effects	14
 file	crates/sake/src/obj.rs	as_conversions	5
 file	crates/sake/src/obj.rs	cast_possible_truncation	3
@@ -2025,7 +2025,6 @@ file	crates/sake/src/tctx.rs	unwrap_used	5
 file	crates/sake/src/test_guest.rs	as_conversions	6
 file	crates/sake/src/test_guest.rs	cast_possible_truncation	2
 file	crates/sake/src/test_guest.rs	expect_used	1
-file	crates/sake/src/test_guest.rs	unwrap_used	3
 file	crates/sake/src/text.rs	arithmetic_side_effects	42
 file	crates/sake/src/text.rs	as_conversions	30
 file	crates/sake/src/text.rs	cast_possible_truncation	8
