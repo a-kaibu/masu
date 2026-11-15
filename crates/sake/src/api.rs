@@ -95,7 +95,13 @@ impl Ctx<'_> {
     }
     /// x64: the whole argument `i` (RCX, RDX, R8, R9, then the stack past the home space).
     pub fn a64(&self, i: u32) -> u64 {
-        if i < 4 { self.cpu.gpr([1, 2, 8, 9][kome::num::us(i)]) } else { crate::mem::r64(self.esp + 8 + 8 * i) }
+        match i {
+            0 => self.cpu.gpr(1),
+            1 => self.cpu.gpr(2),
+            2 => self.cpu.gpr(8),
+            3 => self.cpu.gpr(9),
+            _ => crate::mem::r64(self.esp + 8 + 8 * i),
+        }
     }
     /// x64: floating-point argument `i` (XMM0-3, then the stack), as a double's bits.
     pub fn xmm(&self, i: u32) -> u64 {
@@ -131,8 +137,8 @@ impl Ctx<'_> {
     pub fn call_f(&mut self, f: u32, args: &[u32], floats: &[usize]) -> u32 {
         if crate::mem::x64() {
             for &i in floats {
-                if i < 4 {
-                    self.cpu.set_xmm(i, u128::from(args[i]));
+                if i < 4 && let Some(&v) = args.get(i) {
+                    self.cpu.set_xmm(i, u128::from(v));
                 }
             }
         }
@@ -498,7 +504,9 @@ pub fn export(dll: &str, name: &str) -> u32 {
         this_arg,
         yields: yields(name),
     });
-    publish(kome::num::us(i), &e[kome::num::us(i)]);
+    if let Some(x) = e.last() {
+        publish(kome::num::us(i), x);
+    }
     idx.insert(key, i);
     TRAP_LO + 4 * i
 }
@@ -597,20 +605,23 @@ fn threads_on() -> bool {
             std::thread::sleep(std::time::Duration::from_secs_f64(s));
             use std::sync::atomic::Ordering::Relaxed;
             let mut out = format!("sake threads at {} ms:", crate::k32::ticks_ms() - 60_000);
-            for k in 0..RECENT_THREADS {
-                let pos = kome::num::us(RECENT_POS[k].load(Relaxed));
+            for (k, (slots, at)) in RECENT.iter().zip(&RECENT_POS).enumerate() {
+                let pos = kome::num::us(at.load(Relaxed));
                 if pos == 0 {
                     continue;
                 }
                 out += &format!("\n  {:04x}:", 0x20 + 4 * k);
                 for n in pos.saturating_sub(RECENT_N)..pos {
-                    let r: Vec<u32> = RECENT[k][n % RECENT_N].iter().map(|x| x.load(Relaxed)).collect();
-                    out += &format!(" {}({:x},{:x},{:x})@{:x}/{}", name_of(TRAP_LO + 4 * r[0]).unwrap_or_default(), r[1], r[2], r[3], r[4], r[5]);
+                    let Some(slot) = slots.get(n % RECENT_N) else { continue };
+                    let [f, a1, a2, a3, ret, ms] = slot.each_ref().map(|x| x.load(Relaxed));
+                    out += &format!(" {}({a1:x},{a2:x},{a3:x})@{ret:x}/{ms}", name_of(TRAP_LO + 4 * f).unwrap_or_default());
                 }
                 // (waiting for a critical section: its LockCount, RecursionCount, OwningThread, LockSemaphore)
-                let last: Vec<u32> = RECENT[k][(pos - 1) % RECENT_N].iter().map(|x| x.load(Relaxed)).collect();
-                if name_of(TRAP_LO + 4 * last[0]).is_some_and(|n| n.contains("EnterCriticalSection")) && last[1] >= 0x10000 {
-                    out += &format!(" [cs {:x}: {:x} {:x} owner {:x} {:x}]", last[1], r32(last[1] + 4), r32(last[1] + 8), r32(last[1] + 12), r32(last[1] + 16));
+                if let Some(slot) = slots.get((pos - 1) % RECENT_N) {
+                    let [f, cs, ..] = slot.each_ref().map(|x| x.load(Relaxed));
+                    if name_of(TRAP_LO + 4 * f).is_some_and(|n| n.contains("EnterCriticalSection")) && cs >= 0x10000 {
+                        out += &format!(" [cs {cs:x}: {:x} {:x} owner {:x} {:x}]", r32(cs + 4), r32(cs + 8), r32(cs + 12), r32(cs + 16));
+                    }
                 }
             }
             eprintln!("{out}");
@@ -686,7 +697,9 @@ fn usage(i: u32) {
         if u.len() <= kome::num::us(i) {
             u.resize(kome::num::us(i).saturating_add(1), 0);
         }
-        u[kome::num::us(i)] += 1;
+        if let Some(n) = u.get_mut(kome::num::us(i)) {
+            *n += 1;
+        }
     }
     kura::usage::tick();
 }
@@ -818,12 +831,14 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
     }
     if sw & SW_THREADS != 0 && let Some(k) = recent_slot(crate::cur().tid) {
         use std::sync::atomic::Ordering::Relaxed;
-        let n = kome::num::us(RECENT_POS[k].load(Relaxed));
-        let r = [i, r32(esp + 4), r32(esp + 8), r32(esp + 12), r32(esp), crate::k32::ticks_ms() - 60_000];
-        for (x, v) in RECENT[k][n % RECENT_N].iter().zip(r) {
-            x.store(v, Relaxed);
+        if let (Some(slots), Some(at)) = (RECENT.get(k), RECENT_POS.get(k)) {
+            let n = kome::num::us(at.load(Relaxed));
+            let r = [i, r32(esp + 4), r32(esp + 8), r32(esp + 12), r32(esp), crate::k32::ticks_ms() - 60_000];
+            for (x, v) in slots.get(n % RECENT_N).into_iter().flatten().zip(r) {
+                x.store(v, Relaxed);
+            }
+            at.store(kome::num::u32_of(n) + 1, Relaxed);
         }
-        RECENT_POS[k].store(kome::num::u32_of(n) + 1, Relaxed);
     }
     if sw & SW_WATCH != 0 {
         static LAST: AtomicU32 = AtomicU32::new(0);
@@ -929,9 +944,12 @@ pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
     let a = export("sake", name);
     let i = (a - TRAP_LO) / 4;
     let mut e = ENTRIES.w();
-    e[kome::num::us(i)].bytes = bytes;
-    e[kome::num::us(i)].known = true;
-    publish(kome::num::us(i), &e[kome::num::us(i)]);
+    // (export made entry i)
+    if let Some(x) = e.get_mut(kome::num::us(i)) {
+        x.bytes = bytes;
+        x.known = true;
+        publish(kome::num::us(i), x);
+    }
     let _ = w32;
     a
 }
@@ -942,8 +960,10 @@ pub fn host_fn_this(name: &str, f: Handler, bytes: u32) -> u32 {
     let a = host_fn(name, f, bytes);
     let i = kome::num::us((a - TRAP_LO) / 4);
     let mut e = ENTRIES.w();
-    e[i].this_arg = true;
-    publish(i, &e[i]);
+    if let Some(x) = e.get_mut(i) {
+        x.this_arg = true;
+        publish(i, x);
+    }
     a
 }
 

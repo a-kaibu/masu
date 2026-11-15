@@ -747,7 +747,7 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
     if wide {
         let v: Vec<u16> = name.encode_utf16().collect();
         let n = v.len().min(kome::num::us(cap));
-        for (i, &u) in v[..n].iter().enumerate() {
+        for (i, &u) in v.iter().take(n).enumerate() {
             mem::w16(dst + 2 * kome::num::u32_of(i), u);
         }
         if n < kome::num::us(cap) {
@@ -759,7 +759,7 @@ fn psapi_name(c: &mut Ctx, base_only: bool, wide: bool) -> u32 {
         // answers; the wide name is converted into the caller's buffer)
         let v = crate::text::s2a(&name);
         if v.len() >= kome::num::us(cap) {
-            mem::write(dst, &v[..kome::num::us(cap) - 1]);
+            mem::write(dst, v.get(..kome::num::us(cap) - 1).unwrap_or(&v));
             mem::w8(dst + cap - 1, 0);
             return cap;
         }
@@ -1987,7 +1987,7 @@ fn WaitForMultipleObjects(c: &mut Ctx) -> u32 {
         return obj::WAIT_FAILED;
     }
     // (wait-all on the same object twice: ERROR_INVALID_PARAMETER)
-    if c.a(2) != 0 && (1..hs.len()).any(|i| hs[..i].contains(&hs[i])) {
+    if c.a(2) != 0 && hs.iter().enumerate().any(|(i, h)| hs.iter().take(i).any(|x| x == h)) {
         last_error(87);
         return obj::WAIT_FAILED;
     }
@@ -2120,7 +2120,9 @@ const OWNER: usize = 3;
 const SEM: usize = 4;
 const SPIN: usize = 5;
 fn cs_off(f: usize) -> u32 {
-    if mem::x64() { [0, 8, 12, 16, 24, 32][f] } else { [0, 4, 8, 12, 16, 20][f] }
+    let t: &[u32; 6] = if mem::x64() { &[0, 8, 12, 16, 24, 32] } else { &[0, 4, 8, 12, 16, 20] };
+    // (f is one of the field constants above)
+    t.get(f).copied().unwrap_or(0)
 }
 /// LockCount while owned (Vista and later: bit 0 clear = locked, no waiters counted)
 const CS_LOCKED: u32 = 0xffff_fffe;
@@ -3169,7 +3171,7 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
     } else {
         for (off, len) in xmem::pieces(k) {
             match remote_bytes(c.a(0), xmem::READ, vec![a.wrapping_add(off), len], vec![]) {
-                Some(Ok((_, bytes))) => mem::write(b + off, &bytes[..(kome::num::us(len)).min(bytes.len())]),
+                Some(Ok((_, bytes))) => mem::write(b + off, bytes.get(..kome::num::us(len)).unwrap_or(&bytes)),
                 Some(Err(e)) => {
                     // (it changed meanwhile: what was copied so far)
                     mem::putp(done, off);
@@ -3402,7 +3404,7 @@ fn RtlMultiByteToUnicodeN(c: &mut Ctx) -> u32 {
     let b: Vec<u8> = (0..n).map(|i| mem::r8(src + i)).collect();
     let w = a2w(&b);
     let k = w.len().min(kome::num::us(cap) / 2);
-    for (i, &u) in w[..k].iter().enumerate() {
+    for (i, &u) in w.iter().take(k).enumerate() {
         w16(dst + 2 * kome::num::u32_of(i), u);
     }
     if pw != 0 {
@@ -5296,10 +5298,10 @@ fn locale_info(ty: u32) -> String {
         0x1009 => "1".into(),
         0x100b => "1".into(),
         0x1014 => if ja { "¥" } else { "$" }.into(),
-        0x2a..=0x30 => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][kome::num::us(ty & 0xffff) - 0x2a].into(),
-        0x31..=0x37 => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][kome::num::us(ty & 0xffff) - 0x31].into(),
-        0x38..=0x43 => ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"][kome::num::us(ty & 0xffff) - 0x38].into(),
-        0x44..=0x4f => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][kome::num::us(ty & 0xffff) - 0x44].into(),
+        0x2a..=0x30 => ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].get(kome::num::us(ty & 0xffff) - 0x2a).copied().unwrap_or_default().into(),
+        0x31..=0x37 => ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].get(kome::num::us(ty & 0xffff) - 0x31).copied().unwrap_or_default().into(),
+        0x38..=0x43 => ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].get(kome::num::us(ty & 0xffff) - 0x38).copied().unwrap_or_default().into(),
+        0x44..=0x4f => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].get(kome::num::us(ty & 0xffff) - 0x44).copied().unwrap_or_default().into(),
         0x50 => "".into(),
         0x51 => "-".into(),
         _ => "".into(),
@@ -5390,7 +5392,7 @@ fn guest_units(p: u32, n: u32) -> Option<Vec<u16>> {
         last_error(998);
         return None;
     }
-    Some(mem::slice(p, bytes).chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect())
+    Some(mem::slice(p, bytes).as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).collect())
 }
 fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     let (cp, flags, src, n, dst, cap) = (c.a(0), c.a(1), c.a(2), c.i(3), c.a(4), c.a(5));
@@ -5425,10 +5427,10 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     // buffer untouched here silently turned its Automation strings into empty
     // BSTRs. Preserve the failure result while retaining the converted prefix.
     let mut written = w.len().min(kome::num::us(cap));
-    if written < w.len() && written > 0 && (0xd800..=0xdbff).contains(&w[written - 1]) && (0xdc00..=0xdfff).contains(&w[written]) {
+    if written > 0 && w.get(written - 1).is_some_and(|c| (0xd800..=0xdbff).contains(c)) && w.get(written).is_some_and(|c| (0xdc00..=0xdfff).contains(c)) {
         written -= 1;
     }
-    for (i, ch) in w[..written].iter().enumerate() {
+    for (i, ch) in w.iter().take(written).enumerate() {
         w16(dst + 2 * kome::num::u32_of(i), *ch);
     }
     if kome::num::u32_of(w.len()) > cap {
@@ -5472,13 +5474,13 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
         let mut fit = 0;
         let mut at = 0;
         while at < a.len() {
-            let n = if utf8 { 1 + a[at + 1..].iter().take_while(|b| **b & 0xc0 == 0x80).count() }
-                else if crate::text::is_lead_cp(cp, a[at]) { 2 } else { 1 };
+            let n = if utf8 { 1 + a.iter().skip(at + 1).take_while(|b| **b & 0xc0 == 0x80).count() }
+                else if a.get(at).is_some_and(|&b| crate::text::is_lead_cp(cp, b)) { 2 } else { 1 };
             if at + n > kome::num::us(cap) { break; }
             at += n;
             fit = at;
         }
-        mem::write(dst, &a[..fit]);
+        mem::write(dst, a.get(..fit).unwrap_or(&a));
         last_error(122);
         return 0;
     }
@@ -5603,15 +5605,17 @@ fn GetStringTypeA(c: &mut Ctx) -> u32 {
     // one result per byte
     let mut w = Vec::new();
     let mut i = 0;
-    while i < s.len() {
-        if crate::text::is_lead(s[i]) && i + 1 < s.len() {
-            let x = a2w(&s[i..i + 2]);
+    while let Some(rest) = s.get(i..) {
+        if let [b, b2, ..] = rest && crate::text::is_lead(*b) {
+            let x = a2w(&[*b, *b2]);
             w.push(x.first().copied().unwrap_or(0));
             w.push(x.first().copied().unwrap_or(0));
             i += 2;
-        } else {
-            w.push(a2w(&s[i..i + 1]).first().copied().unwrap_or(0));
+        } else if let [b, ..] = rest {
+            w.push(a2w(&[*b]).first().copied().unwrap_or(0));
             i += 1;
+        } else {
+            break;
         }
     }
     string_type(ty, &w, out);
@@ -5665,7 +5669,7 @@ fn LCMapStringA(c: &mut Ctx) -> u32 {
         return kome::num::u32_of(s.len());
     }
     let k = s.len().min(kome::num::us(cap));
-    mem::write(dst, &s[..k]);
+    mem::write(dst, s.get(..k).unwrap_or(&s));
     kome::num::u32_of(k)
 }
 pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
@@ -5683,7 +5687,7 @@ pub(crate) fn LCMapStringW(c: &mut Ctx) -> u32 {
         return kome::num::u32_of(w.len());
     }
     let k = w.len().min(kome::num::us(cap));
-    for (i, ch) in w[..k].iter().enumerate() {
+    for (i, ch) in w.iter().take(k).enumerate() {
         w16(dst + 2 * kome::num::u32_of(i), *ch);
     }
     kome::num::u32_of(k)
@@ -5763,13 +5767,12 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
     let mut items = Vec::new();
     let cs: Vec<char> = pic.chars().collect();
     let mut i = 0;
-    while i < cs.len() {
-        let ch = cs[i];
+    while let Some(&ch) = cs.get(i) {
         if ch == '\'' {
             let mut lit = String::new();
             i += 1;
-            while i < cs.len() {
-                if cs[i] == '\'' {
+            while let Some(&x) = cs.get(i) {
+                if x == '\'' {
                     if cs.get(i + 1) == Some(&'\'') {
                         lit.push('\'');
                         i += 2;
@@ -5778,12 +5781,12 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
                     i += 1;
                     break;
                 }
-                lit.push(cs[i]);
+                lit.push(x);
                 i += 1;
             }
             items.push(Item::Lit(lit));
         } else if "yMdgHhmst".contains(ch) {
-            let n = cs[i..].iter().take_while(|&&x| x == ch).count();
+            let n = cs.iter().skip(i).take_while(|&&x| x == ch).count();
             items.push(Item::Field(ch, n));
             i += n;
         } else {
@@ -5793,23 +5796,22 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
     }
     // skipped fields take the literal text before them along (after them when first)
     let mut keep = vec![true; items.len()];
-    for k in 0..items.len() {
-        if let Item::Field(ch, _) = items[k] {
+    let lit = |j: usize| matches!(items.get(j), Some(Item::Lit(_)));
+    for (k, it) in items.iter().enumerate() {
+        if let Item::Field(ch, _) = *it {
             let ch = if h24 && ch == 'h' { 'H' } else { ch };
             if skip.contains(ch) {
-                keep[k] = false;
                 let mut j = k;
-                while j > 0 && matches!(items[j - 1], Item::Lit(_)) {
+                while j > 0 && lit(j - 1) {
                     j -= 1;
-                    keep[j] = false;
                 }
+                let mut end = k + 1;
                 if j == 0 {
-                    let mut j = k + 1;
-                    while j < items.len() && matches!(items[j], Item::Lit(_)) {
-                        keep[j] = false;
-                        j += 1;
+                    while lit(end) {
+                        end += 1;
                     }
                 }
+                keep.iter_mut().take(end).skip(j).for_each(|x| *x = false);
             }
         }
     }
@@ -5817,8 +5819,8 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
     const EN_DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
     const EN_MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
     let mut out = String::new();
-    for (k, it) in items.iter().enumerate() {
-        if !keep[k] {
+    for (it, &kept) in items.iter().zip(&keep) {
+        if !kept {
             continue;
         }
         match *it {
@@ -5828,11 +5830,11 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
                 let num = |v: u32| if n >= 2 { format!("{v:02}") } else { v.to_string() };
                 let am = h < 12;
                 let s = match ch {
-                    'd' if n >= 4 => if ja { format!("{}曜日", JA_DAYS[dow]) } else { EN_DAYS[dow].into() },
-                    'd' if n == 3 => if ja { JA_DAYS[dow].into() } else { EN_DAYS[dow].chars().take(3).collect() },
+                    'd' if n >= 4 => if ja { format!("{}曜日", JA_DAYS.get(dow).copied().unwrap_or_default()) } else { EN_DAYS.get(dow).copied().unwrap_or_default().into() },
+                    'd' if n == 3 => if ja { JA_DAYS.get(dow).copied().unwrap_or_default().into() } else { EN_DAYS.get(dow).copied().unwrap_or_default().chars().take(3).collect() },
                     'd' => num(d),
-                    'M' if n >= 4 => if ja { format!("{mo}月") } else { EN_MONTHS[kome::num::us(mo).wrapping_add(11) % 12].into() },
-                    'M' if n == 3 => if ja { mo.to_string() } else { EN_MONTHS[kome::num::us(mo).wrapping_add(11) % 12].chars().take(3).collect() },
+                    'M' if n >= 4 => if ja { format!("{mo}月") } else { EN_MONTHS.get(kome::num::us(mo).wrapping_add(11) % 12).copied().unwrap_or_default().into() },
+                    'M' if n == 3 => if ja { mo.to_string() } else { EN_MONTHS.get(kome::num::us(mo).wrapping_add(11) % 12).copied().unwrap_or_default().chars().take(3).collect() },
                     'M' => num(mo),
                     'y' if n == 1 => (y % 100).to_string(),
                     'y' if n == 2 => format!("{:02}", y % 100),
@@ -6059,7 +6061,9 @@ impl Atoms {
         }
         self.2.remove(&i);
         self.1.get_or_insert_with(HashMap::default).insert(s.to_lowercase(), i);
-        self.0[i] = Some((s, 1));
+        if let Some(e) = self.0.get_mut(i) {
+            *e = Some((s, 1));
+        }
         0xc000 + kome::num::u32_of(i)
     }
     /// 0 once deleted (or an integer atom), else the atom (not one)
@@ -6069,7 +6073,7 @@ impl Atoms {
         }
         let Some(i) = a.checked_sub(0xc000).filter(|&i| (kome::num::us(i)) < self.0.len()) else { return a };
         let i = kome::num::us(i);
-        let e = &mut self.0[i];
+        let Some(e) = self.0.get_mut(i) else { return a };
         match e {
             Some((_, n)) if *n > 1 => *n -= 1,
             Some((name, _)) => {
@@ -6147,7 +6151,7 @@ fn atom_name_into(a: u32, buf: u32, size: u32, wide: bool, global: bool) -> u32 
     }
     let text: Vec<u16> = if wide { name.encode_utf16().collect() } else { crate::text::s2a(&name).into_iter().map(u16::from).collect() };
     let put = |n: usize, nul: bool| {
-        for (i, &ch) in text[..n].iter().enumerate() {
+        for (i, &ch) in text.iter().take(n).enumerate() {
             if wide { mem::w16(buf + 2 * kome::num::u32_of(i), ch) } else { w8(buf + kome::num::u32_of(i), kome::num::lo8(ch)) }
         }
         if nul {
@@ -6809,11 +6813,11 @@ fn enum_resources(c: &mut Ctx, level: usize, wide: bool) -> u32 {
     // (read before the callbacks: on x64 the arguments are registers a call clobbers)
     let given: Vec<u32> = (0..level).map(|i| c.a(1 + kome::num::u32_of(i))).collect();
     let Some(ids) = crate::pe::resource_ids(m, &path) else {
-        last_error([1812, 1813, 1814][level.min(2)]);
+        last_error(match level { 0 => 1812, 1 => 1813, _ => 1814 });
         return 0;
     };
     if ids.is_empty() {
-        last_error([1812, 1813, 1815][level.min(2)]);
+        last_error(match level { 0 => 1812, 1 => 1813, _ => 1815 });
         return 0;
     }
     for id in ids {
@@ -6897,7 +6901,7 @@ fn SizeofResource(c: &mut Ctx) -> u32 {
 
 /// The handle of standard stream `i` (0 in, 1 out, 2 error).
 pub(crate) fn std_handle(i: usize) -> u32 {
-    STD.get_or_init(|| [obj::add(Obj::Other(crate::obj::Other::Stdin)), obj::add(Obj::Other(crate::obj::Other::Stdout)), obj::add(Obj::Other(crate::obj::Other::Stderr))])[i]
+    STD.get_or_init(|| [obj::add(Obj::Other(crate::obj::Other::Stdin)), obj::add(Obj::Other(crate::obj::Other::Stdout)), obj::add(Obj::Other(crate::obj::Other::Stderr))]).get(i).copied().unwrap_or(0)
 }
 static STD: OnceLock<[u32; 3]> = OnceLock::new();
 static STD_GIVEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -7060,8 +7064,8 @@ fn device_open(name: &str) -> Option<Result<u32, u32>> {
         return None;
     }
     let b = rest.as_bytes();
-    if b.len() == 2 && b[1] == b':' && b[0].is_ascii_alphabetic() {
-        let bit = 1u32 << (b[0].to_ascii_uppercase() - b'A');
+    if let &[d, b':'] = b && d.is_ascii_alphabetic() {
+        let bit = 1u32 << (d.to_ascii_uppercase() - b'A');
         return Some(if logical_drives() & bit != 0 { last_error(0); Ok(obj::add(Obj::Other(crate::obj::Other::Volume))) } else { Err(2) });
     }
     // (devices sake has: the console's, COM ports and the like are not)
@@ -7143,7 +7147,7 @@ fn OpenFile(c: &mut Ctx) -> u32 {
         }
     };
     let b = name.as_bytes();
-    let own_path = name.contains(['\\', '/']) || (b.len() > 1 && b[1] == b':');
+    let own_path = name.contains(['\\', '/']) || (b.get(1) == Some(&b':'));
     let full = if own_path || style & (OF_CREATE | OF_PARSE) != 0 {
         files::full_path(&name)
     } else {
@@ -7319,8 +7323,8 @@ fn WriteFile(c: &mut Ctx) -> u32 {
     }
     if crate::env_on!("SAKE_TRACE_WRITES") {
         let b = mem::slice(buf, n.min(400));
-        eprintln!("sake: WriteFile({h:x}, {n}): {:?}", String::from_utf16_lossy(&if b.len() > 2 && b[1] == 0 {
-            b.chunks(2).map(|x| u16::from_le_bytes([x[0], *x.get(1).unwrap_or(&0)])).collect::<Vec<_>>()
+        eprintln!("sake: WriteFile({h:x}, {n}): {:?}", String::from_utf16_lossy(&if b.len() > 2 && b.get(1) == Some(&0) {
+            b.chunks(2).map(|x| u16::from_le_bytes([x.first().copied().unwrap_or(0), x.get(1).copied().unwrap_or(0)])).collect::<Vec<_>>()
         } else {
             a2s(b).encode_utf16().collect()
         }));
@@ -7402,7 +7406,7 @@ pub(crate) fn echo_write(path: &str, buf: u32, n: u32) {
     }
     let zeros = b.iter().skip(1).step_by(2).filter(|&&x| x == 0).count();
     let t = if WIDE.load(Ordering::Relaxed) || (b.len() >= 2 && zeros * 2 >= b.len() / 2) {
-        let u: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).filter(|&c| c != 0xfeff).collect();
+        let u: Vec<u16> = b.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c)).filter(|&c| c != 0xfeff).collect();
         String::from_utf16_lossy(&u)
     } else {
         a2s(b)
@@ -7669,7 +7673,7 @@ fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
     }
     let w = mem::wstr(p);
     let sep = |i: usize| w.get(i).is_some_and(|&ch| ch == u16::from(b'\\') || ch == u16::from(b'/'));
-    let n = if w.len() >= 2 && w[1] == u16::from(b':') {
+    let n = if w.get(1) == Some(&u16::from(b':')) {
         if sep(2) { 3 } else { 2 }
     } else if sep(0) && sep(1) {
         // \\server\share\ (or \\?\...)
@@ -7735,10 +7739,12 @@ fn find_first_at(pat: u32, data: u32, wide: bool) -> u32 {
         let r = files::find(&pat).map(|f| f.entries.iter().map(|e| e.0.clone()).collect::<Vec<_>>().join(" "));
         eprintln!("sake: FindFirstFile({pat}) -> {r:?}");
     }
-    match files::find(&pat) {
+    // (files::find answers None for no match: an empty list is that too)
+    match files::find(&pat).filter(|f| !f.entries.is_empty()) {
         Some(f) => {
-            let (n, m) = &f.entries[0];
-            write_find_data(data, n, m, wide);
+            if let Some((n, m)) = f.entries.first() {
+                write_find_data(data, n, m, wide);
+            }
             let mut f = f;
             f.at = 1;
             obj::add(Obj::Find(std::sync::Arc::new(Mutex::new(f))))
@@ -7768,7 +7774,10 @@ fn find_next(c: &mut Ctx, wide: bool) -> u32 {
         last_error(18);
         return 0;
     }
-    let (n, m) = &f.entries[f.at];
+    let Some((n, m)) = f.entries.get(f.at) else {
+        last_error(18);
+        return 0;
+    };
     write_find_data(c.a(1), n, m, wide);
     f.at += 1;
     1
@@ -8533,7 +8542,14 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
     // for there only, as given and then with the extension
     let b = given.as_bytes();
     let sep = |ch: u8| ch == b'\\' || ch == b'/';
-    let own_path = sep(b[0]) || (b.len() > 1 && b[1] == b':') || (b[0] == b'.' && b.len() > 1 && (sep(b[1]) || (b[1] == b'.' && b.len() > 2 && sep(b[2]))));
+    let own_path = match b {
+        [] => false,
+        [x, ..] if sep(*x) => true,
+        [_, b':', ..] => true,
+        [b'.', x, ..] if sep(*x) => true,
+        [b'.', b'.', x, ..] => sep(*x),
+        [_, ..] => false,
+    };
     let dirs: Vec<String> = if own_path {
         vec![String::new()]
     } else if path != 0 {
@@ -8756,8 +8772,8 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
     let more = {
         let mut r = READ_VIEWS.locked();
         match r.iter().position(|v| v.1 == a) {
-            Some(i) if r[i].2 > 1 => {
-                r[i].2 -= 1;
+            Some(i) if let Some(v) = r.get_mut(i) && v.2 > 1 => {
+                v.2 -= 1;
                 true
             }
             Some(i) => {
@@ -8779,7 +8795,8 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
 fn write_back(a: u32, remove: bool) {
     let mut l = WRITE_BACK.locked();
     let Some(i) = l.iter().position(|v| a >= v.0 && a - v.0 < v.1.max(1)) else { return };
-    let (b, n, f, off) = if remove { l.remove(i) } else { l[i].clone() };
+    let Some(v) = l.get(i).cloned() else { return };
+    let (b, n, f, off) = if remove { l.remove(i) } else { v };
     drop(l);
     let pos = f.seek(SeekFrom::Current(0)).unwrap_or(0);
     f.seek(SeekFrom::Start(off));
@@ -8989,7 +9006,7 @@ fn K32EnumProcesses(c: &mut Ctx) -> u32 {
     let (p, cb, pu) = (c.a(0), c.a(1), c.a(2));
     let ids = crate::process::running();
     let n = (kome::num::us(cb / 4)).min(ids.len());
-    for (i, &id) in ids[..n].iter().enumerate() {
+    for (i, &id) in ids.iter().take(n).enumerate() {
         w32(p + 4 * kome::num::u32_of(i), id);
     }
     w32(pu, 4 * kome::num::u32_of(n));

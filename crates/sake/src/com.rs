@@ -72,13 +72,18 @@ impl Method {
     pub const fn checked(of: Iface, name: &'static str, slot: Option<usize>) -> Method {
         let ms = of.0 .1;
         match slot {
-            Some(i) => assert!(i < ms.len() && str_eq(ms[i].0, name), "com: the interface has no such method at that slot"),
+            Some(i) => assert!(slot_is(ms, i, name), "com: the interface has no such method at that slot"),
             None => {
-                let mut i = 0;
-                while i < ms.len() && !str_eq(ms[i].0, name) {
-                    i += 1;
+                let mut rest = ms;
+                let mut found = false;
+                while let [(m, _, _), more @ ..] = rest {
+                    if str_eq(m, name) {
+                        found = true;
+                        break;
+                    }
+                    rest = more;
                 }
-                assert!(i < ms.len(), "com: the interface has no such method");
+                assert!(found, "com: the interface has no such method");
             }
         }
         Method { of, name, slot }
@@ -94,30 +99,43 @@ pub const fn handler(f: Handler) -> Handler {
     f
 }
 
+/// (const: slice patterns, no index that could be out of range)
 const fn str_eq(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
+    let (mut a, mut b) = (a.as_bytes(), b.as_bytes());
+    loop {
+        match (a, b) {
+            ([], []) => return true,
+            ([x, ra @ ..], [y, rb @ ..]) if *x == *y => {
+                a = ra;
+                b = rb;
+            }
+            _ => return false,
         }
-        i += 1;
     }
-    true
+}
+/// Whether method slot `i` of `ms` is named `name`
+const fn slot_is(ms: &[(&str, u8, u8)], i: usize, name: &str) -> bool {
+    let mut rest = ms;
+    let mut k = 0;
+    while let [(m, _, _), more @ ..] = rest {
+        if k == i {
+            return str_eq(m, name);
+        }
+        k += 1;
+        rest = more;
+    }
+    false
 }
 
 type Table = (&'static str, &'static [(&'static str, u8, u8)], &'static [&'static str]);
 
 const fn find(name: &str) -> Option<&'static Table> {
-    let mut i = 0;
-    while i < methods::IFACES.len() {
-        if str_eq(methods::IFACES[i].0, name) {
-            return Some(&methods::IFACES[i]);
+    let mut rest: &'static [Table] = &methods::IFACES;
+    while let [t, more @ ..] = rest {
+        if str_eq(t.0, name) {
+            return Some(t);
         }
-        i += 1;
+        rest = more;
     }
     None
 }

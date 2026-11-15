@@ -44,14 +44,14 @@ static THUNKS: [std::sync::atomic::AtomicU64; 10] = [const { std::sync::atomic::
 fn thunk(name: &str) -> Option<(u32, u32)> {
     use std::sync::atomic::Ordering::Relaxed;
     let slot = HOOKABLE.iter().position(|&n| n == name);
-    if let Some(v) = slot.map(|i| THUNKS[i].load(Relaxed)).filter(|&v| v != 0) {
+    if let Some(v) = slot.and_then(|i| THUNKS.get(i)).map(|t| t.load(Relaxed)).filter(|&v| v != 0) {
         return Some((kome::num::lo32(v >> 32), kome::num::lo32(v)));
     }
     let base = crate::pe::by_name("ntdll.dll")?;
     let t = crate::pe::with(base, |m| m.exports.get(name).copied())??;
     let trap = export("ntdll", name);
-    if let Some(i) = slot {
-        THUNKS[i].store(u64::from(t) << 32 | u64::from(trap), Relaxed);
+    if let Some(th) = slot.and_then(|i| THUNKS.get(i)) {
+        th.store(u64::from(t) << 32 | u64::from(trap), Relaxed);
     }
     Some((t, trap))
 }
@@ -119,7 +119,7 @@ fn relative_name(path: &str) -> Option<(String, u32)> {
 /// and the full one is under `dir` (case-insensitive; ".." out of it: None).
 fn relative_under(path: &str, full: &str, dir: &str) -> Option<String> {
     let b = path.as_bytes();
-    if b.is_empty() || b[0] == b'\\' || b[0] == b'/' || b.get(1) == Some(&b':') {
+    if matches!(b, [] | [b'\\' | b'/', ..] | [_, b':', ..]) {
         return None;
     }
     let pre = format!("{}\\", dir.trim_end_matches('\\'));
@@ -576,13 +576,13 @@ fn create(c: &mut Ctx, out: u32, access: u32, oa: u32, io: u32, attrs: u32, shar
 
 /// NtCreateFile(&h, access, oa, iosb, alloc, attrs, share, disposition, options, ea, ealen)
 fn nt_create_file(c: &mut Ctx) -> u32 {
-    let a: Vec<u32> = (0..9).map(|i| c.a(i)).collect();
-    if let Some(h) = afd_name(a[2]).and_then(|n| crate::afd::open(&n)) {
-        mem::wp(a[0], h);
-        iosb(a[3], 0, 1); // FILE_OPENED
+    let [h_out, access, oa, io, _alloc, attrs, share, disposition, options] = std::array::from_fn(|i| c.a(kome::num::u32_of(i)));
+    if let Some(h) = afd_name(oa).and_then(|n| crate::afd::open(&n)) {
+        mem::wp(h_out, h);
+        iosb(io, 0, 1); // FILE_OPENED
         return 0;
     }
-    create(c, a[0], a[1], a[2], a[3], a[5], a[6], a[7], a[8])
+    create(c, h_out, access, oa, io, attrs, share, disposition, options)
 }
 /// OBJECT_ATTRIBUTES' name when it is a device's ("\Device\..."), for afd.rs
 fn afd_name(oa: u32) -> Option<String> {
@@ -702,7 +702,7 @@ fn nt_query_volume_information_file(c: &mut Ctx) -> u32 {
         return 0xc000_0004; // STATUS_INFO_LENGTH_MISMATCH
     }
     let n = (kome::num::u32_of(v.len())).min(len);
-    for (i, b) in v[..kome::num::us(n)].iter().enumerate() {
+    for (i, b) in v.iter().take(kome::num::us(n)).enumerate() {
         mem::w8(out + kome::num::u32_of(i), *b);
     }
     let st = if n < kome::num::u32_of(v.len()) { 0x8000_0005 } else { 0 }; // STATUS_BUFFER_OVERFLOW
@@ -712,8 +712,8 @@ fn nt_query_volume_information_file(c: &mut Ctx) -> u32 {
 
 /// NtOpenFile(&h, access, oa, iosb, share, options)
 fn nt_open_file(c: &mut Ctx) -> u32 {
-    let a: Vec<u32> = (0..6).map(|i| c.a(i)).collect();
-    create(c, a[0], a[1], a[2], a[3], 0, a[4], 1, a[5])
+    let [h_out, access, oa, io, share, options] = std::array::from_fn(|i| c.a(kome::num::u32_of(i)));
+    create(c, h_out, access, oa, io, 0, share, 1, options)
 }
 fn nt_close(c: &mut Ctx) -> u32 {
     let h = c.a(0);
@@ -1227,65 +1227,72 @@ fn entry_attrs(dir: &str, name: &str, m: &kura::fs::Metadata) -> u32 {
 /// or nothing at the end. ".." is matched as "." (Windows' answers in Wine's ntdll directory
 /// test).
 pub fn nt_match(expr: &[u16], name: &[u16]) -> bool {
-    let name = if name == [u16::from(b'.'), u16::from(b'.')] { &name[..1] } else { name };
+    let dot = u16::from(b'.');
+    let name = if name == [dot, dot] { name.get(..1).unwrap_or(name) } else { name };
     let (e, n) = (expr.len(), name.len());
     // (each literal and ? takes one character of the name: a mask with more than the name has
     // matches nothing, before any table; the mask is a guest string of up to 32767 characters)
     if expr.iter().filter(|&&c| !matches!(c, 0x2a | 0x3c | 0x3e | 0x22)).count() > n {
         return false;
     }
-    let lead = name.iter().take_while(|&&c| c == u16::from(b'.')).count();
-    let dot = u16::from(b'.');
+    let lead = name.iter().take_while(|&&c| c == dot).count();
+    // (out of the table: false; a character past the name: none)
+    let at = |v: &[bool], x: usize| v.get(x).copied().unwrap_or(false);
+    let ch = |j: usize| name.get(j).copied();
     // m[i][j]: expr[i..] against name[j..], filled from the last row up (row i needs rows past
     // i only): no recursion as deep as the mask (it was one frame per character)
     let w = n + 1;
     let mut m = vec![false; (e + 1) * w];
-    m[e * w + n] = true;
+    if let Some(x) = m.get_mut(e * w + n) {
+        *x = true;
+    }
     // (true counts of row i + 1 before each column: a range of it is a subtraction)
     let mut before = vec![0u32; w + 1];
-    for i in (0..e).rev() {
+    for (i, &c) in expr.iter().enumerate().rev() {
         let next = (i + 1) * w;
-        for k in 0..w {
-            before[k + 1] = before[k] + u32::from(m[next + k]);
+        let mut total = 0;
+        for (k, b) in before.iter_mut().enumerate().skip(1) {
+            total += u32::from(at(&m, next + k - 1));
+            *b = total;
         }
-        let any = |a: usize, b: usize| before[b + 1] > before[a];
+        let cnt = |x: usize| before.get(x).copied().unwrap_or(0);
+        let any = |a: usize, b: usize| cnt(b + 1) > cnt(a);
         for j in (0..=n).rev() {
-            let r = match expr[i] {
+            let r = match c {
                 0x2a => any(j, n),
                 0x3c => {
                     // up to just past the last period, or anywhere with none; at the start of a
                     // name whose periods all lead (".a"), also the whole name
-                    let to = (j..n).rev().find(|&k| name[k] == dot).map_or(n, |k| k + 1);
-                    let whole = j == 0 && !name[lead..].contains(&dot);
-                    any(j, to) || (whole && m[next + n])
+                    let to = (j..n).rev().find(|&k| ch(k) == Some(dot)).map_or(n, |k| k + 1);
+                    let whole = j == 0 && !name.iter().skip(lead).any(|&x| x == dot);
+                    any(j, to) || (whole && at(&m, next + n))
                 }
-                0x3f => j < n && m[next + j + 1],
+                0x3f => j < n && at(&m, next + j + 1),
                 0x3e => {
                     if j == n {
-                        m[next + j]
-                    } else if name[j] == dot {
-                        let mut k = i;
-                        while k < e && expr[k] == 0x3e {
-                            k += 1;
-                        }
-                        if k == e { m[k * w + j + 1] } else { m[k * w + j] }
+                        at(&m, next + j)
+                    } else if ch(j) == Some(dot) {
+                        let k = i + expr.iter().skip(i).take_while(|&&x| x == 0x3e).count();
+                        if k == e { at(&m, k * w + j + 1) } else { at(&m, k * w + j) }
                     } else {
-                        m[next + j + 1]
+                        at(&m, next + j + 1)
                     }
                 }
                 0x22 => {
                     if j == n {
-                        m[next + j]
+                        at(&m, next + j)
                     } else {
-                        name[j] == dot && m[next + j + 1]
+                        ch(j) == Some(dot) && at(&m, next + j + 1)
                     }
                 }
-                c => j < n && up(c) == up(name[j]) && m[next + j + 1],
+                c => ch(j).is_some_and(|x| up(c) == up(x)) && at(&m, next + j + 1),
             };
-            m[i * w + j] = r;
+            if let Some(x) = m.get_mut(i * w + j) {
+                *x = r;
+            }
         }
     }
-    m[0]
+    at(&m, 0)
 }
 
 /// nt_match as it was (recursive, memoized): the reference of the tests.
@@ -1398,7 +1405,7 @@ fn dir_entry(p: u32, dc: DirClass, name: &str, m: &kura::fs::Metadata, attrs: u3
     let w: Vec<u16> = name.encode_utf16().collect();
     w32(p + len_at, 2 * kome::num::u32_of(w.len()));
     let n = (2 * kome::num::u32_of(w.len())).min(room.saturating_sub(name_at)) / 2;
-    for (i, &u) in w[..kome::num::us(n)].iter().enumerate() {
+    for (i, &u) in w.iter().take(kome::num::us(n)).enumerate() {
         mem::w16(p + name_at + 2 * kome::num::u32_of(i), u);
     }
     2 * n
@@ -1483,8 +1490,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
         return 0x8000_0006; // STATUS_NO_MORE_FILES
     }
     let (mut at, mut prev) = (0u32, None::<u32>);
-    while s.at < s.entries.len() {
-        let (name, m) = &s.entries[s.at];
+    while let Some((name, m)) = s.entries.get(s.at) {
         let need = fixed + 2 * kome::num::u32_of(name.encode_utf16().count());
         if at + need > len {
             if prev.is_none() {

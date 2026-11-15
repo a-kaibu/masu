@@ -311,7 +311,7 @@ pub fn cstr(a: u32) -> Vec<u8> {
     // instead of wrapping past 4 GB, review b07)
     if a < GUEST_TOP {
         let s = slice(a, GUEST_TOP - a);
-        return s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())].to_vec();
+        return s.iter().take_while(|&&c| c != 0).copied().collect();
     }
     let mut n = 0;
     while r8(a + n) != 0 {
@@ -326,7 +326,7 @@ pub fn wstr(a: u32) -> Vec<u16> {
     }
     if a < GUEST_TOP {
         let s = slice(a, (GUEST_TOP - a) & !1);
-        let units = s.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]));
+        let units = s.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c));
         let n = units.clone().position(|c| c == 0).unwrap_or(s.len() / 2);
         let mut v = Vec::with_capacity(n);
         v.extend(units.take(n));
@@ -374,7 +374,7 @@ pub fn put_cstr(dst: u32, cap: u32, s: &[u8]) -> u32 {
         return 0;
     }
     let n = (kome::num::lo32(s.len())).min(cap - 1);
-    write(dst, &s[..us(n)]);
+    write(dst, s.get(..us(n)).unwrap_or(s));
     w8(dst + n, 0);
     n
 }
@@ -383,8 +383,8 @@ pub fn put_wstr(dst: u32, cap: u32, s: &[u16]) -> u32 {
         return 0;
     }
     let n = (kome::num::lo32(s.len())).min(cap - 1);
-    for i in 0..n {
-        w16(dst + 2 * i, s[us(i)]);
+    for (i, &u) in (0..n).zip(s) {
+        w16(dst + 2 * i, u);
     }
     w16(dst + 2 * n, 0);
     n
@@ -574,7 +574,7 @@ pub fn commit_range(a: u32, n: u32, prot: u32) -> bool {
     let Some((b, r)) = find(a) else { return false };
     let (first, last) = page_span(a - b, n.max(1), r.size);
     if let Some(p) = PAGES.locked().get_mut(&b) {
-        for x in &mut p[us(first)..us(last)] {
+        for x in p.iter_mut().take(us(last)).skip(us(first)) {
             *x = COMMITTED | prot;
         }
     }
@@ -592,12 +592,12 @@ pub fn decommit_range(a: u32, n: u32) -> bool {
     let (first, last) = if n == 0 { ((a - b) / PAGE, r.size / PAGE) } else { page_span(a - b, n, r.size) };
     let mut g = PAGES.locked();
     if let Some(p) = g.get_mut(&b) {
-        for i in first..last {
-            if p[us(i)] != 0 {
+        for (i, x) in (first..last).zip(p.iter_mut().skip(us(first))) {
+            if *x != 0 {
                 if !is_zero(slice(b + i * PAGE, PAGE)) {
                     fill(b + i * PAGE, PAGE, 0);
                 }
-                p[us(i)] = 0;
+                *x = 0;
             }
         }
     }
@@ -614,11 +614,8 @@ pub fn query(a: u32) -> Option<(u32, Region, u32, u32, u32, u32)> {
     let g = PAGES.locked();
     let p = g.get(&b)?;
     let i = kome::num::us((a - b) / PAGE);
-    let v = p[i];
-    let mut j = i;
-    while j < p.len() && p[j] == v {
-        j += 1;
-    }
+    let &v = p.get(i)?;
+    let j = i + p.iter().skip(i).take_while(|&&x| x == v).count();
     let state = if v & COMMITTED != 0 { 0x1000 } else { 0x2000 };
     Some((b, r, b + kome::num::u32_of(i) * PAGE, kome::num::lo32(j - i) * PAGE, state, if v & COMMITTED != 0 { v & !COMMITTED } else { 0 }))
 }
@@ -651,8 +648,8 @@ pub fn protect(a: u32, n: u32, prot: u32) -> Option<u32> {
     let mut g = PAGES.locked();
     let p = g.get_mut(&b)?;
     let (first, last) = page_span(a - b, n.max(1), r.size);
-    let old = p[us(first)] & !COMMITTED;
-    for x in &mut p[us(first)..us(last)] {
+    let old = p.get(us(first))? & !COMMITTED;
+    for x in p.iter_mut().take(us(last)).skip(us(first)) {
         if *x & COMMITTED != 0 {
             *x = COMMITTED | prot;
         }
@@ -1458,7 +1455,7 @@ mod tests {
             let p = b.0.as_mut_ptr().expose_provenance() + off;
             assert_eq!(rmw32_at(p, |v| v.wrapping_add(0x0101_0101)), 0x1122_3344);
             assert_eq!(u32::from_le_bytes(b.0[off..off + 4].try_into().unwrap()), 0x1223_3445, "offset {off}");
-            assert!(b.0[..off].iter().chain(&b.0[off + 4..]).all(|&x| x == 0xaa), "offset {off}");
+            assert!(b.0.iter().take(off).chain(&b.0[off + 4..]).all(|&x| x == 0xaa), "offset {off}");
         }
     }
 

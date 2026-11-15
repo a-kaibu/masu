@@ -590,7 +590,7 @@ pub fn wait(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool
         for (d, &h) in small.iter_mut().zip(handles) {
             *d = n(h);
         }
-        &small[..handles.len()]
+        small.get(..handles.len()).unwrap_or(&small)
     } else {
         many = handles.iter().map(|&h| n(h)).collect();
         &many
