@@ -2,6 +2,7 @@
 //! here (vfs, the page's whole file system) directly, and on node whatever is outside them
 //! through std::fs. Paths are absolute host paths.
 
+use crate::guest::lo32;
 use std::ffi::{c_int, OsString};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -85,7 +86,7 @@ impl From<std::fs::Metadata> for Metadata {
         #[cfg(not(unix))]
         let ino = 0;
         #[cfg(unix)]
-        let links = if m.is_dir() { 1 } else { std::os::unix::fs::MetadataExt::nlink(&m).clamp(1, u64::from(u32::MAX)) as u32 };
+        let links = if m.is_dir() { 1 } else { lo32(std::os::unix::fs::MetadataExt::nlink(&m).clamp(1, u64::from(u32::MAX))) };
         #[cfg(not(unix))]
         let links = 1;
         Metadata { dir: m.is_dir(), len: m.len(), modified: m.modified().unwrap_or(UNIX_EPOCH), readonly: m.permissions().readonly(), ino, links }

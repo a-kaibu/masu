@@ -2,6 +2,7 @@
 //! stdout/stderr into the crash log, clocks without BigInts, and the per-thread CPU count
 //! (MASU_LOAD) around futex waits. sched_yield is in c/shim.c.
 
+use crate::guest::{lo32, us};
 use std::ffi::{c_int, c_void};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
@@ -30,7 +31,7 @@ pub extern "C" fn vnhost_output_queue() {
 /// written, 0 when nothing is queued or a thread is adding to it right now.
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_output_take(buf: *mut u8, cap: u32) -> u32 {
-    OUT_Q.take(std::slice::from_raw_parts_mut(buf, cap as usize)) as u32
+    lo32(OUT_Q.take(std::slice::from_raw_parts_mut(buf, us(cap))))
 }
 
 fn on_page_thread() -> bool {
@@ -52,7 +53,7 @@ fn queued(f: c_int, b: &[u8]) -> bool {
 #[no_mangle]
 pub unsafe extern "C" fn __wrap_write(f: c_int, buf: *const c_void, len: size_t) -> ssize_t {
     if (f == 1 || f == 2) && !buf.is_null() {
-        let b = std::slice::from_raw_parts(buf as *const u8, len);
+        let b = std::slice::from_raw_parts(buf.cast::<u8>(), len);
         crate::crashlog::output(f, b);
         if queued(f, b) {
             return len as ssize_t;
@@ -68,7 +69,7 @@ pub unsafe extern "C" fn __wrap_writev(f: c_int, iov: *const iovec, cnt: c_int) 
         let mut l = crate::crashlog::Line::<4096>::new();
         for v in std::slice::from_raw_parts(iov, cnt.max(0) as usize) {
             if !v.iov_base.is_null() {
-                l.push(std::slice::from_raw_parts(v.iov_base as *const u8, v.iov_len));
+                l.push(std::slice::from_raw_parts(v.iov_base.cast_const().cast::<u8>(), v.iov_len));
             }
         }
         crate::crashlog::output(f, l.bytes());
@@ -77,7 +78,7 @@ pub unsafe extern "C" fn __wrap_writev(f: c_int, iov: *const iovec, cnt: c_int) 
             let mut total = 0;
             for v in std::slice::from_raw_parts(iov, cnt.max(0) as usize) {
                 if !v.iov_base.is_null() {
-                    OUT_Q.push(f as u8, std::slice::from_raw_parts(v.iov_base as *const u8, v.iov_len));
+                    OUT_Q.push(f as u8, std::slice::from_raw_parts(v.iov_base.cast_const().cast::<u8>(), v.iov_len));
                     total += v.iov_len;
                 }
             }
@@ -175,7 +176,7 @@ struct LoadSlot(Option<&'static Load>, std::cell::Cell<f64>);
 fn load_key() -> libc::pthread_key_t {
     static KEY: std::sync::OnceLock<libc::pthread_key_t> = std::sync::OnceLock::new();
     unsafe extern "C" fn retire(v: *mut c_void) {
-        let Some(l) = LOAD.get((v as usize).wrapping_sub(1)) else { return };
+        let Some(l) = LOAD.get((v.expose_provenance()).wrapping_sub(1)) else { return };
         let woke = f64::from_bits(l.woke.swap(0, Ordering::Relaxed));
         let mut busy = f64::from_bits(l.busy.swap(0, Ordering::Relaxed));
         if woke != 0.0 {
@@ -306,7 +307,7 @@ pub unsafe extern "C" fn vnhost_load_busy() -> f64 {
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_load_slot(i: u32, out: *mut [f64; 2]) -> bool {
     let n = LOAD_N.load(Ordering::Relaxed).min(LOAD_THREADS);
-    let Some(l) = LOAD[..n].get(i as usize) else { return false };
+    let Some(l) = LOAD[..n].get(us(i)) else { return false };
     let mut busy = f64::from_bits(l.busy.load(Ordering::Relaxed));
     let woke = f64::from_bits(l.woke.load(Ordering::Relaxed));
     if woke != 0.0 {
@@ -346,12 +347,12 @@ pub unsafe extern "C" fn vnhost_mem_info(out: *mut [f64; 2]) {
     extern "C" {
         static __heap_base: u8;
     }
-    let top = sbrk(0) as usize;
-    let base = std::ptr::addr_of!(__heap_base) as usize;
+    let top = sbrk(0).expose_provenance();
+    let base = std::ptr::addr_of!(__heap_base).expose_provenance();
     // (mallinfo walks every chunk of the heap with malloc's lock held, every thread's malloc
     // waiting: the page's meter asks each second, the profile of the scenario had it at ~4 ms
     // a call on the page's thread; once per MALLINFO_MS is enough for the logs that show it)
-    let used = MALLINFO.get(crate::render::d3d::now(), || mallinfo().uordblks as u32 as f64);
+    let used = MALLINFO.get(crate::render::d3d::now(), || lo32(mallinfo().uordblks) as f64);
     *out = [top.saturating_sub(base) as f64, used];
 }
 

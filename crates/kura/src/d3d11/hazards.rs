@@ -6,6 +6,7 @@
 //! slices of the same texture do not conflict. (On WebGPU a texture sampled and rendered in
 //! the same pass is a validation error that loses the pass.)
 
+use crate::guest::us;
 use super::{Data, State, View, D11};
 
 /// What a view covers: (resource, first mip, mips, first slice, slices); a buffer view covers
@@ -46,9 +47,9 @@ fn refused(d: &D11, st: &State, srv: u32) -> bool {
 /// NULL.
 pub fn after_srvs(d: &mut D11, st: &mut State, stage: usize, start: u32, n: u32) {
     for s in start..start.saturating_add(n).min(128) {
-        let v = st.srvs[stage][s as usize];
+        let v = st.srvs[stage][us(s)];
         if v != 0 && refused(d, st, v) {
-            st.srvs[stage][s as usize] = 0;
+            st.srvs[stage][us(s)] = 0;
             d.unbind(v);
         }
     }

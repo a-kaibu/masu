@@ -9,6 +9,7 @@
 
 #[cfg(test)]
 use crate::locks::Lock;
+use crate::guest::{gc, lo32, us};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -93,9 +94,9 @@ impl Batch {
             let at = self.mems[i];
             let c = &self.cmds[at..at + 9];
             let (h, pitch, ptr) = (c[6], c[7], c[8]);
-            let len = pitch as usize * h as usize;
+            let len = us(pitch) * us(h);
             if u64::from(ptr) < u64::from(hi) && u64::from(ptr) + len as u64 > u64::from(lo) {
-                let off = self.blob(unsafe { std::slice::from_raw_parts(ptr as usize as *const u8, len) });
+                let off = self.blob(unsafe { std::slice::from_raw_parts(gc::<u8>(ptr), len) });
                 self.cmds[at] = WRITE_TEXTURE;
                 self.cmds[at + 8] = off;
                 self.mems.swap_remove(i);
@@ -117,7 +118,7 @@ impl Batch {
         let at = self.data.len().next_multiple_of(align);
         self.data.resize(at, 0);
         self.data.extend_from_slice(bytes);
-        at as u32
+        lo32(at)
     }
 
     /// Appends to the blob (4-byte aligned); returns the offset.
@@ -125,14 +126,14 @@ impl Batch {
         let at = self.blob.len().next_multiple_of(4);
         self.blob.resize(at, 0);
         self.blob.extend_from_slice(bytes);
-        at as u32
+        lo32(at)
     }
 
     /// Room for `len` bytes aligned to `align`; returns the offset.
     pub fn reserve(&mut self, len: usize, align: usize) -> u32 {
         let at = self.data.len().next_multiple_of(align);
         self.data.resize(at + len, 0);
-        at as u32
+        lo32(at)
     }
 }
 
@@ -517,12 +518,12 @@ pub unsafe extern "C" fn vnhost_d3d9_poll(out: *mut [u32; 6]) -> u32 {
         let Some(b) = &q.reading else { return 0 };
         super::stats::batch(b.data.len(), b.blob.len());
         q.shown += u64::from(b.presents);
-        out[0] = b.cmds.as_ptr() as u32;
-        out[1] = b.cmds.len() as u32;
-        out[2] = b.data.as_ptr() as u32;
-        out[3] = b.data.len() as u32;
-        out[4] = b.blob.as_ptr() as u32;
-        out[5] = b.blob.len() as u32;
+        out[0] = lo32(b.cmds.as_ptr().expose_provenance());
+        out[1] = lo32(b.cmds.len());
+        out[2] = lo32(b.data.as_ptr().expose_provenance());
+        out[3] = lo32(b.data.len());
+        out[4] = lo32(b.blob.as_ptr().expose_provenance());
+        out[5] = lo32(b.blob.len());
         1
     });
     WAKE.notify_all();
@@ -595,6 +596,7 @@ fn pace_wait(next: &mut f64, t: f64, frame: f64) -> f64 {
 
 #[cfg(test)]
 mod pace_tests {
+    use crate::guest::{lo32, us};
     use proptest::prelude::*;
     proptest! {
         /// Any clock, stepped back or forward: every wait is between 0 and a frame, and with a
@@ -644,8 +646,8 @@ mod pace_tests {
             let mut next = std::collections::HashMap::new();
             let mut t = 1e9;
             for f in 0..frames {
-                for w in 1..=n as u32 {
-                    let at = t + offsets[w as usize - 1];
+                for w in 1..=lo32(n) {
+                    let at = t + offsets[us(w) - 1];
                     let wait = super::pace_window(&mut next, w, at, 16.0);
                     prop_assert!(f == 0 || wait == 0.0, "frame {} window {} waited {}", f, w, wait);
                 }

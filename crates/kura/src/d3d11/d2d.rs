@@ -5,6 +5,8 @@
 //! touched). Glyph coverage lives in an R8 atlas and gradients in a ramp texture (256 texels a
 //! row), both kept here and uploaded before the draw that reads them.
 
+use crate::guest::{lo32, us};
+use kome::num::to_f32;
 use super::*;
 
 const DATA: u32 = 0xffff_ffff;
@@ -161,14 +163,14 @@ impl Shadow {
     fn new(w: u32, h: u32, page: u32, bpp: u32) -> Shadow {
         let gpu = page_id();
         gpu::record(|q| q.cmd(&[gpu::CREATE_TEXTURE2, gpu, w, h, 1, 1, page, 0]));
-        Shadow { gpu, w, bpp, px: vec![0; (w * h * bpp) as usize], dirty: None }
+        Shadow { gpu, w, bpp, px: vec![0; us(w * h * bpp)], dirty: None }
     }
 
     fn put(&mut self, x: u32, y: u32, w: u32, h: u32, src: &[u8]) {
-        let row = (w * self.bpp) as usize;
+        let row = us(w * self.bpp);
         for k in 0..h {
-            let at = (((y + k) * self.w + x) * self.bpp) as usize;
-            self.px[at..at + row].copy_from_slice(&src[k as usize * row..][..row]);
+            let at = us(((y + k) * self.w + x) * self.bpp);
+            self.px[at..at + row].copy_from_slice(&src[us(k) * row..][..row]);
         }
         self.dirty = Some(self.dirty.map_or((y, y + h), |(a, b)| (a.min(y), b.max(y + h))));
     }
@@ -176,7 +178,7 @@ impl Shadow {
     fn upload(&mut self) {
         let Some((y0, y1)) = self.dirty.take() else { return };
         let bpr = self.w * self.bpp;
-        let rows = &self.px[(y0 * bpr) as usize..(y1 * bpr) as usize];
+        let rows = &self.px[us(y0 * bpr)..us(y1 * bpr)];
         let (gpu, w) = (self.gpu, self.w);
         gpu::record(|q| {
             let off = q.blob(rows);
@@ -228,7 +230,7 @@ fn d2<R>(f: impl FnOnce(&mut D2) -> R) -> R {
             let id = page_id();
             gpu::record(|q| {
                 let off = q.blob(code.as_bytes());
-                q.cmd(&[gpu::CREATE_SHADER, id, off, code.len() as u32]);
+                q.cmd(&[gpu::CREATE_SHADER, id, off, lo32(code.len())]);
             });
             sh[i] = id;
         }
@@ -263,7 +265,7 @@ pub fn glyph(key: u64, w: u32, h: u32, cov: impl FnOnce() -> Vec<u8>) -> Option<
             return None;
         }
         let px = cov();
-        if px.len() >= (w * h) as usize {
+        if px.len() >= us(w * h) {
             s.atlas.put(x, y, w, h, &px);
         }
         s.shelf = [x + w + 1, y, sh.max(h + 1)];
@@ -279,7 +281,7 @@ pub fn ramp(texels: &[u8; 1024]) -> Option<u32> {
         if let Some(&r) = s.rows.get(&texels[..]) {
             return Some(r);
         }
-        let r = s.rows.len() as u32;
+        let r = lo32(s.rows.len());
         if r >= RAMP_ROWS {
             return None;
         }
@@ -355,15 +357,15 @@ pub fn bitmap(w: u32, h: u32) -> u32 {
 
 /// Writes rows `px` (`pitch` bytes apart) to bitmap `id` at (x, y), `w` x `h`.
 pub fn bitmap_write(id: u32, (x, y, w, h): (u32, u32, u32, u32), px: &[u8], pitch: u32) {
-    let row = (w * 4) as usize;
-    let all = row * h as usize;
+    let row = us(w * 4);
+    let all = row * us(h);
     // (rows back to back already: the caller's bytes straight into the queue, one copy, not two)
-    let packed = pitch as usize == row && px.len() >= all;
+    let packed = us(pitch) == row && px.len() >= all;
     let mut rows = Vec::new();
     if !packed {
         rows.reserve(all);
-        for k in 0..h as usize {
-            match px.get(k * pitch as usize..k * pitch as usize + row) {
+        for k in 0..us(h) {
+            match px.get(k * us(pitch)..k * us(pitch) + row) {
                 Some(r) => rows.extend_from_slice(r),
                 None => return,
             }
@@ -400,7 +402,7 @@ pub fn draw(addr: u32, items: &[Item], bitmap: Option<u32>) {
     // pipeline: triangle strip, no culling, no depth, one instance buffer, one target blended
     // ONE, INV_SRC_ALPHA
     let mut key = vec![vs, ps, 4, 0, 1, 0, 0, 0, 0, 0xffff];
-    key.extend_from_slice(&[1, std::mem::size_of::<Item>() as u32, 1, 5, 3, 0, 0, 3, 16, 1, 3, 32, 2, 3, 48, 3, 7, 64, 4]);
+    key.extend_from_slice(&[1, lo32(std::mem::size_of::<Item>()), 1, 5, 3, 0, 0, 3, 16, 1, 3, 32, 2, 3, 48, 3, 7, 64, 4]);
     key.extend_from_slice(&[1, tpage, 1, blend_factor(2, false).code(), blend_factor(6, false).code(), 1, blend_factor(2, true).code(), blend_factor(6, true).code(), 1, 0xf]);
     let pipe = match d.pipelines.get(&key) {
         Some(&p) => {
@@ -409,7 +411,7 @@ pub fn draw(addr: u32, items: &[Item], bitmap: Option<u32>) {
         }
         None => {
             let id = page_id();
-            let mut c = vec![gpu::CREATE_PIPELINE2, id, key.len() as u32];
+            let mut c = vec![gpu::CREATE_PIPELINE2, id, lo32(key.len())];
             c.extend_from_slice(&key);
             gpu::record(|q| q.cmd(&c));
             d.pipelines.insert(key, id);
@@ -432,7 +434,7 @@ pub fn draw(addr: u32, items: &[Item], bitmap: Option<u32>) {
         q.cmd(&[gpu::SET_TARGETS2, 1, tgpu, 0, 0, 0, 0, 0]);
         let vo = q.data(&bytes, 16);
         let mut c = vec![gpu::DRAW2, pipe];
-        c.extend([0.0, 0.0, tw as f32, th as f32, 0.0, 1.0].map(f32::to_bits));
+        c.extend([0.0, 0.0, to_f32(tw), to_f32(th), 0.0, 1.0].map(f32::to_bits));
         c.extend_from_slice(&[0, 0, 0, 0, 0]);
         c.extend([0f32; 4].map(f32::to_bits));
         // stencil reference, the instance buffer, no index buffer
@@ -445,7 +447,7 @@ pub fn draw(addr: u32, items: &[Item], bitmap: Option<u32>) {
         if let Some(b) = bitmap {
             c.extend_from_slice(&[18, 1, b, 1, 0, 1, 0, 1]);
         }
-        c.extend_from_slice(&[0, 4, items.len() as u32, 0, 0, 0, 0]);
+        c.extend_from_slice(&[0, 4, lo32(items.len()), 0, 0, 0, 0]);
         q.cmd(&c);
     });
 }
@@ -476,17 +478,17 @@ mod tests {
             // (the readback's memory where 32-bit addresses reach it)
             let rb_at = unsafe { crate::d3d9::trace_tests::alloc(12 * 12 * 4) };
             unsafe { std::ptr::write_bytes(rb_at, 0, 12 * 12 * 4) };
-            let req = 0x5300_0000 | (seed as u32 & 0xffff);
-            gpu::record(|q| q.cmd(&[gpu::READBACK, req, id, 0, 0, 0, 12, 12, rb_at as u32, 48]));
+            let req = 0x5300_0000 | (lo32(seed) & 0xffff);
+            gpu::record(|q| q.cmd(&[gpu::READBACK, req, id, 0, 0, 0, 12, 12, lo32(rb_at.expose_provenance()), 48]));
             proptest::prop_assert!(gpu::wait_readback(req));
             let rb = unsafe { std::slice::from_raw_parts(rb_at, 12 * 12 * 4) };
             bitmap_free(id);
             gpu::set_pump(None);
             for ty in 0..12u32 {
                 for tx in 0..12u32 {
-                    let at = ((ty * 12 + tx) * 4) as usize;
+                    let at = us((ty * 12 + tx) * 4);
                     let inside = !short && tx >= x && tx < x + w && ty >= y && ty < y + h;
-                    let want = if inside { let s = ((ty - y) * pitch + (tx - x) * 4) as usize; px[s..s + 4].to_vec() } else { vec![0; 4] };
+                    let want = if inside { let s = us((ty - y) * pitch + (tx - x) * 4); px[s..s + 4].to_vec() } else { vec![0; 4] };
                     proptest::prop_assert_eq!(&rb[at..at + 4], &want[..], "texel ({}, {})", tx, ty);
                 }
             }

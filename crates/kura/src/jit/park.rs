@@ -16,6 +16,7 @@
 //! A kept translation still checks its bytes on every entry, so taking one back too eagerly
 //! costs an exit, never wrong code.
 
+use crate::guest::{lo32, us};
 use std::collections::{HashMap, HashSet};
 
 /// Translations kept per thread after their code changed: two versions of a few loops take
@@ -139,10 +140,10 @@ impl Parking {
 /// it, moving later entries of its probe run back so lookups that stop at an empty slot still
 /// find them. Only if it is `v` (another translation may own the address by now); whether it was.
 pub fn remove(hash: &mut [[u32; 2]], eip: u32, v: u32, slot: impl Fn(u32, u32) -> u32) -> bool {
-    let mask = hash.len() as u32 - 1;
+    let mask = lo32(hash.len()) - 1;
     let mut h = slot(eip, mask);
     loop {
-        let e = hash[h as usize];
+        let e = hash[us(h)];
         if e[0] == 0 {
             return false;
         }
@@ -160,18 +161,18 @@ pub fn remove(hash: &mut [[u32; 2]], eip: u32, v: u32, slot: impl Fn(u32, u32) -
     let mut j = h;
     loop {
         j = (j + 1) & mask;
-        let e = hash[j as usize];
+        let e = hash[us(j)];
         if e[0] == 0 {
             break;
         }
         let home = slot(e[0], mask);
         let stays = if hole <= j { hole < home && home <= j } else { hole < home || home <= j };
         if !stays {
-            hash[hole as usize] = e;
+            hash[us(hole)] = e;
             hole = j;
         }
     }
-    hash[hole as usize] = [0, 0];
+    hash[us(hole)] = [0, 0];
     true
 }
 
@@ -185,20 +186,20 @@ mod tests {
     }
 
     fn insert(hash: &mut [[u32; 2]], eip: u32, idx: u32) {
-        let mask = hash.len() as u32 - 1;
+        let mask = lo32(hash.len()) - 1;
         let mut h = slot(eip, mask);
-        while hash[h as usize][0] != 0 && hash[h as usize][0] != eip {
+        while hash[us(h)][0] != 0 && hash[us(h)][0] != eip {
             h = (h + 1) & mask;
         }
-        hash[h as usize] = [eip, idx];
+        hash[us(h)] = [eip, idx];
     }
 
     fn get(hash: &[[u32; 2]], eip: u32) -> Option<u32> {
-        let mask = hash.len() as u32 - 1;
+        let mask = lo32(hash.len()) - 1;
         let mut h = slot(eip, mask);
-        while hash[h as usize][0] != 0 {
-            if hash[h as usize][0] == eip {
-                return Some(hash[h as usize][1]);
+        while hash[us(h)][0] != 0 {
+            if hash[us(h)][0] == eip {
+                return Some(hash[us(h)][1]);
             }
             h = (h + 1) & mask;
         }
@@ -252,7 +253,7 @@ mod tests {
             for w in writes {
                 let w = w % versions;
                 let mem = w;
-                let mut now = |c: &[(u32, u32)]| Some(vec![mem as u8; c[0].1 as usize]);
+                let mut now = |c: &[(u32, u32)]| Some(vec![mem as u8; us(c[0].1)]);
                 let live_ok = p.live.values().all(|x| now(&x.code) == Some(x.text.clone()));
                 if live_ok {
                     continue; // (no entry finds its code changed)

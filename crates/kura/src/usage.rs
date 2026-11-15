@@ -8,6 +8,7 @@
 //! sake, whose output is compared, a line per process): the entry points games use that no
 //! test reaches.
 
+use crate::guest::{lo32, us};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, OnceLock};
@@ -28,7 +29,7 @@ pub fn d3d(id: u32) {
     if on() {
         // (the entry calls 0xffff_00xx: interface 255)
         let i = if id >> 16 == 0xffff { 0xff00 | id & 0xff } else { id & 0xffff };
-        D3D[i as usize].fetch_add(1, Relaxed);
+        D3D[us(i)].fetch_add(1, Relaxed);
         tick();
     }
 }
@@ -86,7 +87,7 @@ pub fn line() -> String {
     let mut v: Vec<(String, u64)> = D3D.iter().enumerate().filter_map(|(i, n)| {
         let n = n.load(Relaxed);
         // (Direct3D 9's by name, the rest by interface and method number)
-        let named = if i >> 8 < 64 { crate::d3d9::name((i >> 8) as u32, (i & 0xff) as u32) } else { String::new() };
+        let named = if i >> 8 < 64 { crate::d3d9::name(lo32(i >> 8), lo32(i & 0xff)) } else { String::new() };
         let k = if named.contains('?') || named.contains('#') || named.is_empty() { format!("d3d:{}.{}", i >> 8, i & 0xff) } else { format!("d3d9:{named}") };
         (n > 0).then_some((k, n))
     }).collect();

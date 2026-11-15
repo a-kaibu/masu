@@ -9,6 +9,7 @@
 //! sample is drawn into a 1x texture of the format and read back (`samples_out`), and a
 //! restored one is drawn sample by sample (multisample mask) from those (`samples_in`).
 
+use crate::guest::{lo32, us};
 use super::*;
 
 /// The GPU's part of a state.
@@ -100,7 +101,7 @@ impl D3d {
                     let buf = gpu::buffer(bpr * h, usage::COPY_DST | usage::MAP_READ);
                     self.open = true;
                     gpu::copy_layer_to_buffer(t.tex, level, [0, 0, layer], buf, bpr, w, h);
-                    let n = bpr as usize * h as usize;
+                    let n = us(bpr) * us(h);
                     if t.halved {
                         widened += n * 2 + 4;
                     }
@@ -116,7 +117,7 @@ impl D3d {
             let buf = gpu::buffer(size, usage::COPY_DST | usage::MAP_READ);
             self.open = true;
             gpu::copy_buffer(b, buf, size);
-            reads.push(Read { what: What::Buf { id }, buf, data: Vec::new(), at: Some((place(&mut total, size as usize), size as usize)), state: 0 });
+            reads.push(Read { what: What::Buf { id }, buf, data: Vec::new(), at: Some((place(&mut total, us(size)), us(size))), state: 0 });
         }
         self.submit();
         // (room for the shaders' text after them, so that adding it moves nothing)
@@ -128,8 +129,8 @@ impl D3d {
             let token = self.next_token;
             self.next_token = self.next_token.wrapping_add(1).max(1);
             match r.at {
-                Some((at, n)) => gpu::read_buffer(r.buf, n as u32, blob[at..at + n].as_mut_ptr(), token),
-                None => gpu::read_buffer(r.buf, r.data.len() as u32, r.data.as_mut_ptr(), token),
+                Some((at, n)) => gpu::read_buffer(r.buf, lo32(n), blob[at..at + n].as_mut_ptr(), token),
+                None => gpu::read_buffer(r.buf, lo32(r.data.len()), r.data.as_mut_ptr(), token),
             }
             self.snap_tokens.insert(token, k);
         }
@@ -204,7 +205,7 @@ impl D3d {
         ids.sort_unstable();
         for id in ids {
             let code = self.shader_src[&id].as_bytes();
-            c.extend_from_slice(&[CREATE_SHADER, id, blob.len() as u32, code.len() as u32]);
+            c.extend_from_slice(&[CREATE_SHADER, id, lo32(blob.len()), lo32(code.len())]);
             blob.extend_from_slice(code);
             pad4(&mut blob);
         }
@@ -212,14 +213,14 @@ impl D3d {
         ids.sort_unstable();
         for id in ids {
             let k = &self.pipe_keys[&id];
-            c.extend_from_slice(&[CREATE_PIPELINE, id, k.len() as u32]);
+            c.extend_from_slice(&[CREATE_PIPELINE, id, lo32(k.len())]);
             c.extend_from_slice(k);
         }
         let mut ids: Vec<u32> = self.pipelines2.keys().copied().collect();
         ids.sort_unstable();
         for id in ids {
             let k = &self.pipelines2[&id].key;
-            c.extend_from_slice(&[CREATE_PIPELINE2, id, k.len() as u32]);
+            c.extend_from_slice(&[CREATE_PIPELINE2, id, lo32(k.len())]);
             c.extend_from_slice(k);
         }
         let mut ids: Vec<(u32, u32)> = self.buffers.iter().map(|(&id, &(_, size))| (id, size)).collect();
@@ -232,23 +233,23 @@ impl D3d {
             match r.what {
                 What::Sample { id, sample, bpr, .. } => {
                     match ms.last_mut() {
-                        Some((i, v)) if *i == id && v.len() == sample as usize => v.push((bpr, r.data)),
+                        Some((i, v)) if *i == id && v.len() == us(sample) => v.push((bpr, r.data)),
                         _ if sample == 0 => ms.push((id, vec![(bpr, r.data)])),
                         _ => {}
                     }
                     continue;
                 }
                 What::Tex { id, level, layer, w, h, bpr, .. } if r.at.is_some() => {
-                    c.extend_from_slice(&[WRITE_TEXTURE2, id, level, layer, 0, 0, w, h, bpr, r.at.unwrap().0 as u32]);
+                    c.extend_from_slice(&[WRITE_TEXTURE2, id, level, layer, 0, 0, w, h, bpr, lo32(r.at.unwrap().0)]);
                     continue;
                 }
                 What::Buf { id } if r.at.is_some() => {
                     let (at, n) = r.at.unwrap();
-                    c.extend_from_slice(&[WRITE_BUFFER, id, 0, at as u32, n as u32]);
+                    c.extend_from_slice(&[WRITE_BUFFER, id, 0, lo32(at), lo32(n)]);
                     continue;
                 }
                 What::Tex { id, level, layer, w, h, bpr, halved } => {
-                    let off = blob.len() as u32;
+                    let off = lo32(blob.len());
                     let bpr = if halved {
                         // (kept as halves, written as 32-bit floats)
                         blob.extend(r.data.chunks_exact(2).flat_map(|x| f16_to_f32(u16::from_le_bytes([x[0], x[1]])).to_le_bytes()));
@@ -260,7 +261,7 @@ impl D3d {
                     c.extend_from_slice(&[WRITE_TEXTURE2, id, level, layer, 0, 0, w, h, bpr, off]);
                 }
                 What::Buf { id } => {
-                    c.extend_from_slice(&[WRITE_BUFFER, id, 0, blob.len() as u32, r.data.len() as u32]);
+                    c.extend_from_slice(&[WRITE_BUFFER, id, 0, lo32(blob.len()), lo32(r.data.len())]);
                     blob.extend_from_slice(&r.data);
                 }
             }
@@ -418,7 +419,7 @@ impl D3d {
             let buf = gpu::buffer(bpr * h, usage::COPY_DST | usage::MAP_READ);
             gpu::copy_layer_to_buffer(tex, 0, [0, 0, 0], buf, bpr, w, h);
             [group, tv, pipe, layout, module].into_iter().for_each(gpu::drop);
-            reads.push(Read { what: What::Sample { id, sample, bpr, tex }, buf, data: vec![0; (bpr * h) as usize], at: None, state: 0 });
+            reads.push(Read { what: What::Sample { id, sample, bpr, tex }, buf, data: vec![0; us(bpr * h)], at: None, state: 0 });
         }
         reads
     }

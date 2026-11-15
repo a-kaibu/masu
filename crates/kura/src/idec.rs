@@ -13,6 +13,7 @@
 //! answer in time: None, and the caller decodes it itself. A page that once did not answer in
 //! time is not asked again.
 
+use crate::guest::{lo32, us};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex};
@@ -150,7 +151,7 @@ impl Layout {
 
     /// The width and height of a chroma plane (0 x 0 for 4-byte pixels).
     pub fn chroma(self, w: u32, h: u32) -> (usize, usize) {
-        let (w, h) = (w as usize, h as usize);
+        let (w, h) = (us(w), us(h));
         match self {
             Layout::I420 => (w.div_ceil(2), h.div_ceil(2)),
             Layout::I422 => (w.div_ceil(2), h),
@@ -163,8 +164,8 @@ impl Layout {
     pub fn size(self, w: u32, h: u32) -> usize {
         let (cw, ch) = self.chroma(w, h);
         match self {
-            Layout::Bgrx | Layout::Rgbx => w as usize * h as usize * 4,
-            _ => w as usize * h as usize + 2 * cw * ch,
+            Layout::Bgrx | Layout::Rgbx => us(w) * us(h) * 4,
+            _ => us(w) * us(h) + 2 * cw * ch,
         }
     }
 }
@@ -286,7 +287,7 @@ impl Picture {
 
     #[doc(hidden)]
     pub fn bgr24_with(&self, row: fn(&[u8], &[u8], &[u8], &mut [u8])) -> Option<Vec<u8>> {
-        let (w, h) = (self.w as usize, self.h as usize);
+        let (w, h) = (us(self.w), us(self.h));
         if self.bytes.len() != self.layout.size(self.w, self.h) {
             return None;
         }
@@ -316,7 +317,7 @@ impl Picture {
 
     /// A gray file's samples: its Y plane, or the B of its 4-byte pixels.
     pub fn gray(&self) -> Option<Vec<u8>> {
-        let n = self.w as usize * self.h as usize;
+        let n = us(self.w) * us(self.h);
         if self.bytes.len() != self.layout.size(self.w, self.h) {
             return None;
         }
@@ -402,7 +403,7 @@ mod simd {
 /// The doorbell's address (the page waits on it with Atomics.waitAsync).
 #[no_mangle]
 pub extern "C" fn vnhost_idec_doorbell() -> u32 {
-    DOORBELL.as_ptr() as u32
+    lo32(DOORBELL.as_ptr().expose_provenance())
 }
 
 /// Lists up to `max` files not listed before into `out`, 3 words each: id, address, bytes. The
@@ -415,11 +416,11 @@ pub unsafe extern "C" fn vnhost_idec_list(out: *mut u32, max: u32) -> u32 {
     // (a `max` whose words overflow the address space lists nothing, as in vnhost_adec_list)
     let Some(words) = usize::try_from(max).ok().and_then(|m| m.checked_mul(3)) else { return 0 };
     let out = std::slice::from_raw_parts_mut(out, words);
-    let rows = list(max as usize);
+    let rows = list(us(max));
     for (n, r) in rows.iter().enumerate() {
-        out[n * 3..n * 3 + 3].copy_from_slice(&[r.0, r.1 as u32, r.2 as u32]);
+        out[n * 3..n * 3 + 3].copy_from_slice(&[r.0, lo32(r.1), lo32(r.2)]);
     }
-    rows.len() as u32
+    lo32(rows.len())
 }
 
 fn list(max: usize) -> Vec<(u32, usize, usize)> {
@@ -430,7 +431,7 @@ fn list(max: usize) -> Vec<(u32, usize, usize)> {
             .take(max)
             .map(|(&id, r)| {
                 r.listed = true;
-                (id, r.data.as_ptr() as usize, r.data.len())
+                (id, r.data.as_ptr().expose_provenance(), r.data.len())
             })
             .collect()
     })
@@ -441,7 +442,7 @@ fn list(max: usize) -> Vec<(u32, usize, usize)> {
 /// one of ours or the size is out of reach.
 #[no_mangle]
 pub extern "C" fn vnhost_idec_begin(id: u32, w: u32, h: u32, layout: u32) -> u32 {
-    begin(id, w, h, layout).unwrap_or(0) as u32
+    lo32(begin(id, w, h, layout).unwrap_or(0))
 }
 
 fn begin(id: u32, w: u32, h: u32, layout: u32) -> Option<usize> {
@@ -456,7 +457,7 @@ fn begin(id: u32, w: u32, h: u32, layout: u32) -> Option<usize> {
             r.px = zeroed(n)?;
             r.size = (w, h);
             r.layout = Some(layout);
-            Some(r.px.as_ptr() as usize)
+            Some(r.px.as_ptr().expose_provenance())
         }
         _ => None,
     })
@@ -500,12 +501,12 @@ pub fn test_page(on: bool) {
 #[doc(hidden)]
 pub fn test_page_pass(dec: &mut dyn FnMut(&[u8]) -> Option<Picture>) {
     for (id, p, n) in list(16) {
-        let data = unsafe { std::slice::from_raw_parts(p as *const u8, n) }.to_vec();
+        let data = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(p), n) }.to_vec();
         match dec(&data) {
             Some(pic) => {
                 let at = begin(id, pic.w, pic.h, pic.layout as u32);
                 if let Some(at) = at {
-                    unsafe { std::ptr::copy_nonoverlapping(pic.bytes.as_ptr(), at as *mut u8, pic.bytes.len().min(pic.layout.size(pic.w, pic.h))) };
+                    unsafe { std::ptr::copy_nonoverlapping(pic.bytes.as_ptr(), std::ptr::with_exposed_provenance_mut::<u8>(at), pic.bytes.len().min(pic.layout.size(pic.w, pic.h))) };
                 }
                 vnhost_idec_done(id, u32::from(at.is_some()));
             }
@@ -525,13 +526,13 @@ pub fn test_cases(bin: &[u8]) -> Vec<(String, Picture, Vec<u8>)> {
         u32::from_le_bytes(bin[*i - 4..*i].try_into().unwrap())
     };
     while i < bin.len() {
-        let n = word(&mut i) as usize;
+        let n = us(word(&mut i));
         let name = String::from_utf8(bin[i..i + n].to_vec()).unwrap();
         i += n;
-        let (w, h, layout, n) = (word(&mut i), word(&mut i), Layout::from_u32(word(&mut i)).unwrap(), word(&mut i) as usize);
+        let (w, h, layout, n) = (word(&mut i), word(&mut i), Layout::from_u32(word(&mut i)).unwrap(), us(word(&mut i)));
         let bytes = bin[i..i + n].to_vec();
         i += n;
-        let rgb = bin[i..i + w as usize * h as usize * 3].to_vec();
+        let rgb = bin[i..i + us(w) * us(h) * 3].to_vec();
         i += rgb.len();
         out.push((name, Picture { w, h, layout, bytes }, rgb));
     }
@@ -646,7 +647,7 @@ pub(crate) mod tests {
                 let p = Picture { w, h, layout: l, bytes: vec![7; l.size(w, h) - 1] };
                 assert_eq!((p.bgr24(), p.gray()), (None, None));
                 let p = Picture { bytes: vec![7; l.size(w, h)], ..p };
-                assert_eq!(p.bgr24().unwrap().len(), w as usize * h as usize * 3);
+                assert_eq!(p.bgr24().unwrap().len(), us(w) * us(h) * 3);
             }
         }
         let px = |layout| Picture { w: 2, h: 1, layout, bytes: vec![1, 2, 3, 0, 4, 5, 6, 0] };
@@ -663,10 +664,10 @@ pub(crate) mod tests {
         fn upsampling_keeps_flat_chroma(w in 1u32..40, h in 1u32..40, l in 1u32..=3, c in proptest::prelude::any::<u8>(), y in proptest::collection::vec(proptest::prelude::any::<u8>(), 1600)) {
             let l = Layout::from_u32(l).unwrap();
             let (cw, ch) = l.chroma(w, h);
-            let (n, ww) = (w as usize * h as usize, w as usize);
+            let (n, ww) = (us(w) * us(h), us(w));
             let mut out = vec![0; out_len(ww, cw)];
             let mut cs = vec![0; cw + 2];
-            for row in 0..h as usize {
+            for row in 0..us(h) {
                 upsample(l, &vec![c; cw * ch], cw, ch, row, &mut cs, &mut out);
                 proptest::prop_assert!(out[..ww].iter().all(|&o| o == c));
             }

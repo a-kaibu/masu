@@ -16,6 +16,9 @@
 //! `reset` starts a stream again (a seek): chunks and samples still here go, and the page makes a
 //! new decoder; what the old one still hands back is dropped (by generation).
 
+use crate::guest::{lo32, us};
+#[cfg(test)]
+use kome::num::to_f32;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Condvar, Mutex};
@@ -225,7 +228,7 @@ pub fn decode<'a>(id: u32, chunks: impl IntoIterator<Item = &'a [u8]>, timeout: 
 /// The doorbell's address (the page waits on it with Atomics.waitAsync).
 #[no_mangle]
 pub extern "C" fn vnhost_adec_doorbell() -> u32 {
-    DOORBELL.as_ptr() as u32
+    lo32(DOORBELL.as_ptr().expose_provenance())
 }
 
 /// Lists up to `max` open streams into `out`, 10 words each: id, generation, codec string ptr
@@ -237,24 +240,24 @@ pub extern "C" fn vnhost_adec_doorbell() -> u32 {
 /// `out` must hold `max * 10` words.
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_adec_list(out: *mut u32, max: u32) -> u32 {
-    let Some(words) = (max as usize).checked_mul(10) else { return 0 };
+    let Some(words) = (us(max)).checked_mul(10) else { return 0 };
     let out = std::slice::from_raw_parts_mut(out, words);
-    let rows = rows(max as usize);
+    let rows = rows(us(max));
     for (n, r) in rows.iter().enumerate() {
         out[n * 10..n * 10 + 10].copy_from_slice(&[
             r.id,
             r.gen,
-            r.codec.0 as u32,
-            r.codec.1 as u32,
+            lo32(r.codec.0),
+            lo32(r.codec.1),
             r.rate,
             r.channels,
-            r.desc.0 as u32,
-            r.desc.1 as u32,
+            lo32(r.desc.0),
+            lo32(r.desc.1),
             r.queued,
             u32::from(r.failed),
         ]);
     }
-    rows.len() as u32
+    lo32(rows.len())
 }
 
 /// A stream as the page lists it (address and length of its codec string and description).
@@ -288,11 +291,11 @@ fn rows(max: usize) -> Vec<Row> {
             .map(|(id, s)| Row {
                 id,
                 gen: s.gen,
-                codec: (s.codec.as_ptr() as usize, s.codec.len()),
+                codec: (s.codec.as_ptr().expose_provenance(), s.codec.len()),
                 rate: s.rate,
                 channels: s.channels,
-                desc: (s.desc.as_ptr() as usize, s.desc.len()),
-                queued: s.queue.len() as u32,
+                desc: (s.desc.as_ptr().expose_provenance(), s.desc.len()),
+                queued: lo32(s.queue.len()),
                 failed: s.failed,
             })
             .collect()
@@ -312,10 +315,10 @@ pub unsafe extern "C" fn vnhost_adec_chunk(id: u32, gen: u32, size: *mut u32, se
     let Some((b, n)) = next_chunk(id, gen) else { return 0 };
     let mut c = CHUNK.lock().unwrap_or_else(|e| e.into_inner());
     *c = b;
-    *size = c.len() as u32;
+    *size = lo32(c.len());
     *seq = n;
     c.reserve(1);
-    c.as_ptr() as u32
+    lo32(c.as_ptr().expose_provenance())
 }
 
 /// The next chunk of stream `id` (generation `gen`) and its sequence number.
@@ -325,7 +328,7 @@ fn next_chunk(id: u32, gen: u32) -> Option<(Vec<u8>, u32)> {
         let b = s.queue.pop_front()?;
         s.queued -= b.len();
         s.taken += 1;
-        Some((b, s.taken as u32))
+        Some((b, lo32(s.taken)))
     })
 }
 
@@ -337,10 +340,10 @@ fn next_chunk(id: u32, gen: u32) -> Option<(Vec<u8>, u32)> {
 /// `pcm` must hold `frames * channels` floats.
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_adec_pcm(id: u32, gen: u32, pcm: *const f32, frames: u32, channels: u32) {
-    let Some(n) = (frames as usize).checked_mul(channels as usize).filter(|_| channels != 0 && !pcm.is_null()) else { return };
+    let Some(n) = (us(frames)).checked_mul(us(channels)).filter(|_| channels != 0 && !pcm.is_null()) else { return };
     let failed = with(|m| {
         let Some(s) = m.get_mut(&id).filter(|s| s.gen == gen && !s.closed) else { return false };
-        if s.pcm.len() + (frames as usize).saturating_mul(s.channels as usize) > MAX_PCM {
+        if s.pcm.len() + (us(frames)).saturating_mul(us(s.channels)) > MAX_PCM {
             // (the guest is not taking them: see MAX_PCM)
             s.failed = true;
             s.queue.clear();
@@ -348,7 +351,7 @@ pub unsafe extern "C" fn vnhost_adec_pcm(id: u32, gen: u32, pcm: *const f32, fra
             return true;
         }
         // (read only once it fits: a count past MAX_PCM failed above without touching `pcm`)
-        put(&mut s.pcm, std::slice::from_raw_parts(pcm, n), channels as usize, s.channels as usize);
+        put(&mut s.pcm, std::slice::from_raw_parts(pcm, n), us(channels), us(s.channels));
         false
     });
     if failed {
@@ -402,7 +405,7 @@ pub fn test_page_pass(dec: &mut dyn FnMut(&[u8], u32) -> Vec<f32>) {
         let mut last = 0;
         while let Some((b, seq)) = next_chunk(r.id, r.gen) {
             let pcm = dec(&b, r.channels);
-            unsafe { vnhost_adec_pcm(r.id, r.gen, pcm.as_ptr(), (pcm.len() / r.channels.max(1) as usize) as u32, r.channels) };
+            unsafe { vnhost_adec_pcm(r.id, r.gen, pcm.as_ptr(), lo32(pcm.len() / us(r.channels.max(1))), r.channels) };
             last = seq;
         }
         if last > 0 {
@@ -445,8 +448,8 @@ pub(crate) mod tests {
                     let (id, gen) = (row.id, row.gen);
                     let mut last = 0;
                     while let Some((b, seq)) = chunk(id, gen) {
-                        let pcm: Vec<f32> = b.iter().flat_map(|&v| (0..ch).map(move |_| v as f32 / 256.0 + seq as f32)).collect();
-                        unsafe { vnhost_adec_pcm(id, gen, pcm.as_ptr(), b.len() as u32, ch) };
+                        let pcm: Vec<f32> = b.iter().flat_map(|&v| (0..ch).map(move |_| to_f32(v) / 256.0 + to_f32(seq))).collect();
+                        unsafe { vnhost_adec_pcm(id, gen, pcm.as_ptr(), lo32(b.len()), ch) };
                         last = seq;
                     }
                     if last > 0 {
@@ -476,8 +479,8 @@ pub(crate) mod tests {
         let id = open("opus", 48000, 2, &[1, 2, 3]).unwrap();
         push(id, [&[9u8, 9][..], &[8][..]]);
         let row = list().into_iter().find(|r| r.id == id).unwrap();
-        let codec = unsafe { std::slice::from_raw_parts(row.codec.0 as *const u8, row.codec.1) };
-        let desc = unsafe { std::slice::from_raw_parts(row.desc.0 as *const u8, row.desc.1) };
+        let codec = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(row.codec.0), row.codec.1) };
+        let desc = unsafe { std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(row.desc.0), row.desc.1) };
         assert_eq!((codec, desc, row.rate, row.channels, row.queued, row.failed), (&b"opus"[..], &[1u8, 2, 3][..], 48000, 2, 2, false));
         assert_eq!(chunk(id, row.gen), Some((vec![9, 9], 1)));
         assert_eq!(chunk(id, row.gen + 1), None, "another generation's page takes nothing");
@@ -567,7 +570,7 @@ pub(crate) mod tests {
         let id = open("mp3", 44100, 2, &[]).unwrap();
         let pcm = vec![0.25f32; 1 << 20];
         for _ in 0..MAX_PCM >> 20 {
-            unsafe { vnhost_adec_pcm(id, 0, pcm.as_ptr(), (pcm.len() / 2) as u32, 2) };
+            unsafe { vnhost_adec_pcm(id, 0, pcm.as_ptr(), lo32(pcm.len() / 2), 2) };
         }
         assert!(!failed(id));
         unsafe { vnhost_adec_pcm(id, 0, pcm.as_ptr(), 1, 2) };
@@ -656,7 +659,7 @@ pub(crate) mod tests {
                 let mut want = Vec::new();
                 for c in b {
                     seq += 1;
-                    want.extend(c.iter().flat_map(|&v| (0..ch).map(move |_| v as f32 / 256.0 + seq as f32)));
+                    want.extend(c.iter().flat_map(|&v| (0..ch).map(move |_| to_f32(v) / 256.0 + to_f32(seq))));
                 }
                 prop_assert_eq!(got, Some(want.len()));
                 prop_assert_eq!(out, want);

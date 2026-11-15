@@ -2,6 +2,7 @@
 //! described in JSON (numbers under "module", "layout", "view", "buffer", "texture", "sampler"
 //! name objects of the table); per-draw calls take plain arguments.
 
+use crate::guest::{lo32, us};
 pub type Id = u32;
 
 mod ffi {
@@ -137,7 +138,7 @@ pub fn pipeline_layout(json: &str) -> Id {
 pub fn render_pipeline(json: &str) -> Id {
     let t = std::time::Instant::now();
     let id = unsafe { ffi::vngpu_render_pipeline(json.as_ptr(), json.len()) };
-    PIPELINES.lock().unwrap_or_else(|e| e.into_inner()).made(t.elapsed().as_micros() as u32);
+    PIPELINES.lock().unwrap_or_else(|e| e.into_inner()).made(lo32(t.elapsed().as_micros()));
     id
 }
 
@@ -179,7 +180,7 @@ impl PipelineStats {
             return 0;
         }
         v.sort_unstable();
-        v[((v.len() - 1) as f64 * q).round() as usize]
+        v[(((v.len() - 1) as f64 * q).round()) as usize]
     }
 }
 
@@ -243,7 +244,7 @@ mod set_tests {
                         drop(s);
                         set_vertex_buffer(slot, bufs[k], off * 4);
                         set_vertex_buffer(slot, bufs[k], off * 4);
-                        saved += (STATE_CALLS_SAVED.load(std::sync::atomic::Ordering::Relaxed) > before) as u32;
+                        saved += u32::from(STATE_CALLS_SAVED.load(std::sync::atomic::Ordering::Relaxed) > before);
                     }
                 }
             }
@@ -277,7 +278,7 @@ mod pipeline_stats_tests {
 pub fn compute_pipeline(json: &str) -> Id {
     let t = std::time::Instant::now();
     let id = unsafe { ffi::vngpu_compute_pipeline(json.as_ptr(), json.len()) };
-    PIPELINES.lock().unwrap_or_else(|e| e.into_inner()).made(t.elapsed().as_micros() as u32);
+    PIPELINES.lock().unwrap_or_else(|e| e.into_inner()).made(lo32(t.elapsed().as_micros()));
     id
 }
 /// A compute pass of its own: `pipe` with bind group 0 `group`, x*y*z workgroups.
@@ -304,7 +305,7 @@ pub fn bind_group(layout: Id, entries: &[(u32, Res)]) -> Id {
             Res::Obj(o) => w.extend_from_slice(&[binding, 1, o, 0, 0]),
         }
     }
-    unsafe { ffi::vngpu_bind_group(layout, w.as_ptr(), entries.len() as u32) }
+    unsafe { ffi::vngpu_bind_group(layout, w.as_ptr(), lo32(entries.len())) }
 }
 
 pub fn write_buffer(buf: Id, at: u32, bytes: &[u8]) {
@@ -440,14 +441,14 @@ pub fn set_bind_group(i: u32, g: Id, offsets: &[u32]) {
     let key = (i < 4 && offsets.len() <= 4).then(|| {
         let mut o = [0u32; 4];
         o[..offsets.len()].copy_from_slice(offsets);
-        (g, o, offsets.len() as u32)
+        (g, o, lo32(offsets.len()))
     });
-    if key.is_none_or(|k| to_set(|s| &mut s.groups[i as usize], k)) {
-        unsafe { ffi::vngpu_set_bind_group(i, g, offsets.as_ptr(), offsets.len() as u32) }
+    if key.is_none_or(|k| to_set(|s| &mut s.groups[us(i)], k)) {
+        unsafe { ffi::vngpu_set_bind_group(i, g, offsets.as_ptr(), lo32(offsets.len())) }
     }
 }
 pub fn set_vertex_buffer(slot: u32, buf: Id, off: u32) {
-    if slot >= 8 || to_set(|s| &mut s.vertex[slot as usize], (buf, off)) {
+    if slot >= 8 || to_set(|s| &mut s.vertex[us(slot)], (buf, off)) {
         unsafe { ffi::vngpu_set_vertex_buffer(slot, buf, off) }
     }
 }

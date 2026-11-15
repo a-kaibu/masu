@@ -5,6 +5,9 @@
 //! page reads from the ring (`vnhost_audio_ring`) into WebAudio. Under node nobody drains it and
 //! `out` just stays capped, so the timing games wait on is the same in both.
 
+use crate::guest::{lo32, us};
+#[cfg(test)]
+use kome::num::to_f32;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
@@ -100,7 +103,7 @@ pub fn close(id: i32) {
 
 /// Frames of stream `id` not played yet.
 pub fn queued(id: i32) -> u32 {
-    with(|c| c.streams.get(&id).map_or(0, |s| s.q.len() as u32))
+    with(|c| c.streams.get(&id).map_or(0, |s| lo32(s.q.len())))
 }
 
 /// Queues interleaved stereo frames; how many it took (up to [`QUEUE_CAP`] queued).
@@ -116,7 +119,7 @@ pub fn write(id: i32, frames: &[f32]) -> usize {
             let mut acc = ACC.lock().unwrap_or_else(|e| e.into_inner());
             acc.0 += sum;
             acc.1 += n;
-            if acc.1 >= RATE as usize * 5 {
+            if acc.1 >= us(RATE) * 5 {
                 eprintln!("vnvm audio: rms {:.4} over {} frames", (acc.0 / acc.1 as f64).sqrt(), acc.1);
                 *acc = (0.0, 0);
             }
@@ -152,9 +155,9 @@ static RING_ON: AtomicBool = AtomicBool::new(false);
 fn ring_put(out: &mut VecDeque<[f32; 2]>) {
     let head = RING.head.load(Ordering::Relaxed);
     let data = unsafe { &mut *RING.data.get() };
-    let n = out.len() as u32;
+    let n = lo32(out.len());
     for (i, f) in out.drain(..).enumerate() {
-        let at = (head.wrapping_add(i as u32) as usize & (RING_FRAMES - 1)) * 2;
+        let at = (us(head.wrapping_add(lo32(i))) & (RING_FRAMES - 1)) * 2;
         data[at] = f[0];
         data[at + 1] = f[1];
     }
@@ -166,9 +169,9 @@ fn ring_put(out: &mut VecDeque<[f32; 2]>) {
 /// from +8) and writes its size in frames to `frames`.
 #[no_mangle]
 pub unsafe extern "C" fn vnhost_audio_ring(frames: *mut u32) -> *const u8 {
-    *frames = RING_FRAMES as u32;
+    *frames = lo32(RING_FRAMES);
     RING_ON.store(true, Ordering::Relaxed);
-    &RING as *const Ring as *const u8
+    std::ptr::from_ref(&RING).cast::<u8>()
 }
 
 #[cfg(test)]
@@ -188,15 +191,15 @@ mod tests {
             let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
             let id = open();
             for (k, n) in sizes.into_iter().enumerate() {
-                let before = queued(id) as usize;
-                let frames = vec![k as f32; n * 2];
+                let before = us(queued(id));
+                let frames = vec![to_f32(k); n * 2];
                 let took = write(id, &frames);
                 prop_assert!(took <= n);
-                let after = queued(id) as usize;
+                let after = us(queued(id));
                 prop_assert!(after <= QUEUE_CAP);
                 // (the wall clock plays some meanwhile)
-                prop_assert!(after + RATE as usize / 2 >= (before + took).min(QUEUE_CAP));
-                prop_assert!(took == n || before + took >= QUEUE_CAP - RATE as usize / 2);
+                prop_assert!(after + us(RATE) / 2 >= (before + took).min(QUEUE_CAP));
+                prop_assert!(took == n || before + took >= QUEUE_CAP - us(RATE) / 2);
             }
             close(id);
         }
@@ -208,7 +211,7 @@ mod tests {
     fn catch_up_fits_the_ring() {
         let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let id = open();
-        write(id, &vec![0.5; RATE as usize * 2 * 2]);
+        write(id, &vec![0.5; us(RATE) * 2 * 2]);
         let head0 = RING.head.load(Ordering::Relaxed);
         RING_ON.store(true, Ordering::Relaxed);
         with(|c| c.clock -= std::time::Duration::from_secs(3));

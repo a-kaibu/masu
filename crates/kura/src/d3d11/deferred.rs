@@ -15,6 +15,7 @@
 //! A recorded call keeps copies of what its pointers point to, and private references to the
 //! objects it names, until the list goes.
 
+use crate::guest::{gc, gp, lo32, us};
 use super::*;
 
 /// D3D11_ERROR_DEFERRED_CONTEXT_MAP_WITHOUT_INITIAL_DISCARD
@@ -163,7 +164,7 @@ unsafe fn update_size(d: &D11, a: &dyn Fn(usize) -> u32) -> Option<u32> {
         }
         _ => 0,
     };
-    (size <= MAX_BLOB && u64::from(a(4)) + size <= 1 << 32).then_some(size as u32)
+    (size <= MAX_BLOB && u64::from(a(4)) + size <= 1 << 32).then_some(lo32(size))
 }
 
 /// A call onto the list being recorded (nobody else has it yet).
@@ -188,7 +189,7 @@ unsafe fn record(d: &mut D11, this: u32, m: u32, a: &dyn Fn(usize) -> u32) {
     let mut blobs = Vec::new();
     for (i, size) in ptrs {
         if a(i) != 0 && size != 0 {
-            blobs.push((i, Box::from(std::slice::from_raw_parts(a(i) as *const u8, size as usize))));
+            blobs.push((i, Box::from(std::slice::from_raw_parts(gc::<u8>(a(i)), us(size)))));
         }
     }
     hold(d, this, m, &args, &blobs);
@@ -215,7 +216,7 @@ fn objects(m: u32) -> (&'static [usize], &'static [usize]) {
 
 /// The objects a recorded call names, held by the list being recorded.
 fn hold(d: &mut D11, this: u32, m: u32, args: &[u32; 16], blobs: &[(usize, Box<[u8]>)]) {
-    let ps = ptr() as usize;
+    let ps = us(ptr());
     let (singles, arrays) = objects(m);
     let mut ids: Vec<u32> = singles.iter().map(|&i| d.id_of(args[i])).collect();
     for (i, b) in blobs {
@@ -368,19 +369,19 @@ unsafe fn replay(d: &mut D11, st: &mut State, r: &Rec, after: &mut After) {
     let mut mem = Vec::new();
     let mut have = true;
     for (i, b) in &r.blobs {
-        let p = d.guest_alloc(b.len() as u32);
+        let p = d.guest_alloc(lo32(b.len()));
         // (nothing from the allocator: the call is dropped, its copies not written to address 0)
         if p == 0 {
             have = false;
             continue;
         }
-        std::ptr::copy_nonoverlapping(b.as_ptr(), p as *mut u8, b.len());
+        std::ptr::copy_nonoverlapping(b.as_ptr(), gp::<u8>(p), b.len());
         args[*i] = p;
         mem.push(p);
     }
     // (an update reads no more than was copied for it: its box is the copy's)
     let a = |i: usize| args[i];
-    let fits = have && (!matches!(r.m, 48 | 116) || update_size(d, &a).is_some_and(|n| n <= r.blobs.iter().find(|b| b.0 == 4).map_or(0, |b| b.1.len() as u32)));
+    let fits = have && (!matches!(r.m, 48 | 116) || update_size(d, &a).is_some_and(|n| n <= r.blobs.iter().find(|b| b.0 == 4).map_or(0, |b| lo32(b.1.len()))));
     if fits {
         context_call2(d, st, r.m, &a, after);
     }
@@ -407,7 +408,7 @@ unsafe fn map(d: &mut D11, this: u32, res: u32, sub: u32, ty: u32, out: u32) -> 
                 }
                 return E_OUTOFMEMORY;
             }
-            (t.usage, false, size as u32, pitch, pitch * rows)
+            (t.usage, false, lo32(size), pitch, pitch * rows)
         }
         _ => (0, false, 0, 0, 0),
     };
@@ -453,7 +454,7 @@ unsafe fn unmap(d: &mut D11, this: u32, res: u32, sub: u32) {
         return;
     };
     let args = [0, res, sub, 0, 0, pitch, depth, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-    let blobs: Vec<(usize, Box<[u8]>)> = vec![(4, Box::from(std::slice::from_raw_parts(mem as *const u8, size as usize)))];
+    let blobs: Vec<(usize, Box<[u8]>)> = vec![(4, Box::from(std::slice::from_raw_parts(gc::<u8>(mem), us(size))))];
     hold(d, this, 48, &args, &blobs);
     if let Some(Data::Deferred(x)) = d.objs.get_mut(&this).map(|o| &mut o.data) {
         push(&mut x.list, Rec { m: 48, args, blobs });

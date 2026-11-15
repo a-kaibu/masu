@@ -26,6 +26,9 @@
 
 #[cfg(test)]
 use crate::locks::Lock;
+use crate::guest::lo32;
+#[cfg(test)]
+use crate::guest::us;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering::*};
 use std::sync::{Condvar, Mutex};
 use std::time::Duration;
@@ -415,7 +418,7 @@ fn host_range() -> (u32, u32) {
         }
         let top = unsafe { sbrk(0) } as usize as u64;
         let lo = 0x8000_0000u64;
-        (lo as u32, (top.saturating_sub(lo)) as u32)
+        (lo32(lo), lo32(top.saturating_sub(lo)))
     }
     #[cfg(not(target_os = "emscripten"))]
     {
@@ -457,7 +460,7 @@ pub fn merge_ranges(mut v: Vec<(u32, u32)>) -> Vec<u32> {
         }
     }
     // (a length is 32 bits: all 4 GiB in one range is two halves)
-    out.iter().flat_map(|&(lo, hi)| if hi - lo > u64::from(u32::MAX) { vec![lo as u32, 0x8000_0000, (lo + 0x8000_0000) as u32, (hi - lo - 0x8000_0000) as u32] } else { vec![lo as u32, (hi - lo) as u32] }).collect()
+    out.iter().flat_map(|&(lo, hi)| if hi - lo > u64::from(u32::MAX) { vec![lo32(lo), 0x8000_0000, lo32(lo + 0x8000_0000), lo32(hi - lo - 0x8000_0000)] } else { vec![lo32(lo), lo32(hi - lo)] }).collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -563,8 +566,8 @@ fn fail(msg: String) {
     eprintln!("snap: no state: {msg}");
     let mut m = MSG.lock().unwrap_or_else(|e| e.into_inner());
     *m = msg;
-    VNHOST_SNAP.msg.store(m.as_ptr() as usize as u32, SeqCst);
-    VNHOST_SNAP.msg_len.store(m.len() as u32, SeqCst);
+    VNHOST_SNAP.msg.store(lo32(m.as_ptr().expose_provenance()), SeqCst);
+    VNHOST_SNAP.msg_len.store(lo32(m.len()), SeqCst);
     drop(m);
     resume_all(None);
     VNHOST_SNAP.state.store(ST_FAILED, SeqCst);
@@ -669,8 +672,8 @@ fn take(only_pause: bool) {
     // module: formal/tla/SnapPause.tla, NoFence)
     drop(GATE.lock().unwrap_or_else(|e| e.into_inner()));
     let list = Box::leak(if only_pause { Vec::new() } else { build_ranges() }.into_boxed_slice());
-    VNHOST_SNAP.ranges.store(list.as_ptr() as usize as u32, SeqCst);
-    VNHOST_SNAP.nranges.store(list.len() as u32 / 2, SeqCst);
+    VNHOST_SNAP.ranges.store(lo32(list.as_ptr().expose_provenance()), SeqCst);
+    VNHOST_SNAP.nranges.store(lo32(list.len()) / 2, SeqCst);
     let c = raw_clocks();
     for (i, &v) in c.iter().enumerate() {
         VNHOST_SNAP.clock[i].store((v + offset(i)).to_bits(), SeqCst);
@@ -828,7 +831,7 @@ mod tests {
     #[test]
     fn fail_messages_share_one_buffer() {
         let _one = ONE.lock().unwrap_or_else(|e| e.into_inner());
-        let read = || unsafe { std::str::from_utf8(std::slice::from_raw_parts(VNHOST_SNAP.msg.load(SeqCst) as usize as *const u8, VNHOST_SNAP.msg_len.load(SeqCst) as usize)).unwrap().to_string() };
+        let read = || unsafe { std::str::from_utf8(std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(us(VNHOST_SNAP.msg.load(SeqCst))), us(VNHOST_SNAP.msg_len.load(SeqCst)))).unwrap().to_string() };
         if cfg!(target_pointer_width = "64") {
             // (the Ctl holds 32-bit addresses: only meaningful in the wasm32 module; here the
             // buffer is checked by its contents)

@@ -150,7 +150,6 @@ impl Pages {
 
 #[cfg(test)]
 mod tests {
-    use crate::guest::us;
     use super::*;
     use proptest::prelude::*;
 

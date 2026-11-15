@@ -1,6 +1,9 @@
 //! What CreateTexture1D/2D/3D and CreateBuffer accept, as Windows decides it (the d3d11api
 //! winref probe's golden output; per-format answers in `winfmt`).
 
+use crate::guest::us;
+#[cfg(test)]
+use crate::guest::lo32;
 use super::winfmt::{self, FORMATS};
 
 pub const E_INVALIDARG: u32 = 0x8007_0057;
@@ -39,7 +42,7 @@ const MISC_GDI: u32 = 0x200;
 /// an R8 texture and the chroma one as R8G8 for views of them, see mod.rs `Nv12`): Windows' row
 /// less multisampling and the video decoder's, processor's and encoder's bits.
 pub fn format(fmt: u32) -> Option<(bool, u32, bool, u32, [u8; 3], u32)> {
-    FORMATS.get(fmt as usize).copied().filter(|_| fmt != 0).map(|f| {
+    FORMATS.get(us(fmt)).copied().filter(|_| fmt != 0).map(|f| {
         if fmt == NV12 {
             (true, f.1 & NV12_SUPPORT, false, 0, [0; 3], f.5)
         } else if UNKEPT.contains(&fmt) {
@@ -635,7 +638,7 @@ pub const UAV: u32 = 3;
 /// takes `desc` (its words; None: NULL) for a view of texture `r`, and the view if it does.
 pub fn view(kind: u32, r: &Res, desc: Option<&[u32]>) -> Result<View, u32> {
     let bad = Err(E_INVALIDARG);
-    let need = [BIND_SRV, BIND_RT, BIND_DS, BIND_UAV][kind as usize & 3];
+    let need = [BIND_SRV, BIND_RT, BIND_DS, BIND_UAV][us(kind) & 3];
     if r.bind & need == 0 {
         return bad;
     }
@@ -691,7 +694,7 @@ pub fn view(kind: u32, r: &Res, desc: Option<&[u32]>) -> Result<View, u32> {
     } else if fmt != r.fmt && !same_family && !r32_of_32 && !cast {
         return bad;
     }
-    let cap = [0x100, 0x4000, 0x10000, 0x2000000][kind as usize & 3];
+    let cap = [0x100, 0x4000, 0x10000, 0x2000000][us(kind) & 3];
     if support(fmt).is_none_or(|s| s & cap == 0) {
         return bad;
     }
@@ -808,7 +811,7 @@ pub struct BufView {
 /// flags); UAV: BUFFER (first, n, flags); RTV: BUFFER (first, n).
 pub fn buffer_view(kind: u32, size: u32, bind: u32, misc: u32, stride: u32, w: Option<&[u32]>) -> Result<BufView, u32> {
     let bad = Err(E_INVALIDARG);
-    let need = [BIND_SRV, BIND_RT, BIND_DS, BIND_UAV][kind as usize & 3];
+    let need = [BIND_SRV, BIND_RT, BIND_DS, BIND_UAV][us(kind) & 3];
     if bind & need == 0 || kind == DSV {
         return bad;
     }
@@ -849,7 +852,7 @@ pub fn buffer_view(kind: u32, size: u32, bind: u32, misc: u32, stride: u32, w: O
         if flags & 6 != 0 {
             return bad;
         }
-        let cap = [0x1, 0x4000, 0, 0x2000000][kind as usize & 3];
+        let cap = [0x1, 0x4000, 0, 0x2000000][us(kind) & 3];
         let ok = if kind == SRV { format(fmt).is_some_and(|f| f.5 & winfmt::BSRV != 0) } else { support(fmt).is_some_and(|s| s & cap != 0) };
         let bytes = texel_bytes(fmt);
         if !ok || bytes == 0 {
@@ -956,13 +959,13 @@ mod shader_tests {
         let mut body = Vec::new();
         let mut offs = Vec::new();
         for (t, d) in &chunks {
-            offs.push((head + body.len()) as u32);
+            offs.push(lo32(head + body.len()));
             body.extend(t);
-            body.extend((d.len() as u32).to_le_bytes());
+            body.extend((lo32(d.len())).to_le_bytes());
             body.extend(d);
         }
-        out.extend(((head + body.len()) as u32).to_le_bytes());
-        out.extend((chunks.len() as u32).to_le_bytes());
+        out.extend((lo32(head + body.len())).to_le_bytes());
+        out.extend((lo32(chunks.len())).to_le_bytes());
         for o in offs {
             out.extend(o.to_le_bytes());
         }
@@ -1061,12 +1064,12 @@ mod input_layout_tests {
     /// A DXBC container with only an ISGN of (name, index, sysval).
     fn isgn(inputs: &[(&str, u32, u32)]) -> Vec<u8> {
         let mut c = Vec::new();
-        c.extend((inputs.len() as u32).to_le_bytes());
+        c.extend((lo32(inputs.len())).to_le_bytes());
         c.extend(8u32.to_le_bytes());
         let mut names = Vec::new();
         let base = 8 + 24 * inputs.len();
         for (r, &(n, i, sv)) in inputs.iter().enumerate() {
-            for x in [(base + names.len()) as u32, i, sv, 3, r as u32, 0x0f0f] {
+            for x in [lo32(base + names.len()), i, sv, 3, lo32(r), 0x0f0f] {
                 c.extend(x.to_le_bytes());
             }
             names.extend(n.bytes().chain([0]));
@@ -1078,7 +1081,7 @@ mod input_layout_tests {
         b.extend(1u32.to_le_bytes());
         b.extend(36u32.to_le_bytes());
         b.extend(b"ISGN");
-        b.extend((c.len() as u32).to_le_bytes());
+        b.extend((lo32(c.len())).to_le_bytes());
         b.extend(c);
         b
     }
