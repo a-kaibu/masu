@@ -1473,7 +1473,11 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
             return 0x8000_0006;
         }
     }
-    let s = &mut scan.as_mut().unwrap().1;
+    // (always Some: set above on a first call or a restart, kept by the calls before)
+    let Some((_, s)) = scan.as_mut() else {
+        iosb(io, 0x8000_0006, 0);
+        return 0x8000_0006;
+    };
     if s.at >= s.entries.len() {
         iosb(io, 0x8000_0006, 0);
         return 0x8000_0006; // STATUS_NO_MORE_FILES
@@ -1517,7 +1521,7 @@ pub fn object_name(win: &str) -> Option<String> {
         return None;
     }
     let dev = crate::k32::drive_device(d)?;
-    let rest = &win[2..];
+    let rest = win.get(2..).unwrap_or_default();
     let rest = if rest.is_empty() { "\\" } else { rest };
     // (no trailing "\" but the root's: Windows names a directory without one)
     let rest = if rest.len() > 1 { rest.trim_end_matches('\\') } else { rest };

@@ -130,11 +130,14 @@ pub fn put64(a: u32, v: u64) {
 }
 #[inline(always)]
 pub fn r64(a: u32) -> u64 {
+    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
+    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
     unsafe { host::<u64>(a).cast_const().read_unaligned() }
 }
 #[inline(always)]
 pub fn w64(a: u32, v: u64) {
     if guest(a, 8) {
+        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
         unsafe { host::<u64>(a).write_unaligned(v) }
     }
 }
@@ -164,31 +167,40 @@ fn refused(a: u32, n: u32) {
 
 #[inline(always)]
 pub fn r8(a: u32) -> u8 {
+    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
+    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
     unsafe { *host::<u8>(a).cast_const() }
 }
 #[inline(always)]
 pub fn r16(a: u32) -> u16 {
+    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
+    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
     unsafe { host::<u16>(a).cast_const().read_unaligned() }
 }
 #[inline(always)]
 pub fn r32(a: u32) -> u32 {
+    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
+    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
     unsafe { host::<u32>(a).cast_const().read_unaligned() }
 }
 #[inline(always)]
 pub fn w8(a: u32, v: u8) {
     if guest(a, 1) {
+        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
         unsafe { *host::<u8>(a) = v }
     }
 }
 #[inline(always)]
 pub fn w16(a: u32, v: u16) {
     if guest(a, 2) {
+        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
         unsafe { host::<u16>(a).write_unaligned(v) }
     }
 }
 #[inline(always)]
 pub fn w32(a: u32, v: u32) {
     if guest(a, 4) {
+        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
         unsafe { host::<u32>(a).write_unaligned(v) }
     }
 }
@@ -200,6 +212,9 @@ pub fn put32(a: u32, v: u32) {
     }
 }
 pub fn slice<'a>(a: u32, n: u32) -> &'a [u8] {
+    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
+    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
+    // SAFETY: The slice is read while the guest may write it: sake never keeps it across a guest call.
     unsafe { std::slice::from_raw_parts(host::<u8>(a).cast_const(), us(n)) }
 }
 /// Guest memory `a..a + n` for sake to write into, or None where that is not the guest's: in
@@ -215,6 +230,7 @@ pub fn guest_mut<'a>(a: u32, n: u32) -> Option<&'a mut [u8]> {
         }
         return None;
     }
+    // SAFETY: guest_range above: a..a+n is guest memory past the NULL pages (backed).
     Some(unsafe { std::slice::from_raw_parts_mut(host::<u8>(a), us(n)) })
 }
 /// Whether `a..a + n` is guest memory sake may write for the program (guest_mut's rule).
@@ -226,6 +242,7 @@ pub fn guest_range(a: u32, n: u32) -> bool {
 pub const NULL_TOP: u32 = 0x1_0000;
 pub fn fill(a: u32, n: u32, v: u8) {
     if guest(a, n) {
+        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
         unsafe { std::ptr::write_bytes(host::<u8>(a), v, us(n)) }
     }
 }
@@ -247,6 +264,7 @@ pub fn zero(a: u32, n: u32) {
     while p < end {
         let next = ((p | (u64::from(PAGE) - 1)) + 1).min(end);
         // (inside guest memory: checked above)
+        // SAFETY: p..next is inside a..a+n, which guest() above found guest memory (backed).
         let s = unsafe { std::slice::from_raw_parts_mut(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(p)), kome::num::us(next - p)) };
         if !is_zero(s) {
             s.fill(0);
@@ -271,11 +289,15 @@ pub fn is_zero(s: &[u8]) -> bool {
 
 pub fn copy(dst: u32, src: u32, n: u32) {
     if guest(dst, n) {
+        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
+        // The source is read as r8 reads (the wasm memory); ptr::copy allows the overlap.
         unsafe { std::ptr::copy(host::<u8>(src).cast_const(), host::<u8>(dst), us(n)) }
     }
 }
 pub fn write(dst: u32, data: &[u8]) {
     if guest(dst, kome::num::lo32(data.len())) {
+        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
+        // `data` is host memory sake holds, not the guest bytes it is copied to.
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), host::<u8>(dst), data.len()) }
     }
 }
@@ -746,6 +768,8 @@ pub fn alloc(size: u32) -> Option<u32> {
 
 struct Sys;
 
+// SAFETY: Sys hands dlmalloc only guest memory it reserved for the heap and never hands the same
+// range out twice; dlmalloc is the only user of what it returns.
 unsafe impl dlmalloc::Allocator for Sys {
     fn alloc(&self, size: usize) -> (*mut u8, usize, u32) {
         let Some(size) = u32::try_from(size).ok().filter(|&n| n <= HI - GRAN).map(|n| align_up(n, GRAN)) else {
@@ -816,6 +840,8 @@ fn slab_cap(p: u32) -> u32 {
 pub(crate) static SLAB_MADE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 fn slab_lock(t: u32) -> &'static std::sync::atomic::AtomicU32 {
+    // SAFETY: t is a slab's lock word: 4-aligned guest memory the slab owns for as long as it exists
+    // (slabs are never freed), only ever accessed atomically.
     unsafe { std::sync::atomic::AtomicU32::from_ptr(host::<u32>(t)) }
 }
 
@@ -970,6 +996,9 @@ pub fn heap_destroy(heap: u32) -> usize {
     lock.store(0, Ordering::Release);
     drop(slabs);
     let big = BIG.lock().unwrap_or_else(|e| e.into_inner()).as_mut().and_then(|m| m.remove(&heap)).unwrap_or_default();
+    // (freed in address order: the heap's layout after it is the same run to run)
+    let mut big: Vec<u32> = big.into_iter().collect();
+    big.sort_unstable();
     for p in big {
         if r32(p - 4) == MAGIC && r32(p - 16) == heap && heap_free(p) {
             n += 1;
@@ -980,6 +1009,7 @@ pub fn heap_destroy(heap: u32) -> usize {
 
 pub fn heap_alloc(size: u32, zero: bool) -> u32 {
     let Some(total) = size.checked_add(HDR) else { return 0 };
+    // SAFETY: dlmalloc's malloc has no precondition beyond the size; its memory is Sys's (guest memory).
     let p = unsafe { HEAP.locked().malloc(us(total), 16) }.expose_provenance();
     let p = kome::num::lo32(p);
     if p == 0 {
@@ -1021,6 +1051,7 @@ pub fn heap_free(p: u32) -> bool {
     w32(p - 4, 0);
     // (c_free: the header's size may be below the chunk's after an in-place shrink)
     let _ = size;
+    // SAFETY: p - HDR is what malloc returned in heap_alloc (heap_owns(p) above: a live block).
     unsafe { HEAP.locked().c_free(std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(p - HDR))) };
     true
 }
@@ -1075,29 +1106,36 @@ pub fn atomic_rmw32(a: u32, f: impl Fn(u32) -> u32) -> u32 {
 #[allow(deprecated)]
 pub(crate) fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::SeqCst};
-    unsafe {
-        if p % 4 == 0 {
-            let a = &*std::ptr::with_exposed_provenance::<AtomicU32>(p);
-            return a.fetch_update(SeqCst, SeqCst, |v| Some(f(v))).unwrap_or_else(|v| v);
-        }
-        let word = p & !7;
-        if p - word <= 4 {
-            let w = &*std::ptr::with_exposed_provenance::<AtomicU64>(word);
-            let sh = kome::num::lo32(p - word) * 8;
-            let m = 0xffff_ffffu64 << sh;
-            let mut old = 0;
-            let _ = w.fetch_update(SeqCst, SeqCst, |cur| {
+    if p % 4 == 0 {
+        // SAFETY: p is 4-aligned host memory the caller names (guest memory: backed), used as
+        // an atomic word by every writer here
+        let a = unsafe { &*std::ptr::with_exposed_provenance::<AtomicU32>(p) };
+        return a.fetch_update(SeqCst, SeqCst, |v| Some(f(v))).unwrap_or_else(|v| v);
+    }
+    let word = p & !7;
+    if p - word <= 4 {
+        // SAFETY: the 8-aligned word holding all 4 bytes, the same memory, atomic as above
+        let w = unsafe { &*std::ptr::with_exposed_provenance::<AtomicU64>(word) };
+        let sh = kome::num::lo32(p - word) * 8;
+        let m = 0xffff_ffffu64 << sh;
+        let mut old = 0;
+        // (the closure always answers Some: fetch_update cannot fail)
+        let _prev: u64 = w
+            .fetch_update(SeqCst, SeqCst, |cur| {
                 old = kome::num::lo32((cur & m) >> sh);
                 Some((cur & !m) | (u64::from(f(old)) << sh))
-            });
-            return old;
-        }
-        static SPLIT: Mutex<()> = Mutex::new(());
-        let _g = SPLIT.lock().unwrap_or_else(|e| e.into_inner());
-        let old = std::ptr::with_exposed_provenance::<u32>(p).read_unaligned();
-        std::ptr::with_exposed_provenance_mut::<u32>(p).write_unaligned(f(old));
-        old
+            })
+            .unwrap_or_else(|v| v);
+        return old;
     }
+    static SPLIT: Mutex<()> = Mutex::new(());
+    let _g = SPLIT.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: 4 bytes of the caller's memory across two words, unaligned access; SPLIT orders
+    // the writers that straddle
+    let old = unsafe { std::ptr::with_exposed_provenance::<u32>(p).read_unaligned() };
+    // SAFETY: as above
+    unsafe { std::ptr::with_exposed_provenance_mut::<u32>(p).write_unaligned(f(old)) };
+    old
 }
 
 #[cfg(test)]

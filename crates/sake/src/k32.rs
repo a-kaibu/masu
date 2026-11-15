@@ -295,6 +295,7 @@ fn ExitProcess(c: &mut Ctx) -> u32 {
     if crate::env_on!("SAKE_TRACE_EXIT") {
         eprintln!("sake: ExitProcess({code}) from {:#x}", r32(c.esp));
     }
+    // SAFETY: libc::exit has no precondition (the process ends).
     unsafe { libc::exit(code.cast_signed()) }
 }
 use crate::process::PROCESS_ALL_ACCESS;
@@ -312,6 +313,7 @@ fn TerminateProcess(c: &mut Ctx) -> u32 {
             if crate::env_on!("SAKE_TRACE_EXIT") {
                 eprintln!("sake: TerminateProcess({}) of itself", c.a(1));
             }
+            // SAFETY: libc::exit has no precondition (the process ends).
             unsafe { libc::exit(c.a(1).cast_signed()) }
         }
         Some((pid, _)) => u32::from(crate::process::terminate(pid, c.a(1))),
@@ -323,6 +325,7 @@ fn TerminateProcess(c: &mut Ctx) -> u32 {
 }
 fn FatalAppExitA(c: &mut Ctx) -> u32 {
     eprintln!("sake: FatalAppExit: {}", arg_str(c.a(1), false));
+    // SAFETY: libc::exit has no precondition (the process ends).
     unsafe { libc::exit(1) }
 }
 
@@ -334,6 +337,7 @@ pub fn exit_thread(code: u32) -> ! {
     // (a CRT thread's reference to its DLL: FreeLibrary once its code is done)
     let held = CRT_DLLS.locked().remove(&crate::cur().tid);
     if let Some(m) = held {
+        // SAFETY: the running thread's own Cpu, alive while it runs, borrowed by nothing else here.
         crate::pe::free_library(unsafe { &mut *crate::cur().cpu }, m);
     }
     crate::dbg::thread_exiting(code);
@@ -388,6 +392,7 @@ pub fn exit_thread(code: u32) -> ! {
     crate::pe::loader_thread_exit();
     if t.tid == crate::process::first_tid(crate::pid()) {
         // the main thread: the process
+        // SAFETY: libc::exit has no precondition (the process ends).
         unsafe { libc::exit(code.cast_signed()) }
     }
     // the guest stack and TEB go back to the address space (a game starting a thread per
@@ -399,6 +404,7 @@ pub fn exit_thread(code: u32) -> ! {
     // sound kept ~4 KB of them per thread for ever; review P2-1). Nothing else holds them:
     // its save-state part went above, the crash log's entry goes with the Cpu.
     crate::forget_thread(t);
+    // SAFETY: pthread_exit has no precondition; this thread's records were released above.
     unsafe { libc::pthread_exit(std::ptr::null_mut()) }
 }
 fn ExitThread(c: &mut Ctx) -> u32 {
@@ -953,6 +959,7 @@ pub fn park_suspended() -> bool {
     }
     if parked {
         // (a context set meanwhile: SetThreadContext)
+        // SAFETY: t is this thread's record: its Cpu is alive and not borrowed while it is parked.
         crate::tctx::apply_pending(unsafe { &mut *t.cpu });
     }
     parked
@@ -995,7 +1002,8 @@ fn NtResumeThread(c: &mut Ctx) -> u32 {
 pub(crate) fn suspend_process(on: bool, but: u32) {
     for (tid, _, _) in thread_list() {
         if tid != but {
-            let _ = suspend_for_other(tid, on);
+            // (a thread that cannot be suspended or resumed (it ended meanwhile) is left as it is)
+            if suspend_for_other(tid, on).is_err() {}
         }
     }
 }
@@ -2089,6 +2097,8 @@ static CS: waits::Cs = waits::Cs::new();
 /// atomic: it gets an aligned stand-in of its own, the guest's bytes there left as they are.
 fn atomic(a: u32) -> &'static AtomicU32 {
     if a % 4 == 0 {
+        // SAFETY: a is 4-aligned (checked above) guest memory (backed: mem's module doc); the guest
+        // uses it as an atomic word too, as the Interlocked/Wait API asks.
         return unsafe { &*std::ptr::with_exposed_provenance::<AtomicU32>(kome::num::us(a)) };
     }
     static SHADOW: Mutex<Option<HashMap<u32, &'static AtomicU32>>> = Mutex::new(None);
@@ -2503,6 +2513,8 @@ pub(crate) fn teb_of(tid: u32) -> Option<u32> {
 pub(crate) fn thread_cpu(tid: u32) -> Option<(*mut koji::Cpu, (u32, u32))> {
     let g = TEBS.locked();
     let &(_, _, t) = g.iter().find(|e| e.0 == tid)?;
+    // SAFETY: TEBS holds a thread's record from tls_thread_init until forget_thread takes it out, which
+    // happens under the same lock (held here as g).
     let t = unsafe { &*std::ptr::with_exposed_provenance::<crate::Thread>(t) };
     Some((t.cpu, t.api))
 }
@@ -5817,10 +5829,10 @@ fn format_picture(pic: &str, st: [u16; 8], ja: bool, skip: &str, h24: bool) -> S
                 let am = h < 12;
                 let s = match ch {
                     'd' if n >= 4 => if ja { format!("{}曜日", JA_DAYS[dow]) } else { EN_DAYS[dow].into() },
-                    'd' if n == 3 => if ja { JA_DAYS[dow].into() } else { EN_DAYS[dow][..3].into() },
+                    'd' if n == 3 => if ja { JA_DAYS[dow].into() } else { EN_DAYS[dow].chars().take(3).collect() },
                     'd' => num(d),
                     'M' if n >= 4 => if ja { format!("{mo}月") } else { EN_MONTHS[kome::num::us(mo).wrapping_add(11) % 12].into() },
-                    'M' if n == 3 => if ja { mo.to_string() } else { EN_MONTHS[kome::num::us(mo).wrapping_add(11) % 12][..3].into() },
+                    'M' if n == 3 => if ja { mo.to_string() } else { EN_MONTHS[kome::num::us(mo).wrapping_add(11) % 12].chars().take(3).collect() },
                     'M' => num(mo),
                     'y' if n == 1 => (y % 100).to_string(),
                     'y' if n == 2 => format!("{:02}", y % 100),
@@ -6892,7 +6904,8 @@ static STD_GIVEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool:
 /// STARTF_USESTDHANDLES's handles, for a process another one started with them
 pub fn set_std_handles(h: Option<(u32, u32, u32)>) {
     if let Some((a, b, c)) = h {
-        let _ = STD.set([a, b, c]);
+        // (once only: a second call leaves the first handles)
+        if STD.set([a, b, c]).is_err() {}
         STD_GIVEN.store(true, Ordering::Relaxed);
     }
 }
@@ -8169,7 +8182,8 @@ fn copy_ex(c: &mut Ctx, wide: bool) -> u32 {
         match c.call(progress, &args) {
             1 => {
                 if let Some(h) = files::resolve(&to) {
-                    let _ = kura::fs::remove_file(h);
+                    // (PROGRESS_CANCEL's partial copy goes if it can; CopyFileEx answers as before)
+                    if kura::fs::remove_file(h).is_err() {}
                 }
                 last_error(1235);
                 return 0;
@@ -8201,7 +8215,8 @@ fn full_path_name(c: &mut Ctx, wide: bool) -> u32 {
         mem::wp(c.a(3), 0);
     } else if c.a(3) != 0 && r < c.a(1) {
         let pos = full.rfind('\\').map_or(0, |i| i + 1);
-        let off = if wide { full[..pos].encode_utf16().count() * 2 } else { crate::text::s2a(&full[..pos]).len() };
+        let head = full.get(..pos).unwrap_or_default();
+        let off = if wide { head.encode_utf16().count() * 2 } else { crate::text::s2a(head).len() };
         mem::wp(c.a(3), c.a(2) + kome::num::u32_of(off));
     }
     r
@@ -8281,7 +8296,8 @@ fn temp_name(c: &mut Ctx, wide: bool) -> u32 {
     let n = if c.a(2) != 0 { c.a(2) } else { TEMP_N.fetch_add(1, Ordering::Relaxed) };
     let p = format!("{}\\{}{:04X}.tmp", dir.trim_end_matches('\\'), pre.chars().take(3).collect::<String>(), n);
     if c.a(2) == 0 {
-        let _ = kura::fs::File::create(files::resolve_new(&p));
+        // (GetTempFileName answers the name even if the file could not be made, as before)
+        if kura::fs::File::create(files::resolve_new(&p)).is_err() {}
     }
     ret_str(c.a(3), 260, &p, wide);
     n
@@ -8531,7 +8547,7 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
         if files::resolve(&w).is_some() || is_system_dll_path(&w) {
             let r = ret_str(buf, cap, &w, wide);
             if part != 0 {
-                let dir = &w[..w.rfind('\\').map_or(0, |i| i + 1)];
+                let dir = w.get(..w.rfind('\\').map_or(0, |i| i + 1)).unwrap_or_default();
                 let off = kome::num::u32_of(if wide { 2 * dir.encode_utf16().count() } else { crate::text::s2a(dir).len() });
                 // (pointer-sized; only when the name fitted)
                 if r < cap {
@@ -8548,7 +8564,7 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
 /// the current one, system32, windows, then PATH
 fn search_dirs() -> Vec<String> {
     let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
-    let exe_dir = exe.rfind('\\').map_or(String::new(), |i| exe[..i].to_string());
+    let exe_dir = exe.rsplit_once('\\').map_or(String::new(), |(d, _)| d.to_string());
     let mut v = vec![exe_dir, files::cwd(), "C:\\windows\\system32".into(), "C:\\windows".into()];
     v.extend(env_get("PATH").unwrap_or_default().split(';').filter(|d| !d.is_empty()).map(String::from));
     v
@@ -8568,7 +8584,8 @@ fn create_file_mapping(c: &mut Ctx, wide: bool) -> u32 {
     // (a writable mapping larger than its file makes the file that long, as Windows does)
     let want = u64::from(c.a(4)) | u64::from(c.a(3)) << 32;
     if let (Some(f), true) = (&f, write) && want > f.size() {
-        let _ = f.f.locked().set_len(want);
+        // (a file that cannot grow: the view still maps, its tail reads zero as before)
+        if f.f.locked().set_len(want).is_err() {}
     }
     sa_inherit(c.a(1), create_named(named(c.a(5), wide), Obj::Mapping { file: f, size, view: 0, write }))
 }
@@ -8781,15 +8798,15 @@ static VIEWS: Mutex<Vec<(u32, u32, Option<String>)>> = Mutex::new(Vec::new());
 /// "C:\x\y" as the NT device path GetMappedFileName gives ("\Device\HarddiskVolume1\x\y")
 fn device_path(win: &str) -> String {
     match win.chars().next().and_then(drive_device) {
-        Some(d) if win.get(1..2) == Some(":") => format!("{d}{}", &win[2..]),
+        Some(d) if win.get(1..2) == Some(":") => format!("{d}{}", win.get(2..).unwrap_or_default()),
         _ => win.to_string(),
     }
 }
 /// The file behind an address (a module's image or a file view), as GetMappedFileName finds it:
 /// Err(ERROR_FILE_INVALID) for a pagefile view, Err(ERROR_UNEXP_NET_ERR) for no mapping
 pub(crate) fn mapped_file(a: u32) -> Result<String, u32> {
-    if let Some(b) = crate::pe::containing(a) {
-        return Ok(crate::pe::with(b, |m| m.path.clone()).unwrap());
+    if let Some(p) = crate::pe::containing(a).and_then(|b| crate::pe::with(b, |m| m.path.clone())) {
+        return Ok(p);
     }
     match VIEWS.locked().iter().find(|v| a >= v.0 && a - v.0 < v.1) {
         Some((_, _, Some(p))) => Ok(p.clone()),
@@ -8930,6 +8947,7 @@ pub fn exec(file: &str, args: &str, dir: Option<&str>) -> bool {
     };
     let full = files::host_to_win(&h);
     eprintln!("sake: exec {full}\t{args}");
+    // SAFETY: libc::exit has no precondition (the process ends).
     unsafe { libc::exit(0) }
 }
 fn CreateProcessA(c: &mut Ctx) -> u32 {
@@ -9103,6 +9121,7 @@ fn random_into(p: u32, n: u32) -> bool {
         return false;
     }
     let Some(b) = mem::guest_mut(p, n) else { return false };
+    // SAFETY: getentropy writes at most chunk.len() (<= 256, its limit) bytes into the chunk.
     b.chunks_mut(256).all(|chunk| unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) } == 0)
 }
 /// BCryptOpenAlgorithmProvider(&alg, id, implementation, flags): any algorithm "opens"; only
@@ -9426,11 +9445,11 @@ fn ConvertDefaultLocale(c: &mut Ctx) -> u32 {
 }
 fn MakeSureDirectoryPathExists(c: &mut Ctx) -> u32 {
     let s = arg_str(c.a(0), false);
-    let dir = &s[..s.rfind('\\').unwrap_or(0)];
+    let dir = s.rsplit_once('\\').map_or("", |(d, _)| d);
     let mut at = 0;
-    while let Some(i) = dir[at..].find('\\').map(|i| i + at) {
+    while let Some(i) = dir.get(at..).and_then(|r| r.find('\\')).map(|i| i + at) {
         if i > 2 {
-            mkdir(&dir[..i]);
+            mkdir(dir.get(..i).unwrap_or(dir));
         }
         at = i + 1;
     }

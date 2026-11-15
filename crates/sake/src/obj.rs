@@ -724,7 +724,9 @@ fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dy
         // (TerminateThread ended this thread: its entry goes first, with what woke it)
         if crate::k32::terminating() {
             if let Some(id) = id.take() {
-                g.as_mut().unwrap().leave(id);
+                if let Some(t) = g.as_mut() {
+                    t.leave(id);
+                }
             }
             drop(g);
             if crate::k32::terminated_here() {
@@ -737,7 +739,9 @@ fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dy
         // its entry goes, so what woke it goes on to another waiter, #221)
         if crate::k32::suspended_here() {
             if let Some(id) = id.take() {
-                g.as_mut().unwrap().leave(id);
+                if let Some(t) = g.as_mut() {
+                    t.leave(id);
+                }
             }
             drop(g);
             crate::k32::stand_while_suspended();
@@ -791,7 +795,7 @@ fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dy
         blocked = true;
         match deadline {
             None => {
-                while !g.as_ref().unwrap().waits.poked(me) {
+                while !g.as_ref().is_some_and(|t| t.waits.poked(me)) {
                     g = cv.wait(g).unwrap_or_else(|e| e.into_inner());
                 }
             }
@@ -804,7 +808,9 @@ fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dy
         }
     };
     if let Some(id) = id {
-        g.as_mut().unwrap().leave(id);
+        if let Some(t) = g.as_mut() {
+            t.leave(id);
+        }
     }
     drop(g);
     for m in marks {

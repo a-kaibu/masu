@@ -257,12 +257,17 @@ fn hot_slot(i: usize, make: bool) -> Option<&'static Hot> {
         p = Box::leak(chunk).as_mut_ptr();
         c.store(p, Ordering::Release);
     }
-    Some(unsafe { &*p.add(i % HOT_CHUNK) })
+    // SAFETY: p is a leaked chunk of HOT_CHUNK Hots (made above or by an earlier call), never freed;
+    // i % HOT_CHUNK is inside it.
+    let q = unsafe { p.add(i % HOT_CHUNK) };
+    // SAFETY: q points at one of the chunk's Hots, alive for ever (leaked).
+    Some(unsafe { &*q })
 }
 
 /// Entry `i` (of `e`, ENTRIES write-locked) into the hot table.
 fn publish(i: usize, e: &Entry) {
-    let s = hot_slot(i, true).expect("trap index in range");
+    // (always Some: export asserts i < MAX_ENTRIES, which HOT covers)
+    let Some(s) = hot_slot(i, true) else { return };
     // (Release: the Box's handler is written before a reader that sees its pointer reads it)
     s.f.store(e.f.map_or(std::ptr::null_mut(), |f| Box::into_raw(Box::new(f))), Ordering::Release);
     s.meta.store(Meta::of(e).pack(), Ordering::Release);
@@ -576,8 +581,8 @@ fn stats_on() -> bool {
 // (lock-free: relaxed stores into a slot per thread, so watching barely changes the timing)
 const RECENT_N: usize = 8;
 const RECENT_THREADS: usize = 128;
-static RECENT: [[[std::sync::atomic::AtomicU32; 6]; RECENT_N]; RECENT_THREADS] = unsafe { std::mem::zeroed() };
-static RECENT_POS: [std::sync::atomic::AtomicU32; RECENT_THREADS] = unsafe { std::mem::zeroed() };
+static RECENT: [[[std::sync::atomic::AtomicU32; 6]; RECENT_N]; RECENT_THREADS] = [const { [const { [const { std::sync::atomic::AtomicU32::new(0) }; 6] }; RECENT_N] }; RECENT_THREADS];
+static RECENT_POS: [std::sync::atomic::AtomicU32; RECENT_THREADS] = [const { std::sync::atomic::AtomicU32::new(0) }; RECENT_THREADS];
 
 fn recent_slot(tid: u32) -> Option<usize> {
     let k = kome::num::us(tid.wrapping_sub(0x20) / 4);

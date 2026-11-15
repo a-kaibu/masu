@@ -20,17 +20,39 @@ pub use crate::hresult::E_NOINTERFACE;
 /// An interface com_methods.rs has a vtable for. Only `com::iface!(IName)` makes one, and the
 /// compiler checks the name there: a misspelt interface does not build (it panicked at the first
 /// object of it).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct Iface(&'static str);
+#[derive(Clone, Copy)]
+pub struct Iface(&'static Table);
 
 impl Iface {
     #[doc(hidden)]
     pub const fn checked(name: &'static str) -> Iface {
-        assert!(find(name).is_some(), "com: no such interface in com_methods.rs");
-        Iface(name)
+        let t = find(name);
+        assert!(t.is_some(), "com: no such interface in com_methods.rs");
+        // (the assert stops the build first: com::iface! evaluates this in a const)
+        const NONE: Table = ("", &[], &[]);
+        match t {
+            Some(t) => Iface(t),
+            None => Iface(&NONE),
+        }
     }
     pub const fn name(self) -> &'static str {
-        self.0
+        self.0 .0
+    }
+}
+impl PartialEq for Iface {
+    fn eq(&self, o: &Iface) -> bool {
+        self.name() == o.name()
+    }
+}
+impl Eq for Iface {}
+impl std::hash::Hash for Iface {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        self.name().hash(h)
+    }
+}
+impl std::fmt::Debug for Iface {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Iface({})", self.name())
     }
 }
 
@@ -48,8 +70,7 @@ pub struct Method {
 impl Method {
     #[doc(hidden)]
     pub const fn checked(of: Iface, name: &'static str, slot: Option<usize>) -> Method {
-        let Some(t) = find(of.0) else { panic!("com: no such interface") };
-        let ms = t.1;
+        let ms = of.0 .1;
         match slot {
             Some(i) => assert!(i < ms.len() && str_eq(ms[i].0, name), "com: the interface has no such method at that slot"),
             None => {
@@ -176,8 +197,7 @@ fn objs<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
 }
 
 fn table(iface: Iface) -> &'static Table {
-    // (Iface::checked found it when it compiled)
-    find(iface.0).unwrap_or_else(|| panic!("com: no interface {}", iface.0))
+    iface.0
 }
 
 /// The IIDs an interface answers QueryInterface for (itself and its bases), worked out once for
@@ -246,7 +266,7 @@ fn query_interface(c: &mut Ctx) -> u32 {
     let want = read_guid(riid);
     let found = objs(|m| {
         let o = m.get_mut(&this)?;
-        let hit = iids_of(o.iface.0).contains(&want).then_some(this);
+        let hit = iids_of(o.iface.name()).contains(&want).then_some(this);
         if hit.is_some() {
             o.refs += 1;
         }
@@ -258,7 +278,7 @@ fn query_interface(c: &mut Ctx) -> u32 {
             0
         }
         None => {
-            let iface = objs(|m| m.get(&this).map_or("?", |o| o.iface.0));
+            let iface = objs(|m| m.get(&this).map_or("?", |o| o.iface.name()));
             warn_once(&format!("sake: com {iface}::QueryInterface {{{}}}: no", fmt_guid(want)));
             mem::putp(out, 0);
             E_NOINTERFACE
@@ -380,16 +400,16 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
     }
     let t = table(iface);
     for m in impls {
-        assert!(t.2.contains(&m.0.of.0), "com: {}::{} is not a method of {}", m.0.of.0, m.0.name, iface.0);
+        assert!(t.2.contains(&m.0.of.name()), "com: {}::{} is not a method of {}", m.0.of.name(), m.0.name, iface.name());
     }
     let k = mem::ps();
     let v = mem::heap_alloc(k * kome::num::u32_of(t.1.len()), true);
     for (i, &(name, dwords, kind)) in t.1.iter().enumerate() {
         let found = slot_impl(i, name, impls).map(|m| m.1);
         let f = slot_handler(i, found);
-        let a = host_fn(&format!("{}::{i}:{name}", iface.0), f, 4 * u32::from(dwords));
+        let a = host_fn(&format!("{}::{i}:{name}", iface.name()), f, 4 * u32::from(dwords));
         if i > 2 && found.is_none() {
-            STUBS.locked().get_or_insert_with(HashMap::new).insert(a, (iface.0, name, kind));
+            STUBS.locked().get_or_insert_with(HashMap::new).insert(a, (iface.name(), name, kind));
         }
         NAMES.locked().get_or_insert_with(HashMap::new).insert(a, (name, dwords));
         mem::wp(v + k * kome::num::u32_of(i), a);
@@ -418,12 +438,12 @@ pub(crate) fn check_vtables(golden: &str, ifaces: &[Iface]) {
     let mut seen: Vec<((&str, &str, Option<usize>), String)> = Vec::new();
     let mut out = String::new();
     for &i in ifaces {
-        let Some((_, impls)) = calls.iter().rev().find(|b| b.0 == i) else { panic!("com: no vtable asked for {}", i.0) };
-        let i = i.0;
-        for (k, &(name, _, _)) in table(Iface(i)).1.iter().enumerate() {
+        let Some((_, impls)) = calls.iter().rev().find(|b| b.0 == i) else { panic!("com: no vtable asked for {}", i.name()) };
+        let (t, i) = (table(i), i.name());
+        for (k, &(name, _, _)) in t.1.iter().enumerate() {
             let label = match (slot_impl(k, name, impls), k) {
                 (Some(m), _) => {
-                    let key = (m.0.of.0, m.0.name, m.0.slot);
+                    let key = (m.0.of.name(), m.0.name, m.0.slot);
                     match seen.iter().find(|s| s.0 == key) {
                         Some(s) => s.1.clone(),
                         None => {
@@ -660,7 +680,7 @@ mod review_tests {
     fn first_vtables_race_to_one() {
         let _g = crate::test_guest::enter();
         // (interfaces from the end of the table: the least likely to be built by other tests)
-        let names: Vec<Iface> = methods::IFACES.iter().rev().take(6).map(|t| Iface(t.0)).collect();
+        let names: Vec<Iface> = methods::IFACES.iter().rev().take(6).map(Iface).collect();
         for name in names {
             let ts: Vec<_> = (0..8).map(|_| std::thread::spawn(move || vtable(name, &[]))).collect();
             let vs: Vec<u32> = ts.into_iter().map(|t| t.join().unwrap()).collect();
