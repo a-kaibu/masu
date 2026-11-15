@@ -497,7 +497,7 @@ unsafe fn rdf(p: u32, i: usize) -> f32 {
 /// Size of the guest's pointers (and HWNDs, SIZE_Ts): 8 for 64-bit programs.
 /// Guest addresses are below 4G either way.
 use crate::d3d9::device::ptr;
-use crate::guest::{gc, gp, lo32, lo32w, us};
+use crate::guest::{gc, gp, lo32, us};
 
 /// Pointer `i` of an array of pointers.
 unsafe fn rdp(p: u32, i: usize) -> u32 {
@@ -1685,8 +1685,8 @@ unsafe fn adapter_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32)
                 (false, _) => 512 << 20,
             };
             for (i, v) in [budget, 0, budget / 2, 0].into_iter().enumerate() {
-                wr(a(3), 2 * i, lo32w(v));
-                wr(a(3), 2 * i + 1, lo32w(v >> 32));
+                wr(a(3), 2 * i, lo32(v));
+                wr(a(3), 2 * i + 1, lo32(v >> 32));
             }
             S_OK
         }
@@ -3101,8 +3101,8 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 0 | 5 => wr(a(2), 0, 1),
                 1 => wr(a(2), 0, 1000),
                 2 => {
-                    wr(a(2), 0, lo32w(stamp));
-                    wr(a(2), 1, lo32w(stamp >> 32));
+                    wr(a(2), 0, lo32(stamp));
+                    wr(a(2), 1, lo32(stamp >> 32));
                 }
                 3 => wr(a(2), 0, 1_000_000_000),
                 _ => {}
@@ -4098,7 +4098,7 @@ unsafe fn wire_edges(d: &D11, st: &State, indexed: bool, count: u32, start: u32,
         if u64::from(st.ib.2) + (u64::from(start) + u64::from(count)) * isz > u64::from(b.size) {
             return None;
         }
-        let p = b.mem + st.ib.2 + start * lo32w(isz);
+        let p = b.mem + st.ib.2 + start * lo32(isz);
         (0..us(count)).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*gc::<u16>(p).add(k)) }).collect()
     } else {
         (start..start.saturating_add(count)).collect()
@@ -4434,7 +4434,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         let isz = if st.ib.1 == 42 { 4 } else { 2 };
         match mem(st.ib.0) {
             Some((m, size)) if u64::from(st.ib.2) + (u64::from(start) + u64::from(count)) * isz <= u64::from(size) => {
-                let p = m + st.ib.2 + start * lo32w(isz);
+                let p = m + st.ib.2 + start * lo32(isz);
                 (0..us(count)).map(|k| if isz == 4 { rd(p, k) } else { u32::from(*gc::<u16>(p).add(k)) }.wrapping_add(base.cast_unsigned())).collect()
             }
             _ => {
@@ -4458,7 +4458,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
             break;
         }
         for v in vs {
-            add(m + lo32w(at(v)), stride);
+            add(m + lo32(at(v)), stride);
         }
     }
     for cb in cbs_read {

@@ -9,7 +9,7 @@ use super::stateblock as sb;
 use super::{IF_CUBE, IF_D3D9, IF_DECL, IF_DEVICE, IF_IB, IF_PS, IF_QUERY, IF_STATEBLOCK, IF_SURFACE, IF_SWAPCHAIN};
 use super::{IF_TEXTURE, IF_VB, IF_VOLUME, IF_VOLUMETEX, IF_VS};
 use std::collections::HashMap;
-use crate::guest::{gc, gp, lo32, lo32w, us};
+use crate::guest::{gc, gp, lo32, us};
 
 const POOL_DEFAULT: u32 = 0;
 const POOL_SYSTEMMEM: u32 = 2;
@@ -3315,7 +3315,7 @@ fn clamp_count(d: &D3d, slots: &[(u32, u32, u32); 16], src: &Src, streams: &[(u3
         let start = u64::from(ptr) + u64::from(first) * u64::from(stride);
         n = n.min(end.saturating_sub(start) / u64::from(stride));
     }
-    lo32w(n)
+    lo32(n)
 }
 
 /// The vertex declaration of an FVF.
@@ -3423,7 +3423,7 @@ fn regs_fit(start: u32, n: u32, len: usize) -> bool {
 
 /// The viewport (x, y, width, height, ..) as a rectangle, its edges at most i32::MAX.
 fn clear_area(vp: &[u32; 6]) -> [i32; 4] {
-    let edge = |a: u32, b: u32| lo32w((u64::from(a) + u64::from(b)).min(i32::MAX as u64)).cast_signed();
+    let edge = |a: u32, b: u32| lo32((u64::from(a) + u64::from(b)).min(i32::MAX as u64)).cast_signed();
     [edge(vp[0], 0), edge(vp[1], 0), edge(vp[0], vp[2]), edge(vp[1], vp[3])]
 }
 
@@ -3706,7 +3706,7 @@ pub fn present_part(words: (u32, u32), w: u32, h: u32, dst: [i32; 4], bound: (u3
     let map = |v: i32, d0: i32, dn: i64, s0: u32, sn: i64, up: bool| {
         let num = i64::from(v - d0) * sn;
         let q = if up { (num + dn - 1).div_euclid(dn) } else { num.div_euclid(dn) };
-        lo32w(((i64::from(s0) + q).clamp(i64::from(s0), i64::from(s0) + sn)).cast_unsigned())
+        lo32(((i64::from(s0) + q).clamp(i64::from(s0), i64::from(s0) + sn)).cast_unsigned())
     };
     let mut s = [map(c[0], dst[0], dw, src[0], sw, false), map(c[1], dst[1], dh, src[1], sh, false), map(c[2], dst[0], dw, src[0], sw, true), map(c[3], dst[1], dh, src[1], sh, true)];
     s[2] = s[2].max(s[0] + 1).min(src[2]);
@@ -4116,7 +4116,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             if !(0..=i64::from(u32::MAX)).contains(&first) {
                 return D3DERR_INVALIDCALL;
             }
-            (lo32w(first.cast_unsigned()), n, Some((iptr, isize, lo)))
+            (lo32(first.cast_unsigned()), n, Some((iptr, isize, lo)))
         }
         Src::Up { .. } => (0, nverts, None),
         Src::UpIndexed { idx, isize, .. } => {
@@ -4719,7 +4719,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
             let Some(Data::Buffer(b)) = d.objs.get(&vb).map(|o| &o.data) else { return None };
             let at = u64::from(off) + u64::from(first) * u64::from(stride);
             let fits = at % 4 == 0 && stride % 4 == 0 && at + u64::from(count) * u64::from(stride) <= u64::from(b.len);
-            (from_buffer && divider(sn).is_none() && fits && resident(b)).then_some((vb, lo32w(at)))
+            (from_buffer && divider(sn).is_none() && fits && resident(b)).then_some((vb, lo32(at)))
         })
         .collect();
     let index_res: Option<(u32, u32)> = match (&src, index) {
@@ -5093,7 +5093,7 @@ impl DrawHash {
     fn finish(&self) -> u32 {
         use std::hash::Hasher;
         let h = self.0.finish();
-        lo32w(h) ^ lo32w(h >> 32)
+        lo32(h) ^ lo32(h >> 32)
     }
 }
 

@@ -9,7 +9,7 @@ proptest! {
         prop_assert_eq!(gp::<u8>(v), v as usize as *mut u8);
         prop_assert_eq!(gc::<u32>(v), v as usize as *const u32);
         prop_assert_eq!(lo32(w), w as u32);
-        prop_assert_eq!(lo32w(x), x as u32);
+        prop_assert_eq!(lo32(x), x as u32);
     }
 }
 
