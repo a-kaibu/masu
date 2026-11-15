@@ -40,7 +40,9 @@ sym=$(rustc +nightly --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/l
 [ -x "$sym" ] || { echo "no llvm-symbolizer: rustup +nightly component add llvm-tools" >&2; exit 1; }
 export ASAN_SYMBOLIZER_PATH=$sym TSAN_SYMBOLIZER_PATH=$sym
 echo "symbolizer: $sym"
-export TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1"
+# (allocator_may_return_null as for ASan: tests ask for an impossible size and expect a "no"; kura
+# pages room, #242)
+export TSAN_OPTIONS="halt_on_error=1:second_deadlock_stack=1:allocator_may_return_null=1:suppressions=$PWD/tools/ci/tsan.supp"
 extra=()
 [ "$kind" = thread ] && extra=(-Zbuild-std)
 CARGO_TARGET_DIR=target/sanitize-$kind cargo +nightly test "${extra[@]}" --release --target x86_64-unknown-linux-gnu --no-fail-fast "${pkgs[@]}"

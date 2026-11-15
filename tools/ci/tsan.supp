@@ -1,0 +1,7 @@
+# ThreadSanitizer suppressions (tools/ci/sanitize.sh thread). Only third-party code whose
+# ordering goes through the kernel, where TSan sees no happens-before; never masu's own.
+#
+# tokio's I/O driver: a ScheduledIo is written when a socket registers (RegistrationSet::allocate)
+# and read by whichever worker's epoll_wait returns its token; the order is epoll_ctl before the
+# event, through the kernel (masu daemon tests, #242).
+race:tokio::runtime::io::driver::Driver>::turn
