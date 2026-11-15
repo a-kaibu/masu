@@ -425,6 +425,9 @@ jobs:
         run: |
           export PLAYWRIGHT="$RUNNER_TEMP/pw/node_modules/playwright/index.js"
           [ -f mirror/mirror-trials.json ] && export MIRROR=$PWD/mirror/mirror-trials.json
+          # (the machine's memory every 5 s: a stuck page's whole renderer stops, as under memory pressure)
+          mkdir -p results
+          (while :; do echo "== $(date +%T)"; free -m | sed -n 2,3p; ps -eo rss=,args= --sort=-rss | head -5 | cut -c1-120; sleep 5; done) > results/mem.log 2>&1 &
           ONLY="$IDS" SAKE_ENV="SAKE_SHIRUSU=1" STORY=30 STUCK_STACK=1 STUCK_TRACE=1 RTP="$RUNNER_TEMP/rtp" tests/corpus/ci.sh "$RUNNER_TEMP/dist" "$RUNNER_TEMP/fonts" results || true
       - uses: actions/upload-artifact@v7.0.2
         if: always()
@@ -432,6 +435,7 @@ jobs:
           name: sake-results
           path: |
             results/sake-build.txt
+            results/mem.log
             results/**/*.json
             results/**/console.log
             results/**/shirusu.log
