@@ -13,6 +13,7 @@
 
 #![allow(non_snake_case, clippy::missing_safety_doc, clippy::too_many_arguments)]
 
+use crate::guest::{lo32, lo32w, us};
 use crate::d3d9::gpu;
 use crate::render::d3d::{BlendOp, Compare, Factor, StencilOp};
 use crate::locks::Lock;
@@ -257,7 +258,7 @@ impl Buffer {
     /// from buffers they never unmap).
     fn sync(&mut self) {
         if self.mapped != 0 {
-            unsafe { std::ptr::copy_nonoverlapping(self.mapped as *const u8, self.data.as_mut_ptr(), self.data.len()) };
+            unsafe { std::ptr::copy_nonoverlapping(std::ptr::with_exposed_provenance::<u8>(self.mapped), self.data.as_mut_ptr(), self.data.len()) };
         }
     }
 
@@ -270,7 +271,7 @@ impl Buffer {
             self.sync();
         }
         if let Some((_, free)) = *GUEST.lock().unwrap_or_else(|e| e.into_inner()) {
-            unsafe { free(self.mapped as *mut u8) };
+            unsafe { free(std::ptr::with_exposed_provenance_mut::<u8>(self.mapped)) };
         }
         self.mapped = 0;
     }
@@ -584,7 +585,7 @@ fn mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
 }
 
 fn bytes<T>(v: &[T]) -> &[u8] {
-    unsafe { std::slice::from_raw_parts(v.as_ptr() as *const u8, std::mem::size_of_val(v)) }
+    unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) }
 }
 
 // ---- the WGL entries (contexts, current context, swap) ----
@@ -637,8 +638,8 @@ pub extern "C" fn vngl_make_current(ctx: u32, hwnd: u32, w: u32, h: u32) -> i32 
     }
     let Some(c) = g.ctxs.get_mut(&ctx) else { return 0 };
     if c.draw == 0 && hwnd != 0 {
-        c.viewport = [0, 0, w as i32, h as i32];
-        c.scissor = [0, 0, w as i32, h as i32];
+        c.viewport = [0, 0, w.cast_signed(), h.cast_signed()];
+        c.scissor = [0, 0, w.cast_signed(), h.cast_signed()];
     }
     c.draw = hwnd;
     c.w = w;
@@ -678,7 +679,7 @@ pub unsafe extern "C" fn vngl_swap(hwnd: u32, rect: *const i32) {
         }
     };
     let r = std::slice::from_raw_parts(rect, 4);
-    gpu::record(|q| q.cmd(&[gpu::PRESENT_FLIP, tex.0, r[0] as u32, r[1] as u32, r[2] as u32, r[3] as u32, tex.1, tex.2, hwnd]));
+    gpu::record(|q| q.cmd(&[gpu::PRESENT_FLIP, tex.0, r[0].cast_unsigned(), r[1].cast_unsigned(), r[2].cast_unsigned(), r[3].cast_unsigned(), tex.1, tex.2, hwnd]));
     gpu::present(hwnd);
 }
 
@@ -761,7 +762,7 @@ extern "C" fn glGetStringi(name: u32, i: u32) -> *const u8 {
     if v.is_empty() {
         *v = EXTENSIONS.split(' ').map(|s| format!("{s}\0").into_bytes()).collect();
     }
-    v.get(i as usize).map_or(std::ptr::null(), |s| s.as_ptr())
+    v.get(us(i)).map_or(std::ptr::null(), |s| s.as_ptr())
 }
 
 /// glGet values as f64 (None: unknown)
@@ -810,8 +811,8 @@ fn get(g: &Gl, c: &Ctx, pname: u32) -> Option<Vec<f64>> {
         0x8894 => vec![f64::from(c.array_buffer)],
         0x8895 => vec![f64::from(c.element_buffer)],
         0x0B00 => f(&c.color),
-        0x84E0 => vec![f64::from(GL_TEXTURE0 + c.active as u32)],
-        0x84E1 => vec![f64::from(GL_TEXTURE0 + c.client_active as u32)],
+        0x84E0 => vec![f64::from(GL_TEXTURE0 + lo32(c.active))],
+        0x84E1 => vec![f64::from(GL_TEXTURE0 + lo32(c.client_active))],
         0x0BE1 => vec![f64::from(c.blend[0])],
         0x0BE0 => vec![f64::from(c.blend[1])],
         0x0C22 => f(&c.clear_color),
@@ -964,7 +965,7 @@ extern "C" fn glFrontFace(m: u32) {
     with(|_, c| c.front = m)
 }
 extern "C" fn glStencilFunc(f: u32, r: i32, m: u32) {
-    with(|_, c| c.stencil = [f, r as u32, m])
+    with(|_, c| c.stencil = [f, r.cast_unsigned(), m])
 }
 extern "C" fn glStencilOp(a: u32, b: u32, d: u32) {
     with(|_, c| c.stencil_ops = [a, b, d])
@@ -1213,10 +1214,10 @@ unsafe extern "C" fn glTexCoord2fv(v: *const f32) {
     texcoord(0, *v, *v.add(1))
 }
 extern "C" fn glMultiTexCoord2f(u: u32, s: f32, t: f32) {
-    texcoord(u.wrapping_sub(GL_TEXTURE0) as usize, s, t)
+    texcoord(us(u.wrapping_sub(GL_TEXTURE0)), s, t)
 }
 unsafe extern "C" fn glMultiTexCoord2fv(u: u32, v: *const f32) {
-    texcoord(u.wrapping_sub(GL_TEXTURE0) as usize, *v, *v.add(1))
+    texcoord(us(u.wrapping_sub(GL_TEXTURE0)), *v, *v.add(1))
 }
 extern "C" fn glNormal3f(x: f32, y: f32, z: f32) {
     with(|_, c| c.normal = [x, y, z])
@@ -1253,10 +1254,10 @@ extern "C" fn glNormalPointer(ty: u32, stride: i32, ptr: u32) {
     pointer(3, 3, ty, stride, ptr)
 }
 extern "C" fn glClientActiveTexture(u: u32) {
-    with(|_, c| c.client_active = (u.wrapping_sub(GL_TEXTURE0) as usize).min(7))
+    with(|_, c| c.client_active = (us(u.wrapping_sub(GL_TEXTURE0))).min(7))
 }
 extern "C" fn glActiveTexture(u: u32) {
-    with(|_, c| c.active = (u.wrapping_sub(GL_TEXTURE0) as usize).min(7))
+    with(|_, c| c.active = (us(u.wrapping_sub(GL_TEXTURE0))).min(7))
 }
 
 fn type_size(ty: u32) -> usize {
@@ -1283,7 +1284,7 @@ pub(crate) fn fetch(g: &Gl, a: &Array, i: u32, def: [f32; 4]) -> [f32; 4] {
         if a.ptr == 0 || end > GUEST_END {
             return def;
         }
-        off as usize as *const u8
+        std::ptr::with_exposed_provenance::<u8>(off as usize)
     };
     let mut v = def;
     for k in 0..n {
@@ -1337,13 +1338,13 @@ pub(crate) fn indices(g: &Gl, c: &Ctx, count: i32, ty: u32, ptr: u32) -> Vec<u32
     let end = u64::from(ptr) + (n * ts) as u64;
     let src: *const u8 = if c.element_buffer != 0 {
         match g.buffers.get(&c.element_buffer) {
-            Some(b) if end <= b.data.len() as u64 => unsafe { b.data.as_ptr().add(ptr as usize) },
+            Some(b) if end <= b.data.len() as u64 => unsafe { b.data.as_ptr().add(us(ptr)) },
             _ => return Vec::new(),
         }
     } else if end > GUEST_END {
         return Vec::new();
     } else {
-        ptr as usize as *const u8
+        std::ptr::with_exposed_provenance::<u8>(us(ptr))
     };
     if src.is_null() {
         return Vec::new();
@@ -1352,8 +1353,8 @@ pub(crate) fn indices(g: &Gl, c: &Ctx, count: i32, ty: u32, ptr: u32) -> Vec<u32
         .map(|k| unsafe {
             match ty {
                 GL_UNSIGNED_BYTE => u32::from(*src.add(k)),
-                GL_UNSIGNED_SHORT => u32::from(std::ptr::read_unaligned((src as *const u16).add(k))),
-                _ => std::ptr::read_unaligned((src as *const u32).add(k)),
+                GL_UNSIGNED_SHORT => u32::from(std::ptr::read_unaligned((src.cast::<u16>()).add(k))),
+                _ => std::ptr::read_unaligned((src.cast::<u32>()).add(k)),
             }
         })
         .collect()
@@ -1362,9 +1363,9 @@ pub(crate) fn indices(g: &Gl, c: &Ctx, count: i32, ty: u32, ptr: u32) -> Vec<u32
 /// The vertices of `first` and `count` that a draw takes: the ends saturate, at most
 /// MAX_VERTICES of them (a count of garbage asked for count * 64 bytes and aborted).
 fn draw_range(first: i32, count: i32) -> std::ops::Range<u32> {
-    let lo = first.max(0) as u32;
-    let hi = (i64::from(first) + i64::from(count.max(0))).clamp(0, i64::from(u32::MAX)) as u32;
-    lo..hi.max(lo).min(lo.saturating_add(MAX_VERTICES as u32))
+    let lo = first.max(0).cast_unsigned();
+    let hi = lo32w(((i64::from(first) + i64::from(count.max(0))).clamp(0, i64::from(u32::MAX))).cast_unsigned());
+    lo..hi.max(lo).min(lo.saturating_add(lo32(MAX_VERTICES)))
 }
 
 extern "C" fn glDrawArrays(mode: u32, first: i32, count: i32) {
@@ -1548,7 +1549,7 @@ pub(crate) fn pipeline(g: &mut Gl, key: Vec<u32>) -> u32 {
         return p;
     }
     let id = page_id();
-    let mut cmd = vec![gpu::CREATE_PIPELINE2, id, key.len() as u32];
+    let mut cmd = vec![gpu::CREATE_PIPELINE2, id, lo32(key.len())];
     cmd.extend_from_slice(&key);
     gpu::record(|q| q.cmd(&cmd));
     g.pipelines.insert(key, id);
@@ -1559,7 +1560,7 @@ pub(crate) fn shader(code: &str) -> u32 {
     let id = page_id();
     gpu::record(|q| {
         let off = q.blob(code.as_bytes());
-        q.cmd(&[gpu::CREATE_SHADER, id, off, code.len() as u32]);
+        q.cmd(&[gpu::CREATE_SHADER, id, off, lo32(code.len())]);
     });
     id
 }
@@ -1587,7 +1588,7 @@ pub(crate) fn draw_state(c: &Ctx, w: u32, h: u32) -> Vec<u32> {
     let mut out: Vec<u32> = [v[0] as f32, v[1] as f32, v[2] as f32, v[3] as f32, c.depth_range[0], c.depth_range[1]].iter().map(|f| f.to_bits()).collect();
     if c.caps.contains(&GL_SCISSOR_TEST) {
         let s = c.scissor;
-        out.extend_from_slice(&[s[0].max(0) as u32, s[1].max(0) as u32, s[2].max(0) as u32, s[3].max(0) as u32, 1]);
+        out.extend_from_slice(&[(s[0].max(0)).cast_unsigned(), (s[1].max(0)).cast_unsigned(), (s[2].max(0)).cast_unsigned(), (s[3].max(0)).cast_unsigned(), 1]);
     } else {
         out.extend_from_slice(&[0, 0, w, h, 0]);
     }
@@ -1696,12 +1697,12 @@ fn draw(g: &mut Gl, c: &mut Ctx, mode: u32, v: Vec<[f32; 16]>) {
         w.extend_from_slice(&[1, 0, 0, DATA, vuo, 208, 208, 0, 0]);
         w.extend_from_slice(&[5, 0, 0, DATA, fuo, 80, 80, 0, 0]);
         for (u, t) in texs.iter().enumerate() {
-            w.extend_from_slice(&[16 + u as u32, 1, t.0, 1, 0, t.1, 0, 1]);
+            w.extend_from_slice(&[16 + lo32(u), 1, t.0, 1, 0, t.1, 0, 1]);
         }
         for (u, t) in texs.iter().enumerate() {
-            w.extend_from_slice(&[160 + u as u32, 2, t.2 .0, 0, t.2 .1, 0, 0, 0]);
+            w.extend_from_slice(&[160 + lo32(u), 2, t.2 .0, 0, t.2 .1, 0, 0, 0]);
         }
-        w.extend_from_slice(&[0, verts.len() as u32, 1, 0, 0, 0, 0]);
+        w.extend_from_slice(&[0, lo32(verts.len()), 1, 0, 0, 0, 0]);
         q.cmd(&w);
     });
 }
@@ -1710,13 +1711,13 @@ extern "C" fn glClear(mask: u32) {
     with(|g, c| {
         let Some((color, level, depth, _, _)) = target(g, c) else { return };
         let cc = c.clear_color.map(|f| f.to_bits());
-        let (cd, cs) = (c.clear_depth.to_bits(), c.clear_stencil as u32 & 0xff);
+        let (cd, cs) = (c.clear_depth.to_bits(), c.clear_stencil.cast_unsigned() & 0xff);
         // (with the scissor test on: only its box, as a rectangle clear of the targets)
         if c.caps.contains(&GL_SCISSOR_TEST) && color != 0 {
             let sc = c.scissor;
             let f = u32::from(mask & 0x4000 != 0 && c.color_mask != 0) | u32::from(mask & 0x100 != 0 && depth != 0) * 2 | u32::from(mask & 0x400 != 0 && depth != 0) * 4;
-            let (x, y) = (sc[0].max(0) as u32, sc[1].max(0) as u32);
-            let (w, h) = ((sc[0] + sc[2]).max(0) as u32 - x, (sc[1] + sc[3]).max(0) as u32 - y);
+            let (x, y) = ((sc[0].max(0)).cast_unsigned(), (sc[1].max(0)).cast_unsigned());
+            let (w, h) = (((sc[0] + sc[2]).max(0)).cast_unsigned() - x, ((sc[1] + sc[3]).max(0)).cast_unsigned() - y);
             if f != 0 && w > 0 && h > 0 {
                 gpu::record(|q| {
                     q.cmd(&[gpu::SET_TARGETS2, 1, color, level, 0, depth, 0, 0]);
@@ -1922,12 +1923,12 @@ pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u3
         Some((b, _)) => (b, b),
         None => (comp_size(ty).max(1), n * comp_size(ty).max(1)),
     };
-    let l = if unpack[1] > 0 { unpack[1] as usize } else { w as usize };
+    let l = if unpack[1] > 0 { unpack[1] as usize } else { us(w) };
     let a = unpack[0].max(1) as usize;
     let row = l * group;
     let pitch = if s >= a { row } else { row.div_ceil(a) * a };
     let src = src.add(unpack[2].max(0) as usize * pitch + unpack[3].max(0) as usize * group);
-    let mut out = vec![0u8; w as usize * h as usize * 4];
+    let mut out = vec![0u8; us(w) * us(h) * 4];
     // Bytes as they are or in another order (what games upload every frame: movies, software
     // rendering): whole rows, not a pixel at a time through the general path below.
     let plain = GlType::of(ty) == Some(GlType::UnsignedByte) && w > 0;
@@ -1945,8 +1946,8 @@ pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u3
         _ => None,
     };
     if let (true, Some((n, o))) = (plain, order) {
-        for (y, dst) in out.chunks_exact_mut(w as usize * 4).enumerate() {
-            let row = std::slice::from_raw_parts(src.add(y * pitch), w as usize * n);
+        for (y, dst) in out.chunks_exact_mut(us(w) * 4).enumerate() {
+            let row = std::slice::from_raw_parts(src.add(y * pitch), us(w) * n);
             if n == 4 && o == [0, 1, 2] {
                 dst.copy_from_slice(row);
                 continue;
@@ -1958,16 +1959,16 @@ pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u3
         return out;
     }
     let mut v = [0u8; 4];
-    for y in 0..h as usize {
+    for y in 0..us(h) {
         let row = src.add(y * pitch);
-        for x in 0..w as usize {
+        for x in 0..us(w) {
             let p = row.add(x * group);
             match packed {
                 Some((b, fields)) => {
                     let bits = match b {
                         1 => u32::from(*p),
-                        2 => u32::from(std::ptr::read_unaligned(p as *const u16)),
-                        _ => std::ptr::read_unaligned(p as *const u32),
+                        2 => u32::from(std::ptr::read_unaligned(p.cast::<u16>())),
+                        _ => std::ptr::read_unaligned(p.cast::<u32>()),
                     };
                     for (k, &(sh, nb)) in fields.iter().enumerate().take(4) {
                         let max = (1u64 << nb) - 1;
@@ -2001,7 +2002,7 @@ pub(crate) unsafe fn to_rgba(src: *const u8, w: u32, h: u32, format: u32, ty: u3
                 Base::Intensity => [r, r, r, r],
                 Base::Rgba | Base::Depth => [r, g, b, al],
             };
-            out[(y * w as usize + x) * 4..][..4].copy_from_slice(&px);
+            out[(y * us(w) + x) * 4..][..4].copy_from_slice(&px);
         }
     }
     out
@@ -2057,7 +2058,7 @@ unsafe extern "C" fn glTexImage2D(target: u32, level: i32, internal: i32, w: i32
         if target != GL_TEXTURE_2D {
             return c.err(GL_INVALID_ENUM);
         }
-        if level < 0 || level > 15 || !(0..=MAX_TEXTURE as i32).contains(&w) || !(0..=MAX_TEXTURE as i32).contains(&h) || !(0..=1).contains(&border) || internal <= 0 || (5..0x1900).contains(&internal) {
+        if level < 0 || level > 15 || !(0..=MAX_TEXTURE.cast_signed()).contains(&w) || !(0..=MAX_TEXTURE.cast_signed()).contains(&h) || !(0..=1).contains(&border) || internal <= 0 || (5..0x1900).contains(&internal) {
             return c.err(GL_INVALID_VALUE);
         }
         let e = pixels_err(format, ty);
@@ -2068,13 +2069,13 @@ unsafe extern "C" fn glTexImage2D(target: u32, level: i32, internal: i32, w: i32
         let t = bound_mut(g, c);
         let base = base_format(internal);
         if level == 0 {
-            alloc_texture(t, w as u32, h as u32, base);
-        } else if t.gpu == 0 || level as u32 >= t.levels {
+            alloc_texture(t, w.cast_unsigned(), h.cast_unsigned(), base);
+        } else if t.gpu == 0 || level.cast_unsigned() >= t.levels {
             return;
         }
         t.defined |= 1 << level;
         if !src.is_null() && base != Base::Depth && w > 0 && h > 0 {
-            upload(t, level as u32, 0, 0, w as u32, h as u32, src, format, ty, c.unpack);
+            upload(t, level.cast_unsigned(), 0, 0, w.cast_unsigned(), h.cast_unsigned(), src, format, ty, c.unpack);
         }
     })
 }
@@ -2117,7 +2118,7 @@ unsafe extern "C" fn glTexSubImage2D(target: u32, level: i32, x: i32, y: i32, w:
         if w == 0 || h == 0 || pixels.is_null() || t.base == Base::Depth {
             return;
         }
-        upload(t, level as u32, x as u32, y as u32, w as u32, h as u32, pixels, format, ty, c.unpack);
+        upload(t, level.cast_unsigned(), x.cast_unsigned(), y.cast_unsigned(), w.cast_unsigned(), h.cast_unsigned(), pixels, format, ty, c.unpack);
     })
 }
 
@@ -2166,8 +2167,8 @@ unsafe extern "C" fn glGetTexLevelParameteriv(_t: u32, level: i32, p: u32, out: 
     *out = with(|g, c| {
         let Some(t) = g.textures.get(&bound_texture(c)) else { return 0 };
         match p {
-            0x1000 => (t.w >> level).max(1) as i32,
-            0x1001 => (t.h >> level).max(1) as i32,
+            0x1000 => ((t.w >> level).max(1)).cast_signed(),
+            0x1001 => ((t.h >> level).max(1)).cast_signed(),
             0x1003 => 0x8058,
             _ => 0,
         }
@@ -2230,10 +2231,10 @@ extern "C" fn glCopyTexSubImage2D(target: u32, level: i32, xo: i32, yo: i32, x: 
         if t.gpu == 0 || src == 0 {
             return;
         }
-        let (x0, y0) = (x.max(0) as u32, y.max(0) as u32);
-        let (w, h) = ((w as u32).min(sw.saturating_sub(x0)), (h as u32).min(sh.saturating_sub(y0)));
+        let (x0, y0) = (x.max(0).cast_unsigned(), y.max(0).cast_unsigned());
+        let (w, h) = ((w.cast_unsigned()).min(sw.saturating_sub(x0)), (h.cast_unsigned()).min(sh.saturating_sub(y0)));
         let id = t.gpu;
-        gpu::record(|q| q.cmd(&[gpu::COPY, src, sl, x0, y0, w, h, id, level as u32, xo.max(0) as u32, yo.max(0) as u32, w, h, 0]));
+        gpu::record(|q| q.cmd(&[gpu::COPY, src, sl, x0, y0, w, h, id, level.cast_unsigned(), xo.max(0).cast_unsigned(), yo.max(0).cast_unsigned(), w, h, 0]));
     })
 }
 
@@ -2242,12 +2243,12 @@ extern "C" fn glCopyTexImage2D(target: u32, level: i32, internal: u32, x: i32, y
         return;
     }
     with(|g, c| {
-        if w > MAX_TEXTURE as i32 || h > MAX_TEXTURE as i32 {
+        if w > MAX_TEXTURE.cast_signed() || h > MAX_TEXTURE.cast_signed() {
             return c.err(GL_INVALID_VALUE);
         }
         if let Some(t) = g.textures.get_mut(&bound_texture(c)) {
             if level == 0 {
-                alloc_texture(t, w as u32, h as u32, base_format(internal as i32));
+                alloc_texture(t, w.cast_unsigned(), h.cast_unsigned(), base_format(internal.cast_signed()));
             }
             t.defined |= 1 << level;
         }
@@ -2260,7 +2261,7 @@ unsafe extern "C" fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, t
         return;
     }
     // (no target is wider: w * h * 4 fits, and the page's rows of w * 4 fit the buffer)
-    if w > MAX_TEXTURE as i32 || h > MAX_TEXTURE as i32 {
+    if w > MAX_TEXTURE.cast_signed() || h > MAX_TEXTURE.cast_signed() {
         return with(|_, c| c.err(GL_INVALID_VALUE));
     }
     let req = with(|g, c| {
@@ -2268,12 +2269,12 @@ unsafe extern "C" fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, t
         if src == 0 {
             return None;
         }
-        let (x0, y0) = (x.max(0) as u32, y.max(0) as u32);
-        let (rw, rh) = ((w as u32).min(sw.saturating_sub(x0)), (h as u32).min(sh.saturating_sub(y0)));
+        let (x0, y0) = (x.max(0).cast_unsigned(), y.max(0).cast_unsigned());
+        let (rw, rh) = ((w.cast_unsigned()).min(sw.saturating_sub(x0)), (h.cast_unsigned()).min(sh.saturating_sub(y0)));
         let buf = vec![0u8; (w * h * 4) as usize];
         let req = page_id();
-        let p = buf.as_ptr() as u32;
-        gpu::record(|q| q.cmd(&[gpu::READBACK, req, src, sl, x0, y0, rw, rh, p, w as u32 * 4]));
+        let p = lo32(buf.as_ptr().expose_provenance());
+        gpu::record(|q| q.cmd(&[gpu::READBACK, req, src, sl, x0, y0, rw, rh, p, w.cast_unsigned() * 4]));
         Some((req, buf, c.pack))
     });
     let Some((req, buf, pack)) = req else { return };
@@ -2297,7 +2298,7 @@ unsafe extern "C" fn glReadPixels(x: i32, y: i32, w: i32, h: i32, format: u32, t
             let d = out.add(row * pitch + col * bpp);
             for k in 0..comps {
                 if ty == GL_FLOAT {
-                    std::ptr::write_unaligned((d as *mut f32).add(k), f32::from(px[k]) / 255.0);
+                    std::ptr::write_unaligned((d.cast::<f32>()).add(k), f32::from(px[k]) / 255.0);
                 } else {
                     *d.add(k) = px[k];
                 }
@@ -2374,7 +2375,7 @@ unsafe extern "C" fn glBufferSubData(target: u32, off: isize, size: isize, data:
             b.data[o..o + n].copy_from_slice(std::slice::from_raw_parts(data, n));
             // (and into a mapping, which the unmap reads back)
             if b.mapped != 0 {
-                std::ptr::copy_nonoverlapping(data, (b.mapped + o) as *mut u8, n);
+                std::ptr::copy_nonoverlapping(data, std::ptr::with_exposed_provenance_mut::<u8>(b.mapped + o), n);
             }
         } else {
             c.err(GL_INVALID_VALUE);
@@ -2388,18 +2389,18 @@ extern "C" fn glMapBuffer(target: u32, _access: u32) -> *mut u8 {
     with(|g, c| {
         let id = bound_buffer(c, target);
         let Some(b) = g.buffers.get_mut(&id) else { return 0 };
-        let Some((alloc, _)) = *GUEST.lock().unwrap_or_else(|e| e.into_inner()) else { return b.data.as_mut_ptr() as usize };
+        let Some((alloc, _)) = *GUEST.lock().unwrap_or_else(|e| e.into_inner()) else { return b.data.as_mut_ptr().expose_provenance() };
         // (mapped already: GL_INVALID_OPERATION and no pointer)
         if b.mapped != 0 {
             c.err(GL_INVALID_OPERATION);
             return 0;
         }
-        let p = unsafe { alloc(b.data.len().max(1) as u32) } as usize;
+        let p = unsafe { alloc(lo32(b.data.len().max(1))) } as usize;
         if p == 0 {
             c.err(0x0505);
             return 0;
         }
-        unsafe { std::ptr::copy_nonoverlapping(b.data.as_ptr(), p as *mut u8, b.data.len()) };
+        unsafe { std::ptr::copy_nonoverlapping(b.data.as_ptr(), std::ptr::with_exposed_provenance_mut::<u8>(p), b.data.len()) };
         b.mapped = p;
         g.mapped.insert(id);
         p
@@ -2478,7 +2479,7 @@ fn attach(target: u32, point: u32, a: Att) {
     })
 }
 extern "C" fn glFramebufferTexture2D(target: u32, point: u32, _textarget: u32, t: u32, level: i32) {
-    attach(target, point, if t == 0 { Att::None } else { Att::Tex(t, level.max(0) as u32) })
+    attach(target, point, if t == 0 { Att::None } else { Att::Tex(t, level.max(0).cast_unsigned()) })
 }
 extern "C" fn glFramebufferTexture(target: u32, point: u32, t: u32, level: i32) {
     glFramebufferTexture2D(target, point, GL_TEXTURE_2D, t, level)
@@ -2497,7 +2498,7 @@ unsafe extern "C" fn glGetFramebufferAttachmentParameteriv(target: u32, point: u
         match (p, a) {
             (0x8CD0, Att::Tex(..)) => 0x1702,
             (0x8CD0, Att::Rb(_)) => 0x8D41,
-            (0x8CD1, Att::Tex(t, _)) | (0x8CD1, Att::Rb(t)) => t as i32,
+            (0x8CD1, Att::Tex(t, _)) | (0x8CD1, Att::Rb(t)) => t.cast_signed(),
             _ => 0,
         }
     })
@@ -2541,11 +2542,11 @@ extern "C" fn glBindRenderbuffer(_target: u32, rb: u32) {
 extern "C" fn glRenderbufferStorage(_target: u32, internal: u32, w: i32, h: i32) {
     with(|g, c| {
         let Some(r) = g.rbs.get_mut(&c.rb) else { return c.err(GL_INVALID_OPERATION) };
-        let depth = base_format(internal as i32) == Base::Depth || matches!(internal, 0x8D48 | 0x8D46 | 0x8D47 | 0x1901);
+        let depth = base_format(internal.cast_signed()) == Base::Depth || matches!(internal, 0x8D48 | 0x8D46 | 0x8D47 | 0x1901);
         let old = r.gpu;
         r.gpu = page_id();
-        r.w = w.max(1) as u32;
-        r.h = h.max(1) as u32;
+        r.w = w.max(1).cast_unsigned();
+        r.h = h.max(1).cast_unsigned();
         r.depth = depth;
         let (id, rw, rh) = (r.gpu, r.w, r.h);
         gpu::record(|q| {
