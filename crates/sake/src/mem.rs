@@ -422,6 +422,10 @@ pub fn cstr(a: u32) -> Vec<u8> {
     }
     slice(a, n).to_vec()
 }
+/// The bytes of `n` UTF-16 units in guest memory (saturating at 4 GiB)
+pub fn wbytes(n: usize) -> u32 {
+    kome::num::u32_of(n).saturating_mul(2)
+}
 /// NUL-terminated UTF-16 string at `a`.
 pub fn wstr(a: u32) -> Vec<u16> {
     if a == 0 {

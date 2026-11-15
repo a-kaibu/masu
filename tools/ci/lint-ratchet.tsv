@@ -1696,7 +1696,6 @@ file	crates/sake/src/netaddr.rs	as_conversions	47
 file	crates/sake/src/netaddr.rs	cast_possible_truncation	26
 file	crates/sake/src/netaddr.rs	indexing_slicing	9
 file	crates/sake/src/netaddr.rs	unwrap_used	5
-file	crates/sake/src/nt.rs	arithmetic_side_effects	169
 file	crates/sake/src/ntsync.rs	arithmetic_side_effects	13
 file	crates/sake/src/ntsync.rs	as_conversions	21
 file	crates/sake/src/ntsync.rs	cast_possible_truncation	1

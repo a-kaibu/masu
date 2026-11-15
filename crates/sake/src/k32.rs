@@ -8766,7 +8766,7 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
     // a view of a pagefile section: one view fewer; the block goes with the last view of a
     // section no handle holds
     let section = section_views(|m| {
-        let (&b, s) = m.iter_mut().find(|&(&b, ref s)| a >= b && (mem::ga(a) - b).get() < s.size)?;
+        let (&b, s) = m.iter_mut().find(|&(&b, ref s)| a >= b && mem::ga(a).since(mem::ga(b)) < s.size)?;
         s.views = s.views.saturating_sub(1);
         let last = s.views == 0 && !s.open;
         if last {
@@ -8811,7 +8811,7 @@ fn UnmapViewOfFile(c: &mut Ctx) -> u32 {
 /// the file position stays); `remove`: the view goes away
 fn write_back(a: u32, remove: bool) {
     let mut l = WRITE_BACK.locked();
-    let Some(i) = l.iter().position(|v| a >= v.0 && (mem::ga(a) - v.0).get() < v.1.max(1)) else { return };
+    let Some(i) = l.iter().position(|v| a >= v.0 && mem::ga(a).since(mem::ga(v.0)) < v.1.max(1)) else { return };
     let Some(v) = l.get(i).cloned() else { return };
     let (b, n, f, off) = if remove { l.remove(i) } else { v };
     drop(l);
@@ -8842,12 +8842,12 @@ pub(crate) fn mapped_file(a: u32) -> Result<String, u32> {
     if let Some(p) = crate::pe::containing(a).and_then(|b| crate::pe::with(b, |m| m.path.clone())) {
         return Ok(p);
     }
-    match VIEWS.locked().iter().find(|v| a >= v.0 && (mem::ga(a) - v.0).get() < v.1) {
+    match VIEWS.locked().iter().find(|v| a >= v.0 && mem::ga(a).since(mem::ga(v.0)) < v.1) {
         Some((_, _, Some(p))) => Ok(p.clone()),
         Some(_) => Err(1006),
         None => {
             // (a pagefile section a program shares by name)
-            let named = obj::with(|t| t.objs.values().any(|(o, _)| matches!(o, Obj::Mapping { file: None, view, size, .. } if *view != 0 && a >= *view && (mem::ga(a) - *view).get() < *size)));
+            let named = obj::with(|t| t.objs.values().any(|(o, _)| matches!(o, Obj::Mapping { file: None, view, size, .. } if *view != 0 && a >= *view && mem::ga(a).since(mem::ga(*view)) < *size)));
             Err(if named { 1006 } else { 59 })
         }
     }
@@ -9304,7 +9304,7 @@ fn push_list(h: u32, first: u32, last: u32, n: u32) -> u32 {
     let _g = SLIST.locked();
     let (old, d) = slist_get(h);
     mem::wp(last, old);
-    slist_set(h, first, (mem::ga(d) + n).get());
+    slist_set(h, first, d.saturating_add(n));
     old
 }
 /// InterlockedPushListSListEx(head, first, last, count)
