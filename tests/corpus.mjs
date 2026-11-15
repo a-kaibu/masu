@@ -10,7 +10,7 @@
 // env: PRE=x,y / PRE_KEYS=0 (see below), TITLE_STILL=2 (seconds the title holds still), STORY=60 (story seconds), TITLE_MAX=120 (give up on the title),
 // TITLE_AT=s (the title from then on even with few colours: 操心術外伝's dark menu on black), STORY_AT=x,y (story clicks,
 // default centre of the bottom fifth), IDLE=s (that long more without a click: idleCores, a still screen's CPU), CHROME_ARGS, PLAYWRIGHT,
-// TITLE_SIG / STORY_SIG (the screens expected: tests/corpus/sig.mjs; titleMatch, storyMatch), STUCK_S=30 (no answer from the page that long: pageStuck, stuck.txt, out), STUCK_STACK=1 (the debugger on, for stuck.txt's stack), STUCK_TRACE=1 (Chrome's trace then: trace.json.gz)
+// TITLE_SIG / STORY_SIG (the screens expected: tests/corpus/sig.mjs; titleMatch, storyMatch), STUCK_S=30 (no answer from the page that long: pageStuck, stuck.txt, out), STUCK_STACK=1 (the debugger on, for stuck.txt's stack), STUCK_TRACE=1 (Chrome's trace then: trace.json.gz); a crashed page ends the run at once (crashed, the result so far)
 const pw = await import(process.env.PLAYWRIGHT ?? "playwright");
 const { chromium } = pw.default ?? pw;
 import { mkdirSync, appendFileSync, writeFileSync } from "node:fs";
@@ -34,6 +34,9 @@ const browser = await chromium.launch({ args });
 // Japanese games check the time zone (Siglus: "Japan only")
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 }, timezoneId: process.env.TZ_ID ?? "Asia/Tokyo", locale: "ja-JP" });
 let crashed = false, exited = false;
+// (stuck: the run is being ended, by the watchdog below or a crash)
+let answered = Date.now(), stuck = false;
+const later = (s, v) => new Promise((r) => setTimeout(() => r(v), s * 1000));
 page.on("console", (m) => {
   const t = m.text();
   appendFileSync(logFile, `${now().toFixed(1).padStart(7)} [${m.type()}] ${t}\n`);
@@ -42,11 +45,23 @@ page.on("console", (m) => {
   if (/quit|exited/i.test(t) && /game|root/i.test(t)) exited = true;
 });
 page.on("pageerror", (e) => { appendFileSync(logFile, `[pageerror] ${e.message}\n`); res.errors.push("pageerror: " + e.message.slice(0, 200)); });
-page.on("crash", () => { crashed = true; res.errors.push("page crashed"); });
+// (a crashed page answers nothing more, its waits never end: the result so far, and out.
+// V8 running out of memory compiling one of koji's functions ended pages so, 3e424b3d)
+page.on("crash", async () => {
+  crashed = true;
+  res.errors.push(`page crashed at ${now().toFixed(1)} s`);
+  if (stuck) return;
+  stuck = true;
+  process.on("uncaughtException", () => {});
+  process.on("unhandledRejection", () => {});
+  res.crashed = true;
+  save();
+  await Promise.race([browser.close().catch(() => {}), later(10)]);
+  process.exit(0);
+});
 await page.goto(url);
 // (SAKE_SHIRUSU=1: the page keeps sake's shirusu lines apart from the console,
 // web/src/shirusu.ts; they are taken every 2 s, in order, into shirusu.log)
-const later = (s, v) => new Promise((r) => setTimeout(() => r(v), s * 1000));
 let shirusuChain = Promise.resolve();
 const drainShirusu = () =>
   (shirusuChain = shirusuChain.then(async () => {
@@ -55,11 +70,13 @@ const drainShirusu = () =>
     if (s) appendFileSync(`${out}/shirusu.log`, s + "\n");
   }));
 const shirusuTimer = setInterval(() => void drainShirusu(), 2000);
+// (CORPUS_CRASH_S: the page crashed that many seconds in, by DevTools: tests/corpus-stuck-browser.mjs)
+if (process.env.CORPUS_CRASH_S)
+  setTimeout(() => page.context().newCDPSession(page).then((c) => c.send("Page.crash")).catch(() => {}), Number(process.env.CORPUS_CRASH_S) * 1000);
 // (a page that stops answering, its thread stuck inside sake or a script: every wait above
 // would wait for good and the title leave no result. After STUCK_S seconds without an answer:
 // where the page's thread is (DevTools' pause, stuck.txt), the result so far, and out)
 const STUCK_S = Number(process.env.STUCK_S ?? 30);
-let answered = Date.now(), stuck = false;
 const watchdog = setInterval(async () => {
   if (stuck) return;
   if (await Promise.race([page.evaluate(() => 1).then(() => true, () => true), later(5, false)])) answered = Date.now();

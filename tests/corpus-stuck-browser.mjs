@@ -1,7 +1,8 @@
 // tests/corpus.mjs on a page whose thread stops answering (a loop that never ends, as a
 // page stuck inside sake): it gives up after STUCK_S, says when the page last answered, and
 // stuck.txt has where the page's thread was (the loop's function), trace.json.gz Chrome's trace. And on a page that keeps
-// answering, the watchdog stays out of it (no pageStuck, the run ends as usual).
+// answering, the watchdog stays out of it (no pageStuck, the run ends as usual). A page that
+// crashes ends the run at once.
 //
 //   node tests/corpus-stuck-browser.mjs    (env PLAYWRIGHT as tests/corpus.mjs)
 import assert from "node:assert/strict";
@@ -46,7 +47,18 @@ const run = (html, env) => {
   console.log(`stuck: gave up after ${secs.toFixed(1)} s, last answer ${res.pageStuck} s; ${s.split("\n")[1].trim()}`);
 }
 
-// 2. a page that answers (no title ever: the run ends at TITLE_MAX, as before)
+// 2. a page that crashes (as when V8 ran out of memory compiling): the run ends right away
+// with what it had, not when every wait gives up
+{
+  const { secs, res } = run("<p>soon gone</p>", { STUCK_S: "60", TITLE_MAX: "300", CORPUS_CRASH_S: "3" });
+  assert.ok(secs < 40, `ended after ${secs} s`);
+  assert.equal(res.crashed, true);
+  assert.ok(res.errors.some((e) => e.startsWith("page crashed at")), JSON.stringify(res.errors));
+  assert.equal(res.pageStuck, undefined);
+  console.log(`crashed: ended after ${secs.toFixed(1)} s`);
+}
+
+// 3. a page that answers (no title ever: the run ends at TITLE_MAX, as before)
 {
   const { out, res } = run("<p>nothing</p>", { STUCK_S: "4", TITLE_MAX: "10" });
   assert.equal(res.pageStuck, undefined);
