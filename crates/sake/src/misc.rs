@@ -3,6 +3,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::hresult::CO_E_NOTINITIALIZED;
 use crate::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -2421,7 +2422,6 @@ const DRAGDROP_S_DROP: u32 = 0x0004_0100;
 const DRAGDROP_E_NOTREGISTERED: u32 = 0x8004_0100;
 const DRAGDROP_E_ALREADYREGISTERED: u32 = 0x8004_0101;
 const DRAGDROP_E_INVALIDHWND: u32 = 0x8004_0102;
-const CO_E_NOTINITIALIZED: u32 = 0x8004_01f0;
 
 /// An argument of a COM call: a pointer or DWORD, or a POINTL by value (two DWORDs on x86,
 /// one register on x64)
@@ -3587,7 +3587,7 @@ pub const COMCTL32_VERSION: (u32, u32, u32) = (5, 82, 19041);
 /// ullVersion major.minor.build.0 in 16-bit fields), else E_INVALIDARG; dwPlatformID
 /// DLLVER_PLATFORM_NT. The dwords written (offset, value), all within cbSize.
 pub fn dll_version_words(size: u32, (major, minor, build): (u32, u32, u32)) -> Result<Vec<(u32, u32)>, u32> {
-    const E_INVALIDARG: u32 = 0x8007_0057;
+    use crate::hresult::E_INVALIDARG;
     if size != 20 && size != 32 {
         return Err(E_INVALIDARG);
     }
@@ -4236,8 +4236,8 @@ fn url_apply(c: &mut Ctx, wide: bool) -> u32 {
 /// URL_PART_SCHEME), Err(HRESULT). Parts: SCHEME 1, HOSTNAME 2, USERNAME 3, PASSWORD 4, PORT 5,
 /// QUERY 6; URL_PARTFLAG_KEEPSCHEME 1 puts "scheme:" in front of 2..5 (not for file:).
 pub(crate) fn url_part(url: &str, part: u32, flags: u32) -> Result<Option<String>, u32> {
-    const E_FAIL: u32 = 0x8000_4005;
-    const E_INVALIDARG: u32 = 0x8007_0057;
+    use crate::hresult::E_FAIL;
+    use crate::hresult::E_INVALIDARG;
     let some = |s: &str| Ok((!s.is_empty()).then(|| s.to_string()));
     // (a scheme: a letter, at least one more of letters, digits, + - .; case folded)
     let scheme = url.find(':').filter(|&n| n >= 2 && url[..n].chars().enumerate().all(|(i, ch)| ch.is_ascii_alphabetic() || (i > 0 && (ch.is_ascii_digit() || "+-.".contains(ch))))).map(|n| url[..n].to_ascii_lowercase());

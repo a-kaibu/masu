@@ -3,12 +3,12 @@
 //! memory) and VT_NULL for the rest. デカくてエッチな俺の姉 reads Win32_Processor without
 //! checking that it got anything.
 
+use crate::hresult::E_OUTOFMEMORY;
 use crate::api::{Ctx, Handler};
 use crate::mem;
 
 const WBEM_S_FALSE: u32 = 1;
 const WBEM_E_NOT_SUPPORTED: u32 = 0x8004_100c;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
 
 /// One object per interface (no state: the reference count does not matter).
 fn singleton(name: &str, methods: &[(Handler, u32)], cell: &std::sync::OnceLock<u32>) -> u32 {

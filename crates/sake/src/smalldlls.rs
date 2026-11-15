@@ -12,6 +12,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::hresult::{E_INVALIDARG, E_POINTER, E_FAIL, E_NOINTERFACE, E_HANDLE, E_OUTOFMEMORY, S_FALSE};
 use std::sync::Mutex;
 
 use crate::api::{implement, Ctx};
@@ -19,13 +20,6 @@ use crate::dnsrec::{self, Data, Rec};
 use crate::k32::last_error;
 use crate::mem::{self, cstr, ps, put32, putp, r16, r32, rp, w16, w32, wp, wstr};
 
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_POINTER: u32 = 0x8000_4003;
-const E_FAIL: u32 = 0x8000_4005;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_HANDLE: u32 = 0x8007_0006;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
-const S_FALSE: u32 = 1;
 const ERROR_INVALID_PARAMETER: u32 = 87;
 
 fn guid(p: u32) -> [u8; 16] {

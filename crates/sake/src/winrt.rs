@@ -8,14 +8,10 @@
 //! address (pointer-sized, +16), and for strings made on the heap a reference count after it,
 //! then the characters and a terminating 0.
 #![allow(non_snake_case)]
+use crate::hresult::{S_OK, E_INVALIDARG, E_POINTER, E_OUTOFMEMORY, REGDB_E_CLASSNOTREG};
 use crate::api::{implement, Ctx};
 use crate::mem::{self, ps, r32, rp, w32, wp};
 
-const S_OK: u32 = 0;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_POINTER: u32 = 0x8000_4003;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
-const REGDB_E_CLASSNOTREG: u32 = 0x8004_0154;
 const REF: u32 = 1;
 /// the characters' address
 const PTR: u32 = 16;
@@ -211,7 +207,7 @@ mod ui {
     use crate::api::{host_fn, Handler};
     use std::sync::OnceLock;
 
-    const E_NOINTERFACE: u32 = 0x8000_4002;
+    use crate::hresult::E_NOINTERFACE;
 
     type Guid = (u32, u16, u16, [u8; 8]);
     const fn g(a: u32, b: u16, c: u16, d: [u8; 8]) -> Guid {

@@ -11,21 +11,12 @@
 //! vtable is what programs call).
 #![allow(non_snake_case)]
 
+use crate::hresult::{S_OK, S_FALSE, E_NOTIMPL, E_NOINTERFACE, E_POINTER, E_FAIL, E_INVALIDARG, DISP_E_MEMBERNOTFOUND, DISP_E_UNKNOWNNAME, TYPE_E_ELEMENTNOTFOUND};
 use crate::api::{Ctx, Handler};
 use crate::mem::{self, r16, r32, w16, w32};
 use crate::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-const S_OK: u32 = 0;
-const S_FALSE: u32 = 1;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_POINTER: u32 = 0x8000_4003;
-const E_FAIL: u32 = 0x8000_4005;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const DISP_E_MEMBERNOTFOUND: u32 = 0x8002_0003;
-const DISP_E_UNKNOWNNAME: u32 = 0x8002_0006;
-const TYPE_E_ELEMENTNOTFOUND: u32 = 0x8002_802b;
 const CONNECT_E_NOCONNECTION: u32 = 0x8004_0200;
 const CONNECT_E_ADVISELIMIT: u32 = 0x8004_0201;
 const OLEOBJ_S_INVALIDVERB: u32 = 0x0004_0180;

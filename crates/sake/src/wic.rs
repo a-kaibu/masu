@@ -4,6 +4,7 @@
 //! convert on the way out. Sources made by the game itself are read through their vtables
 //! (GetSize, GetPixelFormat, CopyPixels).
 
+use crate::hresult::{E_FAIL, E_INVALIDARG, E_POINTER, E_NOTIMPL, E_OUTOFMEMORY, STG_E_MEDIUMFULL};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -11,18 +12,12 @@ use crate::api::Ctx;
 use crate::com::{self, read_guid, Guid};
 use crate::mem;
 
-const E_FAIL: u32 = 0x8000_4005;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_POINTER: u32 = 0x8000_4003;
 const WINCODEC_ERR_PALETTEUNAVAILABLE: u32 = 0x8898_2f45;
 const WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT: u32 = 0x8898_2f80;
 const WINCODEC_ERR_COMPONENTNOTFOUND: u32 = 0x8898_2f50;
 const WINCODEC_ERR_INSUFFICIENTBUFFER: u32 = 0x8898_2f8c;
 const WINCODEC_ERR_PROPERTYNOTFOUND: u32 = 0x8898_2f40;
 const WINCODEC_ERR_UNSUPPORTEDOPERATION: u32 = 0x8898_2f81;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
-const STG_E_MEDIUMFULL: u32 = 0x8003_0070;
 
 /// The largest image (and stream) sake keeps: 1 GiB, 16384 x 16384 BGRA. Sizes came from the
 /// guest unchecked: `w * h * 4` wrapped in u32 (CreateBitmap(0x8000, 0x8000) made a 0-byte

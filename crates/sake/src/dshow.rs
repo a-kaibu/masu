@@ -15,6 +15,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::num::us;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 
@@ -188,10 +189,6 @@ impl State {
 /// A picture's side as the i32 its rectangles are in (none is past i32::MAX).
 fn side(n: u32) -> i32 {
     i32::try_from(n).unwrap_or(i32::MAX)
-}
-/// A guest count as a host one.
-fn us(n: u32) -> usize {
-    usize::try_from(n).unwrap_or(usize::MAX)
 }
 
 fn slot_of(iid: u32) -> Option<Slot> {

@@ -10,6 +10,7 @@ iced-x86 = { version = "1.21", default-features = false, features = ["no_std", "
 libm = "0.2"
 
 [dev-dependencies]
+kome = { path = "../kome" }
 flate2 = "1"
 proptest = "1"
 # (the JIT's modules validated in the property tests)

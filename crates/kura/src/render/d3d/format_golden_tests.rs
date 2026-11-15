@@ -3,7 +3,7 @@
 //! page format code (and one past them), its WebGPU format and bpp, storable, renderable,
 //! multisamplable, resolvable, blendable, is_depth, halved. (Native builds have no GPU features:
 //! the feature-dependent answers are those without them.) format_golden.txt holds them;
-//! MASU_UPDATE_FORMATS=1 rewrites it.
+//! MASU_UPDATE_GOLDEN=1 rewrites it.
 use super::*;
 
 #[test]
@@ -25,11 +25,7 @@ fn every_format_answers_as_pinned() {
         );
     }
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/render/d3d/format_golden.txt");
-    if std::env::var_os("MASU_UPDATE_FORMATS").is_some() {
-        std::fs::write(&path, &got).unwrap();
-    }
-    let want = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(want == got, "render::d3d format answers differ from format_golden.txt (MASU_UPDATE_FORMATS=1 rewrites it):\n{got}");
+    kome::golden::check(&path, &got);
 }
 
 /// The view dimensions and topologies the command words' codes name, pinned before they become

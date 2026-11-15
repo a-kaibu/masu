@@ -153,20 +153,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "masu-fuzz"
-version = "0.0.0"
-dependencies = [
- "anyhow",
- "encoding_rs",
- "flate2",
- "libfuzzer-sys",
- "regex",
- "sdrs-core",
- "serde_json",
- "zip",
-]
-
-[[package]]
 name = "itoa"
 version = "1.0.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -181,6 +167,10 @@ dependencies = [
  "getrandom",
  "libc",
 ]
+
+[[package]]
+name = "kome"
+version = "0.1.0"
 
 [[package]]
 name = "libc"
@@ -203,6 +193,21 @@ name = "log"
 version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
+
+[[package]]
+name = "masu-fuzz"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "encoding_rs",
+ "flate2",
+ "kome",
+ "libfuzzer-sys",
+ "regex",
+ "sdrs-core",
+ "serde_json",
+ "zip",
+]
 
 [[package]]
 name = "memchr"

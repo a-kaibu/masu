@@ -6,6 +6,7 @@ license.workspace = true
 description = "Vorbis I audio decoding (headers, codebooks, floor 1, residues, coupling, IMDCT), written to match libvorbis's output, for sake to take over games' own x86 Vorbis decoders"
 
 [dependencies]
+kome = { path = "../kome" }
 
 [dev-dependencies]
 proptest = "1"

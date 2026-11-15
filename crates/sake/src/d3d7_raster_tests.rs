@@ -148,16 +148,7 @@ fn raster_draws_as_before() {
     }
     let out = out.join("\n") + "\n";
     let golden = concat!(env!("CARGO_MANIFEST_DIR"), "/src/d3d7_raster_golden.txt");
-    if std::env::var_os("MASU_UPDATE_GOLDEN").is_some() {
-        std::fs::write(golden, &out).unwrap();
-        return;
-    }
-    let want = std::fs::read_to_string(golden).unwrap_or_default();
-    if want != out {
-        let (w, o): (Vec<&str>, Vec<&str>) = (want.lines().collect(), out.lines().collect());
-        let i = w.iter().zip(&o).position(|(a, b)| a != b).unwrap_or(w.len().min(o.len()));
-        panic!("d3d7: d3d7_raster_golden.txt differs at line {} (MASU_UPDATE_GOLDEN=1 rewrites it):\n  want {:?}\n  got  {:?}", i + 1, w.get(i), o.get(i));
-    }
+    kome::golden::check(golden, &out);
 }
 
 /// SRCBLEND/DESTBLEND as Raster::new read them before Blend (the pair, then each factor by its

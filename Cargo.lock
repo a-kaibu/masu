@@ -130,6 +130,7 @@ checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 name = "asf"
 version = "0.1.0"
 dependencies = [
+ "kome",
  "proptest",
 ]
 
@@ -1128,6 +1129,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 name = "dxwgsl"
 version = "0.1.0"
 dependencies = [
+ "kome",
  "naga",
  "proptest",
 ]
@@ -1540,6 +1542,7 @@ dependencies = [
 name = "glwgsl"
 version = "0.1.0"
 dependencies = [
+ "kome",
  "naga",
  "pp-rs",
 ]
@@ -1630,6 +1633,7 @@ name = "hlslc"
 version = "0.1.0"
 dependencies = [
  "dxwgsl",
+ "kome",
  "naga",
  "proptest",
 ]
@@ -2082,10 +2086,18 @@ version = "0.1.0"
 dependencies = [
  "flate2",
  "iced-x86",
+ "kome",
  "libc",
  "libm",
  "proptest",
  "wasmparser",
+]
+
+[[package]]
+name = "kome"
+version = "0.1.0"
+dependencies = [
+ "proptest",
 ]
 
 [[package]]
@@ -2100,6 +2112,7 @@ dependencies = [
  "half",
  "hlslc",
  "koji",
+ "kome",
  "libc",
  "miniz_oxide 0.8.9",
  "naga",
@@ -2236,6 +2249,7 @@ dependencies = [
  "futures-util",
  "inno",
  "koji",
+ "kome",
  "libc",
  "masu-tls",
  "md-5 0.11.0",
@@ -2385,6 +2399,7 @@ dependencies = [
 name = "mpeg1"
 version = "0.1.0"
 dependencies = [
+ "kome",
  "proptest",
 ]
 
@@ -3538,6 +3553,7 @@ dependencies = [
  "idna",
  "jpeg-decoder",
  "koji",
+ "kome",
  "kura",
  "libc",
  "libm",
@@ -3772,6 +3788,7 @@ dependencies = [
  "glwgsl",
  "half",
  "hlslc",
+ "kome",
  "naga",
 ]
 
@@ -4622,6 +4639,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vorbis"
 version = "0.1.0"
 dependencies = [
+ "kome",
  "proptest",
 ]
 
@@ -5110,6 +5128,7 @@ name = "wmcodec"
 version = "0.1.0"
 dependencies = [
  "asf",
+ "kome",
  "proptest",
 ]
 

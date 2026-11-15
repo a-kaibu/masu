@@ -1,4 +1,4 @@
-use crate::locked::ReadWrite;
+use kome::locks::tolerant::Rw as _;
 use crate::storage::Storage;
 use axum::{
     extract::{Path, State},
@@ -399,7 +399,7 @@ async fn publish_wasm(remote: &Storage, web: &std::path::Path, wasm: &std::sync:
             remote.put(&logical, &z).await?;
             sent += 1;
         }
-        wasm.write_locked().insert(name, h);
+        wasm.w().insert(name, h);
     }
     Ok(sent)
 }
@@ -410,7 +410,7 @@ async fn publish_wasm(remote: &Storage, web: &std::path::Path, wasm: &std::sync:
 /// without S3: the page then loads it from here as before.
 async fn sake_direct(State(s): State<Store>, Path(name): Path<String>) -> Response {
     let Some(remote) = s.remote.as_ref().as_ref() else { return StatusCode::NOT_IMPLEMENTED.into_response() };
-    let Some(h) = s.wasm.read_locked().get(&name).cloned() else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(h) = s.wasm.r().get(&name).cloned() else { return StatusCode::NOT_FOUND.into_response() };
     match remote.direct(&format!("chunks/{}/{h}", &h[..2]), DIRECT_EXPIRY).await {
         Ok(Some(d)) => {
             let mut v = direct_json(&d);
@@ -841,7 +841,7 @@ mod tests {
         let remote = state.remote.as_ref().as_ref().unwrap();
         assert_eq!(publish_wasm(remote, &web, &state.wasm).await.unwrap(), 2);
         assert_eq!(publish_wasm(remote, &web, &state.wasm).await.unwrap(), 0, "the same build again: nothing sent");
-        assert_eq!(state.wasm.read_locked().len(), 2);
+        assert_eq!(state.wasm.r().len(), 2);
         let h = blake3::hash(&wasm).to_hex()[..32].to_string();
         assert!(remote.has(&format!("chunks/{}/{h}", &h[..2])).unwrap());
         // (the server reads it as any chunk too)

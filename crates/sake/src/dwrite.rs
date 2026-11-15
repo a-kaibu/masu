@@ -5,6 +5,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::hresult::{E_INVALIDARG, E_NOT_SUFFICIENT_BUFFER};
 use crate::api::{implement, Ctx};
 use crate::com;
 use crate::gdi::{text_font, TextFont};
@@ -665,8 +666,6 @@ fn GetSystemFontCollection(c: &mut Ctx) -> u32 {
 
 // ---- the system font collection: gdi.rs's built-in faces, a family of one font each ----
 
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_NOT_SUFFICIENT_BUFFER: u32 = 0x8007_007a;
 
 /// An object whose value (a face index) follows the vtable pointer.
 fn with_value(iface: com::Iface, methods: com::Impls, v: u32) -> u32 {

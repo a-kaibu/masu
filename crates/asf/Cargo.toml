@@ -6,6 +6,7 @@ license.workspace = true
 description = "Advanced Systems Format (ASF: .wmv / .wma / .asf) demuxing, for sake's Windows Media Format SDK readers (wmvcore)"
 
 [dependencies]
+kome = { path = "../kome" }
 
 [dev-dependencies]
 # (no fork or timeout: the tests also run on wasm32, formal/wasm32.sh)

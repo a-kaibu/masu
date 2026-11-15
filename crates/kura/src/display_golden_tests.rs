@@ -2,7 +2,7 @@
 //! of a Display (windows placed, restacked, shown and hidden, drawn plainly and partly, drawn from
 //! shared surfaces, unshared, destroyed, the screen resized, frames taken with and without direct
 //! ones), each step's frame io, view, extent, window list and a hash of the screen buffer.
-//! display_golden.txt holds them; MASU_UPDATE_DISPLAY=1 rewrites it.
+//! display_golden.txt holds them; MASU_UPDATE_GOLDEN=1 rewrites it.
 use super::*;
 
 struct Rng(u64);
@@ -108,12 +108,5 @@ fn sessions_answer_as_pinned() {
         got += &session(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15));
     }
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/display_golden.txt");
-    if std::env::var_os("MASU_UPDATE_DISPLAY").is_some() {
-        std::fs::write(&path, &got).unwrap();
-    }
-    let want = std::fs::read_to_string(&path).unwrap_or_default();
-    if want != got {
-        let diff: Vec<String> = want.lines().zip(got.lines()).filter(|(a, b)| a != b).take(5).map(|(a, b)| format!("- {a}\n+ {b}")).collect();
-        panic!("display differs from display_golden.txt (MASU_UPDATE_DISPLAY=1 rewrites it):\n{}", diff.join("\n"));
-    }
+    kome::golden::check(&path, &got);
 }

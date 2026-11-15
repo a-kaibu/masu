@@ -6,6 +6,7 @@ license.workspace = true
 description = "HLSL compiler: source to DXBC (shader model 4/5), Direct3D 9 bytecode (2/3) and fx_2_0 effects; Direct3D 9 shader assembler"
 
 [dependencies]
+kome = { path = "../kome" }
 # (the SM4/5 opcode table: one enum for the compiler that writes the tokens and the translator
 # that reads them)
 dxwgsl = { path = "../dxwgsl" }

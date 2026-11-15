@@ -11,45 +11,9 @@
 //! functional spec (float, integer and conversion rules), the D3D9 instruction reference
 //! (ps_3_0), the HLSL constant packing rules, the GLSL 1.20 spec and std140 for GL.
 
+pub(crate) use kome::num::{us, u32_of, usize_of, u64_of, lo32, lo16, lo8};
 // (a u32 count or offset as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
-
-/// A u32 as an index (lossless: the assert above)
-pub(crate) fn us(x: u32) -> usize {
-    usize::try_from(x).unwrap_or(usize::MAX)
-}
-
-/// A length or index as u32 (u32::MAX past 2^32)
-pub(crate) fn u32_of(x: usize) -> u32 {
-    u32::try_from(x).unwrap_or(u32::MAX)
-}
-
-/// A u64 (a random draw below a small bound) as an index
-pub(crate) fn usize_of(x: u64) -> usize {
-    usize::try_from(x).unwrap_or(usize::MAX)
-}
-
-/// A length as u64 (lossless on every target this runs on)
-pub(crate) fn u64_of(x: usize) -> u64 {
-    u64::try_from(x).unwrap_or(u64::MAX)
-}
-
-/// The low 32 bits (random words, packed fields)
-pub(crate) fn lo32(x: u64) -> u32 {
-    let [a, b, c, d, ..] = x.to_le_bytes();
-    u32::from_le_bytes([a, b, c, d])
-}
-
-/// The low 16 bits of a packed word
-pub(crate) fn lo16(x: u32) -> u16 {
-    let [a, b, ..] = x.to_le_bytes();
-    u16::from_le_bytes([a, b])
-}
-
-/// The low byte of a packed word
-pub(crate) fn lo8(x: u32) -> u8 {
-    x.to_le_bytes()[0]
-}
 
 mod cases;
 mod compute;

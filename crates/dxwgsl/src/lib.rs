@@ -6,24 +6,9 @@
 //!
 //! Bytes in, WGSL text and what it binds out; no GPU or OS calls, std only.
 
+pub(crate) use kome::num::{us, u32_of, lo8};
 // (a u32 count or offset as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
-
-/// A u32 as an index (lossless: the assert above)
-pub(crate) fn us(x: u32) -> usize {
-    usize::try_from(x).unwrap_or(usize::MAX)
-}
-
-/// A count or index as u32 (callers' values are small: shader registers and stages; u32::MAX
-/// past that)
-pub(crate) fn u32_of(x: usize) -> u32 {
-    u32::try_from(x).unwrap_or(u32::MAX)
-}
-
-/// The low 8 bits of `x` (a field the caller masked or shifted down)
-pub(crate) fn lo8(x: u32) -> u8 {
-    x.to_le_bytes()[0]
-}
 
 pub mod addr;
 pub mod d3d9;

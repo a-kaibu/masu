@@ -1,5 +1,6 @@
 //! Vorbis's bit packing: least significant bit first, as libogg's oggpack_read.
 
+pub use kome::num::us;
 // (a u32 read from a packet always fits a usize: `us` widens, it never truncates)
 const _: () = assert!(usize::BITS >= 32);
 
@@ -13,12 +14,6 @@ pub fn ix(x: i32) -> usize {
 #[inline(always)]
 pub fn i32_len(n: usize) -> i32 {
     i32::try_from(n).unwrap_or(i32::MAX)
-}
-
-/// A u32 as a length, a count or an index.
-#[inline(always)]
-pub fn us(x: u32) -> usize {
-    usize::try_from(x).unwrap_or(usize::MAX)
 }
 
 /// Reads bits from a packet. Past its end every read fails (as oggpack_read's -1), and the

@@ -4,14 +4,12 @@
 
 #![allow(non_snake_case)]
 
+use crate::hresult::{E_NOTIMPL, E_FAIL, E_OUTOFMEMORY, STG_E_MEDIUMFULL};
 use std::sync::OnceLock;
 
 use crate::api::{implement, Ctx};
 use crate::mem::{self, put32, r32, w32};
 
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_FAIL: u32 = 0x8000_4005;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
 
 use crate::api::vtable;
 
@@ -48,7 +46,6 @@ fn no_locks(_: &mut Ctx) -> u32 {
 // Windows' HGLOBAL streams share it: a write through one is seen by the others, the HGLOBAL
 // goes with the last of them): {hglobal, size, delete on release, refs}
 
-const STG_E_MEDIUMFULL: u32 = 0x8003_0070;
 
 fn hg(this: u32) -> u32 {
     r32(r32(this + 4))

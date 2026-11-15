@@ -89,7 +89,7 @@ pub fn transcode(omv: &Path, out: &Path) -> Result<()> {
     (&mut f).take(64 << 10).read_to_end(&mut data)?;
     let ogg = data.windows(4).position(|w| w == b"OggS").context("no Ogg stream")?;
     let Some(head) = data.first_chunk::<0x40>() else { bail!("not an .omv") };
-    let (w, h, frame_us) = (crate::le::u32::<0x2c, 0x40>(head), crate::le::u32::<0x30, 0x40>(head), crate::le::u32::<0x3c, 0x40>(head));
+    let (w, h, frame_us) = (kome::le::u32::<0x2c, 0x40>(head), kome::le::u32::<0x30, 0x40>(head), kome::le::u32::<0x3c, 0x40>(head));
     if w == 0 || h == 0 || w > 8192 || h > 8192 {
         bail!("unexpected header ({w}x{h})");
     }
@@ -169,7 +169,7 @@ fn ivf_frames(p: &Path) -> Result<(u32, u32, Vec<(u64, u32, bool)>)> {
         let mut fh = [0u8; 13];
         let size = {
             r.read_exact(&mut fh[..12])?;
-            crate::le::u32::<0, 13>(&fh)
+            kome::le::u32::<0, 13>(&fh)
         };
         if at + 12 + size as u64 > len {
             bail!("IVF cut short");

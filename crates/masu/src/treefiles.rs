@@ -4,7 +4,7 @@
 //! for one that is not satisfiable). Files go out one chunk at a time: a big movie does not sit
 //! in memory whole.
 
-use crate::locked::Locked;
+use kome::locks::tolerant::Lock as _;
 use axum::{
     body::Body,
     extract::{Path, State},

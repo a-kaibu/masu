@@ -7,6 +7,7 @@
 //! stay u32 constants (the D3DFORMAT values); the `pub fn`s take those and answer for an unknown
 //! one as they always did (format_golden_tests pins every answer).
 
+use kome::num::{us, lo8, lo16};
 use super::gpu::{FMT_BGRA8, FMT_DEPTH24S8, FMT_RGBA16F, FMT_RGBA32F};
 
 macro_rules! formats {
@@ -90,22 +91,6 @@ formats! {
 
 // (every u32 is a usize where kura runs: wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
-
-/// A u32 size or count as usize (lossless: the assert above).
-fn us(v: u32) -> usize {
-    usize::try_from(v).unwrap_or(usize::MAX)
-}
-
-/// The low 8 bits.
-fn lo8(v: u32) -> u8 {
-    v.to_le_bytes()[0]
-}
-
-/// The low 16 bits.
-fn lo16(v: u32) -> u16 {
-    let [a, b, _, _] = v.to_le_bytes();
-    u16::from_le_bytes([a, b])
-}
 
 /// A float rounded to a whole number as that number: NaN 0, out of range the nearest end (what
 /// `as` does; the only float-to-integer step here).

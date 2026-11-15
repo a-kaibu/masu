@@ -7,9 +7,6 @@
 #[allow(dead_code)]
 mod ttc;
 
-#[allow(dead_code)]
-#[path = "../../src/le.rs"]
-mod le;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {

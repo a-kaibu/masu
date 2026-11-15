@@ -5,24 +5,9 @@
 //!
 //! Source text in, bytecode out; std only. The dxwgsl crate turns the output into WGSL.
 
+pub(crate) use kome::num::{us, u32_of, lo32};
 // (a u32 count or register as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
-
-/// A u32 as an index (lossless: the assert above)
-pub(crate) fn us(x: u32) -> usize {
-    usize::try_from(x).unwrap_or(usize::MAX)
-}
-
-/// A length or index as u32 (shader sizes are far below 2^32; u32::MAX past that)
-pub(crate) fn u32_of(x: usize) -> u32 {
-    u32::try_from(x).unwrap_or(u32::MAX)
-}
-
-/// The low 32 bits: the wrap the formats mean (two's complement immediates, shift counts)
-pub(crate) fn lo32(x: i64) -> u32 {
-    let [a, b, c, d, ..] = x.to_le_bytes();
-    u32::from_le_bytes([a, b, c, d])
-}
 
 /// A count the formats keep in 16 bits (u16::MAX past that)
 pub(crate) fn sat16<T: TryInto<u16>>(x: T) -> u16 {

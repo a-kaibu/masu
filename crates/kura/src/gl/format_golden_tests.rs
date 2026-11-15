@@ -3,7 +3,7 @@
 //! format_comps and packed_fields for every value 0..=0xffff (each one's non-default answers
 //! listed, and a hash of all), comp8 of random bytes for each type, and to_rgba of random
 //! pixels for every format, type and base format, with random unpack states.
-//! format_golden.txt holds them; MASU_UPDATE_FORMATS=1 rewrites it.
+//! format_golden.txt holds them; MASU_UPDATE_GOLDEN=1 rewrites it.
 use super::*;
 
 struct Rng(u64);
@@ -81,12 +81,5 @@ fn gl_tables_answer_as_pinned() {
         got.push('\n');
     }
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/gl/format_golden.txt");
-    if std::env::var_os("MASU_UPDATE_FORMATS").is_some() {
-        std::fs::write(&path, &got).unwrap();
-    }
-    let want = std::fs::read_to_string(&path).unwrap_or_default();
-    if want != got {
-        let diff: Vec<String> = want.lines().zip(got.lines()).filter(|(a, b)| a != b).map(|(a, b)| format!("- {a}\n+ {b}")).collect();
-        panic!("gl tables differ from format_golden.txt (MASU_UPDATE_FORMATS=1 rewrites it):\n{}", diff.join("\n"));
-    }
+    kome::golden::check(&path, &got);
 }

@@ -6,7 +6,7 @@
 //! settings: Siglus reads them from its own folder), so a game registered with a launcher
 //! starts that instead (`/games`, serve.rs; `masu add`, unpack.rs pick_exe).
 
-use crate::locked::Locked;
+use kome::locks::tolerant::Lock as _;
 /// In a game's file list (paths relative to its tree, `/` separated): the engine to start, if it
 /// is a Siglus game: the SiglusEngine.exe in a folder that has Gameexe.dat, the shallowest
 /// (then the first by name). Names are matched as Windows does, without case.

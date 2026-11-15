@@ -10,6 +10,7 @@ description = "From-scratch Win32 layer (HLE of kernel32/user32/gdi32/dsound...)
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+kome = { path = "../kome" }
 koji = { path = "../koji" }
 kura = { path = "../kura" }
 waits = { path = "../waits" }

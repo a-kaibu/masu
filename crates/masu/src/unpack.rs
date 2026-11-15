@@ -492,7 +492,7 @@ fn installshield(job: &Job, src: &Path, out: &Path) -> Result<bool> {
         f.read_exact(&mut b).context("truncated setup")?;
         Ok(b)
     };
-    let u32_at = |b: &[u8], o: usize| crate::le::u32_at(b, o).context("truncated setup");
+    let u32_at = |b: &[u8], o: usize| kome::le::u32_at(b, o).context("truncated setup");
     let mut entries = vec![];
     if &h[..14] == b"ISSetupStream\0" {
         let ver = u16::from_le_bytes([h[16], h[17]]);
@@ -500,7 +500,7 @@ fn installshield(job: &Job, src: &Path, out: &Path) -> Result<bool> {
             // (version 4 on: 64-bit sizes, 48-byte entry headers)
             let (hl, b) = if ver >= 4 { (48, rd(pos, 18)?) } else { (24, rd(pos, 14)?) };
             let (nl, flags) = (usize::try_from(u32_at(&b, 0)?)?, u32_at(&b, 4)?);
-            let len = if ver >= 4 { crate::le::u64_at(&b, 10).context("truncated setup")? } else { u64::from(u32_at(&b, 10)?) };
+            let len = if ver >= 4 { kome::le::u64_at(&b, 10).context("truncated setup")? } else { u64::from(u32_at(&b, 10)?) };
             if nl % 2 != 0 || nl > IS_NAME_MAX {
                 bail!("entry {i}: a name of {nl} bytes");
             }

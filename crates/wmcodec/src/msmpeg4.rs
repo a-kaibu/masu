@@ -7,7 +7,7 @@ use crate::hpel;
 use crate::idct;
 use crate::intrax8::{IntraX8, Plane};
 use crate::msmpeg4_tables as t;
-use crate::num::{i32z, ix, lo16, lo8, lo8z};
+use crate::num::{i32z, ix, lo16, lo8};
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
@@ -527,7 +527,7 @@ impl Decoder {
             let mut run = if skip_type == 3 { self.mb_w } else { self.mb_h };
             while run > 0 {
                 let block = run.min(25);
-                let bits = u32::from(lo8z(block));
+                let bits = u32::from(lo8(block));
                 if g.get(bits) + 1 != 1 << bits {
                     break;
                 }

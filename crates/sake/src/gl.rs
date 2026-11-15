@@ -473,10 +473,6 @@ mod sig_golden_tests {
             out += &format!("{name} {kinds:?} {ret} {}\n", stack_bytes(sig));
         }
         let golden = concat!(env!("CARGO_MANIFEST_DIR"), "/src/gl_sigs_golden.txt");
-        if std::env::var_os("MASU_UPDATE_GOLDEN").is_some() {
-            std::fs::write(golden, &out).unwrap();
-            return;
-        }
-        assert_eq!(std::fs::read_to_string(golden).unwrap_or_default(), out, "gl_sigs_golden.txt (MASU_UPDATE_GOLDEN=1 rewrites it)");
+        kome::golden::check(golden, &out);
     }
 }

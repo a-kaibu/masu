@@ -8,14 +8,13 @@
 //! the IDirectXFile (its templates are shared, not its count). Each enumerator has its own objects
 //! and each object its own data (GetData's pointer stays the same for it, a DWORD >= 2 before it).
 
+use crate::hresult::{E_NOINTERFACE, E_NOTIMPL};
 use crate::api::{implement, Ctx, Handler};
 use crate::mem;
 use crate::xof::{self, Child, Guid, Templates, XFile};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_NOTIMPL: u32 = 0x8000_4001;
 
 const fn iid(n: u8) -> Guid {
     [0x40 + n, 0xab, 0x82, 0x3d, 0xda, 0x62, 0xcf, 0x11, 0xab, 0x39, 0x00, 0x20, 0xaf, 0x71, 0xe4, 0x33]

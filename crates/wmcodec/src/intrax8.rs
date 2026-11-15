@@ -7,7 +7,7 @@ use crate::bits::Bits;
 use crate::idct;
 use crate::intrax8_tables as t;
 use crate::msmpeg4_tables as m4;
-use crate::num::{ix, lo16, lo16u, lo8, lo8z, us};
+use crate::num::{ix, lo16, lo8, us};
 use crate::vlc::Vlc;
 use std::sync::OnceLock;
 
@@ -621,7 +621,7 @@ fn spatial_compensation(k: Orient, s: &[u8; 42], px: &mut [u8], at: usize, strid
         }
     };
     let g = |i: usize| usize::from(s[i]);
-    let g4 = |i: usize| u16::from(lo8z(g(i))) << 4;
+    let g4 = |i: usize| u16::from(lo8(g(i))) << 4;
     match k {
         O0 => {
             let mut left = [[0u16; 8]; 2];
@@ -646,28 +646,28 @@ fn spatial_compensation(k: Orient, s: &[u8; 42], px: &mut [u8], at: usize, strid
                 }
             }
             for i in 0..8 {
-                top[0][i] = top[0][i].wrapping_add(lo16u((u32::from(top[1][i]) * 181 + 128) >> 8));
-                left[0][i] = left[0][i].wrapping_add(lo16u((u32::from(left[1][i]) * 181 + 128) >> 8));
+                top[0][i] = top[0][i].wrapping_add(kome::num::lo16((u32::from(top[1][i]) * 181 + 128) >> 8));
+                left[0][i] = left[0][i].wrapping_add(kome::num::lo16((u32::from(left[1][i]) * 181 + 128) >> 8));
             }
             put(&|x, y| lo8((u32::from(top[0][x]) * ZERO_PREDICTION_WEIGHTS[y * 16 + x * 2] + u32::from(left[0][y]) * ZERO_PREDICTION_WEIGHTS[y * 16 + x * 2 + 1] + 0x8000) >> 16));
         }
         O1 => put(&|x, y| s[AREA4 + (2 * y + x + 2).min(15)]),
         O2 => put(&|x, y| s[AREA4 + 1 + y + x]),
         O3 => put(&|x, y| s[AREA4 + ((y + 1) >> 1) + x]),
-        O4 => put(&|x, _| lo8z((g(AREA4 + x) + g(AREA6 + x) + 1) >> 1)),
+        O4 => put(&|x, _| lo8((g(AREA4 + x) + g(AREA6 + x) + 1) >> 1)),
         O5 => put(&|x, y| if 2 * x < y { s[AREA2 + 9 + 2 * x - y] } else { s[AREA4 + x - ((y + 1) >> 1)] }),
         O6 => put(&|x, y| s[AREA3 + x - y]),
         O7 => put(&|x, y| {
             if let Some(d) = x.checked_sub(2 * y).filter(|&d| d > 0) {
-                lo8z((g(AREA3 - 1 + d) + g(AREA3 + d) + 1) >> 1)
+                lo8((g(AREA3 - 1 + d) + g(AREA3 + d) + 1) >> 1)
             } else {
                 s[AREA2 + 8 - y + (x >> 1)]
             }
         }),
-        O8 => put(&|_, y| lo8z((g(AREA1 + 7 - y) + g(AREA2 + 7 - y) + 1) >> 1)),
+        O8 => put(&|_, y| lo8((g(AREA1 + 7 - y) + g(AREA2 + 7 - y) + 1) >> 1)),
         O9 => put(&|x, y| s[AREA2 + 6 - (x + y).min(6)]),
-        O10 => put(&|x, y| lo8z((g(AREA2 + 7 - y) * (8 - x) + g(AREA4 + x) * x + 4) >> 3)),
-        O11 => put(&|x, y| lo8z((g(AREA2 + 7 - y) * y + g(AREA4 + x) * (8 - y) + 4) >> 3)),
+        O10 => put(&|x, y| lo8((g(AREA2 + 7 - y) * (8 - x) + g(AREA4 + x) * x + 4) >> 3)),
+        O11 => put(&|x, y| lo8((g(AREA2 + 7 - y) * y + g(AREA4 + x) * (8 - y) + 4) >> 3)),
     }
 }
 

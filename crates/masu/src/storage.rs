@@ -1,5 +1,5 @@
 //! Encrypted immutable S3 objects. Names and key envelopes live in SQLite.
-use crate::locked::Locked;
+use kome::locks::tolerant::Lock as _;
 use crate::{envelope::Envelope, library::Library};
 use anyhow::{anyhow, ensure, Context, Result};
 use rusqlite::OptionalExtension;

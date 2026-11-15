@@ -2,7 +2,7 @@
 //! compiler checks every table against instead of u32 constants and `_` arms): for every format
 //! number 0..=255, the DXTn FOURCCs and a few out-of-range ones, each table's answer and a hash
 //! of what texel, pack, page_texel, target_color/target_clear, convert (and decode_dxt) make of
-//! the same random inputs. format_golden.txt holds them; MASU_UPDATE_FORMATS=1 rewrites it.
+//! the same random inputs. format_golden.txt holds them; MASU_UPDATE_GOLDEN=1 rewrites it.
 use super::format::*;
 
 fn fnv(h: &mut u64, bytes: &[u8]) {
@@ -129,12 +129,5 @@ fn every_format_answers_as_pinned() {
     fnv(&mut h, &out);
     got += &format!("p8 {h:016x}\n");
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/d3d9/format_golden.txt");
-    if std::env::var_os("MASU_UPDATE_FORMATS").is_some() {
-        std::fs::write(&path, &got).unwrap();
-    }
-    let want = std::fs::read_to_string(&path).unwrap_or_default();
-    if want != got {
-        let diff: Vec<String> = want.lines().zip(got.lines()).filter(|(a, b)| a != b).map(|(a, b)| format!("- {a}\n+ {b}")).collect();
-        panic!("d3d9 format answers differ from format_golden.txt (MASU_UPDATE_FORMATS=1 rewrites it):\n{}", diff.join("\n"));
-    }
+    kome::golden::check(&path, &got);
 }

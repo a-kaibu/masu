@@ -46,3 +46,25 @@ proptest! {
         prop_assert_eq!(*b.r(), want);
     }
 }
+
+mod tolerant {
+    use crate::locks::tolerant::{Lock as _, Rw as _};
+    use std::sync::{Mutex, RwLock};
+
+    /// A lock a panicking thread held: tolerant takes it again, with what was written before.
+    #[test]
+    fn tolerant_takes_a_poisoned_lock() {
+        let (m, l) = (Mutex::new(1), RwLock::new(1));
+        super::poison(|| {
+            *m.lock().unwrap() = 2;
+            *l.write().unwrap() = 2;
+            let _g = (m.lock(), l.write());
+            panic!("held");
+        });
+        assert!(m.is_poisoned() && l.is_poisoned());
+        assert_eq!(*m.locked(), 2);
+        assert_eq!(*l.r(), 2);
+        *l.w() = 3;
+        assert_eq!(*l.r(), 3);
+    }
+}

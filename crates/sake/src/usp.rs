@@ -4,15 +4,13 @@
 
 #![allow(non_snake_case)]
 
+use crate::hresult::{E_PENDING, E_INVALIDARG, E_OUTOFMEMORY};
 use std::sync::OnceLock;
 
 use crate::api::{implement, Ctx};
 use crate::gdi;
 use crate::mem::{self, put32, r16, r32, w16, w32, w8};
 
-const E_PENDING: u32 = 0x8000_000a;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
 
 /// The most characters one call takes (as ScriptPlace's bound); a garbage count used to build a
 /// 512 MB Vec here and ask the guest heap for 1.6 GB in ScriptStringAnalyse.

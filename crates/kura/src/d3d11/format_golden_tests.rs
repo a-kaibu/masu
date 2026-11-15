@@ -3,7 +3,7 @@
 //! every use against): for every DXGI format 0..=200 and a few out-of-range ones, info, support,
 //! page, pitch_rows, texture_bytes, page_texture_bytes, vertex_format, family, copy_compatible,
 //! packs_back, and hashes of what from_page and to_page make of the same random texels.
-//! format_golden.txt holds them; MASU_UPDATE_FORMATS=1 rewrites it.
+//! format_golden.txt holds them; MASU_UPDATE_GOLDEN=1 rewrites it.
 use super::format::*;
 
 fn fnv(h: &mut u64, bytes: &[u8]) {
@@ -103,14 +103,7 @@ fn every_format_answers_as_pinned() {
         got.push('\n');
     }
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/d3d11/format_golden.txt");
-    if std::env::var_os("MASU_UPDATE_FORMATS").is_some() {
-        std::fs::write(&path, &got).unwrap();
-    }
-    let want = std::fs::read_to_string(&path).unwrap_or_default();
-    if want != got {
-        let diff: Vec<String> = want.lines().zip(got.lines()).filter(|(a, b)| a != b).map(|(a, b)| format!("- {a}\n+ {b}")).collect();
-        panic!("d3d11 format answers differ from format_golden.txt (MASU_UPDATE_FORMATS=1 rewrites it):\n{}", diff.join("\n"));
-    }
+    kome::golden::check(&path, &got);
 }
 
 /// D3D11_BLEND (0..=20 and far past them) to the pipeline key's blend factor, as a color factor

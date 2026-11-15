@@ -13,8 +13,8 @@ use std::sync::Mutex;
 pub(crate) mod methods;
 pub use methods::Guid;
 
-pub const E_NOTIMPL: u32 = 0x8000_4001;
-pub const E_NOINTERFACE: u32 = 0x8000_4002;
+pub use crate::hresult::E_NOTIMPL;
+pub use crate::hresult::E_NOINTERFACE;
 
 /// An interface com_methods.rs has a vtable for. Only `com::iface!(IName)` makes one, and the
 /// compiler checks the name there: a misspelt interface does not build (it panicked at the first
@@ -408,7 +408,7 @@ thread_local!(static CALLS: std::cell::RefCell<Calls> = const { std::cell::RefCe
 /// them), one line per slot that is not a stub: its handler named by the first slot (in this
 /// order) it filled, so that two slots sharing a handler, and which list's handler won, show. A
 /// module's object constructors are pinned with this before their method lists change shape
-/// (MASU_UPDATE_VTABLES=1 writes the file).
+/// (MASU_UPDATE_GOLDEN=1 writes the file).
 #[cfg(test)]
 pub(crate) fn check_vtables(golden: &str, ifaces: &[Iface]) {
     let calls = CALLS.with(|c| c.borrow().clone());
@@ -443,27 +443,7 @@ pub(crate) fn check_vtables(golden: &str, ifaces: &[Iface]) {
         }
     }
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(golden);
-    if std::env::var_os("MASU_UPDATE_VTABLES").is_some() {
-        std::fs::write(&path, &out).unwrap();
-    }
-    let want = std::fs::read_to_string(&path).unwrap_or_default();
-    assert!(want == out, "com: {golden} differs (MASU_UPDATE_VTABLES=1 rewrites it):\n{}", diff(&want, &out));
-}
-#[cfg(test)]
-fn diff(a: &str, b: &str) -> String {
-    let (x, y): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
-    let mut d = String::new();
-    for l in &x {
-        if !y.contains(l) {
-            d += &format!("- {l}\n");
-        }
-    }
-    for l in &y {
-        if !x.contains(l) {
-            d += &format!("+ {l}\n");
-        }
-    }
-    d
+    kome::golden::check(&path, &out);
 }
 
 /// A new object (refcount 1) of `size` bytes, the vtable pointer first.

@@ -8,6 +8,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::hresult::{S_OK, S_FALSE, E_NOTIMPL, E_NOINTERFACE, E_INVALIDARG, E_UNEXPECTED, DISP_E_MEMBERNOTFOUND, DISP_E_EXCEPTION};
 use crate::api::{vtable, Ctx};
 use crate::mem::{self, put32, r16, r32, w16, w32};
 use crate::typelib::{read_var, write_var, Var};
@@ -18,14 +19,6 @@ use boa_engine::property::PropertyDescriptor;
 use boa_engine::{js_string, Context, JsError, JsNativeError, JsObject, JsResult, JsString, JsValue, NativeFunction, Source};
 use std::cell::{Cell, RefCell};
 
-const S_OK: u32 = 0;
-const S_FALSE: u32 = 1;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_UNEXPECTED: u32 = 0x8000_ffff;
-const DISP_E_MEMBERNOTFOUND: u32 = 0x8002_0003;
-const DISP_E_EXCEPTION: u32 = 0x8002_0009;
 const SCRIPT_E_REPORTED: u32 = 0x8002_0101;
 
 const DISPATCH_METHOD: u32 = 1;

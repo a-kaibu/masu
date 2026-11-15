@@ -6,6 +6,7 @@ license.workspace = true
 description = "MPEG-1 system streams (ISO/IEC 11172-1), video (11172-2) and audio layer II (11172-3) decoding, a port of pl_mpeg, for sake's DirectShow MPEG-1 splitter and decoders"
 
 [dependencies]
+kome = { path = "../kome" }
 
 [dev-dependencies]
 # (no fork or timeout: the tests also run on wasm32, formal/wasm32.sh)

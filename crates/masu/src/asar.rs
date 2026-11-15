@@ -42,7 +42,7 @@ pub enum Source {
 /// The header of an asar archive: where its data starts and its files (folders as entries with
 /// no source). None when `head` (the archive's first bytes, at least the whole header) is not one.
 pub fn parse(head: &[u8], len: u64) -> Result<Option<(u64, Vec<(PathBuf, Option<Source>)>)>> {
-    let u32_at = |o: usize| crate::le::u32_at(head, o).map(u64::from);
+    let u32_at = |o: usize| kome::le::u32_at(head, o).map(u64::from);
     let (Some(4), Some(buf), Some(payload), Some(slen)) = (u32_at(0), u32_at(4), u32_at(8), u32_at(12)) else { return Ok(None) };
     // (the pickle: its payload is the string's length and the string, padded to 4)
     if buf > MAX_HEADER || payload + 4 > buf || slen + 4 > payload || 8 + buf > len {
@@ -101,8 +101,8 @@ pub fn unpack(file: &Path, dir: &Path) -> Result<bool> {
     if f.read_exact(&mut head).is_err() {
         return Ok(false);
     }
-    let buf = u64::from(crate::le::u32::<4, 16>(&head));
-    if crate::le::u32::<0, 16>(&head) != 4 || buf > MAX_HEADER || 8 + buf > len {
+    let buf = u64::from(kome::le::u32::<4, 16>(&head));
+    if kome::le::u32::<0, 16>(&head) != 4 || buf > MAX_HEADER || 8 + buf > len {
         return Ok(false);
     }
     let mut whole = vec![0u8; 8 + buf as usize];

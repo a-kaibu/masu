@@ -19,8 +19,6 @@ mod cdc;
 mod daemon;
 mod dirs;
 mod envelope;
-mod le;
-mod locked;
 mod library;
 mod library_api;
 mod storage;

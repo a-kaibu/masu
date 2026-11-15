@@ -6,7 +6,7 @@
 
 use crate::bits::Bits;
 use crate::mdct::Imdct;
-use crate::num::{i32z, ix, lo8, lo8z, us};
+use crate::num::{i32z, ix, lo8, us};
 use crate::vlc::Vlc;
 use crate::wma_tables as t;
 
@@ -956,7 +956,7 @@ impl Decoder {
                     len -= 8;
                 }
                 if len > 0 {
-                    let len = u32::from(lo8z(len));
+                    let len = u32::from(lo8(len));
                     self.last_superframe[q] = lo8(r.get(len) << (8 - len));
                     q += 1;
                 }

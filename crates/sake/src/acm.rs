@@ -9,6 +9,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::num::us;
 use crate::HashMap;
 use std::sync::Mutex;
 
@@ -1209,10 +1210,6 @@ fn acmStreamSize(c: &mut Ctx) -> u32 {
 /// A byte count that does not fit 32 bits: the most there is.
 fn sat32<T: TryInto<u32>>(v: T) -> u32 {
     v.try_into().unwrap_or(u32::MAX)
-}
-/// A guest's 32-bit count as an index (every host's usize holds it)
-fn us(v: u32) -> usize {
-    usize::try_from(v).unwrap_or(usize::MAX)
 }
 /// MP3's sizes as l3codecp gives them (winref acmmp3): a frame's output for each block of
 /// the source begun (nBlockSize, else a frame at the average byte rate), and for an output

@@ -8,6 +8,7 @@
 //! `MASU_INPUT="<seconds>:<kind>,<x>,<y>,<data>;..."` sends input that many seconds after the
 //! first window shows up (see `start_scripted_input`).
 
+use kome::num::lo32;
 use std::collections::{HashMap, VecDeque};
 use std::ffi::c_int;
 use std::sync::Mutex;
@@ -29,12 +30,6 @@ fn ix(v: i32) -> usize {
 /// A count as a C int (saturating; display's counts are of windows and pixels of one screen).
 fn cint(v: usize) -> c_int {
     c_int::try_from(v).unwrap_or(c_int::MAX)
-}
-
-/// The low 32 bits (a scripted input's numbers, read as i64).
-fn lo32(v: i64) -> u32 {
-    let [a, b, c, d, ..] = v.to_le_bytes();
-    u32::from_le_bytes([a, b, c, d])
 }
 
 /// sake's surface a window shows, by its address (a pointer would make Display not Send).

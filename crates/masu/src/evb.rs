@@ -57,7 +57,7 @@ pub fn locate(head: &[u8], read: &mut dyn FnMut(u64, usize) -> io::Result<Vec<u8
     if head.len() < 0x40 || &head[..2] != b"MZ" {
         return Ok(None);
     }
-    let Some(pe) = crate::le::u32_at(head, 0x3c).and_then(|p| usize::try_from(p).ok()) else { return Ok(None) };
+    let Some(pe) = kome::le::u32_at(head, 0x3c).and_then(|p| usize::try_from(p).ok()) else { return Ok(None) };
     if pe.checked_add(24).is_none_or(|e| e > head.len()) || &head[pe..pe + 4] != b"PE\0\0" {
         return Ok(None);
     }
@@ -69,7 +69,7 @@ pub fn locate(head: &[u8], read: &mut dyn FnMut(u64, usize) -> io::Result<Vec<u8
         if &sec[..8] != b".enigma1" {
             continue;
         }
-        let (raw_size, raw_at) = (u64::from(crate::le::u32::<16, 40>(sec)), u64::from(crate::le::u32::<20, 40>(sec)));
+        let (raw_size, raw_at) = (u64::from(kome::le::u32::<16, 40>(sec)), u64::from(kome::le::u32::<20, 40>(sec)));
         let b = read(raw_at, raw_size.min(64 << 10) as usize)?;
         return Ok(b.windows(4).position(|w| w == MAGIC).map(|p| raw_at + p as u64));
     }
@@ -106,8 +106,8 @@ fn read_node<R: Read + Seek>(r: &mut R, at: u64) -> Result<Node> {
     let mut ty = [0u8];
     r.read_exact(&mut ty)?;
     Ok(Node {
-        size: u64::from(crate::le::u32::<0, 16>(&h)),
-        count: crate::le::u32::<12, 16>(&h),
+        size: u64::from(kome::le::u32::<0, 16>(&h)),
+        count: kome::le::u32::<12, 16>(&h),
         name: String::from_utf16_lossy(&units),
         ty: ty[0],
         after: at + 16 + 2 * units.len() as u64 + 3,
@@ -234,14 +234,14 @@ fn extract_chunked<R: Read + Seek, W: Write>(r: &mut R, p: &Packed, w: &mut W, l
     }
     let mut h = [0u8; 8];
     r.read_exact(&mut h)?;
-    let table = u64::from(crate::le::u32::<0, 8>(&h));
+    let table = u64::from(kome::le::u32::<0, 8>(&h));
     if table < 8 || table > p.stored || table > MAX_TABLE {
         bail!("a chunk table of {table} bytes");
     }
     let mut t = vec![0u8; (table - 8) as usize];
     r.read_exact(&mut t)?;
     // (12 bytes an entry, the last one possibly only its first 4)
-    let chunks: Vec<u64> = t.chunks(12).filter_map(|c| crate::le::u32_at(c, 0)).map(u64::from).collect();
+    let chunks: Vec<u64> = t.chunks(12).filter_map(|c| kome::le::u32_at(c, 0)).map(u64::from).collect();
     let mut rest = p.stored - table;
     let mut n = 0u64;
     let mut buf = Vec::new();

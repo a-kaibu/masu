@@ -12,14 +12,8 @@ mod unpack;
 mod engine_exe;
 
 #[allow(dead_code)]
-#[path = "../../src/le.rs"]
-mod le;
-#[allow(dead_code)]
 #[path = "../../../kura/src/tree_list.rs"]
 mod tree_list;
-#[allow(dead_code)]
-#[path = "../../src/locked.rs"]
-mod locked;
 use libfuzzer_sys::fuzz_target;
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::Path;

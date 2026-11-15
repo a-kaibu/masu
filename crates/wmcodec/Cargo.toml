@@ -7,6 +7,7 @@ license = "LGPL-2.1-or-later"
 description = "Windows Media decoders (WMA 1/2, MS-MPEG4 / WMV 1/2, WMV 3 / VC-1) ported from FFmpeg 7.1 to Rust, for sake's wmvcore readers and decoder DMOs"
 
 [dependencies]
+kome = { path = "../kome" }
 
 [dev-dependencies]
 asf = { path = "../asf" }

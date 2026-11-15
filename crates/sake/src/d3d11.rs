@@ -5,6 +5,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::hresult::{E_NOTIMPL, E_NOINTERFACE};
 use std::sync::OnceLock;
 
 use crate::api::{host_fn, implement, Ctx};
@@ -16,7 +17,6 @@ mod methods;
 use methods::METHODS;
 
 const FIRST: u8 = 64;
-const E_NOTIMPL: u32 = 0x8000_4001;
 
 /// A method's trap tag (crate::api::set_tag): its id, with FLOAT for a method that returns a
 /// float; the tag's data is its argument count with `this`.
@@ -185,7 +185,6 @@ fn d3d12_no_root_signature(_: &mut Ctx) -> u32 {
     E_NOTIMPL
 }
 const DXGI_ERROR_UNSUPPORTED: u32 = 0x887a_0004;
-const E_NOINTERFACE: u32 = 0x8000_4002;
 fn not_impl(_: &mut Ctx) -> u32 {
     E_NOTIMPL
 }

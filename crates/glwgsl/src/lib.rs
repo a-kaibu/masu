@@ -6,6 +6,7 @@
 //! [`link`] takes a program's vertex and fragment source and gives each stage's WGSL, its
 //! uniform block layout ([`Member::put`] writes glUniform data into it) and samplers.
 
+use kome::num::us;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -560,10 +561,6 @@ fn index_narrow(s: &str, name: &str, wide: &str, swz: &str) -> String {
 
 // (a u32 offset or count as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
-
-fn us(x: u32) -> usize {
-    usize::try_from(x).unwrap_or(usize::MAX)
-}
 
 fn lanes(s: naga::VectorSize) -> u32 {
     match s {

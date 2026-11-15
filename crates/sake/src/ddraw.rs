@@ -7,6 +7,7 @@
 
 #![allow(non_snake_case)]
 
+use crate::hresult::{E_NOINTERFACE, E_INVALIDARG};
 use crate::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -18,8 +19,6 @@ use crate::user::Rect;
 mod d3d7;
 
 const DD_OK: u32 = 0;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_INVALIDARG: u32 = 0x8007_0057;
 const DDERR_INVALIDPARAMS: u32 = 0x8007_0057;
 const DDERR_UNSUPPORTED: u32 = 0x8000_4001;
 const DDERR_NOTFOUND: u32 = 0x8876_00ff;

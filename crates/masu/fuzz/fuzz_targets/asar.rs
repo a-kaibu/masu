@@ -7,9 +7,6 @@
 #[path = "../../src/asar.rs"]
 mod asar;
 
-#[allow(dead_code)]
-#[path = "../../src/le.rs"]
-mod le;
 use libfuzzer_sys::fuzz_target;
 use std::path::Component;
 

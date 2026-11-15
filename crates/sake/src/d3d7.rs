@@ -6,6 +6,7 @@
 //! integer pixel centers, eight texture stages (point or bilinear, wrap/mirror/clamp/border),
 //! color key, alpha test, depth test and alpha blending.
 
+use crate::hresult::CLASS_E_NOAGGREGATION;
 use super::*;
 
 const D3D_OK: u32 = 0;
@@ -2349,7 +2350,6 @@ fn clear_dev(id: u32, vp: [i32; 4], n: u32, rects: u32, flags: u32, color: u32, 
 // block [vtable, id, refs]), with the methods whose arguments are the same shared; viewports
 // and materials are objects of their own, the current viewport the device's viewport.
 
-const CLASS_E_NOAGGREGATION: u32 = 0x8004_0110;
 const DDERR_ALREADYINITIALIZED: u32 = 0x8876_0005;
 const D3DERR_VIEWPORTDATANOTSET: u32 = 0x8876_0305;
 const D3DERR_VIEWPORTHASNODEVICE: u32 = 0x8876_0306;

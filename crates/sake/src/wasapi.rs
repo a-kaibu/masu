@@ -14,6 +14,7 @@
 //! later) renders through this. Behaviour checked by Wine's mmdevapi render tests
 //! (tests/winetest) and host/tests/wasapi.c.
 
+use kome::num::us;
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
@@ -142,10 +143,6 @@ const STEP_DB: f32 = 0.03125;
 /// x86 stdcall: the handler pops this many bytes of arguments (x64 ignores it)
 fn b(n: u32) -> u32 {
     4 * n
-}
-/// A guest index (a channel, a session) as an index of ours
-fn us(i: u32) -> usize {
-    usize::try_from(i).unwrap_or(usize::MAX)
 }
 
 // ---------------------------------------------------------------------------------------------

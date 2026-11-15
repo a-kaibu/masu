@@ -11,6 +11,7 @@ description = "masu: play visual novels in the browser. The server (web app buil
 ignored = ["md-5", "rust-s3"]
 
 [dependencies]
+kome = { path = "../kome" }
 foresee = { path = "../foresee" }
 # Siglus' Scene.pck (decrypting, unpacking, its key from the game's own files): what each scene
 # names, for foresee.rs. MPL-2.0.

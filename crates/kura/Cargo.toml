@@ -10,6 +10,7 @@ description = "Browser host for sake on wasm32: the x86 run loop, file system, d
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+kome = { path = "../kome" }
 koji = { path = "../koji" }
 waits = { path = "../waits" }
 dxwgsl = { path = "../dxwgsl" }

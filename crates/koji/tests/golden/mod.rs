@@ -5,7 +5,7 @@
 //! The goldens pin what koji does today, bit for bit, so a rewrite that is meant to change
 //! nothing (newtypes, exhaustive matches, typed conversions) proves it: the interpreter's
 //! state after every step and the JIT's wasm bytes must stay the same. A change that is meant
-//! to change behaviour rewrites them (`MASU_GOLDEN_UPDATE=1`) and says why in its commit.
+//! to change behaviour rewrites them (`MASU_UPDATE_GOLDEN=1`) and says why in its commit.
 #![allow(dead_code)]
 
 use koji::{Fault, Memory};
@@ -158,21 +158,10 @@ impl Memory for Mem {
 }
 
 /// Checks `lines` ("<name> <hash>") against crates/koji/testdata/golden/<file>, or writes them
-/// with MASU_GOLDEN_UPDATE=1.
+/// with MASU_UPDATE_GOLDEN=1.
 pub fn check(file: &str, lines: &[String]) {
     let path = format!("{}/testdata/golden/{file}", env!("CARGO_MANIFEST_DIR"));
-    let got = lines.join("\n") + "\n";
-    if std::env::var_os("MASU_GOLDEN_UPDATE").is_some() {
-        std::fs::create_dir_all(std::path::Path::new(&path).parent().unwrap()).unwrap();
-        std::fs::write(&path, &got).unwrap();
-        return;
+    if let Err(e) = kome::golden::compare(&path, &(lines.join("\n") + "\n")) {
+        panic!("{e}\n(a change meant to change nothing changed this; MASU_GOLDEN_GROUP=<n> prints a group's cases)");
     }
-    let want = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e} (MASU_GOLDEN_UPDATE=1 writes it)"));
-    let diff: Vec<String> = want.lines().zip(got.lines()).filter(|(w, g)| w != g).map(|(w, g)| format!("  want {w}\n  got  {g}")).collect();
-    assert!(
-        diff.is_empty() && want.lines().count() == got.lines().count(),
-        "{file}: {} group(s) differ from the golden (a change meant to change nothing changed this; MASU_GOLDEN_GROUP=<n> prints a group's cases):\n{}",
-        diff.len(),
-        diff.join("\n")
-    );
 }

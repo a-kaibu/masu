@@ -14,6 +14,7 @@
 //! Nothing here trusts the file: lengths are checked, a damaged packet gives what it holds up
 //! to the damage, and objects never grow past their stated size (fuzz/fuzz_targets/asf.rs).
 
+use kome::num::us;
 use std::collections::{HashMap, VecDeque};
 
 pub type Guid = [u8; 16];
@@ -47,12 +48,6 @@ const MS: u64 = 10_000;
 
 // (a u32 field of the file always fits a usize: `us` is the widening, not a truncation)
 const _: () = assert!(usize::BITS >= 32);
-
-/// A u32 of the file as a length or an offset.
-#[inline(always)]
-fn us(x: u32) -> usize {
-    usize::try_from(x).unwrap_or(usize::MAX)
-}
 
 /// A stream's number: the low 7 bits of a stream number byte (1..=127 in a valid file; 0 can
 /// come out of a damaged one, and is then a stream like any other).
