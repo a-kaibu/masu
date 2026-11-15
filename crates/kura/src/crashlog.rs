@@ -881,9 +881,18 @@ mod tests {
         for c in &mut cpus {
             register(&mut **c);
         }
-        let n = vnhost_crashlog_snapshot() as usize;
-        let snap = String::from_utf8_lossy(&unsafe { &*SNAP.0.get() }[..n]).into_owned();
-        assert!(snap.contains(&format!("at {:08x}", 0x0050_0000 + 299)), "the newest thread is not in the snapshot");
+        // (the snapshot only try_locks the thread list, as a crashing thread may hold it, and
+        // other tests' Cpus register meanwhile: then it says "(thread list busy)" and a later
+        // one is taken; SNAP_BUSY likewise, #242)
+        let newest = format!("at {:08x}", 0x0050_0000 + 299);
+        let seen = (0..10_000).any(|_| {
+            let ok = snapshot_text().contains(&newest);
+            if !ok {
+                std::thread::yield_now();
+            }
+            ok
+        });
+        assert!(seen, "the newest thread is not in the snapshot");
         for c in &mut cpus {
             unregister(&mut **c);
         }
