@@ -33,11 +33,19 @@ mem::transmute(_copy), mem::zeroed / MaybeUninit::assume_init, each counted unde
 string literals taken out, across lines: `static mut`, `unsafe impl ... Send/Sync for`; and the
 store's tree format ("vnvm-tree", a string, so searched in the raw text) spelled outside
 crates/kura/src/tree_list.rs (each new reader of a wire format is a second parser to keep in step).
+
+PINNED: the unsafe kinds (masu-*, undocumented unsafe, unsafe ops in unsafe fns, pointer casts,
+allow-attr) are also kept site by site in tools/ci/lint-ratchet-sites.tsv: each one's file, lint and
+the text of its line (spaces collapsed). A count alone let one go for another (review 2026-11-15:
+"a from_raw_parts removed here, a transmute added there"); here every site that is not in the list
+fails, even when the count stays. A line with one on it that is edited is a new site: fix it, or
+for code moved as it is, --raise its file (and say so in the commit).
 """
 import collections, json, os, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TSV = os.path.join(ROOT, "tools", "ci", "lint-ratchet.tsv")
+SITES = os.path.join(ROOT, "tools", "ci", "lint-ratchet-sites.tsv")
 LINTS = [
     "as_conversions",  # every `as`: From/TryFrom/a named helper says what may happen
     "cast_possible_truncation",  # the subset of those that drop bits
@@ -104,6 +112,7 @@ ROBUST = [
 ]
 GROUPS = ["correctness", "suspicious", "perf"]
 RUSTC = {"E0133": "unsafe_op_in_unsafe_fn"}
+PINNED = {"undocumented_unsafe_blocks", "multiple_unsafe_ops_per_block", "missing_safety_doc", "not_unsafe_ptr_arg_deref", "unsafe_op_in_unsafe_fn", "cast_ptr_alignment", "ptr_as_ptr", "borrow_as_ptr", "missing_transmute_annotations", "allow-attr"}
 TRACKED = re.compile(r"\b(?:clippy::(?:" + "|".join(LINTS + ROBUST + GROUPS) + ")|" + "|".join(RUSTC.values()) + r")\b")
 # (code with comments and strings taken out: across lines, `[^{]*` stops at the impl's body)
 CUSTOM = {
@@ -251,12 +260,53 @@ def custom():
                         yield (rel, src.count("\n", 0, m.start()) + 1, m.start() + 1, name)
 
 
+def pinned(lint):
+    return lint in PINNED or lint.startswith("masu-")
+
+
+lines = {}
+
+
+def line_text(f, n):
+    """line `n` of `f` without its comments, its runs of whitespace one space: what a site is known by"""
+    if f not in lines:
+        # (comments out: a reworded comment is the same site)
+        lines[f] = code_only(open(os.path.join(ROOT, f), encoding="utf-8", errors="replace").read(), strings=True).split("\n")
+    v = lines[f]
+    return " ".join(v[n - 1].split()) if 0 < n <= len(v) else ""
+
+
 def count():
     per_file = collections.Counter()
-    for f, _, _, lint in list(clippy()) + list(allow_attrs()) + list(custom()):
+    sites = collections.Counter()
+    where = {}
+    for f, n, _, lint in list(clippy()) + list(allow_attrs()) + list(custom()):
         if not TEST_FILE.search(f):
             per_file[(f, lint)] += 1
-    return per_file
+            if pinned(lint):
+                k = (f, lint, line_text(f, n))
+                sites[k] += 1
+                where.setdefault(k, n)
+    return per_file, sites, where
+
+
+def load_sites():
+    sites = collections.Counter()
+    if os.path.exists(SITES):
+        for line in open(SITES, encoding="utf-8"):
+            if line.startswith("#") or not line.strip():
+                continue
+            f, lint, text = line.rstrip("\n").split("\t", 2)
+            sites[(f, lint, text)] += 1
+    return sites
+
+
+def save_sites(sites):
+    with open(SITES, "w", encoding="utf-8") as o:
+        o.write("# tools/ci/lint-ratchet.py: every unsafe-kind site (file, lint, its line's text); a site not here fails CI\n")
+        for (f, l, t), n in sorted(sites.items()):
+            for _ in range(n):
+                o.write(f"{f}\t{l}\t{t}\n")
 
 
 def load():
@@ -283,23 +333,31 @@ def save(files):
 def main():
     update = "--update" in sys.argv
     raise_files = set(sys.argv[sys.argv.index("--raise") + 1 :]) if "--raise" in sys.argv else set()
-    files = count()
+    files, sites, where = count()
     old = load()
+    old_sites = load_sites()
     up = sorted(k for k, n in files.items() if n > old.get(k, 0) and k[0] not in raise_files)
     down = sorted(k for k, n in old.items() if files.get(k, 0) < n)
+    # (the first --update writes every site down: before it there was no list)
+    first = not os.path.exists(SITES)
+    new_sites = [] if first else sorted(k for k, n in sites.items() if n > old_sites.get(k, 0) and k[0] not in raise_files)
     for f, l in up:
         print(f"lint-ratchet: {f}: clippy::{l} {old.get((f, l), 0)} -> {files[(f, l)]}")
+    for k in new_sites:
+        print(f"lint-ratchet: {k[0]}:{where[k]}: {k[1]}: a new site (not in {os.path.relpath(SITES, ROOT)}): {k[2]}")
+    up += new_sites
     if update:
         if up:
-            sys.exit("lint-ratchet: counts above went up: fix them (the baseline only goes down)")
+            sys.exit("lint-ratchet: counts above went up or sites are new: fix them (the baseline only goes down)")
         new = {k: (n if k[0] in raise_files else min(n, old.get(k, n))) for k, n in files.items()}
         save(new)
+        save_sites(collections.Counter({k: (n if first or k[0] in raise_files else min(n, old_sites.get(k, 0))) for k, n in sites.items()}))
         print(f"lint-ratchet: wrote {os.path.relpath(TSV, ROOT)} ({sum(new.values())} in all, {sum(old.values()) - sum(new.values())} fewer)")
         return
     if down:
         print(f"lint-ratchet: {sum(old[k] - files.get(k, 0) for k in down)} fewer than the baseline in {len(set(f for f, _ in down))} files (tools/ci/lint-ratchet.py --update writes it down)")
     if up:
-        sys.exit("lint-ratchet: lints went up (above): From/TryFrom instead of `as`, every variant named instead of `_`, `?` or a typed error instead of unwrap/panic, get()/checked_*/wrapping_* instead of a[i] and bare arithmetic, // SAFETY: on unsafe")
+        sys.exit("lint-ratchet: lints went up or unsafe sites are new (above): From/TryFrom instead of `as`, every variant named instead of `_`, `?` or a typed error instead of unwrap/panic, get()/checked_*/wrapping_* instead of a[i] and bare arithmetic, // SAFETY: on unsafe")
     print(f"lint-ratchet: ok ({sum(files.values())} left)")
 
 
