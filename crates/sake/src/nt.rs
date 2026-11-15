@@ -8,9 +8,9 @@ use crate::mem::{self, put32, r16, r32, w32};
 fn k32(c: &mut Ctx, name: &str, args: &[u32]) -> u32 {
     let f = export("kernel32", name);
     // (kernel32 under ntdll here: it does the work, not the program's hook again)
-    IN_NT.with(|d| d.set(d.get() + 1));
+    IN_NT.update(|d| d + 1);
     let r = c.call(f, args);
-    IN_NT.with(|d| d.set(d.get() - 1));
+    IN_NT.update(|d| d - 1);
     r
 }
 

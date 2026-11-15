@@ -181,7 +181,7 @@ pub fn crtdll_data(name: &str) -> Option<u32> {
             static OWN: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
             return Some(*OWN.lock().unwrap().get_or_insert_with(HashMap::default).entry(name.into()).or_insert_with(|| var(0)));
         }
-        n => n.strip_suffix("_dll").unwrap_or(n),
+        n => n.trim_suffix("_dll"),
     };
     data(msvcrt)
 }

@@ -83,7 +83,7 @@ fn t<R>(f: impl FnOnce(&mut Tables) -> R) -> R {
 /// Runs `f` with `c` as the Ctx script code calls guest code through.
 fn enter<R>(c: &mut Ctx, f: impl FnOnce() -> R) -> R {
     let prev = CUR.with(|p| p.replace(c as *mut Ctx as *mut Ctx<'static>));
-    DEPTH.with(|d| d.set(d.get() + 1));
+    DEPTH.update(|d| d + 1);
     let r = f();
     let outer = DEPTH.with(|d| {
         d.set(d.get() - 1);

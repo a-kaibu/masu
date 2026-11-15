@@ -323,11 +323,11 @@ pub(crate) fn pump(cpu: &mut koji::Cpu, reentrant: bool) {
             if call.is_some() { k.changed(); } call
         }).0;
         let Some(call) = call else { break };
-        DEPTH.with(|d| d.set(d.get() + 1));
+        DEPTH.update(|d| d + 1);
         let saved = cpu.clone();
         let reply = serve(cpu, &call);
         *cpu = saved;
-        DEPTH.with(|d| d.set(d.get() - 1));
+        DEPTH.update(|d| d - 1);
         kern::with(|k| { k.com.reply(call.id, reply); k.changed(); });
     }
 }

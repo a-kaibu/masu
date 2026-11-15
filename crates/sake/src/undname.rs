@@ -1280,7 +1280,7 @@ fn type_name(slot: u32, dec: &[u8]) -> u32 {
     if have != 0 {
         return have;
     }
-    let d = undecorate(dec.strip_prefix(b".").unwrap_or(dec), TYPE_ONLY | 0x800);
+    let d = undecorate(dec.trim_prefix(b"."), TYPE_ONLY | 0x800);
     let p = mem::heap_alloc(d.len() as u32 + 1, true);
     mem::write(p, &d);
     wp(slot, p);

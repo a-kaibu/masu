@@ -325,7 +325,7 @@ fn full_path_trim(p: &str, trim: bool) -> String {
 /// Host path for a Windows path, without checking that it exists.
 pub fn to_host(w: &str) -> String {
     let w = full_path(w);
-    let w = w.strip_prefix("\\\\?\\").unwrap_or(&w);
+    let w = w.trim_prefix("\\\\?\\");
     let w = &wow64_system(w);
     let (drive, rest) = w.split_at(2);
     let rest = rest.replace('\\', "/");

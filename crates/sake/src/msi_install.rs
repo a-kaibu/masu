@@ -176,9 +176,9 @@ pub fn do_action(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str, table: Option
         eprintln!("msi: action {name}: actions nested {MAX_ACTION_DEPTH} deep");
         return ERROR_INSTALL_FAILURE;
     }
-    DEPTH.with(|d| d.set(d.get() + 1));
+    DEPTH.update(|d| d + 1);
     let r = do_action_nested(c, p, name, table);
-    DEPTH.with(|d| d.set(d.get() - 1));
+    DEPTH.update(|d| d - 1);
     r
 }
 /// How deep actions may run inside actions.
@@ -1162,7 +1162,7 @@ fn process_components(p: &Arc<Mutex<Package>>) -> u32 {
             INSTALLSTATE_SOURCE => {
                 let src = pk.dirs.get(&c.dir).map(|d| d.source.clone()).unwrap_or_default();
                 let root = pk.prop("SourceDir");
-                let rel = src.strip_prefix(root.as_str()).unwrap_or(&src).to_string();
+                let rel = src.trim_prefix(root.as_str()).to_string();
                 put_str(&key, &packed, &format!("01:{rel}{}", file.map(|f| f.name.as_str()).unwrap_or("")));
             }
             INSTALLSTATE_ABSENT => {

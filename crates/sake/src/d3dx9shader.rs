@@ -317,7 +317,7 @@ fn by_name(t: &Table, parent: Option<usize>, name: &str) -> Option<usize> {
         Some(p) => &t.ks[p].members,
     };
     let k = *list.iter().find(|&&k| t.ks[k].name == head)?;
-    let rest = rest.strip_prefix('.').unwrap_or(rest);
+    let rest = rest.trim_prefix('.');
     if rest.is_empty() {
         Some(k)
     } else {

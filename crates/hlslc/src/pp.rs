@@ -144,7 +144,7 @@ fn clean(src: &str) -> Vec<String> {
     let mut in_block = false;
     let mut pending_empty = 0;
     for raw in src.split('\n') {
-        let raw = raw.strip_suffix('\r').unwrap_or(raw);
+        let raw = raw.trim_suffix('\r');
         let b = raw.as_bytes();
         let mut i = 0;
         let mut in_str = false;

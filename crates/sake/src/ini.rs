@@ -52,7 +52,7 @@ fn unquote(v: &str) -> &str {
 impl Ini {
     pub(crate) fn parse(text: &str) -> Ini {
         let mut ini = Ini::default();
-        let mut lines: Vec<&str> = text.split('\n').map(|l| l.strip_suffix('\r').unwrap_or(l)).collect();
+        let mut lines: Vec<&str> = text.split('\n').map(|l| l.trim_suffix('\r')).collect();
         if lines.last() == Some(&"") {
             lines.pop();
         }
@@ -278,7 +278,7 @@ fn read_host(host: &str) -> Option<Arc<Ini>> {
     }
     let b = kura::fs::read(host).ok()?;
     #[cfg(test)]
-    tests::READS.with(|n| n.set(n.get() + 1));
+    tests::READS.update(|n| n + 1);
     let ini = Arc::new(decode(&b));
     if b.len() <= CACHE_BYTES {
         remember(host, stamp, ini.clone());

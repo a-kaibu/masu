@@ -192,7 +192,7 @@ const MAX_PAGE: u64 = 16 << 20;
 /// make it undecryptable.
 fn with_hook(page: Vec<u8>) -> Vec<u8> {
     const HOOK: &[u8] = b"<script src=\"/frame.js\"></script>";
-    let body = page.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&page);
+    let body = page.trim_prefix(b"\xef\xbb\xbf");
     if body.iter().find(|c| !c.is_ascii_whitespace()) != Some(&b'<') {
         return page;
     }

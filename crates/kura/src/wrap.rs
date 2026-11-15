@@ -278,7 +278,7 @@ pub fn load_idle<R>(f: impl FnOnce() -> R) -> R {
     let r = f();
     let blocked = unsafe { emscripten_get_now() } - t;
     // the wrapper counts from its own stamp: it takes off the time blocked
-    LOAD_IDLE.with(|c| c.set(c.get() + blocked));
+    LOAD_IDLE.update(|c| c + blocked);
     if woke != 0.0 {
         l.woke.store((woke + blocked).to_bits(), Ordering::Relaxed);
     }

@@ -269,7 +269,7 @@ fn functions(ix: &Index) -> HashMap<(String, String), MethodDef<'_>> {
         if let Item::Fn(f) = it {
             if let Some(im) = f.impl_map() {
                 let dll = im.import_scope().name().to_lowercase();
-                let dll = dll.strip_suffix(".dll").unwrap_or(&dll).to_string();
+                let dll = dll.trim_suffix(".dll").to_string();
                 m.insert((dll, f.name().to_string()), f);
             }
         }

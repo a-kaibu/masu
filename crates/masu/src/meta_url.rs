@@ -49,7 +49,7 @@ pub fn entry_id(s: &str) -> Option<String> {
     }
     let host = authority.split(':').next().unwrap_or("").to_ascii_lowercase();
     let host = host.trim_end_matches('.');
-    let host = host.strip_prefix("www.").unwrap_or(host);
+    let host = host.trim_prefix("www.");
     let rest = rest.split('#').next().unwrap_or("");
     let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
     match host {

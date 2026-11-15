@@ -202,7 +202,7 @@ impl Video {
         let mut i = from;
         while i + 3 < d.len() {
             #[cfg(test)]
-            STEPS.with(|c| c.set(c.get() + 1));
+            STEPS.update(|c| c + 1);
             if d[i + 2] > 1 {
                 i += 3;
             } else if d[i] == 0 && d[i + 1] == 0 && d[i + 2] == 1 {

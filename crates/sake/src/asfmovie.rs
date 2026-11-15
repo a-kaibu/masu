@@ -55,7 +55,7 @@ impl Video {
             let frames = match self.r.next_sample() {
                 Some(s) => {
                     #[cfg(test)]
-                    DECODED.with(|c| c.set(c.get() + 1));
+                    DECODED.update(|c| c + 1);
                     self.codec.decode(&s.data, s.time, s.key)
                 }
                 None => {
@@ -144,7 +144,7 @@ pub struct Audio {
 impl Audio {
     fn seek(&mut self, frame: u64) {
         #[cfg(test)]
-        SEEKS.with(|c| c.set(c.get() + 1));
+        SEEKS.update(|c| c + 1);
         self.sought = frame;
         self.r.seek((frame as u128 * SEC as u128 / self.rate.max(1) as u128) as u64);
         self.codec.flush();

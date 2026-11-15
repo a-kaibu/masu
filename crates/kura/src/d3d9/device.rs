@@ -4908,7 +4908,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                     }
                     DRAWS_JOINED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     #[cfg(test)]
-                    JOINED_HERE.with(|j| j.set(j.get() + 1));
+                    JOINED_HERE.update(|j| j + 1);
                     return ((vso, pso), Some((at, len, vend)));
                 }
             }

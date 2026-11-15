@@ -217,7 +217,7 @@ fn format_reg(m: &HashMap<String, KeyData>) -> String {
 
 fn write_reg(t: &str) -> bool {
     #[cfg(test)]
-    reg_cache_tests::WRITES.with(|n| n.set(n.get() + 1));
+    reg_cache_tests::WRITES.update(|n| n + 1);
     let h = crate::files::resolve_new(REG_FILE);
     if let Some(d) = h.rsplit_once('/') {
         let _ = kura::fs::create_dir_all(d.0);
@@ -383,7 +383,7 @@ thread_local! {
 /// standard actions: a package's thousand Registry rows are one file write, not a thousand).
 /// Other processes see them at the end; this one at once.
 pub(crate) fn reg_batch<R>(f: impl FnOnce() -> R) -> R {
-    BATCH.with(|b| b.set(b.get() + 1));
+    BATCH.update(|b| b + 1);
     let r = f();
     if BATCH.with(|b| {
         b.set(b.get() - 1);
@@ -2902,7 +2902,7 @@ fn parse_num(s: &str) -> Option<f64> {
     if let Some(o) = t.strip_prefix("&O").or_else(|| t.strip_prefix("&o")) {
         return i64::from_str_radix(o, 8).ok().map(|x| x as f64);
     }
-    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
+    let body = t.trim_prefix(['+', '-']);
     let n = body.find(['.', 'e', 'E']).unwrap_or(body.len());
     let (int_part, rest) = body.split_at(n);
     // (separators only between digits of the integer part)

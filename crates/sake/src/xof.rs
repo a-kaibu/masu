@@ -231,7 +231,7 @@ pub fn parse_guid(s: &[u8]) -> Option<Guid> {
 
 fn number(w: &[u8]) -> Option<Tok> {
     let s = std::str::from_utf8(w).ok()?;
-    let body = s.strip_prefix(['-', '+']).unwrap_or(s);
+    let body = s.trim_prefix(['-', '+']);
     let first = body.bytes().next()?;
     if !(first.is_ascii_digit() || first == b'.' && body.len() > 1 && body.as_bytes()[1].is_ascii_digit()) {
         return None;

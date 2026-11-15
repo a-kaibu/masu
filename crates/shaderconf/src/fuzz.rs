@@ -172,7 +172,7 @@ impl Input {
     fn parse(t: &str) -> Option<Input> {
         let t: String = t.lines().skip_while(|l| l.starts_with('#')).collect::<Vec<_>>().join("\n");
         let (head, rest) = t.split_once(|c| c == '\n' || c == ':').map(|(a, b)| (a.trim(), b))?;
-        let rest = rest.strip_prefix('\n').unwrap_or(rest);
+        let rest = rest.trim_prefix('\n');
         let hex = |s: &str| s.split_whitespace().map(|w| u32::from_str_radix(w, 16).ok()).collect::<Option<Vec<u32>>>();
         Some(match head {
             "HLSL (ps_4_0)" => Input::Hlsl(rest.trim_start_matches(['\n']).to_string(), "ps_4_0"),

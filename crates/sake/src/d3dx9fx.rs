@@ -1465,7 +1465,7 @@ fn GetString(c: &mut Ctx) -> u32 {
     .flatten();
     let Some(s) = r else { return D3DERR_INVALIDCALL };
     // (a string object's data may end in its NUL)
-    let s = s.strip_suffix(&[0]).unwrap_or(&s);
+    let s = s.trim_suffix(&[0]);
     w32(out, fx_str(this(c), s));
     0
 }

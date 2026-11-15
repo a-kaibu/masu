@@ -1179,7 +1179,7 @@ fn nested(job: &Job, root: &Path) -> Result<()> {
         if s.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case("BGIForInstalling.exe")) {
             for e in fs::read_dir(s.parent().context("the installer's folder")?)?.flatten() {
                 let p = e.path();
-                if p.is_file() && fs::read(&p).is_ok_and(|b| b.strip_suffix(b"\n").unwrap_or(&b).strip_suffix(b"\r").map_or(b.as_slice() == b"0123456789ABCDEF", |x| x == b"0123456789ABCDEF")) && e.metadata().is_ok_and(|m| m.len() == 16) {
+                if p.is_file() && fs::read(&p).is_ok_and(|b| b.trim_suffix(b"\n").strip_suffix(b"\r").map_or(b.as_slice() == b"0123456789ABCDEF", |x| x == b"0123456789ABCDEF")) && e.metadata().is_ok_and(|m| m.len() == 16) {
                     eprintln!("{}: the install media's marker, removed", p.display());
                     fs::remove_file(&p)?;
                 }
@@ -1203,7 +1203,7 @@ fn nested(job: &Job, root: &Path) -> Result<()> {
             }
             Err(e) if is_limit(&e) => return Err(e.context(m.display().to_string())),
             _ => {
-                let rel = m.strip_prefix(root).unwrap_or(m).display();
+                let rel = m.trim_prefix(root).display();
                 job.issue(format!("{rel}: left as is (needs msiextract, or msiinfo and cabextract)"));
                 fs::remove_dir_all(&o)?;
                 job.reset(mark);
