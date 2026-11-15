@@ -11,7 +11,7 @@ pub mod gpu;
 #[cfg(test)]
 pub mod model;
 
-use crate::guest::{lo32, lo32w, us};
+use crate::guest::{lo32, us};
 #[cfg(test)]
 use crate::locks::Lock;
 use std::cell::RefCell;
@@ -178,10 +178,10 @@ pub unsafe extern "C" fn vnhost_render_info(out: *mut [u32; 8]) {
     let f = *FRAME.lock().unwrap_or_else(|e| e.into_inner());
     let out = &mut *out;
     out[..4].copy_from_slice(&f);
-    out[4] = lo32w(STATS[0].load(Relaxed));
-    out[5] = lo32w(STATS[1].load(Relaxed) / 1000);
-    out[6] = lo32w(STATS[2].load(Relaxed));
-    out[7] = lo32w(STATS[3].load(Relaxed) >> 20);
+    out[4] = lo32(STATS[0].load(Relaxed));
+    out[5] = lo32(STATS[1].load(Relaxed) / 1000);
+    out[6] = lo32(STATS[2].load(Relaxed));
+    out[7] = lo32(STATS[3].load(Relaxed) >> 20);
 }
 
 /// host/vngpu.js: every animation frame (of the drawing thread's worker).

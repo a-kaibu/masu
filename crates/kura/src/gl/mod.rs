@@ -13,7 +13,7 @@
 
 #![allow(non_snake_case, clippy::missing_safety_doc, clippy::too_many_arguments)]
 
-use crate::guest::{lo32, lo32w, us};
+use crate::guest::{lo32, us};
 use crate::d3d9::gpu;
 use crate::render::d3d::{BlendOp, Compare, Factor, StencilOp};
 use crate::locks::Lock;
@@ -1364,7 +1364,7 @@ pub(crate) fn indices(g: &Gl, c: &Ctx, count: i32, ty: u32, ptr: u32) -> Vec<u32
 /// MAX_VERTICES of them (a count of garbage asked for count * 64 bytes and aborted).
 fn draw_range(first: i32, count: i32) -> std::ops::Range<u32> {
     let lo = first.max(0).cast_unsigned();
-    let hi = lo32w(((i64::from(first) + i64::from(count.max(0))).clamp(0, i64::from(u32::MAX))).cast_unsigned());
+    let hi = lo32(((i64::from(first) + i64::from(count.max(0))).clamp(0, i64::from(u32::MAX))).cast_unsigned());
     lo..hi.max(lo).min(lo.saturating_add(lo32(MAX_VERTICES)))
 }
 

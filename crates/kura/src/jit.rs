@@ -16,7 +16,7 @@
 //! no interpreter warm-up and no translation, and in Chromium the browser's code cache of the
 //! module keeps V8's optimized code too.
 
-use crate::guest::{gc, lo32, lo32w, us};
+use crate::guest::{gc, lo32, us};
 use crate::locks::{Lock, Rw};
 use crate::cpu::Linear;
 use std::cell::{Cell, RefCell};
@@ -500,7 +500,7 @@ const FN_BUILDS: u32 = 8;
 const MAX_MERGES: u32 = 512;
 /// The hops of `n` samples out of a ring of `len`, `hops` hops since the last one.
 fn hop_share(hops: u32, n: usize, len: usize) -> u32 {
-    lo32w((u64::from(hops) * n as u64 / len.max(1) as u64).min(u64::from(u32::MAX)))
+    lo32((u64::from(hops) * n as u64 / len.max(1) as u64).min(u64::from(u32::MAX)))
 }
 
 /// Hops out of a long-mode region that make merge_hot64 merge it with where they go
@@ -1760,7 +1760,7 @@ fn take_acks(book: &mut SaveBook) {
     let ids: Vec<u32> = book.inflight.keys().copied().collect();
     for id in ids {
         let v = SAVE_ACKS[us(id) % 32].load(Ordering::Acquire);
-        if v >> 63 == 1 && lo32w(v >> 8) == id {
+        if v >> 63 == 1 && lo32(v >> 8) == id {
             book.answer(id, match v & 0xff {
                 1 => Ack::Taken,
                 2 => Ack::Refused,
@@ -1996,7 +1996,7 @@ fn merge_hot(st: &mut State, cpu: &Cpu) {
             PAIRS.with(|p| {
                 let mut p = p.borrow_mut();
                 for j in &jumps {
-                    let from = st.roots.get(&(lo32w(j >> 32))).map_or(0, |r| r[0]);
+                    let from = st.roots.get(&(lo32(j >> 32))).map_or(0, |r| r[0]);
                     *p.entry((from, *j as u32)).or_default() += 1;
                 }
                 if n - last > 50_000_000 {
@@ -2042,7 +2042,7 @@ fn merge_hot(st: &mut State, cpu: &Cpu) {
     // functions (jit::FN): a call or tail jump that found no function there, or a function
     // left often (built again with the blocks that ran since)
     for &(c, p) in &runs {
-        let (from, to) = (lo32w(p >> 32), lo32w(p));
+        let (from, to) = (lo32(p >> 32), lo32(p));
         if c < FN_SAMPLES {
             break;
         }
@@ -2095,12 +2095,12 @@ fn merge_hot(st: &mut State, cpu: &Cpu) {
     }
     // regions: the most frequent pair between them
     let Some(&(c, best)) = runs.iter().find(|r| {
-        let (from, to) = (lo32w(r.1 >> 32), lo32w(r.1));
+        let (from, to) = (lo32(r.1 >> 32), lo32(r.1));
         from & jit::FN_TAG == 0 && !st.fns.contains(&from) && !st.fns.contains(&to)
     }) else {
         return;
     };
-    let (from, to) = (lo32w(best >> 32), lo32w(best));
+    let (from, to) = (lo32(best >> 32), lo32(best));
     if c < MERGE_SAMPLES || st.merges >= MAX_MERGES || st.fns.contains(&to) {
         return;
     }
@@ -2167,8 +2167,8 @@ fn merge_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64], hops: u32) {
     let mut best = (0, 0u32);
     let mut i = 0;
     while i < jumps.len() {
-        let from = lo32w(jumps[i] >> 32);
-        let k = i + jumps[i..].iter().take_while(|j| lo32w(**j >> 32) == from).count();
+        let from = lo32(jumps[i] >> 32);
+        let k = i + jumps[i..].iter().take_while(|j| lo32(**j >> 32) == from).count();
         if k - i > best.0 {
             best = (k - i, from);
         }
@@ -2199,8 +2199,8 @@ fn merge_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64], hops: u32) {
     let mut i = 0;
     while i < jumps.len() {
         let k = i + jumps[i..].iter().take_while(|j| **j == jumps[i]).count();
-        let to = lo32w(jumps[i]);
-        if lo32w(jumps[i] >> 32) == from && k - i >= 2 && !roots.contains(&to) && st.merged.insert((from, to)) {
+        let to = lo32(jumps[i]);
+        if lo32(jumps[i] >> 32) == from && k - i >= 2 && !roots.contains(&to) && st.merged.insert((from, to)) {
             new.push(to);
         }
         i = k;
@@ -2230,7 +2230,7 @@ fn fn_hot64(st: &mut State, cpu: &Cpu, jumps: &[u64]) {
     let mut i = 0;
     while i < jumps.len() {
         let k = i + jumps[i..].iter().take_while(|j| **j == jumps[i]).count();
-        let (from, to) = (lo32w(jumps[i] >> 32), lo32w(jumps[i]));
+        let (from, to) = (lo32(jumps[i] >> 32), lo32(jumps[i]));
         let n = k - i;
         i = k;
         // (a call's miss: the target becomes a function; a function's jump out: built again,
@@ -2375,7 +2375,7 @@ fn fn_span(c: &[(u32, u32)], root: u32) -> Option<(u32, u64)> {
         }
         lo = lo.min(s);
     }
-    Some((lo32w(lo), hi))
+    Some((lo32(lo), hi))
 }
 
 /// Translates the x64 function at `eip` (jit::long::FN64, in the 4GB alias cpu.rip_hi) and
