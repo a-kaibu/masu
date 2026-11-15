@@ -22,6 +22,8 @@
 
 #![allow(clippy::too_many_arguments)]
 
+use crate::guest::{lo32, us};
+use kome::num::{to_f32, Trunc};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -41,7 +43,7 @@ impl J {
     pub fn get(&self, k: &str) -> Option<&J> {
         match self {
             J::Obj(v) => v.iter().find(|e| e.0 == k).map(|e| &e.1),
-            _ => None,
+            J::Null | J::Bool(_) | J::Num(_) | J::Str(_) | J::Arr(_) => None,
         }
     }
     fn num(&self, k: &str) -> Option<f64> {
@@ -51,7 +53,7 @@ impl J {
         }
     }
     fn u(&self, k: &str) -> Option<u32> {
-        self.num(k).map(|n| n as u32)
+        self.num(k).map(|n| n.trunc_u32())
     }
     fn s(&self, k: &str) -> Option<&str> {
         match self.get(k) {
@@ -417,7 +419,7 @@ impl Texture {
         ((self.w >> mip).max(1), (self.h >> mip).max(1), d)
     }
     fn sub(&self, mip: u32, layer: u32) -> usize {
-        (mip * self.layers + layer) as usize
+        us(mip * self.layers + layer)
     }
 }
 
@@ -614,11 +616,11 @@ impl Model {
     /// Tests of a lost device: what object `id` of the table holds becomes zeros (a texture's
     /// texels and stencil, a buffer's bytes), as a new one's.
     pub fn zero(&mut self, id: u32) {
-        let Some(Some(k)) = self.table.get(id as usize).copied() else { return };
+        let Some(Some(k)) = self.table.get(us(id)).copied() else { return };
         match &mut self.objs[k] {
             Obj::Texture(t) => t.texels.iter_mut().chain(t.stencil.iter_mut()).for_each(|v| v.fill(0)),
             Obj::Buffer(b) => b.data.fill(0),
-            _ => {}
+            Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {}
         }
     }
 }
@@ -643,19 +645,19 @@ impl Model {
         let a = self.objs.len() - 1;
         match self.free.pop() {
             Some(i) => {
-                self.table[i as usize] = Some(a);
+                self.table[us(i)] = Some(a);
                 i
             }
             None => {
                 self.table.push(Some(a));
-                (self.table.len() - 1) as u32
+                lo32(self.table.len() - 1)
             }
         }
     }
 
     /// The object behind table index `i` (an error when it was dropped or never made).
     pub fn at(&mut self, i: u32, what: &str) -> Option<usize> {
-        match self.table.get(i as usize).copied().flatten() {
+        match self.table.get(us(i)).copied().flatten() {
             Some(a) => Some(a),
             None => {
                 self.err(format!("{what}: object {i} is not in the table (dropped or never made)"));
@@ -667,7 +669,7 @@ impl Model {
     pub fn tex(&self, a: usize) -> &Texture {
         match &self.objs[a] {
             Obj::Texture(t) => t,
-            _ => panic!("not a texture"),
+            Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => panic!("not a texture"),
         }
     }
 
@@ -679,7 +681,7 @@ impl Model {
                 None
             }
             Obj::Texture(_) => Some(a),
-            _ => {
+            Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {
                 self.err(format!("{what}: object {i} is not a texture"));
                 None
             }
@@ -694,7 +696,7 @@ impl Model {
                 None
             }
             Obj::Buffer(_) => Some(a),
-            _ => {
+            Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {
                 self.err(format!("{what}: object {i} is not a buffer"));
                 None
             }
@@ -714,7 +716,7 @@ impl Model {
     fn view_of(&self, a: usize) -> Option<&View> {
         match &self.objs[a] {
             Obj::View(v) => Some(v),
-            _ => None,
+            Obj::Texture(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
         }
     }
 
@@ -767,11 +769,11 @@ impl Model {
             self.err(format!("createTexture: {samples}x {format} {dim} {w}x{h}x{d}, {mips} mips, usage {usage:#x}"));
         }
         let layers = d;
-        let n = (w.min(4096) * h.min(4096)) as usize;
+        let n = us(w.min(4096) * h.min(4096));
         let mut texels = Vec::new();
         for m in 0..mips.min(32) {
             for _ in 0..layers {
-                texels.push(vec![0u64; (((w >> m).max(1)) * ((h >> m).max(1))).min(n as u32) as usize]);
+                texels.push(vec![0u64; us((((w >> m).max(1)) * ((h >> m).max(1))).min(lo32(n)))]);
             }
         }
         let stencil = if has_stencil(&format) { texels.clone() } else { Vec::new() };
@@ -835,7 +837,7 @@ impl Model {
         if size > 1 << 28 {
             self.err(format!("createBuffer: size {size}"));
         }
-        self.put(Obj::Buffer(Buffer { size, usage, data: vec![0; size.min(1 << 28) as usize], destroyed: false, mapped: false }))
+        self.put(Obj::Buffer(Buffer { size, usage, data: vec![0; us(size.min(1 << 28))], destroyed: false, mapped: false }))
     }
 
     pub fn sampler(&mut self, s: &str) -> u32 {
@@ -1079,9 +1081,9 @@ impl Model {
         };
         // every binding the shaders use is in the layout, of its kind
         for u in &used {
-            let e = groups.get(u.0 as usize).and_then(|&g| match &self.objs[g] {
+            let e = groups.get(us(u.0)).and_then(|&g| match &self.objs[g] {
                 Obj::Layout(es) => es.iter().find(|e| e.binding == u.1).cloned(),
-                _ => None,
+                Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
             });
             match e {
                 None => self.err(format!("{what}: the shaders use @group({}) @binding({}), the layout has no such entry", u.0, u.1)),
@@ -1282,9 +1284,9 @@ impl Model {
             }
         };
         for u in &used {
-            let e = groups.get(u.0 as usize).and_then(|&g| match &self.objs[g] {
+            let e = groups.get(us(u.0)).and_then(|&g| match &self.objs[g] {
                 Obj::Layout(es) => es.iter().find(|e| e.binding == u.1).cloned(),
-                _ => None,
+                Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
             });
             match e {
                 None => self.err(format!("{what}: the shader uses @group({}) @binding({}), the layout has no such entry", u.0, u.1)),
@@ -1335,7 +1337,7 @@ impl Model {
             .iter()
             .filter_map(|(b, e)| match e {
                 Entry::View(v) => Some((es.iter().any(|x| x.binding == *b && x.kind == 'w'), self.view_of(*v).unwrap().clone())),
-                _ => None,
+                Entry::Buffer(..) | Entry::Sampler(_) => None,
             })
             .collect();
         for (i, (wa, va)) in views.iter().enumerate() {
@@ -1351,8 +1353,8 @@ impl Model {
 
     pub fn pipeline_group_layout(&mut self, p: u32, i: u32) -> u32 {
         let l = match self.at(p, "getBindGroupLayout").map(|a| self.objs[a].clone()) {
-            Some(Obj::Pipeline(p)) => p.groups.get(i as usize).map(|&g| self.objs[g].clone()),
-            Some(Obj::Compute(_, g)) => g.get(i as usize).map(|&g| self.objs[g].clone()),
+            Some(Obj::Pipeline(p)) => p.groups.get(us(i)).map(|&g| self.objs[g].clone()),
+            Some(Obj::Compute(_, g)) => g.get(us(i)).map(|&g| self.objs[g].clone()),
             _ => None,
         };
         match l {
@@ -1454,7 +1456,7 @@ impl Model {
                         }
                         entries.push((binding, Entry::Sampler(a)));
                     }
-                    _ => self.err(format!("{what}: binding {binding}: not a view or sampler")),
+                    Obj::Texture(_) | Obj::Buffer(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => self.err(format!("{what}: binding {binding}: not a view or sampler")),
                 }
             }
         }
@@ -1479,7 +1481,7 @@ impl Model {
             return;
         }
         let Obj::Buffer(bf) = &mut self.objs[b] else { return };
-        bf.data[at as usize..at as usize + bytes.len()].copy_from_slice(bytes);
+        bf.data[us(at)..us(at) + bytes.len()].copy_from_slice(bytes);
     }
 
     pub fn write_texture(&mut self, tex: u32, mip: u32, o: [u32; 3], p: *const u8, n: usize, bpr: u32, rows: u32, size: [u32; 3]) {
@@ -1527,8 +1529,8 @@ impl Model {
             let s = tm.sub(mip, o[2] + z);
             for y in 0..size[1] {
                 for x in 0..size[0] {
-                    let at = (z * rows * bpr + y * bpr + x * bpp) as usize;
-                    tm.texels[s][((o[1] + y) * lw + o[0] + x) as usize] = write_texel(&data[at..at + bpp as usize]);
+                    let at = us(z * rows * bpr + y * bpr + x * bpp);
+                    tm.texels[s][us((o[1] + y) * lw + o[0] + x)] = write_texel(&data[at..at + us(bpp)]);
                 }
             }
         }
@@ -1539,7 +1541,7 @@ impl Model {
         match &mut self.objs[a] {
             Obj::Texture(t) => t.destroyed = true,
             Obj::Buffer(b) => b.destroyed = true,
-            _ => {}
+            Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => {}
         }
     }
 
@@ -1549,7 +1551,7 @@ impl Model {
     }
     /// Tests: the open pass's vertex buffer at `slot` and its index buffer (objects, offsets).
     pub fn vbuf(&self, slot: u32) -> Option<(usize, u32)> {
-        self.pass.as_ref()?.3.vbufs.get(slot as usize).copied().flatten()
+        self.pass.as_ref()?.3.vbufs.get(us(slot)).copied().flatten()
     }
     pub fn ibuf(&self) -> Option<(usize, bool, u32)> {
         self.pass.as_ref()?.3.ibuf
@@ -1557,9 +1559,9 @@ impl Model {
 
     /// Tests: the bytes of the buffer behind table index `i`.
     pub fn buffer_bytes(&self, i: u32) -> Option<Vec<u8>> {
-        match &self.objs[*self.table.get(i as usize)?.as_ref()?] {
+        match &self.objs[*self.table.get(us(i))?.as_ref()?] {
             Obj::Buffer(b) => Some(b.data.clone()),
-            _ => None,
+            Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
         }
     }
 
@@ -1578,9 +1580,9 @@ impl Model {
         if i == 0 {
             return;
         }
-        match self.table.get(i as usize).copied().flatten() {
+        match self.table.get(us(i)).copied().flatten() {
             Some(_) => {
-                self.table[i as usize] = None;
+                self.table[us(i)] = None;
                 self.free.push(i);
             }
             None => self.err(format!("drop: object {i} is not in the table")),
@@ -1860,7 +1862,7 @@ impl Model {
             self.err(format!("{what}: no attachments"));
             return;
         };
-        let st = DrawState { viewport: [0.0, 0.0, sz.0 as f32, sz.1 as f32, 0.0, 1.0], scissor: [0, 0, sz.0, sz.1], ..Default::default() };
+        let st = DrawState { viewport: [0.0, 0.0, to_f32(sz.0), to_f32(sz.1), 0.0, 1.0], scissor: [0, 0, sz.0, sz.1], ..Default::default() };
         self.pass = Some((colors, depth, Vec::new(), st, sz));
         self.pass_samples = pass_samples.unwrap_or(1);
     }
@@ -1926,10 +1928,10 @@ impl Model {
             }
         }
         let st = &mut self.pass.as_mut().unwrap().3;
-        if st.groups.len() <= i as usize {
-            st.groups.resize(i as usize + 1, None);
+        if st.groups.len() <= us(i) {
+            st.groups.resize(us(i) + 1, None);
         }
-        st.groups[i as usize] = Some((a, offs.to_vec()));
+        st.groups[us(i)] = Some((a, offs.to_vec()));
     }
 
     pub fn set_vertex_buffer(&mut self, slot: u32, buf: u32, off: u32) {
@@ -1944,10 +1946,10 @@ impl Model {
             self.err(format!("{what}: slot {slot} offset {off} of {s} (usage {u:#x})"));
         }
         let st = &mut self.pass.as_mut().unwrap().3;
-        if st.vbufs.len() <= slot as usize {
-            st.vbufs.resize(slot as usize + 1, None);
+        if st.vbufs.len() <= us(slot) {
+            st.vbufs.resize(us(slot) + 1, None);
         }
-        st.vbufs[slot as usize] = Some((b, off));
+        st.vbufs[us(slot)] = Some((b, off));
     }
 
     pub fn set_index_buffer(&mut self, buf: u32, u32_: bool, off: u32) {
@@ -1971,7 +1973,7 @@ impl Model {
         }
         let (w, h) = self.pass.as_ref().unwrap().4;
         let [x, y, vw, vh, z0, z1] = v;
-        if vw < 0.0 || vh < 0.0 || x < 0.0 || y < 0.0 || x + vw > w as f32 || y + vh > h as f32 || !(0.0..=1.0).contains(&z0) || !(0.0..=1.0).contains(&z1) || z0 > z1 {
+        if vw < 0.0 || vh < 0.0 || x < 0.0 || y < 0.0 || x + vw > to_f32(w) || y + vh > to_f32(h) || !(0.0..=1.0).contains(&z0) || !(0.0..=1.0).contains(&z1) || z0 > z1 {
             self.err(format!("{what}: {v:?} in a {w}x{h} pass"));
         }
         self.pass.as_mut().unwrap().3.viewport = v;
@@ -2104,16 +2106,16 @@ impl Model {
 
     fn assemble1(&self, d: &Draw, instance: u32) -> Vec<Vec<Vertex>> {
         let Obj::Pipeline(p) = &self.objs[d.st.pipeline.unwrap()] else { return Vec::new() };
-        let (n, first, base) = (d.args[0], d.args[2], d.args[3] as i32);
+        let (n, first, base) = (d.args[0], d.args[2], d.args[3].cast_signed());
         // the vertex index of each invocation (None: a strip restart)
         let ids: Vec<Option<i64>> = if d.indexed {
             let Some((b, u32_, off)) = d.st.ibuf else { return Vec::new() };
             let Obj::Buffer(bf) = &self.objs[b] else { return Vec::new() };
             let sz = if u32_ { 4 } else { 2 };
-            (0..n as usize)
+            (0..us(n))
                 .map(|i| {
-                    let at = off as usize + (first as usize + i) * sz;
-                    let ix = bf.data.get(at..at + sz).map(|c| if sz == 4 { u32::from_le_bytes(c.try_into().unwrap()) } else { u16::from_le_bytes(c.try_into().unwrap()) as u32 });
+                    let at = us(off) + (us(first) + i) * sz;
+                    let ix = bf.data.get(at..at + sz).map(|c| if sz == 4 { u32::from_le_bytes(c.try_into().unwrap()) } else { lo32(u16::from_le_bytes(c.try_into().unwrap())) });
                     let ix = ix.unwrap_or(0);
                     let restart = p.strip_format.is_some() && ix == if u32_ { u32::MAX } else { 0xffff };
                     (!restart).then_some(ix as i64 + base as i64)
@@ -2129,13 +2131,13 @@ impl Model {
                 let v = if p.per_instance[k] { instance as i64 } else { v };
                 let src = d.st.vbufs.get(k).copied().flatten().and_then(|(b, off)| match &self.objs[b] {
                     Obj::Buffer(bf) => Some((bf, off)),
-                    _ => None,
+                    Obj::Texture(_) | Obj::View(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Pipeline(_) | Obj::Compute(..) | Obj::Group(..) => None,
                 });
                 for &(aoff, size, loc) in list {
                     let bytes = src
                         .and_then(|(bf, off)| {
                             let at = off as i64 + v * stride + aoff as i64;
-                            (at >= 0).then(|| bf.data.get(at as usize..at as usize + size as usize)).flatten()
+                            (at >= 0).then(|| bf.data.get(at as usize..at as usize + us(size))).flatten()
                         })
                         .map(|b| b.to_vec())
                         .unwrap_or_default();
@@ -2171,7 +2173,7 @@ impl Model {
         let Obj::Group(_, entries) = &self.objs[*g] else { return None };
         let v = entries.iter().find_map(|(b, e)| match e {
             Entry::View(v) if *b == 0 => Some(*v),
-            _ => None,
+            Entry::Buffer(..) | Entry::View(_) | Entry::Sampler(_) => None,
         })?;
         let vw = self.view_of(v)?;
         let t = self.tex(vw.tex);
@@ -2185,11 +2187,11 @@ impl Model {
         let Obj::Group(_, entries) = &self.objs[*g] else { return None };
         let (b, off) = entries.iter().find_map(|(k, e)| match e {
             Entry::Buffer(b, off, _) if *k == 2 => Some((*b, *off as usize)),
-            _ => None,
+            Entry::Buffer(..) | Entry::View(_) | Entry::Sampler(_) => None,
         })?;
         let Obj::Buffer(bf) = &self.objs[b] else { return None };
         let f = |k: usize| bf.data.get(off + 4 * k..off + 4 * k + 4).map(|x| f32::from_le_bytes(x.try_into().unwrap()));
-        let h = self.tex(tex).texels[sub].len() as u32 / w.max(1);
+        let h = lo32(self.tex(tex).texels[sub].len()) / w.max(1);
         Some((tex, sub, w, h, [f(0)?, f(1)?, f(2)?, f(3)?]))
     }
 
@@ -2200,11 +2202,11 @@ impl Model {
         let Obj::Group(_, entries) = &self.objs[*g] else { return None };
         let (b, off) = entries.iter().find_map(|(k, e)| match e {
             Entry::Buffer(b, off, _) if *k == 1 => Some((*b, *off as usize)),
-            _ => None,
+            Entry::Buffer(..) | Entry::View(_) | Entry::Sampler(_) => None,
         })?;
         let Obj::Buffer(bf) = &self.objs[b] else { return None };
         let f = |k: usize| bf.data.get(off + 4 * k..off + 4 * k + 4).map(|x| f32::from_le_bytes(x.try_into().unwrap()) as i64);
-        let h = self.tex(tex).texels[sub].len() as u32 / w.max(1);
+        let h = lo32(self.tex(tex).texels[sub].len()) / w.max(1);
         Some((tex, sub, w, h, [f(0)?, f(1)?]))
     }
 
@@ -2224,7 +2226,7 @@ impl Model {
                     Entry::Buffer(b, off, size) => {
                         let dynoff = dynamic.iter().position(|x| x == binding).and_then(|k| offs.get(k)).copied().unwrap_or(0);
                         let Obj::Buffer(bf) = &self.objs[*b] else { continue };
-                        let lo = (*off + dynoff) as usize;
+                        let lo = us(*off + dynoff);
                         let hi = (lo + *size as usize).min(bf.data.len());
                         let bytes = &bf.data[lo.min(hi)..hi];
                         h = hash_bytes(h, bytes);
@@ -2276,32 +2278,32 @@ impl Model {
     fn draw_sig(&mut self, d: &Draw) -> (u64, Option<([f32; 4], f32)>) {
         let p = match &self.objs[d.st.pipeline.unwrap()] {
             Obj::Pipeline(p) => p.clone(),
-            _ => unreachable!(),
+            Obj::Texture(_) | Obj::View(_) | Obj::Buffer(_) | Obj::Sampler(_) | Obj::Shader(..) | Obj::Layout(_) | Obj::PipelineLayout(_) | Obj::Compute(..) | Obj::Group(..) => unreachable!(),
         };
         let (mut h, clear) = self.groups_sig(d, &p, p.hash);
         // vertices and indices: the bytes it reads
-        let (n, inst, first, base, first_inst) = (d.args[0], d.args[1], d.args[2], d.args[3] as i32, d.args[4]);
+        let (n, inst, first, base, first_inst) = (d.args[0], d.args[1], d.args[2], d.args[3].cast_signed(), d.args[4]);
         let mut max_vertex = first as u64 + n as u64;
         if d.indexed {
             if let Some((b, u32_, off)) = d.st.ibuf {
                 let Obj::Buffer(bf) = &self.objs[b] else { unreachable!() };
                 let sz = if u32_ { 4 } else { 2 };
-                let lo = off as usize + first as usize * sz;
-                let hi = (lo + n as usize * sz).min(bf.data.len());
+                let lo = us(off) + us(first) * sz;
+                let hi = (lo + us(n) * sz).min(bf.data.len());
                 let ix = &bf.data[lo.min(hi)..hi];
                 h = hash_bytes(h, ix);
-                max_vertex = ix.chunks(sz).map(|c| if sz == 4 { u32::from_le_bytes(c.try_into().unwrap()) } else { u16::from_le_bytes(c.try_into().unwrap()) as u32 } as i64 + base as i64).max().unwrap_or(0).max(0) as u64 + 1;
+                max_vertex = ix.chunks(sz).map(|c| if sz == 4 { u32::from_le_bytes(c.try_into().unwrap()) } else { lo32(u16::from_le_bytes(c.try_into().unwrap())) } as i64 + base as i64).max().unwrap_or(0).max(0) as u64 + 1;
             }
         }
         for (k, &stride) in p.buffers.iter().enumerate() {
             if let Some((b, off)) = d.st.vbufs.get(k).copied().flatten() {
                 let Obj::Buffer(bf) = &self.objs[b] else { continue };
-                let hi = (off as u64 + max_vertex * stride as u64).min(bf.data.len() as u64) as usize;
-                h = hash_bytes(h, &bf.data[(off as usize).min(hi)..hi]);
+                let hi = ((off as u64 + max_vertex * stride as u64).min(bf.data.len() as u64)) as usize;
+                h = hash_bytes(h, &bf.data[(us(off)).min(hi)..hi]);
             }
         }
         h = mix(h, (n as u64) << 32 | inst as u64);
-        h = mix(h, (first as u64) << 32 | (base as u32 as u64));
+        h = mix(h, (first as u64) << 32 | (lo32(base) as u64));
         h = mix(h, first_inst as u64);
         for v in d.st.viewport {
             h = mix(h, v.to_bits() as u64);
@@ -2358,8 +2360,8 @@ impl Model {
             let Obj::Pipeline(p) = self.objs[d.st.pipeline.unwrap()].clone() else { continue };
             let [vx, vy, vw, vh, _, _] = d.st.viewport;
             let s = d.st.scissor;
-            let (cx0, cy0) = ((vx - 0.5).ceil().max(0.0) as u32, (vy - 0.5).ceil().max(0.0) as u32);
-            let (cx1, cy1) = ((vx + vw - 0.5).ceil().max(0.0) as u32, (vy + vh - 0.5).ceil().max(0.0) as u32);
+            let (cx0, cy0) = (((vx - 0.5).ceil().max(0.0)).trunc_u32(), ((vy - 0.5).ceil().max(0.0)).trunc_u32());
+            let (cx1, cy1) = (((vx + vw - 0.5).ceil().max(0.0)).trunc_u32(), ((vy + vh - 0.5).ceil().max(0.0)).trunc_u32());
             let (mut x0, mut y0, mut x1, mut y1) = (cx0.max(s[0]), cy0.max(s[1]), cx1.min(s[0] + s[2]), cy1.min(s[1] + s[3]));
             if let Some(b) = d.bounds {
                 (x0, y0, x1, y1) = (x0.max(b[0]), y0.max(b[1]), x1.min(b[2]), y1.min(b[3]));
@@ -2379,20 +2381,20 @@ impl Model {
                 let blends = p.targets.get(ci).is_some_and(|t| t.2) || ztest;
                 for y in y0..y1.min(h) {
                     for x in x0..x1.min(w) {
-                        let at = (y * w + x) as usize;
+                        let at = us(y * w + x);
                         let old = self.tex(t).texels[si][at];
                         let oz = zatt.map_or(0, |(zt, zs, _)| self.tex(zt).texels[zs][at]);
                         let new = match clear {
                             _ if bsrc.is_some() => {
                                 let (st, ss, sw, sh, r) = bsrc.unwrap();
-                                let u = r[0] + (x as f32 + 0.5 - vx) / vw * r[2];
-                                let v = r[1] + (y as f32 + 0.5 - vy) / vh * r[3];
-                                let (sx, sy) = (((u * sw as f32) as i64).clamp(0, sw as i64 - 1), ((v * sh as f32) as i64).clamp(0, sh as i64 - 1));
+                                let u = r[0] + (to_f32(x) + 0.5 - vx) / vw * r[2];
+                                let v = r[1] + (to_f32(y) + 0.5 - vy) / vh * r[3];
+                                let (sx, sy) = (((u * to_f32(sw)) as i64).clamp(0, sw as i64 - 1), ((v * to_f32(sh)) as i64).clamp(0, sh as i64 - 1));
                                 self.tex(st).texels[ss].get((sy * sw as i64 + sx) as usize).copied().unwrap_or(0)
                             }
                             _ if copy_src.is_some() => {
                                 let (st, ss, sw) = copy_src.unwrap();
-                                self.tex(st).texels[ss].get((y * sw + x) as usize).copied().unwrap_or(0)
+                                self.tex(st).texels[ss].get(us(y * sw + x)).copied().unwrap_or(0)
                             }
                             Some((c, _)) if p.clear_shader => clear_texel(&self.tex(t).format, c),
                             _ => mix(mix(mix(sig, (x as u64) << 32 | y as u64), if blends { old } else { 0 }), if p.depth.as_ref().is_some_and(|d| d.2 != "always") { oz } else { 0 }),
@@ -2409,7 +2411,7 @@ impl Model {
                 if pd.1 {
                     for y in y0..y1.min(h) {
                         for x in x0..x1.min(w) {
-                            let at = (y * w + x) as usize;
+                            let at = us(y * w + x);
                             let oz = self.tex(zt).texels[zs][at];
                             let nz = match clear {
                                 _ if zsrc.is_some() => {
@@ -2417,7 +2419,7 @@ impl Model {
                                     let (st, ss, sw, sh, o) = zsrc.unwrap();
                                     let (sx, sy) = (x as i64 - o[0], y as i64 - o[1]);
                                     let v = if (0..sw as i64).contains(&sx) && (0..sh as i64).contains(&sy) { self.tex(st).texels[ss][(sy * sw as i64 + sx) as usize] } else { 0 };
-                                    let f = f32::from_bits(v as u32);
+                                    let f = f32::from_bits(lo32(v));
                                     depth_value(&self.tex(zt).format, if f.is_nan() { 0.0 } else { f })
                                 }
                                 Some((_, z)) if p.clear_shader => depth_value(&self.tex(zt).format, z),
@@ -2529,19 +2531,19 @@ impl Model {
                     for z in 0..size[2] {
                         for y in 0..size[1] {
                             for x in 0..size[0] {
-                                let v = st.texels[st.sub(smip, so[2] + z)][((so[1] + y) * sw + so[0] + x) as usize];
+                                let v = st.texels[st.sub(smip, so[2] + z)][us((so[1] + y) * sw + so[0] + x)];
                                 let Obj::Texture(tx) = &mut self.objs[t] else { continue };
                                 let si = tx.sub(dmip, d[2] + z);
-                                tx.texels[si][((d[1] + y) * dw + d[0] + x) as usize] = v;
+                                tx.texels[si][us((d[1] + y) * dw + d[0] + x)] = v;
                             }
                         }
                     }
                 }
                 Cmd::BufCopy(a, b, n) => {
                     let Obj::Buffer(src) = &self.objs[a] else { continue };
-                    let bytes = src.data[..n as usize].to_vec();
+                    let bytes = src.data[..us(n)].to_vec();
                     let Obj::Buffer(dst) = &mut self.objs[b] else { continue };
-                    dst.data[..n as usize].copy_from_slice(&bytes);
+                    dst.data[..us(n)].copy_from_slice(&bytes);
                 }
                 Cmd::ToBuffer(t, mip, [x, y, z], b, bpr, w, h) => {
                     let tx = self.tex(t).clone();
@@ -2551,9 +2553,9 @@ impl Model {
                     let Obj::Buffer(bf) = &mut self.objs[b] else { continue };
                     for r in 0..h {
                         for c in 0..w {
-                            let v = texel_bytes(tx.texels[s][((y + r) * lw + x + c) as usize], bpp as usize);
-                            let at = (r * bpr + c * bpp) as usize;
-                            bf.data[at..at + bpp as usize].copy_from_slice(&v);
+                            let v = texel_bytes(tx.texels[s][us((y + r) * lw + x + c)], us(bpp));
+                            let at = us(r * bpr + c * bpp);
+                            bf.data[at..at + us(bpp)].copy_from_slice(&v);
                         }
                     }
                 }
@@ -2567,8 +2569,8 @@ impl Model {
                     let Obj::Texture(tm) = &mut self.objs[t] else { continue };
                     for r in 0..h {
                         for c in 0..w {
-                            let at = (r * bpr + c * bpp) as usize;
-                            tm.texels[s][((y + r) * lw + x + c) as usize] = write_texel(&data[at..at + bpp as usize]);
+                            let at = us(r * bpr + c * bpp);
+                            tm.texels[s][us((y + r) * lw + x + c)] = write_texel(&data[at..at + us(bpp)]);
                         }
                     }
                 }
@@ -2590,7 +2592,7 @@ impl Model {
             match e {
                 Entry::Buffer(bf, off, size) => {
                     if let Obj::Buffer(buf) = &self.objs[*bf] {
-                        x = hash_bytes(x, &buf.data[*off as usize..(*off + *size).min(buf.size) as usize]);
+                        x = hash_bytes(x, &buf.data[*off as usize..us((*off + *size).min(buf.size))]);
                     }
                 }
                 Entry::View(v) => {
@@ -2633,7 +2635,7 @@ impl Model {
             return;
         }
         bf.mapped = true;
-        self.pending_maps.push((b, size, dst as usize, token));
+        self.pending_maps.push((b, size, dst.expose_provenance(), token));
     }
 
     /// Finishes the maps asked for (as the page does once the GPU is done): copies, unmaps,
@@ -2642,10 +2644,10 @@ impl Model {
         let mut tokens = Vec::new();
         for (b, size, dst, token) in std::mem::take(&mut self.pending_maps) {
             let Obj::Buffer(bf) = &mut self.objs[b] else { continue };
-            let bytes = bf.data[..size as usize].to_vec();
+            let bytes = bf.data[..us(size)].to_vec();
             bf.mapped = false;
             if dst != 0 {
-                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), dst as *mut u8, bytes.len()) };
+                unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), std::ptr::with_exposed_provenance_mut::<u8>(dst), bytes.len()) };
             }
             self.obs.push(Obs::Read(bytes));
             tokens.push(token);
@@ -2854,7 +2856,7 @@ pub extern "C" fn vngpu_pipeline_group_layout(p: u32, i: u32) -> u32 {
 #[no_mangle]
 pub extern "C" fn vngpu_bind_group(layout: u32, entries: *const u32, n: u32) -> u32 {
     count("bind_group");
-    let w = unsafe { std::slice::from_raw_parts(entries, n as usize * 5) };
+    let w = unsafe { std::slice::from_raw_parts(entries, us(n) * 5) };
     with(|m| m.bind_group(layout, w))
 }
 #[no_mangle]
@@ -2917,7 +2919,7 @@ pub extern "C" fn vngpu_set_pipeline(p: u32) {
 }
 #[no_mangle]
 pub extern "C" fn vngpu_set_bind_group(i: u32, g: u32, offs: *const u32, n: u32) {
-    let o = if n == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(offs, n as usize) } };
+    let o = if n == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(offs, us(n)) } };
     with(|m| m.set_bind_group(i, g, o))
 }
 #[no_mangle]
@@ -2952,7 +2954,7 @@ pub extern "C" fn vngpu_draw(n: u32, inst: u32, first: u32, first_inst: u32) {
 #[no_mangle]
 pub extern "C" fn vngpu_draw_indexed(n: u32, inst: u32, first: u32, base: i32, first_inst: u32) {
     count("draw_indexed");
-    with(|m| m.draw([n, inst, first, base as u32, first_inst], true))
+    with(|m| m.draw([n, inst, first, lo32(base), first_inst], true))
 }
 #[no_mangle]
 pub extern "C" fn emscripten_get_now() -> f64 {
