@@ -5,6 +5,10 @@
 //!
 //! Source text in, bytecode out; std only. The dxwgsl crate turns the output into WGSL.
 
+// (safe Rust, no shared state: tools/ci/sanitize.sh leaves the crate out of TSan, where it can
+// have no data race to find, #242)
+#![forbid(unsafe_code)]
+
 // (a u32 count or register as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);
 
