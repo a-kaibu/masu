@@ -142,8 +142,7 @@ impl D3d {
     pub(super) fn snap_mapped(&mut self, token: u32, ok: bool) -> bool {
         if let Some(g) = self.snap_graves.iter().position(|g| g.tokens.contains_key(&token)) {
             let grave = &mut self.snap_graves[g];
-            let k = grave.tokens.remove(&token).unwrap();
-            if let Some(r) = grave.reads.get(k) {
+            if let Some(r) = grave.tokens.remove(&token).and_then(|k| grave.reads.get(k)) {
                 gpu::destroy(r.buf);
                 if let What::Sample { tex, .. } = r.what {
                     gpu::destroy(tex);
@@ -229,8 +228,8 @@ impl D3d {
         }
         let mut ms: Vec<(u32, Samples)> = Vec::new();
         for r in reads.into_iter().filter(|r| r.state == 1) {
-            match r.what {
-                What::Sample { id, sample, bpr, .. } => {
+            match (r.what, r.at) {
+                (What::Sample { id, sample, bpr, .. }, _) => {
                     match ms.last_mut() {
                         Some((i, v)) if *i == id && v.len() == us(sample) => v.push((bpr, r.data)),
                         _ if sample == 0 => ms.push((id, vec![(bpr, r.data)])),
@@ -238,16 +237,15 @@ impl D3d {
                     }
                     continue;
                 }
-                What::Tex { id, level, layer, w, h, bpr, .. } if r.at.is_some() => {
-                    c.extend_from_slice(&[WRITE_TEXTURE2, id, level, layer, 0, 0, w, h, bpr, lo32(r.at.unwrap().0)]);
+                (What::Tex { id, level, layer, w, h, bpr, .. }, Some((at, _))) => {
+                    c.extend_from_slice(&[WRITE_TEXTURE2, id, level, layer, 0, 0, w, h, bpr, lo32(at)]);
                     continue;
                 }
-                What::Buf { id } if r.at.is_some() => {
-                    let (at, n) = r.at.unwrap();
+                (What::Buf { id }, Some((at, n))) => {
                     c.extend_from_slice(&[WRITE_BUFFER, id, 0, lo32(at), lo32(n)]);
                     continue;
                 }
-                What::Tex { id, level, layer, w, h, bpr, halved } => {
+                (What::Tex { id, level, layer, w, h, bpr, halved }, None) => {
                     let off = lo32(blob.len());
                     let bpr = if halved {
                         // (kept as halves, written as 32-bit floats)
@@ -259,7 +257,7 @@ impl D3d {
                     };
                     c.extend_from_slice(&[WRITE_TEXTURE2, id, level, layer, 0, 0, w, h, bpr, off]);
                 }
-                What::Buf { id } => {
+                (What::Buf { id }, None) => {
                     c.extend_from_slice(&[WRITE_BUFFER, id, 0, lo32(blob.len()), lo32(r.data.len())]);
                     blob.extend_from_slice(&r.data);
                 }

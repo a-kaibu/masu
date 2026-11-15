@@ -523,13 +523,14 @@ pub fn test_cases(bin: &[u8]) -> Vec<(String, Picture, Vec<u8>)> {
     let mut i = 0;
     let word = |i: &mut usize| {
         *i += 4;
-        u32::from_le_bytes(bin[*i - 4..*i].try_into().unwrap())
+        bin.get(*i - 4..*i).and_then(|b| <[u8; 4]>::try_from(b).ok()).map_or(0, u32::from_le_bytes)
     };
     while i < bin.len() {
         let n = us(word(&mut i));
-        let name = String::from_utf8(bin[i..i + n].to_vec()).unwrap();
+        let name = String::from_utf8_lossy(&bin[i..i + n]).into_owned();
         i += n;
-        let (w, h, layout, n) = (word(&mut i), word(&mut i), Layout::from_u32(word(&mut i)).unwrap(), us(word(&mut i)));
+        let (w, h, layout, n) = (word(&mut i), word(&mut i), Layout::from_u32(word(&mut i)), us(word(&mut i)));
+        let Some(layout) = layout else { break };
         let bytes = bin[i..i + n].to_vec();
         i += n;
         let rgb = bin[i..i + us(w) * us(h) * 3].to_vec();

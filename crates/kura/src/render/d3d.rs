@@ -1298,7 +1298,9 @@ impl D3d {
                     self.drop_twin(id);
                     if self.textures.contains_key(&id) {
                         self.flush_if_used(id);
-                        self.textures.remove(&id).unwrap().free(self.shown());
+                        if let Some(t) = self.textures.remove(&id) {
+                            t.free(self.shown());
+                        }
                         self.tex_gen += 1;
                         drop_all(&mut self.groups1);
                         self.clear_groups2();
@@ -1443,12 +1445,12 @@ impl D3d {
                     i += 9;
                 }
                 COPY => {
-                    let v: [u32; 13] = c[i + 1..i + 14].try_into().unwrap();
+                    let v: [u32; 13] = std::array::from_fn(|k| c[i + 1 + k]);
                     self.copy_rect(v);
                     i += 14;
                 }
                 READBACK => {
-                    let v: [u32; 9] = c[i + 1..i + 10].try_into().unwrap();
+                    let v: [u32; 9] = std::array::from_fn(|k| c[i + 1 + k]);
                     self.readback(v);
                     i += 10;
                 }
@@ -1467,7 +1469,7 @@ impl D3d {
                 }
                 CREATE_TEXTURE2 => {
                     self.clear_groups2();
-                    let v: [u32; 7] = c[i + 1..i + 8].try_into().unwrap();
+                    let v: [u32; 7] = std::array::from_fn(|k| c[i + 1 + k]);
                     self.create_texture2(v);
                     i += 8;
                 }
@@ -3083,7 +3085,9 @@ impl D3d {
             None => {
                 let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"usage":{}}}"#, qf(format), usage::T_RENDER | usage::T_BINDING | usage::T_COPY_SRC));
                 let view = gpu::view(tex, "");
-                self.textures.get_mut(&id).unwrap().shown = Some((tex, view));
+                if let Some(t) = self.textures.get_mut(&id) {
+                    t.shown = Some((tex, view));
+                }
                 (tex, view)
             }
         };
@@ -3167,7 +3171,7 @@ impl D3d {
             _ => {
                 self.next_twin -= 1;
                 let tid = self.next_twin;
-                let r32 = lo32(TEX_FORMATS.iter().position(|&f| f == Tf::R32Float).unwrap());
+                let r32 = TEX_FORMATS.iter().position(|&f| f == Tf::R32Float).map_or(0, lo32);
                 self.create_texture2([tid, w, h, layers, 1, r32, 0]);
                 // (not kept in save states: made again from the depth texture)
                 self.textures.get_mut(&tid)?.make.clear();
@@ -3506,7 +3510,7 @@ impl D3d {
         self.traffic(tex, level, false, true);
         self.use_tex(tex);
         let view = self.view2(tex, 1, level, 1, layer, 1, false);
-        let t = self.textures.get_mut(&tex).unwrap();
+        let Some(t) = self.textures.get_mut(&tex) else { return };
         self.open = true;
         if is_depth(t.format) {
             let s = t.format == DS;
@@ -3808,7 +3812,7 @@ impl D3d {
             if ccw & 2 != 0 && gpu::has_feature("depth-clip-control") { r#","unclippedDepth":true"# } else { "" }
         ));
         gpu::drop(pl);
-        let p = self.pipelines2.get_mut(&id).unwrap();
+        let Some(p) = self.pipelines2.get_mut(&id) else { return false };
         gpu::drop(p.pipeline);
         p.layouts.iter().for_each(|&l| gpu::drop(l));
         p.pipeline = pipeline;
@@ -4051,8 +4055,7 @@ impl D3d {
                 let (zd, zs) = z.zclear.unwrap_or((1.0, 0));
                 let fits = !z.fits.is_empty();
                 self.end_pass();
-                if !self.no_pass_opt && !fits {
-                    let tg = self.targets2.as_ref().unwrap();
+                if !self.no_pass_opt && !fits && let Some(tg) = self.targets2.as_ref() {
                     let zi = 1 + us(tg[0]) * 3;
                     let c = Clear { level: tg[zi + 1], layer: tg[zi + 2], flags: new << 1, color: [0.0; 4], z: zd, stencil: zs };
                     match self.clears.get_mut(&zid) {
@@ -4336,7 +4339,7 @@ fn same(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    let word = |c: &[u8], k: usize| u64::from_ne_bytes(c[k * 8..k * 8 + 8].try_into().unwrap());
+    let word = |c: &[u8], k: usize| c.get(k * 8..).and_then(<[u8]>::first_chunk::<8>).map_or(0, |w| u64::from_ne_bytes(*w));
     let (ca, cb) = (a.chunks_exact(32), b.chunks_exact(32));
     let (ta, tb) = (ca.remainder(), cb.remainder());
     for (x, y) in ca.zip(cb) {

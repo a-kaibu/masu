@@ -112,7 +112,7 @@ pub unsafe fn bc67_texels(conv: Conv, src: *const u8, pitch: usize, w: u32, h: u
 /// `src` must hold the box.
 pub unsafe fn widened_texels(conv: Conv, src: *const u8, pitch: usize, w: u32, h: u32) -> Option<Vec<u8>> {
     let (w, h) = (w as usize, h as usize);
-    let rd = |y: usize, at: usize| u32::from_le_bytes(std::slice::from_raw_parts(src.add(y * pitch + at), 4).try_into().unwrap());
+    let rd = |y: usize, at: usize| u32::from_le_bytes(src.add(y * pitch + at).cast::<[u8; 4]>().read_unaligned());
     // (sized once: RGB32 widens to 16 bytes a texel, 4:2:2 to 4, XR_BIAS to 8)
     let texel = match conv {
         RGB32F | RGB32I => 16,
@@ -243,7 +243,7 @@ pub fn from_page(fmt: u32, page: &[u8], w: u32, h: u32) -> Option<Vec<u8>> {
         return None;
     }
     let mut out = vec![0u8; n * f.bpp as usize];
-    let fl = |t: usize, c: usize| f32::from_le_bytes(page[t * pb + 4 * c..t * pb + 4 * c + 4].try_into().unwrap());
+    let fl = |t: usize, c: usize| f32::from_le_bytes(std::array::from_fn(|k| page[t * pb + 4 * c + k]));
     match f.conv {
         Conv::Copy if f.bpp as usize == pb => out.copy_from_slice(&page[..n * pb]),
         U16N | S16N => {

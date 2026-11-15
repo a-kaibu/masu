@@ -193,7 +193,7 @@ impl D3d {
                 self.free_blocks.push(page + i * 16);
             }
         }
-        let addr = self.free_blocks.pop().unwrap();
+        let Some(addr) = self.free_blocks.pop() else { return 0 };
         self.next += 1;
         let id = self.next;
         unsafe {
@@ -315,8 +315,7 @@ impl D3d {
             Data::Device => {
                 // (the device the calls went to, or one waiting: the others stay as they are,
                 // KiriKiri Z releases a small window's device while its main one draws on)
-                if self.dev.as_ref().is_some_and(|dev| dev.obj == id) {
-                    let dev = self.dev.take().unwrap();
+                if let Some(dev) = self.dev.take_if(|dev| dev.obj == id) {
                     dev.release_all(self);
                     self.dev = self.parked.pop();
                 } else if let Some(i) = self.parked.iter().position(|dev| dev.obj == id) {

@@ -500,8 +500,9 @@ impl Render {
             q(format)
         ));
         let layout = gpu::pipeline_group_layout(pipeline, 0);
+        let at = self.pipes.len();
         self.pipes.push((format, Pipe { pipeline, layout }));
-        &self.pipes.last().unwrap().1
+        &self.pipes[at].1
     }
 
     fn frame(&mut self, t: f64) {

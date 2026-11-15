@@ -105,7 +105,7 @@ impl Parking {
             // (unreadable code: new, as the interpreter will find out)
             new |= t.as_ref().is_none_or(|t| self.seen.insert(key(&self.live[b].code, t)));
         }
-        let out: Vec<Wx> = gone.iter().map(|(b, _)| self.live.remove(b).unwrap()).collect();
+        let out: Vec<Wx> = gone.iter().filter_map(|(b, _)| self.live.remove(b)).collect();
         for w in &out {
             self.parked.retain(|p| p.roots != w.roots || p.code != w.code || p.text != w.text);
             self.parked.push(w.clone());

@@ -1759,10 +1759,10 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         61 => {
             // EndStateBlock(out): a block of what was recorded
             let dev = dev!(d);
-            if a(1) == 0 || dev.recording.is_none() {
+            if a(1) == 0 {
                 return D3DERR_INVALIDCALL;
             }
-            let rec = dev.recording.take().unwrap();
+            let Some(rec) = dev.recording.take() else { return D3DERR_INVALIDCALL };
             let st = sb::masked_copy(&rec.st, &rec.mask);
             bind_all(d, &state_binds(&st));
             unbind_all(d, &state_binds(&rec.st));
@@ -2478,14 +2478,15 @@ fn changed_box(rows: &[u8], pitch: usize, row: usize, h: usize, bpp: usize, shad
         let (a, s) = (&rows[y * pitch..y * pitch + row], &mut shadow[y * row..(y + 1) * row]);
         // 8 bytes at a time from each end (the tail bytes by themselves)
         let words = row / 8;
-        let w = |x: &[u8], i: usize| u64::from_ne_bytes(x[i * 8..i * 8 + 8].try_into().unwrap());
+        let w = |x: &[u8], i: usize| x.get(i * 8..).and_then(<[u8]>::first_chunk::<8>).map_or(0, |b| u64::from_ne_bytes(*b));
         let l = (0..words).find(|&i| w(a, i) != w(s, i)).map_or(words * 8, |i| i * 8);
         let Some(l) = (l..row).find(|&i| a[i] != s[i]) else { continue };
         let r = match (words * 8..row).rev().find(|&i| a[i] != s[i]) {
             Some(i) => i + 1,
             None => {
-                let wi = (0..words).rev().find(|&i| w(a, i) != w(s, i)).unwrap();
-                (wi * 8..wi * 8 + 8).rev().find(|&i| a[i] != s[i]).unwrap() + 1
+                // (one of the words differs: the byte at l does)
+                let wi = (0..words).rev().find(|&i| w(a, i) != w(s, i));
+                wi.and_then(|wi| (wi * 8..wi * 8 + 8).rev().find(|&i| a[i] != s[i])).map_or(row, |i| i + 1)
             }
         };
         s[l..r].copy_from_slice(&a[l..r]);
@@ -3623,7 +3624,7 @@ fn ensure_targets(d: &mut D3d, rt: u32, more: &[u32], ds: u32) {
     let z = surface_gpu(d, ds);
     let mut c = vec![gpu::SET_TARGETS2, 1 + lo32(more.len()), t.0, t.1, 0];
     for &m in more {
-        let g = surface_gpu(d, m).unwrap();
+        let Some(g) = surface_gpu(d, m) else { return };
         c.extend_from_slice(&[g.0, g.1, 0]);
     }
     c.extend_from_slice(&[z.map_or(0, |z| z.0), 0, 0]);
@@ -3977,7 +3978,7 @@ unsafe fn rect_draw(d: &D3d, elems: &[Elem], streams: &[(u32, u32, u32)], first:
         let uv: Vec<(f32, f32)> = (0..4).map(|v| (vtx(v, tc.offset, 0) * tw, vtx(v, tc.offset, 1) * th)).collect();
         // texel = s * position + o, from two corners, true for all four; inside the texture
         // (no wrapping), at most 4 times larger or smaller
-        let at = |c: (f32, f32)| uv[pos.iter().position(|p| *p == c).unwrap()];
+        let at = |c: (f32, f32)| pos.iter().position(|p| *p == c).and_then(|i| uv.get(i)).copied().unwrap_or_default();
         let (a, b) = (at((x0, y0)), at((x1, y1)));
         let (sx, sy) = ((b.0 - a.0) / (x1 - x0), (b.1 - a.1) / (y1 - y0));
         let (ox, oy) = (a.0 - sx * x0, a.1 - sy * y0);
@@ -4317,7 +4318,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         if stride != 0 && e.offset + type_size(e.ty) > stride {
             continue;
         }
-        let slot = lo32(used.iter().position(|&s| s == e.stream).unwrap());
+        let Some(slot) = used.iter().position(|&s| s == e.stream).map(lo32) else { continue };
         match vs_shader {
             Some(sh) => {
                 // vs 1.x without dcl: register = usage order... (vs 1.1 has dcl too)
@@ -4738,8 +4739,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     }
     h.add(&instances.to_le_bytes());
     match (index, index_buf) {
-        (Some((_, isz, _)), Some(_)) => {
-            let (g, at, cg) = index_buf.unwrap();
+        (Some((_, isz, _)), Some((g, at, cg))) => {
             for w in [u64::from(g), cg, u64::from(at), u64::from(nverts * isz)] {
                 h.add(&w.to_le_bytes());
             }
@@ -4811,8 +4811,8 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 }
             }
         }
-        let (ifmt, ioff, icount, base) = match (&index, prim) {
-            (Some((iptr, isz, min)), 6) => {
+        let (ifmt, ioff, icount, base) = match (&index, prim, index_buf) {
+            (Some((iptr, isz, min)), 6, _) => {
                 // fan, indexed
                 // (straight into one buffer of bytes)
                 let get = |i: u32| -> u32 {
@@ -4826,25 +4826,24 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 }
                 (4, b.data(&bytes, 4), prims * 3, -(*min as i32))
             }
-            (Some((iptr, _, min)), _) if widen => {
+            (Some((iptr, _, min)), _, _) if widen => {
                 let mut bytes = Vec::with_capacity(us(nverts) * 4);
                 for k in 0..nverts {
                     bytes.extend_from_slice(&u32::from(*(gc::<u16>(iptr + 2 * k))).to_le_bytes());
                 }
                 (4, b.data(&bytes, 4), nverts, -(*min as i32))
             }
-            (Some((_, isz, min)), _) if index_buf.is_some() => {
+            (Some((_, isz, min)), _, Some((g, at, _))) => {
                 // (from the index buffer's page copy: the last pair, its buffer marked)
-                let (g, at, _) = index_buf.unwrap();
                 offs.push(g | INDEX_PAIR);
                 offs.push(at);
                 (*isz, 0, nverts, -(*min as i32))
             }
-            (Some((iptr, isz, min)), _) => {
+            (Some((iptr, isz, min)), _, None) => {
                 let len = us(nverts * isz);
                 (*isz, b.data(std::slice::from_raw_parts(*iptr as *const u8, len), 4), nverts, -(*min as i32))
             }
-            (None, 6) => {
+            (None, 6, _) => {
                 let mut bytes = Vec::with_capacity(us(prims) * 6);
                 for t in 0..prims {
                     for v in [0, (t + 1) as u16, (t + 2) as u16] {
@@ -4853,7 +4852,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
                 }
                 (2, b.data(&bytes, 4), prims * 3, 0)
             }
-            (None, _) => (0, 0, count, 0),
+            (None, _, _) => (0, 0, count, 0),
         };
         let mut c = vec![
             gpu::DRAW,
