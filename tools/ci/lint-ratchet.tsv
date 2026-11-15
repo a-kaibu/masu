@@ -322,13 +322,12 @@ file	crates/kura/src/cpu.rs	ptr_as_ptr	4
 file	crates/kura/src/cpu.rs	undocumented_unsafe_blocks	23
 file	crates/kura/src/cpu.rs	unwrap_used	2
 file	crates/kura/src/crashlog.rs	arithmetic_side_effects	44
-file	crates/kura/src/crashlog.rs	as_conversions	48
+file	crates/kura/src/crashlog.rs	as_conversions	47
 file	crates/kura/src/crashlog.rs	borrow_as_ptr	4
 file	crates/kura/src/crashlog.rs	cast_possible_truncation	17
 file	crates/kura/src/crashlog.rs	indexing_slicing	19
 file	crates/kura/src/crashlog.rs	let_underscore_must_use	56
 file	crates/kura/src/crashlog.rs	masu-from_raw_parts	1
-file	crates/kura/src/crashlog.rs	masu-static_mut	1
 file	crates/kura/src/crashlog.rs	masu-unsafe_send_sync	5
 file	crates/kura/src/crashlog.rs	multiple_unsafe_ops_per_block	2
 file	crates/kura/src/crashlog.rs	ptr_as_ptr	1
@@ -384,9 +383,7 @@ file	crates/kura/src/d3d11/mod.rs	multiple_unsafe_ops_per_block	1
 file	crates/kura/src/d3d11/mod.rs	undocumented_unsafe_blocks	13
 file	crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	490
 file	crates/kura/src/d3d9/d3d8.rs	arithmetic_side_effects	46
-file	crates/kura/src/d3d9/d3d8.rs	as_conversions	45
-file	crates/kura/src/d3d9/d3d8.rs	borrow_as_ptr	6
-file	crates/kura/src/d3d9/d3d8.rs	cast_possible_truncation	5
+file	crates/kura/src/d3d9/d3d8.rs	as_conversions	1
 file	crates/kura/src/d3d9/d3d8.rs	indexing_slicing	15
 file	crates/kura/src/d3d9/d3d8.rs	missing_safety_doc	1
 file	crates/kura/src/d3d9/d3d8.rs	unsafe_op_in_unsafe_fn	120
