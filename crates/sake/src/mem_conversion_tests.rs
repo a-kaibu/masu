@@ -53,3 +53,12 @@ proptest! {
         }
     }
 }
+
+proptest! {
+    // (lo16/lo8 are `as u16`/`as u8`: the low bits)
+    #[test]
+    fn lo16_lo8_are_the_truncating_casts(x in any::<u32>()) {
+        prop_assert_eq!(lo16(x), x as u16);
+        prop_assert_eq!(lo8(x), x as u8);
+    }
+}

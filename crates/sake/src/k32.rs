@@ -3315,8 +3315,8 @@ fn LdrGetDllHandle(c: &mut Ctx) -> u32 {
 }
 // ntdll's counted strings: UNICODE_STRING / ANSI_STRING = { u16 Length, u16 MaximumLength, PTR Buffer }
 fn put_counted(us: u32, len: u32, max: u32, buf: u32) {
-    w16(us, len as u16);
-    w16(us + 2, max as u16);
+    w16(us, mem::lo16(len));
+    w16(us + 2, mem::lo16(max));
     // (UNICODE_STRING / ANSI_STRING: Buffer after the two lengths, pointer-aligned)
     mem::wp(us + mem::ps(), buf);
 }
@@ -3360,7 +3360,7 @@ fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
         if n + unit > u32::from(r16(us + 2)) {
             return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
         }
-        w16(us, n as u16);
+        w16(us, mem::lo16(n));
         mem::rp(us + mem::ps())
     };
     for (i, &x) in v.iter().enumerate() {
@@ -3431,7 +3431,7 @@ fn RtlUnicodeToMultiByteSize(c: &mut Ctx) -> u32 {
 }
 /// RtlUpcaseUnicodeChar(c): Windows' upper case of one UTF-16 unit
 fn RtlUpcaseUnicodeChar(c: &mut Ctx) -> u32 {
-    u32::from(crate::nt::up(c.a(0) as u16))
+    u32::from(crate::nt::up(mem::lo16(c.a(0))))
 }
 /// RtlCompareUnicodeString(a, b, case insensitive): the difference of the first units that
 /// differ (in upper case when asked), else of the lengths
@@ -5089,7 +5089,7 @@ fn RtlVerifyVersionInfo(c: &mut Ctx) -> u32 {
 }
 fn VerSetConditionMask(c: &mut Ctx) -> u32 {
     let (m, t, k) = if mem::x64() { (c.a64(0), c.a(1), c.a(2)) } else { (u64::from(c.a(0)) | u64::from(c.a(1)) << 32, c.a(2), c.a(3)) };
-    let v = ver_set_condition_mask(m, t, k as u8);
+    let v = ver_set_condition_mask(m, t, mem::lo8(k));
     c.ret64(v)
 }
 
@@ -5353,10 +5353,10 @@ fn GetCPInfoExA(c: &mut Ctx) -> u32 {
     GetCPInfo(c)
 }
 fn IsDBCSLeadByte(c: &mut Ctx) -> u32 {
-    ok(crate::text::is_lead(c.a(0) as u8))
+    ok(crate::text::is_lead(mem::lo8(c.a(0))))
 }
 fn IsDBCSLeadByteEx(c: &mut Ctx) -> u32 {
-    ok(crate::text::is_lead_cp(c.a(0), c.a(1) as u8))
+    ok(crate::text::is_lead_cp(c.a(0), mem::lo8(c.a(1))))
 }
 
 /// The `n` guest bytes at `p` (a string a caller sized), or None (ERROR_NOACCESS set) where they
@@ -6224,7 +6224,7 @@ pub(crate) fn write_systemtime(p: u32, secs: i64, ms: u32) {
     w16(p + 8, (rem / 3600) as u16);
     w16(p + 10, (rem / 60 % 60) as u16);
     w16(p + 12, (rem % 60) as u16);
-    w16(p + 14, ms as u16);
+    w16(p + 14, mem::lo16(ms));
 }
 pub fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
@@ -7094,7 +7094,7 @@ fn OpenFile(c: &mut Ctx) -> u32 {
         if of != 0 {
             mem::w8(of, 136);
             mem::w8(of + 1, 1);
-            mem::w16(of + 2, err as u16);
+            mem::w16(of + 2, mem::lo16(err));
             if err == 0 {
                 mem::w32(of + 4, 0);
                 mem::put_cstr(of + 8, 128, &crate::text::s2a(path));
@@ -9163,7 +9163,7 @@ fn RtlMoveMemory(c: &mut Ctx) -> u32 {
     0
 }
 fn RtlFillMemory(c: &mut Ctx) -> u32 {
-    mem::fill(c.a(0), c.a(1), c.a(2) as u8);
+    mem::fill(c.a(0), c.a(1), mem::lo8(c.a(2)));
     0
 }
 fn InitializeSListHead(c: &mut Ctx) -> u32 {
@@ -9190,7 +9190,7 @@ fn slist_set(h: u32, next: u32, depth: u32) {
         return;
     }
     w32(h, next);
-    w16(h + 4, depth as u16);
+    w16(h + 4, mem::lo16(depth));
     w16(h + 6, r16(h + 6).wrapping_add(1));
 }
 fn InterlockedPushEntrySList(c: &mut Ctx) -> u32 {
@@ -9868,7 +9868,7 @@ mod version_tests {
         /// The other fields are compared on their own.
         #[test]
         fn single_fields(cur in 0u32..5, want in 0u32..5, c in 0u8..8, field in 0usize..3) {
-            let (bit, set): (u32, fn(&mut OsVer, u32)) = [(4u32, (|v: &mut OsVer, x| v.build = x) as fn(&mut OsVer, u32)), (8, |v, x| v.platform = x), (0x80, |v, x| v.product = x as u8)][field];
+            let (bit, set): (u32, fn(&mut OsVer, u32)) = [(4u32, (|v: &mut OsVer, x| v.build = x) as fn(&mut OsVer, u32)), (8, |v, x| v.platform = x), (0x80, |v, x| v.product = mem::lo8(x))][field];
             let (mut a, mut b) = (OS_VERSION, OS_VERSION);
             set(&mut a, cur);
             set(&mut b, want);

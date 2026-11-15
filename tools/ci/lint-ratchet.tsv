@@ -1447,8 +1447,8 @@ file	crates/sake/src/jscript.rs	masu-static_mut	1
 file	crates/sake/src/jscript.rs	ptr_as_ptr	1
 file	crates/sake/src/jscript.rs	unused_result_ok	1
 file	crates/sake/src/k32.rs	arithmetic_side_effects	549
-file	crates/sake/src/k32.rs	as_conversions	178
-file	crates/sake/src/k32.rs	cast_possible_truncation	91
+file	crates/sake/src/k32.rs	as_conversions	166
+file	crates/sake/src/k32.rs	cast_possible_truncation	79
 file	crates/sake/src/k32.rs	cast_possible_wrap	12
 file	crates/sake/src/k32.rs	cast_sign_loss	30
 file	crates/sake/src/k32.rs	indexing_slicing	69

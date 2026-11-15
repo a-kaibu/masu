@@ -30,6 +30,17 @@ fn host<T>(a: u32) -> *mut T {
 pub fn len(n: u32) -> usize {
     n as usize
 }
+/// The low 16 bits of a guest value, as Windows reads a WORD from a DWORD argument or register
+#[inline]
+pub fn lo16(x: u32) -> u16 {
+    let [a, b, _, _] = x.to_le_bytes();
+    u16::from_le_bytes([a, b])
+}
+/// The low 8 bits of a guest value, as Windows reads a BYTE from a DWORD argument or register
+#[inline]
+pub fn lo8(x: u32) -> u8 {
+    x.to_le_bytes()[0]
+}
 /// A host length (a string's, a buffer's) as a guest one: every length the guest sees fits its
 /// 32-bit address space; one that does not (only a 64-bit host can hold it) is u32::MAX, not its
 /// low bits.
