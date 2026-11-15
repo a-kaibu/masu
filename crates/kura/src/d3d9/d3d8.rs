@@ -7,6 +7,7 @@
 //! they map to Direct3D 9 objects here (a shader's declaration to a vertex declaration, the
 //! `dcl`s Direct3D 9 needs put in its code).
 
+use crate::guest::{gc, gp, lo32, us};
 use super::device;
 use super::format as fmt;
 use super::*;
@@ -37,12 +38,12 @@ struct Vs {
 }
 
 unsafe fn rd(p: u32, i: usize) -> u32 {
-    *((p as *const u32).add(i))
+    *((gc::<u32>(p)).add(i))
 }
 
 unsafe fn wr(p: u32, i: usize, v: u32) {
     if p != 0 {
-        *((p as *mut u32).add(i)) = v;
+        *((gp::<u32>(p)).add(i)) = v;
     }
 }
 
@@ -95,7 +96,7 @@ unsafe fn caps8(c: &mut [u32; 76], out: u32, r: u32) {
         return;
     }
     let o = caps8_of(c);
-    std::ptr::copy_nonoverlapping(o.as_ptr(), out as *mut u32, 53);
+    std::ptr::copy_nonoverlapping(o.as_ptr(), gp::<u32>(out), 53);
 }
 
 /// D3DSURFACE_DESC9 to 8 (Size instead of MultiSampleQuality, before MultiSampleType)
@@ -175,7 +176,7 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
         (IF_SURFACE, 7..=10) => {
             if m == 8 {
                 let mut d9 = [0u32; 8];
-                let r = c9(d, IF_SURFACE, 12, this, &[me, d9.as_mut_ptr() as u32], after);
+                let r = c9(d, IF_SURFACE, 12, this, &[me, lo32(d9.as_mut_ptr().expose_provenance())], after);
                 if r == S_OK {
                     surface_desc8(&d9, a(1));
                 }
@@ -186,7 +187,7 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
         }
         (IF_VOLUME, 8) => {
             let mut d9 = [0u32; 8];
-            let r = c9(d, IF_VOLUME, 8, this, &[me, d9.as_mut_ptr() as u32], after);
+            let r = c9(d, IF_VOLUME, 8, this, &[me, lo32(d9.as_mut_ptr().expose_provenance())], after);
             if r == S_OK {
                 volume_desc8(&d9, a(1));
             }
@@ -195,7 +196,7 @@ pub unsafe fn call(d: &mut D3d, iface: u32, m: u32, this: u32, args: *const u32,
         (IF_TEXTURE | IF_CUBE | IF_VOLUMETEX, 14..=18) => {
             if m == 14 {
                 let mut d9 = [0u32; 8];
-                let r = c9(d, iface, 17, this, &[me, a(1), d9.as_mut_ptr() as u32], after);
+                let r = c9(d, iface, 17, this, &[me, a(1), lo32(d9.as_mut_ptr().expose_provenance())], after);
                 if r == S_OK {
                     if iface == IF_VOLUMETEX {
                         volume_desc8(&d9, a(2));
@@ -221,8 +222,8 @@ unsafe fn d3d8_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, af
                 return D3DERR_INVALIDCALL;
             }
             let mut id9 = [0u8; 1100];
-            let r = c9(d, IF_D3D9, 5, this, &[me, a(1), a(2), id9.as_mut_ptr() as u32], after);
-            let out = a(3) as *mut u8;
+            let r = c9(d, IF_D3D9, 5, this, &[me, a(1), a(2), lo32(id9.as_mut_ptr().expose_provenance())], after);
+            let out = gp::<u8>(a(3));
             std::ptr::copy_nonoverlapping(id9.as_ptr(), out, 1024);
             std::ptr::copy_nonoverlapping(id9.as_ptr().add(1056), out.add(1024), 44);
             r
@@ -232,7 +233,7 @@ unsafe fn d3d8_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, af
         11 => c9(d, IF_D3D9, 11, this, &[me, a(1), a(2), a(3), a(4), a(5), 0], after),
         13 => {
             let mut c = [0u32; 76];
-            let r = c9(d, IF_D3D9, 14, this, &[me, a(1), a(2), c.as_mut_ptr() as u32], after);
+            let r = c9(d, IF_D3D9, 14, this, &[me, a(1), a(2), lo32(c.as_mut_ptr().expose_provenance())], after);
             caps8(&mut c, a(3), r);
             r
         }
@@ -240,7 +241,7 @@ unsafe fn d3d8_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, af
         15 => {
             // CreateDevice(adapter, type, window, flags, pp, out)
             let mut p = pp9(a(5));
-            let r = c9(d, IF_D3D9, 16, this, &[me, a(1), a(2), a(3), a(4), p.as_mut_ptr() as u32, a(6)], after);
+            let r = c9(d, IF_D3D9, 16, this, &[me, a(1), a(2), a(3), a(4), lo32(p.as_mut_ptr().expose_provenance()), a(6)], after);
             pp8(a(5), &p);
             // (a device that failed to be made leaves the live one's shaders and state blocks;
             // a new one starts with none: release what the old tables held)
@@ -338,7 +339,7 @@ unsafe fn parse_decl(p: u32) -> Option<(Vec<u32>, Vec<u32>, Vec<(u32, [u32; 4])>
                     el.push(stream | off << 16);
                     el.push(ty | usage << 16 | index << 24);
                     regs.push(reg);
-                    off += *SIZES.get(ty as usize)?;
+                    off += *SIZES.get(us(ty))?;
                 }
             }
             4 => {
@@ -411,7 +412,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         5 => S_OK, // ResourceManagerDiscardBytes
         7 => {
             let mut c = [0u32; 76];
-            let r = c9(d, dev, 7, this, &[me, c.as_mut_ptr() as u32], after);
+            let r = c9(d, dev, 7, this, &[me, lo32(c.as_mut_ptr().expose_provenance())], after);
             caps8(&mut c, a(1), r);
             r
         }
@@ -422,7 +423,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
                 return D3DERR_INVALIDCALL;
             }
             let mut p = pp9(a(1));
-            let r = c9(d, dev, 13, this, &[me, p.as_mut_ptr() as u32, a(2)], after);
+            let r = c9(d, dev, 13, this, &[me, lo32(p.as_mut_ptr().expose_provenance()), a(2)], after);
             if r == 0 {
                 pp8(a(1), &p);
             }
@@ -430,7 +431,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         }
         14 => {
             let mut p = pp9(a(1));
-            let r = c9(d, dev, 16, this, &[me, p.as_mut_ptr() as u32], after);
+            let r = c9(d, dev, 16, this, &[me, lo32(p.as_mut_ptr().expose_provenance())], after);
             pp8(a(1), &p);
             d.d8.base_vertex = 0;
             r
@@ -443,7 +444,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         // Create{Texture, VolumeTexture, CubeTexture, VertexBuffer, IndexBuffer}: no shared handle
         20..=24 => {
             let mut args: Vec<u32> = (0..10).map(a).collect();
-            args[[8, 9, 7, 6, 6][m as usize - 20]] = 0;
+            args[[8, 9, 7, 6, 6][us(m) - 20]] = 0;
             device::call(d, dev, m + 3, this, args.as_ptr(), after)
         }
         25 => c9(d, dev, 28, this, &[me, a(1), a(2), a(3), a(4), 0, a(5), a(6), 0], after),
@@ -479,14 +480,14 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
             }
             let Some(dev) = d.dev.as_ref() else { return D3DERR_INVALIDCALL };
             let d9 = matches!(st, 174..=209) && st != 177;
-            wr(out, 0, if d9 { 0xbaad_cafe } else { dev.st.rs[st as usize] });
+            wr(out, 0, if d9 { 0xbaad_cafe } else { dev.st.rs[us(st)] });
             S_OK
         }
         34..=50 => same(d, m + 7, after),
         52 => same(d, 60, after),
         53 => {
             let mut o = 0u32;
-            let r = c9(d, dev, 61, this, &[me, &mut o as *mut u32 as u32], after);
+            let r = c9(d, dev, 61, this, &[me, lo32((&raw mut o).expose_provenance())], after);
             if r == S_OK {
                 wr(a(1), 0, new_token(d, o));
             }
@@ -498,7 +499,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         },
         56 => match token(d, a(1)) {
             Some(sb) => {
-                d.d8.sb[a(1) as usize - 1] = 0;
+                d.d8.sb[us(a(1)) - 1] = 0;
                 d.release(sb);
                 // (while recording: D3DERR_INVALIDCALL, the block gone all the same; kikizake
                 // golden d3d8-32 edge-release-while-recording)
@@ -512,7 +513,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         },
         57 => {
             let mut o = 0u32;
-            let r = c9(d, dev, 59, this, &[me, a(1), &mut o as *mut u32 as u32], after);
+            let r = c9(d, dev, 59, this, &[me, a(1), lo32((&raw mut o).expose_provenance())], after);
             if r == S_OK {
                 // (Direct3D 8's own states in the block: the whole state is in it already, the
                 // mask says which apply)
@@ -551,7 +552,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
             S_OK
         }
         78 => {
-            let i = a(1).wrapping_sub(VS_FIXED_MAX + 1) as usize;
+            let i = us(a(1).wrapping_sub(VS_FIXED_MAX + 1));
             let Some(Some(vs)) = d.d8.vs.get_mut(i).map(|v| v.take()) else { return D3DERR_INVALIDCALL };
             d.release(vs.decl);
             if vs.vs != 0 {
@@ -562,7 +563,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         79 | 80 => same(d, m + 15, after),
         81 | 82 => {
             // GetVertexShaderDeclaration/Function(handle, data, size in bytes)
-            let i = a(1).wrapping_sub(VS_FIXED_MAX + 1) as usize;
+            let i = us(a(1).wrapping_sub(VS_FIXED_MAX + 1));
             let Some(Some(vs)) = d.d8.vs.get(i) else { return D3DERR_INVALIDCALL };
             let t = if m == 81 { &vs.decl_raw } else { &vs.func };
             give(t, a(2), a(3))
@@ -570,7 +571,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         83 => c9(d, dev, 100, this, &[me, a(1), a(2), 0, a(3)], after),
         84 => {
             let mut off = 0u32;
-            c9(d, dev, 101, this, &[me, a(1), a(2), &mut off as *mut u32 as u32, a(3)], after)
+            c9(d, dev, 101, this, &[me, a(1), a(2), lo32((&raw mut off).expose_provenance()), a(3)], after)
         }
         85 => {
             if d.d8.base_vertex != a(2) {
@@ -587,7 +588,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         }
         87 => {
             let mut o = 0u32;
-            let r = c9(d, dev, 106, this, &[me, a(1), &mut o as *mut u32 as u32], after);
+            let r = c9(d, dev, 106, this, &[me, a(1), lo32((&raw mut o).expose_provenance())], after);
             if r == S_OK {
                 let id = d.id_of(o);
                 let h = match d.d8.ps.iter().position(|x| x.is_none()) {
@@ -600,7 +601,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
                         d.d8.ps.len()
                     }
                 };
-                wr(a(2), 0, h as u32);
+                wr(a(2), 0, lo32(h));
             }
             r
         }
@@ -609,7 +610,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
             let ps = if h == 0 {
                 0
             } else {
-                match d.d8.ps.get(h as usize - 1) {
+                match d.d8.ps.get(us(h) - 1) {
                     Some(&Some(id)) => d.addr_of(id),
                     _ => return D3DERR_INVALIDCALL,
                 }
@@ -622,7 +623,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
             S_OK
         }
         90 => {
-            let h = a(1) as usize;
+            let h = us(a(1));
             let Some(Some(id)) = h.checked_sub(1).and_then(|i| d.d8.ps.get_mut(i)).map(|p| p.take()) else {
                 return D3DERR_INVALIDCALL;
             };
@@ -631,7 +632,7 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
         }
         91 | 92 => same(d, m + 18, after),
         93 => {
-            let h = a(1) as usize;
+            let h = us(a(1));
             let Some(&Some(id)) = h.checked_sub(1).and_then(|i| d.d8.ps.get(i)) else { return D3DERR_INVALIDCALL };
             let addr = d.addr_of(id);
             c9(d, IF_PS, 4, id, &[addr, a(2), a(3)], after)
@@ -643,13 +644,13 @@ unsafe fn device_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32, 
 
 /// Copies `t` (dwords) out to `data` (NULL: just the size) with its size in bytes at `size`.
 unsafe fn give(t: &[u32], data: u32, size: u32) -> u32 {
-    let n = t.len() as u32 * 4;
+    let n = lo32(t.len()) * 4;
     if data != 0 {
         if rd(size, 0) < n {
             wr(size, 0, n);
             return D3DERR_INVALIDCALL;
         }
-        std::ptr::copy_nonoverlapping(t.as_ptr(), data as *mut u32, t.len());
+        std::ptr::copy_nonoverlapping(t.as_ptr(), gp::<u32>(data), t.len());
     }
     wr(size, 0, n);
     S_OK
@@ -661,17 +662,17 @@ fn new_token(d: &mut D3d, addr: u32) -> u32 {
     match d.d8.sb.iter().position(|&x| x == 0) {
         Some(i) => {
             d.d8.sb[i] = id;
-            i as u32 + 1
+            lo32(i) + 1
         }
         None => {
             d.d8.sb.push(id);
-            d.d8.sb.len() as u32
+            lo32(d.d8.sb.len())
         }
     }
 }
 
 fn token(d: &D3d, t: u32) -> Option<u32> {
-    let id = *d.d8.sb.get((t as usize).checked_sub(1)?)?;
+    let id = *d.d8.sb.get((us(t)).checked_sub(1)?)?;
     (id != 0).then_some(id)
 }
 
@@ -682,7 +683,7 @@ unsafe fn create_vs(d: &mut D3d, this: u32, decl: u32, func: u32, out: u32, afte
     let Some((el, regs, consts, decl_raw)) = parse_decl(decl) else { return D3DERR_INVALIDCALL };
     let me = d.addr_of(this);
     let mut o = 0u32;
-    let r = c9(d, IF_DEVICE, 86, this, &[me, el.as_ptr() as u32, &mut o as *mut u32 as u32], after);
+    let r = c9(d, IF_DEVICE, 86, this, &[me, lo32(el.as_ptr().expose_provenance()), lo32((&raw mut o).expose_provenance())], after);
     if r != S_OK {
         return r;
     }
@@ -691,7 +692,7 @@ unsafe fn create_vs(d: &mut D3d, this: u32, decl: u32, func: u32, out: u32, afte
     if func != 0 {
         let (raw, with) = shader_code(func, &regs);
         let mut s = 0u32;
-        let r = c9(d, IF_DEVICE, 91, this, &[me, with.as_ptr() as u32, &mut s as *mut u32 as u32], after);
+        let r = c9(d, IF_DEVICE, 91, this, &[me, lo32(with.as_ptr().expose_provenance()), lo32((&raw mut s).expose_provenance())], after);
         if r != S_OK {
             d.release(decl_id);
             return r;
@@ -710,7 +711,7 @@ unsafe fn create_vs(d: &mut D3d, this: u32, decl: u32, func: u32, out: u32, afte
             d.d8.vs.len() - 1
         }
     };
-    wr(out, 0, VS_FIXED_MAX + 1 + i as u32);
+    wr(out, 0, VS_FIXED_MAX + 1 + lo32(i));
     S_OK
 }
 
@@ -721,12 +722,12 @@ unsafe fn set_vs(d: &mut D3d, this: u32, h: u32, after: &mut After) -> u32 {
         c9(d, IF_DEVICE, 92, this, &[me, 0], after);
         return c9(d, IF_DEVICE, 89, this, &[me, h], after);
     }
-    let Some(Some(vs)) = d.d8.vs.get((h - VS_FIXED_MAX - 1) as usize) else { return D3DERR_INVALIDCALL };
+    let Some(Some(vs)) = d.d8.vs.get(us(h - VS_FIXED_MAX - 1)) else { return D3DERR_INVALIDCALL };
     let (decl, shader, consts) = (d.addr_of(vs.decl), d.addr_of(vs.vs), vs.consts.clone());
     d.d8.cur_vs = h;
     c9(d, IF_DEVICE, 87, this, &[me, decl], after);
     for (reg, v) in consts {
-        c9(d, IF_DEVICE, 94, this, &[me, reg, v.as_ptr() as u32, 1], after);
+        c9(d, IF_DEVICE, 94, this, &[me, reg, lo32(v.as_ptr().expose_provenance()), 1], after);
     }
     c9(d, IF_DEVICE, 92, this, &[me, shader], after)
 }
@@ -740,12 +741,12 @@ unsafe fn copy_rects(d: &mut D3d, this: u32, src: u32, rects: u32, n: u32, dst: 
         _ => return D3DERR_INVALIDCALL,
     };
     let n = if rects == 0 { 1 } else { n };
-    for i in 0..n as usize {
+    for i in 0..us(n) {
         let r = if rects == 0 { [0, 0, sw, sh] } else { [rd(rects, i * 4), rd(rects, i * 4 + 1), rd(rects, i * 4 + 2), rd(rects, i * 4 + 3)] };
         let p = if points == 0 { [r[0], r[1]] } else { [rd(points, i * 2), rd(points, i * 2 + 1)] };
         let mut hr = D3DERR_INVALIDCALL;
         if !rendered {
-            hr = c9(d, IF_DEVICE, 30, this, &[me, src, r.as_ptr() as u32, dst, p.as_ptr() as u32], after);
+            hr = c9(d, IF_DEVICE, 30, this, &[me, src, lo32(r.as_ptr().expose_provenance()), dst, lo32(p.as_ptr().expose_provenance())], after);
         }
         if hr != S_OK && rendered && r == [0, 0, sw, sh] && p == [0, 0] {
             // a render target to system memory (screenshots): GetRenderTargetData
@@ -753,7 +754,7 @@ unsafe fn copy_rects(d: &mut D3d, this: u32, src: u32, rects: u32, n: u32, dst: 
         }
         if hr != S_OK {
             let dr = [p[0], p[1], p[0] + r[2] - r[0], p[1] + r[3] - r[1]];
-            hr = c9(d, IF_DEVICE, 34, this, &[me, src, r.as_ptr() as u32, dst, dr.as_ptr() as u32, 0], after);
+            hr = c9(d, IF_DEVICE, 34, this, &[me, src, lo32(r.as_ptr().expose_provenance()), dst, lo32(dr.as_ptr().expose_provenance()), 0], after);
         }
         if hr != S_OK {
             return hr;
