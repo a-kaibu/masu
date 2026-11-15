@@ -570,7 +570,7 @@ impl Stack {
     }
     /// Matrices on it, the top too.
     fn len(&self) -> usize {
-        self.below.len() + 1
+        self.below.len().saturating_add(1)
     }
     /// glPushMatrix: a copy of the top on top.
     fn push(&mut self) {
