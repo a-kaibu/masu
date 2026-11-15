@@ -519,7 +519,7 @@ fn counts() -> (Vec<u32>, u32) {
     obj::with(|t| {
         let mut tids: Vec<u32> = t.objs.iter().filter_map(|(_, (o, _))| match o {
             Obj::Thread { tid, done: false, .. } => Some(*tid),
-            _ => None,
+            Obj::Event { .. } | Obj::Timer { .. } | Obj::Mutex { .. } | Obj::Semaphore { .. } | Obj::Thread { .. } | Obj::Process { .. } | Obj::RemoteThread { .. } | Obj::File(_) | Obj::Pipe(_) | Obj::Shared(_) | Obj::Find(_) | Obj::Mapping { .. } | Obj::Key(_) | Obj::DebugObject(_) | Obj::Other(_) => None,
         }).collect();
         tids.sort();
         tids.dedup();
@@ -1502,7 +1502,7 @@ fn kind(o: &Obj) -> u8 {
         Obj::Semaphore { .. } => 3,
         Obj::Timer { .. } => 4,
         Obj::Mapping { .. } => 5,
-        _ => 0,
+        Obj::Thread { .. } | Obj::Process { .. } | Obj::RemoteThread { .. } | Obj::File(_) | Obj::Pipe(_) | Obj::Shared(_) | Obj::Find(_) | Obj::Key(_) | Obj::DebugObject(_) | Obj::Other(_) => 0,
     }
 }
 /// A kernel object name: "Local\\" / "Global\\" prefixes, no other backslash (ERROR_PATH_NOT_FOUND)
@@ -1517,7 +1517,7 @@ fn kern_sync(o: &Obj) -> Option<crate::kern::Sync> {
         Obj::Event { manual, set } => Sync::Event { manual, set },
         Obj::Mutex { owner, count } => Sync::Mutex { owner, pid: crate::pid(), count, abandoned: false },
         Obj::Semaphore { count, max } => Sync::Semaphore { count, max },
-        _ => return None,
+        Obj::Timer { .. } | Obj::Thread { .. } | Obj::Process { .. } | Obj::RemoteThread { .. } | Obj::File(_) | Obj::Pipe(_) | Obj::Shared(_) | Obj::Find(_) | Obj::Mapping { .. } | Obj::Key(_) | Obj::DebugObject(_) | Obj::Other(_) => return None,
     })
 }
 pub(crate) fn create_named(name: Option<String>, o: Obj) -> u32 {
@@ -2130,7 +2130,7 @@ pub fn cs_enter(cs: u32) {
     let me = crate::cur().tid;
     match CS.enter(atomic(cs + cs_off(OWNER)), atomic(cs + cs_off(SEM)), me, &Pause) {
         waits::Entered::Again => w32(cs + cs_off(REC), r32(cs + cs_off(REC)) + 1),
-        _ => {
+        waits::Entered::First | waits::Entered::Busy => {
             w32(cs + cs_off(REC), 1);
             w32(cs + cs_off(LOCK), CS_LOCKED);
         }
@@ -3201,7 +3201,7 @@ fn WriteProcessMemory(c: &mut Ctx) -> u32 {
             }
             done_n
         }
-        _ => {
+        xmem::Target::Own | xmem::Target::Bad => {
             let k = mem::accessible(a, n, true, true).min(readable);
             if k == 0 && n != 0 {
                 last_error(998);
@@ -6887,7 +6887,7 @@ pub(crate) fn GetFileType(c: &mut Ctx) -> u32 {
     match obj::with(|t| t.objs.get(&c.a(0)).map(|(o, _)| match o {
         Obj::Other(_) => 2,
         Obj::Pipe(_) => 3,
-        _ => 1,
+        Obj::Event { .. } | Obj::Timer { .. } | Obj::Mutex { .. } | Obj::Semaphore { .. } | Obj::Thread { .. } | Obj::Process { .. } | Obj::RemoteThread { .. } | Obj::File(_) | Obj::Shared(_) | Obj::Find(_) | Obj::Mapping { .. } | Obj::Key(_) | Obj::DebugObject(_) => 1,
     })) {
         Some(k) => k,
         // (no such handle: FILE_TYPE_UNKNOWN and ERROR_INVALID_HANDLE, as Windows; shirusu

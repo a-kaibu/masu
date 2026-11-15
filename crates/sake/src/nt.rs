@@ -1558,7 +1558,7 @@ fn nt_query_object(c: &mut Ctx) -> u32 {
             t.objs.get(&h).map(|(o, _)| {
                 let name = match o {
                     crate::obj::Obj::File(f) => object_name(&crate::files::host_to_win(&f.path)).unwrap_or_default(),
-                    _ => String::new(),
+                    crate::obj::Obj::Event { .. } | crate::obj::Obj::Timer { .. } | crate::obj::Obj::Mutex { .. } | crate::obj::Obj::Semaphore { .. } | crate::obj::Obj::Thread { .. } | crate::obj::Obj::Process { .. } | crate::obj::Obj::RemoteThread { .. } | crate::obj::Obj::Pipe(_) | crate::obj::Obj::Shared(_) | crate::obj::Obj::Find(_) | crate::obj::Obj::Mapping { .. } | crate::obj::Obj::Key(_) | crate::obj::Obj::DebugObject(_) | crate::obj::Obj::Other(_) => String::new(),
                 };
                 (type_name(o), name)
             })

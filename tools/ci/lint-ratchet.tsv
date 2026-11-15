@@ -1452,7 +1452,7 @@ file	crates/sake/src/k32.rs	masu-set_len	3
 file	crates/sake/src/k32.rs	string_slice	10
 file	crates/sake/src/k32.rs	undocumented_unsafe_blocks	11
 file	crates/sake/src/k32.rs	unwrap_used	3
-file	crates/sake/src/k32.rs	wildcard_enum_match_arm	8
+file	crates/sake/src/k32.rs	wildcard_enum_match_arm	2
 file	crates/sake/src/kern.rs	arithmetic_side_effects	38
 file	crates/sake/src/kern.rs	as_conversions	17
 file	crates/sake/src/kern.rs	cast_possible_truncation	7
@@ -1733,7 +1733,6 @@ file	crates/sake/src/nt.rs	cast_possible_wrap	4
 file	crates/sake/src/nt.rs	indexing_slicing	49
 file	crates/sake/src/nt.rs	string_slice	1
 file	crates/sake/src/nt.rs	unwrap_used	1
-file	crates/sake/src/nt.rs	wildcard_enum_match_arm	1
 file	crates/sake/src/ntsync.rs	arithmetic_side_effects	13
 file	crates/sake/src/ntsync.rs	as_conversions	21
 file	crates/sake/src/ntsync.rs	cast_possible_truncation	1
