@@ -1,0 +1,4 @@
+draw 789411 IDirect3DDevice9::DrawPrimitive
+image d789411 1280 720 2
+image f0 1280 720 2
+calls 844 frames 32

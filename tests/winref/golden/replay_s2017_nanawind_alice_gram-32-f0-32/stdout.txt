@@ -1,0 +1,4 @@
+draw 35 IDirect3DDevice9::DrawPrimitiveUP
+image d35 1920 1080 2
+image f0 1920 1080 2
+calls 741 frames 72

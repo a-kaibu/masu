@@ -1,0 +1,4 @@
+draw 1852 IDirect3DDevice9::DrawPrimitiveUP
+image d1852 1920 1080 2
+image f0 1920 1080 2
+calls 12178 frames 62

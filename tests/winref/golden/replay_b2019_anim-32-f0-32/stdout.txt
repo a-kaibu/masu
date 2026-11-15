@@ -1,0 +1,32 @@
+draw 484 IDirect3DDevice9::DrawPrimitiveUP
+image d484 1280 720 2
+draw 491 IDirect3DDevice9::DrawPrimitiveUP
+image d491 1280 720 2
+draw 498 IDirect3DDevice9::DrawPrimitiveUP
+image d498 1280 720 2
+draw 505 IDirect3DDevice9::DrawPrimitiveUP
+image d505 1280 720 2
+draw 512 IDirect3DDevice9::DrawPrimitiveUP
+image d512 1280 720 2
+draw 519 IDirect3DDevice9::DrawPrimitiveUP
+image d519 1280 720 2
+draw 526 IDirect3DDevice9::DrawPrimitiveUP
+image d526 1280 720 2
+draw 533 IDirect3DDevice9::DrawPrimitiveUP
+image d533 1280 720 2
+draw 540 IDirect3DDevice9::DrawPrimitiveUP
+image d540 1280 720 2
+draw 547 IDirect3DDevice9::DrawPrimitiveUP
+image d547 1280 720 2
+draw 554 IDirect3DDevice9::DrawPrimitiveUP
+image d554 1280 720 2
+draw 561 IDirect3DDevice9::DrawPrimitiveUP
+image d561 1280 720 2
+draw 568 IDirect3DDevice9::DrawPrimitiveUP
+image d568 1280 720 2
+draw 575 IDirect3DDevice9::DrawPrimitiveUP
+image d575 1280 720 2
+draw 582 IDirect3DDevice9::DrawPrimitiveUP
+image d582 1280 720 2
+image f0 1280 720 2
+calls 52987 frames 654

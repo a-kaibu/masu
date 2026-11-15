@@ -1,0 +1,58 @@
+image r2465 1280 720 2
+draw 2696 IDirect3DDevice9Ex::DrawPrimitive
+image d2696 1280 720 2
+draw 2736 IDirect3DDevice9Ex::DrawPrimitive
+image d2736 1280 720 2
+draw 2774 IDirect3DDevice9Ex::DrawPrimitive
+image d2774 1280 720 2
+draw 2804 IDirect3DDevice9Ex::DrawPrimitive
+image d2804 1280 720 2
+draw 2847 IDirect3DDevice9Ex::DrawPrimitive
+image d2847 1280 720 2
+draw 2863 IDirect3DDevice9Ex::DrawPrimitive
+image d2863 1280 720 2
+draw 2906 IDirect3DDevice9Ex::DrawPrimitive
+image d2906 1280 720 2
+draw 2922 IDirect3DDevice9Ex::DrawPrimitive
+image d2922 1280 720 2
+draw 2965 IDirect3DDevice9Ex::DrawPrimitive
+image d2965 1280 720 2
+draw 2981 IDirect3DDevice9Ex::DrawPrimitive
+image d2981 1280 720 2
+draw 3024 IDirect3DDevice9Ex::DrawPrimitive
+image d3024 1280 720 2
+draw 3040 IDirect3DDevice9Ex::DrawPrimitive
+image d3040 1280 720 2
+draw 3083 IDirect3DDevice9Ex::DrawPrimitive
+image d3083 1280 720 2
+draw 3099 IDirect3DDevice9Ex::DrawPrimitive
+image d3099 1280 720 2
+draw 3142 IDirect3DDevice9Ex::DrawPrimitive
+image d3142 1280 720 2
+draw 3158 IDirect3DDevice9Ex::DrawPrimitive
+image d3158 1280 720 2
+draw 3201 IDirect3DDevice9Ex::DrawPrimitive
+image d3201 1280 720 2
+draw 3217 IDirect3DDevice9Ex::DrawPrimitive
+image d3217 1280 720 2
+draw 3260 IDirect3DDevice9Ex::DrawPrimitive
+image d3260 1280 720 2
+draw 3276 IDirect3DDevice9Ex::DrawPrimitive
+image d3276 1280 720 2
+draw 3319 IDirect3DDevice9Ex::DrawPrimitive
+image d3319 1280 720 2
+draw 3335 IDirect3DDevice9Ex::DrawPrimitive
+image d3335 1280 720 2
+draw 3378 IDirect3DDevice9Ex::DrawPrimitive
+image d3378 1280 720 2
+draw 3394 IDirect3DDevice9Ex::DrawPrimitive
+image d3394 1280 720 2
+draw 3432 IDirect3DDevice9Ex::DrawPrimitive
+image d3432 1280 720 2
+image r3439 1280 720 2
+draw 3473 IDirect3DDevice9Ex::DrawPrimitive
+image d3473 1280 720 2
+draw 3602 IDirect3DDevice9Ex::DrawPrimitive
+image d3602 1280 720 2
+image f0 1280 720 2
+calls 321539 frames 364
