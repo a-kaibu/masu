@@ -126,7 +126,9 @@ def run_clippy(targets, lints):
     args = ["cargo", "clippy", "--workspace", *targets, "--keep-going", "--message-format=json", "--", "--cap-lints", "warn", "-A", "clippy::all"]
     for l in lints:
         args += ["-W", l if "::" in l or l in RUSTC.values() else "clippy::" + l]
-    p = subprocess.run(args, cwd=ROOT, stdout=subprocess.PIPE, text=True)
+    # (the warnings are what it counts: CI's CARGO_BUILD_WARNINGS=deny would fail the run)
+    env = dict(os.environ, CARGO_BUILD_WARNINGS="warn")
+    p = subprocess.run(args, cwd=ROOT, stdout=subprocess.PIPE, text=True, env=env)
     for line in p.stdout.splitlines():
         try:
             m = json.loads(line)

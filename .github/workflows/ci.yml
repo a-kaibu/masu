@@ -187,8 +187,10 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
+    # (cargo's build.warnings: the workspace's own warnings fail the build; unlike
+    # RUSTFLAGS=-D warnings it is not part of every crate's fingerprint)
     env:
-      RUSTFLAGS: -D warnings
+      CARGO_BUILD_WARNINGS: deny
     steps:
       - uses: actions/checkout@v7.0.1
       - run: tools/ci/rust-key.sh
@@ -599,29 +601,29 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-build-
       - run: tools/ci/pnpm.sh
       - run: tools/ci/rust-key.sh
-      # (rust-src and the emscripten std, per stable rustc)
+      # (rust-src and the emscripten std, per rustc: rust-toolchain.toml)
       - id: cache-6
         uses: actions/cache/restore@v6.1.0
         with:
           path: |
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/wasm32-unknown-emscripten
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/components
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/manifest-rust-src
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/manifest-rust-std-wasm32-unknown-emscripten
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/multirust-config.toml
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/src
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/wasm32-unknown-emscripten
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/components
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/manifest-rust-src
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/manifest-rust-std-wasm32-unknown-emscripten
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/multirust-config.toml
           key: rust-wasm-${{ env.RUST_KEY }}
       - run: tools/ci/rust-wasm.sh
       - if: steps.cache-6.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
         with:
           path: |
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/wasm32-unknown-emscripten
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/components
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/manifest-rust-src
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/manifest-rust-std-wasm32-unknown-emscripten
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/multirust-config.toml
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/src
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/wasm32-unknown-emscripten
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/components
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/manifest-rust-src
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/manifest-rust-std-wasm32-unknown-emscripten
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/multirust-config.toml
           key: rust-wasm-${{ env.RUST_KEY }}
       # (Emscripten, one cache for every workflow that builds sake (conformance, release, winref,
       # bench): in the cargo caches it was a copy per workflow, and the caches' 10 GB is shared)
@@ -908,7 +910,7 @@ jobs:
       - run: tools/ci/apt.sh mingw-w64
       - run: rustup target add x86_64-pc-windows-gnu
       - name: masu for Windows builds without warnings
-        run: RUSTFLAGS="-D warnings" cargo build --release -p masu --target x86_64-pc-windows-gnu
+        run: CARGO_BUILD_WARNINGS=deny cargo build --release -p masu --target x86_64-pc-windows-gnu
       - name: Shrink the cargo cache
         if: ${{ !cancelled() }}
         run: python3 tools/ci/cache-prune.py target

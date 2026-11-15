@@ -1,0 +1,6 @@
+# The Rust toolchain every build uses, CI's included (tools/ci/rust-key.sh installs it): one
+# compiler for everyone, so a new release's warnings land in one commit, not in every thread.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"
+components = ["clippy"]

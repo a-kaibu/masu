@@ -21,7 +21,6 @@ mpeg1 = { path = "../mpeg1" }
 asf = { path = "../asf" }
 wmcodec = { path = "../wmcodec" }
 msidb = { path = "../msidb" }
-cab = "0.6"
 miniz_oxide = "0.8"
 lzxd = "0.2"
 crt = { path = "../crt" }
@@ -51,6 +50,8 @@ boa_engine = { version = "0.22", default-features = false, features = ["annex-b"
 masu-tls = { path = "../tls-client" }
 
 [dev-dependencies]
+# (the tests build cabinets to read back; sake reads them with its own cabinet.rs)
+cab = "0.6"
 naga = { version = "30", features = ["wgsl-in"] }
 proptest = "1"
 idna_ref = { package = "idna", version = "1" }

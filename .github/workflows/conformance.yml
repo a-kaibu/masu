@@ -35,29 +35,29 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - run: tools/ci/rust-key.sh
-      # (rust-src and the emscripten std, per stable rustc)
+      # (rust-src and the emscripten std, per rustc: rust-toolchain.toml)
       - id: cache-1
         uses: actions/cache/restore@v6.1.0
         with:
           path: |
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/wasm32-unknown-emscripten
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/components
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/manifest-rust-src
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/manifest-rust-std-wasm32-unknown-emscripten
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/multirust-config.toml
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/src
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/wasm32-unknown-emscripten
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/components
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/manifest-rust-src
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/manifest-rust-std-wasm32-unknown-emscripten
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/multirust-config.toml
           key: rust-wasm-${{ env.RUST_KEY }}
       - run: tools/ci/rust-wasm.sh
       - if: steps.cache-1.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
         with:
           path: |
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/src
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/wasm32-unknown-emscripten
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/components
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/manifest-rust-src
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/manifest-rust-std-wasm32-unknown-emscripten
-            ~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/multirust-config.toml
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/src
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/wasm32-unknown-emscripten
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/components
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/manifest-rust-src
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/manifest-rust-std-wasm32-unknown-emscripten
+            ${{ env.RUST_SYSROOT }}/lib/rustlib/multirust-config.toml
           key: rust-wasm-${{ env.RUST_KEY }}
       # (Emscripten, one cache shared with CI, Release, winref and Bench: in the cargo caches it
       # was a copy per workflow)

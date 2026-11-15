@@ -125,7 +125,7 @@ fn frame(h: &mut H, f: &mpeg1::Frame) {
 /// Demux (or not, for an elementary stream) and decode `d` fed in chunks of `cut` bytes.
 fn decode(h: &mut H, d: &[u8], cut: usize) {
     let (mut v, mut a) = (Video::new(), Audio::new());
-    let mut drain = |h: &mut H, v: &mut Video, a: &mut Audio| {
+    let drain = |h: &mut H, v: &mut Video, a: &mut Audio| {
         while let Some(f) = v.decode() {
             frame(h, f);
         }
