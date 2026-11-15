@@ -1564,12 +1564,12 @@ file	crates/sake/src/mf/movie.rs	indexing_slicing	7
 file	crates/sake/src/mf/movie.rs	masu-from_raw_parts	1
 file	crates/sake/src/mf/movie.rs	multiple_unsafe_ops_per_block	1
 file	crates/sake/src/mf/movie.rs	unwrap_used	1
-file	crates/sake/src/mf/mp4.rs	arithmetic_side_effects	62
-file	crates/sake/src/mf/mp4.rs	as_conversions	81
+file	crates/sake/src/mf/mp4.rs	arithmetic_side_effects	61
+file	crates/sake/src/mf/mp4.rs	as_conversions	80
 file	crates/sake/src/mf/mp4.rs	cast_possible_truncation	34
 file	crates/sake/src/mf/mp4.rs	cast_possible_wrap	4
 file	crates/sake/src/mf/mp4.rs	cast_sign_loss	3
-file	crates/sake/src/mf/mp4.rs	indexing_slicing	18
+file	crates/sake/src/mf/mp4.rs	indexing_slicing	17
 file	crates/sake/src/mf/plat.rs	arithmetic_side_effects	32
 file	crates/sake/src/mf/plat.rs	as_conversions	19
 file	crates/sake/src/mf/plat.rs	cast_possible_truncation	5

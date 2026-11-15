@@ -247,12 +247,10 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
         for i in 0..(u32be(b, os + 4)? as usize).min(count) {
             let (n, d) = (u32be(b, os + 8 + 8 * i)?, u32be(b, os + 12 + 8 * i)?);
             let d = if v1 { d as i32 as i64 } else { d as i64 };
-            for _ in 0..n {
-                if k < count {
-                    cts[k] = d;
-                    k += 1;
-                }
-            }
+            // (a run past the samples ends with them: a damaged count of 2^32 took 18 s)
+            let run = usize::try_from(n).unwrap_or(usize::MAX);
+            cts.iter_mut().skip(k).take(run).for_each(|x| *x = d);
+            k = k.saturating_add(run);
         }
     }
     let mut key = vec![true; count];
@@ -305,13 +303,18 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
 }
 
 /// A sample's NAL units as Annex B (each length prefix a start code), the SPS and PPS before
-/// a key frame's; None when the lengths do not add up.
+/// a key frame's; None when the lengths do not add up or `v` has no NAL length size.
 pub fn annexb(v: &Video, key: bool, s: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(s.len() + if key { v.head.len() } else { 0 } + 16);
     if key {
         out.extend_from_slice(&v.head);
     }
-    let n = v.nal as usize;
+    let n = usize::from(v.nal);
+    // (no length size: not H.264 in MP4 framing, an ASF track's; each unit would be empty and
+    // the loop would never end)
+    if !matches!(n, 1 | 2 | 4) {
+        return None;
+    }
     let mut p = 0;
     while p < s.len() {
         let l = s.get(p..p + n)?.iter().fold(0usize, |a, &x| a << 8 | x as usize);
@@ -326,6 +329,19 @@ pub fn annexb(v: &Video, key: bool, s: &[u8]) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A track without NAL lengths (an ASF one's nal 0, or a damaged size) has no Annex B:
+    /// before, nal 0 never got past the first byte and filled memory until sake was killed
+    /// (the mf_source golden's WMV track).
+    #[test]
+    fn annexb_without_nal_lengths_is_none() {
+        let mut v = Video { codec: String::new(), w: 1, h: 1, profile: 0, level: 0, nal: 0, head: Vec::new(), samples: Vec::new(), rate: (1, 1), bitrate: 0, wm: None };
+        for nal in [0u8, 3, 5, 8, 255] {
+            v.nal = nal;
+            assert_eq!(annexb(&v, true, &[0, 0, 0, 1, 9]), None, "nal {nal}");
+            assert_eq!(annexb(&v, false, &[]), None, "nal {nal}");
+        }
+    }
     use proptest::prelude::*;
 
     fn bx(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {

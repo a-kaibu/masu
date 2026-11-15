@@ -948,3 +948,7 @@ pub fn init() {
     // (mf.dll has it too: import libraries that name mf for it, mingw's)
     implement("mf", "MFCreateSourceResolver", MFCreateSourceResolver);
 }
+
+#[cfg(test)]
+#[path = "source_snapshot_tests.rs"]
+mod snapshot_tests;
