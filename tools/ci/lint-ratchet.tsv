@@ -446,7 +446,6 @@ file	crates/kura/src/fs.rs	cast_possible_truncation	2
 file	crates/kura/src/fs.rs	cast_possible_wrap	1
 file	crates/kura/src/fs.rs	cast_sign_loss	1
 file	crates/kura/src/fs.rs	indexing_slicing	1
-file	crates/kura/src/fs.rs	masu-set_len	1
 file	crates/kura/src/gl/glsl.rs	arithmetic_side_effects	36
 file	crates/kura/src/gl/glsl.rs	as_conversions	28
 file	crates/kura/src/gl/glsl.rs	as_underscore	8
@@ -505,7 +504,6 @@ file	crates/kura/src/pages.rs	arithmetic_side_effects	30
 file	crates/kura/src/pages.rs	as_conversions	40
 file	crates/kura/src/pages.rs	cast_possible_truncation	14
 file	crates/kura/src/pages.rs	indexing_slicing	8
-file	crates/kura/src/pages.rs	masu-set_len	3
 file	crates/kura/src/pool.rs	arithmetic_side_effects	2
 file	crates/kura/src/render/d3d.rs	arithmetic_side_effects	420
 file	crates/kura/src/render/d3d.rs	as_conversions	74
@@ -578,7 +576,6 @@ file	crates/kura/src/vfs.rs	indexing_slicing	29
 file	crates/kura/src/vfs.rs	iter_over_hash_type	2
 file	crates/kura/src/vfs.rs	let_underscore_must_use	1
 file	crates/kura/src/vfs.rs	masu-from_raw_parts	5
-file	crates/kura/src/vfs.rs	masu-set_len	4
 file	crates/kura/src/vfs.rs	masu-wire_tree	13
 file	crates/kura/src/vfs.rs	match_wildcard_for_single_variants	1
 file	crates/kura/src/vfs.rs	missing_safety_doc	6
@@ -605,7 +602,6 @@ file	crates/kura/src/vfs/shared.rs	cast_possible_wrap	2
 file	crates/kura/src/vfs/shared.rs	empty_drop	1
 file	crates/kura/src/vfs/shared.rs	expect_used	2
 file	crates/kura/src/vfs/shared.rs	indexing_slicing	21
-file	crates/kura/src/vfs/shared.rs	masu-set_len	1
 file	crates/kura/src/vfs/shared.rs	unwrap_used	3
 file	crates/kura/src/vfs/shared/sim.rs	arithmetic_side_effects	11
 file	crates/kura/src/vfs/shared/sim.rs	as_conversions	14
@@ -628,7 +624,6 @@ file	crates/kura/src/video.rs	cast_precision_loss	1
 file	crates/kura/src/video.rs	cast_sign_loss	16
 file	crates/kura/src/video.rs	indexing_slicing	41
 file	crates/kura/src/video.rs	masu-from_raw_parts	1
-file	crates/kura/src/video.rs	masu-set_len	1
 file	crates/kura/src/video.rs	unsafe_op_in_unsafe_fn	74
 file	crates/kura/src/video.rs	unwrap_used	3
 file	crates/kura/src/video.rs	wildcard_enum_match_arm	3
@@ -1069,7 +1064,6 @@ file	crates/sake/src/crt_io.rs	checked_conversions	1
 file	crates/sake/src/crt_io.rs	expect_used	1
 file	crates/sake/src/crt_io.rs	indexing_slicing	19
 file	crates/sake/src/crt_io.rs	lossy_float_literal	4
-file	crates/sake/src/crt_io.rs	masu-set_len	1
 file	crates/sake/src/crt_io.rs	string_slice	2
 file	crates/sake/src/crt_io.rs	undocumented_unsafe_blocks	5
 file	crates/sake/src/crt_io.rs	unwrap_used	21
@@ -1425,7 +1419,6 @@ file	crates/sake/src/jscript.rs	let_underscore_must_use	9
 file	crates/sake/src/jscript.rs	masu-static_mut	1
 file	crates/sake/src/jscript.rs	ptr_as_ptr	1
 file	crates/sake/src/jscript.rs	unused_result_ok	1
-file	crates/sake/src/k32.rs	masu-set_len	3
 file	crates/sake/src/k32.rs	wildcard_enum_match_arm	1
 file	crates/sake/src/kern.rs	arithmetic_side_effects	38
 file	crates/sake/src/kern.rs	as_conversions	17
@@ -1503,7 +1496,6 @@ file	crates/sake/src/mf/plat.rs	as_conversions	2
 file	crates/sake/src/mf/plat.rs	indexing_slicing	1
 file	crates/sake/src/mf/plat.rs	let_underscore_must_use	1
 file	crates/sake/src/mf/plat.rs	map_err_ignore	3
-file	crates/sake/src/mf/plat.rs	masu-set_len	1
 file	crates/sake/src/mf/reader.rs	arithmetic_side_effects	61
 file	crates/sake/src/mf/reader.rs	as_conversions	5
 file	crates/sake/src/mf/reader.rs	cast_sign_loss	1

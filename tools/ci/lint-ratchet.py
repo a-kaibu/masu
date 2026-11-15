@@ -26,7 +26,8 @@ in them (mostly at 0; they stay there). rustc's unsafe_op_in_unsafe_fn (E0133 as
 counted as "unsafe_op_in_unsafe_fn".
 
 CUSTOM ("masu-*"): what clippy has no lint for, found line by line in crates/ (comments and test
-files skipped): `static mut`, `unsafe impl Send/Sync`, transmute, Vec::set_len, mem::zeroed /
+files skipped): `static mut`, `unsafe impl Send/Sync`, transmute, Vec::set_len (a `.set_len(` with
+`unsafe` on its line or the 4 before: File::set_len and the like are safe and not counted), mem::zeroed /
 assume_init on uninit, slice::from_raw_parts, and the store's tree format ("vnvm-tree") spelled
 outside crates/kura/src/tree_list.rs (each new reader of a wire format is a second parser to keep in step).
 """
@@ -111,6 +112,9 @@ CUSTOM = {
     "masu-wire_tree": re.compile(r"vnvm-tree"),
 }
 CUSTOM_HOME = {"masu-wire_tree": "crates/kura/src/tree_list.rs"}
+# (counted only inside unsafe code: the unsafe method of that name is Vec::set_len)
+CUSTOM_UNSAFE_ONLY = {"masu-set_len"}
+UNSAFE = re.compile(r"\bunsafe\b")
 ALLOW = re.compile(r"#!?\[\s*(?:allow|expect)\s*\(([^\]]*)\)\s*\]")
 
 
@@ -177,12 +181,16 @@ def custom():
                 continue
             path = os.path.join(d, f)
             rel = os.path.relpath(path, ROOT)
+            recent = collections.deque(maxlen=5)
             for i, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
                 code = line.split("//", 1)[0] if "//" in line and '"' not in line.split("//", 1)[0] else line
                 if code.lstrip().startswith(("//", "*", "/*")):
                     continue
+                recent.append(code)
                 for name, rx in CUSTOM.items():
                     if CUSTOM_HOME.get(name) == rel:
+                        continue
+                    if name in CUSTOM_UNSAFE_ONLY and not any(UNSAFE.search(c) for c in recent):
                         continue
                     for m in rx.finditer(code):
                         yield (rel, i, m.start() + 1, name)
