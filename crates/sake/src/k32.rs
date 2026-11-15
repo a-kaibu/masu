@@ -945,22 +945,24 @@ const ERROR_SIGNAL_REFUSED: u32 = 156;
 pub(crate) static SUSPENDS: std::sync::LazyLock<waits::suspend::Suspends> = std::sync::LazyLock::new(Default::default);
 
 /// kura's run loop, before every slice: a suspended thread stands still here (true: it did).
-pub fn park_suspended() -> bool {
+pub fn park_suspended(cpu: &mut koji::Cpu) -> bool {
     crate::uni::slice();
     if !SUSPENDS.any() {
         return false;
     }
     let t = crate::cur();
+    // (GetThreadContext of it meanwhile: where it stands)
+    let _ = crate::set_stopped(Some(crate::Stopped { cpu: Box::new(cpu.clone()), api: (0, 0) }));
     // (one processor: a suspended thread does not hold it)
     let held = crate::uni::leave();
     let parked = SUSPENDS.park(t.tid, || kura::snap::pausing() && kura::snap::parkable());
     if held {
         crate::uni::enter();
     }
+    let _ = crate::set_stopped(None);
     if parked {
         // (a context set meanwhile: SetThreadContext)
-        // SAFETY: t is this thread's record: its Cpu is alive and not borrowed while it is parked.
-        crate::tctx::apply_pending(unsafe { &mut *t.cpu });
+        crate::tctx::apply_pending(cpu);
     }
     parked
 }
@@ -2511,14 +2513,14 @@ pub(crate) fn thread_list() -> Vec<(u32, u32, usize)> {
 pub(crate) fn teb_of(tid: u32) -> Option<u32> {
     TEBS.locked().iter().find(|e| e.0 == tid).map(|e| e.1)
 }
-/// Running thread `tid`'s CPU and the API call it is in (crate::Thread's `api`)
-pub(crate) fn thread_cpu(tid: u32) -> Option<(*mut koji::Cpu, (u32, u32))> {
+/// Running thread `tid` (None: no such thread) and where it stands still (None: it runs)
+pub(crate) fn thread_stopped(tid: u32) -> Option<Option<crate::Stopped>> {
     let g = TEBS.locked();
     let &(_, _, t) = g.iter().find(|e| e.0 == tid)?;
     // SAFETY: TEBS holds a thread's record from tls_thread_init until forget_thread takes it out, which
     // happens under the same lock (held here as g).
     let t = unsafe { &*std::ptr::with_exposed_provenance::<crate::Thread>(t) };
-    Some((t.cpu(), t.api()))
+    Some(t.stopped())
 }
 /// How many threads run
 pub(crate) fn thread_count() -> usize {

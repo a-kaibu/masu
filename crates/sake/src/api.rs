@@ -779,7 +779,10 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     let me = crate::cur();
     crate::obj::HANDOFF.entered(me.tid);
     let tid = me.tid;
-    let outer = crate::swap_api((esp, if crate::mem::x64() { 8 } else { (if cdecl { 0 } else { bytes }).saturating_add(4) }));
+    // (a call that may wait, or any while a thread is suspended: GetThreadContext from another
+    // thread reads this copy of where it stands, as returned from the call)
+    let api = (esp, if crate::mem::x64() { 8 } else { (if cdecl { 0 } else { bytes }).saturating_add(4) });
+    let outer = crate::set_stopped((yields != 0 || crate::k32::SUSPENDS.any()).then(|| crate::Stopped { cpu: Box::new(cpu.clone()), api }));
     let this = (this_arg && !crate::mem::x64()).then(|| cpu.regs[koji::ECX]);
     let mut c = Ctx { cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this };
     if yields == 0 || (yields == 2 && c.a(0) != 0) {
@@ -807,7 +810,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     if top {
         crate::snap::api_leave();
     }
-    crate::swap_api(outer);
+    let _ = crate::set_stopped(outer);
     if let Some(o) = shirusu.filter(|_| !c.jumped) {
         let ret = match c.edx {
             Some(d) => u64::from(d) << 32 | u64::from(r),

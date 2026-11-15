@@ -304,16 +304,16 @@ file	crates/kura/src/audio.rs	missing_safety_doc	1
 file	crates/kura/src/audio.rs	undocumented_unsafe_blocks	2
 file	crates/kura/src/audio.rs	unsafe_op_in_unsafe_fn	1
 file	crates/kura/src/cpu.rs	arithmetic_side_effects	17
-file	crates/kura/src/cpu.rs	as_conversions	71
+file	crates/kura/src/cpu.rs	as_conversions	70
 file	crates/kura/src/cpu.rs	cast_possible_truncation	11
 file	crates/kura/src/cpu.rs	cast_possible_wrap	1
 file	crates/kura/src/cpu.rs	cast_ptr_alignment	5
 file	crates/kura/src/cpu.rs	cast_sign_loss	2
 file	crates/kura/src/cpu.rs	indexing_slicing	1
 file	crates/kura/src/cpu.rs	let_underscore_must_use	3
-file	crates/kura/src/cpu.rs	multiple_unsafe_ops_per_block	3
+file	crates/kura/src/cpu.rs	multiple_unsafe_ops_per_block	2
 file	crates/kura/src/cpu.rs	ptr_as_ptr	4
-file	crates/kura/src/cpu.rs	undocumented_unsafe_blocks	18
+file	crates/kura/src/cpu.rs	undocumented_unsafe_blocks	17
 file	crates/kura/src/crashlog.rs	arithmetic_side_effects	26
 file	crates/kura/src/crashlog.rs	as_conversions	18
 file	crates/kura/src/crashlog.rs	cast_possible_truncation	3
@@ -1852,7 +1852,6 @@ file	crates/sake/src/tctx.rs	as_conversions	17
 file	crates/sake/src/tctx.rs	cast_possible_truncation	9
 file	crates/sake/src/tctx.rs	cast_sign_loss	5
 file	crates/sake/src/tctx.rs	indexing_slicing	3
-file	crates/sake/src/tctx.rs	undocumented_unsafe_blocks	2
 file	crates/sake/src/tctx.rs	unwrap_used	5
 file	crates/sake/src/test_guest.rs	as_conversions	6
 file	crates/sake/src/test_guest.rs	cast_possible_truncation	2

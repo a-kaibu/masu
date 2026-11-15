@@ -214,15 +214,23 @@ use mem::{r32, w32};
 /// A guest thread's record: made by `enter`, freed by `forget_thread` when the thread ends.
 /// It is never lent out (review 2026-11-15: `cur()` gave a `&'static mut Thread`, any number of
 /// them, still there after forget_thread freed it): `cur()` answers a copy of what does not
-/// change ([`Me`]), and what does is atomics another thread may read too (GetThreadContext:
-/// `api`, k32::thread_cpu).
+/// change ([`Me`]); what does is atomics, or behind a lock (`stopped`), for another thread too.
 pub struct Thread {
     me: Me,
     /// save states: the host's thread-local state of this thread when it stood still (snap.rs)
     tls: [AtomicU32; 8],
-    /// the API call it is in: the stack pointer at its return address and what returning
-    /// pops (0 outside one; GetThreadContext from another thread, crate::tctx), as one word
-    api: std::sync::atomic::AtomicU64,
+    /// where it stands still, for GetThreadContext from another thread (crate::tctx)
+    stopped: std::sync::Mutex<Option<Stopped>>,
+}
+
+/// A copy a thread made of its own x86 state where it stands still: parked suspended, in an API
+/// call that may wait, at a debug event. Another thread reads this copy, never the Cpu the
+/// thread runs on (review 2026-11-15). `api`: the API call it is in (the stack pointer at its
+/// return address and what returning pops; (0, 0): none, the context is where it stands).
+#[derive(Clone, Debug)]
+pub(crate) struct Stopped {
+    pub cpu: Box<Cpu>,
+    pub api: (u32, u32),
 }
 
 /// What a guest thread's record says that never changes: a copy.
@@ -235,7 +243,7 @@ pub struct Thread {
 /// ```
 #[derive(Clone, Copy, Debug)]
 pub struct Me {
-    /// its x86 state (kura::cpu::create; kept for good: kura's pool). Only the thread itself
+    /// the thread's Cpu (kura::cpu::create, freed when the thread ends); only this thread
     /// uses it while it runs.
     pub cpu: *mut Cpu,
     pub tid: u32,
@@ -247,13 +255,10 @@ pub struct Me {
 }
 
 impl Thread {
-    /// The API call it is in (see `api`)
-    pub(crate) fn api(&self) -> (u32, u32) {
-        let v = self.api.load(Ordering::Acquire);
-        (kome::num::lo32(v >> 32), kome::num::lo32(v))
-    }
-    pub(crate) fn cpu(&self) -> *mut Cpu {
-        self.me.cpu
+    /// Where it stands still now (None: it runs)
+    pub(crate) fn stopped(&self) -> Option<Stopped> {
+        use kome::locks::Lock as _;
+        self.stopped.locked().clone()
     }
 }
 
@@ -285,10 +290,19 @@ pub fn cur() -> Me {
     me.unwrap_or(Me { cpu: std::ptr::null_mut(), tid: 0, teb: 0, obj: 0, stack: 0 })
 }
 
-/// The calling thread is in an API call now (`api`: see Thread's), and returns the one it was in
-pub(crate) fn swap_api(api: (u32, u32)) -> (u32, u32) {
-    let v = u64::from(api.0) << 32 | u64::from(api.1);
-    with_cur(|t| t.api.swap(v, Ordering::AcqRel)).map_or((0, 0), |o| (kome::num::lo32(o >> 32), kome::num::lo32(o)))
+thread_local! {
+    /// (whether this thread's `stopped` is Some: clearing it costs nothing when it is not)
+    static STOPPED_SET: Cell<bool> = const { Cell::new(false) };
+}
+/// The calling thread stands still as `s` says (None: it runs on), and answers what it said
+/// before (to put back when a nested call returns)
+pub(crate) fn set_stopped(s: Option<Stopped>) -> Option<Stopped> {
+    use kome::locks::Lock as _;
+    if s.is_none() && !STOPPED_SET.with(Cell::get) {
+        return None;
+    }
+    STOPPED_SET.with(|c| c.set(s.is_some()));
+    with_cur(|t| std::mem::replace(&mut *t.stopped.locked(), s)).flatten()
 }
 /// The calling thread's saved host-side state (save states, snap.rs)
 pub(crate) fn thread_tls() -> [u32; 8] {
@@ -390,7 +404,7 @@ fn enter(stack: u32, obj: impl FnOnce(u32) -> u32) -> Option<Me> {
         }
     }
     let me = Me { cpu, tid, teb, obj: obj(tid), stack: st };
-    let t = Box::into_raw(Box::new(Thread { me, tls: Default::default(), api: Default::default() }));
+    let t = Box::into_raw(Box::new(Thread { me, tls: Default::default(), stopped: Default::default() }));
     adopt(t.expose_provenance());
     k32::tls_thread_init(teb);
     Some(me)

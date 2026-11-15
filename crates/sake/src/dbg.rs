@@ -105,7 +105,15 @@ fn report(code: u32, vals: Vec<u64>, data: Vec<u8>, cpu: Option<&mut koji::Cpu>)
     let ev = Ev { pid: crate::pid(), tid: t.tid, code, vals, data, wait: true, ..Ev::default() };
     let Some(id) = kern::with(|k| { k.changed(); k.dbg.post(ev) }).0 else { return DBG_CONTINUE };
     // (GetThreadContext of this thread meanwhile: where it stands, not in an API call)
-    let api = crate::swap_api((0, 0));
+    let here = match &cpu {
+        Some(c) => Some(crate::Stopped { cpu: Box::new((**c).clone()), api: (0, 0) }),
+        None => None,
+    };
+    let outer = crate::set_stopped(here);
+    if cpu.is_none() {
+        // (no Cpu here: the copy of the call it is in, as where it stands)
+        let _ = crate::set_stopped(outer.clone().map(|s| crate::Stopped { api: (0, 0), ..s }));
+    }
     if crate::env_on!("SAKE_TRACE_DBG") {
         eprintln!("sake: thread {:#x} reports event {code} ({id})", crate::cur().tid);
     }
@@ -113,7 +121,7 @@ fn report(code: u32, vals: Vec<u64>, data: Vec<u8>, cpu: Option<&mut koji::Cpu>)
     if crate::env_on!("SAKE_TRACE_DBG") {
         eprintln!("sake: thread {:#x}: event {id} continued with {r:x?}", crate::cur().tid);
     }
-    crate::swap_api(api);
+    let _ = crate::set_stopped(outer);
     if let Some(cpu) = cpu {
         crate::tctx::apply_pending(cpu);
     }

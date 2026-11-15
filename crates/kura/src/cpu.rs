@@ -5,7 +5,6 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
-use kome::locks::Lock as _;
 
 use koji::{Cpu, Exit, Fault, Memory};
 
@@ -255,7 +254,9 @@ pub fn tid() -> i32 {
 // ---------------------------------------------------------------------------------------------
 // guest threads' CPUs
 
-/// A new CPU (kept until [`destroy`]: the crash log reads it).
+/// A new CPU, the calling thread's: only that thread uses it (the crash log and MASU_TRACE_EIP
+/// read what it shows, crashlog::shown; GetThreadContext a copy sake makes, sake::Stopped), so
+/// it is freed by [`destroy`].
 pub fn create(trap_lo: u32, trap_hi: u32) -> *mut Cpu {
     // MASU_CPUID_AVX: CPUID reports AVX/AVX2/FMA3/BMI (koji::CPUID_AVX)
     koji::CPUID_AVX.store(crate::env_on!("MASU_CPUID_AVX"), Ordering::Relaxed);
@@ -264,47 +265,18 @@ pub fn create(trap_lo: u32, trap_hi: u32) -> *mut Cpu {
     UPPER_OPEN.store(crate::env_on!("MASU_UPPER_OPEN"), Ordering::Relaxed);
     TRAP_LO.store(trap_lo, Ordering::Relaxed);
     TRAP_HI.store(trap_hi, Ordering::Relaxed);
-    let mut pool = RETIRED.locked();
-    let lease = pool.0.take(|| Kept(Box::into_raw(Box::<Cpu>::default()).expose_provenance())).lease();
-    let cpu = std::ptr::with_exposed_provenance_mut::<Cpu>(lease.0);
-    // SAFETY: a Cpu of the pool, out to nobody (lent now): made by Box::into_raw, never freed.
-    unsafe { *cpu = Cpu::default() };
-    pool.1.push(lease);
-    drop(pool);
-    unsafe {
-        (*cpu).trap_lo = trap_lo;
-        (*cpu).trap_hi = trap_hi;
-        (*cpu).fpu.cw = 0x27f;
-    }
-    // SAFETY: the new Cpu, the calling thread's alone (it runs nothing yet).
-    crate::crashlog::register(unsafe { &*cpu });
-    cpu
+    let mut c = Box::new(Cpu { trap_lo, trap_hi, ..Cpu::default() });
+    c.fpu.cw = 0x27f;
+    crate::crashlog::register(&c);
+    Box::into_raw(c)
 }
-
-/// The Cpus of threads that ended, for the next threads: kept, not freed, as the crash log's
-/// snapshot and MASU_TRACE_EIP read another thread's Cpu without a lock (one that ended
-/// meanwhile reads as a stale state, never as freed memory). A program that starts and ends
-/// threads all the time keeps as many as it had threads at once.
-/// (the pool and the Cpus lent out: destroy gives a Cpu's lease back)
-static RETIRED: Mutex<(crate::pool::Pool<Kept>, Vec<crate::pool::Lease<Kept>>)> = Mutex::new((crate::pool::Pool::new(), Vec::new()));
-
-/// A Cpu kept for good (never freed: see RETIRED), by its address
-struct Kept(usize);
 
 /// # Safety
 /// `cpu` came from [`create`] and is not used after this.
 pub unsafe fn destroy(cpu: *mut Cpu) {
     crate::crashlog::unregister(cpu);
-    let mut pool = RETIRED.locked();
-    let (p, out) = &mut *pool;
-    if let Some(i) = out.iter().position(|l| l.0 == cpu.expose_provenance()) {
-        p.give(out.swap_remove(i));
-    }
-}
-
-/// (tests: the Cpus waiting for reuse, made, the most out at once)
-pub fn retired() -> crate::pool::Counts {
-    RETIRED.locked().0.counts()
+    // SAFETY: the caller's: made by create's Box::into_raw, used by nothing after this.
+    drop(unsafe { Box::from_raw(cpu) });
 }
 
 /// What an [`Exit`] means for the caller of [`run`]; None to keep running.
@@ -440,10 +412,10 @@ pub fn work() -> u64 {
 
 /// Asked at the top of every slice of the run loop: whether the thread stood still (it is
 /// suspended by another thread: it returns once resumed, or when a save state wants it parked).
-static PARK: std::sync::OnceLock<fn() -> bool> = std::sync::OnceLock::new();
+static PARK: std::sync::OnceLock<fn(&mut Cpu) -> bool> = std::sync::OnceLock::new();
 
 /// sake's SuspendThread: see PARK.
-pub fn set_park(f: fn() -> bool) {
+pub fn set_park(f: fn(&mut Cpu) -> bool) {
     let _ = PARK.set(f);
 }
 
@@ -481,7 +453,7 @@ fn cpu_run(cpu: &mut Cpu) -> Stop {
         // (a thread another one suspended: SuspendThread, sake's suspend.rs)
         if let Some(park) = PARK.get() {
             crate::crashlog::phase(crate::crashlog::Phase::Park);
-            if park() {
+            if park(cpu) {
                 continue;
             }
         }
@@ -669,36 +641,28 @@ mod reuse_tests {
     use super::*;
 
     /// Threads that come and go one after the other (a game starting one per file or sound):
-    /// their Cpus and crash-log records are used again, not left behind one per thread
-    /// (review P2-1), and a reused Cpu starts as a new one.
+    /// their crash-log records are used again, not left behind one per thread (review P2-1),
+    /// and a new Cpu starts clean.
     #[test]
-    fn cpus_and_their_records_are_used_again() {
-        let mut seen = std::collections::HashSet::new();
+    fn crash_log_records_are_used_again() {
         for round in 0..200u32 {
             std::thread::spawn(move || {
                 let c = create(0x1000, 0x2000);
                 unsafe {
-                    assert_eq!((*c).eip, 0, "round {round}: a reused Cpu starts clean");
+                    assert_eq!((*c).eip, 0, "round {round}: a new Cpu starts clean");
                     assert_eq!(((*c).trap_lo, (*c).trap_hi, (*c).fpu.cw), (0x1000, 0x2000, 0x27f));
                     (*c).eip = 0xdead_0000 + round;
-                    (*c).regs[0] = round;
+                    destroy(c);
                 }
-                let p = c as usize;
-                unsafe { destroy(c) };
-                p
             })
             .join()
-            .map(|p| seen.insert(p))
             .unwrap();
         }
         // (other tests' threads may hold any number at once, more under a sanitizer, #242: so
         // not a bound but what reuse means: no more made than were ever out at once, and none
         // made for a thread while one waited)
-        let (cpus, logs) = (super::retired(), crate::crashlog::counts());
-        for (what, c) in [("Cpus", cpus), ("crash-log records", logs)] {
-            assert_eq!(c.made, c.peak, "{what}: {c:?}");
-            assert!(c.waiting >= 1, "{what}: {c:?}");
-        }
-        assert!(seen.len() <= cpus.made, "{} Cpus seen, {cpus:?}", seen.len());
+        let logs = crate::crashlog::counts();
+        assert_eq!(logs.made, logs.peak, "{logs:?}");
+        assert!(logs.waiting >= 1, "{logs:?}");
     }
 }

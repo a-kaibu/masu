@@ -115,7 +115,7 @@ fn wait_stopped(tid: u32) {
     let held = crate::uni::leave();
     crate::k32::SUSPENDS.wait_stopped(
         tid,
-        || crate::k32::thread_cpu(tid).is_none_or(|(_, api)| api != (0, 0)),
+        || crate::k32::thread_stopped(tid).is_none_or(|s| s.is_some()),
         || Some(end.saturating_duration_since(std::time::Instant::now()).as_millis() as u64),
     );
     if held {
@@ -175,10 +175,10 @@ fn thread_of(h: u32) -> Option<u32> {
 /// crate::xmem's GET_CONTEXT: the whole context of thread `tid` of this process (another
 /// process asks), as GetThreadContext of it here sees it
 pub fn context_of(tid: u32) -> Option<Vec<u8>> {
-    let (cpu, api) = crate::k32::thread_cpu(tid)?;
+    let mut s = crate::k32::thread_stopped(tid)??;
     let base = mem::heap_alloc(size(mem::x64()) + 16, true);
     let at = (base + 15) & !15;
-    capture(unsafe { &mut *cpu }, api, at);
+    capture(&mut s.cpu, s.api, at);
     overlay_pending(tid, at);
     let v = mem::bytes(at, size(mem::x64()));
     mem::heap_free(base);
@@ -220,11 +220,12 @@ fn GetThreadContext(c: &mut Ctx) -> u32 {
             let esp = c.esp;
             capture(c.cpu, (esp, pop), base);
         } else {
-            let Some((cpu, api)) = crate::k32::thread_cpu(tid) else {
+            // (a thread that did not stop within wait_stopped's time: no context, as for one gone)
+            let Some(mut s) = crate::k32::thread_stopped(tid).flatten() else {
                 crate::k32::last_error(6);
                 return 0;
             };
-            capture(unsafe { &mut *cpu }, api, base);
+            capture(&mut s.cpu, s.api, base);
             overlay_pending(tid, base);
         }
         overlay(ctx, base, flags);
@@ -338,6 +339,31 @@ mod tests {
     use super::*;
 
     /// The descriptors kernel32:thread test_GetThreadSelectorEntry reads from Windows
+    /// Another thread reads a copy the thread made where it stood still, never its Cpu: what the
+    /// thread does to its Cpu afterwards is not seen; a nested call that does not wait clears
+    /// it and its return puts the outer one back (review 2026-11-15: GetThreadContext read the
+    /// running Cpu of another thread)
+    #[test]
+    fn another_thread_reads_a_copy() {
+        let _g = crate::test_guest::enter();
+        crate::test_guest::guest_thread();
+        let tid = crate::cur().tid;
+        let mut cpu = koji::Cpu { eip: 0x0040_1234, ..koji::Cpu::default() };
+        assert!(crate::set_stopped(Some(crate::Stopped { cpu: Box::new(cpu.clone()), api: (0x1000, 8) })).is_none());
+        cpu.eip = 0;
+        let seen = std::thread::scope(|s| s.spawn(|| crate::k32::thread_stopped(tid)).join().unwrap());
+        let seen = seen.expect("the thread is listed").expect("it stands still");
+        assert_eq!((seen.cpu.eip, seen.api), (0x0040_1234, (0x1000, 8)));
+        assert_ne!(seen.cpu.eip, cpu.eip);
+        // (a nested call that does not wait: running; its return: the outer call's again)
+        let outer = crate::set_stopped(None);
+        assert_eq!(crate::k32::thread_stopped(tid).map(|s| s.is_none()), Some(true));
+        assert!(crate::set_stopped(outer).is_none());
+        assert_eq!(crate::k32::thread_stopped(tid).flatten().map(|s| s.api), Some((0x1000, 8)));
+        assert!(crate::set_stopped(None).is_some());
+        assert!(crate::set_stopped(None).is_none());
+    }
+
     #[test]
     fn selectors() {
         let fs = selector_entry(0x53, 0x7fec_0000).unwrap();
