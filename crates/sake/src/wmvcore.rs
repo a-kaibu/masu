@@ -18,7 +18,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use crate::api::{implement, vtable, Ctx};
+use crate::api::{implement, vtable, Ctx, Handler};
 use crate::mem::{self, ps, put32, putp, r16, r32, rp, w16, w32, w64, wp};
 
 pub const E_NOINTERFACE: u32 = 0x8000_4002;
@@ -363,12 +363,8 @@ struct Vt {
     buffer: u32,
 }
 
-fn vts() -> &'static Vt {
-    static V: std::sync::OnceLock<Vt> = std::sync::OnceLock::new();
-    V.get_or_init(|| Vt {
-        sync: vtable(
-            "IWMSyncReader2",
-            &[
+/// IWMSyncReader2's methods and their x86 argument bytes
+const M_SYNC: &[(Handler, u32)] = &[
                 (qi, 12),
                 (add_ref, 4),
                 (release, 4),
@@ -400,11 +396,9 @@ fn vts() -> &'static Vt {
                 (sr_get_allocate_for_output, 12),
                 (sr_set_allocate_for_stream, 12),
                 (sr_get_allocate_for_stream, 12),
-            ],
-        ),
-        profile: vtable(
-            "IWMProfile3",
-            &[
+            ];
+/// IWMProfile3's methods and their x86 argument bytes
+const M_PROFILE: &[(Handler, u32)] = &[
                 (qi, 12),
                 (add_ref, 4),
                 (release, 4),
@@ -444,11 +438,9 @@ fn vts() -> &'static Vt {
                 (notimpl, 8),
                 (notimpl, 8),
                 (notimpl, 8),
-            ],
-        ),
-        header: vtable(
-            "IWMHeaderInfo3",
-            &[
+            ];
+/// IWMHeaderInfo3's methods and their x86 argument bytes
+const M_HEADER: &[(Handler, u32)] = &[
                 (qi, 12),
                 (add_ref, 4),
                 (release, 4),
@@ -476,11 +468,9 @@ fn vts() -> &'static Vt {
                 (notimpl, 16),
                 (notimpl, 44),
                 (notimpl, 32),
-            ],
-        ),
-        config: vtable(
-            "IWMStreamConfig",
-            &[
+            ];
+/// IWMStreamConfig's methods and their x86 argument bytes
+const M_CONFIG: &[(Handler, u32)] = &[
                 (sc_qi, 12),
                 (com_add_ref, 4),
                 (sc_release, 4),
@@ -495,11 +485,9 @@ fn vts() -> &'static Vt {
                 (notimpl, 8),
                 (sc_get_buffer_window, 8),
                 (notimpl, 8),
-            ],
-        ),
-        props: vtable(
-            "IWMOutputMediaProps",
-            &[
+            ];
+/// IWMOutputMediaProps's methods and their x86 argument bytes
+const M_PROPS: &[(Handler, u32)] = &[
                 (sc_qi, 12),
                 (com_add_ref, 4),
                 (sc_release, 4),
@@ -508,12 +496,19 @@ fn vts() -> &'static Vt {
                 (mp_set_media_type, 8),
                 (mp_get_name, 12),
                 (mp_get_name, 12),
-            ],
-        ),
-        buffer: vtable(
-            "INSSBuffer",
-            &[(buf_qi, 12), (buf_add_ref, 4), (buf_release, 4), (buf_get_length, 8), (buf_set_length, 8), (buf_get_max_length, 8), (buf_get_buffer, 8), (buf_get_buffer_and_length, 12)],
-        ),
+            ];
+/// INSSBuffer's methods and their x86 argument bytes
+const M_BUFFER: &[(Handler, u32)] = &[(buf_qi, 12), (buf_add_ref, 4), (buf_release, 4), (buf_get_length, 8), (buf_set_length, 8), (buf_get_max_length, 8), (buf_get_buffer, 8), (buf_get_buffer_and_length, 12)];
+
+fn vts() -> &'static Vt {
+    static V: std::sync::OnceLock<Vt> = std::sync::OnceLock::new();
+    V.get_or_init(|| Vt {
+        sync: vtable("IWMSyncReader2", M_SYNC),
+        profile: vtable("IWMProfile3", M_PROFILE),
+        header: vtable("IWMHeaderInfo3", M_HEADER),
+        config: vtable("IWMStreamConfig", M_CONFIG),
+        props: vtable("IWMOutputMediaProps", M_PROPS),
+        buffer: vtable("INSSBuffer", M_BUFFER),
     })
 }
 
@@ -1809,3 +1804,7 @@ pub fn asyncr_snap_wake() {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "wmvcore/snapshot_tests.rs"]
+mod snapshot_tests;
