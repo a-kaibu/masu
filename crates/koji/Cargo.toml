@@ -6,11 +6,11 @@ license.workspace = true
 description = "x86 user-mode CPU core: interpreter and x86->wasm JIT"
 
 [dependencies]
+kome = { path = "../kome" }
 iced-x86 = { version = "1.21", default-features = false, features = ["no_std", "decoder", "instr_info", "fast_fmt"] }
 libm = "0.2"
 
 [dev-dependencies]
-kome = { path = "../kome" }
 flate2 = "1"
 proptest = "1"
 # (the JIT's modules validated in the property tests)
