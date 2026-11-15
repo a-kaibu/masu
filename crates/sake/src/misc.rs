@@ -5153,7 +5153,7 @@ fn GetFileTitleW(c: &mut Ctx) -> u32 {
     get_file_title(c, true)
 }
 pub fn init() {
-    let _ = (s2a, r8);
+    let _ = (s2a, { let x: fn(u32) -> u8 = r8; x });
     implement("comdlg32", "GetFileTitleA", GetFileTitleA);
     implement("comdlg32", "GetFileTitleW", GetFileTitleW);
     wts_init();

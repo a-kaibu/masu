@@ -937,7 +937,7 @@ pub fn init() {
     for (n, f) in fns {
         implement("gdiplus", n, *f);
     }
-    let _ = put32;
+    let _ = { let x: fn(u32, u32) = put32; x };
 }
 
 #[cfg(test)]

@@ -28,10 +28,12 @@ fn host<T>(a: u32) -> *mut T {
     std::ptr::with_exposed_provenance_mut(kome::num::us(a))
 }
 
-/// A guest address. Its arithmetic wraps at 4 GiB as the x86's does (an offset past the top
-/// comes round to the bottom: what the guest's own code computes); a length or a count is not
-/// one (its arithmetic is checked where it is done). Made from a u32 by `ga(a)`, given back
-/// by `.get()`; reads and writes guest memory as mem's functions do.
+/// A guest address: a value, x86 address arithmetic only. Its arithmetic wraps at 4 GiB as the
+/// x86's does (an offset past the top comes round to the bottom: what the guest's own code
+/// computes); a length or a count is not one (its arithmetic is checked where it is done). Made
+/// from a u32 by `ga(a)` (or `.into()`), given back by `.get()`. It does not touch memory: the
+/// accessors here do (`mem::r32(a)`, `mem::w32(a, v)`), each through a checked [`Range`]
+/// (review 2026-11-15).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
 pub struct Ga(u32);
 
@@ -62,46 +64,6 @@ impl Ga {
         // (two u32s: the sum is below 2^33, never wraps)
         u64::from(self.0).wrapping_add(u64::from(n))
     }
-    #[inline(always)]
-    pub fn r8(self) -> u8 {
-        r8(self.0)
-    }
-    #[inline(always)]
-    pub fn r16(self) -> u16 {
-        r16(self.0)
-    }
-    #[inline(always)]
-    pub fn r32(self) -> u32 {
-        r32(self.0)
-    }
-    #[inline(always)]
-    pub fn r64(self) -> u64 {
-        r64(self.0)
-    }
-    #[inline(always)]
-    pub fn rp(self) -> u32 {
-        rp(self.0)
-    }
-    #[inline(always)]
-    pub fn w8(self, v: u8) {
-        w8(self.0, v)
-    }
-    #[inline(always)]
-    pub fn w16(self, v: u16) {
-        w16(self.0, v)
-    }
-    #[inline(always)]
-    pub fn w32(self, v: u32) {
-        w32(self.0, v)
-    }
-    #[inline(always)]
-    pub fn w64(self, v: u64) {
-        w64(self.0, v)
-    }
-    #[inline(always)]
-    pub fn wp(self, v: u32) {
-        wp(self.0, v)
-    }
 }
 impl std::ops::Add<u32> for Ga {
     type Output = Ga;
@@ -121,6 +83,12 @@ impl std::ops::AddAssign<u32> for Ga {
     #[inline(always)]
     fn add_assign(&mut self, o: u32) {
         self.0 = self.0.wrapping_add(o);
+    }
+}
+impl From<u32> for Ga {
+    #[inline(always)]
+    fn from(a: u32) -> Ga {
+        Ga(a)
     }
 }
 impl From<Ga> for u32 {
@@ -156,24 +124,27 @@ pub fn ps() -> u32 {
 
 /// Reads a pointer-sized field (its low half on x64).
 #[inline(always)]
-pub fn rp(a: u32) -> u32 {
+pub fn rp(a: impl Into<Ga>) -> u32 {
     r32(a)
 }
 
 /// Writes a pointer-sized field (zero-extended on x64; INVALID_HANDLE_VALUE and other small
 /// negative values sign-extended).
 #[inline(always)]
-pub fn wp(a: u32, v: u32) {
-    w32(a, v);
+pub fn wp(a: impl Into<Ga>, v: u32) {
+    let a = a.into();
     if x64() {
-        (ga(a) + 4).w32(if v >= 0xffff_f000 { 0xffff_ffff } else { 0 });
+        w64(a, u64::from(v) | if v >= 0xffff_f000 { 0xffff_ffff_0000_0000 } else { 0 });
+    } else {
+        w32(a, v);
     }
 }
 
 /// wp if `a` is not NULL.
 #[inline]
-pub fn putp(a: u32, v: u32) {
-    if a != 0 {
+pub fn putp(a: impl Into<Ga>, v: u32) {
+    let a = a.into();
+    if a.get() != 0 {
         wp(a, v)
     }
 }
@@ -223,98 +194,153 @@ pub fn put_addr(a: u32, v: u32) {
     }
 }
 
-/// Writes `v` if `a` is not NULL.
+// ---------------------------------------------------------------------------------------------
+// reading and writing guest memory: one rule, one checked type
+
+/// The guest's first 64 KiB: never handed out (NULL pointers fault on Windows too).
+pub const NULL_TOP: u32 = 0x1_0000;
+
+/// Guest memory `a..a + n` that sake may read and write for the program: past the NULL pages
+/// and below GUEST_TOP (sake's own heap and stacks are above it: a bad pointer an API is given,
+/// which Wine's tests pass on purpose, would corrupt sake itself). Made only by [`range`]; the
+/// accesses that touch memory take one, so none goes unchecked (review 2026-11-15: w32 allowed
+/// address 0, copy checked only its destination, write checked a length cut to 32 bits).
+/// ```compile_fail
+/// let r = sake::mem::Range { a: 0, n: 4 };
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Range {
+    a: u32,
+    n: u32,
+}
+
+/// `n` bytes at `a` if they are all guest memory sake may use (see [`Range`]); n == 0 always is.
+#[inline(always)]
+pub fn range(a: u32, n: u32) -> Option<Range> {
+    (n == 0 || (a >= NULL_TOP && ga(a).end(n) <= u64::from(GUEST_TOP))).then_some(Range { a, n })
+}
+/// [`range`] for a host length (a Rust slice's): None past 4 GiB too
 #[inline]
-pub fn put64(a: u32, v: u64) {
-    if a != 0 {
-        w64(a, v)
+pub fn range_of(a: u32, n: usize) -> Option<Range> {
+    range(a, u32::try_from(n).ok()?)
+}
+/// range(), and a note the first time a write is refused
+#[inline(always)]
+fn for_write(a: u32, n: u32) -> Option<Range> {
+    let r = range(a, n);
+    if r.is_none() {
+        refused(a, n);
     }
+    r
 }
-#[inline(always)]
-pub fn r64(a: u32) -> u64 {
-    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
-    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
-    unsafe { host::<u64>(a).cast_const().read_unaligned() }
-}
-#[inline(always)]
-pub fn w64(a: u32, v: u64) {
-    if guest(a, 8) {
-        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
-        unsafe { host::<u64>(a).write_unaligned(v) }
+
+impl Range {
+    #[inline(always)]
+    pub fn addr(self) -> u32 {
+        self.a
+    }
+    #[inline(always)]
+    pub fn len(self) -> u32 {
+        self.n
+    }
+    #[inline(always)]
+    pub fn is_empty(self) -> bool {
+        self.n == 0
+    }
+    /// The host pointer of its start (guest address = host address)
+    #[inline(always)]
+    fn ptr<T>(self) -> *mut T {
+        host(self.a)
+    }
+    /// An `N`-byte value at its start (`N` <= its length)
+    #[inline(always)]
+    fn read<T: Copy>(self) -> T {
+        debug_assert!(std::mem::size_of::<T>() <= us(self.n));
+        // SAFETY: a Range is guest memory (backed: the module doc) at least size_of::<T>() long
+        // (the callers make it so); read_unaligned allows any address.
+        unsafe { self.ptr::<T>().cast_const().read_unaligned() }
+    }
+    #[inline(always)]
+    fn write<T: Copy>(self, v: T) {
+        debug_assert!(std::mem::size_of::<T>() <= us(self.n));
+        // SAFETY: as in read: guest memory, never sake's own.
+        unsafe { self.ptr::<T>().write_unaligned(v) }
     }
 }
 
-/// Guest memory is below 2G (GUEST_TOP); sake's own heap and stacks are above it (emscripten's
-/// GLOBAL_BASE). A write the guest asks for there (a bad pointer passed to an API: Wine's tests
-/// pass some on purpose) would corrupt sake itself: it is dropped (Windows would fault).
-#[inline(always)]
-pub fn guest(a: u32, n: u32) -> bool {
-    if ga(a).end(n) <= u64::from(GUEST_TOP) {
-        return true;
-    }
-    refused(a, n);
-    false
-}
-/// Whether `n` bytes at `a` are all guest memory (a check before reading a guest buffer whose
-/// length the guest gave)
-pub fn in_guest(a: u32, n: u32) -> bool {
-    ga(a).end(n) <= u64::from(GUEST_TOP)
-}
 #[cold]
 #[inline(never)]
 fn refused(a: u32, n: u32) {
+    if a < NULL_TOP {
+        // (a NULL pointer: Wine's tests pass many, an API refuses them as Windows faults)
+        return;
+    }
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| eprintln!("sake: a write of {n} bytes to {a:#x} (not guest memory) was dropped"));
 }
 
+/// The value at `a`; 0 where that is not guest memory (Windows would fault)
 #[inline(always)]
-pub fn r8(a: u32) -> u8 {
-    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
-    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
-    unsafe { *host::<u8>(a).cast_const() }
+fn rd<T: Copy + Default>(a: Ga) -> T {
+    range(a.get(), kome::num::u32_of(std::mem::size_of::<T>())).map_or_else(T::default, Range::read)
 }
+/// `v` at `a`; dropped where that is not guest memory
 #[inline(always)]
-pub fn r16(a: u32) -> u16 {
-    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
-    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
-    unsafe { host::<u16>(a).cast_const().read_unaligned() }
-}
-#[inline(always)]
-pub fn r32(a: u32) -> u32 {
-    // SAFETY: guest memory is the low 2 GiB of the wasm memory, all of it backed (the module doc); an
-    // address past it reads sake's own, still inside the wasm memory. Unaligned access: read_unaligned.
-    unsafe { host::<u32>(a).cast_const().read_unaligned() }
-}
-#[inline(always)]
-pub fn w8(a: u32, v: u8) {
-    if guest(a, 1) {
-        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
-        unsafe { *host::<u8>(a) = v }
+fn wr<T: Copy>(a: Ga, v: T) {
+    if let Some(r) = for_write(a.get(), kome::num::u32_of(std::mem::size_of::<T>())) {
+        r.write(v);
     }
 }
+
 #[inline(always)]
-pub fn w16(a: u32, v: u16) {
-    if guest(a, 2) {
-        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
-        unsafe { host::<u16>(a).write_unaligned(v) }
-    }
+pub fn r8(a: impl Into<Ga>) -> u8 {
+    rd(a.into())
 }
 #[inline(always)]
-pub fn w32(a: u32, v: u32) {
-    if guest(a, 4) {
-        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
-        unsafe { host::<u32>(a).write_unaligned(v) }
+pub fn r16(a: impl Into<Ga>) -> u16 {
+    rd(a.into())
+}
+#[inline(always)]
+pub fn r32(a: impl Into<Ga>) -> u32 {
+    rd(a.into())
+}
+#[inline(always)]
+pub fn r64(a: impl Into<Ga>) -> u64 {
+    rd(a.into())
+}
+#[inline(always)]
+pub fn w8(a: impl Into<Ga>, v: u8) {
+    wr(a.into(), v)
+}
+#[inline(always)]
+pub fn w16(a: impl Into<Ga>, v: u16) {
+    wr(a.into(), v)
+}
+#[inline(always)]
+pub fn w32(a: impl Into<Ga>, v: u32) {
+    wr(a.into(), v)
+}
+#[inline(always)]
+pub fn w64(a: impl Into<Ga>, v: u64) {
+    wr(a.into(), v)
+}
+/// Writes `v` if `a` is not NULL.
+#[inline]
+pub fn put32(a: impl Into<Ga>, v: u32) {
+    let a = a.into();
+    if a.get() != 0 {
+        w32(a, v)
     }
 }
 /// Writes `v` if `a` is not NULL.
 #[inline]
-pub fn put32(a: u32, v: u32) {
-    if a != 0 {
-        w32(a, v)
+pub fn put64(a: impl Into<Ga>, v: u64) {
+    let a = a.into();
+    if a.get() != 0 {
+        w64(a, v)
     }
 }
-/// A copy of guest memory `a..a + n`; empty where that is not all guest memory (an address
-/// past GUEST_TOP read sake's own)
+/// A copy of guest memory `a..a + n`; empty where that is not all guest memory
 pub fn bytes(a: u32, n: u32) -> Vec<u8> {
     view(a, n, <[u8]>::to_vec)
 }
@@ -326,69 +352,48 @@ pub fn array<const N: usize>(a: u32) -> [u8; N] {
 /// empty where that is not all guest memory. The view lives only inside `f`: it cannot be kept
 /// until the guest runs again and changes it.
 pub fn view<R>(a: u32, n: u32, f: impl FnOnce(&[u8]) -> R) -> R {
-    if !guest(a, n) {
+    match range(a, n) {
+        Some(r) => raw(r, f),
+        None => f(&[]),
+    }
+}
+/// The one place guest memory is read as a Rust slice.
+fn raw<R>(r: Range, f: impl FnOnce(&[u8]) -> R) -> R {
+    if r.is_empty() {
         return f(&[]);
     }
-    raw(a, n, f)
+    // SAFETY: a Range is guest memory (the low 2 GiB of the wasm memory, all of it backed: the
+    // module doc), not empty: its pointer is not NULL. The guest's own threads may write it
+    // meanwhile (as the x86 they emulate allows); sake reads bytes, not invariants, from it, and
+    // the borrow ends with `f`, before sake runs guest code again on this thread.
+    f(unsafe { std::slice::from_raw_parts(r.ptr::<u8>().cast_const(), us(r.n)) })
 }
-/// The one place guest memory is read as a Rust slice; `a..a + n` checked guest memory by the
-/// caller (guest()).
-fn raw<R>(a: u32, n: u32, f: impl FnOnce(&[u8]) -> R) -> R {
-    debug_assert!(in_guest(a, n));
-    // SAFETY: a..a+n is guest memory (the caller's guest() check; the low 2 GiB of the wasm
-    // memory, all of it backed: the module doc). The guest's own threads may write it meanwhile
-    // (as the x86 they emulate allows); sake reads bytes, not invariants, from it, and the borrow
-    // ends with `f`, before sake runs guest code again on this thread.
-    f(unsafe { std::slice::from_raw_parts(host::<u8>(a).cast_const(), us(n)) })
-}
-/// The one place guest memory is written as a Rust slice; `a..a + n` checked by the caller.
-fn raw_mut<R>(a: u32, n: u32, f: impl FnOnce(&mut [u8]) -> R) -> R {
-    debug_assert!(in_guest(a, n));
+/// The one place guest memory is written as a Rust slice.
+fn raw_mut<R>(r: Range, f: impl FnOnce(&mut [u8]) -> R) -> R {
+    if r.is_empty() {
+        return f(&mut []);
+    }
     // SAFETY: as in raw; the borrow ends with `f`.
-    f(unsafe { std::slice::from_raw_parts_mut(host::<u8>(a), us(n)) })
+    f(unsafe { std::slice::from_raw_parts_mut(r.ptr::<u8>(), us(r.n)) })
 }
 /// The host pointer of guest memory `a..a + n`, None where that is not all guest memory: for
 /// code that walks it by pointer (the software rasterizers). Reading or writing through it is
 /// the caller's unsafe, inside that range.
 pub fn host_ptr(a: u32, n: u32) -> Option<*const u8> {
-    guest(a, n).then(|| host::<u8>(a).cast_const())
+    range(a, n).map(|r| r.ptr::<u8>().cast_const())
 }
-/// host_ptr for writing: None where guest_range refuses (the NULL pages, past GUEST_TOP)
+/// host_ptr for writing
 pub fn host_ptr_mut(a: u32, n: u32) -> Option<*mut u8> {
-    if !guest_range(a, n) {
-        if a >= NULL_TOP {
-            refused(a, n);
-        }
-        return None;
-    }
-    Some(host::<u8>(a))
+    for_write(a, n).map(Range::ptr::<u8>)
 }
-/// `f` with guest memory `a..a + n` to write; None (and `f` not run) where that is not the
-/// guest's to write (guest_range: the NULL pages, past GUEST_TOP)
+/// `f` with guest memory `a..a + n` to write; None (and `f` not run) where that is not all
+/// guest memory
 pub fn view_mut<R>(a: u32, n: u32, f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
-    if n == 0 {
-        return Some(f(&mut []));
-    }
-    if !guest_range(a, n) {
-        if a >= NULL_TOP {
-            refused(a, n);
-        }
-        return None;
-    }
-    // (guest_range above: a..a+n is guest memory past the NULL pages)
-    Some(raw_mut(a, n, f))
+    for_write(a, n).map(|r| raw_mut(r, f))
 }
-/// Whether `a..a + n` is guest memory sake may write for the program (view_mut's rule).
-#[inline]
-pub fn guest_range(a: u32, n: u32) -> bool {
-    n == 0 || (a >= NULL_TOP && ga(a).end(n) <= u64::from(GUEST_TOP))
-}
-/// The guest's first 64 KiB: never handed out (NULL pointers fault on Windows too).
-pub const NULL_TOP: u32 = 0x1_0000;
 pub fn fill(a: u32, n: u32, v: u8) {
-    if guest(a, n) {
-        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
-        unsafe { std::ptr::write_bytes(host::<u8>(a), v, us(n)) }
+    if let Some(r) = for_write(a, n) {
+        raw_mut(r, |s| s.fill(v));
     }
 }
 /// Zeroes [a, a+n) without writing to the pages in it that are zero already. The browser backs
@@ -401,22 +406,17 @@ pub fn zero(a: u32, n: u32) {
     if n < ZERO_SKIP_MIN {
         return fill(a, n, 0);
     }
-    if !guest(a, n) {
-        return;
-    }
-    let end = ga(a).end(n);
-    let mut p = u64::from(a);
-    while p < end {
-        // (p < end <= 2^32: the next page boundary is below 2^33)
-        let next = (p | u64::from(PAGE).saturating_sub(1)).saturating_add(1).min(end);
-        // (p..next is inside a..a+n, guest memory: checked above)
-        raw_mut(kome::num::lo32(p), kome::num::lo32(next.saturating_sub(p)), |s| {
-            if !is_zero(s) {
-                s.fill(0);
+    let Some(r) = for_write(a, n) else { return };
+    raw_mut(r, |s| {
+        // (pages of the guest's: a starts where it starts, the rest on page boundaries)
+        let first = us(PAGE.saturating_sub(a % PAGE)).min(s.len());
+        let (head, rest) = s.split_at_mut(first);
+        for p in std::iter::once(head).chain(rest.chunks_mut(us(PAGE))) {
+            if !is_zero(p) {
+                p.fill(0);
             }
-        });
-        p = next;
-    }
+        }
+    });
 }
 /// (below this zero() fills: one or two pages)
 const ZERO_SKIP_MIN: u32 = 2 * PAGE;
@@ -433,19 +433,22 @@ pub fn is_zero(s: &[u8]) -> bool {
     c.remainder().iter().all(|&b| b == 0)
 }
 
+/// `n` bytes from `src` to `dst` (they may overlap); nothing where either is not all guest memory
 pub fn copy(dst: u32, src: u32, n: u32) {
-    if guest(dst, n) {
-        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
-        // The source is read as r8 reads (the wasm memory); ptr::copy allows the overlap.
-        unsafe { std::ptr::copy(host::<u8>(src).cast_const(), host::<u8>(dst), us(n)) }
+    let (Some(s), Some(d)) = (range(src, n), for_write(dst, n)) else { return };
+    if n == 0 {
+        return;
     }
+    // SAFETY: both are guest memory n bytes long (Ranges); ptr::copy allows the overlap.
+    unsafe { std::ptr::copy(s.ptr::<u8>().cast_const(), d.ptr::<u8>(), us(n)) }
 }
+/// `data` (host memory sake holds) at `dst`; nothing where that is not all guest memory
 pub fn write(dst: u32, data: &[u8]) {
-    if guest(dst, kome::num::lo32(data.len())) {
-        // SAFETY: guest() above: the bytes are guest memory (backed, the module doc), never sake's own.
-        // `data` is host memory sake holds, not the guest bytes it is copied to.
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), host::<u8>(dst), data.len()) }
-    }
+    let Some(d) = range_of(dst, data.len()) else {
+        refused(dst, kome::num::u32_of(data.len()));
+        return;
+    };
+    raw_mut(d, |s| s.copy_from_slice(data));
 }
 
 /// NUL-terminated byte string at `a` (without the NUL).
@@ -459,7 +462,7 @@ pub fn cstr(a: u32) -> Vec<u8> {
         return view(a, GUEST_TOP.saturating_sub(a), |s| s.iter().take_while(|&&c| c != 0).copied().collect());
     }
     let mut n = 0;
-    while (ga(a) + n).r8() != 0 {
+    while r8(ga(a) + n) != 0 {
         n = n.wrapping_add(1);
     }
     bytes(a, n)
@@ -485,7 +488,7 @@ pub fn wstr(a: u32) -> Vec<u16> {
     let mut v = Vec::new();
     let mut p = ga(a);
     loop {
-        let c = p.r16();
+        let c = r16(p);
         if c == 0 {
             break;
         }
@@ -498,7 +501,7 @@ pub fn wstr(a: u32) -> Vec<u16> {
 pub fn cstrn(a: u32, n: u32) -> Vec<u8> {
     let mut v = Vec::new();
     for i in 0..n {
-        let c = (ga(a) + i).r8();
+        let c = r8(ga(a) + i);
         if c == 0 {
             break;
         }
@@ -510,7 +513,7 @@ pub fn cstrn(a: u32, n: u32) -> Vec<u8> {
 pub fn wstrn(a: u32, n: u32) -> Vec<u16> {
     let mut v = Vec::new();
     for i in 0..n {
-        let c = ga(a).at(i, 2).r16();
+        let c = r16(ga(a).at(i, 2));
         if c == 0 {
             break;
         }
@@ -525,7 +528,7 @@ pub fn put_cstr(dst: u32, cap: u32, s: &[u8]) -> u32 {
     }
     let n = (kome::num::lo32(s.len())).min(cap.saturating_sub(1));
     write(dst, s.get(..us(n)).unwrap_or(s));
-    (ga(dst) + n).w8(0);
+    w8(ga(dst) + n, 0);
     n
 }
 pub fn put_wstr(dst: u32, cap: u32, s: &[u16]) -> u32 {
@@ -534,9 +537,9 @@ pub fn put_wstr(dst: u32, cap: u32, s: &[u16]) -> u32 {
     }
     let n = (kome::num::lo32(s.len())).min(cap.saturating_sub(1));
     for (i, &u) in (0..n).zip(s) {
-        ga(dst).at(i, 2).w16(u);
+        w16(ga(dst).at(i, 2), u);
     }
-    ga(dst).at(n, 2).w16(0);
+    w16(ga(dst).at(n, 2), 0);
     n
 }
 
@@ -633,7 +636,7 @@ fn insert(sp: &mut BTreeMap<u32, Region>, base: u32, size: u32, prot: u32, kind:
     #[cfg(test)]
     {
         let n = size.min(16 * PAGE);
-        if TEST_MAPPED.load(std::sync::atomic::Ordering::Relaxed) && in_guest(base, n) {
+        if TEST_MAPPED.load(std::sync::atomic::Ordering::Relaxed) && range(base, n).is_some() {
             assert!(view(base, n, is_zero), "free guest memory at {base:#x} is not zero: something wrote there without reserving it");
         }
     }
@@ -842,7 +845,7 @@ pub fn guard_hit(a: u32) -> bool {
 /// below becomes the guard page (unless it is the stack's last one) and StackLimit the hit
 /// page's base.
 pub fn stack_grow(teb: u32, a: u32) -> bool {
-    let (dealloc, base) = ((ga(teb) + 0xe0c).r32(), (ga(teb) + 4).r32());
+    let (dealloc, base) = (r32(ga(teb) + 0xe0c), r32(ga(teb) + 4));
     if dealloc == 0 || !(dealloc..base).contains(&a) {
         return false;
     }
@@ -850,8 +853,8 @@ pub fn stack_grow(teb: u32, a: u32) -> bool {
     if u64::from(page) >= ga(dealloc).end(PAGE) {
         commit_range((ga(page) - PAGE).get(), PAGE, 0x04 | 0x100);
     }
-    if page < (ga(teb) + 8).r32() {
-        (ga(teb) + 8).w32(page);
+    if page < r32(ga(teb) + 8) {
+        w32(ga(teb) + 8, page);
     }
     true
 }
@@ -859,7 +862,7 @@ pub fn stack_grow(teb: u32, a: u32) -> bool {
 /// Whether `a` is in the lowest page of the thread stack of `teb` (between DeallocationStack
 /// and a page above it), which new_teb leaves inaccessible.
 pub fn stack_floor(teb: u32, a: u32) -> bool {
-    let dealloc = if x64() { (ga(teb) + 0x1478).r64() } else { u64::from((ga(teb) + 0xe0c).r32()) };
+    let dealloc = if x64() { r64(ga(teb) + 0x1478) } else { u64::from(r32(ga(teb) + 0xe0c)) };
     dealloc != 0 && (dealloc..dealloc.saturating_add(u64::from(PAGE))).contains(&(u64::from(a)))
 }
 
@@ -1002,8 +1005,8 @@ pub const SLAB_CAP: u32 = 0x5ca9_0000;
 /// The class of small block `p`: its tagged word, or (a block from before the word, a state
 /// saved earlier) its size's.
 fn slab_cap(p: u32) -> u32 {
-    let k = (ga(p) - 12).r32().wrapping_sub(SLAB_CAP);
-    if (1..=SLAB_MAX / 16).contains(&k) { k } else { slab_class((ga(p) - 8).r32()) }
+    let k = r32(ga(p) - 12).wrapping_sub(SLAB_CAP);
+    if (1..=SLAB_MAX / 16).contains(&k) { k } else { slab_class(r32(ga(p) - 8)) }
 }
 
 /// (tests: blocks made for the class lists)
@@ -1034,7 +1037,7 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
     if size > SLAB_MAX {
         let p = heap_alloc(size, zero);
         if p != 0 && heap != 0 {
-            (ga(p) - 16).w32(heap);
+            w32(ga(p) - 16, heap);
             BIG.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).entry(heap).or_default().insert(p);
         }
         return p;
@@ -1046,12 +1049,12 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
     while lock.swap(1, Ordering::Acquire) != 0 {
         std::hint::spin_loop();
     }
-    let head = ga(t).at(k, 4).r32();
+    let head = r32(ga(t).at(k, 4));
     let mut made = Vec::new();
     let p = if head != 0 {
-        ga(t).at(k, 4).w32(r32(head));
+        w32(ga(t).at(k, 4), r32(head));
         // (its heap goes with it while the lists are held: heap_destroy walks under the lock)
-        (ga(head) - 16).w32(heap);
+        w32(ga(head) - 16, heap);
         head
     } else {
         // a new block for the caller and a few for the list
@@ -1062,17 +1065,17 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
             if b == 0 {
                 break;
             }
-            (ga(b) - 12).w32(SLAB_CAP | k);
-            (ga(b) - 16).w32(heap);
+            w32(ga(b) - 12, SLAB_CAP | k);
+            w32(ga(b) - 16, heap);
             made.push(b);
             #[cfg(test)]
             SLAB_MADE.fetch_add(1, Ordering::Relaxed);
             if i == 0 {
                 first = b;
             } else {
-                (ga(b) - 4).w32(SLAB_FREE);
-                w32(b, ga(t).at(k, 4).r32());
-                ga(t).at(k, 4).w32(b);
+                w32(ga(b) - 4, SLAB_FREE);
+                w32(b, r32(ga(t).at(k, 4)));
+                w32(ga(t).at(k, 4), b);
             }
         }
         first
@@ -1085,8 +1088,8 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
     if p == 0 {
         return 0;
     }
-    (ga(p) - 8).w32(size);
-    (ga(p) - 4).w32(SLAB);
+    w32(ga(p) - 8, size);
+    w32(ga(p) - 4, SLAB);
     if zero {
         fill(p, size, 0);
     }
@@ -1095,7 +1098,7 @@ pub fn heap_alloc_in(heap: u32, size: u32, zero: bool) -> u32 {
 
 /// heap_free for HeapFree/free: small blocks back to their class list.
 pub fn heap_free_small(p: u32) -> bool {
-    if p < LO + HDR || (ga(p) - 4).r32() != SLAB {
+    if p < LO + HDR || r32(ga(p) - 4) != SLAB {
         return heap_free(p);
     }
     use std::sync::atomic::Ordering;
@@ -1105,9 +1108,9 @@ pub fn heap_free_small(p: u32) -> bool {
     while lock.swap(1, Ordering::Acquire) != 0 {
         std::hint::spin_loop();
     }
-    (ga(p) - 4).w32(SLAB_FREE);
-    w32(p, ga(t).at(k, 4).r32());
-    ga(t).at(k, 4).w32(p);
+    w32(ga(p) - 4, SLAB_FREE);
+    w32(p, r32(ga(t).at(k, 4)));
+    w32(ga(t).at(k, 4), p);
     lock.store(0, Ordering::Release);
     true
 }
@@ -1119,22 +1122,22 @@ pub fn heap_retag(p: u32, heap: u32) {
     if !heap_owns(p) {
         return;
     }
-    if (ga(p) - 4).r32() == SLAB {
+    if r32(ga(p) - 4) == SLAB {
         let lock = slab_lock(slab_table());
         while lock.swap(1, Ordering::Acquire) != 0 {
             std::hint::spin_loop();
         }
-        (ga(p) - 16).w32(heap);
+        w32(ga(p) - 16, heap);
         lock.store(0, Ordering::Release);
         return;
     }
     let mut m = BIG.lock().unwrap_or_else(|e| e.into_inner());
     let m = m.get_or_insert_with(Default::default);
-    let old = (ga(p) - 16).r32();
+    let old = r32(ga(p) - 16);
     if old != 0 {
         m.get_mut(&old).map(|s| s.remove(&p));
     }
-    (ga(p) - 16).w32(heap);
+    w32(ga(p) - 16, heap);
     if heap != 0 {
         m.entry(heap).or_default().insert(p);
     }
@@ -1156,11 +1159,11 @@ pub fn heap_destroy(heap: u32) -> usize {
         std::hint::spin_loop();
     }
     for &b in slabs.iter() {
-        if (ga(b) - 4).r32() == SLAB && (ga(b) - 16).r32() == heap {
+        if r32(ga(b) - 4) == SLAB && r32(ga(b) - 16) == heap {
             let k = slab_cap(b);
-            (ga(b) - 4).w32(SLAB_FREE);
-            w32(b, ga(t).at(k, 4).r32());
-            ga(t).at(k, 4).w32(b);
+            w32(ga(b) - 4, SLAB_FREE);
+            w32(b, r32(ga(t).at(k, 4)));
+            w32(ga(t).at(k, 4), b);
             n = n.saturating_add(1);
         }
     }
@@ -1171,7 +1174,7 @@ pub fn heap_destroy(heap: u32) -> usize {
     let mut big: Vec<u32> = big.into_iter().collect();
     big.sort_unstable();
     for p in big {
-        if (ga(p) - 4).r32() == MAGIC && (ga(p) - 16).r32() == heap && heap_free(p) {
+        if r32(ga(p) - 4) == MAGIC && r32(ga(p) - 16) == heap && heap_free(p) {
             n = n.saturating_add(1);
         }
     }
@@ -1187,9 +1190,9 @@ pub fn heap_alloc(size: u32, zero: bool) -> u32 {
         return 0;
     }
     let p = ga(p) + HDR;
-    (p - 16).w32(0);
-    (p - 8).w32(size);
-    (p - 4).w32(MAGIC);
+    w32(p - 16, 0);
+    w32(p - 8, size);
+    w32(p - 4, MAGIC);
     if zero {
         crate::mem::zero(p.get(), size);
     }
@@ -1200,27 +1203,27 @@ pub fn heap_size(p: u32) -> u32 {
     if p == 0 || !heap_owns(p) {
         return u32::MAX;
     }
-    (ga(p) - 8).r32()
+    r32(ga(p) - 8)
 }
 
 /// Whether `p` came from heap_alloc (games free pointers of other heaps through ours rarely,
 /// but GlobalFree of a handle and the like do happen).
 pub fn heap_owns(p: u32) -> bool {
-    p >= LO + HDR && matches!((ga(p) - 4).r32(), MAGIC | SLAB)
+    p >= LO + HDR && matches!(r32(ga(p) - 4), MAGIC | SLAB)
 }
 
 pub fn heap_free(p: u32) -> bool {
     if !heap_owns(p) {
         return false;
     }
-    let size = (ga(p) - 8).r32();
-    if (ga(p) - 4).r32() == MAGIC && (ga(p) - 16).r32() != 0 {
-        let h = (ga(p) - 16).r32();
+    let size = r32(ga(p) - 8);
+    if r32(ga(p) - 4) == MAGIC && r32(ga(p) - 16) != 0 {
+        let h = r32(ga(p) - 16);
         if let Some(m) = BIG.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
             m.get_mut(&h).map(|s| s.remove(&p));
         }
     }
-    (ga(p) - 4).w32(0);
+    w32(ga(p) - 4, 0);
     // (c_free: the header's size may be below the chunk's after an in-place shrink)
     let _ = size;
     // SAFETY: p - HDR is what malloc returned in heap_alloc (heap_owns(p) above: a live block).
@@ -1235,7 +1238,7 @@ pub fn heap_fits(p: u32, size: u32) -> bool {
         return false;
     }
     let old = heap_size(p);
-    if (ga(p) - 4).r32() == SLAB { size <= SLAB_MAX && slab_class(size) <= slab_cap(p) } else { size <= old }
+    if r32(ga(p) - 4) == SLAB { size <= SLAB_MAX && slab_class(size) <= slab_cap(p) } else { size <= old }
 }
 
 pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
@@ -1252,7 +1255,7 @@ pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
         if zero && size > old {
             crate::mem::zero((ga(p) + old).get(), size.saturating_sub(old));
         }
-        (ga(p) - 8).w32(size);
+        w32(ga(p) - 8, size);
         return p;
     }
     let n = heap_alloc_small(size, false);
@@ -1271,8 +1274,10 @@ pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
 /// value and stores `f(old)`. x86 allows the dword unaligned (mono's JIT keeps counters in
 /// packed structures) but wasm atomics fault on it: an unaligned one inside an aligned qword
 /// swaps that qword, one that straddles two takes a lock (atomic against the others that do).
+/// The guest's word at `a` changed by `f` atomically, its old value; 0 (and nothing changed)
+/// where that is not guest memory (Windows would fault)
 pub fn atomic_rmw32(a: u32, f: impl Fn(u32) -> u32) -> u32 {
-    rmw32_at(us(a), f)
+    for_write(a, 4).map_or(0, |r| rmw32_at(us(r.addr()), f))
 }
 // (fetch_update is try_update on newer toolchains, which the one pinned here lacks)
 #[allow(deprecated)]
@@ -1362,7 +1367,7 @@ mod tests {
     /// slice: into the NULL pages after a failed allocation, or past 2 GB into its own heap
     #[test]
     fn view_mut_refuses_what_is_not_the_guests() {
-        use super::{guest_range, view_mut, NULL_TOP};
+        use super::{range, view_mut, NULL_TOP};
         assert!(view_mut(0, 0, |s| s.is_empty()) == Some(true));
         assert!(view_mut(0, 16, |_| ()).is_none());
         assert!(view_mut(NULL_TOP - 1, 1, |_| ()).is_none());
@@ -1370,17 +1375,17 @@ mod tests {
         assert!(view_mut(GUEST_TOP - 4, 5, |_| ()).is_none());
         assert!(view_mut(0x40_0000, u32::MAX, |_| ()).is_none());
         assert!(view_mut(0xffff_fff0, 0x20, |_| ()).is_none());
-        assert!(guest_range(NULL_TOP, 1) && guest_range(GUEST_TOP - 4, 4) && guest_range(0x40_0000, GUEST_TOP - 0x40_0000));
+        assert!(range(NULL_TOP, 1).is_some() && range(GUEST_TOP - 4, 4).is_some() && range(0x40_0000, GUEST_TOP - 0x40_0000).is_some());
     }
 
     proptest::proptest! {
         /// guest_range: empty, or wholly in [64 KiB, 2 GB), no wrapping
         #[test]
         fn guest_range_is_the_guests_half(a in proptest::prelude::any::<u32>(), n in proptest::prelude::any::<u32>()) {
-            use super::{guest_range, NULL_TOP};
+            use super::{range, NULL_TOP};
             let want = n == 0 || (a >= NULL_TOP && (kome::num::lo64(a) + kome::num::lo64(n)) <= kome::num::lo64(GUEST_TOP));
-            proptest::prop_assert_eq!(guest_range(a, n), want);
-            if guest_range(a, n) && n != 0 {
+            proptest::prop_assert_eq!(range(a, n).is_some(), want);
+            if range(a, n).is_some() && n != 0 {
                 proptest::prop_assert!(a.checked_add(n).is_some_and(|e| e <= GUEST_TOP));
             }
         }
@@ -1504,7 +1509,7 @@ mod tests {
     /// (pages that were zero, pages with one byte set anywhere, ranges cut at any byte); and it
     /// leaves pages that were zero unwritten, so that they never become RAM (the RSS tests).
     mod zeroing {
-        use super::super::{is_zero, release, reserve, commit, decommit_range, heap_alloc, heap_free, bytes, view_mut, ga, zero, PAGE};
+        use super::super::{is_zero, release, reserve, commit, decommit_range, heap_alloc, heap_free, bytes, view_mut, ga, w8, zero, PAGE};
         use proptest::prelude::*;
 
         #[test]
@@ -1528,7 +1533,7 @@ mod tests {
                 let b = reserve(0, 10 * PAGE, 4, 0x20000, false).unwrap();
                 commit(b, 4);
                 for &(at, v) in &dirty {
-                    (ga(b) + at).w8(v);
+                    w8(ga(b) + at, v);
                 }
                 let before = bytes(b, 10 * PAGE);
                 zero(b + start, len);
@@ -1660,7 +1665,7 @@ mod heap_destroy_tests {
     use proptest::prelude::*;
 
     fn live(p: u32) -> bool {
-        matches!((ga(p) - 4).r32(), MAGIC | SLAB)
+        matches!(r32(ga(p) - 4), MAGIC | SLAB)
     }
 
     #[test]

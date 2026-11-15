@@ -879,7 +879,7 @@ fn scatter(bufs: &[(u32, u32)], mut data: &[u8]) {
 /// fails or sends nothing, not an allocation of the count)
 /// Whether a WSABUF array of `n` at `p` can be read (wsabufs takes it)
 fn bufs_ok(p: u32, n: u32) -> bool {
-    n <= MAX_BUFS && (n == 0 || p != 0 && mem::in_guest(p, n * 2 * ps()))
+    n <= MAX_BUFS && (n == 0 || p != 0 && mem::range(p, n * 2 * ps()).is_some())
 }
 fn wsabufs(p: u32, n: u32) -> Vec<(u32, u32)> {
     let k = ps();
@@ -1672,7 +1672,7 @@ fn gather(bufs: &[(u32, u32)]) -> Result<Vec<u8>, u32> {
     let mut v = Vec::new();
     for &(p, n) in bufs {
         let n = n.min(left);
-        if n != 0 && !mem::in_guest(p, n) {
+        if n != 0 && mem::range(p, n).is_none() {
             return Err(WSAEFAULT);
         }
         mem::view(p, n, |s| v.extend_from_slice(s));
@@ -2208,7 +2208,7 @@ fn WSAPoll(c: &mut Ctx) -> u32 {
     }
     let k = ps();
     let size = 2 * k;
-    if n > MAX_BUFS || !mem::in_guest(fds, n * size) {
+    if n > MAX_BUFS || mem::range(fds, n * size).is_none() {
         return err(WSAEFAULT);
     }
     let ents: Vec<(u32, u16)> = (0..n).map(|i| (rp(fds + size * i), r16(fds + size * i + k))).collect();

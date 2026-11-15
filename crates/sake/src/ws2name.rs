@@ -1678,7 +1678,7 @@ pub fn init() {
     implement(d, "WSALookupServiceNextA", |_| err(WSA_E_NO_MORE));
     implement(d, "WSALookupServiceNextW", |_| err(WSA_E_NO_MORE));
     implement(d, "WSALookupServiceEnd", |c| if c.a(0) == 0 { err(6) } else { 0 });
-    let _ = (w8, WSASERVICE_NOT_FOUND);
+    let _ = ({ let x: fn(u32, u8) = w8; x }, WSASERVICE_NOT_FOUND);
 }
 
 fn lookup_begin(c: &mut Ctx) -> u32 {

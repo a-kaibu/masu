@@ -97,8 +97,8 @@ pub fn complete(h: u32, ov: u32, status: u32, bytes: u32, sync: bool) {
     }
     let k = ps();
     wp(ov, status);
-    (crate::mem::ga(ov) + k).wp(bytes);
-    let ev = (mem::ga(ov).at(2, k) + 8).rp();
+    crate::mem::wp(crate::mem::ga(ov) + k, bytes);
+    let ev = crate::mem::rp(mem::ga(ov).at(2, k) + 8);
     let file = obj::key_of(h);
     let (assoc, mode) = with(|s| file.map_or((None, 0), |f| (s.assoc.get(&f).copied(), s.modes.get(&f).copied().unwrap_or(0))));
     let mut told = false;
@@ -383,9 +383,9 @@ fn GetQueuedCompletionStatusEx(c: &mut Ctx) -> u32 {
                 } else {
                     w32(e, kome::num::lo32(key));
                 }
-                (crate::mem::ga(e) + k).wp(ov);
-                crate::mem::ga(e).at(k, 2).wp(status);
-                crate::mem::ga(e).at(k, 3).w32(bytes);
+                crate::mem::wp(crate::mem::ga(e) + k, ov);
+                crate::mem::wp(crate::mem::ga(e).at(k, 2), status);
+                crate::mem::w32(crate::mem::ga(e).at(k, 3), bytes);
                 n = n.saturating_add(1);
                 p = if n < count { take(port) } else { None };
             }
@@ -414,7 +414,7 @@ fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
 /// Waits until the OVERLAPPED is no longer pending (on its event when it has one)
 pub fn wait_overlapped(c: &mut Ctx, ov: u32, ms: u32, alertable: bool) -> u32 {
     let k = ps();
-    let ev = (mem::ga(ov).at(2, k) + 8).rp() & !1;
+    let ev = crate::mem::rp(mem::ga(ov).at(2, k) + 8) & !1;
     if rp(ov) != STATUS_PENDING {
         return 0;
     }
@@ -459,7 +459,7 @@ fn overlapped_result(c: &mut Ctx, ex: bool) -> u32 {
         }
     }
     let k = ps();
-    mem::put32(bp, (crate::mem::ga(ov) + k).rp());
+    mem::put32(bp, crate::mem::rp(crate::mem::ga(ov) + k));
     let s = rp(ov);
     if s != 0 {
         last_error(nt_to_win32(s));
@@ -511,7 +511,7 @@ pub fn init_nt() {
                 }
                 wp(pval, ov);
                 wp(iosb, status);
-                (crate::mem::ga(iosb) + ps()).wp(bytes);
+                crate::mem::wp(crate::mem::ga(iosb) + ps(), bytes);
                 0
             }
             Err(e) => status_of(e),
@@ -529,9 +529,9 @@ pub fn init_nt() {
                     if mem::x64() {
                         mem::w64(e, key);
                     }
-                    (crate::mem::ga(e) + k).wp(ov);
-                    crate::mem::ga(e).at(k, 2).wp(status);
-                    crate::mem::ga(e).at(k, 3).wp(bytes);
+                    crate::mem::wp(crate::mem::ga(e) + k, ov);
+                    crate::mem::wp(crate::mem::ga(e).at(k, 2), status);
+                    crate::mem::wp(crate::mem::ga(e).at(k, 3), bytes);
                     n = n.saturating_add(1);
                     p = if n < count { take(port) } else { None };
                 }
@@ -586,7 +586,7 @@ pub fn init() {
         with(|s| *s.modes.entry(file).or_default() |= f);
         1
     });
-    let _ = r32;
+    let _ = { let x: fn(u32) -> u32 = r32; x };
 }
 
 /// Ports and associations through any handle to the object (review: they were kept by handle
@@ -605,7 +605,7 @@ mod tests {
     fn get(port: u32) -> Result<(u32, u32, u32), u32> {
         let out = mem::heap_alloc(12, true);
         let ok = call(GetQueuedCompletionStatus, &[port, out, out + 4, out + 8, 0]);
-        let r = if ok != 0 { Ok((r32(out), (crate::mem::ga(out) + 4).r32(), (crate::mem::ga(out) + 8).r32())) } else { Err(crate::k32::get_last_error()) };
+        let r = if ok != 0 { Ok((r32(out), crate::mem::r32(crate::mem::ga(out) + 4), crate::mem::r32(crate::mem::ga(out) + 8))) } else { Err(crate::k32::get_last_error()) };
         mem::heap_free(out);
         r
     }

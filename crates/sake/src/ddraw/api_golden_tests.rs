@@ -323,7 +323,7 @@ impl World {
                 }
             }
         }
-        let _ = w16;
+        let _ = { let x: fn(u32, u16) = w16; x };
     }
 }
 

@@ -373,7 +373,7 @@ pub fn init() {
     for (n, f) in fns {
         implement("gdiplus", n, *f);
     }
-    let _ = r32;
+    let _ = { let x: fn(u32) -> u32 = r32; x };
 }
 
 #[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]

@@ -30,7 +30,7 @@ pub fn hooked(name: &str) -> Option<u32> {
     let (t, trap) = thunk(name)?;
     // (the thunk: hot-patch prologue `mov edi, edi; push ebp; mov ebp, esp; pop ebp`, then
     // `push trap; ret`)
-    let same = mem::array::<7>(t) == [0x8b, 0xff, 0x55, 0x8b, 0xec, 0x5d, 0x68] && (mem::ga(t) + 7).r32() == trap && (mem::ga(t) + 11).r8() == 0xc3;
+    let same = mem::array::<7>(t) == [0x8b, 0xff, 0x55, 0x8b, 0xec, 0x5d, 0x68] && crate::mem::r32(mem::ga(t) + 7) == trap && crate::mem::r8(mem::ga(t) + 11) == 0xc3;
     (!same).then_some(t)
 }
 
@@ -85,17 +85,17 @@ impl Scratch {
         }
         let buf = self.alloc(mem::wbytes(w.len()).saturating_add(2));
         for (i, &x) in w.iter().enumerate() {
-            mem::ga(buf).at(kome::num::u32_of(i), 2).w16(x);
+            crate::mem::w16(mem::ga(buf).at(kome::num::u32_of(i), 2), x);
         }
         let us = self.alloc(8);
         mem::w16(us, kome::num::lo16(w.len()).wrapping_mul(2));
-        (mem::ga(us) + 2).w16(kome::num::lo16(w.len()).wrapping_mul(2).wrapping_add(2));
-        (mem::ga(us) + 4).w32(buf);
+        crate::mem::w16(mem::ga(us) + 2, kome::num::lo16(w.len()).wrapping_mul(2).wrapping_add(2));
+        crate::mem::w32(mem::ga(us) + 4, buf);
         let oa = self.alloc(24);
         w32(oa, 24);
-        (mem::ga(oa) + 4).w32(root);
-        (mem::ga(oa) + 8).w32(us);
-        (mem::ga(oa) + 12).w32(0x40 | if inherit { 2 } else { 0 });
+        crate::mem::w32(mem::ga(oa) + 4, root);
+        crate::mem::w32(mem::ga(oa) + 8, us);
+        crate::mem::w32(mem::ga(oa) + 12, 0x40 | if inherit { 2 } else { 0 });
         oa
     }
 }
@@ -260,7 +260,7 @@ pub mod via {
             }
         }
         let mut s = Scratch::new();
-        let inherit = sa != 0 && (mem::ga(sa) + 8).r32() != 0;
+        let inherit = sa != 0 && crate::mem::r32(mem::ga(sa) + 8) != 0;
         let oa = s.attributes(name, inherit, true);
         let (out, io) = (s.alloc(4), s.alloc(8));
         let delete = if fl & 0x0400_0000 != 0 { 0x0001_0000 } else { 0 };
@@ -272,7 +272,7 @@ pub mod via {
         }
         // ERROR_ALREADY_EXISTS: CREATE_ALWAYS that overwrote (FILE_OVERWRITTEN), OPEN_ALWAYS that
         // opened (FILE_OPENED); a CREATE_ALWAYS that only opened says 0 (winref nthook-32)
-        let info = (mem::ga(io) + 4).r32();
+        let info = crate::mem::r32(mem::ga(io) + 4);
         last_error(if disp == 2 && info == 3 || disp == 4 && info == 1 { 183 } else { 0 });
         Some(r32(out))
     }
@@ -284,7 +284,7 @@ pub mod via {
         put32(done, 0);
         let mut s = Scratch::new();
         // (an OVERLAPPED is the IO_STATUS_BLOCK, its offset and event)
-        let (io, off, ev) = if ov != 0 { (ov, (mem::ga(ov) + 8).get(), (mem::ga(ov) + 16).r32()) } else { (s.alloc(8), 0, 0) };
+        let (io, off, ev) = if ov != 0 { (ov, (mem::ga(ov) + 8).get(), crate::mem::r32(mem::ga(ov) + 16)) } else { (s.alloc(8), 0, 0) };
         if ov != 0 {
             w32(ov, 0x103);
         }
@@ -300,7 +300,7 @@ pub mod via {
             last_error(file_error(st));
             return Some(0);
         }
-        put32(done, (mem::ga(io) + 4).r32());
+        put32(done, crate::mem::r32(mem::ga(io) + 4));
         Some(1)
     }
 
@@ -320,7 +320,7 @@ pub mod via {
             0 => 0,
             // FilePositionInformation, FileStandardInformation's EndOfFile
             1 => mem::r64(query(c, h, 14, 8, &mut s).map_err(file_error)?).cast_signed(),
-            2 => (mem::ga(query(c, h, 5, 24, &mut s).map_err(file_error)?) + 8).r64().cast_signed(),
+            2 => crate::mem::r64(mem::ga(query(c, h, 5, 24, &mut s).map_err(file_error)?) + 8).cast_signed(),
             _ => return Err(87),
         };
         let p = base.wrapping_add(d);
@@ -376,7 +376,7 @@ pub mod via {
         let mut s = Scratch::new();
         Some(match query(c, h, 5, 24, &mut s) {
             Ok(i) => {
-                let n = (mem::ga(i) + 8).r64();
+                let n = crate::mem::r64(mem::ga(i) + 8);
                 if ex {
                     mem::put64(p, n);
                     1
@@ -411,7 +411,7 @@ pub mod via {
             last_error(file_error(st));
             return Some(u32::MAX);
         }
-        Some((mem::ga(out) + 32).r32())
+        Some(crate::mem::r32(mem::ga(out) + 32))
     }
     /// GetFileAttributesExA/W(name, GetFileExInfoStandard, WIN32_FILE_ATTRIBUTE_DATA*):
     /// NtQueryFullAttributesFile's FILE_NETWORK_OPEN_INFORMATION
@@ -428,16 +428,16 @@ pub mod via {
             last_error(file_error(st));
             return Some(0);
         }
-        w32(p, (mem::ga(out) + 48).r32());
+        w32(p, crate::mem::r32(mem::ga(out) + 48));
         mem::copy((mem::ga(p) + 4).get(), out, 24);
-        (mem::ga(p) + 28).w32((mem::ga(out) + 44).r32());
-        (mem::ga(p) + 32).w32((mem::ga(out) + 40).r32());
+        crate::mem::w32(mem::ga(p) + 28, crate::mem::r32(mem::ga(out) + 44));
+        crate::mem::w32(mem::ga(p) + 32, crate::mem::r32(mem::ga(out) + 40));
         Some(1)
     }
 }
 
 fn last_error() -> u32 {
-    (mem::ga(crate::cur().teb) + crate::teb_last_error()).r32()
+    crate::mem::r32(mem::ga(crate::cur().teb) + crate::teb_last_error())
 }
 
 /// The NTSTATUS for the thread's Win32 error.
@@ -459,7 +459,7 @@ fn status() -> u32 {
 fn iosb(p: u32, st: u32, info: u32) {
     if p != 0 && st < 0xc000_0000 {
         mem::wp(p, st);
-        (mem::ga(p) + mem::ps()).wp(info);
+        crate::mem::wp(mem::ga(p) + mem::ps(), info);
     }
 }
 
@@ -467,12 +467,12 @@ fn iosb(p: u32, st: u32, info: u32) {
 fn path_of(oa: u32) -> Option<u32> {
     // (OBJECT_ATTRIBUTES: Length, RootDirectory, ObjectName; UNICODE_STRING's Buffer after its
     // two lengths, both pointer-aligned)
-    let us = mem::ga(oa).at(2, mem::ps()).rp();
+    let us = crate::mem::rp(mem::ga(oa).at(2, mem::ps()));
     if us == 0 {
         return None;
     }
-    let (n, b) = (u32::from(r16(us)) / 2, (mem::ga(us) + mem::ps()).rp());
-    let mut w: Vec<u16> = (0..n).map(|i| mem::ga(b).at(i, 2).r16()).collect();
+    let (n, b) = (u32::from(r16(us)) / 2, crate::mem::rp(mem::ga(us) + mem::ps()));
+    let mut w: Vec<u16> = (0..n).map(|i| crate::mem::r16(mem::ga(b).at(i, 2))).collect();
     let s = String::from_utf16_lossy(&w);
     for pre in ["\\??\\UNC\\", "\\??\\", "\\DosDevices\\", "\\GLOBAL??\\"] {
         if s.starts_with(pre) {
@@ -504,7 +504,7 @@ fn path_of(oa: u32) -> Option<u32> {
     }
     let p = mem::heap_alloc(mem::wbytes(w.len()).saturating_add(2), true);
     for (i, &x) in w.iter().enumerate() {
-        mem::ga(p).at(kome::num::u32_of(i), 2).w16(x);
+        crate::mem::w16(mem::ga(p).at(kome::num::u32_of(i), 2), x);
     }
     Some(p)
 }
@@ -589,12 +589,12 @@ fn afd_name(oa: u32) -> Option<String> {
     if oa == 0 {
         return None;
     }
-    let us = mem::ga(oa).at(2, mem::ps()).rp();
+    let us = crate::mem::rp(mem::ga(oa).at(2, mem::ps()));
     if us == 0 {
         return None;
     }
-    let (n, b) = (u32::from(r16(us)) / 2, (mem::ga(us) + mem::ps()).rp());
-    let s = String::from_utf16_lossy(&(0..n).map(|i| mem::ga(b).at(i, 2).r16()).collect::<Vec<_>>());
+    let (n, b) = (u32::from(r16(us)) / 2, crate::mem::rp(mem::ga(us) + mem::ps()));
+    let s = String::from_utf16_lossy(&(0..n).map(|i| crate::mem::r16(mem::ga(b).at(i, 2))).collect::<Vec<_>>());
     s.to_ascii_lowercase().starts_with("\\device\\").then_some(s)
 }
 
@@ -703,7 +703,7 @@ fn nt_query_volume_information_file(c: &mut Ctx) -> u32 {
     }
     let n = (kome::num::u32_of(v.len())).min(len);
     for (i, b) in v.iter().take(kome::num::us(n)).enumerate() {
-        (mem::ga(out) + kome::num::u32_of(i)).w8(*b);
+        crate::mem::w8(mem::ga(out) + kome::num::u32_of(i), *b);
     }
     let st = if n < kome::num::u32_of(v.len()) { 0x8000_0005 } else { 0 }; // STATUS_BUFFER_OVERFLOW
     iosb(io, st, n);
@@ -725,7 +725,7 @@ fn seek_to(c: &mut Ctx, h: u32, off: u32) {
     if off == 0 {
         return;
     }
-    let (lo, hi) = (r32(off), (mem::ga(off) + 4).r32());
+    let (lo, hi) = (r32(off), crate::mem::r32(mem::ga(off) + 4));
     if hi == 0xffff_ffff && (lo == 0xffff_fffe || lo == 0xffff_ffff) {
         return;
     }
@@ -796,8 +796,8 @@ fn basic(out: u32, t: u32, attrs: u32) {
     copy((mem::ga(out) + 8).get(), (mem::ga(t) + 8).get(), 8);
     copy((mem::ga(out) + 16).get(), (mem::ga(t) + 16).get(), 8);
     copy((mem::ga(out) + 24).get(), (mem::ga(t) + 16).get(), 8); // ChangeTime
-    (mem::ga(out) + 32).w32(attrs);
-    (mem::ga(out) + 36).w32(0);
+    crate::mem::w32(mem::ga(out) + 32, attrs);
+    crate::mem::w32(mem::ga(out) + 36, 0);
 }
 
 /// NtQueryInformationFile(h, iosb, buf, len, class)
@@ -831,26 +831,26 @@ fn nt_query_information_file(c: &mut Ctx) -> u32 {
         return 0;
     }
     let Some(i) = by_handle(c, h) else { return 0xc000_0008 };
-    let (attrs, size_hi, size_lo) = (r32(i), (mem::ga(i) + 32).r32(), (mem::ga(i) + 36).r32());
+    let (attrs, size_hi, size_lo) = (r32(i), crate::mem::r32(mem::ga(i) + 32), crate::mem::r32(mem::ga(i) + 36));
     match class {
         4 => basic(out, i.saturating_add(4), attrs),
         5 => {
             for o in [0, 8] {
-                (mem::ga(out) + o).w32(size_lo);
-                (mem::ga(out) + o + 4).w32(size_hi);
+                crate::mem::w32(mem::ga(out) + o, size_lo);
+                crate::mem::w32(mem::ga(out) + o + 4, size_hi);
             }
-            (mem::ga(out) + 16).w32((mem::ga(i) + 40).r32());
-            (mem::ga(out) + 20).w32(u32::from(attrs & 0x10 != 0).saturating_mul(0x100));
+            crate::mem::w32(mem::ga(out) + 16, crate::mem::r32(mem::ga(i) + 40));
+            crate::mem::w32(mem::ga(out) + 20, u32::from(attrs & 0x10 != 0).saturating_mul(0x100));
         }
         _ => {
             // FILE_NETWORK_OPEN_INFORMATION
             basic(out, i.saturating_add(4), 0);
             for o in [32, 40] {
-                (mem::ga(out) + o).w32(size_lo);
-                (mem::ga(out) + o + 4).w32(size_hi);
+                crate::mem::w32(mem::ga(out) + o, size_lo);
+                crate::mem::w32(mem::ga(out) + o + 4, size_hi);
             }
-            (mem::ga(out) + 48).w32(attrs);
-            (mem::ga(out) + 52).w32(0);
+            crate::mem::w32(mem::ga(out) + 48, attrs);
+            crate::mem::w32(mem::ga(out) + 52, 0);
         }
     }
     mem::heap_free(i);
@@ -880,14 +880,14 @@ fn file_all_information(c: &mut Ctx, h: u32, io: u32, out: u32, len: u32) -> u32
     }
     let Some(f) = crate::obj::file(h) else { return 0xc000_0008 };
     let Some(i) = by_handle(c, h) else { return 0xc000_0008 };
-    let (attrs, size_hi, size_lo) = (r32(i), (mem::ga(i) + 32).r32(), (mem::ga(i) + 36).r32());
+    let (attrs, size_hi, size_lo) = (r32(i), crate::mem::r32(mem::ga(i) + 32), crate::mem::r32(mem::ga(i) + 36));
     basic(out, i.saturating_add(4), attrs);
     for o in [40, 48] {
-        (mem::ga(out) + o).w32(size_lo);
-        (mem::ga(out) + o + 4).w32(size_hi);
+        crate::mem::w32(mem::ga(out) + o, size_lo);
+        crate::mem::w32(mem::ga(out) + o + 4, size_hi);
     }
-    (mem::ga(out) + 56).w32((mem::ga(i) + 40).r32());
-    (mem::ga(out) + 60).w32(u32::from(attrs & 0x10 != 0).saturating_mul(0x100));
+    crate::mem::w32(mem::ga(out) + 56, crate::mem::r32(mem::ga(i) + 40));
+    crate::mem::w32(mem::ga(out) + 60, u32::from(attrs & 0x10 != 0).saturating_mul(0x100));
     mem::heap_free(i);
     mem::fill((mem::ga(out) + 64).get(), 16, 0);
     let p = mem::heap_alloc(8, true);
@@ -923,14 +923,14 @@ fn nt_set_information_file(c: &mut Ctx) -> u32 {
     let (h, io, buf, class) = (c.a(0), c.a(1), c.a(2), c.a(4));
     match class {
         14 => {
-            k32(c, "SetFilePointerEx", &[h, r32(buf), (mem::ga(buf) + 4).r32(), 0, 0]);
+            k32(c, "SetFilePointerEx", &[h, r32(buf), crate::mem::r32(mem::ga(buf) + 4), 0, 0]);
         }
         20 => {
             let p = mem::heap_alloc(8, true);
             k32(c, "SetFilePointerEx", &[h, 0, 0, p, 1]);
-            k32(c, "SetFilePointerEx", &[h, r32(buf), (mem::ga(buf) + 4).r32(), 0, 0]);
+            k32(c, "SetFilePointerEx", &[h, r32(buf), crate::mem::r32(mem::ga(buf) + 4), 0, 0]);
             k32(c, "SetEndOfFile", &[h]);
-            k32(c, "SetFilePointerEx", &[h, r32(p), (mem::ga(p) + 4).r32(), 0, 0]);
+            k32(c, "SetFilePointerEx", &[h, r32(p), crate::mem::r32(mem::ga(p) + 4), 0, 0]);
             mem::heap_free(p);
         }
         4 => {}
@@ -973,13 +973,13 @@ fn nt_query_full_attributes_file(c: &mut Ctx) -> u32 {
     match attr_data(c, c.a(0)) {
         Ok(d) => {
             basic(out, (mem::ga(d) + 4).get(), 0);
-            let (hi, lo) = ((mem::ga(d) + 28).r32(), (mem::ga(d) + 32).r32());
+            let (hi, lo) = (crate::mem::r32(mem::ga(d) + 28), crate::mem::r32(mem::ga(d) + 32));
             for o in [32, 40] {
-                (mem::ga(out) + o).w32(lo);
-                (mem::ga(out) + o + 4).w32(hi);
+                crate::mem::w32(mem::ga(out) + o, lo);
+                crate::mem::w32(mem::ga(out) + o + 4, hi);
             }
-            (mem::ga(out) + 48).w32(r32(d));
-            (mem::ga(out) + 52).w32(0);
+            crate::mem::w32(mem::ga(out) + 48, r32(d));
+            crate::mem::w32(mem::ga(out) + 52, 0);
             mem::heap_free(d);
             0
         }
@@ -1015,7 +1015,7 @@ fn nt_set_information_thread(c: &mut Ctx) -> u32 {
             if buf == 0 || mem::accessible(buf, len, false, false) < len {
                 return 0xC000_0005;
             }
-            if (mem::ga(buf) + ps).r16() != 0 {
+            if crate::mem::r16(mem::ga(buf) + ps) != 0 {
                 return 0xC000_000D;
             }
             crate::affinity::with(|a| a.set_group(tid, mem::rp(buf))).map_or(0xC000_000D, |_| 0)
@@ -1053,11 +1053,11 @@ fn set_name_info(tid: u32, buf: u32, len: u32) -> u32 {
     if buf == 0 || mem::accessible(buf, len, false, false) < len {
         return 0xC000_0005;
     }
-    let (n, p) = (u32::from(r16(buf)), (mem::ga(buf) + ps).rp());
+    let (n, p) = (u32::from(r16(buf)), crate::mem::rp(mem::ga(buf) + ps));
     if n != 0 && (p == 0 || mem::accessible(p, n, false, false) < n) {
         return 0xC000_0005;
     }
-    set_thread_name(tid, (0..n / 2).map(|i| mem::ga(p).at(i, 2).r16()).collect());
+    set_thread_name(tid, (0..n / 2).map(|i| crate::mem::r16(mem::ga(p).at(i, 2))).collect());
     0
 }
 /// GetThreadDescription(thread, &string): a LocalAlloc'd copy; SetThreadDescription(thread,
@@ -1071,7 +1071,7 @@ fn get_thread_description(c: &mut Ctx) -> u32 {
     let name = thread_name(tid);
     let p = crate::k32::global_alloc(0x40, mem::wbytes(name.len()).saturating_add(2));
     for (i, &u) in name.iter().enumerate() {
-        mem::ga(p).at(kome::num::u32_of(i), 2).w16(u);
+        crate::mem::w16(mem::ga(p).at(kome::num::u32_of(i), 2), u);
     }
     mem::putp(out, p);
     0x1000_0000
@@ -1110,10 +1110,10 @@ fn nt_query_information_thread(c: &mut Ctx) -> u32 {
         }
         let n = kome::num::lo16(name.len()).wrapping_mul(2);
         mem::w16(out, n);
-        (mem::ga(out) + 2).w16(n);
-        (mem::ga(out) + ps).wp(mem::ga(out).at(ps, 2).get());
+        crate::mem::w16(mem::ga(out) + 2, n);
+        crate::mem::wp(mem::ga(out) + ps, mem::ga(out).at(ps, 2).get());
         for (i, &u) in name.iter().enumerate() {
-            mem::ga(out).at(2, ps).at(kome::num::u32_of(i), 2).w16(u);
+            crate::mem::w16(mem::ga(out).at(2, ps).at(kome::num::u32_of(i), 2), u);
         }
         return 0;
     }
@@ -1139,12 +1139,12 @@ fn nt_query_information_thread(c: &mut Ctx) -> u32 {
             });
             let teb = if h == crate::obj::CURRENT_THREAD { crate::cur().teb } else { crate::k32::teb_of(tid).unwrap_or(0) };
             w32(out, code);
-            (mem::ga(out) + ps).wp(teb);
-            mem::ga(out).at(ps, 2).wp(crate::pid());
-            mem::ga(out).at(ps, 3).wp(tid);
-            mem::ga(out).at(ps, 4).wp(crate::affinity::with(|a| a.thread(tid)));
-            mem::ga(out).at(ps, 5).w32(8);
-            (mem::ga(out).at(5, ps) + 4).w32(8);
+            crate::mem::wp(mem::ga(out) + ps, teb);
+            crate::mem::wp(mem::ga(out).at(ps, 2), crate::pid());
+            crate::mem::wp(mem::ga(out).at(ps, 3), tid);
+            crate::mem::wp(mem::ga(out).at(ps, 4), crate::affinity::with(|a| a.thread(tid)));
+            crate::mem::w32(mem::ga(out).at(ps, 5), 8);
+            crate::mem::w32(mem::ga(out).at(5, ps) + 4, 8);
         }
         12 => w32(out, u32::from(crate::k32::thread_count() <= 1)),
         14 => w32(out, u32::from(crate::k32::boost_off(tid))),
@@ -1176,10 +1176,10 @@ fn nt_query_information_process(c: &mut Ctx) -> u32 {
     mem::fill(out, need, 0);
     match class {
         0 => {
-            (mem::ga(out) + 4).w32(crate::PEB.load(std::sync::atomic::Ordering::Relaxed));
-            (mem::ga(out) + 8).w32(1);
-            (mem::ga(out) + 12).w32(8);
-            (mem::ga(out) + 16).w32(0x20);
+            crate::mem::w32(mem::ga(out) + 4, crate::PEB.load(std::sync::atomic::Ordering::Relaxed));
+            crate::mem::w32(mem::ga(out) + 8, 1);
+            crate::mem::w32(mem::ga(out) + 12, 8);
+            crate::mem::w32(mem::ga(out) + 16, 0x20);
         }
         7 if debugged() => mem::wp(out, u32::MAX),
         0x1e if debugged() => mem::wp(out, crate::obj::add(crate::obj::Obj::Event { manual: true, set: false })),
@@ -1403,13 +1403,13 @@ fn dir_entry(p: u32, dc: DirClass, name: &str, m: &kura::fs::Metadata, attrs: u3
         let size = if m.is_dir() { 0 } else { m.len() };
         mem::put64((mem::ga(p) + 40).get(), size);
         mem::put64((mem::ga(p) + 48).get(), size); // (as NtQueryInformationFile gives it)
-        (mem::ga(p) + 56).w32(attrs);
+        crate::mem::w32(mem::ga(p) + 56, attrs);
     }
     let w: Vec<u16> = name.encode_utf16().collect();
-    (mem::ga(p) + len_at).w32(mem::wbytes(w.len()));
+    crate::mem::w32(mem::ga(p) + len_at, mem::wbytes(w.len()));
     let n = mem::wbytes(w.len()).min(room.saturating_sub(name_at)) / 2;
     for (i, &u) in w.iter().take(kome::num::us(n)).enumerate() {
-        (mem::ga(p) + name_at).at(kome::num::u32_of(i), 2).w16(u);
+        crate::mem::w16((mem::ga(p) + name_at).at(kome::num::u32_of(i), 2), u);
     }
     n.saturating_mul(2)
 }
@@ -1456,7 +1456,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
         // the last one, "*" at first
         let mask: Vec<u16> = if mask != 0 && r16(mask) != 0 {
             let b = mem::rp(mask.saturating_add(mem::ps()));
-            (0..u32::from(r16(mask)) / 2).map(|i| mem::ga(b).at(i, 2).r16()).collect()
+            (0..u32::from(r16(mask)) / 2).map(|i| crate::mem::r16(mem::ga(b).at(i, 2))).collect()
         } else {
             scan.as_ref().map_or(vec![u16::from(b'*')], |s| s.0.clone())
         };
@@ -1505,7 +1505,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
             break;
         }
         if let Some(p) = prev {
-            (mem::ga(buf) + p).w32(at.saturating_sub(p));
+            crate::mem::w32(mem::ga(buf) + p, at.saturating_sub(p));
         }
         dir_entry((mem::ga(buf) + at).get(), dc, name, m, entry_attrs(&f.path, name, m), need);
         prev = Some(at);
@@ -1515,7 +1515,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
             break;
         }
     }
-    let end = prev.map_or(0, |p| p.saturating_add(fixed).saturating_add((mem::ga(buf) + p + dc.len_at).r32()));
+    let end = prev.map_or(0, |p| p.saturating_add(fixed).saturating_add(crate::mem::r32(mem::ga(buf) + p + dc.len_at)));
     iosb(io, 0, end);
     0
 }
@@ -1585,13 +1585,13 @@ fn nt_query_object(c: &mut Ctx) -> u32 {
         // (cut at a UNICODE_STRING's 32767 characters, its length no longer wrapping)
         w.truncate(0x7ffe);
         mem::w16(at, kome::num::lo16(w.len()).wrapping_mul(2));
-        (mem::ga(at) + 2).w16(if w.is_empty() { 0 } else { kome::num::lo16(w.len()).wrapping_mul(2).wrapping_add(2) });
-        (mem::ga(at) + ps).wp(if w.is_empty() { 0 } else { base });
+        crate::mem::w16(mem::ga(at) + 2, if w.is_empty() { 0 } else { kome::num::lo16(w.len()).wrapping_mul(2).wrapping_add(2) });
+        crate::mem::wp(mem::ga(at) + ps, if w.is_empty() { 0 } else { base });
         for (i, &x) in w.iter().enumerate() {
-            mem::ga(base).at(kome::num::u32_of(i), 2).w16(x);
+            crate::mem::w16(mem::ga(base).at(kome::num::u32_of(i), 2), x);
         }
         if !w.is_empty() {
-            mem::ga(base).at(kome::num::u32_of(w.len()), 2).w16(0);
+            crate::mem::w16(mem::ga(base).at(kome::num::u32_of(w.len()), 2), 0);
         }
     };
     let chars = |s: &str| mem::wbytes(s.encode_utf16().count());
@@ -1611,8 +1611,8 @@ fn nt_query_object(c: &mut Ctx) -> u32 {
     match class {
         0 => {
             // Attributes, GrantedAccess, HandleCount, PointerCount
-            (mem::ga(buf) + 8).w32(1);
-            (mem::ga(buf) + 12).w32(1);
+            crate::mem::w32(mem::ga(buf) + 8, 1);
+            crate::mem::w32(mem::ga(buf) + 12, 1);
         }
         1 => ustr(buf, &name, (mem::ga(buf) + us).get()),
         _ => ustr(buf, ty, (mem::ga(buf) + need - chars(ty) - 2).get()),
@@ -2022,12 +2022,12 @@ mod hooked_tests {
             crate::pe::hle_module("ntdll");
             let base = crate::pe::by_name("ntdll.dll").unwrap();
             let t = crate::pe::with(base, |m| m.exports.get("NtReadFile").copied()).flatten().unwrap();
-            let old = (mem::ga(t) + at).r8();
-            (mem::ga(t) + at).w8(v);
+            let old = crate::mem::r8(mem::ga(t) + at);
+            crate::mem::w8(mem::ga(t) + at, v);
             for _ in 0..asks {
                 prop_assert_eq!(hooked("NtReadFile"), (v != old).then_some(t));
             }
-            (mem::ga(t) + at).w8(old);
+            crate::mem::w8(mem::ga(t) + at, old);
             prop_assert_eq!(hooked("NtReadFile"), None);
         }
     }

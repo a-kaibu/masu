@@ -2060,7 +2060,7 @@ pub fn int_other(cpu: &mut Cpu, n: u32) {
         // (no enhanced mode Windows check)
         cpu.regs[EAX] = cpu.regs[EAX] & 0xffff_0000 | 0x0a03;
     }
-    let _ = r32;
+    let _ = { let x: fn(u32) -> u32 = r32; x };
 }
 
 /// (year, month, day, weekday) of today (local time).

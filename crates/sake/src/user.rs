@@ -2358,7 +2358,7 @@ fn to_remote(w: &crate::kern::KWin, msg: u32, wp: u32, lp: u32, send: bool) -> u
         let d = if mem::x64() { mem::r64(lp) } else { r32(lp) as u64 };
         let (p, n) = (mem::rp(lp + 2 * ps), r32(lp + ps));
         // (the data is copied into the shared kernel: guest memory only, MAX_COPYDATA at most)
-        if n > MAX_COPYDATA || n != 0 && !mem::in_guest(p, n) {
+        if n > MAX_COPYDATA || n != 0 && mem::range(p, n).is_none() {
             crate::k32::last_error(87);
             return 0;
         }

@@ -235,7 +235,7 @@ pub fn iid(iface: &str) -> Option<Guid> {
 pub fn read_guid(p: u32) -> Guid {
     let mut b = [0u8; 8];
     for (i, v) in b.iter_mut().enumerate() {
-        *v = (mem::ga(p) + 8 + kome::num::u32_of(i)).r8();
+        *v = crate::mem::r8(mem::ga(p) + 8 + kome::num::u32_of(i));
     }
     (mem::r32(p), mem::r16((crate::mem::ga(p) + 4).get()), mem::r16((crate::mem::ga(p) + 6).get()), b)
 }
@@ -430,7 +430,7 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
             STUBS.locked().get_or_insert_with(HashMap::new).insert(a, (iface.name(), name, kind));
         }
         NAMES.locked().get_or_insert_with(HashMap::new).insert(a, (name, dwords));
-        mem::ga(v).at(kome::num::u32_of(i), k).wp(a);
+        crate::mem::wp(mem::ga(v).at(kome::num::u32_of(i), k), a);
     }
     VTBLS.locked().get_or_insert_with(HashMap::new).insert(iface, v);
     v

@@ -61,8 +61,8 @@ impl Ctx<'_> {
         }
         match self.this {
             Some(t) if i == 0 => t,
-            Some(_) => crate::mem::ga(self.esp).at(i, 4).r32(),
-            None => (crate::mem::ga(self.esp) + 4).at(i, 4).r32(),
+            Some(_) => crate::mem::r32(crate::mem::ga(self.esp).at(i, 4)),
+            None => crate::mem::r32((crate::mem::ga(self.esp) + 4).at(i, 4)),
         }
     }
     /// A pointer-sized argument (size_t, ptrdiff_t): x64 all 64 bits, x86 the slot.
@@ -108,12 +108,12 @@ impl Ctx<'_> {
             1 => self.cpu.gpr(2),
             2 => self.cpu.gpr(8),
             3 => self.cpu.gpr(9),
-            _ => (crate::mem::ga(self.esp) + 8).at(i, 8).r64(),
+            _ => crate::mem::r64((crate::mem::ga(self.esp) + 8).at(i, 8)),
         }
     }
     /// x64: floating-point argument `i` (XMM0-3, then the stack), as a double's bits.
     pub fn xmm(&self, i: u32) -> u64 {
-        if i < 4 { kome::num::lo64(self.cpu.xmm(kome::num::us(i))) } else { (crate::mem::ga(self.esp) + 8).at(i, 8).r64() }
+        if i < 4 { kome::num::lo64(self.cpu.xmm(kome::num::us(i))) } else { crate::mem::r64((crate::mem::ga(self.esp) + 8).at(i, 8)) }
     }
     /// A POINT passed by value at slots `i`, `i + 1` (x64: the one 8-byte argument `i`; the
     /// index is the same when only 4-byte arguments come before it).
@@ -628,7 +628,7 @@ fn threads_on() -> bool {
                 if let Some(slot) = slots.get(pos.saturating_sub(1) % RECENT_N) {
                     let [f, cs, ..] = slot.each_ref().map(|x| x.load(Relaxed));
                     if name_of(trap_at(f)).is_some_and(|n| n.contains("EnterCriticalSection")) && cs >= 0x10000 {
-                        out += &format!(" [cs {cs:x}: {:x} {:x} owner {:x} {:x}]", (crate::mem::ga(cs) + 4).r32(), (crate::mem::ga(cs) + 8).r32(), (crate::mem::ga(cs) + 12).r32(), (crate::mem::ga(cs) + 16).r32());
+                        out += &format!(" [cs {cs:x}: {:x} {:x} owner {:x} {:x}]", crate::mem::r32(crate::mem::ga(cs) + 4), crate::mem::r32(crate::mem::ga(cs) + 8), crate::mem::r32(crate::mem::ga(cs) + 12), crate::mem::r32(crate::mem::ga(cs) + 16));
                     }
                 }
             }
@@ -844,7 +844,7 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
         use std::sync::atomic::Ordering::Relaxed;
         if let (Some(slots), Some(at)) = (RECENT.get(k), RECENT_POS.get(k)) {
             let n = kome::num::us(at.load(Relaxed));
-            let r = [i, (crate::mem::ga(esp) + 4).r32(), (crate::mem::ga(esp) + 8).r32(), (crate::mem::ga(esp) + 12).r32(), r32(esp), crate::k32::ticks_ms().wrapping_sub(60_000)];
+            let r = [i, crate::mem::r32(crate::mem::ga(esp) + 4), crate::mem::r32(crate::mem::ga(esp) + 8), crate::mem::r32(crate::mem::ga(esp) + 12), r32(esp), crate::k32::ticks_ms().wrapping_sub(60_000)];
             for (x, v) in slots.get(n % RECENT_N).into_iter().flatten().zip(r) {
                 x.store(v, Relaxed);
             }
@@ -865,7 +865,7 @@ fn debug_enter(cpu: &mut Cpu, addr: u32, i: u32, esp: u32, bytes: u32, sw: u32) 
         let x64 = crate::mem::x64();
         let nargs = if x64 { 4.max(bytes / 4).min(8) } else { (bytes / 4).min(8) };
         let args: Vec<String> = (0..nargs)
-            .map(|k| if x64 { format!("{:x}", Ctx { cpu: &mut *cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this: None }.a64(k)) } else { format!("{:x}", (crate::mem::ga(esp) + 4).at(k, 4).r32()) })
+            .map(|k| if x64 { format!("{:x}", Ctx { cpu: &mut *cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this: None }.a64(k)) } else { format!("{:x}", crate::mem::r32((crate::mem::ga(esp) + 4).at(k, 4))) })
             .collect();
         let from = if x64 { crate::mem::r64(esp) } else { u64::from(r32(esp)) };
         let line = format!("sake {:04x} {}: {n}({}) from {:x}", crate::cur().tid, crate::k32::ticks_ms().wrapping_sub(60_000), args.join(","), from);
@@ -968,7 +968,7 @@ pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
         x.known = true;
         publish(kome::num::us(i), x);
     }
-    let _ = w32;
+    let _ = { let x: fn(u32, u32) = w32; x };
     a
 }
 
@@ -990,7 +990,7 @@ pub fn vtable(name: &str, methods: &[(Handler, u32)]) -> u32 {
     let k = crate::mem::ps();
     let v = crate::mem::heap_alloc(k.saturating_mul(kome::num::lo32(methods.len())), true);
     for (i, (f, bytes)) in methods.iter().enumerate() {
-        crate::mem::ga(v).at(kome::num::u32_of(i), k).wp( host_fn(&format!("{name}::{i}"), *f, *bytes));
+        crate::mem::wp(crate::mem::ga(v).at(kome::num::u32_of(i), k), host_fn(&format!("{name}::{i}"), *f, *bytes));
     }
     v
 }

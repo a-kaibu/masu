@@ -1692,7 +1692,7 @@ pub fn init() {
     implement("hhctrl", "HtmlHelpA", |_| 0);
     implement("hhctrl", "HtmlHelpW", |_| 0);
     implement("hhctrl", "doWinMain", |_| 0);
-    let _ = (r16, E_HANDLE);
+    let _ = ({ let x: fn(u32) -> u16 = r16; x }, E_HANDLE);
 }
 
 #[cfg(test)]
