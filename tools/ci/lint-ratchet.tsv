@@ -426,7 +426,7 @@ file	crates/kura/src/d3d9/gpu.rs	missing_safety_doc	1
 file	crates/kura/src/d3d9/gpu.rs	undocumented_unsafe_blocks	1
 file	crates/kura/src/d3d9/gpu.rs	unsafe_op_in_unsafe_fn	1
 file	crates/kura/src/d3d9/mod.rs	arithmetic_side_effects	29
-file	crates/kura/src/d3d9/mod.rs	as_conversions	38
+file	crates/kura/src/d3d9/mod.rs	as_conversions	9
 file	crates/kura/src/d3d9/mod.rs	cast_possible_truncation	1
 file	crates/kura/src/d3d9/mod.rs	cast_precision_loss	3
 file	crates/kura/src/d3d9/mod.rs	cast_sign_loss	1
@@ -436,7 +436,6 @@ file	crates/kura/src/d3d9/mod.rs	masu-from_raw_parts	2
 file	crates/kura/src/d3d9/mod.rs	masu-unsafe_send_sync	1
 file	crates/kura/src/d3d9/mod.rs	missing_safety_doc	3
 file	crates/kura/src/d3d9/mod.rs	multiple_unsafe_ops_per_block	2
-file	crates/kura/src/d3d9/mod.rs	ptr_as_ptr	1
 file	crates/kura/src/d3d9/mod.rs	undocumented_unsafe_blocks	10
 file	crates/kura/src/d3d9/mod.rs	unsafe_op_in_unsafe_fn	20
 file	crates/kura/src/d3d9/mod.rs	unwrap_used	2
@@ -470,14 +469,14 @@ file	crates/kura/src/fs.rs	cast_sign_loss	1
 file	crates/kura/src/fs.rs	indexing_slicing	1
 file	crates/kura/src/fs.rs	masu-set_len	1
 file	crates/kura/src/gl/glsl.rs	arithmetic_side_effects	38
-file	crates/kura/src/gl/glsl.rs	as_conversions	63
+file	crates/kura/src/gl/glsl.rs	as_conversions	28
 file	crates/kura/src/gl/glsl.rs	as_underscore	8
-file	crates/kura/src/gl/glsl.rs	cast_possible_truncation	20
-file	crates/kura/src/gl/glsl.rs	cast_possible_wrap	10
-file	crates/kura/src/gl/glsl.rs	cast_sign_loss	17
+file	crates/kura/src/gl/glsl.rs	cast_possible_truncation	9
+file	crates/kura/src/gl/glsl.rs	cast_possible_wrap	9
+file	crates/kura/src/gl/glsl.rs	cast_sign_loss	7
 file	crates/kura/src/gl/glsl.rs	indexing_slicing	23
 file	crates/kura/src/gl/glsl.rs	masu-from_raw_parts	3
-file	crates/kura/src/gl/glsl.rs	ptr_as_ptr	12
+file	crates/kura/src/gl/glsl.rs	ptr_as_ptr	9
 file	crates/kura/src/gl/glsl.rs	string_slice	2
 file	crates/kura/src/gl/glsl.rs	unsafe_op_in_unsafe_fn	55
 file	crates/kura/src/gl/glsl.rs	unwrap_in_result	4
