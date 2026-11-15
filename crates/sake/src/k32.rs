@@ -83,7 +83,7 @@ pub fn clock_ns() -> u64 {
     static LAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let now = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let t0 = *START.get_or_init(now);
-    let t = now().saturating_sub(t0) as u64;
+    let t = kome::num::lo64(now().saturating_sub(t0));
     LAST.fetch_max(t, Ordering::Relaxed).max(t)
 }
 
@@ -523,7 +523,7 @@ fn counts() -> (Vec<u32>, u32) {
         }).collect();
         tids.sort();
         tids.dedup();
-        (tids, t.objs.iter().count() as u32)
+        (tids, kome::num::lo32(t.objs.iter().count()))
     })
 }
 /// GetPerformanceInfo(PERFORMANCE_INFORMATION*, bytes): in pages, one process with its threads
@@ -546,7 +546,7 @@ fn K32GetPerformanceInfo(c: &mut Ctx) -> u32 {
     let (tids, handles) = counts();
     w32(at(10), handles);
     w32(at(10) + 4, 1);
-    w32(at(10) + 8, tids.len().max(1) as u32);
+    w32(at(10) + 8, kome::num::lo32(tids.len().max(1)));
     1
 }
 /// NtQuerySystemInformation's classes sysinfo.rs leaves to us (class, buffer, bytes, &needed):
@@ -1377,7 +1377,7 @@ pub(crate) fn ncpu() -> u32 {
     if let Some(n) = std::env::var("SAKE_NCPU").ok().and_then(|v| v.parse::<u32>().ok()) {
         return n.clamp(1, 64);
     }
-    std::thread::available_parallelism().map_or(4, |n| n.get() as u32).clamp(1, 8)
+    std::thread::available_parallelism().map_or(4, |n| kome::num::lo32(n.get())).clamp(1, 8)
 }
 fn Sleep(c: &mut Ctx) -> u32 {
     let ms = c.a(0);
@@ -1470,7 +1470,7 @@ pub(crate) fn wait_on_address(a: u32, cmp: u32, size: u32, ms: u32) -> Result<()
     if ADDR.wait(kome::num::us(a), || value_at(a, size) == Some(want), ms, &Pause) { Ok(()) } else { Err(1460) }
 }
 fn WakeByAddressAll(c: &mut Ctx) -> u32 {
-    ADDR.wake(c.a(0) as usize);
+    ADDR.wake(kome::num::us(c.a(0)));
     0
 }
 
@@ -1787,7 +1787,7 @@ fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
             mem::putp(pov, ov);
             return 1;
         }
-        let left = deadline.map_or(0xffff_ffff, |d| d.saturating_duration_since(std::time::Instant::now()).as_millis() as u32);
+        let left = deadline.map_or(0xffff_ffff, |d| kome::num::lo32(d.saturating_duration_since(std::time::Instant::now()).as_millis()));
         if deadline.is_some() && left == 0 || obj::wait(&[port], false, left, None) != 0 {
             mem::putp(pov, 0);
             last_error(258);
@@ -2199,10 +2199,10 @@ fn DeleteCriticalSection(c: &mut Ctx) -> u32 {
 pub(crate) fn raise_from_api(c: &mut Ctx, code: u32, flags: u32, nargs: u32) {
     if mem::x64() {
         let ret = mem::r64(c.esp);
-        c.cpu.eip = ret as u32;
+        c.cpu.eip = kome::num::lo32(ret);
         c.cpu.rip_hi = (ret >> 32) as u32;
         c.cpu.set_gpr(4, u64::from(c.esp) + 8);
-        crate::seh64::raise(c.cpu, code, flags, ret as u32, &[]);
+        crate::seh64::raise(c.cpu, code, flags, kome::num::lo32(ret), &[]);
     } else {
         let ret = r32(c.esp);
         c.cpu.eip = ret;
@@ -2280,7 +2280,7 @@ pub(crate) fn srw_acquire(l: u32, shared: bool) {
 /// srw_acquire for at most `ms` milliseconds: whether it got the lock.
 pub(crate) fn srw_acquire_for(l: u32, shared: bool, ms: u32) -> bool {
     let end = std::time::Instant::now() + std::time::Duration::from_millis(u64::from(ms));
-    SYNC.srw_acquire_until(atomic(l), shared, &Pause, || Some(end.saturating_duration_since(std::time::Instant::now()).as_nanos().div_ceil(1_000_000) as u64))
+    SYNC.srw_acquire_until(atomic(l), shared, &Pause, || Some(kome::num::lo64(end.saturating_duration_since(std::time::Instant::now()).as_nanos().div_ceil(1_000_000))))
 }
 pub(crate) fn srw_release(l: u32, shared: bool) {
     SYNC.srw_release(atomic(l), shared)
@@ -2341,7 +2341,7 @@ pub(crate) fn cv_wake(cv: u32) {
 }
 fn SleepConditionVariableSRW(c: &mut Ctx) -> u32 {
     let (cv, l, ms, shared) = (c.a(0), c.a(1), c.a(2), c.a(3) & 1 != 0);
-    u32::from(cv_wait(cv, ms, |l, s| srw_release(l as u32, s != 0), crate::snap::Reacquire::Srw, u64::from(l), u64::from(shared), 1))
+    u32::from(cv_wait(cv, ms, |l, s| srw_release(kome::num::lo32(l), s != 0), crate::snap::Reacquire::Srw, u64::from(l), u64::from(shared), 1))
 }
 fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
     let (cv, cs, ms) = (c.a(0), c.a(1), c.a(2));
@@ -2351,8 +2351,8 @@ fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
         cv,
         ms,
         |cs, _| {
-            w32(cs as u32 + cs_off(REC), 1);
-            cs_leave(cs as u32)
+            w32(kome::num::lo32(cs) + cs_off(REC), 1);
+            cs_leave(kome::num::lo32(cs))
         },
         crate::snap::Reacquire::Cs,
         u64::from(cs),
@@ -2362,8 +2362,8 @@ fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
 }
 /// SleepConditionVariableCS's lock back: section `cs` entered `depth` times
 pub(crate) fn cs_reacquire(cs: u64, depth: u64) {
-    cs_enter(cs as u32);
-    w32(cs as u32 + cs_off(REC), depth as u32)
+    cs_enter(kome::num::lo32(cs));
+    w32(kome::num::lo32(cs) + cs_off(REC), kome::num::lo32(depth))
 }
 fn WakeConditionVariable(c: &mut Ctx) -> u32 {
     cv_wake(c.a(0));
@@ -2699,7 +2699,7 @@ fn output_debug_string(p: u32, wide: bool) {
         crate::dbg::output(b, kome::num::u32_of(a.len()) + 1);
         mem::heap_free(b);
     } else {
-        crate::dbg::output(p, mem::cstr(p).len() as u32 + 1);
+        crate::dbg::output(p, kome::num::lo32(mem::cstr(p).len()) + 1);
     }
 }
 fn OutputDebugStringA(c: &mut Ctx) -> u32 {
@@ -3113,7 +3113,7 @@ fn VirtualUnlock(_: &mut Ctx) -> u32 {
 }
 fn FlushInstructionCache(c: &mut Ctx) -> u32 {
     if c.a(1) != 0 {
-        kura::jit::code_changed(c.a(1) as usize, c.a(2).max(1) as usize);
+        kura::jit::code_changed(kome::num::us(c.a(1)), kome::num::us(c.a(2).max(1)));
     }
     1
 }
@@ -3208,7 +3208,7 @@ fn WriteProcessMemory(c: &mut Ctx) -> u32 {
                 return 0;
             }
             mem::copy(a, b, k);
-            kura::jit::code_changed(kome::num::us(a), k.max(1) as usize);
+            kura::jit::code_changed(kome::num::us(a), kome::num::us(k.max(1)));
             k
         }
     };
@@ -3243,7 +3243,7 @@ fn RtlTimeToSecondsSince1970(c: &mut Ctx) -> u32 {
     if !(0..=i64::from(u32::MAX)).contains(&s) {
         return 0;
     }
-    put32(c.a(1), s as u32);
+    put32(c.a(1), kome::num::lo32(s));
     1
 }
 fn locale_name() -> &'static str {
@@ -3295,7 +3295,7 @@ fn LCIDToLocaleName(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
         return kome::num::u32_of(w.len());
     }
-    if (c.a(2) as usize) < w.len() {
+    if (kome::num::us(c.a(2))) < w.len() {
         last_error(122);
         return 0;
     }
@@ -3322,13 +3322,13 @@ fn put_counted(us: u32, len: u32, max: u32, buf: u32) {
 }
 fn RtlInitUnicodeString(c: &mut Ctx) -> u32 {
     let (us, s) = (c.a(0), c.a(1));
-    let n = if s == 0 { 0 } else { 2 * wstr(s).len() as u32 };
+    let n = if s == 0 { 0 } else { 2 * kome::num::lo32(wstr(s).len()) };
     put_counted(us, n, if s == 0 { 0 } else { n + 2 }, s);
     0
 }
 fn RtlInitAnsiString(c: &mut Ctx) -> u32 {
     let (us, s) = (c.a(0), c.a(1));
-    let n = if s == 0 { 0 } else { cstr(s).len() as u32 };
+    let n = if s == 0 { 0 } else { kome::num::lo32(cstr(s).len()) };
     put_counted(us, n, if s == 0 { 0 } else { n + 1 }, s);
     0
 }
@@ -3420,13 +3420,13 @@ fn RtlUnicodeToMultiByteN(c: &mut Ctx) -> u32 {
 fn RtlMultiByteToUnicodeSize(c: &mut Ctx) -> u32 {
     let (pw, src, n) = (c.a(0), c.a(1), c.a(2));
     let b: Vec<u8> = (0..n).map(|i| mem::r8(src + i)).collect();
-    w32(pw, 2 * a2w(&b).len() as u32);
+    w32(pw, 2 * kome::num::lo32(a2w(&b).len()));
     0
 }
 fn RtlUnicodeToMultiByteSize(c: &mut Ctx) -> u32 {
     let (pw, src, n) = (c.a(0), c.a(1), c.a(2));
     let w: Vec<u16> = (0..n / 2).map(|i| r16(src + 2 * i)).collect();
-    w32(pw, crate::text::w2a(&w).len() as u32);
+    w32(pw, kome::num::lo32(crate::text::w2a(&w).len()));
     0
 }
 /// RtlUpcaseUnicodeChar(c): Windows' upper case of one UTF-16 unit
@@ -4052,7 +4052,7 @@ fn GlobalMemoryStatus(c: &mut Ctx) -> u32 {
     w32(p + 4, 30);
     for (i, v) in [PHYS, PHYS / 4 * 3, 2 * PHYS, 2 * PHYS, 0x7ffe_0000, 0x6000_0000].into_iter().enumerate() {
         let at = p + 8 + ps * kome::num::u32_of(i);
-        if x64 { mem::w64(at, clamp(v)) } else { w32(at, clamp(v) as u32) }
+        if x64 { mem::w64(at, clamp(v)) } else { w32(at, kome::num::lo32(clamp(v))) }
     }
     0
 }
@@ -4066,7 +4066,7 @@ fn GlobalMemoryStatusEx(c: &mut Ctx) -> u32 {
     }
     w32(p + 4, 30);
     let q = |o: u32, v: u64| {
-        w32(p + o, v as u32);
+        w32(p + o, kome::num::lo32(v));
         w32(p + o + 4, (v >> 32) as u32);
     };
     q(8, PHYS);
@@ -4111,7 +4111,7 @@ fn GetSystemInfo(c: &mut Ctx) -> u32 {
 // CPU topology: one group, one package, one NUMA node, one core per processor (the MSVC
 // concurrency runtime asks before it starts; without it the game throws at startup)
 pub(crate) fn cpu_mask() -> u32 {
-    cpu_mask64() as u32
+    kome::num::lo32(cpu_mask64())
 }
 /// One bit per processor (SAKE_NCPU takes up to 64: a shift by 32 or 64 overflowed)
 fn cpu_mask64() -> u64 {
@@ -4151,8 +4151,8 @@ fn GetLogicalProcessorInformationEx(c: &mut Ctx) -> u32 {
         items.push((4, 76, Box::new(|p| {
             w16(p + 8, 1);
             w16(p + 10, 1);
-            w8(p + 8 + 24, ncpu() as u8);
-            w8(p + 8 + 25, ncpu() as u8);
+            w8(p + 8 + 24, kome::num::lo8(ncpu()));
+            w8(p + 8 + 25, kome::num::lo8(ncpu()));
             w32(p + 8 + 24 + 40, cpu_mask());
         })));
     }
@@ -4585,7 +4585,7 @@ fn SetThreadpoolWait(c: &mut Ctx) -> u32 {
     let (h, obj_h, due) = (c.a(0), c.a(1), c.a(2));
     let Some(generation) = tp_bump(h) else { return 0 };
     if obj_h != 0 {
-        let ms = if due == 0 { u32::MAX } else { due_ms(due).min(u64::from(u32::MAX) - 1) as u32 };
+        let ms = if due == 0 { u32::MAX } else { kome::num::lo32(due_ms(due).min(u64::from(u32::MAX) - 1)) };
         crate::pool::wait_add(
             u64::from(h),
             obj_h,
@@ -5316,7 +5316,7 @@ fn GetLocaleInfoA(c: &mut Ctx) -> u32 {
     }
     let s = locale_info(c.a(1));
     if c.a(3) == 0 {
-        return crate::text::s2a(&s).len() as u32 + 1;
+        return kome::num::lo32(crate::text::s2a(&s).len()) + 1;
     }
     ret_str(c.a(2), c.a(3), &s, false) + 1
 }
@@ -5384,7 +5384,7 @@ fn MultiByteToWideChar(c: &mut Ctx) -> u32 {
     let (cp, flags, src, n, dst, cap) = (c.a(0), c.a(1), c.a(2), c.i(3), c.a(4), c.a(5));
     // (Windows: any negative length means NUL-terminated; no output buffer with a size is
     // ERROR_INVALID_PARAMETER)
-    if src == 0 || n == 0 || cap > i32::MAX as u32 || src == dst || cap != 0 && dst == 0 {
+    if src == 0 || n == 0 || cap > kome::num::lo32(i32::MAX) || src == dst || cap != 0 && dst == 0 {
         last_error(87);
         return 0;
     }
@@ -5429,7 +5429,7 @@ fn WideCharToMultiByte(c: &mut Ctx) -> u32 {
     let (cp, src, n, dst, cap) = (c.a(0), c.a(2), c.i(3), c.a(4), c.a(5));
     // (Windows: any negative length means NUL-terminated; no output buffer with a size is
     // ERROR_INVALID_PARAMETER)
-    if src == 0 || n == 0 || cap > i32::MAX as u32 || src == dst || cap != 0 && dst == 0 {
+    if src == 0 || n == 0 || cap > kome::num::lo32(i32::MAX) || src == dst || cap != 0 && dst == 0 {
         last_error(87);
         return 0;
     }
@@ -5907,10 +5907,10 @@ fn MulDiv(c: &mut Ctx) -> u32 {
 
 // lstr*
 fn lstrlenA(c: &mut Ctx) -> u32 {
-    cstr(c.a(0)).len() as u32
+    kome::num::lo32(cstr(c.a(0)).len())
 }
 fn lstrlenW(c: &mut Ctx) -> u32 {
-    wstr(c.a(0)).len() as u32
+    kome::num::lo32(wstr(c.a(0)).len())
 }
 fn lstrcpyA(c: &mut Ctx) -> u32 {
     let s = cstr(c.a(1));
@@ -6244,7 +6244,7 @@ fn GetLocalTime(c: &mut Ctx) -> u32 {
     0
 }
 fn put64(p: u32, v: u64) {
-    w32(p, v as u32);
+    w32(p, kome::num::lo32(v));
     w32(p + 4, (v >> 32) as u32);
 }
 fn get64(p: u32) -> u64 {
@@ -6259,7 +6259,7 @@ fn GetSystemTimePreciseAsFileTime(c: &mut Ctx) -> u32 {
 }
 fn FileTimeToSystemTime(c: &mut Ctx) -> u32 {
     let ft = get64(c.a(0));
-    if ft > i64::MAX as u64 {
+    if ft > kome::num::lo64(i64::MAX) {
         last_error(87);
         return 0;
     }
@@ -6399,7 +6399,7 @@ fn FileTimeToDosDateTime(c: &mut Ctx) -> u32 {
     write_systemtime(tmp, secs, 0);
     let (y, m, d, h, mi, s) = (r16(tmp), r16(tmp + 2), r16(tmp + 6), r16(tmp + 8), r16(tmp + 10), r16(tmp + 12));
     mem::heap_free(tmp);
-    if !(1980..=2107).contains(&y) || ft > i64::MAX as u64 {
+    if !(1980..=2107).contains(&y) || ft > kome::num::lo64(i64::MAX) {
         last_error(87);
         return 0;
     }
@@ -7198,7 +7198,7 @@ fn _llseek(c: &mut Ctx) -> u32 {
         1 => SeekFrom::Current(i64::from(c.i(1))),
         _ => SeekFrom::End(i64::from(c.i(1))),
     };
-    f.seek(pos).map_or(0xffff_ffff, |p| p as u32)
+    f.seek(pos).map_or(0xffff_ffff, |p| kome::num::lo32(p))
 }
 /// ReadFile / WriteFile on a socket: a recv / send, completed at once (with an IOCP packet)
 fn socket_io(h: u32, buf: u32, n: u32, done: u32, ov: u32, write: bool) -> u32 {
@@ -7389,7 +7389,7 @@ fn SetFilePointer(c: &mut Ctx) -> u32 {
     match f.seek(pos) {
         Some(p) => {
             put32(phi, (p >> 32) as u32);
-            p as u32
+            kome::num::lo32(p)
         }
         None => {
             last_error(131);
@@ -7438,7 +7438,7 @@ fn GetFileSize(c: &mut Ctx) -> u32 {
     };
     let s = f.size();
     put32(c.a(1), (s >> 32) as u32);
-    s as u32
+    kome::num::lo32(s)
 }
 fn GetFileSizeEx(c: &mut Ctx) -> u32 {
     if let Some(r) = crate::nt::via::file_size(c, true) {
@@ -7565,13 +7565,13 @@ fn GetFileInformationByHandle(c: &mut Ctx) -> u32 {
     }
     w32(p + 28, 0x1234);
     w32(p + 32, (m.len() >> 32) as u32);
-    w32(p + 36, m.len() as u32);
+    w32(p + 36, kome::num::lo32(m.len()));
     // nNumberOfLinks
     w32(p + 40, m.links());
     // nFileIndexHigh, nFileIndexLow
     let ix = files::file_index(&f.path, &m);
     w32(p + 44, (ix >> 32) as u32);
-    w32(p + 48, ix as u32);
+    w32(p + 48, kome::num::lo32(ix));
     1
 }
 
@@ -7678,7 +7678,7 @@ fn write_find_raw(p: u32, name: &str, attrs: u32, t: u64, len: u64, wide: bool) 
         put64(p + o, t);
     }
     w32(p + 28, (len >> 32) as u32);
-    w32(p + 32, len as u32);
+    w32(p + 32, kome::num::lo32(len));
     if wide {
         put_wstr(p + 44, 260, &name.encode_utf16().collect::<Vec<_>>());
     } else {
@@ -7869,7 +7869,7 @@ fn attrs_ex(c: &mut Ctx, wide: bool) -> u32 {
     // (a directory's size is 0)
     let len = if m.is_dir() { 0 } else { m.len() };
     w32(p + 28, (len >> 32) as u32);
-    w32(p + 32, len as u32);
+    w32(p + 32, kome::num::lo32(len));
     1
 }
 fn GetFileAttributesExA(c: &mut Ctx) -> u32 {
@@ -8135,7 +8135,7 @@ fn copy_ex(c: &mut Ctx, wide: bool) -> u32 {
         let quads = [size, done, size, done];
         let mut args: Vec<u32> = Vec::new();
         for q in quads {
-            args.push(q as u32);
+            args.push(kome::num::lo32(q));
             if !mem::x64() {
                 args.push((q >> 32) as u32);
             }
@@ -8594,7 +8594,7 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
         }
         if view != 0 {
             section_views(|m| m.get_mut(&view).map(|s| s.views += 1));
-            return view + off as u32;
+            return view + kome::num::lo32(off);
         }
         let Some(b) = mem::reserve(0, size.max(1), 4, 0x40000, false) else {
             last_error(8);
@@ -8608,7 +8608,7 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
                 *view = b;
             }
         });
-        return b + off as u32;
+        return b + kome::num::lo32(off);
     };
     // a file's view: the bytes from `off`, as many as asked (0: to the end); the section is the
     // file (a writable mapping made it at least its size), past it ERROR_ACCESS_DENIED; a view
@@ -8624,8 +8624,8 @@ fn MapViewOfFile(c: &mut Ctx) -> u32 {
         last_error(8);
         return 0;
     }
-    let n = want as u32;
-    let have = len.saturating_sub(off).min(u64::from(n)) as u32;
+    let n = kome::num::lo32(want);
+    let have = kome::num::lo32(len.saturating_sub(off).min(u64::from(n)));
     let path = files::host_to_win(&f.path);
     // (a read-only view of what another read-only view shows already: the same copy)
     // (FILE_MAP_READ alone: FILE_MAP_WRITE and FILE_MAP_COPY views are the program's own)
@@ -10546,12 +10546,12 @@ mod drive_tests {
                 let b = mem::heap_alloc(40, true);
                 assert_eq!(crate::test_guest::call(GetDiskFreeSpaceExA, &[r, b, b + 8, b + 16]), 1);
                 assert_eq!(crate::test_guest::call(GetDiskFreeSpaceA, &[r, b + 24, b + 28, b + 32, b + 36]), 1);
-                let q = |o: u32| r32(b + o) as u64 | (r32(b + o + 4) as u64) << 32;
-                let cluster = r32(b + 24) as u64 * r32(b + 28) as u64;
-                assert_eq!(q(0), r32(b + 32) as u64 * cluster);
+                let q = |o: u32| kome::num::lo64(r32(b + o)) | (kome::num::lo64(r32(b + o + 4))) << 32;
+                let cluster = kome::num::lo64(r32(b + 24)) * kome::num::lo64(r32(b + 28));
+                assert_eq!(q(0), kome::num::lo64(r32(b + 32)) * cluster);
                 assert_eq!(q(16), q(0));
-                assert_eq!(q(8), r32(b + 36) as u64 * cluster);
-                assert!(q(0) as u32 > 1 << 30 && (q(0) as u32) < 1 << 31, "low part positive and big");
+                assert_eq!(q(8), kome::num::lo64(r32(b + 36)) * cluster);
+                assert!(kome::num::lo32(q(0)) > 1 << 30 && (kome::num::lo32(q(0))) < 1 << 31, "low part positive and big");
                 mem::heap_free(b);
             }
             assert_eq!(crate::test_guest::call(GetDriveTypeA, &[r]), if ok { DRIVE_FIXED } else { DRIVE_CDROM });
@@ -10936,7 +10936,7 @@ mod review_b07 {
             assert_eq!(call(GetLastError, &[]), 998);
             assert_eq!(call(LCMapStringA, &[0x411, 0x100, src, n, 0, 0]), 0);
             assert_eq!(call(LCMapStringW, &[0x411, 0x100, src, n, 0, 0]), 0);
-            assert_eq!(call(CompareStringOrdinal, &[src, n as u32, src, 3, 0]), 0);
+            assert_eq!(call(CompareStringOrdinal, &[src, kome::num::lo32(n), src, 3, 0]), 0);
             assert_eq!(call(BCryptGenRandom, &[0, dst, n, 2]), 0xc000_000d);
             assert_eq!(call(SystemFunction036, &[dst, n]), 0);
         }

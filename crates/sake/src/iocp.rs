@@ -320,7 +320,7 @@ fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<(Pack
                 if now >= d {
                     return Err(258); // WAIT_TIMEOUT
                 }
-                (d - now).as_millis().max(1) as u32
+                kome::num::lo32((d - now).as_millis().max(1))
             }
         };
         let ready = || with(|s| s.ports.get(&port.0).is_none_or(|q| !q.is_empty())) || (alertable && crate::apc::pending(tid));
@@ -341,7 +341,7 @@ fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
                 if mem::x64() {
                     mem::w64(kp, key);
                 } else {
-                    w32(kp, key as u32);
+                    w32(kp, kome::num::lo32(key));
                 }
             }
             if op != 0 {
@@ -381,7 +381,7 @@ fn GetQueuedCompletionStatusEx(c: &mut Ctx) -> u32 {
                 if mem::x64() {
                     mem::w64(e, key);
                 } else {
-                    w32(e, key as u32);
+                    w32(e, kome::num::lo32(key));
                 }
                 wp(e + k, ov);
                 wp(e + 2 * k, status);
@@ -505,7 +505,7 @@ pub fn init_nt() {
         let (port, pkey, pval, iosb, ms) = (c.a(0), c.a(1), c.a(2), c.a(3), crate::ntsync::timeout_ms(c.a(4)));
         match wait_packet(c, port, ms, false) {
             Ok(((bytes, key, ov, status), _)) => {
-                wp(pkey, key as u32);
+                wp(pkey, kome::num::lo32(key));
                 if mem::x64() {
                     mem::w64(pkey, key);
                 }
@@ -525,7 +525,7 @@ pub fn init_nt() {
                 let (mut n, mut p) = (0, Some(first));
                 while let Some((bytes, key, ov, status)) = p {
                     let e = info + 4 * k * n;
-                    wp(e, key as u32);
+                    wp(e, kome::num::lo32(key));
                     if mem::x64() {
                         mem::w64(e, key);
                     }

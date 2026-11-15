@@ -344,7 +344,7 @@ pub mod via {
         Some(match seek(c, h, d, how) {
             Ok(p) => {
                 put32(phi, (p >> 32) as u32);
-                p as u32
+                kome::num::lo32(p)
             }
             Err(e) => {
                 last_error(e);
@@ -382,7 +382,7 @@ pub mod via {
                     1
                 } else {
                     put32(p, (n >> 32) as u32);
-                    n as u32
+                    kome::num::lo32(n)
                 }
             }
             Err(st) => {
@@ -1760,8 +1760,8 @@ mod fs_info_tests {
                     let u32at = |o: usize| u32::from_le_bytes(v[o..o + 4].try_into().unwrap());
                     let u64at = |o: usize| u64::from_le_bytes(v[o..o + 8].try_into().unwrap());
                     match class {
-                        1 => prop_assert_eq!(u32at(12) as usize, v.len() - 18),
-                        5 => prop_assert_eq!(u32at(8) as usize, v.len() - 12),
+                        1 => prop_assert_eq!(kome::num::us(u32at(12)), v.len() - 18),
+                        5 => prop_assert_eq!(kome::num::us(u32at(8)), v.len() - 12),
                         3 => prop_assert_eq!((u64at(0), u64at(8), u32at(16), u32at(20)), (0x200_0000, 0xf7_a3c1, 8, 512)),
                         7 => prop_assert_eq!((u64at(0), u64at(8), u64at(16), u32at(24), u32at(28)), (0x200_0000, 0xf7_a3c1, 0xf7_a3c1, 8, 512)),
                         _ => {}
@@ -2042,7 +2042,7 @@ mod file_name_tests {
         fn never_past_the_buffer(name in "[a-zA-Z0-9\\\\ .]{0,80}", len in 8u32..400) {
             let (st, n, w) = file_name_info(&format!("C:{name}"), len);
             prop_assert!(kome::num::u32_of(w.len()) <= len);
-            prop_assert_eq!(u32::from_le_bytes(w[..4].try_into().unwrap()), 2 * name.len().max(1) as u32);
+            prop_assert_eq!(u32::from_le_bytes(w[..4].try_into().unwrap()), 2 * kome::num::lo32(name.len().max(1)));
             if st == 0 { prop_assert_eq!(kome::num::us(n), w.len()); } else { prop_assert_eq!(kome::num::us(n), w.len()); prop_assert!(n <= len); }
         }
     }

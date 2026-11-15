@@ -275,7 +275,7 @@ pub fn copy(dst: u32, src: u32, n: u32) {
     }
 }
 pub fn write(dst: u32, data: &[u8]) {
-    if guest(dst, data.len() as u32) {
+    if guest(dst, kome::num::lo32(data.len())) {
         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), host::<u8>(dst), data.len()) }
     }
 }
@@ -351,7 +351,7 @@ pub fn put_cstr(dst: u32, cap: u32, s: &[u8]) -> u32 {
     if cap == 0 || dst == 0 {
         return 0;
     }
-    let n = (s.len() as u32).min(cap - 1);
+    let n = (kome::num::lo32(s.len())).min(cap - 1);
     write(dst, &s[..us(n)]);
     w8(dst + n, 0);
     n
@@ -360,7 +360,7 @@ pub fn put_wstr(dst: u32, cap: u32, s: &[u16]) -> u32 {
     if cap == 0 || dst == 0 {
         return 0;
     }
-    let n = (s.len() as u32).min(cap - 1);
+    let n = (kome::num::lo32(s.len())).min(cap - 1);
     for i in 0..n {
         w16(dst + 2 * i, s[us(i)]);
     }
@@ -402,7 +402,7 @@ fn align_up(v: u32, a: u32) -> u32 {
 /// near 4 GB wrapped to 0 and reserved an empty region the program took for ~4 GB, review b07)
 fn page_size(size: u32) -> Option<u32> {
     let n = u64::from(size.max(1)).div_ceil(u64::from(PAGE)) * u64::from(PAGE);
-    (n <= u64::from(HI)).then_some(n as u32)
+    (n <= u64::from(HI)).then_some(kome::num::lo32(n))
 }
 
 /// Reserves `size` bytes at `want` (0 = anywhere, lowest first; `top` = highest first).
@@ -484,7 +484,7 @@ pub fn reserve_aligned(size: u32, align: u32, prot: u32, kind: u32) -> Option<u3
 fn aligned_fit(holes: &[(u32, u32)], size: u32, align: u32) -> Option<u32> {
     holes.iter().find_map(|&(lo, hi)| {
         let b = (u64::from(lo) + u64::from(align) - 1) & !(u64::from(align) - 1);
-        (b + u64::from(size) <= u64::from(hi)).then_some(b as u32)
+        (b + u64::from(size) <= u64::from(hi)).then_some(kome::num::lo32(b))
     })
 }
 
@@ -611,7 +611,7 @@ pub fn accessible(a: u32, n: u32, write: bool, code_too: bool) -> u32 {
         if at < u64::from(LO) {
             break;
         }
-        let Some((_, _, run, size, state, prot)) = query(at as u32) else { break };
+        let Some((_, _, run, size, state, prot)) = query(kome::num::lo32(at)) else { break };
         let ok = state == 0x1000
             && prot & 0x100 == 0
             && if write { prot & 0xcc != 0 || code_too && prot & 0x30 != 0 } else { prot & 0xfe != 0 };
@@ -1137,8 +1137,8 @@ mod tests {
             let (first, last) = page_span(off, n, size);
             proptest::prop_assert!(first <= last && last <= pages);
             proptest::prop_assert_eq!(first, off / PAGE);
-            if off as u64 + n as u64 <= size as u64 {
-                proptest::prop_assert_eq!(last as u64, (off as u64 + n as u64).div_ceil(PAGE as u64));
+            if kome::num::lo64(off) + kome::num::lo64(n) <= kome::num::lo64(size) {
+                proptest::prop_assert_eq!(kome::num::lo64(last), (kome::num::lo64(off) + kome::num::lo64(n)).div_ceil(kome::num::lo64(PAGE)));
             } else {
                 proptest::prop_assert_eq!(last, pages);
             }
@@ -1165,7 +1165,7 @@ mod tests {
         #[test]
         fn guest_range_is_the_guests_half(a in proptest::prelude::any::<u32>(), n in proptest::prelude::any::<u32>()) {
             use super::{guest_range, NULL_TOP};
-            let want = n == 0 || (a >= NULL_TOP && (a as u64 + n as u64) <= GUEST_TOP as u64);
+            let want = n == 0 || (a >= NULL_TOP && (kome::num::lo64(a) + kome::num::lo64(n)) <= kome::num::lo64(GUEST_TOP));
             proptest::prop_assert_eq!(guest_range(a, n), want);
             if guest_range(a, n) && n != 0 {
                 proptest::prop_assert!(a.checked_add(n).is_some_and(|e| e <= GUEST_TOP));
@@ -1210,17 +1210,17 @@ mod tests {
                         got.push((b, size, hi));
                     }
                 }
-                prop_assert_eq!(HIGH.load(Relaxed), before + got.len() as u32);
+                prop_assert_eq!(HIGH.load(Relaxed), before + kome::num::lo32(got.len()));
                 for a in probes.iter().copied().chain(got.iter().flat_map(|&(b, n, _)| [b, b + n - 1, b + n])) {
                     let want = got.iter().find(|&&(b, n, _)| a.wrapping_sub(b) < n).map_or(0, |g| g.2);
-                    prop_assert_eq!(widen(a), a as u64 | (want as u64) << 32, "{:#x}", a);
+                    prop_assert_eq!(widen(a), kome::num::lo64(a) | (kome::num::lo64(want)) << 32, "{:#x}", a);
                     prop_assert_eq!(high_of(a), want);
                     prop_assert_eq!(find(a).is_some(), got.iter().any(|&(b, n, _)| a.wrapping_sub(b) < n));
                 }
                 // made plain again, then gone: no high block left
                 if let Some(&(b, _, _)) = got.first() {
                     prop_assert!(set_high(b, 0));
-                    prop_assert_eq!(widen(b), b as u64);
+                    prop_assert_eq!(widen(b), kome::num::lo64(b));
                 }
                 for &(b, _, _) in &got {
                     forget(b);
@@ -1263,23 +1263,23 @@ mod tests {
                 let holes: Vec<(u32, u32)> = cuts.chunks(2).filter(|c| c.len() == 2).map(|c| (c[0] << 16, c[1] << 16)).collect();
                 let (size, align) = (size_pages << 12, 1u32 << shift);
                 let got = aligned_fit(&holes, size, align);
-                let fits = |b: u64| holes.iter().any(|&(lo, hi)| b >= lo as u64 && b + size as u64 <= hi as u64);
+                let fits = |b: u64| holes.iter().any(|&(lo, hi)| b >= kome::num::lo64(lo) && b + kome::num::lo64(size) <= kome::num::lo64(hi));
                 match got {
                     Some(b) => {
                         prop_assert_eq!(b % align, 0);
-                        prop_assert!(fits(b as u64));
+                        prop_assert!(fits(kome::num::lo64(b)));
                         // nothing lower
                         let mut x = 0u64;
-                        while x < b as u64 {
+                        while x < kome::num::lo64(b) {
                             prop_assert!(!fits(x));
-                            x += align as u64;
+                            x += kome::num::lo64(align);
                         }
                     }
                     None => {
                         let mut x = 0u64;
                         while x < 0x8000_0000 {
                             prop_assert!(!fits(x));
-                            x += align as u64;
+                            x += kome::num::lo64(align);
                         }
                     }
                 }
@@ -1331,7 +1331,7 @@ mod tests {
         /// This process's resident memory (smaps Rss of the guest range: the kernel's zero page,
         /// which reads of never-written pages map, is not counted), KiB
         fn guest_rss_kib() -> u64 {
-            let (lo, hi) = (super::super::LO as u64, super::super::HI as u64);
+            let (lo, hi) = (kome::num::lo64(super::super::LO), kome::num::lo64(super::super::HI));
             let mut rss = 0;
             let mut inside = false;
             for l in std::fs::read_to_string("/proc/self/smaps").unwrap().lines() {
@@ -1531,7 +1531,7 @@ mod heap_destroy_tests {
         #[test]
         fn heaps_against_a_model(ops in proptest::collection::vec(op(), 1..120)) {
             let _g = crate::test_guest::enter();
-            let heap = |h: u8| if h == 0 { 0 } else { 0x90_0000 + h as u32 * 0x1_0000 };
+            let heap = |h: u8| if h == 0 { 0 } else { 0x90_0000 + kome::num::lo32(h) * 0x1_0000 };
             // (what a failed case before this one left)
             for h in 1..4 {
                 heap_destroy(heap(h));
@@ -1632,7 +1632,7 @@ mod review_b07_tests {
                 Some(n) => {
                     prop_assert!(n % PAGE == 0 && n >= size.max(1) && n - size.max(1) < PAGE && n <= HI);
                 }
-                None => prop_assert!(size as u64 > HI as u64 - PAGE as u64),
+                None => prop_assert!(kome::num::lo64(size) > kome::num::lo64(HI) - kome::num::lo64(PAGE)),
             }
         }
 

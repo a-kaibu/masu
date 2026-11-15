@@ -45,7 +45,7 @@ impl Ctx<'_> {
     #[inline]
     pub fn a(&self, i: u32) -> u32 {
         if crate::mem::x64() {
-            return self.a64(i) as u32;
+            return kome::num::lo32(self.a64(i));
         }
         match self.this {
             Some(t) if i == 0 => t,
@@ -74,7 +74,7 @@ impl Ctx<'_> {
     /// The float argument `i` (x64: XMM `i`; x86: slot `i`).
     pub fn fl(&self, i: u32) -> f32 {
         if crate::mem::x64() {
-            return f32::from_bits(self.xmm(i) as u32);
+            return f32::from_bits(kome::num::lo32(self.xmm(i)));
         }
         f32::from_bits(self.a(i))
     }
@@ -95,7 +95,7 @@ impl Ctx<'_> {
     }
     /// x64: floating-point argument `i` (XMM0-3, then the stack), as a double's bits.
     pub fn xmm(&self, i: u32) -> u64 {
-        if i < 4 { self.cpu.xmm(kome::num::us(i)) as u64 } else { crate::mem::r64(self.esp + 8 + 8 * i) }
+        if i < 4 { kome::num::lo64(self.cpu.xmm(kome::num::us(i))) } else { crate::mem::r64(self.esp + 8 + 8 * i) }
     }
     /// A POINT passed by value at slots `i`, `i + 1` (x64: the one 8-byte argument `i`; the
     /// index is the same when only 4-byte arguments come before it).
@@ -109,7 +109,7 @@ impl Ctx<'_> {
     /// The float argument `i` (x64: XMM0-3, then the stack slot's low half).
     pub fn f(&self, i: u32) -> f32 {
         if crate::mem::x64() {
-            return f32::from_bits(self.xmm(i) as u32);
+            return f32::from_bits(kome::num::lo32(self.xmm(i)));
         }
         f32::from_bits(self.a(i))
     }
@@ -150,7 +150,7 @@ impl Ctx<'_> {
     }
     pub fn ret64(&mut self, v: u64) -> u32 {
         self.edx = Some((v >> 32) as u32);
-        v as u32
+        kome::num::lo32(v)
     }
 }
 
@@ -455,7 +455,7 @@ pub fn export(dll: &str, name: &str) -> u32 {
     });
     let f = find_impl(&d, name);
     let mut e = ENTRIES.w();
-    let i = e.len() as u32;
+    let i = kome::num::lo32(e.len());
     assert!((kome::num::us(i)) < MAX_ENTRIES, "sake: more than {MAX_ENTRIES} distinct imports ({dll}!{name})");
     let this_arg = spec.is_some_and(|s| s.2) && THIS_ARG0.contains(&d.as_str());
     e.push(Entry {
@@ -701,7 +701,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
         None => unimplemented_call(&mut c, i, known),
     };
     if let Some(t0) = t0 {
-        *TIMES.locked().get_or_insert_with(HashMap::default).entry(i).or_default() += t0.elapsed().as_micros() as u64;
+        *TIMES.locked().get_or_insert_with(HashMap::default).entry(i).or_default() += kome::num::lo64(t0.elapsed().as_micros());
     }
     if top {
         crate::snap::api_leave();
@@ -710,7 +710,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     if let Some(o) = shirusu.filter(|_| !c.jumped) {
         let ret = match c.edx {
             Some(d) => u64::from(d) << 32 | u64::from(r),
-            None if crate::mem::x64() && r >= 0xffff_f000 => i64::from(r as i32) as u64,
+            None if crate::mem::x64() && r >= 0xffff_f000 => kome::num::lo64(i64::from(r as i32)),
             None if crate::mem::x64() => crate::mem::widen(r),
             None => u64::from(r),
         };
@@ -850,7 +850,7 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
         // pseudo-handles) sign-extended, an address in an image above 4G widened
         let rax = match edx {
             Some(d) => u64::from(d) << 32 | u64::from(r),
-            None if r >= 0xffff_f000 => i64::from(r as i32) as u64,
+            None if r >= 0xffff_f000 => kome::num::lo64(i64::from(r as i32)),
             None => crate::mem::widen(r),
         };
         cpu.set_gpr(EAX, rax);
@@ -858,7 +858,7 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
             cpu.set_xmm(0, u128::from(v.to_bits()));
         }
         let ret = crate::mem::r64(esp);
-        cpu.eip = ret as u32;
+        cpu.eip = kome::num::lo32(ret);
         cpu.rip_hi = (ret >> 32) as u32;
         cpu.set_gpr(ESP, u64::from(esp) + 8);
         crate::tctx::apply_pending_after_call(cpu);
@@ -880,14 +880,14 @@ fn finish(cpu: &mut Cpu, esp: u32, r: u32, edx: Option<u32>, st0: Option<f64>, c
 pub fn stub(code: &[u8]) -> u32 {
     static AT: Mutex<(u32, u32)> = Mutex::new((0, 0));
     let mut g = AT.locked();
-    if g.1 < code.len() as u32 {
+    if g.1 < kome::num::lo32(code.len()) {
         let b = crate::mem::alloc(0x10000).expect("stub page");
         crate::mem::commit(b, 0x40);
         *g = (b, 0x10000);
     }
     let a = g.0;
     crate::mem::write(a, code);
-    let n = (code.len() as u32 + 15) & !15;
+    let n = (kome::num::lo32(code.len()) + 15) & !15;
     g.0 += n;
     g.1 = g.1.saturating_sub(n);
     a
@@ -920,7 +920,7 @@ pub fn host_fn_this(name: &str, f: Handler, bytes: u32) -> u32 {
 /// A COM vtable of traps (x64: 8-byte entries).
 pub fn vtable(name: &str, methods: &[(Handler, u32)]) -> u32 {
     let k = crate::mem::ps();
-    let v = crate::mem::heap_alloc(k * methods.len() as u32, true);
+    let v = crate::mem::heap_alloc(k * kome::num::lo32(methods.len()), true);
     for (i, (f, bytes)) in methods.iter().enumerate() {
         crate::mem::wp(v + k * kome::num::u32_of(i), host_fn(&format!("{name}::{i}"), *f, *bytes));
     }
@@ -1119,7 +1119,7 @@ mod ordinal_tests {
             let u64at = |o: usize| u64::from_le_bytes(f[o..o + 8].try_into().unwrap());
             let pe = u32at(0x3c);
             let wide = u16::from_le_bytes([f[pe + 24], f[pe + 25]]) == 0x20b;
-            let (n, opt) = (u16::from_le_bytes([f[pe + 6], f[pe + 7]]) as usize, u16::from_le_bytes([f[pe + 20], f[pe + 21]]) as usize);
+            let (n, opt) = (kome::num::us(u16::from_le_bytes([f[pe + 6], f[pe + 7]])), kome::num::us(u16::from_le_bytes([f[pe + 20], f[pe + 21]])));
             let dirs = pe + 24 + if wide { 112 } else { 96 };
             let off = |rva: usize| {
                 (0..n).map(|k| pe + 24 + opt + 40 * k).find_map(|s| {
@@ -1144,7 +1144,7 @@ mod ordinal_tests {
                     let dll = cstr(off(name).unwrap());
                     let mut p = off(t).unwrap();
                     loop {
-                        let (v, flag) = if wide { (u64at(p), 1u64 << 63) } else { (u32at(p) as u64, 1 << 31) };
+                        let (v, flag) = if wide { (u64at(p), 1u64 << 63) } else { (kome::num::lo64(u32at(p)), 1 << 31) };
                         if v == 0 {
                             break;
                         }
@@ -1182,7 +1182,7 @@ mod hot_tests {
         assert!(hot(MAX_ENTRIES).is_none());
         assert!(hot(MAX_ENTRIES - 1).is_none());
         assert_eq!(tag_of(TRAP_LO - 4), (0, 0));
-        assert_eq!(tag_of(TRAP_LO + 4 * MAX_ENTRIES as u32), (0, 0));
+        assert_eq!(tag_of(TRAP_LO + 4 * kome::num::lo32(MAX_ENTRIES)), (0, 0));
     }
 
     fn h1(_: &mut Ctx) -> u32 {

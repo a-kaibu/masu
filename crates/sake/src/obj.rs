@@ -606,7 +606,7 @@ pub fn wait(handles: &[u32], all: bool, ms: u32, extra: Option<&dyn Fn() -> bool
                 return Some(Err(5));
             }
             if let Some(x) = extra && x() {
-                return Some(Ok(handles.len() as u32));
+                return Some(Ok(kome::num::lo32(handles.len())));
             }
             let keys: Vec<Option<Key>> = handles.iter().map(|h| t.objs.key(h)).collect();
             match attempt(t, &keys, all, tid, false) {
@@ -746,7 +746,7 @@ fn wait_held_then(handles: &[Option<Key>], all: bool, ms: u32, extra: Option<&dy
         }
         let t = g.get_or_insert_with(Table::new);
         if let Some(x) = extra && x() {
-            break (handles.len() as u32, Vec::new());
+            break (kome::num::lo32(handles.len()), Vec::new());
         }
         match attempt(t, handles, all, tid, blocked) {
             Attempt::Failed => {
