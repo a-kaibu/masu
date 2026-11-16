@@ -244,14 +244,154 @@ fn top_level(t: &str) -> Vec<String> {
     out
 }
 
+/// `x` without a leading `&`, a trailing `.to_vec()` / `.clone()` / `.collect()` or a `vec!`.
+fn bare(x: &str) -> &str {
+    let mut x = x.trim().trim_start_matches('&').trim();
+    loop {
+        let y = x.trim_end_matches(".to_vec()").trim_end_matches(".clone()").trim_end_matches(".collect()");
+        let y = match y.rfind(".collect::<") {
+            Some(k) if y.ends_with(">()") => &y[..k],
+            _ => y,
+        };
+        if y == x {
+            break;
+        }
+        x = y;
+    }
+    x.strip_prefix("vec!").unwrap_or(x)
+}
+
+/// The body of `fn name` in `s` (its braces), the first one.
+fn fn_text<'s>(s: &'s str, name: &str) -> Option<(usize, &'s str)> {
+    s.match_indices(&format!("fn {name}")).find_map(|(k, _)| {
+        let rest = &s[k + 3 + name.len()..];
+        if !rest.starts_with(['(', '<']) {
+            return None;
+        }
+        let open = k + 3 + name.len() + rest.find('{')?;
+        (!s[k..open].contains(';')).then(|| bracketed(s, open).map(|b| (open, b)))?
+    })
+}
+
+/// The handlers, by slot, of the vtable list `x` used at byte `at` of `s` (None: a slot the text
+/// does not say): an array, a binding of one (then pushed to, extended, its slots set), a
+/// chain of them, a function returning one (in any file), a macro's (`macro:name:fn`).
+fn list_of(files: &[(std::path::PathBuf, String)], s: &str, at: usize, x: &str, depth: u32) -> Option<Vec<Option<String>>> {
+    if depth > 8 {
+        return None;
+    }
+    let x = bare(x);
+    let elems = |arr: &str| -> Vec<Option<String>> {
+        top_level(&arr[1..arr.len() - 1])
+            .into_iter()
+            .map(|e| e.strip_prefix('(').and_then(|i| top_level(i.strip_suffix(')')?).into_iter().next()))
+            .collect()
+    };
+    if x.starts_with('[') {
+        return bracketed(x, 0).filter(|b| b.len() == x.len()).map(elems);
+    }
+    let strip_iter = |t: &str| t.trim().trim_end_matches(".into_iter()").trim_end_matches(".iter()").trim_end_matches(".copied()").trim_end_matches(".cloned()").to_string();
+    if let Some(k) = x.find(".chain(") {
+        let mut out = list_of(files, s, at, &strip_iter(&x[..k]), depth + 1)?;
+        let mut rest = &x[k..];
+        while let Some(r) = rest.strip_prefix(".chain(") {
+            let arg = bracketed(rest, 6)?;
+            out.extend(list_of(files, s, at, &strip_iter(&arg[1..arg.len() - 1]), depth + 1)?);
+            rest = r[arg.len() - 1..].trim_start();
+            for t in [".into_iter()", ".iter()", ".copied()", ".cloned()", ".collect()"] {
+                rest = rest.strip_prefix(t).unwrap_or(rest).trim_start();
+            }
+            if let Some(r) = rest.strip_prefix(".collect::<") {
+                rest = r.split_once(">()").map_or("", |x| x.1).trim_start();
+            }
+        }
+        return Some(out);
+    }
+    if let Some(mac) = x.strip_suffix(')').and_then(|t| t.split_once("!(")).map(|t| t.0).filter(|m| m.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
+        let k = s.find(&format!("macro_rules! {mac} {{"))?;
+        let body = bracketed(s, k + 14 + mac.len())?;
+        let j = body.rfind("[(")?;
+        let arr = bracketed(body, j)?;
+        return Some(elems(arr).into_iter().map(|h| h.map(|h| format!("macro:{mac}:{}", h.split(' ').next().unwrap_or_default()))).collect());
+    }
+    if let Some(f) = x.strip_suffix("()").filter(|f| f.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
+        let (t, (open, body)) = std::iter::once(s).chain(files.iter().map(|x| x.1.as_str())).find_map(|t| fn_text(t, f).map(|b| (t, b)))?;
+        let inner = &body[1..body.len() - 1];
+        let tail = inner.rfind(';').map_or(inner, |k| &inner[k + 1..]);
+        return list_of(files, t, open + body.len(), tail, depth + 1);
+    }
+    if !x.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    // (its binding: the last `let [mut] x` before, else a const / static)
+    let lets = s[..at].rmatch_indices(&format!("let {x}")).chain(s[..at].rmatch_indices(&format!("let mut {x}"))).map(|m| m.0).filter(|&b| !s[b + 4..].trim_start_matches("mut ")[x.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')).max();
+    let b = lets.or_else(|| ["const ", "static "].iter().find_map(|k| s.find(&format!("{k}{x}:")).or_else(|| s.find(&format!("{k}{x} ")))))?;
+    let eq = b + s[b..].find('=')?;
+    let mut d = 0i32;
+    let end = eq + s[eq..].char_indices().find(|&(_, ch)| {
+        match ch {
+            '(' | '[' | '{' => d += 1,
+            ')' | ']' | '}' => d -= 1,
+            _ => {}
+        }
+        ch == ';' && d == 0
+    })?.0;
+    let v = &s[eq + 1..end];
+    let mut out = match list_of(files, s, b, v, depth + 1) {
+        Some(o) => o,
+        None if v.contains(".map(") => vec![None; 64],
+        None => return None,
+    };
+    if lets.is_some() {
+        let after = &s[end..at];
+        for (k, _) in after.match_indices(&format!("{x}.")) {
+            if after[..k].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+                continue;
+            }
+            let r = &after[k + x.len() + 1..];
+            let call = ["push(", "extend(", "extend_from_slice("].into_iter().find(|c| r.starts_with(c));
+            if let Some(c) = call {
+                let arg = bracketed(r, c.len() - 1)?;
+                let arg = &arg[1..arg.len() - 1];
+                if c == "push(" {
+                    out.push(arg.trim().strip_prefix('(').and_then(|i| top_level(i.strip_suffix(')')?).into_iter().next()));
+                } else {
+                    out.extend(list_of(files, s, end + k, &strip_iter(arg), depth + 1)?);
+                }
+            }
+        }
+        // (x[n].0 = h; x[n] = (h, ..))
+        for (k, _) in after.match_indices(&format!("{x}[")) {
+            let r = &after[k + x.len() + 1..];
+            let Some((n, r)) = r.split_once(']') else { continue };
+            let Ok(n) = n.parse::<usize>() else { continue };
+            let h = if let Some(r) = r.strip_prefix(".0 = ") {
+                r.split(';').next().map(str::trim)
+            } else if let Some(r) = r.strip_prefix(" = (") {
+                r.split(',').next().map(str::trim)
+            } else {
+                None
+            };
+            if let (Some(h), Some(slot)) = (h, out.get_mut(n)) {
+                *slot = Some(h.to_string());
+            }
+        }
+    }
+    Some(out)
+}
+
 /// Every COM method with pointer-sized out-parameters (com_outptrs.txt) that a vtable of sake's
-/// gives a handler: com::impls! lists by name, api::vtable's lists by slot where the list is
-/// in the text (inline, or bound to a name in the same file). Its handler takes its arguments
+/// gives a handler: com::impls! lists by name, api::vtable's lists by slot where the text says
+/// them (list_of: inline, bound to a name and pushed to or extended, chained, returned by a
+/// function, a macro's; and through a function handing its name and list on to vtable, the
+/// singletons of mmdevapi and wmi: 2026-11-16 CI's strict host-tests found mmdevapi's,
+/// dshow's and amstream's this missed). Its handler takes its arguments
 /// as that method's, c.args::<outs::iface::I::M>() (or a method's with the same out-parameters),
 /// first thing, or (a handler of several overloads) picks the one it is called as and takes
-/// those; a `_` handler takes none (review 2026-11-16 stage 3: 290 COM handlers took theirs
+/// those, and hands no helper the bare Ctx (c.ctx()) that takes one of them through Ctx::a;
+/// a `_` handler takes none (review 2026-11-16 stage 3: 290 COM handlers took theirs
 /// through Ctx::a, the typelib's BSTRs and misc's QI written 32 bits wide). Lists made at run
-/// time (vec! extended, by kind) are checked when they are called: Ctx::a of an out-parameter
+/// time (by kind, a tuple-struct macro's) are checked when they are called: Ctx::a of an out-parameter
 /// fails a test, c.args of another method's too.
 #[test]
 fn com_handlers_take_their_methods_arguments() {
@@ -295,44 +435,83 @@ fn com_handlers_take_their_methods_arguments() {
             }
         }
     }
-    // (a handler's body by name: its file's, else its parent module's)
+    // (a handler's body by name: its file's, else its parent module's; `macro:m:f`: fn f of
+    // macro_rules! m's; Err: a `_` handler)
     let body_of = |file: &std::path::Path, name: &str| -> Option<Result<String, ()>> {
         let parent = file.parent().map(|d| d.with_extension("rs"));
         for f in std::iter::once(file.to_path_buf()).chain(parent) {
             let Some((_, s)) = files.iter().find(|x| x.0 == f) else { continue };
+            let (s, name) = match name.strip_prefix("macro:").and_then(|m| m.split_once(':')) {
+                Some((m, f)) => {
+                    let Some(k) = s.find(&format!("macro_rules! {m} {{")) else { continue };
+                    (bracketed(s, k + 14 + m.len()).unwrap_or_default(), f)
+                }
+                None => (s.as_str(), name),
+            };
             for (k, _) in s.match_indices(&format!("fn {name}(")) {
                 let head = &s[k + 3 + name.len()..];
                 if head.starts_with("(_: &mut Ctx) -> u32") {
                     return Some(Err(()));
                 }
-                if let Some(b) = head.strip_prefix("(c: &mut Ctx) -> u32 {") {
-                    return Some(Ok(b.lines().take(8).collect::<Vec<_>>().join("\n")));
+                if head.starts_with("(c: &mut Ctx) -> u32 {") {
+                    let open = k + 3 + name.len() + head.find('{').unwrap_or_default();
+                    return bracketed(s, open).map(|b| Ok(b.to_string()));
                 }
             }
         }
         None
+    };
+    // (a helper's whole text by name, any signature: its file's, else its parent module's)
+    let helper_of = |file: &std::path::Path, name: &str| -> Option<String> {
+        let parent = file.parent().map(|d| d.with_extension("rs"));
+        std::iter::once(file.to_path_buf()).chain(parent).find_map(|f| files.iter().find(|x| x.0 == f).and_then(|(_, s)| fn_text(s, name).map(|b| b.1.to_string())))
     };
     let (mut bad, mut checked) = (vec![], 0);
     let mut check = |file: &std::path::Path, iface: &str, slot: usize, h: &str| {
         let Some((m, x64, x86)) = masks.get(&(iface.to_string(), slot)) else { return };
         let h = h.trim().trim_end_matches(" as Handler").trim_end_matches(" as crate::api::Handler");
         let h = h.strip_prefix("hr!(").and_then(|x| x.strip_suffix(')')).unwrap_or(h);
-        let body = if h.starts_with('|') {
+        let whole = if h.starts_with('|') {
             Ok(h.to_string())
         } else {
-            let name = h.rsplit("::").next().unwrap_or(h);
+            let name = if h.starts_with("macro:") { h } else { h.rsplit("::").next().unwrap_or(h) };
             match body_of(file, name) {
                 Some(b) => b,
                 None => return,
             }
         };
         checked += 1;
-        let Ok(body) = body else { return };
+        let Ok(whole) = whole else { return };
+        let body = whole.lines().take(8).collect::<Vec<_>>().join("\n");
         let typed: Vec<&str> = body.match_indices("c.args::<").filter_map(|(k, _)| body[k + 9..].split('>').next()).collect();
         let first = body.trim_start_matches(|c: char| c == '{' || c.is_whitespace()).starts_with("let c = &mut c.args::<") || h.starts_with('|');
         let ok = !typed.is_empty() && typed.iter().all(|t| of_type(t).is_some()) && (first || typed.len() > 1) && typed.iter().any(|t| of_type(t).as_ref() == Some(&(x64.clone(), x86.clone())));
         if !ok {
             bad.push(format!("{}: {iface}::{m} (slot {slot}): its handler {h} is to start `let c = &mut c.args::<crate::api::outs::iface::{iface}::{m}>();` (or a method's with the same out-parameters), it takes {typed:?}", file.display()));
+            return;
+        }
+        // (a helper handed the bare Ctx, c.ctx(), reading one of these out-parameters as a value
+        // through Ctx::a: mf's ar_get, wasapi's svc_qi, wmvcore's get_alloc did)
+        for (k, _) in whole.match_indices("(c.ctx()").chain(whole.match_indices("(c.ctx_ref()")) {
+            let name: String = whole[..k].chars().rev().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect::<Vec<_>>().into_iter().rev().collect();
+            if name.is_empty() {
+                continue;
+            }
+            let Some(mut t) = helper_of(file, &name) else { continue };
+            // (its own nested handlers aside: they take theirs)
+            while let Some(k) = t[1..].find("fn ").map(|k| k + 1) {
+                let Some(o) = t[k..].find('{').map(|o| k + o) else { break };
+                let Some(n) = bracketed(&t, o).map(str::len) else { break };
+                t.replace_range(k..o + n, "");
+            }
+            if t.lines().take(4).any(|l| l.contains("c.args::<")) {
+                continue;
+            }
+            for i in x64.split(',') {
+                if ["a", "z", "a64", "i"].iter().any(|f| t.contains(&format!("c.{f}({i})"))) {
+                    bad.push(format!("{}: {iface}::{m} (slot {slot}): its handler {h} hands c.ctx() to {name}, which takes out-parameter {i} as a value: hand it the Args (c) or the Out", file.display()));
+                }
+            }
         }
     };
     for (p, s) in &files {
@@ -357,40 +536,45 @@ fn com_handlers_take_their_methods_arguments() {
                 }
             }
         }
-        // vtable("Name", &[(handler, bytes), ..]) or a list bound to a name before it
-        for (k, _) in s.match_indices("vtable(") {
-            if s[..k].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
-                continue;
+        // vtable("Name", list), or a function of this file's handing its arguments on to one
+        // (mmdevapi's and wmi's singleton(name, methods, cell)): the list's handlers by slot
+        let mut calls: Vec<(String, usize, usize)> = vec![("vtable".into(), 0, 1)];
+        for (k, _) in s.match_indices("fn ") {
+            let w: String = s[k + 3..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            let Some(o) = s[k..].find('(').map(|o| k + o) else { continue };
+            let Some(params) = bracketed(s, o) else { continue };
+            let ps: Vec<String> = top_level(&params[1..params.len() - 1]).iter().map(|q| q.split(':').next().unwrap_or_default().trim().to_string()).collect();
+            let Some((_, body)) = fn_text(&s[k..], &w) else { continue };
+            for (v, _) in body.match_indices("vtable(") {
+                let Some(a) = bracketed(body, v + 6) else { continue };
+                let a = top_level(&a[1..a.len() - 1]);
+                if let [n, l] = a.as_slice()
+                    && let (Some(ni), Some(li)) = (ps.iter().position(|x| x == n), ps.iter().position(|x| x == l.trim_start_matches('&')))
+                {
+                    calls.push((w.clone(), ni, li));
+                }
             }
-            let Some(args) = bracketed(s, k + 6) else { continue };
-            let a = top_level(&args[1..args.len() - 1]);
-            let [name, list] = a.as_slice() else { continue };
-            let names: Vec<&str> = name.split('"').skip(1).step_by(2).collect();
-            let list = list.trim_start_matches('&').trim();
-            let arr = if list.starts_with('[') {
-                Some(list.to_string())
-            } else if list.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                // (its binding: `let list[: T] = [` or `vec![`, the last before the call)
-                s[..k].rmatch_indices(&format!("let {list}")).chain(s[..k].rmatch_indices(&format!("let mut {list}"))).map(|x| x.0).max().and_then(|b| {
-                    let r = &s[b..k];
-                    let eq = r.find('=')?;
-                    let v = r[eq + 1..].trim_start().trim_start_matches('&').trim_start_matches("vec!");
-                    let at = b + eq + 1 + (r[eq + 1..].len() - v.len());
-                    (v.starts_with('[') && !r[..eq].contains(';') || v.starts_with('[')).then(|| bracketed(s, at).map(str::to_string)).flatten()
-                })
-            } else {
-                None
-            };
-            let Some(arr) = arr else { continue };
-            for n in names {
-                let iface = n.split(['(']).next().unwrap_or(n).rsplit([' ', ':']).next().unwrap_or(n);
-                if !ifaces.contains(iface) {
+        }
+        for (f, ni, li) in &calls {
+            for (k, _) in s.match_indices(&format!("{f}(")) {
+                if s[..k].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_') || s[..k].ends_with("fn ") {
                     continue;
                 }
-                for (sl, e) in top_level(&arr[1..arr.len() - 1]).iter().enumerate() {
-                    if let Some(inner) = e.strip_prefix('(').and_then(|x| x.strip_suffix(')')) {
-                        let parts = top_level(inner);
-                        if let Some(h) = parts.first() {
+                let Some(args) = bracketed(s, k + f.len()) else { continue };
+                let a = top_level(&args[1..args.len() - 1]);
+                let (Some(name), Some(list)) = (a.get(*ni), a.get(*li)) else { continue };
+                let names: Vec<&str> = name.split('"').skip(1).step_by(2).collect();
+                if names.is_empty() {
+                    continue;
+                }
+                let Some(hs) = list_of(&files, s, k, list, 0) else { continue };
+                for n in names {
+                    let iface = n.split(['(']).next().unwrap_or(n).rsplit([' ', ':']).next().unwrap_or(n);
+                    if !ifaces.contains(iface) {
+                        continue;
+                    }
+                    for (sl, h) in hs.iter().enumerate() {
+                        if let Some(h) = h {
                             check(p, iface, sl, h);
                         }
                     }
@@ -398,7 +582,7 @@ fn com_handlers_take_their_methods_arguments() {
             }
         }
     }
-    // (320 at 2026-11-16)
-    assert!(checked > 250, "only {checked} COM methods found");
+    // (516 at 2026-11-16)
+    assert!(checked > 400, "only {checked} COM methods found");
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }

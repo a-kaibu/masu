@@ -21,7 +21,7 @@ use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::api::{vtable, Ctx, Handler};
-use crate::mem::{self, ps, put64, putp, r16, r32, rp, w16, w32, wp};
+use crate::mem::{self, ps, put64, r16, r32, rp, w16, w32, wp};
 use crate::sound::{sample_at, Fmt, AHEAD, RATE, STEP};
 use crate::HashMap;
 
@@ -582,17 +582,17 @@ fn svc_release(c: &mut Ctx) -> u32 {
     n
 }
 /// QueryInterface of a service answering IUnknown and `own`
-fn svc_qi(c: &mut Ctx, own: &[Iid]) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+fn svc_qi(c: &mut crate::api::QiArgs, own: &[Iid]) -> u32 {
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return E_POINTER;
     }
     if is_unknown(iid) || own.iter().any(|&g| guid_is(iid, g)) {
         addref_obj(this);
-        putp(out, this);
+        out.put(this);
         S_OK
     } else {
-        putp(out, 0);
+        out.put(0);
         E_NOINTERFACE
     }
 }
@@ -983,7 +983,7 @@ fn render_vtbl() -> u32 {
 }
 fn rc_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    svc_qi(c.ctx(), &[IID_RENDER])
+    svc_qi(c, &[IID_RENDER])
 }
 /// GetBuffer(frames, BYTE**): the client's buffer, room for `frames`, silent (none for 0
 /// frames, which takes nothing)
@@ -1057,7 +1057,7 @@ fn clock_vtbl() -> u32 {
 }
 fn ck_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    svc_qi(c.ctx(), &[IID_CLOCK])
+    svc_qi(c, &[IID_CLOCK])
 }
 fn ck_freq(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(1));
@@ -1104,7 +1104,7 @@ fn stream_vtbl() -> u32 {
 }
 fn st_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    svc_qi(c.ctx(), &[IID_STREAM_VOLUME])
+    svc_qi(c, &[IID_STREAM_VOLUME])
 }
 fn channels_of(this: u32) -> u32 {
     client(owner(this), |cl| cl.fmt.map_or(2, |f| f.channels)).unwrap_or(2)
@@ -1195,7 +1195,7 @@ fn simple_vtbl() -> u32 {
 }
 fn sv_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    svc_qi(c.ctx(), &[IID_SIMPLE_VOLUME])
+    svc_qi(c, &[IID_SIMPLE_VOLUME])
 }
 fn sv_set_volume(c: &mut Ctx) -> u32 {
     let v = farg(c, 1);
@@ -1236,7 +1236,7 @@ fn channel_vtbl() -> u32 {
 }
 fn cv_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    svc_qi(c.ctx(), &[IID_CHANNEL_VOLUME])
+    svc_qi(c, &[IID_CHANNEL_VOLUME])
 }
 fn cv_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
@@ -1335,7 +1335,7 @@ fn se_qi(c: &mut Ctx) -> u32 {
     } else if guid_is(iid, IID_CHANNEL_VOLUME) {
         channel_vtbl()
     } else {
-        return svc_qi(c.ctx(), &[IID_SESSION, IID_SESSION2]);
+        return svc_qi(c, &[IID_SESSION, IID_SESSION2]);
     };
     out.put(service(v, owner(this), session_idx(this)));
     S_OK
@@ -1550,7 +1550,7 @@ fn sm_duck(c: &mut Ctx) -> u32 {
 }
 fn en_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    svc_qi(c.ctx(), &[IID_ENUMERATOR])
+    svc_qi(c, &[IID_ENUMERATOR])
 }
 fn en_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {

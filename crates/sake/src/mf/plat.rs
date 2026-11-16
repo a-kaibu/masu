@@ -85,27 +85,27 @@ fn ar_release(c: &mut Ctx) -> u32 {
     n
 }
 /// GetState(IUnknown **) / GetObject(IUnknown **): E_POINTER when there is none (Windows', Wine's)
-fn ar_get(c: &mut Ctx, which: fn(&Result) -> u32) -> u32 {
-    let out = c.a(1);
-    let v = result(c.a(0), |r| which(r)).unwrap_or(0);
-    if out == 0 {
+fn ar_get<F: crate::api::Outs>(c: &mut crate::api::Args<'_, '_, F>, which: fn(&Result) -> u32) -> u32 {
+    let out = c.out::<1>();
+    let v = result(c.a::<0>(), |r| which(r)).unwrap_or(0);
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if v == 0 {
-        putp(out, 0);
+        out.put(0);
         return Hr::Pointer.code();
     }
-    add_ref(c, v);
-    putp(out, v);
+    add_ref(c.ctx(), v);
+    out.put(v);
     0
 }
 fn ar_state(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IMFAsyncResult::GetState>();
-    ar_get(c.ctx(), |r| r.state)
+    ar_get(c, |r| r.state)
 }
 fn ar_object(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IMFAsyncResult::GetObject>();
-    ar_get(c.ctx(), |r| r.object)
+    ar_get(c, |r| r.object)
 }
 fn ar_status(c: &mut Ctx) -> u32 {
     result(c.a(0), |r| r.status).unwrap_or(Hr::Pointer.code())
@@ -765,9 +765,10 @@ pub fn decoders(cat: &Guid, input: Option<&Guid>) -> Vec<&'static str> {
 /// IMFActivate of a decoder: an attribute store (its name) that activates nothing (the reader
 /// decodes; programs that list decoders only look at them).
 fn act_activate(c: &mut Ctx) -> u32 {
-    let out = c.a(2);
-    if out != 0 {
-        putp(out, 0);
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let out = c.out::<2>();
+    if !out.is_null() {
+        out.put(0);
     }
     Hr::MfUnexpected.code()
 }

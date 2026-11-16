@@ -259,6 +259,9 @@ pub mod outs {
 /// }
 /// let _: sake::api::Handler = g;
 /// ```
+/// QueryInterface's arguments: the helpers several interfaces' QueryInterface share take these
+pub type QiArgs<'c, 'a> = Args<'c, 'a, outs::iface::IUnknown::QueryInterface>;
+
 pub struct Args<'c, 'a, F: Outs> {
     c: &'c mut Ctx<'a>,
     f: std::marker::PhantomData<fn() -> F>,
@@ -464,6 +467,46 @@ mod outs_tests {
         assert!(m.value_check);
     }
 
+    /// A handler taking its method's arguments goes; one taking another's fails a test, where
+    /// the metadata has the method; where it has not (a version of sake's own name, a method
+    /// past the end of the metadata's vtable) nothing is known to hold it to (host-tests
+    /// xaudio2, xfile: IXAudio2_27, IDirectXFileData).
+    #[test]
+    fn a_handler_is_held_to_its_methods_out_parameters_where_they_are_known() {
+        let _g = crate::test_guest::enter();
+        fn h(_: &mut Ctx) -> u32 {
+            0
+        }
+        let typed_as = |v: u32, slot: u32, f: fn(&mut Ctx)| {
+            let a = crate::mem::rp(crate::mem::ga(v).at(slot, crate::mem::ps()));
+            let (_, m, o) = hot(kome::num::us(trap_no(a))).expect("published");
+            let sp = crate::mem::heap_alloc(64, true);
+            let mut cpu = koji::Cpu::default();
+            let mut c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: a, this: None, outs: if m.value_check { o.of_arch(crate::mem::x64()) } else { 0 } };
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&mut c))).is_ok()
+        };
+        let qi = |c: &mut Ctx| {
+            c.args::<outs::iface::IUnknown::QueryInterface>();
+        };
+        struct NoOuts;
+        impl Outs for NoOuts {
+            const MASK: u64 = 0;
+            const MASK32: u64 = 0;
+        }
+        let none = |c: &mut Ctx| {
+            c.args::<NoOuts>();
+        };
+        let known = vtable("IDirectSoundNotify", &[(h, 12), (h, 4), (h, 4), (h, 12), (h, 8)]);
+        assert!(typed_as(known, 0, qi));
+        assert!(!typed_as(known, 0, none));
+        assert!(typed_as(known, 1, none));
+        assert!(!typed_as(known, 1, qi));
+        // (past the metadata's 4 methods)
+        assert!(typed_as(known, 4, qi) && typed_as(known, 4, none));
+        let own = vtable("IXAudio2_27", &[(h, 12), (h, 4), (h, 4)]);
+        assert!(typed_as(own, 0, qi) && typed_as(own, 0, none) && typed_as(own, 1, qi));
+    }
+
     /// The slots watched are where the caller's out-parameters are: a 32-bit write to one fails,
     /// to anything else not (kura::outs; x86 here, the same arguments as x64's numbering).
     #[test]
@@ -516,17 +559,20 @@ pub(crate) enum ComArgs {
 /// The trap `addr` (a COM method's: com.rs's and api::vtable's vtables, d3d9's, d3d11's) gets
 /// method `slot` of `iface`'s pointer-sized out-parameters (outs::com, Microsoft's metadata):
 /// watched for 32-bit writes (kura::outs), and with ComArgs::Typed its handler's Ctx::a of one
-/// reported.
+/// reported. A method the metadata does not have (an interface of its own, IXAudio2_27 or
+/// IDirectXFileData, or one past the end of the metadata's vtable) has none known: its handler
+/// is not held to any (its c.args not checked against the call's, Ctx::args).
 pub(crate) fn set_com_outs(addr: u32, iface: &str, slot: u32, how: ComArgs) {
+    let known = outs::com_dwords(iface).is_some_and(|d| kome::num::us(slot) < d.len());
     let m = outs::com(iface, slot);
-    if m == OutMask::NONE {
+    if known && m == OutMask::NONE && how == ComArgs::Typed {
         return;
     }
     let i = kome::num::us(trap_no(addr));
     let mut e = ENTRIES.w();
     if let Some(x) = e.get_mut(i) {
         x.outs = m;
-        x.value_check = how == ComArgs::Typed;
+        x.value_check = known && how == ComArgs::Typed;
         publish(i, x);
     }
 }
@@ -536,6 +582,10 @@ pub(crate) fn set_com_outs(addr: u32, iface: &str, slot: u32, how: ComArgs) {
 /// and the log says so once.
 #[cold]
 fn typed_as_another(trap: u32, typed: u64, called: u64) {
+    // (a method whose out-parameters are not known: none to hold its handler to)
+    if !hot(kome::num::us(trap_no(trap))).is_some_and(|h| h.1.value_check) {
+        return;
+    }
     let what = format!("{}: its handler takes the arguments of one with out-parameters {typed:#b}, it has {called:#b}", name_of(trap).unwrap_or_else(|| format!("{trap:#x}")));
     assert!(!cfg!(test) && !cfg!(debug_assertions) && !kura::outs::strict(), "{what}");
     static SAID: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
@@ -1581,9 +1631,8 @@ pub fn vtable(name: &str, methods: &[(Handler, u32)]) -> u32 {
     let iface = vtable_iface(name, methods.iter().map(|m| m.1));
     for (i, (f, bytes)) in methods.iter().enumerate() {
         let a = host_fn(&format!("{name}::{i}"), *f, *bytes);
-        if let Some(n) = iface {
-            set_com_outs(a, n, kome::num::u32_of(i), ComArgs::Typed);
-        }
+        // (none: a vtable the metadata does not have, its methods' out-parameters not known)
+        set_com_outs(a, iface.unwrap_or(""), kome::num::u32_of(i), ComArgs::Typed);
         crate::mem::wp(crate::mem::ga(v).at(kome::num::u32_of(i), k), a);
     }
     v

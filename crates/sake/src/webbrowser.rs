@@ -176,18 +176,19 @@ fn notimpl(_: &mut Ctx) -> u32 {
 }
 
 fn qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return E_POINTER;
     }
     let b = base_of(this);
     match which(&mem::array::<16>(iid)) {
         Some(i) if with(b, |s| s.refs += 1).is_some() => {
-            mem::putp(out, b + mem::ps() * i as u32);
+            out.put(b + mem::ps() * i as u32);
             S_OK
         }
         _ => {
-            mem::putp(out, 0);
+            out.put(0);
             E_NOINTERFACE
         }
     }
@@ -279,7 +280,8 @@ fn GetTypeInfoCount(c: &mut Ctx) -> u32 {
     S_OK
 }
 fn GetTypeInfo(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(3), 0);
+    let c = &mut c.args::<crate::api::outs::iface::IWebBrowser2::GetTypeInfo>();
+    c.out::<3>().put(0);
     TYPE_E_ELEMENTNOTFOUND
 }
 fn GetIDsOfNames(c: &mut Ctx) -> u32 {
@@ -319,21 +321,23 @@ fn Refresh2(_: &mut Ctx) -> u32 {
 }
 /// get_Application: the control itself (IDispatch)
 fn get_self(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IWebBrowser2::get_Application>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let b = base_of(this);
     with(b, |s| s.refs += 1);
-    mem::wp(out, b);
+    out.put(b);
     S_OK
 }
 /// get_Parent, get_Container, get_Document: none
 fn get_null(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IWebBrowser2::get_Parent>();
+    if c.out::<1>().is_null() {
         return E_POINTER;
     }
-    mem::wp(c.a(1), 0);
+    c.out::<1>().put(0);
     S_OK
 }
 fn put_bool(p: u32, v: bool) {
@@ -354,23 +358,26 @@ fn get_Busy(c: &mut Ctx) -> u32 {
     S_OK
 }
 fn get_Type(c: &mut Ctx) -> u32 {
-    get_null(c)
+    let c = &mut c.args::<crate::api::outs::iface::IWebBrowser2::get_Type>();
+    get_null(c.ctx())
 }
 fn get_LocationURL(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IWebBrowser2::get_LocationName>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let url = with(this, |s| s.url.clone()).unwrap_or_default();
-    mem::wp(out, bstr(&url));
+    out.put(bstr(&url));
     S_OK
 }
 fn get_Name(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IWebBrowser2::get_Name>();
+    if c.out::<1>().is_null() {
         return E_POINTER;
     }
     let name: Vec<u16> = "Microsoft Web Browser Control".encode_utf16().collect();
-    mem::wp(c.a(1), bstr(&name));
+    c.out::<1>().put(bstr(&name));
     S_OK
 }
 fn get_ReadyState(c: &mut Ctx) -> u32 {

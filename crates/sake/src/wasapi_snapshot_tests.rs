@@ -13,6 +13,7 @@
 //! golden/wasapi.txt; objects show by kind, sessions as counted from the first this test saw.
 use super::*;
 use crate::test_guest::{call, enter, guest_thread, hash, snapshot, Rng};
+use crate::mem::putp;
 use std::fmt::Write;
 
 fn put_wave(p: u32, w: &Wave, mask: u32, base: bool) {

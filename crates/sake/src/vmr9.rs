@@ -991,16 +991,17 @@ fn pin_disconnect(c: &mut Ctx) -> u32 {
     0
 }
 fn pin_connected_to(c: &mut Ctx) -> u32 {
-    let (p, out) = (pin_block(c, P_PIN), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IPin::ConnectedTo>();
+    let (p, out) = (pin_block(c.ctx_ref(), P_PIN), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let peer = pin_with(p, |p| p.peer).unwrap_or(0);
-    mem::putp(out, peer);
+    out.put(peer);
     if peer == 0 {
         return VFW_E_NOT_CONNECTED;
     }
-    guest_add_ref(c, peer);
+    guest_add_ref(c.ctx(), peer);
     0
 }
 fn pin_connection_mt(c: &mut Ctx) -> u32 {
@@ -1041,15 +1042,16 @@ fn pin_query_direction(c: &mut Ctx) -> u32 {
     0
 }
 fn pin_query_id(c: &mut Ctx) -> u32 {
-    let (p, out) = (pin_block(c, P_PIN), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IPin::QueryId>();
+    let (p, out) = (pin_block(c.ctx_ref(), P_PIN), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let i = pin_with(p, |p| p.index).unwrap_or(0);
     let name: Vec<u16> = pin_name(i).encode_utf16().collect();
     let s = mem::heap_alloc(2 * name.len() as u32 + 2, false);
     mem::put_wstr(s, name.len() as u32 + 1, &name);
-    mem::putp(out, s);
+    out.put(s);
     0
 }
 fn pin_query_accept(c: &mut Ctx) -> u32 {
@@ -1060,10 +1062,11 @@ fn pin_query_accept(c: &mut Ctx) -> u32 {
 }
 /// EnumMediaTypes: none (it takes what it is offered)
 fn pin_enum_mt(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IPin::EnumMediaTypes>();
+    if c.out::<1>().is_null() {
         return E_POINTER;
     }
-    mem::putp(c.a(1), empty_enum_mt());
+    c.out::<1>().put(empty_enum_mt());
     0
 }
 fn pin_eos(c: &mut Ctx) -> u32 {
@@ -1137,8 +1140,9 @@ fn empty_enum_mt() -> u32 {
 
 // IMemInputPin
 fn mip_get_allocator(c: &mut Ctx) -> u32 {
-    let (p, out) = (pin_block(c, P_MIP), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMemInputPin::GetAllocator>();
+    let (p, out) = (pin_block(c.ctx_ref(), P_MIP), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let a = match pin_with(p, |p| p.alloc).unwrap_or(0) {
@@ -1150,7 +1154,7 @@ fn mip_get_allocator(c: &mut Ctx) -> u32 {
         a => a,
     };
     alloc_with(a, |x| x.refs += 1);
-    mem::putp(out, a);
+    out.put(a);
     0
 }
 /// NotifyAllocator(allocator, read only): its own allocator only

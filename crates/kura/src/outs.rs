@@ -89,6 +89,14 @@ pub fn strict() -> bool {
     *S.get_or_init(|| std::env::var("MASU_OUTS_STRICT").as_deref() == Ok("1"))
 }
 
+static FAIL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A dependent's tests (sake's, under `cargo test --release` too, where this crate's
+/// cfg!(test) and debug_assertions are off): a report fails like a test's.
+pub fn fail_reports() {
+    FAIL.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Names a call for the report (sake's: its DLL!function or interface::method).
 pub type Namer = fn(u32) -> String;
 static NAMER: std::sync::OnceLock<Namer> = std::sync::OnceLock::new();
@@ -102,7 +110,7 @@ pub fn set_namer(f: Namer) {
 fn short_write(who: u32, a: u32) {
     let name = NAMER.get().map_or_else(|| format!("{who:#x}"), |f| f(who));
     let what = format!("{name}: a 32-bit write to its pointer-sized out-parameter at {a:#x} (the upper half stays the caller's): mem::putp / wp / api::Out");
-    assert!(!cfg!(test) && !cfg!(debug_assertions) && !strict(), "{what}");
+    assert!(!cfg!(test) && !cfg!(debug_assertions) && !strict() && !FAIL.load(std::sync::atomic::Ordering::Relaxed), "{what}");
     static SAID: std::sync::Mutex<Option<std::collections::HashSet<(u32, u32)>>> = std::sync::Mutex::new(None);
     let mut g = SAID.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if g.get_or_insert_with(Default::default).insert((who, a)) {

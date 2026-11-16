@@ -105,16 +105,16 @@ fn one(_: &mut Ctx) -> u32 {
     1
 }
 /// QueryInterface answering IUnknown and the object's own interface
-fn qi(c: &mut Ctx, own: Iid) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+fn qi(c: &mut crate::api::Args<'_, '_, crate::api::outs::iface::IUnknown::QueryInterface>, own: Iid) -> u32 {
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if is_unknown(iid) || guid_is(iid, own) {
-        putp(out, this);
+        out.put(this);
         S_OK
     } else {
-        putp(out, 0);
+        out.put(0);
         Hr::NoInterface.code()
     }
 }
@@ -129,37 +129,39 @@ fn task_wstr(s: &str) -> u32 {
 // ---------------------------------------------------------------------------------------------
 // IMMDeviceEnumerator {a95664d2-9614-4f35-a746-de8db63617e6}
 
-fn en_qi(c: &mut Ctx) -> u32 {
+fn en_qi(c: &mut crate::api::Args<'_, '_, crate::api::outs::iface::IUnknown::QueryInterface>) -> u32 {
     qi(c, IID_ENUMERATOR)
 }
 /// EnumAudioEndpoints(flow, state mask, IMMDeviceCollection**)
 fn en_enum(c: &mut Ctx) -> u32 {
-    let (flow, mask, out) = (c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMMDeviceEnumerator::EnumAudioEndpoints>();
+    let (flow, mask, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let Some(flow) = Flow::of(flow).filter(|_| mask & !DEVICE_STATEMASK_ALL == 0) else {
-        putp(out, 0);
+        out.put(0);
         return Hr::InvalidArg.code();
     };
     let renders = match flow {
         Flow::Render | Flow::All => true,
         Flow::Capture => false,
     };
-    putp(out, collection(renders && mask & DEVICE_STATE_ACTIVE != 0));
+    out.put(collection(renders && mask & DEVICE_STATE_ACTIVE != 0));
     S_OK
 }
 /// GetDefaultAudioEndpoint(flow, role, IMMDevice**): the render endpoint; no capture one
 fn en_default(c: &mut Ctx) -> u32 {
-    let (flow, role, out) = (c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMMDeviceEnumerator::GetDefaultAudioEndpoint>();
+    let (flow, role, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let Some(flow) = Flow::of(flow).filter(|_| role_ok(role)) else { return Hr::InvalidArg.code() };
     match flow {
         Flow::Render => {
-            putp(out, device());
+            out.put(device());
             S_OK
         }
         Flow::Capture | Flow::All => Hr::NotFound.code(),
@@ -168,15 +170,16 @@ fn en_default(c: &mut Ctx) -> u32 {
 /// GetDevice(id, IMMDevice**): an id that names no endpoint is E_INVALIDARG (Windows, Wine's
 /// mmdevenum test)
 fn en_get(c: &mut Ctx) -> u32 {
-    let (id, out) = (c.a(1), c.a(2));
-    if id == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (id, out) = (c.a::<1>(), c.out::<2>());
+    if id == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     if mem::wstr(id).into_iter().eq(DEVICE_ID.encode_utf16()) {
-        putp(out, device());
+        out.put(device());
         S_OK
     } else {
-        putp(out, 0);
+        out.put(0);
         Hr::InvalidArg.code()
     }
 }
@@ -217,6 +220,7 @@ fn en_release(_: &mut Ctx) -> u32 {
     r.unwrap_or(1).saturating_sub(1).max(1)
 }
 fn en_qi_ref(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     let r = en_qi(c);
     if r == S_OK {
         ENUM_REFS.fetch_add(1, Ordering::Relaxed);
@@ -240,7 +244,7 @@ pub fn enumerator() -> u32 {
 
 fn col_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    let r = qi(c.ctx(), IID_COLLECTION);
+    let r = qi(c, IID_COLLECTION);
     if r == S_OK {
         col_addref(c.ctx());
     }
@@ -304,9 +308,10 @@ fn collection(has: bool) -> u32 {
 /// IMMDevice and, as Windows' device object has, IMMEndpoint (Unity 6's audio setup asks for it
 /// and uses the pointer without checking the result)
 fn dev_qi(c: &mut Ctx) -> u32 {
-    let (iid, out) = (c.a(1), c.a(2));
-    if out != 0 && guid_is(iid, ENDPOINT) {
-        putp(out, endpoint());
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (iid, out) = (c.a::<1>(), c.out::<2>());
+    if !out.is_null() && guid_is(iid, ENDPOINT) {
+        out.put(endpoint());
         return S_OK;
     }
     qi(c, IID_DEVICE)
@@ -314,20 +319,21 @@ fn dev_qi(c: &mut Ctx) -> u32 {
 /// Activate(iid, clsctx, params, void**): WASAPI's IAudioClient, IAudioSessionManager(2) and
 /// IAudioEndpointVolume (wasapi.rs), or the property store
 fn dev_activate(c: &mut Ctx) -> u32 {
-    let (iid, out) = (c.a(1), c.a(4));
-    if iid == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMMDevice::Activate>();
+    let (iid, out) = (c.a::<1>(), c.out::<4>());
+    if iid == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     if guid_is(iid, IID_PROPERTY_STORE) {
-        putp(out, store());
+        out.put(store());
         return S_OK;
     }
     // IDirectSound(8) {279afa83-4981-11ce-a521-0020af0be560}, {c50a7e93-f395-4834-9ef6-7fa99de50966}:
     // a DirectSound device on this endpoint, dsound.dll loaded as Windows' does
     if guid_is(iid, IID_DIRECTSOUND) || guid_is(iid, IID_DIRECTSOUND8) {
-        crate::pe::load_library(c.cpu, "dsound.dll");
+        crate::pe::load_library(c.ctx().cpu, "dsound.dll");
         if let Some(o) = crate::sound::device() {
-            putp(out, o);
+            out.put(o);
             return S_OK;
         }
     }
@@ -344,32 +350,34 @@ fn dev_activate(c: &mut Ctx) -> u32 {
         0
     };
     if o != 0 {
-        putp(out, o);
+        out.put(o);
         return S_OK;
     }
     crate::com::warn_once(&format!("IMMDevice::Activate {:08x}: not available", r32(iid)));
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 /// OpenPropertyStore(access, IPropertyStore**): STGM_READ, _WRITE or _READWRITE; another
 /// access is E_INVALIDARG with the pointer left as it was (Wine's propstore test)
 fn dev_store(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // STGM_READ 0, STGM_WRITE 1, STGM_READWRITE 2
-    if c.a(1) > 2 {
+    if c.a::<1>() > 2 {
         return Hr::InvalidArg.code();
     }
-    if c.a(2) == 0 {
+    if c.out::<2>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(2), store());
+    c.out::<2>().put(store());
     S_OK
 }
 /// GetId(LPWSTR*)
 fn dev_id(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMMDevice::GetId>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), task_wstr(DEVICE_ID));
+    c.out::<1>().put(task_wstr(DEVICE_ID));
     S_OK
 }
 fn dev_state(c: &mut Ctx) -> u32 {
@@ -390,8 +398,9 @@ fn device() -> u32 {
 
 const ENDPOINT: Iid = (0x1be0_9788, 0x6894, 0x4089);
 fn ep_qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let to = if guid_is(iid, ENDPOINT) {
@@ -399,10 +408,10 @@ fn ep_qi(c: &mut Ctx) -> u32 {
     } else if is_unknown(iid) || guid_is(iid, IID_DEVICE) {
         device()
     } else {
-        putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     };
-    putp(out, to);
+    out.put(to);
     S_OK
 }
 /// GetDataFlow(EDataFlow*): the one endpoint renders
@@ -471,6 +480,7 @@ fn device_format() -> [u8; 40] {
     f.try_into().unwrap_or([0; 40])
 }
 fn ps_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     qi(c, IID_PROPERTY_STORE)
 }
 const KEY_COUNT: u32 = 7;

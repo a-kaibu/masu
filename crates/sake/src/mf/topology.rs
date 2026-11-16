@@ -65,11 +65,6 @@ fn next_id() -> u64 {
     u64::from(std::process::id()) << 32 | N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The out pointer after a 64-bit argument at x86 slots `slot - 2`, `slot - 1`.
-fn after64(c: &Ctx, slot: u32) -> u32 {
-    if mem::x64() { c.a(slot - 1) } else { c.a(slot) }
-}
-
 /// A new attribute store with vtable `vt` (one reference).
 fn new_store(vt: u32) -> u32 {
     let b = object(vt, 1);
@@ -88,10 +83,11 @@ fn store_release(c: &mut Ctx, gone: fn(&mut Ctx, u32)) -> u32 {
 // --- nodes ----------------------------------------------------------------------------------
 
 fn tn_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IMFTopologyNode {83cf873a-f6da-4bc8-823f-bacfd55dc430} (IMFTopology's but the last byte)
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     if is(&g, 0x83cf_873a, 0xf6da, 0x4bc8) && g[15] != 0x30 {
-        putp(c.a(2), 0);
+        c.out::<2>().put(0);
         return Hr::NoInterface.code();
     }
     reader::typed_qi(c, 0x83cf_873a, 0xf6da, 0x4bc8)
@@ -118,16 +114,17 @@ fn tn_set_object(c: &mut Ctx) -> u32 {
     0
 }
 fn tn_get_object(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFTopologyNode::GetObject>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let o = node(c.a(0), |n| n.object).unwrap_or(0);
-    putp(out, o);
+    let o = node(c.a::<0>(), |n| n.object).unwrap_or(0);
+    out.put(o);
     if o == 0 {
         return Hr::Fail.code();
     }
-    add_ref(c, o);
+    add_ref(c.ctx(), o);
     0
 }
 fn tn_get_type(c: &mut Ctx) -> u32 {
@@ -209,18 +206,18 @@ fn tn_disconnect(c: &mut Ctx) -> u32 {
     }
 }
 /// GetInput / GetOutput(DWORD, IMFTopologyNode **, DWORD *other)
-fn tn_link(c: &mut Ctx, outputs: bool) -> u32 {
-    let (i, out, oi) = (us(c.a(1)), c.a(2), c.a(3));
-    if out == 0 || oi == 0 {
+fn tn_link<F: crate::api::Outs>(c: &mut crate::api::Args<'_, '_, F>, outputs: bool) -> u32 {
+    let (i, out, oi) = (us(c.a::<1>()), c.out::<2>(), c.a::<3>());
+    if out.is_null() || oi == 0 {
         return Hr::Pointer.code();
     }
-    let l = node(c.a(0), |n| (if outputs { &n.outputs } else { &n.inputs }).get(i).copied());
+    let l = node(c.a::<0>(), |n| (if outputs { &n.outputs } else { &n.inputs }).get(i).copied());
     match l.flatten() {
         None => Hr::InvalidArg.code(),
         Some(None) => Hr::NotFound.code(),
         Some(Some((o, k))) => {
-            add_ref(c, o);
-            putp(out, o);
+            add_ref(c.ctx(), o);
+            out.put(o);
             w32(oi, k);
             0
         }
@@ -238,16 +235,16 @@ fn tn_set_pref(c: &mut Ctx, outputs: bool) -> u32 {
     release(c, old.unwrap_or(0));
     0
 }
-fn tn_get_pref(c: &mut Ctx, outputs: bool) -> u32 {
-    let (i, out) = (c.a(1), c.a(2));
-    if out == 0 {
+fn tn_get_pref<F: crate::api::Outs>(c: &mut crate::api::Args<'_, '_, F>, outputs: bool) -> u32 {
+    let (i, out) = (c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let t = node(c.a(0), |n| (if outputs { &n.out_types } else { &n.in_types }).get(&i).copied()).flatten();
-    putp(out, t.unwrap_or(0));
+    let t = node(c.a::<0>(), |n| (if outputs { &n.out_types } else { &n.in_types }).get(&i).copied()).flatten();
+    out.put(t.unwrap_or(0));
     match t {
         Some(t) => {
-            add_ref(c, t);
+            add_ref(c.ctx(), t);
             0
         }
         None => Hr::NotFound.code(),
@@ -313,12 +310,12 @@ fn node_vtable() -> u32 {
             (|c: &mut Ctx| tn_count(c, true), 8),
             (tn_connect, 16),
             (tn_disconnect, 8),
-            (|c: &mut Ctx| tn_link(c, false), 16),
-            (|c: &mut Ctx| tn_link(c, true), 16),
+            (|c: &mut Ctx| tn_link(&mut c.args::<crate::api::outs::iface::IMFTopologyNode::GetInput>(), false), 16),
+            (|c: &mut Ctx| tn_link(&mut c.args::<crate::api::outs::iface::IMFTopologyNode::GetOutput>(), true), 16),
             (|c: &mut Ctx| tn_set_pref(c, true), 12),
-            (|c: &mut Ctx| tn_get_pref(c, true), 12),
+            (|c: &mut Ctx| tn_get_pref(&mut c.args::<crate::api::outs::iface::IMFTopologyNode::GetOutputPrefType>(), true), 12),
             (|c: &mut Ctx| tn_set_pref(c, false), 12),
-            (|c: &mut Ctx| tn_get_pref(c, false), 12),
+            (|c: &mut Ctx| tn_get_pref(&mut c.args::<crate::api::outs::iface::IMFTopologyNode::GetInputPrefType>(), false), 12),
             (tn_clone_from, 8),
         ]);
         vtable("IMFTopologyNode", &m)
@@ -351,10 +348,11 @@ fn MFCreateTopologyNode(c: &mut Ctx) -> u32 {
 // --- topologies -----------------------------------------------------------------------------
 
 fn tp_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IMFTopology {83cf873a-f6da-4bc8-823f-bacfd55dc433}
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     if is(&g, 0x83cf_873a, 0xf6da, 0x4bc8) && g[15] != 0x33 {
-        putp(c.a(2), 0);
+        c.out::<2>().put(0);
         return Hr::NoInterface.code();
     }
     reader::typed_qi(c, 0x83cf_873a, 0xf6da, 0x4bc8)
@@ -406,15 +404,16 @@ fn tp_count(c: &mut Ctx) -> u32 {
     0
 }
 fn tp_get(c: &mut Ctx) -> u32 {
-    let (i, out) = (us(lo16(c.a(1))), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (i, out) = (us(lo16(c.a::<1>())), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let n = topo(c.a(0), |t| t.nodes.get(i).copied()).flatten();
-    putp(out, n.unwrap_or(0));
+    let n = topo(c.a::<0>(), |t| t.nodes.get(i).copied()).flatten();
+    out.put(n.unwrap_or(0));
     match n {
         Some(n) => {
-            add_ref(c, n);
+            add_ref(c.ctx(), n);
             0
         }
         None => Hr::InvalidIndex.code(),
@@ -469,17 +468,18 @@ fn tp_clone_from(c: &mut Ctx) -> u32 {
     0
 }
 fn tp_by_id(c: &mut Ctx) -> u32 {
-    let id = u64_arg(c, 1, 1);
-    let out = after64(c, 3);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFTopology::GetNodeByID>();
+    let id = u64_arg(c.ctx_ref(), 1, 1);
+    let out = c.out_arch::<2, 3>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let ns = topo(c.a(0), |t| t.nodes.clone()).unwrap_or_default();
+    let ns = topo(c.a::<0>(), |t| t.nodes.clone()).unwrap_or_default();
     let n = ns.into_iter().find(|&n| node(n, |x| x.id) == Some(id));
-    putp(out, n.unwrap_or(0));
+    out.put(n.unwrap_or(0));
     match n {
         Some(n) => {
-            add_ref(c, n);
+            add_ref(c.ctx(), n);
             0
         }
         None => Hr::NotFound.code(),
@@ -490,16 +490,16 @@ pub fn nodes_of(b: u32, kind: u32) -> Vec<u32> {
     let ns = topo(b, |t| t.nodes.clone()).unwrap_or_default();
     ns.into_iter().filter(|&n| node(n, |x| x.kind) == Some(kind)).collect()
 }
-fn tp_collection(c: &mut Ctx, kind: u32) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+fn tp_collection<F: crate::api::Outs>(c: &mut crate::api::Args<'_, '_, F>, kind: u32) -> u32 {
+    let out = c.out::<1>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let ns = nodes_of(c.a(0), kind);
+    let ns = nodes_of(c.a::<0>(), kind);
     for &n in &ns {
-        add_ref(c, n);
+        add_ref(c.ctx(), n);
     }
-    putp(out, new_collection(ns));
+    out.put(new_collection(ns));
     0
 }
 
@@ -518,8 +518,8 @@ fn topo_vtable() -> u32 {
             (tp_clear, 4),
             (tp_clone_from, 8),
             (tp_by_id, 16),
-            (|c: &mut Ctx| tp_collection(c, SOURCESTREAM), 8),
-            (|c: &mut Ctx| tp_collection(c, OUTPUT), 8),
+            (|c: &mut Ctx| tp_collection(&mut c.args::<crate::api::outs::iface::IMFTopology::GetSourceNodeCollection>(), SOURCESTREAM), 8),
+            (|c: &mut Ctx| tp_collection(&mut c.args::<crate::api::outs::iface::IMFTopology::GetOutputNodeCollection>(), OUTPUT), 8),
         ]);
         vtable("IMFTopology", &m)
     })
@@ -541,6 +541,7 @@ fn MFCreateTopology(c: &mut Ctx) -> u32 {
 // --- the renderers' activates ---------------------------------------------------------------
 
 fn ac_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IMFActivate {7fee9e9a-4a89-47a6-899c-b6a53a70fb67}
     reader::typed_qi(c, 0x7fee_9e9a, 0x4a89, 0x47a6)
 }

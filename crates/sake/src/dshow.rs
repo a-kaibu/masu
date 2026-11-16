@@ -304,12 +304,12 @@ fn base(c: &Ctx, k: Slot) -> u32 {
     c.a(0) - ps() * k.0
 }
 
-fn qi_k(c: &mut Ctx, k: Slot) -> u32 {
-    let b = base(c, k);
-    if c.a(2) == 0 {
+fn qi_k(c: &mut crate::api::QiArgs, k: Slot) -> u32 {
+    let b = base(c.ctx_ref(), k);
+    if c.out::<2>().is_null() {
         return Hr::Pointer.code();
     }
-    match slot_of(c.a(1)) {
+    match slot_of(c.a::<1>()) {
         Some(s) => {
             let windowless = with(b, |g| {
                 g.refs += 1;
@@ -321,14 +321,14 @@ fn qi_k(c: &mut Ctx, k: Slot) -> u32 {
                 BV if windowless => BV_NONE,
                 s => s,
             };
-            putp(c.a(2), s.of(b));
+            c.out::<2>().put(s.of(b));
             0
         }
         None => {
             if crate::env_on!("SAKE_TRACE_COM") {
-                eprintln!("sake: FilterGraph QueryInterface {:08x}: no", r32(c.a(1)));
+                eprintln!("sake: FilterGraph QueryInterface {:08x}: no", r32(c.a::<1>()));
             }
-            putp(c.a(2), 0);
+            c.out::<2>().put(0);
             Hr::NoInterface.code()
         }
     }
@@ -373,6 +373,7 @@ fn release_k(c: &mut Ctx, k: Slot) -> u32 {
 macro_rules! iunknown {
     ($k:expr) => {{
         fn q(c: &mut Ctx) -> u32 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
             qi_k(c, $k)
         }
         fn a(c: &mut Ctx) -> u32 {
@@ -412,7 +413,8 @@ fn put_dbl(p: u32, v: f64) -> u32 {
 /// and its references (freed at the last Release); Next hands the renderer out with a
 /// reference, as COM's enumerators do.
 fn enum_filters(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IGraphBuilder::EnumFilters>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
     static E: OnceLock<u32> = OnceLock::new();
@@ -471,12 +473,12 @@ fn enum_filters(c: &mut Ctx) -> u32 {
         }
         vtable("IEnumFilters", &[(qi, 12), (add, 4), (release, 4), (next, 16), (skip, 8), (reset, 4), (notimpl, 8)])
     });
-    let f = with(base(c, GB), |g| g.evr).unwrap_or(0);
+    let f = with(base(c.ctx_ref(), GB), |g| g.evr).unwrap_or(0);
     let e = mem::heap_alloc(4 * ps(), true);
     wp(e, v);
     wp(e + ps(), f);
     w32(e + 3 * ps(), 1);
-    putp(c.a(1), e);
+    c.out::<1>().put(e);
     0
 }
 /// a getter: zero its out parameter
@@ -571,17 +573,18 @@ fn add_filter_at(c: &mut Ctx, b: u32, f: u32, name: u32) -> u32 {
 /// caller. A file not there: HRESULT_FROM_WIN32 of why, *out NULL. (AdvHD goes on to the
 /// IMediaControl it then asks for, unchecked: #200)
 fn add_source_filter(c: &mut Ctx) -> u32 {
-    let (b, file, name, out) = (base(c, GB), c.a(1), c.a(2), c.a(3));
-    if file == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IGraphBuilder::AddSourceFilter>();
+    let (b, file, name, out) = (base(c.ctx_ref(), GB), c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if file == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let f = match crate::dshow_mpeg::add_source(file) {
         Ok(f) => f,
         Err(e) => return e,
     };
-    add_filter_at(c, b, f, if name != 0 { name } else { file });
-    putp(out, f);
+    add_filter_at(c.ctx(), b, f, if name != 0 { name } else { file });
+    out.put(f);
     0
 }
 
@@ -598,15 +601,16 @@ pub(crate) fn com(c: &mut Ctx, obj: u32, slot: u32, args: &[u32]) -> u32 {
 /// reference added), else *out NULL and VFW_E_NOT_FOUND (the graph's own renderers are no
 /// filters a game can reach)
 fn find_filter(c: &mut Ctx) -> u32 {
-    let (name, out) = (c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (name, out) = (c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let want = if name == 0 { Vec::new() } else { mem::wstr(name) };
-    if let Some(f) = with(base(c, GB), |g| g.named.iter().find(|(n, _)| *n == want).map(|x| x.1)).flatten() {
-        call(c, f, Unknown::AddRef, &[]);
-        putp(out, f);
+    if let Some(f) = with(base(c.ctx_ref(), GB), |g| g.named.iter().find(|(n, _)| *n == want).map(|x| x.1)).flatten() {
+        call(c.ctx(), f, Unknown::AddRef, &[]);
+        out.put(f);
         return 0;
     }
     if crate::env_on!("SAKE_TRACE_COM") && name != 0 {
@@ -1050,17 +1054,19 @@ fn es_notify(c: &mut Ctx) -> u32 {
 }
 
 fn get_event_handle(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMediaEventEx::GetEventHandle>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), with(base(c, ME), |g| g.event).unwrap_or(0));
+    c.out::<1>().put(with(base(c.ctx_ref(), ME), |g| g.event).unwrap_or(0));
     0
 }
 /// GetEvent(code, p1, p2, timeout ms): waits for one that long (INFINITE too)
 fn get_event(c: &mut Ctx) -> u32 {
-    let b = base(c, ME);
-    let (pc, p1, p2, ms) = (c.a(1), c.a(2), c.a(3), c.a(4));
-    if pc == 0 || p1 == 0 || p2 == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMediaEventEx::GetEvent>();
+    let b = base(c.ctx_ref(), ME);
+    let (pc, p1, p2, ms) = (c.a::<1>(), c.out::<2>(), c.out::<3>(), c.a::<4>());
+    if pc == 0 || p1.is_null() || p2.is_null() {
         return Hr::Pointer.code();
     }
     // (the event object reset when the queue is empty: under the lock, as before, so that a
@@ -1078,14 +1084,14 @@ fn get_event(c: &mut Ctx) -> u32 {
     match got {
         Some((code, a, bb)) => {
             put32(pc, code);
-            putp(p1, a);
-            putp(p2, bb);
+            p1.put(a);
+            p2.put(bb);
             0
         }
         None => {
             put32(pc, 0);
-            putp(p1, 0);
-            putp(p2, 0);
+            p1.put(0);
+            p2.put(0);
             Hr::Abort.code()
         }
     }
@@ -1542,6 +1548,21 @@ fn sync(b: u32) {
 fn vw_prop(c: &mut Ctx, i: u32) -> u32 {
     let b = base(c, VW);
     let (put, prop) = if (26..30).contains(&i) { (i % 2 == 1, i / 2) } else { (i % 2 == 0, i / 2) };
+    if !put && matches!(prop, 0 | 11 | 12) {
+        // (get_Caption's BSTR *, get_Owner's and get_MessageDrain's OAHWND *: pointer-sized; no
+        // caption kept)
+        let out = c.out(1);
+        if out.is_null() {
+            return Hr::Pointer.code();
+        }
+        out.put(with(b, |g| match prop {
+            11 => g.owner,
+            12 => g.drain,
+            _ => 0,
+        })
+        .unwrap_or(0));
+        return 0;
+    }
     let v = c.a(1);
     if !put && v == 0 {
         return Hr::Pointer.code();
@@ -1559,20 +1580,12 @@ fn vw_prop(c: &mut Ctx, i: u32) -> u32 {
         if let Some(f) = field {
             if put {
                 *f = v;
-            } else if prop == 11 || prop == 12 {
-                putp(v, *f);
             } else {
                 put32(v, *f);
             }
             return;
         }
         match prop {
-            // Caption: a BSTR (none kept)
-            0 => {
-                if !put {
-                    putp(v, 0);
-                }
-            }
             3 => {
                 if put {
                     g.auto_show = v != 0;
@@ -2226,31 +2239,32 @@ macro_rules! evr_unknown {
         vec![($q as Handler, 12), (a as Handler, 4), (r as Handler, 4)]
     }};
 }
-fn evr_qi(c: &mut Ctx, k: u32) -> u32 {
-    let b = c.a(0) - ps() * k;
-    match evr_slot(c.a(1)) {
+fn evr_qi(c: &mut crate::api::QiArgs, k: u32) -> u32 {
+    let b = c.a::<0>() - ps() * k;
+    match evr_slot(c.a::<1>()) {
         Some(s) => {
             evr_with(b, |e| e.refs.as_mut().map(|n| *n += 1));
-            putp(c.a(2), b + ps() * s);
+            c.out::<2>().put(b + ps() * s);
             0
         }
         None => {
-            putp(c.a(2), 0);
+            c.out::<2>().put(0);
             Hr::NoInterface.code()
         }
     }
 }
 /// IMFGetService::GetService(service, iid, out)
 fn evr_get_service(c: &mut Ctx) -> u32 {
-    let b = c.a(0) - ps();
-    match evr_slot(c.a(2)) {
+    let c = &mut c.args::<crate::api::outs::iface::IMFGetService::GetService>();
+    let b = c.a::<0>() - ps();
+    match evr_slot(c.a::<2>()) {
         Some(s) => {
             evr_with(b, |e| e.refs.as_mut().map(|n| *n += 1));
-            putp(c.a(3), b + ps() * s);
+            c.out::<3>().put(b + ps() * s);
             0
         }
         None => {
-            putp(c.a(3), 0);
+            c.out::<3>().put(0);
             Hr::NoInterface.code()
         }
     }
@@ -2346,10 +2360,11 @@ fn dc_set_window(c: &mut Ctx) -> u32 {
     0
 }
 fn dc_get_window(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFVideoDisplayControl::GetVideoWindow>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), evr_with(dc_block(c), |v| v.hwnd).unwrap_or(0));
+    c.out::<1>().put(evr_with(dc_block(c.ctx_ref()), |v| v.hwnd).unwrap_or(0));
     0
 }
 
@@ -2358,12 +2373,15 @@ fn evr(iid: u32) -> Option<u32> {
     let s = evr_slot(iid)?;
     let v = V.get_or_init(|| {
         fn q0(c: &mut Ctx) -> u32 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
             evr_qi(c, 0)
         }
         fn q1(c: &mut Ctx) -> u32 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
             evr_qi(c, 1)
         }
         fn q2(c: &mut Ctx) -> u32 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
             evr_qi(c, 2)
         }
         let mut gs = evr_unknown!(q1, 1);
@@ -2559,8 +2577,9 @@ pub(crate) fn wl_set_window(c: &mut Ctx) -> u32 {
 }
 /// GetCurrentImage(BYTE **dib): the frame shown, a CoTaskMemAlloc'd 32-bit DIB
 pub(crate) fn wl_image(c: &mut Ctx) -> u32 {
-    let e = wl_block(c);
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IVMRWindowlessControl::GetCurrentImage>();
+    let e = wl_block(c.ctx_ref());
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
     let g = GRAPHS.lock().unwrap_or_else(|x| x.into_inner()).get_or_insert_with(HashMap::new).iter().find(|(_, g)| g.evr == e && g.playing).map(|(&b, _)| b);
@@ -2575,7 +2594,7 @@ pub(crate) fn wl_image(c: &mut Ctx) -> u32 {
         mem::heap_free(img);
         return 0x8000_ffff;
     }
-    putp(c.a(1), img);
+    c.out::<1>().put(img);
     0
 }
 pub(crate) fn wl_set_border(c: &mut Ctx) -> u32 {
@@ -3051,7 +3070,7 @@ mod wait_tests {
                     0 => {
                         let out = mem::heap_alloc(8, true);
                         let id = if on_graph { iid(giids[k], 0) } else { iid(eiids[k], 0) };
-                        let qi: Handler = if on_graph { [|c: &mut Ctx| qi_k(c, Slot(0)), |c: &mut Ctx| qi_k(c, Slot(1)), |c: &mut Ctx| qi_k(c, Slot(2)), |c: &mut Ctx| qi_k(c, Slot(3))][((p - if on_graph { gbase } else { ev }) / ps()) as usize % 4] } else { [|c: &mut Ctx| evr_qi(c, 0), |c: &mut Ctx| evr_qi(c, 1), |c: &mut Ctx| evr_qi(c, 2)][((p - ev) / ps()) as usize % 3] };
+                        let qi: Handler = if on_graph { [|c: &mut Ctx| qi_k(&mut c.args(), Slot(0)), |c: &mut Ctx| qi_k(&mut c.args(), Slot(1)), |c: &mut Ctx| qi_k(&mut c.args(), Slot(2)), |c: &mut Ctx| qi_k(&mut c.args(), Slot(3))][((p - if on_graph { gbase } else { ev }) / ps()) as usize % 4] } else { [|c: &mut Ctx| evr_qi(&mut c.args(), 0), |c: &mut Ctx| evr_qi(&mut c.args(), 1), |c: &mut Ctx| evr_qi(&mut c.args(), 2)][((p - ev) / ps()) as usize % 3] };
                         proptest::prop_assert_eq!(call(qi, &[p, id, out]), 0);
                         *n += 1;
                         list.push(r32(out));

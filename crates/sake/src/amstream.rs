@@ -189,20 +189,20 @@ fn iid_ok(iid: u32, ids: &[u32]) -> bool {
     let first = r32(iid);
     first == 0 && r32(iid + 4) == 0 && r32(iid + 8) == 0xc0 && r32(iid + 12) == 0x4600_0000 || ids.contains(&first) && first != 0
 }
-fn qi(c: &mut Ctx, ids: &[u32]) -> u32 {
-    let (b, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+fn qi(c: &mut crate::api::QiArgs, ids: &[u32]) -> u32 {
+    let (b, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if iid == 0 || !iid_ok(iid, ids) {
         if crate::env_on!("SAKE_TRACE_COM") {
             eprintln!("sake: amstream QueryInterface {:08x}: no", r32(iid));
         }
-        putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     }
     refs(b, 1);
-    putp(out, b);
+    out.put(b);
     0
 }
 fn add_ref(c: &mut Ctx) -> u32 {
@@ -236,7 +236,7 @@ const SAMPLE_IDS: [u32; 2] = [0xb502_d1be, 0xf410_4fcf];
 
 fn mms_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    qi(c.ctx(), &MMS_IDS)
+    qi(c, &MMS_IDS)
 }
 /// GetInformation(DWORD *flags, STREAM_TYPE *): a clock, seeking; read
 fn mms_info(c: &mut Ctx) -> u32 {
@@ -514,19 +514,22 @@ fn mms_open_file(c: &mut Ctx) -> u32 {
 // IMediaStream, IDirectDrawMediaStream
 
 fn ddstream_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     qi(c, &DDSTREAM_IDS)
 }
 fn audiostream_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     qi(c, &AUDIOSTREAM_IDS)
 }
 /// GetMultiMediaStream(IMultiMediaStream **)
 fn st_get_mms(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMediaStream::GetMultiMediaStream>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    let b = stream(c.a(0), |s| s.mms).unwrap_or(0);
+    let b = stream(c.a::<0>(), |s| s.mms).unwrap_or(0);
     refs(b, 1);
-    putp(c.a(1), b);
+    c.out::<1>().put(b);
     0
 }
 /// GetInformation(MSPID *, STREAM_TYPE *)
@@ -563,21 +566,22 @@ fn write_format(s: u32, p: u32) {
 }
 /// GetFormat(DDSURFACEDESC *current, IDirectDrawPalette **, DDSURFACEDESC *desired, DWORD *flags)
 fn dd_get_format(c: &mut Ctx) -> u32 {
-    let s = c.a(0);
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawMediaStream::GetFormat>();
+    let s = c.a::<0>();
     let b = stream(s, |x| x.mms).unwrap_or(0);
     if !mms(b, |x| x.open).unwrap_or(false) {
         return Hr::NoStream.code();
     }
-    for p in [c.a(1), c.a(3)] {
+    for p in [c.a::<1>(), c.a::<3>()] {
         if p != 0 {
             write_format(s, p);
         }
     }
-    if c.a(2) != 0 {
-        putp(c.a(2), 0);
+    if !c.out::<2>().is_null() {
+        c.out::<2>().put(0);
     }
-    if c.a(4) != 0 {
-        w32(c.a(4), 0);
+    if c.a::<4>() != 0 {
+        w32(c.a::<4>(), 0);
     }
     0
 }
@@ -605,12 +609,13 @@ fn dd_of(s: u32) -> u32 {
 }
 /// GetDirectDraw(IDirectDraw **)
 fn dd_get_dd(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawMediaStream::GetDirectDraw>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    let dd = dd_of(c.a(0));
-    add_ref_guest(c, dd);
-    putp(c.a(1), dd);
+    let dd = dd_of(c.a::<0>());
+    add_ref_guest(c.ctx(), dd);
+    c.out::<1>().put(dd);
     0
 }
 /// SetDirectDraw(IDirectDraw *)
@@ -623,25 +628,26 @@ fn dd_set_dd(c: &mut Ctx) -> u32 {
 /// CreateSample(IDirectDrawSurface *, const RECT *, DWORD flags, IDirectDrawStreamSample **)
 /// (no surface: one made at the frames' size with the stream's DirectDraw)
 fn dd_create_sample(c: &mut Ctx) -> u32 {
-    let (s, mut surf, rect, out) = (c.a(0), c.a(1), c.a(2), c.a(4));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawMediaStream::CreateSample>();
+    let (s, mut surf, rect, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<4>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     if surf == 0 {
         let dd = dd_of(s);
         let desc = mem::heap_alloc(108 + 8, true);
         w32(desc, 108);
         write_format(s, desc);
         let slot = desc + 108;
-        let hr = com(c, dd, 6, &[desc, slot, 0]); // IDirectDraw::CreateSurface
+        let hr = com(c.ctx(), dd, 6, &[desc, slot, 0]); // IDirectDraw::CreateSurface
         surf = rp(slot);
         mem::heap_free(desc);
         if hr != 0 || surf == 0 {
             return if hr != 0 { hr } else { Hr::Fail.code() };
         }
     } else {
-        add_ref_guest(c, surf);
+        add_ref_guest(c.ctx(), surf);
     }
     let r = if rect != 0 {
         read_rect(rect)
@@ -653,21 +659,22 @@ fn dd_create_sample(c: &mut Ctx) -> u32 {
     wp(b, vtables()[3]);
     refs(s, 1);
     objs(|m| m.insert(b, Obj::Sample(Sample { refs: 1, stream: s, surface: surf, rect: r, frame: None, status: 0 })));
-    putp(out, b);
+    out.put(b);
     0
 }
 /// AllocateSample(DWORD flags, IStreamSample **)
 fn dd_allocate(c: &mut Ctx) -> u32 {
-    let (s, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMediaStream::AllocateSample>();
+    let (s, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let tmp = mem::heap_alloc(8, true);
     let mut args = vec![0, 0, 0, tmp];
     let f = rp(rp(s) + ps() * 13);
     args.insert(0, s);
-    let hr = c.call(f, &args);
-    putp(out, rp(tmp));
+    let hr = c.ctx().call(f, &args);
+    out.put(rp(tmp));
     mem::heap_free(tmp);
     hr
 }
@@ -690,7 +697,7 @@ fn dd_time_per_frame(c: &mut Ctx) -> u32 {
 
 fn sample_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
-    qi(c.ctx(), &SAMPLE_IDS)
+    qi(c, &SAMPLE_IDS)
 }
 fn sm_get_stream(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {

@@ -1216,10 +1216,10 @@ fn set_alloc(c: &mut Ctx, by_stream: bool) -> u32 {
     0
 }
 
-fn get_alloc(c: &mut Ctx, by_stream: bool) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (n, out) = (c.a(1), c.a(2));
-    if out == 0 {
+fn get_alloc<F: crate::api::Outs>(c: &mut crate::api::Args<'_, '_, F>, by_stream: bool) -> u32 {
+    let Some(rr) = reader(c.a::<0>()) else { return Hr::Unexpected.code() };
+    let (n, out) = (c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let a = {
@@ -1229,9 +1229,9 @@ fn get_alloc(c: &mut Ctx, by_stream: bool) -> u32 {
         if by_stream { r.outputs[k].alloc_stream } else { r.outputs[k].alloc_output }
     };
     if a != 0 {
-        crate::dshow::com(c, a, 1, &[]);
+        crate::dshow::com(c.ctx(), a, 1, &[]);
     }
-    putp(out, a);
+    out.put(a);
     0
 }
 
@@ -1240,14 +1240,14 @@ fn sr_set_allocate_for_output(c: &mut Ctx) -> u32 {
 }
 fn sr_get_allocate_for_output(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IWMSyncReader2::GetAllocateForOutput>();
-    get_alloc(c.ctx(), false)
+    get_alloc(c, false)
 }
 fn sr_set_allocate_for_stream(c: &mut Ctx) -> u32 {
     set_alloc(c, true)
 }
 fn sr_get_allocate_for_stream(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IWMSyncReader2::GetAllocateForStream>();
-    get_alloc(c.ctx(), true)
+    get_alloc(c, true)
 }
 
 // ---- IWMProfile

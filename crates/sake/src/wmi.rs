@@ -20,7 +20,8 @@ fn singleton(name: &str, methods: &[(Handler, u32)], cell: &std::sync::OnceLock<
 }
 
 fn qi(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(2), c.a(0));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    c.out::<2>().put(c.a::<0>());
     0
 }
 fn one(_: &mut Ctx) -> u32 {
@@ -68,7 +69,8 @@ pub fn locator() -> u32 {
 
 /// ConnectServer(this, resource, user, password, locale, flags, authority, ctx, &services)
 fn connect_server(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(8), services());
+    let c = &mut c.args::<crate::api::outs::iface::IWbemLocator::ConnectServer>();
+    c.out::<8>().put(services());
     0
 }
 
@@ -87,20 +89,22 @@ fn services() -> u32 {
 }
 
 fn enum_at4(c: &mut Ctx) -> u32 {
-    let class = String::from_utf16_lossy(&mem::wstr(c.a(1)));
+    let c = &mut c.args::<crate::api::outs::iface::IWbemServices::CreateClassEnum>();
+    let class = String::from_utf16_lossy(&mem::wstr(c.a::<1>()));
     let e = new_enum(&class);
-    mem::putp(c.a(4), e);
+    c.out::<4>().put(e);
     if e == 0 { E_OUTOFMEMORY } else { 0 }
 }
 fn enum_at5(c: &mut Ctx) -> u32 {
-    let q = String::from_utf16_lossy(&mem::wstr(c.a(2)));
+    let c = &mut c.args::<crate::api::outs::iface::IWbemServices::ExecQuery>();
+    let q = String::from_utf16_lossy(&mem::wstr(c.a::<2>()));
     let lower = q.to_ascii_lowercase();
     let class = lower.find(" from ").map(|i| q[i + 6..].split_whitespace().next().unwrap_or("").to_string()).unwrap_or_default();
     if crate::env_on!("SAKE_TRACE_COM") {
         eprintln!("sake: WMI query {q}");
     }
     let e = new_enum(&class);
-    mem::putp(c.a(5), e);
+    c.out::<5>().put(e);
     if e == 0 { E_OUTOFMEMORY } else { 0 }
 }
 

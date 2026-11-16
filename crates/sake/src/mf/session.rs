@@ -186,6 +186,7 @@ fn event<R>(b: u32, f: impl FnOnce(&(u32, Guid, u32, Option<Val>)) -> R) -> Opti
 }
 
 fn me_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IMFMediaEvent {df598932-f10c-4e39-bba2-c308f101daa3}
     reader::typed_qi(c, 0xdf59_8932, 0xf10c, 0x4e39)
 }
@@ -452,22 +453,22 @@ fn slot(g: &Guid) -> Option<u32> {
         _ => return None,
     })
 }
-fn qi(c: &mut Ctx, k: u32) -> u32 {
-    let (b, out) = (base(c, k), c.a(2));
-    if out == 0 {
+fn qi(c: &mut crate::api::QiArgs, k: u32) -> u32 {
+    let (b, out) = (base(c.ctx_ref(), k), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // (the clock and volume answer for themselves; the session for all but those)
     let s = slot(&g).filter(|&s| k < 2 || s == k || s == 0 && is_unknown(&g));
     match s {
         Some(s) => {
             session(b, |x| x.refs += 1);
-            putp(out, b + ps() * s);
+            out.put(b + ps() * s);
             0
         }
         None => {
-            putp(out, 0);
+            out.put(0);
             Hr::NoInterface.code()
         }
     }
@@ -495,6 +496,7 @@ fn release_k(c: &mut Ctx, k: u32) -> u32 {
 macro_rules! unknown {
     ($k:expr) => {{
         fn q(c: &mut Ctx) -> u32 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
             qi(c, $k)
         }
         fn a(c: &mut Ctx) -> u32 {
@@ -515,8 +517,9 @@ fn live(b: u32) -> bool {
 
 /// GetEvent(DWORD flags, IMFMediaEvent **): MF_EVENT_FLAG_NO_WAIT (1) or it waits
 fn ms_get_event(c: &mut Ctx) -> u32 {
-    let (b, flags, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (b, flags, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     loop {
@@ -540,7 +543,7 @@ fn ms_get_event(c: &mut Ctx) -> u32 {
         };
         match got {
             Some(x) => {
-                putp(out, new_event(x));
+                out.put(new_event(x));
                 return 0;
             }
             // (a save state: the call is made again after it)
@@ -569,16 +572,17 @@ fn ms_begin_event(c: &mut Ctx) -> u32 {
 }
 /// EndGetEvent(IMFAsyncResult *, IMFMediaEvent **)
 fn ms_end_event(c: &mut Ctx) -> u32 {
-    let (r, out) = (c.a(1), c.a(2));
-    if r == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (r, out) = (c.a::<1>(), c.out::<2>());
+    if r == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     let o = plat::object_of(r);
-    putp(out, o);
+    out.put(o);
     if o == 0 {
         return plat::done_of(r).map(|d| d.1).filter(|&h| h != 0).unwrap_or(Hr::Fail.code());
     }
-    add_ref(c, o);
+    add_ref(c.ctx(), o);
     0
 }
 /// QueueEvent(MediaEventType, REFGUID, HRESULT, const PROPVARIANT *)
@@ -819,16 +823,17 @@ fn ms_shutdown(c: &mut Ctx) -> u32 {
     0
 }
 fn ms_get_clock(c: &mut Ctx) -> u32 {
-    let (b, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaSession::GetClock>();
+    let (b, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if !live(b) {
-        putp(out, 0);
+        out.put(0);
         return Hr::Shutdown.code();
     }
     session(b, |s| s.refs += 1);
-    putp(out, b + 2 * ps());
+    out.put(b + 2 * ps());
     0
 }
 fn ms_caps(c: &mut Ctx) -> u32 {
@@ -846,19 +851,20 @@ fn ms_caps(c: &mut Ctx) -> u32 {
 }
 /// GetFullTopology(DWORD flags, TOPOID, IMFTopology **): the current one (MFSESSION_GETFULLTOPOLOGY_CURRENT) or by id
 fn ms_full_topology(c: &mut Ctx) -> u32 {
-    let (b, flags) = (c.a(0), c.a(1));
-    let id = u64_arg(c, 2, 2);
-    let out = if mem::x64() { c.a(3) } else { c.a(4) };
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaSession::GetFullTopology>();
+    let (b, flags) = (c.a::<0>(), c.a::<1>());
+    let id = u64_arg(c.ctx_ref(), 2, 2);
+    let out = c.out_arch::<3, 4>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let Some(t) = session(b, |s| (!s.shut).then_some(s.topology)).flatten() else { return Hr::Shutdown.code() };
     if t == 0 || (flags & 1 == 0 && topology::topo(t, |x| x.id) != Some(id)) {
         return Hr::NotFound.code();
     }
-    add_ref(c, t);
-    putp(out, t);
+    add_ref(c.ctx(), t);
+    out.put(t);
     0
 }
 
@@ -867,11 +873,12 @@ fn ms_full_topology(c: &mut Ctx) -> u32 {
 /// GetService(REFGUID service, REFIID, void **): the video display control (MR_VIDEO_RENDER_SERVICE),
 /// the volume (MR_POLICY_VOLUME_SERVICE)
 fn gs_get_service(c: &mut Ctx) -> u32 {
-    let (b, sv, iid, out) = (base(c, 1), c.a(1), c.a(2), c.a(3));
-    if sv == 0 || iid == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFGetService::GetService>();
+    let (b, sv, iid, out) = (base(c.ctx_ref(), 1), c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if sv == 0 || iid == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let (s, i) = (guid_at(sv), guid_at(iid));
     if !live(b) {
         return Hr::Shutdown.code();
@@ -886,7 +893,7 @@ fn gs_get_service(c: &mut Ctx) -> u32 {
         if dc == 0 {
             return Hr::UnsupportedService.code();
         }
-        putp(out, dc);
+        out.put(dc);
         return 0;
     }
     // MR_POLICY_VOLUME_SERVICE {1abaa2ac-9d3b-47c6-ab48-c59506de784d}
@@ -895,7 +902,7 @@ fn gs_get_service(c: &mut Ctx) -> u32 {
             return Hr::NoInterface.code();
         }
         session(b, |x| x.refs += 1);
-        putp(out, b + 3 * ps());
+        out.put(b + 3 * ps());
         return 0;
     }
     Hr::UnsupportedService.code()
@@ -1056,8 +1063,9 @@ fn vtables() -> [u32; 4] {
             (ck_props, 8),
             (ok, 8), // SetTimeSource
             (|c: &mut Ctx| {
-                if c.a(1) != 0 {
-                    putp(c.a(1), 0);
+                let c = &mut c.args::<crate::api::outs::iface::IMFPresentationClock::GetTimeSource>();
+                if !c.out::<1>().is_null() {
+                    c.out::<1>().put(0);
                 }
                 Hr::ClockNoTimeSource.code()
             }, 8), // GetTimeSource

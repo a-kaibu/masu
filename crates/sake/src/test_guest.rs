@@ -8,6 +8,7 @@ static SERIAL: Mutex<()> = Mutex::new(());
 pub const TOP: u32 = if cfg!(masu_sanitize) { 0x7fff_0000 } else { mem::GUEST_TOP };
 pub fn enter() -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    kura::outs::fail_reports();
     // (the outcome kept: a map that failed fails every test with its own reason, not with a
     // poisoned Once, review 2026-11-16)
     static MAP: OnceLock<Result<(), String>> = OnceLock::new();

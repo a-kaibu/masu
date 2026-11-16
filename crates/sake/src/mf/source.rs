@@ -569,16 +569,17 @@ fn pd_count(c: &mut Ctx) -> u32 {
 }
 /// GetStreamDescriptorByIndex(DWORD, BOOL *selected, IMFStreamDescriptor **)
 fn pd_by_index(c: &mut Ctx) -> u32 {
-    let (i, sel, out) = (us(c.a(1)), c.a(2), c.a(3));
-    if sel == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFPresentationDescriptor::GetStreamDescriptorByIndex>();
+    let (i, sel, out) = (us(c.a::<1>()), c.a::<2>(), c.out::<3>());
+    if sel == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
+    let Some(s) = side(c.a::<0>()) else { return Hr::InvalidArg.code() };
     if i >= s.media.tracks.len() {
         return Hr::InvalidArg.code();
     }
     w32(sel, u32::from(s.selected.lock().unwrap_or_else(|e| e.into_inner())[i]));
-    putp(out, new_sd(&s.media, i));
+    out.put(new_sd(&s.media, i));
     0
 }
 fn pd_select(c: &mut Ctx, on: bool) -> u32 {
@@ -594,16 +595,18 @@ fn pd_select(c: &mut Ctx, on: bool) -> u32 {
     }
 }
 fn pd_clone(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFPresentationDescriptor::Clone>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
+    let Some(s) = side(c.a::<0>()) else { return Hr::InvalidArg.code() };
     let sel = s.selected.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    putp(out, new_pd(&s.media, Some(sel)));
+    out.put(new_pd(&s.media, Some(sel)));
     0
 }
 fn pd_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IMFPresentationDescriptor {03cb2711-24d7-4db6-a17f-f3a7a479a536}
     reader::typed_qi(c, 0x03cb_2711, 0x24d7, 0x4db6)
 }
@@ -627,6 +630,7 @@ fn new_pd(m: &Arc<Media>, sel: Option<Vec<bool>>) -> u32 {
 }
 
 fn sd_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IMFStreamDescriptor {56c03d9c-9dbb-45f5-ab4b-d80f47c05938}
     reader::typed_qi(c, 0x56c0_3d9c, 0x9dbb, 0x45f5)
 }
@@ -640,12 +644,13 @@ fn sd_id(c: &mut Ctx) -> u32 {
     0
 }
 fn sd_handler(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFStreamDescriptor::GetMediaTypeHandler>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
-    putp(out, new_handler(&s.media, s.stream));
+    let Some(s) = side(c.a::<0>()) else { return Hr::InvalidArg.code() };
+    out.put(new_handler(&s.media, s.stream));
     0
 }
 fn sd_vtable() -> u32 {

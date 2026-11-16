@@ -2235,17 +2235,18 @@ fn surface_of_dc(dc: u32) -> Option<u32> {
 /// IDirectDraw4/7::GetSurfaceFromDC(dc, surface): IDirectDraw4's gives the IDirectDrawSurface
 /// (ddraw4's test_getdc), IDirectDraw7's the IDirectDrawSurface7.
 fn D_GetSurfaceFromDC(c: &mut Ctx) -> u32 {
-    if c.a(2) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    if c.out::<2>().is_null() {
         return E_INVALIDARG;
     }
-    let kind = if dd_version(c) == 3 { 2 } else { 0 };
-    match surface_of_dc(c.a(1)) {
+    let kind = if dd_version(c.ctx_ref()) == 3 { 2 } else { 0 };
+    match surface_of_dc(c.a::<1>()) {
         Some(id) => {
-            w32(c.a(2), block(id, kind));
+            c.out::<2>().put(block(id, kind));
             DD_OK
         }
         None => {
-            w32(c.a(2), 0);
+            c.out::<2>().put(0);
             DDERR_NOTFOUND
         }
     }

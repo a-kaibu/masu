@@ -673,22 +673,23 @@ fn reader<R>(b: u32, f: impl FnOnce(&mut Reader) -> R) -> Option<R> {
 
 /// IMFMediaType {44ae0fa8-ea31-4109-8d2e-4cae4997c555}, IMFSample {c40a00f2-...}: both
 /// attribute stores with more methods; their QueryInterface answers for themselves too.
-pub fn typed_qi(c: &mut Ctx, d1: u32, d2: u16, d3: u16) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+pub fn typed_qi(c: &mut crate::api::QiArgs, d1: u32, d2: u16, d3: u16) -> u32 {
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let g = guid_at(iid);
     if is_unknown(&g) || is(&g, 0x2cd2_d921, 0xc447, 0x44a7) || is(&g, d1, d2, d3) {
         attrs(this, |a| a.0 += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 
 fn type_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     typed_qi(c, 0x44ae_0fa8, 0xea31, 0x4109)
 }
 /// GetMajorType(GUID *)
@@ -1046,6 +1047,7 @@ fn sample<R>(b: u32, f: impl FnOnce(&mut Sample) -> R) -> Option<R> {
 }
 
 fn sm_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     typed_qi(c, 0xc40a_00f2, 0xb93a, 0x4d80)
 }
 fn sm_release(c: &mut Ctx) -> u32 {
@@ -1114,21 +1116,23 @@ fn sm_count(c: &mut Ctx) -> u32 {
 }
 /// GetBufferByIndex(DWORD, IMFMediaBuffer **)
 fn sm_by_index(c: &mut Ctx) -> u32 {
-    let (i, out) = (c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (i, out) = (c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let Some(b) = sample(c.a(0), |s| s.bufs.get(us(i)).copied()).flatten() else {
+    let Some(b) = sample(c.a::<0>(), |s| s.bufs.get(us(i)).copied()).flatten() else {
         return Hr::InvalidArg.code();
     };
-    add_ref(c, b);
-    putp(out, b);
+    add_ref(c.ctx(), b);
+    out.put(b);
     0
 }
 /// ConvertToContiguousBuffer(IMFMediaBuffer **): the one buffer, or a new one of them all
 fn sm_contiguous(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFSample::ConvertToContiguousBuffer>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let bufs = sample(this, |s| s.bufs.clone()).unwrap_or_default();
@@ -1136,8 +1140,8 @@ fn sm_contiguous(c: &mut Ctx) -> u32 {
         return Hr::Fail.code();
     }
     if let [b] = bufs[..] {
-        add_ref(c, b);
-        putp(out, b);
+        add_ref(c.ctx(), b);
+        out.put(b);
         return 0;
     }
     let mut all = Vec::new();
@@ -1146,11 +1150,11 @@ fn sm_contiguous(c: &mut Ctx) -> u32 {
     }
     let nb = new_buffer(lo32(all.len()), &all);
     for b in bufs {
-        release(c, b);
+        release(c.ctx(), b);
     }
-    add_ref(c, nb);
+    add_ref(c.ctx(), nb);
     sample(this, |s| s.bufs = vec![nb]);
-    putp(out, nb);
+    out.put(nb);
     0
 }
 fn sm_add(c: &mut Ctx) -> u32 {
