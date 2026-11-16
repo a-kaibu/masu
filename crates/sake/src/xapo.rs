@@ -595,41 +595,41 @@ pub fn create_instance(clsid: u32) -> Option<u32> {
 
 /// CreateFX(clsid, ppEffect[, pInitData, InitDataByteSize])
 fn create_fx(c: &mut Ctx, init: bool) -> u32 {
-    let (g, out) = (c.a(0), c.a(1));
-    if g == 0 || out == 0 {
+    let (g, out) = (c.a(0), c.out(1));
+    if g == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     let Some(o) = create(&read_guid(g)) else {
-        putp(out, 0);
+        out.put(0);
         return Hr::ClassNotAvailable.code();
     };
     if init && c.a(2) != 0 {
         let v = mem::bytes(c.a(2), c.a(3).min(4096));
         with(o, |x| init_data(x, v));
     }
-    putp(out, o.addr());
+    out.put(o.addr());
     0
 }
 
 /// CreateAudioVolumeMeter / CreateAudioReverb(ppApo) of 2.8+: the SDK's class in its
 /// registration properties
 fn create_kind(c: &mut Ctx, kind: Kind, g: &[u8; 16]) -> u32 {
-    let out = c.a(0);
-    if out == 0 {
+    let out = c.out(0);
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, make(kind, g).addr());
+    out.put(make(kind, g).addr());
     0
 }
 
 pub fn init() {
     for dll in ["xaudio2_8", "xaudio2_9"] {
-        implement(dll, "CreateFX", |c| create_fx(c, true));
-        implement(dll, "CreateAudioVolumeMeter", |c| create_kind(c, Kind::VolumeMeter, &CLSID_AUDIO_VOLUME_METER));
-        implement(dll, "CreateAudioReverb", |c| create_kind(c, Kind::AudioReverb, &CLSID_AUDIO_REVERB));
+        implement(dll, "CreateFX", |c| create_fx(c.args::<crate::api::outs::CreateFX>().ctx(), true));
+        implement(dll, "CreateAudioVolumeMeter", |c| create_kind(c.args::<crate::api::outs::CreateAudioVolumeMeter>().ctx(), Kind::VolumeMeter, &CLSID_AUDIO_VOLUME_METER));
+        implement(dll, "CreateAudioReverb", |c| create_kind(c.args::<crate::api::outs::CreateAudioReverb>().ctx(), Kind::AudioReverb, &CLSID_AUDIO_REVERB));
     }
     for dll in ["xapofx1_0", "xapofx1_1", "xapofx1_2", "xapofx1_3", "xapofx1_4", "xapofx1_5"] {
-        implement(dll, "CreateFX", |c| create_fx(c, false));
+        implement(dll, "CreateFX", |c| create_fx(c.args::<crate::api::outs::CreateFX>().ctx(), false));
     }
 }
 

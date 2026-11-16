@@ -485,7 +485,17 @@ unsafe fn rd(p: u32, i: usize) -> u32 {
     *(gc::<u32>(p).add(i))
 }
 
+/// (a 32-bit value: crate::outs reports it at one of the call's pointer-sized out-parameters)
 unsafe fn wr(p: u32, i: usize, v: u32) {
+    if p != 0 {
+        crate::outs::wrote32(p.wrapping_add(kome::num::lo32(i).wrapping_mul(4)));
+        // SAFETY: wr's own contract: dword i at p is the caller's guest memory
+        unsafe { wr_word(p, i, v) };
+    }
+}
+
+/// (wr unchecked: a half of a pointer-sized value, wrp)
+unsafe fn wr_word(p: u32, i: usize, v: u32) {
     if p != 0 {
         *(gp::<u32>(p).add(i)) = v;
     }
@@ -506,9 +516,11 @@ unsafe fn rdp(p: u32, i: usize) -> u32 {
 }
 
 unsafe fn wrp(p: u32, i: usize, v: u32) {
-    wr(p, i * us(ptr() / 4), v);
+    // SAFETY: wrp's own contract: pointer i of the array at p is the caller's guest memory
+    unsafe { wr_word(p, i * us(ptr() / 4), v) };
     if ptr() == 8 {
-        wr(p, i * 2 + 1, 0);
+        // SAFETY: (its upper half, in the same pointer)
+        unsafe { wr_word(p, i * 2 + 1, 0) };
     }
 }
 

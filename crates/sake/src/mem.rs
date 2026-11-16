@@ -136,7 +136,8 @@ pub fn wp(a: impl Into<Ga>, v: u32) {
     if x64() {
         w64(a, u64::from(v) | if v >= 0xffff_f000 { 0xffff_ffff_0000_0000 } else { 0 });
     } else {
-        w32(a, v);
+        // (the whole of an x86 pointer: not w32, which kura::outs asks)
+        wr(a, v);
     }
 }
 
@@ -190,7 +191,7 @@ pub fn high_of(a: u32) -> u32 {
 /// Writes guest address `v` as a pointer (x64: its 64-bit value, `widen`) if `a` is not NULL.
 pub fn put_addr(a: u32, v: u32) {
     if a != 0 {
-        if x64() { w64(a, widen(v)) } else { w32(a, v) }
+        if x64() { w64(a, widen(v)) } else { wr(ga(a), v) }
     }
 }
 
@@ -318,7 +319,12 @@ pub fn w16(a: impl Into<Ga>, v: u16) {
 }
 #[inline(always)]
 pub fn w32(a: impl Into<Ga>, v: u32) {
-    wr(a.into(), v)
+    let a = a.into();
+    // (a 32-bit write to one of the running call's pointer-sized out-parameters: short of it on
+    // x64, and the same mistake on x86, where the tests run, kura::outs; wp / putp / api::Out
+    // write those whole)
+    kura::outs::wrote32(a.get());
+    wr(a, v)
 }
 #[inline(always)]
 pub fn w64(a: impl Into<Ga>, v: u64) {

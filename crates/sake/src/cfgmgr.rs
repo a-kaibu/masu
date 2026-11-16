@@ -229,8 +229,9 @@ fn iface_property(c: &mut Ctx) -> u32 {
 
 /// CM_Register_Notification(filter*, context, callback, HCMNOTIFICATION*)
 fn register(c: &mut Ctx) -> u32 {
-    let (filter, callback, out) = (c.a(0), c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::CM_Register_Notification>();
+    let (filter, callback, out) = (c.a::<0>(), c.a::<2>(), c.out::<3>());
+    if out.is_null() {
         return CR_FAILURE;
     }
     if filter == 0 || callback == 0 || mem::r32(filter) != NOTIFY_FILTER_SIZE {
@@ -241,7 +242,7 @@ fn register(c: &mut Ctx) -> u32 {
         return CR_OUT_OF_MEMORY;
     }
     mem::w32(h, NOTIFY_MAGIC);
-    mem::putp(out, h);
+    out.put(h);
     CR_SUCCESS
 }
 const NOTIFY_MAGIC: u32 = u32::from_le_bytes(*b"CMNf");

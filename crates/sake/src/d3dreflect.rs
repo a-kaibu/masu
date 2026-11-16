@@ -396,24 +396,26 @@ fn parse(code: &[u8], fl: u8) -> Option<Refl> {
 
 /// D3DReflect(data, size, iid, reflector)
 pub fn D3DReflect(c: &mut Ctx) -> u32 {
-    let code = mem::bytes(c.a(0), c.a(1));
-    reflect(&code, 0, c.a(3))
+    let c = &mut c.args::<crate::api::outs::D3DReflect>();
+    let code = mem::bytes(c.a::<0>(), c.a::<1>());
+    reflect(&code, 0, c.out::<3>())
 }
 
 /// D3D10ReflectShader(data, size, ID3D10ShaderReflection **)
 pub fn D3D10ReflectShader(c: &mut Ctx) -> u32 {
-    let code = mem::bytes(c.a(0), c.a(1));
-    reflect(&code, 4, c.a(2))
+    let c = &mut c.args::<crate::api::outs::D3D10ReflectShader>();
+    let code = mem::bytes(c.a::<0>(), c.a::<1>());
+    reflect(&code, 4, c.out::<2>())
 }
 
-fn reflect(code: &[u8], fl: u8, out: u32) -> u32 {
+fn reflect(code: &[u8], fl: u8, out: crate::api::Out) -> u32 {
     match parse(code, fl) {
         Some(r) => {
-            mem::putp(out, new_obj(fl, Obj::Refl(r)));
+            out.put(new_obj(fl, Obj::Refl(r)));
             0
         }
         None => {
-            mem::putp(out, 0);
+            out.put(0);
             0x8007_0057
         }
     }
@@ -976,7 +978,7 @@ mod review_tests {
         let out = mem::heap_alloc(8, true);
         let before = OBJS.lock().unwrap().live();
         for _ in 0..20 {
-            assert_eq!(reflect(&code, 0, out), 0);
+            assert_eq!(reflect(&code, 0, crate::api::Out::at(out)), 0);
             let r = r32(out);
             assert!(OBJS.lock().unwrap().live() > before + 4);
             assert_eq!(call(refl_add_ref, &[r]), 2);
@@ -1005,7 +1007,7 @@ mod review_tests {
         let out = mem::heap_alloc(8, true);
         let before = OBJS.lock().unwrap().live();
         let t0 = std::time::Instant::now();
-        assert_eq!(reflect(&code, 0, out), 0);
+        assert_eq!(reflect(&code, 0, crate::api::Out::at(out)), 0);
         assert!(t0.elapsed().as_secs() < 5);
         let made = OBJS.lock().unwrap().live() - before;
         assert!(made <= MAX_TYPES as usize + 16, "{made} objects");

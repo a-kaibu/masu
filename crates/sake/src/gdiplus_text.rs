@@ -430,8 +430,8 @@ fn GdipDeleteStringFormat(c: &mut Ctx) -> u32 {
 }
 // Native generic formats are shared, mutable objects, including across Delete calls.
 static GENERIC_FORMATS: Mutex<[u32; 2]> = Mutex::new([0; 2]);
-fn generic_format(out: u32, typographic: bool) -> u32 {
-    if out == 0 { return INVALID_PARAMETER; }
+fn generic_format(out: crate::api::Out, typographic: bool) -> u32 {
+    if out.is_null() { return INVALID_PARAMETER; }
     let mut handles = GENERIC_FORMATS.lock().unwrap();
     let h = &mut handles[usize::from(typographic)];
     if *h == 0 {
@@ -441,11 +441,17 @@ fn generic_format(out: u32, typographic: bool) -> u32 {
         *h = mem::heap_alloc(16, true);
         with(|m| m.insert(*h, Obj::Format(v)));
     }
-    mem::putp(out, *h);
+    out.put(*h);
     OK
 }
-fn GdipStringFormatGetGenericDefault(c: &mut Ctx) -> u32 { generic_format(c.a(0), false) }
-fn GdipStringFormatGetGenericTypographic(c: &mut Ctx) -> u32 { generic_format(c.a(0), true) }
+fn GdipStringFormatGetGenericDefault(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GdipStringFormatGetGenericDefault>();
+    generic_format(c.out::<0>(), false)
+}
+fn GdipStringFormatGetGenericTypographic(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GdipStringFormatGetGenericTypographic>();
+    generic_format(c.out::<0>(), true)
+}
 macro_rules! format_property {
     ($get:ident, $set:ident, $field:ident, $max:expr) => {
         fn $get(c: &mut Ctx) -> u32 {

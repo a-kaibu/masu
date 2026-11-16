@@ -580,7 +580,7 @@ fn thread(c: &mut Ctx) -> u32 {
                         let buf = if adv != 0 { callback_buffer(c, adv, stream, num, &data, ctx) } else { 0 };
                         if buf != 0 { putp(p, buf); 0 } else { Hr::OutOfMemory.code() }
                     }
-                    None => hand_out(c, alloc, &data, time, dur, flags, p),
+                    None => hand_out(c, alloc, &data, time, dur, flags, crate::api::Out::at(p)),
                 };
                 if hr == 0 {
                     let buf = rp(p);

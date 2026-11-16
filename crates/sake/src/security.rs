@@ -19,7 +19,7 @@ use std::sync::Mutex;
 
 use crate::api::{implement, Ctx};
 use crate::k32::last_error;
-use crate::mem::{self, cstr, put32, putp, r16, r32, r8, w16, w32, w8, wstr};
+use crate::mem::{self, cstr, put32, r16, r32, r8, w16, w32, w8, wstr};
 use crate::obj::{self, Obj};
 
 macro_rules! reg {
@@ -145,7 +145,7 @@ fn ConvertStringSidToSidW(c: &mut Ctx) -> u32 {
     string_sid(c.ctx(), t)
 }
 fn string_sid(c: &mut Ctx, t: String) -> u32 {
-    if c.a(0) == 0 || c.a(1) == 0 {
+    if c.a(0) == 0 || c.out(1).is_null() {
         last_error(ERROR_INVALID_PARAMETER);
         return 0;
     }
@@ -153,7 +153,7 @@ fn string_sid(c: &mut Ctx, t: String) -> u32 {
         last_error(ERROR_INVALID_SID);
         return 0;
     };
-    putp(c.a(1), sid_alloc(&sid));
+    c.out(1).put(sid_alloc(&sid));
     1
 }
 
@@ -1032,13 +1032,13 @@ fn GetTokenInformation(c: &mut Ctx) -> u32 {
 /// SET_ACCESS add an allowed one. Trustees by SID, or by CURRENT_USER and the accounts'
 /// names (LookupAccountName's).
 fn set_entries(c: &mut Ctx, wide: bool) -> u32 {
-    let (count, list, old, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if out == 0 || count != 0 && list == 0 {
+    let (count, list, old, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    if out.is_null() || count != 0 && list == 0 {
         return ERROR_INVALID_PARAMETER;
     }
     // (no entries and no old ACL: no ACL at all, a NULL one (winref host_aclentries))
     if count == 0 && old == 0 {
-        mem::putp(out, 0);
+        out.put(0);
         return 0;
     }
     let x64 = mem::x64();
@@ -1115,7 +1115,7 @@ fn set_entries(c: &mut Ctx, wide: bool) -> u32 {
         at += 8 + sid.len();
     }
     w16(acl + 4, all.len() as u16);
-    mem::wp(out, acl);
+    out.put(acl);
     0
 }
 fn SetEntriesInAclA(c: &mut Ctx) -> u32 {

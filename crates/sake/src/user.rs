@@ -8717,20 +8717,22 @@ pub fn init() {
         0
     });
     implement("shcore", "GetCurrentProcessExplicitAppUserModelID", |c| {
+        let c = &mut c.args::<crate::api::outs::GetCurrentProcessExplicitAppUserModelID>();
         let (flags, title) = app_id_params();
         let (n, buf) = (crate::mem::r16(title) as u32 / 2, crate::mem::rp(title + crate::mem::ps()));
-        if c.a(0) == 0 {
+        let id = c.out::<0>();
+        if id.is_null() {
             return 0x8007_0057;
         }
         if r32(flags) & 0x1000 == 0 || buf == 0 {
-            crate::mem::wp(c.a(0), 0);
+            id.put(0);
             return 0x8000_4005;
         }
         let out = crate::mem::heap_alloc(2 * n + 2, true);
         for i in 0..n {
             crate::mem::w16(out + 2 * i, crate::mem::r16(buf + 2 * i));
         }
-        crate::mem::wp(c.a(0), out);
+        id.put(out);
         0
     });
     implement("shcore", "SetProcessReference", |_| 0);

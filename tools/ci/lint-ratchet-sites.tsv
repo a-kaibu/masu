@@ -641,8 +641,6 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p + at, 0, luid);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p + at, 2, if warp { 2 } else { 0 });
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p + at, 3, 1);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p + at, 4, 1);
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p, i * 2 + 1, 0);
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p, i * us(ptr() / 4), v);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p, k, v);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p, k, v);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	wr(p, k, v);
@@ -1134,8 +1132,6 @@ crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(out, 1, if vblank { 0 }
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(out, 1, vl.slice);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(out, 2, 60);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(out, 3, fmt::X8R8G8B8);
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(p, i * 2 + 1, 0);
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(p, i * us(ptr() / 4), v);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(pp, 9, 0);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(pp, pp_index(i), *v);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	wr(size, 0, lo32(p.1.len()));

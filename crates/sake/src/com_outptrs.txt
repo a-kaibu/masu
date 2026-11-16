@@ -1,504 +1,562 @@
-IAMCertifiedOutputProtection #7
-IAMFilterMiscFlags #4
-IAMMultiMediaStream #19
-IAMStreamSelect #6
-IAMVideoAccelerator #15
-IActivationFactory #7
-IActiveScript #16
-IActiveScriptError #6
-IActiveScriptParse32 #6
-IActiveScriptProperty #5
-IAsyncReader #11
-IAudioClient #15
-IAudioClock #6
-IAudioClockAdjustment #4
-IAudioEndpointVolume #21
-IAudioMediaStream #12
-IAudioRenderClient #5
-IAudioSessionControl #12
-IAudioSessionControl2 #17
-IAudioSessionEnumerator #5
-IAudioSessionEvents #10
-IAudioSessionManager #5
-IAudioSessionManager2 #10
-IAudioStreamVolume #8
-IAudioVolumeDuckNotification #5
-IBaseFilter #15
-IBasicAudio #11
-IBasicVideo #39
-IBasicVideo2 #40
-IChannelAudioVolume #8
-IClassFactory #5
-IClientSecurity #6
-IConnectionPoint #8
-IConnectionPointContainer #5
-ID2D1AnalysisTransform #4
-ID2D1Bitmap #11
-ID2D1Bitmap1 #16
-ID2D1BitmapBrush #16
-ID2D1BitmapBrush1 #18
-ID2D1BitmapRenderTarget #58
-ID2D1BlendTransform #8
-ID2D1BorderTransform #10
-ID2D1BoundsAdjustmentTransform #6
-ID2D1Brush #8
-ID2D1ColorContext #7
-ID2D1ColorContext1 #10
-ID2D1CommandList #6
-ID2D1CommandSink #28
-ID2D1CommandSink1 #29
-ID2D1CommandSink2 #32
-ID2D1CommandSink3 #33
-ID2D1CommandSink4 #34
-ID2D1CommandSink5 #35
-ID2D1ComputeInfo #10
-ID2D1ComputeTransform #9
-ID2D1ConcreteTransform #6
-ID2D1DCRenderTarget #58
-ID2D1Device #9
-ID2D1Device1 #12
-ID2D1Device2 #15
-ID2D1Device3 #16
-ID2D1Device4 #19
-ID2D1Device5 #20
-ID2D1Device6 #21
-ID2D1Device7 #22
-ID2D1DeviceContext #92
-ID2D1DeviceContext1 #95
-ID2D1DeviceContext2 #106
-ID2D1DeviceContext3 #108
-ID2D1DeviceContext4 #115
-ID2D1DeviceContext5 #119
-ID2D1DeviceContext6 #120
-ID2D1DeviceContext7 #123
-ID2D1DrawInfo #12
-ID2D1DrawTransform #8
-ID2D1DrawingStateBlock #8
-ID2D1DrawingStateBlock1 #10
-ID2D1Effect #19
-ID2D1EffectContext #24
-ID2D1EffectContext1 #25
-ID2D1EffectContext2 #27
-ID2D1EffectImpl #6
-ID2D1EllipseGeometry #18
-ID2D1Factory #17
-ID2D1Factory1 #27
-ID2D1Factory2 #28
-ID2D1Factory3 #29
-ID2D1Factory4 #30
-ID2D1Factory5 #31
-ID2D1Factory6 #32
-ID2D1Factory7 #33
-ID2D1Factory8 #34
-ID2D1GdiInteropRenderTarget #5
-ID2D1GdiMetafile #6
-ID2D1GdiMetafile1 #8
-ID2D1GdiMetafileSink #4
-ID2D1GdiMetafileSink1 #5
-ID2D1Geometry #17
-ID2D1GeometryGroup #20
-ID2D1GeometryRealization #4
-ID2D1GeometrySink #15
-ID2D1GradientMesh #6
-ID2D1GradientStopCollection #8
-ID2D1GradientStopCollection1 #13
-ID2D1HwndRenderTarget #60
-ID2D1Image #4
-ID2D1ImageBrush #18
-ID2D1ImageSource #6
-ID2D1ImageSourceFromWic #9
-ID2D1Ink #14
-ID2D1InkStyle #8
-ID2D1Layer #5
-ID2D1LinearGradientBrush #13
-ID2D1LookupTable3D #4
-ID2D1Mesh #5
-ID2D1Multithread #6
-ID2D1OffsetTransform #6
-ID2D1PathGeometry #21
-ID2D1PathGeometry1 #22
-ID2D1PrintControl #5
-ID2D1Properties #14
-ID2D1RadialGradientBrush #17
-ID2D1RectangleGeometry #18
-ID2D1RenderInfo #7
-ID2D1RenderTarget #57
-ID2D1Resource #4
-ID2D1ResourceTexture #4
-ID2D1RoundedRectangleGeometry #18
-ID2D1SimplifiedGeometrySink #10
-ID2D1SolidColorBrush #10
-ID2D1SourceTransform #9
-ID2D1SpriteBatch #9
-ID2D1StrokeStyle #13
-ID2D1StrokeStyle1 #14
-ID2D1SvgAttribute #6
-ID2D1SvgDocument #15
-ID2D1SvgElement #34
-ID2D1SvgGlyphStyle #9
-ID2D1SvgPaint #13
-ID2D1SvgPathData #15
-ID2D1SvgPointCollection #10
-ID2D1SvgStrokeDashArray #12
-ID2D1TessellationSink #5
-ID2D1Transform #7
-ID2D1TransformGraph #12
-ID2D1TransformNode #4
-ID2D1TransformedGeometry #19
-ID2D1TransformedImageSource #6
-ID2D1VertexBuffer #5
-ID3D10ShaderReflection #9
-ID3D10ShaderReflectionConstantBuffer #3
-ID3D10ShaderReflectionType #4
-ID3D10ShaderReflectionVariable #2
-ID3D11Device #43
-ID3D11DeviceContext #115
-ID3D11ShaderReflection #22
-ID3D11ShaderReflectionConstantBuffer #3
-ID3D11ShaderReflectionType #11
-ID3D11ShaderReflectionVariable #4
-ID3D11Texture2D #11
-ID3DBlob #5
-ID3DInclude #2
-IDMOWrapperFilter #4
-IDWriteAsyncResult #5
-IDWriteBitmapRenderTarget #11
-IDWriteBitmapRenderTarget1 #13
-IDWriteBitmapRenderTarget2 #14
-IDWriteBitmapRenderTarget3 #17
-IDWriteColorGlyphRunEnumerator #5
-IDWriteColorGlyphRunEnumerator1 #6
-IDWriteFactory #24
-IDWriteFactory1 #26
-IDWriteFactory2 #31
-IDWriteFactory3 #40
-IDWriteFactory4 #43
-IDWriteFactory5 #48
-IDWriteFactory6 #55
-IDWriteFactory7 #57
-IDWriteFactory8 #58
-IDWriteFont #14
-IDWriteFont1 #18
-IDWriteFont2 #19
-IDWriteFont3 #24
-IDWriteFontCollection #7
-IDWriteFontCollection1 #9
-IDWriteFontCollection2 #13
-IDWriteFontCollection3 #14
-IDWriteFontCollectionLoader #4
-IDWriteFontDownloadListener #4
-IDWriteFontDownloadQueue #9
-IDWriteFontFace #18
-IDWriteFontFace1 #30
-IDWriteFontFace2 #35
-IDWriteFontFace3 #49
-IDWriteFontFace4 #53
-IDWriteFontFace5 #58
-IDWriteFontFace6 #60
-IDWriteFontFace7 #62
-IDWriteFontFaceReference #17
-IDWriteFontFaceReference1 #20
-IDWriteFontFallback #4
-IDWriteFontFallback1 #5
-IDWriteFontFallbackBuilder #6
-IDWriteFontFamily #9
-IDWriteFontFamily1 #12
-IDWriteFontFamily2 #14
-IDWriteFontFile #6
-IDWriteFontFileEnumerator #5
-IDWriteFontFileLoader #4
-IDWriteFontFileStream #7
-IDWriteFontList #6
-IDWriteFontList1 #9
-IDWriteFontList2 #10
-IDWriteFontResource #15
-IDWriteFontSet #13
-IDWriteFontSet1 #26
-IDWriteFontSet2 #27
-IDWriteFontSet3 #30
-IDWriteFontSet4 #32
-IDWriteFontSetBuilder #7
-IDWriteFontSetBuilder1 #8
-IDWriteFontSetBuilder2 #10
-IDWriteGdiInterop #8
-IDWriteGdiInterop1 #12
-IDWriteGlyphRunAnalysis #6
-IDWriteInMemoryFontFileLoader #6
-IDWriteInlineObject #7
-IDWriteLocalFontFileLoader #7
-IDWriteLocalizedStrings #9
-IDWriteNumberSubstitution #3
-IDWritePaintReader #12
-IDWritePixelSnapping #6
-IDWriteRemoteFontFileLoader #7
-IDWriteRemoteFontFileStream #11
-IDWriteRenderingParams #8
-IDWriteRenderingParams1 #9
-IDWriteRenderingParams2 #10
-IDWriteRenderingParams3 #11
-IDWriteStringList #8
-IDWriteTextAnalysisSink #7
-IDWriteTextAnalysisSink1 #8
-IDWriteTextAnalysisSource #8
-IDWriteTextAnalysisSource1 #9
-IDWriteTextAnalyzer #10
-IDWriteTextAnalyzer1 #19
-IDWriteTextAnalyzer2 #22
-IDWriteTextFormat #28
-IDWriteTextFormat1 #36
-IDWriteTextFormat2 #38
-IDWriteTextFormat3 #43
-IDWriteTextLayout #67
-IDWriteTextLayout1 #71
-IDWriteTextLayout2 #80
-IDWriteTextLayout3 #84
-IDWriteTextLayout4 #89
-IDWriteTextRenderer #10
-IDWriteTextRenderer1 #14
-IDWriteTypography #6
-IDXGISwapChain #18
-IDataObject #12
-IDirect3D9 #17
-IDirect3D9Ex #22
-IDirect3DCubeTexture9 #22
-IDirect3DDevice9 #119
-IDirect3DDevice9Ex #134
-IDirect3DDeviceManager9 #10
-IDirect3DStateBlock9 #6
-IDirect3DSurface9 #17
-IDirect3DTexture9 #22
-IDirectDraw #23
-IDirectDraw2 #24
-IDirectDraw4 #28
-IDirectDraw7 #30
-IDirectDrawClipper #9
-IDirectDrawMediaStream #15
-IDirectDrawPalette #7
-IDirectDrawStreamSample #10
-IDirectDrawSurface #36
-IDirectDrawSurface2 #39
-IDirectDrawSurface3 #40
-IDirectDrawSurface4 #45
-IDirectDrawSurface7 #49
-IDirectMusic #12
-IDirectMusic8 #13
-IDirectSound #11
-IDirectSound3DBuffer #21
-IDirectSound3DListener #18
-IDirectSound8 #12
-IDirectSoundBuffer8 #24
-IDirectSoundNotify #4
-IDirectXVideoAccelerationService #4
-IDirectXVideoProcessor #9
-IDirectXVideoProcessorService #12
-IDispatch #7
-IDispatchEx #15
-IDropSource #5
-IDropTarget #7
-IEnumDMO #7
-IEnumFilters #7
-IEnumMediaTypes #7
-IEnumPins #7
-IEnumString #7
-IEnumWbemClassObject #8
-IFileSourceFilter #5
-IFilterGraph #11
-IFilterGraph2 #21
-IFont #27
-IFontDisp #7
-IGraphBuilder #18
-IGraphConfig #13
-IInspectable #6
-IKsPropertySet #6
-IMF2DBuffer #10
-IMFActivate #36
-IMFAsyncCallback #5
-IMFAsyncResult #8
-IMFAttributes #33
-IMFByteStream #18
-IMFClock #8
-IMFCollection #9
-IMFDXGIBuffer #7
-IMFDXGIDeviceManager #10
-IMFGetService #4
-IMFMediaBuffer #8
-IMFMediaEngine #45
-IMFMediaEngineClassFactory #6
-IMFMediaEngineEx #82
-IMFMediaEngineNotify #4
-IMFMediaError #7
-IMFMediaEvent #37
-IMFMediaEventGenerator #7
-IMFMediaSession #17
-IMFMediaSource #13
-IMFMediaType #38
-IMFMediaTypeHandler #9
-IMFPresentationClock #16
-IMFPresentationDescriptor #38
-IMFSample #47
-IMFSimpleAudioVolume #7
-IMFSourceReader #13
-IMFSourceReaderCallback #6
-IMFSourceResolver #10
-IMFStreamDescriptor #35
-IMFTopology #43
-IMFTopologyNode #49
-IMFTransform #26
-IMFVideoDisplayControl #19
-IMFVideoSampleAllocator #7
-IMFVideoSampleAllocatorEx #8
-IMMDevice #7
-IMMDeviceCollection #5
-IMMDeviceEnumerator #8
-IMMEndpoint #4
-IMMNotificationClient #8
-IMalloc #9
-IMediaControl #16
-IMediaEventEx #16
-IMediaEventSink #4
-IMediaFilter #10
-IMediaPosition #18
-IMediaSample #19
-IMediaSample2 #21
-IMediaSeeking #20
-IMediaStream #9
-IMemAllocator #9
-IMemInputPin #9
-IMultiMediaStream #12
-INSSBuffer #8
-IObjectSafety #5
-IOleControl #7
-IOleInPlaceActiveObject #10
-IOleInPlaceObject #9
-IOleObject #24
-IOleWindow #5
-IOverlay #13
-IPersist #4
-IPersistFile #9
-IPersistStream #8
-IPersistStreamInit #9
-IPicture #17
-IPin #18
-IPropertyNotifySink #5
-IPropertyStore #8
-IQualProp #9
-IQualityControl #5
-IReferenceClock #7
-ISequentialStream #5
-IShellLinkA #21
-IShellLinkW #21
-ISimpleAudioVolume #7
-IStream #14
-IStreamSample #8
-ITypeInfo #22
-ITypeInfo2 #37
-ITypeLib #13
-ITypeLib2 #17
-IUnknown #3
-IVMRAspectRatioControl9 #5
-IVMRDeinterlaceControl9 #10
-IVMRFilterConfig #10
-IVMRFilterConfig9 #10
-IVMRMixerBitmap9 #6
-IVMRMixerControl9 #16
-IVMRMonitorConfig9 #8
-IVMRSurfaceAllocatorNotify9 #8
-IVMRWindowlessControl #18
-IVMRWindowlessControl9 #16
-IVideoWindow #46
-IViewObject #9
-IViewObject2 #10
-IWICBitmap #11
-IWICBitmapClipper #9
-IWICBitmapCodecInfo #23
-IWICBitmapCodecProgressNotification #4
-IWICBitmapDecoder #14
-IWICBitmapDecoderInfo #26
-IWICBitmapEncoder #13
-IWICBitmapEncoderInfo #24
-IWICBitmapFlipRotator #9
-IWICBitmapFrameChainReader #5
-IWICBitmapFrameChainWriter #5
-IWICBitmapFrameDecode #11
-IWICBitmapFrameEncode #14
-IWICBitmapLock #7
-IWICBitmapScaler #9
-IWICBitmapSource #8
-IWICBitmapSourceTransform #7
-IWICBitmapSourceTransform2 #8
-IWICBitmapToneMapper #10
-IWICColorContext #9
-IWICColorTransform #9
-IWICComponentFactory #35
-IWICComponentInfo #11
-IWICD3DTextureSource #7
-IWICDdsDecoder #5
-IWICDdsEncoder #6
-IWICDdsFrameDecode #6
-IWICDevelopRaw #43
-IWICDevelopRawNotificationCallback #4
-IWICDisplayAdaptationControl #6
-IWICDisplayAdaptationControl2 #11
-IWICEnumMetadataItem #7
-IWICFastMetadataEncoder #5
-IWICFormatConverter #10
-IWICFormatConverterInfo #13
-IWICImageEncoder #6
-IWICImagingFactory #28
-IWICImagingFactory2 #29
-IWICImagingFactory3 #30
-IWICJpegFrameDecode #13
-IWICJpegFrameEncode #7
-IWICMetadataBlockReader #7
-IWICMetadataBlockWriter #12
-IWICMetadataHandlerInfo #18
-IWICMetadataQueryReader #7
-IWICMetadataQueryWriter #9
-IWICMetadataReader #9
-IWICMetadataReaderInfo #21
-IWICMetadataWriter #13
-IWICMetadataWriterInfo #20
-IWICPalette #13
-IWICPersistStream #10
-IWICPixelFormatInfo #16
-IWICPixelFormatInfo2 #18
-IWICPlanarBitmapFrameEncode #5
-IWICPlanarBitmapSourceTransform #5
-IWICPlanarFormatConverter #10
-IWICProgressCallback #4
-IWICProgressiveLevelControl #6
-IWICStream #18
-IWICStreamProvider #7
-IWMHeaderInfo #15
-IWMHeaderInfo2 #17
-IWMHeaderInfo3 #24
-IWMMediaProps #6
-IWMOutputMediaProps #8
-IWMProfile #21
-IWMProfile2 #22
-IWMProfile3 #34
-IWMReader #14
-IWMReaderAdvanced2 #38
-IWMReaderAllocatorEx #5
-IWMReaderCallback #5
-IWMReaderCallbackAdvanced #9
-IWMStreamConfig #14
-IWMSyncReader #24
-IWMSyncReader2 #30
-IWbemClassObject #27
-IWbemLocator #4
-IWbemServices #26
-IWebBrowser #32
-IWebBrowser2 #71
-IWebBrowserApp #52
-IXAPO #13
-IXAPOParameters #5
-IXAudio2 #13
-IXAudio2EngineCallback #3
-IXAudio2MasteringVoice #20
-IXAudio2SourceVoice #29
-IXAudio2Voice #19
-IXAudio2VoiceCallback #7
+IAMCertifiedOutputProtection # 3,1,1,4,2,2,3
+IAMFilterMiscFlags # 3,1,1,1
+IAMMultiMediaStream # 3,1,1,3,3,3,2,2,2,2,3,2,4,2,2,5,3,4,2
+IAMStreamSelect # 3,1,1,2,9,3
+IAMVideoAccelerator # 3,1,1,3,4,4,5,3,2,2,6,3,8,4,3
+IActivationFactory # 3,1,1,3,2,2,2
+IActiveScript # 3,1,1,2,3,2,2,1,3,5,3,2,3,3,4,2
+IActiveScriptError # 3,1,1,2,4,2
+IActiveScriptParse32 # 3,1,1,1,12,10
+IActiveScriptProperty # 3,1,1,4,4
+IAsyncReader # 3,1,1,4,3,4,2,5,3,1,1
+IAudioClient # 3,1,1,9,2,2,2,4,2,3,1,1,1,2,3
+IAudioClock # 3,1,1,2,3,2
+IAudioClockAdjustment # 3,1,1,2
+IAudioEndpointVolume # 3,1,1,2,2,2,3,3,2,2,4,4,3,3,3,2,3,2,2,2,4
+IAudioMediaStream # 3,1,1,2,3,3,3,4,2,2,2,4
+IAudioRenderClient # 3,1,1,3,3
+IAudioSessionControl # 3,1,1,2,2,3,2,3,2,3,2,2
+IAudioSessionControl2 # 3,1,1,2,2,3,2,3,2,3,2,2,2,2,2,1,2
+IAudioSessionEnumerator # 3,1,1,2,3
+IAudioSessionEvents # 3,1,1,3,3,4,5,3,2,2
+IAudioSessionManager # 3,1,1,4,4
+IAudioSessionManager2 # 3,1,1,4,4,2,2,2,3,2
+IAudioStreamVolume # 3,1,1,2,3,3,3,3
+IAudioVolumeDuckNotification # 3,1,1,3,2
+IBaseFilter # 3,1,1,2,1,1,3,3,2,2,2,3,2,3,2
+IBasicAudio # 3,1,1,2,4,6,9,2,2,2,2
+IBasicVideo # 3,1,1,2,4,6,9,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,5,5,1,5,5,1,3,5,3,1,1
+IBasicVideo2 # 3,1,1,2,4,6,9,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,5,5,1,5,5,1,3,5,3,1,1,3
+IChannelAudioVolume # 3,1,1,2,4,3,4,3
+IClassFactory # 3,1,1,4,2
+IClientSecurity # 3,1,1,9,9,3
+IConnectionPoint # 3,1,1,2,2,3,2,2
+IConnectionPointContainer # 3,1,1,2,3
+ID2D1AnalysisTransform # 3,1,1,3
+ID2D1Bitmap # 3,1,1,2,2,2,2,3,4,4,4
+ID2D1Bitmap1 # 3,1,1,2,2,2,2,3,4,4,4,2,1,2,3,1
+ID2D1BitmapBrush # 3,1,1,2,2,2,1,2,2,2,2,2,1,1,1,2
+ID2D1BitmapBrush1 # 3,1,1,2,2,2,1,2,2,2,2,2,1,1,1,2,2,1
+ID2D1BitmapRenderTarget # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,2
+ID2D1BlendTransform # 3,1,1,1,3,2,2,2
+ID2D1BorderTransform # 3,1,1,1,3,2,2,2,1,1
+ID2D1BoundsAdjustmentTransform # 3,1,1,1,2,2
+ID2D1Brush # 3,1,1,2,2,2,1,2
+ID2D1ColorContext # 3,1,1,2,1,1,3
+ID2D1ColorContext1 # 3,1,1,2,1,1,3,1,1,2
+ID2D1CommandList # 3,1,1,2,2,1
+ID2D1CommandSink # 3,1,1,1,1,2,5,2,2,2,2,2,2,7,8,5,5,7,6,3,3,5,4,3,3,3,1,1
+ID2D1CommandSink1 # 3,1,1,1,1,2,5,2,2,2,2,2,2,7,8,5,5,7,6,3,3,5,4,3,3,3,1,1,2
+ID2D1CommandSink2 # 3,1,1,1,1,2,5,2,2,2,2,2,2,7,8,5,5,7,6,3,3,5,4,3,3,3,1,1,2,4,2,4
+ID2D1CommandSink3 # 3,1,1,1,1,2,5,2,2,2,2,2,2,7,8,5,5,7,6,3,3,5,4,3,3,3,1,1,2,4,2,4,7
+ID2D1CommandSink4 # 3,1,1,1,1,2,5,2,2,2,2,2,2,7,8,5,5,7,6,3,3,5,4,3,3,3,1,1,2,4,2,4,7,2
+ID2D1CommandSink5 # 3,1,1,1,1,2,5,2,2,2,2,2,2,7,8,5,5,7,6,3,3,5,4,3,3,3,1,1,2,4,2,4,7,2,6
+ID2D1ComputeInfo # 3,1,1,4,3,2,2,3,2,3
+ID2D1ComputeTransform # 3,1,1,1,4,6,7,2,5
+ID2D1ConcreteTransform # 3,1,1,1,3,2
+ID2D1DCRenderTarget # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,3
+ID2D1Device # 3,1,1,2,3,5,3,1,2
+ID2D1Device1 # 3,1,1,2,3,5,3,1,2,1,2,3
+ID2D1Device2 # 3,1,1,2,3,5,3,1,2,1,2,3,3,2,2
+ID2D1Device3 # 3,1,1,2,3,5,3,1,2,1,2,3,3,2,2,3
+ID2D1Device4 # 3,1,1,2,3,5,3,1,2,1,2,3,3,2,2,3,3,3,1
+ID2D1Device5 # 3,1,1,2,3,5,3,1,2,1,2,3,3,2,2,3,3,3,1,3
+ID2D1Device6 # 3,1,1,2,3,5,3,1,2,1,2,3,3,2,2,3,3,3,1,3,3
+ID2D1Device7 # 3,1,1,2,3,5,3,1,2,1,2,3,3,2,2,3,3,3,1,3,3,3
+ID2D1DeviceContext # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,7,4,5,3,3,4,3,9,5,5,2,2,2,3,3,6,2,2,2,2,2,2,1,2,1,7,6,3,7,3,4,3,4,6,5
+ID2D1DeviceContext1 # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,7,4,5,3,3,4,3,9,5,5,2,2,2,3,3,6,2,2,2,2,2,2,1,2,1,7,6,3,7,3,4,3,4,6,5,4,6,3
+ID2D1DeviceContext2 # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,7,4,5,3,3,4,3,9,5,5,2,2,2,3,3,6,2,2,2,2,2,2,1,2,1,7,6,3,7,3,4,3,4,6,5,4,6,3,3,3,4,5,7,6,3,4,2,4,4
+ID2D1DeviceContext3 # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,7,4,5,3,3,4,3,9,5,5,2,2,2,3,3,6,2,2,2,2,2,2,1,2,1,7,6,3,7,3,4,3,4,6,5,4,6,3,3,3,4,5,7,6,3,4,2,4,4,2,7
+ID2D1DeviceContext4 # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,7,4,5,3,3,4,3,9,5,5,2,2,2,3,3,6,2,2,2,2,2,2,1,2,1,7,6,3,7,3,4,3,4,6,5,4,6,3,3,3,4,5,7,6,3,4,2,4,4,2,7,2,10,8,7,8,13,13
+ID2D1DeviceContext5 # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,7,4,5,3,3,4,3,9,5,5,2,2,2,3,3,6,2,2,2,2,2,2,1,2,1,7,6,3,7,3,4,3,4,6,5,4,6,3,3,3,4,5,7,6,3,4,2,4,4,2,7,2,10,8,7,8,13,13,5,2,3,3
+ID2D1DeviceContext6 # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,7,4,5,3,3,4,3,9,5,5,2,2,2,3,3,6,2,2,2,2,2,2,1,2,1,7,6,3,7,3,4,3,4,6,5,4,6,3,3,3,4,5,7,6,3,4,2,4,4,2,7,2,10,8,7,8,13,13,5,2,3,3,6
+ID2D1DeviceContext7 # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,7,4,5,3,3,4,3,9,5,5,2,2,2,3,3,6,2,2,2,2,2,2,1,2,1,7,6,3,7,3,4,3,4,6,5,4,6,3,3,3,4,5,7,6,3,4,2,4,4,2,7,2,10,8,7,8,13,13,5,2,3,3,6,1,7,10
+ID2D1DrawInfo # 3,1,1,4,3,2,2,3,3,3,3,6
+ID2D1DrawTransform # 3,1,1,1,4,6,7,2
+ID2D1DrawingStateBlock # 3,1,1,2,2,2,2,2
+ID2D1DrawingStateBlock1 # 3,1,1,2,2,2,2,2,2,2
+ID2D1Effect # 3,1,1,1,4,2,2,2,5,5,5,5,2,3,4,2,3,1,2
+ID2D1EffectContext # 3,1,1,3,3,4,3,4,4,4,3,4,4,4,2,7,3,5,3,5,3,3,4,2
+ID2D1EffectContext1 # 3,1,1,3,3,4,3,4,4,4,3,4,4,4,2,7,3,5,3,5,3,3,4,2,7
+ID2D1EffectContext2 # 3,1,1,3,3,4,3,4,4,4,3,4,4,4,2,7,3,5,3,5,3,3,4,2,7,3,3
+ID2D1EffectImpl # 3,1,1,3,2,2
+ID2D1EllipseGeometry # 3,1,1,2,3,6,8,6,5,5,4,6,4,4,4,6,6,2
+ID2D1Factory # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3
+ID2D1Factory1 # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3,3,5,2,4,3,6,6,2,5,3
+ID2D1Factory2 # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3,3,5,2,4,3,6,6,2,5,3,3
+ID2D1Factory3 # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3,3,5,2,4,3,6,6,2,5,3,3,3
+ID2D1Factory4 # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3,3,5,2,4,3,6,6,2,5,3,3,3,3
+ID2D1Factory5 # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3,3,5,2,4,3,6,6,2,5,3,3,3,3,3
+ID2D1Factory6 # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3,3,5,2,4,3,6,6,2,5,3,3,3,3,3,3
+ID2D1Factory7 # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3,3,5,2,4,3,6,6,2,5,3,3,3,3,3,3,3
+ID2D1Factory8 # 3,1,1,1,3,3,3,3,5,4,2,5,4,4,4,4,3,3,5,2,4,3,6,6,2,5,3,3,3,3,3,3,3,3
+ID2D1GdiInteropRenderTarget # 3,1,1,3,2
+ID2D1GdiMetafile # 3,1,1,2,2,2
+ID2D1GdiMetafile1 # 3,1,1,2,2,2,3,2
+ID2D1GdiMetafileSink # 3,1,1,4
+ID2D1GdiMetafileSink1 # 3,1,1,4,5
+ID2D1Geometry # 3,1,1,2,3,6,8,6,5,5,4,6,4,4,4,6,6
+ID2D1GeometryGroup # 3,1,1,2,3,6,8,6,5,5,4,6,4,4,4,6,6,1,1,3
+ID2D1GeometryRealization # 3,1,1,2
+ID2D1GeometrySink # 3,1,1,2,2,4,3,3,2,1,3,2,2,3,2
+ID2D1GradientMesh # 3,1,1,2,1,4
+ID2D1GradientStopCollection # 3,1,1,2,1,3,1,1
+ID2D1GradientStopCollection1 # 3,1,1,2,1,3,1,1,3,1,1,1,1
+ID2D1HwndRenderTarget # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2,1,2,1
+ID2D1Image # 3,1,1,2
+ID2D1ImageBrush # 3,1,1,2,2,2,1,2,2,2,2,2,2,2,1,1,1,2
+ID2D1ImageSource # 3,1,1,2,1,2
+ID2D1ImageSourceFromWic # 3,1,1,2,1,2,2,2,2
+ID2D1Ink # 3,1,1,2,2,2,3,2,4,2,1,4,5,4
+ID2D1InkStyle # 3,1,1,2,2,2,2,1
+ID2D1Layer # 3,1,1,2,2
+ID2D1LinearGradientBrush # 3,1,1,2,2,2,1,2,3,3,2,2,2
+ID2D1LookupTable3D # 3,1,1,2
+ID2D1Mesh # 3,1,1,2,2
+ID2D1Multithread # 3,1,1,1,1,1
+ID2D1OffsetTransform # 3,1,1,1,3,2
+ID2D1PathGeometry # 3,1,1,2,3,6,8,6,5,5,4,6,4,4,4,6,6,2,2,2,2
+ID2D1PathGeometry1 # 3,1,1,2,3,6,8,6,5,5,4,6,4,4,4,6,6,2,2,2,2,6
+ID2D1PrintControl # 3,1,1,7,1
+ID2D1Properties # 3,1,1,1,4,2,2,2,5,5,5,5,2,3
+ID2D1RadialGradientBrush # 3,1,1,2,2,2,1,2,3,3,2,2,2,2,1,1,2
+ID2D1RectangleGeometry # 3,1,1,2,3,6,8,6,5,5,4,6,4,4,4,6,6,2
+ID2D1RenderInfo # 3,1,1,4,3,2,2
+ID2D1RenderTarget # 3,1,1,2,7,4,5,5,4,6,5,5,6,3,2,8,5,3,5,3,5,3,5,4,3,6,6,8,6,6,2,2,2,1,2,1,2,2,5,3,3,1,3,2,2,3,1,2,1,3,2,3,3,2,2,1,2
+ID2D1Resource # 3,1,1,2
+ID2D1ResourceTexture # 3,1,1,7
+ID2D1RoundedRectangleGeometry # 3,1,1,2,3,6,8,6,5,5,4,6,4,4,4,6,6,2
+ID2D1SimplifiedGeometrySink # 3,1,1,2,2,4,3,3,2,1
+ID2D1SolidColorBrush # 3,1,1,2,2,2,1,2,2,2
+ID2D1SourceTransform # 3,1,1,1,4,6,7,2,5
+ID2D1SpriteBatch # 3,1,1,2,10,11,7,1,1
+ID2D1StrokeStyle # 3,1,1,2,1,1,1,1,1,1,1,1,3
+ID2D1StrokeStyle1 # 3,1,1,2,1,1,1,1,1,1,1,1,3,1
+ID2D1SvgAttribute # 3,1,1,2,2,2
+ID2D1SvgDocument # 3,1,1,2,3,2,2,2,3,3,3,5,4,4,6
+ID2D1SvgElement # 3,1,1,2,2,3,1,1,2,1,2,2,3,3,3,2,3,2,3,3,1,5,4,2,3,3,1,3,5,4,4,5,5,4
+ID2D1SvgGlyphStyle # 3,1,1,2,2,2,6,1,6
+ID2D1SvgPaint # 3,1,1,2,2,2,2,1,2,2,2,3,1
+ID2D1SvgPathData # 3,1,1,2,2,2,2,4,4,1,2,4,4,1,3
+ID2D1SvgPointCollection # 3,1,1,2,2,2,2,4,4,1
+ID2D1SvgStrokeDashArray # 3,1,1,2,2,2,2,4,4,4,4,1
+ID2D1TessellationSink # 3,1,1,3,1
+ID2D1Transform # 3,1,1,1,4,6,7
+ID2D1TransformGraph # 3,1,1,1,2,2,2,2,4,4,1,2
+ID2D1TransformNode # 3,1,1,1
+ID2D1TransformedGeometry # 3,1,1,2,3,6,8,6,5,5,4,6,4,4,4,6,6,2,2
+ID2D1TransformedImageSource # 3,1,1,2,2,2
+ID2D1VertexBuffer # 3,1,1,3,1
+ID3D10BlendState1 # 3,1,1,2,4,4,3,2,2
+ID3D10Buffer # 3,1,1,2,4,4,3,2,2,1,4,1,2
+ID3D10DepthStencilState # 3,1,1,2,4,4,3,2
+ID3D10DepthStencilView # 3,1,1,2,4,4,3,2,2
+ID3D10Device1 # 3,1,1,4,4,2,4,2,4,3,4,2,6,4,6,5,4,2,2,4,4,3,4,4,4,4,3,4,1,2,3,3,9,3,7,3,5,2,6,4,4,2,4,2,4,2,6,4,4,2,2,4,4,3,4,4,4,4,3,4,2,3,3,1,2,1,4,4,3,1,1,4,4,4,4,4,4,4,6,4,4,7,4,3,3,3,3,3,3,3,3,4,2,10,1,4,3,3,4,3,1
+ID3D10GeometryShader # 3,1,1,2,4,4,3
+ID3D10InputLayout # 3,1,1,2,4,4,3
+ID3D10Multithread # 3,1,1,1,1,2,1
+ID3D10PixelShader # 3,1,1,2,4,4,3
+ID3D10Query # 3,1,1,2,4,4,3,1,1,4,1,2
+ID3D10RasterizerState # 3,1,1,2,4,4,3,2
+ID3D10RenderTargetView # 3,1,1,2,4,4,3,2,2
+ID3D10SamplerState # 3,1,1,2,4,4,3,2
+ID3D10ShaderReflection # 3,1,1,2,2,2,3,3,3
+ID3D10ShaderReflectionConstantBuffer # 2,2,2
+ID3D10ShaderReflectionType # 2,2,2,2
+ID3D10ShaderReflectionVariable # 2,1
+ID3D10ShaderResourceView1 # 3,1,1,2,4,4,3,2,2,2
+ID3D10Texture1D # 3,1,1,2,4,4,3,2,2,1,5,2,2
+ID3D10Texture2D # 3,1,1,2,4,4,3,2,2,1,5,2,2
+ID3D10Texture3D # 3,1,1,2,4,4,3,2,2,1,5,2,2
+ID3D10VertexShader # 3,1,1,2,4,4,3
+ID3D11BlendState1 # 3,1,1,2,4,4,3,2,2
+ID3D11Buffer # 3,1,1,2,4,4,3,2,2,1,2
+ID3D11ClassLinkage # 3,1,1,2,4,4,3,4,7
+ID3D11CommandList # 3,1,1,2,4,4,3,1
+ID3D11ComputeShader # 3,1,1,2,4,4,3
+ID3D11DepthStencilState # 3,1,1,2,4,4,3,2
+ID3D11DepthStencilView # 3,1,1,2,4,4,3,2,2
+ID3D11Device # 3,1,1,4,4,4,4,4,4,4,4,6,5,5,10,5,5,5,5,2,3,3,3,3,3,3,3,3,4,3,4,2,10,4,4,4,3,1,1,1,2,2,1
+ID3D11Device5 # 3,1,1,4,4,4,4,4,4,4,4,6,5,5,10,5,5,5,5,2,3,3,3,3,3,3,3,3,4,3,4,2,10,4,4,4,3,1,1,1,2,2,1,2,3,3,3,8,4,5,2,3,8,5,4,4,3,4,4,4,3,2,3,7,7,3,2,4,6
+ID3D11DeviceContext # 3,1,1,2,4,4,3,4,4,4,4,4,4,3,6,3,4,2,6,4,6,5,4,4,2,4,4,2,2,5,3,4,4,4,8,4,3,4,1,3,3,4,3,2,3,3,9,3,7,4,3,3,3,5,2,3,2,6,3,4,4,4,4,4,4,4,4,4,5,4,4,4,4,4,4,4,4,4,2,6,4,4,4,2,4,4,3,4,4,4,7,4,3,3,2,3,3,4,4,4,4,4,4,4,4,4,4,4,4,4,1,1,1,1,3
+ID3D11DeviceContext4 # 3,1,1,2,4,4,3,4,4,4,4,4,4,3,6,3,4,2,6,4,6,5,4,4,2,4,4,2,2,5,3,4,4,4,8,4,3,4,1,3,3,4,3,2,3,3,9,3,7,4,3,3,3,5,2,3,2,6,3,4,4,4,4,4,4,4,4,4,5,4,4,4,4,4,4,4,4,4,2,6,4,4,4,2,4,4,3,4,4,4,7,4,3,3,2,3,3,4,4,4,4,4,4,4,4,4,4,4,4,4,1,1,1,1,3,10,8,2,2,6,6,6,6,6,6,6,6,6,6,6,6,3,5,4,11,7,8,6,4,3,1,3,3,1,3,2,2,4,4
+ID3D11DomainShader # 3,1,1,2,4,4,3
+ID3D11GeometryShader # 3,1,1,2,4,4,3
+ID3D11HullShader # 3,1,1,2,4,4,3
+ID3D11InputLayout # 3,1,1,2,4,4,3
+ID3D11PixelShader # 3,1,1,2,4,4,3
+ID3D11Query # 3,1,1,2,4,4,3,1,2
+ID3D11RasterizerState2 # 3,1,1,2,4,4,3,2,2,2
+ID3D11RenderTargetView # 3,1,1,2,4,4,3,2,2
+ID3D11SamplerState # 3,1,1,2,4,4,3,2
+ID3D11ShaderReflection # 3,1,1,2,2,2,3,3,3,3,2,3,1,1,1,1,1,1,1,2,4,1
+ID3D11ShaderReflectionConstantBuffer # 2,2,2
+ID3D11ShaderReflectionType # 2,2,2,2,2,1,1,1,2,2,2
+ID3D11ShaderReflectionVariable # 2,1,1,2
+ID3D11ShaderResourceView # 3,1,1,2,4,4,3,2,2
+ID3D11Texture1D # 3,1,1,2,4,4,3,2,2,1,2
+ID3D11Texture2D # 3,1,1,2,4,4,3,2,2,1,2
+ID3D11Texture3D # 3,1,1,2,4,4,3,2,2,1,2
+ID3D11UnorderedAccessView # 3,1,1,2,4,4,3,2,2
+ID3D11VertexShader # 3,1,1,2,4,4,3
+ID3DBlob # 3,1,1,1,1
+ID3DInclude # 6,2
+ID3DUserDefinedAnnotation # 3,1,1,2,1,2,1
+IDMOWrapperFilter # 3,1,1,3
+IDWriteAsyncResult # 3,1,1,1,1
+IDWriteBitmapRenderTarget # 3,1,1,8,1,1,2,2,2,2,3
+IDWriteBitmapRenderTarget1 # 3,1,1,8,1,1,2,2,2,2,3,1,2
+IDWriteBitmapRenderTarget2 # 3,1,1,8,1,1,2,2,2,2,3,1,2,2
+IDWriteBitmapRenderTarget3 # 3,1,1,8,1,1,2,2,2,2,3,1,2,2,1,9,9
+IDWriteColorGlyphRunEnumerator # 3,1,1,2,2
+IDWriteColorGlyphRunEnumerator1 # 3,1,1,2,2,2
+IDWriteFactory # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9
+IDWriteFactory1 # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9,3,8
+IDWriteFactory2 # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9,3,8,2,2,9,9,10
+IDWriteFactory3 # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9,3,8,2,2,9,9,10,10,9,5,6,2,2,3,4,2
+IDWriteFactory4 # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9,3,8,2,2,9,9,10,10,9,5,6,2,2,3,4,2,10,5,7
+IDWriteFactory5 # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9,3,8,2,2,9,9,10,10,9,5,6,2,2,3,4,2,10,5,7,2,2,4,3,5
+IDWriteFactory6 # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9,3,8,2,2,9,9,10,10,9,5,6,2,2,3,4,2,10,5,7,2,2,4,3,5,7,4,3,4,4,2,8
+IDWriteFactory7 # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9,3,8,2,2,9,9,10,10,9,5,6,2,2,3,4,2,10,5,7,2,2,4,3,5,7,4,3,4,4,2,8,3,4
+IDWriteFactory8 # 3,1,1,3,5,2,2,4,5,7,2,3,7,2,2,9,2,2,7,10,3,2,5,9,3,8,2,2,9,9,10,10,9,5,6,2,2,3,4,2,10,5,7,2,2,4,3,5,7,4,3,4,4,2,8,3,4,11
+IDWriteFont # 3,1,1,2,1,1,1,1,2,4,1,2,3,2
+IDWriteFont1 # 3,1,1,2,1,1,1,1,2,4,1,2,3,2,2,2,4,1
+IDWriteFont2 # 3,1,1,2,1,1,1,1,2,4,1,2,3,2,2,2,4,1,1
+IDWriteFont3 # 3,1,1,2,1,1,1,1,2,4,1,2,3,2,2,2,4,1,1,2,2,2,2,1
+IDWriteFontCollection # 3,1,1,1,3,4,3
+IDWriteFontCollection1 # 3,1,1,1,3,4,3,2,3
+IDWriteFontCollection2 # 3,1,1,1,3,4,3,2,3,3,5,1,2
+IDWriteFontCollection3 # 3,1,1,1,3,4,3,2,3,3,5,1,2,1
+IDWriteFontCollectionLoader # 3,1,1,5
+IDWriteFontDownloadListener # 3,1,1,4
+IDWriteFontDownloadQueue # 3,1,1,3,2,1,2,1,1
+IDWriteFontFace # 3,1,1,1,3,1,1,1,2,1,5,4,6,2,9,6,5,9
+IDWriteFontFace1 # 3,1,1,1,3,1,1,1,2,1,5,4,6,2,9,6,5,9,2,5,2,4,1,5,9,4,1,9,4,1
+IDWriteFontFace2 # 3,1,1,1,3,1,1,1,2,1,5,4,6,2,9,6,5,9,2,5,2,4,1,5,9,4,1,9,4,1,1,1,1,5,11
+IDWriteFontFace3 # 3,1,1,1,3,1,1,1,2,1,5,4,6,2,9,6,5,9,2,5,2,4,1,5,9,4,1,9,4,1,1,1,1,5,11,2,2,1,1,1,2,2,4,2,11,2,2,5,5
+IDWriteFontFace4 # 3,1,1,1,3,1,1,1,2,1,5,4,6,2,9,6,5,9,2,5,2,4,1,5,9,4,1,9,4,1,1,1,1,5,11,2,2,1,1,1,2,2,4,2,11,2,2,5,5,5,1,6,2
+IDWriteFontFace5 # 3,1,1,1,3,1,1,1,2,1,5,4,6,2,9,6,5,9,2,5,2,4,1,5,9,4,1,9,4,1,1,1,1,5,11,2,2,1,1,1,2,2,4,2,11,2,2,5,5,5,1,6,2,1,3,1,2,2
+IDWriteFontFace6 # 3,1,1,1,3,1,1,1,2,1,5,4,6,2,9,6,5,9,2,5,2,4,1,5,9,4,1,9,4,1,1,1,1,5,11,2,2,1,1,1,2,2,4,2,11,2,2,5,5,5,1,6,2,1,3,1,2,2,3,3
+IDWriteFontFace7 # 3,1,1,1,3,1,1,1,2,1,5,4,6,2,9,6,5,9,2,5,2,4,1,5,9,4,1,9,4,1,1,1,1,5,11,2,2,1,1,1,2,2,4,2,11,2,2,5,5,5,1,6,2,1,3,1,2,2,3,3,2,4
+IDWriteFontFaceReference # 3,1,1,2,3,2,1,1,2,1,1,2,1,1,3,3,5
+IDWriteFontFaceReference1 # 3,1,1,2,3,2,1,1,2,1,1,2,1,1,3,3,5,2,1,3
+IDWriteFontFallback # 3,1,1,12
+IDWriteFontFallback1 # 3,1,1,12,11
+IDWriteFontFallbackBuilder # 3,1,1,9,2,2
+IDWriteFontFamily # 3,1,1,2,1,3,2,5,5
+IDWriteFontFamily1 # 3,1,1,2,1,3,2,5,5,2,3,3
+IDWriteFontFamily2 # 3,1,1,2,1,3,2,5,5,2,3,3,4,2
+IDWriteFontFile # 3,1,1,3,2,5
+IDWriteFontFileEnumerator # 3,1,1,2,2
+IDWriteFontFileLoader # 3,1,1,4
+IDWriteFontFileStream # 3,1,1,7,2,2,2
+IDWriteFontList # 3,1,1,2,1,3
+IDWriteFontList1 # 3,1,1,2,1,3,2,3,3
+IDWriteFontList2 # 3,1,1,2,1,3,2,3,3,2
+IDWriteFontResource # 3,1,1,2,1,1,3,3,2,3,2,5,1,5,5
+IDWriteFontSet # 3,1,1,1,3,4,4,3,4,5,3,6,4
+IDWriteFontSet1 # 3,1,1,1,3,4,4,3,4,5,3,6,4,5,2,4,5,5,7,7,5,4,3,3,3,2
+IDWriteFontSet2 # 3,1,1,1,3,4,4,3,4,5,3,6,4,5,2,4,5,5,7,7,5,4,3,3,3,2,1
+IDWriteFontSet3 # 3,1,1,1,3,4,4,3,4,5,3,6,4,5,2,4,5,5,7,7,5,4,3,3,3,2,1,2,2,4
+IDWriteFontSet4 # 3,1,1,1,3,4,4,3,4,5,3,6,4,5,2,4,5,5,7,7,5,4,3,3,3,2,1,2,2,4,8,6
+IDWriteFontSetBuilder # 3,1,1,4,2,2,2
+IDWriteFontSetBuilder1 # 3,1,1,4,2,2,2,2
+IDWriteFontSetBuilder2 # 3,1,1,4,2,2,2,2,10,2
+IDWriteGdiInterop # 3,1,1,3,4,3,3,5
+IDWriteGdiInterop1 # 3,1,1,3,4,3,3,5,4,3,3,4
+IDWriteGlyphRunAnalysis # 3,1,1,3,5,5
+IDWriteInMemoryFontFileLoader # 3,1,1,4,6,1
+IDWriteInlineObject # 3,1,1,8,2,2,3
+IDWriteLocalFontFileLoader # 3,1,1,4,4,5,4
+IDWriteLocalizedStrings # 3,1,1,1,4,3,4,3,4
+IDWriteNumberSubstitution # 3,1,1
+IDWritePaintReader # 3,1,1,6,2,2,3,3,3,1,4,4
+IDWritePixelSnapping # 3,1,1,3,3,3
+IDWriteRemoteFontFileLoader # 3,1,1,4,4,4,5
+IDWriteRemoteFontFileStream # 3,1,1,7,2,2,2,2,7,1,5
+IDWriteRenderingParams # 3,1,1,1,1,1,1,1
+IDWriteRenderingParams1 # 3,1,1,1,1,1,1,1,1
+IDWriteRenderingParams2 # 3,1,1,1,1,1,1,1,1,1
+IDWriteRenderingParams3 # 3,1,1,1,1,1,1,1,1,1,1
+IDWriteStringList # 3,1,1,1,3,4,3,4
+IDWriteTextAnalysisSink # 3,1,1,4,4,5,4
+IDWriteTextAnalysisSink1 # 3,1,1,4,4,5,4,7
+IDWriteTextAnalysisSource # 3,1,1,4,4,1,4,4
+IDWriteTextAnalysisSource1 # 3,1,1,4,4,1,4,4,5
+IDWriteTextAnalyzer # 3,1,1,5,5,5,5,18,19,22
+IDWriteTextAnalyzer1 # 3,1,1,5,5,5,5,18,19,22,12,10,5,4,4,7,11,8,19
+IDWriteTextAnalyzer2 # 3,1,1,5,5,5,5,18,19,22,12,10,5,4,4,7,11,8,19,6,8,9
+IDWriteTextFormat # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3
+IDWriteTextFormat1 # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3,2,1,2,1,2,1,2,2
+IDWriteTextFormat2 # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3,2,1,2,1,2,1,2,2,2,2
+IDWriteTextFormat3 # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3,2,1,2,1,2,1,2,2,2,2,3,1,3,1,2
+IDWriteTextLayout # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3,2,2,4,4,4,4,4,4,4,4,4,4,4,4,1,1,4,4,5,4,4,4,4,4,4,4,4,4,4,5,5,4,2,2,4,2,6,6,8
+IDWriteTextLayout1 # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3,2,2,4,4,4,4,4,4,4,4,4,4,4,4,1,1,4,4,5,4,4,4,4,4,4,4,4,4,4,5,5,4,2,2,4,2,6,6,8,4,4,6,6
+IDWriteTextLayout2 # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3,2,2,4,4,4,4,4,4,4,4,4,4,4,4,1,1,4,4,5,4,4,4,4,4,4,4,4,4,4,5,5,4,2,2,4,2,6,6,8,4,4,6,6,2,2,1,2,1,2,1,2,2
+IDWriteTextLayout3 # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3,2,2,4,4,4,4,4,4,4,4,4,4,4,4,1,1,4,4,5,4,4,4,4,4,4,4,4,4,4,5,5,4,2,2,4,2,6,6,8,4,4,6,6,2,2,1,2,1,2,1,2,2,1,2,2,4
+IDWriteTextLayout4 # 3,1,1,2,2,2,2,2,2,3,4,1,1,1,1,1,1,3,4,2,1,3,1,1,1,1,1,3,2,2,4,4,4,4,4,4,4,4,4,4,4,4,1,1,4,4,5,4,4,4,4,4,4,4,4,4,4,5,5,4,2,2,4,2,6,6,8,4,4,6,6,2,2,1,2,1,2,1,2,2,1,2,2,4,5,2,5,1,2
+IDWriteTextRenderer # 3,1,1,3,3,3,8,6,6,8
+IDWriteTextRenderer1 # 3,1,1,3,3,3,8,6,6,8,9,7,7,9
+IDWriteTypography # 3,1,1,3,1,3
+IDXGIAdapter4 # 3,1,1,4,3,4,3,3,2,3,2,2,3,2,4,5,3,2,2
+IDXGIDevice3 # 3,1,1,4,3,4,3,2,6,4,2,2,2,2,4,4,2,1
+IDXGIFactory7 # 3,1,1,4,3,4,3,3,3,2,4,3,3,1,1,7,6,3,4,3,2,4,3,2,5,1,5,3,4,5,3,2
+IDXGIOutput6 # 3,1,1,4,3,4,3,2,5,4,1,3,1,2,2,2,2,2,2,5,4,2,3,1,4,5,6,2,2
+IDXGIResource # 3,1,1,4,3,4,3,3,2,2,2,2
+IDXGISurface2 # 3,1,1,4,3,4,3,3,2,3,1,3,2,4
+IDXGISwapChain # 3,1,1,4,3,4,3,3,3,4,3,3,2,6,2,2,2,2
+IDXGISwapChain1 # 3,1,1,4,3,4,3,3,3,4,3,3,2,6,2,2,2,2,2,2,2,3,4,1,2,2,2,2,2
+IDataObject # 3,1,1,3,3,2,3,4,3,5,2,2
+IDirect3D9 # 3,1,1,2,1,4,3,5,3,6,7,7,6,5,4,2,7
+IDirect3D9Ex # 3,1,1,2,1,4,3,5,3,6,7,7,6,5,4,2,7,3,5,4,8,3
+IDirect3DCubeTexture9 # 3,1,1,2,5,4,2,2,1,1,1,2,1,1,2,1,1,3,4,6,3,3
+IDirect3DDevice9 # 3,1,1,1,1,1,2,2,3,2,4,4,2,3,3,1,2,5,5,3,2,4,3,9,10,8,7,7,9,9,5,3,3,3,6,4,7,3,3,2,2,1,1,7,3,3,3,2,2,2,2,3,3,3,3,3,3,3,3,3,1,2,2,2,3,3,4,4,4,4,2,3,3,2,2,2,2,2,1,2,1,4,7,5,9,7,3,2,2,2,2,3,2,2,4,4,4,4,4,4,5,5,3,3,2,2,3,2,2,4,4,4,4,4,4,4,4,2,3
+IDirect3DDevice9Ex # 3,1,1,1,1,1,2,2,3,2,4,4,2,3,3,1,2,5,5,3,2,4,3,9,10,8,7,7,9,9,5,3,3,3,6,4,7,3,3,2,2,1,1,7,3,3,3,2,2,2,2,3,3,3,3,3,3,3,3,3,1,2,2,2,3,3,4,4,4,4,2,3,3,2,2,2,2,2,1,2,1,4,7,5,9,7,3,2,2,2,2,3,2,2,4,4,4,4,4,4,5,5,3,3,2,2,3,2,2,4,4,4,4,4,4,4,4,2,3,5,9,6,2,2,2,3,2,2,2,10,8,10,3,4
+IDirect3DDeviceManager9 # 3,1,1,3,2,2,2,4,3,4
+IDirect3DIndexBuffer9 # 3,1,1,2,5,4,2,2,1,1,1,5,1,2
+IDirect3DPixelShader9 # 3,1,1,2,3
+IDirect3DQuery9 # 3,1,1,2,1,1,2,4
+IDirect3DStateBlock9 # 3,1,1,2,1,1
+IDirect3DSurface9 # 3,1,1,2,5,4,2,2,1,1,1,3,2,4,1,2,2
+IDirect3DSwapChain9 # 3,1,1,6,2,4,2,2,2,2
+IDirect3DTexture9 # 3,1,1,2,5,4,2,2,1,1,1,2,1,1,2,1,1,3,3,5,2,2
+IDirect3DVertexBuffer9 # 3,1,1,2,5,4,2,2,1,1,1,5,1,2
+IDirect3DVertexDeclaration9 # 3,1,1,2,3
+IDirect3DVertexShader9 # 3,1,1,2,3
+IDirect3DVolume9 # 3,1,1,2,5,4,2,3,2,4,1
+IDirect3DVolumeTexture9 # 3,1,1,2,5,4,2,2,1,1,1,2,1,1,2,1,1,3,3,5,2,2
+IDirectDraw # 3,1,1,1,4,5,4,3,5,5,1,3,2,3,2,2,2,2,2,1,3,4,3
+IDirectDraw2 # 3,1,1,1,4,5,4,3,5,5,1,3,2,3,2,2,2,2,2,1,3,6,3,4
+IDirectDraw4 # 3,1,1,1,4,5,4,3,5,5,1,3,2,3,2,2,2,2,2,1,3,6,3,4,3,1,1,3
+IDirectDraw7 # 3,1,1,1,4,5,4,3,5,5,1,3,2,3,2,2,2,2,2,1,3,6,3,4,3,1,1,3,4,3
+IDirectDrawClipper # 3,1,1,4,2,3,2,3,3
+IDirectDrawMediaStream # 3,1,1,2,3,3,3,4,2,5,3,2,2,5,2
+IDirectDrawPalette # 3,1,1,2,5,4,5
+IDirectDrawStreamSample # 3,1,1,2,4,3,5,3,3,2
+IDirectDrawSurface # 3,1,1,2,2,6,4,6,3,3,4,3,3,2,2,2,3,2,2,3,2,2,2,3,1,5,2,1,2,3,3,2,2,6,2,3
+IDirectDrawSurface2 # 3,1,1,2,2,6,4,6,3,3,4,3,3,2,2,2,3,2,2,3,2,2,2,3,1,5,2,1,2,3,3,2,2,6,2,3,2,2,2
+IDirectDrawSurface3 # 3,1,1,2,2,6,4,6,3,3,4,3,3,2,2,2,3,2,2,3,2,2,2,3,1,5,2,1,2,3,3,2,2,6,2,3,2,2,2,3
+IDirectDrawSurface4 # 3,1,1,2,2,6,4,6,3,3,4,3,3,2,2,2,3,2,2,3,2,2,2,3,1,5,2,1,2,3,3,2,2,6,2,3,2,2,2,3,5,4,2,2,1
+IDirectDrawSurface7 # 3,1,1,2,2,6,4,6,3,3,4,3,3,2,2,2,3,2,2,3,2,2,2,3,1,5,2,1,2,3,3,2,2,6,2,3,2,2,2,3,5,4,2,2,1,2,2,2,2
+IDirectMusic # 3,1,1,3,4,5,3,3,2,2,2,3
+IDirectMusic8 # 3,1,1,3,4,5,3,3,2,2,2,3,2
+IDirectSound # 3,1,1,4,2,3,3,1,2,2,2
+IDirectSound3DBuffer # 3,1,1,2,3,2,2,2,2,2,2,2,3,4,5,3,3,3,3,5,5
+IDirectSound3DListener # 3,1,1,2,2,2,3,2,2,2,3,3,3,8,5,3,5,1
+IDirectSound8 # 3,1,1,4,2,3,3,1,2,2,2,2
+IDirectSoundBuffer8 # 3,1,1,2,3,4,2,2,2,2,3,8,4,2,2,2,2,2,1,5,1,4,4,5
+IDirectSoundNotify # 3,1,1,3
+IDirectXVideoAccelerationService # 3,1,1,10
+IDirectXVideoProcessor # 3,1,1,2,5,2,3,3,6
+IDirectXVideoProcessorService # 3,1,1,10,2,4,5,6,5,6,6,6
+IDispatch # 3,1,1,2,4,6,9
+IDispatchEx # 3,1,1,2,4,6,9,4,8,3,2,4,3,4,2
+IDropSource # 3,1,1,3,2
+IDropTarget # 3,1,1,6,5,1,6
+IEnumDMO # 3,1,1,5,2,1,2
+IEnumFilters # 3,1,1,4,2,1,2
+IEnumMediaTypes # 3,1,1,4,2,1,2
+IEnumPins # 3,1,1,4,2,1,2
+IEnumString # 3,1,1,4,2,1,2
+IEnumWbemClassObject # 3,1,1,1,5,3,2,3
+IFileSourceFilter # 3,1,1,3,3
+IFilterGraph # 3,1,1,3,2,2,3,4,2,2,1
+IFilterGraph2 # 3,1,1,3,2,2,3,4,2,2,1,3,2,3,4,2,1,1,5,3,4
+IFont # 3,1,1,2,2,2,3,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,2,2,2,2
+IFontDisp # 3,1,1,2,4,6,9
+IGraphBuilder # 3,1,1,3,2,2,3,4,2,2,1,3,2,3,4,2,1,1
+IGraphConfig # 3,1,1,7,5,2,2,2,2,4,3,3,3
+IInspectable # 3,1,1,3,2,2
+IKsPropertySet # 3,1,1,7,8,4
+IMF2DBuffer # 3,1,1,3,1,3,2,2,3,3
+IMFActivate # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2,3,1,1
+IMFAsyncCallback # 3,1,1,3,2
+IMFAsyncResult # 3,1,1,2,1,2,2,1
+IMFAttributes # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2
+IMFByteStream # 3,1,1,2,2,3,2,3,2,4,5,3,4,5,3,6,1,1
+IMFClock # 3,1,1,2,4,2,3,2
+IMFCollection # 3,1,1,2,3,2,3,3,1
+IMFDXGIBuffer # 3,1,1,3,2,4,3
+IMFDXGIDeviceManager # 3,1,1,2,4,5,2,3,2,3
+IMFGetService # 3,1,1,4
+IMFMediaBuffer # 3,1,1,4,1,2,2,2
+IMFMediaEngine # 3,1,1,2,2,2,2,2,1,1,2,2,1,3,1,1,1,3,1,1,1,1,3,1,3,2,2,1,1,2,1,2,1,1,1,2,1,3,1,1,3,3,1,5,2
+IMFMediaEngineClassFactory # 3,1,1,4,2,2
+IMFMediaEngineEx # 3,1,1,2,2,2,2,2,1,1,2,2,1,3,1,1,1,3,1,1,1,1,3,1,3,2,2,1,1,2,1,2,1,1,1,2,1,3,1,1,3,3,1,5,2,3,3,4,1,3,3,2,2,3,2,4,3,3,1,2,3,3,1,3,2,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,4,2
+IMFMediaEngineNotify # 3,1,1,4
+IMFMediaError # 3,1,1,1,1,2,2
+IMFMediaEvent # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2,2,2,2,2
+IMFMediaEventGenerator # 3,1,1,3,3,3,5
+IMFMediaSession # 3,1,1,3,3,3,5,3,1,3,1,1,1,1,2,2,5
+IMFMediaSource # 3,1,1,3,3,3,5,2,2,4,1,1,1
+IMFMediaType # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2,2,2,3,6,6
+IMFMediaTypeHandler # 3,1,1,3,2,3,2,2,2
+IMFPresentationClock # 3,1,1,2,4,2,3,2,2,2,2,2,2,3,1,1
+IMFPresentationDescriptor # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2,2,4,2,2,2
+IMFSample # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2,2,2,2,3,2,3,2,3,2,2,2,1,2,2
+IMFSimpleAudioVolume # 3,1,1,2,2,2,2
+IMFSourceReader # 3,1,1,3,3,4,3,4,3,7,2,5,4
+IMFSourceReaderCallback # 3,1,1,7,2,3
+IMFSourceResolver # 3,1,1,6,7,7,4,8,4,2
+IMFStreamDescriptor # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2,2,2
+IMFTopology # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2,2,2,2,2,3,1,2,4,2,2
+IMFTopologyNode # 3,1,1,3,3,4,4,3,3,3,3,3,5,4,3,5,4,4,3,2,1,3,4,4,3,3,4,3,1,1,2,4,2,2,2,2,2,3,2,2,4,2,4,4,3,3,3,3,2
+IMFTransform # 3,1,1,5,3,5,3,3,2,3,3,2,3,4,4,4,4,3,3,3,2,5,3,3,4,5
+IMFVideoDisplayControl # 3,1,1,3,3,3,3,2,2,2,2,1,5,2,2,2,2,2,2
+IMFVideoSampleAllocator # 3,1,1,2,1,3,2
+IMFVideoSampleAllocatorEx # 3,1,1,2,1,3,2,5
+IMMDevice # 3,1,1,5,3,2,2
+IMMDeviceCollection # 3,1,1,2,3
+IMMDeviceEnumerator # 3,1,1,4,4,3,2,2
+IMMEndpoint # 3,1,1,2
+IMMNotificationClient # 3,1,1,3,2,2,4,7
+IMalloc # 3,1,1,2,3,2,2,2,1
+IMediaControl # 3,1,1,2,4,6,9,1,1,1,3,2,3,2,2,1
+IMediaEventEx # 3,1,1,2,4,6,9,2,5,3,2,2,4,4,2,2
+IMediaEventSink # 3,1,1,4
+IMediaFilter # 3,1,1,2,1,1,3,3,2,2
+IMediaPosition # 3,1,1,2,4,6,9,2,3,2,2,3,2,3,3,2,2,2
+IMediaSample # 3,1,1,2,1,3,3,1,2,1,2,1,2,2,2,1,2,3,3
+IMediaSample2 # 3,1,1,2,1,3,3,1,2,1,2,1,2,2,2,1,2,3,3,3,3
+IMediaSeeking # 3,1,1,2,2,2,2,2,2,2,2,2,2,6,5,3,3,3,2,2
+IMediaStream # 3,1,1,2,3,3,3,4,2
+IMemAllocator # 3,1,1,3,2,1,1,5,2
+IMemInputPin # 3,1,1,2,3,2,2,4,1
+IMultiMediaStream # 3,1,1,3,3,3,2,2,2,2,3,2
+INSSBuffer # 3,1,1,2,2,2,2,3
+IObjectSafety # 3,1,1,4,4
+IOleControl # 3,1,1,2,2,2,2
+IOleInPlaceActiveObject # 3,1,1,2,2,2,2,2,4,2
+IOleInPlaceObject # 3,1,1,2,2,1,1,3,1
+IOleObject # 3,1,1,2,2,3,2,3,4,4,3,7,2,1,1,2,3,3,3,3,2,2,3,2
+IOleWindow # 3,1,1,2,2
+IOverlay # 3,1,1,3,3,2,2,2,2,4,3,3,1
+IPersist # 3,1,1,2
+IPersistFile # 3,1,1,2,1,3,3,2,2
+IPersistStream # 3,1,1,2,1,2,3,2
+IPersistStreamInit # 3,1,1,2,1,2,3,2,1
+IPicture # 3,1,1,2,2,2,2,2,11,2,2,4,2,2,1,4,2
+IPin # 3,1,1,3,3,1,2,2,2,2,2,2,2,3,1,1,1,7
+IPropertyNotifySink # 3,1,1,2,2
+IPropertyStore # 3,1,1,2,3,3,3,1
+IQualProp # 3,1,1,2,2,2,2,2,2
+IQualityControl # 3,1,1,8,2
+IReferenceClock # 3,1,1,2,7,7,2
+ISequentialStream # 3,1,1,4,4
+IShellLinkA # 3,1,1,5,2,2,3,2,3,2,3,2,2,2,2,2,4,3,3,3,2
+IShellLinkW # 3,1,1,5,2,2,3,2,3,2,3,2,2,2,2,2,4,3,3,3,2
+ISimpleAudioVolume # 3,1,1,3,2,3,2
+IStream # 3,1,1,4,4,5,3,6,2,1,6,6,3,2
+IStreamSample # 3,1,1,2,4,3,5,3
+ITypeInfo # 3,1,1,2,2,3,3,5,3,3,4,8,6,6,3,4,4,3,3,2,2,2
+ITypeInfo2 # 3,1,1,2,2,3,3,5,3,3,4,8,6,6,3,4,4,3,3,2,2,2,2,2,4,3,3,4,5,4,4,6,2,3,4,3,3
+ITypeLib # 3,1,1,1,3,3,3,2,2,6,4,6,2
+ITypeLib2 # 3,1,1,1,3,3,3,2,2,6,4,6,2,3,3,6,2
+IUnknown # 3,1,1
+IVMRAspectRatioControl9 # 3,1,1,2,2
+IVMRDeinterlaceControl9 # 3,1,1,4,4,3,3,2,2,3
+IVMRFilterConfig # 3,1,1,2,2,2,2,2,2,2
+IVMRFilterConfig9 # 3,1,1,2,2,2,2,2,2,2
+IVMRMixerBitmap9 # 3,1,1,2,2,2
+IVMRMixerControl9 # 3,1,1,3,3,3,3,3,3,2,2,2,2,3,3,3
+IVMRMonitorConfig9 # 3,1,1,2,2,2,2,4
+IVMRSurfaceAllocatorNotify9 # 3,1,1,3,3,3,4,4
+IVMRWindowlessControl # 3,1,1,5,3,3,3,3,2,2,2,3,1,2,2,2,2,2
+IVMRWindowlessControl9 # 3,1,1,5,3,3,3,3,2,2,2,3,1,2,2,2
+IVideoWindow # 3,1,1,2,4,6,9,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,5,5,5,3,3,5,2,2
+IViewObject # 3,1,1,11,7,5,2,4,4
+IViewObject2 # 3,1,1,11,7,5,2,4,4,5
+IWICBitmap # 3,1,1,3,2,3,2,5,4,2,5
+IWICBitmapClipper # 3,1,1,3,2,3,2,5,3
+IWICBitmapCodecInfo # 3,1,1,2,2,2,4,2,4,4,4,2,4,4,4,4,4,4,2,2,2,2,3
+IWICBitmapCodecProgressNotification # 3,1,1,4
+IWICBitmapDecoder # 3,1,1,3,3,2,2,2,2,2,4,2,2,3
+IWICBitmapDecoderInfo # 3,1,1,2,2,2,4,2,4,4,4,2,4,4,4,4,4,4,2,2,2,2,3,5,3,2
+IWICBitmapEncoder # 3,1,1,3,2,2,3,2,2,2,3,1,2
+IWICBitmapEncoderInfo # 3,1,1,2,2,2,4,2,4,4,4,2,4,4,4,4,4,4,2,2,2,2,3,2
+IWICBitmapFlipRotator # 3,1,1,3,2,3,2,5,3
+IWICBitmapFrameChainReader # 3,1,1,3,4
+IWICBitmapFrameChainWriter # 3,1,1,4,3
+IWICBitmapFrameDecode # 3,1,1,3,2,3,2,5,2,4,2
+IWICBitmapFrameEncode # 3,1,1,2,3,5,2,3,2,2,5,3,1,2
+IWICBitmapLock # 3,1,1,3,2,3,2
+IWICBitmapScaler # 3,1,1,3,2,3,2,5,5
+IWICBitmapSource # 3,1,1,3,2,3,2,5
+IWICBitmapSourceTransform # 3,1,1,9,3,2,3
+IWICBitmapSourceTransform2 # 3,1,1,9,3,2,3,5
+IWICBitmapToneMapper # 3,1,1,3,2,3,2,5,6,4
+IWICColorContext # 3,1,1,2,3,2,2,4,2
+IWICColorTransform # 3,1,1,3,2,3,2,5,5
+IWICComponentFactory # 3,1,1,6,5,5,3,4,4,2,2,2,2,2,2,2,2,6,4,7,8,5,3,4,3,3,4,4,6,6,5,4,3,3,4
+IWICComponentInfo # 3,1,1,2,2,2,4,2,4,4,4
+IWICD3DTextureSource # 3,1,1,5,10,3,2
+IWICDdsDecoder # 3,1,1,2,5
+IWICDdsEncoder # 3,1,1,2,2,5
+IWICDdsFrameDecode # 3,1,1,3,2,5
+IWICDevelopRaw # 3,1,1,3,2,3,2,5,2,4,2,2,2,2,3,2,4,4,2,2,2,2,4,3,2,3,2,3,2,3,2,3,2,3,2,2,3,4,3,2,2,2,2
+IWICDevelopRawNotificationCallback # 3,1,1,2
+IWICDisplayAdaptationControl # 3,1,1,3,2,2
+IWICDisplayAdaptationControl2 # 3,1,1,3,2,2,2,2,2,2,3
+IWICEnumMetadataItem # 3,1,1,6,2,1,2
+IWICFastMetadataEncoder # 3,1,1,1,2
+IWICFormatConverter # 3,1,1,3,2,3,2,5,8,4
+IWICFormatConverterInfo # 3,1,1,2,2,2,4,2,4,4,4,4,2
+IWICImageEncoder # 3,1,1,4,4,4
+IWICImagingFactory # 3,1,1,6,5,5,3,4,4,2,2,2,2,2,2,2,2,6,4,7,8,5,3,4,3,3,4,4
+IWICImagingFactory2 # 3,1,1,6,5,5,3,4,4,2,2,2,2,2,2,2,2,6,4,7,8,5,3,4,3,3,4,4,3
+IWICImagingFactory3 # 3,1,1,6,5,5,3,4,4,2,2,2,2,2,2,2,2,6,4,7,8,5,3,4,3,3,4,4,3,2
+IWICJpegFrameDecode # 3,1,1,2,3,1,4,4,4,2,3,6,5
+IWICJpegFrameEncode # 3,1,1,4,4,4,3
+IWICMetadataBlockReader # 3,1,1,2,2,3,2
+IWICMetadataBlockWriter # 3,1,1,2,2,3,2,2,3,2,3,2
+IWICMetadataHandlerInfo # 3,1,1,2,2,2,4,2,4,4,4,2,4,4,4,2,2,2
+IWICMetadataQueryReader # 3,1,1,2,4,3,2
+IWICMetadataQueryWriter # 3,1,1,2,4,3,2,3,2
+IWICMetadataReader # 3,1,1,2,2,2,5,4,2
+IWICMetadataReaderInfo # 3,1,1,2,2,2,4,2,4,4,4,2,4,4,4,2,2,2,6,4,2
+IWICMetadataWriter # 3,1,1,2,2,2,5,4,2,4,5,3,2
+IWICMetadataWriterInfo # 3,1,1,2,2,2,4,2,4,4,4,2,4,4,4,2,2,2,5,2
+IWICPalette # 3,1,1,3,3,4,2,2,2,4,2,2,2
+IWICPersistStream # 3,1,1,2,1,2,3,2,4,4
+IWICPixelFormatInfo # 3,1,1,2,2,2,4,2,4,4,4,2,2,2,2,5
+IWICPixelFormatInfo2 # 3,1,1,2,2,2,4,2,4,4,4,2,2,2,2,5,2,2
+IWICPlanarBitmapFrameEncode # 3,1,1,4,4
+IWICPlanarBitmapSourceTransform # 3,1,1,9,8
+IWICPlanarFormatConverter # 3,1,1,3,2,3,2,5,9,5
+IWICProgressCallback # 3,1,1,5
+IWICProgressiveLevelControl # 3,1,1,2,2,2
+IWICStream # 3,1,1,4,4,5,3,6,2,1,6,6,3,2,2,3,3,6
+IWICStreamProvider # 3,1,1,2,2,2,1
+IWMHeaderInfo # 3,1,1,3,8,6,6,2,5,4,2,2,7,5,2
+IWMHeaderInfo2 # 3,1,1,3,8,6,6,2,5,4,2,2,7,5,2,2,9
+IWMHeaderInfo3 # 3,1,1,3,8,6,6,2,5,4,2,2,7,5,2,2,9,3,6,9,7,8,3,6
+IWMMediaProps # 3,1,1,2,3,2
+IWMOutputMediaProps # 3,1,1,2,3,2,3,3
+IWMProfile # 3,1,1,2,3,2,3,2,2,3,3,2,2,2,2,3,2,3,2,2,2
+IWMProfile2 # 3,1,1,2,3,2,3,2,2,3,3,2,2,2,2,3,2,3,2,2,2,2
+IWMProfile3 # 3,1,1,2,3,2,3,2,2,3,3,2,2,2,2,3,2,3,2,2,2,2,2,2,2,3,2,2,2,2,2,1,2,4
+IWMReader # 3,1,1,4,1,2,3,3,3,4,7,1,1,1
+IWMReaderAdvanced2 # 3,1,1,2,2,3,2,2,4,3,2,2,3,3,3,3,3,3,2,2,3,3,3,2,2,3,4,2,2,3,6,6,6,6,2,2,1,4
+IWMReaderAllocatorEx # 3,1,1,10,10
+IWMReaderCallback # 3,1,1,6,9
+IWMReaderCallbackAdvanced # 3,1,1,9,4,5,4,5,5
+IWMStreamConfig # 3,1,1,2,2,2,3,2,3,2,2,2,2,2
+IWMSyncReader # 3,1,1,2,1,5,6,8,4,3,3,3,6,6,2,3,3,3,4,3,3,3,3,2
+IWMSyncReader2 # 3,1,1,2,1,5,6,8,4,3,3,3,6,6,2,3,3,3,4,3,3,3,3,2,4,7,3,3,3,3
+IWbemClassObject # 3,1,1,2,6,5,2,5,2,6,1,3,2,3,3,3,3,3,2,5,5,2,2,5,1,3,3
+IWbemLocator # 3,1,1,9
+IWbemServices # 3,1,1,6,2,3,6,5,5,5,5,5,5,5,5,5,5,5,5,5,6,6,6,6,8,7
+IWebBrowser # 3,1,1,2,4,6,9,1,1,1,1,6,1,2,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+IWebBrowser2 # 3,1,1,2,4,6,9,1,1,1,1,6,1,2,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,3,6,3,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,6,3,5,4,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+IWebBrowserApp # 3,1,1,2,4,6,9,1,1,1,1,6,1,2,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,3,6,3,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+IXAPO # 3,1,1,2,4,4,3,1,5,1,6,2,2
+IXAPOParameters # 3,1,1,3,3
+IXAudio2 # 3,1,1,2,2,8,8,8,1,1,2,2,3
+IXAudio2EngineCallback # 1,1,2
+IXAudio2MasteringVoice # 2,2,2,3,3,3,5,4,3,2,4,3,3,2,4,3,6,5,1,2
+IXAudio2SourceVoice # 2,2,2,3,3,3,5,4,3,2,4,3,3,2,4,3,6,5,1,3,3,3,1,1,2,3,3,2,2
+IXAudio2Voice # 2,2,2,3,3,3,5,4,3,2,4,3,3,2,4,3,6,5,1
+IXAudio2VoiceCallback # 2,1,1,2,2,2,3
 IAMCertifiedOutputProtection 0 2 2
 IAMCertifiedOutputProtection 3 2 2
 IAMFilterMiscFlags 0 2 2
@@ -1428,7 +1486,106 @@ ID2D1TransformedImageSource 3 1 1
 ID2D1TransformedImageSource 4 1 1
 ID2D1VertexBuffer 0 2 2
 ID2D1VertexBuffer 3 1 1
+ID3D10BlendState1 0 2 2
+ID3D10BlendState1 3 1 1
+ID3D10Buffer 0 2 2
+ID3D10Buffer 3 1 1
+ID3D10Buffer 10 3 3
+ID3D10DepthStencilState 0 2 2
+ID3D10DepthStencilState 3 1 1
+ID3D10DepthStencilView 0 2 2
+ID3D10DepthStencilView 3 1 1
+ID3D10DepthStencilView 7 1 1
+ID3D10Device1 0 2 2
+ID3D10Device1 39 3 3
+ID3D10Device1 40 3 3
+ID3D10Device1 41 1 1
+ID3D10Device1 42 3 3
+ID3D10Device1 43 1 1
+ID3D10Device1 44 3 3
+ID3D10Device1 45 1 1
+ID3D10Device1 46 3 3
+ID3D10Device1 47 1 1
+ID3D10Device1 48 3 3
+ID3D10Device1 49 1 1
+ID3D10Device1 51 3 3
+ID3D10Device1 52 3 3
+ID3D10Device1 53 1 1
+ID3D10Device1 54 3 3
+ID3D10Device1 55 3 3
+ID3D10Device1 56 2,3 2,3
+ID3D10Device1 57 1 1
+ID3D10Device1 58 1 1
+ID3D10Device1 59 2 2
+ID3D10Device1 60 1 1
+ID3D10Device1 71 3 3
+ID3D10Device1 72 3 3
+ID3D10Device1 73 3 3
+ID3D10Device1 74 3 3
+ID3D10Device1 75 3 3
+ID3D10Device1 76 3 3
+ID3D10Device1 77 3 3
+ID3D10Device1 78 5 5
+ID3D10Device1 79 3 3
+ID3D10Device1 80 3 3
+ID3D10Device1 81 6 6
+ID3D10Device1 82 3 3
+ID3D10Device1 83 2 2
+ID3D10Device1 84 2 2
+ID3D10Device1 85 2 2
+ID3D10Device1 86 2 2
+ID3D10Device1 87 2 2
+ID3D10Device1 88 2 2
+ID3D10Device1 89 2 2
+ID3D10Device1 95 3 3
+ID3D10Device1 98 3 3
+ID3D10Device1 99 2 2
+ID3D10GeometryShader 0 2 2
+ID3D10GeometryShader 3 1 1
+ID3D10InputLayout 0 2 2
+ID3D10InputLayout 3 1 1
+ID3D10Multithread 0 2 2
+ID3D10PixelShader 0 2 2
+ID3D10PixelShader 3 1 1
+ID3D10Query 0 2 2
+ID3D10Query 3 1 1
+ID3D10RasterizerState 0 2 2
+ID3D10RasterizerState 3 1 1
+ID3D10RenderTargetView 0 2 2
+ID3D10RenderTargetView 3 1 1
+ID3D10RenderTargetView 7 1 1
+ID3D10SamplerState 0 2 2
+ID3D10SamplerState 3 1 1
 ID3D10ShaderReflection 0 2 2
+ID3D10ShaderResourceView1 0 2 2
+ID3D10ShaderResourceView1 3 1 1
+ID3D10ShaderResourceView1 7 1 1
+ID3D10Texture1D 0 2 2
+ID3D10Texture1D 3 1 1
+ID3D10Texture1D 10 4 4
+ID3D10Texture2D 0 2 2
+ID3D10Texture2D 3 1 1
+ID3D10Texture3D 0 2 2
+ID3D10Texture3D 3 1 1
+ID3D10VertexShader 0 2 2
+ID3D10VertexShader 3 1 1
+ID3D11BlendState1 0 2 2
+ID3D11BlendState1 3 1 1
+ID3D11Buffer 0 2 2
+ID3D11Buffer 3 1 1
+ID3D11ClassLinkage 0 2 2
+ID3D11ClassLinkage 3 1 1
+ID3D11ClassLinkage 7 3 3
+ID3D11ClassLinkage 8 6 6
+ID3D11CommandList 0 2 2
+ID3D11CommandList 3 1 1
+ID3D11ComputeShader 0 2 2
+ID3D11ComputeShader 3 1 1
+ID3D11DepthStencilState 0 2 2
+ID3D11DepthStencilState 3 1 1
+ID3D11DepthStencilView 0 2 2
+ID3D11DepthStencilView 3 1 1
+ID3D11DepthStencilView 7 1 1
 ID3D11Device 0 2 2
 ID3D11Device 3 3 3
 ID3D11Device 4 3 3
@@ -1457,6 +1614,54 @@ ID3D11Device 26 2 2
 ID3D11Device 27 2 2
 ID3D11Device 28 3 3
 ID3D11Device 40 1 1
+ID3D11Device5 0 2 2
+ID3D11Device5 3 3 3
+ID3D11Device5 4 3 3
+ID3D11Device5 5 3 3
+ID3D11Device5 6 3 3
+ID3D11Device5 7 3 3
+ID3D11Device5 8 3 3
+ID3D11Device5 9 3 3
+ID3D11Device5 10 3 3
+ID3D11Device5 11 5 5
+ID3D11Device5 12 4 4
+ID3D11Device5 13 4 4
+ID3D11Device5 14 9 9
+ID3D11Device5 15 4 4
+ID3D11Device5 16 4 4
+ID3D11Device5 17 4 4
+ID3D11Device5 18 4 4
+ID3D11Device5 19 1 1
+ID3D11Device5 20 2 2
+ID3D11Device5 21 2 2
+ID3D11Device5 22 2 2
+ID3D11Device5 23 2 2
+ID3D11Device5 24 2 2
+ID3D11Device5 25 2 2
+ID3D11Device5 26 2 2
+ID3D11Device5 27 2 2
+ID3D11Device5 28 3 3
+ID3D11Device5 40 1 1
+ID3D11Device5 43 1 1
+ID3D11Device5 44 2 2
+ID3D11Device5 45 2 2
+ID3D11Device5 46 2 2
+ID3D11Device5 47 7 7
+ID3D11Device5 48 3 3
+ID3D11Device5 49 4 4
+ID3D11Device5 50 1 1
+ID3D11Device5 51 2 2
+ID3D11Device5 54 3 3
+ID3D11Device5 55 3 3
+ID3D11Device5 56 2 2
+ID3D11Device5 57 3 3
+ID3D11Device5 58 3 3
+ID3D11Device5 59 3 3
+ID3D11Device5 60 2 2
+ID3D11Device5 61 1 1
+ID3D11Device5 62 2 2
+ID3D11Device5 67 3 3
+ID3D11Device5 68 4 5
 ID3D11DeviceContext 0 2 2
 ID3D11DeviceContext 3 1 1
 ID3D11DeviceContext 72 3 3
@@ -1495,11 +1700,88 @@ ID3D11DeviceContext 107 1,2 1,2
 ID3D11DeviceContext 108 3 3
 ID3D11DeviceContext 109 3 3
 ID3D11DeviceContext 114 2 2
+ID3D11DeviceContext4 0 2 2
+ID3D11DeviceContext4 3 1 1
+ID3D11DeviceContext4 72 3 3
+ID3D11DeviceContext4 73 3 3
+ID3D11DeviceContext4 74 1,2 1,2
+ID3D11DeviceContext4 75 3 3
+ID3D11DeviceContext4 76 1,2 1,2
+ID3D11DeviceContext4 77 3 3
+ID3D11DeviceContext4 78 1 1
+ID3D11DeviceContext4 79 3 3
+ID3D11DeviceContext4 80 1 1
+ID3D11DeviceContext4 81 3 3
+ID3D11DeviceContext4 82 1,2 1,2
+ID3D11DeviceContext4 84 3 3
+ID3D11DeviceContext4 85 3 3
+ID3D11DeviceContext4 86 1 1
+ID3D11DeviceContext4 87 3 3
+ID3D11DeviceContext4 88 3 3
+ID3D11DeviceContext4 89 2,3 2,3
+ID3D11DeviceContext4 90 2,3,6 2,3,6
+ID3D11DeviceContext4 91 1 1
+ID3D11DeviceContext4 92 1 1
+ID3D11DeviceContext4 93 2 2
+ID3D11DeviceContext4 94 1 1
+ID3D11DeviceContext4 97 3 3
+ID3D11DeviceContext4 98 1,2 1,2
+ID3D11DeviceContext4 99 3 3
+ID3D11DeviceContext4 100 3 3
+ID3D11DeviceContext4 101 3 3
+ID3D11DeviceContext4 102 1,2 1,2
+ID3D11DeviceContext4 103 3 3
+ID3D11DeviceContext4 104 3 3
+ID3D11DeviceContext4 105 3 3
+ID3D11DeviceContext4 106 3 3
+ID3D11DeviceContext4 107 1,2 1,2
+ID3D11DeviceContext4 108 3 3
+ID3D11DeviceContext4 109 3 3
+ID3D11DeviceContext4 114 2 2
+ID3D11DeviceContext4 125 3 3
+ID3D11DeviceContext4 126 3 3
+ID3D11DeviceContext4 127 3 3
+ID3D11DeviceContext4 128 3 3
+ID3D11DeviceContext4 129 3 3
+ID3D11DeviceContext4 130 3 3
+ID3D11DeviceContext4 131 2 2
+ID3D11DomainShader 0 2 2
+ID3D11DomainShader 3 1 1
+ID3D11GeometryShader 0 2 2
+ID3D11GeometryShader 3 1 1
+ID3D11HullShader 0 2 2
+ID3D11HullShader 3 1 1
+ID3D11InputLayout 0 2 2
+ID3D11InputLayout 3 1 1
+ID3D11PixelShader 0 2 2
+ID3D11PixelShader 3 1 1
+ID3D11Query 0 2 2
+ID3D11Query 3 1 1
+ID3D11RasterizerState2 0 2 2
+ID3D11RasterizerState2 3 1 1
+ID3D11RenderTargetView 0 2 2
+ID3D11RenderTargetView 3 1 1
+ID3D11RenderTargetView 7 1 1
+ID3D11SamplerState 0 2 2
+ID3D11SamplerState 3 1 1
 ID3D11ShaderReflection 0 2 2
+ID3D11ShaderResourceView 0 2 2
+ID3D11ShaderResourceView 3 1 1
+ID3D11ShaderResourceView 7 1 1
+ID3D11Texture1D 0 2 2
+ID3D11Texture1D 3 1 1
 ID3D11Texture2D 0 2 2
 ID3D11Texture2D 3 1 1
+ID3D11Texture3D 0 2 2
+ID3D11Texture3D 3 1 1
+ID3D11UnorderedAccessView 0 2 2
+ID3D11UnorderedAccessView 3 1 1
+ID3D11UnorderedAccessView 7 1 1
+ID3D11VertexShader 0 2 2
+ID3D11VertexShader 3 1 1
 ID3DBlob 0 2 2
 ID3DInclude 0 4 4
+ID3DUserDefinedAnnotation 0 2 2
 IDMOWrapperFilter 0 2 2
 IDWriteAsyncResult 0 2 2
 IDWriteBitmapRenderTarget 0 2 2
@@ -2178,12 +2460,54 @@ IDWriteTextLayout4 79 1 1
 IDWriteTextRenderer 0 2 2
 IDWriteTextRenderer1 0 2 2
 IDWriteTypography 0 2 2
+IDXGIAdapter4 0 2 2
+IDXGIAdapter4 6 2 2
+IDXGIAdapter4 7 2 2
+IDXGIDevice3 0 2 2
+IDXGIDevice3 6 2 2
+IDXGIDevice3 7 1 1
+IDXGIDevice3 8 5 5
+IDXGIFactory7 0 2 2
+IDXGIFactory7 6 2 2
+IDXGIFactory7 7 2 2
+IDXGIFactory7 9 1 1
+IDXGIFactory7 10 3 3
+IDXGIFactory7 11 2 2
+IDXGIFactory7 12 2 2
+IDXGIFactory7 15 6 6
+IDXGIFactory7 16 5 5
+IDXGIFactory7 24 4 4
+IDXGIFactory7 26 3 4
+IDXGIFactory7 27 2 2
+IDXGIFactory7 29 4 4
+IDXGIOutput6 0 2 2
+IDXGIOutput6 6 2 2
+IDXGIOutput6 22 2 2
+IDXGIOutput6 26 5 5
+IDXGIResource 0 2 2
+IDXGIResource 6 2 2
+IDXGIResource 7 2 2
+IDXGIResource 8 1 1
+IDXGISurface2 0 2 2
+IDXGISurface2 6 2 2
+IDXGISurface2 7 2 2
+IDXGISurface2 11 2 2
+IDXGISurface2 13 2 2
 IDXGISwapChain 0 2 2
 IDXGISwapChain 6 2 2
 IDXGISwapChain 7 2 2
 IDXGISwapChain 9 3 3
 IDXGISwapChain 11 2 2
 IDXGISwapChain 15 1 1
+IDXGISwapChain1 0 2 2
+IDXGISwapChain1 6 2 2
+IDXGISwapChain1 7 2 2
+IDXGISwapChain1 9 3 3
+IDXGISwapChain1 11 2 2
+IDXGISwapChain1 15 1 1
+IDXGISwapChain1 20 1 1
+IDXGISwapChain1 21 2 2
+IDXGISwapChain1 24 1 1
 IDataObject 0 2 2
 IDataObject 8 2 2
 IDataObject 11 1 1
@@ -2257,15 +2581,38 @@ IDirect3DDeviceManager9 0 2 2
 IDirect3DDeviceManager9 4 1 1
 IDirect3DDeviceManager9 7 2 2
 IDirect3DDeviceManager9 9 3 3
+IDirect3DIndexBuffer9 0 2 2
+IDirect3DIndexBuffer9 3 1 1
+IDirect3DIndexBuffer9 11 3 3
+IDirect3DPixelShader9 0 2 2
+IDirect3DPixelShader9 3 1 1
+IDirect3DQuery9 0 2 2
+IDirect3DQuery9 3 1 1
 IDirect3DStateBlock9 0 2 2
 IDirect3DStateBlock9 3 1 1
 IDirect3DSurface9 0 2 2
 IDirect3DSurface9 3 1 1
 IDirect3DSurface9 11 2 2
 IDirect3DSurface9 15 1 1
+IDirect3DSwapChain9 0 2 2
+IDirect3DSwapChain9 5 3 3
+IDirect3DSwapChain9 8 1 1
 IDirect3DTexture9 0 2 2
 IDirect3DTexture9 3 1 1
 IDirect3DTexture9 18 2 2
+IDirect3DVertexBuffer9 0 2 2
+IDirect3DVertexBuffer9 3 1 1
+IDirect3DVertexBuffer9 11 3 3
+IDirect3DVertexDeclaration9 0 2 2
+IDirect3DVertexDeclaration9 3 1 1
+IDirect3DVertexShader9 0 2 2
+IDirect3DVertexShader9 3 1 1
+IDirect3DVolume9 0 2 2
+IDirect3DVolume9 3 1 1
+IDirect3DVolume9 7 2 2
+IDirect3DVolumeTexture9 0 2 2
+IDirect3DVolumeTexture9 3 1 1
+IDirect3DVolumeTexture9 18 2 2
 IDirectDraw 0 2 2
 IDirectDraw 4 2 2
 IDirectDraw 5 3 3

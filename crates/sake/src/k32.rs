@@ -2063,7 +2063,7 @@ fn DuplicateHandle(c: &mut Ctx) -> u32 {
 /// share_handle), a handle to it there (crate::xmem)
 fn duplicate_into(c: &mut Ctx, pid: u32) -> u32 {
     use crate::kern::enc::Enc;
-    let (src, out, opts) = (c.a(1), c.a(3), c.a(6));
+    let (src, out, opts) = (c.a(1), c.out(3), c.a(6));
     if !matches!(xmem::target(c.a(0)), xmem::Target::Own) {
         last_error(5);
         return 0;
@@ -2088,8 +2088,8 @@ fn duplicate_into(c: &mut Ctx, pid: u32) -> u32 {
     if opts & 1 != 0 {
         obj::close(src);
     }
-    if out != 0 {
-        mem::putp(out, h);
+    if !out.is_null() {
+        out.put(h);
     }
     1
 }
@@ -8268,14 +8268,14 @@ fn full_path_name(c: &mut Ctx, wide: bool) -> u32 {
     let full = files::full_path(&name);
     let r = ret_str(c.a(2), c.a(1), &full, wide);
     let unc_root = full.strip_prefix("\\\\").is_some_and(|u| u.matches('\\').count() <= 1);
-    if c.a(3) != 0 && r < c.a(1) && (full.ends_with('\\') || unc_root) {
+    if !c.out(3).is_null() && r < c.a(1) && (full.ends_with('\\') || unc_root) {
         // (no file part in "C:\" or "dir\")
-        mem::wp(c.a(3), 0);
-    } else if c.a(3) != 0 && r < c.a(1) {
+        c.out(3).put(0);
+    } else if !c.out(3).is_null() && r < c.a(1) {
         let pos = full.rfind('\\').map_or(0, |i| i.saturating_add(1));
         let head = full.get(..pos).unwrap_or_default();
         let off = if wide { head.encode_utf16().count().saturating_mul(2) } else { crate::text::s2a(head).len() };
-        mem::wp(c.a(3), (mem::ga(c.a(2)) + kome::num::u32_of(off)).get());
+        c.out(3).put((mem::ga(c.a(2)) + kome::num::u32_of(off)).get());
     }
     r
 }
@@ -8578,7 +8578,7 @@ fn GetVolumeInformationW(c: &mut Ctx) -> u32 {
 /// SearchPath(path, name, ext, cap, buf, &file part): without a path, the exe's folder, the
 /// current one, system32 (where the DLLs we implement are), the Windows folder and PATH
 fn search_path(c: &mut Ctx, wide: bool) -> u32 {
-    let (path, name, ext, cap, buf, part) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    let (path, name, ext, cap, buf, part) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.out(5));
     let given = if name == 0 { String::new() } else { arg_str(name, wide) };
     if given.trim_start_matches(' ').is_empty() {
         last_error(87);
@@ -8613,12 +8613,12 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
         let w = files::full_path(&if own_path { n.clone() } else { format!("{}\\{n}", d.trim_end_matches('\\')) });
         if files::resolve(&w).is_some() || is_system_dll_path(&w) {
             let r = ret_str(buf, cap, &w, wide);
-            if part != 0 {
+            if !part.is_null() {
                 let dir = w.get(..w.rfind('\\').map_or(0, |i| i.saturating_add(1))).unwrap_or_default();
                 let off = kome::num::u32_of(if wide { dir.encode_utf16().count().saturating_mul(2) } else { crate::text::s2a(dir).len() });
                 // (pointer-sized; only when the name fitted)
                 if r < cap {
-                    mem::putp(part, (mem::ga(buf) + off).get());
+                    part.put((mem::ga(buf) + off).get());
                 }
             }
             return r;

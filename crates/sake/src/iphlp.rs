@@ -1736,14 +1736,15 @@ static PENDING: std::sync::Mutex<Vec<(u32, u32)>> = std::sync::Mutex::new(Vec::n
 /// NotifyAddrChange / NotifyRouteChange(&handle, overlapped): no change ever comes; with an
 /// OVERLAPPED the call is pending on a new handle until CancelIPChangeNotify
 fn NotifyChange(c: &mut Ctx) -> u32 {
-    let (hp, ov) = (c.a(0), c.a(1));
+    let c = &mut c.args::<crate::api::outs::NotifyAddrChange>();
+    let (hp, ov) = (c.out::<0>(), c.a::<1>());
     if ov == 0 {
         // (a synchronous wait for a change that never comes would block forever)
         return ERROR_NOT_SUPPORTED;
     }
     let h = crate::obj::add(crate::obj::Obj::Other(crate::obj::Other::IpChangeNotify));
-    if hp != 0 {
-        wp(hp, h);
+    if !hp.is_null() {
+        hp.put(h);
     }
     let ev = crate::mem::rp(ov + 2 * crate::mem::ps() + 8);
     if ev != 0 {
@@ -2075,10 +2076,11 @@ pub fn init() {
     implement(d, "GetUnicastIpAddressTable", GetUnicastIpAddressTable);
     implement(d, "GetUnicastIpAddressEntry", GetUnicastIpAddressEntry);
     implement(d, "GetAnycastIpAddressTable", |c| {
-        if !family_ok(c.a(0) & 0xffff) {
+        let c = &mut c.args::<crate::api::outs::GetAnycastIpAddressTable>();
+        if !family_ok(c.a::<0>() & 0xffff) {
             return ERROR_INVALID_PARAMETER;
         }
-        table2(c.out(1), 48, 0, |_, _| {})
+        table2(c.out::<1>(), 48, 0, |_, _| {})
     });
     implement(d, "GetIpInterfaceTable", GetIpInterfaceTable);
     implement(d, "GetIpInterfaceEntry", GetIpInterfaceEntry);

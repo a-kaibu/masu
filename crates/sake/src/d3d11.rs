@@ -108,6 +108,9 @@ fn init() {
                 let bytes = if float { 8 } else { 4 * u32::from(args) };
                 let a = host_fn(&format!("d3d11:{i}:{j}"), method, bytes);
                 crate::api::set_tag(a, Tag { iface: i, index: j, float }.bits(), usize::from(args));
+                if let Some((name, _)) = kura::d3d11::names::NAMES.get(usize::from(i.wrapping_sub(FIRST))) {
+                    crate::api::set_com_outs(a, name, u32::from(j));
+                }
                 mem::wp(v + ps * u32::from(j), a);
             }
             mem::wp(table + ps * u32::from(i), v);

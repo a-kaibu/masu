@@ -354,15 +354,15 @@ fn Q_QueryInterface(c: &mut Ctx) -> u32 {
     let own = if r32(c.a(0)) == d3d3_vtbl() { 5 } else { 4 };
     match guid_first(c.a(1)) {
         0 => {
-            put32(c.a(2), dd_iface(obj, own));
+            crate::mem::putp(c.a(2), dd_iface(obj, own));
             D3D_OK
         }
         0xf504_9e77 if own == 4 => {
-            put32(c.a(2), dd_iface(obj, 4));
+            crate::mem::putp(c.a(2), dd_iface(obj, 4));
             D3D_OK
         }
         0xbb22_3240 if own == 5 => {
-            put32(c.a(2), dd_iface(obj, 5));
+            crate::mem::putp(c.a(2), dd_iface(obj, 5));
             D3D_OK
         }
         // (the DirectDraw interfaces, each of its own version: ddraw7's test_texture_wrong_caps
@@ -374,11 +374,11 @@ fn Q_QueryInterface(c: &mut Ctx) -> u32 {
                 0x9c59_509a => 2,
                 _ => 3,
             };
-            put32(c.a(2), dd_iface(obj, v));
+            crate::mem::putp(c.a(2), dd_iface(obj, v));
             D3D_OK
         }
         _ => {
-            put32(c.a(2), 0);
+            crate::mem::putp(c.a(2), 0);
             E_NOINTERFACE
         }
     }
@@ -622,7 +622,7 @@ fn vb(c: &Ctx) -> Option<(u32, u32, u32)> {
 }
 
 fn B_QueryInterface(c: &mut Ctx) -> u32 {
-    put32(c.a(2), c.a(0));
+    crate::mem::putp(c.a(2), c.a(0));
     B_AddRef(c);
     D3D_OK
 }
@@ -655,7 +655,7 @@ const MAX_VB: u32 = 256 << 20;
 fn B_Lock(c: &mut Ctx) -> u32 {
     let Some((m, fvf, n)) = vb(c) else { return D3DERR_INVALIDCALL };
     put32(c.a(2), m);
-    put32(c.a(3), vb_size(fvf, n).unwrap_or(0));
+    crate::mem::putp(c.a(3), vb_size(fvf, n).unwrap_or(0));
     D3D_OK
 }
 fn B_GetVertexBufferDesc(c: &mut Ctx) -> u32 {
@@ -2628,12 +2628,12 @@ fn E_QueryInterface(c: &mut Ctx) -> u32 {
     match guid_first(c.a(1)) {
         // IDirect3DDevice3, IUnknown
         0xb0ab_3b60 | 0 => {
-            put32(c.a(2), c.a(0));
+            crate::mem::putp(c.a(2), c.a(0));
             V_AddRef(c);
             D3D_OK
         }
         _ => {
-            put32(c.a(2), 0);
+            crate::mem::putp(c.a(2), 0);
             E_NOINTERFACE
         }
     }
@@ -3268,12 +3268,12 @@ fn light3_vtbl() -> u32 {
 fn L_QueryInterface(c: &mut Ctx) -> u32 {
     match guid_first(c.a(1)) {
         0x4417_c142 | 0 => {
-            put32(c.a(2), c.a(0));
+            crate::mem::putp(c.a(2), c.a(0));
             O_AddRef(c);
             D3D_OK
         }
         _ => {
-            put32(c.a(2), 0);
+            crate::mem::putp(c.a(2), 0);
             E_NOINTERFACE
         }
     }

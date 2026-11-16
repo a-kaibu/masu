@@ -494,11 +494,11 @@ fn L_QueryInterface(c: &mut Ctx) -> u32 {
     // IUnknown, ITypeLib {00020402-...}, ITypeLib2 {00020411-...}
     match r32(c.a(1)) {
         0 | 0x0002_0402 | 0x0002_0411 => {
-            put32(c.a(2), c.a(0));
+            crate::mem::putp(c.a(2), c.a(0));
             S_OK
         }
         _ => {
-            put32(c.a(2), 0);
+            crate::mem::putp(c.a(2), 0);
             0x8000_4002
         }
     }
@@ -534,7 +534,7 @@ fn L_GetTypeInfoOfGuid(c: &mut Ctx) -> u32 {
             S_OK
         }
         None => {
-            put32(c.a(2), 0);
+            crate::mem::putp(c.a(2), 0);
             TYPE_E_ELEMENTNOTFOUND
         }
     }
@@ -583,11 +583,11 @@ fn I_QueryInterface(c: &mut Ctx) -> u32 {
     // IUnknown, ITypeInfo {00020401-...}, ITypeInfo2 {00020412-...}
     match r32(c.a(1)) {
         0 | 0x0002_0401 | 0x0002_0412 => {
-            put32(c.a(2), c.a(0));
+            crate::mem::putp(c.a(2), c.a(0));
             S_OK
         }
         _ => {
-            put32(c.a(2), 0);
+            crate::mem::putp(c.a(2), 0);
             0x8000_4002
         }
     }
@@ -765,9 +765,9 @@ fn I_GetDocumentation(c: &mut Ctx) -> u32 {
     };
     let Some(n) = n else { return TYPE_E_ELEMENTNOTFOUND };
     put_bstr(c.a(2), &n);
-    put32(c.a(3), 0);
+    crate::mem::putp(c.a(3), 0);
     put32(c.a(4), 0);
-    put32(c.a(5), 0);
+    crate::mem::putp(c.a(5), 0);
     S_OK
 }
 
@@ -797,7 +797,7 @@ fn I_GetRefTypeInfo(c: &mut Ctx) -> u32 {
     let h = c.a(1);
     if h & 1 != 0 {
         // in another library (stdole2's IDispatch): not loaded
-        put32(c.a(2), 0);
+        crate::mem::putp(c.a(2), 0);
         return TYPE_E_CANTLOADLIBRARY;
     }
     match info_block(li, h as usize / 100) {

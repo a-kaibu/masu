@@ -358,7 +358,7 @@ file	crates/kura/src/d3d11/mod.rs	masu-unsafe_send_sync	1
 file	crates/kura/src/d3d11/mod.rs	missing_safety_doc	4
 file	crates/kura/src/d3d11/mod.rs	multiple_unsafe_ops_per_block	1
 file	crates/kura/src/d3d11/mod.rs	undocumented_unsafe_blocks	13
-file	crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	490
+file	crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	488
 file	crates/kura/src/d3d9/d3d8.rs	arithmetic_side_effects	46
 file	crates/kura/src/d3d9/d3d8.rs	as_conversions	1
 file	crates/kura/src/d3d9/d3d8.rs	indexing_slicing	15
@@ -378,7 +378,7 @@ file	crates/kura/src/d3d9/device.rs	masu-from_raw_parts	14
 file	crates/kura/src/d3d9/device.rs	missing_safety_doc	1
 file	crates/kura/src/d3d9/device.rs	undocumented_unsafe_blocks	5
 file	crates/kura/src/d3d9/device.rs	unreachable	3
-file	crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	325
+file	crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	323
 file	crates/kura/src/d3d9/device.rs	wildcard_enum_match_arm	5
 file	crates/kura/src/d3d9/format.rs	arithmetic_side_effects	68
 file	crates/kura/src/d3d9/format.rs	as_conversions	81

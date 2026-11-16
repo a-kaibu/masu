@@ -1308,11 +1308,11 @@ fn DS_QueryInterface(c: &mut Ctx) -> u32 {
     match r32(iid) {
         0 | 0x279a_fa83 | 0xc50a_7e93 => {
             DS_AddRef(c);
-            put32(out, this);
+            crate::mem::putp(out, this);
             0
         }
         _ => {
-            put32(out, 0);
+            crate::mem::putp(out, 0);
             Hr::NoInterface.code()
         }
     }
@@ -1380,7 +1380,7 @@ fn DS_CreateSoundBuffer(c: &mut Ctx) -> u32 {
             },
         )
     });
-    put32(out, o);
+    crate::mem::putp(out, o);
     0
 }
 fn DS_GetCaps(c: &mut Ctx) -> u32 {
@@ -1426,7 +1426,7 @@ fn DS_DuplicateSoundBuffer(c: &mut Ctx) -> u32 {
     if !ok {
         return Hr::InvalidParam.code();
     }
-    put32(out, o);
+    crate::mem::putp(out, o);
     0
 }
 fn DS_SetCooperativeLevel(_: &mut Ctx) -> u32 {
@@ -1459,25 +1459,25 @@ fn B_QueryInterface(c: &mut Ctx) -> u32 {
     match r32(iid) {
         0 | 0x279a_fa85 | 0x6825_a449 => {
             with_buf(this, |b| b.refs += 1);
-            put32(out, this);
+            crate::mem::putp(out, this);
             0
         }
         0xb021_0783 => {
-            put32(out, child(notify_vtbl(), this));
+            crate::mem::putp(out, child(notify_vtbl(), this));
             0
         }
         // IDirectSound3DListener (the primary buffer) / IDirectSound3DBuffer: accepted, the sound
         // is not positioned
         0x279a_fa84 => {
-            put32(out, child(listener3d_vtbl(), this));
+            crate::mem::putp(out, child(listener3d_vtbl(), this));
             0
         }
         0x279a_fa86 => {
-            put32(out, child(buffer3d_vtbl(), this));
+            crate::mem::putp(out, child(buffer3d_vtbl(), this));
             0
         }
         _ => {
-            put32(out, 0);
+            crate::mem::putp(out, 0);
             Hr::NoInterface.code()
         }
     }
@@ -1618,9 +1618,9 @@ fn B_Lock(c: &mut Ctx) -> u32 {
     .flatten();
     match r {
         Some((a1, l1, a2, l2)) => {
-            put32(p1, a1);
+            crate::mem::putp(p1, a1);
             put32(n1, l1);
-            put32(p2, if l2 > 0 { a2 } else { 0 });
+            crate::mem::putp(p2, if l2 > 0 { a2 } else { 0 });
             put32(n2, l2);
             0
         }
@@ -1716,11 +1716,11 @@ fn N_QueryInterface(c: &mut Ctx) -> u32 {
     let buf = r32(this + 4);
     if r32(iid) == 0xb021_0783 || r32(iid) == 0 {
         w32(this + 8, r32(this + 8) + 1);
-        put32(out, this);
+        crate::mem::putp(out, this);
         return 0;
     }
     let _ = buf;
-    put32(out, 0);
+    crate::mem::putp(out, 0);
     Hr::NoInterface.code()
 }
 /// An interface object of buffer `buf` (IDirectSoundNotify, IDirectSound3DBuffer/Listener):

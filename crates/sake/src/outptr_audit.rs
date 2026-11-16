@@ -27,16 +27,20 @@ fn handlers() -> Vec<(String, String, String)> {
             }
             let s = std::fs::read_to_string(&p).unwrap();
             let mut rest = s.as_str();
-            while let Some(at) = rest.find("\nfn ") {
-                rest = &rest[at + 4..];
+            // (`fn`, `pub fn`, `pub(crate) fn`: D3DReflect was a pub one, which this missed)
+            while let Some(at) = ["\nfn ", "\npub fn ", "\npub(crate) fn "].iter().filter_map(|k| rest.find(k).map(|i| (i, k.len()))).min() {
+                rest = &rest[at.0 + at.1..];
                 let head = rest;
                 let Some(paren) = head.find('(') else { continue };
                 let name = &head[..paren];
-                if !head[paren..].starts_with("(c: &mut Ctx) -> u32 {\n") || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                // (one-line handlers too: CryptGetUserKey's `{ add_rsa(c, false) }` passed its
+                // out-parameter on as c.a(2), which this missed and MASU_OUTS_STRICT found)
+                if !head[paren..].starts_with("(c: &mut Ctx) -> u32 {") || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                     continue;
                 }
                 let body = &head[paren..];
-                let end = body.find("\n}\n").unwrap_or(body.len());
+                let one_line = !body.starts_with("(c: &mut Ctx) -> u32 {\n");
+                let end = if one_line { body.find('\n') } else { body.find("\n}\n") }.unwrap_or(body.len());
                 v.push((name.to_string(), p.display().to_string(), body[..end].to_string()));
             }
         }
@@ -100,4 +104,88 @@ fn an_out_is_a_u32_only_in_words() {
     // (the d3d11 device calls, CoCreateInstance's, MFGetService's...: 15 at 2026-11-16)
     assert!(seen >= 10, "only {seen} words! found");
     assert!(bad.is_empty(), "an Out made a u32 outside words!:\n{}", bad.join("\n"));
+}
+
+/// A closure registered for such a function (`implement(dll, "Name", |c| ..)`) takes its
+/// arguments as the function's too, first thing; a named handler registered under another
+/// name has that name's out-parameters (review 2026-11-16 follow-up: 24 closures took theirs
+/// through Ctx::a, SHCreateItemFromParsingName's written 32 bits wide).
+#[test]
+fn registered_closures_take_their_functions_arguments() {
+    let mut table: HashMap<String, (String, String)> = HashMap::new();
+    for l in include_str!("outptrs.txt").lines() {
+        let v: Vec<&str> = l.split(' ').collect();
+        table.insert(v[1].to_string(), (v[2].to_string(), v[3].to_string()));
+    }
+    // (a handler's typed first line: the function whose arguments it takes)
+    let typed_as: HashMap<String, String> = handlers()
+        .into_iter()
+        .filter_map(|(n, _, body)| {
+            let rest = body.strip_prefix("(c: &mut Ctx) -> u32 {\n    let c = &mut c.args::<crate::api::outs::")?;
+            Some((n, rest.split('>').next()?.to_string()))
+        })
+        .collect();
+    let mut dirs = vec![std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
+    let (mut bad, mut seen) = (vec![], 0);
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                dirs.push(p);
+                continue;
+            }
+            if p.extension().is_none_or(|x| x != "rs") || p.ends_with("outptr_audit.rs") {
+                continue;
+            }
+            let s = std::fs::read_to_string(&p).unwrap();
+            let mut rest = s.as_str();
+            while let Some(at) = rest.find("implement(") {
+                rest = &rest[at + 10..];
+                // implement(<dll>, "<Name>", <handler>
+                let Some(q) = rest.find('"') else { break };
+                let Some(len) = rest[q + 1..].find('"') else { break };
+                let name = &rest[q + 1..q + 1 + len];
+                if rest[..q].contains([')', ';', '\n']) || !table.contains_key(name) {
+                    continue;
+                }
+                let h = rest[q + 2 + len..].trim_start_matches([',', ' ']);
+                if h.starts_with('|') {
+                    seen += 1;
+                    let typed = format!("c.args::<crate::api::outs::{name}>()");
+                    let head: String = h.chars().take(160).collect();
+                    if !head.contains(&typed) {
+                        bad.push(format!("{}: implement(.., \"{name}\", |c| ..): its first thing is to be {typed}", p.display()));
+                    }
+                } else {
+                    let f: String = h.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':').collect();
+                    let f = f.rsplit("::").next().unwrap_or_default();
+                    // (its handler takes the arguments of a function with the same out-parameters)
+                    let as_ = typed_as.get(f).map(String::as_str);
+                    if f != name && as_.is_none_or(|t| table.get(t) != table.get(name)) {
+                        bad.push(format!("{}: implement(.., \"{name}\", {f}): {f} is to start `let c = &mut c.args::<crate::api::outs::{name}>();` (or a function's with the same out-parameters), it takes {as_:?}'s", p.display()));
+                    }
+                }
+            }
+            // ("Name", handler) tables (gdiplus's, d3dx9's...): the same rule as a named handler's
+            let mut rest = s.as_str();
+            while let Some(at) = rest.find("(\"") {
+                rest = &rest[at + 2..];
+                let Some(len) = rest.find('"') else { break };
+                let name = &rest[..len];
+                let Some(h) = rest[len + 1..].strip_prefix(", ") else { continue };
+                let f: String = h.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':').collect();
+                if !table.contains_key(name) || !f.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') || !h[f.len()..].starts_with(')') {
+                    continue;
+                }
+                let f = f.rsplit("::").next().unwrap_or_default();
+                let as_ = typed_as.get(f).map(String::as_str);
+                if f != name && as_.is_none_or(|t| table.get(t) != table.get(name)) {
+                    bad.push(format!("{}: (\"{name}\", {f}): {f} is to start `let c = &mut c.args::<crate::api::outs::{name}>();` (or a function's with the same out-parameters), it takes {as_:?}'s", p.display()));
+                }
+            }
+        }
+    }
+    // (13 on one line at 2026-11-16)
+    assert!(seen >= 10, "only {seen} closures found");
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
 }

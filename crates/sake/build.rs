@@ -33,6 +33,51 @@ fn parse(line: &str) -> Result<(&str, u64, u64), String> {
     Ok((name, bits(x64)?, bits(x86)?))
 }
 
+/// src/com_outptrs.txt (tools/win32md: the interfaces sake names): `com(iface, slot)`, a COM
+/// method's pointer-sized out-parameters as `mask` gives a function's (`this` argument 0), and
+/// `com_dwords(iface)`, its vtable's methods' x86 stack dwords, which sake's vtables are
+/// checked against.
+fn com(o: &mut String) -> Result<(), Error> {
+    println!("cargo::rerun-if-changed=src/com_outptrs.txt");
+    let text = std::fs::read_to_string("src/com_outptrs.txt")?;
+    let mut masks = BTreeMap::<(&str, u32), (u64, u64)>::new();
+    let mut dwords = BTreeMap::<&str, &str>::new();
+    for (n, line) in (1u32..).zip(text.lines()) {
+        let at = |e: String| format!("src/com_outptrs.txt:{n}: {e}");
+        let f: Vec<&str> = line.split(' ').collect();
+        let name = f.first().copied().unwrap_or_default();
+        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Err(at(format!("{name}: not a name")).into());
+        }
+        match f.as_slice() {
+            [_, "#", d] if d.split(',').all(|x| x.parse::<u8>().is_ok()) => {
+                dwords.insert(name, d);
+            }
+            [_, slot, x64, x86] => {
+                let slot: u32 = slot.parse().map_err(|e| at(format!("{slot}: not a slot: {e}")))?;
+                masks.insert((name, slot), (bits(x64).map_err(at)?, bits(x86).map_err(at)?));
+            }
+            _ => return Err(at(format!("not \"iface slot i,j... k,l...\" nor \"iface # d,d...\": {line}")).into()),
+        }
+    }
+    for (name, _) in masks.keys() {
+        if !dwords.contains_key(name) {
+            return Err(format!("src/com_outptrs.txt: {name} has out-parameters and no vtable").into());
+        }
+    }
+    *o += "/// The pointer-sized out-parameters of the COM method `slot` of `iface` (bit i: argument i,\n/// `this` 0), none when it has none or the metadata has no such interface.\npub fn com(iface: &str, slot: u32) -> super::OutMask {\n    match (iface, slot) {\n";
+    for ((name, slot), (x64, x86)) in &masks {
+        writeln!(o, "        (\"{name}\", {slot}) => super::OutMask {{ x64: {x64:#x}, x86: {x86:#x} }},")?;
+    }
+    *o += "        _ => super::OutMask::NONE,\n    }\n}\n";
+    *o += "/// The vtable of `iface` as the metadata has it: each method's x86 stack dwords, `this` and a\n/// hidden result pointer counted.\npub fn com_dwords(iface: &str) -> Option<&'static [u8]> {\n    match iface {\n";
+    for (name, d) in &dwords {
+        writeln!(o, "        \"{name}\" => Some(&[{d}]),")?;
+    }
+    *o += "        _ => None,\n    }\n}\n";
+    Ok(())
+}
+
 fn main() -> Result<(), Error> {
     println!("cargo::rerun-if-changed=src/outptrs.txt");
     let text = std::fs::read_to_string("src/outptrs.txt")?;
@@ -53,6 +98,7 @@ fn main() -> Result<(), Error> {
         writeln!(o, "        \"{name}\" => super::OutMask {{ x64: {x64:#x}, x86: {x86:#x} }},")?;
     }
     o += "        _ => super::OutMask::NONE,\n    }\n}\n";
+    com(&mut o)?;
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").ok_or("OUT_DIR")?).join("outs.rs");
     std::fs::write(out, o)?;
     Ok(())

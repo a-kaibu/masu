@@ -574,9 +574,8 @@ pub fn init() {
     }
     // GetRestrictedErrorInfo(&info): none (S_FALSE); RoGetErrorReportingFlags(&flags): 0
     implement("combase", "GetRestrictedErrorInfo", |c| {
-        if c.a(0) != 0 {
-            mem::putp(c.a(0), 0);
-        }
+        let c = &mut c.args::<crate::api::outs::GetRestrictedErrorInfo>();
+        c.out::<0>().put(0);
         1
     });
     implement("combase", "RoGetErrorReportingFlags", |c| {

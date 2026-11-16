@@ -160,7 +160,7 @@ fn mt_input_status(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
         return Hr::Pointer.code();
     }
-    w32(c.a(2), 1);
+    wp(c.a(2), 1);
     0
 }
 fn mt_output_status(c: &mut Ctx) -> u32 {

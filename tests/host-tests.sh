@@ -16,6 +16,9 @@
 #
 #   tests/host-tests.sh [name ...]      SAKE=path/to/sake.js (default /home/user/work/sake-out/sake.js)
 set -uo pipefail
+# (a pointer-sized out-parameter taken as a value or written 32 bits wide fails the run, as it
+# does sake's tests: kura::outs)
+export MASU_OUTS_STRICT=1
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SAKE=${SAKE:-/home/user/work/sake-out/sake.js}
 OUT=${OUT:-$(mktemp -d)}

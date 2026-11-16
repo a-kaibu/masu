@@ -3389,12 +3389,14 @@ pub fn init() {
     implement(d, "WSAConnectByNameA", |c| connect_by_name(c, false));
     implement(d, "WSAConnectByNameW", |c| connect_by_name(c, true));
     implement(d, "WSAProviderConfigChange", |c| {
-        if c.a(0) == 0 {
+        let c = &mut c.args::<crate::api::outs::WSAProviderConfigChange>();
+        let out = c.out::<0>();
+        if out.is_null() {
             return err(WSAEFAULT);
         }
         // a handle that would complete when the provider catalog changes (it never does)
-        if mem::rp(c.a(0)) == 0 {
-            wp(c.a(0), obj::add(Obj::Other(crate::obj::Other::ProviderChange)));
+        if out.get() == 0 {
+            out.put(obj::add(Obj::Other(crate::obj::Other::ProviderChange)));
         }
         res(Ok(0))
     });

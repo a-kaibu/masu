@@ -175,11 +175,11 @@ pub fn ip_literal(s: &str) -> Option<Vec<u8>> {
 
 /// DnsQuery_A / _W / _UTF8(name, type, options, extra, ppResults, reserved)
 fn dns_query(c: &mut Ctx, charset: u32) -> u32 {
-    let (np, ty, out) = (c.a(0), c.a(1) & 0xffff, c.a(4));
-    if out != 0 {
-        putp(out, 0);
+    let (np, ty, out) = (c.a(0), c.a(1) & 0xffff, c.out(4));
+    if !out.is_null() {
+        out.put(0);
     }
-    if np == 0 || out == 0 {
+    if np == 0 || out.is_null() {
         return 87;
     }
     let name: Vec<u16> = if charset == 1 { wstr(np) } else { String::from_utf8_lossy(&cstr(np)).encode_utf16().collect() };
@@ -204,7 +204,7 @@ fn dns_query(c: &mut Ctx, charset: u32) -> u32 {
     let data = if ip.len() == 4 { Data::A(ip[..4].try_into().unwrap()) } else { Data::Aaaa(ip[..16].try_into().unwrap()) };
     // Flags: section 0, the character set, Reserved 0x20 (as Windows sets them)
     let r = Rec { name: Some(s), ty: want as u16, data_len: ip.len() as u16, flags: 0x20 << 8, ttl: 604800, reserved: 0, data };
-    putp(out, dnsrec::write(&r, charset));
+    out.put(dnsrec::write(&r, charset));
     0
 }
 /// DnsRecordListFree(list, type) / DnsFree(p, type): each record is one block (its strings in
@@ -224,14 +224,14 @@ fn dns_free(c: &mut Ctx) -> u32 {
 
 /// DnsExtractRecordsFromMessage_UTF8 / _W(buffer, length, ppRecord)
 fn dns_extract(c: &mut Ctx, charset: u32) -> u32 {
-    let (b, len, out) = (c.a(0), c.a(1) & 0xffff, c.a(2));
-    if b == 0 || out == 0 {
+    let (b, len, out) = (c.a(0), c.a(1) & 0xffff, c.out(2));
+    if b == 0 || out.is_null() {
         return 87;
     }
     match dnsrec::extract(&mem::bytes(b, len), charset) {
         Ok(v) => {
             let ps: Vec<u32> = v.iter().map(|r| dnsrec::write(r, charset)).collect();
-            putp(out, dnsrec::link(&ps));
+            out.put(dnsrec::link(&ps));
             0
         }
         Err(e) => e,
@@ -658,11 +658,11 @@ fn com_call(c: &mut Ctx, o: u32, slot: u32, args: &[u32]) -> u32 {
 /// GetVideoService(handle, riid, ppService): the manager's video processor service (one per
 /// manager; it works on the manager's current device)
 fn DM_GetVideoService(c: &mut Ctx) -> u32 {
-    let (this, h, iid, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let (this, h, iid, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    if out.is_null() {
         return E_POINTER;
     }
-    putp(out, 0);
+    out.put(0);
     let r = with_mgr(this, |m| match handle_state(m, h) {
         None => Err(E_HANDLE),
         Some(true) => Err(DXVA2_E_NEW_VIDEO_DEVICE),
@@ -727,7 +727,7 @@ fn new_service(device: u32, manager: u32) -> u32 {
     o
 }
 
-fn service_qi(o: u32, iid: u32, out: u32) -> u32 {
+fn service_qi(o: u32, iid: u32, out: crate::api::Out) -> u32 {
     let g = guid(iid);
     let unknown = g == [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46];
     // IDirectXVideoAccelerationService {fc51a550-d5e7-11d9-af55-00054e43ff02}, the processor
@@ -735,10 +735,10 @@ fn service_qi(o: u32, iid: u32, out: u32) -> u32 {
     let tail = [0xe7, 0xd5, 0xd9, 0x11, 0xaf, 0x55, 0x00, 0x05, 0x4e, 0x43, 0xff, 0x02];
     if unknown || (matches!(r32(iid), 0xfc51_a550 | 0xfc51_a552) && g[4..] == tail) {
         vs_ref(o, 1);
-        putp(out, o);
+        out.put(o);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     E_NOINTERFACE
 }
 /// a manager's service counts on the manager (as Windows': AddRef/Release go to it)
@@ -756,7 +756,7 @@ fn vs_ref(o: u32, d: i32) -> u32 {
     n
 }
 fn VS_QueryInterface(c: &mut Ctx) -> u32 {
-    service_qi(c.a(0), c.a(1), c.a(2))
+    service_qi(c.a(0), c.a(1), c.out(2))
 }
 fn VS_AddRef(c: &mut Ctx) -> u32 {
     vs_ref(c.a(0), 1)
@@ -1592,17 +1592,17 @@ pub fn init() {
         let s = |p: u32| (p != 0).then(|| String::from_utf8_lossy(&cstr(p)).encode_utf16().collect::<Vec<u16>>());
         names_equal(s(c.a(0)).as_deref(), s(c.a(1)).as_deref()) as u32
     });
-    implement("dnsapi", "DnsQuery_W", |c| dns_query(c, 1));
-    implement("dnsapi", "DnsQuery_UTF8", |c| dns_query(c, 2));
-    implement("dnsapi", "DnsQuery_A", |c| dns_query(c, 3));
+    implement("dnsapi", "DnsQuery_W", |c| dns_query(c.args::<crate::api::outs::DnsQuery_W>().ctx(), 1));
+    implement("dnsapi", "DnsQuery_UTF8", |c| dns_query(c.args::<crate::api::outs::DnsQuery_UTF8>().ctx(), 2));
+    implement("dnsapi", "DnsQuery_A", |c| dns_query(c.args::<crate::api::outs::DnsQuery_A>().ctx(), 3));
     implement("dnsapi", "DnsRecordListFree", dns_free);
     implement("dnsapi", "DnsFree", dns_free);
     implement("dnsapi", "DnsFlushResolverCache", |_| 1);
     for n in ["DnsFlushResolverCacheEntry_A", "DnsFlushResolverCacheEntry_W", "DnsFlushResolverCacheEntry_UTF8"] {
         implement("dnsapi", n, |c| (c.a(0) != 0) as u32);
     }
-    implement("dnsapi", "DnsExtractRecordsFromMessage_UTF8", |c| dns_extract(c, 2));
-    implement("dnsapi", "DnsExtractRecordsFromMessage_W", |c| dns_extract(c, 1));
+    implement("dnsapi", "DnsExtractRecordsFromMessage_UTF8", |c| dns_extract(c.args::<crate::api::outs::DnsExtractRecordsFromMessage_UTF8>().ctx(), 2));
+    implement("dnsapi", "DnsExtractRecordsFromMessage_W", |c| dns_extract(c.args::<crate::api::outs::DnsExtractRecordsFromMessage_W>().ctx(), 1));
     implement("dnsapi", "DnsRecordCopyEx", |c| if c.a(0) == 0 { 0 } else { dnsrec::copy(c.a(0), c.a(1), c.a(2)) });
     implement("dnsapi", "DnsRecordSetCopyEx", |c| set_copy(c.a(0), c.a(1), c.a(2)));
     implement("dnsapi", "DnsRecordCompare", |c| if c.a(0) == 0 || c.a(1) == 0 { 0 } else { record_compare(c.a(0), c.a(1)) as u32 });
@@ -1632,15 +1632,16 @@ pub fn init() {
     // dxva2
     implement("dxva2", "DXVA2CreateDirect3DDeviceManager9", DXVA2CreateDirect3DDeviceManager9);
     implement("dxva2", "DXVA2CreateVideoService", |c| {
-        let (dev, iid, out) = (c.a(0), c.a(1), c.a(2));
-        if dev == 0 || out == 0 {
+        let c = &mut c.args::<crate::api::outs::DXVA2CreateVideoService>();
+        let (dev, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+        if dev == 0 || out.is_null() {
             return E_POINTER;
         }
-        add_ref(c, dev);
+        add_ref(c.ctx(), dev);
         let o = new_service(dev, 0);
         let hr = service_qi(o, iid, out);
         let f = rp(rp(o) + 2 * ps());
-        c.call(f, &[o]);
+        c.ctx().call(f, &[o]);
         hr
     });
     implement("dxva2", "GetNumberOfPhysicalMonitorsFromHMONITOR", GetNumberOfPhysicalMonitors);

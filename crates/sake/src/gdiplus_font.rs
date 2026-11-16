@@ -239,12 +239,12 @@ fn GdipIsStyleAvailable(c: &mut Ctx) -> u32 {
     OK
 }
 fn generic(c: &mut Ctx, name: &str) -> u32 {
-    let out = c.a(0);
-    if out == 0 {
+    let out = c.out(0);
+    if out.is_null() {
         return INVALID_PARAMETER;
     }
     let Some(h) = installed_family(name) else { return FONT_FAMILY_NOT_FOUND };
-    mem::putp(out, h);
+    out.put(h);
     OK
 }
 fn GdipGetGenericFontFamilySansSerif(c: &mut Ctx) -> u32 {

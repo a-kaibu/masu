@@ -504,12 +504,12 @@ fn X_QueryInterface(c: &mut Ctx) -> u32 {
     // IUnknown, IDispatch, IDispatchEx
     match r32(c.a(1)) {
         0 | 0x0002_0400 | 0xa6ef_9860 => {
-            put32(c.a(2), c.a(0));
+            crate::mem::putp(c.a(2), c.a(0));
             X_AddRef(c);
             S_OK
         }
         _ => {
-            put32(c.a(2), 0);
+            crate::mem::putp(c.a(2), 0);
             E_NOINTERFACE
         }
     }
@@ -735,11 +735,11 @@ fn Q_QueryInterface(c: &mut Ctx) -> u32 {
         0x4954_e0d0 => 3,
         g => {
             crate::com::warn_once(&format!("sake: jscript: QueryInterface {g:08x}: no"));
-            put32(c.a(2), 0);
+            crate::mem::putp(c.a(2), 0);
             return E_NOINTERFACE;
         }
     };
-    put32(c.a(2), blocks[k]);
+    crate::mem::putp(c.a(2), blocks[k]);
     Q_AddRef(c);
     S_OK
 }
@@ -817,7 +817,7 @@ fn GetScriptSite(c: &mut Ctx) -> u32 {
     let id = engine_of(c);
     let site = t(|t| t.engines.get(&id).map_or(0, |e| e.site));
     if site == 0 {
-        put32(c.a(2), 0);
+        crate::mem::putp(c.a(2), 0);
         return S_FALSE;
     }
     let (riid, out) = (c.a(1), c.a(2));
@@ -977,7 +977,7 @@ fn error_release(e: u32) -> u32 {
     n
 }
 fn E_QueryInterface(c: &mut Ctx) -> u32 {
-    put32(c.a(2), c.a(0));
+    crate::mem::putp(c.a(2), c.a(0));
     E_AddRef(c);
     S_OK
 }
@@ -998,7 +998,7 @@ fn E_GetSourcePosition(c: &mut Ctx) -> u32 {
     S_OK
 }
 fn E_GetSourceLineText(c: &mut Ctx) -> u32 {
-    put32(c.a(1), 0);
+    crate::mem::putp(c.a(1), 0);
     E_NOTIMPL
 }
 
@@ -1037,10 +1037,10 @@ fn GetScriptDispatch(c: &mut Ctx) -> u32 {
             mem::putp(c.a(2), p);
             return S_OK;
         }
-        put32(c.a(2), 0);
+        crate::mem::putp(c.a(2), 0);
         return E_INVALIDARG;
     }
-    put32(c.a(2), script_disp(id, ctx.global_object(), true));
+    crate::mem::putp(c.a(2), script_disp(id, ctx.global_object(), true));
     S_OK
 }
 fn GetCurrentScriptThreadID(c: &mut Ctx) -> u32 {

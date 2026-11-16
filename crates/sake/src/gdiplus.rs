@@ -297,19 +297,21 @@ fn ok(_: &mut Ctx) -> u32 {
 /// GdipCreateBitmapFromStream / GdipLoadImageFromStream (+ICM)(stream, &image): a stream
 /// that is no picture is InvalidParameter (winref gdip)
 fn from_stream(c: &mut Ctx) -> u32 {
-    if c.a(0) == 0 || c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::GdipCreateBitmapFromStream>();
+    if c.a::<0>() == 0 || c.out::<1>().is_null() {
         return INVALID_PARAMETER;
     }
     // (the out pointer read first: on x64 calling the stream's Read clobbers the argument registers)
-    let out = c.out(1);
-    let data = crate::wic::read_stream(c, c.a(0));
+    let (out, stream) = (c.out::<1>(), c.a::<0>());
+    let data = crate::wic::read_stream(c.ctx(), stream);
     new_image(&data, out, INVALID_PARAMETER)
 }
 /// GdipCreateBitmapFromFile / GdipLoadImageFromFile (+ICM)(wide path, &image)
 fn from_file(c: &mut Ctx) -> u32 {
-    let name = String::from_utf16_lossy(&mem::wstr(c.a(0)));
+    let c = &mut c.args::<crate::api::outs::GdipCreateBitmapFromFile>();
+    let name = String::from_utf16_lossy(&mem::wstr(c.a::<0>()));
     let Some(data) = crate::files::resolve(&name).and_then(|h| kura::fs::read(h).ok()) else { return FILE_NOT_FOUND };
-    new_image(&data, c.out(1), UNKNOWN_IMAGE_FORMAT)
+    new_image(&data, c.out::<1>(), UNKNOWN_IMAGE_FORMAT)
 }
 
 pub(crate) fn size_of(img: u32) -> Option<(u32, u32)> {

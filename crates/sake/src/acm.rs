@@ -14,7 +14,7 @@ use crate::HashMap;
 use std::sync::Mutex;
 
 use crate::api::{implement, Ctx};
-use crate::mem::{self, put32, putp, r16, r32, r8, rp, w16, w32};
+use crate::mem::{self, put32, r16, r32, r8, rp, w16, w32};
 
 const DRIVER: u32 = 0x00ac_0001;
 /// The same converter enumerated a second time as Windows' msadp32.acm ("MS-ADPCM"): F&C's
@@ -631,14 +631,14 @@ fn hdr_sync(from: u32, to: u32) {
 /// is the DriverProc); a notification window (ACM_DRIVERADDF_NOTIFYHWND) is taken and never
 /// told; drivers by registry name are not there
 fn driver_add(c: &mut Ctx) -> u32 {
-    let (out, lparam, flags) = (c.a(0), c.a(2), c.a(4));
-    if out == 0 {
+    let (out, lparam, flags) = (c.out(0), c.a(2), c.a(4));
+    if out.is_null() {
         return MMSYSERR_INVALPARAM;
     }
     match flags & 7 {
         3 if lparam != 0 => {}
         4 => {
-            putp(out, 0);
+            out.put(0);
             return 0;
         }
         _ => return MMSYSERR_INVALPARAM,
@@ -656,7 +656,7 @@ fn driver_add(c: &mut Ctx) -> u32 {
         return MMSYSERR_ERROR;
     }
     send(c, i, Msg::Enable, 0, 0);
-    putp(out, i.id());
+    out.put(i.id());
     0
 }
 fn acmDriverAddA(c: &mut Ctx) -> u32 {

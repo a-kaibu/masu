@@ -1063,7 +1063,8 @@ fn set_name_info(tid: u32, buf: u32, len: u32) -> u32 {
 /// GetThreadDescription(thread, &string): a LocalAlloc'd copy; SetThreadDescription(thread,
 /// string): NULL clears it. Both HRESULT_FROM_NT (0x10000000 | status).
 fn get_thread_description(c: &mut Ctx) -> u32 {
-    let (h, out) = (c.a(0), c.a(1));
+    let c = &mut c.args::<crate::api::outs::GetThreadDescription>();
+    let (h, out) = (c.a::<0>(), c.out::<1>());
     let Some(tid) = crate::k32::any_thread_tid(h) else { return 0x1000_0000 | 0xC000_0008 };
     if !crate::obj::allows_any(h, 0x40 | 0x800) {
         return 0x1000_0000 | 0xC000_0022;
@@ -1073,7 +1074,7 @@ fn get_thread_description(c: &mut Ctx) -> u32 {
     for (i, &u) in name.iter().enumerate() {
         crate::mem::w16(mem::ga(p).at(kome::num::u32_of(i), 2), u);
     }
-    mem::putp(out, p);
+    out.put(p);
     0x1000_0000
 }
 fn set_thread_description(c: &mut Ctx) -> u32 {

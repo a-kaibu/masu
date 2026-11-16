@@ -113,7 +113,8 @@ impl Out {
         if crate::mem::x64() {
             crate::mem::put64(self.0, v)
         } else {
-            crate::mem::put32(self.0, kome::num::lo32(v))
+            // (the whole x86 slot: putp, not put32, which kura::outs asks)
+            crate::mem::putp(self.0, kome::num::lo32(v))
         }
     }
     /// What it holds now (mem::rp: its low half on x64)
@@ -427,6 +428,61 @@ mod outs_tests {
         }
     }
 
+    /// A vtable's name says its interface where the metadata has that vtable and this one is its
+    /// start, by every method's stack bytes; otherwise none (its slots are not the metadata's).
+    #[test]
+    fn vtable_names_their_interface() {
+        let unk = [12, 4, 4];
+        assert_eq!(vtable_iface("IDirectSoundNotify", [12, 4, 4, 12].into_iter()), Some("IDirectSoundNotify"));
+        assert_eq!(vtable_iface("VMR9::IPin", unk.into_iter()), Some("IPin"));
+        assert_eq!(vtable_iface("MPEG-1 IPin", unk.into_iter()), Some("IPin"));
+        assert_eq!(vtable_iface("IVideoWindow(windowless)", unk.into_iter()), Some("IVideoWindow"));
+        // (a method taking other bytes than the metadata's fails a test; a version the metadata
+        // lacks, or no interface, is none)
+        assert!(std::panic::catch_unwind(|| vtable_iface("IDirectSoundNotify", [12, 4, 4, 16].into_iter())).is_err());
+        assert_eq!(vtable_iface("IXAudio2SourceVoice_27", unk.into_iter()), None);
+        assert_eq!(vtable_iface("CDialog", unk.into_iter()), None);
+        // (IGraphBuilder with IFilterGraph2's methods after)
+        assert_eq!(vtable_iface("IDirectSoundNotify", [12, 4, 4, 12, 4].into_iter()), Some("IDirectSoundNotify"));
+    }
+
+    /// The traps of a vtable get its methods' out-parameters, watched for 32-bit writes and not
+    /// (yet) for values; a function's are both.
+    #[test]
+    fn a_vtable_carries_its_methods_out_parameters() {
+        let _g = crate::test_guest::enter();
+        fn h(_: &mut Ctx) -> u32 {
+            0
+        }
+        let v = vtable("IDirectSoundNotify", &[(h, 12), (h, 4), (h, 4), (h, 12)]);
+        let qi = crate::mem::rp(v);
+        let (_, m, o) = hot(kome::num::us(trap_no(qi))).expect("published");
+        assert_eq!(o, outs::com("IDirectSoundNotify", 0));
+        assert_eq!(o, OutMask { x64: 0b100, x86: 0b100 });
+        assert!(!m.value_check);
+        let (_, m, _) = hot(kome::num::us(trap_no(export("kernel32", "GetProcessAffinityMask")))).expect("published");
+        assert!(m.value_check);
+    }
+
+    /// The slots watched are where the caller's out-parameters are: a 32-bit write to one fails,
+    /// to anything else not (kura::outs; x86 here, the same arguments as x64's numbering).
+    #[test]
+    fn a_32_bit_write_to_a_watched_slot_fails() {
+        let _g = crate::test_guest::enter();
+        let sp = crate::mem::heap_alloc(4 + 4 * 4, true);
+        for i in 0..4u32 {
+            crate::mem::w32(crate::mem::ga(sp + 4).at(i, 4), 0x5000 + 16 * i);
+        }
+        let mut cpu = koji::Cpu::default();
+        let c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 };
+        let guard = out_slots(&c, 0b1010);
+        let caught = |a: u32| std::panic::catch_unwind(|| kura::outs::wrote32(a)).is_err();
+        assert!(caught(0x5010) && caught(0x5030));
+        assert!(!caught(0x5000) && !caught(0x5020) && !caught(0x5014));
+        drop(guard);
+        assert!(!caught(0x5010));
+    }
+
     /// An import gets its function's out-parameters where dispatch reads them, with its handler.
     #[test]
     fn an_entry_carries_its_out_parameters() {
@@ -438,13 +494,39 @@ mod outs_tests {
     }
 }
 
+/// The running call's pointer-sized out-parameters (bits `m` of its arguments) watched by
+/// kura::outs: the slots' addresses as the caller passed them.
+fn out_slots(c: &Ctx, m: u64) -> kura::outs::Guard {
+    kura::outs::set_namer(|t| name_of(t).unwrap_or_else(|| format!("{t:#x}")));
+    let at = (0..64u32).filter(|&i| m >> i & 1 != 0).map(|i| c.slot(i));
+    kura::outs::enter(kura::outs::Slots::new(c.trap, at))
+}
+
+/// The trap `addr` (a COM method's: com.rs's and api::vtable's vtables, d3d9's, d3d11's) gets
+/// method `slot` of `iface`'s pointer-sized out-parameters (outs::com, Microsoft's metadata):
+/// watched for 32-bit writes (kura::outs); its handler's Ctx::a of one not yet reported
+/// (value_check, for when the COM handlers take theirs as Out).
+pub(crate) fn set_com_outs(addr: u32, iface: &str, slot: u32) {
+    let m = outs::com(iface, slot);
+    if m == OutMask::NONE {
+        return;
+    }
+    let i = kome::num::us(trap_no(addr));
+    let mut e = ENTRIES.w();
+    if let Some(x) = e.get_mut(i) {
+        x.outs = m;
+        x.value_check = false;
+        publish(i, x);
+    }
+}
+
 /// A pointer-sized out-parameter of the function at `trap` taken as a value (Ctx::a, z, a64):
 /// a test fails; a game goes on, and the log says so once per function and argument.
 #[cold]
 fn out_as_value(trap: u32, i: u32) {
     let what = format!("{} argument {i} is a pointer-sized out-parameter: c.out({i}), not a value", name_of(trap).unwrap_or_else(|| format!("{trap:#x}")));
     // (under test: fails there)
-    assert!(!cfg!(test) && !cfg!(debug_assertions), "{what}");
+    assert!(!cfg!(test) && !cfg!(debug_assertions) && !kura::outs::strict(), "{what}");
     static SAID: Mutex<Option<HashSet<(u32, u32)>>> = Mutex::new(None);
     if SAID.locked().get_or_insert_with(HashSet::default).insert((trap, i)) {
         eprintln!("sake: {what}");
@@ -616,8 +698,12 @@ struct Entry {
     /// a bare yield, not work (waits::handoff::Handoff::worked): 1 always (SwitchToThread),
     /// 2 when its argument 0 is 0 (Sleep(0), SleepEx(0, ..))
     yields: u8,
-    /// its pointer-sized out-parameters (outs::mask)
+    /// its pointer-sized out-parameters (outs::mask, outs::com: set_com_outs)
     outs: OutMask,
+    /// whether its handler is held to taking them only as Out (Ctx::a of one reported): a
+    /// function's; a COM method's not yet (their handlers take `putp(c.a(i), ..)` still, which
+    /// the 32-bit write check, kura::outs, covers meanwhile)
+    value_check: bool,
 }
 
 fn yields(name: &str) -> u8 {
@@ -699,6 +785,7 @@ struct Meta {
     known: bool,
     this_arg: bool,
     yields: u8,
+    value_check: bool,
 }
 
 const META_SET: u32 = 1 << 31;
@@ -706,14 +793,14 @@ const META_BYTES: u32 = (1 << 20) - 1;
 
 impl Meta {
     fn of(e: &Entry) -> Meta {
-        Meta { bytes: e.bytes, cdecl: e.cdecl, known: e.known, this_arg: e.this_arg, yields: e.yields }
+        Meta { bytes: e.bytes, cdecl: e.cdecl, known: e.known, this_arg: e.this_arg, yields: e.yields, value_check: e.value_check }
     }
     /// (bytes: 20 bits, a stdcall function's arguments are far fewer; more is cut to META_BYTES)
     fn pack(self) -> u32 {
-        META_SET | self.bytes.min(META_BYTES) | u32::from(self.cdecl) << 20 | u32::from(self.known) << 21 | u32::from(self.this_arg) << 22 | (u32::from(self.yields) & 3) << 23
+        META_SET | self.bytes.min(META_BYTES) | u32::from(self.cdecl) << 20 | u32::from(self.known) << 21 | u32::from(self.this_arg) << 22 | (u32::from(self.yields) & 3) << 23 | u32::from(self.value_check) << 25
     }
     fn unpack(w: u32) -> Option<Meta> {
-        (w & META_SET != 0).then_some(Meta { bytes: w & META_BYTES, cdecl: w >> 20 & 1 != 0, known: w >> 21 & 1 != 0, this_arg: w >> 22 & 1 != 0, yields: kome::num::lo8(w >> 23 & 3) })
+        (w & META_SET != 0).then_some(Meta { bytes: w & META_BYTES, cdecl: w >> 20 & 1 != 0, known: w >> 21 & 1 != 0, this_arg: w >> 22 & 1 != 0, yields: kome::num::lo8(w >> 23 & 3), value_check: w >> 25 & 1 != 0 })
     }
 }
 
@@ -970,6 +1057,7 @@ pub fn export(dll: &str, name: &str) -> u32 {
         this_arg,
         yields: yields(name),
         outs: outs::mask(name),
+        value_check: true,
     });
     if let Some(x) = e.last() {
         publish(kome::num::us(i), x);
@@ -1176,7 +1264,7 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     let _uni = crate::uni::Api::new();
     crate::comrpc::pump(cpu, false);
     let i = trap_no(addr);
-    let Some((f, Meta { bytes, cdecl, known, this_arg, yields }, outs)) = hot(kome::num::us(i)) else {
+    let Some((f, Meta { bytes, cdecl, known, this_arg, yields, value_check }, outs)) = hot(kome::num::us(i)) else {
         crate::fatal(cpu, &format!("jump to unknown trap address {addr:#x}"));
     };
     let esp = cpu.regs[ESP];
@@ -1194,7 +1282,12 @@ pub fn dispatch(cpu: &mut Cpu, addr: u32) {
     let api = (esp, if crate::mem::x64() { 8 } else { (if cdecl { 0 } else { bytes }).saturating_add(4) });
     let outer = crate::set_stopped((yields != 0 || crate::k32::SUSPENDS.any()).then(|| crate::Stopped { cpu: Box::new(cpu.clone()), api }));
     let this = (this_arg && !crate::mem::x64()).then(|| cpu.regs[koji::ECX]);
-    let mut c = Ctx { cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this, outs: outs.of_arch(crate::mem::x64()) };
+    let x64 = crate::mem::x64();
+    let mut c = Ctx { cpu, esp, edx: None, jumped: false, st0: None, trap: addr, this, outs: if value_check { outs.of_arch(x64) } else { 0 } };
+    // (the caller's pointer-sized slots watched while it runs, kura::outs: a 32-bit write
+    // leaves half of one on x64, and is the same mistake on x86, where the tests run)
+    let m = outs.of_arch(x64);
+    let _slots = (m != 0).then(|| out_slots(&c, m));
     if yields == 0 || (yields == 2 && c.a(0) != 0) {
         crate::obj::HANDOFF.worked(tid);
     }
@@ -1449,14 +1542,45 @@ pub fn host_fn_this(name: &str, f: Handler, bytes: u32) -> u32 {
     a
 }
 
-/// A COM vtable of traps (x64: 8-byte entries).
+/// A COM vtable of traps (x64: 8-byte entries). `name` says the interface ("IDirectDraw7",
+/// "VMR9::IPin", "MPEG-1 IPin", "IVideoWindow(windowless)"): where the metadata has its vtable
+/// and this one is the start of it, each method gets its out-parameters (set_com_outs).
 pub fn vtable(name: &str, methods: &[(Handler, u32)]) -> u32 {
     let k = crate::mem::ps();
     let v = crate::mem::heap_alloc(k.saturating_mul(kome::num::lo32(methods.len())), true);
+    let iface = vtable_iface(name, methods.iter().map(|m| m.1));
     for (i, (f, bytes)) in methods.iter().enumerate() {
-        crate::mem::wp(crate::mem::ga(v).at(kome::num::u32_of(i), k), host_fn(&format!("{name}::{i}"), *f, *bytes));
+        let a = host_fn(&format!("{name}::{i}"), *f, *bytes);
+        if let Some(n) = iface {
+            set_com_outs(a, n, kome::num::u32_of(i));
+        }
+        crate::mem::wp(crate::mem::ga(v).at(kome::num::u32_of(i), k), a);
     }
     v
+}
+
+/// The interface of the metadata a vtable called `name` with methods taking `bytes` is: its
+/// name's last word without a "(...)", when its methods take the stack bytes the metadata's
+/// vtable of that interface has (past its end: a derived interface's methods) (a vtable of an older version, IXAudio2SourceVoice_28 say, has
+/// none: its slots are not the metadata's).
+fn vtable_iface(name: &str, bytes: impl ExactSizeIterator<Item = u32>) -> Option<&str> {
+    let last = name.rsplit([':', ' ']).next()?;
+    let n = last.split('(').next()?;
+    let d = outs::com_dwords(n)?;
+    let b: Vec<u32> = bytes.collect();
+    let first_apart = b.iter().zip(d).position(|(&b, &w)| b != 4 * u32::from(w));
+    if let Some(k) = first_apart {
+        let what = format!("sake: vtable {name} is not the metadata's {n} from slot {k}: {:?} bytes against {:?} (another version: a name of its own, IXAudio2_27)", b.get(k), d.get(k).map(|&w| 4 * u32::from(w)));
+        // (under test it fails: a vtable of sake's with the wrong stack bytes pops the wrong
+        // amount on x86, IWMHeaderInfo3's and IWMProfile3's did)
+        assert!(!cfg!(test), "{what}");
+        if cfg!(debug_assertions) {
+            eprintln!("{what}");
+        }
+        return None;
+    }
+    // (more methods than the metadata's: a derived interface's past its end, which have none)
+    Some(n)
 }
 
 #[cfg(test)]
@@ -1702,8 +1826,8 @@ mod hot_tests {
 
     proptest! {
         #[test]
-        fn meta_round_trips(bytes in 0u32..=META_BYTES, cdecl in any::<bool>(), known in any::<bool>(), this_arg in any::<bool>(), yields in 0u8..3) {
-            let m = Meta { bytes, cdecl, known, this_arg, yields };
+        fn meta_round_trips(bytes in 0u32..=META_BYTES, cdecl in any::<bool>(), known in any::<bool>(), this_arg in any::<bool>(), yields in 0u8..3, value_check in any::<bool>()) {
+            let m = Meta { bytes, cdecl, known, this_arg, yields, value_check };
             prop_assert_eq!(Meta::unpack(m.pack()), Some(m));
         }
         /// stubs: in the stub area, 16-byte aligned, apart, holding their code; too big: None

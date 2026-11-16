@@ -286,19 +286,19 @@ fn CredWriteW(c: &mut Ctx) -> u32 {
 
 /// CredRead(target, type, flags, &credential)
 fn cred_read(c: &mut Ctx, wide: bool) -> u32 {
-    let (t, ty, flags, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (t, ty, flags, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
     if ty == 0 || ty >= TYPE_MAX {
         return fail(ERROR_INVALID_PARAMETER);
     }
     if flags != 0 {
         return fail(ERROR_INVALID_FLAGS);
     }
-    if t == 0 || out == 0 {
+    if t == 0 || out.is_null() {
         return fail(ERROR_INVALID_PARAMETER);
     }
     match read(&text_in(t, wide).unwrap(), ty) {
         Some(cr) => {
-            mem::putp(out, creds_out(&[cr], wide, false));
+            out.put(creds_out(&[cr], wide, false));
             1
         }
         None => fail(ERROR_NOT_FOUND),
@@ -336,22 +336,22 @@ fn CredDeleteW(c: &mut Ctx) -> u32 {
 
 /// CredEnumerate(filter, flags, &count, &credentials): an array of pointers
 fn cred_enumerate(c: &mut Ctx, wide: bool) -> u32 {
-    let (f, flags, countp, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (f, flags, countp, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
     // CRED_ENUMERATE_ALL_CREDENTIALS (1) goes with no filter only
     if flags & !1 != 0 || flags & 1 != 0 && f != 0 {
         return fail(ERROR_INVALID_FLAGS);
     }
-    if countp == 0 || out == 0 {
+    if countp == 0 || out.is_null() {
         return fail(ERROR_INVALID_PARAMETER);
     }
     let cs = select(text_in(f, wide).as_deref());
     if cs.is_empty() {
         w32(countp, 0);
-        mem::putp(out, 0);
+        out.put(0);
         return fail(ERROR_NOT_FOUND);
     }
     w32(countp, cs.len() as u32);
-    mem::putp(out, creds_out(&cs, wide, true));
+    out.put(creds_out(&cs, wide, true));
     1
 }
 fn CredEnumerateA(c: &mut Ctx) -> u32 {
@@ -366,12 +366,12 @@ fn CredEnumerateW(c: &mut Ctx) -> u32 {
 /// CredReadDomainCredentials(target info, flags, &count, &credentials): the domain
 /// credentials whose target is one of the info's names
 fn cred_read_domain(c: &mut Ctx, wide: bool) -> u32 {
-    let (info, flags, countp, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if info == 0 || countp == 0 || out == 0 {
+    let (info, flags, countp, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    if info == 0 || countp == 0 || out.is_null() {
         return fail(ERROR_INVALID_PARAMETER);
     }
     w32(countp, 0);
-    mem::putp(out, 0);
+    out.put(0);
     if flags & !1 != 0 {
         return fail(ERROR_INVALID_FLAGS);
     }
@@ -382,7 +382,7 @@ fn cred_read_domain(c: &mut Ctx, wide: bool) -> u32 {
         return fail(ERROR_NOT_FOUND);
     }
     w32(countp, cs.len() as u32);
-    mem::putp(out, creds_out(&cs, wide, true));
+    out.put(creds_out(&cs, wide, true));
     1
 }
 fn CredReadDomainCredentialsA(c: &mut Ctx) -> u32 {
@@ -524,8 +524,8 @@ fn marshal_in(ty: u32, p: u32) -> Option<Marshaled> {
     }
 }
 fn cred_marshal(c: &mut Ctx, wide: bool) -> u32 {
-    let (ty, p, out) = (c.a(0), c.a(1), c.a(2));
-    let Some(m) = marshal_in(ty, p).filter(|_| out != 0) else {
+    let (ty, p, out) = (c.a(0), c.a(1), c.out(2));
+    let Some(m) = marshal_in(ty, p).filter(|_| !out.is_null()) else {
         return fail(ERROR_INVALID_PARAMETER);
     };
     let s = marshal(&m);
@@ -533,7 +533,7 @@ fn cred_marshal(c: &mut Ctx, wide: bool) -> u32 {
     let b = text_bytes(&w, wide);
     let blk = mem::heap_alloc(b.len() as u32, false);
     mem::write(blk, &b);
-    mem::putp(out, blk);
+    out.put(blk);
     1
 }
 fn CredMarshalCredentialA(c: &mut Ctx) -> u32 {
@@ -547,15 +547,15 @@ fn CredMarshalCredentialW(c: &mut Ctx) -> u32 {
 
 /// CredUnmarshalCredential(text, &type, &credential)
 fn cred_unmarshal(c: &mut Ctx, wide: bool) -> u32 {
-    let (t, typ, out) = (c.a(0), c.a(1), c.a(2));
-    if t == 0 || typ == 0 || out == 0 {
+    let (t, typ, out) = (c.a(0), c.a(1), c.out(2));
+    if t == 0 || typ == 0 || out.is_null() {
         return fail(ERROR_INVALID_PARAMETER);
     }
     let s = w2a(&text_in(t, wide).unwrap());
     let (ty, m) = unmarshal(&s);
     w32(typ, ty);
     let Some(m) = m else {
-        mem::putp(out, 0);
+        out.put(0);
         return fail(ERROR_INVALID_PARAMETER);
     };
     let p = ps();
@@ -580,7 +580,7 @@ fn cred_unmarshal(c: &mut Ctx, wide: bool) -> u32 {
             b
         }
     };
-    mem::putp(out, blk);
+    out.put(blk);
     1
 }
 fn CredUnmarshalCredentialA(c: &mut Ctx) -> u32 {

@@ -141,7 +141,7 @@ fn acm_behaviour_snapshot() {
             wfx(&mut r, dst)
         };
         let flags = r.pick(&[0u32, 0, 0, 1]);
-        putp(ph, 0xdead);
+        crate::mem::putp(ph, 0xdead);
         let ro = call(acmStreamOpen, &[ph, 0, src, dst, 0, 0, 0, flags]);
         let h = r32(ph);
         write!(out, "{case} {fs} -> {fd} f{flags}: open {ro} h{}", if h == 0xdead { "-" } else if h == 0 { "0" } else { "+" }).unwrap();

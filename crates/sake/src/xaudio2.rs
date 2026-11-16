@@ -583,7 +583,7 @@ fn xa_vtbl() -> u32 {
     static V: OnceLock<u32> = OnceLock::new();
     *V.get_or_init(|| {
         vtable(
-            "IXAudio2",
+            "IXAudio2_27",
             &[
                 (X_QueryInterface, 12),
                 (X_AddRef, 4),
@@ -611,7 +611,7 @@ fn xa28_vtbl() -> u32 {
     static V: OnceLock<u32> = OnceLock::new();
     *V.get_or_init(|| {
         vtable(
-            "IXAudio2_28",
+            "IXAudio2",
             &[
                 (X_QueryInterface, 12),
                 (X_AddRef, 4),
@@ -917,7 +917,7 @@ fn src_vtbl() -> u32 {
             (S_GetFrequencyRatio, 8),
             (S_SetSourceSampleRate, 8),
         ]);
-        vtable("IXAudio2SourceVoice", &m)
+        vtable("IXAudio2SourceVoice_27", &m)
     })
 }
 
@@ -938,7 +938,7 @@ fn src28_vtbl() -> u32 {
             (S_GetFrequencyRatio, 8),
             (S_SetSourceSampleRate, 8),
         ]);
-        vtable("IXAudio2SourceVoice_28", &m)
+        vtable("IXAudio2SourceVoice", &m)
     })
 }
 
@@ -948,7 +948,7 @@ fn master28_vtbl() -> u32 {
     *V.get_or_init(|| {
         let mut m = VOICE_METHODS.to_vec();
         m.push((M_GetChannelMask, 8));
-        vtable("IXAudio2MasteringVoice_28", &m)
+        vtable("IXAudio2MasteringVoice", &m)
     })
 }
 

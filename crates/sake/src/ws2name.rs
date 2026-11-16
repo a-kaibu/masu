@@ -1229,20 +1229,20 @@ fn ostr(p: u32, wide: bool) -> Option<String> {
 
 /// getaddrinfo(node, service, hints, &result) / GetAddrInfoW
 fn getaddrinfo(c: &mut Ctx, wide: bool) -> u32 {
-    let (n, s, h, res) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (n, s, h, res) = (c.a(0), c.a(1), c.a(2), c.out(3));
     if !started() {
         last(WSANOTINITIALISED);
         return WSANOTINITIALISED;
     }
-    if res == 0 {
+    if res.is_null() {
         last(WSANO_RECOVERY);
         return WSANO_RECOVERY;
     }
-    wp(res, 0);
+    res.put(0);
     let hints = hints_at(h);
     match addrinfo(ostr(n, wide).as_deref(), ostr(s, wide).as_deref(), &hints) {
         Ok((canon, v)) => {
-            wp(res, build_ai(&canon, &v, hints.flags, wide, false));
+            res.put(build_ai(&canon, &v, hints.flags, wide, false));
             last(0);
             0
         }
@@ -1636,8 +1636,8 @@ pub fn init() {
     implement(d, "WSAAddressToStringA", |c| address_to_string(c, false));
     implement(d, "WSAAddressToStringW", |c| address_to_string(c, true));
     implement(d, "GetHostNameW", |c| gethostname(c, true));
-    implement(d, "getaddrinfo", |c| getaddrinfo(c, false));
-    implement(d, "GetAddrInfoW", |c| getaddrinfo(c, true));
+    implement(d, "getaddrinfo", |c| getaddrinfo(c.args::<crate::api::outs::getaddrinfo>().ctx(), false));
+    implement(d, "GetAddrInfoW", |c| getaddrinfo(c.args::<crate::api::outs::GetAddrInfoW>().ctx(), true));
     implement(d, "GetAddrInfoExW", GetAddrInfoExW);
     implement(d, "GetAddrInfoExOverlappedResult", |c| if c.a(0) == 0 { WSAEINVAL } else { mem::rp(c.a(0)) });
     implement(d, "GetAddrInfoExCancel", |c| if c.a(0) == 0 { WSAEINVAL } else { 6 });
@@ -1661,9 +1661,10 @@ pub fn init() {
     implement(d, "WSAEnumNameSpaceProvidersW", |c| enum_namespaces(c, true));
     implement(d, "WSCGetProviderPath", WSCGetProviderPath);
     implement(d, "WSCGetProviderInfo", |c| {
-        let (id, info, size, errp) = (c.a(0), c.a(2), c.a(3), c.a(5));
+        let c = &mut c.args::<crate::api::outs::WSCGetProviderInfo>();
+        let (id, info, size, errp) = (c.a::<0>(), c.a::<2>(), c.out::<3>(), c.a::<5>());
         if errp != 0 {
-            w32(errp, if id == 0 || info == 0 && size == 0 { WSAEFAULT } else { WSANO_RECOVERY });
+            w32(errp, if id == 0 || info == 0 && size.is_null() { WSAEFAULT } else { WSANO_RECOVERY });
         }
         SOCKET_ERROR
     });
@@ -1683,14 +1684,15 @@ pub fn init() {
 }
 
 fn lookup_begin(c: &mut Ctx) -> u32 {
-    let (qs, h) = (c.a(0), c.a(2));
-    if qs == 0 || h == 0 {
+    let c = &mut c.args::<crate::api::outs::WSALookupServiceBeginA>();
+    let (qs, h) = (c.a::<0>(), c.out::<2>());
+    if qs == 0 || h.is_null() {
         return err(WSAEFAULT);
     }
     if r32(qs) == 0 {
         return err(WSAEINVAL);
     }
-    wp(h, 0x5ea0);
+    h.put(0x5ea0);
     0
 }
 

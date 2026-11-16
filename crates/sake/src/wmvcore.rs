@@ -432,7 +432,9 @@ const M_SYNC: &[(Handler, u32)] = &[
                 (sr_set_allocate_for_stream, 12),
                 (sr_get_allocate_for_stream, 12),
             ];
-/// IWMProfile3's methods and their x86 argument bytes
+/// IWMProfile3's methods and their x86 argument bytes, as Microsoft's metadata has them
+/// (api::vtable_iface tells them apart: the table had four methods too many from slot 30 on,
+/// IWMHeaderInfo3 seven sizes wrong and one too many, which popped the wrong stack bytes on x86)
 const M_PROFILE: &[(Handler, u32)] = &[
                 (qi, 12),
                 (add_ref, 4),
@@ -464,15 +466,11 @@ const M_PROFILE: &[(Handler, u32)] = &[
                 (notimpl, 8),
                 (notimpl, 8),
                 (notimpl, 8),
-                (pr_zero_count, 8),
-                (notimpl, 12),
+                (pr_no_prioritization, 8),
                 (notimpl, 8),
+                (notimpl, 4),
                 (notimpl, 8),
-                (notimpl, 8),
-                (notimpl, 12),
-                (notimpl, 8),
-                (notimpl, 8),
-                (notimpl, 8),
+                (notimpl, 16),
             ];
 /// IWMHeaderInfo3's methods and their x86 argument bytes
 const M_HEADER: &[(Handler, u32)] = &[
@@ -484,7 +482,7 @@ const M_HEADER: &[(Handler, u32)] = &[
                 (hi_get_attribute_by_name, 24),
                 (notimpl, 24),
                 (hi_zero_count, 8),
-                (notimpl, 24),
+                (notimpl, 20),
                 (notimpl, 16),
                 (notimpl, 8),
                 (hi_zero_count, 8),
@@ -493,16 +491,15 @@ const M_HEADER: &[(Handler, u32)] = &[
                 (notimpl, 8),
                 // IWMHeaderInfo2
                 (hi_zero_count, 8),
-                (notimpl, 32),
+                (notimpl, 36),
                 // IWMHeaderInfo3
                 (hi_get_attribute_count_ex, 12),
                 (notimpl, 24),
-                (notimpl, 40),
+                (notimpl, 36),
+                (notimpl, 28),
                 (notimpl, 32),
-                (notimpl, 32),
-                (notimpl, 16),
-                (notimpl, 44),
-                (notimpl, 32),
+                (notimpl, 12),
+                (notimpl, 24),
             ];
 /// IWMStreamConfig's methods and their x86 argument bytes
 const M_CONFIG: &[(Handler, u32)] = &[
@@ -787,7 +784,7 @@ fn sr_set_range_by_frame(c: &mut Ctx) -> u32 {
 }
 
 /// Writes a new INSSBuffer of `data` (ours, or the program's allocator's) into `*out`.
-fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u64, flags: u32, out: u32) -> u32 {
+fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u64, flags: u32, out: crate::api::Out) -> u32 {
     let (a, by_stream, num) = alloc;
     if a != 0 {
         // IWMReaderAllocatorEx::AllocateForStreamEx / AllocateForOutputEx(num, cb, &buf, flags,
@@ -814,7 +811,7 @@ fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u
             mem::write(dst, data);
         }
         crate::dshow::com(c, b, 4, &[lo32(data.len())]);
-        putp(out, b);
+        out.put(b);
         return 0;
     }
     give(out, new_buffer(data))
@@ -825,8 +822,8 @@ fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u
 fn sr_get_next_sample(c: &mut Ctx) -> u32 {
     let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
     let want = lo16(c.a(1));
-    let (pbuf, ptime, pdur, pflags, pout, pnum) = (c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
-    if pbuf == 0 || ptime == 0 || pdur == 0 || pflags == 0 {
+    let (pbuf, ptime, pdur, pflags, pout, pnum) = (c.out(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
+    if pbuf.is_null() || ptime == 0 || pdur == 0 || pflags == 0 {
         return Hr::Pointer.code();
     }
     if want == 0 && (pout == 0 && pnum == 0) {
@@ -1047,8 +1044,8 @@ fn sr_get_output_count(c: &mut Ctx) -> u32 {
 /// GetOutputProps(DWORD output, IWMOutputMediaProps **): a copy of its type
 fn sr_get_output_props(c: &mut Ctx) -> u32 {
     let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (k, out) = (us(c.a(1)), c.a(2));
-    if out == 0 {
+    let (k, out) = (us(c.a(1)), c.out(2));
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let r = lock(&rr);
@@ -1129,8 +1126,8 @@ fn sr_get_output_format_count(c: &mut Ctx) -> u32 {
 
 fn sr_get_output_format(c: &mut Ctx) -> u32 {
     let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (k, i, out) = (us(c.a(1)), us(c.a(2)), c.a(3));
-    if out == 0 {
+    let (k, i, out) = (us(c.a(1)), us(c.a(2)), c.out(3));
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let r = lock(&rr);
@@ -1271,6 +1268,17 @@ fn pr_get_name(c: &mut Ctx) -> u32 {
     0
 }
 
+/// IWMProfile3::GetStreamPrioritization(this, IWMStreamPrioritization **): none, NULL written
+/// whole (it is pointer-sized: the table had it as a count, w32, and it took 12 bytes from slot
+/// 30 on, against the metadata's)
+fn pr_no_prioritization(c: &mut Ctx) -> u32 {
+    if c.a(1) == 0 {
+        return Hr::Pointer.code();
+    }
+    crate::mem::putp(c.a(1), 0);
+    0
+}
+
 fn pr_zero_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
@@ -1292,8 +1300,8 @@ fn pr_get_stream_count(c: &mut Ctx) -> u32 {
 
 fn pr_get_stream(c: &mut Ctx) -> u32 {
     let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (i, out) = (us(c.a(1)), c.a(2));
-    if out == 0 {
+    let (i, out) = (us(c.a(1)), c.out(2));
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let r = lock(&rr);
@@ -1304,14 +1312,14 @@ fn pr_get_stream(c: &mut Ctx) -> u32 {
 
 fn pr_get_stream_by_number(c: &mut Ctx) -> u32 {
     let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (n, out) = (lo8(c.a(1)), c.a(2));
-    if out == 0 {
+    let (n, out) = (lo8(c.a(1)), c.out(2));
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let r = lock(&rr);
     let Some(h) = r.header() else { return Hr::InvalidRequest.code() };
     let Some(s) = asf::StreamNumber::new(n).and_then(|n| h.stream(n)) else {
-        putp(out, 0);
+        out.put(0);
         return Hr::UnrecognizedStreamType.code();
     };
     give(out, new_props(Props::Stream(s.clone())))
@@ -1700,8 +1708,8 @@ fn bufs<R>(f: impl FnOnce(&mut HashMap<u32, Buf>) -> R) -> R {
 }
 
 /// Puts a new object `o` into `out`: S_OK, or Hr::OutOfMemory.code() when there is none (0)
-fn give(out: u32, o: u32) -> u32 {
-    putp(out, o);
+fn give(out: crate::api::Out, o: u32) -> u32 {
+    out.put(o);
     if o == 0 { Hr::OutOfMemory.code() } else { 0 }
 }
 
@@ -1814,16 +1822,18 @@ fn buf_get_buffer_and_length(c: &mut Ctx) -> u32 {
 pub fn init() {
     // WMCreateSyncReader(IUnknown *cert, DWORD rights, IWMSyncReader **)
     implement("wmvcore", "WMCreateSyncReader", |c| {
-        let out = c.a(2);
-        if out == 0 {
+        let c = &mut c.args::<crate::api::outs::WMCreateSyncReader>();
+        let out = c.out::<2>();
+        if out.is_null() {
             return Hr::InvalidArg.code();
         }
         give(out, new_sync_reader())
     });
     // WMCreateReader(IUnknown *cert, DWORD rights, IWMReader **)
     implement("wmvcore", "WMCreateReader", |c| {
-        let out = c.a(2);
-        if out == 0 {
+        let c = &mut c.args::<crate::api::outs::WMCreateReader>();
+        let out = c.out::<2>();
+        if out.is_null() {
             return Hr::InvalidArg.code();
         }
         give(out, asyncr::new_reader())

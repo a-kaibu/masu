@@ -1546,7 +1546,7 @@ fn ver_find(block: u32, sub: &str) -> Option<(u32, u32, bool)> {
 }
 
 fn ver_query(c: &mut Ctx, wide: bool) -> u32 {
-    let (block, sub, pp, plen) = (c.a(0), arg_str(c.a(1), wide), c.a(2), c.a(3));
+    let (block, sub, pp, plen) = (c.a(0), arg_str(c.a(1), wide), c.out(2), c.a(3));
     let Some((val, n, text)) = ver_find(block, &sub) else { return 0 };
     if text && !wide {
         // the ANSI copy goes in the second half of the buffer (sized twice the resource)
@@ -1556,10 +1556,10 @@ fn ver_query(c: &mut Ctx, wide: bool) -> u32 {
         let a = w2a(&s);
         mem::write(at, &a);
         mem::w8(at + a.len() as u32, 0);
-        mem::putp(pp, at);
+        pp.put(at);
         put32(plen, a.len() as u32 + 1);
     } else {
-        mem::putp(pp, val);
+        pp.put(val);
         put32(plen, n);
     }
     crate::k32::last_error(0);
@@ -1947,7 +1947,7 @@ fn create_object(c: &mut Ctx, clsid: u32, iid: u32, out: crate::api::Out) -> u32
         return 0;
     }
     if let Some(obj) = crate::mmdevapi::create_instance(clsid) {
-        mem::putp(c.a(4), obj);
+        c.out(4).put(obj);
         return 0;
     }
     if let Some(obj) = crate::com::create_instance(clsid) {
@@ -2344,13 +2344,13 @@ fn uuid_text(p: u32) -> String {
     guid_string(p).trim_matches(['{', '}']).to_ascii_lowercase()
 }
 fn uuid_to_string(c: &mut Ctx, wide: bool) -> u32 {
-    let (u, out) = (c.a(0), c.a(1));
+    let (u, out) = (c.a(0), c.out(1));
     let t = uuid_text(u);
     let p = mem::heap_alloc(2 * (t.len() as u32 + 1), true);
     for (i, b) in t.bytes().enumerate() {
         if wide { w16(p + 2 * i as u32, b as u16) } else { mem::w8(p + i as u32, b) }
     }
-    mem::wp(out, p);
+    out.put(p);
     0
 }
 fn UuidToStringA(c: &mut Ctx) -> u32 {
@@ -3196,12 +3196,12 @@ fn SHGetFolderPathA(c: &mut Ctx) -> u32 {
 /// SHGetKnownFolderPath(rfid, flags, token, PWSTR *out): the known folders that have a CSIDL.
 /// SHStrDupA/W(src, &copy): a wide copy in CoTaskMemAlloc memory
 fn sh_str_dup(c: &mut Ctx, wide: bool) -> u32 {
-    let (src, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let (src, out) = (c.a(0), c.out(1));
+    if out.is_null() {
         return 0x8007_0057;
     }
     if src == 0 {
-        mem::putp(out, 0);
+        out.put(0);
         return 0x8007_0057;
     }
     let w: Vec<u16> = if wide { mem::wstr(src) } else { crate::text::a2w(&mem::cstr(src)) };
@@ -3209,7 +3209,7 @@ fn sh_str_dup(c: &mut Ctx, wide: bool) -> u32 {
     for (i, v) in w.iter().enumerate() {
         mem::w16(p + 2 * i as u32, *v);
     }
-    mem::putp(out, p);
+    out.put(p);
     0
 }
 fn SHStrDupA(c: &mut Ctx) -> u32 {
@@ -4823,9 +4823,9 @@ static NEXT_HASH: AtomicU32 = AtomicU32::new(0x4a00_0000);
 fn acquire(c: &mut Ctx, wide: bool) -> u32 {
     let container = (c.a(1) != 0).then(|| arg_str(c.a(1), wide));
     let name = (c.a(2) != 0).then(|| arg_str(c.a(2), wide));
-    if c.a(0) == 0 && c.a(4) & 16 == 0 { return crypto_result(Err(87)); }
+    if c.out(0).is_null() && c.a(4) & 16 == 0 { return crypto_result(Err(87)); }
     match crate::capi::acquire(container.as_deref(), name.as_deref(), c.a(3), c.a(4)) {
-        Ok(id) => { if c.a(4) & 16 == 0 { mem::putp(c.a(0), id); } 1 }, Err(e) => crypto_result(Err(e)),
+        Ok(id) => { if c.a(4) & 16 == 0 { c.out(0).put(id); } 1 }, Err(e) => crypto_result(Err(e)),
     }
 }
 fn CryptAcquireContextA(c: &mut Ctx) -> u32 {
@@ -4839,18 +4839,24 @@ fn CryptAcquireContextW(c: &mut Ctx) -> u32 {
 fn CryptReleaseContext(c: &mut Ctx) -> u32 {
     crypto_result(crate::capi::release(c.a(0), c.a(1)))
 }
-fn add_rsa(c: &mut Ctx, generated: bool) -> u32 {
-    let (provider, spec, out) = (c.a(0), c.a(1), if generated { c.a(3) } else { c.a(2) });
-    if out == 0 { return crypto_result(Err(87)); }
-    let key = if generated { crate::capi::generate(provider, spec, c.a(2)) } else { crate::capi::user_key(provider, spec) };
+/// CryptGenKey's (`flags`: its dwFlags) or CryptGetUserKey's (None) key of `spec` in `provider`, as `out`.
+fn add_rsa(provider: u32, spec: u32, flags: Option<u32>, out: crate::api::Out) -> u32 {
+    if out.is_null() { return crypto_result(Err(87)); }
+    let key = match flags { Some(f) => crate::capi::generate(provider, spec, f), None => crate::capi::user_key(provider, spec) };
     match key.and_then(|k| PublicRsa::generated(k, spec)) {
         Ok(key) => { let id = NEXT_HASH.fetch_add(1, Ordering::Relaxed);
-            RSA_KEYS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, key); mem::putp(out, id); 1 },
+            RSA_KEYS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, key); out.put(id); 1 },
         Err(e) => crypto_result(Err(e)),
     }
 }
-fn CryptGenKey(c: &mut Ctx) -> u32 { add_rsa(c, true) }
-fn CryptGetUserKey(c: &mut Ctx) -> u32 { add_rsa(c, false) }
+fn CryptGenKey(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CryptGenKey>();
+    add_rsa(c.a::<0>(), c.a::<1>(), Some(c.a::<2>()), c.out::<3>())
+}
+fn CryptGetUserKey(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CryptGetUserKey>();
+    add_rsa(c.a::<0>(), c.a::<1>(), None, c.out::<2>())
+}
 fn CryptSignHashA(c: &mut Ctx) -> u32 {
     if c.a(5) == 0 { return crypto_result(Err(87)); }
     if c.a(3) & !1 != 0 { return crypto_result(Err(crate::cng::NTE_BAD_FLAGS)); }
@@ -5227,9 +5233,9 @@ pub fn init() {
     });
     implement("shell32", "SHChangeNotify", |_| 0);
     implement("shell32", "SHCreateItemFromParsingName", |c| {
-        if c.a(3) != 0 {
-            w32(c.a(3), 0);
-        }
+        let c = &mut c.args::<crate::api::outs::SHCreateItemFromParsingName>();
+        // (the item is pointer-sized: w32 left half of it on x64, kura::outs)
+        c.out::<3>().put(0);
         0x8000_4001
     });
     // (xinputuap: the Windows 10 one, AdvHD imports it)
@@ -5423,8 +5429,8 @@ fn wts_str(s: &str, wide: bool) -> (u32, u32) {
 /// (as Windows answers for it: empty client strings, zero client numbers); other sessions don't
 /// exist.
 fn wts_query(c: &mut Ctx, wide: bool) -> u32 {
-    let (session, class, out, bytes) = (c.a(1), c.a(2), c.a(3), c.a(4));
-    if out == 0 || bytes == 0 {
+    let (session, class, out, bytes) = (c.a(1), c.a(2), c.out(3), c.a(4));
+    if out.is_null() || bytes == 0 {
         crate::k32::last_error(87);
         return 0;
     }
@@ -5457,7 +5463,7 @@ fn wts_query(c: &mut Ctx, wide: bool) -> u32 {
             return 0;
         }
     };
-    mem::putp(out, p);
+    out.put(p);
     w32(bytes, n);
     1
 }
@@ -5474,8 +5480,8 @@ fn WTSQuerySessionInformationW(c: &mut Ctx) -> u32 {
 /// WTSEnumerateSessions(server, 0, 1, &info, &count): the one session
 /// (WTS_SESSION_INFO {SessionId, pWinStationName, State}).
 fn wts_enum(c: &mut Ctx, wide: bool) -> u32 {
-    let (out, count) = (c.a(3), c.a(4));
-    if c.a(1) != 0 || c.a(2) != 1 || out == 0 || count == 0 {
+    let (out, count) = (c.out(3), c.a(4));
+    if c.a(1) != 0 || c.a(2) != 1 || out.is_null() || count == 0 {
         crate::k32::last_error(87);
         return 0;
     }
@@ -5484,7 +5490,7 @@ fn wts_enum(c: &mut Ctx, wide: bool) -> u32 {
     w32(info, SESSION);
     mem::putp(info + ps, wts_str("Console", wide).0);
     w32(info + 2 * ps, 0);
-    mem::putp(out, info);
+    out.put(info);
     w32(count, 1);
     1
 }

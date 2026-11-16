@@ -15,7 +15,8 @@
 //! 8 on x64: a pointer, handle, interface, SIZE_T, SRWLOCK...): "dll name i,j... k,l..." (x64
 //! argument indexes from 0, then x86 stack dwords, which a GUID or a double by value moves), sorted.
 //! - crates/sake/src/com_outptrs.txt: the same per method of the interfaces sake names, by vtable
-//!   slot ("interface slot i,j... k,l...", `this` 0), and "interface #n" its method count.
+//!   slot ("interface slot i,j... k,l...", `this` 0), and "interface # d,d..." each method's x86
+//!   stack dwords (with `this`), its vtable as the metadata has it.
 //! sake writes those with mem::putp/wp; put32/w32 leaves the upper half on x64
 //! (crates/sake/src/outptr_audit.rs).
 use std::collections::{BTreeMap, HashMap};
@@ -354,7 +355,9 @@ fn outptrs(i32_: &Index, i64_: &Index) -> String {
 /// interfaces sake's source names (a vtable of its own; the rest is 30000 lines no one reads).
 fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
     let (l32, l64) = (Layout::new(i32_, false), Layout::new(i64_, true));
-    let named = sake_names(&root.join("crates/sake/src"));
+    let mut named = sake_names(&root.join("crates/sake/src"));
+    // (and the D3D11 / DXGI ones kura answers, by number)
+    named.extend(D3D11.iter().map(|(_, n)| n.to_string()));
     // (each method: its arguments (type, out), and whether a structure comes back through a
     // hidden pointer, which is argument 1 after `this` on both)
     fn walk<'a>(ix: &'a Index, t: TypeDef<'a>, out: &mut Vec<(Vec<(Type, bool)>, bool)>) {
@@ -370,7 +373,7 @@ fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
         }
     }
     let mut o = BTreeMap::<(String, usize), (Vec<u32>, Vec<u32>)>::new();
-    let mut counts = BTreeMap::<String, usize>::new();
+    let mut counts = BTreeMap::<String, String>::new();
     let ifaces64: HashMap<String, TypeDef> = i64_.types().filter(|t| t.category() == TypeCategory::Interface).map(|t| (t.name().to_string(), t)).collect();
     for t in i32_.types().filter(|t| t.category() == TypeCategory::Interface && named.contains(t.name())) {
         let Some(t64) = ifaces64.get(t.name()) else { continue };
@@ -380,7 +383,11 @@ fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
         if m32.len() != m64.len() {
             continue;
         }
-        counts.insert(t.name().to_string(), m32.len());
+        // (x86 stack dwords with `this` and a hidden result pointer, per method: what a vtable
+        // of sake's is checked against)
+        let dw: Vec<String> = vtable(i32_, &l32, t).iter().map(|v| v.1.to_string()).collect();
+        assert_eq!(dw.len(), m32.len(), "{}", t.name());
+        counts.insert(t.name().to_string(), dw.join(","));
         for (k, ((a32, h), (a64, _))) in m32.iter().zip(&m64).enumerate() {
             if a32.len() != a64.len() {
                 continue;
@@ -399,7 +406,7 @@ fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
     }
     let mut s = String::new();
     for (n, c) in &counts {
-        s += &format!("{n} #{c}\n");
+        s += &format!("{n} # {c}\n");
     }
     for ((n, k), (a, b)) in o {
         let j = |v: &[u32]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");

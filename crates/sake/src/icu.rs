@@ -333,7 +333,7 @@ fn ubrk_close(c: &mut Ctx) -> u32 {
     0
 }
 fn step(c: &mut Ctx, f: fn(&mut Brk) -> i32) -> u32 {
-    with(c.a(0), f).unwrap_or(DONE) as u32
+    with(c.out(0).object(), f).unwrap_or(DONE) as u32
 }
 fn ubrk_current(c: &mut Ctx) -> u32 {
     step(c, |b| b.current())

@@ -37,6 +37,16 @@ const METHODS: [&[u32]; 15] = [
 
 const NUM_IFACES: u32 = 15;
 
+/// The interfaces 1..=15 by Wine's numbering, as Microsoft's metadata names them (the 9Ex
+/// ones where METHODS has their methods): their methods' out-parameters (api::set_com_outs),
+/// and a vtable checked against the metadata's (vtables_are_the_metadatas).
+const IFACES: [&str; 15] = [
+    "IDirect3D9Ex", "IDirect3DDevice9Ex", "IDirect3DSwapChain9", "IDirect3DSurface9", "IDirect3DTexture9",
+    "IDirect3DCubeTexture9", "IDirect3DVolumeTexture9", "IDirect3DVertexBuffer9", "IDirect3DIndexBuffer9",
+    "IDirect3DVertexDeclaration9", "IDirect3DVertexShader9", "IDirect3DPixelShader9", "IDirect3DStateBlock9",
+    "IDirect3DQuery9", "IDirect3DVolume9",
+];
+
 /// Direct3D 8 (kura's d3d8.rs on the same device): interface 16 + the Direct3D 9 one, each
 /// method's argument count with `this` (from Wine's dlls/vnd3d8/main.c).
 const METHODS8: [(u8, &[u32]); 10] = [
@@ -458,6 +468,9 @@ fn init() {
             for (n, &args) in (0u8..).zip(m) {
                 let a = host_fn(&format!("d3d9:{i}:{n}"), method, 4 * args);
                 crate::api::set_tag(a, Method::new(i, n).id(), 0);
+                if let Some(name) = IFACES.get(usize::from(i).wrapping_sub(1)) {
+                    crate::api::set_com_outs(a, name, u32::from(n));
+                }
                 wp(v + k * u32::from(n), a);
             }
             wp(table + k * u32::from(i), v);
@@ -581,6 +594,19 @@ mod tag_tests {
                 assert_eq!(crate::api::args_of(a), (false, 4 * args));
             }
         }
+    }
+
+    /// Every interface's vtable is the metadata's (Microsoft's: the same methods, each with
+    /// the same stack dwords), so that its out-parameters by slot are the ones its methods have.
+    #[test]
+    fn vtables_are_the_metadatas() {
+        for (name, m) in IFACES.iter().zip(METHODS) {
+            let want = crate::api::outs::com_dwords(name).unwrap_or_else(|| panic!("{name} not in com_outptrs.txt"));
+            let got: Vec<u8> = m.iter().map(|&a| u8::try_from(a).unwrap()).collect();
+            assert_eq!(got, want, "{name}");
+        }
+        // (e.g. IDirect3DDevice9::CreateTexture's IDirect3DTexture9** is x64's 7, x86's dword 7)
+        assert_eq!(crate::api::outs::com("IDirect3DDevice9Ex", 23), crate::api::OutMask { x64: 1 << 7 | 1 << 8, x86: 1 << 7 | 1 << 8 });
     }
 
     #[test]

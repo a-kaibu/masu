@@ -426,6 +426,7 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
         let found = slot_impl(i, name, impls).map(|m| m.1);
         let f = slot_handler(i, found);
         let a = host_fn(&format!("{}::{i}:{name}", iface.name()), f, 4 * u32::from(dwords));
+        crate::api::set_com_outs(a, iface.name(), kome::num::u32_of(i));
         if i > 2 && found.is_none() {
             STUBS.locked().get_or_insert_with(HashMap::new).insert(a, (iface.name(), name, kind));
         }

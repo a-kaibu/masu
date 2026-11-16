@@ -386,12 +386,13 @@ fn v4_s2a(c: &mut Ctx, w: bool, ex: bool) -> u32 {
     }
     let s = if w { wide(p) } else { narrow(p) };
     let r = v4_parse(&s, strict, !ex, ex);
-    let (term, out, portp) = if ex { (0, c.a(2), c.a(3)) } else { (c.a(2), c.a(3), 0) };
+    // (the terminator is pointer-sized, plain only: argument 2 there, the address Ex's)
+    let (term, out, portp) = if ex { (None, c.a(2), c.a(3)) } else { (Some(c.out(2)), c.a(3), 0) };
     if let Some(a) = r.addr && out != 0 {
         mem::write(out, &a);
     }
-    if term != 0 {
-        mem::wp(term, p + r.end as u32 * if w { 2 } else { 1 });
+    if let Some(t) = term {
+        t.put(p + r.end as u32 * if w { 2 } else { 1 });
     }
     if r.ok && portp != 0 {
         w16(portp, r.port);
@@ -402,7 +403,7 @@ fn v4_s2a(c: &mut Ctx, w: bool, ex: bool) -> u32 {
 fn v6_s2a(c: &mut Ctx, w: bool, ex: bool) -> u32 {
     // plain: (str, &terminator, &addr); Ex: (str, &addr, &scope, &port)
     let p = c.a(0);
-    let (term, out, scopep, portp) = if ex { (0, c.a(1), c.a(2), c.a(3)) } else { (c.a(1), c.a(2), 0, 0) };
+    let (term, out, scopep, portp) = if ex { (None, c.a(1), c.a(2), c.a(3)) } else { (Some(c.out(1)), c.a(2), 0, 0) };
     if p == 0 || out == 0 || (ex && (scopep == 0 || portp == 0)) {
         return STATUS_INVALID_PARAMETER;
     }
@@ -410,8 +411,8 @@ fn v6_s2a(c: &mut Ctx, w: bool, ex: bool) -> u32 {
     let mut a: [u8; 16] = mem::array::<16>(out);
     let r = v6_parse(&s, &mut a, ex, !ex);
     mem::write(out, &a);
-    if term != 0 {
-        mem::wp(term, p + r.end as u32 * if w { 2 } else { 1 });
+    if let Some(t) = term {
+        t.put(p + r.end as u32 * if w { 2 } else { 1 });
     }
     if r.ok && ex {
         w32(scopep, r.scope);
@@ -488,12 +489,12 @@ fn v6_a2s(c: &mut Ctx, w: bool) -> u32 {
 
 pub fn init() {
     let d = "ntdll";
-    implement(d, "RtlIpv4StringToAddressA", |c| v4_s2a(c, false, false));
-    implement(d, "RtlIpv4StringToAddressW", |c| v4_s2a(c, true, false));
+    implement(d, "RtlIpv4StringToAddressA", |c| v4_s2a(c.args::<crate::api::outs::RtlIpv4StringToAddressA>().ctx(), false, false));
+    implement(d, "RtlIpv4StringToAddressW", |c| v4_s2a(c.args::<crate::api::outs::RtlIpv4StringToAddressW>().ctx(), true, false));
     implement(d, "RtlIpv4StringToAddressExA", |c| v4_s2a(c, false, true));
     implement(d, "RtlIpv4StringToAddressExW", |c| v4_s2a(c, true, true));
-    implement(d, "RtlIpv6StringToAddressA", |c| v6_s2a(c, false, false));
-    implement(d, "RtlIpv6StringToAddressW", |c| v6_s2a(c, true, false));
+    implement(d, "RtlIpv6StringToAddressA", |c| v6_s2a(c.args::<crate::api::outs::RtlIpv6StringToAddressA>().ctx(), false, false));
+    implement(d, "RtlIpv6StringToAddressW", |c| v6_s2a(c.args::<crate::api::outs::RtlIpv6StringToAddressW>().ctx(), true, false));
     implement(d, "RtlIpv6StringToAddressExA", |c| v6_s2a(c, false, true));
     implement(d, "RtlIpv6StringToAddressExW", |c| v6_s2a(c, true, true));
     implement(d, "RtlIpv4AddressToStringA", |c| v4_a2s(c, false));

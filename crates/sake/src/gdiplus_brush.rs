@@ -437,7 +437,7 @@ fn GdipIsMatrixEqual(c: &mut Ctx) -> u32 {
 /// GdipTransformMatrixPoints / ..I / GdipVectorTransformMatrixPoints(..I)(m, pts, count)
 fn transform_points(c: &mut Ctx, int: bool, vector: bool) -> u32 {
     let (p, n) = (c.a(1), c.i(2));
-    let Some(mut m) = matrix(c.a(0)) else { return INVALID_PARAMETER };
+    let Some(mut m) = matrix(c.out(0).object()) else { return INVALID_PARAMETER };
     if p == 0 || n <= 0 {
         return INVALID_PARAMETER;
     }
@@ -661,7 +661,8 @@ pub(crate) fn main_color(h: u32) -> Option<u32> {
 }
 
 pub(crate) fn GdipCreateSolidFill(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Brush(Brush::Solid(c.a(0))), c.out(1))
+    let c = &mut c.args::<crate::api::outs::GdipCreateSolidFill>();
+    new_obj(Obj::Brush(Brush::Solid(c.a::<0>())), c.out::<1>())
 }
 fn GdipGetSolidFillColor(c: &mut Ctx) -> u32 {
     let out = c.a(1);
@@ -827,7 +828,7 @@ fn parts(want: Xf, b: &mut Brush) -> Option<(&mut M, &mut u32)> {
 }
 /// Get..Transform(brush, matrix) of brushes of `kind`
 fn get_transform(c: &mut Ctx, kind: Xf) -> u32 {
-    let (h, mh) = (c.a(0), c.a(1));
+    let (h, mh) = (c.a(0), c.out(1));
     let mut got = None;
     let s = on_brush(h, |b| {
         let Some((m, _)) = parts(kind, b) else { return INVALID_PARAMETER };
@@ -835,13 +836,13 @@ fn get_transform(c: &mut Ctx, kind: Xf) -> u32 {
         OK
     });
     let Some(m) = got.filter(|_| s == OK) else { return INVALID_PARAMETER };
-    on_matrix(mh, |x| {
+    on_matrix(mh.object(), |x| {
         *x = m;
         OK
     })
 }
 fn set_transform(c: &mut Ctx, kind: Xf) -> u32 {
-    let Some(m) = matrix(c.a(1)) else { return INVALID_PARAMETER };
+    let Some(m) = matrix(c.out(1).object()) else { return INVALID_PARAMETER };
     on_brush(c.a(0), |b| {
         let Some((bm, _)) = parts(kind, b) else { return INVALID_PARAMETER };
         *bm = m;
