@@ -15,8 +15,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { createCipheriv, randomBytes, randomUUID } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { get } from "node:http";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
@@ -117,7 +116,6 @@ async function chunksOf(...names) {
   }
   return out;
 }
-const chunkUrl = (h) => `${base}store/chunks/${h.slice(0, 2)}/${h}`;
 /** A zstd frame of raw blocks (single segment, its size in 4 bytes, no checksum). */
 function rawFrame(d) {
   const parts = [Buffer.from([0x28, 0xb5, 0x2f, 0xfd, 0xa0]), Buffer.alloc(4)];
@@ -143,20 +141,12 @@ const gChunks = await chunksOf("prefix32", "g");
 const hChunks = await chunksOf("h");
 // (a few only on the server: /store-direct leaves them out, or says 404 asked alone)
 const decoded = new Map();
-// (the store keeps chunks zstd-coded and sends them so, Content-Encoding: zstd. Node 26's fetch
-// decodes that itself and keeps the header, so the bytes are read off the wire here)
-const raw = (url) =>
-  new Promise((ok, fail) =>
-    get(url, (r) => {
-      const parts = [];
-      r.on("data", (d) => parts.push(d));
-      r.on("end", () => ok({ encoding: r.headers["content-encoding"], body: Buffer.concat(parts) }));
-      r.on("error", fail);
-    }).on("error", fail),
-  );
+// (the server gives no chunk, 16b08c7: their bytes from the store on the disk, which keeps them
+// as zstd frames)
 for (const h of [...gChunks, ...hChunks]) {
-  const r = await raw(chunkUrl(h));
-  decoded.set(h, new Uint8Array(r.encoding === "zstd" ? zstdDecompressSync(r.body) : r.body));
+  const body = readFileSync(join(store, "chunks", h.slice(0, 2), h));
+  const zstd = body.subarray(0, 4).equals(Buffer.from([0x28, 0xb5, 0x2f, 0xfd]));
+  decoded.set(h, new Uint8Array(zstd ? zstdDecompressSync(body) : body));
 }
 
 const browser = await chromium.launchPersistentContext(join(work, "profile"), {

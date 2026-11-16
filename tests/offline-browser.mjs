@@ -14,6 +14,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { zstdStandIn } from "./zstd-standin.mjs";
 const pw = await import(process.env.PLAYWRIGHT ?? "playwright");
 const { chromium } = pw.default ?? pw;
 
@@ -32,6 +33,8 @@ if (!existsSync(join(web, "sake/sake.wasm"))) {
   writeFileSync(join(web, "sake/sake.wasm"), new Uint8Array([0, 0x61, 0x73, 0x6d, 1, 0, 0, 0]));
   writeFileSync(join(web, "sake/jit-version.txt"), "00000000\n");
 }
+// (the chunks are zstd frames: decoded with sake's snapz, or its stand-in)
+zstdStandIn(web);
 
 const prefix = join(work, "prefix/drive_c/windows");
 mkdirSync(join(prefix, "temp"), { recursive: true });

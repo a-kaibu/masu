@@ -109,6 +109,13 @@ try {
   const rev = (await fetch(`${base}saves/state.g.index`, { method: "HEAD" })).headers.get("etag");
   idx.states.push({ slot: 3, created: "2026-01-01T00:00:00.000Z", size: 9, build: "b", thumb: "" });
   assert.equal((await fetch(`${base}saves/state.g.index`, { method: "PUT", headers: { "if-match": rev }, body: JSON.stringify(idx) })).status, 204);
+  // (with a bucket the server keeps an index's last 8 revisions, storage.rs SAVE_REVISIONS, and
+  // what any of them names stays: the same index written 8 times more, so only what it names now
+  // is named)
+  for (let k = 0; k < 8; k++) {
+    const etag = (await fetch(`${base}saves/state.g.index`, { method: "HEAD" })).headers.get("etag");
+    assert.equal((await fetch(`${base}saves/state.g.index`, { method: "PUT", headers: { "if-match": etag }, body: JSON.stringify(idx) })).status, 204);
+  }
   const old = await device("old");
   assert.equal((await load(old.page, 3)).text, "old state");
   await old.ctx.close();

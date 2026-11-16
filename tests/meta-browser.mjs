@@ -143,7 +143,8 @@ await new Promise((ok) => sources.listen(0, "127.0.0.1", ok));
 const src = `http://127.0.0.1:${sources.address().port}`;
 
 const port = 9300 + Math.floor(Math.random() * 200) * 2;
-const env = { ...process.env, MASU_META_EGS_SQL: `${src}/egs`, MASU_META_VNDB: `${src}/vndb`, MASU_META_SEED: `${src}/seed`, MASU_GAMEDB_REF: `127.0.0.1:${sources.address().port}/none/gamedb` };
+// (MASU_META_COVER_LOCAL: covers from this stand-in on 127.0.0.1, which meta.rs cover_agent refuses otherwise)
+const env = { ...process.env, MASU_META_COVER_LOCAL: "1", MASU_META_EGS_SQL: `${src}/egs`, MASU_META_VNDB: `${src}/vndb`, MASU_META_SEED: `${src}/seed`, MASU_GAMEDB_REF: `127.0.0.1:${sources.address().port}/none/gamedb` };
 // (the stand-ins are on this machine: no proxy in between)
 for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) delete env[k];
 const server = spawn(

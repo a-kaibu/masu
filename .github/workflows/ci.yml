@@ -110,6 +110,7 @@ jobs:
       - name: Installable, and opens offline (service worker)
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
+          FZSTD: ${{ runner.temp }}/masu-browser/node_modules/fzstd/esm/index.mjs
         run: node tests/offline-browser.mjs target/debug/masu
       - name: sake's wasm from the bucket, the device or the HTTP cache (web/src/wasmsource.ts)
         env:
@@ -154,6 +155,7 @@ jobs:
       - name: What is on the device and being saved there (保存 tab, a game's parts, the file being fetched)
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
+          FZSTD: ${{ runner.temp }}/masu-browser/node_modules/fzstd/esm/index.mjs
         run: node tests/storage-browser.mjs target/debug/masu
       - name: The browser's back button goes back to the game list (once, from a game picked or opened by its address)
         env:

@@ -228,6 +228,8 @@ try {
     assert.deepEqual(await shown(), ["sakura", "tsuki"]);
     await search.fill("ありえない");
     await page.getByRole("button", { name: /検索をクリア/ }).click();
+    // (the list comes back on the next render: waited for, not read at once)
+    await page.locator("[data-game]").nth(2).waitFor({ timeout: 5000 });
     assert.equal(await page.locator("[data-game]").count(), 3);
 
     if (view.name === "desktop") {
