@@ -1,13 +1,15 @@
 // A web game's frame (NW.js or Electron pages: TyranoScript, RPG Maker MV/MZ), built as
-// frame.js and loaded first by each of its pages (crates/masu/src/treefiles.rs adds the
-// <script>). The frame is on another origin than the app (masu serve's game listener): its
+// frame.js and loaded first by each of its pages (the frame's service worker, game-sw.ts, adds
+// the <script>; it also asks, through this, the app's page for the port it reads the game's
+// files over: gameport.ts). The frame is on another origin than the app (masu serve's game listener): its
 // scripts reach the app only through the messages of frame-protocol.ts, which the app's page
 // (html.ts) checks. Before any script of the game this gives the page a localStorage kept with
 // masu's saved games and the Node stand-ins NW.js games reach for; the saves come from the
 // app's page, and until they do the page's DOMContentLoaded and load wait.
 import { FILE, type FromFrame, type Init } from "./frame-protocol";
+import { relayPorts } from "./gameport";
 import { toApp } from "./skynovel";
-import { fileUrl, readSync } from "./sync-read";
+import { fileUrl, frameReady, readSync } from "./sync-read";
 import { folderDirs, HELLO_AGAIN, HELLO_WAIT_MS, normPath as norm } from "./webstore";
 
 type Changed = (key: string) => void;
@@ -203,12 +205,18 @@ const changed: Changed = (key) => keep && post({ masu: "set", key, value: items.
 const node =
   !/\/resources\/app\//i.test(decodeURIComponent(location.pathname)) || location.hash === "#masu-node";
 Object.defineProperty(window, "localStorage", { value: storage(items, changed) });
-if (node) Object.assign(window, { require: nodeRequire(folder, items, changed), process: nodeProcess() });
-else
+if (node) {
+  Object.assign(window, { require: nodeRequire(folder, items, changed), process: nodeProcess() });
+} else
   Object.assign(window, {
     studio_api: studioApi(items, changed),
     to_app: toApp(items, changed, location.href),
   });
+
+relayPorts();
+// (the service worker kept running while the game does: one stopped and started again asks this
+// page for its port, which a synchronous read in progress would hold up)
+setInterval(() => navigator.serviceWorker?.controller?.postMessage({ masu: "alive" }), 20_000);
 
 // DOMContentLoaded and load wait for the saves (the game reads them from its handlers)
 let ready = false;
@@ -230,7 +238,10 @@ addEventListener("message", (e: MessageEvent) => {
     folder.base = m.base;
     for (const n of m.names) folder.names.add(n);
   }
-  go();
+  // (NW.js: once the synchronous reads' worker runs, over the app's port; in a task of its own:
+  // a read spun on in the task of the worker's first message is never answered, in Chromium)
+  if (node) void frameReady(e.ports[0]).then(() => setTimeout(go, 0));
+  else go();
 });
 const go = () => {
   ready = true;

@@ -3,7 +3,10 @@
 // offline (sw.ts keeps them).
 
 /** sake's files (crates/sake/build.sh → public/sake/) */
-export const sakeBase = () => new URL("sake/", location.href).href;
+// (a worker of the page: the page's URL, which the paths are relative to; its own is elsewhere)
+let pageHref: string | undefined;
+export const setPageHref = (href: string) => void (pageHref = href);
+export const sakeBase = () => new URL("sake/", pageHref ?? location.href).href;
 
 /**
  * The sake build this device runs. sake.wasm has the whole 4 GB memory from the start and never

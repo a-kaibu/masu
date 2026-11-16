@@ -21,11 +21,12 @@
 //!   programs saved (shared libraries and the like; the chunks only for a program with no list
 //!   of its own yet): every page loads them too, so a
 //!   game's first run starts with them
-//! - `GET /tree/<name>/<path>`: one file of a tree as itself (treefiles.rs)
 //! - web games (NW.js / Electron pages: web/src/html.ts) run in an iframe from a second
 //!   listener (`--game-listen`, the next port by default): another origin than the app's, so their
-//!   scripts cannot reach the page, the saves or anything else here. It serves only `/tree/...`
-//!   and `/frame.js` (web/src/frame.ts); `GET /game-origin` tells the page where it is
+//!   scripts cannot reach the page, the saves or anything else here. It serves only the frame's
+//!   own scripts ([`GAME_FILES`], from web/src); the game's files (`/tree/<name>/<path>`) come
+//!   from that origin's service worker, which has the app's page read them from the device or
+//!   the bucket, never through this server. `GET /game-origin` tells the page where it is
 //! - other devices need the server's token (auth.rs); writes (PUT) come only from the app's own
 //!   pages (`Sec-Fetch-Site`, `Origin`), with a body limit each
 //! - `GET /games`: the launcher's list, the store's `games/<id>.json` (`masu add-game`) as
@@ -134,9 +135,10 @@ fn same_origin_write<B>(req: &Request<B>) -> bool {
     [host("host"), host("x-forwarded-host")].into_iter().flatten().any(|h| bare(&h) == bare(&from))
 }
 
-/// The game listener: web games' files and the frame's script, nothing else. Pages there may
-/// be framed by the app's (another origin, cross-origin isolated: they need COEP and CORP).
-fn games_router(trees: crate::treefiles::Trees, web: &std::path::Path) -> Router {
+/// The game listener: the frame's scripts, nothing else (the game's files come from its service
+/// worker, web/src/game-sw.ts). Pages there may be framed by the app's (another origin,
+/// cross-origin isolated: they need COEP and CORP).
+fn games_router(web: &std::path::Path) -> Router {
     async fn game_headers(req: Request<axum::body::Body>, next: Next) -> Response {
         let mut res = next.run(req).await;
         let h = res.headers_mut();
@@ -146,11 +148,14 @@ fn games_router(trees: crate::treefiles::Trees, web: &std::path::Path) -> Router
         h.insert("x-content-type-options", HeaderValue::from_static("nosniff"));
         res
     }
-    Router::new()
-        .route("/tree/{name}/{*path}", get(crate::treefiles::file).with_state(trees))
-        .route_service("/frame.js", tower_http::services::ServeFile::new(web.join("frame.js")))
+    GAME_FILES
+        .iter()
+        .fold(Router::new(), |r, f| r.route_service(&format!("/{f}"), tower_http::services::ServeFile::new(web.join(f))))
         .layer(middleware::from_fn(game_headers))
 }
+
+/// What the game listener serves (from the web build), each at `/<name>`.
+const GAME_FILES: [&str; 5] = ["game-boot.html", "game-boot.js", "game-sw.js", "frame.js", "frame-read.js"];
 
 /// The largest run log a page sends (web/src/crashlog.ts keeps its last lines).
 const LOG_MAX: usize = 32 << 20;
@@ -1538,7 +1543,7 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
         .merge(crate::update::router(exe, dirs.fonts.clone()))
         .merge(saves::router(saves.clone()))
         .merge(crate::portable::router(store.clone(), saves.clone()))
-        .merge(crate::foresee::router(trees.clone(), args.jit.clone()))
+        .merge(crate::foresee::router(trees, args.jit.clone()))
         .route("/games", get(games).with_state(pre.clone()))
         // (zstd on the way: a game's regions are ~15 MB of wasm, ~2.5 MB compressed, and on a
         // slow connection they held the start back)
@@ -1549,7 +1554,6 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
                 .service(ServeDir::new(&args.jit)),
         )
         .merge(crate::store_api::router(store.clone(), Some(args.web.clone()))?)
-        .route("/tree/{name}/{*path}", get(crate::treefiles::file).with_state(trees.clone()))
         .route("/game-origin", get(move || async move { axum::Json(game_origin) }))
         .route("/version", get(|| async { axum::Json(version_info()) }))
         .fallback_service(ServeDir::new(&args.web).precompressed_zstd())
@@ -1580,7 +1584,7 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
         .with_state(crate::apps::Apps { dir: apps_dir, root: inner.clone() })
         .fallback_service(inner)
         .layer(middleware::from_fn_with_state(auth.clone(), crate::auth::guard));
-    let games = games_router(trees, &args.web).layer(middleware::from_fn_with_state(auth, crate::auth::guard));
+    let games = games_router(&args.web).layer(middleware::from_fn_with_state(auth, crate::auth::guard));
     // without TCP_NODELAY a kept-alive connection waits out the peer's delayed ACK (~40ms) on
     // every small response; the page reads the store one chunk at a time
     let listener = tokio::net::TcpListener::bind(args.listen).await?.tap_io(|tcp| {
@@ -1612,6 +1616,37 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
 
 #[cfg(test)]
 mod tests {
+    /// The game listener serves the frame's scripts with the headers a frame of the app's
+    /// (cross-origin isolated) page needs, and nothing else: no game's files (those come from
+    /// its service worker, web/src/game-sw.ts), no route of the app's.
+    #[tokio::test]
+    async fn game_listener_serves_only_the_frames_scripts() {
+        use axum::http::{header, Request, StatusCode};
+        use tower::ServiceExt;
+        let web = std::env::temp_dir().join(format!("masu-games-router-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&web).unwrap();
+        for f in super::GAME_FILES {
+            std::fs::write(web.join(f), format!("<{f}>")).unwrap();
+        }
+        std::fs::write(web.join("index.html"), "the app").unwrap();
+        let app = super::games_router(&web);
+        let get = |uri: &str| app.clone().oneshot(Request::get(uri).body(axum::body::Body::empty()).unwrap());
+        for f in super::GAME_FILES {
+            let r = get(&format!("/{f}")).await.unwrap();
+            assert_eq!(r.status(), StatusCode::OK, "{f}");
+            assert_eq!(r.headers()["cross-origin-embedder-policy"], "require-corp");
+            assert_eq!(r.headers()["cross-origin-resource-policy"], "cross-origin");
+            assert_eq!(r.headers()[header::CACHE_CONTROL], "no-cache");
+            assert_eq!(r.headers()["x-content-type-options"], "nosniff");
+            let body = axum::body::to_bytes(r.into_body(), usize::MAX).await.unwrap();
+            assert_eq!(&body[..], format!("<{f}>").as_bytes());
+        }
+        for uri in ["/tree/t/a.bin", "/index.html", "/store/trees/t.tsv", "/saves/x", "/game-origin", "/", "/game-sw.js/x"] {
+            assert_eq!(get(uri).await.unwrap().status(), StatusCode::NOT_FOUND, "{uri}");
+        }
+        let _ = std::fs::remove_dir_all(web);
+    }
+
     /// What a stuck server prints: each thread's backtrace, a thread blocked on a lock among
     /// them with the function it waits in (run in a child process: its stderr is looked at).
     #[cfg(target_os = "linux")]

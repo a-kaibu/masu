@@ -46,7 +46,7 @@ jobs:
           key: playwright-${{ runner.os }}-1.63.0
       - name: Install browser test tools
         run: |
-          mkdir -p "$RUNNER_TEMP/masu-browser" && pnpm add --dir "$RUNNER_TEMP/masu-browser" playwright@1.63.0
+          mkdir -p "$RUNNER_TEMP/masu-browser" && pnpm add --dir "$RUNNER_TEMP/masu-browser" playwright@1.63.0 fzstd@0.1.1
           "$RUNNER_TEMP/masu-browser/node_modules/.bin/playwright" install chromium
       - if: steps.cache-1.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6.1.0
@@ -98,13 +98,15 @@ jobs:
           restore-keys: |
             browser-${{ runner.os }}-${{ env.RUST_KEY }}-${{ hashFiles('Cargo.lock') }}-
             browser-${{ runner.os }}-${{ env.RUST_KEY }}-
-      - name: Web games run isolated from the app
+      - name: Web games run isolated from the app, their files from the bucket
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
+          FZSTD: ${{ runner.temp }}/masu-browser/node_modules/fzstd/esm/index.mjs
         run: |
           (cd web && pnpm install --frozen-lockfile && pnpm exec vp build)
           cargo build -p masu
           node tests/webgame-isolation.mjs target/debug/masu
+          node tests/webgame-sw-browser.mjs
       - name: Installable, and opens offline (service worker)
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs

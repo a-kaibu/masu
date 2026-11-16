@@ -3,22 +3,32 @@ import { build, defineConfig, type Plugin } from "vite-plus";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// frame.js: the script of web games' frames (src/frame.ts), a classic script (it must run before
-// the game's own scripts), served by masu serve's game listener
+// The game listener's scripts (masu serve), each a classic script: frame.js, the script of web
+// games' frames (src/frame.ts: it must run before the game's own scripts); game-boot.js, the
+// frame's first page (public/game-boot.html), which registers game-sw.js, the frame origin's
+// service worker that answers the game's files (src/game-sw.ts); frame-read.js, the frame's
+// worker for its synchronous reads (src/frame-read.ts)
+const GAME_SCRIPTS = [
+  ["src/frame.ts", "masuFrame", "frame.js"],
+  ["src/game-boot.ts", "masuGameBoot", "game-boot.js"],
+  ["src/game-sw.ts", "masuGameSw", "game-sw.js"],
+  ["src/frame-read.ts", "masuFrameRead", "frame-read.js"],
+] as const;
 const frame = (): Plugin => ({
   name: "masu-frame",
   apply: "build",
   async closeBundle() {
-    await build({
-      configFile: false,
-      logLevel: "warn",
-      build: {
-        outDir: "dist",
-        emptyOutDir: false,
-        target: "es2022",
-        lib: { entry: "src/frame.ts", formats: ["iife"], name: "masuFrame", fileName: () => "frame.js" },
-      },
-    });
+    for (const [entry, name, file] of GAME_SCRIPTS)
+      await build({
+        configFile: false,
+        logLevel: "warn",
+        build: {
+          outDir: "dist",
+          emptyOutDir: false,
+          target: "es2022",
+          lib: { entry, formats: ["iife"], name, fileName: () => file },
+        },
+      });
   },
 });
 

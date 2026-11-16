@@ -131,9 +131,8 @@ Wasm の同期ファイル API は保ち、ページ側で作成した通信 Wor
 通信 Worker はデータ受け取り確認を非同期に待つため、別の要求を止めない。
 初期化時にページ側で必要な tree は、Wasm の factory 呼び出し前に取得する。
 
-Web ゲームの Node 互換 `readFileSync` はページスレッド上で実行されるため、対象ディレクトリのファイルを起動前に4並列で取得する。
-この種類のゲームは全量取得の時間とメモリが必要になる。
-Windows ゲーム側は従来どおり必要なチャンクを取得する。
+Web ゲーム（NW.js / Electron）のファイルもサーバーを通らない。ゲーム側オリジンの Service Worker（web/src/game-sw.ts）が `/tree/<tree>/<path>` に答え、アプリ側の tree ワーカー（web/src/tree-worker.ts）に MessagePort で読み出しを頼む。tree ワーカーは OPFS かバケットからチャンクを取る。
+Node 互換の `readFileSync` は、フレーム側ワーカー（web/src/frame-read.ts）が tree ワーカーに直接頼み、共有メモリで渡す（web/src/sync-read.ts）。読むのは頼まれたファイルだけで、起動前の全量取得はしない。
 
 ## 検証コマンド
 

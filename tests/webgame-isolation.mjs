@@ -1,19 +1,56 @@
 // Web games (NW.js pages, web/src/html.ts + frame.ts) run on masu serve's game listener: another
 // origin than the app. Packs a fake NW.js game whose page tries to reach the app, starts the
 // server and checks in Chromium that the game gets its saves, writes them back, and reaches
-// nothing else: not the page, not the server's other routes.
+// nothing else: not the page, not the server's other routes. The game's files come from the
+// bucket (masu serve --dev-bucket: a stand-in on this machine) through the app's page and the
+// frame's service worker (web/src/game-sw.ts), not from the server: the game listener has no
+// /tree/ route at all. Without sake built (web/dist/sake/snapz.mjs) the chunks' zstd frames are
+// decoded by a stand-in over fzstd (FZSTD: its esm/index.mjs; CI installs it with playwright).
 // node tests/webgame-isolation.mjs [path to masu] (PLAYWRIGHT, CHROME as in fetch-browser.mjs)
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 const pw = await import(process.env.PLAYWRIGHT ?? "playwright");
 const { chromium } = pw.default ?? pw;
 
 const bin = process.argv[2] ?? "target/debug/masu";
 const work = mkdtempSync(join(tmpdir(), "masu-webgame-"));
 const game = join(work, "game");
+const port = 18000 + Math.floor(Math.random() * 1000) * 2;
+// (the app's origin, as the game would guess it: the frame's referrer is its own boot page)
+const appOrigin = `http://127.0.0.1:${port}`;
+const web = join(work, "web");
+cpSync(resolve("web/dist"), web, { recursive: true });
+if (!existsSync(join(web, "sake/snapz.mjs"))) {
+  const fzstd = process.env.FZSTD;
+  assert.ok(fzstd && existsSync(fzstd), "sake not built: FZSTD names fzstd's esm/index.mjs for the zstd stand-in");
+  mkdirSync(join(web, "sake"), { recursive: true });
+  cpSync(fzstd, join(web, "sake/fzstd.mjs"));
+  // (snapz's calls, over fzstd: what direct.ts snapzUnzstd uses of it)
+  writeFileSync(
+    join(web, "sake/snapz.mjs"),
+    `import { decompress } from "./fzstd.mjs";
+export default async () => {
+  const HEAPU8 = new Uint8Array(160 << 20);
+  let top = 8, live = 0;
+  return {
+    HEAPU8,
+    _malloc(n) { const p = top; top += (n + 7) & ~7; if (top > HEAPU8.length) { top = p; return 0; } live++; return p; },
+    _free(p) { if (p && --live === 0) top = 8; },
+    _snapz_decompress(dst, cap, src, n) {
+      let out;
+      try { out = decompress(HEAPU8.slice(src, src + n)); } catch { return 0xffffffff; }
+      if (out.length > cap) return 0xffffffff;
+      HEAPU8.set(out, dst);
+      return out.length;
+    },
+  };
+};
+`,
+  );
+}
 mkdirSync(join(game, "www"), { recursive: true });
 writeFileSync(join(game, "Game.exe"), "MZ not really");
 writeFileSync(join(game, "package.json"), JSON.stringify({ main: "www/index.html" }));
@@ -41,10 +78,10 @@ writeFileSync(
     localStorage.setItem("progress", String(Number(out.saved ?? 0) + 1));
     for (const path of ["/saves/x", "/api/favorites", "/store/trees/sample.tsv", "/game-origin"]) {
       try { out[path] = (await fetch(path)).status; } catch { out[path] = "blocked"; }
-      try { await fetch(new URL(path, document.referrer || "http://127.0.0.1/").href, { mode: "cors" }); out["app " + path] = "read"; }
+      try { await fetch(new URL(path, "${appOrigin}").href, { mode: "cors" }); out["app " + path] = "read"; }
       catch { out["app " + path] = "blocked"; }
     }
-    try { await fetch(new URL("/saves/x", document.referrer).href, { method: "PUT", body: "x" }); out.put = "sent"; }
+    try { await fetch(new URL("/saves/x", "${appOrigin}").href, { method: "PUT", body: "x" }); out.put = "sent"; }
     catch { out.put = "blocked"; }
     document.title = "done " + JSON.stringify(out);
   });
@@ -93,10 +130,9 @@ app.on("ready", () => {
 electron("tyrano", "7.1.2");
 electron("isolated", "22.3.27");
 
-const port = 18000 + Math.floor(Math.random() * 1000) * 2;
 const server = spawn(
   bin,
-  ["--store", store, "serve", "--foreground", "--web", "web/dist", "--listen", `127.0.0.1:${port}`, "--no-prerun"],
+  ["--store", store, "serve", "--foreground", "--web", web, "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")],
   { stdio: "inherit", env: { ...process.env, XDG_RUNTIME_DIR: work } },
 );
 const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME, chromiumSandbox: false });

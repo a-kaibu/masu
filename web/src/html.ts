@@ -5,9 +5,15 @@
 // `GET /game-origin`) and sandboxed, so the game's scripts cannot reach this page, the saves of
 // other games or the server's other routes: its pages start with frame.ts (frame.js), which
 // asks this page for the game's saves and sends back what the game writes, and nothing else
-// (frame-protocol.ts).
+// (frame-protocol.ts). The game's files come from the frame origin's service worker
+// (game-sw.ts), which asks this page for them (gameport.ts): this page reads them from the device
+// or straight from the bucket (treeread.ts), not through the server.
 import { electronNode, electronPages } from "./electron";
 import { fromFrame, type Init } from "./frame-protocol";
+import type { GivePort } from "./gameport";
+import type { TreeWorkerAsk } from "./tree-worker";
+import type { TreeReader } from "./treeread";
+import { openTree } from "./treesource";
 import { loadSaves, storeSaves } from "./saves";
 import { SAVE_SOON_MS, SaveItems } from "./webstore";
 
@@ -34,13 +40,14 @@ async function gameOrigin(): Promise<string> {
   return new URL(url ?? `${location.protocol}//${location.hostname}:${port}`).origin;
 }
 
-/** The start page's URL (package.json's main), or null when the program is no web game. */
-async function startPage(base: string): Promise<string | null> {
-  const r = await fetch(`${base}package.json`).catch(() => null);
-  if (!r?.ok) return null;
+/** The start page's path in the tree (package.json's main, beside it in `dir`), or null when
+ * the program is no web game. */
+async function startPage(tree: TreeReader, dir: string): Promise<string | null> {
+  const pkg = await tree.text(`${dir}package.json`);
+  if (pkg === null) return null;
   let main = "";
   try {
-    const m = ((await r.json()) as { main?: unknown }).main;
+    const m = (JSON.parse(pkg) as { main?: unknown }).main;
     if (typeof m === "string") main = m.replace(/^app:\/\/[^/]*\//, "").replace(/^\.\//, "");
   } catch (e) {
     console.warn("package.json:", e);
@@ -48,25 +55,20 @@ async function startPage(base: string): Promise<string | null> {
   // (Electron: the main script names the page it opens, SKYNovel's doc/app/index.htm, #234)
   const named: string[] = [];
   if (/\.[cm]?js$/i.test(main)) {
-    const code = await fetch(base + enc(main))
-      .then((r) => (r.ok ? r.text() : ""))
-      .catch(() => "");
+    const code = (await tree.text(dir + main)) ?? "";
     named.push(...electronPages(main, code));
   }
   for (const page of [main, ...named, "www/index.html", "index.html"]) {
     if (!/\.html?$/i.test(page)) continue;
-    const h = await fetch(base + enc(page), { method: "HEAD" }).catch(() => null);
-    if (h?.ok) return base + enc(page);
+    const f = tree.file(dir + page);
+    if (f) return f.path;
   }
   return null;
 }
 
 /** Whether the Electron game in `dir` (with resources/app/) runs its page with Node. */
-async function electronPageNode(dir: string): Promise<boolean> {
-  const text = async (url: string) => {
-    const r = await fetch(url).catch(() => null);
-    return r?.ok ? r.text() : null;
-  };
+async function electronPageNode(tree: TreeReader, dir: string): Promise<boolean> {
+  const text = (path: string) => tree.text(path);
   const app = `${dir}resources/app/`;
   let main = "index.js";
   try {
@@ -76,7 +78,7 @@ async function electronPageNode(dir: string): Promise<boolean> {
     console.warn("package.json:", e);
   }
   if (!/\.[cm]?js$/i.test(main)) main += ".js";
-  const code = await text(app + enc(main));
+  const code = await text(app + main);
   return code !== null && electronNode(code, await text(`${dir}version`));
 }
 
@@ -93,15 +95,19 @@ export async function startWebGame(
 ): Promise<boolean> {
   const at = where(run, mounts);
   if (!at) return false;
-  const root = new URL(`tree/${encodeURIComponent(at.tree)}/`, location.href).href;
+  const tree = await openTree(at.tree, location.href);
+  // (the frame's reads answered by a worker: the frame's synchronous reads (sync-read.ts) hold
+  // the main thread, which this page shares with it)
+  const reads = new Worker(new URL("./tree-worker.ts", import.meta.url), { type: "module" });
+  reads.postMessage({ tree: at.tree, page: location.href } satisfies TreeWorkerAsk);
   // NW.js: package.json beside the exe; Electron: resources/app (its pages run without Node:
   // contextIsolation, and a global `process` stops a PixiJS game's title buttons)
-  let page = await startPage(root + enc(at.dir));
+  let page = await startPage(tree, at.dir);
   const node = !!page;
-  page ??= await startPage(root + enc(`${at.dir}resources/app/`));
+  page ??= await startPage(tree, `${at.dir}resources/app/`);
   if (!page) return false;
   // (older Electron games, as TyranoScript v5's, have Node in the page: saves through fs)
-  const electronWithNode = !node && (await electronPageNode(root + enc(at.dir)));
+  const electronWithNode = !node && (await electronPageNode(tree, at.dir));
   log("Web ゲームとして開いています");
   const origin = await gameOrigin();
 
@@ -154,20 +160,14 @@ export async function startWebGame(
   // folder when asked (frame.ts, sync-read.ts); it gets the folder's URL and file names
   const base = node ? `${origin}/tree/${encodeURIComponent(at.tree)}/${enc(at.dir)}` : "";
   const names: string[] = [];
-  if (node) {
-    const response = await fetch(new URL(`store/trees/${encodeURIComponent(at.tree)}.tsv`, location.href));
-    if (!response.ok) throw new Error(`ゲーム一覧の取得: HTTP ${response.status}`);
-    const paths = (await response.text())
-      .split("\n")
-      .filter((line) => line.startsWith("f\t"))
-      .map((line) => line.split("\t")[3]!)
-      .filter((path) => path.startsWith(at.dir));
-    for (const path of paths) names.push(path.slice(at.dir.length));
-  }
+  if (node)
+    for (const { path } of tree.files.values())
+      if (path.startsWith(at.dir)) names.push(path.slice(at.dir.length));
 
   const frame = document.createElement("iframe");
   frame.id = "frame";
-  frame.allow = "autoplay; fullscreen";
+  // (cross-origin-isolated: its synchronous reads wait on a SharedArrayBuffer, sync-read.ts)
+  frame.allow = "autoplay; fullscreen; cross-origin-isolated";
   // (another origin already: the sandbox keeps it from navigating this page and the like)
   frame.sandbox.add(
     "allow-scripts",
@@ -177,14 +177,27 @@ export async function startWebGame(
     "allow-popups",
     "allow-modals",
   );
-  frame.src = `${origin}/tree/${encodeURIComponent(at.tree)}/${page.slice(root.length)}${electronWithNode ? "#masu-node" : ""}`;
+  // (its first page registers the worker that answers the game's files, then opens the game's)
+  const to = `/tree/${encodeURIComponent(at.tree)}/${enc(page)}${electronWithNode ? "#masu-node" : ""}`;
+  frame.src = `${origin}/game-boot.html?to=${encodeURIComponent(to)}`;
   addEventListener("message", (e: MessageEvent) => {
     if (e.source !== frame.contentWindow || e.origin !== origin) return;
     const m = fromFrame(e.data);
-    if (m?.masu === "hello") {
+    if (m?.masu === "want-port") {
+      // (only this game's tree)
+      if (m.tree !== at.tree) return;
+      const ch = new MessageChannel();
+      reads.postMessage({ port: ch.port1 } satisfies TreeWorkerAsk, [ch.port1]);
+      frame.contentWindow!.postMessage({ masu: "port", tree: at.tree } satisfies GivePort, origin, [
+        ch.port2,
+      ]);
+    } else if (m?.masu === "hello") {
       // (each page of the game asks: a reload gets the saves as they are now)
       const init: Init = { masu: "init", items: [...items], base, names };
-      frame.contentWindow!.postMessage(init, origin);
+      // (NW.js: a port to the tree's worker for the synchronous reads, sync-read.ts)
+      const ch = new MessageChannel();
+      if (node) reads.postMessage({ port: ch.port1 } satisfies TreeWorkerAsk, [ch.port1]);
+      frame.contentWindow!.postMessage(init, origin, node ? [ch.port2] : []);
     } else if (m?.masu === "set") {
       if (!saves.set(m.key, m.value)) {
         if (!refused) log("ゲームのセーブが大きすぎるため、これ以上は保存しません");

@@ -295,6 +295,23 @@ sake.js through `Module.instantiateWasm`, compiled once per page (children share
 `&wasm=server` forces the server's file. Tests: store_api `sake_wasm_from_the_bucket`,
 web/src/wasmsource.test.ts, tests/wasmsource-browser.mjs (Chromium, CI).
 
+## Web games' files (web/src/game-sw.ts, treeread.ts)
+
+NW.js / Electron games run in a frame on the game listener's origin, which serves only the
+frame's own scripts (serve.rs `GAME_FILES`): there is no `/tree/` route. The frame's first page
+(game-boot.html) registers that origin's service worker, which answers `/tree/<tree>/<path>`
+(one Range, HEAD, 416, the frame script put into pages, big files piece by piece) by asking the
+app's tree worker (tree-worker.ts) over a MessagePort (gameport.ts). The tree worker reads the
+tree's list and takes each chunk from OPFS or the bucket (/store-direct, AES-GCM, zstd, BLAKE3:
+treesource.ts), keeping it on the device. A stopped and restarted service worker asks the
+frame's pages for a new port. Node's synchronous `readFileSync` goes through a worker of the
+frame's (frame-read.ts) straight to the tree worker, the page spinning on shared memory
+(sync-read.ts): a synchronous XHR does not reach a service worker in Chromium, and a message to
+the worker posted while the page spins was at times not delivered, so the asks go in shared
+memory too. Range and page rules are the server's former ones (differential corpus
+testdata/webgame/tree-rules.jsonl from testdata/webgame/oracle.rs). Tests: web/src/treeread.test.ts,
+sync-read.test.ts, tests/webgame-sw-browser.mjs, tests/webgame-isolation.mjs (--dev-bucket).
+
 ## Still to do
 
 - Run hints_eval again when more games have read-order lists, per engine.
