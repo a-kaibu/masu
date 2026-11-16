@@ -18,12 +18,17 @@
 //! while the ring is not lapped; a writer that stops while others go once round the ring leaves
 //! mixed text, never a data race. Another thread's `Cpu` is never read: a guest thread shows its
 //! registers ([`shown`]) at every slice and every exit from guest code, and the snapshot (and
-//! MASU_TRACE_EIP) reads those. Nothing on these paths allocates (the page may ask for a
+//! MASU_TRACE_EIP) reads those. Nor is another thread's guest memory or JIT state (review
+//! 2026-11-16: an atomic read here against sake's plain writes on another thread is still a
+//! data race): guest memory is read only through an [`Own`], which only a registered guest
+//! thread gets, for itself; a thread shows its return addresses with its registers, and the
+//! modules and their exports are copied when sake maps them, before their code runs. Nothing on these paths allocates (the page may ask for a
 //! snapshot while another thread died holding the allocator's lock), except the sake API-name
 //! lookup in a guest thread's own exception record.
 //!
 //! The cost while nothing goes wrong: four stores per syscall (the thread's trap ring), ~24 per
-//! exit from guest code and per slice, and a copy of each stderr write.
+//! exit from guest code and per slice (one guest read more: its return addresses are shown
+//! again only when ESP, EBP or [ESP] changed), and a copy of each stderr write.
 
 use core::fmt::{self, Write};
 use std::cell::Cell;
@@ -235,16 +240,17 @@ pub fn output(fd: i32, b: &[u8]) {
 /// The calling guest thread's state (as it showed it last: at its current syscall), deep, in EV.
 fn thread_state(why: &str) {
     let Some(t) = CUR.with(Cell::get) else { return };
+    let Some(o) = Own::here() else { return };
     let r = Regs::of(t);
     let mut l = Line::<16384>::new();
     stamp(&mut l);
     let mods = &mut [Module { base: 0, size: 0, name: [0; 40], len: 0 }; MAX_MODULES];
-    let n = modules(&r, mods);
+    let n = modules(mods);
     let mods = mods.get(..n).unwrap_or(&[]);
-    let _ = write!(l, "{why}: at its syscall from {:08x}", rd32(r.sp()).unwrap_or(0));
-    sym(&mut l, mods, rd32(r.sp()).unwrap_or(0));
+    let _ = write!(l, "{why}: at its syscall from {:08x}", rd32(o, r.sp()).unwrap_or(0));
+    sym(&mut l, mods, rd32(o, r.sp()).unwrap_or(0));
     regs(&mut l, &r);
-    detail(&mut l, &r, None, Some(t), mods, true, DEEP);
+    detail(&mut l, &r, None, Some(o), Some(t), mods, true, DEEP);
     module_list(&mut l, mods, false);
     let _ = l.write_str("\n");
     EV.put(l.bytes());
@@ -315,6 +321,33 @@ struct Shown {
     gs_base: AtomicU32,
     long: AtomicBool,
     jit_ring: AtomicU32,
+    /// [ESP] and the EBP chain's return addresses (32-bit code), `frames_n` of them, as the
+    /// thread read them itself; (esp, ebp, [esp]) they were read at, so as not to walk again
+    frames: [AtomicU32; FRAMES],
+    frames_n: AtomicU32,
+    frames_at: [AtomicU32; 3],
+}
+
+/// Return addresses a thread shows (the snapshot's frames of another thread)
+const FRAMES: usize = 16;
+
+/// The calling thread is the guest thread whose guest memory and JIT state is read: only it
+/// reads them, at its own points (its exception, its syscall, its slice), never another thread
+/// (the page's snapshot, MASU_TRACE_EIP's), so no read here meets a write of sake's on another
+/// thread (review 2026-11-16). Not Send: it stays on the thread that took it.
+#[derive(Clone, Copy)]
+struct Own(std::marker::PhantomData<*const ()>);
+
+impl Own {
+    /// A registered guest thread (crashlog::register) is the caller: None on any other.
+    fn here() -> Option<Own> {
+        CUR.with(Cell::get).map(|_| Own(std::marker::PhantomData))
+    }
+    /// The image sake has just mapped and not run (add_module, on the thread loading it): no
+    /// other code knows of it yet to write it.
+    fn mapping() -> Own {
+        Own(std::marker::PhantomData)
+    }
 }
 
 /// A copy of what a thread showed (or of its own Cpu)
@@ -376,7 +409,52 @@ impl Shown {
             gs_base: AtomicU32::new(0),
             long: AtomicBool::new(false),
             jit_ring: AtomicU32::new(0),
+            frames: [const { AtomicU32::new(0) }; FRAMES],
+            frames_n: AtomicU32::new(0),
+            frames_at: [const { AtomicU32::new(0) }; 3],
         }
+    }
+    /// The calling thread's return addresses at `r` (its own registers), read by itself; not
+    /// again while ESP, EBP and [ESP] are what they were.
+    fn set_frames(&self, o: Own, r: &Regs) {
+        let (esp, ebp) = (r.sp(), r.r(5));
+        let top = rd32(o, esp).unwrap_or(0);
+        let at = [esp, ebp, top];
+        if self.frames_n.load(Relaxed) != 0 && self.frames_at.iter().zip(at).all(|(x, v)| x.load(Relaxed) == v) {
+            return;
+        }
+        let mut out = [0u32; FRAMES];
+        let mut n = 0;
+        if let Some(x) = out.first_mut() {
+            *x = top;
+            n = 1;
+        }
+        if !r.long {
+            let mut ebp = ebp;
+            while n < FRAMES {
+                let (Some(ret), Some(next)) = (rd32(o, ebp.wrapping_add(4)), rd32(o, ebp)) else { break };
+                if let Some(x) = out.get_mut(n) {
+                    *x = ret;
+                }
+                n += 1;
+                if next <= ebp {
+                    break;
+                }
+                ebp = next;
+            }
+        }
+        for (d, v) in self.frames.iter().zip(out) {
+            d.store(v, Relaxed);
+        }
+        self.frames_n.store(kome::num::u32_of(n), Relaxed);
+        for (d, v) in self.frames_at.iter().zip(at) {
+            d.store(v, Relaxed);
+        }
+    }
+    /// What set_frames showed last: [ESP] first, then the frames' return addresses
+    fn frames(&self) -> ([u32; FRAMES], usize) {
+        let n = kome::num::us(self.frames_n.load(Relaxed)).min(FRAMES);
+        (std::array::from_fn(|i| self.frames.get(i).map_or(0, |x| x.load(Relaxed))), n)
     }
     fn set(&self, r: &Regs) {
         for (d, &v) in self.gpr.iter().zip(&r.gpr) {
@@ -425,7 +503,7 @@ impl ThreadLog {
 }
 
 /// The running threads' records (each lent by RETIRED)
-static THREADS: Mutex<Vec<crate::pool::Lease<&'static ThreadLog>>> = Mutex::new(Vec::new());
+static THREADS: Mutex<Vec<crate::pool::Lease<&'static ThreadLog, Retired>>> = Mutex::new(Vec::new());
 
 thread_local! {
     static CUR: Cell<Option<&'static ThreadLog>> = const { Cell::new(None) };
@@ -458,6 +536,7 @@ pub fn register(cpu: &Cpu) {
     t.exceptions.store(0, Relaxed);
     t.phase.store(Phase::Nowhere as u8, Relaxed);
     t.shown.set(&Regs::from_cpu(cpu));
+    t.shown.frames_n.store(0, Relaxed);
     CUR.with(|c| c.set(Some(*t)));
     let mut r = RETIRED.locked_anyway();
     for old in g.extract_if(.., |x| x.cpu.load(Relaxed) == me) {
@@ -470,7 +549,9 @@ pub fn register(cpu: &Cpu) {
 /// The records of threads that ended, for the next threads (they used to be leaked, one per
 /// thread: ~2 KB each; review P2-1). Kept, never freed: the snapshot reads entries it listed
 /// after letting go of THREADS.
-static RETIRED: Mutex<crate::pool::Pool<&'static ThreadLog>> = Mutex::new(crate::pool::Pool::new());
+static RETIRED: Mutex<crate::pool::Pool<&'static ThreadLog, Retired>> = Mutex::new(crate::pool::Pool::new());
+/// RETIRED's brand: its leases go back to it only
+struct Retired;
 
 /// (tests: the records waiting for reuse, made, the most out at once)
 pub fn counts() -> crate::pool::Counts {
@@ -520,7 +601,10 @@ pub fn in_guest(on: bool) {
 pub fn shown(cpu: &Cpu) {
     CUR.with(|c| {
         if let Some(t) = c.get() {
-            t.shown.set(&Regs::from_cpu(cpu));
+            let r = Regs::from_cpu(cpu);
+            t.shown.set(&r);
+            // (CUR is set: this is a registered guest thread, reading its own stack)
+            t.shown.set_frames(Own(std::marker::PhantomData), &r);
         }
     });
 }
@@ -530,10 +614,12 @@ pub fn shown(cpu: &Cpu) {
 pub fn trap(cpu: &Cpu, addr: u32) {
     CUR.with(|c| {
         let Some(t) = c.get() else { return };
+        // (CUR is set: a registered guest thread, its own stack)
+        let o = Own(std::marker::PhantomData);
         let esp = cpu.regs[4];
         let n = t.n.load(Relaxed);
         if let Some(e) = t.traps.get(kome::num::us(n) % TRAPS) {
-            for (d, v) in e.iter().zip([addr, cpu.regs[0], rd32(esp).unwrap_or(0), rd32(esp.wrapping_add(4)).unwrap_or(0)]) {
+            for (d, v) in e.iter().zip([addr, cpu.regs[0], rd32(o, esp).unwrap_or(0), rd32(o, esp.wrapping_add(4)).unwrap_or(0)]) {
                 d.store(v, Relaxed);
             }
         }
@@ -550,17 +636,9 @@ pub fn eip_line() -> String {
         .map(|t| {
             let r = Regs::of(t);
             let at = if t.guest.load(Relaxed) != 0 { "" } else { "*" };
-            let mut ebp = r.r(5);
-            let mut stack = vec![rd32(r.sp()).unwrap_or(0)];
-            for _ in 0..8 {
-                let (Some(ret), Some(next)) = (rd32(ebp.wrapping_add(4)), rd32(ebp)) else { break };
-                stack.push(ret);
-                if next <= ebp {
-                    break;
-                }
-                ebp = next;
-            }
-            let stack: Vec<String> = stack.iter().map(|a| format!("{a:x}")).collect();
+            // (what the thread showed itself: another thread's stack is not read)
+            let (frames, n) = t.shown.frames();
+            let stack: Vec<String> = frames.iter().take(n.min(9)).map(|a| format!("{a:x}")).collect();
             format!("{}:{:08x}{at}<{}>", t.tid.load(Relaxed), r.eip, stack.join(","))
         })
         .collect();
@@ -587,28 +665,30 @@ fn readable(a: u32, n: u32) -> bool {
 
 /// `N` bytes of guest memory, read as atomics: the guest's threads write it meanwhile (as the
 /// x86 they emulate allows), and a crash report reads whatever is there.
-fn rd<const N: usize>(a: u32) -> Option<[u8; N]> {
+fn rd<const N: usize>(_: Own, a: u32) -> Option<[u8; N]> {
     if !readable(a, kome::num::u32_of(N)) {
         return None;
     }
     Some(std::array::from_fn(|i| {
         let p = std::ptr::with_exposed_provenance_mut::<u8>(kome::num::us(a).wrapping_add(i));
         // SAFETY: readable() above: guest memory, inside the wasm memory, valid for as long as
-        // it is; any address is aligned for an AtomicU8, and every access here is atomic.
+        // it is; any address is aligned for an AtomicU8. The Own says it is the calling guest
+        // thread's own memory, read at its own point: no Rust code of another thread is
+        // writing it (as for every API's read of what the program handed it).
         unsafe { AtomicU8::from_ptr(p) }.load(Relaxed)
     }))
 }
 
-fn rd32(a: u32) -> Option<u32> {
-    rd::<4>(a).map(u32::from_le_bytes)
+fn rd32(o: Own, a: u32) -> Option<u32> {
+    rd::<4>(o, a).map(u32::from_le_bytes)
 }
 
-fn rd16(a: u32) -> Option<u16> {
-    rd::<2>(a).map(u16::from_le_bytes)
+fn rd16(o: Own, a: u32) -> Option<u16> {
+    rd::<2>(o, a).map(u16::from_le_bytes)
 }
 
-fn rd8(a: u32) -> Option<u8> {
-    rd::<1>(a).map(|[b]| b)
+fn rd8(o: Own, a: u32) -> Option<u8> {
+    rd::<1>(o, a).map(|[b]| b)
 }
 
 #[derive(Clone, Copy)]
@@ -639,93 +719,89 @@ fn make_module(base: u32, size: u32, name: impl Iterator<Item = u8>) -> Module {
     m
 }
 
-/// sake: an image it mapped at `base` from `path`.
+/// The exports of the modules sake mapped, copied then: a record never reads an image (sake's
+/// loader writes images and relocates them on other threads, review 2026-11-16)
+struct Exports {
+    base: u32,
+    /// (rva, name), by rva
+    list: Vec<(u32, Box<str>)>,
+}
+
+static EXPORTS: Mutex<Vec<Exports>> = Mutex::new(Vec::new());
+
+/// sake: an image it mapped at `base` from `path` (before any of its code runs).
 pub fn add_module(base: u32, path: &str) {
-    let size = rd32(base.wrapping_add(rd32(base.wrapping_add(0x3c)).unwrap_or(0)).wrapping_add(0x50)).unwrap_or(0x1000);
+    let o = Own::mapping();
+    let size = rd32(o, base.wrapping_add(rd32(o, base.wrapping_add(0x3c)).unwrap_or(0)).wrapping_add(0x50)).unwrap_or(0x1000);
     let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let m = make_module(base, size, name.bytes().filter(|c| c.is_ascii_graphic()));
+    let list = read_exports(o, base, size).unwrap_or_default();
     let mut g = EXTRA.locked_anyway();
+    g.retain(|x| x.base != base);
     if g.len() < MAX_MODULES {
         g.push(m);
+        drop(g);
+        let mut e = EXPORTS.locked_anyway();
+        e.retain(|x| x.base != base);
+        e.push(Exports { base, list });
     }
 }
 
-/// The loaded modules of the process `cpu` runs in: its PEB's loader list.
-fn modules(cpu: &Regs, out: &mut [Module; MAX_MODULES]) -> usize {
-    let long = cpu.long;
-    let (teb, peb_at, ldr_at, head_at, base_at, size_at, name_at, buf_at) =
-        if long { (cpu.gs_base, 0x60, 0x18, 0x10, 0x30, 0x40, 0x58, 0x60) } else { (cpu.fs_base, 0x30, 0x0c, 0x0c, 0x18, 0x20, 0x2c, 0x30) };
+/// The modules sake mapped, as add_module copied them (sake keeps no loader list in the PEB;
+/// a guest's own list would be written by its loader on other threads)
+fn modules(out: &mut [Module; MAX_MODULES]) -> usize {
     let mut n = 0;
-    (|| -> Option<()> {
-        let peb = rd32(teb.wrapping_add(peb_at))?;
-        let ldr = rd32(peb.wrapping_add(ldr_at))?;
-        let head = ldr.wrapping_add(head_at);
-        let mut e = rd32(head)?;
-        while e != head && n < MAX_MODULES {
-            let len = rd16(e.wrapping_add(name_at))? as u32 / 2;
-            let buf = rd32(e.wrapping_add(buf_at))?;
-            let name = (0..len.min(40)).map(|i| rd16(buf.wrapping_add(2 * i)).unwrap_or(b'?' as u16)).map(|c| if c < 0x80 && c >= 0x20 { c as u8 } else { b'?' });
-            out[n] = make_module(rd32(e.wrapping_add(base_at))?, rd32(e.wrapping_add(size_at))?, name);
-            n += 1;
-            e = rd32(e)?;
-        }
-        Some(())
-    })();
-    if n == 0 && let Ok(g) = EXTRA.try_lock() {
-        for m in g.iter().take(MAX_MODULES) {
-            out[n] = *m;
+    // (try_lock: a thread may have died holding it)
+    if let Ok(g) = EXTRA.try_lock() {
+        for (d, m) in out.iter_mut().zip(g.iter()) {
+            *d = *m;
             n += 1;
         }
     }
     n
 }
 
-/// The export of `m` nearest below `addr`: (its name's address, offset).
-fn export_near(m: &Module, addr: u32) -> Option<(u32, u32)> {
+/// The named exports of the image at `base` (`size` bytes): (rva, name) by rva.
+fn read_exports(o: Own, base: u32, size: u32) -> Option<Vec<(u32, Box<str>)>> {
     // (all of it read from guest memory: wrapping, as the rest of the file; with overflow
     // checks a damaged header aborted the process from inside the crash logger)
-    let base = m.base;
-    let rva = addr.wrapping_sub(base);
-    let pe = base.wrapping_add(rd32(base.wrapping_add(0x3c))?);
-    if rd32(pe)? != 0x4550 {
+    let pe = base.wrapping_add(rd32(o, base.wrapping_add(0x3c))?);
+    if rd32(o, pe)? != 0x4550 {
         return None;
     }
     let oh = pe.wrapping_add(24);
-    let dir = if rd16(oh)? == 0x20b { oh.wrapping_add(112) } else { oh.wrapping_add(96) };
-    let exp = rd32(dir)?;
-    if exp == 0 || exp >= m.size {
+    let dir = if rd16(o, oh)? == 0x20b { oh.wrapping_add(112) } else { oh.wrapping_add(96) };
+    let exp = rd32(o, dir)?;
+    if exp == 0 || exp >= size {
         return None;
     }
     let ed = base.wrapping_add(exp);
-    let names = rd32(ed.wrapping_add(0x18))?.min(20000);
-    let at = |o: u32| -> Option<u32> { Some(base.wrapping_add(rd32(ed.wrapping_add(o))?)) };
+    let names = rd32(o, ed.wrapping_add(0x18))?.min(20000);
+    let at = |off: u32| -> Option<u32> { Some(base.wrapping_add(rd32(o, ed.wrapping_add(off))?)) };
     let (funcs, name_tab, ords) = (at(0x1c)?, at(0x20)?, at(0x24)?);
-    let mut best: Option<(u32, u32)> = None;
+    let mut list = Vec::new();
     for i in 0..names {
-        let ord = rd16(ords.wrapping_add(2 * i))? as u32;
-        let f = rd32(funcs.wrapping_add(ord.wrapping_mul(4)))?;
-        if f <= rva && best.is_none_or(|(b, _)| f > b) {
-            best = Some((f, rd32(name_tab.wrapping_add(4 * i))?));
-        }
+        let ord = u32::from(rd16(o, ords.wrapping_add(i.wrapping_mul(2)))?);
+        let f = rd32(o, funcs.wrapping_add(ord.wrapping_mul(4)))?;
+        let name = base.wrapping_add(rd32(o, name_tab.wrapping_add(i.wrapping_mul(4)))?);
+        let text: String = (0..64u32).map_while(|k| rd8(o, name.wrapping_add(k)).filter(|c| (0x20..0x80).contains(c))).map(char::from).collect();
+        list.push((f, text.into_boxed_str()));
     }
-    best.map(|(f, name)| (base.wrapping_add(name), rva - f))
+    list.sort_by_key(|e| e.0);
+    Some(list)
 }
 
 /// `addr` as "module+rva (export+off)", or nothing outside the modules.
 fn sym(w: &mut impl Write, mods: &[Module], addr: u32) {
     let Some(m) = mods.iter().find(|m| addr >= m.base && addr - m.base < m.size) else { return };
-    let _ = write!(w, " {}+{:x}", m.name(), addr - m.base);
-    if let Some((name, off)) = export_near(m, addr) {
-        let _ = w.write_str(" (");
-        for i in 0..64 {
-            match rd8(name + i) {
-                Some(c) if c >= 0x20 && c < 0x80 => {
-                    let _ = w.write_char(c as char);
-                }
-                _ => break,
-            }
-        }
-        let _ = write!(w, "+{off:x})");
+    let rva = addr.wrapping_sub(m.base);
+    let _ = write!(w, " {}+{rva:x}", m.name());
+    // (try_lock: a thread may have died holding it)
+    let Ok(g) = EXPORTS.try_lock() else { return };
+    let Some(e) = g.iter().find(|e| e.base == m.base) else { return };
+    let k = e.list.partition_point(|x| x.0 <= rva);
+    if let Some((f, name)) = k.checked_sub(1).and_then(|k| e.list.get(k)) {
+        let _ = write!(w, " ({name}+{:x})", rva.wrapping_sub(*f));
     }
 }
 
@@ -770,8 +846,10 @@ const NORMAL: Depth = Depth { scan: 0x800, found: 24, frames: 16 };
 const DEEP: Depth = Depth { scan: 0x6000, found: 64, frames: 40 };
 
 /// `own`: the calling thread's own Cpu (its FPU, SSE and JIT state too), None for what a
-/// thread showed (`t`: its record, for its last calls; `name`: with the API names)
-fn detail(w: &mut impl Write, cpu: &Regs, own: Option<&Cpu>, t: Option<&ThreadLog>, mods: &[Module], name: bool, depth: Depth) {
+/// thread showed (`t`: its record, for its last calls; `name`: with the API names). `mem`: the
+/// calling thread is the one `cpu` is of, and reads its code, stack and JIT ring itself; None
+/// (another thread's record) shows only the return addresses that thread showed.
+fn detail(w: &mut impl Write, cpu: &Regs, own: Option<&Cpu>, mem: Option<Own>, t: Option<&ThreadLog>, mods: &[Module], name: bool, depth: Depth) {
     let long = cpu.long;
     if let Some(c) = own {
         let f = &c.fpu;
@@ -789,9 +867,23 @@ fn detail(w: &mut impl Write, cpu: &Regs, own: Option<&Cpu>, t: Option<&ThreadLo
             }
         }
     }
+    let Some(o) = mem else {
+        // (another thread's: what it showed itself, its memory is not read here)
+        if let Some(t) = t {
+            let (frames, n) = t.shown.frames();
+            let _ = w.write_str("\n  return addresses ([esp], then the ebp chain, as the thread showed them):");
+            for &a in frames.iter().take(n) {
+                let _ = write!(w, "\n    {a:08x}");
+                sym(w, mods, a);
+            }
+            traps(w, t, mods, name, 24);
+        }
+        jit_totals(w, own);
+        return;
+    };
     let _ = write!(w, "\n  code @{:08x}:", cpu.eip);
     for i in 0..16 {
-        match rd8(cpu.eip.wrapping_add(i)) {
+        match rd8(o, cpu.eip.wrapping_add(i)) {
             Some(b) => {
                 let _ = write!(w, " {b:02x}");
             }
@@ -806,7 +898,7 @@ fn detail(w: &mut impl Write, cpu: &Regs, own: Option<&Cpu>, t: Option<&ThreadLo
         if i % 8 == 0 {
             let _ = w.write_str("\n   ");
         }
-        match rd32(esp.wrapping_add(4 * i)) {
+        match rd32(o, esp.wrapping_add(4 * i)) {
             Some(v) => {
                 let _ = write!(w, " {v:08x}");
             }
@@ -820,7 +912,7 @@ fn detail(w: &mut impl Write, cpu: &Regs, own: Option<&Cpu>, t: Option<&ThreadLo
         let _ = w.write_str("\n  frames (ebp chain):");
         let mut ebp = cpu.r(5);
         for _ in 0..depth.frames {
-            let (Some(ret), Some(next)) = (rd32(ebp.wrapping_add(4)), rd32(ebp)) else { break };
+            let (Some(ret), Some(next)) = (rd32(o, ebp.wrapping_add(4)), rd32(o, ebp)) else { break };
             let _ = write!(w, "\n    {ret:08x}");
             sym(w, mods, ret);
             if next <= ebp {
@@ -835,8 +927,8 @@ fn detail(w: &mut impl Write, cpu: &Regs, own: Option<&Cpu>, t: Option<&ThreadLo
     let step = if long { 8 } else { 4 };
     let mut a = esp;
     while a < esp.wrapping_add(depth.scan) && found < depth.found {
-        let Some(v) = rd32(a) else { break };
-        if long && rd32(a + 4).unwrap_or(1) > 0xffff {
+        let Some(v) = rd32(o, a) else { break };
+        if long && rd32(o, a + 4).unwrap_or(1) > 0xffff {
             a += step;
             continue;
         }
@@ -854,16 +946,20 @@ fn detail(w: &mut impl Write, cpu: &Regs, own: Option<&Cpu>, t: Option<&ThreadLo
     // the JIT: its recent jumps between regions (from, to), newest first
     if cpu.jit_ring != 0 {
         let ring = cpu.jit_ring;
-        if let Some(n) = rd32(ring) {
+        if let Some(n) = rd32(o, ring) {
             let _ = w.write_str("\n  jit region jumps (newest first):");
             let size = koji::jit::RING_SIZE;
             for k in 0..n.min(size).min(16) {
                 let i = (n.wrapping_sub(1 + k)) & (size - 1);
-                let (a, b) = (rd32(ring + 4 + 8 * i).unwrap_or(0), rd32(ring + 8 + 8 * i).unwrap_or(0));
+                let (a, b) = (rd32(o, ring + 4 + 8 * i).unwrap_or(0), rd32(o, ring + 8 + 8 * i).unwrap_or(0));
                 let _ = write!(w, " {a:x}>{b:x}");
             }
         }
     }
+    jit_totals(w, own);
+}
+
+fn jit_totals(w: &mut impl Write, own: Option<&Cpu>) {
     let c = crate::jit::compiled_totals();
     let _ = write!(w, "\n  jit: on {} (x64 {}), regions built {}, functions {}, rebuilt {}, call depth {:?}", crate::jit::enabled(), crate::jit::enabled64(), c[0], c[1], c[2], own.map(|c| c.jit_depth));
     let m = crate::jit::jit_modules();
@@ -949,7 +1045,7 @@ pub fn exception(cpu: &Cpu, what: &str, access: Option<(u32, bool)>, from_jit: b
     stamp(&mut l);
     let mods = &mut [Module { base: 0, size: 0, name: [0; 40], len: 0 }; MAX_MODULES];
     let r = Regs::from_cpu(cpu);
-    let n = modules(&r, mods);
+    let n = modules(mods);
     let mods = mods.get(..n).unwrap_or(&[]);
     let _ = write!(l, "exception #{} {what} at {:08x}", k.saturating_add(1), cpu.eip);
     sym(&mut l, mods, cpu.eip);
@@ -958,7 +1054,9 @@ pub fn exception(cpu: &Cpu, what: &str, access: Option<(u32, bool)>, from_jit: b
         let _ = write!(l, " {} {a:08x}", if wr { "writing" } else { "reading" });
     }
     regs(&mut l, &r);
-    detail(&mut l, &r, Some(cpu), t, mods, true, NORMAL);
+    // (the faulting thread's own: it reads its code and stack; a thread sake did not register
+    // shows its registers only)
+    detail(&mut l, &r, Some(cpu), Own::here(), t, mods, true, NORMAL);
     module_list(&mut l, mods, false);
     let _ = l.write_str("\n");
     EV.put(l.bytes());
@@ -989,14 +1087,14 @@ pub extern "C" fn vnhost_crashlog_snapshot() -> u32 {
         }
     }
     let _ = write!(w, "threads now: {count}");
-    let mut last_teb = u32::MAX;
+    let mut listed = false;
     for &t in list.iter().flatten() {
         if t.cpu.load(Relaxed) == 0 {
             continue;
         }
         let cpu = Regs::of(t);
         let mods = &mut [Module { base: 0, size: 0, name: [0; 40], len: 0 }; MAX_MODULES];
-        let n = modules(&cpu, mods);
+        let n = modules(mods);
         let mods = mods.get(..n).unwrap_or(&[]);
         let _ = write!(
             w,
@@ -1012,10 +1110,10 @@ pub extern "C" fn vnhost_crashlog_snapshot() -> u32 {
         sym(&mut w, mods, cpu.eip);
         let _ = write!(w, ", exceptions {}", t.exceptions.load(Relaxed));
         regs(&mut w, &cpu);
-        detail(&mut w, &cpu, None, Some(t), mods, false, NORMAL);
-        let peb = if cpu.long { rd32(cpu.gs_base.wrapping_add(0x60)) } else { rd32(cpu.fs_base.wrapping_add(0x30)) }.unwrap_or(0);
-        if peb != last_teb {
-            last_teb = peb;
+        // (not the page's thread's: what each thread showed, no memory of theirs)
+        detail(&mut w, &cpu, None, None, Some(t), mods, false, NORMAL);
+        if !listed {
+            listed = true;
             module_list(&mut w, mods, true);
         }
     }
@@ -1097,6 +1195,33 @@ mod tests {
         }
         unregister(cpu);
         drop(owned);
+    }
+
+    /// Review 2026-11-16: only a registered guest thread gets an Own (reads guest memory), and
+    /// for itself; a snapshot taken on another thread shows what each thread showed, never its
+    /// code or stack read from there.
+    #[test]
+    fn other_threads_memory_is_not_read() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(std::thread::spawn(|| Own::here().is_none()).join().unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        let h = std::thread::spawn(move || {
+            let owned = Box::new(Cpu { eip: 0x0061_2345, ..Cpu::default() });
+            register(&owned);
+            shown(&owned);
+            tx.send(Own::here().is_some()).unwrap();
+            done_rx.recv().unwrap();
+            unregister(std::ptr::from_ref(&*owned));
+        });
+        assert!(rx.recv().unwrap());
+        let want = format!("at {:08x}", 0x0061_2345);
+        let snap = (0..10_000).map(|_| snapshot_text()).find(|t| t.contains(&want)).expect("the thread in a snapshot");
+        let ours = snap.split("\n\nthread ").find(|t| t.contains(&want)).unwrap();
+        assert!(ours.contains("return addresses"), "{ours}");
+        assert!(!ours.contains("code @") && !ours.contains("stack @"), "{ours}");
+        done_tx.send(()).unwrap();
+        h.join().unwrap();
     }
 
     /// With more threads made than the snapshot takes (the list keeps every one), the newest
@@ -1220,7 +1345,7 @@ mod tests {
         #[test]
         fn export_near_any_module(base: u32, size: u32, addr: u32) {
             let m = make_module(base, size, b"x.dll".iter().copied());
-            let _ = export_near(&m, addr);
+            let _ = read_exports(Own::mapping(), base, size);
             let mut l = Line::<256>::new();
             sym(&mut l, &[m], addr);
         }
