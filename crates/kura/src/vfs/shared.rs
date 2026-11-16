@@ -345,8 +345,14 @@ impl Fs {
                     let Some(Some(n)) = self.nodes.get_mut(ino as usize) else { continue };
                     (n.mode, n.mtime, n.nlink, n.open_refs) = (mode, mtime, nlink, open_refs);
                     if let Data::File(Content::Upper(v)) = &mut n.data {
-                        v.set_len(size);
-                        for (at, b) in ranges { v.write(at, &b); }
+                        // (another process's file: one this one cannot hold stays as it was)
+                        if v.set_len(size).is_ok() {
+                            for (at, b) in ranges {
+                                if v.write(at, &b).is_err() {
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
             }

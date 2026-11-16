@@ -6,6 +6,15 @@
 
 /// Bytes per page.
 pub const PAGE: usize = 1 << 20;
+/// PAGE as a file offset
+const PAGE64: u64 = 1 << 20;
+const _: () = assert!(PAGE64.count_ones() == 1 && PAGE64.trailing_zeros() == PAGE.trailing_zeros());
+
+/// A length the file cannot have: past u64 (an offset near u64::MAX plus a write) or one whose
+/// page list the memory does not hold (review 2026-11-16: write's `off + len` overflowed, and
+/// set_len relied on its caller having asked room() first).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TooLong;
 
 #[derive(Default, Clone)]
 pub struct Pages {
@@ -67,14 +76,15 @@ impl Pages {
         n
     }
 
-    /// Writes `data` at `off`, making the file longer (zeros between) when it ends past it.
-    pub fn write(&mut self, off: u64, data: &[u8]) {
+    /// Writes `data` at `off`, making the file longer (zeros between) when it ends past it;
+    /// nothing is written (Err) when it would end past what a file can be.
+    pub fn write(&mut self, off: u64, data: &[u8]) -> Result<(), TooLong> {
         if data.is_empty() {
-            return;
+            return Ok(());
         }
-        let end = off + data.len() as u64;
+        let end = u64::try_from(data.len()).ok().and_then(|n| off.checked_add(n)).ok_or(TooLong)?;
         if end > self.len {
-            self.set_len(end);
+            self.set_len(end)?;
         }
         let mut done = 0;
         while done < data.len() {
@@ -94,18 +104,24 @@ impl Pages {
             page[o..o + k].copy_from_slice(&data[done..done + k]);
             done += k;
         }
+        Ok(())
     }
 
     /// Whether the file can be `end` bytes long: its page list made room for (false when the
     /// memory is not there; a page itself is at most PAGE bytes, its data what is written).
+    /// set_len and write ask it themselves; a caller asks first to fail before other work.
     pub fn room(&mut self, end: u64) -> bool {
         let Ok(count) = usize::try_from(end.div_ceil(PAGE as u64)) else { return false };
         count <= self.pages.len() || self.pages.try_reserve(count - self.pages.len()).is_ok()
     }
 
-    /// Cuts or lengthens (with zeros) the file to `n` bytes.
-    pub fn set_len(&mut self, n: u64) {
-        let count = n.div_ceil(PAGE as u64) as usize;
+    /// Cuts or lengthens (with zeros) the file to `n` bytes; unchanged (Err) when its page list
+    /// cannot be made.
+    pub fn set_len(&mut self, n: u64) -> Result<(), TooLong> {
+        if !self.room(n) {
+            return Err(TooLong);
+        }
+        let count = usize::try_from(n.div_ceil(PAGE64)).ok().ok_or(TooLong)?;
         if n < self.len {
             self.pages.truncate(count);
             if let Some(last) = self.pages.last_mut() {
@@ -119,6 +135,7 @@ impl Pages {
             self.pages.resize_with(count, Vec::new);
         }
         self.len = n;
+        Ok(())
     }
 
     /// The bytes in order, a piece at a time (zeros for what was never written).
@@ -196,8 +213,8 @@ mod tests {
             let (mut p, mut m) = (Pages::new(), Vec::new());
             for o in &ops {
                 match o {
-                    Op::Write(at, d) => p.write(*at, d),
-                    Op::SetLen(n) => p.set_len(*n),
+                    Op::Write(at, d) => p.write(*at, d).unwrap(),
+                    Op::SetLen(n) => p.set_len(*n).unwrap(),
                 }
                 apply(&mut m, o);
                 prop_assert_eq!(p.len(), m.len() as u64);
@@ -229,7 +246,7 @@ mod tests {
             }
             let mut p = Pages::new();
             for (a, b) in pieces {
-                p.write(a as u64, &data[a..b]);
+                p.write(a as u64, &data[a..b]).unwrap();
             }
             prop_assert!(p.to_vec() == data);
         }
@@ -263,7 +280,7 @@ mod tests {
         let mut p = Pages::new();
         let mut at = 0;
         while at < size {
-            p.write(at as u64, &piece);
+            p.write(at as u64, &piece).unwrap();
             at += piece.len();
         }
         assert_eq!(p.len(), size as u64);
@@ -277,13 +294,41 @@ mod tests {
     #[test]
     fn a_long_empty_file_holds_nothing() {
         let mut p = Pages::new();
-        p.set_len(10 << 30);
+        p.set_len(10 << 30).unwrap();
         assert_eq!(p.held(), 0);
         let mut b = [1u8; 16];
         assert_eq!(p.read((5 << 30) + 3, &mut b), 16);
         assert_eq!(b, [0; 16]);
-        p.write(1 << 30, b"x");
+        p.write(1 << 30, b"x").unwrap();
         assert!(p.held() <= 4096);
+    }
+
+    proptest! {
+        /// Review 2026-11-16: any offset and length, the ones near u64::MAX too: an Err and the
+        /// file as it was, or the write as a Vec would hold it; never a panic (overflow checks).
+        #[test]
+        fn huge_offsets_and_lengths_are_errors(off in prop_oneof![any::<u64>(), (u64::MAX - 4096)..=u64::MAX, Just(u64::MAX)], n in 0u64..64, len in prop_oneof![any::<u64>(), Just(u64::MAX), Just(u64::MAX >> 1)]) {
+            let mut p = Pages::from_slice(b"abc");
+            let before = p.to_vec();
+            let fits = off.checked_add(n).is_some_and(|e| e <= 4 * PAGE as u64);
+            let r = p.write(off, &vec![9u8; usize::try_from(n).unwrap()]);
+            if n == 0 {
+                prop_assert_eq!(r, Ok(()));
+            } else if off.checked_add(n).is_none() {
+                prop_assert_eq!(r, Err(TooLong));
+                prop_assert!(p.to_vec() == before);
+            } else if fits {
+                prop_assert_eq!(r, Ok(()));
+            }
+            if r.is_err() {
+                prop_assert_eq!(p.len(), 3);
+            }
+            let had = p.len();
+            match p.set_len(len) {
+                Ok(()) => prop_assert_eq!(p.len(), len),
+                Err(TooLong) => prop_assert_eq!(p.len(), had),
+            }
+        }
     }
 
     /// A small file costs about its size, not a page.
@@ -291,7 +336,7 @@ mod tests {
     fn a_small_file_holds_its_size() {
         let mut p = Pages::new();
         for i in 0..100u64 {
-            p.write(i * 10, b"0123456789");
+            p.write(i * 10, b"0123456789").unwrap();
         }
         assert!(p.held() < 4096, "held {}", p.held());
     }
@@ -313,7 +358,7 @@ mod proofs {
         let mut steps = 0;
         while done < n {
             let at = off + done as u64;
-            let (i, o) = (us(at / PAGE as u64), us(at % PAGE as u64));
+            let (i, o) = ((at / PAGE as u64) as usize, (at % PAGE as u64) as usize);
             let k = (PAGE - o).min(n - done);
             assert!(k > 0 && o + k <= PAGE);
             assert_eq!(i as u64 * PAGE as u64 + o as u64, at);

@@ -1933,10 +1933,10 @@ fn copy_up(ino: Ino, keep: u64) -> Result<(), c_int> {
         if n == 0 {
             break;
         }
-        v.write(at, &buf[..n]);
+        v.write(at, &buf[..n]).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
         at += n as u64;
     }
-    v.set_len(size);
+    v.set_len(size).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
     with(|fs| {
         if let Some(Data::File(c @ Content::Lower { .. })) = fs.data_mut(ino) {
             *c = Content::Upper(v);
@@ -1974,11 +1974,8 @@ impl Fs {
             // (as WriteFile and pwrite: nothing written, the file as it was)
             return Ok(0);
         }
-        if !v.room(end as u64) {
-            return Err(libc::ENOSPC);
-        }
         let old = v.len() as usize;
-        v.write(off, data);
+        v.write(off, data).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
         // (the bytes the other processes need: these, and the zeros a write past the end made)
         self.dirt.bytes(ino, old.min(end - data.len()), end);
         if let Some(n) = self.meta_mut(ino) {
@@ -1991,12 +1988,9 @@ impl Fs {
         match self.upper_mut(ino) {
             Some(Data::File(Content::Upper(v))) => {
                 let size = upper_end(size, 0, UPPER_MAX)?;
-                if !v.room(size as u64) {
-                    return Err(libc::ENOSPC);
-                }
                 let old = v.len() as usize;
                 // (pages hold what was written: a SetEndOfFile far out costs nothing)
-                v.set_len(size as u64);
+                v.set_len(size as u64).map_err(|crate::pages::TooLong| libc::ENOSPC)?;
                 // (cut then grown again before the others look: the zeros between are new)
                 self.dirt.bytes(ino, old.min(size), old.max(size));
                 Ok(())

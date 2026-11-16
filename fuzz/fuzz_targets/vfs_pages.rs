@@ -23,7 +23,7 @@ fuzz_target!(|data: &[u8]| {
                 let n = (h[4] as usize * 37).min(data.len() - at);
                 let bytes = &data[at..at + n];
                 at += n;
-                p.write(pos, bytes);
+                p.write(pos, bytes).expect("a 24-bit offset fits");
                 if !bytes.is_empty() {
                     let end = pos as usize + bytes.len();
                     if m.len() < end {
@@ -33,7 +33,7 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
             1 => {
-                p.set_len(pos);
+                p.set_len(pos).expect("a 24-bit length fits");
                 m.resize(pos as usize, 0);
             }
             _ => {
