@@ -197,30 +197,21 @@ impl Memory for Linear {
         })
     }
     fn cmpxchg16(&mut self, addr: u32, old: u128, new: u128) -> Result<u128, Fault> {
-        use std::sync::atomic::AtomicU64;
-        // no 128-bit atomics in wasm: all 16-byte swaps take one lock, and each half is stored
-        // atomically, so a plain reader sees a torn pair at worst (and its own swap then fails)
-        static WIDE: Mutex<()> = Mutex::new(());
-        let p = check(addr, 16, true)?;
-        let _g = WIDE.lock().unwrap_or_else(|e| e.into_inner());
-        let ord = Ordering::SeqCst;
-        unsafe {
-            if p as usize % 8 == 0 {
-                let (lo, hi) = (&*(p as *const AtomicU64), &*(p.add(8) as *const AtomicU64));
-                let cur = lo.load(ord) as u128 | (hi.load(ord) as u128) << 64;
-                if cur == old {
-                    lo.store(new as u64, ord);
-                    hi.store((new >> 64) as u64, ord);
-                }
-                Ok(cur)
-            } else {
-                let cur = (p as *const u128).read_unaligned();
-                if cur == old {
-                    (p as *mut u128).write_unaligned(new);
-                }
-                Ok(cur)
-            }
+        // (CMPXCHG16B needs a 16-byte aligned operand: #GP otherwise, which Windows reports as an
+        // access violation at 0xffffffff; review 2026-11-16: the unaligned case was a plain
+        // read and write)
+        if addr % 16 != 0 {
+            return Err(Fault { addr: u32::MAX, write: false });
         }
+        let p = check(addr, 16, true)?;
+        // SAFETY: check: 16 bytes of guest memory at a 16-aligned address, valid while the
+        // module's memory is (never shrunk); every access sake makes to a lock-prefixed slot is
+        // atomic.
+        let lo = unsafe { std::sync::atomic::AtomicU64::from_ptr(p.cast()) };
+        let p8 = p.wrapping_add(8);
+        // SAFETY: as above, its second 8 bytes.
+        let hi = unsafe { std::sync::atomic::AtomicU64::from_ptr(p8.cast()) };
+        Ok(swap16(lo, hi, old, new))
     }
     fn host_range(&mut self, addr: u32, len: u32) -> Option<*mut u8> {
         check(addr, len, true).ok()
@@ -664,5 +655,88 @@ mod reuse_tests {
         let logs = crate::crashlog::counts();
         assert_eq!(logs.made, logs.peak, "{logs:?}");
         assert!(logs.waiting >= 1, "{logs:?}");
+    }
+}
+
+/// CMPXCHG16B on the two halves of a 16-byte slot (wasm has no 128-bit atomics). All 16-byte
+/// swaps take one lock, so they are atomic among themselves; each half is then swapped with a
+/// 64-bit compare-exchange, so a lock-prefixed 64-bit operation of another thread on either half
+/// is never overwritten: the swap fails instead (and undoes its low half). What it cannot give
+/// is the x86's single 128-bit store: a plain 8-byte read between the two halves sees the new
+/// low half with the old high one (a lock-free list re-reads such a pair through its own swap,
+/// which then fails). Review 2026-11-16.
+pub fn swap16(lo: &std::sync::atomic::AtomicU64, hi: &std::sync::atomic::AtomicU64, old: u128, new: u128) -> u128 {
+    static WIDE: Mutex<()> = Mutex::new(());
+    let _g = WIDE.lock().unwrap_or_else(|e| e.into_inner());
+    let ord = Ordering::SeqCst;
+    let (old_lo, old_hi) = (kome::num::lo64(old), kome::num::lo64(old >> 64));
+    let (new_lo, new_hi) = (kome::num::lo64(new), kome::num::lo64(new >> 64));
+    let pair = |l: u64, h: u64| u128::from(l) | u128::from(h) << 64;
+    if let Err(l) = lo.compare_exchange(old_lo, new_lo, ord, ord) {
+        return pair(l, hi.load(ord));
+    }
+    if let Err(h) = hi.compare_exchange(old_hi, new_hi, ord, ord) {
+        // (the low half back as it was, unless another thread's operation wrote it meanwhile:
+        // then that one stands)
+        if lo.compare_exchange(new_lo, old_lo, ord, ord).is_err() {
+            // (another thread's 64-bit operation wrote it: that one stands)
+        }
+        return pair(lo.load(ord), h);
+    }
+    old
+}
+
+#[cfg(test)]
+mod swap16_tests {
+    use super::swap16;
+    use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
+
+    /// Review 2026-11-16: 16-byte swaps counting a 128-bit value up while other threads add to
+    /// the high half with 64-bit atomics (as LOCK XADD does): no update of either is lost.
+    #[test]
+    fn no_update_is_lost() {
+        static LO: AtomicU64 = AtomicU64::new(u64::MAX - 1000);
+        static HI: AtomicU64 = AtomicU64::new(0);
+        const SWAPS: u64 = 20_000;
+        const ADDS: u64 = 20_000;
+        let swappers: Vec<_> = (0..3)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let mut done = 0;
+                    while done < SWAPS {
+                        let cur = u128::from(LO.load(SeqCst)) | u128::from(HI.load(SeqCst)) << 64;
+                        if swap16(&LO, &HI, cur, cur.wrapping_add(1)) == cur {
+                            done += 1;
+                        }
+                    }
+                })
+            })
+            .collect();
+        let adders: Vec<_> = (0..2)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    for _ in 0..ADDS {
+                        HI.fetch_add(1 << 20, SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for t in swappers.into_iter().chain(adders) {
+            t.join().unwrap();
+        }
+        let v = u128::from(LO.load(SeqCst)) | u128::from(HI.load(SeqCst)) << 64;
+        let want = u128::from(u64::MAX - 1000) + u128::from(3 * SWAPS) + (u128::from(2 * ADDS) << 84);
+        assert_eq!(v, want);
+    }
+
+    /// A swap whose old value is not there changes nothing and says what is
+    #[test]
+    fn a_failed_swap_changes_nothing() {
+        let (lo, hi) = (AtomicU64::new(5), AtomicU64::new(7));
+        assert_eq!(swap16(&lo, &hi, 5 | 8 << 64, 1), 5 | 7 << 64);
+        assert_eq!((lo.load(SeqCst), hi.load(SeqCst)), (5, 7));
+        assert_eq!(swap16(&lo, &hi, 6 | 7 << 64, 1), 5 | 7 << 64);
+        assert_eq!(swap16(&lo, &hi, 5 | 7 << 64, 9 | 10 << 64), 5 | 7 << 64);
+        assert_eq!((lo.load(SeqCst), hi.load(SeqCst)), (9, 10));
     }
 }
