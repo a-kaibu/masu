@@ -4634,7 +4634,7 @@ mod eh_prolog_tests {
         let mut cpu = koji::Cpu::default();
         cpu.regs[koji::EAX] = 0x0040_2e1b;
         cpu.regs[koji::EBP] = 0x1234;
-        let mut c = Ctx { cpu: &mut cpu, esp: e, edx: None, jumped: false, st0: None, trap: 0, this: None };
+        let mut c = Ctx { cpu: &mut cpu, esp: e, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 };
         super::_EH_prolog(&mut c);
         assert!(c.jumped);
         assert_eq!(cpu.eip, 0x0040_1054);
@@ -4660,7 +4660,7 @@ mod libm_sse2_tests {
         let mut cpu = koji::Cpu::default();
         cpu.xmm[0] = x0;
         cpu.xmm[1] = x1;
-        let mut c = Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None };
+        let mut c = Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 };
         f(&mut c);
         assert!(c.st0.is_none(), "{name}: the result is xmm0's, not ST0's");
         cpu.xmm[0]

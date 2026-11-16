@@ -912,36 +912,44 @@ fn open_key_view(h: u32, sub: &str, create: bool, out: crate::api::Out, sam: u32
 }
 
 fn RegOpenKeyExA(c: &mut Ctx) -> u32 {
-    let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), false) };
-    open_key_view(c.a(0), &s, false, c.out(4), c.a(3))
+    let c = &mut c.args::<crate::api::outs::RegOpenKeyExA>();
+    let s = if c.a::<1>() == 0 { String::new() } else { arg_str(c.a::<1>(), false) };
+    open_key_view(c.a::<0>(), &s, false, c.out::<4>(), c.a::<3>())
 }
 fn RegOpenKeyExW(c: &mut Ctx) -> u32 {
-    let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), true) };
-    open_key_view(c.a(0), &s, false, c.out(4), c.a(3))
+    let c = &mut c.args::<crate::api::outs::RegOpenKeyExW>();
+    let s = if c.a::<1>() == 0 { String::new() } else { arg_str(c.a::<1>(), true) };
+    open_key_view(c.a::<0>(), &s, false, c.out::<4>(), c.a::<3>())
 }
 fn RegOpenKeyA(c: &mut Ctx) -> u32 {
-    let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), false) };
-    open_key(c.a(0), &s, false, c.out(2))
+    let c = &mut c.args::<crate::api::outs::RegOpenKeyA>();
+    let s = if c.a::<1>() == 0 { String::new() } else { arg_str(c.a::<1>(), false) };
+    open_key(c.a::<0>(), &s, false, c.out::<2>())
 }
 fn RegOpenKeyW(c: &mut Ctx) -> u32 {
-    let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), true) };
-    open_key(c.a(0), &s, false, c.out(2))
+    let c = &mut c.args::<crate::api::outs::RegOpenKeyW>();
+    let s = if c.a::<1>() == 0 { String::new() } else { arg_str(c.a::<1>(), true) };
+    open_key(c.a::<0>(), &s, false, c.out::<2>())
 }
 fn RegCreateKeyExA(c: &mut Ctx) -> u32 {
-    let s = arg_str(c.a(1), false);
-    create_key_ex(c.a(0), &s, c.out(7), c.a(8), c.a(5))
+    let c = &mut c.args::<crate::api::outs::RegCreateKeyExA>();
+    let s = arg_str(c.a::<1>(), false);
+    create_key_ex(c.a::<0>(), &s, c.out::<7>(), c.a::<8>(), c.a::<5>())
 }
 fn RegCreateKeyExW(c: &mut Ctx) -> u32 {
-    let s = arg_str(c.a(1), true);
-    create_key_ex(c.a(0), &s, c.out(7), c.a(8), c.a(5))
+    let c = &mut c.args::<crate::api::outs::RegCreateKeyExW>();
+    let s = arg_str(c.a::<1>(), true);
+    create_key_ex(c.a::<0>(), &s, c.out::<7>(), c.a::<8>(), c.a::<5>())
 }
 fn RegCreateKeyA(c: &mut Ctx) -> u32 {
-    let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), false) };
-    open_key(c.a(0), &s, true, c.out(2))
+    let c = &mut c.args::<crate::api::outs::RegCreateKeyA>();
+    let s = if c.a::<1>() == 0 { String::new() } else { arg_str(c.a::<1>(), false) };
+    open_key(c.a::<0>(), &s, true, c.out::<2>())
 }
 fn RegCreateKeyW(c: &mut Ctx) -> u32 {
-    let s = if c.a(1) == 0 { String::new() } else { arg_str(c.a(1), true) };
-    open_key(c.a(0), &s, true, c.out(2))
+    let c = &mut c.args::<crate::api::outs::RegCreateKeyW>();
+    let s = if c.a::<1>() == 0 { String::new() } else { arg_str(c.a::<1>(), true) };
+    open_key(c.a::<0>(), &s, true, c.out::<2>())
 }
 fn RegCloseKey(c: &mut Ctx) -> u32 {
     if root_name(c.a(0)).is_none() && !obj::close(c.a(0)) {
@@ -1558,9 +1566,11 @@ fn ver_query(c: &mut Ctx, wide: bool) -> u32 {
     1
 }
 fn VerQueryValueA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::VerQueryValueA>();
     ver_query(c, false)
 }
 fn VerQueryValueW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::VerQueryValueW>();
     ver_query(c, true)
 }
 
@@ -1856,26 +1866,29 @@ fn dxdiag_provider() -> u32 {
 }
 
 fn CoCreateInstance(c: &mut Ctx) -> u32 {
-    let (clsid, iid, out) = (c.a(0), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::CoCreateInstance>();
+    let (clsid, iid, out) = (c.a::<0>(), c.a::<3>(), c.out::<4>());
     // (the VMR-9 can be aggregated)
-    if let Some(hr) = crate::vmr9::create_instance(c, clsid, c.a(1), iid, out) {
+    let outer = c.a::<1>();
+    if let Some(hr) = crate::vmr9::create_instance(c, clsid, outer, iid, out) {
         return hr;
     }
     // (DirectMusic refuses an outer object)
-    if let Some(hr) = crate::dmusic::create_instance(clsid, c.a(1), iid, out) {
+    if let Some(hr) = crate::dmusic::create_instance(clsid, c.a::<1>(), iid, out) {
         return hr;
     }
-    if let Some(hr) = crate::dmime::create_instance(clsid, c.a(1), iid, out) {
+    if let Some(hr) = crate::dmime::create_instance(clsid, c.a::<1>(), iid, out) {
         return hr;
     }
     let hr = create_object(c, clsid, iid, out);
     if hr == 0x8004_0154 {
-        let (context, outer) = (c.a(2), c.a(1));
+        let (context, outer) = (c.a::<2>(), c.a::<1>());
         crate::comrpc::create(c.cpu, clsid, iid, out, context, outer)
     } else { hr }
 }
 fn CoGetClassObject(c: &mut Ctx) -> u32 {
-    let (clsid, context, reserved, iid, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::CoGetClassObject>();
+    let (clsid, context, reserved, iid, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
     if out.is_null() || clsid == 0 || iid == 0 { return 0x8000_4003; }
     out.put(0);
     if reserved != 0 { return 0x8007_0057; }
@@ -1894,10 +1907,10 @@ fn create_object(c: &mut Ctx, clsid: u32, iid: u32, out: crate::api::Out) -> u32
         out.put(dxdiag_provider());
         return 0;
     }
-    if let Some(hr) = crate::shelllink::create_instance(clsid, iid, out.addr()) {
+    if let Some(hr) = crate::shelllink::create_instance(clsid, iid, out) {
         return hr;
     }
-    if let Some(hr) = crate::webbrowser::create_instance(clsid, iid, out.addr()) {
+    if let Some(hr) = crate::webbrowser::create_instance(clsid, iid, out) {
         return hr;
     }
     if let Some(obj) = crate::ddraw::create_instance(clsid, iid) {
@@ -2108,11 +2121,13 @@ fn IsUserAnAdmin(_: &mut Ctx) -> u32 {
     1
 }
 fn SHGetMalloc(c: &mut Ctx) -> u32 {
-    c.out(0).put(malloc_obj());
+    let c = &mut c.args::<crate::api::outs::SHGetMalloc>();
+    c.out::<0>().put(malloc_obj());
     0
 }
 fn CoGetMalloc(c: &mut Ctx) -> u32 {
-    c.out(1).put(malloc_obj());
+    let c = &mut c.args::<crate::api::outs::CoGetMalloc>();
+    c.out::<1>().put(malloc_obj());
     0
 }
 /// In-process marshaling (every apartment of sake's one process shares its objects, as the
@@ -2161,7 +2176,8 @@ fn read_marshaled(c: &mut Ctx, stm: u32) -> Result<u32, u32> {
 }
 /// CoUnmarshalInterface(stream, riid, void**)
 fn CoUnmarshalInterface(c: &mut Ctx) -> u32 {
-    let (stm, iid, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::CoUnmarshalInterface>();
+    let (stm, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if out.is_null() {
         return 0x8000_4003;
     }
@@ -2170,7 +2186,7 @@ fn CoUnmarshalInterface(c: &mut Ctx) -> u32 {
         Ok(p) => p,
         Err(hr) => return hr,
     };
-    let hr = crate::d3dx9::com_call(c, p, 0, &[iid, out.addr()]);
+    let hr = crate::d3dx9::com_call(c, p, 0, &[iid, out.to_callee()]);
     crate::d3dx9::com_call(c, p, 2, &[]);
     hr
 }
@@ -2226,7 +2242,8 @@ fn StringFromGUID2(c: &mut Ctx) -> u32 {
 }
 /// StringFromCLSID / StringFromIID: the "{...}" string in CoTaskMem
 fn StringFromCLSID(c: &mut Ctx) -> u32 {
-    let (g, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::StringFromCLSID>();
+    let (g, out) = (c.a::<0>(), c.out::<1>());
     let s: Vec<u16> = guid_string(g).encode_utf16().collect();
     let p = mem::heap_alloc(2 * s.len() as u32 + 2, false);
     mem::put_wstr(p, s.len() as u32 + 1, &s);
@@ -2234,6 +2251,7 @@ fn StringFromCLSID(c: &mut Ctx) -> u32 {
     0
 }
 fn StringFromIID(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::StringFromIID>();
     StringFromCLSID(c)
 }
 /// CLSIDFromString / IIDFromString: "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}" (ProgIDs are not
@@ -2336,13 +2354,16 @@ fn uuid_to_string(c: &mut Ctx, wide: bool) -> u32 {
     0
 }
 fn UuidToStringA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::UuidToStringA>();
     uuid_to_string(c, false)
 }
 fn UuidToStringW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::UuidToStringW>();
     uuid_to_string(c, true)
 }
 fn RpcStringFreeA(c: &mut Ctx) -> u32 {
-    let pp = c.out(0);
+    let c = &mut c.args::<crate::api::outs::RpcStringFreeA>();
+    let pp = c.out::<0>();
     if !pp.is_null() && pp.get() != 0 {
         mem::heap_free(pp.get());
         pp.put(0);
@@ -2644,7 +2665,8 @@ pub(crate) fn bstr_free(b: u32) {
 }
 /// VarBstrFromBool(value, lcid, flags, &out): "True" for any nonzero value, "False" for 0.
 fn VarBstrFromBool(c: &mut Ctx) -> u32 {
-    let (v, out) = (c.a(0) as u16, c.out(3));
+    let c = &mut c.args::<crate::api::outs::VarBstrFromBool>();
+    let (v, out) = (c.a::<0>() as u16, c.out::<3>());
     if out.is_null() {
         return 0x8007_0057;
     }
@@ -2677,14 +2699,16 @@ fn SysAllocStringByteLen(c: &mut Ctx) -> u32 {
     b + 4
 }
 fn SysReAllocString(c: &mut Ctx) -> u32 {
-    let (pb, s) = (c.out(0), c.a(1));
+    let c = &mut c.args::<crate::api::outs::SysReAllocString>();
+    let (pb, s) = (c.out::<0>(), c.a::<1>());
     let nb = bstr_alloc(&wstr(s));
     bstr_free(pb.get());
     pb.put(nb);
     1
 }
 fn SysReAllocStringLen(c: &mut Ctx) -> u32 {
-    let (pb, s, n) = (c.out(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::SysReAllocStringLen>();
+    let (pb, s, n) = (c.out::<0>(), c.a::<1>(), c.a::<2>());
     let nb = bstr_from_guest(s, n);
     if nb == 0 {
         return 0;
@@ -3048,7 +3072,8 @@ fn VariantChangeType(c: &mut Ctx) -> u32 {
     variant_change(c, d, s, f, t)
 }
 fn GetErrorInfo(c: &mut Ctx) -> u32 {
-    c.out(1).put(0);
+    let c = &mut c.args::<crate::api::outs::GetErrorInfo>();
+    c.out::<1>().put(0);
     1
 }
 fn SetErrorInfo(_: &mut Ctx) -> u32 {
@@ -3188,18 +3213,22 @@ fn sh_str_dup(c: &mut Ctx, wide: bool) -> u32 {
     0
 }
 fn SHStrDupA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::SHStrDupA>();
     sh_str_dup(c, false)
 }
 fn SHStrDupW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::SHStrDupW>();
     sh_str_dup(c, true)
 }
 /// SHGetPropertyStoreForWindow(hwnd, riid, &store): no property stores (taskbar app ids)
 fn SHGetPropertyStoreForWindow(c: &mut Ctx) -> u32 {
-    c.out(2).put(0);
+    let c = &mut c.args::<crate::api::outs::SHGetPropertyStoreForWindow>();
+    c.out::<2>().put(0);
     0x8000_4001
 }
 fn SHGetKnownFolderPath(c: &mut Ctx) -> u32 {
-    let (id, out) = (c.a(0), c.out(3));
+    let c = &mut c.args::<crate::api::outs::SHGetKnownFolderPath>();
+    let (id, out) = (c.a::<0>(), c.out::<3>());
     let path = match r32(id) {
         0x3eb6_85db => folder_path(0x1a, true),
         0xf1b3_2785 | 0xa520_a1a4 => folder_path(0x1c, true),
@@ -3617,7 +3646,8 @@ fn IsOS(c: &mut Ctx) -> u32 {
 }
 
 fn SHGetSpecialFolderLocation(c: &mut Ctx) -> u32 {
-    let (csidl, out) = (c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::SHGetSpecialFolderLocation>();
+    let (csidl, out) = (c.a::<1>(), c.out::<2>());
     // an ID list of our own: a marker and the CSIDL, then the terminator
     let p = mem::heap_alloc(12, true);
     w16(p, 8);
@@ -3627,7 +3657,8 @@ fn SHGetSpecialFolderLocation(c: &mut Ctx) -> u32 {
     0
 }
 fn SHGetFolderLocation(c: &mut Ctx) -> u32 {
-    let (csidl, out) = (c.a(1), c.out(4));
+    let c = &mut c.args::<crate::api::outs::SHGetFolderLocation>();
+    let (csidl, out) = (c.a::<1>(), c.out::<4>());
     let p = mem::heap_alloc(12, true);
     w16(p, 8);
     w16(p + 2, 0x7676);
@@ -4713,18 +4744,19 @@ fn crypto_result(result: Result<(), u32>) -> u32 {
     }
 }
 fn CryptImportKey(c: &mut Ctx) -> u32 {
-    if let Err(e) = crate::capi::provider(c.a(0)) { return crypto_result(Err(e)); }
-    if c.a(1) == 0 || c.out(5).is_null() {
+    let c = &mut c.args::<crate::api::outs::CryptImportKey>();
+    if let Err(e) = crate::capi::provider(c.a::<0>()) { return crypto_result(Err(e)); }
+    if c.a::<1>() == 0 || c.out::<5>().is_null() {
         return crypto_result(Err(87));
     }
-    if c.a(3) != 0 || c.a(4) != 0 {
+    if c.a::<3>() != 0 || c.a::<4>() != 0 {
         return crypto_result(Err(crate::cng::NTE_BAD_FLAGS));
     }
-    match PublicRsa::from_blob(&mem::bytes(c.a(1), c.a(2))) {
+    match PublicRsa::from_blob(&mem::bytes(c.a::<1>(), c.a::<2>())) {
         Ok(key) => {
             let id = NEXT_HASH.fetch_add(1, Ordering::Relaxed);
             RSA_KEYS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, key);
-            c.out(5).put(id);
+            c.out::<5>().put(id);
             1
         }
         Err(e) => crypto_result(Err(e)),
@@ -4797,9 +4829,11 @@ fn acquire(c: &mut Ctx, wide: bool) -> u32 {
     }
 }
 fn CryptAcquireContextA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CryptAcquireContextA>();
     acquire(c, false)
 }
 fn CryptAcquireContextW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CryptAcquireContextW>();
     acquire(c, true)
 }
 fn CryptReleaseContext(c: &mut Ctx) -> u32 {
@@ -4842,8 +4876,9 @@ fn CryptGenRandom(c: &mut Ctx) -> u32 {
     random_into(p, n) as u32
 }
 fn CryptCreateHash(c: &mut Ctx) -> u32 {
-    if let Err(e) = crate::capi::provider(c.a(0)) { return crypto_result(Err(e)); }
-    let h = match c.a(1) {
+    let c = &mut c.args::<crate::api::outs::CryptCreateHash>();
+    if let Err(e) = crate::capi::provider(c.a::<0>()) { return crypto_result(Err(e)); }
+    let h = match c.a::<1>() {
         0x8003 => Hasher::Md5(md5::Context::new()),
         0x8004 => Hasher::Sha1(Sha1::default()),
         0x800c => Hasher::Sha256(<sha2::Sha256 as sha2::Digest>::new()),
@@ -4854,8 +4889,8 @@ fn CryptCreateHash(c: &mut Ctx) -> u32 {
     };
     let id = NEXT_HASH.fetch_add(1, Ordering::Relaxed);
     HASHES.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, (h, false));
-    HASH_PROVIDERS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, c.a(0));
-    c.out(4).put(id);
+    HASH_PROVIDERS.lock().unwrap().get_or_insert_with(HashMap::default).insert(id, c.a::<0>());
+    c.out::<4>().put(id);
     1
 }
 fn CryptHashData(c: &mut Ctx) -> u32 {
@@ -4956,7 +4991,8 @@ static KEYS: Mutex<Option<HashMap<u32, Rc4>>> = Mutex::new(None);
 /// CryptDeriveKey(prov, alg, hash, flags, &key): key length in the flags' high word (else the
 /// provider's default); a 40-bit key gets 11 zero bytes of salt unless CRYPT_NO_SALT (0x10)
 fn CryptDeriveKey(c: &mut Ctx) -> u32 {
-    let (alg, hash, flags, out) = (c.a(1), c.a(2), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::CryptDeriveKey>();
+    let (alg, hash, flags, out) = (c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
     if alg != 0x6801 {
         eprintln!("sake: CryptDeriveKey: algorithm {alg:#x}");
         w32(crate::cur().teb + crate::teb_last_error(), 0x8009_0008);
@@ -4975,7 +5011,7 @@ fn CryptDeriveKey(c: &mut Ctx) -> u32 {
         }
     };
     let bits = match flags >> 16 {
-        0 => match crate::capi::provider(c.a(0)) { Ok(p) => p.rc4_bits, Err(e) => return crypto_result(Err(e)) },
+        0 => match crate::capi::provider(c.a::<0>()) { Ok(p) => p.rc4_bits, Err(e) => return crypto_result(Err(e)) },
         b => b,
     };
     let mut key = digest[..((bits / 8) as usize).clamp(5, digest.len())].to_vec();
@@ -5427,9 +5463,11 @@ fn wts_query(c: &mut Ctx, wide: bool) -> u32 {
 }
 
 fn WTSQuerySessionInformationA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::WTSQuerySessionInformationA>();
     wts_query(c, false)
 }
 fn WTSQuerySessionInformationW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::WTSQuerySessionInformationW>();
     wts_query(c, true)
 }
 
@@ -5451,9 +5489,11 @@ fn wts_enum(c: &mut Ctx, wide: bool) -> u32 {
     1
 }
 fn WTSEnumerateSessionsA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::WTSEnumerateSessionsA>();
     wts_enum(c, false)
 }
 fn WTSEnumerateSessionsW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::WTSEnumerateSessionsW>();
     wts_enum(c, true)
 }
 

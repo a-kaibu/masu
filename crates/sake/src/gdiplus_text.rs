@@ -67,20 +67,23 @@ fn new_graphics(img: u32, hdc: u32, out: crate::api::Out) -> u32 {
     new_obj(Obj::Graphics { img, hdc, unit: 1, scale: 1.0, origin: (0, 0) }, out)
 }
 fn GdipCreateFromHDC(c: &mut Ctx) -> u32 {
-    if c.a(0) == 0 {
+    let c = &mut c.args::<crate::api::outs::GdipCreateFromHDC>();
+    if c.a::<0>() == 0 {
         return OUT_OF_MEMORY;
     }
-    new_graphics(0, c.a(0), c.out(1))
+    new_graphics(0, c.a::<0>(), c.out::<1>())
 }
 fn GdipCreateFromHWND(c: &mut Ctx) -> u32 {
-    new_graphics(0, 0, c.out(1))
+    let c = &mut c.args::<crate::api::outs::GdipCreateFromHWND>();
+    new_graphics(0, 0, c.out::<1>())
 }
 /// GdipCreateBitmapFromGraphics(width, height, graphics, &bitmap): a 32bppPARGB bitmap
 fn GdipCreateBitmapFromGraphics(c: &mut Ctx) -> u32 {
-    if graphics(c.a(2)).is_none() || c.i(0) <= 0 || c.i(1) <= 0 {
+    let c = &mut c.args::<crate::api::outs::GdipCreateBitmapFromGraphics>();
+    if graphics(c.a::<2>()).is_none() || c.i(0) <= 0 || c.i(1) <= 0 {
         return INVALID_PARAMETER;
     }
-    crate::gdiplus::new_bitmap(c.a(0), c.a(1), 0x000e_200b, c.out(3))
+    crate::gdiplus::new_bitmap(c.a::<0>(), c.a::<1>(), 0x000e_200b, c.out::<3>())
 }
 fn GdipGetRenderingOrigin(c: &mut Ctx) -> u32 {
     let (xp, yp) = (c.a(1), c.a(2));
@@ -104,10 +107,11 @@ fn GdipSetRenderingOrigin(c: &mut Ctx) -> u32 {
     })
 }
 fn GdipGetImageGraphicsContext(c: &mut Ctx) -> u32 {
-    if !crate::gdiplus::is_image(c.a(0)) {
+    let c = &mut c.args::<crate::api::outs::GdipGetImageGraphicsContext>();
+    if !crate::gdiplus::is_image(c.a::<0>()) {
         return INVALID_PARAMETER;
     }
-    new_graphics(c.a(0), 0, c.out(1))
+    new_graphics(c.a::<0>(), 0, c.out::<1>())
 }
 fn GdipSetPageUnit(c: &mut Ctx) -> u32 {
     let u = c.a(1);
@@ -207,15 +211,18 @@ fn font_from_logfont(c: &mut Ctx, wide: bool) -> u32 {
     new_obj(Obj::Font { lf, em, family, size: em, unit: 0, style }, out)
 }
 fn GdipCreateFontFromLogfontA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GdipCreateFontFromLogfontA>();
     font_from_logfont(c, false)
 }
 fn GdipCreateFontFromLogfontW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GdipCreateFontFromLogfontW>();
     font_from_logfont(c, true)
 }
 /// GdipCreateFont(family, size, style, unit, &font): a positive size in a unit other than
 /// UnitDisplay
 fn GdipCreateFont(c: &mut Ctx) -> u32 {
-    let (family, size, style, unit, out) = (c.a(0), c.f(1), c.a(2), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::GdipCreateFont>();
+    let (family, size, style, unit, out) = (c.a::<0>(), c.f(1), c.a::<2>(), c.a::<3>(), c.out::<4>());
     if crate::gdiplus_font::family(family).is_none() || out.is_null() || !(size > 0.0) || unit == 1 || unit > 6 {
         return INVALID_PARAMETER;
     }
@@ -224,12 +231,13 @@ fn GdipCreateFont(c: &mut Ctx) -> u32 {
     new_obj(Obj::Font { lf, em, family, size, unit, style }, out)
 }
 fn GdipCloneFont(c: &mut Ctx) -> u32 {
-    let o = with(|m| match m.get(&c.a(0)) {
+    let c = &mut c.args::<crate::api::outs::GdipCloneFont>();
+    let o = with(|m| match m.get(&c.a::<0>()) {
         Some(Obj::Font { lf, em, family, size, unit, style }) => Some(Obj::Font { lf: lf.clone(), em: *em, family: *family, size: *size, unit: *unit, style: *style }),
         _ => None,
     });
     let Some(o) = o else { return INVALID_PARAMETER };
-    new_obj(o, c.out(1))
+    new_obj(o, c.out::<1>())
 }
 fn GdipDeleteFont(c: &mut Ctx) -> u32 {
     if font(c.a(0)).is_none() {
@@ -302,7 +310,8 @@ fn GdipGetFontStyle(c: &mut Ctx) -> u32 {
 }
 /// GdipGetFamily(font, &family): the family it was made from, the same object
 fn GdipGetFamily(c: &mut Ctx) -> u32 {
-    let (Some((family, _, _, _)), out) = (font_info(c.a(0)), c.out(1)) else { return INVALID_PARAMETER };
+    let c = &mut c.args::<crate::api::outs::GdipGetFamily>();
+    let (Some((family, _, _, _)), out) = (font_info(c.a::<0>()), c.out::<1>()) else { return INVALID_PARAMETER };
     if out.is_null() {
         return INVALID_PARAMETER;
     }
@@ -354,7 +363,8 @@ fn line_height(tf: &TextFont) -> f32 {
 
 /// GdipCreatePen1(argb, width, unit, &pen)
 fn GdipCreatePen1(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Pen { argb: c.a(0), width: c.f(1) }, c.out(3))
+    let c = &mut c.args::<crate::api::outs::GdipCreatePen1>();
+    new_obj(Obj::Pen { argb: c.a::<0>(), width: c.f(1) }, c.out::<3>())
 }
 /// a brush's (gdiplus_brush) or pen's color
 fn color_of(b: u32) -> Option<u32> {
@@ -394,15 +404,17 @@ fn edit_format(h: u32, f: impl FnOnce(&mut StringFormat) -> u32) -> u32 {
     })
 }
 fn GdipCreateStringFormat(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Format(StringFormat::new(c.a(0))), c.out(2))
+    let c = &mut c.args::<crate::api::outs::GdipCreateStringFormat>();
+    new_obj(Obj::Format(StringFormat::new(c.a::<0>())), c.out::<2>())
 }
 fn GdipCloneStringFormat(c: &mut Ctx) -> u32 {
-    let v = with(|m| match m.get(&c.a(0)) {
+    let c = &mut c.args::<crate::api::outs::GdipCloneStringFormat>();
+    let v = with(|m| match m.get(&c.a::<0>()) {
         Some(Obj::Format(v)) => Some(v.clone()), _ => None,
     });
     let Some(mut v) = v else { return INVALID_PARAMETER };
     v.generic = false;
-    new_obj(Obj::Format(v), c.out(1))
+    new_obj(Obj::Format(v), c.out::<1>())
 }
 fn GdipDeleteStringFormat(c: &mut Ctx) -> u32 {
     with(|m| {
@@ -512,18 +524,21 @@ fn format(f: u32) -> (u32, u32) {
 // ---- regions ----
 
 fn GdipCreateRegion(c: &mut Ctx) -> u32 {
-    new_obj(Obj::Region { r: [-4194304.0, -4194304.0, 8388608.0, 8388608.0] }, c.out(0))
+    let c = &mut c.args::<crate::api::outs::GdipCreateRegion>();
+    new_obj(Obj::Region { r: [-4194304.0, -4194304.0, 8388608.0, 8388608.0] }, c.out::<0>())
 }
 /// GdipCreateRegionRect(RectF*, &region) / GdipCreateRegionRectI(Rect*, &region)
 fn GdipCreateRegionRect(c: &mut Ctx) -> u32 {
-    let p = c.a(0);
+    let c = &mut c.args::<crate::api::outs::GdipCreateRegionRect>();
+    let p = c.a::<0>();
     let r = [0, 4, 8, 12].map(|o| fl(r32(p + o)));
-    new_obj(Obj::Region { r }, c.out(1))
+    new_obj(Obj::Region { r }, c.out::<1>())
 }
 fn GdipCreateRegionRectI(c: &mut Ctx) -> u32 {
-    let p = c.a(0);
+    let c = &mut c.args::<crate::api::outs::GdipCreateRegionRectI>();
+    let p = c.a::<0>();
     let r = [0, 4, 8, 12].map(|o| r32(p + o) as i32 as f32);
-    new_obj(Obj::Region { r }, c.out(1))
+    new_obj(Obj::Region { r }, c.out::<1>())
 }
 fn region(g: u32) -> Option<[f32; 4]> {
     with(|m| match m.get(&g) {
@@ -673,11 +688,12 @@ fn GdipMeasureString(c: &mut Ctx) -> u32 {
 /// GdipMeasureCharacterRanges(graphics, string, length, font, layout, format, count, regions):
 /// each of the format's ranges as the box of its characters' cells
 fn GdipMeasureCharacterRanges(c: &mut Ctx) -> u32 {
-    let Some((cells, _, _, _, lh, k)) = lay(c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5)) else { return INVALID_PARAMETER };
-    let ranges = with(|m| match m.get(&c.a(5)) {
+    let c = &mut c.args::<crate::api::outs::GdipMeasureCharacterRanges>();
+    let Some((cells, _, _, _, lh, k)) = lay(c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>()) else { return INVALID_PARAMETER };
+    let ranges = with(|m| match m.get(&c.a::<5>()) {
         Some(Obj::Format(v)) => v.ranges.clone(), _ => Vec::new(),
     });
-    let (n, regs) = (c.a(6), c.out(7));
+    let (n, regs) = (c.a::<6>(), c.out::<7>());
     for (j, &(first, count)) in ranges.iter().enumerate().take(n as usize) {
         let inr: Vec<&Cell> = cells.iter().filter(|c| c.i as i32 >= first && (c.i as i32) < first + count).collect();
         let r = if inr.is_empty() {
@@ -689,7 +705,7 @@ fn GdipMeasureCharacterRanges(c: &mut Ctx) -> u32 {
             let y1 = inr.iter().map(|c| c.y + lh).fold(f32::MIN, f32::max);
             [x0, y0, x1 - x0, y1 - y0].map(|v| v / k)
         };
-        let reg = r32(regs.addr() + 4 * j as u32);
+        let reg = regs.nth(kome::num::u32_of(j)).get();
         with(|m| {
             if let Some(Obj::Region { r: rr }) = m.get_mut(&reg) {
                 *rr = r;

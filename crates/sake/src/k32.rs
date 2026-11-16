@@ -642,7 +642,8 @@ fn process_modules() -> Vec<u32> {
 /// EnumProcessModules(process, modules, bytes, &needed): as many handles as fit, and the bytes
 /// all of them take
 fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
-    let (h, p, cb, pn) = (c.a(0), c.out(1), c.a(2), c.a(3));
+    let c = &mut c.args::<crate::api::outs::K32EnumProcessModules>();
+    let (h, p, cb, pn) = (c.a::<0>(), c.out::<1>(), c.a::<2>(), c.a::<3>());
     if !psapi_access(h, true) {
         return 0;
     }
@@ -654,7 +655,7 @@ fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
         return 0;
     }
     for (i, &b) in all.iter().enumerate().take(kome::num::us(cb.checked_div(ps).unwrap_or(0))) {
-        crate::mem::wp(mem::ga(p.addr()).at(kome::num::u32_of(i), ps), b);
+        p.nth(kome::num::u32_of(i)).put_addr(b);
     }
     if pn == 0 {
         last_error(998);
@@ -665,7 +666,8 @@ fn K32EnumProcessModules(c: &mut Ctx) -> u32 {
 }
 /// EnumProcessModulesEx(.., filter): a process of one kind has its own modules only
 fn K32EnumProcessModulesEx(c: &mut Ctx) -> u32 {
-    if c.a(4) > 3 {
+    let c = &mut c.args::<crate::api::outs::K32EnumProcessModulesEx>();
+    if c.a::<4>() > 3 {
         last_error(87);
         return 0;
     }
@@ -1775,7 +1777,8 @@ fn PostQueuedCompletionStatus(c: &mut Ctx) -> u32 {
 /// GetQueuedCompletionStatus(port, &bytes, &key, &overlapped, ms): the first packet; on a timeout
 /// FALSE, WAIT_TIMEOUT and a NULL overlapped (key and bytes as they were)
 fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
-    let (port, pbytes, pkey, pov, ms) = (c.a(0), c.a(1), c.out(2), c.out(3), c.a(4));
+    let c = &mut c.args::<crate::api::outs::GetQueuedCompletionStatus>();
+    let (port, pbytes, pkey, pov, ms) = (c.a::<0>(), c.a::<1>(), c.out::<2>(), c.out::<3>(), c.a::<4>());
     let deadline = (ms != 0xffff_ffff).then(|| kome::time::from_now(std::time::Duration::from_millis(u64::from(ms))));
     loop {
         let got = {
@@ -2025,8 +2028,9 @@ fn CloseHandle(c: &mut Ctx) -> u32 {
     ok(r)
 }
 fn DuplicateHandle(c: &mut Ctx) -> u32 {
-    let src = c.a(1);
-    if let xmem::Target::Other(pid) = xmem::target(c.a(2)) {
+    let c = &mut c.args::<crate::api::outs::DuplicateHandle>();
+    let src = c.a::<1>();
+    if let xmem::Target::Other(pid) = xmem::target(c.a::<2>()) {
         return duplicate_into(c, pid);
     }
     let h = if src == obj::CURRENT_THREAD {
@@ -2035,11 +2039,11 @@ fn DuplicateHandle(c: &mut Ctx) -> u32 {
         obj::add(Obj::Process { access: PROCESS_ALL_ACCESS, pid: crate::pid() })
     } else if crate::ws2::is_socket(src) {
         let h = crate::ws2::dup_socket(src).unwrap_or(0);
-        if c.a(6) & 1 != 0 {
+        if c.a::<6>() & 1 != 0 {
             crate::ws2::close_socket(src);
         }
         h
-    } else if c.a(6) & 1 != 0 {
+    } else if c.a::<6>() & 1 != 0 {
         // DUPLICATE_CLOSE_SOURCE: Windows hands out the number it just freed (the old handle
         // keeps working through the new one)
         if obj::with(|t| t.objs.contains_key(&src)) { src } else { 0 }
@@ -2047,7 +2051,7 @@ fn DuplicateHandle(c: &mut Ctx) -> u32 {
         obj::dup(src)
     };
     // (a HANDLE: 8 bytes on x64)
-    c.out(3).put(h);
+    c.out::<3>().put(h);
     if h == 0 {
         // (a value that is no handle of this process: a pointer, a closed handle)
         last_error(6);
@@ -2286,10 +2290,10 @@ fn RtlLeaveCriticalSection(c: &mut Ctx) -> u32 {
 static SYNC: waits::Sync = waits::Sync::new();
 
 pub(crate) fn srw_try(l: crate::api::Out, shared: bool) -> bool {
-    waits::Sync::srw_try(atomic(l.addr()), shared)
+    waits::Sync::srw_try(atomic(l.lock_word()), shared)
 }
 pub(crate) fn srw_acquire(l: crate::api::Out, shared: bool) {
-    SYNC.srw_acquire(atomic(l.addr()), shared, &Pause)
+    SYNC.srw_acquire(atomic(l.lock_word()), shared, &Pause)
 }
 /// srw_acquire for at most `ms` milliseconds: whether it got the lock.
 pub(crate) fn srw_acquire_for(l: u32, shared: bool, ms: u32) -> bool {
@@ -2297,36 +2301,44 @@ pub(crate) fn srw_acquire_for(l: u32, shared: bool, ms: u32) -> bool {
     SYNC.srw_acquire_until(atomic(l), shared, &Pause, || Some(kome::num::lo64(end.saturating_duration_since(std::time::Instant::now()).as_nanos().div_ceil(1_000_000))))
 }
 pub(crate) fn srw_release(l: crate::api::Out, shared: bool) {
-    SYNC.srw_release(atomic(l.addr()), shared)
+    SYNC.srw_release(atomic(l.lock_word()), shared)
 }
 fn InitializeSRWLock(c: &mut Ctx) -> u32 {
-    c.out(0).put(0);
+    let c = &mut c.args::<crate::api::outs::InitializeSRWLock>();
+    c.out::<0>().put(0);
     0
 }
 fn AcquireSRWLockExclusive(c: &mut Ctx) -> u32 {
-    srw_acquire(c.out(0), false);
+    let c = &mut c.args::<crate::api::outs::AcquireSRWLockExclusive>();
+    srw_acquire(c.out::<0>(), false);
     0
 }
 fn AcquireSRWLockShared(c: &mut Ctx) -> u32 {
-    srw_acquire(c.out(0), true);
+    let c = &mut c.args::<crate::api::outs::AcquireSRWLockShared>();
+    srw_acquire(c.out::<0>(), true);
     0
 }
 fn ReleaseSRWLockExclusive(c: &mut Ctx) -> u32 {
-    srw_release(c.out(0), false);
+    let c = &mut c.args::<crate::api::outs::ReleaseSRWLockExclusive>();
+    srw_release(c.out::<0>(), false);
     0
 }
 fn ReleaseSRWLockShared(c: &mut Ctx) -> u32 {
-    srw_release(c.out(0), true);
+    let c = &mut c.args::<crate::api::outs::ReleaseSRWLockShared>();
+    srw_release(c.out::<0>(), true);
     0
 }
 fn TryAcquireSRWLockExclusive(c: &mut Ctx) -> u32 {
-    u32::from(srw_try(c.out(0), false))
+    let c = &mut c.args::<crate::api::outs::TryAcquireSRWLockExclusive>();
+    u32::from(srw_try(c.out::<0>(), false))
 }
 fn TryAcquireSRWLockShared(c: &mut Ctx) -> u32 {
-    u32::from(srw_try(c.out(0), true))
+    let c = &mut c.args::<crate::api::outs::TryAcquireSRWLockShared>();
+    u32::from(srw_try(c.out::<0>(), true))
 }
 fn InitializeConditionVariable(c: &mut Ctx) -> u32 {
-    c.out(0).put(0);
+    let c = &mut c.args::<crate::api::outs::InitializeConditionVariable>();
+    c.out::<0>().put(0);
     0
 }
 /// Waits for a wake of `cv` (after `release`, before `reacquire`); false on timeout.
@@ -2344,21 +2356,23 @@ pub(crate) fn cv_wait(cv: crate::api::Out, ms: u32, release: fn(u64, u64), reacq
             crate::snap::point_return(self.3, self.0, self.1, self.2);
         }
     }
-    let woke = SYNC.cv_wait(cv.addr(), ms, || release(a, b), || reacquire.call(a, b), &Return(reacquire, a, b, woken));
+    let woke = SYNC.cv_wait(cv.lock_word(), ms, || release(a, b), || reacquire.call(a, b), &Return(reacquire, a, b, woken));
     if !woke {
         last_error(1460);
     }
     woke
 }
 pub(crate) fn cv_wake(cv: crate::api::Out) {
-    SYNC.cv_wake(cv.addr());
+    SYNC.cv_wake(cv.lock_word());
 }
 fn SleepConditionVariableSRW(c: &mut Ctx) -> u32 {
-    let (cv, l, ms, shared) = (c.out(0), c.out(1), c.a(2), c.a(3) & 1 != 0);
-    u32::from(cv_wait(cv, ms, |l, s| srw_release(crate::api::Out::at(kome::num::lo32(l)), s != 0), crate::snap::Reacquire::Srw, u64::from(l.addr()), u64::from(shared), 1))
+    let c = &mut c.args::<crate::api::outs::SleepConditionVariableSRW>();
+    let (cv, l, ms, shared) = (c.out::<0>(), c.out::<1>(), c.a::<2>(), c.a::<3>() & 1 != 0);
+    u32::from(cv_wait(cv, ms, |l, s| srw_release(crate::api::Out::at(kome::num::lo32(l)), s != 0), crate::snap::Reacquire::Srw, u64::from(l.lock_word()), u64::from(shared), 1))
 }
 fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
-    let (cv, cs, ms) = (c.out(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::SleepConditionVariableCS>();
+    let (cv, cs, ms) = (c.out::<0>(), c.a::<1>(), c.a::<2>());
     // a recursively entered section is left and entered again as a whole
     let depth = crate::mem::r32(mem::ga(cs) + cs_off(REC)).max(1);
     u32::from(cv_wait(
@@ -2380,18 +2394,21 @@ pub(crate) fn cs_reacquire(cs: u64, depth: u64) {
     crate::mem::w32(mem::ga(kome::num::lo32(cs)) + cs_off(REC), kome::num::lo32(depth))
 }
 fn WakeConditionVariable(c: &mut Ctx) -> u32 {
-    cv_wake(c.out(0));
+    let c = &mut c.args::<crate::api::outs::WakeConditionVariable>();
+    cv_wake(c.out::<0>());
     0
 }
 fn WakeAllConditionVariable(c: &mut Ctx) -> u32 {
-    cv_wake(c.out(0));
+    let c = &mut c.args::<crate::api::outs::WakeAllConditionVariable>();
+    cv_wake(c.out::<0>());
     0
 }
 /// InitOnceExecuteOnce(once, fn, param, context): the word is 0 (new), 1 (running), 2 (done).
 fn InitOnceExecuteOnce(c: &mut Ctx) -> u32 {
-    let (once, f, param, ctx) = (c.out(0), c.a(1), c.a(2), c.out(3));
-    let r = SYNC.once_execute(atomic(once.addr()), || {
-        let r = c.call(f, &[once.addr(), param, ctx.addr()]);
+    let c = &mut c.args::<crate::api::outs::InitOnceExecuteOnce>();
+    let (once, f, param, ctx) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
+    let r = SYNC.once_execute(atomic(once.lock_word()), || {
+        let r = c.call(f, &[once.lock_word(), param, ctx.to_callee()]);
         // (done: the context the function gave, with 2 in its low bits)
         let got = if !ctx.is_null() { ctx.get() & !3 } else { 0 };
         (r, if r != 0 { got | 2 } else { 0 })
@@ -2411,14 +2428,15 @@ fn InitOnceExecuteOnce(c: &mut Ctx) -> u32 {
 /// thread initializes (3 while INIT_ONCE_ASYNC ones do), then the context with 2 in its low
 /// bits (as Windows keeps it).
 fn InitOnceBeginInitialize(c: &mut Ctx) -> u32 {
-    let (once, flags, pending, ctx) = (c.out(0), c.a(1), c.a(2), c.out(3));
+    let c = &mut c.args::<crate::api::outs::InitOnceBeginInitialize>();
+    let (once, flags, pending, ctx) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
     const CHECK_ONLY: u32 = 1;
     const ASYNC: u32 = 2;
     if flags & !3 != 0 || flags == CHECK_ONLY | ASYNC {
         last_error(87);
         return 0;
     }
-    match SYNC.once_begin_ex(atomic(once.addr()), flags & CHECK_ONLY != 0, flags & ASYNC != 0) {
+    match SYNC.once_begin_ex(atomic(once.lock_word()), flags & CHECK_ONLY != 0, flags & ASYNC != 0) {
         waits::Begin::Done(v) => {
             put32(pending, 0);
             if !ctx.is_null() {
@@ -2444,13 +2462,14 @@ fn InitOnceBeginInitialize(c: &mut Ctx) -> u32 {
 /// (and takes no context); INIT_ONCE_ASYNC (2) ends an asynchronous initialization (which
 /// cannot fail)
 fn InitOnceComplete(c: &mut Ctx) -> u32 {
-    let (once, flags, ctx) = (c.out(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::InitOnceComplete>();
+    let (once, flags, ctx) = (c.out::<0>(), c.a::<1>(), c.a::<2>());
     let (asynchronous, failed) = (flags & 2 != 0, flags & 4 != 0);
     if flags & !6 != 0 || (asynchronous && failed) || ctx & 3 != 0 || (failed && ctx != 0) {
         last_error(87);
         return 0;
     }
-    match SYNC.once_complete_ex(atomic(once.addr()), asynchronous, if failed { 0 } else { ctx | 2 }) {
+    match SYNC.once_complete_ex(atomic(once.lock_word()), asynchronous, if failed { 0 } else { ctx | 2 }) {
         Ok(()) => 1,
         Err(waits::Complete::Invalid) => {
             last_error(87);
@@ -2463,7 +2482,8 @@ fn InitOnceComplete(c: &mut Ctx) -> u32 {
     }
 }
 fn InitOnceInitialize(c: &mut Ctx) -> u32 {
-    c.out(0).put(0);
+    let c = &mut c.args::<crate::api::outs::InitOnceInitialize>();
+    c.out::<0>().put(0);
     0
 }
 
@@ -3148,10 +3168,11 @@ fn is_bad(p: u32, n: u32) -> bool {
 /// write whose first byte cannot be written is ERROR_NOACCESS with the count left alone.
 /// Executable pages take writes, read-only data does not. The count is a SIZE_T.
 fn ReadProcessMemory(c: &mut Ctx) -> u32 {
-    let (a, b, n, done) = (c.a(1), c.a(2), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::ReadProcessMemory>();
+    let (a, b, n, done) = (c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
     // (another process's memory: first whether all of it can be read, then xmem::READ_STEP at a
     // time into what the destination takes)
-    let remote = match remote_bytes(c.a(0), xmem::READ, vec![a, n, 1], vec![]) {
+    let remote = match remote_bytes(c.a::<0>(), xmem::READ, vec![a, n, 1], vec![]) {
         None => {
             if mem::accessible(a, n, false, false) < n {
                 done.put(0);
@@ -3172,7 +3193,7 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
         mem::copy(b, a, k);
     } else {
         for (off, len) in xmem::pieces(k) {
-            match remote_bytes(c.a(0), xmem::READ, vec![a.wrapping_add(off), len], vec![]) {
+            match remote_bytes(c.a::<0>(), xmem::READ, vec![a.wrapping_add(off), len], vec![]) {
                 Some(Ok((_, bytes))) => mem::write((mem::ga(b) + off).get(), bytes.get(..kome::num::us(len)).unwrap_or(&bytes)),
                 Some(Err(e)) => {
                     // (it changed meanwhile: what was copied so far)
@@ -3192,15 +3213,16 @@ fn ReadProcessMemory(c: &mut Ctx) -> u32 {
     1
 }
 fn WriteProcessMemory(c: &mut Ctx) -> u32 {
-    let (a, b, n, done) = (c.a(1), c.a(2), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::WriteProcessMemory>();
+    let (a, b, n, done) = (c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
     let readable = mem::accessible(b, n, false, false);
-    let k = match xmem::target(c.a(0)) {
+    let k = match xmem::target(c.a::<0>()) {
         xmem::Target::Other(_) => {
             // (xmem::READ_STEP at a time, as reads; a piece the target took only part of ends it)
             let mut done_n = 0u32;
             for (off, len) in xmem::pieces(readable) {
                 let data = mem::bytes((mem::ga(b) + off).get(), len);
-                match remote(c.a(0), xmem::WRITE, vec![a.wrapping_add(off)], data) {
+                match remote(c.a::<0>(), xmem::WRITE, vec![a.wrapping_add(off)], data) {
                     Some(Ok(v)) => {
                         let w = v.first().copied().unwrap_or(0);
                         done_n = done_n.saturating_add(w);
@@ -4417,7 +4439,8 @@ fn rw_arm(h: u32, generation: u32, obj_h: u32, ms: u32, flags: u32) {
 }
 /// RegisterWaitForSingleObject(phandle*, object, callback, ctx, ms, flags)
 fn RegisterWaitForSingleObject(c: &mut Ctx) -> u32 {
-    let (out, obj_h, cb, ctx, ms, flags) = (c.out(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
+    let c = &mut c.args::<crate::api::outs::RegisterWaitForSingleObject>();
+    let (out, obj_h, cb, ctx, ms, flags) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>());
     let h = mem::heap_alloc(16, true);
     tp_insert(h, cb, ctx);
     out.put(h);
@@ -4659,10 +4682,11 @@ fn SetThreadStackGuarantee(c: &mut Ctx) -> u32 {
 }
 /// GetCurrentThreadStackLimits(&low, &high): TEB DeallocationStack and StackBase
 fn GetCurrentThreadStackLimits(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GetCurrentThreadStackLimits>();
     let teb = crate::cur().teb;
     let ps = mem::ps();
-    c.out(0).put(crate::mem::rp(mem::ga(teb) + if mem::x64() { 0x1478 } else { 0xe0c }));
-    c.out(1).put(crate::mem::rp(mem::ga(teb) + ps));
+    c.out::<0>().put(crate::mem::rp(mem::ga(teb) + if mem::x64() { 0x1478 } else { 0xe0c }));
+    c.out::<1>().put(crate::mem::rp(mem::ga(teb) + ps));
     0
 }
 fn FlushProcessWriteBuffers(_: &mut Ctx) -> u32 {
@@ -4809,11 +4833,12 @@ fn not_wow64() -> u32 {
 }
 /// Wow64DisableWow64FsRedirection(PVOID* old)
 fn Wow64DisableWow64FsRedirection(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::Wow64DisableWow64FsRedirection>();
     if mem::x64() {
         return not_wow64();
     }
-    let old = c.out(0);
-    if old.is_null() || is_bad(old.addr(), mem::ps()) {
+    let old = c.out::<0>();
+    if old.is_null() || old.is_unwritable() {
         last_error(998);
         return 0;
     }
@@ -6614,9 +6639,10 @@ fn GetModuleHandleW(c: &mut Ctx) -> u32 {
     module_handle(c.a(0), true)
 }
 fn GetModuleHandleExW(c: &mut Ctx) -> u32 {
-    let flags = c.a(0);
-    let h = if flags & 4 != 0 { crate::pe::containing(c.a(1)).unwrap_or(0) } else { module_handle(c.a(1), true) };
-    c.out(2).put_addr(h);
+    let c = &mut c.args::<crate::api::outs::GetModuleHandleExW>();
+    let flags = c.a::<0>();
+    let h = if flags & 4 != 0 { crate::pe::containing(c.a::<1>()).unwrap_or(0) } else { module_handle(c.a::<1>(), true) };
+    c.out::<2>().put_addr(h);
     // (a reference unless UNCHANGED_REFCOUNT; PIN keeps it loaded)
     if h != 0 && flags & 2 == 0 {
         crate::pe::add_reference(h, flags & 1 != 0);
@@ -6624,9 +6650,10 @@ fn GetModuleHandleExW(c: &mut Ctx) -> u32 {
     ok(h != 0)
 }
 fn GetModuleHandleExA(c: &mut Ctx) -> u32 {
-    let flags = c.a(0);
-    let h = if flags & 4 != 0 { crate::pe::containing(c.a(1)).unwrap_or(0) } else { module_handle(c.a(1), false) };
-    c.out(2).put_addr(h);
+    let c = &mut c.args::<crate::api::outs::GetModuleHandleExA>();
+    let flags = c.a::<0>();
+    let h = if flags & 4 != 0 { crate::pe::containing(c.a::<1>()).unwrap_or(0) } else { module_handle(c.a::<1>(), false) };
+    c.out::<2>().put_addr(h);
     // (a reference unless UNCHANGED_REFCOUNT; PIN keeps it loaded)
     if h != 0 && flags & 2 == 0 {
         crate::pe::add_reference(h, flags & 1 != 0);
@@ -7689,7 +7716,8 @@ fn GetFileInformationByHandleEx(c: &mut Ctx) -> u32 {
 }
 /// PathCchSkipRoot(path, *root end): past "C:\", "C:", "\\server\share\" or "\"
 fn PathCchSkipRoot(c: &mut Ctx) -> u32 {
-    let (p, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::PathCchSkipRoot>();
+    let (p, out) = (c.a::<0>(), c.out::<1>());
     if p == 0 || out.is_null() {
         return 0x8007_0057;
     }
@@ -8252,9 +8280,11 @@ fn full_path_name(c: &mut Ctx, wide: bool) -> u32 {
     r
 }
 fn GetFullPathNameA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GetFullPathNameA>();
     full_path_name(c, false)
 }
 fn GetFullPathNameW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GetFullPathNameW>();
     full_path_name(c, true)
 }
 fn GetShortPathNameA(c: &mut Ctx) -> u32 {
@@ -8607,9 +8637,11 @@ fn search_dirs() -> Vec<String> {
     v
 }
 fn SearchPathA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::SearchPathA>();
     search_path(c, false)
 }
 fn SearchPathW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::SearchPathW>();
     search_path(c, true)
 }
 // file mappings: views are copies (read-only use: archives); a pagefile-backed one has one view
@@ -9275,11 +9307,12 @@ fn slist_set(h: u32, next: u32, depth: u32) {
     crate::mem::w16(mem::ga(h) + 6, crate::mem::r16(mem::ga(h) + 6).wrapping_add(1));
 }
 fn InterlockedPushEntrySList(c: &mut Ctx) -> u32 {
-    let (h, e) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::InterlockedPushEntrySList>();
+    let (h, e) = (c.a::<0>(), c.out::<1>());
     let _g = SLIST.locked();
     let (old, n) = slist_get(h);
     e.put(old);
-    slist_set(h, e.addr(), n.saturating_add(1));
+    slist_set(h, e.object(), n.saturating_add(1));
     old
 }
 fn InterlockedPopEntrySList(c: &mut Ctx) -> u32 {
@@ -9312,7 +9345,8 @@ fn push_list(h: u32, first: u32, last: crate::api::Out, n: u32) -> u32 {
 }
 /// InterlockedPushListSListEx(head, first, last, count)
 fn InterlockedPushListSListEx(c: &mut Ctx) -> u32 {
-    push_list(c.a(0), c.out(1).addr(), c.out(2), c.a(3))
+    let c = &mut c.args::<crate::api::outs::InterlockedPushListSListEx>();
+    push_list(c.a::<0>(), c.out::<1>().object(), c.out::<2>(), c.a::<3>())
 }
 /// InterlockedPushListSList(head, first, last, count): fastcall on x86 (head in ECX, first
 /// in EDX)
@@ -9454,7 +9488,8 @@ fn Process32FirstW(c: &mut Ctx) -> u32 {
 /// process too, as kernel32 opens it with OpenProcess(pid) and that is ours); another's: not
 /// ours to read (ERROR_INVALID_PARAMETER)
 fn Toolhelp32ReadProcessMemory(c: &mut Ctx) -> u32 {
-    let (pid, a, b, n, done) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::Toolhelp32ReadProcessMemory>();
+    let (pid, a, b, n, done) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
     if pid != 0 && pid != crate::pid() {
         done.put(0);
         last_error(87);

@@ -510,7 +510,8 @@ fn new_buffer(c: &mut Ctx, tex: u32, sub: u32, bottom_up: bool, len_is_max: bool
 /// MFCreateDXGISurfaceBuffer(REFIID, IUnknown *surface, UINT subresource, BOOL bottomUp,
 /// IMFMediaBuffer **)
 fn MFCreateDXGISurfaceBuffer(c: &mut Ctx) -> u32 {
-    let (iid, surface, sub, bottom_up, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::MFCreateDXGISurfaceBuffer>();
+    let (iid, surface, sub, bottom_up, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
     if out.is_null() {
         return Hr::Pointer.code();
     }

@@ -297,7 +297,8 @@ fn ubrk_open(c: &mut Ctx) -> u32 {
 }
 /// ubrk_setText(bi, const UChar *, int32_t, UErrorCode *)
 fn ubrk_setText(c: &mut Ctx) -> u32 {
-    let (b, text, len, status) = (c.out(0), c.a(1), c.a(2) as i32, c.a(3));
+    let c = &mut c.args::<crate::api::outs::ubrk_setText>();
+    let (b, text, len, status) = (c.out::<0>(), c.a::<1>(), c.a::<2>() as i32, c.a::<3>());
     if failed(status) {
         return 0;
     }
@@ -305,27 +306,29 @@ fn ubrk_setText(c: &mut Ctx) -> u32 {
         fail(status, ILLEGAL_ARGUMENT);
         return 0;
     };
-    if with(b.addr(), |k| k.set_text(&t)).is_none() {
+    if with(b.object(), |k| k.set_text(&t)).is_none() {
         fail(status, ILLEGAL_ARGUMENT);
     }
     0
 }
 /// ubrk_setUText(bi, UText *, UErrorCode *)
 fn ubrk_setUText(c: &mut Ctx) -> u32 {
-    let (b, ut, status) = (c.out(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::ubrk_setUText>();
+    let (b, ut, status) = (c.out::<0>(), c.a::<1>(), c.a::<2>());
     if failed(status) {
         return 0;
     }
     match utext_text(ut) {
-        Some(t) if with(b.addr(), |k| k.set_text(&t)).is_some() => {}
+        Some(t) if with(b.object(), |k| k.set_text(&t)).is_some() => {}
         _ => fail(status, ILLEGAL_ARGUMENT),
     }
     0
 }
 fn ubrk_close(c: &mut Ctx) -> u32 {
-    let b = c.out(0);
-    if BRKS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&b.addr()).is_some() {
-        mem::heap_free(b.addr());
+    let c = &mut c.args::<crate::api::outs::ubrk_close>();
+    let b = c.out::<0>();
+    if BRKS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&b.object()).is_some() {
+        mem::heap_free(b.object());
     }
     0
 }
@@ -336,28 +339,35 @@ fn ubrk_current(c: &mut Ctx) -> u32 {
     step(c, |b| b.current())
 }
 fn ubrk_next(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::ubrk_next>();
     step(c, Brk::next)
 }
 fn ubrk_previous(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::ubrk_previous>();
     step(c, Brk::previous)
 }
 fn ubrk_first(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::ubrk_first>();
     step(c, Brk::first)
 }
 fn ubrk_last(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::ubrk_last>();
     step(c, Brk::last)
 }
 fn ubrk_following(c: &mut Ctx) -> u32 {
-    let off = c.a(1) as i32;
-    with(c.out(0).addr(), |b| b.following(off)).unwrap_or(DONE) as u32
+    let c = &mut c.args::<crate::api::outs::ubrk_following>();
+    let off = c.a::<1>() as i32;
+    with(c.out::<0>().object(), |b| b.following(off)).unwrap_or(DONE) as u32
 }
 fn ubrk_preceding(c: &mut Ctx) -> u32 {
-    let off = c.a(1) as i32;
-    with(c.out(0).addr(), |b| b.preceding(off)).unwrap_or(DONE) as u32
+    let c = &mut c.args::<crate::api::outs::ubrk_preceding>();
+    let off = c.a::<1>() as i32;
+    with(c.out::<0>().object(), |b| b.preceding(off)).unwrap_or(DONE) as u32
 }
 fn ubrk_isBoundary(c: &mut Ctx) -> u32 {
-    let off = c.a(1) as i32;
-    with(c.out(0).addr(), |b| b.is_boundary(off)).unwrap_or(false) as u32
+    let c = &mut c.args::<crate::api::outs::ubrk_isBoundary>();
+    let off = c.a::<1>() as i32;
+    with(c.out::<0>().object(), |b| b.is_boundary(off)).unwrap_or(false) as u32
 }
 
 /// uloc_getDefault(): a Japanese Windows' "ja_JP"

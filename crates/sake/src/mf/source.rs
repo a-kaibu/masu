@@ -936,7 +936,8 @@ fn resolver_qi(c: &mut Ctx) -> u32 {
 
 /// MFCreateSourceResolver(IMFSourceResolver **): one resolver (it holds nothing)
 fn MFCreateSourceResolver(c: &mut Ctx) -> u32 {
-    let out = c.out(0);
+    let c = &mut c.args::<crate::api::outs::MFCreateSourceResolver>();
+    let out = c.out::<0>();
     if out.is_null() {
         return Hr::Pointer.code();
     }

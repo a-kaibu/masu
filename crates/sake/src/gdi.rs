@@ -3194,7 +3194,8 @@ fn CreateBitmapIndirect(c: &mut Ctx) -> u32 {
 }
 
 fn CreateDIBSection(c: &mut Ctx) -> u32 {
-    let (dc, bmi, usage, pbits, section, offset) = (c.a(0), c.a(1), c.a(2), c.out(3), c.a(4), c.a(5));
+    let c = &mut c.args::<crate::api::outs::CreateDIBSection>();
+    let (dc, bmi, usage, pbits, section, offset) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>(), c.a::<4>(), c.a::<5>());
     let pal = with(|t| match t.m.get(&dc) {
         Some(G::Dc(d)) => dc_palette(t, &d.s),
         _ => default_palette(),

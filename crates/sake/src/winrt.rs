@@ -52,7 +52,8 @@ fn chars(h: u32) -> Vec<u16> {
 
 /// WindowsCreateString(src, length, &string)
 fn WindowsCreateString(c: &mut Ctx) -> u32 {
-    let (src, n, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::WindowsCreateString>();
+    let (src, n, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if out.is_null() {
         return E_INVALIDARG;
     }
@@ -75,7 +76,8 @@ fn WindowsCreateString(c: &mut Ctx) -> u32 {
 /// WindowsCreateStringReference(src, length, &header, &string): the string stays the caller's
 /// (it has to end in a 0 at `length`)
 fn WindowsCreateStringReference(c: &mut Ctx) -> u32 {
-    let (src, n, hdr, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    let c = &mut c.args::<crate::api::outs::WindowsCreateStringReference>();
+    let (src, n, hdr, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
     if out.is_null() || hdr == 0 {
         return E_INVALIDARG;
     }
@@ -108,7 +110,8 @@ fn WindowsDeleteString(c: &mut Ctx) -> u32 {
 
 /// WindowsDuplicateString(string, &copy): one more reference, or a copy of a reference string
 fn WindowsDuplicateString(c: &mut Ctx) -> u32 {
-    let (h, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::WindowsDuplicateString>();
+    let (h, out) = (c.a::<0>(), c.out::<1>());
     if out.is_null() {
         return E_INVALIDARG;
     }
@@ -169,29 +172,31 @@ fn class_name(h: u32) -> String {
 /// AccessibilitySettings (Unity 6's App UI plugin asks for high contrast); C++/WinRT throws, and
 /// the program terminates, when one is missing
 fn RoGetActivationFactory(c: &mut Ctx) -> u32 {
-    if let (Some(k), true) = (ui::Class::named(&class_name(c.a(0))), !c.out(2).is_null()) {
+    let c = &mut c.args::<crate::api::outs::RoGetActivationFactory>();
+    if let (Some(k), true) = (ui::Class::named(&class_name(c.a::<0>())), !c.out::<2>().is_null()) {
         let f = ui::factory(k);
-        return ui::qi_into(f, c.a(1), c.out(2));
+        return ui::qi_into(f, c.a::<1>(), c.out::<2>());
     }
     if crate::env_on!("SAKE_TRACE_COM") {
-        eprintln!("sake: RoGetActivationFactory {}: not registered", class_name(c.a(0)));
+        eprintln!("sake: RoGetActivationFactory {}: not registered", class_name(c.a::<0>()));
     }
-    if !c.out(2).is_null() {
-        c.out(2).put(0);
+    if !c.out::<2>().is_null() {
+        c.out::<2>().put(0);
     }
     REGDB_E_CLASSNOTREG
 }
 fn RoActivateInstance(c: &mut Ctx) -> u32 {
-    if let (Some(k), true) = (ui::Class::named(&class_name(c.a(0))), !c.out(1).is_null()) {
+    let c = &mut c.args::<crate::api::outs::RoActivateInstance>();
+    if let (Some(k), true) = (ui::Class::named(&class_name(c.a::<0>())), !c.out::<1>().is_null()) {
         let o = ui::object(k);
-        c.out(1).put(o);
+        c.out::<1>().put(o);
         return if o == 0 { E_OUTOFMEMORY } else { S_OK };
     }
     if crate::env_on!("SAKE_TRACE_COM") {
-        eprintln!("sake: RoActivateInstance {}: not registered", class_name(c.a(0)));
+        eprintln!("sake: RoActivateInstance {}: not registered", class_name(c.a::<0>()));
     }
-    if !c.out(1).is_null() {
-        c.out(1).put(0);
+    if !c.out::<1>().is_null() {
+        c.out::<1>().put(0);
     }
     REGDB_E_CLASSNOTREG
 }

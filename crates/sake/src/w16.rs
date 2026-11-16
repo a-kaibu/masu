@@ -412,7 +412,7 @@ pub fn call32_with(cpu: &mut Cpu, f: Handler, args: &[u32], trap: u32) -> (u32, 
         w32(sp + 4 + 4 * i as u32, a);
     }
     SCR32.with(|s| s.set(sp));
-    let mut c = Ctx { cpu, esp: sp, edx: None, jumped: false, st0: None, trap, this: None };
+    let mut c = Ctx { cpu, esp: sp, edx: None, jumped: false, st0: None, trap, this: None, outs: 0 };
     let r = f(&mut c);
     let edx = c.edx.unwrap_or(0);
     SCR32.with(|s| s.set(top));

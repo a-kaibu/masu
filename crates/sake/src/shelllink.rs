@@ -506,12 +506,12 @@ fn vtables() -> [u32; IFACES] {
 }
 
 /// CoCreateInstance(CLSID_ShellLink): None for another class, else the HRESULT
-pub fn create_instance(clsid: u32, iid: u32, out: u32) -> Option<u32> {
+pub fn create_instance(clsid: u32, iid: u32, out: crate::api::Out) -> Option<u32> {
     if !ole_guid(clsid, 0x0002_1401) {
         return None;
     }
     let Some(i) = which(iid) else {
-        mem::putp(out, 0);
+        out.put(0);
         return Some(0x8000_4002);
     };
     let ps = mem::ps();
@@ -520,7 +520,7 @@ pub fn create_instance(clsid: u32, iid: u32, out: u32) -> Option<u32> {
         mem::wp(o + ps * k as u32, *v);
     }
     links(|m| m.insert(o, State { link: Link::default(), file: None, dirty: false, refs: 1 }));
-    mem::putp(out, o + ps * i);
+    out.put(o + ps * i);
     Some(0)
 }
 
@@ -556,7 +556,7 @@ mod tests {
         };
         let (clsid, iid, out) = (guid(0x0002_1401), guid(0), mem::heap_alloc(8, true));
         for _ in 0..3 {
-            assert_eq!(create_instance(clsid, iid, out), Some(0));
+            assert_eq!(create_instance(clsid, iid, crate::api::Out::at(out)), Some(0));
             let o = mem::rp(out);
             assert!(mem::heap_owns(o) && links(|m| m.contains_key(&o)));
             assert_eq!(crate::test_guest::call(add_ref, &[o]), 2);

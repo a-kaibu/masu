@@ -105,9 +105,11 @@ pub fn parse_sid(t: &str) -> Option<Sid> {
     (subs.len() <= 15).then_some(Sid(auth, subs))
 }
 fn ConvertSidToStringSidA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::ConvertSidToStringSidA>();
     sid_string(c, false)
 }
 fn ConvertSidToStringSidW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::ConvertSidToStringSidW>();
     sid_string(c, true)
 }
 fn sid_string(c: &mut Ctx, wide: bool) -> u32 {
@@ -129,14 +131,18 @@ fn sid_string(c: &mut Ctx, wide: bool) -> u32 {
         w8(p + t.len() as u32, 0);
         p
     };
-    putp(c.a(1), p);
+    c.out(1).put(p);
     1
 }
 fn ConvertStringSidToSidA(c: &mut Ctx) -> u32 {
-    string_sid(c, String::from_utf8_lossy(&cstr(c.a(0))).into_owned())
+    let c = &mut c.args::<crate::api::outs::ConvertStringSidToSidA>();
+    let t = String::from_utf8_lossy(&cstr(c.a::<0>())).into_owned();
+    string_sid(c, t)
 }
 fn ConvertStringSidToSidW(c: &mut Ctx) -> u32 {
-    string_sid(c, String::from_utf16_lossy(&wstr(c.a(0))))
+    let c = &mut c.args::<crate::api::outs::ConvertStringSidToSidW>();
+    let t = String::from_utf16_lossy(&wstr(c.a::<0>()));
+    string_sid(c, t)
 }
 fn string_sid(c: &mut Ctx, t: String) -> u32 {
     if c.a(0) == 0 || c.a(1) == 0 {
@@ -186,7 +192,8 @@ fn sid_alloc(s: &Sid) -> u32 {
 }
 
 fn AllocateAndInitializeSid(c: &mut Ctx) -> u32 {
-    let (auth, n, out) = (c.a(0), c.a(1) & 0xff, c.out(10));
+    let c = &mut c.args::<crate::api::outs::AllocateAndInitializeSid>();
+    let (auth, n, out) = (c.a::<0>(), c.a::<1>() & 0xff, c.out::<10>());
     // (more than 8 sub-authorities: ERROR_INVALID_SID, winref security)
     if auth == 0 {
         last_error(ERROR_INVALID_PARAMETER);
@@ -197,7 +204,7 @@ fn AllocateAndInitializeSid(c: &mut Ctx) -> u32 {
         return 0;
     }
     let a = (0..6).fold(0u64, |a, i| a << 8 | r8(auth + i) as u64);
-    let sid = Sid(a, (0..n).map(|i| c.a(2 + i)).collect());
+    let sid = Sid(a, (0..n).map(|i| c.a_at(2 + i)).collect());
     out.put(sid_alloc(&sid));
     1
 }
@@ -500,7 +507,8 @@ fn GetAclInformation(c: &mut Ctx) -> u32 {
     1
 }
 fn GetAce(c: &mut Ctx) -> u32 {
-    let (acl, i, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::GetAce>();
+    let (acl, i, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if i >= r16(acl + 4) as u32 {
         last_error(ERROR_INVALID_PARAMETER);
         return 0;
@@ -584,7 +592,8 @@ fn IsValidSecurityDescriptor(c: &mut Ctx) -> u32 {
     }
 }
 fn GetSecurityDescriptorDacl(c: &mut Ctx) -> u32 {
-    let (sd, present, dacl, defaulted) = (c.a(0), c.a(1), c.out(2), c.a(3));
+    let c = &mut c.args::<crate::api::outs::GetSecurityDescriptorDacl>();
+    let (sd, present, dacl, defaulted) = (c.a::<0>(), c.a::<1>(), c.out::<2>(), c.a::<3>());
     if !sd_ok(sd) {
         last_error(ERROR_UNKNOWN_REVISION);
         return 0;
@@ -598,7 +607,8 @@ fn GetSecurityDescriptorDacl(c: &mut Ctx) -> u32 {
     1
 }
 fn GetSecurityDescriptorOwner(c: &mut Ctx) -> u32 {
-    let (sd, owner, defaulted) = (c.a(0), c.out(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::GetSecurityDescriptorOwner>();
+    let (sd, owner, defaulted) = (c.a::<0>(), c.out::<1>(), c.a::<2>());
     if !sd_ok(sd) {
         last_error(ERROR_UNKNOWN_REVISION);
         return 0;
@@ -608,7 +618,8 @@ fn GetSecurityDescriptorOwner(c: &mut Ctx) -> u32 {
     1
 }
 fn GetSecurityDescriptorGroup(c: &mut Ctx) -> u32 {
-    let (sd, group, defaulted) = (c.a(0), c.out(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::GetSecurityDescriptorGroup>();
+    let (sd, group, defaulted) = (c.a::<0>(), c.out::<1>(), c.a::<2>());
     if !sd_ok(sd) {
         last_error(ERROR_UNKNOWN_REVISION);
         return 0;
@@ -740,7 +751,8 @@ fn impersonation_token(h: u32) -> bool {
 }
 
 fn OpenProcessToken(c: &mut Ctx) -> u32 {
-    let out = c.out(2);
+    let c = &mut c.args::<crate::api::outs::OpenProcessToken>();
+    let out = c.out::<2>();
     if out.is_null() {
         last_error(998); // ERROR_NOACCESS
         return 0;
@@ -749,7 +761,8 @@ fn OpenProcessToken(c: &mut Ctx) -> u32 {
     1
 }
 fn OpenThreadToken(c: &mut Ctx) -> u32 {
-    let out = c.out(3);
+    let c = &mut c.args::<crate::api::outs::OpenThreadToken>();
+    let out = c.out::<3>();
     let tid = crate::cur().tid;
     let imp = IMPERSONATING.lock().unwrap().as_ref().is_some_and(|s| s.contains(&tid));
     if !imp {
@@ -780,20 +793,22 @@ fn RevertToSelf(_: &mut Ctx) -> u32 {
     1
 }
 fn DuplicateToken(c: &mut Ctx) -> u32 {
-    if !is_token(c.a(0)) {
+    let c = &mut c.args::<crate::api::outs::DuplicateToken>();
+    if !is_token(c.a::<0>()) {
         last_error(ERROR_INVALID_HANDLE);
         return 0;
     }
-    c.out(2).put(new_token(obj::Other::ImpersonationToken));
+    c.out::<2>().put(new_token(obj::Other::ImpersonationToken));
     1
 }
 fn DuplicateTokenEx(c: &mut Ctx) -> u32 {
-    if !is_token(c.a(0)) {
+    let c = &mut c.args::<crate::api::outs::DuplicateTokenEx>();
+    if !is_token(c.a::<0>()) {
         last_error(ERROR_INVALID_HANDLE);
         return 0;
     }
     // TokenType: 1 primary, 2 impersonation
-    c.out(5).put(new_token(if c.a(4) == 2 { obj::Other::ImpersonationToken } else { obj::Other::Token }));
+    c.out::<5>().put(new_token(if c.a::<4>() == 2 { obj::Other::ImpersonationToken } else { obj::Other::Token }));
     1
 }
 
@@ -1104,9 +1119,11 @@ fn set_entries(c: &mut Ctx, wide: bool) -> u32 {
     0
 }
 fn SetEntriesInAclA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::SetEntriesInAclA>();
     set_entries(c, false)
 }
 fn SetEntriesInAclW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::SetEntriesInAclW>();
     set_entries(c, true)
 }
 
@@ -1177,7 +1194,7 @@ fn object_sd(info: u32, dir: bool) -> Vec<u8> {
 }
 
 /// The descriptor (LocalAlloc'd) and the pointers into it the caller asked for; a Win32 error
-fn give_sd(info: u32, dir: bool, owner: u32, group: u32, dacl: u32, sacl: u32, sdp: u32) -> u32 {
+fn give_sd(info: u32, dir: bool, owner: crate::api::Out, group: crate::api::Out, dacl: crate::api::Out, sacl: crate::api::Out, sdp: crate::api::Out) -> u32 {
     if info & SACL_SECURITY_INFORMATION != 0 && !enabled(8) {
         return ERROR_PRIVILEGE_NOT_HELD;
     }
@@ -1192,13 +1209,11 @@ fn give_sd(info: u32, dir: bool, owner: u32, group: u32, dacl: u32, sacl: u32, s
         if o == 0 { 0 } else { sd + o }
     };
     for (want, p, i) in [(OWNER_SECURITY_INFORMATION, owner, 0), (GROUP_SECURITY_INFORMATION, group, 1), (SACL_SECURITY_INFORMATION, sacl, 2), (DACL_SECURITY_INFORMATION, dacl, 3)] {
-        if p != 0 && info & want != 0 {
-            mem::wp(p, part(i));
+        if info & want != 0 {
+            p.put(part(i));
         }
     }
-    if sdp != 0 {
-        mem::wp(sdp, sd);
-    }
+    sdp.put(sd);
     0
 }
 
@@ -1206,8 +1221,8 @@ fn give_sd(info: u32, dir: bool, owner: u32, group: u32, dacl: u32, sacl: u32, s
 /// error. A file or folder (SE_FILE_OBJECT) has to exist; other kinds get the same descriptor.
 fn named_info(c: &mut Ctx, wide: bool) -> u32 {
     let (name, ty, info) = (c.a(0), c.a(1), c.a(2));
-    let (owner, group, dacl, sacl, sdp) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
-    if name == 0 || owner == 0 && group == 0 && dacl == 0 && sacl == 0 && sdp == 0 {
+    let (owner, group, dacl, sacl, sdp) = (c.out(3), c.out(4), c.out(5), c.out(6), c.out(7));
+    if name == 0 || owner.is_null() && group.is_null() && dacl.is_null() && sacl.is_null() && sdp.is_null() {
         return ERROR_INVALID_PARAMETER;
     }
     let mut dir = false;
@@ -1222,9 +1237,11 @@ fn named_info(c: &mut Ctx, wide: bool) -> u32 {
     give_sd(info, dir, owner, group, dacl, sacl, sdp)
 }
 fn GetNamedSecurityInfoA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GetNamedSecurityInfoA>();
     named_info(c, false)
 }
 fn GetNamedSecurityInfoW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GetNamedSecurityInfoW>();
     named_info(c, true)
 }
 /// SetNamedSecurityInfo(name, type, info, owner, group, dacl, sacl): sake's files keep no
@@ -1261,12 +1278,13 @@ fn SetNamedSecurityInfoW(c: &mut Ctx) -> u32 {
 }
 /// GetSecurityInfo(handle, type, info, &owner, &group, &dacl, &sacl, &sd)
 fn GetSecurityInfo(c: &mut Ctx) -> u32 {
-    let (h, info) = (c.a(0), c.a(2));
-    let (owner, group, dacl, sacl, sdp) = (c.out(3), c.out(4), c.out(5), c.out(6), c.out(7));
+    let c = &mut c.args::<crate::api::outs::GetSecurityInfo>();
+    let (h, info) = (c.a::<0>(), c.a::<2>());
+    let (owner, group, dacl, sacl, sdp) = (c.out::<3>(), c.out::<4>(), c.out::<5>(), c.out::<6>(), c.out::<7>());
     if h == 0 || h == u32::MAX {
         return ERROR_INVALID_HANDLE;
     }
-    give_sd(info, false, owner.addr(), group.addr(), dacl.addr(), sacl.addr(), sdp.addr())
+    give_sd(info, false, owner, group, dacl, sacl, sdp)
 }
 
 // ---------------------------------------------------------------------------------------------

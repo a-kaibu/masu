@@ -1912,7 +1912,7 @@ mod tests {
     fn null_parameter_blocks_are_refused() {
         let _g = crate::test_guest::enter();
         let mut cpu = koji::Cpu::default();
-        let mut c = Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None };
+        let mut c = Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 };
         for (msg, flags) in [
             (MCI_SET, MCI_SET_TIME_FORMAT),
             (MCI_SETAUDIO, MCI_DGV_SETAUDIO_ITEM | MCI_DGV_SETAUDIO_VALUE),

@@ -24,27 +24,28 @@ fn wchars(p: u32, n: u32) -> Vec<u16> {
 
 /// The font for a call: the DC's (remembered in the SCRIPT_CACHE, a block holding the HFONT),
 /// or the cached one when there is no DC.
-fn cache_font(dc: u32, psc: u32) -> Option<u32> {
-    if psc == 0 {
+fn cache_font(dc: u32, psc: crate::api::Out) -> Option<u32> {
+    if psc.is_null() {
         return (dc != 0).then_some(0);
     }
     if dc != 0 {
         let f = gdi::dc_font_handle(dc);
         // (SCRIPT_CACHE is a pointer)
-        let mut blk = mem::rp(psc);
+        let mut blk = psc.get();
         if blk == 0 {
             blk = mem::heap_alloc(4, true);
-            mem::wp(psc, blk);
+            psc.put(blk);
         }
         w32(blk, f);
         return Some(f);
     }
-    let blk = mem::rp(psc);
+    let blk = psc.get();
     (blk != 0).then(|| r32(blk))
 }
 
 fn ScriptFreeCache(c: &mut Ctx) -> u32 {
-    let psc = c.out(0);
+    let c = &mut c.args::<crate::api::outs::ScriptFreeCache>();
+    let psc = c.out::<0>();
     if !psc.is_null() && psc.get() != 0 {
         mem::heap_free(psc.get());
         psc.put(0);
@@ -65,11 +66,12 @@ fn ScriptItemize(c: &mut Ctx) -> u32 {
 }
 
 fn ScriptShape(c: &mut Ctx) -> u32 {
-    let (dc, psc, s, n, max, out, clust, vis, count) = (c.a(0), c.out(1), c.a(2), c.a(3), c.a(4), c.a(6), c.a(7), c.a(8), c.a(9));
+    let c = &mut c.args::<crate::api::outs::ScriptShape>();
+    let (dc, psc, s, n, max, out, clust, vis, count) = (c.a::<0>(), c.out::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<6>(), c.a::<7>(), c.a::<8>(), c.a::<9>());
     if n > max {
         return E_OUTOFMEMORY;
     }
-    let Some(f) = cache_font(dc, psc.addr()) else { return E_PENDING };
+    let Some(f) = cache_font(dc, psc) else { return E_PENDING };
     let Some(g) = gdi::font_glyphs(dc, f, &wchars(s, n)) else { return E_PENDING };
     for (i, gi) in g.iter().enumerate() {
         let i = i as u32;
@@ -87,11 +89,12 @@ fn put16(base: u32, i: u32, v: u16) {
 }
 
 fn ScriptPlace(c: &mut Ctx) -> u32 {
-    let (dc, psc, glyphs, n, adv, goff, abc) = (c.a(0), c.out(1), c.a(2), c.a(3), c.a(6), c.a(7), c.a(8));
+    let c = &mut c.args::<crate::api::outs::ScriptPlace>();
+    let (dc, psc, glyphs, n, adv, goff, abc) = (c.a::<0>(), c.out::<1>(), c.a::<2>(), c.a::<3>(), c.a::<6>(), c.a::<7>(), c.a::<8>());
     if (n as i32) <= 0 || n > 1 << 20 {
         return E_INVALIDARG;
     }
-    let Some(f) = cache_font(dc, psc.addr()) else { return E_PENDING };
+    let Some(f) = cache_font(dc, psc) else { return E_PENDING };
     let Some(w) = gdi::font_abc(dc, f, &wchars(glyphs, n)) else { return E_PENDING };
     let (mut ta, mut tb, mut tc) = (0, 0, 0);
     for (i, (a, b, cc)) in w.iter().enumerate() {
@@ -116,8 +119,9 @@ fn ScriptPlace(c: &mut Ctx) -> u32 {
 }
 
 fn ScriptGetFontProperties(c: &mut Ctx) -> u32 {
-    let (dc, psc, p) = (c.a(0), c.out(1), c.a(2));
-    let Some(f) = cache_font(dc, psc.addr()) else { return E_PENDING };
+    let c = &mut c.args::<crate::api::outs::ScriptGetFontProperties>();
+    let (dc, psc, p) = (c.a::<0>(), c.out::<1>(), c.a::<2>());
+    let Some(f) = cache_font(dc, psc) else { return E_PENDING };
     if p == 0 || r32(p) < 16 {
         return E_INVALIDARG;
     }
@@ -132,6 +136,7 @@ fn ScriptGetFontProperties(c: &mut Ctx) -> u32 {
 
 /// One script (the default) with empty SCRIPT_PROPERTIES.
 fn ScriptGetProperties(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::ScriptGetProperties>();
     static TABLE: OnceLock<u32> = OnceLock::new();
     let t = *TABLE.get_or_init(|| {
         let props = mem::heap_alloc(8, true);
@@ -139,8 +144,8 @@ fn ScriptGetProperties(c: &mut Ctx) -> u32 {
         mem::wp(t, props);
         t
     });
-    c.out(0).put(t);
-    put32(c.a(1), 1);
+    c.out::<0>().put(t);
+    put32(c.a::<1>(), 1);
     0
 }
 
@@ -191,7 +196,8 @@ fn ScriptApplyDigitSubstitution(c: &mut Ctx) -> u32 {
 
 /// ScriptTextOut: the glyphs are drawn with ExtTextOutW's ETO_GLYPH_INDEX.
 fn ScriptTextOut(c: &mut Ctx) -> u32 {
-    let (dc, x, y, opts, rect, glyphs, n, adv) = (c.a(0), c.a(2), c.a(3), c.a(4), c.a(5), c.a(9), c.a(10), c.a(11));
+    let c = &mut c.args::<crate::api::outs::ScriptTextOut>();
+    let (dc, x, y, opts, rect, glyphs, n, adv) = (c.a::<0>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<9>(), c.a::<10>(), c.a::<11>());
     let f = crate::export_once!("gdi32", "ExtTextOutW");
     c.call(f, &[dc, x, y, opts & 6 | 0x10, rect, glyphs, n, adv]);
     0
@@ -199,7 +205,8 @@ fn ScriptTextOut(c: &mut Ctx) -> u32 {
 
 // SCRIPT_STRING_ANALYSIS: {dc, chars (copy), n, SIZE, advances}
 fn ScriptStringAnalyse(c: &mut Ctx) -> u32 {
-    let (dc, s, n, out) = (c.a(0), c.a(1), c.a(2), c.out(12));
+    let c = &mut c.args::<crate::api::outs::ScriptStringAnalyse>();
+    let (dc, s, n, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<12>());
     if n == 0 || (n as i32) < 0 || n > MAX_CHARS || dc == 0 {
         return E_INVALIDARG;
     }
@@ -256,7 +263,8 @@ fn ScriptStringOut(c: &mut Ctx) -> u32 {
     0
 }
 fn ScriptStringFree(c: &mut Ctx) -> u32 {
-    let p = c.out(0);
+    let c = &mut c.args::<crate::api::outs::ScriptStringFree>();
+    let p = c.out::<0>();
     if !p.is_null() && p.get() != 0 {
         mem::heap_free(p.get());
         p.put(0);

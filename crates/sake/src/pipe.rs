@@ -76,19 +76,20 @@ pub fn query(name: &str) -> Result<(), u32> {
 
 /// CreatePipe(&read, &write, sa, size)
 fn CreatePipe(c: &mut Ctx) -> u32 {
-    let Some((r, w)) = kw(|k| k.create_anon(c.a(3), crate::pid())) else {
+    let c = &mut c.args::<crate::api::outs::CreatePipe>();
+    let Some((r, w)) = kw(|k| k.create_anon(c.a::<3>(), crate::pid())) else {
         crate::k32::last_error(5);
         return 0;
     };
     let hr = obj::add(Obj::Pipe(Handle { end: r, read: true, write: false, ovl: false }));
     let hw = obj::add(Obj::Pipe(Handle { end: w, read: false, write: true, ovl: false }));
     // SECURITY_ATTRIBUTES.bInheritHandle
-    if c.a(2) != 0 && r32(c.a(2) + 2 * mem::ps()) != 0 {
+    if c.a::<2>() != 0 && r32(c.a::<2>() + 2 * mem::ps()) != 0 {
         obj::set_inherit(hr, true);
         obj::set_inherit(hw, true);
     }
-    c.out(0).put(hr);
-    c.out(1).put(hw);
+    c.out::<0>().put(hr);
+    c.out::<1>().put(hw);
     1
 }
 

@@ -442,7 +442,8 @@ fn put_name(dst: &mut [u8], s: &str, wide: bool) {
 
 /// mixerOpen(HMIXER*, id, callback, instance, flags)
 fn mixerOpen(c: &mut Ctx) -> u32 {
-    let (out, id, cb, flags) = (c.out(0), c.a(1), c.a(2), c.a(4));
+    let c = &mut c.args::<crate::api::outs::mixerOpen>();
+    let (out, id, cb, flags) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.a::<4>());
     if out.is_null() {
         return MmErr::InvalParam.code();
     }

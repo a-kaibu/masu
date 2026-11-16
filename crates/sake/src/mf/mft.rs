@@ -400,7 +400,8 @@ fn al_vtable() -> u32 {
 
 /// MFCreateVideoSampleAllocatorEx(REFIID, void **)
 fn MFCreateVideoSampleAllocatorEx(c: &mut Ctx) -> u32 {
-    let (riid, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::MFCreateVideoSampleAllocatorEx>();
+    let (riid, out) = (c.a::<0>(), c.out::<1>());
     if riid == 0 || out.is_null() {
         return Hr::Pointer.code();
     }

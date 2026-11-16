@@ -283,9 +283,10 @@ fn get_bits(row: &[u8], x: u32, bits: u32) -> u32 {
 }
 
 fn GdiplusStartup(c: &mut Ctx) -> u32 {
-    c.out(0).put(1);
-    if c.a(2) != 0 {
-        mem::fill(c.a(2), 8, 0);
+    let c = &mut c.args::<crate::api::outs::GdiplusStartup>();
+    c.out::<0>().put(1);
+    if c.a::<2>() != 0 {
+        mem::fill(c.a::<2>(), 8, 0);
     }
     OK
 }
@@ -440,8 +441,9 @@ fn GdipDisposeImage(c: &mut Ctx) -> u32 {
     OK
 }
 fn GdipCloneImage(c: &mut Ctx) -> u32 {
-    let Some(b) = with(|m| m.get(&c.a(0)).map(|b| Bitmap { w: b.w, h: b.h, px: b.px.clone(), fmt: b.fmt, flags: b.flags, palette: b.palette.clone(), idx: b.idx.clone(), locked: None })) else { return INVALID_PARAMETER };
-    add(b, c.out(1))
+    let c = &mut c.args::<crate::api::outs::GdipCloneImage>();
+    let Some(b) = with(|m| m.get(&c.a::<0>()).map(|b| Bitmap { w: b.w, h: b.h, px: b.px.clone(), fmt: b.fmt, flags: b.flags, palette: b.palette.clone(), idx: b.idx.clone(), locked: None })) else { return INVALID_PARAMETER };
+    add(b, c.out::<1>())
 }
 
 impl Bitmap {
@@ -633,7 +635,8 @@ fn GdipBitmapUnlockBits(c: &mut Ctx) -> u32 {
 /// new zeroed bitmap; otherwise the caller's pixels are copied in (GDI+ would alias them). A
 /// stride that is no multiple of 4 is InvalidParameter (winref gdip).
 fn GdipCreateBitmapFromScan0(c: &mut Ctx) -> u32 {
-    let (w, h, stride, fmt, scan0, out) = (c.a(0), c.a(1), c.a(2) as i32, c.a(3), c.a(4), c.out(5));
+    let c = &mut c.args::<crate::api::outs::GdipCreateBitmapFromScan0>();
+    let (w, h, stride, fmt, scan0, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>() as i32, c.a::<3>(), c.a::<4>(), c.out::<5>());
     if w == 0 || h == 0 || out.is_null() || w.checked_mul(h).is_none_or(|n| n > 1 << 26) || scan0 != 0 && stride % 4 != 0 {
         return INVALID_PARAMETER;
     }
@@ -677,9 +680,10 @@ fn over(p: [u8; 4], bg: [u8; 4]) -> [u8; 4] {
 /// GdipCreateHBITMAPFromBitmap(bitmap, &hbitmap, background): a 32-bit top-down DIB section of
 /// the pixels over the background colour, rounded, with the pixels' own alpha (winref gdip)
 fn GdipCreateHBITMAPFromBitmap(c: &mut Ctx) -> u32 {
-    let bg = c.a(2).to_le_bytes();
+    let c = &mut c.args::<crate::api::outs::GdipCreateHBITMAPFromBitmap>();
+    let bg = c.a::<2>().to_le_bytes();
     let Some((w, h, px)) = with(|m| {
-        m.get(&c.a(0)).map(|b| {
+        m.get(&c.a::<0>()).map(|b| {
             let px: Vec<u8> = (0..(b.w * b.h) as usize)
                 .flat_map(|i| {
                     over(b.straight(i), bg)
@@ -691,7 +695,7 @@ fn GdipCreateHBITMAPFromBitmap(c: &mut Ctx) -> u32 {
         return INVALID_PARAMETER;
     };
     let hb = crate::gdi::dib_section_bgra(w, h, &px);
-    c.out(1).put(hb);
+    c.out::<1>().put(hb);
     if hb != 0 { OK } else { 1 }
 }
 

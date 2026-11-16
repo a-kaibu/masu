@@ -1032,7 +1032,8 @@ fn VP_VideoProcessBlt(c: &mut Ctx) -> u32 {
 
 /// DXVA2CreateDirect3DDeviceManager9(pResetToken, ppDeviceManager)
 fn DXVA2CreateDirect3DDeviceManager9(c: &mut Ctx) -> u32 {
-    let (tok, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::DXVA2CreateDirect3DDeviceManager9>();
+    let (tok, out) = (c.a::<0>(), c.out::<1>());
     if tok == 0 || out.is_null() {
         return E_POINTER;
     }
@@ -1276,8 +1277,9 @@ fn ED_Clone(c: &mut Ctx) -> u32 {
 /// DMOEnum(category, flags, cIn, pIn, cOut, pOut, ppEnum): the DMOs of the category (GUID_NULL:
 /// all) that take every requested input type and give every requested output type
 fn DMOEnum(c: &mut Ctx) -> u32 {
-    let cat = if c.a(0) == 0 { [0; 16] } else { guid(c.a(0)) };
-    let (ins, outs, out) = (read_types(c.a(2), c.a(3)), read_types(c.a(4), c.a(5)), c.out(6));
+    let c = &mut c.args::<crate::api::outs::DMOEnum>();
+    let cat = if c.a::<0>() == 0 { [0; 16] } else { guid(c.a::<0>()) };
+    let (ins, outs, out) = (read_types(c.a::<2>(), c.a::<3>()), read_types(c.a::<4>(), c.a::<5>()), c.out::<6>());
     if out.is_null() {
         return E_POINTER;
     }
@@ -1369,7 +1371,8 @@ fn MoCopyMediaType(c: &mut Ctx) -> u32 {
     copy_mt(c, d, s)
 }
 fn MoCreateMediaType(c: &mut Ctx) -> u32 {
-    let (pp, cb) = (c.out(0), c.a(1));
+    let c = &mut c.args::<crate::api::outs::MoCreateMediaType>();
+    let (pp, cb) = (c.out::<0>(), c.a::<1>());
     if pp.is_null() {
         return E_POINTER;
     }
@@ -1396,7 +1399,8 @@ fn MoDeleteMediaType(c: &mut Ctx) -> u32 {
     0
 }
 fn MoDuplicateMediaType(c: &mut Ctx) -> u32 {
-    let (pp, s) = (c.out(0), c.a(1));
+    let c = &mut c.args::<crate::api::outs::MoDuplicateMediaType>();
+    let (pp, s) = (c.out::<0>(), c.a::<1>());
     if pp.is_null() || s == 0 {
         return E_POINTER;
     }
@@ -1479,7 +1483,8 @@ fn wic_proxy(c: &mut Ctx) -> u32 {
 /// WICConvertBitmapSource(dstFormat, pISrc, ppIDst): a format converter of the source
 /// (the source itself, AddRef'd, when it is already in that format)
 fn WICConvertBitmapSource(c: &mut Ctx) -> u32 {
-    let (fmt, src, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::WICConvertBitmapSource>();
+    let (fmt, src, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if fmt == 0 || src == 0 || out.is_null() {
         return E_INVALIDARG;
     }

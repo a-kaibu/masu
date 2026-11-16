@@ -818,10 +818,11 @@ fn waveOutGetDevCapsW(c: &mut Ctx) -> u32 {
 }
 /// waveOutOpen(phwo, device, format, callback, instance, flags)
 fn waveOutOpen(c: &mut Ctx) -> u32 {
-    let (ph, device, fmtp, cb, inst, flags) = (c.out(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
-    mm(wave_open(c, ph.addr(), device, fmtp, WaveCb::of(flags, cb, inst), flags))
+    let c = &mut c.args::<crate::api::outs::waveOutOpen>();
+    let (ph, device, fmtp, cb, inst, flags) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>());
+    mm(wave_open(c, ph, device, fmtp, WaveCb::of(flags, cb, inst), flags))
 }
-fn wave_open(c: &mut Ctx, ph: u32, device: u32, fmtp: u32, cbk: WaveCb, flags: u32) -> Result<(), WaveErr> {
+fn wave_open(c: &mut Ctx, ph: crate::api::Out, device: u32, fmtp: u32, cbk: WaveCb, flags: u32) -> Result<(), WaveErr> {
     // a device id (not an open handle)
     if !matches!(device, 0 | WAVE_MAPPER) {
         return Err(WaveErr::BadDeviceId);
@@ -831,8 +832,8 @@ fn wave_open(c: &mut Ctx, ph: u32, device: u32, fmtp: u32, cbk: WaveCb, flags: u
     }
     if let Err(e) = read_format_check(fmtp, flags & 8 != 0) {
         // a failed open (not a query) leaves NULL
-        if flags & 1 == 0 && ph != 0 {
-            put32(ph, 0);
+        if flags & 1 == 0 && !ph.is_null() {
+            ph.put(0);
         }
         return Err(e);
     }
@@ -840,7 +841,7 @@ fn wave_open(c: &mut Ctx, ph: u32, device: u32, fmtp: u32, cbk: WaveCb, flags: u
     if flags & 1 != 0 {
         return Ok(()); // WAVE_FORMAT_QUERY
     }
-    if ph == 0 {
+    if ph.is_null() {
         return Err(WaveErr::InvalParam);
     }
     start_mixer();
@@ -848,7 +849,7 @@ fn wave_open(c: &mut Ctx, ph: u32, device: u32, fmtp: u32, cbk: WaveCb, flags: u
     with(|d| {
         d.waves.insert(hwo, Wave { fmt, queue: Default::default(), pos: 0.0, done: Vec::new(), paused: false, closing: false, played: 0, cb: cbk, volume: 0xffff_ffff, device, w16: None })
     });
-    put32(ph, hwo);
+    ph.put(hwo);
     static ENTRY: OnceLock<u32> = OnceLock::new();
     static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if !STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
@@ -856,7 +857,7 @@ fn wave_open(c: &mut Ctx, ph: u32, device: u32, fmtp: u32, cbk: WaveCb, flags: u
         if crate::spawn_service(entry, 0).is_none() {
             STARTED.store(false, std::sync::atomic::Ordering::SeqCst);
             with(|d| d.waves.remove(&hwo));
-            put32(ph, 0);
+            ph.put(0);
             return Err(WaveErr::NoMem);
         }
     }
@@ -1184,19 +1185,21 @@ fn no_sound() -> bool {
 }
 
 fn DirectSoundCreate(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::DirectSoundCreate>();
     if no_sound() {
-        c.out(1).put(0);
+        c.out::<1>().put(0);
         return Hr::NoDriver.code();
     }
-    c.out(1).put(create_device());
+    c.out::<1>().put(create_device());
     0
 }
 fn DirectSoundCreate8(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::DirectSoundCreate8>();
     if no_sound() {
-        c.out(1).put(0);
+        c.out::<1>().put(0);
         return Hr::NoDriver.code();
     }
-    c.out(1).put(create_device());
+    c.out::<1>().put(create_device());
     0
 }
 /// The output device DirectSoundEnumerate lists after the primary driver (a GUID of its own, as

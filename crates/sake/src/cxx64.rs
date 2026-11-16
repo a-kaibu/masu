@@ -1110,7 +1110,7 @@ mod review_tests {
         let d = Disp { pc: 0, base: 0, func, target_ip: 0, ctx: 0, data: 0, at: 0 };
         let f = Fh4 { header: 0, unwind_count: 16, unwind_map: map, try_count: 0, try_map: 0, ip_count: 0, ip_map: 0, frame: 0 };
         let mut cpu = koji::Cpu::default();
-        let mut c = Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None };
+        let mut c = Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 };
         for level in 0..16 {
             local_unwind4(&mut c, 0, &d, &f, level, -1);
         }

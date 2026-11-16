@@ -341,7 +341,8 @@ fn policy_ok(h: u32) -> bool {
 
 /// LsaOpenPolicy(system, attributes, access, &handle)
 fn LsaOpenPolicy(c: &mut Ctx) -> u32 {
-    let (attrs, out) = (c.a(1), c.out(3));
+    let c = &mut c.args::<crate::api::outs::LsaOpenPolicy>();
+    let (attrs, out) = (c.a::<1>(), c.out::<3>());
     if attrs == 0 || out.is_null() {
         return STATUS_INVALID_PARAMETER;
     }
@@ -393,7 +394,8 @@ fn policy_info(class: u32) -> Option<Blk> {
 }
 /// LsaQueryInformationPolicy(policy, class, &buffer)
 fn LsaQueryInformationPolicy(c: &mut Ctx) -> u32 {
-    let (h, class, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::LsaQueryInformationPolicy>();
+    let (h, class, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if !policy_ok(h) {
         return STATUS_INVALID_HANDLE;
     }
@@ -412,7 +414,8 @@ fn LsaQueryInformationPolicy(c: &mut Ctx) -> u32 {
 /// LsaEnumerateAccountRights(policy, sid, &rights, &count): no account has rights assigned
 /// on its own (they come through groups), so STATUS_OBJECT_NAME_NOT_FOUND with both cleared.
 fn LsaEnumerateAccountRights(c: &mut Ctx) -> u32 {
-    let (h, rights, count) = (c.a(0), c.out(2), c.a(3));
+    let c = &mut c.args::<crate::api::outs::LsaEnumerateAccountRights>();
+    let (h, rights, count) = (c.a::<0>(), c.out::<2>(), c.a::<3>());
     if !rights.is_null() {
         rights.put(0);
     }
@@ -539,17 +542,20 @@ fn lookup_names(h: u32, count: u32, names: u32, domsp: crate::api::Out, sidsp: c
     }
 }
 fn LsaLookupNames2(c: &mut Ctx) -> u32 {
-    lookup_names(c.a(0), c.a(2), c.a(3), c.out(4), c.out(5), true)
+    let c = &mut c.args::<crate::api::outs::LsaLookupNames2>();
+    lookup_names(c.a::<0>(), c.a::<2>(), c.a::<3>(), c.out::<4>(), c.out::<5>(), true)
 }
 fn LsaLookupNames(c: &mut Ctx) -> u32 {
-    lookup_names(c.a(0), c.a(1), c.a(2), c.out(3), c.out(4), false)
+    let c = &mut c.args::<crate::api::outs::LsaLookupNames>();
+    lookup_names(c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>(), c.out::<4>(), false)
 }
 
 /// LsaLookupSids(policy, count, sids, &domains, &names): LSA_TRANSLATED_NAME {Use;
 /// UNICODE_STRING Name; LONG DomainIndex} per SID; an unknown SID is named by its text with
 /// index -1.
 fn LsaLookupSids(c: &mut Ctx) -> u32 {
-    let (h, count, sids, domsp, namesp) = (c.a(0), c.a(1), c.a(2), c.out(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::LsaLookupSids>();
+    let (h, count, sids, domsp, namesp) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>(), c.out::<4>());
     if !policy_ok(h) {
         return STATUS_INVALID_HANDLE;
     }

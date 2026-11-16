@@ -1512,9 +1512,10 @@ pub fn set_ui_level(level: u32) {
 }
 
 fn MsiSetInternalUI(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::MsiSetInternalUI>();
     // (dwUILevel: a level 0..5 and INSTALLUILEVEL_ flags above it; phWnd: the parent window,
     // swapped with the previous one)
-    let (level, phwnd) = (c.a(0), c.out(1));
+    let (level, phwnd) = (c.a::<0>(), c.out::<1>());
     let base = level & 0x1f;
     if base > INSTALLUILEVEL_FULL || level & !0x1f & !UI_FLAGS != 0 {
         return INSTALLUILEVEL_NOCHANGE;

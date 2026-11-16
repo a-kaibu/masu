@@ -522,7 +522,8 @@ fn create9(c: &mut Ctx) -> u32 {
 }
 /// Direct3DCreate9Ex(version, out): the Direct3D 9 object, whose vtable has the Ex methods.
 fn Direct3DCreate9Ex(c: &mut Ctx) -> u32 {
-    let out = if mem::x64() { c.a64(1) as u32 } else { c.out(1).addr() };
+    let c = &mut c.args::<crate::api::outs::Direct3DCreate9Ex>();
+    let out = c.out::<1>();
     let o = create9(c);
     if o != 0 {
         let mut ex = EXTENDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -530,7 +531,7 @@ fn Direct3DCreate9Ex(c: &mut Ctx) -> u32 {
             ex.push(o);
         }
     }
-    putp(out, o);
+    out.put(o);
     if o == 0 { 0x8876_086a } else { 0 }
 }
 fn Direct3DCreate9On12(c: &mut Ctx) -> u32 {

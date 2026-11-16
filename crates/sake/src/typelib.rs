@@ -1106,16 +1106,21 @@ fn load_arg(c: &mut Ctx, out: crate::api::Out) -> u32 {
     }
 }
 fn LoadTypeLib(c: &mut Ctx) -> u32 {
-    load_arg(c, c.out(1))
+    let c = &mut c.args::<crate::api::outs::LoadTypeLib>();
+    let out = c.out::<1>();
+    load_arg(c, out)
 }
 fn LoadTypeLibEx(c: &mut Ctx) -> u32 {
-    load_arg(c, c.out(2))
+    let c = &mut c.args::<crate::api::outs::LoadTypeLibEx>();
+    let out = c.out::<2>();
+    load_arg(c, out)
 }
 /// LoadRegTypeLib(guid, major, minor, lcid, &lib): a library loaded before, by its GUID.
 fn LoadRegTypeLib(c: &mut Ctx) -> u32 {
-    let g = c.a(0);
+    let c = &mut c.args::<crate::api::outs::LoadRegTypeLib>();
+    let g = c.a::<0>();
     let hit = LIBS.lock().unwrap().iter().find(|l| guid_eq(g, &l.lib.guid)).map(|l| l.block);
-    c.out(4).put(hit.unwrap_or(0));
+    c.out::<4>().put(hit.unwrap_or(0));
     if hit.is_some() { S_OK } else { TYPE_E_CANTLOADLIBRARY }
 }
 fn ok(_: &mut Ctx) -> u32 {

@@ -771,10 +771,11 @@ pub fn new_type(s: Store) -> u32 {
 }
 
 fn MFCreateMediaType(c: &mut Ctx) -> u32 {
-    if c.out(0).is_null() {
+    let c = &mut c.args::<crate::api::outs::MFCreateMediaType>();
+    if c.out::<0>().is_null() {
         return Hr::Pointer.code();
     }
-    c.out(0).put(new_type(Store::default()));
+    c.out::<0>().put(new_type(Store::default()));
     0
 }
 
@@ -825,7 +826,8 @@ pub fn wave_format(s: &Store, force_ext: bool) -> Option<Vec<u8>> {
 
 /// MFCreateWaveFormatExFromMFMediaType(type, WAVEFORMATEX **out, UINT32 *size, flags)
 fn MFCreateWaveFormatExFromMFMediaType(c: &mut Ctx) -> u32 {
-    let (t, out, size, flags) = (c.a(0), c.out(1), c.a(2), c.a(3));
+    let c = &mut c.args::<crate::api::outs::MFCreateWaveFormatExFromMFMediaType>();
+    let (t, out, size, flags) = (c.a::<0>(), c.out::<1>(), c.a::<2>(), c.a::<3>());
     if t == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
@@ -1014,10 +1016,11 @@ fn new_buffer(max: u32, bytes: &[u8]) -> u32 {
 }
 
 fn MFCreateMemoryBuffer(c: &mut Ctx) -> u32 {
-    if c.out(1).is_null() {
+    let c = &mut c.args::<crate::api::outs::MFCreateMemoryBuffer>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    c.out(1).put(new_buffer(c.a(0), &[]));
+    c.out::<1>().put(new_buffer(c.a::<0>(), &[]));
     0
 }
 
@@ -1241,10 +1244,11 @@ pub(super) fn new_sample_of(time: Option<u64>, dur: Option<u64>, b: u32) -> u32 
 }
 
 fn MFCreateSample(c: &mut Ctx) -> u32 {
-    if c.out(0).is_null() {
+    let c = &mut c.args::<crate::api::outs::MFCreateSample>();
+    if c.out::<0>().is_null() {
         return Hr::Pointer.code();
     }
-    c.out(0).put(new_sample(None, None, None));
+    c.out::<0>().put(new_sample(None, None, None));
     0
 }
 
@@ -1815,7 +1819,8 @@ fn reader_of(c: &mut Ctx, attributes: u32, data: Data, out: crate::api::Out) -> 
 
 /// MFCreateSourceReaderFromURL(LPCWSTR url, IMFAttributes *, IMFSourceReader **)
 fn MFCreateSourceReaderFromURL(c: &mut Ctx) -> u32 {
-    let (url, at, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::MFCreateSourceReaderFromURL>();
+    let (url, at, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if url == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
@@ -1852,7 +1857,8 @@ pub fn file_url_path(u: &str) -> String {
 /// MFCreateSourceReaderFromByteStream(IMFByteStream *, IMFAttributes *, IMFSourceReader **):
 /// the stream read as samples are wanted (GetLength, SetCurrentPosition, Read)
 fn MFCreateSourceReaderFromByteStream(c: &mut Ctx) -> u32 {
-    let (bs, at, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::MFCreateSourceReaderFromByteStream>();
+    let (bs, at, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if bs == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
@@ -1864,7 +1870,8 @@ fn MFCreateSourceReaderFromByteStream(c: &mut Ctx) -> u32 {
 /// MFCreateSourceReaderFromMediaSource(IMFMediaSource *, IMFAttributes *, IMFSourceReader **):
 /// a source of ours (MFCreateSourceResolver's)
 fn MFCreateSourceReaderFromMediaSource(c: &mut Ctx) -> u32 {
-    let (src, at, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::MFCreateSourceReaderFromMediaSource>();
+    let (src, at, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if src == 0 || out.is_null() {
         return Hr::Pointer.code();
     }

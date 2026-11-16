@@ -123,7 +123,8 @@ fn TranslateColorGlyphRun(c: &mut Ctx) -> u32 {
     0x8898_500c
 }
 fn DWriteCreateFactory(c: &mut Ctx) -> u32 {
-    let (ty, out) = (c.a(0), c.out(2));
+    let c = &mut c.args::<crate::api::outs::DWriteCreateFactory>();
+    let (ty, out) = (c.a::<0>(), c.out::<2>());
     let f = if ty == 0 {
         let mut g = SHARED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if *g == 0 {

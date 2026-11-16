@@ -3,7 +3,9 @@
 //! as the caller had it (GetProcessAffinityMask's masks, InitializeSRWLock's lock, every
 //! DirectDrawCreate/DirectSoundCreate interface: tests/winref/probes/outptr*.c). Such an argument
 //! is an api::Out (`c.out(i)`): it is no address the 32-bit writers take, and its own writers
-//! write it whole; this test checks that every handler takes them so. outptrs.txt is
+//! write it whole; this test checks that every handler of such a function takes its arguments as
+//! the function's (api::Args, from the types build.rs makes of outptrs.txt), where taking one as
+//! a value does not compile. outptrs.txt is
 //! generated from Microsoft's Win32 metadata (tools/win32md): "dll name i,j..." per function.
 //! This checks every `fn Name(c: &mut Ctx) -> u32` handler named after a function there.
 use std::collections::HashMap;
@@ -50,19 +52,18 @@ fn pointer_sized_out_params_are_written_whole() {
     }
     let hs = handlers();
     let checked: Vec<_> = hs.iter().filter(|h| table.contains_key(h.0.as_str())).collect();
-    // (the parse above found them: 267 handlers have such parameters at 2026-11)
-    assert!(checked.len() > 200, "only {} handlers found", checked.len());
-    // (a pointer-sized out-parameter is taken only as api::Out, c.out(i), whose writers are
-    // whole: no `c.a(i)` for it, so neither a direct w32(c.a(i), ..) nor one through a local
-    // variable can write half of it; review 2026-11-15)
+    // (the parse above found them: 324 handlers have such parameters at 2026-11-16)
+    assert!(checked.len() > 300, "only {} handlers found", checked.len());
+    // (a pointer-sized out-parameter is taken only as api::Out: each such handler takes its
+    // arguments as its function's, c.args::<outs::Name>(), where a::<I>() of one does not
+    // compile and the index-taking c.a(i) is not there; review 2026-11-16, the text search for
+    // `c.a(i)` this was missed an index in a variable and a helper given `c`, which Ctx::a now
+    // reports at run time)
     let mut bad = vec![];
     for (name, file, body) in checked {
-        for i in &table[name.as_str()] {
-            let call = format!("c.a({i})");
-            let hit = body.match_indices(&call).any(|(at, _)| at == 0 || !body.as_bytes()[at - 1].is_ascii_alphanumeric() && body.as_bytes()[at - 1] != b'_');
-            if hit {
-                bad.push(format!("{file}: {name} argument {i} is pointer-sized: c.out({i}), not {call}"));
-            }
+        let first = format!("(c: &mut Ctx) -> u32 {{\n    let c = &mut c.args::<crate::api::outs::{name}>();\n");
+        if !body.starts_with(&first) {
+            bad.push(format!("{file}: {name} has pointer-sized out-parameters {:?}: its first line is to be `let c = &mut c.args::<crate::api::outs::{name}>();`", table[name.as_str()]));
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));

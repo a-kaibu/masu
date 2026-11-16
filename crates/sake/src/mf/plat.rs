@@ -171,7 +171,8 @@ pub fn done_of(b: u32) -> Option<(u32, u32)> {
 
 /// MFCreateAsyncResult(IUnknown *object, IMFAsyncCallback *, IUnknown *state, IMFAsyncResult **)
 fn MFCreateAsyncResult(c: &mut Ctx) -> u32 {
-    let (o, cb, st, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    let c = &mut c.args::<crate::api::outs::MFCreateAsyncResult>();
+    let (o, cb, st, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
     if out.is_null() {
         return Hr::InvalidArg.code();
     }
@@ -542,7 +543,8 @@ pub fn new_file_stream(f: kura::fs::File, caps: u32) -> u32 {
 
 /// MFCreateFile(MF_FILE_ACCESSMODE, MF_FILE_OPENMODE, MF_FILE_FLAGS, LPCWSTR url, IMFByteStream **)
 fn MFCreateFile(c: &mut Ctx) -> u32 {
-    let (access, mode, url, out) = (c.a(0), c.a(1), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::MFCreateFile>();
+    let (access, mode, url, out) = (c.a::<0>(), c.a::<1>(), c.a::<3>(), c.out::<4>());
     if url == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
@@ -786,10 +788,11 @@ fn new_activate(name: &str) -> u32 {
 /// MFTEnumEx(GUID category, UINT32 flags, const MFT_REGISTER_TYPE_INFO *in, *out, IMFActivate
 /// ***, UINT32 *count): GUID by value (x86: 4 slots; x64: its address)
 fn MFTEnumEx(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::MFTEnumEx>();
     let cat = guid_at(c.byval(0));
     let k = if mem::x64() { 1 } else { 4 };
-    let (input, list, count) = (c.a(k + 1), c.a(k + 3), c.a(k + 4));
-    if list == 0 || count == 0 {
+    let (input, list, count) = (c.a_at(k + 1), c.out_at(k + 3), c.a_at(k + 4));
+    if list.is_null() || count == 0 {
         return Hr::Pointer.code();
     }
     // MFT_REGISTER_TYPE_INFO: major type, subtype
@@ -797,14 +800,14 @@ fn MFTEnumEx(c: &mut Ctx) -> u32 {
     let found = decoders(&cat, sub.as_ref());
     w32(count, lo32(found.len()));
     if found.is_empty() {
-        putp(list, 0);
+        list.put(0);
         return 0;
     }
     let arr = mem::heap_alloc(ps() * lo32(found.len()), true);
     for (i, n) in found.iter().enumerate() {
         wp(arr + ps() * lo32(i), new_activate(n));
     }
-    putp(list, arr);
+    list.put(arr);
     0
 }
 

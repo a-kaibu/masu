@@ -520,7 +520,8 @@ fn make(props: Properties, scale: (i32, i32)) -> u32 {
     base
 }
 fn OleCreateFontIndirect(c: &mut Ctx) -> u32 {
-    let (desc, iid, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::OleCreateFontIndirect>();
+    let (desc, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if out.is_null() || iid == 0 {
         return POINTER;
     }

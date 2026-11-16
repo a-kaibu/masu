@@ -162,7 +162,7 @@ fn angle_point_sprite_gs(src: &str) -> Vec<u8> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn compile(c: &mut Ctx, src: &[u8], name: &str, defs: u32, inc: u32, entry: u32, target: u32, flags: u32, out: u32, errs: u32) -> u32 {
+fn compile(c: &mut Ctx, src: &[u8], name: &str, defs: u32, inc: u32, entry: u32, target: u32, flags: u32, out: crate::api::Out, errs: crate::api::Out) -> u32 {
     let src = String::from_utf8_lossy(src).into_owned();
     let src = src.trim_end_matches('\0');
     let entry = if entry == 0 { "main".to_string() } else { crate::k32::arg_str(entry, false) };
@@ -175,10 +175,10 @@ fn compile(c: &mut Ctx, src: &[u8], name: &str, defs: u32, inc: u32, entry: u32,
     } else {
         hlslc::compile(src, &defines, &mut include, &entry, &target, flags)
     };
-    mem::putp(errs, 0);
+    errs.put(0);
     match r {
         Ok(code) => {
-            mem::putp(out, blob(&code));
+            out.put(blob(&code));
             0
         }
         Err(e) => {
@@ -187,8 +187,8 @@ fn compile(c: &mut Ctx, src: &[u8], name: &str, defs: u32, inc: u32, entry: u32,
             if std::env::var_os("SAKE_HLSL_DUMP").is_some() {
                 eprintln!("{src}");
             }
-            mem::putp(out, 0);
-            mem::putp(errs, text_blob(&msg));
+            out.put(0);
+            errs.put(text_blob(&msg));
             0x8000_4005
         }
     }
@@ -196,37 +196,41 @@ fn compile(c: &mut Ctx, src: &[u8], name: &str, defs: u32, inc: u32, entry: u32,
 
 /// D3DCompile(data, size, name, defines, include, entry, target, flags1, flags2, code, errors)
 fn D3DCompile(c: &mut Ctx) -> u32 {
-    let src = mem::bytes(c.a(0), c.a(1));
-    let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
-    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.out(9), c.out(10));
-    compile(c, &src, &name, d, i, e, t, f, o.addr(), er.addr())
+    let c = &mut c.args::<crate::api::outs::D3DCompile>();
+    let src = mem::bytes(c.a::<0>(), c.a::<1>());
+    let name = if c.a::<2>() == 0 { String::new() } else { crate::k32::arg_str(c.a::<2>(), false) };
+    let (d, i, e, t, f, o, er) = (c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.a::<7>(), c.out::<9>(), c.out::<10>());
+    compile(c, &src, &name, d, i, e, t, f, o, er)
 }
 
 /// D3DCompile2(.., flags2, secondary flags, secondary data, its size, code, errors)
 fn D3DCompile2(c: &mut Ctx) -> u32 {
-    let src = mem::bytes(c.a(0), c.a(1));
-    let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
-    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.out(12), c.out(13));
-    compile(c, &src, &name, d, i, e, t, f, o.addr(), er.addr())
+    let c = &mut c.args::<crate::api::outs::D3DCompile2>();
+    let src = mem::bytes(c.a::<0>(), c.a::<1>());
+    let name = if c.a::<2>() == 0 { String::new() } else { crate::k32::arg_str(c.a::<2>(), false) };
+    let (d, i, e, t, f, o, er) = (c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.a::<7>(), c.out::<12>(), c.out::<13>());
+    compile(c, &src, &name, d, i, e, t, f, o, er)
 }
 
 /// D3DCompileFromFile(file, defines, include, entry, target, flags1, flags2, code, errors)
 fn D3DCompileFromFile(c: &mut Ctx) -> u32 {
-    let name = crate::k32::arg_str(c.a(0), true);
+    let c = &mut c.args::<crate::api::outs::D3DCompileFromFile>();
+    let name = crate::k32::arg_str(c.a::<0>(), true);
     let Some(src) = read_file(&name) else {
-        c.out(7).put(0);
-        c.out(8).put(0);
+        c.out::<7>().put(0);
+        c.out::<8>().put(0);
         return 0x8007_0002;
     };
-    let (d, i, e, t, f, o, er) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.out(7), c.out(8));
-    compile(c, &src, &name, d, i, e, t, f, o.addr(), er.addr())
+    let (d, i, e, t, f, o, er) = (c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.out::<7>(), c.out::<8>());
+    compile(c, &src, &name, d, i, e, t, f, o, er)
 }
 
 /// D3DPreprocess(data, size, name, defines, include, text, errors)
 fn D3DPreprocess(c: &mut Ctx) -> u32 {
-    let src = String::from_utf8_lossy(&mem::bytes(c.a(0), c.a(1))).into_owned();
-    let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
-    let (defs, inc, out, errs) = (c.a(3), c.a(4), c.out(5), c.out(6));
+    let c = &mut c.args::<crate::api::outs::D3DPreprocess>();
+    let src = String::from_utf8_lossy(&mem::bytes(c.a::<0>(), c.a::<1>())).into_owned();
+    let name = if c.a::<2>() == 0 { String::new() } else { crate::k32::arg_str(c.a::<2>(), false) };
+    let (defs, inc, out, errs) = (c.a::<3>(), c.a::<4>(), c.out::<5>(), c.out::<6>());
     let defines = defines(defs);
     let base = dir_of(&name);
     let mut include = |n: &str, sys: bool| open_include(c, inc, &base, n, sys);
@@ -258,15 +262,16 @@ fn D3DPreprocess(c: &mut Ctx) -> u32 {
 }
 
 fn D3DCreateBlob(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::D3DCreateBlob>();
     // (the guest heap's block directly, zeroed: a host Vec of the guest's size first aborted
     // on a huge one; no room is E_OUTOFMEMORY)
-    match new_blob(blob_vtbl(), c.a(0), |_| ()) {
+    match new_blob(blob_vtbl(), c.a::<0>(), |_| ()) {
         Some(o) => {
-            c.out(1).put(o);
+            c.out::<1>().put(o);
             0
         }
         None => {
-            c.out(1).put(0);
+            c.out::<1>().put(0);
             0x8007_000e
         }
     }
@@ -282,41 +287,45 @@ fn part(code: &[u8], tags: &[&[u8; 4]]) -> Option<Vec<u8>> {
     Some(hlslc::sm4::container(&chunks))
 }
 
-fn sig_blob(c: &mut Ctx, tags: &[&[u8; 4]], out: u32) -> u32 {
+fn sig_blob(c: &mut Ctx, tags: &[&[u8; 4]], out: crate::api::Out) -> u32 {
     let code = mem::bytes(c.a(0), c.a(1));
     match part(&code, tags) {
         Some(b) => {
-            mem::putp(out, blob(&b));
+            out.put(blob(&b));
             0
         }
         None => {
-            mem::putp(out, 0);
+            out.put(0);
             0x8007_0057
         }
     }
 }
 
 fn D3DGetInputSignatureBlob(c: &mut Ctx) -> u32 {
-    let o = c.out(2);
-    sig_blob(c, &[b"ISGN"], o.addr())
+    let c = &mut c.args::<crate::api::outs::D3DGetInputSignatureBlob>();
+    let o = c.out::<2>();
+    sig_blob(c, &[b"ISGN"], o)
 }
 fn D3DGetOutputSignatureBlob(c: &mut Ctx) -> u32 {
-    let o = c.out(2);
-    sig_blob(c, &[b"OSGN"], o.addr())
+    let c = &mut c.args::<crate::api::outs::D3DGetOutputSignatureBlob>();
+    let o = c.out::<2>();
+    sig_blob(c, &[b"OSGN"], o)
 }
 fn D3DGetInputAndOutputSignatureBlob(c: &mut Ctx) -> u32 {
-    let o = c.out(2);
-    sig_blob(c, &[b"ISGN", b"OSGN"], o.addr())
+    let c = &mut c.args::<crate::api::outs::D3DGetInputAndOutputSignatureBlob>();
+    let o = c.out::<2>();
+    sig_blob(c, &[b"ISGN", b"OSGN"], o)
 }
 
 /// D3DGetBlobPart(data, size, part, flags, blob): 0 input, 1 output, 2 both signatures, 5 debug
 /// info, 8 private data...
 fn D3DGetBlobPart(c: &mut Ctx) -> u32 {
-    let o = c.out(4);
-    match c.a(2) {
-        0 => sig_blob(c, &[b"ISGN"], o.addr()),
-        1 => sig_blob(c, &[b"OSGN"], o.addr()),
-        2 => sig_blob(c, &[b"ISGN", b"OSGN"], o.addr()),
+    let c = &mut c.args::<crate::api::outs::D3DGetBlobPart>();
+    let o = c.out::<4>();
+    match c.a::<2>() {
+        0 => sig_blob(c, &[b"ISGN"], o),
+        1 => sig_blob(c, &[b"OSGN"], o),
+        2 => sig_blob(c, &[b"ISGN", b"OSGN"], o),
         _ => {
             o.put(0);
             0x8000_4005
@@ -326,20 +335,22 @@ fn D3DGetBlobPart(c: &mut Ctx) -> u32 {
 
 /// D3DStripShader(data, size, flags, blob): nothing of ours to strip
 fn D3DStripShader(c: &mut Ctx) -> u32 {
-    let code = mem::bytes(c.a(0), c.a(1));
-    c.out(3).put(blob(&code));
+    let c = &mut c.args::<crate::api::outs::D3DStripShader>();
+    let code = mem::bytes(c.a::<0>(), c.a::<1>());
+    c.out::<3>().put(blob(&code));
     0
 }
 
 fn D3DReadFileToBlob(c: &mut Ctx) -> u32 {
-    let name = crate::k32::arg_str(c.a(0), true);
+    let c = &mut c.args::<crate::api::outs::D3DReadFileToBlob>();
+    let name = crate::k32::arg_str(c.a::<0>(), true);
     match read_file(&name) {
         Some(d) => {
-            c.out(1).put(blob(&d));
+            c.out::<1>().put(blob(&d));
             0
         }
         None => {
-            c.out(1).put(0);
+            c.out::<1>().put(0);
             0x8007_0002
         }
     }
@@ -347,16 +358,18 @@ fn D3DReadFileToBlob(c: &mut Ctx) -> u32 {
 
 /// D3DDisassemble(data, size, flags, comments, text)
 fn D3DDisassemble(c: &mut Ctx) -> u32 {
-    c.out(4).put(text_blob("// (no disassembly in sake)\n"));
+    let c = &mut c.args::<crate::api::outs::D3DDisassemble>();
+    c.out::<4>().put(text_blob("// (no disassembly in sake)\n"));
     0
 }
 
 /// D3D10CompileShader(data, size, name, defines, include, entry, profile, flags, code, errors)
 fn D3D10CompileShader(c: &mut Ctx) -> u32 {
-    let src = mem::bytes(c.a(0), c.a(1));
-    let name = if c.a(2) == 0 { String::new() } else { crate::k32::arg_str(c.a(2), false) };
-    let (d, i, e, t, f, o, er) = (c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.out(8), c.out(9));
-    compile(c, &src, &name, d, i, e, t, f | hlslc::D3D10_BLOB, o.addr(), er.addr())
+    let c = &mut c.args::<crate::api::outs::D3D10CompileShader>();
+    let src = mem::bytes(c.a::<0>(), c.a::<1>());
+    let name = if c.a::<2>() == 0 { String::new() } else { crate::k32::arg_str(c.a::<2>(), false) };
+    let (d, i, e, t, f, o, er) = (c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.a::<7>(), c.out::<8>(), c.out::<9>());
+    compile(c, &src, &name, d, i, e, t, f | hlslc::D3D10_BLOB, o, er)
 }
 
 /// A string the guest keeps (the D3D10Get*ShaderProfile results).
@@ -382,12 +395,14 @@ fn D3D10GetGeometryShaderProfile(_: &mut Ctx) -> u32 {
 }
 /// D3D10DisassembleShader(data, size, color, comments, text)
 fn D3D10DisassembleShader(c: &mut Ctx) -> u32 {
-    c.out(4).put(text_blob("// (no disassembly in sake)\n"));
+    let c = &mut c.args::<crate::api::outs::D3D10DisassembleShader>();
+    c.out::<4>().put(text_blob("// (no disassembly in sake)\n"));
     0
 }
 /// Not done: effects (Effects 10)
 fn D3D10CreateEffectFromMemory(c: &mut Ctx) -> u32 {
-    c.out(5).put(0);
+    let c = &mut c.args::<crate::api::outs::D3D10CreateEffectFromMemory>();
+    c.out::<5>().put(0);
     0x8000_4001
 }
 

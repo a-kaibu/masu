@@ -463,7 +463,7 @@ pub(crate) fn get_class(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::a
         let base = crate::pe::load_library(cpu, &path);
         if base == 0 { return 0x8007_007e; }
         let Some(entry) = crate::pe::proc_address(base, crate::pe::Import::Name("DllGetClassObject")) else { return 0x8007_007f };
-        return crate::call(cpu, entry, &[clsid, iid, out.addr()]);
+        return crate::call(cpu, entry, &[clsid, iid, out.to_callee()]);
     }
     // Remote factory interfaces need a dedicated activation protocol. Never
     // report success with a null factory when that protocol is unavailable.
@@ -482,7 +482,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
         if hr != CLASSNOTREG {
             if hr != 0 { return hr; }
             if factory == 0 { return NOINTERFACE; }
-            let result = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, outer, iid, out.addr()]);
+            let result = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, outer, iid, out.to_callee()]);
             refcall(cpu, factory, 2); return result;
         }
     }
@@ -491,7 +491,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
     if target.pid == crate::pid() {
         let Some((factory, _)) = FACTORIES.lock().unwrap().as_ref().and_then(|f| f.get(&target.cookie)).copied() else { return CLASSNOTREG };
         let p = mem::heap_alloc(16, true); mem::write(p, &iid);
-        let hr = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, 0, p, out.addr()]); mem::heap_free(p); return hr;
+        let hr = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, 0, p, out.to_callee()]); mem::heap_free(p); return hr;
     }
     // Read the signature before activation so unsupported interfaces do not leak
     // a server reference when the local proxy cannot be constructed.

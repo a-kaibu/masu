@@ -332,15 +332,17 @@ fn table2(out: crate::api::Out, row: u32, n: usize, fill: impl Fn(u32, usize)) -
     NO_ERROR
 }
 fn GetIfTable2(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GetIfTable2>();
     let v = sorted();
-    table2(c.out(0), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
+    table2(c.out::<0>(), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
 }
 fn GetIfTable2Ex(c: &mut Ctx) -> u32 {
-    if c.a(0) > 2 {
+    let c = &mut c.args::<crate::api::outs::GetIfTable2Ex>();
+    if c.a::<0>() > 2 {
         return ERROR_INVALID_PARAMETER;
     }
     let v = sorted();
-    table2(c.out(1), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
+    table2(c.out::<1>(), 1352, v.len(), |p, i| fill_ifrow2(p, v[i]))
 }
 
 // ---- IPv4 address and route tables ----
@@ -455,12 +457,13 @@ fn family_ok(f: u32) -> bool {
     matches!(f, AF_UNSPEC | AF_INET | AF_INET6)
 }
 fn GetIpForwardTable2(c: &mut Ctx) -> u32 {
-    let f = c.a(0) & 0xffff;
+    let c = &mut c.args::<crate::api::outs::GetIpForwardTable2>();
+    let f = c.a::<0>() & 0xffff;
     if !family_ok(f) {
         return ERROR_INVALID_PARAMETER;
     }
     let v = routes(f);
-    table2(c.out(1), 104, v.len(), |p, i| fill_forward_row2(p, &v[i]))
+    table2(c.out::<1>(), 104, v.len(), |p, i| fill_forward_row2(p, &v[i]))
 }
 
 fn GetIpNetTable(c: &mut Ctx) -> u32 {
@@ -474,10 +477,11 @@ fn GetIpNetTable(c: &mut Ctx) -> u32 {
     ERROR_NO_DATA
 }
 fn GetIpNetTable2(c: &mut Ctx) -> u32 {
-    if !family_ok(c.a(0) & 0xffff) {
+    let c = &mut c.args::<crate::api::outs::GetIpNetTable2>();
+    if !family_ok(c.a::<0>() & 0xffff) {
         return ERROR_INVALID_PARAMETER;
     }
-    table2(c.out(1), 88, 0, |_, _| {})
+    table2(c.out::<1>(), 88, 0, |_, _| {})
 }
 
 // ---- statistics ----
@@ -817,12 +821,13 @@ fn fill_unicast_row(p: u32, a: &Addr) {
     w32(p + 64, 4); // IpDadStatePreferred
 }
 fn GetUnicastIpAddressTable(c: &mut Ctx) -> u32 {
-    let f = c.a(0) & 0xffff;
+    let c = &mut c.args::<crate::api::outs::GetUnicastIpAddressTable>();
+    let f = c.a::<0>() & 0xffff;
     if !family_ok(f) {
         return ERROR_INVALID_PARAMETER;
     }
     let v = addrs(f);
-    table2(c.out(1), 80, v.len(), |p, i| fill_unicast_row(p, &v[i]))
+    table2(c.out::<1>(), 80, v.len(), |p, i| fill_unicast_row(p, &v[i]))
 }
 /// GetUnicastIpAddressEntry(row): by Address and InterfaceLuid (or InterfaceIndex)
 fn GetUnicastIpAddressEntry(c: &mut Ctx) -> u32 {
@@ -880,7 +885,8 @@ fn fill_ipif_row(p: u32, f: &Iface, fam: u32) {
     w32(p + 160, 30000);
 }
 fn GetIpInterfaceTable(c: &mut Ctx) -> u32 {
-    let fam = c.a(0) & 0xffff;
+    let c = &mut c.args::<crate::api::outs::GetIpInterfaceTable>();
+    let fam = c.a::<0>() & 0xffff;
     if !family_ok(fam) {
         return ERROR_INVALID_PARAMETER;
     }
@@ -892,7 +898,7 @@ fn GetIpInterfaceTable(c: &mut Ctx) -> u32 {
             }
         }
     }
-    table2(c.out(1), 168, v.len(), |p, i| fill_ipif_row(p, v[i].0, v[i].1))
+    table2(c.out::<1>(), 168, v.len(), |p, i| fill_ipif_row(p, v[i].0, v[i].1))
 }
 fn GetIpInterfaceEntry(c: &mut Ctx) -> u32 {
     let p = c.a(0);
@@ -1894,7 +1900,8 @@ fn ParseNetworkString(c: &mut Ctx) -> u32 {
 /// CreateSortedAddressPairs(sources, nSources, dests, nDests, options, &pairs, &count): each
 /// destination with the loopback address of its family as the source, in the given order
 fn CreateSortedAddressPairs(c: &mut Ctx) -> u32 {
-    let (src, nsrc, dst, n, opts, out, count) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.out(5), c.a(6));
+    let c = &mut c.args::<crate::api::outs::CreateSortedAddressPairs>();
+    let (src, nsrc, dst, n, opts, out, count) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.out::<5>(), c.a::<6>());
     if src != 0 || nsrc != 0 || dst == 0 || n == 0 || opts != 0 || out.is_null() || count == 0 {
         return ERROR_INVALID_PARAMETER;
     }

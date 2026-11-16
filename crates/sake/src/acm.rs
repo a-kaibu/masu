@@ -660,9 +660,11 @@ fn driver_add(c: &mut Ctx) -> u32 {
     0
 }
 fn acmDriverAddA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::acmDriverAddA>();
     driver_add(c)
 }
 fn acmDriverAddW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::acmDriverAddW>();
     driver_add(c)
 }
 /// acmDriverRemove(hadid, 0)
@@ -691,7 +693,8 @@ fn open_added(c: &mut Ctx, i: Slot) -> u32 {
     id
 }
 fn acmDriverOpen(c: &mut Ctx) -> u32 {
-    let (out, id) = (c.out(0), c.a(1));
+    let c = &mut c.args::<crate::api::outs::acmDriverOpen>();
+    let (out, id) = (c.out::<0>(), c.a::<1>());
     if out.is_null() {
         return MMSYSERR_INVALPARAM;
     }
@@ -722,7 +725,7 @@ fn acmDriverClose(c: &mut Ctx) -> u32 {
 }
 
 /// acmStreamOpen on added driver i; Some(result) when the driver answered
-fn stream_open_added(c: &mut Ctx, i: Slot, ph: u32, src: u32, dst: u32, filter: u32, cb: u32, inst: u32, flags: u32) -> u32 {
+fn stream_open_added(c: &mut Ctx, i: Slot, ph: crate::api::Out, src: u32, dst: u32, filter: u32, cb: u32, inst: u32, flags: u32) -> u32 {
     if open_added(c, i) == 0 {
         return MMSYSERR_ERROR;
     }
@@ -743,13 +746,13 @@ fn stream_open_added(c: &mut Ctx, i: Slot, ph: u32, src: u32, dst: u32, filter: 
                 mem::heap_free(p);
             }
         }
-        if ph != 0 && r != 0 {
-            putp(ph, 0);
+        if !ph.is_null() && r != 0 {
+            ph.put(0);
         }
         return r;
     }
     lock(&GUEST_STREAMS).get_or_insert_with(HashMap::default).insert(h, GuestStream { drv: i, inst: si, hdrs: HashMap::default() });
-    putp(ph, h.0);
+    ph.put(h.0);
     0
 }
 fn guest<R>(h: Has, f: impl FnOnce(&mut GuestStream) -> R) -> Option<R> {
@@ -897,7 +900,8 @@ fn acmDriverEnum(c: &mut Ctx) -> u32 {
 }
 /// acmDriverID(hao, &hadid, 0): an added driver's id for its HACMDRIVER or streams
 fn acmDriverID(c: &mut Ctx) -> u32 {
-    let h = c.a(0);
+    let c = &mut c.args::<crate::api::outs::acmDriverID>();
+    let h = c.a::<0>();
     let id = if let Some(i) = added_index(h) {
         i.id()
     } else if let Some(i) = guest(Has(h), |g| g.drv) {
@@ -907,7 +911,7 @@ fn acmDriverID(c: &mut Ctx) -> u32 {
     } else {
         DRIVER
     };
-    c.out(1).put(id);
+    c.out::<1>().put(id);
     0
 }
 /// ACMDRIVERDETAILS' numbers and hicon, before its strings
@@ -1113,21 +1117,24 @@ fn acmFormatSuggest(c: &mut Ctx) -> u32 {
 }
 /// acmStreamOpen(phas, had, src, dst, filter, cb, inst, flags)
 fn acmStreamOpen(c: &mut Ctx) -> u32 {
-    let (ph, had, src, dst, flags) = (c.out(0), c.a(1), c.a(2), c.a(3), c.a(7));
+    let c = &mut c.args::<crate::api::outs::acmStreamOpen>();
+    let (ph, had, src, dst, flags) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<7>());
     if src == 0 || dst == 0 {
         return MMSYSERR_INVALPARAM;
     }
     // a driver the program added: the one it opened, or with no driver named, any of them
     // before the built-in one (as Windows tries the process's own drivers first)
     if let Some(i) = added_index(had) {
-        return stream_open_added(c, i, ph.addr(), src, dst, c.a(4), c.a(5), c.a(6), flags);
+        let (filter, cb, inst) = (c.a::<4>(), c.a::<5>(), c.a::<6>());
+        return stream_open_added(c, i, ph, src, dst, filter, cb, inst, flags);
     }
     if let Hacm::Id(_) | Hacm::Opened(_) = Hacm::from(had) {
         return MMSYSERR_INVALHANDLE;
     }
     if had == 0 {
         for i in added_slots() {
-            if added(i).is_some() && stream_open_added(c, i, ph.addr(), src, dst, c.a(4), c.a(5), c.a(6), flags) == 0 {
+            let (filter, cb, inst) = (c.a::<4>(), c.a::<5>(), c.a::<6>());
+            if added(i).is_some() && stream_open_added(c, i, ph, src, dst, filter, cb, inst, flags) == 0 {
                 return 0;
             }
         }

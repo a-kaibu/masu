@@ -803,8 +803,9 @@ fn gluNewQuadric(_: &mut Ctx) -> u32 {
     q
 }
 fn gluDeleteQuadric(c: &mut Ctx) -> u32 {
-    if !c.out(0).is_null() {
-        mem::heap_free(c.out(0).addr());
+    let c = &mut c.args::<crate::api::outs::gluDeleteQuadric>();
+    if !c.out::<0>().is_null() {
+        mem::heap_free(c.out::<0>().object());
     }
     0
 }
@@ -846,11 +847,12 @@ pub const MAX_LOOPS: i32 = 1 << 12;
 
 /// gluCylinder(q, base, top, height, slices, stacks)
 fn gluCylinder(c: &mut Ctx) -> u32 {
-    let qp = c.out(0);
+    let c = &mut c.args::<crate::api::outs::gluCylinder>();
+    let qp = c.out::<0>();
     if qp.is_null() {
         return 0;
     }
-    let q = quad(qp.addr());
+    let q = quad(qp.object());
     let (base, top, height) = (darg(c, 1, 1), darg(c, 3, 2), darg(c, 5, 3));
     let (slices, stacks) = (arg(c, 7, 4).cast_signed(), arg(c, 8, 5).cast_signed());
     if slices < 2 || stacks < 1 || base < 0.0 || top < 0.0 || height < 0.0 {
@@ -876,11 +878,12 @@ fn gluCylinder(c: &mut Ctx) -> u32 {
 }
 /// gluSphere(q, radius, slices, stacks)
 fn gluSphere(c: &mut Ctx) -> u32 {
-    let qp = c.out(0);
+    let c = &mut c.args::<crate::api::outs::gluSphere>();
+    let qp = c.out::<0>();
     if qp.is_null() {
         return 0;
     }
-    let q = quad(qp.addr());
+    let q = quad(qp.object());
     let r = darg(c, 1, 1);
     let (slices, stacks) = (arg(c, 3, 2).cast_signed(), arg(c, 4, 3).cast_signed());
     if slices < 2 || stacks < 1 || r < 0.0 {
@@ -925,14 +928,16 @@ fn partial_disk(q: [u32; 4], inner: f64, outer: f64, slices: i32, loops: i32, st
 }
 /// gluDisk(q, inner, outer, slices, loops)
 fn gluDisk(c: &mut Ctx) -> u32 {
-    if !c.out(0).is_null() {
-        partial_disk(quad(c.out(0).addr()), darg(c, 1, 1), darg(c, 3, 2), arg(c, 5, 3).cast_signed(), arg(c, 6, 4).cast_signed(), 0.0, 360.0);
+    let c = &mut c.args::<crate::api::outs::gluDisk>();
+    if !c.out::<0>().is_null() {
+        partial_disk(quad(c.out::<0>().object()), darg(c, 1, 1), darg(c, 3, 2), arg(c, 5, 3).cast_signed(), arg(c, 6, 4).cast_signed(), 0.0, 360.0);
     }
     0
 }
 fn gluPartialDisk(c: &mut Ctx) -> u32 {
-    if !c.out(0).is_null() {
-        partial_disk(quad(c.out(0).addr()), darg(c, 1, 1), darg(c, 3, 2), arg(c, 5, 3).cast_signed(), arg(c, 6, 4).cast_signed(), darg(c, 7, 5), darg(c, 9, 6));
+    let c = &mut c.args::<crate::api::outs::gluPartialDisk>();
+    if !c.out::<0>().is_null() {
+        partial_disk(quad(c.out::<0>().object()), darg(c, 1, 1), darg(c, 3, 2), arg(c, 5, 3).cast_signed(), arg(c, 6, 4).cast_signed(), darg(c, 7, 5), darg(c, 9, 6));
     }
     0
 }

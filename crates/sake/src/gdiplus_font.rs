@@ -165,7 +165,8 @@ fn members(h: u32) -> Option<Vec<u32>> {
 /// GdipCreateFontFamilyFromName(name, collection, &family): in the collection given, else
 /// the installed one
 fn GdipCreateFontFamilyFromName(c: &mut Ctx) -> u32 {
-    let (np, coll, out) = (c.a(0), c.a(1), c.out(2));
+    let c = &mut c.args::<crate::api::outs::GdipCreateFontFamilyFromName>();
+    let (np, coll, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     if np == 0 || out.is_null() {
         return INVALID_PARAMETER;
     }
@@ -180,7 +181,8 @@ fn GdipCreateFontFamilyFromName(c: &mut Ctx) -> u32 {
     OK
 }
 fn GdipCloneFontFamily(c: &mut Ctx) -> u32 {
-    let (h, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::GdipCloneFontFamily>();
+    let (h, out) = (c.a::<0>(), c.out::<1>());
     if family(h).is_none() || out.is_null() {
         return INVALID_PARAMETER;
     }
@@ -246,18 +248,22 @@ fn generic(c: &mut Ctx, name: &str) -> u32 {
     OK
 }
 fn GdipGetGenericFontFamilySansSerif(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GdipGetGenericFontFamilySansSerif>();
     generic(c, "Microsoft Sans Serif")
 }
 fn GdipGetGenericFontFamilySerif(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GdipGetGenericFontFamilySerif>();
     generic(c, "Times New Roman")
 }
 fn GdipGetGenericFontFamilyMonospace(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GdipGetGenericFontFamilyMonospace>();
     generic(c, "Courier New")
 }
 
 /// GdipNewInstalledFontCollection(&collection): always the same one
 fn GdipNewInstalledFontCollection(c: &mut Ctx) -> u32 {
-    let out = c.out(0);
+    let c = &mut c.args::<crate::api::outs::GdipNewInstalledFontCollection>();
+    let out = c.out::<0>();
     if out.is_null() {
         return INVALID_PARAMETER;
     }
@@ -271,7 +277,8 @@ fn GdipNewInstalledFontCollection(c: &mut Ctx) -> u32 {
     OK
 }
 fn GdipNewPrivateFontCollection(c: &mut Ctx) -> u32 {
-    let out = c.out(0);
+    let c = &mut c.args::<crate::api::outs::GdipNewPrivateFontCollection>();
+    let out = c.out::<0>();
     if out.is_null() {
         return INVALID_PARAMETER;
     }
@@ -282,7 +289,8 @@ fn GdipNewPrivateFontCollection(c: &mut Ctx) -> u32 {
 }
 /// GdipDeletePrivateFontCollection(&collection): NULLs the pointer; its families stay
 fn GdipDeletePrivateFontCollection(c: &mut Ctx) -> u32 {
-    let p = c.out(0);
+    let c = &mut c.args::<crate::api::outs::GdipDeletePrivateFontCollection>();
+    let p = c.out::<0>();
     if p.is_null() {
         return INVALID_PARAMETER;
     }
@@ -334,15 +342,15 @@ fn GdipGetFontCollectionFamilyCount(c: &mut Ctx) -> u32 {
 }
 /// GdipGetFontCollectionFamilyList(collection, sought, families[], &found)
 fn GdipGetFontCollectionFamilyList(c: &mut Ctx) -> u32 {
-    let (h, n, out, found) = (c.a(0), c.i(1), c.out(2), c.a(3));
+    let c = &mut c.args::<crate::api::outs::GdipGetFontCollectionFamilyList>();
+    let (h, n, out, found) = (c.a::<0>(), c.i(1), c.out::<2>(), c.a::<3>());
     if out.is_null() || found == 0 || n < 0 || !is_collection(h) {
         return INVALID_PARAMETER;
     }
     let m = members(h).unwrap_or_default();
     let k = m.len().min(n as usize);
     for (i, f) in m.iter().take(k).enumerate() {
-        let step = if mem::x64() { 8 } else { 4 };
-        mem::wp(out.addr() + step * i as u32, *f);
+        out.nth(kome::num::u32_of(i)).put(*f);
     }
     w32(found, k as u32);
     OK

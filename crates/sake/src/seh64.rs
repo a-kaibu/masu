@@ -648,8 +648,9 @@ fn RtlVirtualUnwind(c: &mut Ctx) -> u32 {
 
 /// RtlPcToFileHeader(pc, *base) -> base
 fn RtlPcToFileHeader(c: &mut Ctx) -> u32 {
-    let b = crate::pe::containing(c.a(0)).unwrap_or(0);
-    c.out(1).put_size(if b != 0 { crate::mem::widen(b) } else { 0 });
+    let c = &mut c.args::<crate::api::outs::RtlPcToFileHeader>();
+    let b = crate::pe::containing(c.a::<0>()).unwrap_or(0);
+    c.out::<1>().put_size(if b != 0 { crate::mem::widen(b) } else { 0 });
     b
 }
 

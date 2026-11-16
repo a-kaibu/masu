@@ -36,7 +36,7 @@ pub fn call(f: Handler, args: &[u32]) -> u32 {
     let sp = mem::heap_alloc(4 + 4 * args.len() as u32, true);
     for (i, &a) in args.iter().enumerate() { mem::w32(sp + 4 + 4 * i as u32, a); }
     let mut cpu = koji::Cpu::default();
-    let result = f(&mut Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None });
+    let result = f(&mut Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 });
     mem::heap_free(sp);
     result
 }
@@ -68,7 +68,7 @@ pub fn call_stacked(f: Handler, args: &[u32]) -> u32 {
     // (kura's CPU: its run loop stops at sake's traps)
     let cpu = unsafe { &mut *kura::cpu::create(crate::api::TRAP_LO, crate::api::TRAP_HI) };
     cpu.regs[koji::ESP] = stack + 0xfff0;
-    let result = f(&mut Ctx { cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None });
+    let result = f(&mut Ctx { cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 });
     mem::heap_free(sp);
     mem::heap_free(stack);
     result
@@ -80,7 +80,7 @@ pub fn call_st0(f: Handler, args: &[u32]) -> (u32, Option<f64>) {
     for (i, &a) in (0u32..).zip(args) { mem::w32(sp + 4 + 4 * i, a); }
     let cpu = unsafe { &mut *kura::cpu::create(crate::api::TRAP_LO, crate::api::TRAP_HI) };
     cpu.regs[koji::ESP] = stack + 0xfff0;
-    let mut c = Ctx { cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None };
+    let mut c = Ctx { cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 };
     let result = f(&mut c);
     let st0 = c.st0;
     mem::heap_free(sp);

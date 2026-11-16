@@ -305,9 +305,11 @@ fn cred_read(c: &mut Ctx, wide: bool) -> u32 {
     }
 }
 fn CredReadA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredReadA>();
     cred_read(c, false)
 }
 fn CredReadW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredReadW>();
     cred_read(c, true)
 }
 
@@ -353,9 +355,11 @@ fn cred_enumerate(c: &mut Ctx, wide: bool) -> u32 {
     1
 }
 fn CredEnumerateA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredEnumerateA>();
     cred_enumerate(c, false)
 }
 fn CredEnumerateW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredEnumerateW>();
     cred_enumerate(c, true)
 }
 
@@ -382,9 +386,11 @@ fn cred_read_domain(c: &mut Ctx, wide: bool) -> u32 {
     1
 }
 fn CredReadDomainCredentialsA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredReadDomainCredentialsA>();
     cred_read_domain(c, false)
 }
 fn CredReadDomainCredentialsW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredReadDomainCredentialsW>();
     cred_read_domain(c, true)
 }
 
@@ -531,9 +537,11 @@ fn cred_marshal(c: &mut Ctx, wide: bool) -> u32 {
     1
 }
 fn CredMarshalCredentialA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredMarshalCredentialA>();
     cred_marshal(c, false)
 }
 fn CredMarshalCredentialW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredMarshalCredentialW>();
     cred_marshal(c, true)
 }
 
@@ -576,9 +584,11 @@ fn cred_unmarshal(c: &mut Ctx, wide: bool) -> u32 {
     1
 }
 fn CredUnmarshalCredentialA(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredUnmarshalCredentialA>();
     cred_unmarshal(c, false)
 }
 fn CredUnmarshalCredentialW(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::CredUnmarshalCredentialW>();
     cred_unmarshal(c, true)
 }
 fn cred_is_marshaled(c: &mut Ctx, wide: bool) -> u32 {

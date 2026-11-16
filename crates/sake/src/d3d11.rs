@@ -119,11 +119,13 @@ fn init() {
 /// (adapter, driver type, software, flags, levels, count, sdk, swapchain desc, swapchain,
 /// device, feature level, context)
 fn D3D11CreateDeviceAndSwapChain(c: &mut Ctx) -> u32 {
-    let a: Vec<u32> = (0..12).map(|i| c.a(i)).collect();
+    let c = &mut c.args::<crate::api::outs::D3D11CreateDeviceAndSwapChain>();
+    let a = [c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.a::<7>(), c.out::<8>().to_callee(), c.out::<9>().to_callee(), c.a::<10>(), c.out::<11>().to_callee()];
     host(CREATE_DEVICE, &a)
 }
 fn D3D11CreateDevice(c: &mut Ctx) -> u32 {
-    let a = [c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), 0, 0, c.out(7).addr(), c.a(8), c.out(9).addr()];
+    let c = &mut c.args::<crate::api::outs::D3D11CreateDevice>();
+    let a = [c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), 0, 0, c.out::<7>().to_callee(), c.a::<8>(), c.out::<9>().to_callee()];
     host(CREATE_DEVICE, &a)
 }
 /// (factory, adapter, flags, levels, count, device)
@@ -134,32 +136,39 @@ fn D3D11CoreCreateDevice(c: &mut Ctx) -> u32 {
 /// d3d10.dll / d3d10_1.dll: the D3D11 device's D3D10 face (crates/kura/src/d3d11/d3d10.rs)
 /// (adapter, driver type, software, flags, sdk, out)
 fn D3D10CreateDevice(c: &mut Ctx) -> u32 {
-    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), 0xa000, c.a(4), 0, 0, c.out(5).addr()])
+    let c = &mut c.args::<crate::api::outs::D3D10CreateDevice>();
+    host(CREATE_DEVICE10, &[c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), 0xa000, c.a::<4>(), 0, 0, c.out::<5>().to_callee()])
 }
 /// (adapter, driver type, software, flags, sdk, swap chain desc, swap chain, device)
 fn D3D10CreateDeviceAndSwapChain(c: &mut Ctx) -> u32 {
-    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), 0xa000, c.a(4), c.a(5), c.out(6).addr(), c.out(7).addr()])
+    let c = &mut c.args::<crate::api::outs::D3D10CreateDeviceAndSwapChain>();
+    host(CREATE_DEVICE10, &[c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), 0xa000, c.a::<4>(), c.a::<5>(), c.out::<6>().to_callee(), c.out::<7>().to_callee()])
 }
 /// (adapter, driver type, software, flags, level, sdk, out)
 fn D3D10CreateDevice1(c: &mut Ctx) -> u32 {
-    host(CREATE_DEVICE10, &[c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), 0, 0, c.out(6).addr()])
+    let c = &mut c.args::<crate::api::outs::D3D10CreateDevice1>();
+    host(CREATE_DEVICE10, &[c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), 0, 0, c.out::<6>().to_callee()])
 }
 /// (adapter, driver type, software, flags, level, sdk, swap chain desc, swap chain, device)
 fn D3D10CreateDeviceAndSwapChain1(c: &mut Ctx) -> u32 {
-    let a: Vec<u32> = (0..9).map(|i| c.a(i)).collect();
+    let c = &mut c.args::<crate::api::outs::D3D10CreateDeviceAndSwapChain1>();
+    let a = [c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.out::<7>().to_callee(), c.out::<8>().to_callee()];
     host(CREATE_DEVICE10, &a)
 }
 fn D3D11On12CreateDevice(_: &mut Ctx) -> u32 {
     E_NOTIMPL
 }
 fn CreateDXGIFactory(c: &mut Ctx) -> u32 {
-    host(CREATE_FACTORY, &[0, c.a(0), c.out(1).addr()])
+    let c = &mut c.args::<crate::api::outs::CreateDXGIFactory>();
+    host(CREATE_FACTORY, &[0, c.a::<0>(), c.out::<1>().to_callee()])
 }
 fn CreateDXGIFactory2(c: &mut Ctx) -> u32 {
-    host(CREATE_FACTORY, &[c.a(0), c.a(1), c.out(2).addr()])
+    let c = &mut c.args::<crate::api::outs::CreateDXGIFactory2>();
+    host(CREATE_FACTORY, &[c.a::<0>(), c.a::<1>(), c.out::<2>().to_callee()])
 }
 fn DXGIGetDebugInterface1(c: &mut Ctx) -> u32 {
-    c.out(2).put(0);
+    let c = &mut c.args::<crate::api::outs::DXGIGetDebugInterface1>();
+    c.out::<2>().put(0);
     E_NOTIMPL
 }
 /// d3d12.dll as on a PC whose GPU has no Direct3D 12 driver: it loads (Unity 6 calls into it

@@ -410,7 +410,8 @@ fn GetMaximumBitmapSize(_: &mut Ctx) -> u32 {
 }
 
 fn D2D1CreateFactory(c: &mut Ctx) -> u32 {
-    c.out(3).put(factory());
+    let c = &mut c.args::<crate::api::outs::D2D1CreateFactory>();
+    c.out::<3>().put(factory());
     0
 }
 
@@ -446,7 +447,8 @@ fn device_of_new_factory(out: crate::api::Out) -> u32 {
 }
 
 fn D2D1CreateDevice(c: &mut Ctx) -> u32 {
-    device_of_new_factory(c.out(2))
+    let c = &mut c.args::<crate::api::outs::D2D1CreateDevice>();
+    device_of_new_factory(c.out::<2>())
 }
 
 fn GetFactory(c: &mut Ctx) -> u32 {
@@ -540,13 +542,14 @@ fn CreateDeviceContext(c: &mut Ctx) -> u32 {
 }
 
 fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::D2D1CreateDeviceContext>();
     // (dxgi surface, properties, out): a device and a context targeting the surface
     let dev_out = mem::heap_alloc(8, true);
     device_of_new_factory(crate::api::Out::at(dev_out));
     let device = mem::rp(dev_out);
     mem::heap_free(dev_out);
     let o = com::object(CONTEXT, &context_methods(), 8);
-    let surface = c.a(0);
+    let surface = c.a::<0>();
     let bmp = new_bitmap(surface);
     // (D2D1_CREATION_PROPERTIES: threading, debug level, options; no DPI: 96)
     st(|s| {
@@ -554,7 +557,7 @@ fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
         s.dcs.insert(o, Dc { device, ..Default::default() })
     });
     set_target(c, o, bmp, true);
-    c.out(2).put(o);
+    c.out::<2>().put(o);
     0
 }
 

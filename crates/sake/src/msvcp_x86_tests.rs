@@ -126,7 +126,7 @@ proptest! {
         let _g = test_guest::enter();
         let sp = frame(Some(this), &slots);
         let mut cpu = koji::Cpu::default();
-        let c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: Some(this) };
+        let c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: Some(this), outs: 0 };
         prop_assert_eq!(c.a(0), this);
         for k in 1..=slots.len() as u32 {
             prop_assert_eq!(c.a(k), slots[k as usize - 1]);
@@ -146,7 +146,7 @@ proptest! {
         let _g = test_guest::enter();
         let sp = frame(None, &slots);
         let mut cpu = koji::Cpu::default();
-        let c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None };
+        let c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 };
         for k in 0..slots.len() as u32 {
             prop_assert_eq!(c.a(k), slots[k as usize]);
         }
@@ -167,14 +167,14 @@ proptest! {
         mem::w64(ios + 32, old);
         let sp = frame(Some(ios), &[new as u32, (new >> 32) as u32]);
         let mut cpu = koji::Cpu::default();
-        let mut c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: Some(ios) };
+        let mut c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: Some(ios), outs: 0 };
         let lo = set(&mut c);
         prop_assert_eq!(lo as u64 | (c.edx.unwrap() as u64) << 32, old);
         prop_assert_eq!(mem::r64(ios + 32), new);
         // nothing else of the ios_base written
         prop_assert_eq!(mem::array::<32>(ios).iter().all(|&b| b == 0), true);
         prop_assert_eq!(mem::array::<16>(ios + 40).iter().all(|&b| b == 0), true);
-        let mut c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: Some(ios) };
+        let mut c = Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: Some(ios), outs: 0 };
         let lo = get(&mut c);
         prop_assert_eq!(lo as u64 | (c.edx.unwrap() as u64) << 32, new);
         mem::heap_free(sp);

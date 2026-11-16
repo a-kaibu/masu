@@ -568,7 +568,7 @@ mod review_tests {
 
     fn with_ctx<R>(f: impl FnOnce(&mut Ctx) -> R) -> R {
         let mut cpu = koji::Cpu::default();
-        f(&mut Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None })
+        f(&mut Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 })
     }
 
     proptest! {

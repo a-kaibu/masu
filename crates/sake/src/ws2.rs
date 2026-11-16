@@ -3062,7 +3062,8 @@ fn AcceptEx(c: &mut Ctx) -> u32 {
 
 /// GetAcceptExSockaddrs(buf, dataLen, localLen, remoteLen, &local, &localSize, &remote, &remoteSize)
 fn GetAcceptExSockaddrs(c: &mut Ctx) -> u32 {
-    let (buf, data, llen, _rlen, lp, lsp, rpp, rsp) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4), c.a(5), c.out(6), c.a(7));
+    let c = &mut c.args::<crate::api::outs::GetAcceptExSockaddrs>();
+    let (buf, data, llen, _rlen, lp, lsp, rpp, rsp) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>(), c.a::<5>(), c.out::<6>(), c.a::<7>());
     let l = buf + data;
     let r = l + llen;
     if !lp.is_null() {

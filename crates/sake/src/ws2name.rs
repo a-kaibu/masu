@@ -1256,7 +1256,8 @@ fn getaddrinfo(c: &mut Ctx, wide: bool) -> u32 {
 /// GetAddrInfoExW(name, service, namespace, nsid, hints, &result, timeout, overlapped,
 /// completion, &handle): answered at once (an overlapped request completes immediately)
 fn GetAddrInfoExW(c: &mut Ctx) -> u32 {
-    let (n, s, h, res, ov, cb) = (c.a(0), c.a(1), c.a(4), c.out(5), c.a(7), c.a(8));
+    let c = &mut c.args::<crate::api::outs::GetAddrInfoExW>();
+    let (n, s, h, res, ov, cb) = (c.a::<0>(), c.a::<1>(), c.a::<4>(), c.out::<5>(), c.a::<7>(), c.a::<8>());
     let fail = |e: u32| {
         last(e);
         e
@@ -1290,12 +1291,12 @@ fn GetAddrInfoExW(c: &mut Ctx) -> u32 {
         res.put(ai);
         return fail(code);
     }
-    let hp = c.out(9);
+    let hp = c.out::<9>();
     if !hp.is_null() {
         hp.put(0x1234);
     }
     // OVERLAPPED { Internal = the result, Pointer (over Offset) = &result, hEvent }
-    wp(ov + 2 * k, res.addr());
+    wp(ov + 2 * k, res.object());
     if cb != 0 {
         // the routine runs on a thread of its own (a thread pool's, on Windows) once done
         wp(ov, 0x2734); // (WSAEINPROGRESS)

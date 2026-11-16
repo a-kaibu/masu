@@ -335,7 +335,8 @@ fn node_insert(b: u32, n: Node) {
 
 /// MFCreateTopologyNode(MF_TOPOLOGY_TYPE, IMFTopologyNode **)
 fn MFCreateTopologyNode(c: &mut Ctx) -> u32 {
-    let (k, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::MFCreateTopologyNode>();
+    let (k, out) = (c.a::<0>(), c.out::<1>());
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -526,7 +527,8 @@ fn topo_vtable() -> u32 {
 
 /// MFCreateTopology(IMFTopology **)
 fn MFCreateTopology(c: &mut Ctx) -> u32 {
-    let out = c.out(0);
+    let c = &mut c.args::<crate::api::outs::MFCreateTopology>();
+    let out = c.out::<0>();
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -566,7 +568,8 @@ fn new_activate(a: Act) -> u32 {
 }
 /// MFCreateVideoRendererActivate(HWND, IMFActivate **)
 fn MFCreateVideoRendererActivate(c: &mut Ctx) -> u32 {
-    let (h, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::MFCreateVideoRendererActivate>();
+    let (h, out) = (c.a::<0>(), c.out::<1>());
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -575,7 +578,8 @@ fn MFCreateVideoRendererActivate(c: &mut Ctx) -> u32 {
 }
 /// MFCreateAudioRendererActivate(IMFActivate **)
 fn MFCreateAudioRendererActivate(c: &mut Ctx) -> u32 {
-    let out = c.out(0);
+    let c = &mut c.args::<crate::api::outs::MFCreateAudioRendererActivate>();
+    let out = c.out::<0>();
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -695,7 +699,8 @@ pub fn new_collection(items: Vec<u32>) -> u32 {
 }
 /// MFCreateCollection(IMFCollection **)
 fn MFCreateCollection(c: &mut Ctx) -> u32 {
-    let out = c.out(0);
+    let c = &mut c.args::<crate::api::outs::MFCreateCollection>();
+    let out = c.out::<0>();
     if out.is_null() {
         return Hr::Pointer.code();
     }

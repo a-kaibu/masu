@@ -784,10 +784,11 @@ fn attrs_vtable() -> u32 {
 
 /// MFCreateAttributes(IMFAttributes **out, UINT32 initial size)
 fn MFCreateAttributes(c: &mut Ctx) -> u32 {
-    if c.out(0).is_null() {
+    let c = &mut c.args::<crate::api::outs::MFCreateAttributes>();
+    if c.out::<0>().is_null() {
         return Hr::Pointer.code();
     }
-    c.out(0).put(new_attrs());
+    c.out::<0>().put(new_attrs());
     0
 }
 
@@ -879,7 +880,8 @@ fn mg_device_qi(c: &mut Ctx) -> u32 {
 }
 
 fn MFCreateDXGIDeviceManager(c: &mut Ctx) -> u32 {
-    let (token, out) = (c.a(0), c.out(1));
+    let c = &mut c.args::<crate::api::outs::MFCreateDXGIDeviceManager>();
+    let (token, out) = (c.a::<0>(), c.out::<1>());
     if token == 0 || out.is_null() {
         return Hr::Pointer.code();
     }

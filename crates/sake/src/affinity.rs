@@ -106,9 +106,10 @@ fn SetProcessAffinityMask(c: &mut Ctx) -> u32 {
 }
 
 fn GetProcessAffinityMask(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::GetProcessAffinityMask>();
     let (p, all) = with(|m| (m.process, m.all));
-    c.out(1).put(p);
-    c.out(2).put(all);
+    c.out::<1>().put(p);
+    c.out::<2>().put(all);
     1
 }
 

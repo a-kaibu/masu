@@ -348,17 +348,17 @@ fn inner_release(c: &mut Ctx, b: u32) -> u32 {
 
 /// QueryInterface through any interface: the aggregate's, or the filter's own
 fn qi(c: &mut Ctx, b: u32) -> u32 {
-    let (iid, out) = (c.a(1), c.a(2));
-    if out == 0 {
+    let (iid, out) = (c.a(1), c.out(2));
+    if out.is_null() {
         return E_POINTER;
     }
     let outer = vmr_with(b, |v| v.outer).unwrap_or(0);
     if outer != 0 {
-        return com_call(c, outer, 0, &[iid, out]);
+        return com_call(c, outer, 0, &[iid, out.to_callee()]);
     }
     qi_inner_out(c, b, iid, out)
 }
-fn qi_inner_out(c: &mut Ctx, b: u32, iid: u32, out: u32) -> u32 {
+fn qi_inner_out(c: &mut Ctx, b: u32, iid: u32, out: crate::api::Out) -> u32 {
     match inner_qi(b, &read_guid(iid)) {
         Some(p) => {
             // (an interface other than the inner IUnknown counts on the outer object's count)
@@ -367,11 +367,11 @@ fn qi_inner_out(c: &mut Ctx, b: u32, iid: u32, out: u32) -> u32 {
             } else {
                 add_ref(c, b);
             }
-            mem::putp(out, p);
+            out.put(p);
             0
         }
         None => {
-            mem::putp(out, 0);
+            out.put(0);
             E_NOINTERFACE
         }
     }
@@ -415,8 +415,8 @@ fn notimpl(_: &mut Ctx) -> u32 {
 
 // the non-delegating IUnknown
 fn unk_qi(c: &mut Ctx) -> u32 {
-    let (b, iid, out) = (block(c, UNK), c.a(1), c.a(2));
-    if out == 0 {
+    let (b, iid, out) = (block(c, UNK), c.a(1), c.out(2));
+    if out.is_null() {
         return E_POINTER;
     }
     qi_inner_out(c, b, iid, out)
@@ -1911,7 +1911,7 @@ pub fn create_instance(c: &mut Ctx, clsid: u32, outer: u32, iid: u32, out: crate
         },
     );
     crate::dshow::vmr_evr(b + ps() * BF, Some(false));
-    let r = qi_inner_out(c, b, iid, out.addr());
+    let r = qi_inner_out(c, b, iid, out);
     if r != 0 {
         vmr_with(b, |v| v.refs = 1);
         inner_release(c, b);

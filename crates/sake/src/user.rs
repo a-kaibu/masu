@@ -4337,7 +4337,8 @@ fn SendMessageW(c: &mut Ctx) -> u32 {
     as_wide(true, || send_message(c))
 }
 fn SendMessageTimeoutA(c: &mut Ctx) -> u32 {
-    let (h, m, wp, lp, res) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(6));
+    let c = &mut c.args::<crate::api::outs::SendMessageTimeoutA>();
+    let (h, m, wp, lp, res) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<6>());
     let r = send(c, h, m, wp, lp);
     res.put(r);
     1
@@ -5491,8 +5492,9 @@ fn WaitForInputIdle(_: &mut Ctx) -> u32 {
     0
 }
 fn GetKeyboardLayoutList(c: &mut Ctx) -> u32 {
-    if c.a(0) > 0 {
-        c.out(1).put(keyboard_layout());
+    let c = &mut c.args::<crate::api::outs::GetKeyboardLayoutList>();
+    if c.a::<0>() > 0 {
+        c.out::<1>().put(keyboard_layout());
     }
     1
 }

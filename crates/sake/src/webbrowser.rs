@@ -951,14 +951,14 @@ fn point_vtable() -> u32 {
 }
 
 /// CoCreateInstance(CLSID_WebBrowser): None for another class, else the HRESULT
-pub fn create_instance(clsid: u32, iid: u32, out: u32) -> Option<u32> {
+pub fn create_instance(clsid: u32, iid: u32, out: crate::api::Out) -> Option<u32> {
     static CLS: std::sync::OnceLock<[[u8; 16]; 2]> = std::sync::OnceLock::new();
     let cls = &mem::array::<16>(clsid);
     if !CLS.get_or_init(|| [guid(CLSID_WEBBROWSER), guid(CLSID_WEBBROWSER_V1)]).iter().any(|g| g == cls) {
         return None;
     }
     let Some(i) = which(&mem::array::<16>(iid)) else {
-        mem::putp(out, 0);
+        out.put(0);
         return Some(E_NOINTERFACE);
     };
     let ps = mem::ps();
@@ -973,7 +973,7 @@ pub fn create_instance(clsid: u32, iid: u32, out: u32) -> Option<u32> {
     b.props.insert(63, 0xffff); // RegisterAsDropTarget
     b.props.insert(69, 0xffff); // Resizable
     browsers(|m| m.insert(o, b));
-    mem::putp(out, o + ps * i as u32);
+    out.put(o + ps * i as u32);
     Some(S_OK)
 }
 

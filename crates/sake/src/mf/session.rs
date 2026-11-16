@@ -257,7 +257,8 @@ fn new_event(x: E) -> u32 {
 }
 /// MFCreateMediaEvent(MediaEventType, REFGUID extended, HRESULT, const PROPVARIANT *, IMFMediaEvent **)
 fn MFCreateMediaEvent(c: &mut Ctx) -> u32 {
-    let (t, ext, hr, pv, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.out(4));
+    let c = &mut c.args::<crate::api::outs::MFCreateMediaEvent>();
+    let (t, ext, hr, pv, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -902,7 +903,8 @@ fn gs_get_service(c: &mut Ctx) -> u32 {
 
 /// MFGetService(IUnknown *, REFGUID service, REFIID, void **): its IMFGetService's
 fn MFGetService(c: &mut Ctx) -> u32 {
-    let (o, sv, iid, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    let c = &mut c.args::<crate::api::outs::MFGetService>();
+    let (o, sv, iid, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
     if o == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
@@ -915,7 +917,7 @@ fn MFGetService(c: &mut Ctx) -> u32 {
     if hr != 0 || gs == 0 {
         return Hr::UnsupportedService.code();
     }
-    let hr = com(c, gs, 3, &[sv, iid, out.addr()]);
+    let hr = com(c, gs, 3, &[sv, iid, out.to_callee()]);
     release(c, gs);
     hr
 }
@@ -1074,7 +1076,8 @@ fn vtables() -> [u32; 4] {
 
 /// MFCreateMediaSession(IMFAttributes *config, IMFMediaSession **)
 fn MFCreateMediaSession(c: &mut Ctx) -> u32 {
-    let out = c.out(1);
+    let c = &mut c.args::<crate::api::outs::MFCreateMediaSession>();
+    let out = c.out::<1>();
     if out.is_null() {
         return Hr::Pointer.code();
     }
