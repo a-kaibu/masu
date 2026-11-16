@@ -1,18 +1,12 @@
+draw 550 IDirect3DDevice9::DrawPrimitiveUP
+image d550 1024 768 2
+draw 554 IDirect3DDevice9::DrawPrimitiveUP
+image d554 1024 768 2
+draw 558 IDirect3DDevice9::DrawPrimitiveUP
+image d558 1024 768 2
+draw 562 IDirect3DDevice9::DrawPrimitiveUP
+image d562 1024 768 2
+draw 566 IDirect3DDevice9::DrawPrimitiveUP
+image d566 1024 768 2
 image f0 1024 768 2
-image f56 1024 768 2
-image f112 1024 768 2
-image f168 1024 768 2
-image f224 1024 768 2
-image f280 1024 768 2
-image f336 1024 768 2
-image f392 1024 768 2
-image f448 1024 768 2
-image f504 1024 768 2
-image f560 1024 768 2
-image f616 1024 768 2
-image f672 1024 768 2
-image f728 1024 768 2
-image f784 1024 768 2
-image f840 1024 768 2
-image f896 1024 768 2
 calls 424497 frames 2781
