@@ -9,7 +9,7 @@
 //   node tests/exec-browser.mjs [path to masu]
 //   (web/dist built with sake in it: crates/sake/build.sh, then pnpm build; PLAYWRIGHT as elsewhere)
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -53,6 +53,10 @@ writeFileSync(join(game, "StartData/Start.ini"), '#GAME_TITLE = "chain"\r\n');
 writeFileSync(join(game, "StartData/GameData/Gameexe.dat"), "data");
 run("pack", game, "chain");
 run("add-game", "chain", "--title", "ランチャーの試験", "--tree", "chain", "--exe", "Start.exe", "--no-meta");
+// (a Siglus layout: the list would start its engine in the launcher's place, engine_exe.rs; the
+// game's own setting of what it runs wins, as a user's would, so the chain runs as it is)
+const set = spawnSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('CREATE TABLE IF NOT EXISTS game_settings(game TEXT PRIMARY KEY, config TEXT NOT NULL)'); c.execute('INSERT INTO game_settings(game,config) VALUES(?,?)', ('chain', sys.argv[2])); c.commit()", join(store, "library.sqlite3"), JSON.stringify({ run: "Z:\\masu\\game\\Start.exe" })], { stdio: "inherit" });
+assert.equal(set.status, 0);
 
 const port = 8900 + Math.floor(Math.random() * 200) * 2;
 const server = spawn(
