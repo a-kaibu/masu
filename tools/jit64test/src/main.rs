@@ -844,12 +844,15 @@ struct Jit {
     fnm: bool,
 }
 
+/// The wasm fuel of one run (Jit::new; again for the program after a FRESH test's other one)
+const FUEL: u64 = 100_000_000;
+
 impl Jit {
     fn new(engine: &Engine, memory: &SharedMemory, base: usize) -> Jit {
         let mut store = Store::new(engine, ());
         // A region can loop (and chain) without returning to run's host-side step limit.
         // Trap instead of hanging the whole CI when a generated program or the JIT loops.
-        store.set_fuel(100_000_000).unwrap();
+        store.set_fuel(FUEL).unwrap();
         let mut linker = Linker::new(engine);
         linker.define(&store, "env", "memory", memory.clone()).unwrap();
         let table = Table::new(&mut store, TableType::new(RefType::FUNCREF, 0, None), Ref::Func(None)).unwrap();
@@ -1236,8 +1239,11 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instru
                     put_cpu(m, pc);
                 }
                 let _ = jit.run(base);
-                // (its translations stay; whatever it found rewritten is forgotten)
+                // (its translations stay; whatever it found rewritten is forgotten; the program
+                // gets its own fuel: one that ran into the zeroes past its code spent all of it,
+                // and the program then trapped at once, seed 5682 test 3607)
                 jit.rewritten = false;
+                jit.store.set_fuel(FUEL).unwrap();
                 CODE_WRITTEN.store(false, Relaxed);
                 koji::jit::MX_EXACT.store(exact, Relaxed);
                 SWITCHED.store(false, Relaxed);
