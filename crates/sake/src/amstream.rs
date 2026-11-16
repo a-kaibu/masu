@@ -235,7 +235,8 @@ const AUDIOSTREAM_IDS: [u32; 2] = [0xb502_d1bd, 0xf753_7560];
 const SAMPLE_IDS: [u32; 2] = [0xb502_d1be, 0xf410_4fcf];
 
 fn mms_qi(c: &mut Ctx) -> u32 {
-    qi(c, &MMS_IDS)
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    qi(c.ctx(), &MMS_IDS)
 }
 /// GetInformation(DWORD *flags, STREAM_TYPE *): a clock, seeking; read
 fn mms_info(c: &mut Ctx) -> u32 {
@@ -264,34 +265,36 @@ fn purpose(p: u32) -> Option<u32> {
 }
 /// GetMediaStream(REFMSPID, IMediaStream **)
 fn mms_get_stream(c: &mut Ctx) -> u32 {
-    let (b, id, out) = (c.a(0), c.a(1), c.a(2));
-    if id == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAMMultiMediaStream::GetMediaStream>();
+    let (b, id, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if id == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     let s = purpose(id).map_or(0, |id| stream_of(b, id));
     if s == 0 {
-        putp(out, 0);
+        out.put(0);
         return Hr::NoStream.code();
     }
     refs(s, 1);
-    putp(out, s);
+    out.put(s);
     0
 }
 /// EnumMediaStreams(long index, IMediaStream **)
 fn mms_enum(c: &mut Ctx) -> u32 {
-    let (b, i, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAMMultiMediaStream::EnumMediaStreams>();
+    let (b, i, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let all: Vec<u32> = mms(b, |x| [x.video, x.audio].into_iter().filter(|&s| s != 0).collect()).unwrap_or_default();
     match all.get(usize::try_from(i).unwrap_or(usize::MAX)) {
         Some(&s) => {
             refs(s, 1);
-            putp(out, s);
+            out.put(s);
             0
         }
         None => {
-            putp(out, 0);
+            out.put(0);
             Hr::False.code()
         }
     }
@@ -367,18 +370,20 @@ fn mms_seek(c: &mut Ctx) -> u32 {
     0
 }
 fn mms_eos_handle(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAMMultiMediaStream::GetEndOfStreamEventHandle>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), mms(c.a(0), |x| x.eos).unwrap_or(0));
+    c.out::<1>().put(mms(c.a::<0>(), |x| x.eos).unwrap_or(0));
     0
 }
 /// GetFilter: none to hand out (games that only stream a file do not ask)
 fn mms_get_null(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAMMultiMediaStream::GetFilter>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), 0);
+    c.out::<1>().put(0);
     Hr::NotImpl.code()
 }
 /// Initialize(STREAM_TYPE, DWORD flags, IGraphBuilder *): the graph given is the one it uses
@@ -393,8 +398,9 @@ fn mms_initialize(c: &mut Ctx) -> u32 {
 /// GetFilterGraph(IGraphBuilder **): the graph it streams with (ShiinaRio adds a renderer of
 /// its own to it, through IFilterGraph)
 fn mms_get_graph(c: &mut Ctx) -> u32 {
-    let (b, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAMMultiMediaStream::GetFilterGraph>();
+    let (b, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let mut g = mms(b, |x| x.graph).unwrap_or(0);
@@ -408,8 +414,8 @@ fn mms_get_graph(c: &mut Ctx) -> u32 {
         mem::heap_free(ids);
         mms(b, |x| x.graph = g);
     }
-    add_ref_guest(c, g);
-    putp(out, g);
+    add_ref_guest(c.ctx(), g);
+    out.put(g);
     if g == 0 { Hr::NotImpl.code() } else { 0 }
 }
 
@@ -422,9 +428,10 @@ fn new_stream(c: &mut Ctx, b: u32, id: u32, dd: u32) -> u32 {
 }
 /// AddMediaStream(IUnknown *stream_object, const MSPID *, DWORD flags, IMediaStream **)
 fn mms_add_stream(c: &mut Ctx) -> u32 {
-    let (b, obj, id, flags, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
-    if out != 0 {
-        putp(out, 0);
+    let c = &mut c.args::<crate::api::outs::iface::IAMMultiMediaStream::AddMediaStream>();
+    let (b, obj, id, flags, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
+    if !out.is_null() {
+        out.put(0);
     }
     if id == 0 {
         return Hr::Pointer.code();
@@ -438,11 +445,11 @@ fn mms_add_stream(c: &mut Ctx) -> u32 {
         return 0;
     }
     // (a video stream's object is the IDirectDraw its surfaces come from)
-    let s = new_stream(c, b, id, if id == VIDEO { obj } else { 0 });
+    let s = new_stream(c.ctx(), b, id, if id == VIDEO { obj } else { 0 });
     mms(b, |x| if id == VIDEO { x.video = s } else { x.audio = s });
-    if out != 0 {
+    if !out.is_null() {
         refs(s, 1);
-        putp(out, s);
+        out.put(s);
     }
     0
 }
@@ -682,7 +689,8 @@ fn dd_time_per_frame(c: &mut Ctx) -> u32 {
 // IStreamSample, IDirectDrawStreamSample
 
 fn sample_qi(c: &mut Ctx) -> u32 {
-    qi(c, &SAMPLE_IDS)
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    qi(c.ctx(), &SAMPLE_IDS)
 }
 fn sm_get_stream(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
@@ -895,13 +903,14 @@ fn sm_status(c: &mut Ctx) -> u32 {
 }
 /// GetSurface(IDirectDrawSurface **, RECT *)
 fn sm_surface(c: &mut Ctx) -> u32 {
-    let Some((surf, r)) = sample(c.a(0), |x| (x.surface, x.rect)) else { return Hr::Fail.code() };
-    if c.a(1) != 0 {
-        add_ref_guest(c, surf);
-        putp(c.a(1), surf);
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawStreamSample::GetSurface>();
+    let Some((surf, r)) = sample(c.a::<0>(), |x| (x.surface, x.rect)) else { return Hr::Fail.code() };
+    if !c.out::<1>().is_null() {
+        add_ref_guest(c.ctx(), surf);
+        c.out::<1>().put(surf);
     }
-    if c.a(2) != 0 {
-        for (at, v) in (c.a(2)..).step_by(4).zip([r.0, r.1, r.2, r.3]) {
+    if c.a::<2>() != 0 {
+        for (at, v) in (c.a::<2>()..).step_by(4).zip([r.0, r.1, r.2, r.3]) {
             w32(at, v.cast_unsigned());
         }
     }

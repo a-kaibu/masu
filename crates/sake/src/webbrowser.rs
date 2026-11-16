@@ -706,18 +706,19 @@ fn FindConnectionPoint(c: &mut Ctx) -> u32 {
 }
 
 fn point_qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return E_POINTER;
     }
     let g = mem::array::<16>(iid);
     if g == guid(IID_IUNKNOWN) || g == guid(IID_ICONNECTIONPOINT) {
         let owner = points(|m| m.get(&this).map(|p| p.owner)).unwrap_or(0);
         with(owner, |s| s.refs += 1);
-        mem::wp(out, this);
+        out.put(this);
         S_OK
     } else {
-        mem::wp(out, 0);
+        out.put(0);
         E_NOINTERFACE
     }
 }
@@ -747,13 +748,14 @@ fn GetConnectionInterface(c: &mut Ctx) -> u32 {
     S_OK
 }
 fn GetConnectionPointContainer(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IConnectionPoint::GetConnectionPointContainer>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let owner = points(|m| m.get(&this).map(|p| p.owner)).unwrap_or(0);
     with(owner, |s| s.refs += 1);
-    mem::wp(out, owner + 6 * mem::ps());
+    out.put(owner + 6 * mem::ps());
     S_OK
 }
 fn PointAdvise(c: &mut Ctx) -> u32 {

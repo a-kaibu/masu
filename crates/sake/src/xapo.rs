@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
 
 use crate::api::{implement, Ctx, Handler};
-use crate::mem::{self, ps, putp, r16, r32, rp, w32, wp};
+use crate::mem::{self, ps, r16, r32, rp, w32, wp};
 
 /// The failures the XAPO methods give
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -255,17 +255,18 @@ fn with_this<R>(this: u32, f: impl FnOnce(&mut Xapo) -> R) -> Option<R> {
 }
 
 fn QueryInterface(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let o = obj(this).unwrap_or(Obj(this.wrapping_sub(ps())));
     let Some(i) = iface_of(&read_guid(iid)) else {
-        putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     };
     with(o, |x| x.refs = x.refs.wrapping_add(1));
-    putp(out, match i {
+    out.put(match i {
         Iface::Xapo => o.addr(),
         Iface::Params => o.params(),
     });
@@ -311,8 +312,9 @@ const _: () = assert!(REG_SIZE == 1068 && REG_WORDS == 1040);
 /// GetRegistrationProperties(ppRegistrationProperties): XAPO_REGISTRATION_PROPERTIES in
 /// CoTaskMemAlloc memory
 fn GetRegistrationProperties(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IXAPO::GetRegistrationProperties>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let Some((k, g)) = with_this(this, |x| (x.kind, x.clsid)) else { return Hr::InvalidArg.code() };
@@ -325,7 +327,7 @@ fn GetRegistrationProperties(c: &mut Ctx) -> u32 {
     for (i, v) in (0u32..).zip([1u32, 0, 0x1f, 1, 1, 1, 1]) {
         w32(p + REG_WORDS + 4 * i, v);
     }
-    putp(out, p);
+    out.put(p);
     0
 }
 
@@ -343,17 +345,18 @@ fn is_float(f: u32) -> bool {
 /// IsInputFormatSupported / IsOutputFormatSupported(pOtherFormat, pRequestedFormat,
 /// ppSupportedFormat): float PCM is; for anything else the nearest (the request as float)
 fn IsFormatSupported(c: &mut Ctx) -> u32 {
-    let (want, out) = (c.a(2), c.a(3));
+    let c = &mut c.args::<crate::api::outs::iface::IXAPO::IsInputFormatSupported>();
+    let (want, out) = (c.a::<2>(), c.out::<3>());
     if want == 0 {
         return Hr::Pointer.code();
     }
     if is_float(want) {
-        if out != 0 {
-            putp(out, 0);
+        if !out.is_null() {
+            out.put(0);
         }
         return 0;
     }
-    if out != 0 {
+    if !out.is_null() {
         let p = mem::heap_alloc(18, true);
         let (ch, rate) = (r16(want + 2).max(1), r32(want + 4));
         mem::w16(p, 3);
@@ -362,7 +365,7 @@ fn IsFormatSupported(c: &mut Ctx) -> u32 {
         w32(p + 8, rate.wrapping_mul(u32::from(ch)).wrapping_mul(4));
         mem::w16(p + 12, ch.wrapping_mul(4));
         mem::w16(p + 14, 32);
-        putp(out, p);
+        out.put(p);
     }
     Hr::FormatUnsupported.code()
 }

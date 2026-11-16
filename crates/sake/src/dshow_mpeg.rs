@@ -40,7 +40,7 @@ use waits::calls::Calls;
 use crate::api::{Ctx, Handler};
 use crate::dshow::{com, State};
 use crate::dshow_play::{float, narrow, now, time, wide, Timeline, SEC};
-use crate::mem::{self, ps, put32, putp, r32, rp, w16, w32, w64, wp};
+use crate::mem::{self, ps, put32, r32, rp, w16, w32, w64, wp};
 use kome::num::*;
 
 /// The HRESULTs the MPEG / AVI / ASF filters answer (besides S_OK).
@@ -421,31 +421,32 @@ fn release(c: &mut Ctx, b: u32) -> u32 {
 }
 
 fn f_qi(c: &mut Ctx) -> u32 {
-    let (b, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (b, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if filter_iid(iid) {
         add_ref(b);
-        putp(out, b);
+        out.put(b);
         return 0;
     }
     if is(iid, &IID_IAMSTREAMSELECT) && kind(b) == Some(Kind::Split) {
         add_ref(b);
-        putp(out, Word::StreamSelect.of(b));
+        out.put(Word::StreamSelect.of(b));
         return 0;
     }
     if is(iid, &dmo::IID_IDMOWRAPPERFILTER) && kind(b) == Some(Kind::Dmo) {
         add_ref(b);
-        putp(out, Word::DmoWrapper.of(b));
+        out.put(Word::DmoWrapper.of(b));
         return 0;
     }
     if is(iid, &IID_IFILESOURCEFILTER) && matches!(kind(b), Some(Kind::File | Kind::Asf)) {
         add_ref(b);
-        putp(out, Word::FileSource.of(b));
+        out.put(Word::FileSource.of(b));
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn f_add_ref(c: &mut Ctx) -> u32 {
@@ -516,10 +517,11 @@ fn notimpl(_: &mut Ctx) -> u32 {
     Hr::NotImpl.code()
 }
 fn get_null(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IBaseFilter::GetSyncSource>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), 0);
+    c.out::<1>().put(0);
     0
 }
 /// The pins there are, in order.
@@ -527,26 +529,28 @@ fn pins_of(b: u32) -> Vec<u32> {
     fwith(b, |f| PinNo::ALL.into_iter().filter(|&k| f.pins.at(k).on).map(|k| k.of(b)).collect()).unwrap_or_default()
 }
 fn f_enum_pins(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IBaseFilter::EnumPins>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let pins = pins_of(c.a(0));
-    putp(out, enum_new(pins));
+    let pins = pins_of(c.a::<0>());
+    out.put(enum_new(pins));
     0
 }
 fn f_find_pin(c: &mut Ctx) -> u32 {
-    let (b, id, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (b, id, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let want = if id == 0 { Vec::new() } else { mem::wstr(id) };
     let found = fwith(b, |f| PinNo::ALL.into_iter().find(|&k| f.pins.at(k).on && f.pins.at(k).name.encode_utf16().eq(want.iter().copied()))).flatten();
     match found {
         Some(k) => {
             add_ref(b);
-            putp(out, k.of(b));
+            out.put(k.of(b));
             0
         }
         None => Hr::NotFound.code(),
@@ -583,28 +587,29 @@ fn f_join(c: &mut Ctx) -> u32 {
 // pins
 
 fn p_qi(c: &mut Ctx) -> u32 {
-    let (p, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (p, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IPIN) {
         if let Some((b, _)) = pin_of(p) {
             add_ref(b);
         }
-        putp(out, p);
+        out.put(p);
         return 0;
     }
     if let Some((b, PinNo::P1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::Dmo)) && is(iid, &IID_IMEMINPUTPIN) {
         add_ref(b);
-        putp(out, Word::MemInput.of(b));
+        out.put(Word::MemInput.of(b));
         return 0;
     }
     if let Some((b, PinNo::P1)) = pin_of(p).filter(|&(b, _)| kind(b) == Some(Kind::File)) && is(iid, &IID_IASYNCREADER) {
         add_ref(b);
-        putp(out, Word::AsyncReader.of(b));
+        out.put(Word::AsyncReader.of(b));
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn p_add_ref(c: &mut Ctx) -> u32 {
@@ -1075,12 +1080,13 @@ fn p_disconnect(c: &mut Ctx) -> u32 {
     0
 }
 fn p_connected_to(c: &mut Ctx) -> u32 {
-    let (p, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IPin::ConnectedTo>();
+    let (p, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let peer = pin_of(p).map_or(0, |(b, k)| pin(b, k).peer);
-    putp(out, peer);
+    out.put(peer);
     if peer == 0 {
         return Hr::NotConnected.code();
     }
@@ -1089,7 +1095,7 @@ fn p_connected_to(c: &mut Ctx) -> u32 {
             add_ref(pb);
         }
         None => {
-            com(c, peer, 1, &[]);
+            com(c.ctx(), peer, 1, &[]);
         }
     }
     0
@@ -1133,8 +1139,9 @@ fn p_direction(c: &mut Ctx) -> u32 {
     0
 }
 fn p_id(c: &mut Ctx) -> u32 {
-    let (p, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IPin::QueryId>();
+    let (p, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let name = pin_of(p).map_or("", |(b, k)| pin(b, k).name);
@@ -1143,7 +1150,7 @@ fn p_id(c: &mut Ctx) -> u32 {
     for (i, v) in w.iter().enumerate() {
         w16(s + 2 * lo32(i), *v);
     }
-    putp(out, s);
+    out.put(s);
     0
 }
 /// QueryAccept: the type it is connected with (S_FALSE: another)
@@ -1291,21 +1298,22 @@ fn source_load(b: u32, name: u32, mt: u32) -> u32 {
 }
 
 fn fsf_qi(c: &mut Ctx) -> u32 {
-    let (b, iid, out) = (Word::FileSource.base(c.a(0)), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (b, iid, out) = (Word::FileSource.base(c.a::<0>()), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IFILESOURCEFILTER) {
         add_ref(b);
-        putp(out, Word::FileSource.of(b));
+        out.put(Word::FileSource.of(b));
         return 0;
     }
     if filter_iid(iid) {
         add_ref(b);
-        putp(out, b);
+        out.put(b);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn fsf_add_ref(c: &mut Ctx) -> u32 {
@@ -1320,12 +1328,13 @@ fn fsf_load(c: &mut Ctx) -> u32 {
 }
 /// GetCurFile(name, mt): a CoTaskMemAlloc copy of the name (NULL before Load) and the type
 fn fsf_cur_file(c: &mut Ctx) -> u32 {
-    let (b, out, mt) = (Word::FileSource.base(c.a(0)), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IFileSourceFilter::GetCurFile>();
+    let (b, out, mt) = (Word::FileSource.base(c.a::<0>()), c.out::<1>(), c.a::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let Some((name, sub)) = fwith(b, |f| f.src.as_ref().map(|s| (s.name.clone(), s.sub))).flatten() else {
-        putp(out, 0);
+        out.put(0);
         if mt != 0 {
             mem::fill(mt, mt_size(), 0);
         }
@@ -1335,7 +1344,7 @@ fn fsf_cur_file(c: &mut Ctx) -> u32 {
     for (i, w) in name.iter().enumerate() {
         w16(s + 2 * lo32(i), *w);
     }
-    putp(out, s);
+    out.put(s);
     if mt != 0 {
         mem::fill(mt, mt_size(), 0);
         put_guid(mt, &MEDIATYPE_STREAM);
@@ -1369,21 +1378,22 @@ fn source_connect(c: &mut Ctx, b: u32, recv: u32, want: u32) -> u32 {
 }
 
 fn ar_qi(c: &mut Ctx) -> u32 {
-    let (b, iid, out) = (Word::AsyncReader.base(c.a(0)), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (b, iid, out) = (Word::AsyncReader.base(c.a::<0>()), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IASYNCREADER) {
         add_ref(b);
-        putp(out, Word::AsyncReader.of(b));
+        out.put(Word::AsyncReader.of(b));
         return 0;
     }
     if is(iid, &IID_IPIN) {
         add_ref(b);
-        putp(out, PinNo::P1.of(b));
+        out.put(PinNo::P1.of(b));
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn ar_add_ref(c: &mut Ctx) -> u32 {
@@ -1682,22 +1692,23 @@ fn streams(b: u32) -> Vec<(PinNo, u32)> {
     [(PinNo::P2, 0), (PinNo::P3, 1)].into_iter().filter(|&(k, _)| fwith(b, |f| f.pins.at(k).on).unwrap_or(false)).collect()
 }
 fn ss_qi(c: &mut Ctx) -> u32 {
-    let b = Word::StreamSelect.base(c.a(0));
-    let (iid, out) = (c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let b = Word::StreamSelect.base(c.a::<0>());
+    let (iid, out) = (c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IAMSTREAMSELECT) {
         add_ref(b);
-        putp(out, c.a(0));
+        out.put(c.a::<0>());
         return 0;
     }
     if filter_iid(iid) {
         add_ref(b);
-        putp(out, b);
+        out.put(b);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn ss_add_ref(c: &mut Ctx) -> u32 {
@@ -1716,32 +1727,33 @@ fn ss_count(c: &mut Ctx) -> u32 {
 }
 /// Info(index, &mt, &flags, &lcid, &group, &name, &object, &unk)
 fn ss_info(c: &mut Ctx) -> u32 {
-    let b = Word::StreamSelect.base(c.a(0));
-    let Some(&(k, group)) = streams(b).get(to_usize(c.a(1))) else { return Hr::False.code() };
-    let (mt, flags, lcid, grp, name, obj, unk) = (c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7), c.a(8));
-    if mt != 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAMStreamSelect::Info>();
+    let b = Word::StreamSelect.base(c.a::<0>());
+    let Some(&(k, group)) = streams(b).get(to_usize(c.a::<1>())) else { return Hr::False.code() };
+    let (mt, flags, lcid, grp, name, obj, unk) = (c.out::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.out::<6>(), c.out::<7>(), c.out::<8>());
+    if !mt.is_null() {
         let t = out_type(b, k).unwrap_or(0);
         let m = mem::heap_alloc(mt_size(), true);
         if t != 0 {
             copy_mt(t, m);
             free_mt(t);
         }
-        putp(mt, m);
+        mt.put(m);
     }
     put32(flags, 1); // AMSTREAMSELECTINFO_ENABLED
     put32(lcid, 0);
     put32(grp, group);
-    if name != 0 {
+    if !name.is_null() {
         let n = pin(b, k).name;
         let w: Vec<u16> = n.encode_utf16().chain([0]).collect();
         let p = mem::heap_alloc(2 * lo32(w.len()), false);
         for (i, v) in w.iter().enumerate() {
             w16(p + 2 * lo32(i), *v);
         }
-        putp(name, p);
+        name.put(p);
     }
-    putp(obj, 0);
-    putp(unk, 0);
+    obj.put(0);
+    unk.put(0);
     0
 }
 /// Enable(index, flags): the streams there are stay enabled
@@ -1765,16 +1777,17 @@ fn enum_new(pins: Vec<u32>) -> u32 {
     e
 }
 fn e_qi(c: &mut Ctx) -> u32 {
-    let (e, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (e, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IENUMPINS) {
         ewith(e, |x| x.2 += 1);
-        putp(out, e);
+        out.put(e);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn e_add_ref(c: &mut Ctx) -> u32 {
@@ -1799,8 +1812,9 @@ fn e_release(c: &mut Ctx) -> u32 {
 }
 /// Next(n, pins, fetched)
 fn e_next(c: &mut Ctx) -> u32 {
-    let (e, n, out, got) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IEnumPins::Next>();
+    let (e, n, out, got) = (c.a::<0>(), c.a::<1>(), c.out::<2>(), c.a::<3>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let take = ewith(e, |x| {
@@ -1813,7 +1827,7 @@ fn e_next(c: &mut Ctx) -> u32 {
         if let Some((b, _)) = pin_of(p) {
             add_ref(b);
         }
-        wp(out + ps() * lo32(i), p);
+        out.nth(lo32(i)).put(p);
     }
     if got != 0 {
         put32(got, lo32(take.len()));
@@ -1834,14 +1848,15 @@ fn e_reset(c: &mut Ctx) -> u32 {
     0
 }
 fn e_clone(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IEnumPins::Clone>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let Some((pins, at, _)) = ewith(c.a(0), |x| x.clone()) else { return Hr::Unexpected.code() };
+    let Some((pins, at, _)) = ewith(c.a::<0>(), |x| x.clone()) else { return Hr::Unexpected.code() };
     let e = enum_new(pins);
     ewith(e, |x| x.1 = at);
-    putp(out, e);
+    out.put(e);
     0
 }
 
@@ -1958,15 +1973,16 @@ fn drop_pool(dec: u32) {
 }
 
 fn a_qi(c: &mut Ctx) -> u32 {
-    let (a, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (a, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IMEMALLOCATOR) {
-        putp(out, a);
+        out.put(a);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn one(_: &mut Ctx) -> u32 {
@@ -1996,8 +2012,9 @@ fn a_get_props(c: &mut Ctx) -> u32 {
 }
 /// GetBuffer(&sample, start, stop, flags): one of ours, held for the caller
 fn a_get_buffer(c: &mut Ctx) -> u32 {
-    let (a, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMemAllocator::GetBuffer>();
+    let (a, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let dec = ALLOCS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).iter().find(|(_, x)| x.0 == a).map(|(&d, _)| d);
@@ -2007,21 +2024,22 @@ fn a_get_buffer(c: &mut Ctx) -> u32 {
     if s == 0 {
         return Hr::Unexpected.code();
     }
-    putp(out, s);
+    out.put(s);
     0
 }
 
 fn s_qi(c: &mut Ctx) -> u32 {
-    let (s, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (s, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IMEDIASAMPLE) {
         swith(s, |x| x.refs += 1);
-        putp(out, s);
+        out.put(s);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn s_add_ref(c: &mut Ctx) -> u32 {
@@ -2035,10 +2053,11 @@ fn s_release(c: &mut Ctx) -> u32 {
     unref(c.a(0))
 }
 fn s_pointer(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMediaSample::GetPointer>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), swith(c.a(0), |x| x.buf).unwrap_or(0));
+    c.out::<1>().put(swith(c.a::<0>(), |x| x.buf).unwrap_or(0));
     0
 }
 fn s_size(c: &mut Ctx) -> u32 {
@@ -2093,10 +2112,11 @@ fn s_set_len(c: &mut Ctx) -> u32 {
 }
 /// GetMediaType: no change (S_FALSE, *NULL)
 fn s_media_type(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMediaSample::GetMediaType>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), 0);
+    c.out::<1>().put(0);
     Hr::False.code()
 }
 fn s_is_disc(c: &mut Ctx) -> u32 {

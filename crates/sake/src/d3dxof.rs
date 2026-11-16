@@ -67,8 +67,9 @@ fn new_obj(kind: Kind, refs: u32) -> u32 {
 }
 
 fn qi(c: &mut Ctx) -> u32 {
-    let (this, riid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, riid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return 0x8000_4003;
     }
     let want = if riid == 0 { [0xff; 16] } else { guid_at(riid) };
@@ -86,7 +87,7 @@ fn qi(c: &mut Ctx) -> u32 {
         }
         ok
     });
-    mem::putp(out, if ok { this } else { 0 });
+    out.put(if ok { this } else { 0 });
     if ok { 0 } else { E_NOINTERFACE }
 }
 

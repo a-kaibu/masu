@@ -459,7 +459,7 @@ mod outs_tests {
         let (_, m, o) = hot(kome::num::us(trap_no(qi))).expect("published");
         assert_eq!(o, outs::com("IDirectSoundNotify", 0));
         assert_eq!(o, OutMask { x64: 0b100, x86: 0b100 });
-        assert!(!m.value_check);
+        assert!(m.value_check);
         let (_, m, _) = hot(kome::num::us(trap_no(export("kernel32", "GetProcessAffinityMask")))).expect("published");
         assert!(m.value_check);
     }
@@ -502,11 +502,22 @@ fn out_slots(c: &Ctx, m: u64) -> kura::outs::Guard {
     kura::outs::enter(kura::outs::Slots::new(c.trap, at))
 }
 
+/// How a COM method's handler takes its arguments (set_com_outs).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ComArgs {
+    /// as its method's (c.args::<outs::iface::I::M>(), first thing): Ctx::a of an
+    /// out-parameter reported, as a function's is, and c.args of another's
+    Typed,
+    /// every one as a word handed on to kura (d3d9, d3d11), whose writers are watched for a
+    /// 32-bit write to an out slot (kura::outs) instead
+    Words,
+}
+
 /// The trap `addr` (a COM method's: com.rs's and api::vtable's vtables, d3d9's, d3d11's) gets
 /// method `slot` of `iface`'s pointer-sized out-parameters (outs::com, Microsoft's metadata):
-/// watched for 32-bit writes (kura::outs); its handler's Ctx::a of one not yet reported
-/// (value_check, for when the COM handlers take theirs as Out).
-pub(crate) fn set_com_outs(addr: u32, iface: &str, slot: u32) {
+/// watched for 32-bit writes (kura::outs), and with ComArgs::Typed its handler's Ctx::a of one
+/// reported.
+pub(crate) fn set_com_outs(addr: u32, iface: &str, slot: u32, how: ComArgs) {
     let m = outs::com(iface, slot);
     if m == OutMask::NONE {
         return;
@@ -515,8 +526,21 @@ pub(crate) fn set_com_outs(addr: u32, iface: &str, slot: u32) {
     let mut e = ENTRIES.w();
     if let Some(x) = e.get_mut(i) {
         x.outs = m;
-        x.value_check = false;
+        x.value_check = how == ComArgs::Typed;
         publish(i, x);
+    }
+}
+
+/// The handler at `trap` takes its arguments as a function's or method's whose pointer-sized
+/// out-parameters (`typed`) are not the called one's (`called`): a test fails; a game goes on,
+/// and the log says so once.
+#[cold]
+fn typed_as_another(trap: u32, typed: u64, called: u64) {
+    let what = format!("{}: its handler takes the arguments of one with out-parameters {typed:#b}, it has {called:#b}", name_of(trap).unwrap_or_else(|| format!("{trap:#x}")));
+    assert!(!cfg!(test) && !cfg!(debug_assertions) && !kura::outs::strict(), "{what}");
+    static SAID: Mutex<Option<HashSet<u32>>> = Mutex::new(None);
+    if SAID.locked().get_or_insert_with(HashSet::default).insert(trap) {
+        eprintln!("sake: {what}");
     }
 }
 
@@ -537,6 +561,12 @@ impl<'a> Ctx<'a> {
     /// The arguments as the function `F`'s: its pointer-sized out-parameters only as Out.
     #[inline]
     pub fn args<F: Outs>(&mut self) -> Args<'_, 'a, F> {
+        // (a handler taking another function's or method's arguments: its out-parameters are
+        // not these; called through a trap only, a test's own Ctx has none)
+        let want = if crate::mem::x64() { F::MASK } else { F::MASK32 };
+        if self.trap != 0 && want != self.outs {
+            typed_as_another(self.trap, want, self.outs);
+        }
         Args { c: self, f: std::marker::PhantomData }
     }
 }
@@ -1552,7 +1582,7 @@ pub fn vtable(name: &str, methods: &[(Handler, u32)]) -> u32 {
     for (i, (f, bytes)) in methods.iter().enumerate() {
         let a = host_fn(&format!("{name}::{i}"), *f, *bytes);
         if let Some(n) = iface {
-            set_com_outs(a, n, kome::num::u32_of(i));
+            set_com_outs(a, n, kome::num::u32_of(i), ComArgs::Typed);
         }
         crate::mem::wp(crate::mem::ga(v).at(kome::num::u32_of(i), k), a);
     }

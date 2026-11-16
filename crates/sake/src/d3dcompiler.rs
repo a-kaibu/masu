@@ -15,16 +15,17 @@ fn blob_size(c: &mut Ctx) -> u32 {
     r32(c.a(0) + 16)
 }
 fn blob_qi(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IUnknown and ID3D10Blob {8BA5FB08-5195-40e2-AC58-0D989C3A0102}
-    let g = mem::bytes(c.a(1), 16);
+    let g = mem::bytes(c.a::<1>(), 16);
     const UNK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46];
     const BLOB: [u8; 16] = [0x08, 0xfb, 0xa5, 0x8b, 0x95, 0x51, 0xe2, 0x40, 0xac, 0x58, 0x0d, 0x98, 0x9c, 0x3a, 0x01, 0x02];
     if g == UNK || g == BLOB {
-        blob_add_ref(c);
-        mem::putp(c.a(2), c.a(0));
+        blob_add_ref(c.ctx());
+        c.out::<2>().put(c.a::<0>());
         return 0;
     }
-    mem::putp(c.a(2), 0);
+    c.out::<2>().put(0);
     0x8000_4002
 }
 fn blob_add_ref(c: &mut Ctx) -> u32 {

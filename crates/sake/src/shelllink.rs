@@ -199,19 +199,20 @@ fn which(iid: u32) -> Option<u32> {
 }
 
 fn qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return 0x8000_4003;
     }
     let b = base_of(this);
     match which(iid) {
         Some(i) => {
             with(b, |s| s.refs += 1);
-            mem::putp(out, b + mem::ps() * i);
+            out.put(b + mem::ps() * i);
             0
         }
         None => {
-            mem::putp(out, 0);
+            out.put(0);
             0x8000_4002
         }
     }
@@ -450,8 +451,9 @@ fn SaveCompleted(_: &mut Ctx) -> u32 {
     0
 }
 fn GetCurFile(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    match with(c.a(0), |s| s.file.clone()).flatten() {
+    let c = &mut c.args::<crate::api::outs::iface::IPersistFile::GetCurFile>();
+    let out = c.out::<1>();
+    match with(c.a::<0>(), |s| s.file.clone()).flatten() {
         Some(f) => {
             let w: Vec<u16> = f.encode_utf16().chain([0]).collect();
             // (CoTaskMemAlloc's heap)
@@ -459,11 +461,11 @@ fn GetCurFile(c: &mut Ctx) -> u32 {
             for (i, &u) in w.iter().enumerate() {
                 mem::w16(p + 2 * i as u32, u);
             }
-            mem::putp(out, p);
+            out.put(p);
             0
         }
         None => {
-            mem::putp(out, 0);
+            out.put(0);
             1
         }
     }

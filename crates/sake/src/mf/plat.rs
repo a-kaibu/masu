@@ -40,18 +40,19 @@ pub fn result_callback(b: u32) -> u32 {
 }
 
 fn ar_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFAsyncResult {ac6b7889-0740-4d51-8619-905994a55cc6}
     if is_unknown(&g) || is(&g, 0xac6b_7889, 0x0740, 0x4d51) {
         result(this, |r| r.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn ar_add_ref(c: &mut Ctx) -> u32 {
@@ -99,10 +100,12 @@ fn ar_get(c: &mut Ctx, which: fn(&Result) -> u32) -> u32 {
     0
 }
 fn ar_state(c: &mut Ctx) -> u32 {
-    ar_get(c, |r| r.state)
+    let c = &mut c.args::<crate::api::outs::iface::IMFAsyncResult::GetState>();
+    ar_get(c.ctx(), |r| r.state)
 }
 fn ar_object(c: &mut Ctx) -> u32 {
-    ar_get(c, |r| r.object)
+    let c = &mut c.args::<crate::api::outs::iface::IMFAsyncResult::GetObject>();
+    ar_get(c.ctx(), |r| r.object)
 }
 fn ar_status(c: &mut Ctx) -> u32 {
     result(c.a(0), |r| r.status).unwrap_or(Hr::Pointer.code())
@@ -275,18 +278,19 @@ const CAN_WRITE: u32 = 2;
 const CAN_SEEK: u32 = 4;
 
 fn bs_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFByteStream {ad4c1b00-4bf7-422f-9175-756693d9130d}
     if is_unknown(&g) || is(&g, 0xad4c_1b00, 0x4bf7, 0x422f) {
         bs(this, |s| s.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn bs_add_ref(c: &mut Ctx) -> u32 {

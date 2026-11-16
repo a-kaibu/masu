@@ -491,14 +491,15 @@ fn guid_eq(p: u32, g: &[u8; 16]) -> bool {
 }
 
 fn L_QueryInterface(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IUnknown, ITypeLib {00020402-...}, ITypeLib2 {00020411-...}
-    match r32(c.a(1)) {
+    match r32(c.a::<1>()) {
         0 | 0x0002_0402 | 0x0002_0411 => {
-            crate::mem::putp(c.a(2), c.a(0));
+            c.out::<2>().put(c.a::<0>());
             S_OK
         }
         _ => {
-            crate::mem::putp(c.a(2), 0);
+            c.out::<2>().put(0);
             0x8000_4002
         }
     }
@@ -507,9 +508,10 @@ fn L_GetTypeInfoCount(c: &mut Ctx) -> u32 {
     LIBS.lock().unwrap().get(lib_of(c)).map_or(0, |l| l.lib.infos.len() as u32)
 }
 fn L_GetTypeInfo(c: &mut Ctx) -> u32 {
-    match info_block(lib_of(c), c.a(1) as usize) {
+    let c = &mut c.args::<crate::api::outs::iface::ITypeLib::GetTypeInfo>();
+    match info_block(lib_of(c.ctx()), c.a::<1>() as usize) {
         Some(b) => {
-            mem::putp(c.a(2), b);
+            c.out::<2>().put(b);
             S_OK
         }
         None => TYPE_E_ELEMENTNOTFOUND,
@@ -525,22 +527,24 @@ fn L_GetTypeInfoType(c: &mut Ctx) -> u32 {
     }
 }
 fn L_GetTypeInfoOfGuid(c: &mut Ctx) -> u32 {
-    let li = lib_of(c);
-    let g = c.a(1);
+    let c = &mut c.args::<crate::api::outs::iface::ITypeLib::GetTypeInfoOfGuid>();
+    let li = lib_of(c.ctx());
+    let g = c.a::<1>();
     let hit = LIBS.lock().unwrap().get(li).and_then(|l| l.lib.infos.iter().position(|i| guid_eq(g, &i.guid)).map(|i| l.infos[i]));
     match hit {
         Some(b) => {
-            mem::putp(c.a(2), b);
+            c.out::<2>().put(b);
             S_OK
         }
         None => {
-            crate::mem::putp(c.a(2), 0);
+            c.out::<2>().put(0);
             TYPE_E_ELEMENTNOTFOUND
         }
     }
 }
 fn L_GetLibAttr(c: &mut Ctx) -> u32 {
-    let Some((g, lcid, ver, flags)) = LIBS.lock().unwrap().get(lib_of(c)).map(|l| (l.lib.guid, l.lib.lcid, l.lib.version, l.lib.flags)) else {
+    let c = &mut c.args::<crate::api::outs::iface::ITypeLib::GetLibAttr>();
+    let Some((g, lcid, ver, flags)) = LIBS.lock().unwrap().get(lib_of(c.ctx())).map(|l| (l.lib.guid, l.lib.lcid, l.lib.version, l.lib.flags)) else {
         return E_INVALIDARG;
     };
     let p = mem::heap_alloc(32, true);
@@ -550,24 +554,25 @@ fn L_GetLibAttr(c: &mut Ctx) -> u32 {
     w16(p + 24, ver as u16);
     w16(p + 26, (ver >> 16) as u16);
     w16(p + 28, flags as u16);
-    mem::putp(c.a(1), p);
+    c.out::<1>().put(p);
     S_OK
 }
-fn put_bstr(p: u32, s: &str) {
-    if p != 0 {
-        put32(p, crate::misc::bstr_alloc(&s.encode_utf16().collect::<Vec<_>>()));
+fn put_bstr(p: crate::api::Out, s: &str) {
+    if !p.is_null() {
+        p.put(crate::misc::bstr_alloc(&s.encode_utf16().collect::<Vec<_>>()));
     }
 }
 fn L_GetDocumentation(c: &mut Ctx) -> u32 {
-    let li = lib_of(c);
-    let idx = c.a(1) as i32;
+    let c = &mut c.args::<crate::api::outs::iface::ITypeLib::GetDocumentation>();
+    let li = lib_of(c.ctx());
+    let idx = c.a::<1>() as i32;
     let n = LIBS.lock().unwrap().get(li).and_then(|l| if idx < 0 { Some(l.lib.name.clone()) } else { l.lib.infos.get(idx as usize).map(|i| i.name.clone()) });
     let Some(n) = n else { return TYPE_E_ELEMENTNOTFOUND };
-    put_bstr(c.a(2), &n);
-    for p in [c.a(3), c.a(5)] {
-        put32(p, 0);
+    put_bstr(c.out::<2>(), &n);
+    for p in [c.out::<3>(), c.out::<5>()] {
+        p.put(0);
     }
-    put32(c.a(4), 0);
+    put32(c.a::<4>(), 0);
     S_OK
 }
 fn L_IsName(c: &mut Ctx) -> u32 {
@@ -580,14 +585,15 @@ fn L_IsName(c: &mut Ctx) -> u32 {
 }
 
 fn I_QueryInterface(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IUnknown, ITypeInfo {00020401-...}, ITypeInfo2 {00020412-...}
-    match r32(c.a(1)) {
+    match r32(c.a::<1>()) {
         0 | 0x0002_0401 | 0x0002_0412 => {
-            crate::mem::putp(c.a(2), c.a(0));
+            c.out::<2>().put(c.a::<0>());
             S_OK
         }
         _ => {
-            crate::mem::putp(c.a(2), 0);
+            c.out::<2>().put(0);
             0x8000_4002
         }
     }
@@ -595,7 +601,8 @@ fn I_QueryInterface(c: &mut Ctx) -> u32 {
 
 /// TYPEATTR
 fn I_GetTypeAttr(c: &mut Ctx) -> u32 {
-    let (li, ii) = info_of(c);
+    let c = &mut c.args::<crate::api::outs::iface::ITypeInfo::GetTypeAttr>();
+    let (li, ii) = info_of(c.ctx());
     let Some(l) = lib(li) else { return E_INVALIDARG };
     let Some(i) = l.lib.infos.get(ii) else { return E_INVALIDARG };
     let p = mem::heap_alloc(76, true);
@@ -616,7 +623,7 @@ fn I_GetTypeAttr(c: &mut Ctx) -> u32 {
     if let Some(a) = &i.alias {
         write_tdesc(p + 60, a);
     }
-    mem::putp(c.a(1), p);
+    c.out::<1>().put(p);
     S_OK
 }
 
@@ -652,8 +659,9 @@ fn write_tdesc(p: u32, t: &Td) {
 /// FUNCDESC (32-bit layout, 52 bytes) with its ELEMDESCs; freed in one piece by
 /// ReleaseFuncDesc (the TYPEDESCs pointed to stay: small and few).
 fn I_GetFuncDesc(c: &mut Ctx) -> u32 {
-    let (li, ii) = info_of(c);
-    let Some(f) = with_info(li, ii, |_, i| i.funcs.get(c.a(1) as usize).cloned()).flatten() else { return TYPE_E_ELEMENTNOTFOUND };
+    let c = &mut c.args::<crate::api::outs::iface::ITypeInfo::GetFuncDesc>();
+    let (li, ii) = info_of(c.ctx());
+    let Some(f) = with_info(li, ii, |_, i| i.funcs.get(c.a::<1>() as usize).cloned()).flatten() else { return TYPE_E_ELEMENTNOTFOUND };
     let n = f.params.len() as u32;
     let p = mem::heap_alloc(52 + 16 * n, true);
     w32(p, f.memid as u32);
@@ -671,7 +679,7 @@ fn I_GetFuncDesc(c: &mut Ctx) -> u32 {
         write_tdesc(e, &a.td);
         w16(e + 12, a.flags);
     }
-    mem::putp(c.a(2), p);
+    c.out::<2>().put(p);
     S_OK
 }
 fn free_func_desc(c: &mut Ctx) -> u32 {
@@ -736,8 +744,9 @@ fn I_GetIDsOfNames(c: &mut Ctx) -> u32 {
 }
 
 fn I_GetNames(c: &mut Ctx) -> u32 {
-    let (li, ii) = info_of(c);
-    let (memid, out, max, count) = (c.a(1) as i32, c.a(2), c.a(3), c.a(4));
+    let c = &mut c.args::<crate::api::outs::iface::ITypeInfo::GetNames>();
+    let (li, ii) = info_of(c.ctx());
+    let (memid, out, max, count) = (c.a::<1>() as i32, c.out::<2>(), c.a::<3>(), c.a::<4>());
     let names = find(li, ii, &mut |_, i| {
         if let Some(f) = i.funcs.iter().find(|f| f.memid == memid) {
             let mut v = vec![f.name.clone()];
@@ -749,25 +758,26 @@ fn I_GetNames(c: &mut Ctx) -> u32 {
     let Some(names) = names else { return TYPE_E_ELEMENTNOTFOUND };
     let k = (names.len() as u32).min(max);
     for (j, n) in names.iter().take(k as usize).enumerate() {
-        put_bstr(out + 4 * j as u32, n);
+        put_bstr(out.nth(j as u32), n);
     }
     put32(count, k);
     S_OK
 }
 
 fn I_GetDocumentation(c: &mut Ctx) -> u32 {
-    let (li, ii) = info_of(c);
-    let memid = c.a(1) as i32;
+    let c = &mut c.args::<crate::api::outs::iface::ITypeInfo::GetDocumentation>();
+    let (li, ii) = info_of(c.ctx());
+    let memid = c.a::<1>() as i32;
     let n = if memid == -1 {
         with_info(li, ii, |_, i| i.name.clone())
     } else {
         find(li, ii, &mut |_, i| i.funcs.iter().find(|f| f.memid == memid).map(|f| f.name.clone()).or_else(|| i.vars.iter().find(|v| v.memid == memid).map(|v| v.name.clone())))
     };
     let Some(n) = n else { return TYPE_E_ELEMENTNOTFOUND };
-    put_bstr(c.a(2), &n);
-    crate::mem::putp(c.a(3), 0);
-    put32(c.a(4), 0);
-    crate::mem::putp(c.a(5), 0);
+    put_bstr(c.out::<2>(), &n);
+    c.out::<3>().put(0);
+    put32(c.a::<4>(), 0);
+    c.out::<5>().put(0);
     S_OK
 }
 
@@ -793,27 +803,29 @@ fn I_GetImplTypeFlags(c: &mut Ctx) -> u32 {
     S_OK
 }
 fn I_GetRefTypeInfo(c: &mut Ctx) -> u32 {
-    let (li, _) = info_of(c);
-    let h = c.a(1);
+    let c = &mut c.args::<crate::api::outs::iface::ITypeInfo::GetRefTypeInfo>();
+    let (li, _) = info_of(c.ctx());
+    let h = c.a::<1>();
     if h & 1 != 0 {
         // in another library (stdole2's IDispatch): not loaded
-        crate::mem::putp(c.a(2), 0);
+        c.out::<2>().put(0);
         return TYPE_E_CANTLOADLIBRARY;
     }
     match info_block(li, h as usize / 100) {
         Some(b) => {
-            mem::putp(c.a(2), b);
+            c.out::<2>().put(b);
             S_OK
         }
         None => TYPE_E_ELEMENTNOTFOUND,
     }
 }
 fn I_GetContainingTypeLib(c: &mut Ctx) -> u32 {
-    let (li, ii) = info_of(c);
+    let c = &mut c.args::<crate::api::outs::iface::ITypeInfo::GetContainingTypeLib>();
+    let (li, ii) = info_of(c.ctx());
     if let Some(b) = LIBS.lock().unwrap().get(li).map(|l| l.block) {
-        mem::putp(c.a(1), b);
+        c.out::<1>().put(b);
     }
-    put32(c.a(2), ii as u32);
+    put32(c.a::<2>(), ii as u32);
     S_OK
 }
 

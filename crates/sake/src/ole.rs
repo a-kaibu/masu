@@ -19,9 +19,10 @@ fn gcall(c: &mut Ctx, dll: &str, name: &str, args: &[u32]) -> u32 {
 }
 
 fn qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
     w32(this + 4 * 7, r32(this + 4 * 7) + 1);
-    crate::mem::putp(out, this);
+    out.put(this);
     0
 }
 fn add_ref(c: &mut Ctx) -> u32 {
@@ -179,11 +180,12 @@ fn s_copy_to(c: &mut Ctx) -> u32 {
     hr
 }
 fn s_clone(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
+    let c = &mut c.args::<crate::api::outs::iface::IStream::Clone>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
     let m = r32(this + 4);
     let o = mem::heap_alloc(32, true);
     if o == 0 {
-        crate::mem::putp(out, 0);
+        out.put(0);
         return E_OUTOFMEMORY;
     }
     w32(o, stream_vtbl());
@@ -191,7 +193,7 @@ fn s_clone(c: &mut Ctx) -> u32 {
     w32(o + 12, r32(this + 12));
     w32(o + 28, 1);
     w32(m + 12, r32(m + 12) + 1);
-    crate::mem::putp(out, o);
+    out.put(o);
     0
 }
 
@@ -306,7 +308,8 @@ fn p_handle(c: &mut Ctx) -> u32 {
     0
 }
 fn p_zero(c: &mut Ctx) -> u32 {
-    crate::mem::putp(c.a(1), 0);
+    let c = &mut c.args::<crate::api::outs::iface::IPicture::get_CurDC>();
+    c.out::<1>().put(0);
     0
 }
 fn p_type(c: &mut Ctx) -> u32 {
@@ -340,9 +343,10 @@ fn p_render(c: &mut Ctx) -> u32 {
     0
 }
 fn p_select(c: &mut Ctx) -> u32 {
-    let (this, hdc, pdc, pbm) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    let old = gcall(c, "gdi32", "SelectObject", &[hdc, r32(this + 4)]);
-    crate::mem::putp(pdc, 0);
+    let c = &mut c.args::<crate::api::outs::iface::IPicture::SelectPicture>();
+    let (this, hdc, pdc, pbm) = (c.a::<0>(), c.a::<1>(), c.out::<2>(), c.a::<3>());
+    let old = gcall(c.ctx(), "gdi32", "SelectObject", &[hdc, r32(this + 4)]);
+    pdc.put(0);
     put32(pbm, old);
     0
 }

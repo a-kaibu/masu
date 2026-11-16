@@ -1304,15 +1304,16 @@ pub fn create_instance(_c: &mut Ctx, clsid: u32, _iid: u32) -> Option<u32> {
 }
 
 fn DS_QueryInterface(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     match r32(iid) {
         0 | 0x279a_fa83 | 0xc50a_7e93 => {
-            DS_AddRef(c);
-            crate::mem::putp(out, this);
+            DS_AddRef(c.ctx());
+            out.put(this);
             0
         }
         _ => {
-            crate::mem::putp(out, 0);
+            out.put(0);
             Hr::NoInterface.code()
         }
     }
@@ -1343,8 +1344,9 @@ fn DS_Release(c: &mut Ctx) -> u32 {
     left
 }
 fn DS_CreateSoundBuffer(c: &mut Ctx) -> u32 {
-    let (desc, out) = (c.a(1), c.a(2));
-    if desc == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectSound8::CreateSoundBuffer>();
+    let (desc, out) = (c.a::<1>(), c.out::<2>());
+    if desc == 0 || out.is_null() {
         return Hr::InvalidParam.code();
     }
     let flags = r32(desc + 4);
@@ -1380,7 +1382,7 @@ fn DS_CreateSoundBuffer(c: &mut Ctx) -> u32 {
             },
         )
     });
-    crate::mem::putp(out, o);
+    out.put(o);
     0
 }
 fn DS_GetCaps(c: &mut Ctx) -> u32 {
@@ -1397,7 +1399,8 @@ fn DS_GetCaps(c: &mut Ctx) -> u32 {
     0
 }
 fn DS_DuplicateSoundBuffer(c: &mut Ctx) -> u32 {
-    let (src, out) = (c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IDirectSound8::DuplicateSoundBuffer>();
+    let (src, out) = (c.a::<1>(), c.out::<2>());
     let o = new_object(buf_vtbl(), 0);
     let ok = with(|d| {
         let Some(s) = d.bufs.get(&Key::Ds(src)) else { return false };
@@ -1426,7 +1429,7 @@ fn DS_DuplicateSoundBuffer(c: &mut Ctx) -> u32 {
     if !ok {
         return Hr::InvalidParam.code();
     }
-    crate::mem::putp(out, o);
+    out.put(o);
     0
 }
 fn DS_SetCooperativeLevel(_: &mut Ctx) -> u32 {
@@ -1455,29 +1458,30 @@ fn with_buf<R>(this: u32, f: impl FnOnce(&mut Buf) -> R) -> Option<R> {
 }
 
 fn B_QueryInterface(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     match r32(iid) {
         0 | 0x279a_fa85 | 0x6825_a449 => {
             with_buf(this, |b| b.refs += 1);
-            crate::mem::putp(out, this);
+            out.put(this);
             0
         }
         0xb021_0783 => {
-            crate::mem::putp(out, child(notify_vtbl(), this));
+            out.put(child(notify_vtbl(), this));
             0
         }
         // IDirectSound3DListener (the primary buffer) / IDirectSound3DBuffer: accepted, the sound
         // is not positioned
         0x279a_fa84 => {
-            crate::mem::putp(out, child(listener3d_vtbl(), this));
+            out.put(child(listener3d_vtbl(), this));
             0
         }
         0x279a_fa86 => {
-            crate::mem::putp(out, child(buffer3d_vtbl(), this));
+            out.put(child(buffer3d_vtbl(), this));
             0
         }
         _ => {
-            crate::mem::putp(out, 0);
+            out.put(0);
             Hr::NoInterface.code()
         }
     }
@@ -1600,7 +1604,8 @@ fn B_Initialize(_: &mut Ctx) -> u32 {
     Hr::AlreadyInitialized.code()
 }
 fn B_Lock(c: &mut Ctx) -> u32 {
-    let (this, off, bytes, p1, n1, p2, n2, flags) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
+    let c = &mut c.args::<crate::api::outs::iface::IDirectSoundBuffer8::Lock>();
+    let (this, off, bytes, p1, n1, p2, n2, flags) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>(), c.a::<4>(), c.out::<5>(), c.a::<6>(), c.a::<7>());
     let r = with_buf(this, |b| {
         if b.size == 0 {
             return None;
@@ -1618,9 +1623,9 @@ fn B_Lock(c: &mut Ctx) -> u32 {
     .flatten();
     match r {
         Some((a1, l1, a2, l2)) => {
-            crate::mem::putp(p1, a1);
+            p1.put(a1);
             put32(n1, l1);
-            crate::mem::putp(p2, if l2 > 0 { a2 } else { 0 });
+            p2.put(if l2 > 0 { a2 } else { 0 });
             put32(n2, l2);
             0
         }
@@ -1712,15 +1717,16 @@ fn B_GetObjectInPath(_: &mut Ctx) -> u32 {
 }
 
 fn N_QueryInterface(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     let buf = r32(this + 4);
     if r32(iid) == 0xb021_0783 || r32(iid) == 0 {
         w32(this + 8, r32(this + 8) + 1);
-        crate::mem::putp(out, this);
+        out.put(this);
         return 0;
     }
     let _ = buf;
-    crate::mem::putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 /// An interface object of buffer `buf` (IDirectSoundNotify, IDirectSound3DBuffer/Listener):

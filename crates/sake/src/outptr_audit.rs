@@ -189,3 +189,216 @@ fn registered_closures_take_their_functions_arguments() {
     assert!(seen >= 10, "only {seen} closures found");
     assert!(bad.is_empty(), "{}", bad.join("\n"));
 }
+
+/// The text from `s[i]`, an opening bracket, to its closing one (strings skipped), or None.
+fn bracketed(s: &str, i: usize) -> Option<&str> {
+    let b = s.as_bytes();
+    let (mut depth, mut j, mut quoted) = (0i32, i, false);
+    while let Some(&ch) = b.get(j) {
+        if quoted {
+            if ch == b'\\' {
+                j += 2;
+                continue;
+            }
+            quoted = ch != b'"';
+        } else {
+            match ch {
+                b'"' => quoted = true,
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return s.get(i..=j);
+                    }
+                }
+                _ => {}
+            }
+        }
+        j += 1;
+    }
+    None
+}
+
+/// `t` split at its top-level commas (line comments dropped).
+fn top_level(t: &str) -> Vec<String> {
+    let t: String = t.lines().map(|l| l.split("//").next().unwrap_or_default()).collect::<Vec<_>>().join("\n");
+    let (mut out, mut cur, mut depth, mut quoted) = (vec![], String::new(), 0i32, false);
+    for ch in t.chars() {
+        if quoted {
+            quoted = ch != '"';
+        } else if ch == '"' {
+            quoted = true;
+        } else if "([{".contains(ch) {
+            depth += 1;
+        } else if ")]}".contains(ch) {
+            depth -= 1;
+        } else if ch == ',' && depth == 0 {
+            out.push(std::mem::take(&mut cur).trim().to_string());
+            continue;
+        }
+        cur.push(ch);
+    }
+    if !cur.trim().is_empty() {
+        out.push(cur.trim().to_string());
+    }
+    out
+}
+
+/// Every COM method with pointer-sized out-parameters (com_outptrs.txt) that a vtable of sake's
+/// gives a handler: com::impls! lists by name, api::vtable's lists by slot where the list is
+/// in the text (inline, or bound to a name in the same file). Its handler takes its arguments
+/// as that method's, c.args::<outs::iface::I::M>() (or a method's with the same out-parameters),
+/// first thing, or (a handler of several overloads) picks the one it is called as and takes
+/// those; a `_` handler takes none (review 2026-11-16 stage 3: 290 COM handlers took theirs
+/// through Ctx::a, the typelib's BSTRs and misc's QI written 32 bits wide). Lists made at run
+/// time (vec! extended, by kind) are checked when they are called: Ctx::a of an out-parameter
+/// fails a test, c.args of another method's too.
+#[test]
+fn com_handlers_take_their_methods_arguments() {
+    // (interface, slot) -> (method, x64, x86); (interface, method) -> slots
+    let mut masks: HashMap<(String, usize), (String, String, String)> = HashMap::new();
+    let mut slots: HashMap<(String, String), Vec<usize>> = HashMap::new();
+    let mut ifaces = std::collections::HashSet::new();
+    for l in include_str!("com_outptrs.txt").lines() {
+        let f: Vec<&str> = l.split(' ').collect();
+        match f.as_slice() {
+            [i, "#", _] => {
+                ifaces.insert(i.to_string());
+            }
+            [i, s, m, a, b] => {
+                let s: usize = s.parse().unwrap();
+                masks.insert((i.to_string(), s), (m.to_string(), a.to_string(), b.to_string()));
+                slots.entry((i.to_string(), m.to_string())).or_default().push(s);
+            }
+            _ => panic!("com_outptrs.txt: {l}"),
+        }
+    }
+    // (a type's out-parameters: iface::I::M or iface::I::M_slot)
+    let of_type = |t: &str| -> Option<(String, String)> {
+        let rest = t.strip_prefix("crate::api::outs::iface::")?;
+        let (i, m) = rest.split_once("::")?;
+        let s = match m.rsplit_once('_') {
+            Some((_, n)) if n.parse::<usize>().is_ok() && masks.contains_key(&(i.to_string(), n.parse().ok()?)) => n.parse().ok()?,
+            _ => *slots.get(&(i.to_string(), m.to_string()))?.first()?,
+        };
+        masks.get(&(i.to_string(), s)).map(|x| (x.1.clone(), x.2.clone()))
+    };
+    let mut files = vec![];
+    let mut dirs = vec![std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") && !p.ends_with("outptr_audit.rs") {
+                files.push((p.clone(), std::fs::read_to_string(&p).unwrap()));
+            }
+        }
+    }
+    // (a handler's body by name: its file's, else its parent module's)
+    let body_of = |file: &std::path::Path, name: &str| -> Option<Result<String, ()>> {
+        let parent = file.parent().map(|d| d.with_extension("rs"));
+        for f in std::iter::once(file.to_path_buf()).chain(parent) {
+            let Some((_, s)) = files.iter().find(|x| x.0 == f) else { continue };
+            for (k, _) in s.match_indices(&format!("fn {name}(")) {
+                let head = &s[k + 3 + name.len()..];
+                if head.starts_with("(_: &mut Ctx) -> u32") {
+                    return Some(Err(()));
+                }
+                if let Some(b) = head.strip_prefix("(c: &mut Ctx) -> u32 {") {
+                    return Some(Ok(b.lines().take(8).collect::<Vec<_>>().join("\n")));
+                }
+            }
+        }
+        None
+    };
+    let (mut bad, mut checked) = (vec![], 0);
+    let mut check = |file: &std::path::Path, iface: &str, slot: usize, h: &str| {
+        let Some((m, x64, x86)) = masks.get(&(iface.to_string(), slot)) else { return };
+        let h = h.trim().trim_end_matches(" as Handler").trim_end_matches(" as crate::api::Handler");
+        let h = h.strip_prefix("hr!(").and_then(|x| x.strip_suffix(')')).unwrap_or(h);
+        let body = if h.starts_with('|') {
+            Ok(h.to_string())
+        } else {
+            let name = h.rsplit("::").next().unwrap_or(h);
+            match body_of(file, name) {
+                Some(b) => b,
+                None => return,
+            }
+        };
+        checked += 1;
+        let Ok(body) = body else { return };
+        let typed: Vec<&str> = body.match_indices("c.args::<").filter_map(|(k, _)| body[k + 9..].split('>').next()).collect();
+        let first = body.trim_start_matches(|c: char| c == '{' || c.is_whitespace()).starts_with("let c = &mut c.args::<") || h.starts_with('|');
+        let ok = !typed.is_empty() && typed.iter().all(|t| of_type(t).is_some()) && (first || typed.len() > 1) && typed.iter().any(|t| of_type(t).as_ref() == Some(&(x64.clone(), x86.clone())));
+        if !ok {
+            bad.push(format!("{}: {iface}::{m} (slot {slot}): its handler {h} is to start `let c = &mut c.args::<crate::api::outs::iface::{iface}::{m}>();` (or a method's with the same out-parameters), it takes {typed:?}", file.display()));
+        }
+    };
+    for (p, s) in &files {
+        // com::impls!(IFoo { Method [@ slot]: handler, .. })
+        for (k, _) in s.match_indices("impls!(") {
+            let rest = &s[k + 7..];
+            let iface: String = rest.trim_start().chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+            let Some(open) = rest.find('{') else { continue };
+            let Some(list) = bracketed(rest, open) else { continue };
+            for e in top_level(&list[1..list.len() - 1]) {
+                let Some((m, h)) = e.split_once(':') else { continue };
+                let (m, at) = match m.split_once('@') {
+                    Some((m, n)) => (m.trim(), n.trim().parse::<usize>().ok()),
+                    None => (m.trim(), None),
+                };
+                let ss = match at {
+                    Some(n) => vec![n],
+                    None => slots.get(&(iface.clone(), m.to_string())).and_then(|v| v.first()).map(|&x| vec![x]).unwrap_or_default(),
+                };
+                for sl in ss {
+                    check(p, &iface, sl, h);
+                }
+            }
+        }
+        // vtable("Name", &[(handler, bytes), ..]) or a list bound to a name before it
+        for (k, _) in s.match_indices("vtable(") {
+            if s[..k].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+                continue;
+            }
+            let Some(args) = bracketed(s, k + 6) else { continue };
+            let a = top_level(&args[1..args.len() - 1]);
+            let [name, list] = a.as_slice() else { continue };
+            let names: Vec<&str> = name.split('"').skip(1).step_by(2).collect();
+            let list = list.trim_start_matches('&').trim();
+            let arr = if list.starts_with('[') {
+                Some(list.to_string())
+            } else if list.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                // (its binding: `let list[: T] = [` or `vec![`, the last before the call)
+                s[..k].rmatch_indices(&format!("let {list}")).chain(s[..k].rmatch_indices(&format!("let mut {list}"))).map(|x| x.0).max().and_then(|b| {
+                    let r = &s[b..k];
+                    let eq = r.find('=')?;
+                    let v = r[eq + 1..].trim_start().trim_start_matches('&').trim_start_matches("vec!");
+                    let at = b + eq + 1 + (r[eq + 1..].len() - v.len());
+                    (v.starts_with('[') && !r[..eq].contains(';') || v.starts_with('[')).then(|| bracketed(s, at).map(str::to_string)).flatten()
+                })
+            } else {
+                None
+            };
+            let Some(arr) = arr else { continue };
+            for n in names {
+                let iface = n.split(['(']).next().unwrap_or(n).rsplit([' ', ':']).next().unwrap_or(n);
+                if !ifaces.contains(iface) {
+                    continue;
+                }
+                for (sl, e) in top_level(&arr[1..arr.len() - 1]).iter().enumerate() {
+                    if let Some(inner) = e.strip_prefix('(').and_then(|x| x.strip_suffix(')')) {
+                        let parts = top_level(inner);
+                        if let Some(h) = parts.first() {
+                            check(p, iface, sl, h);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // (320 at 2026-11-16)
+    assert!(checked > 250, "only {checked} COM methods found");
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

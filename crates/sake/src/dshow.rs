@@ -418,10 +418,11 @@ fn enum_filters(c: &mut Ctx) -> u32 {
     static E: OnceLock<u32> = OnceLock::new();
     let v = *E.get_or_init(|| {
         fn qi(c: &mut Ctx) -> u32 {
-            let ok = r32(c.a(1)) == 0x56a8_6893 || r32(c.a(1)) == 0;
-            putp(c.a(2), if ok { c.a(0) } else { 0 });
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+            let ok = r32(c.a::<1>()) == 0x56a8_6893 || r32(c.a::<1>()) == 0;
+            c.out::<2>().put(if ok { c.a::<0>() } else { 0 });
             if ok {
-                add(c);
+                add(c.ctx());
             }
             if ok { 0 } else { Hr::NoInterface.code() }
         }
@@ -441,16 +442,17 @@ fn enum_filters(c: &mut Ctx) -> u32 {
         }
         /// Next(n, filters, fetched)
         fn next(c: &mut Ctx) -> u32 {
-            let (e, n) = (c.a(0), c.a(1));
+            let c = &mut c.args::<crate::api::outs::iface::IEnumFilters::Next>();
+            let (e, n) = (c.a::<0>(), c.a::<1>());
             let (f, at) = (r32(e + ps()), r32(e + 2 * ps()));
             let got = u32::from(n > 0 && f != 0 && at == 0);
             if got == 1 {
-                call(c, f, Unknown::AddRef, &[]);
-                putp(c.a(2), f);
+                call(c.ctx(), f, Unknown::AddRef, &[]);
+                c.out::<2>().put(f);
                 w32(e + 2 * ps(), 1);
             }
-            if c.a(3) != 0 {
-                put32(c.a(3), got);
+            if c.a::<3>() != 0 {
+                put32(c.a::<3>(), got);
             }
             if got == n { 0 } else { Hr::False.code() }
         }

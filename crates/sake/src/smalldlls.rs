@@ -454,14 +454,15 @@ fn release(c: &mut Ctx, o: u32) {
 }
 
 fn DM_QueryInterface(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     // IUnknown, IDirect3DDeviceManager9 {a0cade0f-06d5-4cf4-a1c7-f3cdd725aa75}
     if matches!(r32(iid), 0 | 0xa0ca_de0f) {
         with_mgr(this, |m| m.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     E_NOINTERFACE
 }
 fn DM_AddRef(c: &mut Ctx) -> u32 {
@@ -516,8 +517,9 @@ fn DM_ResetDevice(c: &mut Ctx) -> u32 {
     0
 }
 fn DM_OpenDeviceHandle(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirect3DDeviceManager9::OpenDeviceHandle>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let r = with_mgr(this, |m| {
@@ -533,11 +535,11 @@ fn DM_OpenDeviceHandle(c: &mut Ctx) -> u32 {
     });
     match r {
         Some(Ok(h)) => {
-            putp(out, h);
+            out.put(h);
             0
         }
         Some(Err(e)) => {
-            putp(out, 0);
+            out.put(0);
             e
         }
         None => E_POINTER,
@@ -575,7 +577,8 @@ fn DM_TestDevice(c: &mut Ctx) -> u32 {
 /// LockDevice(handle, ppDevice, fBlock): one handle holds the device at a time (another's lock
 /// fails with DXVA2_E_VIDEO_DEVICE_LOCKED; sake does not wait for it)
 fn DM_LockDevice(c: &mut Ctx) -> u32 {
-    let (this, h, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IDirect3DDeviceManager9::LockDevice>();
+    let (this, h, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     let r = with_mgr(this, |m| {
         if m.device == 0 {
             return Err(DXVA2_E_NOT_INITIALIZED);
@@ -596,18 +599,18 @@ fn DM_LockDevice(c: &mut Ctx) -> u32 {
         Ok(dev) => {
             let sb = with_mgr(this, |m| m.saved.iter().position(|s| s.0 == h).map(|i| m.saved.remove(i).1)).flatten();
             if let Some(sb) = sb {
-                com_call(c, sb, 5, &[]); // IDirect3DStateBlock9::Apply
-                release(c, sb);
+                com_call(c.ctx(), sb, 5, &[]); // IDirect3DStateBlock9::Apply
+                release(c.ctx(), sb);
             }
-            add_ref(c, dev);
-            if out != 0 {
-                putp(out, dev);
+            add_ref(c.ctx(), dev);
+            if !out.is_null() {
+                out.put(dev);
             }
             0
         }
         Err(e) => {
-            if out != 0 {
-                putp(out, 0);
+            if !out.is_null() {
+                out.put(0);
             }
             e
         }
@@ -658,7 +661,8 @@ fn com_call(c: &mut Ctx, o: u32, slot: u32, args: &[u32]) -> u32 {
 /// GetVideoService(handle, riid, ppService): the manager's video processor service (one per
 /// manager; it works on the manager's current device)
 fn DM_GetVideoService(c: &mut Ctx) -> u32 {
-    let (this, h, iid, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    let c = &mut c.args::<crate::api::outs::iface::IDirect3DDeviceManager9::GetVideoService>();
+    let (this, h, iid, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
     if out.is_null() {
         return E_POINTER;
     }
@@ -756,7 +760,8 @@ fn vs_ref(o: u32, d: i32) -> u32 {
     n
 }
 fn VS_QueryInterface(c: &mut Ctx) -> u32 {
-    service_qi(c.a(0), c.a(1), c.out(2))
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    service_qi(c.a::<0>(), c.a::<1>(), c.out::<2>())
 }
 fn VS_AddRef(c: &mut Ctx) -> u32 {
     vs_ref(c.a(0), 1)
@@ -782,18 +787,19 @@ fn VS_Release(c: &mut Ctx) -> u32 {
 /// CreateSurface(width, height, backbuffers, format, pool, usage, type, ppSurface, pShared):
 /// backbuffers + 1 offscreen plain surfaces of the device
 fn VS_CreateSurface(c: &mut Ctx) -> u32 {
-    let (o, w, h, back, fmt, pool, out, shared) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(8), c.a(9));
+    let c = &mut c.args::<crate::api::outs::iface::IDirectXVideoProcessorService::CreateSurface>();
+    let (o, w, h, back, fmt, pool, out, shared) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.out::<8>(), c.out::<9>());
     let dev = svc_device(o);
-    if out == 0 || dev == 0 || back > 64 {
+    if out.is_null() || dev == 0 || back > 64 {
         return E_INVALIDARG;
     }
     let create = rp(rp(dev) + 36 * ps()); // IDirect3DDevice9::CreateOffscreenPlainSurface
     for i in 0..=back {
-        let hr = c.call(create, &[dev, w, h, fmt, pool, out + ps() * i, shared]);
+        let hr = c.ctx().call(create, &crate::api::words![dev, w, h, fmt, pool, out.nth(i), shared]);
         if hr & 0x8000_0000 != 0 {
             for j in 0..i {
-                release(c, rp(out + ps() * j));
-                wp(out + ps() * j, 0);
+                release(c.ctx(), out.nth(j).get());
+                out.nth(j).put(0);
             }
             return hr;
         }
@@ -817,19 +823,20 @@ fn task_mem(words: &[u32]) -> u32 {
 }
 /// GetVideoProcessorDeviceGuids(desc, pCount, ppGuids)
 fn VS_GetDeviceGuids(c: &mut Ctx) -> u32 {
-    let (d, count, out) = (c.a(1), c.a(2), c.a(3));
-    if count == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectXVideoProcessorService::GetVideoProcessorDeviceGuids>();
+    let (d, count, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if count == 0 || out.is_null() {
         return E_POINTER;
     }
     put32(count, 0);
-    putp(out, 0);
+    out.put(0);
     if !SOFTWARE_INPUTS.contains(&desc_format(d)) {
         return E_FAIL;
     }
     let p = mem::heap_alloc(16, false);
     put_guid(p, &DXVA2_SOFTWARE_DEVICE);
     put32(count, 1);
-    putp(out, p);
+    out.put(p);
     0
 }
 fn is_software(g: u32) -> bool {
@@ -837,28 +844,30 @@ fn is_software(g: u32) -> bool {
 }
 /// GetVideoProcessorRenderTargets(device, desc, pCount, ppFormats)
 fn VS_GetRenderTargets(c: &mut Ctx) -> u32 {
-    let (g, d, count, out) = (c.a(1), c.a(2), c.a(3), c.a(4));
-    if count == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectXVideoProcessorService::GetVideoProcessorRenderTargets>();
+    let (g, d, count, out) = (c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
+    if count == 0 || out.is_null() {
         return E_POINTER;
     }
     if !is_software(g) || !SOFTWARE_INPUTS.contains(&desc_format(d)) {
         return E_FAIL;
     }
     put32(count, 2);
-    putp(out, task_mem(&[D3DFMT_X8R8G8B8, D3DFMT_A8R8G8B8]));
+    out.put(task_mem(&[D3DFMT_X8R8G8B8, D3DFMT_A8R8G8B8]));
     0
 }
 /// GetVideoProcessorSubStreamFormats(device, desc, rtFormat, pCount, ppFormats)
 fn VS_GetSubStreamFormats(c: &mut Ctx) -> u32 {
-    let (g, d, count, out) = (c.a(1), c.a(2), c.a(4), c.a(5));
-    if count == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectXVideoProcessorService::GetVideoProcessorSubStreamFormats>();
+    let (g, d, count, out) = (c.a::<1>(), c.a::<2>(), c.a::<4>(), c.out::<5>());
+    if count == 0 || out.is_null() {
         return E_POINTER;
     }
     if !is_software(g) || !SOFTWARE_INPUTS.contains(&desc_format(d)) {
         return E_FAIL;
     }
     put32(count, 2);
-    putp(out, task_mem(&[D3DFMT_A8R8G8B8, 0x5655_5941]));
+    out.put(task_mem(&[D3DFMT_A8R8G8B8, 0x5655_5941]));
     0
 }
 /// DXVA2_VideoProcessorCaps of the software device
@@ -891,11 +900,12 @@ fn vp_fields() -> (u32, u32, u32, u32, u32) {
 }
 /// CreateVideoProcessor(device, desc, rtFormat, maxSubStreams, ppProcessor)
 fn VS_CreateVideoProcessor(c: &mut Ctx) -> u32 {
-    let (o, g, d, rt, max, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));
-    if out == 0 || d == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectXVideoProcessorService::CreateVideoProcessor>();
+    let (o, g, d, rt, max, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.out::<5>());
+    if out.is_null() || d == 0 {
         return E_POINTER;
     }
-    putp(out, 0);
+    out.put(0);
     if !is_software(g) {
         return E_INVALIDARG;
     }
@@ -928,19 +938,20 @@ fn VS_CreateVideoProcessor(c: &mut Ctx) -> u32 {
     mem::write(p + desc, &mem::bytes(d, 36));
     w32(p + rtf, rt);
     w32(p + mx, max);
-    putp(out, p);
+    out.put(p);
     0
 }
 fn VP_QueryInterface(c: &mut Ctx) -> u32 {
-    let (o, iid, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (o, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     // IUnknown, IDirectXVideoProcessor {8c3a39f0-916e-4690-804f-4c8001355d25}
     let g = guid(iid);
     if g == [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46] || g == [0xf0, 0x39, 0x3a, 0x8c, 0x6e, 0x91, 0x90, 0x46, 0x80, 0x4f, 0x4c, 0x80, 0x01, 0x35, 0x5d, 0x25] {
         w32(o + ps(), r32(o + ps()) + 1);
-        putp(out, o);
+        out.put(o);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     E_NOINTERFACE
 }
 fn VP_AddRef(c: &mut Ctx) -> u32 {
@@ -960,13 +971,14 @@ fn VP_Release(c: &mut Ctx) -> u32 {
     n
 }
 fn VP_GetVideoProcessorService(c: &mut Ctx) -> u32 {
-    let (o, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectXVideoProcessor::GetVideoProcessorService>();
+    let (o, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let svc = rp(o + vp_fields().0);
     vs_ref(svc, 1);
-    putp(out, svc);
+    out.put(svc);
     0
 }
 /// GetCreationParameters(pDeviceGuid, pVideoDesc, pRenderTargetFormat, pMaxNumSubStreams)
@@ -1001,7 +1013,8 @@ fn VP_GetVideoProcessorCaps(c: &mut Ctx) -> u32 {
 /// sample's SrcRect of its surface stretched (linear) to its DstRect of the target, in order,
 /// by the device's StretchRect
 fn VP_VideoProcessBlt(c: &mut Ctx) -> u32 {
-    let (o, rt, params, samples, n) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let c = &mut c.args::<crate::api::outs::iface::IDirectXVideoProcessor::VideoProcessBlt>();
+    let (o, rt, params, samples, n) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>());
     if rt == 0 || params == 0 || (n != 0 && samples == 0) {
         return E_POINTER;
     }
@@ -1022,7 +1035,7 @@ fn VP_VideoProcessBlt(c: &mut Ctx) -> u32 {
         if surf == 0 {
             return E_INVALIDARG;
         }
-        let hr = c.call(stretch, &[dev, surf, s + rect_at, rt, s + rect_at + 16, 2]);
+        let hr = c.ctx().call(stretch, &[dev, surf, s + rect_at, rt, s + rect_at + 16, 2]);
         if hr & 0x8000_0000 != 0 {
             return hr;
         }
@@ -1195,14 +1208,15 @@ fn ed_entry(o: u32, i: u32) -> u32 {
     o + ps() + 12 + i * (16 + ps())
 }
 fn ED_QueryInterface(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     // IUnknown, IEnumDMO {2c3cd98a-2bfa-4a53-9c27-5249ba64ba0f}
     if matches!(r32(iid), 0 | 0x2c3c_d98a) {
-        ED_AddRef(c);
-        putp(out, this);
+        ED_AddRef(c.ctx());
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     E_NOINTERFACE
 }
 fn ED_AddRef(c: &mut Ctx) -> u32 {
@@ -1224,7 +1238,8 @@ fn ED_Release(c: &mut Ctx) -> u32 {
 }
 /// Next(cItems, pCLSID, Names, pcFetched): names are CoTaskMemAlloc'd copies
 fn ED_Next(c: &mut Ctx) -> u32 {
-    let (this, n, clsids, names, fetched) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    let c = &mut c.args::<crate::api::outs::iface::IEnumDMO::Next>();
+    let (this, n, clsids, names, fetched) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>(), c.a::<4>());
     if clsids == 0 {
         return E_POINTER;
     }
@@ -1236,14 +1251,14 @@ fn ED_Next(c: &mut Ctx) -> u32 {
     while got < n && pos + got < count {
         let e = ed_entry(this, pos + got);
         mem::write(clsids + 16 * got, &mem::array::<16>(e));
-        if names != 0 {
+        if !names.is_null() {
             let s = wstr(rp(e + 16));
             let p = mem::heap_alloc(2 * s.len() as u32 + 2, true);
             if p == 0 {
                 return E_OUTOFMEMORY;
             }
             mem::put_wstr(p, s.len() as u32 + 1, &s);
-            wp(names + ps() * got, p);
+            names.nth(got).put(p);
         }
         got += 1;
     }
@@ -1265,12 +1280,13 @@ fn ED_Reset(c: &mut Ctx) -> u32 {
     0
 }
 fn ED_Clone(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IEnumDMO::Clone>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return E_POINTER;
     }
     let items: Vec<([u8; 16], Vec<u16>)> = (0..r32(this + ps() + 8)).map(|i| (guid(ed_entry(this, i)), wstr(rp(ed_entry(this, i) + 16)))).collect();
-    putp(out, enum_dmo(&items, r32(this + ps() + 4) as usize));
+    out.put(enum_dmo(&items, r32(this + ps() + 4) as usize));
     0
 }
 

@@ -117,9 +117,12 @@ static SHARED: Mutex<u32> = Mutex::new(0);
 /// parameter is the last argument of every overload; IDWriteFactory4's and 8's take the
 /// baseline origin as a D2D1_POINT_2F, one argument on x64, two dwords on x86).
 fn TranslateColorGlyphRun(c: &mut Ctx) -> u32 {
-    let n = com::method_dwords(c.trap).unwrap_or(9);
-    let last = if crate::mem::x64() && n > 9 { n - 2 } else { n - 1 };
-    mem::putp(c.a(last), 0);
+    // (which overload: its x86 stack dwords, 10 for IDWriteFactory4's)
+    let out = match com::method_dwords(c.trap) {
+        Some(10) => c.args::<crate::api::outs::iface::IDWriteFactory7::TranslateColorGlyphRun_40>().out_arch::<8, 9>(),
+        _ => c.args::<crate::api::outs::iface::IDWriteFactory7::TranslateColorGlyphRun>().out::<8>(),
+    };
+    out.put(0);
     0x8898_500c
 }
 fn DWriteCreateFactory(c: &mut Ctx) -> u32 {
@@ -143,15 +146,16 @@ fn DWriteCreateFactory(c: &mut Ctx) -> u32 {
 }
 
 fn CreateTextFormat(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFactory7::CreateTextFormat>();
     // (this, family, collection, weight, style, stretch, size, locale, out)
-    let family = String::from_utf16_lossy(&wstr(c.a(1), None));
-    let fmt = Format { family, size: fl(c, 6), weight: c.a(3).cast_signed(), align: 0, para: 0, wrap: 0, spacing: None, char_spacing: (0.0, 0.0, 0.0) };
+    let family = String::from_utf16_lossy(&wstr(c.a::<1>(), None));
+    let fmt = Format { family, size: fl(c.ctx(), 6), weight: c.a::<3>().cast_signed(), align: 0, para: 0, wrap: 0, spacing: None, char_spacing: (0.0, 0.0, 0.0) };
     let o = com::object(com::iface!(IDWriteTextFormat3), &format_methods(), 8);
     formats(|m| m.insert(o, fmt));
     com::on_free(o, |o| {
         formats(|m| m.remove(&o));
     });
-    mem::putp(c.a(8), o);
+    c.out::<8>().put(o);
     0
 }
 
@@ -279,9 +283,9 @@ fn layout_methods() -> Vec<(com::Method, crate::api::Handler)> {
     v
 }
 
-fn new_layout(text: Vec<u16>, fmt: u32, w: f32, h: f32, out: u32) -> u32 {
+fn new_layout(text: Vec<u16>, fmt: u32, w: f32, h: f32, out: crate::api::Out) -> u32 {
     let Some(fmt) = format_of(fmt) else {
-        mem::putp(out, 0);
+        out.put(0);
         return 0x8007_0057;
     };
     let o = com::object(com::iface!(IDWriteTextLayout4), &layout_methods(), 8);
@@ -289,23 +293,25 @@ fn new_layout(text: Vec<u16>, fmt: u32, w: f32, h: f32, out: u32) -> u32 {
     com::on_free(o, |o| {
         layouts(|m| m.remove(&o));
     });
-    mem::putp(out, o);
+    out.put(o);
     0
 }
 
 fn CreateTextLayout(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFactory7::CreateTextLayout>();
     // (this, string, length, format, max width, max height, out)
-    if c.a(2) > MAX_COUNT {
+    if c.a::<2>() > MAX_COUNT {
         return E_INVALIDARG;
     }
-    new_layout(wstr(c.a(1), Some(c.a(2))), c.a(3), fl(c, 4), fl(c, 5), c.a(6))
+    new_layout(wstr(c.a::<1>(), Some(c.a::<2>())), c.a::<3>(), fl(c.ctx(), 4), fl(c.ctx(), 5), c.out::<6>())
 }
 fn CreateGdiCompatibleTextLayout(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFactory7::CreateGdiCompatibleTextLayout>();
     // (this, string, length, format, width, height, pixels per dip, transform, natural, out)
-    if c.a(2) > MAX_COUNT {
+    if c.a::<2>() > MAX_COUNT {
         return E_INVALIDARG;
     }
-    new_layout(wstr(c.a(1), Some(c.a(2))), c.a(3), fl(c, 4), fl(c, 5), c.a(9))
+    new_layout(wstr(c.a::<1>(), Some(c.a::<2>())), c.a::<3>(), fl(c.ctx(), 4), fl(c.ctx(), 5), c.out::<9>())
 }
 
 fn SetMaxWidth(c: &mut Ctx) -> u32 {
@@ -646,8 +652,8 @@ fn Draw(c: &mut Ctx) -> u32 {
 
 fn CreateRenderingParams(c: &mut Ctx) -> u32 {
     // (CreateRenderingParams(this, out), CreateMonitorRenderingParams(this, monitor, out))
-    let out = if is_monitor_call(c) { c.a(2) } else { c.a(1) };
-    mem::putp(out, com::object(com::iface!(IDWriteRenderingParams3), &[], 8));
+    let out = if is_monitor_call(c) { c.args::<crate::api::outs::iface::IDWriteFactory7::CreateMonitorRenderingParams>().out::<2>() } else { c.args::<crate::api::outs::iface::IDWriteFactory7::CreateRenderingParams>().out::<1>() };
+    out.put(com::object(com::iface!(IDWriteRenderingParams3), &[], 8));
     0
 }
 fn is_monitor_call(c: &Ctx) -> bool {
@@ -655,13 +661,18 @@ fn is_monitor_call(c: &Ctx) -> bool {
 }
 fn CreateCustomRenderingParams(c: &mut Ctx) -> u32 {
     // (this, gamma, contrast, [grayscale contrast,] cleartype level, geometry, mode, [grid fit,] out):
-    // the out pointer is the last argument
-    let n = com::method_dwords(c.trap).unwrap_or(8);
-    mem::putp(c.a(n - 1), com::object(com::iface!(IDWriteRenderingParams3), &[], 8));
+    // the out pointer is the last argument, the overload told by its x86 stack dwords
+    let out = match com::method_dwords(c.trap) {
+        Some(8) => c.args::<crate::api::outs::iface::IDWriteFactory7::CreateCustomRenderingParams_25>().out::<7>(),
+        Some(9) => c.args::<crate::api::outs::iface::IDWriteFactory7::CreateCustomRenderingParams_29>().out::<8>(),
+        _ => c.args::<crate::api::outs::iface::IDWriteFactory7::CreateCustomRenderingParams>().out::<6>(),
+    };
+    out.put(com::object(com::iface!(IDWriteRenderingParams3), &[], 8));
     0
 }
 fn GetSystemFontCollection(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(1), collection());
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFactory7::GetSystemFontCollection>();
+    c.out::<1>().put(collection());
     0
 }
 
@@ -746,12 +757,13 @@ fn GetFontFamilyCount(_: &mut Ctx) -> u32 {
     lo32(crate::gdi::sys_faces())
 }
 fn GetFontFamily(c: &mut Ctx) -> u32 {
-    let (i, out) = (c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontCollection::GetFontFamily>();
+    let (i, out) = (c.a::<1>(), c.out::<2>());
     if to_usize(i) >= crate::gdi::sys_faces() {
-        mem::putp(out, 0);
+        out.put(0);
         return E_INVALIDARG;
     }
-    mem::putp(out, family(i));
+    out.put(family(i));
     0
 }
 fn FindFamilyName(c: &mut Ctx) -> u32 {
@@ -762,24 +774,28 @@ fn FindFamilyName(c: &mut Ctx) -> u32 {
     0
 }
 fn GetFontFromFontFace(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(2), font(value(c.a(1))));
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontCollection::GetFontFromFontFace>();
+    c.out::<2>().put(font(value(c.a::<1>())));
     0
 }
 fn GetFontCollection(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(1), collection());
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontFamily::GetFontCollection>();
+    c.out::<1>().put(collection());
     0
 }
 fn GetFont(c: &mut Ctx) -> u32 {
-    let (i, out) = (c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (i, out) = (c.a::<1>(), c.out::<2>());
     if i != 0 {
-        mem::putp(out, 0);
+        out.put(0);
         return E_INVALIDARG;
     }
-    mem::putp(out, font(value(c.a(0))));
+    out.put(font(value(c.a::<0>())));
     0
 }
 fn GetFamilyNames(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(1), strings(family_names(to_usize(value(c.a(0))))));
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontFamily::GetFamilyNames>();
+    c.out::<1>().put(strings(family_names(to_usize(value(c.a::<0>())))));
     0
 }
 /// (locale, name): the English name, then the Japanese one when the face has one
@@ -789,27 +805,32 @@ fn family_names(i: usize) -> Vec<(String, String)> {
     vec![("en-us".to_string(), n[n.len() - 1].to_string()), ("ja-jp".to_string(), n[0].to_string())]
 }
 fn GetFirstMatchingFont(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontFamily::GetFirstMatchingFont>();
     // (this, weight, stretch, style, out)
-    mem::putp(c.a(4), font(value(c.a(0))));
+    c.out::<4>().put(font(value(c.a::<0>())));
     0
 }
 fn GetMatchingFonts(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontFamily::GetMatchingFonts>();
     let m = com::impls!(IDWriteFontList { GetFontCollection: GetFontCollection, GetFontCount: one, GetFont: GetFont });
-    mem::putp(c.a(4), with_value(com::iface!(IDWriteFontList), &m, value(c.a(0))));
+    c.out::<4>().put(with_value(com::iface!(IDWriteFontList), &m, value(c.a::<0>())));
     0
 }
 fn FontGetFontFamily(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(1), family(value(c.a(0))));
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFont::GetFontFamily>();
+    c.out::<1>().put(family(value(c.a::<0>())));
     0
 }
 fn GetFaceNames(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(1), strings(vec![("en-us".to_string(), "Regular".to_string()), ("ja-jp".to_string(), "標準".to_string())]));
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFont::GetFaceNames>();
+    c.out::<1>().put(strings(vec![("en-us".to_string(), "Regular".to_string()), ("ja-jp".to_string(), "標準".to_string())]));
     0
 }
 fn GetInformationalStrings(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFont::GetInformationalStrings>();
     // (this, id, out strings, out exists)
-    mem::putp(c.a(2), 0);
-    w32(c.a(3), 0);
+    c.out::<2>().put(0);
+    w32(c.a::<3>(), 0);
     0
 }
 fn HasCharacter(c: &mut Ctx) -> u32 {
@@ -818,7 +839,8 @@ fn HasCharacter(c: &mut Ctx) -> u32 {
     0
 }
 fn CreateFontFace(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(1), face(value(c.a(0))));
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFont::CreateFontFace>();
+    c.out::<1>().put(face(value(c.a::<0>())));
     0
 }
 /// DWRITE_FONT_METRICS in design units, from the face's tables.
@@ -875,9 +897,10 @@ fn FaceGetIndex(c: &mut Ctx) -> u32 {
     crate::gdi::sys_face_file(to_usize(value(c.a(0)))).1
 }
 fn GetFiles(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontFace::GetFiles>();
     // (this, in/out count, files)
-    let (i, n, out) = (value(c.a(0)), c.a(1), c.a(2));
-    if out == 0 {
+    let (i, n, out) = (value(c.a::<0>()), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         w32(n, 1);
         return 0;
     }
@@ -892,18 +915,20 @@ fn GetFiles(c: &mut Ctx) -> u32 {
     let m = com::impls!(IDWriteFontFile { GetReferenceKey: GetReferenceKey, GetLoader: GetLoader, Analyze: Analyze });
     let f = with_value(com::iface!(IDWriteFontFile), &m, i);
     w32(f + mem::ps() + 4, key);
-    mem::putp(out, f);
+    out.put(f);
     w32(n, 1);
     0
 }
 fn GetReferenceKey(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontFile::GetReferenceKey>();
     // (this, out key, out size): the key is the file's path
-    let key = mem::r32(c.a(0) + mem::ps() + 4);
-    mem::putp(c.a(1), key);
-    w32(c.a(2), 2 * (lo32(wstr(key, None).len()) + 1));
+    let key = mem::r32(c.a::<0>() + mem::ps() + 4);
+    c.out::<1>().put(key);
+    w32(c.a::<2>(), 2 * (lo32(wstr(key, None).len()) + 1));
     0
 }
 fn GetLoader(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontFile::GetLoader>();
     static LOADER: Mutex<u32> = Mutex::new(0);
     let mut g = LOADER.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     if *g == 0 {
@@ -912,7 +937,7 @@ fn GetLoader(c: &mut Ctx) -> u32 {
         com::keep(*g);
     }
     com::add_ref_obj(*g);
-    mem::putp(c.a(1), *g);
+    c.out::<1>().put(*g);
     0
 }
 fn Analyze(c: &mut Ctx) -> u32 {
@@ -1022,12 +1047,14 @@ fn GetString(c: &mut Ctx) -> u32 {
 // ---- font fallback ----
 
 fn GetSystemFontFallback(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(1), com::object(com::iface!(IDWriteFontFallback), &com::impls!(IDWriteFontFallback { MapCharacters: MapCharacters }), 8));
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFactory7::GetSystemFontFallback>();
+    c.out::<1>().put(com::object(com::iface!(IDWriteFontFallback), &com::impls!(IDWriteFontFallback { MapCharacters: MapCharacters }), 8));
     0
 }
 fn CreateNumberSubstitution(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFactory7::CreateNumberSubstitution>();
     // (this, method, locale, ignore user override, out)
-    mem::putp(c.a(4), com::object(com::iface!(IDWriteNumberSubstitution), &[], 8));
+    c.out::<4>().put(com::object(com::iface!(IDWriteNumberSubstitution), &[], 8));
     0
 }
 
@@ -1061,17 +1088,18 @@ fn map_chars(text: &[u16], requested: Option<usize>, has: &dyn Fn(usize, u32) ->
 }
 
 fn MapCharacters(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDWriteFontFallback::MapCharacters>();
     // (this, source, position, length, collection, family, weight, style, stretch,
     //  out mapped length, out font, out scale)
-    let (src, pos, len) = (c.a(1), c.a(2), c.a(3));
-    let family = String::from_utf16_lossy(&wstr(c.a(5), None));
-    let (out_len, out_font, out_scale) = (c.a(9), c.a(10), c.a(11));
+    let (src, pos, len) = (c.a::<1>(), c.a::<2>(), c.a::<3>());
+    let family = String::from_utf16_lossy(&wstr(c.a::<5>(), None));
+    let (out_len, out_font, out_scale) = (c.a::<9>(), c.out::<10>(), c.a::<11>());
     // the text, from the source's GetTextAtPosition(position, out text, out length)
     let get_text = mem::rp(mem::rp(src) + 3 * mem::ps());
     let tmp = mem::heap_alloc(16, true);
     let mut text = Vec::new();
     while lo32(text.len()) < len {
-        c.call(get_text, &[src, pos + lo32(text.len()), tmp, tmp + 8]);
+        c.ctx().call(get_text, &[src, pos + lo32(text.len()), tmp, tmp + 8]);
         let (p, n) = (mem::rp(tmp), mem::r32(tmp + 8));
         if p == 0 || n == 0 {
             break;
@@ -1081,7 +1109,7 @@ fn MapCharacters(c: &mut Ctx) -> u32 {
     mem::heap_free(tmp);
     let (n, f) = map_chars(&text, find_family(&family), &|i, ch| crate::gdi::sys_face_has(i, ch));
     w32(out_len, if text.is_empty() { len } else { lo32(n) });
-    mem::putp(out_font, f.map_or(0, |i| font(lo32(i))));
+    out_font.put(f.map_or(0, |i| font(lo32(i))));
     w32(out_scale, f.map_or(0.0f32, |_| 1.0).to_bits());
     0
 }
@@ -1440,7 +1468,7 @@ mod vtable_tests {
         }
         let fmt = made(CreateTextFormat, &[0, name, 0, 400, 0, 5, 12f32.to_bits(), name]);
         let out = mem::heap_alloc(8, true);
-        assert_eq!(new_layout(vec![0x41], fmt, 100.0, 100.0, out), 0);
+        assert_eq!(new_layout(vec![0x41], fmt, 100.0, 100.0, crate::api::Out::at(out)), 0);
         made(CreateRenderingParams, &[0]);
         collection();
         let fam = family(0);

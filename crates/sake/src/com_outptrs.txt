@@ -541,6 +541,7 @@ IWMReaderAllocatorEx # 3,1,1,10,10
 IWMReaderCallback # 3,1,1,6,9
 IWMReaderCallbackAdvanced # 3,1,1,9,4,5,4,5,5
 IWMStreamConfig # 3,1,1,2,2,2,3,2,3,2,2,2,2,2
+IWMStreamPrioritization # 3,1,1,3,3
 IWMSyncReader # 3,1,1,2,1,5,6,8,4,3,3,3,6,6,2,3,3,3,4,3,3,3,3,2
 IWMSyncReader2 # 3,1,1,2,1,5,6,8,4,3,3,3,6,6,2,3,3,3,4,3,3,3,3,2,4,7,3,3,3,3
 IWbemClassObject # 3,1,1,2,6,5,2,5,2,6,1,3,2,3,3,3,3,3,2,5,5,2,2,5,1,3,3
@@ -557,2857 +558,2858 @@ IXAudio2MasteringVoice # 2,2,2,3,3,3,5,4,3,2,4,3,3,2,4,3,6,5,1,2
 IXAudio2SourceVoice # 2,2,2,3,3,3,5,4,3,2,4,3,3,2,4,3,6,5,1,3,3,3,1,1,2,3,3,2,2
 IXAudio2Voice # 2,2,2,3,3,3,5,4,3,2,4,3,3,2,4,3,6,5,1
 IXAudio2VoiceCallback # 2,1,1,2,2,2,3
-IAMCertifiedOutputProtection 0 2 2
-IAMCertifiedOutputProtection 3 2 2
-IAMFilterMiscFlags 0 2 2
-IAMMultiMediaStream 0 2 2
-IAMMultiMediaStream 4 2 2
-IAMMultiMediaStream 5 2 2
-IAMMultiMediaStream 11 1 1
-IAMMultiMediaStream 13 1 1
-IAMMultiMediaStream 14 1 1
-IAMMultiMediaStream 15 4 4
-IAMStreamSelect 0 2 2
-IAMStreamSelect 4 2,6,7,8 2,6,7,8
-IAMVideoAccelerator 0 2 2
-IAMVideoAccelerator 10 4 4
-IActivationFactory 0 2 2
-IActivationFactory 3 2 2
-IActivationFactory 4 1 1
-IActivationFactory 6 1 1
-IActiveScript 0 2 2
-IActiveScript 4 2 2
-IActiveScript 10 2 2
-IActiveScript 15 1 1
-IActiveScriptError 0 2 2
-IActiveScriptError 5 1 1
-IActiveScriptParse32 0 2 2
-IActiveScriptParse32 4 10 10
-IActiveScriptProperty 0 2 2
-IAsyncReader 0 2 2
-IAsyncReader 3 3 3
-IAsyncReader 5 2,3 2,3
-IAudioClient 0 2 2
-IAudioClient 7 3 3
-IAudioClient 8 1 1
-IAudioClient 14 2 2
-IAudioClock 0 2 2
-IAudioClockAdjustment 0 2 2
-IAudioEndpointVolume 0 2 2
-IAudioMediaStream 0 2 2
-IAudioMediaStream 3 1 1
-IAudioMediaStream 6 2 2
-IAudioMediaStream 7 3 3
-IAudioMediaStream 11 3 3
-IAudioRenderClient 0 2 2
-IAudioRenderClient 3 2 2
-IAudioSessionControl 0 2 2
-IAudioSessionControl 4 1 1
-IAudioSessionControl 6 1 1
-IAudioSessionControl2 0 2 2
-IAudioSessionControl2 4 1 1
-IAudioSessionControl2 6 1 1
-IAudioSessionControl2 12 1 1
-IAudioSessionControl2 13 1 1
-IAudioSessionEnumerator 0 2 2
-IAudioSessionEnumerator 4 2 2
-IAudioSessionEvents 0 2 2
-IAudioSessionManager 0 2 2
-IAudioSessionManager 3 3 3
-IAudioSessionManager 4 3 3
-IAudioSessionManager2 0 2 2
-IAudioSessionManager2 3 3 3
-IAudioSessionManager2 4 3 3
-IAudioSessionManager2 5 1 1
-IAudioStreamVolume 0 2 2
-IAudioVolumeDuckNotification 0 2 2
-IBaseFilter 0 2 2
-IBaseFilter 9 1 1
-IBaseFilter 10 1 1
-IBaseFilter 11 2 2
-IBaseFilter 14 1 1
-IBasicAudio 0 2 2
-IBasicAudio 4 3 3
-IBasicVideo 0 2 2
-IBasicVideo 4 3 3
-IBasicVideo2 0 2 2
-IBasicVideo2 4 3 3
-IChannelAudioVolume 0 2 2
-IClassFactory 0 2 2
-IClassFactory 3 3 3
-IClientSecurity 0 2 2
-IClientSecurity 3 4,7 4,7
-IClientSecurity 5 2 2
-IConnectionPoint 0 2 2
-IConnectionPoint 4 1 1
-IConnectionPoint 7 1 1
-IConnectionPointContainer 0 2 2
-IConnectionPointContainer 3 1 1
-IConnectionPointContainer 4 2 2
-ID2D1AnalysisTransform 0 2 2
-ID2D1Bitmap 0 2 2
-ID2D1Bitmap 3 1 1
-ID2D1Bitmap1 0 2 2
-ID2D1Bitmap1 3 1 1
-ID2D1Bitmap1 11 1 1
-ID2D1Bitmap1 13 1 1
-ID2D1BitmapBrush 0 2 2
-ID2D1BitmapBrush 3 1 1
-ID2D1BitmapBrush 15 1 1
-ID2D1BitmapBrush1 0 2 2
-ID2D1BitmapBrush1 3 1 1
-ID2D1BitmapBrush1 15 1 1
-ID2D1BitmapRenderTarget 0 2 2
-ID2D1BitmapRenderTarget 3 1 1
-ID2D1BitmapRenderTarget 4 5 6
-ID2D1BitmapRenderTarget 5 3 3
-ID2D1BitmapRenderTarget 6 4 4
-ID2D1BitmapRenderTarget 7 4 4
-ID2D1BitmapRenderTarget 8 3 3
-ID2D1BitmapRenderTarget 9 5 5
-ID2D1BitmapRenderTarget 10 4 4
-ID2D1BitmapRenderTarget 11 4 4
-ID2D1BitmapRenderTarget 12 5 5
-ID2D1BitmapRenderTarget 13 2 2
-ID2D1BitmapRenderTarget 14 1 1
-ID2D1BitmapRenderTarget 37 1 1
-ID2D1BitmapRenderTarget 57 1 1
-ID2D1BlendTransform 0 2 2
-ID2D1BorderTransform 0 2 2
-ID2D1BoundsAdjustmentTransform 0 2 2
-ID2D1Brush 0 2 2
-ID2D1Brush 3 1 1
-ID2D1ColorContext 0 2 2
-ID2D1ColorContext 3 1 1
-ID2D1ColorContext1 0 2 2
-ID2D1ColorContext1 3 1 1
-ID2D1CommandList 0 2 2
-ID2D1CommandList 3 1 1
-ID2D1CommandSink 0 2 2
-ID2D1CommandSink1 0 2 2
-ID2D1CommandSink2 0 2 2
-ID2D1CommandSink3 0 2 2
-ID2D1CommandSink4 0 2 2
-ID2D1CommandSink5 0 2 2
-ID2D1ComputeInfo 0 2 2
-ID2D1ComputeTransform 0 2 2
-ID2D1ConcreteTransform 0 2 2
-ID2D1DCRenderTarget 0 2 2
-ID2D1DCRenderTarget 3 1 1
-ID2D1DCRenderTarget 4 5 6
-ID2D1DCRenderTarget 5 3 3
-ID2D1DCRenderTarget 6 4 4
-ID2D1DCRenderTarget 7 4 4
-ID2D1DCRenderTarget 8 3 3
-ID2D1DCRenderTarget 9 5 5
-ID2D1DCRenderTarget 10 4 4
-ID2D1DCRenderTarget 11 4 4
-ID2D1DCRenderTarget 12 5 5
-ID2D1DCRenderTarget 13 2 2
-ID2D1DCRenderTarget 14 1 1
-ID2D1DCRenderTarget 37 1 1
-ID2D1Device 0 2 2
-ID2D1Device 3 1 1
-ID2D1Device 4 2 2
-ID2D1Device 5 4 4
-ID2D1Device1 0 2 2
-ID2D1Device1 3 1 1
-ID2D1Device1 4 2 2
-ID2D1Device1 5 4 4
-ID2D1Device1 11 2 2
-ID2D1Device2 0 2 2
-ID2D1Device2 3 1 1
-ID2D1Device2 4 2 2
-ID2D1Device2 5 4 4
-ID2D1Device2 11 2 2
-ID2D1Device2 12 2 2
-ID2D1Device2 14 1 1
-ID2D1Device3 0 2 2
-ID2D1Device3 3 1 1
-ID2D1Device3 4 2 2
-ID2D1Device3 5 4 4
-ID2D1Device3 11 2 2
-ID2D1Device3 12 2 2
-ID2D1Device3 14 1 1
-ID2D1Device3 15 2 2
-ID2D1Device4 0 2 2
-ID2D1Device4 3 1 1
-ID2D1Device4 4 2 2
-ID2D1Device4 5 4 4
-ID2D1Device4 11 2 2
-ID2D1Device4 12 2 2
-ID2D1Device4 14 1 1
-ID2D1Device4 15 2 2
-ID2D1Device4 16 2 2
-ID2D1Device5 0 2 2
-ID2D1Device5 3 1 1
-ID2D1Device5 4 2 2
-ID2D1Device5 5 4 4
-ID2D1Device5 11 2 2
-ID2D1Device5 12 2 2
-ID2D1Device5 14 1 1
-ID2D1Device5 15 2 2
-ID2D1Device5 16 2 2
-ID2D1Device5 19 2 2
-ID2D1Device6 0 2 2
-ID2D1Device6 3 1 1
-ID2D1Device6 4 2 2
-ID2D1Device6 5 4 4
-ID2D1Device6 11 2 2
-ID2D1Device6 12 2 2
-ID2D1Device6 14 1 1
-ID2D1Device6 15 2 2
-ID2D1Device6 16 2 2
-ID2D1Device6 19 2 2
-ID2D1Device6 20 2 2
-ID2D1Device7 0 2 2
-ID2D1Device7 3 1 1
-ID2D1Device7 4 2 2
-ID2D1Device7 5 4 4
-ID2D1Device7 11 2 2
-ID2D1Device7 12 2 2
-ID2D1Device7 14 1 1
-ID2D1Device7 15 2 2
-ID2D1Device7 16 2 2
-ID2D1Device7 19 2 2
-ID2D1Device7 20 2 2
-ID2D1Device7 21 2 2
-ID2D1DeviceContext 0 2 2
-ID2D1DeviceContext 3 1 1
-ID2D1DeviceContext 4 5 6
-ID2D1DeviceContext 5 3 3
-ID2D1DeviceContext 6 4 4
-ID2D1DeviceContext 7 4 4
-ID2D1DeviceContext 8 3 3
-ID2D1DeviceContext 9 5 5
-ID2D1DeviceContext 10 4 4
-ID2D1DeviceContext 11 4 4
-ID2D1DeviceContext 12 5 5
-ID2D1DeviceContext 13 2 2
-ID2D1DeviceContext 14 1 1
-ID2D1DeviceContext 37 1 1
-ID2D1DeviceContext 57 5 6
-ID2D1DeviceContext 58 3 3
-ID2D1DeviceContext 59 4 4
-ID2D1DeviceContext 60 2 2
-ID2D1DeviceContext 61 2 2
-ID2D1DeviceContext 62 3 3
-ID2D1DeviceContext 63 2 2
-ID2D1DeviceContext 64 8 8
-ID2D1DeviceContext 65 4 4
-ID2D1DeviceContext 66 4 4
-ID2D1DeviceContext 67 1 1
-ID2D1DeviceContext 73 1 1
-ID2D1DeviceContext 75 1 1
-ID2D1DeviceContext1 0 2 2
-ID2D1DeviceContext1 3 1 1
-ID2D1DeviceContext1 4 5 6
-ID2D1DeviceContext1 5 3 3
-ID2D1DeviceContext1 6 4 4
-ID2D1DeviceContext1 7 4 4
-ID2D1DeviceContext1 8 3 3
-ID2D1DeviceContext1 9 5 5
-ID2D1DeviceContext1 10 4 4
-ID2D1DeviceContext1 11 4 4
-ID2D1DeviceContext1 12 5 5
-ID2D1DeviceContext1 13 2 2
-ID2D1DeviceContext1 14 1 1
-ID2D1DeviceContext1 37 1 1
-ID2D1DeviceContext1 57 5 6
-ID2D1DeviceContext1 58 3 3
-ID2D1DeviceContext1 59 4 4
-ID2D1DeviceContext1 60 2 2
-ID2D1DeviceContext1 61 2 2
-ID2D1DeviceContext1 62 3 3
-ID2D1DeviceContext1 63 2 2
-ID2D1DeviceContext1 64 8 8
-ID2D1DeviceContext1 65 4 4
-ID2D1DeviceContext1 66 4 4
-ID2D1DeviceContext1 67 1 1
-ID2D1DeviceContext1 73 1 1
-ID2D1DeviceContext1 75 1 1
-ID2D1DeviceContext1 92 3 3
-ID2D1DeviceContext1 93 5 5
-ID2D1DeviceContext2 0 2 2
-ID2D1DeviceContext2 3 1 1
-ID2D1DeviceContext2 4 5 6
-ID2D1DeviceContext2 5 3 3
-ID2D1DeviceContext2 6 4 4
-ID2D1DeviceContext2 7 4 4
-ID2D1DeviceContext2 8 3 3
-ID2D1DeviceContext2 9 5 5
-ID2D1DeviceContext2 10 4 4
-ID2D1DeviceContext2 11 4 4
-ID2D1DeviceContext2 12 5 5
-ID2D1DeviceContext2 13 2 2
-ID2D1DeviceContext2 14 1 1
-ID2D1DeviceContext2 37 1 1
-ID2D1DeviceContext2 57 5 6
-ID2D1DeviceContext2 58 3 3
-ID2D1DeviceContext2 59 4 4
-ID2D1DeviceContext2 60 2 2
-ID2D1DeviceContext2 61 2 2
-ID2D1DeviceContext2 62 3 3
-ID2D1DeviceContext2 63 2 2
-ID2D1DeviceContext2 64 8 8
-ID2D1DeviceContext2 65 4 4
-ID2D1DeviceContext2 66 4 4
-ID2D1DeviceContext2 67 1 1
-ID2D1DeviceContext2 73 1 1
-ID2D1DeviceContext2 75 1 1
-ID2D1DeviceContext2 92 3 3
-ID2D1DeviceContext2 93 5 5
-ID2D1DeviceContext2 95 2 2
-ID2D1DeviceContext2 96 2 2
-ID2D1DeviceContext2 97 3 3
-ID2D1DeviceContext2 98 4 4
-ID2D1DeviceContext2 99 6 6
-ID2D1DeviceContext2 100 5 5
-ID2D1DeviceContext2 105 3 3
-ID2D1DeviceContext3 0 2 2
-ID2D1DeviceContext3 3 1 1
-ID2D1DeviceContext3 4 5 6
-ID2D1DeviceContext3 5 3 3
-ID2D1DeviceContext3 6 4 4
-ID2D1DeviceContext3 7 4 4
-ID2D1DeviceContext3 8 3 3
-ID2D1DeviceContext3 9 5 5
-ID2D1DeviceContext3 10 4 4
-ID2D1DeviceContext3 11 4 4
-ID2D1DeviceContext3 12 5 5
-ID2D1DeviceContext3 13 2 2
-ID2D1DeviceContext3 14 1 1
-ID2D1DeviceContext3 37 1 1
-ID2D1DeviceContext3 57 5 6
-ID2D1DeviceContext3 58 3 3
-ID2D1DeviceContext3 59 4 4
-ID2D1DeviceContext3 60 2 2
-ID2D1DeviceContext3 61 2 2
-ID2D1DeviceContext3 62 3 3
-ID2D1DeviceContext3 63 2 2
-ID2D1DeviceContext3 64 8 8
-ID2D1DeviceContext3 65 4 4
-ID2D1DeviceContext3 66 4 4
-ID2D1DeviceContext3 67 1 1
-ID2D1DeviceContext3 73 1 1
-ID2D1DeviceContext3 75 1 1
-ID2D1DeviceContext3 92 3 3
-ID2D1DeviceContext3 93 5 5
-ID2D1DeviceContext3 95 2 2
-ID2D1DeviceContext3 96 2 2
-ID2D1DeviceContext3 97 3 3
-ID2D1DeviceContext3 98 4 4
-ID2D1DeviceContext3 99 6 6
-ID2D1DeviceContext3 100 5 5
-ID2D1DeviceContext3 105 3 3
-ID2D1DeviceContext3 106 1 1
-ID2D1DeviceContext4 0 2 2
-ID2D1DeviceContext4 3 1 1
-ID2D1DeviceContext4 4 5 6
-ID2D1DeviceContext4 5 3 3
-ID2D1DeviceContext4 6 4 4
-ID2D1DeviceContext4 7 4 4
-ID2D1DeviceContext4 8 3 3
-ID2D1DeviceContext4 9 5 5
-ID2D1DeviceContext4 10 4 4
-ID2D1DeviceContext4 11 4 4
-ID2D1DeviceContext4 12 5 5
-ID2D1DeviceContext4 13 2 2
-ID2D1DeviceContext4 14 1 1
-ID2D1DeviceContext4 37 1 1
-ID2D1DeviceContext4 57 5 6
-ID2D1DeviceContext4 58 3 3
-ID2D1DeviceContext4 59 4 4
-ID2D1DeviceContext4 60 2 2
-ID2D1DeviceContext4 61 2 2
-ID2D1DeviceContext4 62 3 3
-ID2D1DeviceContext4 63 2 2
-ID2D1DeviceContext4 64 8 8
-ID2D1DeviceContext4 65 4 4
-ID2D1DeviceContext4 66 4 4
-ID2D1DeviceContext4 67 1 1
-ID2D1DeviceContext4 73 1 1
-ID2D1DeviceContext4 75 1 1
-ID2D1DeviceContext4 92 3 3
-ID2D1DeviceContext4 93 5 5
-ID2D1DeviceContext4 95 2 2
-ID2D1DeviceContext4 96 2 2
-ID2D1DeviceContext4 97 3 3
-ID2D1DeviceContext4 98 4 4
-ID2D1DeviceContext4 99 6 6
-ID2D1DeviceContext4 100 5 5
-ID2D1DeviceContext4 105 3 3
-ID2D1DeviceContext4 106 1 1
-ID2D1DeviceContext4 108 1 1
-ID2D1DeviceContext4 113 11 12
-ID2D1DeviceContext4 114 11 12
-ID2D1DeviceContext5 0 2 2
-ID2D1DeviceContext5 3 1 1
-ID2D1DeviceContext5 4 5 6
-ID2D1DeviceContext5 5 3 3
-ID2D1DeviceContext5 6 4 4
-ID2D1DeviceContext5 7 4 4
-ID2D1DeviceContext5 8 3 3
-ID2D1DeviceContext5 9 5 5
-ID2D1DeviceContext5 10 4 4
-ID2D1DeviceContext5 11 4 4
-ID2D1DeviceContext5 12 5 5
-ID2D1DeviceContext5 13 2 2
-ID2D1DeviceContext5 14 1 1
-ID2D1DeviceContext5 37 1 1
-ID2D1DeviceContext5 57 5 6
-ID2D1DeviceContext5 58 3 3
-ID2D1DeviceContext5 59 4 4
-ID2D1DeviceContext5 60 2 2
-ID2D1DeviceContext5 61 2 2
-ID2D1DeviceContext5 62 3 3
-ID2D1DeviceContext5 63 2 2
-ID2D1DeviceContext5 64 8 8
-ID2D1DeviceContext5 65 4 4
-ID2D1DeviceContext5 66 4 4
-ID2D1DeviceContext5 67 1 1
-ID2D1DeviceContext5 73 1 1
-ID2D1DeviceContext5 75 1 1
-ID2D1DeviceContext5 92 3 3
-ID2D1DeviceContext5 93 5 5
-ID2D1DeviceContext5 95 2 2
-ID2D1DeviceContext5 96 2 2
-ID2D1DeviceContext5 97 3 3
-ID2D1DeviceContext5 98 4 4
-ID2D1DeviceContext5 99 6 6
-ID2D1DeviceContext5 100 5 5
-ID2D1DeviceContext5 105 3 3
-ID2D1DeviceContext5 106 1 1
-ID2D1DeviceContext5 108 1 1
-ID2D1DeviceContext5 113 11 12
-ID2D1DeviceContext5 114 11 12
-ID2D1DeviceContext5 115 3 4
-ID2D1DeviceContext5 117 2 2
-ID2D1DeviceContext5 118 2 2
-ID2D1DeviceContext6 0 2 2
-ID2D1DeviceContext6 3 1 1
-ID2D1DeviceContext6 4 5 6
-ID2D1DeviceContext6 5 3 3
-ID2D1DeviceContext6 6 4 4
-ID2D1DeviceContext6 7 4 4
-ID2D1DeviceContext6 8 3 3
-ID2D1DeviceContext6 9 5 5
-ID2D1DeviceContext6 10 4 4
-ID2D1DeviceContext6 11 4 4
-ID2D1DeviceContext6 12 5 5
-ID2D1DeviceContext6 13 2 2
-ID2D1DeviceContext6 14 1 1
-ID2D1DeviceContext6 37 1 1
-ID2D1DeviceContext6 57 5 6
-ID2D1DeviceContext6 58 3 3
-ID2D1DeviceContext6 59 4 4
-ID2D1DeviceContext6 60 2 2
-ID2D1DeviceContext6 61 2 2
-ID2D1DeviceContext6 62 3 3
-ID2D1DeviceContext6 63 2 2
-ID2D1DeviceContext6 64 8 8
-ID2D1DeviceContext6 65 4 4
-ID2D1DeviceContext6 66 4 4
-ID2D1DeviceContext6 67 1 1
-ID2D1DeviceContext6 73 1 1
-ID2D1DeviceContext6 75 1 1
-ID2D1DeviceContext6 92 3 3
-ID2D1DeviceContext6 93 5 5
-ID2D1DeviceContext6 95 2 2
-ID2D1DeviceContext6 96 2 2
-ID2D1DeviceContext6 97 3 3
-ID2D1DeviceContext6 98 4 4
-ID2D1DeviceContext6 99 6 6
-ID2D1DeviceContext6 100 5 5
-ID2D1DeviceContext6 105 3 3
-ID2D1DeviceContext6 106 1 1
-ID2D1DeviceContext6 108 1 1
-ID2D1DeviceContext6 113 11 12
-ID2D1DeviceContext6 114 11 12
-ID2D1DeviceContext6 115 3 4
-ID2D1DeviceContext6 117 2 2
-ID2D1DeviceContext6 118 2 2
-ID2D1DeviceContext7 0 2 2
-ID2D1DeviceContext7 3 1 1
-ID2D1DeviceContext7 4 5 6
-ID2D1DeviceContext7 5 3 3
-ID2D1DeviceContext7 6 4 4
-ID2D1DeviceContext7 7 4 4
-ID2D1DeviceContext7 8 3 3
-ID2D1DeviceContext7 9 5 5
-ID2D1DeviceContext7 10 4 4
-ID2D1DeviceContext7 11 4 4
-ID2D1DeviceContext7 12 5 5
-ID2D1DeviceContext7 13 2 2
-ID2D1DeviceContext7 14 1 1
-ID2D1DeviceContext7 37 1 1
-ID2D1DeviceContext7 57 5 6
-ID2D1DeviceContext7 58 3 3
-ID2D1DeviceContext7 59 4 4
-ID2D1DeviceContext7 60 2 2
-ID2D1DeviceContext7 61 2 2
-ID2D1DeviceContext7 62 3 3
-ID2D1DeviceContext7 63 2 2
-ID2D1DeviceContext7 64 8 8
-ID2D1DeviceContext7 65 4 4
-ID2D1DeviceContext7 66 4 4
-ID2D1DeviceContext7 67 1 1
-ID2D1DeviceContext7 73 1 1
-ID2D1DeviceContext7 75 1 1
-ID2D1DeviceContext7 92 3 3
-ID2D1DeviceContext7 93 5 5
-ID2D1DeviceContext7 95 2 2
-ID2D1DeviceContext7 96 2 2
-ID2D1DeviceContext7 97 3 3
-ID2D1DeviceContext7 98 4 4
-ID2D1DeviceContext7 99 6 6
-ID2D1DeviceContext7 100 5 5
-ID2D1DeviceContext7 105 3 3
-ID2D1DeviceContext7 106 1 1
-ID2D1DeviceContext7 108 1 1
-ID2D1DeviceContext7 113 11 12
-ID2D1DeviceContext7 114 11 12
-ID2D1DeviceContext7 115 3 4
-ID2D1DeviceContext7 117 2 2
-ID2D1DeviceContext7 118 2 2
-ID2D1DrawInfo 0 2 2
-ID2D1DrawTransform 0 2 2
-ID2D1DrawingStateBlock 0 2 2
-ID2D1DrawingStateBlock 3 1 1
-ID2D1DrawingStateBlock 7 1 1
-ID2D1DrawingStateBlock1 0 2 2
-ID2D1DrawingStateBlock1 3 1 1
-ID2D1DrawingStateBlock1 7 1 1
-ID2D1Effect 0 2 2
-ID2D1Effect 13 2 2
-ID2D1Effect 16 2 2
-ID2D1Effect 18 1 1
-ID2D1EffectContext 0 2 2
-ID2D1EffectContext 4 2 2
-ID2D1EffectContext 6 2 2
-ID2D1EffectContext 7 3 3
-ID2D1EffectContext 8 3 3
-ID2D1EffectContext 9 2 3
-ID2D1EffectContext 10 2 2
-ID2D1EffectContext 15 6 6
-ID2D1EffectContext 16 2 2
-ID2D1EffectContext 17 4 4
-ID2D1EffectContext 18 2 2
-ID2D1EffectContext 19 4 4
-ID2D1EffectContext 20 2 2
-ID2D1EffectContext 21 2 2
-ID2D1EffectContext1 0 2 2
-ID2D1EffectContext1 4 2 2
-ID2D1EffectContext1 6 2 2
-ID2D1EffectContext1 7 3 3
-ID2D1EffectContext1 8 3 3
-ID2D1EffectContext1 9 2 3
-ID2D1EffectContext1 10 2 2
-ID2D1EffectContext1 15 6 6
-ID2D1EffectContext1 16 2 2
-ID2D1EffectContext1 17 4 4
-ID2D1EffectContext1 18 2 2
-ID2D1EffectContext1 19 4 4
-ID2D1EffectContext1 20 2 2
-ID2D1EffectContext1 21 2 2
-ID2D1EffectContext1 24 6 6
-ID2D1EffectContext2 0 2 2
-ID2D1EffectContext2 4 2 2
-ID2D1EffectContext2 6 2 2
-ID2D1EffectContext2 7 3 3
-ID2D1EffectContext2 8 3 3
-ID2D1EffectContext2 9 2 3
-ID2D1EffectContext2 10 2 2
-ID2D1EffectContext2 15 6 6
-ID2D1EffectContext2 16 2 2
-ID2D1EffectContext2 17 4 4
-ID2D1EffectContext2 18 2 2
-ID2D1EffectContext2 19 4 4
-ID2D1EffectContext2 20 2 2
-ID2D1EffectContext2 21 2 2
-ID2D1EffectContext2 24 6 6
-ID2D1EffectContext2 25 2 2
-ID2D1EffectContext2 26 2 2
-ID2D1EffectImpl 0 2 2
-ID2D1EllipseGeometry 0 2 2
-ID2D1EllipseGeometry 3 1 1
-ID2D1Factory 0 2 2
-ID2D1Factory 5 2 2
-ID2D1Factory 6 2 2
-ID2D1Factory 7 2 2
-ID2D1Factory 8 4 4
-ID2D1Factory 9 3 3
-ID2D1Factory 10 1 1
-ID2D1Factory 11 4 4
-ID2D1Factory 12 3 3
-ID2D1Factory 13 3 3
-ID2D1Factory 14 3 3
-ID2D1Factory 15 3 3
-ID2D1Factory 16 2 2
-ID2D1Factory1 0 2 2
-ID2D1Factory1 5 2 2
-ID2D1Factory1 6 2 2
-ID2D1Factory1 7 2 2
-ID2D1Factory1 8 4 4
-ID2D1Factory1 9 3 3
-ID2D1Factory1 10 1 1
-ID2D1Factory1 11 4 4
-ID2D1Factory1 12 3 3
-ID2D1Factory1 13 3 3
-ID2D1Factory1 14 3 3
-ID2D1Factory1 15 3 3
-ID2D1Factory1 16 2 2
-ID2D1Factory1 17 2 2
-ID2D1Factory1 18 4 4
-ID2D1Factory1 19 1 1
-ID2D1Factory1 20 3 3
-ID2D1Factory1 21 2 2
-ID2D1Factory1 26 2 2
-ID2D1Factory2 0 2 2
-ID2D1Factory2 5 2 2
-ID2D1Factory2 6 2 2
-ID2D1Factory2 7 2 2
-ID2D1Factory2 8 4 4
-ID2D1Factory2 9 3 3
-ID2D1Factory2 10 1 1
-ID2D1Factory2 11 4 4
-ID2D1Factory2 12 3 3
-ID2D1Factory2 13 3 3
-ID2D1Factory2 14 3 3
-ID2D1Factory2 15 3 3
-ID2D1Factory2 16 2 2
-ID2D1Factory2 17 2 2
-ID2D1Factory2 18 4 4
-ID2D1Factory2 19 1 1
-ID2D1Factory2 20 3 3
-ID2D1Factory2 21 2 2
-ID2D1Factory2 26 2 2
-ID2D1Factory2 27 2 2
-ID2D1Factory3 0 2 2
-ID2D1Factory3 5 2 2
-ID2D1Factory3 6 2 2
-ID2D1Factory3 7 2 2
-ID2D1Factory3 8 4 4
-ID2D1Factory3 9 3 3
-ID2D1Factory3 10 1 1
-ID2D1Factory3 11 4 4
-ID2D1Factory3 12 3 3
-ID2D1Factory3 13 3 3
-ID2D1Factory3 14 3 3
-ID2D1Factory3 15 3 3
-ID2D1Factory3 16 2 2
-ID2D1Factory3 17 2 2
-ID2D1Factory3 18 4 4
-ID2D1Factory3 19 1 1
-ID2D1Factory3 20 3 3
-ID2D1Factory3 21 2 2
-ID2D1Factory3 26 2 2
-ID2D1Factory3 27 2 2
-ID2D1Factory3 28 2 2
-ID2D1Factory4 0 2 2
-ID2D1Factory4 5 2 2
-ID2D1Factory4 6 2 2
-ID2D1Factory4 7 2 2
-ID2D1Factory4 8 4 4
-ID2D1Factory4 9 3 3
-ID2D1Factory4 10 1 1
-ID2D1Factory4 11 4 4
-ID2D1Factory4 12 3 3
-ID2D1Factory4 13 3 3
-ID2D1Factory4 14 3 3
-ID2D1Factory4 15 3 3
-ID2D1Factory4 16 2 2
-ID2D1Factory4 17 2 2
-ID2D1Factory4 18 4 4
-ID2D1Factory4 19 1 1
-ID2D1Factory4 20 3 3
-ID2D1Factory4 21 2 2
-ID2D1Factory4 26 2 2
-ID2D1Factory4 27 2 2
-ID2D1Factory4 28 2 2
-ID2D1Factory4 29 2 2
-ID2D1Factory5 0 2 2
-ID2D1Factory5 5 2 2
-ID2D1Factory5 6 2 2
-ID2D1Factory5 7 2 2
-ID2D1Factory5 8 4 4
-ID2D1Factory5 9 3 3
-ID2D1Factory5 10 1 1
-ID2D1Factory5 11 4 4
-ID2D1Factory5 12 3 3
-ID2D1Factory5 13 3 3
-ID2D1Factory5 14 3 3
-ID2D1Factory5 15 3 3
-ID2D1Factory5 16 2 2
-ID2D1Factory5 17 2 2
-ID2D1Factory5 18 4 4
-ID2D1Factory5 19 1 1
-ID2D1Factory5 20 3 3
-ID2D1Factory5 21 2 2
-ID2D1Factory5 26 2 2
-ID2D1Factory5 27 2 2
-ID2D1Factory5 28 2 2
-ID2D1Factory5 29 2 2
-ID2D1Factory5 30 2 2
-ID2D1Factory6 0 2 2
-ID2D1Factory6 5 2 2
-ID2D1Factory6 6 2 2
-ID2D1Factory6 7 2 2
-ID2D1Factory6 8 4 4
-ID2D1Factory6 9 3 3
-ID2D1Factory6 10 1 1
-ID2D1Factory6 11 4 4
-ID2D1Factory6 12 3 3
-ID2D1Factory6 13 3 3
-ID2D1Factory6 14 3 3
-ID2D1Factory6 15 3 3
-ID2D1Factory6 16 2 2
-ID2D1Factory6 17 2 2
-ID2D1Factory6 18 4 4
-ID2D1Factory6 19 1 1
-ID2D1Factory6 20 3 3
-ID2D1Factory6 21 2 2
-ID2D1Factory6 26 2 2
-ID2D1Factory6 27 2 2
-ID2D1Factory6 28 2 2
-ID2D1Factory6 29 2 2
-ID2D1Factory6 30 2 2
-ID2D1Factory6 31 2 2
-ID2D1Factory7 0 2 2
-ID2D1Factory7 5 2 2
-ID2D1Factory7 6 2 2
-ID2D1Factory7 7 2 2
-ID2D1Factory7 8 4 4
-ID2D1Factory7 9 3 3
-ID2D1Factory7 10 1 1
-ID2D1Factory7 11 4 4
-ID2D1Factory7 12 3 3
-ID2D1Factory7 13 3 3
-ID2D1Factory7 14 3 3
-ID2D1Factory7 15 3 3
-ID2D1Factory7 16 2 2
-ID2D1Factory7 17 2 2
-ID2D1Factory7 18 4 4
-ID2D1Factory7 19 1 1
-ID2D1Factory7 20 3 3
-ID2D1Factory7 21 2 2
-ID2D1Factory7 26 2 2
-ID2D1Factory7 27 2 2
-ID2D1Factory7 28 2 2
-ID2D1Factory7 29 2 2
-ID2D1Factory7 30 2 2
-ID2D1Factory7 31 2 2
-ID2D1Factory7 32 2 2
-ID2D1Factory8 0 2 2
-ID2D1Factory8 5 2 2
-ID2D1Factory8 6 2 2
-ID2D1Factory8 7 2 2
-ID2D1Factory8 8 4 4
-ID2D1Factory8 9 3 3
-ID2D1Factory8 10 1 1
-ID2D1Factory8 11 4 4
-ID2D1Factory8 12 3 3
-ID2D1Factory8 13 3 3
-ID2D1Factory8 14 3 3
-ID2D1Factory8 15 3 3
-ID2D1Factory8 16 2 2
-ID2D1Factory8 17 2 2
-ID2D1Factory8 18 4 4
-ID2D1Factory8 19 1 1
-ID2D1Factory8 20 3 3
-ID2D1Factory8 21 2 2
-ID2D1Factory8 26 2 2
-ID2D1Factory8 27 2 2
-ID2D1Factory8 28 2 2
-ID2D1Factory8 29 2 2
-ID2D1Factory8 30 2 2
-ID2D1Factory8 31 2 2
-ID2D1Factory8 32 2 2
-ID2D1Factory8 33 2 2
-ID2D1GdiInteropRenderTarget 0 2 2
-ID2D1GdiInteropRenderTarget 3 2 2
-ID2D1GdiMetafile 0 2 2
-ID2D1GdiMetafile 3 1 1
-ID2D1GdiMetafile1 0 2 2
-ID2D1GdiMetafile1 3 1 1
-ID2D1GdiMetafileSink 0 2 2
-ID2D1GdiMetafileSink1 0 2 2
-ID2D1Geometry 0 2 2
-ID2D1Geometry 3 1 1
-ID2D1GeometryGroup 0 2 2
-ID2D1GeometryGroup 3 1 1
-ID2D1GeometryGroup 19 1 1
-ID2D1GeometryRealization 0 2 2
-ID2D1GeometryRealization 3 1 1
-ID2D1GeometrySink 0 2 2
-ID2D1GradientMesh 0 2 2
-ID2D1GradientMesh 3 1 1
-ID2D1GradientStopCollection 0 2 2
-ID2D1GradientStopCollection 3 1 1
-ID2D1GradientStopCollection1 0 2 2
-ID2D1GradientStopCollection1 3 1 1
-ID2D1HwndRenderTarget 0 2 2
-ID2D1HwndRenderTarget 3 1 1
-ID2D1HwndRenderTarget 4 5 6
-ID2D1HwndRenderTarget 5 3 3
-ID2D1HwndRenderTarget 6 4 4
-ID2D1HwndRenderTarget 7 4 4
-ID2D1HwndRenderTarget 8 3 3
-ID2D1HwndRenderTarget 9 5 5
-ID2D1HwndRenderTarget 10 4 4
-ID2D1HwndRenderTarget 11 4 4
-ID2D1HwndRenderTarget 12 5 5
-ID2D1HwndRenderTarget 13 2 2
-ID2D1HwndRenderTarget 14 1 1
-ID2D1HwndRenderTarget 37 1 1
-ID2D1Image 0 2 2
-ID2D1Image 3 1 1
-ID2D1ImageBrush 0 2 2
-ID2D1ImageBrush 3 1 1
-ID2D1ImageBrush 13 1 1
-ID2D1ImageSource 0 2 2
-ID2D1ImageSource 3 1 1
-ID2D1ImageSourceFromWic 0 2 2
-ID2D1ImageSourceFromWic 3 1 1
-ID2D1ImageSourceFromWic 8 1 1
-ID2D1Ink 0 2 2
-ID2D1Ink 3 1 1
-ID2D1InkStyle 0 2 2
-ID2D1InkStyle 3 1 1
-ID2D1Layer 0 2 2
-ID2D1Layer 3 1 1
-ID2D1LinearGradientBrush 0 2 2
-ID2D1LinearGradientBrush 3 1 1
-ID2D1LinearGradientBrush 12 1 1
-ID2D1LookupTable3D 0 2 2
-ID2D1LookupTable3D 3 1 1
-ID2D1Mesh 0 2 2
-ID2D1Mesh 3 1 1
-ID2D1Mesh 4 1 1
-ID2D1Multithread 0 2 2
-ID2D1OffsetTransform 0 2 2
-ID2D1PathGeometry 0 2 2
-ID2D1PathGeometry 3 1 1
-ID2D1PathGeometry 17 1 1
-ID2D1PathGeometry1 0 2 2
-ID2D1PathGeometry1 3 1 1
-ID2D1PathGeometry1 17 1 1
-ID2D1PrintControl 0 2 2
-ID2D1Properties 0 2 2
-ID2D1Properties 13 2 2
-ID2D1RadialGradientBrush 0 2 2
-ID2D1RadialGradientBrush 3 1 1
-ID2D1RadialGradientBrush 16 1 1
-ID2D1RectangleGeometry 0 2 2
-ID2D1RectangleGeometry 3 1 1
-ID2D1RenderInfo 0 2 2
-ID2D1RenderTarget 0 2 2
-ID2D1RenderTarget 3 1 1
-ID2D1RenderTarget 4 5 6
-ID2D1RenderTarget 5 3 3
-ID2D1RenderTarget 6 4 4
-ID2D1RenderTarget 7 4 4
-ID2D1RenderTarget 8 3 3
-ID2D1RenderTarget 9 5 5
-ID2D1RenderTarget 10 4 4
-ID2D1RenderTarget 11 4 4
-ID2D1RenderTarget 12 5 5
-ID2D1RenderTarget 13 2 2
-ID2D1RenderTarget 14 1 1
-ID2D1RenderTarget 37 1 1
-ID2D1Resource 0 2 2
-ID2D1Resource 3 1 1
-ID2D1ResourceTexture 0 2 2
-ID2D1RoundedRectangleGeometry 0 2 2
-ID2D1RoundedRectangleGeometry 3 1 1
-ID2D1SimplifiedGeometrySink 0 2 2
-ID2D1SolidColorBrush 0 2 2
-ID2D1SolidColorBrush 3 1 1
-ID2D1SourceTransform 0 2 2
-ID2D1SpriteBatch 0 2 2
-ID2D1SpriteBatch 3 1 1
-ID2D1StrokeStyle 0 2 2
-ID2D1StrokeStyle 3 1 1
-ID2D1StrokeStyle1 0 2 2
-ID2D1StrokeStyle1 3 1 1
-ID2D1SvgAttribute 0 2 2
-ID2D1SvgAttribute 3 1 1
-ID2D1SvgAttribute 4 1 1
-ID2D1SvgAttribute 5 1 1
-ID2D1SvgDocument 0 2 2
-ID2D1SvgDocument 3 1 1
-ID2D1SvgDocument 7 1 1
-ID2D1SvgDocument 8 2 2
-ID2D1SvgDocument 10 2 2
-ID2D1SvgDocument 11 4 4
-ID2D1SvgDocument 12 3 3
-ID2D1SvgDocument 13 3 3
-ID2D1SvgDocument 14 5 5
-ID2D1SvgElement 0 2 2
-ID2D1SvgElement 3 1 1
-ID2D1SvgElement 4 1 1
-ID2D1SvgElement 8 1 1
-ID2D1SvgElement 10 1 1
-ID2D1SvgElement 11 1 1
-ID2D1SvgElement 12 2 2
-ID2D1SvgElement 13 2 2
-ID2D1SvgElement 18 2 2
-ID2D1SvgElement 30 3 3
-ID2D1SvgGlyphStyle 0 2 2
-ID2D1SvgGlyphStyle 3 1 1
-ID2D1SvgGlyphStyle 5 1 1
-ID2D1SvgGlyphStyle 8 1 1
-ID2D1SvgPaint 0 2 2
-ID2D1SvgPaint 3 1 1
-ID2D1SvgPaint 4 1 1
-ID2D1SvgPaint 5 1 1
-ID2D1SvgPathData 0 2 2
-ID2D1SvgPathData 3 1 1
-ID2D1SvgPathData 4 1 1
-ID2D1SvgPathData 5 1 1
-ID2D1SvgPathData 14 2 2
-ID2D1SvgPointCollection 0 2 2
-ID2D1SvgPointCollection 3 1 1
-ID2D1SvgPointCollection 4 1 1
-ID2D1SvgPointCollection 5 1 1
-ID2D1SvgStrokeDashArray 0 2 2
-ID2D1SvgStrokeDashArray 3 1 1
-ID2D1SvgStrokeDashArray 4 1 1
-ID2D1SvgStrokeDashArray 5 1 1
-ID2D1TessellationSink 0 2 2
-ID2D1Transform 0 2 2
-ID2D1TransformGraph 0 2 2
-ID2D1TransformNode 0 2 2
-ID2D1TransformedGeometry 0 2 2
-ID2D1TransformedGeometry 3 1 1
-ID2D1TransformedGeometry 17 1 1
-ID2D1TransformedImageSource 0 2 2
-ID2D1TransformedImageSource 3 1 1
-ID2D1TransformedImageSource 4 1 1
-ID2D1VertexBuffer 0 2 2
-ID2D1VertexBuffer 3 1 1
-ID3D10BlendState1 0 2 2
-ID3D10BlendState1 3 1 1
-ID3D10Buffer 0 2 2
-ID3D10Buffer 3 1 1
-ID3D10Buffer 10 3 3
-ID3D10DepthStencilState 0 2 2
-ID3D10DepthStencilState 3 1 1
-ID3D10DepthStencilView 0 2 2
-ID3D10DepthStencilView 3 1 1
-ID3D10DepthStencilView 7 1 1
-ID3D10Device1 0 2 2
-ID3D10Device1 39 3 3
-ID3D10Device1 40 3 3
-ID3D10Device1 41 1 1
-ID3D10Device1 42 3 3
-ID3D10Device1 43 1 1
-ID3D10Device1 44 3 3
-ID3D10Device1 45 1 1
-ID3D10Device1 46 3 3
-ID3D10Device1 47 1 1
-ID3D10Device1 48 3 3
-ID3D10Device1 49 1 1
-ID3D10Device1 51 3 3
-ID3D10Device1 52 3 3
-ID3D10Device1 53 1 1
-ID3D10Device1 54 3 3
-ID3D10Device1 55 3 3
-ID3D10Device1 56 2,3 2,3
-ID3D10Device1 57 1 1
-ID3D10Device1 58 1 1
-ID3D10Device1 59 2 2
-ID3D10Device1 60 1 1
-ID3D10Device1 71 3 3
-ID3D10Device1 72 3 3
-ID3D10Device1 73 3 3
-ID3D10Device1 74 3 3
-ID3D10Device1 75 3 3
-ID3D10Device1 76 3 3
-ID3D10Device1 77 3 3
-ID3D10Device1 78 5 5
-ID3D10Device1 79 3 3
-ID3D10Device1 80 3 3
-ID3D10Device1 81 6 6
-ID3D10Device1 82 3 3
-ID3D10Device1 83 2 2
-ID3D10Device1 84 2 2
-ID3D10Device1 85 2 2
-ID3D10Device1 86 2 2
-ID3D10Device1 87 2 2
-ID3D10Device1 88 2 2
-ID3D10Device1 89 2 2
-ID3D10Device1 95 3 3
-ID3D10Device1 98 3 3
-ID3D10Device1 99 2 2
-ID3D10GeometryShader 0 2 2
-ID3D10GeometryShader 3 1 1
-ID3D10InputLayout 0 2 2
-ID3D10InputLayout 3 1 1
-ID3D10Multithread 0 2 2
-ID3D10PixelShader 0 2 2
-ID3D10PixelShader 3 1 1
-ID3D10Query 0 2 2
-ID3D10Query 3 1 1
-ID3D10RasterizerState 0 2 2
-ID3D10RasterizerState 3 1 1
-ID3D10RenderTargetView 0 2 2
-ID3D10RenderTargetView 3 1 1
-ID3D10RenderTargetView 7 1 1
-ID3D10SamplerState 0 2 2
-ID3D10SamplerState 3 1 1
-ID3D10ShaderReflection 0 2 2
-ID3D10ShaderResourceView1 0 2 2
-ID3D10ShaderResourceView1 3 1 1
-ID3D10ShaderResourceView1 7 1 1
-ID3D10Texture1D 0 2 2
-ID3D10Texture1D 3 1 1
-ID3D10Texture1D 10 4 4
-ID3D10Texture2D 0 2 2
-ID3D10Texture2D 3 1 1
-ID3D10Texture3D 0 2 2
-ID3D10Texture3D 3 1 1
-ID3D10VertexShader 0 2 2
-ID3D10VertexShader 3 1 1
-ID3D11BlendState1 0 2 2
-ID3D11BlendState1 3 1 1
-ID3D11Buffer 0 2 2
-ID3D11Buffer 3 1 1
-ID3D11ClassLinkage 0 2 2
-ID3D11ClassLinkage 3 1 1
-ID3D11ClassLinkage 7 3 3
-ID3D11ClassLinkage 8 6 6
-ID3D11CommandList 0 2 2
-ID3D11CommandList 3 1 1
-ID3D11ComputeShader 0 2 2
-ID3D11ComputeShader 3 1 1
-ID3D11DepthStencilState 0 2 2
-ID3D11DepthStencilState 3 1 1
-ID3D11DepthStencilView 0 2 2
-ID3D11DepthStencilView 3 1 1
-ID3D11DepthStencilView 7 1 1
-ID3D11Device 0 2 2
-ID3D11Device 3 3 3
-ID3D11Device 4 3 3
-ID3D11Device 5 3 3
-ID3D11Device 6 3 3
-ID3D11Device 7 3 3
-ID3D11Device 8 3 3
-ID3D11Device 9 3 3
-ID3D11Device 10 3 3
-ID3D11Device 11 5 5
-ID3D11Device 12 4 4
-ID3D11Device 13 4 4
-ID3D11Device 14 9 9
-ID3D11Device 15 4 4
-ID3D11Device 16 4 4
-ID3D11Device 17 4 4
-ID3D11Device 18 4 4
-ID3D11Device 19 1 1
-ID3D11Device 20 2 2
-ID3D11Device 21 2 2
-ID3D11Device 22 2 2
-ID3D11Device 23 2 2
-ID3D11Device 24 2 2
-ID3D11Device 25 2 2
-ID3D11Device 26 2 2
-ID3D11Device 27 2 2
-ID3D11Device 28 3 3
-ID3D11Device 40 1 1
-ID3D11Device5 0 2 2
-ID3D11Device5 3 3 3
-ID3D11Device5 4 3 3
-ID3D11Device5 5 3 3
-ID3D11Device5 6 3 3
-ID3D11Device5 7 3 3
-ID3D11Device5 8 3 3
-ID3D11Device5 9 3 3
-ID3D11Device5 10 3 3
-ID3D11Device5 11 5 5
-ID3D11Device5 12 4 4
-ID3D11Device5 13 4 4
-ID3D11Device5 14 9 9
-ID3D11Device5 15 4 4
-ID3D11Device5 16 4 4
-ID3D11Device5 17 4 4
-ID3D11Device5 18 4 4
-ID3D11Device5 19 1 1
-ID3D11Device5 20 2 2
-ID3D11Device5 21 2 2
-ID3D11Device5 22 2 2
-ID3D11Device5 23 2 2
-ID3D11Device5 24 2 2
-ID3D11Device5 25 2 2
-ID3D11Device5 26 2 2
-ID3D11Device5 27 2 2
-ID3D11Device5 28 3 3
-ID3D11Device5 40 1 1
-ID3D11Device5 43 1 1
-ID3D11Device5 44 2 2
-ID3D11Device5 45 2 2
-ID3D11Device5 46 2 2
-ID3D11Device5 47 7 7
-ID3D11Device5 48 3 3
-ID3D11Device5 49 4 4
-ID3D11Device5 50 1 1
-ID3D11Device5 51 2 2
-ID3D11Device5 54 3 3
-ID3D11Device5 55 3 3
-ID3D11Device5 56 2 2
-ID3D11Device5 57 3 3
-ID3D11Device5 58 3 3
-ID3D11Device5 59 3 3
-ID3D11Device5 60 2 2
-ID3D11Device5 61 1 1
-ID3D11Device5 62 2 2
-ID3D11Device5 67 3 3
-ID3D11Device5 68 4 5
-ID3D11DeviceContext 0 2 2
-ID3D11DeviceContext 3 1 1
-ID3D11DeviceContext 72 3 3
-ID3D11DeviceContext 73 3 3
-ID3D11DeviceContext 74 1,2 1,2
-ID3D11DeviceContext 75 3 3
-ID3D11DeviceContext 76 1,2 1,2
-ID3D11DeviceContext 77 3 3
-ID3D11DeviceContext 78 1 1
-ID3D11DeviceContext 79 3 3
-ID3D11DeviceContext 80 1 1
-ID3D11DeviceContext 81 3 3
-ID3D11DeviceContext 82 1,2 1,2
-ID3D11DeviceContext 84 3 3
-ID3D11DeviceContext 85 3 3
-ID3D11DeviceContext 86 1 1
-ID3D11DeviceContext 87 3 3
-ID3D11DeviceContext 88 3 3
-ID3D11DeviceContext 89 2,3 2,3
-ID3D11DeviceContext 90 2,3,6 2,3,6
-ID3D11DeviceContext 91 1 1
-ID3D11DeviceContext 92 1 1
-ID3D11DeviceContext 93 2 2
-ID3D11DeviceContext 94 1 1
-ID3D11DeviceContext 97 3 3
-ID3D11DeviceContext 98 1,2 1,2
-ID3D11DeviceContext 99 3 3
-ID3D11DeviceContext 100 3 3
-ID3D11DeviceContext 101 3 3
-ID3D11DeviceContext 102 1,2 1,2
-ID3D11DeviceContext 103 3 3
-ID3D11DeviceContext 104 3 3
-ID3D11DeviceContext 105 3 3
-ID3D11DeviceContext 106 3 3
-ID3D11DeviceContext 107 1,2 1,2
-ID3D11DeviceContext 108 3 3
-ID3D11DeviceContext 109 3 3
-ID3D11DeviceContext 114 2 2
-ID3D11DeviceContext4 0 2 2
-ID3D11DeviceContext4 3 1 1
-ID3D11DeviceContext4 72 3 3
-ID3D11DeviceContext4 73 3 3
-ID3D11DeviceContext4 74 1,2 1,2
-ID3D11DeviceContext4 75 3 3
-ID3D11DeviceContext4 76 1,2 1,2
-ID3D11DeviceContext4 77 3 3
-ID3D11DeviceContext4 78 1 1
-ID3D11DeviceContext4 79 3 3
-ID3D11DeviceContext4 80 1 1
-ID3D11DeviceContext4 81 3 3
-ID3D11DeviceContext4 82 1,2 1,2
-ID3D11DeviceContext4 84 3 3
-ID3D11DeviceContext4 85 3 3
-ID3D11DeviceContext4 86 1 1
-ID3D11DeviceContext4 87 3 3
-ID3D11DeviceContext4 88 3 3
-ID3D11DeviceContext4 89 2,3 2,3
-ID3D11DeviceContext4 90 2,3,6 2,3,6
-ID3D11DeviceContext4 91 1 1
-ID3D11DeviceContext4 92 1 1
-ID3D11DeviceContext4 93 2 2
-ID3D11DeviceContext4 94 1 1
-ID3D11DeviceContext4 97 3 3
-ID3D11DeviceContext4 98 1,2 1,2
-ID3D11DeviceContext4 99 3 3
-ID3D11DeviceContext4 100 3 3
-ID3D11DeviceContext4 101 3 3
-ID3D11DeviceContext4 102 1,2 1,2
-ID3D11DeviceContext4 103 3 3
-ID3D11DeviceContext4 104 3 3
-ID3D11DeviceContext4 105 3 3
-ID3D11DeviceContext4 106 3 3
-ID3D11DeviceContext4 107 1,2 1,2
-ID3D11DeviceContext4 108 3 3
-ID3D11DeviceContext4 109 3 3
-ID3D11DeviceContext4 114 2 2
-ID3D11DeviceContext4 125 3 3
-ID3D11DeviceContext4 126 3 3
-ID3D11DeviceContext4 127 3 3
-ID3D11DeviceContext4 128 3 3
-ID3D11DeviceContext4 129 3 3
-ID3D11DeviceContext4 130 3 3
-ID3D11DeviceContext4 131 2 2
-ID3D11DomainShader 0 2 2
-ID3D11DomainShader 3 1 1
-ID3D11GeometryShader 0 2 2
-ID3D11GeometryShader 3 1 1
-ID3D11HullShader 0 2 2
-ID3D11HullShader 3 1 1
-ID3D11InputLayout 0 2 2
-ID3D11InputLayout 3 1 1
-ID3D11PixelShader 0 2 2
-ID3D11PixelShader 3 1 1
-ID3D11Query 0 2 2
-ID3D11Query 3 1 1
-ID3D11RasterizerState2 0 2 2
-ID3D11RasterizerState2 3 1 1
-ID3D11RenderTargetView 0 2 2
-ID3D11RenderTargetView 3 1 1
-ID3D11RenderTargetView 7 1 1
-ID3D11SamplerState 0 2 2
-ID3D11SamplerState 3 1 1
-ID3D11ShaderReflection 0 2 2
-ID3D11ShaderResourceView 0 2 2
-ID3D11ShaderResourceView 3 1 1
-ID3D11ShaderResourceView 7 1 1
-ID3D11Texture1D 0 2 2
-ID3D11Texture1D 3 1 1
-ID3D11Texture2D 0 2 2
-ID3D11Texture2D 3 1 1
-ID3D11Texture3D 0 2 2
-ID3D11Texture3D 3 1 1
-ID3D11UnorderedAccessView 0 2 2
-ID3D11UnorderedAccessView 3 1 1
-ID3D11UnorderedAccessView 7 1 1
-ID3D11VertexShader 0 2 2
-ID3D11VertexShader 3 1 1
-ID3DBlob 0 2 2
-ID3DInclude 0 4 4
-ID3DUserDefinedAnnotation 0 2 2
-IDMOWrapperFilter 0 2 2
-IDWriteAsyncResult 0 2 2
-IDWriteBitmapRenderTarget 0 2 2
-IDWriteBitmapRenderTarget1 0 2 2
-IDWriteBitmapRenderTarget2 0 2 2
-IDWriteBitmapRenderTarget3 0 2 2
-IDWriteColorGlyphRunEnumerator 0 2 2
-IDWriteColorGlyphRunEnumerator 4 1 1
-IDWriteColorGlyphRunEnumerator1 0 2 2
-IDWriteColorGlyphRunEnumerator1 4 1 1
-IDWriteColorGlyphRunEnumerator1 5 1 1
-IDWriteFactory 0 2 2
-IDWriteFactory 3 1 1
-IDWriteFactory 4 4 4
-IDWriteFactory 7 3 3
-IDWriteFactory 8 4 4
-IDWriteFactory 9 6 6
-IDWriteFactory 10 1 1
-IDWriteFactory 11 2 2
-IDWriteFactory 12 6 6
-IDWriteFactory 15 8 8
-IDWriteFactory 16 1 1
-IDWriteFactory 17 1 1
-IDWriteFactory 18 6 6
-IDWriteFactory 19 9 9
-IDWriteFactory 20 2 2
-IDWriteFactory 21 1 1
-IDWriteFactory 22 4 4
-IDWriteFactory 23 8 8
-IDWriteFactory1 0 2 2
-IDWriteFactory1 3 1 1
-IDWriteFactory1 4 4 4
-IDWriteFactory1 7 3 3
-IDWriteFactory1 8 4 4
-IDWriteFactory1 9 6 6
-IDWriteFactory1 10 1 1
-IDWriteFactory1 11 2 2
-IDWriteFactory1 12 6 6
-IDWriteFactory1 15 8 8
-IDWriteFactory1 16 1 1
-IDWriteFactory1 17 1 1
-IDWriteFactory1 18 6 6
-IDWriteFactory1 19 9 9
-IDWriteFactory1 20 2 2
-IDWriteFactory1 21 1 1
-IDWriteFactory1 22 4 4
-IDWriteFactory1 23 8 8
-IDWriteFactory1 24 1 1
-IDWriteFactory1 25 7 7
-IDWriteFactory2 0 2 2
-IDWriteFactory2 3 1 1
-IDWriteFactory2 4 4 4
-IDWriteFactory2 7 3 3
-IDWriteFactory2 8 4 4
-IDWriteFactory2 9 6 6
-IDWriteFactory2 10 1 1
-IDWriteFactory2 11 2 2
-IDWriteFactory2 12 6 6
-IDWriteFactory2 15 8 8
-IDWriteFactory2 16 1 1
-IDWriteFactory2 17 1 1
-IDWriteFactory2 18 6 6
-IDWriteFactory2 19 9 9
-IDWriteFactory2 20 2 2
-IDWriteFactory2 21 1 1
-IDWriteFactory2 22 4 4
-IDWriteFactory2 23 8 8
-IDWriteFactory2 24 1 1
-IDWriteFactory2 25 7 7
-IDWriteFactory2 26 1 1
-IDWriteFactory2 27 1 1
-IDWriteFactory2 28 8 8
-IDWriteFactory2 29 8 8
-IDWriteFactory2 30 9 9
-IDWriteFactory3 0 2 2
-IDWriteFactory3 3 1 1
-IDWriteFactory3 4 4 4
-IDWriteFactory3 7 3 3
-IDWriteFactory3 8 4 4
-IDWriteFactory3 9 6 6
-IDWriteFactory3 10 1 1
-IDWriteFactory3 11 2 2
-IDWriteFactory3 12 6 6
-IDWriteFactory3 15 8 8
-IDWriteFactory3 16 1 1
-IDWriteFactory3 17 1 1
-IDWriteFactory3 18 6 6
-IDWriteFactory3 19 9 9
-IDWriteFactory3 20 2 2
-IDWriteFactory3 21 1 1
-IDWriteFactory3 22 4 4
-IDWriteFactory3 23 8 8
-IDWriteFactory3 24 1 1
-IDWriteFactory3 25 7 7
-IDWriteFactory3 26 1 1
-IDWriteFactory3 27 1 1
-IDWriteFactory3 28 8 8
-IDWriteFactory3 29 8 8
-IDWriteFactory3 30 9 9
-IDWriteFactory3 31 9 9
-IDWriteFactory3 32 8 8
-IDWriteFactory3 33 4 4
-IDWriteFactory3 34 5 5
-IDWriteFactory3 35 1 1
-IDWriteFactory3 36 1 1
-IDWriteFactory3 37 2 2
-IDWriteFactory3 38 2 2
-IDWriteFactory3 39 1 1
-IDWriteFactory4 0 2 2
-IDWriteFactory4 3 1 1
-IDWriteFactory4 4 4 4
-IDWriteFactory4 7 3 3
-IDWriteFactory4 8 4 4
-IDWriteFactory4 9 6 6
-IDWriteFactory4 10 1 1
-IDWriteFactory4 11 2 2
-IDWriteFactory4 12 6 6
-IDWriteFactory4 15 8 8
-IDWriteFactory4 16 1 1
-IDWriteFactory4 17 1 1
-IDWriteFactory4 18 6 6
-IDWriteFactory4 19 9 9
-IDWriteFactory4 20 2 2
-IDWriteFactory4 21 1 1
-IDWriteFactory4 22 4 4
-IDWriteFactory4 23 8 8
-IDWriteFactory4 24 1 1
-IDWriteFactory4 25 7 7
-IDWriteFactory4 26 1 1
-IDWriteFactory4 27 1 1
-IDWriteFactory4 28 8 8
-IDWriteFactory4 29 8 8
-IDWriteFactory4 30 9 9
-IDWriteFactory4 31 9 9
-IDWriteFactory4 32 8 8
-IDWriteFactory4 33 4 4
-IDWriteFactory4 34 5 5
-IDWriteFactory4 35 1 1
-IDWriteFactory4 36 1 1
-IDWriteFactory4 37 2 2
-IDWriteFactory4 38 2 2
-IDWriteFactory4 39 1 1
-IDWriteFactory4 40 8 9
-IDWriteFactory5 0 2 2
-IDWriteFactory5 3 1 1
-IDWriteFactory5 4 4 4
-IDWriteFactory5 7 3 3
-IDWriteFactory5 8 4 4
-IDWriteFactory5 9 6 6
-IDWriteFactory5 10 1 1
-IDWriteFactory5 11 2 2
-IDWriteFactory5 12 6 6
-IDWriteFactory5 15 8 8
-IDWriteFactory5 16 1 1
-IDWriteFactory5 17 1 1
-IDWriteFactory5 18 6 6
-IDWriteFactory5 19 9 9
-IDWriteFactory5 20 2 2
-IDWriteFactory5 21 1 1
-IDWriteFactory5 22 4 4
-IDWriteFactory5 23 8 8
-IDWriteFactory5 24 1 1
-IDWriteFactory5 25 7 7
-IDWriteFactory5 26 1 1
-IDWriteFactory5 27 1 1
-IDWriteFactory5 28 8 8
-IDWriteFactory5 29 8 8
-IDWriteFactory5 30 9 9
-IDWriteFactory5 31 9 9
-IDWriteFactory5 32 8 8
-IDWriteFactory5 33 4 4
-IDWriteFactory5 34 5 5
-IDWriteFactory5 35 1 1
-IDWriteFactory5 36 1 1
-IDWriteFactory5 37 2 2
-IDWriteFactory5 38 2 2
-IDWriteFactory5 39 1 1
-IDWriteFactory5 40 8 9
-IDWriteFactory5 43 1 1
-IDWriteFactory5 44 1 1
-IDWriteFactory5 45 3 3
-IDWriteFactory5 47 4 4
-IDWriteFactory6 0 2 2
-IDWriteFactory6 3 1 1
-IDWriteFactory6 4 4 4
-IDWriteFactory6 7 3 3
-IDWriteFactory6 8 4 4
-IDWriteFactory6 9 6 6
-IDWriteFactory6 10 1 1
-IDWriteFactory6 11 2 2
-IDWriteFactory6 12 6 6
-IDWriteFactory6 15 8 8
-IDWriteFactory6 16 1 1
-IDWriteFactory6 17 1 1
-IDWriteFactory6 18 6 6
-IDWriteFactory6 19 9 9
-IDWriteFactory6 20 2 2
-IDWriteFactory6 21 1 1
-IDWriteFactory6 22 4 4
-IDWriteFactory6 23 8 8
-IDWriteFactory6 24 1 1
-IDWriteFactory6 25 7 7
-IDWriteFactory6 26 1 1
-IDWriteFactory6 27 1 1
-IDWriteFactory6 28 8 8
-IDWriteFactory6 29 8 8
-IDWriteFactory6 30 9 9
-IDWriteFactory6 31 9 9
-IDWriteFactory6 32 8 8
-IDWriteFactory6 33 4 4
-IDWriteFactory6 34 5 5
-IDWriteFactory6 35 1 1
-IDWriteFactory6 36 1 1
-IDWriteFactory6 37 2 2
-IDWriteFactory6 38 2 2
-IDWriteFactory6 39 1 1
-IDWriteFactory6 40 8 9
-IDWriteFactory6 43 1 1
-IDWriteFactory6 44 1 1
-IDWriteFactory6 45 3 3
-IDWriteFactory6 47 4 4
-IDWriteFactory6 48 6 6
-IDWriteFactory6 49 3 3
-IDWriteFactory6 50 2 2
-IDWriteFactory6 51 3 3
-IDWriteFactory6 52 3 3
-IDWriteFactory6 53 1 1
-IDWriteFactory6 54 7 7
-IDWriteFactory7 0 2 2
-IDWriteFactory7 3 1 1
-IDWriteFactory7 4 4 4
-IDWriteFactory7 7 3 3
-IDWriteFactory7 8 4 4
-IDWriteFactory7 9 6 6
-IDWriteFactory7 10 1 1
-IDWriteFactory7 11 2 2
-IDWriteFactory7 12 6 6
-IDWriteFactory7 15 8 8
-IDWriteFactory7 16 1 1
-IDWriteFactory7 17 1 1
-IDWriteFactory7 18 6 6
-IDWriteFactory7 19 9 9
-IDWriteFactory7 20 2 2
-IDWriteFactory7 21 1 1
-IDWriteFactory7 22 4 4
-IDWriteFactory7 23 8 8
-IDWriteFactory7 24 1 1
-IDWriteFactory7 25 7 7
-IDWriteFactory7 26 1 1
-IDWriteFactory7 27 1 1
-IDWriteFactory7 28 8 8
-IDWriteFactory7 29 8 8
-IDWriteFactory7 30 9 9
-IDWriteFactory7 31 9 9
-IDWriteFactory7 32 8 8
-IDWriteFactory7 33 4 4
-IDWriteFactory7 34 5 5
-IDWriteFactory7 35 1 1
-IDWriteFactory7 36 1 1
-IDWriteFactory7 37 2 2
-IDWriteFactory7 38 2 2
-IDWriteFactory7 39 1 1
-IDWriteFactory7 40 8 9
-IDWriteFactory7 43 1 1
-IDWriteFactory7 44 1 1
-IDWriteFactory7 45 3 3
-IDWriteFactory7 47 4 4
-IDWriteFactory7 48 6 6
-IDWriteFactory7 49 3 3
-IDWriteFactory7 50 2 2
-IDWriteFactory7 51 3 3
-IDWriteFactory7 52 3 3
-IDWriteFactory7 53 1 1
-IDWriteFactory7 54 7 7
-IDWriteFactory7 55 2 2
-IDWriteFactory7 56 3 3
-IDWriteFactory8 0 2 2
-IDWriteFactory8 3 1 1
-IDWriteFactory8 4 4 4
-IDWriteFactory8 7 3 3
-IDWriteFactory8 8 4 4
-IDWriteFactory8 9 6 6
-IDWriteFactory8 10 1 1
-IDWriteFactory8 11 2 2
-IDWriteFactory8 12 6 6
-IDWriteFactory8 15 8 8
-IDWriteFactory8 16 1 1
-IDWriteFactory8 17 1 1
-IDWriteFactory8 18 6 6
-IDWriteFactory8 19 9 9
-IDWriteFactory8 20 2 2
-IDWriteFactory8 21 1 1
-IDWriteFactory8 22 4 4
-IDWriteFactory8 23 8 8
-IDWriteFactory8 24 1 1
-IDWriteFactory8 25 7 7
-IDWriteFactory8 26 1 1
-IDWriteFactory8 27 1 1
-IDWriteFactory8 28 8 8
-IDWriteFactory8 29 8 8
-IDWriteFactory8 30 9 9
-IDWriteFactory8 31 9 9
-IDWriteFactory8 32 8 8
-IDWriteFactory8 33 4 4
-IDWriteFactory8 34 5 5
-IDWriteFactory8 35 1 1
-IDWriteFactory8 36 1 1
-IDWriteFactory8 37 2 2
-IDWriteFactory8 38 2 2
-IDWriteFactory8 39 1 1
-IDWriteFactory8 40 8 9
-IDWriteFactory8 43 1 1
-IDWriteFactory8 44 1 1
-IDWriteFactory8 45 3 3
-IDWriteFactory8 47 4 4
-IDWriteFactory8 48 6 6
-IDWriteFactory8 49 3 3
-IDWriteFactory8 50 2 2
-IDWriteFactory8 51 3 3
-IDWriteFactory8 52 3 3
-IDWriteFactory8 53 1 1
-IDWriteFactory8 54 7 7
-IDWriteFactory8 55 2 2
-IDWriteFactory8 56 3 3
-IDWriteFactory8 57 9 10
-IDWriteFont 0 2 2
-IDWriteFont 3 1 1
-IDWriteFont 8 1 1
-IDWriteFont 9 2 2
-IDWriteFont 13 1 1
-IDWriteFont1 0 2 2
-IDWriteFont1 3 1 1
-IDWriteFont1 8 1 1
-IDWriteFont1 9 2 2
-IDWriteFont1 13 1 1
-IDWriteFont2 0 2 2
-IDWriteFont2 3 1 1
-IDWriteFont2 8 1 1
-IDWriteFont2 9 2 2
-IDWriteFont2 13 1 1
-IDWriteFont3 0 2 2
-IDWriteFont3 3 1 1
-IDWriteFont3 8 1 1
-IDWriteFont3 9 2 2
-IDWriteFont3 13 1 1
-IDWriteFont3 19 1 1
-IDWriteFont3 21 1 1
-IDWriteFontCollection 0 2 2
-IDWriteFontCollection 4 2 2
-IDWriteFontCollection 6 2 2
-IDWriteFontCollection1 0 2 2
-IDWriteFontCollection1 4 2 2
-IDWriteFontCollection1 6 2 2
-IDWriteFontCollection1 7 1 1
-IDWriteFontCollection1 8 2 2
-IDWriteFontCollection2 0 2 2
-IDWriteFontCollection2 4 2 2
-IDWriteFontCollection2 6 2 2
-IDWriteFontCollection2 7 1 1
-IDWriteFontCollection2 8 2 2
-IDWriteFontCollection2 9 2 2
-IDWriteFontCollection2 10 4 4
-IDWriteFontCollection2 12 1 1
-IDWriteFontCollection3 0 2 2
-IDWriteFontCollection3 4 2 2
-IDWriteFontCollection3 6 2 2
-IDWriteFontCollection3 7 1 1
-IDWriteFontCollection3 8 2 2
-IDWriteFontCollection3 9 2 2
-IDWriteFontCollection3 10 4 4
-IDWriteFontCollection3 12 1 1
-IDWriteFontCollectionLoader 0 2 2
-IDWriteFontCollectionLoader 3 4 4
-IDWriteFontDownloadListener 0 2 2
-IDWriteFontDownloadQueue 0 2 2
-IDWriteFontFace 0 2 2
-IDWriteFontFace 4 2 2
-IDWriteFontFace 12 2,4 2,4
-IDWriteFontFace1 0 2 2
-IDWriteFontFace1 4 2 2
-IDWriteFontFace1 12 2,4 2,4
-IDWriteFontFace2 0 2 2
-IDWriteFontFace2 4 2 2
-IDWriteFontFace2 12 2,4 2,4
-IDWriteFontFace3 0 2 2
-IDWriteFontFace3 4 2 2
-IDWriteFontFace3 12 2,4 2,4
-IDWriteFontFace3 35 1 1
-IDWriteFontFace3 40 1 1
-IDWriteFontFace3 41 1 1
-IDWriteFontFace3 42 2 2
-IDWriteFontFace4 0 2 2
-IDWriteFontFace4 4 2 2
-IDWriteFontFace4 12 2,4 2,4
-IDWriteFontFace4 35 1 1
-IDWriteFontFace4 40 1 1
-IDWriteFontFace4 41 1 1
-IDWriteFontFace4 42 2 2
-IDWriteFontFace4 51 5 5
-IDWriteFontFace5 0 2 2
-IDWriteFontFace5 4 2 2
-IDWriteFontFace5 12 2,4 2,4
-IDWriteFontFace5 35 1 1
-IDWriteFontFace5 40 1 1
-IDWriteFontFace5 41 1 1
-IDWriteFontFace5 42 2 2
-IDWriteFontFace5 51 5 5
-IDWriteFontFace5 56 1 1
-IDWriteFontFace6 0 2 2
-IDWriteFontFace6 4 2 2
-IDWriteFontFace6 12 2,4 2,4
-IDWriteFontFace6 35 1 1
-IDWriteFontFace6 40 1 1
-IDWriteFontFace6 41 1 1
-IDWriteFontFace6 42 2 2
-IDWriteFontFace6 51 5 5
-IDWriteFontFace6 56 1 1
-IDWriteFontFace6 58 2 2
-IDWriteFontFace6 59 2 2
-IDWriteFontFace7 0 2 2
-IDWriteFontFace7 4 2 2
-IDWriteFontFace7 12 2,4 2,4
-IDWriteFontFace7 35 1 1
-IDWriteFontFace7 40 1 1
-IDWriteFontFace7 41 1 1
-IDWriteFontFace7 42 2 2
-IDWriteFontFace7 51 5 5
-IDWriteFontFace7 56 1 1
-IDWriteFontFace7 58 2 2
-IDWriteFontFace7 59 2 2
-IDWriteFontFace7 61 3 3
-IDWriteFontFaceReference 0 2 2
-IDWriteFontFaceReference 3 1 1
-IDWriteFontFaceReference 4 2 2
-IDWriteFontFaceReference 8 1 1
-IDWriteFontFaceReference1 0 2 2
-IDWriteFontFaceReference1 3 1 1
-IDWriteFontFaceReference1 4 2 2
-IDWriteFontFaceReference1 8 1 1
-IDWriteFontFaceReference1 17 1 1
-IDWriteFontFallback 0 2 2
-IDWriteFontFallback 3 10 10
-IDWriteFontFallback1 0 2 2
-IDWriteFontFallback1 3 10 10
-IDWriteFontFallback1 4 10 10
-IDWriteFontFallbackBuilder 0 2 2
-IDWriteFontFallbackBuilder 5 1 1
-IDWriteFontFamily 0 2 2
-IDWriteFontFamily 3 1 1
-IDWriteFontFamily 5 2 2
-IDWriteFontFamily 6 1 1
-IDWriteFontFamily 7 4 4
-IDWriteFontFamily 8 4 4
-IDWriteFontFamily1 0 2 2
-IDWriteFontFamily1 3 1 1
-IDWriteFontFamily1 5 2 2
-IDWriteFontFamily1 6 1 1
-IDWriteFontFamily1 7 4 4
-IDWriteFontFamily1 8 4 4
-IDWriteFontFamily1 10 2 2
-IDWriteFontFamily1 11 2 2
-IDWriteFontFamily2 0 2 2
-IDWriteFontFamily2 3 1 1
-IDWriteFontFamily2 5 2 2
-IDWriteFontFamily2 6 1 1
-IDWriteFontFamily2 7 4 4
-IDWriteFontFamily2 8 4 4
-IDWriteFontFamily2 10 2 2
-IDWriteFontFamily2 11 2 2
-IDWriteFontFamily2 12 3 3
-IDWriteFontFamily2 13 1 1
-IDWriteFontFile 0 2 2
-IDWriteFontFile 3 1 1
-IDWriteFontFile 4 1 1
-IDWriteFontFileEnumerator 0 2 2
-IDWriteFontFileEnumerator 4 1 1
-IDWriteFontFileLoader 0 2 2
-IDWriteFontFileLoader 3 3 3
-IDWriteFontFileStream 0 2 2
-IDWriteFontFileStream 3 1,4 1,6
-IDWriteFontList 0 2 2
-IDWriteFontList 3 1 1
-IDWriteFontList 5 2 2
-IDWriteFontList1 0 2 2
-IDWriteFontList1 3 1 1
-IDWriteFontList1 5 2 2
-IDWriteFontList1 7 2 2
-IDWriteFontList1 8 2 2
-IDWriteFontList2 0 2 2
-IDWriteFontList2 3 1 1
-IDWriteFontList2 5 2 2
-IDWriteFontList2 7 2 2
-IDWriteFontList2 8 2 2
-IDWriteFontList2 9 1 1
-IDWriteFontResource 0 2 2
-IDWriteFontResource 3 1 1
-IDWriteFontResource 9 2 2
-IDWriteFontResource 11 4 4
-IDWriteFontResource 13 4 4
-IDWriteFontResource 14 4 4
-IDWriteFontSet 0 2 2
-IDWriteFontSet 4 2 2
-IDWriteFontSet 7 2 2
-IDWriteFontSet 8 3 3
-IDWriteFontSet 9 4 4
-IDWriteFontSet 11 5 5
-IDWriteFontSet 12 3 3
-IDWriteFontSet1 0 2 2
-IDWriteFontSet1 4 2 2
-IDWriteFontSet1 7 2 2
-IDWriteFontSet1 8 3 3
-IDWriteFontSet1 9 4 4
-IDWriteFontSet1 11 5 5
-IDWriteFontSet1 12 3 3
-IDWriteFontSet1 13 4 4
-IDWriteFontSet1 14 1 1
-IDWriteFontSet1 15 3 3
-IDWriteFontSet1 16 4 4
-IDWriteFontSet1 17 4 4
-IDWriteFontSet1 22 2 2
-IDWriteFontSet1 23 2 2
-IDWriteFontSet1 24 2 2
-IDWriteFontSet2 0 2 2
-IDWriteFontSet2 4 2 2
-IDWriteFontSet2 7 2 2
-IDWriteFontSet2 8 3 3
-IDWriteFontSet2 9 4 4
-IDWriteFontSet2 11 5 5
-IDWriteFontSet2 12 3 3
-IDWriteFontSet2 13 4 4
-IDWriteFontSet2 14 1 1
-IDWriteFontSet2 15 3 3
-IDWriteFontSet2 16 4 4
-IDWriteFontSet2 17 4 4
-IDWriteFontSet2 22 2 2
-IDWriteFontSet2 23 2 2
-IDWriteFontSet2 24 2 2
-IDWriteFontSet3 0 2 2
-IDWriteFontSet3 4 2 2
-IDWriteFontSet3 7 2 2
-IDWriteFontSet3 8 3 3
-IDWriteFontSet3 9 4 4
-IDWriteFontSet3 11 5 5
-IDWriteFontSet3 12 3 3
-IDWriteFontSet3 13 4 4
-IDWriteFontSet3 14 1 1
-IDWriteFontSet3 15 3 3
-IDWriteFontSet3 16 4 4
-IDWriteFontSet3 17 4 4
-IDWriteFontSet3 22 2 2
-IDWriteFontSet3 23 2 2
-IDWriteFontSet3 24 2 2
-IDWriteFontSet4 0 2 2
-IDWriteFontSet4 4 2 2
-IDWriteFontSet4 7 2 2
-IDWriteFontSet4 8 3 3
-IDWriteFontSet4 9 4 4
-IDWriteFontSet4 11 5 5
-IDWriteFontSet4 12 3 3
-IDWriteFontSet4 13 4 4
-IDWriteFontSet4 14 1 1
-IDWriteFontSet4 15 3 3
-IDWriteFontSet4 16 4 4
-IDWriteFontSet4 17 4 4
-IDWriteFontSet4 22 2 2
-IDWriteFontSet4 23 2 2
-IDWriteFontSet4 24 2 2
-IDWriteFontSet4 31 5 5
-IDWriteFontSetBuilder 0 2 2
-IDWriteFontSetBuilder 6 1 1
-IDWriteFontSetBuilder1 0 2 2
-IDWriteFontSetBuilder1 6 1 1
-IDWriteFontSetBuilder2 0 2 2
-IDWriteFontSetBuilder2 6 1 1
-IDWriteGdiInterop 0 2 2
-IDWriteGdiInterop 3 2 2
-IDWriteGdiInterop 6 2 2
-IDWriteGdiInterop 7 4 4
-IDWriteGdiInterop1 0 2 2
-IDWriteGdiInterop1 3 2 2
-IDWriteGdiInterop1 6 2 2
-IDWriteGdiInterop1 7 4 4
-IDWriteGdiInterop1 8 3 3
-IDWriteGdiInterop1 11 3 3
-IDWriteGlyphRunAnalysis 0 2 2
-IDWriteInMemoryFontFileLoader 0 2 2
-IDWriteInMemoryFontFileLoader 3 3 3
-IDWriteInMemoryFontFileLoader 4 5 5
-IDWriteInlineObject 0 2 2
-IDWriteLocalFontFileLoader 0 2 2
-IDWriteLocalFontFileLoader 3 3 3
-IDWriteLocalizedStrings 0 2 2
-IDWriteNumberSubstitution 0 2 2
-IDWritePaintReader 0 2 2
-IDWritePixelSnapping 0 2 2
-IDWriteRemoteFontFileLoader 0 2 2
-IDWriteRemoteFontFileLoader 3 3 3
-IDWriteRemoteFontFileLoader 4 3 3
-IDWriteRemoteFontFileLoader 6 4 4
-IDWriteRemoteFontFileStream 0 2 2
-IDWriteRemoteFontFileStream 3 1,4 1,6
-IDWriteRemoteFontFileStream 10 4 4
-IDWriteRenderingParams 0 2 2
-IDWriteRenderingParams1 0 2 2
-IDWriteRenderingParams2 0 2 2
-IDWriteRenderingParams3 0 2 2
-IDWriteStringList 0 2 2
-IDWriteTextAnalysisSink 0 2 2
-IDWriteTextAnalysisSink1 0 2 2
-IDWriteTextAnalysisSource 0 2 2
-IDWriteTextAnalysisSource 3 2 2
-IDWriteTextAnalysisSource 4 2 2
-IDWriteTextAnalysisSource 6 3 3
-IDWriteTextAnalysisSource 7 3 3
-IDWriteTextAnalysisSource1 0 2 2
-IDWriteTextAnalysisSource1 3 2 2
-IDWriteTextAnalysisSource1 4 2 2
-IDWriteTextAnalysisSource1 6 3 3
-IDWriteTextAnalysisSource1 7 3 3
-IDWriteTextAnalyzer 0 2 2
-IDWriteTextAnalyzer1 0 2 2
-IDWriteTextAnalyzer2 0 2 2
-IDWriteTextFormat 0 2 2
-IDWriteTextFormat 17 2 2
-IDWriteTextFormat 19 1 1
-IDWriteTextFormat1 0 2 2
-IDWriteTextFormat1 17 2 2
-IDWriteTextFormat1 19 1 1
-IDWriteTextFormat1 35 1 1
-IDWriteTextFormat2 0 2 2
-IDWriteTextFormat2 17 2 2
-IDWriteTextFormat2 19 1 1
-IDWriteTextFormat2 35 1 1
-IDWriteTextFormat3 0 2 2
-IDWriteTextFormat3 17 2 2
-IDWriteTextFormat3 19 1 1
-IDWriteTextFormat3 35 1 1
-IDWriteTextLayout 0 2 2
-IDWriteTextLayout 17 2 2
-IDWriteTextLayout 19 1 1
-IDWriteTextLayout 44 2 2
-IDWriteTextLayout 53 2 2
-IDWriteTextLayout 54 2 2
-IDWriteTextLayout 55 2 2
-IDWriteTextLayout1 0 2 2
-IDWriteTextLayout1 17 2 2
-IDWriteTextLayout1 19 1 1
-IDWriteTextLayout1 44 2 2
-IDWriteTextLayout1 53 2 2
-IDWriteTextLayout1 54 2 2
-IDWriteTextLayout1 55 2 2
-IDWriteTextLayout2 0 2 2
-IDWriteTextLayout2 17 2 2
-IDWriteTextLayout2 19 1 1
-IDWriteTextLayout2 44 2 2
-IDWriteTextLayout2 53 2 2
-IDWriteTextLayout2 54 2 2
-IDWriteTextLayout2 55 2 2
-IDWriteTextLayout2 79 1 1
-IDWriteTextLayout3 0 2 2
-IDWriteTextLayout3 17 2 2
-IDWriteTextLayout3 19 1 1
-IDWriteTextLayout3 44 2 2
-IDWriteTextLayout3 53 2 2
-IDWriteTextLayout3 54 2 2
-IDWriteTextLayout3 55 2 2
-IDWriteTextLayout3 79 1 1
-IDWriteTextLayout4 0 2 2
-IDWriteTextLayout4 17 2 2
-IDWriteTextLayout4 19 1 1
-IDWriteTextLayout4 44 2 2
-IDWriteTextLayout4 53 2 2
-IDWriteTextLayout4 54 2 2
-IDWriteTextLayout4 55 2 2
-IDWriteTextLayout4 79 1 1
-IDWriteTextRenderer 0 2 2
-IDWriteTextRenderer1 0 2 2
-IDWriteTypography 0 2 2
-IDXGIAdapter4 0 2 2
-IDXGIAdapter4 6 2 2
-IDXGIAdapter4 7 2 2
-IDXGIDevice3 0 2 2
-IDXGIDevice3 6 2 2
-IDXGIDevice3 7 1 1
-IDXGIDevice3 8 5 5
-IDXGIFactory7 0 2 2
-IDXGIFactory7 6 2 2
-IDXGIFactory7 7 2 2
-IDXGIFactory7 9 1 1
-IDXGIFactory7 10 3 3
-IDXGIFactory7 11 2 2
-IDXGIFactory7 12 2 2
-IDXGIFactory7 15 6 6
-IDXGIFactory7 16 5 5
-IDXGIFactory7 24 4 4
-IDXGIFactory7 26 3 4
-IDXGIFactory7 27 2 2
-IDXGIFactory7 29 4 4
-IDXGIOutput6 0 2 2
-IDXGIOutput6 6 2 2
-IDXGIOutput6 22 2 2
-IDXGIOutput6 26 5 5
-IDXGIResource 0 2 2
-IDXGIResource 6 2 2
-IDXGIResource 7 2 2
-IDXGIResource 8 1 1
-IDXGISurface2 0 2 2
-IDXGISurface2 6 2 2
-IDXGISurface2 7 2 2
-IDXGISurface2 11 2 2
-IDXGISurface2 13 2 2
-IDXGISwapChain 0 2 2
-IDXGISwapChain 6 2 2
-IDXGISwapChain 7 2 2
-IDXGISwapChain 9 3 3
-IDXGISwapChain 11 2 2
-IDXGISwapChain 15 1 1
-IDXGISwapChain1 0 2 2
-IDXGISwapChain1 6 2 2
-IDXGISwapChain1 7 2 2
-IDXGISwapChain1 9 3 3
-IDXGISwapChain1 11 2 2
-IDXGISwapChain1 15 1 1
-IDXGISwapChain1 20 1 1
-IDXGISwapChain1 21 2 2
-IDXGISwapChain1 24 1 1
-IDataObject 0 2 2
-IDataObject 8 2 2
-IDataObject 11 1 1
-IDirect3D9 0 2 2
-IDirect3D9 16 6 6
-IDirect3D9Ex 0 2 2
-IDirect3D9Ex 16 6 6
-IDirect3D9Ex 20 7 7
-IDirect3DCubeTexture9 0 2 2
-IDirect3DCubeTexture9 3 1 1
-IDirect3DCubeTexture9 18 3 3
-IDirect3DDevice9 0 2 2
-IDirect3DDevice9 6 1 1
-IDirect3DDevice9 13 2 2
-IDirect3DDevice9 14 2 2
-IDirect3DDevice9 18 4 4
-IDirect3DDevice9 23 7,8 7,8
-IDirect3DDevice9 24 8,9 8,9
-IDirect3DDevice9 25 6,7 6,7
-IDirect3DDevice9 26 5,6 5,6
-IDirect3DDevice9 27 5,6 5,6
-IDirect3DDevice9 28 7,8 7,8
-IDirect3DDevice9 29 7,8 7,8
-IDirect3DDevice9 36 5,6 5,6
-IDirect3DDevice9 38 2 2
-IDirect3DDevice9 40 1 1
-IDirect3DDevice9 59 2 2
-IDirect3DDevice9 61 1 1
-IDirect3DDevice9 64 2 2
-IDirect3DDevice9 86 2 2
-IDirect3DDevice9 88 1 1
-IDirect3DDevice9 91 2 2
-IDirect3DDevice9 93 1 1
-IDirect3DDevice9 101 2 2
-IDirect3DDevice9 105 1 1
-IDirect3DDevice9 106 2 2
-IDirect3DDevice9 108 1 1
-IDirect3DDevice9 118 2 2
-IDirect3DDevice9Ex 0 2 2
-IDirect3DDevice9Ex 6 1 1
-IDirect3DDevice9Ex 13 2 2
-IDirect3DDevice9Ex 14 2 2
-IDirect3DDevice9Ex 18 4 4
-IDirect3DDevice9Ex 23 7,8 7,8
-IDirect3DDevice9Ex 24 8,9 8,9
-IDirect3DDevice9Ex 25 6,7 6,7
-IDirect3DDevice9Ex 26 5,6 5,6
-IDirect3DDevice9Ex 27 5,6 5,6
-IDirect3DDevice9Ex 28 7,8 7,8
-IDirect3DDevice9Ex 29 7,8 7,8
-IDirect3DDevice9Ex 36 5,6 5,6
-IDirect3DDevice9Ex 38 2 2
-IDirect3DDevice9Ex 40 1 1
-IDirect3DDevice9Ex 59 2 2
-IDirect3DDevice9Ex 61 1 1
-IDirect3DDevice9Ex 64 2 2
-IDirect3DDevice9Ex 86 2 2
-IDirect3DDevice9Ex 88 1 1
-IDirect3DDevice9Ex 91 2 2
-IDirect3DDevice9Ex 93 1 1
-IDirect3DDevice9Ex 101 2 2
-IDirect3DDevice9Ex 105 1 1
-IDirect3DDevice9Ex 106 2 2
-IDirect3DDevice9Ex 108 1 1
-IDirect3DDevice9Ex 118 2 2
-IDirect3DDevice9Ex 125 1 1
-IDirect3DDevice9Ex 129 7,8 7,8
-IDirect3DDevice9Ex 130 5,6 5,6
-IDirect3DDevice9Ex 131 7,8 7,8
-IDirect3DDeviceManager9 0 2 2
-IDirect3DDeviceManager9 4 1 1
-IDirect3DDeviceManager9 7 2 2
-IDirect3DDeviceManager9 9 3 3
-IDirect3DIndexBuffer9 0 2 2
-IDirect3DIndexBuffer9 3 1 1
-IDirect3DIndexBuffer9 11 3 3
-IDirect3DPixelShader9 0 2 2
-IDirect3DPixelShader9 3 1 1
-IDirect3DQuery9 0 2 2
-IDirect3DQuery9 3 1 1
-IDirect3DStateBlock9 0 2 2
-IDirect3DStateBlock9 3 1 1
-IDirect3DSurface9 0 2 2
-IDirect3DSurface9 3 1 1
-IDirect3DSurface9 11 2 2
-IDirect3DSurface9 15 1 1
-IDirect3DSwapChain9 0 2 2
-IDirect3DSwapChain9 5 3 3
-IDirect3DSwapChain9 8 1 1
-IDirect3DTexture9 0 2 2
-IDirect3DTexture9 3 1 1
-IDirect3DTexture9 18 2 2
-IDirect3DVertexBuffer9 0 2 2
-IDirect3DVertexBuffer9 3 1 1
-IDirect3DVertexBuffer9 11 3 3
-IDirect3DVertexDeclaration9 0 2 2
-IDirect3DVertexDeclaration9 3 1 1
-IDirect3DVertexShader9 0 2 2
-IDirect3DVertexShader9 3 1 1
-IDirect3DVolume9 0 2 2
-IDirect3DVolume9 3 1 1
-IDirect3DVolume9 7 2 2
-IDirect3DVolumeTexture9 0 2 2
-IDirect3DVolumeTexture9 3 1 1
-IDirect3DVolumeTexture9 18 2 2
-IDirectDraw 0 2 2
-IDirectDraw 4 2 2
-IDirectDraw 5 3 3
-IDirectDraw 6 2 2
-IDirectDraw 7 2 2
-IDirectDraw 14 1 1
-IDirectDraw2 0 2 2
-IDirectDraw2 4 2 2
-IDirectDraw2 5 3 3
-IDirectDraw2 6 2 2
-IDirectDraw2 7 2 2
-IDirectDraw2 14 1 1
-IDirectDraw4 0 2 2
-IDirectDraw4 4 2 2
-IDirectDraw4 5 3 3
-IDirectDraw4 6 2 2
-IDirectDraw4 7 2 2
-IDirectDraw4 14 1 1
-IDirectDraw4 24 2 2
-IDirectDraw7 0 2 2
-IDirectDraw7 4 2 2
-IDirectDraw7 5 3 3
-IDirectDraw7 6 2 2
-IDirectDraw7 7 2 2
-IDirectDraw7 14 1 1
-IDirectDraw7 24 2 2
-IDirectDrawClipper 0 2 2
-IDirectDrawClipper 4 1 1
-IDirectDrawMediaStream 0 2 2
-IDirectDrawMediaStream 3 1 1
-IDirectDrawMediaStream 6 2 2
-IDirectDrawMediaStream 7 3 3
-IDirectDrawMediaStream 9 2 2
-IDirectDrawMediaStream 11 1 1
-IDirectDrawMediaStream 13 4 4
-IDirectDrawPalette 0 2 2
-IDirectDrawStreamSample 0 2 2
-IDirectDrawStreamSample 8 1 1
-IDirectDrawSurface 0 2 2
-IDirectDrawSurface 12 2 2
-IDirectDrawSurface 15 1 1
-IDirectDrawSurface 17 1 1
-IDirectDrawSurface 20 1 1
-IDirectDrawSurface2 0 2 2
-IDirectDrawSurface2 12 2 2
-IDirectDrawSurface2 15 1 1
-IDirectDrawSurface2 17 1 1
-IDirectDrawSurface2 20 1 1
-IDirectDrawSurface2 36 1 1
-IDirectDrawSurface3 0 2 2
-IDirectDrawSurface3 12 2 2
-IDirectDrawSurface3 15 1 1
-IDirectDrawSurface3 17 1 1
-IDirectDrawSurface3 20 1 1
-IDirectDrawSurface3 36 1 1
-IDirectDrawSurface4 0 2 2
-IDirectDrawSurface4 12 2 2
-IDirectDrawSurface4 15 1 1
-IDirectDrawSurface4 17 1 1
-IDirectDrawSurface4 20 1 1
-IDirectDrawSurface4 36 1 1
-IDirectDrawSurface7 0 2 2
-IDirectDrawSurface7 12 2 2
-IDirectDrawSurface7 15 1 1
-IDirectDrawSurface7 17 1 1
-IDirectDrawSurface7 20 1 1
-IDirectDrawSurface7 36 1 1
-IDirectMusic 0 2 2
-IDirectMusic 4 2 2
-IDirectMusic 5 3 3
-IDirectMusic 7 2 2
-IDirectMusic8 0 2 2
-IDirectMusic8 4 2 2
-IDirectMusic8 5 3 3
-IDirectMusic8 7 2 2
-IDirectSound 0 2 2
-IDirectSound 3 2 2
-IDirectSound 5 2 2
-IDirectSound3DBuffer 0 2 2
-IDirectSound3DListener 0 2 2
-IDirectSound8 0 2 2
-IDirectSound8 3 2 2
-IDirectSound8 5 2 2
-IDirectSoundBuffer8 0 2 2
-IDirectSoundBuffer8 11 3,5 3,5
-IDirectSoundBuffer8 23 4 4
-IDirectSoundNotify 0 2 2
-IDirectXVideoAccelerationService 0 2 2
-IDirectXVideoAccelerationService 3 8,9 8,9
-IDirectXVideoProcessor 0 2 2
-IDirectXVideoProcessor 3 1 1
-IDirectXVideoProcessor 8 5 5
-IDirectXVideoProcessorService 0 2 2
-IDirectXVideoProcessorService 3 8,9 8,9
-IDirectXVideoProcessorService 5 3 3
-IDirectXVideoProcessorService 6 4 4
-IDirectXVideoProcessorService 7 5 5
-IDirectXVideoProcessorService 11 5 5
-IDispatch 0 2 2
-IDispatch 4 3 3
-IDispatchEx 0 2 2
-IDispatchEx 4 3 3
-IDispatchEx 12 2 2
-IDispatchEx 14 1 1
-IDropSource 0 2 2
-IDropTarget 0 2 2
-IEnumDMO 0 2 2
-IEnumDMO 3 3 3
-IEnumDMO 6 1 1
-IEnumFilters 0 2 2
-IEnumFilters 3 2 2
-IEnumFilters 6 1 1
-IEnumMediaTypes 0 2 2
-IEnumMediaTypes 3 2 2
-IEnumMediaTypes 6 1 1
-IEnumPins 0 2 2
-IEnumPins 3 2 2
-IEnumPins 6 1 1
-IEnumString 0 2 2
-IEnumString 3 2 2
-IEnumString 6 1 1
-IEnumWbemClassObject 0 2 2
-IEnumWbemClassObject 4 3 3
-IEnumWbemClassObject 6 1 1
-IFileSourceFilter 0 2 2
-IFileSourceFilter 4 1 1
-IFilterGraph 0 2 2
-IFilterGraph 5 1 1
-IFilterGraph 6 2 2
-IFilterGraph2 0 2 2
-IFilterGraph2 5 1 1
-IFilterGraph2 6 2 2
-IFilterGraph2 14 3 3
-IFilterGraph2 18 4 4
-IFont 0 2 2
-IFont 3 1 1
-IFont 19 1 1
-IFont 20 1 1
-IFontDisp 0 2 2
-IFontDisp 4 3 3
-IGraphBuilder 0 2 2
-IGraphBuilder 5 1 1
-IGraphBuilder 6 2 2
-IGraphBuilder 14 3 3
-IGraphConfig 0 2 2
-IGraphConfig 6 1 1
-IInspectable 0 2 2
-IInspectable 3 2 2
-IInspectable 4 1 1
-IKsPropertySet 0 2 2
-IMF2DBuffer 0 2 2
-IMF2DBuffer 3 1 1
-IMF2DBuffer 5 1 1
-IMFActivate 0 2 2
-IMFActivate 13 2 2
-IMFActivate 16 2 2
-IMFActivate 17 3 3
-IMFActivate 33 2 2
-IMFAsyncCallback 0 2 2
-IMFAsyncResult 0 2 2
-IMFAsyncResult 3 1 1
-IMFAsyncResult 6 1 1
-IMFAttributes 0 2 2
-IMFAttributes 13 2 2
-IMFAttributes 16 2 2
-IMFAttributes 17 3 3
-IMFByteStream 0 2 2
-IMFClock 0 2 2
-IMFCollection 0 2 2
-IMFCollection 4 2 2
-IMFCollection 6 2 2
-IMFDXGIBuffer 0 2 2
-IMFDXGIBuffer 3 2 2
-IMFDXGIBuffer 5 3 3
-IMFDXGIDeviceManager 0 2 2
-IMFDXGIDeviceManager 4 3 3
-IMFDXGIDeviceManager 5 3 3
-IMFDXGIDeviceManager 6 1 1
-IMFGetService 0 2 2
-IMFGetService 3 3 3
-IMFMediaBuffer 0 2 2
-IMFMediaBuffer 3 1 1
-IMFMediaEngine 0 2 2
-IMFMediaEngine 3 1 1
-IMFMediaEngine 7 1 1
-IMFMediaEngine 11 1 1
-IMFMediaEngine 25 1 1
-IMFMediaEngine 26 1 1
-IMFMediaEngineClassFactory 0 2 2
-IMFMediaEngineClassFactory 3 3 3
-IMFMediaEngineClassFactory 4 1 1
-IMFMediaEngineClassFactory 5 1 1
-IMFMediaEngineEx 0 2 2
-IMFMediaEngineEx 3 1 1
-IMFMediaEngineEx 7 1 1
-IMFMediaEngineEx 11 1 1
-IMFMediaEngineEx 25 1 1
-IMFMediaEngineEx 26 1 1
-IMFMediaEngineEx 72 1 1
-IMFMediaEngineNotify 0 2 2
-IMFMediaError 0 2 2
-IMFMediaEvent 0 2 2
-IMFMediaEvent 13 2 2
-IMFMediaEvent 16 2 2
-IMFMediaEvent 17 3 3
-IMFMediaEventGenerator 0 2 2
-IMFMediaEventGenerator 3 2 2
-IMFMediaEventGenerator 5 2 2
-IMFMediaSession 0 2 2
-IMFMediaSession 3 2 2
-IMFMediaSession 5 2 2
-IMFMediaSession 14 1 1
-IMFMediaSession 16 3 4
-IMFMediaSource 0 2 2
-IMFMediaSource 3 2 2
-IMFMediaSource 5 2 2
-IMFMediaSource 8 1 1
-IMFMediaType 0 2 2
-IMFMediaType 13 2 2
-IMFMediaType 16 2 2
-IMFMediaType 17 3 3
-IMFMediaType 36 2 5
-IMFMediaTypeHandler 0 2 2
-IMFMediaTypeHandler 3 2 2
-IMFMediaTypeHandler 5 2 2
-IMFMediaTypeHandler 7 1 1
-IMFPresentationClock 0 2 2
-IMFPresentationClock 9 1 1
-IMFPresentationDescriptor 0 2 2
-IMFPresentationDescriptor 13 2 2
-IMFPresentationDescriptor 16 2 2
-IMFPresentationDescriptor 17 3 3
-IMFPresentationDescriptor 34 3 3
-IMFPresentationDescriptor 37 1 1
-IMFSample 0 2 2
-IMFSample 13 2 2
-IMFSample 16 2 2
-IMFSample 17 3 3
-IMFSample 40 2 2
-IMFSample 41 1 1
-IMFSimpleAudioVolume 0 2 2
-IMFSourceReader 0 2 2
-IMFSourceReader 5 3 3
-IMFSourceReader 6 2 2
-IMFSourceReader 9 6 6
-IMFSourceReader 11 4 4
-IMFSourceReaderCallback 0 2 2
-IMFSourceResolver 0 2 2
-IMFSourceResolver 3 5 5
-IMFSourceResolver 4 6 6
-IMFSourceResolver 5 4 4
-IMFSourceResolver 6 3 3
-IMFSourceResolver 7 5 5
-IMFSourceResolver 8 3 3
-IMFStreamDescriptor 0 2 2
-IMFStreamDescriptor 13 2 2
-IMFStreamDescriptor 16 2 2
-IMFStreamDescriptor 17 3 3
-IMFStreamDescriptor 34 1 1
-IMFTopology 0 2 2
-IMFTopology 13 2 2
-IMFTopology 16 2 2
-IMFTopology 17 3 3
-IMFTopology 37 2 2
-IMFTopology 40 2 3
-IMFTopology 41 1 1
-IMFTopology 42 1 1
-IMFTopologyNode 0 2 2
-IMFTopologyNode 13 2 2
-IMFTopologyNode 16 2 2
-IMFTopologyNode 17 3 3
-IMFTopologyNode 34 1 1
-IMFTopologyNode 42 2 2
-IMFTopologyNode 43 2 2
-IMFTopologyNode 45 2 2
-IMFTopologyNode 47 2 2
-IMFTransform 0 2 2
-IMFTransform 8 1 1
-IMFTransform 9 2 2
-IMFTransform 10 2 2
-IMFTransform 13 3 3
-IMFTransform 14 3 3
-IMFTransform 17 2 2
-IMFTransform 18 2 2
-IMFVideoDisplayControl 0 2 2
-IMFVideoDisplayControl 10 1 1
-IMFVideoDisplayControl 12 2 2
-IMFVideoSampleAllocator 0 2 2
-IMFVideoSampleAllocator 6 1 1
-IMFVideoSampleAllocatorEx 0 2 2
-IMFVideoSampleAllocatorEx 6 1 1
-IMMDevice 0 2 2
-IMMDevice 3 4 4
-IMMDevice 4 2 2
-IMMDevice 5 1 1
-IMMDeviceCollection 0 2 2
-IMMDeviceCollection 4 2 2
-IMMDeviceEnumerator 0 2 2
-IMMDeviceEnumerator 3 3 3
-IMMDeviceEnumerator 4 3 3
-IMMDeviceEnumerator 5 2 2
-IMMEndpoint 0 2 2
-IMMNotificationClient 0 2 2
-IMalloc 0 2 2
-IMediaControl 0 2 2
-IMediaControl 4 3 3
-IMediaControl 12 2 2
-IMediaControl 13 1 1
-IMediaControl 14 1 1
-IMediaEventEx 0 2 2
-IMediaEventEx 4 3 3
-IMediaEventEx 7 1 1
-IMediaEventEx 8 2,3 2,3
-IMediaEventSink 0 2 2
-IMediaFilter 0 2 2
-IMediaFilter 9 1 1
-IMediaPosition 0 2 2
-IMediaPosition 4 3 3
-IMediaSample 0 2 2
-IMediaSample 3 1 1
-IMediaSample 13 1 1
-IMediaSample2 0 2 2
-IMediaSample2 3 1 1
-IMediaSample2 13 1 1
-IMediaSeeking 0 2 2
-IMediaStream 0 2 2
-IMediaStream 3 1 1
-IMediaStream 6 2 2
-IMediaStream 7 3 3
-IMemAllocator 0 2 2
-IMemAllocator 7 1 1
-IMemInputPin 0 2 2
-IMemInputPin 3 1 1
-IMultiMediaStream 0 2 2
-IMultiMediaStream 4 2 2
-IMultiMediaStream 5 2 2
-IMultiMediaStream 11 1 1
-INSSBuffer 0 2 2
-INSSBuffer 6 1 1
-INSSBuffer 7 1 1
-IObjectSafety 0 2 2
-IOleControl 0 2 2
-IOleInPlaceActiveObject 0 2 2
-IOleInPlaceActiveObject 3 1 1
-IOleInPlaceObject 0 2 2
-IOleInPlaceObject 3 1 1
-IOleObject 0 2 2
-IOleObject 4 1 1
-IOleObject 8 3 3
-IOleObject 10 2 2
-IOleObject 12 1 1
-IOleObject 16 2 2
-IOleObject 21 1 1
-IOleWindow 0 2 2
-IOleWindow 3 1 1
-IOverlay 0 2 2
-IOverlay 3 2 2
-IOverlay 8 1 1
-IOverlay 9 3 3
-IPersist 0 2 2
-IPersistFile 0 2 2
-IPersistFile 8 1 1
-IPersistStream 0 2 2
-IPersistStreamInit 0 2 2
-IPicture 0 2 2
-IPicture 10 1 1
-IPicture 11 2 2
-IPin 0 2 2
-IPin 6 1 1
-IPin 10 1 1
-IPin 12 1 1
-IPin 13 1 1
-IPropertyNotifySink 0 2 2
-IPropertyStore 0 2 2
-IQualProp 0 2 2
-IQualityControl 0 2 2
-IReferenceClock 0 2 2
-IReferenceClock 4 4 6
-IReferenceClock 5 4 6
-ISequentialStream 0 2 2
-IShellLinkA 0 2 2
-IShellLinkA 4 1 1
-IShellLinkW 0 2 2
-IShellLinkW 4 1 1
-ISimpleAudioVolume 0 2 2
-IStream 0 2 2
-IStream 13 1 1
-IStreamSample 0 2 2
-ITypeInfo 0 2 2
-ITypeInfo 3 1 1
-ITypeInfo 4 1 1
-ITypeInfo 5 2 2
-ITypeInfo 6 2 2
-ITypeInfo 7 2 2
-ITypeInfo 12 2,3,5 2,3,5
-ITypeInfo 13 3,4 3,4
-ITypeInfo 14 2 2
-ITypeInfo 15 3 3
-ITypeInfo 16 3 3
-ITypeInfo 17 2 2
-ITypeInfo 18 1 1
-ITypeInfo2 0 2 2
-ITypeInfo2 3 1 1
-ITypeInfo2 4 1 1
-ITypeInfo2 5 2 2
-ITypeInfo2 6 2 2
-ITypeInfo2 7 2 2
-ITypeInfo2 12 2,3,5 2,3,5
-ITypeInfo2 13 3,4 3,4
-ITypeInfo2 14 2 2
-ITypeInfo2 15 3 3
-ITypeInfo2 16 3 3
-ITypeInfo2 17 2 2
-ITypeInfo2 18 1 1
-ITypeInfo2 31 3,5 3,5
-ITypeLib 0 2 2
-ITypeLib 4 2 2
-ITypeLib 6 2 2
-ITypeLib 7 1 1
-ITypeLib 8 1 1
-ITypeLib 9 2,3,5 2,3,5
-ITypeLib 11 3 3
-ITypeLib2 0 2 2
-ITypeLib2 4 2 2
-ITypeLib2 6 2 2
-ITypeLib2 7 1 1
-ITypeLib2 8 1 1
-ITypeLib2 9 2,3,5 2,3,5
-ITypeLib2 11 3 3
-ITypeLib2 15 3,5 3,5
-IUnknown 0 2 2
-IVMRAspectRatioControl9 0 2 2
-IVMRDeinterlaceControl9 0 2 2
-IVMRFilterConfig 0 2 2
-IVMRFilterConfig9 0 2 2
-IVMRMixerBitmap9 0 2 2
-IVMRMixerControl9 0 2 2
-IVMRMonitorConfig9 0 2 2
-IVMRSurfaceAllocatorNotify9 0 2 2
-IVMRSurfaceAllocatorNotify9 6 3 3
-IVMRWindowlessControl 0 2 2
-IVMRWindowlessControl 13 1 1
-IVMRWindowlessControl9 0 2 2
-IVMRWindowlessControl9 13 1 1
-IVideoWindow 0 2 2
-IVideoWindow 4 3 3
-IVideoWindow 8 1 1
-IVideoWindow 30 1 1
-IVideoWindow 32 1 1
-IViewObject 0 2 2
-IViewObject 4 6 6
-IViewObject 8 3 3
-IViewObject2 0 2 2
-IViewObject2 4 6 6
-IViewObject2 8 3 3
-IWICBitmap 0 2 2
-IWICBitmap 8 3 3
-IWICBitmapClipper 0 2 2
-IWICBitmapCodecInfo 0 2 2
-IWICBitmapCodecProgressNotification 0 2 2
-IWICBitmapDecoder 0 2 2
-IWICBitmapDecoder 6 1 1
-IWICBitmapDecoder 8 1 1
-IWICBitmapDecoder 9 1 1
-IWICBitmapDecoder 10 2 2
-IWICBitmapDecoder 11 1 1
-IWICBitmapDecoder 13 2 2
-IWICBitmapDecoderInfo 0 2 2
-IWICBitmapDecoderInfo 25 1 1
-IWICBitmapEncoder 0 2 2
-IWICBitmapEncoder 5 1 1
-IWICBitmapEncoder 10 1,2 1,2
-IWICBitmapEncoder 12 1 1
-IWICBitmapEncoderInfo 0 2 2
-IWICBitmapEncoderInfo 23 1 1
-IWICBitmapFlipRotator 0 2 2
-IWICBitmapFrameChainReader 0 2 2
-IWICBitmapFrameChainReader 4 3 3
-IWICBitmapFrameChainWriter 0 2 2
-IWICBitmapFrameChainWriter 3 2,3 2,3
-IWICBitmapFrameDecode 0 2 2
-IWICBitmapFrameDecode 8 1 1
-IWICBitmapFrameDecode 9 2 2
-IWICBitmapFrameDecode 10 1 1
-IWICBitmapFrameEncode 0 2 2
-IWICBitmapFrameEncode 13 1 1
-IWICBitmapLock 0 2 2
-IWICBitmapLock 5 2 2
-IWICBitmapScaler 0 2 2
-IWICBitmapSource 0 2 2
-IWICBitmapSourceTransform 0 2 2
-IWICBitmapSourceTransform2 0 2 2
-IWICBitmapToneMapper 0 2 2
-IWICColorContext 0 2 2
-IWICColorTransform 0 2 2
-IWICComponentFactory 0 2 2
-IWICComponentFactory 3 5 5
-IWICComponentFactory 4 4 4
-IWICComponentFactory 5 4 4
-IWICComponentFactory 6 2 2
-IWICComponentFactory 7 3 3
-IWICComponentFactory 8 3 3
-IWICComponentFactory 9 1 1
-IWICComponentFactory 10 1 1
-IWICComponentFactory 11 1 1
-IWICComponentFactory 12 1 1
-IWICComponentFactory 13 1 1
-IWICComponentFactory 14 1 1
-IWICComponentFactory 15 1 1
-IWICComponentFactory 16 1 1
-IWICComponentFactory 17 5 5
-IWICComponentFactory 18 3 3
-IWICComponentFactory 19 6 6
-IWICComponentFactory 20 7 7
-IWICComponentFactory 21 4 4
-IWICComponentFactory 22 2 2
-IWICComponentFactory 23 3 3
-IWICComponentFactory 24 2 2
-IWICComponentFactory 25 2 2
-IWICComponentFactory 26 3 3
-IWICComponentFactory 27 3 3
-IWICComponentFactory 28 5 5
-IWICComponentFactory 29 5 5
-IWICComponentFactory 30 4 4
-IWICComponentFactory 31 3 3
-IWICComponentFactory 32 2 2
-IWICComponentFactory 33 2 2
-IWICComponentFactory 34 3 3
-IWICComponentInfo 0 2 2
-IWICD3DTextureSource 0 2 2
-IWICD3DTextureSource 3 4 4
-IWICD3DTextureSource 4 9 9
-IWICD3DTextureSource 6 1 1
-IWICDdsDecoder 0 2 2
-IWICDdsDecoder 4 4 4
-IWICDdsEncoder 0 2 2
-IWICDdsEncoder 5 1 1
-IWICDdsFrameDecode 0 2 2
-IWICDevelopRaw 0 2 2
-IWICDevelopRaw 8 1 1
-IWICDevelopRaw 9 2 2
-IWICDevelopRaw 10 1 1
-IWICDevelopRaw 13 1 1
-IWICDevelopRawNotificationCallback 0 2 2
-IWICDisplayAdaptationControl 0 2 2
-IWICDisplayAdaptationControl2 0 2 2
-IWICEnumMetadataItem 0 2 2
-IWICEnumMetadataItem 6 1 1
-IWICFastMetadataEncoder 0 2 2
-IWICFastMetadataEncoder 4 1 1
-IWICFormatConverter 0 2 2
-IWICFormatConverterInfo 0 2 2
-IWICFormatConverterInfo 12 1 1
-IWICImageEncoder 0 2 2
-IWICImagingFactory 0 2 2
-IWICImagingFactory 3 5 5
-IWICImagingFactory 4 4 4
-IWICImagingFactory 5 4 4
-IWICImagingFactory 6 2 2
-IWICImagingFactory 7 3 3
-IWICImagingFactory 8 3 3
-IWICImagingFactory 9 1 1
-IWICImagingFactory 10 1 1
-IWICImagingFactory 11 1 1
-IWICImagingFactory 12 1 1
-IWICImagingFactory 13 1 1
-IWICImagingFactory 14 1 1
-IWICImagingFactory 15 1 1
-IWICImagingFactory 16 1 1
-IWICImagingFactory 17 5 5
-IWICImagingFactory 18 3 3
-IWICImagingFactory 19 6 6
-IWICImagingFactory 20 7 7
-IWICImagingFactory 21 4 4
-IWICImagingFactory 22 2 2
-IWICImagingFactory 23 3 3
-IWICImagingFactory 24 2 2
-IWICImagingFactory 25 2 2
-IWICImagingFactory 26 3 3
-IWICImagingFactory 27 3 3
-IWICImagingFactory2 0 2 2
-IWICImagingFactory2 3 5 5
-IWICImagingFactory2 4 4 4
-IWICImagingFactory2 5 4 4
-IWICImagingFactory2 6 2 2
-IWICImagingFactory2 7 3 3
-IWICImagingFactory2 8 3 3
-IWICImagingFactory2 9 1 1
-IWICImagingFactory2 10 1 1
-IWICImagingFactory2 11 1 1
-IWICImagingFactory2 12 1 1
-IWICImagingFactory2 13 1 1
-IWICImagingFactory2 14 1 1
-IWICImagingFactory2 15 1 1
-IWICImagingFactory2 16 1 1
-IWICImagingFactory2 17 5 5
-IWICImagingFactory2 18 3 3
-IWICImagingFactory2 19 6 6
-IWICImagingFactory2 20 7 7
-IWICImagingFactory2 21 4 4
-IWICImagingFactory2 22 2 2
-IWICImagingFactory2 23 3 3
-IWICImagingFactory2 24 2 2
-IWICImagingFactory2 25 2 2
-IWICImagingFactory2 26 3 3
-IWICImagingFactory2 27 3 3
-IWICImagingFactory2 28 2 2
-IWICImagingFactory3 0 2 2
-IWICImagingFactory3 3 5 5
-IWICImagingFactory3 4 4 4
-IWICImagingFactory3 5 4 4
-IWICImagingFactory3 6 2 2
-IWICImagingFactory3 7 3 3
-IWICImagingFactory3 8 3 3
-IWICImagingFactory3 9 1 1
-IWICImagingFactory3 10 1 1
-IWICImagingFactory3 11 1 1
-IWICImagingFactory3 12 1 1
-IWICImagingFactory3 13 1 1
-IWICImagingFactory3 14 1 1
-IWICImagingFactory3 15 1 1
-IWICImagingFactory3 16 1 1
-IWICImagingFactory3 17 5 5
-IWICImagingFactory3 18 3 3
-IWICImagingFactory3 19 6 6
-IWICImagingFactory3 20 7 7
-IWICImagingFactory3 21 4 4
-IWICImagingFactory3 22 2 2
-IWICImagingFactory3 23 3 3
-IWICImagingFactory3 24 2 2
-IWICImagingFactory3 25 2 2
-IWICImagingFactory3 26 3 3
-IWICImagingFactory3 27 3 3
-IWICImagingFactory3 28 2 2
-IWICImagingFactory3 29 1 1
-IWICJpegFrameDecode 0 2 2
-IWICJpegFrameEncode 0 2 2
-IWICMetadataBlockReader 0 2 2
-IWICMetadataBlockReader 5 2 2
-IWICMetadataBlockReader 6 1 1
-IWICMetadataBlockWriter 0 2 2
-IWICMetadataBlockWriter 5 2 2
-IWICMetadataBlockWriter 6 1 1
-IWICMetadataBlockWriter 8 2 2
-IWICMetadataHandlerInfo 0 2 2
-IWICMetadataQueryReader 0 2 2
-IWICMetadataQueryReader 6 1 1
-IWICMetadataQueryWriter 0 2 2
-IWICMetadataQueryWriter 6 1 1
-IWICMetadataReader 0 2 2
-IWICMetadataReader 4 1 1
-IWICMetadataReader 8 1 1
-IWICMetadataReaderInfo 0 2 2
-IWICMetadataReaderInfo 20 1 1
-IWICMetadataWriter 0 2 2
-IWICMetadataWriter 4 1 1
-IWICMetadataWriter 8 1 1
-IWICMetadataWriterInfo 0 2 2
-IWICMetadataWriterInfo 19 1 1
-IWICPalette 0 2 2
-IWICPersistStream 0 2 2
-IWICPixelFormatInfo 0 2 2
-IWICPixelFormatInfo 12 1 1
-IWICPixelFormatInfo2 0 2 2
-IWICPixelFormatInfo2 12 1 1
-IWICPlanarBitmapFrameEncode 0 2 2
-IWICPlanarBitmapSourceTransform 0 2 2
-IWICPlanarFormatConverter 0 2 2
-IWICProgressCallback 0 2 2
-IWICProgressiveLevelControl 0 2 2
-IWICStream 0 2 2
-IWICStream 13 1 1
-IWICStreamProvider 0 2 2
-IWICStreamProvider 3 1 1
-IWMHeaderInfo 0 2 2
-IWMHeaderInfo2 0 2 2
-IWMHeaderInfo3 0 2 2
-IWMMediaProps 0 2 2
-IWMOutputMediaProps 0 2 2
-IWMProfile 0 2 2
-IWMProfile 9 2 2
-IWMProfile 10 2 2
-IWMProfile 15 2 2
-IWMProfile 17 2 2
-IWMProfile 20 1 1
-IWMProfile2 0 2 2
-IWMProfile2 9 2 2
-IWMProfile2 10 2 2
-IWMProfile2 15 2 2
-IWMProfile2 17 2 2
-IWMProfile2 20 1 1
-IWMProfile3 0 2 2
-IWMProfile3 9 2 2
-IWMProfile3 10 2 2
-IWMProfile3 15 2 2
-IWMProfile3 17 2 2
-IWMProfile3 20 1 1
-IWMProfile3 25 2 2
-IWMProfile3 28 1 1
-IWMProfile3 29 1 1
-IWMProfile3 32 1 1
-IWMReader 0 2 2
-IWMReader 6 2 2
-IWMReader 9 3 3
-IWMReaderAdvanced2 0 2 2
-IWMReaderAllocatorEx 0 2 2
-IWMReaderAllocatorEx 3 3 3
-IWMReaderAllocatorEx 4 3 3
-IWMReaderCallback 0 2 2
-IWMReaderCallbackAdvanced 0 2 2
-IWMReaderCallbackAdvanced 7 3 3
-IWMReaderCallbackAdvanced 8 3 3
-IWMStreamConfig 0 2 2
-IWMSyncReader 0 2 2
-IWMSyncReader 7 2 2
-IWMSyncReader 15 2 2
-IWMSyncReader 18 3 3
-IWMSyncReader2 0 2 2
-IWMSyncReader2 7 2 2
-IWMSyncReader2 15 2 2
-IWMSyncReader2 18 3 3
-IWMSyncReader2 27 2 2
-IWMSyncReader2 29 2 2
-IWbemClassObject 0 2 2
-IWbemClassObject 3 1 1
-IWbemClassObject 7 4 4
-IWbemClassObject 9 2 2
-IWbemClassObject 11 2 2
-IWbemClassObject 12 1 1
-IWbemClassObject 13 2 2
-IWbemClassObject 14 2 2
-IWbemClassObject 15 2 2
-IWbemClassObject 17 2 2
-IWbemClassObject 19 3,4 3,4
-IWbemClassObject 23 2,3,4 2,3,4
-IWbemClassObject 25 2 2
-IWbemClassObject 26 2 2
-IWbemLocator 0 2 2
-IWbemLocator 3 8 8
-IWbemServices 0 2 2
-IWbemServices 3 4,5 4,5
-IWbemServices 5 2 2
-IWbemServices 6 4,5 4,5
-IWbemServices 8 4 4
-IWbemServices 10 4 4
-IWbemServices 12 4 4
-IWbemServices 14 4 4
-IWbemServices 16 4 4
-IWbemServices 18 4 4
-IWbemServices 20 5 5
-IWbemServices 22 5 5
-IWbemServices 24 6,7 6,7
-IWebBrowser 0 2 2
-IWebBrowser 4 3 3
-IWebBrowser 15 1 1
-IWebBrowser 16 1 1
-IWebBrowser 17 1 1
-IWebBrowser 18 1 1
-IWebBrowser 20 1 1
-IWebBrowser 29 1 1
-IWebBrowser 30 1 1
-IWebBrowser2 0 2 2
-IWebBrowser2 4 3 3
-IWebBrowser2 15 1 1
-IWebBrowser2 16 1 1
-IWebBrowser2 17 1 1
-IWebBrowser2 18 1 1
-IWebBrowser2 20 1 1
-IWebBrowser2 29 1 1
-IWebBrowser2 30 1 1
-IWebBrowser2 36 1 1
-IWebBrowser2 37 1 1
-IWebBrowser2 38 1 1
-IWebBrowser2 39 1 1
-IWebBrowser2 44 1 1
-IWebBrowserApp 0 2 2
-IWebBrowserApp 4 3 3
-IWebBrowserApp 15 1 1
-IWebBrowserApp 16 1 1
-IWebBrowserApp 17 1 1
-IWebBrowserApp 18 1 1
-IWebBrowserApp 20 1 1
-IWebBrowserApp 29 1 1
-IWebBrowserApp 30 1 1
-IWebBrowserApp 36 1 1
-IWebBrowserApp 37 1 1
-IWebBrowserApp 38 1 1
-IWebBrowserApp 39 1 1
-IWebBrowserApp 44 1 1
-IXAPO 0 2 2
-IXAPO 3 1 1
-IXAPO 4 3 3
-IXAPO 5 3 3
-IXAPOParameters 0 2 2
-IXAudio2 0 2 2
-IXAudio2 5 1 1
-IXAudio2 6 1 1
-IXAudio2 7 1 1
+IAMCertifiedOutputProtection 0 QueryInterface 2 2
+IAMCertifiedOutputProtection 3 KeyExchange 2 2
+IAMFilterMiscFlags 0 QueryInterface 2 2
+IAMMultiMediaStream 0 QueryInterface 2 2
+IAMMultiMediaStream 4 GetMediaStream 2 2
+IAMMultiMediaStream 5 EnumMediaStreams 2 2
+IAMMultiMediaStream 11 GetEndOfStreamEventHandle 1 1
+IAMMultiMediaStream 13 GetFilterGraph 1 1
+IAMMultiMediaStream 14 GetFilter 1 1
+IAMMultiMediaStream 15 AddMediaStream 4 4
+IAMStreamSelect 0 QueryInterface 2 2
+IAMStreamSelect 4 Info 2,6,7,8 2,6,7,8
+IAMVideoAccelerator 0 QueryInterface 2 2
+IAMVideoAccelerator 10 GetBuffer 4 4
+IActivationFactory 0 QueryInterface 2 2
+IActivationFactory 3 GetIids 2 2
+IActivationFactory 4 GetRuntimeClassName 1 1
+IActivationFactory 6 ActivateInstance 1 1
+IActiveScript 0 QueryInterface 2 2
+IActiveScript 4 GetScriptSite 2 2
+IActiveScript 10 GetScriptDispatch 2 2
+IActiveScript 15 Clone 1 1
+IActiveScriptError 0 QueryInterface 2 2
+IActiveScriptError 5 GetSourceLineText 1 1
+IActiveScriptParse32 0 QueryInterface 2 2
+IActiveScriptParse32 4 AddScriptlet 10 10
+IActiveScriptProperty 0 QueryInterface 2 2
+IAsyncReader 0 QueryInterface 2 2
+IAsyncReader 3 RequestAllocator 3 3
+IAsyncReader 5 WaitForNext 2,3 2,3
+IAudioClient 0 QueryInterface 2 2
+IAudioClient 7 IsFormatSupported 3 3
+IAudioClient 8 GetMixFormat 1 1
+IAudioClient 14 GetService 2 2
+IAudioClock 0 QueryInterface 2 2
+IAudioClockAdjustment 0 QueryInterface 2 2
+IAudioEndpointVolume 0 QueryInterface 2 2
+IAudioMediaStream 0 QueryInterface 2 2
+IAudioMediaStream 3 GetMultiMediaStream 1 1
+IAudioMediaStream 6 AllocateSample 2 2
+IAudioMediaStream 7 CreateSharedSample 3 3
+IAudioMediaStream 11 CreateSample 3 3
+IAudioRenderClient 0 QueryInterface 2 2
+IAudioRenderClient 3 GetBuffer 2 2
+IAudioSessionControl 0 QueryInterface 2 2
+IAudioSessionControl 4 GetDisplayName 1 1
+IAudioSessionControl 6 GetIconPath 1 1
+IAudioSessionControl2 0 QueryInterface 2 2
+IAudioSessionControl2 4 GetDisplayName 1 1
+IAudioSessionControl2 6 GetIconPath 1 1
+IAudioSessionControl2 12 GetSessionIdentifier 1 1
+IAudioSessionControl2 13 GetSessionInstanceIdentifier 1 1
+IAudioSessionEnumerator 0 QueryInterface 2 2
+IAudioSessionEnumerator 4 GetSession 2 2
+IAudioSessionEvents 0 QueryInterface 2 2
+IAudioSessionManager 0 QueryInterface 2 2
+IAudioSessionManager 3 GetAudioSessionControl 3 3
+IAudioSessionManager 4 GetSimpleAudioVolume 3 3
+IAudioSessionManager2 0 QueryInterface 2 2
+IAudioSessionManager2 3 GetAudioSessionControl 3 3
+IAudioSessionManager2 4 GetSimpleAudioVolume 3 3
+IAudioSessionManager2 5 GetSessionEnumerator 1 1
+IAudioStreamVolume 0 QueryInterface 2 2
+IAudioVolumeDuckNotification 0 QueryInterface 2 2
+IBaseFilter 0 QueryInterface 2 2
+IBaseFilter 9 GetSyncSource 1 1
+IBaseFilter 10 EnumPins 1 1
+IBaseFilter 11 FindPin 2 2
+IBaseFilter 14 QueryVendorInfo 1 1
+IBasicAudio 0 QueryInterface 2 2
+IBasicAudio 4 GetTypeInfo 3 3
+IBasicVideo 0 QueryInterface 2 2
+IBasicVideo 4 GetTypeInfo 3 3
+IBasicVideo2 0 QueryInterface 2 2
+IBasicVideo2 4 GetTypeInfo 3 3
+IChannelAudioVolume 0 QueryInterface 2 2
+IClassFactory 0 QueryInterface 2 2
+IClassFactory 3 CreateInstance 3 3
+IClientSecurity 0 QueryInterface 2 2
+IClientSecurity 3 QueryBlanket 4,7 4,7
+IClientSecurity 5 CopyProxy 2 2
+IConnectionPoint 0 QueryInterface 2 2
+IConnectionPoint 4 GetConnectionPointContainer 1 1
+IConnectionPoint 7 EnumConnections 1 1
+IConnectionPointContainer 0 QueryInterface 2 2
+IConnectionPointContainer 3 EnumConnectionPoints 1 1
+IConnectionPointContainer 4 FindConnectionPoint 2 2
+ID2D1AnalysisTransform 0 QueryInterface 2 2
+ID2D1Bitmap 0 QueryInterface 2 2
+ID2D1Bitmap 3 GetFactory 1 1
+ID2D1Bitmap1 0 QueryInterface 2 2
+ID2D1Bitmap1 3 GetFactory 1 1
+ID2D1Bitmap1 11 GetColorContext 1 1
+ID2D1Bitmap1 13 GetSurface 1 1
+ID2D1BitmapBrush 0 QueryInterface 2 2
+ID2D1BitmapBrush 3 GetFactory 1 1
+ID2D1BitmapBrush 15 GetBitmap 1 1
+ID2D1BitmapBrush1 0 QueryInterface 2 2
+ID2D1BitmapBrush1 3 GetFactory 1 1
+ID2D1BitmapBrush1 15 GetBitmap 1 1
+ID2D1BitmapRenderTarget 0 QueryInterface 2 2
+ID2D1BitmapRenderTarget 3 GetFactory 1 1
+ID2D1BitmapRenderTarget 4 CreateBitmap 5 6
+ID2D1BitmapRenderTarget 5 CreateBitmapFromWicBitmap 3 3
+ID2D1BitmapRenderTarget 6 CreateSharedBitmap 4 4
+ID2D1BitmapRenderTarget 7 CreateBitmapBrush 4 4
+ID2D1BitmapRenderTarget 8 CreateSolidColorBrush 3 3
+ID2D1BitmapRenderTarget 9 CreateGradientStopCollection 5 5
+ID2D1BitmapRenderTarget 10 CreateLinearGradientBrush 4 4
+ID2D1BitmapRenderTarget 11 CreateRadialGradientBrush 4 4
+ID2D1BitmapRenderTarget 12 CreateCompatibleRenderTarget 5 5
+ID2D1BitmapRenderTarget 13 CreateLayer 2 2
+ID2D1BitmapRenderTarget 14 CreateMesh 1 1
+ID2D1BitmapRenderTarget 37 GetTextRenderingParams 1 1
+ID2D1BitmapRenderTarget 57 GetBitmap 1 1
+ID2D1BlendTransform 0 QueryInterface 2 2
+ID2D1BorderTransform 0 QueryInterface 2 2
+ID2D1BoundsAdjustmentTransform 0 QueryInterface 2 2
+ID2D1Brush 0 QueryInterface 2 2
+ID2D1Brush 3 GetFactory 1 1
+ID2D1ColorContext 0 QueryInterface 2 2
+ID2D1ColorContext 3 GetFactory 1 1
+ID2D1ColorContext1 0 QueryInterface 2 2
+ID2D1ColorContext1 3 GetFactory 1 1
+ID2D1CommandList 0 QueryInterface 2 2
+ID2D1CommandList 3 GetFactory 1 1
+ID2D1CommandSink 0 QueryInterface 2 2
+ID2D1CommandSink1 0 QueryInterface 2 2
+ID2D1CommandSink2 0 QueryInterface 2 2
+ID2D1CommandSink3 0 QueryInterface 2 2
+ID2D1CommandSink4 0 QueryInterface 2 2
+ID2D1CommandSink5 0 QueryInterface 2 2
+ID2D1ComputeInfo 0 QueryInterface 2 2
+ID2D1ComputeTransform 0 QueryInterface 2 2
+ID2D1ConcreteTransform 0 QueryInterface 2 2
+ID2D1DCRenderTarget 0 QueryInterface 2 2
+ID2D1DCRenderTarget 3 GetFactory 1 1
+ID2D1DCRenderTarget 4 CreateBitmap 5 6
+ID2D1DCRenderTarget 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DCRenderTarget 6 CreateSharedBitmap 4 4
+ID2D1DCRenderTarget 7 CreateBitmapBrush 4 4
+ID2D1DCRenderTarget 8 CreateSolidColorBrush 3 3
+ID2D1DCRenderTarget 9 CreateGradientStopCollection 5 5
+ID2D1DCRenderTarget 10 CreateLinearGradientBrush 4 4
+ID2D1DCRenderTarget 11 CreateRadialGradientBrush 4 4
+ID2D1DCRenderTarget 12 CreateCompatibleRenderTarget 5 5
+ID2D1DCRenderTarget 13 CreateLayer 2 2
+ID2D1DCRenderTarget 14 CreateMesh 1 1
+ID2D1DCRenderTarget 37 GetTextRenderingParams 1 1
+ID2D1Device 0 QueryInterface 2 2
+ID2D1Device 3 GetFactory 1 1
+ID2D1Device 4 CreateDeviceContext 2 2
+ID2D1Device 5 CreatePrintControl 4 4
+ID2D1Device1 0 QueryInterface 2 2
+ID2D1Device1 3 GetFactory 1 1
+ID2D1Device1 4 CreateDeviceContext 2 2
+ID2D1Device1 5 CreatePrintControl 4 4
+ID2D1Device1 11 CreateDeviceContext 2 2
+ID2D1Device2 0 QueryInterface 2 2
+ID2D1Device2 3 GetFactory 1 1
+ID2D1Device2 4 CreateDeviceContext 2 2
+ID2D1Device2 5 CreatePrintControl 4 4
+ID2D1Device2 11 CreateDeviceContext 2 2
+ID2D1Device2 12 CreateDeviceContext 2 2
+ID2D1Device2 14 GetDxgiDevice 1 1
+ID2D1Device3 0 QueryInterface 2 2
+ID2D1Device3 3 GetFactory 1 1
+ID2D1Device3 4 CreateDeviceContext 2 2
+ID2D1Device3 5 CreatePrintControl 4 4
+ID2D1Device3 11 CreateDeviceContext 2 2
+ID2D1Device3 12 CreateDeviceContext 2 2
+ID2D1Device3 14 GetDxgiDevice 1 1
+ID2D1Device3 15 CreateDeviceContext 2 2
+ID2D1Device4 0 QueryInterface 2 2
+ID2D1Device4 3 GetFactory 1 1
+ID2D1Device4 4 CreateDeviceContext 2 2
+ID2D1Device4 5 CreatePrintControl 4 4
+ID2D1Device4 11 CreateDeviceContext 2 2
+ID2D1Device4 12 CreateDeviceContext 2 2
+ID2D1Device4 14 GetDxgiDevice 1 1
+ID2D1Device4 15 CreateDeviceContext 2 2
+ID2D1Device4 16 CreateDeviceContext 2 2
+ID2D1Device5 0 QueryInterface 2 2
+ID2D1Device5 3 GetFactory 1 1
+ID2D1Device5 4 CreateDeviceContext 2 2
+ID2D1Device5 5 CreatePrintControl 4 4
+ID2D1Device5 11 CreateDeviceContext 2 2
+ID2D1Device5 12 CreateDeviceContext 2 2
+ID2D1Device5 14 GetDxgiDevice 1 1
+ID2D1Device5 15 CreateDeviceContext 2 2
+ID2D1Device5 16 CreateDeviceContext 2 2
+ID2D1Device5 19 CreateDeviceContext 2 2
+ID2D1Device6 0 QueryInterface 2 2
+ID2D1Device6 3 GetFactory 1 1
+ID2D1Device6 4 CreateDeviceContext 2 2
+ID2D1Device6 5 CreatePrintControl 4 4
+ID2D1Device6 11 CreateDeviceContext 2 2
+ID2D1Device6 12 CreateDeviceContext 2 2
+ID2D1Device6 14 GetDxgiDevice 1 1
+ID2D1Device6 15 CreateDeviceContext 2 2
+ID2D1Device6 16 CreateDeviceContext 2 2
+ID2D1Device6 19 CreateDeviceContext 2 2
+ID2D1Device6 20 CreateDeviceContext 2 2
+ID2D1Device7 0 QueryInterface 2 2
+ID2D1Device7 3 GetFactory 1 1
+ID2D1Device7 4 CreateDeviceContext 2 2
+ID2D1Device7 5 CreatePrintControl 4 4
+ID2D1Device7 11 CreateDeviceContext 2 2
+ID2D1Device7 12 CreateDeviceContext 2 2
+ID2D1Device7 14 GetDxgiDevice 1 1
+ID2D1Device7 15 CreateDeviceContext 2 2
+ID2D1Device7 16 CreateDeviceContext 2 2
+ID2D1Device7 19 CreateDeviceContext 2 2
+ID2D1Device7 20 CreateDeviceContext 2 2
+ID2D1Device7 21 CreateDeviceContext 2 2
+ID2D1DeviceContext 0 QueryInterface 2 2
+ID2D1DeviceContext 3 GetFactory 1 1
+ID2D1DeviceContext 4 CreateBitmap 5 6
+ID2D1DeviceContext 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext 6 CreateSharedBitmap 4 4
+ID2D1DeviceContext 7 CreateBitmapBrush 4 4
+ID2D1DeviceContext 8 CreateSolidColorBrush 3 3
+ID2D1DeviceContext 9 CreateGradientStopCollection 5 5
+ID2D1DeviceContext 10 CreateLinearGradientBrush 4 4
+ID2D1DeviceContext 11 CreateRadialGradientBrush 4 4
+ID2D1DeviceContext 12 CreateCompatibleRenderTarget 5 5
+ID2D1DeviceContext 13 CreateLayer 2 2
+ID2D1DeviceContext 14 CreateMesh 1 1
+ID2D1DeviceContext 37 GetTextRenderingParams 1 1
+ID2D1DeviceContext 57 CreateBitmap 5 6
+ID2D1DeviceContext 58 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext 59 CreateColorContext 4 4
+ID2D1DeviceContext 60 CreateColorContextFromFilename 2 2
+ID2D1DeviceContext 61 CreateColorContextFromWicColorContext 2 2
+ID2D1DeviceContext 62 CreateBitmapFromDxgiSurface 3 3
+ID2D1DeviceContext 63 CreateEffect 2 2
+ID2D1DeviceContext 64 CreateGradientStopCollection 8 8
+ID2D1DeviceContext 65 CreateImageBrush 4 4
+ID2D1DeviceContext 66 CreateBitmapBrush 4 4
+ID2D1DeviceContext 67 CreateCommandList 1 1
+ID2D1DeviceContext 73 GetDevice 1 1
+ID2D1DeviceContext 75 GetTarget 1 1
+ID2D1DeviceContext1 0 QueryInterface 2 2
+ID2D1DeviceContext1 3 GetFactory 1 1
+ID2D1DeviceContext1 4 CreateBitmap 5 6
+ID2D1DeviceContext1 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext1 6 CreateSharedBitmap 4 4
+ID2D1DeviceContext1 7 CreateBitmapBrush 4 4
+ID2D1DeviceContext1 8 CreateSolidColorBrush 3 3
+ID2D1DeviceContext1 9 CreateGradientStopCollection 5 5
+ID2D1DeviceContext1 10 CreateLinearGradientBrush 4 4
+ID2D1DeviceContext1 11 CreateRadialGradientBrush 4 4
+ID2D1DeviceContext1 12 CreateCompatibleRenderTarget 5 5
+ID2D1DeviceContext1 13 CreateLayer 2 2
+ID2D1DeviceContext1 14 CreateMesh 1 1
+ID2D1DeviceContext1 37 GetTextRenderingParams 1 1
+ID2D1DeviceContext1 57 CreateBitmap 5 6
+ID2D1DeviceContext1 58 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext1 59 CreateColorContext 4 4
+ID2D1DeviceContext1 60 CreateColorContextFromFilename 2 2
+ID2D1DeviceContext1 61 CreateColorContextFromWicColorContext 2 2
+ID2D1DeviceContext1 62 CreateBitmapFromDxgiSurface 3 3
+ID2D1DeviceContext1 63 CreateEffect 2 2
+ID2D1DeviceContext1 64 CreateGradientStopCollection 8 8
+ID2D1DeviceContext1 65 CreateImageBrush 4 4
+ID2D1DeviceContext1 66 CreateBitmapBrush 4 4
+ID2D1DeviceContext1 67 CreateCommandList 1 1
+ID2D1DeviceContext1 73 GetDevice 1 1
+ID2D1DeviceContext1 75 GetTarget 1 1
+ID2D1DeviceContext1 92 CreateFilledGeometryRealization 3 3
+ID2D1DeviceContext1 93 CreateStrokedGeometryRealization 5 5
+ID2D1DeviceContext2 0 QueryInterface 2 2
+ID2D1DeviceContext2 3 GetFactory 1 1
+ID2D1DeviceContext2 4 CreateBitmap 5 6
+ID2D1DeviceContext2 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext2 6 CreateSharedBitmap 4 4
+ID2D1DeviceContext2 7 CreateBitmapBrush 4 4
+ID2D1DeviceContext2 8 CreateSolidColorBrush 3 3
+ID2D1DeviceContext2 9 CreateGradientStopCollection 5 5
+ID2D1DeviceContext2 10 CreateLinearGradientBrush 4 4
+ID2D1DeviceContext2 11 CreateRadialGradientBrush 4 4
+ID2D1DeviceContext2 12 CreateCompatibleRenderTarget 5 5
+ID2D1DeviceContext2 13 CreateLayer 2 2
+ID2D1DeviceContext2 14 CreateMesh 1 1
+ID2D1DeviceContext2 37 GetTextRenderingParams 1 1
+ID2D1DeviceContext2 57 CreateBitmap 5 6
+ID2D1DeviceContext2 58 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext2 59 CreateColorContext 4 4
+ID2D1DeviceContext2 60 CreateColorContextFromFilename 2 2
+ID2D1DeviceContext2 61 CreateColorContextFromWicColorContext 2 2
+ID2D1DeviceContext2 62 CreateBitmapFromDxgiSurface 3 3
+ID2D1DeviceContext2 63 CreateEffect 2 2
+ID2D1DeviceContext2 64 CreateGradientStopCollection 8 8
+ID2D1DeviceContext2 65 CreateImageBrush 4 4
+ID2D1DeviceContext2 66 CreateBitmapBrush 4 4
+ID2D1DeviceContext2 67 CreateCommandList 1 1
+ID2D1DeviceContext2 73 GetDevice 1 1
+ID2D1DeviceContext2 75 GetTarget 1 1
+ID2D1DeviceContext2 92 CreateFilledGeometryRealization 3 3
+ID2D1DeviceContext2 93 CreateStrokedGeometryRealization 5 5
+ID2D1DeviceContext2 95 CreateInk 2 2
+ID2D1DeviceContext2 96 CreateInkStyle 2 2
+ID2D1DeviceContext2 97 CreateGradientMesh 3 3
+ID2D1DeviceContext2 98 CreateImageSourceFromWic 4 4
+ID2D1DeviceContext2 99 CreateLookupTable3D 6 6
+ID2D1DeviceContext2 100 CreateImageSourceFromDxgi 5 5
+ID2D1DeviceContext2 105 CreateTransformedImageSource 3 3
+ID2D1DeviceContext3 0 QueryInterface 2 2
+ID2D1DeviceContext3 3 GetFactory 1 1
+ID2D1DeviceContext3 4 CreateBitmap 5 6
+ID2D1DeviceContext3 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext3 6 CreateSharedBitmap 4 4
+ID2D1DeviceContext3 7 CreateBitmapBrush 4 4
+ID2D1DeviceContext3 8 CreateSolidColorBrush 3 3
+ID2D1DeviceContext3 9 CreateGradientStopCollection 5 5
+ID2D1DeviceContext3 10 CreateLinearGradientBrush 4 4
+ID2D1DeviceContext3 11 CreateRadialGradientBrush 4 4
+ID2D1DeviceContext3 12 CreateCompatibleRenderTarget 5 5
+ID2D1DeviceContext3 13 CreateLayer 2 2
+ID2D1DeviceContext3 14 CreateMesh 1 1
+ID2D1DeviceContext3 37 GetTextRenderingParams 1 1
+ID2D1DeviceContext3 57 CreateBitmap 5 6
+ID2D1DeviceContext3 58 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext3 59 CreateColorContext 4 4
+ID2D1DeviceContext3 60 CreateColorContextFromFilename 2 2
+ID2D1DeviceContext3 61 CreateColorContextFromWicColorContext 2 2
+ID2D1DeviceContext3 62 CreateBitmapFromDxgiSurface 3 3
+ID2D1DeviceContext3 63 CreateEffect 2 2
+ID2D1DeviceContext3 64 CreateGradientStopCollection 8 8
+ID2D1DeviceContext3 65 CreateImageBrush 4 4
+ID2D1DeviceContext3 66 CreateBitmapBrush 4 4
+ID2D1DeviceContext3 67 CreateCommandList 1 1
+ID2D1DeviceContext3 73 GetDevice 1 1
+ID2D1DeviceContext3 75 GetTarget 1 1
+ID2D1DeviceContext3 92 CreateFilledGeometryRealization 3 3
+ID2D1DeviceContext3 93 CreateStrokedGeometryRealization 5 5
+ID2D1DeviceContext3 95 CreateInk 2 2
+ID2D1DeviceContext3 96 CreateInkStyle 2 2
+ID2D1DeviceContext3 97 CreateGradientMesh 3 3
+ID2D1DeviceContext3 98 CreateImageSourceFromWic 4 4
+ID2D1DeviceContext3 99 CreateLookupTable3D 6 6
+ID2D1DeviceContext3 100 CreateImageSourceFromDxgi 5 5
+ID2D1DeviceContext3 105 CreateTransformedImageSource 3 3
+ID2D1DeviceContext3 106 CreateSpriteBatch 1 1
+ID2D1DeviceContext4 0 QueryInterface 2 2
+ID2D1DeviceContext4 3 GetFactory 1 1
+ID2D1DeviceContext4 4 CreateBitmap 5 6
+ID2D1DeviceContext4 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext4 6 CreateSharedBitmap 4 4
+ID2D1DeviceContext4 7 CreateBitmapBrush 4 4
+ID2D1DeviceContext4 8 CreateSolidColorBrush 3 3
+ID2D1DeviceContext4 9 CreateGradientStopCollection 5 5
+ID2D1DeviceContext4 10 CreateLinearGradientBrush 4 4
+ID2D1DeviceContext4 11 CreateRadialGradientBrush 4 4
+ID2D1DeviceContext4 12 CreateCompatibleRenderTarget 5 5
+ID2D1DeviceContext4 13 CreateLayer 2 2
+ID2D1DeviceContext4 14 CreateMesh 1 1
+ID2D1DeviceContext4 37 GetTextRenderingParams 1 1
+ID2D1DeviceContext4 57 CreateBitmap 5 6
+ID2D1DeviceContext4 58 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext4 59 CreateColorContext 4 4
+ID2D1DeviceContext4 60 CreateColorContextFromFilename 2 2
+ID2D1DeviceContext4 61 CreateColorContextFromWicColorContext 2 2
+ID2D1DeviceContext4 62 CreateBitmapFromDxgiSurface 3 3
+ID2D1DeviceContext4 63 CreateEffect 2 2
+ID2D1DeviceContext4 64 CreateGradientStopCollection 8 8
+ID2D1DeviceContext4 65 CreateImageBrush 4 4
+ID2D1DeviceContext4 66 CreateBitmapBrush 4 4
+ID2D1DeviceContext4 67 CreateCommandList 1 1
+ID2D1DeviceContext4 73 GetDevice 1 1
+ID2D1DeviceContext4 75 GetTarget 1 1
+ID2D1DeviceContext4 92 CreateFilledGeometryRealization 3 3
+ID2D1DeviceContext4 93 CreateStrokedGeometryRealization 5 5
+ID2D1DeviceContext4 95 CreateInk 2 2
+ID2D1DeviceContext4 96 CreateInkStyle 2 2
+ID2D1DeviceContext4 97 CreateGradientMesh 3 3
+ID2D1DeviceContext4 98 CreateImageSourceFromWic 4 4
+ID2D1DeviceContext4 99 CreateLookupTable3D 6 6
+ID2D1DeviceContext4 100 CreateImageSourceFromDxgi 5 5
+ID2D1DeviceContext4 105 CreateTransformedImageSource 3 3
+ID2D1DeviceContext4 106 CreateSpriteBatch 1 1
+ID2D1DeviceContext4 108 CreateSvgGlyphStyle 1 1
+ID2D1DeviceContext4 113 GetColorBitmapGlyphImage 11 12
+ID2D1DeviceContext4 114 GetSvgGlyphImage 11 12
+ID2D1DeviceContext5 0 QueryInterface 2 2
+ID2D1DeviceContext5 3 GetFactory 1 1
+ID2D1DeviceContext5 4 CreateBitmap 5 6
+ID2D1DeviceContext5 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext5 6 CreateSharedBitmap 4 4
+ID2D1DeviceContext5 7 CreateBitmapBrush 4 4
+ID2D1DeviceContext5 8 CreateSolidColorBrush 3 3
+ID2D1DeviceContext5 9 CreateGradientStopCollection 5 5
+ID2D1DeviceContext5 10 CreateLinearGradientBrush 4 4
+ID2D1DeviceContext5 11 CreateRadialGradientBrush 4 4
+ID2D1DeviceContext5 12 CreateCompatibleRenderTarget 5 5
+ID2D1DeviceContext5 13 CreateLayer 2 2
+ID2D1DeviceContext5 14 CreateMesh 1 1
+ID2D1DeviceContext5 37 GetTextRenderingParams 1 1
+ID2D1DeviceContext5 57 CreateBitmap 5 6
+ID2D1DeviceContext5 58 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext5 59 CreateColorContext 4 4
+ID2D1DeviceContext5 60 CreateColorContextFromFilename 2 2
+ID2D1DeviceContext5 61 CreateColorContextFromWicColorContext 2 2
+ID2D1DeviceContext5 62 CreateBitmapFromDxgiSurface 3 3
+ID2D1DeviceContext5 63 CreateEffect 2 2
+ID2D1DeviceContext5 64 CreateGradientStopCollection 8 8
+ID2D1DeviceContext5 65 CreateImageBrush 4 4
+ID2D1DeviceContext5 66 CreateBitmapBrush 4 4
+ID2D1DeviceContext5 67 CreateCommandList 1 1
+ID2D1DeviceContext5 73 GetDevice 1 1
+ID2D1DeviceContext5 75 GetTarget 1 1
+ID2D1DeviceContext5 92 CreateFilledGeometryRealization 3 3
+ID2D1DeviceContext5 93 CreateStrokedGeometryRealization 5 5
+ID2D1DeviceContext5 95 CreateInk 2 2
+ID2D1DeviceContext5 96 CreateInkStyle 2 2
+ID2D1DeviceContext5 97 CreateGradientMesh 3 3
+ID2D1DeviceContext5 98 CreateImageSourceFromWic 4 4
+ID2D1DeviceContext5 99 CreateLookupTable3D 6 6
+ID2D1DeviceContext5 100 CreateImageSourceFromDxgi 5 5
+ID2D1DeviceContext5 105 CreateTransformedImageSource 3 3
+ID2D1DeviceContext5 106 CreateSpriteBatch 1 1
+ID2D1DeviceContext5 108 CreateSvgGlyphStyle 1 1
+ID2D1DeviceContext5 113 GetColorBitmapGlyphImage 11 12
+ID2D1DeviceContext5 114 GetSvgGlyphImage 11 12
+ID2D1DeviceContext5 115 CreateSvgDocument 3 4
+ID2D1DeviceContext5 117 CreateColorContextFromDxgiColorSpace 2 2
+ID2D1DeviceContext5 118 CreateColorContextFromSimpleColorProfile 2 2
+ID2D1DeviceContext6 0 QueryInterface 2 2
+ID2D1DeviceContext6 3 GetFactory 1 1
+ID2D1DeviceContext6 4 CreateBitmap 5 6
+ID2D1DeviceContext6 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext6 6 CreateSharedBitmap 4 4
+ID2D1DeviceContext6 7 CreateBitmapBrush 4 4
+ID2D1DeviceContext6 8 CreateSolidColorBrush 3 3
+ID2D1DeviceContext6 9 CreateGradientStopCollection 5 5
+ID2D1DeviceContext6 10 CreateLinearGradientBrush 4 4
+ID2D1DeviceContext6 11 CreateRadialGradientBrush 4 4
+ID2D1DeviceContext6 12 CreateCompatibleRenderTarget 5 5
+ID2D1DeviceContext6 13 CreateLayer 2 2
+ID2D1DeviceContext6 14 CreateMesh 1 1
+ID2D1DeviceContext6 37 GetTextRenderingParams 1 1
+ID2D1DeviceContext6 57 CreateBitmap 5 6
+ID2D1DeviceContext6 58 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext6 59 CreateColorContext 4 4
+ID2D1DeviceContext6 60 CreateColorContextFromFilename 2 2
+ID2D1DeviceContext6 61 CreateColorContextFromWicColorContext 2 2
+ID2D1DeviceContext6 62 CreateBitmapFromDxgiSurface 3 3
+ID2D1DeviceContext6 63 CreateEffect 2 2
+ID2D1DeviceContext6 64 CreateGradientStopCollection 8 8
+ID2D1DeviceContext6 65 CreateImageBrush 4 4
+ID2D1DeviceContext6 66 CreateBitmapBrush 4 4
+ID2D1DeviceContext6 67 CreateCommandList 1 1
+ID2D1DeviceContext6 73 GetDevice 1 1
+ID2D1DeviceContext6 75 GetTarget 1 1
+ID2D1DeviceContext6 92 CreateFilledGeometryRealization 3 3
+ID2D1DeviceContext6 93 CreateStrokedGeometryRealization 5 5
+ID2D1DeviceContext6 95 CreateInk 2 2
+ID2D1DeviceContext6 96 CreateInkStyle 2 2
+ID2D1DeviceContext6 97 CreateGradientMesh 3 3
+ID2D1DeviceContext6 98 CreateImageSourceFromWic 4 4
+ID2D1DeviceContext6 99 CreateLookupTable3D 6 6
+ID2D1DeviceContext6 100 CreateImageSourceFromDxgi 5 5
+ID2D1DeviceContext6 105 CreateTransformedImageSource 3 3
+ID2D1DeviceContext6 106 CreateSpriteBatch 1 1
+ID2D1DeviceContext6 108 CreateSvgGlyphStyle 1 1
+ID2D1DeviceContext6 113 GetColorBitmapGlyphImage 11 12
+ID2D1DeviceContext6 114 GetSvgGlyphImage 11 12
+ID2D1DeviceContext6 115 CreateSvgDocument 3 4
+ID2D1DeviceContext6 117 CreateColorContextFromDxgiColorSpace 2 2
+ID2D1DeviceContext6 118 CreateColorContextFromSimpleColorProfile 2 2
+ID2D1DeviceContext7 0 QueryInterface 2 2
+ID2D1DeviceContext7 3 GetFactory 1 1
+ID2D1DeviceContext7 4 CreateBitmap 5 6
+ID2D1DeviceContext7 5 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext7 6 CreateSharedBitmap 4 4
+ID2D1DeviceContext7 7 CreateBitmapBrush 4 4
+ID2D1DeviceContext7 8 CreateSolidColorBrush 3 3
+ID2D1DeviceContext7 9 CreateGradientStopCollection 5 5
+ID2D1DeviceContext7 10 CreateLinearGradientBrush 4 4
+ID2D1DeviceContext7 11 CreateRadialGradientBrush 4 4
+ID2D1DeviceContext7 12 CreateCompatibleRenderTarget 5 5
+ID2D1DeviceContext7 13 CreateLayer 2 2
+ID2D1DeviceContext7 14 CreateMesh 1 1
+ID2D1DeviceContext7 37 GetTextRenderingParams 1 1
+ID2D1DeviceContext7 57 CreateBitmap 5 6
+ID2D1DeviceContext7 58 CreateBitmapFromWicBitmap 3 3
+ID2D1DeviceContext7 59 CreateColorContext 4 4
+ID2D1DeviceContext7 60 CreateColorContextFromFilename 2 2
+ID2D1DeviceContext7 61 CreateColorContextFromWicColorContext 2 2
+ID2D1DeviceContext7 62 CreateBitmapFromDxgiSurface 3 3
+ID2D1DeviceContext7 63 CreateEffect 2 2
+ID2D1DeviceContext7 64 CreateGradientStopCollection 8 8
+ID2D1DeviceContext7 65 CreateImageBrush 4 4
+ID2D1DeviceContext7 66 CreateBitmapBrush 4 4
+ID2D1DeviceContext7 67 CreateCommandList 1 1
+ID2D1DeviceContext7 73 GetDevice 1 1
+ID2D1DeviceContext7 75 GetTarget 1 1
+ID2D1DeviceContext7 92 CreateFilledGeometryRealization 3 3
+ID2D1DeviceContext7 93 CreateStrokedGeometryRealization 5 5
+ID2D1DeviceContext7 95 CreateInk 2 2
+ID2D1DeviceContext7 96 CreateInkStyle 2 2
+ID2D1DeviceContext7 97 CreateGradientMesh 3 3
+ID2D1DeviceContext7 98 CreateImageSourceFromWic 4 4
+ID2D1DeviceContext7 99 CreateLookupTable3D 6 6
+ID2D1DeviceContext7 100 CreateImageSourceFromDxgi 5 5
+ID2D1DeviceContext7 105 CreateTransformedImageSource 3 3
+ID2D1DeviceContext7 106 CreateSpriteBatch 1 1
+ID2D1DeviceContext7 108 CreateSvgGlyphStyle 1 1
+ID2D1DeviceContext7 113 GetColorBitmapGlyphImage 11 12
+ID2D1DeviceContext7 114 GetSvgGlyphImage 11 12
+ID2D1DeviceContext7 115 CreateSvgDocument 3 4
+ID2D1DeviceContext7 117 CreateColorContextFromDxgiColorSpace 2 2
+ID2D1DeviceContext7 118 CreateColorContextFromSimpleColorProfile 2 2
+ID2D1DrawInfo 0 QueryInterface 2 2
+ID2D1DrawTransform 0 QueryInterface 2 2
+ID2D1DrawingStateBlock 0 QueryInterface 2 2
+ID2D1DrawingStateBlock 3 GetFactory 1 1
+ID2D1DrawingStateBlock 7 GetTextRenderingParams 1 1
+ID2D1DrawingStateBlock1 0 QueryInterface 2 2
+ID2D1DrawingStateBlock1 3 GetFactory 1 1
+ID2D1DrawingStateBlock1 7 GetTextRenderingParams 1 1
+ID2D1Effect 0 QueryInterface 2 2
+ID2D1Effect 13 GetSubProperties 2 2
+ID2D1Effect 16 GetInput 2 2
+ID2D1Effect 18 GetOutput 1 1
+ID2D1EffectContext 0 QueryInterface 2 2
+ID2D1EffectContext 4 CreateEffect 2 2
+ID2D1EffectContext 6 CreateTransformNodeFromEffect 2 2
+ID2D1EffectContext 7 CreateBlendTransform 3 3
+ID2D1EffectContext 8 CreateBorderTransform 3 3
+ID2D1EffectContext 9 CreateOffsetTransform 2 3
+ID2D1EffectContext 10 CreateBoundsAdjustmentTransform 2 2
+ID2D1EffectContext 15 CreateResourceTexture 6 6
+ID2D1EffectContext 16 FindResourceTexture 2 2
+ID2D1EffectContext 17 CreateVertexBuffer 4 4
+ID2D1EffectContext 18 FindVertexBuffer 2 2
+ID2D1EffectContext 19 CreateColorContext 4 4
+ID2D1EffectContext 20 CreateColorContextFromFilename 2 2
+ID2D1EffectContext 21 CreateColorContextFromWicColorContext 2 2
+ID2D1EffectContext1 0 QueryInterface 2 2
+ID2D1EffectContext1 4 CreateEffect 2 2
+ID2D1EffectContext1 6 CreateTransformNodeFromEffect 2 2
+ID2D1EffectContext1 7 CreateBlendTransform 3 3
+ID2D1EffectContext1 8 CreateBorderTransform 3 3
+ID2D1EffectContext1 9 CreateOffsetTransform 2 3
+ID2D1EffectContext1 10 CreateBoundsAdjustmentTransform 2 2
+ID2D1EffectContext1 15 CreateResourceTexture 6 6
+ID2D1EffectContext1 16 FindResourceTexture 2 2
+ID2D1EffectContext1 17 CreateVertexBuffer 4 4
+ID2D1EffectContext1 18 FindVertexBuffer 2 2
+ID2D1EffectContext1 19 CreateColorContext 4 4
+ID2D1EffectContext1 20 CreateColorContextFromFilename 2 2
+ID2D1EffectContext1 21 CreateColorContextFromWicColorContext 2 2
+ID2D1EffectContext1 24 CreateLookupTable3D 6 6
+ID2D1EffectContext2 0 QueryInterface 2 2
+ID2D1EffectContext2 4 CreateEffect 2 2
+ID2D1EffectContext2 6 CreateTransformNodeFromEffect 2 2
+ID2D1EffectContext2 7 CreateBlendTransform 3 3
+ID2D1EffectContext2 8 CreateBorderTransform 3 3
+ID2D1EffectContext2 9 CreateOffsetTransform 2 3
+ID2D1EffectContext2 10 CreateBoundsAdjustmentTransform 2 2
+ID2D1EffectContext2 15 CreateResourceTexture 6 6
+ID2D1EffectContext2 16 FindResourceTexture 2 2
+ID2D1EffectContext2 17 CreateVertexBuffer 4 4
+ID2D1EffectContext2 18 FindVertexBuffer 2 2
+ID2D1EffectContext2 19 CreateColorContext 4 4
+ID2D1EffectContext2 20 CreateColorContextFromFilename 2 2
+ID2D1EffectContext2 21 CreateColorContextFromWicColorContext 2 2
+ID2D1EffectContext2 24 CreateLookupTable3D 6 6
+ID2D1EffectContext2 25 CreateColorContextFromDxgiColorSpace 2 2
+ID2D1EffectContext2 26 CreateColorContextFromSimpleColorProfile 2 2
+ID2D1EffectImpl 0 QueryInterface 2 2
+ID2D1EllipseGeometry 0 QueryInterface 2 2
+ID2D1EllipseGeometry 3 GetFactory 1 1
+ID2D1Factory 0 QueryInterface 2 2
+ID2D1Factory 5 CreateRectangleGeometry 2 2
+ID2D1Factory 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory 7 CreateEllipseGeometry 2 2
+ID2D1Factory 8 CreateGeometryGroup 4 4
+ID2D1Factory 9 CreateTransformedGeometry 3 3
+ID2D1Factory 10 CreatePathGeometry 1 1
+ID2D1Factory 11 CreateStrokeStyle 4 4
+ID2D1Factory 12 CreateDrawingStateBlock 3 3
+ID2D1Factory 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory 14 CreateHwndRenderTarget 3 3
+ID2D1Factory 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory 16 CreateDCRenderTarget 2 2
+ID2D1Factory1 0 QueryInterface 2 2
+ID2D1Factory1 5 CreateRectangleGeometry 2 2
+ID2D1Factory1 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory1 7 CreateEllipseGeometry 2 2
+ID2D1Factory1 8 CreateGeometryGroup 4 4
+ID2D1Factory1 9 CreateTransformedGeometry 3 3
+ID2D1Factory1 10 CreatePathGeometry 1 1
+ID2D1Factory1 11 CreateStrokeStyle 4 4
+ID2D1Factory1 12 CreateDrawingStateBlock 3 3
+ID2D1Factory1 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory1 14 CreateHwndRenderTarget 3 3
+ID2D1Factory1 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory1 16 CreateDCRenderTarget 2 2
+ID2D1Factory1 17 CreateDevice 2 2
+ID2D1Factory1 18 CreateStrokeStyle 4 4
+ID2D1Factory1 19 CreatePathGeometry 1 1
+ID2D1Factory1 20 CreateDrawingStateBlock 3 3
+ID2D1Factory1 21 CreateGdiMetafile 2 2
+ID2D1Factory1 26 GetEffectProperties 2 2
+ID2D1Factory2 0 QueryInterface 2 2
+ID2D1Factory2 5 CreateRectangleGeometry 2 2
+ID2D1Factory2 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory2 7 CreateEllipseGeometry 2 2
+ID2D1Factory2 8 CreateGeometryGroup 4 4
+ID2D1Factory2 9 CreateTransformedGeometry 3 3
+ID2D1Factory2 10 CreatePathGeometry 1 1
+ID2D1Factory2 11 CreateStrokeStyle 4 4
+ID2D1Factory2 12 CreateDrawingStateBlock 3 3
+ID2D1Factory2 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory2 14 CreateHwndRenderTarget 3 3
+ID2D1Factory2 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory2 16 CreateDCRenderTarget 2 2
+ID2D1Factory2 17 CreateDevice 2 2
+ID2D1Factory2 18 CreateStrokeStyle 4 4
+ID2D1Factory2 19 CreatePathGeometry 1 1
+ID2D1Factory2 20 CreateDrawingStateBlock 3 3
+ID2D1Factory2 21 CreateGdiMetafile 2 2
+ID2D1Factory2 26 GetEffectProperties 2 2
+ID2D1Factory2 27 CreateDevice 2 2
+ID2D1Factory3 0 QueryInterface 2 2
+ID2D1Factory3 5 CreateRectangleGeometry 2 2
+ID2D1Factory3 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory3 7 CreateEllipseGeometry 2 2
+ID2D1Factory3 8 CreateGeometryGroup 4 4
+ID2D1Factory3 9 CreateTransformedGeometry 3 3
+ID2D1Factory3 10 CreatePathGeometry 1 1
+ID2D1Factory3 11 CreateStrokeStyle 4 4
+ID2D1Factory3 12 CreateDrawingStateBlock 3 3
+ID2D1Factory3 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory3 14 CreateHwndRenderTarget 3 3
+ID2D1Factory3 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory3 16 CreateDCRenderTarget 2 2
+ID2D1Factory3 17 CreateDevice 2 2
+ID2D1Factory3 18 CreateStrokeStyle 4 4
+ID2D1Factory3 19 CreatePathGeometry 1 1
+ID2D1Factory3 20 CreateDrawingStateBlock 3 3
+ID2D1Factory3 21 CreateGdiMetafile 2 2
+ID2D1Factory3 26 GetEffectProperties 2 2
+ID2D1Factory3 27 CreateDevice 2 2
+ID2D1Factory3 28 CreateDevice 2 2
+ID2D1Factory4 0 QueryInterface 2 2
+ID2D1Factory4 5 CreateRectangleGeometry 2 2
+ID2D1Factory4 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory4 7 CreateEllipseGeometry 2 2
+ID2D1Factory4 8 CreateGeometryGroup 4 4
+ID2D1Factory4 9 CreateTransformedGeometry 3 3
+ID2D1Factory4 10 CreatePathGeometry 1 1
+ID2D1Factory4 11 CreateStrokeStyle 4 4
+ID2D1Factory4 12 CreateDrawingStateBlock 3 3
+ID2D1Factory4 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory4 14 CreateHwndRenderTarget 3 3
+ID2D1Factory4 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory4 16 CreateDCRenderTarget 2 2
+ID2D1Factory4 17 CreateDevice 2 2
+ID2D1Factory4 18 CreateStrokeStyle 4 4
+ID2D1Factory4 19 CreatePathGeometry 1 1
+ID2D1Factory4 20 CreateDrawingStateBlock 3 3
+ID2D1Factory4 21 CreateGdiMetafile 2 2
+ID2D1Factory4 26 GetEffectProperties 2 2
+ID2D1Factory4 27 CreateDevice 2 2
+ID2D1Factory4 28 CreateDevice 2 2
+ID2D1Factory4 29 CreateDevice 2 2
+ID2D1Factory5 0 QueryInterface 2 2
+ID2D1Factory5 5 CreateRectangleGeometry 2 2
+ID2D1Factory5 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory5 7 CreateEllipseGeometry 2 2
+ID2D1Factory5 8 CreateGeometryGroup 4 4
+ID2D1Factory5 9 CreateTransformedGeometry 3 3
+ID2D1Factory5 10 CreatePathGeometry 1 1
+ID2D1Factory5 11 CreateStrokeStyle 4 4
+ID2D1Factory5 12 CreateDrawingStateBlock 3 3
+ID2D1Factory5 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory5 14 CreateHwndRenderTarget 3 3
+ID2D1Factory5 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory5 16 CreateDCRenderTarget 2 2
+ID2D1Factory5 17 CreateDevice 2 2
+ID2D1Factory5 18 CreateStrokeStyle 4 4
+ID2D1Factory5 19 CreatePathGeometry 1 1
+ID2D1Factory5 20 CreateDrawingStateBlock 3 3
+ID2D1Factory5 21 CreateGdiMetafile 2 2
+ID2D1Factory5 26 GetEffectProperties 2 2
+ID2D1Factory5 27 CreateDevice 2 2
+ID2D1Factory5 28 CreateDevice 2 2
+ID2D1Factory5 29 CreateDevice 2 2
+ID2D1Factory5 30 CreateDevice 2 2
+ID2D1Factory6 0 QueryInterface 2 2
+ID2D1Factory6 5 CreateRectangleGeometry 2 2
+ID2D1Factory6 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory6 7 CreateEllipseGeometry 2 2
+ID2D1Factory6 8 CreateGeometryGroup 4 4
+ID2D1Factory6 9 CreateTransformedGeometry 3 3
+ID2D1Factory6 10 CreatePathGeometry 1 1
+ID2D1Factory6 11 CreateStrokeStyle 4 4
+ID2D1Factory6 12 CreateDrawingStateBlock 3 3
+ID2D1Factory6 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory6 14 CreateHwndRenderTarget 3 3
+ID2D1Factory6 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory6 16 CreateDCRenderTarget 2 2
+ID2D1Factory6 17 CreateDevice 2 2
+ID2D1Factory6 18 CreateStrokeStyle 4 4
+ID2D1Factory6 19 CreatePathGeometry 1 1
+ID2D1Factory6 20 CreateDrawingStateBlock 3 3
+ID2D1Factory6 21 CreateGdiMetafile 2 2
+ID2D1Factory6 26 GetEffectProperties 2 2
+ID2D1Factory6 27 CreateDevice 2 2
+ID2D1Factory6 28 CreateDevice 2 2
+ID2D1Factory6 29 CreateDevice 2 2
+ID2D1Factory6 30 CreateDevice 2 2
+ID2D1Factory6 31 CreateDevice 2 2
+ID2D1Factory7 0 QueryInterface 2 2
+ID2D1Factory7 5 CreateRectangleGeometry 2 2
+ID2D1Factory7 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory7 7 CreateEllipseGeometry 2 2
+ID2D1Factory7 8 CreateGeometryGroup 4 4
+ID2D1Factory7 9 CreateTransformedGeometry 3 3
+ID2D1Factory7 10 CreatePathGeometry 1 1
+ID2D1Factory7 11 CreateStrokeStyle 4 4
+ID2D1Factory7 12 CreateDrawingStateBlock 3 3
+ID2D1Factory7 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory7 14 CreateHwndRenderTarget 3 3
+ID2D1Factory7 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory7 16 CreateDCRenderTarget 2 2
+ID2D1Factory7 17 CreateDevice 2 2
+ID2D1Factory7 18 CreateStrokeStyle 4 4
+ID2D1Factory7 19 CreatePathGeometry 1 1
+ID2D1Factory7 20 CreateDrawingStateBlock 3 3
+ID2D1Factory7 21 CreateGdiMetafile 2 2
+ID2D1Factory7 26 GetEffectProperties 2 2
+ID2D1Factory7 27 CreateDevice 2 2
+ID2D1Factory7 28 CreateDevice 2 2
+ID2D1Factory7 29 CreateDevice 2 2
+ID2D1Factory7 30 CreateDevice 2 2
+ID2D1Factory7 31 CreateDevice 2 2
+ID2D1Factory7 32 CreateDevice 2 2
+ID2D1Factory8 0 QueryInterface 2 2
+ID2D1Factory8 5 CreateRectangleGeometry 2 2
+ID2D1Factory8 6 CreateRoundedRectangleGeometry 2 2
+ID2D1Factory8 7 CreateEllipseGeometry 2 2
+ID2D1Factory8 8 CreateGeometryGroup 4 4
+ID2D1Factory8 9 CreateTransformedGeometry 3 3
+ID2D1Factory8 10 CreatePathGeometry 1 1
+ID2D1Factory8 11 CreateStrokeStyle 4 4
+ID2D1Factory8 12 CreateDrawingStateBlock 3 3
+ID2D1Factory8 13 CreateWicBitmapRenderTarget 3 3
+ID2D1Factory8 14 CreateHwndRenderTarget 3 3
+ID2D1Factory8 15 CreateDxgiSurfaceRenderTarget 3 3
+ID2D1Factory8 16 CreateDCRenderTarget 2 2
+ID2D1Factory8 17 CreateDevice 2 2
+ID2D1Factory8 18 CreateStrokeStyle 4 4
+ID2D1Factory8 19 CreatePathGeometry 1 1
+ID2D1Factory8 20 CreateDrawingStateBlock 3 3
+ID2D1Factory8 21 CreateGdiMetafile 2 2
+ID2D1Factory8 26 GetEffectProperties 2 2
+ID2D1Factory8 27 CreateDevice 2 2
+ID2D1Factory8 28 CreateDevice 2 2
+ID2D1Factory8 29 CreateDevice 2 2
+ID2D1Factory8 30 CreateDevice 2 2
+ID2D1Factory8 31 CreateDevice 2 2
+ID2D1Factory8 32 CreateDevice 2 2
+ID2D1Factory8 33 CreateDevice 2 2
+ID2D1GdiInteropRenderTarget 0 QueryInterface 2 2
+ID2D1GdiInteropRenderTarget 3 GetDC 2 2
+ID2D1GdiMetafile 0 QueryInterface 2 2
+ID2D1GdiMetafile 3 GetFactory 1 1
+ID2D1GdiMetafile1 0 QueryInterface 2 2
+ID2D1GdiMetafile1 3 GetFactory 1 1
+ID2D1GdiMetafileSink 0 QueryInterface 2 2
+ID2D1GdiMetafileSink1 0 QueryInterface 2 2
+ID2D1Geometry 0 QueryInterface 2 2
+ID2D1Geometry 3 GetFactory 1 1
+ID2D1GeometryGroup 0 QueryInterface 2 2
+ID2D1GeometryGroup 3 GetFactory 1 1
+ID2D1GeometryGroup 19 GetSourceGeometries 1 1
+ID2D1GeometryRealization 0 QueryInterface 2 2
+ID2D1GeometryRealization 3 GetFactory 1 1
+ID2D1GeometrySink 0 QueryInterface 2 2
+ID2D1GradientMesh 0 QueryInterface 2 2
+ID2D1GradientMesh 3 GetFactory 1 1
+ID2D1GradientStopCollection 0 QueryInterface 2 2
+ID2D1GradientStopCollection 3 GetFactory 1 1
+ID2D1GradientStopCollection1 0 QueryInterface 2 2
+ID2D1GradientStopCollection1 3 GetFactory 1 1
+ID2D1HwndRenderTarget 0 QueryInterface 2 2
+ID2D1HwndRenderTarget 3 GetFactory 1 1
+ID2D1HwndRenderTarget 4 CreateBitmap 5 6
+ID2D1HwndRenderTarget 5 CreateBitmapFromWicBitmap 3 3
+ID2D1HwndRenderTarget 6 CreateSharedBitmap 4 4
+ID2D1HwndRenderTarget 7 CreateBitmapBrush 4 4
+ID2D1HwndRenderTarget 8 CreateSolidColorBrush 3 3
+ID2D1HwndRenderTarget 9 CreateGradientStopCollection 5 5
+ID2D1HwndRenderTarget 10 CreateLinearGradientBrush 4 4
+ID2D1HwndRenderTarget 11 CreateRadialGradientBrush 4 4
+ID2D1HwndRenderTarget 12 CreateCompatibleRenderTarget 5 5
+ID2D1HwndRenderTarget 13 CreateLayer 2 2
+ID2D1HwndRenderTarget 14 CreateMesh 1 1
+ID2D1HwndRenderTarget 37 GetTextRenderingParams 1 1
+ID2D1Image 0 QueryInterface 2 2
+ID2D1Image 3 GetFactory 1 1
+ID2D1ImageBrush 0 QueryInterface 2 2
+ID2D1ImageBrush 3 GetFactory 1 1
+ID2D1ImageBrush 13 GetImage 1 1
+ID2D1ImageSource 0 QueryInterface 2 2
+ID2D1ImageSource 3 GetFactory 1 1
+ID2D1ImageSourceFromWic 0 QueryInterface 2 2
+ID2D1ImageSourceFromWic 3 GetFactory 1 1
+ID2D1ImageSourceFromWic 8 GetSource 1 1
+ID2D1Ink 0 QueryInterface 2 2
+ID2D1Ink 3 GetFactory 1 1
+ID2D1InkStyle 0 QueryInterface 2 2
+ID2D1InkStyle 3 GetFactory 1 1
+ID2D1Layer 0 QueryInterface 2 2
+ID2D1Layer 3 GetFactory 1 1
+ID2D1LinearGradientBrush 0 QueryInterface 2 2
+ID2D1LinearGradientBrush 3 GetFactory 1 1
+ID2D1LinearGradientBrush 12 GetGradientStopCollection 1 1
+ID2D1LookupTable3D 0 QueryInterface 2 2
+ID2D1LookupTable3D 3 GetFactory 1 1
+ID2D1Mesh 0 QueryInterface 2 2
+ID2D1Mesh 3 GetFactory 1 1
+ID2D1Mesh 4 Open 1 1
+ID2D1Multithread 0 QueryInterface 2 2
+ID2D1OffsetTransform 0 QueryInterface 2 2
+ID2D1PathGeometry 0 QueryInterface 2 2
+ID2D1PathGeometry 3 GetFactory 1 1
+ID2D1PathGeometry 17 Open 1 1
+ID2D1PathGeometry1 0 QueryInterface 2 2
+ID2D1PathGeometry1 3 GetFactory 1 1
+ID2D1PathGeometry1 17 Open 1 1
+ID2D1PrintControl 0 QueryInterface 2 2
+ID2D1Properties 0 QueryInterface 2 2
+ID2D1Properties 13 GetSubProperties 2 2
+ID2D1RadialGradientBrush 0 QueryInterface 2 2
+ID2D1RadialGradientBrush 3 GetFactory 1 1
+ID2D1RadialGradientBrush 16 GetGradientStopCollection 1 1
+ID2D1RectangleGeometry 0 QueryInterface 2 2
+ID2D1RectangleGeometry 3 GetFactory 1 1
+ID2D1RenderInfo 0 QueryInterface 2 2
+ID2D1RenderTarget 0 QueryInterface 2 2
+ID2D1RenderTarget 3 GetFactory 1 1
+ID2D1RenderTarget 4 CreateBitmap 5 6
+ID2D1RenderTarget 5 CreateBitmapFromWicBitmap 3 3
+ID2D1RenderTarget 6 CreateSharedBitmap 4 4
+ID2D1RenderTarget 7 CreateBitmapBrush 4 4
+ID2D1RenderTarget 8 CreateSolidColorBrush 3 3
+ID2D1RenderTarget 9 CreateGradientStopCollection 5 5
+ID2D1RenderTarget 10 CreateLinearGradientBrush 4 4
+ID2D1RenderTarget 11 CreateRadialGradientBrush 4 4
+ID2D1RenderTarget 12 CreateCompatibleRenderTarget 5 5
+ID2D1RenderTarget 13 CreateLayer 2 2
+ID2D1RenderTarget 14 CreateMesh 1 1
+ID2D1RenderTarget 37 GetTextRenderingParams 1 1
+ID2D1Resource 0 QueryInterface 2 2
+ID2D1Resource 3 GetFactory 1 1
+ID2D1ResourceTexture 0 QueryInterface 2 2
+ID2D1RoundedRectangleGeometry 0 QueryInterface 2 2
+ID2D1RoundedRectangleGeometry 3 GetFactory 1 1
+ID2D1SimplifiedGeometrySink 0 QueryInterface 2 2
+ID2D1SolidColorBrush 0 QueryInterface 2 2
+ID2D1SolidColorBrush 3 GetFactory 1 1
+ID2D1SourceTransform 0 QueryInterface 2 2
+ID2D1SpriteBatch 0 QueryInterface 2 2
+ID2D1SpriteBatch 3 GetFactory 1 1
+ID2D1StrokeStyle 0 QueryInterface 2 2
+ID2D1StrokeStyle 3 GetFactory 1 1
+ID2D1StrokeStyle1 0 QueryInterface 2 2
+ID2D1StrokeStyle1 3 GetFactory 1 1
+ID2D1SvgAttribute 0 QueryInterface 2 2
+ID2D1SvgAttribute 3 GetFactory 1 1
+ID2D1SvgAttribute 4 GetElement 1 1
+ID2D1SvgAttribute 5 Clone 1 1
+ID2D1SvgDocument 0 QueryInterface 2 2
+ID2D1SvgDocument 3 GetFactory 1 1
+ID2D1SvgDocument 7 GetRoot 1 1
+ID2D1SvgDocument 8 FindElementById 2 2
+ID2D1SvgDocument 10 Deserialize 2 2
+ID2D1SvgDocument 11 CreatePaint 4 4
+ID2D1SvgDocument 12 CreateStrokeDashArray 3 3
+ID2D1SvgDocument 13 CreatePointCollection 3 3
+ID2D1SvgDocument 14 CreatePathData 5 5
+ID2D1SvgElement 0 QueryInterface 2 2
+ID2D1SvgElement 3 GetFactory 1 1
+ID2D1SvgElement 4 GetDocument 1 1
+ID2D1SvgElement 8 GetParent 1 1
+ID2D1SvgElement 10 GetFirstChild 1 1
+ID2D1SvgElement 11 GetLastChild 1 1
+ID2D1SvgElement 12 GetPreviousChild 2 2
+ID2D1SvgElement 13 GetNextChild 2 2
+ID2D1SvgElement 18 CreateChild 2 2
+ID2D1SvgElement 30 GetAttributeValue 3 3
+ID2D1SvgGlyphStyle 0 QueryInterface 2 2
+ID2D1SvgGlyphStyle 3 GetFactory 1 1
+ID2D1SvgGlyphStyle 5 GetFill 1 1
+ID2D1SvgGlyphStyle 8 GetStroke 1 1
+ID2D1SvgPaint 0 QueryInterface 2 2
+ID2D1SvgPaint 3 GetFactory 1 1
+ID2D1SvgPaint 4 GetElement 1 1
+ID2D1SvgPaint 5 Clone 1 1
+ID2D1SvgPathData 0 QueryInterface 2 2
+ID2D1SvgPathData 3 GetFactory 1 1
+ID2D1SvgPathData 4 GetElement 1 1
+ID2D1SvgPathData 5 Clone 1 1
+ID2D1SvgPathData 14 CreatePathGeometry 2 2
+ID2D1SvgPointCollection 0 QueryInterface 2 2
+ID2D1SvgPointCollection 3 GetFactory 1 1
+ID2D1SvgPointCollection 4 GetElement 1 1
+ID2D1SvgPointCollection 5 Clone 1 1
+ID2D1SvgStrokeDashArray 0 QueryInterface 2 2
+ID2D1SvgStrokeDashArray 3 GetFactory 1 1
+ID2D1SvgStrokeDashArray 4 GetElement 1 1
+ID2D1SvgStrokeDashArray 5 Clone 1 1
+ID2D1TessellationSink 0 QueryInterface 2 2
+ID2D1Transform 0 QueryInterface 2 2
+ID2D1TransformGraph 0 QueryInterface 2 2
+ID2D1TransformNode 0 QueryInterface 2 2
+ID2D1TransformedGeometry 0 QueryInterface 2 2
+ID2D1TransformedGeometry 3 GetFactory 1 1
+ID2D1TransformedGeometry 17 GetSourceGeometry 1 1
+ID2D1TransformedImageSource 0 QueryInterface 2 2
+ID2D1TransformedImageSource 3 GetFactory 1 1
+ID2D1TransformedImageSource 4 GetSource 1 1
+ID2D1VertexBuffer 0 QueryInterface 2 2
+ID2D1VertexBuffer 3 Map 1 1
+ID3D10BlendState1 0 QueryInterface 2 2
+ID3D10BlendState1 3 GetDevice 1 1
+ID3D10Buffer 0 QueryInterface 2 2
+ID3D10Buffer 3 GetDevice 1 1
+ID3D10Buffer 10 Map 3 3
+ID3D10DepthStencilState 0 QueryInterface 2 2
+ID3D10DepthStencilState 3 GetDevice 1 1
+ID3D10DepthStencilView 0 QueryInterface 2 2
+ID3D10DepthStencilView 3 GetDevice 1 1
+ID3D10DepthStencilView 7 GetResource 1 1
+ID3D10Device1 0 QueryInterface 2 2
+ID3D10Device1 39 VSGetConstantBuffers 3 3
+ID3D10Device1 40 PSGetShaderResources 3 3
+ID3D10Device1 41 PSGetShader 1 1
+ID3D10Device1 42 PSGetSamplers 3 3
+ID3D10Device1 43 VSGetShader 1 1
+ID3D10Device1 44 PSGetConstantBuffers 3 3
+ID3D10Device1 45 IAGetInputLayout 1 1
+ID3D10Device1 46 IAGetVertexBuffers 3 3
+ID3D10Device1 47 IAGetIndexBuffer 1 1
+ID3D10Device1 48 GSGetConstantBuffers 3 3
+ID3D10Device1 49 GSGetShader 1 1
+ID3D10Device1 51 VSGetShaderResources 3 3
+ID3D10Device1 52 VSGetSamplers 3 3
+ID3D10Device1 53 GetPredication 1 1
+ID3D10Device1 54 GSGetShaderResources 3 3
+ID3D10Device1 55 GSGetSamplers 3 3
+ID3D10Device1 56 OMGetRenderTargets 2,3 2,3
+ID3D10Device1 57 OMGetBlendState 1 1
+ID3D10Device1 58 OMGetDepthStencilState 1 1
+ID3D10Device1 59 SOGetTargets 2 2
+ID3D10Device1 60 RSGetState 1 1
+ID3D10Device1 71 CreateBuffer 3 3
+ID3D10Device1 72 CreateTexture1D 3 3
+ID3D10Device1 73 CreateTexture2D 3 3
+ID3D10Device1 74 CreateTexture3D 3 3
+ID3D10Device1 75 CreateShaderResourceView 3 3
+ID3D10Device1 76 CreateRenderTargetView 3 3
+ID3D10Device1 77 CreateDepthStencilView 3 3
+ID3D10Device1 78 CreateInputLayout 5 5
+ID3D10Device1 79 CreateVertexShader 3 3
+ID3D10Device1 80 CreateGeometryShader 3 3
+ID3D10Device1 81 CreateGeometryShaderWithStreamOutput 6 6
+ID3D10Device1 82 CreatePixelShader 3 3
+ID3D10Device1 83 CreateBlendState 2 2
+ID3D10Device1 84 CreateDepthStencilState 2 2
+ID3D10Device1 85 CreateRasterizerState 2 2
+ID3D10Device1 86 CreateSamplerState 2 2
+ID3D10Device1 87 CreateQuery 2 2
+ID3D10Device1 88 CreatePredicate 2 2
+ID3D10Device1 89 CreateCounter 2 2
+ID3D10Device1 95 OpenSharedResource 3 3
+ID3D10Device1 98 CreateShaderResourceView1 3 3
+ID3D10Device1 99 CreateBlendState1 2 2
+ID3D10GeometryShader 0 QueryInterface 2 2
+ID3D10GeometryShader 3 GetDevice 1 1
+ID3D10InputLayout 0 QueryInterface 2 2
+ID3D10InputLayout 3 GetDevice 1 1
+ID3D10Multithread 0 QueryInterface 2 2
+ID3D10PixelShader 0 QueryInterface 2 2
+ID3D10PixelShader 3 GetDevice 1 1
+ID3D10Query 0 QueryInterface 2 2
+ID3D10Query 3 GetDevice 1 1
+ID3D10RasterizerState 0 QueryInterface 2 2
+ID3D10RasterizerState 3 GetDevice 1 1
+ID3D10RenderTargetView 0 QueryInterface 2 2
+ID3D10RenderTargetView 3 GetDevice 1 1
+ID3D10RenderTargetView 7 GetResource 1 1
+ID3D10SamplerState 0 QueryInterface 2 2
+ID3D10SamplerState 3 GetDevice 1 1
+ID3D10ShaderReflection 0 QueryInterface 2 2
+ID3D10ShaderResourceView1 0 QueryInterface 2 2
+ID3D10ShaderResourceView1 3 GetDevice 1 1
+ID3D10ShaderResourceView1 7 GetResource 1 1
+ID3D10Texture1D 0 QueryInterface 2 2
+ID3D10Texture1D 3 GetDevice 1 1
+ID3D10Texture1D 10 Map 4 4
+ID3D10Texture2D 0 QueryInterface 2 2
+ID3D10Texture2D 3 GetDevice 1 1
+ID3D10Texture3D 0 QueryInterface 2 2
+ID3D10Texture3D 3 GetDevice 1 1
+ID3D10VertexShader 0 QueryInterface 2 2
+ID3D10VertexShader 3 GetDevice 1 1
+ID3D11BlendState1 0 QueryInterface 2 2
+ID3D11BlendState1 3 GetDevice 1 1
+ID3D11Buffer 0 QueryInterface 2 2
+ID3D11Buffer 3 GetDevice 1 1
+ID3D11ClassLinkage 0 QueryInterface 2 2
+ID3D11ClassLinkage 3 GetDevice 1 1
+ID3D11ClassLinkage 7 GetClassInstance 3 3
+ID3D11ClassLinkage 8 CreateClassInstance 6 6
+ID3D11CommandList 0 QueryInterface 2 2
+ID3D11CommandList 3 GetDevice 1 1
+ID3D11ComputeShader 0 QueryInterface 2 2
+ID3D11ComputeShader 3 GetDevice 1 1
+ID3D11DepthStencilState 0 QueryInterface 2 2
+ID3D11DepthStencilState 3 GetDevice 1 1
+ID3D11DepthStencilView 0 QueryInterface 2 2
+ID3D11DepthStencilView 3 GetDevice 1 1
+ID3D11DepthStencilView 7 GetResource 1 1
+ID3D11Device 0 QueryInterface 2 2
+ID3D11Device 3 CreateBuffer 3 3
+ID3D11Device 4 CreateTexture1D 3 3
+ID3D11Device 5 CreateTexture2D 3 3
+ID3D11Device 6 CreateTexture3D 3 3
+ID3D11Device 7 CreateShaderResourceView 3 3
+ID3D11Device 8 CreateUnorderedAccessView 3 3
+ID3D11Device 9 CreateRenderTargetView 3 3
+ID3D11Device 10 CreateDepthStencilView 3 3
+ID3D11Device 11 CreateInputLayout 5 5
+ID3D11Device 12 CreateVertexShader 4 4
+ID3D11Device 13 CreateGeometryShader 4 4
+ID3D11Device 14 CreateGeometryShaderWithStreamOutput 9 9
+ID3D11Device 15 CreatePixelShader 4 4
+ID3D11Device 16 CreateHullShader 4 4
+ID3D11Device 17 CreateDomainShader 4 4
+ID3D11Device 18 CreateComputeShader 4 4
+ID3D11Device 19 CreateClassLinkage 1 1
+ID3D11Device 20 CreateBlendState 2 2
+ID3D11Device 21 CreateDepthStencilState 2 2
+ID3D11Device 22 CreateRasterizerState 2 2
+ID3D11Device 23 CreateSamplerState 2 2
+ID3D11Device 24 CreateQuery 2 2
+ID3D11Device 25 CreatePredicate 2 2
+ID3D11Device 26 CreateCounter 2 2
+ID3D11Device 27 CreateDeferredContext 2 2
+ID3D11Device 28 OpenSharedResource 3 3
+ID3D11Device 40 GetImmediateContext 1 1
+ID3D11Device5 0 QueryInterface 2 2
+ID3D11Device5 3 CreateBuffer 3 3
+ID3D11Device5 4 CreateTexture1D 3 3
+ID3D11Device5 5 CreateTexture2D 3 3
+ID3D11Device5 6 CreateTexture3D 3 3
+ID3D11Device5 7 CreateShaderResourceView 3 3
+ID3D11Device5 8 CreateUnorderedAccessView 3 3
+ID3D11Device5 9 CreateRenderTargetView 3 3
+ID3D11Device5 10 CreateDepthStencilView 3 3
+ID3D11Device5 11 CreateInputLayout 5 5
+ID3D11Device5 12 CreateVertexShader 4 4
+ID3D11Device5 13 CreateGeometryShader 4 4
+ID3D11Device5 14 CreateGeometryShaderWithStreamOutput 9 9
+ID3D11Device5 15 CreatePixelShader 4 4
+ID3D11Device5 16 CreateHullShader 4 4
+ID3D11Device5 17 CreateDomainShader 4 4
+ID3D11Device5 18 CreateComputeShader 4 4
+ID3D11Device5 19 CreateClassLinkage 1 1
+ID3D11Device5 20 CreateBlendState 2 2
+ID3D11Device5 21 CreateDepthStencilState 2 2
+ID3D11Device5 22 CreateRasterizerState 2 2
+ID3D11Device5 23 CreateSamplerState 2 2
+ID3D11Device5 24 CreateQuery 2 2
+ID3D11Device5 25 CreatePredicate 2 2
+ID3D11Device5 26 CreateCounter 2 2
+ID3D11Device5 27 CreateDeferredContext 2 2
+ID3D11Device5 28 OpenSharedResource 3 3
+ID3D11Device5 40 GetImmediateContext 1 1
+ID3D11Device5 43 GetImmediateContext1 1 1
+ID3D11Device5 44 CreateDeferredContext1 2 2
+ID3D11Device5 45 CreateBlendState1 2 2
+ID3D11Device5 46 CreateRasterizerState1 2 2
+ID3D11Device5 47 CreateDeviceContextState 7 7
+ID3D11Device5 48 OpenSharedResource1 3 3
+ID3D11Device5 49 OpenSharedResourceByName 4 4
+ID3D11Device5 50 GetImmediateContext2 1 1
+ID3D11Device5 51 CreateDeferredContext2 2 2
+ID3D11Device5 54 CreateTexture2D1 3 3
+ID3D11Device5 55 CreateTexture3D1 3 3
+ID3D11Device5 56 CreateRasterizerState2 2 2
+ID3D11Device5 57 CreateShaderResourceView1 3 3
+ID3D11Device5 58 CreateUnorderedAccessView1 3 3
+ID3D11Device5 59 CreateRenderTargetView1 3 3
+ID3D11Device5 60 CreateQuery1 2 2
+ID3D11Device5 61 GetImmediateContext3 1 1
+ID3D11Device5 62 CreateDeferredContext3 2 2
+ID3D11Device5 67 OpenSharedFence 3 3
+ID3D11Device5 68 CreateFence 4 5
+ID3D11DeviceContext 0 QueryInterface 2 2
+ID3D11DeviceContext 3 GetDevice 1 1
+ID3D11DeviceContext 72 VSGetConstantBuffers 3 3
+ID3D11DeviceContext 73 PSGetShaderResources 3 3
+ID3D11DeviceContext 74 PSGetShader 1,2 1,2
+ID3D11DeviceContext 75 PSGetSamplers 3 3
+ID3D11DeviceContext 76 VSGetShader 1,2 1,2
+ID3D11DeviceContext 77 PSGetConstantBuffers 3 3
+ID3D11DeviceContext 78 IAGetInputLayout 1 1
+ID3D11DeviceContext 79 IAGetVertexBuffers 3 3
+ID3D11DeviceContext 80 IAGetIndexBuffer 1 1
+ID3D11DeviceContext 81 GSGetConstantBuffers 3 3
+ID3D11DeviceContext 82 GSGetShader 1,2 1,2
+ID3D11DeviceContext 84 VSGetShaderResources 3 3
+ID3D11DeviceContext 85 VSGetSamplers 3 3
+ID3D11DeviceContext 86 GetPredication 1 1
+ID3D11DeviceContext 87 GSGetShaderResources 3 3
+ID3D11DeviceContext 88 GSGetSamplers 3 3
+ID3D11DeviceContext 89 OMGetRenderTargets 2,3 2,3
+ID3D11DeviceContext 90 OMGetRenderTargetsAndUnorderedAccessViews 2,3,6 2,3,6
+ID3D11DeviceContext 91 OMGetBlendState 1 1
+ID3D11DeviceContext 92 OMGetDepthStencilState 1 1
+ID3D11DeviceContext 93 SOGetTargets 2 2
+ID3D11DeviceContext 94 RSGetState 1 1
+ID3D11DeviceContext 97 HSGetShaderResources 3 3
+ID3D11DeviceContext 98 HSGetShader 1,2 1,2
+ID3D11DeviceContext 99 HSGetSamplers 3 3
+ID3D11DeviceContext 100 HSGetConstantBuffers 3 3
+ID3D11DeviceContext 101 DSGetShaderResources 3 3
+ID3D11DeviceContext 102 DSGetShader 1,2 1,2
+ID3D11DeviceContext 103 DSGetSamplers 3 3
+ID3D11DeviceContext 104 DSGetConstantBuffers 3 3
+ID3D11DeviceContext 105 CSGetShaderResources 3 3
+ID3D11DeviceContext 106 CSGetUnorderedAccessViews 3 3
+ID3D11DeviceContext 107 CSGetShader 1,2 1,2
+ID3D11DeviceContext 108 CSGetSamplers 3 3
+ID3D11DeviceContext 109 CSGetConstantBuffers 3 3
+ID3D11DeviceContext 114 FinishCommandList 2 2
+ID3D11DeviceContext4 0 QueryInterface 2 2
+ID3D11DeviceContext4 3 GetDevice 1 1
+ID3D11DeviceContext4 72 VSGetConstantBuffers 3 3
+ID3D11DeviceContext4 73 PSGetShaderResources 3 3
+ID3D11DeviceContext4 74 PSGetShader 1,2 1,2
+ID3D11DeviceContext4 75 PSGetSamplers 3 3
+ID3D11DeviceContext4 76 VSGetShader 1,2 1,2
+ID3D11DeviceContext4 77 PSGetConstantBuffers 3 3
+ID3D11DeviceContext4 78 IAGetInputLayout 1 1
+ID3D11DeviceContext4 79 IAGetVertexBuffers 3 3
+ID3D11DeviceContext4 80 IAGetIndexBuffer 1 1
+ID3D11DeviceContext4 81 GSGetConstantBuffers 3 3
+ID3D11DeviceContext4 82 GSGetShader 1,2 1,2
+ID3D11DeviceContext4 84 VSGetShaderResources 3 3
+ID3D11DeviceContext4 85 VSGetSamplers 3 3
+ID3D11DeviceContext4 86 GetPredication 1 1
+ID3D11DeviceContext4 87 GSGetShaderResources 3 3
+ID3D11DeviceContext4 88 GSGetSamplers 3 3
+ID3D11DeviceContext4 89 OMGetRenderTargets 2,3 2,3
+ID3D11DeviceContext4 90 OMGetRenderTargetsAndUnorderedAccessViews 2,3,6 2,3,6
+ID3D11DeviceContext4 91 OMGetBlendState 1 1
+ID3D11DeviceContext4 92 OMGetDepthStencilState 1 1
+ID3D11DeviceContext4 93 SOGetTargets 2 2
+ID3D11DeviceContext4 94 RSGetState 1 1
+ID3D11DeviceContext4 97 HSGetShaderResources 3 3
+ID3D11DeviceContext4 98 HSGetShader 1,2 1,2
+ID3D11DeviceContext4 99 HSGetSamplers 3 3
+ID3D11DeviceContext4 100 HSGetConstantBuffers 3 3
+ID3D11DeviceContext4 101 DSGetShaderResources 3 3
+ID3D11DeviceContext4 102 DSGetShader 1,2 1,2
+ID3D11DeviceContext4 103 DSGetSamplers 3 3
+ID3D11DeviceContext4 104 DSGetConstantBuffers 3 3
+ID3D11DeviceContext4 105 CSGetShaderResources 3 3
+ID3D11DeviceContext4 106 CSGetUnorderedAccessViews 3 3
+ID3D11DeviceContext4 107 CSGetShader 1,2 1,2
+ID3D11DeviceContext4 108 CSGetSamplers 3 3
+ID3D11DeviceContext4 109 CSGetConstantBuffers 3 3
+ID3D11DeviceContext4 114 FinishCommandList 2 2
+ID3D11DeviceContext4 125 VSGetConstantBuffers1 3 3
+ID3D11DeviceContext4 126 HSGetConstantBuffers1 3 3
+ID3D11DeviceContext4 127 DSGetConstantBuffers1 3 3
+ID3D11DeviceContext4 128 GSGetConstantBuffers1 3 3
+ID3D11DeviceContext4 129 PSGetConstantBuffers1 3 3
+ID3D11DeviceContext4 130 CSGetConstantBuffers1 3 3
+ID3D11DeviceContext4 131 SwapDeviceContextState 2 2
+ID3D11DomainShader 0 QueryInterface 2 2
+ID3D11DomainShader 3 GetDevice 1 1
+ID3D11GeometryShader 0 QueryInterface 2 2
+ID3D11GeometryShader 3 GetDevice 1 1
+ID3D11HullShader 0 QueryInterface 2 2
+ID3D11HullShader 3 GetDevice 1 1
+ID3D11InputLayout 0 QueryInterface 2 2
+ID3D11InputLayout 3 GetDevice 1 1
+ID3D11PixelShader 0 QueryInterface 2 2
+ID3D11PixelShader 3 GetDevice 1 1
+ID3D11Query 0 QueryInterface 2 2
+ID3D11Query 3 GetDevice 1 1
+ID3D11RasterizerState2 0 QueryInterface 2 2
+ID3D11RasterizerState2 3 GetDevice 1 1
+ID3D11RenderTargetView 0 QueryInterface 2 2
+ID3D11RenderTargetView 3 GetDevice 1 1
+ID3D11RenderTargetView 7 GetResource 1 1
+ID3D11SamplerState 0 QueryInterface 2 2
+ID3D11SamplerState 3 GetDevice 1 1
+ID3D11ShaderReflection 0 QueryInterface 2 2
+ID3D11ShaderResourceView 0 QueryInterface 2 2
+ID3D11ShaderResourceView 3 GetDevice 1 1
+ID3D11ShaderResourceView 7 GetResource 1 1
+ID3D11Texture1D 0 QueryInterface 2 2
+ID3D11Texture1D 3 GetDevice 1 1
+ID3D11Texture2D 0 QueryInterface 2 2
+ID3D11Texture2D 3 GetDevice 1 1
+ID3D11Texture3D 0 QueryInterface 2 2
+ID3D11Texture3D 3 GetDevice 1 1
+ID3D11UnorderedAccessView 0 QueryInterface 2 2
+ID3D11UnorderedAccessView 3 GetDevice 1 1
+ID3D11UnorderedAccessView 7 GetResource 1 1
+ID3D11VertexShader 0 QueryInterface 2 2
+ID3D11VertexShader 3 GetDevice 1 1
+ID3DBlob 0 QueryInterface 2 2
+ID3DInclude 0 Open 4 4
+ID3DUserDefinedAnnotation 0 QueryInterface 2 2
+IDMOWrapperFilter 0 QueryInterface 2 2
+IDWriteAsyncResult 0 QueryInterface 2 2
+IDWriteBitmapRenderTarget 0 QueryInterface 2 2
+IDWriteBitmapRenderTarget1 0 QueryInterface 2 2
+IDWriteBitmapRenderTarget2 0 QueryInterface 2 2
+IDWriteBitmapRenderTarget3 0 QueryInterface 2 2
+IDWriteColorGlyphRunEnumerator 0 QueryInterface 2 2
+IDWriteColorGlyphRunEnumerator 4 GetCurrentRun 1 1
+IDWriteColorGlyphRunEnumerator1 0 QueryInterface 2 2
+IDWriteColorGlyphRunEnumerator1 4 GetCurrentRun 1 1
+IDWriteColorGlyphRunEnumerator1 5 GetCurrentRun 1 1
+IDWriteFactory 0 QueryInterface 2 2
+IDWriteFactory 3 GetSystemFontCollection 1 1
+IDWriteFactory 4 CreateCustomFontCollection 4 4
+IDWriteFactory 7 CreateFontFileReference 3 3
+IDWriteFactory 8 CreateCustomFontFileReference 4 4
+IDWriteFactory 9 CreateFontFace 6 6
+IDWriteFactory 10 CreateRenderingParams 1 1
+IDWriteFactory 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory 12 CreateCustomRenderingParams 6 6
+IDWriteFactory 15 CreateTextFormat 8 8
+IDWriteFactory 16 CreateTypography 1 1
+IDWriteFactory 17 GetGdiInterop 1 1
+IDWriteFactory 18 CreateTextLayout 6 6
+IDWriteFactory 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory 21 CreateTextAnalyzer 1 1
+IDWriteFactory 22 CreateNumberSubstitution 4 4
+IDWriteFactory 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory1 0 QueryInterface 2 2
+IDWriteFactory1 3 GetSystemFontCollection 1 1
+IDWriteFactory1 4 CreateCustomFontCollection 4 4
+IDWriteFactory1 7 CreateFontFileReference 3 3
+IDWriteFactory1 8 CreateCustomFontFileReference 4 4
+IDWriteFactory1 9 CreateFontFace 6 6
+IDWriteFactory1 10 CreateRenderingParams 1 1
+IDWriteFactory1 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory1 12 CreateCustomRenderingParams 6 6
+IDWriteFactory1 15 CreateTextFormat 8 8
+IDWriteFactory1 16 CreateTypography 1 1
+IDWriteFactory1 17 GetGdiInterop 1 1
+IDWriteFactory1 18 CreateTextLayout 6 6
+IDWriteFactory1 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory1 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory1 21 CreateTextAnalyzer 1 1
+IDWriteFactory1 22 CreateNumberSubstitution 4 4
+IDWriteFactory1 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory1 24 GetEudcFontCollection 1 1
+IDWriteFactory1 25 CreateCustomRenderingParams 7 7
+IDWriteFactory2 0 QueryInterface 2 2
+IDWriteFactory2 3 GetSystemFontCollection 1 1
+IDWriteFactory2 4 CreateCustomFontCollection 4 4
+IDWriteFactory2 7 CreateFontFileReference 3 3
+IDWriteFactory2 8 CreateCustomFontFileReference 4 4
+IDWriteFactory2 9 CreateFontFace 6 6
+IDWriteFactory2 10 CreateRenderingParams 1 1
+IDWriteFactory2 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory2 12 CreateCustomRenderingParams 6 6
+IDWriteFactory2 15 CreateTextFormat 8 8
+IDWriteFactory2 16 CreateTypography 1 1
+IDWriteFactory2 17 GetGdiInterop 1 1
+IDWriteFactory2 18 CreateTextLayout 6 6
+IDWriteFactory2 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory2 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory2 21 CreateTextAnalyzer 1 1
+IDWriteFactory2 22 CreateNumberSubstitution 4 4
+IDWriteFactory2 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory2 24 GetEudcFontCollection 1 1
+IDWriteFactory2 25 CreateCustomRenderingParams 7 7
+IDWriteFactory2 26 GetSystemFontFallback 1 1
+IDWriteFactory2 27 CreateFontFallbackBuilder 1 1
+IDWriteFactory2 28 TranslateColorGlyphRun 8 8
+IDWriteFactory2 29 CreateCustomRenderingParams 8 8
+IDWriteFactory2 30 CreateGlyphRunAnalysis 9 9
+IDWriteFactory3 0 QueryInterface 2 2
+IDWriteFactory3 3 GetSystemFontCollection 1 1
+IDWriteFactory3 4 CreateCustomFontCollection 4 4
+IDWriteFactory3 7 CreateFontFileReference 3 3
+IDWriteFactory3 8 CreateCustomFontFileReference 4 4
+IDWriteFactory3 9 CreateFontFace 6 6
+IDWriteFactory3 10 CreateRenderingParams 1 1
+IDWriteFactory3 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory3 12 CreateCustomRenderingParams 6 6
+IDWriteFactory3 15 CreateTextFormat 8 8
+IDWriteFactory3 16 CreateTypography 1 1
+IDWriteFactory3 17 GetGdiInterop 1 1
+IDWriteFactory3 18 CreateTextLayout 6 6
+IDWriteFactory3 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory3 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory3 21 CreateTextAnalyzer 1 1
+IDWriteFactory3 22 CreateNumberSubstitution 4 4
+IDWriteFactory3 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory3 24 GetEudcFontCollection 1 1
+IDWriteFactory3 25 CreateCustomRenderingParams 7 7
+IDWriteFactory3 26 GetSystemFontFallback 1 1
+IDWriteFactory3 27 CreateFontFallbackBuilder 1 1
+IDWriteFactory3 28 TranslateColorGlyphRun 8 8
+IDWriteFactory3 29 CreateCustomRenderingParams 8 8
+IDWriteFactory3 30 CreateGlyphRunAnalysis 9 9
+IDWriteFactory3 31 CreateGlyphRunAnalysis 9 9
+IDWriteFactory3 32 CreateCustomRenderingParams 8 8
+IDWriteFactory3 33 CreateFontFaceReference 4 4
+IDWriteFactory3 34 CreateFontFaceReference 5 5
+IDWriteFactory3 35 GetSystemFontSet 1 1
+IDWriteFactory3 36 CreateFontSetBuilder 1 1
+IDWriteFactory3 37 CreateFontCollectionFromFontSet 2 2
+IDWriteFactory3 38 GetSystemFontCollection 2 2
+IDWriteFactory3 39 GetFontDownloadQueue 1 1
+IDWriteFactory4 0 QueryInterface 2 2
+IDWriteFactory4 3 GetSystemFontCollection 1 1
+IDWriteFactory4 4 CreateCustomFontCollection 4 4
+IDWriteFactory4 7 CreateFontFileReference 3 3
+IDWriteFactory4 8 CreateCustomFontFileReference 4 4
+IDWriteFactory4 9 CreateFontFace 6 6
+IDWriteFactory4 10 CreateRenderingParams 1 1
+IDWriteFactory4 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory4 12 CreateCustomRenderingParams 6 6
+IDWriteFactory4 15 CreateTextFormat 8 8
+IDWriteFactory4 16 CreateTypography 1 1
+IDWriteFactory4 17 GetGdiInterop 1 1
+IDWriteFactory4 18 CreateTextLayout 6 6
+IDWriteFactory4 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory4 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory4 21 CreateTextAnalyzer 1 1
+IDWriteFactory4 22 CreateNumberSubstitution 4 4
+IDWriteFactory4 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory4 24 GetEudcFontCollection 1 1
+IDWriteFactory4 25 CreateCustomRenderingParams 7 7
+IDWriteFactory4 26 GetSystemFontFallback 1 1
+IDWriteFactory4 27 CreateFontFallbackBuilder 1 1
+IDWriteFactory4 28 TranslateColorGlyphRun 8 8
+IDWriteFactory4 29 CreateCustomRenderingParams 8 8
+IDWriteFactory4 30 CreateGlyphRunAnalysis 9 9
+IDWriteFactory4 31 CreateGlyphRunAnalysis 9 9
+IDWriteFactory4 32 CreateCustomRenderingParams 8 8
+IDWriteFactory4 33 CreateFontFaceReference 4 4
+IDWriteFactory4 34 CreateFontFaceReference 5 5
+IDWriteFactory4 35 GetSystemFontSet 1 1
+IDWriteFactory4 36 CreateFontSetBuilder 1 1
+IDWriteFactory4 37 CreateFontCollectionFromFontSet 2 2
+IDWriteFactory4 38 GetSystemFontCollection 2 2
+IDWriteFactory4 39 GetFontDownloadQueue 1 1
+IDWriteFactory4 40 TranslateColorGlyphRun 8 9
+IDWriteFactory5 0 QueryInterface 2 2
+IDWriteFactory5 3 GetSystemFontCollection 1 1
+IDWriteFactory5 4 CreateCustomFontCollection 4 4
+IDWriteFactory5 7 CreateFontFileReference 3 3
+IDWriteFactory5 8 CreateCustomFontFileReference 4 4
+IDWriteFactory5 9 CreateFontFace 6 6
+IDWriteFactory5 10 CreateRenderingParams 1 1
+IDWriteFactory5 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory5 12 CreateCustomRenderingParams 6 6
+IDWriteFactory5 15 CreateTextFormat 8 8
+IDWriteFactory5 16 CreateTypography 1 1
+IDWriteFactory5 17 GetGdiInterop 1 1
+IDWriteFactory5 18 CreateTextLayout 6 6
+IDWriteFactory5 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory5 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory5 21 CreateTextAnalyzer 1 1
+IDWriteFactory5 22 CreateNumberSubstitution 4 4
+IDWriteFactory5 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory5 24 GetEudcFontCollection 1 1
+IDWriteFactory5 25 CreateCustomRenderingParams 7 7
+IDWriteFactory5 26 GetSystemFontFallback 1 1
+IDWriteFactory5 27 CreateFontFallbackBuilder 1 1
+IDWriteFactory5 28 TranslateColorGlyphRun 8 8
+IDWriteFactory5 29 CreateCustomRenderingParams 8 8
+IDWriteFactory5 30 CreateGlyphRunAnalysis 9 9
+IDWriteFactory5 31 CreateGlyphRunAnalysis 9 9
+IDWriteFactory5 32 CreateCustomRenderingParams 8 8
+IDWriteFactory5 33 CreateFontFaceReference 4 4
+IDWriteFactory5 34 CreateFontFaceReference 5 5
+IDWriteFactory5 35 GetSystemFontSet 1 1
+IDWriteFactory5 36 CreateFontSetBuilder 1 1
+IDWriteFactory5 37 CreateFontCollectionFromFontSet 2 2
+IDWriteFactory5 38 GetSystemFontCollection 2 2
+IDWriteFactory5 39 GetFontDownloadQueue 1 1
+IDWriteFactory5 40 TranslateColorGlyphRun 8 9
+IDWriteFactory5 43 CreateFontSetBuilder 1 1
+IDWriteFactory5 44 CreateInMemoryFontFileLoader 1 1
+IDWriteFactory5 45 CreateHttpFontFileLoader 3 3
+IDWriteFactory5 47 UnpackFontFile 4 4
+IDWriteFactory6 0 QueryInterface 2 2
+IDWriteFactory6 3 GetSystemFontCollection 1 1
+IDWriteFactory6 4 CreateCustomFontCollection 4 4
+IDWriteFactory6 7 CreateFontFileReference 3 3
+IDWriteFactory6 8 CreateCustomFontFileReference 4 4
+IDWriteFactory6 9 CreateFontFace 6 6
+IDWriteFactory6 10 CreateRenderingParams 1 1
+IDWriteFactory6 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory6 12 CreateCustomRenderingParams 6 6
+IDWriteFactory6 15 CreateTextFormat 8 8
+IDWriteFactory6 16 CreateTypography 1 1
+IDWriteFactory6 17 GetGdiInterop 1 1
+IDWriteFactory6 18 CreateTextLayout 6 6
+IDWriteFactory6 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory6 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory6 21 CreateTextAnalyzer 1 1
+IDWriteFactory6 22 CreateNumberSubstitution 4 4
+IDWriteFactory6 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory6 24 GetEudcFontCollection 1 1
+IDWriteFactory6 25 CreateCustomRenderingParams 7 7
+IDWriteFactory6 26 GetSystemFontFallback 1 1
+IDWriteFactory6 27 CreateFontFallbackBuilder 1 1
+IDWriteFactory6 28 TranslateColorGlyphRun 8 8
+IDWriteFactory6 29 CreateCustomRenderingParams 8 8
+IDWriteFactory6 30 CreateGlyphRunAnalysis 9 9
+IDWriteFactory6 31 CreateGlyphRunAnalysis 9 9
+IDWriteFactory6 32 CreateCustomRenderingParams 8 8
+IDWriteFactory6 33 CreateFontFaceReference 4 4
+IDWriteFactory6 34 CreateFontFaceReference 5 5
+IDWriteFactory6 35 GetSystemFontSet 1 1
+IDWriteFactory6 36 CreateFontSetBuilder 1 1
+IDWriteFactory6 37 CreateFontCollectionFromFontSet 2 2
+IDWriteFactory6 38 GetSystemFontCollection 2 2
+IDWriteFactory6 39 GetFontDownloadQueue 1 1
+IDWriteFactory6 40 TranslateColorGlyphRun 8 9
+IDWriteFactory6 43 CreateFontSetBuilder 1 1
+IDWriteFactory6 44 CreateInMemoryFontFileLoader 1 1
+IDWriteFactory6 45 CreateHttpFontFileLoader 3 3
+IDWriteFactory6 47 UnpackFontFile 4 4
+IDWriteFactory6 48 CreateFontFaceReference 6 6
+IDWriteFactory6 49 CreateFontResource 3 3
+IDWriteFactory6 50 GetSystemFontSet 2 2
+IDWriteFactory6 51 GetSystemFontCollection 3 3
+IDWriteFactory6 52 CreateFontCollectionFromFontSet 3 3
+IDWriteFactory6 53 CreateFontSetBuilder 1 1
+IDWriteFactory6 54 CreateTextFormat 7 7
+IDWriteFactory7 0 QueryInterface 2 2
+IDWriteFactory7 3 GetSystemFontCollection 1 1
+IDWriteFactory7 4 CreateCustomFontCollection 4 4
+IDWriteFactory7 7 CreateFontFileReference 3 3
+IDWriteFactory7 8 CreateCustomFontFileReference 4 4
+IDWriteFactory7 9 CreateFontFace 6 6
+IDWriteFactory7 10 CreateRenderingParams 1 1
+IDWriteFactory7 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory7 12 CreateCustomRenderingParams 6 6
+IDWriteFactory7 15 CreateTextFormat 8 8
+IDWriteFactory7 16 CreateTypography 1 1
+IDWriteFactory7 17 GetGdiInterop 1 1
+IDWriteFactory7 18 CreateTextLayout 6 6
+IDWriteFactory7 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory7 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory7 21 CreateTextAnalyzer 1 1
+IDWriteFactory7 22 CreateNumberSubstitution 4 4
+IDWriteFactory7 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory7 24 GetEudcFontCollection 1 1
+IDWriteFactory7 25 CreateCustomRenderingParams 7 7
+IDWriteFactory7 26 GetSystemFontFallback 1 1
+IDWriteFactory7 27 CreateFontFallbackBuilder 1 1
+IDWriteFactory7 28 TranslateColorGlyphRun 8 8
+IDWriteFactory7 29 CreateCustomRenderingParams 8 8
+IDWriteFactory7 30 CreateGlyphRunAnalysis 9 9
+IDWriteFactory7 31 CreateGlyphRunAnalysis 9 9
+IDWriteFactory7 32 CreateCustomRenderingParams 8 8
+IDWriteFactory7 33 CreateFontFaceReference 4 4
+IDWriteFactory7 34 CreateFontFaceReference 5 5
+IDWriteFactory7 35 GetSystemFontSet 1 1
+IDWriteFactory7 36 CreateFontSetBuilder 1 1
+IDWriteFactory7 37 CreateFontCollectionFromFontSet 2 2
+IDWriteFactory7 38 GetSystemFontCollection 2 2
+IDWriteFactory7 39 GetFontDownloadQueue 1 1
+IDWriteFactory7 40 TranslateColorGlyphRun 8 9
+IDWriteFactory7 43 CreateFontSetBuilder 1 1
+IDWriteFactory7 44 CreateInMemoryFontFileLoader 1 1
+IDWriteFactory7 45 CreateHttpFontFileLoader 3 3
+IDWriteFactory7 47 UnpackFontFile 4 4
+IDWriteFactory7 48 CreateFontFaceReference 6 6
+IDWriteFactory7 49 CreateFontResource 3 3
+IDWriteFactory7 50 GetSystemFontSet 2 2
+IDWriteFactory7 51 GetSystemFontCollection 3 3
+IDWriteFactory7 52 CreateFontCollectionFromFontSet 3 3
+IDWriteFactory7 53 CreateFontSetBuilder 1 1
+IDWriteFactory7 54 CreateTextFormat 7 7
+IDWriteFactory7 55 GetSystemFontSet 2 2
+IDWriteFactory7 56 GetSystemFontCollection 3 3
+IDWriteFactory8 0 QueryInterface 2 2
+IDWriteFactory8 3 GetSystemFontCollection 1 1
+IDWriteFactory8 4 CreateCustomFontCollection 4 4
+IDWriteFactory8 7 CreateFontFileReference 3 3
+IDWriteFactory8 8 CreateCustomFontFileReference 4 4
+IDWriteFactory8 9 CreateFontFace 6 6
+IDWriteFactory8 10 CreateRenderingParams 1 1
+IDWriteFactory8 11 CreateMonitorRenderingParams 2 2
+IDWriteFactory8 12 CreateCustomRenderingParams 6 6
+IDWriteFactory8 15 CreateTextFormat 8 8
+IDWriteFactory8 16 CreateTypography 1 1
+IDWriteFactory8 17 GetGdiInterop 1 1
+IDWriteFactory8 18 CreateTextLayout 6 6
+IDWriteFactory8 19 CreateGdiCompatibleTextLayout 9 9
+IDWriteFactory8 20 CreateEllipsisTrimmingSign 2 2
+IDWriteFactory8 21 CreateTextAnalyzer 1 1
+IDWriteFactory8 22 CreateNumberSubstitution 4 4
+IDWriteFactory8 23 CreateGlyphRunAnalysis 8 8
+IDWriteFactory8 24 GetEudcFontCollection 1 1
+IDWriteFactory8 25 CreateCustomRenderingParams 7 7
+IDWriteFactory8 26 GetSystemFontFallback 1 1
+IDWriteFactory8 27 CreateFontFallbackBuilder 1 1
+IDWriteFactory8 28 TranslateColorGlyphRun 8 8
+IDWriteFactory8 29 CreateCustomRenderingParams 8 8
+IDWriteFactory8 30 CreateGlyphRunAnalysis 9 9
+IDWriteFactory8 31 CreateGlyphRunAnalysis 9 9
+IDWriteFactory8 32 CreateCustomRenderingParams 8 8
+IDWriteFactory8 33 CreateFontFaceReference 4 4
+IDWriteFactory8 34 CreateFontFaceReference 5 5
+IDWriteFactory8 35 GetSystemFontSet 1 1
+IDWriteFactory8 36 CreateFontSetBuilder 1 1
+IDWriteFactory8 37 CreateFontCollectionFromFontSet 2 2
+IDWriteFactory8 38 GetSystemFontCollection 2 2
+IDWriteFactory8 39 GetFontDownloadQueue 1 1
+IDWriteFactory8 40 TranslateColorGlyphRun 8 9
+IDWriteFactory8 43 CreateFontSetBuilder 1 1
+IDWriteFactory8 44 CreateInMemoryFontFileLoader 1 1
+IDWriteFactory8 45 CreateHttpFontFileLoader 3 3
+IDWriteFactory8 47 UnpackFontFile 4 4
+IDWriteFactory8 48 CreateFontFaceReference 6 6
+IDWriteFactory8 49 CreateFontResource 3 3
+IDWriteFactory8 50 GetSystemFontSet 2 2
+IDWriteFactory8 51 GetSystemFontCollection 3 3
+IDWriteFactory8 52 CreateFontCollectionFromFontSet 3 3
+IDWriteFactory8 53 CreateFontSetBuilder 1 1
+IDWriteFactory8 54 CreateTextFormat 7 7
+IDWriteFactory8 55 GetSystemFontSet 2 2
+IDWriteFactory8 56 GetSystemFontCollection 3 3
+IDWriteFactory8 57 TranslateColorGlyphRun 9 10
+IDWriteFont 0 QueryInterface 2 2
+IDWriteFont 3 GetFontFamily 1 1
+IDWriteFont 8 GetFaceNames 1 1
+IDWriteFont 9 GetInformationalStrings 2 2
+IDWriteFont 13 CreateFontFace 1 1
+IDWriteFont1 0 QueryInterface 2 2
+IDWriteFont1 3 GetFontFamily 1 1
+IDWriteFont1 8 GetFaceNames 1 1
+IDWriteFont1 9 GetInformationalStrings 2 2
+IDWriteFont1 13 CreateFontFace 1 1
+IDWriteFont2 0 QueryInterface 2 2
+IDWriteFont2 3 GetFontFamily 1 1
+IDWriteFont2 8 GetFaceNames 1 1
+IDWriteFont2 9 GetInformationalStrings 2 2
+IDWriteFont2 13 CreateFontFace 1 1
+IDWriteFont3 0 QueryInterface 2 2
+IDWriteFont3 3 GetFontFamily 1 1
+IDWriteFont3 8 GetFaceNames 1 1
+IDWriteFont3 9 GetInformationalStrings 2 2
+IDWriteFont3 13 CreateFontFace 1 1
+IDWriteFont3 19 CreateFontFace 1 1
+IDWriteFont3 21 GetFontFaceReference 1 1
+IDWriteFontCollection 0 QueryInterface 2 2
+IDWriteFontCollection 4 GetFontFamily 2 2
+IDWriteFontCollection 6 GetFontFromFontFace 2 2
+IDWriteFontCollection1 0 QueryInterface 2 2
+IDWriteFontCollection1 4 GetFontFamily 2 2
+IDWriteFontCollection1 6 GetFontFromFontFace 2 2
+IDWriteFontCollection1 7 GetFontSet 1 1
+IDWriteFontCollection1 8 GetFontFamily 2 2
+IDWriteFontCollection2 0 QueryInterface 2 2
+IDWriteFontCollection2 4 GetFontFamily 2 2
+IDWriteFontCollection2 6 GetFontFromFontFace 2 2
+IDWriteFontCollection2 7 GetFontSet 1 1
+IDWriteFontCollection2 8 GetFontFamily 2 2
+IDWriteFontCollection2 9 GetFontFamily 2 2
+IDWriteFontCollection2 10 GetMatchingFonts 4 4
+IDWriteFontCollection2 12 GetFontSet 1 1
+IDWriteFontCollection3 0 QueryInterface 2 2
+IDWriteFontCollection3 4 GetFontFamily 2 2
+IDWriteFontCollection3 6 GetFontFromFontFace 2 2
+IDWriteFontCollection3 7 GetFontSet 1 1
+IDWriteFontCollection3 8 GetFontFamily 2 2
+IDWriteFontCollection3 9 GetFontFamily 2 2
+IDWriteFontCollection3 10 GetMatchingFonts 4 4
+IDWriteFontCollection3 12 GetFontSet 1 1
+IDWriteFontCollectionLoader 0 QueryInterface 2 2
+IDWriteFontCollectionLoader 3 CreateEnumeratorFromKey 4 4
+IDWriteFontDownloadListener 0 QueryInterface 2 2
+IDWriteFontDownloadQueue 0 QueryInterface 2 2
+IDWriteFontFace 0 QueryInterface 2 2
+IDWriteFontFace 4 GetFiles 2 2
+IDWriteFontFace 12 TryGetFontTable 2,4 2,4
+IDWriteFontFace1 0 QueryInterface 2 2
+IDWriteFontFace1 4 GetFiles 2 2
+IDWriteFontFace1 12 TryGetFontTable 2,4 2,4
+IDWriteFontFace2 0 QueryInterface 2 2
+IDWriteFontFace2 4 GetFiles 2 2
+IDWriteFontFace2 12 TryGetFontTable 2,4 2,4
+IDWriteFontFace3 0 QueryInterface 2 2
+IDWriteFontFace3 4 GetFiles 2 2
+IDWriteFontFace3 12 TryGetFontTable 2,4 2,4
+IDWriteFontFace3 35 GetFontFaceReference 1 1
+IDWriteFontFace3 40 GetFamilyNames 1 1
+IDWriteFontFace3 41 GetFaceNames 1 1
+IDWriteFontFace3 42 GetInformationalStrings 2 2
+IDWriteFontFace4 0 QueryInterface 2 2
+IDWriteFontFace4 4 GetFiles 2 2
+IDWriteFontFace4 12 TryGetFontTable 2,4 2,4
+IDWriteFontFace4 35 GetFontFaceReference 1 1
+IDWriteFontFace4 40 GetFamilyNames 1 1
+IDWriteFontFace4 41 GetFaceNames 1 1
+IDWriteFontFace4 42 GetInformationalStrings 2 2
+IDWriteFontFace4 51 GetGlyphImageData 5 5
+IDWriteFontFace5 0 QueryInterface 2 2
+IDWriteFontFace5 4 GetFiles 2 2
+IDWriteFontFace5 12 TryGetFontTable 2,4 2,4
+IDWriteFontFace5 35 GetFontFaceReference 1 1
+IDWriteFontFace5 40 GetFamilyNames 1 1
+IDWriteFontFace5 41 GetFaceNames 1 1
+IDWriteFontFace5 42 GetInformationalStrings 2 2
+IDWriteFontFace5 51 GetGlyphImageData 5 5
+IDWriteFontFace5 56 GetFontResource 1 1
+IDWriteFontFace6 0 QueryInterface 2 2
+IDWriteFontFace6 4 GetFiles 2 2
+IDWriteFontFace6 12 TryGetFontTable 2,4 2,4
+IDWriteFontFace6 35 GetFontFaceReference 1 1
+IDWriteFontFace6 40 GetFamilyNames 1 1
+IDWriteFontFace6 41 GetFaceNames 1 1
+IDWriteFontFace6 42 GetInformationalStrings 2 2
+IDWriteFontFace6 51 GetGlyphImageData 5 5
+IDWriteFontFace6 56 GetFontResource 1 1
+IDWriteFontFace6 58 GetFamilyNames 2 2
+IDWriteFontFace6 59 GetFaceNames 2 2
+IDWriteFontFace7 0 QueryInterface 2 2
+IDWriteFontFace7 4 GetFiles 2 2
+IDWriteFontFace7 12 TryGetFontTable 2,4 2,4
+IDWriteFontFace7 35 GetFontFaceReference 1 1
+IDWriteFontFace7 40 GetFamilyNames 1 1
+IDWriteFontFace7 41 GetFaceNames 1 1
+IDWriteFontFace7 42 GetInformationalStrings 2 2
+IDWriteFontFace7 51 GetGlyphImageData 5 5
+IDWriteFontFace7 56 GetFontResource 1 1
+IDWriteFontFace7 58 GetFamilyNames 2 2
+IDWriteFontFace7 59 GetFaceNames 2 2
+IDWriteFontFace7 61 CreatePaintReader 3 3
+IDWriteFontFaceReference 0 QueryInterface 2 2
+IDWriteFontFaceReference 3 CreateFontFace 1 1
+IDWriteFontFaceReference 4 CreateFontFaceWithSimulations 2 2
+IDWriteFontFaceReference 8 GetFontFile 1 1
+IDWriteFontFaceReference1 0 QueryInterface 2 2
+IDWriteFontFaceReference1 3 CreateFontFace 1 1
+IDWriteFontFaceReference1 4 CreateFontFaceWithSimulations 2 2
+IDWriteFontFaceReference1 8 GetFontFile 1 1
+IDWriteFontFaceReference1 17 CreateFontFace 1 1
+IDWriteFontFallback 0 QueryInterface 2 2
+IDWriteFontFallback 3 MapCharacters 10 10
+IDWriteFontFallback1 0 QueryInterface 2 2
+IDWriteFontFallback1 3 MapCharacters 10 10
+IDWriteFontFallback1 4 MapCharacters 10 10
+IDWriteFontFallbackBuilder 0 QueryInterface 2 2
+IDWriteFontFallbackBuilder 5 CreateFontFallback 1 1
+IDWriteFontFamily 0 QueryInterface 2 2
+IDWriteFontFamily 3 GetFontCollection 1 1
+IDWriteFontFamily 5 GetFont 2 2
+IDWriteFontFamily 6 GetFamilyNames 1 1
+IDWriteFontFamily 7 GetFirstMatchingFont 4 4
+IDWriteFontFamily 8 GetMatchingFonts 4 4
+IDWriteFontFamily1 0 QueryInterface 2 2
+IDWriteFontFamily1 3 GetFontCollection 1 1
+IDWriteFontFamily1 5 GetFont 2 2
+IDWriteFontFamily1 6 GetFamilyNames 1 1
+IDWriteFontFamily1 7 GetFirstMatchingFont 4 4
+IDWriteFontFamily1 8 GetMatchingFonts 4 4
+IDWriteFontFamily1 10 GetFont 2 2
+IDWriteFontFamily1 11 GetFontFaceReference 2 2
+IDWriteFontFamily2 0 QueryInterface 2 2
+IDWriteFontFamily2 3 GetFontCollection 1 1
+IDWriteFontFamily2 5 GetFont 2 2
+IDWriteFontFamily2 6 GetFamilyNames 1 1
+IDWriteFontFamily2 7 GetFirstMatchingFont 4 4
+IDWriteFontFamily2 8 GetMatchingFonts 4 4
+IDWriteFontFamily2 10 GetFont 2 2
+IDWriteFontFamily2 11 GetFontFaceReference 2 2
+IDWriteFontFamily2 12 GetMatchingFonts 3 3
+IDWriteFontFamily2 13 GetFontSet 1 1
+IDWriteFontFile 0 QueryInterface 2 2
+IDWriteFontFile 3 GetReferenceKey 1 1
+IDWriteFontFile 4 GetLoader 1 1
+IDWriteFontFileEnumerator 0 QueryInterface 2 2
+IDWriteFontFileEnumerator 4 GetCurrentFontFile 1 1
+IDWriteFontFileLoader 0 QueryInterface 2 2
+IDWriteFontFileLoader 3 CreateStreamFromKey 3 3
+IDWriteFontFileStream 0 QueryInterface 2 2
+IDWriteFontFileStream 3 ReadFileFragment 1,4 1,6
+IDWriteFontList 0 QueryInterface 2 2
+IDWriteFontList 3 GetFontCollection 1 1
+IDWriteFontList 5 GetFont 2 2
+IDWriteFontList1 0 QueryInterface 2 2
+IDWriteFontList1 3 GetFontCollection 1 1
+IDWriteFontList1 5 GetFont 2 2
+IDWriteFontList1 7 GetFont 2 2
+IDWriteFontList1 8 GetFontFaceReference 2 2
+IDWriteFontList2 0 QueryInterface 2 2
+IDWriteFontList2 3 GetFontCollection 1 1
+IDWriteFontList2 5 GetFont 2 2
+IDWriteFontList2 7 GetFont 2 2
+IDWriteFontList2 8 GetFontFaceReference 2 2
+IDWriteFontList2 9 GetFontSet 1 1
+IDWriteFontResource 0 QueryInterface 2 2
+IDWriteFontResource 3 GetFontFile 1 1
+IDWriteFontResource 9 GetAxisNames 2 2
+IDWriteFontResource 11 GetAxisValueNames 4 4
+IDWriteFontResource 13 CreateFontFace 4 4
+IDWriteFontResource 14 CreateFontFaceReference 4 4
+IDWriteFontSet 0 QueryInterface 2 2
+IDWriteFontSet 4 GetFontFaceReference 2 2
+IDWriteFontSet 7 GetPropertyValues 2 2
+IDWriteFontSet 8 GetPropertyValues 3 3
+IDWriteFontSet 9 GetPropertyValues 4 4
+IDWriteFontSet 11 GetMatchingFonts 5 5
+IDWriteFontSet 12 GetMatchingFonts 3 3
+IDWriteFontSet1 0 QueryInterface 2 2
+IDWriteFontSet1 4 GetFontFaceReference 2 2
+IDWriteFontSet1 7 GetPropertyValues 2 2
+IDWriteFontSet1 8 GetPropertyValues 3 3
+IDWriteFontSet1 9 GetPropertyValues 4 4
+IDWriteFontSet1 11 GetMatchingFonts 5 5
+IDWriteFontSet1 12 GetMatchingFonts 3 3
+IDWriteFontSet1 13 GetMatchingFonts 4 4
+IDWriteFontSet1 14 GetFirstFontResources 1 1
+IDWriteFontSet1 15 GetFilteredFonts 3 3
+IDWriteFontSet1 16 GetFilteredFonts 4 4
+IDWriteFontSet1 17 GetFilteredFonts 4 4
+IDWriteFontSet1 22 GetFontFaceReference 2 2
+IDWriteFontSet1 23 CreateFontResource 2 2
+IDWriteFontSet1 24 CreateFontFace 2 2
+IDWriteFontSet2 0 QueryInterface 2 2
+IDWriteFontSet2 4 GetFontFaceReference 2 2
+IDWriteFontSet2 7 GetPropertyValues 2 2
+IDWriteFontSet2 8 GetPropertyValues 3 3
+IDWriteFontSet2 9 GetPropertyValues 4 4
+IDWriteFontSet2 11 GetMatchingFonts 5 5
+IDWriteFontSet2 12 GetMatchingFonts 3 3
+IDWriteFontSet2 13 GetMatchingFonts 4 4
+IDWriteFontSet2 14 GetFirstFontResources 1 1
+IDWriteFontSet2 15 GetFilteredFonts 3 3
+IDWriteFontSet2 16 GetFilteredFonts 4 4
+IDWriteFontSet2 17 GetFilteredFonts 4 4
+IDWriteFontSet2 22 GetFontFaceReference 2 2
+IDWriteFontSet2 23 CreateFontResource 2 2
+IDWriteFontSet2 24 CreateFontFace 2 2
+IDWriteFontSet3 0 QueryInterface 2 2
+IDWriteFontSet3 4 GetFontFaceReference 2 2
+IDWriteFontSet3 7 GetPropertyValues 2 2
+IDWriteFontSet3 8 GetPropertyValues 3 3
+IDWriteFontSet3 9 GetPropertyValues 4 4
+IDWriteFontSet3 11 GetMatchingFonts 5 5
+IDWriteFontSet3 12 GetMatchingFonts 3 3
+IDWriteFontSet3 13 GetMatchingFonts 4 4
+IDWriteFontSet3 14 GetFirstFontResources 1 1
+IDWriteFontSet3 15 GetFilteredFonts 3 3
+IDWriteFontSet3 16 GetFilteredFonts 4 4
+IDWriteFontSet3 17 GetFilteredFonts 4 4
+IDWriteFontSet3 22 GetFontFaceReference 2 2
+IDWriteFontSet3 23 CreateFontResource 2 2
+IDWriteFontSet3 24 CreateFontFace 2 2
+IDWriteFontSet4 0 QueryInterface 2 2
+IDWriteFontSet4 4 GetFontFaceReference 2 2
+IDWriteFontSet4 7 GetPropertyValues 2 2
+IDWriteFontSet4 8 GetPropertyValues 3 3
+IDWriteFontSet4 9 GetPropertyValues 4 4
+IDWriteFontSet4 11 GetMatchingFonts 5 5
+IDWriteFontSet4 12 GetMatchingFonts 3 3
+IDWriteFontSet4 13 GetMatchingFonts 4 4
+IDWriteFontSet4 14 GetFirstFontResources 1 1
+IDWriteFontSet4 15 GetFilteredFonts 3 3
+IDWriteFontSet4 16 GetFilteredFonts 4 4
+IDWriteFontSet4 17 GetFilteredFonts 4 4
+IDWriteFontSet4 22 GetFontFaceReference 2 2
+IDWriteFontSet4 23 CreateFontResource 2 2
+IDWriteFontSet4 24 CreateFontFace 2 2
+IDWriteFontSet4 31 GetMatchingFonts 5 5
+IDWriteFontSetBuilder 0 QueryInterface 2 2
+IDWriteFontSetBuilder 6 CreateFontSet 1 1
+IDWriteFontSetBuilder1 0 QueryInterface 2 2
+IDWriteFontSetBuilder1 6 CreateFontSet 1 1
+IDWriteFontSetBuilder2 0 QueryInterface 2 2
+IDWriteFontSetBuilder2 6 CreateFontSet 1 1
+IDWriteGdiInterop 0 QueryInterface 2 2
+IDWriteGdiInterop 3 CreateFontFromLOGFONT 2 2
+IDWriteGdiInterop 6 CreateFontFaceFromHdc 2 2
+IDWriteGdiInterop 7 CreateBitmapRenderTarget 4 4
+IDWriteGdiInterop1 0 QueryInterface 2 2
+IDWriteGdiInterop1 3 CreateFontFromLOGFONT 2 2
+IDWriteGdiInterop1 6 CreateFontFaceFromHdc 2 2
+IDWriteGdiInterop1 7 CreateBitmapRenderTarget 4 4
+IDWriteGdiInterop1 8 CreateFontFromLOGFONT 3 3
+IDWriteGdiInterop1 11 GetMatchingFontsByLOGFONT 3 3
+IDWriteGlyphRunAnalysis 0 QueryInterface 2 2
+IDWriteInMemoryFontFileLoader 0 QueryInterface 2 2
+IDWriteInMemoryFontFileLoader 3 CreateStreamFromKey 3 3
+IDWriteInMemoryFontFileLoader 4 CreateInMemoryFontFileReference 5 5
+IDWriteInlineObject 0 QueryInterface 2 2
+IDWriteLocalFontFileLoader 0 QueryInterface 2 2
+IDWriteLocalFontFileLoader 3 CreateStreamFromKey 3 3
+IDWriteLocalizedStrings 0 QueryInterface 2 2
+IDWriteNumberSubstitution 0 QueryInterface 2 2
+IDWritePaintReader 0 QueryInterface 2 2
+IDWritePixelSnapping 0 QueryInterface 2 2
+IDWriteRemoteFontFileLoader 0 QueryInterface 2 2
+IDWriteRemoteFontFileLoader 3 CreateStreamFromKey 3 3
+IDWriteRemoteFontFileLoader 4 CreateRemoteStreamFromKey 3 3
+IDWriteRemoteFontFileLoader 6 CreateFontFileReferenceFromUrl 4 4
+IDWriteRemoteFontFileStream 0 QueryInterface 2 2
+IDWriteRemoteFontFileStream 3 ReadFileFragment 1,4 1,6
+IDWriteRemoteFontFileStream 10 BeginDownload 4 4
+IDWriteRenderingParams 0 QueryInterface 2 2
+IDWriteRenderingParams1 0 QueryInterface 2 2
+IDWriteRenderingParams2 0 QueryInterface 2 2
+IDWriteRenderingParams3 0 QueryInterface 2 2
+IDWriteStringList 0 QueryInterface 2 2
+IDWriteTextAnalysisSink 0 QueryInterface 2 2
+IDWriteTextAnalysisSink1 0 QueryInterface 2 2
+IDWriteTextAnalysisSource 0 QueryInterface 2 2
+IDWriteTextAnalysisSource 3 GetTextAtPosition 2 2
+IDWriteTextAnalysisSource 4 GetTextBeforePosition 2 2
+IDWriteTextAnalysisSource 6 GetLocaleName 3 3
+IDWriteTextAnalysisSource 7 GetNumberSubstitution 3 3
+IDWriteTextAnalysisSource1 0 QueryInterface 2 2
+IDWriteTextAnalysisSource1 3 GetTextAtPosition 2 2
+IDWriteTextAnalysisSource1 4 GetTextBeforePosition 2 2
+IDWriteTextAnalysisSource1 6 GetLocaleName 3 3
+IDWriteTextAnalysisSource1 7 GetNumberSubstitution 3 3
+IDWriteTextAnalyzer 0 QueryInterface 2 2
+IDWriteTextAnalyzer1 0 QueryInterface 2 2
+IDWriteTextAnalyzer2 0 QueryInterface 2 2
+IDWriteTextFormat 0 QueryInterface 2 2
+IDWriteTextFormat 17 GetTrimming 2 2
+IDWriteTextFormat 19 GetFontCollection 1 1
+IDWriteTextFormat1 0 QueryInterface 2 2
+IDWriteTextFormat1 17 GetTrimming 2 2
+IDWriteTextFormat1 19 GetFontCollection 1 1
+IDWriteTextFormat1 35 GetFontFallback 1 1
+IDWriteTextFormat2 0 QueryInterface 2 2
+IDWriteTextFormat2 17 GetTrimming 2 2
+IDWriteTextFormat2 19 GetFontCollection 1 1
+IDWriteTextFormat2 35 GetFontFallback 1 1
+IDWriteTextFormat3 0 QueryInterface 2 2
+IDWriteTextFormat3 17 GetTrimming 2 2
+IDWriteTextFormat3 19 GetFontCollection 1 1
+IDWriteTextFormat3 35 GetFontFallback 1 1
+IDWriteTextLayout 0 QueryInterface 2 2
+IDWriteTextLayout 17 GetTrimming 2 2
+IDWriteTextLayout 19 GetFontCollection 1 1
+IDWriteTextLayout 44 GetFontCollection 2 2
+IDWriteTextLayout 53 GetDrawingEffect 2 2
+IDWriteTextLayout 54 GetInlineObject 2 2
+IDWriteTextLayout 55 GetTypography 2 2
+IDWriteTextLayout1 0 QueryInterface 2 2
+IDWriteTextLayout1 17 GetTrimming 2 2
+IDWriteTextLayout1 19 GetFontCollection 1 1
+IDWriteTextLayout1 44 GetFontCollection 2 2
+IDWriteTextLayout1 53 GetDrawingEffect 2 2
+IDWriteTextLayout1 54 GetInlineObject 2 2
+IDWriteTextLayout1 55 GetTypography 2 2
+IDWriteTextLayout2 0 QueryInterface 2 2
+IDWriteTextLayout2 17 GetTrimming 2 2
+IDWriteTextLayout2 19 GetFontCollection 1 1
+IDWriteTextLayout2 44 GetFontCollection 2 2
+IDWriteTextLayout2 53 GetDrawingEffect 2 2
+IDWriteTextLayout2 54 GetInlineObject 2 2
+IDWriteTextLayout2 55 GetTypography 2 2
+IDWriteTextLayout2 79 GetFontFallback 1 1
+IDWriteTextLayout3 0 QueryInterface 2 2
+IDWriteTextLayout3 17 GetTrimming 2 2
+IDWriteTextLayout3 19 GetFontCollection 1 1
+IDWriteTextLayout3 44 GetFontCollection 2 2
+IDWriteTextLayout3 53 GetDrawingEffect 2 2
+IDWriteTextLayout3 54 GetInlineObject 2 2
+IDWriteTextLayout3 55 GetTypography 2 2
+IDWriteTextLayout3 79 GetFontFallback 1 1
+IDWriteTextLayout4 0 QueryInterface 2 2
+IDWriteTextLayout4 17 GetTrimming 2 2
+IDWriteTextLayout4 19 GetFontCollection 1 1
+IDWriteTextLayout4 44 GetFontCollection 2 2
+IDWriteTextLayout4 53 GetDrawingEffect 2 2
+IDWriteTextLayout4 54 GetInlineObject 2 2
+IDWriteTextLayout4 55 GetTypography 2 2
+IDWriteTextLayout4 79 GetFontFallback 1 1
+IDWriteTextRenderer 0 QueryInterface 2 2
+IDWriteTextRenderer1 0 QueryInterface 2 2
+IDWriteTypography 0 QueryInterface 2 2
+IDXGIAdapter4 0 QueryInterface 2 2
+IDXGIAdapter4 6 GetParent 2 2
+IDXGIAdapter4 7 EnumOutputs 2 2
+IDXGIDevice3 0 QueryInterface 2 2
+IDXGIDevice3 6 GetParent 2 2
+IDXGIDevice3 7 GetAdapter 1 1
+IDXGIDevice3 8 CreateSurface 5 5
+IDXGIFactory7 0 QueryInterface 2 2
+IDXGIFactory7 6 GetParent 2 2
+IDXGIFactory7 7 EnumAdapters 2 2
+IDXGIFactory7 9 GetWindowAssociation 1 1
+IDXGIFactory7 10 CreateSwapChain 3 3
+IDXGIFactory7 11 CreateSoftwareAdapter 2 2
+IDXGIFactory7 12 EnumAdapters1 2 2
+IDXGIFactory7 15 CreateSwapChainForHwnd 6 6
+IDXGIFactory7 16 CreateSwapChainForCoreWindow 5 5
+IDXGIFactory7 24 CreateSwapChainForComposition 4 4
+IDXGIFactory7 26 EnumAdapterByLuid 3 4
+IDXGIFactory7 27 EnumWarpAdapter 2 2
+IDXGIFactory7 29 EnumAdapterByGpuPreference 4 4
+IDXGIOutput6 0 QueryInterface 2 2
+IDXGIOutput6 6 GetParent 2 2
+IDXGIOutput6 22 DuplicateOutput 2 2
+IDXGIOutput6 26 DuplicateOutput1 5 5
+IDXGIResource 0 QueryInterface 2 2
+IDXGIResource 6 GetParent 2 2
+IDXGIResource 7 GetDevice 2 2
+IDXGIResource 8 GetSharedHandle 1 1
+IDXGISurface2 0 QueryInterface 2 2
+IDXGISurface2 6 GetParent 2 2
+IDXGISurface2 7 GetDevice 2 2
+IDXGISurface2 11 GetDC 2 2
+IDXGISurface2 13 GetResource 2 2
+IDXGISwapChain 0 QueryInterface 2 2
+IDXGISwapChain 6 GetParent 2 2
+IDXGISwapChain 7 GetDevice 2 2
+IDXGISwapChain 9 GetBuffer 3 3
+IDXGISwapChain 11 GetFullscreenState 2 2
+IDXGISwapChain 15 GetContainingOutput 1 1
+IDXGISwapChain1 0 QueryInterface 2 2
+IDXGISwapChain1 6 GetParent 2 2
+IDXGISwapChain1 7 GetDevice 2 2
+IDXGISwapChain1 9 GetBuffer 3 3
+IDXGISwapChain1 11 GetFullscreenState 2 2
+IDXGISwapChain1 15 GetContainingOutput 1 1
+IDXGISwapChain1 20 GetHwnd 1 1
+IDXGISwapChain1 21 GetCoreWindow 2 2
+IDXGISwapChain1 24 GetRestrictToOutput 1 1
+IDataObject 0 QueryInterface 2 2
+IDataObject 8 EnumFormatEtc 2 2
+IDataObject 11 EnumDAdvise 1 1
+IDirect3D9 0 QueryInterface 2 2
+IDirect3D9 16 CreateDevice 6 6
+IDirect3D9Ex 0 QueryInterface 2 2
+IDirect3D9Ex 16 CreateDevice 6 6
+IDirect3D9Ex 20 CreateDeviceEx 7 7
+IDirect3DCubeTexture9 0 QueryInterface 2 2
+IDirect3DCubeTexture9 3 GetDevice 1 1
+IDirect3DCubeTexture9 18 GetCubeMapSurface 3 3
+IDirect3DDevice9 0 QueryInterface 2 2
+IDirect3DDevice9 6 GetDirect3D 1 1
+IDirect3DDevice9 13 CreateAdditionalSwapChain 2 2
+IDirect3DDevice9 14 GetSwapChain 2 2
+IDirect3DDevice9 18 GetBackBuffer 4 4
+IDirect3DDevice9 23 CreateTexture 7,8 7,8
+IDirect3DDevice9 24 CreateVolumeTexture 8,9 8,9
+IDirect3DDevice9 25 CreateCubeTexture 6,7 6,7
+IDirect3DDevice9 26 CreateVertexBuffer 5,6 5,6
+IDirect3DDevice9 27 CreateIndexBuffer 5,6 5,6
+IDirect3DDevice9 28 CreateRenderTarget 7,8 7,8
+IDirect3DDevice9 29 CreateDepthStencilSurface 7,8 7,8
+IDirect3DDevice9 36 CreateOffscreenPlainSurface 5,6 5,6
+IDirect3DDevice9 38 GetRenderTarget 2 2
+IDirect3DDevice9 40 GetDepthStencilSurface 1 1
+IDirect3DDevice9 59 CreateStateBlock 2 2
+IDirect3DDevice9 61 EndStateBlock 1 1
+IDirect3DDevice9 64 GetTexture 2 2
+IDirect3DDevice9 86 CreateVertexDeclaration 2 2
+IDirect3DDevice9 88 GetVertexDeclaration 1 1
+IDirect3DDevice9 91 CreateVertexShader 2 2
+IDirect3DDevice9 93 GetVertexShader 1 1
+IDirect3DDevice9 101 GetStreamSource 2 2
+IDirect3DDevice9 105 GetIndices 1 1
+IDirect3DDevice9 106 CreatePixelShader 2 2
+IDirect3DDevice9 108 GetPixelShader 1 1
+IDirect3DDevice9 118 CreateQuery 2 2
+IDirect3DDevice9Ex 0 QueryInterface 2 2
+IDirect3DDevice9Ex 6 GetDirect3D 1 1
+IDirect3DDevice9Ex 13 CreateAdditionalSwapChain 2 2
+IDirect3DDevice9Ex 14 GetSwapChain 2 2
+IDirect3DDevice9Ex 18 GetBackBuffer 4 4
+IDirect3DDevice9Ex 23 CreateTexture 7,8 7,8
+IDirect3DDevice9Ex 24 CreateVolumeTexture 8,9 8,9
+IDirect3DDevice9Ex 25 CreateCubeTexture 6,7 6,7
+IDirect3DDevice9Ex 26 CreateVertexBuffer 5,6 5,6
+IDirect3DDevice9Ex 27 CreateIndexBuffer 5,6 5,6
+IDirect3DDevice9Ex 28 CreateRenderTarget 7,8 7,8
+IDirect3DDevice9Ex 29 CreateDepthStencilSurface 7,8 7,8
+IDirect3DDevice9Ex 36 CreateOffscreenPlainSurface 5,6 5,6
+IDirect3DDevice9Ex 38 GetRenderTarget 2 2
+IDirect3DDevice9Ex 40 GetDepthStencilSurface 1 1
+IDirect3DDevice9Ex 59 CreateStateBlock 2 2
+IDirect3DDevice9Ex 61 EndStateBlock 1 1
+IDirect3DDevice9Ex 64 GetTexture 2 2
+IDirect3DDevice9Ex 86 CreateVertexDeclaration 2 2
+IDirect3DDevice9Ex 88 GetVertexDeclaration 1 1
+IDirect3DDevice9Ex 91 CreateVertexShader 2 2
+IDirect3DDevice9Ex 93 GetVertexShader 1 1
+IDirect3DDevice9Ex 101 GetStreamSource 2 2
+IDirect3DDevice9Ex 105 GetIndices 1 1
+IDirect3DDevice9Ex 106 CreatePixelShader 2 2
+IDirect3DDevice9Ex 108 GetPixelShader 1 1
+IDirect3DDevice9Ex 118 CreateQuery 2 2
+IDirect3DDevice9Ex 125 CheckResourceResidency 1 1
+IDirect3DDevice9Ex 129 CreateRenderTargetEx 7,8 7,8
+IDirect3DDevice9Ex 130 CreateOffscreenPlainSurfaceEx 5,6 5,6
+IDirect3DDevice9Ex 131 CreateDepthStencilSurfaceEx 7,8 7,8
+IDirect3DDeviceManager9 0 QueryInterface 2 2
+IDirect3DDeviceManager9 4 OpenDeviceHandle 1 1
+IDirect3DDeviceManager9 7 LockDevice 2 2
+IDirect3DDeviceManager9 9 GetVideoService 3 3
+IDirect3DIndexBuffer9 0 QueryInterface 2 2
+IDirect3DIndexBuffer9 3 GetDevice 1 1
+IDirect3DIndexBuffer9 11 Lock 3 3
+IDirect3DPixelShader9 0 QueryInterface 2 2
+IDirect3DPixelShader9 3 GetDevice 1 1
+IDirect3DQuery9 0 QueryInterface 2 2
+IDirect3DQuery9 3 GetDevice 1 1
+IDirect3DStateBlock9 0 QueryInterface 2 2
+IDirect3DStateBlock9 3 GetDevice 1 1
+IDirect3DSurface9 0 QueryInterface 2 2
+IDirect3DSurface9 3 GetDevice 1 1
+IDirect3DSurface9 11 GetContainer 2 2
+IDirect3DSurface9 15 GetDC 1 1
+IDirect3DSwapChain9 0 QueryInterface 2 2
+IDirect3DSwapChain9 5 GetBackBuffer 3 3
+IDirect3DSwapChain9 8 GetDevice 1 1
+IDirect3DTexture9 0 QueryInterface 2 2
+IDirect3DTexture9 3 GetDevice 1 1
+IDirect3DTexture9 18 GetSurfaceLevel 2 2
+IDirect3DVertexBuffer9 0 QueryInterface 2 2
+IDirect3DVertexBuffer9 3 GetDevice 1 1
+IDirect3DVertexBuffer9 11 Lock 3 3
+IDirect3DVertexDeclaration9 0 QueryInterface 2 2
+IDirect3DVertexDeclaration9 3 GetDevice 1 1
+IDirect3DVertexShader9 0 QueryInterface 2 2
+IDirect3DVertexShader9 3 GetDevice 1 1
+IDirect3DVolume9 0 QueryInterface 2 2
+IDirect3DVolume9 3 GetDevice 1 1
+IDirect3DVolume9 7 GetContainer 2 2
+IDirect3DVolumeTexture9 0 QueryInterface 2 2
+IDirect3DVolumeTexture9 3 GetDevice 1 1
+IDirect3DVolumeTexture9 18 GetVolumeLevel 2 2
+IDirectDraw 0 QueryInterface 2 2
+IDirectDraw 4 CreateClipper 2 2
+IDirectDraw 5 CreatePalette 3 3
+IDirectDraw 6 CreateSurface 2 2
+IDirectDraw 7 DuplicateSurface 2 2
+IDirectDraw 14 GetGDISurface 1 1
+IDirectDraw2 0 QueryInterface 2 2
+IDirectDraw2 4 CreateClipper 2 2
+IDirectDraw2 5 CreatePalette 3 3
+IDirectDraw2 6 CreateSurface 2 2
+IDirectDraw2 7 DuplicateSurface 2 2
+IDirectDraw2 14 GetGDISurface 1 1
+IDirectDraw4 0 QueryInterface 2 2
+IDirectDraw4 4 CreateClipper 2 2
+IDirectDraw4 5 CreatePalette 3 3
+IDirectDraw4 6 CreateSurface 2 2
+IDirectDraw4 7 DuplicateSurface 2 2
+IDirectDraw4 14 GetGDISurface 1 1
+IDirectDraw4 24 GetSurfaceFromDC 2 2
+IDirectDraw7 0 QueryInterface 2 2
+IDirectDraw7 4 CreateClipper 2 2
+IDirectDraw7 5 CreatePalette 3 3
+IDirectDraw7 6 CreateSurface 2 2
+IDirectDraw7 7 DuplicateSurface 2 2
+IDirectDraw7 14 GetGDISurface 1 1
+IDirectDraw7 24 GetSurfaceFromDC 2 2
+IDirectDrawClipper 0 QueryInterface 2 2
+IDirectDrawClipper 4 GetHWnd 1 1
+IDirectDrawMediaStream 0 QueryInterface 2 2
+IDirectDrawMediaStream 3 GetMultiMediaStream 1 1
+IDirectDrawMediaStream 6 AllocateSample 2 2
+IDirectDrawMediaStream 7 CreateSharedSample 3 3
+IDirectDrawMediaStream 9 GetFormat 2 2
+IDirectDrawMediaStream 11 GetDirectDraw 1 1
+IDirectDrawMediaStream 13 CreateSample 4 4
+IDirectDrawPalette 0 QueryInterface 2 2
+IDirectDrawStreamSample 0 QueryInterface 2 2
+IDirectDrawStreamSample 8 GetSurface 1 1
+IDirectDrawSurface 0 QueryInterface 2 2
+IDirectDrawSurface 12 GetAttachedSurface 2 2
+IDirectDrawSurface 15 GetClipper 1 1
+IDirectDrawSurface 17 GetDC 1 1
+IDirectDrawSurface 20 GetPalette 1 1
+IDirectDrawSurface2 0 QueryInterface 2 2
+IDirectDrawSurface2 12 GetAttachedSurface 2 2
+IDirectDrawSurface2 15 GetClipper 1 1
+IDirectDrawSurface2 17 GetDC 1 1
+IDirectDrawSurface2 20 GetPalette 1 1
+IDirectDrawSurface2 36 GetDDInterface 1 1
+IDirectDrawSurface3 0 QueryInterface 2 2
+IDirectDrawSurface3 12 GetAttachedSurface 2 2
+IDirectDrawSurface3 15 GetClipper 1 1
+IDirectDrawSurface3 17 GetDC 1 1
+IDirectDrawSurface3 20 GetPalette 1 1
+IDirectDrawSurface3 36 GetDDInterface 1 1
+IDirectDrawSurface4 0 QueryInterface 2 2
+IDirectDrawSurface4 12 GetAttachedSurface 2 2
+IDirectDrawSurface4 15 GetClipper 1 1
+IDirectDrawSurface4 17 GetDC 1 1
+IDirectDrawSurface4 20 GetPalette 1 1
+IDirectDrawSurface4 36 GetDDInterface 1 1
+IDirectDrawSurface7 0 QueryInterface 2 2
+IDirectDrawSurface7 12 GetAttachedSurface 2 2
+IDirectDrawSurface7 15 GetClipper 1 1
+IDirectDrawSurface7 17 GetDC 1 1
+IDirectDrawSurface7 20 GetPalette 1 1
+IDirectDrawSurface7 36 GetDDInterface 1 1
+IDirectMusic 0 QueryInterface 2 2
+IDirectMusic 4 CreateMusicBuffer 2 2
+IDirectMusic 5 CreatePort 3 3
+IDirectMusic 7 GetMasterClock 2 2
+IDirectMusic8 0 QueryInterface 2 2
+IDirectMusic8 4 CreateMusicBuffer 2 2
+IDirectMusic8 5 CreatePort 3 3
+IDirectMusic8 7 GetMasterClock 2 2
+IDirectSound 0 QueryInterface 2 2
+IDirectSound 3 CreateSoundBuffer 2 2
+IDirectSound 5 DuplicateSoundBuffer 2 2
+IDirectSound3DBuffer 0 QueryInterface 2 2
+IDirectSound3DListener 0 QueryInterface 2 2
+IDirectSound8 0 QueryInterface 2 2
+IDirectSound8 3 CreateSoundBuffer 2 2
+IDirectSound8 5 DuplicateSoundBuffer 2 2
+IDirectSoundBuffer8 0 QueryInterface 2 2
+IDirectSoundBuffer8 11 Lock 3,5 3,5
+IDirectSoundBuffer8 23 GetObjectInPath 4 4
+IDirectSoundNotify 0 QueryInterface 2 2
+IDirectXVideoAccelerationService 0 QueryInterface 2 2
+IDirectXVideoAccelerationService 3 CreateSurface 8,9 8,9
+IDirectXVideoProcessor 0 QueryInterface 2 2
+IDirectXVideoProcessor 3 GetVideoProcessorService 1 1
+IDirectXVideoProcessor 8 VideoProcessBlt 5 5
+IDirectXVideoProcessorService 0 QueryInterface 2 2
+IDirectXVideoProcessorService 3 CreateSurface 8,9 8,9
+IDirectXVideoProcessorService 5 GetVideoProcessorDeviceGuids 3 3
+IDirectXVideoProcessorService 6 GetVideoProcessorRenderTargets 4 4
+IDirectXVideoProcessorService 7 GetVideoProcessorSubStreamFormats 5 5
+IDirectXVideoProcessorService 11 CreateVideoProcessor 5 5
+IDispatch 0 QueryInterface 2 2
+IDispatch 4 GetTypeInfo 3 3
+IDispatchEx 0 QueryInterface 2 2
+IDispatchEx 4 GetTypeInfo 3 3
+IDispatchEx 12 GetMemberName 2 2
+IDispatchEx 14 GetNameSpaceParent 1 1
+IDropSource 0 QueryInterface 2 2
+IDropTarget 0 QueryInterface 2 2
+IEnumDMO 0 QueryInterface 2 2
+IEnumDMO 3 Next 3 3
+IEnumDMO 6 Clone 1 1
+IEnumFilters 0 QueryInterface 2 2
+IEnumFilters 3 Next 2 2
+IEnumFilters 6 Clone 1 1
+IEnumMediaTypes 0 QueryInterface 2 2
+IEnumMediaTypes 3 Next 2 2
+IEnumMediaTypes 6 Clone 1 1
+IEnumPins 0 QueryInterface 2 2
+IEnumPins 3 Next 2 2
+IEnumPins 6 Clone 1 1
+IEnumString 0 QueryInterface 2 2
+IEnumString 3 Next 2 2
+IEnumString 6 Clone 1 1
+IEnumWbemClassObject 0 QueryInterface 2 2
+IEnumWbemClassObject 4 Next 3 3
+IEnumWbemClassObject 6 Clone 1 1
+IFileSourceFilter 0 QueryInterface 2 2
+IFileSourceFilter 4 GetCurFile 1 1
+IFilterGraph 0 QueryInterface 2 2
+IFilterGraph 5 EnumFilters 1 1
+IFilterGraph 6 FindFilterByName 2 2
+IFilterGraph2 0 QueryInterface 2 2
+IFilterGraph2 5 EnumFilters 1 1
+IFilterGraph2 6 FindFilterByName 2 2
+IFilterGraph2 14 AddSourceFilter 3 3
+IFilterGraph2 18 AddSourceFilterForMoniker 4 4
+IFont 0 QueryInterface 2 2
+IFont 3 get_Name 1 1
+IFont 19 get_hFont 1 1
+IFont 20 Clone 1 1
+IFontDisp 0 QueryInterface 2 2
+IFontDisp 4 GetTypeInfo 3 3
+IGraphBuilder 0 QueryInterface 2 2
+IGraphBuilder 5 EnumFilters 1 1
+IGraphBuilder 6 FindFilterByName 2 2
+IGraphBuilder 14 AddSourceFilter 3 3
+IGraphConfig 0 QueryInterface 2 2
+IGraphConfig 6 EnumCacheFilter 1 1
+IInspectable 0 QueryInterface 2 2
+IInspectable 3 GetIids 2 2
+IInspectable 4 GetRuntimeClassName 1 1
+IKsPropertySet 0 QueryInterface 2 2
+IMF2DBuffer 0 QueryInterface 2 2
+IMF2DBuffer 3 Lock2D 1 1
+IMF2DBuffer 5 GetScanline0AndPitch 1 1
+IMFActivate 0 QueryInterface 2 2
+IMFActivate 13 GetAllocatedString 2 2
+IMFActivate 16 GetAllocatedBlob 2 2
+IMFActivate 17 GetUnknown 3 3
+IMFActivate 33 ActivateObject 2 2
+IMFAsyncCallback 0 QueryInterface 2 2
+IMFAsyncResult 0 QueryInterface 2 2
+IMFAsyncResult 3 GetState 1 1
+IMFAsyncResult 6 GetObject 1 1
+IMFAttributes 0 QueryInterface 2 2
+IMFAttributes 13 GetAllocatedString 2 2
+IMFAttributes 16 GetAllocatedBlob 2 2
+IMFAttributes 17 GetUnknown 3 3
+IMFByteStream 0 QueryInterface 2 2
+IMFClock 0 QueryInterface 2 2
+IMFCollection 0 QueryInterface 2 2
+IMFCollection 4 GetElement 2 2
+IMFCollection 6 RemoveElement 2 2
+IMFDXGIBuffer 0 QueryInterface 2 2
+IMFDXGIBuffer 3 GetResource 2 2
+IMFDXGIBuffer 5 GetUnknown 3 3
+IMFDXGIDeviceManager 0 QueryInterface 2 2
+IMFDXGIDeviceManager 4 GetVideoService 3 3
+IMFDXGIDeviceManager 5 LockDevice 3 3
+IMFDXGIDeviceManager 6 OpenDeviceHandle 1 1
+IMFGetService 0 QueryInterface 2 2
+IMFGetService 3 GetService 3 3
+IMFMediaBuffer 0 QueryInterface 2 2
+IMFMediaBuffer 3 Lock 1 1
+IMFMediaEngine 0 QueryInterface 2 2
+IMFMediaEngine 3 GetError 1 1
+IMFMediaEngine 7 GetCurrentSource 1 1
+IMFMediaEngine 11 GetBuffered 1 1
+IMFMediaEngine 25 GetPlayed 1 1
+IMFMediaEngine 26 GetSeekable 1 1
+IMFMediaEngineClassFactory 0 QueryInterface 2 2
+IMFMediaEngineClassFactory 3 CreateInstance 3 3
+IMFMediaEngineClassFactory 4 CreateTimeRange 1 1
+IMFMediaEngineClassFactory 5 CreateError 1 1
+IMFMediaEngineEx 0 QueryInterface 2 2
+IMFMediaEngineEx 3 GetError 1 1
+IMFMediaEngineEx 7 GetCurrentSource 1 1
+IMFMediaEngineEx 11 GetBuffered 1 1
+IMFMediaEngineEx 25 GetPlayed 1 1
+IMFMediaEngineEx 26 GetSeekable 1 1
+IMFMediaEngineEx 72 GetVideoSwapchainHandle 1 1
+IMFMediaEngineNotify 0 QueryInterface 2 2
+IMFMediaError 0 QueryInterface 2 2
+IMFMediaEvent 0 QueryInterface 2 2
+IMFMediaEvent 13 GetAllocatedString 2 2
+IMFMediaEvent 16 GetAllocatedBlob 2 2
+IMFMediaEvent 17 GetUnknown 3 3
+IMFMediaEventGenerator 0 QueryInterface 2 2
+IMFMediaEventGenerator 3 GetEvent 2 2
+IMFMediaEventGenerator 5 EndGetEvent 2 2
+IMFMediaSession 0 QueryInterface 2 2
+IMFMediaSession 3 GetEvent 2 2
+IMFMediaSession 5 EndGetEvent 2 2
+IMFMediaSession 14 GetClock 1 1
+IMFMediaSession 16 GetFullTopology 3 4
+IMFMediaSource 0 QueryInterface 2 2
+IMFMediaSource 3 GetEvent 2 2
+IMFMediaSource 5 EndGetEvent 2 2
+IMFMediaSource 8 CreatePresentationDescriptor 1 1
+IMFMediaType 0 QueryInterface 2 2
+IMFMediaType 13 GetAllocatedString 2 2
+IMFMediaType 16 GetAllocatedBlob 2 2
+IMFMediaType 17 GetUnknown 3 3
+IMFMediaType 36 GetRepresentation 2 5
+IMFMediaTypeHandler 0 QueryInterface 2 2
+IMFMediaTypeHandler 3 IsMediaTypeSupported 2 2
+IMFMediaTypeHandler 5 GetMediaTypeByIndex 2 2
+IMFMediaTypeHandler 7 GetCurrentMediaType 1 1
+IMFPresentationClock 0 QueryInterface 2 2
+IMFPresentationClock 9 GetTimeSource 1 1
+IMFPresentationDescriptor 0 QueryInterface 2 2
+IMFPresentationDescriptor 13 GetAllocatedString 2 2
+IMFPresentationDescriptor 16 GetAllocatedBlob 2 2
+IMFPresentationDescriptor 17 GetUnknown 3 3
+IMFPresentationDescriptor 34 GetStreamDescriptorByIndex 3 3
+IMFPresentationDescriptor 37 Clone 1 1
+IMFSample 0 QueryInterface 2 2
+IMFSample 13 GetAllocatedString 2 2
+IMFSample 16 GetAllocatedBlob 2 2
+IMFSample 17 GetUnknown 3 3
+IMFSample 40 GetBufferByIndex 2 2
+IMFSample 41 ConvertToContiguousBuffer 1 1
+IMFSimpleAudioVolume 0 QueryInterface 2 2
+IMFSourceReader 0 QueryInterface 2 2
+IMFSourceReader 5 GetNativeMediaType 3 3
+IMFSourceReader 6 GetCurrentMediaType 2 2
+IMFSourceReader 9 ReadSample 6 6
+IMFSourceReader 11 GetServiceForStream 4 4
+IMFSourceReaderCallback 0 QueryInterface 2 2
+IMFSourceResolver 0 QueryInterface 2 2
+IMFSourceResolver 3 CreateObjectFromURL 5 5
+IMFSourceResolver 4 CreateObjectFromByteStream 6 6
+IMFSourceResolver 5 BeginCreateObjectFromURL 4 4
+IMFSourceResolver 6 EndCreateObjectFromURL 3 3
+IMFSourceResolver 7 BeginCreateObjectFromByteStream 5 5
+IMFSourceResolver 8 EndCreateObjectFromByteStream 3 3
+IMFStreamDescriptor 0 QueryInterface 2 2
+IMFStreamDescriptor 13 GetAllocatedString 2 2
+IMFStreamDescriptor 16 GetAllocatedBlob 2 2
+IMFStreamDescriptor 17 GetUnknown 3 3
+IMFStreamDescriptor 34 GetMediaTypeHandler 1 1
+IMFTopology 0 QueryInterface 2 2
+IMFTopology 13 GetAllocatedString 2 2
+IMFTopology 16 GetAllocatedBlob 2 2
+IMFTopology 17 GetUnknown 3 3
+IMFTopology 37 GetNode 2 2
+IMFTopology 40 GetNodeByID 2 3
+IMFTopology 41 GetSourceNodeCollection 1 1
+IMFTopology 42 GetOutputNodeCollection 1 1
+IMFTopologyNode 0 QueryInterface 2 2
+IMFTopologyNode 13 GetAllocatedString 2 2
+IMFTopologyNode 16 GetAllocatedBlob 2 2
+IMFTopologyNode 17 GetUnknown 3 3
+IMFTopologyNode 34 GetObject 1 1
+IMFTopologyNode 42 GetInput 2 2
+IMFTopologyNode 43 GetOutput 2 2
+IMFTopologyNode 45 GetOutputPrefType 2 2
+IMFTopologyNode 47 GetInputPrefType 2 2
+IMFTransform 0 QueryInterface 2 2
+IMFTransform 8 GetAttributes 1 1
+IMFTransform 9 GetInputStreamAttributes 2 2
+IMFTransform 10 GetOutputStreamAttributes 2 2
+IMFTransform 13 GetInputAvailableType 3 3
+IMFTransform 14 GetOutputAvailableType 3 3
+IMFTransform 17 GetInputCurrentType 2 2
+IMFTransform 18 GetOutputCurrentType 2 2
+IMFVideoDisplayControl 0 QueryInterface 2 2
+IMFVideoDisplayControl 10 GetVideoWindow 1 1
+IMFVideoDisplayControl 12 GetCurrentImage 2 2
+IMFVideoSampleAllocator 0 QueryInterface 2 2
+IMFVideoSampleAllocator 6 AllocateSample 1 1
+IMFVideoSampleAllocatorEx 0 QueryInterface 2 2
+IMFVideoSampleAllocatorEx 6 AllocateSample 1 1
+IMMDevice 0 QueryInterface 2 2
+IMMDevice 3 Activate 4 4
+IMMDevice 4 OpenPropertyStore 2 2
+IMMDevice 5 GetId 1 1
+IMMDeviceCollection 0 QueryInterface 2 2
+IMMDeviceCollection 4 Item 2 2
+IMMDeviceEnumerator 0 QueryInterface 2 2
+IMMDeviceEnumerator 3 EnumAudioEndpoints 3 3
+IMMDeviceEnumerator 4 GetDefaultAudioEndpoint 3 3
+IMMDeviceEnumerator 5 GetDevice 2 2
+IMMEndpoint 0 QueryInterface 2 2
+IMMNotificationClient 0 QueryInterface 2 2
+IMalloc 0 QueryInterface 2 2
+IMediaControl 0 QueryInterface 2 2
+IMediaControl 4 GetTypeInfo 3 3
+IMediaControl 12 AddSourceFilter 2 2
+IMediaControl 13 get_FilterCollection 1 1
+IMediaControl 14 get_RegFilterCollection 1 1
+IMediaEventEx 0 QueryInterface 2 2
+IMediaEventEx 4 GetTypeInfo 3 3
+IMediaEventEx 7 GetEventHandle 1 1
+IMediaEventEx 8 GetEvent 2,3 2,3
+IMediaEventSink 0 QueryInterface 2 2
+IMediaFilter 0 QueryInterface 2 2
+IMediaFilter 9 GetSyncSource 1 1
+IMediaPosition 0 QueryInterface 2 2
+IMediaPosition 4 GetTypeInfo 3 3
+IMediaSample 0 QueryInterface 2 2
+IMediaSample 3 GetPointer 1 1
+IMediaSample 13 GetMediaType 1 1
+IMediaSample2 0 QueryInterface 2 2
+IMediaSample2 3 GetPointer 1 1
+IMediaSample2 13 GetMediaType 1 1
+IMediaSeeking 0 QueryInterface 2 2
+IMediaStream 0 QueryInterface 2 2
+IMediaStream 3 GetMultiMediaStream 1 1
+IMediaStream 6 AllocateSample 2 2
+IMediaStream 7 CreateSharedSample 3 3
+IMemAllocator 0 QueryInterface 2 2
+IMemAllocator 7 GetBuffer 1 1
+IMemInputPin 0 QueryInterface 2 2
+IMemInputPin 3 GetAllocator 1 1
+IMultiMediaStream 0 QueryInterface 2 2
+IMultiMediaStream 4 GetMediaStream 2 2
+IMultiMediaStream 5 EnumMediaStreams 2 2
+IMultiMediaStream 11 GetEndOfStreamEventHandle 1 1
+INSSBuffer 0 QueryInterface 2 2
+INSSBuffer 6 GetBuffer 1 1
+INSSBuffer 7 GetBufferAndLength 1 1
+IObjectSafety 0 QueryInterface 2 2
+IOleControl 0 QueryInterface 2 2
+IOleInPlaceActiveObject 0 QueryInterface 2 2
+IOleInPlaceActiveObject 3 GetWindow 1 1
+IOleInPlaceObject 0 QueryInterface 2 2
+IOleInPlaceObject 3 GetWindow 1 1
+IOleObject 0 QueryInterface 2 2
+IOleObject 4 GetClientSite 1 1
+IOleObject 8 GetMoniker 3 3
+IOleObject 10 GetClipboardData 2 2
+IOleObject 12 EnumVerbs 1 1
+IOleObject 16 GetUserType 2 2
+IOleObject 21 EnumAdvise 1 1
+IOleWindow 0 QueryInterface 2 2
+IOleWindow 3 GetWindow 1 1
+IOverlay 0 QueryInterface 2 2
+IOverlay 3 GetPalette 2 2
+IOverlay 8 GetWindowHandle 1 1
+IOverlay 9 GetClipList 3 3
+IPersist 0 QueryInterface 2 2
+IPersistFile 0 QueryInterface 2 2
+IPersistFile 8 GetCurFile 1 1
+IPersistStream 0 QueryInterface 2 2
+IPersistStreamInit 0 QueryInterface 2 2
+IPicture 0 QueryInterface 2 2
+IPicture 10 get_CurDC 1 1
+IPicture 11 SelectPicture 2 2
+IPin 0 QueryInterface 2 2
+IPin 6 ConnectedTo 1 1
+IPin 10 QueryId 1 1
+IPin 12 EnumMediaTypes 1 1
+IPin 13 QueryInternalConnections 1 1
+IPropertyNotifySink 0 QueryInterface 2 2
+IPropertyStore 0 QueryInterface 2 2
+IQualProp 0 QueryInterface 2 2
+IQualityControl 0 QueryInterface 2 2
+IReferenceClock 0 QueryInterface 2 2
+IReferenceClock 4 AdviseTime 4 6
+IReferenceClock 5 AdvisePeriodic 4 6
+ISequentialStream 0 QueryInterface 2 2
+IShellLinkA 0 QueryInterface 2 2
+IShellLinkA 4 GetIDList 1 1
+IShellLinkW 0 QueryInterface 2 2
+IShellLinkW 4 GetIDList 1 1
+ISimpleAudioVolume 0 QueryInterface 2 2
+IStream 0 QueryInterface 2 2
+IStream 13 Clone 1 1
+IStreamSample 0 QueryInterface 2 2
+ITypeInfo 0 QueryInterface 2 2
+ITypeInfo 3 GetTypeAttr 1 1
+ITypeInfo 4 GetTypeComp 1 1
+ITypeInfo 5 GetFuncDesc 2 2
+ITypeInfo 6 GetVarDesc 2 2
+ITypeInfo 7 GetNames 2 2
+ITypeInfo 12 GetDocumentation 2,3,5 2,3,5
+ITypeInfo 13 GetDllEntry 3,4 3,4
+ITypeInfo 14 GetRefTypeInfo 2 2
+ITypeInfo 15 AddressOfMember 3 3
+ITypeInfo 16 CreateInstance 3 3
+ITypeInfo 17 GetMops 2 2
+ITypeInfo 18 GetContainingTypeLib 1 1
+ITypeInfo2 0 QueryInterface 2 2
+ITypeInfo2 3 GetTypeAttr 1 1
+ITypeInfo2 4 GetTypeComp 1 1
+ITypeInfo2 5 GetFuncDesc 2 2
+ITypeInfo2 6 GetVarDesc 2 2
+ITypeInfo2 7 GetNames 2 2
+ITypeInfo2 12 GetDocumentation 2,3,5 2,3,5
+ITypeInfo2 13 GetDllEntry 3,4 3,4
+ITypeInfo2 14 GetRefTypeInfo 2 2
+ITypeInfo2 15 AddressOfMember 3 3
+ITypeInfo2 16 CreateInstance 3 3
+ITypeInfo2 17 GetMops 2 2
+ITypeInfo2 18 GetContainingTypeLib 1 1
+ITypeInfo2 31 GetDocumentation2 3,5 3,5
+ITypeLib 0 QueryInterface 2 2
+ITypeLib 4 GetTypeInfo 2 2
+ITypeLib 6 GetTypeInfoOfGuid 2 2
+ITypeLib 7 GetLibAttr 1 1
+ITypeLib 8 GetTypeComp 1 1
+ITypeLib 9 GetDocumentation 2,3,5 2,3,5
+ITypeLib 11 FindName 3 3
+ITypeLib2 0 QueryInterface 2 2
+ITypeLib2 4 GetTypeInfo 2 2
+ITypeLib2 6 GetTypeInfoOfGuid 2 2
+ITypeLib2 7 GetLibAttr 1 1
+ITypeLib2 8 GetTypeComp 1 1
+ITypeLib2 9 GetDocumentation 2,3,5 2,3,5
+ITypeLib2 11 FindName 3 3
+ITypeLib2 15 GetDocumentation2 3,5 3,5
+IUnknown 0 QueryInterface 2 2
+IVMRAspectRatioControl9 0 QueryInterface 2 2
+IVMRDeinterlaceControl9 0 QueryInterface 2 2
+IVMRFilterConfig 0 QueryInterface 2 2
+IVMRFilterConfig9 0 QueryInterface 2 2
+IVMRMixerBitmap9 0 QueryInterface 2 2
+IVMRMixerControl9 0 QueryInterface 2 2
+IVMRMonitorConfig9 0 QueryInterface 2 2
+IVMRSurfaceAllocatorNotify9 0 QueryInterface 2 2
+IVMRSurfaceAllocatorNotify9 6 AllocateSurfaceHelper 3 3
+IVMRWindowlessControl 0 QueryInterface 2 2
+IVMRWindowlessControl 13 GetCurrentImage 1 1
+IVMRWindowlessControl9 0 QueryInterface 2 2
+IVMRWindowlessControl9 13 GetCurrentImage 1 1
+IVideoWindow 0 QueryInterface 2 2
+IVideoWindow 4 GetTypeInfo 3 3
+IVideoWindow 8 get_Caption 1 1
+IVideoWindow 30 get_Owner 1 1
+IVideoWindow 32 get_MessageDrain 1 1
+IViewObject 0 QueryInterface 2 2
+IViewObject 4 GetColorSet 6 6
+IViewObject 8 GetAdvise 3 3
+IViewObject2 0 QueryInterface 2 2
+IViewObject2 4 GetColorSet 6 6
+IViewObject2 8 GetAdvise 3 3
+IWICBitmap 0 QueryInterface 2 2
+IWICBitmap 8 Lock 3 3
+IWICBitmapClipper 0 QueryInterface 2 2
+IWICBitmapCodecInfo 0 QueryInterface 2 2
+IWICBitmapCodecProgressNotification 0 QueryInterface 2 2
+IWICBitmapDecoder 0 QueryInterface 2 2
+IWICBitmapDecoder 6 GetDecoderInfo 1 1
+IWICBitmapDecoder 8 GetMetadataQueryReader 1 1
+IWICBitmapDecoder 9 GetPreview 1 1
+IWICBitmapDecoder 10 GetColorContexts 2 2
+IWICBitmapDecoder 11 GetThumbnail 1 1
+IWICBitmapDecoder 13 GetFrame 2 2
+IWICBitmapDecoderInfo 0 QueryInterface 2 2
+IWICBitmapDecoderInfo 25 CreateInstance 1 1
+IWICBitmapEncoder 0 QueryInterface 2 2
+IWICBitmapEncoder 5 GetEncoderInfo 1 1
+IWICBitmapEncoder 10 CreateNewFrame 1,2 1,2
+IWICBitmapEncoder 12 GetMetadataQueryWriter 1 1
+IWICBitmapEncoderInfo 0 QueryInterface 2 2
+IWICBitmapEncoderInfo 23 CreateInstance 1 1
+IWICBitmapFlipRotator 0 QueryInterface 2 2
+IWICBitmapFrameChainReader 0 QueryInterface 2 2
+IWICBitmapFrameChainReader 4 GetChainedFrame 3 3
+IWICBitmapFrameChainWriter 0 QueryInterface 2 2
+IWICBitmapFrameChainWriter 3 AppendFrameToChain 2,3 2,3
+IWICBitmapFrameDecode 0 QueryInterface 2 2
+IWICBitmapFrameDecode 8 GetMetadataQueryReader 1 1
+IWICBitmapFrameDecode 9 GetColorContexts 2 2
+IWICBitmapFrameDecode 10 GetThumbnail 1 1
+IWICBitmapFrameEncode 0 QueryInterface 2 2
+IWICBitmapFrameEncode 13 GetMetadataQueryWriter 1 1
+IWICBitmapLock 0 QueryInterface 2 2
+IWICBitmapLock 5 GetDataPointer 2 2
+IWICBitmapScaler 0 QueryInterface 2 2
+IWICBitmapSource 0 QueryInterface 2 2
+IWICBitmapSourceTransform 0 QueryInterface 2 2
+IWICBitmapSourceTransform2 0 QueryInterface 2 2
+IWICBitmapToneMapper 0 QueryInterface 2 2
+IWICColorContext 0 QueryInterface 2 2
+IWICColorTransform 0 QueryInterface 2 2
+IWICComponentFactory 0 QueryInterface 2 2
+IWICComponentFactory 3 CreateDecoderFromFilename 5 5
+IWICComponentFactory 4 CreateDecoderFromStream 4 4
+IWICComponentFactory 5 CreateDecoderFromFileHandle 4 4
+IWICComponentFactory 6 CreateComponentInfo 2 2
+IWICComponentFactory 7 CreateDecoder 3 3
+IWICComponentFactory 8 CreateEncoder 3 3
+IWICComponentFactory 9 CreatePalette 1 1
+IWICComponentFactory 10 CreateFormatConverter 1 1
+IWICComponentFactory 11 CreateBitmapScaler 1 1
+IWICComponentFactory 12 CreateBitmapClipper 1 1
+IWICComponentFactory 13 CreateBitmapFlipRotator 1 1
+IWICComponentFactory 14 CreateStream 1 1
+IWICComponentFactory 15 CreateColorContext 1 1
+IWICComponentFactory 16 CreateColorTransformer 1 1
+IWICComponentFactory 17 CreateBitmap 5 5
+IWICComponentFactory 18 CreateBitmapFromSource 3 3
+IWICComponentFactory 19 CreateBitmapFromSourceRect 6 6
+IWICComponentFactory 20 CreateBitmapFromMemory 7 7
+IWICComponentFactory 21 CreateBitmapFromHBITMAP 4 4
+IWICComponentFactory 22 CreateBitmapFromHICON 2 2
+IWICComponentFactory 23 CreateComponentEnumerator 3 3
+IWICComponentFactory 24 CreateFastMetadataEncoderFromDecoder 2 2
+IWICComponentFactory 25 CreateFastMetadataEncoderFromFrameDecode 2 2
+IWICComponentFactory 26 CreateQueryWriter 3 3
+IWICComponentFactory 27 CreateQueryWriterFromReader 3 3
+IWICComponentFactory 28 CreateMetadataReader 5 5
+IWICComponentFactory 29 CreateMetadataReaderFromContainer 5 5
+IWICComponentFactory 30 CreateMetadataWriter 4 4
+IWICComponentFactory 31 CreateMetadataWriterFromReader 3 3
+IWICComponentFactory 32 CreateQueryReaderFromBlockReader 2 2
+IWICComponentFactory 33 CreateQueryWriterFromBlockWriter 2 2
+IWICComponentFactory 34 CreateEncoderPropertyBag 3 3
+IWICComponentInfo 0 QueryInterface 2 2
+IWICD3DTextureSource 0 QueryInterface 2 2
+IWICD3DTextureSource 3 GetTexture 4 4
+IWICD3DTextureSource 4 GetTransformedTexture 9 9
+IWICD3DTextureSource 6 GetD3DTextureOptions 1 1
+IWICDdsDecoder 0 QueryInterface 2 2
+IWICDdsDecoder 4 GetFrame 4 4
+IWICDdsEncoder 0 QueryInterface 2 2
+IWICDdsEncoder 5 CreateNewFrame 1 1
+IWICDdsFrameDecode 0 QueryInterface 2 2
+IWICDevelopRaw 0 QueryInterface 2 2
+IWICDevelopRaw 8 GetMetadataQueryReader 1 1
+IWICDevelopRaw 9 GetColorContexts 2 2
+IWICDevelopRaw 10 GetThumbnail 1 1
+IWICDevelopRaw 13 GetCurrentParameterSet 1 1
+IWICDevelopRawNotificationCallback 0 QueryInterface 2 2
+IWICDisplayAdaptationControl 0 QueryInterface 2 2
+IWICDisplayAdaptationControl2 0 QueryInterface 2 2
+IWICEnumMetadataItem 0 QueryInterface 2 2
+IWICEnumMetadataItem 6 Clone 1 1
+IWICFastMetadataEncoder 0 QueryInterface 2 2
+IWICFastMetadataEncoder 4 GetMetadataQueryWriter 1 1
+IWICFormatConverter 0 QueryInterface 2 2
+IWICFormatConverterInfo 0 QueryInterface 2 2
+IWICFormatConverterInfo 12 CreateInstance 1 1
+IWICImageEncoder 0 QueryInterface 2 2
+IWICImagingFactory 0 QueryInterface 2 2
+IWICImagingFactory 3 CreateDecoderFromFilename 5 5
+IWICImagingFactory 4 CreateDecoderFromStream 4 4
+IWICImagingFactory 5 CreateDecoderFromFileHandle 4 4
+IWICImagingFactory 6 CreateComponentInfo 2 2
+IWICImagingFactory 7 CreateDecoder 3 3
+IWICImagingFactory 8 CreateEncoder 3 3
+IWICImagingFactory 9 CreatePalette 1 1
+IWICImagingFactory 10 CreateFormatConverter 1 1
+IWICImagingFactory 11 CreateBitmapScaler 1 1
+IWICImagingFactory 12 CreateBitmapClipper 1 1
+IWICImagingFactory 13 CreateBitmapFlipRotator 1 1
+IWICImagingFactory 14 CreateStream 1 1
+IWICImagingFactory 15 CreateColorContext 1 1
+IWICImagingFactory 16 CreateColorTransformer 1 1
+IWICImagingFactory 17 CreateBitmap 5 5
+IWICImagingFactory 18 CreateBitmapFromSource 3 3
+IWICImagingFactory 19 CreateBitmapFromSourceRect 6 6
+IWICImagingFactory 20 CreateBitmapFromMemory 7 7
+IWICImagingFactory 21 CreateBitmapFromHBITMAP 4 4
+IWICImagingFactory 22 CreateBitmapFromHICON 2 2
+IWICImagingFactory 23 CreateComponentEnumerator 3 3
+IWICImagingFactory 24 CreateFastMetadataEncoderFromDecoder 2 2
+IWICImagingFactory 25 CreateFastMetadataEncoderFromFrameDecode 2 2
+IWICImagingFactory 26 CreateQueryWriter 3 3
+IWICImagingFactory 27 CreateQueryWriterFromReader 3 3
+IWICImagingFactory2 0 QueryInterface 2 2
+IWICImagingFactory2 3 CreateDecoderFromFilename 5 5
+IWICImagingFactory2 4 CreateDecoderFromStream 4 4
+IWICImagingFactory2 5 CreateDecoderFromFileHandle 4 4
+IWICImagingFactory2 6 CreateComponentInfo 2 2
+IWICImagingFactory2 7 CreateDecoder 3 3
+IWICImagingFactory2 8 CreateEncoder 3 3
+IWICImagingFactory2 9 CreatePalette 1 1
+IWICImagingFactory2 10 CreateFormatConverter 1 1
+IWICImagingFactory2 11 CreateBitmapScaler 1 1
+IWICImagingFactory2 12 CreateBitmapClipper 1 1
+IWICImagingFactory2 13 CreateBitmapFlipRotator 1 1
+IWICImagingFactory2 14 CreateStream 1 1
+IWICImagingFactory2 15 CreateColorContext 1 1
+IWICImagingFactory2 16 CreateColorTransformer 1 1
+IWICImagingFactory2 17 CreateBitmap 5 5
+IWICImagingFactory2 18 CreateBitmapFromSource 3 3
+IWICImagingFactory2 19 CreateBitmapFromSourceRect 6 6
+IWICImagingFactory2 20 CreateBitmapFromMemory 7 7
+IWICImagingFactory2 21 CreateBitmapFromHBITMAP 4 4
+IWICImagingFactory2 22 CreateBitmapFromHICON 2 2
+IWICImagingFactory2 23 CreateComponentEnumerator 3 3
+IWICImagingFactory2 24 CreateFastMetadataEncoderFromDecoder 2 2
+IWICImagingFactory2 25 CreateFastMetadataEncoderFromFrameDecode 2 2
+IWICImagingFactory2 26 CreateQueryWriter 3 3
+IWICImagingFactory2 27 CreateQueryWriterFromReader 3 3
+IWICImagingFactory2 28 CreateImageEncoder 2 2
+IWICImagingFactory3 0 QueryInterface 2 2
+IWICImagingFactory3 3 CreateDecoderFromFilename 5 5
+IWICImagingFactory3 4 CreateDecoderFromStream 4 4
+IWICImagingFactory3 5 CreateDecoderFromFileHandle 4 4
+IWICImagingFactory3 6 CreateComponentInfo 2 2
+IWICImagingFactory3 7 CreateDecoder 3 3
+IWICImagingFactory3 8 CreateEncoder 3 3
+IWICImagingFactory3 9 CreatePalette 1 1
+IWICImagingFactory3 10 CreateFormatConverter 1 1
+IWICImagingFactory3 11 CreateBitmapScaler 1 1
+IWICImagingFactory3 12 CreateBitmapClipper 1 1
+IWICImagingFactory3 13 CreateBitmapFlipRotator 1 1
+IWICImagingFactory3 14 CreateStream 1 1
+IWICImagingFactory3 15 CreateColorContext 1 1
+IWICImagingFactory3 16 CreateColorTransformer 1 1
+IWICImagingFactory3 17 CreateBitmap 5 5
+IWICImagingFactory3 18 CreateBitmapFromSource 3 3
+IWICImagingFactory3 19 CreateBitmapFromSourceRect 6 6
+IWICImagingFactory3 20 CreateBitmapFromMemory 7 7
+IWICImagingFactory3 21 CreateBitmapFromHBITMAP 4 4
+IWICImagingFactory3 22 CreateBitmapFromHICON 2 2
+IWICImagingFactory3 23 CreateComponentEnumerator 3 3
+IWICImagingFactory3 24 CreateFastMetadataEncoderFromDecoder 2 2
+IWICImagingFactory3 25 CreateFastMetadataEncoderFromFrameDecode 2 2
+IWICImagingFactory3 26 CreateQueryWriter 3 3
+IWICImagingFactory3 27 CreateQueryWriterFromReader 3 3
+IWICImagingFactory3 28 CreateImageEncoder 2 2
+IWICImagingFactory3 29 CreateBitmapToneMapper 1 1
+IWICJpegFrameDecode 0 QueryInterface 2 2
+IWICJpegFrameEncode 0 QueryInterface 2 2
+IWICMetadataBlockReader 0 QueryInterface 2 2
+IWICMetadataBlockReader 5 GetReaderByIndex 2 2
+IWICMetadataBlockReader 6 GetEnumerator 1 1
+IWICMetadataBlockWriter 0 QueryInterface 2 2
+IWICMetadataBlockWriter 5 GetReaderByIndex 2 2
+IWICMetadataBlockWriter 6 GetEnumerator 1 1
+IWICMetadataBlockWriter 8 GetWriterByIndex 2 2
+IWICMetadataHandlerInfo 0 QueryInterface 2 2
+IWICMetadataQueryReader 0 QueryInterface 2 2
+IWICMetadataQueryReader 6 GetEnumerator 1 1
+IWICMetadataQueryWriter 0 QueryInterface 2 2
+IWICMetadataQueryWriter 6 GetEnumerator 1 1
+IWICMetadataReader 0 QueryInterface 2 2
+IWICMetadataReader 4 GetMetadataHandlerInfo 1 1
+IWICMetadataReader 8 GetEnumerator 1 1
+IWICMetadataReaderInfo 0 QueryInterface 2 2
+IWICMetadataReaderInfo 20 CreateInstance 1 1
+IWICMetadataWriter 0 QueryInterface 2 2
+IWICMetadataWriter 4 GetMetadataHandlerInfo 1 1
+IWICMetadataWriter 8 GetEnumerator 1 1
+IWICMetadataWriterInfo 0 QueryInterface 2 2
+IWICMetadataWriterInfo 19 CreateInstance 1 1
+IWICPalette 0 QueryInterface 2 2
+IWICPersistStream 0 QueryInterface 2 2
+IWICPixelFormatInfo 0 QueryInterface 2 2
+IWICPixelFormatInfo 12 GetColorContext 1 1
+IWICPixelFormatInfo2 0 QueryInterface 2 2
+IWICPixelFormatInfo2 12 GetColorContext 1 1
+IWICPlanarBitmapFrameEncode 0 QueryInterface 2 2
+IWICPlanarBitmapSourceTransform 0 QueryInterface 2 2
+IWICPlanarFormatConverter 0 QueryInterface 2 2
+IWICProgressCallback 0 QueryInterface 2 2
+IWICProgressiveLevelControl 0 QueryInterface 2 2
+IWICStream 0 QueryInterface 2 2
+IWICStream 13 Clone 1 1
+IWICStreamProvider 0 QueryInterface 2 2
+IWICStreamProvider 3 GetStream 1 1
+IWMHeaderInfo 0 QueryInterface 2 2
+IWMHeaderInfo2 0 QueryInterface 2 2
+IWMHeaderInfo3 0 QueryInterface 2 2
+IWMMediaProps 0 QueryInterface 2 2
+IWMOutputMediaProps 0 QueryInterface 2 2
+IWMProfile 0 QueryInterface 2 2
+IWMProfile 9 GetStream 2 2
+IWMProfile 10 GetStreamByNumber 2 2
+IWMProfile 15 CreateNewStream 2 2
+IWMProfile 17 GetMutualExclusion 2 2
+IWMProfile 20 CreateNewMutualExclusion 1 1
+IWMProfile2 0 QueryInterface 2 2
+IWMProfile2 9 GetStream 2 2
+IWMProfile2 10 GetStreamByNumber 2 2
+IWMProfile2 15 CreateNewStream 2 2
+IWMProfile2 17 GetMutualExclusion 2 2
+IWMProfile2 20 CreateNewMutualExclusion 1 1
+IWMProfile3 0 QueryInterface 2 2
+IWMProfile3 9 GetStream 2 2
+IWMProfile3 10 GetStreamByNumber 2 2
+IWMProfile3 15 CreateNewStream 2 2
+IWMProfile3 17 GetMutualExclusion 2 2
+IWMProfile3 20 CreateNewMutualExclusion 1 1
+IWMProfile3 25 GetBandwidthSharing 2 2
+IWMProfile3 28 CreateNewBandwidthSharing 1 1
+IWMProfile3 29 GetStreamPrioritization 1 1
+IWMProfile3 32 CreateNewStreamPrioritization 1 1
+IWMReader 0 QueryInterface 2 2
+IWMReader 6 GetOutputProps 2 2
+IWMReader 9 GetOutputFormat 3 3
+IWMReaderAdvanced2 0 QueryInterface 2 2
+IWMReaderAllocatorEx 0 QueryInterface 2 2
+IWMReaderAllocatorEx 3 AllocateForStreamEx 3 3
+IWMReaderAllocatorEx 4 AllocateForOutputEx 3 3
+IWMReaderCallback 0 QueryInterface 2 2
+IWMReaderCallbackAdvanced 0 QueryInterface 2 2
+IWMReaderCallbackAdvanced 7 AllocateForStream 3 3
+IWMReaderCallbackAdvanced 8 AllocateForOutput 3 3
+IWMStreamConfig 0 QueryInterface 2 2
+IWMStreamPrioritization 0 QueryInterface 2 2
+IWMSyncReader 0 QueryInterface 2 2
+IWMSyncReader 7 GetNextSample 2 2
+IWMSyncReader 15 GetOutputProps 2 2
+IWMSyncReader 18 GetOutputFormat 3 3
+IWMSyncReader2 0 QueryInterface 2 2
+IWMSyncReader2 7 GetNextSample 2 2
+IWMSyncReader2 15 GetOutputProps 2 2
+IWMSyncReader2 18 GetOutputFormat 3 3
+IWMSyncReader2 27 GetAllocateForOutput 2 2
+IWMSyncReader2 29 GetAllocateForStream 2 2
+IWbemClassObject 0 QueryInterface 2 2
+IWbemClassObject 3 GetQualifierSet 1 1
+IWbemClassObject 7 GetNames 4 4
+IWbemClassObject 9 Next 2 2
+IWbemClassObject 11 GetPropertyQualifierSet 2 2
+IWbemClassObject 12 Clone 1 1
+IWbemClassObject 13 GetObjectText 2 2
+IWbemClassObject 14 SpawnDerivedClass 2 2
+IWbemClassObject 15 SpawnInstance 2 2
+IWbemClassObject 17 GetPropertyOrigin 2 2
+IWbemClassObject 19 GetMethod 3,4 3,4
+IWbemClassObject 23 NextMethod 2,3,4 2,3,4
+IWbemClassObject 25 GetMethodQualifierSet 2 2
+IWbemClassObject 26 GetMethodOrigin 2 2
+IWbemLocator 0 QueryInterface 2 2
+IWbemLocator 3 ConnectServer 8 8
+IWbemServices 0 QueryInterface 2 2
+IWbemServices 3 OpenNamespace 4,5 4,5
+IWbemServices 5 QueryObjectSink 2 2
+IWbemServices 6 GetObject 4,5 4,5
+IWbemServices 8 PutClass 4 4
+IWbemServices 10 DeleteClass 4 4
+IWbemServices 12 CreateClassEnum 4 4
+IWbemServices 14 PutInstance 4 4
+IWbemServices 16 DeleteInstance 4 4
+IWbemServices 18 CreateInstanceEnum 4 4
+IWbemServices 20 ExecQuery 5 5
+IWbemServices 22 ExecNotificationQuery 5 5
+IWbemServices 24 ExecMethod 6,7 6,7
+IWebBrowser 0 QueryInterface 2 2
+IWebBrowser 4 GetTypeInfo 3 3
+IWebBrowser 15 get_Application 1 1
+IWebBrowser 16 get_Parent 1 1
+IWebBrowser 17 get_Container 1 1
+IWebBrowser 18 get_Document 1 1
+IWebBrowser 20 get_Type 1 1
+IWebBrowser 29 get_LocationName 1 1
+IWebBrowser 30 get_LocationURL 1 1
+IWebBrowser2 0 QueryInterface 2 2
+IWebBrowser2 4 GetTypeInfo 3 3
+IWebBrowser2 15 get_Application 1 1
+IWebBrowser2 16 get_Parent 1 1
+IWebBrowser2 17 get_Container 1 1
+IWebBrowser2 18 get_Document 1 1
+IWebBrowser2 20 get_Type 1 1
+IWebBrowser2 29 get_LocationName 1 1
+IWebBrowser2 30 get_LocationURL 1 1
+IWebBrowser2 36 get_Name 1 1
+IWebBrowser2 37 get_HWND 1 1
+IWebBrowser2 38 get_FullName 1 1
+IWebBrowser2 39 get_Path 1 1
+IWebBrowser2 44 get_StatusText 1 1
+IWebBrowserApp 0 QueryInterface 2 2
+IWebBrowserApp 4 GetTypeInfo 3 3
+IWebBrowserApp 15 get_Application 1 1
+IWebBrowserApp 16 get_Parent 1 1
+IWebBrowserApp 17 get_Container 1 1
+IWebBrowserApp 18 get_Document 1 1
+IWebBrowserApp 20 get_Type 1 1
+IWebBrowserApp 29 get_LocationName 1 1
+IWebBrowserApp 30 get_LocationURL 1 1
+IWebBrowserApp 36 get_Name 1 1
+IWebBrowserApp 37 get_HWND 1 1
+IWebBrowserApp 38 get_FullName 1 1
+IWebBrowserApp 39 get_Path 1 1
+IWebBrowserApp 44 get_StatusText 1 1
+IXAPO 0 QueryInterface 2 2
+IXAPO 3 GetRegistrationProperties 1 1
+IXAPO 4 IsInputFormatSupported 3 3
+IXAPO 5 IsOutputFormatSupported 3 3
+IXAPOParameters 0 QueryInterface 2 2
+IXAudio2 0 QueryInterface 2 2
+IXAudio2 5 CreateSourceVoice 1 1
+IXAudio2 6 CreateSubmixVoice 1 1
+IXAudio2 7 CreateMasteringVoice 1 1

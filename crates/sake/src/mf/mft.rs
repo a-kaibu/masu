@@ -52,17 +52,18 @@ fn mft<R>(b: u32, f: impl FnOnce(&mut Mft) -> R) -> Option<R> {
 }
 
 fn mt_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     if is_unknown(&g) || is_transform(&g) {
         mft(this, |m| m.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn mt_add_ref(c: &mut Ctx) -> u32 {
@@ -109,22 +110,24 @@ fn mt_count(c: &mut Ctx) -> u32 {
 }
 /// GetAttributes(IMFAttributes **)
 fn mt_attributes(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFTransform::GetAttributes>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let a = mft(this, |m| m.attrs).unwrap_or(0);
-    add_ref(c, a);
-    putp(out, a);
+    add_ref(c.ctx(), a);
+    out.put(a);
     if a == 0 { Hr::NotImpl.code() } else { 0 }
 }
 /// GetOutputAvailableType(stream, index, IMFMediaType **): the reader's current type, index 0
 fn mt_output_available(c: &mut Ctx) -> u32 {
-    let (this, id, i, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFTransform::GetOutputAvailableType>();
+    let (this, id, i, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     if id != 0 {
         return Hr::InvalidStreamNumber.code();
     }
@@ -135,21 +138,22 @@ fn mt_output_available(c: &mut Ctx) -> u32 {
 }
 /// GetOutputCurrentType(stream, IMFMediaType **): a copy of the reader's current type
 fn mt_output_current(c: &mut Ctx) -> u32 {
-    let (this, id, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFTransform::GetOutputCurrentType>();
+    let (this, id, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     if id != 0 {
         return Hr::InvalidStreamNumber.code();
     }
     current(this, out)
 }
-fn current(this: u32, out: u32) -> u32 {
+fn current(this: u32, out: crate::api::Out) -> u32 {
     let Some((r, k)) = mft(this, |m| (m.reader, m.stream)) else { return Hr::InvalidArg.code() };
     match super::reader::current_type(r, k) {
         Some(s) => {
-            putp(out, super::reader::new_type(s));
+            out.put(super::reader::new_type(s));
             0
         }
         None => Hr::TransformTypeNotSet.code(),
@@ -172,8 +176,9 @@ fn mt_output_status(c: &mut Ctx) -> u32 {
 }
 /// GetInputStreamAttributes / GetOutputStreamAttributes(stream, IMFAttributes **): none
 fn mt_stream_attributes(c: &mut Ctx) -> u32 {
-    if c.a(2) != 0 {
-        putp(c.a(2), 0);
+    let c = &mut c.args::<crate::api::outs::iface::IMFTransform::GetInputStreamAttributes>();
+    if !c.out::<2>().is_null() {
+        c.out::<2>().put(0);
     }
     Hr::NotImpl.code()
 }
@@ -285,16 +290,17 @@ pub fn frames_of(ty: &Store, attrs: Option<&Store>) -> Result<Frames, u32> {
 }
 
 fn al_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    if is_allocator(&guid_at(c.a(1))) {
+    if is_allocator(&guid_at(c.a::<1>())) {
         alloc(this, |a| a.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn al_add_ref(c: &mut Ctx) -> u32 {
@@ -361,28 +367,29 @@ fn al_init_ex(c: &mut Ctx) -> u32 {
 }
 /// AllocateSample(IMFSample **): a sample of one frame's buffer (a texture's, with a manager)
 fn al_allocate(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFVideoSampleAllocatorEx::AllocateSample>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     let Some((manager, frames)) = alloc(this, |a| (a.manager, a.frames)) else { return Hr::InvalidArg.code() };
     let Some(f) = frames else { return Hr::NotInitialized.code() };
     let Some(n) = super::dxgi::frame_bytes(f.fmt, f.w, f.h) else { return Hr::InvalidMediaType.code() };
     let zero = vec![0u8; us(n)];
     if manager == 0 {
-        putp(out, super::reader::new_sample(None, None, Some(&zero)));
+        out.put(super::reader::new_sample(None, None, Some(&zero)));
         return 0;
     }
-    let dev = super::dxgi::manager_device(c, manager);
+    let dev = super::dxgi::manager_device(c.ctx(), manager);
     if dev == 0 {
         return Hr::NotInitialized.code();
     }
-    let b = super::dxgi::texture_buffer(c, dev, f.w, f.h, f.fmt, f.usage, f.bind, &zero);
-    release(c, dev);
+    let b = super::dxgi::texture_buffer(c.ctx(), dev, f.w, f.h, f.fmt, f.usage, f.bind, &zero);
+    release(c.ctx(), dev);
     match b {
         Some(b) => {
-            putp(out, super::reader::new_sample_of(None, None, b));
+            out.put(super::reader::new_sample_of(None, None, b));
             0
         }
         None => Hr::InvalidArg.code(),

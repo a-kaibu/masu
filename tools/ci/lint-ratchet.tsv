@@ -1068,7 +1068,7 @@ file	crates/sake/src/cxx64.rs	cast_possible_wrap	20
 file	crates/sake/src/cxx64.rs	cast_sign_loss	17
 file	crates/sake/src/cxx64.rs	indexing_slicing	3
 file	crates/sake/src/cxx64.rs	unwrap_used	1
-file	crates/sake/src/d2d.rs	arithmetic_side_effects	97
+file	crates/sake/src/d2d.rs	arithmetic_side_effects	91
 file	crates/sake/src/d2d.rs	as_conversions	12
 file	crates/sake/src/d2d.rs	cast_possible_truncation	5
 file	crates/sake/src/d2d.rs	cast_possible_wrap	1
@@ -1209,7 +1209,7 @@ file	crates/sake/src/dshow.rs	cast_possible_truncation	12
 file	crates/sake/src/dshow.rs	cast_precision_loss	4
 file	crates/sake/src/dshow.rs	indexing_slicing	2
 file	crates/sake/src/dshow.rs	undocumented_unsafe_blocks	1
-file	crates/sake/src/dshow_mpeg.rs	arithmetic_side_effects	128
+file	crates/sake/src/dshow_mpeg.rs	arithmetic_side_effects	127
 file	crates/sake/src/dshow_mpeg.rs	as_conversions	36
 file	crates/sake/src/dshow_mpeg.rs	cast_possible_truncation	2
 file	crates/sake/src/dshow_mpeg.rs	indexing_slicing	23
@@ -1226,7 +1226,7 @@ file	crates/sake/src/dshow_play.rs	indexing_slicing	6
 file	crates/sake/src/dshow_play.rs	iter_over_hash_type	1
 file	crates/sake/src/dshow_play.rs	large_enum_variant	1
 file	crates/sake/src/dshow_play.rs	multiple_unsafe_ops_per_block	1
-file	crates/sake/src/dwrite.rs	arithmetic_side_effects	83
+file	crates/sake/src/dwrite.rs	arithmetic_side_effects	80
 file	crates/sake/src/dwrite.rs	as_conversions	6
 file	crates/sake/src/dwrite.rs	cast_possible_truncation	4
 file	crates/sake/src/dwrite.rs	indexing_slicing	28
@@ -1802,7 +1802,7 @@ file	crates/sake/src/shirusu.rs	arithmetic_side_effects	3
 file	crates/sake/src/shirusu.rs	as_conversions	8
 file	crates/sake/src/shirusu.rs	cast_possible_truncation	8
 file	crates/sake/src/shirusu.rs	unwrap_used	1
-file	crates/sake/src/smalldlls.rs	arithmetic_side_effects	154
+file	crates/sake/src/smalldlls.rs	arithmetic_side_effects	150
 file	crates/sake/src/smalldlls.rs	as_conversions	57
 file	crates/sake/src/smalldlls.rs	cast_possible_truncation	23
 file	crates/sake/src/smalldlls.rs	cast_possible_wrap	2
@@ -1865,7 +1865,7 @@ file	crates/sake/src/tls_socket.rs	as_conversions	5
 file	crates/sake/src/tls_socket.rs	cast_possible_truncation	1
 file	crates/sake/src/tls_socket.rs	cast_sign_loss	3
 file	crates/sake/src/tls_socket.rs	indexing_slicing	2
-file	crates/sake/src/typelib.rs	arithmetic_side_effects	124
+file	crates/sake/src/typelib.rs	arithmetic_side_effects	123
 file	crates/sake/src/typelib.rs	as_conversions	147
 file	crates/sake/src/typelib.rs	cast_possible_truncation	42
 file	crates/sake/src/typelib.rs	cast_possible_wrap	29
@@ -1919,7 +1919,7 @@ file	crates/sake/src/vcomp.rs	as_conversions	12
 file	crates/sake/src/vcomp.rs	cast_possible_wrap	4
 file	crates/sake/src/vcomp.rs	cast_sign_loss	3
 file	crates/sake/src/vcomp.rs	undocumented_unsafe_blocks	1
-file	crates/sake/src/vmr9.rs	arithmetic_side_effects	62
+file	crates/sake/src/vmr9.rs	arithmetic_side_effects	61
 file	crates/sake/src/vmr9.rs	as_conversions	56
 file	crates/sake/src/vmr9.rs	cast_possible_truncation	17
 file	crates/sake/src/vmr9.rs	indexing_slicing	4
@@ -1968,7 +1968,7 @@ file	crates/sake/src/webbrowser.rs	cast_sign_loss	20
 file	crates/sake/src/webbrowser.rs	fn_to_numeric_cast_any	12
 file	crates/sake/src/webbrowser.rs	indexing_slicing	6
 file	crates/sake/src/webbrowser.rs	unwrap_used	5
-file	crates/sake/src/wic.rs	arithmetic_side_effects	132
+file	crates/sake/src/wic.rs	arithmetic_side_effects	131
 file	crates/sake/src/wic.rs	as_conversions	120
 file	crates/sake/src/wic.rs	cast_possible_truncation	31
 file	crates/sake/src/wic.rs	cast_possible_wrap	13

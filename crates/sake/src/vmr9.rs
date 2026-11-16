@@ -394,7 +394,9 @@ fn release(c: &mut Ctx, b: u32) -> u32 {
 macro_rules! iunknown {
     ($k:expr) => {{
         fn q(c: &mut Ctx) -> u32 {
-            qi(c, block(c, $k))
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+            let b = block(c.ctx(), $k);
+            qi(c.ctx(), b)
         }
         fn a(c: &mut Ctx) -> u32 {
             add_ref(c, block(c, $k))
@@ -567,17 +569,18 @@ fn enum_pins_new(c: &mut Ctx, b: u32, pos: u32) -> u32 {
     static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let v = *V.get_or_init(|| {
         fn e_qi(c: &mut Ctx) -> u32 {
-            let (e, iid, out) = (c.a(0), c.a(1), c.a(2));
-            if out == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+            let (e, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+            if out.is_null() {
                 return E_POINTER;
             }
             let g = read_guid(iid);
             if g == IID_IUNKNOWN || g == IID_IENUMPINS {
                 enums(|m| m.get_mut(&e).map(|x| x.0 += 1));
-                mem::putp(out, e);
+                out.put(e);
                 0
             } else {
-                mem::putp(out, 0);
+                out.put(0);
                 E_NOINTERFACE
             }
         }
@@ -608,8 +611,9 @@ fn enum_pins_new(c: &mut Ctx, b: u32, pos: u32) -> u32 {
         }
         /// Next(n, pins, &fetched)
         fn e_next(c: &mut Ctx) -> u32 {
-            let (e, n, out, fetched) = (c.a(0), c.a(1), c.a(2), c.a(3));
-            if out == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IEnumPins::Next>();
+            let (e, n, out, fetched) = (c.a::<0>(), c.a::<1>(), c.out::<2>(), c.a::<3>());
+            if out.is_null() {
                 return E_POINTER;
             }
             if n > 1 && fetched == 0 {
@@ -621,8 +625,8 @@ fn enum_pins_new(c: &mut Ctx, b: u32, pos: u32) -> u32 {
             if ver == now {
                 while got < n && ((pos + got) as usize) < pins.len() {
                     let p = pins[(pos + got) as usize];
-                    add_ref(c, b);
-                    mem::putp(out + ps() * got, p);
+                    add_ref(c.ctx(), b);
+                    out.nth(got).put(p);
                     got += 1;
                 }
                 enums(|m| m.get_mut(&e).map(|x| x.2 += got));
@@ -655,14 +659,15 @@ fn enum_pins_new(c: &mut Ctx, b: u32, pos: u32) -> u32 {
             0
         }
         fn e_clone(c: &mut Ctx) -> u32 {
-            let (e, out) = (c.a(0), c.a(1));
-            if out == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IEnumPins::Clone>();
+            let (e, out) = (c.a::<0>(), c.out::<1>());
+            if out.is_null() {
                 return E_POINTER;
             }
             let Some((_, b, pos, ver)) = enums(|m| m.get(&e).copied()) else { return E_POINTER };
-            let n = enum_pins_new(c, b, pos);
+            let n = enum_pins_new(c.ctx(), b, pos);
             enums(|m| m.get_mut(&n).map(|x| x.3 = ver));
-            mem::putp(out, n);
+            out.put(n);
             0
         }
         vtable("VMR9::IEnumPins", &[(e_qi, 12), (e_add, 4), (e_release, 4), (e_next, 16), (e_skip, 8), (e_reset, 4), (e_clone, 8)])
@@ -868,9 +873,9 @@ fn pin_block(c: &Ctx, k: u32) -> u32 {
 fn pin_filter(p: u32) -> u32 {
     pin_with(p, |p| p.filter).unwrap_or(0)
 }
-fn pin_qi(c: &mut Ctx, p: u32) -> u32 {
-    let (iid, out) = (c.a(1), c.a(2));
-    if out == 0 {
+fn pin_qi(c: &mut Ctx, p: u32, out: crate::api::Out) -> u32 {
+    let iid = c.a(1);
+    if out.is_null() {
         return E_POINTER;
     }
     let k = match read_guid(iid) {
@@ -880,18 +885,20 @@ fn pin_qi(c: &mut Ctx, p: u32) -> u32 {
         IID_IAMVIDEOACCELERATOR => P_VA,
         IID_IQUALITYCONTROL => P_QC,
         _ => {
-            mem::putp(out, 0);
+            out.put(0);
             return E_NOINTERFACE;
         }
     };
     add_ref(c, pin_filter(p));
-    mem::putp(out, p + ps() * k);
+    out.put(p + ps() * k);
     0
 }
 macro_rules! pin_iunknown {
     ($k:expr) => {{
         fn q(c: &mut Ctx) -> u32 {
-            pin_qi(c, pin_block(c, $k))
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+            let (b, out) = (pin_block(c.ctx(), $k), c.out::<2>());
+            pin_qi(c.ctx(), b, out)
         }
         fn a(c: &mut Ctx) -> u32 {
             add_ref(c, pin_filter(pin_block(c, $k)))
@@ -1083,16 +1090,17 @@ fn empty_enum_mt() -> u32 {
     static E: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *E.get_or_init(|| {
         fn q(c: &mut Ctx) -> u32 {
-            let (iid, out) = (c.a(1), c.a(2));
-            if out == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+            let (iid, out) = (c.a::<1>(), c.out::<2>());
+            if out.is_null() {
                 return E_POINTER;
             }
             let g = read_guid(iid);
             if g == IID_IUNKNOWN || g == IID_IENUMMEDIATYPES {
-                mem::putp(out, c.a(0));
+                out.put(c.a::<0>());
                 0
             } else {
-                mem::putp(out, 0);
+                out.put(0);
                 E_NOINTERFACE
             }
         }
@@ -1100,22 +1108,24 @@ fn empty_enum_mt() -> u32 {
             1
         }
         fn next(c: &mut Ctx) -> u32 {
-            if c.a(2) == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IEnumMediaTypes::Next>();
+            if c.out::<2>().is_null() {
                 return E_POINTER;
             }
-            if c.a(3) != 0 {
-                put32(c.a(3), 0);
+            if c.a::<3>() != 0 {
+                put32(c.a::<3>(), 0);
             }
-            if c.a(1) == 0 { 0 } else { S_FALSE }
+            if c.a::<1>() == 0 { 0 } else { S_FALSE }
         }
         fn skip(c: &mut Ctx) -> u32 {
             if c.a(1) == 0 { 0 } else { S_FALSE }
         }
         fn clone(c: &mut Ctx) -> u32 {
-            if c.a(1) == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IEnumMediaTypes::Clone>();
+            if c.out::<1>().is_null() {
                 return E_POINTER;
             }
-            mem::putp(c.a(1), c.a(0));
+            c.out::<1>().put(c.a::<0>());
             0
         }
         let v = vtable("VMR9::IEnumMediaTypes", &[(q, 12), (one, 4), (one, 4), (next, 16), (skip, 8), (ok, 4), (clone, 8)]);
@@ -1358,17 +1368,18 @@ fn alloc_new() -> u32 {
     static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let v = *V.get_or_init(|| {
         fn q(c: &mut Ctx) -> u32 {
-            let (a, iid, out) = (c.a(0), c.a(1), c.a(2));
-            if out == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+            let (a, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+            if out.is_null() {
                 return E_POINTER;
             }
             let g = read_guid(iid);
             if g == IID_IUNKNOWN || g == IID_IMEMALLOCATOR {
                 alloc_with(a, |x| x.refs += 1);
-                mem::putp(out, a);
+                out.put(a);
                 0
             } else {
-                mem::putp(out, 0);
+                out.put(0);
                 E_NOINTERFACE
             }
         }
@@ -1463,11 +1474,12 @@ fn alloc_new() -> u32 {
         }
         /// GetBuffer(&sample, start, end, flags)
         fn get_buffer(c: &mut Ctx) -> u32 {
-            let (a, out) = (c.a(0), c.a(1));
-            if out == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IMemAllocator::GetBuffer>();
+            let (a, out) = (c.a::<0>(), c.out::<1>());
+            if out.is_null() {
                 return E_POINTER;
             }
-            mem::putp(out, 0);
+            out.put(0);
             let r = alloc_with(a, |x| {
                 if !x.committed {
                     return Err(VFW_E_NOT_COMMITTED);
@@ -1493,7 +1505,7 @@ fn alloc_new() -> u32 {
                         x.discontinuity = false;
                         x.mt = None;
                     });
-                    mem::putp(out, s);
+                    out.put(s);
                     0
                 }
                 Err(e) => e,
@@ -1511,17 +1523,18 @@ fn sample_new(alloc: u32, size: u32) -> u32 {
     static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let v = *V.get_or_init(|| {
         fn q(c: &mut Ctx) -> u32 {
-            let (s, iid, out) = (c.a(0), c.a(1), c.a(2));
-            if out == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+            let (s, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+            if out.is_null() {
                 return E_POINTER;
             }
             let g = read_guid(iid);
             if g == IID_IUNKNOWN || g == IID_IMEDIASAMPLE || g == IID_IMEDIASAMPLE2 {
                 sample_with(s, |x| x.refs += 1);
-                mem::putp(out, s);
+                out.put(s);
                 0
             } else {
-                mem::putp(out, 0);
+                out.put(0);
                 E_NOINTERFACE
             }
         }
@@ -1563,10 +1576,11 @@ fn sample_new(alloc: u32, size: u32) -> u32 {
             n
         }
         fn get_pointer(c: &mut Ctx) -> u32 {
-            if c.a(1) == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IMediaSample::GetPointer>();
+            if c.out::<1>().is_null() {
                 return E_POINTER;
             }
-            mem::putp(c.a(1), sample_with(c.a(0), |x| x.data).unwrap_or(0));
+            c.out::<1>().put(sample_with(c.a::<0>(), |x| x.data).unwrap_or(0));
             0
         }
         fn get_size(c: &mut Ctx) -> u32 {
@@ -1625,19 +1639,20 @@ fn sample_new(alloc: u32, size: u32) -> u32 {
             .unwrap_or(E_POINTER)
         }
         fn get_mt(c: &mut Ctx) -> u32 {
-            let out = c.a(1);
-            if out == 0 {
+            let c = &mut c.args::<crate::api::outs::iface::IMediaSample::GetMediaType>();
+            let out = c.out::<1>();
+            if out.is_null() {
                 return E_POINTER;
             }
-            match sample_with(c.a(0), |x| x.mt.clone()).flatten() {
+            match sample_with(c.a::<0>(), |x| x.mt.clone()).flatten() {
                 Some(mt) => {
                     let p = mem::heap_alloc(mt_size(), true);
                     mt.write(p);
-                    mem::putp(out, p);
+                    out.put(p);
                     0
                 }
                 None => {
-                    mem::putp(out, 0);
+                    out.put(0);
                     S_FALSE
                 }
             }

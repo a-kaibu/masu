@@ -109,7 +109,7 @@ fn init() {
                 let a = host_fn(&format!("d3d11:{i}:{j}"), method, bytes);
                 crate::api::set_tag(a, Tag { iface: i, index: j, float }.bits(), usize::from(args));
                 if let Some((name, _)) = kura::d3d11::names::NAMES.get(usize::from(i.wrapping_sub(FIRST))) {
-                    crate::api::set_com_outs(a, name, u32::from(j));
+                    crate::api::set_com_outs(a, name, u32::from(j), crate::api::ComArgs::Words);
                 }
                 mem::wp(v + ps * u32::from(j), a);
             }

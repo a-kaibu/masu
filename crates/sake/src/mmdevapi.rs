@@ -239,9 +239,10 @@ pub fn enumerator() -> u32 {
 // object is [vtable, has, references] and takes no reference on the enumerator
 
 fn col_qi(c: &mut Ctx) -> u32 {
-    let r = qi(c, IID_COLLECTION);
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let r = qi(c.ctx(), IID_COLLECTION);
     if r == S_OK {
-        col_addref(c);
+        col_addref(c.ctx());
     }
     r
 }
@@ -274,15 +275,16 @@ fn col_count(c: &mut Ctx) -> u32 {
     S_OK
 }
 fn col_item(c: &mut Ctx) -> u32 {
-    let (this, i, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMMDeviceCollection::Item>();
+    let (this, i, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if i == 0 && col_has(this) {
-        putp(out, device());
+        out.put(device());
         S_OK
     } else {
-        putp(out, 0);
+        out.put(0);
         Hr::InvalidArg.code()
     }
 }

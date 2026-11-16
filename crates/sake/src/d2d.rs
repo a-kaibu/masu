@@ -271,7 +271,8 @@ fn hwnd_methods() -> Vec<(com::Method, Handler)> {
 
 /// CreateHwndRenderTarget(render target properties, HWND properties, out)
 fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
-    let (factory, hp, out) = (c.a(0), c.a(2), c.a(3));
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1Factory7::CreateHwndRenderTarget>();
+    let (factory, hp, out) = (c.a::<0>(), c.a::<2>(), c.out::<3>());
     let hwnd = r32(hp);
     let (mut w, mut h) = (r32(hp + 4), r32(hp + 8));
     if (w == 0 || h == 0) && let Some(r) = crate::user::client_rect_screen(hwnd) {
@@ -285,11 +286,11 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     }
     let (sc_out, dev_out, ctx_out) = (desc + 60, desc + 64, desc + 68);
     let create = crate::export_once!("d3d11", "D3D11CreateDeviceAndSwapChain");
-    let hr = c.call(create, &[0, 1, 0, 0x20, 0, 0, 7, desc, sc_out, dev_out, 0, ctx_out]);
+    let hr = c.ctx().call(create, &[0, 1, 0, 0x20, 0, 0, 7, desc, sc_out, dev_out, 0, ctx_out]);
     let (sc, d3d, imm) = (r32(sc_out), r32(dev_out), r32(ctx_out));
     mem::heap_free(desc);
     if hr != 0 || sc == 0 {
-        mem::putp(out, 0);
+        out.put(0);
         return if hr != 0 { hr } else { 0x8000_4005 };
     }
     let dev_out = mem::heap_alloc(8, true);
@@ -304,9 +305,9 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
         s.d3d.insert(o, d3d);
         s.held.insert(o, [sc, imm, d3d].into_iter().filter(|&x| x != 0).collect());
     });
-    let bmp = back_buffer(c, sc);
-    set_target(c, o, bmp, true);
-    mem::putp(out, o);
+    let bmp = back_buffer(c.ctx(), sc);
+    set_target(c.ctx(), o, bmp, true);
+    out.put(o);
     0
 }
 
@@ -319,7 +320,8 @@ fn bitmap_rt_methods() -> Vec<(com::Method, Handler)> {
 /// CreateCompatibleRenderTarget(size in DIPs *, size in pixels *, pixel format *, options, out):
 /// a render target on a texture of its own, which GetBitmap hands out to draw elsewhere.
 fn CreateCompatibleRenderTarget(c: &mut Ctx) -> u32 {
-    let (parent, ps, pp, out) = (c.a(0), c.a(1), c.a(2), c.a(5));
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1BitmapRenderTarget::CreateCompatibleRenderTarget>();
+    let (parent, ps, pp, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<5>());
     let (pw, ph, device, d3d) = st(|s| {
         let (w, h, dev) = s.dcs.get(&parent).map_or((1, 1, 0), |d| (d.w, d.h, d.device));
         (w, h, dev, s.d3d.get(&parent).copied().unwrap_or(0))
@@ -333,7 +335,7 @@ fn CreateCompatibleRenderTarget(c: &mut Ctx) -> u32 {
     };
     let (w, h) = (w.max(1), h.max(1));
     if d3d == 0 {
-        mem::putp(out, 0);
+        out.put(0);
         return 0x8899_000c; // D2DERR_UNSUPPORTED_OPERATION
     }
     // ID3D11Device::CreateTexture2D(D3D11_TEXTURE2D_DESC: w, h, 1 mip, 1 layer, B8G8R8A8, 1
@@ -342,11 +344,11 @@ fn CreateCompatibleRenderTarget(c: &mut Ctx) -> u32 {
     for (o, v) in [(0, w), (4, h), (8, 1), (12, 1), (16, 87), (20, 1), (32, 0x28)] {
         w32(desc + o, v);
     }
-    c.call(mem::rp(mem::rp(d3d) + mem::ps() * 5), &[d3d, desc, 0, desc + 44]);
+    c.ctx().call(mem::rp(mem::rp(d3d) + mem::ps() * 5), &[d3d, desc, 0, desc + 44]);
     let tex = r32(desc + 44);
     mem::heap_free(desc);
     if tex == 0 {
-        mem::putp(out, 0);
+        out.put(0);
         return 0x8007_000e;
     }
     // (the texture is the bitmap's: released with it; drawn elsewhere as a surface)
@@ -356,23 +358,24 @@ fn CreateCompatibleRenderTarget(c: &mut Ctx) -> u32 {
     let o = com::object(com::iface!(ID2D1BitmapRenderTarget), &bitmap_rt_methods(), 8);
     // (it keeps its device and the D3D11 device its textures come from)
     com::add_ref_obj(device);
-    c.call(mem::rp(mem::rp(d3d) + mem::ps()), &[d3d]);
+    c.ctx().call(mem::rp(mem::rp(d3d) + mem::ps()), &[d3d]);
     st(|s| {
         s.parents.insert(o, device);
         s.dcs.insert(o, Dc { device, ..Default::default() });
         s.d3d.insert(o, d3d);
         s.held.insert(o, vec![d3d]);
     });
-    set_target(c, o, bmp, true);
-    mem::putp(out, o);
+    set_target(c.ctx(), o, bmp, true);
+    out.put(o);
     0
 }
 fn GetBitmap(c: &mut Ctx) -> u32 {
-    let t = st(|s| s.dcs.get(&c.a(0)).map_or(0, |d| d.target));
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1BitmapRenderTarget::GetBitmap>();
+    let t = st(|s| s.dcs.get(&c.a::<0>()).map_or(0, |d| d.target));
     if t != 0 {
         com::add_ref_obj(t);
     }
-    mem::putp(c.a(1), t);
+    c.out::<1>().put(t);
     0
 }
 
@@ -435,7 +438,8 @@ fn free_device(d: u32) {
 }
 
 fn CreateDevice(c: &mut Ctx) -> u32 {
-    new_device(c.a(0), c.out(2))
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1Factory7::CreateDevice>();
+    new_device(c.a::<0>(), c.out::<2>())
 }
 
 /// A device of a factory of its own (the device's reference alone).
@@ -452,7 +456,8 @@ fn D2D1CreateDevice(c: &mut Ctx) -> u32 {
 }
 
 fn GetFactory(c: &mut Ctx) -> u32 {
-    let mut f = st(|s| s.parents.get(&c.a(0)).copied().unwrap_or(0));
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1Device6::GetFactory>();
+    let mut f = st(|s| s.parents.get(&c.a::<0>()).copied().unwrap_or(0));
     // (a context's factory is its device's)
     if com::is(f, DEVICE) {
         f = st(|s| s.parents.get(&f).copied().unwrap_or(0));
@@ -460,7 +465,7 @@ fn GetFactory(c: &mut Ctx) -> u32 {
     if f != 0 {
         com::add_ref_obj(f);
     }
-    mem::putp(c.a(1), f);
+    c.out::<1>().put(f);
     0
 }
 
@@ -529,15 +534,16 @@ fn zero(_: &mut Ctx) -> u32 {
 /// properties: what lies after `out` was read as DPI, KiriKiri's DrawDeviceD2D then drew its
 /// picture at 2/96 the size, AMBITIOUS MISSION's black screen; winref d2d device_context).
 fn CreateDeviceContext(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1Device6::CreateDeviceContext>();
     let o = com::object(CONTEXT, &context_methods(), 8);
-    let device = c.a(0);
+    let device = c.a::<0>();
     // (a context keeps its device)
     com::add_ref_obj(device);
     st(|s| {
         s.parents.insert(o, device);
         s.dcs.insert(o, Dc { device, ..Default::default() })
     });
-    mem::putp(c.a(2), o);
+    c.out::<2>().put(o);
     0
 }
 
@@ -562,32 +568,34 @@ fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
 }
 
 fn CreateDxgiSurfaceRenderTarget(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1Factory7::CreateDxgiSurfaceRenderTarget>();
     // (this, surface, properties, out): a context of a device of this factory
     let dev_out = mem::heap_alloc(8, true);
-    new_device(c.a(0), crate::api::Out::at(dev_out));
+    new_device(c.a::<0>(), crate::api::Out::at(dev_out));
     let device = mem::rp(dev_out);
     mem::heap_free(dev_out);
     let o = com::object(CONTEXT, &context_methods(), 8);
-    let bmp = new_bitmap(c.a(1));
+    let bmp = new_bitmap(c.a::<1>());
     // (D2D1_RENDER_TARGET_PROPERTIES: dpiX, dpiY after the type and pixel format; 0 is 96)
-    let props = c.a(2);
+    let props = c.a::<2>();
     let dpi = if props != 0 { (rf(props, 3), rf(props, 4)) } else { (0.0, 0.0) };
     let dpi = Some(dpi).filter(|&(x, y)| x > 0.0 && y > 0.0 && (x, y) != (96.0, 96.0));
     st(|s| {
         s.parents.insert(o, device);
         s.dcs.insert(o, Dc { device, dpi, ..Default::default() })
     });
-    set_target(c, o, bmp, true);
-    mem::putp(c.a(3), o);
+    set_target(c.ctx(), o, bmp, true);
+    c.out::<3>().put(o);
     0
 }
 
 fn GetDevice(c: &mut Ctx) -> u32 {
-    let d = st(|s| s.dcs.get(&c.a(0)).map_or(0, |d| d.device));
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1DeviceContext::GetDevice>();
+    let d = st(|s| s.dcs.get(&c.a::<0>()).map_or(0, |d| d.device));
     if d != 0 {
         com::add_ref_obj(d);
     }
-    mem::putp(c.a(1), d);
+    c.out::<1>().put(d);
     0
 }
 
@@ -624,8 +632,9 @@ fn eff(d: &Dc) -> Option<Xf> {
 // ---- resources ----
 
 fn CreateSolidColorBrush(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1RenderTarget::CreateSolidColorBrush>();
     // (this, color, properties, out)
-    let (col, props) = (c.a(1), c.a(2));
+    let (col, props) = (c.a::<1>(), c.a::<2>());
     let color = [rf(col, 0), rf(col, 1), rf(col, 2), rf(col, 3)];
     let opacity = if props != 0 { rf(props, 0) } else { 1.0 };
     let o = com::object(
@@ -635,7 +644,7 @@ fn CreateSolidColorBrush(c: &mut Ctx) -> u32 {
     );
     st(|s| s.brushes.insert(o, Brush { color, opacity, linear: None }));
     com::on_free(o, free_brush);
-    mem::putp(c.a(3), o);
+    c.out::<3>().put(o);
     0
 }
 fn free_brush(o: u32) {
@@ -711,10 +720,12 @@ fn alpha_ignored(pf: u32) -> bool {
 }
 
 fn CreateBitmap(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1RenderTarget::CreateBitmap>();
     // (this, D2D1_SIZE_U by value, data, pitch, properties, out)
-    let (w, h) = c.pt(1);
-    let (w, h, o) = (w.cast_unsigned(), h.cast_unsigned(), if mem::x64() { 2 } else { 3 });
-    let (data, pitch, props, out) = (c.a(o), c.a(o + 1), c.a(o + 2), c.a(o + 3));
+    let (w, h) = c.ctx().pt(1);
+    let (w, h) = (w.cast_unsigned(), h.cast_unsigned());
+    // (D2D1_SIZE_U by value: one argument on x64, two dwords on x86)
+    let (data, pitch, props, out) = (c.a_arch::<2, 3>(), c.a_arch::<3, 4>(), c.a_arch::<4, 5>(), c.out_arch::<5, 6>());
     if w == 0 || h == 0 || w > 16384 || h > 16384 {
         return 0x8007_0057; // E_INVALIDARG
     }
@@ -724,7 +735,7 @@ fn CreateBitmap(c: &mut Ctx) -> u32 {
     } else {
         None
     };
-    mem::putp(out, new_image(w, h, px.as_deref().map(|p| (p, pitch)), alpha_ignored(props)));
+    out.put(new_image(w, h, px.as_deref().map(|p| (p, pitch)), alpha_ignored(props)));
     0
 }
 
@@ -749,15 +760,17 @@ pub fn pixels(data: u32, pitch: u32, w: u32, h: u32) -> Option<Vec<u8>> {
 /// then that onto the swap chain's buffer: an image there took nothing and showed black,
 /// AMBITIOUS MISSION after episode 1.)
 fn CreateBitmap1(c: &mut Ctx) -> u32 {
-    let (w, h) = c.pt(1);
-    let (w, h, o) = (w.cast_unsigned(), h.cast_unsigned(), if mem::x64() { 2 } else { 3 });
-    let (data, pitch, props, out) = (c.a(o), c.a(o + 1), c.a(o + 2), c.a(o + 3));
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1DeviceContext::CreateBitmap_57>();
+    let (w, h) = c.ctx().pt(1);
+    let (w, h) = (w.cast_unsigned(), h.cast_unsigned());
+    // (D2D1_SIZE_U by value: one argument on x64, two dwords on x86)
+    let (data, pitch, props, out) = (c.a_arch::<2, 3>(), c.a_arch::<3, 4>(), c.a_arch::<4, 5>(), c.out_arch::<5, 6>());
     // (D2D1_BITMAP_PROPERTIES1: pixel format, dpi x, dpi y, options, color context)
     let options = if props != 0 { r32(props + 16) } else { 0 };
     if options & 1 == 0 || w == 0 || h == 0 || w > 16384 || h > 16384 {
-        return CreateBitmap(c);
+        return CreateBitmap(c.ctx());
     }
-    let Some(tex) = gpu2d::target_texture(w, h) else { return CreateBitmap(c) };
+    let Some(tex) = gpu2d::target_texture(w, h) else { return CreateBitmap(c.ctx()) };
     if data != 0 {
         if let Some(gpu) = gpu2d::texture_gpu(tex) {
             let Some(px) = pixels(data, pitch, w, h) else { return 0x8007_0057 };
@@ -773,18 +786,19 @@ fn CreateBitmap1(c: &mut Ctx) -> u32 {
             s.opaque.insert(bmp);
         }
     });
-    mem::putp(out, bmp);
+    out.put(bmp);
     0
 }
 
 fn CreateBitmapFromWicBitmap(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1RenderTarget::CreateBitmapFromWicBitmap>();
     // (this, source, properties or NULL, out)
-    let (src, props, out) = (c.a(1), c.a(2), c.a(3));
-    let Some((w, h, px)) = crate::wic::pbgra(c, src) else {
-        mem::putp(out, 0);
+    let (src, props, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    let Some((w, h, px)) = crate::wic::pbgra(c.ctx(), src) else {
+        out.put(0);
         return 0x8000_4005; // E_FAIL
     };
-    mem::putp(out, new_image(w, h, Some((&px, w * 4)), alpha_ignored(props)));
+    out.put(new_image(w, h, Some((&px, w * 4)), alpha_ignored(props)));
     0
 }
 
@@ -939,22 +953,23 @@ fn DrawBitmap(c: &mut Ctx) -> u32 {
 }
 
 fn CreateBitmapFromDxgiSurface(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1DeviceContext::CreateBitmapFromDxgiSurface>();
     // (this, surface, properties, out)
-    if gpu2d::size(c.a(1)).is_none() {
-        eprintln!("sake: d2d CreateBitmapFromDxgiSurface {:#x}: not a texture", c.a(1));
+    if gpu2d::size(c.a::<1>()).is_none() {
+        eprintln!("sake: d2d CreateBitmapFromDxgiSurface {:#x}: not a texture", c.a::<1>());
     }
-    let bmp = new_bitmap(c.a(1));
-    if alpha_ignored(c.a(2)) {
+    let bmp = new_bitmap(c.a::<1>());
+    if alpha_ignored(c.a::<2>()) {
         st(|s| s.opaque.insert(bmp));
     }
     // (always: a game's picture goes through these, in every run's log; the first 16)
     static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     if N.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 16 {
         let (w, h) = bitmap_size(bmp);
-        let opts = if c.a(2) != 0 { mem::r32(c.a(2) + 16) } else { 0 };
-        eprintln!("sake: d2d bitmap {bmp:#x} of surface {:#x}: {w}x{h} options {opts:#x}", c.a(1));
+        let opts = if c.a::<2>() != 0 { mem::r32(c.a::<2>() + 16) } else { 0 };
+        eprintln!("sake: d2d bitmap {bmp:#x} of surface {:#x}: {w}x{h} options {opts:#x}", c.a::<1>());
     }
-    mem::putp(c.a(3), bmp);
+    c.out::<3>().put(bmp);
     0
 }
 /// A bitmap's size in pixels (either kind).
@@ -1032,11 +1047,12 @@ fn DcRelease(c: &mut Ctx) -> u32 {
     n
 }
 fn GetTarget(c: &mut Ctx) -> u32 {
-    let t = st(|s| s.dcs.get(&c.a(0)).map_or(0, |d| d.target));
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1DeviceContext::GetTarget>();
+    let t = st(|s| s.dcs.get(&c.a::<0>()).map_or(0, |d| d.target));
     if t != 0 {
         com::add_ref_obj(t);
     }
-    mem::putp(c.a(1), t);
+    c.out::<1>().put(t);
     0
 }
 fn GetSize(c: &mut Ctx) -> u32 {
@@ -1223,8 +1239,9 @@ fn brush(dc: u32, b: u32) -> Paint {
 }
 
 fn CreateGradientStopCollection(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1RenderTarget::CreateGradientStopCollection>();
     // (this, stops, count, gamma, extend mode, out)
-    let (p, n) = (c.a(1), c.a(2));
+    let (p, n) = (c.a::<1>(), c.a::<2>());
     // (as many as the guest's memory holds: the count is the guest's)
     let n = n.min(mem::accessible(p, n.saturating_mul(20), false, false) / 20);
     let stops: Vec<(f32, [f32; 4])> = (0..n).map(|i| {
@@ -1236,7 +1253,7 @@ fn CreateGradientStopCollection(c: &mut Ctx) -> u32 {
     com::on_free(o, |o| {
         st(|s| s.stops.remove(&o));
     });
-    mem::putp(c.a(5), o);
+    c.out::<5>().put(o);
     0
 }
 fn StopCount(c: &mut Ctx) -> u32 {
@@ -1244,15 +1261,16 @@ fn StopCount(c: &mut Ctx) -> u32 {
 }
 
 fn CreateLinearGradientBrush(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1RenderTarget::CreateLinearGradientBrush>();
     // (this, linear properties {start, end}, brush properties, stops, out)
-    let (lp, bp, sc) = (c.a(1), c.a(2), c.a(3));
+    let (lp, bp, sc) = (c.a::<1>(), c.a::<2>(), c.a::<3>());
     let opacity = if bp != 0 { rf(bp, 0) } else { 1.0 };
     let stops = st(|s| s.stops.get(&sc).cloned()).unwrap_or_default();
     let o = com::object(com::iface!(ID2D1LinearGradientBrush), &com::impls!(ID2D1LinearGradientBrush { SetOpacity: SetOpacity, GetOpacity: GetOpacity }), 8);
     let linear = Some(([rf(lp, 0), rf(lp, 1)], [rf(lp, 2), rf(lp, 3)], stops));
     st(|s| s.brushes.insert(o, Brush { color: [0.0; 4], opacity, linear }));
     com::on_free(o, free_brush);
-    mem::putp(c.a(4), o);
+    c.out::<4>().put(o);
     0
 }
 
@@ -1568,40 +1586,45 @@ fn free_geom(o: u32) {
     }
 }
 fn CreatePathGeometry(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1Factory7::CreatePathGeometry>();
     let o = com::object(com::iface!(ID2D1PathGeometry1), &geom_methods(), 16);
-    w32(o + mem::ps(), c.a(0));
-    com::add_ref_obj(c.a(0));
+    w32(o + mem::ps(), c.a::<0>());
+    com::add_ref_obj(c.a::<0>());
     com::on_free(o, free_geom);
     geoms(|m| m.insert(o, Geom::Path { glyphs: Vec::new(), figures: false }));
-    mem::putp(c.a(1), o);
+    c.out::<1>().put(o);
     0
 }
 fn GetFactoryOfGeom(c: &mut Ctx) -> u32 {
-    let f = r32(c.a(0) + mem::ps());
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1PathGeometry::GetFactory>();
+    let f = r32(c.a::<0>() + mem::ps());
     com::add_ref_obj(f);
-    mem::putp(c.a(1), f);
+    c.out::<1>().put(f);
     0
 }
 fn CreateTransformedGeometry(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1Factory7::CreateTransformedGeometry>();
     // (this, source, matrix *, out)
-    let (src, m, out) = (c.a(1), c.a(2), c.a(3));
+    let (src, m, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
     let xf = [rf(m, 0), rf(m, 1), rf(m, 2), rf(m, 3), rf(m, 4), rf(m, 5)];
     let o = com::object(com::iface!(ID2D1TransformedGeometry), &com::impls!(ID2D1TransformedGeometry { GetFactory: GetFactoryOfGeom }), 16);
-    w32(o + mem::ps(), c.a(0));
-    com::add_ref_obj(c.a(0));
+    w32(o + mem::ps(), c.a::<0>());
+    com::add_ref_obj(c.a::<0>());
     com::add_ref_obj(src);
     com::on_free(o, free_geom);
     geoms(|g| g.insert(o, Geom::Xformed { src, m: xf }));
-    mem::putp(out, o);
+    out.put(o);
     0
 }
 fn CreateStrokeStyle(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1Factory7::CreateStrokeStyle>();
     // (this, properties, dashes, dash count, out): drawn as a round pen whatever it says
-    mem::putp(c.a(4), com::object(com::iface!(ID2D1StrokeStyle1), &[], 8));
+    c.out::<4>().put(com::object(com::iface!(ID2D1StrokeStyle1), &[], 8));
     0
 }
 /// Open(this, out sink): the sink records into the geometry
 fn GeomOpen(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::ID2D1PathGeometry::Open>();
     let m = com::impls!(ID2D1GeometrySink {
         SetFillMode: ok,
         SetSegmentFlags: ok,
@@ -1617,13 +1640,13 @@ fn GeomOpen(c: &mut Ctx) -> u32 {
         AddArc: SinkFigure,
     });
     let o = com::object(com::iface!(ID2D1GeometrySink), &m, 16);
-    w32(o + mem::ps(), c.a(0));
-    com::add_ref_obj(c.a(0));
+    w32(o + mem::ps(), c.a::<0>());
+    com::add_ref_obj(c.a::<0>());
     // (the sink keeps its geometry)
     com::on_free(o, |o| {
         com::release_obj(r32(o + mem::ps()));
     });
-    mem::putp(c.a(1), o);
+    c.out::<1>().put(o);
     0
 }
 fn SinkFigure(c: &mut Ctx) -> u32 {

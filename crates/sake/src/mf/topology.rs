@@ -590,18 +590,19 @@ fn MFCreateAudioRendererActivate(c: &mut Ctx) -> u32 {
 // --- collections ----------------------------------------------------------------------------
 
 fn co_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFCollection {5bc8a76b-869a-46a3-9b03-fa218a66aebe}
     if is_unknown(&g) || is(&g, 0x5bc8_a76b, 0x869a, 0x46a3) {
         coll(this, |s| s.0 += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn co_add_ref(c: &mut Ctx) -> u32 {
@@ -634,20 +635,21 @@ fn co_count(c: &mut Ctx) -> u32 {
     0
 }
 /// GetElement(DWORD, IUnknown **) / RemoveElement(DWORD, IUnknown **)
-fn co_get(c: &mut Ctx, remove: bool) -> u32 {
-    let (i, out) = (us(c.a(1)), c.a(2));
-    if out == 0 {
+/// GetElement / RemoveElement(index, IUnknown **): `out` the element
+fn co_get(c: &mut Ctx, out: crate::api::Out, remove: bool) -> u32 {
+    let i = us(c.a(1));
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let e = coll(c.a(0), |s| if i < s.1.len() { Some(if remove { s.1.remove(i) } else { s.1[i] }) } else { None }).flatten();
     let Some(e) = e else {
-        putp(out, 0);
+        out.put(0);
         return Hr::InvalidArg.code();
     };
     if !remove {
         add_ref(c, e);
     }
-    putp(out, e);
+    out.put(e);
     if e == 0 { Hr::Unexpected.code() } else { 0 }
 }
 fn co_add(c: &mut Ctx) -> u32 {
@@ -685,9 +687,9 @@ pub fn new_collection(items: Vec<u32>) -> u32 {
                 (co_add_ref, 4),
                 (co_release, 4),
                 (co_count, 8),
-                (|c: &mut Ctx| co_get(c, false), 12),
+                (|c: &mut Ctx| { let c = &mut c.args::<crate::api::outs::iface::IMFCollection::GetElement>(); let out = c.out::<2>(); co_get(c.ctx(), out, false) }, 12),
                 (co_add, 8),
-                (|c: &mut Ctx| co_get(c, true), 12),
+                (|c: &mut Ctx| { let c = &mut c.args::<crate::api::outs::iface::IMFCollection::RemoveElement>(); let out = c.out::<2>(); co_get(c.ctx(), out, true) }, 12),
                 (co_insert, 12),
                 (co_clear, 4),
             ],

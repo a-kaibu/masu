@@ -72,12 +72,13 @@ pub fn length(b: u32) -> Option<u32> {
 }
 
 fn qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let Some(b) = base(this) else { return Hr::InvalidArg.code() };
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFMediaBuffer {045fa593-...}, IMFDXGIBuffer {e7174cfa-...}, IMF2DBuffer {7dc9d5f9-...}
     let slot = if is_unknown(&g) || is(&g, 0x045f_a593, 0x8799, 0x42b8) {
         0
@@ -86,11 +87,11 @@ fn qi(c: &mut Ctx) -> u32 {
     } else if is(&g, 0x7dc9_d5f9, 0x9ed9, 0x44ec) {
         2
     } else {
-        putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     };
     dx(b, |d| d.refs += 1);
-    putp(out, b + slot * ps());
+    out.put(b + slot * ps());
     0
 }
 fn add_ref_(c: &mut Ctx) -> u32 {
@@ -295,12 +296,13 @@ fn mb_get_max(c: &mut Ctx) -> u32 {
 
 /// GetResource(REFIID, void **): the texture, as the interface asked for
 fn db_resource(c: &mut Ctx) -> u32 {
-    let (iid, out) = (c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFDXGIBuffer::GetResource>();
+    let (iid, out) = (c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let Some(tex) = with(c.a(0), |d| d.tex) else { return Hr::InvalidArg.code() };
-    com(c, tex, 0, &[iid, out])
+    let Some(tex) = with(c.a::<0>(), |d| d.tex) else { return Hr::InvalidArg.code() };
+    com(c.ctx(), tex, 0, &crate::api::words![iid, out])
 }
 /// GetSubresourceIndex(UINT *)
 fn db_sub(c: &mut Ctx) -> u32 {
@@ -312,16 +314,17 @@ fn db_sub(c: &mut Ctx) -> u32 {
 }
 /// GetUnknown(REFGUID, REFIID, void **): the object set with that key, as `riid`
 fn db_get_unknown(c: &mut Ctx) -> u32 {
-    let (key, iid, out) = (c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFDXGIBuffer::GetUnknown>();
+    let (key, iid, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let k = guid_at(key);
-    let Some(u) = with(c.a(0), |d| d.unks.iter().find(|x| x.0 == k).map(|x| x.1)).flatten() else {
-        putp(out, 0);
+    let Some(u) = with(c.a::<0>(), |d| d.unks.iter().find(|x| x.0 == k).map(|x| x.1)).flatten() else {
+        out.put(0);
         return Hr::NotFound.code();
     };
-    com(c, u, 0, &[iid, out])
+    com(c.ctx(), u, 0, &crate::api::words![iid, out])
 }
 /// SetUnknown(REFGUID, IUnknown *): an object kept under a key (NULL: forget it)
 fn db_set_unknown(c: &mut Ctx) -> u32 {

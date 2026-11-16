@@ -404,19 +404,20 @@ pub fn source_of(b: u32) -> Option<(Arc<Data>, Arc<Media>)> {
 }
 
 fn ms_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFMediaSource {279a808d-aec7-40c8-9c6b-a6b492c78a66}, IMFMediaEventGenerator
     // {2cd0bd52-bcd5-4b89-b62c-eadc0c031e7d}
     if is_unknown(&g) || is(&g, 0x279a_808d, 0xaec7, 0x40c8) || is(&g, 0x2cd0_bd52, 0xbcd5, 0x4b89) {
         source(this, |s| s.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn ms_add_ref(c: &mut Ctx) -> u32 {
@@ -458,7 +459,8 @@ fn ms_live(c: &Ctx) -> bool {
 /// GetEvent / BeginGetEvent / EndGetEvent / QueueEvent: no events (nothing runs a source of
 /// ours but a reader)
 fn ms_event(c: &mut Ctx) -> u32 {
-    if !ms_live(c) {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaSource::GetEvent>();
+    if !ms_live(c.ctx()) {
         return Hr::Shutdown.code();
     }
     Hr::NoEventsAvailable.code()
@@ -476,12 +478,13 @@ fn ms_characteristics(c: &mut Ctx) -> u32 {
     0
 }
 fn ms_pd(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaSource::CreatePresentationDescriptor>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let Some((_, m)) = source_of(c.a(0)) else { return Hr::Shutdown.code() };
-    putp(out, new_pd(&m, None));
+    let Some((_, m)) = source_of(c.a::<0>()) else { return Hr::Shutdown.code() };
+    out.put(new_pd(&m, None));
     0
 }
 fn ms_start(c: &mut Ctx) -> u32 {
@@ -661,18 +664,19 @@ fn new_sd(m: &Arc<Media>, i: usize) -> u32 {
 // IMFMediaTypeHandler: a block (vtable, then the current type), the stream by SIDES
 
 fn mh_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFMediaTypeHandler {e93dcf6c-4b07-4e1e-8123-aa16ed6eadf5}
     if is_unknown(&g) || is(&g, 0xe93d_cf6c, 0x4b07, 0x4e1e) {
-        add_ref(c, this);
-        putp(out, this);
+        add_ref(c.ctx(), this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 static HANDLER_REFS: Mutex<Option<HashMap<u32, u32>>> = Mutex::new(None);
@@ -705,11 +709,12 @@ fn mh_release(c: &mut Ctx) -> u32 {
 /// IsMediaTypeSupported(IMFMediaType *, IMFMediaType **closest): the native type's major type
 /// and subtype
 fn mh_supported(c: &mut Ctx) -> u32 {
-    let (t, closest) = (c.a(1), c.a(2));
-    if closest != 0 {
-        putp(closest, 0);
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaTypeHandler::IsMediaTypeSupported>();
+    let (t, closest) = (c.a::<1>(), c.out::<2>());
+    if !closest.is_null() {
+        closest.put(0);
     }
-    let (Some(s), Some(want)) = (side(c.a(0)), store_of(t)) else { return Hr::Pointer.code() };
+    let (Some(s), Some(want)) = (side(c.a::<0>()), store_of(t)) else { return Hr::Pointer.code() };
     let native = native_of(&s.media.tracks[s.stream]);
     if reader::equal_flags(&native, &want) & 3 == 3 {
         0
@@ -725,15 +730,16 @@ fn mh_count(c: &mut Ctx) -> u32 {
     0
 }
 fn mh_by_index(c: &mut Ctx) -> u32 {
-    let (i, out) = (c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaTypeHandler::GetMediaTypeByIndex>();
+    let (i, out) = (c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if i != 0 {
         return Hr::NoMoreTypes.code();
     }
-    let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
-    putp(out, reader::new_type(native_of(&s.media.tracks[s.stream])));
+    let Some(s) = side(c.a::<0>()) else { return Hr::InvalidArg.code() };
+    out.put(reader::new_type(native_of(&s.media.tracks[s.stream])));
     0
 }
 fn mh_set_current(c: &mut Ctx) -> u32 {
@@ -751,21 +757,22 @@ fn mh_set_current(c: &mut Ctx) -> u32 {
     0
 }
 fn mh_current(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaTypeHandler::GetCurrentMediaType>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let cur = rp(c.a(0) + ps());
+    let cur = rp(c.a::<0>() + ps());
     if cur != 0 {
-        add_ref(c, cur);
-        putp(out, cur);
+        add_ref(c.ctx(), cur);
+        out.put(cur);
         return 0;
     }
-    mh_by_index_0(c, out)
+    mh_by_index_0(c.ctx(), out)
 }
-fn mh_by_index_0(c: &mut Ctx, out: u32) -> u32 {
+fn mh_by_index_0(c: &mut Ctx, out: crate::api::Out) -> u32 {
     let Some(s) = side(c.a(0)) else { return Hr::InvalidArg.code() };
-    putp(out, reader::new_type(native_of(&s.media.tracks[s.stream])));
+    out.put(reader::new_type(native_of(&s.media.tracks[s.stream])));
     0
 }
 fn mh_major(c: &mut Ctx) -> u32 {
@@ -834,51 +841,53 @@ fn from_stream(c: &mut Ctx, bs: u32, flags: u32) -> Result<(u32, u32), u32> {
     let d = Data::guest(c, bs).ok_or(Hr::Fail.code())?;
     Ok((0, resolve(c, d)?))
 }
-fn put_object(r: Result<(u32, u32), u32>, ty: u32, out: u32) -> u32 {
+fn put_object(r: Result<(u32, u32), u32>, ty: u32, out: crate::api::Out) -> u32 {
     match r {
         Ok((t, o)) => {
             if ty != 0 {
                 w32(ty, t);
             }
-            putp(out, o);
+            out.put(o);
             0
         }
         Err(e) => {
-            putp(out, 0);
+            out.put(0);
             e
         }
     }
 }
 /// CreateObjectFromURL(LPCWSTR, DWORD flags, IPropertyStore *, MF_OBJECT_TYPE *, IUnknown **)
 fn sv_from_url(c: &mut Ctx) -> u32 {
-    let (url, flags, ty, out) = (c.a(1), c.a(2), c.a(4), c.a(5));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceResolver::CreateObjectFromURL>();
+    let (url, flags, ty, out) = (c.a::<1>(), c.a::<2>(), c.a::<4>(), c.out::<5>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let r = from_url(c, url, flags);
+    let r = from_url(c.ctx(), url, flags);
     put_object(r, ty, out)
 }
 /// CreateObjectFromByteStream(IMFByteStream *, LPCWSTR, DWORD flags, IPropertyStore *,
 /// MF_OBJECT_TYPE *, IUnknown **)
 fn sv_from_stream(c: &mut Ctx) -> u32 {
-    let (bs, flags, ty, out) = (c.a(1), c.a(3), c.a(5), c.a(6));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceResolver::CreateObjectFromByteStream>();
+    let (bs, flags, ty, out) = (c.a::<1>(), c.a::<3>(), c.a::<5>(), c.out::<6>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let r = from_stream(c, bs, flags);
+    let r = from_stream(c.ctx(), bs, flags);
     put_object(r, ty, out)
 }
 /// The object and type a Begin* made, by its result
 static MADE: Mutex<Option<HashMap<u32, (u32, u32)>>> = Mutex::new(None);
-fn begin(c: &mut Ctx, r: Result<(u32, u32), u32>, cancel: u32, cb: u32, state: u32) -> u32 {
+fn begin(c: &mut Ctx, r: Result<(u32, u32), u32>, cancel: crate::api::Out, cb: u32, state: u32) -> u32 {
     if cb == 0 {
         if let Ok((_, o)) = r {
             release(c, o);
         }
         return Hr::InvalidArg.code();
     }
-    if cancel != 0 {
-        putp(cancel, 0);
+    if !cancel.is_null() {
+        cancel.put(0);
     }
     let res = plat::new_result(c, 0, cb, state);
     match r {
@@ -894,21 +903,24 @@ fn begin(c: &mut Ctx, r: Result<(u32, u32), u32>, cancel: u32, cb: u32, state: u
 }
 /// BeginCreateObjectFromURL(LPCWSTR, DWORD, IPropertyStore *, IUnknown **cancel, callback, state)
 fn sv_begin_url(c: &mut Ctx) -> u32 {
-    let (url, flags, cancel, cb, st) = (c.a(1), c.a(2), c.a(4), c.a(5), c.a(6));
-    let r = from_url(c, url, flags);
-    begin(c, r, cancel, cb, st)
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceResolver::BeginCreateObjectFromURL>();
+    let (url, flags, cancel, cb, st) = (c.a::<1>(), c.a::<2>(), c.out::<4>(), c.a::<5>(), c.a::<6>());
+    let r = from_url(c.ctx(), url, flags);
+    begin(c.ctx(), r, cancel, cb, st)
 }
 /// BeginCreateObjectFromByteStream(IMFByteStream *, LPCWSTR, DWORD, IPropertyStore *,
 /// IUnknown **cancel, callback, state)
 fn sv_begin_stream(c: &mut Ctx) -> u32 {
-    let (bs, flags, cancel, cb, st) = (c.a(1), c.a(3), c.a(5), c.a(6), c.a(7));
-    let r = from_stream(c, bs, flags);
-    begin(c, r, cancel, cb, st)
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceResolver::BeginCreateObjectFromByteStream>();
+    let (bs, flags, cancel, cb, st) = (c.a::<1>(), c.a::<3>(), c.out::<5>(), c.a::<6>(), c.a::<7>());
+    let r = from_stream(c.ctx(), bs, flags);
+    begin(c.ctx(), r, cancel, cb, st)
 }
 /// End*(IMFAsyncResult *, MF_OBJECT_TYPE *, IUnknown **)
 fn sv_end(c: &mut Ctx) -> u32 {
-    let (res, ty, out) = (c.a(1), c.a(2), c.a(3));
-    if res == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceResolver::EndCreateObjectFromURL>();
+    let (res, ty, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if res == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
     let made = MADE.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&res);
@@ -920,17 +932,18 @@ fn sv_end(c: &mut Ctx) -> u32 {
 }
 
 fn resolver_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFSourceResolver {fbe5a32d-a497-4b61-bb85-97b1a848a6e3}
     if is_unknown(&g) || is(&g, 0xfbe5_a32d, 0xa497, 0x4b61) {
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 

@@ -15,7 +15,7 @@
 //! 8 on x64: a pointer, handle, interface, SIZE_T, SRWLOCK...): "dll name i,j... k,l..." (x64
 //! argument indexes from 0, then x86 stack dwords, which a GUID or a double by value moves), sorted.
 //! - crates/sake/src/com_outptrs.txt: the same per method of the interfaces sake names, by vtable
-//!   slot ("interface slot i,j... k,l...", `this` 0), and "interface # d,d..." each method's x86
+//!   slot ("interface slot method i,j... k,l...", `this` 0), and "interface # d,d..." each method's x86
 //!   stack dwords (with `this`), its vtable as the metadata has it.
 //! sake writes those with mem::putp/wp; put32/w32 leaves the upper half on x64
 //! (crates/sake/src/outptr_audit.rs).
@@ -360,7 +360,7 @@ fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
     named.extend(D3D11.iter().map(|(_, n)| n.to_string()));
     // (each method: its arguments (type, out), and whether a structure comes back through a
     // hidden pointer, which is argument 1 after `this` on both)
-    fn walk<'a>(ix: &'a Index, t: TypeDef<'a>, out: &mut Vec<(Vec<(Type, bool)>, bool)>) {
+    fn walk<'a>(ix: &'a Index, t: TypeDef<'a>, out: &mut Vec<(Vec<(Type, bool)>, bool, String)>) {
         if let Some(b) = base(ix, t) {
             walk(ix, b, out);
         }
@@ -369,10 +369,10 @@ fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
             let rows = m.params_by_sequence(sig.types.len()).ok();
             let v = sig.types.iter().enumerate().map(|(i, ty)| (ty.clone(), rows.as_ref().is_some_and(|r| r.params()[i].is_some_and(|p| p.flags().contains(ParamAttributes::Out))))).collect();
             let hidden = matches!(&sig.return_type, r @ Type::ValueName(_) if !scalar(ix, r));
-            out.push((v, hidden));
+            out.push((v, hidden, m.name().to_string()));
         }
     }
-    let mut o = BTreeMap::<(String, usize), (Vec<u32>, Vec<u32>)>::new();
+    let mut o = BTreeMap::<(String, usize), (String, Vec<u32>, Vec<u32>)>::new();
     let mut counts = BTreeMap::<String, String>::new();
     let ifaces64: HashMap<String, TypeDef> = i64_.types().filter(|t| t.category() == TypeCategory::Interface).map(|t| (t.name().to_string(), t)).collect();
     for t in i32_.types().filter(|t| t.category() == TypeCategory::Interface && named.contains(t.name())) {
@@ -388,7 +388,7 @@ fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
         let dw: Vec<String> = vtable(i32_, &l32, t).iter().map(|v| v.1.to_string()).collect();
         assert_eq!(dw.len(), m32.len(), "{}", t.name());
         counts.insert(t.name().to_string(), dw.join(","));
-        for (k, ((a32, h), (a64, _))) in m32.iter().zip(&m64).enumerate() {
+        for (k, ((a32, h, name), (a64, _, _))) in m32.iter().zip(&m64).enumerate() {
             if a32.len() != a64.len() {
                 continue;
             }
@@ -396,9 +396,9 @@ fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
             let mut slot = first;
             for (i, ((t32, out), (t64, _))) in a32.iter().zip(a64).enumerate() {
                 if *out && l64.pointee(t64) == 8 && l32.pointee(t32) == 4 {
-                    let e = o.entry((t.name().to_string(), k)).or_default();
-                    e.0.push(first + i as u32);
-                    e.1.push(slot);
+                    let e = o.entry((t.name().to_string(), k)).or_insert_with(|| (name.clone(), vec![], vec![]));
+                    e.1.push(first + i as u32);
+                    e.2.push(slot);
                 }
                 slot += l32.of(t32, None).0.max(1).div_ceil(4);
             }
@@ -408,9 +408,9 @@ fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
     for (n, c) in &counts {
         s += &format!("{n} # {c}\n");
     }
-    for ((n, k), (a, b)) in o {
+    for ((n, k), (m, a, b)) in o {
         let j = |v: &[u32]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
-        s += &format!("{n} {k} {} {}\n", j(&a), j(&b));
+        s += &format!("{n} {k} {m} {} {}\n", j(&a), j(&b));
     }
     s
 }

@@ -123,16 +123,17 @@ pub(crate) fn new_object() -> u32 {
 }
 
 fn qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     if iid == 0 || !answers(&read16(iid)) {
-        mem::putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     }
-    add_ref(c);
-    mem::putp(out, this);
+    add_ref(c.ctx());
+    out.put(this);
     Hr::Ok.code()
 }
 fn add_ref(c: &mut Ctx) -> u32 {
@@ -152,14 +153,16 @@ fn enum_none(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 { Hr::Pointer } else { Hr::False }.code()
 }
 fn create_port(c: &mut Ctx) -> u32 {
-    if c.a(3) != 0 {
-        mem::putp(c.a(3), 0);
+    let c = &mut c.args::<crate::api::outs::iface::IDirectMusic8::CreatePort>();
+    if !c.out::<3>().is_null() {
+        c.out::<3>().put(0);
     }
     Hr::NotFound.code()
 }
 fn get_clock(c: &mut Ctx) -> u32 {
-    if c.a(2) != 0 {
-        mem::putp(c.a(2), 0);
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    if !c.out::<2>().is_null() {
+        c.out::<2>().put(0);
     }
     Hr::NotImpl.code()
 }

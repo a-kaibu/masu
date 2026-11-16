@@ -1269,9 +1269,13 @@ mod tests {
     fn writers_and_snapshots_at_once() {
         let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let stop = AtomicBool::new(false);
+        // (lines each writer wrote: the snapshots go on until every one has written some; CI
+        // 2026-11-16 took its 200 before a writer ran, and the ring had no writer line)
+        let wrote = [const { std::sync::atomic::AtomicU32::new(0) }; 4];
         std::thread::scope(|s| {
             for k in 0..4u32 {
                 let stop = &stop;
+                let wrote = &wrote;
                 s.spawn(move || {
                     let mut cpu = Box::new(Cpu { eip: 0x0060_0000 + k, ..Cpu::default() });
                     register(&cpu);
@@ -1285,14 +1289,19 @@ mod tests {
                         event(format_args!("writer {k} line {i}"));
                         output(2, format!("writer {k} out {i}\n").as_bytes());
                         i = i.wrapping_add(1);
+                        if let Some(w) = wrote.get(kome::num::us(k)) {
+                            w.store(i, Relaxed);
+                        }
                     }
                     unregister(&*cpu);
                 });
             }
-            for _ in 0..200 {
+            let mut n = 0u32;
+            while n < 200 || wrote.iter().any(|w| w.load(Relaxed) < 16) {
                 let t = snapshot_text();
                 assert!(t.is_empty() || t.contains("threads now: "), "{t}");
                 let _ = eip_line();
+                n = n.saturating_add(1);
             }
             stop.store(true, Relaxed);
         });

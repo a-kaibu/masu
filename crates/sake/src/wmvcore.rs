@@ -564,8 +564,9 @@ pub fn new_sync_reader() -> u32 {
 }
 
 fn qi(c: &mut Ctx) -> u32 {
-    let (this, riid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, riid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let Some(b) = block(this) else { return Hr::NoInterface.code() };
@@ -587,11 +588,11 @@ fn qi(c: &mut Ctx) -> u32 {
         if crate::env_on!("SAKE_TRACE_COM") {
             eprintln!("sake: wmvcore reader QueryInterface {:02x?}: no", want);
         }
-        putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     };
     table(|m| m.get_mut(&b).map(|o| o.refs += 1));
-    putp(out, b + ps() * w);
+    out.put(b + ps() * w);
     0
 }
 
@@ -820,9 +821,10 @@ fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u
 /// GetNextSample(WORD stream, INSSBuffer **, QWORD *time, QWORD *duration, DWORD *flags,
 /// DWORD *output, WORD *stream)
 fn sr_get_next_sample(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let want = lo16(c.a(1));
-    let (pbuf, ptime, pdur, pflags, pout, pnum) = (c.out(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
+    let c = &mut c.args::<crate::api::outs::iface::IWMSyncReader2::GetNextSample>();
+    let Some(rr) = reader(c.a::<0>()) else { return Hr::Unexpected.code() };
+    let want = lo16(c.a::<1>());
+    let (pbuf, ptime, pdur, pflags, pout, pnum) = (c.out::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.a::<7>());
     if pbuf.is_null() || ptime == 0 || pdur == 0 || pflags == 0 {
         return Hr::Pointer.code();
     }
@@ -841,7 +843,7 @@ fn sr_get_next_sample(c: &mut Ctx) -> u32 {
             _ => {}
         }
     }
-    let got = with_ctx(c, || next_sample(r, lo8(want)));
+    let got = with_ctx(c.ctx(), || next_sample(r, lo8(want)));
     let Some((k, time, dur, data, key)) = got else {
         return Hr::NoMoreSamples.code();
     };
@@ -859,7 +861,7 @@ fn sr_get_next_sample(c: &mut Ctx) -> u32 {
     };
     let stream = o.stream;
     drop(g);
-    let hr = hand_out(c, alloc, &data, time, dur, flags, pbuf);
+    let hr = hand_out(c.ctx(), alloc, &data, time, dur, flags, pbuf);
     if hr != 0 {
         return hr;
     }
@@ -1043,8 +1045,9 @@ fn sr_get_output_count(c: &mut Ctx) -> u32 {
 
 /// GetOutputProps(DWORD output, IWMOutputMediaProps **): a copy of its type
 fn sr_get_output_props(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (k, out) = (us(c.a(1)), c.out(2));
+    let c = &mut c.args::<crate::api::outs::iface::IWMSyncReader2::GetOutputProps>();
+    let Some(rr) = reader(c.a::<0>()) else { return Hr::Unexpected.code() };
+    let (k, out) = (us(c.a::<1>()), c.out::<2>());
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -1125,8 +1128,9 @@ fn sr_get_output_format_count(c: &mut Ctx) -> u32 {
 }
 
 fn sr_get_output_format(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (k, i, out) = (us(c.a(1)), us(c.a(2)), c.out(3));
+    let c = &mut c.args::<crate::api::outs::iface::IWMReader::GetOutputFormat>();
+    let Some(rr) = reader(c.a::<0>()) else { return Hr::Unexpected.code() };
+    let (k, i, out) = (us(c.a::<1>()), us(c.a::<2>()), c.out::<3>());
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -1235,13 +1239,15 @@ fn sr_set_allocate_for_output(c: &mut Ctx) -> u32 {
     set_alloc(c, false)
 }
 fn sr_get_allocate_for_output(c: &mut Ctx) -> u32 {
-    get_alloc(c, false)
+    let c = &mut c.args::<crate::api::outs::iface::IWMSyncReader2::GetAllocateForOutput>();
+    get_alloc(c.ctx(), false)
 }
 fn sr_set_allocate_for_stream(c: &mut Ctx) -> u32 {
     set_alloc(c, true)
 }
 fn sr_get_allocate_for_stream(c: &mut Ctx) -> u32 {
-    get_alloc(c, true)
+    let c = &mut c.args::<crate::api::outs::iface::IWMSyncReader2::GetAllocateForStream>();
+    get_alloc(c.ctx(), true)
 }
 
 // ---- IWMProfile
@@ -1272,18 +1278,20 @@ fn pr_get_name(c: &mut Ctx) -> u32 {
 /// whole (it is pointer-sized: the table had it as a count, w32, and it took 12 bytes from slot
 /// 30 on, against the metadata's)
 fn pr_no_prioritization(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IWMProfile3::GetStreamPrioritization>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    crate::mem::putp(c.a(1), 0);
+    c.out::<1>().put(0);
     0
 }
 
 fn pr_zero_count(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    if c.a::<1>() == 0 {
         return Hr::Pointer.code();
     }
-    w32(c.a(1), 0);
+    w32(c.a::<1>(), 0);
     0
 }
 
@@ -1299,8 +1307,9 @@ fn pr_get_stream_count(c: &mut Ctx) -> u32 {
 }
 
 fn pr_get_stream(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (i, out) = (us(c.a(1)), c.out(2));
+    let c = &mut c.args::<crate::api::outs::iface::IWMProfile3::GetStream>();
+    let Some(rr) = reader(c.a::<0>()) else { return Hr::Unexpected.code() };
+    let (i, out) = (us(c.a::<1>()), c.out::<2>());
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -1311,8 +1320,9 @@ fn pr_get_stream(c: &mut Ctx) -> u32 {
 }
 
 fn pr_get_stream_by_number(c: &mut Ctx) -> u32 {
-    let Some(rr) = reader(c.a(0)) else { return Hr::Unexpected.code() };
-    let (n, out) = (lo8(c.a(1)), c.out(2));
+    let c = &mut c.args::<crate::api::outs::iface::IWMProfile3::GetStreamByNumber>();
+    let Some(rr) = reader(c.a::<0>()) else { return Hr::Unexpected.code() };
+    let (n, out) = (lo8(c.a::<1>()), c.out::<2>());
     if out.is_null() {
         return Hr::Pointer.code();
     }
@@ -1522,8 +1532,9 @@ fn props_type(p: u32) -> Option<MediaType> {
 }
 
 fn sc_qi(c: &mut Ctx) -> u32 {
-    let (this, riid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, riid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let Some(b) = props_block(this) else { return Hr::NoInterface.code() };
@@ -1541,11 +1552,11 @@ fn sc_qi(c: &mut Ctx) -> u32 {
         None
     };
     let Some(w) = w else {
-        putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     };
     props(|m| m.get_mut(&b).map(|o| o.refs += 1));
-    putp(out, b + ps() * w);
+    out.put(b + ps() * w);
     0
 }
 
@@ -1729,17 +1740,18 @@ pub fn new_buffer(data: &[u8]) -> u32 {
 }
 
 fn buf_qi(c: &mut Ctx) -> u32 {
-    let (this, riid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, riid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let want = guid_at(riid).unwrap_or([0xff; 16]);
     if want != IID_IUNKNOWN && want != IID_NSSBUFFER {
-        putp(out, 0);
+        out.put(0);
         return Hr::NoInterface.code();
     }
     bufs(|m| m.get_mut(&this).map(|o| o.refs += 1));
-    putp(out, this);
+    out.put(this);
     0
 }
 
@@ -1799,21 +1811,23 @@ fn buf_get_max_length(c: &mut Ctx) -> u32 {
 }
 
 fn buf_get_buffer(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::INSSBuffer::GetBuffer>();
+    if c.out::<1>().is_null() {
         return Hr::InvalidArg.code();
     }
-    let Some(d) = bufs(|m| m.get(&c.a(0)).map(|o| o.data)) else { return Hr::Unexpected.code() };
-    putp(c.a(1), d);
+    let Some(d) = bufs(|m| m.get(&c.a::<0>()).map(|o| o.data)) else { return Hr::Unexpected.code() };
+    c.out::<1>().put(d);
     0
 }
 
 fn buf_get_buffer_and_length(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 || c.a(2) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::INSSBuffer::GetBufferAndLength>();
+    if c.out::<1>().is_null() || c.a::<2>() == 0 {
         return Hr::InvalidArg.code();
     }
-    let Some((d, n)) = bufs(|m| m.get(&c.a(0)).map(|o| (o.data, o.len))) else { return Hr::Unexpected.code() };
-    putp(c.a(1), d);
-    w32(c.a(2), n);
+    let Some((d, n)) = bufs(|m| m.get(&c.a::<0>()).map(|o| (o.data, o.len))) else { return Hr::Unexpected.code() };
+    c.out::<1>().put(d);
+    w32(c.a::<2>(), n);
     0
 }
 

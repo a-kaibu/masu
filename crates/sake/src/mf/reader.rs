@@ -905,18 +905,19 @@ fn buf<R>(b: u32, f: impl FnOnce(&mut Buf) -> R) -> Option<R> {
 }
 
 fn mb_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFMediaBuffer {045fa593-8799-42b8-bc8d-8968c6453507}
     if is_unknown(&g) || is(&g, 0x045f_a593, 0x8799, 0x42b8) {
         buf(this, |b| b.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn mb_add_ref(c: &mut Ctx) -> u32 {
@@ -941,12 +942,13 @@ fn mb_release(c: &mut Ctx) -> u32 {
 }
 /// Lock(BYTE **, DWORD *max, DWORD *current)
 fn mb_lock(c: &mut Ctx) -> u32 {
-    let (pp, pmax, plen) = (c.a(1), c.a(2), c.a(3));
-    if pp == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaBuffer::Lock>();
+    let (pp, pmax, plen) = (c.out::<1>(), c.a::<2>(), c.a::<3>());
+    if pp.is_null() {
         return Hr::Pointer.code();
     }
-    let Some((d, m, l)) = buf(c.a(0), |b| (b.data, b.max, b.len)) else { return Hr::InvalidArg.code() };
-    putp(pp, d);
+    let Some((d, m, l)) = buf(c.a::<0>(), |b| (b.data, b.max, b.len)) else { return Hr::InvalidArg.code() };
+    pp.put(d);
     if pmax != 0 {
         w32(pmax, m);
     }
@@ -1257,18 +1259,19 @@ fn MFCreateSample(c: &mut Ctx) -> u32 {
 const FIRST_VIDEO: u32 = 0xffff_fffc;
 
 fn sr_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFSourceReader {70ae66f2-c809-4e4f-8915-bdcb406b7993}
     if is_unknown(&g) || is(&g, 0x70ae_66f2, 0xc809, 0x4e4f) {
         reader(this, |r| r.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn sr_add_ref(c: &mut Ctx) -> u32 {
@@ -1353,30 +1356,32 @@ fn kind_of(this: u32, i: u32) -> Result<Kind, u32> {
 }
 /// GetNativeMediaType(DWORD stream, DWORD index, IMFMediaType **)
 fn sr_native(c: &mut Ctx) -> u32 {
-    let (i, k, out) = (c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceReader::GetNativeMediaType>();
+    let (i, k, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let kind = match kind_of(c.a(0), i) {
+    let kind = match kind_of(c.a::<0>(), i) {
         Ok(k) => k,
         Err(e) => return e,
     };
     if k != 0 {
         return Hr::NoMoreTypes.code();
     }
-    putp(out, new_type(native_of(&kind)));
+    out.put(new_type(native_of(&kind)));
     0
 }
 /// GetCurrentMediaType(DWORD stream, IMFMediaType **): a copy (Windows hands out its own
 /// object; changing the copy changes nothing here)
 fn sr_current(c: &mut Ctx) -> u32 {
-    let (i, out) = (c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceReader::GetCurrentMediaType>();
+    let (i, out) = (c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    match on_stream(c.a(0), i, |r, k| r.streams[k].current) {
+    match on_stream(c.a::<0>(), i, |r, k| r.streams[k].current) {
         Ok(cur) => {
-            putp(out, new_type(store_of(cur).unwrap_or_default()));
+            out.put(new_type(store_of(cur).unwrap_or_default()));
             0
         }
         Err(e) => e,
@@ -1483,10 +1488,11 @@ fn clone_kind(k: &Kind) -> Kind {
 /// ReadSample(DWORD stream, DWORD flags, DWORD *actual, DWORD *streamflags, LONGLONG *time,
 /// IMFSample **)
 fn sr_read(c: &mut Ctx) -> u32 {
-    let (this, i, actual, sflags, time, out) = (c.a(0), c.a(1), c.a(3), c.a(4), c.a(5), c.a(6));
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceReader::ReadSample>();
+    let (this, i, actual, sflags, time, out) = (c.a::<0>(), c.a::<1>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.out::<6>());
     if reader(this, |r| r.callback != 0).unwrap_or(false) {
         // asynchronous: none of the out pointers, the answer goes to OnReadSample
-        if actual != 0 || sflags != 0 || time != 0 || out != 0 {
+        if actual != 0 || sflags != 0 || time != 0 || !out.is_null() {
             return Hr::InvalidArg.code();
         }
         if i != ALL_STREAMS {
@@ -1499,15 +1505,15 @@ fn sr_read(c: &mut Ctx) -> u32 {
         request(this, Req::Read(i));
         return 0;
     }
-    if out == 0 || sflags == 0 {
+    if out.is_null() || sflags == 0 {
         // (synchronous mode: both are needed)
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     if i != ALL_STREAMS && let Err(e) = on_stream(this, i, |_, _| ()) {
         return e;
     }
-    let (hr, k, flags, t, sample) = read_one(c, this, i);
+    let (hr, k, flags, t, sample) = read_one(c.ctx(), this, i);
     if actual != 0 {
         w32(actual, k);
     }
@@ -1515,7 +1521,7 @@ fn sr_read(c: &mut Ctx) -> u32 {
     if time != 0 && hr == 0 {
         w64(time, t);
     }
-    putp(out, sample);
+    out.put(sample);
     hr
 }
 
@@ -1659,11 +1665,12 @@ fn sr_flush(c: &mut Ctx) -> u32 {
 /// GetServiceForStream(DWORD stream, REFGUID service, REFIID, void **): a video stream's decoder
 /// (GUID_NULL, IMFTransform: see mft); nothing else.
 fn sr_service(c: &mut Ctx) -> u32 {
-    let (this, i, svc, riid, out) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
-    if out == 0 || riid == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFSourceReader::GetServiceForStream>();
+    let (this, i, svc, riid, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<4>());
+    if out.is_null() || riid == 0 {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     if i == MEDIASOURCE {
         return Hr::UnsupportedService.code();
     }
@@ -1674,7 +1681,7 @@ fn sr_service(c: &mut Ctx) -> u32 {
     let null = svc == 0 || guid_at(svc) == [0; 16];
     match k {
         Some(k) if null && super::mft::is_transform(&guid_at(riid)) => {
-            putp(out, super::mft::transform(c, this, k));
+            out.put(super::mft::transform(c.ctx(), this, k));
             0
         }
         _ => Hr::UnsupportedService.code(),

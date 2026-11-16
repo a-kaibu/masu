@@ -177,22 +177,23 @@ fn base_of(mi: u32) -> u32 {
 }
 
 fn mi_qi(c: &mut Ctx) -> u32 {
-    let (mi, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (mi, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let b = base_of(mi);
     if is(iid, &IID_IMEMINPUTPIN) {
         add_ref(b);
-        putp(out, mi);
+        out.put(mi);
         return 0;
     }
     if is(iid, &IID_IUNKNOWN) || is(iid, &IID_IPIN) {
         add_ref(b);
-        putp(out, PinNo::P1.of(b));
+        out.put(PinNo::P1.of(b));
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn mi_add_ref(c: &mut Ctx) -> u32 {
@@ -204,8 +205,9 @@ fn mi_release(c: &mut Ctx) -> u32 {
 }
 /// GetAllocator: none of its own (VFW_E_NO_ALLOCATOR: the source's is used)
 fn mi_get_allocator(c: &mut Ctx) -> u32 {
-    if c.a(1) != 0 {
-        putp(c.a(1), 0);
+    let c = &mut c.args::<crate::api::outs::iface::IMemInputPin::GetAllocator>();
+    if !c.out::<1>().is_null() {
+        c.out::<1>().put(0);
     }
     0x8004_020a
 }
@@ -354,8 +356,10 @@ fn mi_receive_multiple(c: &mut Ctx) -> u32 {
 
 /// IDMOWrapperFilter: QI / AddRef / Release of the filter, Init(clsidDMO, catDMO)
 fn dw_qi(c: &mut Ctx) -> u32 {
-    let b = Word::DmoWrapper.base(c.a(0));
-    com(c, b, 0, &[c.a(1), c.a(2)])
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let b = Word::DmoWrapper.base(c.a::<0>());
+    let w = crate::api::words![c.a::<1>(), c.out::<2>()];
+    com(c.ctx(), b, 0, &w)
 }
 fn dw_add_ref(c: &mut Ctx) -> u32 {
     add_ref(Word::DmoWrapper.base(c.a(0)))

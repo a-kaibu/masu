@@ -1764,7 +1764,8 @@ fn dx_path(o: u32) -> String {
     DX_NODES.lock().unwrap().get_or_insert_with(HashMap::default).get(&o).cloned().unwrap_or_default()
 }
 fn dx_qi(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(2), c.a(0));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    c.out::<2>().put(c.a::<0>());
     0
 }
 fn dx_addref(_: &mut Ctx) -> u32 {
@@ -2010,14 +2011,15 @@ fn dll_get_class_object(c: &mut Ctx, dll: &str) -> u32 {
 fn class_factory(clsid: u32) -> u32 {
     use crate::api::Handler;
     fn qi(c: &mut Ctx) -> u32 {
-        let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
+        let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+        let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
         let unk_or_cf = matches!(r32(iid), 0 | 1) && r16(iid + 4) == 0 && r16(iid + 6) == 0 && r32(iid + 8) == 0xc0 && r32(iid + 12) == 0x4600_0000;
         if !unk_or_cf {
-            mem::putp(out, 0);
+            out.put(0);
             return 0x8000_4002;
         }
-        add_ref(c);
-        mem::putp(out, this);
+        add_ref(c.ctx());
+        out.put(this);
         0
     }
     fn add_ref(c: &mut Ctx) -> u32 {
@@ -2033,7 +2035,8 @@ fn class_factory(clsid: u32) -> u32 {
     }
     /// CreateInstance(this, outer, riid, ppv)
     fn create(c: &mut Ctx) -> u32 {
-        let (this, outer, iid, out) = (c.a(0), c.a(1), c.a(2), c.out(3));
+        let c = &mut c.args::<crate::api::outs::iface::IClassFactory::CreateInstance>();
+        let (this, outer, iid, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
         if out.is_null() {
             return 0x8000_4003;
         }
@@ -2041,7 +2044,7 @@ fn class_factory(clsid: u32) -> u32 {
             out.put(0);
             return 0x8004_0110; // CLASS_E_NOAGGREGATION
         }
-        create_object(c, this + mem::ps() + 4, iid, out)
+        create_object(c.ctx(), this + mem::ps() + 4, iid, out)
     }
     fn lock(_: &mut Ctx) -> u32 {
         0
@@ -2077,7 +2080,8 @@ fn malloc_obj() -> u32 {
     static O: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     *O.get_or_init(|| {
         fn qi(c: &mut Ctx) -> u32 {
-            put32(c.a(2), c.a(0));
+            let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+            c.out::<2>().put(c.a::<0>());
             0
         }
         fn one(_: &mut Ctx) -> u32 {

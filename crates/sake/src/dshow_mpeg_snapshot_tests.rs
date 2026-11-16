@@ -128,7 +128,7 @@ fn take_log() -> String {
 }
 fn fake_qi(c: &mut Ctx) -> u32 {
     log(format!("f{}.qi", r32(c.a(0) + 4)));
-    putp(c.a(2), 0);
+    crate::mem::putp(c.a(2), 0);
     Hr::NoInterface.code()
 }
 fn fake_addref(c: &mut Ctx) -> u32 {

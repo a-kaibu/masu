@@ -34,8 +34,9 @@ fn field(o: u32, i: u32) -> u32 {
 }
 /// QueryInterface on a counted block: itself, one more reference
 fn qi_counted(c: &mut Ctx) -> u32 {
-    mem::putp(c.a(2), c.a(0));
-    add_ref(c);
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    c.out::<2>().put(c.a::<0>());
+    add_ref(c.ctx());
     0
 }
 fn add_ref(c: &mut Ctx) -> u32 {
@@ -132,7 +133,8 @@ fn reset(c: &mut Ctx) -> u32 {
 }
 /// Next(this, timeout, count, objects, &returned)
 fn next(c: &mut Ctx) -> u32 {
-    let (this, count, out, ret) = (c.a(0), c.a(2), c.a(3), c.a(4));
+    let c = &mut c.args::<crate::api::outs::iface::IEnumWbemClassObject::Next>();
+    let (this, count, out, ret) = (c.a::<0>(), c.a::<2>(), c.out::<3>(), c.a::<4>());
     let k = mem::r32(field(this, 0));
     if k == 0 || mem::r32(field(this, 1)) != 0 || count == 0 {
         mem::put32(ret, 0);
@@ -144,17 +146,18 @@ fn next(c: &mut Ctx) -> u32 {
         return E_OUTOFMEMORY;
     }
     mem::w32(field(this, 1), 1);
-    mem::putp(out, o);
+    out.put(o);
     mem::put32(ret, 1);
     if count == 1 { 0 } else { WBEM_S_FALSE }
 }
 fn clone(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IEnumMediaTypes::Clone>();
     let e = new_enum("");
-    mem::putp(c.a(1), e);
+    c.out::<1>().put(e);
     if e == 0 {
         return E_OUTOFMEMORY;
     }
-    mem::w32(field(e, 0), mem::r32(field(c.a(0), 0)));
+    mem::w32(field(e, 0), mem::r32(field(c.a::<0>(), 0)));
     0
 }
 fn skip(c: &mut Ctx) -> u32 {

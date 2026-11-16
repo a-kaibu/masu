@@ -726,21 +726,22 @@ fn jscript_globals(ctx: &mut Context) {
 }
 
 fn Q_QueryInterface(c: &mut Ctx) -> u32 {
-    let id = engine_of(c);
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let id = engine_of(c.ctx());
     let Some(blocks) = t(|t| t.engines.get(&id).map(|e| e.blocks)) else { return E_UNEXPECTED };
-    let k = match r32(c.a(1)) {
+    let k = match r32(c.a::<1>()) {
         0 | 0xbb1a_2ae1 => 0,
         0xbb1a_2ae2 => 1,
         0xcb5b_dc81 => 2,
         0x4954_e0d0 => 3,
         g => {
             crate::com::warn_once(&format!("sake: jscript: QueryInterface {g:08x}: no"));
-            crate::mem::putp(c.a(2), 0);
+            c.out::<2>().put(0);
             return E_NOINTERFACE;
         }
     };
-    crate::mem::putp(c.a(2), blocks[k]);
-    Q_AddRef(c);
+    c.out::<2>().put(blocks[k]);
+    Q_AddRef(c.ctx());
     S_OK
 }
 fn Q_AddRef(c: &mut Ctx) -> u32 {
@@ -814,14 +815,15 @@ fn SetScriptSite(c: &mut Ctx) -> u32 {
     S_OK
 }
 fn GetScriptSite(c: &mut Ctx) -> u32 {
-    let id = engine_of(c);
+    let c = &mut c.args::<crate::api::outs::iface::IActiveScript::GetScriptSite>();
+    let id = engine_of(c.ctx());
     let site = t(|t| t.engines.get(&id).map_or(0, |e| e.site));
     if site == 0 {
-        crate::mem::putp(c.a(2), 0);
+        c.out::<2>().put(0);
         return S_FALSE;
     }
-    let (riid, out) = (c.a(1), c.a(2));
-    enter(c, || com(site, 0, &[riid, out]))
+    let (riid, out) = (c.a::<1>(), c.out::<2>());
+    enter(c.ctx(), || com(site, 0, &crate::api::words![riid, out]))
 }
 fn GetScriptState(c: &mut Ctx) -> u32 {
     let id = engine_of(c);
@@ -977,8 +979,9 @@ fn error_release(e: u32) -> u32 {
     n
 }
 fn E_QueryInterface(c: &mut Ctx) -> u32 {
-    crate::mem::putp(c.a(2), c.a(0));
-    E_AddRef(c);
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    c.out::<2>().put(c.a::<0>());
+    E_AddRef(c.ctx());
     S_OK
 }
 fn E_GetExceptionInfo(c: &mut Ctx) -> u32 {
@@ -998,7 +1001,8 @@ fn E_GetSourcePosition(c: &mut Ctx) -> u32 {
     S_OK
 }
 fn E_GetSourceLineText(c: &mut Ctx) -> u32 {
-    crate::mem::putp(c.a(1), 0);
+    let c = &mut c.args::<crate::api::outs::iface::IActiveScriptError::GetSourceLineText>();
+    c.out::<1>().put(0);
     E_NOTIMPL
 }
 
@@ -1027,20 +1031,21 @@ fn ParseScriptText(c: &mut Ctx) -> u32 {
 
 /// GetScriptDispatch(item, &disp): the global object (or a named item's object).
 fn GetScriptDispatch(c: &mut Ctx) -> u32 {
-    let id = engine_of(c);
+    let c = &mut c.args::<crate::api::outs::iface::IActiveScript::GetScriptDispatch>();
+    let id = engine_of(c.ctx());
     let Some(ctx) = engine_ctx(id) else { return E_UNEXPECTED };
-    if c.a(1) != 0 {
-        let name = JsString::from(&mem::wstr(c.a(1))[..]);
+    if c.a::<1>() != 0 {
+        let name = JsString::from(&mem::wstr(c.a::<1>())[..]);
         let g = ctx.global_object();
         if let Some(p) = g.get(name, ctx).ok().and_then(|v| v.as_object()).and_then(|o| t(|t| t.hosts.get(&o).copied())) {
-            enter(c, || com(p, 1, &[]));
-            mem::putp(c.a(2), p);
+            enter(c.ctx(), || com(p, 1, &[]));
+            c.out::<2>().put(p);
             return S_OK;
         }
-        crate::mem::putp(c.a(2), 0);
+        c.out::<2>().put(0);
         return E_INVALIDARG;
     }
-    crate::mem::putp(c.a(2), script_disp(id, ctx.global_object(), true));
+    c.out::<2>().put(script_disp(id, ctx.global_object(), true));
     S_OK
 }
 fn GetCurrentScriptThreadID(c: &mut Ctx) -> u32 {

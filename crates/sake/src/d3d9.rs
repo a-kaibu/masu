@@ -469,7 +469,7 @@ fn init() {
                 let a = host_fn(&format!("d3d9:{i}:{n}"), method, 4 * args);
                 crate::api::set_tag(a, Method::new(i, n).id(), 0);
                 if let Some(name) = IFACES.get(usize::from(i).wrapping_sub(1)) {
-                    crate::api::set_com_outs(a, name, u32::from(n));
+                    crate::api::set_com_outs(a, name, u32::from(n), crate::api::ComArgs::Words);
                 }
                 wp(v + k * u32::from(n), a);
             }

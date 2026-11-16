@@ -661,8 +661,8 @@ pub(crate) fn new_client() -> u32 {
     o
 }
 
-fn client_qi(this: u32, iid: u32, out: u32) -> u32 {
-    if out == 0 {
+fn client_qi(this: u32, iid: u32, out: crate::api::Out) -> u32 {
+    if out.is_null() {
         return E_POINTER;
     }
     let to = if is_unknown(iid) || guid_is(iid, IID_CLIENT) {
@@ -670,15 +670,16 @@ fn client_qi(this: u32, iid: u32, out: u32) -> u32 {
     } else if guid_is(iid, IID_CLOCK_ADJUST) {
         this + ps()
     } else {
-        putp(out, 0);
+        out.put(0);
         return E_NOINTERFACE;
     };
     client(this, |c| c.refs += 1);
-    putp(out, to);
+    out.put(to);
     S_OK
 }
 fn ac_qi(c: &mut Ctx) -> u32 {
-    client_qi(c.a(0), c.a(1), c.a(2))
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    client_qi(c.a::<0>(), c.a::<1>(), c.out::<2>())
 }
 fn ac_addref(c: &mut Ctx) -> u32 {
     client(c.a(0), |c| {
@@ -691,7 +692,8 @@ fn ac_release(c: &mut Ctx) -> u32 {
     release_client(c.a(0))
 }
 fn adj_qi(c: &mut Ctx) -> u32 {
-    client_qi(c.a(0) - ps(), c.a(1), c.a(2))
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    client_qi(c.a::<0>() - ps(), c.a::<1>(), c.out::<2>())
 }
 fn adj_addref(c: &mut Ctx) -> u32 {
     client(c.a(0) - ps(), |c| {
@@ -811,14 +813,15 @@ fn ac_padding(c: &mut Ctx) -> u32 {
 }
 /// IsFormatSupported(share mode, format, closest match**)
 fn ac_supported(c: &mut Ctx) -> u32 {
-    let (mode, fmt, closest) = (c.a(1), c.a(2), c.a(3));
-    if closest != 0 {
-        putp(closest, 0);
+    let c = &mut c.args::<crate::api::outs::iface::IAudioClient::IsFormatSupported>();
+    let (mode, fmt, closest) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if !closest.is_null() {
+        closest.put(0);
     }
     if mode > 1 {
         return E_INVALIDARG;
     }
-    if fmt == 0 || (mode == 0 && closest == 0) {
+    if fmt == 0 || (mode == 0 && closest.is_null()) {
         return E_POINTER;
     }
     if mode == 1 {
@@ -826,15 +829,16 @@ fn ac_supported(c: &mut Ctx) -> u32 {
     }
     let r = shared_supported(&read_wave(fmt));
     if r == Ok(Done::False) {
-        putp(closest, mix_format());
+        closest.put(mix_format());
     }
     hr(r)
 }
 fn ac_mix_format(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioClient::GetMixFormat>();
+    if c.out::<1>().is_null() {
         return E_POINTER;
     }
-    putp(c.a(1), mix_format());
+    c.out::<1>().put(mix_format());
     S_OK
 }
 /// GetDevicePeriod(default*, minimum*): either may be NULL
@@ -929,11 +933,12 @@ fn ac_set_event(c: &mut Ctx) -> u32 {
 }
 /// GetService(riid, void**)
 fn ac_service(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if iid == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioClient::GetService>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if iid == 0 || out.is_null() {
         return E_POINTER;
     }
-    putp(out, 0);
+    out.put(0);
     let Some(Some((session, flags, ctl))) = client(this, |cl| cl.fmt.map(|_| (cl.session, cl.flags, cl.ctl))) else { return NOT_INITIALIZED };
     let is = |g: Iid| guid_is(iid, g);
     let o = if is(IID_RENDER) {
@@ -965,7 +970,7 @@ fn ac_service(c: &mut Ctx) -> u32 {
     } else {
         return E_NOINTERFACE;
     };
-    putp(out, o);
+    out.put(o);
     S_OK
 }
 
@@ -977,13 +982,15 @@ fn render_vtbl() -> u32 {
     *V.get_or_init(|| vtable("IAudioRenderClient", &[(rc_qi, b(3)), (svc_addref, b(1)), (svc_release, b(1)), (rc_get, b(3)), (rc_release, b(3))]))
 }
 fn rc_qi(c: &mut Ctx) -> u32 {
-    svc_qi(c, &[IID_RENDER])
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    svc_qi(c.ctx(), &[IID_RENDER])
 }
 /// GetBuffer(frames, BYTE**): the client's buffer, room for `frames`, silent (none for 0
 /// frames, which takes nothing)
 fn rc_get(c: &mut Ctx) -> u32 {
-    let (this, n, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioRenderClient::GetBuffer>();
+    let (this, n, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return E_POINTER;
     }
     let r = client(owner(this), |cl| {
@@ -1005,11 +1012,11 @@ fn rc_get(c: &mut Ctx) -> u32 {
             if p != 0 {
                 mem::fill(p, bytes, if u8 { 0x80 } else { 0 });
             }
-            putp(out, p);
+            out.put(p);
             S_OK
         }
         Some(Err(e)) => {
-            putp(out, 0);
+            out.put(0);
             e.code()
         }
         None => NOT_INITIALIZED,
@@ -1049,7 +1056,8 @@ fn clock_vtbl() -> u32 {
     *V.get_or_init(|| vtable("IAudioClock", &[(ck_qi, b(3)), (svc_addref, b(1)), (svc_release, b(1)), (ck_freq, b(2)), (ck_pos, b(3)), (ck_chars, b(2))]))
 }
 fn ck_qi(c: &mut Ctx) -> u32 {
-    svc_qi(c, &[IID_CLOCK])
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    svc_qi(c.ctx(), &[IID_CLOCK])
 }
 fn ck_freq(c: &mut Ctx) -> u32 {
     let (this, out) = (c.a(0), c.a(1));
@@ -1095,7 +1103,8 @@ fn stream_vtbl() -> u32 {
     })
 }
 fn st_qi(c: &mut Ctx) -> u32 {
-    svc_qi(c, &[IID_STREAM_VOLUME])
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    svc_qi(c.ctx(), &[IID_STREAM_VOLUME])
 }
 fn channels_of(this: u32) -> u32 {
     client(owner(this), |cl| cl.fmt.map_or(2, |f| f.channels)).unwrap_or(2)
@@ -1185,7 +1194,8 @@ fn simple_vtbl() -> u32 {
     })
 }
 fn sv_qi(c: &mut Ctx) -> u32 {
-    svc_qi(c, &[IID_SIMPLE_VOLUME])
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    svc_qi(c.ctx(), &[IID_SIMPLE_VOLUME])
 }
 fn sv_set_volume(c: &mut Ctx) -> u32 {
     let v = farg(c, 1);
@@ -1225,7 +1235,8 @@ fn channel_vtbl() -> u32 {
     })
 }
 fn cv_qi(c: &mut Ctx) -> u32 {
-    svc_qi(c, &[IID_CHANNEL_VOLUME])
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    svc_qi(c.ctx(), &[IID_CHANNEL_VOLUME])
 }
 fn cv_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
@@ -1314,8 +1325,9 @@ fn session_vtbl() -> u32 {
 }
 /// IAudioSessionControl(2) itself; the session's volume interfaces as objects of their own
 fn se_qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return E_POINTER;
     }
     let v = if guid_is(iid, IID_SIMPLE_VOLUME) {
@@ -1323,9 +1335,9 @@ fn se_qi(c: &mut Ctx) -> u32 {
     } else if guid_is(iid, IID_CHANNEL_VOLUME) {
         channel_vtbl()
     } else {
-        return svc_qi(c, &[IID_SESSION, IID_SESSION2]);
+        return svc_qi(c.ctx(), &[IID_SESSION, IID_SESSION2]);
     };
-    putp(out, service(v, owner(this), session_idx(this)));
+    out.put(service(v, owner(this), session_idx(this)));
     S_OK
 }
 /// GetState(AudioSessionState*): active while one of its streams runs
@@ -1339,19 +1351,21 @@ fn se_state(c: &mut Ctx) -> u32 {
     w32(out, u32::from(on));
     S_OK
 }
-fn get_str(out: u32, f: impl FnOnce(&Session) -> Vec<u16>, this: u32) -> u32 {
-    if out == 0 {
+fn get_str(out: crate::api::Out, f: impl FnOnce(&Session) -> Vec<u16>, this: u32) -> u32 {
+    if out.is_null() {
         return E_POINTER;
     }
     let s = sess(this, |s| f(s));
-    putp(out, task_wstr(&s));
+    out.put(task_wstr(&s));
     S_OK
 }
 fn se_get_name(c: &mut Ctx) -> u32 {
-    get_str(c.a(1), |s| s.name.clone(), c.a(0))
+    let c = &mut c.args::<crate::api::outs::iface::IAudioSessionControl2::GetDisplayName>();
+    get_str(c.out::<1>(), |s| s.name.clone(), c.a::<0>())
 }
 fn se_get_icon(c: &mut Ctx) -> u32 {
-    get_str(c.a(1), |s| s.icon.clone(), c.a(0))
+    let c = &mut c.args::<crate::api::outs::iface::IAudioSessionControl2::GetIconPath>();
+    get_str(c.out::<1>(), |s| s.icon.clone(), c.a::<0>())
 }
 /// SetDisplayName / SetIconPath(string, event context)
 fn se_set_name(c: &mut Ctx) -> u32 {
@@ -1414,19 +1428,21 @@ fn identifier(this: u32) -> Vec<u16> {
     format!("{}|{exe}%b{guid}", crate::mmdevapi::DEVICE_ID).encode_utf16().collect()
 }
 fn se_identifier(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioSessionControl2::GetSessionIdentifier>();
+    if c.out::<1>().is_null() {
         return NULL_REF;
     }
-    putp(c.a(1), task_wstr(&identifier(c.a(0))));
+    c.out::<1>().put(task_wstr(&identifier(c.a::<0>())));
     S_OK
 }
 fn se_instance(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioSessionControl2::GetSessionInstanceIdentifier>();
+    if c.out::<1>().is_null() {
         return NULL_REF;
     }
-    let mut s = identifier(c.a(0));
+    let mut s = identifier(c.a::<0>());
     s.extend(format!("|1%b{}", crate::pid()).encode_utf16());
-    putp(c.a(1), task_wstr(&s));
+    c.out::<1>().put(task_wstr(&s));
     S_OK
 }
 fn se_pid(c: &mut Ctx) -> u32 {
@@ -1473,15 +1489,16 @@ pub(crate) fn manager() -> u32 {
     })
 }
 fn sm_qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return E_POINTER;
     }
     if is_unknown(iid) || guid_is(iid, IID_MANAGER) || guid_is(iid, IID_MANAGER2) {
-        putp(out, this);
+        out.put(this);
         S_OK
     } else {
-        putp(out, 0);
+        out.put(0);
         E_NOINTERFACE
     }
 }
@@ -1490,35 +1507,38 @@ fn sm_ref(_: &mut Ctx) -> u32 {
 }
 /// GetAudioSessionControl(session guid, flags, IAudioSessionControl**)
 fn sm_control(c: &mut Ctx) -> u32 {
-    let (g, out) = (c.a(1), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioSessionManager2::GetAudioSessionControl>();
+    let (g, out) = (c.a::<1>(), c.out::<3>());
+    if out.is_null() {
         return NULL_REF;
     }
     let i = with(|e| session_of(e, guid_arg(g)));
-    putp(out, service(session_vtbl(), 0, i));
+    out.put(service(session_vtbl(), 0, i));
     S_OK
 }
 /// GetSimpleAudioVolume(session guid, flags, ISimpleAudioVolume**)
 fn sm_volume(c: &mut Ctx) -> u32 {
-    let (g, out) = (c.a(1), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioSessionManager2::GetSimpleAudioVolume>();
+    let (g, out) = (c.a::<1>(), c.out::<3>());
+    if out.is_null() {
         return NULL_REF;
     }
     let i = with(|e| session_of(e, guid_arg(g)));
-    putp(out, service(simple_vtbl(), 0, i));
+    out.put(service(simple_vtbl(), 0, i));
     S_OK
 }
 /// GetSessionEnumerator(IAudioSessionEnumerator**): a snapshot of the sessions
 fn sm_enum(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioSessionManager2::GetSessionEnumerator>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return NULL_REF;
     }
     static V: OnceLock<u32> = OnceLock::new();
     let v = *V.get_or_init(|| vtable("IAudioSessionEnumerator", &[(en_qi, b(3)), (svc_addref, b(1)), (svc_release, b(1)), (en_count, b(2)), (en_get, b(3))]));
     // (the count where the session index goes)
     let o = service(v, 0, with(|e| e.sessions.len()));
-    putp(out, o);
+    out.put(o);
     S_OK
 }
 fn sm_notify(c: &mut Ctx) -> u32 {
@@ -1529,7 +1549,8 @@ fn sm_duck(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 { NULL_REF } else { S_OK }
 }
 fn en_qi(c: &mut Ctx) -> u32 {
-    svc_qi(c, &[IID_ENUMERATOR])
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    svc_qi(c.ctx(), &[IID_ENUMERATOR])
 }
 fn en_count(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
@@ -1540,14 +1561,15 @@ fn en_count(c: &mut Ctx) -> u32 {
 }
 /// GetSession(index, IAudioSessionControl**)
 fn en_get(c: &mut Ctx) -> u32 {
-    let (this, i, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IAudioSessionEnumerator::GetSession>();
+    let (this, i, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return NULL_REF;
     }
     if us(i) >= session_idx(this) {
         return E_INVALIDARG;
     }
-    putp(out, service(session_vtbl(), 0, us(i)));
+    out.put(service(session_vtbl(), 0, us(i)));
     S_OK
 }
 
@@ -1590,15 +1612,16 @@ pub(crate) fn endpoint_volume() -> u32 {
     })
 }
 fn ev_qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return E_POINTER;
     }
     if is_unknown(iid) || guid_is(iid, IID_ENDPOINT_VOLUME) {
-        putp(out, this);
+        out.put(this);
         S_OK
     } else {
-        putp(out, 0);
+        out.put(0);
         E_NOINTERFACE
     }
 }

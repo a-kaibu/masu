@@ -148,7 +148,7 @@ fn xapo_snapshot() {
     for (i, g) in clsids().iter().enumerate() {
         mem::write(pg, g);
         for (form, f) in [("init", fx_init as Handler), ("plain", fx_plain as Handler)] {
-            putp(po, 0xdead_beef);
+            crate::mem::putp(po, 0xdead_beef);
             let hr = call(f, &[pg, po, 0, 0]);
             let o = rp(po);
             let k = if hr == 0 { with_this(o, |x| format!("{:?}", x.kind)) } else { None };
@@ -170,7 +170,7 @@ fn xapo_snapshot() {
         for this in [o, o + ps()] {
             let pi = mem::heap_alloc(16, true);
             mem::write(pi, iid);
-            putp(po, 0xdead_beef);
+            crate::mem::putp(po, 0xdead_beef);
             let hr = call(QueryInterface, &[this, pi, po]);
             writeln!(out, "qi iid#{i} on {}: {hr:#x} -> {}", rel(this, o), rel(rp(po), o)).unwrap();
             mem::heap_free(pi);
@@ -188,7 +188,7 @@ fn xapo_snapshot() {
     // GetRegistrationProperties of every class
     for (i, g) in clsids().iter().enumerate() {
         let Some(o) = create(g).map(Obj::addr) else { continue };
-        putp(po, 0);
+        crate::mem::putp(po, 0);
         let hr = call(GetRegistrationProperties, &[o, po]);
         let p = rp(po);
         let name = String::from_utf16_lossy(&mem::wstr(p + 16));
@@ -203,7 +203,7 @@ fn xapo_snapshot() {
     for _ in 0..300 {
         let (f, d) = seeded_format(&mut r);
         let with_out = r.below(4) != 0;
-        putp(po, 0xdead_beef);
+        crate::mem::putp(po, 0xdead_beef);
         let hr = call(IsFormatSupported, &[0, 0, f, if with_out { po } else { 0 }]);
         let p = rp(po);
         let got = if !with_out { "-".to_string() } else if p == 0xdead_beef { "untouched".into() } else if p == 0 { "0".into() } else { format!("{:?}", &mem::array::<18>(p)) };
@@ -238,10 +238,10 @@ fn xapo_snapshot() {
         let fo = if r.below(12) == 0 { seeded_format(&mut r).0 } else { fi };
         let max = r.pick(&[0u32, 1, 64, 256, 480, 480, 480, 480]);
         let lp = mem::heap_alloc(16, true);
-        putp(lp, fi);
+        crate::mem::putp(lp, fi);
         w32(lp + ps(), max);
         let lo = mem::heap_alloc(16, true);
-        putp(lo, fo);
+        crate::mem::putp(lo, fo);
         w32(lo + ps(), max);
         let (nin, nout) = if r.below(10) == 0 { (r.pick(&[0u32, 2]), 1) } else { (1, 1) };
         let hr = call(LockForProcess, &[o, nin, lp, nout, lo]);
@@ -263,11 +263,11 @@ fn xapo_snapshot() {
             let flags = r.pick(&[0u32, 1, 1, 1]);
             let enabled = r.below(5) != 0;
             let pin = mem::heap_alloc(16, true);
-            putp(pin, ib);
+            crate::mem::putp(pin, ib);
             w32(pin + ps(), flags);
             w32(pin + ps() + 4, valid);
             let pout = mem::heap_alloc(16, true);
-            putp(pout, ob);
+            crate::mem::putp(pout, ob);
             w32(pout + ps(), 7);
             w32(pout + ps() + 4, 9);
             let hr = call(Process, &[this, 1, pin, 1, pout, u32::from(enabled)]);
@@ -282,17 +282,17 @@ fn xapo_snapshot() {
             let gp = mem::heap_alloc(64, true);
             let peaks = mem::heap_alloc(256, true);
             let rmss = mem::heap_alloc(256, true);
-            putp(gp, peaks);
-            putp(gp + ps(), rmss);
+            crate::mem::putp(gp, peaks);
+            crate::mem::putp(gp + ps(), rmss);
             w32(gp + 2 * ps(), r.pick(&[0u32, 1, 2, 8]));
             let n = r.pick(&[0u32, 4, 12, 52]);
             let hr = call(GetParameters, &[o + ps(), gp, n]);
             // (the level pointers are heap addresses: zeros where they were left)
             if rp(gp) == peaks {
-                putp(gp, 0);
+                crate::mem::putp(gp, 0);
             }
             if rp(gp + ps()) == rmss {
-                putp(gp + ps(), 0);
+                crate::mem::putp(gp + ps(), 0);
             }
             writeln!(out, "  get {n}: {hr:#x} params={:#x} peaks={:#x} rms={:#x}", hash(gp, 64), hash(peaks, 256), hash(rmss, 256)).unwrap();
             mem::heap_free(gp);

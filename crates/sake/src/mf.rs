@@ -438,18 +438,19 @@ getter!(at_get_strlen, Val::Str(s) => |o| w32(o, lo32(s.len())));
 getter!(at_get_blobsize, Val::Blob(b) => |o: u32| w32(o, lo32(b.len())));
 
 fn at_qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
     let g = guid_at(iid);
     // IMFAttributes {2cd2d921-c447-44a7-a13c-4adabfc247e3}
     if is_unknown(&g) || is(&g, 0x2cd2_d921, 0xc447, 0x44a7) {
         attrs(this, |a| a.0 += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn at_add_ref(c: &mut Ctx) -> u32 {
@@ -558,13 +559,14 @@ fn at_get_string(c: &mut Ctx) -> u32 {
 }
 /// GetAllocatedString(key, WCHAR **s, UINT32 *length)
 fn at_get_alloc_string(c: &mut Ctx) -> u32 {
-    let (out, len) = (c.a(2), c.a(3));
-    match value(c) {
+    let c = &mut c.args::<crate::api::outs::iface::IMFAttributes::GetAllocatedString>();
+    let (out, len) = (c.out::<2>(), c.a::<3>());
+    match value(c.ctx()) {
         Ok(Val::Str(s)) => {
-            if out == 0 || len == 0 {
+            if out.is_null() || len == 0 {
                 return Hr::Pointer.code();
             }
-            putp(out, task_wstr(&s));
+            out.put(task_wstr(&s));
             w32(len, lo32(s.len()));
             0
         }
@@ -595,15 +597,16 @@ fn at_get_blob(c: &mut Ctx) -> u32 {
 }
 /// GetAllocatedBlob(key, BYTE **buf, UINT32 *size)
 fn at_get_alloc_blob(c: &mut Ctx) -> u32 {
-    let (out, size) = (c.a(2), c.a(3));
-    match value(c) {
+    let c = &mut c.args::<crate::api::outs::iface::IMFAttributes::GetAllocatedBlob>();
+    let (out, size) = (c.out::<2>(), c.a::<3>());
+    match value(c.ctx()) {
         Ok(Val::Blob(b)) => {
-            if out == 0 || size == 0 {
+            if out.is_null() || size == 0 {
                 return Hr::Pointer.code();
             }
             let q = mem::heap_alloc(lo32(b.len().max(1)), false);
             mem::write(q, &b);
-            putp(out, q);
+            out.put(q);
             w32(size, lo32(b.len()));
             0
         }
@@ -613,17 +616,18 @@ fn at_get_alloc_blob(c: &mut Ctx) -> u32 {
 }
 /// GetUnknown(key, REFIID, void **out): the object's QueryInterface
 fn at_get_unknown(c: &mut Ctx) -> u32 {
-    let (iid, out) = (c.a(2), c.a(3));
-    match value(c) {
+    let c = &mut c.args::<crate::api::outs::iface::IMFAttributes::GetUnknown>();
+    let (iid, out) = (c.a::<2>(), c.out::<3>());
+    match value(c.ctx()) {
         Ok(Val::Unk(u)) => {
-            if out == 0 {
+            if out.is_null() {
                 return Hr::Pointer.code();
             }
             if u == 0 {
-                putp(out, 0);
+                out.put(0);
                 return Hr::NoInterface.code();
             }
-            com(c, u, 0, &[iid, out])
+            com(c.ctx(), u, 0, &crate::api::words![iid, out])
         }
         Ok(_) => Hr::InvalidType.code(),
         Err(e) => e,
@@ -807,18 +811,19 @@ fn manager<R>(b: u32, f: impl FnOnce(&mut Manager) -> R) -> Option<R> {
 }
 
 fn mg_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFDXGIDeviceManager {eb533d5d-2db6-40f8-97a9-494692014f07}
     if is_unknown(&g) || is(&g, 0xeb53_3d5d, 0x2db6, 0x40f8) {
         manager(this, |m| m.refs += 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn mg_add_ref(c: &mut Ctx) -> u32 {
@@ -855,28 +860,30 @@ fn mg_reset(c: &mut Ctx) -> u32 {
 }
 /// OpenDeviceHandle(HANDLE *h): one handle, the device's
 fn mg_open(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFDXGIDeviceManager::OpenDeviceHandle>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    if manager(c.a(0), |m| m.device).unwrap_or(0) == 0 {
+    if manager(c.a::<0>(), |m| m.device).unwrap_or(0) == 0 {
         return Hr::NotInitialized.code();
     }
-    putp(c.a(1), 1);
+    c.out::<1>().put(1);
     0
 }
 /// LockDevice(HANDLE, REFIID, void **out, BOOL block) / GetVideoService(HANDLE, REFIID, void **):
 /// the device's QueryInterface
 fn mg_device_qi(c: &mut Ctx) -> u32 {
-    let (iid, out) = (c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFDXGIDeviceManager::GetVideoService>();
+    let (iid, out) = (c.a::<2>(), c.out::<3>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let dev = manager(c.a(0), |m| m.device).unwrap_or(0);
+    let dev = manager(c.a::<0>(), |m| m.device).unwrap_or(0);
     if dev == 0 {
-        putp(out, 0);
+        out.put(0);
         return Hr::NotInitialized.code();
     }
-    com(c, dev, 0, &[iid, out])
+    com(c.ctx(), dev, 0, &crate::api::words![iid, out])
 }
 
 fn MFCreateDXGIDeviceManager(c: &mut Ctx) -> u32 {
@@ -917,18 +924,19 @@ fn MFCreateDXGIDeviceManager(c: &mut Ctx) -> u32 {
 
 fn new_error(code: u16, hr: u32) -> u32 {
     fn er_qi(c: &mut Ctx) -> u32 {
-        let (this, out) = (c.a(0), c.a(2));
-        if out == 0 {
+        let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+        let (this, out) = (c.a::<0>(), c.out::<2>());
+        if out.is_null() {
             return Hr::Pointer.code();
         }
-        let g = guid_at(c.a(1));
+        let g = guid_at(c.a::<1>());
         // IMFMediaError {fc0e10d2-ab2a-4501-a951-06bb1075184c}
         if is_unknown(&g) || is(&g, 0xfc0e_10d2, 0xab2a, 0x4501) {
-            er_add_ref(c);
-            putp(out, this);
+            er_add_ref(c.ctx());
+            out.put(this);
             return 0;
         }
-        putp(out, 0);
+        out.put(0);
         Hr::NoInterface.code()
     }
     fn er_add_ref(c: &mut Ctx) -> u32 {
@@ -1419,21 +1427,22 @@ fn start_events(b: u32) {
 }
 
 fn en_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFMediaEngine {98a1b0bb-03eb-4935-ae7c-93c1fa0e1c93}, IMFMediaEngineEx {83015ead-b1e6-40d0-...}
     if is_unknown(&g) || is(&g, 0x98a1_b0bb, 0x03eb, 0x4935) || is(&g, 0x8301_5ead, 0xb1e6, 0x40d0) {
-        en_add_ref(c);
-        putp(out, this);
+        en_add_ref(c.ctx());
+        out.put(this);
         return 0;
     }
     if crate::env_on!("SAKE_TRACE_COM") {
-        eprintln!("sake: IMFMediaEngine QueryInterface {:08x}: no", r32(c.a(1)));
+        eprintln!("sake: IMFMediaEngine QueryInterface {:08x}: no", r32(c.a::<1>()));
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn en_add_ref(c: &mut Ctx) -> u32 {
@@ -1534,19 +1543,21 @@ fn en_load(c: &mut Ctx) -> u32 {
     0
 }
 fn en_get_source(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaEngine::GetCurrentSource>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    let s = engine(c.a(0), |e| e.src.clone()).flatten();
-    putp(c.a(1), s.map_or(0, |s| crate::misc::bstr_alloc(&s)));
+    let s = engine(c.a::<0>(), |e| e.src.clone()).flatten();
+    c.out::<1>().put(s.map_or(0, |s| crate::misc::bstr_alloc(&s)));
     0
 }
 fn en_get_error(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaEngine::GetError>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    let (code, hr) = engine(c.a(0), |e| e.st.error).unwrap_or((MediaErr::NoError, 0));
-    putp(c.a(1), if code == MediaErr::NoError { 0 } else { new_error(code.code(), hr) });
+    let (code, hr) = engine(c.a::<0>(), |e| e.st.error).unwrap_or((MediaErr::NoError, 0));
+    c.out::<1>().put(if code == MediaErr::NoError { 0 } else { new_error(code.code(), hr) });
     0
 }
 fn en_set_error(c: &mut Ctx) -> u32 {
@@ -2097,11 +2108,12 @@ fn is_role(g: &Guid) -> bool {
 /// CreateInstance(DWORD flags, IMFAttributes *attr, IMFMediaEngine **out): MF_MEDIA_ENGINE_CALLBACK
 /// is needed
 fn fa_create(c: &mut Ctx) -> u32 {
-    let (_flags, attr, out) = (c.a(1), c.a(2), c.a(3));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaEngineClassFactory::CreateInstance>();
+    let (_flags, attr, out) = (c.a::<1>(), c.a::<2>(), c.out::<3>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    putp(out, 0);
+    out.put(0);
     if attr == 0 {
         return Hr::Pointer.code();
     }
@@ -2113,34 +2125,36 @@ fn fa_create(c: &mut Ctx) -> u32 {
     let Some(notify) = notify else { return Hr::AttributeNotFound.code() };
     let u32_of = |f: fn(&Guid) -> bool| s.items.iter().find_map(|(k, v)| if let (true, Val::U32(x)) = (f(k), v) { Some(*x) } else { None });
     let (category, role) = (u32_of(is_category).unwrap_or(0), u32_of(is_role).unwrap_or(0));
-    add_ref(c, notify);
+    add_ref(c.ctx(), notify);
     static VT: OnceLock<u32> = OnceLock::new();
     let b = object(*VT.get_or_init(|| vtable("IMFMediaEngine", &engine_methods())), 1);
     let e = Engine { refs: 1, st: State::default(), notify, shut: false, src: None, movie: false, ticked: None, category, role, thread: false, frames: Frames::default() };
     ENGINES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, e);
     start_events(b);
-    putp(out, b);
+    out.put(b);
     0
 }
 fn fa_qi(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, out) = (c.a::<0>(), c.out::<2>());
+    if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(1));
+    let g = guid_at(c.a::<1>());
     // IMFMediaEngineClassFactory {4d645ace-26aa-4688-9be1-df3516990b93}
     if is_unknown(&g) || is(&g, 0x4d64_5ace, 0x26aa, 0x4688) {
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn fa_create_error(c: &mut Ctx) -> u32 {
-    if c.a(1) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IMFMediaEngineClassFactory::CreateError>();
+    if c.out::<1>().is_null() {
         return Hr::Pointer.code();
     }
-    putp(c.a(1), new_error(0, 0));
+    c.out::<1>().put(new_error(0, 0));
     0
 }
 fn one(_: &mut Ctx) -> u32 {

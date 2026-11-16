@@ -60,11 +60,12 @@ fn iid_offset(p: u32) -> Option<u32> {
     }
 }
 fn query(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
+    if out.is_null() {
         return POINTER;
     }
-    wp(out, 0);
+    out.put(0);
     let Some(offset) = iid_offset(iid) else {
         return NOINTERFACE;
     };
@@ -72,7 +73,7 @@ fn query(c: &mut Ctx) -> u32 {
     if with(this, |f| f.refs += 1).is_none() {
         return INVALID;
     }
-    wp(out, base + offset);
+    out.put(base + offset);
     0
 }
 fn add(c: &mut Ctx) -> u32 {
@@ -113,7 +114,6 @@ fn read(c: &mut Ctx, id: u32) -> u32 {
         return INVALID;
     };
     match id {
-        0 => wp(out, crate::misc::bstr_alloc(&p.name)),
         2 => w64(out, p.size as u64),
         3 => w32(out, (p.weight >= 550) as u32),
         4 => w32(out, p.italic as u32),
@@ -165,7 +165,23 @@ macro_rules! property {
         }
     };
 }
-property!(get_name, put_name, 0);
+// (get_Name's out-parameter is a BSTR *: pointer-sized, taken as an Out)
+fn get_name(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IFont::get_Name>();
+    let out = c.out::<1>();
+    if out.is_null() {
+        return POINTER;
+    }
+    let Some(p) = with(c.a::<0>(), |f| f.props.clone()) else {
+        return INVALID;
+    };
+    out.put(crate::misc::bstr_alloc(&p.name));
+    0
+}
+fn put_name(c: &mut Ctx) -> u32 {
+    let v = c.a(1);
+    change(c.a(0), 0, u64::from(v))
+}
 property!(get_bold, put_bold, 3);
 property!(get_italic, put_italic, 4);
 property!(get_underline, put_underline, 5);
@@ -184,15 +200,16 @@ fn put_size(c: &mut Ctx) -> u32 {
     change(c.a(0), 2, value)
 }
 fn hfont(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IFont::get_hFont>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return POINTER;
     }
     let Some((p, h, ratio)) = with(this, |f| (f.props.clone(), f.current, f.ratio)) else {
         return INVALID;
     };
     if h != 0 {
-        wp(out, h);
+        out.put(h);
         return 0;
     }
     let buffer = mem::heap_alloc(92, true);
@@ -211,16 +228,16 @@ fn hfont(c: &mut Ctx) -> u32 {
     for (i, ch) in p.name.iter().take(31).enumerate() {
         w16(buffer + 28 + 2 * i as u32, *ch)
     }
-    let h = c.call(crate::export_once!("gdi32", "CreateFontIndirectW"), &[buffer]);
+    let h = c.ctx().call(crate::export_once!("gdi32", "CreateFontIndirectW"), &[buffer]);
     mem::heap_free(buffer);
     if h == 0 {
         return 0x8007000e;
     }
     let stale = with(this, |f| keep_font(f, h)).unwrap_or_default();
     for old in stale {
-        c.call(crate::export_once!("gdi32", "DeleteObject"), &[old]);
+        c.ctx().call(crate::export_once!("gdi32", "DeleteObject"), &[old]);
     }
-    wp(out, h);
+    out.put(h);
     0
 }
 
@@ -238,15 +255,16 @@ fn keep_font(f: &mut Font, h: u32) -> Vec<u32> {
     stale
 }
 fn clone_font(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IFont::Clone>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return POINTER;
     }
-    let Some((p, r)) = with(c.a(0), |f| (f.props.clone(), f.ratio)) else {
+    let Some((p, r)) = with(c.a::<0>(), |f| (f.props.clone(), f.ratio)) else {
         return INVALID;
     };
     let f = make(p, r);
-    wp(out, f);
+    out.put(f);
     // (the guest heap full: E_OUTOFMEMORY, not S_OK with a NULL font)
     if f == 0 { 0x8007_000e } else { 0 }
 }
@@ -340,10 +358,11 @@ fn type_count(c: &mut Ctx) -> u32 {
     0
 }
 fn type_info(c: &mut Ctx) -> u32 {
-    if c.a(3) == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IFontDisp::GetTypeInfo>();
+    if c.out::<3>().is_null() {
         return POINTER;
     }
-    wp(c.a(3), 0);
+    c.out::<3>().put(0);
     0x8002000b
 }
 fn ids(c: &mut Ctx) -> u32 {

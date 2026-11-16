@@ -422,11 +422,13 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
     }
     let k = mem::ps();
     let v = mem::heap_alloc(k.saturating_mul(kome::num::u32_of(t.1.len())), true);
+    // (its out-parameters given once the table is there and BUILD let go)
+    let mut outs = Vec::new();
     for (i, &(name, dwords, kind)) in t.1.iter().enumerate() {
         let found = slot_impl(i, name, impls).map(|m| m.1);
         let f = slot_handler(i, found);
         let a = host_fn(&format!("{}::{i}:{name}", iface.name()), f, 4 * u32::from(dwords));
-        crate::api::set_com_outs(a, iface.name(), kome::num::u32_of(i));
+        outs.push((a, kome::num::u32_of(i)));
         if i > 2 && found.is_none() {
             STUBS.locked().get_or_insert_with(HashMap::new).insert(a, (iface.name(), name, kind));
         }
@@ -434,6 +436,10 @@ pub fn vtable(iface: Iface, impls: Impls) -> u32 {
         crate::mem::wp(mem::ga(v).at(kome::num::u32_of(i), k), a);
     }
     VTBLS.locked().get_or_insert_with(HashMap::new).insert(iface, v);
+    drop(_b);
+    for (a, i) in outs {
+        crate::api::set_com_outs(a, iface.name(), i, crate::api::ComArgs::Typed);
+    }
     v
 }
 

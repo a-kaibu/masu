@@ -665,15 +665,16 @@ pub fn create_instance(clsid: u32) -> Option<u32> {
 }
 
 fn X_QueryInterface(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (this, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     // IUnknown and the object's own IXAudio2: 2.7's, or 2.8's and 2.9's (one engine serves both)
     let v27 = mem::rp(this) == xa_vtbl();
     if matches!((r32(iid), v27), (0, _) | (0x8bcf_1f58, true) | (0x60d8_dac8 | 0x2b02_e3cf, false)) {
         w32(refs(this), r32(refs(this)) + 1);
-        putp(out, this);
+        out.put(this);
         return 0;
     }
-    putp(out, 0);
+    out.put(0);
     Hr::NoInterface.code()
 }
 fn X_AddRef(c: &mut Ctx) -> u32 {
@@ -785,11 +786,12 @@ fn new_voice(kind: Kind, fmt: Fmt, dest: u32, cb: u32) -> u32 {
 
 /// CreateSourceVoice(pp, format, flags, max ratio, callback, sends, effects)
 fn X_CreateSourceVoice(c: &mut Ctx) -> u32 {
-    let (pp, wf, cb, sends, fx) = (c.a(1), c.a(2), c.a(5), c.a(6), c.a(7));
-    let chain = match read_chain(c, fx) {
+    let c = &mut c.args::<crate::api::outs::iface::IXAudio2::CreateSourceVoice>();
+    let (pp, wf, cb, sends, fx) = (c.out::<1>(), c.a::<2>(), c.a::<5>(), c.a::<6>(), c.a::<7>());
+    let chain = match read_chain(c.ctx(), fx) {
         Ok(ch) => ch,
         Err(e) => {
-            putp(pp, 0);
+            pp.put(0);
             return e.code();
         }
     };
@@ -798,49 +800,51 @@ fn X_CreateSourceVoice(c: &mut Ctx) -> u32 {
     let bits = u32::from(r16(wf + 14));
     if !matches!(sub, 1 | 3) || !matches!(bits, 8 | 16 | 24 | 32) || r32(wf + 4) == 0 {
         eprintln!("sake: XAudio2 source format {tag:#x} ({bits} bits) not supported");
-        putp(pp, 0);
+        pp.put(0);
         return Hr::InvalidArg.code();
     }
     let fmt = Fmt { rate: r32(wf + 4), channels: u32::from(r16(wf + 2)).max(1), bits, float: sub == 3, law: 0 };
     let o = new_voice(Kind::Source, fmt, first_send(sends), cb);
     with_voice(o, |v| v.chain = chain);
-    putp(pp, o);
+    pp.put(o);
     0
 }
 /// CreateSubmixVoice(pp, channels, rate, flags, stage, sends, effects)
 fn X_CreateSubmixVoice(c: &mut Ctx) -> u32 {
-    let (pp, ch, rate, sends, fx) = (c.a(1), c.a(2), c.a(3), c.a(6), c.a(7));
-    let chain = match read_chain(c, fx) {
+    let c = &mut c.args::<crate::api::outs::iface::IXAudio2::CreateSubmixVoice>();
+    let (pp, ch, rate, sends, fx) = (c.out::<1>(), c.a::<2>(), c.a::<3>(), c.a::<6>(), c.a::<7>());
+    let chain = match read_chain(c.ctx(), fx) {
         Ok(ch) => ch,
         Err(e) => {
-            putp(pp, 0);
+            pp.put(0);
             return e.code();
         }
     };
     let fmt = Fmt { rate: if rate == 0 { RATE } else { rate }, channels: ch.max(1), bits: 32, float: true, law: 0 };
     let o = new_voice(Kind::Submix, fmt, first_send(sends), 0);
     with_voice(o, |v| v.chain = chain);
-    putp(pp, o);
+    pp.put(o);
     0
 }
 /// CreateMasteringVoice(pp, channels, rate, flags, device, effects[, category])
 fn X_CreateMasteringVoice(c: &mut Ctx) -> u32 {
-    let (pp, ch, rate, fx) = (c.a(1), c.a(2), c.a(3), c.a(6));
+    let c = &mut c.args::<crate::api::outs::iface::IXAudio2::CreateMasteringVoice>();
+    let (pp, ch, rate, fx) = (c.out::<1>(), c.a::<2>(), c.a::<3>(), c.a::<6>());
     if with(|e| e.master != 0) {
-        putp(pp, 0);
+        pp.put(0);
         return Hr::InvalidCall.code();
     }
-    let chain = match read_chain(c, fx) {
+    let chain = match read_chain(c.ctx(), fx) {
         Ok(ch) => ch,
         Err(e) => {
-            putp(pp, 0);
+            pp.put(0);
             return e.code();
         }
     };
     let fmt = Fmt { rate: if rate == 0 { RATE } else { rate }, channels: if ch == 0 { 2 } else { ch }, bits: 32, float: true, law: 0 };
     let o = new_voice(Kind::Master, fmt, 0, 0);
     with_voice(o, |v| v.chain = chain);
-    putp(pp, o);
+    pp.put(o);
     start_thread();
     with(|e| e.running = true);
     WAKE.notify_all();

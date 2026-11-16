@@ -128,7 +128,8 @@ fn new_list(l: List) -> u32 {
 
 /// SetupCreateDiskSpaceList(reserved1, reserved2, flags)
 fn create(c: &mut Ctx) -> u32 {
-    let (r1, r2, flags) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IClassFactory::CreateInstance>();
+    let (r1, r2, flags) = (c.a::<0>(), c.a::<1>(), c.a::<2>());
     if r1 != 0 || r2 != 0 || flags & !(SPDSL_IGNORE_DISK | SPDSL_DISALLOW_NEGATIVE_ADJUST) != 0 {
         return fail(ERROR_INVALID_PARAMETER);
     }

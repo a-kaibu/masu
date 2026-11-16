@@ -616,7 +616,8 @@ fn dec_palette(c: &mut Ctx) -> u32 {
 
 /// GetFrame(this, index, out): a frame source in the frame's own pixel format
 fn dec_frame(c: &mut Ctx) -> u32 {
-    let (this, index, out) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IWICBitmapDecoder::GetFrame>();
+    let (this, index, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     let Some((pic, _)) = picture_of(this) else {
         return E_FAIL;
     };
@@ -653,7 +654,7 @@ fn dec_frame(c: &mut Ctx) -> u32 {
             *r = Some(raw);
         }
     });
-    mem::putp(out, p);
+    out.put(p);
     0
 }
 
@@ -668,11 +669,12 @@ fn frame_meta<R>(f: impl FnOnce(&mut HashMap<u32, (Guid, Option<Arc<wicmeta::Met
 
 /// IWICBitmapFrameDecode::GetMetadataQueryReader(this, out)
 fn frame_reader(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICBitmapFrameDecode::GetMetadataQueryReader>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return E_INVALIDARG;
     }
-    mem::putp(out, 0);
+    out.put(0);
     match frame_meta(|m| m.get(&this).cloned()) {
         Some((container, Some(meta))) => {
             let r = new(
@@ -680,7 +682,7 @@ fn frame_reader(c: &mut Ctx) -> u32 {
                 &com::impls!(IWICMetadataQueryReader { Release: release, GetContainerFormat: reader_container, GetLocation: reader_location, GetMetadataByName: reader_get, GetEnumerator: reader_enum }),
                 Obj::Reader { container, meta },
             );
-            mem::putp(out, r);
+            out.put(r);
             0
         }
         Some((_, None)) => WINCODEC_ERR_UNSUPPORTEDOPERATION,
@@ -752,12 +754,13 @@ fn reader_get(c: &mut Ctx) -> u32 {
 
 /// GetEnumerator(this, IEnumString **): the top-level blocks ("/sRGB", ...)
 fn reader_enum(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
+    let c = &mut c.args::<crate::api::outs::iface::IWICMetadataQueryReader::GetEnumerator>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
     let Some((_, meta)) = reader_of(this) else { return E_FAIL };
-    if out == 0 {
+    if out.is_null() {
         return E_INVALIDARG;
     }
-    mem::putp(out, new_names(meta.blocks.clone(), 0));
+    out.put(new_names(meta.blocks.clone(), 0));
     0
 }
 
@@ -771,8 +774,9 @@ fn new_names(names: Vec<String>, pos: usize) -> u32 {
 
 /// IEnumString::Next(this, celt, rgelt, pceltFetched): CoTaskMem strings
 fn names_next(c: &mut Ctx) -> u32 {
-    let (this, n, out, fetched) = (c.a(0), c.a(1), c.a(2), c.a(3));
-    if out == 0 || (n > 1 && fetched == 0) {
+    let c = &mut c.args::<crate::api::outs::iface::IEnumString::Next>();
+    let (this, n, out, fetched) = (c.a::<0>(), c.a::<1>(), c.out::<2>(), c.a::<3>());
+    if out.is_null() || (n > 1 && fetched == 0) {
         return E_INVALIDARG;
     }
     let got = with(|m| match m.get_mut(&this) {
@@ -789,7 +793,7 @@ fn names_next(c: &mut Ctx) -> u32 {
         for (j, ch) in w.iter().enumerate() {
             mem::w16(p + j as u32 * 2, *ch);
         }
-        mem::wp(out + i as u32 * mem::ps(), p);
+        out.nth(i as u32).put(p);
     }
     if fetched != 0 {
         mem::w32(fetched, got.len() as u32);
@@ -820,8 +824,9 @@ fn names_reset(c: &mut Ctx) -> u32 {
 }
 
 fn names_clone(c: &mut Ctx) -> u32 {
-    let (this, out) = (c.a(0), c.a(1));
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IEnumString::Clone>();
+    let (this, out) = (c.a::<0>(), c.out::<1>());
+    if out.is_null() {
         return E_INVALIDARG;
     }
     let Some((names, pos)) = with(|m| match m.get(&this) {
@@ -830,7 +835,7 @@ fn names_clone(c: &mut Ctx) -> u32 {
     }) else {
         return E_NOTIMPL;
     };
-    mem::putp(out, new_names(names, pos));
+    out.put(new_names(names, pos));
     0
 }
 
@@ -841,15 +846,15 @@ fn raw_of(this: u32) -> Option<Arc<picture::Frame>> {
     })
 }
 
-fn create_decoder(data: &[u8], out: u32) -> u32 {
+fn create_decoder(data: &[u8], out: crate::api::Out) -> u32 {
     match decoder(data) {
         Some(d) => {
-            mem::putp(out, d);
+            out.put(d);
             0
         }
         None => {
             eprintln!("sake: WIC: no decoder for {} bytes ({:02x?})", data.len(), &data[..data.len().min(4)]);
-            mem::putp(out, 0);
+            out.put(0);
             WINCODEC_ERR_COMPONENTNOTFOUND
         }
     }
@@ -858,38 +863,42 @@ fn create_decoder(data: &[u8], out: u32) -> u32 {
 // ---- the factory ----
 
 fn f_decoder_from_filename(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateDecoderFromFilename>();
     // (this, name, vendor, access, options, out)
-    let (name, out) = (c.a(1), c.a(5));
+    let (name, out) = (c.a::<1>(), c.out::<5>());
     let name = String::from_utf16_lossy(&mem::wstr(name));
     match crate::d3dcompiler::read_file(&name) {
         Some(d) => create_decoder(&d, out),
         None => {
-            mem::putp(out, 0);
+            out.put(0);
             0x8007_0002
         }
     }
 }
 
 fn f_decoder_from_stream(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateDecoderFromStream>();
     // (this, stream, vendor, options, out)
-    let (stm, out) = (c.a(1), c.a(4));
+    let (stm, out) = (c.a::<1>(), c.out::<4>());
     if stm == 0 {
         return E_INVALIDARG;
     }
-    let data = read_stream(c, stm);
+    let data = read_stream(c.ctx(), stm);
     create_decoder(&data, out)
 }
 
 fn f_create_stream(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    mem::putp(out, new(com::iface!(IWICStream), &stream_impls(), Obj::Stream { data: Vec::new(), pos: 0 }));
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateStream>();
+    let out = c.out::<1>();
+    out.put(new(com::iface!(IWICStream), &stream_impls(), Obj::Stream { data: Vec::new(), pos: 0 }));
     0
 }
 
 fn f_create_converter(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateFormatConverter>();
+    let out = c.out::<1>();
     let empty = Arc::new(Img::new(0, 0, Vec::new()));
-    mem::putp(out, new_source(com::iface!(IWICFormatConverter), empty, Fmt::Bgra, &com::impls!(IWICFormatConverter { Initialize: conv_init, CanConvert: conv_can })));
+    out.put(new_source(com::iface!(IWICFormatConverter), empty, Fmt::Bgra, &com::impls!(IWICFormatConverter { Initialize: conv_init, CanConvert: conv_can })));
     0
 }
 
@@ -913,8 +922,9 @@ fn palette_colors(p: u32) -> Option<Vec<u32>> {
 }
 
 fn f_create_palette(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
-    if out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreatePalette>();
+    let out = c.out::<1>();
+    if out.is_null() {
         return E_INVALIDARG;
     }
     let p = new(
@@ -934,7 +944,7 @@ fn f_create_palette(c: &mut Ctx) -> u32 {
         }),
         Obj::Palette { colors: Vec::new(), kind: 0 },
     );
-    mem::putp(out, p);
+    out.put(p);
     0
 }
 
@@ -1147,9 +1157,10 @@ fn conv_can(c: &mut Ctx) -> u32 {
 }
 
 fn f_create_scaler(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateBitmapScaler>();
+    let out = c.out::<1>();
     let empty = Arc::new(Img::new(0, 0, Vec::new()));
-    mem::putp(out, new_source(com::iface!(IWICBitmapScaler), empty, Fmt::Bgra, &com::impls!(IWICBitmapScaler { Initialize: scaler_init })));
+    out.put(new_source(com::iface!(IWICBitmapScaler), empty, Fmt::Bgra, &com::impls!(IWICBitmapScaler { Initialize: scaler_init })));
     0
 }
 
@@ -1387,9 +1398,10 @@ fn crop(img: &Img, (x, y, w, h): (u32, u32, u32, u32)) -> Img {
 }
 
 fn f_create_clipper(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateBitmapClipper>();
+    let out = c.out::<1>();
     let empty = Arc::new(Img::new(0, 0, Vec::new()));
-    mem::putp(out, new_source(com::iface!(IWICBitmapClipper), empty, Fmt::Bgra, &com::impls!(IWICBitmapClipper { Initialize: clipper_init })));
+    out.put(new_source(com::iface!(IWICBitmapClipper), empty, Fmt::Bgra, &com::impls!(IWICBitmapClipper { Initialize: clipper_init })));
     0
 }
 
@@ -1406,9 +1418,10 @@ fn clipper_init(c: &mut Ctx) -> u32 {
 }
 
 fn f_create_flip(c: &mut Ctx) -> u32 {
-    let out = c.a(1);
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateBitmapFlipRotator>();
+    let out = c.out::<1>();
     let empty = Arc::new(Img::new(0, 0, Vec::new()));
-    mem::putp(out, new_source(com::iface!(IWICBitmapFlipRotator), empty, Fmt::Bgra, &com::impls!(IWICBitmapFlipRotator { Initialize: flip_init })));
+    out.put(new_source(com::iface!(IWICBitmapFlipRotator), empty, Fmt::Bgra, &com::impls!(IWICBitmapFlipRotator { Initialize: flip_init })));
     0
 }
 
@@ -1477,21 +1490,23 @@ fn bm_set_palette(c: &mut Ctx) -> u32 {
 }
 
 fn f_create_bitmap(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateBitmap>();
     // (this, width, height, format, option, out)
-    let (w, h, fmt, out) = (c.a(1), c.a(2), c.a(3), c.a(5));
+    let (w, h, fmt, out) = (c.a::<1>(), c.a::<2>(), c.a::<3>(), c.out::<5>());
     let Some(f) = fmt_of(read_guid(fmt)) else {
         return WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT;
     };
     let Some(n) = image_bytes(w, h) else {
         return E_OUTOFMEMORY;
     };
-    mem::putp(out, new_bitmap(Img::new(w, h, vec![0; n]), f));
+    out.put(new_bitmap(Img::new(w, h, vec![0; n]), f));
     0
 }
 
 fn f_bitmap_from_memory(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateBitmapFromMemory>();
     // (this, width, height, format, stride, size, buffer, out)
-    let (w, h, fmt, stride, size, buf, out) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6), c.a(7));
+    let (w, h, fmt, stride, size, buf, out) = (c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.out::<7>());
     let Some(f) = fmt_of(read_guid(fmt)) else {
         return WINCODEC_ERR_UNSUPPORTEDPIXELFORMAT;
     };
@@ -1527,37 +1542,40 @@ fn f_bitmap_from_memory(c: &mut Ctx) -> u32 {
             }
         });
     }
-    mem::putp(out, b);
+    out.put(b);
     0
 }
 
 fn f_bitmap_from_source(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateBitmapFromSource>();
     // (this, source, option, out)
-    let (src, out) = (c.a(1), c.a(3));
-    let Some((img, f)) = read_source(c, src) else {
+    let (src, out) = (c.a::<1>(), c.out::<3>());
+    let Some((img, f)) = read_source(c.ctx(), src) else {
         return E_INVALIDARG;
     };
     // (the pixels shared until one of them is locked for writing)
-    mem::putp(out, new_bitmap_shared(img, f));
+    out.put(new_bitmap_shared(img, f));
     0
 }
 
 fn f_bitmap_from_source_rect(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateBitmapFromSourceRect>();
     // (this, source, x, y, width, height, out)
-    let (src, x, y, w, h, out) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6));
-    let Some((img, f)) = read_source(c, src) else {
+    let (src, x, y, w, h, out) = (c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.out::<6>());
+    let Some((img, f)) = read_source(c.ctx(), src) else {
         return E_INVALIDARG;
     };
     if !inside(x, y, w, h, img.w, img.h) {
         return E_INVALIDARG;
     }
-    mem::putp(out, new_bitmap(crop(&img, (x, y, w, h)), f));
+    out.put(new_bitmap(crop(&img, (x, y, w, h)), f));
     0
 }
 
 fn bm_lock(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICBitmap::Lock>();
     // (this, rect, flags (1 read, 2 write), out)
-    let (this, prc, flags, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let (this, prc, flags, out) = (c.a::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
     let Some((bitmap, fmt)) = with(|m| match m.get(&this) {
         Some(Obj::Bitmap { img, fmt, .. }) => Some((img.clone(), *fmt)),
         _ => None,
@@ -1584,7 +1602,7 @@ fn bm_lock(c: &mut Ctx) -> u32 {
         &com::impls!(IWICBitmapLock { Release: release, GetSize: lock_size, GetStride: lock_stride, GetDataPointer: lock_data, GetPixelFormat: lock_format }),
         Obj::Lock { bitmap, fmt, rect: r, buf, stride, write: flags & 2 != 0, owner: this },
     );
-    mem::putp(out, l);
+    out.put(l);
     0
 }
 
@@ -1610,10 +1628,11 @@ fn lock_stride(c: &mut Ctx) -> u32 {
 }
 
 fn lock_data(c: &mut Ctx) -> u32 {
-    let (this, psize, pptr) = (c.a(0), c.a(1), c.a(2));
+    let c = &mut c.args::<crate::api::outs::iface::IWICBitmapLock::GetDataPointer>();
+    let (this, psize, pptr) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     lock(this, |_, r, buf, s| {
         mem::w32(psize, s * r.3);
-        mem::putp(pptr, buf);
+        pptr.put(buf);
     })
     .map_or(E_FAIL, |_| 0)
 }
@@ -1692,8 +1711,9 @@ fn transparency(f: Fmt) -> u32 {
 /// CreateComponentInfo(clsid, out): pixel formats only (IWICPixelFormatInfo2); other components
 /// (codecs, converters): WINCODEC_ERR_COMPONENTNOTFOUND.
 fn f_component_info(c: &mut Ctx) -> u32 {
-    let (clsid, out) = (c.a(1), c.a(2));
-    if clsid == 0 || out == 0 {
+    let c = &mut c.args::<crate::api::outs::iface::IWICImagingFactory2::CreateComponentInfo>();
+    let (clsid, out) = (c.a::<1>(), c.out::<2>());
+    if clsid == 0 || out.is_null() {
         return E_INVALIDARG;
     }
     // (Windows leaves *out as it was for a component it does not know: winref wicconv)
@@ -1712,7 +1732,7 @@ fn f_component_info(c: &mut Ctx) -> u32 {
         }),
         Obj::FormatInfo(f),
     );
-    mem::putp(out, p);
+    out.put(p);
     0
 }
 

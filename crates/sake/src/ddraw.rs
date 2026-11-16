@@ -501,13 +501,14 @@ fn this(c: &Ctx) -> (u32, u8) {
 }
 
 fn S_QueryInterface(c: &mut Ctx) -> u32 {
-    let (id, _) = this(c);
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let (id, _) = this(c.ctx());
     // (no IID: E_INVALIDARG; IUnknown is the IDirectDrawSurface: ddraw7's test_surface_qi)
-    if c.a(1) == 0 {
-        crate::mem::putp(c.a(2), 0);
+    if c.a::<1>() == 0 {
+        c.out::<2>().put(0);
         return E_INVALIDARG;
     }
-    let kind = match guid_first(c.a(1)) {
+    let kind = match guid_first(c.a::<1>()) {
         0x6c14_db81 | 0x5780_5885 | 0xda04_4e00 | 0 => 0,
         0x0b2b_8630 => 1,
         0x0667_5a80 => 2,
@@ -515,12 +516,12 @@ fn S_QueryInterface(c: &mut Ctx) -> u32 {
         0x9328_1502 if !surf(id).map_or(true, |x| x.v7) => 3,
         0x2cdc_d9e0 if !surf(id).map_or(true, |x| x.v7) => 4,
         _ => {
-            crate::mem::putp(c.a(2), 0);
+            c.out::<2>().put(0);
             return E_NOINTERFACE;
         }
     };
     with(|s| s.surfs.get_mut(&id).map(|x| x.refs += 1));
-    crate::mem::putp(c.a(2), block(id, kind));
+    c.out::<2>().put(block(id, kind));
     DD_OK
 }
 fn S_AddRef(c: &mut Ctx) -> u32 {
@@ -735,12 +736,13 @@ fn S_DeleteAttachedSurface(c: &mut Ctx) -> u32 {
 }
 
 fn S_GetAttachedSurface(c: &mut Ctx) -> u32 {
-    let (id, kind) = this(c);
-    let want = r32(c.a(1));
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawSurface::GetAttachedSurface>();
+    let (id, kind) = this(c.ctx());
+    let want = r32(c.a::<1>());
     let Some(s) = surf(id) else { return DDERR_INVALIDPARAMS };
     if s.zbuf != 0 && want & CAPS_ZBUFFER != 0 {
         with(|st| st.surfs.get_mut(&s.zbuf).map(|x| x.refs += 1));
-        crate::mem::putp(c.a(2), block(s.zbuf, kind));
+        c.out::<2>().put(block(s.zbuf, kind));
         return DD_OK;
     }
     // (the next of a flip chain: asked for as a back buffer or a flip surface, or by caps it
@@ -750,32 +752,32 @@ fn S_GetAttachedSurface(c: &mut Ctx) -> u32 {
     let next_has = |w: u32| surf(next).is_some_and(|n| w != 0 && n.caps & w == w);
     if next != 0 && (want & (CAPS_BACKBUFFER | CAPS_FLIP) != 0 || (s.mip == 0 && next_has(want))) {
         with(|st| st.surfs.get_mut(&next).map(|x| x.refs += 1));
-        crate::mem::putp(c.a(2), block(next, kind));
+        c.out::<2>().put(block(next, kind));
         return DD_OK;
     }
     // (a cube map's face, asked for by DDSCAPS2: the root gives its other faces' tops, a face
     // its next level; ddraw7's test_getdc)
-    let face = if kind >= 1 { r32(c.a(1) + 4) & CUBE_FACES } else { 0 };
+    let face = if kind >= 1 { r32(c.a::<1>() + 4) & CUBE_FACES } else { 0 };
     if face != 0 {
         let at = s.faces.iter().copied().find(|f| surf(*f).is_some_and(|x| x.caps2 & face != 0));
         let at = at.or((s.caps2 & face != 0 && s.mip != 0).then_some(s.mip));
         let Some(at) = at else {
-            crate::mem::putp(c.a(2), 0);
+            c.out::<2>().put(0);
             return DDERR_NOTFOUND;
         };
         with(|st| st.surfs.get_mut(&at).map(|x| x.refs += 1));
-        crate::mem::putp(c.a(2), block(at, kind));
+        c.out::<2>().put(block(at, kind));
         return DD_OK;
     }
     // (the next mipmap level: asked for as TEXTURE, MIPMAP or COMPLEX, which it is)
     // (or by DDSCAPS2_MIPMAPSUBLEVEL alone: ddraw7's test_device_load)
-    let sublevel = kind >= 1 && r32(c.a(1) + 4) & DDSCAPS2_MIPMAPSUBLEVEL != 0;
+    let sublevel = kind >= 1 && r32(c.a::<1>() + 4) & DDSCAPS2_MIPMAPSUBLEVEL != 0;
     if s.mip != 0 && (want & (CAPS_TEXTURE | CAPS_MIPMAP | CAPS_COMPLEX) != 0 || sublevel) && want & !(CAPS_TEXTURE | CAPS_MIPMAP | CAPS_COMPLEX) == 0 {
         with(|st| st.surfs.get_mut(&s.mip).map(|x| x.refs += 1));
-        crate::mem::putp(c.a(2), block(s.mip, kind));
+        c.out::<2>().put(block(s.mip, kind));
         return DD_OK;
     }
-    crate::mem::putp(c.a(2), 0);
+    c.out::<2>().put(0);
     DDERR_NOTFOUND
 }
 
@@ -820,10 +822,11 @@ fn S_GetPixelFormat(c: &mut Ctx) -> u32 {
     DD_OK
 }
 fn S_GetDDInterface(c: &mut Ctx) -> u32 {
-    let (id, kind) = this(c);
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawSurface4::GetDDInterface>();
+    let (id, kind) = this(c.ctx());
     let obj = surf(id).map_or(0, |s| s.dd);
     let b = dd_iface(obj, [0, 2, 3][kind as usize]);
-    mem::putp(c.a(1), b);
+    c.out::<1>().put(b);
     if b == 0 { DDERR_INVALIDPARAMS } else { DD_OK }
 }
 const DDERR_MOREDATA: u32 = 0x8876_02b2;
@@ -967,9 +970,10 @@ fn S_SetClipper(c: &mut Ctx) -> u32 {
     DD_OK
 }
 fn S_GetClipper(c: &mut Ctx) -> u32 {
-    let (id, _) = this(c);
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawSurface::GetClipper>();
+    let (id, _) = this(c.ctx());
     let cl = surf(id).map_or(0, |s| s.clipper);
-    crate::mem::putp(c.a(1), cl);
+    c.out::<1>().put(cl);
     if cl == 0 { DDERR_NOCLIPLIST } else { DD_OK }
 }
 
@@ -986,9 +990,10 @@ fn S_SetPalette(c: &mut Ctx) -> u32 {
     DD_OK
 }
 fn S_GetPalette(c: &mut Ctx) -> u32 {
-    let (id, _) = this(c);
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawSurface::GetPalette>();
+    let (id, _) = this(c.ctx());
     let p = surf(id).map_or(0, |s| s.palette);
-    mem::putp(c.a(1), p);
+    c.out::<1>().put(p);
     if p == 0 { DDERR_NOPALETTEATTACHED } else { DD_OK }
 }
 
@@ -1033,7 +1038,8 @@ fn S_Unlock(c: &mut Ctx) -> u32 {
 }
 
 fn S_GetDC(c: &mut Ctx) -> u32 {
-    let (id, _) = this(c);
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawSurface::GetDC>();
+    let (id, _) = this(c.ctx());
     let Some(s) = surf(id) else { return DDERR_INVALIDPARAMS };
     // (a second GetDC before ReleaseDC: Windows' error; a new DC each time left the first one
     // for good)
@@ -1041,10 +1047,10 @@ fn S_GetDC(c: &mut Ctx) -> u32 {
         return DDERR_DCALREADYCREATED;
     }
     apply_palette(id);
-    let dc = gcall(c, "gdi32", "CreateCompatibleDC", &[0]);
-    gcall(c, "gdi32", "SelectObject", &[dc, s.hbm]);
+    let dc = gcall(c.ctx(), "gdi32", "CreateCompatibleDC", &[0]);
+    gcall(c.ctx(), "gdi32", "SelectObject", &[dc, s.hbm]);
     with(|st| st.surfs.get_mut(&id).map(|x| x.dc = dc));
-    crate::mem::putp(c.a(1), dc);
+    c.out::<1>().put(dc);
     DD_OK
 }
 fn S_ReleaseDC(c: &mut Ctx) -> u32 {
@@ -1500,7 +1506,8 @@ fn new_clipper() -> u32 {
     b
 }
 fn C_QueryInterface(c: &mut Ctx) -> u32 {
-    crate::mem::putp(c.a(2), c.a(0));
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    c.out::<2>().put(c.a::<0>());
     DD_OK
 }
 fn C_GetClipList(c: &mut Ctx) -> u32 {
@@ -1521,8 +1528,9 @@ fn C_GetClipList(c: &mut Ctx) -> u32 {
     DD_OK
 }
 fn C_GetHWnd(c: &mut Ctx) -> u32 {
-    let h = with(|s| s.clippers.get(&c.a(0)).copied()).unwrap_or(0);
-    mem::putp(c.a(1), h);
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDrawClipper::GetHWnd>();
+    let h = with(|s| s.clippers.get(&c.a::<0>()).copied()).unwrap_or(0);
+    c.out::<1>().put(h);
     DD_OK
 }
 fn C_IsClipListChanged(c: &mut Ctx) -> u32 {
@@ -1733,29 +1741,32 @@ fn D_Release(c: &mut Ctx) -> u32 {
 }
 
 fn D_QueryInterface(c: &mut Ctx) -> u32 {
-    let v = match guid_first(c.a(1)) {
+    let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
+    let v = match guid_first(c.a::<1>()) {
         0x6c14_db80 | 0 => 0,
         0xb3a6_f3e0 => 1,
         0x9c59_509a => 2,
         0x15e6_5ec0 => 3,
-        0xf504_9e77 if dd_version(c) == 3 => 4,
+        0xf504_9e77 if dd_version(c.ctx()) == 3 => 4,
         // IDirect3D3: not from an object DirectDrawCreateEx made
-        0xbb22_3240 if !dds(|m, _| m.get(&dd_of(c.a(0)).0).map_or(true, |o| o.ex)) => 5,
+        0xbb22_3240 if !dds(|m, _| m.get(&dd_of(c.a::<0>()).0).map_or(true, |o| o.ex)) => 5,
         _ => {
-            crate::mem::putp(c.a(2), 0);
+            c.out::<2>().put(0);
             return E_NOINTERFACE;
         }
     };
-    crate::mem::putp(c.a(2), dd_iface(dd_of(c.a(0)).0, v));
+    c.out::<2>().put(dd_iface(dd_of(c.a::<0>()).0, v));
     DD_OK
 }
 
 fn D_CreateClipper(c: &mut Ctx) -> u32 {
-    crate::mem::putp(c.a(2), new_clipper());
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDraw::CreateClipper>();
+    c.out::<2>().put(new_clipper());
     DD_OK
 }
 fn D_CreatePalette(c: &mut Ctx) -> u32 {
-    let (entries, out) = (c.a(2), c.a(3));
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDraw::CreatePalette>();
+    let (entries, out) = (c.a::<2>(), c.out::<3>());
     let b = mem::heap_alloc(8, true);
     w32(b, palette_vtbl());
     let mut pal = [0u32; 256];
@@ -1766,13 +1777,14 @@ fn D_CreatePalette(c: &mut Ctx) -> u32 {
         }
     }
     with(|s| s.palettes.insert(b, pal));
-    crate::mem::putp(out, b);
+    out.put(b);
     DD_OK
 }
 
 fn D_CreateSurface(c: &mut Ctx) -> u32 {
-    let (d, out) = (c.a(1), c.a(2));
-    let kind = match dd_version(c) {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDraw::CreateSurface>();
+    let (d, out) = (c.a::<1>(), c.out::<2>());
+    let kind = match dd_version(c.ctx()) {
         3 => 2,
         2 => 1,
         _ => 0,
@@ -1782,7 +1794,7 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
     // (cube map faces without DDSCAPS2_CUBEMAP: refused, as Windows, Wine's dsurface tests
     // CubeMapTest)
     if flags & 1 != 0 && kind == 2 && r32(d + wide(108)) & 0xfc00 != 0 && r32(d + wide(108)) & 0x200 == 0 {
-        crate::mem::putp(out, 0);
+        out.put(0);
         return DDERR_INVALIDCAPS;
     }
     let (mw, mh, mbpp) = display();
@@ -1832,23 +1844,23 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
     let cube = kind == 2 && flags & 1 != 0 && r32(d + wide(108)) & 0x200 != 0;
     let mip = caps & CAPS_MIPMAP != 0;
     if (mip && caps & CAPS_TEXTURE == 0) || (caps & CAPS_COMPLEX != 0 && !mip && caps & CAPS_FLIP == 0 && !cube) {
-        crate::mem::putp(out, 0);
+        out.put(0);
         return DDERR_INVALIDCAPS;
     }
     let faces = r32(d + wide(108)) & CUBE_FACES;
     if cube && faces == 0 {
-        crate::mem::putp(out, 0);
+        out.put(0);
         return DDERR_INVALIDPARAMS;
     }
     let levels = match (mip, caps & CAPS_COMPLEX != 0, flags & DDSD_MIPMAPCOUNT != 0) {
         (false, ..) => 0,
         (true, false, true) => {
-            crate::mem::putp(out, 0);
+            out.put(0);
             return DDERR_INVALIDCAPS;
         }
         (true, false, false) => 1,
         (true, true, true) if r32(d + 24) == 0 => {
-            crate::mem::putp(out, 0);
+            out.put(0);
             return DDERR_INVALIDPARAMS;
         }
         (true, true, true) => r32(d + 24).min(mip_levels(w, h)),
@@ -1860,8 +1872,8 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
     }
     let pf = pfv.filter(|p| p[1] | p[2] | p[3] != 0).unwrap_or_else(|| plain_pf(bpp, r565));
     let Some(id) = new_surface_pf(w, h, bpp, r565, pf, caps) else { return DDERR_OUTOFMEMORY };
-    let (owner, v7) = (dd_of(c.a(0)).0, dd_version(c) == 3);
-    let held = if kind >= 1 { c.a(0) } else { 0 };
+    let (owner, v7) = (dd_of(c.a::<0>()).0, dd_version(c.ctx()) == 3);
+    let held = if kind >= 1 { c.a::<0>() } else { 0 };
     if held != 0 {
         dd_addref(held);
     }
@@ -1887,7 +1899,7 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
     // DirectDraw object and the primary stayed for good)
     let mut made = vec![id];
     for _ in 1..face_bits.len() {
-        let Some(f) = new_surface_pf(w, h, bpp, r565, pf, caps) else { return undo_create(c, &made) };
+        let Some(f) = new_surface_pf(w, h, bpp, r565, pf, caps) else { return undo_create(c.ctx(), &made) };
         made.push(f);
         with(|s| {
             s.surfs.get_mut(&f).map(|x| {
@@ -1907,7 +1919,7 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
         let mut up = top;
         for i in 1..levels {
             let (lw, lh) = ((w >> i).max(1), (h >> i).max(1));
-            let Some(m) = new_surface_pf(lw, lh, bpp, r565, pf, caps) else { return undo_create(c, &made) };
+            let Some(m) = new_surface_pf(lw, lh, bpp, r565, pf, caps) else { return undo_create(c.ctx(), &made) };
             made.push(m);
             with(|s| {
                 s.surfs.get_mut(&m).map(|x| {
@@ -1926,7 +1938,7 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
     let mut prev = id;
     for i in 0..backs {
         let bc = (caps & !(CAPS_PRIMARY | CAPS_FRONTBUFFER)) | CAPS_BACKBUFFER * u32::from(i == 0) | CAPS_FLIP | CAPS_COMPLEX;
-        let Some(b) = new_surface(w, h, bpp, r565, bc) else { return undo_create(c, &made) };
+        let Some(b) = new_surface(w, h, bpp, r565, bc) else { return undo_create(c.ctx(), &made) };
         made.push(b);
         with(|s| {
             s.surfs.get_mut(&b).map(|x| {
@@ -1941,7 +1953,7 @@ fn D_CreateSurface(c: &mut Ctx) -> u32 {
     if backs > 0 {
         with(|s| s.surfs.get_mut(&prev).map(|x| x.next = id));
     }
-    crate::mem::putp(out, block(id, kind));
+    out.put(block(id, kind));
     DD_OK
 }
 
@@ -2057,19 +2069,20 @@ fn D_GetFourCCCodes(c: &mut Ctx) -> u32 {
     DD_OK
 }
 fn D_GetGDISurface(c: &mut Ctx) -> u32 {
+    let c = &mut c.args::<crate::api::outs::iface::IDirectDraw::GetGDISurface>();
     let p = with(|s| s.primary);
     if p == 0 {
-        crate::mem::putp(c.a(1), 0);
+        c.out::<1>().put(0);
         return DDERR_NOTFOUND;
     }
-    let kind = match dd_version(c) {
+    let kind = match dd_version(c.ctx()) {
         3 => 2,
         2 => 1,
         _ => 0,
     };
     // (a reference of the primary for the caller, as Windows gives)
     with(|s| s.surfs.get_mut(&p).map(|x| x.refs += 1));
-    crate::mem::putp(c.a(1), block(p, kind));
+    c.out::<1>().put(block(p, kind));
     DD_OK
 }
 fn D_GetMonitorFrequency(c: &mut Ctx) -> u32 {
