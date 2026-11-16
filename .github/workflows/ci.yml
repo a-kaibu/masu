@@ -24,6 +24,10 @@ jobs:
   browser:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # (no RPG Maker RTPs from their publisher in these servers: a prefix of 289 MiB that each
+    # "save it whole first" fetches; none of these games is one)
+    env:
+      MASU_RTP: "0"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0
@@ -719,7 +723,8 @@ jobs:
   host-tests:
     needs: build
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # (host/tests on sake alone took past 25 min, 2026-11-16)
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -817,6 +822,10 @@ jobs:
       actions: read
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # (no RPG Maker RTPs from their publisher in these servers: a prefix of 289 MiB that each
+    # "save it whole first" fetches; none of these games is one)
+    env:
+      MASU_RTP: "0"
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: actions/setup-node@v7.1.0

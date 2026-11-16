@@ -315,8 +315,17 @@ try {
   );
   await page.goBack();
   await page.waitForURL((u) => !u.searchParams.has("game"));
-  // (the list loaded again, for the line as it is now)
-  await page.goto(page.url());
+  // (the list loaded again, for the line as it is now; a load the back's own still going on
+  // aborts is made again: CI, net::ERR_ABORTED)
+  for (let i = 0; ; i++) {
+    try {
+      await page.goto(page.url());
+      break;
+    } catch (e) {
+      if (i >= 4 || !/ERR_ABORTED/.test(String(e))) throw e;
+      await page.waitForTimeout(300);
+    }
+  }
   const asked = count.bucket + count.server;
   await page.getByRole("button", { name: "すぐ遊ぶゲーム を起動" }).click();
   await dialog.getByTestId("save-first-ask").waitFor({ timeout: 30000 });

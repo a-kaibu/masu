@@ -50,6 +50,9 @@ int main(void) {
         SetLastError(0);
         BOOL ok = GetOverlappedResult(h, &change, &got, TRUE);
         DWORD e = GetLastError(), took = GetTickCount() - t0;
+        /* (the completion wakes this thread inside CancelIPChangeNotify, before it returns and
+         * its result is stored: CI's interpreter run printed -1) */
+        for (int i = 0; i < 2000 && cancelled == -1; i++) Sleep(1);
         printf("cancel %d\n", cancelled);
         printf("change result %d error %lu bytes %lu before the thread ended %d\n", ok, e, got, took < 2000);
         WaitForSingleObject(t, INFINITE);
