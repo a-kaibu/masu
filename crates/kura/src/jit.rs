@@ -1028,6 +1028,11 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
                 vnvm_jit_init(d.as_ptr(), d.len())
             };
             let _ = d;
+            // (the compiler thread started now, at a thread's first use of the JIT, not with the
+            // first job: a thread made in the browser starts only once the page's thread gets to
+            // it, and every guest thread stood still that long, 3 s behind a busy page in
+            // tests/output-browser.mjs)
+            let _ = compiler();
             let (done_tx, done_rx) = std::sync::mpsc::channel();
             static STATES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
             State {
