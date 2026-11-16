@@ -471,6 +471,9 @@ fn reclaim(st: &mut State) {
         freed.1 += u64::from(bytes);
         false
     });
+    // (and the parking's live translations of those: parked and put back, they named cleared
+    // slots; jit/park.rs Parking::forget)
+    st.park.forget(|b| gone.iter().any(|&(g, n)| b.wrapping_sub(g) < n));
     for (base, n) in gone {
         #[cfg(target_os = "emscripten")]
         unsafe {

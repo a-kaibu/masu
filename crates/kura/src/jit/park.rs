@@ -130,6 +130,15 @@ impl Parking {
         self.parked.iter().any(|w| w.has(a))
     }
 
+    /// Forgets the live translations whose module reclaim freed (`freed`: of a table index):
+    /// one whose entries something else took over (a region merged into a bigger one) stays
+    /// live here though nothing refers to its module, and parked and put back later it named
+    /// cleared table slots ("null function or function signature mismatch", codeturns under
+    /// MASU_JIT_RECLAIM=1).
+    pub fn forget(&mut self, freed: impl Fn(u32) -> bool) {
+        self.live.retain(|&b, _| !freed(b));
+    }
+
     /// Table indexes still referred to (reclaim must not free them).
     pub fn bases(&self) -> impl Iterator<Item = u32> + '_ {
         self.parked.iter().flat_map(|w| w.entries.iter().map(|e| e.1))
@@ -271,6 +280,71 @@ mod tests {
                     }
                 }
                 prop_assert!(p.live.values().all(|x| now(&x.code) == Some(x.text.clone())));
+            }
+        }
+    }
+
+    proptest! {
+        /// Translations made, taken over by others (a merge: their hash entries replaced, the
+        /// parking not told), parked, put back, with reclaim's rule run between (a module goes
+        /// when no hash entry and no parked translation names it, and the parking forgets it):
+        /// whatever goes back in names a module still loaded.
+        #[test]
+        fn nothing_freed_comes_back(ops in prop::collection::vec((0u8..5, 0u8..4, 0u8..3), 1..300)) {
+            let code = |k: u8| vec![(0x35e_0000u32 + u32::from(k) * 0x40, 0x10u32)];
+            let mut p = Parking::default();
+            let mut mem = [0u8; 4];
+            let mut hash: std::collections::HashMap<u32, u32> = Default::default();
+            let mut freed = std::collections::HashSet::new();
+            let mut base = 0u32;
+            for (op, k, v) in ops {
+                let a = 0x35e_0000 + u32::from(k) * 0x40;
+                let at = |m: &[u8; 4], c: &[(u32, u32)]| Some(vec![m[us((c[0].0 - 0x35e_0000) / 0x40)]; us(c[0].1)]);
+                match op {
+                    // a translation of the code there now
+                    0 => {
+                        base += 2;
+                        let t = at(&mem, &code(k)).unwrap();
+                        p.track(Wx { base, entries: vec![(a, base)], roots: vec![a], func: None, code: code(k), text: t });
+                        hash.insert(a, base);
+                    }
+                    // its entry taken over by a bigger region's (another module)
+                    1 => {
+                        base += 2;
+                        if hash.contains_key(&a) {
+                            hash.insert(a, base);
+                        }
+                    }
+                    // the code rewritten: parked, and put back if a version comes again
+                    2 => {
+                        mem[us(k)] = v;
+                        let mut now = |c: &[(u32, u32)]| at(&mem, c);
+                        let r = p.park(a, &mut now);
+                        for w in &r.out {
+                            for e in &w.entries {
+                                if hash.get(&e.0) == Some(&e.1) {
+                                    hash.remove(&e.0);
+                                }
+                            }
+                        }
+                        if let Some(w) = p.reinstate(a, &mut now) {
+                            prop_assert!(!freed.contains(&w.base), "put back a freed module {}", w.base);
+                            for e in &w.entries {
+                                hash.insert(e.0, e.1);
+                            }
+                        }
+                    }
+                    // reclaim
+                    _ => {
+                        let live: std::collections::HashSet<u32> = hash.values().copied().chain(p.bases()).collect();
+                        for b in (2..=base).step_by(2) {
+                            if !live.contains(&b) {
+                                freed.insert(b);
+                            }
+                        }
+                        p.forget(|b| freed.contains(&b));
+                    }
+                }
             }
         }
     }

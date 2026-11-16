@@ -146,7 +146,7 @@ try {
     const t = Date.now();
     while (Date.now() - t < (warm ? 60000 : 12000) && !lines.some((l) => /^fetched ahead: .*done$/.test(l))) await new Promise((r) => setTimeout(r, 200));
     const done = lines.find((l) => /^fetched ahead: /.test(l));
-    const kept = await page.evaluate(async () => {
+    const count = () => page.evaluate(async () => {
       const cache = await (async () => {
       // (the device's chunk store: OPFS, web/src/chunkstore.ts)
       const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("masu-chunks", { create: true });
@@ -177,6 +177,12 @@ try {
       }
       return { have, all };
     });
+    // (a chunk fetched is on its way onto the device, its put not done yet: "done" comes first)
+    let kept = await count();
+    for (let i = 0; warm && kept.have < kept.all && i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 200));
+      kept = await count();
+    }
     if (warm) {
       assert.match(done ?? "", /^fetched ahead: (\d+) of \1 chunks looked at, \d+ fetched .* 0 failed, .*done$/, lines.slice(-8).join(" | "));
       assert.equal(kept.have, kept.all, `every chunk on the device: ${JSON.stringify(kept)}; ${done}`);
