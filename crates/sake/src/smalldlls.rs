@@ -1405,7 +1405,7 @@ fn MoDuplicateMediaType(c: &mut Ctx) -> u32 {
         return E_POINTER;
     }
     let p = mem::heap_alloc(mt_off().3, true);
-    let r = copy_mt(c, p, s);
+    let r = copy_mt(c.ctx(), p, s);
     if r != 0 {
         mem::heap_free(p);
         return r;
@@ -1490,29 +1490,29 @@ fn WICConvertBitmapSource(c: &mut Ctx) -> u32 {
     }
     out.put(0);
     let cur = mem::heap_alloc(16, true);
-    let hr = call_method(c, src, "IWICBitmapSource", "GetPixelFormat", &[cur]);
+    let hr = call_method(c.ctx(), src, "IWICBitmapSource", "GetPixelFormat", &[cur]);
     let same = hr == 0 && guid(cur) == guid(fmt);
     mem::heap_free(cur);
     if same {
-        add_ref(c, src);
+        add_ref(c.ctx(), src);
         out.put(src);
         return 0;
     }
     let factory = crate::wic::factory();
     let pc = mem::heap_alloc(8, true);
-    let hr = call_method(c, factory, "IWICImagingFactory", "CreateFormatConverter", &[pc]);
+    let hr = call_method(c.ctx(), factory, "IWICImagingFactory", "CreateFormatConverter", &[pc]);
     let conv = rp(pc);
     mem::heap_free(pc);
-    release(c, factory);
+    release(c.ctx(), factory);
     if hr != 0 || conv == 0 {
         return if hr != 0 { hr } else { E_FAIL };
     }
     // Initialize(source, dstFormat, WICBitmapDitherTypeNone, NULL palette, 0.0 alpha threshold,
     // WICBitmapPaletteTypeCustom); the double is two zero words on x86, one zero slot on x64
     let args: Vec<u32> = if mem::x64() { vec![src, fmt, 0, 0, 0, 0] } else { vec![src, fmt, 0, 0, 0, 0, 0] };
-    let hr = call_method(c, conv, "IWICFormatConverter", "Initialize", &args);
+    let hr = call_method(c.ctx(), conv, "IWICFormatConverter", "Initialize", &args);
     if hr != 0 {
-        release(c, conv);
+        release(c.ctx(), conv);
         return hr;
     }
     out.put(conv);

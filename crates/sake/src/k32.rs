@@ -671,7 +671,7 @@ fn K32EnumProcessModulesEx(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    K32EnumProcessModules(c)
+    K32EnumProcessModules(c.ctx())
 }
 /// Whether psapi may read this process's modules through `h`: PROCESS_QUERY_INFORMATION (or
 /// its limited form) and PROCESS_VM_READ; ERROR_INVALID_HANDLE / ERROR_ACCESS_DENIED if not
@@ -2031,7 +2031,7 @@ fn DuplicateHandle(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::DuplicateHandle>();
     let src = c.a::<1>();
     if let xmem::Target::Other(pid) = xmem::target(c.a::<2>()) {
-        return duplicate_into(c, pid);
+        return duplicate_into(c.ctx(), pid);
     }
     let h = if src == obj::CURRENT_THREAD {
         obj::dup(crate::cur().obj)
@@ -2408,7 +2408,7 @@ fn InitOnceExecuteOnce(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::InitOnceExecuteOnce>();
     let (once, f, param, ctx) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
     let r = SYNC.once_execute(atomic(once.lock_word()), || {
-        let r = c.call(f, &[once.lock_word(), param, ctx.to_callee()]);
+        let r = c.ctx().call(f, &crate::api::words![once.lock_word(), param, ctx]);
         // (done: the context the function gave, with 2 in its low bits)
         let got = if !ctx.is_null() { ctx.get() & !3 } else { 0 };
         (r, if r != 0 { got | 2 } else { 0 })
@@ -8281,11 +8281,11 @@ fn full_path_name(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn GetFullPathNameA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GetFullPathNameA>();
-    full_path_name(c, false)
+    full_path_name(c.ctx(), false)
 }
 fn GetFullPathNameW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GetFullPathNameW>();
-    full_path_name(c, true)
+    full_path_name(c.ctx(), true)
 }
 fn GetShortPathNameA(c: &mut Ctx) -> u32 {
     let s = arg_str(c.a(0), false);
@@ -8638,11 +8638,11 @@ fn search_dirs() -> Vec<String> {
 }
 fn SearchPathA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SearchPathA>();
-    search_path(c, false)
+    search_path(c.ctx(), false)
 }
 fn SearchPathW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SearchPathW>();
-    search_path(c, true)
+    search_path(c.ctx(), true)
 }
 // file mappings: views are copies (read-only use: archives); a pagefile-backed one has one view
 // that every handle to it shares, and a name another CreateFileMapping / OpenFileMapping finds

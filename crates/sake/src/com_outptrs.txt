@@ -1,0 +1,3066 @@
+IAMCertifiedOutputProtection #7
+IAMFilterMiscFlags #4
+IAMMultiMediaStream #19
+IAMStreamSelect #6
+IAMVideoAccelerator #15
+IActivationFactory #7
+IActiveScript #16
+IActiveScriptError #6
+IActiveScriptParse32 #6
+IActiveScriptProperty #5
+IAsyncReader #11
+IAudioClient #15
+IAudioClock #6
+IAudioClockAdjustment #4
+IAudioEndpointVolume #21
+IAudioMediaStream #12
+IAudioRenderClient #5
+IAudioSessionControl #12
+IAudioSessionControl2 #17
+IAudioSessionEnumerator #5
+IAudioSessionEvents #10
+IAudioSessionManager #5
+IAudioSessionManager2 #10
+IAudioStreamVolume #8
+IAudioVolumeDuckNotification #5
+IBaseFilter #15
+IBasicAudio #11
+IBasicVideo #39
+IBasicVideo2 #40
+IChannelAudioVolume #8
+IClassFactory #5
+IClientSecurity #6
+IConnectionPoint #8
+IConnectionPointContainer #5
+ID2D1AnalysisTransform #4
+ID2D1Bitmap #11
+ID2D1Bitmap1 #16
+ID2D1BitmapBrush #16
+ID2D1BitmapBrush1 #18
+ID2D1BitmapRenderTarget #58
+ID2D1BlendTransform #8
+ID2D1BorderTransform #10
+ID2D1BoundsAdjustmentTransform #6
+ID2D1Brush #8
+ID2D1ColorContext #7
+ID2D1ColorContext1 #10
+ID2D1CommandList #6
+ID2D1CommandSink #28
+ID2D1CommandSink1 #29
+ID2D1CommandSink2 #32
+ID2D1CommandSink3 #33
+ID2D1CommandSink4 #34
+ID2D1CommandSink5 #35
+ID2D1ComputeInfo #10
+ID2D1ComputeTransform #9
+ID2D1ConcreteTransform #6
+ID2D1DCRenderTarget #58
+ID2D1Device #9
+ID2D1Device1 #12
+ID2D1Device2 #15
+ID2D1Device3 #16
+ID2D1Device4 #19
+ID2D1Device5 #20
+ID2D1Device6 #21
+ID2D1Device7 #22
+ID2D1DeviceContext #92
+ID2D1DeviceContext1 #95
+ID2D1DeviceContext2 #106
+ID2D1DeviceContext3 #108
+ID2D1DeviceContext4 #115
+ID2D1DeviceContext5 #119
+ID2D1DeviceContext6 #120
+ID2D1DeviceContext7 #123
+ID2D1DrawInfo #12
+ID2D1DrawTransform #8
+ID2D1DrawingStateBlock #8
+ID2D1DrawingStateBlock1 #10
+ID2D1Effect #19
+ID2D1EffectContext #24
+ID2D1EffectContext1 #25
+ID2D1EffectContext2 #27
+ID2D1EffectImpl #6
+ID2D1EllipseGeometry #18
+ID2D1Factory #17
+ID2D1Factory1 #27
+ID2D1Factory2 #28
+ID2D1Factory3 #29
+ID2D1Factory4 #30
+ID2D1Factory5 #31
+ID2D1Factory6 #32
+ID2D1Factory7 #33
+ID2D1Factory8 #34
+ID2D1GdiInteropRenderTarget #5
+ID2D1GdiMetafile #6
+ID2D1GdiMetafile1 #8
+ID2D1GdiMetafileSink #4
+ID2D1GdiMetafileSink1 #5
+ID2D1Geometry #17
+ID2D1GeometryGroup #20
+ID2D1GeometryRealization #4
+ID2D1GeometrySink #15
+ID2D1GradientMesh #6
+ID2D1GradientStopCollection #8
+ID2D1GradientStopCollection1 #13
+ID2D1HwndRenderTarget #60
+ID2D1Image #4
+ID2D1ImageBrush #18
+ID2D1ImageSource #6
+ID2D1ImageSourceFromWic #9
+ID2D1Ink #14
+ID2D1InkStyle #8
+ID2D1Layer #5
+ID2D1LinearGradientBrush #13
+ID2D1LookupTable3D #4
+ID2D1Mesh #5
+ID2D1Multithread #6
+ID2D1OffsetTransform #6
+ID2D1PathGeometry #21
+ID2D1PathGeometry1 #22
+ID2D1PrintControl #5
+ID2D1Properties #14
+ID2D1RadialGradientBrush #17
+ID2D1RectangleGeometry #18
+ID2D1RenderInfo #7
+ID2D1RenderTarget #57
+ID2D1Resource #4
+ID2D1ResourceTexture #4
+ID2D1RoundedRectangleGeometry #18
+ID2D1SimplifiedGeometrySink #10
+ID2D1SolidColorBrush #10
+ID2D1SourceTransform #9
+ID2D1SpriteBatch #9
+ID2D1StrokeStyle #13
+ID2D1StrokeStyle1 #14
+ID2D1SvgAttribute #6
+ID2D1SvgDocument #15
+ID2D1SvgElement #34
+ID2D1SvgGlyphStyle #9
+ID2D1SvgPaint #13
+ID2D1SvgPathData #15
+ID2D1SvgPointCollection #10
+ID2D1SvgStrokeDashArray #12
+ID2D1TessellationSink #5
+ID2D1Transform #7
+ID2D1TransformGraph #12
+ID2D1TransformNode #4
+ID2D1TransformedGeometry #19
+ID2D1TransformedImageSource #6
+ID2D1VertexBuffer #5
+ID3D10ShaderReflection #9
+ID3D10ShaderReflectionConstantBuffer #3
+ID3D10ShaderReflectionType #4
+ID3D10ShaderReflectionVariable #2
+ID3D11Device #43
+ID3D11DeviceContext #115
+ID3D11ShaderReflection #22
+ID3D11ShaderReflectionConstantBuffer #3
+ID3D11ShaderReflectionType #11
+ID3D11ShaderReflectionVariable #4
+ID3D11Texture2D #11
+ID3DBlob #5
+ID3DInclude #2
+IDMOWrapperFilter #4
+IDWriteAsyncResult #5
+IDWriteBitmapRenderTarget #11
+IDWriteBitmapRenderTarget1 #13
+IDWriteBitmapRenderTarget2 #14
+IDWriteBitmapRenderTarget3 #17
+IDWriteColorGlyphRunEnumerator #5
+IDWriteColorGlyphRunEnumerator1 #6
+IDWriteFactory #24
+IDWriteFactory1 #26
+IDWriteFactory2 #31
+IDWriteFactory3 #40
+IDWriteFactory4 #43
+IDWriteFactory5 #48
+IDWriteFactory6 #55
+IDWriteFactory7 #57
+IDWriteFactory8 #58
+IDWriteFont #14
+IDWriteFont1 #18
+IDWriteFont2 #19
+IDWriteFont3 #24
+IDWriteFontCollection #7
+IDWriteFontCollection1 #9
+IDWriteFontCollection2 #13
+IDWriteFontCollection3 #14
+IDWriteFontCollectionLoader #4
+IDWriteFontDownloadListener #4
+IDWriteFontDownloadQueue #9
+IDWriteFontFace #18
+IDWriteFontFace1 #30
+IDWriteFontFace2 #35
+IDWriteFontFace3 #49
+IDWriteFontFace4 #53
+IDWriteFontFace5 #58
+IDWriteFontFace6 #60
+IDWriteFontFace7 #62
+IDWriteFontFaceReference #17
+IDWriteFontFaceReference1 #20
+IDWriteFontFallback #4
+IDWriteFontFallback1 #5
+IDWriteFontFallbackBuilder #6
+IDWriteFontFamily #9
+IDWriteFontFamily1 #12
+IDWriteFontFamily2 #14
+IDWriteFontFile #6
+IDWriteFontFileEnumerator #5
+IDWriteFontFileLoader #4
+IDWriteFontFileStream #7
+IDWriteFontList #6
+IDWriteFontList1 #9
+IDWriteFontList2 #10
+IDWriteFontResource #15
+IDWriteFontSet #13
+IDWriteFontSet1 #26
+IDWriteFontSet2 #27
+IDWriteFontSet3 #30
+IDWriteFontSet4 #32
+IDWriteFontSetBuilder #7
+IDWriteFontSetBuilder1 #8
+IDWriteFontSetBuilder2 #10
+IDWriteGdiInterop #8
+IDWriteGdiInterop1 #12
+IDWriteGlyphRunAnalysis #6
+IDWriteInMemoryFontFileLoader #6
+IDWriteInlineObject #7
+IDWriteLocalFontFileLoader #7
+IDWriteLocalizedStrings #9
+IDWriteNumberSubstitution #3
+IDWritePaintReader #12
+IDWritePixelSnapping #6
+IDWriteRemoteFontFileLoader #7
+IDWriteRemoteFontFileStream #11
+IDWriteRenderingParams #8
+IDWriteRenderingParams1 #9
+IDWriteRenderingParams2 #10
+IDWriteRenderingParams3 #11
+IDWriteStringList #8
+IDWriteTextAnalysisSink #7
+IDWriteTextAnalysisSink1 #8
+IDWriteTextAnalysisSource #8
+IDWriteTextAnalysisSource1 #9
+IDWriteTextAnalyzer #10
+IDWriteTextAnalyzer1 #19
+IDWriteTextAnalyzer2 #22
+IDWriteTextFormat #28
+IDWriteTextFormat1 #36
+IDWriteTextFormat2 #38
+IDWriteTextFormat3 #43
+IDWriteTextLayout #67
+IDWriteTextLayout1 #71
+IDWriteTextLayout2 #80
+IDWriteTextLayout3 #84
+IDWriteTextLayout4 #89
+IDWriteTextRenderer #10
+IDWriteTextRenderer1 #14
+IDWriteTypography #6
+IDXGISwapChain #18
+IDataObject #12
+IDirect3D9 #17
+IDirect3D9Ex #22
+IDirect3DCubeTexture9 #22
+IDirect3DDevice9 #119
+IDirect3DDevice9Ex #134
+IDirect3DDeviceManager9 #10
+IDirect3DStateBlock9 #6
+IDirect3DSurface9 #17
+IDirect3DTexture9 #22
+IDirectDraw #23
+IDirectDraw2 #24
+IDirectDraw4 #28
+IDirectDraw7 #30
+IDirectDrawClipper #9
+IDirectDrawMediaStream #15
+IDirectDrawPalette #7
+IDirectDrawStreamSample #10
+IDirectDrawSurface #36
+IDirectDrawSurface2 #39
+IDirectDrawSurface3 #40
+IDirectDrawSurface4 #45
+IDirectDrawSurface7 #49
+IDirectMusic #12
+IDirectMusic8 #13
+IDirectSound #11
+IDirectSound3DBuffer #21
+IDirectSound3DListener #18
+IDirectSound8 #12
+IDirectSoundBuffer8 #24
+IDirectSoundNotify #4
+IDirectXVideoAccelerationService #4
+IDirectXVideoProcessor #9
+IDirectXVideoProcessorService #12
+IDispatch #7
+IDispatchEx #15
+IDropSource #5
+IDropTarget #7
+IEnumDMO #7
+IEnumFilters #7
+IEnumMediaTypes #7
+IEnumPins #7
+IEnumString #7
+IEnumWbemClassObject #8
+IFileSourceFilter #5
+IFilterGraph #11
+IFilterGraph2 #21
+IFont #27
+IFontDisp #7
+IGraphBuilder #18
+IGraphConfig #13
+IInspectable #6
+IKsPropertySet #6
+IMF2DBuffer #10
+IMFActivate #36
+IMFAsyncCallback #5
+IMFAsyncResult #8
+IMFAttributes #33
+IMFByteStream #18
+IMFClock #8
+IMFCollection #9
+IMFDXGIBuffer #7
+IMFDXGIDeviceManager #10
+IMFGetService #4
+IMFMediaBuffer #8
+IMFMediaEngine #45
+IMFMediaEngineClassFactory #6
+IMFMediaEngineEx #82
+IMFMediaEngineNotify #4
+IMFMediaError #7
+IMFMediaEvent #37
+IMFMediaEventGenerator #7
+IMFMediaSession #17
+IMFMediaSource #13
+IMFMediaType #38
+IMFMediaTypeHandler #9
+IMFPresentationClock #16
+IMFPresentationDescriptor #38
+IMFSample #47
+IMFSimpleAudioVolume #7
+IMFSourceReader #13
+IMFSourceReaderCallback #6
+IMFSourceResolver #10
+IMFStreamDescriptor #35
+IMFTopology #43
+IMFTopologyNode #49
+IMFTransform #26
+IMFVideoDisplayControl #19
+IMFVideoSampleAllocator #7
+IMFVideoSampleAllocatorEx #8
+IMMDevice #7
+IMMDeviceCollection #5
+IMMDeviceEnumerator #8
+IMMEndpoint #4
+IMMNotificationClient #8
+IMalloc #9
+IMediaControl #16
+IMediaEventEx #16
+IMediaEventSink #4
+IMediaFilter #10
+IMediaPosition #18
+IMediaSample #19
+IMediaSample2 #21
+IMediaSeeking #20
+IMediaStream #9
+IMemAllocator #9
+IMemInputPin #9
+IMultiMediaStream #12
+INSSBuffer #8
+IObjectSafety #5
+IOleControl #7
+IOleInPlaceActiveObject #10
+IOleInPlaceObject #9
+IOleObject #24
+IOleWindow #5
+IOverlay #13
+IPersist #4
+IPersistFile #9
+IPersistStream #8
+IPersistStreamInit #9
+IPicture #17
+IPin #18
+IPropertyNotifySink #5
+IPropertyStore #8
+IQualProp #9
+IQualityControl #5
+IReferenceClock #7
+ISequentialStream #5
+IShellLinkA #21
+IShellLinkW #21
+ISimpleAudioVolume #7
+IStream #14
+IStreamSample #8
+ITypeInfo #22
+ITypeInfo2 #37
+ITypeLib #13
+ITypeLib2 #17
+IUnknown #3
+IVMRAspectRatioControl9 #5
+IVMRDeinterlaceControl9 #10
+IVMRFilterConfig #10
+IVMRFilterConfig9 #10
+IVMRMixerBitmap9 #6
+IVMRMixerControl9 #16
+IVMRMonitorConfig9 #8
+IVMRSurfaceAllocatorNotify9 #8
+IVMRWindowlessControl #18
+IVMRWindowlessControl9 #16
+IVideoWindow #46
+IViewObject #9
+IViewObject2 #10
+IWICBitmap #11
+IWICBitmapClipper #9
+IWICBitmapCodecInfo #23
+IWICBitmapCodecProgressNotification #4
+IWICBitmapDecoder #14
+IWICBitmapDecoderInfo #26
+IWICBitmapEncoder #13
+IWICBitmapEncoderInfo #24
+IWICBitmapFlipRotator #9
+IWICBitmapFrameChainReader #5
+IWICBitmapFrameChainWriter #5
+IWICBitmapFrameDecode #11
+IWICBitmapFrameEncode #14
+IWICBitmapLock #7
+IWICBitmapScaler #9
+IWICBitmapSource #8
+IWICBitmapSourceTransform #7
+IWICBitmapSourceTransform2 #8
+IWICBitmapToneMapper #10
+IWICColorContext #9
+IWICColorTransform #9
+IWICComponentFactory #35
+IWICComponentInfo #11
+IWICD3DTextureSource #7
+IWICDdsDecoder #5
+IWICDdsEncoder #6
+IWICDdsFrameDecode #6
+IWICDevelopRaw #43
+IWICDevelopRawNotificationCallback #4
+IWICDisplayAdaptationControl #6
+IWICDisplayAdaptationControl2 #11
+IWICEnumMetadataItem #7
+IWICFastMetadataEncoder #5
+IWICFormatConverter #10
+IWICFormatConverterInfo #13
+IWICImageEncoder #6
+IWICImagingFactory #28
+IWICImagingFactory2 #29
+IWICImagingFactory3 #30
+IWICJpegFrameDecode #13
+IWICJpegFrameEncode #7
+IWICMetadataBlockReader #7
+IWICMetadataBlockWriter #12
+IWICMetadataHandlerInfo #18
+IWICMetadataQueryReader #7
+IWICMetadataQueryWriter #9
+IWICMetadataReader #9
+IWICMetadataReaderInfo #21
+IWICMetadataWriter #13
+IWICMetadataWriterInfo #20
+IWICPalette #13
+IWICPersistStream #10
+IWICPixelFormatInfo #16
+IWICPixelFormatInfo2 #18
+IWICPlanarBitmapFrameEncode #5
+IWICPlanarBitmapSourceTransform #5
+IWICPlanarFormatConverter #10
+IWICProgressCallback #4
+IWICProgressiveLevelControl #6
+IWICStream #18
+IWICStreamProvider #7
+IWMHeaderInfo #15
+IWMHeaderInfo2 #17
+IWMHeaderInfo3 #24
+IWMMediaProps #6
+IWMOutputMediaProps #8
+IWMProfile #21
+IWMProfile2 #22
+IWMProfile3 #34
+IWMReader #14
+IWMReaderAdvanced2 #38
+IWMReaderAllocatorEx #5
+IWMReaderCallback #5
+IWMReaderCallbackAdvanced #9
+IWMStreamConfig #14
+IWMSyncReader #24
+IWMSyncReader2 #30
+IWbemClassObject #27
+IWbemLocator #4
+IWbemServices #26
+IWebBrowser #32
+IWebBrowser2 #71
+IWebBrowserApp #52
+IXAPO #13
+IXAPOParameters #5
+IXAudio2 #13
+IXAudio2EngineCallback #3
+IXAudio2MasteringVoice #20
+IXAudio2SourceVoice #29
+IXAudio2Voice #19
+IXAudio2VoiceCallback #7
+IAMCertifiedOutputProtection 0 2 2
+IAMCertifiedOutputProtection 3 2 2
+IAMFilterMiscFlags 0 2 2
+IAMMultiMediaStream 0 2 2
+IAMMultiMediaStream 4 2 2
+IAMMultiMediaStream 5 2 2
+IAMMultiMediaStream 11 1 1
+IAMMultiMediaStream 13 1 1
+IAMMultiMediaStream 14 1 1
+IAMMultiMediaStream 15 4 4
+IAMStreamSelect 0 2 2
+IAMStreamSelect 4 2,6,7,8 2,6,7,8
+IAMVideoAccelerator 0 2 2
+IAMVideoAccelerator 10 4 4
+IActivationFactory 0 2 2
+IActivationFactory 3 2 2
+IActivationFactory 4 1 1
+IActivationFactory 6 1 1
+IActiveScript 0 2 2
+IActiveScript 4 2 2
+IActiveScript 10 2 2
+IActiveScript 15 1 1
+IActiveScriptError 0 2 2
+IActiveScriptError 5 1 1
+IActiveScriptParse32 0 2 2
+IActiveScriptParse32 4 10 10
+IActiveScriptProperty 0 2 2
+IAsyncReader 0 2 2
+IAsyncReader 3 3 3
+IAsyncReader 5 2,3 2,3
+IAudioClient 0 2 2
+IAudioClient 7 3 3
+IAudioClient 8 1 1
+IAudioClient 14 2 2
+IAudioClock 0 2 2
+IAudioClockAdjustment 0 2 2
+IAudioEndpointVolume 0 2 2
+IAudioMediaStream 0 2 2
+IAudioMediaStream 3 1 1
+IAudioMediaStream 6 2 2
+IAudioMediaStream 7 3 3
+IAudioMediaStream 11 3 3
+IAudioRenderClient 0 2 2
+IAudioRenderClient 3 2 2
+IAudioSessionControl 0 2 2
+IAudioSessionControl 4 1 1
+IAudioSessionControl 6 1 1
+IAudioSessionControl2 0 2 2
+IAudioSessionControl2 4 1 1
+IAudioSessionControl2 6 1 1
+IAudioSessionControl2 12 1 1
+IAudioSessionControl2 13 1 1
+IAudioSessionEnumerator 0 2 2
+IAudioSessionEnumerator 4 2 2
+IAudioSessionEvents 0 2 2
+IAudioSessionManager 0 2 2
+IAudioSessionManager 3 3 3
+IAudioSessionManager 4 3 3
+IAudioSessionManager2 0 2 2
+IAudioSessionManager2 3 3 3
+IAudioSessionManager2 4 3 3
+IAudioSessionManager2 5 1 1
+IAudioStreamVolume 0 2 2
+IAudioVolumeDuckNotification 0 2 2
+IBaseFilter 0 2 2
+IBaseFilter 9 1 1
+IBaseFilter 10 1 1
+IBaseFilter 11 2 2
+IBaseFilter 14 1 1
+IBasicAudio 0 2 2
+IBasicAudio 4 3 3
+IBasicVideo 0 2 2
+IBasicVideo 4 3 3
+IBasicVideo2 0 2 2
+IBasicVideo2 4 3 3
+IChannelAudioVolume 0 2 2
+IClassFactory 0 2 2
+IClassFactory 3 3 3
+IClientSecurity 0 2 2
+IClientSecurity 3 4,7 4,7
+IClientSecurity 5 2 2
+IConnectionPoint 0 2 2
+IConnectionPoint 4 1 1
+IConnectionPoint 7 1 1
+IConnectionPointContainer 0 2 2
+IConnectionPointContainer 3 1 1
+IConnectionPointContainer 4 2 2
+ID2D1AnalysisTransform 0 2 2
+ID2D1Bitmap 0 2 2
+ID2D1Bitmap 3 1 1
+ID2D1Bitmap1 0 2 2
+ID2D1Bitmap1 3 1 1
+ID2D1Bitmap1 11 1 1
+ID2D1Bitmap1 13 1 1
+ID2D1BitmapBrush 0 2 2
+ID2D1BitmapBrush 3 1 1
+ID2D1BitmapBrush 15 1 1
+ID2D1BitmapBrush1 0 2 2
+ID2D1BitmapBrush1 3 1 1
+ID2D1BitmapBrush1 15 1 1
+ID2D1BitmapRenderTarget 0 2 2
+ID2D1BitmapRenderTarget 3 1 1
+ID2D1BitmapRenderTarget 4 5 6
+ID2D1BitmapRenderTarget 5 3 3
+ID2D1BitmapRenderTarget 6 4 4
+ID2D1BitmapRenderTarget 7 4 4
+ID2D1BitmapRenderTarget 8 3 3
+ID2D1BitmapRenderTarget 9 5 5
+ID2D1BitmapRenderTarget 10 4 4
+ID2D1BitmapRenderTarget 11 4 4
+ID2D1BitmapRenderTarget 12 5 5
+ID2D1BitmapRenderTarget 13 2 2
+ID2D1BitmapRenderTarget 14 1 1
+ID2D1BitmapRenderTarget 37 1 1
+ID2D1BitmapRenderTarget 57 1 1
+ID2D1BlendTransform 0 2 2
+ID2D1BorderTransform 0 2 2
+ID2D1BoundsAdjustmentTransform 0 2 2
+ID2D1Brush 0 2 2
+ID2D1Brush 3 1 1
+ID2D1ColorContext 0 2 2
+ID2D1ColorContext 3 1 1
+ID2D1ColorContext1 0 2 2
+ID2D1ColorContext1 3 1 1
+ID2D1CommandList 0 2 2
+ID2D1CommandList 3 1 1
+ID2D1CommandSink 0 2 2
+ID2D1CommandSink1 0 2 2
+ID2D1CommandSink2 0 2 2
+ID2D1CommandSink3 0 2 2
+ID2D1CommandSink4 0 2 2
+ID2D1CommandSink5 0 2 2
+ID2D1ComputeInfo 0 2 2
+ID2D1ComputeTransform 0 2 2
+ID2D1ConcreteTransform 0 2 2
+ID2D1DCRenderTarget 0 2 2
+ID2D1DCRenderTarget 3 1 1
+ID2D1DCRenderTarget 4 5 6
+ID2D1DCRenderTarget 5 3 3
+ID2D1DCRenderTarget 6 4 4
+ID2D1DCRenderTarget 7 4 4
+ID2D1DCRenderTarget 8 3 3
+ID2D1DCRenderTarget 9 5 5
+ID2D1DCRenderTarget 10 4 4
+ID2D1DCRenderTarget 11 4 4
+ID2D1DCRenderTarget 12 5 5
+ID2D1DCRenderTarget 13 2 2
+ID2D1DCRenderTarget 14 1 1
+ID2D1DCRenderTarget 37 1 1
+ID2D1Device 0 2 2
+ID2D1Device 3 1 1
+ID2D1Device 4 2 2
+ID2D1Device 5 4 4
+ID2D1Device1 0 2 2
+ID2D1Device1 3 1 1
+ID2D1Device1 4 2 2
+ID2D1Device1 5 4 4
+ID2D1Device1 11 2 2
+ID2D1Device2 0 2 2
+ID2D1Device2 3 1 1
+ID2D1Device2 4 2 2
+ID2D1Device2 5 4 4
+ID2D1Device2 11 2 2
+ID2D1Device2 12 2 2
+ID2D1Device2 14 1 1
+ID2D1Device3 0 2 2
+ID2D1Device3 3 1 1
+ID2D1Device3 4 2 2
+ID2D1Device3 5 4 4
+ID2D1Device3 11 2 2
+ID2D1Device3 12 2 2
+ID2D1Device3 14 1 1
+ID2D1Device3 15 2 2
+ID2D1Device4 0 2 2
+ID2D1Device4 3 1 1
+ID2D1Device4 4 2 2
+ID2D1Device4 5 4 4
+ID2D1Device4 11 2 2
+ID2D1Device4 12 2 2
+ID2D1Device4 14 1 1
+ID2D1Device4 15 2 2
+ID2D1Device4 16 2 2
+ID2D1Device5 0 2 2
+ID2D1Device5 3 1 1
+ID2D1Device5 4 2 2
+ID2D1Device5 5 4 4
+ID2D1Device5 11 2 2
+ID2D1Device5 12 2 2
+ID2D1Device5 14 1 1
+ID2D1Device5 15 2 2
+ID2D1Device5 16 2 2
+ID2D1Device5 19 2 2
+ID2D1Device6 0 2 2
+ID2D1Device6 3 1 1
+ID2D1Device6 4 2 2
+ID2D1Device6 5 4 4
+ID2D1Device6 11 2 2
+ID2D1Device6 12 2 2
+ID2D1Device6 14 1 1
+ID2D1Device6 15 2 2
+ID2D1Device6 16 2 2
+ID2D1Device6 19 2 2
+ID2D1Device6 20 2 2
+ID2D1Device7 0 2 2
+ID2D1Device7 3 1 1
+ID2D1Device7 4 2 2
+ID2D1Device7 5 4 4
+ID2D1Device7 11 2 2
+ID2D1Device7 12 2 2
+ID2D1Device7 14 1 1
+ID2D1Device7 15 2 2
+ID2D1Device7 16 2 2
+ID2D1Device7 19 2 2
+ID2D1Device7 20 2 2
+ID2D1Device7 21 2 2
+ID2D1DeviceContext 0 2 2
+ID2D1DeviceContext 3 1 1
+ID2D1DeviceContext 4 5 6
+ID2D1DeviceContext 5 3 3
+ID2D1DeviceContext 6 4 4
+ID2D1DeviceContext 7 4 4
+ID2D1DeviceContext 8 3 3
+ID2D1DeviceContext 9 5 5
+ID2D1DeviceContext 10 4 4
+ID2D1DeviceContext 11 4 4
+ID2D1DeviceContext 12 5 5
+ID2D1DeviceContext 13 2 2
+ID2D1DeviceContext 14 1 1
+ID2D1DeviceContext 37 1 1
+ID2D1DeviceContext 57 5 6
+ID2D1DeviceContext 58 3 3
+ID2D1DeviceContext 59 4 4
+ID2D1DeviceContext 60 2 2
+ID2D1DeviceContext 61 2 2
+ID2D1DeviceContext 62 3 3
+ID2D1DeviceContext 63 2 2
+ID2D1DeviceContext 64 8 8
+ID2D1DeviceContext 65 4 4
+ID2D1DeviceContext 66 4 4
+ID2D1DeviceContext 67 1 1
+ID2D1DeviceContext 73 1 1
+ID2D1DeviceContext 75 1 1
+ID2D1DeviceContext1 0 2 2
+ID2D1DeviceContext1 3 1 1
+ID2D1DeviceContext1 4 5 6
+ID2D1DeviceContext1 5 3 3
+ID2D1DeviceContext1 6 4 4
+ID2D1DeviceContext1 7 4 4
+ID2D1DeviceContext1 8 3 3
+ID2D1DeviceContext1 9 5 5
+ID2D1DeviceContext1 10 4 4
+ID2D1DeviceContext1 11 4 4
+ID2D1DeviceContext1 12 5 5
+ID2D1DeviceContext1 13 2 2
+ID2D1DeviceContext1 14 1 1
+ID2D1DeviceContext1 37 1 1
+ID2D1DeviceContext1 57 5 6
+ID2D1DeviceContext1 58 3 3
+ID2D1DeviceContext1 59 4 4
+ID2D1DeviceContext1 60 2 2
+ID2D1DeviceContext1 61 2 2
+ID2D1DeviceContext1 62 3 3
+ID2D1DeviceContext1 63 2 2
+ID2D1DeviceContext1 64 8 8
+ID2D1DeviceContext1 65 4 4
+ID2D1DeviceContext1 66 4 4
+ID2D1DeviceContext1 67 1 1
+ID2D1DeviceContext1 73 1 1
+ID2D1DeviceContext1 75 1 1
+ID2D1DeviceContext1 92 3 3
+ID2D1DeviceContext1 93 5 5
+ID2D1DeviceContext2 0 2 2
+ID2D1DeviceContext2 3 1 1
+ID2D1DeviceContext2 4 5 6
+ID2D1DeviceContext2 5 3 3
+ID2D1DeviceContext2 6 4 4
+ID2D1DeviceContext2 7 4 4
+ID2D1DeviceContext2 8 3 3
+ID2D1DeviceContext2 9 5 5
+ID2D1DeviceContext2 10 4 4
+ID2D1DeviceContext2 11 4 4
+ID2D1DeviceContext2 12 5 5
+ID2D1DeviceContext2 13 2 2
+ID2D1DeviceContext2 14 1 1
+ID2D1DeviceContext2 37 1 1
+ID2D1DeviceContext2 57 5 6
+ID2D1DeviceContext2 58 3 3
+ID2D1DeviceContext2 59 4 4
+ID2D1DeviceContext2 60 2 2
+ID2D1DeviceContext2 61 2 2
+ID2D1DeviceContext2 62 3 3
+ID2D1DeviceContext2 63 2 2
+ID2D1DeviceContext2 64 8 8
+ID2D1DeviceContext2 65 4 4
+ID2D1DeviceContext2 66 4 4
+ID2D1DeviceContext2 67 1 1
+ID2D1DeviceContext2 73 1 1
+ID2D1DeviceContext2 75 1 1
+ID2D1DeviceContext2 92 3 3
+ID2D1DeviceContext2 93 5 5
+ID2D1DeviceContext2 95 2 2
+ID2D1DeviceContext2 96 2 2
+ID2D1DeviceContext2 97 3 3
+ID2D1DeviceContext2 98 4 4
+ID2D1DeviceContext2 99 6 6
+ID2D1DeviceContext2 100 5 5
+ID2D1DeviceContext2 105 3 3
+ID2D1DeviceContext3 0 2 2
+ID2D1DeviceContext3 3 1 1
+ID2D1DeviceContext3 4 5 6
+ID2D1DeviceContext3 5 3 3
+ID2D1DeviceContext3 6 4 4
+ID2D1DeviceContext3 7 4 4
+ID2D1DeviceContext3 8 3 3
+ID2D1DeviceContext3 9 5 5
+ID2D1DeviceContext3 10 4 4
+ID2D1DeviceContext3 11 4 4
+ID2D1DeviceContext3 12 5 5
+ID2D1DeviceContext3 13 2 2
+ID2D1DeviceContext3 14 1 1
+ID2D1DeviceContext3 37 1 1
+ID2D1DeviceContext3 57 5 6
+ID2D1DeviceContext3 58 3 3
+ID2D1DeviceContext3 59 4 4
+ID2D1DeviceContext3 60 2 2
+ID2D1DeviceContext3 61 2 2
+ID2D1DeviceContext3 62 3 3
+ID2D1DeviceContext3 63 2 2
+ID2D1DeviceContext3 64 8 8
+ID2D1DeviceContext3 65 4 4
+ID2D1DeviceContext3 66 4 4
+ID2D1DeviceContext3 67 1 1
+ID2D1DeviceContext3 73 1 1
+ID2D1DeviceContext3 75 1 1
+ID2D1DeviceContext3 92 3 3
+ID2D1DeviceContext3 93 5 5
+ID2D1DeviceContext3 95 2 2
+ID2D1DeviceContext3 96 2 2
+ID2D1DeviceContext3 97 3 3
+ID2D1DeviceContext3 98 4 4
+ID2D1DeviceContext3 99 6 6
+ID2D1DeviceContext3 100 5 5
+ID2D1DeviceContext3 105 3 3
+ID2D1DeviceContext3 106 1 1
+ID2D1DeviceContext4 0 2 2
+ID2D1DeviceContext4 3 1 1
+ID2D1DeviceContext4 4 5 6
+ID2D1DeviceContext4 5 3 3
+ID2D1DeviceContext4 6 4 4
+ID2D1DeviceContext4 7 4 4
+ID2D1DeviceContext4 8 3 3
+ID2D1DeviceContext4 9 5 5
+ID2D1DeviceContext4 10 4 4
+ID2D1DeviceContext4 11 4 4
+ID2D1DeviceContext4 12 5 5
+ID2D1DeviceContext4 13 2 2
+ID2D1DeviceContext4 14 1 1
+ID2D1DeviceContext4 37 1 1
+ID2D1DeviceContext4 57 5 6
+ID2D1DeviceContext4 58 3 3
+ID2D1DeviceContext4 59 4 4
+ID2D1DeviceContext4 60 2 2
+ID2D1DeviceContext4 61 2 2
+ID2D1DeviceContext4 62 3 3
+ID2D1DeviceContext4 63 2 2
+ID2D1DeviceContext4 64 8 8
+ID2D1DeviceContext4 65 4 4
+ID2D1DeviceContext4 66 4 4
+ID2D1DeviceContext4 67 1 1
+ID2D1DeviceContext4 73 1 1
+ID2D1DeviceContext4 75 1 1
+ID2D1DeviceContext4 92 3 3
+ID2D1DeviceContext4 93 5 5
+ID2D1DeviceContext4 95 2 2
+ID2D1DeviceContext4 96 2 2
+ID2D1DeviceContext4 97 3 3
+ID2D1DeviceContext4 98 4 4
+ID2D1DeviceContext4 99 6 6
+ID2D1DeviceContext4 100 5 5
+ID2D1DeviceContext4 105 3 3
+ID2D1DeviceContext4 106 1 1
+ID2D1DeviceContext4 108 1 1
+ID2D1DeviceContext4 113 11 12
+ID2D1DeviceContext4 114 11 12
+ID2D1DeviceContext5 0 2 2
+ID2D1DeviceContext5 3 1 1
+ID2D1DeviceContext5 4 5 6
+ID2D1DeviceContext5 5 3 3
+ID2D1DeviceContext5 6 4 4
+ID2D1DeviceContext5 7 4 4
+ID2D1DeviceContext5 8 3 3
+ID2D1DeviceContext5 9 5 5
+ID2D1DeviceContext5 10 4 4
+ID2D1DeviceContext5 11 4 4
+ID2D1DeviceContext5 12 5 5
+ID2D1DeviceContext5 13 2 2
+ID2D1DeviceContext5 14 1 1
+ID2D1DeviceContext5 37 1 1
+ID2D1DeviceContext5 57 5 6
+ID2D1DeviceContext5 58 3 3
+ID2D1DeviceContext5 59 4 4
+ID2D1DeviceContext5 60 2 2
+ID2D1DeviceContext5 61 2 2
+ID2D1DeviceContext5 62 3 3
+ID2D1DeviceContext5 63 2 2
+ID2D1DeviceContext5 64 8 8
+ID2D1DeviceContext5 65 4 4
+ID2D1DeviceContext5 66 4 4
+ID2D1DeviceContext5 67 1 1
+ID2D1DeviceContext5 73 1 1
+ID2D1DeviceContext5 75 1 1
+ID2D1DeviceContext5 92 3 3
+ID2D1DeviceContext5 93 5 5
+ID2D1DeviceContext5 95 2 2
+ID2D1DeviceContext5 96 2 2
+ID2D1DeviceContext5 97 3 3
+ID2D1DeviceContext5 98 4 4
+ID2D1DeviceContext5 99 6 6
+ID2D1DeviceContext5 100 5 5
+ID2D1DeviceContext5 105 3 3
+ID2D1DeviceContext5 106 1 1
+ID2D1DeviceContext5 108 1 1
+ID2D1DeviceContext5 113 11 12
+ID2D1DeviceContext5 114 11 12
+ID2D1DeviceContext5 115 3 4
+ID2D1DeviceContext5 117 2 2
+ID2D1DeviceContext5 118 2 2
+ID2D1DeviceContext6 0 2 2
+ID2D1DeviceContext6 3 1 1
+ID2D1DeviceContext6 4 5 6
+ID2D1DeviceContext6 5 3 3
+ID2D1DeviceContext6 6 4 4
+ID2D1DeviceContext6 7 4 4
+ID2D1DeviceContext6 8 3 3
+ID2D1DeviceContext6 9 5 5
+ID2D1DeviceContext6 10 4 4
+ID2D1DeviceContext6 11 4 4
+ID2D1DeviceContext6 12 5 5
+ID2D1DeviceContext6 13 2 2
+ID2D1DeviceContext6 14 1 1
+ID2D1DeviceContext6 37 1 1
+ID2D1DeviceContext6 57 5 6
+ID2D1DeviceContext6 58 3 3
+ID2D1DeviceContext6 59 4 4
+ID2D1DeviceContext6 60 2 2
+ID2D1DeviceContext6 61 2 2
+ID2D1DeviceContext6 62 3 3
+ID2D1DeviceContext6 63 2 2
+ID2D1DeviceContext6 64 8 8
+ID2D1DeviceContext6 65 4 4
+ID2D1DeviceContext6 66 4 4
+ID2D1DeviceContext6 67 1 1
+ID2D1DeviceContext6 73 1 1
+ID2D1DeviceContext6 75 1 1
+ID2D1DeviceContext6 92 3 3
+ID2D1DeviceContext6 93 5 5
+ID2D1DeviceContext6 95 2 2
+ID2D1DeviceContext6 96 2 2
+ID2D1DeviceContext6 97 3 3
+ID2D1DeviceContext6 98 4 4
+ID2D1DeviceContext6 99 6 6
+ID2D1DeviceContext6 100 5 5
+ID2D1DeviceContext6 105 3 3
+ID2D1DeviceContext6 106 1 1
+ID2D1DeviceContext6 108 1 1
+ID2D1DeviceContext6 113 11 12
+ID2D1DeviceContext6 114 11 12
+ID2D1DeviceContext6 115 3 4
+ID2D1DeviceContext6 117 2 2
+ID2D1DeviceContext6 118 2 2
+ID2D1DeviceContext7 0 2 2
+ID2D1DeviceContext7 3 1 1
+ID2D1DeviceContext7 4 5 6
+ID2D1DeviceContext7 5 3 3
+ID2D1DeviceContext7 6 4 4
+ID2D1DeviceContext7 7 4 4
+ID2D1DeviceContext7 8 3 3
+ID2D1DeviceContext7 9 5 5
+ID2D1DeviceContext7 10 4 4
+ID2D1DeviceContext7 11 4 4
+ID2D1DeviceContext7 12 5 5
+ID2D1DeviceContext7 13 2 2
+ID2D1DeviceContext7 14 1 1
+ID2D1DeviceContext7 37 1 1
+ID2D1DeviceContext7 57 5 6
+ID2D1DeviceContext7 58 3 3
+ID2D1DeviceContext7 59 4 4
+ID2D1DeviceContext7 60 2 2
+ID2D1DeviceContext7 61 2 2
+ID2D1DeviceContext7 62 3 3
+ID2D1DeviceContext7 63 2 2
+ID2D1DeviceContext7 64 8 8
+ID2D1DeviceContext7 65 4 4
+ID2D1DeviceContext7 66 4 4
+ID2D1DeviceContext7 67 1 1
+ID2D1DeviceContext7 73 1 1
+ID2D1DeviceContext7 75 1 1
+ID2D1DeviceContext7 92 3 3
+ID2D1DeviceContext7 93 5 5
+ID2D1DeviceContext7 95 2 2
+ID2D1DeviceContext7 96 2 2
+ID2D1DeviceContext7 97 3 3
+ID2D1DeviceContext7 98 4 4
+ID2D1DeviceContext7 99 6 6
+ID2D1DeviceContext7 100 5 5
+ID2D1DeviceContext7 105 3 3
+ID2D1DeviceContext7 106 1 1
+ID2D1DeviceContext7 108 1 1
+ID2D1DeviceContext7 113 11 12
+ID2D1DeviceContext7 114 11 12
+ID2D1DeviceContext7 115 3 4
+ID2D1DeviceContext7 117 2 2
+ID2D1DeviceContext7 118 2 2
+ID2D1DrawInfo 0 2 2
+ID2D1DrawTransform 0 2 2
+ID2D1DrawingStateBlock 0 2 2
+ID2D1DrawingStateBlock 3 1 1
+ID2D1DrawingStateBlock 7 1 1
+ID2D1DrawingStateBlock1 0 2 2
+ID2D1DrawingStateBlock1 3 1 1
+ID2D1DrawingStateBlock1 7 1 1
+ID2D1Effect 0 2 2
+ID2D1Effect 13 2 2
+ID2D1Effect 16 2 2
+ID2D1Effect 18 1 1
+ID2D1EffectContext 0 2 2
+ID2D1EffectContext 4 2 2
+ID2D1EffectContext 6 2 2
+ID2D1EffectContext 7 3 3
+ID2D1EffectContext 8 3 3
+ID2D1EffectContext 9 2 3
+ID2D1EffectContext 10 2 2
+ID2D1EffectContext 15 6 6
+ID2D1EffectContext 16 2 2
+ID2D1EffectContext 17 4 4
+ID2D1EffectContext 18 2 2
+ID2D1EffectContext 19 4 4
+ID2D1EffectContext 20 2 2
+ID2D1EffectContext 21 2 2
+ID2D1EffectContext1 0 2 2
+ID2D1EffectContext1 4 2 2
+ID2D1EffectContext1 6 2 2
+ID2D1EffectContext1 7 3 3
+ID2D1EffectContext1 8 3 3
+ID2D1EffectContext1 9 2 3
+ID2D1EffectContext1 10 2 2
+ID2D1EffectContext1 15 6 6
+ID2D1EffectContext1 16 2 2
+ID2D1EffectContext1 17 4 4
+ID2D1EffectContext1 18 2 2
+ID2D1EffectContext1 19 4 4
+ID2D1EffectContext1 20 2 2
+ID2D1EffectContext1 21 2 2
+ID2D1EffectContext1 24 6 6
+ID2D1EffectContext2 0 2 2
+ID2D1EffectContext2 4 2 2
+ID2D1EffectContext2 6 2 2
+ID2D1EffectContext2 7 3 3
+ID2D1EffectContext2 8 3 3
+ID2D1EffectContext2 9 2 3
+ID2D1EffectContext2 10 2 2
+ID2D1EffectContext2 15 6 6
+ID2D1EffectContext2 16 2 2
+ID2D1EffectContext2 17 4 4
+ID2D1EffectContext2 18 2 2
+ID2D1EffectContext2 19 4 4
+ID2D1EffectContext2 20 2 2
+ID2D1EffectContext2 21 2 2
+ID2D1EffectContext2 24 6 6
+ID2D1EffectContext2 25 2 2
+ID2D1EffectContext2 26 2 2
+ID2D1EffectImpl 0 2 2
+ID2D1EllipseGeometry 0 2 2
+ID2D1EllipseGeometry 3 1 1
+ID2D1Factory 0 2 2
+ID2D1Factory 5 2 2
+ID2D1Factory 6 2 2
+ID2D1Factory 7 2 2
+ID2D1Factory 8 4 4
+ID2D1Factory 9 3 3
+ID2D1Factory 10 1 1
+ID2D1Factory 11 4 4
+ID2D1Factory 12 3 3
+ID2D1Factory 13 3 3
+ID2D1Factory 14 3 3
+ID2D1Factory 15 3 3
+ID2D1Factory 16 2 2
+ID2D1Factory1 0 2 2
+ID2D1Factory1 5 2 2
+ID2D1Factory1 6 2 2
+ID2D1Factory1 7 2 2
+ID2D1Factory1 8 4 4
+ID2D1Factory1 9 3 3
+ID2D1Factory1 10 1 1
+ID2D1Factory1 11 4 4
+ID2D1Factory1 12 3 3
+ID2D1Factory1 13 3 3
+ID2D1Factory1 14 3 3
+ID2D1Factory1 15 3 3
+ID2D1Factory1 16 2 2
+ID2D1Factory1 17 2 2
+ID2D1Factory1 18 4 4
+ID2D1Factory1 19 1 1
+ID2D1Factory1 20 3 3
+ID2D1Factory1 21 2 2
+ID2D1Factory1 26 2 2
+ID2D1Factory2 0 2 2
+ID2D1Factory2 5 2 2
+ID2D1Factory2 6 2 2
+ID2D1Factory2 7 2 2
+ID2D1Factory2 8 4 4
+ID2D1Factory2 9 3 3
+ID2D1Factory2 10 1 1
+ID2D1Factory2 11 4 4
+ID2D1Factory2 12 3 3
+ID2D1Factory2 13 3 3
+ID2D1Factory2 14 3 3
+ID2D1Factory2 15 3 3
+ID2D1Factory2 16 2 2
+ID2D1Factory2 17 2 2
+ID2D1Factory2 18 4 4
+ID2D1Factory2 19 1 1
+ID2D1Factory2 20 3 3
+ID2D1Factory2 21 2 2
+ID2D1Factory2 26 2 2
+ID2D1Factory2 27 2 2
+ID2D1Factory3 0 2 2
+ID2D1Factory3 5 2 2
+ID2D1Factory3 6 2 2
+ID2D1Factory3 7 2 2
+ID2D1Factory3 8 4 4
+ID2D1Factory3 9 3 3
+ID2D1Factory3 10 1 1
+ID2D1Factory3 11 4 4
+ID2D1Factory3 12 3 3
+ID2D1Factory3 13 3 3
+ID2D1Factory3 14 3 3
+ID2D1Factory3 15 3 3
+ID2D1Factory3 16 2 2
+ID2D1Factory3 17 2 2
+ID2D1Factory3 18 4 4
+ID2D1Factory3 19 1 1
+ID2D1Factory3 20 3 3
+ID2D1Factory3 21 2 2
+ID2D1Factory3 26 2 2
+ID2D1Factory3 27 2 2
+ID2D1Factory3 28 2 2
+ID2D1Factory4 0 2 2
+ID2D1Factory4 5 2 2
+ID2D1Factory4 6 2 2
+ID2D1Factory4 7 2 2
+ID2D1Factory4 8 4 4
+ID2D1Factory4 9 3 3
+ID2D1Factory4 10 1 1
+ID2D1Factory4 11 4 4
+ID2D1Factory4 12 3 3
+ID2D1Factory4 13 3 3
+ID2D1Factory4 14 3 3
+ID2D1Factory4 15 3 3
+ID2D1Factory4 16 2 2
+ID2D1Factory4 17 2 2
+ID2D1Factory4 18 4 4
+ID2D1Factory4 19 1 1
+ID2D1Factory4 20 3 3
+ID2D1Factory4 21 2 2
+ID2D1Factory4 26 2 2
+ID2D1Factory4 27 2 2
+ID2D1Factory4 28 2 2
+ID2D1Factory4 29 2 2
+ID2D1Factory5 0 2 2
+ID2D1Factory5 5 2 2
+ID2D1Factory5 6 2 2
+ID2D1Factory5 7 2 2
+ID2D1Factory5 8 4 4
+ID2D1Factory5 9 3 3
+ID2D1Factory5 10 1 1
+ID2D1Factory5 11 4 4
+ID2D1Factory5 12 3 3
+ID2D1Factory5 13 3 3
+ID2D1Factory5 14 3 3
+ID2D1Factory5 15 3 3
+ID2D1Factory5 16 2 2
+ID2D1Factory5 17 2 2
+ID2D1Factory5 18 4 4
+ID2D1Factory5 19 1 1
+ID2D1Factory5 20 3 3
+ID2D1Factory5 21 2 2
+ID2D1Factory5 26 2 2
+ID2D1Factory5 27 2 2
+ID2D1Factory5 28 2 2
+ID2D1Factory5 29 2 2
+ID2D1Factory5 30 2 2
+ID2D1Factory6 0 2 2
+ID2D1Factory6 5 2 2
+ID2D1Factory6 6 2 2
+ID2D1Factory6 7 2 2
+ID2D1Factory6 8 4 4
+ID2D1Factory6 9 3 3
+ID2D1Factory6 10 1 1
+ID2D1Factory6 11 4 4
+ID2D1Factory6 12 3 3
+ID2D1Factory6 13 3 3
+ID2D1Factory6 14 3 3
+ID2D1Factory6 15 3 3
+ID2D1Factory6 16 2 2
+ID2D1Factory6 17 2 2
+ID2D1Factory6 18 4 4
+ID2D1Factory6 19 1 1
+ID2D1Factory6 20 3 3
+ID2D1Factory6 21 2 2
+ID2D1Factory6 26 2 2
+ID2D1Factory6 27 2 2
+ID2D1Factory6 28 2 2
+ID2D1Factory6 29 2 2
+ID2D1Factory6 30 2 2
+ID2D1Factory6 31 2 2
+ID2D1Factory7 0 2 2
+ID2D1Factory7 5 2 2
+ID2D1Factory7 6 2 2
+ID2D1Factory7 7 2 2
+ID2D1Factory7 8 4 4
+ID2D1Factory7 9 3 3
+ID2D1Factory7 10 1 1
+ID2D1Factory7 11 4 4
+ID2D1Factory7 12 3 3
+ID2D1Factory7 13 3 3
+ID2D1Factory7 14 3 3
+ID2D1Factory7 15 3 3
+ID2D1Factory7 16 2 2
+ID2D1Factory7 17 2 2
+ID2D1Factory7 18 4 4
+ID2D1Factory7 19 1 1
+ID2D1Factory7 20 3 3
+ID2D1Factory7 21 2 2
+ID2D1Factory7 26 2 2
+ID2D1Factory7 27 2 2
+ID2D1Factory7 28 2 2
+ID2D1Factory7 29 2 2
+ID2D1Factory7 30 2 2
+ID2D1Factory7 31 2 2
+ID2D1Factory7 32 2 2
+ID2D1Factory8 0 2 2
+ID2D1Factory8 5 2 2
+ID2D1Factory8 6 2 2
+ID2D1Factory8 7 2 2
+ID2D1Factory8 8 4 4
+ID2D1Factory8 9 3 3
+ID2D1Factory8 10 1 1
+ID2D1Factory8 11 4 4
+ID2D1Factory8 12 3 3
+ID2D1Factory8 13 3 3
+ID2D1Factory8 14 3 3
+ID2D1Factory8 15 3 3
+ID2D1Factory8 16 2 2
+ID2D1Factory8 17 2 2
+ID2D1Factory8 18 4 4
+ID2D1Factory8 19 1 1
+ID2D1Factory8 20 3 3
+ID2D1Factory8 21 2 2
+ID2D1Factory8 26 2 2
+ID2D1Factory8 27 2 2
+ID2D1Factory8 28 2 2
+ID2D1Factory8 29 2 2
+ID2D1Factory8 30 2 2
+ID2D1Factory8 31 2 2
+ID2D1Factory8 32 2 2
+ID2D1Factory8 33 2 2
+ID2D1GdiInteropRenderTarget 0 2 2
+ID2D1GdiInteropRenderTarget 3 2 2
+ID2D1GdiMetafile 0 2 2
+ID2D1GdiMetafile 3 1 1
+ID2D1GdiMetafile1 0 2 2
+ID2D1GdiMetafile1 3 1 1
+ID2D1GdiMetafileSink 0 2 2
+ID2D1GdiMetafileSink1 0 2 2
+ID2D1Geometry 0 2 2
+ID2D1Geometry 3 1 1
+ID2D1GeometryGroup 0 2 2
+ID2D1GeometryGroup 3 1 1
+ID2D1GeometryGroup 19 1 1
+ID2D1GeometryRealization 0 2 2
+ID2D1GeometryRealization 3 1 1
+ID2D1GeometrySink 0 2 2
+ID2D1GradientMesh 0 2 2
+ID2D1GradientMesh 3 1 1
+ID2D1GradientStopCollection 0 2 2
+ID2D1GradientStopCollection 3 1 1
+ID2D1GradientStopCollection1 0 2 2
+ID2D1GradientStopCollection1 3 1 1
+ID2D1HwndRenderTarget 0 2 2
+ID2D1HwndRenderTarget 3 1 1
+ID2D1HwndRenderTarget 4 5 6
+ID2D1HwndRenderTarget 5 3 3
+ID2D1HwndRenderTarget 6 4 4
+ID2D1HwndRenderTarget 7 4 4
+ID2D1HwndRenderTarget 8 3 3
+ID2D1HwndRenderTarget 9 5 5
+ID2D1HwndRenderTarget 10 4 4
+ID2D1HwndRenderTarget 11 4 4
+ID2D1HwndRenderTarget 12 5 5
+ID2D1HwndRenderTarget 13 2 2
+ID2D1HwndRenderTarget 14 1 1
+ID2D1HwndRenderTarget 37 1 1
+ID2D1Image 0 2 2
+ID2D1Image 3 1 1
+ID2D1ImageBrush 0 2 2
+ID2D1ImageBrush 3 1 1
+ID2D1ImageBrush 13 1 1
+ID2D1ImageSource 0 2 2
+ID2D1ImageSource 3 1 1
+ID2D1ImageSourceFromWic 0 2 2
+ID2D1ImageSourceFromWic 3 1 1
+ID2D1ImageSourceFromWic 8 1 1
+ID2D1Ink 0 2 2
+ID2D1Ink 3 1 1
+ID2D1InkStyle 0 2 2
+ID2D1InkStyle 3 1 1
+ID2D1Layer 0 2 2
+ID2D1Layer 3 1 1
+ID2D1LinearGradientBrush 0 2 2
+ID2D1LinearGradientBrush 3 1 1
+ID2D1LinearGradientBrush 12 1 1
+ID2D1LookupTable3D 0 2 2
+ID2D1LookupTable3D 3 1 1
+ID2D1Mesh 0 2 2
+ID2D1Mesh 3 1 1
+ID2D1Mesh 4 1 1
+ID2D1Multithread 0 2 2
+ID2D1OffsetTransform 0 2 2
+ID2D1PathGeometry 0 2 2
+ID2D1PathGeometry 3 1 1
+ID2D1PathGeometry 17 1 1
+ID2D1PathGeometry1 0 2 2
+ID2D1PathGeometry1 3 1 1
+ID2D1PathGeometry1 17 1 1
+ID2D1PrintControl 0 2 2
+ID2D1Properties 0 2 2
+ID2D1Properties 13 2 2
+ID2D1RadialGradientBrush 0 2 2
+ID2D1RadialGradientBrush 3 1 1
+ID2D1RadialGradientBrush 16 1 1
+ID2D1RectangleGeometry 0 2 2
+ID2D1RectangleGeometry 3 1 1
+ID2D1RenderInfo 0 2 2
+ID2D1RenderTarget 0 2 2
+ID2D1RenderTarget 3 1 1
+ID2D1RenderTarget 4 5 6
+ID2D1RenderTarget 5 3 3
+ID2D1RenderTarget 6 4 4
+ID2D1RenderTarget 7 4 4
+ID2D1RenderTarget 8 3 3
+ID2D1RenderTarget 9 5 5
+ID2D1RenderTarget 10 4 4
+ID2D1RenderTarget 11 4 4
+ID2D1RenderTarget 12 5 5
+ID2D1RenderTarget 13 2 2
+ID2D1RenderTarget 14 1 1
+ID2D1RenderTarget 37 1 1
+ID2D1Resource 0 2 2
+ID2D1Resource 3 1 1
+ID2D1ResourceTexture 0 2 2
+ID2D1RoundedRectangleGeometry 0 2 2
+ID2D1RoundedRectangleGeometry 3 1 1
+ID2D1SimplifiedGeometrySink 0 2 2
+ID2D1SolidColorBrush 0 2 2
+ID2D1SolidColorBrush 3 1 1
+ID2D1SourceTransform 0 2 2
+ID2D1SpriteBatch 0 2 2
+ID2D1SpriteBatch 3 1 1
+ID2D1StrokeStyle 0 2 2
+ID2D1StrokeStyle 3 1 1
+ID2D1StrokeStyle1 0 2 2
+ID2D1StrokeStyle1 3 1 1
+ID2D1SvgAttribute 0 2 2
+ID2D1SvgAttribute 3 1 1
+ID2D1SvgAttribute 4 1 1
+ID2D1SvgAttribute 5 1 1
+ID2D1SvgDocument 0 2 2
+ID2D1SvgDocument 3 1 1
+ID2D1SvgDocument 7 1 1
+ID2D1SvgDocument 8 2 2
+ID2D1SvgDocument 10 2 2
+ID2D1SvgDocument 11 4 4
+ID2D1SvgDocument 12 3 3
+ID2D1SvgDocument 13 3 3
+ID2D1SvgDocument 14 5 5
+ID2D1SvgElement 0 2 2
+ID2D1SvgElement 3 1 1
+ID2D1SvgElement 4 1 1
+ID2D1SvgElement 8 1 1
+ID2D1SvgElement 10 1 1
+ID2D1SvgElement 11 1 1
+ID2D1SvgElement 12 2 2
+ID2D1SvgElement 13 2 2
+ID2D1SvgElement 18 2 2
+ID2D1SvgElement 30 3 3
+ID2D1SvgGlyphStyle 0 2 2
+ID2D1SvgGlyphStyle 3 1 1
+ID2D1SvgGlyphStyle 5 1 1
+ID2D1SvgGlyphStyle 8 1 1
+ID2D1SvgPaint 0 2 2
+ID2D1SvgPaint 3 1 1
+ID2D1SvgPaint 4 1 1
+ID2D1SvgPaint 5 1 1
+ID2D1SvgPathData 0 2 2
+ID2D1SvgPathData 3 1 1
+ID2D1SvgPathData 4 1 1
+ID2D1SvgPathData 5 1 1
+ID2D1SvgPathData 14 2 2
+ID2D1SvgPointCollection 0 2 2
+ID2D1SvgPointCollection 3 1 1
+ID2D1SvgPointCollection 4 1 1
+ID2D1SvgPointCollection 5 1 1
+ID2D1SvgStrokeDashArray 0 2 2
+ID2D1SvgStrokeDashArray 3 1 1
+ID2D1SvgStrokeDashArray 4 1 1
+ID2D1SvgStrokeDashArray 5 1 1
+ID2D1TessellationSink 0 2 2
+ID2D1Transform 0 2 2
+ID2D1TransformGraph 0 2 2
+ID2D1TransformNode 0 2 2
+ID2D1TransformedGeometry 0 2 2
+ID2D1TransformedGeometry 3 1 1
+ID2D1TransformedGeometry 17 1 1
+ID2D1TransformedImageSource 0 2 2
+ID2D1TransformedImageSource 3 1 1
+ID2D1TransformedImageSource 4 1 1
+ID2D1VertexBuffer 0 2 2
+ID2D1VertexBuffer 3 1 1
+ID3D10ShaderReflection 0 2 2
+ID3D11Device 0 2 2
+ID3D11Device 3 3 3
+ID3D11Device 4 3 3
+ID3D11Device 5 3 3
+ID3D11Device 6 3 3
+ID3D11Device 7 3 3
+ID3D11Device 8 3 3
+ID3D11Device 9 3 3
+ID3D11Device 10 3 3
+ID3D11Device 11 5 5
+ID3D11Device 12 4 4
+ID3D11Device 13 4 4
+ID3D11Device 14 9 9
+ID3D11Device 15 4 4
+ID3D11Device 16 4 4
+ID3D11Device 17 4 4
+ID3D11Device 18 4 4
+ID3D11Device 19 1 1
+ID3D11Device 20 2 2
+ID3D11Device 21 2 2
+ID3D11Device 22 2 2
+ID3D11Device 23 2 2
+ID3D11Device 24 2 2
+ID3D11Device 25 2 2
+ID3D11Device 26 2 2
+ID3D11Device 27 2 2
+ID3D11Device 28 3 3
+ID3D11Device 40 1 1
+ID3D11DeviceContext 0 2 2
+ID3D11DeviceContext 3 1 1
+ID3D11DeviceContext 72 3 3
+ID3D11DeviceContext 73 3 3
+ID3D11DeviceContext 74 1,2 1,2
+ID3D11DeviceContext 75 3 3
+ID3D11DeviceContext 76 1,2 1,2
+ID3D11DeviceContext 77 3 3
+ID3D11DeviceContext 78 1 1
+ID3D11DeviceContext 79 3 3
+ID3D11DeviceContext 80 1 1
+ID3D11DeviceContext 81 3 3
+ID3D11DeviceContext 82 1,2 1,2
+ID3D11DeviceContext 84 3 3
+ID3D11DeviceContext 85 3 3
+ID3D11DeviceContext 86 1 1
+ID3D11DeviceContext 87 3 3
+ID3D11DeviceContext 88 3 3
+ID3D11DeviceContext 89 2,3 2,3
+ID3D11DeviceContext 90 2,3,6 2,3,6
+ID3D11DeviceContext 91 1 1
+ID3D11DeviceContext 92 1 1
+ID3D11DeviceContext 93 2 2
+ID3D11DeviceContext 94 1 1
+ID3D11DeviceContext 97 3 3
+ID3D11DeviceContext 98 1,2 1,2
+ID3D11DeviceContext 99 3 3
+ID3D11DeviceContext 100 3 3
+ID3D11DeviceContext 101 3 3
+ID3D11DeviceContext 102 1,2 1,2
+ID3D11DeviceContext 103 3 3
+ID3D11DeviceContext 104 3 3
+ID3D11DeviceContext 105 3 3
+ID3D11DeviceContext 106 3 3
+ID3D11DeviceContext 107 1,2 1,2
+ID3D11DeviceContext 108 3 3
+ID3D11DeviceContext 109 3 3
+ID3D11DeviceContext 114 2 2
+ID3D11ShaderReflection 0 2 2
+ID3D11Texture2D 0 2 2
+ID3D11Texture2D 3 1 1
+ID3DBlob 0 2 2
+ID3DInclude 0 4 4
+IDMOWrapperFilter 0 2 2
+IDWriteAsyncResult 0 2 2
+IDWriteBitmapRenderTarget 0 2 2
+IDWriteBitmapRenderTarget1 0 2 2
+IDWriteBitmapRenderTarget2 0 2 2
+IDWriteBitmapRenderTarget3 0 2 2
+IDWriteColorGlyphRunEnumerator 0 2 2
+IDWriteColorGlyphRunEnumerator 4 1 1
+IDWriteColorGlyphRunEnumerator1 0 2 2
+IDWriteColorGlyphRunEnumerator1 4 1 1
+IDWriteColorGlyphRunEnumerator1 5 1 1
+IDWriteFactory 0 2 2
+IDWriteFactory 3 1 1
+IDWriteFactory 4 4 4
+IDWriteFactory 7 3 3
+IDWriteFactory 8 4 4
+IDWriteFactory 9 6 6
+IDWriteFactory 10 1 1
+IDWriteFactory 11 2 2
+IDWriteFactory 12 6 6
+IDWriteFactory 15 8 8
+IDWriteFactory 16 1 1
+IDWriteFactory 17 1 1
+IDWriteFactory 18 6 6
+IDWriteFactory 19 9 9
+IDWriteFactory 20 2 2
+IDWriteFactory 21 1 1
+IDWriteFactory 22 4 4
+IDWriteFactory 23 8 8
+IDWriteFactory1 0 2 2
+IDWriteFactory1 3 1 1
+IDWriteFactory1 4 4 4
+IDWriteFactory1 7 3 3
+IDWriteFactory1 8 4 4
+IDWriteFactory1 9 6 6
+IDWriteFactory1 10 1 1
+IDWriteFactory1 11 2 2
+IDWriteFactory1 12 6 6
+IDWriteFactory1 15 8 8
+IDWriteFactory1 16 1 1
+IDWriteFactory1 17 1 1
+IDWriteFactory1 18 6 6
+IDWriteFactory1 19 9 9
+IDWriteFactory1 20 2 2
+IDWriteFactory1 21 1 1
+IDWriteFactory1 22 4 4
+IDWriteFactory1 23 8 8
+IDWriteFactory1 24 1 1
+IDWriteFactory1 25 7 7
+IDWriteFactory2 0 2 2
+IDWriteFactory2 3 1 1
+IDWriteFactory2 4 4 4
+IDWriteFactory2 7 3 3
+IDWriteFactory2 8 4 4
+IDWriteFactory2 9 6 6
+IDWriteFactory2 10 1 1
+IDWriteFactory2 11 2 2
+IDWriteFactory2 12 6 6
+IDWriteFactory2 15 8 8
+IDWriteFactory2 16 1 1
+IDWriteFactory2 17 1 1
+IDWriteFactory2 18 6 6
+IDWriteFactory2 19 9 9
+IDWriteFactory2 20 2 2
+IDWriteFactory2 21 1 1
+IDWriteFactory2 22 4 4
+IDWriteFactory2 23 8 8
+IDWriteFactory2 24 1 1
+IDWriteFactory2 25 7 7
+IDWriteFactory2 26 1 1
+IDWriteFactory2 27 1 1
+IDWriteFactory2 28 8 8
+IDWriteFactory2 29 8 8
+IDWriteFactory2 30 9 9
+IDWriteFactory3 0 2 2
+IDWriteFactory3 3 1 1
+IDWriteFactory3 4 4 4
+IDWriteFactory3 7 3 3
+IDWriteFactory3 8 4 4
+IDWriteFactory3 9 6 6
+IDWriteFactory3 10 1 1
+IDWriteFactory3 11 2 2
+IDWriteFactory3 12 6 6
+IDWriteFactory3 15 8 8
+IDWriteFactory3 16 1 1
+IDWriteFactory3 17 1 1
+IDWriteFactory3 18 6 6
+IDWriteFactory3 19 9 9
+IDWriteFactory3 20 2 2
+IDWriteFactory3 21 1 1
+IDWriteFactory3 22 4 4
+IDWriteFactory3 23 8 8
+IDWriteFactory3 24 1 1
+IDWriteFactory3 25 7 7
+IDWriteFactory3 26 1 1
+IDWriteFactory3 27 1 1
+IDWriteFactory3 28 8 8
+IDWriteFactory3 29 8 8
+IDWriteFactory3 30 9 9
+IDWriteFactory3 31 9 9
+IDWriteFactory3 32 8 8
+IDWriteFactory3 33 4 4
+IDWriteFactory3 34 5 5
+IDWriteFactory3 35 1 1
+IDWriteFactory3 36 1 1
+IDWriteFactory3 37 2 2
+IDWriteFactory3 38 2 2
+IDWriteFactory3 39 1 1
+IDWriteFactory4 0 2 2
+IDWriteFactory4 3 1 1
+IDWriteFactory4 4 4 4
+IDWriteFactory4 7 3 3
+IDWriteFactory4 8 4 4
+IDWriteFactory4 9 6 6
+IDWriteFactory4 10 1 1
+IDWriteFactory4 11 2 2
+IDWriteFactory4 12 6 6
+IDWriteFactory4 15 8 8
+IDWriteFactory4 16 1 1
+IDWriteFactory4 17 1 1
+IDWriteFactory4 18 6 6
+IDWriteFactory4 19 9 9
+IDWriteFactory4 20 2 2
+IDWriteFactory4 21 1 1
+IDWriteFactory4 22 4 4
+IDWriteFactory4 23 8 8
+IDWriteFactory4 24 1 1
+IDWriteFactory4 25 7 7
+IDWriteFactory4 26 1 1
+IDWriteFactory4 27 1 1
+IDWriteFactory4 28 8 8
+IDWriteFactory4 29 8 8
+IDWriteFactory4 30 9 9
+IDWriteFactory4 31 9 9
+IDWriteFactory4 32 8 8
+IDWriteFactory4 33 4 4
+IDWriteFactory4 34 5 5
+IDWriteFactory4 35 1 1
+IDWriteFactory4 36 1 1
+IDWriteFactory4 37 2 2
+IDWriteFactory4 38 2 2
+IDWriteFactory4 39 1 1
+IDWriteFactory4 40 8 9
+IDWriteFactory5 0 2 2
+IDWriteFactory5 3 1 1
+IDWriteFactory5 4 4 4
+IDWriteFactory5 7 3 3
+IDWriteFactory5 8 4 4
+IDWriteFactory5 9 6 6
+IDWriteFactory5 10 1 1
+IDWriteFactory5 11 2 2
+IDWriteFactory5 12 6 6
+IDWriteFactory5 15 8 8
+IDWriteFactory5 16 1 1
+IDWriteFactory5 17 1 1
+IDWriteFactory5 18 6 6
+IDWriteFactory5 19 9 9
+IDWriteFactory5 20 2 2
+IDWriteFactory5 21 1 1
+IDWriteFactory5 22 4 4
+IDWriteFactory5 23 8 8
+IDWriteFactory5 24 1 1
+IDWriteFactory5 25 7 7
+IDWriteFactory5 26 1 1
+IDWriteFactory5 27 1 1
+IDWriteFactory5 28 8 8
+IDWriteFactory5 29 8 8
+IDWriteFactory5 30 9 9
+IDWriteFactory5 31 9 9
+IDWriteFactory5 32 8 8
+IDWriteFactory5 33 4 4
+IDWriteFactory5 34 5 5
+IDWriteFactory5 35 1 1
+IDWriteFactory5 36 1 1
+IDWriteFactory5 37 2 2
+IDWriteFactory5 38 2 2
+IDWriteFactory5 39 1 1
+IDWriteFactory5 40 8 9
+IDWriteFactory5 43 1 1
+IDWriteFactory5 44 1 1
+IDWriteFactory5 45 3 3
+IDWriteFactory5 47 4 4
+IDWriteFactory6 0 2 2
+IDWriteFactory6 3 1 1
+IDWriteFactory6 4 4 4
+IDWriteFactory6 7 3 3
+IDWriteFactory6 8 4 4
+IDWriteFactory6 9 6 6
+IDWriteFactory6 10 1 1
+IDWriteFactory6 11 2 2
+IDWriteFactory6 12 6 6
+IDWriteFactory6 15 8 8
+IDWriteFactory6 16 1 1
+IDWriteFactory6 17 1 1
+IDWriteFactory6 18 6 6
+IDWriteFactory6 19 9 9
+IDWriteFactory6 20 2 2
+IDWriteFactory6 21 1 1
+IDWriteFactory6 22 4 4
+IDWriteFactory6 23 8 8
+IDWriteFactory6 24 1 1
+IDWriteFactory6 25 7 7
+IDWriteFactory6 26 1 1
+IDWriteFactory6 27 1 1
+IDWriteFactory6 28 8 8
+IDWriteFactory6 29 8 8
+IDWriteFactory6 30 9 9
+IDWriteFactory6 31 9 9
+IDWriteFactory6 32 8 8
+IDWriteFactory6 33 4 4
+IDWriteFactory6 34 5 5
+IDWriteFactory6 35 1 1
+IDWriteFactory6 36 1 1
+IDWriteFactory6 37 2 2
+IDWriteFactory6 38 2 2
+IDWriteFactory6 39 1 1
+IDWriteFactory6 40 8 9
+IDWriteFactory6 43 1 1
+IDWriteFactory6 44 1 1
+IDWriteFactory6 45 3 3
+IDWriteFactory6 47 4 4
+IDWriteFactory6 48 6 6
+IDWriteFactory6 49 3 3
+IDWriteFactory6 50 2 2
+IDWriteFactory6 51 3 3
+IDWriteFactory6 52 3 3
+IDWriteFactory6 53 1 1
+IDWriteFactory6 54 7 7
+IDWriteFactory7 0 2 2
+IDWriteFactory7 3 1 1
+IDWriteFactory7 4 4 4
+IDWriteFactory7 7 3 3
+IDWriteFactory7 8 4 4
+IDWriteFactory7 9 6 6
+IDWriteFactory7 10 1 1
+IDWriteFactory7 11 2 2
+IDWriteFactory7 12 6 6
+IDWriteFactory7 15 8 8
+IDWriteFactory7 16 1 1
+IDWriteFactory7 17 1 1
+IDWriteFactory7 18 6 6
+IDWriteFactory7 19 9 9
+IDWriteFactory7 20 2 2
+IDWriteFactory7 21 1 1
+IDWriteFactory7 22 4 4
+IDWriteFactory7 23 8 8
+IDWriteFactory7 24 1 1
+IDWriteFactory7 25 7 7
+IDWriteFactory7 26 1 1
+IDWriteFactory7 27 1 1
+IDWriteFactory7 28 8 8
+IDWriteFactory7 29 8 8
+IDWriteFactory7 30 9 9
+IDWriteFactory7 31 9 9
+IDWriteFactory7 32 8 8
+IDWriteFactory7 33 4 4
+IDWriteFactory7 34 5 5
+IDWriteFactory7 35 1 1
+IDWriteFactory7 36 1 1
+IDWriteFactory7 37 2 2
+IDWriteFactory7 38 2 2
+IDWriteFactory7 39 1 1
+IDWriteFactory7 40 8 9
+IDWriteFactory7 43 1 1
+IDWriteFactory7 44 1 1
+IDWriteFactory7 45 3 3
+IDWriteFactory7 47 4 4
+IDWriteFactory7 48 6 6
+IDWriteFactory7 49 3 3
+IDWriteFactory7 50 2 2
+IDWriteFactory7 51 3 3
+IDWriteFactory7 52 3 3
+IDWriteFactory7 53 1 1
+IDWriteFactory7 54 7 7
+IDWriteFactory7 55 2 2
+IDWriteFactory7 56 3 3
+IDWriteFactory8 0 2 2
+IDWriteFactory8 3 1 1
+IDWriteFactory8 4 4 4
+IDWriteFactory8 7 3 3
+IDWriteFactory8 8 4 4
+IDWriteFactory8 9 6 6
+IDWriteFactory8 10 1 1
+IDWriteFactory8 11 2 2
+IDWriteFactory8 12 6 6
+IDWriteFactory8 15 8 8
+IDWriteFactory8 16 1 1
+IDWriteFactory8 17 1 1
+IDWriteFactory8 18 6 6
+IDWriteFactory8 19 9 9
+IDWriteFactory8 20 2 2
+IDWriteFactory8 21 1 1
+IDWriteFactory8 22 4 4
+IDWriteFactory8 23 8 8
+IDWriteFactory8 24 1 1
+IDWriteFactory8 25 7 7
+IDWriteFactory8 26 1 1
+IDWriteFactory8 27 1 1
+IDWriteFactory8 28 8 8
+IDWriteFactory8 29 8 8
+IDWriteFactory8 30 9 9
+IDWriteFactory8 31 9 9
+IDWriteFactory8 32 8 8
+IDWriteFactory8 33 4 4
+IDWriteFactory8 34 5 5
+IDWriteFactory8 35 1 1
+IDWriteFactory8 36 1 1
+IDWriteFactory8 37 2 2
+IDWriteFactory8 38 2 2
+IDWriteFactory8 39 1 1
+IDWriteFactory8 40 8 9
+IDWriteFactory8 43 1 1
+IDWriteFactory8 44 1 1
+IDWriteFactory8 45 3 3
+IDWriteFactory8 47 4 4
+IDWriteFactory8 48 6 6
+IDWriteFactory8 49 3 3
+IDWriteFactory8 50 2 2
+IDWriteFactory8 51 3 3
+IDWriteFactory8 52 3 3
+IDWriteFactory8 53 1 1
+IDWriteFactory8 54 7 7
+IDWriteFactory8 55 2 2
+IDWriteFactory8 56 3 3
+IDWriteFactory8 57 9 10
+IDWriteFont 0 2 2
+IDWriteFont 3 1 1
+IDWriteFont 8 1 1
+IDWriteFont 9 2 2
+IDWriteFont 13 1 1
+IDWriteFont1 0 2 2
+IDWriteFont1 3 1 1
+IDWriteFont1 8 1 1
+IDWriteFont1 9 2 2
+IDWriteFont1 13 1 1
+IDWriteFont2 0 2 2
+IDWriteFont2 3 1 1
+IDWriteFont2 8 1 1
+IDWriteFont2 9 2 2
+IDWriteFont2 13 1 1
+IDWriteFont3 0 2 2
+IDWriteFont3 3 1 1
+IDWriteFont3 8 1 1
+IDWriteFont3 9 2 2
+IDWriteFont3 13 1 1
+IDWriteFont3 19 1 1
+IDWriteFont3 21 1 1
+IDWriteFontCollection 0 2 2
+IDWriteFontCollection 4 2 2
+IDWriteFontCollection 6 2 2
+IDWriteFontCollection1 0 2 2
+IDWriteFontCollection1 4 2 2
+IDWriteFontCollection1 6 2 2
+IDWriteFontCollection1 7 1 1
+IDWriteFontCollection1 8 2 2
+IDWriteFontCollection2 0 2 2
+IDWriteFontCollection2 4 2 2
+IDWriteFontCollection2 6 2 2
+IDWriteFontCollection2 7 1 1
+IDWriteFontCollection2 8 2 2
+IDWriteFontCollection2 9 2 2
+IDWriteFontCollection2 10 4 4
+IDWriteFontCollection2 12 1 1
+IDWriteFontCollection3 0 2 2
+IDWriteFontCollection3 4 2 2
+IDWriteFontCollection3 6 2 2
+IDWriteFontCollection3 7 1 1
+IDWriteFontCollection3 8 2 2
+IDWriteFontCollection3 9 2 2
+IDWriteFontCollection3 10 4 4
+IDWriteFontCollection3 12 1 1
+IDWriteFontCollectionLoader 0 2 2
+IDWriteFontCollectionLoader 3 4 4
+IDWriteFontDownloadListener 0 2 2
+IDWriteFontDownloadQueue 0 2 2
+IDWriteFontFace 0 2 2
+IDWriteFontFace 4 2 2
+IDWriteFontFace 12 2,4 2,4
+IDWriteFontFace1 0 2 2
+IDWriteFontFace1 4 2 2
+IDWriteFontFace1 12 2,4 2,4
+IDWriteFontFace2 0 2 2
+IDWriteFontFace2 4 2 2
+IDWriteFontFace2 12 2,4 2,4
+IDWriteFontFace3 0 2 2
+IDWriteFontFace3 4 2 2
+IDWriteFontFace3 12 2,4 2,4
+IDWriteFontFace3 35 1 1
+IDWriteFontFace3 40 1 1
+IDWriteFontFace3 41 1 1
+IDWriteFontFace3 42 2 2
+IDWriteFontFace4 0 2 2
+IDWriteFontFace4 4 2 2
+IDWriteFontFace4 12 2,4 2,4
+IDWriteFontFace4 35 1 1
+IDWriteFontFace4 40 1 1
+IDWriteFontFace4 41 1 1
+IDWriteFontFace4 42 2 2
+IDWriteFontFace4 51 5 5
+IDWriteFontFace5 0 2 2
+IDWriteFontFace5 4 2 2
+IDWriteFontFace5 12 2,4 2,4
+IDWriteFontFace5 35 1 1
+IDWriteFontFace5 40 1 1
+IDWriteFontFace5 41 1 1
+IDWriteFontFace5 42 2 2
+IDWriteFontFace5 51 5 5
+IDWriteFontFace5 56 1 1
+IDWriteFontFace6 0 2 2
+IDWriteFontFace6 4 2 2
+IDWriteFontFace6 12 2,4 2,4
+IDWriteFontFace6 35 1 1
+IDWriteFontFace6 40 1 1
+IDWriteFontFace6 41 1 1
+IDWriteFontFace6 42 2 2
+IDWriteFontFace6 51 5 5
+IDWriteFontFace6 56 1 1
+IDWriteFontFace6 58 2 2
+IDWriteFontFace6 59 2 2
+IDWriteFontFace7 0 2 2
+IDWriteFontFace7 4 2 2
+IDWriteFontFace7 12 2,4 2,4
+IDWriteFontFace7 35 1 1
+IDWriteFontFace7 40 1 1
+IDWriteFontFace7 41 1 1
+IDWriteFontFace7 42 2 2
+IDWriteFontFace7 51 5 5
+IDWriteFontFace7 56 1 1
+IDWriteFontFace7 58 2 2
+IDWriteFontFace7 59 2 2
+IDWriteFontFace7 61 3 3
+IDWriteFontFaceReference 0 2 2
+IDWriteFontFaceReference 3 1 1
+IDWriteFontFaceReference 4 2 2
+IDWriteFontFaceReference 8 1 1
+IDWriteFontFaceReference1 0 2 2
+IDWriteFontFaceReference1 3 1 1
+IDWriteFontFaceReference1 4 2 2
+IDWriteFontFaceReference1 8 1 1
+IDWriteFontFaceReference1 17 1 1
+IDWriteFontFallback 0 2 2
+IDWriteFontFallback 3 10 10
+IDWriteFontFallback1 0 2 2
+IDWriteFontFallback1 3 10 10
+IDWriteFontFallback1 4 10 10
+IDWriteFontFallbackBuilder 0 2 2
+IDWriteFontFallbackBuilder 5 1 1
+IDWriteFontFamily 0 2 2
+IDWriteFontFamily 3 1 1
+IDWriteFontFamily 5 2 2
+IDWriteFontFamily 6 1 1
+IDWriteFontFamily 7 4 4
+IDWriteFontFamily 8 4 4
+IDWriteFontFamily1 0 2 2
+IDWriteFontFamily1 3 1 1
+IDWriteFontFamily1 5 2 2
+IDWriteFontFamily1 6 1 1
+IDWriteFontFamily1 7 4 4
+IDWriteFontFamily1 8 4 4
+IDWriteFontFamily1 10 2 2
+IDWriteFontFamily1 11 2 2
+IDWriteFontFamily2 0 2 2
+IDWriteFontFamily2 3 1 1
+IDWriteFontFamily2 5 2 2
+IDWriteFontFamily2 6 1 1
+IDWriteFontFamily2 7 4 4
+IDWriteFontFamily2 8 4 4
+IDWriteFontFamily2 10 2 2
+IDWriteFontFamily2 11 2 2
+IDWriteFontFamily2 12 3 3
+IDWriteFontFamily2 13 1 1
+IDWriteFontFile 0 2 2
+IDWriteFontFile 3 1 1
+IDWriteFontFile 4 1 1
+IDWriteFontFileEnumerator 0 2 2
+IDWriteFontFileEnumerator 4 1 1
+IDWriteFontFileLoader 0 2 2
+IDWriteFontFileLoader 3 3 3
+IDWriteFontFileStream 0 2 2
+IDWriteFontFileStream 3 1,4 1,6
+IDWriteFontList 0 2 2
+IDWriteFontList 3 1 1
+IDWriteFontList 5 2 2
+IDWriteFontList1 0 2 2
+IDWriteFontList1 3 1 1
+IDWriteFontList1 5 2 2
+IDWriteFontList1 7 2 2
+IDWriteFontList1 8 2 2
+IDWriteFontList2 0 2 2
+IDWriteFontList2 3 1 1
+IDWriteFontList2 5 2 2
+IDWriteFontList2 7 2 2
+IDWriteFontList2 8 2 2
+IDWriteFontList2 9 1 1
+IDWriteFontResource 0 2 2
+IDWriteFontResource 3 1 1
+IDWriteFontResource 9 2 2
+IDWriteFontResource 11 4 4
+IDWriteFontResource 13 4 4
+IDWriteFontResource 14 4 4
+IDWriteFontSet 0 2 2
+IDWriteFontSet 4 2 2
+IDWriteFontSet 7 2 2
+IDWriteFontSet 8 3 3
+IDWriteFontSet 9 4 4
+IDWriteFontSet 11 5 5
+IDWriteFontSet 12 3 3
+IDWriteFontSet1 0 2 2
+IDWriteFontSet1 4 2 2
+IDWriteFontSet1 7 2 2
+IDWriteFontSet1 8 3 3
+IDWriteFontSet1 9 4 4
+IDWriteFontSet1 11 5 5
+IDWriteFontSet1 12 3 3
+IDWriteFontSet1 13 4 4
+IDWriteFontSet1 14 1 1
+IDWriteFontSet1 15 3 3
+IDWriteFontSet1 16 4 4
+IDWriteFontSet1 17 4 4
+IDWriteFontSet1 22 2 2
+IDWriteFontSet1 23 2 2
+IDWriteFontSet1 24 2 2
+IDWriteFontSet2 0 2 2
+IDWriteFontSet2 4 2 2
+IDWriteFontSet2 7 2 2
+IDWriteFontSet2 8 3 3
+IDWriteFontSet2 9 4 4
+IDWriteFontSet2 11 5 5
+IDWriteFontSet2 12 3 3
+IDWriteFontSet2 13 4 4
+IDWriteFontSet2 14 1 1
+IDWriteFontSet2 15 3 3
+IDWriteFontSet2 16 4 4
+IDWriteFontSet2 17 4 4
+IDWriteFontSet2 22 2 2
+IDWriteFontSet2 23 2 2
+IDWriteFontSet2 24 2 2
+IDWriteFontSet3 0 2 2
+IDWriteFontSet3 4 2 2
+IDWriteFontSet3 7 2 2
+IDWriteFontSet3 8 3 3
+IDWriteFontSet3 9 4 4
+IDWriteFontSet3 11 5 5
+IDWriteFontSet3 12 3 3
+IDWriteFontSet3 13 4 4
+IDWriteFontSet3 14 1 1
+IDWriteFontSet3 15 3 3
+IDWriteFontSet3 16 4 4
+IDWriteFontSet3 17 4 4
+IDWriteFontSet3 22 2 2
+IDWriteFontSet3 23 2 2
+IDWriteFontSet3 24 2 2
+IDWriteFontSet4 0 2 2
+IDWriteFontSet4 4 2 2
+IDWriteFontSet4 7 2 2
+IDWriteFontSet4 8 3 3
+IDWriteFontSet4 9 4 4
+IDWriteFontSet4 11 5 5
+IDWriteFontSet4 12 3 3
+IDWriteFontSet4 13 4 4
+IDWriteFontSet4 14 1 1
+IDWriteFontSet4 15 3 3
+IDWriteFontSet4 16 4 4
+IDWriteFontSet4 17 4 4
+IDWriteFontSet4 22 2 2
+IDWriteFontSet4 23 2 2
+IDWriteFontSet4 24 2 2
+IDWriteFontSet4 31 5 5
+IDWriteFontSetBuilder 0 2 2
+IDWriteFontSetBuilder 6 1 1
+IDWriteFontSetBuilder1 0 2 2
+IDWriteFontSetBuilder1 6 1 1
+IDWriteFontSetBuilder2 0 2 2
+IDWriteFontSetBuilder2 6 1 1
+IDWriteGdiInterop 0 2 2
+IDWriteGdiInterop 3 2 2
+IDWriteGdiInterop 6 2 2
+IDWriteGdiInterop 7 4 4
+IDWriteGdiInterop1 0 2 2
+IDWriteGdiInterop1 3 2 2
+IDWriteGdiInterop1 6 2 2
+IDWriteGdiInterop1 7 4 4
+IDWriteGdiInterop1 8 3 3
+IDWriteGdiInterop1 11 3 3
+IDWriteGlyphRunAnalysis 0 2 2
+IDWriteInMemoryFontFileLoader 0 2 2
+IDWriteInMemoryFontFileLoader 3 3 3
+IDWriteInMemoryFontFileLoader 4 5 5
+IDWriteInlineObject 0 2 2
+IDWriteLocalFontFileLoader 0 2 2
+IDWriteLocalFontFileLoader 3 3 3
+IDWriteLocalizedStrings 0 2 2
+IDWriteNumberSubstitution 0 2 2
+IDWritePaintReader 0 2 2
+IDWritePixelSnapping 0 2 2
+IDWriteRemoteFontFileLoader 0 2 2
+IDWriteRemoteFontFileLoader 3 3 3
+IDWriteRemoteFontFileLoader 4 3 3
+IDWriteRemoteFontFileLoader 6 4 4
+IDWriteRemoteFontFileStream 0 2 2
+IDWriteRemoteFontFileStream 3 1,4 1,6
+IDWriteRemoteFontFileStream 10 4 4
+IDWriteRenderingParams 0 2 2
+IDWriteRenderingParams1 0 2 2
+IDWriteRenderingParams2 0 2 2
+IDWriteRenderingParams3 0 2 2
+IDWriteStringList 0 2 2
+IDWriteTextAnalysisSink 0 2 2
+IDWriteTextAnalysisSink1 0 2 2
+IDWriteTextAnalysisSource 0 2 2
+IDWriteTextAnalysisSource 3 2 2
+IDWriteTextAnalysisSource 4 2 2
+IDWriteTextAnalysisSource 6 3 3
+IDWriteTextAnalysisSource 7 3 3
+IDWriteTextAnalysisSource1 0 2 2
+IDWriteTextAnalysisSource1 3 2 2
+IDWriteTextAnalysisSource1 4 2 2
+IDWriteTextAnalysisSource1 6 3 3
+IDWriteTextAnalysisSource1 7 3 3
+IDWriteTextAnalyzer 0 2 2
+IDWriteTextAnalyzer1 0 2 2
+IDWriteTextAnalyzer2 0 2 2
+IDWriteTextFormat 0 2 2
+IDWriteTextFormat 17 2 2
+IDWriteTextFormat 19 1 1
+IDWriteTextFormat1 0 2 2
+IDWriteTextFormat1 17 2 2
+IDWriteTextFormat1 19 1 1
+IDWriteTextFormat1 35 1 1
+IDWriteTextFormat2 0 2 2
+IDWriteTextFormat2 17 2 2
+IDWriteTextFormat2 19 1 1
+IDWriteTextFormat2 35 1 1
+IDWriteTextFormat3 0 2 2
+IDWriteTextFormat3 17 2 2
+IDWriteTextFormat3 19 1 1
+IDWriteTextFormat3 35 1 1
+IDWriteTextLayout 0 2 2
+IDWriteTextLayout 17 2 2
+IDWriteTextLayout 19 1 1
+IDWriteTextLayout 44 2 2
+IDWriteTextLayout 53 2 2
+IDWriteTextLayout 54 2 2
+IDWriteTextLayout 55 2 2
+IDWriteTextLayout1 0 2 2
+IDWriteTextLayout1 17 2 2
+IDWriteTextLayout1 19 1 1
+IDWriteTextLayout1 44 2 2
+IDWriteTextLayout1 53 2 2
+IDWriteTextLayout1 54 2 2
+IDWriteTextLayout1 55 2 2
+IDWriteTextLayout2 0 2 2
+IDWriteTextLayout2 17 2 2
+IDWriteTextLayout2 19 1 1
+IDWriteTextLayout2 44 2 2
+IDWriteTextLayout2 53 2 2
+IDWriteTextLayout2 54 2 2
+IDWriteTextLayout2 55 2 2
+IDWriteTextLayout2 79 1 1
+IDWriteTextLayout3 0 2 2
+IDWriteTextLayout3 17 2 2
+IDWriteTextLayout3 19 1 1
+IDWriteTextLayout3 44 2 2
+IDWriteTextLayout3 53 2 2
+IDWriteTextLayout3 54 2 2
+IDWriteTextLayout3 55 2 2
+IDWriteTextLayout3 79 1 1
+IDWriteTextLayout4 0 2 2
+IDWriteTextLayout4 17 2 2
+IDWriteTextLayout4 19 1 1
+IDWriteTextLayout4 44 2 2
+IDWriteTextLayout4 53 2 2
+IDWriteTextLayout4 54 2 2
+IDWriteTextLayout4 55 2 2
+IDWriteTextLayout4 79 1 1
+IDWriteTextRenderer 0 2 2
+IDWriteTextRenderer1 0 2 2
+IDWriteTypography 0 2 2
+IDXGISwapChain 0 2 2
+IDXGISwapChain 6 2 2
+IDXGISwapChain 7 2 2
+IDXGISwapChain 9 3 3
+IDXGISwapChain 11 2 2
+IDXGISwapChain 15 1 1
+IDataObject 0 2 2
+IDataObject 8 2 2
+IDataObject 11 1 1
+IDirect3D9 0 2 2
+IDirect3D9 16 6 6
+IDirect3D9Ex 0 2 2
+IDirect3D9Ex 16 6 6
+IDirect3D9Ex 20 7 7
+IDirect3DCubeTexture9 0 2 2
+IDirect3DCubeTexture9 3 1 1
+IDirect3DCubeTexture9 18 3 3
+IDirect3DDevice9 0 2 2
+IDirect3DDevice9 6 1 1
+IDirect3DDevice9 13 2 2
+IDirect3DDevice9 14 2 2
+IDirect3DDevice9 18 4 4
+IDirect3DDevice9 23 7,8 7,8
+IDirect3DDevice9 24 8,9 8,9
+IDirect3DDevice9 25 6,7 6,7
+IDirect3DDevice9 26 5,6 5,6
+IDirect3DDevice9 27 5,6 5,6
+IDirect3DDevice9 28 7,8 7,8
+IDirect3DDevice9 29 7,8 7,8
+IDirect3DDevice9 36 5,6 5,6
+IDirect3DDevice9 38 2 2
+IDirect3DDevice9 40 1 1
+IDirect3DDevice9 59 2 2
+IDirect3DDevice9 61 1 1
+IDirect3DDevice9 64 2 2
+IDirect3DDevice9 86 2 2
+IDirect3DDevice9 88 1 1
+IDirect3DDevice9 91 2 2
+IDirect3DDevice9 93 1 1
+IDirect3DDevice9 101 2 2
+IDirect3DDevice9 105 1 1
+IDirect3DDevice9 106 2 2
+IDirect3DDevice9 108 1 1
+IDirect3DDevice9 118 2 2
+IDirect3DDevice9Ex 0 2 2
+IDirect3DDevice9Ex 6 1 1
+IDirect3DDevice9Ex 13 2 2
+IDirect3DDevice9Ex 14 2 2
+IDirect3DDevice9Ex 18 4 4
+IDirect3DDevice9Ex 23 7,8 7,8
+IDirect3DDevice9Ex 24 8,9 8,9
+IDirect3DDevice9Ex 25 6,7 6,7
+IDirect3DDevice9Ex 26 5,6 5,6
+IDirect3DDevice9Ex 27 5,6 5,6
+IDirect3DDevice9Ex 28 7,8 7,8
+IDirect3DDevice9Ex 29 7,8 7,8
+IDirect3DDevice9Ex 36 5,6 5,6
+IDirect3DDevice9Ex 38 2 2
+IDirect3DDevice9Ex 40 1 1
+IDirect3DDevice9Ex 59 2 2
+IDirect3DDevice9Ex 61 1 1
+IDirect3DDevice9Ex 64 2 2
+IDirect3DDevice9Ex 86 2 2
+IDirect3DDevice9Ex 88 1 1
+IDirect3DDevice9Ex 91 2 2
+IDirect3DDevice9Ex 93 1 1
+IDirect3DDevice9Ex 101 2 2
+IDirect3DDevice9Ex 105 1 1
+IDirect3DDevice9Ex 106 2 2
+IDirect3DDevice9Ex 108 1 1
+IDirect3DDevice9Ex 118 2 2
+IDirect3DDevice9Ex 125 1 1
+IDirect3DDevice9Ex 129 7,8 7,8
+IDirect3DDevice9Ex 130 5,6 5,6
+IDirect3DDevice9Ex 131 7,8 7,8
+IDirect3DDeviceManager9 0 2 2
+IDirect3DDeviceManager9 4 1 1
+IDirect3DDeviceManager9 7 2 2
+IDirect3DDeviceManager9 9 3 3
+IDirect3DStateBlock9 0 2 2
+IDirect3DStateBlock9 3 1 1
+IDirect3DSurface9 0 2 2
+IDirect3DSurface9 3 1 1
+IDirect3DSurface9 11 2 2
+IDirect3DSurface9 15 1 1
+IDirect3DTexture9 0 2 2
+IDirect3DTexture9 3 1 1
+IDirect3DTexture9 18 2 2
+IDirectDraw 0 2 2
+IDirectDraw 4 2 2
+IDirectDraw 5 3 3
+IDirectDraw 6 2 2
+IDirectDraw 7 2 2
+IDirectDraw 14 1 1
+IDirectDraw2 0 2 2
+IDirectDraw2 4 2 2
+IDirectDraw2 5 3 3
+IDirectDraw2 6 2 2
+IDirectDraw2 7 2 2
+IDirectDraw2 14 1 1
+IDirectDraw4 0 2 2
+IDirectDraw4 4 2 2
+IDirectDraw4 5 3 3
+IDirectDraw4 6 2 2
+IDirectDraw4 7 2 2
+IDirectDraw4 14 1 1
+IDirectDraw4 24 2 2
+IDirectDraw7 0 2 2
+IDirectDraw7 4 2 2
+IDirectDraw7 5 3 3
+IDirectDraw7 6 2 2
+IDirectDraw7 7 2 2
+IDirectDraw7 14 1 1
+IDirectDraw7 24 2 2
+IDirectDrawClipper 0 2 2
+IDirectDrawClipper 4 1 1
+IDirectDrawMediaStream 0 2 2
+IDirectDrawMediaStream 3 1 1
+IDirectDrawMediaStream 6 2 2
+IDirectDrawMediaStream 7 3 3
+IDirectDrawMediaStream 9 2 2
+IDirectDrawMediaStream 11 1 1
+IDirectDrawMediaStream 13 4 4
+IDirectDrawPalette 0 2 2
+IDirectDrawStreamSample 0 2 2
+IDirectDrawStreamSample 8 1 1
+IDirectDrawSurface 0 2 2
+IDirectDrawSurface 12 2 2
+IDirectDrawSurface 15 1 1
+IDirectDrawSurface 17 1 1
+IDirectDrawSurface 20 1 1
+IDirectDrawSurface2 0 2 2
+IDirectDrawSurface2 12 2 2
+IDirectDrawSurface2 15 1 1
+IDirectDrawSurface2 17 1 1
+IDirectDrawSurface2 20 1 1
+IDirectDrawSurface2 36 1 1
+IDirectDrawSurface3 0 2 2
+IDirectDrawSurface3 12 2 2
+IDirectDrawSurface3 15 1 1
+IDirectDrawSurface3 17 1 1
+IDirectDrawSurface3 20 1 1
+IDirectDrawSurface3 36 1 1
+IDirectDrawSurface4 0 2 2
+IDirectDrawSurface4 12 2 2
+IDirectDrawSurface4 15 1 1
+IDirectDrawSurface4 17 1 1
+IDirectDrawSurface4 20 1 1
+IDirectDrawSurface4 36 1 1
+IDirectDrawSurface7 0 2 2
+IDirectDrawSurface7 12 2 2
+IDirectDrawSurface7 15 1 1
+IDirectDrawSurface7 17 1 1
+IDirectDrawSurface7 20 1 1
+IDirectDrawSurface7 36 1 1
+IDirectMusic 0 2 2
+IDirectMusic 4 2 2
+IDirectMusic 5 3 3
+IDirectMusic 7 2 2
+IDirectMusic8 0 2 2
+IDirectMusic8 4 2 2
+IDirectMusic8 5 3 3
+IDirectMusic8 7 2 2
+IDirectSound 0 2 2
+IDirectSound 3 2 2
+IDirectSound 5 2 2
+IDirectSound3DBuffer 0 2 2
+IDirectSound3DListener 0 2 2
+IDirectSound8 0 2 2
+IDirectSound8 3 2 2
+IDirectSound8 5 2 2
+IDirectSoundBuffer8 0 2 2
+IDirectSoundBuffer8 11 3,5 3,5
+IDirectSoundBuffer8 23 4 4
+IDirectSoundNotify 0 2 2
+IDirectXVideoAccelerationService 0 2 2
+IDirectXVideoAccelerationService 3 8,9 8,9
+IDirectXVideoProcessor 0 2 2
+IDirectXVideoProcessor 3 1 1
+IDirectXVideoProcessor 8 5 5
+IDirectXVideoProcessorService 0 2 2
+IDirectXVideoProcessorService 3 8,9 8,9
+IDirectXVideoProcessorService 5 3 3
+IDirectXVideoProcessorService 6 4 4
+IDirectXVideoProcessorService 7 5 5
+IDirectXVideoProcessorService 11 5 5
+IDispatch 0 2 2
+IDispatch 4 3 3
+IDispatchEx 0 2 2
+IDispatchEx 4 3 3
+IDispatchEx 12 2 2
+IDispatchEx 14 1 1
+IDropSource 0 2 2
+IDropTarget 0 2 2
+IEnumDMO 0 2 2
+IEnumDMO 3 3 3
+IEnumDMO 6 1 1
+IEnumFilters 0 2 2
+IEnumFilters 3 2 2
+IEnumFilters 6 1 1
+IEnumMediaTypes 0 2 2
+IEnumMediaTypes 3 2 2
+IEnumMediaTypes 6 1 1
+IEnumPins 0 2 2
+IEnumPins 3 2 2
+IEnumPins 6 1 1
+IEnumString 0 2 2
+IEnumString 3 2 2
+IEnumString 6 1 1
+IEnumWbemClassObject 0 2 2
+IEnumWbemClassObject 4 3 3
+IEnumWbemClassObject 6 1 1
+IFileSourceFilter 0 2 2
+IFileSourceFilter 4 1 1
+IFilterGraph 0 2 2
+IFilterGraph 5 1 1
+IFilterGraph 6 2 2
+IFilterGraph2 0 2 2
+IFilterGraph2 5 1 1
+IFilterGraph2 6 2 2
+IFilterGraph2 14 3 3
+IFilterGraph2 18 4 4
+IFont 0 2 2
+IFont 3 1 1
+IFont 19 1 1
+IFont 20 1 1
+IFontDisp 0 2 2
+IFontDisp 4 3 3
+IGraphBuilder 0 2 2
+IGraphBuilder 5 1 1
+IGraphBuilder 6 2 2
+IGraphBuilder 14 3 3
+IGraphConfig 0 2 2
+IGraphConfig 6 1 1
+IInspectable 0 2 2
+IInspectable 3 2 2
+IInspectable 4 1 1
+IKsPropertySet 0 2 2
+IMF2DBuffer 0 2 2
+IMF2DBuffer 3 1 1
+IMF2DBuffer 5 1 1
+IMFActivate 0 2 2
+IMFActivate 13 2 2
+IMFActivate 16 2 2
+IMFActivate 17 3 3
+IMFActivate 33 2 2
+IMFAsyncCallback 0 2 2
+IMFAsyncResult 0 2 2
+IMFAsyncResult 3 1 1
+IMFAsyncResult 6 1 1
+IMFAttributes 0 2 2
+IMFAttributes 13 2 2
+IMFAttributes 16 2 2
+IMFAttributes 17 3 3
+IMFByteStream 0 2 2
+IMFClock 0 2 2
+IMFCollection 0 2 2
+IMFCollection 4 2 2
+IMFCollection 6 2 2
+IMFDXGIBuffer 0 2 2
+IMFDXGIBuffer 3 2 2
+IMFDXGIBuffer 5 3 3
+IMFDXGIDeviceManager 0 2 2
+IMFDXGIDeviceManager 4 3 3
+IMFDXGIDeviceManager 5 3 3
+IMFDXGIDeviceManager 6 1 1
+IMFGetService 0 2 2
+IMFGetService 3 3 3
+IMFMediaBuffer 0 2 2
+IMFMediaBuffer 3 1 1
+IMFMediaEngine 0 2 2
+IMFMediaEngine 3 1 1
+IMFMediaEngine 7 1 1
+IMFMediaEngine 11 1 1
+IMFMediaEngine 25 1 1
+IMFMediaEngine 26 1 1
+IMFMediaEngineClassFactory 0 2 2
+IMFMediaEngineClassFactory 3 3 3
+IMFMediaEngineClassFactory 4 1 1
+IMFMediaEngineClassFactory 5 1 1
+IMFMediaEngineEx 0 2 2
+IMFMediaEngineEx 3 1 1
+IMFMediaEngineEx 7 1 1
+IMFMediaEngineEx 11 1 1
+IMFMediaEngineEx 25 1 1
+IMFMediaEngineEx 26 1 1
+IMFMediaEngineEx 72 1 1
+IMFMediaEngineNotify 0 2 2
+IMFMediaError 0 2 2
+IMFMediaEvent 0 2 2
+IMFMediaEvent 13 2 2
+IMFMediaEvent 16 2 2
+IMFMediaEvent 17 3 3
+IMFMediaEventGenerator 0 2 2
+IMFMediaEventGenerator 3 2 2
+IMFMediaEventGenerator 5 2 2
+IMFMediaSession 0 2 2
+IMFMediaSession 3 2 2
+IMFMediaSession 5 2 2
+IMFMediaSession 14 1 1
+IMFMediaSession 16 3 4
+IMFMediaSource 0 2 2
+IMFMediaSource 3 2 2
+IMFMediaSource 5 2 2
+IMFMediaSource 8 1 1
+IMFMediaType 0 2 2
+IMFMediaType 13 2 2
+IMFMediaType 16 2 2
+IMFMediaType 17 3 3
+IMFMediaType 36 2 5
+IMFMediaTypeHandler 0 2 2
+IMFMediaTypeHandler 3 2 2
+IMFMediaTypeHandler 5 2 2
+IMFMediaTypeHandler 7 1 1
+IMFPresentationClock 0 2 2
+IMFPresentationClock 9 1 1
+IMFPresentationDescriptor 0 2 2
+IMFPresentationDescriptor 13 2 2
+IMFPresentationDescriptor 16 2 2
+IMFPresentationDescriptor 17 3 3
+IMFPresentationDescriptor 34 3 3
+IMFPresentationDescriptor 37 1 1
+IMFSample 0 2 2
+IMFSample 13 2 2
+IMFSample 16 2 2
+IMFSample 17 3 3
+IMFSample 40 2 2
+IMFSample 41 1 1
+IMFSimpleAudioVolume 0 2 2
+IMFSourceReader 0 2 2
+IMFSourceReader 5 3 3
+IMFSourceReader 6 2 2
+IMFSourceReader 9 6 6
+IMFSourceReader 11 4 4
+IMFSourceReaderCallback 0 2 2
+IMFSourceResolver 0 2 2
+IMFSourceResolver 3 5 5
+IMFSourceResolver 4 6 6
+IMFSourceResolver 5 4 4
+IMFSourceResolver 6 3 3
+IMFSourceResolver 7 5 5
+IMFSourceResolver 8 3 3
+IMFStreamDescriptor 0 2 2
+IMFStreamDescriptor 13 2 2
+IMFStreamDescriptor 16 2 2
+IMFStreamDescriptor 17 3 3
+IMFStreamDescriptor 34 1 1
+IMFTopology 0 2 2
+IMFTopology 13 2 2
+IMFTopology 16 2 2
+IMFTopology 17 3 3
+IMFTopology 37 2 2
+IMFTopology 40 2 3
+IMFTopology 41 1 1
+IMFTopology 42 1 1
+IMFTopologyNode 0 2 2
+IMFTopologyNode 13 2 2
+IMFTopologyNode 16 2 2
+IMFTopologyNode 17 3 3
+IMFTopologyNode 34 1 1
+IMFTopologyNode 42 2 2
+IMFTopologyNode 43 2 2
+IMFTopologyNode 45 2 2
+IMFTopologyNode 47 2 2
+IMFTransform 0 2 2
+IMFTransform 8 1 1
+IMFTransform 9 2 2
+IMFTransform 10 2 2
+IMFTransform 13 3 3
+IMFTransform 14 3 3
+IMFTransform 17 2 2
+IMFTransform 18 2 2
+IMFVideoDisplayControl 0 2 2
+IMFVideoDisplayControl 10 1 1
+IMFVideoDisplayControl 12 2 2
+IMFVideoSampleAllocator 0 2 2
+IMFVideoSampleAllocator 6 1 1
+IMFVideoSampleAllocatorEx 0 2 2
+IMFVideoSampleAllocatorEx 6 1 1
+IMMDevice 0 2 2
+IMMDevice 3 4 4
+IMMDevice 4 2 2
+IMMDevice 5 1 1
+IMMDeviceCollection 0 2 2
+IMMDeviceCollection 4 2 2
+IMMDeviceEnumerator 0 2 2
+IMMDeviceEnumerator 3 3 3
+IMMDeviceEnumerator 4 3 3
+IMMDeviceEnumerator 5 2 2
+IMMEndpoint 0 2 2
+IMMNotificationClient 0 2 2
+IMalloc 0 2 2
+IMediaControl 0 2 2
+IMediaControl 4 3 3
+IMediaControl 12 2 2
+IMediaControl 13 1 1
+IMediaControl 14 1 1
+IMediaEventEx 0 2 2
+IMediaEventEx 4 3 3
+IMediaEventEx 7 1 1
+IMediaEventEx 8 2,3 2,3
+IMediaEventSink 0 2 2
+IMediaFilter 0 2 2
+IMediaFilter 9 1 1
+IMediaPosition 0 2 2
+IMediaPosition 4 3 3
+IMediaSample 0 2 2
+IMediaSample 3 1 1
+IMediaSample 13 1 1
+IMediaSample2 0 2 2
+IMediaSample2 3 1 1
+IMediaSample2 13 1 1
+IMediaSeeking 0 2 2
+IMediaStream 0 2 2
+IMediaStream 3 1 1
+IMediaStream 6 2 2
+IMediaStream 7 3 3
+IMemAllocator 0 2 2
+IMemAllocator 7 1 1
+IMemInputPin 0 2 2
+IMemInputPin 3 1 1
+IMultiMediaStream 0 2 2
+IMultiMediaStream 4 2 2
+IMultiMediaStream 5 2 2
+IMultiMediaStream 11 1 1
+INSSBuffer 0 2 2
+INSSBuffer 6 1 1
+INSSBuffer 7 1 1
+IObjectSafety 0 2 2
+IOleControl 0 2 2
+IOleInPlaceActiveObject 0 2 2
+IOleInPlaceActiveObject 3 1 1
+IOleInPlaceObject 0 2 2
+IOleInPlaceObject 3 1 1
+IOleObject 0 2 2
+IOleObject 4 1 1
+IOleObject 8 3 3
+IOleObject 10 2 2
+IOleObject 12 1 1
+IOleObject 16 2 2
+IOleObject 21 1 1
+IOleWindow 0 2 2
+IOleWindow 3 1 1
+IOverlay 0 2 2
+IOverlay 3 2 2
+IOverlay 8 1 1
+IOverlay 9 3 3
+IPersist 0 2 2
+IPersistFile 0 2 2
+IPersistFile 8 1 1
+IPersistStream 0 2 2
+IPersistStreamInit 0 2 2
+IPicture 0 2 2
+IPicture 10 1 1
+IPicture 11 2 2
+IPin 0 2 2
+IPin 6 1 1
+IPin 10 1 1
+IPin 12 1 1
+IPin 13 1 1
+IPropertyNotifySink 0 2 2
+IPropertyStore 0 2 2
+IQualProp 0 2 2
+IQualityControl 0 2 2
+IReferenceClock 0 2 2
+IReferenceClock 4 4 6
+IReferenceClock 5 4 6
+ISequentialStream 0 2 2
+IShellLinkA 0 2 2
+IShellLinkA 4 1 1
+IShellLinkW 0 2 2
+IShellLinkW 4 1 1
+ISimpleAudioVolume 0 2 2
+IStream 0 2 2
+IStream 13 1 1
+IStreamSample 0 2 2
+ITypeInfo 0 2 2
+ITypeInfo 3 1 1
+ITypeInfo 4 1 1
+ITypeInfo 5 2 2
+ITypeInfo 6 2 2
+ITypeInfo 7 2 2
+ITypeInfo 12 2,3,5 2,3,5
+ITypeInfo 13 3,4 3,4
+ITypeInfo 14 2 2
+ITypeInfo 15 3 3
+ITypeInfo 16 3 3
+ITypeInfo 17 2 2
+ITypeInfo 18 1 1
+ITypeInfo2 0 2 2
+ITypeInfo2 3 1 1
+ITypeInfo2 4 1 1
+ITypeInfo2 5 2 2
+ITypeInfo2 6 2 2
+ITypeInfo2 7 2 2
+ITypeInfo2 12 2,3,5 2,3,5
+ITypeInfo2 13 3,4 3,4
+ITypeInfo2 14 2 2
+ITypeInfo2 15 3 3
+ITypeInfo2 16 3 3
+ITypeInfo2 17 2 2
+ITypeInfo2 18 1 1
+ITypeInfo2 31 3,5 3,5
+ITypeLib 0 2 2
+ITypeLib 4 2 2
+ITypeLib 6 2 2
+ITypeLib 7 1 1
+ITypeLib 8 1 1
+ITypeLib 9 2,3,5 2,3,5
+ITypeLib 11 3 3
+ITypeLib2 0 2 2
+ITypeLib2 4 2 2
+ITypeLib2 6 2 2
+ITypeLib2 7 1 1
+ITypeLib2 8 1 1
+ITypeLib2 9 2,3,5 2,3,5
+ITypeLib2 11 3 3
+ITypeLib2 15 3,5 3,5
+IUnknown 0 2 2
+IVMRAspectRatioControl9 0 2 2
+IVMRDeinterlaceControl9 0 2 2
+IVMRFilterConfig 0 2 2
+IVMRFilterConfig9 0 2 2
+IVMRMixerBitmap9 0 2 2
+IVMRMixerControl9 0 2 2
+IVMRMonitorConfig9 0 2 2
+IVMRSurfaceAllocatorNotify9 0 2 2
+IVMRSurfaceAllocatorNotify9 6 3 3
+IVMRWindowlessControl 0 2 2
+IVMRWindowlessControl 13 1 1
+IVMRWindowlessControl9 0 2 2
+IVMRWindowlessControl9 13 1 1
+IVideoWindow 0 2 2
+IVideoWindow 4 3 3
+IVideoWindow 8 1 1
+IVideoWindow 30 1 1
+IVideoWindow 32 1 1
+IViewObject 0 2 2
+IViewObject 4 6 6
+IViewObject 8 3 3
+IViewObject2 0 2 2
+IViewObject2 4 6 6
+IViewObject2 8 3 3
+IWICBitmap 0 2 2
+IWICBitmap 8 3 3
+IWICBitmapClipper 0 2 2
+IWICBitmapCodecInfo 0 2 2
+IWICBitmapCodecProgressNotification 0 2 2
+IWICBitmapDecoder 0 2 2
+IWICBitmapDecoder 6 1 1
+IWICBitmapDecoder 8 1 1
+IWICBitmapDecoder 9 1 1
+IWICBitmapDecoder 10 2 2
+IWICBitmapDecoder 11 1 1
+IWICBitmapDecoder 13 2 2
+IWICBitmapDecoderInfo 0 2 2
+IWICBitmapDecoderInfo 25 1 1
+IWICBitmapEncoder 0 2 2
+IWICBitmapEncoder 5 1 1
+IWICBitmapEncoder 10 1,2 1,2
+IWICBitmapEncoder 12 1 1
+IWICBitmapEncoderInfo 0 2 2
+IWICBitmapEncoderInfo 23 1 1
+IWICBitmapFlipRotator 0 2 2
+IWICBitmapFrameChainReader 0 2 2
+IWICBitmapFrameChainReader 4 3 3
+IWICBitmapFrameChainWriter 0 2 2
+IWICBitmapFrameChainWriter 3 2,3 2,3
+IWICBitmapFrameDecode 0 2 2
+IWICBitmapFrameDecode 8 1 1
+IWICBitmapFrameDecode 9 2 2
+IWICBitmapFrameDecode 10 1 1
+IWICBitmapFrameEncode 0 2 2
+IWICBitmapFrameEncode 13 1 1
+IWICBitmapLock 0 2 2
+IWICBitmapLock 5 2 2
+IWICBitmapScaler 0 2 2
+IWICBitmapSource 0 2 2
+IWICBitmapSourceTransform 0 2 2
+IWICBitmapSourceTransform2 0 2 2
+IWICBitmapToneMapper 0 2 2
+IWICColorContext 0 2 2
+IWICColorTransform 0 2 2
+IWICComponentFactory 0 2 2
+IWICComponentFactory 3 5 5
+IWICComponentFactory 4 4 4
+IWICComponentFactory 5 4 4
+IWICComponentFactory 6 2 2
+IWICComponentFactory 7 3 3
+IWICComponentFactory 8 3 3
+IWICComponentFactory 9 1 1
+IWICComponentFactory 10 1 1
+IWICComponentFactory 11 1 1
+IWICComponentFactory 12 1 1
+IWICComponentFactory 13 1 1
+IWICComponentFactory 14 1 1
+IWICComponentFactory 15 1 1
+IWICComponentFactory 16 1 1
+IWICComponentFactory 17 5 5
+IWICComponentFactory 18 3 3
+IWICComponentFactory 19 6 6
+IWICComponentFactory 20 7 7
+IWICComponentFactory 21 4 4
+IWICComponentFactory 22 2 2
+IWICComponentFactory 23 3 3
+IWICComponentFactory 24 2 2
+IWICComponentFactory 25 2 2
+IWICComponentFactory 26 3 3
+IWICComponentFactory 27 3 3
+IWICComponentFactory 28 5 5
+IWICComponentFactory 29 5 5
+IWICComponentFactory 30 4 4
+IWICComponentFactory 31 3 3
+IWICComponentFactory 32 2 2
+IWICComponentFactory 33 2 2
+IWICComponentFactory 34 3 3
+IWICComponentInfo 0 2 2
+IWICD3DTextureSource 0 2 2
+IWICD3DTextureSource 3 4 4
+IWICD3DTextureSource 4 9 9
+IWICD3DTextureSource 6 1 1
+IWICDdsDecoder 0 2 2
+IWICDdsDecoder 4 4 4
+IWICDdsEncoder 0 2 2
+IWICDdsEncoder 5 1 1
+IWICDdsFrameDecode 0 2 2
+IWICDevelopRaw 0 2 2
+IWICDevelopRaw 8 1 1
+IWICDevelopRaw 9 2 2
+IWICDevelopRaw 10 1 1
+IWICDevelopRaw 13 1 1
+IWICDevelopRawNotificationCallback 0 2 2
+IWICDisplayAdaptationControl 0 2 2
+IWICDisplayAdaptationControl2 0 2 2
+IWICEnumMetadataItem 0 2 2
+IWICEnumMetadataItem 6 1 1
+IWICFastMetadataEncoder 0 2 2
+IWICFastMetadataEncoder 4 1 1
+IWICFormatConverter 0 2 2
+IWICFormatConverterInfo 0 2 2
+IWICFormatConverterInfo 12 1 1
+IWICImageEncoder 0 2 2
+IWICImagingFactory 0 2 2
+IWICImagingFactory 3 5 5
+IWICImagingFactory 4 4 4
+IWICImagingFactory 5 4 4
+IWICImagingFactory 6 2 2
+IWICImagingFactory 7 3 3
+IWICImagingFactory 8 3 3
+IWICImagingFactory 9 1 1
+IWICImagingFactory 10 1 1
+IWICImagingFactory 11 1 1
+IWICImagingFactory 12 1 1
+IWICImagingFactory 13 1 1
+IWICImagingFactory 14 1 1
+IWICImagingFactory 15 1 1
+IWICImagingFactory 16 1 1
+IWICImagingFactory 17 5 5
+IWICImagingFactory 18 3 3
+IWICImagingFactory 19 6 6
+IWICImagingFactory 20 7 7
+IWICImagingFactory 21 4 4
+IWICImagingFactory 22 2 2
+IWICImagingFactory 23 3 3
+IWICImagingFactory 24 2 2
+IWICImagingFactory 25 2 2
+IWICImagingFactory 26 3 3
+IWICImagingFactory 27 3 3
+IWICImagingFactory2 0 2 2
+IWICImagingFactory2 3 5 5
+IWICImagingFactory2 4 4 4
+IWICImagingFactory2 5 4 4
+IWICImagingFactory2 6 2 2
+IWICImagingFactory2 7 3 3
+IWICImagingFactory2 8 3 3
+IWICImagingFactory2 9 1 1
+IWICImagingFactory2 10 1 1
+IWICImagingFactory2 11 1 1
+IWICImagingFactory2 12 1 1
+IWICImagingFactory2 13 1 1
+IWICImagingFactory2 14 1 1
+IWICImagingFactory2 15 1 1
+IWICImagingFactory2 16 1 1
+IWICImagingFactory2 17 5 5
+IWICImagingFactory2 18 3 3
+IWICImagingFactory2 19 6 6
+IWICImagingFactory2 20 7 7
+IWICImagingFactory2 21 4 4
+IWICImagingFactory2 22 2 2
+IWICImagingFactory2 23 3 3
+IWICImagingFactory2 24 2 2
+IWICImagingFactory2 25 2 2
+IWICImagingFactory2 26 3 3
+IWICImagingFactory2 27 3 3
+IWICImagingFactory2 28 2 2
+IWICImagingFactory3 0 2 2
+IWICImagingFactory3 3 5 5
+IWICImagingFactory3 4 4 4
+IWICImagingFactory3 5 4 4
+IWICImagingFactory3 6 2 2
+IWICImagingFactory3 7 3 3
+IWICImagingFactory3 8 3 3
+IWICImagingFactory3 9 1 1
+IWICImagingFactory3 10 1 1
+IWICImagingFactory3 11 1 1
+IWICImagingFactory3 12 1 1
+IWICImagingFactory3 13 1 1
+IWICImagingFactory3 14 1 1
+IWICImagingFactory3 15 1 1
+IWICImagingFactory3 16 1 1
+IWICImagingFactory3 17 5 5
+IWICImagingFactory3 18 3 3
+IWICImagingFactory3 19 6 6
+IWICImagingFactory3 20 7 7
+IWICImagingFactory3 21 4 4
+IWICImagingFactory3 22 2 2
+IWICImagingFactory3 23 3 3
+IWICImagingFactory3 24 2 2
+IWICImagingFactory3 25 2 2
+IWICImagingFactory3 26 3 3
+IWICImagingFactory3 27 3 3
+IWICImagingFactory3 28 2 2
+IWICImagingFactory3 29 1 1
+IWICJpegFrameDecode 0 2 2
+IWICJpegFrameEncode 0 2 2
+IWICMetadataBlockReader 0 2 2
+IWICMetadataBlockReader 5 2 2
+IWICMetadataBlockReader 6 1 1
+IWICMetadataBlockWriter 0 2 2
+IWICMetadataBlockWriter 5 2 2
+IWICMetadataBlockWriter 6 1 1
+IWICMetadataBlockWriter 8 2 2
+IWICMetadataHandlerInfo 0 2 2
+IWICMetadataQueryReader 0 2 2
+IWICMetadataQueryReader 6 1 1
+IWICMetadataQueryWriter 0 2 2
+IWICMetadataQueryWriter 6 1 1
+IWICMetadataReader 0 2 2
+IWICMetadataReader 4 1 1
+IWICMetadataReader 8 1 1
+IWICMetadataReaderInfo 0 2 2
+IWICMetadataReaderInfo 20 1 1
+IWICMetadataWriter 0 2 2
+IWICMetadataWriter 4 1 1
+IWICMetadataWriter 8 1 1
+IWICMetadataWriterInfo 0 2 2
+IWICMetadataWriterInfo 19 1 1
+IWICPalette 0 2 2
+IWICPersistStream 0 2 2
+IWICPixelFormatInfo 0 2 2
+IWICPixelFormatInfo 12 1 1
+IWICPixelFormatInfo2 0 2 2
+IWICPixelFormatInfo2 12 1 1
+IWICPlanarBitmapFrameEncode 0 2 2
+IWICPlanarBitmapSourceTransform 0 2 2
+IWICPlanarFormatConverter 0 2 2
+IWICProgressCallback 0 2 2
+IWICProgressiveLevelControl 0 2 2
+IWICStream 0 2 2
+IWICStream 13 1 1
+IWICStreamProvider 0 2 2
+IWICStreamProvider 3 1 1
+IWMHeaderInfo 0 2 2
+IWMHeaderInfo2 0 2 2
+IWMHeaderInfo3 0 2 2
+IWMMediaProps 0 2 2
+IWMOutputMediaProps 0 2 2
+IWMProfile 0 2 2
+IWMProfile 9 2 2
+IWMProfile 10 2 2
+IWMProfile 15 2 2
+IWMProfile 17 2 2
+IWMProfile 20 1 1
+IWMProfile2 0 2 2
+IWMProfile2 9 2 2
+IWMProfile2 10 2 2
+IWMProfile2 15 2 2
+IWMProfile2 17 2 2
+IWMProfile2 20 1 1
+IWMProfile3 0 2 2
+IWMProfile3 9 2 2
+IWMProfile3 10 2 2
+IWMProfile3 15 2 2
+IWMProfile3 17 2 2
+IWMProfile3 20 1 1
+IWMProfile3 25 2 2
+IWMProfile3 28 1 1
+IWMProfile3 29 1 1
+IWMProfile3 32 1 1
+IWMReader 0 2 2
+IWMReader 6 2 2
+IWMReader 9 3 3
+IWMReaderAdvanced2 0 2 2
+IWMReaderAllocatorEx 0 2 2
+IWMReaderAllocatorEx 3 3 3
+IWMReaderAllocatorEx 4 3 3
+IWMReaderCallback 0 2 2
+IWMReaderCallbackAdvanced 0 2 2
+IWMReaderCallbackAdvanced 7 3 3
+IWMReaderCallbackAdvanced 8 3 3
+IWMStreamConfig 0 2 2
+IWMSyncReader 0 2 2
+IWMSyncReader 7 2 2
+IWMSyncReader 15 2 2
+IWMSyncReader 18 3 3
+IWMSyncReader2 0 2 2
+IWMSyncReader2 7 2 2
+IWMSyncReader2 15 2 2
+IWMSyncReader2 18 3 3
+IWMSyncReader2 27 2 2
+IWMSyncReader2 29 2 2
+IWbemClassObject 0 2 2
+IWbemClassObject 3 1 1
+IWbemClassObject 7 4 4
+IWbemClassObject 9 2 2
+IWbemClassObject 11 2 2
+IWbemClassObject 12 1 1
+IWbemClassObject 13 2 2
+IWbemClassObject 14 2 2
+IWbemClassObject 15 2 2
+IWbemClassObject 17 2 2
+IWbemClassObject 19 3,4 3,4
+IWbemClassObject 23 2,3,4 2,3,4
+IWbemClassObject 25 2 2
+IWbemClassObject 26 2 2
+IWbemLocator 0 2 2
+IWbemLocator 3 8 8
+IWbemServices 0 2 2
+IWbemServices 3 4,5 4,5
+IWbemServices 5 2 2
+IWbemServices 6 4,5 4,5
+IWbemServices 8 4 4
+IWbemServices 10 4 4
+IWbemServices 12 4 4
+IWbemServices 14 4 4
+IWbemServices 16 4 4
+IWbemServices 18 4 4
+IWbemServices 20 5 5
+IWbemServices 22 5 5
+IWbemServices 24 6,7 6,7
+IWebBrowser 0 2 2
+IWebBrowser 4 3 3
+IWebBrowser 15 1 1
+IWebBrowser 16 1 1
+IWebBrowser 17 1 1
+IWebBrowser 18 1 1
+IWebBrowser 20 1 1
+IWebBrowser 29 1 1
+IWebBrowser 30 1 1
+IWebBrowser2 0 2 2
+IWebBrowser2 4 3 3
+IWebBrowser2 15 1 1
+IWebBrowser2 16 1 1
+IWebBrowser2 17 1 1
+IWebBrowser2 18 1 1
+IWebBrowser2 20 1 1
+IWebBrowser2 29 1 1
+IWebBrowser2 30 1 1
+IWebBrowser2 36 1 1
+IWebBrowser2 37 1 1
+IWebBrowser2 38 1 1
+IWebBrowser2 39 1 1
+IWebBrowser2 44 1 1
+IWebBrowserApp 0 2 2
+IWebBrowserApp 4 3 3
+IWebBrowserApp 15 1 1
+IWebBrowserApp 16 1 1
+IWebBrowserApp 17 1 1
+IWebBrowserApp 18 1 1
+IWebBrowserApp 20 1 1
+IWebBrowserApp 29 1 1
+IWebBrowserApp 30 1 1
+IWebBrowserApp 36 1 1
+IWebBrowserApp 37 1 1
+IWebBrowserApp 38 1 1
+IWebBrowserApp 39 1 1
+IWebBrowserApp 44 1 1
+IXAPO 0 2 2
+IXAPO 3 1 1
+IXAPO 4 3 3
+IXAPO 5 3 3
+IXAPOParameters 0 2 2
+IXAudio2 0 2 2
+IXAudio2 5 1 1
+IXAudio2 6 1 1
+IXAudio2 7 1 1

@@ -335,7 +335,7 @@ fn wait_packet(c: &mut Ctx, port: u32, ms: u32, alertable: bool) -> Result<(Pack
 fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GetQueuedCompletionStatus>();
     let (port, bp, kp, op, ms) = (c.a::<0>(), c.a::<1>(), c.out::<2>(), c.out::<3>(), c.a::<4>());
-    match wait_packet(c, port, ms, false) {
+    match wait_packet(c.ctx(), port, ms, false) {
         Ok(((bytes, key, ov, status), _)) => {
             mem::put32(bp, bytes);
             kp.put_size(key);

@@ -80,7 +80,7 @@ fn GdipCreateFromHWND(c: &mut Ctx) -> u32 {
 /// GdipCreateBitmapFromGraphics(width, height, graphics, &bitmap): a 32bppPARGB bitmap
 fn GdipCreateBitmapFromGraphics(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipCreateBitmapFromGraphics>();
-    if graphics(c.a::<2>()).is_none() || c.i(0) <= 0 || c.i(1) <= 0 {
+    if graphics(c.a::<2>()).is_none() || c.ctx().i(0) <= 0 || c.ctx().i(1) <= 0 {
         return INVALID_PARAMETER;
     }
     crate::gdiplus::new_bitmap(c.a::<0>(), c.a::<1>(), 0x000e_200b, c.out::<3>())
@@ -212,17 +212,17 @@ fn font_from_logfont(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn GdipCreateFontFromLogfontA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipCreateFontFromLogfontA>();
-    font_from_logfont(c, false)
+    font_from_logfont(c.ctx(), false)
 }
 fn GdipCreateFontFromLogfontW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipCreateFontFromLogfontW>();
-    font_from_logfont(c, true)
+    font_from_logfont(c.ctx(), true)
 }
 /// GdipCreateFont(family, size, style, unit, &font): a positive size in a unit other than
 /// UnitDisplay
 fn GdipCreateFont(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipCreateFont>();
-    let (family, size, style, unit, out) = (c.a::<0>(), c.f(1), c.a::<2>(), c.a::<3>(), c.out::<4>());
+    let (family, size, style, unit, out) = (c.a::<0>(), c.ctx().f(1), c.a::<2>(), c.a::<3>(), c.out::<4>());
     if crate::gdiplus_font::family(family).is_none() || out.is_null() || !(size > 0.0) || unit == 1 || unit > 6 {
         return INVALID_PARAMETER;
     }
@@ -364,7 +364,7 @@ fn line_height(tf: &TextFont) -> f32 {
 /// GdipCreatePen1(argb, width, unit, &pen)
 fn GdipCreatePen1(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipCreatePen1>();
-    new_obj(Obj::Pen { argb: c.a::<0>(), width: c.f(1) }, c.out::<3>())
+    new_obj(Obj::Pen { argb: c.a::<0>(), width: c.ctx().f(1) }, c.out::<3>())
 }
 /// a brush's (gdiplus_brush) or pen's color
 fn color_of(b: u32) -> Option<u32> {

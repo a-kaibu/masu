@@ -120,12 +120,12 @@ fn init() {
 /// device, feature level, context)
 fn D3D11CreateDeviceAndSwapChain(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::D3D11CreateDeviceAndSwapChain>();
-    let a = [c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.a::<7>(), c.out::<8>().to_callee(), c.out::<9>().to_callee(), c.a::<10>(), c.out::<11>().to_callee()];
+    let a = crate::api::words![c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.a::<7>(), c.out::<8>(), c.out::<9>(), c.a::<10>(), c.out::<11>()];
     host(CREATE_DEVICE, &a)
 }
 fn D3D11CreateDevice(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::D3D11CreateDevice>();
-    let a = [c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), 0, 0, c.out::<7>().to_callee(), c.a::<8>(), c.out::<9>().to_callee()];
+    let a = crate::api::words![c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), 0, 0, c.out::<7>(), c.a::<8>(), c.out::<9>()];
     host(CREATE_DEVICE, &a)
 }
 /// (factory, adapter, flags, levels, count, device)
@@ -137,22 +137,22 @@ fn D3D11CoreCreateDevice(c: &mut Ctx) -> u32 {
 /// (adapter, driver type, software, flags, sdk, out)
 fn D3D10CreateDevice(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::D3D10CreateDevice>();
-    host(CREATE_DEVICE10, &[c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), 0xa000, c.a::<4>(), 0, 0, c.out::<5>().to_callee()])
+    host(CREATE_DEVICE10, &crate::api::words![c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), 0xa000, c.a::<4>(), 0, 0, c.out::<5>()])
 }
 /// (adapter, driver type, software, flags, sdk, swap chain desc, swap chain, device)
 fn D3D10CreateDeviceAndSwapChain(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::D3D10CreateDeviceAndSwapChain>();
-    host(CREATE_DEVICE10, &[c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), 0xa000, c.a::<4>(), c.a::<5>(), c.out::<6>().to_callee(), c.out::<7>().to_callee()])
+    host(CREATE_DEVICE10, &crate::api::words![c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), 0xa000, c.a::<4>(), c.a::<5>(), c.out::<6>(), c.out::<7>()])
 }
 /// (adapter, driver type, software, flags, level, sdk, out)
 fn D3D10CreateDevice1(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::D3D10CreateDevice1>();
-    host(CREATE_DEVICE10, &[c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), 0, 0, c.out::<6>().to_callee()])
+    host(CREATE_DEVICE10, &crate::api::words![c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), 0, 0, c.out::<6>()])
 }
 /// (adapter, driver type, software, flags, level, sdk, swap chain desc, swap chain, device)
 fn D3D10CreateDeviceAndSwapChain1(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::D3D10CreateDeviceAndSwapChain1>();
-    let a = [c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.out::<7>().to_callee(), c.out::<8>().to_callee()];
+    let a = crate::api::words![c.a::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>(), c.a::<6>(), c.out::<7>(), c.out::<8>()];
     host(CREATE_DEVICE10, &a)
 }
 fn D3D11On12CreateDevice(_: &mut Ctx) -> u32 {
@@ -160,11 +160,11 @@ fn D3D11On12CreateDevice(_: &mut Ctx) -> u32 {
 }
 fn CreateDXGIFactory(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::CreateDXGIFactory>();
-    host(CREATE_FACTORY, &[0, c.a::<0>(), c.out::<1>().to_callee()])
+    host(CREATE_FACTORY, &crate::api::words![0, c.a::<0>(), c.out::<1>()])
 }
 fn CreateDXGIFactory2(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::CreateDXGIFactory2>();
-    host(CREATE_FACTORY, &[c.a::<0>(), c.a::<1>(), c.out::<2>().to_callee()])
+    host(CREATE_FACTORY, &crate::api::words![c.a::<0>(), c.a::<1>(), c.out::<2>()])
 }
 fn DXGIGetDebugInterface1(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::DXGIGetDebugInterface1>();

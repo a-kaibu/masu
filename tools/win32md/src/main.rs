@@ -12,8 +12,10 @@
 //! - crates/sake/src/d3d11_methods.rs and crates/kura/src/d3d11/names.rs: the DXGI, D3D11 and D3D10
 //!   interfaces sake's d3d11.rs numbers 64.. (D3D11 below): each method's argument count, and names.
 //! - crates/sake/src/outptrs.txt: each function's out parameters that point at something pointer-sized (4 bytes on x86,
-//! 8 on x64: a pointer, handle, interface, SIZE_T, SRWLOCK...): "dll name i,j..." (argument
-//! indexes from 0), sorted.
+//! 8 on x64: a pointer, handle, interface, SIZE_T, SRWLOCK...): "dll name i,j... k,l..." (x64
+//! argument indexes from 0, then x86 stack dwords, which a GUID or a double by value moves), sorted.
+//! - crates/sake/src/com_outptrs.txt: the same per method of the interfaces sake names, by vtable
+//!   slot ("interface slot i,j... k,l...", `this` 0), and "interface #n" its method count.
 //! sake writes those with mem::putp/wp; put32/w32 leaves the upper half on x64
 //! (crates/sake/src/outptr_audit.rs).
 use std::collections::{BTreeMap, HashMap};
@@ -201,6 +203,29 @@ fn com(ix: &Index) -> String {
     o + "];\n"
 }
 
+/// Every interface-like name (I + a capital) in sake's source: the interfaces it has vtables of.
+fn sake_names(dir: &std::path::Path) -> std::collections::HashSet<String> {
+    let mut v = std::collections::HashSet::new();
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                dirs.push(p);
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                let s = std::fs::read_to_string(&p).unwrap();
+                for w in s.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+                    let b = w.as_bytes();
+                    if b.len() > 2 && b[0] == b'I' && b[1].is_ascii_uppercase() {
+                        v.insert(w.to_string());
+                    }
+                }
+            }
+        }
+    }
+    v
+}
+
 /// sake's d3d11.rs interface numbers 64..: (number, the interface whose vtable is used)
 const D3D11: &[(u32, &str)] = &[
     (64, "IDXGIFactory7"), (65, "IDXGIAdapter4"), (66, "IDXGIOutput6"), (67, "IDXGISwapChain1"),
@@ -288,12 +313,13 @@ fn main() {
     write("crates/sake/src/d3d11_methods.rs", m);
     write("crates/kura/src/d3d11/names.rs", n);
     write("crates/sake/src/outptrs.txt", outptrs(&i32_, &i64_));
+    write("crates/sake/src/com_outptrs.txt", com_outptrs(&i32_, &i64_, &root));
 }
 
 fn outptrs(i32_: &Index, i64_: &Index) -> String {
     let (l32, l64) = (Layout::new(i32_, false), Layout::new(i64_, true));
     let f32 = functions(i32_);
-    let mut out = BTreeMap::<(String, String), Vec<usize>>::new();
+    let mut out = BTreeMap::<(String, String), Vec<(usize, u32)>>::new();
     for ((dll, name), f) in functions(i64_) {
         let Some(g) = f32.get(&(dll.clone(), name.clone())) else { continue };
         let (s64, s32) = (f.signature(&[]), g.signature(&[]));
@@ -301,17 +327,83 @@ fn outptrs(i32_: &Index, i64_: &Index) -> String {
             continue;
         }
         let Ok(rows) = f.params_by_sequence(s64.types.len()) else { continue };
+        // (x86: argument i's first stack dword, the earlier ones taking a dword each, two for a
+        // 64-bit or double value, a GUID's four...)
+        let mut slot = 0u32;
         for (i, t) in s64.types.iter().enumerate() {
             let out_param = rows.params()[i].is_some_and(|p| p.flags().contains(ParamAttributes::Out));
             if out_param && l64.pointee(t) == 8 && l32.pointee(&s32.types[i]) == 4 {
-                out.entry((dll.clone(), name.clone())).or_default().push(i);
+                out.entry((dll.clone(), name.clone())).or_default().push((i, slot));
             }
+            slot += l32.of(&s32.types[i], None).0.max(1).div_ceil(4);
         }
     }
     let mut o = String::new();
     for ((dll, name), v) in out {
-        let v: Vec<String> = v.iter().map(|i| i.to_string()).collect();
-        o += &format!("{dll} {name} {}\n", v.join(","));
+        let x64: Vec<String> = v.iter().map(|(i, _)| i.to_string()).collect();
+        let x86: Vec<String> = v.iter().map(|(_, s)| s.to_string()).collect();
+        o += &format!("{dll} {name} {} {}\n", x64.join(","), x86.join(","));
     }
     o
+}
+
+/// com_outptrs.txt: each interface method's out parameters that point at something
+/// pointer-sized, by vtable slot (inherited methods first): "interface slot i,j... k,l...", the
+/// x64 argument indexes and the x86 stack dwords, `this` argument 0 in both (a hidden result
+/// pointer, for a structure returned, 1); and "interface #n" for its n methods. Only the
+/// interfaces sake's source names (a vtable of its own; the rest is 30000 lines no one reads).
+fn com_outptrs(i32_: &Index, i64_: &Index, root: &std::path::Path) -> String {
+    let (l32, l64) = (Layout::new(i32_, false), Layout::new(i64_, true));
+    let named = sake_names(&root.join("crates/sake/src"));
+    // (each method: its arguments (type, out), and whether a structure comes back through a
+    // hidden pointer, which is argument 1 after `this` on both)
+    fn walk<'a>(ix: &'a Index, t: TypeDef<'a>, out: &mut Vec<(Vec<(Type, bool)>, bool)>) {
+        if let Some(b) = base(ix, t) {
+            walk(ix, b, out);
+        }
+        for m in t.methods() {
+            let sig = m.signature(&[]);
+            let rows = m.params_by_sequence(sig.types.len()).ok();
+            let v = sig.types.iter().enumerate().map(|(i, ty)| (ty.clone(), rows.as_ref().is_some_and(|r| r.params()[i].is_some_and(|p| p.flags().contains(ParamAttributes::Out))))).collect();
+            let hidden = matches!(&sig.return_type, r @ Type::ValueName(_) if !scalar(ix, r));
+            out.push((v, hidden));
+        }
+    }
+    let mut o = BTreeMap::<(String, usize), (Vec<u32>, Vec<u32>)>::new();
+    let mut counts = BTreeMap::<String, usize>::new();
+    let ifaces64: HashMap<String, TypeDef> = i64_.types().filter(|t| t.category() == TypeCategory::Interface).map(|t| (t.name().to_string(), t)).collect();
+    for t in i32_.types().filter(|t| t.category() == TypeCategory::Interface && named.contains(t.name())) {
+        let Some(t64) = ifaces64.get(t.name()) else { continue };
+        let (mut m32, mut m64) = (Vec::new(), Vec::new());
+        walk(i32_, t, &mut m32);
+        walk(i64_, *t64, &mut m64);
+        if m32.len() != m64.len() {
+            continue;
+        }
+        counts.insert(t.name().to_string(), m32.len());
+        for (k, ((a32, h), (a64, _))) in m32.iter().zip(&m64).enumerate() {
+            if a32.len() != a64.len() {
+                continue;
+            }
+            let first = 1 + u32::from(*h);
+            let mut slot = first;
+            for (i, ((t32, out), (t64, _))) in a32.iter().zip(a64).enumerate() {
+                if *out && l64.pointee(t64) == 8 && l32.pointee(t32) == 4 {
+                    let e = o.entry((t.name().to_string(), k)).or_default();
+                    e.0.push(first + i as u32);
+                    e.1.push(slot);
+                }
+                slot += l32.of(t32, None).0.max(1).div_ceil(4);
+            }
+        }
+    }
+    let mut s = String::new();
+    for (n, c) in &counts {
+        s += &format!("{n} #{c}\n");
+    }
+    for ((n, k), (a, b)) in o {
+        let j = |v: &[u32]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",");
+        s += &format!("{n} {k} {} {}\n", j(&a), j(&b));
+    }
+    s
 }

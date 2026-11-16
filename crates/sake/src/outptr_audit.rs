@@ -6,7 +6,8 @@
 //! write it whole; this test checks that every handler of such a function takes its arguments as
 //! the function's (api::Args, from the types build.rs makes of outptrs.txt), where taking one as
 //! a value does not compile. outptrs.txt is
-//! generated from Microsoft's Win32 metadata (tools/win32md): "dll name i,j..." per function.
+//! generated from Microsoft's Win32 metadata (tools/win32md): "dll name x64 x86" per function
+//! (the x64 argument indices and the x86 stack dwords, "i,j").
 //! This checks every `fn Name(c: &mut Ctx) -> u32` handler named after a function there.
 use std::collections::HashMap;
 
@@ -67,4 +68,36 @@ fn pointer_sized_out_params_are_written_whole() {
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
+}
+
+/// An Out becomes a u32 only as a word of a call (api::words!): the sealed trait behind it is
+/// named nowhere else in sake (review 2026-11-16: Out::to_callee was a plain u32 that a 32-bit
+/// writer could take; a crate cannot hide a module from itself, so this is the rest of the seal).
+#[test]
+fn an_out_is_a_u32_only_in_words() {
+    let mut bad = vec![];
+    let mut dirs = vec![std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/src"))];
+    let mut seen = 0;
+    while let Some(d) = dirs.pop() {
+        for e in std::fs::read_dir(&d).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                dirs.push(p);
+                continue;
+            }
+            if p.extension().is_none_or(|x| x != "rs") || p.ends_with("api.rs") || p.ends_with("outptr_audit.rs") {
+                continue;
+            }
+            let s = std::fs::read_to_string(&p).unwrap();
+            seen += s.matches("words![").count();
+            for (n, l) in s.lines().enumerate() {
+                if l.contains("__word") || l.contains("callee::") || l.contains("to_callee") {
+                    bad.push(format!("{}:{}: {l}", p.display(), n + 1));
+                }
+            }
+        }
+    }
+    // (the d3d11 device calls, CoCreateInstance's, MFGetService's...: 15 at 2026-11-16)
+    assert!(seen >= 10, "only {seen} words! found");
+    assert!(bad.is_empty(), "an Out made a u32 outside words!:\n{}", bad.join("\n"));
 }

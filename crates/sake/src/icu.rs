@@ -340,19 +340,19 @@ fn ubrk_current(c: &mut Ctx) -> u32 {
 }
 fn ubrk_next(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_next>();
-    step(c, Brk::next)
+    step(c.ctx(), Brk::next)
 }
 fn ubrk_previous(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_previous>();
-    step(c, Brk::previous)
+    step(c.ctx(), Brk::previous)
 }
 fn ubrk_first(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_first>();
-    step(c, Brk::first)
+    step(c.ctx(), Brk::first)
 }
 fn ubrk_last(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_last>();
-    step(c, Brk::last)
+    step(c.ctx(), Brk::last)
 }
 fn ubrk_following(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_following>();

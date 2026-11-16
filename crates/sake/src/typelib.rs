@@ -1108,12 +1108,12 @@ fn load_arg(c: &mut Ctx, out: crate::api::Out) -> u32 {
 fn LoadTypeLib(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::LoadTypeLib>();
     let out = c.out::<1>();
-    load_arg(c, out)
+    load_arg(c.ctx(), out)
 }
 fn LoadTypeLibEx(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::LoadTypeLibEx>();
     let out = c.out::<2>();
-    load_arg(c, out)
+    load_arg(c.ctx(), out)
 }
 /// LoadRegTypeLib(guid, major, minor, lcid, &lib): a library loaded before, by its GUID.
 fn LoadRegTypeLib(c: &mut Ctx) -> u32 {

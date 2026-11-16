@@ -556,7 +556,7 @@ fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
         s.parents.insert(o, device);
         s.dcs.insert(o, Dc { device, ..Default::default() })
     });
-    set_target(c, o, bmp, true);
+    set_target(c.ctx(), o, bmp, true);
     c.out::<2>().put(o);
     0
 }

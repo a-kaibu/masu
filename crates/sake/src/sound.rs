@@ -820,7 +820,7 @@ fn waveOutGetDevCapsW(c: &mut Ctx) -> u32 {
 fn waveOutOpen(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::waveOutOpen>();
     let (ph, device, fmtp, cb, inst, flags) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.a::<3>(), c.a::<4>(), c.a::<5>());
-    mm(wave_open(c, ph, device, fmtp, WaveCb::of(flags, cb, inst), flags))
+    mm(wave_open(c.ctx(), ph, device, fmtp, WaveCb::of(flags, cb, inst), flags))
 }
 fn wave_open(c: &mut Ctx, ph: crate::api::Out, device: u32, fmtp: u32, cbk: WaveCb, flags: u32) -> Result<(), WaveErr> {
     // a device id (not an open handle)

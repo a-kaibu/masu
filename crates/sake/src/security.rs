@@ -106,11 +106,11 @@ pub fn parse_sid(t: &str) -> Option<Sid> {
 }
 fn ConvertSidToStringSidA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ConvertSidToStringSidA>();
-    sid_string(c, false)
+    sid_string(c.ctx(), false)
 }
 fn ConvertSidToStringSidW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ConvertSidToStringSidW>();
-    sid_string(c, true)
+    sid_string(c.ctx(), true)
 }
 fn sid_string(c: &mut Ctx, wide: bool) -> u32 {
     let Some(sid) = Sid::read(c.a(0)) else {
@@ -137,12 +137,12 @@ fn sid_string(c: &mut Ctx, wide: bool) -> u32 {
 fn ConvertStringSidToSidA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ConvertStringSidToSidA>();
     let t = String::from_utf8_lossy(&cstr(c.a::<0>())).into_owned();
-    string_sid(c, t)
+    string_sid(c.ctx(), t)
 }
 fn ConvertStringSidToSidW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ConvertStringSidToSidW>();
     let t = String::from_utf16_lossy(&wstr(c.a::<0>()));
-    string_sid(c, t)
+    string_sid(c.ctx(), t)
 }
 fn string_sid(c: &mut Ctx, t: String) -> u32 {
     if c.a(0) == 0 || c.a(1) == 0 {
@@ -204,7 +204,7 @@ fn AllocateAndInitializeSid(c: &mut Ctx) -> u32 {
         return 0;
     }
     let a = (0..6).fold(0u64, |a, i| a << 8 | r8(auth + i) as u64);
-    let sid = Sid(a, (0..n).map(|i| c.a_at(2 + i)).collect());
+    let sid = Sid(a, c.a_range::<2, 10>().take(kome::num::us(n)).collect());
     out.put(sid_alloc(&sid));
     1
 }
@@ -1120,11 +1120,11 @@ fn set_entries(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn SetEntriesInAclA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SetEntriesInAclA>();
-    set_entries(c, false)
+    set_entries(c.ctx(), false)
 }
 fn SetEntriesInAclW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SetEntriesInAclW>();
-    set_entries(c, true)
+    set_entries(c.ctx(), true)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1238,11 +1238,11 @@ fn named_info(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn GetNamedSecurityInfoA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GetNamedSecurityInfoA>();
-    named_info(c, false)
+    named_info(c.ctx(), false)
 }
 fn GetNamedSecurityInfoW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GetNamedSecurityInfoW>();
-    named_info(c, true)
+    named_info(c.ctx(), true)
 }
 /// SetNamedSecurityInfo(name, type, info, owner, group, dacl, sacl): sake's files keep no
 /// descriptors, so a file or folder that exists takes the change (its DACL stays the one every

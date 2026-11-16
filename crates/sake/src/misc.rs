@@ -1567,11 +1567,11 @@ fn ver_query(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn VerQueryValueA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::VerQueryValueA>();
-    ver_query(c, false)
+    ver_query(c.ctx(), false)
 }
 fn VerQueryValueW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::VerQueryValueW>();
-    ver_query(c, true)
+    ver_query(c.ctx(), true)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1870,7 +1870,7 @@ fn CoCreateInstance(c: &mut Ctx) -> u32 {
     let (clsid, iid, out) = (c.a::<0>(), c.a::<3>(), c.out::<4>());
     // (the VMR-9 can be aggregated)
     let outer = c.a::<1>();
-    if let Some(hr) = crate::vmr9::create_instance(c, clsid, outer, iid, out) {
+    if let Some(hr) = crate::vmr9::create_instance(c.ctx(), clsid, outer, iid, out) {
         return hr;
     }
     // (DirectMusic refuses an outer object)
@@ -1880,10 +1880,10 @@ fn CoCreateInstance(c: &mut Ctx) -> u32 {
     if let Some(hr) = crate::dmime::create_instance(clsid, c.a::<1>(), iid, out) {
         return hr;
     }
-    let hr = create_object(c, clsid, iid, out);
+    let hr = create_object(c.ctx(), clsid, iid, out);
     if hr == 0x8004_0154 {
         let (context, outer) = (c.a::<2>(), c.a::<1>());
-        crate::comrpc::create(c.cpu, clsid, iid, out, context, outer)
+        crate::comrpc::create(c.ctx().cpu, clsid, iid, out, context, outer)
     } else { hr }
 }
 fn CoGetClassObject(c: &mut Ctx) -> u32 {
@@ -1892,7 +1892,7 @@ fn CoGetClassObject(c: &mut Ctx) -> u32 {
     if out.is_null() || clsid == 0 || iid == 0 { return 0x8000_4003; }
     out.put(0);
     if reserved != 0 { return 0x8007_0057; }
-    let hr = crate::comrpc::get_class(c.cpu, clsid, iid, out, context);
+    let hr = crate::comrpc::get_class(c.ctx().cpu, clsid, iid, out, context);
     if hr != 0 && crate::api::trace() != 0 {
         eprintln!("sake: CoGetClassObject {} iid {} context {context:x}: {hr:08x}",
             crate::comrpc::text(&mem::array::<16>(clsid)), crate::comrpc::text(&mem::array::<16>(iid)));
@@ -2182,12 +2182,12 @@ fn CoUnmarshalInterface(c: &mut Ctx) -> u32 {
         return 0x8000_4003;
     }
     out.put(0);
-    let p = match read_marshaled(c, stm) {
+    let p = match read_marshaled(c.ctx(), stm) {
         Ok(p) => p,
         Err(hr) => return hr,
     };
-    let hr = crate::d3dx9::com_call(c, p, 0, &[iid, out.to_callee()]);
-    crate::d3dx9::com_call(c, p, 2, &[]);
+    let hr = crate::d3dx9::com_call(c.ctx(), p, 0, &crate::api::words![iid, out]);
+    crate::d3dx9::com_call(c.ctx(), p, 2, &[]);
     hr
 }
 /// CoReleaseMarshalData(stream): the marshaled reference goes
@@ -2252,7 +2252,7 @@ fn StringFromCLSID(c: &mut Ctx) -> u32 {
 }
 fn StringFromIID(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::StringFromIID>();
-    StringFromCLSID(c)
+    StringFromCLSID(c.ctx())
 }
 /// CLSIDFromString / IIDFromString: "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}" (ProgIDs are not
 /// registered: CO_E_CLASSSTRING).
@@ -2355,11 +2355,11 @@ fn uuid_to_string(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn UuidToStringA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::UuidToStringA>();
-    uuid_to_string(c, false)
+    uuid_to_string(c.ctx(), false)
 }
 fn UuidToStringW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::UuidToStringW>();
-    uuid_to_string(c, true)
+    uuid_to_string(c.ctx(), true)
 }
 fn RpcStringFreeA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::RpcStringFreeA>();
@@ -3214,11 +3214,11 @@ fn sh_str_dup(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn SHStrDupA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SHStrDupA>();
-    sh_str_dup(c, false)
+    sh_str_dup(c.ctx(), false)
 }
 fn SHStrDupW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SHStrDupW>();
-    sh_str_dup(c, true)
+    sh_str_dup(c.ctx(), true)
 }
 /// SHGetPropertyStoreForWindow(hwnd, riid, &store): no property stores (taskbar app ids)
 fn SHGetPropertyStoreForWindow(c: &mut Ctx) -> u32 {
@@ -4830,11 +4830,11 @@ fn acquire(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn CryptAcquireContextA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::CryptAcquireContextA>();
-    acquire(c, false)
+    acquire(c.ctx(), false)
 }
 fn CryptAcquireContextW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::CryptAcquireContextW>();
-    acquire(c, true)
+    acquire(c.ctx(), true)
 }
 fn CryptReleaseContext(c: &mut Ctx) -> u32 {
     crypto_result(crate::capi::release(c.a(0), c.a(1)))
@@ -5464,11 +5464,11 @@ fn wts_query(c: &mut Ctx, wide: bool) -> u32 {
 
 fn WTSQuerySessionInformationA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::WTSQuerySessionInformationA>();
-    wts_query(c, false)
+    wts_query(c.ctx(), false)
 }
 fn WTSQuerySessionInformationW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::WTSQuerySessionInformationW>();
-    wts_query(c, true)
+    wts_query(c.ctx(), true)
 }
 
 /// WTSEnumerateSessions(server, 0, 1, &info, &count): the one session
@@ -5490,11 +5490,11 @@ fn wts_enum(c: &mut Ctx, wide: bool) -> u32 {
 }
 fn WTSEnumerateSessionsA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::WTSEnumerateSessionsA>();
-    wts_enum(c, false)
+    wts_enum(c.ctx(), false)
 }
 fn WTSEnumerateSessionsW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::WTSEnumerateSessionsW>();
-    wts_enum(c, true)
+    wts_enum(c.ctx(), true)
 }
 
 /// WTSFreeMemory(p): the blocks above (their strings are kept: a few bytes per call).

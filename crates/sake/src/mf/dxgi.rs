@@ -524,24 +524,24 @@ fn MFCreateDXGISurfaceBuffer(c: &mut Ctx) -> u32 {
         return Hr::InvalidArg.code();
     }
     let p = mem::heap_alloc(ps(), true);
-    let hr = com(c, surface, 0, &[iid, p]);
+    let hr = com(c.ctx(), surface, 0, &[iid, p]);
     let tex = rp(p);
     mem::heap_free(p);
     if hr != 0 || tex == 0 {
         return if hr != 0 { hr } else { Hr::NoInterface.code() };
     }
-    let d = desc(c, tex);
+    let d = desc(c.ctx(), tex);
     if sub >= d[2].max(1) * d[3].max(1) {
-        release(c, tex);
+        release(c.ctx(), tex);
         return Hr::InvalidArg.code();
     }
-    match new_buffer(c, tex, sub, bottom_up != 0, false, None) {
+    match new_buffer(c.ctx(), tex, sub, bottom_up != 0, false, None) {
         Some(b) => {
             out.put(b);
             0
         }
         None => {
-            release(c, tex);
+            release(c.ctx(), tex);
             Hr::InvalidArg.code()
         }
     }

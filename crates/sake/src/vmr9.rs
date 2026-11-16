@@ -354,7 +354,7 @@ fn qi(c: &mut Ctx, b: u32) -> u32 {
     }
     let outer = vmr_with(b, |v| v.outer).unwrap_or(0);
     if outer != 0 {
-        return com_call(c, outer, 0, &[iid, out.to_callee()]);
+        return com_call(c, outer, 0, &crate::api::words![iid, out]);
     }
     qi_inner_out(c, b, iid, out)
 }

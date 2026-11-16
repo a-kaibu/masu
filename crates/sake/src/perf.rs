@@ -100,7 +100,7 @@ fn start(c: &mut Ctx, g: u32, out: crate::api::Out) -> u32 {
 fn PerfStartProvider(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::PerfStartProvider>();
     let (g, out) = (c.a::<0>(), c.out::<2>());
-    start(c, g, out)
+    start(c.ctx(), g, out)
 }
 /// PerfStartProviderEx(provider GUID, PERF_PROVIDER_CONTEXT, &handle)
 fn PerfStartProviderEx(c: &mut Ctx) -> u32 {
@@ -110,7 +110,7 @@ fn PerfStartProviderEx(c: &mut Ctx) -> u32 {
     if ctx == 0 || r32(ctx) < need {
         return ERROR_INVALID_PARAMETER;
     }
-    start(c, g, out)
+    start(c.ctx(), g, out)
 }
 fn PerfStopProvider(c: &mut Ctx) -> u32 {
     let h = c.a(0);

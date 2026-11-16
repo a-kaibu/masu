@@ -176,7 +176,7 @@ fn MFCreateAsyncResult(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::InvalidArg.code();
     }
-    let b = new_result(c, o, cb, st);
+    let b = new_result(c.ctx(), o, cb, st);
     out.put(b);
     0
 }
@@ -789,9 +789,8 @@ fn new_activate(name: &str) -> u32 {
 /// ***, UINT32 *count): GUID by value (x86: 4 slots; x64: its address)
 fn MFTEnumEx(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::MFTEnumEx>();
-    let cat = guid_at(c.byval(0));
-    let k = if mem::x64() { 1 } else { 4 };
-    let (input, list, count) = (c.a_at(k + 1), c.out_at(k + 3), c.a_at(k + 4));
+    let cat = guid_at(c.ctx_ref().byval(0));
+    let (input, list, count) = (c.a_arch::<2, 5>(), c.out_arch::<4, 7>(), c.a_arch::<5, 8>());
     if list.is_null() || count == 0 {
         return Hr::Pointer.code();
     }

@@ -398,7 +398,7 @@ fn OleLoadPicture(c: &mut Ctx) -> u32 {
             break;
         }
         w32(got, 0);
-        c.call(read, &[stm, buf, want, got]);
+        c.ctx().call(read, &[stm, buf, want, got]);
         // (a Read claiming more than it was asked for read no more than the buffer; a stream
         // that never ends stops at what a picture can be)
         let n = r32(got).min(want);
@@ -431,7 +431,7 @@ fn OleLoadPictureEx(c: &mut Ctx) -> u32 {
     // (stream, size, runmode, riid, x, y, flags, out): as OleLoadPicture
     let (stm, size, out) = (c.a::<0>(), c.a::<1>(), c.out::<7>());
     let tmp = mem::heap_alloc(8, true);
-    let r = gcall(c, "oleaut32", "OleLoadPicture", &[stm, size, 0, 0, tmp]);
+    let r = gcall(c.ctx(), "oleaut32", "OleLoadPicture", &[stm, size, 0, 0, tmp]);
     out.put(mem::rp(tmp));
     mem::heap_free(tmp);
     r

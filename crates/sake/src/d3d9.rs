@@ -524,7 +524,7 @@ fn create9(c: &mut Ctx) -> u32 {
 fn Direct3DCreate9Ex(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::Direct3DCreate9Ex>();
     let out = c.out::<1>();
-    let o = create9(c);
+    let o = create9(c.ctx());
     if o != 0 {
         let mut ex = EXTENDED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if !ex.contains(&o) {

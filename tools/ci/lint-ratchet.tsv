@@ -1466,7 +1466,7 @@ file	crates/sake/src/mf/movie.rs	masu-from_raw_parts	1
 file	crates/sake/src/mf/movie.rs	multiple_unsafe_ops_per_block	1
 file	crates/sake/src/mf/mp4.rs	arithmetic_side_effects	61
 file	crates/sake/src/mf/mp4.rs	indexing_slicing	17
-file	crates/sake/src/mf/plat.rs	arithmetic_side_effects	32
+file	crates/sake/src/mf/plat.rs	arithmetic_side_effects	29
 file	crates/sake/src/mf/plat.rs	as_conversions	2
 file	crates/sake/src/mf/plat.rs	indexing_slicing	1
 file	crates/sake/src/mf/plat.rs	let_underscore_must_use	1
@@ -1765,7 +1765,7 @@ file	crates/sake/src/sdrt_login.rs	as_conversions	4
 file	crates/sake/src/sdrt_login.rs	cast_possible_truncation	2
 file	crates/sake/src/sdrt_login.rs	indexing_slicing	6
 file	crates/sake/src/sdrt_login.rs	undocumented_unsafe_blocks	1
-file	crates/sake/src/security.rs	arithmetic_side_effects	135
+file	crates/sake/src/security.rs	arithmetic_side_effects	134
 file	crates/sake/src/security.rs	as_conversions	102
 file	crates/sake/src/security.rs	cast_possible_truncation	46
 file	crates/sake/src/security.rs	cast_possible_wrap	2

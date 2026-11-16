@@ -249,15 +249,15 @@ fn generic(c: &mut Ctx, name: &str) -> u32 {
 }
 fn GdipGetGenericFontFamilySansSerif(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipGetGenericFontFamilySansSerif>();
-    generic(c, "Microsoft Sans Serif")
+    generic(c.ctx(), "Microsoft Sans Serif")
 }
 fn GdipGetGenericFontFamilySerif(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipGetGenericFontFamilySerif>();
-    generic(c, "Times New Roman")
+    generic(c.ctx(), "Times New Roman")
 }
 fn GdipGetGenericFontFamilyMonospace(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipGetGenericFontFamilyMonospace>();
-    generic(c, "Courier New")
+    generic(c.ctx(), "Courier New")
 }
 
 /// GdipNewInstalledFontCollection(&collection): always the same one
@@ -343,7 +343,7 @@ fn GdipGetFontCollectionFamilyCount(c: &mut Ctx) -> u32 {
 /// GdipGetFontCollectionFamilyList(collection, sought, families[], &found)
 fn GdipGetFontCollectionFamilyList(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipGetFontCollectionFamilyList>();
-    let (h, n, out, found) = (c.a::<0>(), c.i(1), c.out::<2>(), c.a::<3>());
+    let (h, n, out, found) = (c.a::<0>(), c.ctx().i(1), c.out::<2>(), c.a::<3>());
     if out.is_null() || found == 0 || n < 0 || !is_collection(h) {
         return INVALID_PARAMETER;
     }

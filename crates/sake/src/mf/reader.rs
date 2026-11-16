@@ -1831,7 +1831,7 @@ fn MFCreateSourceReaderFromURL(c: &mut Ctx) -> u32 {
     let missing = || 0x8007_0000 | crate::files::missing(&path);
     let Some(host) = crate::files::resolve(&path) else { return missing() };
     let Some(d) = kura::fs::File::open(&host).ok().and_then(Data::host) else { return missing() };
-    reader_of(c, at, d, out)
+    reader_of(c.ctx(), at, d, out)
 }
 
 /// A file: URL's path ("file:///C:/a%20b.mp3" -> "C:\a b.mp3"); anything else as it is.
@@ -1863,8 +1863,8 @@ fn MFCreateSourceReaderFromByteStream(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     out.put(0);
-    let Some(d) = Data::guest(c, bs) else { return Hr::InvalidArg.code() };
-    reader_of(c, at, d, out)
+    let Some(d) = Data::guest(c.ctx(), bs) else { return Hr::InvalidArg.code() };
+    reader_of(c.ctx(), at, d, out)
 }
 
 /// MFCreateSourceReaderFromMediaSource(IMFMediaSource *, IMFAttributes *, IMFSourceReader **):
@@ -1877,7 +1877,7 @@ fn MFCreateSourceReaderFromMediaSource(c: &mut Ctx) -> u32 {
     }
     out.put(0);
     let Some((data, media)) = source::source_of(src) else { return Hr::NotImpl.code() };
-    new_reader(c, at, data, &media, src, out)
+    new_reader(c.ctx(), at, data, &media, src, out)
 }
 
 pub fn init() {

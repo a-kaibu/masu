@@ -264,7 +264,7 @@ fn MFCreateMediaEvent(c: &mut Ctx) -> u32 {
     }
     let val = if pv == 0 || r16(pv) == 0 { None } else { Some(get_prop(pv).unwrap_or(Val::U32(0))) };
     if let Some(Val::Unk(u)) = val {
-        add_ref(c, u);
+        add_ref(c.ctx(), u);
     }
     let b = new_event(E { met: t, hr, val, ..E::default() });
     if ext != 0 {
@@ -911,14 +911,14 @@ fn MFGetService(c: &mut Ctx) -> u32 {
     out.put(0);
     let g = mem::heap_alloc(16 + ps(), true);
     mem::write(g, &const { source::g("fa993888-4383-415a-a930-dd472a8cf6f7") });
-    let hr = com(c, o, 0, &[g, g + 16]);
+    let hr = com(c.ctx(), o, 0, &[g, g + 16]);
     let gs = rp(g + 16);
     mem::heap_free(g);
     if hr != 0 || gs == 0 {
         return Hr::UnsupportedService.code();
     }
-    let hr = com(c, gs, 3, &[sv, iid, out.to_callee()]);
-    release(c, gs);
+    let hr = com(c.ctx(), gs, 3, &crate::api::words![sv, iid, out]);
+    release(c.ctx(), gs);
     hr
 }
 
