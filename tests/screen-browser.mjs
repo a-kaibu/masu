@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 const pw = await import(process.env.PLAYWRIGHT ?? "playwright");
@@ -27,6 +28,10 @@ run("pack", join(work, "prefix"), "prefix32");
 const game = join(work, "game");
 mkdirSync(game, { recursive: true });
 execFileSync("i686-w64-mingw32-gcc", ["-O2", "host/tests/screenfit.c", "-o", join(game, "screenfit.exe"), "-lgdi32", "-ld3d9"]);
+// (a file the game never reads, as a game's movies and voices: &warm=0 leaves it in the bucket.
+// Past what a read's delivery pack brings along, MASU_PACK_SPAN in host/fetch-bridge.js: without
+// it the one pack held all there was, once the prefix held no RTPs, MASU_RTP=0)
+writeFileSync(join(game, "unread.bin"), randomBytes(40 << 20));
 run("pack", game, "screenfit");
 
 const port = 9300 + Math.floor(Math.random() * 200) * 2;
@@ -174,10 +179,10 @@ try {
     });
     if (warm) {
       assert.match(done ?? "", /^fetched ahead: (\d+) of \1 chunks looked at, \d+ fetched .* 0 failed, .*done$/, lines.slice(-8).join(" | "));
-      assert.equal(kept.have, kept.all, `every chunk on the device: ${JSON.stringify(kept)}`);
+      assert.equal(kept.have, kept.all, `every chunk on the device: ${JSON.stringify(kept)}; ${done}`);
     } else {
       assert.equal(done, undefined, "&warm=0: nothing fetched ahead");
-      assert.ok(kept.have < kept.all, `&warm=0: only what the game read: ${JSON.stringify(kept)}`);
+      assert.ok(kept.have < kept.all, `&warm=0: only what the game read: ${JSON.stringify(kept)}; ${lines.slice(-20).join(" | ")}`);
     }
     await ctx.close();
   }
