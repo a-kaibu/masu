@@ -4,3 +4,8 @@ RTF read through several callbacks: ok
 RTF text: ok
 SF_TEXT replaces the text: ok
 callback error in dwError: ok
+EM_EXGETSEL after EM_REPLACESEL: ok
+the second line's caret: ok
+(0,-1) selects all: ok
+ends in order: ok
+EM_EXLINEFROMCHAR: ok

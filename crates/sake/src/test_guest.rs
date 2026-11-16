@@ -1,18 +1,34 @@
 //! Test-only guest memory and x86 argument frames; never linked into the runtime.
 use crate::{api::{Ctx, Handler}, mem};
-use std::sync::{Mutex, MutexGuard, Once};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 static SERIAL: Mutex<()> = Mutex::new(());
+/// The top of the test guest memory: GUEST_TOP, or under AddressSanitizer the page below its
+/// shadow memory, which starts at 0x7fff8000 on x86-64 Linux (inside sake's stub area: the
+/// mapping failed with EEXIST and every guest test after it, review 2026-11-16)
+pub const TOP: u32 = if cfg!(masu_sanitize) { 0x7fff_0000 } else { mem::GUEST_TOP };
 pub fn enter() -> MutexGuard<'static, ()> {
     let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    static MAP: Once = Once::new();
-    MAP.call_once(|| unsafe {
-        // (up to GUEST_TOP: the stub area above HI too)
-        let p = libc::mmap(mem::LO as usize as *mut _, (mem::GUEST_TOP - mem::LO) as usize,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE | libc::MAP_NORESERVE, -1, 0);
-        assert_eq!(p as usize, mem::LO as usize, "guest memory: {}", std::io::Error::last_os_error());
+    // (the outcome kept: a map that failed fails every test with its own reason, not with a
+    // poisoned Once, review 2026-11-16)
+    static MAP: OnceLock<Result<(), String>> = OnceLock::new();
+    let mapped = MAP.get_or_init(|| {
+        // (up to GUEST_TOP: the stub area above HI too; below TOP under a sanitizer)
+        // SAFETY: a fixed anonymous mapping where nothing is (NOREPLACE: refused, not replaced,
+        // where something is), never unmapped.
+        let p = unsafe {
+            libc::mmap(mem::LO as usize as *mut _, (TOP - mem::LO) as usize,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE | libc::MAP_NORESERVE, -1, 0)
+        };
+        if p as usize != mem::LO as usize {
+            return Err(format!("guest memory {:#x}..{TOP:#x}: {}", mem::LO, std::io::Error::last_os_error()));
+        }
         mem::TEST_MAPPED.store(true, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
     });
+    if let Err(e) = mapped {
+        panic!("{e}");
+    }
     assert_eq!(mem::ps(), 4);
     guard
 }

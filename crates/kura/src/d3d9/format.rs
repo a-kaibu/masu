@@ -1367,7 +1367,7 @@ mod proofs {
         let bits: u32 = *[1u32, 4, 5, 6].get(kani::any_where(|&i: &usize| i < 4)).unwrap();
         let v: u32 = kani::any_where(|&v| v < 1 << bits);
         let max = (1 << bits) - 1;
-        let e = ext(v, bits);
+        let e = u32::from(ext(v, bits));
         // |e - v * 255 / max| <= 1/2, in integers
         assert!(e <= 255);
         assert!((2 * e * max).abs_diff(2 * v * 255) <= max);

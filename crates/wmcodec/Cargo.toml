@@ -2,6 +2,8 @@
 name = "wmcodec"
 version = "0.1.0"
 edition.workspace = true
+# (a workspace crate, never published: cargo-deny lets its path dependencies be)
+publish = false
 # a port of FFmpeg's decoders, and so under FFmpeg's license
 license = "LGPL-2.1-or-later"
 description = "Windows Media decoders (WMA 1/2, MS-MPEG4 / WMV 1/2, WMV 3 / VC-1) ported from FFmpeg 7.1 to Rust, for sake's wmvcore readers and decoder DMOs"

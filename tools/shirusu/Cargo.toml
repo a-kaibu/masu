@@ -2,6 +2,8 @@
 name = "sake-shirusu"
 version = "0.1.0"
 edition = "2024"
+# (a workspace crate, never published: cargo-deny lets its path dependencies be)
+publish = false
 license = "MIT OR Apache-2.0"
 description = "Builds a shirusu Trace from sake's SAKE_SHIRUSU=1 lines (crates/sake/src/shirusu.rs)"
 

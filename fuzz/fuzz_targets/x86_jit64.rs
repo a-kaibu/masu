@@ -208,6 +208,8 @@ fuzz_target!(|data: &[u8]| {
             },
         )
         .unwrap();
+    // (FN64's call cache misses: no function made here, the call goes out to the region path)
+    linker.func_wrap("env", "callmiss", |_: u32, _: u32, _: u32| -> u32 { 0 }).unwrap();
     let run = linker.instantiate(&mut store, dispatch).unwrap().get_typed_func::<u32, i32>(&mut store, "f0").unwrap();
 
     let d = mem.data();
