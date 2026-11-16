@@ -234,13 +234,14 @@ mod tests {
         let (fake, remote, dir) = crate::storage::gc_tests::serve(0).await;
         let h = format!("ab{}", "1".repeat(30));
         remote.put(&format!("chunks/ab/{h}"), b"a chunk").await.unwrap();
-        remote.put("trees/game.tsv", b"vnvm-tree\t2\t64\n").await.unwrap();
+        let list = format!("{}\n", crate::tree_list::Header { avg: 64 });
+        remote.put("trees/game.tsv", list.as_bytes()).await.unwrap();
         remote.put("games/game.json", b"{}").await.unwrap();
         std::fs::create_dir_all(dir.join("chunks/ab")).unwrap();
         std::fs::write(dir.join(format!("chunks/ab/{h}")), b"a chunk on the disk").unwrap();
         std::fs::write(dir.join("trees-local.tsv"), b"x").unwrap();
         let app = routes(Store { remote: Arc::new(remote), wasm: Default::default() }, None);
-        assert_eq!(get_(&app, "/store/trees/game.tsv", None).await.2, b"vnvm-tree\t2\t64\n");
+        assert_eq!(get_(&app, "/store/trees/game.tsv", None).await.2, list.as_bytes());
         assert_eq!(get_(&app, "/store/games/game.json", None).await.2, b"{}");
         let before = fake.gets();
         for p in [format!("/store/chunks/ab/{h}"), "/store/library.sqlite3".into(), "/store/trees/../chunks/x".into(), "/store/trees-local.tsv".into(), "/store/keys".into()] {

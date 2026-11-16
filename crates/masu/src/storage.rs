@@ -1432,7 +1432,7 @@ pub(crate) mod gc_tests {
         let (f, s, dir) = serve(0).await;
         let store = dir.join("store");
         let chunk = |k: u32| format!("{:02x}{k:030x}", 0x10 + k);
-        let mut tsv = String::from("vnvm-tree\t2\t64\n");
+        let mut tsv = format!("{}\n", crate::tree_list::Header { avg: 64 });
         for k in 0..4u32 {
             let h = chunk(k);
             std::fs::create_dir_all(store.join("chunks").join(&h[..2])).unwrap();
@@ -1460,7 +1460,7 @@ pub(crate) mod gc_tests {
         assert_eq!(f.objects.locked().len() - before, 1);
         // a chunk on neither side: an error, and the list not sent
         let gone = format!("ff{:030x}", 9);
-        std::fs::write(store.join("trees/bench.tsv"), format!("vnvm-tree\t2\t64\nf\t644\t0\tx\t1\t{gone}:1\n")).unwrap();
+        std::fs::write(store.join("trees/bench.tsv"), format!("{}\nf\t644\t0\tx\t1\t{gone}:1\n", crate::tree_list::Header { avg: 64 })).unwrap();
         let e = s.push_trees(&store, &["bench"]).await.unwrap_err();
         assert!(format!("{e:#}").contains(&gone), "{e:#}");
         assert!(!s.has("trees/bench.tsv").unwrap());
@@ -1698,7 +1698,6 @@ struct Shared {
     disk: Option<std::sync::Arc<Disk>>,
 }
 
-/// By (configuration file, database).
 /// The configuration of `serve --dev-bucket`'s stand-in bucket (dev_bucket.rs), used instead of
 /// MASU_STORAGE_CONFIG once set.
 static DEV_CONFIG: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
@@ -1706,9 +1705,10 @@ static DEV_CONFIG: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock
 /// Makes [`Storage::configured`] open the stand-in bucket configured at `path` (once: a second
 /// call keeps the first).
 pub fn use_dev_config(path: std::path::PathBuf) {
-    let _ = DEV_CONFIG.set(path);
+    DEV_CONFIG.get_or_init(|| path);
 }
 
+/// By (configuration file, database).
 static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(std::path::PathBuf, std::path::PathBuf), Shared>>> = std::sync::LazyLock::new(Default::default);
 
 /// Objects as the bucket has them (encrypted: [`Storage::get`] decrypts, so checks, them each

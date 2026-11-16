@@ -34,11 +34,7 @@ crates/kura/src/audio.rs	unsafe_op_in_unsafe_fn	*frames = lo32(RING_FRAMES);
 crates/kura/src/cpu.rs	cast_ptr_alignment	2 if addr % 2 == 0 => (*(p as *const AtomicU16)).compare_exchange(old as u16, new as u16, ord, ord).unwrap_or_else(|v| v) as u64,
 crates/kura/src/cpu.rs	cast_ptr_alignment	4 if addr % 4 == 0 => (*(p as *const AtomicU32)).compare_exchange(old as u32, new as u32, ord, ord).unwrap_or_else(|v| v) as u64,
 crates/kura/src/cpu.rs	cast_ptr_alignment	8 => (*(p as *const AtomicU64)).compare_exchange(old, new, ord, ord).unwrap_or_else(|v| v),
-crates/kura/src/cpu.rs	cast_ptr_alignment	let (lo, hi) = (&*(p as *const AtomicU64), &*(p.add(8) as *const AtomicU64));
-crates/kura/src/cpu.rs	cast_ptr_alignment	let (lo, hi) = (&*(p as *const AtomicU64), &*(p.add(8) as *const AtomicU64));
 crates/kura/src/cpu.rs	multiple_unsafe_ops_per_block	Ok(unsafe {
-crates/kura/src/cpu.rs	multiple_unsafe_ops_per_block	unsafe {
-crates/kura/src/cpu.rs	ptr_as_ptr	(p as *mut u128).write_unaligned(new);
 crates/kura/src/cpu.rs	ptr_as_ptr	unsafe { (check(addr, 2, true)? as *mut u16).write_unaligned(v) };
 crates/kura/src/cpu.rs	ptr_as_ptr	unsafe { (check(addr, 4, true)? as *mut u32).write_unaligned(v) };
 crates/kura/src/cpu.rs	ptr_as_ptr	unsafe { (check(addr, 8, true)? as *mut u64).write_unaligned(v) };
@@ -51,7 +47,6 @@ crates/kura/src/cpu.rs	undocumented_unsafe_blocks	c = (c ^ unsafe { *((at + i) a
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	h = (h ^ unsafe { *((d + i) as usize as *const u8) } as u32).wrapping_mul(0x0100_0193);
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	let code: Vec<String> = (0..if ok { 8 } else { 0 }).map(|i| unsafe { *((cpu.eip as usize + i) as *const u8) }).map(|b| format!("{b:02x}")).collect();
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	let ret = if ok(r[4]) { unsafe { *(r[4] as usize as *const u32) } } else { 0 };
-crates/kura/src/cpu.rs	undocumented_unsafe_blocks	unsafe {
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	unsafe { (check(addr, 2, true)? as *mut u16).write_unaligned(v) };
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	unsafe { (check(addr, 4, true)? as *mut u32).write_unaligned(v) };
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	unsafe { (check(addr, 8, true)? as *mut u64).write_unaligned(v) };
@@ -1799,20 +1794,9 @@ crates/masu/src/serve.rs	undocumented_unsafe_blocks	unsafe { backtrace(warm.as_m
 crates/masu/src/serve.rs	undocumented_unsafe_blocks	unsafe { libc::signal(libc::SIGUSR2, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t) };
 crates/masu/src/serve.rs	undocumented_unsafe_blocks	unsafe { libc::syscall(libc::SYS_tgkill, pid, tid, libc::SIGUSR2) };
 crates/masu/src/storage.rs	masu-wire_tree	std::fs::write(dir.join("trees/sample.tsv"), "vnvm-tree\t1\t262144\nf\t0\t0\tgame.exe\t1\tabcd\n").unwrap();
-crates/masu/src/store_api.rs	masu-wire_tree	assert_eq!((s, &b[..]), (StatusCode::OK, &b"vnvm-tree\t2\t64\n"[..]));
-crates/masu/src/store_api.rs	masu-wire_tree	let mut tsv = String::from("vnvm-tree\t2\t64\n");
-crates/masu/src/store_api.rs	masu-wire_tree	let mut tsv = String::from("vnvm-tree\t2\t64\n");
-crates/masu/src/store_api.rs	masu-wire_tree	let mut tsv = String::from("vnvm-tree\t2\t64\n");
-crates/masu/src/store_api.rs	masu-wire_tree	let mut tsv = String::from("vnvm-tree\t2\t64\n");
-crates/masu/src/store_api.rs	masu-wire_tree	let mut tsv = String::from("vnvm-tree\t2\t64\n");
-crates/masu/src/store_api.rs	masu-wire_tree	std::fs::write(dir.join("trees/game.tsv"), format!("vnvm-tree\t2\t64\n{}", line("f.dat", 5, &[(&h, 5)]))).unwrap();
-crates/masu/src/store_api.rs	masu-wire_tree	std::fs::write(dir.join("trees/t.tsv"), b"vnvm-tree\t2\t64\n").unwrap();
 crates/masu/src/treefiles.rs	masu-wire_tree	format!("vnvm-tree\t2\t4\nd\t755\t0\tdir\t2\t{h}:2\nf\t644\t0\tx\t2\t{h}:2\textra\nf\t644\t0\tok\t2\t{h}:2\nf\t644\t0\tshort\t2\ta:2\nf\t644\t0\tnochunks\t2\t:2\nf\t644\t0\twrong\t3\t{h}:2\nf\t644\t0\tnolength\t2\t{h}\n"),
-crates/masu/src/treefiles.rs	masu-wire_tree	format!("vnvm-tree\t2\t4\nf\t644\t0\ta.bin\t10\t{c0}:4,:4,{c2}:2\nf\t644\t0\tempty.txt\t0\t\n"),
 crates/masu/src/treefiles.rs	masu-wire_tree	let mut lines = String::from("vnvm-tree\t2\t64\n");
 crates/masu/src/treefiles.rs	masu-wire_tree	std::fs::write(&path, format!("vnvm-tree\t2\t4\nf\t644\t0\tnew\t2\t{h}:2\n")).unwrap();
-crates/masu/src/treefiles.rs	masu-wire_tree	std::fs::write(dir.join("trees/p.tsv"), format!("vnvm-tree\t2\t1024\nf\t644\t0\tWWW/Index.html\t42\t{page}:42\nf\t644\t0\tframes/yesno.htm\t40\t{crypt}:40\n")).unwrap();
-crates/masu/src/treefiles.rs	masu-wire_tree	std::fs::write(dir.join("trees/s.tsv"), format!("vnvm-tree\t2\t64\nf\t644\t0\tbig.bin\t{}\t{}\n", want.len(), list.join(","))).unwrap();
 crates/sake/src/amstream.rs	undocumented_unsafe_blocks	while !unsafe { play::frame(stream, n.cast_signed(), px.as_mut_ptr().cast::<u8>(), 4 * usize::try_from(w).unwrap_or(0), w, h) } {
 crates/sake/src/asfmovie.rs	masu-from_raw_parts	let d = unsafe { std::slice::from_raw_parts_mut(dst.add(y * pitch), 4 * w as usize) };
 crates/sake/src/asfmovie.rs	multiple_unsafe_ops_per_block	let d = unsafe { std::slice::from_raw_parts_mut(dst.add(y * pitch), 4 * w as usize) };

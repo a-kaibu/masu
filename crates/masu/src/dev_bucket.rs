@@ -38,10 +38,11 @@ struct Objects(PathBuf);
 
 /// `bytes=a-b` or `bytes=a-` of `len` bytes: (a, b inclusive); None: not one this takes (the
 /// whole object goes); Some(None): past the end.
-fn range(h: &str, len: u64) -> Option<Option<(u64, u64)>> {
+fn range(h: &str, len: usize) -> Option<Option<(usize, usize)>> {
     let (a, b) = h.trim().strip_prefix("bytes=")?.split_once('-')?;
-    let a: u64 = a.parse().ok()?;
-    let b: u64 = if b.is_empty() { u64::MAX } else { b.parse().ok()? };
+    let a: usize = a.parse().ok()?;
+    // (an end past usize is past the end of any object: the whole rest)
+    let b: usize = if b.is_empty() { usize::MAX } else { usize::try_from(b.parse::<u64>().ok()?).unwrap_or(usize::MAX) };
     if b < a {
         return None;
     }
@@ -77,17 +78,23 @@ async fn object(State(o): State<Objects>, method: Method, UrlPath(path): UrlPath
             }
         }
         Method::DELETE => {
-            let _ = tokio::fs::remove_file(&file).await;
-            StatusCode::NO_CONTENT.into_response()
+            // (deleting what is not there is done, as a bucket answers)
+            match tokio::fs::remove_file(&file).await {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                    eprintln!("dev bucket: {} not deleted: {e}", key.0);
+                    StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                }
+                Ok(()) | Err(_) => StatusCode::NO_CONTENT.into_response(),
+            }
         }
         Method::GET | Method::HEAD => {
             let Ok(data) = tokio::fs::read(&file).await else { return StatusCode::NOT_FOUND.into_response() };
-            let len = data.len() as u64;
+            let len = data.len();
             let want = headers.get(header::RANGE).and_then(|v| v.to_str().ok()).and_then(|h| range(h, len));
             let (status, body, content_range) = match want {
                 None => (StatusCode::OK, Bytes::from(data), None),
                 Some(None) => (StatusCode::RANGE_NOT_SATISFIABLE, Bytes::new(), Some(format!("bytes */{len}"))),
-                Some(Some((a, b))) => (StatusCode::PARTIAL_CONTENT, Bytes::from(data).slice(a as usize..b as usize + 1), Some(format!("bytes {a}-{b}/{len}"))),
+                Some(Some((a, b))) => (StatusCode::PARTIAL_CONTENT, Bytes::from(data).slice(a..=b), Some(format!("bytes {a}-{b}/{len}"))),
             };
             let mut r = if method == Method::HEAD { status.into_response() } else { (status, body).into_response() };
             if let Some(c) = content_range.and_then(|c| HeaderValue::from_str(&c).ok()) {
@@ -186,7 +193,7 @@ mod tests {
     async fn serves_objects_as_a_bucket_does() {
         let dir = std::env::temp_dir().join(format!("masu-dev-bucket-{}", uuid::Uuid::new_v4()));
         let app = router(dir.clone());
-        let data: Vec<u8> = (0..1000u32).map(|i| (i * 7) as u8).collect();
+        let data: Vec<u8> = std::iter::successors(Some(0u8), |v| Some(v.wrapping_add(7))).take(1000).collect();
         assert_eq!(call(&app, "PUT", "/dev/p/obj-1", None, &data).await.0, StatusCode::OK);
         let (st, h, got) = call(&app, "GET", "/dev/p/obj-1?X-Amz-Signature=any", None, b"").await;
         assert_eq!((st, got), (StatusCode::OK, data.clone()));

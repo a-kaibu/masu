@@ -231,7 +231,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("trees")).unwrap();
         std::fs::write(
             dir.join("trees/t.tsv"),
-            format!("vnvm-tree\t2\t4\nf\t644\t0\tA.bin\t10\t{c0}:4,:4,{c2}:2\nf\t644\t0\tempty.txt\t0\t\n"),
+            format!("{}\nf\t644\t0\tA.bin\t10\t{c0}:4,:4,{c2}:2\nf\t644\t0\tempty.txt\t0\t\n", crate::tree_list::Header { avg: 4 }),
         )
         .unwrap();
         (dir.clone(), Trees { store: dir, remote: Arc::new(None), cache: Default::default(), decoded: Default::default() })
