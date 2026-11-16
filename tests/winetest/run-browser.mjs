@@ -31,7 +31,7 @@ mkdirSync(join(work, "bin"));
 for (const exe of new Set(jobs.map((j) => j[1]))) cpSync(join(binDir, exe), join(work, "bin", exe));
 execFileSync(masu, ["--store", store, "pack", join(work, "prefix"), "prefix32"], { stdio: "ignore" });
 execFileSync(masu, ["--store", store, "pack", join(work, "bin"), "winetest"], { stdio: "ignore" });
-const serveArgs = ["--store", store, "serve", "--foreground", "--listen", `127.0.0.1:${port}`, "--logs", join(work, "logs")];
+const serveArgs = ["--store", store, "serve", "--foreground", "--listen", `127.0.0.1:${port}`, "--logs", join(work, "logs"), "--dev-bucket", join(work, "bucket")];
 if (process.env.WEB) serveArgs.push("--web", process.env.WEB);
 const server = spawn(masu, serveArgs, { stdio: "ignore" });
 const base = `http://127.0.0.1:${port}`;

@@ -73,7 +73,7 @@ import { keepServerWasm } from "./wasmkeep";
 import { sakeWasmBytes, wasmModuleArg } from "./wasmsource";
 import { deviceChunks } from "./chunkstore";
 import { fetchForesee, handForesee, mountedTrees } from "./foresee";
-import { netBudget, setGameBusy, shareAcrossTabs } from "./budget";
+import { CLASS, netBudget, setGameBusy, shareAcrossTabs } from "./budget";
 import {
   builds,
   getState,
@@ -1194,7 +1194,7 @@ function readAhead(
         while (i >= busyWidth && sake?._vnhost_net_busy?.()) await new Promise((r) => setTimeout(r, 25));
         // (kept on the device from an earlier play: no network; a chunk that fails for good is
         // left to the game's own read)
-        const c = await getChunk(store, hex, { cache, priority: "low" }).catch(() => null);
+        const c = await getChunk(store, hex, { cache, budget: CLASS.ahead }).catch(() => null);
         if (!c) {
           budget.release(n);
           continue;

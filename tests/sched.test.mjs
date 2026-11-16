@@ -26,7 +26,26 @@ const HASHES = [...CHUNKS.keys()];
 const BASE = 'http://srv/';
 const url = (h) => `${BASE}store/chunks/${h.slice(0, 2)}/${h}`;
 
-/** A fresh bridge with a stand-in server (`/store-direct`, `/store`) and bucket. */
+/** The device's chunk store (OPFS in the browser: host/fetch-bridge.js masuOpfsStore) over
+ * `kept` (url -> { b }), its writes held until `putGate` resolves. */
+function device(kept, putGate) {
+  return {
+    match: async (u) => {
+      const d = kept.get(u);
+      return d && { arrayBuffer: async () => d.b.slice().buffer };
+    },
+    putBytes: async (u, data) => {
+      // (the device's write held until it resolves)
+      if (putGate) await putGate;
+      kept.set(u, { b: data.slice() });
+    },
+    read: async (u, from, len) => kept.get(u)?.b.slice(from, from + len) ?? null,
+    delete: async (u) => kept.delete(u),
+  };
+}
+
+/** A fresh bridge with a stand-in server (`/store-direct`; its `/store` is never asked for a
+ * chunk: counted) and bucket. */
 async function bridge(opt = {}) {
   const key = crypto.getRandomValues(new Uint8Array(32));
   const hex = (b) => Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -74,14 +93,14 @@ async function bridge(opt = {}) {
       const out = {};
       for (const p of JSON.parse(init.body)) {
         const h = p.slice(p.lastIndexOf('/') + 1);
-        if (sealed.has(h) && !(opt.onlyServer ?? []).includes(h)) out[p] = info(h);
+        if (sealed.has(h) && !(opt.notInBucket ?? []).includes(h)) out[p] = info(h);
       }
       return { ok: true, status: 200, json: async () => out };
     }
     if (u.startsWith(`${BASE}store-direct/`)) {
       log.one++;
       const h = u.slice(u.lastIndexOf('/') + 1);
-      if (!sealed.has(h) || (opt.onlyServer ?? []).includes(h)) return { ok: false, status: 404 };
+      if (!sealed.has(h) || (opt.notInBucket ?? []).includes(h)) return { ok: false, status: 404 };
       return { ok: true, status: 200, json: async () => info(h) };
     }
     if (u === `http://bucket/pack/${PACK}`) {
@@ -108,30 +127,16 @@ async function bridge(opt = {}) {
       const body = s.all;
       return { ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => body.slice().buffer };
     }
+    // (the server has no chunks: counted, never answered)
     if (u.startsWith(`${BASE}store/chunks/`)) {
       log.store++;
-      const h = u.slice(u.lastIndexOf('/') + 1);
-      return { ok: true, status: 200, headers: { get: () => null }, arrayBuffer: async () => CHUNKS.get(h).slice().buffer };
+      return { ok: false, status: 404 };
     }
     return { ok: false, status: 404 };
   };
   const kept = new Map();
-  const caches = {
-    open: async () => ({
-      match: async (u) => {
-        const d = kept.get(u);
-        return d && { headers: { get: (n) => d.h[n] ?? null }, arrayBuffer: async () => d.b.slice().buffer };
-      },
-      put: async (u, r) => {
-        const b = new Uint8Array(await r.arrayBuffer());
-        // (opt.putGate: the device's write held until it resolves)
-        if (opt.putGate) await opt.putGate;
-        kept.set(u, { b, h: Object.fromEntries(r.headers) });
-      },
-    }),
-  };
   const ctx = vm.createContext({
-    fetch, caches, crypto, Response, Blob, AbortSignal, AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
+    fetch, crypto, Response, Blob, AbortSignal, AbortController, setTimeout, clearTimeout, setInterval, clearInterval,
     SharedArrayBuffer, Atomics, Int32Array, Float64Array, Uint8Array, ArrayBuffer, Map, Set, Promise, Math, Date, JSON, Object, Array, String, Number, Error,
     navigator: { onLine: true, locks: opt.locks },
     console,
@@ -139,6 +144,7 @@ async function bridge(opt = {}) {
   vm.runInContext(source, ctx);
   // (the stand-in objects are not zstd frames: the plain chunk)
   vm.runInContext('masuUnzstd = async (base, frame) => frame; MASU_BAD_CHUNK = 1;', ctx);
+  ctx.masuCacheOpen = Promise.resolve(device(kept, opt.putGate));
   return { ctx, log, kept, pack };
 }
 
@@ -248,15 +254,28 @@ test('the bucket\'s addresses asked for many at once: one POST per 512, none one
   assert.equal(log.bucket.length, 6);
 });
 
-test('a chunk only on the server: the batch leaves it out, the read goes to /store without a single ask', async () => {
+test('a chunk the bucket lacks: the batch leaves it out, the read asks once alone and fails, never the server', async () => {
   const h = HASHES[3];
-  const { ctx, log } = await bridge({ onlyServer: [h] });
+  const { ctx, log } = await bridge({ notInBucket: [h] });
   await ctx.masuDirectMany([url(h), url(HASHES[4])]);
-  const r = await ctx.masuWhole(url(h), { cls: 0 });
-  assert.deepEqual(r.data, CHUNKS.get(h));
-  assert.equal(log.one, 0);
-  assert.equal(log.store, 1);
+  await assert.rejects(ctx.masuWhole(url(h), { cls: 0 }), /bucket does not have/);
+  assert.equal(log.one, 1);
+  assert.equal(log.store, 0);
   assert.equal(log.bucket.length, 0);
+  // (the other one reads as ever)
+  assert.deepEqual((await ctx.masuWhole(url(HASHES[4]), { cls: 0 })).data, CHUNKS.get(HASHES[4]));
+});
+
+test('the server failing to answer for a while: asked again until it does; chunks never from it', async () => {
+  const h = HASHES[6];
+  const { ctx, log } = await bridge();
+  const inner = ctx.fetch;
+  let refused = 0;
+  ctx.fetch = (u, init) => (u.includes('/store-direct/') && refused++ < 2 ? Promise.resolve({ ok: false, status: 502 }) : inner(u, init));
+  ctx.masuBackoff = () => 5;
+  assert.deepEqual((await ctx.masuWhole(url(h), { cls: 0 })).data, CHUNKS.get(h));
+  assert.equal(refused, 3);
+  assert.equal(log.store, 0);
 });
 
 test('a warm run fetches each chunk once, asks for addresses in batches, and a game read in it joins', async () => {
@@ -394,7 +413,7 @@ test('a neighbour in this worker\'s memory is left out too', async () => {
   assert.equal(ctx.masuInflight.size, 0);
 });
 
-test('a span that opens but is not the chunk its name says: not kept, the chunk from the server', async () => {
+test('a span that opens but is not the chunk its name says: not kept, its read fails (never the server)', async () => {
   const order = HASHES.slice(0, 5);
   const { ctx, log, kept } = await bridge({ packs: order, wrong: order[2] });
   await ctx.masuDirectMany(order.map(url));
@@ -402,9 +421,9 @@ test('a span that opens but is not the chunk its name says: not kept, the chunk 
   await settle(ctx);
   assert.ok(!kept.has(url(order[2])), 'not kept');
   for (const i of [1, 3, 4]) assert.ok(kept.has(url(order[i])));
-  // (read: from the server, once)
-  assert.deepEqual((await ctx.masuWhole(url(order[2]), { cls: 0 })).data, CHUNKS.get(order[2]));
-  assert.equal(log.store, 1);
+  // (read: the bucket's object is not it either)
+  await assert.rejects(ctx.masuWhole(url(order[2]), { cls: 0 }), /does not match its name/);
+  assert.equal(log.store, 0);
 });
 
 test('a game read of a neighbour while the GET is going joins it', async () => {
@@ -474,24 +493,18 @@ test('ranges name the fetcher threads\' reads', () => {
 // under load: a read ahead waited on it, the game's read behind it, no window ever): each step of
 // a read of it given MASU_CACHE_MS, then the network.
 
-/** Cache Storage over `kept` (url -> { b, h }) whose steps (open, match, arrayBuffer, blob,
- * slice) never settle when `hang(step)` says so, and reject when `fail(step)` does. */
+/** The device's store over `kept` (url -> { b }) whose steps (match, arrayBuffer, read) never
+ * settle when `hang(step)` says so, and reject when `fail(step)` does. */
 function stalling(kept, hang, fail = () => false) {
   const step = (name, f) => (hang(name) ? new Promise(() => {}) : fail(name) ? Promise.reject(new Error(name)) : f());
-  const body = (b) => ({
-    arrayBuffer: () => step('arrayBuffer', async () => b.slice().buffer),
-    blob: () => step('blob', async () => ({ slice: (x, y) => ({ arrayBuffer: () => step('slice', async () => b.slice(x, y).buffer) }) })),
-  });
   return {
-    open: () =>
-      step('open', async () => ({
-        match: (u) =>
-          step('match', async () => {
-            const d = kept.get(u);
-            return d && { headers: { get: (n) => d.h[n] ?? null }, ...body(d.b) };
-          }),
-        put: async (u, r) => void kept.set(u, { b: new Uint8Array(await r.arrayBuffer()), h: Object.fromEntries(r.headers) }),
-      })),
+    match: (u) =>
+      step('match', async () => {
+        const d = kept.get(u);
+        return d && { arrayBuffer: () => step('arrayBuffer', async () => d.b.slice().buffer) };
+      }),
+    read: (u, from, len) => step('read', async () => kept.get(u)?.b.slice(from, from + len) ?? null),
+    putBytes: async (u, data) => void kept.set(u, { b: data.slice() }),
   };
 }
 
@@ -503,7 +516,7 @@ const rng = (seed) => () => {
   return (seed >>> 0) / 2 ** 32;
 };
 
-test('Cache Storage that never answers, at any step of any read: every read still has the right bytes, from the network, in time', async () => {
+test('a device store that never answers, at any step of any read: every read still has the right bytes, from the bucket, in time', async () => {
   const big = HASHES.filter((h) => CHUNKS.get(h).length > 3000);
   for (let seed = 1; seed <= 150; seed++) {
     const r = rng(seed * 2654435761);
@@ -511,14 +524,12 @@ test('Cache Storage that never answers, at any step of any read: every read stil
     const h = big[Math.floor(r() * big.length)];
     const data = CHUNKS.get(h);
     const block = 1024;
-    // (on the device as a whole chunk, as blocks kept alone, or not at all)
-    const where = Math.floor(r() * 3);
-    if (where === 0) kept.set(url(h), { b: data, h: { 'x-masu-checked': '1' } });
-    if (where === 1) for (let k = 0; k * block < data.length; k++) kept.set(ctx.masuBlockKey(url(h), k, block), { b: data.slice(k * block, (k + 1) * block), h: {} });
+    // (on the device or not)
+    const where = Math.floor(r() * 2);
+    if (where === 0) kept.set(url(h), { b: data });
     const p = r();
     const hung = new Set();
-    ctx.caches = stalling(kept, (s) => r() < p && (hung.add(s), true));
-    ctx.masuCacheOpen = undefined;
+    ctx.masuCacheOpen = Promise.resolve(stalling(kept, (s) => r() < p && (hung.add(s), true)));
     ctx.MASU_CACHE_MS = 15;
     const whole = r() < 0.3;
     const from = Math.floor((r() * data.length) / block) * block;
@@ -530,54 +541,8 @@ test('Cache Storage that never answers, at any step of any read: every read stil
     assert.deepEqual(got.data, want, `seed ${seed}: where ${where}, hung ${[...hung]}, ${whole ? 'whole' : `${from}+${len}`}`);
     assert.ok(Date.now() - t < 2000, `seed ${seed}: ${Date.now() - t} ms`);
     // (an answering cache: from it, nothing over the network)
-    if (!hung.size && where === 0) assert.equal(log.bucket.length + log.store, 0, `seed ${seed}`);
-  }
-});
-
-test("a block kept alone that does not read is not there: not taken for the chunk's short last block", async () => {
-  const h = HASHES.find((x) => CHUNKS.get(x).length > 4096);
-  const data = CHUNKS.get(h);
-  const block = 1024;
-  for (const mode of ['reject', 'hang']) {
-    const { ctx, kept, log } = await bridge({ delay: 1 });
-    for (let k = 0; k * block < data.length; k++) kept.set(ctx.masuBlockKey(url(h), k, block), { b: data.slice(k * block, (k + 1) * block), h: {} });
-    // (the second block's body does not read)
-    let n = 0;
-    const second = (s) => s === 'arrayBuffer' && ++n === 2;
-    ctx.caches = mode === 'hang' ? stalling(kept, second) : stalling(kept, () => false, second);
-    ctx.masuCacheOpen = undefined;
-    ctx.MASU_CACHE_MS = 15;
-    const got = await ctx.masuFetchPart(url(h), 0, 3 * block, block, 0);
-    assert.deepEqual(got.data, data.subarray(0, 3 * block), mode);
-    assert.ok(log.bucket.length + log.store > 0, `${mode}: from the network`);
-  }
-});
-
-test("every range goes past the browser's HTTP cache (its bodies of one chunk waited on each other there), whole chunks not", async () => {
-  const big = HASHES.filter((h) => CHUNKS.get(h).length > 3000);
-  for (let seed = 1; seed <= 60; seed++) {
-    const r = rng(seed * 40503);
-    const { ctx } = await bridge({ delay: 1 });
-    const seen = [];
-    const inner = ctx.fetch;
-    ctx.fetch = (u, init = {}) => {
-      seen.push({ u, range: init.headers?.range, cache: init.cache });
-      return inner(u, init);
-    };
-    // (a server without the bucket: reads of blocks are ranges of /store)
-    ctx.masuDirectOff = r() < 0.5;
-    const h = big[Math.floor(r() * big.length)];
-    const data = CHUNKS.get(h);
-    const block = 1024;
-    const reads = Array.from({ length: 1 + Math.floor(r() * 4) }, () => {
-      const from = Math.floor((r() * data.length) / block) * block;
-      return [from, 1 + Math.floor(r() * Math.min(2 * block, data.length - from))];
-    });
-    const got = await Promise.all(reads.map(([from, len]) => ctx.masuFetchPart(url(h), from, len, block, Math.floor(r() * 2))));
-    got.forEach((g, i) => assert.deepEqual(g.data, data.subarray(reads[i][0], reads[i][0] + reads[i][1]), `seed ${seed}`));
-    const store = seen.filter((s) => s.u.includes('/store/chunks/'));
-    for (const s of store) assert.equal(s.cache === 'no-store', !!s.range, `seed ${seed}: ${JSON.stringify(s)}`);
-    if (ctx.masuDirectOff) assert.ok(store.some((s) => s.range), `seed ${seed}: ranges asked for`);
+    if (!hung.size && where === 0) assert.equal(log.bucket.length, 0, `seed ${seed}`);
+    assert.equal(log.store, 0);
   }
 });
 

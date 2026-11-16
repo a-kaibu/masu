@@ -41,7 +41,7 @@ const port = 9700 + Math.floor(Math.random() * 100) * 2;
 const base = `http://127.0.0.1:${port}/`;
 const store = join(work, "store");
 async function serve(web) {
-  const s = spawn(bin, ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"], { stdio: "inherit" });
+  const s = spawn(bin, ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")], { stdio: "inherit" });
   for (let i = 0; i < 100; i++) {
     if (await fetch(`${base}apps/builds`).then((r) => r.ok, () => false)) return s;
     await new Promise((r) => setTimeout(r, 300));

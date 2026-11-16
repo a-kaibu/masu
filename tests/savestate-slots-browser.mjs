@@ -35,7 +35,7 @@ writeFileSync(join(web, "index.html"), "<!doctype html><title>states</title>");
 const port = 9500 + Math.floor(Math.random() * 200) * 2;
 const base = `http://127.0.0.1:${port}/`;
 async function start() {
-  const s = spawn(bin, ["serve", "--foreground", "--web", web, "--store", join(work, "store"), "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"], { stdio: "inherit" });
+  const s = spawn(bin, ["serve", "--foreground", "--web", web, "--store", join(work, "store"), "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")], { stdio: "inherit" });
   for (let i = 0; i < 100; i++) {
     if (await fetch(`${base}saves/x`).then((r) => r.status === 404, () => false)) break;
     await new Promise((r) => setTimeout(r, 300));

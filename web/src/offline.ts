@@ -1,6 +1,6 @@
 // A game saved to the device before it is played (ui/SaveFirst.tsx: when it is picked the first
 // time; or from its 詳細, on Wi-Fi before a trip on a mobile line): every store
-// chunk of its trees (and of the prefix: fonts, DLLs) goes into the chunk cache (net.ts CHUNKS),
+// chunk of its trees (and of the prefix: fonts, DLLs) goes into the device's chunk store (chunkstore.ts),
 // where the game's reads (host/fetch-bridge.js) and the page's read-ahead look first. sake
 // itself, the game's saved x86 regions and lists are fetched with them (saveApp), and the
 // service worker (sw.ts) keeps those and the app's pages: the game then starts with no connection.
@@ -8,14 +8,13 @@
 import { coverUrl, type GameEntry } from "./launcher";
 import { gameBusy } from "./budget";
 import { listChunks } from "./chunkstore";
-import { directFetcher, limit, type Unzstd } from "./direct";
+import { directFetcher, type Unzstd } from "./direct";
 import { shared } from "./poll";
 import {
   chunkCache,
   chunkPath,
   fetchBoot,
   fetchRetry,
-  getChunk,
   HttpError,
   isFull,
   storeChunk,
@@ -336,8 +335,6 @@ async function saveApp(g: GameEntry, signal: AbortSignal): Promise<void> {
 
 /** Chunks fetched at once from the bucket itself (direct.ts: ~2 s each whatever the size). */
 export const DIRECT_AT_ONCE = 16;
-/** Chunks fetched at once through the server (/store: a store without S3, a chunk only there). */
-export const SERVER_AT_ONCE = 4;
 
 /** Of DIRECT_AT_ONCE, how many go on while a game playing waits for a read of its own. */
 export const SAVE_BUSY_WIDTH = 2;
@@ -455,8 +452,8 @@ export class NoRoom extends Error {
   }
 }
 
-/** Fetches `g`'s chunks the device lacks (from the bucket DIRECT_AT_ONCE at a time, else through
- * the server SERVER_AT_ONCE at a time, retried as net.ts does); `report(have, total)`, and the
+/** Fetches `g`'s chunks the device lacks (from the bucket DIRECT_AT_ONCE at a time, retried as
+ * net.ts does); `report(have, total)`, and the
  * whole progress in savesRunning (watchSaves). Throws NoRoom first when the device has no room for them. */
 export async function saveOffline(
   g: GameEntry,
@@ -514,7 +511,6 @@ export async function saveOffline(
     report(done, hashes.length);
     const base = store();
     const direct = directFetcher(base, opt);
-    const server = limit(SERVER_AT_ONCE);
     const held = byteLimit(SAVE_RUN_BYTES);
     let next = 0;
     // (the device filled up meanwhile: the save stops at once; before, every later chunk's write
@@ -546,15 +542,15 @@ export async function saveOffline(
       tell();
       report(done, hashes.length);
     };
-    /** Chunk `h` alone: from the bucket, else the server. */
+    /** Chunk `h` alone, from the bucket. */
     const alone = (h: string) => {
       const url = new URL(chunkPath(h), base).href;
       // (one fetch of a chunk the game's network worker fetches too: its Web Lock, host/fetch-bridge.js masuWhole)
       return withChunkLock(h, async () => {
         if (await cache.match(url).catch(() => undefined)) return;
         const data = await direct.get(h, { signal, request: opt.request });
-        if (data) await keep(url, data);
-        else await server(() => getChunk(base, h, { cache, priority: "low", signal, request: opt.request }));
+        if (!data) throw new Error(`chunk ${h}: the bucket did not give it`);
+        await keep(url, data);
       });
     };
     const one = async (i: number) => {

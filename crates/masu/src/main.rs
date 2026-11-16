@@ -17,6 +17,7 @@ mod auth;
 mod cdc;
 #[cfg(unix)]
 mod daemon;
+mod dev_bucket;
 mod dirs;
 mod envelope;
 mod library;

@@ -60,10 +60,6 @@ jobs:
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
         run: node tests/fetch-browser.mjs
-      - name: Ranges past a whole chunk in the HTTP cache
-        env:
-          PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
-        run: node tests/range-cache-browser.mjs
       - name: Saved chunks in OPFS, read through synchronous handles (tests/opfs-read-browser.mjs)
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
@@ -76,7 +72,7 @@ jobs:
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
         run: node tests/gpulost-browser.mjs
-      - name: Unstable link (drops, stalls, offline, chunks kept on the device)
+      - name: Unstable link (drops, stalls, offline)
         env:
           PLAYWRIGHT: ${{ runner.temp }}/masu-browser/node_modules/playwright/index.mjs
         run: node tests/net-browser.mjs

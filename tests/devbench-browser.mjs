@@ -24,7 +24,7 @@ if (process.env.FONTS) cpSync(process.env.FONTS, join(work, "prefix/drive_c/wind
 execFileSync(resolve(bin), ["--store", store, "pack", join(work, "prefix"), "prefix32"], { stdio: "pipe" });
 execFileSync(resolve(bin), ["--store", store, "pack", resolve(programs), "bench"], { stdio: "pipe" });
 const port = 9450 + Math.floor(Math.random() * 40) * 2;
-const server = spawn(resolve(bin), ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"], { stdio: ["ignore", "ignore", "inherit"] });
+const server = spawn(resolve(bin), ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")], { stdio: ["ignore", "ignore", "inherit"] });
 const base = `http://127.0.0.1:${port}/`;
 for (let k = 0; k < 100 && !(await fetch(`${base}bench.html`).then((r) => r.ok, () => false)); k++) await new Promise((r) => setTimeout(r, 300));
 const browser = await chromium.launch({

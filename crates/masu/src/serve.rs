@@ -104,6 +104,11 @@ pub struct Args {
     /// Run in this process (for systemd and the like) instead of in the background.
     #[arg(long)]
     pub foreground: bool,
+    /// A stand-in bucket on this machine with its objects in this folder, instead of
+    /// MASU_STORAGE_CONFIG's (tests, work without Hugging Face: dev_bucket.rs). The store is
+    /// pushed to it at the start.
+    #[arg(long)]
+    pub dev_bucket: Option<PathBuf>,
 }
 
 /// Whether `req` may change things: reads always; writes not from another site's or origin's
@@ -1110,7 +1115,6 @@ async fn headers(mut req: Request<axum::body::Body>, next: Next) -> Response {
         req.headers_mut().remove(header::IF_MODIFIED_SINCE);
         req.headers_mut().remove(header::IF_NONE_MATCH);
     }
-    let chunk = req.uri().path().starts_with("/store/chunks/");
     let log = req.uri().path().starts_with("/logs/");
     // a versioned URL (?v=...) names content that never changes: the browser keeps it without
     // asking again, and so keeps its compiled code (a revalidated .wasm loses it)
@@ -1122,18 +1126,7 @@ async fn headers(mut req: Request<axum::body::Body>, next: Next) -> Response {
     h.insert("cross-origin-opener-policy", HeaderValue::from_static("same-origin"));
     h.insert("cross-origin-embedder-policy", HeaderValue::from_static("require-corp"));
     h.insert("cross-origin-resource-policy", HeaderValue::from_static("same-origin"));
-    // (a range of a chunk, 206, is of its decoded bytes: store_api.rs)
-    if chunk && ok {
-        if status == StatusCode::OK {
-            h.insert(header::CONTENT_ENCODING, HeaderValue::from_static("zstd"));
-        }
-        h.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
-        // (only the whole answer is kept: a range is of other bytes than the zstd body the
-        // browser kept for the same URL, and a cache that mixes the two hands out bytes that
-        // never decode; host/fetch-bridge.js asks for ranges past the cache too)
-        let keep = if status == StatusCode::OK { "public, max-age=31536000, immutable" } else { "no-store" };
-        h.insert(header::CACHE_CONTROL, HeaderValue::from_static(keep));
-    } else if log && ok {
+    if log && ok {
         h.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
         h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     } else if versioned && ok {
@@ -1211,9 +1204,23 @@ struct Resolved {
     game_url: Option<String>,
     no_prerun: bool,
     strict_auth: bool,
+    /// the whole store pushed to the bucket at the start (`--dev-bucket`: the tests' stores
+    /// are packed on the disk first)
+    push_all: bool,
+}
+
+/// Puts what the server made of the store itself (sake's C:\, the benchmark's programs) in the
+/// bucket: the page reads chunks from there only.
+fn push_made(store: &std::path::Path) -> anyhow::Result<()> {
+    let Some(storage) = crate::storage::Storage::configured(crate::library::Library::new(store)?)? else { return Ok(()) };
+    let names: Vec<&str> = [crate::pack::PREFIX_TREE, crate::pack::BENCH_TREE].into_iter().filter(|n| store.join("trees").join(format!("{n}.tsv")).is_file()).collect();
+    tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(storage.push_trees(store, &names))
 }
 
 pub fn run(dirs: &crate::dirs::Dirs, a: Args) -> anyhow::Result<()> {
+    if let Some(d) = &a.dev_bucket {
+        crate::dev_bucket::start(d)?;
+    }
     let web = match a.web {
         Some(w) => w,
         None => crate::webassets::unpack(&dirs.cache)?,
@@ -1230,6 +1237,7 @@ pub fn run(dirs: &crate::dirs::Dirs, a: Args) -> anyhow::Result<()> {
         game_url: a.game_url,
         no_prerun: a.no_prerun,
         strict_auth: (a.strict_auth || dirs.strict_auth) && !a.trust_loopback,
+        push_all: a.dev_bucket.is_some(),
     };
     for d in [&dirs.store, &args.jit, &args.logs] {
         std::fs::create_dir_all(d)?;
@@ -1253,7 +1261,10 @@ pub fn run(dirs: &crate::dirs::Dirs, a: Args) -> anyhow::Result<()> {
             Ok(done) => {
                 eprintln!("RPG Maker RTPs installed: {}", done.join(" "));
                 match crate::pack::ensure_prefix(&store, &fonts, Some(&rtp)) {
-                    Ok(true) => eprintln!("sake's C:\\ ({}) has the RTPs", crate::pack::PREFIX_TREE),
+                    Ok(true) => match push_made(&store) {
+                        Ok(()) => eprintln!("sake's C:\\ ({}) has the RTPs", crate::pack::PREFIX_TREE),
+                        Err(e) => eprintln!("sake's C:\\ with the RTPs not put in the bucket: {e:#}"),
+                    },
                     Ok(false) => {}
                     Err(e) => eprintln!("the RTPs into sake's C:\\: {e:#}"),
                 }
@@ -1467,13 +1478,22 @@ fn dump_threads() {}
 async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyhow::Result<()> {
     // (before anything can replace it: /api/update)
     let exe = std::env::current_exe()?;
-    if let Some(storage) = crate::storage::Storage::configured(crate::library::Library::new(&store)?)? {
-        // (a bucket that cannot be reached at the start: the catalog on the disk serves, review
-        // b01; the server ended here before)
-        if let Err(e) = storage.hydrate_catalog(&store).await {
-            eprintln!("masu: the bucket's catalog not fetched ({e:#}): serving the store on the disk");
-        }
+    // (games come only from a bucket: the page fetches their chunks from it itself, never
+    // through this server)
+    let storage = crate::storage::Storage::configured(crate::library::Library::new(&store)?)?.ok_or_else(|| anyhow::anyhow!(
+        "masu serve reads games from a bucket only: set MASU_STORAGE_CONFIG (docs/storage.md), or pass --dev-bucket <dir> for a stand-in on this machine",
+    ))?;
+    // (a bucket that cannot be reached at the start: the catalog on the disk serves, review
+    // b01; the server ended here before)
+    if let Err(e) = storage.hydrate_catalog(&store).await {
+        eprintln!("masu: the bucket's catalog not fetched ({e:#}): serving the store on the disk");
     }
+    let names: Vec<&str> = [crate::pack::PREFIX_TREE, crate::pack::BENCH_TREE].into_iter().filter(|n| store.join("trees").join(format!("{n}.tsv")).is_file()).collect();
+    let pushed = if args.push_all { storage.push_store(&store).await } else { storage.push_trees(&store, &names).await };
+    if let Err(e) = pushed {
+        eprintln!("masu: the store's own trees not put in the bucket ({e:#}): pages cannot read what is only here");
+    }
+    drop(storage);
     let auth = crate::auth::Auth::load(&dirs.token, args.strict_auth)?;
     let jit: Jit = Arc::new((args.jit.clone(), tokio::sync::Mutex::new(())));
     let pre = Arc::new(Prerun {
@@ -1592,41 +1612,6 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
 
 #[cfg(test)]
 mod tests {
-    /// A chunk's whole answer is kept for good and zstd-coded; a range of it (its decoded
-    /// bytes, store_api.rs) is never kept, nor coded (tests/range-cache-browser.mjs: Chromium
-    /// answered ranges from the kept whole one, in bytes that never decode).
-    #[tokio::test]
-    async fn chunk_ranges_are_never_kept_by_the_browser() {
-        use axum::http::{header, Request, StatusCode};
-        use tower::ServiceExt;
-        let app = axum::Router::new()
-            .route(
-                "/store/chunks/ab/x",
-                axum::routing::get(|h: axum::http::HeaderMap| async move {
-                    if h.contains_key(header::RANGE) { (StatusCode::PARTIAL_CONTENT, "b") } else { (StatusCode::OK, "abc") }
-                }),
-            )
-            .route("/store/trees/t.tsv", axum::routing::get(|| async { "t" }))
-            .layer(axum::middleware::from_fn(super::headers));
-        let get = |uri: &str, range: bool| {
-            let mut r = Request::get(uri);
-            if range {
-                r = r.header(header::RANGE, "bytes=1-1");
-            }
-            app.clone().oneshot(r.body(axum::body::Body::empty()).unwrap())
-        };
-        let whole = get("/store/chunks/ab/x", false).await.unwrap();
-        assert_eq!(whole.status(), StatusCode::OK);
-        assert_eq!(whole.headers()[header::CACHE_CONTROL], "public, max-age=31536000, immutable");
-        assert_eq!(whole.headers()[header::CONTENT_ENCODING], "zstd");
-        let part = get("/store/chunks/ab/x", true).await.unwrap();
-        assert_eq!(part.status(), StatusCode::PARTIAL_CONTENT);
-        assert_eq!(part.headers()[header::CACHE_CONTROL], "no-store");
-        assert!(part.headers().get(header::CONTENT_ENCODING).is_none());
-        let tree = get("/store/trees/t.tsv", false).await.unwrap();
-        assert_eq!(tree.headers()[header::CACHE_CONTROL], "no-cache");
-    }
-
     /// What a stuck server prints: each thread's backtrace, a thread blocked on a lock among
     /// them with the function it waits in (run in a child process: its stderr is looked at).
     #[cfg(target_os = "linux")]

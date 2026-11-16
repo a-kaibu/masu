@@ -148,7 +148,7 @@ const env = { ...process.env, MASU_META_EGS_SQL: `${src}/egs`, MASU_META_VNDB: `
 for (const k of ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"]) delete env[k];
 const server = spawn(
   bin,
-  ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"],
+  ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")],
   { stdio: "inherit", env },
 );
 process.on("exit", () => server.kill());

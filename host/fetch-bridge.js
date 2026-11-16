@@ -5,20 +5,18 @@
 // worker retries network errors, stalled bodies (no byte for MASU_STALL_MS) and 5xx/408/429
 // with backoff, waits while the browser says it is offline, and only gives up after
 // MASU_GIVE_UP_MS (a 404 fails at once). While it retries it wakes the waiting pthread every
-// few seconds, so the pthread's own timeout only catches a dead worker. Store chunks are named by
-// their content: they are kept in Cache Storage (MASU_CHUNKS, web/src/net.ts uses the same one),
-// so a second play, or a game saved to the device beforehand, needs no network for them. A chunk
-// is checked against its name (BLAKE3, masuBlake3) before it is used or kept: one that does not
+// few seconds, so the pthread's own timeout only catches a dead worker. Store chunks come only
+// from the bucket (masuDirect: never through the server) and are named by their content: they
+// are kept in OPFS (masuCache, web/src/chunkstore.ts the page's side of the same folder), so a
+// second play, or a game saved to the device beforehand, needs no network for them. A chunk is
+// checked against its name (BLAKE3, masuBlake3) before it is used or kept: one that does not
 // match (cut or damaged on the way, a wrong answer) is fetched again, at most MASU_BAD_CHUNK
-// times. Kept ones carry MASU_CHECKED; one kept before that (or by an older page) is checked
-// once when read, then kept again with it.
+// times; only checked chunks are kept.
 // Retries are announced on the BroadcastChannel "masu-net" (the page shows that it waits).
-var MASU_CHUNKS = 'masu-chunks-v1';
 var MASU_STALL_MS = 20000;
 var MASU_GIVE_UP_MS = 15 * 60000;
 var MASU_RETRY_STATUS = [0, 408, 425, 429, 500, 502, 503, 504];
 var MASU_BAD_CHUNK = 3;
-var MASU_CHECKED = 'x-masu-checked';
 
 /** A store chunk: content-addressed, the same bytes forever. */
 function masuIsChunk(url) {
@@ -380,7 +378,7 @@ async function masuPause(ms) {
 }
 
 /** One try: the body read in pieces; aborted when no byte arrives for `stallMs`. */
-async function masuFetchOnce(url, stallMs, reload, headers) {
+async function masuFetchOnce(url, stallMs, headers) {
   const abort = new AbortController();
   let last = Date.now();
   const watch = setInterval(() => {
@@ -393,7 +391,7 @@ async function masuFetchOnce(url, stallMs, reload, headers) {
     // page's read-ahead had fetched the chunk first, and the game stopped at its start.
     // Under CPU load the bodies of several 206s of one chunk at once also waited on each other
     // there for 20 s and more (2026-11-13, #205).
-    const cache = headers?.range ? 'no-store' : reload ? 'reload' : undefined;
+    const cache = headers?.range ? 'no-store' : undefined;
     const init = { signal: abort.signal, ...(cache ? { cache } : {}), ...(headers ? { headers } : {}) };
     const response = await fetch(url, init);
     last = Date.now();
@@ -435,64 +433,56 @@ function masuNetReport(error) {
 }
 
 /**
- * How long one step of a read of Cache Storage (open, match, a body) may take: past it, the
- * chunk is as if not there and comes from the network. Chromium left a cached chunk's body read
+ * How long one step of a read of the device's chunk store (open, match, a body) may take: past
+ * it, the chunk is as if not there and comes from the network. Chromium left a cached chunk's body read
  * pending for good under load (2026-11-13, 白濁の少女 and 夏神家に起きたこと+ about 1 start in 4
  * with the warm run beside the first reads: a read ahead waited in Blob.arrayBuffer, the game's
  * read for its blocks behind it, no window ever); a read of a 4 MiB chunk takes milliseconds.
  */
 var MASU_CACHE_MS = 5000;
-/** `p` (a Cache Storage step), or a rejection once it took MASU_CACHE_MS. */
+/** `p` (a chunk store step), or a rejection once it took MASU_CACHE_MS. */
 function masuCacheStep(p) {
   let timer;
-  const late = new Promise((_, no) => (timer = setTimeout(() => no(new Error('Cache Storage did not answer')), MASU_CACHE_MS)));
+  const late = new Promise((_, no) => (timer = setTimeout(() => no(new Error('the chunk store did not answer')), MASU_CACHE_MS)));
   return Promise.race([p, late]).finally(() => clearTimeout(timer));
 }
 
 /**
- * The device's chunk store (opened once: every read of a block asks for it): OPFS, with Cache
- * Storage's entries from before read too (web/src/chunkstore.ts has the page's copy, tested
- * against this one on one folder); Cache Storage alone where there is no OPFS.
+ * The device's chunk store (opened once: every read of a block asks for it): OPFS
+ * (web/src/chunkstore.ts has the page's copy, tested against this one on one folder); null
+ * where there is none (the chunks then stay in this worker's memory only).
  */
 var masuCacheOpen;
 var MASU_CHUNK_DIR = 'masu-chunks';
 function masuCache() {
   return (masuCacheOpen ??= (async () => {
-    let old = null;
-    try {
-      old = typeof caches === 'undefined' ? null : await masuCacheStep(caches.open(MASU_CHUNKS));
-    } catch (_) {}
     try {
       const root = await navigator.storage.getDirectory();
-      return masuOpfsStore(await root.getDirectoryHandle(MASU_CHUNK_DIR, { create: true }), old);
+      return masuOpfsStore(await root.getDirectoryHandle(MASU_CHUNK_DIR, { create: true }));
     } catch (_) {
-      return old;
+      return null;
     }
   })());
 }
 
-/** A key's file name in the chunk folder (chunkstore.ts chunkFileName). */
+/** A key's file name in the chunk folder (chunkstore.ts chunkFileName): its hex name. */
 function masuChunkFile(u) {
   u = typeof u === 'string' ? u : u.url;
-  const m = /\/([0-9a-f]{2}|masu-chunks)\/([0-9a-f]{32}(\?b=\d+&s=\d+)?)$/.exec(u) ?? /^()([0-9a-f]{32}(\?b=\d+&s=\d+)?)$/.exec(u);
+  const m = /\/([0-9a-f]{2}|masu-chunks)\/([0-9a-f]{32})$/.exec(u) ?? /^()([0-9a-f]{32})$/.exec(u);
   return m && (m[1] === '' || m[1] === 'masu-chunks' || m[2].startsWith(m[1])) ? m[2] : '';
 }
 
 /**
- * Chunks in OPFS folder `dir` (one file each, chunkstore.ts says how), Cache Storage's `old`
- * read too, with the Cache interface the rest of this file uses, and `read(url, from, len)`: a
+ * Chunks in OPFS folder `dir` (one file each, chunkstore.ts says how): `match`, `putBytes`,
+ * `delete`, `keys`, and `read(url, from, len)`: a
  * part through a read-only synchronous access handle (a dedicated worker's), kept open
  * MASU_HANDLE_MS for the next reads of the same chunk, MASU_HANDLES at most; elsewhere the
  * file's slice. null when it is not here.
  */
 var MASU_HANDLE_MS = 5000;
 var MASU_HANDLES = 32;
-function masuOpfsStore(dir, old) {
+function masuOpfsStore(dir) {
   const handles = new Map();
-  const oldKey = (k) => {
-    const u = typeof k === 'string' ? k : k.url;
-    return /^https?:/.test(u) ? u : undefined;
-  };
   const notFound = (e) => e?.name === 'NotFoundError' || e?.name === 'TypeMismatchError';
   const file = async (name) => {
     try {
@@ -549,7 +539,7 @@ function masuOpfsStore(dir, old) {
     h.timer = setTimeout(() => close(name), MASU_HANDLE_MS);
     return h.h;
   };
-  const write = async (name, o, data) => {
+  const write = async (name, data) => {
     if (!data.length) return;
     // (this worker's own read handle let go; another's (the page's save, another tab): kept already)
     close(name);
@@ -567,39 +557,17 @@ function masuOpfsStore(dir, old) {
       await w.abort().catch(() => {});
       throw e;
     }
-    if (o) await old?.delete(o).catch(() => false);
   };
   return {
+    // (a file: the whole chunk, checked before it was kept)
     async match(k) {
       const name = masuChunkFile(k);
-      const f = name ? await file(name) : null;
-      if (f) {
-        const headers = { 'x-masu-size': String(f.size) };
-        if (!name.includes('?')) headers[MASU_CHECKED] = '1';
-        return new Response(f, { headers });
-      }
-      const o = oldKey(k);
-      return o ? ((await old?.match(o).catch(() => undefined)) ?? undefined) : undefined;
+      return name ? ((await file(name)) ?? undefined) : undefined;
     },
-    async put(k, response) {
-      const name = masuChunkFile(k);
-      const o = oldKey(k);
-      if (!name || (!name.includes('?') && response.headers.get(MASU_CHECKED) !== '1')) {
-        if (o) await old?.put(o, response);
-        return;
-      }
-      await write(name, o, new Uint8Array(await response.arrayBuffer()));
-    },
-    // a checked chunk's bytes as they are (masuKeep): put's write without a Response around
-    // them (that copied the chunk twice more, ~4 MiB each, on this worker)
+    // a checked chunk's bytes (masuKeep)
     async putBytes(k, data) {
       const name = masuChunkFile(k);
-      const o = oldKey(k);
-      if (!name) {
-        if (o) await old?.put(o, new Response(data, { headers: { [MASU_CHECKED]: '1', 'x-masu-size': String(data.length) } }));
-        return;
-      }
-      await write(name, o, data);
+      if (name) await write(name, data);
     },
     async delete(k) {
       const name = masuChunkFile(k);
@@ -611,19 +579,11 @@ function masuOpfsStore(dir, old) {
           gone = true;
         } catch (_) {}
       }
-      const o = oldKey(k);
-      const was = (o && (await old?.delete(o).catch(() => false))) || false;
-      return gone || was;
+      return gone;
     },
     async keys() {
       const out = [];
-      const seen = new Set();
-      for await (const name of dir.keys()) {
-        if (!masuChunkFile(name)) continue;
-        seen.add(name);
-        out.push({ url: `opfs:/${MASU_CHUNK_DIR}/${name}` });
-      }
-      for (const k of (await old?.keys().catch(() => [])) ?? []) if (!seen.has(masuChunkFile(k))) out.push(k);
+      for await (const name of dir.keys()) if (masuChunkFile(name)) out.push({ url: `opfs:/${MASU_CHUNK_DIR}/${name}` });
       return out;
     },
     async read(k, from, len) {
@@ -660,8 +620,8 @@ function masuRange(name) {
 /**
  * Whole chunks this worker fetched lately, newest last (MASU_RECENT_BYTES, and the newest one
  * whatever its size): a read asks for a chunk's blocks one range after another, and the first
- * fetched it whole (the network has no ranges of a zstd-coded chunk). They are answered from
- * here until Cache Storage has the chunk (its put is not awaited), or where there is none.
+ * fetched it whole (the bucket's object is the whole chunk, encrypted). They are answered from
+ * here until OPFS has the chunk (its put is not awaited), or where there is none.
  */
 var MASU_RECENT_BYTES = 32 << 20;
 var masuRecent = new Map();
@@ -685,7 +645,7 @@ function masuKeepRecent(url, data) {
 var MASU_SAVING_BYTES = 64 << 20;
 var masuSaving = new Map();
 var masuSavingBytes = 0;
-/** How long a chunk waits here for its put (Cache Storage can leave one pending for good under
+/** How long a chunk waits here for its put (a write can be left pending for good under
  * load: its bytes stayed here, and past MASU_SAVING_BYTES every fetch ahead stopped). */
 var MASU_PUT_MS = 30000;
 function masuKeep(cache, url, data) {
@@ -694,8 +654,7 @@ function masuKeep(cache, url, data) {
   masuSavingBytes += data.length;
   let timer;
   const late = new Promise((r) => (timer = setTimeout(r, MASU_PUT_MS)));
-  const put = cache.putBytes ? cache.putBytes(url, data) : cache.put(url, new Response(data, { headers: { [MASU_CHECKED]: '1', 'x-masu-size': String(data.length) } }));
-  Promise.race([put, late])
+  Promise.race([cache.putBytes(url, data), late])
     .catch(() => {})
     .finally(() => {
       clearTimeout(timer);
@@ -707,10 +666,6 @@ function masuKeep(cache, url, data) {
 /** Chunk `url` whole if this worker holds it: fetched lately, or on its way onto the device. */
 function masuHeld(url) {
   return masuRecent.get(url) ?? masuSaving.get(url);
-}
-/** Cache Storage's key for block `k` (of `block` bytes) of chunk `url`, kept alone. */
-function masuBlockKey(url, k, block) {
-  return `${url}?b=${k}&s=${block}`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -823,20 +778,18 @@ var masuGameWaiting = 0;
 var masuInflight = new Map();
 
 /**
- * Chunk `url` whole, fetched once whoever asks: from this worker's memory, Cache Storage, a
- * fetch of it already on its way (made `cls`'s if more urgent), else from the bucket (or the
- * server). `want`: the data is needed (not only kept on the device). `size`: its decoded length
+ * Chunk `url` whole, fetched once whoever asks: from this worker's memory, OPFS, a fetch of it
+ * already on its way (made `cls`'s if more urgent), else from the bucket. `want`: the data is needed (not only kept on the device). `size`: its decoded length
  * when known. Classes past the game's hold the chunk's Web Lock while they fetch, so the page's
  * own save does not fetch it again meanwhile (the game's do not wait for a lock).
  */
 var MASU_LOCK_WAIT_MS = 1000;
-function masuWhole(url, { cls = 0, size, want = true, directOnly = false } = {}) {
+function masuWhole(url, { cls = 0, size, want = true } = {}) {
   const mem = masuHeld(url);
   if (mem) return Promise.resolve({ data: mem, wire: 0, cached: 1 });
-  // (null: not from the bucket; the server then, as the asker wants it: once for every waiter
-  // of the same chunk, not a download each)
-  const rest = (r) => r ?? (directOnly ? null : masuRobustOnce(url, cls ? { giveUpMs: 60000 } : {}));
-  const again = (r) => (r && want && !r.data ? masuWhole(url, { cls, size, want, directOnly }) : rest(r));
+  // (one that came without its bytes, where they are wanted: asked again; the fetch itself
+  // throws when the bucket cannot give it)
+  const again = (r) => (r && want && !r.data ? masuWhole(url, { cls, size, want }) : r);
   const going = masuInflight.get(url);
   if (going) {
     going.job.cls = Math.min(going.job.cls, cls);
@@ -855,22 +808,9 @@ function masuWhole(url, { cls = 0, size, want = true, directOnly = false } = {})
     }
     return going.promise.then(again);
   }
-  return masuStartWhole(url, cls, size, want, cls > 0).then(rest);
+  return masuStartWhole(url, cls, size, want, cls > 0);
 }
 masuWhole.LATE = {};
-
-/** masuFetchRobust of `url` shared by everyone asking while it runs. */
-var masuRobustInflight = new Map();
-function masuRobustOnce(url, opt) {
-  let p = masuRobustInflight.get(url);
-  if (!p) {
-    p = masuFetchRobust(url, opt).finally(() => {
-      if (masuRobustInflight.get(url) === p) masuRobustInflight.delete(url);
-    });
-    masuRobustInflight.set(url, p);
-  }
-  return p;
-}
 
 /** masuWhole's fetch of `url`, registered in masuInflight; `lock`: under the chunk's Web Lock. */
 function masuStartWhole(url, cls, size, want, lock) {
@@ -883,7 +823,7 @@ function masuStartWhole(url, cls, size, want, lock) {
     if (mem) return { data: want ? mem : null, wire: 0, cached: 1 };
     const cache = await masuCache();
     const hit = cache && (await masuCacheStep(cache.match(url)).catch(() => undefined));
-    if (hit && hit.headers.get(MASU_CHECKED) === '1') {
+    if (hit) {
       if (!want) return { data: null, wire: 0, cached: 1 };
       try {
         return { data: new Uint8Array(await masuCacheStep(hit.arrayBuffer())), wire: 0, cached: 1 };
@@ -1007,20 +947,17 @@ function masuReadEnd(start, cached) {
 }
 
 /**
- * A store chunk straight from the bucket (S3) when the server gives a way (masu serve's
- * /store-direct: a presigned URL, the object's AES-256-GCM key and UUID): fetched, decrypted
- * (nonce first, the UUID as associated data), zstd-decoded (sake/snapz.mjs) and checked
- * against its name, then kept as one from the server would be. The bucket answers every object
- * after ~2 s whatever its size, so many at once go much faster than through the server's line
- * (worker2: 4 at once 3 MB/s; this page's own line has more). null: no way (an older server, a
- * store without S3, a chunk only on the server, an expired URL that failed): the server, as before.
+ * Store chunks come straight from the bucket (S3), the only place they are (masu serve's
+ * /store-direct gives a presigned URL, the object's AES-256-GCM key and UUID): fetched,
+ * decrypted (nonce first, the UUID as associated data), zstd-decoded (sake/snapz.mjs) and
+ * checked against its name, then kept. The bucket answers every object after 0.4-2 s whatever
+ * its size, so many go at once.
  */
 var MASU_DIRECT_KEEP_MS = 3600000;
 /** How long the server may take to say how to fetch a chunk from the bucket (a stuck server, as
- * worker2's at 19:58 JST 2026-11-09, held a read 80 s): past it, the server's own /store. */
+ * worker2's at 19:58 JST 2026-11-09, held a read 80 s): past it, asked again. */
 var MASU_DIRECT_ASK_MS = 10000;
 var masuDirectInfo = new Map();
-var masuDirectOff = false;
 var masuZstd;
 /** Whether `info` (from /store-direct) still works. */
 function masuDirectFresh(info) {
@@ -1037,15 +974,14 @@ function masuDirectValid(info) {
  * list of chunk paths: crates/masu/src/store_api.rs `direct_many`), MASU_DIRECT_MANY at a
  * time, and keeps the answers: a game's read of one of them then goes to the bucket at once,
  * without first a round trip to the server (which a read of every file the game had not read
- * yet paid before the bucket's own wait). Those the server does not name are only on the server.
- * An older server without the route: asked one by one, as before (masuDirect).
+ * yet paid before the bucket's own wait). Those it does not name are asked for again alone when
+ * read (masuDirect: the bucket lacking one is an error there).
  */
 var MASU_DIRECT_MANY = 512;
 var masuDirectAsking = new Map();
-var masuDirectManyOff = false;
 async function masuDirectMany(urls) {
   const want = urls.filter((u) => masuIsChunk(u) && u.includes('/store/chunks/') && !masuDirectFresh(masuDirectInfo.get(u)) && !masuDirectAsking.has(u));
-  if (masuDirectOff || masuDirectManyOff || !want.length || typeof fetch === 'undefined') return;
+  if (!want.length || typeof fetch === 'undefined') return;
   const runs = [];
   for (let i = 0; i < want.length; i += MASU_DIRECT_MANY) {
     const part = want.slice(i, i + MASU_DIRECT_MANY);
@@ -1064,9 +1000,6 @@ async function masuDirectMany(urls) {
       } catch (_) {
         return;
       }
-      if (r.status === 501) masuDirectOff = true;
-      // (a server without the route)
-      if (r.status === 404 || r.status === 405) masuDirectManyOff = true;
       if (!r.ok) return;
       let all;
       try {
@@ -1078,10 +1011,10 @@ async function masuDirectMany(urls) {
       if (masuDirectInfo.size > 20000) masuDirectInfo.clear();
       for (const u of part) {
         const info = all?.[u.slice(u.lastIndexOf('/store/chunks/') + 7)];
-        // (not named: only on the server, which then answers it as before)
-        const ok = masuDirectValid(info);
-        masuDirectInfo.set(u, ok ? { url: info.url, key: info.key, object: info.object, pack: masuPackValid(info.pack) ? info.pack : undefined, at: now } : { none: true, at: now });
-        if (ok) masuPackNote(u, masuDirectInfo.get(u));
+        // (not named: asked alone when read)
+        if (!masuDirectValid(info)) continue;
+        masuDirectInfo.set(u, { url: info.url, key: info.key, object: info.object, pack: masuPackValid(info.pack) ? info.pack : undefined, at: now });
+        masuPackNote(u, masuDirectInfo.get(u));
       }
     })();
     for (const u of part) masuDirectAsking.set(u, run);
@@ -1094,65 +1027,62 @@ async function masuDirectMany(urls) {
  * Chunk `url` from the bucket itself (as above). `job.cls` is the request's class
  * (MASU_CLASS; read again while it waits for the budget: a game read that joins a fetch ahead
  * of the same chunk makes it the game's), `size` its decoded length when known; `alone`: not
- * with its delivery pack's neighbours.
+ * with its delivery pack's neighbours. Asked of the server and fetched again as masuFetchRobust
+ * retries; throws once the bucket does not have it (404), or after MASU_GIVE_UP_MS.
  */
 async function masuDirect(url, job = { cls: 0 }, size, alone = false) {
   const at = url.lastIndexOf('/store/chunks/');
-  if (masuDirectOff || at < 0 || !masuIsChunk(url) || !globalThis.crypto?.subtle || typeof fetch === 'undefined') return null;
+  if (at < 0 || !masuIsChunk(url)) throw Object.assign(new Error(`not a store chunk: ${url}`), { fatal: true });
   const base = url.slice(0, at + 1);
-  let info = masuDirectInfo.get(url);
-  // (being asked for with others: that answer)
-  if (!masuDirectFresh(info) && masuDirectAsking.has(url)) {
-    await masuDirectAsking.get(url);
-    info = masuDirectInfo.get(url);
-  }
-  if (!masuDirectFresh(info)) {
-    let r;
-    try {
-      r = await fetch(`${base}store-direct/${url.slice(at + 7)}`, { cache: 'no-store', signal: AbortSignal.timeout(MASU_DIRECT_ASK_MS) });
-    } catch (_) {
-      return null;
+  const start = Date.now();
+  for (let attempt = 0, bad = 0; ; attempt++) {
+    let info = masuDirectInfo.get(url);
+    // (being asked for with others: that answer)
+    if (!masuDirectFresh(info) && masuDirectAsking.has(url)) {
+      await masuDirectAsking.get(url);
+      info = masuDirectInfo.get(url);
     }
-    // (501: a store without S3; 404: this chunk is only on the server)
-    if (r.status === 501) masuDirectOff = true;
-    if (!r.ok) return null;
+    let error;
     try {
-      info = { ...(await r.json()), at: Date.now() };
+      if (!masuDirectFresh(info)) info = await masuDirectAsk(url, base, at);
+      // (with the chunks after it in its delivery pack, one GET for them all; failing that, alone)
+      if (info.pack && !alone) {
+        const r = await masuPackRun(url, info, job, size, base);
+        if (r) return r;
+      }
+      const got = await masuFetchRobust(info.url, { giveUpMs: MASU_GIVE_UP_MS - (Date.now() - start), job });
+      const plain = await masuOpen(info, got.data).catch(() => null);
+      const data = plain && (await masuUnzstd(base, plain, size).catch(() => null));
+      if (data && masuChunkOk(url, data)) {
+        masuKeepRecent(url, data);
+        masuKeep(await masuCache(), url, data);
+        return { data, wire: got.wire, cached: got.cached };
+      }
+      if (++bad >= MASU_BAD_CHUNK) throw Object.assign(new Error(`chunk does not match its name ${bad} times`), { fatal: true });
+      error = 'chunk does not match its name';
     } catch (e) {
-      // (not JSON: a server without /store-direct answered with something else; cut short by
-      // the time limit: only this once)
-      if (e?.name !== 'TimeoutError' && e?.name !== 'AbortError') masuDirectOff = true;
-      return null;
+      if (e?.fatal) throw e;
+      error = e?.message ?? e;
     }
-    if (!masuDirectValid(info)) return null;
-    if (!masuPackValid(info.pack)) delete info.pack;
-    if (masuDirectInfo.size > 20000) masuDirectInfo.clear();
-    masuDirectInfo.set(url, info);
-    masuPackNote(url, info);
+    // (a URL that failed: a new one next time)
+    masuDirectInfo.delete(url);
+    if (Date.now() - start > MASU_GIVE_UP_MS) throw new Error(`${error} (gave up)`);
+    await masuPause(masuBackoff(attempt));
   }
-  if (info.none) return null;
-  // (with the chunks after it in its delivery pack, one GET for them all; failing that, alone)
-  if (info.pack && !alone) {
-    const r = await masuPackRun(url, info, job, size, base);
-    if (r) return r;
-  }
-  for (let bad = 0; bad < MASU_BAD_CHUNK; bad++) {
-    let got;
-    try {
-      got = await masuFetchRobust(info.url, { giveUpMs: 60000, job });
-    } catch (_) {
-      masuDirectInfo.delete(url);
-      return null;
-    }
-    const plain = await masuOpen(info, got.data).catch(() => null);
-    const data = plain && (await masuUnzstd(base, plain, size).catch(() => null));
-    if (data && masuChunkOk(url, data)) {
-      masuKeepRecent(url, data);
-      masuKeep(await masuCache(), url, data);
-      return { data, wire: got.wire, cached: got.cached };
-    }
-  }
-  return null;
+}
+
+/** The server's answer for chunk `url` (`GET store-direct/<path>`), kept; throws (final for a 404). */
+async function masuDirectAsk(url, base, at) {
+  const r = await fetch(`${base}store-direct/${url.slice(at + 7)}`, { cache: 'no-store', signal: AbortSignal.timeout(MASU_DIRECT_ASK_MS) });
+  if (r.status === 404) throw Object.assign(new Error(`the bucket does not have ${url.slice(at + 7)}`), { fatal: true });
+  if (!r.ok) throw new Error(`store-direct: HTTP ${r.status}`);
+  const info = { ...(await r.json()), at: Date.now() };
+  if (!masuDirectValid(info)) throw new Error('store-direct: not an answer');
+  if (!masuPackValid(info.pack)) delete info.pack;
+  if (masuDirectInfo.size > 20000) masuDirectInfo.clear();
+  masuDirectInfo.set(url, info);
+  masuPackNote(url, info);
+  return info;
 }
 
 /**
@@ -1195,8 +1125,7 @@ async function masuPackRun(url, info, job, size, base) {
     end += n.pack.len;
     // (here or coming already: its bytes only if a later one is taken)
     if (masuInflight.has(u) || masuHeld(u)) continue;
-    const hit = cache && (await masuCacheStep(cache.match(u)).catch(() => undefined));
-    if (hit && hit.headers.get(MASU_CHECKED) === '1') continue;
+    if (cache && (await masuCacheStep(cache.match(u)).catch(() => undefined))) continue;
     run.push({ url: u, info: n });
     last = end;
   }
@@ -1212,6 +1141,8 @@ async function masuPackRun(url, info, job, size, base) {
       .finally(() => {
         if (masuInflight.get(n.url) === entry) masuInflight.delete(n.url);
       });
+    // (a neighbour nobody reads that fails alone fails nobody)
+    entry.promise.catch(() => {});
     masuInflight.set(n.url, entry);
   }
   const out = new Map();
@@ -1300,11 +1231,9 @@ async function masuUnzstd(base, frame, size) {
 /**
  * Bytes `from..from + len` of `url`'s (whole when `from` is undefined), as masuFetchRobust's
  * result. Of a chunk, from the first place that has them: this worker's memory (a chunk it
- * fetched whole lately), Cache Storage's copy of the whole chunk (checked when it was kept;
- * Blob.slice reads only those bytes, whatever the chunk's size), its blocks kept alone (`block`
- * bytes each, as vfs.rs asks for them: `from` is a block's start); else a range from the server
- * (only what is read crosses the network, kept as blocks); a server without ranges sends the
- * whole chunk, then checked and kept whole (and in this worker's memory for the next blocks).
+ * fetched whole lately), OPFS's copy of the whole chunk (a synchronous handle reads only those
+ * bytes, whatever the chunk's size), else the whole chunk from the bucket (masuWhole: kept, and
+ * in this worker's memory for the next blocks). `block` is what vfs.rs asks for at a time.
  */
 async function masuFetchPart(url, from, len, block, cls = 0) {
   if (from === undefined) return masuIsChunk(url) ? masuWhole(url, { cls }) : masuFetchRobust(url);
@@ -1313,82 +1242,24 @@ async function masuFetchPart(url, from, len, block, cls = 0) {
   if (mem) return { data: part(mem), wire: 0, cached: 1 };
   if (!masuIsChunk(url)) return masuFetchPart(url).then((r) => ({ ...r, data: part(r.data) }));
   const cache = await masuCache();
-  block ||= len || 1;
-  const first = Math.floor(from / block);
-  const last = Math.max(first, Math.ceil((from + len) / block) - 1);
   if (cache) {
-    // (the whole chunk in OPFS: those bytes alone, through a synchronous handle)
-    const quick = cache.read && (await masuCacheStep(cache.read(url, from, len)).catch(() => null));
+    const quick = await masuCacheStep(cache.read(url, from, len)).catch(() => null);
     if (quick) return { data: quick, wire: 0, cached: 1 };
-    const hit = await masuCacheStep(cache.match(url)).catch(() => undefined);
-    if (hit && hit.headers.get(MASU_CHECKED) === '1') {
-      try {
-        const blob = await masuCacheStep(hit.blob());
-        return { data: new Uint8Array(await masuCacheStep(blob.slice(from, from + len).arrayBuffer())), wire: 0, cached: 1 };
-      } catch (_) {}
-    }
-    // (blocks kept alone: all of them, or the network; a block that does not read is not there,
-    // not a short last one)
-    const parts = [];
-    for (let k = first; k <= last; k++) {
-      const b = await masuCacheStep(cache.match(masuBlockKey(url, k, block))).catch(() => undefined);
-      const bytes = b && (await masuCacheStep(b.arrayBuffer()).catch(() => undefined));
-      if (!bytes) break;
-      parts.push(new Uint8Array(bytes));
-      // (a chunk's last block: shorter, nothing after it)
-      if (parts.at(-1).length < block) break;
-    }
-    if (parts.length === last + 1 - first || (parts.length && parts.at(-1).length < block)) {
-      const all = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
-      let at = 0;
-      for (const p of parts) all.set(p, (at += p.length) - p.length);
-      return { data: all.subarray(from - first * block, from - first * block + len), wire: 0, cached: 1 };
-    }
   }
-  // (from the bucket itself: the whole chunk, kept; the next blocks come from memory; one
-  // fetch of it whoever else asks for it now)
-  const direct = await masuWhole(url, { cls, directOnly: true });
-  if (direct?.data) return { ...direct, data: part(direct.data) };
-  // (the whole blocks asked for: what is kept)
-  const at = first * block;
-  const r = await masuFetchRobust(url, { range: [at, (last + 1) * block - at] });
-  if (!r.partial) return { ...r, data: part(r.data) };
-  if (cache) {
-    for (let k = first; k <= last; k++) {
-      const d = r.data.subarray((k - first) * block, (k + 1 - first) * block);
-      // (a short block only at the chunk's end)
-      if (d.length === block || (r.total !== undefined && k * block + d.length === r.total))
-        cache.put(masuBlockKey(url, k, block), new Response(d.slice(), { headers: { 'x-masu-size': String(d.length) } })).catch(() => {});
-    }
-  }
-  return { ...r, data: r.data.subarray(from - at, from - at + len) };
+  const r = await masuWhole(url, { cls });
+  return { ...r, data: part(r.data) };
 }
 
 /**
- * `url`'s bytes, retried as above: { data, wire (bytes over the network), cached (1: no
- * network) }. Throws for a final failure.
+ * `url`'s bytes (a file of the server's, an object of the bucket's; `opt.range` [from, len]:
+ * those bytes, `partial` when the answer is a 206 of them), retried as above: { data, wire
+ * (bytes over the network), cached (1: from the browser's HTTP cache) }. Throws for a final
+ * failure.
  */
 async function masuFetchRobust(url, opt = {}) {
   const stallMs = opt.stallMs ?? MASU_STALL_MS;
   const giveUpMs = opt.giveUpMs ?? MASU_GIVE_UP_MS;
-  const chunk = masuIsChunk(url);
-  const cache = chunk ? await masuCache() : null;
-  // opt.range [from, len]: those bytes of the decoded chunk (masuFetchPart looked on the device
-  // already); the answer has `partial` (a 206 of them, masu serve's store_api.rs) or is the
-  // whole chunk (a server without ranges), checked and kept as any
   const range = opt.range;
-  const hit = range || !cache ? undefined : await masuCacheStep(cache.match(url)).catch(() => undefined);
-  if (hit) {
-    try {
-      const data = new Uint8Array(await masuCacheStep(hit.arrayBuffer()));
-      if (hit.headers.get(MASU_CHECKED) === '1') return { data, wire: 0, cached: 1 };
-      if (masuChunkOk(url, data)) {
-        masuKeep(cache, url, data);
-        return { data, wire: 0, cached: 1 };
-      }
-      await cache.delete(url).catch(() => {});
-    } catch (_) {}
-  }
   const start = Date.now();
   const key = {};
   let after = 0;
@@ -1400,10 +1271,9 @@ async function masuFetchRobust(url, opt = {}) {
         // (the bucket's budget, for each request made: a retry is one more; opt.job's class
         // read again each time)
         if (opt.job) await masuGate(opt.job);
-        // (after a chunk that did not match, past the browser's HTTP cache: it keeps chunks for good)
-        const { response, data } = await masuFetchOnce(url, stallMs, bad > 0, range && { range: `bytes=${range[0]}-${range[0] + range[1] - 1}` });
+        const { response, data } = await masuFetchOnce(url, stallMs, range && { range: `bytes=${range[0]}-${range[0] + range[1] - 1}` });
         if (data && range && response.status === 206) {
-          // (a range: its place and length checked; a block has no name of its own to check)
+          // (a range: its place and length checked)
           const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers?.get?.('content-range') ?? '');
           if (m && +m[1] === range[0] && data.length === +m[2] - +m[1] + 1 && (data.length === range[1] || +m[2] === +m[3] - 1))
             return { data, wire: data.length, cached: 0, partial: true, total: +m[3] };
@@ -1411,19 +1281,13 @@ async function masuFetchRobust(url, opt = {}) {
           throw new Error('range is not what was asked');
         }
         if (range && response.status === 416) return { data: new Uint8Array(0), wire: 0, cached: 0, partial: true };
-        if (data && !masuChunkOk(url, data)) {
-          if (++bad >= MASU_BAD_CHUNK) throw Object.assign(new Error(`chunk does not match its name ${bad} times`), { final: true });
-          throw new Error('chunk does not match its name');
-        }
         if (data) {
-          if (chunk) masuKeepRecent(url, data);
           // (another origin's timing without Timing-Allow-Origin, as the bucket's: all zeros,
           // which said 0 bytes crossed the network for every chunk from the bucket)
           const t = typeof performance !== 'undefined' && performance.getEntriesByName?.(url).at(-1);
           const timing = t && (t.transferSize > 0 || t.decodedBodySize > 0) ? t : undefined;
           const wire = timing ? timing.transferSize : +(response.headers?.get?.('content-length') || data.length);
           const cached = timing && timing.transferSize === 0 && timing.decodedBodySize > 0 ? 1 : 0;
-          masuKeep(cache, url, data);
           return { data, wire, cached };
         }
         if (!MASU_RETRY_STATUS.includes(response.status)) throw Object.assign(new Error(`HTTP ${response.status}`), { final: true });
@@ -1508,13 +1372,13 @@ function masuFetchWorker(event) {
 
 /** The network worker's script: the functions above (and `more`), `main` its message handler. */
 function masuFetchWorkerSource(main, more = []) {
-  const vars = { MASU_CHUNKS, MASU_STALL_MS, MASU_GIVE_UP_MS, MASU_RETRY_STATUS, MASU_BAD_CHUNK, MASU_CHECKED, MASU_CACHE_MS, MASU_BRIDGE_HEADER, MASU_BRIDGE_BYTES, MASU_RECENT_BYTES, MASU_DIRECT_KEEP_MS, MASU_DIRECT_ASK_MS, MASU_DIRECT_MANY, MASU_CLASS, MASU_RATE, MASU_BURST, MASU_RESERVE, MASU_HINT_WIDTH, MASU_HINT_MAX, MASU_PACK_SPAN, MASU_PACK_MAX, MASU_CHUNK_DIR, MASU_HANDLE_MS, MASU_HANDLES, MASU_BUDGET_BYTES, MASU_BUDGET_SPIN, MASU_SAVING_BYTES, MASU_LOCK_WAIT_MS, MASU_FOLLOW, MASU_PUT_MS };
-  const fns = [masuIsChunk, masuBlake3, masuBlake3Js, masuBlake3Simd, masuChunkOk, masuBackoff, masuPause, masuFetchOnce, masuNetReport, masuCacheStep, masuCache, masuChunkFile, masuOpfsStore, masuRange, masuKeepRecent, masuKeep, masuHeld, masuBlockKey, masuBudgetInit, masuBudgetWith, masuBudgetShare, masuTake, masuDrain, masuGate, masuWhole, masuRobustOnce, masuStartWhole, masuHint, masuHintPump, masuNextAdd, masuFollow, masuReadStart, masuReadEnd, masuDirectFresh, masuDirectValid, masuDirectMany, masuPackValid, masuPackNote, masuPackRun, masuDirect, masuHex, masuOpen, masuZstdSize, masuUnzstd, masuFetchPart, masuFetchRobust, masuWarmRun, masuFetchWorker];
+  const vars = { MASU_STALL_MS, MASU_GIVE_UP_MS, MASU_RETRY_STATUS, MASU_BAD_CHUNK, MASU_CACHE_MS, MASU_BRIDGE_HEADER, MASU_BRIDGE_BYTES, MASU_RECENT_BYTES, MASU_DIRECT_KEEP_MS, MASU_DIRECT_ASK_MS, MASU_DIRECT_MANY, MASU_CLASS, MASU_RATE, MASU_BURST, MASU_RESERVE, MASU_HINT_WIDTH, MASU_HINT_MAX, MASU_PACK_SPAN, MASU_PACK_MAX, MASU_CHUNK_DIR, MASU_HANDLE_MS, MASU_HANDLES, MASU_BUDGET_BYTES, MASU_BUDGET_SPIN, MASU_SAVING_BYTES, MASU_LOCK_WAIT_MS, MASU_FOLLOW, MASU_PUT_MS };
+  const fns = [masuIsChunk, masuBlake3, masuBlake3Js, masuBlake3Simd, masuChunkOk, masuBackoff, masuPause, masuFetchOnce, masuNetReport, masuCacheStep, masuCache, masuChunkFile, masuOpfsStore, masuRange, masuKeepRecent, masuKeep, masuHeld, masuBudgetInit, masuBudgetWith, masuBudgetShare, masuTake, masuDrain, masuGate, masuWhole, masuStartWhole, masuHint, masuHintPump, masuNextAdd, masuFollow, masuReadStart, masuReadEnd, masuDirectFresh, masuDirectValid, masuDirectMany, masuPackValid, masuPackNote, masuPackRun, masuDirect, masuDirectAsk, masuHex, masuOpen, masuZstdSize, masuUnzstd, masuFetchPart, masuFetchRobust, masuWarmRun, masuFetchWorker];
   return [
     ...Object.entries(vars).map(([k, v]) => `var ${k} = ${JSON.stringify(v)};`),
     'var masuNet = { retrying: new Map(), channel: undefined, id: Math.random().toString(36).slice(2) };',
-    'var masuCacheOpen, masuRecent = new Map(), masuDirectInfo = new Map(), masuDirectOff = false, masuZstd;',
-    'var masuDirectAsking = new Map(), masuDirectManyOff = false, masuBudgetBuf, masuBudgetTag = 1, masuGameWaiting = 0, masuInflight = new Map(), masuRobustInflight = new Map(), masuKeys = new Map();',
+    'var masuCacheOpen, masuRecent = new Map(), masuDirectInfo = new Map(), masuZstd;',
+    'var masuDirectAsking = new Map(), masuBudgetBuf, masuBudgetTag = 1, masuGameWaiting = 0, masuInflight = new Map(), masuKeys = new Map();',
     'var masuHints = [], masuHintsSeen = new Set(), masuHintsGoing = 0, masuPacks = new Map(), masuSaving = new Map(), masuSavingBytes = 0;',
     "var masuNext = new Map(), masuReadSeen = new Set(), masuReads = { device: [0, 0], saving: [0, 0], coming: [0, 0], none: [0, 0], followed: 0, hinted: 0 };",
     'masuWhole.LATE = {};',
@@ -1525,8 +1389,8 @@ function masuFetchWorkerSource(main, more = []) {
 
 /**
  * The game's store chunks fetched onto the device while it plays (masuWarm): `urls` in order,
- * `width` at a time, each the device lacks fetched as the game's reads would (from the bucket
- * itself when the server gives a way, else the server) and kept in Cache Storage, where the
+ * `width` at a time, each the device lacks fetched as the game's reads would (from the bucket)
+ * and kept in OPFS, where the
  * game's later reads find it (masuFetchPart). The bucket answers each object after 1-5 s from
  * far away (worker2 to the Mac: 俺の姿が､透明に!'s CG mode and mode changes waited that long for
  * every file read first), so a file read later is on the device by then. `flag` (Int32Array

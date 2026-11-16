@@ -1,8 +1,7 @@
-// The chunk cache in real Chromium (web/src/net.ts trimChunks): FastCDC chunks of MiBs in Cache
-// Storage, the origin's quota made small (estimate() made to say so) and other data in
+// The chunk store in real Chromium (web/src/net.ts trimChunks): FastCDC chunks of MiBs in OPFS
+// (masu-chunks), the origin's quota made small (estimate() made to say so) and other data in
 // OPFS (saves, states): after a trim the chunks are within half the quota and, with the rest,
-// the origin within 80% of it, counted by the chunks' real sizes (also those kept without
-// x-masu-size, by an older page), the oldest gone first.
+// the origin within 80% of it, counted by the chunks' real sizes, the oldest gone first.
 //
 //   node tests/chunk-trim-browser.mjs   (web's node_modules installed; PLAYWRIGHT as elsewhere)
 import assert from "node:assert/strict";
@@ -35,12 +34,12 @@ try {
   }, 200 * MiB);
   await page.addScriptTag({ content: script });
   const r = await page.evaluate(async (MiB) => {
-    const cache = await caches.open("masu-chunks-v1");
-    // 40 chunks of 4 MiB (160 MiB), every 5th one kept without its size
+    const cache = await window.masuNet.chunkCache();
+    // 40 chunks of 4 MiB (160 MiB), written in order
     for (let i = 0; i < 40; i++) {
       const hex = i.toString(16).padStart(32, "0");
-      const headers = i % 5 ? { "x-masu-size": String(4 * MiB) } : {};
-      await cache.put(`${location.origin}/store/chunks/00/${hex}`, new Response(new Uint8Array(4 * MiB).fill(i), { headers }));
+      await window.masuNet.storeChunk(cache, `${location.origin}/store/chunks/00/${hex}`, new Uint8Array(4 * MiB).fill(i));
+      await new Promise((r) => setTimeout(r, 5));
     }
     // 30 MiB of states in OPFS
     const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("states", { create: true });
@@ -49,10 +48,9 @@ try {
     await w.close();
     const before = await navigator.storage.estimate();
     await window.masuNet.trimChunks();
-    const keys = await cache.keys();
-    let bytes = 0;
-    for (const k of keys) bytes += (await (await cache.match(k)).arrayBuffer()).byteLength;
-    return { before, left: keys.map((k) => parseInt(k.url.slice(-32), 16)), bytes };
+    const kept = await cache.list();
+    const bytes = kept.reduce((a, k) => a + k.size, 0);
+    return { before, left: kept.map((k) => parseInt(k.url.slice(-32), 16)).sort((a, b) => a - b), bytes };
   }, MiB);
   // half of 200 MiB is 100; 80% of it less the 30 MiB of states (and the little else) ~130:
   // 100 MiB of chunks at most, 25 of the 40
@@ -68,10 +66,8 @@ try {
     await w.write(new Uint8Array(120 * MiB).fill(8));
     await w.close();
     await window.masuNet.trimChunks();
-    const cache = await caches.open("masu-chunks-v1");
-    let bytes = 0;
-    for (const k of await cache.keys()) bytes += (await (await cache.match(k)).arrayBuffer()).byteLength;
-    return { bytes, est: await navigator.storage.estimate() };
+    const kept = await (await window.masuNet.chunkCache()).list();
+    return { bytes: kept.reduce((a, k) => a + k.size, 0), est: await navigator.storage.estimate() };
   }, MiB);
   // 160 - 150 of states: about 10 MiB of chunks left at most (the browser's usage lags the
   // deletes: fewer may stay)
@@ -82,9 +78,10 @@ try {
   // killed tab cut short) counts nothing, and storeChunk's Response body lands whole
   const r3 = await page.evaluate(async (MiB) => {
     const root = await navigator.storage.getDirectory();
-    for (const n of ["states"]) await root.removeEntry(n, { recursive: true }).catch(() => {});
-    await caches.delete("masu-chunks-v1");
+    await root.removeEntry("states", { recursive: true }).catch(() => {});
     const dir = await root.getDirectoryHandle("masu-chunks", { create: true });
+    // (emptied, not removed: the page's store keeps the folder's handle)
+    for (const name of [...(await Array.fromAsync(dir.keys()))]) await dir.removeEntry(name);
     const hex = (i) => (99 - i).toString(16).padStart(32, "0");
     for (let i = 0; i < 40; i++) {
       await window.masuNet.storeChunk(

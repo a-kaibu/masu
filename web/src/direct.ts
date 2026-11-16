@@ -2,9 +2,9 @@
 // does it for the game (that runs as a plain script inside sake.js, so it has its own copy):
 // masu serve's /store-direct gives a presigned URL, the object's AES-256-GCM key and UUID; the
 // object is fetched, opened (nonce first, the UUID as associated data, crates/masu/src/envelope.rs),
-// zstd-decoded by sake's snapz and checked against its name. The bucket answers each object
-// after ~2 s whatever its size but takes many at once, so saving a whole game to the device
-// (offline.ts) goes many at a time this way instead of through the server's own line.
+// zstd-decoded by sake's snapz and checked against its name. The bucket is the only place the
+// chunks are (the server never sends one); it answers each object after ~2 s whatever its size
+// but takes many at once, so saving a whole game to the device (offline.ts) goes many at a time.
 
 import { blake3Hex } from "./blake3";
 import { CLASS } from "./budget";
@@ -46,9 +46,9 @@ export function isPackSpan(v: unknown): v is PackSpan {
 export const PACK_RUN_BYTES = 32 << 20;
 export const PACK_RUN_MAX = 64;
 
-/** How long the server may take to say how to fetch a chunk from the bucket (then: the server's /store). */
+/** How long the server may take to say how to fetch a chunk from the bucket. */
 export const DIRECT_ASK_MS = 10000;
-/** Fetches of one object that may not open or match its name before the server is asked instead. */
+/** Fetches of one object that may not open or match its name before it is given up on. */
 const BAD = 3;
 
 /** zstd frame -> bytes. */
@@ -159,15 +159,14 @@ export function isDirectInfo(v: unknown): v is DirectInfo {
   );
 }
 
-/**
- * Fetches chunks from the bucket for one store (its /store/ URL). `get(hex)`: the decoded,
- * checked chunk, or null when there is no way (a store without S3 or an older server: then
- * never again for this fetcher; a chunk only on the server, a stuck server, an object that
- * would not open): the caller asks the server.
- */
 /** Chunks one POST /store-direct asks for (host/fetch-bridge.js MASU_DIRECT_MANY). */
 export const DIRECT_MANY = 512;
 
+/**
+ * Fetches chunks from the bucket for one store (its /store/ URL). `get(hex)`: the decoded,
+ * checked chunk, or null when the bucket does not give it (not there, a server that did not
+ * answer, an object that would not open or match): a failure for the caller.
+ */
 export function directFetcher(
   store: string,
   opt: {
@@ -191,22 +190,18 @@ export function directFetcher(
     info: unknown,
     retry?: RetryOptions,
   ): Promise<Uint8Array<ArrayBuffer> | null | typeof EXPIRED>;
-  off(): boolean;
 } {
   const request = opt.request ?? ((i, n) => fetch(i, n));
   const unzstd = opt.unzstd ?? snapzUnzstd;
   const base = new URL("../store-direct/", store).href;
-  let off = typeof crypto === "undefined" || !crypto.subtle;
-  // what POST /store-direct said (null: only on the server), and whether the server has it
+  // what POST /store-direct said (null: the bucket does not have it)
   const known = new Map<string, DirectInfo | null>();
-  let many = true;
   return {
-    off: () => off,
     /** Asks the server how to fetch `hexes` at once, DIRECT_MANY at a time (store_api.rs
      * direct_many): their gets then go to the bucket without a round trip to the server each. */
     async prime(hexes, signal) {
       const want = hexes.filter((h) => !known.has(h));
-      for (let i = 0; many && !off && i < want.length; i += DIRECT_MANY) {
+      for (let i = 0; i < want.length; i += DIRECT_MANY) {
         const part = want.slice(i, i + DIRECT_MANY);
         let r: Response;
         try {
@@ -223,9 +218,6 @@ export function directFetcher(
           signal?.throwIfAborted();
           return;
         }
-        if (r.status === 501) off = true;
-        // (an older server: one by one)
-        if (r.status === 404 || r.status === 405) many = false;
         if (!r.ok) return;
         const all = (await r.json().catch(() => null)) as Record<string, unknown> | null;
         if (!all) return;
@@ -238,7 +230,7 @@ export function directFetcher(
     span(hexes, from) {
       const [maxBytes, maxRun] = opt.packRun ?? [PACK_RUN_BYTES, PACK_RUN_MAX];
       const first = known.get(hexes[from]!)?.pack;
-      if (!first || off) return 1;
+      if (!first) return 1;
       let end = first.offset + first.len;
       let n = 1;
       while (from + n < hexes.length && n < maxRun) {
@@ -254,7 +246,7 @@ export function directFetcher(
       const all = hexes
         .map((h) => [h, known.get(h)] as const)
         .filter((x): x is [string, DirectInfo & { pack: PackSpan }] => !!x[1]?.pack);
-      if (!all.length || off) return out;
+      if (!all.length) return out;
       // (the first one's pack: others are left out)
       const pack = all[0]![1].pack;
       const infos = all.filter(([, i]) => i.pack.id === pack.id);
@@ -288,7 +280,6 @@ export function directFetcher(
     },
     async get(hex, retry = {}) {
       retry.signal?.throwIfAborted();
-      if (off) return null;
       let info: unknown = known.get(hex);
       // (used once: see getRun)
       known.delete(hex);
@@ -311,17 +302,9 @@ export function directFetcher(
             ? AbortSignal.any([retry.signal, AbortSignal.timeout(opt.askMs ?? DIRECT_ASK_MS)])
             : AbortSignal.timeout(opt.askMs ?? DIRECT_ASK_MS);
           const r = await request(`${base}chunks/${hex.slice(0, 2)}/${hex}`, { cache: "no-store", signal });
-          // (501: a store without S3; 404: this chunk is only on the server)
-          if (r.status === 501) off = true;
+          // (404: the bucket does not have it)
           if (!r.ok) return null;
-          try {
-            info = await r.json();
-          } catch (e) {
-            // (not JSON: a server without /store-direct answered with something else)
-            if (!(e instanceof DOMException && (e.name === "TimeoutError" || e.name === "AbortError")))
-              off = true;
-            return null;
-          }
+          info = await r.json().catch(() => null);
         } catch {
           if (retry.signal?.aborted) throw retry.signal.reason;
           return null;
@@ -338,7 +321,7 @@ export function directFetcher(
           );
         } catch (e) {
           if (retry.signal?.aborted) throw e;
-          // (an expired URL: asked for again; others: the server)
+          // (an expired URL: asked for again; others: given up on)
           if (e instanceof HttpError && (e.status === 401 || e.status === 403)) return EXPIRED;
           if (e instanceof HttpError || bad + 1 >= BAD) return null;
           continue;

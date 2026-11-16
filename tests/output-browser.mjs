@@ -33,7 +33,7 @@ run("pack", game, "flood");
 const port = 9300 + Math.floor(Math.random() * 200) * 2;
 const server = spawn(
   bin,
-  ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"],
+  ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")],
   { stdio: "inherit" },
 );
 process.on("exit", () => server.kill());

@@ -72,166 +72,88 @@ test("a tree's chunk hashes (holes left out)", () => {
   expect(treeChunks(tsv)).toEqual([h("a"), h("b")]);
 });
 
-/** A Cache Storage stand-in: what was put, with its headers. */
-function fakeCache() {
-  const m = new Map<string, Response>();
-  const k = (u: string | Request) => (typeof u === "string" ? u : u.url);
-  const cache = {
-    match: async (u: string | Request) => m.get(k(u))?.clone(),
-    put: async (u: string | Request, r: Response) => void m.set(k(u), r),
-    delete: async (u: string | Request) => m.delete(k(u)),
+/** A device store stand-in (OPFS's shape): `kept` in write order, each [url, bytes]. */
+function deviceStore(kept: [string, number][]) {
+  const m = new Map<string, number>(kept);
+  const store: ChunkStore = {
+    match: async () => undefined,
+    put: async () => undefined,
+    keys: async () => [...m.keys()].map((url) => ({ url })),
+    list: async () => [...m].map(([url, size], time) => ({ url, size, time })),
+    delete: async (k) => m.delete(typeof k === "string" ? k : "url" in k ? k.url : String(k)),
   };
-  return { m, cache: cache as unknown as Cache };
+  return { m, store };
 }
 
-test("a chunk is checked against its name: kept marked, fetched again past the HTTP cache when damaged", async () => {
+test("a chunk on the device is read from it; one the bucket lacks fails, never asked of the server", async () => {
   const good = bytes(5000);
   const hex = blake3Hex(good);
-  const inits: RequestInit[] = [];
-  const damaged = Uint8Array.from(good);
-  damaged[100]! ^= 1;
-  const request: typeof fetch = async (_u, init) => (
-    inits.push(init!),
-    new Response(inits.length === 1 ? damaged : good)
-  );
-  const { m, cache } = fakeCache();
-  const r = await getChunk("https://s/store/", hex, { cache, request });
-  expect(Array.from(r.data)).toEqual(Array.from(good));
-  expect(r.cached).toBe(false);
-  expect(inits.map((i) => i.cache)).toEqual([undefined, "reload"]);
-  const kept = m.get(`https://s/store/chunks/${hex.slice(0, 2)}/${hex}`)!;
-  expect(kept.headers.get("x-masu-checked")).toBe("1");
-  // next time from the cache, no request
-  const again = await getChunk("https://s/store/", hex, { cache, request });
-  expect(again.cached).toBe(true);
-  expect(inits.length).toBe(2);
-});
-
-test("a chunk that never matches fails; one kept before the check is checked once", async () => {
-  const good = bytes(3000);
-  const hex = blake3Hex(good);
-  let n = 0;
-  const wrong: typeof fetch = async () => (n++, new Response(bytes(10)));
-  await expect(getChunk("https://s/store/", hex, { cache: null, request: wrong })).rejects.toThrow(
-    /does not match/,
-  );
-  expect(n).toBe(3);
   const url = `https://s/store/chunks/${hex.slice(0, 2)}/${hex}`;
-  // kept by an older page (no mark): checked, kept again with the mark
-  const { m, cache } = fakeCache();
-  m.set(url, new Response(good));
-  const none: typeof fetch = async () => {
-    throw new Error("no request expected");
+  const asked: string[] = [];
+  const request: typeof fetch = async (u) => {
+    const s = typeof u === "string" ? u : u instanceof URL ? u.href : u.url;
+    asked.push(s);
+    return new Response(null, { status: 404 });
   };
-  expect((await getChunk("https://s/store/", hex, { cache, request: none })).cached).toBe(true);
-  await new Promise((r) => setTimeout(r, 0));
-  expect(m.get(url)!.headers.get("x-masu-checked")).toBe("1");
-  // damaged in the cache: dropped, fetched
-  m.set(url, new Response(bytes(10)));
-  const fine: typeof fetch = async () => new Response(good);
-  const r = await getChunk("https://s/store/", hex, { cache, request: fine });
-  expect(r.cached).toBe(false);
+  const store: ChunkStore = {
+    match: async (k) => (k === url ? new Response(good) : undefined),
+    put: async () => undefined,
+    delete: async () => false,
+    keys: async () => [],
+    list: async () => [],
+  };
+  const r = await getChunk("https://s/store/", hex, { cache: store, request });
+  expect(r.cached).toBe(true);
   expect(Array.from(r.data)).toEqual(Array.from(good));
+  expect(asked).toEqual([]);
+  const other = blake3Hex(bytes(10));
+  await expect(getChunk("https://s/store/", other, { cache: store, request })).rejects.toThrow(/bucket/);
+  expect(asked.length).toBeGreaterThan(0);
+  expect(asked.every((u) => !u.includes("/store/chunks/"))).toBe(true);
 });
 
-test("the chunk cache is trimmed by the chunks' real sizes, the saved games' chunks kept", async () => {
-  const { m, cache } = fakeCache();
-  const keyed = cache as unknown as { keys: () => Promise<Request[]> };
-  keyed.keys = async () => [...m.keys()].map((u) => new Request(u));
-  const g = globalThis as unknown as { caches?: unknown };
-  const old = g.caches;
-  g.caches = { open: async () => cache };
-  const storage = { estimate: async () => ({ quota: 4 << 20 }), persist: async () => true };
-  Object.defineProperty(navigator, "storage", { value: storage, configurable: true });
-  try {
-    // limit: half the quota, 2 MiB. 20 chunks of 64 KiB (1.25 MiB): all stay, though 20 x 256
-    // KiB would be over
-    const put = (i: number, n: number, sized = true) =>
-      m.set(
-        `https://s/store/chunks/00/${i.toString(16).padStart(32, "0")}`,
-        new Response(new Uint8Array(n), { headers: sized ? { "x-masu-size": String(n) } : {} }),
-      );
-    for (let i = 0; i < 20; i++) put(i, 64 << 10);
-    await trimChunks();
-    expect(m.size).toBe(20);
-    // 12 more of 256 KiB without the header (an older page's): 4.25 MiB, the oldest go, but
-    // not the saved ones (0 and 1)
-    for (let i = 20; i < 32; i++) put(i, 256 << 10, false);
-    const saved = new Set([0, 1].map((i) => i.toString(16).padStart(32, "0")));
-    await trimChunks(async () => saved);
-    const left = [...m.keys()].map((u) => parseInt(u.slice(-32), 16));
-    expect(left).toContain(0);
-    expect(left).toContain(1);
-    const bytes = left.reduce((a, i) => a + (i < 20 ? 64 << 10 : 256 << 10), 0);
-    expect(bytes).toBeLessThanOrEqual(2 << 20);
-    expect(bytes).toBeGreaterThan((2 << 20) - (256 << 10));
-  } finally {
-    g.caches = old;
-  }
-});
-
-test("a big quota keeps a small chunk cache whole (the 2 GB cap is not negative)", async () => {
-  const { m, cache } = fakeCache();
-  (cache as unknown as { keys: () => Promise<Request[]> }).keys = async () =>
-    [...m.keys()].map((u) => new Request(u));
-  const g = globalThis as unknown as { caches?: unknown };
-  const old = g.caches;
-  g.caches = { open: async () => cache };
-  for (const quota of [100e9, 0]) {
-    Object.defineProperty(navigator, "storage", {
-      value: { estimate: async () => ({ quota }) },
-      configurable: true,
-    });
-    for (let i = 0; i < 3; i++)
-      m.set(`https://s/store/chunks/00/${String(i).padStart(32, "0")}`, new Response(new Uint8Array(10)));
-    try {
-      await trimChunks();
-      expect(m.size, `quota ${quota}`).toBe(3);
-    } finally {
-      g.caches = old;
-    }
-    g.caches = { open: async () => cache };
-  }
-  g.caches = old;
-});
-
-/** trimChunks over a stand-in cache: `chunks` [size said, body bytes] oldest first; what stays. */
+/** trimChunks over a stand-in store: `sizes` oldest first; the indexes that stay. */
 async function trimmed(
-  chunks: [number | null, number][],
+  sizes: number[],
   storage: { quota: number; usage?: number },
   saved = new Set<string>(),
 ): Promise<number[]> {
-  const { m, cache } = fakeCache();
-  (cache as unknown as { keys: () => Promise<Request[]> }).keys = async () =>
-    [...m.keys()].map((u) => new Request(u));
   const hex = (i: number) => i.toString(16).padStart(32, "0");
-  for (const [i, [said, body]] of chunks.entries())
-    m.set(
-      `https://s/store/chunks/00/${hex(i)}`,
-      new Response(new Uint8Array(body), { headers: said === null ? {} : { "x-masu-size": String(said) } }),
-    );
-  const g = globalThis as unknown as { caches?: unknown };
-  const old = g.caches;
-  g.caches = { open: async () => cache };
+  const { m, store } = deviceStore(sizes.map((n, i) => [`opfs:/masu-chunks/${hex(i)}`, n]));
   Object.defineProperty(navigator, "storage", {
     value: { estimate: async () => storage, persist: async () => true },
     configurable: true,
   });
-  try {
-    await trimChunks(async () => saved);
-  } finally {
-    g.caches = old;
-  }
+  await trimChunks(async () => saved, store);
   return [...m.keys()].map((u) => parseInt(u.slice(-32), 16));
 }
+
+test("the chunks are trimmed by their sizes, the saved games' chunks kept", async () => {
+  // limit: half the quota, 2 MiB. 20 chunks of 64 KiB (1.25 MiB): all stay
+  expect((await trimmed(Array(20).fill(64 << 10), { quota: 4 << 20 })).length).toBe(20);
+  // 12 more of 256 KiB: 4.25 MiB, the oldest go, but not the saved ones (0 and 1)
+  const saved = new Set([0, 1].map((i) => i.toString(16).padStart(32, "0")));
+  const left = await trimmed(
+    [...Array(20).fill(64 << 10), ...Array(12).fill(256 << 10)],
+    { quota: 4 << 20 },
+    saved,
+  );
+  expect(left).toContain(0);
+  expect(left).toContain(1);
+  const kept = left.reduce((a, i) => a + (i < 20 ? 64 << 10 : 256 << 10), 0);
+  expect(kept).toBeLessThanOrEqual(2 << 20);
+  expect(kept).toBeGreaterThan((2 << 20) - (256 << 10));
+});
+
+test("a big quota keeps a small chunk store whole (the 2 GB cap is not negative)", async () => {
+  for (const quota of [100e9, 0])
+    expect((await trimmed([10, 10, 10], { quota })).length, `quota ${quota}`).toBe(3);
+});
 
 test("16 MiB chunks are counted as 16 MiB: 100 of them (1.6 GiB) are trimmed to the limit", async () => {
   const MiB = 1 << 20;
   // quota 1 GiB: the chunks' share is 512 MiB, so 32 of 16 MiB stay (the newest)
-  const left = await trimmed(
-    Array.from({ length: 100 }, () => [16 * MiB, 16] as [number, number]),
-    { quota: 1024 * MiB },
-  );
+  const left = await trimmed(Array(100).fill(16 * MiB), { quota: 1024 * MiB });
   expect(left.length).toBe(32);
   expect(left[0]).toBe(68);
 });
@@ -240,20 +162,8 @@ test("what else the origin keeps (saves, states) counts: chunks give way so the 
   const MiB = 1 << 20;
   // quota 1000 MiB, 600 MiB of states besides 20 chunks of 16 MiB (320 MiB): 800 MiB in all
   // allowed, so 200 MiB of chunks (12) stay
-  const left = await trimmed(
-    Array.from({ length: 20 }, () => [16 * MiB, 16] as [number, number]),
-    { quota: 1000 * MiB, usage: 920 * MiB },
-  );
+  const left = await trimmed(Array(20).fill(16 * MiB), { quota: 1000 * MiB, usage: 920 * MiB });
   expect(left.length).toBe(12);
-});
-
-test("a chunk kept without its size (an older page's) is measured, not guessed", async () => {
-  // 3 chunks of 1 MiB with no header, quota 4 MiB (2 MiB for chunks): one goes
-  const left = await trimmed(
-    Array.from({ length: 3 }, () => [null, 1 << 20] as [null, number]),
-    { quota: 4 << 20 },
-  );
-  expect(left).toEqual([1, 2]);
 });
 
 test("property: after a trim the chunks fit their share, only the oldest unsaved went", async () => {
@@ -270,11 +180,7 @@ test("property: after a trim the chunks fit their share, only the oldest unsaved
         .filter(() => rnd(5) === 0)
         .map((i) => i.toString(16).padStart(32, "0")),
     );
-    const left = await trimmed(
-      sizes.map((s) => [s, 0] as [number, number]),
-      { quota, usage: others ? others + total : 0 },
-      saved,
-    );
+    const left = await trimmed(sizes, { quota, usage: others ? others + total : 0 }, saved);
     const limit = Math.min(quota * 0.5, others ? quota * 0.8 - others : Infinity);
     const isSaved = (i: number) => saved.has(i.toString(16).padStart(32, "0"));
     const kept = left.reduce((a, i) => a + sizes[i]!, 0);
@@ -350,17 +256,11 @@ test("trim: the oldest written go first, counted only when gone (property, seede
         return true;
       },
     };
-    const g = globalThis as unknown as { caches?: unknown };
-    const old = g.caches;
     Object.defineProperty(navigator, "storage", {
       value: { estimate: async () => ({ quota }) },
       configurable: true,
     });
-    try {
-      await trimChunks(async () => saved, store);
-    } finally {
-      g.caches = old;
-    }
+    await trimChunks(async () => saved, store);
     const limit = quota * 0.5;
     // model: in trim order, skip saved, delete; stop when what is left fits
     const order = trimOrder(kept);

@@ -132,6 +132,8 @@ while True:
         os.makedirs(jit, exist_ok=True)
         srv = subprocess.Popen([f'{BIN}/masu', 'serve', '--foreground', '--web', WEB, '--store', f'{STORES}/{tid}',
                                 '--jit', jit, '--listen', f'127.0.0.1:{PORT}', '--no-prerun',
+                                # (the game's chunks from a stand-in bucket: the server gives none)
+                                '--dev-bucket', f'{jit}/bucket',
                                 # (web games' origin; the default, PORT + 1, is the next lane's PORT)
                                 '--game-listen', f'127.0.0.1:{PORT + 1000}'],
                                stdout=open(f'{od}/server.log', 'w'), stderr=subprocess.STDOUT)

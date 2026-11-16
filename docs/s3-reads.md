@@ -2,7 +2,11 @@
 
 Games are stored in Hugging Face Storage Buckets (S3 API) as encrypted FastCDC chunks of 4 MiB
 on average (docs/chunk-size.md). The browser fetches them straight from the bucket with signed
-URLs (masu serve `/store-direct`) and decrypts them itself. This note says why play from the
+URLs (masu serve `/store-direct`) and decrypts them itself. The server gives no chunk itself
+(2026-11-16: no `/store/chunks/`, no fallback): it only signs the URLs and serves the catalog
+(`trees/`, `games/`), so a chunk the bucket lacks fails. A store that is not in a bucket is
+served with `masu serve --dev-bucket <dir>`, a stand-in bucket on the same machine that the
+whole store is pushed to at the start (the tests do this). This note says why play from the
 bucket felt slow, and what the browser does about it.
 
 ## What the bucket costs
@@ -26,7 +30,7 @@ Every request to the bucket goes through the network worker:
 - **Fetch once.** The worker keeps one promise per chunk in flight (`masuInflight`). A second
   reader of the same chunk joins it, and a game read that joins a lower class's fetch raises that
   fetch to the game's class. Contexts outside the worker (the page's save to the device) take a
-  Web Lock `masu-chunk:<hex>` and look in the Cache first.
+  Web Lock `masu-chunk:<hex>` and look on the device first.
 - **One budget.** A token bucket in a SharedArrayBuffer holds the request budget: it refills at
   `RATE` (9) a second up to `BURST` (40). The page and the worker share the same buffer
   (web/src/budget.ts has the page's copy, tested against the worker's). Classes, most urgent
@@ -155,15 +159,14 @@ MASU_STORAGE_CONFIG=... masu storage packs saga_planets-2
 ## Chunks on the device: OPFS (web/src/chunkstore.ts)
 
 Chunks fetched or saved to the device are kept in the origin private file system, in the folder
-`masu-chunks`, one file each, named by the chunk's hex name (a block kept alone:
-`<hex>?b=<k>&s=<block>`). Cache Storage (`masu-chunks-v1`) was used before. It is still read,
-so games saved before stay saved, and an entry there goes when it is kept or deleted again.
+`masu-chunks`, one file each, named by the chunk's hex name. Only whole chunks are kept, each
+checked against its name before. (Cache Storage, `masu-chunks-v1`, was used before 2026-11-14;
+it is no longer read.)
 
 - The network worker reads a block of a whole chunk through a read-only synchronous access
   handle, kept open 5 s for the next blocks (32 at most). Measured in headless Chromium
-  (tests/opfs-read-browser.mjs): a 256 KiB block of a 4 MiB chunk takes 1.4 ms against Cache
-  Storage's 1.6 ms. At that size the disk dominates; the gain is bigger for small reads. It also
-  avoids Cache Storage, which sometimes did not answer at all (MASU_CACHE_MS).
+  (tests/opfs-read-browser.mjs): a 256 KiB block of a 4 MiB chunk takes 1.2-1.4 ms (Cache
+  Storage took 1.6 ms, and sometimes did not answer at all).
 - A file exists empty from its creation, and its bytes land whole when it is closed. An empty
   file reads as not there.
 - A file the worker holds open cannot be deleted. A delete from the page then leaves it, and

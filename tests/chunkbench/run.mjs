@@ -77,7 +77,7 @@ for (const [i, kib] of sizes.entries()) {
   }
   const chunks = readFileSync(join(store, "trees/g.tsv"), "utf8").split("\n").filter((l) => l.startsWith("f\t")).reduce((a, l) => a + (l.split("\t")[5]?.split(",").length ?? 0), 0);
   const port = 9300 + i * 10;
-  const server = spawn(bin, ["serve", "--foreground", "--web", resolve(process.env.WEB ?? "web/dist"), "--store", store, "--jit", join(work, `jit-${kib}`), "--listen", `127.0.0.1:${port}`, "--no-prerun"], { stdio: ["ignore", "ignore", "inherit"] });
+  const server = spawn(bin, ["serve", "--foreground", "--web", resolve(process.env.WEB ?? "web/dist"), "--store", store, "--jit", join(work, `jit-${kib}`), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")], { stdio: ["ignore", "ignore", "inherit"] });
   const base = `http://127.0.0.1:${port}/`;
   for (let k = 0; k < 100; k++) {
     if (await fetch(`${base}play.html`).then((r) => r.ok, () => false)) break;

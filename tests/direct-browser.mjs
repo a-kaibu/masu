@@ -2,8 +2,8 @@
 // masu serve's /store-direct). The page is cross-origin isolated like masu's; the bucket is
 // another origin that redirects (s3.hf.co to its CDN) and answers with CORS; objects are sealed
 // as crates/masu/src/envelope.rs seals them and zstd-coded by sake's own snapz. Every way back
-// to the server is checked too: a wrong key, a chunk the bucket lacks, a damaged body, a server
-// without S3.
+// that goes wrong is checked too: a wrong key and a chunk the bucket lacks fail (never the
+// server's: it gives no chunk), a damaged body is fetched again, a stuck answer asked again.
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -53,7 +53,7 @@ const make = (label, n, seed, how = {}) => {
   const hash = blake3(data);
   const key = randomBytes(32);
   const object = randomUUID();
-  chunks.set(hash, { label, data, key, object, sealed: seal(key, object, zstd(data)), how, gets: 0 });
+  chunks.set(hash, { label, data, key, object, sealed: seal(key, object, zstd(data)), how, gets: 0, asked: 0 });
   return `/store/chunks/${hash.slice(0, 2)}/${hash}`;
 };
 const whole = make('whole', 300000, 1);
@@ -64,7 +64,6 @@ const damaged = make('damaged', 110000, 5, { damagedOnce: true });
 const big = make('big', 6 << 20, 6);
 
 const hits = { store: 0, direct: 0, bucket: 0, redirect: 0 };
-let noS3 = false;
 let bucketOrigin;
 const app = createServer(async (req, res) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
@@ -80,10 +79,9 @@ const app = createServer(async (req, res) => {
   if (!c) return res.writeHead(404), res.end();
   if (m[1]) {
     hits.direct++;
-    if (noS3) return res.writeHead(501), res.end();
     if (c.how.missing) return res.writeHead(404), res.end();
-    // (a stuck server: never answers)
-    if (c.how.stuck) return;
+    // (a stuck server: the first ask never answered)
+    if (c.how.stuck && !c.asked++) return;
     const key = c.how.wrongKey ? randomBytes(32) : c.key;
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'application/json');
@@ -175,30 +173,19 @@ try {
   // 6 MiB: more than one transfer buffer, and its last bytes
   [r] = await since(() => read(page, [big, `${big}#${(6 << 20) - 10}+10/262144`]));
   assert.deepEqual(r, [expect(big), expect(big, (6 << 20) - 10, 10)]);
-  // a key that does not open it, a chunk the bucket lacks: the server's, right
+  // a key that does not open it, a chunk the bucket lacks: the read fails, never the server's
   for (const p of [wrongKey, missing]) {
     [r, d] = await since(() => read(page, [p]));
-    assert.deepEqual(r, [expect(p)], p);
-    assert.equal(d.store, 1, `${chunks.get(p.slice(-32)).label}: from the server`);
+    assert.ok(r[0].error, `${chunks.get(p.slice(-32)).label}: fails`);
+    assert.equal(d.store, 0, `${chunks.get(p.slice(-32)).label}: not asked of the server`);
   }
   // a body damaged on the way: fetched again from the bucket
   [r, d] = await since(() => read(page, [damaged]));
   assert.deepEqual(r, [expect(damaged)]);
   assert.deepEqual([d.store, d.bucket], [0, 2], 'damaged once: the bucket again');
 
-  // a server without S3: asked once, then never again
-  noS3 = true;
-  for (const c of chunks.values()) c.gets = 0;
-  const fresh = [make('no s3 a', 50000, 7), make('no s3 b', 60000, 8), make('no s3 c', 70000, 9)];
-  const page2 = await open();
-  await page2.evaluate(async () => { await caches.delete('masu-chunks-v1'); await (await navigator.storage.getDirectory()).removeEntry('masu-chunks', { recursive: true }).catch(() => {}); });
-  [r, d] = await since(() => read(page2, fresh));
-  assert.deepEqual(r, fresh.map((p) => expect(p)));
-  assert.deepEqual(d, { store: 3, direct: 1, bucket: 0, redirect: 0 }, 'no S3: asked once');
-
-  // a server stuck on /store-direct (worker2 at 19:58 JST held a read 80 s): the server's
-  // /store after the time limit, and the bucket again for the next chunk
-  noS3 = false;
+  // a server stuck on /store-direct (worker2 at 19:58 JST held a read 80 s): asked again after
+  // the time limit, then from the bucket
   const stuck = make('stuck ask', 60000, 14, { stuck: true });
   const after = make('after stuck', 50000, 15);
   const page4 = await open();
@@ -206,15 +193,14 @@ try {
   [r, d] = await since(() => read(page4, [stuck, after]));
   assert.deepEqual(r, [expect(stuck), expect(after)]);
   assert.ok(Date.now() - t4 < 8000, `not held: ${Date.now() - t4} ms`);
-  assert.deepEqual([d.store, d.bucket], [1, 1], 'the stuck one from /store, the next from the bucket');
+  assert.deepEqual([d.store, d.bucket], [0, 2], 'both from the bucket, the stuck one asked again');
 
   // the game's chunks fetched onto the device while it plays (masuWarm, web/src/warm.ts): none
-  // while the game waits for a read of its own, then all of them, from the bucket (the server for
-  // one it lacks), kept where the game's reads look; one already on the device not again
-  noS3 = false;
+  // while the game waits for a read of its own, then all of them, from the bucket (one it lacks
+  // failed), kept where the game's reads look; one already on the device not again
   const warmed = [make('warm a', 80000, 10), make('warm b', 1500000, 11), make('warm c', 90000, 12, { missing: true }), make('warm d', 70000, 13)];
   const page3 = await open();
-  await page3.evaluate(async () => { await caches.delete('masu-chunks-v1'); await (await navigator.storage.getDirectory()).removeEntry('masu-chunks', { recursive: true }).catch(() => {}); });
+  await page3.evaluate(async () => { await (await navigator.storage.getDirectory()).removeEntry('masu-chunks', { recursive: true }).catch(() => {}); });
   await read(page3, [warmed[3]]);
   const warm = (paths, { busyFirst, stopFirst, busyWidth } = {}) =>
     page3.evaluate(
@@ -235,9 +221,8 @@ try {
         // (one that waits for the game for good: a failure, not a hang)
         await Promise.race([end, new Promise((_, no) => setTimeout(() => no(new Error('fetching ahead stalled')), 30000))]);
         const cache = await (async () => {
-      // (the device's chunk store: OPFS, web/src/chunkstore.ts; Cache Storage before)
+      // (the device's chunk store: OPFS, web/src/chunkstore.ts)
       const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle('masu-chunks', { create: true });
-      const old = await caches.open('masu-chunks-v1');
       return {
         async match(u) {
           const name = u.slice(u.lastIndexOf('/') + 1);
@@ -245,7 +230,7 @@ try {
             const f = await (await dir.getFileHandle(name)).getFile();
             if (f.size) return new Response(f, { headers: { 'x-masu-size': String(f.size) } });
           } catch {}
-          return old.match(u);
+          return undefined;
         },
       };
     })();
@@ -270,9 +255,9 @@ try {
   assert.deepEqual(d, { store: 0, direct: 0, bucket: 0, redirect: 0 });
   [w, d] = await since(() => warm(warmed, { busyFirst: true }));
   assert.equal(w.early, 0, 'nothing while the game waits');
-  assert.deepEqual(w.last, { end: true, done: 4, fetched: 3, bytes: 80000 + 1500000 + 90000, failed: 0 });
-  assert.deepEqual(w.kept, warmed.map((p) => chunks.get(p.slice(-32)).data.length), 'all on the device');
-  assert.deepEqual([d.bucket, d.store], [2, 1], 'from the bucket, the server for the one it lacks, the kept one not again');
+  assert.deepEqual(w.last, { end: true, done: 4, fetched: 2, bytes: 80000 + 1500000, failed: 1 });
+  assert.deepEqual(w.kept, warmed.map((p, i) => (i === 2 ? -1 : chunks.get(p.slice(-32)).data.length)), 'on the device, but the one the bucket lacks');
+  assert.deepEqual([d.bucket, d.store], [2, 0], 'from the bucket, the kept one not again');
   // what the game reads next is on the device: no network
   [r, d] = await since(() => read(page3, [warmed[1], `${warmed[0]}#100+50/262144`]));
   assert.deepEqual(r, [expect(warmed[1]), expect(warmed[0], 100, 50)]);
@@ -296,10 +281,10 @@ try {
   // busyWidth of them go on all the same, all fetched; none of them twice
   const busy = [make('busy a', 60000, 14), make('busy b', 70000, 15), make('busy c', 50000, 16, { missing: true }), make('busy d', 40000, 17), make('busy e', 30000, 18)];
   [w, d] = await since(() => warm(busy, { busyWidth: 1 }));
-  assert.deepEqual(w.last, { end: true, done: 5, fetched: 5, bytes: 60000 + 70000 + 50000 + 40000 + 30000, failed: 0 }, 'all while the game waits');
-  assert.deepEqual(w.kept, busy.map((p) => chunks.get(p.slice(-32)).data.length));
-  assert.deepEqual([d.bucket, d.store], [4, 1], 'each once');
-  console.log('direct browser: bucket fetch, redirect, decrypt, zstd, blocks, cache and every fallback passed; fetched ahead');
+  assert.deepEqual(w.last, { end: true, done: 5, fetched: 4, bytes: 60000 + 70000 + 40000 + 30000, failed: 1 }, 'all while the game waits');
+  assert.deepEqual(w.kept, busy.map((p, i) => (i === 2 ? -1 : chunks.get(p.slice(-32)).data.length)));
+  assert.deepEqual([d.bucket, d.store], [4, 0], 'each once');
+  console.log('direct browser: bucket fetch, redirect, decrypt, zstd, blocks, device store, failures (never the server) passed; fetched ahead');
 } finally {
   await browser.close();
   app.close();

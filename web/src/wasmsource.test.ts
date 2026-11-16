@@ -61,6 +61,9 @@ function memoryStore(): ChunkStore & { files: Map<string, B> } {
     async keys() {
       return [...files.keys()].map((url) => ({ url }));
     },
+    async list() {
+      return [...files].map(([url, b], time) => ({ url, size: b.length, time }));
+    },
   };
 }
 
@@ -153,7 +156,7 @@ describe("sakeWasmBytes", () => {
     expect(w2.seen.some((s) => s.includes("bucket.example"))).toBe(false);
   });
 
-  it("keeps the checked wasm in OPFS (not the old Cache Storage): the next start reads it with that emptied (2026-11-14 review)", async () => {
+  it("keeps the checked wasm in OPFS: the next start reads it from there (2026-11-14 review)", async () => {
     const files = new Map<string, B>();
     const dir = {
       async getFileHandle(name: string, o: { create?: boolean } = {}) {
@@ -180,8 +183,7 @@ describe("sakeWasmBytes", () => {
         yield* files.keys();
       },
     };
-    const old = memoryStore();
-    const device = opfsStore(dir as unknown as FileSystemDirectoryHandle, old as unknown as Cache);
+    const device = opfsStore(dir as unknown as FileSystemDirectoryHandle);
     const w = world({});
     const r = await sakeWasmBytes("sake.wasm", URL_, STORE, {
       request: w.request,
@@ -192,13 +194,11 @@ describe("sakeWasmBytes", () => {
     await new Promise((r) => setTimeout(r, 10));
     const key = `${STORE}chunks/${w.hex.slice(0, 2)}/${w.hex}`;
     expect(files.get(chunkFileName(key))).toEqual(w.wasm);
-    expect(old.files.size).toBe(0);
-    old.files.clear();
     const w2 = world({});
     const again = await sakeWasmBytes("sake.wasm", URL_, STORE, {
       request: async (i, n) => (urlOf(i).includes("sake-direct") ? w.request(i, n) : w2.request(i, n)),
       unzstd: identity,
-      device: async () => opfsStore(dir as unknown as FileSystemDirectoryHandle, null),
+      device: async () => opfsStore(dir as unknown as FileSystemDirectoryHandle),
     });
     expect(again.from).toBe("device");
     expect(w2.seen.some((s) => s.includes("bucket.example"))).toBe(false);

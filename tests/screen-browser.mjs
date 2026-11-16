@@ -32,7 +32,7 @@ run("pack", game, "screenfit");
 const port = 9300 + Math.floor(Math.random() * 200) * 2;
 const server = spawn(
   bin,
-  ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"],
+  ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")],
   { stdio: "inherit" },
 );
 process.on("exit", () => server.kill());
@@ -143,9 +143,8 @@ try {
     const done = lines.find((l) => /^fetched ahead: /.test(l));
     const kept = await page.evaluate(async () => {
       const cache = await (async () => {
-      // (the device's chunk store: OPFS, web/src/chunkstore.ts; Cache Storage before)
+      // (the device's chunk store: OPFS, web/src/chunkstore.ts)
       const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("masu-chunks", { create: true });
-      const old = await caches.open("masu-chunks-v1");
       return {
         async match(u) {
           const name = u.slice(u.lastIndexOf("/") + 1);
@@ -153,7 +152,7 @@ try {
             const f = await (await dir.getFileHandle(name)).getFile();
             if (f.size) return new Response(f, { headers: { "x-masu-size": String(f.size) } });
           } catch {}
-          return old.match(u);
+          return undefined;
         },
       };
     })();

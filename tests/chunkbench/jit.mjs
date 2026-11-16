@@ -27,7 +27,7 @@ run("pack", join(work, "game"), "f");
 // (REPS rounds: kura saves regions after the program ran 20 s; each round's time printed)
 run("add-game", "f", "--title", "flatbench", "--tree", "f", "--exe", "flatbench.exe", "--no-meta", "--arg", process.env.REPS ?? "12", "--arg", "all", "--arg", "x");
 const port = 9400;
-const server = spawn(bin, ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"], { stdio: ["ignore", "ignore", "inherit"] });
+const server = spawn(bin, ["serve", "--foreground", "--web", resolve("web/dist"), "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")], { stdio: ["ignore", "ignore", "inherit"] });
 const base = `http://127.0.0.1:${port}/`;
 for (let k = 0; k < 100; k++) {
   if (await fetch(`${base}play.html`).then((r) => r.ok, () => false)) break;

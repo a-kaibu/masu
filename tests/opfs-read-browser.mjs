@@ -1,9 +1,8 @@
 // Real Chromium: the network worker's reads of saved chunks (host/fetch-bridge.js masuOpfsStore,
 // web/src/chunkstore.ts), as masuFetchPart reads them: 256 KiB blocks of 4 MiB chunks at
-// random places, from OPFS through read-only synchronous access handles, against Cache Storage
-// (match, then a slice of the body's blob) as before. Checks the bytes, that OPFS is not slower,
-// that the old entries in Cache Storage still read through the store, and that a page's delete
-// goes through once the worker's handles are closed. Prints the times.
+// random places, from OPFS through read-only synchronous access handles, against one handle
+// read straight. Checks the bytes, that a page's delete goes through once the worker's handles
+// are closed, and prints the times.
 //   node tests/opfs-read-browser.mjs          (PLAYWRIGHT as elsewhere)
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -35,26 +34,16 @@ self.onmessage = async () => {
   const data = (i) => { const d = new Uint8Array(SIZE); for (let k = 0; k < SIZE; k += 4096) d[k] = (i * 31 + k / 4096) & 255; return d; };
   const root = await navigator.storage.getDirectory();
   await root.removeEntry('masu-chunks', { recursive: true }).catch(() => {});
-  await caches.delete('masu-chunks-v1');
-  const old = await caches.open('masu-chunks-v1');
-  const store = masuOpfsStore(await root.getDirectoryHandle('masu-chunks', { create: true }), old);
-  const resp = (d) => new Response(d, { headers: { 'x-masu-checked': '1', 'x-masu-size': String(d.length) } });
-  // N chunks in OPFS (through the store), N others in Cache Storage as an older page kept them
-  // (half through put's Response, half as bytes, putBytes: masuKeep's way; the writes timed)
-  let tPut = 0, tBytes = 0;
+  const store = masuOpfsStore(await root.getDirectoryHandle('masu-chunks', { create: true }));
+  let tBytes = 0;
   for (let i = 0; i < N; i++) {
     const d = data(i), t0 = performance.now();
-    if (i & 1) await store.putBytes(url(i), d);
-    else await store.put(url(i), resp(d));
-    if (i & 1) tBytes += performance.now() - t0;
-    else tPut += performance.now() - t0;
+    await store.putBytes(url(i), d);
+    tBytes += performance.now() - t0;
   }
-  // (a key that is no chunk file's: to Cache Storage, as put sends it)
+  // (a key that is no chunk's: not kept)
   await store.putBytes(location.origin + '/store/trees/x.tsv', new Uint8Array([1, 2, 3]));
-  const other = await old.match(location.origin + '/store/trees/x.tsv');
-  const otherOk = !!other && (await other.arrayBuffer()).byteLength === 3;
-  const bytesChecked = (await store.match(url(1)))?.headers.get('x-masu-checked') === '1';
-  for (let i = N; i < 2 * N; i++) await old.put(url(i), resp(data(i)));
+  const otherOk = !(await store.match(location.origin + '/store/trees/x.tsv'));
   let x = 5;
   const rnd = (n) => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) >>> 8) % n;
   const plan = Array.from({ length: READS }, () => [rnd(N), rnd(SIZE / BLOCK) * BLOCK]);
@@ -76,23 +65,13 @@ self.onmessage = async () => {
     }
     hs.forEach((h) => h?.close());
   } catch (e) { mode = String(e); }
-  t = performance.now();
-  for (const [i, at] of plan) {
-    const hit = await old.match(url(i + N));
-    const b = new Uint8Array(await (await hit.blob()).slice(at, at + BLOCK).arrayBuffer());
-    if (!ok(i + N, at, b)) bad++;
-  }
-  const cache = (performance.now() - t) / READS;
-  // old entries through the store: match reads them; read() does not (not in OPFS)
-  const m = await store.match(url(N + 1));
-  const oldOk = m && (await m.arrayBuffer()).byteLength === SIZE && (await store.read(url(N + 1), 0, 10)) === null;
   // a page's delete of a chunk the worker holds open: refused until the worker closes its handles
   await store.read(url(0), 0, 10);
   let refused = false;
   try { await root.getDirectoryHandle('masu-chunks').then((d) => d.removeEntry(hex(0))); } catch (_) { refused = true; }
   store.closeAll();
   const after = await store.delete(url(0));
-  postMessage({ raw, mode, opfs, cache, bad, oldOk, refused, after, tPut, tBytes, otherOk, bytesChecked, gone: (await store.read(url(0), 0, 10)) === null });
+  postMessage({ raw, mode, opfs, bad, refused, after, tBytes, otherOk, gone: (await store.read(url(0), 0, 10)) === null });
 };`,
           ],
           { type: 'text/javascript' },
@@ -106,14 +85,10 @@ self.onmessage = async () => {
     });
   }, source);
   console.log(`(one handle straight: ${r.raw.toFixed(3)} ms ${r.mode})`);
-  console.log(`opfs-read: 256 KiB block of a 4 MiB chunk: OPFS sync ${r.opfs.toFixed(3)} ms, Cache Storage ${r.cache.toFixed(3)} ms (${(r.cache / r.opfs).toFixed(1)}x)`);
-  console.log(`opfs-write: 4 MiB chunk put ${(r.tPut / 6).toFixed(2)} ms, putBytes ${(r.tBytes / 6).toFixed(2)} ms`);
-  assert.equal(r.bad, 0, 'every block as kept (both ways of putting)');
-  assert.ok(r.bytesChecked, 'a chunk put as bytes reads back as checked');
-  assert.ok(r.otherOk, 'putBytes of a key that is no chunk goes to Cache Storage');
-  assert.ok(r.oldOk, "Cache Storage's old entries read through the store");
-  // (disk-bound at 256 KiB here: 1.1-1.2x; not slower, with room for a busy CI machine)
-  assert.ok(r.opfs <= r.cache * 1.5, 'OPFS not slower than Cache Storage');
+  console.log(`opfs-read: 256 KiB block of a 4 MiB chunk: OPFS sync ${r.opfs.toFixed(3)} ms`);
+  console.log(`opfs-write: 4 MiB chunk putBytes ${(r.tBytes / 12).toFixed(2)} ms`);
+  assert.equal(r.bad, 0, 'every block as kept');
+  assert.ok(r.otherOk, 'a key that is no chunk is not kept');
   assert.ok(r.refused, 'a delete of an open file refused (as the store expects)');
   assert.ok(r.after && r.gone, "the worker's own delete closes its handles first");
   console.log('opfs-read-browser: ok');

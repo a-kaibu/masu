@@ -28,49 +28,36 @@ globalThis.Worker = class {
       const tries = new Map();
       const body = (length) => Uint8Array.from({length}, (_, i) => i % 251).buffer;
       const NAMES = ${JSON.stringify(names)};
-      // Cache Storage as the browser's: bodies kept, Blob.slice reading only its bytes (counted)
+      // the device's chunk store (OPFS in the browser): kept bodies, reads of parts counted
       MASU_RECENT_BYTES = 1;
       const kept = new Map();
       let fetches = 0, slices = 0;
-      globalThis.caches = {open: async () => ({
-        match: async (u) => {
-          const d = kept.get(u);
-          return d && {headers: {get: (k) => d.h[k] ?? null}, arrayBuffer: async () => d.b.slice().buffer,
-            blob: async () => ({slice: (a, b) => ({arrayBuffer: async () => (slices++, d.b.slice(a, b).buffer)})})};
-        },
-        put: async (u, r) => void kept.set(u, {b: new Uint8Array(await r.arrayBuffer()), h: Object.fromEntries(r.headers)}),
+      masuCacheOpen = Promise.resolve({
+        match: async (u) => { const d = kept.get(u); return d && {arrayBuffer: async () => d.slice().buffer}; },
+        putBytes: async (u, d) => void kept.set(u, d.slice()),
+        read: async (u, a, n) => { const d = kept.get(u); return d ? (slices++, d.slice(a, a + n)) : null; },
         delete: async (u) => kept.delete(u),
-      })};
+      });
+      // (the stand-in bucket's objects are the chunks themselves: no key, no zstd)
+      masuOpen = async (info, c) => c;
+      masuUnzstd = async (base, f) => f;
       globalThis.fetch = async (url, init) => {
         const n = (tries.get(url) ?? 0) + 1;
         tries.set(url, n);
-        // (how many chunk fetches and Cache Storage slices so far, as a body's length)
+        // (how many bucket fetches and device reads of parts so far, as a body's length)
         if (url === 'count' || url === 'slices') return {ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(url === 'count' ? fetches : slices)};
-        // (a server without S3: no chunk from the bucket itself; tests/direct-browser.mjs has one)
-        if (url.includes('/store-direct/')) return {ok: false, status: 501};
-        if (url.includes('/chunks/')) fetches++;
-        // store chunks: the bytes their name says (the 262144-byte one damaged the first time,
-        // and then only past the HTTP cache), any other name 1000 bytes that never match
-        const chunk = /[/]chunks[/][0-9a-f]{2}[/]([0-9a-f]{32})$/.exec(url);
+        // the server says where in the bucket; it never has a chunk itself
+        const ask = /[/]store-direct[/]chunks[/][0-9a-f]{2}[/]([0-9a-f]{32})$/.exec(url);
+        if (ask) return {ok: true, status: 200, json: async () => ({url: 'https://bucket/' + ask[1], key: '0'.repeat(64), object: '00000000-0000-4000-8000-000000000000'})};
+        if (url.includes('/store/chunks/')) throw new Error('a chunk asked of the server: ' + url);
+        // the bucket's objects: the bytes their name says (the 262144-byte one damaged the
+        // first time), any other name 1000 bytes that never match
+        const chunk = /^https:[/][/]bucket[/]([0-9a-f]{32})$/.exec(url);
         if (chunk) {
+          fetches++;
           const length = NAMES[chunk[1]] ?? 1000;
           const data = new Uint8Array(body(length));
-          // ranges of the decoded chunk (masu serve's store_api.rs), but from "old" (a server
-          // without them: the whole chunk); "bad" answers the wrong place the first time
-          const range = /^bytes=([0-9]+)-([0-9]+)$/.exec(init?.headers?.range ?? '');
-          // "warm": the page's read-ahead fetched the whole chunk (200, zstd-coded) into the
-          // browser's HTTP cache; Chromium answers a range of it from that entry, coded bytes
-          // that fail to decode, unless the request keeps out of the cache (tests/range-cache-browser.mjs)
-          if (range && url.startsWith('https://warm/') && init?.cache !== 'no-store') throw new TypeError('Failed to fetch');
-          if (range && !url.startsWith('https://old/')) {
-            const a = +range[1];
-            if (a >= length) return {ok: false, status: 416, headers: {get: () => null}};
-            const b = Math.min(+range[2], length - 1);
-            const off = url.startsWith('https://bad/') && n === 1 ? 1 : 0;
-            return {ok: true, status: 206, headers: {get: (k) => (k === 'content-range' ? 'bytes ' + (a + off) + '-' + (b + off) + '/' + length : null)},
-              arrayBuffer: async () => data.slice(a, b + 1).buffer};
-          }
-          if (length === 262144 && (n === 1 || init?.cache !== 'reload')) data[1000] ^= 1;
+          if (length === 262144 && n === 1) data[1000] ^= 1;
           return {ok: true, status: 200, arrayBuffer: async () => data.buffer};
         }
         await new Promise(r => setTimeout(r, url === 'slow' ? 30 : 1));
@@ -176,65 +163,33 @@ test('a chunk is checked against its name: fetched again when damaged, a failure
 });
 const nameOf = (n) => vectors.find((v) => v[0] === 'p' && +v[1] === n)[2];
 const want = (from, len, n) => Array.from({length: Math.max(0, Math.min(from + len, n) - from)}, (_, i) => (from + i) % 251);
-test('block ranges of a chunk: only they cross the network, kept as blocks; a whole chunk kept is read by slices', async () => {
+test('blocks of a chunk: the whole chunk from the bucket once, its other blocks from memory', async () => {
   const c = `https://s/store/chunks/ab/${nameOf(262143)}`;
   const B = 65536;
-  const r = await request([`${c}#0+100/${B}`, `${c}#65536+70000/${B}`, `${c}#196608+65535/${B}`, 'count', 'slices',
-    `${c}#65536+65536/${B}`, `${c}#0+262143/${B}`, 'count', c, 'count', `${c}#7+262136/${B}`, `${c}#300000+5/${B}`, 'count', 'slices'].join('|'));
+  const r = await request([`${c}#0+100/${B}`, `${c}#65536+70000/${B}`, `${c}#196608+65535/${B}`, 'count', `${c}#300000+5/${B}`, c, 'count'].join('|'));
   assert.ok(!r.error, r.error);
-  const [a, b, e, n1, s1, f, g, n2, whole, n3, h, past, n4, s4] = r.data;
+  const [a, b, e, n1, past, whole, n2] = r.data;
   assert.deepEqual(a, want(0, 100, 262143));
   assert.deepEqual(b, want(65536, 70000, 262143));
   // (the chunk's last block, short)
   assert.deepEqual(e, want(196608, 65535, 262143));
-  assert.equal(n1.length, 3, 'a request per range');
-  assert.equal(s1.length, 0);
-  // (blocks 1 and 0..3 kept alone: no network)
-  assert.deepEqual(f, want(65536, 65536, 262143));
-  assert.deepEqual(g, want(0, 262143, 262143));
-  assert.equal(n2.length, 3);
-  // the whole chunk (the page's): fetched and kept; its ranges then by slices
-  assert.deepEqual(whole, want(0, 262143, 262143));
-  assert.equal(n3.length, 4);
-  assert.deepEqual(h, want(7, 262136, 262143));
+  assert.equal(n1.length, 1, 'one fetch for every block');
   assert.deepEqual(past, []);
-  assert.equal(n4.length, 4);
+  assert.deepEqual(whole, want(0, 262143, 262143));
+  assert.equal(n2.length, 1);
 });
-test('a server without ranges: the whole chunk once (checked, kept), its other blocks from it', async () => {
-  const c = `https://old/store/chunks/ab/${nameOf(200000)}`;
-  const d = `https://old/store/chunks/ab/${nameOf(262143)}`;
-  const r = await request([`${c}#0+100/65536`, `${c}#100000+70000/65536`, `${c}#196608+65536/65536`, 'count', `${d}#5+10/65536`, `${c}#7+1000/65536`, 'count', 'slices'].join('|'));
+test('a chunk pushed out of memory: its blocks read from the device by parts, not fetched again', async () => {
+  const c = `https://s/store/chunks/ab/${nameOf(200000)}`;
+  const d = `https://s/store/chunks/ab/${nameOf(262143)}`;
+  const r = await request([`${c}#0+100/65536`, `${d}#5+10/65536`, 'count', `${c}#7+1000/65536`, 'count', 'slices'].join('|'));
   assert.ok(!r.error, r.error);
-  const [a, b, e, n1, f, g, n2, s2] = r.data;
+  const [a, f, n1, g, n2, s2] = r.data;
   assert.deepEqual(a, want(0, 100, 200000));
-  assert.deepEqual(b, want(100000, 70000, 200000));
-  assert.deepEqual(e, want(196608, 65536, 200000));
-  assert.equal(n1.length, 1, 'one fetch for three ranges');
   assert.deepEqual(f, want(5, 10, 262143));
-  // (the other chunk pushed this one out of the worker's memory: Cache Storage by a slice)
+  assert.equal(n1.length, 2);
   assert.deepEqual(g, want(7, 1000, 200000));
-  assert.equal(n2.length, 2);
-  assert.equal(s2.length, 1);
-});
-test('a range answered for another place is asked again', async () => {
-  const c = `https://bad/store/chunks/ab/${nameOf(200000)}`;
-  const r = await request([`${c}#65536+65536/65536`, 'count'].join('|'));
-  assert.ok(!r.error, r.error);
-  assert.deepEqual(r.data[0], want(65536, 65536, 200000));
-  assert.equal(r.data[1].length, 2);
-});
-test('ranges of a chunk the HTTP cache holds whole (read ahead by the page) keep out of that cache', async () => {
-  const c = `https://warm/store/chunks/ab/${nameOf(262143)}`;
-  const B = 65536;
-  // (random places and lengths, seeded: every one the decoded chunk's bytes)
-  let x = 7;
-  const next = (n) => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) >>> 8) % n;
-  const asks = Array.from({length: 12}, () => [next(262143 + 1000), 1 + next(3 * B)]);
-  const t = Date.now();
-  const r = await request(asks.map(([from, len]) => `${c}#${from}+${len}/${B}`).join('|'));
-  assert.ok(!r.error, r.error);
-  asks.forEach(([from, len], i) => assert.deepEqual(r.data[i], want(from, len, 262143), `${from}+${len}`));
-  assert.ok(Date.now() - t < 1000, 'no retries');
+  assert.equal(n2.length, 2, 'nothing more from the bucket');
+  assert.equal(s2.length, 1, 'one read of a part on the device');
 });
 test('ranges parse only at the end of a name', () => {
   const masuRange = new Function(`${source}; return masuRange;`)();
@@ -300,8 +255,7 @@ test('the zstd CLI\'s frames say the sizes they hold (differential, when zstd is
 
 test('a chunk whose put never settles leaves after MASU_PUT_MS, and the fetches ahead go on', async () => {
   const s = scope('MASU_PUT_MS = 30', '{ keep: masuKeep, held: masuHeld, bytes: () => masuSavingBytes, saving: () => masuSaving.size }');
-  const stuck = { put: () => new Promise(() => {}) };
-  globalThis.Response ??= class { constructor(b, o) { this.b = b; this.o = o; } };
+  const stuck = { putBytes: () => new Promise(() => {}) };
   for (let i = 0; i < 8; i++) s.keep(stuck, `u${i}`, new Uint8Array(1000));
   assert.equal(s.bytes(), 8000);
   assert.ok(s.held('u3'));
@@ -309,28 +263,33 @@ test('a chunk whose put never settles leaves after MASU_PUT_MS, and the fetches 
   assert.equal(s.bytes(), 0);
   assert.equal(s.saving(), 0);
   // (a put that settles first still ends it at once)
-  s.keep({ put: async () => {} }, 'v', new Uint8Array(10));
+  s.keep({ putBytes: async () => {} }, 'v', new Uint8Array(10));
   await new Promise((r) => setTimeout(r, 5));
   assert.equal(s.bytes(), 0);
 });
 
-test('waiters of one chunk the bucket did not give share one fallback download', async () => {
+test('waiters of one chunk share one download from the bucket; a failed one fails them all, never the server', async () => {
   const s = scope(`
-    var robust = 0;
+    var direct = 0, fail = false;
     masuCache = async () => undefined;
-    masuDirect = async () => null;
-    masuFetchRobust = async (url) => { robust++; await new Promise((r) => setTimeout(r, 20)); return { data: new Uint8Array([1, 2, 3]), wire: 3 }; };
-  `, '{ whole: masuWhole, robust: () => robust }');
+    masuFetchRobust = async (url) => { throw new Error('the server asked for ' + url); };
+    masuDirect = async () => { direct++; await new Promise((r) => setTimeout(r, 20)); if (fail) throw new Error('gone'); return { data: new Uint8Array([1, 2, 3]), wire: 3 }; };
+  `, '{ whole: masuWhole, direct: () => direct, fail: () => (fail = true) }');
   const got = await Promise.all([0, 0, 2, 1, 0].map((cls) => s.whole('chunks/ab/x', { cls })));
-  assert.equal(s.robust(), 1);
+  assert.equal(s.direct(), 1);
   for (const g of got) assert.deepEqual(Array.from(g.data), [1, 2, 3]);
   await s.whole('chunks/ab/x');
-  assert.equal(s.robust(), 2, 'a later read fetches again (nothing is kept here past the download)');
+  assert.equal(s.direct(), 2, 'a later read fetches again (nothing is kept here past the download)');
+  s.fail();
+  const all = await Promise.allSettled([0, 1, 0].map((cls) => s.whole('chunks/ab/x', { cls })));
+  assert.deepEqual(all.map((a) => a.status), ['rejected', 'rejected', 'rejected']);
+  assert.equal(s.direct(), 3);
 });
 
 test('the network worker\'s script has every function and variable the bridge uses', () => {
   const src = scope('', 'masuFetchWorkerSource("")');
-  for (const name of ['masuRobustOnce', 'masuZstdSize', 'MASU_PUT_MS', 'masuRobustInflight', 'masuKeys']) assert.ok(src.includes(name), name);
+  for (const name of ['masuDirectAsk', 'masuZstdSize', 'MASU_PUT_MS', 'masuDirectAsking', 'masuKeys']) assert.ok(src.includes(name), name);
   // (it runs: every name it mentions is defined in it)
-  assert.doesNotThrow(() => new Function(`${src}; masuZstdSize(new Uint8Array(8)); masuRobustOnce;`)());
+  assert.doesNotThrow(() => new Function(`${src}; masuZstdSize(new Uint8Array(8)); masuDirectAsk;`)());
+  for (const gone of ['MASU_CHUNKS', 'masuRobustOnce', 'masuBlockKey', 'masuDirectOff', 'caches.open']) assert.ok(!src.includes(gone), gone);
 });

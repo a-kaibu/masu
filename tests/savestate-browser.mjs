@@ -66,7 +66,7 @@ async function stopServer() {
 }
 async function serve(web) {
   await stopServer();
-  server = spawn(bin, ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"], { stdio: "inherit" });
+  server = spawn(bin, ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")], { stdio: "inherit" });
   for (let i = 0; i < 100; i++) {
     if (server.exitCode !== null) throw new Error(`server exited: ${server.exitCode}`);
     if (await fetch(`${base}apps/builds`).then((r) => r.ok, () => false)) return;

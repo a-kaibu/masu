@@ -60,7 +60,7 @@ def req(port, method='GET', path='/games', headers=None, body=None):
 
 def serve(home, port, *extra):
     env = dict(os.environ, HOME=home, XDG_RUNTIME_DIR='', XDG_CONFIG_HOME=f'{home}/.config')
-    p = subprocess.Popen([BIN, 'serve', '--foreground', '--listen', f'127.0.0.1:{port}', '--no-prerun', *extra],
+    p = subprocess.Popen([BIN, 'serve', '--foreground', '--listen', f'127.0.0.1:{port}', '--no-prerun', '--dev-bucket', f'{home}/bucket', *extra],
                          env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(600):
         try:

@@ -185,15 +185,6 @@ pub(crate) mod gc_tests {
         pub(crate) fn gets(&self) -> usize {
             self.gets.load(SeqCst)
         }
-        /// The most requests on their way at once since the last call (then counted anew).
-        pub(crate) fn take_most(&self) -> usize {
-            self.most.swap(0, SeqCst)
-        }
-        /// Refuse the next `n` requests with `status`.
-        pub(crate) fn refuse_next(&self, n: usize, status: u16) {
-            self.fail_status.store(status as usize, SeqCst);
-            self.fail_next.store(n, SeqCst);
-        }
         /// Some(status) when this request is refused.
         fn refuse(&self) -> Option<StatusCode> {
             let n = self.requests.fetch_add(1, SeqCst) + 1;
@@ -1417,7 +1408,6 @@ pub(crate) mod gc_tests {
             for read in reads {
                 assert_eq!(&*read.unwrap().unwrap(), &big);
             }
-            assert!(!s.warm("chunks/big").await.unwrap());
             // (the page is sent to the bucket even so: storage.rs direct)
             assert!(s.direct("chunks/big", 60).await.unwrap().is_some());
         }).await.expect("readers waited for disk instead of sharing the pending bytes");
@@ -1431,6 +1421,50 @@ pub(crate) mod gc_tests {
         assert_eq!(disk.files().0.len(), 1);
         assert_eq!(&*s.get("chunks/big").await.unwrap().unwrap(), &big);
         assert_eq!(f.gets.load(SeqCst), 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// push_trees: what the server made itself reaches the bucket: the chunks the bucket lacks
+    /// (each once, those it has not again), then the lists; the page reads them back through
+    /// /store-direct as any game's. A chunk neither has fails the push and names nothing.
+    #[tokio::test]
+    async fn push_trees_puts_what_only_the_disk_has() {
+        let (f, s, dir) = serve(0).await;
+        let store = dir.join("store");
+        let chunk = |k: u32| format!("{:02x}{k:030x}", 0x10 + k);
+        let mut tsv = String::from("vnvm-tree\t2\t64\n");
+        for k in 0..4u32 {
+            let h = chunk(k);
+            std::fs::create_dir_all(store.join("chunks").join(&h[..2])).unwrap();
+            std::fs::write(store.join("chunks").join(&h[..2]).join(&h), format!("chunk {k}")).unwrap();
+            // (the same chunk twice in a tree: sent once)
+            tsv += &format!("f\t644\t0\tf{k}\t7\t{h}:7\nf\t644\t0\tcopy{k}\t7\t{h}:7\n");
+        }
+        tsv += "d\t755\t0\tdir\n";
+        std::fs::create_dir_all(store.join("trees")).unwrap();
+        std::fs::write(store.join("trees/prefix32.tsv"), &tsv).unwrap();
+        // (one the bucket has already)
+        s.put(&format!("chunks/10/{}", chunk(0)), b"chunk 0").await.unwrap();
+        let before = f.objects.locked().len();
+        s.push_trees(&store, &["prefix32"]).await.unwrap();
+        assert_eq!(f.objects.locked().len() - before, 3 + 1, "three chunks and the list");
+        for k in 0..4u32 {
+            let h = chunk(k);
+            assert!(s.direct(&format!("chunks/{}/{h}", &h[..2]), 60).await.unwrap().is_some());
+            assert_eq!(&*s.get(&format!("chunks/{}/{h}", &h[..2])).await.unwrap().unwrap(), format!("chunk {k}").as_bytes());
+        }
+        assert_eq!(&*s.get("trees/prefix32.tsv").await.unwrap().unwrap(), tsv.as_bytes());
+        // again: only the list
+        let before = f.objects.locked().len();
+        s.push_trees(&store, &["prefix32"]).await.unwrap();
+        assert_eq!(f.objects.locked().len() - before, 1);
+        // a chunk on neither side: an error, and the list not sent
+        let gone = format!("ff{:030x}", 9);
+        std::fs::write(store.join("trees/bench.tsv"), format!("vnvm-tree\t2\t64\nf\t644\t0\tx\t1\t{gone}:1\n")).unwrap();
+        let e = s.push_trees(&store, &["bench"]).await.unwrap_err();
+        assert!(format!("{e:#}").contains(&gone), "{e:#}");
+        assert!(!s.has("trees/bench.tsv").unwrap());
+        assert!(s.push_trees(&store, &["none"]).await.is_err());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1448,45 +1482,12 @@ pub(crate) mod gc_tests {
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
             }
         }).await.unwrap();
-        assert!(!disk.has(id));
+        assert!(disk.pending(id).is_none() && !disk.path(id).exists());
         assert_eq!(disk.kept(), 0);
         // Oversized objects never enqueue a write or consume pending space.
         disk.write_later(id, vec![0; 4097]);
         assert!(disk.pending.locked().is_empty());
         std::fs::remove_file(dir).unwrap();
-    }
-
-    /// warm: on the disk without a get, no second download, the get after it reads the disk;
-    /// warm and get of the same object at once download it once.
-    #[tokio::test]
-    async fn warm_fetches_ahead_once() {
-        let (f, mut s, dir) = serve(30).await;
-        s.disk = Some(Arc::new(Disk::open(dir.join("s3"), 64 << 20).unwrap()));
-        s.put("chunks/a", b"aaaa").await.unwrap();
-        s.put("chunks/b", b"bbbb").await.unwrap();
-        assert!(s.warm("chunks/a").await.unwrap());
-        assert!(!s.warm("chunks/a").await.unwrap());
-        assert!(!s.warm("chunks/none").await.unwrap());
-        assert_eq!(f.gets.load(SeqCst), 1);
-        assert_eq!(&*s.get("chunks/a").await.unwrap().unwrap(), b"aaaa");
-        assert_eq!(f.gets.load(SeqCst), 1);
-        let s = Arc::new(s);
-        let (w, g) = tokio::join!(s.warm("chunks/b"), s.get("chunks/b"));
-        assert_eq!(&*g.unwrap().unwrap(), b"bbbb");
-        w.unwrap();
-        assert_eq!(f.gets.load(SeqCst), 2, "one download for both");
-        assert!(s.inflight.locked().is_empty());
-        // what the disk has is sent to the bucket too (/store-direct: not through this line)
-        assert!(s.direct("chunks/a", 60).await.unwrap().is_some());
-        s.put("chunks/d", b"dddd").await.unwrap();
-        assert!(s.direct("chunks/d", 60).await.unwrap().is_some());
-        assert!(s.direct("chunks/none", 60).await.unwrap().is_none());
-        // without a disk cache: nothing to warm
-        let (_f2, s2, dir2) = serve(0).await;
-        s2.put("chunks/c", b"c").await.unwrap();
-        assert!(!s2.warm("chunks/c").await.unwrap());
-        let _ = std::fs::remove_dir_all(dir);
-        let _ = std::fs::remove_dir_all(dir2);
     }
 
     /// A kept object damaged on the disk (a flipped byte, cut short, emptied) is noticed by its
@@ -1698,6 +1699,16 @@ struct Shared {
 }
 
 /// By (configuration file, database).
+/// The configuration of `serve --dev-bucket`'s stand-in bucket (dev_bucket.rs), used instead of
+/// MASU_STORAGE_CONFIG once set.
+static DEV_CONFIG: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+/// Makes [`Storage::configured`] open the stand-in bucket configured at `path` (once: a second
+/// call keeps the first).
+pub fn use_dev_config(path: std::path::PathBuf) {
+    let _ = DEV_CONFIG.set(path);
+}
+
 static SHARED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<(std::path::PathBuf, std::path::PathBuf), Shared>>> = std::sync::LazyLock::new(Default::default);
 
 /// Objects as the bucket has them (encrypted: [`Storage::get`] decrypts, so checks, them each
@@ -1752,10 +1763,6 @@ impl Disk {
             }
         }
         (out, temps)
-    }
-
-    pub(crate) fn has(&self, id: Uuid) -> bool {
-        self.pending(id).is_some() || self.path(id).exists()
     }
 
     fn pending(&self, id: Uuid) -> Option<std::sync::Arc<Vec<u8>>> {
@@ -2071,6 +2078,10 @@ impl Storage {
         Ok(())
     }
     pub fn configured(db: Library) -> Result<Option<Self>> {
+        // (the stand-in bucket of `serve --dev-bucket`: any signature does)
+        if let Some(path) = DEV_CONFIG.get() {
+            return Self::open(db, path, Credentials::new(Some("dev"), Some("dev"), None, None, None)?).map(Some);
+        }
         let Some(path) = std::env::var_os("MASU_STORAGE_CONFIG") else {
             return Ok(None);
         };
@@ -2377,12 +2388,6 @@ impl Storage {
         Ok(Some(data?))
     }
 
-    /// (tests elsewhere: a disk cache at `dir`)
-    #[cfg(test)]
-    pub(crate) fn set_disk(&mut self, dir: std::path::PathBuf, limit: u64) {
-        self.disk = Some(std::sync::Arc::new(Disk::open(dir, limit).unwrap()));
-    }
-
     /// Object `id`'s download gate, let go when dropped: also when the future holding it is
     /// dropped mid-download (a client gone away; review b01: its entry stayed).
     fn gate(&self, id: Uuid) -> Gate<'_> {
@@ -2663,59 +2668,12 @@ impl Storage {
         Ok((n, bytes))
     }
 
-    /// The stored size of each of `logicals` the store names (one query each, one connection).
-    pub fn sizes(&self, logicals: &[String]) -> Result<std::collections::HashMap<String, u64>> {
-        let c = self.db.connect()?;
-        let mut q = c.prepare("SELECT size FROM objects WHERE logical=?")?;
-        let mut out = std::collections::HashMap::new();
-        for l in logicals {
-            if let Some(n) = q.query_row([l], |r| r.get::<_, i64>(0)).optional()? {
-                out.insert(l.clone(), n.max(0) as u64);
-            }
-        }
-        Ok(out)
-    }
-
-    /// Puts object `logical` on the disk unless it is there (fetched ahead: a game's start).
-    /// Not decrypted here ([`Storage::get`] checks it when it is read); one download with a
-    /// `get` of the same object at once. Whether it was downloaded.
-    pub async fn warm(&self, logical: &str) -> Result<bool> {
-        let Some(disk) = self.disk.clone() else { return Ok(false) };
-        let entry: Option<String> = self.db.connect()?.query_row("SELECT envelope FROM objects WHERE logical=?", [logical], |r| r.get(0)).optional()?;
-        let Some(entry) = entry else { return Ok(false) };
-        let e: Envelope = serde_json::from_str(&entry)?;
-        if disk.has(e.object) {
-            return Ok(false);
-        }
-        let gate = self.gate(e.object);
-        let r = async {
-            let _one = gate.1.lock().await;
-            if disk.has(e.object) {
-                return Ok(false);
-            }
-            let ciphertext = self.download(e.object).await?;
-            let id = e.object;
-            tokio::task::spawn_blocking(move || disk.write(id, &ciphertext)).await?;
-            Ok::<_, anyhow::Error>(true)
-        }
-        .await;
-        drop(gate);
-        r
-    }
-
     /// Uploads the store's files not uploaded yet, `uploads` (storage.toml, [`PUTS`]) at once:
     /// chunks first, then trees, then games (a game's description goes up once what it names
     /// is there). The objects sent are named [`RECORD_BATCH`] at a time (a push cut short can
     /// leave up to that many sent and never named in the bucket).
     pub async fn push_store(&self, store: &Path) -> Result<()> {
-        use futures_util::TryStreamExt;
-        // (chunks are named by their content: one uploaded is never again)
-        let have: std::collections::HashSet<String> = {
-            let c = self.db.connect()?;
-            let mut q = c.prepare("SELECT logical FROM objects WHERE logical LIKE 'chunks/%'")?;
-            let rows = q.query_map([], |r| r.get(0))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
+        let have = self.chunks_named()?;
         for top in ["chunks", "trees", "games"] {
             let mut files = Vec::new();
             let mut dirs = vec![store.join(top)];
@@ -2743,23 +2701,63 @@ impl Storage {
             }
             files.sort();
             files.retain(|(_, logical)| !have.contains(logical));
-            let mut sent = futures_util::stream::iter(files.into_iter().map(Ok::<_, anyhow::Error>))
-                .map_ok(|(path, logical)| async move {
-                    let data = tokio::fs::read(&path).await?;
-                    self.send(&logical, &data).await
-                })
-                .try_buffer_unordered(self.config.uploads.unwrap_or(PUTS).max(1));
-            let mut batch = Vec::new();
-            while let Some(s) = sent.try_next().await? {
-                batch.push(s);
-                if batch.len() >= RECORD_BATCH {
-                    self.record(&batch)?;
-                    batch.clear();
-                }
-            }
-            self.record(&batch)?;
+            self.send_files(files).await?;
         }
         Ok(())
+    }
+
+    /// The chunks of the store's trees `names` the bucket lacks, then the trees' lists: what the
+    /// server made itself (sake's C:\ with its fonts and RTPs, the benchmark's programs), which
+    /// the page can read only from the bucket. A chunk neither has is an error.
+    pub async fn push_trees(&self, store: &Path, names: &[&str]) -> Result<()> {
+        let have = self.chunks_named()?;
+        let mut chunks = std::collections::BTreeSet::new();
+        let mut lists = Vec::new();
+        for name in names {
+            let logical = format!("trees/{name}.tsv");
+            let path = store.join("trees").join(format!("{name}.tsv"));
+            let tsv = std::fs::read_to_string(&path).with_context(|| format!("{}", path.display()))?;
+            for l in crate::tree_list::good_lines(&tsv) {
+                if let crate::tree_list::Kind::File(c) = l.kind {
+                    chunks.extend(c.list().iter().filter_map(|c| c.id).map(|id| id.store_path()).filter(|p| !have.contains(p)));
+                }
+            }
+            lists.push((path, logical));
+        }
+        let chunks: Vec<_> = chunks.into_iter().map(|logical| (logical.split('/').fold(store.to_path_buf(), |p, part| p.join(part)), logical)).collect();
+        if let Some((path, logical)) = chunks.iter().find(|(p, _)| !p.is_file()) {
+            anyhow::bail!("{logical} is neither in the bucket nor at {}", path.display());
+        }
+        self.send_files(chunks).await?;
+        self.send_files(lists).await
+    }
+
+    /// The chunks the bucket has (named by their content: one there is never sent again).
+    fn chunks_named(&self) -> Result<std::collections::HashSet<String>> {
+        let c = self.db.connect()?;
+        let mut q = c.prepare("SELECT logical FROM objects WHERE logical LIKE 'chunks/%'")?;
+        let rows = q.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Sends `files` (path, logical name), `uploads` at once, naming them [`RECORD_BATCH`] at a time.
+    async fn send_files(&self, files: Vec<(std::path::PathBuf, String)>) -> Result<()> {
+        use futures_util::TryStreamExt;
+        let mut sent = futures_util::stream::iter(files.into_iter().map(Ok::<_, anyhow::Error>))
+            .map_ok(|(path, logical)| async move {
+                let data = tokio::fs::read(&path).await?;
+                self.send(&logical, &data).await
+            })
+            .try_buffer_unordered(self.config.uploads.unwrap_or(PUTS).max(1));
+        let mut batch = Vec::new();
+        while let Some(s) = sent.try_next().await? {
+            batch.push(s);
+            if batch.len() >= RECORD_BATCH {
+                self.record(&batch)?;
+                batch.clear();
+            }
+        }
+        self.record(&batch)
     }
 
     pub async fn backup(&self) -> Result<Uuid> {

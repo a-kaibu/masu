@@ -93,7 +93,7 @@ export async function sakeWasmBytes(
   note(
     `${name}: ${(bytes.length / 2 ** 20).toFixed(1)} MiB from the bucket in ${((Date.now() - t0) / 1000).toFixed(1)} s`,
   );
-  // (as every checked chunk is kept: marked so, it goes to OPFS, not the old Cache Storage)
+  // (kept on the device, OPFS, as every chunk)
   // (one copy only: the fetcher's array is this one's, the store reads it before it returns)
   const own = new Uint8Array(bytes);
   if (device) void keepChunk(device, key, own);

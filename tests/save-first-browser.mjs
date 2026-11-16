@@ -4,8 +4,8 @@
 // the object's key; the bucket answers objects sealed as crates/masu/src/envelope.rs seals them,
 // in zstd frames, each held back 300 ms as the real one holds them ~2 s):
 // - picking the game opens the dialog, which saves it: the bucket gets many at once (more than the
-//   server's 4), the chunks only on the server come through /store at most 4 at once, every chunk
-//   of the game and the prefix ends in the chunk cache with the server's bytes; then 遊ぶ starts it;
+//   server's 4), none through the server's /store, every chunk of the game and the prefix ends in
+//   the chunk store with the store's bytes; then 遊ぶ starts it;
 // - picked again: it starts at once (no dialog);
 // - another game's 保存せずに遊ぶ: starts at once, the save stopped (続きから next time).
 // SHOTS=<dir> keeps screenshots of the dialog. With web/dist/sake/snapz.mjs (sake built) the real zstd decodes the objects; without, a stand-in
@@ -95,7 +95,7 @@ for (const [id, title, kib] of [
 const port = 9500 + Math.floor(Math.random() * 200) * 2;
 const server = spawn(
   bin,
-  ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"],
+  ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")],
   { stdio: "inherit" },
 );
 process.on("exit", () => server.kill());
@@ -142,7 +142,6 @@ const seal = (key, object, plain) => {
 const gChunks = await chunksOf("prefix32", "g");
 const hChunks = await chunksOf("h");
 // (a few only on the server: /store-direct leaves them out, or says 404 asked alone)
-const serverOnly = new Set([...gChunks].slice(0, 6));
 const decoded = new Map();
 // (the store keeps chunks zstd-coded and sends them so, Content-Encoding: zstd. Node 26's fetch
 // decodes that itself and keeps the header, so the bytes are read off the wire here)
@@ -168,7 +167,7 @@ const browser = await chromium.launchPersistentContext(join(work, "profile"), {
 try {
   const page = browser.pages()[0] ?? (await browser.newPage());
   const objects = new Map();
-  const count = { bucket: 0, bucketNow: 0, bucketMost: 0, server: 0, serverNow: 0, serverMost: 0, serverOnlyAsked: 0, many: 0, one: 0, pack: 0, packChunks: 0 };
+  const count = { bucket: 0, bucketNow: 0, bucketMost: 0, server: 0, many: 0, one: 0, pack: 0, packChunks: 0 };
   // (each chunk sealed once, as the bucket keeps it)
   const sealed = new Map();
   const sealOnce = (h) => {
@@ -184,7 +183,7 @@ try {
   // pack_objects; the save reads them with ranged GETs of it, several a GET)
   const PACK = "0f0e0d0c-0b0a-4908-8706-050403020100";
   const PACKED = 20;
-  const packed = [...gChunks].filter((h) => !serverOnly.has(h)).slice(-PACKED);
+  const packed = [...gChunks].slice(-PACKED);
   const at = new Map();
   let off = 0;
   for (const h of packed) {
@@ -213,24 +212,20 @@ try {
       headers: { "access-control-allow-origin": "*", "access-control-expose-headers": "content-range", ...(m ? { "content-range": `bytes ${m[1]}-${+m[1] + body.length - 1}/${packBody.length}` } : {}) },
     });
   });
-  // (many at once, as masu serve's POST /store-direct answers: the server's own left out)
+  // (many at once, as masu serve's POST /store-direct answers)
   await page.route(/\/store-direct$/, async (route) => {
     if (route.request().method() !== "POST") return route.continue();
     count.many++;
     const out = {};
     for (const p of route.request().postDataJSON()) {
       const h = p.slice(-32);
-      if (!serverOnly.has(h) && decoded.has(h)) out[p] = answer(h);
+      if (decoded.has(h)) out[p] = answer(h);
     }
     await route.fulfill({ json: out });
   });
   await page.route(/\/store-direct\/chunks\//, async (route) => {
     const h = route.request().url().slice(-32);
     count.one++;
-    if (serverOnly.has(h)) {
-      count.serverOnlyAsked++;
-      return route.fulfill({ status: 404, body: "" });
-    }
     await route.fulfill({ json: answer(h) });
   });
   await page.route(/^https:\/\/bucket\.test\/[0-9a-f-]{36}$/, async (route) => {
@@ -242,11 +237,9 @@ try {
     await route.fulfill({ status: body ? 200 : 404, body: body ?? "", headers: { "access-control-allow-origin": "*" } });
   });
   await page.route(/\/store\/chunks\//, async (route) => {
+    // (never: the server gives no chunk, S3 only)
     count.server++;
-    count.serverMost = Math.max(count.serverMost, ++count.serverNow);
-    await new Promise((r) => setTimeout(r, 300));
-    count.serverNow--;
-    await route.continue();
+    await route.fulfill({ status: 404, body: "" });
   });
   const dialog = page.getByTestId("save-first");
   const game = () => new URL(page.url()).searchParams.get("game");
@@ -262,21 +255,19 @@ try {
   await dialog.getByRole("button", { name: "遊ぶ", exact: true }).waitFor({ timeout: 120000 });
   if (shots) await page.screenshot({ path: join(shots, "done.png") });
   console.log(`save first: ${JSON.stringify(count)} (${gChunks.size} chunks, real zstd: ${realZstd})`);
-  // (the addresses asked for in batches: none one by one, the server's own known from them)
+  // (the addresses asked for in batches: none one by one)
   assert.ok(count.many >= 1 && count.many <= Math.ceil(gChunks.size / 256), `batches: ${count.many}`);
   assert.equal(count.one, 0, "no chunk asked of /store-direct one by one");
   // (the packed ones from the pack, several a GET; the rest from the bucket alone)
   assert.equal(count.packChunks, PACKED, "every packed chunk from the pack");
   assert.ok(count.pack >= 1 && count.pack < PACKED / 2, `pack GETs: ${count.pack}`);
-  assert.equal(count.bucket, gChunks.size - serverOnly.size - PACKED, "the rest from the bucket alone");
+  assert.equal(count.bucket, gChunks.size - PACKED, "the rest from the bucket alone");
   assert.ok(count.bucketMost > 4, `the bucket many at once: ${count.bucketMost}`);
-  assert.equal(count.server, serverOnly.size, "only the server's own chunks through /store");
-  assert.ok(count.serverMost <= 4, `the server at most 4 at once: ${count.serverMost}`);
+  assert.equal(count.server, 0, "no chunk asked of the server");
   const kept = await page.evaluate(async (hashes) => {
     const cache = await (async () => {
       // (the device's chunk store: OPFS, web/src/chunkstore.ts; Cache Storage before)
       const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("masu-chunks", { create: true });
-      const old = await caches.open("masu-chunks-v1");
       return {
         async match(u) {
           const name = u.slice(u.lastIndexOf("/") + 1);
@@ -284,7 +275,7 @@ try {
             const f = await (await dir.getFileHandle(name)).getFile();
             if (f.size) return new Response(f, { headers: { "x-masu-size": String(f.size) } });
           } catch {}
-          return old.match(u);
+          return undefined;
         },
       };
     })();
@@ -297,7 +288,7 @@ try {
   }, [...gChunks]);
   for (const h of gChunks) {
     const d = decoded.get(h);
-    assert.equal(kept[h], `${Array.from(d.subarray(0, 64)).join(",")}/${d.length}`, `chunk ${h} on the device as the server has it`);
+    assert.equal(kept[h], `${Array.from(d.subarray(0, 64)).join(",")}/${d.length}`, `chunk ${h} on the device as the store has it`);
   }
   const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem("masu-offline") ?? "{}"));
   assert.equal((await saved()).g?.status, "done");
@@ -348,7 +339,7 @@ try {
   assert.ok(count.bucket + count.server > asked, "the save goes on after the yes");
   await dialog.getByRole("button", { name: "保存せずに遊ぶ" }).click();
   await page.waitForURL((u) => u.searchParams.get("game") === "h");
-  console.log("save-first browser: saved whole before play (bucket many at once, server at most 4), saved game at once, 保存せずに遊ぶ, asked first on a mobile line passed");
+  console.log("save-first browser: saved whole before play (bucket many at once, no chunk from the server), saved game at once, 保存せずに遊ぶ, asked first on a mobile line passed");
 } finally {
   await browser.close();
   server.kill();

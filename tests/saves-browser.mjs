@@ -37,7 +37,7 @@ mkdirSync(web);
 writeFileSync(join(web, "index.html"), "<!doctype html><title>saves</title>");
 let server;
 async function startServer() {
-  server = spawn(bin, ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun"], { stdio: "inherit" });
+  server = spawn(bin, ["serve", "--foreground", "--web", web, "--store", store, "--jit", join(work, "jit"), "--listen", `127.0.0.1:${port}`, "--no-prerun", "--dev-bucket", join(work, "bucket")], { stdio: "inherit" });
   for (let i = 0; i < 100; i++) {
     if (await fetch(`${base}saves/x`).then((r) => r.status === 404, () => false)) return;
     await new Promise((r) => setTimeout(r, 300));

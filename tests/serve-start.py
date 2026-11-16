@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory() as home:
     port = free_port()
     env = dict(os.environ, HOME=home, XDG_RUNTIME_DIR='', XDG_CONFIG_HOME=f'{home}/.config')
     p = subprocess.Popen([BIN, 'serve', '--foreground', '--listen', f'127.0.0.1:{port}', '--no-prerun', '--web', web,
-                          '--store', os.path.join(home, 'store')], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                          '--store', os.path.join(home, 'store'), '--dev-bucket', os.path.join(home, 'bucket')], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         t0 = time.time()
         for _ in range(300):

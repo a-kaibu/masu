@@ -63,8 +63,7 @@ function world(
   how: {
     direct?: (hex: string) => Response | undefined;
     bucket?: (hex: string) => Response | Promise<Response> | undefined;
-    many?: () => Response;
-    onlyServer?: string[];
+    notInBucket?: string[];
     /** a bucket that sends the whole pack for a range */
     noRange?: boolean;
   } = {},
@@ -115,11 +114,10 @@ function world(
     const url = urlOf(input);
     asked.push(url);
     if (url.endsWith("/store-direct") && init?.method === "POST") {
-      if (how.many) return how.many();
       const out: Record<string, unknown> = {};
       for (const p of JSON.parse(init.body as string) as string[]) {
         const o = objs.get(p.slice(p.lastIndexOf("/") + 1));
-        if (o && !how.onlyServer?.includes(p.slice(-32))) out[p] = answer(o);
+        if (o && !how.notInBucket?.includes(p.slice(-32))) out[p] = answer(o);
       }
       return Response.json(out);
     }
@@ -176,25 +174,25 @@ describe("directFetcher", () => {
     ]);
   });
 
-  it("gives null for a chunk only on the server, and goes on with the next", async () => {
+  it("gives null for a chunk the bucket lacks, and goes on with the next", async () => {
     const w = world();
     const hex = await w.add(bytes(1000, 2));
     const d = directFetcher(STORE, { request: w.request, unzstd });
     expect(await d.get("0".repeat(32))).toBeNull();
-    expect(d.off()).toBe(false);
     expect(await d.get(hex)).not.toBeNull();
   });
 
-  it("stops asking a store without S3 (501) or a server without /store-direct (not JSON)", async () => {
-    for (const answer of [new Response("", { status: 501 }), new Response("<html>", { status: 200 })]) {
-      const w = world({ direct: () => answer.clone() });
+  it("an answer that is not one (an error, not JSON) gives null for that chunk only: the next is asked again", async () => {
+    for (const answer of [new Response("", { status: 502 }), new Response("<html>", { status: 200 })]) {
+      let bad = true;
+      const w = world({ direct: () => (bad ? answer.clone() : undefined) });
       const hex = await w.add(bytes(1000, 3));
       const d = directFetcher(STORE, { request: w.request, unzstd });
       expect(await d.get(hex)).toBeNull();
-      expect(d.off()).toBe(true);
+      bad = false;
       const n = w.asked.length;
-      expect(await d.get(hex)).toBeNull();
-      expect(w.asked.length, "asked again").toBe(n);
+      expect(await d.get(hex)).not.toBeNull();
+      expect(w.asked.length, "asked again").toBeGreaterThan(n);
     }
   });
 
@@ -209,7 +207,6 @@ describe("directFetcher", () => {
     const t = Date.now();
     expect(await d.get(hex)).toBeNull();
     expect(Date.now() - t).toBeLessThan(2000);
-    expect(d.off()).toBe(false);
   });
 
   it("gives null for an object that will not open, decode or match its name (3 tries)", async () => {
@@ -289,28 +286,16 @@ describe("directFetcher.prime", () => {
     expect(w.asked.filter((u) => u.endsWith("/store-direct")).length).toBe(3);
   });
 
-  it("a chunk the answer leaves out is only on the server: null, without asking alone", async () => {
+  it("a chunk the answer leaves out is not in the bucket: null, without asking alone", async () => {
     const w0 = world();
     const hex = await w0.add(bytes(500, 7));
-    const w = world({ onlyServer: [hex] });
+    const w = world({ notInBucket: [hex] });
     w.objs.set(hex, w0.objs.get(hex)!);
     const d = directFetcher(STORE, { request: w.request, unzstd });
     await d.prime([hex]);
     const n = w.asked.length;
     expect(await d.get(hex)).toBeNull();
     expect(w.asked.length).toBe(n);
-  });
-
-  it("an older server without the route: asked one by one, as before", async () => {
-    const w = world({ many: () => new Response("", { status: 405 }) });
-    const hex = await w.add(bytes(500, 8));
-    const d = directFetcher(STORE, { request: w.request, unzstd });
-    await d.prime([hex]);
-    expect(await d.get(hex)).toEqual(w.objs.get(hex)!.data);
-    expect(w.asked.some((u) => u.includes("/store-direct/chunks/"))).toBe(true);
-    // (and not asked in batches again)
-    await d.prime([await w.add(bytes(9, 9))]);
-    expect(w.asked.filter((u) => u.endsWith("/store-direct")).length).toBe(1);
   });
 });
 

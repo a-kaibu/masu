@@ -82,6 +82,10 @@ Now (crates/kura/src/vfs.rs, host/fetch-bridge.js, crates/masu/src/store_api.rs)
   whole as before. A block has no name of its own to check: its place and length are checked, the
   BLAKE3 check stays for whole chunks (the page's, 端末に保存).
 
+(Since 2026-11-16 the server gives no chunk, whole or ranged: every chunk is fetched whole from
+the bucket, checked, and kept in OPFS; blocks are read from the worker's memory or from that file
+(docs/s3-reads.md). The server-side numbers below are history.)
+
 Same machine and harness as above (Android-like, `THROTTLE=4`, deterministic data.bin: every
 size's runs read the same bytes and the program's sums matched the old build's at every size).
 `NET=20000,40`: a first start over a 20 Mbit/s, 40 ms link, 50 scattered reads of 128 KiB

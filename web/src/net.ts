@@ -1,22 +1,17 @@
 // The page's requests on a weak or unstable link (mobile): the same policy as the game's own
 // reads (host/fetch-bridge.js, the network worker; that runs as a plain script inside sake.js, so
 // it has its own copy): retry dropped connections, stalled bodies and 5xx/408/429 with backoff,
-// wait while the browser is offline, fail at once for other statuses. Store chunks are kept in
-// Cache Storage (CHUNKS, shared with the worker): content-addressed, so never stale. A chunk is
-// checked against its name (BLAKE3) before it is used or kept, as the worker does: kept ones
-// carry CHECKED, one kept without it (an older page's) is checked once when read.
+// wait while the browser is offline, fail at once for other statuses. Store chunks come only
+// from the bucket (direct.ts) and are kept in OPFS (chunkstore.ts, shared with the worker):
+// content-addressed, so never stale; only chunks checked against their name (BLAKE3) are kept.
 
-import { blake3Hex } from "./blake3";
 import { drain, gate } from "./budget";
 import { deviceChunks, listChunks, type ChunkStore } from "./chunkstore";
+import { directFetcher } from "./direct";
 
-export const CHUNKS = "masu-chunks-v1";
 const RETRY = new Set([0, 408, 425, 429, 500, 502, 503, 504]);
-const CHECKED = "x-masu-checked";
-/** A kept chunk's length (trimChunks; one kept without it, an older page's, is measured). */
+/** A kept chunk's length (trimChunks). */
 const SIZE = "x-masu-size";
-/** Fetches of one chunk that may not match its name before it fails. */
-const BAD_CHUNK = 3;
 
 export interface RetryOptions {
   /** no byte for this long: abort and try again (ms) */
@@ -189,7 +184,7 @@ const page = {
   },
 };
 
-/** The device's chunk store (chunkstore.ts: OPFS, Cache Storage's old entries read too; null where there is neither). */
+/** The device's chunk store (chunkstore.ts: OPFS; null where there is none). */
 export function chunkCache(): Promise<ChunkStore | null> {
   return deviceChunks();
 }
@@ -197,47 +192,31 @@ export function chunkCache(): Promise<ChunkStore | null> {
 export const chunkPath = (hex: string) => `chunks/${hex.slice(0, 2)}/${hex}`;
 
 /**
- * Store chunk `hex` (decoded): from Cache Storage, else fetched (and kept there). `cached`:
- * whether it came without the network.
+ * Store chunk `hex` (decoded): from the device, else from the bucket (direct.ts; kept on the
+ * device). `cached`: whether it came without the network. Throws when the bucket cannot give it.
  */
 export async function getChunk(
   store: string,
   hex: string,
-  opt: RetryOptions & { cache?: ChunkStore | null; priority?: RequestPriority } = {},
+  opt: RetryOptions & { cache?: ChunkStore | null } = {},
 ): Promise<{ data: Uint8Array<ArrayBuffer>; cached: boolean }> {
   const url = new URL(chunkPath(hex), store).href;
   const cache = opt.cache === undefined ? await chunkCache() : opt.cache;
-  const keep = (data: Uint8Array<ArrayBuffer>) => (cache ? keepChunk(cache, url, data) : undefined);
   const hit = await cache?.match(url).catch(() => undefined);
-  if (hit) {
-    const data = new Uint8Array(await hit.arrayBuffer());
-    if (hit.headers.get(CHECKED) === "1") return { data, cached: true };
-    if (blake3Hex(data) === hex) {
-      void keep(data);
-      return { data, cached: true };
-    }
-    await cache?.delete(url).catch(() => undefined);
-  }
-  for (let bad = 1; ; bad++) {
-    // (again past the browser's HTTP cache, which keeps chunks for good)
-    const init: RequestInit = {
-      priority: opt.priority ?? "auto",
-      ...(bad > 1 ? { cache: "reload" as const } : {}),
-    };
-    const data = await fetchRetry(url, init, opt);
-    if (blake3Hex(data) === hex) {
-      await keep(data);
-      return { data, cached: false };
-    }
-    if (bad >= BAD_CHUNK) throw new Error(`chunk ${hex} does not match its name (${bad} times)`);
-    await new Promise((r) => setTimeout(r, backoff(bad - 1)));
-  }
+  if (hit) return { data: new Uint8Array(await hit.arrayBuffer()), cached: true };
+  const data = await directFetcher(store, {
+    request: opt.request,
+    ...(opt.budget === undefined ? {} : { cls: opt.budget }),
+  }).get(hex, opt);
+  if (!data) throw new Error(`chunk ${hex}: the bucket did not give it`);
+  if (cache) await keepChunk(cache, url, data);
+  return { data, cached: false };
 }
 
 /** Stores chunk `data` (checked against its name) at `url` in `cache`; rejects when it could
  * not be (the device full: QuotaExceededError, isFull). */
 export function storeChunk(cache: ChunkStore, url: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
-  return cache.put(url, new Response(data, { headers: { [CHECKED]: "1", [SIZE]: String(data.length) } }));
+  return cache.put(url, new Response(data, { headers: { [SIZE]: String(data.length) } }));
 }
 
 /** Keeps chunk `data` at `url` in `cache` if it can, as getChunk does (a cache, not a promise:
@@ -291,11 +270,10 @@ export async function trimChunks(
     if (await cache.delete(k).catch(() => false)) over -= k.size;
   }
 }
-/** A kept chunk's name (its hex, a block's with its ?b=..&s=..). */
+/** A kept chunk's name (its hex). */
 const chunkName = (url: string) => url.slice(url.lastIndexOf("/") + 1);
 
-/** The order chunks go in at a trim: the oldest written first (OPFS lists by name, not age);
- * those with no time (Cache Storage's, older still) first, in their order. */
+/** The order chunks go in at a trim: the oldest written first (OPFS lists by name, not age). */
 export function trimOrder<T extends { time: number }>(kept: readonly T[]): T[] {
   return kept
     .map((k, i) => [k, i] as const)
