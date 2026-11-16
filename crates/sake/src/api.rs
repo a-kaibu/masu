@@ -84,10 +84,16 @@ impl Out {
     pub fn put_addr(self, v: u32) {
         crate::mem::put_addr(self.0, v)
     }
-    /// A whole 64-bit value (x64 only callers)
+    /// A pointer-sized integer (ULONG_PTR, SIZE_T, a widened address): all 8 bytes on x64, the
+    /// low 4 on x86, where the slot is 4 bytes (review 2026-11-16: put64 wrote 8 bytes into a
+    /// 4-byte slot of a 32-bit program); NULL skipped.
     #[inline]
-    pub fn put64(self, v: u64) {
-        crate::mem::put64(self.0, v)
+    pub fn put_size(self, v: u64) {
+        if crate::mem::x64() {
+            crate::mem::put64(self.0, v)
+        } else {
+            crate::mem::put32(self.0, kome::num::lo32(v))
+        }
     }
     /// What it holds now (mem::rp: its low half on x64)
     #[inline]
@@ -282,11 +288,33 @@ fn const_us_is_us() {
 /// only under ENTRIES' write lock (`publish`), read with Acquire. `tag` and `data` are the
 /// handler's own (`set_tag`: a COM method's id, a GL function), 0 when none.
 struct Hot {
-    /// (a leaked Box: a handler a reader may still be calling is never freed; null: none)
-    f: AtomicPtr<Handler>,
-    meta: AtomicU32,
+    /// The entry's handler and flags as one pointer (review 2026-11-16: two atomics let a
+    /// reader take a new handler with the old flags): one of PUBLISHED's, null when none yet.
+    cur: AtomicPtr<Published>,
     tag: AtomicU32,
     data: AtomicUsize,
+}
+
+/// A handler and its flags as a reader takes them, together.
+#[derive(Clone, Copy, Debug)]
+struct Published {
+    f: Option<Handler>,
+    meta: u32,
+}
+
+/// Every (handler, flags) pair ever published, one each: a slot points at one of these. They
+/// live as long as the process (a reader may still hold the pointer a slot had), and there are
+/// as many as there are pairs, not publishes: an entry published again with what it had takes
+/// the same one (review 2026-11-16: publish leaked a Box per host_fn call, 6000 in a test).
+/// (keyed by the pair: a handler's address, which two identical functions may share, is
+/// still the code a reader calls)
+static PUBLISHED: Mutex<Option<HashMap<(Option<Handler>, u32), &'static Published>>> = Mutex::new(None);
+
+/// The one `p` of PUBLISHED (made the first time)
+fn interned(p: Published) -> &'static Published {
+    let mut g = PUBLISHED.locked();
+    let m = g.get_or_insert_with(HashMap::default);
+    *m.entry((p.f, p.meta)).or_insert_with(|| Box::leak(Box::new(p)))
 }
 
 const HOT_CHUNK: usize = 4096;
@@ -326,7 +354,7 @@ fn hot_slot(i: usize, make: bool) -> Option<&'static Hot> {
         if !make {
             return None;
         }
-        let chunk: Box<[Hot]> = (0..HOT_CHUNK).map(|_| Hot { f: AtomicPtr::new(std::ptr::null_mut()), meta: AtomicU32::new(0), tag: AtomicU32::new(0), data: AtomicUsize::new(0) }).collect();
+        let chunk: Box<[Hot]> = (0..HOT_CHUNK).map(|_| Hot { cur: AtomicPtr::new(std::ptr::null_mut()), tag: AtomicU32::new(0), data: AtomicUsize::new(0) }).collect();
         p = Box::leak(chunk).as_mut_ptr();
         c.store(p, Ordering::Release);
     }
@@ -341,20 +369,20 @@ fn hot_slot(i: usize, make: bool) -> Option<&'static Hot> {
 fn publish(i: usize, e: &Entry) {
     // (always Some: export asserts i < MAX_ENTRIES, which HOT covers)
     let Some(s) = hot_slot(i, true) else { return };
-    // (Release: the Box's handler is written before a reader that sees its pointer reads it)
-    s.f.store(e.f.map_or(std::ptr::null_mut(), |f| Box::into_raw(Box::new(f))), Ordering::Release);
-    s.meta.store(Meta::of(e).pack(), Ordering::Release);
+    let p = interned(Published { f: e.f, meta: Meta::of(e).pack() });
+    // (Release: the pair is written before a reader that sees its pointer reads it; it is
+    // PUBLISHED's, never written again)
+    s.cur.store(std::ptr::from_ref(p).cast_mut(), Ordering::Release);
 }
 
 /// Entry `i`'s handler and flags, None when there is no entry `i`.
 fn hot(i: usize) -> Option<(Option<Handler>, Meta)> {
     let s = hot_slot(i, false)?;
-    let m = Meta::unpack(s.meta.load(Ordering::Acquire))?;
-    let f = s.f.load(Ordering::Acquire);
-    // SAFETY: non-null only from Box::into_raw in publish, never freed (Acquire above pairs
-    // with its Release store)
-    let f = (!f.is_null()).then(|| unsafe { *f });
-    Some((f, m))
+    let p = s.cur.load(Ordering::Acquire);
+    // SAFETY: non-null only from publish, a &'static of PUBLISHED's (leaked, never freed nor
+    // written); the Acquire pairs with publish's Release store.
+    let p = unsafe { p.as_ref() }?;
+    Some((p.f, Meta::unpack(p.meta)?))
 }
 
 /// Gives the trap at `addr` the handler's own `tag` (not 0) and `data`, read back without a
@@ -1026,6 +1054,8 @@ pub fn host_fn(name: &str, f: Handler, bytes: u32) -> u32 {
     let mut e = ENTRIES.w();
     // (export made entry i)
     if let Some(x) = e.get_mut(kome::num::us(i)) {
+        // (made again with another handler: that one, as IMPLS has it now)
+        x.f = Some(f);
         x.bytes = bytes;
         x.known = true;
         publish(kome::num::us(i), x);
@@ -1423,6 +1453,64 @@ mod hot_tests {
             r.join().unwrap();
         }
         check_all();
+    }
+}
+
+#[cfg(test)]
+mod republish_tests {
+    use super::*;
+
+    fn r1(_: &mut Ctx) -> u32 {
+        1
+    }
+    fn r2(_: &mut Ctx) -> u32 {
+        2
+    }
+
+    /// Review 2026-11-16: one entry published again and again (host_fn updating its bytes)
+    /// while readers take it: a reader sees one of the pairs that was published, never the
+    /// handler of one with the flags of another; and publishing a pair again makes nothing new
+    /// (the leak LeakSanitizer found: a Box per publish).
+    #[test]
+    fn a_republished_entry_is_read_whole() {
+        let a = host_fn("republish_tests_a", r1, 4);
+        let i = kome::num::us(trap_no(a));
+        let pairs: [(Handler, u32); 2] = [(r1, 4), (r2, 8)];
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let readers: Vec<_> = (0..3)
+            .map(|_| {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    let mut n = 0u64;
+                    while !stop.load(Ordering::Relaxed) {
+                        let (f, m) = hot(i).expect("published");
+                        let f = f.expect("a handler");
+                        let k = usize::from(m.bytes == 8);
+                        assert!(std::ptr::fn_addr_eq(f, pairs[k].0), "handler of one publish with the flags of another");
+                        assert_eq!(m.bytes, pairs[k].1);
+                        n += 1;
+                    }
+                    n
+                })
+            })
+            .collect();
+        let pairs_now = || PUBLISHED.locked().as_ref().map_or(0, |m| m.len());
+        let mut after_two = 0;
+        for k in 0..20_000usize {
+            let (f, b) = pairs[k % 2];
+            assert_eq!(host_fn("republish_tests_a", f, b), a);
+            if k == 1 {
+                after_two = pairs_now();
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        for r in readers {
+            assert!(r.join().unwrap() > 0);
+        }
+        // (two pairs published 20000 times: nothing new after the first of each; other tests'
+        // exports may add theirs meanwhile, far fewer than 20000)
+        let grown = pairs_now().saturating_sub(after_two);
+        assert!(grown < 1000, "{grown} pairs made by publishing two again and again");
     }
 }
 

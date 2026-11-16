@@ -337,13 +337,7 @@ fn GetQueuedCompletionStatus(c: &mut Ctx) -> u32 {
     match wait_packet(c, port, ms, false) {
         Ok(((bytes, key, ov, status), _)) => {
             mem::put32(bp, bytes);
-            if !kp.is_null() {
-                if mem::x64() {
-                    kp.put64(key);
-                } else {
-                    kp.put(kome::num::lo32(key));
-                }
-            }
+            kp.put_size(key);
             if !op.is_null() {
                 op.put(ov);
             }
