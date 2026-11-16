@@ -215,17 +215,22 @@ try {
 
     // search: words narrow the list; a miss offers to clear it
     const search = page.getByRole("searchbox");
+    // (the list follows the box on a later render: each read waits for it, a while at most)
+    const shown = () => page.locator("[data-game]").evaluateAll((l) => l.map((e) => e.dataset.game).sort());
+    const listIs = async (want, what) => {
+      for (let i = 0; i < 50 && JSON.stringify(await shown()) !== JSON.stringify(want); i++) await new Promise((r) => setTimeout(r, 100));
+      assert.deepEqual(await shown(), want, what);
+    };
     await search.fill("月");
-    assert.deepEqual(await page.locator("[data-game]").evaluateAll((l) => l.map((e) => e.dataset.game)), ["tsuki"]);
+    await listIs(["tsuki"], "月");
     assert.equal(await cont.count(), 0, "no continue banner while searching");
     // Japanese as typed: katakana / half-width for hiragana, full-width letters, a typo
-    const shown = () => page.locator("[data-game]").evaluateAll((l) => l.map((e) => e.dataset.game).sort());
     for (const q of ["サクラ", "ｻｸﾗ", "さくらの話"]) {
       await search.fill(q);
-      assert.deepEqual(await shown(), ["sakura"], q);
+      await listIs(["sakura"], q);
     }
     await search.fill("ＫＥＹ");
-    assert.deepEqual(await shown(), ["sakura", "tsuki"]);
+    await listIs(["sakura", "tsuki"], "ＫＥＹ");
     await search.fill("ありえない");
     await page.getByRole("button", { name: /検索をクリア/ }).click();
     // (the list comes back on the next render: waited for, not read at once)

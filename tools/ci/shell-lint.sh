@@ -1,5 +1,5 @@
 #!/bin/bash
-# shellcheck (warnings and errors) over every shell script in the repository, and actionlint over
+# Runs shellcheck (warnings and errors) over every shell script in the repository, and actionlint over
 # the workflows (their run: blocks through shellcheck too). CI: the test job; locally:
 #   PATH=$(tools/ci/lint-tools.sh):$PATH tools/ci/shell-lint.sh
 set -euo pipefail
