@@ -370,7 +370,7 @@ pub(crate) fn read_stream(c: &mut Ctx, stm: u32) -> Vec<u8> {
         mem::w32(got, 0);
         let hr = c.call(read, &[stm, buf, 0x10000, got]);
         let n = mem::r32(got).min(0x10000);
-        mem::view(buf, n, |s| data.extend_from_slice(s));
+        data.extend_from_slice(&mem::bytes(buf, n));
         // (a failing Read, or a stream that never ends: at most MAX_IMAGE)
         if n < 0x10000 || hr & 0x8000_0000 != 0 || data.len() as u64 >= MAX_IMAGE {
             break;

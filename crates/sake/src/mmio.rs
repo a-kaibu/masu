@@ -376,7 +376,7 @@ fn read_via(c: &mut Ctx, proc: u32, name: u32, info: u32, flags: u32) -> Option<
             break;
         }
         // (no more than it was asked for: a procedure answering more would copy past `tmp`)
-        mem::view(tmp, (n as u32).min(0x10000), |s| v.extend_from_slice(s));
+        v.extend_from_slice(&mem::bytes(tmp, (n as u32).min(0x10000)));
     }
     c.call(proc, &[mi, MMIOM_CLOSE, 0, 0]);
     mem::release(tmp);

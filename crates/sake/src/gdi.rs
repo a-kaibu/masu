@@ -5038,7 +5038,7 @@ fn glyph_outline(c: &mut Ctx, wide: bool) -> u32 {
     if size < need {
         return 0xffff_ffff;
     }
-    let wrote = mem::view_mut(buf, need, |out| {
+    let wrote = mem::update(buf, need, |out| {
         out.fill(0);
         for y in 0..g.h {
             for x in 0..g.w {

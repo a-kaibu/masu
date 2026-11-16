@@ -99,7 +99,7 @@ fn guest_read(c: &mut Ctx, bs: u32, off: u64, n: usize) -> Option<Vec<u8>> {
         if hr & 0x8000_0000 != 0 || got == 0 {
             break;
         }
-        mem::view(b, got, |s| out.extend_from_slice(s));
+        out.extend_from_slice(&mem::bytes(b, got));
     }
     mem::heap_free(b);
     mem::heap_free(got_at);

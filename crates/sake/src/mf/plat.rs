@@ -375,7 +375,10 @@ fn read_into(b: u32, p: u32, n: u32) -> Result2 {
         let pos = s.pos;
         let Some(f) = s.file.as_mut() else { return Err(Hr::Shutdown.code()) };
         f.seek(SeekFrom::Start(pos)).map_err(|_| Hr::Fail.code())?;
-        let read = mem::view_mut(p, n, |buf| {
+        // SAFETY: the closure only reads the host file into the buffer, touching no guest memory;
+        // the program handed the buffer to this read (another thread of its writing it meanwhile
+        // would race on Windows too).
+        let read = unsafe { mem::view_mut_unchecked(p, n, |buf| {
             let mut got = 0usize;
             while got < buf.len() {
                 match f.read(&mut buf[got..]) {
@@ -385,7 +388,7 @@ fn read_into(b: u32, p: u32, n: u32) -> Result2 {
                 }
             }
             Ok(got)
-        });
+        }) };
         let Some(got) = read else { return Err(Hr::Fail.code()) };
         let got = got?;
         s.pos += lo64(got);
@@ -403,7 +406,7 @@ fn write_from(b: u32, p: u32, n: u32) -> Result2 {
         let pos = s.pos;
         let Some(f) = s.file.as_mut() else { return Err(Hr::Shutdown.code()) };
         f.seek(SeekFrom::Start(pos)).map_err(|_| Hr::Fail.code())?;
-        mem::view(p, n, |s| f.write_all(s)).map_err(|_| Hr::Fail.code())?;
+        f.write_all(&mem::bytes(p, n)).map_err(|_| Hr::Fail.code())?;
         s.pos += u64::from(n);
         Ok(n)
     })

@@ -1412,10 +1412,13 @@ fn ar_sync_read(c: &mut Ctx) -> u32 {
     // thread behind FILTERS; seek and read are one step under the file's own lock)
     let Some((file, len)) = fwith(b, |f| f.src.as_ref().map(|s| (s.file.clone(), s.len))).flatten() else { return Hr::Unexpected.code() };
     let (at, k) = read_span(pos, n, len);
-    let Some(got) = mem::view_mut(buf, k, |dst| match file.read_at(Some(std::io::SeekFrom::Start(at)), false, dst) {
+    // SAFETY: the closure only reads the host file into the buffer, touching no guest memory;
+    // the program handed the buffer to this read (another thread of its writing it meanwhile
+    // would race on Windows too).
+    let Some(got) = (unsafe { mem::view_mut_unchecked(buf, k, |dst| match file.read_at(Some(std::io::SeekFrom::Start(at)), false, dst) {
         Ok(g) => Some(lo32(g)),
         Err(()) => Some(0),
-    }) else {
+    }) }) else {
         return Hr::Pointer.code();
     };
     match got {
@@ -1653,7 +1656,9 @@ fn vnv_thread(c: &mut Ctx) -> u32 {
                 })
                 .unwrap_or(0);
                 // (bottom-up rows, as RGB32 with a positive height is: straight into the sample)
-                if buf == 0 || mem::view_mut(buf, size, |dst| pack_into(&top, (fw, fh), true, (w, h, bits), dst)).is_none() {
+                // SAFETY: the closure only converts a host picture into the buffer, touching no guest
+                // memory; the program handed the buffer (its sample, its surface) to this call.
+                if buf == 0 || unsafe { mem::view_mut_unchecked(buf, size, |dst| pack_into(&top, (fw, fh), true, (w, h, bits), dst)) }.is_none() {
                     break;
                 }
                 let sent = call_out(&calls, epoch, || com(c, out.mem, 6, &[sample])).is_some();
@@ -2474,7 +2479,9 @@ fn stream_thread(c: &mut Ctx) -> u32 {
                     .unwrap_or(0);
                     // (the picture's own size, clipped to the type's: a later sequence header
                     // of another size indexed past the rows)
-                    if buf != 0 && mem::view_mut(buf, size, |dst| pack_into(&px, (pw, ph), false, (w, h, bits), dst)) == Some(true) {
+                    // SAFETY: the closure only converts a host picture into the buffer, touching no guest
+                    // memory; the program handed the buffer (its sample, its surface) to this call.
+                    if buf != 0 && unsafe { mem::view_mut_unchecked(buf, size, |dst| pack_into(&px, (pw, ph), false, (w, h, bits), dst)) } == Some(true) {
                         com(c, mem_pin, 6, &[sample]);
                     }
                     unref(sample);

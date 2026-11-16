@@ -879,7 +879,9 @@ fn update(c: &mut Ctx, b: u32, m: u32, surf: u32, rect: (i32, i32, i32, i32)) ->
                 // (straight into the surface: it was copied out whole and back per frame)
                 // (a surface's rows in guest memory: a 32-bit size)
                 let len = pitch.wrapping_mul(sh.cast_unsigned());
-                let _ = mem::view_mut(bits, len, |out| draw(&px, w, h, out, usize::try_from(pitch).unwrap_or(0), bpp, [pf[1], pf[2], pf[3]], rect, (sw, sh)));
+                // SAFETY: the closure only converts a host picture into the buffer, touching no guest
+                // memory; the program handed the buffer (its sample, its surface) to this call.
+                let _ = unsafe { mem::view_mut_unchecked(bits, len, |out| draw(&px, w, h, out, usize::try_from(pitch).unwrap_or(0), bpp, [pf[1], pf[2], pf[3]], rect, (sw, sh))) };
                 crate::ddraw::drawn(c, surf, crate::user::Rect { l: rect.0, t: rect.1, r: rect.2, b: rect.3 });
                 play::stats(m, n, [t1 - t0, t1.elapsed(), std::time::Duration::ZERO], px.len());
                 return 0;

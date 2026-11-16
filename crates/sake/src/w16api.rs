@@ -1714,7 +1714,7 @@ fn dialog32(t: u32) -> u32 {
         }
         let extra = crate::mem::r8(p) as u32;
         push16(&mut out, extra as u16);
-        crate::mem::view(p + 1, extra, |s| out.extend_from_slice(s));
+        out.extend_from_slice(&crate::mem::bytes(p + 1, extra));
         p += 1 + extra;
     }
     let b = crate::mem::heap_alloc(out.len() as u32 + 16, true);

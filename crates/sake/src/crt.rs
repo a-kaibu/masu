@@ -676,7 +676,7 @@ fn memset(c: &mut Ctx) -> u32 {
 }
 fn memcmp(c: &mut Ctx) -> u32 {
     let n = c.a(2);
-    mem::view(c.a(0), n, |x| mem::view(c.a(1), n, |y| x.cmp(y))) as i32 as u32
+    mem::bytes(c.a(0), n).cmp(&mem::bytes(c.a(1), n)) as i32 as u32
 }
 fn memchr(c: &mut Ctx) -> u32 {
     let (p, ch, n) = (c.a(0), c.a(1) as u8, c.a(2));
@@ -2812,7 +2812,7 @@ fn mem_s(c: &mut Ctx, f: fn(Option<&mut [u8]>, Option<&[u8]>, usize) -> i32) -> 
     // (the source as a copy: memmove_s's overlap is then no matter)
     let src = (s != 0).then(|| mem::bytes(s, n.min(dn.saturating_add(1)).min(0u32.wrapping_sub(s))));
     let n = kome::num::us(n);
-    let e = match (d != 0).then(|| mem::view_mut(d, dn, |s| f(Some(s), src.as_deref(), n))).flatten() {
+    let e = match (d != 0).then(|| mem::update(d, dn, |s| f(Some(s), src.as_deref(), n))).flatten() {
         Some(e) => e,
         None => f(None, src.as_deref(), n),
     };

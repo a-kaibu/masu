@@ -1404,7 +1404,7 @@ fn rich_stream_in(c: &mut Ctx, h: u32, format: u32, es: u32) -> u32 {
         if err != 0 || n == 0 {
             break;
         }
-        mem::view(buf, n, |s| data.extend_from_slice(s));
+        data.extend_from_slice(&mem::bytes(buf, n));
     }
     mem::heap_free(buf);
     mem::w32(es + err_at, err);
@@ -7473,11 +7473,11 @@ fn CharUpperW(c: &mut Ctx) -> u32 {
 }
 fn CharLowerBuffA(c: &mut Ctx) -> u32 {
     let (p, n) = (c.a(0), c.a(1));
-    mem::view_mut(p, n, |s| crate::text::case_a(s, false)).map_or(0, |()| n)
+    mem::update(p, n, |s| crate::text::case_a(s, false)).map_or(0, |()| n)
 }
 fn CharUpperBuffA(c: &mut Ctx) -> u32 {
     let (p, n) = (c.a(0), c.a(1));
-    mem::view_mut(p, n, |s| crate::text::case_a(s, true)).map_or(0, |()| n)
+    mem::update(p, n, |s| crate::text::case_a(s, true)).map_or(0, |()| n)
 }
 fn char_buff_w(c: &mut Ctx, upper: bool) -> u32 {
     let (p, n) = (c.a(0), c.a(1));

@@ -2746,7 +2746,7 @@ mod blit_tests {
             let (sn, dn) = (src.pitch * sh as u32, dst.pitch * dh as u32);
             let mut x = seed | 1;
             for (at, n) in [(src_at, sn), (dst_at, dn)] {
-                mem::view_mut(at, n, |s| for b in s {
+                mem::update(at, n, |s| for b in s {
                     x ^= x << 13; x ^= x >> 17; x ^= x << 5;
                     *b = x as u8;
                 }).unwrap();

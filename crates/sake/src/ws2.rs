@@ -1675,7 +1675,7 @@ fn gather(bufs: &[(u32, u32)]) -> Result<Vec<u8>, u32> {
         if n != 0 && mem::range(p, n).is_none() {
             return Err(WSAEFAULT);
         }
-        mem::view(p, n, |s| v.extend_from_slice(s));
+        v.extend_from_slice(&mem::bytes(p, n));
         left -= n;
     }
     Ok(v)

@@ -289,7 +289,9 @@ fn show(c: &mut Ctx, b: u32, generation: u32, time: u64, w: u32, h: u32, bgra: &
     })
     .unwrap_or(0);
     // (straight into the sample: a picture-sized Vec and a copy of it a picture before)
-    if buf != 0 && mem::view_mut(buf, size, |dst| wmdec::to_rgb_into(bgra, w, h, ow, oh, 32, dst)) == Some(true) {
+    // SAFETY: the closure only converts a host picture into the buffer, touching no guest
+    // memory; the program handed the buffer (its sample, its surface) to this call.
+    if buf != 0 && unsafe { mem::view_mut_unchecked(buf, size, |dst| wmdec::to_rgb_into(bgra, w, h, ow, oh, 32, dst)) } == Some(true) {
         dwith(b, |d| d.shown = true);
         com(c, mem_pin, 6, &[s]);
         stats(Stat::Shown);

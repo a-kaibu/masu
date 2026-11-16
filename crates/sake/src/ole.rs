@@ -399,7 +399,7 @@ fn OleLoadPicture(c: &mut Ctx) -> u32 {
         // (a Read claiming more than it was asked for read no more than the buffer; a stream
         // that never ends stops at what a picture can be)
         let n = r32(got).min(want);
-        mem::view(buf, n, |s| data.extend_from_slice(s));
+        data.extend_from_slice(&mem::bytes(buf, n));
         if n < want || data.len() >= PICTURE_BYTES_MAX {
             break;
         }

@@ -35,8 +35,8 @@ proptest! {
         prop_assert_eq!(rp(bad), 0);
         prop_assert!(bytes(bad, n).is_empty());
         prop_assert_eq!(array::<4>(bad), [0; 4]);
-        prop_assert!(view(bad, n, |s| s.is_empty()));
-        prop_assert!(view_mut(bad, n, |_| ()).is_none());
+        prop_assert!(bytes(bad, n).is_empty());
+        prop_assert!(update(bad, n, |_| ()).is_none());
         prop_assert!(host_ptr(bad, n).is_none() && host_ptr_mut(bad, n).is_none());
         w8(bad, v as u8);
         w16(bad, v as u16);
@@ -52,12 +52,15 @@ proptest! {
         copy(bad, p, 4);
         copy(p, bad, 4);
         prop_assert_eq!(r32(p), 0x1122_3344);
-        // (past the top: the 2 bytes inside stay)
-        let before = r16(edge);
-        w32(edge, 0xffff_ffff);
-        w64(edge, u64::MAX);
-        prop_assert_eq!(r32(edge), 0);
-        prop_assert_eq!(r16(edge), before);
+        // (past the top: the 2 bytes inside stay; not where a sanitizer's shadow memory is
+        // there instead, test_guest::TOP)
+        if crate::test_guest::TOP == GUEST_TOP {
+            let before = r16(edge);
+            w32(edge, 0xffff_ffff);
+            w64(edge, u64::MAX);
+            prop_assert_eq!(r32(edge), 0);
+            prop_assert_eq!(r16(edge), before);
+        }
         prop_assert_eq!(atomic_rmw32(bad, |x| x + 1), 0);
         heap_free(p);
     }
@@ -105,5 +108,52 @@ proptest! {
         let mut x = ga(a);
         x += o;
         prop_assert_eq!(u32::from(x), a.wrapping_add(o));
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(500))]
+    /// Review 2026-11-16: `update` hands `f` a copy, so guest memory can be written inside it
+    /// (a `w8`, a nested `update` of the same bytes) without two `&mut` to one byte; what comes
+    /// out is the model's: a byte `f` changed has `f`'s value, any other the last write inside.
+    #[test]
+    fn nested_updates_are_copies_as_the_model(
+        init in proptest::collection::vec(any::<u8>(), 32),
+        inner in proptest::collection::vec((0usize..32, any::<u8>()), 0..8),
+        nested in proptest::collection::vec((0usize..32, any::<u8>()), 0..8),
+        outer in proptest::collection::vec((0usize..32, any::<u8>()), 0..8),
+    ) {
+        let _g = crate::test_guest::enter();
+        let p = heap_alloc(32, true);
+        write(p, &init);
+        let mut model = init.clone();
+        let seen = update(p, 32, |s| {
+            let before = s.to_vec();
+            for &(i, v) in &inner {
+                w8(p + kome::num::u32_of(i), v);
+                model[i] = v;
+            }
+            update(p, 32, |t| {
+                for &(i, v) in &nested {
+                    t[i] = v;
+                }
+            });
+            for &(i, v) in &nested {
+                // (the nested copy was taken after `inner`: it writes what it changed)
+                model[i] = v;
+            }
+            for &(i, v) in &outer {
+                s[i] = v;
+            }
+            for (i, b) in s.iter().enumerate() {
+                if *b != before[i] {
+                    model[i] = *b;
+                }
+            }
+            before
+        });
+        prop_assert_eq!(seen, Some(init));
+        prop_assert_eq!(bytes(p, 32), model);
+        heap_free(p);
     }
 }

@@ -549,7 +549,7 @@ fn guest_read(c: &mut Ctx, f: &Fdi, hf: u32, n: usize, out: &mut Vec<u8>) -> boo
         if got == 0 {
             break;
         }
-        mem::view(buf, got, |s| out.extend_from_slice(s));
+        out.extend_from_slice(&mem::bytes(buf, got));
         left -= got as usize;
     }
     mem::heap_free(buf);
@@ -659,7 +659,7 @@ impl Io for Guest<'_, '_> {
             if got == 0 || got == u32::MAX || got > want {
                 return false;
             }
-            mem::view(self.rbuf, got, |s| out.extend_from_slice(s));
+            out.extend_from_slice(&mem::bytes(self.rbuf, got));
             self.pos += got as u64;
         }
         true

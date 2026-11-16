@@ -581,7 +581,10 @@ fn left(f: &mut kura::fs::File) -> usize {
 impl File {
     pub fn read_into(&self, dst: u32, n: u32) -> u32 {
         let mut f = self.f.lock().unwrap();
-        crate::mem::view_mut(dst, n, |buf| {
+        // SAFETY: the closure only reads the host file into the buffer, touching no guest memory;
+        // the program handed the buffer to this read (another thread of its writing it meanwhile
+        // would race on Windows too).
+        unsafe { crate::mem::view_mut_unchecked(dst, n, |buf| {
             let mut got = 0;
             while got < buf.len() {
                 match f.read(&mut buf[got..]) {
@@ -591,7 +594,7 @@ impl File {
                 }
             }
             got as u32
-        })
+        }) }
         .unwrap_or(0)
     }
     /// Up to `n` bytes into host memory (fewer at the end of the file)
@@ -613,7 +616,7 @@ impl File {
     }
     pub fn write_from(&self, src: u32, n: u32) -> u32 {
         let mut f = self.f.lock().unwrap();
-        crate::mem::view(src, n, |s| f.write_all(s)).map_or(0, |_| n)
+        f.write_all(&crate::mem::bytes(src, n)).map_or(0, |()| n)
     }
     pub fn seek(&self, pos: SeekFrom) -> Option<u64> {
         self.f.lock().unwrap().seek(pos).ok()

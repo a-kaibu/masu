@@ -7306,7 +7306,10 @@ fn ReadFile(c: &mut Ctx) -> u32 {
     let k = mem::ps();
     let got = if ov != 0 {
         let start = files::io_start(crate::mem::r32(mem::ga(ov).at(k, 2)), crate::mem::r32(mem::ga(ov).at(k, 2) + 4), false);
-        match mem::view_mut(buf, n, |dst| f.read_at(start, crate::iocp::is_overlapped(h), dst)).unwrap_or(Ok(0)) {
+        // SAFETY: the closure only reads the host file into the buffer, touching no guest memory;
+        // the program handed the buffer to this read (another thread of its writing it meanwhile
+        // would race on Windows too).
+        match unsafe { mem::view_mut_unchecked(buf, n, |dst| f.read_at(start, crate::iocp::is_overlapped(h), dst)) }.unwrap_or(Ok(0)) {
             Ok(got) => kome::num::u32_of(got),
             Err(()) => {
                 // (at or past the end: STATUS_END_OF_FILE in the OVERLAPPED, its event set,
@@ -9156,7 +9159,7 @@ fn random_into(p: u32, n: u32) -> bool {
         return false;
     }
     // SAFETY: getentropy writes at most chunk.len() (<= 256, its limit) bytes into the chunk.
-    mem::view_mut(p, n, |b| b.chunks_mut(256).all(|chunk| unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) } == 0)) == Some(true)
+    mem::update(p, n, |b| b.chunks_mut(256).all(|chunk| unsafe { libc::getentropy(chunk.as_mut_ptr().cast(), chunk.len()) } == 0)) == Some(true)
 }
 /// BCryptOpenAlgorithmProvider(&alg, id, implementation, flags): any algorithm "opens"; only
 /// BCryptGenRandom does something with it.
