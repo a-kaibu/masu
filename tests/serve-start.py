@@ -4,10 +4,11 @@ over a web app with several sake builds took longer than tests/winetest/run-brow
 for the server (winetest-gpu, run 42445713214). A stale .zst is never served: it is removed
 before the server listens; the fresh one appears later and is then sent zstd-encoded.
 
-And it answers while its bucket does not: the store's own trees (here the benchmark's
-programs) go up to the bucket after the server listens. On worker1 (2026-11-17) sake's C:\
-going up through a slow uplink kept 0.4.1 off its port for a quarter of an hour after
-/api/update restarted it, and tailscale serve answered 502 all that time.
+And it answers while its bucket does not, and puts nothing in it: on worker1 (2026-11-17)
+0.4.1 put the store's own trees (sake's C:\\, the benchmark's programs) in the bucket before it
+listened, and through a slow uplink that kept it off its port for a quarter of an hour after
+/api/update restarted it (tailscale serve answered 502). A release's page reads those trees
+from the release's GitHub Pages now (masu release-trees).
 
     tests/serve-start.py [path to masu]
 """
@@ -144,12 +145,10 @@ with tempfile.TemporaryDirectory() as home:
             fail(f'/version: {st} {body[:100]!r}')
         if not os.path.exists(os.path.join(home, 'store', 'trees', 'bench.tsv')):
             fail('no tree "bench" made: nothing to push')
-        for _ in range(100):
-            if held:
-                break
-            time.sleep(0.1)
-        else:
-            fail('the bench tree never went to the bucket')
-        print(f'ok   answers while the bucket holds {len(held)} uploads unanswered')
+        # (the release's GitHub Pages has them: nothing of the store goes up to a real bucket)
+        time.sleep(3)
+        if held:
+            fail(f'{len(held)} connections to the bucket: the store\'s own trees went up')
+        print('ok   answers at once, and puts nothing in a bucket that never answers')
     finally:
         p.kill()

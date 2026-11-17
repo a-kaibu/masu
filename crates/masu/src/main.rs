@@ -110,6 +110,22 @@ enum Cmd {
     },
     #[command(hide = true)]
     Ttc { out: PathBuf, fonts: Vec<PathBuf> },
+    /// A release's trees for its GitHub Pages (pack.rs release_trees): sake's C:\ and the
+    /// benchmark's programs into the new store `out`, the RTPs downloaded from their publisher.
+    #[command(hide = true)]
+    ReleaseTrees {
+        #[arg(long)]
+        out: PathBuf,
+        /// The release's fonts/
+        #[arg(long)]
+        fonts: PathBuf,
+        /// The release's bench/
+        #[arg(long)]
+        bench: PathBuf,
+        /// Where the RTPs are installed (and their downloads kept, in <rtp>.downloads)
+        #[arg(long)]
+        rtp: PathBuf,
+    },
     /// Download RPG Maker's run time packages (VX Ace, VX, XP, 2000, 2003) from their publisher
     /// and install them for sake's C:\ (rtp.rs; `serve` does it by itself when it starts).
     Rtp {
@@ -345,6 +361,11 @@ fn main() -> anyhow::Result<()> {
         Cmd::Gamedb { action: GamedbCmd::Update { dir, part, source } } => gamedb::update(&dir, part, &ghcr_token()?, &source).map(|d| println!("{d}")),
         Cmd::Foresee { trees, out } => foresee::write_all(&dirs.store, &trees, &out),
         Cmd::Ttc { out, fonts } => ttc::run(&out, &fonts),
+        Cmd::ReleaseTrees { out, fonts, bench, rtp } => {
+            let done = rtp::install_all(&rtp, &rtp.with_extension("downloads"))?;
+            eprintln!("RTPs installed in {}: {}", rtp.display(), done.join(" "));
+            crate::pack::release_trees(&out, &fonts, &bench, &rtp)
+        }
         Cmd::Rtp { out, cache } => {
             let out = out.unwrap_or_else(|| dirs.rtp.clone());
             let done = rtp::install_all(&out, &cache.unwrap_or_else(|| dirs.cache.join("rtp")))?;

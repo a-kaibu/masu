@@ -5,6 +5,7 @@
 // itself, the game's saved x86 regions and lists are fetched with them (saveApp), and the
 // service worker (sw.ts) keeps those and the app's pages: the game then starts with no connection.
 
+import { noteTree, treeListUrl } from "./release-trees";
 import { coverUrl, type GameEntry } from "./launcher";
 import { gameBusy } from "./budget";
 import { listChunks } from "./chunkstore";
@@ -114,9 +115,11 @@ async function treeLists(trees: string[]): Promise<{ name: string; tsv: string }
   return Promise.all(
     trees.map(async (name) => ({
       name,
-      tsv: new TextDecoder().decode(
-        await fetchBoot(new URL(`trees/${encodeURIComponent(name)}.tsv`, store())),
-      ),
+      tsv: await fetchBoot(treeListUrl(name, store())).then((b) => {
+        const tsv = new TextDecoder().decode(b);
+        noteTree(name, tsv);
+        return tsv;
+      }),
     })),
   );
 }

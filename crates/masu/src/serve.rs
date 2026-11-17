@@ -1215,7 +1215,9 @@ struct Resolved {
 }
 
 /// Puts what the server made of the store itself (sake's C:\, the benchmark's programs) in the
-/// bucket: the page reads chunks from there only.
+/// stand-in bucket (`--dev-bucket`: the tests' page, built with no CDN, reads them from there).
+/// A real bucket never gets them: a release's page reads them from its GitHub Pages
+/// (web/src/release-trees.ts, `masu release-trees`).
 fn push_made(store: &std::path::Path) -> anyhow::Result<()> {
     let Some(storage) = crate::storage::Storage::configured(crate::library::Library::new(store)?)? else { return Ok(()) };
     let names: Vec<&str> = [crate::pack::PREFIX_TREE, crate::pack::BENCH_TREE].into_iter().filter(|n| store.join("trees").join(format!("{n}.tsv")).is_file()).collect();
@@ -1262,11 +1264,12 @@ pub fn run(dirs: &crate::dirs::Dirs, a: Args) -> anyhow::Result<()> {
             eprintln!("RPG Maker RTPs: {e:#}");
         }
         let (store, fonts, rtp, cache) = (dirs.store.clone(), dirs.fonts.clone(), dirs.rtp.clone(), dirs.cache.join("rtp"));
+        let dev = args.push_all;
         std::thread::spawn(move || match crate::rtp::install_all(&rtp, &cache) {
             Ok(done) => {
                 eprintln!("RPG Maker RTPs installed: {}", done.join(" "));
                 match crate::pack::ensure_prefix(&store, &fonts, Some(&rtp)) {
-                    Ok(true) => match push_made(&store) {
+                    Ok(true) => match if dev { push_made(&store) } else { Ok(()) } {
                         Ok(()) => eprintln!("sake's C:\\ ({}) has the RTPs", crate::pack::PREFIX_TREE),
                         Err(e) => eprintln!("sake's C:\\ with the RTPs not put in the bucket: {e:#}"),
                     },
@@ -1479,17 +1482,16 @@ fn addr2line(exe: &str, offsets: Vec<usize>) -> std::collections::HashMap<usize,
 #[cfg(not(target_os = "linux"))]
 fn dump_threads() {}
 
-/// The bucket brought up to date with the store: the catalog it has that the disk lacks, then
-/// what the server made itself ([`push_made`]'s trees; `all`: the whole store). Failures are
-/// told, not fatal: the catalog on the disk serves (review b01).
-async fn sync_bucket(storage: crate::storage::Storage, store: PathBuf, all: bool) {
+/// The store brought up to date with the bucket: the catalog it has that the disk lacks, then
+/// (`push_store`: the stand-in bucket) the whole store put in it. Nothing goes up to a real
+/// bucket here: sake's C:\ and the benchmark come from the release's GitHub Pages ([`push_made`]).
+/// Failures are told, not fatal: the catalog on the disk serves (review b01).
+async fn sync_bucket(storage: crate::storage::Storage, store: PathBuf, push_store: bool) {
     if let Err(e) = storage.hydrate_catalog(&store).await {
         eprintln!("masu: the bucket's catalog not fetched ({e:#}): serving the store on the disk");
     }
-    let names: Vec<&str> = [crate::pack::PREFIX_TREE, crate::pack::BENCH_TREE].into_iter().filter(|n| store.join("trees").join(format!("{n}.tsv")).is_file()).collect();
-    let pushed = if all { storage.push_store(&store).await } else { storage.push_trees(&store, &names).await };
-    if let Err(e) = pushed {
-        eprintln!("masu: the store's own trees not put in the bucket ({e:#}): pages cannot read what is only here");
+    if push_store && let Err(e) = storage.push_store(&store).await {
+        eprintln!("masu: the store not put in the stand-in bucket ({e:#}): pages cannot read what is only here");
     }
 }
 

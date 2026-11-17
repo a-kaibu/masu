@@ -9,6 +9,7 @@
 import { blake3Hex } from "./blake3";
 import { CLASS } from "./budget";
 import { fetchRetry, HttpError, type RetryOptions } from "./net";
+import { chunkHome } from "./release-trees";
 import { sakeBase } from "./runtime";
 
 export interface DirectInfo {
@@ -194,13 +195,32 @@ export function directFetcher(
   const request = opt.request ?? ((i, n) => fetch(i, n));
   const unzstd = opt.unzstd ?? snapzUnzstd;
   const base = new URL("../store-direct/", store).href;
+  /** A release tree's chunk from its Pages (zstd as it is, no key: release-trees.ts); not the
+   * bucket's budget of requests. */
+  const plainChunk = async (url: string, hex: string, retry: RetryOptions) => {
+    for (let bad = 0; bad < BAD; bad++) {
+      let frame: Uint8Array;
+      try {
+        // (named by its bytes: the browser may keep it)
+        frame = await fetchRetry(url, {}, { giveUpMs: 60000, ...retry, request });
+      } catch (e) {
+        if (retry.signal?.aborted) throw e;
+        if (e instanceof HttpError || bad + 1 >= BAD) return null;
+        continue;
+      }
+      const data = await unzstd(frame).catch(() => null);
+      if (data && blake3Hex(data) === hex) return new Uint8Array(data);
+    }
+    return null;
+  };
   // what POST /store-direct said (null: the bucket does not have it)
   const known = new Map<string, DirectInfo | null>();
   return {
     /** Asks the server how to fetch `hexes` at once, DIRECT_MANY at a time (store_api.rs
      * direct_many): their gets then go to the bucket without a round trip to the server each. */
     async prime(hexes, signal) {
-      const want = hexes.filter((h) => !known.has(h));
+      // (the release's own trees' chunks are on its Pages, not in the bucket: release-trees.ts)
+      const want = hexes.filter((h) => !known.has(h) && chunkHome(h).kind === "bucket");
       for (let i = 0; i < want.length; i += DIRECT_MANY) {
         const part = want.slice(i, i + DIRECT_MANY);
         let r: Response;
@@ -296,6 +316,13 @@ export function directFetcher(
       info: unknown,
       retry: RetryOptions = {},
     ): Promise<Uint8Array<ArrayBuffer> | null | typeof EXPIRED> {
+      const home = chunkHome(hex);
+      switch (home.kind) {
+        case "pages":
+          return plainChunk(home.url, hex, retry);
+        case "bucket":
+          break;
+      }
       if (info === undefined)
         try {
           const signal = retry.signal

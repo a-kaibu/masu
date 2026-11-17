@@ -1,3 +1,4 @@
+import { noteTree, pagesChunks, treeListUrl } from "./release-trees";
 import { eachFrame } from "./frames";
 import { trackPlay } from "./library-data";
 let stopPlay: (() => void) | undefined;
@@ -434,9 +435,12 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       .filter(Boolean)
       .map(async (tree) => {
         const name = `trees/${tree}.tsv`;
-        vnvmFiles[name] = await fetchBoot(new URL(`store/${name}`, location.href)).catch((e: unknown) => {
-          throw new Error(`mount ${tree}: ${e instanceof Error ? e.message : String(e)}`);
+        // (sake's C:\ and the benchmark from the release's Pages: release-trees.ts)
+        const at = treeListUrl(tree, new URL("store/", location.href).href);
+        vnvmFiles[name] = await fetchBoot(at).catch((e: unknown) => {
+          throw new Error(`mount ${tree}: ${e instanceof Error ? e.message : String(e)} (${at})`);
         });
+        noteTree(tree, new TextDecoder().decode(vnvmFiles[name]));
       }),
   ).catch((e: unknown) => {
     treesRead(new Map());
@@ -488,6 +492,8 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
     vnvmFiles,
     // (the bucket's budget of requests: the network worker and the page's save take from one, budget.ts)
     masuNetBudget: netBudget(),
+    // (the release's trees' chunks on its Pages, for the network worker: release-trees.ts)
+    masuPages: pagesChunks(),
     // (sake takes the host path: Z:\\x\\y.exe is /x/y.exe)
     arguments: [
       run.replace(/^z:/i, "").replaceAll("\\", "/"),

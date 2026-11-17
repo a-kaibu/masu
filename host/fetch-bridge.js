@@ -980,7 +980,7 @@ function masuDirectValid(info) {
 var MASU_DIRECT_MANY = 512;
 var masuDirectAsking = new Map();
 async function masuDirectMany(urls) {
-  const want = urls.filter((u) => masuIsChunk(u) && u.includes('/store/chunks/') && !masuDirectFresh(masuDirectInfo.get(u)) && !masuDirectAsking.has(u));
+  const want = urls.filter((u) => masuIsChunk(u) && u.includes('/store/chunks/') && !masuPages.has(u.slice(u.lastIndexOf('/') + 1)) && !masuDirectFresh(masuDirectInfo.get(u)) && !masuDirectAsking.has(u));
   if (!want.length || typeof fetch === 'undefined') return;
   const runs = [];
   for (let i = 0; i < want.length; i += MASU_DIRECT_MANY) {
@@ -1034,6 +1034,8 @@ async function masuDirect(url, job = { cls: 0 }, size, alone = false) {
   const at = url.lastIndexOf('/store/chunks/');
   if (at < 0 || !masuIsChunk(url)) throw Object.assign(new Error(`not a store chunk: ${url}`), { fatal: true });
   const base = url.slice(0, at + 1);
+  const pages = masuPages.get(url.slice(url.lastIndexOf('/') + 1));
+  if (pages) return masuPagesChunk(url, pages, base, size);
   const start = Date.now();
   for (let attempt = 0, bad = 0; ; attempt++) {
     let info = masuDirectInfo.get(url);
@@ -1068,6 +1070,29 @@ async function masuDirect(url, job = { cls: 0 }, size, alone = false) {
     masuDirectInfo.delete(url);
     if (Date.now() - start > MASU_GIVE_UP_MS) throw new Error(`${error} (gave up)`);
     await masuPause(masuBackoff(attempt));
+  }
+}
+
+/**
+ * The release's own trees (sake's C:\, the benchmark: web/src/release-trees.ts) are on its
+ * GitHub Pages, their chunks plain zstd named by their bytes: chunk hex -> URL there, as the
+ * page read the trees' lists (Module.masuPages, posted at the worker's start).
+ */
+var masuPages = new Map();
+function masuPagesInit(pages) {
+  for (const [hex, url] of Object.entries(pages)) if (/^[0-9a-f]{32}$/.test(hex) && typeof url === 'string') masuPages.set(hex, url);
+}
+/** Chunk `url` from the release's Pages (`from`): not the bucket, so not its budget. */
+async function masuPagesChunk(url, from, base, size) {
+  for (let bad = 0; ; ) {
+    const got = await masuFetchRobust(from, {});
+    const data = await masuUnzstd(base, got.data, size).catch(() => null);
+    if (data && masuChunkOk(url, data)) {
+      masuKeepRecent(url, data);
+      masuKeep(await masuCache(), url, data);
+      return { data, wire: got.wire, cached: got.cached };
+    }
+    if (++bad >= MASU_BAD_CHUNK) throw Object.assign(new Error(`chunk from ${from} does not match its name ${bad} times`), { fatal: true });
   }
 }
 
@@ -1328,6 +1353,7 @@ function masuFetchWorker(event) {
   // (not a read: chunks the game reads soon, the budget the page shares, a warm or save run)
   if (m.hint) return masuHint(m.hint);
   if (m.budget) return void masuBudgetInit(m.budget, m.tag);
+  if (m.pages) return void masuPagesInit(m.pages);
   if (m.warm) return void masuWarmRun(m.warm, (r) => event.target?.postMessage?.(r));
   const { url, shared, from, len, block } = m;
   const cls = m.cls ?? MASU_CLASS.game;
@@ -1373,11 +1399,11 @@ function masuFetchWorker(event) {
 /** The network worker's script: the functions above (and `more`), `main` its message handler. */
 function masuFetchWorkerSource(main, more = []) {
   const vars = { MASU_STALL_MS, MASU_GIVE_UP_MS, MASU_RETRY_STATUS, MASU_BAD_CHUNK, MASU_CACHE_MS, MASU_BRIDGE_HEADER, MASU_BRIDGE_BYTES, MASU_RECENT_BYTES, MASU_DIRECT_KEEP_MS, MASU_DIRECT_ASK_MS, MASU_DIRECT_MANY, MASU_CLASS, MASU_RATE, MASU_BURST, MASU_RESERVE, MASU_HINT_WIDTH, MASU_HINT_MAX, MASU_PACK_SPAN, MASU_PACK_MAX, MASU_CHUNK_DIR, MASU_HANDLE_MS, MASU_HANDLES, MASU_BUDGET_BYTES, MASU_BUDGET_SPIN, MASU_SAVING_BYTES, MASU_LOCK_WAIT_MS, MASU_FOLLOW, MASU_PUT_MS };
-  const fns = [masuIsChunk, masuBlake3, masuBlake3Js, masuBlake3Simd, masuChunkOk, masuBackoff, masuPause, masuFetchOnce, masuNetReport, masuCacheStep, masuCache, masuChunkFile, masuOpfsStore, masuRange, masuKeepRecent, masuKeep, masuHeld, masuBudgetInit, masuBudgetWith, masuBudgetShare, masuTake, masuDrain, masuGate, masuWhole, masuStartWhole, masuHint, masuHintPump, masuNextAdd, masuFollow, masuReadStart, masuReadEnd, masuDirectFresh, masuDirectValid, masuDirectMany, masuPackValid, masuPackNote, masuPackRun, masuDirect, masuDirectAsk, masuHex, masuOpen, masuZstdSize, masuUnzstd, masuFetchPart, masuFetchRobust, masuWarmRun, masuFetchWorker];
+  const fns = [masuIsChunk, masuBlake3, masuBlake3Js, masuBlake3Simd, masuChunkOk, masuBackoff, masuPause, masuFetchOnce, masuNetReport, masuCacheStep, masuCache, masuChunkFile, masuOpfsStore, masuRange, masuKeepRecent, masuKeep, masuHeld, masuBudgetInit, masuBudgetWith, masuBudgetShare, masuTake, masuDrain, masuGate, masuWhole, masuStartWhole, masuHint, masuHintPump, masuNextAdd, masuFollow, masuReadStart, masuReadEnd, masuDirectFresh, masuDirectValid, masuDirectMany, masuPackValid, masuPackNote, masuPackRun, masuDirect, masuDirectAsk, masuPagesInit, masuPagesChunk, masuHex, masuOpen, masuZstdSize, masuUnzstd, masuFetchPart, masuFetchRobust, masuWarmRun, masuFetchWorker];
   return [
     ...Object.entries(vars).map(([k, v]) => `var ${k} = ${JSON.stringify(v)};`),
     'var masuNet = { retrying: new Map(), channel: undefined, id: Math.random().toString(36).slice(2) };',
-    'var masuCacheOpen, masuRecent = new Map(), masuDirectInfo = new Map(), masuZstd;',
+    'var masuCacheOpen, masuRecent = new Map(), masuDirectInfo = new Map(), masuZstd, masuPages = new Map();',
     'var masuDirectAsking = new Map(), masuBudgetBuf, masuBudgetTag = 1, masuGameWaiting = 0, masuInflight = new Map(), masuKeys = new Map();',
     'var masuHints = [], masuHintsSeen = new Set(), masuHintsGoing = 0, masuPacks = new Map(), masuSaving = new Map(), masuSavingBytes = 0;',
     "var masuNext = new Map(), masuReadSeen = new Set(), masuReads = { device: [0, 0], saving: [0, 0], coming: [0, 0], none: [0, 0], followed: 0, hinted: 0 };",
@@ -1465,6 +1491,9 @@ function masuFetchConnect() {
     // (each worker its own tag in the budget's lock word: the page frees only a terminated one's)
     const budget = typeof Module !== 'undefined' ? Module.masuNetBudget : undefined;
     if (budget) masuFetchWorkerInstance.postMessage({ budget, tag: (masuFetchWorkerTag = masuFetchTagNext++) });
+    // (the release's trees' chunks on its Pages: masuPages)
+    const pages = typeof Module !== 'undefined' ? Module.masuPages : undefined;
+    if (pages) masuFetchWorkerInstance.postMessage({ pages });
   }
   const channel = new MessageChannel();
   masuFetchWorkerInstance.postMessage({port:channel.port1}, [channel.port1]);
@@ -1490,6 +1519,8 @@ function masuFetchSync(url, from, len, block, cls) {
     const location = URL.createObjectURL(blob);
     masuFetchWorkerInstance = new Worker(location);
     URL.revokeObjectURL(location);
+    const pages = typeof Module !== 'undefined' ? Module.masuPages : undefined;
+    if (pages) masuFetchWorkerInstance.postMessage({ pages });
   }
   // (this thread's buffer, kept: one read at a time per thread; a new one after a worker
   // that timed out, which may still write into the old)

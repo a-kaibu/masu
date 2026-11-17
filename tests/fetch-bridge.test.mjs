@@ -31,7 +31,7 @@ globalThis.Worker = class {
       // the device's chunk store (OPFS in the browser): kept bodies, reads of parts counted
       MASU_RECENT_BYTES = 1;
       const kept = new Map();
-      let fetches = 0, slices = 0;
+      let fetches = 0, slices = 0, fromPages = 0;
       masuCacheOpen = Promise.resolve({
         match: async (u) => { const d = kept.get(u); return d && {arrayBuffer: async () => d.slice().buffer}; },
         putBytes: async (u, d) => void kept.set(u, d.slice()),
@@ -45,10 +45,21 @@ globalThis.Worker = class {
         const n = (tries.get(url) ?? 0) + 1;
         tries.set(url, n);
         // (how many bucket fetches and device reads of parts so far, as a body's length)
-        if (url === 'count' || url === 'slices') return {ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(url === 'count' ? fetches : slices)};
+        if (url === 'count' || url === 'slices' || url === 'pages') return {ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(url === 'count' ? fetches : url === 'pages' ? fromPages : slices)};
         // the server says where in the bucket; it never has a chunk itself
         const ask = /[/]store-direct[/]chunks[/][0-9a-f]{2}[/]([0-9a-f]{32})$/.exec(url);
         if (ask) return {ok: true, status: 200, json: async () => ({url: 'https://bucket/' + ask[1], key: '0'.repeat(64), object: '00000000-0000-4000-8000-000000000000'})};
+        // the release's Pages (release-trees.ts): plain chunks by their names, the first try
+        // of the 262144-byte one damaged; asked of the bucket they are not there
+        const page = /^https:[/][/]pages[/]store[/]chunks[/][0-9a-f]{2}[/]([0-9a-f]{32})$/.exec(url);
+        if (page) {
+          fetches++;
+          fromPages++;
+          const length = NAMES[page[1]] ?? 1000;
+          const data = new Uint8Array(body(length));
+          if (length === 262144 && n === 1) data[7] ^= 1;
+          return {ok: true, status: 200, arrayBuffer: async () => data.buffer};
+        }
         if (url.includes('/store/chunks/')) throw new Error('a chunk asked of the server: ' + url);
         // the bucket's objects: the bytes their name says (the 262144-byte one damaged the
         // first time), any other name 1000 bytes that never match
@@ -78,15 +89,16 @@ globalThis.Worker = class {
 };
 globalThis.Blob = class {};
 globalThis.URL = {createObjectURL: () => '', revokeObjectURL: () => {}};
+if (workerData.pages) globalThis.Module = {masuPages: workerData.pages};
 eval(workerData.source);
 try { const all = workerData.url.split('|').map((u) => Array.from(masuFetchSync(...masuRange(u)))); parentPort.postMessage({data: all.length === 1 ? all[0] : all}); }
 catch(e) { parentPort.postMessage({error: e.message}); }
 finally { masuFetchDispose(); }
 `;
 
-function request(url) {
+function request(url, pages) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(harness, {eval: true, workerData: {url, source}});
+    const worker = new Worker(harness, {eval: true, workerData: {url, source, pages}});
     worker.once('message', resolve);
     worker.once('error', reject);
   });
@@ -292,4 +304,30 @@ test('the network worker\'s script has every function and variable the bridge us
   // (it runs: every name it mentions is defined in it)
   assert.doesNotThrow(() => new Function(`${src}; masuZstdSize(new Uint8Array(8)); masuDirectAsk;`)());
   for (const gone of ['MASU_CHUNKS', 'masuRobustOnce', 'masuBlockKey', 'masuDirectOff', 'caches.open']) assert.ok(!src.includes(gone), gone);
+});
+
+test("the release's trees' chunks come from its Pages, checked, never asked of the server or the bucket", async () => {
+  const pages = (...ns) => Object.fromEntries(ns.map((n) => [nameOf(n), `https://pages/store/chunks/ab/${nameOf(n)}`]));
+  const on = pages(200000, 262144, 102400);
+  const c = `https://s/store/chunks/ab/${nameOf(200000)}`;
+  // (the fake server throws for a chunk asked of it; the bucket's would count too)
+  const r = await request([c, 'count', 'pages'].join('|'), on);
+  assert.ok(!r.error, r.error);
+  assert.deepEqual(r.data[0], want(0, 200000, 200000));
+  assert.equal(r.data[1].length, 1, 'one fetch');
+  assert.equal(r.data[2].length, 1, 'from the Pages');
+  // (damaged the first time: fetched again, the second copy)
+  const once = await request(`https://s/store/chunks/ab/${nameOf(262144)}`, on);
+  assert.ok(!once.error, once.error);
+  assert.equal(once.data.length, 262144);
+  assert.ok(once.data.every((b, i) => b === i % 251));
+  // (named for bytes the Pages never has: given up on, not taken)
+  const bad = '0'.repeat(32);
+  const never = await request(`https://s/store/chunks/ab/${bad}`, { [bad]: `https://pages/store/chunks/ab/${bad}` });
+  assert.ok(never.error, "a chunk that never matches its name fails");
+  // (a chunk not of those trees still goes to the bucket: without the map, the same chunk too)
+  const other = await request([`https://s/store/chunks/ab/${nameOf(102400)}`, 'pages'].join('|'), pages(200000));
+  assert.ok(!other.error, other.error);
+  assert.equal(other.data[0].length, 102400);
+  assert.equal(other.data[1].length, 0, 'not from the Pages');
 });

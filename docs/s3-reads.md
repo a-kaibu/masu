@@ -6,7 +6,11 @@ URLs (masu serve `/store-direct`) and decrypts them itself. The server gives no 
 (2026-11-16: no `/store/chunks/`, no fallback): it only signs the URLs and serves the catalog
 (`trees/`, `games/`), so a chunk the bucket lacks fails. A store that is not in a bucket is
 served with `masu serve --dev-bucket <dir>`, a stand-in bucket on the same machine that the
-whole store is pushed to at the start (the tests do this). This note says why play from the
+whole store is pushed to at the start (the tests do this). sake's C:\ (`prefix32`: the fonts
+and the RPG Maker RTPs) and the benchmark's programs (`bench`) are not in the bucket: a release
+makes them (`masu release-trees`) and puts them on its GitHub Pages as plain zstd chunks, and a
+page built with that CDN reads their lists and chunks from there (web/src/release-trees.ts,
+host/fetch-bridge.js masuPages); a page built without one reads them from the store. This note says why play from the
 bucket felt slow, and what the browser does about it.
 
 ## What the bucket costs

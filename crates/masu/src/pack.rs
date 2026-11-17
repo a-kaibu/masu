@@ -18,7 +18,7 @@ use crate::meta;
 use crate::tree_list::{self, Chunk, ChunkId, ChunkLen, Chunks, Kind, Line, Mode};
 use crate::unpack;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use clap::Subcommand;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -795,6 +795,21 @@ pub fn migrate_guest_paths(store: &Path, jit: &Path) -> Result<usize> {
 /// go into the tree where their setups put them ([`RTP_DIRS`]), where sake's registry points
 /// (misc.rs RTPS). The tree carries a stamp of them ([`RTP_STAMP`]-<hash> of what was
 /// installed), and a tree whose stamp differs gets its RTP part replaced, the rest of it kept.
+/// The trees a release puts on its GitHub Pages (release.yml's pages job, `masu release-trees`):
+/// sake's C:\ with the fonts and the RTPs ([`PREFIX_TREE`]) and the benchmark's programs
+/// ([`BENCH_TREE`]) into the new store `out` (`trees/`, `chunks/`), as plain zstd chunks the
+/// page reads from there itself (web/src/release-trees.ts), not from the bucket. Every part is
+/// required: a font, every RTP installed (`rtp`, rtp.rs), bench.exe.
+pub fn release_trees(out: &Path, fonts: &Path, bench: &Path, rtp: &Path) -> Result<()> {
+    ensure!(!out.join("trees").exists(), "{} has trees already: a release's are made in a new store", out.display());
+    ensure!(crate::rtp::complete(rtp), "{}: not every RTP is installed", rtp.display());
+    ensure!(ensure_prefix(out, fonts, Some(rtp))?, "no font in {}", fonts.display());
+    ensure!(ensure_bench(out, bench)?, "no bench.exe in {}", bench.display());
+    // (only the trees and their chunks go to the site)
+    fs::remove_file(out.join(format!("{BENCH_TREE}.version")))?;
+    Ok(())
+}
+
 pub fn ensure_prefix(store: &Path, fonts: &Path, rtp: Option<&Path>) -> Result<bool> {
     let tsv = store.join("trees").join(format!("{PREFIX_TREE}.tsv"));
     let rtp = rtp.filter(|d| d.join("drive_c").is_dir());
@@ -1555,6 +1570,53 @@ mod tests {
     /// RTPs leave the tree alone; changed RTPs replace the RTP part only (a file gone from them
     /// is gone from the tree, the fonts and what else the tree has stay); a store made before
     /// RTPs (fonts only, or by hand) gets them added.
+    /// A release's trees: both made in a new store with only trees/ and chunks/, every chunk
+    /// they list there (zstd of its bytes, named by them); RTPs, a font and bench.exe each
+    /// required, and a store that has trees refused.
+    #[test]
+    fn release_trees_are_whole() {
+        let t = std::env::temp_dir().join(format!("masu-release-trees-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&t);
+        let (fonts, bench, rtp) = (t.join("fonts"), t.join("bench"), t.join("rtp"));
+        fs::create_dir_all(&fonts).unwrap();
+        fs::write(fonts.join("msgothic.ttf"), b"font").unwrap();
+        fs::create_dir_all(&bench).unwrap();
+        fs::write(bench.join("bench.exe"), vec![7u8; 300_000]).unwrap();
+        fs::write(bench.join("VERSION"), "abc\n").unwrap();
+        let ace = rtp.join("drive_c").join(&RTP_DIRS[0][8..]);
+        fs::create_dir_all(ace.join("Graphics/System")).unwrap();
+        fs::write(ace.join("Graphics/System/Window.png"), b"window").unwrap();
+        let out = |n: &str| t.join(n);
+        assert!(release_trees(&out("a"), &fonts, &bench, &rtp).is_err(), "RTPs not all installed");
+        fs::write(rtp.join("INSTALLED"), crate::rtp::PACKAGES.iter().map(|p| format!("{}\n", p.id)).collect::<String>()).unwrap();
+        assert!(release_trees(&out("b"), &t.join("none"), &bench, &rtp).is_err(), "no fonts");
+        assert!(release_trees(&out("c"), &fonts, &t.join("none"), &rtp).is_err(), "no bench.exe");
+        let store = out("d");
+        release_trees(&store, &fonts, &bench, &rtp).unwrap();
+        let mut top: Vec<String> = fs::read_dir(&store).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+        top.sort();
+        assert_eq!(top, ["chunks", "trees"]);
+        for name in [PREFIX_TREE, BENCH_TREE] {
+            let tsv = fs::read_to_string(store.join(format!("trees/{name}.tsv"))).unwrap();
+            let mut n = 0;
+            for l in tree_list::good_lines(&tsv) {
+                if let tree_list::Kind::File(c) = l.kind {
+                    for id in c.list().iter().filter_map(|c| c.id) {
+                        let z = fs::read(store.join(id.store_path())).unwrap();
+                        let data = zstd::decode_all(&z[..]).unwrap();
+                        let h = blake3::hash(&data).to_hex();
+                        assert_eq!(format!("chunks/{}/{}", &h[..2], &h[..32]), id.store_path());
+                        n += 1;
+                    }
+                }
+            }
+            assert!(n > 0, "{name} lists chunks");
+        }
+        assert!(fs::read_to_string(store.join(format!("trees/{PREFIX_TREE}.tsv"))).unwrap().contains("Window.png"));
+        assert!(release_trees(&store, &fonts, &bench, &rtp).is_err(), "a store with trees");
+        let _ = fs::remove_dir_all(&t);
+    }
+
     #[test]
     fn prefix_with_rtps() {
         let t = std::env::temp_dir().join(format!("masu-prefix-rtp-{}", std::process::id()));
