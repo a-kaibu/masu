@@ -7,6 +7,10 @@
 //
 // 1. the browser has the server's file already (HTTP cache): that, as before (the compiled
 //    code comes with it);
+// 1b. the release's copy on GitHub Pages (`cdn`, the release workflow's pages job):
+//    sake/<build id>/<name>.zst, near the player (Fastly), whatever the server's line; checked
+//    against the build id (the first 16 hex digits of its SHA-256, build-id.txt). Its path is
+//    of one build, so the browser keeps it for good (force-cache);
 // 2. the device's chunk store (OPFS) has it from an earlier start: that;
 // 3. the bucket: fetched, opened, zstd-decoded, checked against its name, kept on the device;
 // 4. none of these (an older server, no S3, the bucket failing): the server's file, as before.
@@ -15,7 +19,7 @@
 // to sake.js through Module.instantiateWasm.
 
 import { CLASS } from "./budget";
-import { directFetcher, isDirectInfo, type Unzstd } from "./direct";
+import { directFetcher, isDirectInfo, snapzUnzstd, type Unzstd } from "./direct";
 import type { ChunkStore } from "./chunkstore";
 import { keepChunk } from "./net";
 
@@ -29,11 +33,21 @@ export interface WasmSourceDeps {
   unzstd?: Unzstd;
   /** how long the server may take to answer /sake-direct */
   askMs?: number;
+  /** where the release's wasm is (GitHub Pages: `https://<owner>.github.io/<repo>/`); none: not tried */
+  cdn?: string;
+  /** this page's build id of `name` (build-id.txt); none: the CDN not tried */
+  buildId?: () => Promise<string | undefined>;
+  /** how long the CDN may take for the whole file */
+  cdnMs?: number;
   note?: (line: string) => void;
 }
 
+/** Where the release's wasm is (release.yml sets VITE_MASU_WASM_CDN for its build: its GitHub
+ * Pages); a build without it tries no CDN. */
+export const WASM_CDN: string = (import.meta.env.VITE_MASU_WASM_CDN as string | undefined) ?? "";
+
 /** What loaded it, for the run log. */
-export type WasmFrom = "http-cache" | "device" | "bucket" | "server";
+export type WasmFrom = "http-cache" | "cdn" | "device" | "bucket" | "server";
 
 /**
  * sake's wasm `name` (`sake.wasm`) as bytes from the device or the bucket, or null for the
@@ -56,6 +70,14 @@ export async function sakeWasmBytes(
     }
   } catch {
     // (not kept, or a browser without only-if-cached)
+  }
+  // 1b. the release's copy on the CDN
+  const fromCdn = await cdnWasm(name, request, deps).catch(() => null);
+  if (fromCdn) {
+    note(
+      `${name}: ${(fromCdn.bytes.length / 2 ** 20).toFixed(1)} MiB from ${deps.cdn} in ${(fromCdn.ms / 1000).toFixed(1)} s`,
+    );
+    return { bytes: fromCdn.bytes, from: "cdn" };
   }
   // which chunk it is (and how to fetch it from the bucket)
   let info: unknown;
@@ -98,6 +120,44 @@ export async function sakeWasmBytes(
   const own = new Uint8Array(bytes);
   if (device) void keepChunk(device, key, own);
   return { bytes: own, from: "bucket" };
+}
+
+/** A build id: build-id.txt's 16 lowercase hex digits. */
+const BUILD_ID = /^[0-9a-f]{16}$/;
+
+/** `bytes`' build id: the first 16 hex digits of their SHA-256 (crates/sake/build.sh). */
+export async function buildIdOf(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(d.subarray(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The CDN's `<cdn>sake/<id>/<name>.zst`, zstd-decoded and checked against `id`; null when there
+ * is no CDN or id, or it is missing, slow or not of this build. */
+async function cdnWasm(
+  name: string,
+  request: typeof fetch,
+  deps: WasmSourceDeps,
+): Promise<{ bytes: Uint8Array<ArrayBuffer>; ms: number } | null> {
+  const cdn = deps.cdn;
+  if (!cdn || !/^https?:\/\/[^/]+\/(.*\/)?$/.test(cdn) || !deps.buildId) return null;
+  const id = await deps.buildId().catch(() => undefined);
+  if (!id || !BUILD_ID.test(id)) return null;
+  const t0 = Date.now();
+  const r = await request(`${cdn}sake/${id}/${encodeURIComponent(name)}.zst`, {
+    mode: "cors",
+    credentials: "omit",
+    cache: "force-cache",
+    signal: AbortSignal.timeout(deps.cdnMs ?? 60000),
+  });
+  if (!r.ok) {
+    await r.body?.cancel().catch(() => {});
+    return null;
+  }
+  const frame = new Uint8Array(await r.arrayBuffer());
+  const plain = await (deps.unzstd ?? snapzUnzstd)(frame);
+  const bytes = new Uint8Array(plain);
+  if ((await buildIdOf(bytes)) !== id) return null;
+  return { bytes, ms: Date.now() - t0 };
 }
 
 /** The chunk `hex` that /sake-direct's `info` says how to fetch, opened and checked (direct.ts). */

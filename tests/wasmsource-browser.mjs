@@ -6,11 +6,15 @@
 // 2. a new page: the wasm read from OPFS, the bucket not asked again;
 // 3. the server's file fetched once (immutable, as masu serve sends a ?v= file): the next page
 //    leaves it to the browser's HTTP cache (only-if-cached), neither /sake-direct nor the bucket asked;
-// 4. a damaged bucket object or a server without S3: null (emscripten loads the server's file).
+// 4. a damaged bucket object or a server without S3: null (emscripten loads the server's file);
+// 5. the release's CDN (another origin answering as GitHub Pages does: ACAO *, max-age=600):
+//    the wasm from there before /sake-direct or the bucket, checked against its build id, and
+//    the next page from the browser's cache (force-cache) without asking it again; a CDN without
+//    CORS (blocked by the isolated page) or of another build: the bucket.
 //   node tests/wasmsource-browser.mjs        (web's pnpm install done; PLAYWRIGHT as elsewhere)
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -103,7 +107,26 @@ const bucket = createServer((req, res) => {
   res.writeHead(200, { 'access-control-allow-origin': '*', 'content-type': 'application/octet-stream' });
   res.end(sealed);
 }).listen(0, '127.0.0.1');
-await Promise.all([app, bucket].map((s) => new Promise((r) => s.once('listening', r))));
+// the release's CDN: GitHub Pages' headers; `cdnCors` false: none (as a host without CORS)
+let cdnCors = true;
+let cdnBytes = wasm;
+const buildId = createHash('sha256').update(wasm).digest('hex').slice(0, 16);
+const cdnSeen = [];
+const cdn = createServer((req, res) => {
+  cdnSeen.push(req.url);
+  if (req.url !== `/masu/sake/${buildId}/sake.wasm.zst`) {
+    res.writeHead(404, cdnCors ? { 'access-control-allow-origin': '*' } : {});
+    return res.end();
+  }
+  res.writeHead(200, {
+    ...(cdnCors ? { 'access-control-allow-origin': '*' } : {}),
+    'content-type': 'application/octet-stream',
+    'cache-control': 'max-age=600',
+    etag: `"${buildId}"`,
+  });
+  res.end(cdnBytes);
+}).listen(0, '127.0.0.1');
+await Promise.all([app, bucket, cdn].map((s) => new Promise((r) => s.once('listening', r))));
 const bucketPort = bucket.address().port;
 const origin = `http://127.0.0.1:${app.address().port}`;
 
@@ -195,9 +218,51 @@ try {
   sealed = seal(wasm);
   assert.deepEqual(await run2(), { from: 'server', bytes: null });
   await context2.close();
-  console.log('wasmsource-browser: ok', counts);
+
+  // 5. the release's CDN
+  s3 = true;
+  const cdnBase = `http://localhost:${cdn.address().port}/masu/`;
+  const runCdn = async (ctx, id = buildId) => {
+    const page = await ctx.newPage();
+    await page.goto(`${origin}/`);
+    const r = await page.evaluate(async ({ origin, cdnBase, id }) => {
+      const m = await import(`${origin}/wasmsource.js`);
+      const got = await m.sakeWasmBytes('sake.wasm', `${origin}/sake/sake.wasm?v=3`, `${origin}/store/`, {
+        unzstd: async (b) => b,
+        cdn: cdnBase,
+        buildId: async () => id,
+      });
+      const arg = await m.wasmModuleArg(Promise.resolve(got));
+      let section = -1;
+      if (arg.instantiateWasm) {
+        const [, mod] = await new Promise((ok) => arg.instantiateWasm({}, (i, mo) => ok([i, mo])));
+        section = WebAssembly.Module.customSections(mod, 'x')[0].byteLength;
+      }
+      return { from: got.from, section };
+    }, { origin, cdnBase, id });
+    await page.close();
+    return r;
+  };
+  const context3 = await browser.newContext();
+  const directBefore = counts.direct;
+  assert.deepEqual(await runCdn(context3), { from: 'cdn', section: BODY });
+  assert.equal(counts.direct, directBefore, 'no /sake-direct asked');
+  assert.deepEqual(cdnSeen, [`/masu/sake/${buildId}/sake.wasm.zst`]);
+  assert.deepEqual(await runCdn(context3), { from: 'cdn', section: BODY });
+  assert.equal(cdnSeen.length, 1, 'the next page from the browser cache');
+  await context3.close();
+  // (no CORS: the isolated page cannot read it; another build's bytes: refused)
+  for (const [cors, bytes] of [[false, wasm], [true, Buffer.concat([wasm, Buffer.from([0])])]]) {
+    cdnCors = cors;
+    cdnBytes = bytes;
+    const ctx = await browser.newContext();
+    assert.equal((await runCdn(ctx)).from, 'bucket', `cors ${cors}`);
+    await ctx.close();
+  }
+  console.log('wasmsource-browser: ok', counts, 'cdn', cdnSeen.length);
 } finally {
   await browser.close();
   app.close();
   bucket.close();
+  cdn.close();
 }

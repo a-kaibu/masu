@@ -70,7 +70,7 @@ import { Budget, pool } from "./ahead";
 import { startWarm, warmAllowed, warmBusyWidth, warmMax, type Warm } from "./warm";
 import { savedChunks } from "./offline";
 import { keepServerWasm } from "./wasmkeep";
-import { sakeWasmBytes, wasmModuleArg } from "./wasmsource";
+import { sakeWasmBytes, WASM_CDN, wasmModuleArg } from "./wasmsource";
 import { deviceChunks } from "./chunkstore";
 import { fetchForesee, handForesee, mountedTrees } from "./foresee";
 import { CLASS, netBudget, setGameBusy, shareAcrossTabs } from "./budget";
@@ -389,6 +389,9 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
       : sakeWasmBytes(WASM, wasmUrl, new URL("store/", location.href).href, {
           device: deviceChunks,
           note: (l) => recorder?.note(l),
+          // (the release's copy on GitHub Pages; &wasmcdn= another, &wasmcdn= empty: none)
+          cdn: params.get("wasmcdn") ?? WASM_CDN,
+          buildId: () => builds().then((b) => b.get(build.name)),
         });
   recorder.note(
     `build: ${WASM} ${version}, translator ${await jitVersion}, memory ${build.memory ? "4 GB fixed" : "growing from 2.06 GB (4 GB refused)"}`,

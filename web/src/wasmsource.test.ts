@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "vite-plus/test";
 import { blake3Hex } from "./blake3";
 import { chunkFileName, opfsStore, type ChunkStore } from "./chunkstore";
-import { sakeWasmBytes, wasmModuleArg, type WasmFrom } from "./wasmsource";
+import { buildIdOf, sakeWasmBytes, wasmModuleArg, type WasmFrom, type WasmSourceDeps } from "./wasmsource";
 
 type B = Uint8Array<ArrayBuffer>;
 const urlOf = (i: RequestInfo | URL) => (typeof i === "string" ? i : i instanceof URL ? i.href : i.url);
@@ -310,4 +310,162 @@ test("an instance that cannot be made is told (the factory would wait for good o
   arg.instantiateWasm!({ m: { f: () => {} } }, () => (started = true));
   await new Promise((r) => setTimeout(r, 20));
   expect(started).toBe(true);
+});
+
+describe("sakeWasmBytes from the release's CDN (GitHub Pages)", () => {
+  const CDN = "https://owner.github.io/masu/";
+  /** world's server and bucket, and a CDN that has `cdnBytes` (none: 404) under build `id`. */
+  async function withCdn(
+    o: Parameters<typeof world>[0] & { cdn?: "ok" | 404 | "slow" | "other-build" | "bad-zstd" },
+  ) {
+    const w = world(o);
+    const id = await buildIdOf(w.wasm);
+    const other = wasmOf(4000);
+    const request = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const u = urlOf(input);
+      if (u.startsWith(CDN)) {
+        w.seen.push(`${init?.cache ?? ""} ${init?.mode ?? ""} ${u}`);
+        if (u !== `${CDN}sake/${id}/sake.wasm.zst`) return new Response("", { status: 404 });
+        switch (o.cdn ?? "ok") {
+          case "ok":
+            return new Response(w.wasm);
+          case 404:
+            return new Response("", { status: 404 });
+          case "slow":
+            return new Promise<Response>((_, no) =>
+              init?.signal?.addEventListener("abort", () => no(new DOMException("t", "TimeoutError"))),
+            );
+          case "other-build":
+            return new Response(other);
+          case "bad-zstd":
+            return new Response(new Uint8Array([1, 2, 3]));
+        }
+      }
+      return w.request(input, init);
+    }) as typeof fetch;
+    // (the "zstd" frame: the bytes themselves; [1,2,3] is not a frame)
+    const unzstd = async (b: Uint8Array) => {
+      if (b.length === 3) throw new Error("not zstd");
+      return b;
+    };
+    return { ...w, id, request, unzstd };
+  }
+
+  it("names a build as build.sh does: the first 16 hex digits of the SHA-256", async () => {
+    // (sha256("abc") = ba7816bf8f01cfea414140de5dae2223...)
+    expect(await buildIdOf(new TextEncoder().encode("abc") as B)).toBe("ba7816bf8f01cfea");
+  });
+
+  it("takes the CDN's file of this build before the server or the bucket, cached for good, CORS", async () => {
+    const w = await withCdn({});
+    const lines: string[] = [];
+    const r = await sakeWasmBytes("sake.wasm", URL_, STORE, {
+      request: w.request,
+      unzstd: w.unzstd,
+      cdn: CDN,
+      buildId: async () => w.id,
+      note: (l) => lines.push(l),
+    });
+    expect(r.from).toBe("cdn");
+    expect(r.bytes).toEqual(w.wasm);
+    expect(w.seen.filter((s) => s.includes(CDN))).toEqual([
+      `force-cache cors ${CDN}sake/${w.id}/sake.wasm.zst`,
+    ]);
+    // (no /sake-direct, no bucket, no server file)
+    expect(w.seen.some((s) => s.includes("sake-direct") || s.includes("bucket.example"))).toBe(false);
+    expect(w.seen.filter((s) => s.endsWith(URL_) && !s.startsWith("only-if-cached"))).toEqual([]);
+    expect(lines.join("\n")).toContain(`from ${CDN}`);
+  });
+
+  it("still leaves a file the browser kept to emscripten first", async () => {
+    const w = await withCdn({ httpCache: true });
+    const r = await sakeWasmBytes("sake.wasm", URL_, STORE, {
+      request: w.request,
+      unzstd: w.unzstd,
+      cdn: CDN,
+      buildId: async () => w.id,
+    });
+    expect(r).toEqual({ bytes: null, from: "http-cache" });
+    expect(w.seen.some((s) => s.includes(CDN))).toBe(false);
+  });
+
+  it("goes on to the bucket when the CDN lacks it, is slow, has another build or a bad frame", async () => {
+    for (const cdn of [404, "slow", "other-build", "bad-zstd"] as const) {
+      const w = await withCdn({ cdn });
+      const r = await sakeWasmBytes("sake.wasm", URL_, STORE, {
+        request: w.request,
+        unzstd: w.unzstd,
+        cdn: CDN,
+        buildId: async () => w.id,
+        cdnMs: 50,
+      });
+      expect(r.from, String(cdn)).toBe("bucket");
+      expect(r.bytes, String(cdn)).toEqual(w.wasm);
+    }
+  });
+
+  it("asks no CDN without one, without a build id, or with a malformed one", async () => {
+    const cases: Partial<WasmSourceDeps>[] = [
+      { cdn: "", buildId: async () => "0123456789abcdef" },
+      { cdn: CDN },
+      { cdn: CDN, buildId: async () => undefined },
+      { cdn: CDN, buildId: async () => "../../evil" },
+      { cdn: CDN, buildId: async () => "0123456789ABCDEF" },
+      { cdn: CDN, buildId: () => Promise.reject(new Error("no build-id.txt")) },
+      { cdn: "javascript:alert(1)//", buildId: async () => "0123456789abcdef" },
+      { cdn: "https://owner.github.io/masu", buildId: async () => "0123456789abcdef" },
+    ];
+    for (const c of cases) {
+      const w = await withCdn({});
+      const r = await sakeWasmBytes("sake.wasm", URL_, STORE, { request: w.request, unzstd: w.unzstd, ...c });
+      expect(r.from, JSON.stringify(c)).toBe("bucket");
+      expect(
+        w.seen.some((s) => s.includes("github.io") || s.includes("javascript:")),
+        JSON.stringify(c),
+      ).toBe(false);
+    }
+  });
+
+  it("picks the first source that has it, the CDN second (seeded property)", async () => {
+    let seed = 7;
+    const r = () => (seed = (seed * 1103515245 + 12345) >>> 0) / 2 ** 32;
+    for (let i = 0; i < 80; i++) {
+      const has = {
+        http: r() < 0.3,
+        cdn: r() < 0.5,
+        answer: r() < 0.7,
+        device: r() < 0.4,
+        bucket: r() < 0.6,
+      };
+      const w = await withCdn({
+        httpCache: has.http,
+        cdn: has.cdn ? "ok" : 404,
+        sakeDirect: has.answer ? undefined : 404,
+        bucket: has.bucket ? "ok" : "fail",
+      });
+      const device = memoryStore();
+      if (has.device) device.files.set(`${STORE}chunks/${w.hex.slice(0, 2)}/${w.hex}`, w.wasm);
+      const got = await sakeWasmBytes("sake.wasm", URL_, STORE, {
+        request: w.request,
+        unzstd: w.unzstd,
+        device: async () => device,
+        cdn: CDN,
+        buildId: async () => w.id,
+      });
+      const want: WasmFrom = has.http
+        ? "http-cache"
+        : has.cdn
+          ? "cdn"
+          : !has.answer
+            ? "server"
+            : has.device
+              ? "device"
+              : has.bucket
+                ? "bucket"
+                : "server";
+      expect(got.from, JSON.stringify(has)).toBe(want);
+      if (want === "http-cache" || want === "server") expect(got.bytes).toBeNull();
+      else expect(got.bytes).toEqual(w.wasm);
+    }
+  }, 20000);
 });
