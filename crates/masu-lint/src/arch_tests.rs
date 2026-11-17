@@ -141,6 +141,19 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: (NOCHECK_HOME, |t| Some(t.replace("AtomicBool::new(false);\n/// Pushes", "AtomicBool::new(true);\n/// Pushes"))),
         },
+        Rule::OutEscape => Fixture {
+            bad: &[
+                ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),
+                ("crates/sake/src/gdiplus.rs", "fn f(c: &mut Ctx) { let m = c.out::<0>().object().key(); let v = crate::mem::r32(m + 4); }\n"),
+                ("crates/sake/src/ws2.rs", "fn f(o: Out) { mem::copy(d, (o.object().key()), 4); let a = Ga::from(o.lock_word().key()); w8(ga(o.object().key()), 1); }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { SYNC.cv_wake(c.out::<0>().lock_word().key()); srw(c.out::<0>().lock_word().atomic()); }\n"),
+                ("crates/sake/src/ws2name.rs", "fn f(res: Out) { wp(ov + 2 * k, res.object().key()); }\nfn g(o: Out) { let m = o.object().key(); }\nfn h(m: u32) { mem::r32(m); }\n"),
+                ("crates/sake/src/x.rs", "fn f(o: Out) { let m = o.object().key(); let m = 5; mem::r32(m); }\n#[cfg(test)]\nmod tests {\n    fn t(o: Out) { mem::w32(o.object().key(), 0); }\n}\n"),
+            ],
+            mutate: ("crates/sake/src/gdiplus_brush.rs", |t| Some(t + "\nfn escape(c: &mut Ctx) { crate::mem::w32(c.out::<0>().object().key(), 0); }\n")),
+        },
     }
 }
 
@@ -208,11 +221,12 @@ fn every_regex_compiles() {
 #[test]
 fn the_new_rules_find_each_spelling_alone() {
     // (each bad file on its own: one spelling found does not hide another that is missed)
-    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode] {
+    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape] {
         for one in fixture(r).bad.chunks(1) {
             assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
         }
     }
-    // (and every fn in the bad file, not only the first)
+    // (and every site in the bad files, not only the first: w8(ga(key)) is two)
     assert_eq!(Rule::SafeRawPointerAbi.check(&Tree::made_up(fixture(Rule::SafeRawPointerAbi).bad)).len(), 3);
+    assert_eq!(Rule::OutEscape.check(&Tree::made_up(fixture(Rule::OutEscape).bad)).len(), 6);
 }

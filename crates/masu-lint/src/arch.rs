@@ -30,10 +30,11 @@ pub enum Rule {
     DisallowedNamed,
     SafeRawPointerAbi,
     UncheckedJitMode,
+    OutEscape,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 13] = [
+    pub const ALL: [Rule; 14] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -47,6 +48,7 @@ impl Rule {
         Rule::DisallowedNamed,
         Rule::SafeRawPointerAbi,
         Rule::UncheckedJitMode,
+        Rule::OutEscape,
     ];
 
     /// the name a site list and a message use
@@ -65,6 +67,7 @@ impl Rule {
             Rule::DisallowedNamed => "disallowed-named",
             Rule::SafeRawPointerAbi => "safe-raw-pointer-abi",
             Rule::UncheckedJitMode => "unchecked-jit-mode",
+            Rule::OutEscape => "out-escape",
         }
     }
 
@@ -84,6 +87,7 @@ impl Rule {
             Rule::DisallowedNamed => "each clippy.toml disallowed-methods entry's reason starts with its masu-* name (`masu-relay: ...`): the ratchet counts it under that name",
             Rule::SafeRawPointerAbi => "an extern fn that takes a raw pointer is `unsafe extern` with a # Safety section (review 2026-11-17, vnhost_jit_late): a safe one lets safe Rust hand it any address; better, take an owned or typed value",
             Rule::UncheckedJitMode => "the JIT without range checks (koji::jit::NOCHECK, MASU_JIT_NOCHECK) is for measuring only (review 2026-11-17): the switch starts off, only kura's jit.rs may set it, and no build, CI step, script or page turns it on",
+            Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
 
@@ -102,6 +106,7 @@ impl Rule {
             Rule::DisallowedNamed => disallowed_named(tree),
             Rule::SafeRawPointerAbi => safe_raw_pointer_abi(tree),
             Rule::UncheckedJitMode => unchecked_jit_mode(tree),
+            Rule::OutEscape => out_escape(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -552,6 +557,113 @@ fn unchecked_jit_mode(tree: &Tree) -> Hits {
         for m in on.find_iter(&src) {
             out.push((p.clone(), line_of(&src, m.start()), format!("turns the unchecked JIT on: {}", m.as_str())));
         }
+    }
+    out
+}
+
+/// sake::mem's functions whose first argument is a guest address (copy: its first two), and the
+/// ways to make a Ga
+pub const ADDRESSED: [&str; 34] = [
+    "rp", "wp", "putp", "r8", "r16", "r32", "r64", "w8", "w16", "w32", "w64", "put32", "put64", "put_addr", "bytes", "array", "update", "view_unchecked", "view_mut_unchecked", "host_ptr", "host_ptr_mut", "fill", "zero",
+    "copy", "write", "cstr", "wstr", "cstrn", "wstrn", "put_cstr", "put_wstr", "range", "range_of", "ga",
+];
+
+/// `x.lock_word().key()` / `x.object().key()`, or a name a `let` bound to one in the same fn
+#[derive(Default)]
+struct KeyEscape {
+    bound: BTreeSet<String>,
+    hits: Vec<(usize, String)>,
+}
+
+fn is_key_chain(e: &syn::Expr) -> bool {
+    if let syn::Expr::MethodCall(m) = e {
+        m.method == "key" && matches!(&*m.receiver, syn::Expr::MethodCall(r) if r.method == "lock_word" || r.method == "object")
+    } else if let syn::Expr::Paren(p) = e {
+        is_key_chain(&p.expr)
+    } else if let syn::Expr::Try(t) = e {
+        is_key_chain(&t.expr)
+    } else {
+        false
+    }
+}
+
+/// a key in `e` (anywhere: `k + 4` too)
+fn has_key(e: &syn::Expr, bound: &BTreeSet<String>) -> bool {
+    struct K<'b>(&'b BTreeSet<String>, bool);
+    impl<'a> syn::visit::Visit<'a> for K<'_> {
+        fn visit_expr(&mut self, e: &'a syn::Expr) {
+            if is_key_chain(e) {
+                self.1 = true;
+            } else if let syn::Expr::Path(p) = e
+                && let Some(i) = p.path.get_ident()
+                && self.0.contains(&i.to_string())
+            {
+                self.1 = true;
+            } else {
+                syn::visit::visit_expr(self, e);
+            }
+        }
+        // (a closure's or a block's own value is not the argument)
+        fn visit_expr_closure(&mut self, _: &'a syn::ExprClosure) {}
+    }
+    let mut k = K(bound, false);
+    syn::visit::Visit::visit_expr(&mut k, e);
+    k.1
+}
+
+impl<'a> syn::visit::Visit<'a> for KeyEscape {
+    fn visit_item_mod(&mut self, m: &'a syn::ItemMod) {
+        if !crate::syntax::is_cfg_test(&m.attrs) {
+            syn::visit::visit_item_mod(self, m);
+        }
+    }
+    fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
+        let outer = std::mem::take(&mut self.bound);
+        syn::visit::visit_item_fn(self, f);
+        self.bound = outer;
+    }
+    fn visit_impl_item_fn(&mut self, f: &'a syn::ImplItemFn) {
+        let outer = std::mem::take(&mut self.bound);
+        syn::visit::visit_impl_item_fn(self, f);
+        self.bound = outer;
+    }
+    fn visit_local(&mut self, l: &'a syn::Local) {
+        if let (syn::Pat::Ident(i), Some(init)) = (&l.pat, &l.init) {
+            if is_key_chain(&init.expr) {
+                self.bound.insert(i.ident.to_string());
+            } else {
+                self.bound.remove(&i.ident.to_string());
+            }
+        }
+        syn::visit::visit_local(self, l);
+    }
+    fn visit_expr_call(&mut self, c: &'a syn::ExprCall) {
+        if let syn::Expr::Path(p) = &*c.func {
+            let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
+            let name = segs.last().map(String::as_str).unwrap_or_default();
+            let parent = segs.iter().rev().nth(1).map(String::as_str);
+            let ga_from = parent == Some("Ga") && (name == "from" || name == "new");
+            let mem_fn = ADDRESSED.contains(&name) && (segs.len() == 1 || parent == Some("mem"));
+            if ga_from || mem_fn {
+                let n = if name == "copy" { 2 } else { 1 };
+                for a in c.args.iter().take(n) {
+                    if has_key(a, &self.bound) {
+                        self.hits.push((crate::syntax::line(p.path.segments.first().map_or_else(proc_macro2::Span::call_site, |s| s.ident.span())), format!("a key() as the address of {}", segs.join("::"))));
+                    }
+                }
+            }
+        }
+        syn::visit::visit_expr_call(self, c);
+    }
+}
+
+fn out_escape(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in tree.rs(&["crates/sake/", "crates/kura/"]) {
+        let Some(file) = tree.syntax(&f) else { continue };
+        let mut v = KeyEscape::default();
+        syn::visit::Visit::visit_file(&mut v, &file);
+        out.extend(v.hits.into_iter().map(|(l, w)| (f.clone(), l, w)));
     }
     out
 }

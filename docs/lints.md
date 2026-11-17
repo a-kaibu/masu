@@ -42,6 +42,7 @@ clippy.toml path stops resolving, a regex stops matching) fails there instead of
 | an exported extern fn taking a raw pointer is `unsafe extern` (review 2026-11-17, vnhost_jit_late) | arch `safe-raw-pointer-abi` |
 | the unchecked JIT (koji::jit::NOCHECK, MASU_JIT_NOCHECK) starts off, is set only in kura's jit.rs, and nothing in CI, scripts or the page turns it on (review 2026-11-17) | arch `unchecked-jit-mode` |
 | an `#[allow]` (several lines, cfg_attr, crate-wide, Cargo.toml) does not hide a counted lint (review 2026-11-17) | ratchet `--force-warn` + allow-attr |
+| a LockWord's / Object's `key()` is no guest address: not the address of mem's readers and writers, ga(), Ga::from (review 2026-11-17, 06dc4bf2) | arch `out-escape` |
 | every pointer-sized out-parameter is taken as typed Args | `sake::outptr_audit` (test) |
 | Pool Lease / brand, Ga, Out misuse does not compile | compile_fail doctests |
 
