@@ -2281,6 +2281,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "masu-lint"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "regex",
+ "serde_json",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "masu-tls"
 version = "0.1.0"
 dependencies = [

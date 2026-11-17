@@ -1,11 +1,11 @@
-# (tools/ci/lint-ratchet.py: tests may unwrap; the code they test may not)
+# (masu-lint ratchet, crates/masu-lint: tests may unwrap; the code they test may not)
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 # (sake::mem::Ga, named as clippy prints it inside sake: a guest address, whose + and - wrap at
 # 4 GiB as the x86's do, by design)
 arithmetic-side-effects-allowed = ["mem::Ga"]
-# (tools/ci/lint-ratchet.py counts these per file as masu-*: unsafe functions named by their type,
-# not by a text search; its DISALLOWED lists the same paths)
+# (masu-lint ratchet counts these per file under the masu-* name each reason starts with: unsafe
+# functions named by their type, not by a text search)
 disallowed-methods = [
     { path = "alloc::vec::Vec::set_len", reason = "masu-set_len: Vec::resize / truncate / a typed buffer" },
     { path = "core::slice::from_raw_parts", reason = "masu-from_raw_parts: a Range or a typed view (sake::mem::view)" },

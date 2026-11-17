@@ -1,0 +1,16 @@
+[package]
+name = "masu-lint"
+version = "0.1.0"
+edition.workspace = true
+# (a workspace crate, never published: cargo-deny lets its path dependencies be)
+publish = false
+license.workspace = true
+description = "masu's own lints: the architecture rules (arch, syn) and the type-safety lint ratchet over clippy (ratchet); docs/lints.md"
+
+[dependencies]
+# (span-locations: a parsed item's line, what a finding reports)
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+regex = "1"
+serde_json = "1"
+syn = { version = "2", features = ["full", "visit"] }
