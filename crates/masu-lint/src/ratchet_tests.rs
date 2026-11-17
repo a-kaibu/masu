@@ -84,3 +84,17 @@ fn every_regex_compiles() {
     }
     assert!(CUSTOM.iter().chain(RAW.iter()).all(|(_, r)| Regex::new(r).is_ok()));
 }
+
+#[test]
+fn a_pinned_site_copied_or_moved_to_another_file_is_new() {
+    // (review 2026-11-17: a site is its file, lint and line text, so the same text moved within
+    // its file stays known, a second copy of it is new, and the same text in another file is new)
+    let k = |f: &str| (Rel::new(f), "masu-transmute".to_owned(), "unsafe { transmute(x) }".to_owned());
+    let known: BTreeMap<_, _> = [(k("a.rs"), 1)].into_iter().collect();
+    let moved: BTreeMap<_, _> = [(k("a.rs"), 1)].into_iter().collect();
+    assert!(fresh_sites(&moved, &known, &BTreeSet::new()).is_empty());
+    let copied: BTreeMap<_, _> = [(k("a.rs"), 2)].into_iter().collect();
+    assert_eq!(fresh_sites(&copied, &known, &BTreeSet::new()), vec![&k("a.rs")]);
+    let elsewhere: BTreeMap<_, _> = [(k("b.rs"), 1)].into_iter().collect();
+    assert_eq!(fresh_sites(&elsewhere, &known, &BTreeSet::new()), vec![&k("b.rs")]);
+}

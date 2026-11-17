@@ -39,6 +39,9 @@ clippy.toml path stops resolving, a regex stops matching) fails there instead of
 | every repr(C) type has a compile-time size assert | arch `repr-c-layout` |
 | release.yml builds and releases only | arch `release-build-only` |
 | MASU_OUTS_STRICT, outptr_audit, the compile_fail doctests, these CI steps stay | arch `required` |
+| an exported extern fn taking a raw pointer is `unsafe extern` (review 2026-11-17, vnhost_jit_late) | arch `safe-raw-pointer-abi` |
+| the unchecked JIT (koji::jit::NOCHECK, MASU_JIT_NOCHECK) starts off, is set only in kura's jit.rs, and nothing in CI, scripts or the page turns it on (review 2026-11-17) | arch `unchecked-jit-mode` |
+| an `#[allow]` (several lines, cfg_attr, crate-wide, Cargo.toml) does not hide a counted lint (review 2026-11-17) | ratchet `--force-warn` + allow-attr |
 | every pointer-sized out-parameter is taken as typed Args | `sake::outptr_audit` (test) |
 | Pool Lease / brand, Ga, Out misuse does not compile | compile_fail doctests |
 

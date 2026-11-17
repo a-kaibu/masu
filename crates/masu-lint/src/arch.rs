@@ -28,10 +28,12 @@ pub enum Rule {
     ReleaseBuildOnly,
     Required,
     DisallowedNamed,
+    SafeRawPointerAbi,
+    UncheckedJitMode,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 11] = [
+    pub const ALL: [Rule; 13] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -43,6 +45,8 @@ impl Rule {
         Rule::ReleaseBuildOnly,
         Rule::Required,
         Rule::DisallowedNamed,
+        Rule::SafeRawPointerAbi,
+        Rule::UncheckedJitMode,
     ];
 
     /// the name a site list and a message use
@@ -59,6 +63,8 @@ impl Rule {
             Rule::ReleaseBuildOnly => "release-build-only",
             Rule::Required => "required",
             Rule::DisallowedNamed => "disallowed-named",
+            Rule::SafeRawPointerAbi => "safe-raw-pointer-abi",
+            Rule::UncheckedJitMode => "unchecked-jit-mode",
         }
     }
 
@@ -76,6 +82,8 @@ impl Rule {
             Rule::ReleaseBuildOnly => "release.yml builds and releases (jobs version, web, bin, pages, release; no test suite or linter): CI tests every push",
             Rule::Required => "the guards stay: MASU_OUTS_STRICT, outptr_audit, the compile_fail doctests, the CI steps of these lints",
             Rule::DisallowedNamed => "each clippy.toml disallowed-methods entry's reason starts with its masu-* name (`masu-relay: ...`): the ratchet counts it under that name",
+            Rule::SafeRawPointerAbi => "an extern fn that takes a raw pointer is `unsafe extern` with a # Safety section (review 2026-11-17, vnhost_jit_late): a safe one lets safe Rust hand it any address; better, take an owned or typed value",
+            Rule::UncheckedJitMode => "the JIT without range checks (koji::jit::NOCHECK, MASU_JIT_NOCHECK) is for measuring only (review 2026-11-17): the switch starts off, only kura's jit.rs may set it, and no build, CI step, script or page turns it on",
         }
     }
 
@@ -92,6 +100,8 @@ impl Rule {
             Rule::ReleaseBuildOnly => release_build_only(tree),
             Rule::Required => required(tree),
             Rule::DisallowedNamed => disallowed_named(tree),
+            Rule::SafeRawPointerAbi => safe_raw_pointer_abi(tree),
+            Rule::UncheckedJitMode => unchecked_jit_mode(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -369,6 +379,167 @@ fn disallowed_named(tree: &Tree) -> Hits {
 /// A finding as a site list knows it: (rule, file, the line's code with spaces collapsed; for
 /// a file-level finding, what it is).
 pub type Site = (String, Rel, String);
+
+/// exported safe `extern "ABI" fn`s with a raw pointer among their parameters (#[cfg(test)]
+/// modules left out, and the files only a #[cfg(test)] `mod x;` brings in)
+#[derive(Default)]
+struct SafeAbiPtr(Vec<(String, usize)>);
+
+impl<'a> syn::visit::Visit<'a> for SafeAbiPtr {
+    fn visit_item_mod(&mut self, m: &'a syn::ItemMod) {
+        if !crate::syntax::is_cfg_test(&m.attrs) {
+            syn::visit::visit_item_mod(self, m);
+        }
+    }
+    fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
+        if !crate::syntax::is_cfg_test(&f.attrs) {
+            self.sig(&f.attrs, &f.sig);
+            syn::visit::visit_item_fn(self, f);
+        }
+    }
+    fn visit_impl_item_fn(&mut self, f: &'a syn::ImplItemFn) {
+        if !crate::syntax::is_cfg_test(&f.attrs) {
+            self.sig(&f.attrs, &f.sig);
+            syn::visit::visit_impl_item_fn(self, f);
+        }
+    }
+}
+
+/// `#[no_mangle]`, `#[unsafe(no_mangle)]`, `#[export_name = ..]`: callable from outside Rust
+fn exported(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        let toks = match &a.meta {
+            syn::Meta::Path(p) => quote::quote!(#p).to_string(),
+            syn::Meta::List(l) => format!("{} {}", l.path.get_ident().map(|i| i.to_string()).unwrap_or_default(), l.tokens),
+            syn::Meta::NameValue(n) => n.path.get_ident().map(|i| i.to_string()).unwrap_or_default(),
+        };
+        toks.split(|c: char| !c.is_alphanumeric() && c != '_').any(|w| w == "no_mangle" || w == "export_name")
+    })
+}
+
+impl SafeAbiPtr {
+    fn sig(&mut self, attrs: &[syn::Attribute], s: &syn::Signature) {
+        if s.abi.is_none() || s.unsafety.is_some() || !exported(attrs) {
+            return;
+        }
+        let takes_ptr = s.inputs.iter().any(|a| match a {
+            syn::FnArg::Typed(t) => has_ptr(&t.ty),
+            syn::FnArg::Receiver(_) => false,
+        });
+        if takes_ptr {
+            self.0.push((s.ident.to_string(), crate::syntax::line(s.fn_token.span)));
+        }
+    }
+}
+
+/// a raw pointer in `ty` (also inside Option<..>, a tuple, an array), not behind a fn pointer type
+fn has_ptr(ty: &syn::Type) -> bool {
+    #[derive(Default)]
+    struct P(bool);
+    impl<'a> syn::visit::Visit<'a> for P {
+        fn visit_type_ptr(&mut self, _: &'a syn::TypePtr) {
+            self.0 = true;
+        }
+        // (a callback's own parameters are its contract, not this fn's)
+        fn visit_type_bare_fn(&mut self, _: &'a syn::TypeBareFn) {}
+    }
+    let mut p = P::default();
+    syn::visit::Visit::visit_type(&mut p, ty);
+    p.0
+}
+
+/// the files a `#[cfg(test)] mod x;` brings in (x.rs or x/mod.rs beside the declaring file)
+fn test_mod_files(tree: &Tree, files: &[Rel]) -> BTreeSet<Rel> {
+    let mut out = BTreeSet::new();
+    for f in files {
+        let Some(file) = tree.syntax(f) else { continue };
+        let s = f.as_str();
+        let dir = match s.rsplit_once('/') {
+            Some((d, "mod.rs" | "lib.rs" | "main.rs")) => d.to_owned(),
+            Some(_) => s.trim_end_matches(".rs").to_owned(),
+            None => String::new(),
+        };
+        for it in &file.items {
+            if let syn::Item::Mod(m) = it
+                && m.content.is_none()
+                && crate::syntax::is_cfg_test(&m.attrs)
+                && !m.attrs.iter().any(|a| a.path().is_ident("path"))
+            {
+                out.insert(Rel(format!("{dir}/{}.rs", m.ident)));
+                out.insert(Rel(format!("{dir}/{}/mod.rs", m.ident)));
+            }
+        }
+    }
+    out
+}
+
+fn safe_raw_pointer_abi(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let files = tree.rs(&["crates/"]);
+    let tests = test_mod_files(tree, &files);
+    for f in files.iter().filter(|f| !tests.contains(*f)) {
+        let Some(file) = tree.syntax(f) else { continue };
+        let mut v = SafeAbiPtr::default();
+        syn::visit::Visit::visit_file(&mut v, &file);
+        out.extend(v.0.into_iter().map(|(n, l)| (f.clone(), l, format!("safe extern fn {n} takes a raw pointer"))));
+    }
+    out
+}
+
+/// koji's switch and where it may be set
+pub const NOCHECK_HOME: &str = "crates/koji/src/jit/mod.rs";
+pub const NOCHECK_SETTER: &str = "crates/kura/src/jit.rs";
+static NOCHECK_STATIC: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\bstatic\s+NOCHECK\s*:[^=]*=\s*([^;]*);"));
+static NOCHECK_ON: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"MASU_JIT_NOCHECK\s*[=:]\s*['\x22]?[^0'\x22\s]"));
+
+fn unchecked_jit_mode(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let home = Rel::new(NOCHECK_HOME);
+    if tree.has(&home) {
+        let code = tree.code(&home, true);
+        match NOCHECK_STATIC.as_ref().and_then(|r| r.captures(&code)) {
+            Some(c) => {
+                let init: String = c.get(1).map_or("", |m| m.as_str()).split_whitespace().collect();
+                if !init.ends_with("AtomicBool::new(false)") {
+                    out.push((home.clone(), c.get(0).map_or(1, |m| line_of(&code, m.start())), format!("NOCHECK starts as {init}, not off")));
+                }
+            }
+            None if !tree.is_made_up() => out.push((home.clone(), 1, "static NOCHECK is gone: move this rule with it".into())),
+            None => {}
+        }
+    }
+    for (f, it) in items(tree, &tree.rs(&["crates/"])) {
+        if f.as_str() == NOCHECK_HOME || f.as_str() == NOCHECK_SETTER {
+            continue;
+        }
+        let lines: BTreeSet<usize> = it.idents.iter().filter(|(i, _)| i == "NOCHECK").map(|(_, l)| *l).collect();
+        out.extend(lines.into_iter().map(|l| (f.clone(), l, "NOCHECK outside koji's jit and kura's jit.rs".into())));
+    }
+    let Some(on) = NOCHECK_ON.as_ref() else { return out };
+    for p in tree.paths() {
+        let s = p.as_str();
+        let scanned = [".github/", "tests/", "tools/", "scripts/", "web/src/", "host/", ".cargo/", "Cargo.toml", "crates/"].iter().any(|x| s.starts_with(x));
+        if !scanned || s.ends_with(".md") || s.starts_with("crates/masu-lint/") || (p.is_rust() && p.is_test_file()) {
+            continue;
+        }
+        if p.is_rust() {
+            // (only kura's init_flags reads the variable; a set_var or a second reader elsewhere is a
+            // way to turn it on)
+            if s != NOCHECK_SETTER {
+                let src = tree.code(p, true);
+                for (k, _) in src.match_indices("\"MASU_JIT_NOCHECK\"") {
+                    out.push((p.clone(), line_of(&src, k), "names MASU_JIT_NOCHECK outside kura's jit.rs".into()));
+                }
+            }
+            continue;
+        }
+        let src = tree.text(p);
+        for m in on.find_iter(&src) {
+            out.push((p.clone(), line_of(&src, m.start()), format!("turns the unchecked JIT on: {}", m.as_str())));
+        }
+    }
+    out
+}
 
 pub fn site(tree: &Tree, f: &Finding) -> Site {
     let text = if f.line > 1 || f.file.is_rust() { line_text(&if f.file.is_rust() { tree.code(&f.file, true).to_string() } else { tree.text(&f.file) }, f.line) } else { f.what.clone() };

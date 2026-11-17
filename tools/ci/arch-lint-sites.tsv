@@ -8,3 +8,4 @@ kome-copy	crates/masu/src/iscab.rs	fn u32_at(b: &[u8], p: usize) -> Result<u32> 
 kome-copy	crates/masu/src/iscab.rs	fn u64_at(b: &[u8], p: usize) -> Result<u64> {	calls kome::le::u64_at, adds anyhow context
 kome-copy	crates/sake/src/lsa.rs	fn us() -> usize {	sizeof(UNICODE_STRING), not a conversion
 kome-copy	crates/sake/src/mf/reader.rs	fn u32_of(s: &Store, k: &Guid) -> Option<u32> {	an attribute store lookup, not a conversion
+safe-raw-pointer-abi	crates/kura/src/jit.rs	pub extern "C" fn vnhost_jit_late(wasm: *const u8, wasm_len: u32, idx: *const u8, idx_len: u32) -> i32 {	review 2026-11-17 P0: the thread fixing the review (2.1) makes it unsafe / an owned LatePart; masu-lint arch --update drops this line then

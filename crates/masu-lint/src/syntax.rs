@@ -7,9 +7,15 @@ pub fn line(span: Span) -> usize {
     span.start().line
 }
 
-/// `#[cfg(test)]`
+/// `#[cfg(test)]`, `#[cfg(all(test, ..))]`
 pub fn is_cfg_test(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|a| a.path().is_ident("cfg") && matches!(&a.meta, syn::Meta::List(l) if l.tokens.to_string() == "test"))
+    attrs.iter().any(|a| {
+        a.path().is_ident("cfg")
+            && matches!(&a.meta, syn::Meta::List(l) if {
+                let s: String = l.tokens.to_string().split_whitespace().collect();
+                s == "test" || s.strip_prefix("all(").and_then(|r| r.strip_suffix(')')).is_some_and(|r| r.split(',').any(|c| c == "test"))
+            })
+    })
 }
 
 /// `#[repr(C)]`, `#[repr(C, packed)]`...

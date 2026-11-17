@@ -97,6 +97,43 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("clippy.toml", "disallowed-methods = [\n    { path = \"core::mem::zeroed\", reason = \"masu-uninit: Default / a value\" },\n]\n")],
             mutate: ("clippy.toml", |t| Some(t.replace("reason = \"masu-relay: ", "reason = \"relay: "))),
         },
+        Rule::SafeRawPointerAbi => Fixture {
+            bad: &[(
+                "crates/kura/src/x.rs",
+                "#[unsafe(no_mangle)]\npub extern \"C\" fn take(p: *const u8, n: u32) -> i32 { 0 }\n#[no_mangle]\nextern \"C\" fn opt(p: Option<*mut u32>) {}\nimpl X {\n    #[unsafe(export_name = \"x_m\")]\n    pub extern \"C\" fn m(&self, out: *mut u32) {}\n}\n",
+            )],
+            good: &[
+                (
+                    "crates/kura/src/x.rs",
+                    "/// # Safety\n/// `p` points at `n` readable bytes\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn take(p: *const u8, n: u32) -> i32 { 0 }\npub extern \"C\" fn val(a: u32) -> u32 { a }\npub extern \"C\" fn cb(f: extern \"C\" fn(*const u8)) {}\nfn plain(p: *const u8) {}\n#[cfg(test)]\nmod tests {\n    extern \"C\" fn t(p: *const u8) {}\n}\n",
+                ),
+                ("crates/kura/src/x_tests.rs", "#[no_mangle]\nextern \"C\" fn t(p: *const u8) {}\n"),
+                // (a thread's entry, handed over as a fn pointer: not callable by name from outside)
+                ("crates/kura/src/thread.rs", "fn start() {\n    extern \"C\" fn main(_: *mut c_void) -> *mut c_void { p }\n}\n#[cfg(all(test, not(target_os = \"emscripten\")))]\nmod stubs {\n    #[unsafe(no_mangle)]\n    extern \"C\" fn vnvm_fetch(n: *const c_char) {}\n}\n"),
+                // (a module only tests build: the page's model for native tests)
+                ("crates/kura/src/render/mod.rs", "pub mod gpu;\n#[cfg(test)]\npub mod model;\n"),
+                ("crates/kura/src/render/model.rs", "#[unsafe(no_mangle)]\npub extern \"C\" fn vngpu_has_feature(_p: *const u8, _n: usize) -> i32 { 0 }\n"),
+            ],
+            mutate: ("crates/kura/src/audio.rs", |t| Some(t + "\n#[unsafe(no_mangle)]\npub extern \"C\" fn vnhost_regression(p: *const u8, n: u32) {}\n")),
+        },
+        Rule::UncheckedJitMode => Fixture {
+            bad: &[
+                (NOCHECK_HOME, "pub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);\n"),
+                ("crates/sake/src/x.rs", "fn f() { koji::jit::NOCHECK.store(true, Relaxed); }\n"),
+                ("crates/masu/src/y.rs", "fn f() { unsafe { std::env::set_var(\"MASU_JIT_NOCHECK\", \"1\") } }\n"),
+                (".github/workflows/bench.yml", "env:\n  MASU_JIT_NOCHECK: 1\n"),
+                ("tests/x.sh", "MASU_JIT_NOCHECK=1 cargo test\n"),
+                ("web/src/play.ts", "const env = { MASU_JIT_NOCHECK: '1' };\n"),
+            ],
+            good: &[
+                (NOCHECK_HOME, "/// Measuring only (MASU_JIT_NOCHECK=1)\npub static NOCHECK: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);\nfn nocheck() -> bool { NOCHECK.load(Relaxed) }\n"),
+                (NOCHECK_SETTER, "fn init() { if std::env::var(\"MASU_JIT_NOCHECK\").is_ok() { jit::NOCHECK.store(true, Relaxed); } }\n"),
+                ("crates/sake/src/x.rs", "// koji::jit::NOCHECK and MASU_JIT_NOCHECK=1 are for measuring\nfn f() {}\n"),
+                ("docs/translator.md", "MASU_JIT_NOCHECK=1: no range checks\n"),
+                ("tests/x.sh", "MASU_JIT_NOCHECK=0 cargo test\n"),
+            ],
+            mutate: (NOCHECK_HOME, |t| Some(t.replace("AtomicBool::new(false);\n/// Pushes", "AtomicBool::new(true);\n/// Pushes"))),
+        },
     }
 }
 
@@ -159,4 +196,16 @@ fn every_regex_compiles() {
     for r in [&BUILD_EXT, &BUILD_OK, &TARGET_DIR, &GOLDEN_ANY, &GOLDEN_FILES, &JOB, &CHECKS, &DISALLOWED] {
         assert!(r.is_some());
     }
+}
+
+#[test]
+fn the_new_rules_find_each_spelling_alone() {
+    // (each bad file on its own: one spelling found does not hide another that is missed)
+    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode] {
+        for one in fixture(r).bad.chunks(1) {
+            assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
+        }
+    }
+    // (and every fn in the bad file, not only the first)
+    assert_eq!(Rule::SafeRawPointerAbi.check(&Tree::made_up(fixture(Rule::SafeRawPointerAbi).bad)).len(), 3);
 }
