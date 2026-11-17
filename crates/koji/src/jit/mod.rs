@@ -4305,7 +4305,7 @@ fn emit_dispatch(g: &mut Gen<'_>, t: &structure::Table, node: usize) {
 
 /// A function's first node with more entries than its root (`entries[0]`): `br_table` on
 /// L_BLK (0 the root, i the i-th other) to the block.
-fn emit_entries<'a>(g: &mut Gen<'a>, blocks: &'a [(u32, Vec<Instruction>)], entries: &[usize], node: usize) {
+fn emit_entries(g: &mut Gen<'_>, blocks: &[(u32, Vec<Instruction>)], entries: &[usize], node: usize) {
     g.ctx = 0;
     g.block_index = lo32(node);
     g.flags = Flags::Entry;

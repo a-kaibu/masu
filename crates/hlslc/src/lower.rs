@@ -525,7 +525,7 @@ impl<'a> L<'a> {
         self.prog.funcs.iter().any(|x| x.name == f && x.params.iter().any(|p| p.is_out)) || matches!(f, "sincos" | "modf")
     }
 
-    fn st(&self, i: usize) -> &Struct {
+    fn st(&self, i: usize) -> &'a Struct {
         &self.prog.structs[i]
     }
 
