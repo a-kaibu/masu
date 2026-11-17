@@ -4,9 +4,14 @@ over a web app with several sake builds took longer than tests/winetest/run-brow
 for the server (winetest-gpu, run 42445713214). A stale .zst is never served: it is removed
 before the server listens; the fresh one appears later and is then sent zstd-encoded.
 
+And it answers while its bucket does not: the store's own trees (here the benchmark's
+programs) go up to the bucket after the server listens. On worker1 (2026-11-17) sake's C:\
+going up through a slow uplink kept 0.4.1 off its port for a quarter of an hour after
+/api/update restarted it, and tailscale serve answered 502 all that time.
+
     tests/serve-start.py [path to masu]
 """
-import http.client, os, random, socket, subprocess, sys, tempfile, time
+import http.client, os, random, socket, subprocess, sys, tempfile, threading, time
 
 BIN = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else 'target/debug/masu')
 
@@ -81,5 +86,70 @@ with tempfile.TemporaryDirectory() as home:
         if st != 200 or enc != 'zstd' or len(body) >= len(big):
             fail(f'big.js after: {st} {enc} {len(body)}')
         print(f'ok   then zstd-encoded ({len(body)} of {len(big)} bytes)')
+    finally:
+        p.kill()
+
+
+def stalled_bucket():
+    """A bucket that takes connections and never answers: (its port, connections so far)."""
+    s = socket.socket()
+    s.bind(('127.0.0.1', 0))
+    s.listen(64)
+    held = []
+
+    def take():
+        while True:
+            c, _ = s.accept()
+            held.append(c)
+
+    threading.Thread(target=take, daemon=True).start()
+    return s.getsockname()[1], held
+
+
+with tempfile.TemporaryDirectory() as home:
+    bport, held = stalled_bucket()
+    with open(os.path.join(home, 'storage.toml'), 'w') as f:
+        f.write(f'bucket = "stalled"\nregion = "us-east-1"\nendpoint = "http://127.0.0.1:{bport}"\n'
+                f'active_key = "k"\ncache_gib = 0\n[keys]\nk = "{"ab" * 32}"\n')
+    # the release's benchmark programs: made into the store's tree "bench", which goes up
+    bench = os.path.join(home, '.local', 'share', 'masu', 'bench')
+    os.makedirs(bench)
+    for name in ['bench.exe', 'cpu.exe']:
+        with open(os.path.join(bench, name), 'wb') as f:
+            f.write(os.urandom(300_000))
+    with open(os.path.join(bench, 'VERSION'), 'w') as f:
+        f.write('test\n')
+    port = free_port()
+    env = dict(os.environ, HOME=home, XDG_RUNTIME_DIR='', XDG_CONFIG_HOME=f'{home}/.config',
+               XDG_DATA_HOME=f'{home}/.local/share', MASU_STORAGE_CONFIG=os.path.join(home, 'storage.toml'),
+               AWS_ACCESS_KEY_ID='t', AWS_SECRET_ACCESS_KEY='t')
+    log = open(os.path.join(home, 'serve.log'), 'w')
+    web = os.path.join(home, 'web')
+    os.makedirs(web)
+    p = subprocess.Popen([BIN, 'serve', '--foreground', '--listen', f'127.0.0.1:{port}', '--no-prerun', '--web', web,
+                          '--store', os.path.join(home, 'store')], env=env, stdout=log, stderr=log)
+    try:
+        for _ in range(300):
+            try:
+                c = http.client.HTTPConnection('127.0.0.1', port, timeout=10)
+                c.request('GET', '/version')
+                r = c.getresponse()
+                st, body = r.status, r.read()
+                break
+            except OSError:
+                time.sleep(0.05)
+        else:
+            fail('no answer in 15 s while the bucket does not answer: ' + open(log.name).read()[-2000:])
+        if st != 200 or b'version' not in body:
+            fail(f'/version: {st} {body[:100]!r}')
+        if not os.path.exists(os.path.join(home, 'store', 'trees', 'bench.tsv')):
+            fail('no tree "bench" made: nothing to push')
+        for _ in range(100):
+            if held:
+                break
+            time.sleep(0.1)
+        else:
+            fail('the bench tree never went to the bucket')
+        print(f'ok   answers while the bucket holds {len(held)} uploads unanswered')
     finally:
         p.kill()

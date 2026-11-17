@@ -1479,6 +1479,20 @@ fn addr2line(exe: &str, offsets: Vec<usize>) -> std::collections::HashMap<usize,
 #[cfg(not(target_os = "linux"))]
 fn dump_threads() {}
 
+/// The bucket brought up to date with the store: the catalog it has that the disk lacks, then
+/// what the server made itself ([`push_made`]'s trees; `all`: the whole store). Failures are
+/// told, not fatal: the catalog on the disk serves (review b01).
+async fn sync_bucket(storage: crate::storage::Storage, store: PathBuf, all: bool) {
+    if let Err(e) = storage.hydrate_catalog(&store).await {
+        eprintln!("masu: the bucket's catalog not fetched ({e:#}): serving the store on the disk");
+    }
+    let names: Vec<&str> = [crate::pack::PREFIX_TREE, crate::pack::BENCH_TREE].into_iter().filter(|n| store.join("trees").join(format!("{n}.tsv")).is_file()).collect();
+    let pushed = if all { storage.push_store(&store).await } else { storage.push_trees(&store, &names).await };
+    if let Err(e) = pushed {
+        eprintln!("masu: the store's own trees not put in the bucket ({e:#}): pages cannot read what is only here");
+    }
+}
+
 #[tokio::main]
 async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyhow::Result<()> {
     // (before anything can replace it: /api/update)
@@ -1488,17 +1502,17 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
     let storage = crate::storage::Storage::configured(crate::library::Library::new(&store)?)?.ok_or_else(|| anyhow::anyhow!(
         "masu serve reads games from a bucket only: set MASU_STORAGE_CONFIG (docs/storage.md), or pass --dev-bucket <dir> for a stand-in on this machine",
     ))?;
-    // (a bucket that cannot be reached at the start: the catalog on the disk serves, review
-    // b01; the server ended here before)
-    if let Err(e) = storage.hydrate_catalog(&store).await {
-        eprintln!("masu: the bucket's catalog not fetched ({e:#}): serving the store on the disk");
-    }
-    let names: Vec<&str> = [crate::pack::PREFIX_TREE, crate::pack::BENCH_TREE].into_iter().filter(|n| store.join("trees").join(format!("{n}.tsv")).is_file()).collect();
-    let pushed = if args.push_all { storage.push_store(&store).await } else { storage.push_trees(&store, &names).await };
-    if let Err(e) = pushed {
-        eprintln!("masu: the store's own trees not put in the bucket ({e:#}): pages cannot read what is only here");
-    }
-    drop(storage);
+    // (the stand-in bucket is on this machine and the tests' pages read what was pushed to it
+    // as soon as the server answers: done first. A real one after the listeners are up: on
+    // worker1, 2026-11-17, sake's C:\ (289 MiB) going up through a slow uplink held the server
+    // off its port for a quarter of an hour after /api/update restarted it, and the proxy in
+    // front answered 502 all along)
+    let bucket = if args.push_all {
+        sync_bucket(storage, store.clone(), true).await;
+        None
+    } else {
+        Some(storage)
+    };
     let auth = crate::auth::Auth::load(&dirs.token, args.strict_auth)?;
     let jit: Jit = Arc::new((args.jit.clone(), tokio::sync::Mutex::new(())));
     let pre = Arc::new(Prerun {
@@ -1606,6 +1620,9 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
         if args.strict_auth { "strict: everyone " } else { "this machine and tailscale serve need no token, others " }
     );
     tokio::spawn(prerun_games(pre));
+    if let Some(storage) = bucket {
+        tokio::spawn(sync_bucket(storage, store.clone(), false));
+    }
     use std::future::IntoFuture;
     tokio::try_join!(
         axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).into_future(),

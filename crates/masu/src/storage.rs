@@ -476,15 +476,50 @@ pub(crate) mod gc_tests {
 
     #[test]
     fn big_uploads_get_time_for_their_size() {
-        assert_eq!(upload_timeout(4 << 20), None);
-        assert_eq!(upload_timeout(8 << 20), None);
-        assert_eq!(upload_timeout((8 << 20) + 1), Some(std::time::Duration::from_secs(60 + 65)));
+        let s = |len, n| upload_timeout(len, AtOnce::new(n)).as_secs();
+        assert_eq!(s(0, 1), 60);
+        assert_eq!(s(4 << 20, 1), 60 + 32);
         // (a 64 MiB pack: 9 minutes, enough at 1 Mbit/s)
-        let t = upload_timeout(PACK_BYTES).unwrap().as_secs();
-        assert_eq!(t, 60 + 512);
-        assert!((PACK_BYTES as u64 * 8) / t < 1_000_000);
-        for len in [(9usize << 20), 32 << 20, 64 << 20, 256 << 20] {
-            assert!(upload_timeout(len) < upload_timeout(len * 2), "{len}");
+        assert_eq!(s(PACK_BYTES, 1), 60 + 512);
+        assert!((PACK_BYTES as u64 * 8) / s(PACK_BYTES, 1) < 1_000_000);
+        // (worker1, 2026-11-17: 16 chunks of 4 MiB at once timed out at 60 s, every try)
+        assert_eq!(s(4 << 20, PUTS), 60 + 512);
+        assert_eq!(AtOnce::new(0), AtOnce::ALONE);
+        assert_eq!(s(usize::MAX, usize::MAX), 60 + u64::MAX.div_ceil(128 << 10), "no overflow");
+    }
+
+    /// A request's failure is told with what is under it (reqwest says only "error sending
+    /// request"; worker1's were timeouts, which the log never said).
+    #[test]
+    fn failures_are_told_with_their_causes() {
+        #[derive(Debug)]
+        struct Top(std::io::Error);
+        impl std::fmt::Display for Top {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("error sending request")
+            }
+        }
+        impl std::error::Error for Top {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let top = Top(std::io::Error::new(std::io::ErrorKind::TimedOut, "timed out"));
+        assert_eq!(causes(&top), "error sending request: timed out");
+        assert_eq!(causes(&top.0), "timed out");
+    }
+
+    proptest::proptest! {
+        /// Uploads sharing a 1 Mbit/s uplink each get there in time: the timeout covers the
+        /// bytes of all of them at 128 KiB/s, plus the 60 s of a request; more bytes or more at
+        /// once never get less time.
+        #[test]
+        fn upload_time_covers_the_shared_line(len in 0usize..(256 << 20), n in 1usize..64) {
+            let t = upload_timeout(len, AtOnce::new(n)).as_secs_f64();
+            let line = f64::from(u32::try_from(len).unwrap()) * f64::from(u32::try_from(n).unwrap()) / f64::from(128u32 << 10);
+            proptest::prop_assert!(t >= 60.0 + line && t < 61.0 + line, "{t} for {len} x {n}");
+            proptest::prop_assert!(upload_timeout(len + 1, AtOnce::new(n)) >= upload_timeout(len, AtOnce::new(n)));
+            proptest::prop_assert!(upload_timeout(len, AtOnce::new(n + 1)) >= upload_timeout(len, AtOnce::new(n)));
         }
     }
 
@@ -1998,12 +2033,24 @@ where
             Ok(r) if !retryable(r.status_code()) || last => return Ok(r),
             Ok(r) => eprintln!("S3: {}, trying again in {wait:?}", r.status_code()),
             Err(e) if last => return Err(e.into()),
-            Err(e) => eprintln!("S3: {e}, trying again in {wait:?}"),
+            // (with its causes: reqwest's own words, "error sending request", say not which)
+            Err(e) => eprintln!("S3: {}, trying again in {wait:?}", causes(&e)),
         }
         tokio::time::sleep(wait).await;
         wait = (wait * 2).min(RETRY_MAX);
     }
     unreachable!()
+}
+
+/// `e` and the errors under it, `a: b: c`.
+fn causes(e: &dyn std::error::Error) -> String {
+    let mut s = e.to_string();
+    let mut at = e.source();
+    while let Some(c) = at {
+        s += &format!(": {c}");
+        at = c.source();
+    }
+    s
 }
 
 fn now_ms() -> i64 {
@@ -2167,18 +2214,13 @@ impl Storage {
         format!("{}{}", self.config.prefix, id)
     }
 
-    async fn upload(&self, id: Uuid, bytes: &[u8]) -> Result<()> {
+    /// Uploads `bytes` as object `id`, one of `at_once` uploads going on together.
+    async fn upload(&self, id: Uuid, bytes: &[u8], at_once: AtOnce) -> Result<()> {
         let path = self.path(id);
         // (rust-s3 gives up on any request after 60 s: a 64 MiB pack on a slow uplink never got
-        // through. A big object gets time for its size.)
-        let long;
-        let bucket = match upload_timeout(bytes.len()) {
-            Some(t) => {
-                long = self.bucket.with_request_timeout(t)?;
-                &*long
-            }
-            None => &*self.bucket,
-        };
+        // through, nor 16 chunks of 4 MiB at once from worker1, 2026-11-17. Each object gets time
+        // for its share of the line.)
+        let bucket = self.bucket.with_request_timeout(upload_timeout(bytes.len(), at_once))?;
         let r = retrying(|| bucket.put_object(&path, bytes)).await?;
         ensure!(
             r.status_code() / 100 == 2,
@@ -2204,18 +2246,18 @@ impl Storage {
     }
 
     pub async fn put(&self, logical: &str, bytes: &[u8]) -> Result<()> {
-        let sent = self.send(logical, bytes).await?;
+        let sent = self.send(logical, bytes, AtOnce::ALONE).await?;
         self.record(&[sent])
     }
 
     /// Encrypts `bytes` as a new object and uploads it (not yet named: see [`Storage::record`]).
-    async fn send(&self, logical: &str, bytes: &[u8]) -> Result<Sent> {
+    async fn send(&self, logical: &str, bytes: &[u8], at_once: AtOnce) -> Result<Sent> {
         let (envelope, ciphertext) = Envelope::encrypt(
             &self.key(&self.config.active_key)?,
             &self.config.active_key,
             bytes,
         )?;
-        self.upload(envelope.object, &ciphertext).await?;
+        self.upload(envelope.object, &ciphertext, at_once).await?;
         Ok(Sent { logical: logical.to_string(), envelope, size: bytes.len() as i64 })
     }
 
@@ -2569,7 +2611,7 @@ impl Storage {
     /// Uploads one pack and names where it holds each object.
     async fn record_pack(&self, game: &str, bytes: Vec<u8>, rows: Vec<(String, Uuid, u64, u64)>) -> Result<()> {
         let pack = Uuid::new_v4();
-        self.upload(pack, &bytes).await?;
+        self.upload(pack, &bytes, AtOnce::ALONE).await?;
         let mut c = self.db.connect()?;
         let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute("INSERT INTO pack_games(pack,game,made_ms) VALUES(?,?,?)", rusqlite::params![pack.to_string(), game, now_ms()])?;
@@ -2743,12 +2785,13 @@ impl Storage {
     /// Sends `files` (path, logical name), `uploads` at once, naming them [`RECORD_BATCH`] at a time.
     async fn send_files(&self, files: Vec<(std::path::PathBuf, String)>) -> Result<()> {
         use futures_util::TryStreamExt;
+        let at_once = AtOnce::new(self.config.uploads.unwrap_or(PUTS));
         let mut sent = futures_util::stream::iter(files.into_iter().map(Ok::<_, anyhow::Error>))
             .map_ok(|(path, logical)| async move {
                 let data = tokio::fs::read(&path).await?;
-                self.send(&logical, &data).await
+                self.send(&logical, &data, at_once).await
             })
-            .try_buffer_unordered(self.config.uploads.unwrap_or(PUTS).max(1));
+            .try_buffer_unordered(at_once.get());
         let mut batch = Vec::new();
         while let Some(s) = sent.try_next().await? {
             batch.push(s);
@@ -2776,7 +2819,7 @@ impl Storage {
             &self.config.active_key,
             &data,
         )?;
-        self.upload(envelope.object, &ciphertext).await?;
+        self.upload(envelope.object, &ciphertext, AtOnce::ALONE).await?;
         let id = Uuid::new_v4();
         // A snapshot contains envelopes from that date. Keep its required wrapping keys
         // encrypted alongside it so rotation can retire old keys without rewriting the DB.
@@ -2793,7 +2836,7 @@ impl Storage {
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_millis(),
         };
-        self.upload(id, &serde_json::to_vec(&backup)?).await?;
+        self.upload(id, &serde_json::to_vec(&backup)?, AtOnce::ALONE).await?;
         self.db.connect()?.execute(
             "INSERT INTO backups(id,snapshot,created_ms) VALUES(?,?,?)",
             rusqlite::params![id.to_string(), backup.envelope.object.to_string(), backup.created_ms as i64],
@@ -2998,7 +3041,7 @@ impl Storage {
             &self.key(&self.config.active_key)?,
             &self.config.active_key,
         )?;
-        self.upload(id, &serde_json::to_vec(&b)?).await
+        self.upload(id, &serde_json::to_vec(&b)?, AtOnce::ALONE).await
     }
 }
 
@@ -3007,10 +3050,28 @@ fn pace(bytes: u64, rate: u64) -> std::time::Duration {
     std::time::Duration::from_secs_f64(bytes as f64 / rate.max(1) as f64)
 }
 
-/// How long an upload of `len` bytes may take, past rust-s3's 60 s for any request: none (that)
-/// up to 8 MiB, else 60 s and a second for each 128 KiB (an uplink of 1 Mbit/s still gets there).
-fn upload_timeout(len: usize) -> Option<std::time::Duration> {
-    (len > 8 << 20).then(|| std::time::Duration::from_secs(60 + (len as u64).div_ceil(128 << 10)))
+/// How many uploads share the line (each gets its share of it): 1 or more.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AtOnce(std::num::NonZeroUsize);
+
+impl AtOnce {
+    const ALONE: AtOnce = AtOnce(std::num::NonZeroUsize::MIN);
+    /// `n` at once (0, a typo in storage.toml, as 1).
+    fn new(n: usize) -> AtOnce {
+        AtOnce(std::num::NonZeroUsize::new(n).unwrap_or(std::num::NonZeroUsize::MIN))
+    }
+    fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+/// How long an upload of `len` bytes, one of `at_once`, may take: 60 s (rust-s3's for any
+/// request: the round trips) and a second for each 128 KiB of the bytes going up together (an
+/// uplink of 1 Mbit/s still gets there).
+fn upload_timeout(len: usize, at_once: AtOnce) -> std::time::Duration {
+    let wide = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+    let together = wide(len).saturating_mul(wide(at_once.get()));
+    std::time::Duration::from_secs(60u64.saturating_add(together.div_ceil(128 << 10)))
 }
 
 /// Notes that `object` is no longer named (gc deletes it later).

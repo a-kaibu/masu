@@ -163,7 +163,7 @@ async fn rustfs_encrypted_storage() -> Result<()> {
         ensure!(kept.exists(), "the chunk was not kept on the disk");
         let mut damaged = s.download(original.object).await?;
         damaged[0] ^= 1;
-        s.upload(original.object, &damaged).await?;
+        s.upload(original.object, &damaged, AtOnce::ALONE).await?;
         *s.cache.lock().unwrap() = Default::default();
         assert_eq!(s.get("chunks/test").await?.as_deref(), Some(&chunk[..]));
         // ...and with it gone (memory and disk both cold) the damaged one is refused
