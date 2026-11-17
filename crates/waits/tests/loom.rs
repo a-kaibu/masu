@@ -1413,3 +1413,112 @@ fn pool_one_job_gets_a_worker() {
 fn pool_jobs_are_taken_once_and_never_left_waiting() {
     pool_case(2);
 }
+
+// ---------------------------------------------------------------------------------------------
+// waits::locked: LOCK-prefixed operations across two aligned words (review 2026-11-17)
+
+mod locked {
+    use loom::sync::atomic::AtomicU64;
+    use loom::sync::Arc;
+    use loom::thread;
+    use std::sync::atomic::Ordering::SeqCst;
+    use waits::locked::{pair, place, swap16, Place, Width};
+
+    fn words() -> Arc<[AtomicU64; 2]> {
+        Arc::new([AtomicU64::new(0), AtomicU64::new(0)])
+    }
+    fn dword_at_6() -> waits::locked::Pair {
+        match place(6, Width::B4) {
+            Place::Pair(p) => p,
+            Place::Word(_) => panic!("bytes 6..10 cross the word"),
+        }
+    }
+    fn all(w: &[AtomicU64; 2]) -> u128 {
+        u128::from(w[0].load(SeqCst)) | u128::from(w[1].load(SeqCst)) << 64
+    }
+
+    /// Two straddling increments and a 64-bit atomic on the high word's other bytes: none lost,
+    /// and the two increments saw 0 and 1 (one after the other: linearizable among themselves).
+    #[test]
+    fn straddling_increments_are_atomic_among_themselves() {
+        super::model(|| {
+            let w = words();
+            let t: Vec<_> = (0..2)
+                .map(|_| {
+                    let w = w.clone();
+                    thread::spawn(move || pair(&w[0], &w[1], dword_at_6(), |v| Some(v + 1)))
+                })
+                .collect();
+            w[1].fetch_add(1 << 32, SeqCst);
+            let mut seen: Vec<u128> = t.into_iter().map(|t| t.join().unwrap()).collect();
+            seen.sort_unstable();
+            assert_eq!(seen, [0, 1]);
+            let v = all(&w);
+            assert_eq!((v >> 48) & 0xffff_ffff, 2);
+            assert_eq!(v >> 96, 1);
+        });
+    }
+
+    /// A straddling increment against a single-word atomic adding into the operand's own bytes
+    /// in the low word or in the high one (the aligned fast paths): both adds stay.
+    #[test]
+    fn straddling_increment_loses_no_overlapping_single_word_add() {
+        for side in 0..2usize {
+            super::model(move || {
+                let w = words();
+                let a = {
+                    let w = w.clone();
+                    thread::spawn(move || pair(&w[0], &w[1], dword_at_6(), |v| Some(v + 1)))
+                };
+                // byte 6 (the operand's lowest) or byte 9 (its highest, bit 8 of the high word)
+                let (k, by) = if side == 0 { (0, 1u64 << 48) } else { (1, 1 << 8) };
+                w[k].fetch_add(by, SeqCst);
+                a.join().unwrap();
+                let want = if side == 0 { 2 } else { 1 + (1 << 24) };
+                assert_eq!((all(&w) >> 48) & 0xffff_ffff, want);
+            });
+        }
+    }
+
+    /// The documented limit (waits::locked's module doc): single-word adds into the operand's
+    /// bytes on both sides while the pair operation is between its two writes can count it
+    /// twice. This pins that it is only that: never a lost add, at most one extra increment.
+    #[test]
+    fn straddling_increment_racing_both_sides() {
+        super::model(|| {
+            let w = words();
+            let a = {
+                let w = w.clone();
+                thread::spawn(move || pair(&w[0], &w[1], dword_at_6(), |v| Some(v + 1)))
+            };
+            let b = {
+                let w = w.clone();
+                thread::spawn(move || w[0].fetch_add(1 << 48, SeqCst))
+            };
+            w[1].fetch_add(1 << 8, SeqCst);
+            a.join().unwrap();
+            b.join().unwrap();
+            let v = (all(&w) >> 48) & 0xffff_ffff;
+            assert!(v == 2 + (1 << 24) || v == 3 + (1 << 24), "{v:#x}");
+        });
+    }
+
+    /// CMPXCHG16B from two threads on the same pair: exactly one wins, and a 64-bit add to the
+    /// high word meanwhile is never undone.
+    #[test]
+    fn swap16_one_winner_and_no_lost_add() {
+        super::model(|| {
+            let w = words();
+            let t: Vec<_> = (1..=2u128)
+                .map(|k| {
+                    let w = w.clone();
+                    thread::spawn(move || swap16(&w[0], &w[1], 0, k | k << 64) == 0)
+                })
+                .collect();
+            w[1].fetch_add(1 << 40, SeqCst);
+            let won = t.into_iter().map(|t| t.join().unwrap()).filter(|&x| x).count();
+            assert!(won <= 1);
+            assert_eq!(all(&w) >> 104, 1, "the add stays");
+        });
+    }
+}

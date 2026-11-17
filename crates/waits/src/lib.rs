@@ -20,6 +20,7 @@
 pub mod calls;
 pub mod handoff;
 pub mod later;
+pub mod locked;
 pub mod outq;
 pub mod pool;
 pub mod suspend;

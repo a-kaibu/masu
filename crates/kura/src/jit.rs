@@ -1472,27 +1472,61 @@ impl Saved {
     }
 }
 
-/// Parts the page handed over after the start: (module address, length, index address,
-/// length). The page writes a slot, then the count (one writer: the page's main thread, which
-/// must not block); threads take them in at their next look for a saved region (saved_regions).
+/// A part the page handed over after the start: its module and its index, kura's for good
+/// (never written or freed again). The only ways to make one are [`vnhost_jit_late`]'s, on the
+/// page's promise (`unsafe`), and [`LatePart::kept`], from bytes Rust gives up: what the
+/// threads later read is a `&'static [u8]` the type says lives for good, not an address taken
+/// back into a slice at each look (review 2026-11-17: the safe `extern "C" fn` kept a raw
+/// pointer and made a `&'static [u8]` of it later).
+/// ```compile_fail
+/// let _ = kura::jit::LatePart { wasm: &[], idx: &[] }; // private: not made outside
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct LatePart {
+    wasm: &'static [u8],
+    idx: &'static [u8],
+}
+
+impl LatePart {
+    /// The page's bytes, adopted: None for a NULL pointer.
+    ///
+    /// # Safety
+    /// `wasm..wasm + wasm_len` and `idx..idx + idx_len` are readable memory that nothing writes
+    /// or frees from now on (the page's malloc'd copies, which it then lets go of).
+    unsafe fn adopt(wasm: *const u8, wasm_len: usize, idx: *const u8, idx_len: usize) -> Option<LatePart> {
+        if wasm.is_null() || idx.is_null() {
+            return None;
+        }
+        // SAFETY: the caller's promise: readable for its length, for good, unwritten.
+        let wasm = unsafe { std::slice::from_raw_parts(wasm, wasm_len) };
+        // SAFETY: as wasm
+        let idx = unsafe { std::slice::from_raw_parts(idx, idx_len) };
+        Some(LatePart { wasm, idx })
+    }
+    /// Bytes Rust owns, given up for good (tests; a host that has the part in a Vec).
+    pub fn kept(wasm: Vec<u8>, idx: Vec<u8>) -> LatePart {
+        LatePart { wasm: Vec::leak(wasm), idx: Vec::leak(idx) }
+    }
+}
+
+/// The parts handed over after the start, in order. The page writes a slot, then the count (one
+/// writer: the page's main thread, which must not block); threads take them in at their next look
+/// for a saved region (saved_regions).
 const LATE_MAX: usize = 64;
 struct Inbox {
-    slots: [[AtomicUsize; 4]; LATE_MAX],
+    slots: [std::sync::OnceLock<LatePart>; LATE_MAX],
     count: AtomicUsize,
 }
 
 impl Inbox {
     const fn new() -> Self {
-        Inbox { slots: [const { [const { AtomicUsize::new(0) }; 4] }; LATE_MAX], count: AtomicUsize::new(0) }
+        Inbox { slots: [const { std::sync::OnceLock::new() }; LATE_MAX], count: AtomicUsize::new(0) }
     }
-    /// (one writer)
-    fn push(&self, v: [usize; 4]) -> bool {
+    /// (one writer: a slot is set once, never waited on)
+    fn push(&self, p: LatePart) -> bool {
         let k = self.count.load(Ordering::Relaxed);
-        if k >= LATE_MAX {
+        if k >= LATE_MAX || self.slots[k].set(p).is_err() {
             return false;
-        }
-        for (a, v) in self.slots[k].iter().zip(v) {
-            a.store(v, Ordering::Relaxed);
         }
         self.count.store(k + 1, Ordering::Release);
         true
@@ -1500,22 +1534,27 @@ impl Inbox {
     fn len(&self) -> usize {
         self.count.load(Ordering::Acquire)
     }
-    /// slot `k` < [`len`] (that call's Acquire saw its stores)
-    fn get(&self, k: usize) -> [usize; 4] {
-        self.slots[k].each_ref().map(|a| a.load(Ordering::Relaxed))
+    /// Part `k`, once pushed
+    fn get(&self, k: usize) -> Option<LatePart> {
+        self.slots.get(k)?.get().copied()
     }
 }
 
 static LATE: Inbox = Inbox::new();
 
 /// The page: a saved part that came after the module started, its module and index in memory
-/// from malloc, kura's from now on (never freed). 0 taken, -1 refused (no room).
+/// from malloc, kura's from now on (never freed). 0 taken, -1 refused (no room, a NULL pointer:
+/// then the page still owns them and frees them).
+///
+/// # Safety
+/// `wasm..wasm + wasm_len` and `idx..idx + idx_len` are readable memory the caller hands over
+/// for good when this answers 0: nothing writes or frees them afterwards (web/src/play.ts
+/// handLate's copies).
 #[unsafe(no_mangle)]
-pub extern "C" fn vnhost_jit_late(wasm: *const u8, wasm_len: u32, idx: *const u8, idx_len: u32) -> i32 {
-    if wasm.is_null() || idx.is_null() || !LATE.push([wasm.expose_provenance(), us(wasm_len), idx.expose_provenance(), us(idx_len)]) {
-        return -1;
-    }
-    0
+pub unsafe extern "C" fn vnhost_jit_late(wasm: *const u8, wasm_len: u32, idx: *const u8, idx_len: u32) -> i32 {
+    // SAFETY: this function's own contract, passed on.
+    let Some(p) = (unsafe { LatePart::adopt(wasm, us(wasm_len), idx, us(idx_len)) }) else { return -1 };
+    if LATE.push(p) { 0 } else { -1 }
 }
 
 static SAVED: std::sync::LazyLock<std::sync::RwLock<Saved>> = std::sync::LazyLock::new(|| {
@@ -1555,12 +1594,11 @@ fn saved_regions() -> std::sync::RwLockReadGuard<'static, Saved> {
 fn take_late(s: &mut Saved, inbox: &Inbox, n: usize) {
     while s.late.len() < n {
         let k = s.late.len();
-        let [w, wl, i, il] = inbox.get(k);
-        // SAFETY: the page gave both to kura for good (vnhost_jit_late), written before the count
-        let (wasm, idx): (&'static [u8], &[u8]) = unsafe { (std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(w), wl), std::slice::from_raw_parts(std::ptr::with_exposed_provenance::<u8>(i), il)) };
-        let entries = jit::saved::decode_all(idx).unwrap_or_default();
+        // (below the count the inbox's Acquire saw: always set)
+        let Some(p) = inbox.get(k) else { break };
+        let entries = jit::saved::decode_all(p.idx).unwrap_or_default();
         let funcs = entries.iter().map(|e| e.width()).sum();
-        s.late.push((wasm, funcs));
+        s.late.push((p.wasm, funcs));
         s.add(k as u16 + 1, entries);
     }
 }
@@ -3723,12 +3761,34 @@ mod late_tests {
 
     /// A part as the page hands it over: its bytes kept for good (as kura keeps the page's).
     fn hand(inbox: &Inbox, entries: &[Entry]) -> bool {
-        let idx: &'static [u8] = Vec::leak(jit::saved::encode(entries));
-        let wasm: &'static [u8] = Vec::leak(vec![0u8, 0x61, 0x73, 0x6d]);
-        inbox.push([wasm.as_ptr().expose_provenance(), wasm.len(), idx.as_ptr().expose_provenance(), idx.len()])
+        inbox.push(LatePart::kept(vec![0u8, 0x61, 0x73, 0x6d], jit::saved::encode(entries)))
     }
 
     proptest! {
+        /// What the page hands over (any lengths, a NULL pointer) is adopted as exactly those
+        /// bytes, or refused before anything is kept: the slices threads read later are the
+        /// page's own, not rebuilt from addresses (review 2026-11-17).
+        #[test]
+        fn adopted_parts_are_the_page_s_bytes(wasm in prop::collection::vec(any::<u8>(), 0..64), idx in prop::collection::vec(any::<u8>(), 0..64), null in 0u8..3) {
+            let (w, i): (&'static [u8], &'static [u8]) = (Vec::leak(wasm.clone()), Vec::leak(idx.clone()));
+            let wp = if null == 1 { std::ptr::null() } else { w.as_ptr() };
+            let ip = if null == 2 { std::ptr::null() } else { i.as_ptr() };
+            // SAFETY: leaked: readable for good, never written
+            let p = unsafe { LatePart::adopt(wp, w.len(), ip, i.len()) };
+            match p {
+                None => prop_assert!(null != 0),
+                Some(p) => {
+                    prop_assert_eq!(null, 0);
+                    prop_assert_eq!(p.wasm, &wasm[..]);
+                    prop_assert_eq!(p.idx, &idx[..]);
+                    let inbox = Inbox::new();
+                    prop_assert!(inbox.push(p));
+                    prop_assert_eq!(inbox.get(0).map(|q| q.idx), Some(&idx[..]));
+                    prop_assert!(inbox.get(1).is_none());
+                }
+            }
+        }
+
         /// However the saved regions come in parts (the first at the start, the others taken
         /// in at any later looks), each region's part and its index in that part's module are
         /// those of the part's own list, and the lookups find every region and function.

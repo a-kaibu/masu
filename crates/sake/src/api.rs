@@ -136,19 +136,77 @@ impl Out {
     /// An SRWLOCK, INIT_ONCE or CONDITION_VARIABLE: the word sake's waits work on atomically
     /// (its low half on x64, where the rest stays 0 as InitializeSRWLock wrote it).
     #[inline]
-    pub fn lock_word(self) -> u32 {
-        self.0
+    pub fn lock_word(self) -> LockWord {
+        LockWord(self.0)
     }
     /// What the caller passed, where the metadata's out-parameter is an object sake made itself
     /// (a GpMatrix*, a UBreakIterator*, a GLUquadric*, an XAPO): the object, read, not written.
     #[inline]
-    pub fn object(self) -> u32 {
-        self.0
+    pub fn object(self) -> Object {
+        Object(self.0)
     }
     /// Slot `i` of an array of pointer-sized slots starting here.
     #[inline]
     pub fn nth(self, i: u32) -> Out {
         Out(crate::mem::ga(self.0).at(i, crate::mem::ps()).get())
+    }
+}
+
+/// The lock word an [`Out`] names (SRWLOCK, INIT_ONCE, CONDITION_VARIABLE): no guest address
+/// (it is no `Into<Ga>`): only sake's waits take it, as an atomic word or the key their waiters
+/// park on (review 2026-11-17: `lock_word()` was a u32, and `mem::w32(out.lock_word(), v)`
+/// compiled).
+/// ```compile_fail
+/// fn f(c: &mut sake::api::Ctx) { sake::mem::w32(c.out(0).lock_word(), 0) }
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct LockWord(u32);
+
+impl LockWord {
+    /// The word, atomic (k32's rule: an unaligned one has a shadow of its own)
+    #[inline]
+    pub(crate) fn atomic(self) -> &'static std::sync::atomic::AtomicU32 {
+        crate::k32::lock_atomic(self.0)
+    }
+    /// The key its waiters park on in sake's waits (an address only as a name)
+    #[inline]
+    pub(crate) fn key(self) -> u32 {
+        self.0
+    }
+    /// Its slot again, for a call that takes the lock itself (the callback InitOnceExecuteOnce
+    /// runs, a reacquire after a save state)
+    #[inline]
+    pub(crate) fn slot(self) -> Out {
+        Out(self.0)
+    }
+    /// The word a save state's reacquire record keeps, and back
+    #[inline]
+    pub(crate) fn saved(self) -> u64 {
+        u64::from(self.0)
+    }
+    #[inline]
+    pub(crate) fn from_saved(v: u64) -> LockWord {
+        LockWord(kome::num::lo32(v))
+    }
+}
+
+/// An object sake made itself that the caller passed back through an out-parameter slot of the
+/// metadata's (a GpMatrix*, a UBreakIterator*, a GLUquadric*): no guest address to write (it is
+/// no `Into<Ga>`), only the key sake's own tables know it by (review 2026-11-17: `object()` was a
+/// u32 any writer took).
+/// ```compile_fail
+/// fn f(c: &mut sake::api::Ctx) { sake::mem::w32(c.out(0).object(), 0) }
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[repr(transparent)]
+pub struct Object(u32);
+
+impl Object {
+    /// The key sake's table of such objects has it under (the address sake gave the program)
+    #[inline]
+    pub fn key(self) -> u32 {
+        self.0
     }
 }
 

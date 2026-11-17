@@ -2112,6 +2112,11 @@ fn atomic(a: u32) -> &'static AtomicU32 {
     g.get_or_insert_with(HashMap::default).entry(a).or_insert_with(|| Box::leak(Box::new(AtomicU32::new(mem::r32(a)))))
 }
 
+/// An SRWLOCK/INIT_ONCE word as an atomic (api::LockWord::atomic)
+pub(crate) fn lock_atomic(a: u32) -> &'static AtomicU32 {
+    atomic(a)
+}
+
 /// An RTL_CRITICAL_SECTION_DEBUG for `cs` (Wine's msvcr90 names its locks in DebugInfo->Spare).
 fn cs_debug_info(cs: u32) {
     let d = mem::heap_alloc(32, true);
@@ -2290,10 +2295,10 @@ fn RtlLeaveCriticalSection(c: &mut Ctx) -> u32 {
 static SYNC: waits::Sync = waits::Sync::new();
 
 pub(crate) fn srw_try(l: crate::api::Out, shared: bool) -> bool {
-    waits::Sync::srw_try(atomic(l.lock_word()), shared)
+    waits::Sync::srw_try(l.lock_word().atomic(), shared)
 }
 pub(crate) fn srw_acquire(l: crate::api::Out, shared: bool) {
-    SYNC.srw_acquire(atomic(l.lock_word()), shared, &Pause)
+    SYNC.srw_acquire(l.lock_word().atomic(), shared, &Pause)
 }
 /// srw_acquire for at most `ms` milliseconds: whether it got the lock.
 pub(crate) fn srw_acquire_for(l: u32, shared: bool, ms: u32) -> bool {
@@ -2301,7 +2306,7 @@ pub(crate) fn srw_acquire_for(l: u32, shared: bool, ms: u32) -> bool {
     SYNC.srw_acquire_until(atomic(l), shared, &Pause, || Some(kome::num::lo64(end.saturating_duration_since(std::time::Instant::now()).as_nanos().div_ceil(1_000_000))))
 }
 pub(crate) fn srw_release(l: crate::api::Out, shared: bool) {
-    SYNC.srw_release(atomic(l.lock_word()), shared)
+    SYNC.srw_release(l.lock_word().atomic(), shared)
 }
 fn InitializeSRWLock(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::InitializeSRWLock>();
@@ -2356,19 +2361,19 @@ pub(crate) fn cv_wait(cv: crate::api::Out, ms: u32, release: fn(u64, u64), reacq
             crate::snap::point_return(self.3, self.0, self.1, self.2);
         }
     }
-    let woke = SYNC.cv_wait(cv.lock_word(), ms, || release(a, b), || reacquire.call(a, b), &Return(reacquire, a, b, woken));
+    let woke = SYNC.cv_wait(cv.lock_word().key(), ms, || release(a, b), || reacquire.call(a, b), &Return(reacquire, a, b, woken));
     if !woke {
         last_error(1460);
     }
     woke
 }
 pub(crate) fn cv_wake(cv: crate::api::Out) {
-    SYNC.cv_wake(cv.lock_word());
+    SYNC.cv_wake(cv.lock_word().key());
 }
 fn SleepConditionVariableSRW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SleepConditionVariableSRW>();
     let (cv, l, ms, shared) = (c.out::<0>(), c.out::<1>(), c.a::<2>(), c.a::<3>() & 1 != 0);
-    u32::from(cv_wait(cv, ms, |l, s| srw_release(crate::api::Out::at(kome::num::lo32(l)), s != 0), crate::snap::Reacquire::Srw, u64::from(l.lock_word()), u64::from(shared), 1))
+    u32::from(cv_wait(cv, ms, |l, s| srw_release(crate::api::LockWord::from_saved(l).slot(), s != 0), crate::snap::Reacquire::Srw, l.lock_word().saved(), u64::from(shared), 1))
 }
 fn SleepConditionVariableCS(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SleepConditionVariableCS>();
@@ -2407,8 +2412,8 @@ fn WakeAllConditionVariable(c: &mut Ctx) -> u32 {
 fn InitOnceExecuteOnce(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::InitOnceExecuteOnce>();
     let (once, f, param, ctx) = (c.out::<0>(), c.a::<1>(), c.a::<2>(), c.out::<3>());
-    let r = SYNC.once_execute(atomic(once.lock_word()), || {
-        let r = c.ctx().call(f, &crate::api::words![once.lock_word(), param, ctx]);
+    let r = SYNC.once_execute(once.lock_word().atomic(), || {
+        let r = c.ctx().call(f, &crate::api::words![once, param, ctx]);
         // (done: the context the function gave, with 2 in its low bits)
         let got = if !ctx.is_null() { ctx.get() & !3 } else { 0 };
         (r, if r != 0 { got | 2 } else { 0 })
@@ -2436,7 +2441,7 @@ fn InitOnceBeginInitialize(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    match SYNC.once_begin_ex(atomic(once.lock_word()), flags & CHECK_ONLY != 0, flags & ASYNC != 0) {
+    match SYNC.once_begin_ex(once.lock_word().atomic(), flags & CHECK_ONLY != 0, flags & ASYNC != 0) {
         waits::Begin::Done(v) => {
             put32(pending, 0);
             if !ctx.is_null() {
@@ -2469,7 +2474,7 @@ fn InitOnceComplete(c: &mut Ctx) -> u32 {
         last_error(87);
         return 0;
     }
-    match SYNC.once_complete_ex(atomic(once.lock_word()), asynchronous, if failed { 0 } else { ctx | 2 }) {
+    match SYNC.once_complete_ex(once.lock_word().atomic(), asynchronous, if failed { 0 } else { ctx | 2 }) {
         Ok(()) => 1,
         Err(waits::Complete::Invalid) => {
             last_error(87);
@@ -9312,7 +9317,7 @@ fn InterlockedPushEntrySList(c: &mut Ctx) -> u32 {
     let _g = SLIST.locked();
     let (old, n) = slist_get(h);
     e.put(old);
-    slist_set(h, e.object(), n.saturating_add(1));
+    slist_set(h, e.object().key(), n.saturating_add(1));
     old
 }
 fn InterlockedPopEntrySList(c: &mut Ctx) -> u32 {
@@ -9346,7 +9351,7 @@ fn push_list(h: u32, first: u32, last: crate::api::Out, n: u32) -> u32 {
 /// InterlockedPushListSListEx(head, first, last, count)
 fn InterlockedPushListSListEx(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::InterlockedPushListSListEx>();
-    push_list(c.a::<0>(), c.out::<1>().object(), c.out::<2>(), c.a::<3>())
+    push_list(c.a::<0>(), c.out::<1>().object().key(), c.out::<2>(), c.a::<3>())
 }
 /// InterlockedPushListSList(head, first, last, count): fastcall on x86 (head in ECX, first
 /// in EDX)

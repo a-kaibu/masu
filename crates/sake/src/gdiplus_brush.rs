@@ -346,17 +346,17 @@ fn GdipCreateMatrix3I(c: &mut Ctx) -> u32 {
 }
 fn GdipCloneMatrix(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipCloneMatrix>();
-    let Some(m) = matrix(c.out::<0>().object()) else { return INVALID_PARAMETER };
+    let Some(m) = matrix(c.out::<0>().object().key()) else { return INVALID_PARAMETER };
     new_obj(Obj::Matrix(m), c.out::<1>())
 }
 fn GdipDeleteMatrix(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipDeleteMatrix>();
-    delete_obj(c.out::<0>().object(), |o| matches!(o, Obj::Matrix(_)))
+    delete_obj(c.out::<0>().object().key(), |o| matches!(o, Obj::Matrix(_)))
 }
 fn GdipSetMatrixElements(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipSetMatrixElements>();
     let e: M = std::array::from_fn(|i| c.ctx().f(i as u32 + 1));
-    on_matrix(c.out::<0>().object(), |m| {
+    on_matrix(c.out::<0>().object().key(), |m| {
         *m = e;
         OK
     })
@@ -371,38 +371,38 @@ fn GdipGetMatrixElements(c: &mut Ctx) -> u32 {
 }
 fn GdipMultiplyMatrix(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipMultiplyMatrix>();
-    let Some(b) = matrix(c.out::<1>().object()) else { return INVALID_PARAMETER };
+    let Some(b) = matrix(c.out::<1>().object().key()) else { return INVALID_PARAMETER };
     let order = c.a::<2>();
-    on_matrix(c.out::<0>().object(), |m| combine(m, &b, order))
+    on_matrix(c.out::<0>().object().key(), |m| combine(m, &b, order))
 }
 fn GdipTranslateMatrix(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipTranslateMatrix>();
     let op = [1.0, 0.0, 0.0, 1.0, c.ctx().f(1), c.ctx().f(2)];
     let order = c.a::<3>();
-    on_matrix(c.out::<0>().object(), |m| combine(m, &op, order))
+    on_matrix(c.out::<0>().object().key(), |m| combine(m, &op, order))
 }
 fn GdipScaleMatrix(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipScaleMatrix>();
     let op = [c.ctx().f(1), 0.0, 0.0, c.ctx().f(2), 0.0, 0.0];
     let order = c.a::<3>();
-    on_matrix(c.out::<0>().object(), |m| combine(m, &op, order))
+    on_matrix(c.out::<0>().object().key(), |m| combine(m, &op, order))
 }
 fn GdipRotateMatrix(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipRotateMatrix>();
     let op = rotation(c.ctx().f(1));
     let order = c.a::<2>();
-    on_matrix(c.out::<0>().object(), |m| combine(m, &op, order))
+    on_matrix(c.out::<0>().object().key(), |m| combine(m, &op, order))
 }
 /// GdipShearMatrix(m, shearX, shearY, order): x' = x + shearX y, y' = shearY x + y
 fn GdipShearMatrix(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipShearMatrix>();
     let op = [1.0, c.ctx().f(2), c.ctx().f(1), 1.0, 0.0, 0.0];
     let order = c.a::<3>();
-    on_matrix(c.out::<0>().object(), |m| combine(m, &op, order))
+    on_matrix(c.out::<0>().object().key(), |m| combine(m, &op, order))
 }
 fn GdipInvertMatrix(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GdipInvertMatrix>();
-    on_matrix(c.out::<0>().object(), |m| match invert(m) {
+    on_matrix(c.out::<0>().object().key(), |m| match invert(m) {
         Some(i) => {
             *m = i;
             OK
@@ -437,7 +437,7 @@ fn GdipIsMatrixEqual(c: &mut Ctx) -> u32 {
 /// GdipTransformMatrixPoints / ..I / GdipVectorTransformMatrixPoints(..I)(m, pts, count)
 fn transform_points(c: &mut Ctx, int: bool, vector: bool) -> u32 {
     let (p, n) = (c.a(1), c.i(2));
-    let Some(mut m) = matrix(c.out(0).object()) else { return INVALID_PARAMETER };
+    let Some(mut m) = matrix(c.out(0).object().key()) else { return INVALID_PARAMETER };
     if p == 0 || n <= 0 {
         return INVALID_PARAMETER;
     }
@@ -836,13 +836,13 @@ fn get_transform(c: &mut Ctx, kind: Xf) -> u32 {
         OK
     });
     let Some(m) = got.filter(|_| s == OK) else { return INVALID_PARAMETER };
-    on_matrix(mh.object(), |x| {
+    on_matrix(mh.object().key(), |x| {
         *x = m;
         OK
     })
 }
 fn set_transform(c: &mut Ctx, kind: Xf) -> u32 {
-    let Some(m) = matrix(c.out(1).object()) else { return INVALID_PARAMETER };
+    let Some(m) = matrix(c.out(1).object().key()) else { return INVALID_PARAMETER };
     on_brush(c.a(0), |b| {
         let Some((bm, _)) = parts(kind, b) else { return INVALID_PARAMETER };
         *bm = m;

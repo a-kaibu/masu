@@ -306,7 +306,7 @@ fn ubrk_setText(c: &mut Ctx) -> u32 {
         fail(status, ILLEGAL_ARGUMENT);
         return 0;
     };
-    if with(b.object(), |k| k.set_text(&t)).is_none() {
+    if with(b.object().key(), |k| k.set_text(&t)).is_none() {
         fail(status, ILLEGAL_ARGUMENT);
     }
     0
@@ -319,7 +319,7 @@ fn ubrk_setUText(c: &mut Ctx) -> u32 {
         return 0;
     }
     match utext_text(ut) {
-        Some(t) if with(b.object(), |k| k.set_text(&t)).is_some() => {}
+        Some(t) if with(b.object().key(), |k| k.set_text(&t)).is_some() => {}
         _ => fail(status, ILLEGAL_ARGUMENT),
     }
     0
@@ -327,13 +327,13 @@ fn ubrk_setUText(c: &mut Ctx) -> u32 {
 fn ubrk_close(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_close>();
     let b = c.out::<0>();
-    if BRKS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&b.object()).is_some() {
-        mem::heap_free(b.object());
+    if BRKS.lock().unwrap().get_or_insert_with(HashMap::default).remove(&b.object().key()).is_some() {
+        mem::heap_free(b.object().key());
     }
     0
 }
 fn step(c: &mut Ctx, f: fn(&mut Brk) -> i32) -> u32 {
-    with(c.out(0).object(), f).unwrap_or(DONE) as u32
+    with(c.out(0).object().key(), f).unwrap_or(DONE) as u32
 }
 fn ubrk_current(c: &mut Ctx) -> u32 {
     step(c, |b| b.current())
@@ -357,17 +357,17 @@ fn ubrk_last(c: &mut Ctx) -> u32 {
 fn ubrk_following(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_following>();
     let off = c.a::<1>() as i32;
-    with(c.out::<0>().object(), |b| b.following(off)).unwrap_or(DONE) as u32
+    with(c.out::<0>().object().key(), |b| b.following(off)).unwrap_or(DONE) as u32
 }
 fn ubrk_preceding(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_preceding>();
     let off = c.a::<1>() as i32;
-    with(c.out::<0>().object(), |b| b.preceding(off)).unwrap_or(DONE) as u32
+    with(c.out::<0>().object().key(), |b| b.preceding(off)).unwrap_or(DONE) as u32
 }
 fn ubrk_isBoundary(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::ubrk_isBoundary>();
     let off = c.a::<1>() as i32;
-    with(c.out::<0>().object(), |b| b.is_boundary(off)).unwrap_or(false) as u32
+    with(c.out::<0>().object().key(), |b| b.is_boundary(off)).unwrap_or(false) as u32
 }
 
 /// uloc_getDefault(): a Japanese Windows' "ja_JP"

@@ -9,43 +9,76 @@
 //! made `made - free.len()` underflow). A Lease is made only here:
 //!
 //!
-//! Each pool has a brand of its own, a type named for it, and a Lease carries its pool's: one
-//! pool's lease does not go to another (review 2026-11-16: `b.give(a.take(..).lease())` put a
-//! value `b` never made on its free list).
+//! Each pool has a brand of its own, a type of which one value ever exists ([`Brand`], made by
+//! [`pool!`] with its one pool), and a Lease carries its pool's: one pool's lease does not go to
+//! another (review 2026-11-16: `b.give(a.take(..).lease())` put a value `b` never made on its
+//! free list; review 2026-11-17: two pools of one brand type still took each other's leases, so
+//! the brand is now a value `Pool::new` takes and only `pool!` makes, once).
 //!
 //! ```compile_fail
-//! struct A;
-//! let mut p = kura::pool::Pool::<u8, A>::new();
-//! p.give(kura::pool::Lease(1u8, std::marker::PhantomData));
+//! kura::pool!(mod a: u8 as A);
+//! a::POOL.lock().unwrap().give(kura::pool::Lease(1u8, std::marker::PhantomData));
 //! ```
 //! ```compile_fail
-//! struct A;
-//! let mut p = kura::pool::Pool::<u8, A>::new();
-//! p.give(1u8);
+//! kura::pool!(mod a: u8 as A);
+//! a::POOL.lock().unwrap().give(1u8);
 //! ```
 //! ```compile_fail
 //! // (not Clone: one lease, one give)
-//! struct A;
-//! let mut p = kura::pool::Pool::<u8, A>::new();
+//! kura::pool!(mod a: u8 as A);
+//! let mut p = a::POOL.lock().unwrap();
 //! let l = p.take(|| 1).lease();
 //! p.give(l.clone());
 //! ```
 //! ```compile_fail
 //! // (another pool's lease)
-//! struct A;
-//! struct B;
-//! let mut a = kura::pool::Pool::<u8, A>::new();
-//! let mut b = kura::pool::Pool::<u8, B>::new();
-//! let l = a.take(|| 42).lease();
-//! b.give(l);
+//! kura::pool!(mod a: u8 as A);
+//! kura::pool!(mod b: u8 as B);
+//! let l = a::POOL.lock().unwrap().take(|| 42).lease();
+//! b::POOL.lock().unwrap().give(l);
+//! ```
+//! ```compile_fail
+//! // (a second pool of a brand: the brand's one value is in its pool, none made outside)
+//! kura::pool!(mod a: u8 as A);
+//! let _b = kura::pool::Pool::<u8, a::A>::new(a::A(()));
+//! ```
+//! ```compile_fail
+//! // (a brand of one's own: a unit struct has values for the asking, so it is no Brand)
+//! struct Tag;
+//! let _a = kura::pool::Pool::<u32, Tag>::new(Tag);
 //! ```
 //! ```
-//! struct A;
-//! let mut a = kura::pool::Pool::<u8, A>::new();
-//! let l = a.take(|| 42).lease();
-//! a.give(l);
-//! assert_eq!(a.counts().waiting, 1);
+//! kura::pool!(mod a: u8 as A);
+//! let mut p = a::POOL.lock().unwrap();
+//! let l = p.take(|| 42).lease();
+//! p.give(l);
+//! assert_eq!(p.counts().waiting, 1);
 //! ```
+
+/// A pool's brand: a type of which exactly one value is ever made, the one its pool holds.
+///
+/// # Safety
+/// No second value of the type is ever made (the type's fields are private to a module that
+/// makes the one value only). [`pool!`] makes such types; nothing else should implement it.
+pub unsafe trait Brand {}
+
+/// `pool!(mod name: T as Brand)`: a module `name` with the brand type `Brand` (one value ever)
+/// and its pool `POOL` (a `Mutex<Pool<T, Brand>>`, the only one that brand's leases go back to).
+#[macro_export]
+macro_rules! pool {
+    ($(#[$m:meta])* $vis:vis mod $name:ident: $t:ty as $brand:ident) => {
+        $(#[$m])*
+        $vis mod $name {
+            #[allow(unused_imports)]
+            use super::*;
+            /// The brand of this module's [`POOL`]: its one value is there.
+            pub struct $brand(());
+            // SAFETY: its field is private to this module, which makes one value: POOL's.
+            unsafe impl $crate::pool::Brand for $brand {}
+            pub static POOL: std::sync::Mutex<$crate::pool::Pool<$t, $brand>> = std::sync::Mutex::new($crate::pool::Pool::new($brand(())));
+        }
+    };
+}
 
 /// A value out of the [`Pool`] branded `B`, to be given back to it. Not Clone, not made outside
 /// this module.
@@ -72,11 +105,12 @@ impl<T, B> std::ops::Deref for Lease<T, B> {
     }
 }
 
-/// `B`: the pool's brand (a type of its own, named for it), which its leases carry
+/// `B`: the pool's brand (its one value, see [`Brand`]), which its leases carry
 pub struct Pool<T, B> {
     free: Vec<Lease<T, B>>,
     made: usize,
     peak: usize,
+    _brand: B,
 }
 
 /// (tests) what a pool holds: waiting for reuse, made, the most out at once
@@ -87,9 +121,10 @@ pub struct Counts {
     pub peak: usize,
 }
 
-impl<T, B> Pool<T, B> {
-    pub const fn new() -> Self {
-        Pool { free: Vec::new(), made: 0, peak: 0 }
+impl<T, B: Brand> Pool<T, B> {
+    /// The pool of brand `b` (whose one value it takes: [`pool!`])
+    pub const fn new(b: B) -> Self {
+        Pool { free: Vec::new(), made: 0, peak: 0, _brand: b }
     }
 
     /// One that waits, else a new one from `make`
@@ -107,6 +142,8 @@ impl<T, B> Pool<T, B> {
     }
 
     pub fn give(&mut self, t: Lease<T, B>) {
+        // (a lease only comes from this pool's take: never more waiting than made)
+        debug_assert!(self.free.len() < self.made);
         self.free.push(t);
     }
 
@@ -136,14 +173,18 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    crate::pool!(mod test: u32 as Test);
+
     proptest! {
         /// Any order of takes and gives: as many made as were ever out at once, the waiting
         /// ones are the made ones not out, and a take with one waiting makes none
         #[test]
         fn makes_only_what_is_out_at_once(ops in proptest::collection::vec(any::<bool>(), 0..200)) {
-            struct Test;
-            let mut p = Pool::<u32, Test>::new();
-            let mut out: Vec<Lease<u32, Test>> = Vec::new();
+            let mut p = test::POOL.lock().unwrap_or_else(|e| e.into_inner());
+            // (one pool for all the cases: each starts it empty)
+            p.free.clear();
+            (p.made, p.peak) = (0, 0);
+            let mut out: Vec<Lease<u32, test::Test>> = Vec::new();
             let mut next = 0u32;
             for take in ops {
                 if take || out.is_empty() {

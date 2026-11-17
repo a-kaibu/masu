@@ -805,7 +805,7 @@ fn gluNewQuadric(_: &mut Ctx) -> u32 {
 fn gluDeleteQuadric(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::gluDeleteQuadric>();
     if !c.out::<0>().is_null() {
-        mem::heap_free(c.out::<0>().object());
+        mem::heap_free(c.out::<0>().object().key());
     }
     0
 }
@@ -852,7 +852,7 @@ fn gluCylinder(c: &mut Ctx) -> u32 {
     if qp.is_null() {
         return 0;
     }
-    let q = quad(qp.object());
+    let q = quad(qp.object().key());
     let (base, top, height) = (darg(c.ctx(), 1, 1), darg(c.ctx(), 3, 2), darg(c.ctx(), 5, 3));
     let (slices, stacks) = (arg(c.ctx(), 7, 4).cast_signed(), arg(c.ctx(), 8, 5).cast_signed());
     if slices < 2 || stacks < 1 || base < 0.0 || top < 0.0 || height < 0.0 {
@@ -883,7 +883,7 @@ fn gluSphere(c: &mut Ctx) -> u32 {
     if qp.is_null() {
         return 0;
     }
-    let q = quad(qp.object());
+    let q = quad(qp.object().key());
     let r = darg(c.ctx(), 1, 1);
     let (slices, stacks) = (arg(c.ctx(), 3, 2).cast_signed(), arg(c.ctx(), 4, 3).cast_signed());
     if slices < 2 || stacks < 1 || r < 0.0 {
@@ -930,14 +930,14 @@ fn partial_disk(q: [u32; 4], inner: f64, outer: f64, slices: i32, loops: i32, st
 fn gluDisk(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::gluDisk>();
     if !c.out::<0>().is_null() {
-        partial_disk(quad(c.out::<0>().object()), darg(c.ctx(), 1, 1), darg(c.ctx(), 3, 2), arg(c.ctx(), 5, 3).cast_signed(), arg(c.ctx(), 6, 4).cast_signed(), 0.0, 360.0);
+        partial_disk(quad(c.out::<0>().object().key()), darg(c.ctx(), 1, 1), darg(c.ctx(), 3, 2), arg(c.ctx(), 5, 3).cast_signed(), arg(c.ctx(), 6, 4).cast_signed(), 0.0, 360.0);
     }
     0
 }
 fn gluPartialDisk(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::gluPartialDisk>();
     if !c.out::<0>().is_null() {
-        partial_disk(quad(c.out::<0>().object()), darg(c.ctx(), 1, 1), darg(c.ctx(), 3, 2), arg(c.ctx(), 5, 3).cast_signed(), arg(c.ctx(), 6, 4).cast_signed(), darg(c.ctx(), 7, 5), darg(c.ctx(), 9, 6));
+        partial_disk(quad(c.out::<0>().object().key()), darg(c.ctx(), 1, 1), darg(c.ctx(), 3, 2), arg(c.ctx(), 5, 3).cast_signed(), arg(c.ctx(), 6, 4).cast_signed(), darg(c.ctx(), 7, 5), darg(c.ctx(), 9, 6));
     }
     0
 }

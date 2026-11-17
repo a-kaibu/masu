@@ -546,12 +546,14 @@ pub fn register(cpu: &Cpu) {
     g.push(t);
 }
 
-/// The records of threads that ended, for the next threads (they used to be leaked, one per
-/// thread: ~2 KB each; review P2-1). Kept, never freed: the snapshot reads entries it listed
-/// after letting go of THREADS.
-static RETIRED: Mutex<crate::pool::Pool<&'static ThreadLog, Retired>> = Mutex::new(crate::pool::Pool::new());
-/// RETIRED's brand: its leases go back to it only
-struct Retired;
+// The records of threads that ended, for the next threads (they used to be leaked, one per
+// thread: ~2 KB each; review P2-1). Kept, never freed: the snapshot reads entries it listed
+// after letting go of THREADS.
+crate::pool!(
+    /// The records of threads that ended (RETIRED) and their brand
+    mod retired: &'static ThreadLog as Retired
+);
+use retired::{Retired, POOL as RETIRED};
 
 /// (tests: the records waiting for reuse, made, the most out at once)
 pub fn counts() -> crate::pool::Counts {

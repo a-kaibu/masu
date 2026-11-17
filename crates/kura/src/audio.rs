@@ -23,7 +23,7 @@ const OUT_CAP: usize = RATE as usize / 4;
 pub const QUEUE_CAP: usize = RATE as usize * 4;
 /// frames mixed at most per catch-up (half the ring): after a stall the worklet would otherwise
 /// get more than the ring holds at once, overwriting itself and lapping its read position
-const CATCH_UP: u64 = RING_FRAMES as u64 / 2;
+const CATCH_UP: usize = RING_FRAMES / 2;
 
 struct Stream {
     /// stereo frames at RATE
@@ -61,7 +61,7 @@ impl Card {
         }
         // a long stall (a hung page, a debugger, a worker descheduled) doesn't replay seconds at
         // once, nor more than the ring takes
-        let n = n.min(CATCH_UP) as usize;
+        let n = usize::try_from(n).unwrap_or(usize::MAX).min(CATCH_UP);
         let start = self.out.len();
         self.out.resize(start + n, [0.0; 2]);
         for s in self.streams.values_mut() {
@@ -137,38 +137,62 @@ fn stats() -> bool {
 /// Frames in the ring the page's AudioWorklet reads (a power of two; 0.74 s).
 const RING_FRAMES: usize = 1 << 15;
 
-/// What the page plays: mixed frames (interleaved stereo f32) at `head % RING_FRAMES`, `head`
-/// counting every frame written. The AudioWorklet reads it straight from the shared wasm memory
-/// with its own read position (web/src/audio.ts), so nothing goes through the page's own
-/// thread, where a long frame would make the sound stutter.
+/// What the page plays: mixed frames (interleaved stereo f32, as their bits) at
+/// `head % RING_FRAMES`, `head` counting every frame written. The AudioWorklet reads it straight
+/// from the shared wasm memory with its own read position (web/src/audio.ts), so nothing goes
+/// through the page's own thread, where a long frame would make the sound stutter.
+///
+/// The hand-over (review 2026-11-17: what kept the writer off the frames the reader was reading
+/// was nowhere written down): the worklet takes `head` (Acquire, after the frames: Release), and
+/// reads a block of at most [`BLOCK`] frames lying at most [`READER_LAG`] behind it (it skips
+/// ahead otherwise); one mix writes at most [`CATCH_UP`] frames. So the frames a block reads are
+/// not written again by the next mix: `CATCH_UP + READER_LAG + BLOCK <= RING_FRAMES` (asserted
+/// below; `ring_tests` plays the protocol, with a mix between every head load and the read).
+/// Only a worklet that stops inside one block for longer than the mixes' slack (~0.17 s of sound)
+/// can read a frame written over: a click, never memory unsafety (the samples are atomics here
+/// and plain numbers in JS).
 #[repr(C)]
 struct Ring {
     head: AtomicU32,
     _pad: u32,
-    data: std::cell::UnsafeCell<[f32; RING_FRAMES * 2]>,
+    data: [AtomicU32; RING_FRAMES * 2],
 }
-// (the page's AudioWorklet reads the ring at these offsets: head, pad, then the samples)
+// (the page's AudioWorklet reads the ring at these offsets: head, pad, then the samples; an
+// AtomicU32 is a u32 in memory, as the Float32Array view over it expects)
 const _: () = assert!(size_of::<Ring>() == 8 + RING_FRAMES * 2 * 4);
-unsafe impl Sync for Ring {}
+const _: () = assert!(size_of::<AtomicU32>() == size_of::<f32>() && align_of::<AtomicU32>() == align_of::<f32>());
 
-static RING: Ring = Ring { head: AtomicU32::new(0), _pad: 0, data: std::cell::UnsafeCell::new([0.0; RING_FRAMES * 2]) };
+/// The most frames the worklet reads per block (an AudioWorklet render quantum)
+const BLOCK: usize = 128;
+/// The most frames it lags behind `head` before it skips ahead (web/src/audio.ts MAX_QUEUE)
+const READER_LAG: usize = RATE as usize / 5;
+const _: () = assert!(CATCH_UP + READER_LAG + BLOCK <= RING_FRAMES);
+
+static RING: Ring = Ring { head: AtomicU32::new(0), _pad: 0, data: [const { AtomicU32::new(0) }; RING_FRAMES * 2] };
 static RING_ON: AtomicBool = AtomicBool::new(false);
 
 fn ring_put(out: &mut VecDeque<[f32; 2]>) {
-    let head = RING.head.load(Ordering::Relaxed);
-    let data = unsafe { &mut *RING.data.get() };
-    let n = lo32(out.len());
-    for (i, f) in out.drain(..).enumerate() {
+    put_frames(&RING, out.drain(..));
+}
+
+/// The frames into `ring` at its head, then the head past them (Release: the worklet reads up
+/// to head)
+fn put_frames(ring: &Ring, frames: impl ExactSizeIterator<Item = [f32; 2]>) {
+    let head = ring.head.load(Ordering::Relaxed);
+    let n = lo32(frames.len());
+    for (i, f) in frames.enumerate() {
         let at = (us(head.wrapping_add(lo32(i))) & (RING_FRAMES - 1)) * 2;
-        data[at] = f[0];
-        data[at + 1] = f[1];
+        ring.data[at].store(f[0].to_bits(), Ordering::Relaxed);
+        ring.data[at + 1].store(f[1].to_bits(), Ordering::Relaxed);
     }
-    // (after the frames: the worklet reads up to head)
-    RING.head.store(head.wrapping_add(n), Ordering::Release);
+    ring.head.store(head.wrapping_add(n), Ordering::Release);
 }
 
 /// The page: from now on mixed frames go to the ring; returns its address (head at +0, frames
 /// from +8) and writes its size in frames to `frames`.
+///
+/// # Safety
+/// `frames` is a writable u32.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_audio_ring(frames: *mut u32) -> *const u8 {
     *frames = lo32(RING_FRAMES);
@@ -180,6 +204,64 @@ pub unsafe extern "C" fn vnhost_audio_ring(frames: *mut u32) -> *const u8 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    /// The worklet's limits as web/src/audio.ts has them, the ones the ring's assert counts on
+    #[test]
+    fn reader_limits_match_the_worklet() {
+        let ts = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../web/src/audio.ts")).unwrap();
+        assert!(ts.contains("const MAX_QUEUE = RATE / 5;"), "READER_LAG is web/src/audio.ts's MAX_QUEUE");
+        assert!(ts.contains("const RATE = 44100;"));
+        assert_eq!(READER_LAG, us(RATE) / 5);
+    }
+
+    /// sinkStep's choice of block (web/src/audio.ts): from `read`, skipping to `target` behind
+    /// `head` when it lags more than `max`; the frames it reads
+    fn block(read: &mut Option<u32>, head: u32, max: u32, target: u32) -> (u32, u32) {
+        let mut r = read.unwrap_or(head.wrapping_sub(target));
+        let mut avail = head.wrapping_sub(r);
+        if avail > max {
+            r = head.wrapping_sub(target);
+            avail = target;
+        }
+        let n = avail.min(lo32(BLOCK));
+        *read = Some(r.wrapping_add(n));
+        (r, n)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+        /// The hand-over played: mixes of any size up to CATCH_UP, the worklet taking head, a mix
+        /// landing before it reads its block, then the block: every frame it reads is the one
+        /// written at that position, none written over (each frame's samples carry its number).
+        #[test]
+        fn a_block_is_never_written_over_by_the_next_mix(steps in prop::collection::vec((0..=lo32(CATCH_UP), 0..=lo32(CATCH_UP), any::<bool>()), 1..60)) {
+            let ring: &'static Ring = Box::leak(Box::new(Ring { head: AtomicU32::new(0), _pad: 0, data: [const { AtomicU32::new(0) }; RING_FRAMES * 2] }));
+            let mut written = 0u32;
+            let mut put = |n: u32| {
+                put_frames(ring, (0..n).map(|i| { let k = written.wrapping_add(i); [f32::from_bits(k), f32::from_bits(!k)] }).collect::<Vec<_>>().into_iter());
+                written = written.wrapping_add(n);
+            };
+            let mut read = None;
+            for (before, between, skip) in steps {
+                put(before);
+                let head = ring.head.load(Ordering::Acquire);
+                if skip {
+                    continue;
+                }
+                let (r, n) = block(&mut read, head, lo32(READER_LAG), RATE / 20);
+                // (the mix that lands between the worklet's head load and its reads)
+                put(between);
+                // (frames before the first written, where the worklet starts behind head 0: none to check)
+                for k in (0..n).map(|i| r.wrapping_add(i)) {
+                    if k < head {
+                        let at = (us(k) & (RING_FRAMES - 1)) * 2;
+                        prop_assert_eq!(ring.data[at].load(Ordering::Relaxed), k, "frame {} written over", k);
+                        prop_assert_eq!(ring.data[at + 1].load(Ordering::Relaxed), !k);
+                    }
+                }
+            }
+        }
+    }
 
     /// (the card is one static)
     static SERIAL: Mutex<()> = Mutex::new(());
@@ -223,7 +305,7 @@ mod tests {
         RING_ON.store(false, Ordering::Relaxed);
         let n = head1.wrapping_sub(head0) as u64;
         eprintln!("caught up {n} frames");
-        assert!(n >= CATCH_UP / 2 && n <= CATCH_UP + RATE as u64 / 100, "{n} frames at once");
+        assert!(n >= lo64(CATCH_UP) / 2 && n <= lo64(CATCH_UP) + u64::from(RATE) / 100, "{n} frames at once");
         close(id);
     }
 }

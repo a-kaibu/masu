@@ -267,6 +267,67 @@ impl Range {
         // SAFETY: as in read: guest memory, never sake's own.
         unsafe { self.ptr::<T>().write_unaligned(v) }
     }
+    // Guest memory is shared: the program's threads (wasm code, no Rust) read and write it at
+    // any time. So safe code here reaches it only by raw-pointer copies like `read`/`write`
+    // above, never through a Rust reference (`&[u8]` promises the bytes do not change while it
+    // lives, `&mut [u8]` that nothing else sees them): a slice of guest memory exists only under
+    // `exclusive_slice`/`exclusive_slice_mut`, whose callers promise exactly that (view_unchecked's
+    // contract). Review 2026-11-17: `bytes`, `update`, `fill`, `write`, `cstr` made slices of it.
+    /// Its bytes, copied out
+    fn copy_out(self) -> Vec<u8> {
+        let mut v = vec![0u8; us(self.n)];
+        self.copy_to(&mut v);
+        v
+    }
+    /// Its first `to.len()` (<= its length) bytes into `to`
+    fn copy_to(self, to: &mut [u8]) {
+        let n = to.len().min(us(self.n));
+        // SAFETY: n bytes of guest memory (a Range, at least n long) into sake's own buffer,
+        // which is no guest memory: they do not overlap. No reference to guest memory is made.
+        unsafe { std::ptr::copy_nonoverlapping(self.ptr::<u8>().cast_const(), to.as_mut_ptr(), n) }
+    }
+    /// `from` (sake's own bytes, no longer than it) at its start
+    fn copy_from(self, from: &[u8]) {
+        let n = from.len().min(us(self.n));
+        // SAFETY: as in copy_to, the other way
+        unsafe { std::ptr::copy_nonoverlapping(from.as_ptr(), self.ptr::<u8>(), n) }
+    }
+    /// Byte `i` (< its length)
+    #[inline(always)]
+    fn byte(self, i: usize) -> u8 {
+        debug_assert!(i < us(self.n));
+        // SAFETY: inside the Range (the callers' i < len), a raw read
+        unsafe { self.ptr::<u8>().cast_const().wrapping_add(i).read() }
+    }
+    /// `v` at byte `i` (< its length)
+    #[inline(always)]
+    fn put_byte(self, i: usize, v: u8) {
+        debug_assert!(i < us(self.n));
+        // SAFETY: as in byte
+        unsafe { self.ptr::<u8>().wrapping_add(i).write(v) }
+    }
+    /// All of it set to `v`
+    fn set_all(self, v: u8) {
+        // SAFETY: the Range's bytes, a raw write
+        unsafe { std::ptr::write_bytes(self.ptr::<u8>(), v, us(self.n)) }
+    }
+    /// Whether every byte is 0 (read a 256-byte block at a time, without stopping inside one,
+    /// through a buffer of sake's own: vectorized)
+    fn all_zero(self) -> bool {
+        let mut buf = [0u8; 256];
+        let mut at = 0u32;
+        while at < self.n {
+            let k = self.n.saturating_sub(at).min(256);
+            let part = Range { a: self.a.wrapping_add(at), n: k };
+            let b = buf.get_mut(..us(k)).unwrap_or_default();
+            part.copy_to(b);
+            if !is_zero(b) {
+                return false;
+            }
+            at = at.wrapping_add(k);
+        }
+        true
+    }
 }
 
 #[cold]
@@ -348,18 +409,15 @@ pub fn put64(a: impl Into<Ga>, v: u64) {
 }
 /// A copy of guest memory `a..a + n`; empty where that is not all guest memory
 pub fn bytes(a: u32, n: u32) -> Vec<u8> {
-    match range(a, n) {
-        // (the copy is made inside raw, whose closure is this one: nothing else runs meanwhile)
-        Some(r) => raw(r, <[u8]>::to_vec),
-        None => Vec::new(),
-    }
+    range(a, n).map_or_else(Vec::new, Range::copy_out)
 }
 /// The `N` bytes at `a`, copied (a GUID, a key, a header); zeros where that is not guest memory
 pub fn array<const N: usize>(a: u32) -> [u8; N] {
-    match range(a, kome::num::u32_of(N)) {
-        Some(r) => raw(r, |s| s.try_into().unwrap_or([0; N])),
-        None => [0; N],
+    let mut v = [0; N];
+    if let Some(r) = range(a, kome::num::u32_of(N)) {
+        r.copy_to(&mut v);
     }
+    v
 }
 /// `f` with a copy of guest memory `a..a + n` to change; the bytes `f` changed are written
 /// back when it returns (the others are left as they are then). None (and `f` not run) where
@@ -370,16 +428,14 @@ pub fn array<const N: usize>(a: u32) -> [u8; N] {
 /// `&mut` to the same guest bytes from safe code).
 pub fn update<R>(a: u32, n: u32, f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
     let r = for_write(a, n)?;
-    let was = raw(r, <[u8]>::to_vec);
+    let was = r.copy_out();
     let mut buf = was.clone();
     let out = f(&mut buf);
-    raw_mut(r, |s| {
-        for ((d, new), old) in s.iter_mut().zip(&buf).zip(&was) {
-            if new != old {
-                *d = *new;
-            }
+    for (i, (new, old)) in buf.iter().zip(&was).enumerate() {
+        if new != old {
+            r.put_byte(i, *new);
         }
-    });
+    }
     Some(out)
 }
 /// `f` with guest memory `a..a + n` itself to read (no copy: decoders, hashes of large
@@ -394,7 +450,8 @@ pub fn update<R>(a: u32, n: u32, f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
 /// ```
 pub unsafe fn view_unchecked<R>(a: u32, n: u32, f: impl FnOnce(&[u8]) -> R) -> R {
     match range(a, n) {
-        Some(r) => raw(r, f),
+        // SAFETY: this function's contract, passed on
+        Some(r) => unsafe { exclusive_slice(r, f) },
         None => f(&[]),
     }
 }
@@ -409,35 +466,32 @@ pub unsafe fn view_unchecked<R>(a: u32, n: u32, f: impl FnOnce(&[u8]) -> R) -> R
 /// sake::mem::view_mut_unchecked(0x1000, 4, |s| s[0] = 1); // unsafe to call
 /// ```
 pub unsafe fn view_mut_unchecked<R>(a: u32, n: u32, f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
-    for_write(a, n).map(|r| raw_mut(r, f))
+    // SAFETY: this function's contract, passed on
+    for_write(a, n).map(|r| unsafe { exclusive_slice_mut(r, f) })
 }
-/// raw over `a..a + n`, empty where that is not all guest memory (this module's own scans)
-fn raw_or_empty<R>(a: u32, n: u32, f: impl FnOnce(&[u8]) -> R) -> R {
-    match range(a, n) {
-        Some(r) => raw(r, f),
-        None => f(&[]),
-    }
-}
-/// The one place guest memory is read as a Rust slice: only with closures of this module
-/// (which touch no other guest memory) or under view_unchecked's contract.
-fn raw<R>(r: Range, f: impl FnOnce(&[u8]) -> R) -> R {
+/// The one place guest memory is read as a Rust slice (the range's validity is the Range's;
+/// that nothing writes it meanwhile is the caller's promise, which no type here can make).
+///
+/// # Safety
+/// Nothing writes `r`'s bytes while `f` runs: not `f`, no other thread.
+unsafe fn exclusive_slice<R>(r: Range, f: impl FnOnce(&[u8]) -> R) -> R {
     if r.is_empty() {
         return f(&[]);
     }
     // SAFETY: a Range is guest memory (the low 2 GiB of the wasm memory, all of it backed: the
-    // module doc), not empty: its pointer is not NULL. No Rust code writes it while `f` runs:
-    // this module's closures write nothing, view_unchecked's caller promises it. (The guest's
-    // own translated code is no Rust code: a program that writes a buffer it handed to a call
-    // races with itself, as on Windows.) The borrow ends with `f`.
+    // module doc), not empty: its pointer is not NULL. Unchanged while `f` runs: the caller's
+    // promise. The borrow ends with `f`.
     f(unsafe { std::slice::from_raw_parts(r.ptr::<u8>().cast_const(), us(r.n)) })
 }
-/// The one place guest memory is written as a Rust slice (as raw: this module's closures or
-/// view_mut_unchecked's contract).
-fn raw_mut<R>(r: Range, f: impl FnOnce(&mut [u8]) -> R) -> R {
+/// The one place guest memory is written as a Rust slice.
+///
+/// # Safety
+/// Nothing else reads or writes `r`'s bytes while `f` runs.
+unsafe fn exclusive_slice_mut<R>(r: Range, f: impl FnOnce(&mut [u8]) -> R) -> R {
     if r.is_empty() {
         return f(&mut []);
     }
-    // SAFETY: as in raw, and nothing else reads it meanwhile; the borrow ends with `f`.
+    // SAFETY: as in exclusive_slice, and unseen by anyone else meanwhile: the caller's promise.
     f(unsafe { std::slice::from_raw_parts_mut(r.ptr::<u8>(), us(r.n)) })
 }
 /// The host pointer of guest memory `a..a + n`, None where that is not all guest memory: for
@@ -452,7 +506,7 @@ pub fn host_ptr_mut(a: u32, n: u32) -> Option<*mut u8> {
 }
 pub fn fill(a: u32, n: u32, v: u8) {
     if let Some(r) = for_write(a, n) {
-        raw_mut(r, |s| s.fill(v));
+        r.set_all(v);
     }
 }
 /// Zeroes [a, a+n) without writing to the pages in it that are zero already. The browser backs
@@ -466,16 +520,16 @@ pub fn zero(a: u32, n: u32) {
         return fill(a, n, 0);
     }
     let Some(r) = for_write(a, n) else { return };
-    raw_mut(r, |s| {
-        // (pages of the guest's: a starts where it starts, the rest on page boundaries)
-        let first = us(PAGE.saturating_sub(a % PAGE)).min(s.len());
-        let (head, rest) = s.split_at_mut(first);
-        for p in std::iter::once(head).chain(rest.chunks_mut(us(PAGE))) {
-            if !is_zero(p) {
-                p.fill(0);
-            }
+    // (pages of the guest's: a starts where it starts, the rest on page boundaries)
+    let mut at = 0u32;
+    while at < r.n {
+        let k = if at == 0 { PAGE.saturating_sub(a % PAGE) } else { PAGE }.min(r.n.saturating_sub(at));
+        let p = Range { a: r.a.wrapping_add(at), n: k };
+        if !p.all_zero() {
+            p.set_all(0);
         }
-    });
+        at = at.wrapping_add(k);
+    }
 }
 /// (below this zero() fills: one or two pages)
 const ZERO_SKIP_MIN: u32 = 2 * PAGE;
@@ -507,7 +561,7 @@ pub fn write(dst: u32, data: &[u8]) {
         refused(dst, kome::num::u32_of(data.len()));
         return;
     };
-    raw_mut(d, |s| s.copy_from_slice(data));
+    d.copy_from(data);
 }
 
 /// NUL-terminated byte string at `a` (without the NUL).
@@ -518,7 +572,9 @@ pub fn cstr(a: u32) -> Vec<u8> {
     // (one scan of the guest memory up to GUEST_TOP: an unterminated string stops there
     // instead of wrapping past 4 GB, review b07)
     if a < GUEST_TOP {
-        return raw_or_empty(a, GUEST_TOP.saturating_sub(a), |s| s.iter().take_while(|&&c| c != 0).copied().collect());
+        let Some(r) = range(a, GUEST_TOP.saturating_sub(a)) else { return Vec::new() };
+        let n = (0..us(r.n)).position(|i| r.byte(i) == 0).unwrap_or(us(r.n));
+        return range_of(a, n).map_or_else(Vec::new, Range::copy_out);
     }
     let mut n = 0;
     while r8(ga(a) + n) != 0 {
@@ -536,13 +592,11 @@ pub fn wstr(a: u32) -> Vec<u16> {
         return Vec::new();
     }
     if a < GUEST_TOP {
-        return raw_or_empty(a, GUEST_TOP.saturating_sub(a) & !1, |s| {
-            let units = s.as_chunks::<2>().0.iter().map(|&c| u16::from_le_bytes(c));
-            let n = units.clone().position(|c| c == 0).unwrap_or(s.len() / 2);
-            let mut v = Vec::with_capacity(n);
-            v.extend(units.take(n));
-            v
-        });
+        let Some(r) = range(a, GUEST_TOP.saturating_sub(a) & !1) else { return Vec::new() };
+        let unit = |i: usize| u16::from_le_bytes([r.byte(i.wrapping_mul(2)), r.byte(i.wrapping_mul(2).wrapping_add(1))]);
+        let units = us(r.n >> 1);
+        let n = (0..units).position(|i| unit(i) == 0).unwrap_or(units);
+        return (0..n).map(unit).collect();
     }
     let mut v = Vec::new();
     let mut p = ga(a);
@@ -696,7 +750,7 @@ fn insert(sp: &mut BTreeMap<u32, Region>, base: u32, size: u32, prot: u32, kind:
     {
         let n = size.min(16 * PAGE);
         if TEST_MAPPED.load(std::sync::atomic::Ordering::Relaxed) && range(base, n).is_some() {
-            assert!(raw_or_empty(base, n, is_zero), "free guest memory at {base:#x} is not zero: something wrote there without reserving it");
+            assert!(range(base, n).is_none_or(Range::all_zero), "free guest memory at {base:#x} is not zero: something wrote there without reserving it");
         }
     }
     sp.insert(base, Region { size, prot, state: 0x2000, alloc_base: base, alloc_prot: prot, kind, hi: 0 });
@@ -813,7 +867,7 @@ pub fn decommit_range(a: u32, n: u32) -> bool {
         for (i, x) in (first..last).zip(p.iter_mut().skip(us(first))) {
             if *x != 0 {
                 let at = ga(b).at(i, PAGE).get();
-                if !raw_or_empty(at, PAGE, is_zero) {
+                if !range(at, PAGE).is_none_or(Range::all_zero) {
                     fill(at, PAGE, 0);
                 }
                 *x = 0;
@@ -1331,49 +1385,50 @@ pub fn heap_realloc(p: u32, size: u32, zero: bool) -> u32 {
 
 /// A locked read-modify-write of the dword at `a` (the Interlocked* functions): returns the old
 /// value and stores `f(old)`. x86 allows the dword unaligned (mono's JIT keeps counters in
-/// packed structures) but wasm atomics fault on it: an unaligned one inside an aligned qword
-/// swaps that qword, one that straddles two takes a lock (atomic against the others that do).
-/// The guest's word at `a` changed by `f` atomically, its old value; 0 (and nothing changed)
-/// where that is not guest memory (Windows would fault)
+/// packed structures) but wasm atomics fault on it: an aligned one is one atomic, an unaligned
+/// one goes through the aligned words holding it by waits::locked's rule (the interpreter's
+/// locked instructions' too: kura cpu.rs). 0 (and nothing changed) where that is not guest
+/// memory (Windows would fault).
 pub fn atomic_rmw32(a: u32, f: impl Fn(u32) -> u32) -> u32 {
-    for_write(a, 4).map_or(0, |r| rmw32_at(us(r.addr()), f))
+    // SAFETY: a Range is guest memory, backed in whole aligned 8-byte words (GUEST_TOP and
+    // NULL_TOP are page multiples), and sake's every access to a locked operand is atomic.
+    for_write(a, 4).map_or(0, |r| unsafe { rmw32_at(us(r.addr()), f) })
 }
-// (fetch_update is try_update on newer toolchains, which the one pinned here lacks)
-#[allow(deprecated)]
-pub(crate) fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
+
+/// [`atomic_rmw32`] on host memory `p`.
+///
+/// # Safety
+/// The aligned 8-byte words holding `p..p + 4` are memory valid for atomic access for the
+/// call, every other access to those bytes meanwhile atomic too.
+/// ```compile_fail
+/// let _ = sake::mem::rmw32_at(0x1000, |v| v); // unsafe, and not sake's API
+/// ```
+pub(crate) unsafe fn rmw32_at(p: usize, f: impl Fn(u32) -> u32) -> u32 {
     use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::SeqCst};
+    use waits::locked::{place, Place, Width};
     if p % 4 == 0 {
-        // SAFETY: p is 4-aligned host memory the caller names (guest memory: backed), used as
-        // an atomic word by every writer here
-        let a = unsafe { &*std::ptr::with_exposed_provenance::<AtomicU32>(p) };
-        return a.fetch_update(SeqCst, SeqCst, |v| Some(f(v))).unwrap_or_else(|v| v);
+        // SAFETY: the caller's: 4-aligned memory, used atomically by everyone
+        let a = unsafe { AtomicU32::from_ptr(std::ptr::with_exposed_provenance_mut::<u32>(p)) };
+        let mut cur = a.load(SeqCst);
+        loop {
+            match a.compare_exchange_weak(cur, f(cur), SeqCst, SeqCst) {
+                Ok(v) => return v,
+                Err(c) => cur = c,
+            }
+        }
     }
     let word = p & !7;
-    // (word is p with its low 3 bits cleared: p - word is 0..=7)
-    let into = p.wrapping_sub(word);
-    if into <= 4 {
-        // SAFETY: the 8-aligned word holding all 4 bytes, the same memory, atomic as above
-        let w = unsafe { &*std::ptr::with_exposed_provenance::<AtomicU64>(word) };
-        let sh = kome::num::lo32(into).wrapping_mul(8);
-        let m = 0xffff_ffffu64 << sh;
-        let mut old = 0;
-        // (the closure always answers Some: fetch_update cannot fail)
-        let _prev: u64 = w
-            .fetch_update(SeqCst, SeqCst, |cur| {
-                old = kome::num::lo32((cur & m) >> sh);
-                Some((cur & !m) | (u64::from(f(old)) << sh))
-            })
-            .unwrap_or_else(|v| v);
-        return old;
-    }
-    static SPLIT: Mutex<()> = Mutex::new(());
-    let _g = SPLIT.lock().unwrap_or_else(|e| e.into_inner());
-    // SAFETY: 4 bytes of the caller's memory across two words, unaligned access; SPLIT orders
-    // the writers that straddle
-    let old = unsafe { std::ptr::with_exposed_provenance::<u32>(p).read_unaligned() };
-    // SAFETY: as above
-    unsafe { std::ptr::with_exposed_provenance_mut::<u32>(p).write_unaligned(f(old)) };
-    old
+    // SAFETY: the caller's: the aligned word holding p
+    let lo = unsafe { AtomicU64::from_ptr(std::ptr::with_exposed_provenance_mut::<u64>(word)) };
+    let g = |v: u64| Some(u64::from(f(kome::num::lo32(v))));
+    kome::num::lo32(match place(p, Width::B4) {
+        Place::Word(at) => waits::locked::word(lo, at, g),
+        Place::Pair(at) => {
+            // SAFETY: the caller's: the next aligned word, which holds the dword's other bytes
+            let hi = unsafe { AtomicU64::from_ptr(std::ptr::with_exposed_provenance_mut::<u64>(word.wrapping_add(8))) };
+            kome::num::lo64(waits::locked::pair(lo, hi, at, |v| g(kome::num::lo64(v)).map(u128::from)))
+        }
+    })
 }
 
 #[cfg(test)]
@@ -1694,7 +1749,8 @@ mod tests {
             let mut b = B([0xaa; 16]);
             b.0[off..off + 4].copy_from_slice(&0x1122_3344u32.to_le_bytes());
             let p = b.0.as_mut_ptr().expose_provenance() + off;
-            assert_eq!(rmw32_at(p, |v| v.wrapping_add(0x0101_0101)), 0x1122_3344);
+            // SAFETY: the 8-aligned buffer's words, this thread's alone
+            assert_eq!(unsafe { rmw32_at(p, |v| v.wrapping_add(0x0101_0101)) }, 0x1122_3344);
             assert_eq!(u32::from_le_bytes(b.0[off..off + 4].try_into().unwrap()), 0x1223_3445, "offset {off}");
             assert!(b.0.iter().take(off).chain(&b.0[off + 4..]).all(|&x| x == 0xaa), "offset {off}");
         }
@@ -1709,7 +1765,7 @@ mod tests {
         let base = b.0.as_mut_ptr().expose_provenance();
         for off in [1usize, 2, 6] {
             let p = base + off;
-            let hs: Vec<_> = (0..4).map(|_| std::thread::spawn(move || (0..20000).for_each(|_| { rmw32_at(p, |v| v + 1); }))).collect();
+            let hs: Vec<_> = (0..4).map(|_| std::thread::spawn(move || (0..20000).for_each(|_| { unsafe { rmw32_at(p, |v| v + 1) }; }))).collect();
             hs.into_iter().for_each(|h| h.join().unwrap());
             assert_eq!(unsafe { std::ptr::with_exposed_provenance::<u32>(p).read_unaligned() }, 80000, "offset {off}");
             unsafe { std::ptr::with_exposed_provenance_mut::<u32>(p).write_unaligned(0) };

@@ -1296,7 +1296,7 @@ fn GetAddrInfoExW(c: &mut Ctx) -> u32 {
         hp.put(0x1234);
     }
     // OVERLAPPED { Internal = the result, Pointer (over Offset) = &result, hEvent }
-    wp(ov + 2 * k, res.object());
+    wp(ov + 2 * k, res.object().key());
     if cb != 0 {
         // the routine runs on a thread of its own (a thread pool's, on Windows) once done
         wp(ov, 0x2734); // (WSAEINPROGRESS)

@@ -77,7 +77,7 @@ impl Rule {
             Rule::GoldenEnv => "one golden switch, MASU_UPDATE_GOLDEN, read by kome::golden only: another *_UPDATE_GOLDEN/BLESS name is a golden MASU_UPDATE_GOLDEN=1 leaves stale",
             Rule::DeadApi => "removed stays removed: sake::mem's safe borrows (slice, guest_mut, view, view_mut, guest, in_guest, guest_range; mem::bytes / mem::update copy) and api's untyped out-parameter paths (to_callee, a_at, out_at, put64; api::words!, typed Args)",
             Rule::UntypedWayBack => "a guest address is a value (mem::r32(ga(a) + 4), no reader/writer methods on Ga), and api::Args has no Deref to Ctx (it let c.a(i) read an out-parameter as a word)",
-            Rule::HomeOnly => "a primitive sound only under a contract has one list of callers (HOMES in arch.rs): view_unchecked, atomics on guest memory, locked_anyway; a new caller goes in HOMES with its reason",
+            Rule::HomeOnly => "a primitive sound only under a contract has one list of callers (HOMES in arch.rs): view_unchecked, atomics on guest memory, locked_anyway, guest slices, two-word LOCK operations, pool brands, adopting the page's JIT parts; a new caller goes in HOMES with its reason",
             Rule::ReprCLayout => "a repr(C) type is a layout something else reads: pin it with `const _: () = assert!(size_of::<T>() == N);` (user rule 2026-11-14)",
             Rule::ReleaseBuildOnly => "release.yml builds and releases (jobs version, web, bin, pages, release; no test suite or linter): CI tests every push",
             Rule::Required => "the guards stay: MASU_OUTS_STRICT, outptr_audit, the compile_fail doctests, the CI steps of these lints",
@@ -203,13 +203,16 @@ fn golden_env(tree: &Tree) -> Hits {
     out
 }
 
-pub const GONE: [(&str, &[&str]); 2] = [
+pub const GONE: [(&str, &[&str]); 3] = [
     // (review 2026-11-15/16: safe borrows of guest memory let another thread's write race the
     // borrow; mem::bytes / mem::update copy, view_unchecked says its contract)
     (MEM, &["slice", "slice_mut", "guest", "guest_mut", "in_guest", "guest_range", "view", "view_mut"]),
     // (out-parameters 2026-11-16: an Out reaches a call word only through api::words!, an argument
     // only through the function's typed Args)
     (API, &["to_callee", "a_at", "out_at", "put64"]),
+    // (review 2026-11-17: safe mem functions made Rust slices of shared guest memory through these;
+    // safe code copies by raw pointer now, a slice exists only under exclusive_slice's contract)
+    (MEM, &["raw", "raw_mut", "raw_or_empty"]),
 ];
 
 fn dead_api(tree: &Tree) -> Hits {
@@ -255,7 +258,7 @@ pub enum Use {
     Path(&'static [&'static str], &'static str),
 }
 
-pub const HOMES: [(&str, Use, &[&str]); 3] = [
+pub const HOMES: [(&str, Use, &[&str]); 7] = [
     // (2026-11-16: the zero-copy reads of guest memory, each with its contract: ReadFile-like host
     // file reads and decoded video frames)
     (
@@ -273,6 +276,18 @@ pub const HOMES: [(&str, Use, &[&str]); 3] = [
     ),
     // (review 2026-11-15: a poisoned lock panics; only crashlog's whole-per-change lists go on)
     ("locked-anyway", Use::Ident(&["locked_anyway"]), &["crates/kura/src/crashlog.rs", "crates/kome/src/locks.rs"]),
+    // (review 2026-11-17: the one place a Rust slice of guest memory is made, under view_unchecked's
+    // contract; everything else in sake copies)
+    ("guest-slice", Use::Ident(&["exclusive_slice", "exclusive_slice_mut"]), &[MEM]),
+    // (review 2026-11-17: LOCK operations across two aligned words, one rule and one lock for all:
+    // the interpreter's (kura cpu) and the Interlocked functions' (sake mem); anyone else would
+    // take another lock of their own)
+    ("locked-pair", Use::Path(&["locked"], "pair"), &["crates/kura/src/cpu.rs", MEM, "crates/waits/src/locked.rs", "crates/waits/tests/loom.rs"]),
+    // (review 2026-11-17: a pool brand has one value ever, made by kura's pool! with its one pool;
+    // an `unsafe impl Brand` elsewhere could make two pools of one brand)
+    ("pool-brand", Use::Ident(&["Brand"]), &["crates/kura/src/pool.rs"]),
+    // (review 2026-11-17: the page's late JIT parts are adopted once, by vnhost_jit_late's contract)
+    ("late-part-adopt", Use::Path(&["LatePart"], "adopt"), &["crates/kura/src/jit.rs"]),
 ];
 
 fn home_only(tree: &Tree) -> Hits {

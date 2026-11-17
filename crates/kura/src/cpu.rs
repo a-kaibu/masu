@@ -4,7 +4,6 @@
 //! The first 64 KiB stay unmapped for the guest so NULL dereferences raise access violations.
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::Mutex;
 
 use koji::{Cpu, Exit, Fault, Memory};
 
@@ -155,42 +154,39 @@ impl Memory for Linear {
         use std::sync::atomic::{AtomicU16, AtomicU64, AtomicU8};
         let bytes = w.bytes();
         let p = check(addr, bytes, true)?;
-        // an unaligned operand goes through the aligned 8 bytes holding it, or a lock when
-        // it straddles two of those (rare; atomic only against other locked accesses)
-        let word = addr & !7;
-        if addr % bytes != 0 && (addr + bytes - 1) & !7 != word {
-            static SPLIT: Mutex<()> = Mutex::new(());
-            let _g = SPLIT.lock().unwrap_or_else(|e| e.into_inner());
-            let mut cur = [0u8; 8];
-            unsafe { std::ptr::copy_nonoverlapping(p, cur.as_mut_ptr(), bytes as usize) };
-            let cur = u64::from_le_bytes(cur);
-            if cur == old {
-                unsafe { std::ptr::copy_nonoverlapping(new.to_le_bytes().as_ptr(), p, bytes as usize) };
-            }
-            return Ok(cur);
-        }
+        // an aligned operand is one wasm atomic; an unaligned one goes through the aligned
+        // words holding it, by waits::locked's rule (sake's Interlocked functions' too)
         let ord = Ordering::SeqCst;
-        Ok(unsafe {
-            match bytes {
-                1 => (*(p as *const AtomicU8)).compare_exchange(old as u8, new as u8, ord, ord).unwrap_or_else(|v| v) as u64,
-                2 if addr % 2 == 0 => (*(p as *const AtomicU16)).compare_exchange(old as u16, new as u16, ord, ord).unwrap_or_else(|v| v) as u64,
-                4 if addr % 4 == 0 => (*(p as *const AtomicU32)).compare_exchange(old as u32, new as u32, ord, ord).unwrap_or_else(|v| v) as u64,
-                8 => (*(p as *const AtomicU64)).compare_exchange(old, new, ord, ord).unwrap_or_else(|v| v),
-                _ => {
-                    // inside one aligned u64: swap the whole word
-                    let w = &*(word as usize as *const AtomicU64);
-                    let sh = (addr - word) * 8;
-                    let m = (u64::MAX >> (64 - bytes * 8)) << sh;
-                    let mut cur = w.load(ord);
-                    loop {
-                        let v = (cur & m) >> sh;
-                        if v != old {
-                            break v;
-                        }
-                        match w.compare_exchange(cur, (cur & !m) | ((new << sh) & m), ord, ord) {
-                            Ok(_) => break v,
-                            Err(c) => cur = c,
-                        }
+        // (each from_ptr below: check gave `bytes` of guest memory at p, valid while the
+        // module's memory is (never shrunk); every access sake and the JIT make to a
+        // lock-prefixed operand is atomic)
+        Ok(match (w, addr % bytes == 0) {
+            // SAFETY: one byte at p (above)
+            (koji::Width::W8, _) => unsafe { AtomicU8::from_ptr(p) }.compare_exchange(old as u8, new as u8, ord, ord).unwrap_or_else(|v| v) as u64,
+            // SAFETY: 2 bytes at p, 2-aligned (above)
+            (koji::Width::W16, true) => unsafe { AtomicU16::from_ptr(p.cast()) }.compare_exchange(old as u16, new as u16, ord, ord).unwrap_or_else(|v| v) as u64,
+            // SAFETY: 4 bytes at p, 4-aligned (above)
+            (koji::Width::W32, true) => unsafe { AtomicU32::from_ptr(p.cast()) }.compare_exchange(old as u32, new as u32, ord, ord).unwrap_or_else(|v| v) as u64,
+            // SAFETY: 8 bytes at p, 8-aligned (above)
+            (koji::Width::W64, true) => unsafe { AtomicU64::from_ptr(p.cast()) }.compare_exchange(old, new, ord, ord).unwrap_or_else(|v| v),
+            (koji::Width::W16 | koji::Width::W32 | koji::Width::W64, false) => {
+                let lw = match w {
+                    koji::Width::W8 => waits::locked::Width::B1,
+                    koji::Width::W16 => waits::locked::Width::B2,
+                    koji::Width::W32 => waits::locked::Width::B4,
+                    koji::Width::W64 => waits::locked::Width::B8,
+                };
+                let word = p.wrapping_sub((addr % 8) as usize);
+                // SAFETY: the aligned word holding p's first byte: guest memory too (backed in whole
+                // pages, above)
+                let lo = unsafe { AtomicU64::from_ptr(word.cast()) };
+                let f = |v: u64| (v == old).then_some(new);
+                match waits::locked::place(addr as usize, lw) {
+                    waits::locked::Place::Word(at) => waits::locked::word(lo, at, f),
+                    waits::locked::Place::Pair(at) => {
+                        // SAFETY: the next aligned word, holding the operand's last bytes (above)
+                        let hi = unsafe { AtomicU64::from_ptr(word.wrapping_add(8).cast()) };
+                        kome::num::lo64(waits::locked::pair(lo, hi, at, |v| f(kome::num::lo64(v)).map(u128::from)))
                     }
                 }
             }
@@ -658,32 +654,12 @@ mod reuse_tests {
     }
 }
 
-/// CMPXCHG16B on the two halves of a 16-byte slot (wasm has no 128-bit atomics). All 16-byte
-/// swaps take one lock, so they are atomic among themselves; each half is then swapped with a
-/// 64-bit compare-exchange, so a lock-prefixed 64-bit operation of another thread on either half
-/// is never overwritten: the swap fails instead (and undoes its low half). What it cannot give
-/// is the x86's single 128-bit store: a plain 8-byte read between the two halves sees the new
-/// low half with the old high one (a lock-free list re-reads such a pair through its own swap,
-/// which then fails). Review 2026-11-16.
+/// CMPXCHG16B on the two halves of a 16-byte slot (wasm has no 128-bit atomics): waits::locked's
+/// rule for operations across two aligned words (one lock for all of them, a compare-exchange of
+/// each word, what another thread may see between the two: its module doc). Review 2026-11-16,
+/// 2026-11-17 (a failed swap answered the high half read after the low one: a pair that never was).
 pub fn swap16(lo: &std::sync::atomic::AtomicU64, hi: &std::sync::atomic::AtomicU64, old: u128, new: u128) -> u128 {
-    static WIDE: Mutex<()> = Mutex::new(());
-    let _g = WIDE.lock().unwrap_or_else(|e| e.into_inner());
-    let ord = Ordering::SeqCst;
-    let (old_lo, old_hi) = (kome::num::lo64(old), kome::num::lo64(old >> 64));
-    let (new_lo, new_hi) = (kome::num::lo64(new), kome::num::lo64(new >> 64));
-    let pair = |l: u64, h: u64| u128::from(l) | u128::from(h) << 64;
-    if let Err(l) = lo.compare_exchange(old_lo, new_lo, ord, ord) {
-        return pair(l, hi.load(ord));
-    }
-    if let Err(h) = hi.compare_exchange(old_hi, new_hi, ord, ord) {
-        // (the low half back as it was, unless another thread's operation wrote it meanwhile:
-        // then that one stands)
-        if lo.compare_exchange(new_lo, old_lo, ord, ord).is_err() {
-            // (another thread's 64-bit operation wrote it: that one stands)
-        }
-        return pair(lo.load(ord), h);
-    }
-    old
+    waits::locked::swap16(lo, hi, old, new)
 }
 
 #[cfg(test)]

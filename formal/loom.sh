@@ -1,6 +1,7 @@
 #!/bin/bash
 # loom (https://github.com/tokio-rs/loom): every interleaving of the lock-word protocols of
-# crates/waits (critical sections, SRW locks, condition variables, INIT_ONCE, WaitOnAddress),
+# crates/waits (critical sections, SRW locks, condition variables, INIT_ONCE, WaitOnAddress, and
+# waits::locked: LOCK operations across two aligned words),
 # with the weak-memory outcomes loom models. LOOM_MAX_PREEMPTIONS (default 3) bounds the
 # preemptions per execution: more finds more and takes longer.
 set -euo pipefail
