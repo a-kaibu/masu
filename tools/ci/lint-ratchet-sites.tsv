@@ -1,4 +1,4 @@
-# tools/ci/lint-ratchet.py: every unsafe-kind site (file, lint, its line's text); a site not here fails CI
+# masu-lint ratchet: every unsafe-kind site (file, lint, its line's text); a site not here fails CI
 crates/koji/src/interp/avx.rs	undocumented_unsafe_blocks	Ok(_) => unsafe { &*t },
 crates/koji/src/interp/avx.rs	undocumented_unsafe_blocks	drop(unsafe { Box::from_raw(t) });
 crates/koji/src/interp/avx.rs	undocumented_unsafe_blocks	return unsafe { &*p };
@@ -1356,6 +1356,8 @@ crates/kura/src/gl/mod.rs	masu-from_raw_parts	let r = std::slice::from_raw_parts
 crates/kura/src/gl/mod.rs	masu-from_raw_parts	let row = std::slice::from_raw_parts(src.add(y * pitch), us(w) * n);
 crates/kura/src/gl/mod.rs	masu-from_raw_parts	tex_env(p, std::slice::from_raw_parts(v, n))
 crates/kura/src/gl/mod.rs	masu-from_raw_parts	unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), std::mem::size_of_val(v)) }
+crates/kura/src/gl/mod.rs	missing_safety_doc	pub unsafe extern "C" fn vngl_proc(name: *const c_char) -> *const c_void {
+crates/kura/src/gl/mod.rs	missing_safety_doc	pub unsafe extern "C" fn vngl_swap(hwnd: u32, rect: *const i32) {
 crates/kura/src/gl/mod.rs	multiple_unsafe_ops_per_block	.map(|k| unsafe {
 crates/kura/src/gl/mod.rs	multiple_unsafe_ops_per_block	v[k] = unsafe {
 crates/kura/src/gl/mod.rs	ptr_as_ptr	let v: [f32; 16] = std::ptr::read_unaligned(m as *const [f32; 16]);
@@ -1941,6 +1943,38 @@ crates/sake/src/gl.rs	undocumented_unsafe_blocks	let s = unsafe { std::ffi::CStr
 crates/sake/src/gl.rs	undocumented_unsafe_blocks	match unsafe { gl_sigs::call(sig, f as *const (), &w[..n]) } {
 crates/sake/src/gl.rs	undocumented_unsafe_blocks	match unsafe { gl_sigs::call(sig, f as *const (), &words) } {
 crates/sake/src/gl.rs	undocumented_unsafe_blocks	unsafe { kura::gl::vngl_swap(hwnd, rect.as_ptr()) };
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S0 => Ret::I((unsafe { std::mem::transmute::<*const (), extern "C" fn() -> u32>(f) })()),
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S1 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn() -> ()>(f) })(); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S10 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f32) -> ()>(f) })(f32::from_bits(w[0])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S11 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f32, f32) -> ()>(f) })(f32::from_bits(w[0]), f32::from_bits(w[1])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S12 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f32, f32, f32) -> ()>(f) })(f32::from_bits(w[0]), f32::from_bits(w[1]), f32::from_bits(w[2])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S13 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f32, f32, f32, f32) -> ()>(f) })(f32::from_bits(w[0]), f32::from_bits(w[1]), f32::from_bits(w[2]), f32::from_bits(w[3])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S14 => Ret::I((unsafe { std::mem::transmute::<*const (), extern "C" fn(u32) -> u32>(f) })(w[0])),
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S15 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32) -> ()>(f) })(w[0]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S16 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, f32) -> ()>(f) })(w[0], f32::from_bits(w[1])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S17 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, f32, f32) -> ()>(f) })(w[0], f32::from_bits(w[1]), f32::from_bits(w[2])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S18 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, f32, f32, f32) -> ()>(f) })(w[0], f32::from_bits(w[1]), f32::from_bits(w[2]), f32::from_bits(w[3])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S19 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, f32, f32, f32, f32) -> ()>(f) })(w[0], f32::from_bits(w[1]), f32::from_bits(w[2]), f32::from_bits(w[3]), f32::from_bits(w[4])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S2 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32) -> ()>(f) })(w[0] & 0xff); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S20 => Ret::I((unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32) -> u32>(f) })(w[0], w[1])),
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S21 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32) -> ()>(f) })(w[0], w[1]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S22 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2] & 0xff, w[3]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S23 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, f32) -> ()>(f) })(w[0], w[1], f32::from_bits(w[2])); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S24 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S25 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2], w[3] & 0xff, w[4], w[5]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S26 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2], w[3]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S27 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2], w[3], w[4]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S28 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2], w[3], w[4], w[5]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S29 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32, u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2], w[3], w[4], w[5], w[6]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S3 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32) -> ()>(f) })(w[0] & 0xff, w[1] & 0xff, w[2] & 0xff); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S30 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32, u32, u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S31 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32, u32, u32, u32, u32, u32) -> ()>(f) })(w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8]); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S4 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(u32, u32, u32, u32) -> ()>(f) })(w[0] & 0xff, w[1] & 0xff, w[2] & 0xff, w[3] & 0xff); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S5 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f64) -> ()>(f) })(f64::from_bits(u64::from(w[0]) | u64::from(w[1]) << 32)); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S6 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f64, f64) -> ()>(f) })(f64::from_bits(u64::from(w[0]) | u64::from(w[1]) << 32), f64::from_bits(u64::from(w[2]) | u64::from(w[3]) << 32)); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S7 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f64, f64, f64) -> ()>(f) })(f64::from_bits(u64::from(w[0]) | u64::from(w[1]) << 32), f64::from_bits(u64::from(w[2]) | u64::from(w[3]) << 32), f64::from_bits(u64::from(w[4]) | u64::from(w[5]) << 32)); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S8 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f64, f64, f64, f64) -> ()>(f) })(f64::from_bits(u64::from(w[0]) | u64::from(w[1]) << 32), f64::from_bits(u64::from(w[2]) | u64::from(w[3]) << 32), f64::from_bits(u64::from(w[4]) | u64::from(w[5]) << 32), f64::from_bits(u64::from(w[6]) | u64::from(w[7]) << 32)); Ret::V },
+crates/sake/src/gl_sigs.rs	masu-transmute	Sig::S9 => { (unsafe { std::mem::transmute::<*const (), extern "C" fn(f64, f64, f64, f64, f64, f64) -> ()>(f) })(f64::from_bits(u64::from(w[0]) | u64::from(w[1]) << 32), f64::from_bits(u64::from(w[2]) | u64::from(w[3]) << 32), f64::from_bits(u64::from(w[4]) | u64::from(w[5]) << 32), f64::from_bits(u64::from(w[6]) | u64::from(w[7]) << 32), f64::from_bits(u64::from(w[8]) | u64::from(w[9]) << 32), f64::from_bits(u64::from(w[10]) | u64::from(w[11]) << 32)); Ret::V },
 crates/sake/src/jscript.rs	masu-static_mut	fn engine_ctx(id: u32) -> Option<&'static mut Context> {
 crates/sake/src/jscript.rs	ptr_as_ptr	let prev = CUR.with(|p| p.replace(c as *mut Ctx as *mut Ctx<'static>));
 crates/sake/src/lib.rs	missing_safety_doc	pub unsafe extern "C" fn sake_main(argc: i32, argv: *const *const libc::c_char) -> i32 {

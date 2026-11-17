@@ -1,4 +1,4 @@
-# tools/ci/lint-ratchet.py: type-safety, robustness and masu-* lints per file (enforced: never up)
+# masu-lint ratchet: type-safety, robustness and masu-* lints per file (enforced: never up)
 file	crates/apitrace/src/layout.rs	arithmetic_side_effects	1
 file	crates/apitrace/src/layout.rs	as_conversions	1
 file	crates/apitrace/src/layout.rs	expect_used	1
@@ -256,6 +256,7 @@ file	crates/koji/src/jit/wasm.rs	as_conversions	3
 file	crates/koji/src/jit/wasm.rs	borrow_as_ptr	1
 file	crates/koji/src/jit/wasm.rs	cast_possible_truncation	2
 file	crates/koji/src/jit/wasm.rs	cast_possible_wrap	2
+file	crates/koji/src/jit/wasm.rs	declare_interior_mutable_const	1
 file	crates/koji/src/jit/wasm.rs	expect_used	1
 file	crates/koji/src/jit/wasm.rs	indexing_slicing	10
 file	crates/koji/src/jit/wasm.rs	let_underscore_must_use	1
@@ -460,6 +461,7 @@ file	crates/kura/src/gl/mod.rs	cast_sign_loss	22
 file	crates/kura/src/gl/mod.rs	indexing_slicing	54
 file	crates/kura/src/gl/mod.rs	iter_over_hash_type	2
 file	crates/kura/src/gl/mod.rs	masu-from_raw_parts	6
+file	crates/kura/src/gl/mod.rs	missing_safety_doc	2
 file	crates/kura/src/gl/mod.rs	multiple_unsafe_ops_per_block	2
 file	crates/kura/src/gl/mod.rs	ptr_as_ptr	2
 file	crates/kura/src/gl/mod.rs	undocumented_unsafe_blocks	10
@@ -711,7 +713,7 @@ file	crates/masu/src/library_api.rs	indexing_slicing	2
 file	crates/masu/src/library_api.rs	let_underscore_must_use	1
 file	crates/masu/src/library_api.rs	map_err_ignore	1
 file	crates/masu/src/main.rs	arithmetic_side_effects	1
-file	crates/masu/src/main.rs	as_conversions	6
+file	crates/masu/src/main.rs	as_conversions	7
 file	crates/masu/src/main.rs	cast_possible_truncation	2
 file	crates/masu/src/main.rs	cast_precision_loss	2
 file	crates/masu/src/main.rs	cast_sign_loss	1
@@ -760,10 +762,12 @@ file	crates/masu/src/serve.rs	as_conversions	37
 file	crates/masu/src/serve.rs	cast_possible_truncation	14
 file	crates/masu/src/serve.rs	cast_possible_wrap	5
 file	crates/masu/src/serve.rs	cast_sign_loss	1
+file	crates/masu/src/serve.rs	expect_used	1
 file	crates/masu/src/serve.rs	fn_to_numeric_cast_any	1
 file	crates/masu/src/serve.rs	indexing_slicing	19
 file	crates/masu/src/serve.rs	let_underscore_must_use	22
 file	crates/masu/src/serve.rs	undocumented_unsafe_blocks	6
+file	crates/masu/src/serve.rs	unwrap_in_result	1
 file	crates/masu/src/serve.rs	unwrap_used	2
 file	crates/masu/src/storage.rs	arithmetic_side_effects	34
 file	crates/masu/src/storage.rs	as_conversions	71
@@ -824,6 +828,7 @@ file	crates/masu/src/webassets.rs	let_underscore_must_use	4
 file	crates/masu/src/webassets.rs	same_name_method	1
 file	crates/masu/src/webassets.rs	string_slice	1
 file	crates/masu/src/webassets.rs	unwrap_used	2
+file	crates/mpeg1/src/audio.rs	approx_constant	16
 file	crates/mpeg1/src/audio.rs	arithmetic_side_effects	98
 file	crates/mpeg1/src/audio.rs	as_conversions	1
 file	crates/mpeg1/src/audio.rs	cast_precision_loss	1
@@ -1337,6 +1342,7 @@ file	crates/sake/src/gl.rs	cast_sign_loss	4
 file	crates/sake/src/gl.rs	indexing_slicing	9
 file	crates/sake/src/gl.rs	undocumented_unsafe_blocks	5
 file	crates/sake/src/gl_sigs.rs	indexing_slicing	125
+file	crates/sake/src/gl_sigs.rs	masu-transmute	32
 file	crates/sake/src/glu.rs	arithmetic_side_effects	113
 file	crates/sake/src/glu.rs	as_conversions	30
 file	crates/sake/src/glu.rs	cast_possible_truncation	20

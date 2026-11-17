@@ -9,7 +9,7 @@ and the crates' own tests, all in CI's `test` job:
 | tool | what it sees | time |
 | --- | --- | --- |
 | `masu-lint arch` (src/arch.rs) | rules about the repository: Rust parsed with syn (items, impls, paths, macro bodies' tokens; #[cfg(test)] modules left out), other files as text | seconds, before the build |
-| `masu-lint ratchet` (src/ratchet.rs) | clippy's lints and the masu-* lints per file and per unsafe site, only ever down | one clippy run |
+| `masu-lint ratchet` (src/ratchet.rs) | clippy's lints and the masu-* lints per file and per unsafe site, only ever down; clippy runs with `--force-warn`, so an `#[allow]`, `#![allow(clippy::all)]` or a Cargo.toml `[lints]` allow does not hide a counted lint, and each `allow`/`expect` naming one is counted itself (read as tokens: over several lines, in `cfg_attr`, in macro bodies) | one clippy run |
 | tests (`outptr_audit`, compile_fail doctests, trybuild-style goldens) | what needs the crate's own tables | `cargo test` |
 
 `cargo test -p masu-lint` (part of CI's `cargo test --workspace`) proves the lints themselves:
