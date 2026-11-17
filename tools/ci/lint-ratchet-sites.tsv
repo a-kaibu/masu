@@ -1783,13 +1783,18 @@ crates/masu/src/pack.rs	masu-wire_tree	let text = |v: &[String]| format!("vnvm-t
 crates/masu/src/pack.rs	masu-wire_tree	proptest::prop_assert_eq!(lines[0], "vnvm-tree\t2\t4194304");
 crates/masu/src/portable.rs	masu-wire_tree	"vnvm-tree\t1\t262144\nf\t0\t0\tgame.exe\t1\tdifferent\n",
 crates/masu/src/portable.rs	masu-wire_tree	std::fs::write(&tree, "vnvm-tree\t1\t262144\nf\t0\t0\tgame.exe\t1\tabcd\n").unwrap();
+crates/masu/src/saves.rs	masu-relay	.get(&format!("saves/{name}/{revision}"))
+crates/masu/src/saves.rs	masu-relay	Some(remote) => remote.get(&format!("saves/{name}/{r}")).await?.map(|d| d.to_vec()),
 crates/masu/src/serve.rs	undocumented_unsafe_blocks	TIDS[i].store(unsafe { libc::syscall(libc::SYS_gettid) }, SeqCst);
 crates/masu/src/serve.rs	undocumented_unsafe_blocks	let me = unsafe { libc::syscall(libc::SYS_gettid) };
 crates/masu/src/serve.rs	undocumented_unsafe_blocks	let n = unsafe { backtrace(buf.as_mut_ptr(), DEPTH as libc::c_int) }.max(0) as usize;
 crates/masu/src/serve.rs	undocumented_unsafe_blocks	unsafe { backtrace(warm.as_mut_ptr(), 4) };
 crates/masu/src/serve.rs	undocumented_unsafe_blocks	unsafe { libc::signal(libc::SIGUSR2, on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t) };
 crates/masu/src/serve.rs	undocumented_unsafe_blocks	unsafe { libc::syscall(libc::SYS_tgkill, pid, tid, libc::SIGUSR2) };
+crates/masu/src/storage.rs	masu-relay	.get(&logical)
 crates/masu/src/storage.rs	masu-wire_tree	std::fs::write(dir.join("trees/sample.tsv"), "vnvm-tree\t1\t262144\nf\t0\t0\tgame.exe\t1\tabcd\n").unwrap();
+crates/masu/src/store_api.rs	masu-relay	match s.remote.get(&path).await {
+crates/masu/src/treefiles.rs	masu-relay	Some(remote) => remote.get(&logical).await.ok()?,
 crates/masu/src/treefiles.rs	masu-wire_tree	format!("vnvm-tree\t2\t4\nd\t755\t0\tdir\t2\t{h}:2\nf\t644\t0\tx\t2\t{h}:2\textra\nf\t644\t0\tok\t2\t{h}:2\nf\t644\t0\tshort\t2\ta:2\nf\t644\t0\tnochunks\t2\t:2\nf\t644\t0\twrong\t3\t{h}:2\nf\t644\t0\tnolength\t2\t{h}\n"),
 crates/masu/src/treefiles.rs	masu-wire_tree	let mut lines = String::from("vnvm-tree\t2\t64\n");
 crates/masu/src/treefiles.rs	masu-wire_tree	std::fs::write(&path, format!("vnvm-tree\t2\t4\nf\t644\t0\tnew\t2\t{h}:2\n")).unwrap();

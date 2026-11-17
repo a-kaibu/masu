@@ -1,0 +1,10 @@
+[package]
+name = "masu-lint-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# (named masu: clippy.toml's `masu::storage::Storage::get` resolves in it)
+[lib]
+name = "masu"
+path = "src/lib.rs"

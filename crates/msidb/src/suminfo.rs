@@ -2,6 +2,7 @@
 //! F29F85E0-4FF9-1068-AB91-08002B27B3D9), properties 1 (codepage) to 19.
 
 use crate::*;
+use kome::le::{u16_at, u32_at};
 
 pub const VT_EMPTY: u32 = 0;
 pub const VT_I2: u32 = 2;
@@ -67,12 +68,6 @@ pub struct SummaryInfo {
     pub props: std::collections::BTreeMap<u32, Prop>,
 }
 
-fn u16_at(b: &[u8], o: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(b.get(o..o + 2)?.try_into().ok()?))
-}
-fn u32_at(b: &[u8], o: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(o..o + 4)?.try_into().ok()?))
-}
 
 impl SummaryInfo {
     pub fn codepage(&self) -> u32 {

@@ -201,6 +201,12 @@ jobs:
       CARGO_BUILD_WARNINGS: deny
     steps:
       - uses: actions/checkout@v7.0.1
+      # (the architecture rules the type-safety rewrites settled, checked by text: seconds and no
+      # build, so first; --self-test: each rule finds its regression put back into a real file)
+      - name: Architecture lint (tools/ci/arch-lint.py)
+        run: |
+          python3 tools/ci/arch-lint.py
+          python3 tools/ci/arch-lint.py --self-test
       - run: tools/ci/rust-key.sh
       - id: cargo-cache
         uses: actions/cache/restore@v6.1.0
@@ -274,6 +280,11 @@ jobs:
       - name: Lint ratchet (type-safety, robustness and masu-* lints; tools/ci/lint-ratchet.py)
         timeout-minutes: 15
         run: python3 tools/ci/lint-ratchet.py
+      # (each lint the ratchet counts against tools/lint-fixtures/ratchet, one line per regression:
+      # a lint a clippy upgrade renamed or a clippy.toml path that stopped resolving fails here
+      # instead of counting 0; a crate without dependencies, target/lint-fixtures)
+      - name: Lint ratchet fixtures (python3 tools/ci/lint-ratchet.py --self-test)
+        run: python3 tools/ci/lint-ratchet.py --self-test
       # (the linters beside clippy, pinned binaries: tools/ci/lint-tools.sh; RustSec's advisory
       # database once a day)
       - id: cache-lint

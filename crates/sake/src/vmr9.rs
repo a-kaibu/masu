@@ -18,17 +18,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::api::{vtable, Ctx, Handler};
+use crate::hresult::{CLASS_E_NOAGGREGATION, E_FAIL, E_INVALIDARG, E_NOINTERFACE, E_NOTIMPL, E_OUTOFMEMORY, E_POINTER, E_PROP_ID_UNSUPPORTED, E_UNEXPECTED, S_FALSE};
 use crate::mem::{self, ps, put32, r32, rp, w32, wp};
 
-const S_FALSE: u32 = 1;
-const E_NOTIMPL: u32 = 0x8000_4001;
-const E_NOINTERFACE: u32 = 0x8000_4002;
-const E_OUTOFMEMORY: u32 = 0x8007_000e;
-const E_POINTER: u32 = 0x8000_4003;
-const E_FAIL: u32 = 0x8000_4005;
-const E_UNEXPECTED: u32 = 0x8000_ffff;
-const E_INVALIDARG: u32 = 0x8007_0057;
-const E_PROP_ID_UNSUPPORTED: u32 = 0x8007_0490;
 const VFW_S_STATE_INTERMEDIATE: u32 = 0x0004_0237;
 const VFW_E_ALREADY_CONNECTED: u32 = 0x8004_0204;
 const VFW_E_NOT_CONNECTED: u32 = 0x8004_0209;
@@ -207,7 +199,6 @@ const KS: u32 = 16;
 const QP: u32 = 17;
 const DI: u32 = 18;
 const N: u32 = 19;
-const CLASS_E_NOAGGREGATION: u32 = 0x8004_0110;
 // (dshow's windowless calls find the filter two slots below IVMRWindowlessControl9)
 const _: () = assert!(WL - 2 == BF);
 

@@ -319,6 +319,9 @@ pub struct Cpu {
     /// SSE instructions keep them; VEX.128 instructions clear their destination's.
     pub ymmh: [u128; 17],
 }
+// (the JIT addresses fields by offset_of!; ymmh stays last with no padding after it, on wasm32
+// as on the host)
+const _: () = assert!(size_of::<Cpu>() == core::mem::offset_of!(Cpu, ymmh) + size_of::<[u128; 17]>());
 
 /// `Cpu::ldt` value for real-mode segment loading in 16-bit mode (base = selector * 16): what
 /// the hardware-recorded 80386 real-mode suite (crates/koji/tests/singlestep.rs) runs on.

@@ -14,4 +14,7 @@ disallowed-methods = [
     { path = "core::mem::transmute_copy", reason = "masu-transmute: from_le_bytes / a safe cast" },
     { path = "core::mem::zeroed", reason = "masu-uninit: Default / a value" },
     { path = "core::mem::MaybeUninit::assume_init", reason = "masu-uninit: a value made whole" },
+    # (no relay, 2026-11-16: the page reads chunks from the bucket itself; each place the server
+    # reads an object's bytes is a known site, a new one is a new relay. Only crate masu has it)
+    { path = "masu::storage::Storage::get", reason = "masu-relay: the page fetches from the bucket (/store-direct); the server reads only the catalog", allow-invalid = true },
 ]

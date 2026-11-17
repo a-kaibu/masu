@@ -331,6 +331,9 @@ struct Mallinfo {
     fordblks: i32,
     keepcost: i32,
 }
+// (emscripten's struct mallinfo: ten ints)
+#[cfg(target_os = "emscripten")]
+const _: () = assert!(size_of::<Mallinfo>() == 40);
 
 #[cfg(target_os = "emscripten")]
 unsafe extern "C" {

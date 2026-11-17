@@ -634,13 +634,6 @@ file	crates/kura/src/wrap.rs	masu-from_raw_parts	6
 file	crates/kura/src/wrap.rs	missing_safety_doc	7
 file	crates/kura/src/wrap.rs	undocumented_unsafe_blocks	8
 file	crates/kura/src/wrap.rs	unsafe_op_in_unsafe_fn	25
-file	crates/masu/src/../../kura/src/tree_list.rs	arithmetic_side_effects	4
-file	crates/masu/src/../../kura/src/tree_list.rs	map_err_ignore	3
-file	crates/masu/src/../../kura/src/vnv.rs	arithmetic_side_effects	15
-file	crates/masu/src/../../kura/src/vnv.rs	as_conversions	46
-file	crates/masu/src/../../kura/src/vnv.rs	cast_possible_truncation	20
-file	crates/masu/src/../../kura/src/vnv.rs	expect_used	2
-file	crates/masu/src/../../kura/src/vnv.rs	indexing_slicing	4
 file	crates/masu/src/apps.rs	indexing_slicing	1
 file	crates/masu/src/apps.rs	let_underscore_must_use	4
 file	crates/masu/src/asar.rs	arithmetic_side_effects	10
@@ -761,6 +754,7 @@ file	crates/masu/src/saves.rs	arithmetic_side_effects	5
 file	crates/masu/src/saves.rs	as_conversions	4
 file	crates/masu/src/saves.rs	cast_possible_truncation	4
 file	crates/masu/src/saves.rs	indexing_slicing	2
+file	crates/masu/src/saves.rs	masu-relay	2
 file	crates/masu/src/serve.rs	arithmetic_side_effects	14
 file	crates/masu/src/serve.rs	as_conversions	37
 file	crates/masu/src/serve.rs	cast_possible_truncation	14
@@ -771,8 +765,8 @@ file	crates/masu/src/serve.rs	indexing_slicing	19
 file	crates/masu/src/serve.rs	let_underscore_must_use	22
 file	crates/masu/src/serve.rs	undocumented_unsafe_blocks	6
 file	crates/masu/src/serve.rs	unwrap_used	2
-file	crates/masu/src/storage.rs	arithmetic_side_effects	35
-file	crates/masu/src/storage.rs	as_conversions	72
+file	crates/masu/src/storage.rs	arithmetic_side_effects	34
+file	crates/masu/src/storage.rs	as_conversions	71
 file	crates/masu/src/storage.rs	cast_possible_truncation	30
 file	crates/masu/src/storage.rs	cast_possible_wrap	6
 file	crates/masu/src/storage.rs	cast_precision_loss	3
@@ -782,6 +776,7 @@ file	crates/masu/src/storage.rs	indexing_slicing	1
 file	crates/masu/src/storage.rs	iter_over_hash_type	3
 file	crates/masu/src/storage.rs	let_underscore_must_use	7
 file	crates/masu/src/storage.rs	map_err_ignore	2
+file	crates/masu/src/storage.rs	masu-relay	1
 file	crates/masu/src/storage.rs	masu-wire_tree	1
 file	crates/masu/src/storage.rs	string_slice	4
 file	crates/masu/src/storage.rs	unreachable	1
@@ -789,6 +784,7 @@ file	crates/masu/src/store_api.rs	arithmetic_side_effects	1
 file	crates/masu/src/store_api.rs	as_conversions	5
 file	crates/masu/src/store_api.rs	cast_possible_truncation	4
 file	crates/masu/src/store_api.rs	indexing_slicing	2
+file	crates/masu/src/store_api.rs	masu-relay	1
 file	crates/masu/src/store_api.rs	string_slice	3
 file	crates/masu/src/tls_relay.rs	arithmetic_side_effects	4
 file	crates/masu/src/tls_relay.rs	indexing_slicing	1
@@ -798,6 +794,7 @@ file	crates/masu/src/treefiles.rs	arithmetic_side_effects	9
 file	crates/masu/src/treefiles.rs	as_conversions	13
 file	crates/masu/src/treefiles.rs	cast_possible_truncation	8
 file	crates/masu/src/treefiles.rs	indexing_slicing	1
+file	crates/masu/src/treefiles.rs	masu-relay	1
 file	crates/masu/src/treefiles.rs	masu-wire_tree	3
 file	crates/masu/src/ttc.rs	arithmetic_side_effects	19
 file	crates/masu/src/ttc.rs	as_conversions	20
@@ -884,7 +881,7 @@ file	crates/msidb/src/sql.rs	cast_possible_truncation	1
 file	crates/msidb/src/sql.rs	cast_sign_loss	1
 file	crates/msidb/src/sql.rs	indexing_slicing	18
 file	crates/msidb/src/sql.rs	map_err_ignore	2
-file	crates/msidb/src/suminfo.rs	arithmetic_side_effects	15
+file	crates/msidb/src/suminfo.rs	arithmetic_side_effects	13
 file	crates/msidb/src/suminfo.rs	as_conversions	15
 file	crates/msidb/src/suminfo.rs	cast_possible_truncation	4
 file	crates/msidb/src/suminfo.rs	cast_possible_wrap	2

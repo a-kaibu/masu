@@ -10,6 +10,7 @@ description = "Windows Installer databases (.msi): the compound file's tables, s
 [dependencies]
 cfb = "0.16"
 encoding_rs = "0.8"
+kome = { path = "../kome" }
 uuid = "1"
 
 [dev-dependencies]

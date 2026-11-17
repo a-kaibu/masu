@@ -70,6 +70,8 @@ pub struct Ctl {
     /// compares it with what it was at READY, before it keeps the copy)
     pub stirs: AtomicU32,
 }
+// (web/src/savestate.ts reads Ctl at fixed offsets: twelve words, then the 8-byte pairs at 48)
+const _: () = assert!(size_of::<Ctl>() == 96 && std::mem::offset_of!(Ctl, clock) == 48 && std::mem::offset_of!(Ctl, saves) == 80);
 
 pub const CMD_NONE: u32 = 0;
 pub const CMD_SAVE: u32 = 1;

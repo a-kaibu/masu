@@ -40,6 +40,8 @@ pub struct Item {
     /// (kind, ramp row + 1 or 0, set by `draw`: target width, height)
     pub kind: [u32; 4],
 }
+// (the WGSL side reads five vec4s per item)
+const _: () = assert!(size_of::<Item>() == 80);
 
 const VS: &str = "struct V {
     @builtin(position) p: vec4<f32>,

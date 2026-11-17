@@ -15,6 +15,8 @@ pub struct F80 {
     pub m: u64,
     pub se: u16,
 }
+// (ten bytes as memory has them, padded to the u64's alignment)
+const _: () = assert!(size_of::<F80>() == 16 && core::mem::offset_of!(F80, se) == 8);
 
 /// The negative quiet NaN the x87 returns for an invalid operation ("indefinite").
 pub const INDEFINITE: F80 = F80 { m: 0xc000_0000_0000_0000, se: 0xffff };

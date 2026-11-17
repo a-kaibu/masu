@@ -16,6 +16,8 @@ pub struct Lazy {
     pub b: u64,
     pub r: u64,
 }
+// (the JIT's wasm stores the fields at these offsets)
+const _: () = assert!(size_of::<Lazy>() == 32 && core::mem::offset_of!(Lazy, a) == 8);
 
 /// The flag-setting operation a lazy record is of.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

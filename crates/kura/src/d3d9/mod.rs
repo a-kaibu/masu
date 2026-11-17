@@ -96,6 +96,8 @@ pub struct HostCalls {
     pub free: unsafe extern "C" fn(*mut u8),
     pub client_rect: unsafe extern "C" fn(u32, *mut i32) -> i32,
 }
+// (unixlib.c's struct: three function pointers)
+const _: () = assert!(size_of::<HostCalls>() == 3 * size_of::<usize>());
 
 pub struct Obj {
     pub iface: u32,

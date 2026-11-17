@@ -7,6 +7,9 @@ file against tools/ci/lint-ratchet.tsv. A file may only go down: a push that add
   tools/ci/lint-ratchet.py            check (CI)
   tools/ci/lint-ratchet.py --update   write the counts down after fixing some (never up: a file
                                       above its line still fails)
+  tools/ci/lint-ratchet.py --self-test
+                                      every counted lint against tools/lint-fixtures/ratchet (one
+                                      marked line per regression it must catch; CI)
   tools/ci/lint-ratchet.py --update --raise FILE...
                                       those files' lines to what they have now: only for code
                                       moved in from another file (say so in the commit)
@@ -29,7 +32,8 @@ CUSTOM ("masu-*"): what clippy has no lint of its own for. The unsafe functions 
 disallowed_methods (clippy.toml), resolved by type, not by name (review 2026-11-15: Vec::set_len was
 "a `.set_len(` with `unsafe` in the 5 lines before"): Vec::set_len, slice::from_raw_parts(_mut),
 mem::transmute(_copy), mem::zeroed / MaybeUninit::assume_init, each counted under its masu-* name
-(DISALLOWED). What is syntax, not a call, is found in each file's code with its comments and
+(DISALLOWED); and masu-relay, masu's Storage::get: each place the server reads an object's bytes
+(no relay, 2026-11-16: the page fetches chunks from the bucket itself, a new reader is a new relay). What is syntax, not a call, is found in each file's code with its comments and
 string literals taken out, across lines: `static mut`, `unsafe impl ... Send/Sync for`; and the
 store's tree format ("vnvm-tree", a string, so searched in the raw text) spelled outside
 crates/kura/src/tree_list.rs (each new reader of a wire format is a second parser to keep in step).
@@ -131,26 +135,30 @@ DISALLOWED = {
     "core::mem::transmute_copy": "masu-transmute",
     "core::mem::zeroed": "masu-uninit",
     "core::mem::MaybeUninit::assume_init": "masu-uninit",
+    "masu::storage::Storage::get": "masu-relay",
 }
 DISALLOWED_PATH = re.compile(r"`([^`]+)`")
 ALLOW = re.compile(r"#!?\[\s*(?:allow|expect)\s*\(([^\]]*)\)\s*\]")
 
 
-def clippy():
-    yield from run_clippy(["--all-targets"], LINTS + ["clippy::" + g for g in GROUPS])
-    yield from run_clippy(["--lib", "--bins"], ROBUST + ["unsafe_op_in_unsafe_fn", "disallowed_methods"])
+def clippy(root=ROOT):
+    yield from run_clippy(["--all-targets"], LINTS + ["clippy::" + g for g in GROUPS], root)
+    yield from run_clippy(["--lib", "--bins"], ROBUST + ["unsafe_op_in_unsafe_fn", "disallowed_methods"], root)
 
 
 seen = set()
 
 
-def run_clippy(targets, lints):
+def run_clippy(targets, lints, root=ROOT):
     args = ["cargo", "clippy", "--workspace", *targets, "--keep-going", "--message-format=json", "--", "--cap-lints", "warn", "-A", "clippy::all"]
     for l in lints:
         args += ["-W", l if "::" in l or l in RUSTC.values() else "clippy::" + l]
     # (the warnings are what it counts: CI's CARGO_BUILD_WARNINGS=deny would fail the run)
     env = dict(os.environ, CARGO_BUILD_WARNINGS="warn")
-    p = subprocess.run(args, cwd=ROOT, stdout=subprocess.PIPE, text=True, env=env)
+    if root != ROOT:
+        # (the self-test's fixture: the repository's clippy.toml, a target dir of its own)
+        env.update(CLIPPY_CONF_DIR=ROOT, CARGO_TARGET_DIR=os.path.join(ROOT, "target", "lint-fixtures"))
+    p = subprocess.run(args, cwd=root, stdout=subprocess.PIPE, text=True, env=env)
     for line in p.stdout.splitlines():
         try:
             m = json.loads(line)
@@ -176,7 +184,7 @@ def run_clippy(targets, lints):
         if not sp:
             continue
         # (a lib's code is checked twice with --all-targets: as the lib and as its tests)
-        key = (sp[0]["file_name"], sp[0]["line_start"], sp[0]["column_start"], code[8:])
+        key = (os.path.relpath(os.path.join(root, sp[0]["file_name"]), root), sp[0]["line_start"], sp[0]["column_start"], code[8:])
         if key not in seen:
             seen.add(key)
             yield key
@@ -184,18 +192,23 @@ def run_clippy(targets, lints):
         sys.exit("lint-ratchet: clippy failed (above)")
 
 
-def allow_attrs():
+def allow_attrs(root=ROOT):
     for top in ("crates",):
-        for d, _, fs in os.walk(os.path.join(ROOT, top)):
+        for d, _, fs in os.walk(os.path.join(root, top)):
             for f in fs:
                 if not f.endswith(".rs"):
                     continue
                 path = os.path.join(d, f)
-                rel = os.path.relpath(path, ROOT)
+                rel = os.path.relpath(path, root)
                 for i, line in enumerate(open(path, encoding="utf-8", errors="replace"), 1):
                     for m in ALLOW.finditer(line):
                         if TRACKED.search(m.group(1)):
                             yield (rel, i, m.start() + 1, "allow-attr")
+
+
+RAW_STR = re.compile(r'b?r(#*)"')
+CHAR_LIT = re.compile(r"'(?:\\(?:[^u]|u\{[0-9a-fA-F]+\})[^']*|[^'\\\n])'")
+PLAIN = re.compile(r"[^/\"'br]+")
 
 
 def code_only(text, strings=False):
@@ -223,9 +236,9 @@ def code_only(text, strings=False):
                     j += 1
             blank(j)
             i = j
-        elif (m := re.match(r'b?r(#*)"', text[i:])) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+        elif c in "br" and (m := RAW_STR.match(text, i)) and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
             end = '"' + m.group(1)
-            j = text.find(end, i + m.end())
+            j = text.find(end, m.end())
             j = n if j < 0 else j + len(end)
             out.append(text[i:j]) if strings else blank(j)
             i = j
@@ -235,22 +248,25 @@ def code_only(text, strings=False):
                 j += 2 if text[j] == "\\" else 1
             out.append(text[i:min(j + 1, n)]) if strings else blank(min(j + 1, n))
             i = min(j + 1, n)
-        elif c == "'" and (m := re.match(r"'(?:\\(?:[^u]|u\{[0-9a-fA-F]+\})[^']*|[^'\\\n])'", text[i:])):
-            blank(i + m.end())
-            i += m.end()
+        elif c == "'" and (m := CHAR_LIT.match(text, i)):
+            blank(m.end())
+            i = m.end()
         else:
-            out.append(c)
-            i += 1
+            # (a run of plain code at once: one character at a time made big files slow)
+            m = PLAIN.match(text, i)
+            j = m.end() if m and m.end() > i else i + 1
+            out.append(text[i:j])
+            i = j
     return "".join(out)
 
 
-def custom():
-    for d, _, fs in os.walk(os.path.join(ROOT, "crates")):
+def custom(root=ROOT):
+    for d, _, fs in os.walk(os.path.join(root, "crates")):
         for f in fs:
             if not f.endswith(".rs"):
                 continue
             path = os.path.join(d, f)
-            rel = os.path.relpath(path, ROOT)
+            rel = os.path.relpath(path, root)
             text = open(path, encoding="utf-8", errors="replace").read()
             for src, rules in ((code_only(text), CUSTOM), (code_only(text, strings=True), RAW)):
                 for name, rx in rules.items():
@@ -330,7 +346,65 @@ def save(files):
                 o.write(f"file\t{f}\t{l}\t{n}\n")
 
 
+def fresh_sites(sites, old_sites, raise_files=()):
+    """the pinned sites more often in `sites` than in the list: a count that stays the same does
+    not hide one site traded for another"""
+    return sorted(k for k, n in sites.items() if n > old_sites.get(k, 0) and k[0] not in raise_files)
+
+
+FIXTURE = os.path.join(ROOT, "tools", "lint-fixtures", "ratchet")
+MARK = re.compile(r"^(?!\s*//).*//~\s*(.*)$")
+
+
+def self_test():
+    """Every lint this script counts, against tools/lint-fixtures/ratchet: a small workspace
+    whose lines each carry the regression one lint is there for, marked `//~ lint...`. Each mark
+    must be found on its line and nothing unmarked may be: a lint renamed or dropped by a clippy
+    upgrade, a clippy.toml path that stops resolving, a regex that stops matching, all fail here
+    instead of silently counting 0. And every lint in the lists has a mark."""
+    want, groups = set(), set()
+    for d, _, fs in os.walk(FIXTURE):
+        for f in fs:
+            if f.endswith(".rs"):
+                path = os.path.join(d, f)
+                rel = os.path.relpath(path, FIXTURE)
+                for i, line in enumerate(open(path, encoding="utf-8"), 1):
+                    if m := MARK.search(line):
+                        for l in m.group(1).split():
+                            # (`eq_op@correctness`: a lint counted through its group)
+                            l, _, g = l.partition("@")
+                            want.add((rel, i, l))
+                            if g:
+                                groups.add(g)
+    got = {(f, n, l) for f, n, _, l in list(clippy(FIXTURE)) + list(allow_attrs(FIXTURE)) + list(custom(FIXTURE))}
+    bad = 0
+    for f, n, l in sorted(want - got):
+        print(f"lint-ratchet self-test: {f}:{n}: {l} did not fire")
+        bad += 1
+    for f, n, l in sorted(got - want):
+        print(f"lint-ratchet self-test: {f}:{n}: {l} fired where no mark says it should")
+        bad += 1
+    names = {l for _, _, l in want}
+    every = set(LINTS + ROBUST + list(RUSTC.values()) + list(CUSTOM) + list(RAW) + list(DISALLOWED.values()) + ["allow-attr"])
+    for l in sorted(every - names):
+        print(f"lint-ratchet self-test: {l} has no fixture line (tools/lint-fixtures/ratchet)")
+        bad += 1
+    for g in sorted(set(GROUPS) - groups):
+        print(f"lint-ratchet self-test: no fixture line for clippy's {g} group (mark it `<lint>@{g}`)")
+        bad += 1
+    # (the site list: a site traded for another at the same count is new)
+    a, b = ("f.rs", "masu-transmute", "x"), ("f.rs", "masu-transmute", "y")
+    if fresh_sites(collections.Counter([b]), collections.Counter([a])) != [b] or fresh_sites(collections.Counter([a]), collections.Counter([a])):
+        print("lint-ratchet self-test: a traded site is not caught")
+        bad += 1
+    if bad:
+        sys.exit(f"lint-ratchet self-test: {bad} failures")
+    print(f"lint-ratchet self-test: ok ({len(want)} marks, {len(names)} lints)")
+
+
 def main():
+    if "--self-test" in sys.argv:
+        return self_test()
     update = "--update" in sys.argv
     raise_files = set(sys.argv[sys.argv.index("--raise") + 1 :]) if "--raise" in sys.argv else set()
     files, sites, where = count()
@@ -340,7 +414,7 @@ def main():
     down = sorted(k for k, n in old.items() if files.get(k, 0) < n)
     # (the first --update writes every site down: before it there was no list)
     first = not os.path.exists(SITES)
-    new_sites = [] if first else sorted(k for k, n in sites.items() if n > old_sites.get(k, 0) and k[0] not in raise_files)
+    new_sites = [] if first else fresh_sites(sites, old_sites, raise_files)
     for f, l in up:
         print(f"lint-ratchet: {f}: clippy::{l} {old.get((f, l), 0)} -> {files[(f, l)]}")
     for k in new_sites:
@@ -361,4 +435,5 @@ def main():
     print(f"lint-ratchet: ok ({sum(files.values())} left)")
 
 
-main()
+if __name__ == "__main__":
+    main()

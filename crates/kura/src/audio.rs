@@ -147,6 +147,8 @@ struct Ring {
     _pad: u32,
     data: std::cell::UnsafeCell<[f32; RING_FRAMES * 2]>,
 }
+// (the page's AudioWorklet reads the ring at these offsets: head, pad, then the samples)
+const _: () = assert!(size_of::<Ring>() == 8 + RING_FRAMES * 2 * 4);
 unsafe impl Sync for Ring {}
 
 static RING: Ring = Ring { head: AtomicU32::new(0), _pad: 0, data: std::cell::UnsafeCell::new([0.0; RING_FRAMES * 2]) };
