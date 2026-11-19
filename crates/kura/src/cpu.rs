@@ -5,6 +5,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use kome::num::us;
 use koji::{Cpu, Exit, Fault, Memory};
 
 const NULL_PAGES: u32 = 0x10000;
@@ -113,6 +114,10 @@ fn check(addr: u32, len: u32, write: bool) -> Result<*mut u8, Fault> {
     Ok(addr as usize as *mut u8)
 }
 
+pub(crate) fn writable(range: crate::guest::Range) -> bool {
+    check(range.addr(), range.len(), true).is_ok()
+}
+
 impl Memory for Linear {
     #[inline(always)]
     fn read8(&mut self, addr: u32) -> Result<u8, Fault> {
@@ -209,8 +214,27 @@ impl Memory for Linear {
         let hi = unsafe { std::sync::atomic::AtomicU64::from_ptr(p8.cast()) };
         Ok(swap16(lo, hi, old, new))
     }
-    fn host_range(&mut self, addr: u32, len: u32) -> Option<*mut u8> {
-        check(addr, len, true).ok()
+    fn bulk_copy(&mut self, dst: u32, src: u32, len: u32) -> bool {
+        let (Ok(d), Ok(s)) = (check(dst, len, true), check(src, len, false)) else { return false };
+        // SAFETY: both complete guest ranges were checked; copy permits overlap.
+        unsafe { std::ptr::copy(s, d, us(len)) };
+        true
+    }
+    fn bulk_fill(&mut self, dst: u32, len: u32, element: &[u8]) -> bool {
+        if element.is_empty() || !us(len).is_multiple_of(element.len()) { return false; }
+        if len == 0 { return true; }
+        let Ok(d) = check(dst, len, true) else { return false };
+        // SAFETY: the guest range is writable for len bytes. Each doubling
+        // copies an initialized prefix into the remaining disjoint suffix.
+        unsafe { std::ptr::copy(element.as_ptr(), d, element.len()) };
+        let mut filled = element.len();
+        while filled < us(len) {
+            let n = filled.min(us(len).saturating_sub(filled));
+            // SAFETY: the adjacent source and destination fit the checked range.
+            unsafe { std::ptr::copy_nonoverlapping(d, d.wrapping_add(filled), n) };
+            filled = filled.saturating_add(n);
+        }
+        true
     }
     fn fetch(&mut self, addr: u32, buf: &mut [u8]) -> usize {
         // (code runs from the guest's half only: the trap range is caught before a fetch)

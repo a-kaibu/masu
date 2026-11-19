@@ -868,29 +868,45 @@ fn get(g: &Gl, c: &Ctx, pname: u32) -> Option<Vec<f64>> {
     })
 }
 
+fn guest_get<T: Copy>(pname: u32, addr: u32, conv: impl Fn(f64) -> T) {
+    let values = with(|g, c| get(g, c, pname).unwrap_or_else(|| vec![0.0]));
+    let Some(len) = values.len().checked_mul(std::mem::size_of::<T>()).and_then(|n| u32::try_from(n).ok()) else { return };
+    let Some(range) = crate::guest::range(crate::guest::ga(addr), len) else { return };
+    if !crate::cpu::writable(range) { return; }
+    let out = crate::guest::gp::<T>(addr);
+    for (i, x) in values.into_iter().enumerate() {
+        // SAFETY: the complete guest destination was checked; GL output may be unaligned.
+        unsafe { out.wrapping_add(i).write_unaligned(conv(x)) };
+    }
+}
+
+fn as_int(x: f64) -> i32 { x as i32 }
+fn as_float(x: f64) -> f32 { x as f32 }
+
+extern "C" fn glGetIntegerv(p: u32, a: u32) { guest_get(p, a, as_int); }
+extern "C" fn glGetFloatv(p: u32, a: u32) { guest_get(p, a, as_float); }
+extern "C" fn glGetDoublev(p: u32, a: u32) { guest_get(p, a, |x| x); }
+extern "C" fn glGetBooleanv(p: u32, a: u32) { guest_get(p, a, |x| u8::from(x != 0.0)); }
+
+#[cfg(test)]
 unsafe fn get_into<T: Copy>(pname: u32, out: *mut T, conv: impl Fn(f64) -> T) {
     let v = with(|g, c| get(g, c, pname).unwrap_or_else(|| vec![0.0]));
     if out.is_null() {
         return;
     }
     for (k, x) in v.iter().enumerate() {
-        *out.add(k) = conv(*x);
+        out.add(k).write_unaligned(conv(*x));
     }
 }
 
-unsafe extern "C" fn glGetIntegerv(p: u32, out: *mut i32) {
-    get_into(p, out, |x| x as i32)
+#[cfg(test)]
+unsafe fn host_integer(p: u32, out: *mut i32) {
+    get_into(p, out, as_int)
 }
-unsafe extern "C" fn glGetFloatv(p: u32, out: *mut f32) {
-    get_into(p, out, |x| x as f32)
+#[cfg(test)]
+unsafe fn host_float(p: u32, out: *mut f32) {
+    get_into(p, out, as_float)
 }
-unsafe extern "C" fn glGetDoublev(p: u32, out: *mut f64) {
-    get_into(p, out, |x| x)
-}
-unsafe extern "C" fn glGetBooleanv(p: u32, out: *mut u8) {
-    get_into(p, out, |x| u8::from(x != 0.0))
-}
-
 fn set_cap(cap: u32, on: bool) {
     with(|_, c| {
         if cap == GL_TEXTURE_2D {

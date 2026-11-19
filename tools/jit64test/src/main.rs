@@ -830,6 +830,7 @@ fn in_code(a: u32) -> bool {
 
 struct Jit {
     engine: Engine,
+    memory: SharedMemory,
     store: Store<()>,
     linker: Linker<()>,
     table: Table,
@@ -933,7 +934,7 @@ impl Jit {
         CODE_WRITTEN.store(false, Relaxed);
         koji::jit::set_watch(watch);
         koji::jit::set_fresh(fresh);
-        Jit { engine: engine.clone(), store, linker, table, entries: HashMap::new(), range: (0, u32::MAX), rewritten: false, fnm: koji::jit::long::FN64.load(Relaxed) }
+        Jit { engine: engine.clone(), memory: memory.clone(), store, linker, table, entries: HashMap::new(), range: (0, u32::MAX), rewritten: false, fnm: koji::jit::long::FN64.load(Relaxed) }
     }
 
     /// Points the Cpu at the hash table and the ring (regions jump to each other through them).
@@ -949,6 +950,17 @@ impl Jit {
     }
 
     fn translate(&mut self, base: usize, eip: u32, rip_hi: u32) -> Result<(), String> {
+        // Each translated region owns one Wasmtime instance until the store is
+        // dropped. Recycle the translations and their dispatch tables together.
+        if self.table.size(&self.store) >= 4096 {
+            let fuel = self.store.get_fuel().map_err(|e| e.to_string())?;
+            let mut fresh = Jit::new(&self.engine, &self.memory, base);
+            fresh.range = self.range;
+            fresh.fnm = self.fnm;
+            fresh.rewritten = self.rewritten;
+            fresh.store.set_fuel(fuel).map_err(|e| e.to_string())?;
+            *self = fresh;
+        }
         let mut m = koji::jit::wasm::Module::default();
         let full = eip as u64 | (rip_hi as u64) << 32;
         let (lo, hi) = self.range;

@@ -50,27 +50,32 @@ pub struct Auth {
 /// The token in `path`, made (random, 128 bits, readable by this user only) when there is none
 /// or `new`.
 pub fn token(path: &Path, new: bool) -> Result<String> {
-    if !new && let Ok(t) = std::fs::read_to_string(path) {
-        let t = t.trim().to_string();
-        if t.len() >= 16 && t.bytes().all(|b| b.is_ascii_alphanumeric()) {
-            return Ok(t);
+    fn read(path: &Path) -> Result<String> {
+        let text = std::fs::read_to_string(path)?;
+        let token = text.trim();
+        anyhow::ensure!(token.len() >= 16 && token.bytes().all(|b| b.is_ascii_alphanumeric()), "invalid token file; rotate it with masu token --new");
+        Ok(token.to_owned())
+    }
+    if !new {
+        match read(path) {
+            Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) => {}
+            result => return result,
         }
     }
-    let t = hex(&random::<16>()?);
-    if let Some(d) = path.parent() {
-        std::fs::create_dir_all(d).with_context(|| d.display().to_string())?;
-    }
+    let dir = path.parent().context("missing token directory")?;
+    std::fs::create_dir_all(dir)?;
     use std::io::Write;
-    let tmp = path.with_extension("tmp");
-    let _ = std::fs::remove_file(&tmp);
-    let mut o = std::fs::OpenOptions::new();
-    o.write(true).create_new(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-    let mut f = o.open(&tmp).with_context(|| tmp.display().to_string())?;
-    writeln!(f, "{t}")?;
-    drop(f);
-    std::fs::rename(&tmp, path)?;
+    let t = hex(&random::<16>()?);
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    writeln!(tmp, "{t}")?;
+    if new {
+        tmp.persist(path)?;
+    } else if let Err(e) = tmp.persist_noclobber(path) {
+        if e.error.kind() == std::io::ErrorKind::AlreadyExists {
+            return read(path);
+        }
+        return Err(e.into());
+    }
     Ok(t)
 }
 
@@ -117,8 +122,8 @@ impl Auth {
         same(self.signed(kind, what).as_bytes(), v.as_bytes()).then_some(what)
     }
 
-    fn new_session(&self) -> String {
-        self.signed("session", &hex(&random::<16>().unwrap_or_default()))
+    fn new_session(&self) -> Result<String> {
+        Ok(self.signed("session", &hex(&random::<16>()?)))
     }
 
     /// A ticket that signs a browser in once, for `secs` from now (at most TICKET_SECS).
@@ -192,7 +197,8 @@ fn page(status: StatusCode, note: &str, next: &str) -> Response {
 
 fn signed_in_to(auth: &Auth, h: &HeaderMap, next: &str) -> Response {
     let https = h.get("x-forwarded-proto").is_some_and(|v| v == "https");
-    let cookie = format!("{COOKIE}={}; Path=/; Max-Age=315360000; HttpOnly; SameSite=Lax{}", auth.new_session(), if https { "; Secure" } else { "" });
+    let Ok(session) = auth.new_session() else { return StatusCode::INTERNAL_SERVER_ERROR.into_response() };
+    let cookie = format!("{COOKIE}={session}; Path=/; Max-Age=315360000; HttpOnly; SameSite=Lax{}", if https { "; Secure" } else { "" });
     let mut res = (StatusCode::SEE_OTHER, [(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap())]).into_response();
     if let Ok(l) = HeaderValue::from_str(next) {
         res.headers_mut().insert(header::LOCATION, l);
@@ -403,7 +409,7 @@ mod tests {
         let far = auth.signed("ticket", &(now() + TICKET_SECS + 60).to_string());
         let forged = format!("{}.{}", now() + 60, "0".repeat(32));
         let other = Auth::with("fedcba9876543210fedcba9876543210", true).ticket(60);
-        let session_as_ticket = auth.new_session();
+        let session_as_ticket = auth.new_session().unwrap();
         for bad in [old, far, forged, other, session_as_ticket] {
             let (s, h, _) = send(auth.clone(), "127.0.0.1:5000", get_("127.0.0.1:8656", &format!("/login?ticket={bad}")), "").await;
             assert_eq!(s, StatusCode::OK, "{bad}");
@@ -412,6 +418,22 @@ mod tests {
         // nor is a ticket a session
         let c = format!("{COOKIE}={t}");
         assert_eq!(send(auth, "127.0.0.1:5000", get_("127.0.0.1:8656", "/x").header(header::COOKIE, c), "").await.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn concurrent_first_use_shares_one_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("token");
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            let readers: Vec<_> = (0..8).map(|_| scope.spawn(|| {
+                start.wait();
+                token(&path, false).unwrap()
+            })).collect();
+            for reader in readers {
+                assert_eq!(reader.join().unwrap(), token(&path, false).unwrap());
+            }
+        });
     }
 
     #[test]
@@ -428,9 +450,10 @@ mod tests {
         let b = token(&p, true).unwrap();
         assert_ne!(a, b);
         assert_eq!(token(&p, false).unwrap(), b);
-        // a damaged file: a new one
+        // Recovery requires explicit rotation.
         std::fs::write(&p, "x\n").unwrap();
-        assert_ne!(token(&p, false).unwrap(), "x");
+        assert!(token(&p, false).is_err());
+        assert!(token(&p, true).is_ok());
         let _ = std::fs::remove_dir_all(&d);
     }
 }

@@ -25,9 +25,19 @@ impl Memory for Flat {
             None => Err(Fault { addr: a, write: true }),
         }
     }
-    fn host_range(&mut self, a: u32, len: u32) -> Option<*mut u8> {
-        let end = (a as usize).checked_add(len as usize)?;
-        (self.bulk && end <= self.m.len()).then(|| unsafe { self.m.as_mut_ptr().add(a as usize) })
+    fn bulk_copy(&mut self, dst: u32, src: u32, len: u32) -> bool {
+        let n = len as usize;
+        let (d, s) = (dst as usize, src as usize);
+        if !self.bulk || d.saturating_add(n) > self.m.len() || s.saturating_add(n) > self.m.len() { return false; }
+        self.m.copy_within(s..s+n, d);
+        true
+    }
+    fn bulk_fill(&mut self, dst: u32, len: u32, element: &[u8]) -> bool {
+        if !self.bulk { return false; }
+        let d = dst as usize;
+        let Some(out) = self.m.get_mut(d..d.saturating_add(len as usize)) else { return false };
+        for chunk in out.chunks_exact_mut(element.len()) { chunk.copy_from_slice(element); }
+        true
     }
 }
 
@@ -94,6 +104,24 @@ fn a_long_scan_takes_several_steps() {
     assert_eq!(step(&mut cpu, &mut m), Exit::Continue);
     assert_eq!((cpu.eip, cpu.regs[7], cpu.regs[1]), (CODE + 2, 0x1000 + n as u32 + 1, 100 - 1));
     assert!(cpu.flags() & 0x40 != 0, "ZF: found");
+}
+
+#[test]
+fn rep_fault_preserves_completed_iterations() {
+    for op in [0xaa, 0xa4] {
+        let mut mem = Flat { m: vec![0; 0x3000], bulk: true };
+        mem.m[CODE as usize..CODE as usize + 2].copy_from_slice(&[0xf3, op]);
+        mem.m[0x1000..0x1004].fill(0x5a);
+        let mut cpu = Cpu { eip: CODE, eflags: 2, ..Cpu::default() };
+        cpu.regs[0] = 0x5a;
+        cpu.regs[1] = 32;
+        cpu.regs[6] = 0x1000;
+        cpu.regs[7] = 0x2ffc;
+        assert_eq!(step(&mut cpu, &mut mem), Exit::Fault(Fault { addr: 0x3000, write: true }));
+        assert_eq!((cpu.eip, cpu.regs[1], cpu.regs[7]), (CODE, 28, 0x3000));
+        assert_eq!(cpu.regs[6], if op == 0xa4 { 0x1004 } else { 0x1000 });
+        assert_eq!(&mem.m[0x2ffc..], &[0x5a; 4]);
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

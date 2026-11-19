@@ -14,6 +14,7 @@
 //! It also looks the game up on ErogameScape (批評空間) / VNDB (see meta.rs) for the card's
 //! brand, release date, score, tags, story and cover; `masu meta` does that again or for older entries.
 
+use crate::atomic_file::publish_file;
 use crate::meta;
 use crate::tree_list::{self, Chunk, ChunkId, ChunkLen, Chunks, Kind, Line, Mode};
 use crate::unpack;
@@ -189,8 +190,26 @@ fn game_path(store: &Path, id: &str) -> PathBuf {
 }
 
 fn read_game(store: &Path, id: &str) -> Result<GameEntry> {
+    ensure!(valid_id(id), "invalid game id {id:?}");
     let p = game_path(store, id);
-    serde_json::from_slice(&fs::read(&p).with_context(|| format!("game {id}"))?).with_context(|| p.display().to_string())
+    let game: GameEntry = serde_json::from_slice(&fs::read(&p).with_context(|| format!("game {id}"))?).with_context(|| p.display().to_string())?;
+    ensure!(game.id == id, "game id in {} differs from its filename", p.display());
+    validate_mounts(&game.mounts)?;
+    Ok(game)
+}
+
+fn validate_tree(name: &str) -> Result<()> {
+    ensure!(!name.is_empty() && !name.starts_with('.') && name.bytes().all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c)), "invalid tree name {name:?}");
+    Ok(())
+}
+
+fn validate_mounts(mounts: &[String]) -> Result<()> {
+    for mount in mounts {
+        let (path, tree) = mount.split_once('=').context("expected /path=tree")?;
+        ensure!(path.starts_with('/'), "invalid mount path {path:?}");
+        validate_tree(tree)?;
+    }
+    Ok(())
 }
 
 /// The trees a game mounts (`/path=tree`).
@@ -214,6 +233,7 @@ fn tree_chunks(store: &Path, name: &str) -> Result<std::collections::HashSet<Chu
 /// program's (`sake-<program>-<build>.chunks`, the newest build's; what serve's pre-run saves),
 /// else none. 16 bytes a chunk.
 pub fn read_order_list(store: &Path, jit: &Path, id: &str) -> Vec<u8> {
+    if !valid_id(id) { return Vec::new(); }
     if let Ok(l) = fs::read(jit.join(format!("game.{id}.chunks"))) && l.len() >= 16 {
         return l;
     }
@@ -293,7 +313,7 @@ fn removal(store: &Path, id: &str) -> Result<Vec<String>> {
         let g = read_game(store, other)?;
         others.extend(game_trees(&g).map(String::from));
     }
-    let trees: Vec<&str> = game_trees(&game).filter(|t| *t != PREFIX_TREE && !others.contains(*t)).collect();
+    let trees: Vec<&str> = game_trees(&game).filter(|t| *t != PREFIX_TREE && *t != BENCH_TREE && !others.contains(*t)).collect();
     let mut out = vec![format!("games/{id}.json")];
     for ext in ["png", "jpg", "jpeg", "webp"] {
         if store.join(format!("games/{id}.{ext}")).exists() {
@@ -302,14 +322,16 @@ fn removal(store: &Path, id: &str) -> Result<Vec<String>> {
     }
     // (every tree in the store that stays: a game's, sake's C:\, one packed by hand)
     let mut kept = std::collections::HashSet::new();
-    if let Ok(dir) = fs::read_dir(store.join("trees")) {
-        for e in dir {
+    match fs::read_dir(store.join("trees")) {
+        Ok(dir) => for e in dir {
             let name = e?.file_name();
             let Some(t) = name.to_str().and_then(|n| n.strip_suffix(".tsv")) else { continue };
             if !t.starts_with('.') && !trees.contains(&t) {
                 kept.extend(tree_chunks(store, t)?);
             }
-        }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
     let mut chunks = std::collections::BTreeSet::new();
     for t in &trees {
@@ -320,12 +342,38 @@ fn removal(store: &Path, id: &str) -> Result<Vec<String>> {
     Ok(out)
 }
 
+/// Hold the Unix store directory locked while changing the local catalog and its chunks.
+/// Removal must see all references, including those of a pack still being built.
+pub(crate) struct StoreWrite {
+    _lock: File,
+    path: PathBuf,
+}
+
+impl StoreWrite {
+    fn acquire(store: &Path) -> Result<Self> {
+        fs::create_dir_all(store)?;
+        let file = File::open(store)?;
+        file.lock().with_context(|| format!("locking store {}", store.display()))?;
+        Ok(Self { _lock: file, path: store.to_owned() })
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) async fn acquire_async(store: &Path) -> Result<Self> {
+        let store = store.to_owned();
+        tokio::task::spawn_blocking(move || Self::acquire(&store)).await?
+    }
+}
+
 /// Removes game `id` ([`removal`]): from `storage` first when there is one (the catalog
 /// fetched first, so that the trees only the S3 store had count as kept; the objects are
 /// retired, `Storage::gc` deletes them), then the files here. Gives what it removed.
 pub async fn remove_game(store: &Path, id: &str, storage: Option<&crate::storage::Storage>) -> Result<Vec<String>> {
+    let lock = StoreWrite::acquire_async(store).await?;
     if let Some(s) = storage {
-        s.hydrate_catalog(store).await?;
+        s.hydrate_catalog_locked(&lock).await?;
     }
     let gone = removal(store, id)?;
     if let Some(s) = storage {
@@ -365,10 +413,7 @@ pub(crate) fn add_for_test(store: &Path, dir: &Path, id: &str, mount: Vec<String
 }
 
 fn write_game(store: &Path, g: &GameEntry) -> Result<()> {
-    let tmp = store.join("games").join(format!(".{}.json.tmp", g.id));
-    fs::write(&tmp, serde_json::to_vec_pretty(g)?)?;
-    fs::rename(&tmp, game_path(store, &g.id))?;
-    Ok(())
+    publish_file(&game_path(store, &g.id), &serde_json::to_vec_pretty(g)?)
 }
 
 /// Looks `g` up (by `title`, or the pinned `id`) and stores the result in it, with the cover
@@ -418,7 +463,7 @@ fn fetch_meta(store: &Path, g: &mut GameEntry, title: Option<&str>, id: Option<&
         match meta::download_cover(&info.cover_url) {
             Ok((b, ext)) => {
                 let name = format!("{}.{ext}", g.id);
-                match fs::write(store.join("games").join(&name), b) {
+                match publish_file(&store.join("games").join(&name), &b) {
                     Ok(()) => g.cover = Some(name),
                     Err(e) => eprintln!("{}: cover: {e}", g.id),
                 }
@@ -475,6 +520,8 @@ fn add_game(
     // the exe must be in the tree (a typo would only show up as "file not found"). With
     // `new_list` (masu add) the tree is published only once all of this holds, so a failed
     // add leaves the game as it was
+    validate_tree(&tree)?;
+    validate_mounts(&mount)?;
     let list = match &new_list {
         Some(l) => l.clone(),
         None => fs::read_to_string(store.join("trees").join(format!("{tree}.tsv")))
@@ -484,18 +531,17 @@ fn add_game(
     if !tree_list::good_lines(&list).any(|l| l.chunks().is_some() && l.path.eq_ignore_ascii_case(&exe)) {
         bail!("{exe} is not a file in tree {tree}");
     }
-    for m in &mount {
-        if !m.starts_with('/') || !m.contains('=') {
-            bail!("--mount {m}: expected /path=tree");
-        }
-    }
     if let Some(e) = env.iter().find(|e| !e.contains('=')) {
         bail!("--env {e}: expected NAME=value");
     }
     let dir = store.join("games");
     fs::create_dir_all(&dir)?;
     // a replaced entry keeps its metadata and cover
-    let old = read_game(store, &id).ok();
+    let old = match read_game(store, &id) {
+        Ok(game) => Some(game),
+        Err(e) if e.downcast_ref::<std::io::Error>().is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound) => None,
+        Err(e) => return Err(e),
+    };
     let new_cover = match cover {
         Some(src) => {
             let ext = src.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
@@ -541,6 +587,10 @@ fn add_game(
 }
 
 pub fn run(store: &Path, cmd: Cmd) -> Result<()> {
+    let _lock = match &cmd {
+        Cmd::Add { .. } | Cmd::AddGame { .. } | Cmd::Pack { .. } | Cmd::Meta { search: None, .. } => Some(StoreWrite::acquire(store)?),
+        Cmd::Prefix { .. } | Cmd::Remove { .. } | Cmd::Unpack { .. } | Cmd::Meta { search: Some(_), .. } => None,
+    };
     match cmd {
         Cmd::Pack { dir, name, follow, chunk_kib } => tree(store, &dir, &name, follow, chunking(chunk_kib))?,
         Cmd::Prefix { fonts, rtp } => {
@@ -598,12 +648,11 @@ pub fn run(store: &Path, cmd: Cmd) -> Result<()> {
                 bail!("id {id:?}: use letters, digits, _ and - (--id)");
             }
             // a download: unpacked into the store's tmp, packed from there, then removed
-            let staged = store.join("tmp").join(format!("unpack-{id}-{}", std::process::id()));
+            let staged = store.join("tmp").join(format!("unpack-{id}-{}", uuid::Uuid::new_v4()));
             let r = (|| {
                 let mut root = path.clone();
                 let mut issues = vec![];
                 if package {
-                    let _ = fs::remove_dir_all(&staged);
                     issues = unpack::unpack(&path, &staged)?;
                     if !issues.is_empty() {
                         eprintln!("{}: unpacked in part, added all the same ({} issues, kept in the game's entry)", dir.display(), issues.len());
@@ -675,19 +724,7 @@ fn write_chunk(dir: &Path, h: &str, buf: &[u8]) -> Result<()> {
         return Ok(());
     }
     fs::create_dir_all(dir)?;
-    let tmp = dir.join(chunk_tmp_name(h));
-    fs::write(&tmp, zstd::bulk::compress(buf, zstd_level())?)?;
-    fs::rename(&tmp, &path)?;
-    Ok(())
-}
-
-/// A temporary name for chunk `h` no other thread or process writes at once (review b01: by
-/// thread alone, the server's background C:\ pack and an `masu add` of the same content
-/// wrote one file, and the loser's rename failed the whole pack).
-fn chunk_tmp_name(h: &str) -> String {
-    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!(".{h}.{}.{n}.tmp", std::process::id())
+    publish_file(&path, &zstd::bulk::compress(buf, zstd_level())?)
 }
 
 /// Removes a scratch folder (and its parent when that is left empty) when dropped: on every
@@ -736,6 +773,7 @@ pub const PREFIX_TREE: &str = "prefix32";
 /// file in `jit` named after such a program (play.ts jitName: sake-Z__vnvm_game_...) renamed.
 /// Done at every start, nothing to do once done; how many it changed.
 pub fn migrate_guest_paths(store: &Path, jit: &Path) -> Result<usize> {
+    let _lock = StoreWrite::acquire(store)?;
     let fix = |s: &str| s.replace("Z:\\vnvm\\", "Z:\\masu\\").replace("/vnvm/game", "/masu/game").replace("/vnvm/prefix", "/masu/prefix");
     let mut n = 0;
     if let Ok(dir) = fs::read_dir(store.join("games")) {
@@ -764,9 +802,7 @@ pub fn migrate_guest_paths(store: &Path, jit: &Path) -> Result<usize> {
                 }
             }
             if changed {
-                let tmp = p.with_extension("json.migrate.tmp");
-                fs::write(&tmp, serde_json::to_vec_pretty(&v)?)?;
-                fs::rename(&tmp, &p)?;
+                publish_file(&p, &serde_json::to_vec_pretty(&v)?)?;
                 n += 1;
             }
         }
@@ -811,6 +847,7 @@ pub fn release_trees(out: &Path, fonts: &Path, bench: &Path, rtp: &Path) -> Resu
 }
 
 pub fn ensure_prefix(store: &Path, fonts: &Path, rtp: Option<&Path>) -> Result<bool> {
+    let _lock = StoreWrite::acquire(store)?;
     let tsv = store.join("trees").join(format!("{PREFIX_TREE}.tsv"));
     let rtp = rtp.filter(|d| d.join("drive_c").is_dir());
     let stamp = rtp.map(rtp_stamp).transpose()?;
@@ -827,33 +864,30 @@ pub fn ensure_prefix(store: &Path, fonts: &Path, rtp: Option<&Path>) -> Result<b
         return Ok(false);
     }
     fs::create_dir_all(store)?;
-    let root = store.join(format!(".{PREFIX_TREE}.{}.tmp", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    let made = (|| {
-        if have.is_none() {
-            let dir = root.join("drive_c/windows/Fonts");
-            fs::create_dir_all(&dir)?;
-            fs::create_dir_all(root.join("drive_c/windows/temp"))?;
-            // (the license goes along with the fonts)
-            for f in &files {
-                fs::copy(f, dir.join(f.file_name().context("a font with no name")?))?;
-            }
+    let staging = tempfile::tempdir_in(store)?;
+    let root = staging.path();
+    if have.is_none() {
+        let dir = root.join("drive_c/windows/Fonts");
+        fs::create_dir_all(&dir)?;
+        fs::create_dir_all(root.join("drive_c/windows/temp"))?;
+        // (the license goes along with the fonts)
+        for f in &files {
+            fs::copy(f, dir.join(f.file_name().context("a font with no name")?))?;
         }
-        if let (Some(rtp), Some(s)) = (rtp, &stamp) {
-            copy_rtp(&rtp.join("drive_c"), &root.join("drive_c"), "drive_c")?;
-            let p = root.join(stamp_path(s));
-            fs::create_dir_all(p.parent().context("the stamp's folder")?)?;
-            fs::write(p, b"")?;
-        }
-        let list = pack_tree(store, &root, PREFIX_TREE, false, chunking(DEFAULT_CHUNK_KIB))?;
-        let list = match &have {
-            Some(old) => merge_rtp(old, &list),
-            None => list,
-        };
-        publish_tree(store, PREFIX_TREE, &list)
-    })();
-    let _ = fs::remove_dir_all(&root);
-    made.map(|()| true)
+    }
+    if let (Some(rtp), Some(s)) = (rtp, &stamp) {
+        copy_rtp(&rtp.join("drive_c"), &root.join("drive_c"), "drive_c")?;
+        let p = root.join(stamp_path(s));
+        fs::create_dir_all(p.parent().context("the stamp's folder")?)?;
+        fs::write(p, b"")?;
+    }
+    let list = pack_tree(store, root, PREFIX_TREE, false, chunking(DEFAULT_CHUNK_KIB))?;
+    let list = match &have {
+        Some(old) => merge_rtp(old, &list),
+        None => list,
+    };
+    publish_tree(store, PREFIX_TREE, &list)?;
+    Ok(true)
 }
 
 /// The folders the RTPs' setups install into (rtp.rs PACKAGES), in the tree. sake's registry
@@ -979,6 +1013,7 @@ pub const BENCH_TREE: &str = "bench";
 /// other programs (their VERSION file, the commit they were built from, against the one the
 /// tree was made from: `<store>/bench.version`). True when it made one.
 pub fn ensure_bench(store: &Path, dir: &Path) -> Result<bool> {
+    let _lock = StoreWrite::acquire(store)?;
     if !dir.join("bench.exe").is_file() {
         return Ok(false);
     }
@@ -990,7 +1025,7 @@ pub fn ensure_bench(store: &Path, dir: &Path) -> Result<bool> {
     }
     fs::create_dir_all(store)?;
     tree(store, dir, BENCH_TREE, false, chunking(DEFAULT_CHUNK_KIB))?;
-    fs::write(stamp, want)?;
+    publish_file(&stamp, want.as_bytes())?;
     Ok(true)
 }
 
@@ -1032,6 +1067,7 @@ fn mtime(m: &fs::Metadata) -> i64 {
 
 /// Packs `root` as tree `name` and publishes its list.
 fn tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Params) -> Result<()> {
+    validate_tree(name)?;
     let list = pack_tree(store, root, name, follow, chunking)?;
     publish_tree(store, name, &list)
 }
@@ -1040,10 +1076,7 @@ fn tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Params) -
 fn publish_tree(store: &Path, name: &str, list: &str) -> Result<()> {
     let dir = store.join("trees");
     fs::create_dir_all(&dir)?;
-    let tmp = dir.join(format!(".{name}.tsv.{}.tmp", std::process::id()));
-    fs::write(&tmp, list)?;
-    fs::rename(&tmp, dir.join(format!("{name}.tsv")))?;
-    Ok(())
+    publish_file(&dir.join(format!("{name}.tsv")), list.as_bytes())
 }
 
 /// The average chunk size of `masu add` and `pack` (KiB). Measured with LOOPERS on Hugging
@@ -1075,7 +1108,7 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
     let mut movies: Vec<(usize, PathBuf, String, Mode, i64, bool)> = Vec::new();
     // NW.js apps unpacked from their exe (see nwjs.rs), walked as if in the exe's folder; the
     // first of two same paths wins
-    let unpacked = store.join("tmp").join(format!("nwjs-{name}-{}", std::process::id()));
+    let unpacked = store.join("tmp").join(format!("nwjs-{name}-{}", uuid::Uuid::new_v4()));
     let _scratch = Scratch(unpacked.clone());
     let mut apps = 0;
     let mut seen = std::collections::HashSet::new();
@@ -1841,15 +1874,48 @@ mod tests {
         let _ = fs::remove_dir_all(&t);
     }
 
-    /// Chunk temp names are never shared, between threads or calls.
+    #[tokio::test]
+    async fn removal_waits_for_an_in_progress_pack() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path();
+        let packing = StoreWrite::acquire(store).unwrap();
+        let mut remove = std::pin::pin!(remove_game(store, "g", None));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(20), &mut remove).await.is_err());
+        fs::create_dir(store.join("games")).unwrap();
+        fs::write(store.join("games/g.json"), r#"{"id":"g","title":"g","run":"g.exe","args":[],"mounts":[],"env":[]}"#).unwrap();
+        drop(packing);
+        assert_eq!(remove.await.unwrap(), ["games/g.json"]);
+    }
+
     #[test]
-    fn chunk_temp_names_are_unique() {
-        let names: std::collections::HashSet<String> = std::thread::scope(|s| {
-            let hs: Vec<_> = (0..8).map(|_| s.spawn(|| (0..200).map(|_| chunk_tmp_name("ab12")).collect::<Vec<_>>())).collect();
-            hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
+    fn removal_rejects_invalid_persisted_mount() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("games")).unwrap();
+        let entry = dir.path().join("games/g.json");
+        fs::write(&entry, r#"{"id":"g","title":"g","run":"g.exe","args":[],"mounts":["/game=bad/name"],"env":[]}"#).unwrap();
+        assert!(removal(dir.path(), "g").unwrap_err().to_string().contains("invalid tree name"));
+        assert!(entry.exists());
+    }
+
+    #[test]
+    fn concurrent_publications_leave_one_complete_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("entry");
+        let start = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for byte in 0..8 {
+                let (path, start) = (&path, &start);
+                scope.spawn(move || {
+                    let bytes = vec![byte; 65536];
+                    start.wait();
+                    publish_file(path, &bytes).unwrap();
+                    let seen = fs::read(path).unwrap();
+                    assert_eq!(seen.len(), bytes.len());
+                    assert!(seen.iter().all(|b| *b == seen[0]));
+                });
+            }
         });
-        assert_eq!(names.len(), 1600);
-        assert!(names.iter().all(|n| n.starts_with(&format!(".ab12.{}.", std::process::id())) && n.ends_with(".tmp")));
+        assert_eq!(dir.path().read_dir().unwrap().count(), 1);
     }
 
     proptest::proptest! {

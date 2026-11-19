@@ -43,7 +43,7 @@ unsafe fn delete(kind: u32, n: i32, p: *const u32) {
 
 fn get(p: u32) -> i64 {
     let mut v = [0i32; 4];
-    unsafe { glGetIntegerv(p, v.as_mut_ptr()) };
+    unsafe { host_integer(p, v.as_mut_ptr()) };
     v[0] as i64
 }
 

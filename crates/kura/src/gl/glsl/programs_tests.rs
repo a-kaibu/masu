@@ -137,7 +137,7 @@ fn run(seed: u64) {
             }
             16 | 17 => {
                 let mut v = [0i32; 4];
-                unsafe { glGetIntegerv(0x8B8D, v.as_mut_ptr()) };
+                unsafe { host_integer(0x8B8D, v.as_mut_ptr()) };
                 (t.op, t.got) = ("Current", v[0] as i64);
             }
             _ => (t.op, t.got) = ("GetError", glGetError() as i64),

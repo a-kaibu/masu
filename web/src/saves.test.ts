@@ -44,9 +44,16 @@ class Device {
     },
     write: async (f, d) => void this.m.set(f, d.slice()),
   };
+  current() {
+    const meta = this.m.get("game.sync.json");
+    const slot = meta && JSON.parse(new TextDecoder().decode(meta)).slot;
+    return this.m.get(slot ? "game.next" : "game.bin");
+  }
   /** what this browser keeps of the game: its blob and anything kept aside */
   kept(): Uint8Array[] {
-    return [...this.m.entries()].filter(([k]) => k.endsWith(".bin")).map(([, v]) => v);
+    const current = this.current();
+    const stashes = [...this.m.entries()].filter(([key]) => /^game\.(local|server)-\d+\.bin$/.test(key));
+    return [...(current ? [current] : []), ...stashes.map(([, value]) => value)];
   }
 }
 
@@ -218,7 +225,7 @@ test("an older page's copy, not known to be sent, is kept aside when the server'
   phone.m.set("game.bin", blob(6));
   expect(eq(await page(phone, s), blob(7))).toBe(true);
   expect(phone.kept().some((b) => eq(b, blob(6)))).toBe(true);
-  expect(eq(phone.m.get("game.bin"), blob(7))).toBe(true);
+  expect(eq(phone.current(), blob(7))).toBe(true);
 });
 
 /** keepSaving over `d` and `s` with a game whose files are `files()` (the export), a clock the
@@ -243,7 +250,7 @@ async function keeper(d: Device, s: Server, files: () => Uint8Array<ArrayBuffer>
   let writes = 0;
   const write = d.files.write.bind(d.files);
   d.files.write = async (f, data) => {
-    if (f.endsWith(".bin")) writes++;
+    if (f === "game.bin" || f === "game.next") writes++;
     return write(f, data);
   };
   return {
@@ -265,7 +272,7 @@ test("offline, a changed save is written to this browser once, and the upload ba
   k.write();
   await k.save();
   expect(k.counts()).toEqual({ reads: 1, writes: 1, puts: 0 });
-  expect(eq(d.m.get("game.bin"), blob(2))).toBe(true);
+  expect(eq(d.current(), blob(2))).toBe(true);
   // (nothing new written by the game, and the next try not due: no export, no write, no request)
   for (let i = 1; i <= 5; i++) {
     k.at(i * 1000);
@@ -341,7 +348,7 @@ test("saves asked for while one is stuck wait as one, not one per tick", async (
   expect(k.counts().reads).toBe(2);
   // (the second change within a minute of the upload: on this device now, sent when due)
   expect(eq(s.data, blob(5))).toBe(true);
-  expect(eq(d.m.get("game.bin"), blob(6))).toBe(true);
+  expect(eq(d.current(), blob(6))).toBe(true);
   k.at(UPLOAD_EVERY);
   await k.save();
   expect(eq(s.data, blob(6))).toBe(true);
@@ -389,7 +396,7 @@ test("property: uploads at most once a minute unless forced, the newest always o
         if (h.length > 1)
           expect(eq(h.at(-1), h.at(-2)), `run ${run} step ${step}: the same twice`).toBe(false);
       }
-      expect(eq(d.m.get("game.bin") ?? blob(1), current), `run ${run} step ${step}: on the device`).toBe(
+      expect(eq(d.current() ?? blob(1), current), `run ${run} step ${step}: on the device`).toBe(
         true,
       );
       if (force && s.up) expect(eq(s.data ?? blob(1), current), `run ${run} step ${step}: forced`).toBe(true);
@@ -474,5 +481,17 @@ test("another device's newer save stops the uploads: the player is told once", a
   }
   expect(notices.length).toBe(1);
   expect(eq(s.data, blob(50))).toBe(true);
-  expect(eq(d.m.get("game.bin"), blob(5))).toBe(true);
+  expect(eq(d.current(), blob(5))).toBe(true);
+});
+
+test("an upload pause followed by a revert persists the last save across restart", async () => {
+  const s = new Server();
+  const d = new Device();
+  let data = blob(1);
+  const k = await keeper(d, s, () => data, null);
+  await k.save();
+  data = blob(2); k.write(); await k.save();
+  data = blob(1); k.write(); await k.save();
+  expect(eq(await page(d, s), blob(1))).toBe(true);
+  expect(eq(s.data, blob(1))).toBe(true);
 });

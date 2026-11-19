@@ -2267,6 +2267,7 @@ dependencies = [
  "siglus_assets",
  "siglus_key_recovery",
  "tar",
+ "tempfile",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",

@@ -98,7 +98,7 @@ pub fn transcode(omv: &Path, out: &Path) -> Result<()> {
     let res = (|| {
         let src = tmp.join("in.ogv");
         f.seek(SeekFrom::Start(ogg as u64))?;
-        std::io::copy(&mut f, &mut BufWriter::new(fs::File::create(&src)?))?;
+        std::io::copy(&mut f, &mut fs::File::create(&src)?)?;
         let probe = Command::new("ffprobe")
             .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "csv=p=0"])
             .arg(&src)

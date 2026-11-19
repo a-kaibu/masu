@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 fn get(p: u32) -> i32 {
     let mut v = [-7i32; 4];
-    unsafe { glGetIntegerv(p, v.as_mut_ptr()) };
+    unsafe { host_integer(p, v.as_mut_ptr()) };
     v[0]
 }
 
@@ -32,7 +32,7 @@ fn glsl_limits_are_answered_and_consistent() {
     assert_eq!(get(0x8B49), 4 * get(0x8DFD));
     assert_eq!(get(0x8B4B), 4 * get(0x8DFC));
     let mut f = [0f32; 4];
-    unsafe { glGetFloatv(0x8B4A, f.as_mut_ptr()) };
+    unsafe { host_float(0x8B4A, f.as_mut_ptr()) };
     assert_eq!(f[0] as i32, get(0x8B4A));
 }
 
@@ -123,7 +123,7 @@ fn matrix_stacks_follow_their_depths() {
             };
             assert_eq!(glGetError(), want_err, "seed {seed} step {step}");
             let mut m = [0f32; 16];
-            unsafe { glGetFloatv([0x0BA6, 0x0BA7, 0x0BA8][mode], m.as_mut_ptr()) };
+            unsafe { host_float([0x0BA6, 0x0BA7, 0x0BA8][mode], m.as_mut_ptr()) };
             assert_eq!(m[0], *model[mode].last().unwrap(), "seed {seed} step {step}");
         }
     }

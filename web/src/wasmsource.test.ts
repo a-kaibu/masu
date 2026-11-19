@@ -1,7 +1,7 @@
 import { describe, expect, it, test } from "vite-plus/test";
 import { blake3Hex } from "./blake3";
 import { chunkFileName, opfsStore, type ChunkStore } from "./chunkstore";
-import { buildIdOf, sakeWasmBytes, wasmModuleArg, type WasmFrom, type WasmSourceDeps } from "./wasmsource";
+import { buildIdOf, runtimeWasm, sakeWasmBytes, wasmModuleArg, type WasmFrom, type WasmSourceDeps } from "./wasmsource";
 
 type B = Uint8Array<ArrayBuffer>;
 const urlOf = (i: RequestInfo | URL) => (typeof i === "string" ? i : i instanceof URL ? i.href : i.url);
@@ -97,7 +97,7 @@ function world(o: {
         );
       if (o.sakeDirect === "bad") return Response.json({ url: "x", key: "zz", object, chunk: hex });
       if (typeof o.sakeDirect === "number") return new Response("", { status: o.sakeDirect });
-      return Response.json({ url: "https://bucket.example/o", key: toHex(key), object, chunk: hex });
+      return Response.json({ build: await buildIdOf(wasm), url: "https://bucket.example/o", key: toHex(key), object, chunk: hex });
     }
     if (u === "https://bucket.example/o") {
       if (o.bucket === "fail") return new Response("", { status: 403 });
@@ -385,7 +385,7 @@ describe("sakeWasmBytes from the release's CDN (GitHub Pages)", () => {
       cdn: CDN,
       buildId: async () => w.id,
     });
-    expect(r).toEqual({ bytes: null, from: "http-cache" });
+    expect(r).toEqual({ bytes: w.wasm, from: "http-cache" });
     expect(w.seen.some((s) => s.includes(CDN))).toBe(false);
   });
 
@@ -418,7 +418,7 @@ describe("sakeWasmBytes from the release's CDN (GitHub Pages)", () => {
     for (const c of cases) {
       const w = await withCdn({});
       const r = await sakeWasmBytes("sake.wasm", URL_, STORE, { request: w.request, unzstd: w.unzstd, ...c });
-      expect(r.from, JSON.stringify(c)).toBe("bucket");
+      expect(r.from, JSON.stringify(c)).toBe(c.buildId ? "server" : "bucket");
       expect(
         w.seen.some((s) => s.includes("github.io") || s.includes("javascript:")),
         JSON.stringify(c),
@@ -464,8 +464,20 @@ describe("sakeWasmBytes from the release's CDN (GitHub Pages)", () => {
                 ? "bucket"
                 : "server";
       expect(got.from, JSON.stringify(has)).toBe(want);
-      if (want === "http-cache" || want === "server") expect(got.bytes).toBeNull();
+      if (want === "server") expect(got.bytes).toBeNull();
       else expect(got.bytes).toEqual(w.wasm);
     }
   }, 20000);
+});
+
+
+it("rejects another build even when HTTP is the only available source", async () => {
+  const old = wasmOf(500);
+  const current = wasmOf(600);
+  const id = await buildIdOf(old);
+  for (const serverOnly of [false, true]) {
+    const request = async () => new Response(current);
+    await expect(runtimeWasm("sake.wasm", "/sake/sake.wasm", "https://local/store/", id, serverOnly, { request }))
+      .rejects.toThrow("expected build");
+  }
 });

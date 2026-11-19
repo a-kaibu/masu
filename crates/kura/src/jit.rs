@@ -833,9 +833,18 @@ pub fn fault_pages(addr: u32, len: u32, kind: u8, checks: bool) {
 #[inline(always)]
 pub(crate) fn faults(addr: u32, len: u32, write: bool) -> bool {
     let Some(map) = FAULT_MAP.get() else { return false };
-    let (lo, hi) = (us(addr) >> 12, (us(addr) + us(len.max(1)) - 1) >> 12);
-    let m = if write { READ_FAULTS | WRITE_FAULTS } else { READ_FAULTS };
-    map.get(lo).is_some_and(|b| b.load(Ordering::Relaxed) & m != 0) || map.get(hi).is_some_and(|b| b.load(Ordering::Relaxed) & m != 0)
+    range_faults(map, addr, len, write)
+}
+
+#[inline]
+fn range_faults(map: &[std::sync::atomic::AtomicU8], addr: u32, len: u32, write: bool) -> bool {
+    let lo = us(addr >> 12);
+    let hi = us(addr.saturating_add(len.saturating_sub(1)) >> 12);
+    let mask = if write { READ_FAULTS | WRITE_FAULTS } else { READ_FAULTS };
+    if lo == hi {
+        return map.get(lo).is_some_and(|p| p.load(Ordering::Relaxed) & mask != 0);
+    }
+    map.get(lo..).is_some_and(|pages| pages.iter().take(hi - lo + 1).any(|p| p.load(Ordering::Relaxed) & mask != 0))
 }
 
 /// Every thread drops its translations (at its next entry into the run loop).
@@ -3670,6 +3679,15 @@ mod save_tests {
 
     /// Games that start the same program (every SiglusEngine.exe at Z:\masu\game) keep lists
     /// of their own: the page's MASU_CHUNKS_URL, else beside the regions.
+    #[test]
+    fn bulk_access_checks_interior_pages() {
+        use std::sync::atomic::AtomicU8;
+        let pages = [AtomicU8::new(0), AtomicU8::new(super::WRITE_FAULTS), AtomicU8::new(0)];
+        assert!(super::range_faults(&pages, 4080, 4200, true));
+        assert!(!super::range_faults(&pages, 4080, 4200, false));
+        assert!(!super::range_faults(&pages, 4080, 16, true));
+    }
+
     #[test]
     fn chunks_url_is_the_pages() {
         let url = std::ffi::CString::new("http://h/jit-save/sake-x-1").unwrap();

@@ -70,25 +70,30 @@ export function savesFor(f: SaveFiles, request?: typeof fetch): void {
 
 const backup = (name: string) => new URL(`saves/${encodeURIComponent(name)}`, location.href).href;
 
-// Beside each blob (<name>.bin), what it is to the server (<name>.sync.json): `base`, the
-// server's revision it came from or was last sent as, and `dirty`, written here and not yet
-// acknowledged by the server. A save made offline (or whose upload the page did not live to see)
-// stays dirty across pages, so the next start that reaches the server sends it instead of
-// starting from the server's older copy. Written dirty before the blob and clean only after the
-// server's acknowledgement: a page that dies in between leaves it dirty (sent again, harmless).
+// Publish one generation by replacing the small sync record after writing the
+// inactive blob. Interrupted writes leave the previous slot and record intact.
 interface Sync {
   base: string | null;
   dirty: boolean;
+  slot: 0 | 1;
+  generation: string | null;
 }
+const blobName = (name: string, slot: number) => (slot ? `${name}.next` : `${name}.bin`);
+const readBlob = (name: string, sync: Sync | null) => files.read(blobName(name, sync?.slot ?? 0));
 async function readSync(name: string): Promise<Sync | null> {
-  const b = await files.read(`${name}.sync.json`).catch(() => null);
+  const b = await files.read(`${name}.sync.json`);
   if (!b) return null;
   try {
     const v = JSON.parse(new TextDecoder().decode(b)) as Partial<Sync>;
-    return { base: typeof v.base === "string" ? v.base : null, dirty: v.dirty !== false };
+    return {
+      base: typeof v.base === "string" ? v.base : null,
+      dirty: v.dirty !== false,
+      slot: v.slot === 1 ? 1 : 0,
+      generation: typeof v.generation === "string" ? v.generation : null,
+    };
   } catch {
-    // (unreadable: as if not sent, the safe side)
-    return { base: null, dirty: true };
+    // An unreadable pointer cannot identify which slot is current.
+    throw new Error("unreadable save generation");
   }
 }
 const writeSync = (name: string, s: Sync) =>
@@ -126,6 +131,21 @@ function locked<T>(name: string, f: () => Promise<T>): Promise<T> {
   return run;
 }
 
+// Only OPFS decisions use the origin-wide Web Lock. A slow PUT must never
+// keep another tab from persisting its newest local save.
+async function localLock<T>(name: string, f: () => Promise<T>): Promise<T> {
+  return navigator.locks.request(`masu-save:${name}`, f);
+}
+
+async function cacheSave(name: string, data: Uint8Array, base: string | null, clean: boolean) {
+  const previous = await readSync(name);
+  const slot = previous?.slot === 1 ? 0 : 1;
+  const record: Sync = { base, dirty: !clean, generation: crypto.randomUUID(), slot };
+  await files.write(blobName(name, slot), data);
+  await writeSync(name, record);
+  return record;
+}
+
 /**
  * The blob an earlier session saved for `name` (null: none). With the server in reach: the
  * server's, unless this browser's copy was saved after it was last sent (offline, or the page
@@ -138,8 +158,8 @@ export async function loadSaves(
   notice?: (message: string) => void,
 ): Promise<Uint8Array | null> {
   const url = backup(name);
-  const sync = await readSync(name);
-  const local = await files.read(`${name}.bin`).catch(() => null);
+
+  const before = await localLock(name, () => readSync(name));
   let remote: Uint8Array | null;
   try {
     // (offline: no tries at all; started from the app kept on the device, sw.ts)
@@ -147,13 +167,30 @@ export async function loadSaves(
     remote = await withRetries(() => transport.load(url), 3);
   } catch (e) {
     console.warn(`saves: server out of reach, starting from this browser's copy: ${String(e)}`);
-    transport.startedOffline(url, local, sync?.base);
-    return local;
+    return localLock(name, async () => {
+      const sync = await readSync(name);
+      const local = await readBlob(name, sync);
+      transport.startedOffline(url, local, sync?.base);
+      return local;
+    });
   }
+  const { local, sync, changed } = await localLock(name, async () => {
+    const sync = await readSync(name);
+    const local = await readBlob(name, sync);
+    if (before?.generation !== sync?.generation) return { local, sync, changed: true };
+    if (remote && !(local && sync?.dirty)) {
+      if (local && !sync && !same(local, remote)) await stash(name, "local", local);
+      await cacheSave(name, remote, transport.revision(url) ?? null, true).catch((e: unknown) =>
+        console.warn("saves: local cache", e),
+      );
+    }
+    return { local, sync, changed: false };
+  });
+  if (changed) return local;
   const revision = transport.revision(url) ?? '"0"';
   const send = async (data: Uint8Array) => {
     // (not sent now: still dirty, sent with the next save or the next start)
-    await storeSaves(name, data as Uint8Array<ArrayBuffer>).catch((e: unknown) =>
+    await storeSaves(name, data as Uint8Array<ArrayBuffer>, false).catch((e: unknown) =>
       console.warn(`saves: not sent: ${String(e)}`),
     );
   };
@@ -168,16 +205,7 @@ export async function loadSaves(
     await send(local);
     return local;
   }
-  if (remote) {
-    // (an older page's copy, not known to be sent: kept aside rather than lost)
-    if (local && !sync && !same(local, remote)) await stash(name, "local", local);
-    await locked(name, async () => {
-      await writeSync(name, { base: revision, dirty: true });
-      await files.write(`${name}.bin`, remote);
-      await writeSync(name, { base: revision, dirty: false });
-    }).catch((e: unknown) => console.warn("saves: local cache", e));
-    return remote;
-  }
+  if (remote) return remote;
   if (local?.length) await send(local);
   return local;
 }
@@ -251,20 +279,26 @@ export function storeSaves(
     // This browser's copy first: with the link down the save still survives the page (the
     // server's copy is tried again on the next change check, or the next start). A denied OPFS
     // quota must not prevent server persistence.
-    if (local) {
-      const base = transport.revision(url) ?? (await readSync(name))?.base ?? null;
-      try {
-        await writeSync(name, { base, dirty: true });
-        await files.write(`${name}.bin`, data);
-      } catch (e) {
-        console.warn("saves: local cache", e);
+    const staged = await localLock(name, async () => {
+      if (local) {
+        const base = transport.revision(url) ?? (await readSync(name))?.base ?? null;
+        return await cacheSave(name, data, base, false);
       }
-    }
-    if (!upload) return false;
+      const record = await readSync(name);
+      return same(await readBlob(name, record), data) ? record : false;
+    }).catch((e: unknown) => {
+      console.warn("saves: local cache", e);
+      return local ? null : false;
+    });
+    if (!upload || staged === false) return false;
     await transport.store(url, data);
-    await writeSync(name, { base: transport.revision(url) ?? null, dirty: false }).catch((e: unknown) =>
-      console.warn("saves: local cache", e),
-    );
+    if (staged)
+      await localLock(name, async () => {
+        const current = await readSync(name);
+        if (current && current.generation === staged.generation) {
+          await writeSync(name, { ...current, base: transport.revision(url) ?? null, dirty: false });
+        }
+      }).catch((e: unknown) => console.warn("saves: local cache", e));
     return true;
   });
 }
@@ -310,7 +344,7 @@ export function keepSaving(
     try {
       const data = fresh ? read() : unsent!;
       seen = changes;
-      if (same(last, data)) {
+      if (same(last, data) && !unsent) {
         unsent = null;
         return;
       }

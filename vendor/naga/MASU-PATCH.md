@@ -16,3 +16,5 @@ Changes (search for "masu:"):
 
 To drop this copy: check the fix is upstream, remove `naga` from [patch.crates-io] in the root
 Cargo.toml and fuzz/Cargo.toml, and run `cargo test -p glwgsl` and the glsl fuzz target.
+
+The GLSL parser reports layout errors for oversized array constructors at the source span. The glwgsl regression exercises the normal compiler error path.

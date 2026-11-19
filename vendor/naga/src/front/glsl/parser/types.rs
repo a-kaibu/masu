@@ -52,7 +52,10 @@ impl ParsingContext<'_> {
                 ArraySize::Constant(size)
             };
 
-            frontend.layouter.update(ctx.module.to_ctx()).unwrap();
+            frontend.layouter.update(ctx.module.to_ctx()).map_err(|_| Error {
+                kind: ErrorKind::SemanticError("Invalid array element layout".into()),
+                meta: *span,
+            })?;
             let stride = frontend.layouter[*ty].to_stride();
             *ty = ctx.module.types.insert(
                 Type {

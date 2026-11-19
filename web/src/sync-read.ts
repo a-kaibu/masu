@@ -20,6 +20,8 @@ export const STATUS = 1;
 export const SIZE = 2;
 export const SEQ = 3;
 export const URL_LEN = 4;
+/** Sequence number of the reply currently in data. */
+export const REPLY_SEQ = 5;
 /** where the URL's UTF-8 starts in ctl, and its room */
 export const URL_AT = 32;
 export const URL_MAX = 8192;
@@ -54,9 +56,10 @@ export function makeShared(max = DATA_MAX): Shared {
 }
 
 /** Spins until ctl[STATE] leaves WAIT (true) or `ms` pass (false). */
-function spin(ctl: Int32Array, ms: number, now: () => number): boolean {
+function spin(ctl: Int32Array, seq: number, ms: number, now: () => number): boolean {
   const until = now() + ms;
-  for (let n = 0; Atomics.load(ctl, STATE) === WAIT; n++) if ((n & 1023) === 0 && now() > until) return false;
+  for (let n = 0; Atomics.load(ctl, REPLY_SEQ) !== seq || Atomics.load(ctl, STATE) === WAIT; n++)
+    if ((n & 1023) === 0 && now() > until) return false;
   return true;
 }
 
@@ -77,9 +80,9 @@ export function readSync(
   new Uint8Array(shared.ctl, URL_AT, URL_MAX).set(name);
   Atomics.store(ctl, URL_LEN, name.length);
   Atomics.store(ctl, STATE, WAIT);
-  Atomics.add(ctl, SEQ, 1);
+  const seq = (Atomics.add(ctl, SEQ, 1) + 1) | 0;
   Atomics.notify(ctl, SEQ);
-  if (!spin(ctl, ms, now) || Atomics.load(ctl, STATE) !== DONE || Atomics.load(ctl, STATUS) !== 200)
+  if (!spin(ctl, seq, ms, now) || Atomics.load(ctl, STATE) !== DONE || Atomics.load(ctl, STATUS) !== 200)
     return null;
   // (a copy of its own: TextDecoder and the game take no shared memory)
   return new Uint8Array(shared.data, 0, Atomics.load(ctl, SIZE)).slice();
@@ -162,7 +165,10 @@ export async function readServer(
       // (FAILED)
     }
     // (a newer ask meanwhile: the page gave up on this one)
-    if (Atomics.load(ctl, SEQ) === seen) Atomics.store(ctl, STATE, state);
+    if (Atomics.load(ctl, SEQ) === seen) {
+      Atomics.store(ctl, STATE, state);
+      Atomics.store(ctl, REPLY_SEQ, seen);
+    }
   }
 }
 

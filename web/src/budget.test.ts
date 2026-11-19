@@ -190,7 +190,7 @@ test("threads taking at once never take more than the budget (real threads, its 
   };
   for (const share of [1, 0.5]) {
     const buf = new SharedArrayBuffer(BYTES);
-    const t0 = Date.now();
+    const t0 = 1000;
     new Float64Array(buf, 8, 4).set([BURST * share, t0, 0, share]);
     const N = 4;
     const MS = 300;
@@ -198,33 +198,33 @@ test("threads taking at once never take more than the budget (real threads, its 
 const { parentPort, workerData } = require('node:worker_threads');
 ${source}
 masuBudgetInit(workerData.buf, workerData.tag);
-const end = Date.now() + workerData.ms;
+const clock = Date.now;
+Date.now = () => workerData.t0;
+const end = clock() + workerData.ms;
 let n = 0, tries = 0;
-while (Date.now() < end) { tries++; if (masuTake(workerData.tag % 2 ? 0 : 1)) n++; }
+while (clock() < end) { tries++; if (masuTake(workerData.tag % 2 ? 0 : 1)) n++; }
 parentPort.postMessage({ n, tries });`;
     const runs = Array.from(
       { length: N },
       (_, i) =>
         new Promise<{ n: number; tries: number }>((res, rej) => {
-          const w = new Worker(code, { eval: true, workerData: { buf, tag: i + 2, ms: MS } });
+          const w = new Worker(code, { eval: true, workerData: { buf, tag: i + 2, ms: MS, t0 } });
           w.once("message", res);
           w.once("error", rej);
         }),
     );
     let mine = 0;
     const end = Date.now() + MS;
-    while (Date.now() < end) if (take(CLASS.game, Date.now(), buf)) mine++;
+    while (Date.now() < end) if (take(CLASS.game, t0, buf)) mine++;
     const got = await Promise.all(runs);
-    const elapsed = (Date.now() - t0) / 1000;
     const total = mine + got.reduce((a, r) => a + r.n, 0);
     expect(new Int32Array(buf, 0, 1)[0]).toBe(0);
     expect(total, `share ${share}`).toBeLessThanOrEqual(
-      Math.ceil((BURST + RATE * elapsed - RESERVE[0]!) * share) + 1,
+      Math.ceil((BURST - RESERVE[0]!) * share) + 1,
     );
     // (and the tokens left are what the refill gave less what was taken: nothing lost to a race)
     const v = new Float64Array(buf, 8, 4);
-    const refill = (v[1]! - t0) / 1000;
-    expect(v[0]!).toBeCloseTo(Math.min(BURST * share, BURST * share + refill * RATE * share) - total, -1);
+    expect(v[0]).toBe(BURST * share - total);
     expect(got.every((r) => r.tries > 0)).toBe(true);
   }
 });

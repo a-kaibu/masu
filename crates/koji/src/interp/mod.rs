@@ -1624,7 +1624,6 @@ impl<'a, M: Memory> X<'a, M> {
             return false;
         }
         let (di, len32) = (lo32(di), lo32(len));
-        let Some(d) = self.mem.host_range(di, len32) else { return false };
         let adv = lo64((lo64(step).cast_signed()).wrapping_mul(lo64(n).cast_signed()));
         match mn {
             Movsb | Movsw | Movsd | Movsq => {
@@ -1633,27 +1632,21 @@ impl<'a, M: Memory> X<'a, M> {
                     return false;
                 }
                 let si = lo32(si);
-                let Some(s) = self.mem.host_range(si, len32) else { return false };
                 // forward copies equal memmove unless the destination starts inside the
                 // source above it; backward ones unless it starts below
                 let overlap = u64::from(di) < u64::from(si) + len && u64::from(si) < u64::from(di) + len;
                 if overlap && di != si && ((!back && di > si) || (back && di < si)) {
                     return false;
                 }
-                unsafe { core::ptr::copy(s, d, us(len)) };
+                if !self.mem.bulk_copy(di, si, len32) { return false; }
                 let v = self.get_reg(rs).wrapping_add(adv);
                 self.set_reg(rs, v);
             }
             Stosb | Stosw | Stosd | Stosq => {
                 let v = self.get_reg(Register::RAX);
-                unsafe {
-                    match size {
-                        1 => core::ptr::write_bytes(d, lo8(v), us(len)),
-                        2 => (0..us(n)).for_each(|i| d.cast::<u16>().add(i).write_unaligned(lo16(v))),
-                        4 => (0..us(n)).for_each(|i| d.cast::<u32>().add(i).write_unaligned(lo32(v))),
-                        _ => (0..us(n)).for_each(|i| d.cast::<u64>().add(i).write_unaligned(v)),
-                    }
-                }
+                let bytes = v.to_le_bytes();
+                let Some(element) = bytes.get(..us(size)) else { return false };
+                if !self.mem.bulk_fill(di, len32, element) { return false; }
             }
             _ => return false,
         }

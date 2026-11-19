@@ -6,6 +6,7 @@ import {
   makeShared,
   readServer,
   readSync,
+  REPLY_SEQ,
   SEQ,
   STATE,
   WAIT,
@@ -122,6 +123,7 @@ test("readSync reads what a finished answer holds (as the worker leaves it)", ()
       Atomics.store(ctl, 1, 200);
       Atomics.store(ctl, 2, 3);
       Atomics.store(ctl, STATE, DONE);
+      Atomics.store(ctl, REPLY_SEQ, Atomics.load(ctl, SEQ));
     }
     return 0;
   }) as typeof Atomics.notify;
@@ -130,4 +132,18 @@ test("readSync reads what a finished answer holds (as the worker leaves it)", ()
   } finally {
     Atomics.notify = real;
   }
+});
+
+test("a late completion from the previous read cannot answer the next request", () => {
+  const s = makeShared(8);
+  const ctl = new Int32Array(s.ctl);
+  let clock = 0;
+  expect(
+    readSync("next", s, 10, () => {
+      Atomics.store(ctl, 1, 200);
+      Atomics.store(ctl, STATE, DONE);
+      Atomics.store(ctl, REPLY_SEQ, Atomics.load(ctl, SEQ) - 1);
+      return (clock += 20);
+    }),
+  ).toBeNull();
 });

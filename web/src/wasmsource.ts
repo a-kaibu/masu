@@ -61,10 +61,15 @@ export async function sakeWasmBytes(
 ): Promise<{ bytes: Uint8Array<ArrayBuffer> | null; from: WasmFrom }> {
   const request = deps.request ?? ((i, n) => fetch(i, n));
   const note = deps.note ?? (() => {});
+  const expected = await deps.buildId?.().catch(() => undefined);
+  if (deps.buildId && (!expected || !BUILD_ID.test(expected))) return { bytes: null, from: "server" };
   // 1. kept by the browser: emscripten's own load is quickest (and keeps the compiled code)
   try {
     const r = await request(url, { cache: "only-if-cached", mode: "same-origin" });
-    if (r.ok) {
+    if (r.ok && expected) {
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      if ((await buildIdOf(bytes)) === expected) return { bytes, from: "http-cache" };
+    } else if (r.ok) {
       await r.body?.cancel().catch(() => {});
       return { bytes: null, from: "http-cache" };
     }
@@ -72,7 +77,7 @@ export async function sakeWasmBytes(
     // (not kept, or a browser without only-if-cached)
   }
   // 1b. the release's copy on the CDN
-  const fromCdn = await cdnWasm(name, request, deps).catch(() => null);
+  const fromCdn = await cdnWasm(name, request, deps, expected).catch(() => null);
   if (fromCdn) {
     note(
       `${name}: ${(fromCdn.bytes.length / 2 ** 20).toFixed(1)} MiB from ${deps.cdn} in ${(fromCdn.ms / 1000).toFixed(1)} s`,
@@ -91,6 +96,8 @@ export async function sakeWasmBytes(
   } catch {
     return { bytes: null, from: "server" };
   }
+  if (expected && (info as { build?: unknown } | null)?.build !== expected)
+    return { bytes: null, from: "server" };
   const hex = (info as { chunk?: unknown } | null)?.chunk;
   if (typeof hex !== "string" || !/^[0-9a-f]{32}$/.test(hex) || !isDirectInfo(info))
     return { bytes: null, from: "server" };
@@ -101,7 +108,8 @@ export async function sakeWasmBytes(
     const kept = await device?.match(key);
     if (kept) {
       const bytes = new Uint8Array(await kept.arrayBuffer());
-      if (bytes.length) return { bytes, from: "device" };
+      if (bytes.length && (!expected || (await buildIdOf(bytes)) === expected))
+        return { bytes, from: "device" };
     }
   } catch {
     // (a store that fails to read: the bucket)
@@ -122,6 +130,28 @@ export async function sakeWasmBytes(
   return { bytes: own, from: "bucket" };
 }
 
+/** The runtime entry point. The caller supplies the build selected for the
+ * snapshot. Every successful result owns the checked bytes, including HTTP. */
+export async function runtimeWasm(
+  name: string,
+  url: string,
+  store: string,
+  id: string | undefined,
+  serverOnly: boolean,
+  deps: WasmSourceDeps,
+) {
+  if (!id || !BUILD_ID.test(id)) throw new Error(`Missing build ID for ${name}`);
+  const candidate = serverOnly
+    ? { from: "server" as const, bytes: null }
+    : await sakeWasmBytes(name, url, store, { ...deps, buildId: async () => id });
+  if (candidate.bytes) return { ...candidate, verified: true as const };
+  const response = await (deps.request ?? fetch)(url);
+  if (!response.ok) throw new Error(`${name}: HTTP ${response.status}`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if ((await buildIdOf(bytes)) !== id) throw new Error(`${name}: expected build ${id}`);
+  return { bytes, from: candidate.from, verified: true as const };
+}
+
 /** A build id: build-id.txt's 16 lowercase hex digits. */
 const BUILD_ID = /^[0-9a-f]{16}$/;
 
@@ -137,10 +167,10 @@ async function cdnWasm(
   name: string,
   request: typeof fetch,
   deps: WasmSourceDeps,
+  id: string | undefined,
 ): Promise<{ bytes: Uint8Array<ArrayBuffer>; ms: number } | null> {
   const cdn = deps.cdn;
   if (!cdn || !/^https?:\/\/[^/]+\/(.*\/)?$/.test(cdn) || !deps.buildId) return null;
-  const id = await deps.buildId().catch(() => undefined);
   if (!id || !BUILD_ID.test(id)) return null;
   const t0 = Date.now();
   const r = await request(`${cdn}sake/${id}/${encodeURIComponent(name)}.zst`, {
@@ -188,7 +218,7 @@ async function bucketChunk(
  * (emscripten loads its URL). A module that fails to compile is none too.
  */
 export async function wasmModuleArg(
-  got: Promise<{ bytes: Uint8Array<ArrayBuffer> | null; from: WasmFrom }>,
+  got: Promise<{ bytes: Uint8Array<ArrayBuffer> | null; from: WasmFrom; verified?: boolean }>,
   note: (line: string) => void = () => {},
   // (an instance that cannot be made: out of memory on a phone, imports that do not match;
   // emscripten's factory then never settles, so the page is told here)
@@ -199,13 +229,14 @@ export async function wasmModuleArg(
     done: (instance: WebAssembly.Instance, module: WebAssembly.Module) => void,
   ) => object;
 }> {
-  const { bytes, from } = await got;
+  const { bytes, from, verified } = await got;
   note(`sake wasm: ${from}`);
   if (!bytes) return {};
   let module: WebAssembly.Module;
   try {
     module = await WebAssembly.compile(bytes);
   } catch (e) {
+    if (verified) throw e;
     note(`sake wasm from the ${from} did not compile (${String(e)}): the server's`);
     return {};
   }

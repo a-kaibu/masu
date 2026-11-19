@@ -141,7 +141,7 @@ test("chunks fed in order, samples interleaved, done once all outputs are back",
     taken: 0,
   });
   a.tick();
-  await tick(5);
+  await expect.poll(() => k.done.at(-1)).toEqual([7, 0, 3]);
   expect(made[0]!.config).toEqual({ codec: "mp3", sampleRate: 44100, numberOfChannels: 2 });
   expect(made[0]!.fed).toEqual([[10], [20, 1], [30]]);
   expect(k.pcm.map((p) => p.data)).toEqual([
@@ -153,8 +153,7 @@ test("chunks fed in order, samples interleaved, done once all outputs are back",
   // more later: done again for them
   k.streams.get(7)!.queue.push([40]);
   a.tick();
-  await tick(5);
-  expect(k.done.at(-1)).toEqual([7, 0, 4]);
+  await expect.poll(() => k.done.at(-1)).toEqual([7, 0, 4]);
 });
 
 test("a description is passed on; Vorbis's first packet gives nothing and is not waited for", async () => {

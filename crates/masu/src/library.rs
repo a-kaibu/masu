@@ -73,10 +73,14 @@ impl Library {
             CREATE INDEX IF NOT EXISTS sessions_game ON sessions(game,started_ms);
             CREATE TABLE IF NOT EXISTS objects(logical TEXT PRIMARY KEY, envelope TEXT NOT NULL, size INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS game_settings(game TEXT PRIMARY KEY, config TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS imported_objects(object TEXT PRIMARY KEY);
             CREATE TABLE IF NOT EXISTS retired(object TEXT PRIMARY KEY, retired_ms INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS packs(logical TEXT PRIMARY KEY, object TEXT NOT NULL, pack TEXT NOT NULL, offset INTEGER NOT NULL, len INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS pack_games(pack TEXT PRIMARY KEY, game TEXT NOT NULL, made_ms INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS packs_pack ON packs(pack);
+            CREATE TABLE IF NOT EXISTS backup_sets(id TEXT PRIMARY KEY, snapshot TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS backup_refs(id TEXT NOT NULL REFERENCES backup_sets(id) ON DELETE CASCADE, object TEXT NOT NULL, PRIMARY KEY(id,object));
+            CREATE INDEX IF NOT EXISTS backup_refs_object ON backup_refs(object);
             CREATE TABLE IF NOT EXISTS backups(id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, created_ms INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS egs_games(id INTEGER PRIMARY KEY, name TEXT NOT NULL, votes INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE IF NOT EXISTS kv(key TEXT PRIMARY KEY, value TEXT NOT NULL);

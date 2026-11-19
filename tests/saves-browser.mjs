@@ -51,7 +51,7 @@ const serverSave = async () => {
 
 /** A browser of its own (a device), its page with saves.ts in it. */
 async function device(name) {
-  const ctx = await chromium.launchPersistentContext(join(work, name), { args: ["--no-proxy-server"], viewport: { width: 400, height: 300 } });
+  const ctx = await chromium.launchPersistentContext(join(work, name), { executablePath: process.env.CHROME, args: ["--no-proxy-server"], viewport: { width: 400, height: 300 } });
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   page.on("console", (m) => process.env.VERBOSE && console.log(`[${name}] ${m.text()}`));
   // (any page of the origin: OPFS and /saves are the origin's)
@@ -122,16 +122,16 @@ try {
 
   step(5);
   // 5. the page closes while its upload is on the way (the PUT never answered)
-  await page.route("**/saves/game", (route) => (route.request().method() === "PUT" ? undefined : route.continue()));
-  const pending = store_(page, "D").catch(() => "closed");
-  await page.waitForFunction(async () => {
-    const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle("saves");
-    return (await (await (await dir.getFileHandle("game.bin")).getFile()).text()) === "D";
+  await page.evaluate(() => {
+    const request = window.fetch.bind(window);
+    window.fetch = (url, init) => {
+      if (init?.method !== "PUT") return request(url, init);
+      window.uploadStarted = true;
+      return new Promise(() => {});
+    };
   });
-  // (Chromium commits an OPFS write to disk a moment after the page sees it: a browser killed
-  // at once keeps the file as it was, the sync state already "dirty", which then sends the older
-  // blob, as it should; this case is about the upload, so the write is let land)
-  await new Promise((r) => setTimeout(r, 1000));
+  const pending = store_(page, "D").catch(() => "closed");
+  await page.waitForFunction(() => window.uploadStarted);
   await ctx.close();
   assert.equal(await pending, "closed");
   assert.equal(await serverSave(), "C");
@@ -165,6 +165,26 @@ try {
   // 7. and the other device's next start is this one's save
   const pc2 = await device("pc");
   assert.equal((await load(pc2.page)).text, "E");
+  const other = await pc2.ctx.newPage();
+  await other.goto(base);
+  await other.addScriptTag({ content: script });
+  await load(other);
+  let accepted, release;
+  const waitAccepted = new Promise(r => accepted = r);
+  const gate = new Promise(r => release = r);
+  await pc2.page.route("**/saves/game", async route => {
+    const response = await route.fetch();
+    accepted();
+    await gate;
+    await route.fulfill({ response });
+  });
+  const old = store_(pc2.page, "X");
+  await waitAccepted;
+  assert.equal(await store_(other, "Y"), false);
+  release();
+  assert.equal(await old, true);
+  assert.equal((await load(other)).text, "Y");
+  assert.equal(await serverSave(), "Y");
   await pc2.ctx.close();
   console.log("saves-browser: ok");
 } finally {

@@ -53,6 +53,6 @@ pub mod wrap;
 pub mod usage;
 pub mod snap;
 pub mod outs;
-pub(crate) mod guest;
+pub mod guest;
 #[cfg(test)]
 mod host_out_tests;

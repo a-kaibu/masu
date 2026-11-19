@@ -213,6 +213,11 @@ pub async fn file(State(a): State<Apps>, Path((key, path)): Path<(String, String
         );
         return res;
     }
+    // Archived JS can predate build-aware downloads. Its runtime and static
+    // assets must come from its own archive even when the current server has them.
+    if path.starts_with("sake-direct/") {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     let (mut parts, body) = req.into_parts();
     let q = parts.uri.query().map(|q| format!("?{q}")).unwrap_or_default();
     let Ok(uri) = format!("/{path}{q}").parse::<Uri>() else { return StatusCode::BAD_REQUEST.into_response() };
@@ -351,7 +356,9 @@ mod tests {
         std::fs::create_dir_all(&apps).unwrap();
         let key = keep(&apps, &web(&root, "old", "sake 00000000000000aa\n")).unwrap().unwrap();
         let key = key.as_str();
-        let server = Router::new().route("/saves/{n}", axum::routing::get(|Path(n): Path<String>| async move { format!("save {n}") }));
+        let server = Router::new()
+            .route("/sake-direct/sake.wasm", axum::routing::get(|| async { "current build" }))
+            .route("/saves/{n}", axum::routing::get(|Path(n): Path<String>| async move { format!("save {n}") }));
         let app = Router::new()
             .route("/apps/builds", axum::routing::get(list))
             .route("/apps/{key}/{*path}", axum::routing::any(file))
@@ -378,6 +385,7 @@ mod tests {
         for query in ["?game=g&state=0", "?%67ame=g", "?%72un=a.exe&state=0"] {
             assert_eq!(get(format!("/apps/{key}/play.html{query}")).await.0, StatusCode::OK);
         }
+        assert_eq!(get(format!("/apps/{key}/sake-direct/sake.wasm")).await.0, StatusCode::NOT_FOUND);
         assert_eq!(get(format!("/apps/{key}/saves/game")).await.2, "save game");
         assert_eq!(get(format!("/apps/{key}/../secret")).await.0, StatusCode::NOT_FOUND);
         assert_eq!(get("/apps/builds".into()).await.2, format!(r#"{{"00000000000000aa":"{key}"}}"#));

@@ -14,7 +14,7 @@ use std::sync::Mutex;
 pub const LO: u32 = 0x3_0000;
 pub const HI: u32 = 0x7ff0_0000;
 /// Where sake's own data starts (crates/sake/build.sh GLOBAL_BASE, koji::jit::GUEST_HI)
-pub const GUEST_TOP: u32 = 0x8000_0000;
+pub use kura::guest::GUEST_TOP;
 const GRAN: u32 = 0x1_0000;
 use kome::num::us;
 pub const PAGE: u32 = 0x1000;
@@ -28,75 +28,7 @@ fn host<T>(a: u32) -> *mut T {
     std::ptr::with_exposed_provenance_mut(kome::num::us(a))
 }
 
-/// A guest address: a value, x86 address arithmetic only. Its arithmetic wraps at 4 GiB as the
-/// x86's does (an offset past the top comes round to the bottom: what the guest's own code
-/// computes); a length or a count is not one (its arithmetic is checked where it is done). Made
-/// from a u32 by `ga(a)` (or `.into()`), given back by `.get()`. It does not touch memory: the
-/// accessors here do (`mem::r32(a)`, `mem::w32(a, v)`), each through a checked [`Range`]
-/// (review 2026-11-15).
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
-pub struct Ga(u32);
-
-/// Guest address `a`
-#[inline(always)]
-pub const fn ga(a: u32) -> Ga {
-    Ga(a)
-}
-
-impl Ga {
-    #[inline(always)]
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-    /// Element `i` of an array of `size`-byte elements here (wrapping, as the x86 computes it)
-    #[inline(always)]
-    pub const fn at(self, i: u32, size: u32) -> Ga {
-        Ga(self.0.wrapping_add(i.wrapping_mul(size)))
-    }
-    /// How far past `base` this is (wrapping)
-    #[inline(always)]
-    pub const fn since(self, base: Ga) -> u32 {
-        self.0.wrapping_sub(base.0)
-    }
-    /// The end of `n` bytes from here, unwrapped (a range check: past GUEST_TOP or 4 GiB shows)
-    #[inline(always)]
-    pub fn end(self, n: u32) -> u64 {
-        // (two u32s: the sum is below 2^33, never wraps)
-        u64::from(self.0).wrapping_add(u64::from(n))
-    }
-}
-impl std::ops::Add<u32> for Ga {
-    type Output = Ga;
-    #[inline(always)]
-    fn add(self, o: u32) -> Ga {
-        Ga(self.0.wrapping_add(o))
-    }
-}
-impl std::ops::Sub<u32> for Ga {
-    type Output = Ga;
-    #[inline(always)]
-    fn sub(self, o: u32) -> Ga {
-        Ga(self.0.wrapping_sub(o))
-    }
-}
-impl std::ops::AddAssign<u32> for Ga {
-    #[inline(always)]
-    fn add_assign(&mut self, o: u32) {
-        self.0 = self.0.wrapping_add(o);
-    }
-}
-impl From<u32> for Ga {
-    #[inline(always)]
-    fn from(a: u32) -> Ga {
-        Ga(a)
-    }
-}
-impl From<Ga> for u32 {
-    #[inline(always)]
-    fn from(a: Ga) -> u32 {
-        a.0
-    }
-}
+pub use kura::guest::{ga, Ga};
 
 // ---------------------------------------------------------------------------------------------
 // 64-bit programs (PE32+): pointers, handles and SIZE_Ts are 8 bytes in their structures. Guest
@@ -199,7 +131,7 @@ pub fn put_addr(a: u32, v: u32) {
 // reading and writing guest memory: one rule, one checked type
 
 /// The guest's first 64 KiB: never handed out (NULL pointers fault on Windows too).
-pub const NULL_TOP: u32 = 0x1_0000;
+pub use kura::guest::NULL_TOP;
 
 /// Guest memory `a..a + n` that sake may read and write for the program: past the NULL pages
 /// and below GUEST_TOP (sake's own heap and stacks are above it: a bad pointer an API is given,
@@ -210,15 +142,11 @@ pub const NULL_TOP: u32 = 0x1_0000;
 /// let r = sake::mem::Range { a: 0, n: 4 };
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Range {
-    a: u32,
-    n: u32,
-}
+pub struct Range(kura::guest::Range);
 
-/// `n` bytes at `a` if they are all guest memory sake may use (see [`Range`]); n == 0 always is.
 #[inline(always)]
 pub fn range(a: u32, n: u32) -> Option<Range> {
-    (n == 0 || (a >= NULL_TOP && ga(a).end(n) <= u64::from(GUEST_TOP))).then_some(Range { a, n })
+    kura::guest::range(ga(a), n).map(Range)
 }
 /// [`range`] for a host length (a Rust slice's): None past 4 GiB too
 #[inline]
@@ -238,32 +166,32 @@ fn for_write(a: u32, n: u32) -> Option<Range> {
 impl Range {
     #[inline(always)]
     pub fn addr(self) -> u32 {
-        self.a
+        self.0.addr()
     }
     #[inline(always)]
     pub fn len(self) -> u32 {
-        self.n
+        self.0.len()
     }
     #[inline(always)]
     pub fn is_empty(self) -> bool {
-        self.n == 0
+        self.len() == 0
     }
     /// The host pointer of its start (guest address = host address)
     #[inline(always)]
     fn ptr<T>(self) -> *mut T {
-        host(self.a)
+        host(self.addr())
     }
     /// An `N`-byte value at its start (`N` <= its length)
     #[inline(always)]
     fn read<T: Copy>(self) -> T {
-        debug_assert!(std::mem::size_of::<T>() <= us(self.n));
+        debug_assert!(std::mem::size_of::<T>() <= us(self.len()));
         // SAFETY: a Range is guest memory (backed: the module doc) at least size_of::<T>() long
         // (the callers make it so); read_unaligned allows any address.
         unsafe { self.ptr::<T>().cast_const().read_unaligned() }
     }
     #[inline(always)]
     fn write<T: Copy>(self, v: T) {
-        debug_assert!(std::mem::size_of::<T>() <= us(self.n));
+        debug_assert!(std::mem::size_of::<T>() <= us(self.len()));
         // SAFETY: as in read: guest memory, never sake's own.
         unsafe { self.ptr::<T>().write_unaligned(v) }
     }
@@ -275,50 +203,50 @@ impl Range {
     // contract). Review 2026-11-17: `bytes`, `update`, `fill`, `write`, `cstr` made slices of it.
     /// Its bytes, copied out
     fn copy_out(self) -> Vec<u8> {
-        let mut v = vec![0u8; us(self.n)];
+        let mut v = vec![0u8; us(self.len())];
         self.copy_to(&mut v);
         v
     }
     /// Its first `to.len()` (<= its length) bytes into `to`
     fn copy_to(self, to: &mut [u8]) {
-        let n = to.len().min(us(self.n));
+        let n = to.len().min(us(self.len()));
         // SAFETY: n bytes of guest memory (a Range, at least n long) into sake's own buffer,
         // which is no guest memory: they do not overlap. No reference to guest memory is made.
         unsafe { std::ptr::copy_nonoverlapping(self.ptr::<u8>().cast_const(), to.as_mut_ptr(), n) }
     }
     /// `from` (sake's own bytes, no longer than it) at its start
     fn copy_from(self, from: &[u8]) {
-        let n = from.len().min(us(self.n));
+        let n = from.len().min(us(self.len()));
         // SAFETY: as in copy_to, the other way
         unsafe { std::ptr::copy_nonoverlapping(from.as_ptr(), self.ptr::<u8>(), n) }
     }
     /// Byte `i` (< its length)
     #[inline(always)]
     fn byte(self, i: usize) -> u8 {
-        debug_assert!(i < us(self.n));
+        debug_assert!(i < us(self.len()));
         // SAFETY: inside the Range (the callers' i < len), a raw read
         unsafe { self.ptr::<u8>().cast_const().wrapping_add(i).read() }
     }
     /// `v` at byte `i` (< its length)
     #[inline(always)]
     fn put_byte(self, i: usize, v: u8) {
-        debug_assert!(i < us(self.n));
+        debug_assert!(i < us(self.len()));
         // SAFETY: as in byte
         unsafe { self.ptr::<u8>().wrapping_add(i).write(v) }
     }
     /// All of it set to `v`
     fn set_all(self, v: u8) {
         // SAFETY: the Range's bytes, a raw write
-        unsafe { std::ptr::write_bytes(self.ptr::<u8>(), v, us(self.n)) }
+        unsafe { std::ptr::write_bytes(self.ptr::<u8>(), v, us(self.len())) }
     }
     /// Whether every byte is 0 (read a 256-byte block at a time, without stopping inside one,
     /// through a buffer of sake's own: vectorized)
     fn all_zero(self) -> bool {
         let mut buf = [0u8; 256];
         let mut at = 0u32;
-        while at < self.n {
-            let k = self.n.saturating_sub(at).min(256);
-            let part = Range { a: self.a.wrapping_add(at), n: k };
+        while at < self.len() {
+            let k = self.len().saturating_sub(at).min(256);
+            let Some(part) = range(self.addr().wrapping_add(at), k) else { return false };
             let b = buf.get_mut(..us(k)).unwrap_or_default();
             part.copy_to(b);
             if !is_zero(b) {
@@ -481,7 +409,7 @@ unsafe fn exclusive_slice<R>(r: Range, f: impl FnOnce(&[u8]) -> R) -> R {
     // SAFETY: a Range is guest memory (the low 2 GiB of the wasm memory, all of it backed: the
     // module doc), not empty: its pointer is not NULL. Unchanged while `f` runs: the caller's
     // promise. The borrow ends with `f`.
-    f(unsafe { std::slice::from_raw_parts(r.ptr::<u8>().cast_const(), us(r.n)) })
+    f(unsafe { std::slice::from_raw_parts(r.ptr::<u8>().cast_const(), us(r.len())) })
 }
 /// The one place guest memory is written as a Rust slice.
 ///
@@ -492,7 +420,7 @@ unsafe fn exclusive_slice_mut<R>(r: Range, f: impl FnOnce(&mut [u8]) -> R) -> R 
         return f(&mut []);
     }
     // SAFETY: as in exclusive_slice, and unseen by anyone else meanwhile: the caller's promise.
-    f(unsafe { std::slice::from_raw_parts_mut(r.ptr::<u8>(), us(r.n)) })
+    f(unsafe { std::slice::from_raw_parts_mut(r.ptr::<u8>(), us(r.len())) })
 }
 /// The host pointer of guest memory `a..a + n`, None where that is not all guest memory: for
 /// code that walks it by pointer (the software rasterizers). Reading or writing through it is
@@ -522,9 +450,9 @@ pub fn zero(a: u32, n: u32) {
     let Some(r) = for_write(a, n) else { return };
     // (pages of the guest's: a starts where it starts, the rest on page boundaries)
     let mut at = 0u32;
-    while at < r.n {
-        let k = if at == 0 { PAGE.saturating_sub(a % PAGE) } else { PAGE }.min(r.n.saturating_sub(at));
-        let p = Range { a: r.a.wrapping_add(at), n: k };
+    while at < r.len() {
+        let k = if at == 0 { PAGE.saturating_sub(a % PAGE) } else { PAGE }.min(r.len().saturating_sub(at));
+        let Some(p) = range(r.addr().wrapping_add(at), k) else { break };
         if !p.all_zero() {
             p.set_all(0);
         }
@@ -573,7 +501,7 @@ pub fn cstr(a: u32) -> Vec<u8> {
     // instead of wrapping past 4 GB, review b07)
     if a < GUEST_TOP {
         let Some(r) = range(a, GUEST_TOP.saturating_sub(a)) else { return Vec::new() };
-        let n = (0..us(r.n)).position(|i| r.byte(i) == 0).unwrap_or(us(r.n));
+        let n = (0..us(r.len())).position(|i| r.byte(i) == 0).unwrap_or(us(r.len()));
         return range_of(a, n).map_or_else(Vec::new, Range::copy_out);
     }
     let mut n = 0;
@@ -594,7 +522,7 @@ pub fn wstr(a: u32) -> Vec<u16> {
     if a < GUEST_TOP {
         let Some(r) = range(a, GUEST_TOP.saturating_sub(a) & !1) else { return Vec::new() };
         let unit = |i: usize| u16::from_le_bytes([r.byte(i.wrapping_mul(2)), r.byte(i.wrapping_mul(2).wrapping_add(1))]);
-        let units = us(r.n >> 1);
+        let units = us(r.len() >> 1);
         let n = (0..units).position(|i| unit(i) == 0).unwrap_or(units);
         return (0..n).map(unit).collect();
     }

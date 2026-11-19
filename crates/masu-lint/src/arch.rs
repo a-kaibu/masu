@@ -240,7 +240,7 @@ fn is_accessor(n: &str) -> bool {
 
 fn untyped_way_back(tree: &Tree) -> Hits {
     let mut out = Hits::new();
-    for (f, it) in items(tree, &tree.rs(&["crates/sake/"])) {
+    for (f, it) in items(tree, &tree.rs(&["crates/sake/", "crates/kura/src/guest.rs"])) {
         for (ty, _, n, l) in &it.methods {
             if ty.as_deref() == Some("Ga") && is_accessor(n) {
                 out.push((f.clone(), *l, format!("Ga::{n}: a reader/writer method on Ga")));

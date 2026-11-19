@@ -13,6 +13,7 @@
 
 mod apps;
 mod asar;
+mod atomic_file;
 mod auth;
 mod cdc;
 #[cfg(unix)]

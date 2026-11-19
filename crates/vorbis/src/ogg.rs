@@ -40,9 +40,14 @@ impl Reader {
     }
 
     pub fn push(&mut self, data: &[u8]) {
-        self.buf.extend_from_slice(data);
-        let used = self.pages(false);
-        self.buf.drain(..used);
+        // Callers also pass whole movie files. Stage at most one additional Ogg page
+        // at a time, regardless of how much input the caller already holds.
+        const MAX_PAGE: usize = 27 + 255 + 255 * 255;
+        for piece in data.chunks(MAX_PAGE) {
+            self.buf.extend_from_slice(piece);
+            let used = self.pages(false);
+            self.buf.drain(..used);
+        }
     }
 
     /// No more bytes: a page cut short gives what it has (as [`packets`] of the whole file).
@@ -87,10 +92,12 @@ impl Reader {
                 let e = (body + usize::from(l)).min(data.len());
                 if mine {
                     if !self.skipping {
-                        self.cur.extend_from_slice(&data[body..e]);
-                        if self.cur.len() > self.limit.unwrap_or(MAX_PACKET) {
+                        let segment = &data[body..e];
+                        if segment.len() > self.limit.unwrap_or(MAX_PACKET).saturating_sub(self.cur.len()) {
                             self.cur = Vec::new();
                             self.skipping = true;
+                        } else {
+                            self.cur.extend_from_slice(segment);
                         }
                     }
                     if l < 255 && !std::mem::take(&mut self.skipping) {
@@ -248,6 +255,16 @@ mod tests {
             let (want, _) = whole_limited(&d, limit);
             prop_assert_eq!(got, want);
         }
+    }
+
+    #[test]
+    fn whole_file_push_bounds_page_staging() {
+        let mut r = Reader::default();
+        let page = page(1, 0, &[255; 255], 0);
+        let data = page.repeat(32);
+        r.push(&data);
+        assert!(r.buf.capacity() <= 4 * page.len());
+        assert_eq!(r.cur.len(), 32 * 255 * 255);
     }
 
     /// A stream whose lacing never ends a packet (all 255s) keeps none of it past the limit.

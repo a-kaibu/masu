@@ -294,18 +294,16 @@ mod tests {
     #[test]
     fn catch_up_fits_the_ring() {
         let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-        let id = open();
-        write(id, &vec![0.5; us(RATE) * 2 * 2]);
-        let head0 = RING.head.load(Ordering::Relaxed);
+        let mut card = Card {
+            streams: [(1, Stream { q: VecDeque::from(vec![[0.5; 2]; CATCH_UP * 2]) })].into(),
+            next_id: 2,
+            clock: Instant::now() - std::time::Duration::from_secs(3),
+            out: VecDeque::new(),
+        };
+        let head = RING.head.load(Ordering::Relaxed);
         RING_ON.store(true, Ordering::Relaxed);
-        with(|c| c.clock -= std::time::Duration::from_secs(3));
-        // (the next call mixes the 3 s)
-        let _ = queued(id);
-        let head1 = RING.head.load(Ordering::Relaxed);
+        card.advance();
         RING_ON.store(false, Ordering::Relaxed);
-        let n = head1.wrapping_sub(head0) as u64;
-        eprintln!("caught up {n} frames");
-        assert!(n >= lo64(CATCH_UP) / 2 && n <= lo64(CATCH_UP) + u64::from(RATE) / 100, "{n} frames at once");
-        close(id);
+        assert_eq!(us(RING.head.load(Ordering::Relaxed).wrapping_sub(head)), CATCH_UP);
     }
 }

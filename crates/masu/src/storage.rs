@@ -345,6 +345,28 @@ pub(crate) mod gc_tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[tokio::test]
+    async fn gc_protects_the_snapshot_during_publication() {
+        let (f, mut s, dir) = serve(0).await;
+        s.put("saves/game/1", b"before").await.unwrap();
+        f.hold_over.store(1, SeqCst);
+        let gate = f.gate.write().await;
+        let (backup, ()) = tokio::join!(s.backup(), async {
+            until(|| f.holding.load(SeqCst) == 1).await;
+            s.forget("saves/game/1").unwrap();
+            age_retired(&s, 60_000);
+            assert_eq!(s.gc(std::time::Duration::ZERO, None).await.unwrap().deleted, 0);
+            drop(gate);
+        });
+        let restored = dir.join("empty.db");
+        s.restore(backup.unwrap(), &restored).await.unwrap();
+        s.db = Library(restored);
+        s.cache = Default::default();
+        s.disk = None;
+        assert_eq!(&*s.get("saves/game/1").await.unwrap().unwrap(), b"before");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     /// Every packs row's pack, as the bucket has it: its span is the object's own ciphertext,
     /// and a pack's spans are side by side in the order they were packed.
     fn check_packs(f: &Fake, s: &Storage) {
@@ -1226,8 +1248,22 @@ pub(crate) mod gc_tests {
             .query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
         let mut want: std::collections::BTreeSet<String> = named(&s).union(&pc_backup).cloned().collect();
         want.extend(packs);
+        want.extend(named(&pc));
+        want.extend(pc_db.connect().unwrap().prepare("SELECT DISTINCT pack FROM packs").unwrap()
+            .query_map([], |r| r.get::<_, String>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap());
         assert_eq!(names(&f), want, "the bucket: what the server names, its packs, and the other's backup");
         check_packs(&f, &s);
+        let restored = dir.join("source-restored.db");
+        pc.restore(backup, &restored).await.unwrap();
+        let mut source = pc;
+        let logicals: Vec<String> = source.db.connect().unwrap().prepare("SELECT logical FROM objects").unwrap()
+            .query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        source.db = Library(restored);
+        source.cache = Default::default();
+        source.disk = None;
+        for logical in logicals {
+            assert!(source.get(&logical).await.unwrap().is_some(), "{logical}");
+        }
         let again = s.merge(backup, &server_store).await.unwrap();
         assert_eq!((again.added, again.packs), (0, 0), "{again:?}");
         let _ = std::fs::remove_dir_all(dir);
@@ -2093,9 +2129,21 @@ struct Backup {
     recovery_ciphertext: Vec<u8>,
 }
 
+fn catalog_path(store: &Path, logical: &str) -> Result<std::path::PathBuf> {
+    let (dir, name) = logical.split_once('/').context("invalid catalog path")?;
+    ensure!(matches!(dir, "trees" | "games") && !name.is_empty() && !name.starts_with('.') && !name.contains(['/', '\\', '\0']), "invalid catalog path");
+    Ok(store.join(dir).join(name))
+}
+
 impl Storage {
     /// Restore the small catalogs locally. Chunk payloads remain remote and stream on demand.
     pub async fn hydrate_catalog(&self, store: &Path) -> Result<()> {
+        let lock = crate::pack::StoreWrite::acquire_async(store).await?;
+        self.hydrate_catalog_locked(&lock).await
+    }
+
+    pub(crate) async fn hydrate_catalog_locked(&self, lock: &crate::pack::StoreWrite) -> Result<()> {
+        let store = lock.path();
         let paths: Vec<String> = {
             let c = self.db.connect()?;
             let mut q = c.prepare("SELECT logical FROM objects WHERE logical LIKE 'trees/%' OR logical LIKE 'games/%'")?;
@@ -2103,13 +2151,7 @@ impl Storage {
             rows.collect::<rusqlite::Result<_>>()?
         };
         for logical in paths {
-            ensure!(
-                Path::new(&logical)
-                    .components()
-                    .all(|c| matches!(c, std::path::Component::Normal(_))),
-                "invalid catalog path"
-            );
-            let path = store.join(&logical);
+            let path = catalog_path(store, &logical)?;
             if path.exists() {
                 continue;
             }
@@ -2319,12 +2361,28 @@ impl Storage {
         Ok(())
     }
 
-    /// Deletes retired objects (replaced or forgotten) that no backup refers to, once retired for
-    /// `grace`: a backup taken before an object was retired has it in its database, so objects
-    /// go only when retired before the oldest backup kept. `keep_backups`: the newest that many
-    /// backups are kept, the others deleted first.
+    /// Deletes locally owned, unreferenced objects retired for at least `grace`.
+    /// Snapshots predating reference tracking pin all retired objects until pruned.
     pub async fn gc(&self, grace: std::time::Duration, keep_backups: Option<usize>) -> Result<Gc> {
+        let _guard = crate::pack::StoreWrite::acquire_async(self.db.0.parent().context("missing database directory")?).await?;
         let mut out = Gc::default();
+        // A live publisher holds this lock until the descriptor is registered.
+        // A process that died left a pending set; delete its uploads before unpinning.
+        let writer = self.backup_lock()?;
+        if writer.try_lock().is_ok() {
+            let pending = {
+                let c = self.db.connect()?;
+                let mut q = c.prepare("SELECT id,snapshot FROM backup_sets WHERE id NOT IN (SELECT id FROM backups)")?;
+                let rows = q.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            for (id, snapshot) in pending {
+                self.delete(Uuid::parse_str(&id)?).await?;
+                self.delete(Uuid::parse_str(&snapshot)?).await?;
+                self.db.connect()?.execute("DELETE FROM backup_sets WHERE id=?", [id])?;
+            }
+        }
+        drop(writer);
         if let Some(n) = keep_backups {
             let old: Vec<(String, String)> = {
                 let c = self.db.connect()?;
@@ -2335,22 +2393,37 @@ impl Storage {
             for (id, snapshot) in old {
                 self.delete(Uuid::parse_str(&id)?).await?;
                 self.delete(Uuid::parse_str(&snapshot)?).await?;
-                self.db.connect()?.execute("DELETE FROM backups WHERE id=?", [&id])?;
+                let mut c = self.db.connect()?;
+                let tx = c.transaction()?;
+                tx.execute("DELETE FROM backups WHERE id=?", [&id])?;
+                tx.execute("DELETE FROM backup_sets WHERE id=?", [&id])?;
+                tx.commit()?;
                 out.backups_dropped += 1;
             }
         }
-        let (oldest, retired): (Option<i64>, Vec<(String, i64)>) = {
+        let retired: Vec<(String, i64, bool)> = {
             let c = self.db.connect()?;
-            let oldest = c.query_row("SELECT MIN(created_ms) FROM backups", [], |r| r.get(0))?;
-            let mut q = c.prepare("SELECT object,retired_ms FROM retired")?;
-            let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
-            (oldest, rows.collect::<rusqlite::Result<_>>()?)
+            // Legacy records timestamped publication, after the snapshot was taken.
+            // A deletion based on that timestamp could invalidate a retained backup.
+            if c.query_row("SELECT EXISTS(SELECT 1 FROM backups WHERE id NOT IN (SELECT id FROM backup_sets))", [], |r| r.get::<_, bool>(0))? {
+                out.kept = usize::try_from(c.query_row("SELECT COUNT(*) FROM retired", [], |r| r.get::<_, i64>(0))?)?;
+                return Ok(out);
+            }
+            let mut q = c.prepare("SELECT object,retired_ms,
+                object IN (SELECT object FROM imported_objects) OR object IN (SELECT object FROM backup_refs)
+                FROM retired")?;
+            let rows = q.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
         };
-        let cutoff = (now_ms() - grace.as_millis() as i64).min(oldest.unwrap_or(i64::MAX));
-        for (object, at) in retired {
+        let cutoff = now_ms() - grace.as_millis() as i64;
+        for (object, at, pinned) in retired {
+            if pinned || at >= cutoff {
+                out.kept = out.kept.saturating_add(1);
+                continue;
+            }
             // (an object still named by a row: never; new objects get new UUIDs)
             let named: bool = self.db.connect()?.query_row("SELECT EXISTS(SELECT 1 FROM objects WHERE instr(envelope,?) > 0)", [&object], |r| r.get(0))?;
-            if at >= cutoff || named {
+            if named {
                 out.kept += 1;
                 continue;
             }
@@ -2715,6 +2788,7 @@ impl Storage {
     /// is there). The objects sent are named [`RECORD_BATCH`] at a time (a push cut short can
     /// leave up to that many sent and never named in the bucket).
     pub async fn push_store(&self, store: &Path) -> Result<()> {
+        let _lock = crate::pack::StoreWrite::acquire_async(store).await?;
         let have = self.chunks_named()?;
         for top in ["chunks", "trees", "games"] {
             let mut files = Vec::new();
@@ -2725,6 +2799,9 @@ impl Storage {
                 }
                 for entry in std::fs::read_dir(dir)? {
                     let entry = entry?;
+                    if entry.file_name().to_string_lossy().starts_with('.') {
+                        continue;
+                    }
                     let kind = entry.file_type()?;
                     if kind.is_dir() {
                         dirs.push(entry.path());
@@ -2752,6 +2829,7 @@ impl Storage {
     /// server made itself (sake's C:\ with its fonts and RTPs, the benchmark's programs), which
     /// the page can read only from the bucket. A chunk neither has is an error.
     pub async fn push_trees(&self, store: &Path, names: &[&str]) -> Result<()> {
+        let _lock = crate::pack::StoreWrite::acquire_async(store).await?;
         let have = self.chunks_named()?;
         let mut chunks = std::collections::BTreeSet::new();
         let mut lists = Vec::new();
@@ -2803,24 +2881,33 @@ impl Storage {
         self.record(&batch)
     }
 
+    fn backup_lock(&self) -> Result<std::fs::File> {
+        Ok(std::fs::OpenOptions::new().create(true).truncate(false).read(true).write(true)
+            .open(self.db.0.with_extension("backup.lock"))?)
+    }
+
     pub async fn backup(&self) -> Result<Uuid> {
-        let temp = self
-            .db
-            .0
-            .with_file_name(format!(".{}.snapshot", Uuid::new_v4()));
-        let result = (|| -> Result<Vec<u8>> {
-            self.db.snapshot(&temp)?;
-            Ok(zstd::encode_all(std::fs::File::open(&temp)?, 3)?)
-        })();
-        let _ = std::fs::remove_file(&temp);
-        let data = result?;
-        let (envelope, ciphertext) = Envelope::encrypt(
-            &self.key(&self.config.active_key)?,
-            &self.config.active_key,
-            &data,
-        )?;
-        self.upload(envelope.object, &ciphertext, AtOnce::ALONE).await?;
+        let writer = self.backup_lock()?;
+        let _writer = tokio::task::spawn_blocking(move || -> std::io::Result<_> { writer.lock()?; Ok(writer) }).await??;
+        let guard = crate::pack::StoreWrite::acquire_async(self.db.0.parent().context("missing database directory")?).await?;
+        let created_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis();
+        let dir = tempfile::tempdir_in(guard.path())?;
+        let snapshot = dir.path().join("snapshot.sqlite");
+        self.db.snapshot(&snapshot)?;
+        let data = zstd::encode_all(std::fs::File::open(&snapshot)?, 3)?;
+        let (envelope, ciphertext) = Envelope::encrypt(&self.key(&self.config.active_key)?, &self.config.active_key, &data)?;
         let id = Uuid::new_v4();
+        {
+            let mut c = self.db.connect()?;
+            c.execute("ATTACH DATABASE ? AS snap", [snapshot.to_str().context("non-UTF8 snapshot path")?])?;
+            let tx = c.transaction()?;
+            tx.execute("INSERT INTO backup_sets(id,snapshot) VALUES(?,?)", [id.to_string(), envelope.object.to_string()])?;
+            tx.execute("INSERT INTO backup_refs(id,object) SELECT ?, json_extract(envelope,'$.object') FROM snap.objects UNION SELECT ?,pack FROM snap.packs", [id.to_string(), id.to_string()])?;
+            tx.commit()?;
+        }
+        drop(guard);
+        drop(dir);
+        self.upload(envelope.object, &ciphertext, AtOnce::ALONE).await?;
         // A snapshot contains envelopes from that date. Keep its required wrapping keys
         // encrypted alongside it so rotation can retire old keys without rewriting the DB.
         let (recovery, recovery_ciphertext) = Envelope::encrypt(
@@ -2832,9 +2919,7 @@ impl Storage {
             envelope,
             recovery,
             recovery_ciphertext,
-            created_ms: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_millis(),
+            created_ms,
         };
         self.upload(id, &serde_json::to_vec(&backup)?, AtOnce::ALONE).await?;
         self.db.connect()?.execute(
@@ -2919,6 +3004,7 @@ impl Storage {
     ///
     /// Then `hydrate_catalog` brings the new games' entries and trees here.
     pub async fn merge(&self, id: Uuid, store: &Path) -> Result<Merged> {
+        let lock = crate::pack::StoreWrite::acquire_async(store).await?;
         let other = self.db.0.with_file_name(format!(".merge-{}.sqlite3", Uuid::new_v4()));
         self.restore(id, &other).await?;
         let mut replaced = Vec::new();
@@ -2933,21 +3019,25 @@ impl Storage {
                 rows.collect::<rusqlite::Result<_>>()?
             };
             for (logical, theirs, size, ours) in rows {
+                let catalog = logical.starts_with("games/") || logical.starts_with("trees/");
+                if catalog {
+                    catalog_path(store, &logical)?;
+                }
                 let object = |e: &str| -> Result<Uuid> { Ok(serde_json::from_str::<Envelope>(e)?.object) };
+                tx.execute("INSERT OR IGNORE INTO imported_objects(object) VALUES(?)", [object(&theirs)?.to_string()])?;
                 match ours {
                     None => {
                         tx.execute("INSERT INTO main.objects(logical,envelope,size) VALUES(?,?,?)", rusqlite::params![logical, theirs, size])?;
                         out.added += 1;
                     }
                     Some(ours) if object(&ours)? == object(&theirs)? => out.same += 1,
-                    Some(ours) if logical.starts_with("games/") || logical.starts_with("trees/") => {
+                    Some(ours) if catalog => {
                         tx.execute("UPDATE main.objects SET envelope=?,size=? WHERE logical=?", rusqlite::params![theirs, size, logical])?;
                         retire(&tx, object(&ours)?)?;
                         replaced.push(logical.clone());
                         out.replaced += 1;
                     }
                     Some(_) => {
-                        retire(&tx, object(&theirs)?)?;
                         out.kept += 1;
                     }
                 }
@@ -2971,8 +3061,8 @@ impl Storage {
                     let r = q.query_map([], |r| r.get(0))?.collect();
                     r
                 };
-                let mut before = ids("SELECT DISTINCT pack FROM main.packs")?;
-                before.extend(ids("SELECT DISTINCT pack FROM other.packs")?);
+                let before = ids("SELECT DISTINCT pack FROM main.packs")?;
+                tx.execute("INSERT OR IGNORE INTO imported_objects(object) SELECT DISTINCT pack FROM other.packs", [])?;
                 out.packs = tx.execute(
                     "INSERT INTO main.packs(logical,object,pack,offset,len) SELECT p.logical,p.object,p.pack,p.offset,p.len FROM other.packs p JOIN main.objects m ON m.logical=p.logical
                      WHERE instr(m.envelope,p.object) > 0 AND NOT EXISTS(SELECT 1 FROM main.packs q WHERE q.logical=p.logical AND q.object=p.object)
@@ -2993,17 +3083,21 @@ impl Storage {
                     out.records += tx.execute(&format!("INSERT OR IGNORE INTO main.{t} SELECT * FROM other.{t}"), [])?;
                 }
             }
+            // Invalidate disk copies before committing. If the transaction fails,
+            // hydration can recover the old versions from its unchanged object rows.
+            for logical in &replaced {
+                match std::fs::remove_file(catalog_path(store, logical)?) {
+                    Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                    _ => {}
+                }
+            }
             tx.commit()?;
             c.execute("DETACH DATABASE other", [])?;
             Ok(out)
         })();
         let _ = std::fs::remove_file(&other);
         let out = result?;
-        // (the old copies here go: hydrate_catalog fetches what is not here)
-        for l in &replaced {
-            let _ = std::fs::remove_file(store.join(l));
-        }
-        self.hydrate_catalog(store).await?;
+        self.hydrate_catalog_locked(&lock).await?;
         Ok(out)
     }
 

@@ -892,8 +892,9 @@ async fn save_log(State(dir): State<Arc<PathBuf>>, Path(name): Path<String>, bod
     }
     let _ = tokio::fs::create_dir_all(&*dir).await;
     let path = dir.join(format!("{name}.txt"));
-    let tmp = dir.join(format!(".{name}.tmp"));
-    if tokio::fs::write(&tmp, &body).await.is_err() || tokio::fs::rename(&tmp, &path).await.is_err() {
+    let dest = path.clone();
+    let bytes = body.clone();
+    if !matches!(tokio::task::spawn_blocking(move || crate::atomic_file::publish_file(&dest, &bytes)).await, Ok(Ok(()))) {
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
     // the first lines say what happened
@@ -1178,8 +1179,7 @@ fn precompress(dir: &std::path::Path, write: bool) {
         }
         match zstd::encode_all(&data[..], 19) {
             Ok(z) if z.len() < data.len() => {
-                let tmp = zst.with_extension("zst.tmp");
-                if std::fs::write(&tmp, &z).and_then(|_| std::fs::rename(&tmp, &zst)).is_ok() {
+                if crate::atomic_file::publish_file(&zst, &z).is_ok() {
                     eprintln!("masu: {} {} -> {} bytes", zst.display(), data.len(), z.len());
                 }
             }
@@ -1228,9 +1228,12 @@ pub fn run(dirs: &crate::dirs::Dirs, a: Args) -> anyhow::Result<()> {
     if let Some(d) = &a.dev_bucket {
         crate::dev_bucket::start(d)?;
     }
-    let web = match a.web {
-        Some(w) => w,
-        None => crate::webassets::unpack(&dirs.cache)?,
+    let (web, _web_lock) = match a.web {
+        Some(w) => (w, None),
+        None => {
+            let (path, lock) = crate::webassets::unpack(&dirs.cache)?;
+            (path, Some(lock))
+        }
     };
     let args = Resolved {
         web,
@@ -1571,9 +1574,7 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
         )
         .merge(crate::store_api::router(store.clone(), Some(args.web.clone()))?)
         .route("/game-origin", get(move || async move { axum::Json(game_origin) }))
-        .route("/version", get(|| async { axum::Json(version_info()) }))
-        .fallback_service(ServeDir::new(&args.web).precompressed_zstd())
-        .layer(middleware::from_fn(headers));
+        .route("/version", get(|| async { axum::Json(version_info()) }));
     // this web app kept for the states it takes, older ones while states need them (apps.rs)
     let apps_dir = store.join("apps");
     std::fs::create_dir_all(&apps_dir)?;
@@ -1597,8 +1598,8 @@ async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyh
     let app = Router::new()
         .route("/apps/builds", get(crate::apps::list))
         .route("/apps/{key}/{*path}", axum::routing::any(crate::apps::file))
-        .with_state(crate::apps::Apps { dir: apps_dir, root: inner.clone() })
-        .fallback_service(inner)
+        .with_state(crate::apps::Apps { dir: apps_dir, root: inner.clone().layer(middleware::from_fn(headers)) })
+        .fallback_service(inner.fallback_service(ServeDir::new(&args.web).precompressed_zstd()).layer(middleware::from_fn(headers)))
         .layer(middleware::from_fn_with_state(auth.clone(), crate::auth::guard));
     let games = games_router(&args.web).layer(middleware::from_fn_with_state(auth, crate::auth::guard));
     // without TCP_NODELAY a kept-alive connection waits out the peer's delayed ACK (~40ms) on

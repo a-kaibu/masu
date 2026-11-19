@@ -217,11 +217,13 @@ pub trait Memory {
         }
         Ok(cur)
     }
-    /// Host pointer to [addr, addr + len) if all of it is plain accessible memory (bulk
-    /// string operations); None to go byte by byte.
-    fn host_range(&mut self, _addr: u32, _len: u32) -> Option<*mut u8> {
-        None
-    }
+    /// Copy plain guest memory with memmove semantics. False leaves it untouched
+    /// so the interpreter can fault at the exact failing iteration.
+    fn bulk_copy(&mut self, _dst: u32, _src: u32, _len: u32) -> bool { false }
+
+    /// Fill plain guest memory with repetitions of a little-endian element.
+    /// False leaves the destination untouched.
+    fn bulk_fill(&mut self, _dst: u32, _len: u32, _element: &[u8]) -> bool { false }
 
     /// Copy up to `buf.len()` instruction bytes at `addr`; returns how many
     /// were readable (decoding fails cleanly on a short fetch).

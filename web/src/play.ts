@@ -71,7 +71,7 @@ import { Budget, pool } from "./ahead";
 import { startWarm, warmAllowed, warmBusyWidth, warmMax, type Warm } from "./warm";
 import { savedChunks } from "./offline";
 import { keepServerWasm } from "./wasmkeep";
-import { sakeWasmBytes, WASM_CDN, wasmModuleArg } from "./wasmsource";
+import { runtimeWasm, WASM_CDN, wasmModuleArg } from "./wasmsource";
 import { deviceChunks } from "./chunkstore";
 import { fetchForesee, handForesee, mountedTrees } from "./foresee";
 import { CLASS, netBudget, setGameBusy, shareAcrossTabs } from "./budget";
@@ -384,16 +384,12 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   // sake's wasm from the bucket when the browser lacks the server's (wasmsource.ts): a far or
   // slow server held the start for minutes; &wasm=server: always the server's
   const wasmUrl = new URL(versioned(`${BASE}${WASM}`, version), location.href).href;
-  const wasmBytes =
-    params.get("wasm") === "server"
-      ? Promise.resolve({ bytes: null, from: "server" as const })
-      : sakeWasmBytes(WASM, wasmUrl, new URL("store/", location.href).href, {
-          device: deviceChunks,
-          note: (l) => recorder?.note(l),
-          // (the release's copy on GitHub Pages; &wasmcdn= another, &wasmcdn= empty: none)
-          cdn: params.get("wasmcdn") ?? WASM_CDN,
-          buildId: () => builds().then((b) => b.get(build.name)),
-        });
+  const wasmBytes = runtimeWasm(WASM, wasmUrl, new URL("store/", location.href).href,
+    (await builds()).get(build.name), params.get("wasm") === "server", {
+      device: deviceChunks,
+      note: (l) => recorder?.note(l),
+      cdn: params.get("wasmcdn") ?? WASM_CDN,
+    });
   recorder.note(
     `build: ${WASM} ${version}, translator ${await jitVersion}, memory ${build.memory ? "4 GB fixed" : "growing from 2.06 GB (4 GB refused)"}`,
   );

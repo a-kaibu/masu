@@ -59,7 +59,7 @@ impl Pages {
         if off >= self.len {
             return 0;
         }
-        let n = buf.len().min((self.len - off) as usize);
+        let n = buf.len().min(usize::try_from(self.len - off).unwrap_or(usize::MAX));
         let mut done = 0;
         while done < n {
             let at = off + done as u64;
@@ -202,6 +202,16 @@ mod tests {
             }
             Op::SetLen(n) => model.resize(*n as usize, 0),
         }
+    }
+
+    #[test]
+    fn reads_start_of_sparse_four_gib_file() {
+        let mut file = Pages::default();
+        file.write(0, b"abc").unwrap();
+        file.set_len(1u64 << 32).unwrap();
+        let mut bytes = [0; 3];
+        assert_eq!(file.read(0, &mut bytes), 3);
+        assert_eq!(&bytes, b"abc");
     }
 
     proptest! {

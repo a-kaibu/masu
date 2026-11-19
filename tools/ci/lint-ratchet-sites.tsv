@@ -1979,8 +1979,8 @@ crates/sake/src/lib.rs	undocumented_unsafe_blocks	unsafe { libc::exit(EXIT_CODE.
 crates/sake/src/lib.rs	unsafe_op_in_unsafe_fn	(0..argc as usize).map(|i| std::ffi::CStr::from_ptr(*argv.add(i)).to_string_lossy().into_owned()).collect();
 crates/sake/src/lib.rs	unsafe_op_in_unsafe_fn	(0..argc as usize).map(|i| std::ffi::CStr::from_ptr(*argv.add(i)).to_string_lossy().into_owned()).collect();
 crates/sake/src/lib.rs	unsafe_op_in_unsafe_fn	(0..argc as usize).map(|i| std::ffi::CStr::from_ptr(*argv.add(i)).to_string_lossy().into_owned()).collect();
-crates/sake/src/mem.rs	masu-from_raw_parts	f(unsafe { std::slice::from_raw_parts(r.ptr::<u8>().cast_const(), us(r.n)) })
-crates/sake/src/mem.rs	masu-from_raw_parts	f(unsafe { std::slice::from_raw_parts_mut(r.ptr::<u8>(), us(r.n)) })
+crates/sake/src/mem.rs	masu-from_raw_parts	f(unsafe { std::slice::from_raw_parts(r.ptr::<u8>().cast_const(), us(r.len())) })
+crates/sake/src/mem.rs	masu-from_raw_parts	f(unsafe { std::slice::from_raw_parts_mut(r.ptr::<u8>(), us(r.len())) })
 crates/sake/src/mf.rs	undocumented_unsafe_blocks	let done = unsafe { kura::d3d11::write_texture_from(surf, f.out.as_ptr().cast::<u8>(), 4 * (r - l).cast_unsigned(), [l.cast_unsigned(), t.cast_unsigned(), r.cast_unsigned(), bt.cast_unsigned()]) };
 crates/sake/src/mf.rs	undocumented_unsafe_blocks	while !unsafe { play::frame(stream, n.cast_signed(), f.px.as_mut_ptr().cast::<u8>(), 4 * to_usize(w), w, h) } {
 crates/sake/src/mf/movie.rs	masu-from_raw_parts	let d = unsafe { std::slice::from_raw_parts_mut(dst.add(y * pitch), row) };

@@ -671,7 +671,7 @@ fn take(only_pause: bool) {
     // only in the wait (one between the two held GATE in the copy, for ever in the restored
     // module: formal/tla/SnapPause.tla, NoFence)
     drop(GATE.lock().unwrap_or_else(|e| e.into_inner()));
-    let list = Box::leak(if only_pause { Vec::new() } else { build_ranges() }.into_boxed_slice());
+    let list = if only_pause { Vec::new() } else { build_ranges() };
     VNHOST_SNAP.ranges.store(lo32(list.as_ptr().expose_provenance()), SeqCst);
     VNHOST_SNAP.nranges.store(lo32(list.len()) / 2, SeqCst);
     let c = raw_clocks();
@@ -693,7 +693,9 @@ fn take(only_pause: bool) {
         eprintln!("snap: stirred: {stirred} wakes while the page copied (the state is not to be kept)");
         VNHOST_SNAP.stirred.store(stirred, SeqCst);
     }
-    let _ = unsafe { Box::from_raw(list as *mut [u32]) };
+    VNHOST_SNAP.nranges.store(0, SeqCst);
+    VNHOST_SNAP.ranges.store(0, SeqCst);
+    drop(list);
     resume_all(Some(c[0]));
     VNHOST_SNAP.state.store(ST_RUNNING, SeqCst);
     notify_page();

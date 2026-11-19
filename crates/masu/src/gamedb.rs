@@ -390,14 +390,10 @@ fn pull_from(name: &str, part: Part, dest: &Path, have: Option<&str>) -> Result<
         return Ok(digest);
     }
     let blob = reg.call("GET", &format!("blobs/{digest}"), &[], &[("Accept", "*/*")])?.into_reader().take(1 << 30);
-    let tmp = dest.with_extension("sqlite.tmp");
+    let tmp = tempfile::NamedTempFile::new_in(dest.parent().context("missing database directory")?)?.into_temp_path();
     unpack(blob, &digest, &tmp, MAX_DB).with_context(|| format!("{r}: {digest}"))?;
-    // (a copy it would not publish is not taken)
-    if let Err(e) = check(&tmp, part) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.context(format!("{r}: not {part:?}'s part")));
-    }
-    std::fs::rename(&tmp, dest)?;
+    check(&tmp, part).with_context(|| format!("{r}: not {part:?}'s part"))?;
+    tmp.persist(dest)?;
     Ok(digest)
 }
 

@@ -16,6 +16,11 @@ ulimit -s unlimited 2>/dev/null || ulimit -s 65536
 export CARGO_TARGET_WASM32_WASIP1_RUNNER="node --no-warnings --stack-size=30000 $PWD/formal/wasi-run.mjs"
 export CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true
 export CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target/wasm32-tests}
+# kura links the host runtime. Compile its standalone paged-file implementation
+# directly so this check runs with the same pointer width as the browser.
+mkdir -p "$CARGO_TARGET_DIR"
+rustc --edition=2024 --target wasm32-wasip1 formal/pages-wasm32.rs -o "$CARGO_TARGET_DIR/pages.wasm"
+node --no-warnings formal/wasi-run.mjs "$CARGO_TARGET_DIR/pages.wasm"
 for c in "${crates[@]}"; do
   echo "== $c"
   cargo test --release --target wasm32-wasip1 -p "$c" --lib

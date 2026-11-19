@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 #[exclude = "*.zst"]
 struct Web;
 
-pub fn unpack(cache: &Path) -> Result<PathBuf> {
+pub fn unpack(cache: &Path) -> Result<(PathBuf, std::fs::File)> {
     let mut names: Vec<_> = Web::iter().collect();
     if names.is_empty() {
         bail!("this masu was built without the web app (build web/dist before masu, or give --web)");
@@ -25,10 +25,14 @@ pub fn unpack(cache: &Path) -> Result<PathBuf> {
     let mut h = blake3::Hasher::new();
     for n in &names {
         h.update(n.as_bytes());
-        h.update(&Web::get(n).unwrap().metadata.sha256_hash());
+        h.update(&Web::get(n).with_context(|| format!("missing web asset {n}"))?.metadata.sha256_hash());
     }
     let key = h.finalize().to_hex()[..16].to_string();
     let root = cache.join("web");
+    std::fs::create_dir_all(&root)?;
+    // Serialize publication, acquisition of the lifetime lock, and pruning across processes.
+    let cache_lock = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(root.join(".lock"))?;
+    cache_lock.lock()?;
     let dir = root.join(&key);
     if !dir.join(".done").exists() {
         let tmp = root.join(format!(".{key}.{}", std::process::id()));
@@ -36,7 +40,7 @@ pub fn unpack(cache: &Path) -> Result<PathBuf> {
         for n in &names {
             let p = tmp.join(n.as_ref());
             std::fs::create_dir_all(p.parent().context("an asset with no folder")?)?;
-            std::fs::write(&p, Web::get(n).unwrap().data).with_context(|| p.display().to_string())?;
+            std::fs::write(&p, Web::get(n).with_context(|| format!("missing web asset {n}"))?.data).with_context(|| p.display().to_string())?;
         }
         std::fs::write(tmp.join(".done"), "")?;
         let _ = std::fs::remove_dir_all(&dir);
@@ -45,9 +49,8 @@ pub fn unpack(cache: &Path) -> Result<PathBuf> {
     // this server uses it while it runs: older builds' servers still running keep theirs
     let inuse = std::fs::File::open(dir.join(".done"))?;
     inuse.lock_shared()?;
-    Box::leak(Box::new(inuse));
     prune(&root, &key)?;
-    Ok(dir)
+    Ok((dir, inuse))
 }
 
 /// Removes the copies of other builds that no running server uses (one that does holds a shared
@@ -65,9 +68,10 @@ fn prune(root: &Path, keep: &str) -> Result<()> {
                 }
             }
             // (one never finished)
-            Err(_) => {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 let _ = std::fs::remove_dir_all(e.path());
             }
+            Err(e) => return Err(e.into()),
         }
     }
     Ok(())

@@ -14,10 +14,18 @@ use axum::{
 use std::{path::PathBuf, sync::Arc};
 
 #[derive(Clone)]
+struct PublishedWasm {
+    build: String,
+    chunk: String,
+}
+
+type WasmCatalog = std::sync::RwLock<std::collections::HashMap<String, PublishedWasm>>;
+
+#[derive(Clone)]
 struct Store {
     remote: Arc<Storage>,
     /// sake's wasm files put in the bucket ([`publish_wasm`]): file name -> chunk name
-    wasm: Arc<std::sync::RwLock<std::collections::HashMap<String, String>>>,
+    wasm: Arc<WasmCatalog>,
 }
 
 /// What `/store/<path>` serves: the catalog (a tree's list, a game's description or cover).
@@ -87,11 +95,11 @@ async fn direct(State(s): State<Store>, Path(path): Path<String>) -> Response {
 /// A /store-direct answer: `{url, key, object}`, and `pack: {id, url, offset, len}` when a
 /// delivery pack holds the object too (storage.rs pack_objects; the page reads its neighbours
 /// in the pack with the same GET).
-fn direct_json(d: &crate::storage::Direct) -> serde_json::Value {
+fn direct_json(d: &crate::storage::Direct) -> serde_json::Map<String, serde_json::Value> {
     let key: String = d.key.iter().map(|b| format!("{b:02x}")).collect();
-    let mut v = serde_json::json!({ "url": d.url, "key": key, "object": d.object.to_string() });
+    let mut v = serde_json::Map::from_iter([("url".into(), d.url.clone().into()), ("key".into(), key.into()), ("object".into(), d.object.to_string().into())]);
     if let Some(p) = &d.pack {
-        v["pack"] = serde_json::json!({ "id": p.id.to_string(), "url": p.url, "offset": p.offset, "len": p.len });
+        v.insert("pack".into(), serde_json::json!({ "id": p.id.to_string(), "url": p.url, "offset": p.offset, "len": p.len }));
     }
     v
 }
@@ -119,7 +127,7 @@ async fn direct_many(State(s): State<Store>, axum::Json(paths): axum::Json<Vec<S
     match remote.direct_many(paths, DIRECT_EXPIRY).await {
         Ok(all) => {
             for (path, d) in all {
-                out.insert(path, direct_json(&d));
+                out.insert(path, direct_json(&d).into());
             }
         }
         Err(e) => {
@@ -143,20 +151,23 @@ fn wasm_name(name: &str) -> bool {
 /// the bucket's speed, not through this server's own line (worker2's gave ~100 KB/s at times,
 /// minutes before a game could start). Each build once: a release's files are the same at
 /// every start.
-async fn publish_wasm(remote: &Storage, web: &std::path::Path, wasm: &std::sync::RwLock<std::collections::HashMap<String, String>>) -> anyhow::Result<usize> {
+async fn publish_wasm(remote: &Storage, web: &std::path::Path, wasm: &WasmCatalog) -> anyhow::Result<usize> {
     let mut names: Vec<String> = std::fs::read_dir(web.join("sake"))?.filter_map(|e| e.ok()?.file_name().into_string().ok()).filter(|n| wasm_name(n)).collect();
     names.sort();
     let mut sent = 0;
     for name in names {
         let bytes = tokio::fs::read(web.join("sake").join(&name)).await?;
-        let h = blake3::hash(&bytes).to_hex()[..32].to_string();
-        let logical = format!("chunks/{}/{h}", &h[..2]);
+        let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
+        let build = digest.as_ref().iter().take(8).map(|b| format!("{b:02x}")).collect();
+        let h = blake3::hash(&bytes).to_hex().split_at(32).0.to_owned();
+        let (prefix, _) = h.split_at(2);
+        let logical = format!("chunks/{prefix}/{h}");
         if !remote.has(&logical)? {
             let z = tokio::task::spawn_blocking(move || zstd::bulk::compress(&bytes, 19)).await??;
             remote.put(&logical, &z).await?;
             sent += 1;
         }
-        wasm.w().insert(name, h);
+        wasm.w().insert(name, PublishedWasm { build, chunk: h });
     }
     Ok(sent)
 }
@@ -166,11 +177,12 @@ async fn publish_wasm(remote: &Storage, web: &std::path::Path, wasm: &std::sync:
 /// checked by the page). 404 until [`publish_wasm`] put it there (or for another name).
 async fn sake_direct(State(s): State<Store>, Path(name): Path<String>) -> Response {
     let remote = &*s.remote;
-    let Some(h) = s.wasm.r().get(&name).cloned() else { return StatusCode::NOT_FOUND.into_response() };
+    let Some(PublishedWasm { build, chunk: h }) = s.wasm.r().get(&name).cloned() else { return StatusCode::NOT_FOUND.into_response() };
     match remote.direct(&format!("chunks/{}/{h}", &h[..2]), DIRECT_EXPIRY).await {
         Ok(Some(d)) => {
             let mut v = direct_json(&d);
-            v["chunk"] = h.into();
+            v.insert("chunk".into(), h.into());
+            v.insert("build".into(), build.into());
             let mut r = axum::Json(v).into_response();
             r.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-store"));
             r
@@ -408,15 +420,20 @@ mod tests {
             let a = reqwest::get(all[n]["url"].as_str().unwrap()).await.unwrap().bytes().await.unwrap();
             let b = reqwest::get(one["url"].as_str().unwrap()).await.unwrap().bytes().await.unwrap();
             assert_eq!(a, b);
-            assert_eq!(all[n]["pack"], one["pack"]);
             if names[..3].contains(n) {
                 let p = &all[n]["pack"];
                 let body = reqwest::get(p["url"].as_str().unwrap()).await.unwrap().bytes().await.unwrap();
+                let other = &one["pack"];
+                for field in ["id", "offset", "len"] {
+                    assert_eq!(p[field], other[field]);
+                }
+                let other_body = reqwest::get(other["url"].as_str().unwrap()).await.unwrap().bytes().await.unwrap();
+                assert_eq!(other_body, body);
                 let (o, l) = (p["offset"].as_u64().unwrap() as usize, p["len"].as_u64().unwrap() as usize);
                 assert_eq!(&body[o..o + l], &a[..], "{n}: the pack's span is the object");
                 assert!(p["id"].as_str().is_some_and(|id| p["url"].as_str().unwrap().contains(id)));
             } else {
-                assert!(all[n].get("pack").is_none(), "{n}");
+                assert!(all[n].get("pack").is_none() && one.get("pack").is_none(), "{n}");
             }
         }
         let many = vec![names[0].clone(); DIRECT_MANY + 1];

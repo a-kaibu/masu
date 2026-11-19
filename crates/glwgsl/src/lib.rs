@@ -657,3 +657,11 @@ impl Member {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[test]
+fn oversized_array_element_is_a_compile_error() {
+    let result = compile("#version 450\nvoid main() { vec4 huge[1073741824][2]; }", false);
+    let error = result.err().expect("oversized shader compiled");
+    assert!(error.contains("Invalid array element layout"), "{error}");
+}

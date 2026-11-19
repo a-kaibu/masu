@@ -202,7 +202,7 @@ fn upload_errors() {
             assert_eq!(err(), e, "alignment {v}");
         }
         let mut got = 0i32;
-        glGetIntegerv(0x0CF5, &mut got);
+        host_integer(0x0CF5, &mut got);
         assert_eq!(got, 8, "a refused alignment leaves the last one");
         glPixelStorei(0x0CF2, -1);
         assert_eq!(err(), GL_INVALID_VALUE);
