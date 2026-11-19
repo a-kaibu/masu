@@ -3,7 +3,7 @@ b2006_alcot	-	ddraw: tri_trial/tri_trial.exe: no title screen, ended; tried d3d9
 b2006_blackcyc	-	not recorded yet
 b2006_interheart	-	none: オイラは番台２体験版/Bandai2.exe: no D3D8/9/11
 b2006_kaguya	-	none: アマツ体験版/AMATU.exe: no D3D8/9/11
-b2006_lilim	-	not recorded yet
+b2006_lilim	-	none: 序章ver/sfa9.exe: no D3D8/9/11 nor DirectDraw
 b2006_lumpofsugar	-	none: 「いつか、届く、あの空に。」体験版/Itsusora.exe: no D3D8/9/11
 b2006_lune	-	not recorded yet
 b2006_marine	-	not recorded yet
@@ -14,14 +14,14 @@ b2007_anim	-	none: 必殺痴漢人 Web体験版/ck.exe: no D3D8/9/11
 b2007_bishop	-	none: hd_Trial2/demo.exe: no D3D8/9/11
 b2007_clochette	-	not recorded yet
 b2007_feng	-	not recorded yet
-b2007_hadashi	-	not recorded yet
-b2007_kaguya	Faithful	not run on sake
+b2007_hadashi	-	none: dl/RealLive.exe: no D3D8/9/11 nor DirectDraw
+b2007_kaguya	Faithful	3 differences on sake
 b2007_lilim	-	not recorded yet
-b2007_lilim_darkness	-	not recorded yet
+b2007_lilim_darkness	-	none: toraianguru_blue_taiken/sfa9.exe: no D3D8/9/11 nor DirectDraw
 b2007_lune	-	not recorded yet
 b2007_marmalade	-	none: リリカル♪りりっく体験版/lyrical.exe: no D3D8/9/11
-b2007_propeller	-	not recorded yet
-b2007_sagaplanets	-	not recorded yet
+b2007_propeller	-	none: BB_Trial/BB.exe: no D3D8/9/11 nor DirectDraw
+b2007_sagaplanets	-	none: RealLive.exe: no D3D8/9/11 nor DirectDraw
 b2007_whirlpool	-	not recorded yet
 b2008_akabeesoft	-	none: WLO_WEB体験版/wlo_webtrial.exe: no D3D8/9/11
 b2008_bishop	-	none: kedamono_web_trial/startup.exe: no D3D8/9/11
@@ -43,19 +43,19 @@ b2010_giga	-	not recorded yet
 b2010_grand_cru	-	none: ReunionWEB体験版/reunion.exe: no D3D8/9/11
 b2010_kaguya	-	none: dl/キラリ☆南国小麦色 体験版/Start.exe: no D3D8/9/11
 b2010_waffle	-	not recorded yet
-b2011_anim_team_mm	Faithful	not run on sake
+b2011_anim_team_mm	Faithful	55 differences on sake
 b2011_bishop	-	notrace: uk_trial/startup.exe: no title screen; tried d3d9; loaded: no graphics DLL
 b2011_catwalk	-	not recorded yet
-b2011_empress	-	not recorded yet
+b2011_empress	-	none: dl/Starless体験版２インストーラ.exe: no D3D8/9/11 nor DirectDraw
 b2011_guilty	-	not recorded yet
 b2011_hook	-	not recorded yet
 b2011_marine	-	not recorded yet
 b2012_alicesoft	-	notrace: dl/母娘乱館体験版/OyakorankanTrial.exe: title screen at 2s; tried d3d9; loaded: d3d9.dll
 b2012_atelier_gh	-	not recorded yet
 b2012_bishop	-	notrace: dl/startup.exe: no title screen; tried d3d9; loaded: no graphics DLL
-b2012_fudegaki_soft	Faithful	not run on sake
+b2012_fudegaki_soft	Faithful	4 differences on sake
 b2012_tinkerbell	-	noconvert: 籠女の繭Web体験版1.1/kagome.exe: d3d9
-b2012_trois	Faithful	not run on sake
+b2012_trois	Faithful	4 differences on sake
 b2012_waffle	-	not recorded yet
 b2013_alicesoft	-	notrace: dl/ランス01体験版/Rance01Trial.exe: no title screen; tried d3d9; loaded: d3d9.dll
 b2013_anim	-	not recorded yet
@@ -66,7 +66,7 @@ b2013_hulotte	-	none: 妹のおかげでモテすぎてヤバい。体験版/妹
 b2013_kaguya	-	noconvert: 肉牝Ｒ３０（体験版）/GAME_SYS.exe: d3d9
 b2013_lumpofsugar	-	notrace: sekachu_trial_WEB2/sekachu_trial_WEB2/sekachu_trial_WEB2.exe: no title screen, ended; tried d3d9; loaded: no graphics DLL
 b2013_tinkerbell	-	noconvert: ぜったいマジラブ！あまイチャはぷにんぐ！体験版/amaitya.exe: d3d9
-b2014_azarashi_soft	Faithful	not run on sake
+b2014_azarashi_soft	Faithful	2 differences on sake
 b2014_ensemble_sweet	-	not recorded yet
 b2014_escude	-	notrace: dl/relord.exe: winplay wrote nothing; tried d3d9; loaded: no graphics DLL
 b2014_guilty	-	not recorded yet
@@ -75,34 +75,34 @@ b2014_undermoon	-	ddraw: 奪われた学園～罠に落ちた優等生～ 体験
 b2014_waffle	-	not recorded yet
 b2014_wendybell	-	noconvert: こすぷれえっち体験版/cosplayh.exe: d3d9
 b2015_empress	-	not recorded yet
-b2015_erectlip	-	not recorded yet
-b2015_guilty	Faithful	not run on sake
+b2015_erectlip	-	none: dosukebe_try/dosukebe_try.exe: no D3D8/9/11 nor DirectDraw
+b2015_guilty	Faithful	293 differences on sake
 b2015_hamham	-	not recorded yet
 b2015_mille_feuille	-	ddraw: 極煌戦姫ミストルティア体験版/mistletear.exe: title screen at 7s; tried d3d9; loaded: d3d10warp.dll d3dim700.dll ddraw.dll dinput.dll dinput8.dll dxgi.dll
 b2015_minato_carnival	-	not recorded yet
-b2016_alcot	Faithful	not run on sake
+b2016_alcot	Faithful	2 differences on sake
 b2016_blackcyc	-	not recorded yet
 b2016_evoll	-	none: dl/game/ags.exe: no D3D8/9/11
 b2016_giga	-	not recorded yet
-b2016_inter_heart_glossy	Faithful	not run on sake
+b2016_inter_heart_glossy	Compatible	
 b2016_kaguya	-	noconvert: 小悪魔発育チュ～！（体験版）/GAME_SYS.exe: d3d9
 b2016_silkys_sakura	-	not recorded yet
 b2016_waffle	-	not recorded yet
-b2017_inter_heart_glossy	Faithful	not run on sake
+b2017_inter_heart_glossy	Compatible	
 b2017_onomatope_raspberry	-	not recorded yet
 b2017_waffle	-	not recorded yet
 b2018_ensemble	-	noconvert: KOIHANA_WEB_TRIAL/ADVHD.EXE: dxgi
-b2018_erectlip	-	not recorded yet
+b2018_erectlip	-	none: bakusai_try/bakusai_try.exe: no D3D8/9/11 nor DirectDraw
 b2018_fudegaki_soft	Convertible	left out: CompatValue x10
-b2018_hachimitsu_soft	Faithful	not run on sake
+b2018_hachimitsu_soft	Compatible	
 b2018_mirai	-	not recorded yet
 b2018_tokohana	-	noconvert: 僕と彼女のご奉仕同棲 体験版/AdvHD.exe: dxgi
-b2019_anim	Faithful	not run on sake
-b2019_sukerasparo	Faithful	not run on sake
-b2020_akabeesoft3	Faithful	not run on sake
+b2019_anim	Faithful	5 differences on sake
+b2019_sukerasparo	Faithful	2 differences on sake
+b2020_akabeesoft3	Faithful	3 differences on sake
 b2020_barista_lab	-	not recorded yet
 b2020_caramel_box_strawberry	-	none: hktrial/ags.exe: no D3D8/9/11
-b2020_erectlip	-	not recorded yet
+b2020_erectlip	-	none: injyoku_reibaishi_try/injyoku_reibaishi_try.exe: no D3D8/9/11 nor DirectDraw
 b2020_hachimitsu_soft	-	not recorded yet
 b2020_lass_pixy	-	none: lsg3_tr/リトルシックガール 桃蜜は妹の香り 体験版/リトルシックガール 桃蜜は妹の香り 体験版.exe: no D3D8/9/11
 b2020_rikuzendo	-	not recorded yet
@@ -113,14 +113,14 @@ b2022_ba_ku	-	not recorded yet
 b2022_lunaprism	-	not recorded yet
 b2023_appetite	-	not recorded yet
 b2023_fg_remake	-	not recorded yet
-b2024_milimili	-	not recorded yet
+b2024_milimili	-	none: hanako_try/hanako_try.exe: no D3D8/9/11 nor DirectDraw
 b2024_ninetail	-	not recorded yet
 b2024_syrup_mm	-	notrace: 狙われた優等生体験版/yutosei.exe: title screen at 10s; tried d3d9; loaded: dinput.dll opengl32.dll
 b2025_ensemble_sweet	-	noconvert: dl/のーぶるバトラー TRIAL EDITION/AdvHD.exe: dxgi
 b2025_guilty	-	noconvert: torikonohomura_trial/虜ノ焔 ～淫欲の炎に満ちた地下闘技場～ 体験版/AdvHD.exe: dxgi
-b2026_anim	Faithful	not run on sake
-b2026_crystalia	-	not recorded yet
-b2026_dessert_soft	Faithful	not run on sake
+b2026_anim	Faithful	4 differences on sake
+b2026_crystalia	-	none: totsulover_try/totsulover_try.exe: no D3D8/9/11 nor DirectDraw
+b2026_dessert_soft	Compatible	
 b2026_wendybell	Convertible	hr 0 D3D11CreateDevice 0 want 0x1; hr 80 ID3D11Device5::QueryInterface 0 want 0x80004002; left out: CompatValue x19; left out: ID3D10Multithread::Release x1; left out: ID3D10Multithread::SetMultithreadProtected x1; left out: ID3DDeviceContextState::AddRef x1; left out: ID3DDeviceContextState::Release x3
 dl_RJ01529614	-	not recorded yet
 dl_RJ01582557	-	not recorded yet
@@ -208,7 +208,7 @@ dl_RJ01740259	-	not recorded yet
 dl_RJ01741863	-	not recorded yet
 dl_RJ01744242	-	not recorded yet
 dl_RJ01746276	-	not recorded yet
-dl_RJ01746340	-	not recorded yet
+dl_RJ01746340	-	none: magical_girl_moko2-Ver0.5-pc/magical_girl_moko2.exe: no D3D8/9/11 nor DirectDraw
 dl_RJ01746806	-	not recorded yet
 dl_RJ01747016	-	not recorded yet
 dl_RJ357058	-	not recorded yet
@@ -220,70 +220,70 @@ dl_VJ01005112	-	not recorded yet
 dl_VJ01005807	-	not recorded yet
 r1_advhd	Convertible	hr 5 D3D11CreateDevice 0 want 0x1; hr 27 D3D11CreateDevice 0 want 0x1; hr 135 ID3D11Device5::QueryInterface 0 want 0x80004002; left out: CompatValue x28; left out: ID3D10Multithread::Release x1; left out: ID3D10Multithread::SetMultithreadProtected x1; left out: ID3DDeviceContextState::AddRef x1; left out: ID3DDeviceContextState::Release x373
 r1_artemis	-	not recorded yet
-r1_higanbana	-	not recorded yet
+r1_higanbana	-	none: higanbana_otameshi.exe: no D3D8/9/11 nor DirectDraw
 r1_kag3	-	not recorded yet
-r1_majiro	-	not recorded yet
+r1_majiro	-	none: あいれぼtrial.exe: no D3D8/9/11 nor DirectDraw
 r1_musica	-	not recorded yet
-r1_naru2	-	not recorded yet
+r1_naru2	-	none: naru2/nana25w.exe: no D3D8/9/11 nor DirectDraw
 r1_qlie	-	not recorded yet
-r1_reallive_five	-	not recorded yet
-r1_renpy	-	not recorded yet
+r1_reallive_five	-	none: Five_trial_setup.exe: no D3D8/9/11 nor DirectDraw
+r1_renpy	-	none: renpy-8.5.3-sdk/renpy.exe: no D3D8/9/11 nor DirectDraw
 r1_sakana	-	not recorded yet
 r1_saku	-	not recorded yet
-r1_trt	-	not recorded yet
+r1_trt	-	none: trt_trial/トライアンソロジー～三面鏡の国のアリス～.exe: no D3D8/9/11 nor DirectDraw
 r1_tyrano	-	not recorded yet
 r1_yuris	-	not recorded yet
 s2006_bishop_hkg2	-	not recorded yet
 s2006_giga_ab	-	notrace: angelbreath_trial/angelbreath.exe: no title screen, ended; tried d3d9; loaded: d3d9.dll dinput8.dll
-s2006_lune_maimiko	-	not recorded yet
+s2006_lune_maimiko	-	none: 妹巫女･萌 体験版/MAIMIKO_trial.exe: no D3D8/9/11 nor DirectDraw
 s2006_lune_sakuya	-	not recorded yet
 s2006_pulltop_haruka	-	not recorded yet
 s2007_giga_himesama	-	not recorded yet
 s2008_alcot_engagekinks	-	not recorded yet
-s2008_clochette_suzunone7	Faithful	not run on sake
+s2008_clochette_suzunone7	Faithful	2 differences on sake
 s2008_guilty_wana2	-	not recorded yet
 s2008_kaguya_dc2	-	not recorded yet
-s2008_sagaplanets_cominghumming	-	not recorded yet
+s2008_sagaplanets_cominghumming	-	none: Coming×Humming!![体験版]/REALLIVEDATA/RealLive.exe: no D3D8/9/11 nor DirectDraw
 s2009_ensemble_hanaotome	-	not recorded yet
 s2009_escude_prister	-	none: 乙女恋心プリスター 体験版/Prister.exe: no D3D8/9/11
-s2010_eushully_ikusa_verita	Faithful	not run on sake
+s2010_eushully_ikusa_verita	Compatible	
 s2010_lumpofsugar_prismrhythm	-	none: PrismRhythm_trial_Web/PrismRhythm.exe: no D3D8/9/11
 s2010_pulltop_lovekami	-	ddraw: 恋神 -ラブカミ-（Web用体験版）/lovekami_t.exe: no title screen; tried d3d8; loaded: d3dim700.dll ddraw.dll dinput8.dll dxgi.dll
 s2010_sagaplanets_kisaragi	-	not recorded yet
-s2011_clochette_kamikaze	Faithful	not run on sake
+s2011_clochette_kamikaze	Faithful	3 differences on sake
 s2011_grand_cru_imostar	-	none: しゅ～てぃんぐ妹スター体験版/sms.exe: no D3D8/9/11
 s2011_lumpofsugar_gackoh	-	notrace: Gackoh_Trial/Gackoh.exe: no title screen, ended; tried d3d9; loaded: no graphics DLL
 s2011_marine_marching	-	not recorded yet
 s2011_propeller_sukima	-	not recorded yet
 s2011_purplesoftware_miranosu	-	not recorded yet
-s2011_waffle_sex_friend	Faithful	not run on sake
-s2012_empress_lewdness	-	not recorded yet
+s2011_waffle_sex_friend	Faithful	212 differences on sake
+s2012_empress_lewdness	-	none: Lewdness体験版/LEWDNESS体験版.exe: no D3D8/9/11 nor DirectDraw
 s2012_escude_gurenka	-	none: ネット体験版/gurenka.exe: no D3D8/9/11
 s2012_kaguya_sperman	-	notrace: sperman_trial.exe.zip/スペルマン（体験版）/GAME_SYS.exe: no title screen; tried d3d9; loaded: d3d9.dll dinput8.dll
 s2012_marine_deka_ane	-	not recorded yet
 s2012_ninetail_gears_of_dragoon	-	none: GoD_RPG_trial_100/uroboros.exe: no D3D8/9/11
 s2013_alicesoft_drapeko	-	notrace: dl/どらぺこ！体験版/DrapekoTrial.exe: title screen at 2s; tried d3d9; loaded: d3d9.dll
-s2014_clochette_sakigake	Faithful	not run on sake
-s2014_erectlip_gyokumajyo	-	not recorded yet
+s2014_clochette_sakigake	Faithful	3 differences on sake
+s2014_erectlip_gyokumajyo	-	none: gyakumajyo_try/gyakumajyo_try.exe: no D3D8/9/11 nor DirectDraw
 s2014_escude_hanaou	-	notrace: 花嫁と魔王WEB専用体験版/hanaou.exe: winplay wrote nothing; tried d3d9; loaded: no graphics DLL
 s2014_hooksoft_meltymoment	-	notrace: MeltyMoment_体験版/BGI.exe: no title screen, ended; tried d3d9; loaded: no graphics DLL
 s2014_lune_revenge_room	-	not recorded yet
-s2014_qoobrand_majokoi	-	not recorded yet
+s2014_qoobrand_majokoi	-	none: MAJOKOI_try/MAJOKOI_try.exe: no D3D8/9/11 nor DirectDraw
 s2014_whirlpool_tearstilla	-	not recorded yet
-s2015_clochette_kokonatsu	Faithful	not run on sake
-s2015_ensemble_sweet_yakimochi	Faithful	not run on sake
+s2015_clochette_kokonatsu	Faithful	2 differences on sake
+s2015_ensemble_sweet_yakimochi	Faithful	5 differences on sake
 s2015_hulotte_yomeyaba	-	none: 嫁探しが捗りすぎてヤバい。体験版/嫁探しが捗りすぎてヤバい。TR.exe: no D3D8/9/11
-s2015_silkys_plus_neyuki	Faithful	not run on sake
-s2016_eushully_sankaio	Faithful	not run on sake
+s2015_silkys_plus_neyuki	Faithful	2 differences on sake
+s2016_eushully_sankaio	Compatible	
 s2016_hooksoft_amenitys_life	-	notrace: AmenitysLife_trial_02/AmenitysLife.exe: no title screen, ended; tried d3d9; loaded: no graphics DLL
 s2016_kaguya_idol_pafupafu	-	noconvert: アイドルパフパフマネージメント（体験版）/GAME_SYS.exe: d3d9
 s2016_marine_cospure_harem	-	not recorded yet
-s2017_akabeesoft3_tonofuta	Faithful	not run on sake
+s2017_akabeesoft3_tonofuta	Faithful	2 differences on sake
 s2017_appetite_immorality_don	-	ddraw: apt090_tr/oyakodon_tr.exe: title screen at 7s; tried d3d9; loaded: d3d10warp.dll d3dim700.dll ddraw.dll dinput.dll dxgi.dll
 s2017_dualtail_vbb	-	not recorded yet
-s2017_inter_heart_glossy_hitozuma_ntr	Faithful	not run on sake
+s2017_inter_heart_glossy_hitozuma_ntr	Compatible	
 s2017_marmalade_mashimaro	-	not recorded yet
-s2017_nanawind_alice_gram	Faithful	not run on sake
+s2017_nanawind_alice_gram	Faithful	3 differences on sake
 s2017_sagaplanets_kinkoi	-	not recorded yet
 s2017_wendybell_oreyome	-	not recorded yet
 s2018_dualtail_vbl	-	not recorded yet
@@ -293,22 +293,22 @@ s2019_appetite_dt_kyoiku	-	ddraw: apt148_tr/DTkyoiku_trial.exe: title screen at 
 s2019_guilty_harame	-	noconvert: 孕女～精子を欲しがる淫らな教え子～ 体験版/AdvHD.exe: dxgi
 s2019_lilim_shinmu	-	ddraw: sinmu_trial_1/風雷戦姫神夢web体験版01.exe: title screen at 15s; tried d3d9; loaded: d3d10warp.dll d3d9.dll d3dx9_43.dll ddraw.dll dinput.dll dxgi.dll
 s2019_lune_dogeza_saimin	-	not recorded yet
-s2020_amuse_craft_erotica_kinbaku	-	not recorded yet
+s2020_amuse_craft_erotica_kinbaku	-	none: kinbaku_s_try/kinbaku_s_try.exe: no D3D8/9/11 nor DirectDraw
 s2020_casket_ayakashi03	-	not recorded yet
 s2020_eushully_tenmei	-	noconvert: 天冥のコンキスタ体験版/tenmei_trial.exe.is/天冥のコンキスタ体験版.msi.x/Program Files/Eushully/天冥のコンキスタ体験版/AGE.EXE: dxgi
-s2020_wonder_fool_maokatsu	Faithful	not run on sake
+s2020_wonder_fool_maokatsu	Faithful	4 differences on sake
 s2021_dualtail_vbhi	-	not recorded yet
-s2021_giga_fuyukiss	Faithful	not run on sake
+s2021_giga_fuyukiss	Faithful	2 differences on sake
 s2021_nanawind_kanade_gram_ch1	-	not recorded yet
 s2021_silkys_plus_fuyukuru	Convertible	hr 67 ID3D11Device5::QueryInterface 0 want 0x80004002; left out: CompatValue x11; left out: ID3D10Multithread::Release x1; left out: ID3DDeviceContextState::AddRef x1; left out: ID3DDeviceContextState::Release x5
 s2022_akabeesoft2_roleplayer_tororo	-	not recorded yet
-s2022_amuse_craft_erotica_tsumamomi	-	not recorded yet
+s2022_amuse_craft_erotica_tsumamomi	-	none: tsumamomi_try/tsumamomi_try.exe: no D3D8/9/11 nor DirectDraw
 s2022_bishop_cs2	-	not recorded yet
-s2022_hooksoft_houkago2	Faithful	not run on sake
+s2022_hooksoft_houkago2	Faithful	2 differences on sake
 s2023_anim_anetumami2	-	not recorded yet
 s2023_hadashi_harem_shangrila	-	not recorded yet
 s2023_j_studio_reaero_dt	Convertible	left out: CompatValue x10
-s2023_milimili_onaho_yokai	-	not recorded yet
+s2023_milimili_onaho_yokai	-	none: onaho_yokai_try/onaho_yokai_try.exe: no D3D8/9/11 nor DirectDraw
 s2024_eushully_hyakusen	-	not recorded yet
 s2024_madosoft_selectoblige	-	not recorded yet
 s2025_dualtail_vbv	-	not recorded yet
