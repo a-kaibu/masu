@@ -146,6 +146,15 @@ async function cacheSave(name: string, data: Uint8Array, base: string | null, cl
   return record;
 }
 
+async function acknowledgeSave(name: string, generation: Sync["generation"], base: Sync["base"]) {
+  await localLock(name, async () => {
+    const current = await readSync(name);
+    if (current && current.generation === generation) {
+      await writeSync(name, { ...current, base, dirty: false });
+    }
+  });
+}
+
 /**
  * The blob an earlier session saved for `name` (null: none). With the server in reach: the
  * server's, unless this browser's copy was saved after it was last sent (offline, or the page
@@ -293,12 +302,9 @@ export function storeSaves(
     if (!upload || staged === false) return false;
     await transport.store(url, data);
     if (staged)
-      await localLock(name, async () => {
-        const current = await readSync(name);
-        if (current && current.generation === staged.generation) {
-          await writeSync(name, { ...current, base: transport.revision(url) ?? null, dirty: false });
-        }
-      }).catch((e: unknown) => console.warn("saves: local cache", e));
+      await acknowledgeSave(name, staged.generation, transport.revision(url) ?? null).catch((e: unknown) =>
+        console.warn("saves: local cache", e),
+      );
     return true;
   });
 }

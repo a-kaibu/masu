@@ -31,10 +31,14 @@ pub enum Rule {
     SafeRawPointerAbi,
     UncheckedJitMode,
     OutEscape,
+    MemoryPointer,
+    PagedReadCast,
+    ShaderLayoutPanic,
+    StoreDeletion,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 14] = [
+    pub const ALL: [Rule; 18] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -49,6 +53,10 @@ impl Rule {
         Rule::SafeRawPointerAbi,
         Rule::UncheckedJitMode,
         Rule::OutEscape,
+        Rule::MemoryPointer,
+        Rule::PagedReadCast,
+        Rule::ShaderLayoutPanic,
+        Rule::StoreDeletion,
     ];
 
     /// the name a site list and a message use
@@ -68,6 +76,10 @@ impl Rule {
             Rule::SafeRawPointerAbi => "safe-raw-pointer-abi",
             Rule::UncheckedJitMode => "unchecked-jit-mode",
             Rule::OutEscape => "out-escape",
+            Rule::MemoryPointer => "memory-pointer",
+            Rule::PagedReadCast => "paged-read-cast",
+            Rule::ShaderLayoutPanic => "shader-layout-panic",
+            Rule::StoreDeletion => "store-deletion",
         }
     }
 
@@ -87,6 +99,10 @@ impl Rule {
             Rule::DisallowedNamed => "each clippy.toml disallowed-methods entry's reason starts with its masu-* name (`masu-relay: ...`): the ratchet counts it under that name",
             Rule::SafeRawPointerAbi => "an extern fn that takes a raw pointer is `unsafe extern` with a # Safety section (review 2026-11-17, vnhost_jit_late): a safe one lets safe Rust hand it any address; better, take an owned or typed value",
             Rule::UncheckedJitMode => "the JIT without range checks (koji::jit::NOCHECK, MASU_JIT_NOCHECK) is for measuring only (review 2026-11-17): the switch starts off, only kura's jit.rs may set it, and no build, CI step, script or page turns it on",
+            Rule::MemoryPointer => "koji Memory operations must keep host pointers inside the implementation",
+            Rule::PagedReadCast => "use checked conversion for file positions and byte counts in Pages::read",
+            Rule::ShaderLayoutPanic => "propagate GLSL array layout failures as compiler errors",
+            Rule::StoreDeletion => "retired bucket objects must pass through gc before physical deletion",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -107,6 +123,10 @@ impl Rule {
             Rule::SafeRawPointerAbi => safe_raw_pointer_abi(tree),
             Rule::UncheckedJitMode => unchecked_jit_mode(tree),
             Rule::OutEscape => out_escape(tree),
+            Rule::MemoryPointer => boundaries::check(self, tree, boundaries::MEMORY),
+            Rule::PagedReadCast => boundaries::check(self, tree, boundaries::PAGES),
+            Rule::ShaderLayoutPanic => boundaries::check(self, tree, boundaries::GLSL),
+            Rule::StoreDeletion => boundaries::check(self, tree, boundaries::STORAGE),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -119,6 +139,9 @@ pub struct Finding {
     pub line: usize,
     pub what: String,
 }
+
+#[path = "boundaries.rs"]
+mod boundaries;
 
 type Hits = Vec<(Rel, usize, String)>;
 
@@ -263,7 +286,8 @@ pub enum Use {
     Path(&'static [&'static str], &'static str),
 }
 
-pub const HOMES: [(&str, Use, &[&str]); 7] = [
+pub const HOMES: [(&str, Use, &[&str]); 8] = [
+    ("bucket-deletion", Use::Ident(&["delete_object"]), &[boundaries::STORAGE]),
     // (2026-11-16: the zero-copy reads of guest memory, each with its contract: ReadFile-like host
     // file reads and decoded video frames)
     (

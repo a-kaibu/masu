@@ -15,6 +15,26 @@ struct Fixture {
 
 fn fixture(r: Rule) -> Fixture {
     match r {
+        Rule::MemoryPointer => Fixture {
+            bad: &[(boundaries::MEMORY, "trait Memory { fn host(&mut self) -> Option<*mut u8>; }")],
+            good: &[(boundaries::MEMORY, "trait Memory { fn copy(&mut self) -> bool; } trait Other { fn raw() -> *const u8; }")],
+            mutate: (boundaries::MEMORY, |t| Some(t.replace("pub trait Memory {", "pub trait Memory { fn raw(&self) -> *const u8;"))),
+        },
+        Rule::PagedReadCast => Fixture {
+            bad: &[(boundaries::PAGES, "impl Pages { fn read() { let n = buf.len().min((len - off) as usize); } }")],
+            good: &[(boundaries::PAGES, "impl Pages { fn read() { let n = usize::try_from(len - off); } }")],
+            mutate: (boundaries::PAGES, |t| Some(t.replace("usize::try_from(self.len - off).unwrap_or(usize::MAX)", "(self.len - off) as usize"))),
+        },
+        Rule::ShaderLayoutPanic => Fixture {
+            bad: &[(boundaries::GLSL, "impl Parser { fn parse_array_specifier_single() { layout.update(ctx).expect(\"layout\"); } }")],
+            good: &[(boundaries::GLSL, "impl Parser { fn parse_array_specifier_single() { self.expect(f, tok)?; layout.update(ctx)?; } }")],
+            mutate: (boundaries::GLSL, |t| Some(t.replace("frontend.layouter.update(ctx.module.to_ctx()).map_err", "frontend.layouter.update(ctx.module.to_ctx()).unwrap(); frontend.layouter.update(ctx.module.to_ctx()).map_err"))),
+        },
+        Rule::StoreDeletion => Fixture {
+            bad: &[(boundaries::STORAGE, "impl Store { fn merge(&self) { self.delete(id); } }")],
+            good: &[(boundaries::STORAGE, "impl Store { fn gc(&self) { self.delete(id); } fn delete(&self) { self.bucket.delete_object(id); } }")],
+            mutate: (boundaries::STORAGE, |t| Some(t + "\nimpl Storage { async fn erase(&self, id: Uuid) -> Result<()> { self.delete(id).await } }")),
+        },
         Rule::BuildOutput => Fixture {
             bad: &[("crates/masu/target/x86_64-pc-windows-gnu/release/masu.exe", "x"), ("web/public/sake/sake.wasm", "x")],
             good: &[("crates/kura/testdata/idec/planes.bin", "x"), ("testdata/apitrace/a.trace.zst", "x"), ("crates/kura/src/target.rs", "x")],

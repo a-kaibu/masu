@@ -43,6 +43,11 @@ clippy.toml path stops resolving, a regex stops matching) fails there instead of
 | the unchecked JIT (koji::jit::NOCHECK, MASU_JIT_NOCHECK) starts off, is set only in kura's jit.rs, and nothing in CI, scripts or the page turns it on (review 2026-11-17) | arch `unchecked-jit-mode` |
 | an `#[allow]` (several lines, cfg_attr, crate-wide, Cargo.toml) does not hide a counted lint (review 2026-11-17) | ratchet `--force-warn` + allow-attr |
 | a LockWord's / Object's `key()` is no guest address: not the address of mem's readers and writers, ga(), Ga::from (review 2026-11-17, 06dc4bf2) | arch `out-escape` |
+| koji's Memory methods keep raw host pointers inside the implementation | arch `memory-pointer` |
+| paged reads convert file byte counts with checked arithmetic; page indexing uses the bounded page location | arch `paged-read-cast` |
+| GLSL array specifiers propagate layout errors to the shader compiler | arch `shader-layout-panic` |
+| physical bucket deletion belongs to the storage GC | arch `store-deletion`, `home-only` |
+| save metadata is published by cacheSave or acknowledgeSave; production Wasm acquisition goes through runtimeWasm | web `pnpm run check` and `pnpm run lint` (TypeScript symbol references, including imports under another name) |
 | every pointer-sized out-parameter is taken as typed Args | `sake::outptr_audit` (test) |
 | Pool Lease / brand, Ga, Out misuse does not compile | compile_fail doctests |
 

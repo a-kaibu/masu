@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vp dev",
     "build": "vp build",
-    "check": "vp check --deny-warnings",
-    "lint": "vp lint --deny-warnings",
+    "check": "vp check --deny-warnings && node tools/boundaries.mjs",
+    "lint": "vp lint --deny-warnings && node tools/boundaries.mjs",
     "fmt": "vp fmt",
     "fmt:check": "vp fmt --check"
   },

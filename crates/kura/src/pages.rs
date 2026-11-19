@@ -10,6 +10,11 @@ pub const PAGE: usize = 1 << 20;
 const PAGE64: u64 = 1 << 20;
 const _: () = assert!(PAGE64.count_ones() == 1 && PAGE64.trailing_zeros() == PAGE.trailing_zeros());
 
+// The caller has already bounded at by the file length, whose page count fits usize.
+fn page_location(at: u64) -> (usize, usize) {
+    ((at / PAGE64) as usize, (at % PAGE64) as usize)
+}
+
 /// A length the file cannot have: past u64 (an offset near u64::MAX plus a write) or one whose
 /// page list the memory does not hold (review 2026-11-16: write's `off + len` overflowed, and
 /// set_len relied on its caller having asked room() first).
@@ -63,7 +68,7 @@ impl Pages {
         let mut done = 0;
         while done < n {
             let at = off + done as u64;
-            let (i, o) = ((at / PAGE as u64) as usize, (at % PAGE as u64) as usize);
+            let (i, o) = page_location(at);
             let k = (PAGE - o).min(n - done);
             let page = &self.pages[i];
             let have = page.len().saturating_sub(o).min(k);
@@ -89,7 +94,7 @@ impl Pages {
         let mut done = 0;
         while done < data.len() {
             let at = off + done as u64;
-            let (i, o) = ((at / PAGE as u64) as usize, (at % PAGE as u64) as usize);
+            let (i, o) = page_location(at);
             let k = (PAGE - o).min(data.len() - done);
             let page = &mut self.pages[i];
             if page.len() < o + k {
@@ -368,7 +373,7 @@ mod proofs {
         let mut steps = 0;
         while done < n {
             let at = off + done as u64;
-            let (i, o) = ((at / PAGE as u64) as usize, (at % PAGE as u64) as usize);
+            let (i, o) = page_location(at);
             let k = (PAGE - o).min(n - done);
             assert!(k > 0 && o + k <= PAGE);
             assert_eq!(i as u64 * PAGE as u64 + o as u64, at);
