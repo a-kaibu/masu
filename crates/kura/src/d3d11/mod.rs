@@ -896,7 +896,11 @@ pub unsafe fn call(id: u32, args: *const u32, calls: *const HostCalls) -> u32 {
     match after {
         After::None => {}
         After::Present(hwnd) => gpu::present(hwnd),
-        After::Sleep(ms) => std::thread::sleep(std::time::Duration::from_millis(ms)),
+        After::Sleep(ms) => {
+            #[cfg(test)]
+            dxgi_tests::check_wait(ms);
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
         After::Readback(reqs) => {
             for req in reqs {
                 gpu::wait_readback(req);

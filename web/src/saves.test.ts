@@ -396,9 +396,7 @@ test("property: uploads at most once a minute unless forced, the newest always o
         if (h.length > 1)
           expect(eq(h.at(-1), h.at(-2)), `run ${run} step ${step}: the same twice`).toBe(false);
       }
-      expect(eq(d.current() ?? blob(1), current), `run ${run} step ${step}: on the device`).toBe(
-        true,
-      );
+      expect(eq(d.current() ?? blob(1), current), `run ${run} step ${step}: on the device`).toBe(true);
       if (force && s.up) expect(eq(s.data ?? blob(1), current), `run ${run} step ${step}: forced`).toBe(true);
     }
     s.up = true;
@@ -490,8 +488,12 @@ test("an upload pause followed by a revert persists the last save across restart
   let data = blob(1);
   const k = await keeper(d, s, () => data, null);
   await k.save();
-  data = blob(2); k.write(); await k.save();
-  data = blob(1); k.write(); await k.save();
+  data = blob(2);
+  k.write();
+  await k.save();
+  data = blob(1);
+  k.write();
+  await k.save();
   expect(eq(await page(d, s), blob(1))).toBe(true);
   expect(eq(s.data, blob(1))).toBe(true);
 });

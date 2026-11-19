@@ -384,12 +384,18 @@ async function boot(audio: Promise<AudioOut>): Promise<void> {
   // sake's wasm from the bucket when the browser lacks the server's (wasmsource.ts): a far or
   // slow server held the start for minutes; &wasm=server: always the server's
   const wasmUrl = new URL(versioned(`${BASE}${WASM}`, version), location.href).href;
-  const wasmBytes = runtimeWasm(WASM, wasmUrl, new URL("store/", location.href).href,
-    (await builds()).get(build.name), params.get("wasm") === "server", {
+  const wasmBytes = runtimeWasm(
+    WASM,
+    wasmUrl,
+    new URL("store/", location.href).href,
+    (await builds()).get(build.name),
+    params.get("wasm") === "server",
+    {
       device: deviceChunks,
       note: (l) => recorder?.note(l),
       cdn: params.get("wasmcdn") ?? WASM_CDN,
-    });
+    },
+  );
   recorder.note(
     `build: ${WASM} ${version}, translator ${await jitVersion}, memory ${build.memory ? "4 GB fixed" : "growing from 2.06 GB (4 GB refused)"}`,
   );

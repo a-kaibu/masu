@@ -1891,6 +1891,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn key_frame_too_far_back_fails() {
+        let _fs = crate::vfs::tests::host_files();
         let mib = 1u32 << 20;
         let frames: Vec<(Vec<u8>, bool)> = (0..80).map(|k| (vec![k as u8], k == 0)).collect();
         let mut d = crate::vnv::write(16, 16, &[("vp09.00.31.08".into(), frames)], None);

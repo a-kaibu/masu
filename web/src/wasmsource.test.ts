@@ -1,7 +1,14 @@
 import { describe, expect, it, test } from "vite-plus/test";
 import { blake3Hex } from "./blake3";
 import { chunkFileName, opfsStore, type ChunkStore } from "./chunkstore";
-import { buildIdOf, runtimeWasm, sakeWasmBytes, wasmModuleArg, type WasmFrom, type WasmSourceDeps } from "./wasmsource";
+import {
+  buildIdOf,
+  runtimeWasm,
+  sakeWasmBytes,
+  wasmModuleArg,
+  type WasmFrom,
+  type WasmSourceDeps,
+} from "./wasmsource";
 
 type B = Uint8Array<ArrayBuffer>;
 const urlOf = (i: RequestInfo | URL) => (typeof i === "string" ? i : i instanceof URL ? i.href : i.url);
@@ -97,7 +104,13 @@ function world(o: {
         );
       if (o.sakeDirect === "bad") return Response.json({ url: "x", key: "zz", object, chunk: hex });
       if (typeof o.sakeDirect === "number") return new Response("", { status: o.sakeDirect });
-      return Response.json({ build: await buildIdOf(wasm), url: "https://bucket.example/o", key: toHex(key), object, chunk: hex });
+      return Response.json({
+        build: await buildIdOf(wasm),
+        url: "https://bucket.example/o",
+        key: toHex(key),
+        object,
+        chunk: hex,
+      });
     }
     if (u === "https://bucket.example/o") {
       if (o.bucket === "fail") return new Response("", { status: 403 });
@@ -470,14 +483,14 @@ describe("sakeWasmBytes from the release's CDN (GitHub Pages)", () => {
   }, 20000);
 });
 
-
 it("rejects another build even when HTTP is the only available source", async () => {
   const old = wasmOf(500);
   const current = wasmOf(600);
   const id = await buildIdOf(old);
   for (const serverOnly of [false, true]) {
     const request = async () => new Response(current);
-    await expect(runtimeWasm("sake.wasm", "/sake/sake.wasm", "https://local/store/", id, serverOnly, { request }))
-      .rejects.toThrow("expected build");
+    await expect(
+      runtimeWasm("sake.wasm", "/sake/sake.wasm", "https://local/store/", id, serverOnly, { request }),
+    ).rejects.toThrow("expected build");
   }
 });

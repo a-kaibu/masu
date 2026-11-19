@@ -219,9 +219,7 @@ parentPort.postMessage({ n, tries });`;
     const got = await Promise.all(runs);
     const total = mine + got.reduce((a, r) => a + r.n, 0);
     expect(new Int32Array(buf, 0, 1)[0]).toBe(0);
-    expect(total, `share ${share}`).toBeLessThanOrEqual(
-      Math.ceil((BURST - RESERVE[0]!) * share) + 1,
-    );
+    expect(total, `share ${share}`).toBeLessThanOrEqual(Math.ceil((BURST - RESERVE[0]!) * share) + 1);
     // (and the tokens left are what the refill gave less what was taken: nothing lost to a race)
     const v = new Float64Array(buf, 8, 4);
     expect(v[0]).toBe(BURST * share - total);

@@ -372,9 +372,19 @@ fn video_support_device_is_made() {
     call1(m(IF_DEVICE, 2), &[main]);
 }
 
-/// WaitForVBlank waits a frame without the device's lock (review b02: it slept 16 ms holding it,
-/// and every other thread's D3D call waited too): while one thread waits 12 vblanks (about
-/// 200 ms), another's 200 calls finish well before, each taking far less than a frame.
+thread_local! {
+    // Only the calling test observes the lock at the actual sleep boundary.
+    static CHECK_WAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn check_wait(ms: u64) {
+    if CHECK_WAIT.replace(false) {
+        assert_eq!(ms, 16);
+        assert!(D11S.try_lock().is_ok(), "device lock held at WaitForVBlank");
+    }
+}
+
+/// WaitForVBlank releases the device before sleeping for a frame.
 #[test]
 fn vblank_wait_lets_others_call() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
@@ -385,26 +395,9 @@ fn vblank_wait_lets_others_call() {
     let ad = rd1(o);
     assert_eq!(call1(m(IF_ADAPTER, 7), &[ad, 0, o]), 0);
     let out = rd1(o);
-    let waiter = std::thread::spawn(move || {
-        let t = std::time::Instant::now();
-        for _ in 0..12 {
-            assert_eq!(call1(m(IF_OUTPUT, 10), &[out]), 0);
-        }
-        t.elapsed()
-    });
-    std::thread::sleep(std::time::Duration::from_millis(5));
-    let t = std::time::Instant::now();
-    let mut slowest = std::time::Duration::ZERO;
-    let p = mem(40);
-    for _ in 0..200 {
-        let c = std::time::Instant::now();
-        assert_eq!(call1(m(IF_OUTPUT, 7), &[out, p]), 0);
-        slowest = slowest.max(c.elapsed());
-    }
-    let others = t.elapsed();
-    let waited = waiter.join().unwrap();
-    assert!(waited >= std::time::Duration::from_millis(12 * 16), "the waits: {waited:?}");
-    assert!(others < waited / 2 && slowest < std::time::Duration::from_millis(12), "200 calls took {others:?} (slowest {slowest:?}) beside waits of {waited:?}");
+    CHECK_WAIT.set(true);
+    assert_eq!(call1(m(IF_OUTPUT, 10), &[out]), 0);
+    assert!(!CHECK_WAIT.get(), "WaitForVBlank did not sleep");
     call1(m(IF_OUTPUT, 2), &[out]);
     call1(m(IF_ADAPTER, 2), &[ad]);
     call1(m(IF_FACTORY, 2), &[f]);
