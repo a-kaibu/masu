@@ -331,6 +331,7 @@ export function keepSaving(
   const read = opt.read ?? (() => exportSaves(m, roots));
   let pending: Promise<void> | undefined;
   let queued: Promise<void> | undefined;
+  let forceQueued = false;
   let seen = -1;
   // (`last`: what the server has; `unsent`: what this browser's copy has that the server does not
   // yet. With the server out of reach the blob is written here once, not again every look, and
@@ -391,9 +392,12 @@ export function keepSaving(
       });
       return pending;
     }
+    forceQueued ||= force;
     return (queued ??= pending.then(() => {
+      const mustUpload = forceQueued;
+      forceQueued = false;
       queued = undefined;
-      return save(force);
+      return save(mustUpload);
     }));
   };
   setInterval(() => void save(), 5000);

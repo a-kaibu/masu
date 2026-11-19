@@ -1,3 +1,4 @@
+import { simulate, deferred } from "./test/simulation";
 import { afterAll, beforeAll, expect, test, vi } from "vite-plus/test";
 import {
   keepSaving,
@@ -497,3 +498,172 @@ test("an upload pause followed by a revert persists the last save across restart
   expect(eq(await page(d, s), blob(1))).toBe(true);
   expect(eq(s.data, blob(1))).toBe(true);
 });
+
+test.each(["poll", "hide then poll", "poll then hide"])(
+  "simulation: slow save acknowledgement with %s",
+  async (order) => {
+    await simulate(async (advance) => {
+      const events = new EventTarget();
+      vi.stubGlobal("addEventListener", events.addEventListener.bind(events));
+      try {
+        const server = new Server();
+        const device = new Device();
+        const accepted = deferred<void>();
+        const ack = deferred<void>();
+        const request = server.request;
+        server.request = async (url, init) => {
+          const response = await request(url, init);
+          if (init?.method === "PUT" && server.rev === 1) {
+            accepted.resolve();
+            await ack.promise;
+          }
+          return response;
+        };
+        online = true;
+        await page(device, server);
+        let version = 1;
+        const game = { _vnhost_vfs_changes: () => version } as unknown as SavesModule;
+        const save = keepSaving(game, "game", [], null, { read: () => blob(version) });
+        const first = save();
+        await accepted.promise;
+        version++;
+        if (order === "hide then poll") events.dispatchEvent(new Event("pagehide"));
+        await advance(5000); // keepSaving's real interval queues the updated version
+        if (order === "poll then hide") events.dispatchEvent(new Event("pagehide"));
+        const pending = save();
+        ack.resolve();
+        await Promise.all([first, pending]);
+        expect(device.current()).toEqual(blob(2));
+        expect(server.data).toEqual(blob(order === "poll" ? 1 : 2));
+        expect(await page(device, server)).toEqual(blob(2));
+        expect(server.history).toEqual([blob(1), blob(2)]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+  },
+);
+
+test.each([false, true])(
+  "simulation: lost acknowledgement after commit, other device saves = %s",
+  async (conflict) => {
+    await simulate(async (advance) => {
+      const server = new Server();
+      const device = new Device();
+      const accepted = deferred<void>();
+      const request = server.request;
+      server.request = async (url, init) => {
+        const response = await request(url, init);
+        if (init?.method === "PUT" && server.rev === 1 && response.ok) {
+          const signal = init.signal!;
+          accepted.resolve();
+          await new Promise<void>((_, reject) =>
+            signal.addEventListener("abort", () => reject(new Error("lost acknowledgement")), { once: true }),
+          );
+        }
+        return response;
+      };
+      online = true;
+      await page(device, server);
+      let failed = false;
+      const write = storeSaves("game", blob(1)).catch(() => {
+        failed = true;
+      });
+      await accepted.promise;
+      await advance(30_000);
+      expect(failed).toBe(false);
+      await advance(1); // two bytes add one millisecond to the upload deadline
+      await write;
+      expect(failed).toBe(true);
+      if (conflict) {
+        const other = new Device();
+        await page(other, server);
+        await storeSaves("game", blob(2));
+        savesFor(device.files, server.request);
+      }
+      const notices: string[] = [];
+      expect(await page(device, server, (message) => notices.push(message))).toEqual(blob(1));
+      expect(notices).toHaveLength(conflict ? 1 : 0);
+      expect(server.data).toEqual(blob(1));
+      if (conflict) expect(device.kept()).toContainEqual(blob(2));
+    });
+  },
+);
+
+test.each(["ack before conflict", "ack after conflict"])(
+  "simulation: two tabs sharing save files: %s",
+  async (order) => {
+    await simulate(async (advance) => {
+      const device = new Device();
+      const server = new Server();
+      const accepted = deferred<void>();
+      const ack = deferred<void>();
+      // Independent module state for each tab; both use the same OPFS and origin locks.
+      const tab = async (request: typeof fetch) => {
+        vi.resetModules();
+        const session = await import("./saves");
+        session.savesFor(device.files, request);
+        await session.loadSaves("game");
+        return session;
+      };
+      online = true;
+      const a = await tab(async (url, init) => {
+        const response = await server.request(url, init);
+        if (init?.method === "PUT") {
+          accepted.resolve();
+          await ack.promise;
+        }
+        return response;
+      });
+      const b = await tab(server.request);
+      const sending = a.storeSaves("game", blob(1));
+      await accepted.promise;
+      await advance(250);
+      if (order === "ack before conflict") {
+        ack.resolve();
+        await sending;
+      }
+      await expect(b.storeSaves("game", blob(2))).rejects.toMatchObject({ name: "SaveConflict" });
+      ack.resolve();
+      await sending;
+      expect(server.data).toEqual(blob(1));
+      expect(device.current()).toEqual(blob(2));
+      await tab(server.request);
+      expect(server.data).toEqual(blob(2));
+      expect(device.kept()).toContainEqual(blob(1));
+    });
+  },
+);
+
+test.each(["before publish", "after publish"])(
+  "simulation: restart %s of local save metadata",
+  async (crash) => {
+    await simulate(async (advance) => {
+      const device = new Device();
+      const server = new Server();
+      online = true;
+      await page(device, server);
+      await storeSaves("game", blob(1));
+      const original = device.files.write.bind(device.files);
+      // The inactive blob is already written. Interrupt on either side of the atomic pointer update.
+      device.files.write = async (file, bytes) => {
+        if (file.endsWith(".sync.json") && crash === "before publish") throw new Error("write interrupted");
+        await original(file, bytes);
+        if (file.endsWith(".sync.json")) throw new Error("acknowledgement interrupted");
+      };
+      await storeSaves("game", blob(2), true, false);
+      device.files.write = original;
+      const expected = blob(crash === "before publish" ? 1 : 2);
+      await advance(5000);
+      online = false;
+      try {
+        expect(await page(device, server)).toEqual(expected);
+        expect(server.data).toEqual(blob(1));
+      } finally {
+        online = true;
+      }
+      expect(await page(device, server)).toEqual(expected);
+      expect(server.data).toEqual(expected);
+    });
+  },
+);

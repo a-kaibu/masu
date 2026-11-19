@@ -1,3 +1,4 @@
+import { simulate, deferred } from "./test/simulation";
 import { expect, test } from "vite-plus/test";
 import corpusText from "../../testdata/webgame/tree-rules.jsonl?raw";
 import {
@@ -319,3 +320,57 @@ test("answerReads answers a worker's asks over a real MessagePort, only for its 
   expect(four.kind === "bytes" && new TextDecoder().decode(four.bytes)).toBe("lo");
   expect(answers.has(99)).toBe(false);
 });
+
+const orders = [
+  [0, 1, 2],
+  [0, 2, 1],
+  [1, 0, 2],
+  [1, 2, 0],
+  [2, 0, 1],
+  [2, 1, 0],
+];
+for (const loss of [false, true]) {
+  test.each(orders)(
+    `simulation: overlapping reads, lost reply = ${loss}, chunk order %i, %i, %i`,
+    async (a, b, c) => {
+      await simulate(async (advance) => {
+        const keys = [h(1), h(2), h(3)];
+        const attempts = [0, 0, 0];
+        const replies = keys.map(() => deferred<Uint8Array>());
+        const line = keys.map((hex) => hex + ":1").join(",");
+        const reader = new TreeReader(parseTree("vnvm-tree\t2\t4\nf\t644\t0\tf\t3\t" + line), async (hex) => {
+          const i = keys.indexOf(hex);
+          attempts[i]!++;
+          return await replies[i]!.promise;
+        });
+        const file = reader.file("f")!;
+        const whole = reader.read(file, 0, 3);
+        const tail = reader.read(file, 1, 3);
+        const results = Promise.allSettled([whole, tail]);
+        // Both reads wait on chunk 1. Its failure must evict only that chunk.
+        for (const [step, i] of [a, b, c].entries()) {
+          setTimeout(() => {
+            if (i === 1 && loss) replies[i]!.reject(new Error("lost reply"));
+            else replies[i]!.resolve(Uint8Array.of(i + 10));
+          }, step + 1);
+        }
+        await advance(3);
+        if (!loss) {
+          expect(await results).toEqual([
+            { status: "fulfilled", value: Uint8Array.of(10, 11, 12) },
+            { status: "fulfilled", value: Uint8Array.of(11, 12) },
+          ]);
+          expect(attempts).toEqual([1, 1, 1]);
+          return;
+        }
+        for (const result of await results)
+          expect(result).toMatchObject({ status: "rejected", reason: new Error("lost reply") });
+        replies[1] = deferred<Uint8Array>();
+        const retry = reader.read(file, 0, 3);
+        replies[1]!.resolve(Uint8Array.of(11));
+        expect(await retry).toEqual(Uint8Array.of(10, 11, 12));
+        expect(attempts).toEqual([1, 2, 1]);
+      });
+    },
+  );
+}

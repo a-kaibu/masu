@@ -1,3 +1,4 @@
+import { simulate, deferred, randomBelow } from "./test/simulation";
 import { expect, test } from "vite-plus/test";
 import { AudioDecode, type DecoderKind } from "./adec";
 import { Gate } from "./memgate";
@@ -35,48 +36,58 @@ test("gate: a write that never ends fails the state, and the gate opens again", 
   expect(g.closed).toBe(false);
 });
 
-// property: random writers (some across awaits) and random states; no write lands while shut,
-// and every write asked for lands once
-test("property: nothing is written while the gate is shut, nothing is lost", async () => {
-  let seed = 7;
-  const rnd = (n: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed % n);
-  for (let run = 0; run < 60; run++) {
-    const g = new Gate();
-    let wrote = 0;
-    let asked = 0;
-    let bad = 0;
-    /** the state's copy of the memory under way (the gate shut and the writes under way done) */
-    let reading = false;
-    const write = () => {
-      if (reading) bad++;
-      wrote++;
-    };
-    const writers: Promise<void>[] = [];
-    for (let i = 0; i < 30; i++) {
-      asked++;
-      if (rnd(2)) g.run(write);
-      else if (g.enter())
-        writers.push(
-          tick(rnd(4)).then(() => {
-            write();
-            g.leave();
-          }),
+// Simultaneous arrivals run in registration order. Writers already copying can finish
+// after close starts; writers arriving during the snapshot must wait for open.
+test.each([7, 13, 23, 29, 41, 101, 257, 2026])(
+  "simulation: gate writer and snapshot schedule (seed %i)",
+  async (seed) => {
+    await simulate(async (advance) => {
+      const rnd = randomBelow(seed);
+      const gate = new Gate();
+      const finished: number[] = [];
+      const violations: number[] = [];
+      let reading = false;
+      let snapshots = 0;
+      const pending: Promise<void>[] = [];
+      for (let id = 0; id < 90; id++) {
+        const at = rnd(80);
+        const duration = rnd(8);
+        setTimeout(
+          () =>
+            gate.run(() => {
+              expect(gate.enter()).toBe(true);
+              setTimeout(() => {
+                if (reading) violations.push(id);
+                finished.push(id);
+                gate.leave();
+              }, duration);
+            }),
+          at,
         );
-      else g.run(write);
-      if (rnd(6) === 0) {
-        await g.close();
-        reading = true;
-        await tick(rnd(3));
-        reading = false;
-        g.open();
       }
-      await tick(rnd(2));
-    }
-    await Promise.all(writers);
-    expect(bad, `run ${run}`).toBe(0);
-    expect(wrote, `run ${run}`).toBe(asked);
-  }
-});
+      for (const at of [10, 30, 50, 70]) {
+        setTimeout(() => {
+          pending.push(
+            gate.closeWhile(async () => {
+              expect(gate.busy).toBe(0);
+              reading = true;
+              await new Promise<void>((resume) => setTimeout(resume, 4));
+              reading = false;
+              snapshots++;
+            }),
+          );
+        }, at);
+      }
+      await advance(100);
+      await Promise.all(pending);
+      expect(snapshots).toBe(4);
+      expect(violations).toEqual([]);
+      expect(finished.sort((a, b) => a - b)).toEqual(Array.from({ length: 90 }, (_, id) => id));
+      expect(gate.busy).toBe(0);
+      expect(gate.closed).toBe(false);
+    });
+  },
+);
 
 // ---- video.ts: a VideoFrame.copyTo that ends late, during a state ----
 
@@ -572,3 +583,49 @@ test("video: a stream whose header cannot be read fails alone, once; a decoder t
     restore();
   }
 });
+
+test.each([49, 50, 51])(
+  "simulation: snapshot with video copy completing at %i ms and deadline at 50 ms",
+  async (delay) => {
+    await simulate(async (advance) => {
+      const m = videoModule(4);
+      const gate = new Gate();
+      const { decoder, restore } = firstDecoder();
+      const video = new Video(m.wasm, () => {}, gate, false);
+      try {
+        video.tick();
+        const dec = await decoder;
+        const copied = deferred<{ offset: number; stride: number }[]>();
+        dec.init.output(
+          fakeFrame(
+            0,
+            () => {},
+            () => copied.promise,
+          ),
+        );
+        expect(gate.busy).toBe(1);
+        const trace: string[] = [];
+        const snapshot = gate
+          .closeWhile(async () => {
+            expect(gate.busy).toBe(0);
+            trace.push("snapshot");
+          }, 50)
+          .catch(() => trace.push("timeout"));
+        gate.run(() => trace.push("queued write"));
+        // The deadline was registered first, so it wins a tie.
+        setTimeout(() => copied.resolve([{ offset: 0, stride: 16 }]), delay);
+        await advance(48);
+        expect(trace).toEqual([]);
+        await advance(3);
+        await snapshot;
+        expect(trace).toEqual(delay < 50 ? ["snapshot", "queued write"] : ["queued write", "timeout"]);
+        expect(gate.closed).toBe(false);
+        expect(gate.busy).toBe(0);
+        expect(m.calls.filter((c) => c.startsWith("ready"))).toHaveLength(1);
+      } finally {
+        video.stop();
+        restore();
+      }
+    });
+  },
+);
