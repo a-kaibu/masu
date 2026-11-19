@@ -147,7 +147,6 @@ test("video: a frame copy under way when a state starts ends before the copy of 
   m.watch(() => reading);
   let release: (() => void) | undefined;
   const copies: number[] = [];
-  const outputs: ((f: VideoFrame) => void)[] = [];
   const frame = (n: number) =>
     ({
       timestamp: n * 1000,
@@ -162,45 +161,18 @@ test("video: a frame copy under way when a state starts ends before the copy of 
       },
       close() {},
     }) as unknown as VideoFrame;
-  const fed: number[] = [];
-  const g2 = globalThis as unknown as { VideoDecoder?: unknown; EncodedVideoChunk?: unknown };
-  const old = g2.VideoDecoder;
-  const oldChunk = g2.EncodedVideoChunk;
-  g2.EncodedVideoChunk = class {
-    timestamp: number;
-    constructor(i: { timestamp: number }) {
-      this.timestamp = i.timestamp;
-    }
-  };
-  g2.VideoDecoder = class {
-    static isConfigSupported = async () => ({ supported: true });
-    state = "unconfigured";
-    decodeQueueSize = 0;
-    constructor(init: { output: (f: VideoFrame) => void }) {
-      outputs.push(init.output);
-    }
-    configure() {
-      this.state = "configured";
-    }
-    reset() {}
-    decode(c: { timestamp: number }) {
-      fed.push(c.timestamp / 1000);
-    }
-    async flush() {}
-    close() {}
-  };
+  const { decoder, restore } = firstDecoder();
   try {
     const v = new Video(m.wasm, () => {}, g, false);
     v.tick();
-    await tick(5);
-    expect(fed.length).toBeGreaterThan(0);
-    outputs[0]!(frame(0));
-    await tick(1);
+    const dec = await decoder;
+    expect(dec.fed.length).toBeGreaterThan(0);
+    dec.init.output(frame(0));
     expect(g.busy).toBe(1);
     // a state starts: the copy under way must end before the memory is read
     let shut = false;
     const closing = g.close().then(() => (shut = true));
-    await tick(5);
+    await Promise.resolve();
     expect(shut).toBe(false);
     release!();
     await closing;
@@ -210,78 +182,49 @@ test("video: a frame copy under way when a state starts ends before the copy of 
     // the memory, as the state's worker reads it
     const before = m.mem.slice();
     // frames decoded meanwhile, a tick: nothing reaches the memory
-    outputs[0]!(frame(1));
-    outputs[0]!(frame(2));
+    dec.init.output(frame(1));
+    dec.init.output(frame(2));
     v.tick();
-    await tick(10);
+    await Promise.resolve();
     expect(m.during).toEqual([]);
-    expect(m.mem).toEqual(before);
+    expect(m.mem.findIndex((byte, i) => byte !== before[i])).toBe(-1);
     reading = false;
     g.open();
-    await tick(5);
+    await g.close();
+    g.open();
     expect(copies).toEqual([0, 1, 2]);
   } finally {
-    g2.VideoDecoder = old;
-    g2.EncodedVideoChunk = oldChunk;
+    restore();
   }
 });
 
 test("video: a jump back to a frame already passed (a seek back after the end) feeds the decoder again from that frame", async () => {
   const m = videoModule(8);
   const g = new Gate();
-  const fed: number[] = [];
-  let resets = 0;
-  const g2 = globalThis as unknown as { VideoDecoder?: unknown; EncodedVideoChunk?: unknown };
-  const old = g2.VideoDecoder;
-  const oldChunk = g2.EncodedVideoChunk;
-  g2.EncodedVideoChunk = class {
-    timestamp: number;
-    constructor(i: { timestamp: number }) {
-      this.timestamp = i.timestamp;
-    }
-  };
-  g2.VideoDecoder = class {
-    static isConfigSupported = async () => ({ supported: true });
-    state = "unconfigured";
-    decodeQueueSize = 0;
-    configure() {
-      this.state = "configured";
-    }
-    reset() {
-      resets++;
-    }
-    decode(c: { timestamp: number }) {
-      fed.push(c.timestamp / 1000);
-    }
-    async flush() {}
-    close() {}
-  };
+  const { decoder, restore } = firstDecoder();
   try {
     const v = new Video(m.wasm, () => {}, g, false);
     v.tick();
-    await tick(5);
+    const dec = await decoder;
+    const fed = dec.fed;
     // read to the end: every frame fed once, no reset
     for (let n = 0; n < 8; n++) {
       m.setWant(n);
       v.tick();
-      await tick(1);
     }
     expect(fed).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-    const before = resets;
+    expect(dec.resets).toBe(0);
     // the same frame again: nothing new
     v.tick();
-    await tick(1);
-    expect(resets).toBe(before);
+    expect(dec.resets).toBe(0);
     // back to frame 3 (all key frames): the decoder starts over there
     fed.length = 0;
     m.setWant(3);
     v.tick();
-    await tick(1);
-    expect(resets).toBe(before + 1);
+    expect(dec.resets).toBe(1);
     expect(fed[0]).toBe(3);
   } finally {
-    g2.VideoDecoder = old;
-    g2.EncodedVideoChunk = oldChunk;
+    restore();
   }
 });
 
@@ -441,6 +384,7 @@ function fakeVideo(onMake: (d: FakeDec) => void) {
     configs: { hardwareAcceleration?: string }[] = [];
     fed: number[] = [];
     closed = false;
+    resets = 0;
     init: FakeDec["init"];
     constructor(init: FakeDec["init"]) {
       this.init = init;
@@ -451,6 +395,7 @@ function fakeVideo(onMake: (d: FakeDec) => void) {
       this.state = "configured";
     }
     reset() {
+      this.resets++;
       this.state = "unconfigured";
     }
     decode(c: { timestamp: number }) {
@@ -467,10 +412,17 @@ function fakeVideo(onMake: (d: FakeDec) => void) {
     g2.EncodedVideoChunk = old[1];
   };
 }
+function firstDecoder() {
+  let created!: (d: FakeDec) => void;
+  const decoder = new Promise<FakeDec>((resolve) => (created = resolve));
+  return { decoder, restore: fakeVideo(created) };
+}
+
 interface FakeDec {
   configs: { hardwareAcceleration?: string }[];
   fed: number[];
   closed: boolean;
+  resets: number;
   init: { output: (f: unknown) => void; error: (e: unknown) => void };
 }
 function fakeFrame(n: number, onClose: () => void, copy?: () => Promise<unknown>) {

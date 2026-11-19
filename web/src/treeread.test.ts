@@ -172,40 +172,43 @@ function randomTree(r: (n: number) => number) {
   return { tsv: lines.join("\n"), store, want };
 }
 
-test("TreeReader: any part of any file is its bytes, in order, whatever the chunks' timing (PBT)", async () => {
-  for (let seed = 1n; seed <= 8n; seed++) {
-    const r = rng(seed);
-    const { tsv, store, want } = randomTree(r);
-    const files = parseTree(tsv);
-    expect(files.size).toBe(want.size);
-    let gets = 0;
-    const reader = new TreeReader(files, async (hex, len) => {
-      gets++;
-      // (answers out of order)
-      await new Promise((ok) => setTimeout(ok, r(3)));
-      const d = store.get(hex)!;
-      expect(d.length).toBe(len);
-      return d;
-    });
-    for (const [path, data] of want) {
-      // (paths match whatever their case)
-      const f = reader.file(r(2) ? path.toUpperCase() : path)!;
-      expect(f.size).toBe(data.length);
-      expect(await reader.read(f, 0, f.size)).toEqual(data);
-      for (let i = 0; i < 30; i++) {
-        const a = r(data.length + 2);
-        const b = a + r(data.length + 2);
-        expect(await reader.read(f, a, b)).toEqual(data.slice(a, b));
-      }
-      if (data.length)
-        for (let at = 0; at < data.length; at += 1 + r(50)) {
-          const c = f.chunks[chunkAt(f, at)]!;
-          expect(c.start <= at && at < c.start + c.len).toBe(true);
-        }
+function expectBytes(actual: Uint8Array, expected: Uint8Array) {
+  expect(actual.length).toBe(expected.length);
+  expect(actual.findIndex((byte, i) => byte !== expected[i])).toBe(-1);
+}
+
+test.each([1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n])("TreeReader reads any range in order (seed %s)", async (seed) => {
+  const r = rng(seed);
+  const { tsv, store, want } = randomTree(r);
+  const files = parseTree(tsv);
+  expect(files.size).toBe(want.size);
+  let gets = 0;
+  const reader = new TreeReader(files, async (hex, len) => {
+    gets++;
+    // (answers out of order)
+    for (let turns = r(3); turns > 0; turns--) await Promise.resolve();
+    const d = store.get(hex)!;
+    expect(d.length).toBe(len);
+    return d;
+  });
+  for (const [path, data] of want) {
+    // (paths match whatever their case)
+    const f = reader.file(r(2) ? path.toUpperCase() : path)!;
+    expect(f.size).toBe(data.length);
+    expectBytes(await reader.read(f, 0, f.size), data);
+    for (let i = 0; i < 30; i++) {
+      const a = r(data.length + 2);
+      const b = a + r(data.length + 2);
+      expectBytes(await reader.read(f, a, b), data.subarray(a, b));
     }
-    // (decoded chunks were kept: far fewer gets than reads of them)
-    expect(gets).toBeLessThanOrEqual(store.size);
+    if (data.length)
+      for (let at = 0; at < data.length; at += 1 + r(50)) {
+        const c = f.chunks[chunkAt(f, at)]!;
+        expect(c.start <= at && at < c.start + c.len).toBe(true);
+      }
   }
+  // (decoded chunks were kept: far fewer gets than reads of them)
+  expect(gets).toBeLessThanOrEqual(store.size);
 });
 
 test("TreeReader: a failed chunk is asked for again; a wrong length is an error; kept bytes stay bounded", async () => {
