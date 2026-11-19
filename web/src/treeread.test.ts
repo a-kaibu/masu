@@ -333,7 +333,7 @@ for (const loss of [false, true]) {
   test.each(orders)(
     `simulation: overlapping reads, lost reply = ${loss}, chunk order %i, %i, %i`,
     async (a, b, c) => {
-      await simulate(async (advance) => {
+      await simulate(async ({ advance }) => {
         const keys = [h(1), h(2), h(3)];
         const attempts = [0, 0, 0];
         const replies = keys.map(() => deferred<Uint8Array>());

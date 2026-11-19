@@ -1,4 +1,4 @@
-import { simulate, deferred, randomBelow } from "./test/simulation";
+import { simulate, deferred, seeds } from "./test/simulation";
 import { expect, test } from "vite-plus/test";
 import { AudioDecode, type DecoderKind } from "./adec";
 import { Gate } from "./memgate";
@@ -38,56 +38,52 @@ test("gate: a write that never ends fails the state, and the gate opens again", 
 
 // Simultaneous arrivals run in registration order. Writers already copying can finish
 // after close starts; writers arriving during the snapshot must wait for open.
-test.each([7, 13, 23, 29, 41, 101, 257, 2026])(
-  "simulation: gate writer and snapshot schedule (seed %i)",
-  async (seed) => {
-    await simulate(async (advance) => {
-      const rnd = randomBelow(seed);
-      const gate = new Gate();
-      const finished: number[] = [];
-      const violations: number[] = [];
-      let reading = false;
-      let snapshots = 0;
-      const pending: Promise<void>[] = [];
-      for (let id = 0; id < 90; id++) {
-        const at = rnd(80);
-        const duration = rnd(8);
-        setTimeout(
-          () =>
-            gate.run(() => {
-              expect(gate.enter()).toBe(true);
-              setTimeout(() => {
-                if (reading) violations.push(id);
-                finished.push(id);
-                gate.leave();
-              }, duration);
-            }),
-          at,
+test.each(seeds)("simulation: gate writer and snapshot schedule (seed %i)", async (seed) => {
+  await simulate(async ({ advance, randomBelow: rnd }) => {
+    const gate = new Gate();
+    const finished: number[] = [];
+    const violations: number[] = [];
+    let reading = false;
+    let snapshots = 0;
+    const pending: Promise<void>[] = [];
+    for (let id = 0; id < 90; id++) {
+      const at = rnd(80);
+      const duration = rnd(8);
+      setTimeout(
+        () =>
+          gate.run(() => {
+            expect(gate.enter()).toBe(true);
+            setTimeout(() => {
+              if (reading) violations.push(id);
+              finished.push(id);
+              gate.leave();
+            }, duration);
+          }),
+        at,
+      );
+    }
+    for (const at of [10, 30, 50, 70]) {
+      setTimeout(() => {
+        pending.push(
+          gate.closeWhile(async () => {
+            expect(gate.busy).toBe(0);
+            reading = true;
+            await new Promise<void>((resume) => setTimeout(resume, 4));
+            reading = false;
+            snapshots++;
+          }),
         );
-      }
-      for (const at of [10, 30, 50, 70]) {
-        setTimeout(() => {
-          pending.push(
-            gate.closeWhile(async () => {
-              expect(gate.busy).toBe(0);
-              reading = true;
-              await new Promise<void>((resume) => setTimeout(resume, 4));
-              reading = false;
-              snapshots++;
-            }),
-          );
-        }, at);
-      }
-      await advance(100);
-      await Promise.all(pending);
-      expect(snapshots).toBe(4);
-      expect(violations).toEqual([]);
-      expect(finished.sort((a, b) => a - b)).toEqual(Array.from({ length: 90 }, (_, id) => id));
-      expect(gate.busy).toBe(0);
-      expect(gate.closed).toBe(false);
-    });
-  },
-);
+      }, at);
+    }
+    await advance(100);
+    await Promise.all(pending);
+    expect(snapshots).toBe(4);
+    expect(violations).toEqual([]);
+    expect(finished.sort((a, b) => a - b)).toEqual(Array.from({ length: 90 }, (_, id) => id));
+    expect(gate.busy).toBe(0);
+    expect(gate.closed).toBe(false);
+  }, seed);
+});
 
 // ---- video.ts: a VideoFrame.copyTo that ends late, during a state ----
 
@@ -587,7 +583,7 @@ test("video: a stream whose header cannot be read fails alone, once; a decoder t
 test.each([49, 50, 51])(
   "simulation: snapshot with video copy completing at %i ms and deadline at 50 ms",
   async (delay) => {
-    await simulate(async (advance) => {
+    await simulate(async ({ advance }) => {
       const m = videoModule(4);
       const gate = new Gate();
       const { decoder, restore } = firstDecoder();

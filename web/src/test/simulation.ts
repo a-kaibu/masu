@@ -1,7 +1,24 @@
 // Only the test advances time. Advancing also runs promise continuations between timers.
 import { vi } from "vite-plus/test";
 
-export async function simulate(run: (advance: (ms: number) => Promise<void>) => Promise<void>) {
+import { browser } from "./browser";
+
+declare const process: { env: Record<string, string | undefined> };
+const configured = process.env.MASU_SIM_SEED;
+if (configured !== undefined && (!/^\d+$/.test(configured) || Number(configured) > 0xffffffff)) {
+  throw new Error("MASU_SIM_SEED must be an unsigned 32-bit decimal integer");
+}
+export const seeds = configured === undefined ? [7, 13, 23, 29, 41, 101, 257, 2026] : [Number(configured)];
+
+interface Simulation {
+  advance: (ms: number) => Promise<void>;
+  randomBelow: (limit: number) => number;
+  browser: ReturnType<typeof browser>;
+}
+
+export async function simulate<T>(run: (sim: Simulation) => Promise<T>, seed = seeds[0]!): Promise<T> {
+  const origin = browser();
+  const restoreGlobals = new Map<string, PropertyDescriptor | undefined>();
   vi.useFakeTimers({
     now: 0,
     toFake: ["Date", "performance", "setTimeout", "clearTimeout", "setInterval", "clearInterval"],
@@ -12,16 +29,54 @@ export async function simulate(run: (advance: (ms: number) => Promise<void>) => 
     setTimeout(() => controller.abort(new DOMException("Deadline expired", "TimeoutError")), ms);
     return controller.signal;
   });
-  let generation = 0;
-  const ids = vi
-    .spyOn(crypto, "randomUUID")
-    .mockImplementation(() => `00000000-0000-4000-8000-${(++generation).toString(16).padStart(12, "0")}`);
+  // Independent streams: an extra ID or random application value cannot move scheduled events.
+  const schedule = randomBelow(seed);
+  const entropy = randomBelow(seed ^ 0x9e3779b9);
+  const app = randomBelow(seed ^ 0x85ebca6b);
+  const random = vi.spyOn(Math, "random").mockImplementation(() => app(0x100000000) / 0x100000000);
+  const bytes = vi.spyOn(crypto, "getRandomValues").mockImplementation((array) => {
+    if (
+      !array ||
+      !/^\[object (?:Uint8Clamped|(?:Int|Uint)(?:8|16|32)|Big(?:Uint|Int)64)Array\]$/.test(
+        Object.prototype.toString.call(array),
+      )
+    ) {
+      throw new DOMException("Expected an integer typed array", "TypeMismatchError");
+    }
+    if (array.byteLength > 65536) throw new DOMException("Too many bytes", "QuotaExceededError");
+    const view = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+    for (let i = 0; i < view.length; i++) view[i] = entropy(256);
+    return array;
+  });
+  const ids = vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
+    const b = crypto.getRandomValues(new Uint8Array(16));
+    b[6] = (b[6]! & 15) | 64;
+    b[8] = (b[8]! & 63) | 128;
+    const hex = Array.from(b, (n) => n.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  });
   try {
-    await run(async (ms) => {
-      await vi.advanceTimersByTimeAsync(ms);
+    for (const [name, value] of Object.entries(origin.globals)) {
+      restoreGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+      Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+    }
+    return await run({
+      browser: origin,
+      randomBelow: schedule,
+      advance: async (ms) => {
+        await vi.advanceTimersByTimeAsync(ms);
+      },
     });
+  } catch (cause) {
+    throw new Error(`Simulation failed with seed ${seed}: ${String(cause)}`, { cause });
   } finally {
+    for (const [name, descriptor] of restoreGlobals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
     ids.mockRestore();
+    bytes.mockRestore();
+    random.mockRestore();
     deadlines.mockRestore();
     vi.useRealTimers();
   }
@@ -39,7 +94,7 @@ export function deferred<T>() {
 }
 
 // The seed in each test name reproduces its entire event schedule.
-export function randomBelow(seed: number) {
+function randomBelow(seed: number) {
   let state = seed >>> 0;
   return (limit: number) => {
     state = (Math.imul(state, 1664525) + 1013904223) >>> 0;

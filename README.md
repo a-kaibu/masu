@@ -143,6 +143,12 @@ target/release/masu pack ~/prefix32 prefix32   # sake の C:\ (フォント)
 target/release/masu serve --foreground --web web/dist --listen 127.0.0.1:8080
 ```
 
+## Web のシミュレーションテスト
+
+`pnpm --dir web run test:simulation` でセーブ同期、動画のスナップショット、チャンク読み出しを検証します。
+失敗時のシードは `pnpm --dir web run test:simulation --seed 42` のように指定して再実行できます（0〜4294967295）。
+専用コマンドはテストプロセスを UTC・英語ロケールで起動します。各シナリオは空のブラウザストレージと仮想時刻 0 から始まり、イベントの順序、アプリの乱数、保存世代の UUID を同じシードから再現します。
+
 ## 対応状況
 
 | 対象 | 状態 |

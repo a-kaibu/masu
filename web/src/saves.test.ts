@@ -22,7 +22,7 @@ class Server {
   history: Uint8Array[] = [];
   up = true;
   request: typeof fetch = async (_url, init) => {
-    if (!this.up || !online) throw new TypeError("Failed to fetch");
+    if (!this.up || !navigator.onLine) throw new TypeError("Failed to fetch");
     if (init?.method === "PUT") {
       const want = Number(new Headers(init.headers).get("if-match")?.replaceAll('"', ""));
       if (want !== this.rev) return new Response(null, { status: 412 });
@@ -502,44 +502,38 @@ test("an upload pause followed by a revert persists the last save across restart
 test.each(["poll", "hide then poll", "poll then hide"])(
   "simulation: slow save acknowledgement with %s",
   async (order) => {
-    await simulate(async (advance) => {
-      const events = new EventTarget();
-      vi.stubGlobal("addEventListener", events.addEventListener.bind(events));
-      try {
-        const server = new Server();
-        const device = new Device();
-        const accepted = deferred<void>();
-        const ack = deferred<void>();
-        const request = server.request;
-        server.request = async (url, init) => {
-          const response = await request(url, init);
-          if (init?.method === "PUT" && server.rev === 1) {
-            accepted.resolve();
-            await ack.promise;
-          }
-          return response;
-        };
-        online = true;
-        await page(device, server);
-        let version = 1;
-        const game = { _vnhost_vfs_changes: () => version } as unknown as SavesModule;
-        const save = keepSaving(game, "game", [], null, { read: () => blob(version) });
-        const first = save();
-        await accepted.promise;
-        version++;
-        if (order === "hide then poll") events.dispatchEvent(new Event("pagehide"));
-        await advance(5000); // keepSaving's real interval queues the updated version
-        if (order === "poll then hide") events.dispatchEvent(new Event("pagehide"));
-        const pending = save();
-        ack.resolve();
-        await Promise.all([first, pending]);
-        expect(device.current()).toEqual(blob(2));
-        expect(server.data).toEqual(blob(order === "poll" ? 1 : 2));
-        expect(await page(device, server)).toEqual(blob(2));
-        expect(server.history).toEqual([blob(1), blob(2)]);
-      } finally {
-        vi.unstubAllGlobals();
-      }
+    await simulate(async ({ advance, browser }) => {
+      const server = new Server();
+      const device = new Device();
+      const accepted = deferred<void>();
+      const ack = deferred<void>();
+      const request = server.request;
+      server.request = async (url, init) => {
+        const response = await request(url, init);
+        if (init?.method === "PUT" && server.rev === 1) {
+          accepted.resolve();
+          await ack.promise;
+        }
+        return response;
+      };
+
+      await page(device, server);
+      let version = 1;
+      const game = { _vnhost_vfs_changes: () => version } as unknown as SavesModule;
+      const save = keepSaving(game, "game", [], null, { read: () => blob(version) });
+      const first = save();
+      await accepted.promise;
+      version++;
+      if (order === "hide then poll") browser.events.dispatchEvent(new Event("pagehide"));
+      await advance(5000); // keepSaving's real interval queues the updated version
+      if (order === "poll then hide") browser.events.dispatchEvent(new Event("pagehide"));
+      const pending = save();
+      ack.resolve();
+      await Promise.all([first, pending]);
+      expect(device.current()).toEqual(blob(2));
+      expect(server.data).toEqual(blob(order === "poll" ? 1 : 2));
+      expect(await page(device, server)).toEqual(blob(2));
+      expect(server.history).toEqual([blob(1), blob(2)]);
     });
   },
 );
@@ -547,7 +541,7 @@ test.each(["poll", "hide then poll", "poll then hide"])(
 test.each([false, true])(
   "simulation: lost acknowledgement after commit, other device saves = %s",
   async (conflict) => {
-    await simulate(async (advance) => {
+    await simulate(async ({ advance }) => {
       const server = new Server();
       const device = new Device();
       const accepted = deferred<void>();
@@ -563,7 +557,7 @@ test.each([false, true])(
         }
         return response;
       };
-      online = true;
+
       await page(device, server);
       let failed = false;
       const write = storeSaves("game", blob(1)).catch(() => {
@@ -593,7 +587,7 @@ test.each([false, true])(
 test.each(["ack before conflict", "ack after conflict"])(
   "simulation: two tabs sharing save files: %s",
   async (order) => {
-    await simulate(async (advance) => {
+    await simulate(async ({ advance }) => {
       const device = new Device();
       const server = new Server();
       const accepted = deferred<void>();
@@ -606,7 +600,7 @@ test.each(["ack before conflict", "ack after conflict"])(
         await session.loadSaves("game");
         return session;
       };
-      online = true;
+
       const a = await tab(async (url, init) => {
         const response = await server.request(url, init);
         if (init?.method === "PUT") {
@@ -638,10 +632,10 @@ test.each(["ack before conflict", "ack after conflict"])(
 test.each(["before publish", "after publish"])(
   "simulation: restart %s of local save metadata",
   async (crash) => {
-    await simulate(async (advance) => {
+    await simulate(async ({ advance, browser }) => {
       const device = new Device();
       const server = new Server();
-      online = true;
+
       await page(device, server);
       await storeSaves("game", blob(1));
       const original = device.files.write.bind(device.files);
@@ -655,15 +649,46 @@ test.each(["before publish", "after publish"])(
       device.files.write = original;
       const expected = blob(crash === "before publish" ? 1 : 2);
       await advance(5000);
-      online = false;
-      try {
-        expect(await page(device, server)).toEqual(expected);
-        expect(server.data).toEqual(blob(1));
-      } finally {
-        online = true;
-      }
+      browser.setOnline(false);
+      expect(await page(device, server)).toEqual(expected);
+      expect(server.data).toEqual(blob(1));
+      browser.setOnline(true);
       expect(await page(device, server)).toEqual(expected);
       expect(server.data).toEqual(expected);
     });
   },
 );
+
+test("simulation: replay a seeded history of saves, disconnects and restarts", async () => {
+  const replay = () =>
+    simulate(async ({ advance, randomBelow, browser }) => {
+      const server = new Server();
+      const device = new Device();
+      const trace = [];
+      let latest = blob(0);
+      await page(device, server);
+      await storeSaves("game", latest);
+      for (let step = 0; step < 24; step++) {
+        await advance(1 + randomBelow(1000));
+        browser.setOnline(randomBelow(3) !== 0);
+        expect(await page(device, server)).toEqual(latest);
+        latest = blob(1 + randomBelow(65535));
+        const saved = await storeSaves("game", latest).catch(() => false);
+        expect(saved).toBe(navigator.onLine);
+        expect(device.current()).toEqual(latest);
+        if (saved) expect(server.data).toEqual(latest);
+        trace.push([
+          Date.now(),
+          saved,
+          server.rev,
+          ...latest,
+          new TextDecoder().decode(device.m.get("game.sync.json")),
+        ]);
+      }
+      browser.setOnline(true);
+      expect(await page(device, server)).toEqual(latest);
+      expect(server.data).toEqual(latest);
+      return trace;
+    });
+  expect(await replay()).toEqual(await replay());
+});
