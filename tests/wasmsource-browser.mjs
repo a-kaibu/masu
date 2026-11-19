@@ -5,7 +5,7 @@
 //    compiles, and instantiateWasm hands emscripten an instance; it is kept in OPFS;
 // 2. a new page: the wasm read from OPFS, the bucket not asked again;
 // 3. the server's file fetched once (immutable, as masu serve sends a ?v= file): the next page
-//    leaves it to the browser's HTTP cache (only-if-cached), neither /sake-direct nor the bucket asked;
+//    verifies and compiles the bytes in the browser's HTTP cache (only-if-cached), neither /sake-direct nor the bucket asked;
 // 4. a damaged bucket object or a server without S3: null (emscripten loads the server's file);
 // 5. the release's CDN (another origin answering as GitHub Pages does: ACAO *, max-age=600):
 //    the wasm from there before /sake-direct or the bucket, checked against its build id, and
@@ -97,7 +97,7 @@ const app = createServer((req, res) => {
       return res.end();
     }
     res.writeHead(200, { ...h, 'content-type': 'application/json', 'cache-control': 'no-store' });
-    return res.end(JSON.stringify({ url: `http://localhost:${bucketPort}/o?sig=1`, key: key.toString('hex'), object, chunk: hex }));
+    return res.end(JSON.stringify({ url: `http://localhost:${bucketPort}/o?sig=1`, key: key.toString('hex'), object, chunk: hex, build: buildId }));
   }
   res.writeHead(404, h);
   res.end();
@@ -130,17 +130,17 @@ await Promise.all([app, bucket, cdn].map((s) => new Promise((r) => s.once('liste
 const bucketPort = bucket.address().port;
 const origin = `http://127.0.0.1:${app.address().port}`;
 
-const browser = await chromium.launch();
+const browser = await chromium.launch({ executablePath: process.env.CHROME });
 try {
   const context = await browser.newContext();
   const run = async () => {
     const page = await context.newPage();
     await page.goto(`${origin}/`);
-    const r = await page.evaluate(async (origin) => {
+    const r = await page.evaluate(async ({ origin, buildId }) => {
       const m = await import(`${origin}/wasmsource.js`);
       const { deviceChunks } = m;
       const url = `${origin}/sake/sake.wasm?v=1`;
-      const got = await m.sakeWasmBytes('sake.wasm', url, `${origin}/store/`, {
+      const got = await m.runtimeWasm('sake.wasm', url, `${origin}/store/`, buildId, false, {
         device: deviceChunks,
         unzstd: async (b) => b,
       });
@@ -154,7 +154,7 @@ try {
       // (the device's copy once it is written)
       await new Promise((r) => setTimeout(r, 300));
       return { from: got.from, bytes: got.bytes?.length ?? 0, section, lines, isolated: crossOriginIsolated };
-    }, origin);
+    }, { origin, buildId });
     await page.close();
     return r;
   };
@@ -182,7 +182,7 @@ try {
   assert.equal(second.section, BODY);
   assert.equal(counts.bucket, 1, 'the bucket not asked again');
 
-  // 3. kept by the browser itself: left to emscripten
+  // 3. already in the browser cache: verify and compile the cached bytes
   {
     const page = await context.newPage();
     await page.goto(`${origin}/`);
@@ -192,7 +192,7 @@ try {
   const before = { ...counts };
   const third = await run();
   assert.equal(third.from, 'http-cache', JSON.stringify(third));
-  assert.equal(third.section, -1, 'emscripten loads it itself');
+  assert.equal(third.section, BODY, 'instantiated from verified HTTP cache bytes');
   assert.deepEqual(counts, before, 'neither the server nor the bucket asked');
 
   // 4. a new device, a damaged object; then a server without S3

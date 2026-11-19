@@ -1905,6 +1905,9 @@ mod drivers {
         /// fields that fit are those of the full answer.
         #[test]
         fn details_fit_cb_struct(which in 0usize..2, size in 4u32..0x398) {
+            // Tag count depends on the mock page advertising its MP3 decoder.
+            // Both queries must observe the same decoder capabilities.
+            let _audio = crate::ADEC_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
             let _g = enter();
             let id = DRIVERS[which].0;
             let p = mem::heap_alloc(0x400, true);
