@@ -13,6 +13,22 @@ struct Fixture {
     mutate: (&'static str, fn(String) -> Option<String>),
 }
 
+/// ntcrt.rs registering every name of win32::NTDLL_OWN_CRT (the classes by its two lists)
+const GOOD_NTCRT: &str = concat!(
+    "pub fn init() {\n    let d = \"ntdll\";\n",
+    "    classes!(Upper \"upper\", Lower \"lower\", Digit \"digit\", Space \"space\", Punct \"punct\", Cntrl \"cntrl\", Xdigit \"xdigit\", Alpha \"alpha\", Alnum \"alnum\", Graph \"graph\", Print \"print\");\n",
+    "    wclasses!(Lower \"lower\", Digit \"digit\", Space \"space\", Xdigit \"xdigit\", Alpha \"alpha\", Alnum \"alnum\", Graph \"graph\", Print \"print\");\n",
+    "    implement(d, \"towlower\", f); implement(d, \"towupper\", f); implement(d, \"tolower\", f); implement(d, \"toupper\", f);\n",
+    "    implement(d, \"_wcslwr\", f); implement(d, \"_wcsupr\", f); implement(d, \"_wcsicmp\", f); implement(d, \"_wcsnicmp\", f);\n",
+    "    implement(d, \"iswctype\", f); implement(d, \"iswascii\", f);\n",
+    "    implement(d, \"_itoa\", f); implement(d, \"_ltoa\", f); implement(d, \"_ultoa\", f); implement(d, \"_i64toa\", f); implement(d, \"_ui64toa\", f);\n",
+    "    implement(d, \"_itow\", f); implement(d, \"_ltow\", f); implement(d, \"_ultow\", f); implement(d, \"_i64tow\", f); implement(d, \"_ui64tow\", f);\n",
+    "    implement(d, \"atoi\", f); implement(d, \"atol\", f); implement(d, \"_wtoi\", f); implement(d, \"_wtol\", f); implement(d, \"_atoi64\", f); implement(d, \"_wtoi64\", f);\n",
+    "    implement(d, \"strtol\", f); implement(d, \"strtoul\", f); implement(d, \"wcstol\", f); implement(d, \"wcstoul\", f); implement(d, \"_wcstoi64\", f); implement(d, \"_wcstoui64\", f);\n",
+    "    implement(d, \"RtlAnsiCharToUnicodeChar\", f);\n",
+    "}\n",
+);
+
 fn fixture(r: Rule) -> Fixture {
     match r {
         Rule::MemoryPointer => Fixture {
@@ -65,6 +81,14 @@ fn fixture(r: Rule) -> Fixture {
                 ("docs/x.md", "GROUPS: 1\n"),
             ],
             mutate: (".github/workflows/bench.yml", |t| Some(t.replace("          ASKED: ${{ inputs.groups }}", "          GROUPS: ${{ inputs.groups }}"))),
+        },
+        Rule::NtdllOwnCrt => Fixture {
+            bad: &[("crates/sake/src/ntcrt.rs", "pub fn init() {\n    let d = \"ntdll\";\n    implement(d, \"towlower\", towlower_h);\n}\n")],
+            good: &[(
+                "crates/sake/src/ntcrt.rs",
+                GOOD_NTCRT,
+            )],
+            mutate: ("crates/sake/src/ntcrt.rs", |t| Some(t.replace("implement(d, \"_wtoi\",", "implement(d, \"_wtoi_gone\","))),
         },
         Rule::BooleanArg => Fixture {
             bad: &[
