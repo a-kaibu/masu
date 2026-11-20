@@ -18,7 +18,14 @@
 //! file: a file whose count drops fails the test, one that rises prints a note (SST_UPDATE=1
 //! rewrites the files). SST_CPU=<cpu> picks a suite, SST_FILTER=<substring> files,
 //! SST_SHOW=<n> prints the first n failures of each file, SST_ROOT=<dir> points at another copy.
+//!
+//! `singlestep_pinned` needs no download: testdata/sst/<cpu>.MOO.gz holds a few tests of every
+//! file (passing ones, picked to differ in exception, prefixes, ModR/M mod and resulting flags:
+//! [`pick_key`]), so a plain `cargo test` still holds the interpreter to the chips. Every one
+//! must pass. SST_PIN=1 (with the suites fetched) picks them again and rewrites the files.
 use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use std::io::Write;
 use koji::{step, Cpu, Exit, Fault, Memory};
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -208,6 +215,8 @@ fn suite(s: &Suite, filter: &str, show: usize) -> Option<(BTreeMap<String, (usiz
     let mut now = BTreeMap::new();
     let mut skipped = BTreeMap::new();
     let mut worse = Vec::new();
+    let pin = std::env::var_os("SST_PIN").is_some();
+    let mut pinned = Vec::new();
     for f in files {
         let name = f.file_name().unwrap().to_string_lossy().trim_end_matches(".MOO.gz").to_string();
         if !name.contains(filter) {
@@ -217,7 +226,9 @@ fn suite(s: &Suite, filter: &str, show: usize) -> Option<(BTreeMap<String, (usiz
         GzDecoder::new(std::fs::File::open(&f).unwrap()).read_to_end(&mut data).unwrap();
         let tests = parse(&data);
         let (mut ok, mut n, mut shown) = (0, 0, 0);
-        for t in &tests {
+        let mut keys = std::collections::HashSet::new();
+        let mut picked = Vec::new();
+        for (k, t) in tests.iter().enumerate() {
             let why = skip(s.kind, t, &revoked);
             if let Some(w) = why {
                 *skipped.entry(w).or_insert(0) += 1;
@@ -225,7 +236,12 @@ fn suite(s: &Suite, filter: &str, show: usize) -> Option<(BTreeMap<String, (usiz
             }
             n += 1;
             match run(t, &mut mem, s.kind) {
-                None => ok += 1,
+                None => {
+                    ok += 1;
+                    if pin && picked.len() < PICKS && keys.insert(pick_key(t)) {
+                        picked.push(k);
+                    }
+                }
                 Some(d) if shown < show => {
                     shown += 1;
                     eprintln!("{} {name} {} [{}] excp {:?}: {d}", s.cpu, t.name, t.bytes.iter().map(|b| format!("{b:02x}")).collect::<String>(), t.excp);
@@ -242,9 +258,102 @@ fn suite(s: &Suite, filter: &str, show: usize) -> Option<(BTreeMap<String, (usiz
         } else if ok < n {
             worse.push(format!("{} {name}: {ok}/{n} pass, not in expected-{}.tsv", s.cpu, s.cpu));
         }
+        if pin {
+            pin_file(&mut pinned, &name, &data, &picked);
+        }
         now.insert(name, (ok, n));
     }
+    if pin && filter.is_empty() {
+        let mut gz = GzEncoder::new(Vec::new(), flate2::Compression::best());
+        gz.write_all(&pinned).unwrap();
+        std::fs::create_dir_all(pinned_path(s.cpu).parent().unwrap()).unwrap();
+        std::fs::write(pinned_path(s.cpu), gz.finish().unwrap()).unwrap();
+    }
     Some((now, worse, skipped))
+}
+
+/// Tests kept per file in testdata/sst
+const PICKS: usize = 6;
+
+fn pinned_path(cpu: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("testdata/sst/{cpu}.MOO.gz"))
+}
+
+/// What makes tests of one file differ for the picks: the exception, the prefixes, the ModR/M
+/// mod, and the defined status flags the chip ended with
+fn pick_key(t: &Test) -> (Option<u8>, Vec<u8>, Option<u8>, u32) {
+    let ins = decode(&t.bytes);
+    let p = t.bytes.iter().position(|b| !matches!(b, 0x26 | 0x2e | 0x36 | 0x3e | 0x64 | 0x65 | 0x66 | 0x67 | 0xf0 | 0xf1 | 0xf2 | 0xf3)).unwrap_or(0);
+    let op = if t.bytes.get(p) == Some(&0x0f) { p + 2 } else { p + 1 };
+    let modrm = (ins.op_count() > 0 && (0..ins.op_count()).any(|i| matches!(ins.op_kind(i), iced_x86::OpKind::Register | iced_x86::OpKind::Memory))).then(|| t.bytes.get(op).map(|m| m >> 6)).flatten();
+    let flags = t.fina.regs[17].unwrap_or(t.init.regs[17].unwrap_or(0)) & FLAGS & !undefined_flags(&ins, t.init.regs[4].unwrap_or(0)) & 0x8d5;
+    (t.excp.map(|e| e.0), t.bytes[..p].to_vec(), modrm, flags)
+}
+
+/// Appends the picked tests of one file to a MOO stream: its masks (after a chunk resetting
+/// the previous file's), then the tests, each NAME prefixed with the file's name
+fn pin_file(out: &mut Vec<u8>, file: &str, data: &[u8], picked: &[usize]) {
+    let chunk = |out: &mut Vec<u8>, id: &[u8; 4], p: &[u8]| {
+        out.extend(id);
+        out.extend((p.len() as u32).to_le_bytes());
+        out.extend(p);
+    };
+    let mut reset = 0xf_ffffu32.to_le_bytes().to_vec();
+    for _ in 0..20 {
+        reset.extend(u32::MAX.to_le_bytes());
+    }
+    chunk(out, b"RM32", &reset);
+    let mut k = 0;
+    for (id, c) in chunks(data) {
+        match &id {
+            b"RM32" => chunk(out, b"RM32", c),
+            b"TEST" => {
+                if picked.contains(&k) {
+                    let mut p = c[..4].to_vec();
+                    for (id, c) in chunks(&c[4..]) {
+                        if &id == b"NAME" {
+                            let name = format!("{file} {}", String::from_utf8_lossy(&c[4..4 + u32le(c, 0) as usize]));
+                            let mut n = (name.len() as u32).to_le_bytes().to_vec();
+                            n.extend(name.as_bytes());
+                            chunk(&mut p, b"NAME", &n);
+                        } else {
+                            chunk(&mut p, &id, c);
+                        }
+                    }
+                    chunk(out, b"TEST", &p);
+                }
+                k += 1;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The pinned tests (testdata/sst): all must pass, without the suites downloaded
+#[test]
+fn singlestep_pinned() {
+    let none = std::collections::HashSet::new();
+    let mut failures = Vec::new();
+    let mut total = 0;
+    for s in &SUITES {
+        let mut data = Vec::new();
+        GzDecoder::new(std::fs::File::open(pinned_path(s.cpu)).unwrap_or_else(|e| panic!("{}: {e}", pinned_path(s.cpu).display()))).read_to_end(&mut data).unwrap();
+        let tests = parse(&data);
+        let mut mem = Ram(vec![0; RAM], Vec::new(), s.kind.addr_mask());
+        let mut n = 0;
+        for t in &tests {
+            if skip(s.kind, t, &none).is_some() {
+                continue;
+            }
+            n += 1;
+            if let Some(d) = run(t, &mut mem, s.kind) {
+                failures.push(format!("{} {} [{}] {}: {d}", s.cpu, t.name, t.bytes.iter().map(|b| format!("{b:02x}")).collect::<String>(), t.hash));
+            }
+        }
+        assert!(n > 1000, "{}: only {n} pinned tests", s.cpu);
+        total += n;
+    }
+    assert!(failures.is_empty(), "{} of {total} pinned SingleStepTests fail:\n{}", failures.len(), failures.join("\n"));
 }
 
 fn read_expected(cpu: &str) -> BTreeMap<String, (usize, usize)> {

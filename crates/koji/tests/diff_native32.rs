@@ -613,3 +613,88 @@ fn random_protected_mode_ops_match_the_host_cpu() {
         assert!(seen.contains_key(m), "{m} never compared: {seen:?}");
     }
 }
+
+/// Every input of the 8-bit operations, against the host CPU (Farcall's CBW test, which tries
+/// every AL, is the idea): random operands rarely hit the carries and the BCD rules' corners
+/// (AF from bit 3, CF out of bit 7, AL 9A..FF with AF set, OF at 7F/80). Two input FLAGS per
+/// case: every status flag clear, every one set (a flag the instruction doesn't read must not
+/// leak into the result). The upper bits of EAX/EBX hold a pattern that must survive.
+#[test]
+fn every_8bit_input_matches_the_host_cpu() {
+    let _m = map();
+    const HI: u32 = 0x5a3c_0000;
+    let mut failures = Vec::new();
+    let mut done = 0usize;
+    let mut check = |insn: &[u8], eax: u32, ebx: u32, ecx: u32, flags: u32| {
+        let st = State { r: [eax, ecx, 0x1357_9bdf, ebx, STACK32 - 0x100, 0x2468_ace0, 0x0f0f_0f0f, 0xf0f0_f0f0], flags };
+        match compare(insn, &st, &[]) {
+            Ok(true) => done += 1,
+            Ok(false) => {}
+            Err(e) => if failures.len() < 20 { failures.push(format!("{e} flags in {flags:03x}")) },
+        }
+    };
+    let flag_sets = [0x202, 0x202 | STATUS];
+    // two operands: AL op BL (all 65536 pairs), and the one-operand forms over all AL
+    let binary: [(&str, &[u8]); 12] = [
+        ("add", &[0x00, 0xd8]), ("or", &[0x08, 0xd8]), ("adc", &[0x10, 0xd8]), ("sbb", &[0x18, 0xd8]),
+        ("and", &[0x20, 0xd8]), ("sub", &[0x28, 0xd8]), ("xor", &[0x30, 0xd8]), ("cmp", &[0x38, 0xd8]),
+        ("test", &[0x84, 0xd8]), ("mul bl", &[0xf6, 0xe3]), ("imul bl", &[0xf6, 0xeb]), ("xchg", &[0x86, 0xd8]),
+    ];
+    for (_, insn) in binary {
+        for f in flag_sets {
+            for a in 0..=255u32 {
+                for b in 0..=255u32 {
+                    check(insn, HI | 0x7700 | a, HI | 0x6600 | b, 0, f);
+                }
+            }
+        }
+    }
+    let unary: [&[u8]; 6] = [&[0xfe, 0xc0], &[0xfe, 0xc8], &[0xf6, 0xd8], &[0xf6, 0xd0], &[0xd0, 0xe0], &[0xd0, 0xf8]];
+    for insn in unary {
+        for f in flag_sets {
+            for a in 0..=255u32 {
+                check(insn, HI | 0x7700 | a, HI, 0, f);
+            }
+        }
+    }
+    // BCD: AL x AH (AAA/AAS carry into AH) x each CF/AF combination
+    for insn in [[0x27u8], [0x2f], [0x37], [0x3f]] {
+        for f in [0, CF, AF, CF | AF] {
+            for ah in [0x00, 0x09, 0x7f, 0xff] {
+                for a in 0..=255u32 {
+                    check(&insn, HI | ah << 8 | a, HI, 0, 0x202 | f);
+                }
+            }
+        }
+    }
+    // AAM ib (base 0 is #DE) over all AL and bases; AAD ib over all AX for a few bases
+    for base in 1..=255u8 {
+        for a in 0..=255u32 {
+            check(&[0xd4, base], HI | 0x5500 | a, HI, 0, 0x202);
+        }
+    }
+    for base in [0x0a, 0x00, 0x01, 0x07, 0x10, 0xff] {
+        for ax in 0..=0xffffu32 {
+            check(&[0xd5, base], HI | ax, HI, 0, 0x202);
+        }
+    }
+    // DIV/IDIV r/m8: all AX for each divisor kind (the quotient overflows raise #DE: skipped)
+    for d in [1u32, 2, 3, 7, 0x0a, 0x10, 0x7f, 0x80, 0x81, 0xfe, 0xff] {
+        for ax in 0..=0xffffu32 {
+            check(&[0xf6, 0xf3], HI | ax, HI | d, 0, 0x202);
+            check(&[0xf6, 0xfb], HI | ax, HI | d, 0, 0x202);
+        }
+    }
+    // shifts and rotates by CL: all AL x counts 0..=33 and the masked ones above, both flag sets
+    for ext in [0u8, 1, 2, 3, 4, 5, 7] {
+        for f in flag_sets {
+            for c in (0..=33u32).chain([0x3f, 0x40, 0x41, 0xff]) {
+                for a in 0..=255u32 {
+                    check(&[0xd2, 0xc0 | ext << 3], HI | 0x7700 | a, HI, HI | 0x100 | c, f);
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{done} checked, mismatches:\n{}", failures.join("\n"));
+    assert!(done > 2_500_000, "{done}");
+}
