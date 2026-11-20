@@ -13,6 +13,7 @@ mod escape;
 mod ratchet;
 mod syntax;
 mod tree;
+mod win32;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

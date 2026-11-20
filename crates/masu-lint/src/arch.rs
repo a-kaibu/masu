@@ -42,10 +42,11 @@ pub enum Rule {
     CatchUnwindAbort,
     ShellSpecialEnv,
     DepthGuard,
+    BooleanArg,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 25] = [
+    pub const ALL: [Rule; 26] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -71,6 +72,7 @@ impl Rule {
         Rule::CatchUnwindAbort,
         Rule::ShellSpecialEnv,
         Rule::DepthGuard,
+        Rule::BooleanArg,
     ];
 
     /// the name a site list and a message use
@@ -101,6 +103,7 @@ impl Rule {
             Rule::CatchUnwindAbort => "catch-unwind-abort",
             Rule::ShellSpecialEnv => "shell-special-env",
             Rule::DepthGuard => "depth-guard",
+            Rule::BooleanArg => "boolean-arg",
         }
     }
 
@@ -131,6 +134,7 @@ impl Rule {
             Rule::CatchUnwindAbort => "sake.wasm is built with panic=abort, so catch_unwind in a crate it links never catches (82cdd0d0: naga's GLSL panic ended the game through a catch_unwind; review 2026-11-14 P1-7): return a Result, or check the input before the call",
             Rule::ShellSpecialEnv => "a workflow's env or a script does not set one of bash's own variables (bench.yml's inputs went through GROUPS: a script's GROUPS=.. is dropped, RANDOM/SECONDS/LINENO are replaced, whether an env value gets in depends on the variable and the bash version): give it a name of its own",
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
+            Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -162,6 +166,7 @@ impl Rule {
             Rule::CatchUnwindAbort => regress::catch_unwind_abort(tree),
             Rule::ShellSpecialEnv => regress::shell_special_env(tree),
             Rule::DepthGuard => regress::depth_guard(tree),
+            Rule::BooleanArg => crate::win32::boolean_arg(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }

@@ -66,6 +66,17 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: (".github/workflows/bench.yml", |t| Some(t.replace("          ASKED: ${{ inputs.groups }}", "          GROUPS: ${{ inputs.groups }}"))),
         },
+        Rule::BooleanArg => Fixture {
+            bad: &[
+                ("crates/sake/src/k32.rs", "fn RtlAnsiStringToUnicodeString(c: &mut Ctx) -> u32 {\n    counted_out(c.a(0), &w, 2, c.a(2) != 0)\n}\n"),
+                ("crates/sake/src/x.rs", "fn wait(c: &mut Ctx) -> u32 {\n    alertable(c.a(1))\n}\nfn init() { implement(\"ntdll\", \"NtWaitForSingleObject\", wait); }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/k32.rs", "fn RtlAnsiStringToUnicodeString(c: &mut Ctx) -> u32 {\n    counted_out(c.a(0), &w, 2, c.boolean(2))\n}\nfn RtlInitAnsiString(c: &mut Ctx) -> u32 {\n    c.a(2)\n}\n"),
+                ("crates/sake/src/x.rs", "fn wait(c: &mut Ctx) -> u32 {\n    alertable(c.boolean(1)) + c.a(0)\n}\nfn init() { implement(\"ntdll\", \"NtWaitForSingleObject\", wait); }\n"),
+            ],
+            mutate: ("crates/sake/src/k32.rs", |t| Some(t.replace("counted_out(c.a(0), &w, 2, c.boolean(2))", "counted_out(c.a(0), &w, 2, c.a(2) != 0)"))),
+        },
         Rule::DepthGuard => Fixture {
             bad: &[
                 ("crates/apitrace/src/trace.rs", "pub const MAX_DEPTH: u32 = 64;\nfn value(&mut self) { self.depth += 1; }\n"),
