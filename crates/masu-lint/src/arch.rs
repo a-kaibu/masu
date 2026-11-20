@@ -42,10 +42,11 @@ pub enum Rule {
     CatchUnwindAbort,
     ShellSpecialEnv,
     DepthGuard,
+    BooleanArg,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 25] = [
+    pub const ALL: [Rule; 26] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -71,6 +72,7 @@ impl Rule {
         Rule::CatchUnwindAbort,
         Rule::ShellSpecialEnv,
         Rule::DepthGuard,
+        Rule::BooleanArg,
     ];
 
     /// the name a site list and a message use
@@ -101,6 +103,7 @@ impl Rule {
             Rule::CatchUnwindAbort => "catch-unwind-abort",
             Rule::ShellSpecialEnv => "shell-special-env",
             Rule::DepthGuard => "depth-guard",
+            Rule::BooleanArg => "boolean-arg",
         }
     }
 
@@ -109,7 +112,7 @@ impl Rule {
         match self {
             Rule::BuildOutput => "no build output in git (a target/ directory, a compiled or packed file outside vendor/ and testdata/): build artifacts never go to GitHub; 99c0d6d6 committed three masu stubs under crates/masu/target",
             Rule::HresultCopy => "sake's HRESULTs live in sake::hresult only (DRY rework 2026-11-15): `use crate::hresult::*` instead of a second `const E_FAIL`",
-            Rule::KomeCopy => "conversions, little-endian readers and lock traits live in kome only (95e48ed5): use kome::num / kome::le / kome::locks, not a copy of your own",
+            Rule::KomeCopy => "conversions, little-endian readers, GUIDs and lock traits live in kome only (95e48ed5, kome::guid): use kome::num / kome::le / kome::guid / kome::locks (a GUID in guest memory: mem::array::<16>, mem::write), not a copy of your own",
             Rule::GoldenEnv => "one golden switch, MASU_UPDATE_GOLDEN, read by kome::golden only: another *_UPDATE_GOLDEN/BLESS name is a golden MASU_UPDATE_GOLDEN=1 leaves stale",
             Rule::DeadApi => "removed stays removed: sake::mem's safe borrows (slice, guest_mut, view, view_mut, guest, in_guest, guest_range; mem::bytes / mem::update copy) and api's untyped out-parameter paths (to_callee, a_at, out_at, put64; api::words!, typed Args)",
             Rule::UntypedWayBack => "a guest address is a value (mem::r32(ga(a) + 4), no reader/writer methods on Ga), and api::Args has no Deref to Ctx (it let c.a(i) read an out-parameter as a word)",
@@ -131,6 +134,7 @@ impl Rule {
             Rule::CatchUnwindAbort => "sake.wasm is built with panic=abort, so catch_unwind in a crate it links never catches (82cdd0d0: naga's GLSL panic ended the game through a catch_unwind; review 2026-11-14 P1-7): return a Result, or check the input before the call",
             Rule::ShellSpecialEnv => "a workflow's env or a script does not set one of bash's own variables (bench.yml's inputs went through GROUPS: a script's GROUPS=.. is dropped, RANDOM/SECONDS/LINENO are replaced, whether an env value gets in depends on the variable and the bash version): give it a name of its own",
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
+            Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -162,6 +166,7 @@ impl Rule {
             Rule::CatchUnwindAbort => regress::catch_unwind_abort(tree),
             Rule::ShellSpecialEnv => regress::shell_special_env(tree),
             Rule::DepthGuard => regress::depth_guard(tree),
+            Rule::BooleanArg => crate::win32::boolean_arg(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -228,13 +233,22 @@ fn hresult_copy(tree: &Tree) -> Hits {
         .collect()
 }
 
-pub const KOME_FNS: [&str; 12] = ["lo8", "lo16", "lo16s", "lo32", "lo64", "us", "u32_of", "u64_of", "to_usize", "u16_at", "u32_at", "u64_at"];
+pub const KOME_FNS: [&str; 18] = [
+    "lo8", "lo16", "lo16s", "lo32", "lo64", "us", "u32_of", "u64_of", "to_usize", "u16_at", "u32_at", "u64_at",
+    // (kome::guid, 2026-11-20: eight GUID builders, six parsers, three printers and eleven guest
+    // readers/writers were copies: kome::guid::{guid, parse, of_text, braced, text},
+    // mem::array::<16> / mem::write)
+    "guid", "guid_string", "fmt_guid", "guid_at", "read_guid", "put_guid",
+];
 
 fn kome_copy(tree: &Tree) -> Hits {
     let files: Vec<Rel> = tree.rs(&["crates/"]).into_iter().filter(|f| !f.as_str().starts_with("crates/kome/")).collect();
     let mut out = Hits::new();
     for (f, it) in items(tree, &files) {
-        out.extend(it.fns.iter().filter(|(n, _)| KOME_FNS.contains(&n.as_str())).map(|(n, l)| (f.clone(), *l, format!("fn {n}"))));
+        // (sake's one guest GUID reader that may get a null pointer lives in mem.rs)
+        let home = |n: &str| f.as_str() == MEM && n == "guid_at";
+        out.extend(it.fns.iter().filter(|(n, _)| KOME_FNS.contains(&n.as_str()) && !home(n)).map(|(n, l)| (f.clone(), *l, format!("fn {n}"))));
+        out.extend(it.byte_readers.iter().map(|(n, l)| (f.clone(), *l, format!("fn {n}: a number from bytes at an offset (kome::le::u32_at, u16_be_at...)"))));
         out.extend(it.traits.iter().filter(|(n, _)| n == "Lock" || n == "Rw").map(|(n, l)| (f.clone(), *l, format!("trait {n}"))));
     }
     out

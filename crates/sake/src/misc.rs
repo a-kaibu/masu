@@ -2219,26 +2219,9 @@ fn CoCreateGuid(c: &mut Ctx) -> u32 {
 fn IsEqualGUID(c: &mut Ctx) -> u32 {
     (&mem::array::<16>(c.a(0)) == &mem::array::<16>(c.a(1))) as u32
 }
-fn guid_string(p: u32) -> String {
-    let b = &mem::array::<8>(p + 8);
-    format!(
-        "{{{:08X}-{:04X}-{:04X}-{:02X}{:02X}-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}}}",
-        r32(p),
-        r16(p + 4),
-        r16(p + 6),
-        b[0],
-        b[1],
-        b[2],
-        b[3],
-        b[4],
-        b[5],
-        b[6],
-        b[7]
-    )
-}
 fn StringFromGUID2(c: &mut Ctx) -> u32 {
     let (g, out, n) = (c.a(0), c.a(1), c.a(2));
-    let s: Vec<u16> = guid_string(g).encode_utf16().collect();
+    let s: Vec<u16> = kome::guid::braced(&mem::array::<16>(g)).encode_utf16().collect();
     if (n as usize) <= s.len() {
         return 0;
     }
@@ -2248,7 +2231,7 @@ fn StringFromGUID2(c: &mut Ctx) -> u32 {
 fn StringFromCLSID(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::StringFromCLSID>();
     let (g, out) = (c.a::<0>(), c.out::<1>());
-    let s: Vec<u16> = guid_string(g).encode_utf16().collect();
+    let s: Vec<u16> = kome::guid::braced(&mem::array::<16>(g)).encode_utf16().collect();
     let p = mem::heap_alloc(2 * s.len() as u32 + 2, false);
     mem::put_wstr(p, s.len() as u32 + 1, &s);
     out.put(p);
@@ -2345,7 +2328,7 @@ fn UuidCreateNil(c: &mut Ctx) -> u32 {
     0
 }
 fn uuid_text(p: u32) -> String {
-    guid_string(p).trim_matches(['{', '}']).to_ascii_lowercase()
+    kome::guid::text(&mem::array::<16>(p))
 }
 fn uuid_to_string(c: &mut Ctx, wide: bool) -> u32 {
     let (u, out) = (c.a(0), c.out(1));
@@ -2377,31 +2360,7 @@ fn RpcStringFreeA(c: &mut Ctx) -> u32 {
 /// A UUID's text as rpcrt4 reads it: exactly 8-4-4-4-12 hex digits (either case), no braces,
 /// nothing before or after. The 16 bytes as they are in memory.
 pub fn parse_uuid(t: &[u16]) -> Option<[u8; 16]> {
-    if t.len() != 36 {
-        return None;
-    }
-    let mut digits = [0u8; 32];
-    let mut n = 0;
-    for (i, &ch) in t.iter().enumerate() {
-        if matches!(i, 8 | 13 | 18 | 23) {
-            if ch != u16::from(b'-') {
-                return None;
-            }
-            continue;
-        }
-        digits[n] = char::from_u32(ch.into()).and_then(|c| c.to_digit(16))? as u8;
-        n += 1;
-    }
-    let byte = |k: usize| digits[2 * k] << 4 | digits[2 * k + 1];
-    let mut u = [0u8; 16];
-    // Data1 (4 bytes), Data2, Data3 little-endian; Data4 as written
-    for (k, at) in [(0, 3), (1, 2), (2, 1), (3, 0), (4, 5), (5, 4), (6, 7), (7, 6)] {
-        u[at] = byte(k);
-    }
-    for k in 8..16 {
-        u[k] = byte(k);
-    }
-    Some(u)
+    kome::guid::parse(&String::from_utf16(t).ok()?)
 }
 fn uuid_from_string(c: &mut Ctx, wide: bool) -> u32 {
     let (s, out) = (c.a(0), c.a(1));

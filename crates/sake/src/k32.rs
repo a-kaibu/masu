@@ -3392,15 +3392,21 @@ fn RtlFreeUnicodeString(c: &mut Ctx) -> u32 {
     }
     0
 }
-/// Stores `v` (code units of `unit` bytes) in counted string `us`, allocating if asked.
-fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
+/// Stores `v` (code units of `unit` bytes) in counted string `us`, allocating if asked
+/// (RtlAnsiStringToUnicodeString's rules, sake-re/ntdll/rtl-integer-strings.md: a size with its
+/// NUL past 0xFFFE is STATUS_INVALID_PARAMETER_2; without allocation a NULL Buffer or a
+/// MaximumLength short of the size is STATUS_BUFFER_OVERFLOW, and nothing is written).
+pub(crate) fn counted_out(us: u32, v: &[u16], unit: u32, alloc: bool) -> u32 {
     let n = unit.saturating_mul(kome::num::u32_of(v.len()));
+    if n.saturating_add(unit) > 0xfffe {
+        return 0xc000_00f0; // STATUS_INVALID_PARAMETER_2
+    }
     let buf = if alloc {
         let b = mem::heap_alloc(n.saturating_add(unit), true);
         put_counted(us, n, n.saturating_add(unit), b);
         b
     } else {
-        if n.saturating_add(unit) > u32::from(crate::mem::r16(mem::ga(us) + 2)) {
+        if n.saturating_add(unit) > u32::from(crate::mem::r16(mem::ga(us) + 2)) || crate::mem::rp(mem::ga(us) + mem::ps()) == 0 {
             return 0x8000_0005; // STATUS_BUFFER_OVERFLOW
         }
         w16(us, kome::num::lo16(n));
@@ -3420,11 +3426,11 @@ fn counted_wide(us: u32) -> Vec<u16> {
 }
 fn RtlAnsiStringToUnicodeString(c: &mut Ctx) -> u32 {
     let w = a2w(&counted_bytes(c.a(1)));
-    counted_out(c.a(0), &w, 2, c.a(2) != 0)
+    counted_out(c.a(0), &w, 2, c.boolean(2))
 }
 fn RtlUnicodeStringToAnsiString(c: &mut Ctx) -> u32 {
     let a: Vec<u16> = crate::text::w2a(&counted_wide(c.a(1))).into_iter().map(|b| u16::from(b)).collect();
-    counted_out(c.a(0), &a, 1, c.a(2) != 0)
+    counted_out(c.a(0), &a, 1, c.boolean(2))
 }
 /// RtlMultiByteToUnicodeN(dst, dst bytes, &written bytes, src, src bytes): the ANSI code page's
 /// text as UTF-16, cut to what fits (whole characters)
@@ -3479,7 +3485,7 @@ fn RtlUpcaseUnicodeChar(c: &mut Ctx) -> u32 {
 /// RtlCompareUnicodeString(a, b, case insensitive): the difference of the first units that
 /// differ (in upper case when asked), else of the lengths
 fn RtlCompareUnicodeString(c: &mut Ctx) -> u32 {
-    let (a, b, ci) = (counted_wide(c.a(0)), counted_wide(c.a(1)), c.a(2) & 0xff != 0);
+    let (a, b, ci) = (counted_wide(c.a(0)), counted_wide(c.a(1)), c.boolean(2));
     let f = |u: u16| if ci { crate::nt::up(u) } else { u };
     for (x, y) in a.iter().zip(&b) {
         let (x, y) = (f(*x), f(*y));

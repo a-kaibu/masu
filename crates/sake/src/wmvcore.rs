@@ -14,6 +14,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::guid::IID_IUNKNOWN;
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -75,14 +76,13 @@ impl Hr {
 const WM_SF_CLEANPOINT: u32 = 1;
 const WM_SF_DISCONTINUITY: u32 = 2;
 
-pub type Guid = [u8; 16];
-pub use asf::guid;
+use kome::guid::Guid;
+use kome::guid::guid;
 
 const fn wm(d1: u32) -> Guid {
     // {xxxxxxxx-2b2b-11d3-b36b-00c04f6108ff}
     guid(d1, 0x2b2b, 0x11d3, [0xb3, 0x6b, 0x00, 0xc0, 0x4f, 0x61, 0x08, 0xff])
 }
-const IID_IUNKNOWN: Guid = guid(0, 0, 0, [0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
 const IID_SYNC_READER: Guid = guid(0x9397_f121, 0x7705, 0x4dc9, [0xb0, 0x49, 0x98, 0xb6, 0x98, 0x18, 0x84, 0x14]);
 const IID_SYNC_READER2: Guid = guid(0xfaed_3d21, 0x1b6b, 0x4af7, [0x8c, 0xb6, 0x3e, 0x18, 0x9b, 0xbc, 0x18, 0x7b]);
 const IID_PROFILE: Guid = wm(0x9640_6bdb);
@@ -111,12 +111,6 @@ pub const SUBTYPE_PCM: Guid = fourcc(1);
 pub const FORMAT_VIDEO_INFO: Guid = guid(0x0558_9f80, 0xc356, 0x11ce, [0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a]);
 pub const FORMAT_WAVE_FORMAT_EX: Guid = guid(0x0558_9f81, 0xc356, 0x11ce, [0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a]);
 
-fn guid_at(p: u32) -> Option<Guid> {
-    (p != 0).then(|| mem::array::<16>(p).first_chunk::<16>().copied().unwrap_or([0; 16]))
-}
-fn put_guid(p: u32, g: &Guid) {
-    mem::write(p, g);
-}
 
 // ---------------------------------------------------------------------------------------------
 // media types
@@ -145,12 +139,12 @@ pub fn mt_size() -> u32 {
 impl MediaType {
     /// Writes it at `p` with its format block at `fmt` (guest memory).
     pub fn write(&self, p: u32, fmt: u32) {
-        put_guid(p, &self.major);
-        put_guid(p + 16, &self.sub);
+        mem::write(p, &self.major);
+        mem::write(p + 16, &self.sub);
         w32(p + 32, u32::from(self.fixed));
         w32(p + 36, u32::from(self.temporal));
         w32(p + 40, self.sample_size);
-        put_guid(p + 44, &self.format_type);
+        mem::write(p + 44, &self.format_type);
         let k = if mem::x64() { 64 } else { 60 };
         wp(p + k, 0);
         w32(p + k + ps(), lo32(self.format.len()));
@@ -170,12 +164,12 @@ impl MediaType {
         let fp = rp(at);
         let format = if n != 0 && fp != 0 && n < 1 << 20 { mem::bytes(fp, n) } else { Vec::new() };
         Some(MediaType {
-            major: guid_at(p)?,
-            sub: guid_at(p + 16)?,
+            major: mem::guid_at(p)?,
+            sub: mem::guid_at(p + 16)?,
             fixed: r32(p + 32) != 0,
             temporal: r32(p + 36) != 0,
             sample_size: r32(p + 40),
-            format_type: guid_at(p + 44)?,
+            format_type: mem::guid_at(p + 44)?,
             format,
         })
     }
@@ -570,7 +564,7 @@ fn qi(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let Some(b) = block(this) else { return Hr::NoInterface.code() };
-    let want = guid_at(riid).unwrap_or([0xff; 16]);
+    let want = mem::guid_at(riid).unwrap_or([0xff; 16]);
     let asy = table(|m| m.get(&b).is_some_and(|o| o.a.is_some()));
     let w = if asy && [IID_IUNKNOWN, asyncr::IID_READER].contains(&want) {
         W_SYNC
@@ -1538,7 +1532,7 @@ fn sc_qi(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let Some(b) = props_block(this) else { return Hr::NoInterface.code() };
-    let want = guid_at(riid).unwrap_or([0xff; 16]);
+    let want = mem::guid_at(riid).unwrap_or([0xff; 16]);
     let stream = props(|m| matches!(m.get(&b).map(|o| &o.p), Some(Props::Stream(_))));
     let w = if want == IID_IUNKNOWN {
         Some(0)
@@ -1598,7 +1592,7 @@ fn sc_get_stream_type(c: &mut Ctx) -> u32 {
         Props::Output(t) => t.major,
     }) {
         Some(g) => {
-            put_guid(out, &g);
+            mem::write(out, &g);
             0
         }
         None => Hr::Unexpected.code(),
@@ -1745,7 +1739,7 @@ fn buf_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let want = guid_at(riid).unwrap_or([0xff; 16]);
+    let want = mem::guid_at(riid).unwrap_or([0xff; 16]);
     if want != IID_IUNKNOWN && want != IID_NSSBUFFER {
         out.put(0);
         return Hr::NoInterface.code();

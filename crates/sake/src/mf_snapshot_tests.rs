@@ -34,7 +34,7 @@ impl Names {
 }
 
 fn key_name(g: &Guid, keys: &[u32; 4]) -> String {
-    keys.iter().position(|&k| guid_at(k) == *g).map_or_else(|| format!("{:02x?}", &g[..4]), |i| format!("k{i}"))
+    keys.iter().position(|&k| mem::array::<16>(k) == *g).map_or_else(|| format!("{:02x?}", &g[..4]), |i| format!("k{i}"))
 }
 fn val_str(v: &Val, names: &Names) -> String {
     match v {

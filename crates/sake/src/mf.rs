@@ -161,11 +161,8 @@ fn blob(p: u32, n: u32) -> Result<Vec<u8>, u32> {
     Ok(mem::bytes(p, n))
 }
 
-type Guid = [u8; 16];
+use kome::guid::Guid;
 
-fn guid_at(p: u32) -> Guid {
-    mem::array::<16>(p).first_chunk::<16>().copied().unwrap_or([0; 16])
-}
 /// The first fields of a GUID: (Data1, Data2, Data3)
 /// Data1 of a GUID (its first field)
 fn data1(g: &Guid) -> u32 {
@@ -373,7 +370,7 @@ fn get_prop(p: u32) -> Result<Val, u32> {
         19 => Val::U32(r32(p + 8)),
         21 => Val::U64(mem::r64(p + 8)),
         5 => Val::F64(f64::from_bits(mem::r64(p + 8))),
-        72 => Val::Guid(guid_at(rp(p + 8))),
+        72 => Val::Guid(mem::array::<16>(rp(p + 8))),
         31 => Val::Str(mem::wstr(rp(p + 8))),
         0x1011 => Val::Blob(blob(rp(p + 8 + ps()), r32(p + 8))?),
         13 => Val::Unk(rp(p + 8)),
@@ -393,7 +390,7 @@ fn value(c: &Ctx) -> Result<Val, u32> {
     if c.a(1) == 0 {
         return Err(Hr::Pointer.code());
     }
-    let k = guid_at(c.a(1));
+    let k = mem::array::<16>(c.a(1));
     attrs(c.a(0), |a| a.1.get(&k).cloned()).flatten().ok_or(Hr::AttributeNotFound.code())
 }
 /// Sets key (argument 1) of this store; the value it replaces is released.
@@ -401,7 +398,7 @@ fn set_value(c: &mut Ctx, v: Val) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    let k = guid_at(c.a(1));
+    let k = mem::array::<16>(c.a(1));
     if let Val::Unk(u) = v {
         add_ref(c, u);
     }
@@ -443,7 +440,7 @@ fn at_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(iid);
+    let g = mem::array::<16>(iid);
     // IMFAttributes {2cd2d921-c447-44a7-a13c-4adabfc247e3}
     if is_unknown(&g) || is(&g, 0x2cd2_d921, 0xc447, 0x44a7) {
         attrs(this, |a| a.0 += 1);
@@ -646,7 +643,7 @@ fn at_delete(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return Hr::Pointer.code();
     }
-    let k = guid_at(c.a(1));
+    let k = mem::array::<16>(c.a(1));
     if let Some(Val::Unk(u)) = attrs(c.a(0), |a| a.1.delete(&k)).flatten() {
         release(c, u);
     }
@@ -677,7 +674,7 @@ fn at_set_guid(c: &mut Ctx) -> u32 {
     if c.a(2) == 0 {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a(2));
+    let g = mem::array::<16>(c.a(2));
     set_value(c, Val::Guid(g))
 }
 fn at_set_string(c: &mut Ctx) -> u32 {
@@ -816,7 +813,7 @@ fn mg_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFDXGIDeviceManager {eb533d5d-2db6-40f8-97a9-494692014f07}
     if is_unknown(&g) || is(&g, 0xeb53_3d5d, 0x2db6, 0x40f8) {
         manager(this, |m| m.refs += 1);
@@ -929,7 +926,7 @@ fn new_error(code: u16, hr: u32) -> u32 {
         if out.is_null() {
             return Hr::Pointer.code();
         }
-        let g = guid_at(c.a::<1>());
+        let g = mem::array::<16>(c.a::<1>());
         // IMFMediaError {fc0e10d2-ab2a-4501-a951-06bb1075184c}
         if is_unknown(&g) || is(&g, 0xfc0e_10d2, 0xab2a, 0x4501) {
             er_add_ref(c.ctx());
@@ -1432,7 +1429,7 @@ fn en_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFMediaEngine {98a1b0bb-03eb-4935-ae7c-93c1fa0e1c93}, IMFMediaEngineEx {83015ead-b1e6-40d0-...}
     if is_unknown(&g) || is(&g, 0x98a1_b0bb, 0x03eb, 0x4935) || is(&g, 0x8301_5ead, 0xb1e6, 0x40d0) {
         en_add_ref(c.ctx());
@@ -2140,7 +2137,7 @@ fn fa_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFMediaEngineClassFactory {4d645ace-26aa-4688-9be1-df3516990b93}
     if is_unknown(&g) || is(&g, 0x4d64_5ace, 0x26aa, 0x4688) {
         out.put(this);
@@ -2163,11 +2160,11 @@ fn one(_: &mut Ctx) -> u32 {
 
 /// CoCreateInstance(CLSID_MFMediaEngineClassFactory {b44392da-499b-446b-a4cb-005fead0e6d5}, ...)
 pub fn create_instance(clsid: u32, iid: u32) -> Option<u32> {
-    let g = guid_at(clsid);
+    let g = mem::array::<16>(clsid);
     if !is(&g, 0xb443_92da, 0x499b, 0x446b) {
         return None;
     }
-    let i = guid_at(iid);
+    let i = mem::array::<16>(iid);
     if !is_unknown(&i) && !is(&i, 0x4d64_5ace, 0x26aa, 0x4688) {
         return Some(0);
     }

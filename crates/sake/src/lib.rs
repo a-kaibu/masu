@@ -165,6 +165,7 @@ mod webbrowser;
 pub mod icu;
 pub mod dnsrec;
 pub mod eventlog;
+pub mod ntstr;
 pub mod smalldlls;
 pub mod security;
 pub mod lsa;
@@ -1078,6 +1079,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     resupdate::init();
     icu::init();
     eventlog::init();
+    ntstr::init();
     security::init();
     lsa::init();
     actctx::init();

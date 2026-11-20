@@ -26,21 +26,17 @@ pub struct Container<'a> {
     chunks: Vec<([u8; 4], &'a [u8])>,
 }
 
-fn rd(b: &[u8], at: usize) -> Option<u32> {
-    b.get(at..at.checked_add(4)?).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
-}
-
 impl<'a> Container<'a> {
     pub fn parse(code: &'a [u8]) -> Result<Self, String> {
         if code.get(..4) != Some(b"DXBC") {
             return Err("not DXBC".into());
         }
-        let n = kome::num::us(rd(code, 28).ok_or("short DXBC")?);
+        let n = kome::num::us(kome::le::u32_at(code, 28).ok_or("short DXBC")?);
         let mut chunks = Vec::new();
         for i in 0..n.min(64) {
-            let off = kome::num::us(rd(code, 32 + 4 * i).ok_or("short DXBC")?);
+            let off = kome::num::us(kome::le::u32_at(code, 32 + 4 * i).ok_or("short DXBC")?);
             let tag = code.get(off..off.checked_add(4).ok_or("bad DXBC chunk")?).ok_or("bad DXBC chunk")?;
-            let size = kome::num::us(rd(code, off + 4).ok_or("bad DXBC chunk")?);
+            let size = kome::num::us(kome::le::u32_at(code, off + 4).ok_or("bad DXBC chunk")?);
             let data = (off + 8).checked_add(size).and_then(|end| code.get(off + 8..end)).ok_or("bad DXBC chunk size")?;
             chunks.push(([tag[0], tag[1], tag[2], tag[3]], data));
         }
@@ -67,13 +63,13 @@ impl<'a> Container<'a> {
 /// Elements of `size` bytes: ISGN/OSGN 24 (name, index, sysval, type, reg, mask), OSG5 28 (a
 /// stream first), ISG1/OSG1 32 (stream first, min precision last).
 fn parse_signature(c: &[u8], size: usize) -> Vec<SigElement> {
-    let n = kome::num::us(rd(c, 0).unwrap_or(0));
+    let n = kome::num::us(kome::le::u32_at(c, 0).unwrap_or(0));
     let mut v = Vec::new();
     for i in 0..n.min(128) {
         let at = 8 + i * size;
         let base = if size == 24 { at } else { at + 4 };
         let (Some(name_off), Some(index), Some(sysval), Some(ty), Some(reg), Some(mask)) =
-            (rd(c, base), rd(c, base + 4), rd(c, base + 8), rd(c, base + 12), rd(c, base + 16), c.get(base + 20))
+            (kome::le::u32_at(c, base), kome::le::u32_at(c, base + 4), kome::le::u32_at(c, base + 8), kome::le::u32_at(c, base + 12), kome::le::u32_at(c, base + 16), c.get(base + 20))
         else {
             break;
         };
@@ -82,7 +78,7 @@ fn parse_signature(c: &[u8], size: usize) -> Vec<SigElement> {
             let e = s.iter().position(|&b| b == 0).unwrap_or(s.len());
             String::from_utf8_lossy(&s[..e]).into_owned()
         });
-        let stream = if size == 24 { 0 } else { rd(c, at).unwrap_or(0) };
+        let stream = if size == 24 { 0 } else { kome::le::u32_at(c, at).unwrap_or(0) };
         v.push(SigElement { name, index, sysval, component_type: ty, reg, mask: u32::from(*mask) & 0xf, stream });
     }
     v

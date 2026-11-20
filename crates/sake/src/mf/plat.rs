@@ -45,7 +45,7 @@ fn ar_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFAsyncResult {ac6b7889-0740-4d51-8619-905994a55cc6}
     if is_unknown(&g) || is(&g, 0xac6b_7889, 0x0740, 0x4d51) {
         result(this, |r| r.refs += 1);
@@ -283,7 +283,7 @@ fn bs_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFByteStream {ad4c1b00-4bf7-422f-9175-756693d9130d}
     if is_unknown(&g) || is(&g, 0xad4c_1b00, 0x4bf7, 0x422f) {
         bs(this, |s| s.refs += 1);
@@ -668,7 +668,7 @@ fn MFCalculateImageSize(c: &mut Ctx) -> u32 {
     if h == 0 {
         return Hr::InvalidArg.code();
     }
-    let g = guid_at(g);
+    let g = mem::array::<16>(g);
     let d1 = data1(&g);
     match video_format(d1).and(image_size(d1, w, h)) {
         Some(s) => {
@@ -794,13 +794,13 @@ fn new_activate(name: &str) -> u32 {
 /// ***, UINT32 *count): GUID by value (x86: 4 slots; x64: its address)
 fn MFTEnumEx(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::MFTEnumEx>();
-    let cat = guid_at(c.ctx_ref().byval(0));
+    let cat = mem::array::<16>(c.ctx_ref().byval(0));
     let (input, list, count) = (c.a_arch::<2, 5>(), c.out_arch::<4, 7>(), c.a_arch::<5, 8>());
     if list.is_null() || count == 0 {
         return Hr::Pointer.code();
     }
     // MFT_REGISTER_TYPE_INFO: major type, subtype
-    let sub = (input != 0).then(|| guid_at(input + 16));
+    let sub = (input != 0).then(|| mem::array::<16>(input + 16));
     let found = decoders(&cat, sub.as_ref());
     w32(count, lo32(found.len()));
     if found.is_empty() {

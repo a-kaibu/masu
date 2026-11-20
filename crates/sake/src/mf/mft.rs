@@ -57,7 +57,7 @@ fn mt_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     if is_unknown(&g) || is_transform(&g) {
         mft(this, |m| m.refs += 1);
         out.put(this);
@@ -295,7 +295,7 @@ fn al_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    if is_allocator(&guid_at(c.a::<1>())) {
+    if is_allocator(&mem::array::<16>(c.a::<1>())) {
         alloc(this, |a| a.refs += 1);
         out.put(this);
         return 0;
@@ -412,7 +412,7 @@ fn MFCreateVideoSampleAllocatorEx(c: &mut Ctx) -> u32 {
     if riid == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    if !is_allocator(&guid_at(riid)) {
+    if !is_allocator(&mem::array::<16>(riid)) {
         out.put(0);
         return Hr::NoInterface.code();
     }

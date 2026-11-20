@@ -6,6 +6,7 @@
 //! gives it a second one, as Windows' does); collections are separate objects freed on their
 //! last Release; the device, its endpoint and property store are stateless singletons.
 
+use kome::guid::IID_IUNKNOWN;
 use crate::hresult::S_OK;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -90,9 +91,8 @@ fn singleton(name: &str, methods: &[(Handler, u32)], cell: &OnceLock<u32>) -> u3
 fn guid_is(p: u32, g: Iid) -> bool {
     p != 0 && r32(p) == g.0 && r16(p + 4) == g.1 && r16(p + 6) == g.2
 }
-const IID_UNKNOWN: [u8; 16] = guid(0, 0, 0, [0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
 fn is_unknown(iid: u32) -> bool {
-    iid != 0 && mem::array::<16>(iid) == IID_UNKNOWN
+    iid != 0 && mem::array::<16>(iid) == IID_IUNKNOWN
 }
 const IID_ENUMERATOR: Iid = (0xa956_64d2, 0x9614, 0x4f35);
 const IID_COLLECTION: Iid = (0x0bd7_a1be, 0x7a1a, 0x44db);
@@ -454,12 +454,7 @@ const KEYS: [([u8; 16], u32, Val); 7] = [
 /// The endpoint's guid, as DEVICE_ID ends
 const ENDPOINT_GUID: &str = "{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}";
 const INTERFACE_PATH: &str = "\\\\?\\SWD#MMDEVAPI#{0.0.0.00000000}.{5a2c1e0b-7f3d-4e8a-9c61-3b8d0f4a2e17}#{e6327cad-dcec-4949-ae8a-991e976a79d2}";
-const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] {
-    let a = d1.to_le_bytes();
-    let b = d2.to_le_bytes();
-    let c = d3.to_le_bytes();
-    [a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]]
-}
+use kome::guid::guid;
 /// The device format Windows reports for a typical stereo output: 16-bit PCM, 44.1 kHz
 /// (the engine mixes in float, wasapi.rs's mix format)
 fn device_format() -> [u8; 40] {

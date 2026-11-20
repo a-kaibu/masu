@@ -7,9 +7,11 @@
 //! - [`le`]: little-endian numbers from bytes without a panic.
 //! - [`locks`]: a Mutex/RwLock taken without an unwrap at every call (one policy: a poisoned
 //!   lock is taken as it is).
+//! - [`guid`]: GUIDs as their 16 bytes: built from fields, parsed, printed.
 //! - [`golden`]: golden-file comparison for tests (one env var rewrites them all).
 //! - [`time`]: deadlines that saturate instead of panicking (`Instant + Duration`).
 pub mod golden;
+pub mod guid;
 pub mod le;
 pub mod locks;
 pub mod num;

@@ -55,15 +55,15 @@ struct BindR {
 /// 5.1's entries are 40 bytes with Space and uID after the 32 of before; before 5.1 a binding's
 /// uID is its bind point and Space 0 (reflection.c's expected descs).
 fn bind_entries(b: &[u8]) -> Vec<(String, [u32; 7], u32, u32)> {
-    let (nb, boff) = (rd(b, 8) as usize, rd(b, 12) as usize);
-    let sm51 = (rd(b, 16) & 0xffff) >= 0x501;
+    let (nb, boff) = (kome::le::u32_at(b, 8).unwrap_or(0) as usize, kome::le::u32_at(b, 12).unwrap_or(0) as usize);
+    let sm51 = (kome::le::u32_at(b, 16).unwrap_or(0) & 0xffff) >= 0x501;
     let stride = if sm51 { 40 } else { 32 };
     (0..nb.min(256))
         .map(|i| {
             let at = boff + stride * i;
-            let vals = [rd(b, at + 4), rd(b, at + 20), rd(b, at + 24), rd(b, at + 28), rd(b, at + 8), rd(b, at + 12), rd(b, at + 16)];
-            let (space, uid) = if sm51 { (rd(b, at + 32), rd(b, at + 36)) } else { (0, vals[4]) };
-            (cstr_at(b, rd(b, at) as usize), vals, space, uid)
+            let vals = [kome::le::u32_at(b, at + 4).unwrap_or(0), kome::le::u32_at(b, at + 20).unwrap_or(0), kome::le::u32_at(b, at + 24).unwrap_or(0), kome::le::u32_at(b, at + 28).unwrap_or(0), kome::le::u32_at(b, at + 8).unwrap_or(0), kome::le::u32_at(b, at + 12).unwrap_or(0), kome::le::u32_at(b, at + 16).unwrap_or(0)];
+            let (space, uid) = if sm51 { (kome::le::u32_at(b, at + 32).unwrap_or(0), kome::le::u32_at(b, at + 36).unwrap_or(0)) } else { (0, vals[4]) };
+            (cstr_at(b, kome::le::u32_at(b, at).unwrap_or(0) as usize), vals, space, uid)
         })
         .collect()
 }
@@ -149,13 +149,6 @@ static OBJS: Mutex<Objs> = Mutex::new(Objs { v: Vec::new(), free: Vec::new() });
 /// stack overflowed, a wide deep one made 256^depth objects
 const MAX_TYPES: u32 = 4096;
 const MAX_TYPE_DEPTH: u32 = 16;
-
-fn rd(b: &[u8], at: usize) -> u32 {
-    b.get(at..at + 4).map_or(0, |s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
-}
-fn rd16(b: &[u8], at: usize) -> u32 {
-    b.get(at..at + 2).map_or(0, |s| u16::from_le_bytes([s[0], s[1]]) as u32)
-}
 fn cstr_at(b: &[u8], at: usize) -> String {
     let s = b.get(at..).unwrap_or(&[]);
     let e = s.iter().position(|&c| c == 0).unwrap_or(s.len());
@@ -278,17 +271,17 @@ fn put(at: u32, fields: &[(bool, u32)]) {
 fn parse_type(b: &[u8], at: usize, sm5: bool, fl: u8, depth: u32, budget: &mut u32) -> u32 {
     *budget = budget.saturating_sub(1);
     let mut t = TypeR {
-        class: rd16(b, at),
-        ty: rd16(b, at + 2),
-        rows: rd16(b, at + 4),
-        cols: rd16(b, at + 6),
-        elems: rd16(b, at + 8),
+        class: kome::le::u16_at(b, at).map_or(0, u32::from),
+        ty: kome::le::u16_at(b, at + 2).map_or(0, u32::from),
+        rows: kome::le::u16_at(b, at + 4).map_or(0, u32::from),
+        cols: kome::le::u16_at(b, at + 6).map_or(0, u32::from),
+        elems: kome::le::u16_at(b, at + 8).map_or(0, u32::from),
         ..Default::default()
     };
-    let nm = rd16(b, at + 10) as usize;
-    let moff = rd(b, at + 12) as usize;
+    let nm = kome::le::u16_at(b, at + 10).map_or(0, u32::from) as usize;
+    let moff = kome::le::u32_at(b, at + 12).unwrap_or(0) as usize;
     if sm5 {
-        let n = rd(b, at + 32) as usize;
+        let n = kome::le::u32_at(b, at + 32).unwrap_or(0) as usize;
         if n != 0 {
             t.name = gstr(&cstr_at(b, n));
         }
@@ -298,9 +291,9 @@ fn parse_type(b: &[u8], at: usize, sm5: bool, fl: u8, depth: u32, budget: &mut u
             break;
         }
         let m = moff + 12 * i;
-        let name = gstr(&cstr_at(b, rd(b, m) as usize));
-        let mt = parse_type(b, rd(b, m + 4) as usize, sm5, fl, depth + 1, budget);
-        let off = rd(b, m + 8);
+        let name = gstr(&cstr_at(b, kome::le::u32_at(b, m).unwrap_or(0) as usize));
+        let mt = parse_type(b, kome::le::u32_at(b, m + 4).unwrap_or(0) as usize, sm5, fl, depth + 1, budget);
+        let off = kome::le::u32_at(b, m + 8).unwrap_or(0);
         if let Some(Obj::Type(x)) = OBJS.lock().unwrap().get_mut(r32(mt + 12) as usize) {
             x.offset = off;
         }
@@ -311,16 +304,16 @@ fn parse_type(b: &[u8], at: usize, sm5: bool, fl: u8, depth: u32, budget: &mut u
 
 fn signature(b: Option<&[u8]>) -> Vec<SigR> {
     let Some(b) = b else { return Vec::new() };
-    let n = rd(b, 0) as usize;
+    let n = kome::le::u32_at(b, 0).unwrap_or(0) as usize;
     (0..n.min(128))
         .map(|i| {
             let at = 8 + 24 * i;
             SigR {
-                name_p: gstr(&cstr_at(b, rd(b, at) as usize)),
-                index: rd(b, at + 4),
-                sysval: rd(b, at + 8),
-                ctype: rd(b, at + 12),
-                reg: rd(b, at + 16),
+                name_p: gstr(&cstr_at(b, kome::le::u32_at(b, at).unwrap_or(0) as usize)),
+                index: kome::le::u32_at(b, at + 4).unwrap_or(0),
+                sysval: kome::le::u32_at(b, at + 8).unwrap_or(0),
+                ctype: kome::le::u32_at(b, at + 12).unwrap_or(0),
+                reg: kome::le::u32_at(b, at + 16).unwrap_or(0),
                 mask: b.get(at + 20).copied().unwrap_or(0),
                 rw: b.get(at + 21).copied().unwrap_or(0),
                 stream: 0,
@@ -333,7 +326,7 @@ fn parse(code: &[u8], fl: u8) -> Option<Refl> {
     let cont = dxwgsl::dxbc::Container::parse(code).ok()?;
     let shdr = cont.chunk(b"SHEX").or_else(|| cont.chunk(b"SHDR"));
     let mut r = Refl {
-        version: shdr.map_or(0, |s| rd(s, 0)),
+        version: shdr.map_or(0, |s| kome::le::u32_at(s, 0).unwrap_or(0)),
         creator: gstr("sake"),
         flags: 0,
         cbs: Vec::new(),
@@ -361,11 +354,11 @@ fn parse(code: &[u8], fl: u8) -> Option<Refl> {
         }
     }
     if let Some(b) = cont.chunk(b"RDEF") {
-        let ncb = rd(b, 0) as usize;
-        let cboff = rd(b, 4) as usize;
-        r.flags = rd(b, 20);
-        r.creator = gstr(&cstr_at(b, rd(b, 24) as usize));
-        let sm5 = (rd(b, 16) & 0xff00) >= 0x500;
+        let ncb = kome::le::u32_at(b, 0).unwrap_or(0) as usize;
+        let cboff = kome::le::u32_at(b, 4).unwrap_or(0) as usize;
+        r.flags = kome::le::u32_at(b, 20).unwrap_or(0);
+        r.creator = gstr(&cstr_at(b, kome::le::u32_at(b, 24).unwrap_or(0) as usize));
+        let sm5 = (kome::le::u32_at(b, 16).unwrap_or(0) & 0xff00) >= 0x500;
         let vsize = if sm5 { 40 } else { 24 };
         let mut budget = MAX_TYPES;
         for (name, vals, space, _uid) in bind_entries(b) {
@@ -373,16 +366,16 @@ fn parse(code: &[u8], fl: u8) -> Option<Refl> {
         }
         for i in 0..ncb.min(64) {
             let at = cboff + 24 * i;
-            let name = cstr_at(b, rd(b, at) as usize);
-            let nv = rd(b, at + 4) as usize;
-            let voff = rd(b, at + 8) as usize;
-            let mut cb = CbR { name_p: gstr(&name), name, ty: rd(b, at + 20), size: rd(b, at + 12), flags: rd(b, at + 16), vars: Vec::new() };
+            let name = cstr_at(b, kome::le::u32_at(b, at).unwrap_or(0) as usize);
+            let nv = kome::le::u32_at(b, at + 4).unwrap_or(0) as usize;
+            let voff = kome::le::u32_at(b, at + 8).unwrap_or(0) as usize;
+            let mut cb = CbR { name_p: gstr(&name), name, ty: kome::le::u32_at(b, at + 20).unwrap_or(0), size: kome::le::u32_at(b, at + 12).unwrap_or(0), flags: kome::le::u32_at(b, at + 16).unwrap_or(0), vars: Vec::new() };
             let cb_obj = new_obj(1 + fl, Obj::Cb(cb.clone()));
             for k in 0..nv.min(1024) {
                 let va = voff + vsize * k;
-                let vname = cstr_at(b, rd(b, va) as usize);
-                let ty = parse_type(b, rd(b, va + 16) as usize, sm5, fl, 0, &mut budget);
-                let v = VarR { name_p: gstr(&vname), name: vname, offset: rd(b, va + 4), size: rd(b, va + 8), flags: rd(b, va + 12), ty };
+                let vname = cstr_at(b, kome::le::u32_at(b, va).unwrap_or(0) as usize);
+                let ty = parse_type(b, kome::le::u32_at(b, va + 16).unwrap_or(0) as usize, sm5, fl, 0, &mut budget);
+                let v = VarR { name_p: gstr(&vname), name: vname, offset: kome::le::u32_at(b, va + 4).unwrap_or(0), size: kome::le::u32_at(b, va + 8).unwrap_or(0), flags: kome::le::u32_at(b, va + 12).unwrap_or(0), ty };
                 cb.vars.push(new_obj(2 + fl, Obj::Var(v, cb_obj)));
             }
             if let Some(o) = OBJS.lock().unwrap().get_mut(r32(cb_obj + 12) as usize) {
@@ -849,15 +842,15 @@ mod tests {
         let b = hlslc::compile(src, &[], &mut inc, "main", "ps_5_0", 0).unwrap();
         let c = dxwgsl::dxbc::Container::parse(&b).unwrap();
         let r = c.chunk(b"RDEF").unwrap();
-        assert_eq!(super::rd(r, 0), 1); // one cbuffer
-        assert_eq!(super::rd(r, 8), 3); // sampler, texture, cbuffer
-        let cb = super::rd(r, 4) as usize;
-        assert_eq!(super::cstr_at(r, super::rd(r, cb) as usize), "A");
-        assert_eq!(super::rd(r, cb + 4), 4);
-        assert_eq!(super::rd(r, cb + 12), 112);
-        let vars = super::rd(r, cb + 8) as usize;
+        assert_eq!(kome::le::u32_at(r, 0).unwrap_or(0), 1); // one cbuffer
+        assert_eq!(kome::le::u32_at(r, 8).unwrap_or(0), 3); // sampler, texture, cbuffer
+        let cb = kome::le::u32_at(r, 4).unwrap_or(0) as usize;
+        assert_eq!(super::cstr_at(r, kome::le::u32_at(r, cb).unwrap_or(0) as usize), "A");
+        assert_eq!(kome::le::u32_at(r, cb + 4).unwrap_or(0), 4);
+        assert_eq!(kome::le::u32_at(r, cb + 12).unwrap_or(0), 112);
+        let vars = kome::le::u32_at(r, cb + 8).unwrap_or(0) as usize;
         // m at 0 (64), v at 64 (12), s at 76, k at 80 (k[0] 80, k[1] 96: size 20)
-        let off: Vec<(u32, u32)> = (0..4).map(|i| (super::rd(r, vars + 40 * i + 4), super::rd(r, vars + 40 * i + 8))).collect();
+        let off: Vec<(u32, u32)> = (0..4).map(|i| (kome::le::u32_at(r, vars + 40 * i + 4).unwrap_or(0), kome::le::u32_at(r, vars + 40 * i + 8).unwrap_or(0))).collect();
         assert_eq!(off, [(0, 64), (64, 12), (76, 4), (80, 20)]);
     }
 
@@ -873,21 +866,21 @@ mod tests {
             let b = hlslc::compile(src, &[], &mut inc, "main", profile, 0).unwrap();
             let c = dxwgsl::dxbc::Container::parse(&b).unwrap();
             let r = c.chunk(b"RDEF").unwrap();
-            let cb = super::rd(r, 4) as usize;
-            let var = super::rd(r, cb + 8) as usize;
-            let t = super::rd(r, var + 16) as usize;
+            let cb = kome::le::u32_at(r, 4).unwrap_or(0) as usize;
+            let var = kome::le::u32_at(r, cb + 8).unwrap_or(0) as usize;
+            let t = kome::le::u32_at(r, var + 16).unwrap_or(0) as usize;
             // class 5 (struct), 4 members
-            assert_eq!((super::rd16(r, t), super::rd16(r, t + 10)), (5, 4), "{profile}");
-            let m = super::rd(r, t + 12) as usize;
-            let members: Vec<(String, u32)> = (0..4).map(|i| (super::cstr_at(r, super::rd(r, m + 12 * i) as usize), super::rd(r, m + 12 * i + 8))).collect();
+            assert_eq!((kome::le::u16_at(r, t).map_or(0, u32::from), kome::le::u16_at(r, t + 10).map_or(0, u32::from)), (5, 4), "{profile}");
+            let m = kome::le::u32_at(r, t + 12).unwrap_or(0) as usize;
+            let members: Vec<(String, u32)> = (0..4).map(|i| (super::cstr_at(r, kome::le::u32_at(r, m + 12 * i).unwrap_or(0) as usize), kome::le::u32_at(r, m + 12 * i + 8).unwrap_or(0))).collect();
             assert_eq!(members, [("dir".into(), 0), ("power".into(), 12), ("color".into(), 16), ("inner".into(), 48)], "{profile}");
             // color: a float4 vector, 2 elements; inner: a struct of 2
-            let color = super::rd(r, m + 12 * 2 + 4) as usize;
-            assert_eq!((super::rd16(r, color), super::rd16(r, color + 6), super::rd16(r, color + 8)), (1, 4, 2));
-            let inner = super::rd(r, m + 12 * 3 + 4) as usize;
-            assert_eq!((super::rd16(r, inner), super::rd16(r, inner + 10)), (5, 2));
+            let color = kome::le::u32_at(r, m + 12 * 2 + 4).unwrap_or(0) as usize;
+            assert_eq!((kome::le::u16_at(r, color).map_or(0, u32::from), kome::le::u16_at(r, color + 6).map_or(0, u32::from), kome::le::u16_at(r, color + 8).map_or(0, u32::from)), (1, 4, 2));
+            let inner = kome::le::u32_at(r, m + 12 * 3 + 4).unwrap_or(0) as usize;
+            assert_eq!((kome::le::u16_at(r, inner).map_or(0, u32::from), kome::le::u16_at(r, inner + 10).map_or(0, u32::from)), (5, 2));
             // a struct is one row of all its components: 3 + 1 + 8 + 3
-            assert_eq!((super::rd16(r, t + 4), super::rd16(r, t + 6)), (1, 15), "{profile}");
+            assert_eq!((kome::le::u16_at(r, t + 4).map_or(0, u32::from), kome::le::u16_at(r, t + 6).map_or(0, u32::from)), (1, 15), "{profile}");
         }
     }
 
@@ -905,18 +898,18 @@ mod tests {
             let b = hlslc::compile(src, &[], &mut inc, "main", "ps_4_0", if d3d10 { hlslc::D3D10_BLOB } else { 0 }).unwrap();
             let c = dxwgsl::dxbc::Container::parse(&b).unwrap();
             let r = c.chunk(b"RDEF").unwrap();
-            let (n, at) = (super::rd(r, 8) as usize, super::rd(r, 12) as usize);
+            let (n, at) = (kome::le::u32_at(r, 8).unwrap_or(0) as usize, kome::le::u32_at(r, 12).unwrap_or(0) as usize);
             // name, type, flags, samples
             let binds: Vec<(String, u32, u32, u32)> =
-                (0..n).map(|i| at + 32 * i).map(|e| (super::cstr_at(r, super::rd(r, e) as usize), super::rd(r, e + 4), super::rd(r, e + 28), super::rd(r, e + 16))).collect();
+                (0..n).map(|i| at + 32 * i).map(|e| (super::cstr_at(r, kome::le::u32_at(r, e).unwrap_or(0) as usize), kome::le::u32_at(r, e + 4).unwrap_or(0), kome::le::u32_at(r, e + 28).unwrap_or(0), kome::le::u32_at(r, e + 16).unwrap_or(0))).collect();
             let (tf, ts) = if d3d10 { (1, 0) } else { (0xd, u32::MAX) };
             assert_eq!(binds, [("smp".into(), 3, 0, 0), ("tex".into(), 2, tf, ts), ("S".into(), 0, 1, 0)], "d3d10 {d3d10}");
-            let cb = super::rd(r, 4) as usize;
-            let vars = super::rd(r, cb + 8) as usize;
-            let elems: Vec<u32> = (0..2).map(|k| super::rd16(r, super::rd(r, vars + 24 * k + 16) as usize + 8)).collect();
+            let cb = kome::le::u32_at(r, 4).unwrap_or(0) as usize;
+            let vars = kome::le::u32_at(r, cb + 8).unwrap_or(0) as usize;
+            let elems: Vec<u32> = (0..2).map(|k| kome::le::u16_at(r, kome::le::u32_at(r, vars + 24 * k + 16).unwrap_or(0) as usize + 8).map_or(0, u32::from)).collect();
             assert_eq!(elems, if d3d10 { [1, 2] } else { [0, 2] });
             let o = c.chunk(b"OSGN").unwrap();
-            assert_eq!(super::rd(o, 8 + 8), if d3d10 { 0 } else { 64 });
+            assert_eq!(kome::le::u32_at(o, 8 + 8).unwrap_or(0), if d3d10 { 0 } else { 64 });
         }
     }
 
@@ -965,8 +958,8 @@ mod review_tests {
     }
     /// The byte offset of chunk `tag`'s data in a container
     fn chunk_at(code: &[u8], tag: &[u8; 4]) -> usize {
-        let n = rd(code, 28) as usize;
-        (0..n).map(|i| rd(code, 32 + 4 * i) as usize).find(|&o| &code[o..o + 4] == tag).unwrap() + 8
+        let n = kome::le::u32_at(code, 28).unwrap_or(0) as usize;
+        (0..n).map(|i| kome::le::u32_at(code, 32 + 4 * i).unwrap_or(0) as usize).find(|&o| &code[o..o + 4] == tag).unwrap() + 8
     }
 
     /// A reflection's last Release frees its objects (constant buffers, variables, types), so
@@ -996,10 +989,10 @@ mod review_tests {
         let _g = enter();
         let mut code = compiled();
         let r = chunk_at(&code, b"RDEF");
-        let cb = r + rd(&code[r..], 4) as usize;
-        let var = r + rd(&code[r..], cb - r + 8) as usize;
-        let t = rd(&code[r..], var - r + 16) as usize;
-        let m = rd(&code[r..], t + 12) as usize;
+        let cb = r + kome::le::u32_at(&code[r..], 4).unwrap_or(0) as usize;
+        let var = r + kome::le::u32_at(&code[r..], cb - r + 8).unwrap_or(0) as usize;
+        let t = kome::le::u32_at(&code[r..], var - r + 16).unwrap_or(0) as usize;
+        let m = kome::le::u32_at(&code[r..], t + 12).unwrap_or(0) as usize;
         // every member of L is L
         for i in 0..4 {
             code[r + m + 12 * i + 4..r + m + 12 * i + 8].copy_from_slice(&(t as u32).to_le_bytes());

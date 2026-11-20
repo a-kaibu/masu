@@ -13,7 +13,7 @@
 //! errors). Values of a binary integer or float list take no separators at all, not even after
 //! the last.
 
-pub type Guid = [u8; 16];
+use kome::guid::Guid;
 pub type B = Vec<u8>;
 
 const fn e(code: u32) -> u32 {
@@ -205,30 +205,6 @@ fn is_sep(c: u8) -> bool {
     c <= b' ' || matches!(c, b'{' | b'}' | b'(' | b')' | b'[' | b']' | b'<' | b'>' | b',' | b';' | b'"')
 }
 
-fn hexval(c: u8) -> Option<u8> {
-    (c as char).to_digit(16).map(|v| v as u8)
-}
-
-/// "3D82AB43-62DA-11CF-AB39-0020AF71E433" (between the angle brackets) as a GUID's bytes.
-pub fn parse_guid(s: &[u8]) -> Option<Guid> {
-    if s.len() != 36 || s[8] != b'-' || s[13] != b'-' || s[18] != b'-' || s[23] != b'-' {
-        return None;
-    }
-    let hex: Vec<u8> = s.iter().copied().filter(|&c| c != b'-').collect();
-    if hex.len() != 32 {
-        return None;
-    }
-    let mut v = [0u8; 16];
-    for (i, b) in v.iter_mut().enumerate() {
-        *b = hexval(hex[2 * i])? << 4 | hexval(hex[2 * i + 1])?;
-    }
-    // (Data1, Data2, Data3 are little-endian in memory, the last 8 bytes as written)
-    v[..4].reverse();
-    v[4..6].reverse();
-    v[6..8].reverse();
-    Some(v)
-}
-
 fn number(w: &[u8]) -> Option<Tok> {
     let s = std::str::from_utf8(w).ok()?;
     let body = s.trim_prefix(['-', '+']);
@@ -285,7 +261,7 @@ pub fn text_tokens(d: &[u8]) -> (Vec<Tok>, Option<u32>) {
             continue;
         }
         if c == b'<' {
-            if d.get(i + 37) == Some(&b'>') && let Some(g) = parse_guid(&d[i + 1..i + 37]) {
+            if d.get(i + 37) == Some(&b'>') && let Some(g) = std::str::from_utf8(&d[i + 1..i + 37]).ok().and_then(kome::guid::parse) {
                 t.push(Tok::Guid(g));
                 i += 38;
                 continue;
@@ -433,7 +409,7 @@ fn index_color() -> &'static Template {
         let m = |ty, n: &str| Member { ty: Ty::Prim(ty), name: Some(n.as_bytes().to_vec()), dims: vec![] };
         Template {
             name: b"indexColor".to_vec(),
-            guid: parse_guid(b"1630B820-7842-11CF-8F52-0040333594A3").unwrap(),
+            guid: kome::guid::of_text("1630B820-7842-11CF-8F52-0040333594A3"),
             members: vec![m(Prim::Dword, "index"), m(Prim::Float, "red"), m(Prim::Float, "green"), m(Prim::Float, "blue"), m(Prim::Float, "alpha")],
             restrict: Restrict::Closed,
         }

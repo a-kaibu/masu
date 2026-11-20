@@ -85,7 +85,7 @@ fn store_release(c: &mut Ctx, gone: fn(&mut Ctx, u32)) -> u32 {
 fn tn_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IMFTopologyNode {83cf873a-f6da-4bc8-823f-bacfd55dc430} (IMFTopology's but the last byte)
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     if is(&g, 0x83cf_873a, 0xf6da, 0x4bc8) && g[15] != 0x30 {
         c.out::<2>().put(0);
         return Hr::NoInterface.code();
@@ -350,7 +350,7 @@ fn MFCreateTopologyNode(c: &mut Ctx) -> u32 {
 fn tp_qi(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     // IMFTopology {83cf873a-f6da-4bc8-823f-bacfd55dc433}
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     if is(&g, 0x83cf_873a, 0xf6da, 0x4bc8) && g[15] != 0x33 {
         c.out::<2>().put(0);
         return Hr::NoInterface.code();
@@ -596,7 +596,7 @@ fn co_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFCollection {5bc8a76b-869a-46a3-9b03-fa218a66aebe}
     if is_unknown(&g) || is(&g, 0x5bc8_a76b, 0x869a, 0x46a3) {
         coll(this, |s| s.0 += 1);

@@ -8,6 +8,7 @@
 //! control is that EVR's). What the session tells of, in order, is `Model`, kept free of the
 //! guest and tested here; winref's mfsession probe has Windows' answers.
 
+use kome::guid::of_text;
 use super::source::{self, Data};
 use super::topology::{self, Act};
 use super::*;
@@ -170,13 +171,13 @@ impl Model {
 // IMFMediaEvent: an attribute store (the status and caps as its attributes) with more methods
 
 fn k_topology_status() -> Guid {
-    const { source::g("30c5018d-9a53-454b-ad9e-6d5f8fa7c43b") }
+    const { of_text("30c5018d-9a53-454b-ad9e-6d5f8fa7c43b") }
 }
 fn k_caps() -> Guid {
-    const { source::g("7e5ebcd0-11b8-4abe-afad-10f6599a7f42") }
+    const { of_text("7e5ebcd0-11b8-4abe-afad-10f6599a7f42") }
 }
 fn k_caps_delta() -> Guid {
-    const { source::g("7e5ebcd1-11b8-4abe-afad-10f6599a7f42") }
+    const { of_text("7e5ebcd1-11b8-4abe-afad-10f6599a7f42") }
 }
 
 /// The events' type, extended type, status and value, by block.
@@ -269,7 +270,7 @@ fn MFCreateMediaEvent(c: &mut Ctx) -> u32 {
     }
     let b = new_event(E { met: t, hr, val, ..E::default() });
     if ext != 0 {
-        let g = guid_at(ext);
+        let g = mem::array::<16>(ext);
         EVENTS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).get_mut(&b).map(|e| e.1 = g);
     }
     out.put(b);
@@ -458,7 +459,7 @@ fn qi(c: &mut crate::api::QiArgs, k: u32) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // (the clock and volume answer for themselves; the session for all but those)
     let s = slot(&g).filter(|&s| k < 2 || s == k || s == 0 && is_unknown(&g));
     match s {
@@ -625,8 +626,8 @@ fn plan(t: u32) -> Option<Plan> {
     let mut p: Option<Plan> = None;
     for n in topology::nodes_of(t, topology::SOURCESTREAM) {
         let Some(st) = store_of(n) else { continue };
-        let Some(Val::Unk(src)) = st.get(&const { source::g("835c58ec-e075-4bc7-bcba-4de000df9ae6") }) else { continue };
-        let Some(Val::Unk(sd)) = st.get(&const { source::g("835c58ee-e075-4bc7-bcba-4de000df9ae6") }) else { continue };
+        let Some(Val::Unk(src)) = st.get(&const { of_text("835c58ec-e075-4bc7-bcba-4de000df9ae6") }) else { continue };
+        let Some(Val::Unk(sd)) = st.get(&const { of_text("835c58ee-e075-4bc7-bcba-4de000df9ae6") }) else { continue };
         let (Some((data, media)), Some((_, i))) = (source::source_of(*src), source::sd_stream(*sd)) else { continue };
         let Some(r) = renderer(n, 0) else { continue };
         let q = p.get_or_insert_with(|| Plan { data, media, video: None, audio: None, hwnd: 0 });
@@ -881,7 +882,7 @@ fn gs_get_service(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     out.put(0);
-    let (s, i) = (guid_at(sv), guid_at(iid));
+    let (s, i) = (mem::array::<16>(sv), mem::array::<16>(iid));
     if !live(b) {
         return Hr::Shutdown.code();
     }
@@ -919,7 +920,7 @@ fn MFGetService(c: &mut Ctx) -> u32 {
     }
     out.put(0);
     let g = mem::heap_alloc(16 + ps(), true);
-    mem::write(g, &const { source::g("fa993888-4383-415a-a930-dd472a8cf6f7") });
+    mem::write(g, &const { of_text("fa993888-4383-415a-a930-dd472a8cf6f7") });
     let hr = com(c.ctx(), o, 0, &[g, g + 16]);
     let gs = rp(g + 16);
     mem::heap_free(g);

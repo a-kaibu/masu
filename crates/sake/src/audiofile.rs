@@ -303,19 +303,6 @@ pub(crate) fn maybe_sound(head: &[u8]) -> bool {
         || open(head).is_some()
 }
 
-fn u16le(b: &[u8], o: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(b.get(o..o + 2)?.try_into().ok()?))
-}
-fn u32le(b: &[u8], o: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(o..o + 4)?.try_into().ok()?))
-}
-fn u32be(b: &[u8], o: usize) -> Option<u32> {
-    Some(u32::from_be_bytes(b.get(o..o + 4)?.try_into().ok()?))
-}
-fn u64be(b: &[u8], o: usize) -> Option<u64> {
-    Some(u64::from_be_bytes(b.get(o..o + 8)?.try_into().ok()?))
-}
-
 /// PCM packets: a tenth of a second each (the last one shorter), as Windows' WAVE source hands
 /// out its samples (winref mfreader: 0.3 s at 22050 Hz in 3 samples of 2205 frames)
 fn pcm_frames(rate: u32) -> u64 {
@@ -337,22 +324,22 @@ fn wave(b: &[u8]) -> Option<Track> {
     let mut o = 12usize;
     let mut fmt: Option<(u16, u16, u32, u32, u16, u16)> = None;
     while o < b.len() && b.len() - o >= 8 {
-        let (id, len32) = (&b[o..o + 4], u32le(b, o + 4)?);
+        let (id, len32) = (&b[o..o + 4], kome::le::u32_at(b, o + 4)?);
         let body = o + 8;
         let (end, next) = riff_chunk(body, len32, b.len());
         if id == b"fmt " {
             fmt = Some((
-                u16le(b, body)?,
-                u16le(b, body + 2)?,
-                u32le(b, body + 4)?,
-                u32le(b, body + 8)?,
-                u16le(b, body + 12)?,
-                u16le(b, body + 14)?,
+                kome::le::u16_at(b, body)?,
+                kome::le::u16_at(b, body + 2)?,
+                kome::le::u32_at(b, body + 4)?,
+                kome::le::u32_at(b, body + 8)?,
+                kome::le::u16_at(b, body + 12)?,
+                kome::le::u16_at(b, body + 14)?,
             ));
             // WAVE_FORMAT_EXTENSIBLE: the subformat GUID's first two bytes are the tag
             if fmt?.0 == 0xfffe {
                 let f = fmt?;
-                fmt = Some((u16le(b, body + 24)?, f.1, f.2, f.3, f.4, f.5));
+                fmt = Some((kome::le::u16_at(b, body + 24)?, f.1, f.2, f.3, f.4, f.5));
             }
         } else if id == b"data" {
             let (tag, ch, rate, avg, align, bits) = fmt?;
@@ -438,11 +425,11 @@ pub fn boxes(b: &[u8], from: usize, to: usize) -> Vec<([u8; 4], usize, usize)> {
     let mut out = Vec::new();
     let mut o = from;
     while o + 8 <= to {
-        let Some(size) = u32be(b, o) else { break };
+        let Some(size) = kome::le::u32_be_at(b, o) else { break };
         let kind: [u8; 4] = b[o + 4..o + 8].try_into().unwrap();
         let (body, end) = match size {
             0 => (o + 8, to),
-            1 => match u64be(b, o + 8) {
+            1 => match kome::le::u64_be_at(b, o + 8) {
                 // (a size past the address space is past `to`: no `as usize` truncation, whose
                 // low bits 0 made `end == o` and the loop push boxes for ever on wasm32)
                 Some(s) if s >= 16 => (o + 16, usize::try_from(s).ok().and_then(|s| o.checked_add(s)).unwrap_or(usize::MAX)),
@@ -476,7 +463,7 @@ fn mp4(b: &[u8]) -> Option<Track> {
             continue;
         }
         let (mds, _) = child(b, ds, de, b"mdhd")?;
-        let timescale = if *b.get(mds)? == 1 { u32be(b, mds + 20)? } else { u32be(b, mds + 12)? };
+        let timescale = if *b.get(mds)? == 1 { kome::le::u32_be_at(b, mds + 20)? } else { kome::le::u32_be_at(b, mds + 12)? };
         let (ns, ne) = child(b, ds, de, b"minf")?;
         let (ss, se) = child(b, ns, ne, b"stbl")?;
         let mut t = sound_track(b, ss, se, timescale, b.len() as u64)?;
@@ -490,9 +477,9 @@ fn mp4(b: &[u8]) -> Option<Track> {
 pub fn movie_duration(b: &[u8], ms: usize, me: usize) -> Option<u64> {
     let (o, _) = child(b, ms, me, b"mvhd")?;
     let (scale, d) = if *b.get(o)? == 1 {
-        (u32be(b, o + 20)?, (u32be(b, o + 24)? as u64) << 32 | u32be(b, o + 28)? as u64)
+        (kome::le::u32_be_at(b, o + 20)?, (kome::le::u32_be_at(b, o + 24)? as u64) << 32 | kome::le::u32_be_at(b, o + 28)? as u64)
     } else {
-        (u32be(b, o + 12)?, u32be(b, o + 16)? as u64)
+        (kome::le::u32_be_at(b, o + 12)?, kome::le::u32_be_at(b, o + 16)? as u64)
     };
     (scale != 0 && d != 0 && d != u32::MAX as u64 && d != u64::MAX).then(|| (d as u128 * 10_000_000 / scale as u128) as u64)
 }
@@ -524,7 +511,7 @@ pub fn sound_track(b: &[u8], ss: usize, se: usize, timescale: u32, file_len: u64
     // size (2), 4 more, rate (16.16); then its boxes (version 1 / 2 entries add fields)
     let ver = u16::from_be_bytes(b.get(es + 8..es + 10)?.try_into().ok()?);
     let mut channels = u16::from_be_bytes(b.get(es + 16..es + 18)?.try_into().ok()?) as u32;
-    let mut rate = u32be(b, es + 24)? >> 16;
+    let mut rate = kome::le::u32_be_at(b, es + 24)? >> 16;
     let inner = es
         + 28
         + match ver {
@@ -605,26 +592,26 @@ pub fn sound_track(b: &[u8], ss: usize, se: usize, timescale: u32, file_len: u64
     // the sample table: sizes (stsz), chunk offsets (stco / co64), samples per chunk (stsc),
     // durations (stts, in the track's timescale)
     let (zs, _) = child(b, ss, se, b"stsz")?;
-    let (fixed, count) = (u32be(b, zs + 4)?, u32be(b, zs + 8)? as usize);
+    let (fixed, count) = (kome::le::u32_be_at(b, zs + 4)?, kome::le::u32_be_at(b, zs + 8)? as usize);
     if count > b.len() {
         return None;
     }
     let sizes: Vec<u32> = if fixed != 0 {
         vec![fixed; count]
     } else {
-        (0..count).map(|i| u32be(b, zs + 12 + 4 * i)).collect::<Option<_>>()?
+        (0..count).map(|i| kome::le::u32_be_at(b, zs + 12 + 4 * i)).collect::<Option<_>>()?
     };
     let chunks: Vec<u64> = if let Some((cs, _)) = child(b, ss, se, b"stco") {
-        let n = u32be(b, cs + 4)? as usize;
-        (0..n.min(b.len())).map(|i| u32be(b, cs + 8 + 4 * i).map(|v| v as u64)).collect::<Option<_>>()?
+        let n = kome::le::u32_be_at(b, cs + 4)? as usize;
+        (0..n.min(b.len())).map(|i| kome::le::u32_be_at(b, cs + 8 + 4 * i).map(|v| v as u64)).collect::<Option<_>>()?
     } else {
         let (cs, _) = child(b, ss, se, b"co64")?;
-        let n = u32be(b, cs + 4)? as usize;
-        (0..n.min(b.len())).map(|i| u64be(b, cs + 8 + 8 * i)).collect::<Option<_>>()?
+        let n = kome::le::u32_be_at(b, cs + 4)? as usize;
+        (0..n.min(b.len())).map(|i| kome::le::u64_be_at(b, cs + 8 + 8 * i)).collect::<Option<_>>()?
     };
     let (scs, _) = child(b, ss, se, b"stsc")?;
-    let runs: Vec<(u32, u32)> = (0..(u32be(b, scs + 4)? as usize).min(b.len()))
-        .map(|i| Some((u32be(b, scs + 8 + 12 * i)?, u32be(b, scs + 12 + 12 * i)?)))
+    let runs: Vec<(u32, u32)> = (0..(kome::le::u32_be_at(b, scs + 4)? as usize).min(b.len()))
+        .map(|i| Some((kome::le::u32_be_at(b, scs + 8 + 12 * i)?, kome::le::u32_be_at(b, scs + 12 + 12 * i)?)))
         .collect::<Option<_>>()?;
     let mut packets = Vec::with_capacity(count);
     let mut k = 0usize;
@@ -643,8 +630,8 @@ pub fn sound_track(b: &[u8], ss: usize, se: usize, timescale: u32, file_len: u64
     }
     let (ts, _) = child(b, ss, se, b"stts")?;
     let mut frames = Vec::with_capacity(count);
-    for i in 0..(u32be(b, ts + 4)? as usize).min(count) {
-        let (n, d) = (u32be(b, ts + 8 + 8 * i)?, u32be(b, ts + 12 + 8 * i)?);
+    for i in 0..(kome::le::u32_be_at(b, ts + 4)? as usize).min(count) {
+        let (n, d) = (kome::le::u32_be_at(b, ts + 8 + 8 * i)?, kome::le::u32_be_at(b, ts + 12 + 8 * i)?);
         // (durations in the track's timescale; frames at the sound's rate)
         let f = (d as u64 * rate as u64 / timescale.max(1) as u64) as u32;
         frames.extend(std::iter::repeat_n(f, (n as usize).min(count - frames.len())));

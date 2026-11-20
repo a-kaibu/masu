@@ -235,11 +235,6 @@ fn iface_of(g: &[u8; 16]) -> Option<Iface> {
     }
 }
 
-fn read_guid(p: u32) -> [u8; 16] {
-    let mut g = [0u8; 16];
-    g.copy_from_slice(&mem::array::<16>(p));
-    g
-}
 
 /// The object behind either interface's `this`, if it is one of ours
 fn obj(this: u32) -> Option<Obj> {
@@ -261,7 +256,7 @@ fn QueryInterface(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let o = obj(this).unwrap_or(Obj(this.wrapping_sub(ps())));
-    let Some(i) = iface_of(&read_guid(iid)) else {
+    let Some(i) = iface_of(&mem::array::<16>(iid)) else {
         out.put(0);
         return Hr::NoInterface.code();
     };
@@ -589,7 +584,7 @@ pub fn create(g: &[u8; 16]) -> Option<Obj> {
 /// CoCreateInstance of xaudio2_7's AudioVolumeMeter / AudioReverb (the FX classes are not
 /// registered: only CreateFX makes them)
 pub fn create_instance(clsid: u32) -> Option<u32> {
-    let g = read_guid(clsid);
+    let g = mem::array::<16>(clsid);
     match kind_of(&g)? {
         k @ (Kind::VolumeMeter | Kind::AudioReverb) => Some(make(k, &g).addr()),
         Kind::Eq | Kind::Limiter | Kind::Reverb | Kind::Echo => None,
@@ -602,7 +597,7 @@ fn create_fx(c: &mut Ctx, init: bool) -> u32 {
     if g == 0 || out.is_null() {
         return Hr::Pointer.code();
     }
-    let Some(o) = create(&read_guid(g)) else {
+    let Some(o) = create(&mem::array::<16>(g)) else {
         out.put(0);
         return Hr::ClassNotAvailable.code();
     };

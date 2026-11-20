@@ -8,10 +8,12 @@
 //! the IDirectXFile (its templates are shared, not its count). Each enumerator has its own objects
 //! and each object its own data (GetData's pointer stays the same for it, a DWORD >= 2 before it).
 
+use kome::guid::IID_IUNKNOWN;
 use crate::hresult::{E_NOINTERFACE, E_NOTIMPL};
 use crate::api::{implement, Ctx, Handler};
 use crate::mem;
-use crate::xof::{self, Child, Guid, Templates, XFile};
+use crate::xof::{self, Child, Templates, XFile};
+use kome::guid::Guid;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -19,7 +21,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 const fn iid(n: u8) -> Guid {
     [0x40 + n, 0xab, 0x82, 0x3d, 0xda, 0x62, 0xcf, 0x11, 0xab, 0x39, 0x00, 0x20, 0xaf, 0x71, 0xe4, 0x33]
 }
-const IID_UNKNOWN: Guid = [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46];
 const IID_FILE: Guid = iid(0);
 const IID_ENUM: Guid = iid(1);
 const IID_OBJECT: Guid = iid(3);
@@ -49,9 +50,6 @@ fn objs<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
     f(OBJS.lock().unwrap().get_or_insert_with(HashMap::new))
 }
 
-fn guid_at(p: u32) -> Guid {
-    mem::array::<16>(p)
-}
 
 fn new_obj(kind: Kind, refs: u32) -> u32 {
     let vt = match kind {
@@ -72,10 +70,10 @@ fn qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return 0x8000_4003;
     }
-    let want = if riid == 0 { [0xff; 16] } else { guid_at(riid) };
+    let want = if riid == 0 { [0xff; 16] } else { mem::array::<16>(riid) };
     let ok = objs(|m| {
         let Some(o) = m.get_mut(&this) else { return false };
-        let ok = want == IID_UNKNOWN
+        let ok = want == IID_IUNKNOWN
             || match o.kind {
                 Kind::File(_) => want == IID_FILE,
                 Kind::Enum(..) => want == IID_ENUM,
@@ -285,7 +283,7 @@ fn by(c: &mut Ctx, name: bool) -> u32 {
     }
     mem::putp(out, 0);
     let n = mem::cstr(key);
-    let g = guid_at(key);
+    let g = mem::array::<16>(key);
     let hit = {
         let mut l = f.lock().unwrap();
         let (file, reg) = &mut *l;

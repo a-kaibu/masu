@@ -62,16 +62,6 @@ pub struct Movie {
     pub duration: Option<u64>,
 }
 
-fn u16be(b: &[u8], o: usize) -> Option<u16> {
-    Some(u16::from_be_bytes(b.get(o..o + 2)?.try_into().ok()?))
-}
-fn u32be(b: &[u8], o: usize) -> Option<u32> {
-    Some(u32::from_be_bytes(b.get(o..o + 4)?.try_into().ok()?))
-}
-fn u64be(b: &[u8], o: usize) -> Option<u64> {
-    Some(u64::from_be_bytes(b.get(o..o + 8)?.try_into().ok()?))
-}
-
 /// At most this much `moov` is read (a bad size: no huge allocation).
 const MOOV_MAX: u64 = 64 << 20;
 
@@ -82,7 +72,7 @@ pub fn open(len: u64, at: &mut dyn FnMut(u64, usize) -> Option<Vec<u8>>) -> Opti
     let mut first = true;
     while o + 8 <= len {
         let h = at(o, 16.min(us(len - o)))?;
-        let size = u64::from(u32be(&h, 0)?);
+        let size = u64::from(kome::le::u32_be_at(&h, 0)?);
         let kind = &h[4..8];
         if first && kind != b"ftyp" {
             return None;
@@ -90,7 +80,7 @@ pub fn open(len: u64, at: &mut dyn FnMut(u64, usize) -> Option<Vec<u8>>) -> Opti
         first = false;
         let (body, end) = match size {
             0 => (o + 8, len),
-            1 => (o + 16, o.checked_add(u64be(&h, 8)?)?),
+            1 => (o + 16, o.checked_add(kome::le::u64_be_at(&h, 8)?)?),
             s if s >= 8 => (o + 8, o + s),
             _ => return None,
         };
@@ -121,7 +111,7 @@ pub fn parse(b: &[u8], ms: usize, file_len: u64) -> Option<Movie> {
         let Some((ds, de)) = child(b, ts, te, b"mdia") else { continue };
         let Some((hs, _)) = child(b, ds, de, b"hdlr") else { continue };
         let Some((mds, _)) = child(b, ds, de, b"mdhd") else { continue };
-        let timescale = if b.get(mds) == Some(&1) { u32be(b, mds + 20) } else { u32be(b, mds + 12) };
+        let timescale = if b.get(mds) == Some(&1) { kome::le::u32_be_at(b, mds + 20) } else { kome::le::u32_be_at(b, mds + 12) };
         let Some(timescale) = timescale.filter(|&t| t != 0) else { continue };
         let Some((ns, ne)) = child(b, ds, de, b"minf") else { continue };
         let Some((ss, se)) = child(b, ns, ne, b"stbl") else { continue };
@@ -159,9 +149,9 @@ fn edit_shift(b: &[u8], ts: usize, te: usize) -> i64 {
     let Some((es, ee)) = child(b, ts, te, b"edts") else { return 0 };
     let Some((ls, _)) = child(b, es, ee, b"elst") else { return 0 };
     let v1 = b.get(ls) == Some(&1);
-    let n = us(u32be(b, ls + 4).unwrap_or(0));
+    let n = us(kome::le::u32_be_at(b, ls + 4).unwrap_or(0));
     for i in 0..n.min(16) {
-        let t = if v1 { u64be(b, ls + 8 + 20 * i + 8).map(|v| lo64(v).cast_signed()) } else { u32be(b, ls + 8 + 12 * i + 4).map(|v| i64::from(lo32(v).cast_signed())) };
+        let t = if v1 { kome::le::u64_be_at(b, ls + 8 + 20 * i + 8).map(|v| lo64(v).cast_signed()) } else { kome::le::u32_be_at(b, ls + 8 + 12 * i + 4).map(|v| i64::from(lo32(v).cast_signed())) };
         match t {
             // (-1: an empty edit, a delay before the media)
             Some(-1) => continue,
@@ -181,7 +171,7 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     }
     // VisualSampleEntry: 6 reserved, data reference (2), 16 more, width (2), height (2), then
     // 50 bytes to its boxes
-    let (w, h) = (u32::from(u16be(b, es + 24)?), u32::from(u16be(b, es + 26)?));
+    let (w, h) = (u32::from(kome::le::u16_be_at(b, es + 24)?), u32::from(kome::le::u16_be_at(b, es + 26)?));
     let (cs, ce) = child(b, es + 78, ee, b"avcC")?;
     let c = b.get(cs..ce)?;
     if c.len() < 7 || c[0] != 1 {
@@ -197,7 +187,7 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
         let n = us(*c.get(p)? & count_mask);
         p += 1;
         for _ in 0..n {
-            let l = us(u16be(c, p)?);
+            let l = us(kome::le::u16_be_at(c, p)?);
             head.extend_from_slice(&[0, 0, 0, 1]);
             head.extend_from_slice(c.get(p + 2..p + 2 + l)?);
             p += 2 + l;
@@ -206,21 +196,21 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     // the sample table: sizes, chunk offsets, samples per chunk, durations, composition offsets,
     // sync samples
     let (zs, _) = child(b, ss, se, b"stsz")?;
-    let (fixed, count) = (u32be(b, zs + 4)?, us(u32be(b, zs + 8)?));
+    let (fixed, count) = (kome::le::u32_be_at(b, zs + 4)?, us(kome::le::u32_be_at(b, zs + 8)?));
     if count == 0 || count > b.len() {
         return None;
     }
-    let sizes: Vec<u32> = if fixed != 0 { vec![fixed; count] } else { (0..count).map(|i| u32be(b, zs + 12 + 4 * i)).collect::<Option<_>>()? };
+    let sizes: Vec<u32> = if fixed != 0 { vec![fixed; count] } else { (0..count).map(|i| kome::le::u32_be_at(b, zs + 12 + 4 * i)).collect::<Option<_>>()? };
     let chunks: Vec<u64> = if let Some((cs, _)) = child(b, ss, se, b"stco") {
-        let n = us(u32be(b, cs + 4)?);
-        (0..n.min(b.len())).map(|i| u32be(b, cs + 8 + 4 * i).map(|v| u64::from(v))).collect::<Option<_>>()?
+        let n = us(kome::le::u32_be_at(b, cs + 4)?);
+        (0..n.min(b.len())).map(|i| kome::le::u32_be_at(b, cs + 8 + 4 * i).map(|v| u64::from(v))).collect::<Option<_>>()?
     } else {
         let (cs, _) = child(b, ss, se, b"co64")?;
-        let n = us(u32be(b, cs + 4)?);
-        (0..n.min(b.len())).map(|i| u64be(b, cs + 8 + 8 * i)).collect::<Option<_>>()?
+        let n = us(kome::le::u32_be_at(b, cs + 4)?);
+        (0..n.min(b.len())).map(|i| kome::le::u64_be_at(b, cs + 8 + 8 * i)).collect::<Option<_>>()?
     };
     let (scs, _) = child(b, ss, se, b"stsc")?;
-    let runs: Vec<(u32, u32)> = (0..(us(u32be(b, scs + 4)?)).min(b.len())).map(|i| Some((u32be(b, scs + 8 + 12 * i)?, u32be(b, scs + 12 + 12 * i)?))).collect::<Option<_>>()?;
+    let runs: Vec<(u32, u32)> = (0..(us(kome::le::u32_be_at(b, scs + 4)?)).min(b.len())).map(|i| Some((kome::le::u32_be_at(b, scs + 8 + 12 * i)?, kome::le::u32_be_at(b, scs + 12 + 12 * i)?))).collect::<Option<_>>()?;
     let mut place = Vec::with_capacity(count);
     for (ci, &off) in chunks.iter().enumerate() {
         let per = runs.iter().rev().find(|r| us(r.0) <= ci + 1).map_or(0, |r| r.1);
@@ -236,8 +226,8 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     }
     let (ts, _) = child(b, ss, se, b"stts")?;
     let mut durs = Vec::with_capacity(count);
-    for i in 0..(us(u32be(b, ts + 4)?)).min(count) {
-        let (n, d) = (u32be(b, ts + 8 + 8 * i)?, u32be(b, ts + 12 + 8 * i)?);
+    for i in 0..(us(kome::le::u32_be_at(b, ts + 4)?)).min(count) {
+        let (n, d) = (kome::le::u32_be_at(b, ts + 8 + 8 * i)?, kome::le::u32_be_at(b, ts + 12 + 8 * i)?);
         durs.extend(std::iter::repeat_n(d, (us(n)).min(count - durs.len())));
     }
     durs.resize(count, *durs.last().unwrap_or(&1));
@@ -245,8 +235,8 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     if let Some((os, _)) = child(b, ss, se, b"ctts") {
         let v1 = b.get(os) == Some(&1);
         let mut k = 0usize;
-        for i in 0..(us(u32be(b, os + 4)?)).min(count) {
-            let (n, d) = (u32be(b, os + 8 + 8 * i)?, u32be(b, os + 12 + 8 * i)?);
+        for i in 0..(us(kome::le::u32_be_at(b, os + 4)?)).min(count) {
+            let (n, d) = (kome::le::u32_be_at(b, os + 8 + 8 * i)?, kome::le::u32_be_at(b, os + 12 + 8 * i)?);
             let d = if v1 { i64::from(lo32(d).cast_signed()) } else { i64::from(d) };
             // (a run past the samples ends with them: a damaged count of 2^32 took 18 s)
             let run = usize::try_from(n).unwrap_or(usize::MAX);
@@ -257,8 +247,8 @@ fn video_track(b: &[u8], ss: usize, se: usize, timescale: u32, shift: i64, file_
     let mut key = vec![true; count];
     if let Some((ys, _)) = child(b, ss, se, b"stss") {
         key = vec![false; count];
-        for i in 0..(us(u32be(b, ys + 4)?)).min(count) {
-            if let Some(k) = u32be(b, ys + 8 + 4 * i).and_then(|n| (us(n)).checked_sub(1)) && k < count {
+        for i in 0..(us(kome::le::u32_be_at(b, ys + 4)?)).min(count) {
+            if let Some(k) = kome::le::u32_be_at(b, ys + 8 + 4 * i).and_then(|n| (us(n)).checked_sub(1)) && k < count {
                 key[k] = true;
             }
         }

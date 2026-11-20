@@ -14,6 +14,7 @@
 
 #![allow(non_snake_case)]
 
+use kome::guid::IID_IUNKNOWN;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
@@ -36,17 +37,10 @@ const VFW_E_TYPE_NOT_ACCEPTED: u32 = 0x8004_022a;
 const VFW_E_TIMEOUT: u32 = 0x8004_022e;
 const VFW_E_VMR_NOT_IN_MIXER_MODE: u32 = 0x8004_0296;
 
-type Guid = [u8; 16];
+use kome::guid::{guid, Guid};
 
-const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> Guid {
-    let a = d1.to_le_bytes();
-    let b = d2.to_le_bytes();
-    let c = d3.to_le_bytes();
-    [a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]]
-}
 const QZ: [u8; 8] = [0xb0, 0x3a, 0x00, 0x20, 0xaf, 0x0b, 0xa7, 0x70];
 const COM: [u8; 8] = [0xc0, 0, 0, 0, 0, 0, 0, 0x46];
-const IID_IUNKNOWN: Guid = guid(0, 0, 0, COM);
 const IID_IPERSIST: Guid = guid(0x0000_010c, 0, 0, COM);
 const IID_IMEDIAFILTER: Guid = guid(0x56a8_6899, 0x0ad4, 0x11ce, QZ);
 const IID_IBASEFILTER: Guid = guid(0x56a8_6895, 0x0ad4, 0x11ce, QZ);
@@ -95,16 +89,6 @@ fn subtype_ok(g: &Guid) -> bool {
     rgb || argb || fourcc
 }
 
-fn read_guid(p: u32) -> Guid {
-    let mut g = [0u8; 16];
-    for (i, b) in g.iter_mut().enumerate() {
-        *b = mem::r8(p + i as u32);
-    }
-    g
-}
-fn put_guid(p: u32, g: &Guid) {
-    mem::write(p, g);
-}
 
 // ---------------------------------------------------------------------------------------------
 // AM_MEDIA_TYPE { majortype, subtype, bFixedSizeSamples, bTemporalCompression, lSampleSize,
@@ -350,7 +334,7 @@ fn qi(c: &mut Ctx, b: u32) -> u32 {
     qi_inner_out(c, b, iid, out)
 }
 fn qi_inner_out(c: &mut Ctx, b: u32, iid: u32, out: crate::api::Out) -> u32 {
-    match inner_qi(b, &read_guid(iid)) {
+    match inner_qi(b, &mem::array::<16>(iid)) {
         Some(p) => {
             // (an interface other than the inner IUnknown counts on the outer object's count)
             if p == b + ps() * UNK {
@@ -427,7 +411,7 @@ fn get_class_id(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return E_POINTER;
     }
-    put_guid(c.a(1), &CLSID_VMR9);
+    mem::write(c.a(1), &CLSID_VMR9);
     0
 }
 fn set_state(c: &mut Ctx, s: u32) -> u32 {
@@ -565,7 +549,7 @@ fn enum_pins_new(c: &mut Ctx, b: u32, pos: u32) -> u32 {
             if out.is_null() {
                 return E_POINTER;
             }
-            let g = read_guid(iid);
+            let g = mem::array::<16>(iid);
             if g == IID_IUNKNOWN || g == IID_IENUMPINS {
                 enums(|m| m.get_mut(&e).map(|x| x.0 += 1));
                 out.put(e);
@@ -869,7 +853,7 @@ fn pin_qi(c: &mut Ctx, p: u32, out: crate::api::Out) -> u32 {
     if out.is_null() {
         return E_POINTER;
     }
-    let k = match read_guid(iid) {
+    let k = match mem::array::<16>(iid) {
         IID_IUNKNOWN | IID_IPIN => P_PIN,
         IID_IMEMINPUTPIN => P_MIP,
         IID_IOVERLAY => P_OV,
@@ -1089,7 +1073,7 @@ fn empty_enum_mt() -> u32 {
             if out.is_null() {
                 return E_POINTER;
             }
-            let g = read_guid(iid);
+            let g = mem::array::<16>(iid);
             if g == IID_IUNKNOWN || g == IID_IENUMMEDIATYPES {
                 out.put(c.a::<0>());
                 0
@@ -1368,7 +1352,7 @@ fn alloc_new() -> u32 {
             if out.is_null() {
                 return E_POINTER;
             }
-            let g = read_guid(iid);
+            let g = mem::array::<16>(iid);
             if g == IID_IUNKNOWN || g == IID_IMEMALLOCATOR {
                 alloc_with(a, |x| x.refs += 1);
                 out.put(a);
@@ -1523,7 +1507,7 @@ fn sample_new(alloc: u32, size: u32) -> u32 {
             if out.is_null() {
                 return E_POINTER;
             }
-            let g = read_guid(iid);
+            let g = mem::array::<16>(iid);
             if g == IID_IUNKNOWN || g == IID_IMEDIASAMPLE || g == IID_IMEDIASAMPLE2 {
                 sample_with(s, |x| x.refs += 1);
                 out.put(s);
@@ -1869,11 +1853,11 @@ fn vtables() -> &'static [u32; N as usize] {
 
 /// CoCreateInstance(CLSID_VideoMixingRenderer9, outer, ..., iid, &out); None: not this class
 pub fn create_instance(c: &mut Ctx, clsid: u32, outer: u32, iid: u32, out: crate::api::Out) -> Option<u32> {
-    if clsid != 0 && read_guid(clsid) == CLSID_MEMORY_ALLOCATOR {
+    if clsid != 0 && mem::array::<16>(clsid) == CLSID_MEMORY_ALLOCATOR {
         if out.is_null() {
             return Some(E_POINTER);
         }
-        let g = read_guid(iid);
+        let g = mem::array::<16>(iid);
         if outer != 0 || (g != IID_IUNKNOWN && g != IID_IMEMALLOCATOR) {
             out.put(0);
             return Some(if outer != 0 { CLASS_E_NOAGGREGATION } else { E_NOINTERFACE });
@@ -1881,14 +1865,14 @@ pub fn create_instance(c: &mut Ctx, clsid: u32, outer: u32, iid: u32, out: crate
         out.put(alloc_new());
         return Some(0);
     }
-    if clsid == 0 || read_guid(clsid) != CLSID_VMR9 {
+    if clsid == 0 || mem::array::<16>(clsid) != CLSID_VMR9 {
         return None;
     }
     if out.is_null() {
         return Some(E_POINTER);
     }
     // (aggregated: only its IUnknown can be asked for)
-    if outer != 0 && read_guid(iid) != IID_IUNKNOWN {
+    if outer != 0 && mem::array::<16>(iid) != IID_IUNKNOWN {
         out.put(0);
         return Some(E_NOINTERFACE);
     }

@@ -100,9 +100,9 @@ pub fn xp3_index(index: &[u8]) -> Vec<Member> {
                 }
                 b"segm" => {
                     for s in b.as_chunks::<28>().0 {
-                        let f = u32::from_le_bytes(bytes::<0, 4, 28>(s));
-                        let start = u64::from_le_bytes(bytes::<4, 8, 28>(s));
-                        let packed = u64::from_le_bytes(bytes::<20, 8, 28>(s));
+                        let f = u32::from_le_bytes(kome::le::arr::<0, 4, 28>(s));
+                        let start = u64::from_le_bytes(kome::le::arr::<4, 8, 28>(s));
+                        let packed = u64::from_le_bytes(kome::le::arr::<20, 8, 28>(s));
                         segments.push((start, packed, f & 7 == 1));
                     }
                 }
@@ -285,7 +285,7 @@ pub fn bgi_index(head: &[u8]) -> Vec<Member> {
         Some(b"BURIKO ARC20") => (96, 128),
         _ => return Vec::new(),
     };
-    let Some(n) = slice_u32(head, 12).and_then(|n| usize::try_from(n).ok()) else { return Vec::new() };
+    let Some(n) = kome::le::u32_at(head, 12).and_then(|n| usize::try_from(n).ok()) else { return Vec::new() };
     let base = 16 + n.saturating_mul(entry);
     let mut out = Vec::new();
     for k in 0..n.min(1 << 20) {
@@ -294,7 +294,7 @@ pub fn bgi_index(head: &[u8]) -> Vec<Member> {
         let end = raw.iter().position(|&b| b == 0).unwrap_or(name_len);
         // (names are Shift_JIS; the ASCII ones are what scripts name)
         let name: String = raw[..end].iter().map(|&b| if b < 0x80 { b as char } else { '_' }).collect();
-        let (Some(off), Some(size)) = (slice_u32(e, name_len), slice_u32(e, name_len + 4)) else { break };
+        let (Some(off), Some(size)) = (kome::le::u32_at(e, name_len), kome::le::u32_at(e, name_len + 4)) else { break };
         let (off, size) = (u64::from(off), u64::from(size));
         if !name.is_empty() {
             out.push(Member { name, segments: vec![(base as u64 + off, size, false)], hash: 0 });
@@ -665,16 +665,7 @@ pub fn keys(name: &str) -> (String, Option<String>) {
     (n, stem)
 }
 
-/// Bytes `AT..AT + L` of an array of N (one past its end does not compile).
-fn bytes<const AT: usize, const L: usize, const N: usize>(b: &[u8; N]) -> [u8; L] {
-    const { assert!(AT + L <= N, "read past the end of the array") };
-    std::array::from_fn(|i| b[AT + i])
-}
 
-/// The u32 at `at` of `b`, little endian; None past its end.
-fn slice_u32(b: &[u8], at: usize) -> Option<u32> {
-    b.get(at..)?.first_chunk::<4>().map(|b| u32::from_le_bytes(*b))
-}
 
 #[cfg(test)]
 mod pinned_tests;

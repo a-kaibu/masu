@@ -318,12 +318,6 @@ fn rf(a: u32) -> f32 {
     f32::from_bits(r32(a))
 }
 
-fn guid(p: u32, d1: u32, d2: u16, d3: u16, d4: [u8; 8]) {
-    w32(p, d1);
-    mem::w16(p + 4, d2);
-    mem::w16(p + 6, d3);
-    mem::write(p + 8, &d4);
-}
 
 // ---------------------------------------------------------------------------------------------
 // IDirect3D7
@@ -427,7 +421,7 @@ fn write_caps(p: u32, dev: usize) {
     mem::w16(p + 186, 8);
     w32(p + 188, 8);
     w32(p + 192, 1e10f32.to_bits());
-    guid(p + 196, d1, d2, d3, d4);
+    mem::write(p + 196, &kome::guid::guid(d1, d2, d3, d4));
     w32(p + 216, 0x3b);
 }
 
@@ -2445,7 +2439,7 @@ fn T_EnumDevices(c: &mut Ctx) -> u32 {
         mem::w8(q + desc.len() as u32, 0);
         mem::write(q + 128, name.as_bytes());
         mem::w8(q + 128 + name.len() as u32, 0);
-        guid(g, d1, d2, d3, d4);
+        mem::write(g, &kome::guid::guid(d1, d2, d3, d4));
         write_desc3(hal, 252, i, i == 0);
         write_desc3(hel, 252, i, false);
         if c.call(cb, &[g, q, q + 128, hal, hel, ctx]) != 1 {
@@ -2477,7 +2471,7 @@ fn T_FindDevice(c: &mut Ctx) -> u32 {
     }
     let n = (r32(r) - 20) / 2;
     let (_, _, d1, d2, d3, d4, _) = DEVICES[i];
-    guid(r + 4, d1, d2, d3, d4);
+    mem::write(r + 4, &kome::guid::guid(d1, d2, d3, d4));
     write_desc3(r + 20, n, i, i == 0);
     write_desc3(r + 20 + n, n, i, false);
     D3D_OK

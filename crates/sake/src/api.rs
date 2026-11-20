@@ -692,6 +692,12 @@ impl Ctx<'_> {
         self.not_out(i);
         self.slot(i)
     }
+    /// Argument `i` as a BOOLEAN (UCHAR): its low byte only, the rest of the slot is the
+    /// caller's garbage (masu-lint boolean-arg)
+    #[inline]
+    pub fn boolean(&self, i: u32) -> bool {
+        kome::num::lo8(self.a(i)) != 0
+    }
     /// (an out-parameter taken as a value: a handler's mistake; under test it fails, a game
     /// goes on and the log names it once; x86 and x64, each by its own numbering, OutMask)
     #[inline]
