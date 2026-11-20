@@ -3677,8 +3677,6 @@ mod save_tests {
         }
     }
 
-    /// Games that start the same program (every SiglusEngine.exe at Z:\masu\game) keep lists
-    /// of their own: the page's MASU_CHUNKS_URL, else beside the regions.
     #[test]
     fn bulk_access_checks_interior_pages() {
         use std::sync::atomic::AtomicU8;
@@ -3688,6 +3686,30 @@ mod save_tests {
         assert!(!super::range_faults(&pages, 4080, 16, true));
     }
 
+    proptest::proptest! {
+        /// A bulk range faults exactly when one of its bytes would, one byte at a time
+        /// (review 1982a46 §2.1: a page in the middle of a REP MOVS/STOS range).
+        #[test]
+        fn bulk_range_faults_iff_some_byte_does(
+            flags in proptest::collection::vec(0u8..4, 1..12),
+            addr in 0u32..(12 << 12),
+            len in 1u32..(6 << 12),
+            write: bool,
+        ) {
+            use std::sync::atomic::AtomicU8;
+            let pages: Vec<AtomicU8> = flags.iter().map(|&f| {
+                AtomicU8::new(match f { 1 => super::READ_FAULTS, 2 => super::WRITE_FAULTS, 3 => super::READ_FAULTS | super::WRITE_FAULTS, _ => 0 })
+            }).collect();
+            let mask = if write { super::READ_FAULTS | super::WRITE_FAULTS } else { super::READ_FAULTS };
+            let bytewise = (addr..addr.saturating_add(len)).any(|a| {
+                pages.get(us(a >> 12)).is_some_and(|p| p.load(Ordering::Relaxed) & mask != 0)
+            });
+            proptest::prop_assert_eq!(super::range_faults(&pages, addr, len, write), bytewise);
+        }
+    }
+
+    /// Games that start the same program (every SiglusEngine.exe at Z:\masu\game) keep lists
+    /// of their own: the page's MASU_CHUNKS_URL, else beside the regions.
     #[test]
     fn chunks_url_is_the_pages() {
         let url = std::ffi::CString::new("http://h/jit-save/sake-x-1").unwrap();
