@@ -24,17 +24,13 @@ pub(crate) struct Clip {
     pub count: u32,
 }
 
-fn le32(b: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
-}
-
 /// The chunks of a RIFF list body: (id, data); a size past the end ends the walk.
 fn chunks(b: &[u8]) -> Vec<([u8; 4], &[u8])> {
     let mut out = Vec::new();
     let mut at = 0usize;
     while at + 8 <= b.len() {
         let id: [u8; 4] = b[at..at + 4].try_into().unwrap();
-        let n = le32(b, at + 4).unwrap() as usize;
+        let n = kome::le::u32_at(b, at + 4).unwrap() as usize;
         let Some(data) = b.get(at + 8..(at + 8).saturating_add(n)) else { break };
         out.push((id, data));
         at = at + 8 + n + n % 2;
@@ -98,7 +94,7 @@ pub(crate) fn parse_avi(b: &[u8]) -> Option<Clip> {
     if b.get(..4)? != b"RIFF" || b.get(8..12)? != b"AVI " {
         return None;
     }
-    let size = (le32(b, 4)? as usize).min(b.len() - 8);
+    let size = (kome::le::u32_at(b, 4)? as usize).min(b.len() - 8);
     let body = &b[12..8 + size.max(4)];
     let (mut avih, mut strf, mut movi) = (None, None, None);
     for (id, data) in chunks(body) {
@@ -129,16 +125,16 @@ pub(crate) fn parse_avi(b: &[u8]) -> Option<Clip> {
         }
     }
     let avih = avih?;
-    let us_per_frame = le32(avih, 0)?;
-    let count = le32(avih, 16)?;
+    let us_per_frame = kome::le::u32_at(avih, 0)?;
+    let count = kome::le::u32_at(avih, 16)?;
     let bmi = strf?;
-    let (w, hh) = (le32(bmi, 4)?, le32(bmi, 8)? as i32);
-    let (bpp, comp) = (u16::from_le_bytes(bmi.get(14..16)?.try_into().ok()?), le32(bmi, 16)?);
+    let (w, hh) = (kome::le::u32_at(bmi, 4)?, kome::le::u32_at(bmi, 8)? as i32);
+    let (bpp, comp) = (u16::from_le_bytes(bmi.get(14..16)?.try_into().ok()?), kome::le::u32_at(bmi, 16)?);
     let h = hh.unsigned_abs();
-    let hdr = le32(bmi, 0)? as usize;
-    let used = le32(bmi, 32).unwrap_or(0) as usize;
+    let hdr = kome::le::u32_at(bmi, 0)? as usize;
+    let used = kome::le::u32_at(bmi, 32).unwrap_or(0) as usize;
     let ncol = if bpp <= 8 { if used == 0 { 1usize << bpp } else { used.min(256) } } else { 0 };
-    let palette: Vec<u32> = (0..ncol).filter_map(|k| le32(bmi, hdr + 4 * k)).map(|c| c & 0xff_ffff).collect();
+    let palette: Vec<u32> = (0..ncol).filter_map(|k| kome::le::u32_at(bmi, hdr + 4 * k)).map(|c| c & 0xff_ffff).collect();
     let drawable = bpp == 8 && matches!(comp, 0 | 1) && w > 0 && h > 0 && (w as u64 * h as u64) <= 4096 * 4096;
     let frames = drawable.then(|| {
         let n = (w * h) as usize;

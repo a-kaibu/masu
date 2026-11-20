@@ -80,9 +80,6 @@ pub fn instance_size(counters: u32, name_bytes: u32) -> u32 {
     (INSTANCE + 8 * counters + name_bytes + 7) & !7
 }
 
-fn guid(p: u32) -> [u8; 16] {
-    mem::array::<16>(p)
-}
 
 fn start(c: &mut Ctx, g: u32, out: crate::api::Out) -> u32 {
     if g == 0 || out.is_null() {
@@ -139,7 +136,7 @@ fn PerfSetCounterSetInfo(c: &mut Ctx) -> u32 {
             Counter { id: r32(e), ty: r32(e + 4), attrib: mem::r64(e + 8) }
         })
         .collect();
-    let g = guid(t);
+    let g = mem::array::<16>(t);
     with(|m| {
         let Some(p) = m.get_mut(&h) else { return ERROR_INVALID_PARAMETER };
         if p.sets.contains_key(&g) {
@@ -158,7 +155,7 @@ fn PerfCreateInstance(c: &mut Ctx) -> u32 {
         last_error(ERROR_INVALID_PARAMETER);
         return 0;
     }
-    let g = guid(g);
+    let g = mem::array::<16>(g);
     let Some(n) = with(|m| m.get(&h).and_then(|p| p.sets.get(&g)).map(|s| s.len() as u32)) else {
         last_error(ERROR_NOT_FOUND);
         return 0;

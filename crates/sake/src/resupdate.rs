@@ -30,13 +30,6 @@ pub enum Id {
 pub type Langs = BTreeMap<u16, (u32, Vec<u8>)>;
 /// type -> name -> language
 pub type Tree = BTreeMap<Id, BTreeMap<Id, Langs>>;
-
-fn r16(b: &[u8], o: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(b.get(o..o + 2)?.try_into().ok()?))
-}
-fn r32(b: &[u8], o: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(o..o + 4)?.try_into().ok()?))
-}
 // (writes past the end are dropped rather than panicking: write() refuses the layouts that
 // would need one, this is the second line)
 fn w16(b: &mut [u8], o: usize, v: u16) {
@@ -77,19 +70,19 @@ pub struct Section {
 
 impl Pe {
     pub fn parse(b: &[u8]) -> Option<Pe> {
-        if r16(b, 0)? != 0x5a4d {
+        if kome::le::u16_at(b, 0)? != 0x5a4d {
             return None;
         }
-        let nt = r32(b, 0x3c)? as usize;
-        if r32(b, nt)? != 0x4550 {
+        let nt = kome::le::u32_at(b, 0x3c)? as usize;
+        if kome::le::u32_at(b, nt)? != 0x4550 {
             return None;
         }
-        let nsecs = r16(b, nt + 6)? as usize;
-        let opt_size = r16(b, nt + 20)? as usize;
+        let nsecs = kome::le::u16_at(b, nt + 6)? as usize;
+        let opt_size = kome::le::u16_at(b, nt + 20)? as usize;
         let opt = nt + 24;
-        let (dirs, ndirs) = match r16(b, opt)? {
-            0x10b => (opt + 96, r32(b, opt + 92)?),
-            0x20b => (opt + 112, r32(b, opt + 108)?),
+        let (dirs, ndirs) = match kome::le::u16_at(b, opt)? {
+            0x10b => (opt + 96, kome::le::u32_at(b, opt + 92)?),
+            0x20b => (opt + 112, kome::le::u32_at(b, opt + 108)?),
             _ => return None,
         };
         let secs = opt + opt_size;
@@ -104,7 +97,7 @@ impl Pe {
     }
     pub fn section(&self, b: &[u8], i: usize) -> Section {
         let s = self.secs + 40 * i;
-        let g = |o| r32(b, s + o).unwrap_or(0);
+        let g = |o| kome::le::u32_at(b, s + o).unwrap_or(0);
         Section { vsize: g(8), va: g(12), raw_size: g(16), raw: g(20), flags: g(36) }
     }
     fn put_section(&self, b: &mut [u8], i: usize, x: &Section) {
@@ -123,7 +116,7 @@ impl Pe {
         if i >= self.ndirs {
             return (0, 0);
         }
-        (r32(b, self.dirs + 8 * i as usize).unwrap_or(0), r32(b, self.dirs + 8 * i as usize + 4).unwrap_or(0))
+        (kome::le::u32_at(b, self.dirs + 8 * i as usize).unwrap_or(0), kome::le::u32_at(b, self.dirs + 8 * i as usize + 4).unwrap_or(0))
     }
     /// The file offset of `len` bytes at rva
     fn offset(&self, b: &[u8], rva: u32, len: u32) -> Option<usize> {
@@ -160,19 +153,19 @@ pub fn read(b: &[u8]) -> Option<Tree> {
         if !seen.borrow_mut().insert(dir) {
             return None;
         }
-        let n = r16(b, dir + 12)? as usize + r16(b, dir + 14)? as usize;
+        let n = kome::le::u16_at(b, dir + 12)? as usize + kome::le::u16_at(b, dir + 14)? as usize;
         let mut v = Vec::with_capacity(n.min(4096));
         for i in 0..n {
             let e = dir + 16 + 8 * i;
-            let name = r32(b, e)?;
+            let name = kome::le::u32_at(b, e)?;
             let id = if name & 0x8000_0000 != 0 {
                 let p = base.checked_add((name & 0x7fff_ffff) as usize)?;
-                let len = r16(b, p)? as usize;
-                Id::Name((0..len).map(|k| r16(b, p + 2 + 2 * k)).collect::<Option<_>>()?)
+                let len = kome::le::u16_at(b, p)? as usize;
+                Id::Name((0..len).map(|k| kome::le::u16_at(b, p + 2 + 2 * k)).collect::<Option<_>>()?)
             } else {
                 Id::Int(name as u16)
             };
-            v.push((id, r32(b, e + 4)?));
+            v.push((id, kome::le::u32_at(b, e + 4)?));
         }
         Some(v)
     };
@@ -192,7 +185,7 @@ pub fn read(b: &[u8]) -> Option<Tree> {
                 }
                 let Id::Int(lang) = lang else { continue };
                 let d = base.checked_add(l as usize)?;
-                let (drva, dsize, cp) = (r32(b, d)?, r32(b, d + 4)?, r32(b, d + 8)?);
+                let (drva, dsize, cp) = (kome::le::u32_at(b, d)?, kome::le::u32_at(b, d + 4)?, kome::le::u32_at(b, d + 8)?);
                 let o = if dsize == 0 { 0 } else { pe.offset(b, drva, dsize)? };
                 copied.set(copied.get().checked_add(dsize as usize)?);
                 if copied.get() > b.len() {
@@ -283,7 +276,7 @@ pub fn build(tree: &Tree, rva: u32) -> Vec<u8> {
 pub fn write(file: &[u8], tree: &Tree) -> Option<Vec<u8>> {
     let mut b = file.to_vec();
     let pe = Pe::parse(&b)?;
-    let (fa, sa) = (r32(&b, pe.opt + 36)?, r32(&b, pe.opt + 32)?);
+    let (fa, sa) = (kome::le::u32_at(&b, pe.opt + 36)?, kome::le::u32_at(&b, pe.opt + 32)?);
     // FileAlignment controls output padding. A damaged header must not turn a tiny
     // resource update into a multi-gigabyte allocation (mutation-test baseline), yet Windows
     // still updates such a file (host_resupdate-32): pad as the usual 0x200 / 0x1000 then.
@@ -305,7 +298,7 @@ pub fn write(file: &[u8], tree: &Tree) -> Option<Vec<u8>> {
         None => {
             // a new section after the last (the header must have room for its entry)
             let end = pe.secs + 40 * (pe.nsecs + 1);
-            let headers = r32(&b, pe.opt + 60)? as usize;
+            let headers = kome::le::u32_at(&b, pe.opt + 60)? as usize;
             let first_raw = secs.iter().filter(|s| s.raw != 0).map(|s| s.raw as usize).min().unwrap_or(headers);
             if end > headers.min(first_raw).min(b.len()) {
                 return None;
@@ -315,7 +308,7 @@ pub fn write(file: &[u8], tree: &Tree) -> Option<Vec<u8>> {
             let at = pe.secs + 40 * pe.nsecs;
             b[at..at + 40].fill(0);
             b[at..at + 5].copy_from_slice(b".rsrc");
-            let nt = r32(&b, 0x3c)? as usize;
+            let nt = kome::le::u32_at(&b, 0x3c)? as usize;
             w16(&mut b, nt + 6, pe.nsecs as u16 + 1);
             let pe = Pe::parse(&b)?;
             pe.put_section(&mut b, pe.nsecs - 1, &Section { vsize: 0, va, raw_size: 0, raw, flags: 0x4000_0040 });
@@ -364,7 +357,7 @@ pub fn write(file: &[u8], tree: &Tree) -> Option<Vec<u8>> {
     }
     for d in 0..pe.ndirs {
         let at = pe.dirs + 8 * d as usize;
-        let v = r32(&b, at)?;
+        let v = kome::le::u32_at(&b, at)?;
         // (the security directory is a file offset)
         if d == 4 {
             if v as usize >= old_end && v != 0 && !empty {
@@ -655,7 +648,7 @@ mod tests {
                 assert!(raw_end as usize <= b.len());
             }
         }
-        assert_eq!(r32(b, pe.opt + 56).unwrap(), va_end);
+        assert_eq!(kome::le::u32_at(b, pe.opt + 56).unwrap(), va_end);
     }
 
     #[test]
@@ -808,7 +801,7 @@ mod tests {
         // both pointing at it (the second over the name directory's own header is enough to
         // show the shape: the bytes after are the name directory itself)
         let mut d = b.clone();
-        let names = r32(&d, base + 16 + 4).unwrap();
+        let names = kome::le::u32_at(&d, base + 16 + 4).unwrap();
         w16(&mut d, base + 14, 2);
         w32(&mut d, base + 24, 11);
         w32(&mut d, base + 28, names);
@@ -841,7 +834,7 @@ mod tests {
         let t = sample();
         let b = image(&[(b".rsrc", 0, 0x4000_0040)], Some(&t));
         let pe = Pe::parse(&b).unwrap();
-        let nt = r32(&b, 0x3c).unwrap() as usize;
+        let nt = kome::le::u32_at(&b, 0x3c).unwrap() as usize;
         for size in [0u16, 71, 95] {
             let mut d = b.clone();
             w16(&mut d, nt + 20, size);

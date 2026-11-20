@@ -87,7 +87,7 @@ fn dmime_snapshot() {
     let zdir = format!("Z:{}", dir.to_str().unwrap().replace('/', "\\"));
     let mut piid = PERF_IIDS[2];
     piid[15] ^= 1;
-    let iids = [IID_UNKNOWN, PERF_IIDS[0], PERF_IIDS[2], LOADER_IIDS[1], SEGMENT_IIDS[0], SEGMENT_IIDS[2], STATE_IIDS[1], AUDIOPATH_IIDS[0], piid];
+    let iids = [IID_IUNKNOWN, PERF_IIDS[0], PERF_IIDS[2], LOADER_IIDS[1], SEGMENT_IIDS[0], SEGMENT_IIDS[2], STATE_IIDS[1], AUDIOPATH_IIDS[0], piid];
     let pick = |r: &mut Rng, v: &[u32]| if v.is_empty() || r.below(30) == 0 { 0x0bad_0000 } else { v[usize::try_from(r.below(u64::try_from(v.len()).unwrap_or(1))).unwrap_or(0)] };
     for i in 0..4000 {
         mem::fill(po, 64, 0);

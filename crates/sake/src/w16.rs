@@ -806,9 +806,6 @@ pub fn exception(cpu: &mut Cpu, stop: kura::cpu::Stop) {
 // The NE loader reads a file that may be truncated or damaged (a partial download through the
 // vfs counts): every read is bounded, 0 past the end, and a bad index is "not a valid module"
 // (error 11) rather than an index panic = the VM's abort.
-fn u16at(d: &[u8], o: usize) -> u16 {
-    d.get(o..o.saturating_add(2)).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]))
-}
 fn b8(d: &[u8], o: usize) -> u8 {
     d.get(o).copied().unwrap_or(0)
 }
@@ -825,7 +822,7 @@ fn seg_n(segs: &[u16], i: usize) -> Option<u16> {
 
 /// Far pointer of an entry (by ordinal) of the program.
 fn entry_point(d: &[u8], ne: usize, segs: &[u16], ord: u16) -> Option<u32> {
-    let mut p = ne + u16at(d, ne + 4) as usize;
+    let mut p = ne + kome::le::u16_at(d, ne + 4).unwrap_or(0) as usize;
     let mut n = 1u32;
     let ord = ord as u32;
     loop {
@@ -842,7 +839,7 @@ fn entry_point(d: &[u8], ne: usize, segs: &[u16], ord: u16) -> Option<u32> {
         let sz = if ty == 0xff { 6 } else { 3 };
         if ord < n + count {
             let e = p + sz * (ord - n) as usize;
-            let (seg, off) = if ty == 0xff { (b8(d, e + 3), u16at(d, e + 4)) } else { (ty, u16at(d, e + 1)) };
+            let (seg, off) = if ty == 0xff { (b8(d, e + 3), kome::le::u16_at(d, e + 4).unwrap_or(0)) } else { (ty, kome::le::u16_at(d, e + 1).unwrap_or(0)) };
             return Some((seg_n(segs, seg as usize)? as u32) << 16 | off as u32);
         }
         n += count;
@@ -855,18 +852,18 @@ fn entry_point(d: &[u8], ne: usize, segs: &[u16], ord: u16) -> Option<u32> {
 /// lookup. None when the bytes are no NE file.
 #[doc(hidden)]
 pub fn check_ne(d: &[u8]) -> Option<(String, Vec<u32>)> {
-    if u16at(d, 0) != 0x5a4d {
+    if kome::le::u16_at(d, 0).unwrap_or(0) != 0x5a4d {
         return None;
     }
     let ne = u32::from_le_bytes(d.get(0x3c..0x40)?.try_into().ok()?) as usize;
-    if u16at(d, ne) != 0x454e {
+    if kome::le::u16_at(d, ne).unwrap_or(0) != 0x454e {
         return None;
     }
-    let nseg = u16at(d, ne + 0x1c) as usize;
+    let nseg = kome::le::u16_at(d, ne + 0x1c).unwrap_or(0) as usize;
     let segs: Vec<u16> = (0..nseg.min(254)).map(|i| 0x100 + 8 * i as u16).collect();
     let name = module_name(d, ne);
     let entries = (1..=512u16).filter_map(|o| entry_point(d, ne, &segs, o)).collect();
-    for i in 0..=u16at(d, ne + 0x1e).min(64) {
+    for i in 0..=kome::le::u16_at(d, ne + 0x1e).unwrap_or(0).min(64) {
         let _ = mod_ref(d, ne, i);
     }
     let _ = export_ordinal(d, ne, &name);
@@ -883,7 +880,7 @@ struct Image {
 /// Maps the segments of the NE file `d` (header at `ne`). None: a header no loader takes (an
 /// alignment shift past 16, a segment table past the file) or no memory or selectors left.
 fn map_segments(d: &[u8], ne: usize) -> Option<Image> {
-    let h = |o: usize| u16at(d, ne + o);
+    let h = |o: usize| kome::le::u16_at(d, ne + o).unwrap_or(0);
     let (nseg, segtab, align) = (h(0x1c), h(0x22), h(0x32));
     let shift = if align == 0 { 9 } else { align as u32 };
     if shift > 16 || ne + segtab as usize + 8 * nseg as usize > d.len() {
@@ -893,7 +890,7 @@ fn map_segments(d: &[u8], ne: usize) -> Option<Image> {
     let mut info = vec![];
     for k in 0..nseg as usize {
         let e = ne + segtab as usize + 8 * k;
-        let (off, len, flags, min) = (u16at(d, e), u16at(d, e + 2), u16at(d, e + 4), u16at(d, e + 6));
+        let (off, len, flags, min) = (kome::le::u16_at(d, e).unwrap_or(0), kome::le::u16_at(d, e + 2).unwrap_or(0), kome::le::u16_at(d, e + 4).unwrap_or(0), kome::le::u16_at(d, e + 6).unwrap_or(0));
         let fofs = (off as usize) << shift;
         let flen = if len == 0 && off != 0 { 0x10000 } else { len as usize };
         let b = crate::mem::alloc(0x10000)?;
@@ -912,15 +909,15 @@ fn map_segments(d: &[u8], ne: usize) -> Option<Image> {
 
 /// The name a module's imports call module `i` (1-based) of its module reference table.
 fn mod_ref(d: &[u8], ne: usize, i: u16) -> String {
-    let (modref, impnam) = (u16at(d, ne + 0x28), u16at(d, ne + 0x2a));
+    let (modref, impnam) = (kome::le::u16_at(d, ne + 0x28).unwrap_or(0), kome::le::u16_at(d, ne + 0x2a).unwrap_or(0));
     let Some(k) = (i as usize).checked_sub(1) else { return String::new() };
-    let r = u16at(d, ne + modref as usize + 2 * k) as usize;
+    let r = kome::le::u16_at(d, ne + modref as usize + 2 * k).unwrap_or(0) as usize;
     pstr(d, ne + impnam as usize + r)
 }
 
 /// Applies the relocations of every segment of `img`.
 fn relocate(d: &[u8], ne: usize, img: &Image) {
-    let impnam = u16at(d, ne + 0x2a);
+    let impnam = kome::le::u16_at(d, ne + 0x2a).unwrap_or(0);
     let segs = &img.segs;
     for k in 0..segs.len() {
         let (fofs, flen, flags, _) = img.info[k];
@@ -929,13 +926,13 @@ fn relocate(d: &[u8], ne: usize, img: &Image) {
         }
         let Some((base, _)) = sel_base(segs[k]) else { continue };
         let mut p = fofs + flen;
-        let n = u16at(d, p);
+        let n = kome::le::u16_at(d, p).unwrap_or(0);
         p += 2;
         for _ in 0..n {
             if p + 8 > d.len() {
                 break;
             }
-            let (st, fl, so, a, b) = (b8(d, p), b8(d, p + 1), u16at(d, p + 2), u16at(d, p + 4), u16at(d, p + 6));
+            let (st, fl, so, a, b) = (b8(d, p), b8(d, p + 1), kome::le::u16_at(d, p + 2).unwrap_or(0), kome::le::u16_at(d, p + 4).unwrap_or(0), kome::le::u16_at(d, p + 6).unwrap_or(0));
             p += 8;
             let target: u32 = match fl & 3 {
                 0 => {
@@ -1049,7 +1046,7 @@ pub fn is_system(module: &str) -> bool {
 
 /// A module's own name (the first entry of its resident names table), upper case.
 fn module_name(d: &[u8], ne: usize) -> String {
-    pstr(d, ne + u16at(d, ne + 0x26) as usize).to_ascii_uppercase()
+    pstr(d, ne + kome::le::u16_at(d, ne + 0x26).unwrap_or(0) as usize).to_ascii_uppercase()
 }
 
 /// The ordinal of export `name` (resident then nonresident names table, any case).
@@ -1060,7 +1057,7 @@ pub fn export_ordinal(d: &[u8], ne: usize, name: &str) -> Option<u16> {
             let n = d[p] as usize;
             let s = d.get(p + 1..p + 1 + n)?;
             d.get(p + 1 + n..p + 3 + n)?;
-            let ord = u16at(d, p + 1 + n);
+            let ord = kome::le::u16_at(d, p + 1 + n).unwrap_or(0);
             if !first && s.eq_ignore_ascii_case(name.as_bytes()) {
                 return Some(ord);
             }
@@ -1069,7 +1066,7 @@ pub fn export_ordinal(d: &[u8], ne: usize, name: &str) -> Option<u16> {
         }
         None
     };
-    let res = ne + u16at(d, ne + 0x26) as usize;
+    let res = ne + kome::le::u16_at(d, ne + 0x26).unwrap_or(0) as usize;
     let nonres = u32::from_le_bytes(d.get(ne + 0x2c..ne + 0x30)?.try_into().unwrap()) as usize;
     scan(res, true).or_else(|| if nonres != 0 { scan(nonres, true) } else { None })
 }
@@ -1153,7 +1150,7 @@ pub fn load_dll(name: &str) -> Result<u16, u16> {
     if d.get(ne..ne + 2) != Some(b"NE") {
         return Err(11);
     }
-    let h = |o: usize| u16at(&d, ne + o);
+    let h = |o: usize| kome::le::u16_at(&d, ne + o).unwrap_or(0);
     let (autodata, heap, ip, cs) = (h(0x0e), h(0x10), h(0x14), h(0x16));
     let Some(img) = map_segments(&d, ne) else { return Err(11) };
     let Some(dgroup) = (if autodata == 0 { img.segs.first().copied() } else { seg_n(&img.segs, autodata as usize) }) else { return Err(11) };
@@ -1177,7 +1174,7 @@ pub fn load_dll(name: &str) -> Result<u16, u16> {
 /// that may run with another DS: the loader makes it "mov ax, <its data segment>", as Windows
 /// does for a module with one data segment.
 fn fix_prologues(d: &[u8], ne: usize, segs: &[u16], dgroup: u16) {
-    let mut p = ne + u16at(d, ne + 4) as usize;
+    let mut p = ne + kome::le::u16_at(d, ne + 4).unwrap_or(0) as usize;
     loop {
         let count = b8(d, p) as usize;
         if count == 0 {
@@ -1192,7 +1189,7 @@ fn fix_prologues(d: &[u8], ne: usize, segs: &[u16], dgroup: u16) {
         for k in 0..count {
             let e = p + sz * k;
             let flags = b8(d, e);
-            let (seg, off) = if ty == 0xff { (b8(d, e + 3), u16at(d, e + 4)) } else { (ty, u16at(d, e + 1)) };
+            let (seg, off) = if ty == 0xff { (b8(d, e + 3), kome::le::u16_at(d, e + 4).unwrap_or(0)) } else { (ty, kome::le::u16_at(d, e + 1).unwrap_or(0)) };
             if flags & 1 == 0 || seg == 0 || seg as usize > segs.len() {
                 continue;
             }
@@ -1303,7 +1300,7 @@ pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
 
     let d = kura::fs::read(exe).unwrap_or_default();
     let ne = d.get(0x3c..0x40).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
-    let h = |o: usize| u16at(&d, ne + o);
+    let h = |o: usize| kome::le::u16_at(&d, ne + o).unwrap_or(0);
     let (autodata, heap, mut stack) = (h(0x0e), h(0x10), h(0x12));
     let (ip, cs, mut sp, ss) = (h(0x14), h(0x16), h(0x18), h(0x1a));
     let (nseg, nmod) = (h(0x1c), h(0x1e));

@@ -114,36 +114,6 @@ fn sorted() -> Vec<&'static Iface> {
     v
 }
 
-/// "{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}"
-pub fn guid_string(g: &[u8; 16]) -> String {
-    let d1 = u32::from_le_bytes(g[0..4].try_into().unwrap());
-    let d2 = u16::from_le_bytes([g[4], g[5]]);
-    let d3 = u16::from_le_bytes([g[6], g[7]]);
-    format!("{{{d1:08X}-{d2:04X}-{d3:04X}-{:02X}{:02X}-{}}}", g[8], g[9], g[10..].iter().map(|b| format!("{b:02X}")).collect::<String>())
-}
-
-/// The reverse of guid_string (braces required, hex of either case)
-pub fn parse_guid(s: &str) -> Option<[u8; 16]> {
-    let b = s.as_bytes();
-    if b.len() != 38 || b[0] != b'{' || b[37] != b'}' || [9, 14, 19, 24].iter().any(|&i| b[i] != b'-') {
-        return None;
-    }
-    let hex = |r: std::ops::Range<usize>| u64::from_str_radix(&s[r], 16).ok();
-    if !s[1..37].chars().all(|c| c == '-' || c.is_ascii_hexdigit()) {
-        return None;
-    }
-    let mut g = [0u8; 16];
-    g[0..4].copy_from_slice(&(hex(1..9)? as u32).to_le_bytes());
-    g[4..6].copy_from_slice(&(hex(10..14)? as u16).to_le_bytes());
-    g[6..8].copy_from_slice(&(hex(15..19)? as u16).to_le_bytes());
-    g[8] = hex(20..22)? as u8;
-    g[9] = hex(22..24)? as u8;
-    for i in 0..6 {
-        g[10 + i] = hex(25 + 2 * i..27 + 2 * i)? as u8;
-    }
-    Some(g)
-}
-
 /// The interface's name for ConvertInterfaceLuidToName: "<type>_<NetLuidIndex>"
 pub fn if_name(f: &Iface) -> String {
     let t = match f.ty {
@@ -183,7 +153,7 @@ pub fn name_to_luid(s: &str) -> Option<u64> {
 }
 
 fn device_name(f: &Iface) -> String {
-    format!("\\DEVICE\\TCPIP_{}", guid_string(&f.guid))
+    format!("\\DEVICE\\TCPIP_{}", kome::guid::braced(&f.guid))
 }
 
 pub fn v4_mask(len: u8) -> u32 {
@@ -964,7 +934,7 @@ fn GetAdaptersInfo(c: &mut Ctx) -> u32 {
             wp(p, p + one);
         }
         w32(p + ps(), f.index); // ComboIndex
-        put_cfixed(p + o(8, 12), 260, &guid_string(&f.guid));
+        put_cfixed(p + o(8, 12), 260, &kome::guid::braced(&f.guid));
         put_cfixed(p + o(268, 272), 132, f.descr);
         w32(p + o(400, 404), f.mac.len() as u32);
         mem::write(p + o(404, 408), f.mac);
@@ -1023,7 +993,7 @@ fn GetAdaptersAddresses(c: &mut Ctx) -> u32 {
             }
         }
         let name = need;
-        need += (guid_string(&f.guid).len() as u32 + 1 + 1) & !1;
+        need += (kome::guid::braced(&f.guid).len() as u32 + 1 + 1) & !1;
         let strs = need;
         let descr_w = 2 * (f.descr.encode_utf16().count() as u32 + 1);
         let alias_w = 2 * (if skip_friendly { 0 } else { f.alias.encode_utf16().count() as u32 } + 1);
@@ -1044,7 +1014,7 @@ fn GetAdaptersAddresses(c: &mut Ctx) -> u32 {
         if i + 1 < n {
             // (the next adapter's offset is in the next plan entry: recomputed below)
         }
-        put_cfixed(buf + name, 64, &guid_string(&f.guid));
+        put_cfixed(buf + name, 64, &kome::guid::braced(&f.guid));
         wp(p + o(12, 16), buf + name);
         let mut prev = 0u32;
         for (off, a) in &uni {
@@ -1142,7 +1112,7 @@ fn GetAdaptersAddresses(c: &mut Ctx) -> u32 {
         if include_prefix {
             sz += routes(fam).iter().filter(|r| r.iface.index == f.index && (r.len == 8 || r.len == 128) && r.dest[0] != 0xff).count() as u32 * (pre + 28);
         }
-        sz += (guid_string(&f.guid).len() as u32 + 2) & !1;
+        sz += (kome::guid::braced(&f.guid).len() as u32 + 2) & !1;
         sz += 2 + 2 * (f.descr.encode_utf16().count() as u32 + 1) + 2 * (if skip_friendly { 0 } else { f.alias.encode_utf16().count() as u32 } + 1);
         at = (at + sz + 7) & !7;
     }
@@ -1522,7 +1492,7 @@ fn guid_to_string(c: &mut Ctx, wide: bool) -> u32 {
     if len < 39 {
         return ERROR_NOT_ENOUGH_MEMORY;
     }
-    let s = guid_string(&mem::array::<16>(g));
+    let s = kome::guid::braced(&mem::array::<16>(g));
     if wide {
         put_wfixed(buf, len, &s);
     } else {
@@ -1535,7 +1505,7 @@ fn ConvertStringToGuidW(c: &mut Ctx) -> u32 {
     if s == 0 || out == 0 {
         return ERROR_INVALID_PARAMETER;
     }
-    match parse_guid(&String::from_utf16_lossy(&mem::wstr(s))) {
+    match kome::guid::parse_braced(&String::from_utf16_lossy(&mem::wstr(s))) {
         Some(g) => {
             mem::write(out, &g);
             NO_ERROR
@@ -2214,14 +2184,14 @@ mod tests {
     #[test]
     fn guid_round_trip() {
         for f in ifaces() {
-            let s = guid_string(&f.guid);
+            let s = kome::guid::braced(&f.guid);
             assert_eq!(s.len(), 38);
-            assert_eq!(parse_guid(&s), Some(f.guid));
-            assert_eq!(parse_guid(&s.to_lowercase()), Some(f.guid));
+            assert_eq!(kome::guid::parse_braced(&s), Some(f.guid));
+            assert_eq!(kome::guid::parse_braced(&s.to_lowercase()), Some(f.guid));
         }
-        assert_eq!(parse_guid("{00000001-0000-0000-0000-00000000000}"), None);
-        assert_eq!(parse_guid("00000001-0000-0000-0000-000000000000"), None);
-        assert_eq!(parse_guid("{0000000g-0000-0000-0000-000000000000}"), None);
+        assert_eq!(kome::guid::parse_braced("{00000001-0000-0000-0000-00000000000}"), None);
+        assert_eq!(kome::guid::parse_braced("00000001-0000-0000-0000-000000000000"), None);
+        assert_eq!(kome::guid::parse_braced("{0000000g-0000-0000-0000-000000000000}"), None);
     }
 
     #[test]

@@ -8,6 +8,7 @@
 //! Unity's VideoPlayer opens its movies so: its byte stream over a part of a .resource file,
 //! the resolver's CreateObjectFromByteStream, then a reader of the source.
 
+use kome::guid::of_text;
 use super::*;
 use crate::audiofile;
 use std::sync::Arc;
@@ -256,56 +257,56 @@ const SEC_: u64 = 10_000_000;
 // --- media types of video -----------------------------------------------------------------
 
 pub fn k_frame_size() -> Guid {
-    const { g("1652c33d-d6b2-4012-b834-72030849a37d") }
+    const { of_text("1652c33d-d6b2-4012-b834-72030849a37d") }
 }
 pub fn k_frame_rate() -> Guid {
-    const { g("c459a2e8-3d2c-4e44-b132-fee5156c7bb0") }
+    const { of_text("c459a2e8-3d2c-4e44-b132-fee5156c7bb0") }
 }
 pub fn k_aspect() -> Guid {
-    const { g("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6") }
+    const { of_text("c6376a1e-8d0a-4027-be45-6d9a0ad39bb6") }
 }
 pub fn k_interlace() -> Guid {
-    const { g("e2724bb8-e676-4806-b4b2-a8d6efb44ccd") }
+    const { of_text("e2724bb8-e676-4806-b4b2-a8d6efb44ccd") }
 }
 pub fn k_stride() -> Guid {
-    const { g("644b4e48-1e02-4516-b0eb-c01ca9d49ac6") }
+    const { of_text("644b4e48-1e02-4516-b0eb-c01ca9d49ac6") }
 }
 pub fn k_fixed_size() -> Guid {
-    const { g("b8ebefaf-b718-4e04-b0a9-116775e3321b") }
+    const { of_text("b8ebefaf-b718-4e04-b0a9-116775e3321b") }
 }
 pub fn k_sample_size() -> Guid {
-    const { g("dad3ab78-1990-408b-bce2-eba673dacc10") }
+    const { of_text("dad3ab78-1990-408b-bce2-eba673dacc10") }
 }
 pub fn k_profile() -> Guid {
-    const { g("ad76a80b-2d5c-4e0b-b375-64e520137036") }
+    const { of_text("ad76a80b-2d5c-4e0b-b375-64e520137036") }
 }
 pub fn k_level() -> Guid {
-    const { g("96f66574-11c5-4015-8666-bff516436da7") }
+    const { of_text("96f66574-11c5-4015-8666-bff516436da7") }
 }
 pub fn k_seq_header() -> Guid {
-    const { g("3c036de7-3ad0-4c9e-9216-ee6d6ac21cb3") }
+    const { of_text("3c036de7-3ad0-4c9e-9216-ee6d6ac21cb3") }
 }
 pub fn k_bitrate() -> Guid {
-    const { g("20332624-fb0d-4d9e-bd0d-cbf6786c102e") }
+    const { of_text("20332624-fb0d-4d9e-bd0d-cbf6786c102e") }
 }
 pub fn k_matrix() -> Guid {
-    const { g("3e23d450-2c75-4d25-a00e-b91670d12327") }
+    const { of_text("3e23d450-2c75-4d25-a00e-b91670d12327") }
 }
 pub fn k_nominal_range() -> Guid {
-    const { g("c21b8ee5-b956-4071-8daf-325edf5cab11") }
+    const { of_text("c21b8ee5-b956-4071-8daf-325edf5cab11") }
 }
 fn k_pd_duration() -> Guid {
-    const { g("6c990d33-bb8e-477a-8598-0d5d96fcd88a") }
+    const { of_text("6c990d33-bb8e-477a-8598-0d5d96fcd88a") }
 }
 fn k_pd_mime() -> Guid {
-    const { g("6c990d37-bb8e-477a-8598-0d5d96fcd88a") }
+    const { of_text("6c990d37-bb8e-477a-8598-0d5d96fcd88a") }
 }
 pub fn major_video() -> Guid {
-    const { g("73646976-0000-0010-8000-00aa00389b71") }
+    const { of_text("73646976-0000-0010-8000-00aa00389b71") }
 }
 /// MFVideoFormat_* by FOURCC (or D3DFORMAT) in Data1
 pub fn video_format(fourcc: u32) -> Guid {
-    let mut b = const { g("00000000-0000-0010-8000-00aa00389b71") };
+    let mut b = const { of_text("00000000-0000-0010-8000-00aa00389b71") };
     b[0..4].copy_from_slice(&fourcc.to_le_bytes());
     b
 }
@@ -318,32 +319,6 @@ pub const YUY2: u32 = u32::from_le_bytes(*b"YUY2");
 pub const RGB32: u32 = 22;
 pub const ARGB32: u32 = 21;
 
-/// A GUID from its text "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", for `const { g(..) }`: a malformed
-/// one fails the build.
-pub const fn g(s: &str) -> Guid {
-    let mut rest = s.as_bytes();
-    // (the 32 hex digits as one big-endian number, the dashes where they belong)
-    let (mut v, mut at) = (0u128, 0u32);
-    while let Some((&c, tail)) = rest.split_first() {
-        let d = match c {
-            b'0'..=b'9' => c.wrapping_sub(b'0'),
-            b'a'..=b'f' => c.wrapping_sub(b'a').wrapping_add(10),
-            b'A'..=b'F' => c.wrapping_sub(b'A').wrapping_add(10),
-            b'-' => 16,
-            _ => 17,
-        };
-        assert!(d != 17, "a GUID's text is hex digits and dashes");
-        assert!((d == 16) == matches!(at, 8 | 13 | 18 | 23), "a GUID's dashes are at 8, 13, 18 and 23");
-        if d != 16 {
-            v = v.wrapping_shl(4) | u128::from_le_bytes([d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-        }
-        at = at.wrapping_add(1);
-        rest = tail;
-    }
-    assert!(at == 36, "a GUID's text is 36 characters");
-    let [a0, a1, a2, a3, b0, b1, c0, c1, d0, d1, d2, d3, d4, d5, d6, d7] = v.to_be_bytes();
-    [a3, a2, a1, a0, b1, b0, c1, c0, d0, d1, d2, d3, d4, d5, d6, d7]
-}
 fn ratio(a: u32, b: u32) -> Val {
     Val::U64(u64::from(a) << 32 | u64::from(b))
 }
@@ -438,7 +413,7 @@ fn ms_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFMediaSource {279a808d-aec7-40c8-9c6b-a6b492c78a66}, IMFMediaEventGenerator
     // {2cd0bd52-bcd5-4b89-b62c-eadc0c031e7d}
     if is_unknown(&g) || is(&g, 0x279a_808d, 0xaec7, 0x40c8) || is(&g, 0x2cd0_bd52, 0xbcd5, 0x4b89) {
@@ -709,7 +684,7 @@ fn mh_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFMediaTypeHandler {e93dcf6c-4b07-4e1e-8123-aa16ed6eadf5}
     if is_unknown(&g) || is(&g, 0xe93d_cf6c, 0x4b07, 0x4e1e) {
         add_ref(c.ctx(), this);
@@ -978,7 +953,7 @@ fn resolver_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFSourceResolver {fbe5a32d-a497-4b61-bb85-97b1a848a6e3}
     if is_unknown(&g) || is(&g, 0xfbe5_a32d, 0xa497, 0x4b61) {
         out.put(this);

@@ -11,6 +11,8 @@
 //! vtable is what programs call).
 #![allow(non_snake_case)]
 
+use kome::guid::IID_IUNKNOWN;
+use kome::guid::{of_text, Guid};
 use crate::hresult::{S_OK, S_FALSE, E_NOTIMPL, E_NOINTERFACE, E_POINTER, E_FAIL, E_INVALIDARG, DISP_E_MEMBERNOTFOUND, DISP_E_UNKNOWNNAME, TYPE_E_ELEMENTNOTFOUND};
 use crate::api::{Ctx, Handler};
 use crate::mem::{self, r16, r32, w16, w32};
@@ -25,65 +27,45 @@ const OLEOBJ_S_INVALIDVERB: u32 = 0x0004_0180;
 /// RECOMPOSEONRESIZE, as IE's control reports
 pub const MISC_STATUS: u32 = 0x20000 | 0x100 | 0x80 | 0x10 | 0x1;
 
-/// A GUID's 16 bytes from its text form ("8856F961-340A-11D0-A96B-00C04FD705A2").
-pub fn guid(s: &str) -> [u8; 16] {
-    let h: Vec<u8> = s.bytes().filter(|b| b.is_ascii_hexdigit()).collect();
-    let byte = |i: usize| u8::from_str_radix(std::str::from_utf8(&h[2 * i..2 * i + 2]).unwrap(), 16).unwrap();
-    let mut g = [0u8; 16];
-    // Data1..Data3 little-endian, Data4 as written
-    for (o, (at, n)) in [(0usize, (0usize, 4usize)), (4, (4, 2)), (6, (6, 2))] {
-        for k in 0..n {
-            g[o + k] = byte(at + n - 1 - k);
-        }
-    }
-    for k in 8..16 {
-        g[k] = byte(k);
-    }
-    g
-}
 
-pub const CLSID_WEBBROWSER: &str = "8856F961-340A-11D0-A96B-00C04FD705A2";
-pub const CLSID_WEBBROWSER_V1: &str = "EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B";
+pub const CLSID_WEBBROWSER: Guid = of_text("8856F961-340A-11D0-A96B-00C04FD705A2");
+pub const CLSID_WEBBROWSER_V1: Guid = of_text("EAB22AC3-30C1-11CF-A7EB-0000C05BAE0B");
 
 /// The interfaces, in the object's order, and the IIDs each answers
-const IFACES: &[&[&str]] = &[
+const IFACES: &[&[Guid]] = &[
     // IWebBrowser2 (dual: IDispatch, IWebBrowser, IWebBrowserApp), and IUnknown
-    &["00000000-0000-0000-C000-000000000046", "00020400-0000-0000-C000-000000000046", "EAB22AC1-30C1-11CF-A7EB-0000C05BAE0B", "0002DF05-0000-0000-C000-000000000046", "D30C1661-CDAF-11D0-8A3E-00C04FC9E26E"],
+    &[of_text("00000000-0000-0000-C000-000000000046"), of_text("00020400-0000-0000-C000-000000000046"), of_text("EAB22AC1-30C1-11CF-A7EB-0000C05BAE0B"), of_text("0002DF05-0000-0000-C000-000000000046"), of_text("D30C1661-CDAF-11D0-8A3E-00C04FC9E26E")],
     // IOleObject
-    &["00000112-0000-0000-C000-000000000046"],
+    &[of_text("00000112-0000-0000-C000-000000000046")],
     // IOleInPlaceObject, IOleWindow
-    &["00000113-0000-0000-C000-000000000046", "00000114-0000-0000-C000-000000000046"],
+    &[of_text("00000113-0000-0000-C000-000000000046"), of_text("00000114-0000-0000-C000-000000000046")],
     // IOleInPlaceActiveObject
-    &["00000117-0000-0000-C000-000000000046"],
+    &[of_text("00000117-0000-0000-C000-000000000046")],
     // IOleControl
-    &["B196B288-BAB4-101A-B69C-00AA00341D07"],
+    &[of_text("B196B288-BAB4-101A-B69C-00AA00341D07")],
     // IPersistStreamInit, IPersist
-    &["7FD52380-4E07-101B-AE2D-08002B2EC713", "0000010C-0000-0000-C000-000000000046"],
+    &[of_text("7FD52380-4E07-101B-AE2D-08002B2EC713"), of_text("0000010C-0000-0000-C000-000000000046")],
     // IConnectionPointContainer
-    &["B196B284-BAB4-101A-B69C-00AA00341D07"],
+    &[of_text("B196B284-BAB4-101A-B69C-00AA00341D07")],
     // IViewObject2, IViewObject
-    &["00000127-0000-0000-C000-000000000046", "0000010D-0000-0000-C000-000000000046"],
+    &[of_text("00000127-0000-0000-C000-000000000046"), of_text("0000010D-0000-0000-C000-000000000046")],
 ];
 
 /// The outgoing interfaces it has connection points for: DWebBrowserEvents2, DWebBrowserEvents,
 /// IPropertyNotifySink
-const EVENTS: [&str; 3] = ["34A715A0-6587-11D0-924A-0020AFC7AC4D", "EAB22AC2-30C1-11CF-A7EB-0000C05BAE0B", "9BFBBC02-EFF1-101A-84ED-00AA00341D07"];
+const EVENTS: [Guid; 3] = [of_text("34A715A0-6587-11D0-924A-0020AFC7AC4D"), of_text("EAB22AC2-30C1-11CF-A7EB-0000C05BAE0B"), of_text("9BFBBC02-EFF1-101A-84ED-00AA00341D07")];
 
-const IID_IUNKNOWN: &str = "00000000-0000-0000-C000-000000000046";
-const IID_ICONNECTIONPOINT: &str = "B196B286-BAB4-101A-B69C-00AA00341D07";
-const IID_IOLEINPLACESITE: &str = "00000119-0000-0000-C000-000000000046";
+const IID_ICONNECTIONPOINT: Guid = of_text("B196B286-BAB4-101A-B69C-00AA00341D07");
+const IID_IOLEINPLACESITE: Guid = of_text("00000119-0000-0000-C000-000000000046");
 
 /// Which interface of the object an IID asks for
 pub fn which(iid: &[u8]) -> Option<usize> {
-    // (parsed once: every QueryInterface parsed up to 13 GUID strings)
-    static T: std::sync::OnceLock<Vec<Vec<[u8; 16]>>> = std::sync::OnceLock::new();
-    T.get_or_init(|| IFACES.iter().map(|ids| ids.iter().map(|s| guid(s)).collect()).collect()).iter().position(|ids| ids.iter().any(|g| g == iid))
+    IFACES.iter().position(|ids| ids.iter().any(|g| g == iid))
 }
 
 /// Which connection point an IID asks for
 pub fn event_index(iid: &[u8]) -> Option<usize> {
-    static T: std::sync::OnceLock<Vec<[u8; 16]>> = std::sync::OnceLock::new();
-    T.get_or_init(|| EVENTS.iter().map(|s| guid(s)).collect()).iter().position(|g| g == iid)
+    EVENTS.iter().position(|g| g == iid)
 }
 
 /// The IWebBrowser2 slots whose value is a property: (the get's slot, VARIANT_BOOL (2 bytes)
@@ -148,11 +130,11 @@ fn with<R>(this: u32, f: impl FnOnce(&mut Browser) -> R) -> Option<R> {
 }
 
 /// A GUID in guest memory (for the IIDs sake asks objects of the program for)
-fn guest_guid(s: &'static str) -> u32 {
-    static AT: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
-    *AT.lock().unwrap().get_or_insert_with(HashMap::default).entry(s).or_insert_with(|| {
+fn guest_guid(g: Guid) -> u32 {
+    static AT: Mutex<Option<HashMap<Guid, u32>>> = Mutex::new(None);
+    *AT.lock().unwrap().get_or_insert_with(HashMap::default).entry(g).or_insert_with(|| {
         let p = mem::heap_alloc(16, false);
-        mem::write(p, &guid(s));
+        mem::write(p, &g);
         p
     })
 }
@@ -467,7 +449,7 @@ fn GetUserClassID(c: &mut Ctx) -> u32 {
     if c.a(1) == 0 {
         return E_POINTER;
     }
-    mem::write(c.a(1), &guid(CLSID_WEBBROWSER));
+    mem::write(c.a(1), &CLSID_WEBBROWSER);
     S_OK
 }
 fn SetExtent(c: &mut Ctx) -> u32 {
@@ -719,7 +701,7 @@ fn point_qi(c: &mut Ctx) -> u32 {
         return E_POINTER;
     }
     let g = mem::array::<16>(iid);
-    if g == guid(IID_IUNKNOWN) || g == guid(IID_ICONNECTIONPOINT) {
+    if g == IID_IUNKNOWN || g == IID_ICONNECTIONPOINT {
         let owner = points(|m| m.get(&this).map(|p| p.owner)).unwrap_or(0);
         with(owner, |s| s.refs += 1);
         out.put(this);
@@ -751,7 +733,7 @@ fn GetConnectionInterface(c: &mut Ctx) -> u32 {
         return E_POINTER;
     }
     let Some(k) = points(|m| m.get(&this).map(|p| p.which)) else { return E_FAIL };
-    mem::write(out, &guid(EVENTS[k]));
+    mem::write(out, &EVENTS[k]);
     S_OK
 }
 fn GetConnectionPointContainer(c: &mut Ctx) -> u32 {
@@ -961,9 +943,8 @@ fn point_vtable() -> u32 {
 
 /// CoCreateInstance(CLSID_WebBrowser): None for another class, else the HRESULT
 pub fn create_instance(clsid: u32, iid: u32, out: crate::api::Out) -> Option<u32> {
-    static CLS: std::sync::OnceLock<[[u8; 16]; 2]> = std::sync::OnceLock::new();
-    let cls = &mem::array::<16>(clsid);
-    if !CLS.get_or_init(|| [guid(CLSID_WEBBROWSER), guid(CLSID_WEBBROWSER_V1)]).iter().any(|g| g == cls) {
+    let cls = mem::array::<16>(clsid);
+    if cls != CLSID_WEBBROWSER && cls != CLSID_WEBBROWSER_V1 {
         return None;
     }
     let Some(i) = which(&mem::array::<16>(iid)) else {
@@ -989,12 +970,11 @@ pub fn create_instance(clsid: u32, iid: u32, out: crate::api::Out) -> Option<u32
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
 
     #[test]
     fn guids_from_text() {
-        assert_eq!(guid(CLSID_WEBBROWSER), [0x61, 0xf9, 0x56, 0x88, 0x0a, 0x34, 0xd0, 0x11, 0xa9, 0x6b, 0x00, 0xc0, 0x4f, 0xd7, 0x05, 0xa2]);
-        assert_eq!(guid("00000112-0000-0000-C000-000000000046"), [0x12, 0x01, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
+        assert_eq!(CLSID_WEBBROWSER, [0x61, 0xf9, 0x56, 0x88, 0x0a, 0x34, 0xd0, 0x11, 0xa9, 0x6b, 0x00, 0xc0, 0x4f, 0xd7, 0x05, 0xa2]);
+        assert_eq!(IFACES[1][0], [0x12, 0x01, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
     }
 
     /// Each IID the control answers is in one interface only, IUnknown is the first's, and the
@@ -1003,18 +983,18 @@ mod tests {
     fn interfaces() {
         let mut seen = std::collections::HashSet::new();
         for (i, ids) in IFACES.iter().enumerate() {
-            for s in *ids {
-                assert!(seen.insert(guid(s)), "{s} twice");
-                assert_eq!(which(&guid(s)), Some(i));
+            for g in *ids {
+                assert!(seen.insert(*g), "{g:?} twice");
+                assert_eq!(which(g), Some(i));
             }
         }
-        assert_eq!(which(&guid(IID_IUNKNOWN)), Some(0));
+        assert_eq!(which(&IID_IUNKNOWN), Some(0));
         for s in ["00000112-0000-0000-C000-000000000046", "7FD52380-4E07-101B-AE2D-08002B2EC713", "B196B288-BAB4-101A-B69C-00AA00341D07", "00020400-0000-0000-C000-000000000046", "D30C1661-CDAF-11D0-8A3E-00C04FC9E26E", "00000113-0000-0000-C000-000000000046", "00000117-0000-0000-C000-000000000046"] {
-            assert!(which(&guid(s)).is_some(), "{s}");
+            assert!(which(&of_text(s)).is_some(), "{s}");
         }
-        assert_eq!(which(&guid(IID_ICONNECTIONPOINT)), None);
-        assert_eq!(which(&guid(IID_IOLEINPLACESITE)), None);
-        assert_eq!(event_index(&guid("34A715A0-6587-11D0-924A-0020AFC7AC4D")), Some(0));
+        assert_eq!(which(&IID_ICONNECTIONPOINT), None);
+        assert_eq!(which(&IID_IOLEINPLACESITE), None);
+        assert_eq!(event_index(&of_text("34A715A0-6587-11D0-924A-0020AFC7AC4D")), Some(0));
     }
 
     /// IWebBrowser2's vtable has its 71 slots, the property gets where PROPS has them and each
@@ -1032,18 +1012,5 @@ mod tests {
         assert!(m[11].0 as usize == Navigate as Handler as usize && m[11].1 == 24);
         assert!(m[52].0 as usize == Navigate2 as Handler as usize && m[52].1 == 24);
         assert!(m[56].0 as usize == get_ReadyState as Handler as usize);
-    }
-
-    proptest! {
-        /// Any GUID's text form gives back its bytes (Data1..3 little-endian).
-        #[test]
-        fn guid_text_round_trip(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) {
-            let s = format!("{d1:08X}-{d2:04X}-{d3:04X}-{:02X}{:02X}-{}", d4[0], d4[1], d4[2..].iter().map(|b| format!("{b:02X}")).collect::<String>());
-            let g = guid(&s);
-            prop_assert_eq!(&g[0..4], &d1.to_le_bytes());
-            prop_assert_eq!(&g[4..6], &d2.to_le_bytes());
-            prop_assert_eq!(&g[6..8], &d3.to_le_bytes());
-            prop_assert_eq!(&g[8..], &d4);
-        }
     }
 }

@@ -78,7 +78,7 @@ fn qi(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let Some(b) = base(this) else { return Hr::InvalidArg.code() };
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFMediaBuffer {045fa593-...}, IMFDXGIBuffer {e7174cfa-...}, IMF2DBuffer {7dc9d5f9-...}
     let slot = if is_unknown(&g) || is(&g, 0x045f_a593, 0x8799, 0x42b8) {
         0
@@ -319,7 +319,7 @@ fn db_get_unknown(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let k = guid_at(key);
+    let k = mem::array::<16>(key);
     let Some(u) = with(c.a::<0>(), |d| d.unks.iter().find(|x| x.0 == k).map(|x| x.1)).flatten() else {
         out.put(0);
         return Hr::NotFound.code();
@@ -328,7 +328,7 @@ fn db_get_unknown(c: &mut Ctx) -> u32 {
 }
 /// SetUnknown(REFGUID, IUnknown *): an object kept under a key (NULL: forget it)
 fn db_set_unknown(c: &mut Ctx) -> u32 {
-    let (key, u) = (guid_at(c.a(1)), c.a(2));
+    let (key, u) = (mem::array::<16>(c.a(1)), c.a(2));
     let Some(b) = base(c.a(0)) else { return Hr::InvalidArg.code() };
     let had = dx(b, |d| d.unks.iter().position(|x| x.0 == key)).flatten();
     match (had, u) {
@@ -522,7 +522,7 @@ fn MFCreateDXGISurfaceBuffer(c: &mut Ctx) -> u32 {
     if iid == 0 || surface == 0 {
         return Hr::InvalidArg.code();
     }
-    let g = guid_at(iid);
+    let g = mem::array::<16>(iid);
     if !is(&g, TEX2D.0, TEX2D.1, TEX2D.2) {
         return Hr::InvalidArg.code();
     }

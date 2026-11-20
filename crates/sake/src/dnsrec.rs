@@ -102,12 +102,6 @@ pub fn get_name(msg: &[u8], mut pos: usize) -> Option<(String, usize)> {
     Some((String::from_utf8_lossy(&out).into_owned(), next.unwrap_or(pos)))
 }
 
-fn be16(m: &[u8], p: usize) -> Option<u16> {
-    Some(u16::from_be_bytes([*m.get(p)?, *m.get(p + 1)?]))
-}
-fn be32(m: &[u8], p: usize) -> Option<u32> {
-    Some(u32::from_be_bytes(m.get(p..p + 4)?.try_into().ok()?))
-}
 
 fn rdata(msg: &[u8], pos: usize, len: usize, ty: u16) -> Result<Data, u32> {
     let end = pos + len;
@@ -123,14 +117,14 @@ fn rdata(msg: &[u8], pos: usize, len: usize, ty: u16) -> Result<Data, u32> {
             Data::Two(a, name(p)?.0)
         }
         15 | 18 | 21 => {
-            let pref = be16(rd, 0).ok_or(bad)?;
+            let pref = kome::le::u16_be_at(rd, 0).ok_or(bad)?;
             Data::Mx(pref, name(pos + 2)?.0)
         }
         33 => {
             if len < 6 {
                 return Err(bad);
             }
-            Data::Srv(be16(rd, 0).unwrap(), be16(rd, 2).unwrap(), be16(rd, 4).unwrap(), name(pos + 6)?.0)
+            Data::Srv(kome::le::u16_be_at(rd, 0).unwrap(), kome::le::u16_be_at(rd, 2).unwrap(), kome::le::u16_be_at(rd, 4).unwrap(), name(pos + 6)?.0)
         }
         t if is_txt_type(t) => {
             let mut v = Vec::new();
@@ -151,7 +145,7 @@ fn rdata(msg: &[u8], pos: usize, len: usize, ty: u16) -> Result<Data, u32> {
             }
             let mut d = [0u32; 5];
             for (i, v) in d.iter_mut().enumerate() {
-                *v = be32(msg, p + 4 * i).ok_or(bad)?;
+                *v = kome::le::u32_be_at(msg, p + 4 * i).ok_or(bad)?;
             }
             Data::Soa(a, b, d)
         }
@@ -162,7 +156,7 @@ fn rdata(msg: &[u8], pos: usize, len: usize, ty: u16) -> Result<Data, u32> {
             }
             let key = &rd[4..];
             let mut b = Vec::with_capacity(8 + key.len());
-            b.extend_from_slice(&be16(rd, 0).unwrap().to_le_bytes());
+            b.extend_from_slice(&kome::le::u16_be_at(rd, 0).unwrap().to_le_bytes());
             b.extend_from_slice(&rd[2..4]);
             b.extend_from_slice(&(key.len() as u16).to_le_bytes());
             b.extend_from_slice(&[0, 0]);
@@ -227,9 +221,9 @@ pub fn extract(msg: &[u8], charset: u32) -> Result<Vec<Rec>, u32> {
         if p + 10 > msg.len() {
             return Err(bad);
         }
-        let ty = be16(msg, p).unwrap();
-        let ttl = be32(msg, p + 4).unwrap();
-        let len = be16(msg, p + 8).unwrap() as usize;
+        let ty = kome::le::u16_be_at(msg, p).unwrap();
+        let ttl = kome::le::u32_be_at(msg, p + 4).unwrap();
+        let len = kome::le::u16_be_at(msg, p + 8).unwrap() as usize;
         let p = p + 10;
         if p + len > msg.len() {
             return Err(bad);
@@ -246,7 +240,7 @@ pub fn extract(msg: &[u8], charset: u32) -> Result<Vec<Rec>, u32> {
     }
     for _ in 0..ns {
         let p = skip_name(msg, pos).ok_or(bad)?;
-        let len = be16(msg, p + 8).ok_or(bad)? as usize;
+        let len = kome::le::u16_be_at(msg, p + 8).ok_or(bad)? as usize;
         pos = p + 10 + len;
         if pos > msg.len() {
             return Err(bad);

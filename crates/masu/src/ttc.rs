@@ -16,12 +16,6 @@ struct Font {
 }
 
 // (by `get`: a font cut short or damaged is an error, not a panic; review b01)
-fn be16(d: &[u8], o: usize) -> Option<u16> {
-    Some(u16::from_be_bytes(d.get(o..o.checked_add(2)?)?.try_into().ok()?))
-}
-fn be32(d: &[u8], o: usize) -> Option<u32> {
-    Some(u32::from_be_bytes(d.get(o..o.checked_add(4)?)?.try_into().ok()?))
-}
 
 fn parse(p: &Path) -> Result<Font> {
     let d = std::fs::read(p).with_context(|| format!("{}", p.display()))?;
@@ -33,7 +27,7 @@ fn parse_bytes(d: &[u8]) -> Result<Font> {
         bail!("not a single TrueType font");
     }
     let cut = || anyhow::anyhow!("its table directory is cut short");
-    let n = be16(d, 4).ok_or_else(cut)? as usize;
+    let n = kome::le::u16_be_at(d, 4).ok_or_else(cut)? as usize;
     // (a directory's fields are 16-bit: n x 16 must fit; real fonts have a few dozen tables)
     if n == 0 || n > 4095 {
         bail!("{n} tables");
@@ -41,12 +35,12 @@ fn parse_bytes(d: &[u8]) -> Result<Font> {
     let mut tables = Vec::new();
     for i in 0..n {
         let r = 12 + 16 * i;
-        let (off, len) = (be32(d, r + 8).ok_or_else(cut)? as usize, be32(d, r + 12).ok_or_else(cut)? as usize);
+        let (off, len) = (kome::le::u32_be_at(d, r + 8).ok_or_else(cut)? as usize, kome::le::u32_be_at(d, r + 12).ok_or_else(cut)? as usize);
         let data = off.checked_add(len).and_then(|end| d.get(off..end)).with_context(|| format!("table {i} out of the file"))?;
         let tag: [u8; 4] = d.get(r..r + 4).ok_or_else(cut)?.try_into()?;
         tables.push((tag, data.to_vec()));
     }
-    Ok(Font { version: be32(d, 0).ok_or_else(cut)?, tables })
+    Ok(Font { version: kome::le::u32_be_at(d, 0).ok_or_else(cut)?, tables })
 }
 
 fn table<'a>(f: &'a Font, tag: &[u8; 4]) -> Option<&'a Vec<u8>> {
@@ -71,7 +65,7 @@ fn glyphs(f: &Font) -> Result<Vec<&[u8]>> {
     if head.len() < 54 {
         bail!("head cut short");
     }
-    let offs: Vec<usize> = if be16(head, 50).context("head cut short")? == 1 {
+    let offs: Vec<usize> = if kome::le::u16_be_at(head, 50).context("head cut short")? == 1 {
         kome::le::pieces::<4>(loca).iter().map(|c| u32::from_be_bytes(*c) as usize).collect()
     } else {
         kome::le::pieces::<2>(loca).iter().map(|c| usize::from(u16::from_be_bytes(*c)) * 2).collect()
@@ -89,7 +83,7 @@ fn unhinted(g: &[u8]) -> Option<Vec<u8>> {
     if nc >= 0 {
         // header, endPtsOfContours, instructionLength, instructions, the rest
         let at = 10 + 2 * nc as usize;
-        let n = be16(g, at)? as usize;
+        let n = kome::le::u16_be_at(g, at)? as usize;
         let mut out = g.get(..at)?.to_vec();
         out.extend_from_slice(&[0, 0]);
         out.extend_from_slice(g.get(at + 2 + n..)?);
@@ -99,7 +93,7 @@ fn unhinted(g: &[u8]) -> Option<Vec<u8>> {
     let mut at = 10;
     let mut instr = false;
     loop {
-        let flags = be16(g, at)?;
+        let flags = kome::le::u16_be_at(g, at)?;
         at += 4 + if flags & 1 != 0 { 4 } else { 2 };
         at += if flags & 8 != 0 { 2 } else if flags & 0x40 != 0 { 4 } else if flags & 0x80 != 0 { 8 } else { 0 };
         instr |= flags & 0x100 != 0;
@@ -302,7 +296,7 @@ pub(crate) mod tests {
         let (a, b) = (sample(b"\x01\x02"), sample(b"\x03\x04\x05\x06"));
         let c = collection(&[&a, &b]).unwrap();
         assert_eq!(&c[..4], b"ttcf");
-        assert_eq!(be32(&c, 8), Some(2));
+        assert_eq!(kome::le::u32_be_at(&c, 8), Some(2));
         assert!(c.len() < a.len() + b.len());
         assert_eq!(c.windows(12).filter(|w| *w == b"same in both").count(), 1);
     }

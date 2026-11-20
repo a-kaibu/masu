@@ -1356,6 +1356,7 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "foresee"
 version = "0.1.0"
 dependencies = [
+ "kome",
  "miniz_oxide 0.8.9",
  "proptest",
 ]

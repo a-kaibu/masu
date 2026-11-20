@@ -388,7 +388,7 @@ pub fn new_reader() -> u32 {
 fn opened(c: &mut Ctx, b: u32, cb: u32, ctx: u32, hr: u32) {
     crate::dshow::com(c, cb, 1, &[]);
     let iid = mem::heap_alloc(24, true);
-    put_guid(iid, &IID_CALLBACK_ADVANCED);
+    mem::write(iid, &IID_CALLBACK_ADVANCED);
     let hr_qi = crate::dshow::com(c, cb, 0, &[iid, iid + 16]);
     let adv = if hr_qi == 0 { rp(iid + 16) } else { 0 };
     mem::heap_free(iid);

@@ -112,7 +112,7 @@ impl Rule {
         match self {
             Rule::BuildOutput => "no build output in git (a target/ directory, a compiled or packed file outside vendor/ and testdata/): build artifacts never go to GitHub; 99c0d6d6 committed three masu stubs under crates/masu/target",
             Rule::HresultCopy => "sake's HRESULTs live in sake::hresult only (DRY rework 2026-11-15): `use crate::hresult::*` instead of a second `const E_FAIL`",
-            Rule::KomeCopy => "conversions, little-endian readers and lock traits live in kome only (95e48ed5): use kome::num / kome::le / kome::locks, not a copy of your own",
+            Rule::KomeCopy => "conversions, little-endian readers, GUIDs and lock traits live in kome only (95e48ed5, kome::guid): use kome::num / kome::le / kome::guid / kome::locks (a GUID in guest memory: mem::array::<16>, mem::write), not a copy of your own",
             Rule::GoldenEnv => "one golden switch, MASU_UPDATE_GOLDEN, read by kome::golden only: another *_UPDATE_GOLDEN/BLESS name is a golden MASU_UPDATE_GOLDEN=1 leaves stale",
             Rule::DeadApi => "removed stays removed: sake::mem's safe borrows (slice, guest_mut, view, view_mut, guest, in_guest, guest_range; mem::bytes / mem::update copy) and api's untyped out-parameter paths (to_callee, a_at, out_at, put64; api::words!, typed Args)",
             Rule::UntypedWayBack => "a guest address is a value (mem::r32(ga(a) + 4), no reader/writer methods on Ga), and api::Args has no Deref to Ctx (it let c.a(i) read an out-parameter as a word)",
@@ -233,13 +233,22 @@ fn hresult_copy(tree: &Tree) -> Hits {
         .collect()
 }
 
-pub const KOME_FNS: [&str; 12] = ["lo8", "lo16", "lo16s", "lo32", "lo64", "us", "u32_of", "u64_of", "to_usize", "u16_at", "u32_at", "u64_at"];
+pub const KOME_FNS: [&str; 18] = [
+    "lo8", "lo16", "lo16s", "lo32", "lo64", "us", "u32_of", "u64_of", "to_usize", "u16_at", "u32_at", "u64_at",
+    // (kome::guid, 2026-11-20: eight GUID builders, six parsers, three printers and eleven guest
+    // readers/writers were copies: kome::guid::{guid, parse, of_text, braced, text},
+    // mem::array::<16> / mem::write)
+    "guid", "guid_string", "fmt_guid", "guid_at", "read_guid", "put_guid",
+];
 
 fn kome_copy(tree: &Tree) -> Hits {
     let files: Vec<Rel> = tree.rs(&["crates/"]).into_iter().filter(|f| !f.as_str().starts_with("crates/kome/")).collect();
     let mut out = Hits::new();
     for (f, it) in items(tree, &files) {
-        out.extend(it.fns.iter().filter(|(n, _)| KOME_FNS.contains(&n.as_str())).map(|(n, l)| (f.clone(), *l, format!("fn {n}"))));
+        // (sake's one guest GUID reader that may get a null pointer lives in mem.rs)
+        let home = |n: &str| f.as_str() == MEM && n == "guid_at";
+        out.extend(it.fns.iter().filter(|(n, _)| KOME_FNS.contains(&n.as_str()) && !home(n)).map(|(n, l)| (f.clone(), *l, format!("fn {n}"))));
+        out.extend(it.byte_readers.iter().map(|(n, l)| (f.clone(), *l, format!("fn {n}: a number from bytes at an offset (kome::le::u32_at, u16_be_at...)"))));
         out.extend(it.traits.iter().filter(|(n, _)| n == "Lock" || n == "Rw").map(|(n, l)| (f.clone(), *l, format!("trait {n}"))));
     }
     out

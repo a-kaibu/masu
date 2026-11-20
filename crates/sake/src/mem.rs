@@ -339,6 +339,11 @@ pub fn put64(a: impl Into<Ga>, v: u64) {
 pub fn bytes(a: u32, n: u32) -> Vec<u8> {
     range(a, n).map_or_else(Vec::new, Range::copy_out)
 }
+/// The GUID a pointer argument points at, None for a null pointer (the one guest GUID reader:
+/// [`array`]`::<16>` when the pointer may not be null; [`write`] puts one)
+pub fn guid_at(p: u32) -> Option<kome::guid::Guid> {
+    (p != 0).then(|| array::<16>(p))
+}
 /// The `N` bytes at `a`, copied (a GUID, a key, a header); zeros where that is not guest memory
 pub fn array<const N: usize>(a: u32) -> [u8; N] {
     let mut v = [0; N];

@@ -15,7 +15,6 @@ impl Param {
 }
 #[derive(Clone, Debug)]
 pub struct Method { pub number: u16, pub stack: u16, pub params: Vec<Param> }
-fn word(b: &[u8], at: usize) -> Option<u16> { Some(u16::from_le_bytes(b.get(at..at.checked_add(2)?)?.try_into().ok()?)) }
 fn scalar(fc: u8) -> Option<u32> {
     Some(match fc { 1..=4 => 1, 5..=7 => 2, 8 | 9 | 0x0e | 0x10 => 4, 0x0b => 8, _ => return None })
 }
@@ -27,29 +26,29 @@ fn kind(types: &[u8], at: usize, depth: usize) -> Option<(Kind, bool)> {
             let flags = *types.get(at + 1)?;
             if flags & 0x10 != 0 { return None; } // pointer-to-pointer needs a distinct representation
             let (k, _) = if flags & 8 != 0 { (Kind::Scalar(scalar(*types.get(at + 2)?)?), false) }
-                else { kind(types, (at + 2).checked_add_signed(word(types, at + 2)? as i16 as isize)?, depth + 1)? };
+                else { kind(types, (at + 2).checked_add_signed(kome::le::u16_at(types, at + 2)? as i16 as isize)?, depth + 1)? };
             (k, fc != 0x11)
         }
         0x15 | 0x1d | 0x1e => { // pointer-free fixed structure / small fixed array
-            let size = word(types, at + 2)? as u32;
+            let size = kome::le::u16_at(types, at + 2)? as u32;
             if size == 0 || size > 16384 { return None; }
             (Kind::Fixed(size), false)
         }
-        0xb4 => (Kind::User { index: word(types, at + 2)?, size: word(types, at + 4)? }, false),
+        0xb4 => (Kind::User { index: kome::le::u16_at(types, at + 2)?, size: kome::le::u16_at(types, at + 4)? }, false),
         0x1b => {
             // A top-level parameter supplies the element count directly. Other
             // correlation expressions must be implemented rather than guessed.
             let corr = *types.get(at + 4)?;
             if !matches!(corr, 0x28 | 0x29) || *types.get(at + 5)? != 0 { return None; }
-            (Kind::Array { element: word(types, at + 2)?, count_stack: word(types, at + 6)? }, false)
+            (Kind::Array { element: kome::le::u16_at(types, at + 2)?, count_stack: kome::le::u16_at(types, at + 6)? }, false)
         }
         _ => (Kind::Scalar(scalar(fc)?), false),
     })
 }
 pub fn parse(proc: &[u8], types: &[u8], pointer_size: u16) -> Option<Method> {
     if !matches!(pointer_size, 4 | 8) || *proc.first()? != 0x33 || *proc.get(1)? & 8 == 0 { return None; }
-    let number = word(proc, 6)?;
-    let stack = word(proc, 8)?;
+    let number = kome::le::u16_at(proc, 6)?;
+    let stack = kome::le::u16_at(proc, 8)?;
     if stack < pointer_size * 2 || stack % pointer_size != 0 || stack > 4096 { return None; }
     let count = *proc.get(15)? as usize;
     if count == 0 || count > 128 { return None; }
@@ -62,11 +61,11 @@ pub fn parse(proc: &[u8], types: &[u8], pointer_size: u16) -> Option<Method> {
     let mut params = Vec::new();
     for _ in 0..count {
         proc.get(at..at.checked_add(6)?)?;
-        let flags = word(proc, at)?;
-        let offset = word(proc, at + 2)?;
+        let flags = kome::le::u16_at(proc, at)?;
+        let offset = kome::le::u16_at(proc, at + 2)?;
         if offset < pointer_size || offset >= stack || offset % pointer_size != 0 { return None; }
         let (kind, nullable) = if flags & 0x40 != 0 { (Kind::Scalar(scalar(*proc.get(at + 4)?)?), false) }
-            else { kind(types, word(proc, at + 4)? as usize, 0)? };
+            else { kind(types, kome::le::u16_at(proc, at + 4)? as usize, 0)? };
         let reference = flags & 0x100 != 0 || flags & (0x40 | 0x80) == 0;
         if flags & 0x20 != 0 && (kind != Kind::Scalar(4) || reference) { return None; }
         params.push(Param { flags, stack: offset, kind, reference, nullable });

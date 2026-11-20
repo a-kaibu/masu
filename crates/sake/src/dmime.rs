@@ -11,6 +11,7 @@
 //! alongside). There is no synthesizer: a MIDI or style segment (.mid, .sgt) loads as a silent
 //! segment, so a game that also has MIDI music runs without it.
 
+use kome::guid::IID_IUNKNOWN;
 use crate::api::{Ctx, Handler};
 use crate::mem;
 use crate::sound::Fmt;
@@ -61,11 +62,7 @@ fn low32(x: u64) -> u32 {
     u32::try_from(x & 0xffff_ffff).unwrap_or(0)
 }
 
-const fn guid(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u8; 16] {
-    let a = a.to_le_bytes();
-    let (b, c) = (b.to_le_bytes(), c.to_le_bytes());
-    [a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]]
-}
+use kome::guid::guid;
 const DM: [u8; 8] = [0x87, 0x04, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd];
 pub const CLSID_PERFORMANCE: [u8; 16] = guid(0xd2ac_2881, 0xb39b, 0x11d1, DM);
 pub const CLSID_SEGMENT: [u8; 16] = guid(0xd2ac_2882, 0xb39b, 0x11d1, DM);
@@ -74,7 +71,6 @@ pub const CLSID_LOADER: [u8; 16] = guid(0xd2ac_2892, 0xb39b, 0x11d1, DM);
 const GUID_ALL_TYPES: [u8; 16] = guid(0xd2ac_2893, 0xb39b, 0x11d1, DM);
 const GUID_PERF_MASTER_VOLUME: [u8; 16] = guid(0xd2ac_28b1, 0xb39b, 0x11d1, DM);
 const GUID_PERF_MASTER_TEMPO: [u8; 16] = guid(0xd2ac_28b0, 0xb39b, 0x11d1, DM);
-const IID_UNKNOWN: [u8; 16] = guid(0, 0, 0, [0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
 const PERF_IIDS: [[u8; 16]; 3] = [
     guid(0x07d4_3d03, 0x6523, 0x11d2, [0x87, 0x1d, 0x00, 0x60, 0x08, 0x93, 0xb1, 0xbd]),
     guid(0x6fc2_cae0, 0xbc78, 0x11d2, [0xaf, 0xa6, 0x00, 0xaa, 0x00, 0x24, 0xd8, 0xb6]),
@@ -124,7 +120,7 @@ const _: () = assert!(RETIRED > Kind::AudioPath.word());
 
 /// Whether an object of `kind` answers QueryInterface for `iid`.
 pub fn answers(kind: Kind, iid: &[u8; 16]) -> bool {
-    *iid == IID_UNKNOWN
+    *iid == IID_IUNKNOWN
         || match kind {
             Kind::Performance => PERF_IIDS.contains(iid),
             Kind::Loader => LOADER_IIDS.contains(iid),
@@ -1287,7 +1283,7 @@ mod tests {
         assert_eq!(PERF_IIDS[2], [0x37, 0x41, 0x9c, 0x67, 0x2e, 0xc6, 0x47, 0x41, 0xb2, 0xb4, 0x9d, 0x56, 0x9a, 0xcb, 0x25, 0x4c]);
         assert_eq!(LOADER_IIDS[1][..4], [0x8c, 0xc0, 0xe7, 0x19]);
         assert_eq!(SEGMENT_IIDS[2][..4], [0x88, 0x44, 0x78, 0xc6]);
-        assert!(answers(Kind::Segment, &IID_UNKNOWN));
+        assert!(answers(Kind::Segment, &IID_IUNKNOWN));
         assert!(!answers(Kind::Segment, &PERF_IIDS[2]));
         assert!(!answers(Kind::Performance, &CLSID_PERFORMANCE));
     }
@@ -1459,7 +1455,7 @@ mod tests {
         // aggregation and other interfaces refused
         assert_eq!(create_instance(g(&CLSID_LOADER), 1, g(&LOADER_IIDS[1]), crate::api::Out::at(out)), Some(Hr::NoAggregation.code()));
         assert_eq!(create_instance(g(&CLSID_LOADER), 0, g(&PERF_IIDS[2]), crate::api::Out::at(out)), Some(Hr::NoInterface.code()));
-        assert_eq!(create_instance(g(&IID_UNKNOWN), 0, g(&PERF_IIDS[2]), crate::api::Out::at(out)), None);
+        assert_eq!(create_instance(g(&IID_IUNKNOWN), 0, g(&PERF_IIDS[2]), crate::api::Out::at(out)), None);
 
         // InitAudio(&dm, &ds, hwnd, DMUS_APATH_SHARED_STEREOPLUSREVERB, 64, DMUS_AUDIOF_ALL, NULL)
         assert_eq!(call(p_init_audio, &[perf, 0, 0, 0, 1, 64, 0x3f, 0]), 0);

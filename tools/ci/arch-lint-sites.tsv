@@ -399,3 +399,7 @@ escape-comment	tests/winref/probes/strapis.c	/* %p, %f (not supported by wsprint
 escape-comment	tests/winref/probes/strapis.c	/* Small kernel32/user32/version calls the corpus found unimplemented or wrong: wvsprintf (the	wording only: a probe source (its golden src hash); reword with its next Windows run
 arc-count	crates/masu/src/saves.rs	if map.get(&self.name).is_some_and(|m| Arc::strong_count(m) == 1) {	every clone of a name's lock is made under this same map lock (NameLocks::lock), so 1 = no holder and no waiter
 arc-count	crates/masu/src/storage.rs	if f.get(&id).is_some_and(|g| std::sync::Arc::ptr_eq(g, gate)) && std::sync::Arc::strong_count(gate) == 2 {	every gate is cloned under this same inflight lock (Storage::gate), so 2 = the map's and ours
+# (kome::guid, 2026-11-20: what stays beside it)
+kome-copy	crates/sake/src/com.rs	pub fn read_guid(p: u32) -> Guid {	the (Data1, Data2, Data3, Data4) form win32md's generated IID tables use: one adapter over kome::guid::fields
+kome-copy	crates/sake/src/wic.rs	fn fmt_guid(f: Fmt) -> Guid {	a pixel format's GUID (the format table), not a GUID helper
+kome-copy	crates/shaderconf/src/ref_dxbc.rs	fn rd(b: &[u8], at: usize) -> Result<u32, String> {	the reference interpreter keeps its own decoder (independent oracle, its module doc)

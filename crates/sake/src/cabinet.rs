@@ -36,13 +36,6 @@ pub const FDINT_CLOSE_FILE_INFO: u32 = 3;
 const CFHEADER: usize = 36;
 const A_EXEC: u16 = 0x40;
 const IFOLD_CONTINUED: u16 = 0xfffd; // 0xfffd from prev, 0xfffe to next, 0xffff both
-
-fn u16le(d: &[u8], o: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(d.get(o..o + 2)?.try_into().ok()?))
-}
-fn u32le(d: &[u8], o: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(d.get(o..o + 4)?.try_into().ok()?))
-}
 /// A NUL-terminated string at `o` (at most 256 bytes as CAB names are): (bytes, offset past the NUL).
 fn sz(d: &[u8], o: usize) -> Option<(Vec<u8>, usize)> {
     let rest = d.get(o..)?;
@@ -75,13 +68,13 @@ pub fn header(d: &[u8]) -> Result<Header, u32> {
     if major > 1 || (major == 1 && minor > 3) {
         return Err(FDIERROR_UNKNOWN_CABINET_VERSION);
     }
-    let flags = u16le(d, 30).unwrap();
+    let flags = kome::le::u16_at(d, 30).unwrap();
     Ok(Header {
-        cb_cabinet: u32le(d, 8).unwrap(),
-        c_folders: u16le(d, 26).unwrap(),
-        c_files: u16le(d, 28).unwrap(),
-        set_id: u16le(d, 32).unwrap(),
-        i_cabinet: u16le(d, 34).unwrap(),
+        cb_cabinet: kome::le::u32_at(d, 8).unwrap(),
+        c_folders: kome::le::u16_at(d, 26).unwrap(),
+        c_files: kome::le::u16_at(d, 28).unwrap(),
+        set_id: kome::le::u16_at(d, 32).unwrap(),
+        i_cabinet: kome::le::u16_at(d, 34).unwrap(),
         reserve: flags & 4 != 0,
         has_prev: flags & 1 != 0,
         has_next: flags & 2 != 0,
@@ -126,7 +119,7 @@ impl Cab {
         let mut o = CFHEADER;
         let (mut folder_reserve, mut data_reserve) = (0usize, 0u8);
         if head.reserve {
-            let hr = u16le(d, o).ok_or(BAD)? as usize;
+            let hr = kome::le::u16_at(d, o).ok_or(BAD)? as usize;
             folder_reserve = *d.get(o + 2).ok_or(BAD)? as usize;
             data_reserve = *d.get(o + 3).ok_or(BAD)?;
             o += 4 + hr;
@@ -143,18 +136,18 @@ impl Cab {
         }
         let mut folders = Vec::with_capacity(head.c_folders as usize);
         for _ in 0..head.c_folders {
-            folders.push(Folder { data: u32le(d, o).ok_or(BAD)?, blocks: u16le(d, o + 4).ok_or(BAD)?, comp: u16le(d, o + 6).ok_or(BAD)? });
+            folders.push(Folder { data: kome::le::u32_at(d, o).ok_or(BAD)?, blocks: kome::le::u16_at(d, o + 4).ok_or(BAD)?, comp: kome::le::u16_at(d, o + 6).ok_or(BAD)? });
             o += 8 + folder_reserve;
         }
-        let mut o = u32le(d, 16).unwrap() as usize;
+        let mut o = kome::le::u32_at(d, 16).unwrap() as usize;
         let mut files = Vec::with_capacity(head.c_files as usize);
         for _ in 0..head.c_files {
-            let size = u32le(d, o).ok_or(BAD)?;
-            let offset = u32le(d, o + 4).ok_or(BAD)?;
-            let folder = u16le(d, o + 8).ok_or(BAD)?;
-            let date = u16le(d, o + 10).ok_or(BAD)?;
-            let time = u16le(d, o + 12).ok_or(BAD)?;
-            let attribs = u16le(d, o + 14).ok_or(BAD)?;
+            let size = kome::le::u32_at(d, o).ok_or(BAD)?;
+            let offset = kome::le::u32_at(d, o + 4).ok_or(BAD)?;
+            let folder = kome::le::u16_at(d, o + 8).ok_or(BAD)?;
+            let date = kome::le::u16_at(d, o + 10).ok_or(BAD)?;
+            let time = kome::le::u16_at(d, o + 12).ok_or(BAD)?;
+            let attribs = kome::le::u16_at(d, o + 14).ok_or(BAD)?;
             let (name, p) = sz(d, o + 16).ok_or(BAD)?;
             o = p;
             files.push(File { size, offset, folder, date, time, attribs, name });
@@ -280,8 +273,8 @@ impl<'a> Decoder<'a> {
         if !io.read_at(self.at as u64, 8, &mut raw) {
             return Err(BAD);
         }
-        let cb = u16le(&raw, 4).ok_or(BAD)? as usize;
-        let un = u16le(&raw, 6).ok_or(BAD)? as usize;
+        let cb = kome::le::u16_at(&raw, 4).ok_or(BAD)? as usize;
+        let un = kome::le::u16_at(&raw, 6).ok_or(BAD)? as usize;
         let start = self.at + 8 + self.data_reserve;
         if !io.read_at(start as u64, cb, &mut raw) {
             return Err(BAD);
@@ -372,7 +365,7 @@ impl Io for Mem<'_> {
 /// The data blocks after them are left in the file.
 pub fn tables_len(head36: &[u8], cb: u64) -> u64 {
     let Ok(h) = header(head36) else { return cb.min(CFHEADER as u64) };
-    let coff = u32le(head36, 16).unwrap_or(0) as u64;
+    let coff = kome::le::u32_at(head36, 16).unwrap_or(0) as u64;
     let names = 4 * 257;
     let folders = h.c_folders as u64 * (8 + 255);
     let files = h.c_files as u64 * (16 + 257);

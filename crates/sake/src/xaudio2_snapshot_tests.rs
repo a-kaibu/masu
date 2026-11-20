@@ -120,10 +120,7 @@ fn chain(classes: &[[u8; 16]], on: &[bool]) -> u32 {
     c
 }
 
-fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] {
-    let (a, b, c) = (d1.to_le_bytes(), d2.to_le_bytes(), d3.to_le_bytes());
-    [a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]]
-}
+use kome::guid::guid;
 
 #[test]
 fn xaudio2_snapshot() {

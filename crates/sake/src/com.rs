@@ -233,16 +233,9 @@ pub fn iid(iface: &str) -> Option<Guid> {
 }
 
 pub fn read_guid(p: u32) -> Guid {
-    let mut b = [0u8; 8];
-    for (i, v) in b.iter_mut().enumerate() {
-        *v = crate::mem::r8(mem::ga(p) + 8 + kome::num::u32_of(i));
-    }
-    (mem::r32(p), mem::r16((crate::mem::ga(p) + 4).get()), mem::r16((crate::mem::ga(p) + 6).get()), b)
+    kome::guid::fields(&mem::array::<16>(p))
 }
 
-fn fmt_guid(g: Guid) -> String {
-    format!("{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{}", g.0, g.1, g.2, g.3[0], g.3[1], g.3[2..].iter().map(|b| format!("{b:02x}")).collect::<String>())
-}
 
 pub fn warn_once(msg: &str) {
     static SEEN: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
@@ -297,7 +290,7 @@ fn query_interface(c: &mut Ctx) -> u32 {
         }
         None => {
             let iface = objs(|m| m.get(&this).map_or("?", |o| o.iface.name()));
-            warn_once(&format!("sake: com {iface}::QueryInterface {{{}}}: no", fmt_guid(want)));
+            warn_once(&format!("sake: com {iface}::QueryInterface {{{}}}: no", kome::guid::text(&kome::guid::guid(want.0, want.1, want.2, want.3))));
             mem::putp(out, 0);
             E_NOINTERFACE
         }

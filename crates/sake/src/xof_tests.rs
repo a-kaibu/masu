@@ -42,10 +42,10 @@ fn headers() {
 
 #[test]
 fn guids_are_little_endian_fields() {
-    let g = parse_guid(b"3D82AB43-62DA-11CF-AB39-0020AF71E433").unwrap();
+    let g = kome::guid::parse("3D82AB43-62DA-11CF-AB39-0020AF71E433").unwrap();
     assert_eq!(g, [0x43, 0xab, 0x82, 0x3d, 0xda, 0x62, 0xcf, 0x11, 0xab, 0x39, 0x00, 0x20, 0xaf, 0x71, 0xe4, 0x33]);
-    assert_eq!(parse_guid(b"3D82AB43-62DA-11CF-AB39-0020AF71E43"), None);
-    assert_eq!(parse_guid(b"3D82AB43x62DA-11CF-AB39-0020AF71E433"), None);
+    assert_eq!(kome::guid::parse("3D82AB43-62DA-11CF-AB39-0020AF71E43"), None);
+    assert_eq!(kome::guid::parse("3D82AB43x62DA-11CF-AB39-0020AF71E433"), None);
 }
 
 #[test]

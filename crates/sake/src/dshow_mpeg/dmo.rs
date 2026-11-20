@@ -373,7 +373,7 @@ fn dw_init(c: &mut Ctx) -> u32 {
     if clsid == 0 {
         return Hr::Pointer.code();
     }
-    let g = guid_at(clsid);
+    let g = mem::array::<16>(clsid);
     dwith(b, |d| d.clsid = g);
     0
 }

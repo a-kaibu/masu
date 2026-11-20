@@ -32,14 +32,7 @@ fn wait_time() -> std::time::Duration {
     std::time::Duration::from_millis(WAIT_MS.load(std::sync::atomic::Ordering::Relaxed))
 }
 
-fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> Guid {
-    let mut g = [0u8; 16];
-    g[0..4].copy_from_slice(&d1.to_le_bytes());
-    g[4..6].copy_from_slice(&d2.to_le_bytes());
-    g[6..8].copy_from_slice(&d3.to_le_bytes());
-    g[8..].copy_from_slice(&d4);
-    g
-}
+use kome::guid::guid;
 /// MFAudioFormat_* (and MFMediaType_Audio): Data1 the WAVE_FORMAT tag, then the base GUID
 fn audio_format(tag: u32) -> Guid {
     guid(tag, 0, 0x10, [0x80, 0, 0, 0xaa, 0, 0x38, 0x9b, 0x71])
@@ -678,7 +671,7 @@ pub fn typed_qi(c: &mut crate::api::QiArgs, d1: u32, d2: u16, d3: u16) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(iid);
+    let g = mem::array::<16>(iid);
     if is_unknown(&g) || is(&g, 0x2cd2_d921, 0xc447, 0x44a7) || is(&g, d1, d2, d3) {
         attrs(this, |a| a.0 += 1);
         out.put(this);
@@ -911,7 +904,7 @@ fn mb_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFMediaBuffer {045fa593-8799-42b8-bc8d-8968c6453507}
     if is_unknown(&g) || is(&g, 0x045f_a593, 0x8799, 0x42b8) {
         buf(this, |b| b.refs += 1);
@@ -1268,7 +1261,7 @@ fn sr_qi(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let g = guid_at(c.a::<1>());
+    let g = mem::array::<16>(c.a::<1>());
     // IMFSourceReader {70ae66f2-c809-4e4f-8915-bdcb406b7993}
     if is_unknown(&g) || is(&g, 0x70ae_66f2, 0xc809, 0x4e4f) {
         reader(this, |r| r.refs += 1);
@@ -1466,7 +1459,7 @@ fn sr_seek(c: &mut Ctx) -> u32 {
     if g == 0 || p == 0 {
         return Hr::Pointer.code();
     }
-    if guid_at(g) != [0; 16] || r16(p) != 20 {
+    if mem::array::<16>(g) != [0; 16] || r16(p) != 20 {
         return Hr::InvalidArg.code();
     }
     let t = lo64(mem::r64(p + 8)).cast_signed();
@@ -1682,9 +1675,9 @@ fn sr_service(c: &mut Ctx) -> u32 {
         Ok(k) => k,
         Err(e) => return e,
     };
-    let null = svc == 0 || guid_at(svc) == [0; 16];
+    let null = svc == 0 || mem::array::<16>(svc) == [0; 16];
     match k {
-        Some(k) if null && super::mft::is_transform(&guid_at(riid)) => {
+        Some(k) if null && super::mft::is_transform(&mem::array::<16>(riid)) => {
             out.put(super::mft::transform(c.ctx(), this, k));
             0
         }
@@ -1703,7 +1696,7 @@ fn sr_presentation(c: &mut Ctx) -> u32 {
     if g == 0 || p == 0 {
         return Hr::Pointer.code();
     }
-    let k = guid_at(g);
+    let k = mem::array::<16>(g);
     let Some(dur) = reader(c.a(0), |r| r.duration) else { return Hr::InvalidArg.code() };
     mem::fill(p, 8 + 2 * ps(), 0);
     if i == MEDIASOURCE && k == k_duration() {

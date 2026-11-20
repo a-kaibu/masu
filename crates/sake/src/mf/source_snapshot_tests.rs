@@ -104,22 +104,3 @@ fn mf_source_snapshot() {
     assert!(!out.contains("PANIC"), "a source panicked on a damaged file: see the golden");
     snapshot("mf_source", &out);
 }
-
-proptest::proptest! {
-    /// The compile-time GUID parser reads what actctx's runtime one does, any case.
-    #[test]
-    fn const_guid_is_parse_guid(b in proptest::array::uniform16(proptest::prelude::any::<u8>()), upper: bool) {
-        let t = format!("{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}", b[3], b[2], b[1], b[0], b[5], b[4], b[7], b[6], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]);
-        let t = if upper { t.to_uppercase() } else { t };
-        proptest::prop_assert_eq!(Some(g(&t)), crate::actctx::parse_guid(&t));
-        proptest::prop_assert_eq!(g(&t), b);
-    }
-}
-
-/// A malformed GUID's text panics (in `const { }`: the build fails).
-#[test]
-fn const_guid_refuses_malformed() {
-    for bad in ["", "1652c33d-d6b2-4012-b834-72030849a37", "1652c33d-d6b2-4012-b834-72030849a37dd", "1652c33dd6b2-4012-b834-72030849a37d-", "1652c33d-d6b2-4012-b834-72030849a37g", "{652c33d-d6b2-4012-b834-72030849a37d"] {
-        assert!(std::panic::catch_unwind(|| g(bad)).is_err(), "{bad}");
-    }
-}

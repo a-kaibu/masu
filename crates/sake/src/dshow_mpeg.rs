@@ -31,6 +31,7 @@
 mod dmo;
 pub use dmo::in_graph as dmo_in_graph;
 
+use kome::guid::IID_IUNKNOWN;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -84,12 +85,7 @@ impl Hr {
 }
 
 
-pub const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] {
-    let a = d1.to_le_bytes();
-    let b = d2.to_le_bytes();
-    let c = d3.to_le_bytes();
-    [a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]]
-}
+use kome::guid::guid;
 const fn ds(d1: u32, d2: u16) -> [u8; 16] {
     // {xxxxxxxx-xxxx-11ce-...} of quartz's media types and formats
     guid(d1, d2, 0x11ce, [0x9f, 0x53, 0x00, 0x20, 0xaf, 0x0b, 0xa7, 0x70])
@@ -131,7 +127,6 @@ const FORMAT_VIDEO_INFO: [u8; 16] = guid(0x0558_9f80, 0xc356, 0x11ce, [0xbf, 0x0
 const FORMAT_WAVE_FORMAT_EX: [u8; 16] = guid(0x0558_9f81, 0xc356, 0x11ce, [0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a]);
 const FORMAT_MPEG_VIDEO: [u8; 16] = guid(0x0558_9f82, 0xc356, 0x11ce, [0xbf, 0x01, 0x00, 0xaa, 0x00, 0x55, 0x59, 0x5a]);
 
-const IID_IUNKNOWN: [u8; 16] = guid(0, 0, 0, [0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
 const IID_IPERSIST: [u8; 16] = guid(0x10c, 0, 0, [0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
 const IID_IBASEFILTER: [u8; 16] = iface(0x56a8_6895);
 const IID_IMEDIAFILTER: [u8; 16] = iface(0x56a8_6899);
@@ -227,15 +222,8 @@ impl Word {
     }
 }
 
-/// The GUID at guest address `p`.
-fn guid_at(p: u32) -> [u8; 16] {
-    mem::array::<16>(p).first_chunk::<16>().copied().unwrap_or([0; 16])
-}
 fn is(p: u32, g: &[u8; 16]) -> bool {
     p != 0 && &mem::array::<16>(p) == g
-}
-fn put_guid(p: u32, g: &[u8; 16]) {
-    mem::write(p, g);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -471,7 +459,7 @@ fn f_class(c: &mut Ctx) -> u32 {
         Some(Kind::Vnv) | Some(Kind::Dmo) => guid(0x94297043, 0xbd82, 0x4dfd, [0xb0, 0xde, 0x81, 0x77, 0x73, 0x9c, 0x6d, 0x20]),
         _ => CLSID_DSOUND_RENDER,
     };
-    put_guid(out, &g);
+    mem::write(out, &g);
     0
 }
 fn set_state(c: &mut Ctx, s: State) -> u32 {
@@ -632,12 +620,12 @@ fn mt_fmt_at() -> (u32, u32) {
 }
 fn new_mt(major: &[u8; 16], sub: &[u8; 16], fixed: bool, sample: u32, fmt_type: &[u8; 16], fmt: &[u8]) -> u32 {
     let p = mem::heap_alloc(mt_size(), true);
-    put_guid(p, major);
-    put_guid(p + 16, sub);
+    mem::write(p, major);
+    mem::write(p + 16, sub);
     w32(p + 32, u32::from(fixed));
     w32(p + 36, u32::from(!fixed));
     w32(p + 40, sample);
-    put_guid(p + 44, fmt_type);
+    mem::write(p + 44, fmt_type);
     let (cb, pb) = mt_fmt_at();
     let f = mem::heap_alloc(lo32(fmt.len().max(1)), true);
     mem::write(f, fmt);
@@ -912,7 +900,7 @@ fn p_connect(c: &mut Ctx) -> u32 {
         return if r == Hr::TypeNotAccepted.code() { Hr::NoAcceptableTypes.code() } else { r };
     }
     let out = mem::heap_alloc(8 + 16, true);
-    put_guid(out + 8, &IID_IMEMINPUTPIN);
+    mem::write(out + 8, &IID_IMEMINPUTPIN);
     let r = com(c, recv, 0, &[out + 8, out]);
     let mem_pin = rp(out);
     mem::heap_free(out);
@@ -963,7 +951,7 @@ fn p_receive_connection(c: &mut Ctx) -> u32 {
     }
     let out = mem::heap_alloc(8, true);
     let iid = mem::heap_alloc(16, false);
-    put_guid(iid, &IID_IASYNCREADER);
+    mem::write(iid, &IID_IASYNCREADER);
     let r = com(c, from, 0, &[iid, out]);
     let reader = rp(out);
     mem::heap_free(out);
@@ -1277,7 +1265,7 @@ fn source_load(b: u32, name: u32, mt: u32) -> u32 {
     let p = |name: &'static str| Pin { out: true, name, on: true, ..Pin::default() };
     let (pins, sub) = match k {
         Kind::File => {
-            let sub = if mt != 0 { guid_at(mt + 16) } else { stream_subtype(&head) };
+            let sub = if mt != 0 { mem::array::<16>(mt + 16) } else { stream_subtype(&head) };
             ([p("Output"), Pin::default(), Pin::default()], sub)
         }
         Kind::Asf | Kind::Split | Kind::VDec | Kind::ADec | Kind::Sound | Kind::Vnv | Kind::Dmo => {
@@ -1347,8 +1335,8 @@ fn fsf_cur_file(c: &mut Ctx) -> u32 {
     out.put(s);
     if mt != 0 {
         mem::fill(mt, mt_size(), 0);
-        put_guid(mt, &MEDIATYPE_STREAM);
-        put_guid(mt + 16, &sub);
+        mem::write(mt, &MEDIATYPE_STREAM);
+        mem::write(mt + 16, &sub);
         w32(mt + 32, 1);
         w32(mt + 40, 1);
     }

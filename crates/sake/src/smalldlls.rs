@@ -22,14 +22,6 @@ use crate::mem::{self, cstr, ps, put32, putp, r16, r32, rp, w16, w32, wp, wstr};
 
 const ERROR_INVALID_PARAMETER: u32 = 87;
 
-fn guid(p: u32) -> [u8; 16] {
-    let mut g = [0u8; 16];
-    g.copy_from_slice(&mem::array::<16>(p));
-    g
-}
-fn put_guid(p: u32, g: &[u8; 16]) {
-    mem::write(p, g);
-}
 
 // ---------------------------------------------------------------------------------------------
 // dnsapi
@@ -732,7 +724,7 @@ fn new_service(device: u32, manager: u32) -> u32 {
 }
 
 fn service_qi(o: u32, iid: u32, out: crate::api::Out) -> u32 {
-    let g = guid(iid);
+    let g = mem::array::<16>(iid);
     let unknown = g == [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46];
     // IDirectXVideoAccelerationService {fc51a550-d5e7-11d9-af55-00054e43ff02}, the processor
     // service {fc51a552-...}; (no decoder service, fc51a551: sake has no video decoders)
@@ -834,13 +826,13 @@ fn VS_GetDeviceGuids(c: &mut Ctx) -> u32 {
         return E_FAIL;
     }
     let p = mem::heap_alloc(16, false);
-    put_guid(p, &DXVA2_SOFTWARE_DEVICE);
+    mem::write(p, &DXVA2_SOFTWARE_DEVICE);
     put32(count, 1);
     out.put(p);
     0
 }
 fn is_software(g: u32) -> bool {
-    g != 0 && guid(g) == DXVA2_SOFTWARE_DEVICE
+    g != 0 && mem::array::<16>(g) == DXVA2_SOFTWARE_DEVICE
 }
 /// GetVideoProcessorRenderTargets(device, desc, pCount, ppFormats)
 fn VS_GetRenderTargets(c: &mut Ctx) -> u32 {
@@ -934,7 +926,7 @@ fn VS_CreateVideoProcessor(c: &mut Ctx) -> u32 {
     w32(p + ps(), 1);
     vs_ref(o, 1);
     wp(p + svc, o);
-    put_guid(p + gd, &guid(g));
+    mem::write(p + gd, &mem::array::<16>(g));
     mem::write(p + desc, &mem::bytes(d, 36));
     w32(p + rtf, rt);
     w32(p + mx, max);
@@ -945,7 +937,7 @@ fn VP_QueryInterface(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IUnknown::QueryInterface>();
     let (o, iid, out) = (c.a::<0>(), c.a::<1>(), c.out::<2>());
     // IUnknown, IDirectXVideoProcessor {8c3a39f0-916e-4690-804f-4c8001355d25}
-    let g = guid(iid);
+    let g = mem::array::<16>(iid);
     if g == [0, 0, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46] || g == [0xf0, 0x39, 0x3a, 0x8c, 0x6e, 0x91, 0x90, 0x46, 0x80, 0x4f, 0x4c, 0x80, 0x01, 0x35, 0x5d, 0x25] {
         w32(o + ps(), r32(o + ps()) + 1);
         out.put(o);
@@ -989,7 +981,7 @@ fn VP_GetCreationParameters(c: &mut Ctx) -> u32 {
     }
     let (_, fg, fd, frt, fmx) = vp_fields();
     if g != 0 {
-        put_guid(g, &guid(o + fg));
+        mem::write(g, &mem::array::<16>(o + fg));
     }
     if d != 0 {
         mem::write(d, &mem::bytes(o + fd, 36));
@@ -1135,10 +1127,10 @@ pub fn type_matches(want: &[u8; 32], have: &[u8; 32]) -> bool {
 /// DMORegister(name, clsid, category, flags, cIn, pIn, cOut, pOut)
 fn DMORegister(c: &mut Ctx) -> u32 {
     let (np, clsid, cat) = (c.a(0), c.a(1), c.a(2));
-    if np == 0 || clsid == 0 || cat == 0 || guid(cat) == [0; 16] {
+    if np == 0 || clsid == 0 || cat == 0 || mem::array::<16>(cat) == [0; 16] {
         return E_INVALIDARG;
     }
-    let d = Dmo { clsid: guid(clsid), name: wstr(np).into_iter().take(79).collect(), category: guid(cat), inputs: read_types(c.a(4), c.a(5)), outputs: read_types(c.a(6), c.a(7)) };
+    let d = Dmo { clsid: mem::array::<16>(clsid), name: wstr(np).into_iter().take(79).collect(), category: mem::array::<16>(cat), inputs: read_types(c.a(4), c.a(5)), outputs: read_types(c.a(6), c.a(7)) };
     let mut g = DMOS.lock().unwrap();
     g.retain(|x| !(x.clsid == d.clsid && x.category == d.category));
     g.push(d);
@@ -1146,7 +1138,7 @@ fn DMORegister(c: &mut Ctx) -> u32 {
 }
 /// DMOUnregister(clsid, category): S_FALSE when nothing was registered (GUID_NULL: every category)
 fn DMOUnregister(c: &mut Ctx) -> u32 {
-    let (clsid, cat) = (guid(c.a(0)), if c.a(1) == 0 { [0; 16] } else { guid(c.a(1)) });
+    let (clsid, cat) = (mem::array::<16>(c.a(0)), if c.a(1) == 0 { [0; 16] } else { mem::array::<16>(c.a(1)) });
     let mut g = DMOS.lock().unwrap();
     let n = g.len();
     g.retain(|x| !(x.clsid == clsid && (cat == [0; 16] || x.category == cat)));
@@ -1154,7 +1146,7 @@ fn DMOUnregister(c: &mut Ctx) -> u32 {
 }
 /// DMOGetName(clsid, WCHAR name[80])
 fn DMOGetName(c: &mut Ctx) -> u32 {
-    let (clsid, out) = (guid(c.a(0)), c.a(1));
+    let (clsid, out) = (mem::array::<16>(c.a(0)), c.a(1));
     let g = DMOS.lock().unwrap();
     let Some(d) = g.iter().find(|x| x.clsid == clsid) else { return E_FAIL };
     if out == 0 {
@@ -1165,7 +1157,7 @@ fn DMOGetName(c: &mut Ctx) -> u32 {
 }
 /// DMOGetTypes(clsid, nIn, pnIn, pIn, nOut, pnOut, pOut)
 fn DMOGetTypes(c: &mut Ctx) -> u32 {
-    let clsid = guid(c.a(0));
+    let clsid = mem::array::<16>(c.a(0));
     let g = DMOS.lock().unwrap();
     let Some(d) = g.iter().find(|x| x.clsid == clsid) else { return E_FAIL };
     for (n, pn, p, list) in [(c.a(1), c.a(2), c.a(3), &d.inputs), (c.a(4), c.a(5), c.a(6), &d.outputs)] {
@@ -1197,7 +1189,7 @@ fn enum_dmo(items: &[([u8; 16], Vec<u16>)], pos: usize) -> u32 {
     w32(o + k + 8, items.len() as u32);
     for (i, (g, n)) in items.iter().enumerate() {
         let e = o + k + 12 + i as u32 * (16 + k);
-        put_guid(e, g);
+        mem::write(e, g);
         let s = mem::heap_alloc(2 * n.len() as u32 + 2, true);
         mem::put_wstr(s, n.len() as u32 + 1, n);
         wp(e + 16, s);
@@ -1285,7 +1277,7 @@ fn ED_Clone(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return E_POINTER;
     }
-    let items: Vec<([u8; 16], Vec<u16>)> = (0..r32(this + ps() + 8)).map(|i| (guid(ed_entry(this, i)), wstr(rp(ed_entry(this, i) + 16)))).collect();
+    let items: Vec<([u8; 16], Vec<u16>)> = (0..r32(this + ps() + 8)).map(|i| (mem::array::<16>(ed_entry(this, i)), wstr(rp(ed_entry(this, i) + 16)))).collect();
     out.put(enum_dmo(&items, r32(this + ps() + 4) as usize));
     0
 }
@@ -1294,7 +1286,7 @@ fn ED_Clone(c: &mut Ctx) -> u32 {
 /// all) that take every requested input type and give every requested output type
 fn DMOEnum(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::DMOEnum>();
-    let cat = if c.a::<0>() == 0 { [0; 16] } else { guid(c.a::<0>()) };
+    let cat = if c.a::<0>() == 0 { [0; 16] } else { mem::array::<16>(c.a::<0>()) };
     let (ins, outs, out) = (read_types(c.a::<2>(), c.a::<3>()), read_types(c.a::<4>(), c.a::<5>()), c.out::<6>());
     if out.is_null() {
         return E_POINTER;
@@ -1507,7 +1499,7 @@ fn WICConvertBitmapSource(c: &mut Ctx) -> u32 {
     out.put(0);
     let cur = mem::heap_alloc(16, true);
     let hr = call_method(c.ctx(), src, "IWICBitmapSource", "GetPixelFormat", &[cur]);
-    let same = hr == 0 && guid(cur) == guid(fmt);
+    let same = hr == 0 && mem::array::<16>(cur) == mem::array::<16>(fmt);
     mem::heap_free(cur);
     if same {
         add_ref(c.ctx(), src);

@@ -380,25 +380,12 @@ fn is_asm(ns: &str) -> bool {
     matches!(ns, ASM_V1 | ASM_V2 | ASM_V3)
 }
 
-pub type Guid = [u8; 16];
+use kome::guid::Guid;
 
-/// "{12345678-1234-5678-1234-111122223333}" (braces optional) as a GUID's bytes.
+/// "{12345678-1234-5678-1234-111122223333}" (braces optional, spaces around it) as a GUID's bytes.
 pub fn parse_guid(s: &str) -> Option<Guid> {
     let s = s.trim();
-    let s = s.strip_prefix('{').and_then(|s| s.strip_suffix('}')).unwrap_or(s);
-    let p: Vec<&str> = s.split('-').collect();
-    if p.len() != 5 || [8, 4, 4, 4, 12].iter().zip(&p).any(|(n, x)| x.len() != *n || !x.chars().all(|c| c.is_ascii_hexdigit())) {
-        return None;
-    }
-    let mut g = [0u8; 16];
-    g[..4].copy_from_slice(&u32::from_str_radix(p[0], 16).ok()?.to_le_bytes());
-    g[4..6].copy_from_slice(&u16::from_str_radix(p[1], 16).ok()?.to_le_bytes());
-    g[6..8].copy_from_slice(&u16::from_str_radix(p[2], 16).ok()?.to_le_bytes());
-    let tail = format!("{}{}", p[3], p[4]);
-    for i in 0..8 {
-        g[8 + i] = u8::from_str_radix(&tail[2 * i..2 * i + 2], 16).ok()?;
-    }
-    Some(g)
+    kome::guid::parse_braced(s).or_else(|| kome::guid::parse(s))
 }
 
 /// An assembly's identity, as its assemblyIdentity element gives it.
@@ -2456,13 +2443,10 @@ fn FindActCtxSectionStringA(c: &mut Ctx) -> u32 {
     let s = c.a(3);
     find_api(c.a(0), c.a(2), (s != 0).then(|| Key::Str(crate::text::a2w(&cstr(s)))), c.a(4))
 }
-fn guid_at(p: u32) -> Guid {
-    mem::array::<16>(p)
-}
 /// FindActCtxSectionGuid(flags, extension guid, section, guid, data)
 fn FindActCtxSectionGuid(c: &mut Ctx) -> u32 {
     let g = c.a(3);
-    find_api(c.a(0), c.a(2), (g != 0).then(|| Key::Guid(guid_at(g))), c.a(4))
+    find_api(c.a(0), c.a(2), (g != 0).then(|| Key::Guid(mem::array::<16>(g))), c.a(4))
 }
 /// RtlFindActivationContextSectionString(flags, extension guid, section, UNICODE_STRING, data)
 fn RtlFindActivationContextSectionString(c: &mut Ctx) -> u32 {
@@ -2477,7 +2461,7 @@ fn RtlFindActivationContextSectionGuid(c: &mut Ctx) -> u32 {
     if c.a(3) == 0 {
         return STATUS_INVALID_PARAMETER;
     }
-    find(c.a(0), c.a(2), &Key::Guid(guid_at(c.a(3))), c.a(4))
+    find(c.a(0), c.a(2), &Key::Guid(mem::array::<16>(c.a(3))), c.a(4))
 }
 
 /// The DLL a LoadLibrary of `name` (a bare file name) loads in the active context: the

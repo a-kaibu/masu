@@ -46,11 +46,7 @@ const IIDS: [[u8; 16]; 4] = [
     guid(0x2d36_29f7, 0x813d, 0x4939, [0x85, 0x08, 0xf0, 0x5c, 0x6b, 0x75, 0xfd, 0x97]),
 ];
 
-const fn guid(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u8; 16] {
-    let a = a.to_le_bytes();
-    let (b, c) = (b.to_le_bytes(), c.to_le_bytes());
-    [a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]]
-}
+use kome::guid::guid;
 
 /// Whether the object answers QueryInterface for `iid` (every interface is the one object:
 /// IDirectMusic8 extends IDirectMusic(2) by one method at the end).

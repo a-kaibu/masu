@@ -17,13 +17,12 @@ const POINTER: u32 = 0x8000_4003;
 const BAD_DATA: u32 = 0x8007_06f7;
 const DISCONNECTED: u32 = 0x8001_0108;
 const CLASSNOTREG: u32 = 0x8004_0154;
-const UNKNOWN: [u8; 16] = [0,0,0,0,0,0,0,0,0xc0,0,0,0,0,0,0,0x46];
-fn guid(p: u32) -> Vec<u8> { if p == 0 { vec![] } else { mem::bytes(p, 16) } }
+/// a GUID argument as the wire carries it: its 16 bytes, none for a null pointer or one that is
+/// not guest memory
+fn wire(p: u32) -> Vec<u8> { if p == 0 { vec![] } else { mem::bytes(p, 16) } }
+/// "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}" (the registry's key), empty for no GUID
 pub(crate) fn text(g: &[u8]) -> String {
-    if g.len() != 16 { return String::new(); }
-    format!("{{{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}}}",
-        u32::from_le_bytes(g[..4].try_into().unwrap()), u16::from_le_bytes(g[4..6].try_into().unwrap()),
-        u16::from_le_bytes(g[6..8].try_into().unwrap()), g[8],g[9],g[10],g[11],g[12],g[13],g[14],g[15])
+    <&[u8; 16]>::try_from(g).map_or_else(|_| String::new(), |g| format!("{{{}}}", kome::guid::text(g)))
 }
 fn qi(cpu: &mut koji::Cpu, object: u32, iid: &[u8]) -> Result<u32, u32> {
     let temp = mem::heap_alloc(16 + ps(), true); mem::write(temp, iid);
@@ -61,7 +60,7 @@ fn read_interfaces(list: u32) -> Vec<Arc<Interface>> {
         if count > 1024 { break; }
         for i in 0..count {
             let stub = rp(table + i * ps()); if stub == 0 { continue; }
-            let iid = guid(rp(stub));
+            let iid = wire(rp(stub));
             let server = rp(stub + ps());
             let count = r32(stub + 2 * ps());
             if server == 0 || count < 3 || count > 256 { continue; }
@@ -95,7 +94,7 @@ fn read_interfaces(list: u32) -> Vec<Arc<Interface>> {
 }
 fn interface(cpu: &mut koji::Cpu, iid: &[u8]) -> Result<Arc<Interface>, u32> {
     if let Some(i) = INTERFACES.lock().unwrap().iter().find(|i| i.iid == iid).cloned() { return Ok(i); }
-    if iid == UNKNOWN { return Ok(Arc::new(Interface { iid: iid.to_vec(), count: 3, methods: BTreeMap::new(), abi: BTreeMap::new() })); }
+    if iid == kome::guid::IID_IUNKNOWN { return Ok(Arc::new(Interface { iid: iid.to_vec(), count: 3, methods: BTreeMap::new(), abi: BTreeMap::new() })); }
     if MISSES.lock().unwrap().contains(iid) { return Err(NOINTERFACE); }
     let proxy_class = crate::misc::registry_string(&format!("hkcr\\interface\\{}\\proxystubclsid32", text(iid)), "").ok_or(NOINTERFACE)?;
     let dll = crate::misc::registry_string(&format!("hkcr\\clsid\\{proxy_class}\\inprocserver32"), "").ok_or(NOINTERFACE)?;
@@ -370,10 +369,10 @@ fn make_proxy(cpu: &mut koji::Cpu, pid: u32, tid: u32, object: u32, iid: &[u8]) 
     Ok(p)
 }
 fn proxy_qi(c: &mut Ctx) -> u32 {
-    let (this, iid, out) = (c.a(0), guid(c.a(1)), c.a(2));
+    let (this, iid, out) = (c.a(0), wire(c.a(1)), c.a(2));
     if out == 0 { return POINTER; } wp(out, 0);
     let Some(proxy) = proxy(this) else { return DISCONNECTED };
-    if iid == UNKNOWN || iid == proxy.info.iid {
+    if iid == kome::guid::IID_IUNKNOWN || iid == proxy.info.iid {
         proxy_ref(c.cpu, this, true); wp(out, this); return 0;
     }
     let mut call = request(&proxy, 2); call.iid = iid.clone();
@@ -459,7 +458,7 @@ fn class_for(cpu: &mut koji::Cpu, clsid: &[u8], context: u32) -> Result<Class, u
 pub(crate) fn get_class(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api::Out, context: u32) -> u32 {
     if out.is_null() || clsid == 0 || iid == 0 { return POINTER; }
     out.put(0);
-    if context & 3 != 0 && let Some(path) = crate::misc::registry_string(&format!("hkcr\\clsid\\{}\\inprocserver32", text(&guid(clsid))), "") {
+    if context & 3 != 0 && let Some(path) = crate::misc::registry_string(&format!("hkcr\\clsid\\{}\\inprocserver32", text(&wire(clsid))), "") {
         let base = crate::pe::load_library(cpu, &path);
         if base == 0 { return 0x8007_007e; }
         let Some(entry) = crate::pe::proc_address(base, crate::pe::Import::Name("DllGetClassObject")) else { return 0x8007_007f };
@@ -475,7 +474,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
     if outer != 0 { return 0x8004_0110; }
     if context & 3 != 0 {
         let factory_iid = mem::heap_alloc(16 + ps(), true);
-        let mut iid_bytes = UNKNOWN; iid_bytes[0] = 1;
+        let mut iid_bytes = kome::guid::IID_IUNKNOWN; iid_bytes[0] = 1;
         mem::write(factory_iid, &iid_bytes);
         let hr = get_class(cpu, clsid, factory_iid, crate::api::Out::at(factory_iid + 16), context & 3);
         let factory = rp(factory_iid + 16); mem::heap_free(factory_iid);
@@ -486,7 +485,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
             refcall(cpu, factory, 2); return result;
         }
     }
-    let (class, iid) = (guid(clsid), guid(iid));
+    let (class, iid) = (wire(clsid), wire(iid));
     let target = match class_for(cpu, &class, context) { Ok(c) => c, Err(hr) => return hr };
     if target.pid == crate::pid() {
         let Some((factory, _)) = FACTORIES.lock().unwrap().as_ref().and_then(|f| f.get(&target.cookie)).copied() else { return CLASSNOTREG };
@@ -503,7 +502,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
     match make_proxy(cpu, target.pid, target.tid, object, &iid) { Ok(p) => { out.put(p); 0 }, Err(hr) => hr }
 }
 fn CoRegisterClassObject(c: &mut Ctx) -> u32 {
-    let (class, object, context, flags, out) = (guid(c.a(0)), c.a(1), c.a(2), c.a(3), c.a(4));
+    let (class, object, context, flags, out) = (wire(c.a(0)), c.a(1), c.a(2), c.a(3), c.a(4));
     if class.len() != 16 || object == 0 || out == 0 { return POINTER; }
     if context & 4 == 0 { return NOTIMPL; }
     let _ = kern::share();
@@ -532,7 +531,7 @@ fn suspend(c: &mut Ctx, suspended: bool) -> u32 {
 fn CoSuspendClassObjects(c: &mut Ctx) -> u32 { suspend(c, true) }
 fn CoResumeClassObjects(c: &mut Ctx) -> u32 { suspend(c, false) }
 fn NdrDllRegisterProxy(c: &mut Ctx) -> u32 {
-    let (module, list, clsid) = (c.a(0), c.a(1), guid(c.a(2)));
+    let (module, list, clsid) = (c.a(0), c.a(1), wire(c.a(2)));
     let Some(path) = crate::pe::with(module, |m| m.path.clone()) else { return 0x8007_0057 };
     if clsid.len() != 16 || list == 0 { return POINTER; }
     let interfaces = read_interfaces(list);

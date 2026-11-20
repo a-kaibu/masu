@@ -17,15 +17,8 @@
 use kome::num::*;
 use std::collections::{HashMap, VecDeque};
 
-pub type Guid = [u8; 16];
+use kome::guid::{guid, Guid};
 
-/// A GUID in the byte order files hold it (the first three fields little-endian).
-pub const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> Guid {
-    let a = d1.to_le_bytes();
-    let b = d2.to_le_bytes();
-    let c = d3.to_le_bytes();
-    [a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]]
-}
 
 pub const HEADER: Guid = guid(0x75b2_2630, 0x668e, 0x11cf, [0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62, 0xce, 0x6c]);
 pub const DATA: Guid = guid(0x75b2_2636, 0x668e, 0x11cf, [0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62, 0xce, 0x6c]);
@@ -146,8 +139,8 @@ impl Stream {
     /// The codec: WAVEFORMATEX.wFormatTag (audio) or BITMAPINFOHEADER.biCompression (video).
     pub fn codec(&self) -> u32 {
         match self.kind {
-            Kind::Audio => u32::from(le16(&self.format, 0).unwrap_or(0)),
-            Kind::Video { .. } => le32(&self.format, 16).unwrap_or(0),
+            Kind::Audio => u32::from(kome::le::u16_at(&self.format, 0).unwrap_or(0)),
+            Kind::Video { .. } => kome::le::u32_at(&self.format, 16).unwrap_or(0),
             Kind::Other(_) => 0,
         }
     }
@@ -203,19 +196,6 @@ impl Header {
         self.attributes.iter().find(|a| a.stream == stream && a.name == name).map(|a| &a.value)
     }
 }
-
-fn le16(b: &[u8], at: usize) -> Option<u16> {
-    Some(u16::from_le_bytes(b.get(at..at.checked_add(2)?)?.try_into().ok()?))
-}
-fn le32(b: &[u8], at: usize) -> Option<u32> {
-    Some(u32::from_le_bytes(b.get(at..at.checked_add(4)?)?.try_into().ok()?))
-}
-fn le64(b: &[u8], at: usize) -> Option<u64> {
-    Some(u64::from_le_bytes(b.get(at..at.checked_add(8)?)?.try_into().ok()?))
-}
-fn guid_at(b: &[u8], at: usize) -> Option<Guid> {
-    b.get(at..at.checked_add(16)?)?.try_into().ok()
-}
 fn utf16(b: &[u8]) -> String {
     let w: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
     let end = w.iter().position(|&c| c == 0).unwrap_or(w.len());
@@ -226,8 +206,8 @@ fn utf16(b: &[u8]) -> String {
 fn objects(b: &[u8]) -> impl Iterator<Item = (Guid, &[u8])> {
     let mut at = 0usize;
     std::iter::from_fn(move || {
-        let g = guid_at(b, at)?;
-        let size = le64(b, at + 16)?;
+        let g = kome::le::bytes_at::<16>(b, at)?;
+        let size = kome::le::u64_at(b, at + 16)?;
         if size < 24 {
             return None;
         }
@@ -241,19 +221,19 @@ fn objects(b: &[u8]) -> impl Iterator<Item = (Guid, &[u8])> {
 /// How many bytes the start of a file must hold for `header` to parse: its Header Object and
 /// the head of the Data Object after it (`None`: not ASF, or too short to tell yet: 30 bytes).
 pub fn header_size(start: &[u8]) -> Option<u64> {
-    if guid_at(start, 0)? != HEADER {
+    if kome::le::bytes_at::<16>(start, 0)? != HEADER {
         return None;
     }
-    le64(start, 16)?.checked_add(50)
+    kome::le::u64_at(start, 16)?.checked_add(50)
 }
 
 /// Parses the Header Object at the start of `b` (and the Data Object's head after it: `b` holds
 /// `header_size` bytes).
 pub fn header(b: &[u8]) -> Result<Header, Error> {
-    if guid_at(b, 0).ok_or(Error::Truncated)? != HEADER {
+    if kome::le::bytes_at::<16>(b, 0).ok_or(Error::Truncated)? != HEADER {
         return Err(Error::NotAsf);
     }
-    let size = le64(b, 16).ok_or(Error::Truncated)?;
+    let size = kome::le::u64_at(b, 16).ok_or(Error::Truncated)?;
     let size = usize::try_from(size).ok().ok_or(Error::Bad("header size"))?;
     if size < 30 || size > b.len() {
         return Err(Error::Truncated);
@@ -264,12 +244,12 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
     for (g, body) in objects(&b[30..size]) {
         match g {
             FILE_PROPERTIES => {
-                let f = |at| le64(body, at).ok_or(Error::Truncated);
+                let f = |at| kome::le::u64_at(body, at).ok_or(Error::Truncated);
                 let play = f(40)?;
                 h.preroll = f(56)?;
-                h.flags = le32(body, 64).ok_or(Error::Truncated)?;
-                h.packet_size = le32(body, 68).ok_or(Error::Truncated)?;
-                h.max_bitrate = le32(body, 76).unwrap_or(0);
+                h.flags = kome::le::u32_at(body, 64).ok_or(Error::Truncated)?;
+                h.packet_size = kome::le::u32_at(body, 68).ok_or(Error::Truncated)?;
+                h.max_bitrate = kome::le::u32_at(body, 76).unwrap_or(0);
                 h.duration = play.saturating_sub(h.preroll.saturating_mul(MS));
                 h.packets = f(32)?;
                 file_props = true;
@@ -280,7 +260,7 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
                 }
             }
             HEADER_EXTENSION => {
-                let n = us(le32(body, 18).unwrap_or(0));
+                let n = us(kome::le::u32_at(body, 18).unwrap_or(0));
                 let inner = body.get(22..22usize.saturating_add(n).min(body.len())).unwrap_or(&[]);
                 for (g, o) in objects(inner) {
                     match g {
@@ -288,19 +268,19 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
                             // start time, end time, bitrate, buffer size, initial fullness,
                             // alt bitrate, alt buffer, alt fullness, max object size, flags,
                             // stream number, language, avg time per frame, ...
-                            if let (Some(rate), Some(n), Some(t)) = (le32(o, 16), le16(o, 48), le64(o, 52)) {
+                            if let (Some(rate), Some(n), Some(t)) = (kome::le::u32_at(o, 16), kome::le::u16_at(o, 48), kome::le::u64_at(o, 52)) {
                                 ext.push((stream_number16(n), t, rate));
                             }
                             // (it may hold the stream's Stream Properties Object, after its
                             // names and payload extension systems)
-                            if let (Some(names), Some(systems)) = (le16(o, 60), le16(o, 62)) {
+                            if let (Some(names), Some(systems)) = (kome::le::u16_at(o, 60), kome::le::u16_at(o, 62)) {
                                 let mut at = 64usize;
                                 for _ in 0..names {
-                                    let len = usize::from(le16(o, at.saturating_add(2)).unwrap_or(0));
+                                    let len = usize::from(kome::le::u16_at(o, at.saturating_add(2)).unwrap_or(0));
                                     at = at.saturating_add(4 + len);
                                 }
                                 for _ in 0..systems {
-                                    let len = us(le32(o, at.saturating_add(18)).unwrap_or(0));
+                                    let len = us(kome::le::u32_at(o, at.saturating_add(18)).unwrap_or(0));
                                     at = at.saturating_add(22 + len);
                                 }
                                 if let Some(rest) = o.get(at..) {
@@ -318,7 +298,7 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
                 }
             }
             CONTENT_DESCRIPTION => {
-                let lens: Vec<usize> = (0..5).map(|k| usize::from(le16(body, k * 2).unwrap_or(0))).collect();
+                let lens: Vec<usize> = (0..5).map(|k| usize::from(kome::le::u16_at(body, k * 2).unwrap_or(0))).collect();
                 let mut at = 10usize;
                 let mut strs = Vec::new();
                 for l in lens {
@@ -344,9 +324,9 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
         }
     }
     // the Data Object: its GUID, size, file id, total packets, reserved
-    if guid_at(b, size) == Some(DATA) {
+    if kome::le::bytes_at::<16>(b, size) == Some(DATA) {
         h.data_offset = u64::try_from(size).ok().ok_or(Error::Bad("header size"))? + 50;
-        if let Some(n) = le64(b, size + 40) && h.packets == 0 {
+        if let Some(n) = kome::le::u64_at(b, size + 40) && h.packets == 0 {
             h.packets = n;
         }
     } else {
@@ -367,26 +347,26 @@ pub fn header(b: &[u8]) -> Result<Header, Error> {
 pub const MAX_PACKET: u32 = 1 << 20;
 
 fn stream_properties(b: &[u8]) -> Option<Stream> {
-    let ty = guid_at(b, 0)?;
-    let ec = guid_at(b, 16)?;
-    let time_offset = le64(b, 32)?;
-    let tlen = us(le32(b, 40)?);
-    let elen = us(le32(b, 44)?);
-    let flags = le16(b, 48)?;
+    let ty = kome::le::bytes_at::<16>(b, 0)?;
+    let ec = kome::le::bytes_at::<16>(b, 16)?;
+    let time_offset = kome::le::u64_at(b, 32)?;
+    let tlen = us(kome::le::u32_at(b, 40)?);
+    let elen = us(kome::le::u32_at(b, 44)?);
+    let flags = kome::le::u16_at(b, 48)?;
     let ts = b.get(54..54usize.checked_add(tlen)?)?;
     let es = b.get(54 + tlen..(54 + tlen).checked_add(elen)?).unwrap_or(&[]);
     let (kind, format) = match ty {
         AUDIO_MEDIA => (Kind::Audio, ts.to_vec()),
         VIDEO_MEDIA => {
-            let width = le32(ts, 0)?;
-            let height = le32(ts, 4)?;
-            let n = usize::from(le16(ts, 9)?);
+            let width = kome::le::u32_at(ts, 0)?;
+            let height = kome::le::u32_at(ts, 4)?;
+            let n = usize::from(kome::le::u16_at(ts, 9)?);
             (Kind::Video { width, height }, ts.get(11..11 + n.min(ts.len().saturating_sub(11)))?.to_vec())
         }
         g => (Kind::Other(g), ts.to_vec()),
     };
     let spread = (ec == AUDIO_SPREAD)
-        .then(|| Some(Spread { span: *es.first()?, packet_size: le16(es, 1)?, chunk_size: le16(es, 3)? }))
+        .then(|| Some(Spread { span: *es.first()?, packet_size: kome::le::u16_at(es, 1)?, chunk_size: kome::le::u16_at(es, 3)? }))
         .flatten()
         .filter(|s| s.span > 1 && s.chunk_size > 0 && s.packet_size % s.chunk_size == 0);
     Some(Stream { number: stream_number16(flags), kind, format, encrypted: flags & 0x8000 != 0, time_offset, spread, avg_time_per_frame: 0, bitrate: 0 })
@@ -395,25 +375,25 @@ fn stream_properties(b: &[u8]) -> Option<Stream> {
 fn value(ty: u16, v: &[u8], wide_bool: bool) -> Value {
     match ty {
         0 => Value::Str(utf16(v)),
-        2 => Value::Bool(if wide_bool { le32(v, 0).unwrap_or(0) != 0 } else { le16(v, 0).unwrap_or(0) != 0 }),
-        3 => Value::U32(le32(v, 0).unwrap_or(0)),
-        4 => Value::U64(le64(v, 0).unwrap_or(0)),
-        5 => Value::U16(le16(v, 0).unwrap_or(0)),
-        6 => Value::Guid(guid_at(v, 0).unwrap_or([0; 16])),
+        2 => Value::Bool(if wide_bool { kome::le::u32_at(v, 0).unwrap_or(0) != 0 } else { kome::le::u16_at(v, 0).unwrap_or(0) != 0 }),
+        3 => Value::U32(kome::le::u32_at(v, 0).unwrap_or(0)),
+        4 => Value::U64(kome::le::u64_at(v, 0).unwrap_or(0)),
+        5 => Value::U16(kome::le::u16_at(v, 0).unwrap_or(0)),
+        6 => Value::Guid(kome::le::bytes_at::<16>(v, 0).unwrap_or([0; 16])),
         _ => Value::Bytes(v.to_vec()),
     }
 }
 
 fn extended_content(b: &[u8]) -> Vec<Attribute> {
     let mut out = Vec::new();
-    let n = le16(b, 0).unwrap_or(0);
+    let n = kome::le::u16_at(b, 0).unwrap_or(0);
     let mut at = 2usize;
     for _ in 0..n {
-        let Some(nl) = le16(b, at) else { break };
+        let Some(nl) = kome::le::u16_at(b, at) else { break };
         let nl = usize::from(nl);
         let Some(name) = b.get(at + 2..at + 2 + nl) else { break };
         at += 2 + nl;
-        let (Some(ty), Some(vl)) = (le16(b, at), le16(b, at + 2)) else { break };
+        let (Some(ty), Some(vl)) = (kome::le::u16_at(b, at), kome::le::u16_at(b, at + 2)) else { break };
         let vl = usize::from(vl);
         let Some(v) = b.get(at + 4..at + 4 + vl) else { break };
         at += 4 + vl;
@@ -424,10 +404,10 @@ fn extended_content(b: &[u8]) -> Vec<Attribute> {
 
 fn metadata(b: &[u8]) -> Vec<Attribute> {
     let mut out = Vec::new();
-    let n = le16(b, 0).unwrap_or(0);
+    let n = kome::le::u16_at(b, 0).unwrap_or(0);
     let mut at = 2usize;
     for _ in 0..n {
-        let (Some(stream), Some(nl), Some(ty), Some(vl)) = (le16(b, at + 2), le16(b, at + 4), le16(b, at + 6), le32(b, at + 8)) else { break };
+        let (Some(stream), Some(nl), Some(ty), Some(vl)) = (kome::le::u16_at(b, at + 2), kome::le::u16_at(b, at + 4), kome::le::u16_at(b, at + 6), kome::le::u32_at(b, at + 8)) else { break };
         let (nl, vl) = (usize::from(nl), us(vl));
         let ns = at + 12;
         let Some(name) = b.get(ns..ns + nl) else { break };
@@ -490,8 +470,8 @@ fn field(b: &[u8], at: &mut usize, t: u8) -> Option<u32> {
     let (v, n) = match Len::of(t) {
         Len::None => return Some(0),
         Len::Byte => (u32::from(*b.get(*at)?), 1),
-        Len::Word => (u32::from(le16(b, *at)?), 2),
-        Len::Dword => (le32(b, *at)?, 4),
+        Len::Word => (u32::from(kome::le::u16_at(b, *at)?), 2),
+        Len::Dword => (kome::le::u32_at(b, *at)?, 4),
     };
     *at += n;
     Some(v)
@@ -521,8 +501,8 @@ pub fn packet(b: &[u8]) -> Result<Packet, Error> {
     let len = field_len(b, &mut at, flags >> 5).ok_or(Error::Truncated)?;
     let _sequence = field(b, &mut at, flags >> 1).ok_or(Error::Truncated)?;
     let mut padding = field_len(b, &mut at, flags >> 3).ok_or(Error::Truncated)?;
-    let send_time = le32(b, at).ok_or(Error::Truncated)?;
-    let duration = le16(b, at + 4).ok_or(Error::Truncated)?;
+    let send_time = kome::le::u32_at(b, at).ok_or(Error::Truncated)?;
+    let duration = kome::le::u16_at(b, at + 4).ok_or(Error::Truncated)?;
     at += 6;
     if len != 0 && len < b.len() {
         // (a shorter packet: the rest is padding)
@@ -570,7 +550,7 @@ pub fn packet(b: &[u8]) -> Result<Packet, Error> {
         }
         let rep = b.get(at..at.checked_add(rlen).ok_or(Error::Truncated)?).ok_or(Error::Truncated)?;
         at += rlen;
-        let (object_size, time) = if rlen >= 8 { (le32(rep, 0).unwrap_or(0), le32(rep, 4).unwrap_or(0)) } else { (0, 0) };
+        let (object_size, time) = if rlen >= 8 { (kome::le::u32_at(rep, 0).unwrap_or(0), kome::le::u32_at(rep, 4).unwrap_or(0)) } else { (0, 0) };
         let plen = if multiple { field_len(b, &mut at, ptype).ok_or(Error::Truncated)? } else { end.saturating_sub(at) };
         let d = at.checked_add(plen).filter(|&e| e <= end).and_then(|e| b.get(at..e)).ok_or(Error::Truncated)?;
         at += plen;

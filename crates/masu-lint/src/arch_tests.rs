@@ -104,8 +104,12 @@ fn fixture(r: Rule) -> Fixture {
             mutate: ("crates/sake/src/k32.rs", |t| Some(t + "\nconst E_FAIL: u32 = 0x8000_4005;\n")),
         },
         Rule::KomeCopy => Fixture {
-            bad: &[("crates/kura/src/x.rs", "fn lo16(x: u32) -> u16 {\n    x as u16\n}\npub trait Lock<T> {}\n")],
-            good: &[("crates/kura/src/x.rs", "use kome::num::lo16;\nimpl R {\n    fn u32_at(&self, o: usize) -> u32 { 0 }\n}\n"), ("crates/kome/src/num.rs", "pub fn lo16(x: u32) -> u16 { 0 }\n")],
+            bad: &[("crates/kura/src/x.rs", "fn lo16(x: u32) -> u16 {\n    x as u16\n}\npub trait Lock<T> {}\n"), ("crates/sake/src/y.rs", "const fn guid(d1: u32, d2: u16, d3: u16, d4: [u8; 8]) -> [u8; 16] { [0; 16] }\nfn read_guid(p: u32) -> [u8; 16] { mem::array::<16>(p) }\nfn be32(d: &[u8], o: usize) -> Option<u32> {\n    Some(u32::from_be_bytes(d.get(o..o + 4)?.try_into().ok()?))\n}\n")],
+            good: &[
+                ("crates/kura/src/x.rs", "use kome::num::lo16;\nimpl R {\n    fn u32_at(&self, o: usize) -> u32 { 0 }\n}\nfn word(b: &[u8], o: usize, k: usize) -> u32 { u32::from_le_bytes([0; 4]) }\nfn len(b: &[u8], o: usize) -> usize { b.len() - o }\n"),
+                ("crates/kome/src/num.rs", "pub fn lo16(x: u32) -> u16 { 0 }\n"),
+                (MEM, "pub fn guid_at(p: u32) -> Option<[u8; 16]> { None }\n"),
+            ],
             mutate: ("crates/kura/src/audio.rs", |t| Some(t + "\nfn lo32(x: u64) -> u32 {\n    x as u32\n}\n")),
         },
         Rule::GoldenEnv => Fixture {
@@ -348,6 +352,9 @@ fn the_new_rules_find_each_spelling_alone() {
         }
     }
     // (and every site in the bad files, not only the first: w8(ga(key)) is two)
+    // (a copy of a number conversion, a lock trait, a GUID builder, a guest GUID reader and a
+    // big-endian byte reader)
+    assert_eq!(Rule::KomeCopy.check(&Tree::made_up(fixture(Rule::KomeCopy).bad)).len(), 5);
     assert_eq!(Rule::SafeRawPointerAbi.check(&Tree::made_up(fixture(Rule::SafeRawPointerAbi).bad)).len(), 3);
     assert_eq!(Rule::OutEscape.check(&Tree::made_up(fixture(Rule::OutEscape).bad)).len(), 6);
 }

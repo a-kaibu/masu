@@ -56,6 +56,20 @@ pub struct Items {
     pub idents: Vec<(String, usize)>,
     /// two-segment paths `A::b` (paths, and macro bodies' `A :: b`)
     pub paths2: Vec<(String, String, usize)>,
+    /// free fns `(b: &[u8], at: usize)` that build a number with from_le_bytes / from_be_bytes
+    /// (a byte reader: kome::le has them): name, line
+    pub byte_readers: Vec<(String, usize)>,
+}
+
+/// `f` reads a number out of a byte slice at an offset (the shape every crate copied)
+fn is_byte_reader(f: &syn::ItemFn) -> bool {
+    let ins: Vec<String> = f.sig.inputs.iter().map(|a| match a {
+        syn::FnArg::Typed(t) => t.ty.to_token_stream().to_string().replace(' ', ""),
+        syn::FnArg::Receiver(_) => "self".into(),
+    }).collect();
+    let body = f.block.to_token_stream().to_string();
+    // (a reader is a line or two: a parser that happens to read a number at its start is not one)
+    ins == ["&[u8]", "usize"] && body.len() <= 200 && (body.contains("from_le_bytes") || body.contains("from_be_bytes"))
 }
 
 impl Items {
@@ -81,6 +95,9 @@ impl<'a> Visit<'a> for Items {
             return;
         }
         self.fns.push((f.sig.ident.to_string(), line(f.sig.ident.span())));
+        if is_byte_reader(f) {
+            self.byte_readers.push((f.sig.ident.to_string(), line(f.sig.ident.span())));
+        }
         syn::visit::visit_item_fn(self, f);
     }
     fn visit_item_impl(&mut self, i: &'a syn::ItemImpl) {
