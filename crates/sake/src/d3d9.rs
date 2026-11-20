@@ -184,11 +184,10 @@ fn method_ex(c: &mut Ctx, id: Method) -> Option<u32> {
         }
         // PresentEx(src, dst, hwnd, region, flags)
         Method { iface: 2, index: 0x79 } => d3d_call(Method::new(2, 17), &[this, args[1], args[2], args[3], args[4]]),
-        // Get{GPUThreadPriority,MaximumFrameLatency}
-        Method { iface: 2, index: 0x7a | 0x7f } => {
-            mem::w32(args[1], if id.index == 0x7f { 3 } else { 0 });
-            0
-        }
+        // GetGPUThreadPriority, SetGPUThreadPriority, WaitForVBlank, CheckResourceResidency,
+        // SetMaximumFrameLatency, GetMaximumFrameLatency, CheckDeviceState: the device's
+        // (kura d3d9 device_method)
+        Method { iface: 2, index: 0x7a..=0x80 } => d3d_call(id, &args[..3]),
         // CreateRenderTargetEx, CreateOffscreenPlainSurfaceEx, CreateDepthStencilSurfaceEx: the
         // same without the usage
         Method { iface: 2, index: 0x81 } => d3d_call(Method::new(2, 28), &args[..9]),
@@ -206,9 +205,8 @@ fn method_ex(c: &mut Ctx, id: Method) -> Option<u32> {
             }
             r
         }
-        // SetConvolutionMonoKernel, ComposeRects, SetGPUThreadPriority, WaitForVBlank,
-        // CheckResourceResidency, SetMaximumFrameLatency, CheckDeviceState
-        Method { iface: 2, index: 0x77 | 0x78 | 0x7b..=0x7e | 0x80 } => 0,
+        // SetConvolutionMonoKernel, ComposeRects
+        Method { iface: 2, index: 0x77 | 0x78 } => 0,
         _ => return None,
     };
     Some(r)

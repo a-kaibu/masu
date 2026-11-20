@@ -405,6 +405,11 @@ pub struct Device {
     /// what the screen shows of each window presented to, where Windows keeps it: a windowed
     /// Present with a destination rectangle (`Shown`)
     pub shown: Vec<Shown>,
+    /// IDirect3DDevice9Ex: Set/GetGPUThreadPriority's (-7..=7, 0 at first)
+    pub gpu_priority: i32,
+    /// IDirect3DDevice9Ex: Set/GetMaximumFrameLatency's (3 at first: Wine's tests of Windows,
+    /// d3d9ex.c test_frame_latency)
+    pub max_latency: u32,
 }
 
 /// D3DSWAPEFFECT_COPY (Direct3D 8's COPY_VSYNC is made one: d3d8.rs)
@@ -925,17 +930,42 @@ unsafe fn device_out(d: &mut D3d, out: u32) -> u32 {
 
 /// The modes the adapter lists: the usual ones that fit the screen, and the screen's own (games
 /// pick a window size from these; AdvHD's settings dialog wants more than one).
+/// Where the 60 Hz beam is in its frame (0..1) by the clock: GetRasterStatus's and
+/// WaitForVBlank's.
+fn beam_phase() -> f64 {
+    use std::sync::OnceLock;
+    static T0: OnceLock<std::time::Instant> = OnceLock::new();
+    (T0.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 60.0).fract()
+}
+
+/// The lines of a frame of `h` lines that are in vertical blank: the last ~5% of the frame
+/// (GetRasterStatus), so the blank starts at this phase.
+fn blank_start(h: u32) -> f64 {
+    let total = h.saturating_add(h / 20).saturating_add(1);
+    f64::from(h) / f64::from(total)
+}
+
+/// WaitForVBlank: until the beam next enters its vertical blank (blank_start), also when it
+/// is in one now: "until the next vertical blank signal" (IDirect3DDevice9Ex::WaitForVBlank,
+/// documented), one frame a call for a game pacing frames with it.
+fn wait_vblank(h: u32) {
+    let (phase, start) = (beam_phase(), blank_start(h));
+    let left = if phase < start { start - phase } else { 1.0 - phase + start };
+    let pair = (std::sync::Mutex::new(()), std::sync::Condvar::new());
+    let g = pair.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // (nobody notifies: the timeout is the wait; a poisoned lock waited as well)
+    drop(pair.1.wait_timeout(g, std::time::Duration::from_secs_f64(left / 60.0)));
+}
+
 /// GetRasterStatus: a 60 Hz beam from the clock (games pace frames on it: BGI waits for the
 /// scanline to pass mid-screen, and a beam that never moves hangs it).
 unsafe fn raster_status(d: &D3d, out: u32) -> u32 {
-    use std::sync::OnceLock;
-    static T0: OnceLock<std::time::Instant> = OnceLock::new();
     if out == 0 {
         return D3DERR_INVALIDCALL;
     }
     let h = d.dev.as_ref().map_or(768, |dev| dev.pp[1].max(1));
     let total = h + h / 20 + 1; // ~5% of the lines in vertical blank
-    let phase = (T0.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 60.0).fract();
+    let phase = beam_phase();
     let line = (phase * f64::from(total)) as u32;
     let vblank = line >= h;
     wr(out, 0, u32::from(vblank));
@@ -1241,6 +1271,8 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
         st: default_state(),
         recording: None,
         batch_target: None,
+        gpu_priority: 0,
+        max_latency: 3,
         pipelines: HashMap::default(),
         shaders: HashMap::new(),
         modules: HashMap::default(),
@@ -2170,14 +2202,89 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             wrp(a(2), 0, o);
             S_OK
         }
+        // IDirect3DDevice9Ex (Direct3DCreate9Ex's devices; sake routes these here)
+        // GetGPUThreadPriority(out)
+        122 => {
+            if a(1) == 0 {
+                return D3DERR_INVALIDCALL;
+            }
+            let p = dev!(d).gpu_priority.cast_unsigned();
+            // SAFETY: wr's own contract: the caller's INT
+            unsafe { wr(a(1), 0, p) };
+            S_OK
+        }
+        // SetGPUThreadPriority(priority): -7..=7 (documented: D3DERR_INVALIDCALL past them)
+        123 => {
+            let p = a(1).cast_signed();
+            if !(-7..=7).contains(&p) {
+                return D3DERR_INVALIDCALL;
+            }
+            dev!(d).gpu_priority = p;
+            S_OK
+        }
+        // WaitForVBlank(swap chain): of the implicit swap chains (GetNumberOfSwapChains)
+        124 => {
+            if a(1) != 0 {
+                return D3DERR_INVALIDCALL;
+            }
+            wait_vblank(dev!(d).pp[1].max(1));
+            S_OK
+        }
+        // CheckResourceResidency(resources, count): every resource of this device is where the
+        // GPU reads it (in video memory: S_OK); up to 65535 (documented), each one of ours
+        125 => {
+            let (list, n) = (a(1), a(2));
+            if n > 65535 || n != 0 && list == 0 {
+                return D3DERR_INVALIDCALL;
+            }
+            let step = us(ptr() >> 2);
+            for i in 0..us(n) {
+                // (an array of pointers: 4 or 8 bytes each, the low word the address)
+                // SAFETY: rd's own contract: the caller's array of `n` pointers
+                let r = d.id_of(unsafe { rd(list, i.saturating_mul(step)) });
+                if !d.objs.get(&r).is_some_and(|o| matches!(o.iface, IF_TEXTURE | IF_CUBE | IF_VOLUMETEX | IF_VB | IF_IB | IF_SURFACE)) {
+                    return D3DERR_INVALIDCALL;
+                }
+            }
+            S_OK
+        }
+        // SetMaximumFrameLatency(n): 0 is the default (3), at most 30 (Wine's tests of Windows,
+        // d3d9ex.c test_frame_latency)
+        126 => {
+            if a(1) > 30 {
+                return D3DERR_INVALIDCALL;
+            }
+            dev!(d).max_latency = if a(1) == 0 { 3 } else { a(1) };
+            S_OK
+        }
+        // GetMaximumFrameLatency(out)
+        127 => {
+            if a(1) == 0 {
+                return D3DERR_INVALIDCALL;
+            }
+            let n = dev!(d).max_latency;
+            // SAFETY: wr's own contract: the caller's UINT
+            unsafe { wr(a(1), 0, n) };
+            S_OK
+        }
+        // CheckDeviceState(hwnd): a windowed device's presentation is never occluded; a full
+        // screen one occludes every window but its own (NULL: the desktop) (Wine's tests of
+        // Windows, d3d9ex.c test_occlusion)
+        128 => {
+            let dev = dev!(d);
+            if dev.pp[8] != 0 || a(1) == dev.hwnd { S_OK } else { S_PRESENT_OCCLUDED }
+        }
         _ => {
             if d.trace {
-                eprintln!("d3d9: {} not implemented", super::name(IF_DEVICE, m));
+                eprintln!("d3d9: {} is no IDirect3DDevice9 method", super::name(IF_DEVICE, m));
             }
             E_NOTIMPL
         }
     }
 }
+
+/// CheckDeviceState's (and PresentEx's) "the presentation area is occluded"
+const S_PRESENT_OCCLUDED: u32 = 0x0876_0868;
 
 const D3DERR_NOTFOUND: u32 = super::D3DERR_NOTFOUND;
 

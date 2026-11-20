@@ -352,7 +352,6 @@ escape-comment	crates/hlslc/src/lower.rs	"line {}: static locals are not support
 escape-comment	crates/hlslc/src/parse.rs	"arrays of shaders are not supported"	escape: implement Windows' behavior (this thread)
 escape-comment	crates/hlslc/src/parse.rs	"geometry shaders are not supported"	escape: implement Windows' behavior (this thread)
 escape-comment	crates/hlslc/src/parse.rs	// (Foo::Bar: static members are not supported; the name alone)	escape: implement Windows' behavior (this thread)
-escape-comment	crates/kura/src/d3d9/device.rs	"d3d9: {} not implemented"	escape: implement Windows' behavior (this thread)
 escape-comment	crates/sake/src/api.rs	"sake: unimplemented {n} (returns {r:#x}), from {:#x}"	escape: implement Windows' behavior (Win32 thread)
 escape-comment	crates/sake/src/cabinet.rs	//! in the next cabinet of a set (spanning) is FDIERROR_CORRUPT_CABINET for now.	escape: implement Windows' behavior (this thread)
 escape-comment	crates/sake/src/cabinet.rs	/// FDITruncateCabinet: not supported (FALSE, as for a cabinet it cannot change).	escape: implement Windows' behavior (this thread)
