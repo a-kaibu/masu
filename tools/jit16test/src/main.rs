@@ -377,7 +377,7 @@ fn to_linear(c: &mut Cpu) {
     c.eip = c.pc16();
 }
 fn from_linear(c: &mut Cpu) {
-    c.eip = c.eip.wrapping_sub(c.sbase[1]) & 0xffff;
+    c.eip = c.eip.wrapping_sub(c.sbase[koji::Seg::Cs]) & 0xffff;
 }
 
 impl Jit {
@@ -505,7 +505,7 @@ impl Jit {
         let eip = c.eip;
         unsafe { put_cpu(m, &c) };
         if !self.entries.contains_key(&eip) {
-            self.translate(base, eip, c.sbase[1])?;
+            self.translate(base, eip, c.sbase[koji::Seg::Cs])?;
         }
         let (f, k, idx) = self.entries[&eip];
         self.chain(base);
@@ -513,7 +513,7 @@ impl Jit {
         params[0] = Val::I32(CPU as i32);
         params[1] = Val::I32((idx | k << koji::jit::ENTRY_SHIFT) as i32);
         for i in 0..8 {
-            params[2 + i] = Val::I32(c.regs[i] as i32);
+            params[2 + i] = Val::I32(c.regs[koji::Gpr::ALL[i]] as i32);
         }
         params[10] = Val::I32(-1);
         let last = koji::jit::N_PARAMS as usize - 1;
@@ -544,7 +544,7 @@ impl Jit {
             let eip = c.eip;
             unsafe { put_cpu(m, &c) };
             if !self.entries.contains_key(&eip) {
-                match self.translate(base, eip, c.sbase[1]) {
+                match self.translate(base, eip, c.sbase[koji::Seg::Cs]) {
                     // (nothing there to translate, as kura's cpu_run: the interpreter steps it)
                     Err(e) if e == "refused" => {
                         let mut c = unsafe { get_cpu(m) };
@@ -566,7 +566,7 @@ impl Jit {
             params[1] = Val::I32((idx | k << koji::jit::ENTRY_SHIFT) as i32);
             let c = unsafe { get_cpu(m) };
             for i in 0..8 {
-                params[2 + i] = Val::I32(c.regs[i] as i32);
+                params[2 + i] = Val::I32(c.regs[koji::Gpr::ALL[i]] as i32);
             }
             params[10] = Val::I32(-1);
             let last = koji::jit::N_PARAMS as usize - 1;
@@ -633,14 +633,14 @@ fn initial(rng: &mut Rng) -> Cpu {
         ..Cpu::default()
     };
     for i in 0..8 {
-        c.regs[i] = match rng.below(3) {
+        c.regs[koji::Gpr::ALL[i]] = match rng.below(3) {
             0 => rng.below(256) as u32,
             1 => rng.next() as u16 as u32,
             _ => rng.next() as u32,
         };
     }
-    c.regs[4] = 0x8000 | (rng.next() as u32 & 0xffff_0000); // sp (garbage above)
-    for (k, sel) in [ES, CS, SS, DS, DS, DS].into_iter().enumerate() {
+    c.regs[koji::ESP] = 0x8000 | (rng.next() as u32 & 0xffff_0000); // sp (garbage above)
+    for (k, sel) in koji::Seg::ALL.into_iter().zip([ES, CS, SS, DS, DS, DS]) {
         c.sreg[k] = sel;
         c.sbase[k] = (sel as u32) << 4;
     }
@@ -681,8 +681,8 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list: &[Instruc
         diffs.push(format!("runs: interp {want:?} jit {got:?}"));
     }
     for i in 0..8 {
-        if want_cpu.regs[i] != got_cpu.regs[i] {
-            diffs.push(format!("{:?}: want {:#x} got {:#x}", R32[i], want_cpu.regs[i], got_cpu.regs[i]));
+        if want_cpu.regs[koji::Gpr::ALL[i]] != got_cpu.regs[koji::Gpr::ALL[i]] {
+            diffs.push(format!("{:?}: want {:#x} got {:#x}", R32[i], want_cpu.regs[koji::Gpr::ALL[i]], got_cpu.regs[koji::Gpr::ALL[i]]));
         }
     }
     if want_cpu.eflags & 0x8d5 != got_cpu.eflags & 0x8d5 {

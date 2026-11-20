@@ -106,7 +106,7 @@ fn engine() -> &'static (Engine, Module) {
 
 fn same(a: &Cpu, b: &Cpu, status: bool) -> bool {
     let keep = if status { !0 } else { !STATUS };
-    (0..16).all(|i| a.gpr(i) == b.gpr(i))
+    koji::Reg64::ALL.into_iter().all(|i| a.gpr(i) == b.gpr(i))
         && a.eip == b.eip
         && a.rip_hi == b.rip_hi
         && a.flags() & keep == b.flags() & keep
@@ -117,7 +117,7 @@ fn same(a: &Cpu, b: &Cpu, status: bool) -> bool {
 }
 
 fn show(c: &Cpu) -> String {
-    let r: Vec<u64> = (0..16).map(|i| c.gpr(i)).collect();
+    let r: Vec<u64> = koji::Reg64::ALL.into_iter().map(|i| c.gpr(i)).collect();
     format!("rip {:#x}:{:#x} regs {:x?} flags {:#x} xmm {:x?} xmm8 {:x?} ymmh {:x?} mxcsr {:#x}", c.rip_hi, c.eip, r, c.flags(), c.xmm, c.xmm8, &c.ymmh[..16], c.mxcsr)
 }
 
@@ -133,9 +133,9 @@ fuzz_target!(|data: &[u8]| {
         // (a flag bit per register: an address in the data window, or the value as it is)
         let v = quad(i);
         let addr = state[128] as u16 | (state[129] as u16) << 8;
-        cpu.set_gpr(i, if addr >> i & 1 != 0 { (LO + 0x1_0000 + (v as u32 & 0x2_fff8)) as u64 } else { v });
+        cpu.set_gpr(koji::Reg64::ALL[i], if addr >> i & 1 != 0 { (LO + 0x1_0000 + (v as u32 & 0x2_fff8)) as u64 } else { v });
     }
-    cpu.set_gpr(4, RSP0 as u64);
+    cpu.set_gpr(koji::Reg64::Rsp, RSP0 as u64);
     cpu.eflags = 0x202 | (state[0] as u32 & STATUS);
     for i in 0..8 {
         cpu.xmm[i] = (quad(i) as u128) << 64 | quad(15 - i) as u128;

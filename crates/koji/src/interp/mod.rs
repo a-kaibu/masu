@@ -3,7 +3,7 @@
 
 use kome::num::*;
 use crate::flags::{self, *};
-use crate::{Cpu, Exit, Fault, Memory, Width, ESP, EAX, ECX, EDX, EBP, ESI, EDI};
+use crate::{Cpu, Exit, Fault, Memory, Reg64, Seg, Width, ESP, EAX, EBX, ECX, EDX, EBP, ESI, EDI};
 use iced_x86::{ConditionCode, Decoder, DecoderOptions, Instruction, Mnemonic, OpKind, Register};
 
 /// The value of an operand access, or the Exit its Fault / Stop makes.
@@ -166,9 +166,6 @@ fn lin(a: u64, _m64: bool) -> u32 {
     lo32(a)
 }
 
-/// reg_info's index for segment registers: flat 32-bit user mode, they read as Wine's
-/// selectors and writes are ignored
-const SEG: usize = usize::MAX - 1;
 
 fn selector(r: Register, m64: bool) -> u64 {
     match r {
@@ -179,36 +176,45 @@ fn selector(r: Register, m64: bool) -> u64 {
     }
 }
 
-/// Index of a segment register in `Cpu::sreg` (ES CS SS DS FS GS); DS for none.
+/// The segment register `r` names in `Cpu::sreg` (ES CS SS DS FS GS); DS for none.
 #[inline]
-fn sidx(r: Register) -> usize {
+fn sidx(r: Register) -> Seg {
     match r {
-        Register::ES => 0,
-        Register::CS => 1,
-        Register::SS => 2,
-        Register::FS => 4,
-        Register::GS => 5,
-        _ => 3,
+        Register::ES => Seg::Es,
+        Register::CS => Seg::Cs,
+        Register::SS => Seg::Ss,
+        Register::FS => Seg::Fs,
+        Register::GS => Seg::Gs,
+        _ => Seg::Ds,
     }
 }
 
-/// Register -> (index, bits, high byte)
+/// What a register operand is: a general register, a segment register, or neither
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    Gpr(Reg64),
+    Seg,
+    None,
+}
+
+/// Register -> (slot, bits, high byte)
 #[inline]
-fn reg_info(r: Register) -> (usize, u32, bool) {
+fn reg_info(r: Register) -> (Slot, u32, bool) {
+    let g = |n: usize| Slot::Gpr(Reg64::low4(n));
     if r.is_gpr32() {
-        (r.number(), 32, false)
+        (g(r.number()), 32, false)
     } else if r.is_gpr64() {
-        (r.number(), 64, false)
+        (g(r.number()), 64, false)
     } else if r.is_gpr16() {
-        (r.number(), 16, false)
+        (g(r.number()), 16, false)
     } else if r.is_gpr8() {
         // AL..BL, AH..BH, SPL..DIL, R8L..R15L
         let n = r.number();
-        if n < 4 { (n, 8, false) } else if n < 8 { (n - 4, 8, true) } else { (n - 4, 8, false) }
+        if n < 4 { (g(n), 8, false) } else if n < 8 { (g(n - 4), 8, true) } else { (g(n - 4), 8, false) }
     } else if r.is_segment_register() {
-        (SEG, 16, false)
+        (Slot::Seg, 16, false)
     } else {
-        (usize::MAX, 0, false)
+        (Slot::None, 0, false)
     }
 }
 
@@ -235,9 +241,9 @@ impl<'a, M: Memory> X<'a, M> {
         self.cpu.mode16 != 0
     }
 
-    /// 16-bit mode: loads segment register `i` (ES CS SS DS FS GS) with `sel`; its base comes
-    /// from the embedder's table at `Cpu::ldt` ([`crate::LDT_REAL`]: real-mode bases, sel * 16).
-    pub(crate) fn load_seg(&mut self, i: usize, sel: u16) {
+    /// 16-bit mode: loads segment register `i` with `sel`; its base comes from the embedder's
+    /// table at `Cpu::ldt` ([`crate::LDT_REAL`]: real-mode bases, sel * 16).
+    pub(crate) fn load_seg(&mut self, i: Seg, sel: u16) {
         let base = if self.cpu.ldt == crate::LDT_REAL { u32::from(sel) << 4 } else if sel >> 3 == 0 { 0 } else { self.mem.read32(self.cpu.ldt.wrapping_add((u32::from(sel) >> 3) * 4)).unwrap_or(0) };
         self.cpu.sreg[i] = sel;
         self.cpu.sbase[i] = base;
@@ -246,23 +252,24 @@ impl<'a, M: Memory> X<'a, M> {
     /// Linear address of the stack slot at `sp`.
     #[inline]
     fn stk(&self, sp: u64) -> u32 {
-        if self.m16() { self.cpu.sbase[2].wrapping_add(lo32(sp) & 0xffff) } else { lin(sp, self.m64()) }
+        if self.m16() { self.cpu.sbase[Seg::Ss].wrapping_add(lo32(sp) & 0xffff) } else { lin(sp, self.m64()) }
     }
 
     #[inline]
     fn get_reg(&self, r: Register) -> u64 {
-        let (i, bits, high) = reg_info(r);
-        if i == SEG {
-            if self.m16() {
-                return u64::from(self.cpu.sreg[sidx(r)]);
-            }
-            return selector(r, self.m64());
-        }
-        if bits == 64 || i >= 8 {
-            let v = self.cpu.gpr(i);
-            return v & flags::mask64(bits);
-        }
-        let v = self.cpu.regs[i];
+        let (slot, bits, high) = reg_info(r);
+        let i = match slot {
+            Slot::Gpr(i) => i,
+            // flat 32-bit user mode: segment registers read as Wine's selectors
+            Slot::Seg if self.m16() => return u64::from(self.cpu.sreg[sidx(r)]),
+            Slot::Seg => return selector(r, self.m64()),
+            Slot::None => return 0,
+        };
+        let g = match i.split() {
+            Ok(g) if bits != 64 => g,
+            Ok(_) | Err(_) => return self.cpu.gpr(i) & flags::mask64(bits),
+        };
+        let v = self.cpu.regs[g];
         u64::from(match (bits, high) {
             (32, _) => v,
             (16, _) => v & 0xffff,
@@ -275,13 +282,18 @@ impl<'a, M: Memory> X<'a, M> {
     /// in 32-bit mode nothing reads it).
     #[inline]
     fn set_reg(&mut self, r: Register, val: u64) {
-        let (i, bits, high) = reg_info(r);
-        if i == SEG {
-            if self.m16() {
-                self.load_seg(sidx(r), lo16(val));
+        let (slot, bits, high) = reg_info(r);
+        let i = match slot {
+            Slot::Gpr(i) => i,
+            // (flat 32-bit user mode: writes to segment registers are ignored)
+            Slot::Seg => {
+                if self.m16() {
+                    self.load_seg(sidx(r), lo16(val));
+                }
+                return;
             }
-            return;
-        }
+            Slot::None => return,
+        };
         let old = self.cpu.gpr(i);
         let v = match (bits, high) {
             (64, _) => val,
@@ -331,7 +343,7 @@ impl<'a, M: Memory> X<'a, M> {
 
     #[inline]
     fn sreg_operand(&self) -> bool {
-        self.ins.op_kind(0) == OpKind::Register && reg_info(self.ins.op_register(0)).0 == SEG
+        self.ins.op_kind(0) == OpKind::Register && reg_info(self.ins.op_register(0)).0 == Slot::Seg
     }
 
     /// Address size of the memory operand (what [`Self::offset`] wraps at).
@@ -592,12 +604,12 @@ impl<'a, M: Memory> X<'a, M> {
             }
         };
         if ins.mnemonic() == Mnemonic::Call {
-            let cs = u64::from(self.cpu.sreg[1]);
+            let cs = u64::from(self.cpu.sreg[Seg::Cs]);
             let ret = self.next();
             tryf!(self.push(cs, w));
             tryf!(self.push(ret, w));
         }
-        self.load_seg(1, sel);
+        self.load_seg(Seg::Cs, sel);
         self.jump(ip)
     }
 
@@ -798,8 +810,8 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Pushad => {
                 let sp = self.sp();
-                let r = self.cpu.regs;
-                for (k, &v) in [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]].iter().enumerate() {
+                // (pushed in encoding order, ESP's value from before the first push)
+                for (k, v) in self.cpu.regs.values().into_iter().enumerate() {
                     tryf!(self.mem.write32(self.stk(sp.wrapping_sub(4 * (lo64(k) + 1))), v));
                 }
                 self.set_sp(sp.wrapping_sub(32));
@@ -815,7 +827,7 @@ impl<'a, M: Memory> X<'a, M> {
                 self.cpu.regs[EDI] = v[0];
                 self.cpu.regs[ESI] = v[1];
                 self.cpu.regs[EBP] = v[2];
-                self.cpu.regs[3] = v[4];
+                self.cpu.regs[EBX] = v[4];
                 self.cpu.regs[EDX] = v[5];
                 self.cpu.regs[ECX] = v[6];
                 self.cpu.regs[EAX] = v[7];
@@ -825,8 +837,7 @@ impl<'a, M: Memory> X<'a, M> {
             // PUSHA/POPA with an operand-size prefix (66 60 / 66 61): the low 16 bits only
             Pusha => {
                 let sp = self.sp();
-                let r = self.cpu.regs;
-                for (k, &v) in [r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]].iter().enumerate() {
+                for (k, v) in self.cpu.regs.values().into_iter().enumerate() {
                     tryf!(self.mem.write16(self.stk(sp.wrapping_sub(2 * (lo64(k) + 1))), lo16(v)));
                 }
                 self.set_sp(sp.wrapping_sub(16));
@@ -838,7 +849,7 @@ impl<'a, M: Memory> X<'a, M> {
                 for (k, slot) in v.iter_mut().enumerate() {
                     *slot = tryf!(self.mem.read16(self.stk(sp.wrapping_add(2 * lo64(k)))));
                 }
-                for (reg, k) in [(EDI, 0), (ESI, 1), (EBP, 2), (3, 4), (EDX, 5), (ECX, 6), (EAX, 7)] {
+                for (reg, k) in [(EDI, 0), (ESI, 1), (EBP, 2), (EBX, 4), (EDX, 5), (ECX, 6), (EAX, 7)] {
                     self.cpu.regs[reg] = (self.cpu.regs[reg] & 0xffff_0000) | u32::from(v[k]);
                 }
                 self.set_sp(sp.wrapping_add(16));
@@ -982,7 +993,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let extra = if ins.op_count() == 1 { u64::from(ins.immediate16()) } else { 0 };
                 let sp = self.sp();
                 self.set_sp(sp.wrapping_add(extra));
-                self.load_seg(1, lo16(cs));
+                self.load_seg(Seg::Cs, lo16(cs));
                 self.jump(ip)
             }
             Iret | Iretd if self.m16() => {
@@ -992,7 +1003,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let f = lo32(tryf!(self.pop(w)));
                 let which = USER_WRITABLE & if w == Width::W16 { 0xffff } else { !0 };
                 self.cpu.eflags = (self.cpu.eflags & !which) | (f & which) | 2;
-                self.load_seg(1, lo16(cs));
+                self.load_seg(Seg::Cs, lo16(cs));
                 self.jump(ip)
             }
             Lds | Les | Lss | Lfs | Lgs => {
@@ -1001,7 +1012,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let off = tryf!(self.read_mem(a, w));
                 let sel = tryf!(self.read_mem(a.wrapping_add(w.bytes()), Width::W16));
                 if self.m16() {
-                    let i = match ins.mnemonic() { Les => 0, Lss => 2, Lds => 3, Lfs => 4, _ => 5 };
+                    let i = match ins.mnemonic() { Les => Seg::Es, Lss => Seg::Ss, Lds => Seg::Ds, Lfs => Seg::Fs, _ => Seg::Gs };
                     self.load_seg(i, lo16(sel));
                 }
                 self.set_reg(ins.op_register(0), off);
@@ -1144,7 +1155,7 @@ impl<'a, M: Memory> X<'a, M> {
             Cmpxchg8b => {
                 let a = self.addr();
                 let cmp = u64::from(self.cpu.regs[EDX]) << 32 | u64::from(self.cpu.regs[EAX]);
-                let n = u64::from(self.cpu.regs[ECX]) << 32 | u64::from(self.cpu.regs[3]);
+                let n = u64::from(self.cpu.regs[ECX]) << 32 | u64::from(self.cpu.regs[EBX]);
                 // always atomic: a plain store of the unchanged value could undo another
                 // thread's write
                 let d = tryf!(self.mem.cmpxchg(a, Width::W64, cmp, n));
@@ -1160,7 +1171,7 @@ impl<'a, M: Memory> X<'a, M> {
             Cmpxchg16b => {
                 let a = self.addr();
                 let cmp = u128::from(self.cpu.gpr(EAX)) | u128::from(self.cpu.gpr(EDX)) << 64;
-                let n = u128::from(self.cpu.gpr(3)) | u128::from(self.cpu.gpr(ECX)) << 64;
+                let n = u128::from(self.cpu.gpr(crate::Reg64::Rbx)) | u128::from(self.cpu.gpr(ECX)) << 64;
                 let d = tryf!(self.mem.cmpxchg16(a, cmp, n));
                 if d == cmp {
                     self.cpu.eflags |= ZF;
@@ -1199,7 +1210,7 @@ impl<'a, M: Memory> X<'a, M> {
             }
             Xlatb => {
                 let m64 = self.m64() && ins.memory_base() == Register::RBX;
-                let b = if m64 { self.cpu.gpr(3) } else { u64::from(self.cpu.regs[3]) };
+                let b = if m64 { self.cpu.gpr(crate::Reg64::Rbx) } else { u64::from(self.cpu.regs[EBX]) };
                 let a = b.wrapping_add(self.get_reg(Register::AL)) & if m64 { u64::MAX } else if self.m16() { 0xffff } else { 0xffff_ffff };
                 let v = tryf!(self.mem.read8(lin(a.wrapping_add(self.seg_base()), self.m64())));
                 self.set_reg(Register::AL, u64::from(v));
@@ -1269,7 +1280,7 @@ impl<'a, M: Memory> X<'a, M> {
                 // long mode SYSCALL: RCX = return address, R11 = RFLAGS; the embedder sees it as
                 // a trap at the instruction after it
                 self.cpu.set_gpr(ECX, self.next());
-                self.cpu.set_gpr(11, u64::from(self.cpu.flags()));
+                self.cpu.set_gpr(crate::Reg64::R11, u64::from(self.cpu.flags()));
                 self.cpu.eip = lo32(self.next());
                 Exit::Syscall
             }
@@ -1692,7 +1703,7 @@ impl<'a, M: Memory> X<'a, M> {
             let si = self.get_reg(rs);
             let di = self.get_reg(rd);
             let sa = lin(si.wrapping_add(src_seg) & if m64 { u64::MAX } else { 0xffff_ffff }, m64);
-            let da = if self.m16() { self.cpu.sbase[0].wrapping_add(lo32(di)) } else { lin(di, m64) };
+            let da = if self.m16() { self.cpu.sbase[Seg::Es].wrapping_add(lo32(di)) } else { lin(di, m64) };
             match mn {
                 Movsb | Movsw | Movsd | Movsq => {
                     let v = tryf!(self.read_mem(sa, w));

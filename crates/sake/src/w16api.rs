@@ -865,7 +865,7 @@ fn catch(c: &mut C16) -> u32 {
     let cpu = &*c.cpu;
     // (the far return address, then the pointer argument: both gone after the return)
     let sp = ((cpu.regs[ESP] & 0xffff) + 8) as u16;
-    let regs = [r16(c.sp), r16(c.sp + 2), sp, cpu.regs[koji::EBP] as u16, cpu.regs[koji::ESI] as u16, cpu.regs[koji::EDI] as u16, cpu.sreg[3], cpu.sreg[2], 0];
+    let regs = [r16(c.sp), r16(c.sp + 2), sp, cpu.regs[koji::EBP] as u16, cpu.regs[koji::ESI] as u16, cpu.regs[koji::EDI] as u16, cpu.sreg[koji::Seg::Ds], cpu.sreg[koji::Seg::Ss], 0];
     for (i, v) in regs.iter().enumerate() {
         w16(buf + 2 * i as u32, *v);
     }
@@ -896,18 +896,18 @@ fn jump(cpu: &mut Cpu) {
     set(&mut cpu.regs[koji::ESI], si);
     set(&mut cpu.regs[koji::EDI], di);
     set(&mut cpu.regs[EAX], ax);
-    w16::set_seg(cpu, 3, ds);
-    w16::set_seg(cpu, 2, ss);
-    w16::set_seg(cpu, 1, cs);
+    w16::set_seg(cpu, koji::Seg::Ds, ds);
+    w16::set_seg(cpu, koji::Seg::Ss, ss);
+    w16::set_seg(cpu, koji::Seg::Cs, cs);
     cpu.eip = ip as u32;
 }
 
 fn init_task(c: &mut C16) -> u32 {
     let cpu = &mut *c.cpu;
-    let ds = cpu.sreg[3];
-    let base = cpu.sbase[3];
+    let ds = cpu.sreg[koji::Seg::Ds];
+    let base = cpu.sbase[koji::Seg::Ds];
     let sp = (cpu.regs[ESP] & 0xffff) + 4;
-    let bx = cpu.regs[3] & 0xffff;
+    let bx = cpu.regs[koji::EBX] & 0xffff;
     w16(base + 0x0c, sp as u16); // stackmin
     w16(base + 0x0e, sp as u16); // stackbottom
     w16(base + 0x0a, (sp.saturating_sub(bx) + 150) as u16); // stacktop
@@ -918,20 +918,20 @@ fn init_task(c: &mut C16) -> u32 {
         bxv += 1;
     }
     cpu.regs[EAX] = 1;
-    cpu.regs[3] = bxv;
+    cpu.regs[koji::EBX] = bxv;
     cpu.regs[ECX] = r16(base + 0x0a) as u32;
     cpu.regs[EDX] = t.cmd_show as u32;
-    cpu.regs[6] = 0;
-    cpu.regs[7] = t.hinst as u32;
+    cpu.regs[koji::ESI] = 0;
+    cpu.regs[koji::EDI] = t.hinst as u32;
     let _ = ds;
     w16::AFTER.with(|a| {
         a.set(Some(|cpu: &mut Cpu| {
             // InitTask leaves a zero word (BP) on the stack
             let sp = (cpu.regs[ESP] & 0xffff).wrapping_sub(2);
-            w16(cpu.sbase[2] + sp, 0);
+            w16(cpu.sbase[koji::Seg::Ss] + sp, 0);
             cpu.regs[ESP] = (cpu.regs[ESP] & 0xffff_0000) | sp;
             let psp = task().psp;
-            w16::set_seg(cpu, 0, psp);
+            w16::set_seg(cpu, koji::Seg::Es, psp);
         }))
     });
     0
@@ -1869,7 +1869,7 @@ struct Dos {
 static DOS: Mutex<Option<Dos>> = Mutex::new(None);
 
 fn ds_dx(cpu: &Cpu) -> u32 {
-    cpu.sbase[3].wrapping_add(cpu.regs[EDX] & 0xffff)
+    cpu.sbase[koji::Seg::Ds].wrapping_add(cpu.regs[EDX] & 0xffff)
 }
 
 /// INT 21h with the registers in `cpu` (carry set on error, AX the error code).
@@ -1901,8 +1901,8 @@ pub fn dos(cpu: &mut Cpu) {
         }
         0x25 | 0x35 => {
             if ah == 0x35 {
-                cpu.regs[3] &= 0xffff_0000;
-                w16::set_seg(cpu, 0, 0);
+                cpu.regs[koji::EBX] &= 0xffff_0000;
+                w16::set_seg(cpu, koji::Seg::Es, 0);
             }
         }
         0x1a => {
@@ -1923,15 +1923,15 @@ pub fn dos(cpu: &mut Cpu) {
             }
         }
         0x3e => {
-            crate::w16::call32(cpu, "kernel32!CloseHandle", &[cpu.regs[3] & 0xffff]);
+            crate::w16::call32(cpu, "kernel32!CloseHandle", &[cpu.regs[koji::EBX] & 0xffff]);
             ok(cpu);
         }
-        0x40 if std_write(cpu.regs[3] & 0xffff, ds_dx(cpu), cpu.regs[ECX] & 0xffff).is_some() => {
+        0x40 if std_write(cpu.regs[koji::EBX] & 0xffff, ds_dx(cpu), cpu.regs[ECX] & 0xffff).is_some() => {
             ok(cpu);
             set_ax(cpu, cpu.regs[ECX] & 0xffff);
         }
         0x3f | 0x40 => {
-            let h = cpu.regs[3] & 0xffff;
+            let h = cpu.regs[koji::EBX] & 0xffff;
             let (buf, n) = (ds_dx(cpu), cpu.regs[ECX] & 0xffff);
             let got = crate::mem::heap_alloc(4, true);
             let f = if ah == 0x3f { "kernel32!ReadFile" } else { "kernel32!WriteFile" };
@@ -1946,7 +1946,7 @@ pub fn dos(cpu: &mut Cpu) {
             }
         }
         0x42 => {
-            let h = cpu.regs[3] & 0xffff;
+            let h = cpu.regs[koji::EBX] & 0xffff;
             let off = (cpu.regs[ECX] & 0xffff) << 16 | (cpu.regs[EDX] & 0xffff);
             let r = crate::w16::call32(cpu, "kernel32!SetFilePointer", &[h, off, 0, ax & 0xff]);
             if r == u32::MAX {
@@ -1959,14 +1959,14 @@ pub fn dos(cpu: &mut Cpu) {
         }
         0x44 => {
             // IOCTL: get device info -> a disk file
-            cpu.regs[EDX] = cpu.regs[EDX] & 0xffff_0000 | if cpu.regs[3] & 0xffff < 3 { 0x80d3 } else { 0x0002 };
+            cpu.regs[EDX] = cpu.regs[EDX] & 0xffff_0000 | if cpu.regs[koji::EBX] & 0xffff < 3 { 0x80d3 } else { 0x0002 };
             ok(cpu);
         }
         0x47 => {
             let cwd = crate::files::cwd();
             let s = crate::text::s2a(cwd.trim_end_matches('\\'));
             let s = if s.len() > 3 { s[3..].to_vec() } else { vec![] };
-            let d = cpu.sbase[3].wrapping_add(cpu.regs[6] & 0xffff);
+            let d = cpu.sbase[koji::Seg::Ds].wrapping_add(cpu.regs[koji::ESI] & 0xffff);
             crate::mem::write(d, &s);
             w8(d + s.len() as u32, 0);
             ok(cpu);
@@ -2034,12 +2034,12 @@ pub fn dos(cpu: &mut Cpu) {
             ok(cpu);
         }
         0x48 => {
-            let paras = cpu.regs[3] & 0xffff;
+            let paras = cpu.regs[koji::EBX] & 0xffff;
             let s = w16::global_alloc(paras * 16, true);
             if s == 0 { err(cpu, 8) } else { ok(cpu); set_ax(cpu, s as u32) }
         }
         0x49 => {
-            w16::global_free(cpu.sreg[0]);
+            w16::global_free(cpu.sreg[koji::Seg::Es]);
             ok(cpu);
         }
         0x0b => set_ax(cpu, ax & 0xff00),

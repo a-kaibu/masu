@@ -49,7 +49,7 @@ fn hash_exit(h: &mut Fnv, e: Exit) {
 
 fn hash_cpu(h: &mut Fnv, c: &Cpu) {
     for i in 0..16 {
-        h.u64(c.gpr(i));
+        h.u64(c.gpr(koji::Reg64::ALL[i]));
     }
     h.u32(c.eip);
     h.u32(c.rip_hi);
@@ -72,8 +72,8 @@ fn hash_cpu(h: &mut Fnv, c: &Cpu) {
     for i in 0..8 {
         h.bytes(&f.st80(i).to_bytes());
     }
-    for (s, b) in c.sreg.iter().zip(c.sbase) {
-        h.u16(*s);
+    for (s, b) in c.sreg.values().into_iter().zip(c.sbase.values()) {
+        h.u16(s);
         h.u32(b);
     }
 }
@@ -88,14 +88,14 @@ fn setup(mode: Mode, n: usize) -> (Cpu, Mem) {
     match mode {
         Mode::I32 | Mode::I32X80 | Mode::I32Cached => {
             for (i, r) in regs.iter().take(8).enumerate() {
-                cpu.set_gpr(i, *r & 0xffff_ffff);
+                cpu.set_gpr(koji::Reg64::ALL[i], *r & 0xffff_ffff);
             }
             cpu.eip = CODE;
         }
         Mode::I64 => {
             cpu.mode64 = 1;
             for (i, r) in regs.iter().enumerate() {
-                cpu.set_gpr(i, *r);
+                cpu.set_gpr(koji::Reg64::ALL[i], *r);
             }
             cpu.eip = CODE;
         }
@@ -103,18 +103,18 @@ fn setup(mode: Mode, n: usize) -> (Cpu, Mem) {
             cpu.mode16 = 1;
             cpu.ldt = koji::LDT_REAL;
             for (i, r) in regs.iter().take(8).enumerate() {
-                cpu.set_gpr(i, *r & 0xffff);
+                cpu.set_gpr(koji::Reg64::ALL[i], *r & 0xffff);
             }
             // ES CS SS DS FS GS, real-mode style (base = selector * 16)
-            cpu.sreg = [0x1800, u16::try_from(CODE >> 4).unwrap(), 0x2000, 0x1800, 0x1800, 0x1800];
-            for i in 0..6 {
+            cpu.sreg = koji::Segs::new([0x1800, u16::try_from(CODE >> 4).unwrap(), 0x2000, 0x1800, 0x1800, 0x1800]);
+            for i in koji::Seg::ALL {
                 cpu.sbase[i] = u32::from(cpu.sreg[i]) << 4;
             }
             cpu.eip = 0;
         }
     }
     let sp = if mode == Mode::I16 { 0xe000 } else { u64::from(STACK_TOP - 0x100) };
-    cpu.set_gpr(4, sp);
+    cpu.set_gpr(koji::Reg64::Rsp, sp);
     let mut x = Rng(n64(n) ^ 0x5353);
     for i in 0..16 {
         cpu.set_xmm(i, u128::from(x.next()) | u128::from(x.next()) << 64);

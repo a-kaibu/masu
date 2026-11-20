@@ -330,9 +330,9 @@ fn catch_entry(c: &mut Ctx) -> u32 {
     push_catch(Active { key: c.esp + 8, rec: prev, ctx, rethrown: false, kind });
     set_current();
     // (the funclet as Wine's call_exc_handler calls it: RCX the handler, RDX the frame)
-    c.cpu.set_gpr(1, handler);
-    c.cpu.set_gpr(2, frame);
-    c.cpu.set_gpr(8, 0x100);
+    c.cpu.set_gpr(koji::Reg64::Rcx, handler);
+    c.cpu.set_gpr(koji::Reg64::Rdx, frame);
+    c.cpu.set_gpr(koji::Reg64::R8, 0x100);
     c.cpu.eip = handler as u32;
     c.cpu.rip_hi = (handler >> 32) as u32;
     c.jumped = true;
@@ -429,7 +429,7 @@ fn raise_cxx(c: &mut Ctx, params: [u64; 4]) {
     let ret = r64(c.esp);
     c.cpu.eip = ret as u32;
     c.cpu.rip_hi = (ret >> 32) as u32;
-    c.cpu.set_gpr(4, c.esp as u64 + 8);
+    c.cpu.set_gpr(koji::Reg64::Rsp, c.esp as u64 + 8);
     crate::seh64::raise(c.cpu, CXX_EXCEPTION, EXCEPTION_NONCONTINUABLE, ret as u32, &params);
     c.jumped = true;
 }
@@ -948,9 +948,9 @@ fn translate(c: &mut Ctx, rec: u32, frame: u64, ctx: u32, dp: u32) -> bool {
     w64(sp + 0x38, ctx as u64);
     w64(sp + 0x40, dp as u64);
     w64(sp + 0x48, frame);
-    c.cpu.set_gpr(1, code(rec) as u64);
-    c.cpu.set_gpr(2, sp as u64 + 0x30);
-    c.cpu.set_gpr(4, sp as u64);
+    c.cpu.set_gpr(koji::Reg64::Rcx, code(rec) as u64);
+    c.cpu.set_gpr(koji::Reg64::Rdx, sp as u64 + 0x30);
+    c.cpu.set_gpr(koji::Reg64::Rsp, sp as u64);
     c.cpu.eip = f as u32;
     c.cpu.rip_hi = (f >> 32) as u32;
     c.jumped = true;
@@ -960,15 +960,15 @@ fn translate(c: &mut Ctx, rec: u32, frame: u64, ctx: u32, dp: u32) -> bool {
 /// TRANSLATE_TRAP: the translator returned. The handler again (the dispatcher context's), with
 /// its arguments and stack as the dispatcher called it.
 pub fn translated(cpu: &mut koji::Cpu) {
-    let sp = cpu.gpr(4) as u32 - 8;
+    let sp = cpu.gpr(koji::Reg64::Rsp) as u32 - 8;
     let (rec, ctx, dp, frame) = (r64(sp + 0x30), r64(sp + 0x38), r64(sp + 0x40), r64(sp + 0x48));
     let teb = crate::cur().teb;
     w32(teb + SE_TRANSLATED_TEB, rec as u32);
     w64(teb + SE_TRANSLATED_TEB + 8, frame);
-    for (r, v) in [(1, rec), (2, frame), (8, ctx), (9, dp)] {
+    for (r, v) in [(koji::Reg64::Rcx, rec), (koji::Reg64::Rdx, frame), (koji::Reg64::R8, ctx), (koji::Reg64::R9, dp)] {
         cpu.set_gpr(r, v);
     }
-    cpu.set_gpr(4, (sp + TRANSLATE_FRAME) as u64);
+    cpu.set_gpr(koji::Reg64::Rsp, (sp + TRANSLATE_FRAME) as u64);
     let h = r64(dp as u32 + 0x30);
     cpu.eip = h as u32;
     cpu.rip_hi = (h >> 32) as u32;

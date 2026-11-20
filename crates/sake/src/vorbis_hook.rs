@@ -466,8 +466,8 @@ fn handler(c: &mut Ctx) -> u32 {
     match kind {
         Kind::Headerin { ecx, edx } => {
             match (ecx, edx) {
-                (true, true) => headerin(c.cpu.regs[1], c.a(0)),
-                (true, false) => headerin(c.cpu.regs[1], c.a(1)),
+                (true, true) => headerin(c.cpu.regs[koji::ECX], c.a(0)),
+                (true, false) => headerin(c.cpu.regs[koji::ECX], c.a(1)),
                 _ => headerin(c.a(0), c.a(2)),
             }
             on_to(c, t)
@@ -618,8 +618,8 @@ fn largest_diff(a: &[Vec<f32>], outs: &[u32]) -> (f32, f32) {
 /// Runs the game's own mapping0_inverse.
 fn original(c: &mut Ctx, tramp: u32, vb: u32, map: u32, fastcall: bool) -> u32 {
     if fastcall {
-        c.cpu.regs[1] = vb;
-        c.cpu.regs[2] = map;
+        c.cpu.regs[koji::ECX] = vb;
+        c.cpu.regs[koji::EDX] = map;
         c.call(tramp, &[])
     } else {
         c.call(tramp, &[vb, map])
@@ -673,7 +673,7 @@ fn pass(why: &'static str) -> Option<u32> {
 /// mapping0_inverse(vb, map): the block's samples (before windowing) into vb->pcm. None: the
 /// game's own code is to do it.
 fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
-    let (vb, map) = if fastcall { (c.cpu.regs[1], c.cpu.regs[2]) } else { (c.a(0), c.a(1)) };
+    let (vb, map) = if fastcall { (c.cpu.regs[koji::ECX], c.cpu.regs[koji::EDX]) } else { (c.a(0), c.a(1)) };
     let sh = shape(tramp);
     if sh == Shape::Off || !readable(vb, VB_VD + 4) {
         return pass("off or vb unreadable");

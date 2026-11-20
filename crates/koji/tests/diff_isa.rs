@@ -420,12 +420,12 @@ fn every_simd_and_bit_instruction_matches_the_host_cpu() {
             // interpreter
             let mut cpu = Cpu { mode64: 1, eip: G_CODE, ..Cpu::default() };
             for i in 0..16 {
-                cpu.set_gpr(i, s.gpr[i]);
+                cpu.set_gpr(koji::Reg64::ALL[i], s.gpr[i]);
                 cpu.set_ymm(i, s.ymm[i]);
             }
             cpu.mm = s.mm;
             for &p in &ptrs {
-                cpu.set_gpr(p, s.gpr[p] + G_DATA as u64);
+                cpu.set_gpr(koji::Reg64::ALL[p], s.gpr[p] + G_DATA as u64);
             }
             cpu.eflags = s.flags as u32;
             cpu.mxcsr = s.mxcsr as u32;
@@ -474,12 +474,12 @@ fn every_simd_and_bit_instruction_matches_the_host_cpu() {
             let mut d = Vec::new();
             for i in 0..16 {
                 if ptrs.contains(&i) {
-                    let (a, b) = (cpu.gpr(i).wrapping_sub(G_DATA as u64), ns.gpr[i].wrapping_sub(nptr as u64));
+                    let (a, b) = (cpu.gpr(koji::Reg64::ALL[i]).wrapping_sub(G_DATA as u64), ns.gpr[i].wrapping_sub(nptr as u64));
                     if a != b {
                         d.push(format!("r{i} interp +{a:#x} cpu +{b:#x}"));
                     }
-                } else if cpu.gpr(i) != ns.gpr[i] {
-                    d.push(format!("r{i} interp {:#x} cpu {:#x}", cpu.gpr(i), ns.gpr[i]));
+                } else if cpu.gpr(koji::Reg64::ALL[i]) != ns.gpr[i] {
+                    d.push(format!("r{i} interp {:#x} cpu {:#x}", cpu.gpr(koji::Reg64::ALL[i]), ns.gpr[i]));
                 }
             }
             let fm = 0x8d5 & !undef;

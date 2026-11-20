@@ -156,7 +156,7 @@ fn run(code: &[u8], mx: u32) -> (Cpu, Exit) {
     m.0[0x1000..0x1000 + code.len()].copy_from_slice(code);
     let mut cpu = Cpu::default();
     cpu.eip = 0x1000;
-    cpu.regs[4] = 0x8000;
+    cpu.regs[koji::ESP] = 0x8000;
     cpu.eflags = 2;
     cpu.mxcsr = mx;
     cpu.trap_lo = 0xffff_0000;
@@ -192,14 +192,14 @@ fn unmasked_invalid_conversion_traps() {
     assert_eq!(e, Exit::SimdException);
     assert_eq!(cpu.eip, 0x1009);
     assert_eq!(cpu.mxcsr, 0x1f01);
-    assert_eq!(cpu.regs[0], 0x4f80_0000, "EAX left alone");
+    assert_eq!(cpu.regs[koji::EAX], 0x4f80_0000, "EAX left alone");
 }
 
 #[test]
 fn masked_runs_on() {
     let (cpu, e) = run(CVT, 0x1f80);
     assert_eq!(e, Exit::Continue);
-    assert_eq!(cpu.regs[0], 0x8000_0000);
+    assert_eq!(cpu.regs[koji::EAX], 0x8000_0000);
     assert_eq!(cpu.mxcsr, 0x1f81, "the invalid flag set, masked");
     let (cpu, e) = run(DIV0, 0x1f80 & !0x400); // (overflow unmasked: divide stays masked)
     assert_eq!(e, Exit::Continue);

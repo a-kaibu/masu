@@ -148,9 +148,9 @@ pub fn apply_pending(cpu: &mut koji::Cpu) -> bool {
 /// An API call returned with `rax`: a context set meanwhile is loaded, but for the result
 /// (as the system call's return value replaces EAX on Windows)
 pub fn apply_pending_after_call(cpu: &mut koji::Cpu) {
-    let rax = cpu.gpr(0);
+    let rax = cpu.gpr(koji::Reg64::Rax);
     if apply_pending(cpu) {
-        cpu.set_gpr(0, rax);
+        cpu.set_gpr(koji::Reg64::Rax, rax);
     }
 }
 
@@ -402,14 +402,14 @@ mod tests {
         let mut cpu = koji::Cpu::default();
         let low = mem::heap_alloc(0x2000, true);
         mem::fill(low, 0x2000, 0xee);
-        cpu.set_gpr(4, (low + 0x2000) as u64);
+        cpu.set_gpr(koji::Reg64::Rsp, (low + 0x2000) as u64);
         // a context that sets EAX (CONTEXT_INTEGER) to 0x1234
         let n = size(false) as usize;
         let mut bytes = vec![0u8; n];
         bytes[0xb0..0xb4].copy_from_slice(&0x1234u32.to_le_bytes());
         set_context_of(tid, 0x1_0002, &bytes);
         assert!(apply_pending(&mut cpu));
-        assert_eq!(cpu.gpr(0), 0x1234);
+        assert_eq!(cpu.gpr(koji::Reg64::Rax), 0x1234);
         assert!(mem::bytes(low, 0x2000).iter().all(|&b| b == 0xee), "nothing written below ESP");
         mem::heap_free(low);
     }

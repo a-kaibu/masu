@@ -31,8 +31,8 @@ fn enter_32_faults_after_its_push() {
     let mut cpu = Cpu::default();
     cpu.eip = CODE;
     cpu.eflags = 2;
-    cpu.regs[4] = 0x8000;
-    cpu.regs[5] = 0x2_0004; // [ebp-4] past the memory
+    cpu.regs[koji::ESP] = 0x8000;
+    cpu.regs[koji::EBP] = 0x2_0004; // [ebp-4] past the memory
     let before = cpu.clone();
     assert_eq!(step(&mut cpu, &mut m), Exit::Fault(Fault { addr: 0x2_0000, write: false }));
     assert_eq!((cpu.regs, cpu.eip, cpu.eflags), (before.regs, before.eip, before.eflags));
@@ -46,8 +46,8 @@ fn enter_64_faults_after_its_push() {
     m.0[CODE as usize..CODE as usize + 4].copy_from_slice(&[0xc8, 0x6d, 0x65, 0x2e]);
     let mut cpu = Cpu { mode64: 1, eip: CODE, ..Cpu::default() };
     cpu.eflags = 2;
-    cpu.set_gpr(4, 0x8000);
-    cpu.set_gpr(5, u64::MAX);
+    cpu.set_gpr(koji::Reg64::Rsp, 0x8000);
+    cpu.set_gpr(koji::Reg64::Rbp, u64::MAX);
     let before = cpu.clone();
     // (RBP - 8 above 4 GB: the 32-bit space's last bytes, never guest memory)
     assert_eq!(step(&mut cpu, &mut m), Exit::Fault(Fault { addr: 0xffff_fff7, write: false }));

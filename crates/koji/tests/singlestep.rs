@@ -65,16 +65,16 @@ fn interrupt(cpu: &mut Cpu, mem: &mut Ram, n: u8, ret: u32) -> Result<u32, Fault
     let ip = mem.read16(n as u32 * 4)?;
     let cs = mem.read16(n as u32 * 4 + 2)?;
     let mut sp = cpu.regs[koji::ESP] as u16;
-    let ss = cpu.sbase[2];
+    let ss = cpu.sbase[koji::Seg::Ss];
     let at = ss.wrapping_add(sp.wrapping_sub(2) as u32) & mem.2;
-    for v in [flags as u16, cpu.sreg[1], ret as u16] {
+    for v in [flags as u16, cpu.sreg[koji::Seg::Cs], ret as u16] {
         sp = sp.wrapping_sub(2);
         mem.write16(ss.wrapping_add(sp as u32), v)?;
     }
     cpu.regs[koji::ESP] = cpu.regs[koji::ESP] & 0xffff_0000 | sp as u32;
     cpu.eflags = flags & !0x300;
-    cpu.sreg[1] = cs;
-    cpu.sbase[1] = (cs as u32) << 4;
+    cpu.sreg[koji::Seg::Cs] = cs;
+    cpu.sbase[koji::Seg::Cs] = (cs as u32) << 4;
     cpu.eip = ip as u32;
     Ok(at)
 }
@@ -83,14 +83,15 @@ fn interrupt(cpu: &mut Cpu, mem: &mut Ram, n: u8, ret: u32) -> Result<u32, Fault
 fn run(t: &Test, mem: &mut Ram, kind: Kind) -> Option<String> {
     let r = |i: usize| t.init.regs[i].unwrap_or(0);
     let mut cpu = Cpu { mode16: 1, ldt: koji::LDT_REAL, ..Cpu::default() };
-    for (k, i) in [2, 4, 5, 3, 9, 8, 6, 7].into_iter().enumerate() {
-        cpu.regs[k] = r(i); // eax ecx edx ebx esp ebp esi edi
+    use koji::{Seg, EAX, EBP, EBX, ECX, EDI, EDX, ESI, ESP};
+    for (g, i) in [(EAX, 2), (ECX, 4), (EDX, 5), (EBX, 3), (ESP, 9), (EBP, 8), (ESI, 6), (EDI, 7)] {
+        cpu.regs[g] = r(i);
     }
     cpu.eip = r(16);
     cpu.eflags = r(17) & FLAGS | 2;
-    for (k, i) in [12, 10, 15, 11, 13, 14].into_iter().enumerate() {
-        cpu.sreg[k] = r(i) as u16; // es cs ss ds fs gs
-        cpu.sbase[k] = (r(i) & 0xffff) << 4;
+    for (s, i) in [(Seg::Es, 12), (Seg::Cs, 10), (Seg::Ss, 15), (Seg::Ds, 11), (Seg::Fs, 13), (Seg::Gs, 14)] {
+        cpu.sreg[s] = r(i) as u16;
+        cpu.sbase[s] = (r(i) & 0xffff) << 4;
     }
     for &(a, v) in &t.init.ram {
         mem.0[a as usize] = v;
@@ -102,7 +103,7 @@ fn run(t: &Test, mem: &mut Ram, kind: Kind) -> Option<String> {
     let start = cpu.eip;
     // (PUSHF: the image of FLAGS, its reserved bits the chip's own (the 808x's top four set))
     if t.bytes.iter().find(|b| !matches!(b, 0x26 | 0x2e | 0x36 | 0x3e | 0xf0 | 0xf2 | 0xf3)) == Some(&0x9c) && kind.regs16() {
-        pushed = Some((cpu.sbase[2] + (cpu.regs[koji::ESP].wrapping_sub(2) & 0xffff)) & mem.2);
+        pushed = Some((cpu.sbase[koji::Seg::Ss] + (cpu.regs[koji::ESP].wrapping_sub(2) & 0xffff)) & mem.2);
     }
     for _ in 0..100_000 {
         let e = step(&mut cpu, mem);
@@ -147,13 +148,13 @@ fn run(t: &Test, mem: &mut Ram, kind: Kind) -> Option<String> {
     } else {
         let got = |i: usize| -> u32 {
             match i {
-                2..=9 => cpu.regs[[0, 3, 1, 2, 6, 7, 5, 4][i - 2]],
-                10 => cpu.sreg[1] as u32,
-                11 => cpu.sreg[3] as u32,
-                12 => cpu.sreg[0] as u32,
-                13 => cpu.sreg[4] as u32,
-                14 => cpu.sreg[5] as u32,
-                15 => cpu.sreg[2] as u32,
+                2..=9 => cpu.regs[[EAX, EBX, ECX, EDX, ESI, EDI, EBP, ESP][i - 2]],
+                10 => cpu.sreg[koji::Seg::Cs] as u32,
+                11 => cpu.sreg[koji::Seg::Ds] as u32,
+                12 => cpu.sreg[koji::Seg::Es] as u32,
+                13 => cpu.sreg[koji::Seg::Fs] as u32,
+                14 => cpu.sreg[koji::Seg::Gs] as u32,
+                15 => cpu.sreg[koji::Seg::Ss] as u32,
                 16 => cpu.eip,
                 17 => cpu.flags(),
                 _ => 0,

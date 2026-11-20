@@ -35,7 +35,7 @@ fn run(code: &[u8], mxcsr_at: usize, mx: u32) -> Cpu {
     }
     let mut cpu = Cpu::default();
     cpu.eip = CODE;
-    cpu.regs[4] = 0x8000;
+    cpu.regs[koji::ESP] = 0x8000;
     cpu.eflags = 2;
     cpu.mxcsr = 0x1f80;
     cpu.trap_lo = 0xffff_0000;

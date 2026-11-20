@@ -61,15 +61,15 @@ proptest! {
         m.0[ptr + 8..ptr + 10].copy_from_slice(&sel.to_le_bytes());
         let mut cpu = Cpu { mode64: u32::from(long), eip: CODE, ..Cpu::default() };
         for (i, r) in regs.iter().enumerate() {
-            cpu.set_gpr(i, u64::from(*r));
+            cpu.set_gpr(koji::Reg64::ALL[i], u64::from(*r));
         }
-        cpu.set_gpr(3, u64::from(PTR));
-        cpu.set_gpr(4, u64::from(SP));
-        let before = (0..16).map(|i| cpu.gpr(i)).collect::<Vec<_>>();
+        cpu.set_gpr(koji::Reg64::Rbx, u64::from(PTR));
+        cpu.set_gpr(koji::Reg64::Rsp, u64::from(SP));
+        let before = (0..16).map(|i| cpu.gpr(koji::Reg64::ALL[i])).collect::<Vec<_>>();
         let mem = m.0.clone();
         prop_assert_eq!(step(&mut cpu, &mut m), Exit::InvalidOpcode, "{:02x?}", bytes);
         prop_assert_eq!(cpu.eip, CODE);
-        prop_assert_eq!((0..16).map(|i| cpu.gpr(i)).collect::<Vec<_>>(), before);
+        prop_assert_eq!((0..16).map(|i| cpu.gpr(koji::Reg64::ALL[i])).collect::<Vec<_>>(), before);
         prop_assert!(m.0 == mem, "memory changed");
     }
 }

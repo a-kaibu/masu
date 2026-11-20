@@ -162,7 +162,7 @@ file	crates/koji/src/interp/mod.rs	arithmetic_side_effects	81
 file	crates/koji/src/interp/mod.rs	as_conversions	3
 file	crates/koji/src/interp/mod.rs	cast_possible_wrap	2
 file	crates/koji/src/interp/mod.rs	cast_sign_loss	1
-file	crates/koji/src/interp/mod.rs	indexing_slicing	13
+file	crates/koji/src/interp/mod.rs	indexing_slicing	6
 file	crates/koji/src/interp/mod.rs	unwrap_used	1
 file	crates/koji/src/interp/mod.rs	wildcard_enum_match_arm	26
 file	crates/koji/src/interp/sse.rs	arithmetic_side_effects	146
@@ -262,10 +262,10 @@ file	crates/koji/src/jit/wasm.rs	unwrap_used	2
 file	crates/koji/src/lazy.rs	arithmetic_side_effects	8
 file	crates/koji/src/lazy.rs	as_conversions	3
 file	crates/koji/src/lazy.rs	cast_possible_truncation	2
-file	crates/koji/src/lib.rs	arithmetic_side_effects	11
+file	crates/koji/src/lib.rs	arithmetic_side_effects	10
 file	crates/koji/src/lib.rs	as_conversions	1
 file	crates/koji/src/lib.rs	fn_to_numeric_cast_any	1
-file	crates/koji/src/lib.rs	indexing_slicing	12
+file	crates/koji/src/lib.rs	indexing_slicing	8
 file	crates/koji/src/lib.rs	masu-transmute	1
 file	crates/koji/src/lib.rs	undocumented_unsafe_blocks	1
 file	crates/koji/src/round.rs	arithmetic_side_effects	29
@@ -1055,7 +1055,6 @@ file	crates/sake/src/cxx.rs	as_conversions	25
 file	crates/sake/src/cxx.rs	cast_possible_truncation	6
 file	crates/sake/src/cxx.rs	cast_possible_wrap	12
 file	crates/sake/src/cxx.rs	cast_sign_loss	7
-file	crates/sake/src/cxx.rs	indexing_slicing	2
 file	crates/sake/src/cxx64.rs	arithmetic_side_effects	100
 file	crates/sake/src/cxx64.rs	as_conversions	118
 file	crates/sake/src/cxx64.rs	cast_possible_truncation	41
@@ -1410,8 +1409,8 @@ file	crates/sake/src/keyboard.rs	as_conversions	35
 file	crates/sake/src/keyboard.rs	cast_possible_truncation	2
 file	crates/sake/src/keyboard.rs	cast_possible_wrap	1
 file	crates/sake/src/keyboard.rs	indexing_slicing	6
-file	crates/sake/src/lib.rs	arithmetic_side_effects	88
-file	crates/sake/src/lib.rs	as_conversions	67
+file	crates/sake/src/lib.rs	arithmetic_side_effects	86
+file	crates/sake/src/lib.rs	as_conversions	63
 file	crates/sake/src/lib.rs	cast_possible_truncation	15
 file	crates/sake/src/lib.rs	cast_possible_wrap	3
 file	crates/sake/src/lib.rs	cast_sign_loss	1
@@ -1771,7 +1770,7 @@ file	crates/sake/src/seh.rs	arithmetic_side_effects	96
 file	crates/sake/src/seh.rs	as_conversions	20
 file	crates/sake/src/seh.rs	cast_possible_truncation	3
 file	crates/sake/src/seh.rs	cast_possible_wrap	1
-file	crates/sake/src/seh.rs	indexing_slicing	2
+file	crates/sake/src/seh.rs	indexing_slicing	1
 file	crates/sake/src/seh.rs	let_underscore_must_use	2
 file	crates/sake/src/seh.rs	unwrap_used	7
 file	crates/sake/src/seh64.rs	arithmetic_side_effects	142

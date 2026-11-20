@@ -67,11 +67,11 @@ fn a32_rep_in_16_bit_code_writes_at_es() {
         let mut cpu = Cpu { mode16: 1, ldt: koji::LDT_REAL, ..Cpu::default() };
         cpu.eip = CODE;
         cpu.eflags = 2;
-        cpu.regs[0] = 0x5a; // AL
-        cpu.regs[1] = 40; // ECX
-        cpu.regs[6] = 0; // ESI
-        cpu.regs[7] = 0x1000; // EDI
-        for (k, seg) in [(0, 0x2000u16), (3, 0x0300)] {
+        cpu.regs[koji::EAX] = 0x5a; // AL
+        cpu.regs[koji::ECX] = 40; // ECX
+        cpu.regs[koji::ESI] = 0; // ESI
+        cpu.regs[koji::EDI] = 0x1000; // EDI
+        for (k, seg) in [(koji::Seg::Es, 0x2000u16), (koji::Seg::Ds, 0x0300)] {
             cpu.sreg[k] = seg;
             cpu.sbase[k] = (seg as u32) << 4;
         }
@@ -80,7 +80,7 @@ fn a32_rep_in_16_bit_code_writes_at_es() {
         let want: Vec<u8> = (0..40).map(|i| if op == 0xaa { 0x5a } else { 0x80 | i as u8 }).collect();
         assert_eq!(&m.m[0x21000..0x21028], &want[..], "bulk {bulk} op {op:#x}: at ES:EDI");
         assert!(m.m[0x1000..0x1100].iter().all(|&b| b == 0), "bulk {bulk} op {op:#x}: nothing at linear EDI");
-        assert_eq!((cpu.regs[1], cpu.regs[7], cpu.eip), (0, 0x1028, CODE + 3));
+        assert_eq!((cpu.regs[koji::ECX], cpu.regs[koji::EDI], cpu.eip), (0, 0x1028, CODE + 3));
     }
 }
 
@@ -92,17 +92,17 @@ fn a_long_scan_takes_several_steps() {
     let mut m = Flat { m: vec![1; 0x1000 + n + 16], bulk: true };
     m.m[CODE as usize..CODE as usize + 2].copy_from_slice(&[0xf2, 0xae]);
     let mut cpu = Cpu { eip: CODE, eflags: 2, ..Cpu::default() };
-    cpu.regs[1] = n as u32 + 100;
-    cpu.regs[7] = 0x1000;
+    cpu.regs[koji::ECX] = n as u32 + 100;
+    cpu.regs[koji::EDI] = 0x1000;
     m.m[0x1000 + n] = 0; // the byte it looks for (AL 0)
     for k in 1..=3u32 {
         assert_eq!(step(&mut cpu, &mut m), Exit::Continue);
         assert_eq!(cpu.eip, CODE, "step {k}: still at it");
-        assert_eq!(cpu.regs[7], 0x1000 + k * REP_STEP_MAX as u32);
-        assert_eq!(cpu.regs[1], n as u32 + 100 - k * REP_STEP_MAX as u32);
+        assert_eq!(cpu.regs[koji::EDI], 0x1000 + k * REP_STEP_MAX as u32);
+        assert_eq!(cpu.regs[koji::ECX], n as u32 + 100 - k * REP_STEP_MAX as u32);
     }
     assert_eq!(step(&mut cpu, &mut m), Exit::Continue);
-    assert_eq!((cpu.eip, cpu.regs[7], cpu.regs[1]), (CODE + 2, 0x1000 + n as u32 + 1, 100 - 1));
+    assert_eq!((cpu.eip, cpu.regs[koji::EDI], cpu.regs[koji::ECX]), (CODE + 2, 0x1000 + n as u32 + 1, 100 - 1));
     assert!(cpu.flags() & 0x40 != 0, "ZF: found");
 }
 
@@ -113,13 +113,13 @@ fn rep_fault_preserves_completed_iterations() {
         mem.m[CODE as usize..CODE as usize + 2].copy_from_slice(&[0xf3, op]);
         mem.m[0x1000..0x1004].fill(0x5a);
         let mut cpu = Cpu { eip: CODE, eflags: 2, ..Cpu::default() };
-        cpu.regs[0] = 0x5a;
-        cpu.regs[1] = 32;
-        cpu.regs[6] = 0x1000;
-        cpu.regs[7] = 0x2ffc;
+        cpu.regs[koji::EAX] = 0x5a;
+        cpu.regs[koji::ECX] = 32;
+        cpu.regs[koji::ESI] = 0x1000;
+        cpu.regs[koji::EDI] = 0x2ffc;
         assert_eq!(step(&mut cpu, &mut mem), Exit::Fault(Fault { addr: 0x3000, write: true }));
-        assert_eq!((cpu.eip, cpu.regs[1], cpu.regs[7]), (CODE, 28, 0x3000));
-        assert_eq!(cpu.regs[6], if op == 0xa4 { 0x1004 } else { 0x1000 });
+        assert_eq!((cpu.eip, cpu.regs[koji::ECX], cpu.regs[koji::EDI]), (CODE, 28, 0x3000));
+        assert_eq!(cpu.regs[koji::ESI], if op == 0xa4 { 0x1004 } else { 0x1000 });
         assert_eq!(&mem.m[0x2ffc..], &[0x5a; 4]);
     }
 }
@@ -226,11 +226,11 @@ proptest! {
         let zf = model(op, size, rep, back, &mut want, &mut want_mem);
 
         let mut m = Flat { m: mem, bulk };
-        let mut cpu = Cpu { eip: CODE, eflags: 2 | if back { 0x400 } else { 0 }, regs, ..Cpu::default() };
+        let mut cpu = Cpu { eip: CODE, eflags: 2 | if back { 0x400 } else { 0 }, regs: koji::Gprs::new(regs), ..Cpu::default() };
         let (steps, e) = run(&mut cpu, &mut m);
         prop_assert_eq!(e, Exit::Continue);
         prop_assert_eq!(cpu.eip, CODE + code.len() as u32);
-        prop_assert_eq!(cpu.regs, want);
+        prop_assert_eq!(cpu.regs.values(), want);
         prop_assert!(m.m == want_mem, "memory differs");
         if matches!(op, Op::Cmps | Op::Scas) && (rep == 0 || count > 0) {
             prop_assert_eq!(cpu.flags() & 0x40 != 0, zf);

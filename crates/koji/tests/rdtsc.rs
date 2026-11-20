@@ -37,11 +37,11 @@ fn rdtsc(cpu: &mut Cpu, mode64: bool) -> u64 {
     cpu.mode64 = mode64 as u32;
     cpu.eflags = 2;
     // (the high halves RDTSC clears in long mode)
-    cpu.set_gpr(0, u64::MAX);
-    cpu.set_gpr(2, u64::MAX);
+    cpu.set_gpr(koji::Reg64::Rax, u64::MAX);
+    cpu.set_gpr(koji::Reg64::Rdx, u64::MAX);
     assert_eq!(step(cpu, &mut m), Exit::Continue);
     assert_eq!(cpu.eip, CODE + 2);
-    let (a, d) = (cpu.gpr(0), cpu.gpr(2));
+    let (a, d) = (cpu.gpr(koji::Reg64::Rax), cpu.gpr(koji::Reg64::Rdx));
     if mode64 {
         assert!(a >> 32 == 0 && d >> 32 == 0, "RAX/RDX upper halves cleared");
     }

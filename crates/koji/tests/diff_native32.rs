@@ -161,7 +161,7 @@ fn undefined(ins: &Instruction, cpu: &Cpu) -> (u32, bool) {
         (if n >= 2 && ins.op_kind(n - 1) == OpKind::Immediate8 {
             ins.immediate8() as u32
         } else if n >= 2 && ins.op_register(n - 1) == Register::CL {
-            cpu.regs[1] & 0xff
+            cpu.regs[koji::ECX] & 0xff
         } else {
             1
         }) & 0x1f
@@ -205,7 +205,7 @@ fn compare(insn: &[u8], st: &State, data: &[u8]) -> Result<bool, String> {
     let ins = Decoder::with_ip(32, insn, at as u64, DecoderOptions::NONE).decode();
     assert_eq!(&c[(at - CODE32) as usize..][..insn.len()], insn);
     let mut cpu = Cpu::default();
-    cpu.regs = st.r;
+    cpu.regs = koji::Gprs::new(st.r);
     cpu.eflags = st.flags;
     cpu.eip = at;
     let exit = step(&mut cpu, &mut Host);
@@ -229,7 +229,7 @@ fn compare(insn: &[u8], st: &State, data: &[u8]) -> Result<bool, String> {
     let want = unsafe { get_state() };
     let want_mem = unsafe { core::slice::from_raw_parts(data_ptr, data.len()).to_vec() };
     let mut before = Cpu::default();
-    before.regs = st.r;
+    before.regs = koji::Gprs::new(st.r);
     let (undef, skip) = undefined(&ins, &before);
     if skip { return Ok(false); }
     let mut diff = Vec::new();
@@ -237,8 +237,8 @@ fn compare(insn: &[u8], st: &State, data: &[u8]) -> Result<bool, String> {
     let (wf, gf) = (want.flags & mask, cpu.flags() & mask);
     if wf != gf { diff.push(format!("flags in {:03x} want {:03x} got {:03x}", st.flags & mask, wf, gf)); }
     for i in 0..8 {
-        if want.r[i] != cpu.regs[i] {
-            diff.push(format!("r{} in {:08x} want {:08x} got {:08x}", i, st.r[i], want.r[i], cpu.regs[i]));
+        if want.r[i] != cpu.regs[koji::Gpr::ALL[i]] {
+            diff.push(format!("r{} in {:08x} want {:08x} got {:08x}", i, st.r[i], want.r[i], cpu.regs[koji::Gpr::ALL[i]]));
         }
     }
     if want_mem != got_mem {

@@ -32,7 +32,7 @@ crates/kura/src/cpu.rs	undocumented_unsafe_blocks	Ok(unsafe { *check(addr, 1, fa
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	c = (c ^ unsafe { *((at + i) as usize as *const u8) } as u32).wrapping_mul(0x0100_0193);
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	h = (h ^ unsafe { *((d + i) as usize as *const u8) } as u32).wrapping_mul(0x0100_0193);
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	let code: Vec<String> = (0..if ok { 8 } else { 0 }).map(|i| unsafe { *((cpu.eip as usize + i) as *const u8) }).map(|b| format!("{b:02x}")).collect();
-crates/kura/src/cpu.rs	undocumented_unsafe_blocks	let ret = if ok(r[4]) { unsafe { *(r[4] as usize as *const u32) } } else { 0 };
+crates/kura/src/cpu.rs	undocumented_unsafe_blocks	let ret = if ok(r[koji::ESP]) { unsafe { *(r[koji::ESP] as usize as *const u32) } } else { 0 };
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	unsafe { (check(addr, 2, true)? as *mut u16).write_unaligned(v) };
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	unsafe { (check(addr, 4, true)? as *mut u32).write_unaligned(v) };
 crates/kura/src/cpu.rs	undocumented_unsafe_blocks	unsafe { (check(addr, 8, true)? as *mut u64).write_unaligned(v) };

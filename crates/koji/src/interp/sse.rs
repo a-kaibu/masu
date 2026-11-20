@@ -1022,7 +1022,7 @@ impl<'a, M: Memory> X<'a, M> {
                 let b = tryf!(self.read_v(1));
                 let imm = u32::from(ins.immediate8());
                 let explicit = matches!(mn, Pcmpestri | Pcmpestrm | Pcmpestri64 | Pcmpestrm64);
-                let lens = explicit.then(|| (self.cpu.regs[0], self.cpu.regs[2]));
+                let lens = explicit.then(|| (self.cpu.regs[crate::EAX], self.cpu.regs[crate::EDX]));
                 let (res, la, lb, n) = pcmpstr(a, b, imm, lens);
                 let mut f = self.cpu.eflags & !STATUS;
                 if res != 0 {

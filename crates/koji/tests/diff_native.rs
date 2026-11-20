@@ -261,10 +261,10 @@ fn undefined(m: Mnemonic, bytes: &[u8], cpu: &Cpu, bits: u32) -> (u32, bool) {
         let op = bytes.iter().find(|&&b| b != 0x66).copied().unwrap();
         (match op {
             0xc0 | 0xc1 => last as u32,
-            0xd2 | 0xd3 => cpu.regs[1] & 0xff,
+            0xd2 | 0xd3 => cpu.regs[koji::ECX] & 0xff,
             0x0f => match bytes[bytes.iter().position(|&b| b == 0x0f).unwrap() + 1] {
                 0xa4 | 0xac => last as u32,
-                _ => cpu.regs[1] & 0xff,
+                _ => cpu.regs[koji::ECX] & 0xff,
             },
             _ => 1,
         }) & 0x1f
@@ -301,10 +301,10 @@ fn random_integer_ops_match_the_host_cpu() {
     for _ in 0..200_000 {
         let insn = random_insn(&mut rng);
         let mut cpu = Cpu::default();
-        for (i, r) in cpu.regs.iter_mut().enumerate() {
-            if i != 4 { *r = rng.value(); }
+        for (g, r) in cpu.regs.iter_mut() {
+            if g != koji::ESP { *r = rng.value(); }
         }
-        cpu.regs[4] = 0x8000;
+        cpu.regs[koji::ESP] = 0x8000;
         cpu.eflags = 0x202 | (rng.next() as u32 & STATUS);
         let before = cpu.clone();
         let mut mem = Vecmem(vec![0; 0x10000]);
@@ -317,7 +317,7 @@ fn random_integer_ops_match_the_host_cpu() {
         }
         assert_eq!(exit, Exit::Continue, "{:02x?} {:?}", insn, ins.mnemonic());
         let mut st = State::default();
-        for i in 0..8 { st.r[i] = before.regs[i] as u64; }
+        for i in 0..8 { st.r[i] = before.regs[koji::Gpr::ALL[i]] as u64; }
         st.flags = before.eflags as u64;
         native.run(&insn, &mut st);
         let bits = {
@@ -331,7 +331,7 @@ fn random_integer_ops_match_the_host_cpu() {
         let got_flags = cpu.eflags & STATUS & !undef;
         let mut ok = want_flags == got_flags;
         for i in 0..8 {
-            if i != 4 && st.r[i] as u32 != cpu.regs[i] {
+            if i != 4 && st.r[i] as u32 != cpu.regs[koji::Gpr::ALL[i]] {
                 ok = false;
             }
         }
@@ -491,10 +491,10 @@ fn random_sse_mmx_ops_match_the_host_cpu() {
             insn.push(if matches!(op.1, 0xc2) { imm & 7 } else { imm });
         }
         let mut cpu = Cpu::default();
-        for (i, x) in cpu.regs.iter_mut().enumerate() {
-            if i != 4 { *x = rng.value(); }
+        for (g, x) in cpu.regs.iter_mut() {
+            if g != koji::ESP { *x = rng.value(); }
         }
-        cpu.regs[4] = 0x8000;
+        cpu.regs[koji::ESP] = 0x8000;
         cpu.eflags = 0x202 | (rng.next() as u32 & STATUS);
         for x in cpu.xmm.iter_mut() {
             *x = u128::from_le_bytes(rand_vec(&mut rng));
@@ -511,7 +511,7 @@ fn random_sse_mmx_ops_match_the_host_cpu() {
         assert_eq!(exit, Exit::Continue, "{:02x?} {:?}", insn, ins.mnemonic());
         let mut st = State::default();
         for i in 0..8 {
-            st.r[i] = before.regs[i] as u64;
+            st.r[i] = before.regs[koji::Gpr::ALL[i]] as u64;
             st.xmm[i] = before.xmm[i].to_le_bytes();
             st.mm[i] = before.mm[i];
         }
@@ -519,7 +519,7 @@ fn random_sse_mmx_ops_match_the_host_cpu() {
         native.run(&insn, &mut st);
         let mut ok = (st.flags as u32 & STATUS) == (cpu.eflags & STATUS);
         for i in 0..8 {
-            if i != 4 && st.r[i] as u32 != cpu.regs[i] { ok = false; }
+            if i != 4 && st.r[i] as u32 != cpu.regs[koji::Gpr::ALL[i]] { ok = false; }
             if !lanes_equal(u128::from_le_bytes(st.xmm[i]), cpu.xmm[i], op.3) { ok = false; }
             if st.mm[i] != cpu.mm[i] { ok = false; }
         }
@@ -528,7 +528,7 @@ fn random_sse_mmx_ops_match_the_host_cpu() {
                 .filter(|&i| u128::from_le_bytes(st.xmm[i]) != cpu.xmm[i])
                 .map(|i| format!("xmm{} in {:032x} want {:032x} got {:032x}", i, before.xmm[i], u128::from_le_bytes(st.xmm[i]), cpu.xmm[i]))
                 .chain((0..8).filter(|&i| st.mm[i] != cpu.mm[i]).map(|i| format!("mm{} in {:016x} want {:016x} got {:016x}", i, before.mm[i], st.mm[i], cpu.mm[i])))
-                .chain((0..8).filter(|&i| i != 4 && st.r[i] as u32 != cpu.regs[i]).map(|i| format!("r{} want {:08x} got {:08x}", i, st.r[i] as u32, cpu.regs[i])))
+                .chain((0..8).filter(|&i| i != 4 && st.r[i] as u32 != cpu.regs[koji::Gpr::ALL[i]]).map(|i| format!("r{} want {:08x} got {:08x}", i, st.r[i] as u32, cpu.regs[koji::Gpr::ALL[i]])))
                 .collect();
             failures.push(format!("{:02x?} {:?} flags want {:03x} got {:03x}\n  {}", insn, ins.mnemonic(),
                 st.flags as u32 & STATUS, cpu.eflags & STATUS, diff.join("\n  ")));
@@ -622,10 +622,10 @@ fn random_sse3_ssse3_sse41_ops_match_the_host_cpu() {
             insn.push(imm);
         }
         let mut cpu = Cpu::default();
-        for (i, x) in cpu.regs.iter_mut().enumerate() {
-            if i != 4 { *x = rng.value(); }
+        for (g, x) in cpu.regs.iter_mut() {
+            if g != koji::ESP { *x = rng.value(); }
         }
-        cpu.regs[4] = 0x8000;
+        cpu.regs[koji::ESP] = 0x8000;
         cpu.eflags = 0x202 | (rng.next() as u32 & STATUS);
         for x in cpu.xmm.iter_mut() {
             *x = u128::from_le_bytes(rand_vec(&mut rng));
@@ -647,7 +647,7 @@ fn random_sse3_ssse3_sse41_ops_match_the_host_cpu() {
         }
         let mut st = State::default();
         for i in 0..8 {
-            st.r[i] = before.regs[i] as u64;
+            st.r[i] = before.regs[koji::Gpr::ALL[i]] as u64;
             st.xmm[i] = before.xmm[i].to_le_bytes();
             st.mm[i] = before.mm[i];
         }
@@ -655,7 +655,7 @@ fn random_sse3_ssse3_sse41_ops_match_the_host_cpu() {
         native.run(&insn, &mut st);
         let mut ok = (st.flags as u32 & STATUS) == (cpu.eflags & STATUS);
         for i in 0..8 {
-            if i != 4 && st.r[i] as u32 != cpu.regs[i] { ok = false; }
+            if i != 4 && st.r[i] as u32 != cpu.regs[koji::Gpr::ALL[i]] { ok = false; }
             if !lanes_equal(u128::from_le_bytes(st.xmm[i]), cpu.xmm[i], op.4) { ok = false; }
             if st.mm[i] != cpu.mm[i] { ok = false; }
         }
@@ -664,7 +664,7 @@ fn random_sse3_ssse3_sse41_ops_match_the_host_cpu() {
                 .filter(|&i| u128::from_le_bytes(st.xmm[i]) != cpu.xmm[i])
                 .map(|i| format!("xmm{} in {:032x} want {:032x} got {:032x}", i, before.xmm[i], u128::from_le_bytes(st.xmm[i]), cpu.xmm[i]))
                 .chain((0..8).filter(|&i| st.mm[i] != cpu.mm[i]).map(|i| format!("mm{} in {:016x} want {:016x} got {:016x}", i, before.mm[i], st.mm[i], cpu.mm[i])))
-                .chain((0..8).filter(|&i| i != 4 && st.r[i] as u32 != cpu.regs[i]).map(|i| format!("r{} in {:08x} want {:08x} got {:08x}", i, before.regs[i], st.r[i] as u32, cpu.regs[i])))
+                .chain((0..8).filter(|&i| i != 4 && st.r[i] as u32 != cpu.regs[koji::Gpr::ALL[i]]).map(|i| format!("r{} in {:08x} want {:08x} got {:08x}", i, before.regs[koji::Gpr::ALL[i]], st.r[i] as u32, cpu.regs[koji::Gpr::ALL[i]])))
                 .collect();
             failures.push(format!("{:02x?} {:?} flags want {:03x} got {:03x}\n  {}", insn, ins.mnemonic(), st.flags as u32 & STATUS, cpu.eflags & STATUS, diff.join("\n  ")));
         }
@@ -728,10 +728,10 @@ fn random_vex128_ops_match_the_host_cpu() {
             continue;
         }
         let mut cpu = Cpu::default();
-        for (i, x) in cpu.regs.iter_mut().enumerate() {
-            if i != 4 { *x = rng.value(); }
+        for (g, x) in cpu.regs.iter_mut() {
+            if g != koji::ESP { *x = rng.value(); }
         }
-        cpu.regs[4] = 0x8000;
+        cpu.regs[koji::ESP] = 0x8000;
         cpu.eflags = 0x202 | (rng.next() as u32 & STATUS);
         for x in cpu.xmm.iter_mut() {
             *x = u128::from_le_bytes(rand_vec(&mut rng));
@@ -750,7 +750,7 @@ fn random_vex128_ops_match_the_host_cpu() {
         }
         let mut st = State::default();
         for i in 0..8 {
-            st.r[i] = before.regs[i] as u64;
+            st.r[i] = before.regs[koji::Gpr::ALL[i]] as u64;
             st.xmm[i] = before.xmm[i].to_le_bytes();
             st.mm[i] = before.mm[i];
         }
@@ -758,14 +758,14 @@ fn random_vex128_ops_match_the_host_cpu() {
         native.run(&insn, &mut st);
         let mut ok = (st.flags as u32 & STATUS) == (cpu.eflags & STATUS);
         for i in 0..8 {
-            if i != 4 && st.r[i] as u32 != cpu.regs[i] { ok = false; }
+            if i != 4 && st.r[i] as u32 != cpu.regs[koji::Gpr::ALL[i]] { ok = false; }
             if !lanes_equal(u128::from_le_bytes(st.xmm[i]), cpu.xmm[i], o.4) { ok = false; }
         }
         if !ok && seen.insert(ins.mnemonic()) {
             let diff: Vec<String> = (0..8)
                 .filter(|&i| u128::from_le_bytes(st.xmm[i]) != cpu.xmm[i])
                 .map(|i| format!("xmm{} in {:032x} want {:032x} got {:032x}", i, before.xmm[i], u128::from_le_bytes(st.xmm[i]), cpu.xmm[i]))
-                .chain((0..8).filter(|&i| i != 4 && st.r[i] as u32 != cpu.regs[i]).map(|i| format!("r{} in {:08x} want {:08x} got {:08x}", i, before.regs[i], st.r[i] as u32, cpu.regs[i])))
+                .chain((0..8).filter(|&i| i != 4 && st.r[i] as u32 != cpu.regs[koji::Gpr::ALL[i]]).map(|i| format!("r{} in {:08x} want {:08x} got {:08x}", i, before.regs[koji::Gpr::ALL[i]], st.r[i] as u32, cpu.regs[koji::Gpr::ALL[i]])))
                 .collect();
             failures.push(format!("{:02x?} {:?} flags want {:03x} got {:03x}\n  {}", insn, ins.mnemonic(), st.flags as u32 & STATUS, cpu.eflags & STATUS, diff.join("\n  ")));
         }

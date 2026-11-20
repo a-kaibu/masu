@@ -719,7 +719,7 @@ pub fn to_linear16(cpu: &mut Cpu) {
     cpu.eip = cpu.pc16();
 }
 pub fn from_linear16(cpu: &mut Cpu) {
-    cpu.eip = cpu.eip.wrapping_sub(cpu.sbase[1]) & 0xffff;
+    cpu.eip = cpu.eip.wrapping_sub(cpu.sbase[koji::Seg::Cs]) & 0xffff;
 }
 
 pub fn enabled64() -> bool {
@@ -2729,7 +2729,7 @@ fn compile16(st: &mut State, cpu: &Cpu, mem: &mut Linear) -> bool {
         jit::LAYOUT.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     let t0 = std::time::Instant::now();
-    let Some(region) = jit::translate_region16(&mut m, mem, eip, cpu.sbase[1], MAX_BLOCKS, |a| {
+    let Some(region) = jit::translate_region16(&mut m, mem, eip, cpu.sbase[koji::Seg::Cs], MAX_BLOCKS, |a| {
         debug_allowed(a) && !(a >= lo && a < hi) && !known.contains(&a) && (a == eip || misses.contains_key(&a))
     }) else {
         st.known.insert(eip);
@@ -2790,7 +2790,7 @@ fn compile_long(st: &mut State, cpu: &Cpu, mem: &mut Linear) -> bool {
 /// Whether cpu.eip looks like the target of a CALL whose return address is on the stack.
 fn called(cpu: &Cpu, mem: &mut Linear) -> bool {
     let mut b = [0u8; 4];
-    if koji::Memory::fetch(mem, cpu.regs[4], &mut b) < 4 {
+    if koji::Memory::fetch(mem, cpu.regs[koji::ESP], &mut b) < 4 {
         return false;
     }
     let ra = u32::from_le_bytes(b);
@@ -3247,7 +3247,7 @@ pub unsafe extern "C" fn vnhost_jit_step(cpu: u32) -> i32 {
         let c = &*cpu;
         let f = |x: u128| (0..4).map(|i| f32::from_bits((x >> (32 * i)) as u32)).collect::<Vec<_>>();
         // (and the stack's top words: return addresses, arguments)
-        let stack: Vec<u32> = (0..12).map(|i| koji::Memory::read32(&mut Linear, c.regs[4].wrapping_add(4 * i)).unwrap_or(0)).collect();
+        let stack: Vec<u32> = (0..12).map(|i| koji::Memory::read32(&mut Linear, c.regs[koji::ESP].wrapping_add(4 * i)).unwrap_or(0)).collect();
         // ([esp] as a C string: a call's buffer)
         let s: String = (0..40).map(|i| koji::Memory::read8(&mut Linear, stack[0].wrapping_add(i)).unwrap_or(0)).take_while(|&b| b != 0).map(|b| b as char).collect();
         eprintln!("vnjit probe {:#x}: regs {:x?} xmm0 {:?} xmm1 {:?} xmm2 {:?} xmm3 {:?} stack {:x?} str {s:?}", c.eip, c.regs, f(c.xmm[0]), f(c.xmm[1]), f(c.xmm[2]), f(c.xmm[3]), stack);

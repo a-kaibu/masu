@@ -61,7 +61,7 @@ fn koji(cw: u16, q: i64, w: i32, op: u32) -> u64 {
     m.0[0x1000..0x1000 + code.len()].copy_from_slice(&code);
     let mut cpu = Cpu::default();
     cpu.eip = 0x1000;
-    cpu.regs[4] = 0x8000;
+    cpu.regs[koji::ESP] = 0x8000;
     cpu.eflags = 2;
     cpu.trap_lo = 0xffff_0000;
     cpu.trap_hi = 0xffff_0001;

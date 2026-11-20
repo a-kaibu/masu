@@ -177,9 +177,9 @@ fuzz_target!(|data: &[u8]| {
     for i in 0..8 {
         // (a flag bit per register: an address in the data window, or the value as it is)
         let v = word(i);
-        cpu.regs[i] = if state[95] >> i & 1 != 0 { LO + 0x1_0000 + (v & 0x2_fffc) } else { v };
+        cpu.regs[koji::Gpr::ALL[i]] = if state[95] >> i & 1 != 0 { LO + 0x1_0000 + (v & 0x2_fffc) } else { v };
     }
-    cpu.regs[4] = ESP0;
+    cpu.regs[koji::ESP] = ESP0;
     cpu.eflags = 0x202 | (word(7) & STATUS);
     for i in 0..4 {
         cpu.xmm[i] = u128::from_le_bytes(state[32 + 16 * i..48 + 16 * i].try_into().unwrap());

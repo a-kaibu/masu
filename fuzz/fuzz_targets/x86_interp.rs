@@ -29,9 +29,9 @@ fuzz_target!(|data: &[u8]| {
     }
     let (state, code) = data.split_at(34);
     let mut cpu = Cpu::default();
-    for i in 0..8 {
+    for (i, g) in koji::Gpr::ALL.into_iter().enumerate() {
         let v = u32::from_le_bytes(state[4 * i..4 * i + 4].try_into().unwrap());
-        cpu.regs[i] = if state[32] >> i & 1 != 0 { LO + (v & 0xfffc) } else { v };
+        cpu.regs[g] = if state[32] >> i & 1 != 0 { LO + (v & 0xfffc) } else { v };
     }
     cpu.eflags = 0x202 | (state[33] as u32 & 0xd5) | (state[33] as u32 & 8) << 8;
     // (16-bit and 64-bit mode too: sake runs Win16 and x64 programs on the same core)
@@ -39,7 +39,7 @@ fuzz_target!(|data: &[u8]| {
         1 => cpu.mode64 = 1,
         2 => {
             cpu.mode16 = 1;
-            cpu.sbase = [LO; 6];
+            cpu.sbase = koji::Segs::new([LO; 6]);
         }
         _ => {}
     }
@@ -47,7 +47,7 @@ fuzz_target!(|data: &[u8]| {
     let n = code.len().min(0x8000);
     mem.0[..n].copy_from_slice(&code[..n]);
     cpu.eip = if cpu.mode16 != 0 { 0 } else { LO };
-    cpu.regs[4] = if cpu.mode16 != 0 { 0xfff0 } else { LO + 0xfff0 };
+    cpu.regs[koji::ESP] = if cpu.mode16 != 0 { 0xfff0 } else { LO + 0xfff0 };
     for _ in 0..2000 {
         if koji::step(&mut cpu, &mut mem) != Exit::Continue {
             break;

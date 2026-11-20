@@ -37,7 +37,7 @@ fn koji_sw(op: &[u8], v: u64, single: bool, cw: u16) -> u16 {
     m.0[0x2010..0x2012].copy_from_slice(&cw.to_le_bytes());
     let mut cpu = Cpu::default();
     cpu.eip = 0x1000;
-    cpu.regs[4] = 0x8000;
+    cpu.regs[koji::ESP] = 0x8000;
     cpu.eflags = 2;
     cpu.trap_lo = 0xffff_0000;
     cpu.trap_hi = 0xffff_0001;

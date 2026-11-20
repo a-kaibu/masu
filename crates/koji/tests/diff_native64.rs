@@ -373,7 +373,7 @@ fn undefined(m: Mnemonic, ins: &iced_x86::Instruction, cpu: &Cpu, bits: u32) -> 
         (if n >= 2 && ins.op_kind(n - 1) == iced_x86::OpKind::Immediate8 {
             ins.immediate8() as u32
         } else if n >= 2 && ins.op_register(n - 1) == iced_x86::Register::CL {
-            cpu.regs[1] & 0xff
+            cpu.regs[koji::ECX] & 0xff
         } else {
             1
         }) & cmask
@@ -429,7 +429,7 @@ fn compare(insn: &[u8], st: &State, data: &[u8], fl_lanes: u32, bits: u32) -> Re
     // interpreter first
     let mut cpu = Cpu::default();
     cpu.mode64 = 1;
-    for i in 0..16 { cpu.set_gpr(i, st.r[i]); }
+    for i in 0..16 { cpu.set_gpr(koji::Reg64::ALL[i], st.r[i]); }
     cpu.eflags = st.flags as u32;
     for i in 0..16 { cpu.set_xmm(i, st.xmm[i]); }
     cpu.mm = st.mm;
@@ -458,7 +458,7 @@ fn compare(insn: &[u8], st: &State, data: &[u8], fl_lanes: u32, bits: u32) -> Re
     let want = unsafe { get_state() };
     let want_mem = unsafe { core::slice::from_raw_parts(data_ptr, data.len()).to_vec() };
     let mut before = Cpu::default();
-    for i in 0..16 { before.set_gpr(i, st.r[i]); }
+    for i in 0..16 { before.set_gpr(koji::Reg64::ALL[i], st.r[i]); }
     let (undef, skip) = undefined(ins.mnemonic(), &ins, &before, bits);
     if skip { return Ok(false); }
     let mut diff = Vec::new();
@@ -466,7 +466,7 @@ fn compare(insn: &[u8], st: &State, data: &[u8], fl_lanes: u32, bits: u32) -> Re
     if wf != gf { diff.push(format!("flags want {:03x} got {:03x}", wf, gf)); }
     if want_mx & 0x3f != cpu.mxcsr & 0x3f { diff.push(format!("mxcsr flags want {:02x} got {:02x}", want_mx & 0x3f, cpu.mxcsr & 0x3f)); }
     for i in 0..16 {
-        if want.r[i] != cpu.gpr(i) { diff.push(format!("r{} in {:x} want {:x} got {:x}", i, st.r[i], want.r[i], cpu.gpr(i))); }
+        if want.r[i] != cpu.gpr(koji::Reg64::ALL[i]) { diff.push(format!("r{} in {:x} want {:x} got {:x}", i, st.r[i], want.r[i], cpu.gpr(koji::Reg64::ALL[i]))); }
         let (w, g) = (want.xmm[i], cpu.xmm(i));
         let same = w == g || (fl_lanes != 0 && (0..128 / fl_lanes).all(|k| {
             let m: u128 = if fl_lanes == 64 { u64::MAX as u128 } else { (1 << fl_lanes) - 1 };

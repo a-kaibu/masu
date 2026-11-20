@@ -87,7 +87,7 @@ fn koji_run(op: &[u8], a: u128, b: u128, mx: u32) -> (u128, u32, u32) {
     m.0[0x2010..0x2020].copy_from_slice(&b.to_le_bytes());
     let mut cpu = Cpu::default();
     cpu.eip = 0x1000;
-    cpu.regs[4] = 0x8000;
+    cpu.regs[koji::ESP] = 0x8000;
     cpu.eflags = 2;
     cpu.mxcsr = mx;
     cpu.trap_lo = 0xffff_0000;
@@ -96,7 +96,7 @@ fn koji_run(op: &[u8], a: u128, b: u128, mx: u32) -> (u128, u32, u32) {
         assert_eq!(step(&mut cpu, &mut m), Exit::Continue);
     }
     let r = u128::from_le_bytes(m.0[0x2020..0x2030].try_into().unwrap());
-    (r, cpu.mxcsr & 0x3f, cpu.regs[0] & 0x45)
+    (r, cpu.mxcsr & 0x3f, cpu.regs[koji::EAX] & 0x45)
 }
 
 macro_rules! host_op {
@@ -239,7 +239,7 @@ fn koji_cmp(op: &[u8], a: u128, b: u128, mx: u32) -> (u128, u32, u32) {
     m.0[0x2010..0x2020].copy_from_slice(&b.to_le_bytes());
     let mut cpu = Cpu::default();
     cpu.eip = 0x1000;
-    cpu.regs[4] = 0x8000;
+    cpu.regs[koji::ESP] = 0x8000;
     cpu.eflags = 2;
     cpu.mxcsr = mx;
     cpu.trap_lo = 0xffff_0000;
