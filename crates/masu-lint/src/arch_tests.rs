@@ -89,6 +89,19 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/msidb/src/sql.rs", |t| Some(t.replace("pub const MAX_DEPTH: usize = 64;", "pub const MAX_NESTING: usize = 64;"))),
         },
+        Rule::TypedRegisters => Fixture {
+            bad: &[
+                ("crates/sake/src/x.rs", "fn f(cpu: &mut Cpu) { cpu.regs[koji::Gpr::ALL[3]] = 0; cpu.set_gpr(koji::Reg64::ALL[ 8 ], 1); }\n"),
+                ("crates/koji/tests/t.rs", "fn f(c: &Cpu) -> u32 { c.regs.values()[4] + c.sbase[Seg::ALL[2]] }\n"),
+                (KOJI_LIB, "pub struct Cpu { pub regs: [u32; 8], pub sreg: [u16; 6] }\npub struct Gprs(pub [u32; 8]);\nimpl core::ops::Index<usize> for Gprs {}\nimpl From<u32> for Gpr {}\n"),
+            ],
+            good: &[
+                ("crates/sake/src/x.rs", "fn f(cpu: &mut Cpu, i: usize) { cpu.regs[koji::EBX] = 0; cpu.set_gpr(koji::Reg64::R8, 1); cpu.set_gpr(koji::Reg64::ALL[i], 2); }\n// Gpr::ALL[3] in a comment\n"),
+                (KOJI_LIB, "pub struct Cpu { pub regs: Gprs, pub sreg: Segs<u16> }\npub struct Gprs([u32; 8]);\nimpl core::ops::Index<Gpr> for Gprs {}\nimpl From<Gpr> for Reg64 {}\nfn at(i: usize) -> Option<Gpr> { if i < 8 { Some(Gpr::ALL[i]) } else { None } }\n"),
+                ("crates/dxwgsl/src/d3d9ff.rs", "fn f(regs: &mut [[f32; 4]; 32]) { regs[16] = [0.0; 4]; }\n"),
+            ],
+            mutate: (KOJI_LIB, |t| Some(t.replacen("    pub regs: Gprs,", "    pub regs: [u32; 8],", 1))),
+        },
         Rule::BuildOutput => Fixture {
             bad: &[("crates/masu/target/x86_64-pc-windows-gnu/release/masu.exe", "x"), ("web/public/sake/sake.wasm", "x")],
             good: &[("crates/kura/testdata/idec/planes.bin", "x"), ("testdata/apitrace/a.trace.zst", "x"), ("crates/kura/src/target.rs", "x")],
@@ -335,7 +348,7 @@ fn a_known_site_covers_as_many_as_it_is_listed() {
 
 #[test]
 fn every_regex_compiles() {
-    for r in [&BUILD_EXT, &BUILD_OK, &TARGET_DIR, &GOLDEN_ANY, &GOLDEN_FILES, &JOB, &CHECKS, &DISALLOWED] {
+    for r in [&BUILD_EXT, &BUILD_OK, &TARGET_DIR, &GOLDEN_ANY, &GOLDEN_FILES, &JOB, &CHECKS, &DISALLOWED, &REG_BY_NUMBER, &REG_UNTYPED] {
         assert!(r.is_some());
     }
     for r in regress::regexes() {
@@ -346,11 +359,13 @@ fn every_regex_compiles() {
 #[test]
 fn the_new_rules_find_each_spelling_alone() {
     // (each bad file on its own: one spelling found does not hide another that is missed)
-    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::DepthGuard] {
+    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::DepthGuard, Rule::TypedRegisters] {
         for one in fixture(r).bad.chunks(1) {
             assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
         }
     }
+    // (two numbered registers in each made-up file, the untyped lib.rs's five ways back)
+    assert_eq!(Rule::TypedRegisters.check(&Tree::made_up(fixture(Rule::TypedRegisters).bad)).len(), 9);
     // (and every site in the bad files, not only the first: w8(ga(key)) is two)
     // (a copy of a number conversion, a lock trait, a GUID builder, a guest GUID reader and a
     // big-endian byte reader)

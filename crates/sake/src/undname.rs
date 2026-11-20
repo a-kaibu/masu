@@ -1265,7 +1265,7 @@ fn UnDecorateSymbolNameW(c: &mut Ctx) -> u32 {
 // thiscall, `this` in ECX)
 
 fn this(c: &Ctx) -> u32 {
-    if mem::x64() { c.a(0) } else { c.cpu.regs[1] }
+    if mem::x64() { c.a(0) } else { c.cpu.regs[koji::ECX] }
 }
 /// argument `i` after `this`
 fn arg(c: &Ctx, i: u32) -> u32 {

@@ -27,7 +27,7 @@ pub const NPOS: u32 = u32::MAX;
 const MAX_SIZE: u32 = u32::MAX - 1;
 
 fn this(c: &Ctx) -> u32 {
-    c.cpu.regs[1]
+    c.cpu.regs[koji::ECX]
 }
 
 pub fn ptr(s: u32) -> u32 {
@@ -265,7 +265,7 @@ mod tests {
             w32(sp + 4 + 4 * i as u32, a);
         }
         let mut cpu = koji::Cpu::default();
-        cpu.regs[1] = this;
+        cpu.regs[koji::ECX] = this;
         let r = f(&mut Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 });
         mem::heap_free(sp);
         r

@@ -165,8 +165,8 @@ fn random_x87_sequences_match_the_host_cpu() {
         let mut mem = TwoRegions { code: body.clone(), data_base, data: d.clone() };
         let mut cpu = Cpu::default();
         cpu.eip = 0x1000;
-        cpu.regs[3] = data_base;
-        cpu.regs[4] = data_base + 0xf00;
+        cpu.regs[koji::EBX] = data_base;
+        cpu.regs[koji::ESP] = data_base + 0xf00;
         let end = 0x1000 + body.len() as u32;
         let mut n = 0;
         while cpu.eip != end {

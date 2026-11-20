@@ -1680,16 +1680,16 @@ fn interp(base: usize) -> Result<(), String> {
 fn initial(rng: &mut Rng) -> Cpu {
     let mut c = Cpu { eip: CODE, ..Cpu::default() };
     for i in 0..8 {
-        c.regs[i] = match rng.below(4) {
+        c.regs[koji::Gpr::ALL[i]] = match rng.below(4) {
             0 => rng.below(256) as u32,
             1 => rng.below(64) as u32,
             2 => rng.next() as u32 | 0x8000_0000,
             _ => rng.next() as u32,
         };
     }
-    c.regs[3] = DATA; // ebx
-    c.regs[4] = STACK - 0x800; // esp
-    c.regs[5] = DATA + 0x100; // ebp
+    c.regs[koji::EBX] = DATA; // ebx
+    c.regs[koji::ESP] = STACK - 0x800; // esp
+    c.regs[koji::EBP] = DATA + 0x100; // ebp
     c.eflags = 0x202 | (rng.next() as u32 & 0x8d5);
     for i in 0..8 {
         c.xmm[i] = match rng.below(6) {
@@ -1756,7 +1756,7 @@ fn state(c: &Cpu) -> Vec<(String, String)> {
     c.materialize();
     let mut v = Vec::new();
     for i in 0..8 {
-        v.push((format!("r{i}"), format!("{:#x}", c.regs[i])));
+        v.push((format!("r{i}"), format!("{:#x}", c.regs[koji::Gpr::ALL[i]])));
     }
     v.push(("eip".into(), format!("{:#x}", c.eip)));
     v.push(("flags".into(), format!("{:#x}", c.eflags & 0x8d5)));

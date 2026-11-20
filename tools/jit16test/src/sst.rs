@@ -32,15 +32,15 @@ fn interrupt(cpu: &mut Cpu, mem: &mut Mem, n: u8, ret: u32) -> Result<(), Fault>
     let ip = mem.read16(G + n as u32 * 4)?;
     let cs = mem.read16(G + n as u32 * 4 + 2)?;
     let mut sp = cpu.regs[koji::ESP] as u16;
-    let ss = cpu.sbase[2];
-    for v in [flags as u16, cpu.sreg[1], ret as u16] {
+    let ss = cpu.sbase[koji::Seg::Ss];
+    for v in [flags as u16, cpu.sreg[koji::Seg::Cs], ret as u16] {
         sp = sp.wrapping_sub(2);
         mem.write16(ss.wrapping_add(sp as u32), v)?;
     }
     cpu.regs[koji::ESP] = cpu.regs[koji::ESP] & 0xffff_0000 | sp as u32;
     cpu.eflags = flags & !0x300;
-    cpu.sreg[1] = cs;
-    cpu.sbase[1] = ((cs as u32) << 4) + G;
+    cpu.sreg[koji::Seg::Cs] = cs;
+    cpu.sbase[koji::Seg::Cs] = ((cs as u32) << 4) + G;
     cpu.eip = ip as u32;
     Ok(())
 }
@@ -71,7 +71,7 @@ fn exit(kind: Kind, c: &mut Cpu, mem: &mut Mem, e: Exit, next: u32, pushed: &mut
         return Ok(false);
     }
     if let Some((n, ip)) = deliver(kind, e, c, next) {
-        let at = c.sbase[2] - G + (c.regs[koji::ESP].wrapping_sub(2) & 0xffff);
+        let at = c.sbase[koji::Seg::Ss] - G + (c.regs[koji::ESP].wrapping_sub(2) & 0xffff);
         interrupt(c, mem, n, ip).map_err(|f| format!("fault {f:?} delivering int {n}"))?;
         *pushed = Some(at);
         return Ok(kind.ends_with_hlt());
@@ -99,11 +99,11 @@ fn run(engine: &Engine, memory: &SharedMemory, base: usize, t: &Test, ins: &Inst
         ..Cpu::default()
     };
     for (k, i) in [2, 4, 5, 3, 9, 8, 6, 7].into_iter().enumerate() {
-        c.regs[k] = r(i);
+        c.regs[koji::Gpr::ALL[k]] = r(i);
     }
     c.eip = r(16);
     c.eflags = r(17) & FLAGS | 2;
-    for (k, i) in [12, 10, 15, 11, 13, 14].into_iter().enumerate() {
+    for (k, i) in koji::Seg::ALL.into_iter().zip([12, 10, 15, 11, 13, 14]) {
         c.sreg[k] = r(i) as u16;
         c.sbase[k] = ((r(i) & 0xffff) << 4) + G;
     }
@@ -113,11 +113,11 @@ fn run(engine: &Engine, memory: &SharedMemory, base: usize, t: &Test, ins: &Inst
     // whose reserved bits are the chip's own)
     let mut pushed = None;
     if t.bytes.iter().find(|b| !matches!(b, 0x26 | 0x2e | 0x36 | 0x3e | 0xf0 | 0xf2 | 0xf3)) == Some(&0x9c) && kind.regs16() {
-        pushed = Some(c.sbase[2] - G + (c.regs[koji::ESP].wrapping_sub(2) & 0xffff));
+        pushed = Some(c.sbase[koji::Seg::Ss] - G + (c.regs[koji::ESP].wrapping_sub(2) & 0xffff));
     }
     // (the 808x suites have NOPs after the instruction, which a block would run on: a HLT
     // there ends it, put back before the memory is compared)
-    let stop = (!kind.ends_with_hlt()).then(|| c.sbase[1] + next);
+    let stop = (!kind.ends_with_hlt()).then(|| c.sbase[koji::Seg::Cs] + next);
     let kept = stop.map(|a| unsafe { std::ptr::replace(m.add(a as usize), 0xf4) });
     let mut mem = Mem(m);
     let mut fail = None;
@@ -172,13 +172,13 @@ fn run(engine: &Engine, memory: &SharedMemory, base: usize, t: &Test, ins: &Inst
     let undef = undefined_flags(ins, r(4));
     let got = |i: usize| -> u32 {
         match i {
-            2..=9 => c.regs[[0, 3, 1, 2, 6, 7, 5, 4][i - 2]],
-            10 => c.sreg[1] as u32,
-            11 => c.sreg[3] as u32,
-            12 => c.sreg[0] as u32,
-            13 => c.sreg[4] as u32,
-            14 => c.sreg[5] as u32,
-            15 => c.sreg[2] as u32,
+            2..=9 => c.regs[[koji::EAX, koji::EBX, koji::ECX, koji::EDX, koji::ESI, koji::EDI, koji::EBP, koji::ESP][i - 2]],
+            10 => c.sreg[koji::Seg::Cs] as u32,
+            11 => c.sreg[koji::Seg::Ds] as u32,
+            12 => c.sreg[koji::Seg::Es] as u32,
+            13 => c.sreg[koji::Seg::Fs] as u32,
+            14 => c.sreg[koji::Seg::Gs] as u32,
+            15 => c.sreg[koji::Seg::Ss] as u32,
             16 => c.eip,
             17 => c.flags(),
             _ => 0,

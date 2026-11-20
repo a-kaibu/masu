@@ -112,7 +112,7 @@ fn fx_image(c: &Cpu, mmx: bool) -> [u8; 512] {
 /// Runs on the CPU: the state after (as a Cpu: registers, flags, x87 or MMX, SSE), DATA, stack.
 fn run_native(exe: &std::path::Path, code: &[u8], data: &[u8], c: &Cpu, mmx: bool) -> Result<(Cpu, Vec<u8>, Vec<u8>), String> {
     let mut input = Vec::new();
-    for r in c.regs {
+    for r in c.regs.values() {
         input.extend_from_slice(&r.to_le_bytes());
     }
     input.extend_from_slice(&c.eflags.to_le_bytes());
@@ -130,7 +130,7 @@ fn run_native(exe: &std::path::Path, code: &[u8], data: &[u8], c: &Cpu, mmx: boo
     let u32at = |i: usize| u32::from_le_bytes(o[i..i + 4].try_into().unwrap());
     let mut r = c.clone();
     for i in 0..8 {
-        r.regs[i] = u32at(4 * i);
+        r.regs[koji::Gpr::ALL[i]] = u32at(4 * i);
     }
     r.eflags = u32at(32);
     r.lazy = Default::default();
@@ -165,7 +165,7 @@ fn compared(c: &Cpu, mmx: bool) -> Vec<(String, String)> {
     c.materialize();
     let mut v = Vec::new();
     for i in 0..8 {
-        v.push((format!("r{i}"), format!("{:#x}", c.regs[i])));
+        v.push((format!("r{i}"), format!("{:#x}", c.regs[koji::Gpr::ALL[i]])));
         v.push((format!("xmm{i}"), format!("{:032x}", c.xmm[i])));
     }
     v.push(("flags".into(), format!("{:#x}", c.eflags & 0x8d5)));
@@ -284,7 +284,7 @@ pub fn run(args: &[String]) {
                 // (DATA there, by the initial registers)
                 let mut at = String::new();
                 if ins.op_kinds().any(|k| k == iced_x86::OpKind::Memory) {
-                    let reg = |r: iced_x86::Register| if r == iced_x86::Register::None { 0 } else { cpu0.regs[r.number() & 7] };
+                    let reg = |r: iced_x86::Register| if r == iced_x86::Register::None { 0 } else { cpu0.regs[koji::Gpr::low3(r.number() as u32)] };
                     let a = reg(ins.memory_base()).wrapping_add(reg(ins.memory_index()).wrapping_mul(ins.memory_index_scale())).wrapping_add(ins.memory_displacement32());
                     if let Some(o) = a.checked_sub(DATA as u32).filter(|&o| o + 8 <= DATA_LEN) {
                         let q = u64::from_le_bytes(data[o as usize..o as usize + 8].try_into().unwrap());

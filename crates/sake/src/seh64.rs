@@ -70,8 +70,8 @@ pub fn save_context(cpu: &mut Cpu, ctx: u32) {
         crate::mem::w16(ctx + o, v);
     }
     w32(ctx + 0x44, cpu.flags());
-    for i in 0..16 {
-        set_reg(ctx, i, cpu.gpr(i));
+    for r in koji::Reg64::ALL {
+        set_reg(ctx, r.num(), cpu.gpr(r));
     }
     set_rip(ctx, cpu.eip as u64 | (cpu.rip_hi as u64) << 32);
     let _ = koji::fxsave(cpu, &mut crate::seh::Guest, ctx + 0x100);
@@ -83,8 +83,8 @@ pub fn save_context(cpu: &mut Cpu, ctx: u32) {
 }
 
 pub fn load_context(cpu: &mut Cpu, ctx: u32) {
-    for i in 0..16 {
-        cpu.set_gpr(i, reg(ctx, i));
+    for r in koji::Reg64::ALL {
+        cpu.set_gpr(r, reg(ctx, r.num()));
     }
     let ip = rip(ctx);
     cpu.eip = ip as u32;
@@ -374,7 +374,7 @@ pub fn idle() -> bool {
 pub fn raise(cpu: &mut Cpu, code: u32, flags: u32, addr: u32, params: &[u64]) {
     let a = cpu.eip as u64 | (cpu.rip_hi as u64) << 32;
     let a = if a as u32 == addr { a } else { crate::mem::widen(addr) };
-    let sp = cpu.gpr(4) as u32;
+    let sp = cpu.gpr(koji::Reg64::Rsp) as u32;
     no_room_ends(cpu, sp, code, a);
     let rec = ((sp - 0x200) & !15) - RECORD_SIZE;
     crate::mem::fill(rec, RECORD_SIZE, 0);
@@ -436,7 +436,7 @@ fn dispatch(cpu: &mut Cpu, rec: u32, orig: u32) {
         let ptrs = (orig - 0x20) & !15;
         w64(ptrs, rec as u64);
         w64(ptrs + 8, orig as u64);
-        cpu.set_gpr(4, ptrs as u64 - 0x40);
+        cpu.set_gpr(koji::Reg64::Rsp, ptrs as u64 - 0x40);
         VEH.with(|v| v.borrow_mut().push(orig));
         for f in veh {
             if crate::call(cpu, f, &[ptrs]) == 0xffff_ffff {
@@ -504,11 +504,11 @@ fn walk(cpu: &mut Cpu) {
             // the handler's call: (record, frame, context, dispatcher context) -> SEH64_TRAP
             let sp = ((d.disp - 0x40) & !15) - 8;
             w64(sp, crate::api::SEH64_TRAP as u64);
-            cpu.set_gpr(4, sp as u64);
-            cpu.set_gpr(1, d.rec as u64);
-            cpu.set_gpr(2, frame);
-            cpu.set_gpr(8, d.orig as u64);
-            cpu.set_gpr(9, d.disp as u64);
+            cpu.set_gpr(koji::Reg64::Rsp, sp as u64);
+            cpu.set_gpr(koji::Reg64::Rcx, d.rec as u64);
+            cpu.set_gpr(koji::Reg64::Rdx, frame);
+            cpu.set_gpr(koji::Reg64::R8, d.orig as u64);
+            cpu.set_gpr(koji::Reg64::R9, d.disp as u64);
             cpu.eip = h as u32;
             cpu.rip_hi = (h >> 32) as u32;
             // (the frame to go on with when it says "continue search")
@@ -546,7 +546,7 @@ fn translation_dropped(cpu: &mut Cpu, d: Dispatch) {
 
 /// SEH64_TRAP: a language handler returned its verdict (EAX).
 pub fn handler_done(cpu: &mut Cpu) {
-    let verdict = cpu.regs[0];
+    let verdict = cpu.regs[koji::EAX];
     let Some(d) = STACK.with(|s| s.borrow().last().copied()) else {
         crate::fatal(cpu, "x64 handler return without a dispatch");
     };
@@ -574,7 +574,7 @@ fn unhandled(cpu: &mut Cpu, d: Dispatch) {
         let ptrs = (d.disp - 0x20) & !15;
         w64(ptrs, d.rec as u64);
         w64(ptrs + 8, d.orig as u64);
-        cpu.set_gpr(4, ptrs as u64 - 0x40);
+        cpu.set_gpr(koji::Reg64::Rsp, ptrs as u64 - 0x40);
         if crate::call(cpu, filter, &[ptrs]) == 0xffff_ffff {
             load_context(cpu, d.orig);
             return;
@@ -817,11 +817,11 @@ fn unwind_go(cpu: &mut Cpu, resumed: bool) {
             w64(sp, UNWIND_TRAP as u64);
             u.handler_sp = sp as u64 + 8;
             UNWINDS.with(|s| *s.borrow_mut().last_mut().unwrap() = u);
-            cpu.set_gpr(4, sp as u64);
-            cpu.set_gpr(1, rec as u64);
-            cpu.set_gpr(2, frame);
-            cpu.set_gpr(8, ctx as u64);
-            cpu.set_gpr(9, disp as u64);
+            cpu.set_gpr(koji::Reg64::Rsp, sp as u64);
+            cpu.set_gpr(koji::Reg64::Rcx, rec as u64);
+            cpu.set_gpr(koji::Reg64::Rdx, frame);
+            cpu.set_gpr(koji::Reg64::R8, ctx as u64);
+            cpu.set_gpr(koji::Reg64::R9, disp as u64);
             cpu.eip = h as u32;
             cpu.rip_hi = (h >> 32) as u32;
             return;
@@ -835,7 +835,7 @@ fn unwind_go(cpu: &mut Cpu, resumed: bool) {
     set_reg(ctx, 0, u.retval);
     set_rip(ctx, u.ip);
     // (below everything the unwind used)
-    cpu.set_gpr(4, u.orig as u64 - 0x40);
+    cpu.set_gpr(koji::Reg64::Rsp, u.orig as u64 - 0x40);
     restore_cpu(cpu, ctx, rec);
 }
 
@@ -855,7 +855,7 @@ fn restore(c: &mut Ctx, ctx: u32, rec: u32) {
 fn restore_cpu(cpu: &mut Cpu, ctx: u32, rec: u32) {
     let code = if rec != 0 { r32(rec) } else { 0 };
     // (below everything the unwind still uses: the exception's record and object)
-    let deep = cpu.gpr(4) as u32;
+    let deep = cpu.gpr(koji::Reg64::Rsp) as u32;
     if code == STATUS_LONGJUMP && r32(rec + 0x18) >= 1 {
         // _JUMP_BUFFER: Frame, Rbx, Rsp, Rbp, Rsi, Rdi, R12-R15, Rip, MxCsr, FpCsr, Spare, Xmm6-15
         let jb = r64(rec + 0x20) as u32;
@@ -884,8 +884,8 @@ fn restore_cpu(cpu: &mut Cpu, ctx: u32, rec: u32) {
         let frame = saved - 0x38;
         w64(frame, CONSOLIDATE_TRAP as u64);
         w64(frame + 8 + HOME, saved as u64);
-        cpu.set_gpr(4, frame as u64);
-        cpu.set_gpr(1, rec as u64);
+        cpu.set_gpr(koji::Reg64::Rsp, frame as u64);
+        cpu.set_gpr(koji::Reg64::Rcx, rec as u64);
         cpu.eip = cb as u32;
         cpu.rip_hi = (cb >> 32) as u32;
         if trace() {
@@ -904,9 +904,9 @@ fn consolidate_saved(sp: u32) -> u32 {
 
 /// CONSOLIDATE_TRAP: the catch block returned where to continue (RAX).
 pub fn consolidated(cpu: &mut Cpu) {
-    let sp = cpu.gpr(4) as u32; // (past the return address)
+    let sp = cpu.gpr(koji::Reg64::Rsp) as u32; // (past the return address)
     let saved = consolidate_saved(sp);
-    let to = crate::cxx64::catch_done(cpu, sp, cpu.gpr(0));
+    let to = crate::cxx64::catch_done(cpu, sp, cpu.gpr(koji::Reg64::Rax));
     set_rip(saved, to);
     load_context(cpu, saved);
     if trace() {
@@ -923,7 +923,7 @@ pub fn raise_exception(c: &mut Ctx) -> u32 {
     let ret = r64(c.esp);
     c.cpu.eip = ret as u32;
     c.cpu.rip_hi = (ret >> 32) as u32;
-    c.cpu.set_gpr(4, c.esp as u64 + 8);
+    c.cpu.set_gpr(koji::Reg64::Rsp, c.esp as u64 + 8);
     // (x64 Windows marks a software exception: EXCEPTION_SOFTWARE_ORIGINATE 0x80)
     raise(c.cpu, code, flags & 1 | 0x80, ret as u32, &params);
     c.jumped = true;
@@ -952,7 +952,8 @@ pub fn setjmp(c: &mut Ctx) -> u32 {
     let (jb, frame) = (c.a(0), c.a64(1));
     let cpu = &*c.cpu;
     w64(jb, frame);
-    for (k, r) in [(1u32, 3usize), (3, 5), (4, 6), (5, 7), (6, 12), (7, 13), (8, 14), (9, 15)] {
+    use koji::Reg64::{R12, R13, R14, R15, Rbp, Rbx, Rdi, Rsi};
+    for (k, r) in [(1u32, Rbx), (3, Rbp), (4, Rsi), (5, Rdi), (6, R12), (7, R13), (8, R14), (9, R15)] {
         w64(jb + 8 * k, cpu.gpr(r));
     }
     w64(jb + 0x10, c.esp as u64 + 8);

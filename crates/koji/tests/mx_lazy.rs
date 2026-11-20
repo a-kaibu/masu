@@ -32,7 +32,7 @@ fn setup(code: &[u8]) -> (Cpu, Flat) {
     m.0[CODE as usize..CODE as usize + code.len()].copy_from_slice(code);
     let mut cpu = Cpu::default();
     cpu.eip = CODE;
-    cpu.regs[4] = 0x8000;
+    cpu.regs[koji::ESP] = 0x8000;
     cpu.eflags = 2;
     cpu.mxcsr = 0x1f80 | 0x21; // flags the program raised: precision, invalid
     cpu.trap_lo = 0xffff_0000;
@@ -82,7 +82,7 @@ fn flag_mode_switches_once_at_the_first_read() {
     for _ in 0..3 {
         assert_eq!(step(&mut cpu, &mut m), Exit::Continue);
     }
-    assert_eq!(cpu.regs[0], 0x1f80);
+    assert_eq!(cpu.regs[koji::EAX], 0x1f80);
     assert!(!jit::mx_exact() && !jit::mx_switched(), "no switch");
     let (fast, e) = translate(ADDSS_RET);
     assert!(!e);

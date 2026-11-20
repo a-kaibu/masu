@@ -2319,14 +2319,14 @@ fn unsafe_frame(ext: u32) -> u32 {
 }
 /// (fastcall) RtlActivateActivationContextUnsafeFast(frame, context)
 fn RtlActivateActivationContextUnsafeFast(c: &mut Ctx) -> u32 {
-    let (ext, h) = (c.cpu.gpr(1) as u32, c.cpu.gpr(2) as u32);
+    let (ext, h) = (c.cpu.gpr(koji::Reg64::Rcx) as u32, c.cpu.gpr(koji::Reg64::Rdx) as u32);
     let f = unsafe_frame(ext);
     push_frame(f, h, 0);
     f
 }
 /// (fastcall) RtlDeactivateActivationContextUnsafeFast(frame)
 fn RtlDeactivateActivationContextUnsafeFast(c: &mut Ctx) -> u32 {
-    let f = unsafe_frame(c.cpu.gpr(1) as u32);
+    let f = unsafe_frame(c.cpu.gpr(koji::Reg64::Rcx) as u32);
     pop_to(f);
     f
 }

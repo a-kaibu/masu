@@ -6647,13 +6647,13 @@ mod tests {
                     let sp = 0x9800usize;
                     m.0[sp..sp + 16].copy_from_slice(&stack);
                     let mut cpu = crate::Cpu { mode64: bits64 as u32, eip: from, ..crate::Cpu::default() };
-                    for (i, &r) in regs.iter().enumerate().take(if bits64 { 16 } else { 8 }) {
-                        cpu.set_gpr(i, r);
+                    for (g, &r) in crate::Reg64::ALL.iter().zip(&regs).take(if bits64 { 16 } else { 8 }) {
+                        cpu.set_gpr(*g, r);
                     }
-                    cpu.set_gpr(4, sp as u64);
+                    cpu.set_gpr(crate::Reg64::Rsp, sp as u64);
                     cpu.eflags = 2 | flags as u32 & crate::flags::STATUS;
                     let e = crate::step(&mut cpu, &mut m);
-                    (e, cpu.eip, cpu.rip_hi, (0..16).map(|i| cpu.gpr(i)).collect::<Vec<_>>(), cpu.eflags, m.0)
+                    (e, cpu.eip, cpu.rip_hi, crate::Reg64::ALL.map(|r| cpu.gpr(r)).to_vec(), cpu.eflags, m.0)
                 };
                 let (a, b) = (run(AT), run(AT + 1));
                 prop_assert_eq!(a.0, b.0);

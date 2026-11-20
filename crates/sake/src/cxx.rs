@@ -429,7 +429,7 @@ const SE_TRANSLATED_TEB: u32 = SE_TRANSLATOR_TEB + 8;
 /// FuncInfo and the frame at 0x20), at 0x18 the EXCEPTION_POINTERS, at 0x28 the handler's EBX,
 /// EBP, ESI and EDI (the dispatcher's, which the guard gives back).
 const TRANSLATE_FRAME: u32 = 0x40;
-const SAVED: [usize; 4] = [koji::EBX, EBP, koji::ESI, koji::EDI];
+const SAVED: [koji::Gpr; 4] = [koji::EBX, EBP, koji::ESI, koji::EDI];
 
 fn _set_se_translator(c: &mut Ctx) -> u32 {
     let at = crate::cur().teb + SE_TRANSLATOR_TEB;

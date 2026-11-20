@@ -201,7 +201,7 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     let mut cpu = Cpu::default();
-    cpu.regs = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444, esp, 0x6666_6666, 0x7777_7777, 0x8888_8888];
+    cpu.regs = koji::Gprs::new([0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444, esp, 0x6666_6666, 0x7777_7777, 0x8888_8888]);
     cpu.eflags = 0x202;
     cpu.eip = LO;
     let (got, got_mem) = run_jit(&cpu, &window.0);
@@ -241,10 +241,10 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(word(&got_mem, md + 8 + 4 * i as u32), w, "JIT state[{i}]");
     }
     // EAX = CRYPT_OK, ESP past the return address, the callee-saved registers kept
-    for r in [0, 3, 4, 5, 6, 7] {
-        assert_eq!(got.regs[r], icpu.regs[r], "register {r}: jit {:#x} interpreter {:#x}", got.regs[r], icpu.regs[r]);
+    for r in [koji::EAX, koji::EBX, koji::ESP, koji::EBP, koji::ESI, koji::EDI] {
+        assert_eq!(got.regs[r], icpu.regs[r], "register {r:?}: jit {:#x} interpreter {:#x}", got.regs[r], icpu.regs[r]);
     }
-    assert_eq!(got.regs[0], 0);
+    assert_eq!(got.regs[koji::EAX], 0);
     // memory: the same but for the callee's frame below the caller's ESP, where the message
     // schedule (W[64] at ESP-0x104) is the same too
     let frame = (esp - 0x200 - LO) as usize..(esp - LO) as usize;

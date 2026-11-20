@@ -762,10 +762,10 @@ impl Ctx<'_> {
     }
     fn raw64(&self, i: u32) -> u64 {
         match i {
-            0 => self.cpu.gpr(1),
-            1 => self.cpu.gpr(2),
-            2 => self.cpu.gpr(8),
-            3 => self.cpu.gpr(9),
+            0 => self.cpu.gpr(koji::Reg64::Rcx),
+            1 => self.cpu.gpr(koji::Reg64::Rdx),
+            2 => self.cpu.gpr(koji::Reg64::R8),
+            3 => self.cpu.gpr(koji::Reg64::R9),
             _ => crate::mem::r64((crate::mem::ga(self.esp) + 8).at(i, 8)),
         }
     }

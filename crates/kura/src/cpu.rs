@@ -309,7 +309,7 @@ fn exit_code(cpu: &Cpu, mem: &mut Linear, exit: Exit, from_jit: bool) -> Option<
                 let code: Vec<String> = (0..if ok { 8 } else { 0 }).map(|i| unsafe { *((cpu.eip as usize + i) as *const u8) }).map(|b| format!("{b:02x}")).collect();
                 eprintln!(
                     "fault {} {:08x} at eip {:08x} [{}] | eax {:08x} ecx {:08x} edx {:08x} ebx {:08x} esp {:08x} ebp {:08x} esi {:08x} edi {:08x} eflags {:08x}",
-                    if f.write { "write" } else { "read" }, f.addr, cpu.eip, code.join(" "), r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], cpu.eflags
+                    if f.write { "write" } else { "read" }, f.addr, cpu.eip, code.join(" "), r[koji::EAX], r[koji::ECX], r[koji::EDX], r[koji::EBX], r[koji::ESP], r[koji::EBP], r[koji::ESI], r[koji::EDI], cpu.eflags
                 );
             }
             // MASU_DUMP_FAULT=<eip, hex>: 64-bit registers and the memory they point at when a
@@ -322,8 +322,8 @@ fn exit_code(cpu: &Cpu, mem: &mut Linear, exit: Exit, from_jit: bool) -> Option<
             if at == Some(cpu.eip) || (at == Some(0) && (f.addr < 0x10000 || f.addr >= 0x8000_0000)) {
                 eprintln!("vnfault at {:x}:{:08x} addr {:x} write {}", cpu.rip_hi, cpu.eip, f.addr, f.write);
                 let names = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"];
-                for (i, n) in names.iter().enumerate() {
-                    let v = cpu.gpr(i);
+                for (r, n) in koji::Reg64::ALL.into_iter().zip(names) {
+                    let v = cpu.gpr(r);
                     let a = v as u32;
                     let mut line = format!("vnfault {n} {v:016x}");
                     if (koji::jit::GUEST_LO..koji::jit::GUEST_HI - 0x80).contains(&a) {
@@ -334,7 +334,7 @@ fn exit_code(cpu: &Cpu, mem: &mut Linear, exit: Exit, from_jit: bool) -> Option<
                     }
                     eprintln!("{line}");
                 }
-                let rsp = cpu.gpr(4) as u32;
+                let rsp = cpu.gpr(koji::Reg64::Rsp) as u32;
                 let st: Vec<String> = (0..48u32).map(|k| format!("{:x}", mem.read64(rsp.wrapping_add(k * 8)).unwrap_or(0xdead))).collect();
                 eprintln!("vnfault stack {}", st.join(" "));
             }
@@ -556,9 +556,9 @@ fn trace_call(cpu: &Cpu) {
         c = (c ^ unsafe { *((at + i) as usize as *const u8) } as u32).wrapping_mul(0x0100_0193);
     }
     let r = &cpu.regs;
-    let ret = if ok(r[4]) { unsafe { *(r[4] as usize as *const u32) } } else { 0 };
-    eprintln!("call {k} prev-dst-hash {h:08x} code {c:08x} | eax {:08x} ecx {:08x} edx {:08x} esi {:08x} edi {:08x} esp {:08x} [esp] {ret:08x} r8 {:x} r9 {:x}", r[0], r[1], r[2], r[6], r[7], r[4], cpu.r8[0], cpu.r8[1]);
-    PREV.with(|p| p.set((k + 1, r[2], r[1])));
+    let ret = if ok(r[koji::ESP]) { unsafe { *(r[koji::ESP] as usize as *const u32) } } else { 0 };
+    eprintln!("call {k} prev-dst-hash {h:08x} code {c:08x} | eax {:08x} ecx {:08x} edx {:08x} esi {:08x} edi {:08x} esp {:08x} [esp] {ret:08x} r8 {:x} r9 {:x}", r[koji::EAX], r[koji::ECX], r[koji::EDX], r[koji::ESI], r[koji::EDI], r[koji::ESP], cpu.r8[0], cpu.r8[1]);
+    PREV.with(|p| p.set((k + 1, r[koji::EDX], r[koji::ECX])));
 }
 
 #[cfg(test)]

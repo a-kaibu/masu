@@ -2224,7 +2224,7 @@ pub(crate) fn raise_from_api(c: &mut Ctx, code: u32, flags: u32, nargs: u32) {
         let ret = mem::r64(c.esp);
         c.cpu.eip = kome::num::lo32(ret);
         c.cpu.rip_hi = kome::num::lo32(ret >> 32);
-        c.cpu.set_gpr(4, u64::from(c.esp) + 8);
+        c.cpu.set_gpr(koji::Reg64::Rsp, u64::from(c.esp) + 8);
         crate::seh64::raise(c.cpu, code, flags, kome::num::lo32(ret), &[]);
     } else {
         let ret = r32(c.esp);
@@ -9365,7 +9365,7 @@ fn InterlockedPushListSList(c: &mut Ctx) -> u32 {
     if mem::x64() {
         return push_list(c.a(0), c.a(1), crate::api::Out::at(c.a(2)), c.a(3));
     }
-    push_list(c.cpu.regs[1], c.cpu.regs[2], crate::api::Out::at(c.a(0)), c.a(1))
+    push_list(c.cpu.regs[koji::ECX], c.cpu.regs[koji::EDX], crate::api::Out::at(c.a(0)), c.a(1))
 }
 fn RtlFirstEntrySList(c: &mut Ctx) -> u32 {
     slist_get(c.a(0)).0

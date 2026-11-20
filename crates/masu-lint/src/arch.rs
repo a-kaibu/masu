@@ -43,10 +43,11 @@ pub enum Rule {
     ShellSpecialEnv,
     DepthGuard,
     BooleanArg,
+    TypedRegisters,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 26] = [
+    pub const ALL: [Rule; 27] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -73,6 +74,7 @@ impl Rule {
         Rule::ShellSpecialEnv,
         Rule::DepthGuard,
         Rule::BooleanArg,
+        Rule::TypedRegisters,
     ];
 
     /// the name a site list and a message use
@@ -104,6 +106,7 @@ impl Rule {
             Rule::ShellSpecialEnv => "shell-special-env",
             Rule::DepthGuard => "depth-guard",
             Rule::BooleanArg => "boolean-arg",
+            Rule::TypedRegisters => "typed-registers",
         }
     }
 
@@ -135,6 +138,7 @@ impl Rule {
             Rule::ShellSpecialEnv => "a workflow's env or a script does not set one of bash's own variables (bench.yml's inputs went through GROUPS: a script's GROUPS=.. is dropped, RANDOM/SECONDS/LINENO are replaced, whether an env value gets in depends on the variable and the bash version): give it a name of its own",
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
             Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
+            Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -167,6 +171,7 @@ impl Rule {
             Rule::ShellSpecialEnv => regress::shell_special_env(tree),
             Rule::DepthGuard => regress::depth_guard(tree),
             Rule::BooleanArg => crate::win32::boolean_arg(tree),
+            Rule::TypedRegisters => typed_registers(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -216,6 +221,34 @@ fn build_output(tree: &Tree) -> Hits {
         .filter(|p| !p.is_rust() && (is(&TARGET_DIR, p.as_str()) || (is(&BUILD_EXT, p.as_str()) && !is(&BUILD_OK, p.as_str()))))
         .map(|p| (p.clone(), 1, p.to_string()))
         .collect()
+}
+
+pub const KOJI_LIB: &str = "crates/koji/src/lib.rs";
+
+/// A register named by a number: `Gpr::ALL[3]`, `Reg64::ALL[8]`, `Seg::ALL[2]`, `regs.values()[4]`
+static REG_BY_NUMBER: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\b(?:Gpr|Reg64|Seg)\s*::\s*ALL\s*\[\s*\d|\.values\s*\(\s*\)\s*\[\s*\d"));
+/// In koji's lib.rs, what would let a number be a register again: the Cpu fields as plain arrays,
+/// a public array inside Gprs/Segs, an Index by a number or a From of one
+static REG_UNTYPED: LazyLock<Option<Regex>> = LazyLock::new(|| {
+    rx(r"pub\s+(?:regs|hi|sreg|sbase)\s*:\s*\[|struct\s+(?:Gprs|Segs\s*<\s*T\s*>)\s*\(\s*pub\b|Index(?:Mut)?\s*<\s*(?:usize|u8|u16|u32|u64|i32|isize)\s*>\s*for\s+(?:Gprs|Segs)|From\s*<\s*(?:usize|u8|u16|u32|u64|i32|isize)\s*>\s*for\s+(?:Gpr|Reg64|Seg)\b")
+});
+
+fn typed_registers(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let (Some(num), Some(untyped)) = (REG_BY_NUMBER.as_ref(), REG_UNTYPED.as_ref()) else { return out };
+    for p in tree.paths() {
+        let s = p.as_str();
+        // (tests too: a test that names a register by number tests the wrong one as surely)
+        if !p.is_rust() || s.starts_with("crates/masu-lint/") || !["crates/", "tools/", "fuzz/"].iter().any(|x| s.starts_with(x)) {
+            continue;
+        }
+        let src = tree.code(p, false);
+        out.extend(num.find_iter(&src).map(|m| (p.clone(), line_of(&src, m.start()), m.as_str().to_owned())));
+        if s == KOJI_LIB {
+            out.extend(untyped.find_iter(&src).map(|m| (p.clone(), line_of(&src, m.start()), m.as_str().to_owned())));
+        }
+    }
+    out
 }
 
 fn hresult_copy(tree: &Tree) -> Hits {

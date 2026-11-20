@@ -54,19 +54,23 @@ impl Cpu {
         if self.lazy.op == 0 { self.eflags } else { (self.eflags & !flags::STATUS) | self.lazy.status() }
     }
 
-    /// 64-bit general register `i` (0..16, encoding order).
+    /// A 64-bit general register.
     #[inline]
-    pub fn gpr(&self, i: usize) -> u64 {
-        if i < 8 { u64::from(self.regs[i]) | u64::from(self.hi[i]) << 32 } else { self.r8[i - 8] }
+    pub fn gpr(&self, r: impl Into<Reg64>) -> u64 {
+        match r.into().split() {
+            Ok(g) => u64::from(self.regs[g]) | u64::from(self.hi[g]) << 32,
+            Err(k) => self.r8[k],
+        }
     }
 
     #[inline]
-    pub fn set_gpr(&mut self, i: usize, v: u64) {
-        if i < 8 {
-            self.regs[i] = lo32(v);
-            self.hi[i] = lo32(v >> 32);
-        } else {
-            self.r8[i - 8] = v;
+    pub fn set_gpr(&mut self, r: impl Into<Reg64>, v: u64) {
+        match r.into().split() {
+            Ok(g) => {
+                self.regs[g] = lo32(v);
+                self.hi[g] = lo32(v >> 32);
+            }
+            Err(k) => self.r8[k] = v,
         }
     }
 
@@ -238,21 +242,293 @@ pub trait Memory {
     }
 }
 
-/// General registers in encoding order.
-pub const EAX: usize = 0;
-pub const ECX: usize = 1;
-pub const EDX: usize = 2;
-pub const EBX: usize = 3;
-pub const ESP: usize = 4;
-pub const EBP: usize = 5;
-pub const ESI: usize = 6;
-pub const EDI: usize = 7;
+/// A general register, in encoding order. [`Gprs`] is indexed by it and by nothing else, so a
+/// register written as a number (`regs[3]`: EBX? the fourth pushed?) doesn't compile.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum Gpr { Eax, Ecx, Edx, Ebx, Esp, Ebp, Esi, Edi }
+
+impl Gpr {
+    /// Encoding order
+    pub const ALL: [Gpr; 8] = [Gpr::Eax, Gpr::Ecx, Gpr::Edx, Gpr::Ebx, Gpr::Esp, Gpr::Ebp, Gpr::Esi, Gpr::Edi];
+    /// The register a 3-bit field of an encoding names (the low three bits of `n`)
+    #[inline]
+    pub const fn low3(n: u32) -> Gpr {
+        match n & 7 {
+            0 => Gpr::Eax,
+            1 => Gpr::Ecx,
+            2 => Gpr::Edx,
+            3 => Gpr::Ebx,
+            4 => Gpr::Esp,
+            5 => Gpr::Ebp,
+            6 => Gpr::Esi,
+            // (n & 7 is 7 here)
+            _ => Gpr::Edi,
+        }
+    }
+    /// Register `i` of the encoding (0..8), None above
+    #[inline]
+    pub fn at(i: usize) -> Option<Gpr> {
+        Gpr::ALL.get(i).copied()
+    }
+    /// The encoding number (0..8)
+    #[inline]
+    pub const fn num(self) -> usize {
+        match self {
+            Gpr::Eax => 0,
+            Gpr::Ecx => 1,
+            Gpr::Edx => 2,
+            Gpr::Ebx => 3,
+            Gpr::Esp => 4,
+            Gpr::Ebp => 5,
+            Gpr::Esi => 6,
+            Gpr::Edi => 7,
+        }
+    }
+}
+
+/// A 64-bit general register (long mode), in encoding order: RAX..RDI are the [`Gpr`]s with
+/// their upper halves ([`Cpu::hi`]), R8..R15 [`Cpu::r8`]. [`Cpu::gpr`] takes it (or a [`Gpr`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub enum Reg64 { Rax, Rcx, Rdx, Rbx, Rsp, Rbp, Rsi, Rdi, R8, R9, R10, R11, R12, R13, R14, R15 }
+
+impl Reg64 {
+    /// Encoding order
+    pub const ALL: [Reg64; 16] = [
+        Reg64::Rax, Reg64::Rcx, Reg64::Rdx, Reg64::Rbx, Reg64::Rsp, Reg64::Rbp, Reg64::Rsi, Reg64::Rdi,
+        Reg64::R8, Reg64::R9, Reg64::R10, Reg64::R11, Reg64::R12, Reg64::R13, Reg64::R14, Reg64::R15,
+    ];
+    /// Register `i` of the encoding (0..16), None above
+    #[inline]
+    pub fn at(i: usize) -> Option<Reg64> {
+        Reg64::ALL.get(i).copied()
+    }
+    /// The register a 4-bit field (REX bit + 3 bits) names: the low four bits of `n`
+    #[inline]
+    pub const fn low4(n: usize) -> Reg64 {
+        match n & 15 {
+            0 => Reg64::Rax,
+            1 => Reg64::Rcx,
+            2 => Reg64::Rdx,
+            3 => Reg64::Rbx,
+            4 => Reg64::Rsp,
+            5 => Reg64::Rbp,
+            6 => Reg64::Rsi,
+            7 => Reg64::Rdi,
+            8 => Reg64::R8,
+            9 => Reg64::R9,
+            10 => Reg64::R10,
+            11 => Reg64::R11,
+            12 => Reg64::R12,
+            13 => Reg64::R13,
+            14 => Reg64::R14,
+            // (n & 15 is 15 here)
+            _ => Reg64::R15,
+        }
+    }
+    /// RAX..RDI as their 32-bit [`Gpr`], R8..R15 as their number - 8 in [`Cpu::r8`]
+    #[inline]
+    pub const fn split(self) -> Result<Gpr, usize> {
+        match self {
+            Reg64::Rax => Ok(Gpr::Eax),
+            Reg64::Rcx => Ok(Gpr::Ecx),
+            Reg64::Rdx => Ok(Gpr::Edx),
+            Reg64::Rbx => Ok(Gpr::Ebx),
+            Reg64::Rsp => Ok(Gpr::Esp),
+            Reg64::Rbp => Ok(Gpr::Ebp),
+            Reg64::Rsi => Ok(Gpr::Esi),
+            Reg64::Rdi => Ok(Gpr::Edi),
+            Reg64::R8 => Err(0),
+            Reg64::R9 => Err(1),
+            Reg64::R10 => Err(2),
+            Reg64::R11 => Err(3),
+            Reg64::R12 => Err(4),
+            Reg64::R13 => Err(5),
+            Reg64::R14 => Err(6),
+            Reg64::R15 => Err(7),
+        }
+    }
+    /// The encoding number (0..16)
+    #[inline]
+    pub const fn num(self) -> usize {
+        match self.split() {
+            Ok(g) => g.num(),
+            Err(k) => 8 + k,
+        }
+    }
+}
+
+impl Reg64 {
+    /// The 64-bit register a general register operand of any width is part of (AH: RAX)
+    pub fn of(r: iced_x86::Register) -> Option<Reg64> {
+        if r.is_gpr() { Reg64::at(r.full_register().number()) } else { None }
+    }
+}
+
+impl From<Gpr> for Reg64 {
+    #[inline]
+    fn from(g: Gpr) -> Reg64 {
+        match g {
+            Gpr::Eax => Reg64::Rax,
+            Gpr::Ecx => Reg64::Rcx,
+            Gpr::Edx => Reg64::Rdx,
+            Gpr::Ebx => Reg64::Rbx,
+            Gpr::Esp => Reg64::Rsp,
+            Gpr::Ebp => Reg64::Rbp,
+            Gpr::Esi => Reg64::Rsi,
+            Gpr::Edi => Reg64::Rdi,
+        }
+    }
+}
+
+pub const EAX: Gpr = Gpr::Eax;
+pub const ECX: Gpr = Gpr::Ecx;
+pub const EDX: Gpr = Gpr::Edx;
+pub const EBX: Gpr = Gpr::Ebx;
+pub const ESP: Gpr = Gpr::Esp;
+pub const EBP: Gpr = Gpr::Ebp;
+pub const ESI: Gpr = Gpr::Esi;
+pub const EDI: Gpr = Gpr::Edi;
+
+/// The eight 32-bit general registers (or the upper halves of RAX..RDI), indexed by [`Gpr`].
+/// `repr(transparent)`: the JIT addresses register `r` at the field's offset + 4 * r.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct Gprs([u32; 8]);
+const _: () = assert!(size_of::<Gprs>() == 32);
+
+impl Gprs {
+    /// From the values in encoding order
+    pub const fn new(v: [u32; 8]) -> Gprs {
+        Gprs(v)
+    }
+    /// The values in encoding order
+    pub const fn values(&self) -> [u32; 8] {
+        self.0
+    }
+    /// (register, value) in encoding order
+    pub fn iter(&self) -> impl Iterator<Item = (Gpr, u32)> + '_ {
+        Gpr::ALL.into_iter().zip(self.0)
+    }
+    /// (register, value) in encoding order, the values to change
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = (Gpr, &mut u32)> {
+        Gpr::ALL.into_iter().zip(self.0.iter_mut())
+    }
+}
+
+impl core::ops::Index<Gpr> for Gprs {
+    type Output = u32;
+    #[inline]
+    fn index(&self, r: Gpr) -> &u32 {
+        let [eax, ecx, edx, ebx, esp, ebp, esi, edi] = &self.0;
+        match r {
+            Gpr::Eax => eax,
+            Gpr::Ecx => ecx,
+            Gpr::Edx => edx,
+            Gpr::Ebx => ebx,
+            Gpr::Esp => esp,
+            Gpr::Ebp => ebp,
+            Gpr::Esi => esi,
+            Gpr::Edi => edi,
+        }
+    }
+}
+
+impl core::ops::IndexMut<Gpr> for Gprs {
+    #[inline]
+    fn index_mut(&mut self, r: Gpr) -> &mut u32 {
+        let [eax, ecx, edx, ebx, esp, ebp, esi, edi] = &mut self.0;
+        match r {
+            Gpr::Eax => eax,
+            Gpr::Ecx => ecx,
+            Gpr::Edx => edx,
+            Gpr::Ebx => ebx,
+            Gpr::Esp => esp,
+            Gpr::Ebp => ebp,
+            Gpr::Esi => esi,
+            Gpr::Edi => edi,
+        }
+    }
+}
+
+/// A segment register (16-bit mode), in encoding order. [`Segs`] is indexed by it only.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum Seg { Es, Cs, Ss, Ds, Fs, Gs }
+
+impl Seg {
+    /// Encoding order
+    pub const ALL: [Seg; 6] = [Seg::Es, Seg::Cs, Seg::Ss, Seg::Ds, Seg::Fs, Seg::Gs];
+    /// Segment register `i` of the encoding (0..6), None above (6 and 7 are #UD)
+    #[inline]
+    pub fn at(i: usize) -> Option<Seg> {
+        Seg::ALL.get(i).copied()
+    }
+    /// The encoding number (0..6)
+    #[inline]
+    pub const fn num(self) -> usize {
+        match self {
+            Seg::Es => 0,
+            Seg::Cs => 1,
+            Seg::Ss => 2,
+            Seg::Ds => 3,
+            Seg::Fs => 4,
+            Seg::Gs => 5,
+        }
+    }
+}
+
+/// One value per segment register (selectors, bases), indexed by [`Seg`]; `repr(transparent)`
+/// for the JIT's field offsets.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[repr(transparent)]
+pub struct Segs<T>([T; 6]);
+
+impl<T: Copy> Segs<T> {
+    /// From the values in encoding order
+    pub const fn new(v: [T; 6]) -> Segs<T> {
+        Segs(v)
+    }
+    /// The values in encoding order
+    pub const fn values(&self) -> [T; 6] {
+        self.0
+    }
+}
+
+impl<T> core::ops::Index<Seg> for Segs<T> {
+    type Output = T;
+    #[inline]
+    fn index(&self, s: Seg) -> &T {
+        let [es, cs, ss, ds, fs, gs] = &self.0;
+        match s {
+            Seg::Es => es,
+            Seg::Cs => cs,
+            Seg::Ss => ss,
+            Seg::Ds => ds,
+            Seg::Fs => fs,
+            Seg::Gs => gs,
+        }
+    }
+}
+
+impl<T> core::ops::IndexMut<Seg> for Segs<T> {
+    #[inline]
+    fn index_mut(&mut self, s: Seg) -> &mut T {
+        let [es, cs, ss, ds, fs, gs] = &mut self.0;
+        match s {
+            Seg::Es => es,
+            Seg::Cs => cs,
+            Seg::Ss => ss,
+            Seg::Ds => ds,
+            Seg::Fs => fs,
+            Seg::Gs => gs,
+        }
+    }
+}
 
 /// Architectural state of one guest thread. `repr(C)`: the JIT addresses the fields directly.
 #[derive(Clone, Debug)]
 #[repr(C)]
 pub struct Cpu {
-    pub regs: [u32; 8],
+    pub regs: Gprs,
     pub eip: u32,
     /// EFLAGS (bit 1 is kept set). Its status flags are stale while `lazy.op` is set: use
     /// [`Cpu::flags`] / [`Cpu::materialize`].
@@ -283,7 +559,7 @@ pub struct Cpu {
     /// bases always fit in 32 bits (all guest memory is below 4GB), so they stay in `eip`,
     /// `regs` and `fs_base`/`gs_base`. `hi` holds the upper halves of RAX..RDI.
     pub mode64: u32,
-    pub hi: [u32; 8],
+    pub hi: Gprs,
     pub r8: [u64; 8],
     pub xmm8: [u128; 8],
     /// JIT: guest calls currently nested as wasm calls (see jit::Gen::call_out)
@@ -312,8 +588,8 @@ pub struct Cpu {
     /// operands add the base of their segment. `eip` is IP (an offset in CS).
     pub mode16: u32,
     /// Selectors and bases of ES CS SS DS FS GS (16-bit mode only)
-    pub sreg: [u16; 6],
-    pub sbase: [u32; 6],
+    pub sreg: Segs<u16>,
+    pub sbase: Segs<u32>,
     /// 16-bit mode: a table of segment bases (u32 per selector index, sel >> 3) that loading
     /// a segment register reads
     pub ldt: u32,
@@ -333,18 +609,18 @@ impl Cpu {
     /// 16-bit mode: the linear address of CS:IP.
     #[inline]
     pub fn pc16(&self) -> u32 {
-        self.sbase[1].wrapping_add(self.eip & 0xffff)
+        self.sbase[Seg::Cs].wrapping_add(self.eip & 0xffff)
     }
 }
 
 impl Default for Cpu {
     fn default() -> Self {
         Cpu {
-            regs: [0; 8], eip: 0, eflags: 0x202, lazy: lazy::Lazy::default(), jit_hash: 0, jit_mask: 0,
+            regs: Gprs::new([0; 8]), eip: 0, eflags: 0x202, lazy: lazy::Lazy::default(), jit_hash: 0, jit_mask: 0,
             jit_budget: 0, jit_ring: 0, fs_base: 0, gs_base: 0, trap_lo: 0, trap_hi: 0, tsc: 0,
             fpu: Fpu::default(), mm: [0; 8], xmm: [0; 8], mxcsr: 0x1f80,
-            mode64: 0, hi: [0; 8], r8: [0; 8], xmm8: [0; 8], jit_depth: 0, rip_hi: 0, jit_calls: 0, jit_code_pages: 0, jit_smc: 0, jit_stale: 0,
-            vex_tmp: 0, mode16: 0, sreg: [0; 6], sbase: [0; 6], ldt: 0, ymmh: [0; 17],
+            mode64: 0, hi: Gprs::new([0; 8]), r8: [0; 8], xmm8: [0; 8], jit_depth: 0, rip_hi: 0, jit_calls: 0, jit_code_pages: 0, jit_smc: 0, jit_stale: 0,
+            vex_tmp: 0, mode16: 0, sreg: Segs::new([0; 6]), sbase: Segs::new([0; 6]), ldt: 0, ymmh: [0; 17],
         }
     }
 }

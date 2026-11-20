@@ -394,7 +394,8 @@ fn enter(stack: u32, obj: impl FnOnce(u32) -> u32) -> Option<Me> {
     let cpu = kura::cpu::create(api::TRAP_LO, api::TRAP_HI);
     unsafe {
         (*cpu).fs_base = teb;
-        (*cpu).regs[ESP] = top - 16;
+        // (an explicit reference: the Gprs index through one)
+        (&mut (*cpu).regs)[ESP] = top - 16;
         if mem::x64() {
             // long mode, GS = the TEB
             (*cpu).mode64 = 1;
@@ -584,14 +585,14 @@ fn run_loop(cpu: &mut Cpu, until: u32, depth: u32) {
                         if mem::x64() {
                             // (x64 serves print and symbols in the kernel and resumes a byte
                             // further, as a debugger would; 32-bit under WoW64 raises them too)
-                            let rax = cpu.gpr(0);
+                            let rax = cpu.gpr(koji::Reg64::Rax);
                             if matches!(rax as u32, 1 | 3 | 4 | 5) {
                                 cpu.eip = e + 1;
                                 continue;
                             }
                             seh64::raise(cpu, 0x8000_0003, 0, e, &[rax]);
                         } else {
-                            let eax = cpu.regs[0];
+                            let eax = cpu.regs[koji::EAX];
                             seh::raise(cpu, 0x8000_0003, 0, e, &[eax]);
                         }
                     }
@@ -682,8 +683,8 @@ fn memory_operand(cpu: &Cpu) -> Option<u64> {
         Register::FS => Some(cpu.fs_base as u64),
         Register::GS => Some(cpu.gs_base as u64),
         Register::ES | Register::CS | Register::SS | Register::DS => Some(0),
-        Register::AH | Register::CH | Register::DH | Register::BH => Some(cpu.gpr(r as usize - Register::AH as usize) >> 8 & 0xff),
-        r => Some(cpu.gpr(r.full_register().number())),
+        Register::AH | Register::CH | Register::DH | Register::BH => Some(cpu.gpr(koji::Reg64::of(r)?) >> 8 & 0xff),
+        r => Some(cpu.gpr(koji::Reg64::of(r)?)),
     })
 }
 
@@ -696,9 +697,9 @@ fn divisor_zero(cpu: &Cpu) -> Option<bool> {
         OpKind::Register => {
             let r = ins.op0_register();
             let v = if matches!(r, Register::AH | Register::CH | Register::DH | Register::BH) {
-                cpu.gpr(r as usize - Register::AH as usize) >> 8
+                cpu.gpr(koji::Reg64::of(r)?) >> 8
             } else {
-                cpu.gpr(r.full_register().number())
+                cpu.gpr(koji::Reg64::of(r)?)
             };
             (v, r.size())
         }
@@ -846,7 +847,7 @@ pub fn call64(cpu: &mut Cpu, f: u64, args: &[u64]) -> u64 {
     mem::w64(sp, api::RET_TRAP as u64);
     for (i, &a) in args.iter().enumerate() {
         if i < 4 {
-            cpu.set_gpr([1, 2, 8, 9][i], a);
+            cpu.set_gpr([koji::Reg64::Rcx, koji::Reg64::Rdx, koji::Reg64::R8, koji::Reg64::R9][i], a);
         }
         mem::w64(sp + 8 + 8 * i as u32, a);
     }
@@ -876,7 +877,7 @@ pub fn fatal(cpu: &mut Cpu, msg: &str) -> ! {
     let r = &cpu.regs;
     eprintln!(
         "sake: {msg}\nsake:   eip {:08x} eax {:08x} ecx {:08x} edx {:08x} ebx {:08x} esp {:08x} ebp {:08x} esi {:08x} edi {:08x}",
-        cpu.eip, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]
+        cpu.eip, r[koji::EAX], r[koji::ECX], r[koji::EDX], r[koji::EBX], r[koji::ESP], r[koji::EBP], r[koji::ESI], r[koji::EDI]
     );
     let mut s = String::new();
     for k in 0..16 {
@@ -886,7 +887,7 @@ pub fn fatal(cpu: &mut Cpu, msg: &str) -> ! {
         }
     }
     eprintln!("sake:   stack:{s}");
-    let mut ebp = r[5];
+    let mut ebp = r[koji::EBP];
     let mut chain = String::new();
     for _ in 0..12 {
         if !(mem::LO..mem::HI - 8).contains(&ebp) {
@@ -1006,7 +1007,7 @@ fn setup64(cpu: &mut Cpu, start: u32, param: u32) {
     let sp = ((cpu.regs[ESP] - 0x40) & !15) - 8;
     mem::w64(sp, api::EXIT_TRAP as u64);
     cpu.set_gpr(ESP, sp as u64);
-    cpu.set_gpr(1, mem::widen(param));
+    cpu.set_gpr(koji::Reg64::Rcx, mem::widen(param));
     let f = mem::widen(start);
     cpu.eip = f as u32;
     cpu.rip_hi = (f >> 32) as u32;

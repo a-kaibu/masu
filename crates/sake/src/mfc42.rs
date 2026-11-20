@@ -130,14 +130,14 @@ fn string(t: &[u16]) -> String {
 // calling helpers
 
 fn this(c: &Ctx) -> u32 {
-    c.cpu.regs[1]
+    c.cpu.regs[koji::ECX]
 }
 /// A thiscall function `f` on `obj` (ECX) with the stack arguments `args`.
 fn tcall(c: &mut Ctx, f: u32, obj: u32, args: &[u32]) -> u32 {
-    let ecx = c.cpu.regs[1];
-    c.cpu.regs[1] = obj;
+    let ecx = c.cpu.regs[koji::ECX];
+    c.cpu.regs[koji::ECX] = obj;
     let r = c.call(f, args);
-    c.cpu.regs[1] = ecx;
+    c.cpu.regs[koji::ECX] = ecx;
     r
 }
 /// The virtual function in slot `slot` (MFC 4.2's numbering) of `obj`. (MFC 4.0's
@@ -3823,7 +3823,7 @@ mod tests {
             w32(sp + 4 + 4 * i as u32, a);
         }
         let mut cpu = koji::Cpu::default();
-        cpu.regs[1] = this;
+        cpu.regs[koji::ECX] = this;
         let r = f(&mut Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 });
         mem::heap_free(sp);
         r

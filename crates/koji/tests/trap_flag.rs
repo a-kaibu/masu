@@ -29,7 +29,7 @@ fn setup(code: &[u8]) -> (Cpu, Flat) {
     m.0[CODE as usize..CODE as usize + code.len()].copy_from_slice(code);
     let mut cpu = Cpu::default();
     cpu.eip = CODE;
-    cpu.regs[4] = 0x8000;
+    cpu.regs[koji::ESP] = 0x8000;
     cpu.eflags = 2;
     // (no trap range in the way)
     cpu.trap_lo = 0xffff_0000;
@@ -117,8 +117,8 @@ fn tf_changes_nothing_else() {
         traced.eflags |= TF;
         for i in 0..8 {
             if i != 4 {
-                plain.regs[i] = rnd();
-                traced.regs[i] = plain.regs[i];
+                plain.regs[koji::Gpr::ALL[i]] = rnd();
+                traced.regs[koji::Gpr::ALL[i]] = plain.regs[koji::Gpr::ALL[i]];
             }
         }
         while plain.eip < CODE + n {
@@ -150,10 +150,10 @@ fn rep_traps_per_iteration() {
     assert_eq!(cpu.eip, rep);
     for left in [2, 1] {
         assert_eq!(step(&mut cpu, &mut m), Exit::SingleStep);
-        assert_eq!((cpu.eip, cpu.regs[1]), (rep, left), "EIP at the REP while iterations remain");
+        assert_eq!((cpu.eip, cpu.regs[koji::ECX]), (rep, left), "EIP at the REP while iterations remain");
     }
     assert_eq!(step(&mut cpu, &mut m), Exit::SingleStep);
-    assert_eq!((cpu.eip, cpu.regs[1]), (rep + 2, 0));
+    assert_eq!((cpu.eip, cpu.regs[koji::ECX]), (rep + 2, 0));
     assert_eq!(&m.0[0x3000..0x3003], b"abc");
     assert_eq!(step(&mut cpu, &mut m), Exit::SingleStep); // xor
     assert_eq!(step(&mut cpu, &mut m), Exit::SingleStep, "ECX 0: one trap");
@@ -167,16 +167,16 @@ fn repe_cmps_stops_at_the_difference() {
     let (mut cpu, mut m) = setup(&[0xf3, 0xa6, 0x90]);
     m.0[0x2000..0x2004].copy_from_slice(b"abXd");
     m.0[0x3000..0x3004].copy_from_slice(b"abcd");
-    cpu.regs[6] = 0x2000;
-    cpu.regs[7] = 0x3000;
-    cpu.regs[1] = 4;
+    cpu.regs[koji::ESI] = 0x2000;
+    cpu.regs[koji::EDI] = 0x3000;
+    cpu.regs[koji::ECX] = 4;
     cpu.eflags |= TF;
     let mut traps = 0;
     while cpu.eip == CODE {
         assert_eq!(step(&mut cpu, &mut m), Exit::SingleStep);
         traps += 1;
     }
-    assert_eq!((traps, cpu.regs[1], cpu.regs[6]), (3, 1, 0x2003));
+    assert_eq!((traps, cpu.regs[koji::ECX], cpu.regs[koji::ESI]), (3, 1, 0x2003));
 }
 
 mod string_ops {
@@ -206,10 +206,10 @@ mod string_ops {
                 let (mut cpu, mut m) = setup(&code);
                 m.0[0x2000..0x2040].copy_from_slice(&src);
                 m.0[0x3000..0x3040].copy_from_slice(&dst);
-                cpu.regs[0] = eax;
-                cpu.regs[1] = count;
-                cpu.regs[6] = 0x2020;
-                cpu.regs[7] = 0x3020;
+                cpu.regs[koji::EAX] = eax;
+                cpu.regs[koji::ECX] = count;
+                cpu.regs[koji::ESI] = 0x2020;
+                cpu.regs[koji::EDI] = 0x3020;
                 if df { cpu.eflags |= koji::flags::DF; }
                 if tf { cpu.eflags |= TF; }
                 let mut traps = 0;
@@ -228,7 +228,7 @@ mod string_ops {
             prop_assert!(plain.2 == stepped.2);
             prop_assert_eq!(plain.3, 1);
             // iterations made: ECX's decrease (one for an unprefixed instruction)
-            let iters = if pre.is_some() { count - plain.0[1] } else { 1 };
+            let iters = if pre.is_some() { count - plain.0[koji::ECX] } else { 1 };
             prop_assert_eq!(stepped.3, iters.max(1));
         }
     }

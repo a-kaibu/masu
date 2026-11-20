@@ -521,7 +521,7 @@ impl C16<'_> {
         h32(self.args[i] as u16)
     }
     pub fn ds(&self) -> u16 {
-        self.cpu.sreg[3]
+        self.cpu.sreg[koji::Seg::Ds]
     }
 }
 
@@ -633,7 +633,7 @@ pub fn dispatch(cpu: &mut Cpu, a: u32) -> bool {
     }) else {
         fatal16(cpu, &format!("w16: call into the thunk segment at {off:#x}, not an import"));
     };
-    let sp = cpu.sbase[2].wrapping_add(cpu.regs[ESP] & 0xffff);
+    let sp = cpu.sbase[koji::Seg::Ss].wrapping_add(cpu.regs[ESP] & 0xffff);
     let size = |t: u8| if matches!(t, b'w' | b's') { 2 } else if t == b'd' { 8 } else { 4 };
     let total: u32 = types.iter().map(|&t| size(t)).sum();
     let mut args = vec![0u32; types.len()];
@@ -692,7 +692,7 @@ pub fn dispatch(cpu: &mut Cpu, a: u32) -> bool {
     let pop = 4 + if conv == Conv::Pascal { total } else { 0 };
     let nsp = (cpu.regs[ESP] & 0xffff).wrapping_add(pop) & 0xffff;
     cpu.regs[ESP] = (cpu.regs[ESP] & 0xffff_0000) | nsp;
-    set_seg(cpu, 1, ret_cs);
+    set_seg(cpu, koji::Seg::Cs, ret_cs);
     cpu.eip = ret_ip;
     if conv == Conv::Register && let Some(after) = AFTER.with(|a| a.take()) {
         after(cpu);
@@ -705,8 +705,8 @@ thread_local! {
     pub static AFTER: Cell<Option<fn(&mut Cpu)>> = const { Cell::new(None) };
 }
 
-/// Loads segment register `i` (ES CS SS DS FS GS).
-pub fn set_seg(cpu: &mut Cpu, i: usize, sel: u16) {
+/// Loads segment register `i`.
+pub fn set_seg(cpu: &mut Cpu, i: koji::Seg, sel: u16) {
     cpu.sreg[i] = sel;
     cpu.sbase[i] = if sel >> 3 == 0 { 0 } else { sel_base(sel).map_or(0, |b| b.0) };
 }
@@ -734,7 +734,7 @@ pub fn call16_in(cpu: &mut Cpu, f: u32, args: &[A], ds: u16, setup: impl FnOnce(
         fatal16(cpu, "call16 outside 16-bit code");
     }
     let mut sp = (cpu.regs[ESP] & 0xffff).wrapping_sub(0x10) & !1;
-    let ss = cpu.sbase[2];
+    let ss = cpu.sbase[koji::Seg::Ss];
     for a in args {
         match *a {
             A::W(v) => {
@@ -752,11 +752,11 @@ pub fn call16_in(cpu: &mut Cpu, f: u32, args: &[A], ds: u16, setup: impl FnOnce(
     w16(ss + sp, RET_OFF as u16);
     w16(ss + sp + 2, thunk);
     cpu.regs[ESP] = (cpu.regs[ESP] & 0xffff_0000) | sp;
-    set_seg(cpu, 3, ds);
-    set_seg(cpu, 0, ds);
+    set_seg(cpu, koji::Seg::Ds, ds);
+    set_seg(cpu, koji::Seg::Es, ds);
     cpu.regs[EAX] = ds as u32;
     setup(cpu);
-    set_seg(cpu, 1, (f >> 16) as u16);
+    set_seg(cpu, koji::Seg::Cs, (f >> 16) as u16);
     cpu.eip = f & 0xffff;
     crate::run(cpu, 0);
     let r = (cpu.regs[EDX] & 0xffff) << 16 | (cpu.regs[EAX] & 0xffff);
@@ -774,14 +774,14 @@ pub fn fatal16(cpu: &mut Cpu, msg: &str) -> ! {
     let r = &cpu.regs;
     eprintln!(
         "sake w16: {msg}\n  cs:ip {:04x}:{:04x} ax {:04x} bx {:04x} cx {:04x} dx {:04x} si {:04x} di {:04x} bp {:04x} ss:sp {:04x}:{:04x} ds {:04x} es {:04x}",
-        cpu.sreg[1], cpu.eip & 0xffff, r[0] & 0xffff, r[3] & 0xffff, r[1] & 0xffff, r[2] & 0xffff, r[6] & 0xffff, r[7] & 0xffff, r[5] & 0xffff,
-        cpu.sreg[2], r[4] & 0xffff, cpu.sreg[3], cpu.sreg[0]
+        cpu.sreg[koji::Seg::Cs], cpu.eip & 0xffff, r[koji::EAX] & 0xffff, r[koji::EBX] & 0xffff, r[koji::ECX] & 0xffff, r[koji::EDX] & 0xffff, r[koji::ESI] & 0xffff, r[koji::EDI] & 0xffff, r[koji::EBP] & 0xffff,
+        cpu.sreg[koji::Seg::Ss], r[koji::ESP] & 0xffff, cpu.sreg[koji::Seg::Ds], cpu.sreg[koji::Seg::Es]
     );
     let pc = cpu.pc16();
     if pc < 0xfe00_0000 {
         eprintln!("  code: {:02x?}", crate::mem::array::<12>(pc));
     }
-    let sp = cpu.sbase[2] + (r[4] & 0xffff);
+    let sp = cpu.sbase[koji::Seg::Ss] + (r[koji::ESP] & 0xffff);
     eprintln!("  stack: {:04x?}", (0..12).map(|k| r16(sp + 2 * k)).collect::<Vec<_>>());
     unsafe { libc::exit(3) }
 }
@@ -1216,10 +1216,10 @@ pub fn init_dlls(cpu: &mut Cpu) -> bool {
         };
         let Some((h, entry, heap)) = next else { return ok };
         let r = call16_in(cpu, entry, &[], h, |cpu| {
-            cpu.regs[7] = h as u32;
+            cpu.regs[koji::EDI] = h as u32;
             cpu.regs[ECX] = heap as u32;
-            cpu.regs[6] = 0;
-            set_seg(cpu, 0, 0);
+            cpu.regs[koji::ESI] = 0;
+            set_seg(cpu, koji::Seg::Es, 0);
         });
         if r & 0xffff == 0 {
             eprintln!("sake w16: the LibEntry of {h:#x} failed");
@@ -1345,17 +1345,17 @@ pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
 
     // registers at the entry (Wine's NE_StartTask)
     cpu.mode16 = 1;
-    cpu.regs = [0; 8];
-    cpu.regs[3] = stack as u32;
+    cpu.regs = koji::Gprs::default();
+    cpu.regs[koji::EBX] = stack as u32;
     cpu.regs[ECX] = heap as u32;
-    cpu.regs[7] = dgroup as u32;
-    set_seg(cpu, 0, psp);
-    set_seg(cpu, 3, dgroup);
-    set_seg(cpu, 2, if ss == 0 { dgroup } else { segs[ss as usize - 1] });
-    set_seg(cpu, 1, segs[cs as usize - 1]);
+    cpu.regs[koji::EDI] = dgroup as u32;
+    set_seg(cpu, koji::Seg::Es, psp);
+    set_seg(cpu, koji::Seg::Ds, dgroup);
+    set_seg(cpu, koji::Seg::Ss, if ss == 0 { dgroup } else { segs[ss as usize - 1] });
+    set_seg(cpu, koji::Seg::Cs, segs[cs as usize - 1]);
     cpu.regs[ESP] = sp as u32;
     cpu.eip = ip as u32;
-    eprintln!("sake w16: {wpath}: {nseg} segments, {nmod} modules, cs:ip {:04x}:{ip:04x} ss:sp {:04x}:{sp:04x}", cpu.sreg[1], cpu.sreg[2]);
+    eprintln!("sake w16: {wpath}: {nseg} segments, {nmod} modules, cs:ip {:04x}:{ip:04x} ss:sp {:04x}:{sp:04x}", cpu.sreg[koji::Seg::Cs], cpu.sreg[koji::Seg::Ss]);
     // (its DLLs' LibEntry first, on its stack; the registers then as they were)
     let regs = (cpu.regs, cpu.sreg, cpu.sbase, cpu.eip);
     init_dlls(cpu);

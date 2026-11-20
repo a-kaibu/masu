@@ -366,7 +366,7 @@ struct Regs {
 impl Regs {
     fn from_cpu(c: &Cpu) -> Regs {
         Regs {
-            gpr: std::array::from_fn(|i| c.gpr(i)),
+            gpr: koji::Reg64::ALL.map(|r| c.gpr(r)),
             eip: c.eip,
             rip_hi: c.rip_hi,
             flags: c.flags(),
@@ -618,10 +618,10 @@ pub fn trap(cpu: &Cpu, addr: u32) {
         let Some(t) = c.get() else { return };
         // (CUR is set: a registered guest thread, its own stack)
         let o = Own(std::marker::PhantomData);
-        let esp = cpu.regs[4];
+        let esp = cpu.regs[koji::ESP];
         let n = t.n.load(Relaxed);
         if let Some(e) = t.traps.get(kome::num::us(n) % TRAPS) {
-            for (d, v) in e.iter().zip([addr, cpu.regs[0], rd32(o, esp).unwrap_or(0), rd32(o, esp.wrapping_add(4)).unwrap_or(0)]) {
+            for (d, v) in e.iter().zip([addr, cpu.regs[koji::EAX], rd32(o, esp).unwrap_or(0), rd32(o, esp.wrapping_add(4)).unwrap_or(0)]) {
                 d.store(v, Relaxed);
             }
         }
@@ -1283,7 +1283,7 @@ mod tests {
                     register(&cpu);
                     let mut i = 0u32;
                     while !stop.load(Relaxed) {
-                        cpu.regs[0] = i;
+                        cpu.regs[koji::EAX] = i;
                         cpu.eip = 0x0060_0000 + k + (i << 8);
                         shown(&cpu);
                         trap(&cpu, 0xfe00_0000 + i);

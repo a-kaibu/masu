@@ -812,10 +812,10 @@ const TRAP_HI: u32 = 0x17_1000;
 /// The host's side of an API at a trap address: rax += rcx + the trap's offset, then back
 /// to the return address on the stack (memory at `m`).
 fn host_api(c: &mut Cpu, m: *mut u8) {
-    let rsp = c.gpr(4);
+    let rsp = c.gpr(koji::Reg64::Rsp);
     let ret = unsafe { ((m as usize + rsp as u32 as usize) as *const u64).read_unaligned() };
-    c.set_gpr(0, c.gpr(0).wrapping_add(c.gpr(1)).wrapping_add((c.eip - TRAP_LO) as u64));
-    c.set_gpr(4, rsp + 8);
+    c.set_gpr(koji::Reg64::Rax, c.gpr(koji::Reg64::Rax).wrapping_add(c.gpr(koji::Reg64::Rcx)).wrapping_add((c.eip - TRAP_LO) as u64));
+    c.set_gpr(koji::Reg64::Rsp, rsp + 8);
     c.eip = ret as u32;
     c.rip_hi = (ret >> 32) as u32;
 }
@@ -1068,7 +1068,7 @@ impl Jit {
             let mut results = vec![Val::I32(0); 1];
             f.call(&mut self.store, &params, &mut results).map_err(|e| format!("trap: {e:?}"))?;
             regions += 1;
-            if std::env::var("JTRACE").is_ok() { let c = unsafe { get_cpu(m) }; eprintln!("entry {:#x} -> status {} at {:x}:{:#x} rsp {:#x} rbx {} rsi {}", params[1].unwrap_i32(), results[0].unwrap_i32(), c.rip_hi, c.eip, c.gpr(4), c.gpr(3), c.gpr(6)); }
+            if std::env::var("JTRACE").is_ok() { let c = unsafe { get_cpu(m) }; eprintln!("entry {:#x} -> status {} at {:x}:{:#x} rsp {:#x} rbx {} rsi {}", params[1].unwrap_i32(), results[0].unwrap_i32(), c.rip_hi, c.eip, c.gpr(koji::Reg64::Rsp), c.gpr(koji::Reg64::Rbx), c.gpr(koji::Reg64::Rsi)); }
             let mut c = unsafe { get_cpu(m) };
             if c.jit_stale != 0 {
                 // (as kura's stale_hit: the code changed since translated; the translations go,
@@ -1147,11 +1147,11 @@ fn initial(rng: &mut Rng, rip_hi: u32) -> Cpu {
             2 => (rng.next() as i32 as i64) as u64,
             _ => rng.next(),
         };
-        c.set_gpr(i, v);
+        c.set_gpr(koji::Reg64::ALL[i], v);
     }
-    c.set_gpr(3, DATA as u64 | (rng.below(2) << 32)); // rbx (its upper half: modulo 4GB)
-    c.set_gpr(4, (STACK - 0x800) as u64); // rsp
-    c.set_gpr(5, DATA as u64 + 0x100); // rbp
+    c.set_gpr(koji::Reg64::Rbx, DATA as u64 | (rng.below(2) << 32)); // rbx (its upper half: modulo 4GB)
+    c.set_gpr(koji::Reg64::Rsp, (STACK - 0x800) as u64); // rsp
+    c.set_gpr(koji::Reg64::Rbp, DATA as u64 + 0x100); // rbp
     c.eflags = 0x202 | (rng.next() as u32 & 0x8d5);
     // xmm: random bits, or floats / doubles / small integers (fewer NaNs)
     let vec = |rng: &mut Rng| -> u128 {
@@ -1294,8 +1294,8 @@ fn run_case(engine: &Engine, memory: &SharedMemory, base: usize, list0: &[Instru
             }
         }
         for i in 0..16 {
-            if want_cpu.gpr(i) != got_cpu.gpr(i) {
-                diffs.push(format!("r{i}: want {:#x} got {:#x}", want_cpu.gpr(i), got_cpu.gpr(i)));
+            if want_cpu.gpr(koji::Reg64::ALL[i]) != got_cpu.gpr(koji::Reg64::ALL[i]) {
+                diffs.push(format!("r{i}: want {:#x} got {:#x}", want_cpu.gpr(koji::Reg64::ALL[i]), got_cpu.gpr(koji::Reg64::ALL[i])));
             }
         }
         if want_cpu.eflags & 0x8d5 != got_cpu.eflags & 0x8d5 {
@@ -1424,13 +1424,13 @@ fn exe_mode(args: &[String]) {
         cpu0.eip = start;
         for i in [0usize, 1, 2, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] {
             match rng.below(3) {
-                0 => cpu0.set_gpr(i, DATA as u64 + rng.below(0xf000)),
-                1 => cpu0.set_gpr(i, rng.below(64)),
+                0 => cpu0.set_gpr(koji::Reg64::ALL[i], DATA as u64 + rng.below(0xf000)),
+                1 => cpu0.set_gpr(koji::Reg64::ALL[i], rng.below(64)),
                 _ => {}
             }
         }
-        cpu0.set_gpr(3, DATA as u64 + rng.below(0xf000));
-        cpu0.set_gpr(5, DATA as u64 + rng.below(0xf000));
+        cpu0.set_gpr(koji::Reg64::Rbx, DATA as u64 + rng.below(0xf000));
+        cpu0.set_gpr(koji::Reg64::Rbp, DATA as u64 + rng.below(0xf000));
         let setup = || unsafe {
             std::ptr::write_bytes(m.add(0x10000), 0, MEM - 0x10000);
             std::ptr::copy_nonoverlapping(data.as_ptr(), m.add(DATA as usize), data.len());
@@ -1500,8 +1500,8 @@ fn exe_mode(args: &[String]) {
         got.materialize();
         let mut d = Vec::new();
         for i in 0..16 {
-            if w.gpr(i) != got.gpr(i) {
-                d.push(format!("r{i}: want {:#x} got {:#x}", w.gpr(i), got.gpr(i)));
+            if w.gpr(koji::Reg64::ALL[i]) != got.gpr(koji::Reg64::ALL[i]) {
+                d.push(format!("r{i}: want {:#x} got {:#x}", w.gpr(koji::Reg64::ALL[i]), got.gpr(koji::Reg64::ALL[i])));
             }
         }
         if (w.eip, w.rip_hi) != (got.eip, got.rip_hi) {
@@ -1521,7 +1521,7 @@ fn exe_mode(args: &[String]) {
             if fails <= 10 {
                 let mut c0 = cpu0.clone();
                 c0.materialize();
-                println!("test {t} from {start:#x}: {}\n    init {:x?} flags {:#x}", d.join("; "), (0..16).map(|i| c0.gpr(i)).collect::<Vec<_>>(), c0.eflags);
+                println!("test {t} from {start:#x}: {}\n    init {:x?} flags {:#x}", d.join("; "), (0..16).map(|i| c0.gpr(koji::Reg64::ALL[i])).collect::<Vec<_>>(), c0.eflags);
             }
         }
     }
@@ -1623,7 +1623,7 @@ fn main() {
             fails += 1;
             if fails <= 10 {
                 println!("test {t} (rip_hi {rip_hi}): {}", diffs.join("; "));
-                println!("    init: {:x?} flags {:#x}", (0..16).map(|i| cpu0.gpr(i)).collect::<Vec<_>>(), cpu0.eflags);
+                println!("    init: {:x?} flags {:#x}", (0..16).map(|i| cpu0.gpr(koji::Reg64::ALL[i])).collect::<Vec<_>>(), cpu0.eflags);
                 let mut dec = iced_x86::Decoder::with_ip(64, &code, rip, iced_x86::DecoderOptions::NONE);
                 let mut f = iced_x86::FastFormatter::new();
                 let mut s = String::new();
@@ -1711,7 +1711,7 @@ fn self_modifying(watch: bool) -> u64 {
     // (the loop starts at +5: mov ecx is 5 bytes, its mov eax's immediate at +6)
     assert_eq!(&code[5..7], &[0xb8, 1]);
     let mut cpu = Cpu { mode64: 1, eip: CODE, jit_budget: 1 << 30, ..Cpu::default() };
-    cpu.set_gpr(4, (STACK - 0x800) as u64);
+    cpu.set_gpr(koji::Reg64::Rsp, (STACK - 0x800) as u64);
     unsafe {
         std::ptr::write_bytes((base + 0x10000) as *mut u8, 0, MEM - 0x10000);
         std::ptr::copy_nonoverlapping(code.as_ptr(), (base + CODE as usize) as *mut u8, code.len());
@@ -1723,7 +1723,7 @@ fn self_modifying(watch: bool) -> u64 {
     WATCH.store(false, Relaxed);
     let c = unsafe { get_cpu(base as *mut u8) };
     assert_eq!(c.eip, END);
-    c.gpr(2)
+    c.gpr(koji::Reg64::Rdx)
 }
 
 #[test]
@@ -1761,7 +1761,7 @@ fn ignored_prefixes_on_branches_stay_translated() {
     let ins: Vec<_> = iced_x86::Decoder::with_ip(64, &code, CODE as u64, iced_x86::DecoderOptions::NONE).into_iter().collect();
     assert_eq!(ins.iter().filter(|i| koji::jit::rep_ignored(i) && (i.has_repne_prefix() || i.has_rep_prefix())).count(), 4);
     let mut cpu = Cpu { mode64: 1, eip: CODE, jit_budget: 1 << 30, mxcsr: 0x1f80, ..Cpu::default() };
-    cpu.set_gpr(4, (STACK - 0x800) as u64);
+    cpu.set_gpr(koji::Reg64::Rsp, (STACK - 0x800) as u64);
     // the interpreter alone
     let mut want = cpu.clone();
     let mut m = vec![0u8; MEM];
@@ -1769,7 +1769,7 @@ fn ignored_prefixes_on_branches_stay_translated() {
     while want.eip != END {
         assert_eq!(koji::step(&mut want, &mut Mem(m.as_mut_ptr())), Exit::Continue);
     }
-    assert_eq!((want.gpr(0), want.gpr(2), want.gpr(1)), (100, 200, 0));
+    assert_eq!((want.gpr(koji::Reg64::Rax), want.gpr(koji::Reg64::Rdx), want.gpr(koji::Reg64::Rcx)), (100, 200, 0));
     unsafe {
         std::ptr::write_bytes((base + 0x10000) as *mut u8, 0, MEM - 0x10000);
         std::ptr::copy_nonoverlapping(code.as_ptr(), (base + CODE as usize) as *mut u8, code.len());
@@ -1780,7 +1780,7 @@ fn ignored_prefixes_on_branches_stay_translated() {
     jit.run(base).unwrap();
     let c = unsafe { get_cpu(base as *mut u8) };
     assert_eq!(c.eip, END);
-    assert_eq!((c.gpr(0), c.gpr(2), c.gpr(1), c.gpr(4)), (want.gpr(0), want.gpr(2), want.gpr(1), want.gpr(4)));
+    assert_eq!((c.gpr(koji::Reg64::Rax), c.gpr(koji::Reg64::Rdx), c.gpr(koji::Reg64::Rcx), c.gpr(koji::Reg64::Rsp)), (want.gpr(koji::Reg64::Rax), want.gpr(koji::Reg64::Rdx), want.gpr(koji::Reg64::Rcx), want.gpr(koji::Reg64::Rsp)));
     assert_eq!(STEPS.get(), 0, "no instruction left to the interpreter");
 }
 
@@ -1806,8 +1806,8 @@ fn non_temporal_stores_stay_translated() {
         &[0xe9], &jmp,                      // 22: jmp END
     ].concat();
     let mut cpu = Cpu { mode64: 1, eip: CODE, jit_budget: 1 << 30, mxcsr: 0x1f80, ..Cpu::default() };
-    cpu.set_gpr(3, DATA as u64);
-    cpu.set_gpr(4, (STACK - 0x800) as u64);
+    cpu.set_gpr(koji::Reg64::Rbx, DATA as u64);
+    cpu.set_gpr(koji::Reg64::Rsp, (STACK - 0x800) as u64);
     cpu.xmm[1] = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeff;
     cpu.xmm[2] = 0x0102_0304_0506_0708_090a_0b0c_0d0e_0f10;
     cpu.xmm[3] = !cpu.xmm[1];
@@ -1907,8 +1907,8 @@ fn run_both_fn_traps(code: &[u8], rbx: u64, traps: bool) -> (Cpu, Cpu, usize, us
     let memory = SharedMemory::new(&engine, MemoryType::shared(pages, pages)).unwrap();
     let base = memory.data().as_ptr() as *mut u8 as usize;
     let mut cpu = Cpu { mode64: 1, eip: CODE, jit_budget: 1 << 30, mxcsr: 0x1f80, ..Cpu::default() };
-    cpu.set_gpr(4, (STACK - 0x800) as u64);
-    cpu.set_gpr(3, rbx);
+    cpu.set_gpr(koji::Reg64::Rsp, (STACK - 0x800) as u64);
+    cpu.set_gpr(koji::Reg64::Rbx, rbx);
     if traps {
         (cpu.trap_lo, cpu.trap_hi) = (TRAP_LO, TRAP_HI);
     }
@@ -1953,9 +1953,9 @@ fn functions_call_each_other() {
         &[0x48, 0x83, 0xc2, 0x02, 0xc3],    // 29: g: add rdx, 2; ret
     ].concat();
     let (want, got, regions, steps) = run_both_fn(&code, 0);
-    assert_eq!((want.gpr(0), want.gpr(2), want.gpr(1)), (1000, 2000, 0));
+    assert_eq!((want.gpr(koji::Reg64::Rax), want.gpr(koji::Reg64::Rdx), want.gpr(koji::Reg64::Rcx)), (1000, 2000, 0));
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
     assert_eq!(steps, 0, "no instruction left to the interpreter");
@@ -1980,9 +1980,9 @@ fn deep_recursion_leaves_and_comes_back() {
         &[0xc3],                            // 29: done: ret
     ].concat();
     let (want, got, _, _) = run_both_fn(&code, 500);
-    assert_eq!(want.gpr(6), 499);
+    assert_eq!(want.gpr(koji::Reg64::Rsi), 499);
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
 }
@@ -2014,7 +2014,7 @@ fn rotates_stay_translated() {
     assert_eq!(code.len() as u32, jmp_at + 5);
     let (want, got, _, steps) = run_both_fn(&code, 0);
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
     assert_eq!(steps, 1, "only pushfq left to the interpreter");
@@ -2047,9 +2047,9 @@ fn calls_through_import_thunks() {
     put(0x70, &((CODE + 0x68) as u64).to_le_bytes()); // the slot: f
     put(0x78, &[0x48, 0xff, 0xc2, 0xc3]); // g: inc rdx; ret
     let (want, got, regions, steps) = run_both_fn(&code, 0);
-    assert_eq!((want.gpr(0), want.gpr(2)), (500, 500));
+    assert_eq!((want.gpr(koji::Reg64::Rax), want.gpr(koji::Reg64::Rdx)), (500, 500));
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
     assert_eq!(steps, 0, "no instruction left to the interpreter");
@@ -2078,9 +2078,9 @@ fn api_calls_go_straight_to_the_host() {
     put(0x70, &((TRAP_LO + 8) as u64).to_le_bytes());
     put(0x78, &((TRAP_LO + 0x10) as u64).to_le_bytes());
     let (want, got, _, steps) = run_both_fn_traps(&code, 0, true);
-    assert_eq!(want.gpr(2), 1000);
+    assert_eq!(want.gpr(koji::Reg64::Rdx), 1000);
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
     assert_eq!(steps, 0, "no instruction left to the interpreter");
@@ -2123,10 +2123,10 @@ fn hinted_indirect_calls_inline_their_leaf() {
     for c in [&mut want, &mut plain, &mut got] {
         c.materialize();
     }
-    assert_eq!((want.gpr(2), want.gpr(3), want.gpr(7), want.gpr(8)), (1000, 3000, 499, 99));
+    assert_eq!((want.gpr(koji::Reg64::Rdx), want.gpr(koji::Reg64::Rbx), want.gpr(koji::Reg64::Rdi), want.gpr(koji::Reg64::R8)), (1000, 3000, 499, 99));
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
-        assert_eq!(plain.gpr(i), want.gpr(i), "register {i}, no hints");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
+        assert_eq!(plain.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}, no hints");
     }
     assert_eq!((plain.eflags & 0x8d5, got.eip, got.eflags & 0x8d5), (want.eflags & 0x8d5, END, want.eflags & 0x8d5));
     assert_eq!(steps, 0, "no instruction left to the interpreter");
@@ -2156,9 +2156,9 @@ fn calls_through_the_same_operand_share_a_hint() {
     HINTS.with(|h| *h.borrow_mut() = vec![(u64::from(CODE + 14), u64::from(l))]);
     let (want, got, _, steps) = run_both_fn(&code, 0);
     HINTS.with(|h| h.borrow_mut().clear());
-    assert_eq!(want.gpr(2), 2001);
+    assert_eq!(want.gpr(koji::Reg64::Rdx), 2001);
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!((got.eip, steps), (END, 0));
 }
@@ -2187,9 +2187,9 @@ fn leaves_called_inline() {
     put(40, &[0x48, 0x83, 0xc0, 0x01, 0xa8, 0x01, 0x74, 0x04, 0x48, 0x83, 0xc2, 0x01, 0xc3]); // L: add rax, 1; test al, 1; jz 52; add rdx, 1; ret
     put(60, &[0x48, 0x83, 0x04, 0x24, 0x05, 0xc3]); // T: add qword [rsp], 5; ret
     let (want, got, regions, _) = run_both_fn(&code, 0);
-    assert_eq!((want.gpr(0), want.gpr(2)), (2000, 1000));
+    assert_eq!((want.gpr(koji::Reg64::Rax), want.gpr(koji::Reg64::Rdx)), (2000, 1000));
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
     assert!(regions < 12, "{regions} entries from the run loop");
@@ -2213,7 +2213,7 @@ fn a_return_to_another_alias_keeps_rip_hi() {
     assert_eq!(want.rip_hi, 1);
     assert_eq!((got.eip, got.rip_hi), (want.eip, want.rip_hi));
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
 }
 
@@ -2240,9 +2240,9 @@ fn an_indirect_call_over_three_functions() {
     put(0x48, &[0x48, 0x83, 0xc2, 0x02, 0xc3]); // f2: add rdx, 2; ret
     put(0x50, &[0x48, 0x83, 0xc6, 0x03, 0xc3]); // f3: add rsi, 3; ret
     let (want, got, regions, steps) = run_both_fn(&code, 0);
-    assert_eq!((want.gpr(0), want.gpr(2), want.gpr(6)), (333, 666, 999));
+    assert_eq!((want.gpr(koji::Reg64::Rax), want.gpr(koji::Reg64::Rdx), want.gpr(koji::Reg64::Rsi)), (333, 666, 999));
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
     assert_eq!(steps, 0, "no instruction left to the interpreter");
@@ -2278,10 +2278,10 @@ fn flags_after_a_call_as_the_caller_reads_them() {
     put(0x45, &[0x48, 0x83, 0xff, 0x64, 0xc3]); // cmp rdi, 100; ret
     put(0x50, &[0x48, 0xff, 0xc2, 0xc3]); // g: inc rdx; ret
     let (want, got, _, steps) = run_both_fn(&code, 0);
-    assert!(want.gpr(6) > 0);
+    assert!(want.gpr(koji::Reg64::Rsi) > 0);
     assert_eq!(steps, 1, "only pushfq left to the interpreter");
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
 }
@@ -2306,9 +2306,9 @@ fn a_loop_header_inside_the_block_before() {
         &[0xe9], &jmp,                  // 25: jmp END
     ].concat();
     let (want, got, regions, steps) = run_both_fn(&code, 0);
-    assert_eq!((want.gpr(0), want.gpr(2)), (500, 1000));
+    assert_eq!((want.gpr(koji::Reg64::Rax), want.gpr(koji::Reg64::Rdx)), (500, 1000));
     for i in 0..16 {
-        assert_eq!(got.gpr(i), want.gpr(i), "register {i}");
+        assert_eq!(got.gpr(koji::Reg64::ALL[i]), want.gpr(koji::Reg64::ALL[i]), "register {i}");
     }
     assert_eq!(got.eip, END);
     assert_eq!(steps, 0, "no instruction left to the interpreter");

@@ -351,7 +351,7 @@ pub fn int3_hit() {
 /// (`cpu` goes on, past a breakpoint's int3), None for the handlers to run
 pub fn first_chance(cpu: &mut koji::Cpu, code: u32, flags: u32, addr: u64, params: &[u64]) -> Option<()> {
     // (the break-in thread's breakpoint never reaches handlers: it ends either way)
-    let sp = cpu.gpr(4) as u32;
+    let sp = cpu.gpr(koji::Reg64::Rsp) as u32;
     let breakin = code == BREAKPOINT && BREAKIN.load(Ordering::Relaxed) != 0 && mem::accessible(sp, ps(), false, false) >= ps() && mem::rp(sp) == breakin_return();
     let int3 = INT3.with(|f| f.replace(false));
     if !STARTED.load(Ordering::Acquire) || !debugged() {

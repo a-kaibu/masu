@@ -25,10 +25,10 @@ fn main() {
     mem.0[0x1000..0x1000 + code.len()].copy_from_slice(&code);
     for cached in [false, true] {
         let mut cpu = Cpu::default();
-        cpu.eip = 0x1000; cpu.regs[4] = 0x80000; cpu.regs[6] = 0x20000; cpu.regs[7] = 0x30000;
+        cpu.eip = 0x1000; cpu.regs[koji::ESP] = 0x80000; cpu.regs[koji::ESI] = 0x20000; cpu.regs[koji::EDI] = 0x30000;
         let mut c = koji::DecodeCache::new();
         let t = std::time::Instant::now();
-        for _ in 0..20_000_000 { cpu.regs[7] &= 0x3ffff; let _ = if cached { koji::step_cached(&mut cpu, &mut mem, Some(&mut c)) } else { koji::step_flow(&mut cpu, &mut mem) }; }
+        for _ in 0..20_000_000 { cpu.regs[koji::EDI] &= 0x3ffff; let _ = if cached { koji::step_cached(&mut cpu, &mut mem, Some(&mut c)) } else { koji::step_flow(&mut cpu, &mut mem) }; }
         println!("cached {cached}: {:.1} ns/instr", t.elapsed().as_nanos() as f64 / 2e7);
     }
 }
