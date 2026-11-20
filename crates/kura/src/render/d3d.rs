@@ -1455,11 +1455,18 @@ impl D3d {
                     i += 10;
                 }
                 FILL => {
-                    let (tex, level, x, y, w, h, color) = (a(1), a(2), a(3), a(4), a(5), a(6), a(7));
+                    // (level | layer << 16: a Direct3D 9 cube's face is its layer)
+                    let (tex, level, x, y, w, h, color) = (a(1), a(2) & 0xffff, a(3), a(4), a(5), a(6), a(7));
+                    let layer = a(2) >> 16;
                     let saved = self.target;
                     let saved2 = self.targets2.take();
                     self.end_pass();
-                    self.target = [tex, level, 0];
+                    if self.textures.get(&tex).is_some_and(|t| t.layers > 1) {
+                        self.target = [0; 3];
+                        self.targets2 = Some(vec![1, tex, level, layer, 0, 0, 0]);
+                    } else {
+                        self.target = [tex, level, 0];
+                    }
                     let col = [((color >> 16) & 255) as f32 / 255.0, ((color >> 8) & 255) as f32 / 255.0, (color & 255) as f32 / 255.0, (color >> 24) as f32 / 255.0];
                     self.clear_rect(1, col, 0.0, 0, x, y, w, h);
                     self.end_pass();
@@ -2199,6 +2206,21 @@ impl D3d {
     /// (`clears`), not with this pair of targets: Siglus clears color, depth and stencil, then
     /// depth, then stencil, and draws to the color target without the depth buffer (Z off).
     fn clear_whole(&mut self, flags: u32, color: [f32; 4], z: f32, stencil: u32) {
+        // (a set of targets, Direct3D 9's on several or on a cube's face: each target's layer)
+        if let Some(tg) = self.targets2.clone() {
+            // ([n, (tex level layer) * n, dtex dlevel dlayer])
+            let views: Vec<[u32; 3]> = tg.get(1..).unwrap_or_default().chunks_exact(3).filter_map(|v| v.first_chunk::<3>().copied()).collect();
+            let (colors, depth) = views.split_at(us(tg.first().copied().unwrap_or(0)).min(views.len()));
+            if flags & 1 != 0 {
+                for &[tex, level, layer] in colors {
+                    self.defer_clear(tex, Clear { level, layer, flags: 1, color, z, stencil });
+                }
+            }
+            if let Some(&[ds, level, layer]) = depth.first() && flags & 6 != 0 && ds != 0 {
+                self.defer_clear(ds, Clear { level, layer, flags: flags & 6, color, z: z.clamp(0.0, 1.0), stencil });
+            }
+            return;
+        }
         let [rt, level, ds] = self.target;
         if flags & 1 != 0 && rt != 0 {
             self.defer_clear(rt, Clear { level, layer: 0, flags: 1, color, z, stencil });

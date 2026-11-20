@@ -86,16 +86,13 @@ fn cube_textures_reach_the_page_and_draw() {
     let caps = unsafe { alloc(304) as u32 };
     assert_eq!(call(IF_DEVICE, 7, &[dev, caps]), 0);
     assert_ne!(rd(caps + 15 * 4) & 0x800, 0, "TextureCaps CUBEMAP");
-    // invalid: no size, a depth format, no out pointer; a render target cube is not available
-    // yet (an error the game sees, not a NULL)
-    for (e, usage, fmt) in [(0, 0, f::A8R8G8B8), (4, 0, 80), (4, 2, f::D24S8)] {
+    // invalid: no size, a render target of a format no target has (as a 2D texture's: winref
+    // d3d9rtfmt X8B8G8R8), a format Windows has no textures of
+    for (e, usage, fmt) in [(0, 0, f::A8R8G8B8), (4, 1, f::X8B8G8R8), (4, 0, f::X8L8V8U8)] {
         let o = out();
         assert_eq!(call(IF_DEVICE, 25, &[dev, e, 1, usage, fmt, 1, o, 0]), 0x8876086c, "edge {e} usage {usage} format {fmt}");
         assert_eq!(rd(o), 0);
     }
-    let o = out();
-    assert_eq!(call(IF_DEVICE, 25, &[dev, 4, 1, 1, f::A8R8G8B8, 0, o, 0]), 0x8876086a, "render target cube: NOTAVAILABLE");
-    assert_eq!(rd(o), 0);
     // 8x8, all levels (4), managed
     let from = model::with(|m| m.objs.len());
     let o = out();
@@ -369,5 +366,169 @@ fn direct3d8_cubes() {
     let e = errors();
     assert!(e.is_empty(), "{:?}", &e[..e.len().min(8)]);
     call(IF_CUBE + V8, 2, &[cube]);
+    gpu::set_pump(None);
+}
+
+/// What the page holds of every face's every level of a render target cube (A8R8G8B8, edge 8,
+/// two levels), as a list of operations leaves it: Clear of a face as the target (whole or a
+/// rectangle), ColorFill of a rectangle, StretchRect of one face's level into another's
+/// (same size, point). Each face is its own layer: no operation reaches another face.
+#[derive(Clone, Debug)]
+enum CubeOp {
+    Clear { face: u32, level: u32, rect: Option<[u32; 4]>, color: u32 },
+    Fill { face: u32, level: u32, rect: [u32; 4], color: u32 },
+    Stretch { from: u32, to: u32, level: u32 },
+}
+
+fn cube_op() -> impl Strategy<Value = CubeOp> {
+    let rect = |e: u32| (0..e, 0..e, 1..=e, 1..=e).prop_map(|(x, y, w, h)| [x, y, (x + w).min(8), (y + h).min(8)]);
+    prop_oneof![
+        (0..6u32, 0..2u32, proptest::option::of(rect(4)), any::<u32>()).prop_map(|(face, level, rect, color)| CubeOp::Clear { face, level, rect, color: color | 0xff00_0000 }),
+        (0..6u32, 0..2u32, rect(4), any::<u32>()).prop_map(|(face, level, rect, color)| CubeOp::Fill { face, level, rect, color }),
+        (0..6u32, 0..6u32, 0..2u32).prop_filter("two faces", |(a, b, _)| a != b).prop_map(|(from, to, level)| CubeOp::Stretch { from, to, level }),
+    ]
+}
+
+/// face `f` level `l` of `cube` (a reference the caller releases)
+fn face(cube: u32, f: u32, l: u32) -> u32 {
+    let o = out();
+    assert_eq!(call(IF_CUBE, 18, &[cube, f, l, o]), 0);
+    rd(o)
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
+    #[test]
+    fn render_target_cube_faces_are_their_layers(ops in proptest::collection::vec(cube_op(), 1..10)) {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        init();
+        let dev = device();
+        errors();
+        use super::format as f;
+        let from = model::with(|m| m.objs.len());
+        let o = out();
+        // CreateCubeTexture(8, 2 levels, RENDERTARGET, A8R8G8B8, DEFAULT)
+        prop_assert_eq!(call(IF_DEVICE, 25, &[dev, 8, 2, 1, f::A8R8G8B8, 0, o, 0]), 0);
+        let cube = rd(o);
+        let o = out();
+        prop_assert_eq!(call(IF_DEVICE, 38, &[dev, 0, o]), 0, "GetRenderTarget");
+        let back = rd(o);
+        // [face][level][texel]
+        let mut want: Vec<Vec<Vec<u32>>> = (0..6).map(|_| (0..2).map(|l| vec![0u32; 64 >> (2 * l)]).collect()).collect();
+        let paint = |w: &mut Vec<u32>, e: u32, r: [u32; 4], c: u32| {
+            for y in r[1]..r[3].min(e) {
+                for x in r[0]..r[2].min(e) {
+                    w[(y * e + x) as usize] = c;
+                }
+            }
+        };
+        for op in &ops {
+            match *op {
+                CubeOp::Clear { face: fc, level, rect, color } => {
+                    let s = face(cube, fc, level);
+                    prop_assert_eq!(call(IF_DEVICE, 37, &[dev, 0, s]), 0, "SetRenderTarget");
+                    let e = 8 >> level;
+                    let (n, p, r) = match rect {
+                        Some(r) => (1, words(&r), r),
+                        None => (0, 0, [0, 0, e, e]),
+                    };
+                    prop_assert_eq!(call(IF_DEVICE, 43, &[dev, n, p, 1, color, 1f32.to_bits(), 0]), 0, "Clear");
+                    paint(&mut want[fc as usize][level as usize], e, r, color);
+                    call(IF_SURFACE, 2, &[s]);
+                }
+                CubeOp::Fill { face: fc, level, rect, color } => {
+                    let s = face(cube, fc, level);
+                    let e = 8 >> level;
+                    let r = [rect[0].min(e - 1), rect[1].min(e - 1), rect[2].min(e), rect[3].min(e)];
+                    prop_assert_eq!(call(IF_DEVICE, 35, &[dev, s, words(&r), color]), 0, "ColorFill");
+                    paint(&mut want[fc as usize][level as usize], e, r, color);
+                    call(IF_SURFACE, 2, &[s]);
+                }
+                CubeOp::Stretch { from: a, to: b, level } => {
+                    let (sa, sb) = (face(cube, a, level), face(cube, b, level));
+                    prop_assert_eq!(call(IF_DEVICE, 34, &[dev, sa, 0, sb, 0, 1]), 0, "StretchRect");
+                    want[b as usize][level as usize] = want[a as usize][level as usize].clone();
+                    call(IF_SURFACE, 2, &[sa]);
+                    call(IF_SURFACE, 2, &[sb]);
+                }
+            }
+        }
+        call(IF_DEVICE, 37, &[dev, 0, back]);
+        call(IF_SURFACE, 2, &[back]);
+        // (GetRenderTargetData of a face: the page does the clears it kept for later)
+        let o = out();
+        prop_assert_eq!(call(IF_DEVICE, 36, &[dev, 8, 8, f::A8R8G8B8, 2, o, 0]), 0, "CreateOffscreenPlainSurface");
+        let sys = rd(o);
+        let s = face(cube, 2, 0);
+        prop_assert_eq!(call(IF_DEVICE, 32, &[dev, s, sys]), 0, "GetRenderTargetData");
+        call(IF_SURFACE, 2, &[s]);
+        pump();
+        let p = page_cubes(from, 8);
+        prop_assert_eq!(p.len(), 1, "one six-layer page texture");
+        for l in 0..2u32 {
+            for fc in 0..6u32 {
+                let got: Vec<u32> = p[0][(l * 6 + fc) as usize].iter().map(|&v| v as u32).collect();
+                prop_assert_eq!(&got, &want[fc as usize][l as usize], "face {} level {} after {:?}", fc, l, ops);
+            }
+        }
+        let e = errors();
+        prop_assert!(e.is_empty(), "{:?}", &e[..e.len().min(8)]);
+        call(IF_CUBE, 2, &[cube]);
+        gpu::set_pump(None);
+    }
+}
+
+/// A depth-stencil cube's face as the depth buffer: a valid WebGPU pass whose depth attachment
+/// is that face's layer (CheckDeviceFormat answers it as any depth texture's).
+#[test]
+fn depth_cube_face_as_the_depth_buffer() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    init();
+    let dev = device();
+    errors();
+    use super::format as f;
+    let o = out();
+    assert_eq!(call(IF_DEVICE, 25, &[dev, 64, 1, 2, f::D24S8, 0, o, 0]), 0, "CreateCubeTexture DEPTHSTENCIL");
+    let zc = rd(o);
+    let z = face(zc, 3, 0);
+    assert_eq!(call(IF_DEVICE, 39, &[dev, z]), 0, "SetDepthStencilSurface");
+    assert_eq!(call(IF_DEVICE, 43, &[dev, 0, 0, 7, 0, 0.25f32.to_bits(), 9]), 0, "Clear");
+    // a quad of XYZRHW | DIFFUSE, Z on
+    call(IF_DEVICE, 57, &[dev, 7, 1]);
+    let v = unsafe { alloc(80) as u32 };
+    let mut b = Vec::new();
+    for (x, y) in [(0f32, 0f32), (64.0, 0.0), (0.0, 64.0), (64.0, 64.0)] {
+        for c in [x - 0.5, y - 0.5, 0.5, 1.0] {
+            b.extend(c.to_le_bytes());
+        }
+        b.extend(0xff80_4020u32.to_le_bytes());
+    }
+    put_bytes(v, &b);
+    call(IF_DEVICE, 89, &[dev, 0x44]);
+    call(IF_DEVICE, 41, &[dev]);
+    assert_eq!(call(IF_DEVICE, 83, &[dev, 5, 2, v, 20]), 0);
+    call(IF_DEVICE, 42, &[dev]);
+    pump();
+    let e = errors();
+    assert!(e.is_empty(), "{:?}", &e[..e.len().min(8)]);
+    // (only the face's layer changed: the others hold what a new texture holds, all alike)
+    let layers = model::with(|m| {
+        m.objs
+            .iter()
+            .rev()
+            .find_map(|o| match o {
+                model::Obj::Texture(t) if t.layers == 6 && t.w == 64 && t.format.starts_with("depth") => Some(t.texels.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+    });
+    assert_eq!(layers.len(), 6);
+    for (i, l) in layers.iter().enumerate().filter(|(i, _)| *i != 3) {
+        assert_eq!(l, &layers[0], "layer {i} as untouched as layer 0");
+    }
+    assert_ne!(layers[3], layers[0], "face 3's layer drawn to");
+    call(IF_DEVICE, 39, &[dev, 0]);
+    call(IF_SURFACE, 2, &[z]);
+    call(IF_CUBE, 2, &[zc]);
     gpu::set_pump(None);
 }

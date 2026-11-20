@@ -414,7 +414,8 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 8] = [
+pub const REQUIRED: [(&str, &str, &str); 9] = [
+    ("crates/kura/src/d3d9/device.rs", "    pub sub: Sub,", "a Direct3D 9 surface names its part of the page texture as a Sub (level and cube face together): a bare level drew every face of a render target cube on layer 0 (2026-11-20)"),
     ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1", "release-build host tests fail on a 32-bit write into a pointer-sized out-parameter (2026-11-16)"),
     ("crates/sake/src/lib.rs", "mod outptr_audit;", "every handler of a function with pointer-sized out-parameters takes its typed Args"),
     ("crates/kura/src/pool.rs", "```compile_fail", "Pool Lease/brand misuse does not compile (review 2026-11-15/16)"),

@@ -34,9 +34,9 @@ pub struct Surface {
     pub fmt: u32,
     pub pool: u32,
     pub usage: u32,
-    /// page texture (0: none, system memory) and mip level
+    /// page texture (0: none, system memory) and the part of it this surface is
     pub gpu: u32,
-    pub level: u32,
+    pub sub: Sub,
     pub own_gpu: bool,
     /// guest copy of the pixels (0: not made yet)
     pub mem: u32,
@@ -57,11 +57,40 @@ pub struct Surface {
     pub shadow: Option<Box<[u8]>>,
     /// when `shadow` was last compared with (`SHADOW_TICK`): the oldest go first
     pub shadow_used: u64,
-    /// a cube texture's face (D3DCUBEMAP_FACES): its layer of the cube's page texture, which
-    /// gets the pixels with gpu::WRITE_TEXTURE2
-    pub face: Option<u32>,
     /// a P8 surface: the device's `pal_gen` its page texels were made with (see refresh_p8)
     pub pal_gen: u64,
+}
+
+/// The part of its page texture a surface is: a mip level, and for a cube texture's face
+/// (D3DCUBEMAP_FACES) its layer. There is no level without the face, so no page command can
+/// name a cube's level and miss which face.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Sub {
+    pub level: u32,
+    pub face: Option<u32>,
+}
+
+impl Sub {
+    pub const fn level(level: u32) -> Sub {
+        Sub { level, face: None }
+    }
+
+    /// as the page's COPY, READBACK and FILL take it: level | layer << 16
+    pub const fn word(self) -> u32 {
+        let layer = match self.face {
+            Some(f) => f,
+            None => 0,
+        };
+        self.level | layer << 16
+    }
+
+    /// the layer of the page texture (0 for a texture without layers)
+    pub const fn layer(self) -> u32 {
+        match self.face {
+            Some(f) => f,
+            None => 0,
+        }
+    }
 }
 
 pub struct Texture {
@@ -324,7 +353,7 @@ pub struct Device {
     pub st: State,
     pub recording: Option<Box<super::stateblock::Recording>>,
     /// draw state the page has (per batch)
-    batch_target: Option<(u32, u32, u32)>,
+    batch_target: Option<(u32, u32, u32, u32)>,
     pipelines: HashMap<Vec<u32>, u32, super::FastHash>,
     shaders: HashMap<String, u32>,
     /// shader modules by what their WGSL is made from (no WGSL generated for a draw that has one)
@@ -1150,7 +1179,7 @@ fn new_surface(d: &mut D3d, w: u32, h: u32, f: u32, pool: u32, usage: u32, conta
         pool,
         usage,
         gpu,
-        level,
+        sub: Sub::level(level),
         own_gpu,
         mem: 0,
         pitch,
@@ -1164,7 +1193,6 @@ fn new_surface(d: &mut D3d, w: u32, h: u32, f: u32, pool: u32, usage: u32, conta
         full_locks: 0,
         shadow: None,
         shadow_used: 0,
-        face: None,
         pal_gen: 0,
     };
     d.new_obj(IF_SURFACE, container, Data::Surface(s))
@@ -2227,7 +2255,7 @@ unsafe fn create_texture(d: &mut D3d, w: u32, h: u32, levels: u32, usage: u32, f
     // d3d9rtfmt's X8B8G8R8)
     if out == 0 || w == 0 || h == 0 || !fmt::supported(f) || usage & USAGE_RENDERTARGET != 0 && !fmt::renderable(f) {
         if d.trace {
-            eprintln!("d3d9: CreateTexture {w}x{h} format {f:#x}: not supported");
+            eprintln!("d3d9: CreateTexture {w}x{h} format {f:#x}: refused, as Windows (winref d3d9rtfmt)");
         }
         return D3DERR_INVALIDCALL;
     }
@@ -2265,7 +2293,7 @@ unsafe fn create_volume_texture(d: &mut D3d, size: [u32; 3], levels: u32, usage:
     let [w, h, depth] = size;
     if out == 0 || w == 0 || h == 0 || depth == 0 || !fmt::supported(f) || fmt::is_depth(f) || usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL) != 0 {
         if d.trace {
-            eprintln!("d3d9: CreateVolumeTexture {w}x{h}x{depth} format {f:#x} usage {usage:#x}: not supported");
+            eprintln!("d3d9: CreateVolumeTexture {w}x{h}x{depth} format {f:#x} usage {usage:#x}: refused, as Windows (winref d3d9vol)");
         }
         if out != 0 {
             wrp(out, 0, 0);
@@ -2308,17 +2336,18 @@ unsafe fn create_volume_texture(d: &mut D3d, size: [u32; 3], levels: u32, usage:
 /// a chain of surfaces (IDirect3DSurface9) whose container is the cube. The page texture is a
 /// 2D texture of six layers, one per face in D3DCUBEMAP_FACES order (+X -X +Y -Y +Z -Z), which
 /// is WebGPU's cube layer order: a cube sampler reads it through a cube view (render::d3d
-/// slot_view). No render target or depth-stencil cubes yet (refused, so a game sees an error,
-/// not a NULL it would call).
+/// slot_view). A render target or depth-stencil cube's faces are targets as a texture's levels
+/// are, each a view of its layer (`Sub`); the formats refused are a 2D texture's (winref
+/// d3d9rtfmt, d3d9cube).
 unsafe fn create_cube_texture(d: &mut D3d, edge: u32, levels: u32, usage: u32, f: u32, pool: u32, out: u32) -> u32 {
-    if out == 0 || edge == 0 || !fmt::supported(f) || fmt::is_depth(f) || usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL) != 0 {
+    if out == 0 || edge == 0 || !fmt::supported(f) || usage & USAGE_RENDERTARGET != 0 && !fmt::renderable(f) {
         if d.trace {
-            eprintln!("d3d9: CreateCubeTexture {edge} format {f:#x} usage {usage:#x}: not supported");
+            eprintln!("d3d9: CreateCubeTexture {edge} format {f:#x} usage {usage:#x}: refused, as Windows (winref d3d9cube)");
         }
         if out != 0 {
             wrp(out, 0, 0);
         }
-        return if usage & USAGE_RENDERTARGET != 0 && fmt::supported(f) { D3DERR_NOTAVAILABLE } else { D3DERR_INVALIDCALL };
+        return D3DERR_INVALIDCALL;
     }
     let max = 32 - edge.leading_zeros();
     let levels = if usage & 0x400 != 0 { 1 } else if levels == 0 { max } else { levels.min(max) };
@@ -2342,7 +2371,7 @@ unsafe fn create_cube_texture(d: &mut D3d, edge: u32, levels: u32, usage: u32, f
                 // (a level's references are the texture's)
                 o.refs = 0;
                 if let Data::Surface(sf) = &mut o.data {
-                    sf.face = Some(face);
+                    sf.sub.face = Some(face);
                     if gpu == 0 {
                         sf.gpu = 0;
                     }
@@ -2682,7 +2711,8 @@ unsafe fn upload_keep(d: &mut D3d, s: u32, r: [u32; 4]) {
     let src = sf.mem + (y0 / bs) * sf.pitch + (x0 / bs) * bpb;
     let (w, h) = (x1 - x0, y1 - y0);
     let bpp = fmt::page_bpp(sf.fmt);
-    let (gpu, level, f, pitch) = (sf.gpu, sf.level, sf.fmt, sf.pitch);
+    let (gpu, sub, f, pitch) = (sf.gpu, sf.sub, sf.fmt, sf.pitch);
+    let level = sub.level;
     // (P8: through the current palette, when there is one)
     let pal = if f == fmt::P8 {
         sf.pal_gen = d.dev.as_ref().map_or(0, |dev| dev.pal_gen);
@@ -2690,7 +2720,7 @@ unsafe fn upload_keep(d: &mut D3d, s: u32, r: [u32; 4]) {
     } else {
         None
     };
-    if let Some(layer) = sf.face {
+    if let Some(layer) = sub.face {
         // (a cube's face: its layer of the page texture)
         gpu::record(|b: &mut Batch| {
             let at = b.blob.len().next_multiple_of(4);
@@ -2801,7 +2831,7 @@ unsafe fn lock_surface(d: &mut D3d, s: u32, out: u32, rect: u32, flags: u32, aft
         // 1-pixel lock of a render target read back the whole level each time), and the rest
         // is still the page's
         let whole = r == [0, 0, sf.w, sf.h] || !(r[0] < r[2] && r[1] < r[3] && r[2] <= sf.w && r[3] <= sf.h);
-        let (gpu, level, pitch, f) = (sf.gpu, sf.level, sf.pitch, sf.fmt);
+        let (gpu, level, pitch, f) = (sf.gpu, sf.sub.word(), sf.pitch, sf.fmt);
         let (x, y, w, h, at) = if whole { (0, 0, sf.w, sf.h, mem) } else { (r[0], r[1], r[2] - r[0], r[3] - r[1], bits) };
         if whole {
             sf.gpu_newer = false;
@@ -3184,7 +3214,7 @@ unsafe fn update_texture(d: &mut D3d, src: u32, dst: u32) -> u32 {
 unsafe fn get_rt_data(d: &mut D3d, rt: u32, dst: u32, after: &mut After) -> u32 {
     let (s, t) = (d.id_of(rt), d.id_of(dst));
     let Some(Data::Surface(a)) = d.objs.get(&s).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
-    let (gpu, level, w, h, page, af) = (a.gpu, a.level, a.w, a.h, fmt::page_bpp(a.fmt), a.fmt);
+    let (gpu, level, w, h, page, af) = (a.gpu, a.sub.word(), a.w, a.h, fmt::page_bpp(a.fmt), a.fmt);
     let Some(mem) = surface_mem(d, t) else { return D3DERR_INVALIDCALL };
     let Some(Data::Surface(b)) = d.objs.get(&t).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
     // (the target's format, or one the page has as it is for one it has as it is: A8R8G8B8
@@ -3199,9 +3229,10 @@ unsafe fn get_rt_data(d: &mut D3d, rt: u32, dst: u32, after: &mut After) -> u32 
 }
 
 /// (texture, level, w, h) of a surface on the page
-fn surface_gpu(d: &D3d, s: u32) -> Option<(u32, u32, u32, u32, u32)> {
+/// A surface's page texture: (texture, the part of it, w, h, format).
+fn surface_gpu(d: &D3d, s: u32) -> Option<(u32, Sub, u32, u32, u32)> {
     match d.objs.get(&s).map(|o| &o.data) {
-        Some(Data::Surface(sf)) if sf.gpu != 0 => Some((sf.gpu, sf.level, sf.w, sf.h, sf.fmt)),
+        Some(Data::Surface(sf)) if sf.gpu != 0 => Some((sf.gpu, sf.sub, sf.w, sf.h, sf.fmt)),
         _ => None,
     }
 }
@@ -3228,13 +3259,13 @@ unsafe fn stretch_rect(d: &mut D3d, src: u32, srect: u32, dst: u32, drect: u32, 
         bt.cmd(&[
             gpu::COPY,
             a.0,
-            a.1,
+            a.1.word(),
             sr[0],
             sr[1],
             sr[2] - sr[0],
             sr[3] - sr[1],
             b.0,
-            b.1,
+            b.1.word(),
             dr[0],
             dr[1],
             dr[2] - dr[0],
@@ -3257,7 +3288,7 @@ unsafe fn color_fill(d: &mut D3d, s: u32, rect: u32, color: u32) -> u32 {
     }
     let Some(g) = surface_gpu(d, s) else { return D3DERR_INVALIDCALL };
     let r = if rect != 0 { [rd(rect, 0), rd(rect, 1), rd(rect, 2), rd(rect, 3)] } else { [0, 0, g.2, g.3] };
-    gpu::record(|b| b.cmd(&[gpu::FILL, g.0, g.1, r[0], r[1], r[2] - r[0], r[3] - r[1], fmt::target_color(g.4, color)]));
+    gpu::record(|b| b.cmd(&[gpu::FILL, g.0, g.1.word(), r[0], r[1], r[2] - r[0], r[3] - r[1], fmt::target_color(g.4, color)]));
     if let Some(dev) = d.dev.as_mut() {
         dev.batch_target = None;
     }
@@ -3552,7 +3583,7 @@ unsafe fn clear(d: &mut D3d, count: u32, rects: u32, flags: u32, color: u32, z: 
     }
     let flags = if dsg.is_none() { flags & 1 } else { flags };
     // render targets 1-3 are cleared too (in a row from 1, of the size of 0)
-    let more: Vec<(u32, (u32, u32, u32, u32, u32))> = if flags & 1 != 0 {
+    let more: Vec<(u32, (u32, Sub, u32, u32, u32))> = if flags & 1 != 0 {
         d.dev.as_ref().map_or(&[][..], |dev| &dev.rt[1..])
             .iter()
             .map_while(|&r| surface_gpu(d, r).filter(|g| (g.2, g.3) == (target.2, target.3)).map(|g| (r, g)))
@@ -3575,7 +3606,7 @@ unsafe fn clear(d: &mut D3d, count: u32, rects: u32, flags: u32, color: u32, z: 
                 b.cmd(&[(r[0]).cast_unsigned(), (r[1]).cast_unsigned(), (r[2] - r[0]).cast_unsigned(), (r[3] - r[1]).cast_unsigned()]);
             }
             for (_, g) in &more {
-                b.cmd(&[gpu::FILL, g.0, g.1, (r[0]).cast_unsigned(), (r[1]).cast_unsigned(), (r[2] - r[0]).cast_unsigned(), (r[3] - r[1]).cast_unsigned(), fmt::target_color(g.4, color)]);
+                b.cmd(&[gpu::FILL, g.0, g.1.word(), (r[0]).cast_unsigned(), (r[1]).cast_unsigned(), (r[2] - r[0]).cast_unsigned(), (r[3] - r[1]).cast_unsigned(), fmt::target_color(g.4, color)]);
             }
         });
     }
@@ -3634,12 +3665,16 @@ fn ensure_targets(d: &mut D3d, rt: u32, more: &[u32], ds: u32) {
     // (a depth buffer of another size than the target: the page draws with one of the target's
     // size, render/d3d.rs depth_for)
     let z = surface_gpu(d, ds);
-    let mut c = vec![gpu::SET_TARGETS2, 1 + lo32(more.len()), t.0, t.1, 0];
+    let mut c = vec![gpu::SET_TARGETS2, 1 + lo32(more.len()), t.0, t.1.level, t.1.layer()];
     for &m in more {
         let Some(g) = surface_gpu(d, m) else { return };
-        c.extend_from_slice(&[g.0, g.1, 0]);
+        c.extend_from_slice(&[g.0, g.1.level, g.1.layer()]);
     }
-    c.extend_from_slice(&[z.map_or(0, |z| z.0), 0, 0]);
+    c.extend_from_slice(&match z {
+        Some(z) if z.1.face.is_some() => [z.0, z.1.level, z.1.layer()],
+        Some(z) => [z.0, 0, 0],
+        None => [0, 0, 0],
+    });
     gpu::record(|b| b.cmd(&c));
     // (the next single target goes out again)
     if let Some(dev) = d.dev.as_mut() {
@@ -3654,11 +3689,18 @@ fn ensure_target(d: &mut D3d, rt: u32, ds: u32) {
     let Some(t) = t else { return };
     // (a depth buffer of another size than the target: the page draws with one of the
     // target's size, render/d3d.rs depth_for; Windows uses a smaller one too)
-    let key = (t.0, t.1, z.map_or(0, |z| z.0));
+    let zsub = z.map_or(0, |z| z.1.word());
+    let key = (t.0, t.1.word(), z.map_or(0, |z| z.0), zsub);
     let generation = gpu::batch_gen();
     let Some(dev) = d.dev.as_mut() else { return };
     if dev.batch_target != Some(key) || dev.batch_gen != generation {
-        gpu::record(|b| b.cmd(&[gpu::SET_TARGET, key.0, key.1, key.2]));
+        // (a cube's face, as target or depth buffer: a view of its layer, as Direct3D 11's)
+        let faces = t.1.face.is_some() || z.is_some_and(|z| z.1.face.is_some());
+        gpu::record(|b| match (faces, z) {
+            (true, Some(z)) => b.cmd(&[gpu::SET_TARGETS2, 1, t.0, t.1.level, t.1.layer(), z.0, z.1.level, z.1.layer()]),
+            (true, None) => b.cmd(&[gpu::SET_TARGETS2, 1, t.0, t.1.level, t.1.layer(), 0, 0, 0]),
+            (false, _) => b.cmd(&[gpu::SET_TARGET, key.0, t.1.level, key.2]),
+        });
         dev.batch_target = Some(key);
         dev.batch_gen = generation;
     }
@@ -3812,7 +3854,7 @@ unsafe fn front_buffer_data(d: &mut D3d, after: &mut After, chain: Option<(u32, 
     let i = shown_for(dev, hwnd, cw, ch, g.4);
     let kept = dev.shown[i].gpu;
     if !dev.shown[i].live {
-        copy_present((g.0, g.1, g.2, g.3), (g.2, g.3), kept, [0, 0, cw.cast_signed(), ch.cast_signed()], cw, ch);
+        copy_present((g.0, g.1.word(), g.2, g.3), (g.2, g.3), kept, [0, 0, cw.cast_signed(), ch.cast_signed()], cw, ch);
     }
     dev.batch_target = None;
     // (the part of the client area on the screen)
@@ -3871,7 +3913,7 @@ unsafe fn present_from(d: &mut D3d, after: &mut After, chain: Option<(u32, bool,
         let part = windowed && !ms && rect != client;
         // (D3DSWAPEFFECT_COPY, windowed: the swap effect for presenting parts, the window's
         // pixels kept from the first Present on)
-        let words = match keep_shown(d, hwnd, client, rect, (g.0, g.1, g.2, g.3, g.4), (s6, s7), part, windowed && copy && !ms) {
+        let words = match keep_shown(d, hwnd, client, rect, (g.0, g.1.word(), g.2, g.3, g.4), (s6, s7), part, windowed && copy && !ms) {
             // (the client area's pixels: the part presented over what it showed)
             Some((kept, w, h)) => [gpu::PRESENT, kept, (client[0]).cast_unsigned(), (client[1]).cast_unsigned(), (client[2]).cast_unsigned(), (client[3]).cast_unsigned(), w, h, hwnd],
             None => [gpu::PRESENT, g.0, (rect[0]).cast_unsigned(), (rect[1]).cast_unsigned(), (rect[2]).cast_unsigned(), (rect[3]).cast_unsigned(), s6, s7, hwnd],
@@ -4136,7 +4178,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
     let dsg = surface_gpu(d, ds);
     // render targets 1-3 (in a row from 1, of the size of 0)
     // (on the stack: at most 3)
-    let mut more_at = [(0u32, (0u32, 0u32, 0u32, 0u32, 0u32)); 3];
+    let mut more_at = [(0u32, (0u32, Sub::level(0), 0u32, 0u32, 0u32)); 3];
     let mut nmore = 0;
     if let Some(target) = target {
         for (slot, m) in more_at.iter_mut().zip(rts[1..].iter().map_while(|&r| surface_gpu(d, r).filter(|g| (g.2, g.3) == (target.2, target.3)).map(|g| (r, g)))) {
