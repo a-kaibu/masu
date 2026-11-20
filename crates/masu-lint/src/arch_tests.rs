@@ -161,6 +161,28 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: (NOCHECK_HOME, |t| Some(t.replace("AtomicBool::new(false);\n/// Pushes", "AtomicBool::new(true);\n/// Pushes"))),
         },
+        Rule::ArcTryUnwrap => Fixture {
+            bad: &[
+                ("crates/sake/src/mf/x.rs", "fn f(d: Arc<Data>) { if let Ok(d) = Arc::try_unwrap(d) { release(d); } }\n"),
+                ("crates/masu/src/x.rs", "fn f(d: std::sync::Arc<u32>) -> u32 { std::sync::Arc::try_unwrap(d).unwrap_or(0) }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/mf/x.rs", "fn f(d: Arc<Data>) { if let Some(d) = Arc::into_inner(d) { release(d); } }\nfn g(r: Rc<u8>) { let _ = Rc::try_unwrap(r); }\n"),
+                ("crates/sake/src/y.rs", "#[cfg(test)]\nmod tests {\n    fn t(d: Arc<u8>) { let _ = Arc::try_unwrap(d); }\n}\n"),
+            ],
+            mutate: ("crates/sake/src/mf/source.rs", |t| Some(t + "\nfn unwrap_again(d: Arc<Data>) -> Option<Data> { Arc::try_unwrap(d).ok() }\n")),
+        },
+        Rule::ArcCount => Fixture {
+            bad: &[
+                ("crates/sake/src/x.rs", "fn last(d: &Arc<Data>) -> bool { Arc::strong_count(d) == 1 }\n"),
+                ("crates/masu/src/x.rs", "fn f(d: &std::sync::Arc<u8>) -> usize { std::sync::Arc::weak_count(d) }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/x.rs", "fn f(d: Arc<Data>) -> Option<Data> { Arc::into_inner(d) }\nfn g(r: &Rc<u8>) -> usize { Rc::strong_count(r) }\n"),
+                ("crates/sake/src/y.rs", "#[cfg(test)]\nmod tests {\n    fn t(d: &Arc<u8>) { assert_eq!(Arc::strong_count(d), 1); }\n}\n"),
+            ],
+            mutate: ("crates/sake/src/mf/source.rs", |t| Some(t + "\nfn last(d: &Arc<Data>) -> bool { Arc::strong_count(d) == 1 }\n")),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),
@@ -241,7 +263,7 @@ fn every_regex_compiles() {
 #[test]
 fn the_new_rules_find_each_spelling_alone() {
     // (each bad file on its own: one spelling found does not hide another that is missed)
-    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape] {
+    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::ArcTryUnwrap, Rule::ArcCount] {
         for one in fixture(r).bad.chunks(1) {
             assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
         }

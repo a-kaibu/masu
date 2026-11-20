@@ -1822,7 +1822,8 @@ fn new_reader(c: &mut Ctx, attributes: u32, data: Arc<Data>, media: &Media, sour
 /// A reader of the file in `data`, or why none.
 fn reader_of(c: &mut Ctx, attributes: u32, data: Data, out: crate::api::Out) -> u32 {
     let Some(media) = source::open_media(Some(c), &data) else {
-        release(c, data.guest_stream());
+        drop(data);
+        source::release_let_go(c);
         return Hr::UnsupportedByteStreamType.code();
     };
     new_reader(c, attributes, Arc::new(data), &media, 0, out)

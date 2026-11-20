@@ -20,8 +20,42 @@ pub enum Src {
     /// bytes of ours (tests; Ogg / ASF packets copied out of the file)
     Mem(Arc<Vec<u8>>),
     Host(Mutex<kura::fs::File>),
-    /// the program's IMFByteStream (a reference held by whoever holds the Data: `release_guest`)
-    Guest(u32),
+    /// the program's IMFByteStream: a reference the Data holds, let go into the LetGo (the
+    /// process's LET_GO) when the Data goes, however it goes; `release_let_go` releases it
+    Guest(u32, &'static LetGo),
+}
+
+/// Guest byte streams whose Data went, to release on the next thread that can call the guest
+/// (a Drop has no Ctx; the last holder may be a movie thread, or any of several at once:
+/// before 2026-11-20 release_data's Arc::try_unwrap lost such a release, and a plain drop of
+/// a Data never made one).
+#[derive(Default)]
+pub struct LetGo(Mutex<Vec<u32>>);
+
+impl LetGo {
+    pub const fn new() -> LetGo {
+        LetGo(Mutex::new(Vec::new()))
+    }
+    fn push(&self, bs: u32) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).push(bs);
+    }
+    /// the streams let go since the last take, each once
+    pub fn take(&self) -> Vec<u32> {
+        std::mem::take(&mut *self.0.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
+/// The process's streams let go (every Data::guest's).
+pub static LET_GO: LetGo = LetGo::new();
+
+impl Drop for Data {
+    fn drop(&mut self) {
+        if let Src::Guest(bs, to) = self.src
+            && bs != 0
+        {
+            to.push(bs);
+        }
+    }
 }
 
 pub struct Data {
@@ -49,13 +83,8 @@ impl Data {
             return None;
         }
         add_ref(c, bs);
-        Some(Data { src: Src::Guest(bs), len, lock: Mutex::new(()) })
-    }
-    pub fn guest_stream(&self) -> u32 {
-        match self.src {
-            Src::Guest(b) => b,
-            Src::Mem(_) | Src::Host(_) => 0,
-        }
+        release_let_go(c);
+        Some(Data { src: Src::Guest(bs, &LET_GO), len, lock: Mutex::new(()) })
     }
     /// `n` bytes at `off` (fewer at the end); None when they could not be read (a guest
     /// stream without a guest thread to call it on, `c` None).
@@ -68,7 +97,7 @@ impl Data {
                 let mut b = vec![0; n];
                 kura::video::read_at(&mut f, off, &mut b).then_some(b)
             }
-            Src::Guest(bs) => {
+            Src::Guest(bs, _) => {
                 let c = c?;
                 let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
                 guest_read(c, *bs, off, n)
@@ -443,10 +472,16 @@ fn ms_release(c: &mut Ctx) -> u32 {
     }
     n
 }
-/// Drops a holder's reference of `d`: the guest stream's when it was the last.
+/// Drops a holder's reference of `d`, and releases the guest streams let go (its own when it
+/// was the last).
 pub fn release_data(c: &mut Ctx, d: Arc<Data>) {
-    if let Ok(d) = Arc::try_unwrap(d) {
-        release(c, d.guest_stream());
+    drop(d);
+    release_let_go(c);
+}
+/// Releases the guest streams whose Data went (on this thread, which can call the guest).
+pub fn release_let_go(c: &mut Ctx) {
+    for bs in LET_GO.take() {
+        release(c, bs);
     }
 }
 fn ms_shut(c: &mut Ctx) -> u32 {
@@ -816,7 +851,8 @@ const MF_RESOLUTION_BYTESTREAM: u32 = 2;
 /// A source of ours on `data`, or the HRESULT why none.
 fn resolve(c: &mut Ctx, data: Data) -> Result<u32, u32> {
     let Some(media) = open_media(Some(c), &data) else {
-        release(c, data.guest_stream());
+        drop(data);
+        release_let_go(c);
         return Err(Hr::UnsupportedByteStreamType.code());
     };
     Ok(new_source(Arc::new(data), media))
@@ -992,3 +1028,7 @@ pub fn init() {
 #[cfg(test)]
 #[path = "source_snapshot_tests.rs"]
 mod snapshot_tests;
+
+#[cfg(test)]
+#[path = "source_letgo_tests.rs"]
+mod letgo_tests;

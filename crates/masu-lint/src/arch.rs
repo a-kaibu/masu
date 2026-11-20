@@ -35,10 +35,12 @@ pub enum Rule {
     PagedReadCast,
     ShaderLayoutPanic,
     StoreDeletion,
+    ArcTryUnwrap,
+    ArcCount,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 18] = [
+    pub const ALL: [Rule; 20] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -57,6 +59,8 @@ impl Rule {
         Rule::PagedReadCast,
         Rule::ShaderLayoutPanic,
         Rule::StoreDeletion,
+        Rule::ArcTryUnwrap,
+        Rule::ArcCount,
     ];
 
     /// the name a site list and a message use
@@ -80,6 +84,8 @@ impl Rule {
             Rule::PagedReadCast => "paged-read-cast",
             Rule::ShaderLayoutPanic => "shader-layout-panic",
             Rule::StoreDeletion => "store-deletion",
+            Rule::ArcTryUnwrap => "arc-try-unwrap",
+            Rule::ArcCount => "arc-count",
         }
     }
 
@@ -103,6 +109,8 @@ impl Rule {
             Rule::PagedReadCast => "use checked conversion for file positions and byte counts in Pages::read",
             Rule::ShaderLayoutPanic => "propagate GLSL array layout failures as compiler errors",
             Rule::StoreDeletion => "retired bucket objects must pass through gc before physical deletion",
+            Rule::ArcTryUnwrap => "no Arc::try_unwrap (Arc audit 2026-11-20, mf release_data): two last holders letting go at once both get Err and neither runs the last-one-out step; Arc::into_inner, or better a Drop that does that step (mf::source::Data)",
+            Rule::ArcCount => "a decision on Arc::strong_count / weak_count holds only while nobody can clone or drop one meanwhile (Arc audit 2026-11-20): each such site is a known site saying which lock makes it so (saves NameLocks, storage gate: the map lock every clone is made under); else let a Drop or Arc::into_inner decide",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -127,6 +135,8 @@ impl Rule {
             Rule::PagedReadCast => boundaries::check(self, tree, boundaries::PAGES),
             Rule::ShaderLayoutPanic => boundaries::check(self, tree, boundaries::GLSL),
             Rule::StoreDeletion => boundaries::check(self, tree, boundaries::STORAGE),
+            Rule::ArcTryUnwrap => arc_use(tree, &["try_unwrap"]),
+            Rule::ArcCount => arc_use(tree, &["strong_count", "weak_count"]),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -731,6 +741,55 @@ pub fn known_counts(known: &[(Site, String)]) -> BTreeMap<Site, usize> {
 /// the findings beyond the known sites
 pub fn fresh(found: &BTreeMap<Site, Vec<Finding>>, known: &BTreeMap<Site, usize>) -> Vec<Finding> {
     found.iter().flat_map(|(s, v)| v.iter().skip(known.get(s).copied().unwrap_or(0)).cloned()).collect()
+}
+
+/// Arc::try_unwrap and Arc::strong_count / weak_count in code (outside #[cfg(test)]
+/// modules and fns, and the files only those bring in)
+fn arc_use(tree: &Tree, names: &'static [&'static str]) -> Hits {
+    let mut out = Hits::new();
+    let files = tree.rs(&["crates/"]);
+    let tests = test_mod_files(tree, &files);
+    for f in files.iter().filter(|f| !tests.contains(*f) && !f.as_str().ends_with("_tests.rs") && !f.as_str().contains("/tests/")) {
+        let Some(file) = tree.syntax(f) else { continue };
+        let mut v = ArcUse { names, hits: Vec::new() };
+        syn::visit::Visit::visit_file(&mut v, &file);
+        out.extend(v.hits.into_iter().map(|(l, what)| (f.clone(), l, what)));
+    }
+    out
+}
+
+struct ArcUse {
+    /// the Arc associated functions looked for
+    names: &'static [&'static str],
+    hits: Vec<(usize, String)>,
+}
+
+impl<'a> syn::visit::Visit<'a> for ArcUse {
+    fn visit_item_mod(&mut self, m: &'a syn::ItemMod) {
+        if !crate::syntax::is_cfg_test(&m.attrs) {
+            syn::visit::visit_item_mod(self, m);
+        }
+    }
+    fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
+        if !crate::syntax::is_cfg_test(&f.attrs) {
+            syn::visit::visit_item_fn(self, f);
+        }
+    }
+    fn visit_impl_item_fn(&mut self, f: &'a syn::ImplItemFn) {
+        if !crate::syntax::is_cfg_test(&f.attrs) {
+            syn::visit::visit_impl_item_fn(self, f);
+        }
+    }
+    fn visit_expr_path(&mut self, e: &'a syn::ExprPath) {
+        let mut back = e.path.segments.iter().rev();
+        if let (Some(f), Some(ty)) = (back.next(), back.next())
+            && ty.ident == "Arc"
+            && self.names.iter().any(|n| f.ident == n)
+        {
+            self.hits.push((crate::syntax::line(f.ident.span()), format!("Arc::{}", f.ident)));
+        }
+        syn::visit::visit_expr_path(self, e);
+    }
 }
 
 #[cfg(test)]

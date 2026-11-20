@@ -8,3 +8,5 @@ kome-copy	crates/masu/src/iscab.rs	fn u32_at(b: &[u8], p: usize) -> Result<u32> 
 kome-copy	crates/masu/src/iscab.rs	fn u64_at(b: &[u8], p: usize) -> Result<u64> {	calls kome::le::u64_at, adds anyhow context
 kome-copy	crates/sake/src/lsa.rs	fn us() -> usize {	sizeof(UNICODE_STRING), not a conversion
 kome-copy	crates/sake/src/mf/reader.rs	fn u32_of(s: &Store, k: &Guid) -> Option<u32> {	an attribute store lookup, not a conversion
+arc-count	crates/masu/src/saves.rs	if map.get(&self.name).is_some_and(|m| Arc::strong_count(m) == 1) {	every clone of a name's lock is made under this same map lock (NameLocks::lock), so 1 = no holder and no waiter
+arc-count	crates/masu/src/storage.rs	if f.get(&id).is_some_and(|g| std::sync::Arc::ptr_eq(g, gate)) && std::sync::Arc::strong_count(gate) == 2 {	every gate is cloned under this same inflight lock (Storage::gate), so 2 = the map's and ours

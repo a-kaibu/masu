@@ -47,6 +47,8 @@ clippy.toml path stops resolving, a regex stops matching) fails there instead of
 | paged reads convert file byte counts with checked arithmetic; page indexing uses the bounded page location | arch `paged-read-cast` |
 | GLSL array specifiers propagate layout errors to the shader compiler | arch `shader-layout-panic` |
 | physical bucket deletion belongs to the storage GC | arch `store-deletion`, `home-only` |
+| no Arc::try_unwrap: two last holders letting go at once both get Err and neither does the last-one-out step; Arc::into_inner, or a Drop that does it (Arc audit 2026-11-20, mf::source::Data) | arch `arc-try-unwrap` |
+| a decision on Arc::strong_count / weak_count is a known site saying which lock keeps clones and drops from racing it (Arc audit 2026-11-20) | arch `arc-count` |
 | save metadata is published by cacheSave or acknowledgeSave; production Wasm acquisition goes through runtimeWasm | web `pnpm run check` and `pnpm run lint` (TypeScript symbol references, including imports under another name) |
 | every pointer-sized out-parameter is taken as typed Args | `sake::outptr_audit` (test) |
 | Pool Lease / brand, Ga, Out misuse does not compile | compile_fail doctests |
