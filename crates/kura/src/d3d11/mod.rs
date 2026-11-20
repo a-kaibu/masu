@@ -26,6 +26,8 @@ mod format_golden_tests;
 #[cfg(test)]
 mod bind_tests;
 #[cfg(test)]
+mod cb1_tests;
+#[cfg(test)]
 mod draw_tests;
 #[cfg(test)]
 mod deferred_tests;
@@ -391,6 +393,9 @@ pub struct State {
     ps: u32,
     /// per stage: VS, PS, GS, HS, DS, CS (only VS and PS draw)
     cbs: [[u32; 15]; 6],
+    /// each constant buffer slot's range (ID3D11DeviceContext1's *SetConstantBuffers1): its first
+    /// constant and how many, in 16-byte constants; *SetConstantBuffers binds (0, 4096)
+    cb_ranges: [[CbRange; 15]; 6],
     srvs: [[u32; 128]; 6],
     samplers: [[u32; 16]; 6],
     /// GS, HS, DS and CS shaders (kept for Get*)
@@ -453,6 +458,11 @@ pub struct D11 {
     pipelines: HashMap<Vec<u32>, u32>,
     /// point sprites' viewport uniform (page buffer, the half size written to it)
     sprite_view: (u32, [f32; 2]),
+    /// constant buffer ranges a shader reads that are not the whole buffer from its start, or
+    /// buffers smaller than the shader's constants: (buffer, first constant, constants the
+    /// shader declares) -> the page buffer holding those bytes, zeros past the buffer's end
+    /// (as Direct3D reads them), and the bytes last written to it
+    cb_copies: HashMap<(u32, u32, u32), (u32, Vec<u8>)>,
     /// page targets set in this batch generation
     targets: Option<(u64, Vec<u32>)>,
     next_gpu: u32,
@@ -733,6 +743,12 @@ impl D11 {
                 if b.gpu != 0 {
                     gpu::record(|q| q.cmd(&[gpu::DESTROY_BUFFER, b.gpu]));
                 }
+                let copies: Vec<(u32, u32, u32)> = self.cb_copies.keys().filter(|k| k.0 == id).copied().collect();
+                for k in copies {
+                    if let Some((g, _)) = self.cb_copies.remove(&k) {
+                        gpu::record(|q| q.cmd(&[gpu::DESTROY_BUFFER, g]));
+                    }
+                }
             }
             Data::Texture(t) => {
                 for (_, mem, _, _) in t.maps {
@@ -819,6 +835,7 @@ pub unsafe fn init(vtbls: *const u32, count: u32) -> u32 {
                 st_owner: 0,
                 pipelines: HashMap::new(),
                 sprite_view: (0, [0.0; 2]),
+                cb_copies: HashMap::new(),
                 targets: None,
                 next_gpu: 0,
                 lost_seen: crate::render::lost_gen(),
@@ -1284,6 +1301,7 @@ fn default_state() -> State {
         vs: 0,
         ps: 0,
         cbs: [[0; 15]; 6],
+        cb_ranges: [[CbRange::WHOLE; 15]; 6],
         srvs: [[0; 128]; 6],
         samplers: [[0; 16]; 6],
         shaders: [0; 4],
@@ -2403,6 +2421,15 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if (a(1) == 0 || a(1) == 4) && a(3) >= 4 {
                 wr(a(2), 0, 1);
             }
+            // D3D11_OPTIONS: ConstantBufferPartialUpdate (6) and ConstantBufferOffsetting (7),
+            // which the context does (set_cbs, cb_binding), as WARP answers (winref d3d11cb1)
+            if a(1) == 5 && a(3) >= 32 {
+                // SAFETY: wr's own contract: the caller's D3D11_FEATURE_DATA_D3D11_OPTIONS of
+                // a(3) >= 32 bytes
+                unsafe { wr(a(2), 6, 1) };
+                // SAFETY: (the same structure's next field)
+                unsafe { wr(a(2), 7, 1) };
+            }
             S_OK
         }
         34..=36 => private_data(d, m - 30, this, a),
@@ -2991,6 +3018,55 @@ unsafe fn set_slots(d: &mut D11, slots: &mut [u32], start: u32, n: u32, p: u32) 
     }
 }
 
+/// the stage (VS PS GS HS DS CS order of `State`) of each of the six *ConstantBuffers1 methods
+/// (VS HS DS GS PS CS order of the vtable)
+const CB1_STAGE: [usize; 6] = [0, 3, 4, 2, 1, 5];
+
+/// A constant buffer slot's range: its first constant and how many (16-byte constants).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CbRange {
+    pub first: u32,
+    pub count: u32,
+}
+
+impl CbRange {
+    /// what *SetConstantBuffers binds: from the start, D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT
+    /// (4096) constants
+    pub const WHOLE: CbRange = CbRange { first: 0, count: 4096 };
+    /// an empty slot's (Get*ConstantBuffers1 past the slots)
+    pub const NONE: CbRange = CbRange { first: 0, count: 0 };
+
+    /// the bytes the shader sees of a buffer of `size` bytes: (offset, length); constants past
+    /// the buffer's end read as 0 (the binding is cut there)
+    pub fn bytes(self, size: u32) -> (u32, u32) {
+        let off = self.first.saturating_mul(16).min(size);
+        (off, self.count.saturating_mul(16).min(size.saturating_sub(off)))
+    }
+}
+
+/// *SetConstantBuffers(start, n, buffers) (`firsts` and `counts` 0) and
+/// *SetConstantBuffers1(start, n, buffers, firsts, counts): each slot's buffer and range. A
+/// range is given in 16-byte constants: the first a multiple of 16, the count a multiple of 16
+/// up to 4096 (D3D11.1 functional spec, ConstantBufferOffsetting); either array NULL binds
+/// whole buffers (winref d3d11cb1).
+unsafe fn set_cbs(d: &mut D11, st: &mut State, stage: usize, start: u32, n: u32, bufs: u32, firsts: u32, counts: u32) {
+    let (Some(slots), Some(ranges)) = (st.cbs.get_mut(stage), st.cb_ranges.get_mut(stage)) else { return };
+    // SAFETY: set_slots' own contract: `bufs` is the caller's array of `n` pointers
+    unsafe { set_slots(d, slots, start, n, bufs) };
+    for i in 0..n {
+        let Some(slot) = ranges.get_mut(us(start.saturating_add(i))) else { break };
+        *slot = if firsts == 0 || counts == 0 {
+            CbRange::WHOLE
+        } else {
+            // SAFETY: rd's own contract: `firsts` and `counts` are the caller's arrays of `n`
+            let first = unsafe { rd(firsts, us(i)) };
+            // SAFETY: (the same)
+            let count = unsafe { rd(counts, us(i)) };
+            CbRange { first, count }
+        };
+    }
+}
+
 /// Gets `n` slots from `start` into `p` (with references).
 unsafe fn get_slots(d: &mut D11, slots: &[u32], start: u32, n: u32, p: u32) {
     // (no array: nothing asked for, no reference given)
@@ -3041,7 +3117,8 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             let ctx = d.context;
             return private_data(d, m, ctx, a);
         }
-        7 | 16 => set_slots(d, &mut st.cbs[usize::from(m == 16)], a(1), a(2), a(3)),
+        // SAFETY: set_cbs' own contract: the caller's arguments of *SetConstantBuffers
+        7 | 16 => unsafe { set_cbs(d, st, usize::from(m == 16), a(1), a(2), a(3), 0, 0) },
         8 | 25 => {
             set_slots(d, &mut st.srvs[usize::from(m == 8)], a(1), a(2), a(3));
             hazards::after_srvs(d, st, usize::from(m == 8), a(1), a(2));
@@ -3233,7 +3310,8 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             wr(a(2), 0, st.predicate.1);
         }
         // GS, HS, DS, CS: constant buffers, resources, samplers, shaders (kept, not drawn with)
-        22 | 62 | 66 | 71 => set_slots(d, &mut st.cbs[stage_of(m)], a(1), a(2), a(3)),
+        // SAFETY: set_cbs' own contract: the caller's arguments of *SetConstantBuffers
+        22 | 62 | 66 | 71 => unsafe { set_cbs(d, st, stage_of(m), a(1), a(2), a(3), 0, 0) },
         31 | 59 | 63 | 67 => {
             set_slots(d, &mut st.srvs[stage_of(m)], a(1), a(2), a(3));
             hazards::after_srvs(d, st, stage_of(m), a(1), a(2));
@@ -3355,12 +3433,36 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         113 => return 0,
         114 => return DXGI_ERROR_INVALID_CALL,
         // ID3D11DeviceContext1
-        115 => return context_call2(d, st, 46, a, after), // CopySubresourceRegion1 (flags ignored)
-        116 => return context_call2(d, st, 48, a, after), // UpdateSubresource1
+        // CopySubresourceRegion1 / UpdateSubresource1: D3D11_COPY_NO_OVERWRITE and DISCARD only
+        // promise what the program does with the destination; the copy's bytes are the same
+        // (D3D11.1 functional spec, as Windows' WARP answers: winref d3d11cb1)
+        115 => return context_call2(d, st, 46, a, after),
+        116 => return context_call2(d, st, 48, a, after),
         117 | 118 | 133 => {}                           // Discard*
-        // *SetConstantBuffers1(start, n, buffers, first, count): whole buffers (offsets ignored)
-        119..=124 => return context_call2(d, st, [7, 62, 66, 22, 16, 71][us(m) - 119], a, after),
-        125..=130 => return context_call2(d, st, [72, 100, 104, 81, 77, 109][us(m) - 125], a, after),
+        // VS, HS, DS, GS, PS, CS SetConstantBuffers1(start, n, buffers, first, count) and
+        // Get*ConstantBuffers1(start, n, buffers, first, count): each slot's range of constants
+        119..=124 => {
+            let stage = CB1_STAGE.get(us(m.saturating_sub(119))).copied().unwrap_or(0);
+            // SAFETY: set_cbs' own contract: the caller's arguments of *SetConstantBuffers1
+            unsafe { set_cbs(d, st, stage, a(1), a(2), a(3), a(4), a(5)) };
+        }
+        125..=130 => {
+            let stage = CB1_STAGE.get(us(m.saturating_sub(125))).copied().unwrap_or(0);
+            let (Some(slots), Some(ranges)) = (st.cbs.get(stage), st.cb_ranges.get(stage)) else { return S_OK };
+            // SAFETY: get_slots' own contract: the caller's array of a(2) pointers (or NULL)
+            unsafe { get_slots(d, slots, a(1), a(2), a(3)) };
+            for i in 0..a(2) {
+                let r = ranges.get(us(a(1).saturating_add(i))).copied().unwrap_or(CbRange::NONE);
+                if a(4) != 0 {
+                    // SAFETY: wr's own contract: the caller's arrays of a(2) dwords
+                    unsafe { wr(a(4), us(i), r.first) };
+                }
+                if a(5) != 0 {
+                    // SAFETY: (the same)
+                    unsafe { wr(a(5), us(i), r.count) };
+                }
+            }
+        }
         131 => swap_state(d, st, a(1), a(2)),
         58 => deferred::execute(d, st, a(1), a(2), after),
         132 => {} // ClearView
@@ -4016,6 +4118,54 @@ fn buffer_gpu(d: &mut D11, id: u32) -> u32 {
     b.gpu
 }
 
+/// The `want` bytes a shader sees through a range of `len` bytes whose words `word(i)` reads:
+/// the range's bytes, then zeros (a constant buffer's ByteWidth is a multiple of 16: whole
+/// words).
+fn range_copy(word: impl Fn(u32) -> u32, len: u32, want: u32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(us(want));
+    for i in 0..len.min(want) >> 2 {
+        bytes.extend_from_slice(&word(i).to_le_bytes());
+    }
+    bytes.resize(us(want), 0);
+    bytes
+}
+
+/// The page buffer a shader reads constant buffer `cb` through, bound with `range`, the shader
+/// declaring `size` bytes: (page buffer, bytes bound). The whole buffer from its start when
+/// that is what the shader sees; else a copy of the range's bytes, cut at the buffer's end
+/// and padded with zeros to `size` (constants past the bound range read as 0: D3D11.1
+/// functional spec, ConstantBufferOffsetting; winref d3d11cb1).
+fn cb_binding(d: &mut D11, cb: u32, range: CbRange, size: u32) -> (u32, u32) {
+    let Some(Data::Buffer(b)) = d.objs.get(&cb).map(|o| &o.data) else { return (0, 0) };
+    let full = b.size.next_multiple_of(16).max(16);
+    let (off, len) = range.bytes(b.size);
+    let want = size.next_multiple_of(16).max(16);
+    if off == 0 && len == b.size.min(65536) && full >= want {
+        return (buffer_gpu(d, cb), full.min(65536));
+    }
+    let mem = b.mem;
+    // SAFETY: `mem` holds the buffer's `b.size` bytes, and range_copy reads words below
+    // off + len <= b.size (CbRange::bytes)
+    let bytes = range_copy(|i| unsafe { rd(mem.wrapping_add(off), us(i)) }, len, want);
+    let key = (cb, range.first, want);
+    let (made, same) = match d.cb_copies.get(&key) {
+        Some((g, last)) => (*g, *last == bytes),
+        None => (0, false),
+    };
+    let g = if made != 0 { made } else { page_id() };
+    if !same {
+        gpu::record(|q| {
+            let at = q.blob(&bytes);
+            if made == 0 {
+                q.cmd(&[gpu::CREATE_BUFFER, g, want]);
+            }
+            q.cmd(&[gpu::WRITE_BUFFER, g, 0, at, want]);
+        });
+        d.cb_copies.insert(key, (g, bytes));
+    }
+    (g, want)
+}
+
 /// The bytes where `new` differs from `old` (same length), widened to whole 4-byte words (as
 /// writeBuffer writes them; the end may be `new`'s length); None when equal.
 pub(crate) fn changed_range(old: &[u8], new: &[u8]) -> Option<(usize, usize)> {
@@ -4360,13 +4510,10 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
                 }
                 dxwgsl::Binding::Uniform(size) => {
                     let cb = st.cbs[stage].get(us(*bi)).copied().unwrap_or(0);
-                    let g = if cb != 0 { buffer_gpu(d, cb) } else { 0 };
+                    let range = st.cb_ranges[stage].get(us(*bi)).copied().unwrap_or(CbRange::WHOLE);
+                    let (g, len) = if cb != 0 { cb_binding(d, cb, range, *size) } else { (0, 0) };
                     cbs_read.push(cb);
-                    let bsize = match d.objs.get(&cb).map(|o| &o.data) {
-                        Some(Data::Buffer(b)) => b.size.next_multiple_of(16).max(16),
-                        _ => 0,
-                    };
-                    entries.push([*bi, 0, g, 0, bsize.min((*size).max(16).max(bsize)), *size, 0, 0]);
+                    entries.push([*bi, 0, g, 0, len, *size, 0, 0]);
                 }
                 dxwgsl::Binding::Texture(vdim, sample) => {
                     let t = bi - 16;
@@ -4545,8 +4692,9 @@ unsafe fn dispatch(d: &mut D11, st: &State, x: u32, y: u32, z: u32) {
         let e = match kind {
             dxwgsl::Binding::Uniform(size) => {
                 let cb = st.cbs[5].get(us(*bi)).copied().unwrap_or(0);
-                let g = if cb != 0 { buffer_gpu(d, cb) } else { 0 };
-                [*bi, 0, g, 0, 0, *size, 0, 0]
+                let range = st.cb_ranges[5].get(us(*bi)).copied().unwrap_or(CbRange::WHOLE);
+                let (g, len) = if cb != 0 { cb_binding(d, cb, range, *size) } else { (0, 0) };
+                [*bi, 0, g, 0, len, *size, 0, 0]
             }
             dxwgsl::Binding::Storage(vdim, _) => {
                 let n = bi - 200;

@@ -352,8 +352,6 @@ escape-comment	crates/hlslc/src/lower.rs	"line {}: static locals are not support
 escape-comment	crates/hlslc/src/parse.rs	"arrays of shaders are not supported"	escape: implement Windows' behavior (this thread)
 escape-comment	crates/hlslc/src/parse.rs	"geometry shaders are not supported"	escape: implement Windows' behavior (this thread)
 escape-comment	crates/hlslc/src/parse.rs	// (Foo::Bar: static members are not supported; the name alone)	escape: implement Windows' behavior (this thread)
-escape-comment	crates/kura/src/d3d11/mod.rs	// *SetConstantBuffers1(start, n, buffers, first, count): whole buffers (offsets ignored)	escape: implement Windows' behavior (this thread)
-escape-comment	crates/kura/src/d3d11/mod.rs	// CopySubresourceRegion1 (flags ignored)	escape: implement Windows' behavior (this thread)
 escape-comment	crates/kura/src/d3d9/device.rs	"d3d9: CreateCubeTexture {edge} format {f:#x} usage {usage:#x}: not supported"	escape: implement Windows' behavior (this thread)
 escape-comment	crates/kura/src/d3d9/device.rs	"d3d9: {} not implemented"	escape: implement Windows' behavior (this thread)
 escape-comment	crates/sake/src/api.rs	"sake: unimplemented {n} (returns {r:#x}), from {:#x}"	escape: implement Windows' behavior (Win32 thread)
