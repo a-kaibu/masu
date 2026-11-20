@@ -137,7 +137,7 @@ async fn rustfs_encrypted_storage() -> Result<()> {
             "must refuse overwrite"
         );
         s.db = Library(restored);
-        *s.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.lock().unwrap() = Default::default();
         assert_eq!(s.db.profile("game")?.note, "private note");
         assert!(s.db.profile("game")?.favorite);
         s.hydrate_catalog(&dir).await?;
@@ -153,7 +153,7 @@ async fn rustfs_encrypted_storage() -> Result<()> {
 
         // A ciphertext modified in the real object store. The whole copy the get above kept
         // on the disk still answers (the disk write does not hold the get back: let it land)...
-        let kept = s.disk.as_ref().context("no disk cache")?.path(original.object);
+        let kept = s.shared.disk.as_ref().context("no disk cache")?.path(original.object);
         for _ in 0..200 {
             if kept.exists() {
                 break;
@@ -164,13 +164,13 @@ async fn rustfs_encrypted_storage() -> Result<()> {
         let mut damaged = s.download(original.object).await?;
         damaged[0] ^= 1;
         s.upload(original.object, &damaged, AtOnce::ALONE).await?;
-        *s.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.lock().unwrap() = Default::default();
         assert_eq!(s.get("chunks/test").await?.as_deref(), Some(&chunk[..]));
         // ...and with it gone (memory and disk both cold) the damaged one is refused
-        s.disk.as_ref().unwrap().remove(original.object);
-        *s.cache.lock().unwrap() = Default::default();
+        s.shared.disk.as_ref().unwrap().remove(original.object);
+        *s.shared.cache.lock().unwrap() = Default::default();
         assert!(s.get("chunks/test").await.is_err());
-        s.disk = None;
+        s.shared = Shared::new(8, None);
         assert!(s.get("chunks/test").await.is_err());
         Ok(())
     }
@@ -282,7 +282,7 @@ async fn rustfs_push_through_503() -> Result<()> {
             stored += page.contents.len();
         }
         assert_eq!(stored, files.len(), "one object for each file");
-        *s.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.lock().unwrap() = Default::default();
         for (logical, bytes) in &files {
             assert_eq!(s.get(logical).await?.as_deref(), Some(&bytes[..]), "{logical}");
         }
@@ -348,7 +348,7 @@ async fn rustfs_remove_game() -> Result<()> {
         let fresh = dir.join("fresh");
         s.hydrate_catalog(&fresh).await?;
         assert!(fresh.join("games/b.json").exists() && !fresh.join("games/a.json").exists());
-        *s.cache.lock().unwrap() = Default::default();
+        *s.shared.cache.lock().unwrap() = Default::default();
         for line in std::fs::read_to_string(fresh.join("trees/b.tsv"))?.lines().filter(|l| l.starts_with("f\t")) {
             for c in line.split('\t').nth(5).unwrap().split(',').map(|c| c.split(':').next().unwrap()).filter(|c| c.len() > 2) {
                 assert!(s.get(&format!("chunks/{}/{c}", &c[..2])).await?.is_some(), "b's chunk {c}");

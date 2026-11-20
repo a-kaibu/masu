@@ -37,10 +37,15 @@ pub enum Rule {
     StoreDeletion,
     EscapeComment,
     ConstantHandler,
+    ArcTryUnwrap,
+    ArcCount,
+    CatchUnwindAbort,
+    ShellSpecialEnv,
+    DepthGuard,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 20] = [
+    pub const ALL: [Rule; 25] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -61,6 +66,11 @@ impl Rule {
         Rule::StoreDeletion,
         Rule::EscapeComment,
         Rule::ConstantHandler,
+        Rule::ArcTryUnwrap,
+        Rule::ArcCount,
+        Rule::CatchUnwindAbort,
+        Rule::ShellSpecialEnv,
+        Rule::DepthGuard,
     ];
 
     /// the name a site list and a message use
@@ -86,6 +96,11 @@ impl Rule {
             Rule::StoreDeletion => "store-deletion",
             Rule::EscapeComment => "escape-comment",
             Rule::ConstantHandler => "constant-handler",
+            Rule::ArcTryUnwrap => "arc-try-unwrap",
+            Rule::ArcCount => "arc-count",
+            Rule::CatchUnwindAbort => "catch-unwind-abort",
+            Rule::ShellSpecialEnv => "shell-special-env",
+            Rule::DepthGuard => "depth-guard",
         }
     }
 
@@ -111,6 +126,11 @@ impl Rule {
             Rule::StoreDeletion => "retired bucket objects must pass through gc before physical deletion",
             Rule::EscapeComment => "no comment excuses code from Windows' behavior (user rule 2026-11-20): implement what Windows does instead of writing the shortcut down; \"not supported\" / an approximation / ignored flags pass only with Windows' evidence in the same comment (winref, a golden, MEASURED, Wine's tests, the spec)",
             Rule::ConstantHandler => "a sake handler that ignores its arguments and returns a constant is an empty success unless its doc names the Windows answer it is (winref, a golden, MEASURED, Wine's tests): implement the call, or cite the evidence (user rule 2026-11-20)",
+            Rule::ArcTryUnwrap => "no Arc::try_unwrap (Arc audit 2026-11-20, mf release_data): two last holders letting go at once both get Err and neither runs the last-one-out step; Arc::into_inner, or better a Drop that does that step (mf::source::Data)",
+            Rule::ArcCount => "a decision on Arc::strong_count / weak_count holds only while nobody can clone or drop one meanwhile (Arc audit 2026-11-20): each such site is a known site saying which lock makes it so (saves NameLocks, storage gate: the map lock every clone is made under); else let a Drop or Arc::into_inner decide",
+            Rule::CatchUnwindAbort => "sake.wasm is built with panic=abort, so catch_unwind in a crate it links never catches (82cdd0d0: naga's GLSL panic ended the game through a catch_unwind; review 2026-11-14 P1-7): return a Result, or check the input before the call",
+            Rule::ShellSpecialEnv => "a workflow's env or a script does not set one of bash's own variables (bench.yml's inputs went through GROUPS: a script's GROUPS=.. is dropped, RANDOM/SECONDS/LINENO are replaced, whether an env value gets in depends on the variable and the bash version): give it a name of its own",
+            Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -137,6 +157,11 @@ impl Rule {
             Rule::StoreDeletion => boundaries::check(self, tree, boundaries::STORAGE),
             Rule::EscapeComment => crate::escape::escape_comment(tree),
             Rule::ConstantHandler => crate::escape::constant_handler(tree),
+            Rule::ArcTryUnwrap => arc_use(tree, &["try_unwrap"]),
+            Rule::ArcCount => arc_use(tree, &["strong_count", "weak_count"]),
+            Rule::CatchUnwindAbort => regress::catch_unwind_abort(tree),
+            Rule::ShellSpecialEnv => regress::shell_special_env(tree),
+            Rule::DepthGuard => regress::depth_guard(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -152,6 +177,8 @@ pub struct Finding {
 
 #[path = "boundaries.rs"]
 mod boundaries;
+#[path = "regress.rs"]
+mod regress;
 
 type Hits = Vec<(Rel, usize, String)>;
 
@@ -745,6 +772,55 @@ pub fn known_counts(known: &[(Site, String)]) -> BTreeMap<Site, usize> {
 /// the findings beyond the known sites
 pub fn fresh(found: &BTreeMap<Site, Vec<Finding>>, known: &BTreeMap<Site, usize>) -> Vec<Finding> {
     found.iter().flat_map(|(s, v)| v.iter().skip(known.get(s).copied().unwrap_or(0)).cloned()).collect()
+}
+
+/// Arc::try_unwrap and Arc::strong_count / weak_count in code (outside #[cfg(test)]
+/// modules and fns, and the files only those bring in)
+fn arc_use(tree: &Tree, names: &'static [&'static str]) -> Hits {
+    let mut out = Hits::new();
+    let files = tree.rs(&["crates/"]);
+    let tests = test_mod_files(tree, &files);
+    for f in files.iter().filter(|f| !tests.contains(*f) && !f.as_str().ends_with("_tests.rs") && !f.as_str().contains("/tests/")) {
+        let Some(file) = tree.syntax(f) else { continue };
+        let mut v = ArcUse { names, hits: Vec::new() };
+        syn::visit::Visit::visit_file(&mut v, &file);
+        out.extend(v.hits.into_iter().map(|(l, what)| (f.clone(), l, what)));
+    }
+    out
+}
+
+struct ArcUse {
+    /// the Arc associated functions looked for
+    names: &'static [&'static str],
+    hits: Vec<(usize, String)>,
+}
+
+impl<'a> syn::visit::Visit<'a> for ArcUse {
+    fn visit_item_mod(&mut self, m: &'a syn::ItemMod) {
+        if !crate::syntax::is_cfg_test(&m.attrs) {
+            syn::visit::visit_item_mod(self, m);
+        }
+    }
+    fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
+        if !crate::syntax::is_cfg_test(&f.attrs) {
+            syn::visit::visit_item_fn(self, f);
+        }
+    }
+    fn visit_impl_item_fn(&mut self, f: &'a syn::ImplItemFn) {
+        if !crate::syntax::is_cfg_test(&f.attrs) {
+            syn::visit::visit_impl_item_fn(self, f);
+        }
+    }
+    fn visit_expr_path(&mut self, e: &'a syn::ExprPath) {
+        let mut back = e.path.segments.iter().rev();
+        if let (Some(f), Some(ty)) = (back.next(), back.next())
+            && ty.ident == "Arc"
+            && self.names.iter().any(|n| f.ident == n)
+        {
+            self.hits.push((crate::syntax::line(f.ident.span()), format!("Arc::{}", f.ident)));
+        }
+        syn::visit::visit_expr_path(self, e);
+    }
 }
 
 #[cfg(test)]

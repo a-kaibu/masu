@@ -49,7 +49,13 @@ clippy.toml path stops resolving, a regex stops matching) fails there instead of
 | physical bucket deletion belongs to the storage GC | arch `store-deletion`, `home-only` |
 | no comment or log line excuses code from Windows' behavior: no to-do markers, "for now", simplifications, "not implemented", stubs that answer anything, approximations, best effort (English or Japanese); "not supported" / an approximation / ignored flags only with Windows' evidence in the same comment (user rule 2026-11-20) | arch `escape-comment` (src/escape.rs, escape_tests.rs: each word alone) |
 | a sake handler that ignores its arguments and returns a constant says in its doc which Windows answer that is (winref, a golden, MEASURED, Wine's tests); otherwise it is an empty success to implement (user rule 2026-11-20) | arch `constant-handler` |
+| no Arc::try_unwrap: two last holders letting go at once both get Err and neither does the last-one-out step; Arc::into_inner, or a Drop that does it (Arc audit 2026-11-20, mf::source::Data) | arch `arc-try-unwrap` |
+| a decision on Arc::strong_count / weak_count is a known site saying which lock keeps clones and drops from racing it (Arc audit 2026-11-20) | arch `arc-count` |
 | save metadata is published by cacheSave or acknowledgeSave; production Wasm acquisition goes through runtimeWasm | web `pnpm run check` and `pnpm run lint` (TypeScript symbol references, including imports under another name) |
+| no catch_unwind in a crate sake.wasm links: it is built with panic=abort and the catch never happens (82cdd0d0, review 2026-11-14 P1-7) | arch `catch-unwind-abort` (the crates: sake and its [dependencies] by path) |
+| a workflow's env or a script does not set one of bash's own variables (GROUPS, RANDOM, SECONDS..; bench.yml passed its input as GROUPS) | arch `shell-special-env` |
+| the depth limits put on recursion over game and file input stay declared and compared against (review b00/b04/b07, b87128be) | arch `depth-guard` (regress.rs DEPTH_GUARDS: a new limit is added there) |
+| Box::leak / String::leak / Vec::leak only at their known sites (61153f30: GetProcAddress leaked its name per call; review 2026-11-16: LSan's 6000 leaks) | clippy.toml disallowed-methods -> masu-leak (pinned per site) |
 | every pointer-sized out-parameter is taken as typed Args | `sake::outptr_audit` (test) |
 | Pool Lease / brand, Ga, Out misuse does not compile | compile_fail doctests |
 

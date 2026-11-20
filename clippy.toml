@@ -14,6 +14,12 @@ disallowed-methods = [
     { path = "core::mem::transmute_copy", reason = "masu-transmute: from_le_bytes / a safe cast" },
     { path = "core::mem::zeroed", reason = "masu-uninit: Default / a value" },
     { path = "core::mem::MaybeUninit::assume_init", reason = "masu-uninit: a value made whole" },
+    # (61153f30: GetProcAddress leaked its name per call; review 2026-11-16: the api hot table's
+    # per-call Box made LSan's 6000 leaks. A leak is right once per process, a known site; any new
+    # one says which it is)
+    { path = "alloc::boxed::Box::leak", reason = "masu-leak: an owner (a static OnceLock, a table entry) or a borrow" },
+    { path = "alloc::string::String::leak", reason = "masu-leak: an owner (a static OnceLock, a table entry) or a borrow" },
+    { path = "alloc::vec::Vec::leak", reason = "masu-leak: an owner (a static OnceLock, a table entry) or a borrow" },
     # (no relay, 2026-11-16: the page reads chunks from the bucket itself; each place the server
     # reads an object's bytes is a known site, a new one is a new relay. Only crate masu has it)
     { path = "masu::storage::Storage::get", reason = "masu-relay: the page fetches from the bucket (/store-direct); the server reads only the catalog", allow-invalid = true },

@@ -658,13 +658,15 @@ fn ms_set_topology(c: &mut Ctx) -> u32 {
     let movie = plan(t).and_then(|p| {
         // (a program's own byte stream is read here, on its thread: the movie thread has none)
         let data = match p.data.src {
-            source::Src::Guest(_) if p.data.len <= 1 << 30 => Arc::new(Data::mem_arc(Arc::new(p.data.read(Some(c), 0, us(p.data.len))?))),
-            source::Src::Guest(_) => return None,
+            source::Src::Guest(..) if p.data.len <= 1 << 30 => Arc::new(Data::mem_arc(Arc::new(p.data.read(Some(c), 0, us(p.data.len))?))),
+            source::Src::Guest(..) => return None,
             source::Src::Mem(_) | source::Src::Host(_) => p.data.clone(),
         };
         let m = movie::open(data, &p.media, p.video, p.audio)?;
         Some((m, p.hwnd))
     });
+    // (the plan's hold on the program's stream, the last one when the source went meanwhile)
+    source::release_let_go(c);
     // (the movie played before goes)
     play::end(b);
     let ok = movie.is_some();

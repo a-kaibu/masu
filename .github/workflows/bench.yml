@@ -51,7 +51,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           SHA: ${{ github.event.workflow_run.head_sha }}
-          GROUPS: ${{ inputs.groups }}
+          ASKED: ${{ inputs.groups }}
         run: |
           # successful CI runs of main, newest first, whose build artifact is still there
           runs=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --status success \
@@ -64,7 +64,7 @@ jobs:
             if has_build "$id"; then OLD_RUN_ID=$id OLD_SHA=$sha; break; fi
           done <<< "$runs"
           ALL="cpu-kernels cpu-game memory-grow gdi wic ddraw d3d8 d3d9 d3d11 d2d gl scenario kirikiri krkr2 renpy-gl renpy-angle onscripter onscripter64 win16 win16-pascal"
-          G=${GROUPS:-$ALL js}
+          G=${ASKED:-$ALL js}
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "old_run_id=$OLD_RUN_ID" >> "$GITHUB_OUTPUT"
