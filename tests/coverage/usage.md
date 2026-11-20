@@ -1,6 +1,6 @@
 # Use-case coverage
 
-344 game runs, 3959 entry points they call, 6174 the tests call.
+346 game runs, 3924 entry points they call, 5114 the tests call.
 
 | kind | used by games | tested | by games weighted | by calls weighted |
 |---|---|---|---|---|
@@ -10,99 +10,99 @@
 | IMediaSample | 13 | 0 | 0.0% | 0.0% |
 | IMemAllocator | 4 | 0 | 0.0% | 0.0% |
 | IMemInputPin | 5 | 0 | 0.0% | 0.0% |
-| IPin | 11 | 8 | 83.9% | 98.9% |
-| api | 3377 | 1550 | 79.2% | 87.8% |
-| d3d | 258 | 136 | 66.6% | 84.2% |
-| d3d9 | 141 | 111 | 86.3% | 98.5% |
+| IPin | 11 | 8 | 82.5% | 98.0% |
+| api | 3352 | 1287 | 71.9% | 81.0% |
+| d3d | 259 | 134 | 64.6% | 80.5% |
+| d3d9 | 141 | 111 | 86.4% | 98.6% |
 | glmissing | 1 | 0 | 0.0% | 0.0% |
-| stub | 135 | 45 | 40.7% | 0.5% |
+| stub | 124 | 33 | 36.0% | 0.6% |
 
-## Called by games, reached by no test (2006)
-
-| entry point | games | calls |
-|---|---|---|
-| `api:kernel32!InitializeCriticalSectionAndSpinCount` | 224 | 8140 |
-| `api:kernel32!SetHandleCount` | 215 | 482 |
-| `api:sake!IDirectSoundBuffer8::15` | 201 | 129684 |
-| `api:kernel32!EncodePointer` | 196 | 144413 |
-| `api:user32!SetCursor` | 150 | 20683 |
-| `api:kernel32!DecodePointer` | 140 | 149515 |
-| `api:sake!d3d9:2:57` | 103 | 3222174 |
-| `api:sake!d3d9:2:43` | 101 | 133330 |
-| `api:sake!d3d9:1:8` | 101 | 1453 |
-| `d3d9:IDirect3D9::GetAdapterDisplayMode` | 101 | 1453 |
-| `api:sake!d3d9:2:65` | 100 | 2527397 |
-| `api:sake!d3d9:2:69` | 100 | 1908631 |
-| `api:sake!d3d9:2:17` | 100 | 75927 |
-| `api:sake!IDirectSoundBuffer8::16` | 97 | 1494 |
-| `api:sake!d3d9:5:19` | 96 | 32547 |
-| `api:sake!d3d9:5:20` | 96 | 32513 |
-| `api:sake!d3d9:2:67` | 87 | 1657377 |
-| `api:sake!d3d9:2:89` | 86 | 514765 |
-| `api:sake!d3d9:1:14` | 79 | 130 |
-| `api:user32!RegisterWindowMessageA` | 75 | 233 |
-| `api:shell32!DragAcceptFiles` | 70 | 80 |
-| `api:sake!d3d9:2:47` | 69 | 1178703 |
-| `api:kernel32!InitializeSRWLock` | 67 | 32213 |
-| `api:user32!ShowCursor` | 67 | 488 |
-| `api:sake!d3d11:70:5` | 64 | 5878 |
-| `api:sake!d3d11:70:3` | 63 | 6878 |
-| `api:kernel32!LocaleNameToLCID` | 63 | 4477 |
-| `api:sake!d3d11:70:7` | 63 | 4080 |
-| `api:sake!d3d11:70:0` | 63 | 266 |
-| `api:sake!d3d11:74:2` | 62 | 880799 |
-| `api:sake!d3d11:71:44` | 62 | 58712 |
-| `api:sake!d3d11:70:20` | 62 | 708 |
-| `api:sake!d3d11:71:14` | 61 | 398144 |
-| `api:user32!PtInRect` | 60 | 436568 |
-| `api:sake!d3d11:71:15` | 60 | 398120 |
-| `api:sake!d3d11:71:48` | 60 | 383787 |
-| `api:sake!d3d11:71:9` | 60 | 139821 |
-| `api:sake!d3d11:71:11` | 60 | 113040 |
-| `api:sake!d3d11:71:8` | 59 | 919934 |
-| `api:kernel32!InitializeConditionVariable` | 59 | 972 |
-| `api:user32!WINNLSEnableIME` | 56 | 189 |
-| `api:sake!d3d11:64:7` | 56 | 141 |
-| `api:sake!d3d11:70:29` | 54 | 3904 |
-| `d3d:70.29` | 54 | 3904 |
-| `api:sake!d3d9:2:18` | 51 | 35089 |
-| `api:sake!d3d11:70:6` | 51 | 114 |
-| `api:sake!d3d11:71:23` | 50 | 63527 |
-| `d3d:71.23` | 50 | 63526 |
-| `api:sake!d3d9:1:5` | 50 | 82 |
-| `d3d9:IDirect3D9::GetAdapterIdentifier` | 50 | 82 |
-| `api:sake!d3d11:68:2` | 50 | 54 |
-| `d3d:68.2` | 50 | 54 |
-| `api:kernel32!GetLocaleInfoEx` | 48 | 785 |
-| `api:sake!d3d9:5:17` | 47 | 146572 |
-| `d3d9:Texture::GetLevelDesc` | 47 | 146562 |
-| `api:sake!d3d11:71:0` | 47 | 89 |
-| `api:sake!d3d11:64:0` | 47 | 87 |
-| `api:sake!d3d11:70:24` | 46 | 17872 |
-| `api:sake!d3d11:91:2` | 46 | 10530 |
-| `api:sake!d3d11:70:33` | 46 | 6239 |
-
-## Called by games, not implemented (136)
+## Called by games, reached by no test (2247)
 
 | entry point | games | calls |
 |---|---|---|
-| `stub:imm32!ImmGetContext` | 90 | 779 |
-| `stub:imm32!ImmAssociateContext` | 74 | 87 |
+| `api:kernel32!GetCurrentThreadId` | 331 | 8270530 |
+| `api:kernel32!GetCurrentProcessId` | 295 | 25195 |
+| `api:kernel32!IsProcessorFeaturePresent` | 265 | 842 |
+| `api:kernel32!InitializeCriticalSectionAndSpinCount` | 224 | 8071 |
+| `api:kernel32!SetHandleCount` | 217 | 499 |
+| `api:kernel32!GetProcessHeap` | 204 | 116808 |
+| `api:sake!IDirectSoundBuffer8::15` | 203 | 180260 |
+| `api:kernel32!EncodePointer` | 197 | 144541 |
+| `api:user32!ScreenToClient` | 179 | 7791170 |
+| `api:kernel32!InterlockedIncrement` | 166 | 8438563 |
+| `api:kernel32!InterlockedDecrement` | 162 | 506658 |
+| `api:user32!SetCursor` | 152 | 23137 |
+| `api:kernel32!GetCurrentProcess` | 149 | 16979 |
+| `api:kernel32!DecodePointer` | 140 | 149560 |
+| `api:user32!AdjustWindowRectEx` | 129 | 318 |
+| `api:kernel32!GetCurrentThread` | 128 | 43169 |
+| `api:kernelbase!InitializeCriticalSectionEx` | 111 | 20240 |
+| `api:kernelbase!FlsSetValue` | 110 | 10465 |
+| `api:kernelbase!FlsAlloc` | 110 | 416 |
+| `api:kernelbase!LCMapStringEx` | 109 | 19884 |
+| `api:sake!cs_wake` | 106 | 189903 |
+| `api:kernelbase!FlsGetValue` | 105 | 1561114 |
+| `api:sake!d3d9:2:57` | 104 | 3435235 |
+| `api:sake!d3d9:2:43` | 103 | 151659 |
+| `api:sake!d3d9:2:17` | 103 | 80026 |
+| `api:sake!d3d9:2:65` | 102 | 2774391 |
+| `api:sake!d3d9:2:69` | 102 | 2389155 |
+| `api:sake!d3d9:1:8` | 102 | 1675 |
+| `d3d9:IDirect3D9::GetAdapterDisplayMode` | 102 | 1675 |
+| `api:sake!d3d9:5:19` | 98 | 37921 |
+| `api:sake!d3d9:5:20` | 98 | 37885 |
+| `api:sake!IDirectSoundBuffer8::16` | 97 | 752 |
+| `api:kernel32!lstrcpyA` | 96 | 226116 |
+| `api:sake!d3d9:2:89` | 89 | 611587 |
+| `api:sake!d3d9:2:67` | 88 | 2537871 |
+| `api:kernel32!InterlockedExchange` | 82 | 597852 |
+| `api:sake!d3d9:1:14` | 80 | 133 |
+| `api:user32!RegisterWindowMessageA` | 74 | 232 |
+| `api:user32!ShowCursor` | 70 | 455 |
+| `api:sake!d3d9:2:47` | 69 | 1166961 |
+| `api:shell32!DragAcceptFiles` | 69 | 79 |
+| `api:user32!DeleteMenu` | 68 | 1062 |
+| `api:kernel32!CompareStringW` | 66 | 614463 |
+| `api:sake!d3d11:65:2` | 66 | 280 |
+| `api:sake!d3d11:70:5` | 65 | 5880 |
+| `api:kernel32!VerifyVersionInfoW` | 65 | 1259 |
+| `api:d3d11!D3D11CreateDevice` | 65 | 94 |
+| `api:sake!d3d11:70:3` | 64 | 10441 |
+| `api:sake!d3d11:70:7` | 64 | 3983 |
+| `api:sake!d3d11:70:0` | 64 | 267 |
+| `api:kernel32!GetVersionExW` | 64 | 229 |
+| `api:sake!d3d11:74:2` | 63 | 305133 |
+| `api:user32!PtInRect` | 62 | 483297 |
+| `api:sake!d3d11:71:44` | 62 | 67380 |
+| `api:sake!d3d11:70:20` | 62 | 702 |
+| `api:sake!d3d11:65:8` | 62 | 188 |
+| `d3d:65.8` | 62 | 188 |
+| `api:sake!d3d11:71:14` | 61 | 276369 |
+| `api:kernel32!LocaleNameToLCID` | 61 | 4475 |
+| `api:user32!GetKeyboardType` | 61 | 344 |
+
+## Called by games, not implemented (125)
+
+| entry point | games | calls |
+|---|---|---|
+| `stub:imm32!ImmGetContext` | 89 | 611 |
+| `stub:imm32!ImmAssociateContext` | 74 | 86 |
 | `stub:kernel32!InitializeProcThreadAttributeList` | 38 | 76 |
 | `stub:kernel32!DeleteProcThreadAttributeList` | 38 | 38 |
-| `stub:imm32!ImmReleaseContext` | 35 | 115 |
 | `stub:user32!RegisterTouchWindow` | 35 | 35 |
-| `stub:imm32!ImmGetOpenStatus` | 25 | 52 |
-| `stub:imm32!ImmGetConversionStatus` | 23 | 72 |
-| `stub:dwmapi!DwmSetWindowAttribute` | 22 | 93 |
-| `stub:imm32!ImmSetOpenStatus` | 17 | 44 |
+| `stub:imm32!ImmReleaseContext` | 34 | 111 |
+| `stub:imm32!ImmGetOpenStatus` | 25 | 50 |
+| `stub:imm32!ImmGetConversionStatus` | 23 | 69 |
+| `stub:dwmapi!DwmSetWindowAttribute` | 22 | 91 |
+| `stub:imm32!ImmSetOpenStatus` | 17 | 43 |
 | `stub:kernel32!AttachConsole` | 12 | 12 |
 | `stub:kernel32!SetConsoleOutputCP` | 11 | 11 |
-| `stub:imm32!ImmIsIME` | 10 | 33 |
+| `stub:imm32!ImmIsIME` | 10 | 32 |
 | `stub:kernel32!SetConsoleCP` | 10 | 10 |
 | `stub:dwmapi!DwmEnableComposition` | 9 | 9 |
-| `stub:setupapi!SetupDiEnumDeviceInterfaces` | 8 | 5633 |
-| `stub:kernel32!GetConsoleScreenBufferInfo` | 8 | 66 |
+| `stub:kernel32!GetConsoleScreenBufferInfo` | 8 | 54 |
+| `stub:user32!IsTouchWindow` | 8 | 25 |
 | `stub:ole32!CoGetApartmentType` | 8 | 19 |
 | `stub:uxtheme!RefreshImmersiveColorPolicyState` | 8 | 18 |
 | `stub:uxtheme!SetPreferredAppMode` | 8 | 18 |
@@ -110,10 +110,10 @@
 | `stub:avifil32!AVIFileInit` | 8 | 9 |
 | `stub:kernel32!SetConsoleMode` | 8 | 8 |
 | `stub:user32!GetThreadDesktop` | 8 | 8 |
-| `stub:user32!IsTouchWindow` | 7 | 24 |
+| `stub:setupapi!SetupDiEnumDeviceInterfaces` | 7 | 4992 |
 | `stub:imm32!ImmSetCompositionFontA` | 7 | 11 |
 | `stub:kernel32!SetConsoleTextAttribute` | 6 | 72 |
-| `stub:winmm!waveInGetNumDevs` | 6 | 46 |
+| `stub:winmm!waveInGetNumDevs` | 6 | 44 |
 | `stub:uxtheme!ShouldAppsUseDarkMode` | 6 | 18 |
 | `stub:crypt32!CertOpenSystemStoreA` | 6 | 6 |
 | `stub:imm32!ImmCreateContext` | 6 | 6 |
@@ -123,22 +123,22 @@
 | `stub:shell32!ExtractIconExA` | 6 | 6 |
 | `stub:shell32!SetCurrentProcessExplicitAppUserModelID` | 6 | 6 |
 | `stub:uiautomationcore!UiaLookupId` | 6 | 6 |
+| `stub:user32!RegisterPowerSettingNotification` | 6 | 6 |
 | `stub:uxtheme!FlushMenuThemes` | 6 | 6 |
-| `stub:user32!GetClipCursor` | 5 | 55138 |
-| `stub:winhttp!WinHttpGetIEProxyConfigForCurrentUser` | 5 | 12 |
+| `stub:user32!GetClipCursor` | 5 | 41634 |
+| `stub:winhttp!WinHttpGetIEProxyConfigForCurrentUser` | 5 | 11 |
 | `stub:imm32!ImmDisableTextFrameService` | 5 | 5 |
-| `stub:user32!RegisterPowerSettingNotification` | 5 | 5 |
-| `stub:user32!GetCursorInfo` | 4 | 207191 |
-| `glmissing:glDrawBuffers` | 4 | 758 |
+| `stub:user32!GetCursorInfo` | 4 | 145375 |
+| `glmissing:glDrawBuffers` | 4 | 840 |
 | `stub:imm32!ImmNotifyIME` | 4 | 4 |
 | `stub:shell32!InitNetworkAddressControl` | 4 | 4 |
 | `stub:user32!SetGestureConfig` | 4 | 4 |
 | `stub:winmm!joyReleaseCapture` | 4 | 4 |
 | `stub:shell32!ExtractIconA` | 3 | 5 |
-| `stub:ucrtbase!iswxdigit` | 2 | 3611 |
-| `stub:imm32!ImmAssociateContextEx` | 2 | 128 |
+| `stub:ucrtbase!iswxdigit` | 2 | 5105 |
+| `stub:imm32!ImmAssociateContextEx` | 2 | 92 |
 | `stub:ucrtbase!iswalnum` | 2 | 63 |
-| `stub:imm32!ImmGetCompositionStringW` | 2 | 28 |
+| `stub:imm32!ImmGetCompositionStringW` | 2 | 8 |
 | `stub:ucrtbase!logbf` | 2 | 5 |
 | `stub:user32!SetMenuInfo` | 2 | 4 |
 | `stub:crypt32!CertOpenSystemStoreW` | 2 | 2 |
