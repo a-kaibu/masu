@@ -35,6 +35,49 @@ fn fixture(r: Rule) -> Fixture {
             good: &[(boundaries::STORAGE, "impl Store { fn gc(&self) { self.delete(id); } fn delete(&self) { self.bucket.delete_object(id); } }")],
             mutate: (boundaries::STORAGE, |t| Some(t + "\nimpl Storage { async fn erase(&self, id: Uuid) -> Result<()> { self.delete(id).await } }")),
         },
+        Rule::CatchUnwindAbort => Fixture {
+            bad: &[
+                ("crates/sake/Cargo.toml", "[package]\nname = \"sake\"\n[dependencies]\nglwgsl = { path = \"../glwgsl\" }\n"),
+                ("crates/glwgsl/Cargo.toml", "[package]\nname = \"glwgsl\"\n[target.'cfg(unix)'.dependencies]\nkome = { path = \"../kome\" }\n"),
+                ("crates/glwgsl/src/lib.rs", "pub fn f() -> Option<u32> { std::panic::catch_unwind(|| naga()).ok() }\n"),
+                ("crates/kome/src/lib.rs", "use std::panic::catch_unwind;\n"),
+            ],
+            good: &[
+                ("crates/sake/Cargo.toml", "[package]\nname = \"sake\"\n[dependencies]\nkome = { path = \"../kome\" }\n[dev-dependencies]\nshaderconf = { path = \"../shaderconf\" }\n[build-dependencies]\nhlslc = { path = \"../hlslc\" }\n"),
+                ("crates/sake/src/api.rs", "fn f() {}\n#[cfg(test)]\nmod tests {\n    fn t() { let _ = std::panic::catch_unwind(|| 1); }\n}\n"),
+                ("crates/sake/src/x_tests.rs", "fn t() { let _ = std::panic::catch_unwind(|| 1); }\n"),
+                ("crates/shaderconf/src/oracle.rs", "fn f() { let _ = std::panic::catch_unwind(|| 1); }\n"),
+                ("crates/hlslc/src/lib.rs", "fn f() { let _ = std::panic::catch_unwind(|| 1); }\n"),
+                ("crates/kome/src/lib.rs", "// (no catch_unwind: panic=abort)\npub fn f() {}\n"),
+            ],
+            mutate: ("crates/glwgsl/src/lib.rs", |t| Some(t + "\nfn caught() -> bool { std::panic::catch_unwind(|| 1).is_ok() }\n")),
+        },
+        Rule::ShellSpecialEnv => Fixture {
+            bad: &[
+                (".github/workflows/bench.yml", "jobs:\n  plan:\n    steps:\n      - env:\n          GROUPS: ${{ inputs.groups }}\n        run: echo\n"),
+                ("tests/x.sh", "#!/bin/sh\nexport RANDOM=4\nSECONDS=0 cargo test\nfor x in a; do PIPESTATUS+=(1); done\n"),
+                (".github/workflows/ci.yml", "      - run: |\n          UID=1000 ./run.sh\n"),
+            ],
+            good: &[
+                (".github/workflows/bench.yml", "      - env:\n          ASKED: ${{ inputs.groups }}\n          BENCH_GROUPS: x\n        run: |\n          G=${ASKED:-all}\n          # GROUPS=1 would be dropped\n          echo \"$SECONDS $UID\"\n          while IFS=$'\\t' read -r a; do :; done\n"),
+                ("tests/x.sh", "MY_GROUPS=1\nSRANDOM_SEED=2 echo $RANDOM\n[ \"$x\" = GROUPS ]\n"),
+                ("vendor/naga/x.sh", "GROUPS=1\n"),
+                ("docs/x.md", "GROUPS: 1\n"),
+            ],
+            mutate: (".github/workflows/bench.yml", |t| Some(t.replace("          ASKED: ${{ inputs.groups }}", "          GROUPS: ${{ inputs.groups }}"))),
+        },
+        Rule::DepthGuard => Fixture {
+            bad: &[
+                ("crates/apitrace/src/trace.rs", "pub const MAX_DEPTH: u32 = 64;\nfn value(&mut self) { self.depth += 1; }\n"),
+                ("crates/msidb/src/cond.rs", "fn deeper(&mut self) -> Option<()> { self.depth += 1; Some(()) }\n"),
+                ("crates/hlslc/src/parse.rs", "#[cfg(test)]\nmod tests {\n    const MAX_NEST: u32 = 512;\n    fn t() { assert!(1 < MAX_NEST); }\n}\n"),
+            ],
+            good: &[
+                ("crates/apitrace/src/trace.rs", "pub const MAX_DEPTH: u32 = 64;\nfn value(&mut self) -> Result<(), String> { if self.depth >= MAX_DEPTH { return Err(String::new()); } Ok(()) }\n"),
+                ("crates/msidb/src/cond.rs", "pub const MAX_DEPTH: usize = 200;\nfn deeper(&mut self) -> Option<()> { self.depth += 1; (self.depth <= MAX_DEPTH).then_some(()) }\n"),
+            ],
+            mutate: ("crates/msidb/src/sql.rs", |t| Some(t.replace("pub const MAX_DEPTH: usize = 64;", "pub const MAX_NESTING: usize = 64;"))),
+        },
         Rule::BuildOutput => Fixture {
             bad: &[("crates/masu/target/x86_64-pc-windows-gnu/release/masu.exe", "x"), ("web/public/sake/sake.wasm", "x")],
             good: &[("crates/kura/testdata/idec/planes.bin", "x"), ("testdata/apitrace/a.trace.zst", "x"), ("crates/kura/src/target.rs", "x")],
@@ -258,12 +301,15 @@ fn every_regex_compiles() {
     for r in [&BUILD_EXT, &BUILD_OK, &TARGET_DIR, &GOLDEN_ANY, &GOLDEN_FILES, &JOB, &CHECKS, &DISALLOWED] {
         assert!(r.is_some());
     }
+    for r in regress::regexes() {
+        assert!(r.is_some());
+    }
 }
 
 #[test]
 fn the_new_rules_find_each_spelling_alone() {
     // (each bad file on its own: one spelling found does not hide another that is missed)
-    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::ArcTryUnwrap, Rule::ArcCount] {
+    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::DepthGuard] {
         for one in fixture(r).bad.chunks(1) {
             assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
         }
@@ -271,4 +317,42 @@ fn the_new_rules_find_each_spelling_alone() {
     // (and every site in the bad files, not only the first: w8(ga(key)) is two)
     assert_eq!(Rule::SafeRawPointerAbi.check(&Tree::made_up(fixture(Rule::SafeRawPointerAbi).bad)).len(), 3);
     assert_eq!(Rule::OutEscape.check(&Tree::made_up(fixture(Rule::OutEscape).bad)).len(), 6);
+}
+
+#[test]
+fn the_abort_build_is_sake_and_what_it_links() {
+    // (the real tree: the crates whose catch_unwind never catches; a dev- or build-dependency is
+    // not linked into sake.wasm)
+    let c = regress::abort_crates(&Tree::repo(&repo()));
+    for k in ["crates/sake", "crates/kura", "crates/koji", "crates/kome", "crates/glwgsl", "crates/hlslc", "crates/msidb"] {
+        assert!(c.contains(k), "{k} not in {c:?}");
+    }
+    assert!(!c.contains("crates/shaderconf") && !c.contains("crates/masu"), "{c:?}");
+    // (and the switch that makes it so is still there)
+    assert!(std::fs::read_to_string(repo().join("crates/sake/build.sh")).unwrap_or_default().contains("-C panic=abort"));
+}
+
+#[test]
+fn bash_drops_an_assignment_to_groups() {
+    // (the reason for shell-special-env, shown on this machine's bash: a script's GROUPS=.. is
+    // dropped; an env value gets through or not by the variable and the bash version)
+    if let Ok(o) = std::process::Command::new("bash").args(["-c", "GROUPS=gdi; echo \"$GROUPS\""]).output() {
+        assert_ne!(String::from_utf8_lossy(&o.stdout).trim(), "gdi");
+    }
+    assert_eq!(regress::special_sets("A=1\nGROUPS=2\n  export SECONDS=3 # x\n# RANDOM=4\nX_UID=5\n", false), vec![(2, "GROUPS".to_owned()), (3, "SECONDS".to_owned())]);
+}
+
+#[test]
+fn each_depth_guard_is_in_the_real_tree() {
+    let real = Tree::repo(&repo());
+    assert!(regress::depth_guard(&real).is_empty());
+    // (taking any one guard's comparison away is found)
+    for (file, name) in regress::DEPTH_GUARDS {
+        let f = Rel::new(file);
+        let text = real.text(&f);
+        let decl = text.lines().find(|l| l.contains(&format!("const {name}:"))).unwrap_or_default().to_owned();
+        let only = text.replace(name, "OTHER").replace(&decl.replace(name, "OTHER"), &decl);
+        let t = Tree::with(&repo(), &f, Some(only));
+        assert!(!regress::depth_guard(&t).is_empty(), "{file} {name}: its uses taken away is not found");
+    }
 }

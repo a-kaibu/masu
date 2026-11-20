@@ -37,10 +37,13 @@ pub enum Rule {
     StoreDeletion,
     ArcTryUnwrap,
     ArcCount,
+    CatchUnwindAbort,
+    ShellSpecialEnv,
+    DepthGuard,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 20] = [
+    pub const ALL: [Rule; 23] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -61,6 +64,9 @@ impl Rule {
         Rule::StoreDeletion,
         Rule::ArcTryUnwrap,
         Rule::ArcCount,
+        Rule::CatchUnwindAbort,
+        Rule::ShellSpecialEnv,
+        Rule::DepthGuard,
     ];
 
     /// the name a site list and a message use
@@ -86,6 +92,9 @@ impl Rule {
             Rule::StoreDeletion => "store-deletion",
             Rule::ArcTryUnwrap => "arc-try-unwrap",
             Rule::ArcCount => "arc-count",
+            Rule::CatchUnwindAbort => "catch-unwind-abort",
+            Rule::ShellSpecialEnv => "shell-special-env",
+            Rule::DepthGuard => "depth-guard",
         }
     }
 
@@ -111,6 +120,9 @@ impl Rule {
             Rule::StoreDeletion => "retired bucket objects must pass through gc before physical deletion",
             Rule::ArcTryUnwrap => "no Arc::try_unwrap (Arc audit 2026-11-20, mf release_data): two last holders letting go at once both get Err and neither runs the last-one-out step; Arc::into_inner, or better a Drop that does that step (mf::source::Data)",
             Rule::ArcCount => "a decision on Arc::strong_count / weak_count holds only while nobody can clone or drop one meanwhile (Arc audit 2026-11-20): each such site is a known site saying which lock makes it so (saves NameLocks, storage gate: the map lock every clone is made under); else let a Drop or Arc::into_inner decide",
+            Rule::CatchUnwindAbort => "sake.wasm is built with panic=abort, so catch_unwind in a crate it links never catches (82cdd0d0: naga's GLSL panic ended the game through a catch_unwind; review 2026-11-14 P1-7): return a Result, or check the input before the call",
+            Rule::ShellSpecialEnv => "a workflow's env or a script does not set one of bash's own variables (bench.yml's inputs went through GROUPS: a script's GROUPS=.. is dropped, RANDOM/SECONDS/LINENO are replaced, whether an env value gets in depends on the variable and the bash version): give it a name of its own",
+            Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -137,6 +149,9 @@ impl Rule {
             Rule::StoreDeletion => boundaries::check(self, tree, boundaries::STORAGE),
             Rule::ArcTryUnwrap => arc_use(tree, &["try_unwrap"]),
             Rule::ArcCount => arc_use(tree, &["strong_count", "weak_count"]),
+            Rule::CatchUnwindAbort => regress::catch_unwind_abort(tree),
+            Rule::ShellSpecialEnv => regress::shell_special_env(tree),
+            Rule::DepthGuard => regress::depth_guard(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -152,6 +167,8 @@ pub struct Finding {
 
 #[path = "boundaries.rs"]
 mod boundaries;
+#[path = "regress.rs"]
+mod regress;
 
 type Hits = Vec<(Rel, usize, String)>;
 

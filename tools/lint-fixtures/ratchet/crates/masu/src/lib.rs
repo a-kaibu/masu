@@ -228,6 +228,18 @@ pub fn set_len(v: &mut Vec<u8>) {
     unsafe { v.set_len(0) } //~ masu-set_len
 }
 
+pub fn leak(s: String) -> &'static str {
+    s.leak() //~ masu-leak
+}
+
+pub fn leak_box() -> &'static u32 {
+    Box::leak(Box::new(1)) //~ masu-leak
+}
+
+pub fn leak_vec() -> &'static [u8] {
+    vec![1u8].leak() //~ masu-leak
+}
+
 pub fn relay(s: &storage::Storage) -> Option<Vec<u8>> {
     s.get("chunks/ab/x") //~ masu-relay
 }
