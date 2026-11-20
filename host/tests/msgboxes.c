@@ -2,7 +2,7 @@
 /* The message boxes installers and games show, all four entry points with every button set:
  * sake shows none and answers with the button that goes on (OK, Ignore, Yes, Cancel,
  * Continue), so this is not compared with Windows by tests/winref (a box waits for a click
- * there). NSIS installers ask through MessageBoxIndirectW, which was unimplemented (returned 0).
+ * there). NSIS installers ask through MessageBoxIndirectW, which was missing (returned 0).
  * (sake: user.rs box_answer, msgboxparams) */
 #include <windows.h>
 #include <stdio.h>

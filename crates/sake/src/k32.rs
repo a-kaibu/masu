@@ -1035,7 +1035,7 @@ fn NtResumeProcess(c: &mut Ctx) -> u32 {
 fn nt_rw_memory(c: &mut Ctx, write: bool) -> u32 {
     let done_at = c.a(4);
     let tmp = mem::heap_alloc(8, true);
-    // (the count goes to `tmp` for the moment: argument 4's slot)
+    // (the count goes to `tmp` until the call returns: argument 4's slot)
     let slot = if mem::x64() { c.esp.saturating_add(40) } else { c.esp.saturating_add(20) };
     let saved = mem::rp(slot);
     mem::wp(slot, tmp);
@@ -7871,8 +7871,8 @@ fn FindClose(c: &mut Ctx) -> u32 {
 /// the folder `path` (INVALID_HANDLE_VALUE with ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND when
 /// there is none, ERROR_DIRECTORY for a file). sake does not watch folders, so the handle (a
 /// manual-reset event) is never signaled: a wait on it times out as on Windows when nothing
-/// changes. オレンジポケット (HOOK) watches its save folder this way; returning 0 (as when it
-/// was unimplemented) left it waiting on no object.
+/// changes. オレンジポケット (HOOK) watches its save folder this way; returning 0 (before this
+/// function existed) left it waiting on no object.
 fn change_notification(c: &mut Ctx, wide: bool) -> u32 {
     let name = arg_str(c.a(0), wide);
     let a = file_attrs(&name);

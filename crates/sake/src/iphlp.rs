@@ -1965,7 +1965,7 @@ fn Netbios(c: &mut Ctx) -> u32 {
                 0
             }
         }
-        // Adapter lookup precedes dispatch even for unsupported synchronous commands.
+        // Adapter lookup precedes dispatch even for synchronous commands Windows rejects.
         // NRC_ENVNOTDEF (0x34) is for an existing adapter that has not been reset.
         _ if lana >= adapters.len() => 0x23, // NRC_BRIDGE: invalid LANA
         0x32 => { // NCBRESET: no live sessions exist in this model.

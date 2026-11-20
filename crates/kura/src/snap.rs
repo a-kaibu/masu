@@ -99,7 +99,7 @@ pub const fn gpu_word(save: u32, state: u32) -> u32 {
 pub fn gpu_state(word: u32) -> u32 {
     word & 3
 }
-/// Number of the save whose GPU read-back `take` asks for now.
+/// Number of the save whose GPU read-back `take` asks for at this moment.
 static GPU_SAVE: AtomicU32 = AtomicU32::new(0);
 
 /// The drawing thread is done with the dump for the request `word` (DUMP of some save): DONE or

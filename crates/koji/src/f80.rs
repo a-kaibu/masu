@@ -139,7 +139,7 @@ impl F80 {
         f32::from_bits(lo32(self.to_ieee(23, 127, rc & 3)))
     }
 
-    /// Rounded to an integer by `rc` (None: a NaN, infinity or unsupported encoding).
+    /// Rounded to an integer by `rc` (None: a NaN, infinity or an encoding the x87 calls unsupported).
     pub fn to_int(self, rc: u32) -> Option<i128> {
         if self.exp() == 0x7fff || self.unsupported() {
             return None;
@@ -180,7 +180,7 @@ impl F80 {
         F80::pack(sign, BIAS + 63 - lo32(lz).cast_signed(), q << lz)
     }
 
-    /// Compares two values: None when unordered (a NaN or unsupported encoding); zeros equal.
+    /// Compares two values: None when unordered (a NaN or an encoding the x87 calls unsupported); zeros equal.
     pub fn compare(self, b: F80) -> Option<core::cmp::Ordering> {
         use core::cmp::Ordering::*;
         if self.is_nan() || b.is_nan() || self.unsupported() || b.unsupported() {

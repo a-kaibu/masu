@@ -9,6 +9,7 @@
 //! `cargo test -p masu-lint` proves each rule and each counted lint fires on its regression.
 mod arch;
 mod code;
+mod escape;
 mod ratchet;
 mod syntax;
 mod tree;

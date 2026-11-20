@@ -99,7 +99,7 @@ pub fn send(c: &mut Ctx, pkg: Option<&Arc<Mutex<Package>>>, kind: u32, rec: &Rec
             mem::heap_free(s);
             r
         };
-        // (0: not handled, the internal UI's turn)
+        // (0: the handler declined, the internal UI's turn)
         if r != 0 {
             return r;
         }

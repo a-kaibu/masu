@@ -166,8 +166,8 @@ fn structure(out: &mut Vec<u8>, ty: u8, handle: u16, body: &[u8], strings: &[&st
 /// device (17), end (127)
 fn smbios() -> Vec<u8> {
     let mut t = Vec::new();
-    // BIOS: vendor 1, version 2, start segment, date 3, ROM size, characteristics (BIOS
-    // characteristics not supported), extension bytes, release 1.0
+    // BIOS: vendor 1, version 2, start segment, date 3, ROM size, characteristics (bit 3,
+    // SMBIOS' "BIOS Characteristics Not Supported", as the spec defines it), extension bytes, release 1.0
     let mut b = vec![1, 2, 0x00, 0xe0, 3, 0];
     b.extend_from_slice(&8u64.to_le_bytes());
     b.extend_from_slice(&[0, 0, 1, 0, 0xff, 0xff]);

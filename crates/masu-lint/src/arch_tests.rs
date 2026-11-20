@@ -161,6 +161,28 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: (NOCHECK_HOME, |t| Some(t.replace("AtomicBool::new(false);\n/// Pushes", "AtomicBool::new(true);\n/// Pushes"))),
         },
+        Rule::EscapeComment => Fixture {
+            bad: &[
+                ("crates/sake/src/x.rs", "// TO\x44O: the rest\nfn f() {} // flags ignored\n/// D3DX: everything else is a logged stub returning 0.\nfn g() { eprintln!(\"x not implemented\"); }\n"),
+                ("crates/kura/src/y.rs", "/* an approximation of replacing it */\nfn h() {}\n// とりあえず 0 を返す\n"),
+                ("tests/z.py", "x = 1  # for now\n"),
+            ],
+            good: &[
+                ("crates/sake/src/x.rs", "// GAA_FLAG_SKIP_FRIENDLY_NAME is ignored, as in Windows\n// (binary labels: not supported, as on Windows)\nfn f() { let s = \"# for nothing\"; }\n/// Simplify(geometry): D2D's own method\n"),
+                ("crates/koji/src/sse.rs", "// RCP: approximations, each vendor's own (x86)\n"),
+                ("vendor/ring/src/a.rs", "// TO\x44O upstream\n"),
+                ("tests/z.sh", "echo \"#for now\"  # what Windows answers\n"),
+            ],
+            mutate: ("crates/sake/src/k32.rs", |t| Some(t + "\n// for now: 0\nfn later() {}\n")),
+        },
+        Rule::ConstantHandler => Fixture {
+            bad: &[("crates/sake/src/x.rs", "fn SetWorldTransform(_c: &mut Ctx) -> u32 {\n    1\n}\n/// accepted\nfn ok(_: &mut crate::api::Ctx) -> u32 { S_OK }\n")],
+            good: &[(
+                "crates/sake/src/x.rs",
+                "/// GetDoubleClickTime: 500, Windows' default (winref user)\nfn GetDoubleClickTime(_c: &mut Ctx) -> u32 {\n    500\n}\nfn GetDC(c: &mut Ctx) -> u32 {\n    c.a(0)\n}\nfn f(_c: &mut Ctx) -> u32 {\n    let x = 1;\n    x\n}\n",
+            )],
+            mutate: ("crates/sake/src/k32.rs", |t| Some(t + "\nfn Regression(_c: &mut Ctx) -> u32 {\n    1\n}\n")),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),
@@ -241,7 +263,7 @@ fn every_regex_compiles() {
 #[test]
 fn the_new_rules_find_each_spelling_alone() {
     // (each bad file on its own: one spelling found does not hide another that is missed)
-    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape] {
+    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment] {
         for one in fixture(r).bad.chunks(1) {
             assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
         }

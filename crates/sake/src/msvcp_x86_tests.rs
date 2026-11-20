@@ -65,7 +65,7 @@ fn x86_names_match_wine_specs() {
 }
 
 /// Every msvcp140 / msvcp120 import of the 32-bit target game has a handler and a spec line
-/// (stack bytes, thiscall), so nothing falls to the unimplemented-call path.
+/// (stack bytes, thiscall), so nothing falls to the missing-export trap.
 #[test]
 fn game_imports_implemented_on_x86() {
     let _g = test_guest::enter();
@@ -85,7 +85,7 @@ fn game_imports_implemented_on_x86() {
 }
 
 /// Every handler registered by its x64 name found its x86 export (a miss is an x86 program's
-/// call that would go unimplemented), but the x64-only ones.
+/// call that would reach the missing-export trap), but the x64-only ones.
 #[test]
 fn every_handler_has_an_x86_name() {
     let _g = test_guest::enter();

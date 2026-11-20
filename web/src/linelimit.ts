@@ -1,5 +1,5 @@
 // How many of the guest's printed lines reach the console (play.ts print/printErr): a game or a
-// sake trace printing per frame or per API call (unimplemented-call warnings) made a
+// sake trace printing per frame or per API call (missing-export warnings) made a
 // console.log, its formatting and its memory per line on the page's thread for the whole
 // session. BURST lines at once, then RATE a second; the lines left out are counted and told in
 // one line when lines are shown again.

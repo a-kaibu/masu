@@ -69,7 +69,7 @@ pub fn support2(fmt: u32) -> Option<u32> {
     format(fmt).filter(|f| f.2).map(|f| f.3)
 }
 
-/// CheckMultisampleQualityLevels: levels at `count` samples (0: not supported)
+/// CheckMultisampleQualityLevels: levels at `count` samples (0: the format has no such count, Windows' answer, winref d3d11check)
 pub fn quality_levels(fmt: u32, count: u32) -> u32 {
     let Some(f) = format(fmt).filter(|f| f.0) else { return 0 };
     match count {

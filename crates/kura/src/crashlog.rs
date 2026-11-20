@@ -200,7 +200,7 @@ pub fn event(args: fmt::Arguments) {
     EV.put(l.bytes());
 }
 
-/// A crash the page should save a report for now.
+/// A crash the page should save a report for at once.
 pub fn crash(reason: &str) {
     let n = reason.len().min(REASON_SIZE.saturating_sub(1));
     for (i, &c) in reason.as_bytes().iter().take(n).enumerate() {

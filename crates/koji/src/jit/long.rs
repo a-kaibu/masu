@@ -1860,7 +1860,7 @@ impl<'a> Gen<'a> {
             self.c.get(t).get(u).i64c(m32).x(I64_AND).x(I64_ADD).set(t);
             half(&mut self.c, a, false);
             half(&mut self.c, b, true);
-            self.c.x(I64_MUL).set(lo); // (lo: a0*b1 for now)
+            self.c.x(I64_MUL).set(lo); // (local lo holds a0*b1 until the low half is written to it)
             self.c.get(t).get(lo).i64c(m32).x(I64_AND).x(I64_ADD).set(t);
             half(&mut self.c, a, true);
             half(&mut self.c, b, true);

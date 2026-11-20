@@ -690,8 +690,8 @@ fn update_changed<'a>(px: &mut [u32], ww: usize, dirty: Rect, src: impl Fn(i32) 
     let Some(t) = (dirty.t..dirty.b).find(|&y| first_diff(&px[row(y)], src(y)).is_some()) else { return Rect::default() };
     // (row t differs: the search from the bottom ends there at the latest)
     let b = (t..dirty.b).rev().find(|&y| first_diff(&px[row(y)], src(y)).is_some()).unwrap_or(t) + 1;
-    // the columns, from both ends of each row: only what lies outside the box so far is
-    // looked at
+    // the columns, from both ends of each row: only what lies outside the box found up to
+    // here is looked at
     let (mut x0, mut x1) = (w, 0);
     for y in t..b {
         let (p, s) = (&px[row(y)], src(y));

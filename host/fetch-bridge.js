@@ -692,7 +692,7 @@ var MASU_RESERVE = [-MASU_RATE * 5, 0, 8, 16, 16];
  * refill (Date.now()), blocked until (Date.now()), share of the line's budget (0, 1], the
  * page's other tabs having the rest)] as Float64, over a SharedArrayBuffer the page makes
  * (web/src/budget.ts netBudget: its own save uses it too) or this worker's own. The lock is only
- * freed by its holder: a taker that cannot have it gives up for now without touching the budget
+ * freed by its holder: a taker that cannot have it gives up on this round without touching the budget
  * (masuTake: no; masuDrain: again in a few ms); after the page terminated a worker, the page
  * frees the lock that worker held (masuBudgetReclaim). formal/tla/BudgetLock.tla.
  */

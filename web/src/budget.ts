@@ -36,7 +36,7 @@ export function netBudget(): SharedArrayBuffer | ArrayBuffer {
   return shared;
 }
 
-/** Tries for the lock before a taker gives up for now: a holder is inside for a few
+/** Tries for the lock before a taker gives up on this round: a holder is inside for a few
  * instructions, so this many only fail while it is not scheduled (or the page has not yet seen
  * that it was terminated). Giving up leaves the budget as it was. */
 export const SPIN_MAX = 1 << 14;

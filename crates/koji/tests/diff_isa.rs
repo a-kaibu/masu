@@ -7,7 +7,7 @@
 //!
 //! Unlike the sampled tests (diff_native*.rs), the list of codes is not hand-made: it is
 //! every code iced knows for these features, so an instruction the interpreter lacks shows up
-//! here as "not implemented" instead of not being tested. `MASU_ISA_FILTER=<prefix>` limits
+//! here as a failure (the interpreter has no form for it) instead of not being tested. `MASU_ISA_FILTER=<prefix>` limits
 //! the run to codes whose name or mnemonic starts with it; `MASU_ISA_CASES=<n>` sets the
 //! cases per code.
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]

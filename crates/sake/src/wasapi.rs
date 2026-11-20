@@ -186,7 +186,7 @@ pub(crate) fn check(w: &Wave, compatible: bool) -> Result<Fmt, Hr> {
         if w.cb < 22 {
             return Err(Hr::InvalidArg);
         }
-        // (another SubFormat: unsupported, once the rest is well-formed)
+        // (another SubFormat: AUDCLNT_E_UNSUPPORTED_FORMAT as Windows answers, once the rest is well-formed)
         let float = match w.sub {
             Some(1) => Some(false),
             Some(3) => Some(true),

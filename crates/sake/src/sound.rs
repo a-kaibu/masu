@@ -786,6 +786,7 @@ fn wave_message(msg: u32, p1: u32, p2: u32) -> Result<(), WaveErr> {
 fn wave_error_text(c: &mut Ctx, wide: bool) -> u32 {
     mm(error_text(c.a(0), c.a(1), c.a(2), wide))
 }
+// (Windows' own texts, word for word: winmm's answers on Windows, winref sound)
 fn error_text(e: u32, p: u32, n: u32, wide: bool) -> Result<(), WaveErr> {
     let text = match e {
         0 => "The specified command was carried out.",

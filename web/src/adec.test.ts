@@ -72,8 +72,8 @@ class FakeKura implements AdecWasm {
 
 /**
  * An AudioDecoder whose chunk k (first byte v) gives one planar output of 2 frames holding v and
- * v + 0.5 per channel, a tick later; `silent(bytes)` chunks give none; codecs in `refused` are
- * not supported.
+ * v + 0.5 per channel, a tick later; `silent(bytes)` chunks give none; codecs in `refused` answer
+ * isConfigSupported false.
  */
 function fakeDecoder(
   opts: { silent?: (b: Uint8Array) => boolean; refused?: string[]; failOn?: number; firstLate?: number } = {},

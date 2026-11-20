@@ -27,7 +27,7 @@ const DRIVERS: [(u32, u32, &str, &str); 2] = [
     (DRIVER_MS, 33, "MS-ADPCM", "Microsoft ADPCM"),
 ];
 /// A WAVEFORMATEX's wFormatTag, parsed once where it is read: a codec's own arm in every
-/// match, so a new one is a compile error wherever it is not handled.
+/// match, so a new one is a compile error wherever a match lacks its arm.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Tag {
     Pcm,

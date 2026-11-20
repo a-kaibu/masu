@@ -1,6 +1,6 @@
 // Real Chromium WebGPU: host/vngpu.js when the drawing thread's device is lost (P0-1 of the
 // 2026-11-14 review). In a worker holding an OffscreenCanvas, as the drawing thread does, with
-// the wasm side stubbed: device.destroy() resolves `device.lost`; the frames stop, render/mod.rs
+// the wasm side a test double: device.destroy() resolves `device.lost`; the frames stop, render/mod.rs
 // is told (vnhost_render_losing), a new device is had and the canvas configured for it, then
 // vnhost_render_lost (which empties the table, vngpu_reset) and the frames go on, drawing on the
 // new device without WebGPU errors; the old device's late answers (readbacks, work done) do not

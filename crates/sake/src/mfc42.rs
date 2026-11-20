@@ -1287,7 +1287,7 @@ pub enum R {
     Void,
     /// lResult = 1
     One,
-    /// the handler's result; 0 is "not handled"
+    /// the handler's result; 0 is "declined" (MFC's own convention)
     NonZero,
 }
 /// The arguments and result of OnWndMsg's AfxSig cases (mfc42.dll 6.06's jump table;

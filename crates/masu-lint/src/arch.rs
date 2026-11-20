@@ -35,10 +35,12 @@ pub enum Rule {
     PagedReadCast,
     ShaderLayoutPanic,
     StoreDeletion,
+    EscapeComment,
+    ConstantHandler,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 18] = [
+    pub const ALL: [Rule; 20] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -57,6 +59,8 @@ impl Rule {
         Rule::PagedReadCast,
         Rule::ShaderLayoutPanic,
         Rule::StoreDeletion,
+        Rule::EscapeComment,
+        Rule::ConstantHandler,
     ];
 
     /// the name a site list and a message use
@@ -80,6 +84,8 @@ impl Rule {
             Rule::PagedReadCast => "paged-read-cast",
             Rule::ShaderLayoutPanic => "shader-layout-panic",
             Rule::StoreDeletion => "store-deletion",
+            Rule::EscapeComment => "escape-comment",
+            Rule::ConstantHandler => "constant-handler",
         }
     }
 
@@ -103,6 +109,8 @@ impl Rule {
             Rule::PagedReadCast => "use checked conversion for file positions and byte counts in Pages::read",
             Rule::ShaderLayoutPanic => "propagate GLSL array layout failures as compiler errors",
             Rule::StoreDeletion => "retired bucket objects must pass through gc before physical deletion",
+            Rule::EscapeComment => "no comment excuses code from Windows' behavior (user rule 2026-11-20): implement what Windows does instead of writing the shortcut down; \"not supported\" / an approximation / ignored flags pass only with Windows' evidence in the same comment (winref, a golden, MEASURED, Wine's tests, the spec)",
+            Rule::ConstantHandler => "a sake handler that ignores its arguments and returns a constant is an empty success unless its doc names the Windows answer it is (winref, a golden, MEASURED, Wine's tests): implement the call, or cite the evidence (user rule 2026-11-20)",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
     }
@@ -127,6 +135,8 @@ impl Rule {
             Rule::PagedReadCast => boundaries::check(self, tree, boundaries::PAGES),
             Rule::ShaderLayoutPanic => boundaries::check(self, tree, boundaries::GLSL),
             Rule::StoreDeletion => boundaries::check(self, tree, boundaries::STORAGE),
+            Rule::EscapeComment => crate::escape::escape_comment(tree),
+            Rule::ConstantHandler => crate::escape::constant_handler(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -693,6 +703,10 @@ fn out_escape(tree: &Tree) -> Hits {
 }
 
 pub fn site(tree: &Tree, f: &Finding) -> Site {
+    // (a comment is known by its own text: the code line is blank there)
+    if f.rule == Rule::EscapeComment {
+        return (f.rule.id().to_owned(), f.file.clone(), f.what.split_whitespace().collect::<Vec<_>>().join(" "));
+    }
     let text = if f.line > 1 || f.file.is_rust() { line_text(&if f.file.is_rust() { tree.code(&f.file, true).to_string() } else { tree.text(&f.file) }, f.line) } else { f.what.clone() };
     (f.rule.id().to_owned(), f.file.clone(), text)
 }

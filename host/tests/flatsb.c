@@ -1,6 +1,6 @@
 /* libs: -lcomctl32 */
 /* comctl32's flat scroll bars: InitializeFlatSB and the FlatSB_ calls on a window's bars, before
- * and after initializing (Delphi launchers call them for every list; they were unimplemented
+ * and after initializing (Delphi launchers call them for every list; they were missing
  * and returned 0). Only the FlatSB_ calls are used on a bar, never mixed with user32's.
  * (sake: user.rs FlatSB_) */
 #include <windows.h>

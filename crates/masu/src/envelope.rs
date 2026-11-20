@@ -83,13 +83,13 @@ impl Envelope {
     /// The object's own key, unwrapped (what a browser decrypts the object with:
     /// AES-256-GCM, the first 12 bytes the nonce, the object's UUID bytes the associated data).
     pub fn data_key(&self, master: &[u8; 32]) -> Result<[u8; 32]> {
-        ensure!(self.version == 1, "unsupported envelope version");
+        ensure!(self.version == 1, "unknown envelope version");
         let k = open(master, &self.aad(), &self.wrapped_key)?;
         k.try_into().map_err(|_| anyhow!("bad data key length"))
     }
 
     pub fn decrypt(&self, master: &[u8; 32], ciphertext: &[u8]) -> Result<Vec<u8>> {
-        ensure!(self.version == 1, "unsupported envelope version");
+        ensure!(self.version == 1, "unknown envelope version");
         ensure!(
             ciphertext.get(..12) == Some(self.nonce.as_slice()),
             "nonce mismatch"
@@ -99,7 +99,7 @@ impl Envelope {
     }
 
     pub fn rewrap(&self, old: &[u8; 32], new: &[u8; 32], key_id: &str) -> Result<Self> {
-        ensure!(self.version == 1, "unsupported envelope version");
+        ensure!(self.version == 1, "unknown envelope version");
         let key = open(old, &self.aad(), &self.wrapped_key)?;
         let mut e = self.clone();
         e.key_id = key_id.into();

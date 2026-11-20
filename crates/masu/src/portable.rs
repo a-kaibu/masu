@@ -173,7 +173,7 @@ fn read_package(store: &Path, id: &str, bytes: &[u8]) -> Result<Package> {
     }
     let m: Manifest =
         serde_json::from_slice(entries.get("manifest.json").context("missing manifest")?)?;
-    ensure!(m.version == 1, "unsupported package version");
+    ensure!(m.version == 1, "unknown package version");
     ensure!(
         fingerprints(store, &target)? == m.fingerprints,
         "game content does not match package"

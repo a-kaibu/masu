@@ -702,7 +702,7 @@ mod tests {
         let num = |b: &[u8]| u32::from_le_bytes(b[8..12].try_into().unwrap());
         let one = 200;
         let mut c = Cursor::default();
-        // sequential: the offset is ignored; changing direction reads the last record again
+        // sequential: the offset does not count (Windows' rule, Wine's tests); changing direction reads the last record again
         assert_eq!(num(&read(&l, &mut c, SEQUENTIAL | FORWARDS, 100, one, true).unwrap()), 1);
         assert_eq!(num(&read(&l, &mut c, SEQUENTIAL | FORWARDS, 200, one, true).unwrap()), 2);
         assert_eq!(num(&read(&l, &mut c, SEQUENTIAL | BACKWARDS, 300, one, true).unwrap()), 2);

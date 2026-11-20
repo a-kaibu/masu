@@ -329,8 +329,8 @@ fn SwapBuffers(c: &mut Ctx) -> u32 {
 }
 
 /// wglSwapLayerBuffers(dc, planes): WGL_SWAP_MAIN_PLANE (1) is SwapBuffers; overlay and underlay
-/// planes do not exist here and are left alone; TRUE (EntisGLS presents with it: unimplemented,
-/// its screen stayed black; winref gl)
+/// planes do not exist here and are left alone; TRUE (EntisGLS presents with it: while it was
+/// missing, its screen stayed black; winref gl)
 fn wglSwapLayerBuffers(c: &mut Ctx) -> u32 {
     if c.a(1) & 1 != 0 {
         return SwapBuffers(c);
