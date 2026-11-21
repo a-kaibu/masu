@@ -642,7 +642,7 @@ impl Gen<'_> {
             let off = self.mem_at(a);
             let e = self.temp();
             self.c.u32c(off).add().set(e);
-            self.smc_check(e);
+            self.smc_check(e, size);
             self.temps -= 1;
         }
         if self.fresh.is_some() {

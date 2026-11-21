@@ -21,7 +21,7 @@ use crate::guest::gc;
 use kome::locks::{Lock, Rw};
 use crate::cpu::Linear;
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -29,6 +29,8 @@ use koji::jit::{self, wasm::Module};
 use koji::{Cpu, Exit};
 
 mod park;
+mod code_ranges;
+use code_ranges::{CodeRanges, Span};
 
 /// Misses at an address before its block is compiled (MASU_JIT_THRESHOLD overrides).
 const THRESHOLD: u32 = 50;
@@ -156,18 +158,20 @@ fn exe_wx_page(a: u32) -> bool {
 /// Pages whose translated code was written over: the interpreter runs them from then on.
 static SMC_PAGES: [AtomicU32; 1 << 14] = [const { AtomicU32::new(0) }; 1 << 14];
 
-/// A store to `a`, a page with translated code: the translations go (everyone's), and so
-/// does the JIT for that page.
-pub(crate) fn smc_hit(a: u32) {
+/// A store of `w` (its whole span: one starting below a block's start and running into it hits
+/// it too, review e18bf44) on a page with translated code: when it wrote translated bytes, the
+/// translations go (everyone's), and so does the JIT for the pages it wrote.
+pub(crate) fn smc_hit(w: Span) -> bool {
     // (data beside the code on its page: nothing to drop)
-    if !in_code(a) {
-        return;
+    if !in_code(w) {
+        return false;
     }
-    set_pages(&SMC_PAGES, us(a), 1, true);
+    set_pages(&SMC_PAGES, us(w.addr()), us(w.len()), true);
     if stats() {
-        eprintln!("vnjit: code at {a:#x} rewritten");
+        eprintln!("vnjit: code at {:#x}+{} rewritten", w.addr(), w.len());
     }
-    code_changed(us(a), 1);
+    code_changed(us(w.addr()), us(w.len()));
+    true
 }
 
 /// Code checked on entry (see [`wx_page`]) found rewritten at `a`, a block's start: the
@@ -282,20 +286,30 @@ fn code_kept(code: &[(u32, u32)]) -> bool {
     code.iter().all(|&(a, n)| !page_set(&SMC_PAGES, a) && !page_set(&SMC_PAGES, a.saturating_add(n.max(1) - 1)))
 }
 
-/// The interpreter's store to `a` (cpu.rs Linear): whether it hit translated code (then
-/// handled by [`smc_hit`]).
+/// The interpreter's store of `len` bytes at `a` (cpu.rs Linear): whether it hit translated
+/// code (then handled by [`smc_hit`]). The page bitmap first (a store to a page without
+/// translated code: two bit tests, no lock), the code's byte ranges then.
 #[inline(always)]
-pub(crate) fn interp_write(a: u32) -> bool {
-    let p = us(a >> 12);
-    if p >= 1 << 19 || CODE_PAGES[p >> 5].load(Ordering::Relaxed) & (1 << (p & 31)) == 0 {
+pub(crate) fn interp_write(a: u32, len: u32) -> bool {
+    let Some(w) = Span::new(a, len) else { return false };
+    if !code_pages_touched(w) {
         return false;
     }
     // (code there checks itself on entry: the page stays translated)
-    if wx_page(a) && wx_checked() {
+    let last = lo32((w.end() - 1).min(u64::from(u32::MAX)));
+    if wx_page(a) && wx_page(last) && wx_checked() {
         return false;
     }
-    smc_hit(a);
-    true
+    smc_hit(w)
+}
+
+/// Whether a page `w` touches has translated code (CODE_PAGES, the first and last page: a
+/// store spans two at most).
+#[inline(always)]
+fn code_pages_touched(w: Span) -> bool {
+    let bit = |p: usize| p < 1 << 19 && CODE_PAGES[p >> 5].load(Ordering::Relaxed) & (1 << (p & 31)) != 0;
+    let (lo, hi) = page_span(w.addr(), w.len());
+    (lo..=hi).any(bit)
 }
 
 /// The guest's pages `addr..addr + len` got protection `prot` (mmap, mprotect; unmapped: 0).
@@ -767,19 +781,18 @@ fn table_answer(base: i32) -> i32 {
 
 /// The translated code's byte ranges (start -> end), for telling a store into code from one
 /// into data on the same page ([`smc_hit`]); dropped with the translations.
-static CODE_RANGES: Mutex<BTreeMap<u32, u32>> = Mutex::new(BTreeMap::new());
+static CODE_RANGES: Mutex<CodeRanges> = Mutex::new(CodeRanges::new());
 
-fn in_code(a: u32) -> bool {
-    // (blocks are short: those starting up to 4 KB below)
-    CODE_RANGES.locked().range(a.saturating_sub(0x1000)..=a).any(|(_, &e)| a < e)
+/// Whether `w` wrote translated bytes: the page bitmap first, then the byte ranges.
+fn in_code(w: Span) -> bool {
+    code_pages_touched(w) && CODE_RANGES.locked().meets(w)
 }
 
 fn mark_code(code: &[(u32, u32)]) {
     {
         let mut r = CODE_RANGES.locked();
         for &(a, n) in code {
-            let e = r.entry(a).or_insert(0);
-            *e = (*e).max(a.saturating_add(n.max(1)));
+            r.insert(Span::at_least_one(a, n));
         }
     }
     for &(a, n) in code {
@@ -902,7 +915,7 @@ fn drop_states(lo: usize, hi: usize) {
     }
     {
         let (a, e) = ((lo as u64) << 12, ((hi as u64) + 1) << 12);
-        CODE_RANGES.locked().retain(|&s, &mut end| u64::from(end) <= a || u64::from(s) >= e);
+        CODE_RANGES.locked().remove(a, e);
     }
     changed(lo32(lo), lo32(hi));
 }
@@ -1261,7 +1274,9 @@ pub fn run(cpu: &mut Cpu) -> Ran {
     }
     cpu.jit_depth = depth;
     if cpu.jit_smc != 0 {
-        smc_hit(std::mem::take(&mut cpu.jit_smc));
+        let (a, n) = (std::mem::take(&mut cpu.jit_smc), std::mem::take(&mut cpu.jit_smc_len));
+        // (a translation always sets both; 0 bytes would be its first byte)
+        smc_hit(Span::at_least_one(a, n));
     }
     if cpu.jit_stale != 0 {
         stale_hit(std::mem::take(&mut cpu.jit_stale));
@@ -4214,5 +4229,56 @@ mod invalidate_tests {
         assert_eq!(total, SHARED_BYTES.load(Ordering::Relaxed));
         assert!(SHARED.locked().as_ref().unwrap().contains_key(&vec![0xbeef_0000 + 19]), "the newest stays");
         assert!(!SHARED.locked().as_ref().unwrap().contains_key(&vec![0xbeef_0000]), "the oldest went");
+    }
+}
+
+#[cfg(test)]
+mod smc_span_tests {
+    use super::*;
+
+    /// The interpreter's stores against translated code (interp_write): a store hits exactly
+    /// when its bytes meet the code's, the page bitmap or not; one starting below a block's
+    /// start and running into it, or crossing into the code's page from the one before, hits
+    /// (only its first byte went before: review e18bf44). Seeded random spans around blocks on
+    /// a page of their own, against the byte model.
+    #[test]
+    fn a_store_hits_code_when_its_bytes_meet_it() {
+        let mut x = 0x2545_f491u32;
+        let mut rnd = |n: u32| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x % n
+        };
+        // (pages of their own, far from other tests' code)
+        for round in 0..64u32 {
+            let page = 0x6f00_0000 + round * 0x4000;
+            let block = page + 0x1000 + rnd(0x40);
+            let n = 1 + rnd(48);
+            mark_code(&[(block, n)]);
+            for _ in 0..64 {
+                let a = page + 0xf00 + rnd(0x300);
+                let len = [1, 2, 4, 8, 10, 16][rnd(6) as usize];
+                let meets = u64::from(a) < u64::from(block) + u64::from(n) && u64::from(block) < u64::from(a) + u64::from(len);
+                if meets {
+                    assert!(interp_write(a, len), "round {round}: {a:#x}+{len} into {block:#x}+{n}");
+                    // (dropped: marked again for the next store)
+                    mark_code(&[(block, n)]);
+                } else {
+                    assert!(!interp_write(a, len), "round {round}: {a:#x}+{len} beside {block:#x}+{n}");
+                }
+            }
+        }
+    }
+
+    /// A store into the page before the code's, nowhere near any code: the bitmap answers it
+    /// (no lock taken, nothing dropped).
+    #[test]
+    fn a_store_to_a_page_without_code_is_no_hit() {
+        mark_code(&[(0x6e80_1000, 4)]);
+        assert!(!interp_write(0x6e80_0000, 4));
+        assert!(!code_pages_touched(Span::at_least_one(0x6e80_0000, 4)));
+        assert!(code_pages_touched(Span::at_least_one(0x6e80_0ffe, 4)));
+        assert!(interp_write(0x6e80_0ffe, 4));
     }
 }

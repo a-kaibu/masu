@@ -103,6 +103,9 @@ pub fn transcode(omv: &Path, out: &Path) -> Result<()> {
             .args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "csv=p=0"])
             .arg(&src)
             .output()?;
+        if !probe.status.success() {
+            bail!("ffprobe {}: {}", probe.status, String::from_utf8_lossy(&probe.stderr).trim());
+        }
         let ph: u32 = String::from_utf8_lossy(&probe.stdout).trim().parse().context("ffprobe")?;
         // (4:2:0 wants even sizes: padded, the reader takes w x h)
         let pad = "pad=ceil(iw/2)*2:ceil(ih/2)*2";

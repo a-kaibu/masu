@@ -1142,7 +1142,7 @@ pub fn find_impl(dll: &str, name: &str) -> Option<Handler> {
         return Some(*f);
     }
     // kernel32 <-> kernelbase <-> ntdll forwarders, and the DLLs that export another's functions
-    for d in forwards(dll).iter().chain(&["kernel32", "kernelbase", "ntdll", "msvcrt", "user32"]) {
+    for d in forwards(dll).iter().chain(fallbacks(dll)) {
         if let Some(f) = m.get(&format!("{d}!{name}")) {
             return Some(*f);
         }
@@ -1153,6 +1153,15 @@ pub fn find_impl(dll: &str, name: &str) -> Option<Handler> {
         return find_impl(dll, plain);
     }
     None
+}
+
+/// Where an export `dll` (a key) has no implementation of its own is looked for. A C runtime's
+/// is the C runtime's (msvcrt's engine with the UCRT's switches), never ntdll's own CRT: that
+/// one has the legacy edges ("0x" read as a prefix with no digit, no floats in sscanf), and
+/// when ntdll!strtol came, ucrtbase!strtol and msvcr*!strtol resolved to it (x64crt "strtol 0x
+/// prefix alone", review e18bf44).
+pub fn fallbacks(dll: &str) -> &'static [&'static str] {
+    if is_crt(dll) { &["msvcrt"] } else { &["kernel32", "kernelbase", "ntdll", "msvcrt", "user32"] }
 }
 
 /// The DLLs whose implementations `dll` (a key) also exports: shcore has shlwapi's string,

@@ -109,7 +109,7 @@ fn check(addr: u32, len: u32, write: bool) -> Result<*mut u8, Fault> {
         return Err(Fault { addr, write });
     }
     if write {
-        crate::jit::interp_write(addr);
+        crate::jit::interp_write(addr, len);
     }
     Ok(addr as usize as *mut u8)
 }

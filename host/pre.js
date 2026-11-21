@@ -204,12 +204,8 @@ if (!ENVIRONMENT_IS_PTHREAD && !ENVIRONMENT_IS_NODE) {
     for (let k = 0; k < 64; k++) {
       const n = wasmExports.vnhost_output_take(buf, CAP) >>> 0;
       if (!n) return;
-      const b = HEAPU8.subarray(buf >>> 0, (buf >>> 0) + n);
-      for (let at = 0; at + 3 <= n; ) {
-        const fd = b[at], len = b[at + 1] | (b[at + 2] << 8);
-        for (let i = at + 3; i < at + 3 + len; i++) printChar(fd, b[i]);
-        at += 3 + len;
-      }
+      // (a copy: printing may call back into the module, which may take into `buf` again)
+      vnhostOutputRecords(HEAPU8.slice(buf >>> 0, (buf >>> 0) + n), n, printChar);
     }
   };
   const ready = Module.onRuntimeInitialized;

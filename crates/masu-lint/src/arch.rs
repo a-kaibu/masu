@@ -57,10 +57,13 @@ pub enum Rule {
     WildcardUnreachable,
     GuestScratch,
     HandStd,
+    KaniFeatures,
+    UncheckedOutput,
+    HandLock,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 40] = [
+    pub const ALL: [Rule; 43] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -101,6 +104,9 @@ impl Rule {
         Rule::WildcardUnreachable,
         Rule::GuestScratch,
         Rule::HandStd,
+        Rule::KaniFeatures,
+        Rule::UncheckedOutput,
+        Rule::HandLock,
     ];
 
     /// the name a site list and a message use
@@ -146,6 +152,9 @@ impl Rule {
             Rule::WildcardUnreachable => "wildcard-unreachable",
             Rule::GuestScratch => "guest-scratch",
             Rule::HandStd => "hand-std",
+            Rule::KaniFeatures => "kani-features",
+            Rule::UncheckedOutput => "unchecked-output",
+            Rule::HandLock => "hand-lock",
         }
     }
 
@@ -191,6 +200,9 @@ impl Rule {
             Rule::NoReturnHandler => "a Windows function that does not come back (modern::NORETURN: ExitProcess, exit, abort, _assert..) is `fn(&mut Ctx) -> !` registered with noreturn! (api::NoReturn checks it; 2026-11-21): a handler that returns a value lets the guest run on past it",
             Rule::WildcardUnreachable => "no `_ => unreachable!()` arm outside tests (2026-11-21, user rule: exhaustive matches, no `_` catch-alls): take the value that cannot come out by a type (an enum, `!` as a type argument, a const-built table)",
             Rule::GuestScratch => "a guest block one sake function uses for the length of a call is a mem::Scratch (2026-11-21: 355 hand pairs converted): it is freed on every way out of the function, where a hand-written heap_free at the end leaked it on each early return; a block the guest keeps stays heap_alloc",
+            Rule::KaniFeatures => "a crate formal/kani.sh compiles (or links) names the Rust 1.100 library features Kani's older nightly has unstable in `#![cfg_attr(kani, feature(..))]` in its lib.rs (2026-11-21: Vec::from_fn stopped every proof; review e18bf44)",
+            Rule::UncheckedOutput => "a command's stdout is its answer only when its exit status says it worked: check `.status.success()` (an empty `git ls-files` from a copy without .git was \"no files\"; review e18bf44)",
+            Rule::HandLock => "a lock between processes is a lock file opened through masu's lockfile::LockFile: Windows' File::open opens no directory, and the store's writers locked the store directory itself (`masu add` failed on Windows; review e18bf44)",
             Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
     }
@@ -237,6 +249,9 @@ impl Rule {
             Rule::WildcardUnreachable => modern::wildcard_unreachable(tree),
             Rule::GuestScratch => modern::guest_scratch(tree),
             Rule::HandStd => modern::hand_std(tree),
+            Rule::KaniFeatures => regress::kani_features(tree),
+            Rule::UncheckedOutput => regress::unchecked_output(tree),
+            Rule::HandLock => regress::hand_lock(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -551,7 +566,9 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 23] = [
+pub const REQUIRED: [(&str, &str, &str); 27] = [
+    (".github/workflows/ci.yml", "pack::tests::adding_a_small_game_takes_the_store_lock_file", "masu add runs on Windows itself: the store's lock opened a directory there and failed (review e18bf44)"),
+    ("crates/sake/src/api.rs", "if is_crt(dll) { &[\"msvcrt\"] }", "a CRT's exports fall back to msvcrt's only: ucrtbase!strtol resolved to ntdll's own CRT, which takes no 0x prefix alone (review e18bf44)"),
     ("crates/sake/src/k32.rs", "    let f = crate::fullpath::process_env_full(&w, count.wrapping_mul(2));", "GetFullPathNameW is RtlGetFullPathName_UEx's answer: one full-path rule for ntdll and kernel32 (files::full_path gave other answers; 2026-11-21)"),
     ("crates/sake/src/nt.rs", "    crate::ntname::check(&w, mem::rp(oa.saturating_add(mem::ps())) != 0)?;", "an NT name passes the object manager's and file system's syntax before a file is looked up (\\??\\C:\\x\\..\\y opened y; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "                send_gamma(Some(&r));", "a full-screen Direct3D 9 device's SetGammaRamp reaches the display (it was answered S_OK and dropped; 2026-11-21)"),
@@ -574,6 +591,8 @@ pub const REQUIRED: [(&str, &str, &str); 23] = [
     ("crates/kura/src/d3d9/gpu.rs", "fn retire(q: &mut Queue, mut b: Batch)", "a batch the page is done with is the next open one (2026-11-21: growing every batch from nothing was 60% of draw)"),
     (MEM, "impl Drop for Scratch", "a Scratch frees its guest block when dropped (2026-11-21)"),
     (API, "pub type NoReturn = fn(&mut Ctx) -> !;", "noreturn! registers only handlers that do not come back: the type is the check (2026-11-21)"),
+    (".github/workflows/ci.yml", "run: tools/ci/own-workspaces.sh", "every Cargo workspace of its own (fuzz harnesses, JIT tools) is compiled on every push (review e18bf44: three were broken and nothing said so)"),
+    (".cargo/mutants.toml", "copy_vcs = true", "cargo-mutants' copy keeps .git: masu-lint lists the tracked files with git (without it the baseline failed and no mutant ran; review e18bf44)"),
     (".github/workflows/ci.yml", "cargo test --workspace --release", "masu-lint's own tests (each rule and each ratchet lint fires on its regression) run on every push"),
 ];
 

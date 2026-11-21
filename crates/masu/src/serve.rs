@@ -1453,6 +1453,10 @@ fn addr2line(exe: &str, offsets: Vec<usize>) -> std::collections::HashMap<usize,
     }
     let args: Vec<String> = offsets.iter().map(|o| format!("{o:#x}")).collect();
     let Ok(r) = std::process::Command::new("addr2line").args(["-f", "-C", "-i", "-a", "-e", exe]).args(&args).output() else { return out };
+    // (a failed addr2line names nothing: its partial output is not the binary's names)
+    if !r.status.success() {
+        return out;
+    }
     let text = String::from_utf8_lossy(&r.stdout);
     // (-a: each address on a line of its own, then function / place pairs, more when inlined)
     let mut cur: Option<usize> = None;
@@ -1852,9 +1856,18 @@ mod tests {
         d
     }
 
+    /// What says a file was not written again: its inode (a new file is a new inode) and its time.
+    #[cfg(unix)]
     fn ino(p: std::path::PathBuf) -> (u64, std::time::SystemTime) {
         let m = std::fs::metadata(p).unwrap();
         (std::os::unix::fs::MetadataExt::ino(&m), m.modified().unwrap())
+    }
+
+    /// Windows has no stable file index in std: a file made again is a new creation time.
+    #[cfg(not(unix))]
+    fn ino(p: std::path::PathBuf) -> (std::time::SystemTime, std::time::SystemTime) {
+        let m = std::fs::metadata(p).unwrap();
+        (m.created().unwrap(), m.modified().unwrap())
     }
 
     #[tokio::test]

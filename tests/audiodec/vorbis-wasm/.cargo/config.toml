@@ -1,0 +1,3 @@
+# (built for the page only: its exported free/open are the module's own, not libc's; tests/audiodec/run.mjs)
+[build]
+target = "wasm32-unknown-unknown"

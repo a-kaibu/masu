@@ -516,6 +516,9 @@ impl Off {
     fn smc() -> u32 {
         lo32(offset_of!(Cpu, jit_smc))
     }
+    fn smc_len() -> u32 {
+        lo32(offset_of!(Cpu, jit_smc_len))
+    }
     fn stale() -> u32 {
         lo32(offset_of!(Cpu, jit_stale))
     }
@@ -1257,15 +1260,33 @@ impl<'a> Gen<'a> {
         self.temps -= 10;
     }
 
-    /// After a store to `e` (see [`WATCH`]): when its page has translated code, leaves for the
-    /// host at the next instruction with Cpu::jit_smc = e.
-    fn smc_check(&mut self, e: u32) {
-        self.c.get(L_CPU).load32(Off::code_pages());
-        self.c.get(e).i32c(17).shr_u().i32c(2).shl().add().load32(0);
-        self.c.get(e).i32c(12).shr_u().shr_u().i32c(1).and();
+    /// After a store of `size` bytes at `e` (see [`WATCH`]): when a page it wrote (its first
+    /// byte's or its last's) has translated code, leaves for the host at the next instruction
+    /// with Cpu::jit_smc = e and Cpu::jit_smc_len = size (the host meets the whole span with
+    /// the code's: a store starting below a block and running into it, or into the next page,
+    /// was missed when only its start went; review e18bf44).
+    fn smc_check(&mut self, e: u32, size: u32) {
+        // (the first byte's page, then the last byte's: e + size - 1 worked out where used)
+        for o in [0, size.max(1) - 1] {
+            self.c.get(L_CPU).load32(Off::code_pages());
+            self.c.get(e);
+            if o > 0 {
+                self.c.u32c(o).add();
+            }
+            self.c.i32c(17).shr_u().i32c(2).shl().add().load32(0);
+            self.c.get(e);
+            if o > 0 {
+                self.c.u32c(o).add();
+            }
+            self.c.i32c(12).shr_u().shr_u().i32c(1).and();
+            if o > 0 {
+                self.c.or();
+            }
+        }
         self.c.if_();
         self.depth += 1;
         self.c.get(L_CPU).get(e).store32(Off::smc());
+        self.c.get(L_CPU).u32c(size.max(1)).store32(Off::smc_len());
         let next = self.ins.next_ip32();
         self.c.u32c(next);
         self.exit_with(RET_INTERP);
@@ -1336,6 +1357,7 @@ impl<'a> Gen<'a> {
         self.c.if_();
         self.depth += 1;
         self.c.get(L_CPU).u32c(a).store32(Off::smc());
+        self.c.get(L_CPU).u32c(n.max(1)).store32(Off::smc_len());
         let next = self.ins.next_ip32();
         self.c.u32c(next);
         self.exit_with(RET_INTERP);
@@ -2061,7 +2083,7 @@ impl<'a> Gen<'a> {
                     let off = self.mem_at(a);
                     let e = self.temp();
                     self.c.u32c(off).add().set(e);
-                    self.smc_check(e);
+                    self.smc_check(e, op_bits(ins, i) / 8);
                     self.temps -= 1;
                 }
                 if self.fresh.is_some() {
@@ -2765,7 +2787,7 @@ impl<'a> Gen<'a> {
             }
             self.c.set(e);
             if self.smc {
-                self.smc_check(e);
+                self.smc_check(e, size);
             }
             if self.fresh.is_some() {
                 self.fresh_store(e, 0, size);

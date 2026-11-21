@@ -5178,3 +5178,44 @@ mod limits_tests {
         }
     }
 }
+
+/// A C runtime's export resolves to the C runtime, never to ntdll's own CRT (its legacy edges:
+/// ucrtbase!strtol and msvcr*!strtol were ntdll's once ntdll!strtol came; review e18bf44).
+#[cfg(test)]
+mod crt_resolution_tests {
+    use crate::api;
+
+    fn same(a: Option<api::Handler>, b: Option<api::Handler>) -> bool {
+        match (a, b) {
+            (Some(a), Some(b)) => a as usize == b as usize,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn crt_exports_are_the_crts_not_ntdlls() {
+        super::init();
+        crate::ntcrt::init();
+        // (every name ntdll's CRT has, asked of each C runtime: msvcrt's answer or none)
+        let nt = api::spec_names("ntdll");
+        for dll in ["ucrtbase", "msvcr71", "msvcr90", "msvcr100", "msvcr120", "api-ms-win-crt-convert-l1-1-0"] {
+            let key = api::dll_key(dll);
+            for name in &nt {
+                let (got, nt_h, crt_h) = (api::find_impl(&key, name), api::find_impl("ntdll", name), api::find_impl("msvcrt", name));
+                if crt_h.is_none() && api::find_impl(&key, name).is_some() {
+                    // (the C runtime's own registration under its name: not a fallback)
+                    assert!(!same(got, nt_h) || same(nt_h, crt_h), "{dll}!{name}: ntdll's handler");
+                    continue;
+                }
+                assert!(same(got, crt_h) || !same(got, nt_h), "{dll}!{name}: resolves to ntdll's CRT, not the C runtime's");
+            }
+        }
+        // (the case that broke: strtol's "0x" with no digit after)
+        assert!(same(api::find_impl("ucrtbase", "strtol"), api::find_impl("msvcrt", "strtol")));
+        assert!(!same(api::find_impl("ucrtbase", "strtol"), api::find_impl("ntdll", "strtol")));
+        // (a system DLL still finds kernel32's, ntdll's...)
+        assert_eq!(api::fallbacks("kernel32"), ["kernel32", "kernelbase", "ntdll", "msvcrt", "user32"]);
+        assert_eq!(api::fallbacks("ucrtbase"), ["msvcrt"]);
+    }
+}

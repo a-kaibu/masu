@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 #[exclude = "*.zst"]
 struct Web;
 
-pub fn unpack(cache: &Path) -> Result<(PathBuf, std::fs::File)> {
+pub fn unpack(cache: &Path) -> Result<(PathBuf, crate::lockfile::LockFile)> {
     let mut names: Vec<_> = Web::iter().collect();
     if names.is_empty() {
         bail!("this masu was built without the web app (build web/dist before masu, or give --web)");
@@ -31,7 +31,7 @@ pub fn unpack(cache: &Path) -> Result<(PathBuf, std::fs::File)> {
     let root = cache.join("web");
     std::fs::create_dir_all(&root)?;
     // Serialize publication, acquisition of the lifetime lock, and pruning across processes.
-    let cache_lock = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(root.join(".lock"))?;
+    let cache_lock = crate::lockfile::LockFile::open(&root.join(".lock"))?;
     cache_lock.lock()?;
     let dir = root.join(&key);
     if !dir.join(".done").exists() {
@@ -47,7 +47,7 @@ pub fn unpack(cache: &Path) -> Result<(PathBuf, std::fs::File)> {
         std::fs::rename(&tmp, &dir).with_context(|| dir.display().to_string())?;
     }
     // this server uses it while it runs: older builds' servers still running keep theirs
-    let inuse = std::fs::File::open(dir.join(".done"))?;
+    let inuse = crate::lockfile::LockFile::open(&dir.join(".done"))?;
     inuse.lock_shared()?;
     prune(&root, &key)?;
     Ok((dir, inuse))
@@ -61,7 +61,7 @@ fn prune(root: &Path, keep: &str) -> Result<()> {
         if n == keep || n.to_string_lossy().starts_with('.') {
             continue;
         }
-        match std::fs::File::open(e.path().join(".done")) {
+        match crate::lockfile::LockFile::existing(&e.path().join(".done")) {
             Ok(f) => {
                 if f.try_lock().is_ok() {
                     let _ = std::fs::remove_dir_all(e.path());
@@ -90,7 +90,7 @@ mod tests {
             }
         }
         // (another server of an older build)
-        let other = std::fs::File::open(root.join("used/.done")).unwrap();
+        let other = crate::lockfile::LockFile::open(&root.join("used/.done")).unwrap();
         other.lock_shared().unwrap();
         super::prune(&root, "new").unwrap();
         assert!(root.join("new").exists());

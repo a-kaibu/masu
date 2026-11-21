@@ -643,9 +643,11 @@ pub struct Cpu {
     /// JIT: the host's bitmap of pages with translated code (a bit per 4 KB page), which
     /// translations of code that may rewrite code test their stores against
     /// (jit::set_watch), and the address such a store hit (0: none; the host drops the
-    /// translations, see kura's jit::smc_hit)
+    /// translations, see kura's jit::smc_hit) with its length in bytes (jit_smc_len: the
+    /// host meets the whole span with the code's, review e18bf44)
     pub jit_code_pages: u32,
     pub jit_smc: u32,
+    pub jit_smc_len: u32,
     /// JIT: the start of a block whose code is no longer what it was translated from (code the
     /// host has its translations check on entry, jit::set_fresh); the host drops them (0: none)
     pub jit_stale: u32,
@@ -687,7 +689,7 @@ impl Default for Cpu {
             regs: Gprs::new([0; 8]), eip: 0, eflags: 0x202, lazy: lazy::Lazy::default(), jit_hash: 0, jit_mask: 0,
             jit_budget: 0, jit_ring: 0, fs_base: 0, gs_base: 0, trap_lo: 0, trap_hi: 0, tsc: 0,
             fpu: Fpu::default(), mm: [0; 8], xmm: [0; 8], mxcsr: 0x1f80,
-            mode64: 0, hi: Gprs::new([0; 8]), r8: [0; 8], xmm8: [0; 8], jit_depth: 0, rip_hi: 0, jit_calls: 0, jit_code_pages: 0, jit_smc: 0, jit_stale: 0,
+            mode64: 0, hi: Gprs::new([0; 8]), r8: [0; 8], xmm8: [0; 8], jit_depth: 0, rip_hi: 0, jit_calls: 0, jit_code_pages: 0, jit_smc: 0, jit_smc_len: 0, jit_stale: 0,
             vex_tmp: 0, mode16: 0, sreg: Segs::new([0; 6]), sbase: Segs::new([0; 6]), ldt: 0, ymmh: [0; 17],
         }
     }

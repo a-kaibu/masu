@@ -33,10 +33,17 @@ impl std::fmt::Display for Rel {
     }
 }
 
+/// what a tree's files are before the overlay
+enum Base {
+    /// the repository's tracked files (listed once, when the tree is made), read from the disk
+    Repo(BTreeSet<Rel>),
+    /// a made-up tree: path -> text
+    MadeUp(BTreeMap<Rel, String>),
+}
+
 pub struct Tree {
     root: PathBuf,
-    /// a made-up tree instead of the repository's files
-    base: Option<BTreeMap<Rel, String>>,
+    base: Base,
     /// path -> text (None: the file is gone)
     overlay: BTreeMap<Rel, Option<String>>,
     paths: OnceLock<Vec<Rel>>,
@@ -45,23 +52,28 @@ pub struct Tree {
 }
 
 impl Tree {
-    pub fn repo(root: &Path) -> Tree {
-        Tree { root: root.to_owned(), base: None, overlay: BTreeMap::new(), paths: OnceLock::new(), code: Default::default(), items: Default::default() }
+    /// the repository's tracked files (Err: they could not be listed)
+    pub fn repo(root: &Path) -> Result<Tree, String> {
+        Ok(Tree { root: root.to_owned(), base: Base::Repo(git_files(root)?), overlay: BTreeMap::new(), paths: OnceLock::new(), code: Default::default(), items: Default::default() })
     }
     #[cfg(test)]
     pub fn made_up(files: &[(&str, &str)]) -> Tree {
         let base = files.iter().map(|(p, t)| (Rel::new(p), (*t).to_owned())).collect();
-        Tree { root: PathBuf::new(), base: Some(base), overlay: BTreeMap::new(), paths: OnceLock::new(), code: Default::default(), items: Default::default() }
+        Tree { root: PathBuf::new(), base: Base::MadeUp(base), overlay: BTreeMap::new(), paths: OnceLock::new(), code: Default::default(), items: Default::default() }
     }
     /// this tree with `path` replaced (None: deleted)
     #[cfg(test)]
-    pub fn with(root: &Path, path: &Rel, text: Option<String>) -> Tree {
-        let mut t = Tree::repo(root);
+    pub fn with(real: &Tree, path: &Rel, text: Option<String>) -> Tree {
+        let base = match &real.base {
+            Base::Repo(f) => Base::Repo(f.clone()),
+            Base::MadeUp(m) => Base::MadeUp(m.clone()),
+        };
+        let mut t = Tree { root: real.root.clone(), base, overlay: BTreeMap::new(), paths: OnceLock::new(), code: Default::default(), items: Default::default() };
         t.overlay.insert(path.clone(), text);
         t
     }
     pub fn is_made_up(&self) -> bool {
-        self.base.is_some()
+        matches!(self.base, Base::MadeUp(_))
     }
     pub fn has(&self, p: &Rel) -> bool {
         self.paths().binary_search(p).is_ok()
@@ -70,8 +82,8 @@ impl Tree {
     pub fn paths(&self) -> &[Rel] {
         self.paths.get_or_init(|| {
             let mut ps: BTreeSet<Rel> = match &self.base {
-                Some(b) => b.keys().cloned().collect(),
-                None => git_files(&self.root),
+                Base::MadeUp(b) => b.keys().cloned().collect(),
+                Base::Repo(f) => f.clone(),
             };
             for (p, t) in &self.overlay {
                 if t.is_some() {
@@ -89,8 +101,8 @@ impl Tree {
             return t.clone().unwrap_or_default();
         }
         match &self.base {
-            Some(b) => b.get(p).cloned().unwrap_or_default(),
-            None => std::fs::read(self.root.join(p.as_str())).map_or_default(|b| String::from_utf8_lossy(&b).into_owned()),
+            Base::MadeUp(b) => b.get(p).cloned().unwrap_or_default(),
+            Base::Repo(_) => std::fs::read(self.root.join(p.as_str())).map_or_default(|b| String::from_utf8_lossy(&b).into_owned()),
         }
     }
 
@@ -130,13 +142,17 @@ impl Tree {
     }
 }
 
-fn git_files(root: &Path) -> BTreeSet<Rel> {
-    let out = std::process::Command::new("git").args(["ls-files", "-z"]).current_dir(root).output();
-    match out {
-        Ok(o) => String::from_utf8_lossy(&o.stdout).split('\0').filter(|s| !s.is_empty()).map(Rel::new).collect(),
-        Err(e) => {
-            eprintln!("masu-lint: git ls-files: {e}");
-            BTreeSet::new()
-        }
+/// the tracked files, or why they could not be listed: a listing that failed is not an empty
+/// repository (cargo-mutants' copy has no .git, `git ls-files` failed there and every rule read
+/// no files; review e18bf44)
+fn git_files(root: &Path) -> Result<BTreeSet<Rel>, String> {
+    let o = std::process::Command::new("git").args(["ls-files", "-z"]).current_dir(root).output().map_err(|e| format!("masu-lint: git ls-files in {}: {e}", root.display()))?;
+    if !o.status.success() {
+        return Err(format!("masu-lint: git ls-files in {} failed ({}): {}", root.display(), o.status, String::from_utf8_lossy(&o.stderr).trim()));
     }
+    let files: BTreeSet<Rel> = String::from_utf8_lossy(&o.stdout).split('\0').filter(|s| !s.is_empty()).map(Rel::new).collect();
+    if files.is_empty() {
+        return Err(format!("masu-lint: git ls-files in {} listed no files", root.display()));
+    }
+    Ok(files)
 }

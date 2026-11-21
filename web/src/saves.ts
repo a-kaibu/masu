@@ -70,34 +70,93 @@ export function savesFor(f: SaveFiles, request?: typeof fetch): void {
 
 const backup = (name: string) => new URL(`saves/${encodeURIComponent(name)}`, location.href).href;
 
-// Publish one generation by replacing the small sync record after writing the
-// inactive blob. Interrupted writes leave the previous slot and record intact.
+// This browser's copy of a game's saves: two blob slots and a small record naming the current
+// one, published by replacing the record after the inactive slot is written (an interrupted
+// write leaves the previous slot and record as they were).
+//
+// The files are versioned (FORMAT): apps kept for older builds (apps.rs) run their own saves.ts
+// on the same origin, and read `<name>.bin` / `<name>.sync.json` as their format had them; one
+// that read this format's files took an inactive slot for the newest unsent save and sent it
+// (review e18bf44). This format's files are its own; the older ones are read once, when this
+// format has none yet (taken over), and left marked as sent, so an older app starts from the
+// server's copy, which this one keeps up to date.
+export const FORMAT = 2;
 interface Sync {
+  /** the server's revision this copy was last in step with */
   base: string | null;
+  /** not known to be on the server */
   dirty: boolean;
   slot: 0 | 1;
+  /** which write made the current blob (an acknowledgement applies to that one only) */
   generation: string | null;
+  /** counts every change of the record, an acknowledgement's too: a start's GET compares it,
+   * since an ACK changes dirty/base and not the generation (review e18bf44) */
+  rev: number;
+  /** a blob from before there was a record (an old page's): not known to be sent or not */
+  adopted?: boolean;
 }
-const blobName = (name: string, slot: number) => (slot ? `${name}.next` : `${name}.bin`);
-const readBlob = (name: string, sync: Sync | null) => files.read(blobName(name, sync?.slot ?? 0));
-async function readSync(name: string): Promise<Sync | null> {
-  const b = await files.read(`${name}.sync.json`);
-  if (!b) return null;
+const blobName = (name: string, slot: 0 | 1) => `${name}.v${FORMAT}.${slot}.bin`;
+const syncName = (name: string) => `${name}.v${FORMAT}.sync.json`;
+/** the files of the format before this one (saves.ts up to e18bf44): read to take over only */
+export const legacyFiles = (name: string) => ({
+  bin: `${name}.bin`,
+  next: `${name}.next`,
+  sync: `${name}.sync.json`,
+});
+
+function parseSync(b: Uint8Array): Partial<Sync> {
   try {
-    const v = JSON.parse(new TextDecoder().decode(b)) as Partial<Sync>;
-    return {
-      base: typeof v.base === "string" ? v.base : null,
-      dirty: v.dirty !== false,
-      slot: v.slot === 1 ? 1 : 0,
-      generation: typeof v.generation === "string" ? v.generation : null,
-    };
+    return JSON.parse(new TextDecoder().decode(b)) as Partial<Sync>;
   } catch {
     // An unreadable pointer cannot identify which slot is current.
     throw new Error("unreadable save generation");
   }
 }
-const writeSync = (name: string, s: Sync) =>
-  files.write(`${name}.sync.json`, new TextEncoder().encode(JSON.stringify(s)));
+function syncOf(v: Partial<Sync>): Sync {
+  return {
+    base: typeof v.base === "string" ? v.base : null,
+    dirty: v.dirty !== false,
+    slot: v.slot === 1 ? 1 : 0,
+    generation: typeof v.generation === "string" ? v.generation : null,
+    rev: typeof v.rev === "number" && Number.isSafeInteger(v.rev) ? v.rev : 0,
+    ...(v.adopted === true ? { adopted: true } : {}),
+  };
+}
+const encodeSync = (s: unknown) => new TextEncoder().encode(JSON.stringify(s));
+
+/** The older format's copy, made this format's (once: this format had no record yet), and the
+ * older record marked as sent. Under localLock. */
+async function takeOver(name: string): Promise<Sync | null> {
+  const old = legacyFiles(name);
+  const oldRecord = await files.read(old.sync);
+  const legacy = oldRecord ? syncOf(parseSync(oldRecord)) : null;
+  const blob = await files.read(legacy?.slot === 1 ? old.next : old.bin);
+  if (!blob) return null;
+  const record: Sync = legacy
+    ? { base: legacy.base, dirty: legacy.dirty, slot: 0, generation: crypto.randomUUID(), rev: 1 }
+    : { base: null, dirty: false, slot: 0, generation: crypto.randomUUID(), rev: 1, adopted: true };
+  await files.write(blobName(name, 0), blob);
+  await files.write(syncName(name), encodeSync(record));
+  // (the older app now starts from the server's copy: this format sends what was unsent; its
+  // record keeps its own fields, only dirty is set)
+  await files.write(
+    old.sync,
+    encodeSync({ ...(oldRecord ? parseSync(oldRecord) : {}), base: legacy?.base ?? null, dirty: false }),
+  );
+  return record;
+}
+
+async function readSync(name: string): Promise<Sync | null> {
+  const b = await files.read(syncName(name));
+  return b ? syncOf(parseSync(b)) : takeOver(name);
+}
+const readBlob = (name: string, sync: Sync | null) =>
+  sync ? files.read(blobName(name, sync.slot)) : Promise.resolve(null);
+/** Replaces the record: `next` over `previous` (the one read under the same lock), counted. */
+const publish = (name: string, previous: Sync | null, next: Omit<Sync, "rev">): Promise<Sync> => {
+  const record: Sync = { ...next, rev: (previous?.rev ?? 0) + 1 };
+  return files.write(syncName(name), encodeSync(record)).then(() => record);
+};
 /** Keeps `data` beside the blob (`what`: whose copy), when one of two copies must give way. */
 async function stash(name: string, what: string, data: Uint8Array): Promise<void> {
   await files
@@ -137,21 +196,35 @@ async function localLock<T>(name: string, f: () => Promise<T>): Promise<T> {
   return navigator.locks.request(`masu-save:${name}`, f);
 }
 
-async function cacheSave(name: string, data: Uint8Array, base: string | null, clean: boolean) {
-  const previous = await readSync(name);
-  const slot = previous?.slot === 1 ? 0 : 1;
-  const record: Sync = { base, dirty: !clean, generation: crypto.randomUUID(), slot };
-  await files.write(blobName(name, slot), data);
-  await writeSync(name, record);
-  return record;
+/** What this browser's copy now holds after a local write: the record that write published. */
+export interface Persisted {
+  readonly generation: string;
+  readonly record: Sync;
 }
 
-async function acknowledgeSave(name: string, generation: Sync["generation"], base: Sync["base"]) {
+/** Writes `data` as this browser's copy (`clean`: the server has these bytes, at `base`). */
+function persist(name: string, data: Uint8Array, base: string | null, clean: boolean): Promise<Persisted> {
+  return localLock(name, () => localWrite(name, data, base, clean));
+}
+
+/**
+ * After the server took a copy at `revision`: the record of the write `generation` (this
+ * page's last) is marked as sent when it holds those bytes (`holds`), or only moved to the new
+ * base when it holds a newer, still unsent copy. A record another write replaced meanwhile is
+ * left alone: that write's own acknowledgement settles it.
+ */
+async function acknowledge(
+  name: string,
+  generation: string | null,
+  revision: string,
+  holds: "these" | "older" | "newer",
+) {
   await localLock(name, async () => {
     const current = await readSync(name);
-    if (current && current.generation === generation) {
-      await writeSync(name, { ...current, base, dirty: false });
-    }
+    if (!current || current.generation !== generation) return;
+    // ("older": this copy could not be written here (OPFS failed) and the server has a newer
+    // one: the stale copy must not be taken for the newest unsent save at the next start)
+    await publish(name, current, { ...current, base: revision, dirty: holds === "newer" });
   });
 }
 
@@ -179,17 +252,21 @@ export async function loadSaves(
     return localLock(name, async () => {
       const sync = await readSync(name);
       const local = await readBlob(name, sync);
-      transport.startedOffline(url, local, sync?.base);
+      transport.startedOffline(url, local, sync?.adopted ? null : sync?.base);
       return local;
     });
   }
   const { local, sync, changed } = await localLock(name, async () => {
     const sync = await readSync(name);
     const local = await readBlob(name, sync);
-    if (before?.generation !== sync?.generation) return { local, sync, changed: true };
+    // (any change of the record while the GET was out, an acknowledgement's too: its answer
+    // may be older than what this browser now has, and is not taken)
+    if (before?.rev !== sync?.rev || before?.generation !== sync?.generation)
+      return { local, sync, changed: true };
     if (remote && !(local && sync?.dirty)) {
-      if (local && !sync && !same(local, remote)) await stash(name, "local", local);
-      await cacheSave(name, remote, transport.revision(url) ?? null, true).catch((e: unknown) =>
+      if (local && sync?.adopted && !same(local, remote)) await stash(name, "local", local);
+      const revision = transport.revision(url) ?? null;
+      await localWrite(name, remote, revision, true).catch((e: unknown) =>
         console.warn("saves: local cache", e),
       );
     }
@@ -197,9 +274,9 @@ export async function loadSaves(
   });
   if (changed) return local;
   const revision = transport.revision(url) ?? '"0"';
-  const send = async (data: Uint8Array) => {
+  const send = async (data: Uint8Array, generation: string | null) => {
     // (not sent now: still dirty, sent with the next save or the next start)
-    await storeSaves(name, data as Uint8Array<ArrayBuffer>, false).catch((e: unknown) =>
+    await upload(name, data as Uint8Array<ArrayBuffer>, generation, "these").catch((e: unknown) =>
       console.warn(`saves: not sent: ${String(e)}`),
     );
   };
@@ -211,12 +288,42 @@ export async function loadSaves(
         "別の端末のセーブより、この端末で後から保存したセーブを使います（別の端末のものも残してあります）",
       );
     }
-    await send(local);
+    await send(local, sync.generation);
     return local;
   }
   if (remote) return remote;
-  if (local?.length) await send(local);
+  if (local?.length) await send(local, sync?.generation ?? null);
   return local;
+}
+
+/** persist under the caller's localLock (loadSaves' decision and its write in one hold) */
+async function localWrite(
+  name: string,
+  data: Uint8Array,
+  base: string | null,
+  clean: boolean,
+): Promise<Persisted> {
+  const previous = await readSync(name);
+  const slot = previous?.slot === 1 ? 0 : 1;
+  const generation = crypto.randomUUID();
+  await files.write(blobName(name, slot), data);
+  const record = await publish(name, previous, { base, dirty: !clean, generation, slot });
+  return { generation, record };
+}
+
+/** Sends `data` to the server and settles the local record of the write `generation` (`holds`:
+ * how that record's bytes stand to `data`). Rejects when the server did not take it. */
+async function upload(
+  name: string,
+  data: Uint8Array<ArrayBuffer>,
+  generation: string | null,
+  holds: "these" | "older" | "newer",
+): Promise<string> {
+  const revision = await transport.store(backup(name), data);
+  await acknowledge(name, generation, revision, holds).catch((e: unknown) =>
+    console.warn("saves: local cache", e),
+  );
+  return revision;
 }
 
 function call(m: SavesModule, f: (s: number, len: number) => number, arg: string): Uint8Array<ArrayBuffer> {
@@ -273,39 +380,61 @@ function exportSaves(m: SavesModule, roots: string[]): Uint8Array<ArrayBuffer> {
   return exportFiles(m, roots, portablePath);
 }
 
-/** Writes `data` as `name`'s blob: this browser's copy, then the server's (rejects when the
- * server's failed; this browser's copy is kept, marked as not sent). `local` false: this
- * browser's copy already holds these bytes (marked dirty), only the server's is written;
- * `upload` false: this browser's copy only (marked not sent: sent later, or at the next start). */
+/** What a store did: each side said apart (a "not sent" was once read as "sent", and a save
+ * never written here was taken for one that was; review e18bf44). */
+export type StoreOutcome =
+  /** on the server, and this browser's copy holds it as sent */
+  | { readonly kind: "sent"; readonly revision: string }
+  /** on the server; this browser's copy could not be written (its older one is marked sent) */
+  | { readonly kind: "sent-not-kept"; readonly revision: string }
+  /** this browser's copy only, marked not sent (sent later, or at the next start) */
+  | { readonly kind: "kept"; readonly generation: string }
+  /** neither: no upload asked for and this browser's copy could not be written */
+  | { readonly kind: "lost" };
+
+/** Writes `data` as this browser's copy (marked not sent), its failure said, never thrown: a
+ * denied OPFS quota must not keep the server's copy from being written. */
+async function persistOrStale(
+  name: string,
+  data: Uint8Array,
+  base: string | null,
+): Promise<
+  | { readonly kind: "persisted"; readonly p: Persisted }
+  | { readonly kind: "failed"; readonly stale: string | null }
+> {
+  try {
+    return { kind: "persisted", p: await persist(name, data, base, false) };
+  } catch (e) {
+    console.warn("saves: local cache", e);
+    const stale = await localLock(name, () => readSync(name)).then(
+      (r) => r?.generation ?? null,
+      () => null,
+    );
+    return { kind: "failed", stale };
+  }
+}
+
+/** Writes `data` as `name`'s blob: this browser's copy, then (`upload`) the server's: rejects
+ * when the server's failed (this browser's copy is kept, marked as not sent). */
 export function storeSaves(
   name: string,
   data: Uint8Array<ArrayBuffer>,
-  local = true,
-  upload = true,
-): Promise<boolean> {
-  return locked(name, async () => {
+  uploadToo = true,
+): Promise<StoreOutcome> {
+  return locked(name, async (): Promise<StoreOutcome> => {
     const url = backup(name);
     // This browser's copy first: with the link down the save still survives the page (the
-    // server's copy is tried again on the next change check, or the next start). A denied OPFS
-    // quota must not prevent server persistence.
-    const staged = await localLock(name, async () => {
-      if (local) {
-        const base = transport.revision(url) ?? (await readSync(name))?.base ?? null;
-        return await cacheSave(name, data, base, false);
-      }
-      const record = await readSync(name);
-      return same(await readBlob(name, record), data) ? record : false;
-    }).catch((e: unknown) => {
-      console.warn("saves: local cache", e);
-      return local ? null : false;
-    });
-    if (!upload || staged === false) return false;
-    await transport.store(url, data);
-    if (staged)
-      await acknowledgeSave(name, staged.generation, transport.revision(url) ?? null).catch((e: unknown) =>
-        console.warn("saves: local cache", e),
-      );
-    return true;
+    // server's copy is tried again on the next change check, or the next start).
+    const base =
+      transport.revision(url) ??
+      (await localLock(name, () => readSync(name)).catch(() => null))?.base ??
+      null;
+    const local = await persistOrStale(name, data, base);
+    if (!uploadToo)
+      return local.kind === "persisted" ? { kind: "kept", generation: local.p.generation } : { kind: "lost" };
+    if (local.kind === "persisted")
+      return { kind: "sent", revision: await upload(name, data, local.p.generation, "these") };
+    return { kind: "sent-not-kept", revision: await upload(name, data, local.stale, "older") };
   });
 }
 
@@ -317,6 +446,13 @@ export const UPLOAD_EVERY = 60_000;
  * Keeps saving what the game writes under `roots` for `name`. Returns a function that saves now
  * (`force`: the upload too, even in the pause after a failed one: when the game quits or the
  * page is hidden).
+ *
+ * Two lines of work, each one at a time: this browser's copy (export, OPFS write) and the
+ * upload. A save waits for the previous local write only, never for an upload: a slow PUT held
+ * the next save's export and OPFS write behind it, and a page closed meanwhile lost it (review
+ * e18bf44). What each side holds is known by what it confirmed: `local` is what this browser's
+ * copy was written with (its write's generation), `last` what the server took; neither is
+ * inferred from what was asked.
  */
 export function keepSaving(
   m: SavesModule,
@@ -329,47 +465,84 @@ export function keepSaving(
 ): (force?: boolean) => Promise<void> {
   const now = opt.now ?? Date.now;
   const read = opt.read ?? (() => exportSaves(m, roots));
-  let pending: Promise<void> | undefined;
-  let queued: Promise<void> | undefined;
-  let forceQueued = false;
+  const url = backup(name);
   let seen = -1;
-  // (`last`: what the server has; `unsent`: what this browser's copy has that the server does not
-  // yet. With the server out of reach the blob is written here once, not again every look, and
-  // the upload is tried again after a growing pause: before, every 5 s exported the whole set,
-  // rewrote it in OPFS and failed the upload, for the rest of the session)
-  let unsent: Uint8Array<ArrayBuffer> | null = null;
+  // (the newest export, numbered: `seq` orders what the two sides hold; 0 is `last`, what this
+  // page started from, which both this browser's copy and the server have)
+  let seq = 0;
+  let target: { readonly data: Uint8Array<ArrayBuffer>; readonly seq: number } | null = last
+    ? { data: last as Uint8Array<ArrayBuffer>, seq: 0 }
+    : null;
+  // (what this browser's copy holds, as this page wrote it: the export's number and the
+  // write's generation; null generation: not written by this page yet)
+  let localSeq = 0;
+  let localGeneration: string | null = null;
+  // (the record current before this page's first write: what a sent copy supersedes when this
+  // page could write none; undefined: not read yet)
+  let before: string | null | undefined;
+  // (what the server has: `last`'s number)
+  let sentSeq = 0;
   let failures = 0;
   let retryAt = 0;
   let told = false;
-  const perform = async (force: boolean) => {
+  const due = (force: boolean) => force || now() >= retryAt;
+
+  const localStep = async () => {
     // (a save state is being taken: the memory stays as it is; the next look saves)
     if (snapping()) return;
     // (nothing written since the last look: no export)
     const changes = m._vnhost_vfs_changes?.() ?? -2;
-    const fresh = changes !== seen || changes === -2;
-    if (!fresh && (!unsent || (!force && now() < retryAt))) return;
-    try {
-      const data = fresh ? read() : unsent!;
+    if (changes !== seen || changes === -2) {
+      const data = read();
       seen = changes;
-      if (same(last, data) && !unsent) {
-        unsent = null;
-        return;
+      if (!target || !same(target.data, data)) target = { data, seq: ++seq };
+    }
+    const t = target;
+    if (!t || localSeq >= t.seq) return;
+    before ??= await localLock(name, () => readSync(name)).then(
+      (r) => r?.generation ?? null,
+      () => null,
+    );
+    try {
+      const p = await persist(name, t.data, transport.revision(url) ?? null, same(last, t.data));
+      if (t.seq >= localSeq) {
+        localSeq = t.seq;
+        localGeneration = p.generation;
       }
-      // (the same bytes as this browser's copy already: only the upload again, and only when due)
-      const local = !same(unsent, data);
-      const due = force || now() >= retryAt;
-      if (!local && !due) return;
-      unsent = data;
-      // (between uploads, a change is written to this browser's copy only: an engine that
-      // rewrites a system file every few lines made each 5 s look upload the whole set again;
-      // the upload follows UPLOAD_EVERY after the last, at once when the page is hidden or the
-      // game quits, and a page killed meanwhile sends this copy at its next start)
-      await storeSaves(name, data, local, due);
-      if (!due) return;
-      last = data;
-      unsent = null;
+    } catch (e) {
+      // (tried again at the next look: localSeq still names the older copy)
+      console.warn("saves: local cache", e);
+    }
+  };
+
+  /** this browser's record after the server took export `t` at `revision` */
+  const settle = (t: number, revision: string) => {
+    const holds = localSeq === t ? "these" : localSeq < t ? "older" : "newer";
+    return acknowledge(name, localGeneration ?? before ?? null, revision, holds).catch((e: unknown) =>
+      console.warn("saves: local cache", e),
+    );
+  };
+
+  const uploadStep = async (force: boolean) => {
+    const t = target;
+    if (!t || sentSeq >= t.seq) return;
+    // (the server has these bytes already: A, B not sent yet, then A again)
+    if (same(last, t.data)) {
+      sentSeq = t.seq;
+      const revision = transport.revision(url);
+      if (revision) await settle(t.seq, revision);
+      return;
+    }
+    if (!due(force)) return;
+    try {
+      const revision = await transport.store(url, t.data);
+      last = t.data;
+      sentSeq = Math.max(sentSeq, t.seq);
       failures = 0;
       retryAt = now() + UPLOAD_EVERY;
+      // (sent when it holds these bytes; an older one (its write failed) marked sent too, so a
+      // start does not take it for the newest; a newer one moved to the new base, still unsent)
+      await settle(t.seq, revision);
     } catch (e) {
       if (e instanceof SaveConflict && !told) {
         told = true;
@@ -383,22 +556,47 @@ export function keepSaving(
       console.warn(`saves: ${String(e)}`);
     }
   };
-  // (one look at a time, and at most one more waiting: a stuck upload used to have each 5 s tick
-  // chain another look behind it)
+
+  // (each line: one at a time, and at most one more waiting: a stuck upload used to have each
+  // 5 s tick chain another look behind it)
+  const line = <A>(step: (a: A) => Promise<void>, merge: (a: A, b: A) => A) => {
+    let pending: Promise<void> | undefined;
+    let queued: Promise<void> | undefined;
+    let arg: A | undefined;
+    const run = (a: A): Promise<void> => {
+      if (!pending) {
+        pending = step(a).finally(() => {
+          pending = undefined;
+        });
+        return pending;
+      }
+      arg = arg === undefined ? a : merge(arg, a);
+      return (queued ??= pending.then(() => {
+        const next = arg!;
+        arg = undefined;
+        queued = undefined;
+        return run(next);
+      }));
+    };
+    return run;
+  };
+  const saveLocal = line<true>(
+    () => localStep(),
+    () => true,
+  );
+  const sendUp = line<boolean>(uploadStep, (a, b) => a || b);
+  // (the upload after the local write it follows, never before it: what the server gets is in
+  // this browser's copy first, or its write failed)
+  // (saves asked for while both lines wait are one: the same local write, then the same upload)
+  let chained:
+    | { readonly local: Promise<void>; readonly force: boolean; readonly done: Promise<void> }
+    | undefined;
   const save = (force = false): Promise<void> => {
-    if (!pending) {
-      pending = perform(force).finally(() => {
-        pending = undefined;
-      });
-      return pending;
-    }
-    forceQueued ||= force;
-    return (queued ??= pending.then(() => {
-      const mustUpload = forceQueued;
-      forceQueued = false;
-      queued = undefined;
-      return save(mustUpload);
-    }));
+    const local = saveLocal(true);
+    if (chained?.local === local && (chained.force || !force)) return chained.done;
+    const done = local.then(() => sendUp(force));
+    chained = { local, force, done };
+    return done;
   };
   setInterval(() => void save(), 5000);
   addEventListener("visibilitychange", () => document.visibilityState === "hidden" && void save(true));

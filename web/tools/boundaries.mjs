@@ -4,7 +4,10 @@ import { pathToFileURL } from "node:url";
 
 /** @type {[string, string, string[]][]} */
 const rules = [
-  ["saves.ts", "writeSync", ["cacheSave", "acknowledgeSave"]],
+  // (this browser's copy is written by a held local lock's write only)
+  ["saves.ts", "localWrite", ["persist", "loadSaves"]],
+  // (the older format's files: taken over once, never written as this format's; review e18bf44)
+  ["saves.ts", "legacyFiles", ["takeOver"]],
   ["wasmsource.ts", "sakeWasmBytes", ["runtimeWasm"]],
 ];
 

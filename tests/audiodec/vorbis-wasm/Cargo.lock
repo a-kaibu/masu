@@ -3,8 +3,15 @@
 version = 4
 
 [[package]]
+name = "kome"
+version = "0.1.0"
+
+[[package]]
 name = "vorbis"
 version = "0.1.0"
+dependencies = [
+ "kome",
+]
 
 [[package]]
 name = "vorbis-wasm"

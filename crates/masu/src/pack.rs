@@ -345,14 +345,16 @@ fn removal(store: &Path, id: &str) -> Result<Vec<String>> {
 /// Hold the Unix store directory locked while changing the local catalog and its chunks.
 /// Removal must see all references, including those of a pack still being built.
 pub(crate) struct StoreWrite {
-    _lock: File,
+    _lock: crate::lockfile::LockFile,
     path: PathBuf,
 }
 
+/// The store's writers' lock file (in the store, beside what it guards).
+pub(crate) const STORE_LOCK: &str = ".store-write.lock";
+
 impl StoreWrite {
     fn acquire(store: &Path) -> Result<Self> {
-        fs::create_dir_all(store)?;
-        let file = File::open(store)?;
+        let file = crate::lockfile::LockFile::in_dir(store, STORE_LOCK)?;
         file.lock().with_context(|| format!("locking store {}", store.display()))?;
         Ok(Self { _lock: file, path: store.to_owned() })
     }
@@ -843,6 +845,8 @@ pub fn release_trees(out: &Path, fonts: &Path, bench: &Path, rtp: &Path) -> Resu
     ensure!(ensure_bench(out, bench)?, "no bench.exe in {}", bench.display());
     // (only the trees and their chunks go to the site)
     fs::remove_file(out.join(format!("{BENCH_TREE}.version")))?;
+    // (the writers' lock file too: nothing writes this store again, and the site gets no lock)
+    fs::remove_file(out.join(STORE_LOCK))?;
     Ok(())
 }
 
@@ -1456,6 +1460,37 @@ mod tests {
         add(&store, &game, "game.exe").unwrap();
         assert!(fs::read_to_string(&tsv).unwrap().contains("extra.dat"));
         let _ = fs::remove_dir_all(&t);
+    }
+
+    /// `masu add` of a small game, as on Windows (CI's windows job runs this there): the store's
+    /// writers lock a lock file in the store, never the store directory (Windows' File::open
+    /// opens none: review e18bf44); adds from several threads at once each land whole, one at a
+    /// time, and the lock is free again afterwards.
+    #[test]
+    fn adding_a_small_game_takes_the_store_lock_file() {
+        let t = tempfile::tempdir().unwrap();
+        let store = t.path().join("store");
+        for n in 0..4u8 {
+            let d = t.path().join(format!("g{n}"));
+            fs::create_dir_all(d.join("data")).unwrap();
+            fs::write(d.join("game.exe"), [b'M', b'Z', n]).unwrap();
+            fs::write(d.join("data/a.dat"), vec![n; 70_000 + usize::from(n) * 999]).unwrap();
+        }
+        std::thread::scope(|s| {
+            for n in 0..4u8 {
+                let (store, dir) = (store.clone(), t.path().join(format!("g{n}")));
+                s.spawn(move || add_for_test(&store, &dir, &format!("g{n}"), vec![]).unwrap());
+            }
+        });
+        assert!(store.join(STORE_LOCK).is_file());
+        for n in 0..4u8 {
+            let game: serde_json::Value = serde_json::from_slice(&fs::read(store.join(format!("games/g{n}.json"))).unwrap()).unwrap();
+            assert!(game["run"].as_str().is_some_and(|r| r.ends_with("\\game.exe")), "g{n}: {game}");
+            let chunks = tree_chunks(&store, &format!("g{n}")).unwrap();
+            assert!(!chunks.is_empty() && chunks.iter().all(|c| store.join(c.store_path()).is_file()), "g{n}");
+        }
+        let free = crate::lockfile::LockFile::in_dir(&store, STORE_LOCK).unwrap();
+        free.try_lock().unwrap();
     }
 
     /// Two games with a file in common, sake's C:\, and a third game that mounts the second's

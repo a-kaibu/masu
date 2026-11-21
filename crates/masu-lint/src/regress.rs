@@ -178,7 +178,212 @@ pub(super) fn wgsl_load_bounds(tree: &Tree) -> Hits {
 
 /// (for the tests: every regex here compiles)
 #[cfg(test)]
-pub(super) fn regexes() -> [&'static LazyLock<Option<Regex>>; 4] {
-    [&SECTION, &PATH_DEP, &SH_SET, &YAML_KEY]
+pub(super) fn regexes() -> [&'static LazyLock<Option<Regex>>; 6] {
+    [&SECTION, &PATH_DEP, &SH_SET, &YAML_KEY, &KANI_FOR, &KANI_GATE]
 }
 
+
+// --- kani-features ----------------------------------------------------------------------------
+
+/// the proofs' script: its `for c in ...; do` names the crates Kani compiles
+pub(super) const KANI_SCRIPT: &str = "formal/kani.sh";
+
+/// Rust 1.100 library features Kani 0.68's compiler (nightly 2026-08-20) has still unstable: a
+/// crate Kani compiles (or links) that uses one names it in `#![cfg_attr(kani, feature(..))]`
+/// in its lib.rs (the Kani job stopped at Vec::from_fn in kura and proved nothing, 2026-11-21;
+/// review e18bf44). (feature, what uses it)
+pub const KANI_UNSTABLE: [(&str, &str); 3] = [
+    ("vec_from_fn", r"\bVec\s*(?:::\s*<[^>]*>\s*)?::\s*from_fn\b"),
+    ("bool_toggle", r"\.\s*toggle\s*\(\s*\)"),
+    ("trim_prefix_suffix", r"\.\s*trim_(?:prefix|suffix)\s*\("),
+];
+
+/// the identifier each feature's use names (the line it is on is then read with its pattern)
+const KANI_NAMES: [(&str, &str); 4] = [("vec_from_fn", "from_fn"), ("bool_toggle", "toggle"), ("trim_prefix_suffix", "trim_prefix"), ("trim_prefix_suffix", "trim_suffix")];
+
+static KANI_FOR: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(?m)^\s*for\s+c\s+in\s+([A-Za-z0-9_ -]+);\s*do"));
+static KANI_GATE: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"#!\[\s*cfg_attr\s*\(\s*kani\s*,\s*feature\s*\(([^)]*)\)\s*\)\s*\]"));
+static KANI_USES: LazyLock<Vec<(&'static str, Option<Regex>)>> = LazyLock::new(|| KANI_UNSTABLE.iter().map(|(f, r)| (*f, rx(r))).collect());
+
+/// the crates `cargo kani` compiles: the script's and every crate they link by path
+pub(super) fn kani_crates(tree: &Tree) -> BTreeSet<String> {
+    let script = tree.text(&Rel::new(KANI_SCRIPT));
+    let roots: Vec<String> = KANI_FOR.as_ref().and_then(|r| r.captures(&script)).and_then(|c| c.get(1)).map_or_default(|m| m.as_str().split_whitespace().map(|c| format!("crates/{c}")).collect());
+    let mut seen = BTreeSet::new();
+    let mut todo = roots;
+    while let Some(c) = todo.pop() {
+        if seen.insert(c.clone()) {
+            todo.extend(path_deps(&tree.text(&Rel(format!("{c}/Cargo.toml")))));
+        }
+    }
+    seen
+}
+
+/// the features `lib` turns on for Kani
+pub fn kani_gated(lib: &str) -> BTreeSet<String> {
+    let Some(r) = KANI_GATE.as_ref() else { return BTreeSet::new() };
+    r.captures_iter(lib).filter_map(|c| c.get(1)).flat_map(|m| m.as_str().split(',').map(|f| f.trim().to_owned()).filter(|f| !f.is_empty()).collect::<Vec<_>>()).collect()
+}
+
+pub(super) fn kani_features(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    if tree.is_made_up() && !tree.has(&Rel::new(KANI_SCRIPT)) {
+        return out;
+    }
+    let crates = kani_crates(tree);
+    if crates.is_empty() {
+        out.push((Rel::new(KANI_SCRIPT), 1, "names no crates (`for c in ...; do`): the rule reads nothing".into()));
+    }
+    for c in crates {
+        let lib = Rel(format!("{c}/src/lib.rs"));
+        let gated = kani_gated(&tree.text(&lib));
+        let prefix = format!("{c}/src/");
+        let files = tree.rs(&[prefix.as_str()]);
+        let tests = test_mod_files(tree, &files);
+        let files: Vec<Rel> = files.into_iter().filter(|f| !tests.contains(f)).collect();
+        // (the names outside #[cfg(test)] modules: Kani builds the library alone)
+        for (f, it) in items(tree, &files) {
+            let code = tree.code(&f, false);
+            for (feature, r) in KANI_USES.iter() {
+                let Some(r) = r else { continue };
+                if gated.contains(*feature) {
+                    continue;
+                }
+                let lines: BTreeSet<usize> = it.idents.iter().filter(|(i, _)| KANI_NAMES.iter().any(|(ff, n)| ff == feature && n == i)).map(|(_, l)| *l).collect();
+                if let Some(l) = lines.into_iter().find(|l| r.is_match(&crate::code::line_text(&code, *l))) {
+                    out.push((f.clone(), l, format!("uses {feature}, unstable in Kani's compiler: {lib} needs `#![cfg_attr(kani, feature({feature}))]`")));
+                }
+            }
+        }
+    }
+    out
+}
+
+// --- unchecked-output -------------------------------------------------------------------------
+
+/// a fn whose body reads a Command's `.output()` stdout and never its status
+struct OutputUse {
+    hits: Vec<(String, usize)>,
+}
+
+impl OutputUse {
+    fn body(&mut self, name: &syn::Ident, block: &syn::Block) {
+        let t = quote::ToTokens::to_token_stream(block).to_string().replace(' ', "");
+        if t.contains(".output()") && t.contains(".stdout") && !t.contains("status") {
+            self.hits.push((name.to_string(), crate::syntax::line(name.span())));
+        }
+    }
+}
+
+impl<'a> syn::visit::Visit<'a> for OutputUse {
+    fn visit_item_mod(&mut self, m: &'a syn::ItemMod) {
+        if !crate::syntax::is_cfg_test(&m.attrs) {
+            syn::visit::visit_item_mod(self, m);
+        }
+    }
+    fn visit_item_fn(&mut self, f: &'a syn::ItemFn) {
+        if !f.attrs.iter().any(|a| a.path().is_ident("test")) {
+            self.body(&f.sig.ident, &f.block);
+            syn::visit::visit_item_fn(self, f);
+        }
+    }
+    fn visit_impl_item_fn(&mut self, f: &'a syn::ImplItemFn) {
+        self.body(&f.sig.ident, &f.block);
+        syn::visit::visit_impl_item_fn(self, f);
+    }
+}
+
+/// what a fn reading a child's output takes for "it worked": its stdout alone (an empty listing
+/// from a git that failed was "no files", review e18bf44)
+pub(super) fn unchecked_output(tree: &Tree) -> Hits {
+    let files: Vec<Rel> = tree.rs(&["crates/", "tools/"]).into_iter().filter(|f| !f.as_str().starts_with("tools/lint-fixtures/")).collect();
+    let tests = test_mod_files(tree, &files);
+    let mut out = Hits::new();
+    for f in files.iter().filter(|f| !tests.contains(*f)) {
+        let Some(file) = tree.syntax(f) else { continue };
+        let mut v = OutputUse { hits: Vec::new() };
+        syn::visit::Visit::visit_file(&mut v, &file);
+        out.extend(v.hits.into_iter().map(|(n, l)| (f.clone(), l, format!("{n} reads a command's stdout and never its exit status: a failed command is not an empty answer"))));
+    }
+    out
+}
+
+/// a lock taken on a file opened by hand: `let f = File::open(..)`, `match File::open(..) { Ok(f) }`
+/// or the open in the receiver itself, then `.lock()` and the like on it
+struct HandLock {
+    opened: BTreeSet<String>,
+    hits: Vec<(String, usize)>,
+}
+
+const LOCK_METHODS: [&str; 4] = ["lock", "try_lock", "lock_shared", "try_lock_shared"];
+
+fn opens_a_file(e: &impl quote::ToTokens) -> bool {
+    let t = quote::ToTokens::to_token_stream(e).to_string().replace(' ', "");
+    // (a File's own open, not LockFile::open)
+    static OPEN: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(^|[^A-Za-z0-9_])(File::(open|create)\(|OpenOptions::new\(\))"));
+    OPEN.as_ref().is_some_and(|r| r.is_match(&t))
+}
+
+fn pat_idents(p: &syn::Pat, out: &mut BTreeSet<String>) {
+    struct V<'o>(&'o mut BTreeSet<String>);
+    impl<'a> syn::visit::Visit<'a> for V<'_> {
+        fn visit_pat_ident(&mut self, i: &'a syn::PatIdent) {
+            self.0.insert(i.ident.to_string());
+            syn::visit::visit_pat_ident(self, i);
+        }
+    }
+    syn::visit::Visit::visit_pat(&mut V(out), p);
+}
+
+impl<'a> syn::visit::Visit<'a> for HandLock {
+    fn visit_local(&mut self, l: &'a syn::Local) {
+        if l.init.as_ref().is_some_and(|i| opens_a_file(&i.expr)) {
+            pat_idents(&l.pat, &mut self.opened);
+        }
+        syn::visit::visit_local(self, l);
+    }
+    fn visit_expr_match(&mut self, m: &'a syn::ExprMatch) {
+        if opens_a_file(&m.expr) {
+            for a in &m.arms {
+                pat_idents(&a.pat, &mut self.opened);
+            }
+        }
+        syn::visit::visit_expr_match(self, m);
+    }
+    fn visit_expr_let(&mut self, l: &'a syn::ExprLet) {
+        if opens_a_file(&l.expr) {
+            pat_idents(&l.pat, &mut self.opened);
+        }
+        syn::visit::visit_expr_let(self, l);
+    }
+    fn visit_expr_method_call(&mut self, c: &'a syn::ExprMethodCall) {
+        let m = c.method.to_string();
+        if c.args.is_empty() && LOCK_METHODS.contains(&m.as_str()) {
+            let named = match &*c.receiver {
+                syn::Expr::Path(p) => p.path.get_ident().is_some_and(|i| self.opened.contains(&i.to_string())),
+                _ => false,
+            };
+            if named || opens_a_file(&c.receiver) {
+                self.hits.push((m, crate::syntax::line(c.method.span())));
+            }
+        }
+        syn::visit::visit_expr_method_call(self, c);
+    }
+}
+
+/// locks between processes taken on a file (or directory) opened by hand, not through
+/// crates/masu/src/lockfile.rs: Windows opens no directory with File::open, and the store's
+/// lock did so (`masu add` failed there; review e18bf44)
+pub(super) fn hand_lock(tree: &Tree) -> Hits {
+    let files: Vec<Rel> = tree.rs(&["crates/", "tools/"]).into_iter()
+        .filter(|f| !f.as_str().starts_with("tools/lint-fixtures/") && f.as_str() != "crates/masu/src/lockfile.rs")
+        .collect();
+    let mut out = Hits::new();
+    for f in &files {
+        let Some(file) = tree.syntax(f) else { continue };
+        let mut v = HandLock { opened: BTreeSet::new(), hits: Vec::new() };
+        syn::visit::Visit::visit_file(&mut v, &file);
+        out.extend(v.hits.into_iter().map(|(m, l)| (f.clone(), l, format!("`.{m}()` on a file opened by hand: take it through crate::lockfile::LockFile (a lock file, never a directory)"))));
+    }
+    out
+}

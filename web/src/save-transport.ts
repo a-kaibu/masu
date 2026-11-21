@@ -70,7 +70,9 @@ export class SaveTransport {
     }
     this.bases.delete(url);
   }
-  store(url: string, data: Uint8Array<ArrayBuffer>): Promise<void> {
+  /** Writes `data` as the server's copy: the revision it is there as (the one this write made,
+   * not whatever a later store left in `revision(url)` by the time the caller looks). */
+  store(url: string, data: Uint8Array<ArrayBuffer>): Promise<string> {
     // (the caller's array as it is: callers hand a fresh export and do not change it)
     const snapshot = data;
     const previous = this.queues.get(url) ?? Promise.resolve();
@@ -92,8 +94,9 @@ export class SaveTransport {
           if (current.ok && current.headers.get("etag")) {
             const bytes = new Uint8Array(await current.arrayBuffer());
             if (same(bytes, snapshot)) {
-              this.revisions.set(url, current.headers.get("etag")!);
-              return;
+              const committed = current.headers.get("etag")!;
+              this.revisions.set(url, committed);
+              return committed;
             }
           }
           throw new SaveConflict();
@@ -102,8 +105,15 @@ export class SaveTransport {
         const revision = r.headers.get("etag");
         if (!revision) throw new Error("保存結果のバージョンがありません");
         this.revisions.set(url, revision);
+        return revision;
       });
-    this.queues.set(url, pending);
+    this.queues.set(
+      url,
+      pending.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
     return pending;
   }
 }

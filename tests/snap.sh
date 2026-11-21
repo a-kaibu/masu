@@ -25,7 +25,11 @@ x86_64-w64-mingw32-gcc -O2 "$ROOT/host/tests/snaptest.c" -o "$OUT/snaptest-64.ex
 LOG=$OUT/last.log
 run() {
   (cd "$(dirname "$SAKE")" && timeout 120 env "$@" node "$SAKE" "$EXE" 2>&1 | tee "$LOG" |
-    perl -0pe 's/snap: (stopped in \d+ ms, \d+ ranges|state of [^\n]*? stood still \d+ ms|saved \S+|restoring \d+ threads|no state: [^\n]*|stirred: [^\n]*)\n//g; s/^(sake|snap):[^\n]*\n//mg')
+    perl -0pe 's/snap: (stopped in \d+ ms, \d+ ranges|state of [^\n]*? stood still \d+ ms|saved \S+|restoring \d+ threads|no state: [^\n]*|stirred: [^\n]*)\n//g; s/^(sake|snap):[^\n]*\n//mg'
+    exit "${PIPESTATUS[0]}")
+  # (a run that hung: its output is cut short, and two of them cut alike compared equal; the
+  # "restored twice" check passed on two empty runs: review e18bf44)
+  if [ $? = 124 ]; then echo "FAIL $*: timed out after 120 s" >&2; fail=1; fi
   # (a thread that ran while a state was copied: snap.js drops that state, the test fails)
   if grep -q "snap: stirred" "$LOG"; then echo "FAIL $*: a thread ran while the state was copied" >&2; fail=1; fi
 }

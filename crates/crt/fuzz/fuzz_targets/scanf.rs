@@ -46,7 +46,7 @@ fuzz_target!(|data: &[u8]| {
     let (sel, rest) = (data[0], &data[1..]);
     let split = (rest[0] as usize).min(rest.len() - 1);
     let (f, input) = (&rest[1..1 + split], &rest[1 + split..]);
-    let m = Mode { ptr64: sel & 1 != 0, secure: sel & 2 != 0, legacy: sel & 4 != 0, legacy_wide: sel & 8 != 0 };
+    let m = Mode { ptr64: sel & 1 != 0, secure: sel & 2 != 0, legacy: sel & 4 != 0, legacy_wide: sel & 8 != 0, no_float: sel & 32 != 0 };
     let mut k = Check { sizes: 0x9e37_79b9_7f4a_7c15 ^ sel as u64, last_size: 0, secure: m.secure };
     let n = if sel & 16 == 0 {
         scan::scan(input, f, m, &mut k)

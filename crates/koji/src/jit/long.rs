@@ -1473,7 +1473,7 @@ impl<'a> Gen<'a> {
 
     /// After the current instruction's store of `size` bytes at L_W: when a page it wrote has
     /// translated code (Cpu::jit_code_pages, a bit per 4 KB page), leaves for the host at the
-    /// next instruction with Cpu::jit_smc = the address (kura's smc_hit drops the translations
+    /// next instruction with Cpu::jit_smc = the address and Cpu::jit_smc_len = `size` (kura's smc_hit drops the translations
     /// and keeps the page to the interpreter, as for koji::jit's 32-bit Gen::smc_check).
     fn smc_check(&mut self, size: u32) {
         for o in [0, size - 1] {
@@ -1493,6 +1493,7 @@ impl<'a> Gen<'a> {
         self.c.if_();
         self.depth += 1;
         self.c.get(L_CPU).get(L_W).store32(cpu_off!(jit_smc));
+        self.c.get(L_CPU).u32c(size.max(1)).store32(cpu_off!(jit_smc_len));
         if !self.hi_swapped.is_empty() {
             let r = self.hi_swapped.clone();
             self.swap_hi(&r);
@@ -1551,6 +1552,7 @@ impl<'a> Gen<'a> {
         self.c.if_();
         self.depth += 1;
         self.c.get(L_CPU).u32c(a).store32(cpu_off!(jit_smc));
+        self.c.get(L_CPU).u32c(n.max(1)).store32(cpu_off!(jit_smc_len));
         if !self.hi_swapped.is_empty() {
             let r = self.hi_swapped.clone();
             self.swap_hi(&r);

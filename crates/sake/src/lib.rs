@@ -5,6 +5,10 @@
 //! (guest address = host address), the game's x86 code runs on the JIT (crates/kura), and
 //! every imported API is a trap into Rust (api.rs). Windows threads are host threads.
 
+// (Kani 0.68's compiler, nightly 2026-08-20, has these Rust 1.100 library features still
+// unstable: formal/kani.sh builds this crate with it; masu-lint kani-features)
+#![cfg_attr(kani, feature(vec_from_fn, bool_toggle, trim_prefix_suffix))]
+
 /// Whether environment variable `$name` is set, read once (std::env::var takes a lock and walks
 /// the environment on every call).
 #[macro_export]

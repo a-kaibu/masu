@@ -250,7 +250,8 @@ fn fixture(r: Rule) -> Fixture {
             good: &[
                 ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1\n"),
                 ("crates/sake/src/lib.rs", "#[cfg(test)]\nmod outptr_audit;\n"),
-                (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo run -q --release -p masu-lint -- dup\ncargo test --workspace --release\ncargo run -q --release -p masu-lint -- ratchet\n"),
+                (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch\ncargo run -q --release -p masu-lint -- dup\ncargo test --workspace --release\ncargo run -q --release -p masu-lint -- ratchet\nrun: tools/ci/own-workspaces.sh\nrun: cargo test -p masu --bin masu -- --exact pack::tests::adding_a_small_game_takes_the_store_lock_file\n"),
+                ("crates/sake/src/api.rs", "pub fn fallbacks(dll: &str) -> &'static [&'static str] {\n    if is_crt(dll) { &[\"msvcrt\"] } else { &[\"kernel32\"] }\n}\n/// ```compile_fail\n/// ```\npub type NoReturn = fn(&mut Ctx) -> !;\n"),
             ],
             mutate: ("tests/host-tests.sh", |t| Some(t.replace("export MASU_OUTS_STRICT=1", ""))),
         },
@@ -453,6 +454,46 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/kome/src/num.rs", |t| Some(t + "\npub fn flip(b: &mut bool) { *b = !*b; }\npub fn d(o: Option<u8>) -> u8 { o.map(|v| v + 1).unwrap_or_default() }\n")),
         },
+        Rule::KaniFeatures => Fixture {
+            bad: &[
+                ("formal/kani.sh", "#!/bin/bash\nfor c in kura; do\n  (cd \"crates/$c\" && cargo kani)\ndone\n"),
+                ("crates/kura/Cargo.toml", "[package]\nname = \"kura\"\n[dependencies]\nkome = { path = \"../kome\" }\n[dev-dependencies]\nproptest = \"1\"\n"),
+                ("crates/kura/src/lib.rs", "//! kura\n#![cfg_attr(kani, feature(bool_toggle))]\nmod a;\n"),
+                ("crates/kura/src/a.rs", "fn f(n: usize) -> Vec<u8> { Vec::<_>::from_fn(n, |i| i as u8) }\n"),
+                ("crates/kome/src/lib.rs", "pub fn t(s: &str) -> &str { s.trim_suffix('\\r') }\n"),
+            ],
+            good: &[
+                ("formal/kani.sh", "#!/bin/bash\nfor c in kura; do\n  (cd \"crates/$c\" && cargo kani)\ndone\n"),
+                ("crates/kura/Cargo.toml", "[package]\nname = \"kura\"\n[dependencies]\nkome = { path = \"../kome\" }\n[dev-dependencies]\nshaderconf = { path = \"../shaderconf\" }\n"),
+                ("crates/kura/src/lib.rs", "//! kura\n#![cfg_attr(kani, feature(vec_from_fn, bool_toggle))]\nmod a;\n"),
+                ("crates/kura/src/a.rs", "fn f(n: usize, b: &mut bool) -> Vec<u8> { b.toggle(); Vec::<_>::from_fn(n, |i| i as u8) }\n#[cfg(test)]\nmod tests {\n    fn t(s: &str) -> &str { s.trim_prefix(\"x\") }\n}\n"),
+                ("crates/kome/src/lib.rs", "pub fn t(s: &str) -> &str { s.strip_suffix('\\r').unwrap_or(s) }\n"),
+                ("crates/shaderconf/src/lib.rs", "pub fn t(s: &str) -> &str { s.trim_prefix(\"x\") }\n"),
+            ],
+            mutate: ("crates/kura/src/lib.rs", |t| Some(t.replace("#![cfg_attr(kani, feature(vec_from_fn, bool_toggle, trim_prefix_suffix))]", ""))),
+        },
+        Rule::UncheckedOutput => Fixture {
+            bad: &[
+                ("crates/masu-lint/src/tree.rs", "fn files(root: &Path) -> Vec<String> {\n    let o = Command::new(\"git\").arg(\"ls-files\").current_dir(root).output();\n    o.map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_owned).collect()).unwrap_or_default()\n}\n"),
+                ("tools/win32md/src/main.rs", "impl X {\n    fn rev(&self) -> String {\n        let o = Command::new(\"git\").arg(\"rev-parse\").output()?;\n        String::from_utf8_lossy(&o.stdout).into()\n    }\n}\n"),
+            ],
+            good: &[
+                ("crates/masu-lint/src/tree.rs", "fn files(root: &Path) -> Result<Vec<String>, String> {\n    let o = Command::new(\"git\").arg(\"ls-files\").output().map_err(|e| e.to_string())?;\n    if !o.status.success() {\n        return Err(\"failed\".into());\n    }\n    Ok(String::from_utf8_lossy(&o.stdout).lines().map(str::to_owned).collect())\n}\n"),
+                ("crates/masu/src/x.rs", "fn has() -> bool { Command::new(\"ffmpeg\").output().is_ok() }\n#[cfg(test)]\nmod tests {\n    fn t() -> Vec<u8> { Command::new(\"x\").output().unwrap().stdout }\n}\n"),
+            ],
+            mutate: ("crates/masu-lint/src/tree.rs", |t| Some(t.replace("o.status", "o.stderr"))),
+        },
+        Rule::HandLock => Fixture {
+            bad: &[
+                ("crates/masu/src/pack.rs", "fn acquire(store: &Path) -> Result<File> {\n    let file = File::open(store)?;\n    file.lock()?;\n    Ok(file)\n}\n"),
+                ("crates/masu/src/webassets.rs", "fn prune(p: &Path) {\n    match std::fs::File::open(p.join(\".done\")) {\n        Ok(f) => if f.try_lock().is_ok() {},\n        Err(_) => {}\n    }\n    std::fs::OpenOptions::new().write(true).open(p).unwrap().lock_shared().unwrap();\n}\n"),
+            ],
+            good: &[
+                ("crates/masu/src/lockfile.rs", "pub struct LockFile(File);\nimpl LockFile {\n    pub fn lock(&self) -> std::io::Result<()> {\n        let f = OpenOptions::new().write(true).open(\"x\")?;\n        f.lock()?;\n        self.0.lock()\n    }\n}\n"),
+                ("crates/masu/src/pack.rs", "fn acquire(store: &Path) -> Result<LockFile> {\n    let file = LockFile::in_dir(store, STORE_LOCK)?;\n    file.lock()?;\n    let m = SHARED.lock();\n    let f = File::open(store)?;\n    let g = m.lock();\n    Ok(file)\n}\n"),
+            ],
+            mutate: ("crates/masu/src/pack.rs", |t| Some(t.replace("let file = crate::lockfile::LockFile::in_dir(store, STORE_LOCK)?;", "let file = File::open(store)?;"))),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),
@@ -471,6 +512,26 @@ fn fixture(r: Rule) -> Fixture {
 
 fn repo() -> std::path::PathBuf {
     crate::root()
+}
+
+/// the repository's tracked files (a listing that fails fails the test: it is not an empty tree)
+fn real_tree() -> Tree {
+    match Tree::repo(&repo()) {
+        Ok(t) => t,
+        Err(e) => panic!("{e}"),
+    }
+}
+
+#[test]
+fn a_listing_that_fails_is_an_error_not_an_empty_tree() {
+    // (cargo-mutants' copy of the tree has no .git: `git ls-files` fails there, and every rule
+    // read no files, so a regression put back was not found; review e18bf44)
+    let dir = std::env::temp_dir().join(format!("masu-lint-no-git-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let r = Tree::repo(&dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(r.is_err(), "a directory outside any repository listed as a tree");
+    assert!(!real_tree().paths().is_empty());
 }
 
 #[test]
@@ -494,12 +555,12 @@ fn each_rule_lets_the_right_spelling_through() {
 fn each_rule_finds_its_regression_put_back_into_the_real_tree() {
     let root = repo();
     let known = known_counts(&load_sites(&std::fs::read_to_string(root.join(crate::ARCH_SITES)).unwrap_or_default()));
-    let real = Tree::repo(&root);
+    let real = real_tree();
     for r in Rule::ALL {
         let (file, mutate) = fixture(r).mutate;
         let f = Rel::new(file);
         let before = fresh(&check(&real, &[r]), &known).len();
-        let tree = Tree::with(&root, &f, mutate(real.text(&f)));
+        let tree = Tree::with(&real, &f, mutate(real.text(&f)));
         let after = fresh(&check(&tree, &[r]), &known).len();
         assert!(after > before, "{}: misses its regression put into {file}", r.id());
     }
@@ -568,7 +629,7 @@ fn the_new_rules_find_each_spelling_alone() {
 fn the_abort_build_is_sake_and_what_it_links() {
     // (the real tree: the crates whose catch_unwind never catches; a dev- or build-dependency is
     // not linked into sake.wasm)
-    let c = regress::abort_crates(&Tree::repo(&repo()));
+    let c = regress::abort_crates(&real_tree());
     for k in ["crates/sake", "crates/kura", "crates/koji", "crates/kome", "crates/glwgsl", "crates/hlslc", "crates/msidb"] {
         assert!(c.contains(k), "{k} not in {c:?}");
     }
@@ -589,7 +650,7 @@ fn bash_drops_an_assignment_to_groups() {
 
 #[test]
 fn each_depth_guard_is_in_the_real_tree() {
-    let real = Tree::repo(&repo());
+    let real = real_tree();
     assert!(regress::depth_guard(&real).is_empty());
     // (taking any one guard's comparison away is found)
     for (file, name) in regress::DEPTH_GUARDS {
@@ -597,7 +658,7 @@ fn each_depth_guard_is_in_the_real_tree() {
         let text = real.text(&f);
         let decl = text.lines().find(|l| l.contains(&format!("const {name}:"))).unwrap_or_default().to_owned();
         let only = text.replace(name, "OTHER").replace(&decl.replace(name, "OTHER"), &decl);
-        let t = Tree::with(&repo(), &f, Some(only));
+        let t = Tree::with(&real, &f, Some(only));
         assert!(!regress::depth_guard(&t).is_empty(), "{file} {name}: its uses taken away is not found");
     }
 }

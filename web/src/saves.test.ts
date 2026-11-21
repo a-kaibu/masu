@@ -1,4 +1,5 @@
 import { simulate, deferred } from "./test/simulation";
+import { exclusiveLocks } from "./test/browser";
 import { afterAll, beforeAll, expect, test, vi } from "vite-plus/test";
 import {
   keepSaving,
@@ -46,9 +47,9 @@ class Device {
     write: async (f, d) => void this.m.set(f, d.slice()),
   };
   current() {
-    const meta = this.m.get("game.sync.json");
+    const meta = this.m.get("game.v2.sync.json");
     const slot = meta && JSON.parse(new TextDecoder().decode(meta)).slot;
-    return this.m.get(slot ? "game.next" : "game.bin");
+    return meta && this.m.get(`game.v2.${slot === 1 ? 1 : 0}.bin`);
   }
   /** what this browser keeps of the game: its blob and anything kept aside */
   kept(): Uint8Array[] {
@@ -64,6 +65,10 @@ let online = true;
 beforeAll(() => {
   g.location = { href: "https://masu.test/play.html" };
   Object.defineProperty(navigator, "onLine", { get: () => online, configurable: true });
+  // (the origin's Web Locks, as a browser has them: the tests outside simulate() had none and
+  // failed on navigator.locks; the simulation's own browser brings its own)
+  if (!("locks" in navigator))
+    Object.defineProperty(navigator, "locks", { value: exclusiveLocks(), configurable: true });
 });
 afterAll(() => {
   g.location = oldLocation;
@@ -251,7 +256,7 @@ async function keeper(d: Device, s: Server, files: () => Uint8Array<ArrayBuffer>
   let writes = 0;
   const write = d.files.write.bind(d.files);
   d.files.write = async (f, data) => {
-    if (f === "game.bin" || f === "game.next") writes++;
+    if (/^game\.v2\.[01]\.bin$/.test(f)) writes++;
     return write(f, data);
   };
   return {
@@ -438,8 +443,13 @@ test("copies set aside: only the newest few of a game stay, other games' and the
       savesFor(d.files, s.request);
       s.data = blob(100 + i);
       s.rev++;
-      d.m.set("game.bin", blob(200 + i));
-      d.m.set("game.sync.json", new TextEncoder().encode(JSON.stringify({ base: '"0"', dirty: true })));
+      d.m.set("game.v2.0.bin", blob(200 + i));
+      d.m.set(
+        "game.v2.sync.json",
+        new TextEncoder().encode(
+          JSON.stringify({ base: '"0"', dirty: true, slot: 0, generation: `g${i}`, rev: i }),
+        ),
+      );
       await loadSaves("game");
     }
   } finally {
@@ -645,7 +655,7 @@ test.each(["before publish", "after publish"])(
         await original(file, bytes);
         if (file.endsWith(".sync.json")) throw new Error("acknowledgement interrupted");
       };
-      await storeSaves("game", blob(2), true, false);
+      await storeSaves("game", blob(2), false);
       device.files.write = original;
       const expected = blob(crash === "before publish" ? 1 : 2);
       await advance(5000);
@@ -673,7 +683,10 @@ test("simulation: replay a seeded history of saves, disconnects and restarts", a
         browser.setOnline(randomBelow(3) !== 0);
         expect(await page(device, server)).toEqual(latest);
         latest = blob(1 + randomBelow(65535));
-        const saved = await storeSaves("game", latest).catch(() => false);
+        const saved = await storeSaves("game", latest).then(
+          (o) => o.kind === "sent",
+          () => false,
+        );
         expect(saved).toBe(navigator.onLine);
         expect(device.current()).toEqual(latest);
         if (saved) expect(server.data).toEqual(latest);
@@ -682,7 +695,7 @@ test("simulation: replay a seeded history of saves, disconnects and restarts", a
           saved,
           server.rev,
           ...latest,
-          new TextDecoder().decode(device.m.get("game.sync.json")),
+          new TextDecoder().decode(device.m.get("game.v2.sync.json")),
         ]);
       }
       browser.setOnline(true);
@@ -691,4 +704,242 @@ test("simulation: replay a seeded history of saves, disconnects and restarts", a
       return trace;
     });
   expect(await replay()).toEqual(await replay());
+});
+
+/** `d`'s blob writes fail while `failing()` says so (an OPFS quota denied, say). */
+function failBlobs(d: Device, failing: () => boolean) {
+  const write = d.files.write.bind(d.files);
+  d.files.write = async (f, data) => {
+    if (/^game\.v2\.[01]\.bin$/.test(f) && failing()) throw new Error("QuotaExceededError");
+    return write(f, data);
+  };
+}
+
+test("a local write that failed once is tried again: the save after it is kept (review e18bf44)", async () => {
+  const s = new Server();
+  const d = new Device();
+  online = true;
+  let current = blob(1);
+  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, null);
+  current = blob(1);
+  k.write();
+  await k.save();
+  let fail = true;
+  failBlobs(d, () => fail);
+  s.up = false;
+  current = blob(2);
+  k.write();
+  await k.save();
+  expect(eq(d.current(), blob(1))).toBe(true);
+  // (the game writes nothing more; OPFS works again: the next look writes B, not "already kept")
+  fail = false;
+  k.at(1000);
+  await k.save();
+  expect(eq(d.current(), blob(2))).toBe(true);
+  // (and B is what the next start has, and sends)
+  s.up = true;
+  expect(eq(await page(d, s), blob(2))).toBe(true);
+  expect(eq(s.data, blob(2))).toBe(true);
+});
+
+test("this browser's copy not written, the server's written: the next start does not go back (keepSaving)", async () => {
+  const s = new Server();
+  const d = new Device();
+  online = true;
+  let current = blob(1);
+  const k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, null);
+  // (A: kept here only, the server down)
+  s.up = false;
+  k.write();
+  await k.save();
+  expect(eq(d.current(), blob(1))).toBe(true);
+  // (B: this browser's write fails, the upload goes through)
+  s.up = true;
+  failBlobs(d, () => true);
+  current = blob(2);
+  k.write();
+  await k.save(true);
+  expect(eq(s.data, blob(2))).toBe(true);
+  expect(eq(d.current(), blob(1))).toBe(true);
+  // (A is no longer taken for the newest unsent save)
+  expect(eq(await page(d, s), blob(2))).toBe(true);
+  expect(eq(s.data, blob(2))).toBe(true);
+});
+
+test("this browser's copy not written, the server's written: the next start does not go back (storeSaves)", async () => {
+  const s = new Server();
+  const d = new Device();
+  online = false;
+  await page(d, s);
+  expect((await storeSaves("game", blob(1), false)).kind).toBe("kept");
+  online = true;
+  failBlobs(d, () => true);
+  await page(d, s);
+  expect(await storeSaves("game", blob(2))).toMatchObject({ kind: "sent-not-kept" });
+  expect(eq(s.data, blob(2))).toBe(true);
+  expect(eq(await page(d, s), blob(2))).toBe(true);
+  expect(eq(s.data, blob(2))).toBe(true);
+});
+
+// Random runs of the keeper with OPFS writes failing now and then, the server up and down,
+// forced saves (property, seeded): after the last save with everything working, this browser's
+// copy and the server hold the newest export, and a restart returns it; never an older one.
+test("property: failed local writes and uploads never bring back an older save", async () => {
+  let x = 4242;
+  const rnd = (n: number) => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) >>> 8) % n;
+  for (let run = 0; run < 200; run++) {
+    const s = new Server();
+    const d = new Device();
+    online = true;
+    let v = 1;
+    let current = blob(v);
+    let k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, null);
+    let fail = false;
+    failBlobs(d, () => fail);
+    let t = 0;
+    for (let step = 0; step < 20; step++) {
+      t += rnd(40_000);
+      k.at(t);
+      if (rnd(2)) {
+        current = blob(++v);
+        k.write();
+      }
+      fail = rnd(3) === 0;
+      s.up = rnd(3) !== 0;
+      await k.save(rnd(4) === 0);
+      // (whatever failed: a restart (a new page, sometimes) never returns a save older than
+      // the newest either copy holds)
+      if (rnd(4) === 0) {
+        fail = false;
+        const newest = Math.max(d.current()?.[0] ?? 0, s.data?.[0] ?? 0);
+        const up = s.up;
+        s.up = true;
+        const got = await page(d, s);
+        expect(got?.[0] ?? 0, `run ${run} step ${step}: restart`).toBe(newest);
+        if (got) current = got as Uint8Array<ArrayBuffer>;
+        k = await keeper(d, s, () => current as Uint8Array<ArrayBuffer>, got);
+        s.up = up;
+        failBlobs(d, () => fail);
+      }
+    }
+    fail = false;
+    s.up = true;
+    k.at(t + 10 * UPLOAD_EVERY);
+    await k.save(true);
+    expect(eq(d.current(), current), `run ${run}: here`).toBe(true);
+    expect(eq(s.data, current), `run ${run}: server`).toBe(true);
+    expect(eq(await page(d, s), current), `run ${run}: restart`).toBe(true);
+  }
+});
+
+test("simulation: an acknowledgement while a start's GET is out keeps the newer local save (review e18bf44)", async () => {
+  await simulate(async () => {
+    const device = new Device();
+    const server = new Server();
+    server.data = blob(1);
+    server.rev = 1;
+    const putStarted = deferred<void>();
+    const putGo = deferred<void>();
+    const getStarted = deferred<void>();
+    const getGo = deferred<void>();
+    const tab = async (request: typeof fetch) => {
+      vi.resetModules();
+      const session = await import("./saves");
+      session.savesFor(device.files, request);
+      return session;
+    };
+    const b = await tab(async (url, init) => {
+      if (init?.method === "PUT") {
+        putStarted.resolve();
+        await putGo.promise;
+      }
+      return server.request(url, init);
+    });
+    await b.loadSaves("game");
+    // (tab B: its save 2 written here, its upload out)
+    const storing = b.storeSaves("game", blob(2));
+    await putStarted.promise;
+    // (tab A starts: its GET answers with the server's copy before B's upload landed)
+    let gets = 0;
+    const a = await tab(async (url, init) => {
+      if (init?.method === "PUT" || gets++) return server.request(url, init);
+      const answer = await server.request(url, init);
+      getStarted.resolve();
+      await getGo.promise;
+      return answer;
+    });
+    const starting = a.loadSaves("game");
+    await getStarted.promise;
+    putGo.resolve();
+    expect(await storing).toMatchObject({ kind: "sent" });
+    getGo.resolve();
+    // (B's acknowledgement changed only the record's dirty and base: A's older answer is not taken)
+    expect(await starting).toEqual(blob(2));
+    expect(device.current()).toEqual(blob(2));
+    expect(server.data).toEqual(blob(2));
+  });
+});
+
+test("simulation: a slow upload does not hold the next save's local write (review e18bf44)", async () => {
+  await simulate(async ({ advance, browser }) => {
+    const device = new Device();
+    const server = new Server();
+    const putStarted = deferred<void>();
+    const putGo = deferred<void>();
+    const request = server.request;
+    server.request = async (url, init) => {
+      if (init?.method === "PUT" && server.rev === 0) {
+        putStarted.resolve();
+        await putGo.promise;
+      }
+      return request(url, init);
+    };
+    await page(device, server);
+    let version = 1;
+    const game = { _vnhost_vfs_changes: () => version } as unknown as SavesModule;
+    const save = keepSaving(game, "game", [], null, { read: () => blob(version) });
+    const first = save();
+    await putStarted.promise;
+    version = 2;
+    // (the page is hidden: save 2 is on this device although save 1's PUT is still out)
+    browser.events.dispatchEvent(new Event("pagehide"));
+    const forced = save(true);
+    await advance(10);
+    expect(device.current()).toEqual(blob(2));
+    expect(server.data).toBeNull();
+    putGo.resolve();
+    await Promise.all([first, forced]);
+    expect(server.data).toEqual(blob(2));
+    expect(await page(device, server)).toEqual(blob(2));
+  });
+});
+
+test("an older app (e18bf44's saves.ts) beside this one: neither takes the other's files for its own", async () => {
+  const s = new Server();
+  const d = new Device();
+  online = true;
+  const old = await import("./test/legacy/saves-e18bf44");
+  const older = async () => {
+    old.savesFor(d.files, s.request);
+    return old.loadSaves("game");
+  };
+  // (the older app saved A here, not sent)
+  await older();
+  s.up = false;
+  await old.storeSaves("game", blob(1)).catch(() => undefined);
+  s.up = true;
+  // (this app takes it over, saves B offline)
+  online = false;
+  expect(eq(await page(d, s), blob(1))).toBe(true);
+  expect((await storeSaves("game", blob(2), false)).kind).toBe("kept");
+  online = true;
+  // (the older app starts: A is not sent again, nor this format's inactive slot taken for its own)
+  await older();
+  expect(s.data === null || eq(s.data, blob(1))).toBe(true);
+  expect(s.history.some((h) => eq(h, blob(2)))).toBe(false);
+  // (this app starts: B, its own newest unsent save, goes up)
+  expect(eq(await page(d, s), blob(2))).toBe(true);
+  expect(eq(s.data, blob(2))).toBe(true);
+  // (the older app now starts from the server's copy: B)
+  expect(eq(await older(), blob(2))).toBe(true);
 });
