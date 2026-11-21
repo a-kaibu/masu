@@ -8283,29 +8283,69 @@ fn CopyFileExA(c: &mut Ctx) -> u32 {
 fn CopyFileExW(c: &mut Ctx) -> u32 {
     copy_ex(c, true)
 }
-fn full_path_name(c: &mut Ctx, wide: bool) -> u32 {
-    let name = arg_str(c.a(0), wide);
-    let full = files::full_path(&name);
-    let r = ret_str(c.a(2), c.a(1), &full, wide);
-    let unc_root = full.strip_prefix("\\\\").is_some_and(|u| u.matches('\\').count() <= 1);
-    if !c.out(3).is_null() && r < c.a(1) && (full.ends_with('\\') || unc_root) {
-        // (no file part in "C:\" or "dir\")
-        c.out(3).put(0);
-    } else if !c.out(3).is_null() && r < c.a(1) {
-        let pos = full.rfind('\\').map_or(0, |i| i.saturating_add(1));
-        let head = full.get(..pos).unwrap_or_default();
-        let off = if wide { head.encode_utf16().count().saturating_mul(2) } else { crate::text::s2a(head).len() };
-        c.out(3).put((mem::ga(c.a(2)) + kome::num::u32_of(off)).get());
+/// GetFullPathNameW: RtlGetFullPathName_UEx(name, count * 2, buffer, file part), its bytes in
+/// units (0 and the error for a name it refuses)
+fn full_path_w(c: &mut Ctx) -> u32 {
+    let (name, count, buf, fp) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    let w = wstr(name);
+    if w.len() > 0x7ffe {
+        last_error(206); // STATUS_NAME_TOO_LONG
+        return 0;
     }
-    r
+    if !fp.is_null() {
+        fp.put(0);
+    }
+    let f = crate::fullpath::process_env_full(&w, count.wrapping_mul(2));
+    if let Some(b) = &f.buffer {
+        crate::fullpath::put_units(buf, b);
+    }
+    if let Some(j) = f.file_part.filter(|_| !fp.is_null()) {
+        fp.put((mem::ga(buf).at(kome::num::u32_of(j), 2)).get());
+    }
+    if f.ret == 0 {
+        last_error(123); // STATUS_OBJECT_NAME_INVALID
+    }
+    f.ret / 2
+}
+/// GetFullPathNameA: the name as Unicode, made full in 0x208 bytes of its own (more:
+/// ERROR_FILENAME_EXCED_RANGE), then in the ANSI code page: copied with its NUL when it fits
+/// (the file part pointing into it), else its size with the NUL, the buffer untouched
+fn full_path_a(c: &mut Ctx) -> u32 {
+    let (name, count, buf, fp) = (c.a(0), c.a(1), c.a(2), c.out(3));
+    let w = a2w(&cstr(name));
+    let f = crate::fullpath::process_env_full(&w, 0x208);
+    if f.ret == 0 {
+        last_error(123);
+        return 0;
+    }
+    if f.ret > 0x208 {
+        last_error(206);
+        return 0;
+    }
+    let text = f.text();
+    let bytes = crate::text::w2a(&text);
+    let n = kome::num::u32_of(bytes.len());
+    if n == 0 {
+        return 0;
+    }
+    if n >= count {
+        return n.saturating_add(1);
+    }
+    mem::write(buf, &bytes);
+    mem::w8(mem::ga(buf) + n, 0);
+    if !fp.is_null() {
+        let at = f.file_part.map_or(0, |j| (mem::ga(buf) + kome::num::u32_of(crate::text::w2a(text.get(..j).unwrap_or(&[])).len())).get());
+        fp.put(at);
+    }
+    n
 }
 fn GetFullPathNameA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GetFullPathNameA>();
-    full_path_name(c.ctx(), false)
+    full_path_a(c.ctx())
 }
 fn GetFullPathNameW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GetFullPathNameW>();
-    full_path_name(c.ctx(), true)
+    full_path_w(c.ctx())
 }
 fn GetShortPathNameA(c: &mut Ctx) -> u32 {
     let s = arg_str(c.a(0), false);
@@ -8366,26 +8406,91 @@ fn SetCurrentDirectoryW(c: &mut Ctx) -> u32 {
 fn ensure_dir(w: &str) {
     files::make_dirs(w);
 }
+/// GetTempPathA: GetTempPathW into count + 1 units of its own (count as a USHORT), again at
+/// the size it asked for when that was short; then in the ANSI code page (count + 1 bytes of
+/// room), else the size it needs with its NUL
 fn GetTempPathA(c: &mut Ctx) -> u32 {
     ensure_dir("C:\\windows\\temp");
-    ret_str(c.a(1), c.a(0), "C:\\windows\\temp\\", false)
+    let (count, buf) = (c.a(0), c.a(1));
+    let n16 = count & 0xffff;
+    let (r, b) = crate::fullpath::process_temp_path(n16);
+    let rb = r.wrapping_mul(2) & 0xffff;
+    let text = |b: Option<Vec<u16>>| -> Vec<u16> { b.unwrap_or_default().into_iter().take_while(|&u| u != 0).collect() };
+    let put = |t: &[u16]| -> u32 {
+        let a = crate::text::w2a(t);
+        let len = kome::num::u32_of(a.len());
+        if len.saturating_add(1) > n16.saturating_add(1) {
+            last_error(234); // STATUS_BUFFER_OVERFLOW
+            return 0;
+        }
+        mem::write(buf, &a);
+        mem::w8(mem::ga(buf) + len, 0);
+        len
+    };
+    if rb <= n16.saturating_mul(2) {
+        return put(&text(b));
+    }
+    let (_, b2) = crate::fullpath::process_temp_path(rb / 2);
+    let t2 = text(b2);
+    let size = kome::num::u32_of(crate::text::w2a(&t2).len());
+    if count > size { put(&t2) } else { size.saturating_add(1) }
 }
+/// GetTempPathW (fullpath::temp_path)
 fn GetTempPathW(c: &mut Ctx) -> u32 {
     ensure_dir("C:\\windows\\temp");
-    ret_str(c.a(1), c.a(0), "C:\\windows\\temp\\", true)
-}
-static TEMP_N: AtomicU32 = AtomicU32::new(0x100);
-fn temp_name(c: &mut Ctx, wide: bool) -> u32 {
-    let dir = arg_str(c.a(0), wide);
-    let pre = arg_str(c.a(1), wide);
-    let n = if c.a(2) != 0 { c.a(2) } else { TEMP_N.fetch_add(1, Ordering::Relaxed) };
-    let p = format!("{}\\{}{:04X}.tmp", dir.trim_end_matches('\\'), pre.chars().take(3).collect::<String>(), n);
-    if c.a(2) == 0 {
-        // (GetTempFileName answers the name even if the file could not be made, as before)
-        if kura::fs::File::create(files::resolve_new(&p)).is_err() {}
+    let (count, buf) = (c.a(0), c.a(1));
+    let (r, b) = crate::fullpath::process_temp_path(count);
+    if let Some(b) = b {
+        crate::fullpath::put_units(buf, &b);
     }
-    ret_str(c.a(3), 260, &p, wide);
-    n
+    r
+}
+static TEMP_N: AtomicU32 = AtomicU32::new(0);
+/// GetTempFileNameA/W (tmpname.rs): the name in a MAX_PATH buffer, the A form through the ANSI
+/// code page both ways
+fn temp_name(c: &mut Ctx, wide: bool) -> u32 {
+    let (path, prefix, unique, out) = (c.a(0), c.a(1), c.a(2), c.a(3));
+    let get = |p: u32| if wide { wstr(p) } else { a2w(&cstr(p)) };
+    let (path, prefix) = (get(path), get(prefix));
+    if path.len() > 0x7ffe {
+        last_error(206);
+        return 0;
+    }
+    let attrs = |p: &[u16]| {
+        let s = String::from_utf16_lossy(p);
+        files::resolve(&files::full_path(&s)).and_then(|h| kura::fs::metadata(h).ok()).map(|m| if m.is_dir() { 0x10 } else { 0x20 })
+    };
+    let mut create = |p: &[u16]| {
+        let s = String::from_utf16_lossy(p);
+        let full = files::full_path(&s);
+        if files::resolve(&full).and_then(|h| kura::fs::metadata(h).ok()).is_some_and(|m| m.is_dir()) {
+            return crate::tmpname::Made::No(5, true);
+        }
+        match kura::fs::OpenOptions::new().write(true).create_new(true).open(files::resolve_new(&full)) {
+            Ok(_) => crate::tmpname::Made::Yes,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => crate::tmpname::Made::No(80, false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => crate::tmpname::Made::No(3, false),
+            Err(_) => crate::tmpname::Made::No(5, false),
+        }
+    };
+    let start = ticks_ms().wrapping_add(TEMP_N.fetch_add(1, Ordering::Relaxed));
+    match crate::tmpname::temp_file_name(&path, &prefix, unique, start, &attrs, &mut create) {
+        Ok((n, name)) => {
+            if wide {
+                crate::fullpath::put_units(out, &name);
+                mem::w16(mem::ga(out).at(kome::num::u32_of(name.len()), 2), 0);
+            } else {
+                let a = crate::text::w2a(&name);
+                mem::write(out, &a);
+                mem::w8(mem::ga(out) + kome::num::u32_of(a.len()), 0);
+            }
+            n
+        }
+        Err(e) => {
+            last_error(e);
+            0
+        }
+    }
 }
 fn GetTempFileNameA(c: &mut Ctx) -> u32 {
     temp_name(c, false)

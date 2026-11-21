@@ -103,6 +103,7 @@ pub mod curdir;
 pub mod ntpath;
 pub mod fullpath;
 pub mod ntname;
+pub mod tmpname;
 pub mod gdi;
 pub mod gdi_geom;
 pub mod k32;

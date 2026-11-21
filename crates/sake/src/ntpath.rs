@@ -243,33 +243,39 @@ pub fn legal_8dot3(s: &[u8], lead: Option<&dyn Fn(u8) -> bool>) -> Option<bool> 
     Some(spaces)
 }
 
-/// RtlIsNameLegalDOS8Dot3(const UNICODE_STRING *name, OEM_STRING *oem, BOOLEAN *spaces): more
-/// than 12 units is FALSE; the name upper-cased into `oem` (or 12 bytes of its own) as
-/// RtlUpcaseUnicodeStringToCountedOemString does (too long for it: FALSE), then the rule;
-/// *spaces only on TRUE
-fn RtlIsNameLegalDOS8Dot3(c: &mut Ctx) -> u32 {
-    let (name, oem, spaces) = (c.a(0), c.a(1), c.a(2));
-    let len = mem::r16(name);
-    if len > 0x18 {
-        return 0;
+/// RtlIsNameLegalDOS8Dot3 on a name's units with `room` bytes of OEM string: more than 12
+/// units is FALSE; the name upper-cased into OEM as RtlUpcaseUnicodeStringToCountedOemString
+/// does (more than `room` bytes: FALSE, nothing written), then the rule. The OEM bytes when
+/// they were made, and Some(spaces) for TRUE.
+pub fn name_8dot3(name: &[u16], room: usize) -> (Option<Vec<u8>>, Option<bool>) {
+    if name.len() > 12 {
+        return (None, None);
     }
-    let buf = mem::rp(mem::ga(name) + mem::ps());
-    let up: Vec<u16> = (0..u32::from(len / 2)).map(|i| crate::nt::up(mem::r16(mem::ga(buf).at(i, 2)))).collect();
+    let up: Vec<u16> = name.iter().map(|&u| crate::nt::up(u)).collect();
     let bytes = crate::text::w2mb(1, &up);
-    let room = if oem != 0 { usize::from(mem::r16(mem::ga(oem) + 2)) } else { 12 };
     if bytes.len() > room {
-        return 0;
-    }
-    if oem != 0 {
-        let ob = mem::rp(mem::ga(oem) + mem::ps());
-        for (i, &b) in bytes.iter().enumerate() {
-            mem::w8(mem::ga(ob) + kome::num::u32_of(i), b);
-        }
-        mem::w16(oem, kome::num::lo16(bytes.len()));
+        return (None, None);
     }
     let lead = |b: u8| crate::text::is_lead_cp(1, b);
     let dbcs = crate::text::is_dbcs();
-    match legal_8dot3(&bytes, if dbcs { Some(&lead) } else { None }) {
+    let r = legal_8dot3(&bytes, if dbcs { Some(&lead) } else { None });
+    (Some(bytes), r)
+}
+
+/// RtlIsNameLegalDOS8Dot3(const UNICODE_STRING *name, OEM_STRING *oem, BOOLEAN *spaces): the
+/// OEM bytes go to `oem` (or 12 bytes of its own); *spaces only on TRUE
+fn RtlIsNameLegalDOS8Dot3(c: &mut Ctx) -> u32 {
+    let (name, oem, spaces) = (c.a(0), c.a(1), c.a(2));
+    let len = mem::r16(name);
+    let buf = mem::rp(mem::ga(name) + mem::ps());
+    let units: Vec<u16> = (0..u32::from(len / 2)).map(|i| mem::r16(mem::ga(buf).at(i, 2))).collect();
+    let room = if oem != 0 { usize::from(mem::r16(mem::ga(oem) + 2)) } else { 12 };
+    let (bytes, r) = name_8dot3(&units, room);
+    if let Some(bytes) = bytes.filter(|_| oem != 0) {
+        mem::write(mem::rp(mem::ga(oem) + mem::ps()), &bytes);
+        mem::w16(oem, kome::num::lo16(bytes.len()));
+    }
+    match r {
         Some(sp) => {
             if spaces != 0 {
                 mem::w8(spaces, u8::from(sp));
@@ -278,6 +284,55 @@ fn RtlIsNameLegalDOS8Dot3(c: &mut Ctx) -> u32 {
         }
         None => 0,
     }
+}
+
+/// CheckNameLegalDOS8Dot3W(name, oem, oem size, *spaces, *legal): NULL name or legal, an oem
+/// size without a buffer or above 0xffff: ERROR_INVALID_PARAMETER. RtlIsNameLegalDOS8Dot3 into
+/// 12 bytes of its own; a legal name's OEM bytes and NUL to `oem` (short:
+/// ERROR_INSUFFICIENT_BUFFER), *spaces on a legal name, *legal always
+fn check_8dot3(name: &[u16], oem: u32, size: u32, spaces: u32, legal: u32) -> u32 {
+    let (bytes, r) = name_8dot3(name, 12);
+    if r.is_some() && oem != 0 {
+        let b = bytes.unwrap_or_default();
+        let n = kome::num::u32_of(b.len());
+        if size < n.saturating_add(1) {
+            crate::k32::last_error(122);
+            return 0;
+        }
+        mem::write(oem, &b);
+        mem::w8(mem::ga(oem) + n, 0);
+    }
+    if let Some(sp) = r.filter(|_| spaces != 0) {
+        mem::w32(spaces, u32::from(sp));
+    }
+    mem::w32(legal, u32::from(r.is_some()));
+    1
+}
+
+fn bad_8dot3_args(name: u32, oem: u32, size: u32, legal: u32) -> bool {
+    name == 0 || legal == 0 || (oem == 0 && size != 0) || size > 0xffff
+}
+
+fn CheckNameLegalDOS8Dot3W(c: &mut Ctx) -> u32 {
+    let (name, oem, size, spaces, legal) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    if bad_8dot3_args(name, oem, size, legal) {
+        crate::k32::last_error(87);
+        return 0;
+    }
+    // (RtlInitUnicodeString: at most 0x7ffe units)
+    let w: Vec<u16> = mem::wstr(name).into_iter().take(0x7ffe).collect();
+    check_8dot3(&w, oem, size, spaces, legal)
+}
+
+/// CheckNameLegalDOS8Dot3A: the same checks, the name from the ANSI code page
+fn CheckNameLegalDOS8Dot3A(c: &mut Ctx) -> u32 {
+    let (name, oem, size, spaces, legal) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4));
+    if bad_8dot3_args(name, oem, size, legal) {
+        crate::k32::last_error(87);
+        return 0;
+    }
+    let w = crate::text::a2w(&mem::cstr(name));
+    check_8dot3(&w, oem, size, spaces, legal)
 }
 
 /// RtlIsDosDeviceName_U(PCWSTR path): RtlInitUnicodeStringEx (too long: 0), then the rule
@@ -298,6 +353,8 @@ pub fn init() {
     implement("ntdll", "RtlDetermineDosPathNameType_U", RtlDetermineDosPathNameType_U);
     implement("ntdll", "RtlIsDosDeviceName_U", RtlIsDosDeviceName_U);
     implement("ntdll", "RtlIsNameLegalDOS8Dot3", RtlIsNameLegalDOS8Dot3);
+    implement("kernel32", "CheckNameLegalDOS8Dot3W", CheckNameLegalDOS8Dot3W);
+    implement("kernel32", "CheckNameLegalDOS8Dot3A", CheckNameLegalDOS8Dot3A);
 }
 
 #[cfg(test)]

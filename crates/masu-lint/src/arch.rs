@@ -546,7 +546,8 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 22] = [
+pub const REQUIRED: [(&str, &str, &str); 23] = [
+    ("crates/sake/src/k32.rs", "    let f = crate::fullpath::process_env_full(&w, count.wrapping_mul(2));", "GetFullPathNameW is RtlGetFullPathName_UEx's answer: one full-path rule for ntdll and kernel32 (files::full_path gave other answers; 2026-11-21)"),
     ("crates/sake/src/nt.rs", "    crate::ntname::check(&w, mem::rp(oa.saturating_add(mem::ps())) != 0)?;", "an NT name passes the object manager's and file system's syntax before a file is looked up (\\??\\C:\\x\\..\\y opened y; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "                send_gamma(Some(&r));", "a full-screen Direct3D 9 device's SetGammaRamp reaches the display (it was answered S_OK and dropped; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "                    let (hr, bytes) = q.get_data(if a(1) == 0 { 0 } else { a(2) }, a(3));", "IDirect3DQuery9::GetData answers what the page measured (it wrote 1000 samples and TRUE at once; 2026-11-21)"),
