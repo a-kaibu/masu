@@ -54,6 +54,8 @@ int main(void) {
         { D3DFMT_X8R8G8B8, "X8R8G8B8" }, { D3DFMT_A8R8G8B8, "A8R8G8B8" }, { D3DFMT_R5G6B5, "R5G6B5" }, { D3DFMT_X1R5G5B5, "X1R5G5B5" },
         { D3DFMT_A2R10G10B10, "A2R10G10B10" }, { D3DFMT_A16B16G16R16F, "A16B16G16R16F" }, { D3DFMT_YUY2, "YUY2" }, { D3DFMT_UYVY, "UYVY" },
         { D3DFMT_DXT1, "DXT1" }, { D3DFMT_L8, "L8" }, { D3DFMT_P8, "P8" }, { (D3DFORMAT)MAKEFOURCC('N', 'V', '1', '2'), "NV12" },
+        { D3DFMT_A8, "A8" }, { D3DFMT_A8L8, "A8L8" }, { D3DFMT_A1R5G5B5, "A1R5G5B5" }, { D3DFMT_A8B8G8R8, "A8B8G8R8" }, { D3DFMT_G16R16, "G16R16" },
+        { D3DFMT_R32F, "R32F" }, { D3DFMT_A32B32G32R32F, "A32B32G32R32F" }, { D3DFMT_V8U8, "V8U8" }, { D3DFMT_X8B8G8R8, "X8B8G8R8" },
     };
     const int nf = sizeof fm / sizeof fm[0];
     for (int s = 0; s < nf; s++) {
@@ -64,12 +66,16 @@ int main(void) {
     static const struct { D3DFORMAT f; const char *n; } ds[] = {
         { D3DFMT_D16, "D16" }, { D3DFMT_D24S8, "D24S8" }, { D3DFMT_D24X8, "D24X8" }, { D3DFMT_D32, "D32" }, { D3DFMT_D15S1, "D15S1" },
         { D3DFMT_D16_LOCKABLE, "D16_LOCKABLE" }, { D3DFMT_D32F_LOCKABLE, "D32F_LOCKABLE" }, { D3DFMT_X8R8G8B8, "X8R8G8B8" },
+        { D3DFMT_D24X4S4, "D24X4S4" }, { D3DFMT_D24FS8, "D24FS8" },
     };
     for (int t = 0; t < 4; t++) {
         printf("  CheckDepthStencilMatch target %s:", fm[t].n);
         for (unsigned k = 0; k < sizeof ds / sizeof ds[0]; k++) printf(" %s %#lx", ds[k].n, IDirect3D9_CheckDepthStencilMatch(d3d, 0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, fm[t].f, ds[k].f));
         printf("\n");
     }
+    printf("  CheckDeviceFormat(DEPTHSTENCIL, SURFACE):");
+    for (unsigned k = 0; k < sizeof ds / sizeof ds[0]; k++) printf(" %s %#lx", ds[k].n, IDirect3D9_CheckDeviceFormat(d3d, 0, D3DDEVTYPE_HAL, D3DFMT_X8R8G8B8, D3DUSAGE_DEPTHSTENCIL, D3DRTYPE_SURFACE, ds[k].f));
+    printf("\n");
 
     puts("GetAvailableTextureMem (MB) at first, after four 1024x1024 X8R8G8B8 render target textures, after their release");
     {
@@ -139,7 +145,7 @@ int main(void) {
         printf("  SetClipStatus %#lx", IDirect3DDevice9_SetClipStatus(dev, &s));
         IDirect3DDevice9_GetClipStatus(dev, &c);
         printf(" then %#lx %#lx\n", c.ClipUnion, c.ClipIntersection);
-        printf("  GetClipStatus(NULL) %#lx SetClipStatus(NULL) %#lx\n", IDirect3DDevice9_GetClipStatus(dev, NULL), IDirect3DDevice9_SetClipStatus(dev, NULL));
+        /* (GetClipStatus(NULL) / SetClipStatus(NULL) kill the process on Windows, exit 139: not asked) */
         /* a lit triangle partly left of the view, through the fixed function, software processed */
         D3DMATRIX id = { { { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 } } };
         IDirect3DDevice9_SetTransform(dev, D3DTS_WORLD, &id);

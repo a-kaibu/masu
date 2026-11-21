@@ -21,16 +21,13 @@ const USAGE_DEPTHSTENCIL: u32 = 2;
 const LOCK_READONLY: u32 = 0x10;
 const LOCK_NO_DIRTY_UPDATE: u32 = 0x8000;
 const USAGE_AUTOGENMIPMAP: u32 = 0x400;
-const USAGE_DYNAMIC: u32 = 0x200;
 /// D3DOK_NOAUTOGEN: a format a texture of may be made with D3DUSAGE_AUTOGENMIPMAP, which then
 /// makes no levels
-const D3DOK_NOAUTOGEN: u32 = 0x0876_087f;
+/// MAKE_D3DSTATUS(2159)
+const D3DOK_NOAUTOGEN: u32 = 0x0876_086f;
 const TEXF_NONE: u32 = 0;
 const CREATE_SOFTWARE_VP: u32 = 0x20;
 const CREATE_MIXED_VP: u32 = 0x80;
-/// D3DPRESENTFLAG_LOCKABLE_BACKBUFFER
-const PRESENTFLAG_LOCKABLE: u32 = 1;
-const SWAPEFFECT_FLIP: u32 = 2;
 const TEXF_LINEAR: u32 = 2;
 const LOCK_DISCARD: u32 = 0x2000;
 
@@ -1114,7 +1111,8 @@ fn send_gamma(r: Option<&[u16; 768]>) {
 
 /// SetCursorProperties(x hot spot, y hot spot, surface): an A8R8G8B8 surface whose width and
 /// height are powers of two no larger than the display's (Windows: Wine's test test_cursor;
-/// the format: documented).
+/// the format: documented), with the hot spot inside it (winref d3d9dev: hot spot (1, 2) of a
+/// 1x1 surface is refused, of a 64x16 one taken).
 unsafe fn set_cursor_properties(d: &mut D3d, x: u32, y: u32, surface: u32) -> u32 {
     let s = d.id_of(surface);
     let Some(Data::Surface(sf)) = d.objs.get(&s).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
@@ -1123,7 +1121,7 @@ unsafe fn set_cursor_properties(d: &mut D3d, x: u32, y: u32, surface: u32) -> u3
     // SAFETY: two out-parameters of this frame
     unsafe { crate::display::vnhost_display_size(&raw mut dw, &raw mut dh) };
     let fits = |v: u32, d: i32| v.is_power_of_two() && i64::from(v) <= i64::from(d);
-    if f != fmt::A8R8G8B8 || !fits(w, dw) || !fits(h, dh) {
+    if f != fmt::A8R8G8B8 || !fits(w, dw) || !fits(h, dh) || x >= w || y >= h {
         return D3DERR_INVALIDCALL;
     }
     // SAFETY: the surface's guest copy (surface_mem), `pitch` bytes a row
@@ -1140,14 +1138,6 @@ unsafe fn set_cursor_properties(d: &mut D3d, x: u32, y: u32, surface: u32) -> u3
     let Some(dev) = d.dev.as_mut() else { return D3DERR_INVALIDCALL };
     dev.cursor.image = Some(CursorImage { w, h, hot: (x, y), bits });
     S_OK
-}
-
-/// SetDialogBoxMode(enable): enabling needs a lockable back buffer, no multisampling and no
-/// flip swap effect (documented); disabling always succeeds.
-fn set_dialog_box_mode(dev: &mut Device, enable: u32) -> u32 {
-    let pp = dev.pp;
-    let ok = pp.get(11).is_some_and(|f| f & PRESENTFLAG_LOCKABLE != 0) && pp.get(4) == Some(&0) && pp.get(6) != Some(&SWAPEFFECT_FLIP);
-    if enable != 0 && !ok { D3DERR_INVALIDCALL } else { S_OK }
 }
 
 unsafe fn display_mode(out: u32) -> u32 {
@@ -1249,7 +1239,8 @@ const CAPS: [u32; 76] = {
 
 unsafe fn d3d9_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) -> u32 {
     match m {
-        3 => S_OK,
+        // RegisterSoftwareDevice(init function): no function is D3DERR_INVALIDCALL (winref d3d9dev)
+        3 => if a(1) == 0 { D3DERR_INVALIDCALL } else { S_OK },
         4 => 1, // GetAdapterCount
         5 => {
             // GetAdapterIdentifier
@@ -1293,18 +1284,21 @@ unsafe fn d3d9_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) ->
         10 => {
             // CheckDeviceFormat(adapter, type, adapter fmt, usage, rtype, fmt)
             let (usage, rtype, f) = (a(4), a(5), a(6));
-            // (D3DUSAGE_AUTOGENMIPMAP: D3DOK_NOAUTOGEN for a format that is no render target,
-            // and never with D3DUSAGE_DYNAMIC: Wine's test test_mipmap_autogen)
+            // (D3DUSAGE_AUTOGENMIPMAP: format::autogen, D3DUSAGE_DYNAMIC or not: winref d3d9tex)
             if usage & USAGE_AUTOGENMIPMAP != 0 && (rtype == RT_TEXTURE || rtype == RT_CUBETEX) {
-                if usage & USAGE_DYNAMIC != 0 || !fmt::supported(f) {
-                    return D3DERR_NOTAVAILABLE;
-                }
-                return if autogen_format(f) { S_OK } else { D3DOK_NOAUTOGEN };
+                return match fmt::autogen(f) {
+                    fmt::AutoGen::Yes => S_OK,
+                    fmt::AutoGen::No => D3DOK_NOAUTOGEN,
+                    fmt::AutoGen::Unavailable => D3DERR_NOTAVAILABLE,
+                };
             }
             // (as Windows answers: no D32 depth buffers and no R8G8B8 textures, which GPUs
             // have not had for long; creating them still works)
-            let ok = if usage & USAGE_DEPTHSTENCIL != 0 {
-                fmt::is_depth(f) && f != fmt::D32
+            // (cube textures: no depth stencil ones, no depth or X8B8G8R8 formats, winref d3d9cube)
+            let ok = if rtype == RT_CUBETEX && !cube_format(usage, f) {
+                false
+            } else if usage & USAGE_DEPTHSTENCIL != 0 {
+                fmt::depth_buffer(f)
             } else if usage & USAGE_RENDERTARGET != 0 {
                 fmt::renderable(f)
             } else if rtype == RT_VB || rtype == RT_IB {
@@ -1320,8 +1314,12 @@ unsafe fn d3d9_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) ->
             }
             if a(5) == 0 { S_OK } else { D3DERR_NOTAVAILABLE }
         }
-        12 => S_OK,
-        13 => S_OK,
+        // CheckDepthStencilMatch(adapter, type, adapter fmt, target fmt, depth fmt): any target
+        // with a depth buffer format Windows makes; another format (D32, D15S1, a color one) is
+        // D3DERR_INVALIDCALL (winref d3d9dev)
+        12 => if fmt::depth_buffer(a(5)) { S_OK } else { D3DERR_INVALIDCALL },
+        // CheckDeviceFormatConversion(adapter, type, source, target): format::converts
+        13 => if fmt::converts(a(3)) && fmt::converts(a(4)) { S_OK } else { D3DERR_NOTAVAILABLE },
         14 => {
             let mut c = CAPS;
             c[0] = a(2).max(1);
@@ -1456,7 +1454,8 @@ unsafe fn create_device(d: &mut D3d, d3d: u32, ty: u32, focus: u32, behavior: u3
         in_scene: false,
         cursor: Cursor::default(),
         gamma: None,
-        clip_status: [0, 0],
+        // (no union, every bit of the intersection: winref d3d9dev)
+        clip_status: [0, u32::MAX],
         software_vp: behavior & CREATE_SOFTWARE_VP != 0,
         frames: 0,
         fvf_decls: HashMap::new(),
@@ -1760,7 +1759,9 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         17 => present(d, after, a(1), a(2), a(3)),
         18 => get_backbuffer(d, a(4)),
         19 => raster_status(d, a(2)),
-        20 => set_dialog_box_mode(dev!(d), a(1)),
+        // SetDialogBoxMode(enable): Windows takes TRUE and FALSE of every device, with a
+        // lockable back buffer or not and of every swap effect (winref d3d9dev)
+        20 => S_OK,
         // SetGammaRamp(swap chain, flags, ramp): kept; a full-screen device's goes to the
         // display (D3DCAPS2_FULLSCREENGAMMA)
         21 => {
@@ -1778,15 +1779,19 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             dev.gamma = Some(r);
             S_OK
         }
-        // GetGammaRamp(swap chain, ramp): SetGammaRamp's, the identity before one
+        // GetGammaRamp(swap chain, ramp): SetGammaRamp's; before one the identity, which for a
+        // windowed device Windows gives as 0..255 (entry i is i, winref d3d9dev) and for a
+        // full-screen one as the display's 16-bit ramp (entry i is i * 257)
         22 => {
             let p = gp::<u16>(a(2));
             if p.is_null() || a(1) != 0 {
                 return S_OK;
             }
-            let r: [u16; 768] = match &dev!(d).gamma {
+            let dev = dev!(d);
+            let scale = if dev.pp.get(8) == Some(&0) { 257 } else { 1 };
+            let r: [u16; 768] = match &dev.gamma {
                 Some(g) => **g,
-                None => std::array::from_fn(|i| u16::try_from(i % 256).unwrap_or(0).wrapping_mul(257)),
+                None => std::array::from_fn(|i| u16::try_from(i % 256).unwrap_or(0).wrapping_mul(scale)),
             };
             // SAFETY: the caller's D3DGAMMARAMP
             unsafe { std::ptr::copy_nonoverlapping(r.as_ptr(), p, 768) };
@@ -1797,6 +1802,10 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
         25 => create_cube_texture(d, a(1), a(2), a(3), a(4), a(5), a(6)),
         26 | 27 => {
             let (len, usage, f, pool, out) = (a(1), a(2), a(3), a(4), a(5));
+            // (no buffers in scratch memory: winref d3d9tex)
+            if pool == POOL_SCRATCH {
+                return D3DERR_INVALIDCALL;
+            }
             let mem = d.guest_alloc(len.max(16));
             if mem == 0 {
                 return super::E_OUTOFMEMORY;
@@ -2513,7 +2522,8 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
 }
 
 /// CheckDeviceState's (and PresentEx's) "the presentation area is occluded"
-const S_PRESENT_OCCLUDED: u32 = 0x0876_0868;
+/// MAKE_D3DSTATUS(2168)
+const S_PRESENT_OCCLUDED: u32 = 0x0876_0878;
 
 const D3DERR_NOTFOUND: u32 = super::D3DERR_NOTFOUND;
 
@@ -2585,14 +2595,16 @@ fn autogen(usage: u32, levels: u32, pool: u32, f: u32) -> Option<Mips> {
     if usage & USAGE_AUTOGENMIPMAP == 0 {
         return Some(Mips::Given);
     }
-    if levels > 1 || pool == POOL_SYSTEMMEM {
+    // (more than one level, system or scratch memory, a format with no AutoGen: refused,
+    // winref d3d9tex)
+    if levels > 1 || pool == POOL_SYSTEMMEM || pool == POOL_SCRATCH {
         return None;
     }
-    Some(if autogen_format(f) { Mips::Auto { stale: true } } else { Mips::Given })
-}
-
-fn autogen_format(f: u32) -> bool {
-    fmt::renderable(f) && !fmt::is_depth(f)
+    match fmt::autogen(f) {
+        fmt::AutoGen::Yes => Some(Mips::Auto { stale: true }),
+        fmt::AutoGen::No => Some(Mips::Given),
+        fmt::AutoGen::Unavailable => None,
+    }
 }
 
 unsafe fn create_texture(d: &mut D3d, w: u32, h: u32, levels: u32, usage: u32, f: u32, pool: u32, out: u32) -> u32 {
@@ -2692,8 +2704,17 @@ unsafe fn create_volume_texture(d: &mut D3d, size: [u32; 3], levels: u32, usage:
 /// slot_view). A render target or depth-stencil cube's faces are targets as a texture's levels
 /// are, each a view of its layer (`Sub`); the formats refused are a 2D texture's (winref
 /// d3d9rtfmt, d3d9cube).
+/// Whether a cube texture can be of usage `usage` and format `f`: not a depth stencil one, not of a
+/// depth format or X8B8G8R8 (winref d3d9cube: CheckDeviceFormat says no, CreateCubeTexture is
+/// D3DERR_INVALIDCALL).
+fn cube_format(usage: u32, f: u32) -> bool {
+    usage & USAGE_DEPTHSTENCIL == 0 && !fmt::is_depth(f) && f != fmt::X8B8G8R8
+}
+
 unsafe fn create_cube_texture(d: &mut D3d, edge: u32, levels: u32, usage: u32, f: u32, pool: u32, out: u32) -> u32 {
-    if out == 0 || edge == 0 || !fmt::supported(f) || usage & USAGE_RENDERTARGET != 0 && !fmt::renderable(f) {
+    // (and render target cubes only in the default pool: winref d3d9cube's managed ones refused)
+    let rt = usage & USAGE_RENDERTARGET != 0;
+    if out == 0 || edge == 0 || !fmt::supported(f) || !cube_format(usage, f) || rt && (!fmt::renderable(f) || pool != POOL_DEFAULT) {
         if d.trace {
             eprintln!("d3d9: CreateCubeTexture {edge} format {f:#x} usage {usage:#x}: refused, as Windows (winref d3d9cube)");
         }

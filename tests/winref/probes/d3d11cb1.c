@@ -216,7 +216,9 @@ int main(void) {
         ID3D11DeviceContext_CSSetConstantBuffers(ctx, 2, 2, bs);
         show("plain", 0);
         show("plain", 5);
-        ID3D11DeviceContext_VSSetConstantBuffers(ctx, 2, 2, NULL);
+        /* (a NULL array: Windows reads it and the process dies, exit 139; slots of NULLs instead) */
+        ID3D11Buffer *none[2] = { NULL, NULL };
+        ID3D11DeviceContext_VSSetConstantBuffers(ctx, 2, 2, none);
         show("plain-null", 0);
         /* the arrays one at a time, and past the slots */
         UINT f[2] = { 0xcccc, 0xcccc }, n[2] = { 0xdddd, 0xdddd };

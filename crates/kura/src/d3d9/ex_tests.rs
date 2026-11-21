@@ -10,7 +10,7 @@ use super::*;
 use proptest::prelude::*;
 
 const INVALIDCALL: u32 = 0x8876_086c;
-const OCCLUDED: u32 = 0x0876_0868;
+const OCCLUDED: u32 = 0x0876_0878;
 
 /// A 64x64 device of window 1, windowed or full screen.
 fn device(windowed: bool) -> u32 {

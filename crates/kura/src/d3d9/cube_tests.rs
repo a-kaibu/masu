@@ -462,57 +462,53 @@ proptest! {
     }
 }
 
-/// A depth-stencil cube's face as the depth buffer: a valid WebGPU pass whose depth attachment
-/// is that face's layer (CheckDeviceFormat answers it as any depth texture's).
+/// CheckDeviceFormat(CUBETEXTURE) and CreateCubeTexture of each format and usage (default pool;
+/// a managed render target cube) against Windows' answers, line by line from the golden
+/// (winref d3d9cube: no depth stencil cubes, no depth or X8B8G8R8 cubes, render target cubes only
+/// in the default pool).
 #[test]
-fn depth_cube_face_as_the_depth_buffer() {
+fn cube_creation_as_the_golden() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     init();
     let dev = device();
     errors();
     use super::format as f;
     let o = out();
-    assert_eq!(call(IF_DEVICE, 25, &[dev, 64, 1, 2, f::D24S8, 0, o, 0]), 0, "CreateCubeTexture DEPTHSTENCIL");
-    let zc = rd(o);
-    let z = face(zc, 3, 0);
-    assert_eq!(call(IF_DEVICE, 39, &[dev, z]), 0, "SetDepthStencilSurface");
-    assert_eq!(call(IF_DEVICE, 43, &[dev, 0, 0, 7, 0, 0.25f32.to_bits(), 9]), 0, "Clear");
-    // a quad of XYZRHW | DIFFUSE, Z on
-    call(IF_DEVICE, 57, &[dev, 7, 1]);
-    let v = unsafe { alloc(80) as u32 };
-    let mut b = Vec::new();
-    for (x, y) in [(0f32, 0f32), (64.0, 0.0), (0.0, 64.0), (64.0, 64.0)] {
-        for c in [x - 0.5, y - 0.5, 0.5, 1.0] {
-            b.extend(c.to_le_bytes());
+    assert_eq!(call(IF_DEVICE, 6, &[dev, o]), 0);
+    let d3d = rd(o);
+    let golden = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/winref/golden/d3d9cube-32/stdout.txt")).expect("the d3d9cube golden");
+    let hr = |v: &str| u32::from_str_radix(v.trim_start_matches("0x"), 16).expect("an HRESULT");
+    let mut rows = 0;
+    for line in golden.lines().filter(|l| l.contains(" usage 0 check ")) {
+        let w: Vec<&str> = line.split_whitespace().collect();
+        let fmt = match w[0] {
+            "A8R8G8B8" => f::A8R8G8B8, "X8R8G8B8" => f::X8R8G8B8, "R5G6B5" => f::R5G6B5, "X8B8G8R8" => f::X8B8G8R8,
+            "A16B16G16R16F" => f::A16B16G16R16F, "R32F" => f::R32F, "DXT1" => f::DXT1, "D16" => f::D16,
+            "D24S8" => f::D24S8, "D24X8" => f::D24X8, "D32" => f::D32,
+            other => panic!("format {other}"),
+        };
+        // (usage U check C create HR made|null [desc ...]) x 3, then managed rendertarget HR
+        let mut k = 1;
+        while w[k] == "usage" {
+            let (usage, check, create) = (hr(w[k + 1]), w[k + 3] == "1", hr(w[k + 5]));
+            check_is(call(IF_D3D9, 10, &[d3d, 0, 1, f::X8R8G8B8, usage, 5, fmt]) == 0, check, &format!("{line}: check usage {usage:#x}"));
+            let o = out();
+            assert_eq!(call(IF_DEVICE, 25, &[dev, 4, 1, usage, fmt, 0, o, 0]), create, "{line}: create usage {usage:#x}");
+            assert_eq!(rd(o) != 0, w[k + 6] == "made", "{line}: the out pointer, usage {usage:#x}");
+            if rd(o) != 0 {
+                call(IF_CUBE, 2, &[rd(o)]);
+            }
+            k += if w[k + 6] == "made" { 9 } else { 7 };
         }
-        b.extend(0xff80_4020u32.to_le_bytes());
+        assert_eq!(&w[k..k + 2], ["managed", "rendertarget"]);
+        let o = out();
+        assert_eq!(call(IF_DEVICE, 25, &[dev, 4, 1, 1, fmt, 1, o, 0]), hr(w[k + 2]), "{line}: managed render target");
+        rows += 1;
     }
-    put_bytes(v, &b);
-    call(IF_DEVICE, 89, &[dev, 0x44]);
-    call(IF_DEVICE, 41, &[dev]);
-    assert_eq!(call(IF_DEVICE, 83, &[dev, 5, 2, v, 20]), 0);
-    call(IF_DEVICE, 42, &[dev]);
-    pump();
-    let e = errors();
-    assert!(e.is_empty(), "{:?}", &e[..e.len().min(8)]);
-    // (only the face's layer changed: the others hold what a new texture holds, all alike)
-    let layers = model::with(|m| {
-        m.objs
-            .iter()
-            .rev()
-            .find_map(|o| match o {
-                model::Obj::Texture(t) if t.layers == 6 && t.w == 64 && t.format.starts_with("depth") => Some(t.texels.clone()),
-                _ => None,
-            })
-            .unwrap_or_default()
-    });
-    assert_eq!(layers.len(), 6);
-    for (i, l) in layers.iter().enumerate().filter(|(i, _)| *i != 3) {
-        assert_eq!(l, &layers[0], "layer {i} as untouched as layer 0");
-    }
-    assert_ne!(layers[3], layers[0], "face 3's layer drawn to");
-    call(IF_DEVICE, 39, &[dev, 0]);
-    call(IF_SURFACE, 2, &[z]);
-    call(IF_CUBE, 2, &[zc]);
+    assert_eq!(rows, 11);
     gpu::set_pump(None);
+}
+
+fn check_is(got: bool, want: bool, what: &str) {
+    assert_eq!(got, want, "{what}");
 }

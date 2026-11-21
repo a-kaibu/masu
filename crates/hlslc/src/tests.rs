@@ -488,6 +488,33 @@ float4 ps(VS_OUTPUT i) : SV_Target { return float4(i.v0, 0, 1); }\n";
     assert!(w.bindings.iter().any(|b| b.0 == 15), "{:?}", w.bindings);
 }
 
+/// A point mip filter (dxwgsl::addr::POINT_MIP): SampleLevel with that sampler reads mip
+/// floor(lod + 0.5), the other sampler and Sample as they are; the rule against Windows' answers
+/// (winref d3d11minlod's point row: lods 0 0.25 1 1.75 2.5 3 5 on 4 mips of 50 100 150 200).
+#[test]
+fn point_mip_levels_round_half_up() {
+    const SRC: &str = "Texture2D a : register(t0); SamplerState s0 : register(s0); SamplerState s1 : register(s1);\n\
+float4 ps(float4 p : SV_Position, float2 uv : TEXCOORD, float l : LOD) : SV_Target {\n\
+  return a.SampleLevel(s0, uv, l) + a.SampleLevel(s1, uv, l) + a.Sample(s0, uv); }\n";
+    let code = compile(SRC, "ps", "ps_5_0");
+    let addr = [dxwgsl::addr::Addr { sampler: 0, flags: dxwgsl::addr::POINT_MIP, border: [0; 4] }];
+    let w = dxwgsl::translate_addr(&code, true, None, &addr).unwrap();
+    let m = naga::front::wgsl::parse_str(&w.code).unwrap_or_else(|e| panic!("{}\n{}", e.emit_to_string(&w.code), w.code));
+    naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all()).validate(&m).unwrap_or_else(|e| panic!("{e:?}\n{}", w.code));
+    let c = &w.code;
+    let level = |s: u32| c.lines().filter(|l| l.contains(&format!("textureSampleLevel(t0, s{s}"))).map(|l| l.contains("+ 0.5f)")).collect::<Vec<_>>();
+    assert_eq!((level(0), level(1)), (vec![true], vec![false]), "{c}");
+    // (no addressing helpers for a sampler with only POINT_MIP)
+    assert!(!c.contains("am0(") && !c.contains("ab0_0("), "{c}");
+    assert_eq!(dxwgsl::translate_addr(&code, true, None, &[]).unwrap().code.matches("+ 0.5f)").count(), 0);
+    // (the rule against the golden)
+    let golden = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/winref/golden/d3d11minlod-32/stdout.txt")).unwrap_or_default();
+    let row = golden.lines().find(|l| l.trim_start().starts_with("point level")).unwrap_or_default();
+    let seen: Vec<f32> = row.split(',').next().unwrap_or_default().split_whitespace().skip(2).filter_map(|v| v.parse().ok()).collect();
+    let model: Vec<f32> = [0.0f32, 0.25, 1.0, 1.75, 2.5, 3.0, 5.0].iter().map(|&l| 50.0 * ((l + 0.5).floor().clamp(0.0, 3.0) + 1.0)).collect();
+    assert_eq!(seen, model, "{row}");
+}
+
 /// Samplers with BORDER / MIRROR_ONCE (dxwgsl::addr): 2D textures and arrays sample at am{s}
 /// and mix in the border; offsets, comparisons and other samplers sample as they are.
 #[test]

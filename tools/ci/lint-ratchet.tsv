@@ -77,7 +77,7 @@ file	crates/dxwgsl/src/dxbc.rs	indexing_slicing	5
 file	crates/dxwgsl/src/tpf.rs	arithmetic_side_effects	13
 file	crates/dxwgsl/src/tpf.rs	indexing_slicing	11
 file	crates/dxwgsl/src/wgsl.rs	arithmetic_side_effects	19
-file	crates/dxwgsl/src/wgsl.rs	indexing_slicing	209
+file	crates/dxwgsl/src/wgsl.rs	indexing_slicing	207
 file	crates/dxwgsl/src/wgsl.rs	let_underscore_must_use	25
 file	crates/foresee/src/lib.rs	arithmetic_side_effects	27
 file	crates/foresee/src/lib.rs	as_conversions	58
@@ -102,7 +102,7 @@ file	crates/hlslc/src/intrinsics.rs	arithmetic_side_effects	14
 file	crates/hlslc/src/intrinsics.rs	indexing_slicing	123
 file	crates/hlslc/src/intrinsics.rs	string_slice	1
 file	crates/hlslc/src/intrinsics.rs	unreachable	2
-file	crates/hlslc/src/lib.rs	indexing_slicing	5
+file	crates/hlslc/src/lib.rs	indexing_slicing	4
 file	crates/hlslc/src/lib.rs	map_err_ignore	1
 file	crates/hlslc/src/lower.rs	arithmetic_side_effects	75
 file	crates/hlslc/src/lower.rs	float_cmp	2
@@ -325,7 +325,7 @@ file	crates/kura/src/d3d11/mod.rs	as_conversions	3
 file	crates/kura/src/d3d11/mod.rs	borrow_as_ptr	2
 file	crates/kura/src/d3d11/mod.rs	cast_precision_loss	2
 file	crates/kura/src/d3d11/mod.rs	float_cmp	1
-file	crates/kura/src/d3d11/mod.rs	indexing_slicing	169
+file	crates/kura/src/d3d11/mod.rs	indexing_slicing	167
 file	crates/kura/src/d3d11/mod.rs	masu-from_raw_parts	12
 file	crates/kura/src/d3d11/mod.rs	masu-unsafe_send_sync	1
 file	crates/kura/src/d3d11/mod.rs	missing_safety_doc	4
@@ -470,9 +470,9 @@ file	crates/kura/src/pages.rs	as_conversions	31
 file	crates/kura/src/pages.rs	cast_possible_truncation	8
 file	crates/kura/src/pages.rs	indexing_slicing	8
 file	crates/kura/src/render/d3d.rs	arithmetic_side_effects	418
-file	crates/kura/src/render/d3d.rs	as_conversions	73
+file	crates/kura/src/render/d3d.rs	as_conversions	72
 file	crates/kura/src/render/d3d.rs	cast_possible_truncation	13
-file	crates/kura/src/render/d3d.rs	cast_precision_loss	34
+file	crates/kura/src/render/d3d.rs	cast_precision_loss	32
 file	crates/kura/src/render/d3d.rs	cast_sign_loss	7
 file	crates/kura/src/render/d3d.rs	indexing_slicing	405
 file	crates/kura/src/render/d3d.rs	iter_over_hash_type	6

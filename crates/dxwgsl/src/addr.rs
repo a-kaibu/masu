@@ -13,7 +13,9 @@
 //!   are products).
 
 /// How one sampler addresses: `flags` bit 0 / 1 BORDER in u / v, bit 2 / 3 MIRRORONCE in u / v,
-/// bit 4 linear (magnification) filtering; `border` the border color, RGBA (f32 bits).
+/// bit 4 linear (magnification) filtering, bit 5 POINT_MIP (an explicit level picks mip
+/// floor(lod + 0.5) as Windows does, winref d3d11minlod: lod 2.5 reads mip 3, where Vulkan's
+/// ceil(lod + 0.5) - 1 reads mip 2); `border` the border color, RGBA (f32 bits).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Addr {
     pub sampler: u32,
@@ -35,6 +37,18 @@ impl Addr {
 pub fn flags(u: u32, v: u32, linear: bool) -> u32 {
     let f = u32::from(u == 4) | u32::from(v == 4) << 1 | u32::from(u == 5) << 2 | u32::from(v == 5) << 3;
     if f == 0 { 0 } else { f | u32::from(linear) << 4 }
+}
+
+/// The bit of a sampler whose mip filter is point
+pub const POINT_MIP: u32 = 32;
+/// The bits of the addressing the shader does (BORDER, MIRRORONCE)
+pub const ADDRESSING: u32 = 15;
+
+impl Addr {
+    /// Whether the shader does the addressing (am / ab functions)
+    pub fn addresses(&self) -> bool {
+        self.flags & ADDRESSING != 0
+    }
 }
 
 /// An address mode as the sampler does it: BORDER and MIRRORONCE clamp.
@@ -73,18 +87,18 @@ pub fn border_fn(x: &Addr, tex: &str, name: &str) -> String {
 
 /// Direct3D 9's functions of the samplers in `a` (texture tex{s}): am{s}, ab{s}.
 pub fn helpers(a: &[Addr]) -> String {
-    a.iter().map(|x| coord_fn(x) + &border_fn(x, &format!("tex{}", x.sampler), &format!("ab{}", x.sampler))).collect()
+    a.iter().filter(|x| x.addresses()).map(|x| coord_fn(x) + &border_fn(x, &format!("tex{}", x.sampler), &format!("ab{}", x.sampler))).collect()
 }
 
 /// `sample` (a sample of sampler `s` at am{s}(uv)) with the border, or as it is when `s` needs
 /// nothing.
 pub fn wrap(a: &[Addr], s: u32, sample: &str, uv: &str) -> String {
-    if a.iter().any(|x| x.sampler == s) { format!("ab{s}({sample}, {uv})") } else { sample.to_string() }
+    if a.iter().any(|x| x.sampler == s && x.addresses()) { format!("ab{s}({sample}, {uv})") } else { sample.to_string() }
 }
 
 /// The coordinate sampler `s` samples at.
 pub fn coord(a: &[Addr], s: u32, uv: &str) -> String {
-    if a.iter().any(|x| x.sampler == s) { format!("am{s}({uv})") } else { uv.to_string() }
+    if a.iter().any(|x| x.sampler == s && x.addresses()) { format!("am{s}({uv})") } else { uv.to_string() }
 }
 
 #[cfg(test)]

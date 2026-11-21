@@ -144,10 +144,14 @@ int main(void) {
         IDirect3DCubeTexture9_GetCubeMapSurface(cube, D3DCUBEMAP_FACE_POSITIVE_X, 0, &s0);
         IDirect3DCubeTexture9_GetCubeMapSurface(cube, D3DCUBEMAP_FACE_NEGATIVE_Z, 0, &s5);
         RECT r = { 2, 4, 8, 8 };
-        printf("ColorFill %#lx\n", IDirect3DDevice9_ColorFill(dev, s2, &r, 0xff123456));
-        RECT sr = { 0, 0, 8, 8 }, dr = { 4, 0, 8, 8 };
-        printf("StretchRect %#lx\n", IDirect3DDevice9_StretchRect(dev, s0, &sr, s5, &dr, D3DTEXF_POINT));
+        /* (Windows' device was lost after these two, GetRenderTargetData D3DERR_DEVICELOST: each is
+         * followed by TestCooperativeLevel and its face's read back, to tell which one) */
+        printf("ColorFill %#lx", IDirect3DDevice9_ColorFill(dev, s2, &r, 0xff123456));
+        printf(" TestCooperativeLevel %#lx\n", IDirect3DDevice9_TestCooperativeLevel(dev));
         faceout(cube, 2, 0);
+        RECT sr = { 0, 0, 8, 8 }, dr = { 4, 0, 8, 8 };
+        printf("StretchRect %#lx", IDirect3DDevice9_StretchRect(dev, s0, &sr, s5, &dr, D3DTEXF_POINT));
+        printf(" TestCooperativeLevel %#lx\n", IDirect3DDevice9_TestCooperativeLevel(dev));
         faceout(cube, 5, 0);
         IDirect3DSurface9_Release(s2);
         IDirect3DSurface9_Release(s0);

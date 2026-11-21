@@ -1462,11 +1462,14 @@ impl W {
         let (coord, layer) = self.sample_coords(&i.ops[1], dim)?;
         let off = self.offset(i, dim);
         let compare = matches!(how, Sampling::Compare | Sampling::CompareLevelZero);
-        let addr = (matches!(dim, 3 | 8) && off.is_none() && !compare && !depth && k == K::F && self.addr.iter().any(|a| a.sampler == s)).then(|| coord.clone());
+        let addr = (matches!(dim, 3 | 8) && off.is_none() && !compare && !depth && k == K::F && self.addr.iter().any(|a| a.sampler == s && a.addresses())).then(|| coord.clone());
         let mut args = vec![format!("t{t}"), format!("s{s}"), if addr.is_some() { format!("am{s}({coord})") } else { coord }];
         args.extend(layer);
+        // (a point mip filter: the mip floor(lod + 0.5), crate::addr::POINT_MIP)
+        let point_mip = self.addr.iter().any(|a| a.sampler == s && a.flags & crate::addr::POINT_MIP != 0);
         let level = |w: &mut W, o: &Operand| -> R<String> {
             let l = w.src(o, K::F, &[0])?;
+            let l = if point_mip { format!("floor({l} + 0.5f)") } else { l };
             Ok(if depth { format!("i32({l})") } else { l })
         };
         let (f, extra, compare) = match how {

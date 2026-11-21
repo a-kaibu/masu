@@ -260,8 +260,6 @@ pub struct Texture {
     pub pristine: bool,
     /// NV12: its chroma plane's texture (see `Nv12`)
     pub nv12: Option<Nv12>,
-    /// SetResourceMinLOD's clamp, as GetResourceMinLOD gives it back
-    pub min_lod: f32,
 }
 
 /// An NV12 texture's chroma plane: a texture of its own (w / 2 x h / 2 R8G8, the texture's
@@ -1443,7 +1441,6 @@ fn new_texture(d: &mut D11, dim: u32, w: u32, h: u32, layers: u32, mips: u32, fm
         bits: HashMap::new(),
         pristine: false,
         nv12: None,
-        min_lod: 0.0,
     }))
 }
 
@@ -2529,14 +2526,21 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
             if (a(1) == 0 || a(1) == 4) && a(3) >= 4 {
                 wr(a(2), 0, 1);
             }
-            // D3D11_OPTIONS: ConstantBufferPartialUpdate (6) and ConstantBufferOffsetting (7),
-            // which the context does (set_cbs, cb_binding), as WARP answers (winref d3d11cb1)
-            if a(1) == 5 && a(3) >= 32 {
-                // SAFETY: wr's own contract: the caller's D3D11_FEATURE_DATA_D3D11_OPTIONS of
-                // a(3) >= 32 bytes
-                unsafe { wr(a(2), 6, 1) };
-                // SAFETY: (the same structure's next field)
-                unsafe { wr(a(2), 7, 1) };
+            // D3D11_OPTIONS (BOOLs), what the device and context do, as WARP answers (winref
+            // d3d11cb1) but LogicOp (0: WebGPU blends with no logic operation):
+            // OutputMergerLogicOp 0, UAVOnlyRenderingForcedSampleCount 1 (ForcedSampleCount
+            // taken), DiscardAPIsSeenByDriver 2 (Discard*), FlagsForUpdateAndCopySeenByDriver 3
+            // (CopySubresourceRegion1 / UpdateSubresource1 flags), ClearView 4,
+            // CopyWithOverlap 5 (the page copies a box within its subresource through a buffer),
+            // ConstantBufferPartialUpdate 6 and ConstantBufferOffsetting 7 (set_cbs,
+            // cb_binding), MapNoOverwriteOnDynamicConstantBuffer 8 and
+            // MapNoOverwriteOnDynamicBufferSRV 9 (Map NO_OVERWRITE of any dynamic buffer)
+            if a(1) == 5 && a(3) >= 40 {
+                for k in 1..10 {
+                    // SAFETY: wr's own contract: the caller's D3D11_FEATURE_DATA_D3D11_OPTIONS of
+                    // a(3) >= 40 bytes
+                    unsafe { wr(a(2), k, 1) };
+                }
             }
             S_OK
         }
@@ -3194,6 +3198,21 @@ impl CbRange {
 /// whole buffers (winref d3d11cb1).
 unsafe fn set_cbs(d: &mut D11, st: &mut State, stage: usize, start: u32, n: u32, bufs: u32, firsts: u32, counts: u32) {
     let (Some(slots), Some(ranges)) = (st.cbs.get_mut(stage), st.cb_ranges.get_mut(stage)) else { return };
+    // a range not of whole 16-constant blocks, or of more than 4096 constants, makes the call do
+    // nothing: the slots keep what they had (winref d3d11cb1 "first8-num16", "first16-num8",
+    // "first16-num4112"; 0 constants is a range)
+    if firsts != 0 && counts != 0 {
+        let bad = (0..n).any(|i| {
+            // SAFETY: rd's own contract: `firsts` is the caller's array of `n`
+            let first = unsafe { rd(firsts, us(i)) };
+            // SAFETY: as above, `counts`
+            let count = unsafe { rd(counts, us(i)) };
+            !cb_range_taken(first, count)
+        });
+        if bad {
+            return;
+        }
+    }
     // SAFETY: set_slots' own contract: `bufs` is the caller's array of `n` pointers
     unsafe { set_slots(d, slots, start, n, bufs) };
     for i in 0..n {
@@ -3208,6 +3227,12 @@ unsafe fn set_cbs(d: &mut D11, st: &mut State, stage: usize, start: u32, n: u32,
             CbRange { first, count }
         };
     }
+}
+
+/// Whether *SetConstantBuffers1 takes a range of `count` constants from `first`: whole blocks of
+/// 16, at most D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT (4096).
+fn cb_range_taken(first: u32, count: u32) -> bool {
+    first % 16 == 0 && count % 16 == 0 && count <= 4096
 }
 
 /// Gets `n` slots from `start` into `p` (with references).
@@ -3534,15 +3559,11 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 }
             }
         }
-        // SetResourceMinLOD(resource, MinLOD), GetResourceMinLOD(resource): the float's bits
-        55 | 56 => {
-            let r = d.id_of(a(1));
-            let Some(Data::Texture(t)) = d.objs.get_mut(&r).map(|o| &mut o.data) else { return 0 };
-            if m == 56 {
-                return t.min_lod.to_bits();
-            }
-            t.min_lod = f32::from_bits(a(2));
-        }
+        // SetResourceMinLOD(resource, MinLOD), GetResourceMinLOD(resource): Windows' device
+        // (WARP, no RESOURCE_MIN_LOD clamp) keeps nothing: Get gives 0 after any Set, on a
+        // texture, a 3D texture or a buffer alike, and what shaders sample is unchanged
+        // (winref d3d11minlod)
+        55 | 56 => return 0,
         41 => dispatch(d, st, a(1), a(2), a(3)),
         42 => {
             // DispatchIndirect(args, offset): the group counts from the buffer
@@ -4319,13 +4340,17 @@ unsafe fn source_bytes(d: &mut D11, id: u32, sub: u32, b: [u32; 6]) -> Option<u3
 // draws
 
 /// A shader's page shader and bindings (translated on first use; vertex shaders per pixel shader).
-/// `samplers`: a pixel shader's (those with BORDER or MIRROR_ONCE addressing: the shader does it)
+/// `samplers`: a pixel shader's (those with BORDER or MIRROR_ONCE addressing: the shader does it;
+/// those with a point mip filter: the shader rounds explicit levels)
 fn shader_for(d: &mut D11, sh: u32, ps: u32, sprite: Option<f32>, samplers: &[u32]) -> Option<(u32, Vec<(u32, dxwgsl::Binding)>)> {
     let mut addr = Vec::new();
     if matches!(d.objs.get(&sh).map(|o| &o.data), Some(Data::Shader(s)) if s.pixel) {
         for (n, &id) in samplers.iter().enumerate() {
             if let Some(desc) = state_desc(d, id) {
-                let flags = dxwgsl::addr::flags(desc[1], desc[2], desc[0] & 4 != 0 || desc[0] & 0x40 != 0);
+                // (D3D11_FILTER bit 0: a linear mip filter; anisotropic filters have it too)
+                let filter = desc.first().copied().unwrap_or_default();
+                let point_mip = if filter & 1 == 0 { dxwgsl::addr::POINT_MIP } else { 0 };
+                let flags = dxwgsl::addr::flags(desc[1], desc[2], filter & 4 != 0 || filter & 0x40 != 0) | point_mip;
                 if flags != 0 {
                     addr.push(dxwgsl::addr::Addr { sampler: lo32(n), flags, border: [desc[7], desc[8], desc[9], desc[10]] });
                 }

@@ -842,7 +842,8 @@ pub fn buffer_view(kind: u32, size: u32, bind: u32, misc: u32, stride: u32, w: O
         }
         4
     } else if structured {
-        if fmt != 0 {
+        // (APPEND and COUNTER together: E_INVALIDARG, winref d3d11uavcount "flags 6")
+        if fmt != 0 || flags & 6 == 6 {
             return bad;
         }
         stride

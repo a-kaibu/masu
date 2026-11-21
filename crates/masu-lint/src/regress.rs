@@ -222,10 +222,74 @@ pub(super) fn ps_quads(tree: &Tree) -> Hits {
     out
 }
 
+// --- d3d9-status-codes ------------------------------------------------------------------------
+
+/// d3d9.h's codes by name: MAKE_D3DHRESULT(code) = 0x8876_0000 | code (D3DERR_), MAKE_D3DSTATUS
+/// (code) = 0x0876_0000 | code (D3DOK_, S_)
+pub const D3D9_CODES: [(&str, u32); 31] = [
+    ("D3DERR_WRONGTEXTUREFORMAT", 0x8876_0000 | 2072),
+    ("D3DERR_UNSUPPORTEDCOLOROPERATION", 0x8876_0000 | 2073),
+    ("D3DERR_UNSUPPORTEDCOLORARG", 0x8876_0000 | 2074),
+    ("D3DERR_UNSUPPORTEDALPHAOPERATION", 0x8876_0000 | 2075),
+    ("D3DERR_UNSUPPORTEDALPHAARG", 0x8876_0000 | 2076),
+    ("D3DERR_TOOMANYOPERATIONS", 0x8876_0000 | 2077),
+    ("D3DERR_CONFLICTINGTEXTUREFILTER", 0x8876_0000 | 2078),
+    ("D3DERR_UNSUPPORTEDFACTORVALUE", 0x8876_0000 | 2079),
+    ("D3DERR_CONFLICTINGRENDERSTATE", 0x8876_0000 | 2081),
+    ("D3DERR_UNSUPPORTEDTEXTUREFILTER", 0x8876_0000 | 2082),
+    ("D3DERR_CONFLICTINGTEXTUREPALETTE", 0x8876_0000 | 2086),
+    ("D3DERR_DRIVERINTERNALERROR", 0x8876_0000 | 2087),
+    ("D3DERR_NOTFOUND", 0x8876_0000 | 2150),
+    ("D3DERR_MOREDATA", 0x8876_0000 | 2151),
+    ("D3DERR_DEVICELOST", 0x8876_0000 | 2152),
+    ("D3DERR_DEVICENOTRESET", 0x8876_0000 | 2153),
+    ("D3DERR_NOTAVAILABLE", 0x8876_0000 | 2154),
+    ("D3DERR_OUTOFVIDEOMEMORY", 0x8876_0000 | 380),
+    ("D3DERR_INVALIDDEVICE", 0x8876_0000 | 2155),
+    ("D3DERR_INVALIDCALL", 0x8876_0000 | 2156),
+    ("D3DERR_DRIVERINVALIDCALL", 0x8876_0000 | 2157),
+    ("D3DERR_WASSTILLDRAWING", 0x8876_0000 | 540),
+    ("D3DOK_NOAUTOGEN", 0x0876_0000 | 2159),
+    ("D3DERR_DEVICEREMOVED", 0x8876_0000 | 2160),
+    ("S_NOT_RESIDENT", 0x0876_0000 | 2165),
+    ("S_RESIDENT_IN_SHARED_MEMORY", 0x0876_0000 | 2166),
+    ("S_PRESENT_MODE_CHANGED", 0x0876_0000 | 2167),
+    ("S_PRESENT_OCCLUDED", 0x0876_0000 | 2168),
+    ("D3DERR_DEVICEHUNG", 0x8876_0000 | 2164),
+    ("D3DERR_UNSUPPORTEDOVERLAY", 0x8876_0000 | 2171),
+    ("D3DERR_UNSUPPORTEDCRYPTO", 0x8876_0000 | 2173),
+];
+
+/// where Direct3D 9's codes are spelled out
+const D3D9_HOMES: [&str; 2] = ["crates/kura/src/d3d9/", "crates/sake/src/d3dx9"];
+
+static D3D9_CONST: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\bconst\s+((?:D3DERR|D3DOK|S)_[A-Z0-9_]+)\s*:\s*u32\s*=\s*(0x[0-9a-fA-F_]+)\s*;"));
+
+/// a Direct3D 9 status const whose value is not d3d9.h's (or whose name the table lacks)
+pub(super) fn d3d9_status(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    let Some(re) = D3D9_CONST.as_ref() else { return out };
+    for f in tree.paths().iter().filter(|p| p.is_rust() && D3D9_HOMES.iter().any(|h| p.as_str().starts_with(h))) {
+        let code = tree.code(f, true);
+        for c in re.captures_iter(&code) {
+            let (Some(name), Some(v)) = (c.get(1), c.get(2)) else { continue };
+            let got = v.as_str().strip_prefix("0x").and_then(|h| u32::from_str_radix(&h.replace('_', ""), 16).ok());
+            let line = crate::code::line_of(&code, name.start());
+            match D3D9_CODES.iter().find(|(n, _)| *n == name.as_str()) {
+                Some(&(_, want)) if got != Some(want) => out.push((f.clone(), line, format!("{} is {:#010x} in d3d9.h, not {}", name.as_str(), want, v.as_str()))),
+                Some(_) => {}
+                None if !name.as_str().starts_with("S_") => out.push((f.clone(), line, format!("{} is not in regress::D3D9_CODES: add it from d3d9.h", name.as_str()))),
+                None => {}
+            }
+        }
+    }
+    out
+}
+
 /// (for the tests: every regex here compiles)
 #[cfg(test)]
-pub(super) fn regexes() -> [&'static LazyLock<Option<Regex>>; 6] {
-    [&SECTION, &PATH_DEP, &SH_SET, &YAML_KEY, &KANI_FOR, &KANI_GATE]
+pub(super) fn regexes() -> [&'static LazyLock<Option<Regex>>; 7] {
+    [&SECTION, &PATH_DEP, &SH_SET, &YAML_KEY, &KANI_FOR, &KANI_GATE, &D3D9_CONST]
 }
 
 

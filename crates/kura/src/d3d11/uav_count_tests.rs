@@ -225,3 +225,15 @@ fn range_tables_written_again_after_a_lost_device() {
     cc(ctx, 67, &[0, 1, vs]);
     release_all();
 }
+
+/// A structured buffer's UAV takes APPEND or COUNTER, not both (winref d3d11uavcount: flags 6
+/// E_INVALIDARG), for any range that fits.
+#[test]
+fn append_and_counter_together_are_refused() {
+    use super::check;
+    for n in 1u32..=16 {
+        let view = |flags: u32| check::buffer_view(check::UAV, 256, 0x80, 0x40, 16, Some(&[0, 1, 0, n, flags]));
+        assert!(view(2).is_ok() && view(4).is_ok() && view(0).is_ok(), "{n}");
+        assert_eq!(view(6).err(), Some(0x8007_0057), "{n}");
+    }
+}

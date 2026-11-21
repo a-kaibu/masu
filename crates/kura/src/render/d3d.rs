@@ -3089,8 +3089,10 @@ impl D3d {
         }
         // the bits of another format of the same size (Direct3D 11's copies between formats of
         // one typeless group, `filter` 2): as is when only sRGB-ness differs, else through a
-        // buffer (WebGPU copies textures of other formats no other way)
-        if filter == 2 {
+        // buffer (WebGPU copies textures of other formats no other way); and a box copied within
+        // its own subresource, overlapping or not (CopySubresourceRegion1, D3D11_OPTIONS
+        // CopyWithOverlap): through a buffer too, read whole before it is written
+        if filter == 2 || (!apart && s_fmt == t_fmt && sw == dw && sh == dh) {
             let base = Tf::base;
             // (depth: 16-bit UNORM and 32-bit float ones, the only ones WebGPU copies out of)
             let copyable = |f: Tf| !is_depth(f) || matches!(f, Tf::Depth16Unorm | Tf::Depth32Float);
@@ -4437,20 +4439,32 @@ impl D3d {
     }
 }
 
-/// A Direct3D 11 / OpenGL draw's viewport (x y w h minz maxz; w or h 0: the whole target) and
-/// scissor (x y w h, when `scissor`) as WebGPU takes them, as `rects9`.
+/// A Direct3D 11 / OpenGL draw's viewport (x y w h minz maxz) and scissor (x y w h, when
+/// `scissor`) as WebGPU takes them, as `rects9`. A viewport without area draws nothing, and the
+/// pixels drawn are those whose centres are inside it (winref d3d11gs "zero-sized viewports":
+/// widths or heights 0 and 0.25 draw no pixel on Windows).
 pub(crate) fn rects11(tw: u32, th: u32, vp: [f32; 6], sc: [u32; 4], scissor: bool) -> Option<([f32; 6], [u32; 4])> {
-    let [vx, vy, vw, vh, minz, maxz] = vp;
-    let whole = !(vw > 0.0 && vh > 0.0);
-    let vp = if whole { [0.0, 0.0, tw as f32, th as f32, minz, maxz] } else { [vx, vy, vw, vh, minz, maxz] };
+    let [vx, vy, vw, vh, ..] = vp;
+    if !(vw > 0.0 && vh > 0.0) {
+        return None;
+    }
+    // (the first pixel whose centre i + 0.5 is at or past v; NaN and below 0: 0)
+    let first = |v: f32| kome::num::trunc_u32((v - 0.5).ceil());
+    let centres = [first(vx), first(vy), first(vx + vw), first(vy + vh)];
     let sc = if scissor { sc } else { [0, 0, tw, th] };
-    rects9(tw, th, vp, sc, None)
+    rects(tw, th, vp, sc, Some(centres), 0.0)
 }
 
 /// A Direct3D 9 draw's viewport (x y w h minz maxz) and scissor (x y w h) as WebGPU takes them
 /// on a `tw` x `th` target: the viewport inside the target, depths in 0..1 (NaN: 0 and 1), the
 /// scissor inside both and `clip` (a segment drawn again in part). None: nothing to draw.
 pub(crate) fn rects9(tw: u32, th: u32, vp: [f32; 6], sc: [u32; 4], clip: Option<[u32; 4]>) -> Option<([f32; 6], [u32; 4])> {
+    rects(tw, th, vp, sc, clip, 1.0)
+}
+
+/// rects9 and rects11: `least` the smallest viewport width and height (Direct3D 9's are whole
+/// pixels, at least 1).
+fn rects(tw: u32, th: u32, vp: [f32; 6], sc: [u32; 4], clip: Option<[u32; 4]>, least: f32) -> Option<([f32; 6], [u32; 4])> {
     let [vx, vy, vw, vh, minz, maxz] = vp;
     let [sx, sy, sw, sh] = sc;
     // scissor inside the target
@@ -4461,7 +4475,7 @@ pub(crate) fn rects9(tw: u32, th: u32, vp: [f32; 6], sc: [u32; 4], clip: Option<
     }
     // (f32::max and min take the number when one side is NaN)
     let (vpx, vpy) = (vx.max(-32768.0).min(32768.0), vy.max(-32768.0).min(32768.0));
-    let (vpw, vph) = (vw.min(32768.0).max(1.0), vh.min(32768.0).max(1.0));
+    let (vpw, vph) = (vw.min(32768.0).max(least), vh.min(32768.0).max(least));
     // WebGPU wants the viewport inside the target
     let (cx0, cy0) = (vpx.max(0.0), vpy.max(0.0));
     let (cx1, cy1) = ((tw as f32).min(vpx + vpw), (th as f32).min(vpy + vph));
@@ -4714,6 +4728,21 @@ mod proofs {
             assert!(s[0] as u64 + s[2] as u64 <= tw as u64 && s[1] as u64 + s[3] as u64 <= th as u64);
         }
     }
+
+    #[kani::proof]
+    fn rects11_are_valid_webgpu() {
+        let (tw, th): (u32, u32) = (kani::any(), kani::any());
+        kani::assume(tw >= 1 && tw <= 16384 && th >= 1 && th <= 16384);
+        let vp: [f32; 6] = kani::any();
+        let sc: [u32; 4] = kani::any();
+        if let Some((v, s)) = super::rects11(tw, th, vp, sc, kani::any()) {
+            assert!(v.iter().all(|x| x.is_finite()));
+            assert!(v[0] >= 0.0 && v[1] >= 0.0 && v[2] > 0.0 && v[3] > 0.0);
+            assert!(v[0] as f64 + v[2] as f64 <= tw as f64 && v[1] as f64 + v[3] as f64 <= th as f64);
+            assert!(s[2] > 0 && s[3] > 0);
+            assert!(s[0] as u64 + s[2] as u64 <= tw as u64 && s[1] as u64 + s[3] as u64 <= th as u64);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4731,6 +4760,39 @@ mod rect_tests {
         assert_eq!(s, [0, 4, 16, 12]);
         assert!(super::rects9(16, 16, [20.0, 0.0, 4.0, 4.0, 0.0, 1.0], [0, 0, 16, 16], None).is_none());
         assert!(super::rects9(16, 16, [0.0, 0.0, 16.0, 16.0, 0.0, 1.0], [0, 0, 16, 16], Some([3, 3, 3, 9])).is_none());
+    }
+
+    /// Direct3D 11 (winref d3d11gs "zero-sized viewports"): a width or height of 0 draws
+    /// nothing, nor does 0.25 at 0 (no pixel centre inside); otherwise the pixels whose centres
+    /// are inside.
+    #[test]
+    fn rects11_as_windows() {
+        let r = |vp: [f32; 4]| super::rects11(64, 64, [vp[0], vp[1], vp[2], vp[3], 0.0, 1.0], [0, 0, 64, 64], false);
+        for vp in [[0.0, 0.0, 0.0, 64.0], [0.0, 0.0, 64.0, 0.0], [0.0; 4], [10.0, 10.0, 0.0, 20.0], [10.0, 10.0, 20.0, 0.0], [0.0, 0.0, 0.25, 64.0], [0.0, 0.0, f32::NAN, 64.0]] {
+            assert!(r(vp).is_none(), "{vp:?}");
+        }
+        assert_eq!(r([0.0, 0.0, 64.0, 64.0]).map(|x| x.1), Some([0, 0, 64, 64]));
+        assert_eq!(r([0.4, 0.0, 0.25, 64.0]).map(|x| x.1), Some([0, 0, 1, 64]), "centre 0.5 inside 0.4..0.65");
+        assert_eq!(r([10.5, 2.0, 5.0, 3.0]).map(|x| x.1), Some([10, 2, 5, 3]), "centres 10.5..14.5 (10.5 on the left edge is in)");
+    }
+
+    proptest::proptest! {
+        /// every pixel of the scissor has its centre inside the viewport, and every pixel
+        /// whose centre is inside it (and inside the target) is there
+        #[test]
+        fn rects11_pixel_centres(x in -8.0f32..72.0, y in -8.0f32..72.0, w in 0.0f32..80.0, h in 0.0f32..80.0) {
+            let got = super::rects11(64, 64, [x, y, w, h, 0.0, 1.0], [0, 0, 64, 64], false).map(|v| v.1);
+            let inside = |i: u32, v: f32, n: f32| { let c = i as f32 + 0.5; c >= v && c < v + n };
+            let cols: Vec<u32> = (0..64).filter(|&i| inside(i, x, w)).collect();
+            let rows: Vec<u32> = (0..64).filter(|&j| inside(j, y, h)).collect();
+            match got {
+                None => proptest::prop_assert!(cols.is_empty() || rows.is_empty(), "{:?} {:?}", cols, rows),
+                Some(s) => {
+                    proptest::prop_assert_eq!(cols, (s[0]..s[0] + s[2]).collect::<Vec<_>>());
+                    proptest::prop_assert_eq!(rows, (s[1]..s[1] + s[3]).collect::<Vec<_>>());
+                }
+            }
+        }
     }
 }
 

@@ -72,7 +72,9 @@ proptest! {
         let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         init();
         let (_, dev) = device(0x20, params(windowed, 0, 1));
-        let identity: Vec<u16> = (0..768u32).map(|i| (i % 256 * 257) as u16).collect();
+        // (the identity: entry i is i on a windowed device, i * 257 on a full-screen one,
+        // winref d3d9dev's windowed row 0000 0001 0080 00ff)
+        let identity: Vec<u16> = (0..768u32).map(|i| (i % 256 * if windowed { 1 } else { 257 }) as u16).collect();
         prop_assert_eq!(get_ramp(dev), identity.clone());
         prop_assert_eq!(page_gamma(), None);
         let ramp: Vec<u16> = (0..768u64).map(|i| (seed.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(i * 7919) >> 20) as u16).collect();
@@ -147,7 +149,7 @@ proptest! {
     /// SetCursorProperties takes an A8R8G8B8 surface whose sides are powers of two no larger
     /// than the display's, of any pool (Wine's test test_cursor; the format: documented).
     #[test]
-    fn cursor_sizes_and_formats(w in 1u32..80, h in 1u32..80, fmt in prop_oneof![Just(f::A8R8G8B8), Just(f::X8R8G8B8), Just(f::R5G6B5)], pool in prop_oneof![Just(0u32), Just(2), Just(3)]) {
+    fn cursor_sizes_and_formats(w in 1u32..80, h in 1u32..80, fmt in prop_oneof![Just(f::A8R8G8B8), Just(f::X8R8G8B8), Just(f::R5G6B5)], pool in prop_oneof![Just(0u32), Just(2), Just(3)], hx in 0u32..70, hy in 0u32..70) {
         let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         init();
         let (_, dev) = device(0x20, params(true, 0, 1));
@@ -156,6 +158,8 @@ proptest! {
         unsafe { crate::display::vnhost_display_size(&mut dw, &mut dh) };
         let ok = fmt == f::A8R8G8B8 && w.is_power_of_two() && h.is_power_of_two() && w as i32 <= dw && h as i32 <= dh;
         prop_assert_eq!(call(IF_DEVICE, 10, &[dev, 0, 0, s]), if ok { 0 } else { INVALIDCALL });
+        // (the hot spot inside the image: winref d3d9dev)
+        prop_assert_eq!(call(IF_DEVICE, 10, &[dev, hx, hy, s]), if ok && hx < w && hy < h { 0 } else { INVALIDCALL });
         call(IF_SURFACE, 2, &[s]);
         call(IF_DEVICE, 2, &[dev]);
         gpu::set_pump(None);
@@ -166,17 +170,17 @@ proptest! {
 fn dialog_box_mode_clip_status_and_vertex_processing() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     init();
-    // SetDialogBoxMode(TRUE): a lockable back buffer, not FLIP (documented); FALSE always
-    for (flags, swap, ok) in [(0, 1, false), (1, 1, true), (1, 3, true), (1, 2, false)] {
+    // SetDialogBoxMode(TRUE) and (FALSE): taken of every device (winref d3d9dev)
+    for (flags, swap) in [(0, 1), (1, 1), (1, 3), (1, 2), (0, 3)] {
         let (_, dev) = device(0x20, params(true, flags, swap));
-        assert_eq!(call(IF_DEVICE, 20, &[dev, 1]), if ok { 0 } else { INVALIDCALL }, "flags {flags} swap {swap}");
+        assert_eq!(call(IF_DEVICE, 20, &[dev, 1]), 0, "flags {flags} swap {swap}");
         assert_eq!(call(IF_DEVICE, 20, &[dev, 0]), 0);
         call(IF_DEVICE, 2, &[dev]);
     }
     let (_, dev) = device(0x20, params(true, 0, 1));
     let c = words(&[0xcdcd_cdcd, 0xcdcd_cdcd]);
     assert_eq!(call(IF_DEVICE, 63, &[dev, c]), 0);
-    assert_eq!((rd(c), rd(c + 4)), (0, 0), "nothing at first");
+    assert_eq!((rd(c), rd(c + 4)), (0, u32::MAX), "no union, every bit of the intersection at first (winref d3d9dev)");
     assert_eq!(call(IF_DEVICE, 62, &[dev, words(&[0x12, 0x34])]), 0);
     assert_eq!(call(IF_DEVICE, 63, &[dev, c]), 0);
     assert_eq!((rd(c), rd(c + 4)), (0x12, 0x34));
@@ -222,6 +226,60 @@ fn available_texture_mem_goes_down_with_default_resources() {
         call(i, 2, &[o]);
     }
     assert_eq!(call(IF_DEVICE, 4, &[dev]), a, "back after their release");
+    call(IF_DEVICE, 2, &[dev]);
+    gpu::set_pump(None);
+}
+
+/// IDirect3D9's RegisterSoftwareDevice, CheckDeviceFormatConversion and CheckDepthStencilMatch
+/// against Windows' own answers, line by line from the golden (winref d3d9dev).
+#[test]
+fn d3d9_answers_as_the_golden() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    init();
+    let (d3d, dev) = device(0x20, params(true, 0, 1));
+    let golden = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/winref/golden/d3d9dev-32/stdout.txt")).expect("the d3d9dev golden");
+    let named = |n: &str| -> u32 {
+        match n {
+            "X8R8G8B8" => f::X8R8G8B8, "A8R8G8B8" => f::A8R8G8B8, "R5G6B5" => f::R5G6B5, "X1R5G5B5" => f::X1R5G5B5,
+            "A2R10G10B10" => f::A2R10G10B10, "A16B16G16R16F" => f::A16B16G16R16F, "YUY2" => u32::from_le_bytes(*b"YUY2"),
+            "UYVY" => u32::from_le_bytes(*b"UYVY"), "DXT1" => f::DXT1, "L8" => f::L8, "P8" => f::P8, "NV12" => u32::from_le_bytes(*b"NV12"),
+            "D16" => f::D16, "D24S8" => f::D24S8, "D24X8" => f::D24X8, "D32" => f::D32, "D15S1" => f::D15S1,
+            "D16_LOCKABLE" => f::D16_LOCKABLE, "D32F_LOCKABLE" => f::D32F_LOCKABLE, "D24X4S4" => f::D24X4S4, "D24FS8" => f::D24FS8,
+            "A8" => f::A8, "A8L8" => f::A8L8, "A1R5G5B5" => f::A1R5G5B5, "A8B8G8R8" => f::A8B8G8R8, "G16R16" => f::G16R16, "R32F" => f::R32F,
+            "A32B32G32R32F" => f::A32B32G32R32F, "V8U8" => f::V8U8, "X8B8G8R8" => f::X8B8G8R8,
+            other => panic!("format {other}"),
+        }
+    };
+    let hr = |v: &str| u32::from_str_radix(v.trim_start_matches("0x"), 16).expect("an HRESULT");
+    let (mut conversions, mut matches) = (0, 0);
+    for line in golden.lines().map(str::trim) {
+        if let Some(v) = line.strip_prefix("RegisterSoftwareDevice(NULL) ") {
+            assert_eq!(call(IF_D3D9, 3, &[d3d, 0]), hr(v));
+        } else if let Some(rest) = line.strip_prefix("CheckDeviceFormatConversion ") {
+            let (src, pairs) = rest.split_once(" ->").expect("a source");
+            let w: Vec<&str> = pairs.split_whitespace().collect();
+            for p in w.chunks(2) {
+                assert_eq!(call(IF_D3D9, 13, &[d3d, 0, 1, named(src), named(p[0])]), hr(p[1]), "{src} -> {}", p[0]);
+                conversions += 1;
+            }
+        } else if let Some(rest) = line.strip_prefix("CheckDeviceFormat(DEPTHSTENCIL, SURFACE):") {
+            let w: Vec<&str> = rest.split_whitespace().collect();
+            for p in w.chunks(2) {
+                assert_eq!(call(IF_D3D9, 10, &[d3d, 0, 1, f::X8R8G8B8, 2, 1, named(p[0])]), hr(p[1]), "CheckDeviceFormat(DEPTHSTENCIL) {}", p[0]);
+            }
+        } else if let Some(rest) = line.strip_prefix("CheckDepthStencilMatch target ") {
+            let (target, pairs) = rest.split_once(':').expect("a target");
+            let w: Vec<&str> = pairs.split_whitespace().collect();
+            for p in w.chunks(2) {
+                assert_eq!(call(IF_D3D9, 12, &[d3d, 0, 1, f::X8R8G8B8, named(target), named(p[0])]), hr(p[1]), "{target}: {}", p[0]);
+                // (CheckDeviceFormat(DEPTHSTENCIL) says the same of the depth formats)
+                let depth = call(IF_D3D9, 10, &[d3d, 0, 1, f::X8R8G8B8, 2, 1, named(p[0])]);
+                assert_eq!(depth == 0, hr(p[1]) == 0, "CheckDeviceFormat(DEPTHSTENCIL) {}", p[0]);
+                matches += 1;
+            }
+        }
+    }
+    assert!(conversions >= 72 && matches >= 32, "{conversions} {matches}");
     call(IF_DEVICE, 2, &[dev]);
     gpu::set_pump(None);
 }

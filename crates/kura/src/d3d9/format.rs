@@ -267,6 +267,57 @@ pub fn is_depth(fmt: u32) -> bool {
     }
 }
 
+/// What CheckDeviceFormat(D3DUSAGE_AUTOGENMIPMAP) of a texture says of a format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoGen {
+    /// D3D_OK: the runtime makes the levels
+    Yes,
+    /// D3DOK_NOAUTOGEN: the texture is made, with one level and no generation
+    No,
+    /// D3DERR_NOTAVAILABLE
+    Unavailable,
+}
+
+/// The format's AutoGen, as Windows (winref d3d9tex: A8R8G8B8, A8, L8, A8L8, A16B16G16R16F and
+/// R32F generate; X8R8G8B8, R5G6B5, V8U8 and DXT1 do not; D16 is not available; dynamic or not
+/// alike). The formats not measured follow the DXGI format each is made of: generation where
+/// that format can be rendered to and has an alpha or no padding channel (A8B8G8R8, the 10 10 10
+/// 2, 16 and 32 bit float and unorm formats), none for padded, packed 16-bit, signed and
+/// compressed ones; winref d3d9tex asks them.
+pub fn autogen(fmt: u32) -> AutoGen {
+    use Format::*;
+    match Format::from_raw(fmt) {
+        Some(A8R8G8B8 | A8 | L8 | A8L8 | A16B16G16R16F | R32F | A8B8G8R8 | A2B10G10R10 | A2R10G10B10 | G16R16 | A16B16G16R16 | L16 | R16F | G16R16F | G32R32F | A32B32G32R32F) => AutoGen::Yes,
+        Some(X8R8G8B8 | R5G6B5 | V8U8 | DXT1 | DXT2 | DXT3 | DXT4 | DXT5 | R8G8B8 | X1R5G5B5 | A1R5G5B5 | A4R4G4B4 | X4R4G4B4 | X8B8G8R8 | A4L4 | P8 | L6V5U5 | X8L8V8U8 | Q8W8V8U8 | V16U16 | A2W10V10U10 | Q16W16V16U16) => AutoGen::No,
+        Some(D16_LOCKABLE | D32 | D15S1 | D24S8 | D24X8 | D24X4S4 | D16 | D32F_LOCKABLE | D24FS8 | INDEX16 | INDEX32) | None => AutoGen::Unavailable,
+    }
+}
+
+/// Formats CheckDeviceFormatConversion converts from and to: the RGB color formats (winref
+/// d3d9dev: X8R8G8B8, A8R8G8B8, R5G6B5, X1R5G5B5, A2R10G10B10, A16B16G16R16F to each other;
+/// from YUY2, UYVY, DXT1, L8, P8 and NV12 D3DERR_NOTAVAILABLE). The other RGB formats are taken
+/// as the measured ones, luminance, alpha-only and signed ones as L8; winref d3d9dev asks them.
+pub fn converts(fmt: u32) -> bool {
+    use Format::*;
+    match Format::from_raw(fmt) {
+        Some(X8R8G8B8 | A8R8G8B8 | R5G6B5 | X1R5G5B5 | A2R10G10B10 | A16B16G16R16F | A1R5G5B5 | A4R4G4B4 | X4R4G4B4 | A8B8G8R8 | X8B8G8R8 | A2B10G10R10 | G16R16 | A16B16G16R16 | R16F | G16R16F | R32F | G32R32F | A32B32G32R32F) => true,
+        Some(R8G8B8 | A8 | L8 | A8L8 | A4L4 | L16 | P8 | V8U8 | L6V5U5 | X8L8V8U8 | Q8W8V8U8 | V16U16 | A2W10V10U10 | Q16W16V16U16 | DXT1 | DXT2 | DXT3 | DXT4 | DXT5) => false,
+        Some(D16_LOCKABLE | D32 | D15S1 | D24S8 | D24X8 | D24X4S4 | D16 | D32F_LOCKABLE | D24FS8 | INDEX16 | INDEX32) | None => false,
+    }
+}
+
+/// Depth formats Windows makes depth buffers of: CheckDepthStencilMatch takes them,
+/// CheckDeviceFormat(DEPTHSTENCIL) says yes (winref d3d9dev: D16, D24S8, D24X8, D16_LOCKABLE,
+/// D32F_LOCKABLE; not D32 or D15S1). D24X4S4 and D24FS8: winref d3d9dev asks.
+pub fn depth_buffer(fmt: u32) -> bool {
+    use Format::*;
+    match Format::from_raw(fmt) {
+        Some(D16 | D24S8 | D24X8 | D16_LOCKABLE | D32F_LOCKABLE) => true,
+        Some(D32 | D15S1 | D24X4S4 | D24FS8) => false,
+        Some(R8G8B8 | A8R8G8B8 | X8R8G8B8 | R5G6B5 | X1R5G5B5 | A1R5G5B5 | A4R4G4B4 | A8 | X4R4G4B4 | A8B8G8R8 | X8B8G8R8 | L8 | A8L8 | A4L4 | P8 | INDEX16 | INDEX32 | A2B10G10R10 | G16R16 | A2R10G10B10 | A16B16G16R16 | V8U8 | L6V5U5 | X8L8V8U8 | Q8W8V8U8 | V16U16 | A2W10V10U10 | L16 | Q16W16V16U16 | R16F | G16R16F | R32F | G32R32F | A16B16G16R16F | A32B32G32R32F | DXT1 | DXT2 | DXT3 | DXT4 | DXT5) | None => false,
+    }
+}
+
 /// Depth formats with stencil bits.
 pub fn has_stencil(fmt: u32) -> bool {
     match Format::from_raw(fmt).map(Format::depth) {

@@ -141,20 +141,28 @@ fn autogen_mipmaps_as_windows() {
     let o = out();
     assert_eq!(call(IF_DEVICE, 6, &[dev, o]), 0);
     let d3d = rd(o);
-    // CheckDeviceFormat(AUTOGENMIPMAP): a render target format yes (L8 is one on Windows:
-    // winref d3d9rtfmt), others D3DOK_NOAUTOGEN, never with DYNAMIC
-    for (fmt, want) in [(f::A8R8G8B8, 0), (f::X8R8G8B8, 0), (f::R5G6B5, 0), (f::L8, 0), (f::DXT1, 0x0876_087f), (f::D16, 0x0876_087f)] {
-        assert_eq!(call(IF_D3D9, 10, &[d3d, 0, 1, f::X8R8G8B8, 0x400, 3, fmt]), want, "format {fmt}");
-        assert_eq!(call(IF_D3D9, 10, &[d3d, 0, 1, f::X8R8G8B8, 0x400 | 0x200, 3, fmt]), 0x8876_086a, "format {fmt} dynamic");
+    // CheckDeviceFormat(AUTOGENMIPMAP) of textures and cube textures, DYNAMIC or not: Windows'
+    // answers (winref d3d9tex), D3DOK_NOAUTOGEN MAKE_D3DSTATUS(2159)
+    let golden = [
+        (f::A8R8G8B8, 0), (f::X8R8G8B8, 0x0876_086f), (f::R5G6B5, 0x0876_086f), (f::A8, 0), (f::L8, 0), (f::A8L8, 0),
+        (f::V8U8, 0x0876_086f), (f::DXT1, 0x0876_086f), (f::A16B16G16R16F, 0), (f::R32F, 0), (f::D16, 0x8876_086a),
+    ];
+    for (fmt, want) in golden {
+        for usage in [0x400, 0x400 | 0x200] {
+            for rtype in [3, 5] {
+                assert_eq!(call(IF_D3D9, 10, &[d3d, 0, 1, f::X8R8G8B8, usage, rtype, fmt]), want, "format {fmt} usage {usage:#x} type {rtype}");
+            }
+        }
     }
-    // refused: levels other than 0 or 1, system memory, a volume
-    for (levels, pool) in [(2, 0), (6, 1), (0, 2)] {
+    // refused: levels other than 0 or 1, system or scratch memory, a depth format, a volume
+    assert_eq!(texture(dev, 64, 0, 0x400, f::D16, 0), Err(INVALIDCALL), "D16");
+    for (levels, pool) in [(2, 0), (6, 1), (0, 2), (0, 3)] {
         assert_eq!(texture(dev, 64, levels, 0x400, f::A8R8G8B8, pool), Err(INVALIDCALL), "levels {levels} pool {pool}");
     }
     let o = out();
     assert_eq!(call(IF_DEVICE, 24, &[dev, 8, 8, 8, 0, 0x400, f::A8R8G8B8, 0, o, 0]), INVALIDCALL, "a volume");
     // one level shown, LINEAR at first, NONE refused
-    for (fmt, pool) in [(f::A8R8G8B8, 0), (f::A8R8G8B8, 1), (f::DXT1, 1), (f::D16, 0)] {
+    for (fmt, pool) in [(f::A8R8G8B8, 0), (f::A8R8G8B8, 1), (f::DXT1, 1)] {
         let t = texture(dev, 64, 0, 0x400, fmt, pool).expect("CreateTexture");
         assert_eq!(call(IF_TEXTURE, 13, &[t]), 1, "GetLevelCount {fmt}");
         assert_eq!(call(IF_TEXTURE, 15, &[t]), 2);

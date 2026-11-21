@@ -146,6 +146,17 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("crates/kura/src/d3d11/query.rs", "const STATS: [u32; 4] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES, c::PS_QUADS];\n")],
             mutate: ("crates/dxwgsl/src/wgsl/expand.rs", |t| Some(t.replace("ps_quads(p,", "clip_count(p,"))),
         },
+        Rule::D3d9Status => Fixture {
+            bad: &[
+                ("crates/kura/src/d3d9/device.rs", "const D3DOK_NOAUTOGEN: u32 = 0x0876_087f;\n"),
+                ("crates/sake/src/d3dx9fx.rs", "const D3DERR_MADEUP: u32 = 0x8876_0999;\n"),
+            ],
+            good: &[
+                ("crates/kura/src/d3d9/device.rs", "const D3DOK_NOAUTOGEN: u32 = 0x0876_086f;\nconst S_PRESENT_OCCLUDED: u32 = 0x0876_0878;\n"),
+                ("crates/sake/src/d3d7.rs", "const D3DERR_INVALIDCALL: u32 = 0x8007_0057;\n"),
+            ],
+            mutate: ("crates/kura/src/d3d9/device.rs", |t| Some(t.replace("0x0876_086f", "0x0876_087f"))),
+        },
         Rule::DepthGuard => Fixture {
             bad: &[
                 ("crates/apitrace/src/trace.rs", "pub const MAX_DEPTH: u32 = 64;\nfn value(&mut self) { self.depth += 1; }\n"),

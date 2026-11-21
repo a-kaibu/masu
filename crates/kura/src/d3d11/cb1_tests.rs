@@ -68,7 +68,7 @@ fn ranges_as_the_model_says() {
     }
     let op = prop_oneof![
         (0usize..6, 0u32..14, 0usize..3).prop_map(|(stage, slot, buf)| Op::Set { stage, slot, buf }),
-        (0usize..6, 0u32..14, 0usize..3, prop_oneof![(0u32..8).prop_map(|k| k * 16), 0u32..200], prop_oneof![(0u32..8).prop_map(|k| k * 16), Just(4096), 0u32..200], any::<bool>(), any::<bool>())
+        (0usize..6, 0u32..14, 0usize..3, prop_oneof![(0u32..8).prop_map(|k| k * 16), 0u32..200], prop_oneof![(0u32..8).prop_map(|k| k * 16), Just(4096), Just(4112), 0u32..200], any::<bool>(), any::<bool>())
             .prop_map(|(stage, slot, buf, first, count, nf, nc)| Op::Set1 { stage, slot, buf, first, count, null_first: nf && count % 3 == 0, null_count: nc && first % 3 == 0 }),
     ];
     let mut runner = proptest::test_runner::TestRunner::new(ProptestConfig { cases: 64, ..ProptestConfig::default() });
@@ -90,8 +90,13 @@ fn ranges_as_the_model_says() {
                         put(firsts, &[first]);
                         put(counts, &[count]);
                         call1(m(IF_CONTEXT, SET1[stage]), &[ctx, slot, 1, arr, if null_first { 0 } else { firsts }, if null_count { 0 } else { counts }]);
+                        // (a range not of whole 16-constant blocks or past 4096 constants:
+                        // the call does nothing, winref d3d11cb1)
+                        let taken = null_first || null_count || (first % 16 == 0 && count % 16 == 0 && count <= 4096);
                         let r = if null_first || null_count { CbRange::WHOLE } else { CbRange { first, count } };
-                        model[stage][slot as usize] = (buf, r);
+                        if taken {
+                            model[stage][slot as usize] = (buf, r);
+                        }
                     }
                 }
             }
