@@ -1,0 +1,140 @@
+GetResourceMinLOD after SetResourceMinLOD (texture of 4 mips)
+  fresh: 0
+  set 0: 0 (00000000)
+  set 0.5: 0 (00000000)
+  set 1: 0 (00000000)
+  set 2.75: 0 (00000000)
+  set 3: 0 (00000000)
+  set 3.5: 0 (00000000)
+  set 4: 0 (00000000)
+  set 10: 0 (00000000)
+  set -1: 0 (00000000)
+  set -0.5: 0 (00000000)
+  set 3.40282e+038: 0 (00000000)
+  set 1.#QNAN: 0 (00000000)
+  set 1.#INF: 0 (00000000)
+  set -1.#INF: 0 (00000000)
+  buffer set 2: 0
+  3D texture set 1.25: 0
+view all mips: red * 255 read under each clamp
+  clamp 0
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp 0.5
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp 1
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp 1.5
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp 2
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp 3
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp 3.5
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp 4
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp 10
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+  clamp -1
+    point level 50 50 100 150 200 200 200, sample 100
+    linear level 50 62.5 100 137.5 175 200 200, sample 100
+    linear MinLOD 1.25 level 112.5 112.5 112.5 137.5 175 200 200, sample 112.5
+    load 50 100 150 200
+    dims 8x8/4 4x4/4 2x2/4
+view from mip 1: red * 255 read under each clamp
+  clamp 0
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp 0.5
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp 1
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp 1.5
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp 2
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp 3
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp 3.5
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp 4
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp 10
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3
+  clamp -1
+    point level 100 100 150 200 200 200 200, sample 100
+    linear level 100 112.5 150 187.5 200 200 200, sample 100
+    linear MinLOD 1.25 level 162.5 162.5 162.5 187.5 200 200 200, sample 162.5
+    load 100 150 200 0
+    dims 4x4/3 2x2/3 1x1/3

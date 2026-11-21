@@ -1,0 +1,60 @@
+reflection: 5 bound resources, 3 constant buffers
+  se: type 5 point 0 count 1 flags 0x1 return 6 dimension 1 samples 24
+  sr: type 5 point 1 count 1 flags 0x1 return 6 dimension 1 samples 16
+  raw: type 7 point 2 count 1 flags 0x1 return 6 dimension 1 samples 0
+  o: type 6 point 0 count 1 flags 0x1 return 6 dimension 1 samples 4
+  rw: type 8 point 1 count 1 flags 0x1 return 6 dimension 1 samples 0
+  cbuffer se: type 3 variables 1 size 24 flags 0
+    $Element: offset 0 size 24 class 5 type 0 rows 1 columns 6 members 3
+  cbuffer sr: type 3 variables 1 size 16 flags 0
+    $Element: offset 0 size 16 class 5 type 0 rows 1 columns 4 members 1
+  cbuffer o: type 3 variables 1 size 4 flags 0
+    $Element: offset 0 size 4 class 0 type 19 rows 1 columns 1 members 0
+o (the view: 70..93)
+  o[66] cdcdcdcd
+  o[67] cdcdcdcd
+  o[68] cdcdcdcd
+  o[69] cdcdcdcd
+  o[70] 6
+  o[71] 18
+  o[72] 40
+  o[73] 18
+  o[74] 100d
+  o[75] 100e
+  o[76] 0
+  o[77] 0
+  o[78] 41880000
+  o[79] 41800000
+  o[80] 9
+  o[81] 420a0000
+  o[82] 2045
+  o[83] 2048
+  o[84] 2053
+  o[85] 0
+  o[86] a
+  o[87] 1
+  o[88] fffffffd
+  o[89] 60
+  o[90] 70
+  o[91] cdcdcdcd
+  o[92] cdcdcdcd
+  o[93] cdcdcdcd
+  o[94] cdcdcdcd
+  o[95] cdcdcdcd
+  o[96] cdcdcdcd
+  o[97] cdcdcdcd
+  o[98] cdcdcdcd
+  o[99] cdcdcdcd
+rw (the view: 84..91)
+  rw[82] 3052
+  rw[83] 3053
+  rw[84] f
+  rw[85] fffffffd
+  rw[86] 51
+  rw[87] 52
+  rw[88] 61
+  rw[89] 70
+  rw[90] 305a
+  rw[91] 305b
+  rw[92] 305c
+  rw[93] 305d
