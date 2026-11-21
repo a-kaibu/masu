@@ -41,6 +41,8 @@ mod desc_tests;
 #[cfg(test)]
 mod copy_tests;
 #[cfg(test)]
+mod minlod_tests;
+#[cfg(test)]
 mod msaa_tests;
 #[cfg(test)]
 mod bits_tests;
@@ -255,6 +257,8 @@ pub struct Texture {
     pub pristine: bool,
     /// NV12: its chroma plane's texture (see `Nv12`)
     pub nv12: Option<Nv12>,
+    /// SetResourceMinLOD's clamp, as GetResourceMinLOD gives it back
+    pub min_lod: f32,
 }
 
 /// An NV12 texture's chroma plane: a texture of its own (w / 2 x h / 2 R8G8, the texture's
@@ -1393,6 +1397,7 @@ fn new_texture(d: &mut D11, dim: u32, w: u32, h: u32, layers: u32, mips: u32, fm
         bits: HashMap::new(),
         pristine: false,
         nv12: None,
+        min_lod: 0.0,
     }))
 }
 
@@ -3384,7 +3389,16 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             // SAFETY: clear_view_texels' own contract: a view of this device
             unsafe { clear_view_texels(d, v, vals, &[]) };
         }
-        49 | 55 => {}
+        49 => {}
+        // SetResourceMinLOD(resource, MinLOD), GetResourceMinLOD(resource): the float's bits
+        55 | 56 => {
+            let r = d.id_of(a(1));
+            let Some(Data::Texture(t)) = d.objs.get_mut(&r).map(|o| &mut o.data) else { return 0 };
+            if m == 56 {
+                return t.min_lod.to_bits();
+            }
+            t.min_lod = f32::from_bits(a(2));
+        }
         41 => dispatch(d, st, a(1), a(2), a(3)),
         42 => {
             // DispatchIndirect(args, offset): the group counts from the buffer

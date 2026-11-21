@@ -23,7 +23,7 @@ const FIRST: u8 = 64;
 const FLOAT: u32 = 1 << 31;
 
 /// A vtable trap's tag: kura's method (interface FIRST.., vtable index; the host takes
-/// `iface << 8 | index`) and whether it returns a float (FLOAT: answered 0.0 here).
+/// `iface << 8 | index`) and whether it returns a float (FLOAT: the host's u32 is its bits).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Tag {
     iface: u8,
@@ -69,17 +69,28 @@ fn method(c: &mut Ctx) -> u32 {
     let (tag, nargs) = crate::api::tag_of(c.trap);
     // (every tag was made by init from a Tag)
     let Some(tag) = Tag::of(tag) else { return 0 };
-    if tag.float {
-        c.st0 = Some(0.0);
-        return 0;
-    }
     let id = tag.id();
-    if mem::x64() {
-        // (the host reads 8-byte slots: the method's arguments, the rest 0)
-        let a: [u64; 16] = std::array::from_fn(|i| if i < nargs { c.a64(i as u32) } else { 0 });
-        return unsafe { kura::d3d11::call(id, a.as_ptr().cast::<u32>(), calls()) };
-    }
-    unsafe { kura::d3d11::call(id, (c.esp + 4) as usize as *const u32, calls()) }
+    let r = if mem::x64() {
+        let a = slots64(c, tag, nargs);
+        // SAFETY: 16 slots of 8 bytes, as many as any method reads
+        unsafe { kura::d3d11::call(id, a.as_ptr().cast::<u32>(), calls()) }
+    } else {
+        // SAFETY: the guest's stack arguments past the return address, mapped guest memory
+        unsafe { kura::d3d11::call(id, (c.esp + 4) as usize as *const u32, calls()) }
+    };
+    // (a FLOAT method: the host's answer is the float's bits)
+    if tag.float { c.ret_f32(f32::from_bits(r)) } else { r }
+}
+
+/// x64: the 8-byte slots the host reads, the method's `nargs` arguments then 0; a float among
+/// the first four is XMM's (methods::FLOAT_ARGS), the others RCX RDX R8 R9 and the stack's.
+fn slots64(c: &Ctx, tag: Tag, nargs: usize) -> [u64; 16] {
+    let floats = methods::FLOAT_ARGS.iter().find(|f| f.0 == tag.iface && f.1 == tag.index).map_or(0, |f| f.2);
+    std::array::from_fn(|i| match u32::try_from(i) {
+        Ok(k) if i < nargs && k < 4 && floats >> k & 1 != 0 => c.xmm(k) & 0xffff_ffff,
+        Ok(k) if i < nargs => c.a64(k),
+        _ => 0,
+    })
 }
 
 fn host(id: u32, args: &[u32]) -> u32 {
@@ -104,8 +115,10 @@ fn init() {
         for (i, m) in (FIRST..).zip(METHODS) {
             let v = mem::heap_alloc(ps * m.len() as u32, true);
             for (j, &args) in (0u8..).zip(m) {
+                // (FLOAT methods take `this` and one more: ID3D11DeviceContext::GetResourceMinLOD)
                 let float = args == 0;
-                let bytes = if float { 8 } else { 4 * u32::from(args) };
+                let args = if float { 2 } else { args };
+                let bytes = 4 * u32::from(args);
                 let a = host_fn(&format!("d3d11:{i}:{j}"), method, bytes);
                 crate::api::set_tag(a, Tag { iface: i, index: j, float }.bits(), usize::from(args));
                 if let Some((name, _)) = kura::d3d11::names::NAMES.get(usize::from(i.wrapping_sub(FIRST))) {
@@ -255,13 +268,42 @@ mod tag_tests {
                 let (tag, n) = crate::api::tag_of(a);
                 assert_eq!(tag & !FLOAT, i << 8 | j as u32);
                 assert_eq!(tag & FLOAT != 0, args == 0);
-                assert_eq!(n, args as usize);
+                // (a FLOAT method takes `this` and its resource)
+                assert_eq!(n, if args == 0 { 2 } else { usize::from(args) });
                 assert_eq!(Tag::of(tag).map(Tag::bits), Some(tag));
             }
         }
         // (no other bits come back as a tag)
         for bits in [1 << 16, 1 << 24, 1 << 30, 0x4000_0000 | 0x4100, u32::MAX] {
             assert_eq!(Tag::of(bits), None, "{bits:#x}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod float_arg_tests {
+    use super::*;
+
+    /// The generated table names the methods that take a float by value (the depth of
+    /// ClearDepthStencilView, SetResourceMinLOD's clamp), and x64 takes each from its XMM
+    /// register, not the integer one at its place.
+    #[test]
+    fn x64_floats_come_from_xmm() {
+        let name = |i: u8, j: u8| kura::d3d11::names::NAMES.get(usize::from(i - FIRST)).and_then(|(n, m)| m.get(usize::from(j)).map(|m| format!("{n}::{m}")));
+        let named: Vec<String> = methods::FLOAT_ARGS.iter().filter_map(|f| name(f.0, f.1)).collect();
+        assert_eq!(named, ["ID3D11DeviceContext4::ClearDepthStencilView", "ID3D11DeviceContext4::SetResourceMinLOD", "ID3D10Device1::ClearDepthStencilView"]);
+        for &(iface, index, mask) in methods::FLOAT_ARGS {
+            let mut cpu = koji::Cpu::default();
+            for (k, r) in (0u32..).zip([koji::Reg64::Rcx, koji::Reg64::Rdx, koji::Reg64::R8, koji::Reg64::R9]) {
+                cpu.set_gpr(r, 0x1111_0000 + u64::from(k));
+                cpu.set_xmm(kome::num::us(k), 0xdead_beef_0000_0000_0000_0000_4000_0000u128 + u128::from(k));
+            }
+            let c = Ctx { cpu: &mut cpu, esp: 0, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 };
+            let s = slots64(&c, Tag { iface, index, float: false }, 4);
+            for k in 0..4u32 {
+                let want = if mask >> k & 1 != 0 { 0x4000_0000 + u64::from(k) } else { 0x1111_0000 + u64::from(k) };
+                assert_eq!(s.get(kome::num::us(k)).copied(), Some(want), "{:?} argument {k}", name(iface, index));
+            }
         }
     }
 }

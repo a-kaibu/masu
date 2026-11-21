@@ -1768,8 +1768,6 @@ crates/sake/src/crt_io.rs	undocumented_unsafe_blocks	unsafe { libc::exit(255) }
 crates/sake/src/crt_io.rs	undocumented_unsafe_blocks	unsafe { libc::exit(3) }
 crates/sake/src/crt_io.rs	undocumented_unsafe_blocks	unsafe { libc::exit(3) }
 crates/sake/src/d3d11.rs	undocumented_unsafe_blocks	return unsafe { kura::d3d11::call(id, a.as_ptr().cast::<u32>(), calls()) };
-crates/sake/src/d3d11.rs	undocumented_unsafe_blocks	return unsafe { kura::d3d11::call(id, a.as_ptr().cast::<u32>(), calls()) };
-crates/sake/src/d3d11.rs	undocumented_unsafe_blocks	unsafe { kura::d3d11::call(id, (c.esp + 4) as usize as *const u32, calls()) }
 crates/sake/src/d3d11.rs	undocumented_unsafe_blocks	unsafe { kura::d3d11::call(id, args.as_ptr(), calls()) }
 crates/sake/src/d3d11.rs	undocumented_unsafe_blocks	unsafe { kura::d3d11::init(table as usize as *const u32, n) };
 crates/sake/src/d3d7.rs	multiple_unsafe_ops_per_block	unsafe {

@@ -699,6 +699,11 @@ impl<'a> Ctx<'a> {
 }
 
 impl Ctx<'_> {
+    /// A float result: x86 ST0, x64 the low single of XMM0 (the u32 result is 0).
+    pub fn ret_f32(&mut self, v: f32) -> u32 {
+        self.st0 = Some(if crate::mem::x64() { f64::from_bits(u64::from(v.to_bits())) } else { f64::from(v) });
+        0
+    }
     /// Argument `i`, a pointer-sized out-parameter
     #[inline]
     pub fn out(&self, i: u32) -> Out {

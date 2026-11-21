@@ -66,8 +66,7 @@ fn size(c: &Ctx, i: u32) -> u32 {
 }
 /// A float result: x86 ST0, x64 the low single of XMM0.
 fn ret_f32(c: &mut Ctx, v: f32) -> u32 {
-    c.st0 = Some(if mem::x64() { f64::from_bits(v.to_bits() as u64) } else { v as f64 });
-    0
+    c.ret_f32(v)
 }
 /// Whether the call went to the UCRT (ucrtbase, api-ms-win-crt-*) rather than msvcrt / msvcr*.
 fn is_ucrt(c: &Ctx) -> bool {
