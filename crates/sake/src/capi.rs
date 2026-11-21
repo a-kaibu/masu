@@ -136,9 +136,10 @@ pub(crate) fn user_key(id: u32, key_spec: u32) -> Result<Key, u32> {
                 if kura::fs::read(&keyset).ok().as_ref() != Some(&p.generation) { return Err(cng::NTE_BAD_KEYSET); }
                 kura::fs::read(&file).map_err(|_| cng::NTE_NO_KEY)
             })?;
-            if bytes.get(..4) != Some(b"CAP1") || bytes.len() < 8 { return Err(cng::NTE_BAD_DATA); }
-            let (rsa, bits) = Rsa::from_blob(Blob::FullPrivate, false, &bytes[8..])?;
-            Ok(Key { rsa, bits, exportable: u32::from_le_bytes(bytes[4..8].try_into().unwrap()) & 1 != 0 })
+            let Some((b"CAP1", rest)) = bytes.split_first_chunk::<4>() else { return Err(cng::NTE_BAD_DATA) };
+            let Some((flags, blob)) = rest.split_first_chunk::<4>() else { return Err(cng::NTE_BAD_DATA) };
+            let (rsa, bits) = Rsa::from_blob(Blob::FullPrivate, false, blob)?;
+            Ok(Key { rsa, bits, exportable: u32::from_le_bytes(*flags) & 1 != 0 })
         })
     } else { p.keys.locked().get(&key_spec).cloned().ok_or(cng::NTE_NO_KEY) }
 }

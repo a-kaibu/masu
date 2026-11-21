@@ -590,7 +590,8 @@ pub(crate) struct Cell {
 pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: bool, align: u32, adv: impl Fn(u16) -> f32) -> Vec<Cell> {
     let pad = em / 6.0;
     let width = rect[2];
-    let mut lines: Vec<Vec<(usize, f32)>> = vec![Vec::new()];
+    // (the lines before the one being filled, and that one)
+    let (mut lines, mut cur): (Vec<Vec<(usize, f32)>>, Vec<(usize, f32)>) = (Vec::new(), Vec::new());
     let mut x = 0.0f32;
     let mut i = 0;
     while i < s.len() {
@@ -599,7 +600,7 @@ pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: boo
             if ch == u16::from(b'\r') && s.get(i + 1) == Some(&u16::from(b'\n')) {
                 i += 1;
             }
-            lines.push(Vec::new());
+            lines.push(std::mem::take(&mut cur));
             x = 0.0;
             i += 1;
             continue;
@@ -607,7 +608,6 @@ pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: boo
         let a = adv(ch);
         if !no_wrap && width > 0.0 && x > 0.0 && pad * 2.0 + x + a > width {
             // (wrap at the last space of the line when there is one, else before this character)
-            let cur = lines.last_mut().unwrap();
             let cut = cur.iter().rposition(|&(k, _)| s[k] == u16::from(b' ')).map(|p| p + 1).filter(|&p| p < cur.len());
             let moved: Vec<(usize, f32)> = match cut {
                 Some(p) => cur.split_off(p),
@@ -619,13 +619,14 @@ pub(crate) fn layout(s: &[u16], rect: [f32; 4], em: f32, line: f32, no_wrap: boo
                 next.push((k, w));
                 nx += w;
             }
-            lines.push(next);
+            lines.push(std::mem::replace(&mut cur, next));
             x = nx;
         }
-        lines.last_mut().unwrap().push((i, a));
+        cur.push((i, a));
         x += a;
         i += 1;
     }
+    lines.push(cur);
     let mut out = Vec::new();
     for (n, l) in lines.iter().enumerate() {
         let total: f32 = l.iter().map(|c| c.1).sum();

@@ -111,20 +111,90 @@ fn errno_of(e: i32) {
 // ---------------------------------------------------------------------------------------------
 // data exports
 
-static DATA: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
+/// msvcrt's data exports: variables (or tables) a program reads by address
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Var {
+    AdjustFdiv,
+    Fmode,
+    Commode,
+    Argc,
+    Argv,
+    Wargv,
+    Environ,
+    Wenviron,
+    Initenv,
+    Winitenv,
+    Acmdln,
+    Wcmdln,
+    Osver,
+    Winver,
+    Winmajor,
+    Winminor,
+    MbCurMax,
+    Pctype,
+    Pwctype,
+    Timezone,
+    Daylight,
+    Dstbias,
+    Tzname,
+    Mbctype,
+    Huge,
+    Iob,
+}
+
+impl Var {
+    pub const ALL: [Var; 26] = [Var::AdjustFdiv, Var::Fmode, Var::Commode, Var::Argc, Var::Argv, Var::Wargv, Var::Environ, Var::Wenviron, Var::Initenv, Var::Winitenv, Var::Acmdln, Var::Wcmdln, Var::Osver, Var::Winver, Var::Winmajor, Var::Winminor, Var::MbCurMax, Var::Pctype, Var::Pwctype, Var::Timezone, Var::Daylight, Var::Dstbias, Var::Tzname, Var::Mbctype, Var::Huge, Var::Iob];
+    /// its export name
+    pub fn name(self) -> &'static str {
+        match self {
+            Var::AdjustFdiv => "_adjust_fdiv",
+            Var::Fmode => "_fmode",
+            Var::Commode => "_commode",
+            Var::Argc => "__argc",
+            Var::Argv => "__argv",
+            Var::Wargv => "__wargv",
+            Var::Environ => "_environ",
+            Var::Wenviron => "_wenviron",
+            Var::Initenv => "__initenv",
+            Var::Winitenv => "__winitenv",
+            Var::Acmdln => "_acmdln",
+            Var::Wcmdln => "_wcmdln",
+            Var::Osver => "_osver",
+            Var::Winver => "_winver",
+            Var::Winmajor => "_winmajor",
+            Var::Winminor => "_winminor",
+            Var::MbCurMax => "__mb_cur_max",
+            Var::Pctype => "_pctype",
+            Var::Pwctype => "_pwctype",
+            Var::Timezone => "_timezone",
+            Var::Daylight => "_daylight",
+            Var::Dstbias => "_dstbias",
+            Var::Tzname => "_tzname",
+            Var::Mbctype => "_mbctype",
+            Var::Huge => "_HUGE",
+            Var::Iob => "_iob",
+        }
+    }
+    /// the data export of that name
+    pub fn of(name: &str) -> Option<Var> {
+        Var::ALL.into_iter().find(|v| v.name() == name)
+    }
+}
+
+static DATA: Mutex<Option<HashMap<&'static str, u32>>> = Mutex::new(None);
 
 /// The address of msvcrt's data export `name`, if it is one.
 pub fn data(name: &str) -> Option<u32> {
-    const NAMES: &[&str] = &["_adjust_fdiv", "_fmode", "_commode", "__argc", "__argv", "__wargv", "_environ", "_wenviron",
-        "__initenv", "__winitenv", "_acmdln", "_wcmdln", "_osver", "_winver", "_winmajor", "_winminor", "__mb_cur_max",
-        "_pctype", "_pwctype", "_timezone", "_daylight", "_dstbias", "_tzname", "_mbctype", "_HUGE", "_iob"];
-    if !NAMES.contains(&name) {
-        return None;
-    }
+    Var::of(name).map(var_at)
+}
+
+/// The address of msvcrt's data export `v` (made at the first ask).
+pub fn var_at(v: Var) -> u32 {
+    let name = v.name();
     let mut g = DATA.locked();
     let m = g.get_or_insert_with(HashMap::default);
     if let Some(&a) = m.get(name) {
-        return Some(a);
+        return a;
     }
     let a = match name {
         "_iob" => iob(),
@@ -159,8 +229,8 @@ pub fn data(name: &str) -> Option<u32> {
         "_winminor" => var(1),
         _ => var(0),
     };
-    m.insert(name.to_string(), a);
-    Some(a)
+    m.insert(name, a);
+    a
 }
 
 /// crtdll.dll's data exports: msvcrt's under their `_dll` names (`_osmajor_dll` is
@@ -397,57 +467,57 @@ fn __getmainargs(c: &mut Ctx) -> u32 {
     let (argc, argv) = args();
     w32(c.a(0), argc);
     wp(c.a(1), argv);
-    wp(c.a(2), rp(data("_environ").unwrap()));
+    wp(c.a(2), rp(var_at(Var::Environ)));
     0
 }
 fn __set_app_type(_: &mut Ctx) -> u32 {
     0
 }
 fn __p__fmode(_: &mut Ctx) -> u32 {
-    data("_fmode").unwrap()
+    var_at(Var::Fmode)
 }
 fn __p__commode(_: &mut Ctx) -> u32 {
-    data("_commode").unwrap()
+    var_at(Var::Commode)
 }
 fn __p___argc(_: &mut Ctx) -> u32 {
-    data("__argc").unwrap()
+    var_at(Var::Argc)
 }
 fn __p___argv(_: &mut Ctx) -> u32 {
-    data("__argv").unwrap()
+    var_at(Var::Argv)
 }
 fn __p___wargv(_: &mut Ctx) -> u32 {
-    data("__wargv").unwrap()
+    var_at(Var::Wargv)
 }
 fn __p__wcmdln(_: &mut Ctx) -> u32 {
-    data("_wcmdln").unwrap()
+    var_at(Var::Wcmdln)
 }
 fn __p__wenviron(_: &mut Ctx) -> u32 {
-    data("_wenviron").unwrap()
+    var_at(Var::Wenviron)
 }
 fn __wgetmainargs(c: &mut Ctx) -> u32 {
     let (argc, argv) = wargs();
     w32(c.a(0), argc);
     wp(c.a(1), argv);
-    wp(c.a(2), rp(data("_wenviron").unwrap()));
+    wp(c.a(2), rp(var_at(Var::Wenviron)));
     0
 }
 fn __p__environ(_: &mut Ctx) -> u32 {
-    data("_environ").unwrap()
+    var_at(Var::Environ)
 }
 fn __p___initenv(_: &mut Ctx) -> u32 {
-    data("__initenv").unwrap()
+    var_at(Var::Initenv)
 }
 fn __p__acmdln(_: &mut Ctx) -> u32 {
-    data("_acmdln").unwrap()
+    var_at(Var::Acmdln)
 }
 fn __p___mb_cur_max(_: &mut Ctx) -> u32 {
-    data("__mb_cur_max").unwrap()
+    var_at(Var::MbCurMax)
 }
 fn ___mb_cur_max_func(_: &mut Ctx) -> u32 {
-    r32(data("__mb_cur_max").unwrap())
+    r32(var_at(Var::MbCurMax))
 }
 fn __pctype_func(_: &mut Ctx) -> u32 {
-    r32(data("_pctype").unwrap())
+    r32(var_at(Var::Pctype))
 }
 /// The CRT's control word (_MCW_EM | _MCW_RC | _MCW_PC | _MCW_IC bits) over the guest's own
 /// x87 control word and MXCSR: x86 sets and reports the x87 one (and the SSE rounding and
@@ -2766,7 +2836,7 @@ fn _configthreadlocale(_: &mut Ctx) -> u32 {
     2
 }
 fn ___mb_cur_max_l_func(_: &mut Ctx) -> u32 {
-    r32(data("__mb_cur_max").unwrap())
+    r32(var_at(Var::MbCurMax))
 }
 
 fn wcsncmp(c: &mut Ctx) -> u32 {
@@ -3393,14 +3463,14 @@ fn strnlen(c: &mut Ctx) -> u32 {
 // ucrtbase / vcruntime140 (VC++ 2015+): startup, onexit tables, std::exception, time
 
 fn _set_fmode(c: &mut Ctx) -> u32 {
-    w32(data("_fmode").unwrap(), c.a(0));
+    w32(var_at(Var::Fmode), c.a(0));
     0
 }
 fn _get_initial_narrow_environment(_: &mut Ctx) -> u32 {
-    r32(data("_environ").unwrap())
+    r32(var_at(Var::Environ))
 }
 fn _get_initial_wide_environment(_: &mut Ctx) -> u32 {
-    rp(data("_wenviron").unwrap())
+    rp(var_at(Var::Wenviron))
 }
 fn ucrt_zero(_: &mut Ctx) -> u32 {
     0
@@ -3853,8 +3923,11 @@ fn ecvt_digits(v: f64, n: usize) -> (Vec<u8>, i32) {
         return (d, 1);
     }
     let s = format!("{:.*e}", n - 1, v.abs());
-    let (m, e) = s.split_once('e').unwrap();
-    (m.bytes().filter(|b| b.is_ascii_digit()).collect(), e.parse::<i32>().unwrap() + 1)
+    // (a mantissa and its power of ten; no `e` would be a power of 0)
+    let (m, e) = s.split_once('e').unwrap_or((s.as_str(), "0"));
+    let (neg, digits) = e.strip_prefix('-').map_or((false, e), |d| (true, d));
+    let exp = digits.bytes().filter(u8::is_ascii_digit).fold(0i32, |x, d| x.saturating_mul(10).saturating_add(i32::from(d - b'0')));
+    (m.bytes().filter(|b| b.is_ascii_digit()).collect(), if neg { 1 - exp } else { exp + 1 })
 }
 fn cvt_out(c: &mut Ctx, d: &[u8], dec: i32, neg: bool, pdec: u32, psign: u32) -> u32 {
     let b = cvt_buf();
@@ -3916,7 +3989,8 @@ fn _gcvt(c: &mut Ctx) -> u32 {
     while d.len() > 1 && d.last() == Some(&b'0') {
         d.pop();
     }
-    let d = String::from_utf8(d).unwrap();
+    // (ASCII: digits, or msvcrt's "1#INF" / "1#QNAN")
+    let d: String = d.iter().map(|&b| char::from(b)).collect();
     if v == 0.0 {
         s.push_str("0.");
     } else if dec < -1 || dec > n as i32 {

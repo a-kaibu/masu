@@ -97,13 +97,14 @@ fn CreatePipe(c: &mut Ctx) -> u32 {
 /// The C runtime's _pipe: (read handle, write handle) of a new anonymous pipe of `size` bytes
 /// (0: 4096), inheritable unless `inherit` is false.
 /// None: no pipe could be made.
-pub fn crt_pipe(size: u32, inherit: bool) -> Option<(u32, u32)> {
+pub fn crt_pipe(size: u32, inherit: bool) -> Option<((u32, Handle), (u32, Handle))> {
     let (r, w) = kw(|k| k.create_anon(size, crate::pid()))?;
-    let hr = obj::add(Obj::Pipe(Handle { end: r, read: true, write: false, ovl: false }));
-    let hw = obj::add(Obj::Pipe(Handle { end: w, read: false, write: true, ovl: false }));
+    let (pr, pw) = (Handle { end: r, read: true, write: false, ovl: false }, Handle { end: w, read: false, write: true, ovl: false });
+    let hr = obj::add(Obj::Pipe(pr));
+    let hw = obj::add(Obj::Pipe(pw));
     obj::set_inherit(hr, inherit);
     obj::set_inherit(hw, inherit);
-    Some((hr, hw))
+    Some(((hr, pr), (hw, pw)))
 }
 
 /// Another handle to `p`'s end (the C runtime's _dup of a pipe descriptor).
@@ -601,7 +602,10 @@ fn call_named(c: &mut Ctx, wide: bool) -> u32 {
             return 0;
         }
     }
-    let p = handle(h).unwrap();
+    let Some(p) = handle(h) else {
+        last_error(6);
+        return 0;
+    };
     let r = match kw(|k| k.set_mode(p.end, Some(true), None)) {
         SUCCESS => {
             let (inp, n, outp, cap, pread) = (c.a(1), c.a(2), c.a(3), c.a(4), c.a(5));

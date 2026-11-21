@@ -2037,7 +2037,7 @@ fn send_other_thread(cpu: &mut koji::Cpu, tid: u32, msg: Msg) -> u32 {
         {
             let mut g = result.0.locked();
             if g.is_none() {
-                g = result.1.wait_timeout(g, Duration::from_millis(5)).unwrap().0;
+                g = kome::locks::wait_timeout(&result.1, g, Duration::from_millis(5)).0;
             }
             if let Some((v, at, gate)) = *g {
                 drop(g);

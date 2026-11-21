@@ -78,7 +78,7 @@ fn loader_lock() -> LoaderGuard {
         return LoaderGuard;
     }
     while l.1 != 0 {
-        l = LOADER_FREE.wait(l).unwrap();
+        l = kome::locks::wait(&LOADER_FREE, l);
     }
     *l = (Some(me), 1);
     LoaderGuard
@@ -1602,12 +1602,13 @@ pub fn load_exe(_cpu: &mut Cpu, host: &str, win: &str) -> Result<u32, String> {
 /// gets one too, not only the loading thread and those started later).
 fn tls_module(base: u32) {
     let mut mods = MODULES.w();
-    let Some(t) = mods.iter_mut().find(|m| m.base == base).and_then(|m| m.tls.as_mut()) else { return };
+    let Some(m) = mods.iter_mut().find(|m| m.base == base) else { return };
+    let Some(t) = m.tls.as_mut() else { return };
     let Some(index) = tls_index_take(&mut TLS_FREE.locked(), &TLS_NEXT, tls_capacity()) else {
         // (more modules with TLS loaded at once than the array holds: none rather than a write
         // past the TEB; the DLL's thread-local variables fault)
         eprintln!("sake: no TLS index left for the module at {base:#x} ({} in use)", tls_capacity());
-        mods.iter_mut().find(|m| m.base == base).unwrap().tls = None;
+        m.tls = None;
         return;
     };
     t.index = index;

@@ -217,7 +217,7 @@ impl Mmio {
             return None;
         }
         Some(match &self.data {
-            Data::File(v) => u32::from_le_bytes(v[off as usize..off as usize + 4].try_into().unwrap()),
+            Data::File(v) => kome::le::u32_at(v, off as usize)?,
             Data::Mem(a, _) => r32(a + off),
             Data::Handle(f, base, _, _) => {
                 f.seek(std::io::SeekFrom::Start(base + off as u64))?;

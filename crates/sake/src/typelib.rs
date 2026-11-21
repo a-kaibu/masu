@@ -1054,8 +1054,7 @@ fn I_Invoke(c: &mut Ctx) -> u32 {
             if result != 0 {
                 match v {
                     // the callee's BSTR / object reference becomes the result's
-                    Some(Var::Str(_)) if retval.is_some() => {
-                        let (m, _) = retval.as_ref().unwrap();
+                    Some(Var::Str(_)) if let Some((m, _)) = &retval => {
                         mem::fill(result, 16, 0);
                         w16(result, VT_BSTR);
                         w32(result + 8, r32(*m));

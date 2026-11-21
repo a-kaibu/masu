@@ -455,19 +455,18 @@ fn _pipe(c: &mut Ctx) -> u32 {
         set_errno(EINVAL);
         return u32::MAX;
     }
-    let Some((hr, hw)) = crate::pipe::crt_pipe(size, mode & O_NOINHERIT == 0) else {
+    let Some(((hr, er), (hw, ew))) = crate::pipe::crt_pipe(size, mode & O_NOINHERIT == 0) else {
         set_errno(24); // EMFILE
         return u32::MAX;
     };
     let fd = |h: u32, end: crate::pipe::Handle| add(Fd { kind: Kind::Pipe(end), text: mode & O_BINARY == 0, append: false, osf: h });
-    let end = |h: u32| crate::pipe::handle(h).expect("a new pipe handle");
-    let r = fd(hr, end(hr));
+    let r = fd(hr, er);
     if r == u32::MAX {
         obj::close(hr);
         obj::close(hw);
         return u32::MAX;
     }
-    let w = fd(hw, end(hw));
+    let w = fd(hw, ew);
     if w == u32::MAX {
         close_fd(r);
         obj::close(hw);
@@ -702,7 +701,7 @@ fn _fileno(c: &mut Ctx) -> u32 {
 fn fdopen(fd: u32, mode: &[u8]) -> u32 {
     match get(fd).map(|d| d.kind) {
         Some(Kind::File(f)) => new_stream_of(f, fd, mode),
-        Some(Kind::Std(i)) => data("_iob").unwrap() + file_size() * i as u32,
+        Some(Kind::Std(i)) => var_at(Var::Iob) + file_size() * i as u32,
         Some(Kind::Pipe(_)) | None => {
             set_errno(EBADF);
             0
@@ -878,7 +877,8 @@ fn radix32(mut n: u32) -> String {
         }
     }
     s.reverse();
-    String::from_utf8(s).unwrap()
+    // (ASCII digits and letters)
+    s.iter().map(|&b| char::from(b)).collect()
 }
 fn _tempnam(c: &mut Ctx) -> u32 {
     tempnam(c, false)
@@ -986,8 +986,8 @@ fn env_array(wide: bool, pin: bool) -> u32 {
 }
 /// _environ / _wenviron: made again after each change (the CRT's are kept up to date as well)
 pub(super) fn refresh_environ() {
-    for (name, wide) in [("_environ", false), ("_wenviron", true)] {
-        let var = data(name).unwrap();
+    for (v, wide) in [(Var::Environ, false), (Var::Wenviron, true)] {
+        let var = var_at(v);
         let old = rp(var);
         wp(var, env_array(wide, false));
         let mut g = ENV_COPIES.locked();
@@ -1139,16 +1139,16 @@ fn _tzset(_: &mut Ctx) -> u32 {
     0
 }
 fn __timezone(_: &mut Ctx) -> u32 {
-    data("_timezone").unwrap()
+    var_at(Var::Timezone)
 }
 fn __daylight(_: &mut Ctx) -> u32 {
-    data("_daylight").unwrap()
+    var_at(Var::Daylight)
 }
 fn __dstbias(_: &mut Ctx) -> u32 {
-    data("_dstbias").unwrap()
+    var_at(Var::Dstbias)
 }
 fn __tzname(_: &mut Ctx) -> u32 {
-    data("_tzname").unwrap()
+    var_at(Var::Tzname)
 }
 pub(super) fn tzname_array() -> u32 {
     // (the CRT's two buffers are 64 bytes each: programs may write their own names there)
@@ -1261,7 +1261,7 @@ fn set_locale(c: &mut Ctx, wide: bool) -> u32 {
         if cat == 0 || cat == 2 {
             LC_CP.store(cp, Ordering::Relaxed);
             let dbcs = cp != 0 && matches!(cp, 932 | 936 | 949 | 950);
-            w32(super::data("__mb_cur_max").unwrap(), if dbcs { 2 } else { 1 });
+            w32(super::var_at(super::Var::MbCurMax), if dbcs { 2 } else { 1 });
         }
     }
     let name = locale_name(cat);

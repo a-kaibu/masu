@@ -159,11 +159,8 @@ pub fn names_equal(a: Option<&[u16]>, b: Option<&[u16]>) -> bool {
 }
 
 /// An IPv4 or IPv6 literal (what DnsQuery answers itself), as its address bytes
-pub fn ip_literal(s: &str) -> Option<Vec<u8>> {
-    if let Ok(a) = s.parse::<std::net::Ipv4Addr>() {
-        return Some(a.octets().to_vec());
-    }
-    s.parse::<std::net::Ipv6Addr>().ok().map(|a| a.octets().to_vec())
+pub fn ip_literal(s: &str) -> Option<std::net::IpAddr> {
+    s.parse::<std::net::IpAddr>().ok()
 }
 
 /// DnsQuery_A / _W / _UTF8(name, type, options, extra, ppResults, reserved)
@@ -184,19 +181,21 @@ fn dns_query(c: &mut Ctx, charset: u32) -> u32 {
     let local = names_equal(Some(&name), Some(&"localhost".encode_utf16().collect::<Vec<u16>>()));
     let ip = match ip_literal(&s) {
         Some(ip) => ip,
-        None if local && ty == 28 => std::net::Ipv6Addr::LOCALHOST.octets().to_vec(),
-        None if local => vec![127, 0, 0, 1],
+        None if local && ty == 28 => std::net::Ipv6Addr::LOCALHOST.into(),
+        None if local => std::net::Ipv4Addr::LOCALHOST.into(),
         // (no DNS server answers here)
         None => return ERROR_TIMEOUT,
     };
     // a record for the address: A (1) for IPv4, AAAA (28) for IPv6
-    let want = if ip.len() == 4 { 1 } else { 28 };
+    let (want, data, len) = match ip {
+        std::net::IpAddr::V4(a) => (1, Data::A(a.octets()), 4),
+        std::net::IpAddr::V6(a) => (28, Data::Aaaa(a.octets()), 16),
+    };
     if ty != want {
         return 9501; // DNS_INFO_NO_RECORDS
     }
-    let data = if ip.len() == 4 { Data::A(ip[..4].try_into().unwrap()) } else { Data::Aaaa(ip[..16].try_into().unwrap()) };
     // Flags: section 0, the character set, Reserved 0x20 (as Windows sets them)
-    let r = Rec { name: Some(s), ty: want as u16, data_len: ip.len() as u16, flags: 0x20 << 8, ttl: 604800, reserved: 0, data };
+    let r = Rec { name: Some(s), ty: want as u16, data_len: len, flags: 0x20 << 8, ttl: 604800, reserved: 0, data };
     out.put(dnsrec::write(&r, charset));
     0
 }
@@ -1812,8 +1811,8 @@ mod tests {
 
     #[test]
     fn literals() {
-        assert_eq!(ip_literal("192.168.111.11"), Some(vec![192, 168, 111, 11]));
-        assert_eq!(ip_literal("2001:db8:3333:4444:5555:6666:7777:8888").map(|v| v.len()), Some(16));
+        assert_eq!(ip_literal("192.168.111.11"), Some(std::net::Ipv4Addr::new(192, 168, 111, 11).into()));
+        assert!(ip_literal("2001:db8:3333:4444:5555:6666:7777:8888").is_some_and(|a| a.is_ipv6()));
         assert_eq!(ip_literal("winehq.org"), None);
         assert_eq!(ip_literal(" 192.168.111.11"), None);
     }

@@ -471,7 +471,8 @@ fn walk(cpu: &mut Cpu) {
         if pc == crate::cxx64::TRANSLATE_TRAP as u64 && d.guard == 0 {
             // (cxx64::translate's frame: the translator returns here, the frame argument above)
             d.guard = r64(rsp(d.cur) as u32 - 8 + 0x48);
-            STACK.with(|s| s.borrow_mut().last_mut().unwrap().guard = d.guard);
+            // (d is the top of STACK, a copy: its guard goes back too)
+            STACK.with(|s| s.borrow_mut().last_mut().map(|top| top.guard = d.guard));
         }
         let Some((h, data, frame, f, base)) = step(cpu, UNW_FLAG_EHANDLER, d.next, &mut 1, d.rec) else {
             if trace() {
@@ -817,7 +818,7 @@ fn unwind_go(cpu: &mut Cpu, resumed: bool) {
             let sp = ((u.orig - 0x40) & !15) - 8;
             w64(sp, UNWIND_TRAP as u64);
             u.handler_sp = sp as u64 + 8;
-            UNWINDS.with(|s| *s.borrow_mut().last_mut().unwrap() = u);
+            UNWINDS.with(|s| s.borrow_mut().last_mut().map(|top| *top = u));
             cpu.set_gpr(koji::Reg64::Rsp, sp as u64);
             cpu.set_gpr(koji::Reg64::Rcx, rec as u64);
             cpu.set_gpr(koji::Reg64::Rdx, frame);

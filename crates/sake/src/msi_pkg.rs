@@ -448,7 +448,9 @@ impl Package {
         }
         for (k, t) in kids {
             self.props.insert(k.clone(), t.clone());
-            self.dirs.get_mut(&k).unwrap().target = t;
+            if let Some(d) = self.dirs.get_mut(&k) {
+                d.target = t;
+            }
         }
     }
 
@@ -483,10 +485,10 @@ impl Package {
     pub fn plan_states(&mut self) {
         let code = self.prop("ProductCode");
         for n in self.comps.keys().cloned().collect::<Vec<_>>() {
-            let c = self.comps.get(&n).unwrap().clone();
+            let Some(c) = self.comps.get(&n).cloned() else { continue };
             let enabled = c.cond.is_empty() || !matches!(evaluate(self, &c.cond), cond::Cond::False);
             let (installed, clients) = if c.id.is_empty() { (INSTALLSTATE_UNKNOWN, 0) } else { crate::msi_install::component_registration(&code, &c.id) };
-            let c = self.comps.get_mut(&n).unwrap();
+            let Some(c) = self.comps.get_mut(&n) else { continue };
             c.enabled = enabled;
             c.installed = installed;
             c.clients = clients;
@@ -648,7 +650,9 @@ impl Package {
                     }
                 }
             }
-            self.comps.get_mut(&cn).unwrap().action = a;
+            if let Some(c) = self.comps.get_mut(&cn) {
+                c.action = a;
+            }
         }
         if depth < 64 {
             let kids: Vec<String> = self.features.iter().filter(|f| f.parent == name && f.name != name).map(|f| f.name.clone()).collect();

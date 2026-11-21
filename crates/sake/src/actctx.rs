@@ -765,10 +765,10 @@ impl Reader {
                     "maxversiontested" => {
                         if let Some(id) = ch.attr("Id") {
                             let mut v = 0u64;
-                            let parts: Vec<&str> = id.split('.').collect();
-                            if parts.len() <= 4 && parts.iter().all(|p| p.parse::<u16>().is_ok()) {
+                            let parts: Option<Vec<u16>> = id.split('.').map(|p| p.parse::<u16>().ok()).collect();
+                            if let Some(parts) = parts && parts.len() <= 4 {
                                 for (i, p) in parts.iter().enumerate() {
-                                    v |= (p.parse::<u16>().unwrap() as u64) << (48 - 16 * i);
+                                    v |= u64::from(*p) << (48 - 16 * i);
                                 }
                                 m.compat.push(Compat::MaxVersion(v));
                             }

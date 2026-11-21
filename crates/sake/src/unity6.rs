@@ -249,8 +249,8 @@ fn image_plan(img: &[u8], ip: u64) -> Option<(Vec<Edit>, Found)> {
 
 /// [start, end) of a mapped image's code sections.
 pub fn code_sections(img: &[u8]) -> Vec<(usize, usize)> {
-    let rd32 = |o: usize| img.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize);
-    let rd16 = |o: usize| img.get(o..o + 2).map(|b| u16::from_le_bytes(b.try_into().unwrap()) as usize);
+    let rd32 = |o: usize| kome::le::u32_at(img, o).map(|v| v as usize);
+    let rd16 = |o: usize| kome::le::u16_at(img, o).map(usize::from);
     let (Some(pe), mut v) = (rd32(0x3c), Vec::new()) else { return Vec::new() };
     let (Some(n), Some(opt)) = (rd16(pe + 6), rd16(pe + 20)) else { return v };
     for k in 0..n {

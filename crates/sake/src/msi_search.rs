@@ -197,7 +197,7 @@ fn raw_value(ty: u32, data: &[u8]) -> Option<String> {
             if s.starts_with('#') { format!("#{s}") } else { s }
         }
         2 => crate::k32::expand_env(&text()),
-        4 if data.len() >= 4 => format!("#{}", i32::from_le_bytes(data[..4].try_into().unwrap())),
+        4 if let Some(v) = kome::le::bytes_at::<4>(data, 0) => format!("#{}", i32::from_le_bytes(v)),
         3 => format!("#x{}", data.iter().map(|b| format!("{b:02X}")).collect::<String>()),
         // (a NUL first, then the strings with their NULs)
         7 => {

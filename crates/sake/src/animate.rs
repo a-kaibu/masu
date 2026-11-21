@@ -29,8 +29,8 @@ fn chunks(b: &[u8]) -> Vec<([u8; 4], &[u8])> {
     let mut out = Vec::new();
     let mut at = 0usize;
     while at + 8 <= b.len() {
-        let id: [u8; 4] = b[at..at + 4].try_into().unwrap();
-        let n = kome::le::u32_at(b, at + 4).unwrap() as usize;
+        let (Some(id), Some(n)) = (kome::le::bytes_at::<4>(b, at), kome::le::u32_at(b, at + 4)) else { break };
+        let n = n as usize;
         let Some(data) = b.get(at + 8..(at + 8).saturating_add(n)) else { break };
         out.push((id, data));
         at = at + 8 + n + n % 2;

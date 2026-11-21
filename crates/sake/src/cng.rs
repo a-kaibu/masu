@@ -229,11 +229,10 @@ impl Rsa {
     /// Parses a BCRYPT_RSAKEY_BLOB of the `want` kind (`any_private`: RSA2 or RSA3); the bit
     /// length is the header's
     pub fn from_blob(want: Blob, any_private: bool, b: &[u8]) -> Result<(Rsa, u32), u32> {
-        if b.len() < 24 {
+        let Some(h) = b.first_chunk::<24>() else {
             return Err(NTE_BAD_DATA);
-        }
-        let r = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap()) as usize;
-        let magic = r(0) as u32;
+        };
+        let magic = kome::le::u32::<0, 24>(h);
         let kind = match magic {
             RSA1 => Blob::Public,
             RSA2 => Blob::Private,
@@ -243,7 +242,7 @@ impl Rsa {
         if kind != want && !(any_private && kind != Blob::Public) {
             return Err(NTE_INVALID_PARAMETER);
         }
-        let (bits, ne, nm, p1, p2) = (r(4) as u32, r(8), r(12), r(16), r(20));
+        let (bits, ne, nm, p1, p2) = (kome::le::u32::<4, 24>(h), kome::le::u32::<8, 24>(h) as usize, kome::le::u32::<12, 24>(h) as usize, kome::le::u32::<16, 24>(h) as usize, kome::le::u32::<20, 24>(h) as usize);
         if ne == 0 || ne > 8 || nm == 0 || b.len() as u64 != blob_need(kind, ne as u32, nm as u32, p1 as u32, p2 as u32) || (kind != Blob::Public && (p1 == 0 || p2 == 0)) {
             return Err(NTE_BAD_DATA);
         }
@@ -533,12 +532,14 @@ fn prehash(curve: Curve, hash: &[u8]) -> Vec<u8> {
 }
 
 impl Ecc {
-    pub fn generate(curve: Curve, ecdsa: bool) -> Ecc {
+    /// a new key pair; None when the curve's library gives no point of x and y (no uncompressed
+    /// encoding of the public key)
+    pub fn generate(curve: Curve, ecdsa: bool) -> Option<Ecc> {
         on_curve!(curve, m => {
             use m::elliptic_curve::sec1::ToEncodedPoint;
             let sk = m::SecretKey::random(&mut Rng);
             let pt = sk.public_key().to_encoded_point(false);
-            Ecc { curve, ecdsa, x: pt.x().unwrap().to_vec(), y: pt.y().unwrap().to_vec(), d: Some(sk.to_bytes().to_vec()) }
+            Some(Ecc { curve, ecdsa, x: pt.x()?.to_vec(), y: pt.y()?.to_vec(), d: Some(sk.to_bytes().to_vec()) })
         })
     }
     /// Checks the point is on the curve and the scalar gives it
@@ -568,12 +569,14 @@ impl Ecc {
         if b.len() < 8 {
             return Err(NTE_NOT_SUPPORTED);
         }
-        let magic = u32::from_le_bytes(b[0..4].try_into().unwrap());
+        let (Some(magic), Some(n)) = (kome::le::u32_at(b, 0), kome::le::u32_at(b, 4)) else {
+            return Err(NTE_NOT_SUPPORTED);
+        };
         let Some((curve, ecdsa, is_priv)) = ecc_of_magic(magic) else { return Err(NTE_INVALID_PARAMETER) };
         if private.is_some_and(|p| p != is_priv) {
             return Err(NTE_INVALID_PARAMETER);
         }
-        let n = u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize;
+        let n = n as usize;
         if n != curve.size() || b.len() != 8 + n * (2 + is_priv as usize) {
             return Err(NTE_NOT_SUPPORTED);
         }
@@ -587,15 +590,17 @@ impl Ecc {
         Self::from_blob(b, Some(private)).map_err(|_| STATUS_INVALID_PARAMETER)
     }
     pub fn to_blob(&self, private: bool) -> Result<Vec<u8>, u32> {
-        if private && self.d.is_none() {
-            return Err(NTE_INVALID_PARAMETER);
-        }
+        let d = match (private, &self.d) {
+            (true, None) => return Err(NTE_INVALID_PARAMETER),
+            (true, Some(d)) => Some(d),
+            (false, _) => None,
+        };
         let mut out = ecc_magic(self.curve, self.ecdsa, private).to_le_bytes().to_vec();
         out.extend_from_slice(&(self.curve.size() as u32).to_le_bytes());
         out.extend_from_slice(&self.x);
         out.extend_from_slice(&self.y);
-        if private {
-            out.extend_from_slice(self.d.as_ref().unwrap());
+        if let Some(d) = d {
+            out.extend_from_slice(d);
         }
         Ok(out)
     }
@@ -932,7 +937,8 @@ fn NCryptCreatePersistedKey(c: &mut Ctx) -> u32 {
     if fl & !(SILENT | OVERWRITE | MACHINE_KEY) != 0 {
         return NTE_BAD_FLAGS;
     }
-    let Some(info) = alg(&wname(a).unwrap()) else { return NTE_NOT_SUPPORTED };
+    let Some(a) = wname(a) else { return NULL_REF };
+    let Some(info) = alg(&a) else { return NTE_NOT_SUPPORTED };
     let name = wname(name);
     if let Some(n) = &name && fl & OVERWRITE == 0 && with(|s| s.store.contains_key(&n.to_lowercase())) {
         return NTE_EXISTS;
@@ -958,8 +964,8 @@ fn NCryptFinalizeKey(c: &mut Ctx) -> u32 {
     }
     if let Some((_, ecdsa)) = Curve::of_alg(k.alg) && k.ecc.is_none() {
         // (the generic ECDSA / ECDH need ECCCurveName first)
-        let Some(curve) = k.curve else { return NTE_INVALID_PARAMETER };
-        k.ecc = Some(Arc::new(Ecc::generate(curve, ecdsa)));
+        let Some(e) = k.curve.and_then(|curve| Ecc::generate(curve, ecdsa)) else { return NTE_INVALID_PARAMETER };
+        k.ecc = Some(Arc::new(e));
     }
     k.finalized = true;
     with(|s| {
@@ -981,7 +987,7 @@ fn NCryptOpenKey(c: &mut Ctx) -> u32 {
     if out.is_null() || name == 0 {
         return NULL_REF;
     }
-    let n = wname(name).unwrap().to_lowercase();
+    let Some(n) = wname(name).map(|n| n.to_lowercase()) else { return NULL_REF };
     match with(|s| s.store.get(&n).cloned()) {
         Some(mut k) => {
             k.prov = p;
@@ -1055,9 +1061,9 @@ fn NCryptImportKey(c: &mut Ctx) -> u32 {
     if wrap != 0 {
         return NTE_NOT_SUPPORTED;
     }
-    let bname = wname(bt).unwrap();
+    let Some(bname) = wname(bt) else { return NULL_REF };
     let raw = bytes(data, size);
-    let magic = raw.get(..4).map_or(0, |m| u32::from_le_bytes(m.try_into().unwrap()));
+    let magic = kome::le::u32_at(&raw, 0).unwrap_or(0);
     let generic = matches!(bname.as_str(), "PUBLICBLOB" | "PRIVATEBLOB");
     let (alg_name, bits, rsa, ecc) = if matches!(bname.as_str(), "ECCPUBLICBLOB" | "ECCPRIVATEBLOB") || (generic && ecc_of_magic(magic).is_some()) {
         let private = !bname.contains("PUBLIC");
@@ -1108,7 +1114,7 @@ fn NCryptExportKey(c: &mut Ctx) -> u32 {
     if wrap != 0 {
         return NTE_NOT_SUPPORTED;
     }
-    let bname = wname(bt).unwrap();
+    let Some(bname) = wname(bt) else { return NULL_REF };
     let private = match bname.as_str() {
         "RSAPUBLICBLOB" | "PUBLICBLOB" | "ECCPUBLICBLOB" => false,
         "RSAPRIVATEBLOB" | "RSAFULLPRIVATEBLOB" | "PRIVATEBLOB" | "ECCPRIVATEBLOB" => true,
@@ -1121,7 +1127,10 @@ fn NCryptExportKey(c: &mut Ctx) -> u32 {
         return NTE_NOT_SUPPORTED;
     }
     let blob = match (&k.rsa, &k.ecc) {
-        (Some(r), _) if !bname.starts_with("ECC") => r.to_blob(Blob::from_name(&bname).unwrap().0, k.bits),
+        (Some(r), _) if !bname.starts_with("ECC") => match Blob::from_name(&bname) {
+            Some((kind, _)) => r.to_blob(kind, k.bits),
+            None => return NTE_NOT_SUPPORTED,
+        },
         (_, Some(e)) if !bname.starts_with("RSA") => e.to_blob(private),
         _ => return NTE_NOT_SUPPORTED,
     };
@@ -1145,7 +1154,7 @@ fn property(h: u32, name: &str) -> Result<Vec<u8>, u32> {
         };
     }
     let Some(k) = key(h) else { return Err(NTE_INVALID_HANDLE) };
-    let info = alg(k.alg).unwrap();
+    let info = alg(k.alg).ok_or(NTE_INVALID_HANDLE)?;
     let block = if info.1 == 1 { if k.alg == "AES" { 16 } else { 8 } } else { k.bits.div_ceil(8) };
     match name {
         "Name" | "Unique Name" => k.name.as_deref().map(w).ok_or(NTE_NOT_SUPPORTED),
@@ -1177,7 +1186,8 @@ fn NCryptGetProperty(c: &mut Ctx) -> u32 {
     if n == 0 || res == 0 {
         return NULL_REF;
     }
-    match property(h, &wname(n).unwrap()) {
+    let Some(n) = wname(n) else { return NULL_REF };
+    match property(h, &n) {
         Ok(v) => give(out, outlen, res, &v),
         Err(e) => e,
     }
@@ -1192,7 +1202,7 @@ fn NCryptSetProperty(c: &mut Ctx) -> u32 {
     if n == 0 {
         return NULL_REF;
     }
-    let name = wname(n).unwrap();
+    let Some(name) = wname(n) else { return NULL_REF };
     if is_prov(h) {
         return if matches!(name.as_str(), "HWND Handle" | "Use Context") { 0 } else { NTE_NOT_SUPPORTED };
     }
@@ -1204,11 +1214,11 @@ fn NCryptSetProperty(c: &mut Ctx) -> u32 {
     match name.as_str() {
         "Length" => {
             let Some(v) = dword() else { return NTE_INVALID_PARAMETER };
-            let k = key(h).unwrap();
+            let Some(k) = key(h) else { return NTE_INVALID_HANDLE };
             if k.finalized {
                 return 0; // (a finalized key keeps its length)
             }
-            let l = alg(k.alg).unwrap().5;
+            let Some(&(.., l)) = alg(k.alg) else { return NTE_INVALID_HANDLE };
             if v < l[0] || v > l[1] || (l[2] != 0 && (v - l[0]) % l[2] != 0) {
                 return NTE_INVALID_PARAMETER;
             }
@@ -1216,7 +1226,7 @@ fn NCryptSetProperty(c: &mut Ctx) -> u32 {
         }
         "Export Policy" => {
             let Some(v) = dword() else { return NTE_INVALID_PARAMETER };
-            if key(h).unwrap().finalized {
+            if key(h).is_none_or(|k| k.finalized) {
                 return NTE_PERM;
             }
             set(&|k| k.export = v)
@@ -1227,7 +1237,7 @@ fn NCryptSetProperty(c: &mut Ctx) -> u32 {
         }
         // the generic ECDSA / ECDH's curve, before finalizing
         "ECCCurveName" => {
-            let k = key(h).unwrap();
+            let Some(k) = key(h) else { return NTE_INVALID_HANDLE };
             if Curve::of_alg(k.alg).is_none_or(|c| c.0.is_some()) {
                 return NTE_NOT_SUPPORTED;
             }
@@ -1568,8 +1578,9 @@ fn BCryptOpenAlgorithmProvider(c: &mut Ctx) -> u32 {
     if out.is_null() || name == 0 {
         return STATUS_INVALID_PARAMETER;
     }
+    let Some(name) = wname(name) else { return STATUS_INVALID_PARAMETER };
     let h = new_handle();
-    ALG_HANDLES.locked().push((h, wname(name).unwrap()));
+    ALG_HANDLES.locked().push((h, name));
     out.put(h);
     0
 }
@@ -1626,8 +1637,8 @@ fn BCryptFinalizeKeyPair(c: &mut Ctx) -> u32 {
             Err(e) => return nt(e),
         }
     } else if let Some((_, ecdsa)) = Curve::of_alg(k.alg) {
-        let Some(curve) = k.curve else { return STATUS_INVALID_PARAMETER };
-        k.ecc = Some(Arc::new(Ecc::generate(curve, ecdsa)));
+        let Some(e) = k.curve.and_then(|curve| Ecc::generate(curve, ecdsa)) else { return STATUS_INVALID_PARAMETER };
+        k.ecc = Some(Arc::new(e));
     }
     k.finalized = true;
     with(|s| s.keys.insert(h, k));
@@ -1648,7 +1659,7 @@ fn BCryptImportKeyPair(c: &mut Ctx) -> u32 {
     if wrap != 0 {
         return STATUS_NOT_SUPPORTED;
     }
-    let bname = wname(bt).unwrap();
+    let Some(bname) = wname(bt) else { return STATUS_INVALID_PARAMETER };
     let raw = bytes(data, size);
     let (bits, rsa, ecc) = if let Some((curve, ecdsa)) = Curve::of_alg(a.0) {
         let private = match bname.as_str() {
@@ -1691,7 +1702,7 @@ fn BCryptExportKey(c: &mut Ctx) -> u32 {
     if !k.finalized {
         return STATUS_INVALID_HANDLE;
     }
-    let bname = wname(bt).unwrap();
+    let Some(bname) = wname(bt) else { return STATUS_INVALID_PARAMETER };
     let blob = match (&k.rsa, &k.ecc) {
         (Some(r), _) => match Blob::from_name(&bname) {
             Some((kind, _)) => r.to_blob(kind, k.bits),
@@ -1948,7 +1959,7 @@ mod tests {
         // BCRYPT_ECCKEY_BLOB sizes: 8 + 2 (public) or 3 (private) coordinates
         for (curve, n) in [(Curve::P256, 32), (Curve::P384, 48), (Curve::P521, 66)] {
             for ecdsa in [true, false] {
-                let k = Ecc::generate(curve, ecdsa);
+                let k = Ecc::generate(curve, ecdsa).unwrap();
                 let (pubb, privb) = (k.to_blob(false).unwrap(), k.to_blob(true).unwrap());
                 assert_eq!((pubb.len(), privb.len()), (8 + 2 * n, 8 + 3 * n));
                 // magics: ECS1/ECS2 for P-256 ECDSA ... ECK5/ECK6 for P-521 ECDH
@@ -1985,7 +1996,7 @@ mod tests {
     #[test]
     fn ecdsa_and_ecdh() {
         for curve in Curve::ALL {
-            let k = Ecc::generate(curve, true);
+            let k = Ecc::generate(curve, true).unwrap();
             for h in [Hash::Sha1, Hash::Sha256, Hash::Sha384, Hash::Sha512] {
                 let d = digest(h, &[b"sake"]);
                 let s = k.sign(&d).unwrap();
@@ -2001,14 +2012,14 @@ mod tests {
                 assert_eq!(k.verify(&d2, &s).unwrap_err(), NTE_BAD_SIGNATURE);
             }
             // ECDH keys agree, ECDSA keys do not; ECDH keys do not sign
-            let (a, b) = (Ecc::generate(curve, false), Ecc::generate(curve, false));
+            let (a, b) = (Ecc::generate(curve, false).unwrap(), Ecc::generate(curve, false).unwrap());
             let z = a.agree(&b).unwrap();
             assert_eq!(z.len(), curve.size());
             assert_eq!(z, b.agree(&a).unwrap());
             assert!(k.agree(&b).is_err());
             assert_eq!(a.sign(&[0; 32]).unwrap_err(), NTE_NOT_SUPPORTED);
             let other = Curve::ALL[(curve as usize + 1) % 3];
-            assert!(a.agree(&Ecc::generate(other, false)).is_err());
+            assert!(a.agree(&Ecc::generate(other, false).unwrap()).is_err());
         }
     }
 
@@ -2035,7 +2046,7 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(48))]
         #[test]
         fn pbt_ecdsa_binds_hash(seed in any::<u64>(), flip in 0usize..32) {
-            let k = Ecc::generate(Curve::P256, true);
+            let k = Ecc::generate(Curve::P256, true).unwrap();
             let d = digest(Hash::Sha256, &[&seed.to_le_bytes()]);
             let s = k.sign(&d).unwrap();
             prop_assert!(k.verify(&d, &s).is_ok());

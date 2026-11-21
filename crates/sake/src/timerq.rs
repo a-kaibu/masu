@@ -343,7 +343,7 @@ fn DeleteTimerQueueEx(c: &mut Ctx) -> u32 {
     }
     let how = completion(ev);
     let now = Instant::now();
-    let (ts, evs) = with(|s| {
+    let done = with(|s| {
         let ts: Vec<u32> = s.timers.iter().filter(|(_, t)| t.queue == q).map(|(&h, _)| h).collect();
         let mut evs = Vec::new();
         for h in &ts {
@@ -352,14 +352,19 @@ fn DeleteTimerQueueEx(c: &mut Ctx) -> u32 {
                 let _ = tm.delete(now, Completion::Wait);
             }
         }
-        let entry = s.queues.get_mut(&q).unwrap();
+        // (a queue another thread deleted since the check: none to delete)
+        let entry = s.queues.get_mut(&q)?;
         entry.0 = true;
         if let Completion::Event(e) = how {
             entry.1.push(e);
         }
         evs.extend(queue_done(s, q));
-        (ts, evs)
+        Some((ts, evs))
     });
+    let Some((ts, evs)) = done else {
+        last_error(ERROR_INVALID_HANDLE);
+        return 0;
+    };
     for &t in &ts {
         settle(t);
     }

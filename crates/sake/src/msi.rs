@@ -625,8 +625,10 @@ fn db_export(c: &mut Ctx, wide: bool) -> u32 {
     }
     for (rel, data) in files {
         let p = join(&folder, &rel.replace('/', "\\"));
-        let dir = p.rsplit_once('\\').unwrap().0.to_string();
-        let _ = kura::fs::create_dir_all(crate::files::resolve_new(&dir));
+        // (p is folder\rel: it has a parent)
+        if let Some((dir, _)) = p.rsplit_once('\\') {
+            let _ = kura::fs::create_dir_all(crate::files::resolve_new(dir));
+        }
         let _ = kura::fs::write(crate::files::resolve_new(&p), data);
     }
     ERROR_SUCCESS

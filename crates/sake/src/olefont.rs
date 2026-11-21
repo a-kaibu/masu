@@ -139,15 +139,15 @@ fn change(this: u32, id: u32, value: u64) -> u32 {
         None
     };
     with(this, |f| {
-        match id {
-            0 => f.props.name = name.unwrap(),
-            2 => f.props.size = value as i64,
-            3 => f.props.weight = if value != 0 { 700 } else { 400 },
-            4 => f.props.italic = value != 0,
-            5 => f.props.underline = value != 0,
-            6 => f.props.strike = value != 0,
-            7 => f.props.weight = value as i16,
-            8 => f.props.charset = value as i16,
+        match (id, name) {
+            (0, Some(n)) => f.props.name = n,
+            (2, _) => f.props.size = value as i64,
+            (3, _) => f.props.weight = if value != 0 { 700 } else { 400 },
+            (4, _) => f.props.italic = value != 0,
+            (5, _) => f.props.underline = value != 0,
+            (6, _) => f.props.strike = value != 0,
+            (7, _) => f.props.weight = value as i16,
+            (8, _) => f.props.charset = value as i16,
             _ => return INVALID,
         }
         f.current = 0;

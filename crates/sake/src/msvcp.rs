@@ -165,7 +165,8 @@ pub fn x86_names(n: &str) -> Vec<String> {
     if !out.ends_with(b"Z") && out.len() >= 2 && out[out.len() - 2] == b'E' && matches!(out[out.len() - 1], b'A' | b'B') {
         out.remove(out.len() - 2);
     }
-    let s = String::from_utf8(out).unwrap();
+    // (the name's bytes less ASCII ones: UTF-8 still)
+    let s = String::from_utf8_lossy(&out).into_owned();
     // (then the __cdecl spellings of a member: its `this` is stack argument 0)
     let mut bases = vec![s.clone()];
     if let Some(at) = member {

@@ -32,7 +32,7 @@ fn ensure(name: &str) -> Result<(), u32> {
     }
     let p = path(&key);
     let number = |name| crate::misc::registry_value(&p, name).and_then(|(ty, b)|
-        (ty == 4 && b.len() == 4).then(|| u32::from_le_bytes(b.try_into().unwrap())));
+        (ty == 4).then_some(b).and_then(|b| <[u8; 4]>::try_from(b.as_slice()).ok()).map(u32::from_le_bytes));
     let ty = number("Type").ok_or(1060u32)?;
     let start = number("Start").unwrap_or(3);
     let image = crate::misc::registry_string(&p, "ImagePath").ok_or(1060u32)?;
@@ -271,7 +271,7 @@ fn QueryServiceConfigW(c: &mut Ctx) -> u32 { query_config(c, true) }
 struct Active { name: String, main: u32, wide: bool, handler: u32, extended: bool, context: u32, token: u32 }
 static ACTIVE: Mutex<Option<Active>> = Mutex::new(None);
 fn main_thread(c: &mut Ctx) -> u32 {
-    let (name, main, wide) = { let a = ACTIVE.locked(); let a = a.as_ref().unwrap(); (a.name.clone(), a.main, a.wide) };
+    let Some((name, main, wide)) = ACTIVE.locked().as_ref().map(|a| (a.name.clone(), a.main, a.wide)) else { return 0 };
     let Some(s) = kern::with(|k| k.services.get(&name).cloned()).0 else { return 0 };
     let args: Vec<String> = std::iter::once(s.name).chain(s.args).collect();
     let argv = mem::heap_alloc((args.len() as u32 + 1) * mem::ps(), true);
@@ -329,9 +329,7 @@ fn dispatcher(c: &mut Ctx, wide: bool) -> u32 {
             }
         });
         if let Some((id, code)) = work.1 {
-            let (handler, extended, context) = {
-                let active = ACTIVE.locked(); let a = active.as_ref().unwrap(); (a.handler, a.extended, a.context)
-            };
+            let (handler, extended, context) = ACTIVE.locked().as_ref().map_or((0, false, 0), |a| (a.handler, a.extended, a.context));
             let result = if handler == 0 { 1061 } else if extended {
                 crate::call(c.cpu, handler, &[code, 0, 0, context])
             } else { crate::call(c.cpu, handler, &[code]); 0 };

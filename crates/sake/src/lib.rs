@@ -1016,6 +1016,13 @@ fn setup64(cpu: &mut Cpu, start: u32, param: u32) {
 }
 
 /// The program: `exe` is its host path.
+/// The process cannot start: why, and exit code 2 (as a load_exe error).
+#[cold]
+fn start_failed(exe: &str, why: &str) -> ! {
+    eprintln!("sake: {exe}: {why}");
+    unsafe { libc::exit(2) }
+}
+
 pub fn main(exe: &str, args: &[String]) -> ! {
     #[cfg(target_arch = "wasm32")]
     kura::wrap::load_init();
@@ -1147,13 +1154,13 @@ pub fn main(exe: &str, args: &[String]) -> ! {
             obj::HANDOFF.progressed(t.tid);
         }
     });
-    let peb = mem::reserve(0, 0x2000, 4, 0x20000, true).expect("PEB");
+    let Some(peb) = mem::reserve(0, 0x2000, 4, 0x20000, true) else { start_failed(exe, "no room for the PEB") };
     mem::commit(peb, 4);
     PEB.store(peb, Ordering::Relaxed);
     if let Some(r) = kura::fs::read_head(exe, 1 << 16).ok().as_deref().and_then(pe::stack_reserve) {
         STACK_RESERVE.store(r, Ordering::Relaxed);
     }
-    let t = enter(pe::thread_stack(STACK_RESERVE.load(Ordering::Relaxed), 0, 0), obj::new_thread_obj).expect("the main thread's TEB and stack");
+    let Some(t) = enter(pe::thread_stack(STACK_RESERVE.load(Ordering::Relaxed), 0, 0), obj::new_thread_obj) else { start_failed(exe, "no room for the main thread's TEB and stack") };
     let cpu = unsafe { &mut *t.cpu };
     let wpath = files::host_to_win(exe);
     k32::set_command_line(&wpath, args);
@@ -1180,10 +1187,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     }
     let base = match pe::load_exe(cpu, exe, &wpath) {
         Ok(b) => b,
-        Err(e) => {
-            eprintln!("sake: {exe}: {e}");
-            unsafe { libc::exit(2) }
-        }
+        Err(e) => start_failed(exe, &e.to_string()),
     };
     let x64 = mem::x64();
     let pp = peb + 0x1000;
@@ -1227,7 +1231,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     ustr(pp + cmd, cmdlen, wcmd);
     // the window title (STARTUPINFO lpTitle) is the image path when the parent gave none
     ustr(pp + if x64 { 0xb0 } else { 0x70 }, 2 * wpath16.len() as u32, wp);
-    let entry = pe::with(base, |m| m.entry).unwrap();
+    let Some(entry) = pe::with(base, |m| m.entry) else { start_failed(exe, "the image is not among the loaded modules") };
     // (a process created suspended has its image mapped and its PEB filled, as on Windows,
     // where the parent reads both before ResumeThread: kernel32:loader; nothing of it runs yet)
     if suspended {

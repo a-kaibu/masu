@@ -379,7 +379,7 @@ fn proxy_qi(c: &mut Ctx) -> u32 {
     let mut call = request(&proxy, 2); call.iid = iid.clone();
     let reply = call_remote(c.cpu, call);
     if reply.hr != 0 { return reply.hr; }
-    let Some(id) = reply.data.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap())) else { return BAD_DATA };
+    let Some(id) = kome::le::u32_at(&reply.data, 0) else { return BAD_DATA };
     match make_proxy(c.cpu, proxy.pid, proxy.tid, id, &iid) { Ok(p) => { wp(out, p); 0 }, Err(hr) => hr }
 }
 fn proxy_ref(cpu: &mut koji::Cpu, this: u32, add: bool) -> u32 {
@@ -499,7 +499,7 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
     let reply = call_remote(cpu, Call { from: crate::pid(), to: target.pid, tid: target.tid,
         class: text(&class), iid: iid.clone(), ..Default::default() });
     if reply.hr != 0 { return reply.hr; }
-    let Some(object) = reply.data.get(..4).map(|b| u32::from_le_bytes(b.try_into().unwrap())) else { return BAD_DATA };
+    let Some(object) = kome::le::u32_at(&reply.data, 0) else { return BAD_DATA };
     match make_proxy(cpu, target.pid, target.tid, object, &iid) { Ok(p) => { out.put(p); 0 }, Err(hr) => hr }
 }
 fn CoRegisterClassObject(c: &mut Ctx) -> u32 {

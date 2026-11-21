@@ -134,7 +134,7 @@ fn rd16(d: &[u8], o: usize, k: usize) -> u32 {
     at(d, o, k, 2).map_or(0, |b| u16::from_le_bytes([b[0], b[1]])) as u32
 }
 fn rd32(d: &[u8], o: usize, k: usize) -> u32 {
-    at(d, o, k, 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+    at(d, o, k, 4).and_then(|b| kome::le::u32_at(b, 0)).unwrap_or(0)
 }
 
 /// Parses a CTAB body into a table.
@@ -823,7 +823,7 @@ fn D3DXGetShaderSamplers(c: &mut Ctx) -> u32 {
 fn semantics(c: &mut Ctx, output: bool) -> u32 {
     let (out, count) = (c.a(1), c.a(2));
     let code = shader_at(c.a(0));
-    let w = |i: usize| code.get(4 * i..4 * i + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+    let w = |i: usize| kome::le::u32_at(&code, 4 * i).unwrap_or(0);
     let ver = w(0);
     let pixel = ver >> 16 == 0xffff;
     let major = (ver >> 8) & 0xff;

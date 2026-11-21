@@ -50,8 +50,8 @@ impl Asm {
         self.u32(0)
     }
     /// Places the code in guest memory.
-    fn place(&mut self) -> u32 {
-        let at = code_alloc(self.b.len() as u32);
+    fn place(&mut self) -> Option<u32> {
+        let at = code_alloc(self.b.len() as u32)?;
         for &(p, l) in &self.rel8 {
             let d = self.labels[l] as i64 - (p as i64 + 1);
             assert!((-128..128).contains(&d), "fast: jump too far");
@@ -64,29 +64,29 @@ impl Asm {
         for (i, &v) in self.b.iter().enumerate() {
             mem::w8(at + i as u32, v);
         }
-        at
+        Some(at)
     }
 }
 
 /// Room for the stubs: read+execute pages VirtualQuery calls MEM_IMAGE, as the system DLL code
 /// they stand for is on Windows (programs that check their imports look: tests/apiimage.c;
 /// KiriKiri's signed-plugin check wants kernel32's functions committed image code).
-fn code_alloc(n: u32) -> u32 {
+fn code_alloc(n: u32) -> Option<u32> {
     static ARENA: Mutex<(u32, u32)> = Mutex::new((0, 0));
     const SIZE: u32 = 0x10000;
     let n = (n + 15) & !15;
     let mut a = ARENA.locked();
     if a.0 == 0 || a.1 + n > SIZE {
-        let base = mem::reserve(0, SIZE.max(n), 0x20, 0x100_0000, true).expect("fast: no room for the stubs");
+        let base = mem::reserve(0, SIZE.max(n), 0x20, 0x100_0000, true)?;
         mem::commit_range(base, SIZE.max(n), 0x20);
         *a = (base, 0);
     }
     let at = a.0 + a.1;
     a.1 += n;
-    at
+    Some(at)
 }
 
-fn enter_cs(trap: u32) -> u32 {
+fn enter_cs(trap: u32) -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x4c, 0x24, 0x04]) // mov ecx,[esp+4]
         .x(&[0x64, 0x8b, 0x15, 0x24, 0, 0, 0]) // mov edx,fs:[0x24] (thread id)
@@ -108,7 +108,7 @@ fn enter_cs(trap: u32) -> u32 {
     a.place()
 }
 
-fn leave_cs(wake: u32) -> u32 {
+fn leave_cs(wake: u32) -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x4c, 0x24, 0x04]) // mov ecx,[esp+4]
         .x(&[0x8b, 0x41, 0x08]) // mov eax,[ecx+8]
@@ -130,7 +130,7 @@ fn leave_cs(wake: u32) -> u32 {
     a.place()
 }
 
-fn is_dbcs_lead_byte() -> u32 {
+fn is_dbcs_lead_byte() -> Option<u32> {
     let table = mem::heap_alloc(256, true);
     for b in 0..=255u8 {
         mem::w8(table + b as u32, crate::text::is_lead(b) as u8);
@@ -143,13 +143,13 @@ fn is_dbcs_lead_byte() -> u32 {
     a.place()
 }
 
-fn get_last_error() -> u32 {
+fn get_last_error() -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x64, 0xa1, 0x34, 0, 0, 0]).x(&[0xc3]); // mov eax,fs:[0x34]; ret
     a.place()
 }
 
-fn set_last_error() -> u32 {
+fn set_last_error() -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x44, 0x24, 0x04]) // mov eax,[esp+4]
         .x(&[0x64, 0xa3, 0x34, 0, 0, 0]) // mov fs:[0x34],eax
@@ -157,7 +157,7 @@ fn set_last_error() -> u32 {
     a.place()
 }
 
-fn tls_get_value(trap: u32) -> u32 {
+fn tls_get_value(trap: u32) -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x44, 0x24, 0x04]) // mov eax,[esp+4]
         .x(&[0x83, 0xf8, 0x40]) // cmp eax,64
@@ -173,7 +173,7 @@ fn tls_get_value(trap: u32) -> u32 {
 // user32's RECT helpers (CatSystem2 calls IntersectRect / IsRectEmpty / SetRectEmpty ~150k
 // times a second)
 
-fn is_rect_empty() -> u32 {
+fn is_rect_empty() -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x4c, 0x24, 0x04, 0x85, 0xc9]) // mov ecx,[esp+4]; test ecx,ecx (NULL: empty)
         .j8(0x74, "empty")
@@ -187,7 +187,7 @@ fn is_rect_empty() -> u32 {
     a.place()
 }
 
-fn set_rect_empty() -> u32 {
+fn set_rect_empty() -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x44, 0x24, 0x04, 0x85, 0xc0]) // mov eax,[esp+4]; test eax,eax; jz
         .j8(0x74, "null")
@@ -199,7 +199,7 @@ fn set_rect_empty() -> u32 {
     a.place()
 }
 
-fn set_rect() -> u32 {
+fn set_rect() -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x44, 0x24, 0x04, 0x85, 0xc0]).j8(0x74, "null"); // mov eax,[esp+4]; test eax,eax; jz
     for k in 0..4u8 {
@@ -209,7 +209,7 @@ fn set_rect() -> u32 {
     a.place()
 }
 
-fn copy_rect() -> u32 {
+fn copy_rect() -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x44, 0x24, 0x04, 0x8b, 0x54, 0x24, 0x08]); // mov eax,[esp+4]; mov edx,[esp+8]
     // (a NULL rectangle: FALSE, as user32 answers; 肉牝Ｒ３０ copies from one)
@@ -221,7 +221,7 @@ fn copy_rect() -> u32 {
     a.place()
 }
 
-fn offset_rect() -> u32 {
+fn offset_rect() -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x44, 0x24, 0x04, 0x8b, 0x4c, 0x24, 0x08, 0x8b, 0x54, 0x24, 0x0c]) // eax=rc ecx=dx edx=dy
         .x(&[0x85, 0xc0])
@@ -233,7 +233,7 @@ fn offset_rect() -> u32 {
     a.place()
 }
 
-fn intersect_rect() -> u32 {
+fn intersect_rect() -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x56, 0x57]) // push esi; push edi
         .x(&[0x8b, 0x7c, 0x24, 0x0c, 0x8b, 0x54, 0x24, 0x10, 0x8b, 0x4c, 0x24, 0x14]) // edi=dst edx=a ecx=b
@@ -263,7 +263,7 @@ fn intersect_rect() -> u32 {
 }
 
 /// msvcrt's _errno / __doserrno: per-thread words in the TEB's free page (crt::ERRNO_TEB)
-fn errno_ptr(off: u32) -> u32 {
+fn errno_ptr(off: u32) -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x64, 0xa1, 0x18, 0, 0, 0]) // mov eax,fs:[0x18]
         .x(&[0x05])
@@ -295,7 +295,7 @@ fn unlock(a: &mut Asm, t: u32) {
 
 /// HeapAlloc(heap, flags, size) (size at esp+12, flags at esp+8, ret 12) or malloc(size)
 /// (esp+4, ret 0)
-fn slab_alloc(trap: u32, size_at: u8, flags_at: Option<u8>, ret: u16) -> u32 {
+fn slab_alloc(trap: u32, size_at: u8, flags_at: Option<u8>, ret: u16) -> Option<u32> {
     let t = mem::slab_table();
     let mut a = Asm::default();
     a.x(&[0x8b, 0x54, 0x24, size_at]) // mov edx,[esp+size]
@@ -347,7 +347,7 @@ fn slab_alloc(trap: u32, size_at: u8, flags_at: Option<u8>, ret: u16) -> u32 {
 }
 
 /// HeapFree(heap, flags, p) (p at esp+12, returns TRUE, ret 12) or free(p) (esp+4, ret 0)
-fn slab_free(trap: u32, p_at: u8, ret: u16) -> u32 {
+fn slab_free(trap: u32, p_at: u8, ret: u16) -> Option<u32> {
     let t = mem::slab_table();
     let mut a = Asm::default();
     a.x(&[0x8b, 0x44, 0x24, p_at]) // mov eax,[esp+p]
@@ -380,7 +380,7 @@ fn slab_free(trap: u32, p_at: u8, ret: u16) -> u32 {
 }
 
 /// HeapReAlloc(heap, flags, p, size) of a small block within its class: in place
-fn slab_realloc(trap: u32) -> u32 {
+fn slab_realloc(trap: u32) -> Option<u32> {
     let mut a = Asm::default();
     a.x(&[0x8b, 0x44, 0x24, 0x0c]) // mov eax,[esp+12]
         .x(&[0x85, 0xc0])
@@ -466,8 +466,10 @@ pub fn bind(dll: &str, name: &str, trap: u32) -> u32 {
         "HeapReAlloc" | "RtlReAllocateHeap" => slab_realloc(trap),
         "malloc" => slab_alloc(trap, 4, None, 0),
         "free" => slab_free(trap, 4, 0),
-        _ => return trap,
+        _ => None,
     };
+    // (no room left for a stub: the trap, which does the same work)
+    let Some(a) = a else { return trap };
     m.insert(name.to_string(), a);
     a
 }
@@ -492,7 +494,7 @@ mod slab_tests {
 
     fn stubs() -> &'static Stubs {
         static S: std::sync::OnceLock<Stubs> = std::sync::OnceLock::new();
-        S.get_or_init(|| Stubs { alloc: slab_alloc(SLOW, 12, Some(8), 12), free: slab_free(SLOW, 12, 12), realloc: slab_realloc(SLOW), stack: mem::heap_alloc(0x1000, true) })
+        S.get_or_init(|| Stubs { alloc: slab_alloc(SLOW, 12, Some(8), 12).unwrap(), free: slab_free(SLOW, 12, 12).unwrap(), realloc: slab_realloc(SLOW).unwrap(), stack: mem::heap_alloc(0x1000, true) })
     }
 
     /// Runs stdcall stub `at` with `args`: Some(eax) when it returned, None when it went to
