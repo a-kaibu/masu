@@ -47,10 +47,11 @@ pub enum Rule {
     TypedRegisters,
     NtdllOwnCrt,
     Utf8OneDecoder,
+    MessageOneFormatter,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 30] = [
+    pub const ALL: [Rule; 31] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -81,6 +82,7 @@ impl Rule {
         Rule::TypedRegisters,
         Rule::NtdllOwnCrt,
         Rule::Utf8OneDecoder,
+        Rule::MessageOneFormatter,
     ];
 
     /// the name a site list and a message use
@@ -116,6 +118,7 @@ impl Rule {
             Rule::TypedRegisters => "typed-registers",
             Rule::NtdllOwnCrt => "ntdll-own-crt",
             Rule::Utf8OneDecoder => "utf8-one-decoder",
+            Rule::MessageOneFormatter => "message-one-formatter",
         }
     }
 
@@ -150,6 +153,7 @@ impl Rule {
             Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
             Rule::Utf8OneDecoder => "sake decodes UTF-8 by one rule, Windows' (RtlUTF8ToUnicodeN: a wrong second byte is swallowed with its lead into one U+FFFD, not Unicode's maximal subparts; 2026-11-21, MultiByteToWideChar had its own): only rtlstr.rs splits bytes with utf8_chunks; elsewhere call crate::rtlstr::utf8_units",
+            Rule::MessageOneFormatter => "kernel32's FormatMessage formats as kernelbase does, with ntdll's RtlFormatMessageEx rule (2026-11-21: fmtmsg.rs had a printf and a line wrapper of its own and failed 328 of Wine's format_msg checks; one formatter makes both right): fmtmsg.rs calls rtlfmt::format and no printf",
             Rule::NtdllOwnCrt => "ntdll's C runtime is not msvcrt's (ASCII / Latin-1 tables, no base check in _itoa, wrapping atoi; 2026-11-20): each function win32.rs NTDLL_OWN_CRT lists keeps an implement(\"ntdll\", ..) of its own, else find_impl answers with msvcrt's",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
         }
@@ -187,6 +191,7 @@ impl Rule {
             Rule::TypedRegisters => typed_registers(tree),
             Rule::NtdllOwnCrt => crate::win32::ntdll_own_crt(tree),
             Rule::Utf8OneDecoder => crate::win32::utf8_one_decoder(tree),
+            Rule::MessageOneFormatter => crate::win32::message_one_formatter(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }

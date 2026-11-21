@@ -217,3 +217,116 @@ proptest! {
         }
     }
 }
+
+fn itu_bytes(units: &[u16]) -> Vec<u8> {
+    units.iter().flat_map(|u| u.to_le_bytes()).collect()
+}
+
+fn itu(b: &[u8], length: usize, mask: Option<u32>) -> (bool, u32) {
+    text_unicode(&b[..length.min(b.len()).min(512)], length as u32, None, mask)
+}
+
+/// Wine's ntdll:rtlstr test_RtlIsTextUnicode (Windows' answers), without a DBCS code page
+#[test]
+fn text_unicode_follows_windows() {
+    let w = |s: &str| -> Vec<u16> { s.encode_utf16().chain([0]).collect() };
+    let ascii = b"A simple string\0".to_vec();
+    assert!(!itu(&ascii, ascii.len(), None).0);
+    let unicode = itu_bytes(&w("A Unicode string"));
+    let n = unicode.len();
+    assert!(itu(&unicode, n, None).0);
+    assert!(!itu(&unicode, n - 1, None).0);
+    assert_eq!(itu(&unicode, n, Some(0xf)), (true, itu::STATISTICS | itu::CONTROLS));
+    assert_eq!(itu(&unicode, n, Some(0xf0)), (false, 0));
+    assert_eq!(itu(&unicode, n - 1, Some(itu::ODD_LENGTH)), (false, itu::ODD_LENGTH));
+    let swap = |v: &[u16]| -> Vec<u16> { v.iter().map(|u| u.swap_bytes()).collect() };
+    let mut be: Vec<u16> = vec![0xfffe];
+    be.extend(swap(&w("A Unicode string")));
+    let be = itu_bytes(&be);
+    assert!(!itu(&be, n + 2, None).0);
+    assert!(!itu(&be[2..], n, None).0);
+    assert_eq!(itu(&be[2..], n, Some(0xf0)).0, false);
+    assert_eq!(itu(&be, n + 2, Some(0xf0)), (false, itu::REVERSE_CONTROLS | itu::REVERSE_SIGNATURE));
+    let nc = w("AUnicodestring");
+    let unc = itu_bytes(&nc);
+    let mut benc: Vec<u16> = vec![0xfffe];
+    benc.extend(swap(&nc));
+    let benc = itu_bytes(&benc);
+    let m = unc.len();
+    let mixed = itu_bytes(&[9, 0x9000, 0x0d00, 10, 0]);
+    let c = Some(itu::CONTROLS);
+    let rc = Some(itu::REVERSE_CONTROLS);
+    assert_eq!(itu(&unc, m, c), (false, 0));
+    assert_eq!(itu(&benc, m, c), (false, 0));
+    assert_eq!(itu(&unicode, n, c), (true, itu::CONTROLS));
+    assert_eq!(itu(&benc, m + 2, c), (false, 0));
+    assert_eq!(itu(&mixed, mixed.len(), c), (true, itu::CONTROLS));
+    assert_eq!(itu(&benc, m, rc), (false, 0));
+    assert_eq!(itu(&unc, m, rc), (false, 0));
+    assert_eq!(itu(&unicode, n, rc), (false, 0));
+    assert_eq!(itu(&be, n + 2, rc), (false, itu::REVERSE_CONTROLS));
+    assert_eq!(itu(&mixed, mixed.len(), rc), (false, itu::REVERSE_CONTROLS));
+    assert_eq!(itu(&mixed, mixed.len(), Some(itu::CONTROLS | itu::REVERSE_CONTROLS)), (false, itu::CONTROLS | itu::REVERSE_CONTROLS));
+    assert!(!itu(&0x0d0au16.to_le_bytes(), 2, None).0);
+    assert_eq!(itu(&[0x41, 0x0a, 0x0d, 0x1d], 4, Some(itu::STATISTICS)), (true, itu::STATISTICS));
+}
+
+proptest::proptest! {
+    /// The flags only ever keep what the caller asked about, and the answer follows from them
+    /// alone (the same flags as the mask give the same answer)
+    #[test]
+    fn text_unicode_masks(b in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..600), mask in proptest::prelude::any::<u32>()) {
+        let length = b.len();
+        let (_, all) = itu(&b, length, None);
+        let (yes, got) = itu(&b, length, Some(mask));
+        if length >= 2 && !(length == 2 && b[0] != 0 && b[1] == 0) {
+            proptest::prop_assert_eq!(got, all & mask);
+            proptest::prop_assert_eq!(itu(&b, length, Some(got)), (yes, got));
+        }
+    }
+}
+
+/// Windows' case table (crate::nt_case, from kikizake's ntcase goldens): sorted both ways, one
+/// the other's inverse, and every pair one of Unicode's simple mappings (Windows leaves some
+/// out, adds none)
+#[test]
+fn case_table_is_a_subset_of_unicode_one_to_one() {
+    use crate::nt_case::{BY_LOWER, BY_UPPER};
+    assert!(BY_LOWER.windows(2).all(|w| w[0].0 < w[1].0));
+    assert!(BY_UPPER.windows(2).all(|w| w[0].0 < w[1].0));
+    let mut inv: Vec<(u16, u16)> = BY_UPPER.iter().map(|&(u, l)| (l, u)).collect();
+    inv.sort();
+    assert_eq!(inv, BY_LOWER.to_vec());
+    for &(l, u) in BY_LOWER.iter() {
+        // (Rust has full mappings: U+1F80's upper case is two letters, its simple one U+1F88,
+        // whose lower case is U+1F80)
+        let one = |c: u16, up: bool| {
+            let c = char::from_u32(u32::from(c)).unwrap();
+            let v: Vec<u32> = if up { c.to_uppercase().map(|x| x as u32).collect() } else { c.to_lowercase().map(|x| x as u32).collect() };
+            v
+        };
+        assert!(one(l, true) == [u32::from(u)] || one(u, false) == [u32::from(l)], "{l:04x} {u:04x}");
+    }
+    for x in 0..=u16::MAX {
+        assert_eq!(crate::nt::down(crate::nt::up(x)), if crate::nt::up(x) == x { crate::nt::down(x) } else { x }, "{x:04x}");
+    }
+}
+
+/// Wine's ntdll:rtlstr expectations (from Windows): Latin-1 upper case, U+00B5 and U+03F4 kept
+#[test]
+fn case_table_follows_wine_expectations() {
+    for ch in 0u16..=255 {
+        let want = match ch {
+            0x61..=0x7a => ch - 0x20,
+            0xe0..=0xfe if ch != 0xf7 => ch - 0x20,
+            0xff => 0x178,
+            _ => ch,
+        };
+        assert_eq!(crate::nt::up(ch), want, "{ch:02x}");
+    }
+    assert_eq!(crate::nt::down(0x3f4), 0x3f4);
+    assert_eq!(crate::nt::down(0x3f9), 0x3f2);
+    assert_eq!(crate::nt::down(0x3fd), 0x37b);
+    assert_eq!(crate::nt::up(0x131), 0x131);
+    assert_eq!(crate::nt::up(0x17f), 0x17f);
+}

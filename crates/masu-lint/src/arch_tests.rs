@@ -33,6 +33,7 @@ const GOOD_NTCRT: &str = concat!(
     "    implement(d, \"RtlCompareUnicodeStrings\", f); implement(d, \"RtlGUIDFromString\", f); implement(d, \"RtlStringFromGUID\", f);\n",
     "    implement(d, \"RtlUTF8ToUnicodeN\", f); implement(d, \"RtlUnicodeToUTF8N\", f); implement(d, \"RtlHashUnicodeString\", f);\n",
     "    implement(d, \"RtlUnicodeStringToAnsiString\", f); implement(d, \"RtlDowncaseUnicodeChar\", f);\n",
+    "    implement(d, \"RtlFormatMessage\", f); implement(d, \"RtlFormatMessageEx\", f); implement(d, \"RtlIsTextUnicode\", f);\n",
     "}\n",
 );
 
@@ -104,6 +105,11 @@ fn fixture(r: Rule) -> Fixture {
                 ("crates/sake/src/rtlstr.rs", "fn f(b: &[u8]) { for ch in b.utf8_chunks() {} }\n"),
             ],
             mutate: ("crates/sake/src/text.rs", |t| Some(t.replace("crate::rtlstr::utf8_units(s)", "{ let _ = s.utf8_chunks(); crate::rtlstr::utf8_units(s) }"))),
+        },
+        Rule::MessageOneFormatter => Fixture {
+            bad: &[("crates/sake/src/fmtmsg.rs", "fn format(s: &[u16]) -> Vec<u16> {\n    crt::fmt::format(s, m, &mut a)\n}\n")],
+            good: &[("crates/sake/src/fmtmsg.rs", "fn format(r: &Request) -> Outcome {\n    rtlfmt::format(r, &mut g) // not a printf\n}\n")],
+            mutate: ("crates/sake/src/fmtmsg.rs", |t| Some(t.replace("rtlfmt::format(", "crate::misc::printf("))),
         },
         Rule::BooleanArg => Fixture {
             bad: &[

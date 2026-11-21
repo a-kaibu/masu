@@ -1199,30 +1199,18 @@ fn nt_query_information_process(c: &mut Ctx) -> u32 {
 fn upcase(n: &str) -> Vec<u16> {
     n.encode_utf16().map(up).collect()
 }
-/// Windows' lower case of one UTF-16 unit (RtlDowncaseUnicodeChar; a unit whose lower case is
-/// not one unit stays)
+/// ntdll's lower case of a unit (RtlDowncaseUnicodeChar: Windows' table, crate::nt_case)
 pub fn down(u: u16) -> u16 {
-    match char::from_u32(u32::from(u)) {
-        Some(c) => {
-            let mut it = c.to_lowercase();
-            match (it.next(), it.next()) {
-                (Some(x), None) if u32::from(x) < 0x10000 => kome::num::lo16(u32::from(x)),
-                _ => u,
-            }
-        }
-        None => u,
-    }
+    case_pair(&crate::nt_case::BY_UPPER, u)
 }
+/// ntdll's uppercase of a unit (Windows' table, crate::nt_case; not Unicode's newer mappings)
 pub fn up(u: u16) -> u16 {
-    match char::from_u32(u32::from(u)) {
-        Some(c) => {
-            let mut it = c.to_uppercase();
-            match (it.next(), it.next()) {
-                (Some(x), None) if u32::from(x) < 0x10000 => kome::num::lo16(u32::from(x)),
-                _ => u,
-            }
-        }
-        None => u,
+    case_pair(&crate::nt_case::BY_LOWER, u)
+}
+fn case_pair(t: &[(u16, u16)], u: u16) -> u16 {
+    match t.binary_search_by_key(&u, |p| p.0) {
+        Ok(i) => t.get(i).map_or(u, |p| p.1),
+        Err(_) => u,
     }
 }
 

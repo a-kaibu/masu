@@ -684,6 +684,179 @@ fn unicode_to_ansi_h(c: &mut Ctx) -> u32 {
     if cut { Status::BufferOverflow } else { Status::Success }.code()
 }
 
+/// RtlIsTextUnicode's flags (IS_TEXT_UNICODE_*)
+pub mod itu {
+    pub const ASCII16: u32 = 0x1;
+    pub const STATISTICS: u32 = 0x2;
+    pub const CONTROLS: u32 = 0x4;
+    pub const SIGNATURE: u32 = 0x8;
+    pub const REVERSE_ASCII16: u32 = 0x10;
+    pub const REVERSE_STATISTICS: u32 = 0x20;
+    pub const REVERSE_CONTROLS: u32 = 0x40;
+    pub const REVERSE_SIGNATURE: u32 = 0x80;
+    pub const ILLEGAL_CHARS: u32 = 0x100;
+    pub const ODD_LENGTH: u32 = 0x200;
+    pub const DBCS_LEADBYTE: u32 = 0x400;
+    pub const NULL_BYTES: u32 = 0x1000;
+}
+
+/// RtlIsTextUnicode (sake-re/ntdll/rtl-strings.md): `bytes` the first min(Length, 512) bytes,
+/// `lead` the ANSI code page's lead bytes (None: not a DBCS code page), `mask` *Flags (None:
+/// no Flags). The answer and the flags (also what goes to *Flags: the tests found, masked).
+pub fn text_unicode(bytes: &[u8], length: u32, lead: Option<&dyn Fn(u8) -> bool>, mask: Option<u32>) -> (bool, u32) {
+    let all = kome::num::us(length >> 1);
+    let mut n = all.min(256);
+    let unit = |k: usize| -> u16 {
+        let lo = bytes.get(k.saturating_mul(2)).copied().unwrap_or(0);
+        let hi = bytes.get(k.saturating_mul(2).saturating_add(1)).copied().unwrap_or(0);
+        u16::from_le_bytes([lo, hi])
+    };
+    if n == 0 || (length == 2 && unit(0) != 0 && unit(0) >> 8 == 0) {
+        return (false, 5);
+    }
+    // (a last unit with a 0 high byte is left out: a terminating 0, or an ANSI character)
+    if length > 2 && all <= 256 && length & 1 == 0 && unit(n.wrapping_sub(1)) & 0xff00 == 0 {
+        n = n.wrapping_sub(1);
+    }
+    #[derive(Default)]
+    struct Count {
+        nul: u32,
+        tab: u32,
+        lf: u32,
+        cr: u32,
+        space: u32,
+        ideo_space: u32,
+        ffff: u32,
+        rbom: u32,
+        rcr: u32,
+        rtab: u32,
+        rlf: u32,
+        rcrlf: u32,
+        rspace: u32,
+        ansi_breaks: u32,
+        zero_bytes: u32,
+        dhi: u32,
+        dlo: u32,
+    }
+    let mut k = Count::default();
+    let inc = |x: &mut u32| *x = x.wrapping_add(1);
+    let (mut phi, mut plo) = (0u8, 0u8);
+    for i in 0..n {
+        let c = unit(i);
+        match c {
+            0 => inc(&mut k.nul),
+            9 => inc(&mut k.tab),
+            0xa => inc(&mut k.lf),
+            0xd => inc(&mut k.cr),
+            0x20 => inc(&mut k.space),
+            0x3000 => inc(&mut k.ideo_space),
+            0xffff => inc(&mut k.ffff),
+            0xfffe => inc(&mut k.rbom),
+            0xd00 => inc(&mut k.rcr),
+            0x900 => inc(&mut k.rtab),
+            0xa00 => inc(&mut k.rlf),
+            0xa0d => inc(&mut k.rcrlf),
+            0x2000 => inc(&mut k.rspace),
+            _ => {}
+        }
+        let [lo, hi] = c.to_le_bytes();
+        // (a CR LF or LF CR across the units: the high byte before and this low byte)
+        if (lo == 0xd && phi == 0xa) || (lo == 0xa && phi == 0xd) {
+            inc(&mut k.ansi_breaks);
+        }
+        k.zero_bytes = k.zero_bytes.wrapping_add(u32::from(hi == 0)).wrapping_add(u32::from(lo == 0));
+        k.dhi = k.dhi.wrapping_add(u32::from(hi.abs_diff(phi)));
+        k.dlo = k.dlo.wrapping_add(u32::from(lo.abs_diff(plo)));
+        (phi, plo) = (hi, lo);
+    }
+    // (the last unit: a CR LF or LF CR inside it, a Ctrl-Z high byte; a 0 high byte is not a
+    // null byte)
+    if (plo == 0xd && phi == 0xa) || (plo == 0xa && phi == 0xd) {
+        inc(&mut k.ansi_breaks);
+    }
+    if phi == 0 {
+        k.zero_bytes = k.zero_bytes.wrapping_sub(1);
+    } else if phi == 0x1a {
+        inc(&mut k.ansi_breaks);
+    }
+    let window = length.min(0x200);
+    let mut flags = if k.dlo < 0x7f && k.dhi == 0 {
+        itu::ASCII16
+    } else if k.dhi != 0 && k.dlo == 0 {
+        itu::REVERSE_ASCII16
+    } else {
+        0
+    };
+    let mut weight = 3u32;
+    if let Some(lead) = lead {
+        let mut leads = 0u32;
+        let mut b = 0usize;
+        while b < kome::num::us(window) {
+            if lead(bytes.get(b).copied().unwrap_or(0)) {
+                leads = leads.wrapping_add(1);
+                b = b.saturating_add(1);
+            }
+            b = b.saturating_add(1);
+        }
+        if leads != 0 && mask.is_some_and(|m| m & itu::DBCS_LEADBYTE != 0) {
+            let half = kome::num::u32_of(all.min(256) >> 1).wrapping_sub(1);
+            weight = if leads < half / 3 {
+                3
+            } else if leads < half.wrapping_mul(2) / 3 {
+                2
+            } else {
+                1
+            };
+            flags |= itu::DBCS_LEADBYTE;
+        }
+    }
+    if k.dhi.wrapping_mul(weight) < k.dlo {
+        flags |= itu::STATISTICS;
+    }
+    if k.dlo.wrapping_mul(weight) < k.dhi {
+        flags |= itu::REVERSE_STATISTICS;
+    }
+    let sum = |v: &[u32]| v.iter().fold(0u32, |a, &x| a.wrapping_add(x));
+    if sum(&[k.space, k.ideo_space, k.tab, k.lf, k.cr]) != 0 {
+        flags |= itu::CONTROLS;
+    }
+    if sum(&[k.rtab, k.rspace, k.rlf, k.rcr]) != 0 {
+        flags |= itu::REVERSE_CONTROLS;
+    }
+    if sum(&[k.rcrlf, k.nul, k.rbom, k.ffff]) != 0 || (k.ansi_breaks != 0 && k.ansi_breaks >= window / 40) {
+        flags |= itu::ILLEGAL_CHARS;
+    }
+    if length & 1 != 0 {
+        flags |= itu::ODD_LENGTH;
+    }
+    if k.zero_bytes != 0 {
+        flags |= itu::NULL_BYTES;
+    }
+    match unit(0) {
+        0xfeff => flags |= itu::SIGNATURE,
+        0xfffe => flags |= itu::REVERSE_SIGNATURE,
+        _ => {}
+    }
+    let r = mask.map_or(flags, |m| m & flags);
+    let yes = r & 0xb08 == itu::SIGNATURE || (r & 0xff0 == 0 && r & 0xf00f != 0);
+    (yes, r)
+}
+
+fn is_text_unicode_h(c: &mut Ctx) -> u32 {
+    let (buf, length, pf) = (c.a(0), c.a(1).cast_signed(), c.a(2));
+    let length = u32::try_from(length).unwrap_or(0);
+    let bytes: Vec<u8> = (0..length.min(0x200)).map(|i| mem::r8(mem::ga(buf) + i)).collect();
+    let cp = crate::text::acp();
+    let lead = |b: u8| crate::text::is_lead_cp(cp, b);
+    let dbcs = cp != 65001 && (0u8..=255).any(lead);
+    let mask = (pf != 0).then(|| mem::r32(pf));
+    let (yes, flags) = text_unicode(&bytes, length, if dbcs { Some(&lead) } else { None }, mask);
+    if pf != 0 {
+        mem::w32(pf, flags);
+    }
+    u32::from(yes)
+}
+
 pub fn init() {
     let d = "ntdll";
     implement(d, "RtlInitUnicodeStringEx", init_ex_h);
@@ -706,6 +879,8 @@ pub fn init() {
     implement(d, "RtlUnicodeToUTF8N", unicode_to_utf8_h);
     implement(d, "RtlHashUnicodeString", hash_h);
     implement(d, "RtlUnicodeStringToAnsiString", unicode_to_ansi_h);
+    implement(d, "RtlIsTextUnicode", is_text_unicode_h);
+    implement("advapi32", "IsTextUnicode", is_text_unicode_h);
 }
 
 #[cfg(test)]

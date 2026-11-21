@@ -7,6 +7,8 @@
 use kome::locks::Rw as _;
 use crate::api::Ctx;
 use crate::mem::{self, r16, r32};
+use crate::ntstr::Status;
+use crate::rtlfmt;
 use crate::text::{a2w, w2a};
 
 const ALLOCATE_BUFFER: u32 = 0x100;
@@ -26,6 +28,7 @@ fn system_message(id: u32) -> Option<&'static str> {
         4 => "The system cannot open the file.\r\n",
         5 => "Access is denied.\r\n",
         6 => "The handle is invalid.\r\n",
+        7 => "The storage control blocks were destroyed.\r\n",
         8 => "Not enough memory resources are available to process this command.\r\n",
         13 => "The data is invalid.\r\n",
         14 => "Not enough memory resources are available to complete this operation.\r\n",
@@ -70,6 +73,10 @@ fn system_message(id: u32) -> Option<&'static str> {
         0x8007_000e => "Not enough memory resources are available to complete this operation.\r\n",
         0x8007_0057 => "The parameter is incorrect.\r\n",
         0x8876_086c => "Invalid call\r\n",
+        0x800b_0100 => "No signature was present in the subject.\r\n",
+        0x8009_2009 => "Cannot find object or property.\r\n",
+        // (an HRESULT of FACILITY_WIN32 has the Win32 code's text: E_ACCESSDENIED is "Access is denied.")
+        h if h >> 16 == 0x8007 => return system_message(h & 0xffff),
         _ => return None,
     })
 }
@@ -115,265 +122,6 @@ fn table_message(module: u32, id: u32) -> Option<Vec<u16>> {
     None
 }
 
-/// The insert arguments: a va_list (pointer-sized slots) or an array of DWORD_PTRs.
-struct Args {
-    base: u32,
-}
-impl Args {
-    fn get(&self, i: u32) -> u64 {
-        if self.base == 0 {
-            return 0;
-        }
-        let a = self.base + i * mem::ps();
-        if mem::x64() { mem::r64(a) } else { r32(a) as u64 }
-    }
-}
-
-/// The widest field and the longest precision an insert takes (FormatMessage's whole output is
-/// limited to 64K): a garbage `*` argument or digits are not gigabytes of padding.
-pub const MAX_FIELD: usize = 0x1_0000;
-
-/// One printf conversion of an insert: `spec` is what is between the '!'s (default "s").
-
-fn printf_insert(spec: &[u16], args: &Args, slot: &mut u32, wide: bool) -> Vec<u16> {
-    let s = String::from_utf16_lossy(spec);
-    let mut it = s.chars().peekable();
-    let (mut left, mut plus, mut space, mut zero, mut alt) = (false, false, false, false, false);
-    while let Some(&c) = it.peek() {
-        match c {
-            '-' => left = true,
-            '+' => plus = true,
-            ' ' => space = true,
-            '0' => zero = true,
-            '#' => alt = true,
-            _ => break,
-        }
-        it.next();
-    }
-    let num = |it: &mut std::iter::Peekable<std::str::Chars>, slot: &mut u32| -> Option<usize> {
-        if it.peek() == Some(&'*') {
-            it.next();
-            let v = args.get(*slot) as i32;
-            *slot += 1;
-            return Some((v.max(0) as usize).min(MAX_FIELD));
-        }
-        let mut n = None;
-        while let Some(d) = it.peek().and_then(|c| c.to_digit(10)) {
-            n = Some((n.unwrap_or(0usize).saturating_mul(10).saturating_add(d as usize)).min(MAX_FIELD));
-            it.next();
-        }
-        n
-    };
-    // zeros in front up to precision `p`, in one step
-    // (and a precision of 0 prints no digits for 0, as printf)
-    let zeros = |t: &mut String, p: Option<usize>| {
-        if p == Some(0) && t == "0" {
-            t.clear();
-        }
-        if let Some(p) = p.filter(|&p| p > t.len()) {
-            t.insert_str(0, &"0".repeat(p - t.len()));
-        }
-    };
-    let width = num(&mut it, slot).unwrap_or(0);
-    let prec = if it.peek() == Some(&'.') {
-        it.next();
-        Some(num(&mut it, slot).unwrap_or(0))
-    } else {
-        None
-    };
-    let mut long64 = false;
-    let mut force_wide = None;
-    loop {
-        match it.peek() {
-            Some('h') => force_wide = Some(false),
-            Some('l') | Some('w') => force_wide = Some(true),
-            Some('I') => {
-                it.next();
-                let a: String = it.clone().take(2).collect();
-                if a == "64" {
-                    long64 = true;
-                    it.next();
-                    it.next();
-                } else if a == "32" {
-                    it.next();
-                    it.next();
-                }
-                continue;
-            }
-            Some('L') => {}
-            _ => break,
-        }
-        it.next();
-    }
-    let conv = it.next().unwrap_or('s');
-    let v = args.get(*slot);
-    *slot += 1;
-    let v = if long64 { v } else { v & 0xffff_ffff };
-    let (body, numeric): (Vec<u16>, bool) = match conv {
-        'd' | 'i' => {
-            let n = if long64 { v as i64 } else { v as u32 as i32 as i64 };
-            let mut t = n.unsigned_abs().to_string();
-            zeros(&mut t, prec);
-            let sign = if n < 0 { "-" } else if plus { "+" } else if space { " " } else { "" };
-            ((sign.to_string() + &t).encode_utf16().collect(), true)
-        }
-        'u' => {
-            // (a precision pads with zeros, as printf: the C library check found it ignored)
-            let mut t = v.to_string();
-            zeros(&mut t, prec);
-            (t.encode_utf16().collect(), true)
-        }
-        'x' | 'X' | 'o' | 'p' => {
-            let mut t = match conv {
-                'x' => format!("{v:x}"),
-                'X' => format!("{v:X}"),
-                'o' => format!("{v:o}"),
-                _ => format!("{:0w$X}", v, w = 2 * mem::ps() as usize),
-            };
-            zeros(&mut t, prec);
-            // ('#': octal's first digit is a 0, the precision's zeros count; hex gets 0x unless 0)
-            if alt && conv == 'o' && !t.starts_with('0') {
-                t.insert(0, '0');
-            } else if alt && v != 0 && (conv == 'x' || conv == 'X') {
-                t.insert_str(0, if conv == 'x' { "0x" } else { "0X" });
-            }
-            (t.encode_utf16().collect(), true)
-        }
-        'c' | 'C' => {
-            let w = force_wide.unwrap_or((conv == 'c') == wide);
-            (if w { vec![v as u16] } else { a2w(&[v as u8]) }, false)
-        }
-        's' | 'S' => {
-            let w = force_wide.unwrap_or((conv == 's') == wide);
-            let p = v as u32;
-            let mut t = if p == 0 { "(null)".encode_utf16().collect() } else if w { mem::wstr(p) } else { a2w(&mem::cstr(p)) };
-            if let Some(p) = prec {
-                t.truncate(p);
-            }
-            (t, false)
-        }
-        _ => (Vec::new(), false),
-    };
-    if body.len() >= width {
-        return body;
-    }
-    let pad = width - body.len();
-    if left {
-        let mut b = body;
-        b.extend(std::iter::repeat(b' ' as u16).take(pad));
-        b
-    } else if zero && numeric && prec.is_none() {
-        // zeros after the sign
-        // (zeros after the sign, or after a 0x prefix)
-        let sign = if body.first().is_some_and(|&c| c == b'-' as u16 || c == b'+' as u16 || c == b' ' as u16) {
-            1
-        } else if body.len() >= 2 && body[0] == b'0' as u16 && (body[1] == b'x' as u16 || body[1] == b'X' as u16) {
-            2
-        } else {
-            0
-        };
-        let mut b = body[..sign].to_vec();
-        b.extend(std::iter::repeat(b'0' as u16).take(pad));
-        b.extend(&body[sign..]);
-        b
-    } else {
-        let mut b: Vec<u16> = std::iter::repeat(b' ' as u16).take(pad).collect();
-        b.extend(body);
-        b
-    }
-}
-
-/// The formatted message, or the error code.
-fn format(src: &[u16], flags: u32, args: &Args, wide: bool) -> Result<Vec<u16>, u32> {
-    let width = flags & 0xff;
-    let mut out: Vec<u16> = Vec::new();
-    let mut i = 0;
-    let ch = |c: char| c as u16;
-    while i < src.len() {
-        let c = src[i];
-        if c == ch('%') {
-            let Some(&n) = src.get(i + 1) else { return Err(87) };
-            if (ch('1')..=ch('9')).contains(&n) {
-                let start = i;
-                let mut idx = (n - ch('0')) as u32;
-                i += 2;
-                if let Some(&d) = src.get(i) && (ch('0')..=ch('9')).contains(&d) {
-                    idx = idx * 10 + (d - ch('0')) as u32;
-                    i += 1;
-                }
-                let mut spec: Vec<u16> = "s".encode_utf16().collect();
-                if src.get(i) == Some(&ch('!')) {
-                    let Some(end) = src[i + 1..].iter().position(|&x| x == ch('!')) else { return Err(87) };
-                    spec = src[i + 1..i + 1 + end].to_vec();
-                    i += end + 2;
-                }
-                if flags & IGNORE_INSERTS != 0 {
-                    out.extend(&src[start..i]);
-                } else {
-                    let mut slot = idx - 1;
-                    out.extend(printf_insert(&spec, args, &mut slot, wide));
-                }
-                continue;
-            }
-            i += 2;
-            match n {
-                x if x == ch('0') => break,
-                x if x == ch('n') => out.extend([13, 10]),
-                x if x == ch('r') => out.push(13),
-                x if x == ch('t') => out.push(9),
-                x => out.push(x),
-            }
-            continue;
-        }
-        if width != 0 && (c == 13 || c == 10) {
-            // a line break of the text: a space in the width modes (CR LF together)
-            if c == 13 && src.get(i + 1) == Some(&10) {
-                i += 1;
-            }
-            out.push(b' ' as u16);
-            i += 1;
-            continue;
-        }
-        out.push(c);
-        i += 1;
-    }
-    if width == 0 || width == 0xff {
-        return Ok(out);
-    }
-    // break lines longer than `width` at their last space, or hard where there is none
-    let w = width as usize;
-    let mut res = Vec::new();
-    let mut line: Vec<u16> = Vec::new();
-    let mut k = 0;
-    while k < out.len() {
-        let c = out[k];
-        if c == 13 && out.get(k + 1) == Some(&10) {
-            res.extend(&line);
-            res.extend([13, 10]);
-            line.clear();
-            k += 2;
-            continue;
-        }
-        line.push(c);
-        if line.len() > w {
-            match line.iter().rposition(|&x| x == b' ' as u16) {
-                Some(p) => {
-                    res.extend(&line[..p]);
-                    line.drain(..=p);
-                }
-                None => {
-                    res.extend(&line[..w]);
-                    line.drain(..w);
-                }
-            }
-            res.extend([13, 10]);
-        }
-        k += 1;
-    }
-    res.extend(&line);
-    Ok(res)
-}
-
 /// FormatMessage(flags, source, id, language, buffer, size, va_list *args)
 pub fn format_message(c: &mut Ctx, wide: bool) -> u32 {
     let (flags, source, id, lang, buf, size, va) = (c.a(0), c.a(1), c.a(2), c.a(3), c.a(4), c.a(5), c.a(6));
@@ -381,6 +129,22 @@ pub fn format_message(c: &mut Ctx, wide: bool) -> u32 {
         crate::k32::last_error(e);
         0
     };
+    // (FormatMessageA: a source string of 0x7FFF bytes or more is refused, and the allocated
+    // buffer's pointer must be there; FormatMessageW: any buffer argument must be)
+    if !wide && flags & FROM_STRING != 0 && source != 0 && mem::cstr(source).len() >= 0x7fff {
+        return fail(87);
+    }
+    if buf == 0 {
+        if wide {
+            return fail(87);
+        }
+        if flags & ALLOCATE_BUFFER != 0 {
+            return fail(8);
+        }
+    }
+    if flags & ALLOCATE_BUFFER != 0 {
+        mem::wp(buf, 0);
+    }
     let src: Vec<u16> = if flags & FROM_STRING != 0 {
         if source == 0 {
             return fail(87);
@@ -400,16 +164,37 @@ pub fn format_message(c: &mut Ctx, wide: bool) -> u32 {
     } else {
         return fail(87);
     };
-    let args = Args { base: if va == 0 { 0 } else if flags & ARGUMENT_ARRAY != 0 { va } else { mem::rp(va) } };
-    let text = match format(&src, flags, &args, wide) {
+    let text = match format(&src, flags, va, wide, if flags & ALLOCATE_BUFFER != 0 { None } else { Some(size) }) {
         Ok(t) => t,
-        Err(e) => return fail(e),
+        Err((e, partial)) => {
+            // (not allocating: what the formatter wrote stays in the caller's buffer, ending
+            // in a 0 at its last unit)
+            if wide && flags & ALLOCATE_BUFFER == 0 && e == 122 {
+                for (k, &u) in partial.iter().take(kome::num::us(size)).enumerate() {
+                    mem::w16(mem::ga(buf).at(kome::num::u32_of(k), 2), u);
+                }
+                if let Some(last) = size.checked_sub(1) {
+                    mem::w16(mem::ga(buf).at(last, 2), 0);
+                }
+            }
+            return fail(e);
+        }
     };
+    // (nothing formatted: ERROR_NO_WORK_DONE; FormatMessageW's buffer has the formatter's 0)
+    if text.is_empty() {
+        if wide && flags & ALLOCATE_BUFFER == 0 && size != 0 {
+            mem::w16(buf, 0);
+        }
+        return fail(235);
+    }
+    if !wide && text.len() >= 0x7fff {
+        return fail(87);
+    }
     let bytes: Vec<u8> = if wide { Vec::new() } else { w2a(&text) };
     let n = if wide { text.len() } else { bytes.len() } as u32;
     let unit = if wide { 2 } else { 1 };
     let dst = if flags & ALLOCATE_BUFFER != 0 {
-        let p = mem::heap_alloc((n + 1).max(size) * unit, true);
+        let p = mem::heap_alloc((n + 1).max(size.saturating_add(1)) * unit, true);
         mem::wp(buf, p);
         p
     } else {
@@ -430,13 +215,49 @@ pub fn format_message(c: &mut Ctx, wide: bool) -> u32 {
     n
 }
 
+/// The formatted message (RtlFormatMessageEx as kernelbase calls it), or the Win32 error and
+/// what the formatter left in the buffer. `room`: the caller's buffer in units (None:
+/// ALLOCATE_BUFFER, which grows the buffer up to the source's size rounded up to 128 KiB).
+fn format(src: &[u16], flags: u32, va: u32, wide: bool, room: Option<u32>) -> Result<Vec<u16>, (u32, Vec<u16>)> {
+    let list = if flags & ARGUMENT_ARRAY != 0 { rtlfmt::ArgList::Array } else { rtlfmt::ArgList::VaList };
+    let mut g = rtlfmt::MemGuest::new(if va == 0 { rtlfmt::ArgList::Array } else { list }, va);
+    let r = request(src, flags, (va != 0).then_some(list), wide, room);
+    outcome(rtlfmt::format(&r, &mut g))
+}
+
+fn request(src: &[u16], flags: u32, args: Option<rtlfmt::ArgList>, wide: bool, room: Option<u32>) -> rtlfmt::Request<'_> {
+    let width = match flags & 0xff {
+        0xff => u32::MAX,
+        w => w,
+    };
+    let room = room.unwrap_or_else(|| {
+        let len = kome::num::u32_of(src.len());
+        let start = if flags & IGNORE_INSERTS != 0 { len } else { len.saturating_mul(4) };
+        let bytes = start.saturating_mul(2).saturating_add(2);
+        (bytes.saturating_add(0x1_ffff) & !0x1_ffff) >> 1
+    });
+    rtlfmt::Request { message: src, width: rtlfmt::Width::of(width), ignore_inserts: flags & IGNORE_INSERTS != 0, ansi: !wide, args, room, ptr64: mem::x64() }
+}
+
+fn outcome(o: rtlfmt::Outcome) -> Result<Vec<u16>, (u32, Vec<u16>)> {
+    // (kernelbase: an overflow is ERROR_INSUFFICIENT_BUFFER, the rest RtlNtStatusToDosError's)
+    if o.status == Status::Success {
+        Ok(o.text().unwrap_or_default().to_vec())
+    } else if o.status == Status::BufferOverflow {
+        Err((122, o.buffer))
+    } else {
+        Err((87, o.buffer))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn f(s: &str, flags: u32) -> Result<String, u32> {
         let w: Vec<u16> = s.encode_utf16().collect();
-        format(&w, flags, &Args { base: 0 }, true).map(|v| String::from_utf16_lossy(&v))
+        let mut g = crate::rtlfmt::tests::Words::new(&[]);
+        outcome(rtlfmt::format(&request(&w, flags, None, true, None), &mut g)).map(|v| String::from_utf16_lossy(&v)).map_err(|e| e.0)
     }
 
     /// The answers of Windows (tests/winref/golden/fmt-32) for messages without inserts.
@@ -510,25 +331,18 @@ mod tests {
         }
     }
 
-    /// Inserts with widths and precisions from `*` arguments or digits: a garbage argument
-    /// (2^31-1, as a wrong va_list gives) is clamped to MAX_FIELD instead of 4 GiB of padding
-    /// or an O(p^2) loop, and long digit strings do not overflow.
+    /// A garbage `*` width (2^31-1, as a wrong va_list gives) or a long digit string: an
+    /// error at once (Windows: the allocated buffer stops growing at 128 KiB), not gigabytes
     #[test]
-    fn huge_widths_are_clamped() {
-        let _g = crate::test_guest::enter();
-        let a = mem::heap_alloc(16, true);
-        mem::w32(a, 0x7fff_ffff);
-        mem::w32(a + 4, 7);
-        let args = Args { base: a };
+    fn huge_widths_fail_fast() {
         for spec in ["*d", ".*d", "-*x", "099999999999999999999999d", ".99999999999999999999999u", "*.*d"] {
-            let w: Vec<u16> = spec.encode_utf16().collect();
+            let w: Vec<u16> = format!("%1!{spec}!").encode_utf16().collect();
+            let mut g = crate::rtlfmt::tests::Words::new(&[0x7fff_ffff, 0x7fff_ffff, 7]);
             let t = std::time::Instant::now();
-            let out = printf_insert(&w, &args, &mut 0, true);
-            assert!(out.len() <= MAX_FIELD + 2, "{spec}: {}", out.len());
-            assert!(out.len() >= MAX_FIELD.min(64), "{spec}");
+            let r = outcome(rtlfmt::format(&request(&w, ARGUMENT_ARRAY, Some(rtlfmt::ArgList::Array), true, None), &mut g));
+            assert!(matches!(r, Err((122, _))), "{spec}");
             assert!(t.elapsed() < std::time::Duration::from_secs(2), "{spec}");
         }
-        mem::heap_free(a);
     }
 
     proptest::proptest! {
@@ -541,8 +355,6 @@ mod tests {
                                        conv in proptest::sample::select(vec!['d', 'i', 'u', 'x', 'X', 'o']),
                                        v in proptest::prop_oneof![proptest::prelude::any::<u32>(), 0u32..20, proptest::prelude::Just(0x8000_0000u32)],
                                        star in proptest::prelude::any::<bool>()) {
-            let _g = crate::test_guest::enter();
-            let a = mem::heap_alloc(16, true);
             let mut spec: String = flags.iter().collect();
             let mut slots = vec![];
             if let Some(w) = width {
@@ -553,12 +365,10 @@ mod tests {
             }
             spec.push(conv);
             slots.push(v);
-            for (i, x) in slots.iter().enumerate() {
-                mem::w32(a + 4 * i as u32, *x);
-            }
-            let w: Vec<u16> = spec.encode_utf16().collect();
-            let got = String::from_utf16_lossy(&printf_insert(&w, &Args { base: a }, &mut 0, true));
-            mem::heap_free(a);
+            // (Windows passes the value first and the stars after it: the array's order is printf's)
+            let w: Vec<u16> = format!("%1!{spec}!").encode_utf16().collect();
+            let mut g = crate::rtlfmt::tests::Words::new(&slots.iter().map(|&x| u64::from(x)).collect::<Vec<u64>>());
+            let got = outcome(rtlfmt::format(&request(&w, ARGUMENT_ARRAY, Some(rtlfmt::ArgList::Array), true, None), &mut g)).map(|v| String::from_utf16_lossy(&v)).unwrap_or_default();
             let mut buf = [0u8; 256];
             let fmt = std::ffi::CString::new(format!("%{spec}")).unwrap();
             let n = unsafe {

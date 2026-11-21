@@ -114,6 +114,8 @@ pub const NTDLL_OWN_CRT: &[&str] = &[
     "RtlDowncaseUnicodeString", "RtlDuplicateUnicodeString", "RtlFindCharInUnicodeString", "RtlCompareUnicodeStrings",
     "RtlGUIDFromString", "RtlStringFromGUID", "RtlUTF8ToUnicodeN", "RtlUnicodeToUTF8N", "RtlHashUnicodeString",
     "RtlUnicodeStringToAnsiString", "RtlDowncaseUnicodeChar",
+    // (rtlfmt.rs, 2026-11-21: without it Wine's ntdll:rtlstr had no message formatter, 65K failures)
+    "RtlFormatMessage", "RtlFormatMessageEx", "RtlIsTextUnicode",
 ];
 
 static NTDLL_IMPL: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"implement\(\s*(?:"ntdll"|d)\s*,\s*"([A-Za-z0-9_]+)""#).ok());
@@ -163,6 +165,27 @@ pub fn utf8_one_decoder(tree: &Tree) -> Hits {
         let code = tree.code(&p, false);
         for (at, _) in code.match_indices("utf8_chunks(") {
             out.push((p.clone(), line_of(&code, at), "a UTF-8 decoder of its own: Windows' rule is crate::rtlstr::utf8_units".to_string()));
+        }
+    }
+    out
+}
+
+/// `message-one-formatter`: fmtmsg.rs (kernel32 FormatMessage) formats through
+/// rtlfmt::format and has no printf of its own (crt::fmt::, misc::printf, format_w)
+pub fn message_one_formatter(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for p in tree.rs(&["crates/sake/src/"]) {
+        if p.as_str() != "crates/sake/src/fmtmsg.rs" {
+            continue;
+        }
+        let code = tree.code(&p, false);
+        for pat in ["crt::fmt::", "misc::printf", "format_w(", "printf_insert"] {
+            for (at, _) in code.match_indices(pat) {
+                out.push((p.clone(), line_of(&code, at), format!("a formatter of its own ({pat}): FormatMessage is RtlFormatMessageEx, crate::rtlfmt::format")));
+            }
+        }
+        if !code.contains("rtlfmt::format(") {
+            out.push((p.clone(), 1, "FormatMessage does not format with crate::rtlfmt::format (RtlFormatMessageEx's rule)".to_string()));
         }
     }
     out
