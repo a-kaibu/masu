@@ -451,6 +451,52 @@ fn process_dos_to_nt(p: &[u16]) -> Result<NtPath, u32> {
     dos_to_nt(p, &Env { cur: &cur, drive: &process_drive }, &exists)
 }
 
+/// GetTempPathW's answer (units) and the buffer of `count` units afterwards: the first of
+/// TMP, TEMP, USERPROFILE whose value fits RtlQueryEnvironmentVariable_U's 0x20a bytes (else
+/// the Windows directory), made full in the caller's buffer; a '\' added when it fits, the
+/// answer then counting it (and its NUL: 2 more when it did not fit)
+pub fn temp_path(count: u32, var: &dyn Fn(&str) -> Option<Vec<u16>>, env: &Env) -> (u32, Option<Vec<u16>>) {
+    let size = count.wrapping_mul(2);
+    let v = ["TMP", "TEMP", "USERPROFILE"].into_iter().filter_map(var).find(|v| v.len() <= 260).unwrap_or_else(|| units("C:\\windows"));
+    let add_slash = v.last() != Some(&BS);
+    let f = full_path_name(&v, size, env);
+    let mut buffer = f.buffer.clone();
+    if f.ret == 0 || f.ret >= size {
+        let r = if add_slash { f.ret.saturating_add(2) } else { f.ret };
+        return (r / 2, buffer);
+    }
+    let n = usize::try_from(f.ret / 2).unwrap_or(0);
+    if f.text().last() == Some(&BS) {
+        return (f.ret / 2, buffer);
+    }
+    if f.ret.saturating_add(2) < size {
+        if let Some(b) = buffer.as_mut() {
+            if let Some(x) = b.get_mut(n) {
+                *x = BS;
+            }
+            if let Some(x) = b.get_mut(n.saturating_add(1)) {
+                *x = 0;
+            }
+        }
+        return (f.ret.saturating_add(2) / 2, buffer);
+    }
+    (f.ret.saturating_add(4) / 2, buffer)
+}
+
+/// The process's temp_path
+pub fn process_temp_path(count: u32) -> (u32, Option<Vec<u16>>) {
+    let cur = crate::curdir::dos_path();
+    let var = |n: &str| crate::k32::env_get(n).map(|v| units(&v));
+    temp_path(count, &var, &Env { cur: &cur, drive: &process_drive })
+}
+
+/// Writes a buffer image to the guest
+pub fn put_units(buf: u32, b: &[u16]) {
+    for (i, &u) in b.iter().enumerate() {
+        mem::w16(mem::ga(buf).at(kome::num::u32_of(i), 2), u);
+    }
+}
+
 /// Writes a Full to the guest: the buffer image, the file part pointer
 fn write_out(f: &Full, buf: u32, file_part: u32) {
     if file_part != 0 {

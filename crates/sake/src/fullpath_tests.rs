@@ -228,3 +228,62 @@ proptest! {
         prop_assert_eq!(a.ret, b.ret);
     }
 }
+
+fn tmp(count: u32, vars: &[(&str, &str)]) -> (u32, String, Vec<u16>) {
+    let cur = w("C:\\windows\\");
+    let unset = |_: u16| DriveDir::Unset;
+    let var = |n: &str| vars.iter().find(|(k, _)| *k == n).map(|(_, v)| w(v));
+    let (r, b) = temp_path(count, &var, &Env { cur: &cur, drive: &unset });
+    let b = b.unwrap_or_default();
+    (r, s(&b.iter().copied().take_while(|&u| u != 0).collect::<Vec<u16>>()), b)
+}
+
+#[test]
+fn temp_path_sources() {
+    // TMP, then TEMP, then USERPROFILE, then the Windows directory; a '\' added
+    assert_eq!(tmp(260, &[("TMP", "C:\\t"), ("TEMP", "C:\\u")]).1, "C:\\t\\");
+    assert_eq!(tmp(260, &[("TEMP", "C:\\u\\")]).1, "C:\\u\\");
+    assert_eq!(tmp(260, &[("USERPROFILE", "C:\\users\\me")]).1, "C:\\users\\me\\");
+    assert_eq!(tmp(260, &[]), (11, "C:\\windows\\".to_string(), tmp(260, &[]).2));
+    // a relative value is made full against the current directory; "C:" is the curdir's drive
+    assert_eq!(tmp(260, &[("TMP", "sub")]).1, "C:\\windows\\sub\\");
+    assert_eq!(tmp(260, &[("TMP", "C:")]).1, "C:\\windows\\");
+    // a value longer than 260 units is passed over
+    let long = format!("C:\\{}", "a".repeat(258));
+    assert_eq!(tmp(600, &[("TMP", &long), ("TEMP", "C:\\u")]).1, "C:\\u\\");
+}
+
+#[test]
+fn temp_path_sizes() {
+    let v = [("TMP", "C:\\windows\\temp\\")];
+    // "C:\windows\temp\" is 16 units
+    assert_eq!(tmp(17, &v).0, 16);
+    assert_eq!(tmp(16, &v).0, 17);
+    let (r, t, b) = tmp(1, &v);
+    assert_eq!((r, t.as_str(), b.len()), (17, "", 1));
+    // without a '\': 15 units; the '\' fits when 2 more units are there
+    let v = [("TMP", "C:\\windows\\temp")];
+    assert_eq!(tmp(17, &v).0, 16);
+    assert_eq!(tmp(16, &v).0, 17);
+    assert_eq!(tmp(16, &v).1, "C:\\windows\\temp");
+    assert_eq!(tmp(15, &v).0, 17);
+    // (Ustr fills the whole buffer: at most 32767 units)
+    assert_eq!(tmp(65534, &v).2.len(), 32767);
+}
+
+proptest! {
+    /// an answer below the count is what the buffer holds, ending in '\'; above it, the
+    /// buffer starts empty; past the text the buffer is all 0
+    #[test]
+    fn temp_path_laws(count in 0u32..40, name in "[a-z]{1,12}", slash: bool) {
+        let v = format!("C:\\{name}{}", if slash { "\\" } else { "" });
+        let (r, t, b) = tmp(count, &[("TMP", &v)]);
+        if r < count {
+            prop_assert_eq!(t.len(), usize::try_from(r).unwrap_or(0));
+            prop_assert!(t.ends_with('\\'));
+        } else {
+            prop_assert!(t.is_empty() || t.len() + 1 == usize::try_from(count).unwrap_or(0));
+        }
+        prop_assert!(b.iter().skip(t.len()).all(|&u| u == 0));
+    }
+}
