@@ -3359,7 +3359,7 @@ fn LdrGetDllHandle(c: &mut Ctx) -> u32 {
     if h == 0 { 0xc000_0135 } else { 0 }
 }
 // ntdll's counted strings: UNICODE_STRING / ANSI_STRING = { u16 Length, u16 MaximumLength, PTR Buffer }
-fn put_counted(us: u32, len: u32, max: u32, buf: u32) {
+pub(crate) fn put_counted(us: u32, len: u32, max: u32, buf: u32) {
     w16(us, kome::num::lo16(len));
     crate::mem::w16(mem::ga(us) + 2, kome::num::lo16(max));
     // (UNICODE_STRING / ANSI_STRING: Buffer after the two lengths, pointer-aligned)
@@ -3497,18 +3497,6 @@ fn RtlCompareUnicodeString(c: &mut Ctx) -> u32 {
 fn RtlEqualUnicodeString(c: &mut Ctx) -> u32 {
     let (a, b) = (counted_wide(c.a(0)), counted_wide(c.a(1)));
     u32::from(a.len() == b.len() && RtlCompareUnicodeString(c) == 0)
-}
-/// RtlDosPathNameToNtPathName_U(dos, &nt, &filepart, reserved): "\??\" + the full path
-fn RtlDosPathNameToNtPathName_U(c: &mut Ctx) -> u32 {
-    let (dos, nt, part) = (c.a(0), c.a(1), c.a(2));
-    let full = files::full_path(&String::from_utf16_lossy(&wstr(dos)));
-    let w: Vec<u16> = format!("\\??\\{full}").encode_utf16().collect();
-    counted_out(nt, &w, 2, true);
-    if part != 0 {
-        let at = w.iter().rposition(|&x| x == u16::from(b'\\')).map_or(0, |i| i.saturating_add(1));
-        mem::wp(part, if at < w.len() { mem::ga(crate::mem::rp(mem::ga(nt) + mem::ps())).at(kome::num::u32_of(at), 2).get() } else { 0 });
-    }
-    1
 }
 fn RtlFormatCurrentUserKeyPath(c: &mut Ctx) -> u32 {
     let w: Vec<u16> = "\\REGISTRY\\USER\\S-1-5-21-0-0-0-1000".encode_utf16().collect();
@@ -9858,9 +9846,11 @@ pub fn init() {
         implement("ntdll", &format!("Zw{n}"), f);
     }
     reg!("ntdll"; RtlGetCurrentPeb, RtlAcquirePebLock, RtlReleasePebLock, RtlInitUnicodeString, RtlInitAnsiString, RtlFreeUnicodeString, RtlCreateUnicodeStringFromAsciiz, RtlAnsiStringToUnicodeString,
-        RtlDosPathNameToNtPathName_U, RtlFormatCurrentUserKeyPath, LdrGetProcedureAddress,
+        RtlFormatCurrentUserKeyPath, LdrGetProcedureAddress,
         NtProtectVirtualMemory);
     implement("ntdll", "RtlInitString", RtlInitAnsiString);
+    // (the OEM code page is the ANSI one here: GetOEMCP)
+    implement("ntdll", "RtlOemStringToUnicodeString", RtlAnsiStringToUnicodeString);
     implement("ntdll", "RtlFreeAnsiString", RtlFreeUnicodeString);
     implement("ntdll", "ZwProtectVirtualMemory", NtProtectVirtualMemory);
     implement("ntdll", "RtlInterlockedPushEntrySList", InterlockedPushEntrySList);

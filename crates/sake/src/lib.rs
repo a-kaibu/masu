@@ -101,6 +101,8 @@ pub mod rtlfmt;
 pub mod llmath;
 pub mod curdir;
 pub mod ntpath;
+pub mod fullpath;
+pub mod ntname;
 pub mod gdi;
 pub mod gdi_geom;
 pub mod k32;
@@ -1101,6 +1103,7 @@ pub fn main(exe: &str, args: &[String]) -> ! {
     llmath::init();
     curdir::init();
     ntpath::init();
+    fullpath::init();
     security::init();
     lsa::init();
     actctx::init();

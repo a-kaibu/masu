@@ -1,5 +1,6 @@
 #![allow(non_snake_case)]
-//! ntdll's DOS path rules: RtlDetermineDosPathNameType_U, RtlIsDosDeviceName_U.
+//! ntdll's DOS path rules: RtlDetermineDosPathNameType_U, RtlIsDosDeviceName_U,
+//! RtlIsNameLegalDOS8Dot3.
 //!
 //! Written from the clean-room notes (project folder sake-re/ntdll/dos-paths.md); checked by
 //! Wine's ntdll:path tests.
@@ -188,6 +189,97 @@ pub fn dos_device(p: &[u16], legacy: bool) -> u32 {
     u32::from(off) << 16 | u32::from(len)
 }
 
+/// RtlFatIllegalTable: the ASCII bytes a FAT name may not hold (controls and "*+,/:;<=>?[\]|)
+const FAT_ILLEGAL: [u32; 4] = [0xffff_ffff, 0xfc00_9c04, 0x3800_0000, 0x1000_0000];
+
+fn fat_illegal(b: u8) -> bool {
+    let word = FAT_ILLEGAL.get(usize::from(b >> 5)).copied().unwrap_or(0);
+    word >> (b & 31) & 1 != 0
+}
+
+/// RtlIsNameLegalDOS8Dot3's rule on the name's upper-case OEM bytes: None when it is no 8.3
+/// name, else whether it holds a space. "." and ".." are names; a base of 1..8 bytes, then
+/// at most one '.' (not first, not after a space) with at most 3 bytes after it; no FAT-illegal
+/// ASCII byte; not ending in ' ' or '.'. A DBCS lead byte (`lead`) takes the next byte along,
+/// and may not start at base index 7 or more, nor be last.
+pub fn legal_8dot3(s: &[u8], lead: Option<&dyn Fn(u8) -> bool>) -> Option<bool> {
+    if s == b"." || s == b".." {
+        return Some(false);
+    }
+    let n = s.len();
+    let (mut spaces, mut dot) = (false, false);
+    let mut i = 0usize;
+    let mut last = 0u8;
+    while i < n {
+        let b = s.get(i).copied().unwrap_or(0);
+        last = b;
+        if lead.is_some_and(|f| f(b)) {
+            if (!dot && i >= 7) || i == n.saturating_sub(1) {
+                return None;
+            }
+            i = i.saturating_add(2);
+            continue;
+        }
+        if b < 0x80 && fat_illegal(b) {
+            return None;
+        }
+        if b == b' ' {
+            spaces = true;
+        } else if b == b'.' {
+            let rest = n.saturating_sub(i).saturating_sub(1);
+            if dot || i == 0 || s.get(i.saturating_sub(1)) == Some(&b' ') || rest > 3 {
+                return None;
+            }
+            dot = true;
+        }
+        if i >= 8 && !dot {
+            return None;
+        }
+        i = i.saturating_add(1);
+    }
+    if n > 0 && (last == b' ' || last == b'.') {
+        return None;
+    }
+    Some(spaces)
+}
+
+/// RtlIsNameLegalDOS8Dot3(const UNICODE_STRING *name, OEM_STRING *oem, BOOLEAN *spaces): more
+/// than 12 units is FALSE; the name upper-cased into `oem` (or 12 bytes of its own) as
+/// RtlUpcaseUnicodeStringToCountedOemString does (too long for it: FALSE), then the rule;
+/// *spaces only on TRUE
+fn RtlIsNameLegalDOS8Dot3(c: &mut Ctx) -> u32 {
+    let (name, oem, spaces) = (c.a(0), c.a(1), c.a(2));
+    let len = mem::r16(name);
+    if len > 0x18 {
+        return 0;
+    }
+    let buf = mem::rp(mem::ga(name) + mem::ps());
+    let up: Vec<u16> = (0..u32::from(len / 2)).map(|i| crate::nt::up(mem::r16(mem::ga(buf).at(i, 2)))).collect();
+    let bytes = crate::text::w2mb(1, &up);
+    let room = if oem != 0 { usize::from(mem::r16(mem::ga(oem) + 2)) } else { 12 };
+    if bytes.len() > room {
+        return 0;
+    }
+    if oem != 0 {
+        let ob = mem::rp(mem::ga(oem) + mem::ps());
+        for (i, &b) in bytes.iter().enumerate() {
+            mem::w8(mem::ga(ob) + kome::num::u32_of(i), b);
+        }
+        mem::w16(oem, kome::num::lo16(bytes.len()));
+    }
+    let lead = |b: u8| crate::text::is_lead_cp(1, b);
+    let dbcs = crate::text::is_dbcs();
+    match legal_8dot3(&bytes, if dbcs { Some(&lead) } else { None }) {
+        Some(sp) => {
+            if spaces != 0 {
+                mem::w8(spaces, u8::from(sp));
+            }
+            1
+        }
+        None => 0,
+    }
+}
+
 /// RtlIsDosDeviceName_U(PCWSTR path): RtlInitUnicodeStringEx (too long: 0), then the rule
 fn RtlIsDosDeviceName_U(c: &mut Ctx) -> u32 {
     let w = mem::wstr(c.a(0));
@@ -205,6 +297,7 @@ fn RtlDetermineDosPathNameType_U(c: &mut Ctx) -> u32 {
 pub fn init() {
     implement("ntdll", "RtlDetermineDosPathNameType_U", RtlDetermineDosPathNameType_U);
     implement("ntdll", "RtlIsDosDeviceName_U", RtlIsDosDeviceName_U);
+    implement("ntdll", "RtlIsNameLegalDOS8Dot3", RtlIsNameLegalDOS8Dot3);
 }
 
 #[cfg(test)]

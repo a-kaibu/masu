@@ -546,7 +546,8 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 21] = [
+pub const REQUIRED: [(&str, &str, &str); 22] = [
+    ("crates/sake/src/nt.rs", "    crate::ntname::check(&w, mem::rp(oa.saturating_add(mem::ps())) != 0)?;", "an NT name passes the object manager's and file system's syntax before a file is looked up (\\??\\C:\\x\\..\\y opened y; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "                send_gamma(Some(&r));", "a full-screen Direct3D 9 device's SetGammaRamp reaches the display (it was answered S_OK and dropped; 2026-11-21)"),
     ("crates/kura/src/d3d9/device.rs", "                    let (hr, bytes) = q.get_data(if a(1) == 0 { 0 } else { a(2) }, a(3));", "IDirect3DQuery9::GetData answers what the page measured (it wrote 1000 samples and TRUE at once; 2026-11-21)"),
     ("crates/kura/src/render/d3d.rs", "                    self.query_end(a(1), QueryEnd::of_word(a(2)));", "queries are measured on the page's GPU (occlusion and timestamp query sets, render/d3d/query.rs)"),

@@ -125,6 +125,10 @@ pub const NTDLL_OWN_CRT: &[&str] = &[
     // (curdir.rs, ntpath.rs, 2026-11-21: no handlers; Wine's ntdll:path crashed on an empty
     // CURDIR and answered 0 for every path type)
     "RtlSetCurrentDirectory_U", "RtlDetermineDosPathNameType_U", "RtlIsDosDeviceName_U",
+    // (fullpath.rs, ntpath.rs, rtlstr.rs, 2026-11-21: no handlers, or a DOS->NT conversion
+    // that knew neither devices, UNC, the static buffer's limit nor the relative name)
+    "RtlGetFullPathName_U", "RtlGetFullPathName_UEx", "RtlDosPathNameToNtPathName_U", "RtlDosPathNameToNtPathName_U_WithStatus",
+    "RtlIsNameLegalDOS8Dot3", "RtlOemStringToUnicodeString", "RtlCompareString",
 ];
 
 static NTDLL_IMPL: LazyLock<Option<Regex>> = LazyLock::new(|| Regex::new(r#"implement\(\s*(?:"ntdll"|d)\s*,\s*"([A-Za-z0-9_]+)""#).ok());
