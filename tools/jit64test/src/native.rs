@@ -6,7 +6,7 @@
 
 use iced_x86::code_asm::*;
 use iced_x86::{Code, CpuidFeature, Instruction, MemoryOperand, Mnemonic, OpCodeOperandKind as K, Register};
-use koji::{Cpu, Exit, Fault};
+use koji::{Cpu, Exit};
 
 #[repr(C)]
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -21,19 +21,7 @@ const G_CODE: u32 = 0x10_0000;
 const G_DATA: u32 = 0x20_0000;
 const G_MEM: usize = 0x40_0000;
 
-struct Mem(Vec<u8>);
-impl koji::Memory for Mem {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().filter(|_| a >= 0x10000).ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        if a < 0x10000 || a as usize >= self.0.len() {
-            return Err(Fault { addr: a, write: true });
-        }
-        self.0[a as usize] = v;
-        Ok(())
-    }
-}
+use koji::Guarded as Mem;
 
 struct Rng(u64);
 impl Rng {

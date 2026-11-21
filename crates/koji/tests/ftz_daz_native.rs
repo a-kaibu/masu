@@ -8,7 +8,8 @@
 #![cfg(all(target_arch = "x86_64", target_os = "linux"))]
 
 use core::arch::asm;
-use koji::{step, Cpu, Exit, Fault, Memory};
+use koji::{step, Cpu, Exit};
+use koji::Flat;
 
 struct Rng(u64);
 impl Rng {
@@ -52,22 +53,6 @@ fn vec(r: &mut Rng, single: bool) -> u128 {
         (0..4).fold(0u128, |v, i| v | (lane32(r) as u128) << (32 * i))
     } else {
         lane64(r) as u128 | (lane64(r) as u128) << 64
-    }
-}
-
-struct Flat(Vec<u8>);
-impl Memory for Flat {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
     }
 }
 

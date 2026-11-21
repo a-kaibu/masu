@@ -12,10 +12,11 @@
 //! TestFloat's level 2 (much longer).
 use iced_x86::code_asm::*;
 use koji::f80::F80;
-use koji::{Cpu, Exit, Fault, Memory};
+use koji::{Cpu, Exit};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use koji::Flat as Ram;
 
 fn gen_bin() -> Option<PathBuf> {
     let p = std::env::var("TF_GEN").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/testfloat/testfloat_gen")));
@@ -160,22 +161,6 @@ fn extf80_against_testfloat() {
     }
     eprintln!("{total} TestFloat extF80 cases");
     assert!(bad.is_empty(), "{}", bad.join("\n"));
-}
-
-struct Ram(Vec<u8>);
-impl Memory for Ram {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
 }
 
 const CODE: u32 = 0x1000;

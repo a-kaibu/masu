@@ -218,6 +218,10 @@ jobs:
       # regression put back into a real file, run with cargo test below)
       - name: Architecture lint (masu-lint arch)
         run: cargo run -q --release -p masu-lint -- arch
+      # (functions and tables copied under another name or file, found by their tokens
+      # (crates/masu-lint/src/dup.rs); the copies kept on purpose are in tools/ci/dup-sites.tsv)
+      - name: Duplicate lint (masu-lint dup)
+        run: cargo run -q --release -p masu-lint -- dup
       # (SingleStepTests: real-mode tests recorded on a real 80386EX, 80286, 8086, 8088 and
       # NEC V20, ~1.9 GB, which crates/koji/tests/singlestep.rs runs when they are there)
       - id: cache-2

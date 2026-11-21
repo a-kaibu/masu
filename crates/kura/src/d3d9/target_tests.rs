@@ -2,24 +2,14 @@
 //! (render/model.rs): the pipelines and passes they make must be valid WebGPU (formats, write
 //! masks, depth-stencil state) and have the targets Direct3D 9 draws to.
 
-use super::draw_tests::{call, out, put_bytes, rd};
-use super::trace_tests::{alloc, attach_page, CALLS, SERIAL};
+use super::draw_tests::{device_with, call, out, put_bytes, rd};
+use super::trace_tests::{alloc, SERIAL};
 use super::*;
 use crate::render::model;
 
 /// A 64x64 device with a D24S8 depth buffer (software vertex processing).
 fn device() -> u32 {
-    attach_page();
-    let o = out();
-    unsafe { vnhost_d3d9_create(0x20, o as *mut u32, &CALLS) };
-    let d3d = rd(o);
-    let pp = unsafe { alloc(56) as u32 };
-    for (i, x) in [64, 64, 22, 1, 0, 0, 1, 1, 1, 1, 75, 0, 0, 0].into_iter().enumerate() {
-        unsafe { *((pp + 4 * i as u32) as *mut u32) = x };
-    }
-    let o = out();
-    assert_eq!(call(IF_D3D9, 16, &[d3d, 0, 1, 1, 0x20, pp, o]), 0);
-    rd(o)
+    device_with([64, 64, 22, 1, 0, 0, 1, 1, 1, 1, 75, 0, 0, 0])
 }
 
 /// A pre-transformed quad over the target (XYZRHW | DIFFUSE).

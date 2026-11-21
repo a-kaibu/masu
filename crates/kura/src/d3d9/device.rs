@@ -609,12 +609,12 @@ impl Device {
     }
 }
 
-unsafe fn rd(p: u32, i: usize) -> u32 {
+pub(crate) unsafe fn rd(p: u32, i: usize) -> u32 {
     *((gc::<u32>(p)).add(i))
 }
 
 /// (a 32-bit value: crate::outs reports it at one of the call's pointer-sized out-parameters)
-unsafe fn wr(p: u32, i: usize, v: u32) {
+pub(crate) unsafe fn wr(p: u32, i: usize, v: u32) {
     if p != 0 {
         crate::outs::wrote32(p.wrapping_add(kome::num::lo32(i).wrapping_mul(4)));
         // SAFETY: wr's own contract: dword i at p is the caller's guest memory
@@ -2290,16 +2290,7 @@ const D3DERR_NOTFOUND: u32 = super::D3DERR_NOTFOUND;
 
 const IDENT: [f32; 16] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
 
-/// a * b (row-major, D3D's order: v * a * b)
-fn mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
-    let mut r = [0f32; 16];
-    for i in 0..4 {
-        for j in 0..4 {
-            r[i * 4 + j] = (0..4).map(|k| a[i * 4 + k] * b[k * 4 + j]).sum();
-        }
-    }
-    r
-}
+use dxwgsl::d3d9ff::mat_mul as mul;
 
 /// the objects a state holds a binding on
 pub(crate) fn state_binds(st: &State) -> [u32; SAMPLERS + 20] {

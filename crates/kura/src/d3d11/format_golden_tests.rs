@@ -7,10 +7,7 @@
 use super::format::*;
 
 fn fnv(h: &mut u64, bytes: &[u8]) {
-    for &b in bytes {
-        *h ^= u64::from(b);
-        *h = h.wrapping_mul(0x100_0000_01b3);
-    }
+    *h = kome::golden::Fnv(*h).bytes(bytes).get();
 }
 
 struct Rng(u64);

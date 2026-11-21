@@ -242,6 +242,74 @@ pub trait Memory {
     }
 }
 
+/// [`Flat`] with its first 64 KB unmapped (as Windows: a null pointer's page and the ones after
+/// it fault): what the differential tests against the host CPU run in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Guarded(pub alloc::vec::Vec<u8>);
+
+impl Guarded {
+    /// where the mapped memory starts
+    pub const LOW: u32 = 0x1_0000;
+}
+
+impl Memory for Guarded {
+    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
+        if a < Guarded::LOW {
+            return Err(Fault { addr: a, write: false });
+        }
+        Flat::read8_in(&self.0, a)
+    }
+    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
+        if a < Guarded::LOW {
+            return Err(Fault { addr: a, write: true });
+        }
+        Flat::write8_in(&mut self.0, a, v)
+    }
+}
+
+/// Read-only memory: `.0` at address `AT` (a code image), anything else and every write faults:
+/// what the JIT's tests translate from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Rom<const AT: u32>(pub alloc::vec::Vec<u8>);
+
+impl<const AT: u32> Memory for Rom<AT> {
+    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
+        a.checked_sub(AT).and_then(|o| usize::try_from(o).ok()).and_then(|o| self.0.get(o)).copied().ok_or(Fault { addr: a, write: false })
+    }
+    fn write8(&mut self, a: u32, _: u8) -> Result<(), Fault> {
+        Err(Fault { addr: a, write: true })
+    }
+}
+
+/// Memory that is one byte vector from address 0 (anything past its end faults): what tests
+/// and tools run code in.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Flat(pub alloc::vec::Vec<u8>);
+
+impl Flat {
+    fn read8_in(m: &[u8], a: u32) -> Result<u8, Fault> {
+        usize::try_from(a).ok().and_then(|i| m.get(i)).copied().ok_or(Fault { addr: a, write: false })
+    }
+    fn write8_in(m: &mut [u8], a: u32, v: u8) -> Result<(), Fault> {
+        match usize::try_from(a).ok().and_then(|i| m.get_mut(i)) {
+            Some(b) => {
+                *b = v;
+                Ok(())
+            }
+            None => Err(Fault { addr: a, write: true }),
+        }
+    }
+}
+
+impl Memory for Flat {
+    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
+        Flat::read8_in(&self.0, a)
+    }
+    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
+        Flat::write8_in(&mut self.0, a, v)
+    }
+}
+
 /// A general register, in encoding order. [`Gprs`] is indexed by it and by nothing else, so a
 /// register written as a number (`regs[3]`: EBX? the fourth pushed?) doesn't compile.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]

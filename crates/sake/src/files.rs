@@ -205,7 +205,7 @@ pub fn file_index(host: &str, m: &kura::fs::Metadata) -> u64 {
     if m.ino() != 0 {
         return m.ino();
     }
-    host.to_lowercase().bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+    kome::golden::Fnv::of(host.to_lowercase().as_bytes())
 }
 
 pub struct Find {

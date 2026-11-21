@@ -250,13 +250,7 @@ fn with<R>(f: impl FnOnce(&mut HashMap<u32, Obj>) -> R) -> R {
     f(OBJS.lock().unwrap().get_or_insert_with(HashMap::default))
 }
 fn new_obj(o: Obj, out: crate::api::Out) -> u32 {
-    if out.is_null() {
-        return INVALID_PARAMETER;
-    }
-    let h = mem::heap_alloc(16, true);
-    with(|m| m.insert(h, o));
-    out.put(h);
-    OK
+    crate::gdiplus::new_handle(&OBJS, o, out)
 }
 fn delete_obj(h: u32, f: fn(&Obj) -> bool) -> u32 {
     let gone = with(|m| match m.get(&h) {

@@ -4652,7 +4652,7 @@ const HLE: &[(Hle, &str, u32, u64)] = &[
 
 /// FNV-1a 64 of `b`.
 fn fnv64(b: &[u8]) -> u64 {
-    b.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &x| (h ^ u64::from(x)).wrapping_mul(0x100_0000_01b3))
+    kome::golden::Fnv::of(b)
 }
 
 /// The function [`Gen::hle`] does at `a`, if the guest's code there is one of [`HLE`].
@@ -6305,20 +6305,10 @@ mod tests {
     use super::*;
 
     /// 3000 blocks of `inc eax; jmp $+2`, then `ret`, at 0x100000.
-    struct Code(Vec<u8>);
-    impl Memory for Code {
-        fn read8(&mut self, a: u32) -> Result<u8, crate::Fault> {
-            a.checked_sub(0x10_0000).and_then(|i| self.0.get(i as usize).copied()).ok_or(crate::Fault { addr: a, write: false })
-        }
-        fn write8(&mut self, a: u32, _: u8) -> Result<(), crate::Fault> {
-            Err(crate::Fault { addr: a, write: true })
-        }
-    }
-
-    fn code() -> Code {
+    fn code() -> crate::Rom<0x10_0000> {
         let mut v: Vec<u8> = core::iter::repeat_n([0x40u8, 0xeb, 0x00], 3000).flatten().collect();
         v.push(0xc3);
-        Code(v)
+        crate::Rom::<0x10_0000>(v)
     }
 
     const SHA256: &[u8] = include_bytes!("../../testdata/ltc_sha256_compress_od.bin");
@@ -6328,10 +6318,10 @@ mod tests {
     /// byte missing; a run of it translated as HLE depends on all of them.
     #[test]
     fn sha256_hle_only_for_its_exact_code() {
-        assert_eq!(hle_at(&mut Code(SHA256.to_vec()), 0x10_0000), Some(Hle::Sha256));
+        assert_eq!(hle_at(&mut crate::Rom::<0x10_0000>(SHA256.to_vec()), 0x10_0000), Some(Hle::Sha256));
         assert_eq!(hle_len(Hle::Sha256), SHA256.len() as u32);
-        assert_eq!(hle_at(&mut Code(SHA256[..SHA256.len() - 1].to_vec()), 0x10_0000), None);
-        let mut c = Code(SHA256.to_vec());
+        assert_eq!(hle_at(&mut crate::Rom::<0x10_0000>(SHA256[..SHA256.len() - 1].to_vec()), 0x10_0000), None);
+        let mut c = crate::Rom::<0x10_0000>(SHA256.to_vec());
         for i in 0..SHA256.len() {
             for bit in 0..8 {
                 c.0[i] ^= 1 << bit;
@@ -6340,7 +6330,7 @@ mod tests {
             }
         }
         let mut m = Module::default();
-        let r = translate_region(&mut m, &mut Code(SHA256.to_vec()), &[0x10_0000], 16, |_| true).unwrap();
+        let r = translate_region(&mut m, &mut crate::Rom::<0x10_0000>(SHA256.to_vec()), &[0x10_0000], 16, |_| true).unwrap();
         assert!(r.code.contains(&(0x10_0000, SHA256.len() as u32)), "{:x?}", r.code);
         // (the C runtimes' are known by their first 48 bytes, as before)
         assert_eq!(hle_len(Hle::Move), 48);
@@ -6359,7 +6349,7 @@ mod tests {
             v.resize(AT as usize, 0xcc);
             v.extend_from_slice(SHA256);
             let mut m = Module::default();
-            let r = translate_region(&mut m, &mut Code(v.clone()), &[0x10_0000, 0x10_0000 + AT], 16, |_| true).unwrap();
+            let r = translate_region(&mut m, &mut crate::Rom::<0x10_0000>(v.clone()), &[0x10_0000, 0x10_0000 + AT], 16, |_| true).unwrap();
             assert!(r.code.contains(&(0x10_0000 + AT, SHA256.len() as u32)), "{l:x?}: {:x?}", r.code);
             valid(m);
         }
@@ -6386,9 +6376,9 @@ mod tests {
             v.extend_from_slice(SHA256);
             let mut m = Module::default();
             let r = if fnm {
-                translate_function(&mut m, &mut Code(v), 0x10_0000, 64, MAX_REGION_INS, (0, 0), &|_| None, &|_| true, |_| true)
+                translate_function(&mut m, &mut crate::Rom::<0x10_0000>(v), 0x10_0000, 64, MAX_REGION_INS, (0, 0), &|_| None, &|_| true, |_| true)
             } else {
-                translate_region(&mut m, &mut Code(v), &[0x10_0000, 0x10_0000 + AT], 64, |_| true)
+                translate_region(&mut m, &mut crate::Rom::<0x10_0000>(v), &[0x10_0000, 0x10_0000 + AT], 64, |_| true)
             };
             if let Some(r) = r {
                 proptest::prop_assert!(fnm || r.code.contains(&(0x10_0000 + AT, SHA256.len() as u32)), "{:x?}", r.code);
@@ -6405,7 +6395,7 @@ mod tests {
 
     /// A straight run of `ops` (indices into a few memory-heavy instructions), then RET, at
     /// 0x100000: wasm grows fast with these.
-    fn heavy(ops: &[u8]) -> Code {
+    fn heavy(ops: &[u8]) -> crate::Rom<0x10_0000> {
         const INS: [&[u8]; 5] = [
             &[0x89, 0x94, 0x88, 0x34, 0x12, 0x00, 0x00], // mov [eax+ecx*4+0x1234], edx
             &[0x8b, 0x84, 0x8a, 0x78, 0x56, 0x00, 0x00], // mov eax, [edx+ecx*4+0x5678]
@@ -6415,7 +6405,7 @@ mod tests {
         ];
         let mut v: Vec<u8> = ops.iter().flat_map(|&k| INS[usize::from(k) % INS.len()].iter().copied()).collect();
         v.push(0xc3);
-        Code(v)
+        crate::Rom::<0x10_0000>(v)
     }
 
     proptest::proptest! {
@@ -6479,7 +6469,7 @@ mod tests {
         let small = || {
             let mut v: Vec<u8> = core::iter::repeat_n([0x40u8, 0x01, 0xc8, 0xeb, 0x00], 40).flatten().collect();
             v.push(0xc3);
-            Code(v)
+            crate::Rom::<0x10_0000>(v)
         };
         let one = || {
             let mut m = Module::default();
@@ -6556,7 +6546,7 @@ mod tests {
             ("call", &[0xe8, 0x00, 0x00, 0x00, 0x00, 0xc3], 0),
         ];
         for (name, bytes, want) in cases {
-            assert_eq!(callee_reads(&mut Code(bytes.to_vec()), 0x10_0000), want, "{name}");
+            assert_eq!(callee_reads(&mut crate::Rom::<0x10_0000>(bytes.to_vec()), 0x10_0000), want, "{name}");
         }
     }
 

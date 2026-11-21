@@ -12,8 +12,9 @@
 
 use koji::flags::STATUS;
 use koji::jit::{self, wasm::Module as JitModule};
-use koji::{Cpu, Exit, Fault, Memory};
+use koji::{Cpu, Exit, Memory};
 use libfuzzer_sys::fuzz_target;
+use masu_fuzz::x86::{converge, engine, Wasm, Window, HI, LO};
 use std::cell::UnsafeCell;
 use std::sync::OnceLock;
 use wasmtime::*;
@@ -24,8 +25,6 @@ const HASH_N: u32 = 64;
 const RING_AT: u32 = 0x8000;
 const CALLS_AT: u32 = 0x10000;
 const PAGES_AT: u32 = 0x20000; // a bit per 4 KB page: 128 KB
-const LO: u32 = 0x10_0000;
-const HI: u32 = 0x14_0000;
 const CODE_MAX: usize = 1024;
 const ESP0: u32 = 0x13_0000;
 const BUDGET: i32 = 64;
@@ -35,38 +34,6 @@ const STEPS: usize = 20_000;
 /// The data window's starting bytes (code goes over the first part).
 fn pattern(a: u32) -> u8 {
     (a.wrapping_mul(0x9e37_79b1) >> 24) as u8
-}
-
-struct Window(Vec<u8>);
-impl Memory for Window {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        if (LO..HI).contains(&a) { Ok(self.0[(a - LO) as usize]) } else { Err(Fault { addr: a, write: false }) }
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        if (LO..HI).contains(&a) {
-            self.0[(a - LO) as usize] = v;
-            Ok(())
-        } else {
-            Err(Fault { addr: a, write: true })
-        }
-    }
-}
-
-/// The wasm memory as guest memory for the `step` helper (the JIT's own view: all of it).
-struct Wasm<'a>(&'a [UnsafeCell<u8>]);
-impl Memory for Wasm<'_> {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        // (only the window: a step outside it is an interpreter fault too, never compared)
-        if (LO..HI).contains(&a) { Ok(unsafe { *self.0[a as usize].get() }) } else { Err(Fault { addr: a, write: false }) }
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        if (LO..HI).contains(&a) {
-            unsafe { *self.0[a as usize].get() = v };
-            Ok(())
-        } else {
-            Err(Fault { addr: a, write: true })
-        }
-    }
 }
 
 fn cpu_in(mem: &[UnsafeCell<u8>], at: u32) -> &mut Cpu {
@@ -80,17 +47,6 @@ struct Host {
     exit: Option<Exit>,
     /// a step read the MXCSR flags first (jit::mx_switched)
     read_flags: bool,
-}
-
-fn engine() -> &'static (Engine, Module) {
-    static E: OnceLock<(Engine, Module)> = OnceLock::new();
-    E.get_or_init(|| {
-        let mut c = Config::new();
-        c.wasm_threads(true).shared_memory(true).wasm_simd(true).wasm_tail_call(true).cranelift_opt_level(OptLevel::None);
-        let e = Engine::new(&c).unwrap();
-        let d = Module::new(&e, jit::dispatch::module()).unwrap();
-        (e, d)
-    })
 }
 
 /// `status`: compare the status flags too (not at an exception: the JIT keeps them only where
@@ -228,7 +184,7 @@ fuzz_target!(|data: &[u8]| {
             let d = mem.data();
             let cpu = cpu_in(d, at);
             let ip = (cpu.eip, cpu.rip_hi);
-            match koji::step(cpu, &mut Wasm(d)) {
+            match koji::step(cpu, &mut Wasm(d, |_| {})) {
                 // (as kura's vnhost_jit_step: POPF setting TF or another MXCSR mode leaves
                 // the region, and so does the first read of the MXCSR flags)
                 Exit::Continue if cpu.eflags & koji::flags::TF != 0 || !koji::jit::sse_ok(cpu.mxcsr) => 2,
@@ -323,7 +279,7 @@ fuzz_target!(|data: &[u8]| {
     let mut first: Option<(Cpu, Vec<u8>)> = None;
     for _ in 0..STEPS {
         if cpu.eip == got.eip && same(&cpu, &got, false) && window.0 == got_mem {
-            if jit_exit.is_some() || converge(&cpu, &window.0, &got, &got_mem) {
+            if jit_exit.is_some() || converge(&cpu, &window.0, &got, &got_mem, same) {
                 return;
             }
         }
@@ -361,23 +317,3 @@ fuzz_target!(|data: &[u8]| {
         memdiff
     );
 });
-
-/// Runs both states on in the interpreter (up to 64 instructions, or to where either stops):
-/// whether they end the same. Status flags that differ and were read make the runs part (a
-/// branch, a SETcc, an ADC); ones still different at the end were never read.
-fn converge(a: &Cpu, am: &[u8], b: &Cpu, bm: &[u8]) -> bool {
-    let (mut a, mut b) = (a.clone(), b.clone());
-    let (mut am, mut bm) = (Window(am.to_vec()), Window(bm.to_vec()));
-    for _ in 0..64 {
-        let (x, y) = (koji::step(&mut a, &mut am), koji::step(&mut b, &mut bm));
-        if x != y {
-            return false;
-        }
-        if x != Exit::Continue {
-            // (an exception: the handler sees the flags as they are, which the JIT does not
-            // keep where nothing after reads them)
-            return same(&a, &b, false) && am.0 == bm.0;
-        }
-    }
-    a.eip == b.eip && same(&a, &b, false) && am.0 == bm.0
-}

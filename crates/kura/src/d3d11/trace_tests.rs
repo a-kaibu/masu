@@ -5,25 +5,25 @@
 use super::*;
 use crate::d3d9::trace_tests::{alloc, hr, seeds, write_trace, Rng, Step, CALLS, SERIAL};
 
-fn mem(n: u32) -> u32 {
+pub(super) fn mem(n: u32) -> u32 {
     unsafe { alloc(4 * n) as u32 }
 }
 
-fn put(p: u32, v: &[u32]) {
+pub(super) fn put(p: u32, v: &[u32]) {
     for (i, &x) in v.iter().enumerate() {
         unsafe { *((p + 4 * i as u32) as *mut u32) = x };
     }
 }
 
-fn rd1(p: u32) -> u32 {
+pub(super) fn rd1(p: u32) -> u32 {
     unsafe { *(p as *const u32) }
 }
 
-fn call1(id: u32, args: &[u32]) -> u32 {
+pub(super) fn call1(id: u32, args: &[u32]) -> u32 {
     unsafe { call(id, args.as_ptr(), &CALLS) }
 }
 
-fn m(iface: u32, m: u32) -> u32 {
+pub(super) fn m(iface: u32, m: u32) -> u32 {
     iface << 8 | m
 }
 
@@ -238,8 +238,8 @@ fn run(seed: u64) {
     assert!(left.iter().all(|x| permanent.contains(x)), "seed {seed}: alive after every reference was released: {left:?}");
 }
 
-#[test]
-fn d3d11_object_lifetimes_trace() {
+/// `run` of every seed (MASU_TRACE_SEEDS) on a fresh vtable, one test at a time.
+pub(super) fn each_seed(run: fn(u64)) {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let vt = mem(256);
     put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
@@ -247,4 +247,9 @@ fn d3d11_object_lifetimes_trace() {
     for seed in 0..seeds() {
         run(seed);
     }
+}
+
+#[test]
+fn d3d11_object_lifetimes_trace() {
+    each_seed(run);
 }

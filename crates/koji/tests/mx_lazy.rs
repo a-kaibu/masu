@@ -4,23 +4,8 @@
 //! the mode is the process's (tools/jit32test and jit64test run programs across the switch).
 
 use core::sync::atomic::Ordering::Relaxed;
-use koji::{jit, step, Cpu, Exit, Fault, Memory};
-
-struct Flat(Vec<u8>);
-impl Memory for Flat {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
+use koji::{jit, step, Cpu, Exit};
+use koji::Flat;
 
 const CODE: u32 = 0x10000; // (jit::GUEST_LO)
 const ADDSS_RET: &[u8] = &[0xf3, 0x0f, 0x58, 0xc1, 0xc3]; // addss xmm0, xmm1; ret

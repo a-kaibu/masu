@@ -492,33 +492,14 @@ fn trace2() -> bool {
     *V.get_or_init(|| std::env::var("MASU_D3D_TRACE").as_deref() == Ok("2"))
 }
 
-unsafe fn rd(p: u32, i: usize) -> u32 {
-    *(gc::<u32>(p).add(i))
-}
-
-/// (a 32-bit value: crate::outs reports it at one of the call's pointer-sized out-parameters)
-unsafe fn wr(p: u32, i: usize, v: u32) {
-    if p != 0 {
-        crate::outs::wrote32(p.wrapping_add(kome::num::lo32(i).wrapping_mul(4)));
-        // SAFETY: wr's own contract: dword i at p is the caller's guest memory
-        unsafe { wr_word(p, i, v) };
-    }
-}
-
-/// (wr unchecked: a half of a pointer-sized value, wrp)
-unsafe fn wr_word(p: u32, i: usize, v: u32) {
-    if p != 0 {
-        *(gp::<u32>(p).add(i)) = v;
-    }
-}
-
 unsafe fn rdf(p: u32, i: usize) -> f32 {
     f32::from_bits(rd(p, i))
 }
 
 /// Size of the guest's pointers (and HWNDs, SIZE_Ts): 8 for 64-bit programs.
 /// Guest addresses are below 4G either way.
-use crate::d3d9::device::ptr;
+// (the guest-memory words d3d9 reads and writes, the same for d3d11)
+use crate::d3d9::device::{ptr, rd, wr, wrp};
 use crate::guest::{gc, gp};
 
 /// Pointer `i` of an array of pointers.
@@ -526,14 +507,6 @@ unsafe fn rdp(p: u32, i: usize) -> u32 {
     rd(p, i * us(ptr() / 4))
 }
 
-unsafe fn wrp(p: u32, i: usize, v: u32) {
-    // SAFETY: wrp's own contract: pointer i of the array at p is the caller's guest memory
-    unsafe { wr_word(p, i * us(ptr() / 4), v) };
-    if ptr() == 8 {
-        // SAFETY: (its upper half, in the same pointer)
-        unsafe { wr_word(p, i * 2 + 1, 0) };
-    }
-}
 
 /// DXGI_SWAP_CHAIN_DESC as 15 dwords in its 32-bit layout (OutputWindow at 11)
 unsafe fn swap_desc(desc: u32) -> [u32; 15] {

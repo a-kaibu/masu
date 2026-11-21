@@ -613,10 +613,7 @@ pub fn host16(module: &str, name: String, args: &str, f: H16) -> u32 {
     })
 }
 
-fn trace() -> u32 {
-    static T: OnceLock<u32> = OnceLock::new();
-    *T.get_or_init(|| std::env::var("SAKE_TRACE").ok().and_then(|s| s.parse().ok()).unwrap_or(0))
-}
+use crate::api::trace;
 
 /// A far call reached the thunk segment at linear `a`. True: it is `call16`'s return.
 pub fn dispatch(cpu: &mut Cpu, a: u32) -> bool {

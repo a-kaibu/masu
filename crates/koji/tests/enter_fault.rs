@@ -3,23 +3,8 @@
 //! RIP are as before the instruction, and the RBP it pushed first stays written below RSP (as
 //! on the hardware, and as the JIT leaves it).
 
-use koji::{step, Cpu, Exit, Fault, Memory};
-
-struct Flat(Vec<u8>);
-impl Memory for Flat {
-    fn read8(&mut self, a: u32) -> Result<u8, Fault> {
-        self.0.get(a as usize).copied().ok_or(Fault { addr: a, write: false })
-    }
-    fn write8(&mut self, a: u32, v: u8) -> Result<(), Fault> {
-        match self.0.get_mut(a as usize) {
-            Some(b) => {
-                *b = v;
-                Ok(())
-            }
-            None => Err(Fault { addr: a, write: true }),
-        }
-    }
-}
+use koji::{step, Cpu, Exit, Fault};
+use koji::Flat;
 
 const CODE: u32 = 0x1000;
 

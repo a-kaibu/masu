@@ -4,6 +4,7 @@
 //!
 //! `MASU_TRACE_DIR=dir` writes `dir/d3d9-<seed>/ComTrace.tla`; `MASU_TRACE_SEEDS=n` (default 20).
 
+use super::draw_tests::call;
 use super::*;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -262,14 +263,6 @@ pub(crate) fn attach_page() {
 
 /// (one test at a time drives the global tables)
 pub(crate) static SERIAL: Mutex<()> = Mutex::new(());
-
-fn call(iface: u32, m: u32, args: &[u32]) -> u32 {
-    // (the guest's arguments are on its stack, with the caller's frame after them: the
-    // Direct3D 8 methods that forward to Direct3D 9 read 10 words whatever the method takes)
-    let mut a = args.to_vec();
-    a.resize(a.len().max(16), 0);
-    unsafe { vnhost_d3d9_call(iface << 8 | m, a.as_ptr(), &CALLS) }
-}
 
 fn out() -> u32 {
     unsafe { alloc(16) as u32 }

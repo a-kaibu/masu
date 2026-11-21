@@ -5,25 +5,15 @@
 //! (アオイシロ's text window: P8 font and frame textures, which drew grey boxes when the
 //! indices were taken for luminance.) Random sequences of calls are checked against a model.
 
-use super::draw_tests::{call, out, put_bytes, rd};
-use super::trace_tests::{alloc, attach_page, Rng, CALLS, SERIAL};
+use super::draw_tests::{device_with, call, out, put_bytes, rd};
+use super::trace_tests::{alloc, Rng, SERIAL};
 use super::*;
 use crate::render::model;
 
 const INVALIDCALL: u32 = 0x8876086c;
 
 fn device() -> u32 {
-    attach_page();
-    let o = out();
-    unsafe { vnhost_d3d9_create(0x20, o as *mut u32, &CALLS) };
-    let d3d = rd(o);
-    let pp = unsafe { alloc(56) as u32 };
-    for (i, x) in [64, 64, 22, 1, 0, 0, 1, 1, 1, 1, 75, 0, 0, 0].into_iter().enumerate() {
-        unsafe { *((pp + 4 * i as u32) as *mut u32) = x };
-    }
-    let o = out();
-    assert_eq!(call(IF_D3D9, 16, &[d3d, 0, 1, 1, 0x20, pp, o]), 0);
-    rd(o)
+    device_with([64, 64, 22, 1, 0, 0, 1, 1, 1, 1, 75, 0, 0, 0])
 }
 
 fn quad(dev: u32) {

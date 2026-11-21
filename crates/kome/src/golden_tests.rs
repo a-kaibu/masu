@@ -91,3 +91,70 @@ fn compare_reads_the_file() {
     assert!(e.contains("2:\n- y\n+ z") && e.contains(UPDATE), "{e}");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// asf's, mpeg1's, vorbis's and wmcodec's damage() as they were (their pin tables hash its output)
+fn old_damage(pkts: &[Vec<u8>], seed: u64) -> Vec<Vec<u8>> {
+    let mut r = OldRng(seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1);
+    let mut below = |n: usize| usize::try_from(r.next() % u64::try_from(n.max(1)).unwrap()).unwrap();
+    let mut p = pkts.to_vec();
+    if p.is_empty() {
+        return p;
+    }
+    for _ in 0..1 + below(6) {
+        let i = below(p.len());
+        if !p[i].is_empty() {
+            let k = below(p[i].len());
+            p[i][k] ^= 1 << below(8);
+        }
+    }
+    match below(6) {
+        0 => {
+            let i = below(p.len());
+            let n = below(p[i].len());
+            p[i].truncate(n);
+        }
+        1 => {
+            p.remove(below(p.len()));
+        }
+        2 => {
+            let i = below(p.len());
+            p.insert(i, p[i].clone());
+        }
+        3 => {
+            let (i, j) = (below(p.len()), below(p.len()));
+            p.swap(i, j);
+        }
+        _ => {}
+    }
+    p
+}
+
+proptest! {
+    #[test]
+    fn damage_is_the_old_one(seed: u64, pieces in proptest::collection::vec(proptest::collection::vec(any::<u8>(), 0..12), 0..6)) {
+        prop_assert_eq!(damage(&pieces, seed), old_damage(&pieces, seed));
+    }
+
+    #[test]
+    fn fnv_u64_is_its_bytes(start: u64, v: u64, n: usize) {
+        prop_assert_eq!(Fnv(start).u64(v).get(), Fnv(start).bytes(&v.to_le_bytes()).get());
+        prop_assert_eq!(Fnv(start).usize(n).get(), Fnv(start).bytes(&u64::try_from(n).unwrap().to_le_bytes()).get());
+    }
+}
+
+#[test]
+fn pins_compare_and_name_what_changed() {
+    let dir = std::env::temp_dir().join(format!("kome-pins-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let t = dir.join("pin.tsv");
+    std::fs::write(&t, "# c\na\t0000000000000001\nb\t00000000000000ff\n").unwrap();
+    let got: std::collections::BTreeMap<String, u64> = [("a".to_owned(), 1), ("b".to_owned(), 255)].into();
+    if !updating() {
+        pins(&t, &got);
+        let changed: std::collections::BTreeMap<String, u64> = [("b".to_owned(), 254)].into();
+        let e = std::panic::catch_unwind(|| pins(&t, &changed)).unwrap_err();
+        let msg = e.downcast_ref::<String>().unwrap();
+        assert!(msg.contains("b: 00000000000000fe, pinned Some(\"00000000000000ff\")"), "{msg}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}

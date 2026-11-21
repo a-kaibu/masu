@@ -31,33 +31,8 @@ pub fn n64(n: usize) -> u64 {
     u64::try_from(n).unwrap()
 }
 
-pub struct Fnv(pub u64);
-impl Fnv {
-    pub fn new() -> Self {
-        Fnv(0xcbf2_9ce4_8422_2325)
-    }
-    pub fn bytes(&mut self, b: &[u8]) {
-        for &x in b {
-            self.0 ^= u64::from(x);
-            self.0 = self.0.wrapping_mul(0x100_0000_01b3);
-        }
-    }
-    pub fn u8(&mut self, v: u8) {
-        self.bytes(&[v]);
-    }
-    pub fn u16(&mut self, v: u16) {
-        self.bytes(&v.to_le_bytes());
-    }
-    pub fn u32(&mut self, v: u32) {
-        self.bytes(&v.to_le_bytes());
-    }
-    pub fn u64(&mut self, v: u64) {
-        self.bytes(&v.to_le_bytes());
-    }
-    pub fn u128(&mut self, v: u128) {
-        self.bytes(&v.to_le_bytes());
-    }
-}
+/// (FNV-1a 64: the hash every golden here is made of)
+pub use kome::golden::Fnv;
 
 /// splitmix64
 pub struct Rng(pub u64);

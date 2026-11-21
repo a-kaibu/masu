@@ -197,6 +197,18 @@ pub(crate) fn unpremul(c: u8, a: u8) -> u8 {
 
 static IMAGES: Mutex<Option<HashMap<u32, Bitmap>>> = Mutex::new(None);
 
+/// A new handle (a 16-byte heap block, so handles never collide) for `o` in `table`, written to
+/// `out`; InvalidParameter for a null `out`.
+pub(crate) fn new_handle<T>(table: &Mutex<Option<HashMap<u32, T>>>, o: T, out: crate::api::Out) -> u32 {
+    if out.is_null() {
+        return INVALID_PARAMETER;
+    }
+    let h = mem::heap_alloc(16, true);
+    kome::locks::Lock::locked(table).get_or_insert_with(HashMap::default).insert(h, o);
+    out.put(h);
+    OK
+}
+
 fn with<R>(f: impl FnOnce(&mut HashMap<u32, Bitmap>) -> R) -> R {
     f(IMAGES.lock().unwrap().get_or_insert_with(HashMap::default))
 }

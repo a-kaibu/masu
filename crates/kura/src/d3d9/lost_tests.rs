@@ -5,14 +5,9 @@
 
 use super::lock_tests::{fill_color, name_of, write_bytes};
 use super::trace_tests::{alloc, CALLS, SERIAL};
+use super::draw_tests::call;
 use super::*;
 use crate::render::model;
-
-fn call(iface: u32, m: u32, args: &[u32]) -> u32 {
-    let mut a = args.to_vec();
-    a.resize(a.len().max(16), 0);
-    unsafe { vnhost_d3d9_call(iface << 8 | m, a.as_ptr(), &CALLS) }
-}
 
 fn out() -> u32 {
     unsafe { alloc(16) as u32 }

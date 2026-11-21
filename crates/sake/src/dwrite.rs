@@ -1446,17 +1446,7 @@ mod vtable_tests {
     //! Every DirectWrite object's vtable, slot by slot (dwrite_vtables.txt), pinned before the
     //! method lists change shape (com::check_vtables).
     use super::*;
-    use crate::test_guest::{call, enter};
-
-    fn made(f: crate::api::Handler, args: &[u32]) -> u32 {
-        let o = mem::heap_alloc(8, true);
-        let mut a = args.to_vec();
-        a.push(o);
-        assert_eq!(call(f, &a), 0);
-        let p = mem::rp(o);
-        mem::heap_free(o);
-        p
-    }
+    use crate::test_guest::{enter, made};
 
     #[test]
     fn every_objects_vtable() {

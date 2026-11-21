@@ -161,12 +161,7 @@ fn refs(b: u32, d: i32) -> u32 {
     })
 }
 
-fn com(c: &mut Ctx, obj: u32, slot: u32, args: &[u32]) -> u32 {
-    let f = rp(rp(obj) + ps() * slot);
-    let mut a = vec![obj];
-    a.extend_from_slice(args);
-    c.call(f, &a)
-}
+use crate::dshow::com;
 fn add_ref_guest(c: &mut Ctx, obj: u32) {
     if obj != 0 {
         com(c, obj, 1, &[]);

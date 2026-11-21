@@ -6,9 +6,14 @@
 //!   cargo run -q --release -p masu-lint -- ratchet [--update [--raise FILE...]]
 //!       clippy's type-safety, robustness and masu-* lints per file and unsafe site (src/ratchet.rs)
 //!
+//!   cargo run -q --release -p masu-lint -- dup [--update | --list]
+//!       the same code written twice (src/dup.rs); known groups with their why in
+//!       tools/ci/dup-sites.tsv, --update drops the gone ones, --list prints every group
+//!
 //! `cargo test -p masu-lint` proves each rule and each counted lint fires on its regression.
 mod arch;
 mod code;
+mod dup;
 mod escape;
 mod ratchet;
 mod syntax;
@@ -67,6 +72,38 @@ fn arch_main(update: bool) -> Result<String, String> {
     Ok(format!("masu-lint arch: ok ({} rules, {} known sites)", arch::Rule::ALL.len(), known.len()))
 }
 
+pub const DUP_SITES: &str = "tools/ci/dup-sites.tsv";
+/// what dup does not read: vendored code, lint fixtures (they repeat on purpose)
+pub const DUP_SKIP: &[&str] = &["vendor/", "tools/lint-fixtures/"];
+
+fn dup_main(update: bool, list: bool) -> Result<String, String> {
+    let root = root();
+    let tree = Tree::repo(&root);
+    let found = dup::find(&dup_files(&tree));
+    let path = root.join(DUP_SITES);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if list {
+        print!("{}", dup::list(&found));
+        return Ok(format!("masu-lint dup: {} groups", found.len()));
+    }
+    if update {
+        std::fs::write(&path, dup::updated(&text, &found)).map_err(|e| e.to_string())?;
+        return Ok(format!("masu-lint dup: wrote {DUP_SITES}"));
+    }
+    let known = dup::load_known(&text);
+    let new = dup::fresh(&found, &known);
+    if !new.is_empty() {
+        print!("{}", dup::report(&new, DUP_SITES));
+        return Err(format!("masu-lint dup: {} groups of copied code (crates/masu-lint/src/dup.rs; kome is where crates share code)", new.len()));
+    }
+    Ok(format!("masu-lint dup: ok ({} groups known)", known.len()))
+}
+
+/// the (path, text) of every tracked Rust file dup reads
+fn dup_files(tree: &Tree) -> Vec<(String, String)> {
+    tree.paths().iter().filter(|p| p.is_rust() && !DUP_SKIP.iter().any(|s| p.as_str().starts_with(s))).map(|p| (p.as_str().to_owned(), tree.text(p))).collect()
+}
+
 fn ratchet_main(update: bool, raise: BTreeSet<Rel>) -> Result<String, String> {
     let root = root();
     let repo = ratchet::Repo { root: root.clone(), dirs: vec!["crates"], conf: root.clone(), target: None };
@@ -80,7 +117,8 @@ fn main() -> ExitCode {
     let r = match args.first().map(String::as_str) {
         Some("arch") => arch_main(update),
         Some("ratchet") => ratchet_main(update, raise),
-        Some(_) | None => Err("usage: masu-lint arch [--update] | masu-lint ratchet [--update [--raise FILE...]]".into()),
+        Some("dup") => dup_main(update, args.iter().any(|a| a == "--list")),
+        Some(_) | None => Err("usage: masu-lint arch [--update] | masu-lint ratchet [--update [--raise FILE...]] | masu-lint dup [--update | --list]".into()),
     };
     match r {
         Ok(m) => {
@@ -92,4 +130,15 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// dup on the repository itself: every group it finds is in dup-sites.tsv (what CI runs)
+#[cfg(test)]
+#[test]
+fn dup_the_repository_has_no_unknown_copies() {
+    let root = root();
+    let found = dup::find(&dup_files(&Tree::repo(&root)));
+    let known = dup::load_known(&std::fs::read_to_string(root.join(DUP_SITES)).unwrap_or_default());
+    let new = dup::fresh(&found, &known);
+    assert!(new.is_empty(), "{}", dup::report(&new, DUP_SITES));
 }

@@ -1,4 +1,4 @@
-# behaviour pins: name, FNV-1a of every output (PIN_RECORD=1 writes it)
+# behaviour pins: name, FNV-1a of every output (MASU_UPDATE_GOLDEN=1 writes it)
 Video_Smoothing.wmv	ec8f2a14bd2b69a1
 Video_Smoothing.wmv damaged x24	2e70bb0eb707390d
 b52crash2.wmv	a20bd792501f75c4

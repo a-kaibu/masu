@@ -222,12 +222,8 @@ crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	(d.calls().client_rect)(hwnd
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	(d.calls().client_rect)(hwnd, rect.as_mut_ptr());
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	(d.calls().client_rect)(hwnd, rect.as_mut_ptr());
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	(std::slice::from_raw_parts(gc::<u8>(a(3)), us(a(2))).to_vec(), 0)
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gc::<u32>(p).add(i))
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gc::<u32>(p).add(i))
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u16>(p + lo32(i) * 2)) = c;
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u16>(p + lo32(i) * 2)) = c;
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u32>(p).add(i)) = v;
-crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*(gp::<u32>(p).add(i)) = v;
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = *args.add(i * 2);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = *args.add(i * 2);
 crates/kura/src/d3d11/mod.rs	unsafe_op_in_unsafe_fn	*v = rd(desc, k);

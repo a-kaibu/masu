@@ -7719,7 +7719,7 @@ fn GetFileInformationByHandleEx(c: &mut Ctx) -> u32 {
         _ => {
             put64(p, 0x1234);
             // (a file id from the path: os.path.samefile compares them)
-            let h = f.path.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b.to_ascii_lowercase())).wrapping_mul(0x100_0000_01b3));
+            let h = kome::golden::Fnv::of(f.path.to_ascii_lowercase().as_bytes());
             put64((mem::ga(p) + 8).get(), h);
         }
     }
@@ -10154,21 +10154,8 @@ mod mapping_names {
     const RW: u32 = 4; // PAGE_READWRITE
     const ALL: u32 = 0xf001f; // FILE_MAP_ALL_ACCESS
 
-    fn cstr_arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
-        for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + kome::num::u32_of(i), b);
-        }
-        p
-    }
-    fn wstr_arg(s: &str) -> u32 {
-        let w: Vec<u16> = s.encode_utf16().chain([0]).collect();
-        let p = mem::heap_alloc(2 * kome::num::u32_of(w.len()), true);
-        for (i, c) in w.iter().enumerate() {
-            mem::w16(p + 2 * kome::num::u32_of(i), *c);
-        }
-        p
-    }
+    use crate::test_guest::astr as cstr_arg;
+    use crate::test_guest::wstr as wstr_arg;
     fn create(name: u32, wide: bool) -> (u32, u32) {
         last_error(0xdead);
         let h = call(if wide { CreateFileMappingW } else { CreateFileMappingA }, &[u32::MAX, 0, RW, 0, 0x20, name]);
@@ -10466,13 +10453,7 @@ mod find_system_dlls {
         guest_thread();
         g
     }
-    fn cstr_arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
-        for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + kome::num::u32_of(i), b);
-        }
-        p
-    }
+    use crate::test_guest::astr as cstr_arg;
     /// (handle, last error, attributes, low size, name) of FindFirstFileA(path)
     fn find(path: &str) -> (u32, u32, u32, u32, String) {
         let data = mem::heap_alloc(320, true);
@@ -10812,13 +10793,7 @@ mod wow64_tests {
         guest_thread();
         g
     }
-    fn arg(s: &str) -> u32 {
-        let p = mem::heap_alloc(kome::num::u32_of(s.len()) + 1, true);
-        for (i, b) in s.bytes().chain([0]).enumerate() {
-            mem::w8(p + kome::num::u32_of(i), b);
-        }
-        p
-    }
+    use crate::test_guest::astr as arg;
 
     #[test]
     fn a_32_bit_process_is_wow64() {

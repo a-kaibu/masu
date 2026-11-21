@@ -15,7 +15,7 @@ pub struct Decoded {
 }
 
 pub fn fnv(h: u64, d: &[u8]) -> u64 {
-    d.iter().fold(h, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3))
+    kome::golden::Fnv(h).bytes(d).get()
 }
 
 /// Demux and decode `data` fed in the slices `cuts` gives (each a length, then the rest).

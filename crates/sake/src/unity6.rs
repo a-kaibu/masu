@@ -284,6 +284,11 @@ pub mod samples {
     pub const FIELD: &str = "81e2ffffff0f49c1ea1c8910418bd2488b810002000081e2ffffff0f49c1ea1c8910c3";
     // a flag test with the same constant
     pub const FLAG: &str = "f7430400000010c3";
+
+    /// The bytes of one of these (two hex digits a byte).
+    pub fn hex(s: &str) -> Vec<u8> {
+        s.as_bytes().chunks(2).filter_map(|c| std::str::from_utf8(c).ok().and_then(|t| u8::from_str_radix(t, 16).ok())).collect()
+    }
 }
 
 #[cfg(test)]
@@ -323,10 +328,6 @@ mod tests {
             let want = (floor.max(2)..=o).rev().find(|&p| code[p - 1] == 0xcc && code[p - 2] == 0xcc).unwrap_or(floor);
             proptest::prop_assert_eq!(sync_point(&code, o), want);
         }
-    }
-
-    fn hex(s: &str) -> Vec<u8> {
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
     }
 
     use super::samples::*;

@@ -4,24 +4,14 @@
 //! WebGPU (a texture_3d binding, a 3D view; white when a 2D texture is set instead). The
 //! Direct3D 8 interfaces read the same through d3d8.rs (D3DVOLUME_DESC8 with Size).
 
-use super::draw_tests::{call, out, put_bytes, rd};
+use super::draw_tests::{device_with, words, call, out, put_bytes, rd};
 use super::trace_tests::{alloc, attach_page, on_low_stack, CALLS, SERIAL};
 use super::*;
 use crate::render::model;
 
 /// A 64x64 device (software vertex processing).
 fn device() -> u32 {
-    attach_page();
-    let o = out();
-    unsafe { vnhost_d3d9_create(0x20, o as *mut u32, &CALLS) };
-    let d3d = rd(o);
-    let pp = unsafe { alloc(56) as u32 };
-    for (i, x) in [64, 64, 22, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0].into_iter().enumerate() {
-        unsafe { *((pp + 4 * i as u32) as *mut u32) = x };
-    }
-    let o = out();
-    assert_eq!(call(IF_D3D9, 16, &[d3d, 0, 1, 1, 0x20, pp, o]), 0);
-    rd(o)
+    device_with([64, 64, 22, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0])
 }
 
 /// A pre-transformed quad over the target with 3D texture coordinates (XYZRHW | TEX1 |
@@ -45,12 +35,6 @@ fn quad(dev: u32, w: f32) {
 
 fn errors() -> Vec<String> {
     model::with(|m| std::mem::take(&mut m.errors))
-}
-
-fn words(w: &[u32]) -> u32 {
-    let p = unsafe { alloc(4 * w.len() as u32) as u32 };
-    put_bytes(p, &w.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
-    p
 }
 
 /// The page's 3D textures of size `w`x`h`x`d` made since `from`: their texels per (mip, z).

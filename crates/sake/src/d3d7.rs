@@ -1149,7 +1149,10 @@ struct Fmt {
 
 impl Fmt {
     fn of(s: &Surf) -> Fmt {
-        let m = [s.pf[1], s.pf[2], s.pf[3], s.pf[4]];
+        Fmt::masks([s.pf[1], s.pf[2], s.pf[3], s.pf[4]])
+    }
+    /// From the R, G, B, A bit masks of a DDPIXELFORMAT (0: no such channel)
+    fn masks(m: [u32; 4]) -> Fmt {
         Fmt { ch: m.map(|m| if m == 0 { (0, 0) } else { (m.trailing_zeros(), m >> m.trailing_zeros()) }) }
     }
     #[inline]
@@ -3653,7 +3656,7 @@ mod tests {
     #[test]
     fn formats_round_trip() {
         for (bpp, _, r, g, b, a) in TEX_FORMATS {
-            let f = Fmt { ch: [r, g, b, a].map(|m| if m == 0 { (0, 0) } else { (m.trailing_zeros(), m >> m.trailing_zeros()) }) };
+            let f = Fmt::masks([r, g, b, a]);
             let all = r | g | b | a;
             let vals: Box<dyn Iterator<Item = u32>> = if bpp == 16 { Box::new(0..0x10000) } else { Box::new((0..0x10000u32).map(|i| i.wrapping_mul(0x9e37_79b9))) };
             for v in vals {
@@ -3822,9 +3825,6 @@ mod tests {
         const ARGB1555: [u32; 4] = [0x7c00, 0x3e0, 0x1f, 0x8000];
         const FMTS: [[u32; 4]; 4] = [XRGB, ARGB, RGB565, ARGB1555];
 
-        fn fmt_of(m: [u32; 4]) -> Fmt {
-            Fmt { ch: m.map(|m| if m == 0 { (0, 0) } else { (m.trailing_zeros(), m >> m.trailing_zeros()) }) }
-        }
 
         struct Pic {
             px: Vec<u8>,
@@ -3839,7 +3839,7 @@ mod tests {
                 let bpp = if m[0] > 0xffff { 4 } else { 2 };
                 let mut x = seed | 1;
                 let px = (0..w as usize * h as usize * bpp).map(|_| { x ^= x << 13; x ^= x >> 17; x ^= x << 5; x as u8 }).collect();
-                Pic { px, w, h, bpp, fmt: fmt_of(m) }
+                Pic { px, w, h, bpp, fmt: Fmt::masks(m) }
             }
             fn at(&self, x: i32, y: i32) -> u32 {
                 read_px(self.px[(y * self.w) as usize * self.bpp + x as usize * self.bpp..].as_ptr(), Access::of_bytes(self.bpp))
