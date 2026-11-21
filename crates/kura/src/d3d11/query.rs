@@ -16,7 +16,7 @@
 //! counts nothing.
 
 use crate::d3d9::gpu::{self, Answer, QueryEnd};
-use crate::d3d9::query::FREQ;
+use crate::d3d9::query::{ns_now, FREQ};
 use kome::num::*;
 
 const S_FALSE: u32 = 1;
@@ -100,7 +100,7 @@ impl Kind {
     }
 }
 
-/// The same states as a D3D9 query (begun: an occlusion query's ticket, 0: none; the device losses then).
+/// (Direct3D 9's: begun with an occlusion query's ticket, 0 none; the device losses then)
 pub use crate::d3d9::query::State;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -257,7 +257,7 @@ impl Query {
             }
             Answer::Done(v) => v,
             Answer::Unrun => match self.kind {
-                Kind::Timestamp => crate::d3d9::query::ns_now(),
+                Kind::Timestamp => ns_now(),
                 Kind::Event | Kind::Occlusion | Kind::TimestampDisjoint | Kind::PipelineStatistics | Kind::OcclusionPredicate | Kind::SoStatistics(_) | Kind::SoOverflowPredicate(_) => 0,
             },
         };
