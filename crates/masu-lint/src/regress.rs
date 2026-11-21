@@ -197,6 +197,31 @@ pub(super) fn clear_rounding(tree: &Tree) -> Hits {
     out
 }
 
+// --- ps-quads --------------------------------------------------------------------------------
+
+/// the clip pass and the query that reads its counters
+const PS_SITES: [(&str, &str, &str); 2] = [
+    ("crates/dxwgsl/src/wgsl/expand.rs", "ps_quads(p,", "the clip pass does not add ps_quads(p, ..) to the counters"),
+    ("crates/kura/src/d3d11/query.rs", "c::PS_QUADS", "PIPELINE_STATISTICS does not read c::PS_QUADS"),
+];
+
+/// PSInvocations not taken from the clip pass's quads
+pub(super) fn ps_quads(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (path, needle, why) in PS_SITES {
+        let f = Rel::new(path);
+        if tree.is_made_up() && !tree.has(&f) {
+            continue;
+        }
+        // (strings kept: the clip pass writes ps_quads in its WGSL text)
+        let code = tree.code(&f, true);
+        if !code.contains(needle) {
+            out.push((f, 1, why.to_owned()));
+        }
+    }
+    out
+}
+
 /// (for the tests: every regex here compiles)
 #[cfg(test)]
 pub(super) fn regexes() -> [&'static LazyLock<Option<Regex>>; 6] {

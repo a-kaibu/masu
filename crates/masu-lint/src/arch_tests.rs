@@ -141,6 +141,11 @@ fn fixture(r: Rule) -> Fixture {
             good: &[("crates/kura/src/d3d11/clear.rs", "// not f16_bits\nfn texel(v: f32) -> u32 { f16_rtz(v) }\n#[cfg(test)]\nmod tests {\n    fn t() { f16_bits(1.0); }\n}\n")],
             mutate: ("crates/kura/src/d3d11/clear.rs", |t| Some(t.replace("sign | rtz_bits(", "f16_bits(v) | rtz_bits("))),
         },
+        Rule::PsQuads => Fixture {
+            bad: &[("crates/kura/src/d3d11/query.rs", "const STATS: [u32; 3] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES];\n// c::PS_QUADS named in a comment\n")],
+            good: &[("crates/kura/src/d3d11/query.rs", "const STATS: [u32; 4] = [c::GS_PRIMITIVES, c::C_INVOCATIONS, c::C_PRIMITIVES, c::PS_QUADS];\n")],
+            mutate: ("crates/dxwgsl/src/wgsl/expand.rs", |t| Some(t.replace("ps_quads(p,", "clip_count(p,"))),
+        },
         Rule::DepthGuard => Fixture {
             bad: &[
                 ("crates/apitrace/src/trace.rs", "pub const MAX_DEPTH: u32 = 64;\nfn value(&mut self) { self.depth += 1; }\n"),

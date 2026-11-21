@@ -484,7 +484,7 @@ pub enum After {
 }
 
 /// Word `k` of the xd array that starts at word `at` (VB_OFFSET, SO_SLOT, ...).
-fn put(xw: &mut [u32; 48], at: usize, k: usize, v: u32) {
+fn put(xw: &mut [u32; x::xd::WORDS], at: usize, k: usize, v: u32) {
     if let Some(w) = xw.get_mut(at.saturating_add(k)) {
         *w = v;
     }
@@ -535,7 +535,7 @@ pub enum Over {
 }
 
 /// The uniform `xd` of a pass.
-fn xd(words: &[u32; 48]) -> Over {
+fn xd(words: &[u32; x::xd::WORDS]) -> Over {
     Over::Data { binding: x::B_XD, kind: 0, bytes: words.iter().flat_map(|w| w.to_le_bytes()).collect() }
 }
 
@@ -631,7 +631,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
     let attrs = attributes(d, st, &vs_code);
     let Some((attrs, vbs)) = attrs else { return After::Draw };
     // the uniform's vertex words
-    let mut xw = [0u32; 48];
+    let mut xw = [0u32; x::xd::WORDS];
     put(&mut xw, x::xd::COUNT, 0, count);
     put(&mut xw, x::xd::START, 0, start);
     put(&mut xw, x::xd::BASE, 0, base.cast_unsigned());
@@ -807,6 +807,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
         if let Some(csh) = shader(d, Key::Clip { src, stream: r, corners }, move |_| x::clip_pass(&stv, &osgn)) {
             let mut cx = xw;
             put(&mut cx, x::xd::ITEMS, 0, slots);
+            raster_words(d, st, &mut cx);
             let mut over = vec![xd(&cx), store(x::B_COUNTERS, counters, true)];
             over.extend(store_entries());
             pass(d, st, 0, &csh, &over, Some(slots));
@@ -834,6 +835,26 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
             unsafe { draw_with(d, st, false, sd.count, 1, 0, 0, 0, None, Some(&sd)) };
             After::Done
         }
+    }
+}
+
+/// The clip pass's raster words (xd VIEWPORT, RASTER, RECT) for PSInvocations: the first
+/// viewport, the rasterizer state's cull mode, winding and depth clip (D3D11's defaults without
+/// one), whether a pixel shader is bound, and the pixels that can be drawn: the viewport's
+/// (centres inside it), the first render target's (or the depth view's) and, with ScissorEnable,
+/// the first scissor rectangle's.
+fn raster_words(d: &D11, st: &State, w: &mut [u32; x::xd::WORDS]) {
+    let vp = st.viewport[0];
+    for (k, v) in vp.iter().take(4).enumerate() {
+        put(w, x::xd::VIEWPORT, k, v.to_bits());
+    }
+    let r = state_desc(d, st.raster).cloned().unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
+    let at = |i: usize| r.get(i).copied().unwrap_or(0);
+    let cull = x::ps::Cull::of(at(1)).unwrap_or(x::ps::Cull::Back);
+    let bits = cull.word() | u32::from(at(2) != 0) << 2 | u32::from(at(6) != 0) << 3 | u32::from(st.ps != 0) << 4;
+    put(w, x::xd::RASTER, 0, bits);
+    for (k, v) in x::ps::rect(&vp, view_size(d, st.rtvs[0]).or_else(|| view_size(d, st.dsv)), (at(7) != 0).then_some(st.scissor[0])).iter().enumerate() {
+        put(w, x::xd::RECT, k, v.cast_unsigned());
     }
 }
 

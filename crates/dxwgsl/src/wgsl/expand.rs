@@ -55,7 +55,7 @@ pub const B_GCOUNT: u32 = 442;
 pub const B_SO: u32 = 450;
 pub const B_COUNTERS: u32 = 455;
 /// vec4s of the uniform `xd`
-pub const XD_VECS: u32 = 12;
+pub const XD_VECS: u32 = 15;
 
 /// The uniform the passes read (`xd`, XD_VECS vec4<u32>), word by word.
 pub mod xd {
@@ -87,9 +87,18 @@ pub mod xd {
     pub const INDEX_SIZE: usize = 40;
     /// stream output: the list's first primitive (vertex stream output: kura's list)
     pub const FIRST: usize = 41;
+    /// the rasterizer's viewport (4 f32: TopLeftX, TopLeftY, Width, Height) for PSInvocations
+    pub const VIEWPORT: usize = 48;
+    /// bits 0..2 CullMode (ps::Cull::word), 4 FrontCounterClockwise, 8 DepthClipEnable, 16 a
+    /// pixel shader is bound
+    pub const RASTER: usize = 52;
+    /// the pixels that can be drawn (4 i32: ps::Raster::rect)
+    pub const RECT: usize = 53;
+    /// the words
+    pub const WORDS: usize = 60;
     /// The words' names in the passes' WGSL (`const XD_<name>`), so the shaders say which word
     /// they read
-    pub const NAMED: [(&str, usize); 15] = [
+    pub const NAMED: [(&str, usize); 18] = [
         ("COUNT", COUNT),
         ("START", START),
         ("BASE", BASE),
@@ -105,6 +114,9 @@ pub mod xd {
         ("SO_SIZE", SO_SIZE),
         ("INDEX_SIZE", INDEX_SIZE),
         ("FIRST", FIRST),
+        ("VIEWPORT", VIEWPORT),
+        ("RASTER", RASTER),
+        ("RECT", RECT),
     ];
 }
 
@@ -115,6 +127,8 @@ pub mod counter {
     pub const GS_PRIMITIVES: u32 = 8;
     pub const C_INVOCATIONS: u32 = 9;
     pub const C_PRIMITIVES: u32 = 10;
+    /// PSInvocations / 4: the quads the pixel shader runs on (ps::invocations)
+    pub const PS_QUADS: u32 = 11;
     pub const N: u32 = 16;
 }
 
@@ -772,8 +786,9 @@ fn clip_count(p: array<vec4<f32>, 3>, n: u32) -> u32 {
 }
 ";
 
-/// Each list primitive of a store through the clipper: counters C_INVOCATIONS (+1 each) and
-/// C_PRIMITIVES (clip_count). `osgn`: the shader's outputs (its SV_Position).
+/// Each list primitive of a store through the clipper: counters C_INVOCATIONS (+1 each),
+/// C_PRIMITIVES (clip_count) and PS_QUADS (ps::WGSL's ps_quads, by the uniform's raster words).
+/// `osgn`: the shader's outputs (its SV_Position).
 pub fn clip_pass(store: &Store, osgn: &[SigElement]) -> Result<Wgsl, String> {
     let stream = match store {
         Store::Vertex { .. } => 0,
@@ -786,6 +801,7 @@ pub fn clip_pass(store: &Store, osgn: &[SigElement]) -> Result<Wgsl, String> {
     wln!(m, "@group(0) @binding({B_COUNTERS}) var<storage, read_write> counters: array<atomic<u32>, {}>;", counter::N);
     bindings.push((B_COUNTERS, Binding::StorageBuffer(true)));
     m.push_str(CLIP_COUNT);
+    m.push_str(ps::WGSL);
     let corners = store.corners();
     let regs = store.regs();
     let pos = osgn.iter().find(|e| e.stream == stream && e.sysval == 1).map(|e| e.reg);
@@ -800,7 +816,7 @@ pub fn clip_pass(store: &Store, osgn: &[SigElement]) -> Result<Wgsl, String> {
         None => m.push_str("        p[c] = vec4<f32>(0.0f);\n"),
     }
     m.push_str("    }\n");
-    wln!(m, "    atomicAdd(&counters[{}u], 1u);\n    atomicAdd(&counters[{}u], clip_count(p, {corners}u));\n}}", counter::C_INVOCATIONS, counter::C_PRIMITIVES);
+    wln!(m, "    atomicAdd(&counters[{}u], 1u);\n    atomicAdd(&counters[{}u], clip_count(p, {corners}u));\n    atomicAdd(&counters[{}u], ps_quads(p, {corners}u));\n}}", counter::C_INVOCATIONS, counter::C_PRIMITIVES, counter::PS_QUADS);
     Ok(Wgsl { code: m, bindings })
 }
 
@@ -808,6 +824,9 @@ pub fn clip_pass(store: &Store, osgn: &[SigElement]) -> Result<Wgsl, String> {
 pub fn is_gs(code: &[u8]) -> bool {
     parse(code).is_ok_and(|(_, p)| p.kind == tpf::GEOMETRY)
 }
+
+#[path = "ps.rs"]
+pub mod ps;
 
 #[cfg(test)]
 #[path = "expand_tests.rs"]
