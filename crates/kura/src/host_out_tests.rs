@@ -51,7 +51,7 @@ fn vnv_of(frames: &[(usize, bool)], two: bool) -> Vec<u8> {
     if two {
         t.push(("vp09.00.31.08".to_string(), track(0x3c)));
     }
-    vnv::write(16, 16, &t, None)
+    vnv::write(16, 16, &t, None).unwrap()
 }
 
 #[test]

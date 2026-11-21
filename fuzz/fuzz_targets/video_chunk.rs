@@ -24,7 +24,7 @@ fuzz_target!(|data: &[u8]| {
         if k & 2 != 0 {
             tracks.push(("vp09.00.31.08".to_string(), frames));
         }
-        let mut f = vnv::write(16, 16, &tracks, None);
+        let Ok(mut f) = vnv::write(16, 16, &tracks, None) else { return };
         let mut at = 1 + n;
         while let Some(p) = rest.get(at..at + 3) {
             at += 3;

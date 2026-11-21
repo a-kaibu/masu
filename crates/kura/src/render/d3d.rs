@@ -3962,14 +3962,16 @@ impl D3d {
                 }
                 8 => {
                     // (what it held: a copy of that mip, made again only when it changed)
-                    let v = match self.textures.get(&a).filter(|t| t.dim != Dim::D3 || b == 5) {
+                    let fits = |t: &&mut Tex| t.dim != Dim::D3 || b == 5;
+                    let stamp = self.stamp_of(a);
+                    if self.textures.get_mut(&a).filter(fits).is_some() {
+                        self.use_tex(a);
+                    }
+                    let v = match self.textures.get_mut(&a).filter(fits) {
                         Some(t) => {
                             let m = cc.min(t.levels.max(1) - 1);
                             let (w, h, layers) = ((t.w >> m).max(1), (t.h >> m).max(1), if t.dim == Dim::D3 { (t.layers >> m).max(1) } else { t.layers.max(1) });
                             let (src, dim, format) = (t.tex, t.dim, t.format);
-                            let stamp = self.stamp_of(a);
-                            self.use_tex(a);
-                            let t = self.textures.get_mut(&a).unwrap();
                             let r = t.reads.entry(m).or_insert_with(|| {
                                 let copy = gpu::texture(&format!(
                                     r#"{{"size":[{w},{h},{layers}],"dimension":{},"format":{},"usage":{}}}"#,

@@ -93,23 +93,24 @@ static FS: Mutex<Option<Fs>> = Mutex::new(None);
 /// Records as `Fs::export` makes them.
 fn parse_records(mut b: &[u8]) -> Vec<(String, Vec<u8>, i64)> {
     let mut files = Vec::new();
-    let u32_at = |b: &[u8]| u32::from_le_bytes(b[..4].try_into().unwrap()) as usize;
-    while b.len() >= 4 {
-        let n = u32_at(b);
-        // (in u64: on wasm32 16 + n wrapped for n near 4 GiB, passed the check and panicked)
-        if (b.len() as u64) < 16 + n as u64 {
-            break;
-        }
-        let path = String::from_utf8_lossy(&b[4..4 + n]).into_owned();
-        let mtime = i64::from_le_bytes(b[4 + n..12 + n].try_into().unwrap());
-        let size = u32_at(&b[12 + n..]);
-        if (b.len() as u64) < 16 + n as u64 + size as u64 {
-            break;
-        }
-        files.push((path, b[16 + n..16 + n + size].to_vec(), mtime));
-        b = &b[16 + n + size..];
+    // (a record cut short ends them: split by what is there, no sum that wraps on wasm32 for
+    // a length near 4 GiB)
+    while let Some((file, rest)) = record(b) {
+        files.push(file);
+        b = rest;
     }
     files
+}
+
+/// The first record of `b` and what follows it: u32 path length, path, i64 mtime, u32 size,
+/// data.
+fn record(b: &[u8]) -> Option<((String, Vec<u8>, i64), &[u8])> {
+    let (n, b) = b.split_first_chunk::<4>()?;
+    let (path, b) = b.split_at_checked(usize::try_from(u32::from_le_bytes(*n)).ok()?)?;
+    let (mtime, b) = b.split_first_chunk::<8>()?;
+    let (size, b) = b.split_first_chunk::<4>()?;
+    let (data, b) = b.split_at_checked(usize::try_from(u32::from_le_bytes(*size)).ok()?)?;
+    Some(((String::from_utf8_lossy(path).into_owned(), data.to_vec(), i64::from_le_bytes(*mtime)), b))
 }
 
 /// The page: the files written under each of `roots` (":"-separated paths) as records (see
@@ -247,7 +248,8 @@ fn with<R>(f: impl FnOnce(&mut Fs) -> R) -> R {
         }
         g = FS.lock().unwrap_or_else(|e| e.into_inner());
     }
-    let fs = g.as_mut().unwrap();
+    // (loaded above; gone again only if another thread took it away meanwhile: loaded here)
+    let fs = g.get_or_insert_with(Fs::load);
     let shared = shared::Guard::enter(fs);
     let result = f(fs);
     shared.publish(fs);
@@ -1160,10 +1162,10 @@ fn fetch_ahead(p: Piece) {
     let mut run: Option<Piece> = None;
     for (k, b) in (p.first..p.first + p.n).enumerate() {
         let new = !have[k] && a.busy.insert((p.h, b));
-        match (&mut run, new) {
-            (Some(r), true) => r.n += 1,
+        match (run.take(), new) {
+            (Some(r), true) => run = Some(Piece { n: r.n + 1, ..r }),
             (None, true) => run = Some(Piece { first: b, n: 1, ..p }),
-            (Some(_), false) => a.queue.push_back(run.take().unwrap()),
+            (Some(r), false) => a.queue.push_back(r),
             (None, false) => {}
         }
     }
@@ -1242,10 +1244,12 @@ fn fetch_piece(p: &Piece, ahead: bool) {
 /// thread could not stop).
 fn wait_ahead(k: &Key) {
     let mut g = AHEAD.lock().unwrap_or_else(|e| e.into_inner());
-    while g.as_ref().is_some_and(|a| a.busy.contains(k)) {
-        let a = g.as_mut().unwrap();
-        if let Some(i) = a.queue.iter().position(|p| p.h == k.0 && p.first <= k.1 && k.1 < p.first + p.n) {
-            let p = a.queue.remove(i).unwrap();
+    while let Some(a) = g.as_mut()
+        && a.busy.contains(k)
+    {
+        if let Some(i) = a.queue.iter().position(|p| p.h == k.0 && p.first <= k.1 && k.1 < p.first + p.n)
+            && let Some(p) = a.queue.remove(i)
+        {
             drop(g);
             #[cfg(test)]
             TAKEN_BACK.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1314,7 +1318,7 @@ fn cached(k: &Key) -> bool {
 /// here: the last block as stored, padded when read).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn vnhost_vfs_put_chunk(hash: *const u8, data: *mut u8, len: size_t) {
-    let h: Hash = std::slice::from_raw_parts(hash, 16).try_into().unwrap();
+    let h: Hash = std::ptr::read(hash.cast::<Hash>());
     if len == 0 {
         // (a Vec of capacity 0 never frees: the page's malloc'ed block leaked per empty chunk)
         libc::free(data as *mut libc::c_void);
@@ -1839,7 +1843,10 @@ fn read_lower(ino: Ino, buf: &mut [u8], off: u64, lower: Result<(Layout, Arc<Vec
         let sequential = last.is_some_and(|l| l.end == off);
         let ahead_end = (end + block() * if sequential { SEQ_AHEAD } else { NEXT_AHEAD }).min(size);
         let queued = last.is_some_and(|l| off >= l.ahead.0 && ahead_end <= l.ahead.1);
-        let ahead = if queued { last.unwrap().ahead } else { (off, block_end(&layout, ahead_end - 1)) };
+        let ahead = match last {
+            Some(l) if queued => l.ahead,
+            _ => (off, block_end(&layout, ahead_end - 1)),
+        };
         m.insert(ino, Last { end, ahead });
         (ahead_end, last.is_none(), queued)
     };
@@ -2021,9 +2028,10 @@ pub(crate) struct Info {
 }
 
 impl Fs {
-    fn info(&self, ino: Ino) -> Info {
-        let n = self.node(ino).unwrap();
-        Info { dir: matches!(n.data, Data::Dir(_)), len: self.file_size(ino), mtime: n.mtime, mode: n.mode, ino }
+    /// (ENOENT: no node `ino`)
+    fn info(&self, ino: Ino) -> Result<Info, c_int> {
+        let n = self.node(ino).ok_or(libc::ENOENT)?;
+        Ok(Info { dir: matches!(n.data, Data::Dir(_)), len: self.file_size(ino), mtime: n.mtime, mode: n.mode, ino })
     }
 }
 
@@ -2064,13 +2072,13 @@ fn at<T>(p: &str, follow: bool, f: impl FnOnce(&mut Fs, Ino) -> Result<T, c_int>
 }
 
 pub(crate) fn info_at(p: &str, follow: bool) -> At<Info> {
-    at(p, follow, |fs, ino| Ok(fs.info(ino)))
+    at(p, follow, |fs, ino| fs.info(ino))
 }
 
 /// The names in directory `p` and what they are.
 pub(crate) fn list_at(p: &str) -> At<Vec<(String, Info)>> {
-    at(p, true, |fs, ino| match &fs.node(ino).unwrap().data {
-        Data::Dir(ch) => Ok(ch.iter().map(|(n, &i)| (n.clone(), fs.info(i))).collect()),
+    at(p, true, |fs, ino| match &fs.node(ino).ok_or(libc::ENOENT)?.data {
+        Data::Dir(ch) => ch.iter().map(|(n, &i)| Ok((n.clone(), fs.info(i)?))).collect(),
         _ => Err(libc::ENOTDIR),
     })
 }
@@ -2079,7 +2087,7 @@ pub(crate) fn list_at(p: &str) -> At<Vec<(String, Info)>> {
 /// CreateFile match without case).
 pub(crate) fn name_nocase(p: &str, name: &str) -> At<Option<String>> {
     let lc = name.to_lowercase();
-    at(p, true, |fs, ino| match &fs.node(ino).unwrap().data {
+    at(p, true, |fs, ino| match &fs.node(ino).ok_or(libc::ENOENT)?.data {
         Data::Dir(ch) => Ok(ch.keys().find(|k| same_nocase(k, name, &lc)).cloned()),
         _ => Err(libc::ENOTDIR),
     })
@@ -2202,7 +2210,8 @@ pub(crate) fn remove_at(p: &str, dir: bool) -> At<()> {
         };
         let Some(Data::Dir(ch)) = fs.node(parent).map(|n| &n.data) else { return At::Ours(Err(libc::ENOTDIR)) };
         let Some(&ino) = ch.get(name) else { return At::Ours(Err(libc::ENOENT)) };
-        match (&fs.node(ino).unwrap().data, dir) {
+        let Some(node) = fs.node(ino) else { return At::Ours(Err(libc::ENOENT)) };
+        match (&node.data, dir) {
             (Data::Dir(c), true) => {
                 if !c.is_empty() {
                     return At::Ours(Err(libc::ENOTEMPTY));
@@ -2238,7 +2247,8 @@ pub(crate) fn rename_at(a: &str, b: &str) -> At<()> {
             }
             Ok(Found::Missing { .. }) => return At::Ours(Err(libc::ENOENT)),
             Ok(Found::Node { ino, path }) => {
-                let (d, n) = path.rsplit_once('/').unwrap();
+                // (resolved paths are absolute: one with no '/' is a name in the root)
+                let (d, n) = path.rsplit_once('/').unwrap_or(("", &path));
                 let parent = match fs.resolve(if d.is_empty() { "/" } else { d }, true) {
                     Ok(Found::Node { ino, .. }) => ino,
                     _ => return At::Ours(Err(libc::EXDEV)), // a mount point itself
@@ -2269,7 +2279,7 @@ pub(crate) fn rename_at(a: &str, b: &str) -> At<()> {
                 if fs.mounts.iter().any(|m| m.1 == ino) {
                     return At::Ours(Err(libc::EBUSY));
                 }
-                let (d, n) = path.rsplit_once('/').unwrap();
+                let (d, n) = path.rsplit_once('/').unwrap_or(("", &path));
                 let Ok(Found::Node { ino: parent, .. }) = fs.resolve(if d.is_empty() { "/" } else { d }, true) else {
                     return At::Ours(Err(libc::EXDEV));
                 };
@@ -2315,7 +2325,7 @@ pub(crate) fn rename_at(a: &str, b: &str) -> At<()> {
 // handles
 
 pub(crate) fn h_info(h: u32) -> Option<Info> {
-    with(|fs| fs.handles.get(&h).map(|x| x.ino).map(|i| fs.info(i)))
+    with(|fs| fs.handles.get(&h).and_then(|x| fs.info(x.ino).ok()))
 }
 
 fn handle(h: u32) -> Option<(Ino, u64, c_int)> {
@@ -2389,7 +2399,7 @@ pub(crate) fn h_seek(h: u32, off: i64, whence: c_int) -> Result<u64, c_int> {
         if new < 0 {
             return Err(libc::EINVAL);
         }
-        fs.handles.get_mut(&h).unwrap().pos = new as u64;
+        fs.handles.get_mut(&h).ok_or(libc::EBADF)?.pos = new as u64;
         Ok(new as u64)
     })
 }

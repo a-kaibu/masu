@@ -48,6 +48,7 @@
 //! let _a = kura::pool::Pool::<u32, Tag>::new(Tag);
 //! ```
 //! ```
+//! use kome::locks::Lock;
 //! kura::pool!(mod a: u8 as A);
 //! let mut p = a::POOL.locked();
 //! let l = p.take(|| 42).lease();
