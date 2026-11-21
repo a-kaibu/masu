@@ -1,108 +1,108 @@
 # Use-case coverage
 
-346 game runs, 3924 entry points they call, 5114 the tests call.
+346 game runs, 3917 entry points they call, 480 the tests call.
 
 | kind | used by games | tested | by games weighted | by calls weighted |
 |---|---|---|---|---|
-| IAMStreamSelect | 3 | 1 | 33.3% | 25.0% |
-| IBaseFilter | 9 | 9 | 100.0% | 100.0% |
-| IEnumPins | 2 | 2 | 100.0% | 100.0% |
+| IAMStreamSelect | 3 | 0 | 0.0% | 0.0% |
+| IBaseFilter | 9 | 1 | 9.1% | 4.5% |
+| IEnumPins | 2 | 0 | 0.0% | 0.0% |
 | IMediaSample | 13 | 0 | 0.0% | 0.0% |
 | IMemAllocator | 4 | 0 | 0.0% | 0.0% |
 | IMemInputPin | 5 | 0 | 0.0% | 0.0% |
-| IPin | 11 | 8 | 82.5% | 98.0% |
-| api | 3352 | 1287 | 71.9% | 81.0% |
-| d3d | 259 | 134 | 64.6% | 80.5% |
-| d3d9 | 141 | 111 | 86.4% | 98.6% |
+| IPin | 10 | 0 | 0.0% | 0.0% |
+| api | 3348 | 7 | 0.0% | 0.0% |
+| d3d | 255 | 134 | 65.1% | 82.4% |
+| d3d9 | 141 | 104 | 82.9% | 99.0% |
 | glmissing | 1 | 0 | 0.0% | 0.0% |
-| stub | 124 | 33 | 36.0% | 0.6% |
+| stub | 126 | 0 | 0.0% | 0.0% |
 
-## Called by games, reached by no test (2247)
-
-| entry point | games | calls |
-|---|---|---|
-| `api:kernel32!GetCurrentThreadId` | 331 | 8270530 |
-| `api:kernel32!GetCurrentProcessId` | 295 | 25195 |
-| `api:kernel32!IsProcessorFeaturePresent` | 265 | 842 |
-| `api:kernel32!InitializeCriticalSectionAndSpinCount` | 224 | 8071 |
-| `api:kernel32!SetHandleCount` | 217 | 499 |
-| `api:kernel32!GetProcessHeap` | 204 | 116808 |
-| `api:sake!IDirectSoundBuffer8::15` | 203 | 180260 |
-| `api:kernel32!EncodePointer` | 197 | 144541 |
-| `api:user32!ScreenToClient` | 179 | 7791170 |
-| `api:kernel32!InterlockedIncrement` | 166 | 8438563 |
-| `api:kernel32!InterlockedDecrement` | 162 | 506658 |
-| `api:user32!SetCursor` | 152 | 23137 |
-| `api:kernel32!GetCurrentProcess` | 149 | 16979 |
-| `api:kernel32!DecodePointer` | 140 | 149560 |
-| `api:user32!AdjustWindowRectEx` | 129 | 318 |
-| `api:kernel32!GetCurrentThread` | 128 | 43169 |
-| `api:kernelbase!InitializeCriticalSectionEx` | 111 | 20240 |
-| `api:kernelbase!FlsSetValue` | 110 | 10465 |
-| `api:kernelbase!FlsAlloc` | 110 | 416 |
-| `api:kernelbase!LCMapStringEx` | 109 | 19884 |
-| `api:sake!cs_wake` | 106 | 189903 |
-| `api:kernelbase!FlsGetValue` | 105 | 1561114 |
-| `api:sake!d3d9:2:57` | 104 | 3435235 |
-| `api:sake!d3d9:2:43` | 103 | 151659 |
-| `api:sake!d3d9:2:17` | 103 | 80026 |
-| `api:sake!d3d9:2:65` | 102 | 2774391 |
-| `api:sake!d3d9:2:69` | 102 | 2389155 |
-| `api:sake!d3d9:1:8` | 102 | 1675 |
-| `d3d9:IDirect3D9::GetAdapterDisplayMode` | 102 | 1675 |
-| `api:sake!d3d9:5:19` | 98 | 37921 |
-| `api:sake!d3d9:5:20` | 98 | 37885 |
-| `api:sake!IDirectSoundBuffer8::16` | 97 | 752 |
-| `api:kernel32!lstrcpyA` | 96 | 226116 |
-| `api:sake!d3d9:2:89` | 89 | 611587 |
-| `api:sake!d3d9:2:67` | 88 | 2537871 |
-| `api:kernel32!InterlockedExchange` | 82 | 597852 |
-| `api:sake!d3d9:1:14` | 80 | 133 |
-| `api:user32!RegisterWindowMessageA` | 74 | 232 |
-| `api:user32!ShowCursor` | 70 | 455 |
-| `api:sake!d3d9:2:47` | 69 | 1166961 |
-| `api:shell32!DragAcceptFiles` | 69 | 79 |
-| `api:user32!DeleteMenu` | 68 | 1062 |
-| `api:kernel32!CompareStringW` | 66 | 614463 |
-| `api:sake!d3d11:65:2` | 66 | 280 |
-| `api:sake!d3d11:70:5` | 65 | 5880 |
-| `api:kernel32!VerifyVersionInfoW` | 65 | 1259 |
-| `api:d3d11!D3D11CreateDevice` | 65 | 94 |
-| `api:sake!d3d11:70:3` | 64 | 10441 |
-| `api:sake!d3d11:70:7` | 64 | 3983 |
-| `api:sake!d3d11:70:0` | 64 | 267 |
-| `api:kernel32!GetVersionExW` | 64 | 229 |
-| `api:sake!d3d11:74:2` | 63 | 305133 |
-| `api:user32!PtInRect` | 62 | 483297 |
-| `api:sake!d3d11:71:44` | 62 | 67380 |
-| `api:sake!d3d11:70:20` | 62 | 702 |
-| `api:sake!d3d11:65:8` | 62 | 188 |
-| `d3d:65.8` | 62 | 188 |
-| `api:sake!d3d11:71:14` | 61 | 276369 |
-| `api:kernel32!LocaleNameToLCID` | 61 | 4475 |
-| `api:user32!GetKeyboardType` | 61 | 344 |
-
-## Called by games, not implemented (125)
+## Called by games, reached by no test (3544)
 
 | entry point | games | calls |
 |---|---|---|
-| `stub:imm32!ImmGetContext` | 89 | 611 |
-| `stub:imm32!ImmAssociateContext` | 74 | 86 |
+| `api:kernel32!GetProcAddress` | 332 | 73535 |
+| `api:kernel32!GetCurrentThreadId` | 331 | 8312350 |
+| `api:kernel32!MultiByteToWideChar` | 326 | 9571441 |
+| `api:kernel32!WideCharToMultiByte` | 321 | 849262 |
+| `api:kernel32!GetFileType` | 318 | 20612 |
+| `api:kernel32!GetStdHandle` | 317 | 23188 |
+| `api:kernel32!SetUnhandledExceptionFilter` | 316 | 576 |
+| `api:kernel32!CloseHandle` | 314 | 69749 |
+| `api:kernel32!HeapAlloc` | 311 | 1149373 |
+| `api:kernel32!GetACP` | 311 | 5289 |
+| `api:kernel32!GetEnvironmentStringsW` | 311 | 815 |
+| `api:kernel32!GetCPInfo` | 310 | 943 |
+| `api:kernel32!FreeEnvironmentStringsW` | 310 | 794 |
+| `api:kernel32!HeapFree` | 304 | 864818 |
+| `api:kernel32!GetStringTypeW` | 304 | 3152 |
+| `api:kernel32!GetCommandLineA` | 303 | 914 |
+| `api:kernel32!QueryPerformanceCounter` | 295 | 14006131 |
+| `api:kernel32!GetCurrentProcessId` | 295 | 25582 |
+| `api:kernel32!ReadFile` | 294 | 2463457 |
+| `api:kernel32!InitializeCriticalSection` | 292 | 196333 |
+| `api:user32!GetSystemMetrics` | 278 | 3008774 |
+| `api:kernel32!GetModuleHandleA` | 278 | 20988 |
+| `api:winmm!timeGetTime` | 275 | 78978295 |
+| `api:kernel32!GetSystemTimeAsFileTime` | 270 | 17864 |
+| `api:kernel32!Sleep` | 268 | 12822860 |
+| `api:kernel32!IsProcessorFeaturePresent` | 265 | 844 |
+| `api:user32!TranslateMessage` | 264 | 202373 |
+| `api:user32!ShowWindow` | 264 | 3034 |
+| `api:kernel32!GetModuleFileNameA` | 263 | 11622 |
+| `api:kernel32!TlsAlloc` | 262 | 2407 |
+| `api:kernel32!TlsSetValue` | 261 | 274569 |
+| `api:kernel32!CreateThread` | 261 | 3230 |
+| `api:user32!EndPaint` | 251 | 27858 |
+| `api:user32!BeginPaint` | 251 | 27857 |
+| `api:user32!GetDC` | 245 | 2595142 |
+| `api:user32!GetClientRect` | 244 | 288049 |
+| `api:kernel32!HeapSize` | 242 | 633421 |
+| `api:kernel32!HeapReAlloc` | 237 | 302550 |
+| `api:ole32!CoInitialize` | 235 | 456 |
+| `api:gdi32!SelectObject` | 232 | 305284 |
+| `api:gdi32!GetStockObject` | 231 | 4225 |
+| `api:user32!ReleaseDC` | 230 | 2594971 |
+| `api:kernel32!GetVersionExA` | 230 | 11436 |
+| `api:user32!LoadCursorA` | 229 | 2206 |
+| `api:winmm!timeBeginPeriod` | 227 | 2198 |
+| `api:kernel32!HeapCreate` | 226 | 528 |
+| `api:kernel32!SetFilePointer` | 224 | 627689 |
+| `api:kernel32!InitializeCriticalSectionAndSpinCount` | 224 | 8114 |
+| `api:sake!IDirectSound8::6` | 223 | 257 |
+| `api:user32!GetCursorPos` | 222 | 7313441 |
+| `api:sake!IDirectSound8::3` | 221 | 1691 |
+| `api:kernel32!WaitForSingleObject` | 219 | 96702741 |
+| `api:kernel32!CreateEventA` | 219 | 64486 |
+| `api:kernel32!WriteFile` | 218 | 1061792 |
+| `api:kernel32!LoadLibraryA` | 217 | 2817 |
+| `api:kernel32!SetHandleCount` | 217 | 501 |
+| `api:kernel32!GetStartupInfoA` | 216 | 687 |
+| `api:user32!SetWindowPos` | 214 | 2890 |
+| `api:user32!LoadIconA` | 214 | 353 |
+| `api:sake!IDirectSoundBuffer8::11` | 212 | 53979 |
+
+## Called by games, not implemented (127)
+
+| entry point | games | calls |
+|---|---|---|
+| `stub:imm32!ImmGetContext` | 90 | 689 |
+| `stub:imm32!ImmAssociateContext` | 75 | 88 |
 | `stub:kernel32!InitializeProcThreadAttributeList` | 38 | 76 |
 | `stub:kernel32!DeleteProcThreadAttributeList` | 38 | 38 |
+| `stub:imm32!ImmReleaseContext` | 35 | 109 |
 | `stub:user32!RegisterTouchWindow` | 35 | 35 |
-| `stub:imm32!ImmReleaseContext` | 34 | 111 |
-| `stub:imm32!ImmGetOpenStatus` | 25 | 50 |
-| `stub:imm32!ImmGetConversionStatus` | 23 | 69 |
-| `stub:dwmapi!DwmSetWindowAttribute` | 22 | 91 |
+| `stub:imm32!ImmGetOpenStatus` | 25 | 47 |
+| `stub:imm32!ImmGetConversionStatus` | 23 | 66 |
+| `stub:dwmapi!DwmSetWindowAttribute` | 22 | 76 |
 | `stub:imm32!ImmSetOpenStatus` | 17 | 43 |
 | `stub:kernel32!AttachConsole` | 12 | 12 |
 | `stub:kernel32!SetConsoleOutputCP` | 11 | 11 |
 | `stub:imm32!ImmIsIME` | 10 | 32 |
 | `stub:kernel32!SetConsoleCP` | 10 | 10 |
 | `stub:dwmapi!DwmEnableComposition` | 9 | 9 |
-| `stub:kernel32!GetConsoleScreenBufferInfo` | 8 | 54 |
-| `stub:user32!IsTouchWindow` | 8 | 25 |
+| `stub:setupapi!SetupDiEnumDeviceInterfaces` | 8 | 5505 |
+| `stub:kernel32!GetConsoleScreenBufferInfo` | 8 | 65 |
 | `stub:ole32!CoGetApartmentType` | 8 | 19 |
 | `stub:uxtheme!RefreshImmersiveColorPolicyState` | 8 | 18 |
 | `stub:uxtheme!SetPreferredAppMode` | 8 | 18 |
@@ -110,12 +110,12 @@
 | `stub:avifil32!AVIFileInit` | 8 | 9 |
 | `stub:kernel32!SetConsoleMode` | 8 | 8 |
 | `stub:user32!GetThreadDesktop` | 8 | 8 |
-| `stub:setupapi!SetupDiEnumDeviceInterfaces` | 7 | 4992 |
+| `stub:user32!IsTouchWindow` | 7 | 24 |
 | `stub:imm32!ImmSetCompositionFontA` | 7 | 11 |
-| `stub:kernel32!SetConsoleTextAttribute` | 6 | 72 |
-| `stub:winmm!waveInGetNumDevs` | 6 | 44 |
+| `stub:user32!GetClipCursor` | 6 | 47841 |
+| `stub:kernel32!SetConsoleTextAttribute` | 6 | 68 |
+| `stub:winmm!waveInGetNumDevs` | 6 | 42 |
 | `stub:uxtheme!ShouldAppsUseDarkMode` | 6 | 18 |
-| `stub:crypt32!CertOpenSystemStoreA` | 6 | 6 |
 | `stub:imm32!ImmCreateContext` | 6 | 6 |
 | `stub:kernel32!GetConsoleProcessList` | 6 | 6 |
 | `stub:kernel32!PowerCreateRequest` | 6 | 6 |
@@ -125,20 +125,20 @@
 | `stub:uiautomationcore!UiaLookupId` | 6 | 6 |
 | `stub:user32!RegisterPowerSettingNotification` | 6 | 6 |
 | `stub:uxtheme!FlushMenuThemes` | 6 | 6 |
-| `stub:user32!GetClipCursor` | 5 | 41634 |
-| `stub:winhttp!WinHttpGetIEProxyConfigForCurrentUser` | 5 | 11 |
+| `stub:winhttp!WinHttpGetIEProxyConfigForCurrentUser` | 5 | 13 |
+| `stub:crypt32!CertOpenSystemStoreA` | 5 | 5 |
 | `stub:imm32!ImmDisableTextFrameService` | 5 | 5 |
-| `stub:user32!GetCursorInfo` | 4 | 145375 |
-| `glmissing:glDrawBuffers` | 4 | 840 |
+| `stub:user32!GetCursorInfo` | 4 | 177778 |
+| `glmissing:glDrawBuffers` | 4 | 847 |
 | `stub:imm32!ImmNotifyIME` | 4 | 4 |
 | `stub:shell32!InitNetworkAddressControl` | 4 | 4 |
 | `stub:user32!SetGestureConfig` | 4 | 4 |
 | `stub:winmm!joyReleaseCapture` | 4 | 4 |
 | `stub:shell32!ExtractIconA` | 3 | 5 |
 | `stub:ucrtbase!iswxdigit` | 2 | 5105 |
-| `stub:imm32!ImmAssociateContextEx` | 2 | 92 |
+| `stub:imm32!ImmAssociateContextEx` | 2 | 101 |
 | `stub:ucrtbase!iswalnum` | 2 | 63 |
-| `stub:imm32!ImmGetCompositionStringW` | 2 | 8 |
+| `stub:imm32!ImmGetCompositionStringW` | 2 | 19 |
 | `stub:ucrtbase!logbf` | 2 | 5 |
 | `stub:user32!SetMenuInfo` | 2 | 4 |
 | `stub:crypt32!CertOpenSystemStoreW` | 2 | 2 |
