@@ -50,6 +50,8 @@ mod cube_tests;
 #[cfg(test)]
 mod ex_tests;
 #[cfg(test)]
+mod tex_tests;
+#[cfg(test)]
 mod caps8_tests;
 #[cfg(test)]
 mod cost_tests;

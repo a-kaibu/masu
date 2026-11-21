@@ -13,11 +13,20 @@ use std::collections::HashMap;
 use crate::guest::{gc, gp};
 
 const POOL_DEFAULT: u32 = 0;
+const POOL_MANAGED: u32 = 1;
 const POOL_SYSTEMMEM: u32 = 2;
 const POOL_SCRATCH: u32 = 3;
 const USAGE_RENDERTARGET: u32 = 1;
 const USAGE_DEPTHSTENCIL: u32 = 2;
 const LOCK_READONLY: u32 = 0x10;
+const LOCK_NO_DIRTY_UPDATE: u32 = 0x8000;
+const USAGE_AUTOGENMIPMAP: u32 = 0x400;
+const USAGE_DYNAMIC: u32 = 0x200;
+/// D3DOK_NOAUTOGEN: a format a texture of may be made with D3DUSAGE_AUTOGENMIPMAP, which then
+/// makes no levels
+const D3DOK_NOAUTOGEN: u32 = 0x0876_087f;
+const TEXF_NONE: u32 = 0;
+const TEXF_LINEAR: u32 = 2;
 const LOCK_DISCARD: u32 = 0x2000;
 
 const RT_SURFACE: u32 = 1;
@@ -107,6 +116,51 @@ pub struct Texture {
     /// a cube texture's faces (6; 0: not a cube): `levels` are the surfaces face by face, each
     /// face's levels together (face * levels per face + level)
     pub faces: u32,
+    /// SetPriority's (a managed texture's only, as Windows: Wine's test test_resource_priority)
+    pub priority: u32,
+    /// SetAutoGenFilterType's (D3DTEXF_LINEAR at first, as Windows: Wine's test test_mipmap_autogen)
+    pub filter: u32,
+    pub mips: Mips,
+    /// the part of each face (one for a 2D or volume texture) changed since the last
+    /// UpdateTexture from it, in level 0's texels: left, top, front, right, bottom, back
+    pub dirty: [Option<[u32; 6]>; 6],
+}
+
+/// A texture's levels below the top: given (its own surfaces), or made by the page from the top
+/// (D3DUSAGE_AUTOGENMIPMAP: the texture shows one level, the page texture has them all;
+/// `stale`: the top changed since they were made, and a draw that reads them makes them again)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Mips {
+    Given,
+    Auto { stale: bool },
+}
+
+impl Texture {
+    fn new(w: u32, h: u32, depth: u32, faces: u32, fmt: u32, pool: u32, usage: u32, gpu: u32, mips: Mips) -> Texture {
+        let all = Some([0, 0, 0, w, h, depth.max(1)]);
+        Texture { w, h, fmt, pool, usage, gpu, levels: Vec::new(), lod: 0, depth, faces, priority: 0, filter: TEXF_LINEAR, mips, dirty: [all; 6] }
+    }
+}
+
+/// `b` (a level's box) in level 0's texels
+fn box_up(b: [u32; 6], level: u32) -> [u32; 6] {
+    let up = |v: u32| v.checked_shl(level).unwrap_or(u32::MAX);
+    [up(b[0]), up(b[1]), up(b[2]), up(b[3]), up(b[4]), up(b[5])]
+}
+
+/// `b` (level 0's texels) in level `level`'s, which is `w` x `h` x `depth`: the texels it
+/// touches
+fn box_down(b: [u32; 6], level: u32, w: u32, h: u32, depth: u32) -> [u32; 6] {
+    let lo = |v: u32| v.checked_shr(level).unwrap_or(0);
+    let hi = |v: u32, n: u32| v.div_ceil(1u32.checked_shl(level).unwrap_or(u32::MAX)).min(n);
+    [lo(b[0]).min(w), lo(b[1]).min(h), lo(b[2]).min(depth), hi(b[3], w), hi(b[4], h), hi(b[5], depth)]
+}
+
+fn grow(d: &mut Option<[u32; 6]>, b: [u32; 6]) {
+    *d = Some(match *d {
+        None => b,
+        Some(o) => [o[0].min(b[0]), o[1].min(b[1]), o[2].min(b[2]), o[3].max(b[3]), o[4].max(b[4]), o[5].max(b[5])],
+    });
 }
 
 impl Texture {
@@ -156,6 +210,8 @@ pub struct Buffer {
     /// and written with the same bytes again leaves a still frame the same)
     pub shadow: Vec<u8>,
     pub cgen: u64,
+    /// SetPriority's (a managed buffer's only, as Windows: Wine's test test_resource_priority)
+    pub priority: u32,
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -1132,6 +1188,14 @@ unsafe fn d3d9_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32) ->
         10 => {
             // CheckDeviceFormat(adapter, type, adapter fmt, usage, rtype, fmt)
             let (usage, rtype, f) = (a(4), a(5), a(6));
+            // (D3DUSAGE_AUTOGENMIPMAP: D3DOK_NOAUTOGEN for a format that is no render target,
+            // and never with D3DUSAGE_DYNAMIC: Wine's test test_mipmap_autogen)
+            if usage & USAGE_AUTOGENMIPMAP != 0 && (rtype == RT_TEXTURE || rtype == RT_CUBETEX) {
+                if usage & USAGE_DYNAMIC != 0 || !fmt::supported(f) {
+                    return D3DERR_NOTAVAILABLE;
+                }
+                return if autogen_format(f) { S_OK } else { D3DOK_NOAUTOGEN };
+            }
             // (as Windows answers: no D32 depth buffers and no R8G8B8 textures, which GPUs
             // have not had for long; creating them still works)
             let ok = if usage & USAGE_DEPTHSTENCIL != 0 {
@@ -1595,7 +1659,7 @@ unsafe fn device_method(d: &mut D3d, m: u32, a: &dyn Fn(usize) -> u32, after: &m
             if mem == 0 {
                 return super::E_OUTOFMEMORY;
             }
-            let b = Buffer { len, usage, fmt: f, pool, mem, gpu: 0, generation: 0, sent: 0, dirty: None, locked: false, shadow: Vec::new(), cgen: 0 };
+            let b = Buffer { len, usage, fmt: f, pool, mem, gpu: 0, generation: 0, sent: 0, dirty: None, locked: false, shadow: Vec::new(), cgen: 0, priority: 0 };
             let o = d.new_obj(if m == 26 { IF_VB } else { IF_IB }, 0, Data::Buffer(b));
             wrp(out, 0, o);
             S_OK
@@ -2348,6 +2412,24 @@ fn apply_state(d: &mut D3d, sb: u32) {
 // ---------------------------------------------------------------------------------------------
 // resources
 
+/// Whether a texture of `usage` and `levels` in `pool` of format `f` makes its own levels
+/// (None: refused, as Windows: D3DUSAGE_AUTOGENMIPMAP with levels other than 0 or 1 or in system
+/// memory; Wine's test test_mipmap_autogen). A format without them (CheckDeviceFormat's
+/// D3DOK_NOAUTOGEN: one that is no render target, or depth) is made with the one level.
+fn autogen(usage: u32, levels: u32, pool: u32, f: u32) -> Option<Mips> {
+    if usage & USAGE_AUTOGENMIPMAP == 0 {
+        return Some(Mips::Given);
+    }
+    if levels > 1 || pool == POOL_SYSTEMMEM {
+        return None;
+    }
+    Some(if autogen_format(f) { Mips::Auto { stale: true } } else { Mips::Given })
+}
+
+fn autogen_format(f: u32) -> bool {
+    fmt::renderable(f) && !fmt::is_depth(f)
+}
+
 unsafe fn create_texture(d: &mut D3d, w: u32, h: u32, levels: u32, usage: u32, f: u32, pool: u32, out: u32) -> u32 {
     // (a render target texture of a format that cannot be one: refused, as Windows, winref
     // d3d9rtfmt's X8B8G8R8)
@@ -2358,9 +2440,16 @@ unsafe fn create_texture(d: &mut D3d, w: u32, h: u32, levels: u32, usage: u32, f
         return D3DERR_INVALIDCALL;
     }
     let max = 32 - w.max(h).leading_zeros();
-    let levels = if usage & 0x400 != 0 { 1 } else if levels == 0 { max } else { levels.min(max) };
-    let gpu = if pool == POOL_SYSTEMMEM || pool == POOL_SCRATCH { 0 } else { gpu_texture(w, h, levels, f, usage) };
-    let tex = Texture { w, h, fmt: f, pool, usage, gpu, levels: Vec::new(), lod: 0, depth: 0, faces: 0 };
+    let Some(mips) = autogen(usage, levels, pool, f) else {
+        if d.trace {
+            eprintln!("d3d9: CreateTexture {w}x{h} {levels} levels pool {pool} AUTOGENMIPMAP: refused, as Windows (Wine's test test_mipmap_autogen)");
+        }
+        return D3DERR_INVALIDCALL;
+    };
+    let levels = if usage & USAGE_AUTOGENMIPMAP != 0 { 1 } else if levels == 0 { max } else { levels.min(max) };
+    let on_page = if mips == Mips::Given { levels } else { max };
+    let gpu = if pool == POOL_SYSTEMMEM || pool == POOL_SCRATCH { 0 } else { gpu_texture(w, h, on_page, f, usage) };
+    let tex = Texture::new(w, h, 0, 0, f, pool, usage, gpu, mips);
     let addr = d.new_obj(IF_TEXTURE, 0, Data::Texture(tex));
     let id = d.id_of(addr);
     let mut lv = Vec::new();
@@ -2389,7 +2478,8 @@ unsafe fn create_texture(d: &mut D3d, w: u32, h: u32, levels: u32, usage: u32, f
 /// depth formats; levels down to 1x1x1 of the largest of the three).
 unsafe fn create_volume_texture(d: &mut D3d, size: [u32; 3], levels: u32, usage: u32, f: u32, pool: u32, out: u32) -> u32 {
     let [w, h, depth] = size;
-    if out == 0 || w == 0 || h == 0 || depth == 0 || !fmt::supported(f) || fmt::is_depth(f) || usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL) != 0 {
+    // (and no D3DUSAGE_AUTOGENMIPMAP volumes: Wine's test test_mipmap_autogen)
+    if out == 0 || w == 0 || h == 0 || depth == 0 || !fmt::supported(f) || fmt::is_depth(f) || usage & (USAGE_RENDERTARGET | USAGE_DEPTHSTENCIL | USAGE_AUTOGENMIPMAP) != 0 {
         if d.trace {
             eprintln!("d3d9: CreateVolumeTexture {w}x{h}x{depth} format {f:#x} usage {usage:#x}: refused, as Windows (winref d3d9vol)");
         }
@@ -2407,7 +2497,7 @@ unsafe fn create_volume_texture(d: &mut D3d, size: [u32; 3], levels: u32, usage:
         gpu::record(|b| b.cmd(&[gpu::CREATE_TEXTURE2, id, w, h, depth, levels, fmt::page_format(f), 1]));
         id
     };
-    let tex = Texture { w, h, fmt: f, pool, usage, gpu, levels: Vec::new(), lod: 0, depth, faces: 0 };
+    let tex = Texture::new(w, h, depth, 0, f, pool, usage, gpu, Mips::Given);
     let addr = d.new_obj(IF_VOLUMETEX, 0, Data::Texture(tex));
     let id = d.id_of(addr);
     let mut lv = Vec::new();
@@ -2448,15 +2538,24 @@ unsafe fn create_cube_texture(d: &mut D3d, edge: u32, levels: u32, usage: u32, f
         return D3DERR_INVALIDCALL;
     }
     let max = 32 - edge.leading_zeros();
-    let levels = if usage & 0x400 != 0 { 1 } else if levels == 0 { max } else { levels.min(max) };
+    let Some(mips) = autogen(usage, levels, pool, f) else {
+        if d.trace {
+            eprintln!("d3d9: CreateCubeTexture {edge} {levels} levels pool {pool} AUTOGENMIPMAP: refused, as Windows (Wine's test test_mipmap_autogen)");
+        }
+        // SAFETY: the caller's out pointer (checked non-null above)
+        unsafe { wrp(out, 0, 0) };
+        return D3DERR_INVALIDCALL;
+    };
+    let levels = if usage & USAGE_AUTOGENMIPMAP != 0 { 1 } else if levels == 0 { max } else { levels.min(max) };
+    let on_page = if mips == Mips::Given { levels } else { max };
     let gpu = if pool == POOL_SYSTEMMEM || pool == POOL_SCRATCH {
         0
     } else {
         let id = gpu_id();
-        gpu::record(|b| b.cmd(&[gpu::CREATE_TEXTURE2, id, edge, edge, 6, levels, fmt::page_format(f), 0]));
+        gpu::record(|b| b.cmd(&[gpu::CREATE_TEXTURE2, id, edge, edge, 6, on_page, fmt::page_format(f), 0]));
         id
     };
-    let tex = Texture { w: edge, h: edge, fmt: f, pool, usage, gpu, levels: Vec::new(), lod: 0, depth: 0, faces: 6 };
+    let tex = Texture::new(edge, edge, 0, 6, f, pool, usage, gpu, mips);
     let addr = d.new_obj(IF_CUBE, 0, Data::Texture(tex));
     let id = d.id_of(addr);
     let mut lv = Vec::new();
@@ -2551,10 +2650,13 @@ unsafe fn lock_volume(d: &mut D3d, v: u32, out: u32, bx: u32, flags: u32) -> u32
         return D3DERR_INVALIDCALL;
     }
     vl.lock = Some(if flags & LOCK_READONLY != 0 { [0; 6] } else { b });
+    let (container, lvl) = (vl.container, vl.level);
     let bits = mem + b[2] * vl.slice + (b[1] / bs) * vl.pitch + (b[0] / bs) * bpb;
     wr(out, 0, vl.pitch);
     wr(out, 1, vl.slice);
     wrp(out + 8, 0, bits);
+    // (the box as left, top, front, right, bottom, back)
+    lock_dirty(d, container, 0, lvl, [b[0], b[1], b[2], b[3], b[4], b[5]], flags);
     S_OK
 }
 
@@ -2793,6 +2895,7 @@ unsafe fn upload(d: &mut D3d, s: u32, r: [u32; 4]) {
 }
 
 unsafe fn upload_keep(d: &mut D3d, s: u32, r: [u32; 4]) {
+    top_changed(d, s);
     let Some(Data::Surface(sf)) = d.objs.get_mut(&s).map(|o| &mut o.data) else { return };
     if sf.gpu == 0 || sf.mem == 0 || fmt::is_depth(sf.fmt) {
         return;
@@ -2918,6 +3021,7 @@ unsafe fn lock_surface(d: &mut D3d, s: u32, out: u32, rect: u32, flags: u32, aft
     };
     let (bpb, bs) = fmt::layout(sf.fmt).unwrap_or((4, 1));
     sf.lock = Some(if flags & LOCK_READONLY != 0 { [0, 0, 0, 0] } else { r });
+    let (container, face, lvl) = (sf.container, sf.sub.face.unwrap_or(0), sf.sub.level);
     let bits = mem + (r[1] / bs) * sf.pitch + (r[0] / bs) * bpb;
     wr(out, 0, sf.pitch);
     wrp(out + ptr(), 0, bits);
@@ -2937,6 +3041,7 @@ unsafe fn lock_surface(d: &mut D3d, s: u32, out: u32, rect: u32, flags: u32, aft
         *after = readback_as(d, gpu, level, x, y, w, h, f, at, pitch);
         d.lock_readback = Some(s);
     }
+    lock_dirty(d, container, face, lvl, [r[0], r[1], 0, r[2], r[3], 1], flags);
     S_OK
 }
 
@@ -2985,8 +3090,10 @@ unsafe fn surface_call(d: &mut D3d, m: u32, this: u32, a: &dyn Fn(usize) -> u32,
     match m {
         3 => device_out(d, a(1)),
         4..=6 => private_data(d, m, this, a),
+        // SetPriority / GetPriority: 0, whatever is set, for every surface (as Windows: Wine's
+        // test test_resource_priority)
         7 | 8 => 0,
-        9 => 0,
+        9 => 0, // PreLoad: a void method (documented); the surface is on the page already
         10 => RT_SURFACE,
         11 => {
             // GetContainer(riid, out)
@@ -3083,6 +3190,9 @@ unsafe fn texture_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(us
             return D3DERR_INVALIDCALL;
         }
         if m == 21 {
+            // SAFETY: AddDirtyRect's RECT is the caller's (NULL: none)
+            let r = unsafe { rect_box(a(2)) };
+            add_dirty(t, a(1), r);
             return S_OK;
         }
         if a(2) >= n {
@@ -3106,6 +3216,10 @@ unsafe fn texture_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(us
         // GetLevelDesc(level, desc), GetVolumeLevel(level, out), LockBox(level, locked, box,
         // flags), UnlockBox(level), AddDirtyBox(box)
         if m == 21 {
+            // SAFETY: AddDirtyBox's D3DBOX (left, top, right, bottom, front, back) is the
+            // caller's (NULL: none)
+            let b = (a(1) != 0).then(|| [0, 1, 4, 2, 3, 5].map(|i| unsafe { rd(a(1), i) }));
+            add_dirty(t, 0, b);
             return S_OK;
         }
         let Some(v) = level(t, a(1)) else { return D3DERR_INVALIDCALL };
@@ -3126,23 +3240,53 @@ unsafe fn texture_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(us
     match m {
         3 => device_out(d, a(1)),
         4..=6 => private_data(d, m, this, a),
-        7 | 8 => 0,
+        // SetPriority(new) answering the one before, GetPriority: a managed texture's (the
+        // others keep 0, as Windows: Wine's test test_resource_priority)
+        7 => {
+            let old = t.priority;
+            if t.pool == POOL_MANAGED {
+                t.priority = a(1);
+            }
+            old
+        }
+        8 => t.priority,
+        // PreLoad: a void method (documented) that makes a managed texture resident; kura's
+        // textures are on the page from their creation on
         9 => 0,
         10 => match iface {
             IF_VOLUMETEX => RT_VOLUMETEX,
             IF_CUBE => RT_CUBETEX,
             _ => RT_TEXTURE,
         },
+        // SetLOD(new) answering the one before, GetLOD: a managed texture's (the others
+        // ignore it, as Windows: Wine's test test_lod), at most its last level
         11 => {
             let old = t.lod;
-            t.lod = a(1);
+            if t.pool == POOL_MANAGED {
+                t.lod = a(1).min(t.level_count().saturating_sub(1));
+            }
             old
         }
         12 => t.lod,
         13 => t.level_count(),
-        14 => S_OK,
-        15 => 2,
-        16 => 0,
+        // SetAutoGenFilterType(filter): D3DTEXF_NONE refused, the others kept (and the levels
+        // made again with it), as Windows: Wine's test test_mipmap_autogen
+        14 => {
+            if a(1) == TEXF_NONE {
+                return D3DERR_INVALIDCALL;
+            }
+            t.filter = a(1);
+            if let Mips::Auto { stale } = &mut t.mips {
+                *stale = true;
+            }
+            S_OK
+        }
+        15 => t.filter,
+        // GenerateMipSubLevels
+        16 => {
+            make_mips(d, this);
+            0
+        }
         17 => {
             let Some(s) = level(t, a(1)) else { return D3DERR_INVALIDCALL };
             surface_call(d, 12, s, &|i| if i == 1 { a(2) } else { 0 }, after)
@@ -3161,8 +3305,42 @@ unsafe fn texture_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(us
             let Some(s) = level(t, a(1)) else { return D3DERR_INVALIDCALL };
             unlock_surface(d, s)
         }
-        21 => S_OK,
+        21 => {
+            // SAFETY: AddDirtyRect's RECT is the caller's (NULL: none)
+            let r = unsafe { rect_box(a(1)) };
+            add_dirty(t, 0, r);
+            S_OK
+        }
         _ => E_NOTIMPL,
+    }
+}
+
+/// A guest RECT (NULL: None, the whole) as a box of depth 1.
+///
+/// # Safety
+/// `r` is 0 or a RECT of the caller's guest memory.
+unsafe fn rect_box(r: u32) -> Option<[u32; 6]> {
+    // SAFETY: the caller's RECT (this function's contract)
+    (r != 0).then(|| [0, 1, 2, 3].map(|i| unsafe { rd(r, i) })).map(|[l, t, rr, b]| [l, t, 0, rr, b, 1])
+}
+
+/// AddDirtyRect / AddDirtyBox of a face (None: the whole texture).
+fn add_dirty(t: &mut Texture, face: u32, b: Option<[u32; 6]>) {
+    let all = [0, 0, 0, t.w, t.h, t.depth.max(1)];
+    let b = b.map_or(all, |b| [b[0].min(t.w), b[1].min(t.h), b[2].min(t.depth.max(1)), b[3].min(t.w), b[4].min(t.h), b[5].min(t.depth.max(1))]);
+    if let Some(slot) = t.dirty.get_mut(us(face)) {
+        grow(slot, b);
+    }
+}
+
+/// A lock of level `level` of face `face` of `container` (a writable one, not
+/// D3DLOCK_NO_DIRTY_UPDATE): the box it locked is dirty, in level 0's texels.
+fn lock_dirty(d: &mut D3d, container: u32, face: u32, level: u32, b: [u32; 6], flags: u32) {
+    if flags & (LOCK_READONLY | LOCK_NO_DIRTY_UPDATE) != 0 {
+        return;
+    }
+    if let Some(Data::Texture(t)) = d.objs.get_mut(&container).map(|o| &mut o.data) {
+        add_dirty(t, face, Some(box_up(b, level)));
     }
 }
 
@@ -3170,7 +3348,18 @@ unsafe fn buffer_call(d: &mut D3d, iface: u32, m: u32, this: u32, a: &dyn Fn(usi
     match m {
         3 => device_out(d, a(1)),
         4..=6 => private_data(d, m, this, a),
-        7 | 8 => 0,
+        // SetPriority(new) answering the one before, GetPriority: a managed buffer's (the
+        // others keep 0, as Windows: Wine's test test_resource_priority)
+        7 | 8 => {
+            let Some(Data::Buffer(b)) = d.objs.get_mut(&this).map(|o| &mut o.data) else { return 0 };
+            let old = b.priority;
+            if m == 7 && b.pool == POOL_MANAGED {
+                b.priority = a(1);
+            }
+            old
+        }
+        // PreLoad: a void method (documented) that makes a managed buffer resident; kura's
+        // buffers are on the page from their first draw on
         9 => 0,
         10 => if iface == IF_VB { RT_VB } else { RT_IB },
         11 => {
@@ -3249,6 +3438,20 @@ unsafe fn update_surface(d: &mut D3d, src: u32, srect: u32, dst: u32, dpoint: u3
         return D3DERR_INVALIDCALL;
     }
     let (dx, dy) = if dpoint != 0 { (rd(dpoint, 0), rd(dpoint, 1)) } else { (0, 0) };
+    // SAFETY: sm and tm are the two surfaces' guest copies (surface_mem)
+    unsafe { copy_rect(d, s, sm, t, tm, r, (dx, dy)) }
+}
+
+/// Rectangle `r` of surface `s` (its pixels at `sm`) to (`dx`, `dy`) of surface `t` (at `tm`),
+/// of the same format, and uploaded.
+///
+/// # Safety
+/// `sm` and `tm` are the guest copies of `s` and `t` (surface_mem), `r` inside `s`.
+unsafe fn copy_rect(d: &mut D3d, s: u32, sm: u32, t: u32, tm: u32, r: [u32; 4], (dx, dy): (u32, u32)) -> u32 {
+    let (Some(Data::Surface(a)), Some(Data::Surface(b))) = (d.objs.get(&s).map(|o| &o.data), d.objs.get(&t).map(|o| &o.data))
+    else {
+        return D3DERR_INVALIDCALL;
+    };
     let (bpb, bs) = fmt::layout(a.fmt).unwrap_or((4, 1));
     let w = (r[2] - r[0]).min(b.w.saturating_sub(dx));
     let h = (r[3] - r[1]).min(b.h.saturating_sub(dy));
@@ -3278,11 +3481,15 @@ unsafe fn update_texture(d: &mut D3d, src: u32, dst: u32) -> u32 {
         if a.fmt != b.fmt || na < nb || a.w != b.w {
             return D3DERR_INVALIDCALL;
         }
-        let pairs: Vec<(u32, u32)> = (0..6).flat_map(|f| (0..nb).map(move |l| (f, l))).map(|(f, l)| (a.levels[us(f * na + l)], b.levels[us(f * nb + l)])).collect();
-        for (x, y) in pairs {
-            let (sa, sb) = (d.addr_of(x), d.addr_of(y));
-            update_surface(d, sa, 0, sb, 0);
+        let dirty = a.dirty;
+        let pairs: Vec<(u32, u32, u32, u32)> = (0..6).flat_map(|f| (0..nb).map(move |l| (f, l))).map(|(f, l)| (f, l, a.levels[us(f * na + l)], b.levels[us(f * nb + l)])).collect();
+        for (f, l, x, y) in pairs {
+            if let Some(b) = dirty.get(us(f)).copied().flatten() {
+                // SAFETY: two surfaces of the textures
+                unsafe { update_dirty(d, x, y, b, l) };
+            }
         }
+        clear_dirty(d, s);
         return S_OK;
     }
     if a.depth != 0 {
@@ -3290,23 +3497,70 @@ unsafe fn update_texture(d: &mut D3d, src: u32, dst: u32) -> u32 {
         if a.pool != POOL_SYSTEMMEM || b.pool != POOL_DEFAULT || a.fmt != b.fmt || (a.w, a.h, a.depth) != (b.w, b.h, b.depth) || a.levels.len() < b.levels.len() {
             return D3DERR_INVALIDCALL;
         }
+        let dirty = a.dirty[0];
         let pairs: Vec<(u32, u32)> = a.levels.iter().copied().zip(b.levels.iter().copied()).collect();
-        for (x, y) in pairs {
+        for (l, (x, y)) in (0u32..).zip(pairs) {
             let (Some(xm), Some(ym)) = (volume_mem(d, x), volume_mem(d, y)) else { return D3DERR_INVALIDCALL };
             let Some(Data::Volume(v)) = d.objs.get(&y).map(|o| &o.data) else { return D3DERR_INVALIDCALL };
-            let (len, b) = (v.slice * v.depth, [0, 0, 0, v.w, v.h, v.depth]);
-            std::ptr::copy(gc::<u8>(xm), gp::<u8>(ym), us(len));
-            upload_volume(d, y, b);
+            let Some(bx) = dirty.map(|b| box_down(b, l, v.w, v.h, v.depth)).filter(|b| b[0] < b[3] && b[1] < b[4] && b[2] < b[5]) else { continue };
+            // (the dirty box's rows of each slice, in whole blocks; both volumes have the same
+            // layout)
+            let (bpb, bs) = fmt::layout(v.fmt).unwrap_or((4, 1));
+            let bx = blocks(bx, bs, v.w, v.h);
+            let per = |v: u32| v.checked_div(bs).unwrap_or(v);
+            let row = per(bx[3].saturating_sub(bx[0])).saturating_mul(bpb);
+            for z in bx[2]..bx[5] {
+                for by in per(bx[1])..per(bx[4]) {
+                    let at = z.saturating_mul(v.slice).saturating_add(by.saturating_mul(v.pitch)).saturating_add(per(bx[0]).saturating_mul(bpb));
+                    // SAFETY: the same box of two volumes of the same size and format, inside
+                    // their guest copies (volume_mem)
+                    unsafe { std::ptr::copy(gc::<u8>(xm.saturating_add(at)), gp::<u8>(ym.saturating_add(at)), us(row)) };
+                }
+            }
+            upload_volume(d, y, bx);
         }
+        clear_dirty(d, s);
         return S_OK;
     }
+    let dirty = a.dirty[0];
     let pairs: Vec<(u32, u32)> = a.levels.iter().copied().zip(b.levels.iter().copied()).collect();
-    for (x, y) in pairs {
-        let sa = d.addr_of(x);
-        let sb = d.addr_of(y);
-        update_surface(d, sa, 0, sb, 0);
+    if let Some(b) = dirty {
+        for (l, (x, y)) in (0u32..).zip(pairs) {
+            // SAFETY: two surfaces of the textures
+            unsafe { update_dirty(d, x, y, b, l) };
+        }
     }
+    clear_dirty(d, s);
     S_OK
+}
+
+/// Box `b` grown to whole `bs` x `bs` blocks (of a compressed format), inside `w` x `h`.
+fn blocks(b: [u32; 6], bs: u32, w: u32, h: u32) -> [u32; 6] {
+    let bs = bs.max(1);
+    let down = |v: u32| v.checked_div(bs).unwrap_or(v).saturating_mul(bs);
+    let up = |v: u32, n: u32| v.div_ceil(bs).saturating_mul(bs).min(n);
+    [down(b[0]), down(b[1]), b[2], up(b[3], w), up(b[4], h), b[5]]
+}
+
+/// UpdateTexture of one level `l` (surface `x` to surface `y`): only the part of dirty box `b`
+/// (level 0's texels) it has, as Windows copies (AddDirtyRect, documented; winref d3d9tex).
+unsafe fn update_dirty(d: &mut D3d, x: u32, y: u32, b: [u32; 6], l: u32) {
+    // SAFETY: the guest copies of two surfaces kura made
+    let (Some(xm), Some(ym)) = (unsafe { surface_mem(d, x) }, unsafe { surface_mem(d, y) }) else { return };
+    settle(d, y);
+    let Some(Data::Surface(sf)) = d.objs.get(&x).map(|o| &o.data) else { return };
+    let (_, bs) = fmt::layout(sf.fmt).unwrap_or((4, 1));
+    let r = blocks(box_down(b, l, sf.w, sf.h, 1), bs, sf.w, sf.h);
+    if r[0] < r[3] && r[1] < r[4] {
+        // SAFETY: xm and ym are their guest copies, the rectangle inside x
+        unsafe { copy_rect(d, x, xm, y, ym, [r[0], r[1], r[3], r[4]], (r[0], r[1])) };
+    }
+}
+
+fn clear_dirty(d: &mut D3d, t: u32) {
+    if let Some(Data::Texture(tx)) = d.objs.get_mut(&t).map(|o| &mut o.data) {
+        tx.dirty = [None; 6];
+    }
 }
 
 unsafe fn get_rt_data(d: &mut D3d, rt: u32, dst: u32, after: &mut After) -> u32 {
@@ -3339,6 +3593,41 @@ fn mark_rendered(d: &mut D3d, s: u32) {
     if let Some(Data::Surface(sf)) = d.objs.get_mut(&s).map(|o| &mut o.data) {
         sf.gpu_newer = true;
         sf.shadow = None;
+    }
+    top_changed(d, s);
+}
+
+/// After the pixels of surface `s` changed: the levels its texture makes from it (it being the
+/// top of a D3DUSAGE_AUTOGENMIPMAP texture) are to be made again.
+fn top_changed(d: &mut D3d, s: u32) {
+    let Some(Data::Surface(sf)) = d.objs.get(&s).map(|o| &o.data) else { return };
+    if sf.sub.level != 0 || sf.container == 0 {
+        return;
+    }
+    let c = sf.container;
+    if let Some(Data::Texture(t)) = d.objs.get_mut(&c).map(|o| &mut o.data) && let Mips::Auto { stale } = &mut t.mips {
+        *stale = true;
+    }
+}
+
+/// The levels of texture `t` made from its top again, if it changed since (a draw that reads
+/// it, GenerateMipSubLevels).
+fn make_mips(d: &mut D3d, t: u32) {
+    let Some(Data::Texture(tx)) = d.objs.get_mut(&t).map(|o| &mut o.data) else { return };
+    if tx.mips == (Mips::Auto { stale: true }) && tx.gpu != 0 {
+        tx.mips = Mips::Auto { stale: false };
+        let g = tx.gpu;
+        gpu::record(|q| q.cmd(&[gpu::GEN_MIPS, g]));
+    }
+}
+
+/// The D3DUSAGE_AUTOGENMIPMAP textures a draw reads: their levels made again if their tops
+/// changed (as Windows makes them before they are sampled).
+fn make_bound_mips(d: &mut D3d) {
+    let Some(dev) = d.dev.as_ref() else { return };
+    let bound = dev.st.textures;
+    for t in bound.into_iter().filter(|&t| t != 0) {
+        make_mips(d, t);
     }
 }
 
@@ -4217,6 +4506,7 @@ unsafe fn draw_one(d: &mut D3d, prim: u32, src: Src, prims: u32) -> u32 {
         return S_OK;
     }
     refresh_p8(d);
+    make_bound_mips(d);
     let Some(dev) = d.dev.as_ref() else { return D3DERR_INVALIDCALL };
     let st = &dev.st;
     let rt = dev.rt[0];

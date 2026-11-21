@@ -1036,7 +1036,6 @@ crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	set_bound(d, s, old);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	set_bound(d, t, old);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	set_bound(d, vb, old);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy(gc::<u8>(sp), gp::<u8>(dp), us(row));
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy(gc::<u8>(xm), gp::<u8>(ym), us(len));
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(CAPS.as_ptr(), gp::<u32>(a(1)), CAPS.len());
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(a(1) as *const i32, dev.st.scissor.as_mut_ptr(), 4);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::copy_nonoverlapping(c.as_ptr(), gp::<f32>(a(2)), 4);
@@ -1067,8 +1066,6 @@ crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::ptr::write_bytes(p, 0
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	std::slice::from_raw_parts_mut(gp::<u32>(mem + y * pitch), us(dw)).fill(0xff00_0000);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	surface_call(d, 12, s, &|i| if i == 1 { a(2) } else { 0 }, after)
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	unlock_surface(d, s)
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	update_surface(d, sa, 0, sb, 0);
-crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	update_surface(d, sa, 0, sb, 0);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	upload(d, s, [0, 0, w, h]);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	upload(d, s, r);
 crates/kura/src/d3d9/device.rs	unsafe_op_in_unsafe_fn	upload(d, t, [dx, dy, dx + w, dy + h]);
