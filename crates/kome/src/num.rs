@@ -290,6 +290,17 @@ pub fn u64_of(x: usize) -> u64 {
     u64::try_from(x).unwrap_or(u64::MAX)
 }
 
+/// `f` in scientific form with `frac` digits after the point: its mantissa ("d.ddd", with the
+/// sign) and its power of ten, as `format!("{:.*e}", frac, f)` writes them (a NaN or infinity:
+/// its text and 0).
+pub fn sci(f: f64, frac: usize) -> (String, i32) {
+    let s = format!("{f:.frac$e}");
+    let Some((m, e)) = s.split_once('e') else { return (s, 0) };
+    let (neg, digits) = e.strip_prefix('-').map_or((false, e), |d| (true, d));
+    let x = digits.bytes().filter(u8::is_ascii_digit).fold(0i32, |x, d| x.saturating_mul(10).saturating_add(i32::from(d - b'0')));
+    (m.to_string(), if neg { -x } else { x })
+}
+
 #[cfg(test)]
 #[path = "num_tests.rs"]
 mod tests;

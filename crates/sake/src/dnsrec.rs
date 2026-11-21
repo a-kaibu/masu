@@ -109,8 +109,8 @@ fn rdata(msg: &[u8], pos: usize, len: usize, ty: u16) -> Result<Data, u32> {
     let rd = msg.get(pos..end).ok_or(bad)?;
     let name = |p: usize| get_name(msg, p).ok_or(bad);
     Ok(match ty {
-        1 => Data::A(rd.get(..4).ok_or(bad)?.try_into().unwrap()),
-        28 => Data::Aaaa(rd.get(..16).ok_or(bad)?.try_into().unwrap()),
+        1 => Data::A(kome::le::bytes_at(rd, 0).ok_or(bad)?),
+        28 => Data::Aaaa(kome::le::bytes_at(rd, 0).ok_or(bad)?),
         t if is_name_type(t) => Data::Name(name(pos)?.0),
         14 | 17 => {
             let (a, p) = name(pos)?;
@@ -124,7 +124,7 @@ fn rdata(msg: &[u8], pos: usize, len: usize, ty: u16) -> Result<Data, u32> {
             if len < 6 {
                 return Err(bad);
             }
-            Data::Srv(kome::le::u16_be_at(rd, 0).unwrap(), kome::le::u16_be_at(rd, 2).unwrap(), kome::le::u16_be_at(rd, 4).unwrap(), name(pos + 6)?.0)
+            Data::Srv(kome::le::u16_be_at(rd, 0).ok_or(bad)?, kome::le::u16_be_at(rd, 2).ok_or(bad)?, kome::le::u16_be_at(rd, 4).ok_or(bad)?, name(pos + 6)?.0)
         }
         t if is_txt_type(t) => {
             let mut v = Vec::new();
@@ -156,7 +156,7 @@ fn rdata(msg: &[u8], pos: usize, len: usize, ty: u16) -> Result<Data, u32> {
             }
             let key = &rd[4..];
             let mut b = Vec::with_capacity(8 + key.len());
-            b.extend_from_slice(&kome::le::u16_be_at(rd, 0).unwrap().to_le_bytes());
+            b.extend_from_slice(&kome::le::u16_be_at(rd, 0).ok_or(bad)?.to_le_bytes());
             b.extend_from_slice(&rd[2..4]);
             b.extend_from_slice(&(key.len() as u16).to_le_bytes());
             b.extend_from_slice(&[0, 0]);
@@ -221,9 +221,9 @@ pub fn extract(msg: &[u8], charset: u32) -> Result<Vec<Rec>, u32> {
         if p + 10 > msg.len() {
             return Err(bad);
         }
-        let ty = kome::le::u16_be_at(msg, p).unwrap();
-        let ttl = kome::le::u32_be_at(msg, p + 4).unwrap();
-        let len = kome::le::u16_be_at(msg, p + 8).unwrap() as usize;
+        let ty = kome::le::u16_be_at(msg, p).ok_or(bad)?;
+        let ttl = kome::le::u32_be_at(msg, p + 4).ok_or(bad)?;
+        let len = kome::le::u16_be_at(msg, p + 8).ok_or(bad)? as usize;
         let p = p + 10;
         if p + len > msg.len() {
             return Err(bad);

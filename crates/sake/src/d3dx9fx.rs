@@ -169,9 +169,9 @@ struct Rd<'a> {
 }
 impl Rd<'_> {
     fn u32(&mut self) -> Result<u32, String> {
-        let v = self.d.get(self.at..self.at + 4).ok_or("effect data cut short")?;
+        let v = kome::le::u32_at(self.d, self.at).ok_or("effect data cut short")?;
         self.at += 4;
-        Ok(u32::from_le_bytes(v.try_into().unwrap()))
+        Ok(v)
     }
 }
 
@@ -519,7 +519,7 @@ pub fn check(data: &[u8]) -> Result<usize, String> {
 
 /// The comment blocks of shader-style bytecode (after its version token): (fourcc, body).
 pub(crate) fn comments(code: &[u8]) -> Vec<([u8; 4], &[u8])> {
-    let w = |i: usize| code.get(4 * i..4 * i + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+    let w = |i: usize| kome::le::u32_at(&code, 4 * i).unwrap_or(0);
     let mut out = Vec::new();
     let mut i = 1;
     while 4 * i < code.len() {
@@ -545,7 +545,7 @@ fn ctab_of(d: &[u8]) -> Vec<Const> {
     // (offsets from the table: past its end reads 0, without adding past usize)
     let at = |o: usize, k: usize, n: usize| d.get(o..).and_then(|b| b.get(k..)).and_then(|b| b.get(..n));
     let r16 = |o: usize, k: usize| at(o, k, 2).map_or(0, |b| u16::from_le_bytes([b[0], b[1]]));
-    let r32 = |o: usize, k: usize| at(o, k, 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+    let r32 = |o: usize, k: usize| at(o, k, 4).and_then(|b| kome::le::u32_at(b, 0)).unwrap_or(0);
     let s = |o: usize| String::from_utf8_lossy(d.get(o..).unwrap_or(&[]).split(|&x| x == 0).next().unwrap_or(&[])).into_owned();
     // (an entry is 20 bytes of the table: a count past that is a damaged CTAB)
     let (count, info) = ((r32(12, 0) as usize).min(d.len() / 20), r32(16, 0) as usize);
@@ -617,12 +617,12 @@ fn pres_body(body: &[u8]) -> Option<Pres> {
     let mut lits = Vec::new();
     let mut ins = Vec::new();
     for (f, d) in comments(body) {
-        let w: Vec<u32> = d.chunks_exact(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect();
+        let w: Vec<u32> = kome::le::pieces::<4>(d).iter().map(|b| u32::from_le_bytes(*b)).collect();
         match &f {
             b"CTAB" => inputs = ctab_of(d),
             b"CLIT" => {
                 let n = *w.first()? as usize;
-                lits = (0..n).filter_map(|k| d.get(4 + 8 * k..12 + 8 * k)).map(|b| f64::from_le_bytes(b.try_into().unwrap())).collect();
+                lits = (0..n).filter_map(|k| kome::le::bytes_at::<8>(d, 4 + 8 * k)).map(f64::from_le_bytes).collect();
             }
             b"FXLC" => {
                 let n = *w.first()?;
@@ -673,7 +673,7 @@ impl Effect {
         &mut v[(off as usize).min(end)..end]
     }
     fn u32_at(&self, i: usize, k: usize) -> u32 {
-        self.value(i).get(4 * k..4 * k + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+        kome::le::u32_at(&self.value(i), 4 * k).unwrap_or(0)
     }
     /// element k of a numeric parameter as a float
     fn f32_at(&self, i: usize, k: usize) -> f32 {

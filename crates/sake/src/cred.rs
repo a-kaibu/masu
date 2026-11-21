@@ -294,10 +294,10 @@ fn cred_read(c: &mut Ctx, wide: bool) -> u32 {
     if flags != 0 {
         return fail(ERROR_INVALID_FLAGS);
     }
-    if t == 0 || out.is_null() {
+    let (Some(name), false) = (text_in(t, wide), out.is_null()) else {
         return fail(ERROR_INVALID_PARAMETER);
-    }
-    match read(&text_in(t, wide).unwrap(), ty) {
+    };
+    match read(&name, ty) {
         Some(cr) => {
             out.put(creds_out(&[cr], wide, false));
             1
@@ -323,10 +323,10 @@ fn cred_delete(c: &mut Ctx, wide: bool) -> u32 {
     if flags != 0 {
         return fail(ERROR_INVALID_FLAGS);
     }
-    if t == 0 {
+    let Some(name) = text_in(t, wide) else {
         return fail(ERROR_INVALID_PARAMETER);
-    }
-    if delete(&text_in(t, wide).unwrap(), ty) { 1 } else { fail(ERROR_NOT_FOUND) }
+    };
+    if delete(&name, ty) { 1 } else { fail(ERROR_NOT_FOUND) }
 }
 fn CredDeleteA(c: &mut Ctx) -> u32 {
     cred_delete(c, false)
@@ -486,7 +486,7 @@ pub fn unmarshal(s: &[u8]) -> (u32, Option<Marshaled>) {
     let ty = val(s[2]).unwrap_or(0);
     let rest = &s[3..];
     let m = match ty {
-        CERT => dec(rest, 20).map(|h| Marshaled::Cert(h.try_into().unwrap())),
+        CERT => dec(rest, 20).and_then(|h| h.try_into().ok()).map(Marshaled::Cert),
         USERNAME | BLOB => (|| {
             if rest.len() < 6 {
                 return None;
@@ -549,10 +549,10 @@ fn CredMarshalCredentialW(c: &mut Ctx) -> u32 {
 /// CredUnmarshalCredential(text, &type, &credential)
 fn cred_unmarshal(c: &mut Ctx, wide: bool) -> u32 {
     let (t, typ, out) = (c.a(0), c.a(1), c.out(2));
-    if t == 0 || typ == 0 || out.is_null() {
+    let (Some(text), false) = (text_in(t, wide), typ == 0 || out.is_null()) else {
         return fail(ERROR_INVALID_PARAMETER);
-    }
-    let s = w2a(&text_in(t, wide).unwrap());
+    };
+    let s = w2a(&text);
     let (ty, m) = unmarshal(&s);
     w32(typ, ty);
     let Some(m) = m else {
@@ -594,7 +594,7 @@ fn CredUnmarshalCredentialW(c: &mut Ctx) -> u32 {
 }
 fn cred_is_marshaled(c: &mut Ctx, wide: bool) -> u32 {
     let t = c.a(0);
-    let ok = t != 0 && unmarshal(&w2a(&text_in(t, wide).unwrap())).1.is_some();
+    let ok = text_in(t, wide).is_some_and(|s| unmarshal(&w2a(&s)).1.is_some());
     if !ok {
         last_error(ERROR_INVALID_PARAMETER);
     }

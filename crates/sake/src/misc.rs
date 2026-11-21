@@ -725,7 +725,7 @@ pub fn reg_put(path: &str, name: &str, ty: u32, data: Vec<u8>) {
             at = if at.is_empty() { part.to_string() } else { format!("{at}\\{part}") };
             m.entry(at.clone()).or_default().ours = true;
         }
-        let k = m.get_mut(&path).unwrap();
+        let k = m.entry(path.clone()).or_default();
         let lname = name.to_lowercase();
         match k.values.iter_mut().find(|v| v.0.to_lowercase() == lname) {
             Some(v) => {
@@ -1419,7 +1419,7 @@ pub(crate) fn file_version(path: &str) -> Option<(u32, u32, Vec<u16>)> {
     let v = file_resource_of(&host, 16)?;
     let v = &v[..];
     let at = v.windows(4).position(|w| w == [0xbd, 0x04, 0xef, 0xfe])?;
-    let d = |k: usize| v.get(at + k..at + k + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let d = |k: usize| kome::le::u32_at(&v, at + k);
     let (ms, ls) = (d(8)?, d(12)?);
     let key: Vec<u8> = "Translation".encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut langs = Vec::new();
@@ -2524,8 +2524,8 @@ fn DoDragDrop(c: &mut Ctx) -> u32 {
         let pt = Arg::Pt(x, y);
         let at = crate::user::prop_at(x, y, DROP_PROP);
         if hr == 0 || hr == DRAGDROP_S_DROP {
-            if cur.is_some() && cur != at {
-                method(c, cur.unwrap().1, 5, &[]);
+            if let Some((_, target)) = cur.filter(|_| cur != at) {
+                method(c, target, 5, &[]);
                 cur = None;
             }
             if cur.is_none() {
@@ -2925,9 +2925,8 @@ fn real_str(f: f64, digits: usize) -> String {
     if f == 0.0 {
         return if f.is_sign_negative() { "-0".into() } else { "0".into() };
     }
-    let e = format!("{:.*e}", digits - 1, f);
-    let (m, x) = e.split_once('e').unwrap();
-    let x: i32 = x.parse().unwrap();
+    let (m, x) = kome::num::sci(f, digits - 1);
+    let m = m.as_str();
     if x < -(digits as i32) || x >= digits as i32 {
         let m = if m.contains('.') { m.trim_end_matches('0').trim_end_matches('.') } else { m };
         return format!("{m}E{}{:02}", if x < 0 { '-' } else { '+' }, x.abs());
@@ -3463,8 +3462,8 @@ fn sh_get_file_info(c: &mut Ctx, wide: bool) -> u32 {
         // 'PE' and the subsystem's Windows version for a GUI program, 'PE' alone for a console one
         let Some(host) = crate::files::resolve(&name) else { return 0 };
         let Ok(b) = kura::fs::read(&host) else { return 0 };
-        let r32b = |o: usize| b.get(o..o + 4).map_or(0, |x| u32::from_le_bytes(x.try_into().unwrap()));
-        let r16b = |o: usize| b.get(o..o + 2).map_or(0, |x| u16::from_le_bytes(x.try_into().unwrap()) as u32);
+        let r32b = |o: usize| kome::le::u32_at(&b, o).unwrap_or(0);
+        let r16b = |o: usize| kome::le::u16_at(&b, o).map_or(0, |v| v as u32);
         if r16b(0) != 0x5a4d {
             return 0;
         }
@@ -3747,7 +3746,8 @@ fn sh_browse_for_folder(c: &mut Ctx, wide: bool) -> u32 {
     static PROC: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     let proc_ = *PROC.get_or_init(|| crate::api::host_fn("browse_dlgproc", browse_dlgproc, 16));
     let r = crate::user::hidden_dialog(c, owner, proc_, lparam);
-    let b = BROWSE.with(|b| b.borrow_mut().pop()).unwrap();
+    // (the push above: a dialog nested in this one pops its own)
+    let Some(b) = BROWSE.with(|b| b.borrow_mut().pop()) else { return 0 };
     eprintln!("sake: SHBrowseForFolder: {}", if r == 1 { b.sel.as_str() } else { "(cancelled)" });
     if r != 1 {
         return 0;
@@ -4637,7 +4637,7 @@ impl PublicRsa {
         if b.len() < 20 || b[..4] != [6, 2, 0, 0] {
             return Err(bad);
         }
-        let word = |i| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
+        let word = |i| kome::le::u32_at(b, i).unwrap_or(0);
         let (alg, magic, bits, exponent) = (word(4), word(8), word(12), word(16));
         if !matches!(alg, 0x2400 | 0xa400) {
             return Err(0x8009_0008); // NTE_BAD_ALGID
@@ -4667,7 +4667,7 @@ impl PublicRsa {
     fn private_blob(&self) -> Result<Vec<u8>, u32> {
         if !self.exportable { return Err(crate::cng::NTE_BAD_KEY_STATE); }
         let full = self.key.to_blob(crate::cng::Blob::FullPrivate, self.bits)?;
-        let e = u32::from_le_bytes(full[8..12].try_into().unwrap()) as usize;
+        let e = kome::le::u32_at(&full, 8).ok_or(crate::cng::NTE_BAD_DATA)? as usize;
         let n = self.bits as usize / 8; let half = n / 2;
         let mut result = self.blob.clone(); result[0] = 7; result[8..12].copy_from_slice(&0x3241_5352u32.to_le_bytes());
         let mut at = 24 + e + n;

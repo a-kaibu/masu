@@ -3922,12 +3922,8 @@ fn ecvt_digits(v: f64, n: usize) -> (Vec<u8>, i32) {
         d.resize(n, b'0');
         return (d, 1);
     }
-    let s = format!("{:.*e}", n - 1, v.abs());
-    // (a mantissa and its power of ten; no `e` would be a power of 0)
-    let (m, e) = s.split_once('e').unwrap_or((s.as_str(), "0"));
-    let (neg, digits) = e.strip_prefix('-').map_or((false, e), |d| (true, d));
-    let exp = digits.bytes().filter(u8::is_ascii_digit).fold(0i32, |x, d| x.saturating_mul(10).saturating_add(i32::from(d - b'0')));
-    (m.bytes().filter(|b| b.is_ascii_digit()).collect(), if neg { 1 - exp } else { exp + 1 })
+    let (m, exp) = kome::num::sci(v.abs(), n - 1);
+    (m.bytes().filter(|b| b.is_ascii_digit()).collect(), exp + 1)
 }
 fn cvt_out(c: &mut Ctx, d: &[u8], dec: i32, neg: bool, pdec: u32, psign: u32) -> u32 {
     let b = cvt_buf();

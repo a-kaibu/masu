@@ -7967,7 +7967,7 @@ fn dlg_wndproc() -> u32 {
 }
 
 fn extra32(h: u32, off: usize) -> u32 {
-    with(|s| s.wins.get(&h).and_then(|w| w.extra.get(off..off + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())))).unwrap_or(0)
+    with(|s| s.wins.get(&h).and_then(|w| kome::le::u32_at(&w.extra, off))).unwrap_or(0)
 }
 fn set_extra32(h: u32, off: usize, v: u32) {
     with(|s| {

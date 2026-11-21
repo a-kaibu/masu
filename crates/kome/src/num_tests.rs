@@ -101,3 +101,17 @@ proptest! {
         prop_assert_eq!(d.to_usize(), if d >= 0 { d as usize } else { usize::MAX });
     }
 }
+
+proptest! {
+    /// sci is format!("{:.*e}") taken apart: the mantissa and the power written back give it.
+    #[test]
+    fn sci_is_the_e_format(f in any::<f64>(), frac in 0usize..20) {
+        let (m, x) = sci(f, frac);
+        let want = format!("{f:.frac$e}");
+        if f.is_finite() {
+            prop_assert_eq!(format!("{m}e{x}"), want);
+        } else {
+            prop_assert_eq!((m, x), (want, 0));
+        }
+    }
+}

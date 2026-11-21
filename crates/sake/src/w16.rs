@@ -528,7 +528,12 @@ impl C16<'_> {
 
 /// Implements a 16-bit function (module as in specs16.txt).
 pub fn implement16(module: &str, name: &str, f: H16) {
-    IMPL16.locked().get_or_insert_with(HashMap::default).insert(format!("{module}.{name}"), f);
+    implement16_named(&format!("{module}.{name}"), f);
+}
+
+/// implement16 by the name "MODULE.Name".
+pub fn implement16_named(name: &str, f: H16) {
+    IMPL16.locked().get_or_insert_with(HashMap::default).insert(name.to_string(), f);
 }
 
 static IMPL16: Mutex<Option<HashMap<String, H16>>> = Mutex::new(None);

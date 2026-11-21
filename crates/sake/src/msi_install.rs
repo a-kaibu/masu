@@ -376,11 +376,10 @@ fn install_files(c: &mut Ctx, p: &Arc<Mutex<Package>>) -> u32 {
         let files: Vec<(FileRec, String, String)> = pk
             .files
             .iter()
-            .filter(|f| pk.comps.get(&f.comp).is_some_and(|c| c.action == INSTALLSTATE_LOCAL))
-            .map(|f| {
-                let comp = pk.comps.get(&f.comp).unwrap();
+            .filter_map(|f| {
+                let comp = pk.comps.get(&f.comp).filter(|c| c.action == INSTALLSTATE_LOCAL)?;
                 let src = pk.dirs.get(&comp.dir).map(|d| d.source.clone()).unwrap_or_default();
-                (f.clone(), pk.file_target(f), src)
+                Some((f.clone(), pk.file_target(f), src))
             })
             .collect();
         let media: Vec<(i32, String)> = crate::msi_pkg::query(&pk.db, "SELECT `LastSequence`, `Cabinet` FROM `Media` ORDER BY `DiskId`").iter().map(|r| (r.get(1).int(), r.get(2).text())).collect();
@@ -1055,7 +1054,7 @@ fn put_str(key: &str, name: &str, v: &str) {
 fn get_str(key: &str, name: &str) -> Option<String> {
     let (ty, d) = crate::misc::reg_get(key, name)?;
     Some(match ty {
-        4 if d.len() >= 4 => u32::from_le_bytes(d[..4].try_into().unwrap()).to_string(),
+        4 if let Some(v) = kome::le::u32_at(&d, 0) => v.to_string(),
         _ => {
             let u: Vec<u16> = d.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
             String::from_utf16_lossy(&u)
@@ -1908,11 +1907,11 @@ fn MsiSourceListEnumSourcesW(c: &mut Ctx) -> u32 {
 /// write them.
 pub fn encode_guid85(g: &str) -> Option<String> {
     const A: &[u8] = b"!$%&'()*+,-.0123456789=?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{}~";
-    let h: Vec<u8> = g.bytes().filter(|c| c.is_ascii_hexdigit()).collect();
+    let h: Vec<u64> = g.chars().filter_map(|c| c.to_digit(16)).map(u64::from).collect();
     if h.len() != 32 {
         return None;
     }
-    let hex = |s: &[u8]| u64::from_str_radix(std::str::from_utf8(s).unwrap(), 16).unwrap();
+    let hex = |s: &[u64]| s.iter().fold(0, |v, &d| v << 4 | d);
     let mut b = Vec::with_capacity(16);
     b.extend((hex(&h[0..8]) as u32).to_le_bytes());
     b.extend((hex(&h[8..12]) as u16).to_le_bytes());
@@ -1921,8 +1920,8 @@ pub fn encode_guid85(g: &str) -> Option<String> {
         b.push(hex(&h[16 + 2 * i..18 + 2 * i]) as u8);
     }
     let mut out = String::new();
-    for k in 0..4 {
-        let mut x = u32::from_le_bytes(b[4 * k..4 * k + 4].try_into().unwrap()) as u64;
+    for w in kome::le::pieces::<4>(&b) {
+        let mut x = u64::from(u32::from_le_bytes(*w));
         for _ in 0..5 {
             out.push(A[(x % 85) as usize] as char);
             x /= 85;

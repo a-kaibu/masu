@@ -99,7 +99,7 @@ impl Image<'_> {
 
     /// A mapped image's sections, from its headers.
     fn of(base: u32, img: &[u8]) -> Option<Image<'_>> {
-        let rd = |o: usize| img.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+        let rd = |o: usize| kome::le::u32_at(&img, o);
         let pe = rd(0x3c)? as usize;
         let nsec = u16::from_le_bytes(img.get(pe + 6..pe + 8)?.try_into().ok()?) as usize;
         let opt = u16::from_le_bytes(img.get(pe + 20..pe + 22)?.try_into().ok()?) as usize;
@@ -130,7 +130,7 @@ impl Image<'_> {
 
     /// The 4 bytes at `o` (0 past the image's end: a damaged or packed module, not an abort).
     fn u32_at(&self, o: usize) -> u32 {
-        self.img.get(o..o.saturating_add(4)).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+        kome::le::u32_at(self.img, o).unwrap_or(0)
     }
 
     /// Addresses in `sections` holding the 4 bytes of `v` (any alignment).
@@ -257,7 +257,7 @@ fn locate(m: &Image) -> Option<(Vec<u32>, u32)> {
     // functions in a build without it)
     let table_or_null = |at: u32, n: usize, null: u32| -> Option<Vec<u32>> {
         let o = at.checked_sub(m.base)? as usize;
-        (0..n).map(|k| m.img.get(o + 4 * k..o + 4 * k + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).filter(|&v| (m.in_code(v) && is_start(v)) || (v == 0 && null >> k & 1 != 0))).collect()
+        (0..n).map(|k| kome::le::u32_at(&m.img, o + 4 * k).filter(|&v| (m.in_code(v) && is_start(v)) || (v == 0 && null >> k & 1 != 0))).collect()
     };
     let table_at = |at: u32, n: usize| table_or_null(at, n, 0);
     // floor 1's table: entry 6 is the function using the dB table
@@ -545,8 +545,9 @@ fn headerin(vi: u32, op: u32) {
             if m.len() >= MAX_STREAMS {
                 // those whose codec_setup is gone or another's, then the oldest
                 m.retain(|&k, s| s.seen.is_none_or(|seen| readable(k, 36) && mem::array::<36>(k) == seen));
-                while m.len() >= MAX_STREAMS {
-                    let oldest = *m.iter().min_by_key(|(_, s)| s.born).unwrap().0;
+                while m.len() >= MAX_STREAMS
+                    && let Some(oldest) = m.iter().min_by_key(|(_, s)| s.born).map(|(&k, _)| k)
+                {
                     m.remove(&oldest);
                 }
             }
@@ -697,7 +698,7 @@ fn mapping(c: &mut Ctx, tramp: u32, fastcall: bool) -> Option<u32> {
             return pass("codec_setup unreadable");
         }
         let now: [u8; 36] = mem::array::<36>(key);
-        let s = m.get_mut(&key).unwrap();
+        let Some(s) = m.get_mut(&key) else { return pass("no headers for its vorbis_info") };
         let Some(dec) = s.dec.clone() else {
             return pass("no headers for its vorbis_info");
         };

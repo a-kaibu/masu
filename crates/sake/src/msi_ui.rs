@@ -187,8 +187,8 @@ pub fn rtf_text(rtf: &str) -> String {
     let mut out: Vec<u16> = Vec::new();
     let mut bytes: Vec<u8> = Vec::new();
     let mut cp = 1252u32;
-    // per group: skipped
-    let mut skip = vec![false];
+    // the group's skipped, and the groups' outside it
+    let (mut skip, mut outer) = (false, Vec::new());
     let mut uc_skip = 0usize;
     let mut i = 0;
     let flush = |bytes: &mut Vec<u8>, out: &mut Vec<u16>, cp: u32| {
@@ -199,15 +199,15 @@ pub fn rtf_text(rtf: &str) -> String {
     };
     while i < b.len() {
         let ch = b[i];
-        let skipping = *skip.last().unwrap();
+        let skipping = skip;
         match ch {
             b'{' => {
-                skip.push(skipping);
+                outer.push(skip);
                 i += 1;
             }
             b'}' => {
-                if skip.len() > 1 {
-                    skip.pop();
+                if let Some(s) = outer.pop() {
+                    skip = s;
                 }
                 i += 1;
             }
@@ -229,7 +229,7 @@ pub fn rtf_text(rtf: &str) -> String {
                 if !n.is_ascii_alphabetic() {
                     // \\ \{ \} and other symbols; \* marks a destination to skip
                     if n == b'*' {
-                        *skip.last_mut().unwrap() = true;
+                        skip = true;
                     } else if !skipping && matches!(n, b'\\' | b'{' | b'}') {
                         bytes.push(n);
                     } else if !skipping && n == b'~' {
@@ -256,7 +256,7 @@ pub fn rtf_text(rtf: &str) -> String {
                 }
                 match word {
                     "fonttbl" | "colortbl" | "stylesheet" | "info" | "pict" | "header" | "footer" | "listtable" | "listoverridetable" | "rsidtbl" | "generator" | "xmlnstbl" | "themedata" | "datastore" | "latentstyles" => {
-                        *skip.last_mut().unwrap() = true;
+                        skip = true;
                     }
                     "ansicpg" => cp = num.unwrap_or(1252) as u32,
                     "par" | "line" | "sect" | "page" if !skipping => {
@@ -311,8 +311,8 @@ fn prop_value(pk: &Package, ctl: &Ctl) -> String {
 fn init(c: &mut Ctx, key: u32, hwnd: u32) {
     let Some((pkg, name)) = with(key, |d| {
         d.hwnd = hwnd;
-        (d.pkg.clone().unwrap(), d.name.clone())
-    }) else { return };
+        Some((d.pkg.clone()?, d.name.clone()))
+    }).flatten() else { return };
     let (dlg_row, rows, default_style) = {
         let pk = pkg.locked();
         let d = query(&pk.db, &format!("SELECT `HCentering`, `VCentering`, `Width`, `Height`, `Attributes`, `Title`, `Control_First`, `Control_Default`, `Control_Cancel` FROM `Dialog` WHERE `Dialog` = '{}'", q(&name))).into_iter().next();
@@ -482,8 +482,8 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
 fn refresh(c: &mut Ctx, key: u32) {
     let Some((pkg, name, ctls)) = with(key, |d| {
         d.busy = true;
-        (d.pkg.clone().unwrap(), d.name.clone(), d.ctls.clone())
-    }) else { return };
+        Some((d.pkg.clone()?, d.name.clone(), d.ctls.clone()))
+    }).flatten() else { return };
     let conds: Vec<(String, String)> = {
         let pk = pkg.locked();
         query(&pk.db, &format!("SELECT `Control_`, `Action`, `Condition` FROM `ControlCondition` WHERE `Dialog_` = '{}'", q(&name)))
@@ -538,7 +538,7 @@ fn refresh(c: &mut Ctx, key: u32) {
 
 /// A control's ControlEvent rows, in order; then the conditions again.
 fn publish(c: &mut Ctx, key: u32, ctl: &str) {
-    let Some((pkg, name, hwnd)) = with(key, |d| (d.pkg.clone().unwrap(), d.name.clone(), d.hwnd)) else { return };
+    let Some((pkg, name, hwnd)) = with(key, |d| Some((d.pkg.clone()?, d.name.clone(), d.hwnd))).flatten() else { return };
     let events: Vec<(String, String)> = {
         let pk = pkg.locked();
         query(&pk.db, &format!("SELECT `Event`, `Argument`, `Condition` FROM `ControlEvent` WHERE `Dialog_` = '{}' AND `Control_` = '{}' ORDER BY `Ordering`", q(&name), q(ctl)))
@@ -630,7 +630,7 @@ fn publish(c: &mut Ctx, key: u32, ctl: &str) {
 
 /// A control's input taken into its property.
 fn take_input(c: &mut Ctx, key: u32, i: usize, code: u32) {
-    let Some((pkg, ctl, busy, all)) = with(key, |d| (d.pkg.clone().unwrap(), d.ctls[i].clone(), d.busy, d.ctls.clone())) else { return };
+    let Some((pkg, ctl, busy, all)) = with(key, |d| Some((d.pkg.clone()?, d.ctls.get(i)?.clone(), d.busy, d.ctls.clone()))).flatten() else { return };
     if busy || ctl.property.is_empty() {
         return;
     }
@@ -878,7 +878,7 @@ pub fn message(c: &mut Ctx, kind: u32, rec: &Record) -> bool {
     if key == 0 {
         return false;
     }
-    let Some((pkg, subs, ctls)) = with(key, |d| (d.pkg.clone().unwrap(), d.subs.clone(), d.ctls.clone())) else { return false };
+    let Some((pkg, subs, ctls)) = with(key, |d| Some((d.pkg.clone()?, d.subs.clone(), d.ctls.clone()))).flatten() else { return false };
     let text_of = |f: &Field| match f {
         Field::Null => String::new(),
         f => f.text(),

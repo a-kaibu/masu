@@ -260,8 +260,7 @@ fn logfont_in(p16: u32, p32: u32) {
 }
 
 fn reg(name: &str, f: w16::H16) {
-    let (m, n) = name.split_once('.').unwrap();
-    w16::implement16(m, n, f);
+    w16::implement16_named(name, f);
 }
 
 pub fn init() {
@@ -913,10 +912,12 @@ fn init_task(c: &mut C16) -> u32 {
     w16(base + 0x0e, sp as u16); // stackbottom
     w16(base + 0x0a, (sp.saturating_sub(bx) + 150) as u16); // stacktop
     let t = task();
-    let pb = w16::sel_base(t.psp).unwrap().0;
+    // (BX: the command tail's first non-blank, in the PSP)
     let mut bxv = 0x81;
-    while matches!(crate::mem::r8(pb + bxv), b' ' | b'\t') {
-        bxv += 1;
+    if let Some((pb, _)) = w16::sel_base(t.psp) {
+        while matches!(crate::mem::r8(pb + bxv), b' ' | b'\t') {
+            bxv += 1;
+        }
     }
     cpu.regs[EAX] = 1;
     cpu.regs[koji::EBX] = bxv;
@@ -1002,7 +1003,8 @@ fn proc16_of(p32: u32) -> u32 {
 
 /// A program's call of a 32-bit window procedure (proc16_of): its message made 32-bit.
 fn call_proc32(c: &mut C16) -> u32 {
-    let p32 = u32::from_str_radix(&c.name, 16).unwrap();
+    // (the name proc16_of gave it: the procedure's address in hex)
+    let Ok(p32) = u32::from_str_radix(&c.name, 16) else { return 0 };
     let (m, w, l, tmp) = to32(c.w(1), c.w(2), c.a(3));
     let r = crate::call(c.cpu, p32, &[c.h(0), m, w, l]);
     to32_done(tmp);
@@ -1862,6 +1864,7 @@ fn format16(fmt: u32, va: u32) -> Vec<u8> {
 // ---------------------------------------------------------------------------------------------
 // DOS (INT 21h, DOS3Call)
 
+#[derive(Default)]
 struct Dos {
     dta: u32,
     finds: HashMap<u32, u32>,
@@ -1995,8 +1998,10 @@ pub fn dos(cpu: &mut Cpu) {
         }
         0x4e | 0x4f => {
             let mut g = DOS.locked();
-            let dos = g.get_or_insert_with(|| Dos { dta: 0, finds: HashMap::default() });
-            let dta = if dos.dta == 0 { w16::sel_base(task().psp).unwrap().0 + 0x80 } else { dos.dta };
+            let dos = g.get_or_insert_with(Dos::default);
+            // (the default DTA: the PSP's command tail; a task without a PSP has none: no more files)
+            let dta = if dos.dta == 0 { w16::sel_base(task().psp).map(|b| b.0 + 0x80) } else { Some(dos.dta) };
+            let Some(dta) = dta else { return err(cpu, 18) };
             let fd = crate::mem::heap_alloc(320, true);
             let (h, r) = if ah == 0x4e {
                 // (a new search at this DTA ends the one before: its find handle is closed)
@@ -2014,11 +2019,11 @@ pub fn dos(cpu: &mut Cpu) {
             };
             // (no more files: the search is over and its handle closed, as DOS has none to keep)
             if !r && h != u32::MAX {
-                DOS.locked().as_mut().unwrap().finds.remove(&dta);
+                DOS.locked().get_or_insert_with(Dos::default).finds.remove(&dta);
                 crate::w16::call32(cpu, "kernel32!FindClose", &[h]);
             }
             if r {
-                DOS.locked().as_mut().unwrap().finds.insert(dta, h);
+                DOS.locked().get_or_insert_with(Dos::default).finds.insert(dta, h);
                 w8(dta + 0x15, r32(fd) as u8);
                 w32(dta + 0x1a, r32(fd + 32));
                 let name = cstr(fd + 44);
