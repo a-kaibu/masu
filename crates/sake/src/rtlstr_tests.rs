@@ -330,3 +330,28 @@ fn case_table_follows_wine_expectations() {
     assert_eq!(crate::nt::up(0x131), 0x131);
     assert_eq!(crate::nt::up(0x17f), 0x17f);
 }
+
+#[test]
+fn compare_string_rows() {
+    // RtlCompareString: unsigned bytes, RtlUpperChar when asked, else the lengths
+    assert_eq!(compare_bytes(b"abc", b"abc", false), 0);
+    assert_eq!(compare_bytes(b"abc", b"ABC", false), 0x20);
+    assert_eq!(compare_bytes(b"abc", b"ABC", true), 0);
+    assert_eq!(compare_bytes(b"ab", b"abc", false), -1);
+    assert_eq!(compare_bytes(b"\xff", b"a", false), 0xff - 0x61);
+    assert_eq!(compare_bytes(b"", b"", true), 0);
+}
+
+proptest::proptest! {
+    /// antisymmetric, 0 exactly for equal (case-folded) strings, and agreeing with the unit
+    /// compare on ASCII
+    #[test]
+    fn compare_string_laws(a in proptest::collection::vec(0x20u8..0x7f, 0..8), b in proptest::collection::vec(0x20u8..0x7f, 0..8), ci: bool) {
+        let x = compare_bytes(&a, &b, ci);
+        proptest::prop_assert_eq!(x, compare_bytes(&b, &a, ci).wrapping_neg());
+        let fold = |v: &[u8]| v.iter().map(|&c| if ci { c.to_ascii_uppercase() } else { c }).collect::<Vec<u8>>();
+        proptest::prop_assert_eq!(x == 0, fold(&a) == fold(&b));
+        let w = |v: &[u8]| v.iter().map(|&c| u16::from(c)).collect::<Vec<u16>>();
+        proptest::prop_assert_eq!(x.signum(), compare_units(&w(&a), &w(&b), ci).signum());
+    }
+}

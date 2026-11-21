@@ -84,6 +84,21 @@ pub fn publish(dir: &str) {
     }
 }
 
+/// The current directory's DOS path as the reference holds it (ending in '\'); before the
+/// process parameters exist, files::cwd's
+pub fn dos_path() -> Vec<u16> {
+    let c = CUR.locked();
+    if c.pp == 0 {
+        drop(c);
+        let mut w: Vec<u16> = crate::files::cwd().encode_utf16().collect();
+        if w.last() != Some(&0x5c) {
+            w.push(0x5c);
+        }
+        return w;
+    }
+    (0..u32::from(c.len / 2)).map(|i| mem::r16(mem::ga(c.buf).at(i, 2))).collect()
+}
+
 /// RtlpCheckForSameCurdir: whether `input` (a DOS path's units) names the current reference
 /// as it is written: past 3 units ("C:\"), the path without its '\' (so "C:\dir" is the same as
 /// "C:\dir\" made, while "C:\dir\" itself, ".", "\\?\C:\dir" are not); else exactly. Case

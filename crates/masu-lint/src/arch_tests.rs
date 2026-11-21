@@ -40,6 +40,9 @@ const GOOD_NTCRT: &str = concat!(
     "    implement(d, \"_aullrem\", f); implement(d, \"_aulldvrm\", f); implement(d, \"_allshl\", f); implement(d, \"_allshr\", f); implement(d, \"_aullshr\", f);\n",
     "    implement(d, \"RtlExtendedMagicDivide\", f); implement(d, \"RtlLargeIntegerToChar\", f); implement(d, \"RtlInt64ToUnicodeString\", f);\n",
     "    implement(d, \"RtlSetCurrentDirectory_U\", f); implement(d, \"RtlDetermineDosPathNameType_U\", f); implement(d, \"RtlIsDosDeviceName_U\", f);\n",
+    "    implement(d, \"RtlGetFullPathName_U\", f); implement(d, \"RtlGetFullPathName_UEx\", f); implement(d, \"RtlDosPathNameToNtPathName_U\", f);\n",
+    "    implement(d, \"RtlDosPathNameToNtPathName_U_WithStatus\", f); implement(d, \"RtlIsNameLegalDOS8Dot3\", f);\n",
+    "    implement(d, \"RtlOemStringToUnicodeString\", f); implement(d, \"RtlCompareString\", f);\n",
     "}\n",
 );
 

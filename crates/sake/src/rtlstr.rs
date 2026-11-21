@@ -229,6 +229,20 @@ pub fn compare_units(a: &[u16], b: &[u16], ci: bool) -> i32 {
     kome::num::lo32(a.len()).wrapping_sub(kome::num::lo32(b.len())).cast_signed()
 }
 
+/// RtlCompareString: the first bytes that differ (as unsigned, RtlUpperChar'd when `ci`), else
+/// the lengths
+pub fn compare_bytes(a: &[u8], b: &[u8], ci: bool) -> i32 {
+    for (&x, &y) in a.iter().zip(b) {
+        if x != y {
+            let (x, y) = if ci { (upper_char(x), upper_char(y)) } else { (x, y) };
+            if x != y {
+                return i32::from(x).wrapping_sub(i32::from(y));
+            }
+        }
+    }
+    kome::num::lo32(a.len()).wrapping_sub(kome::num::lo32(b.len())).cast_signed()
+}
+
 /// the format RtlGUIDFromString reads and RtlStringFromGUID writes
 const GUID_FORMAT: &str = "{%08lx-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}";
 
@@ -548,6 +562,10 @@ fn compare_units_h(c: &mut Ctx) -> u32 {
     let (a, na, b, nb, ci) = (c.a(0), c.a(1), c.a(2), c.a(3), c.boolean(4));
     let read = |s: u32, n: u32| -> Vec<u16> { (0..n).map(|i| mem::r16(mem::ga(s).at(i, 2))).collect() };
     compare_units(&read(a, na), &read(b, nb), ci).cast_unsigned()
+}
+fn compare_bytes_h(c: &mut Ctx) -> u32 {
+    let (a, b) = (Counted::read(c.a(0)).bytes(), Counted::read(c.a(1)).bytes());
+    compare_bytes(&a, &b, c.boolean(2)).cast_unsigned()
 }
 fn guid_from_h(c: &mut Ctx) -> u32 {
     let (s, g) = (Counted::read(c.a(0)), c.a(1));
@@ -873,6 +891,7 @@ pub fn init() {
     implement(d, "RtlDuplicateUnicodeString", duplicate_h);
     implement(d, "RtlFindCharInUnicodeString", find_h);
     implement(d, "RtlCompareUnicodeStrings", compare_units_h);
+    implement(d, "RtlCompareString", compare_bytes_h);
     implement(d, "RtlGUIDFromString", guid_from_h);
     implement(d, "RtlStringFromGUID", guid_text_h);
     implement(d, "RtlUTF8ToUnicodeN", utf8_to_unicode_h);

@@ -196,3 +196,84 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn dos83_wine_table() {
+    // Wine's test_RtlIsNameLegalDOS8Dot3 (Windows): (name, legal, spaces)
+    let rows: &[(&str, Option<bool>)] = &[
+        ("12345678", Some(false)),
+        ("123 5678", Some(true)),
+        ("12345678.", None),
+        ("1234 678.", None),
+        ("12345678.a", Some(false)),
+        ("12345678.a ", None),
+        ("12345678.a c", Some(true)),
+        (" 2345678.a ", None),
+        ("1 345678.abc", Some(true)),
+        ("1      8.a c", Some(true)),
+        ("1 3 5 7 .abc", None),
+        ("12345678.  c", Some(true)),
+        ("123456789.a", None),
+        ("12345.abcd", None),
+        ("12345.ab d", None),
+        (".abc", None),
+        ("12.abc.d", None),
+        (".", Some(false)),
+        ("..", Some(false)),
+        ("...", None),
+    ];
+    for &(name, want) in rows {
+        assert_eq!(legal_8dot3(name.to_ascii_uppercase().as_bytes(), None), want, "{name:?}");
+    }
+}
+
+#[test]
+fn dos83_dbcs() {
+    let lead = |b: u8| matches!(b, 0x81..=0x9f | 0xe0..=0xfc);
+    // a pair counts two bytes; it may not start at 7 in the base, nor be cut at the end
+    assert_eq!(legal_8dot3(b"\x82\xa0\x82\xa2\x82\xa4\x82\xa6", Some(&lead)), Some(false));
+    assert_eq!(legal_8dot3(b"1234567\x82\xa0", Some(&lead)), None);
+    assert_eq!(legal_8dot3(b"ABC.\x82", Some(&lead)), None);
+    assert_eq!(legal_8dot3(b"ABC.\x82\xa0", Some(&lead)), Some(false));
+    // (a trail byte is not checked: '\' after a lead byte is the pair's second half)
+    assert_eq!(legal_8dot3(b"\x95\x5c", Some(&lead)), Some(false));
+    assert_eq!(legal_8dot3(b"\x95\x5c", None), None);
+}
+
+/// Every illegal ASCII byte, alone and inside a name
+#[test]
+fn dos83_every_byte() {
+    for b in 0u8..=0x7f {
+        let bad = b < 0x20 || b"\"*+,/:;<=>?[\\]|".contains(&b);
+        let got = legal_8dot3(&[b'A', b, b'B'], None);
+        if bad {
+            assert_eq!(got, None, "{b:#x}");
+        } else if b != b'.' {
+            assert_eq!(got, Some(b == b' '), "{b:#x}");
+        }
+    }
+}
+
+proptest! {
+    /// a legal name (SBCS) is "."/"..", or base 1..=8 + optional ".ext" of 0..=3 with no
+    /// space before the dot and no trailing space; spaces says whether it holds one
+    #[test]
+    fn dos83_model(v in proptest::collection::vec(prop_oneof![Just(b'A'), Just(b' '), Just(b'.'), Just(b'*')], 0..14)) {
+        let got = legal_8dot3(&v, None);
+        let model = if v == b"." || v == b".." {
+            Some(false)
+        } else {
+            let dots = v.iter().filter(|&&b| b == b'.').count();
+            let (base, ext) = match v.iter().position(|&b| b == b'.') {
+                Some(k) => (&v[..k], Some(&v[k + 1..])),
+                None => (&v[..], None),
+            };
+            let ok = !v.contains(&b'*') && dots <= 1 && base.len() <= 8
+                && (v.is_empty() || !base.is_empty())
+                && ext.is_none_or(|e| e.len() <= 3 && base.last() != Some(&b' '))
+                && !matches!(v.last(), Some(b' ' | b'.'));
+            ok.then(|| v.contains(&b' '))
+        };
+        prop_assert_eq!(got, model, "{:?}", String::from_utf8_lossy(&v));
+    }
+}

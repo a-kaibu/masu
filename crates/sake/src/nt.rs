@@ -464,15 +464,17 @@ fn iosb(p: u32, st: u32, info: u32) {
 }
 
 /// OBJECT_ATTRIBUTES' name as a Win32 path (in guest memory, to free).
-fn path_of(oa: u32) -> Option<u32> {
+fn path_of(oa: u32) -> Result<u32, u32> {
     // (OBJECT_ATTRIBUTES: Length, RootDirectory, ObjectName; UNICODE_STRING's Buffer after its
     // two lengths, both pointer-aligned)
     let us = crate::mem::rp(mem::ga(oa).at(2, mem::ps()));
     if us == 0 {
-        return None;
+        return Err(0xc000_0033);
     }
     let (n, b) = (u32::from(r16(us)) / 2, crate::mem::rp(mem::ga(us) + mem::ps()));
     let mut w: Vec<u16> = (0..n).map(|i| crate::mem::r16(mem::ga(b).at(i, 2))).collect();
+    // (the name's syntax first: the object manager's and the file system's)
+    crate::ntname::check(&w, mem::rp(oa.saturating_add(mem::ps())) != 0)?;
     let s = String::from_utf16_lossy(&w);
     for pre in ["\\??\\UNC\\", "\\??\\", "\\DosDevices\\", "\\GLOBAL??\\"] {
         if s.starts_with(pre) {
@@ -506,11 +508,14 @@ fn path_of(oa: u32) -> Option<u32> {
     for (i, &x) in w.iter().enumerate() {
         crate::mem::w16(mem::ga(p).at(kome::num::u32_of(i), 2), x);
     }
-    Some(p)
+    Ok(p)
 }
 
 fn create(c: &mut Ctx, out: u32, access: u32, oa: u32, io: u32, attrs: u32, share: u32, disp: u32, opts: u32) -> u32 {
-    let Some(path) = path_of(oa) else { return 0xc000_0033 };
+    let path = match path_of(oa) {
+        Ok(p) => p,
+        Err(st) => return st,
+    };
     // NT disposition -> CreateFile's
     let cd = match disp {
         0 | 5 => 2, // SUPERSEDE, OVERWRITE_IF: CREATE_ALWAYS
@@ -534,6 +539,19 @@ fn create(c: &mut Ctx, out: u32, access: u32, oa: u32, io: u32, attrs: u32, shar
     let attrs_now = k32(c, "GetFileAttributesW", &[path]);
     let existed = attrs_now != u32::MAX;
     let is_dir = existed && attrs_now & 0x10 != 0;
+    // (a file's name with a '\' after it is no name: STATUS_OBJECT_NAME_INVALID; older
+    // Windows said STATUS_NOT_A_DIRECTORY)
+    let units = kome::num::u32_of(mem::wstr(path).len());
+    let last = mem::ga(path).at(units.saturating_sub(1), 2);
+    if !existed && units > 1 && mem::r16(last) == 0x5c {
+        mem::w16(last, 0);
+        let a = k32(c, "GetFileAttributesW", &[path]);
+        mem::w16(last, 0x5c);
+        if a != u32::MAX && a & 0x10 == 0 {
+            mem::heap_free(path);
+            return 0xc000_0033;
+        }
+    }
     // FILE_DIRECTORY_FILE: a directory only (made by CREATE / OPEN_IF); FILE_NON_DIRECTORY_FILE:
     // never one
     let fail = |st: u32| {
@@ -951,7 +969,7 @@ fn nt_set_information_file(c: &mut Ctx) -> u32 {
 
 /// WIN32_FILE_ATTRIBUTE_DATA (36 bytes) of OBJECT_ATTRIBUTES' file, or the status.
 fn attr_data(c: &mut Ctx, oa: u32) -> Result<u32, u32> {
-    let Some(path) = path_of(oa) else { return Err(0xc000_0033) };
+    let path = path_of(oa)?;
     let d = mem::heap_alloc(36, true);
     let ok = k32(c, "GetFileAttributesExW", &[path, 0, d]);
     mem::heap_free(path);
@@ -993,7 +1011,10 @@ fn nt_query_full_attributes_file(c: &mut Ctx) -> u32 {
     }
 }
 fn nt_delete_file(c: &mut Ctx) -> u32 {
-    let Some(path) = path_of(c.a(0)) else { return 0xc000_0033 };
+    let path = match path_of(c.a(0)) {
+        Ok(p) => p,
+        Err(st) => return st,
+    };
     let ok = k32(c, "DeleteFileW", &[path]);
     mem::heap_free(path);
     if ok != 0 { 0 } else { status() }
