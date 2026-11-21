@@ -340,19 +340,18 @@ impl<'a, M: Memory> X<'a, M> {
             let bits = if double {
                 let g = |v: u128| f64::from_bits(lo64(v >> (64 * i)));
                 let (p, q, s) = (g(x), g(y), g(z));
-                let v = if p.is_nan() || q.is_nan() || s.is_nan() {
-                    [p, q, s].into_iter().find(|v| v.is_nan()).unwrap().to_bits() | 1 << 51
-                } else {
-                    crate::round::fma64(if neg { -p } else { p }, q, if sub { -s } else { s }, rc).to_bits()
+                // (a NaN operand, the first: quieted)
+                let v = match [p, q, s].into_iter().find(|v| v.is_nan()) {
+                    Some(n) => n.to_bits() | 1 << 51,
+                    None => crate::round::fma64(if neg { -p } else { p }, q, if sub { -s } else { s }, rc).to_bits(),
                 };
                 u128::from(v)
             } else {
                 let g = |v: u128| f32::from_bits(lo32(v >> (32 * i)));
                 let (p, q, s) = (g(x), g(y), g(z));
-                let v = if p.is_nan() || q.is_nan() || s.is_nan() {
-                    [p, q, s].into_iter().find(|v| v.is_nan()).unwrap().to_bits() | 1 << 22
-                } else {
-                    crate::round::fma32(if neg { -p } else { p }, q, if sub { -s } else { s }, rc).to_bits()
+                let v = match [p, q, s].into_iter().find(|v| v.is_nan()) {
+                    Some(n) => n.to_bits() | 1 << 22,
+                    None => crate::round::fma32(if neg { -p } else { p }, q, if sub { -s } else { s }, rc).to_bits(),
                 };
                 u128::from(v)
             };

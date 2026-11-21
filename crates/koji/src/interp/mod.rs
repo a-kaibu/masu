@@ -1816,7 +1816,7 @@ pub fn cpuid_mode(leaf: u32, sub: u32, long: bool) -> (u32, u32, u32, u32) {
         0x8000_0002..=0x8000_0004 => {
             const BRAND: &[u8; 48] = b"vnvm virtual x86 processor\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
             let o = us(leaf - 0x8000_0002) * 16;
-            let w = |i: usize| u32::from_le_bytes(BRAND[o + i * 4..o + i * 4 + 4].try_into().unwrap());
+            let w = |i: usize| kome::le::u32_at(BRAND, o + i * 4).unwrap_or(0);
             (w(0), w(1), w(2), w(3))
         }
         _ => (0, 0, 0, 0),

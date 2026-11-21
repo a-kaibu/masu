@@ -186,8 +186,7 @@ fn supported(ins: &Instruction) -> bool {
         }
         _ if binop(m).is_some() || unpack(m).is_some() => n == 2 && full(),
         _ if farith(m).is_some_and(|f| f.1) => n == 2 && full(),
-        _ if farith(m).is_some() => {
-            let bits = farith(m).unwrap().0;
+        _ if let Some((bits, ..)) = farith(m) => {
             n == 2 && is_x(ins, 0) && (is_x(ins, 1) || mem(ins, 1)) && size_ok(ins, us(bits) / 8)
         }
         _ if shift(m).is_some() => n == 2 && is_x(ins, 0) && (ins.op_kind(1) == OpKind::Immediate8 || ((is_x(ins, 1) || mem(ins, 1)) && size_ok(ins, 16))),
@@ -555,9 +554,8 @@ impl Gen<'_> {
                 let wbits = if mem(&ins, 0) { bits } else if bits == 64 { 64 } else { 32 };
                 self.gdst(0, wbits);
             }
-            _ if farith(m).is_some_and(|f| !f.1) => {
+            _ if let Some((bits, false, _, op)) = farith(m) => {
                 // scalar: element 0 from the operation, the rest from the first source
-                let (bits, _, _, op) = farith(m).unwrap();
                 let (extract, replace) = if bits == 32 { (0x1f, 0x20) } else { (0x21, 0x22) };
                 self.vfirst(src1);
                 if !matches!(m, Sqrtss | Sqrtsd) {

@@ -161,8 +161,7 @@ pub(super) fn supported(ins: &Instruction) -> bool {
         }
         Movq => vreg(d) && src(1, 8),
         Pmovmskb => d.is_gpr32() && ins.op_kind(1) == OpKind::Register && vreg(ins.op_register(1)),
-        _ if farith(m).is_some() => {
-            let (bits, packed, ..) = farith(m).unwrap();
+        _ if let Some((bits, packed, ..)) = farith(m) => {
             d.is_xmm() && src(1, if packed { 16 } else { us(bits) / 8 })
         }
         Minps | Maxps | Minpd | Maxpd | Shufps | Cmpps => d.is_xmm() && src(1, 16),
@@ -247,7 +246,7 @@ impl Gen<'_> {
             return;
         }
         let off = match self.ins.op_kind(i) {
-            OpKind::Memory => self.mem_at(a.unwrap()),
+            OpKind::Memory => self.mem_off(a),
             _ => {
                 self.c.get(L_CPU);
                 Self::voff(self.ins.op_register(i))
@@ -511,7 +510,10 @@ impl Gen<'_> {
                     self.c.get(l).low64().set(w);
                 } else {
                     let (base, off) = match ins.op_kind(1) {
-                        OpKind::Memory => (a.unwrap(), 0),
+                        OpKind::Memory => match a {
+                            Some(a) => (a, 0),
+                            None => return self.bail(),
+                        },
                         _ => (L_CPU, Self::voff(ins.op_register(1))),
                     };
                     self.c.get(base).load64(off).set(w);
@@ -591,14 +593,14 @@ impl Gen<'_> {
         let a = self.mem_addr_sized(bits / 8);
         if ins.op_kind(0) == OpKind::Memory {
             // MOVSS m32, xmm
-            let o = self.mem_at(a.unwrap());
+            let o = self.mem_off(a);
             self.c.get(L_CPU).load32(Off::xmm(ins.op_register(1))).store32(o);
             return;
         }
         let d = ins.op_register(0);
         self.c.get(L_CPU);
         if m == Movss && ins.op_kind(1) == OpKind::Memory {
-            let o = self.mem_at(a.unwrap());
+            let o = self.mem_off(a);
             self.c.v128load32(o);
             return self.vstore(d);
         }
@@ -755,14 +757,18 @@ impl Gen<'_> {
         let a = if m == Bt { None } else { self.mem_addr_sized(size) };
         match m {
             Stmxcsr => {
-                let o = self.mem_at(a.unwrap());
+                let o = self.mem_off(a);
                 self.c.get(L_CPU).load32(Off::mxcsr()).store32(o);
-                self.stored(a.unwrap(), 4);
+                if let Some(a) = a {
+                    self.stored(a, 4);
+                }
             }
             Movsd if ins.op_kind(0) == OpKind::Memory => {
-                let o = self.mem_at(a.unwrap());
+                let o = self.mem_off(a);
                 self.c.get(L_CPU).load64(Off::xmm(ins.op_register(1))).store64(o);
-                self.stored(a.unwrap(), 8);
+                if let Some(a) = a {
+                    self.stored(a, 8);
+                }
             }
             Movsd | Cvtps2pd | Cvtdq2pd | Cvtdq2ps | Cvtpd2ps => {
                 let d = ins.op_register(0);
@@ -876,7 +882,7 @@ impl Gen<'_> {
             return self.mm_set(ins.op_register(0));
         }
         if q && ins.op_kind(0) == OpKind::Register && ins.op_register(0).is_mm() && ins.op_kind(1) == OpKind::Memory {
-            let o = self.mem_at(a.unwrap());
+            let o = self.mem_off(a);
             self.c.v128load64(o);
             return self.mm_set(ins.op_register(0));
         }
@@ -891,7 +897,7 @@ impl Gen<'_> {
             if q {
                 match ins.op_kind(1) {
                     OpKind::Memory => {
-                        let o = self.mem_at(a.unwrap());
+                        let o = self.mem_off(a);
                         self.c.load64(o);
                     }
                     _ => self.vlow64(ins.op_register(1)),
@@ -915,7 +921,7 @@ impl Gen<'_> {
         // out of a vector register
         let r = ins.op_register(1);
         if q {
-            let o = self.mem_at(a.unwrap());
+            let o = self.mem_off(a);
             self.vlow64(r);
             self.c.store64(o);
         } else {
