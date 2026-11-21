@@ -36,10 +36,10 @@ fn ensure(name: &str) -> Result<(), u32> {
     let start = number("Start").unwrap_or(3);
     let image = crate::misc::registry_string(&p, "ImagePath").ok_or(1060u32)?;
     let display = crate::misc::registry_string(&p, "DisplayName").unwrap_or_else(|| name.into());
-    let dependencies = crate::misc::registry_value(&p, "DependOnService").filter(|(ty, _)| *ty == 7).map(|(_, b)| {
+    let dependencies = crate::misc::registry_value(&p, "DependOnService").filter(|(ty, _)| *ty == 7).map_or_default(|(_, b)| {
         let words: Vec<u16> = kome::le::units16(&b).collect();
         words.split(|v| *v == 0).filter(|v| !v.is_empty()).map(String::from_utf16_lossy).collect::<Vec<_>>()
-    }).unwrap_or_default();
+    });
     kern::with(|k| {
         if !k.services.contains_key(&key) {
             let mut s = Service::new(name.into(), display, ty, start, image); s.dependencies = dependencies;
@@ -129,7 +129,7 @@ fn start_dependencies(name: &str, args: Vec<String>, chain: &mut Vec<String>) ->
     let key = name.to_ascii_lowercase();
     if chain.contains(&key) { return Err(1059); }
     chain.push(key.clone());
-    let dependencies = kern::with(|k| k.services.get(&key).map(|s| s.dependencies.clone()).unwrap_or_default()).0;
+    let dependencies = kern::with(|k| k.services.get(&key).map_or_default(|s| s.dependencies.clone())).0;
     for dep in dependencies {
         // RpcSs is supplied by sake's COM activation/call broker, like the core
         // Windows DLLs are supplied by HLE. It has no guest executable to start.

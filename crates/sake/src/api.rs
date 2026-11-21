@@ -1361,7 +1361,7 @@ fn trace_match(i: u32) -> bool {
         return false;
     }
     static F: OnceLock<Vec<String>> = OnceLock::new();
-    let f = F.get_or_init(|| std::env::var("SAKE_TRACE_FILTER").map(|s| s.split(',').map(String::from).collect()).unwrap_or_default());
+    let f = F.get_or_init(|| std::env::var("SAKE_TRACE_FILTER").map_or_default(|s| s.split(',').map(String::from).collect()));
     if f.is_empty() {
         return true;
     }

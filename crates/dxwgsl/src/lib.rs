@@ -31,7 +31,7 @@ pub fn f32_text(f: f32) -> String {
 
 /// A shader's input (`output` false) or output signature.
 pub fn signature(code: &[u8], output: bool) -> Vec<crate::dxbc::SigElement> {
-    crate::dxbc::Container::parse(code).map_or(Vec::new(), |c| c.signature(output))
+    crate::dxbc::Container::parse(code).map_or_default(|c| c.signature(output))
 }
 
 /// What a shader binds (group = stage)

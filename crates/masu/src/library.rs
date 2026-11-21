@@ -638,7 +638,7 @@ mod egs_games_tests {
                 r.read_exact(&mut body).unwrap();
                 let path = line.split(' ').nth(1).unwrap_or("").to_string();
                 let auth = h.get("authorization").cloned().unwrap_or_default();
-                let sql: String = form_urlencoded::parse(&body).find(|(k, _)| k == "sql").map(|(_, v)| v.into_owned()).unwrap_or_default();
+                let sql: String = form_urlencoded::parse(&body).find(|(k, _)| k == "sql").map_or_default(|(_, v)| v.into_owned());
                 let blob = st.gamedb.lock().unwrap().clone();
                 let digest = blob.as_ref().map(|b| format!("sha256:{}", ring::digest::digest(&ring::digest::SHA256, b).as_ref().iter().map(|x| format!("{x:02x}")).collect::<String>()));
                 let (status, extra, ty, out): (&str, String, &str, Vec<u8>) = if path.starts_with("/v2/") && auth != "Bearer tok" {

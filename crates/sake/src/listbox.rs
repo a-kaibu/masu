@@ -350,7 +350,7 @@ fn user_select(c: &mut Ctx, h: u32, i: i32, shift: bool, ctrl: bool, toggle: boo
         if st & LBS_MULTIPLESEL != 0 {
             if toggle {
                 let it = &mut l.items[i as usize];
-                it.sel = !it.sel;
+                it.sel.toggle();
             }
         } else if st & LBS_EXTENDEDSEL != 0 {
             if shift && l.anchor >= 0 {
@@ -365,7 +365,7 @@ fn user_select(c: &mut Ctx, h: u32, i: i32, shift: bool, ctrl: bool, toggle: boo
                 }
             } else if ctrl {
                 let it = &mut l.items[i as usize];
-                it.sel = !it.sel;
+                it.sel.toggle();
                 l.anchor = i;
             } else {
                 for (k, it) in l.items.iter_mut().enumerate() {

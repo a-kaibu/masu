@@ -7,11 +7,9 @@ crates/koji/src/interp/vex.rs	undocumented_unsafe_blocks	Ok(_) => unsafe { &*t }
 crates/koji/src/interp/vex.rs	undocumented_unsafe_blocks	drop(unsafe { Box::from_raw(t) });
 crates/koji/src/interp/vex.rs	undocumented_unsafe_blocks	return unsafe { &*p };
 crates/koji/src/interp/vex.rs	undocumented_unsafe_blocks	unsafe { &*other }
-crates/koji/src/jit/mod.rs	borrow_as_ptr	let at = &counts[k] as *const u32 as usize as u32;
 crates/koji/src/jit/mod.rs	masu-leak	let counts: &'static mut [u32] = alloc::boxed::Box::leak(alloc::vec![0u32; us(n)].into_boxed_slice());
 crates/koji/src/jit/mod.rs	masu-static_mut	let counts: &'static mut [u32] = alloc::boxed::Box::leak(alloc::vec![0u32; us(n)].into_boxed_slice());
 crates/koji/src/jit/mod.rs	masu-transmute	(v != 0).then(|| unsafe { core::mem::transmute::<usize, fn(u32) -> bool>(v) })
-crates/koji/src/jit/wasm.rs	borrow_as_ptr	let at = &MEM_COUNTS[mem_count_slot(store, self.cpu_at, off)] as *const _ as usize as u32 as i32;
 crates/koji/src/lib.rs	masu-transmute	let f = unsafe { core::mem::transmute::<usize, fn() -> u64>(p) };
 crates/koji/src/lib.rs	undocumented_unsafe_blocks	let f = unsafe { core::mem::transmute::<usize, fn() -> u64>(p) };
 crates/kura/src/adec.rs	masu-from_raw_parts	let out = std::slice::from_raw_parts_mut(out, words);
@@ -1756,8 +1754,6 @@ crates/masu/src/engine_exe.rs	masu-wire_tree	let mut tsv = String::from("vnvm-tr
 crates/masu/src/engine_exe.rs	masu-wire_tree	let tsv = "vnvm-tree\t2\t4194304\nd\t755\t0\tStartData\nf\t644\t0\tStart.exe\t3\t:3\nf\t644\t0\ta\\tb\\\\c.dat\t0\t\nl\t777\t0\tlink\tStart.exe\n";
 crates/masu/src/foresee.rs	masu-wire_tree	let mut tsv = String::from("vnvm-tree\t2\t64\n");
 crates/masu/src/pack.rs	masu-wire_tree	fs::write(t.join("trees/x.tsv"), format!("vnvm-tree\t2\t65536\nf\t644\t0\ta.bin\t1\t{col}\n")).unwrap();
-crates/masu/src/pack.rs	masu-wire_tree	let mut out = format!("vnvm-tree\t2\t{}\n", chunking.avg);
-crates/masu/src/pack.rs	masu-wire_tree	let mut out = format!("{}\n", old.lines().next().unwrap_or("vnvm-tree\t2\t0"));
 crates/masu/src/pack.rs	masu-wire_tree	let text = |v: &[String]| format!("vnvm-tree\t2\t4194304\n{}", v.iter().map(|l| format!("{l}\n")).collect::<String>());
 crates/masu/src/pack.rs	masu-wire_tree	proptest::prop_assert_eq!(lines[0], "vnvm-tree\t2\t4194304");
 crates/masu/src/portable.rs	masu-wire_tree	"vnvm-tree\t1\t262144\nf\t0\t0\tgame.exe\t1\tdifferent\n",

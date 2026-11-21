@@ -60,7 +60,7 @@ pub fn crt_argv(cmd: &str) -> Vec<String> {
     let mut quoted = false;
     while i < s.len() && (quoted || (s[i] != ' ' && s[i] != '\t')) {
         if s[i] == '"' {
-            quoted = !quoted;
+            quoted.toggle();
         } else {
             prog.push(s[i]);
         }
@@ -139,7 +139,7 @@ fn find_program(prog: &str, app: bool) -> Result<(String, String), u32> {
     let bare = !name.contains(['\\', '/']);
     let mut tries = Vec::new();
     if bare {
-        let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
+        let exe = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
         if let Some((d, _)) = exe.rsplit_once('\\') {
             tries.push(format!("{d}\\{name}"));
         }

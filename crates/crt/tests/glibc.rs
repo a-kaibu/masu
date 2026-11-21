@@ -348,7 +348,7 @@ fn conversion() -> impl Strategy<Value = String> {
     )
         .prop_map(|(star, w, ty)| {
             // (a width of c/s/[ beyond the 64-byte buffers must not overflow them)
-            format!("%{star}{}{ty}", w.map_or(String::new(), |w| w.to_string()))
+            format!("%{star}{}{ty}", w.map_or_default(|w| w.to_string()))
         })
 }
 

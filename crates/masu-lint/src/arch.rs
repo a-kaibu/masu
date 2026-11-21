@@ -53,10 +53,11 @@ pub enum Rule {
     NoReturnHandler,
     WildcardUnreachable,
     GuestScratch,
+    HandStd,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 36] = [
+    pub const ALL: [Rule; 37] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -93,6 +94,7 @@ impl Rule {
         Rule::NoReturnHandler,
         Rule::WildcardUnreachable,
         Rule::GuestScratch,
+        Rule::HandStd,
     ];
 
     /// the name a site list and a message use
@@ -134,6 +136,7 @@ impl Rule {
             Rule::NoReturnHandler => "noreturn-handler",
             Rule::WildcardUnreachable => "wildcard-unreachable",
             Rule::GuestScratch => "guest-scratch",
+            Rule::HandStd => "hand-std",
         }
     }
 
@@ -176,6 +179,7 @@ impl Rule {
             Rule::NoReturnHandler => "a Windows function that does not come back (modern::NORETURN: ExitProcess, exit, abort, _assert..) is `fn(&mut Ctx) -> !` registered with noreturn! (api::NoReturn checks it; 2026-11-21): a handler that returns a value lets the guest run on past it",
             Rule::WildcardUnreachable => "no `_ => unreachable!()` arm outside tests (2026-11-21, user rule: exhaustive matches, no `_` catch-alls): take the value that cannot come out by a type (an enum, `!` as a type argument, a const-built table)",
             Rule::GuestScratch => "a guest block one sake function uses for the length of a call is a mem::Scratch (2026-11-21: 355 hand pairs converted): it is freed on every way out of the function, where a hand-written heap_free at the end leaked it on each early return; a block the guest keeps stays heap_alloc",
+            Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
     }
 
@@ -217,6 +221,7 @@ impl Rule {
             Rule::NoReturnHandler => modern::noreturn_handler(tree),
             Rule::WildcardUnreachable => modern::wildcard_unreachable(tree),
             Rule::GuestScratch => modern::guest_scratch(tree),
+            Rule::HandStd => modern::hand_std(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -590,8 +595,8 @@ fn exported(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| {
         let toks = match &a.meta {
             syn::Meta::Path(p) => quote::quote!(#p).to_string(),
-            syn::Meta::List(l) => format!("{} {}", l.path.get_ident().map(|i| i.to_string()).unwrap_or_default(), l.tokens),
-            syn::Meta::NameValue(n) => n.path.get_ident().map(|i| i.to_string()).unwrap_or_default(),
+            syn::Meta::List(l) => format!("{} {}", l.path.get_ident().map_or_default(|i| i.to_string()), l.tokens),
+            syn::Meta::NameValue(n) => n.path.get_ident().map_or_default(|i| i.to_string()),
         };
         toks.split(|c: char| !c.is_alphanumeric() && c != '_').any(|w| w == "no_mangle" || w == "export_name")
     })
@@ -800,7 +805,7 @@ impl<'a> syn::visit::Visit<'a> for KeyEscape {
     fn visit_expr_call(&mut self, c: &'a syn::ExprCall) {
         if let syn::Expr::Path(p) = &*c.func {
             let segs: Vec<String> = p.path.segments.iter().map(|s| s.ident.to_string()).collect();
-            let name = segs.last().map(String::as_str).unwrap_or_default();
+            let name = segs.last().map_or_default(String::as_str);
             let parent = segs.iter().rev().nth(1).map(String::as_str);
             let ga_from = parent == Some("Ga") && (name == "from" || name == "new");
             let mem_fn = ADDRESSED.contains(&name) && (segs.len() == 1 || parent == Some("mem"));

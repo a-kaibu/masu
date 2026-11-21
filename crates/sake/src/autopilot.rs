@@ -159,7 +159,7 @@ fn snapshot() -> Vec<Top> {
             }
             false
         };
-        let class = |w: &Window| s.classes.get(w.class).map(|c| c.name.to_lowercase()).unwrap_or_default();
+        let class = |w: &Window| s.classes.get(w.class).map_or_default(|c| c.name.to_lowercase());
         let mut out = Vec::new();
         for (&h, w) in s.wins.iter() {
             if w.style & WS_CHILD != 0 || !w.visible {
@@ -276,7 +276,7 @@ pub fn start() {
             }
             if let Some(a) = pilot.step(&tops) {
                 if log {
-                    let w = front(&tops).map(|t| t.text.clone()).unwrap_or_default();
+                    let w = front(&tops).map_or_default(|t| t.text.clone());
                     match &a {
                         Act::Click(_, x, y, t) => eprintln!("sake auto: [{w}] click \"{t}\" at {x},{y}"),
                         Act::Enter(_) => eprintln!("sake auto: [{w}] Enter"),

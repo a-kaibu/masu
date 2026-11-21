@@ -567,7 +567,7 @@ pub(crate) fn query_system_processes(c: &mut Ctx) -> u32 {
     // past what was checked)
     let (tids, handles) = counts();
     let tids = if tids.is_empty() { vec![crate::cur().tid] } else { tids };
-    let name: Vec<u16> = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.rsplit('\\').next().unwrap_or("").to_string()).unwrap_or_default().encode_utf16().collect();
+    let name: Vec<u16> = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.rsplit('\\').next().unwrap_or("").to_string()).encode_utf16().collect();
     let (need, exact) = match class {
         2 => (312, false),
         5 => {
@@ -1480,7 +1480,7 @@ pub(crate) fn wait_on_address(a: u32, cmp: u32, size: u32, ms: u32) -> Result<()
         return Err(87);
     };
     // (the value is looked at under the lock: a waker changes it, then takes it to wake)
-    if ADDR.wait(kome::num::us(a), || value_at(a, size) == Some(want), ms, &Pause) { Ok(()) } else { Err(1460) }
+    (ADDR.wait(kome::num::us(a), || value_at(a, size) == Some(want), ms, &Pause)).ok_or(1460)
 }
 fn WakeByAddressAll(c: &mut Ctx) -> u32 {
     ADDR.wake(kome::num::us(c.a(0)));
@@ -3019,10 +3019,10 @@ pub(crate) fn free_r(addr: u32, size: u32, ty: u32) -> Result<(), u32> {
         if size != 0 || mem::find(addr).is_some_and(|(b, _)| b != addr) {
             return Err(87);
         }
-        return if mem::release(addr) { Ok(()) } else { Err(487) };
+        return (mem::release(addr)).ok_or(487);
     }
     if ty & 0x4000 != 0 {
-        return if mem::decommit_range(addr, size) { Ok(()) } else { Err(487) };
+        return (mem::decommit_range(addr, size)).ok_or(487);
     }
     Err(87)
 }
@@ -5048,7 +5048,7 @@ pub fn verify_version(cur: &OsVer, want: &OsVer, types: u32, cond: u64) -> Resul
         return Err(VerFail::BadArgs);
     }
     let c = |k: u32| kome::num::lo8(cond >> k.saturating_mul(3) & 7);
-    let check = |ok: bool| if ok { Ok(()) } else { Err(VerFail::Mismatch) };
+    let check = |ok: bool| ok.ok_or(VerFail::Mismatch);
     if types & 0x80 != 0 {
         check(ver_compare(u32::from(cur.product), u32::from(want.product), c(7)))?;
     }
@@ -8647,8 +8647,8 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
 /// Where a bare file name is looked for (SearchPath with no path, OpenFile): the exe's folder,
 /// the current one, system32, windows, then PATH
 fn search_dirs() -> Vec<String> {
-    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
-    let exe_dir = exe.rsplit_once('\\').map_or(String::new(), |(d, _)| d.to_string());
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
+    let exe_dir = exe.rsplit_once('\\').map_or_default(|(d, _)| d.to_string());
     let mut v = vec![exe_dir, files::cwd(), "C:\\windows\\system32".into(), "C:\\windows".into()];
     v.extend(env_get("PATH").unwrap_or_default().split(';').filter(|d| !d.is_empty()).map(String::from));
     v
@@ -8955,7 +8955,7 @@ fn image_file_name(c: &mut Ctx, wide: bool) -> u32 {
     if !psapi_access(h, false) {
         return 0;
     }
-    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
     let p = device_path(&exe);
     let n = kome::num::u32_of(if wide { p.encode_utf16().count() } else { crate::text::s2a(&p).len() });
     if n >= cap || dst == 0 {
@@ -8966,7 +8966,7 @@ fn image_file_name(c: &mut Ctx, wide: bool) -> u32 {
 }
 /// The exe's path: its Windows path, or (`native`) the NT device path
 pub(crate) fn exe_path(native: bool) -> String {
-    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
     if native { device_path(&exe) } else { exe }
 }
 /// QueryFullProcessImageName(process, flags, buffer, size in/out): flags 0 the Windows path,
@@ -9486,7 +9486,7 @@ fn Module32NextW(c: &mut Ctx) -> u32 {
 }
 fn process_entry(c: &mut Ctx, wide: bool) -> u32 {
     let p = c.a(1);
-    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map(|m| m.name.clone()).unwrap_or_default();
+    let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.name.clone());
     let size: u32 = if wide { 36 + 520 } else { 36 + 260 };
     mem::fill((mem::ga(p) + 4).get(), size.saturating_sub(4), 0);
     crate::mem::w32(mem::ga(p) + 8, crate::pid());
@@ -9951,7 +9951,7 @@ mod version_tests {
             }
             let mask = conds.iter().fold(0, |m, &(t, c)| ver_set_condition_mask(m, t, c));
             let got = verify_version(&OS_VERSION, &v, types, mask);
-            let want = if err == 0 { Ok(()) } else { Err(VerFail::Mismatch) };
+            let want = (err == 0).ok_or(VerFail::Mismatch);
             assert_eq!(got, want, "case {i}");
         }
         // (the checks after the table)

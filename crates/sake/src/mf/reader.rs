@@ -1048,7 +1048,7 @@ fn sm_release(c: &mut Ctx) -> u32 {
     let n = at_release(c);
     if n == 0 {
         let gone = SAMPLES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).remove(&this);
-        for b in gone.map(|s| s.bufs).unwrap_or_default() {
+        for b in gone.map_or_default(|s| s.bufs) {
             release(c, b);
         }
     }
@@ -1226,7 +1226,7 @@ pub(super) fn new_sample(time: Option<u64>, dur: Option<u64>, bytes: Option<&[u8
     });
     let b = object(vt, 1);
     ATTRS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, (1, Store::default()));
-    let bufs = bytes.map(|x| vec![new_buffer(lo32(x.len()), x)]).unwrap_or_default();
+    let bufs = bytes.map_or_default(|x| vec![new_buffer(lo32(x.len()), x)]);
     SAMPLES
         .lock()
         .unwrap_or_else(|e| e.into_inner())

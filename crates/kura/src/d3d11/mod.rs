@@ -1078,7 +1078,7 @@ unsafe fn create_device(d: &mut D11, args: *const u32) -> u32 {
             unbind_state(d, &old);
             // (and without what the old one kept in its private data)
             for id in [d.device, d.context] {
-                let old = d.objs.get_mut(&id).map(|o| std::mem::take(&mut o.private)).unwrap_or_default();
+                let old = d.objs.get_mut(&id).map_or_default(|o| std::mem::take(&mut o.private));
                 for (_, _, held) in old {
                     if held != 0 && held != id {
                         d.release(held);
@@ -4554,7 +4554,7 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
     }
     // bindings: group 0 vertex, 1 pixel
     let mut cbs_read = Vec::new();
-    for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or(Vec::new(), |p| p.1.clone()))] {
+    for (stage, binds) in [(0usize, &vb), (1usize, &ps.as_ref().map_or_default(|p| p.1.clone()))] {
         let mut entries: Vec<[u32; 8]> = Vec::new();
         for (bi, kind) in binds.iter() {
             match kind {

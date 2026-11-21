@@ -111,7 +111,7 @@ pub fn words(s: &str) -> Vec<String> {
     for ch in s.chars() {
         match ch {
             '"' => {
-                quoted = !quoted;
+                quoted.toggle();
                 any = true;
             }
             ' ' | '\t' if !quoted => {

@@ -99,7 +99,7 @@ fn enum_at5(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::IWbemServices::ExecQuery>();
     let q = String::from_utf16_lossy(&mem::wstr(c.a::<2>()));
     let lower = q.to_ascii_lowercase();
-    let class = lower.find(" from ").map(|i| q[i + 6..].split_whitespace().next().unwrap_or("").to_string()).unwrap_or_default();
+    let class = lower.find(" from ").map_or_default(|i| q[i + 6..].split_whitespace().next().unwrap_or("").to_string());
     if crate::env_on!("SAKE_TRACE_COM") {
         eprintln!("sake: WMI query {q}");
     }

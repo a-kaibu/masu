@@ -89,7 +89,7 @@ fn release(c: &mut Ctx) -> u32 {
     if n == 0 {
         // (the textures queued and never drawn, the state block, the device)
         let p = QUEUE.lock().unwrap().get_or_insert_with(HashMap::default).remove(&o);
-        for t in p.map(|p| p.held).unwrap_or_default().into_iter().chain([r32(o + SB), r32(o + DEV)]) {
+        for t in p.map_or_default(|p| p.held).into_iter().chain([r32(o + SB), r32(o + DEV)]) {
             if t != 0 {
                 com_call(c, t, 2, &[]);
             }

@@ -332,7 +332,7 @@ pub mod xml {
             .filter(|(n, _)| n != "xmlns" && !n.starts_with("xmlns:"))
             .map(|(n, v)| {
                 let (prefix, local) = split(n);
-                let ns = prefix.map(|p| lookup(p).unwrap_or_else(|| format!("?{p}"))).unwrap_or_default();
+                let ns = prefix.map_or_default(|p| lookup(p).unwrap_or_else(|| format!("?{p}")));
                 (ns, local.to_string(), v.clone())
             })
             .collect();

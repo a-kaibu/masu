@@ -759,7 +759,7 @@ pub fn reg_get(path: &str, name: &str) -> Option<(u32, Vec<u8>)> {
 /// The value names of a key path.
 pub fn reg_values(path: &str) -> Vec<String> {
     let path = wow64_key(path.trim_matches('\\').to_lowercase());
-    with_reg(|m| m.get(&path).map(|k| k.values.iter().map(|v| v.0.clone()).collect()).unwrap_or_default())
+    with_reg(|m| m.get(&path).map_or_default(|k| k.values.iter().map(|v| v.0.clone()).collect()))
 }
 
 /// Deletes a value of a key path.
@@ -3311,7 +3311,7 @@ pub(crate) fn wild_match(pat: &str, name: &str) -> bool {
 fn sh_expand(src: &str, files_only: bool) -> Vec<(String, bool)> {
     let (dir, last) = src.rsplit_once('\\').unwrap_or(("", src));
     if !last.contains(['*', '?']) {
-        return crate::files::resolve(src).and_then(|h| kura::fs::metadata(&h).ok()).map(|m| vec![(src.to_string(), m.is_dir())]).unwrap_or_default();
+        return crate::files::resolve(src).and_then(|h| kura::fs::metadata(&h).ok()).map_or_default(|m| vec![(src.to_string(), m.is_dir())]);
     }
     let Some(h) = crate::files::resolve(dir) else { return Vec::new() };
     let mut out: Vec<(String, bool)> = kura::fs::read_dir(&h).into_iter().flatten().flatten().filter_map(|e| {
@@ -3505,7 +3505,7 @@ fn sh_get_file_info(c: &mut Ctx, wide: bool) -> u32 {
     let trimmed = name.trim_end_matches(['\\', '/']);
     let base = trimmed.rsplit(['\\', '/']).next().unwrap_or(trimmed).to_string();
     let drive = trimmed.len() == 2 && trimmed.ends_with(':');
-    let ext = if dir { String::new() } else { base.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default() };
+    let ext = if dir { String::new() } else { base.rsplit_once('.').map_or_default(|(_, e)| e.to_ascii_lowercase()) };
     if info != 0 {
         mem::write(info, &vec![0u8; need as usize]);
         if flags & SYSICONINDEX != 0 || flags & ICON != 0 {
@@ -3825,7 +3825,7 @@ fn DragQueryFileW(_: &mut Ctx) -> u32 {
 fn CommandLineToArgvW(c: &mut Ctx) -> u32 {
     let s = String::from_utf16_lossy(&wstr(c.a(0)));
     // (an empty line: the program's own path)
-    let args = if s.is_empty() { vec![crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default()] } else { crate::process::argv(&s) };
+    let args = if s.is_empty() { vec![crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone())] } else { crate::process::argv(&s) };
     let n = args.len() as u32;
     let size: u32 = 4 * (n + 1) + args.iter().map(|a| 2 * (a.encode_utf16().count() as u32 + 1)).sum::<u32>();
     let p = mem::heap_alloc(size, true);
@@ -5774,7 +5774,7 @@ pub(crate) mod reg_cache_tests {
     }
 
     fn file() -> String {
-        kura::fs::read(crate::files::resolve_new(REG_FILE)).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default()
+        kura::fs::read(crate::files::resolve_new(REG_FILE)).map_or_default(|b| String::from_utf8_lossy(&b).into_owned())
     }
 
     fn line(path: &str, name: &str, data: &[u8]) -> String {

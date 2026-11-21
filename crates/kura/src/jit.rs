@@ -2505,7 +2505,7 @@ fn compile_fn64(st: &mut State, cpu: &Cpu, mem: &mut Linear, eip: u32) -> bool {
     // (the blocks that ran, and the ones its calls come back to or its jump tables reach)
     // (built again: twice as many instructions each time, as build_fn)
     let base_ins = *FN_INS.get_or_init(|| std::env::var("MASU_JIT_FN_INS").ok().and_then(|v| v.parse().ok()).unwrap_or(1000));
-    let also: Vec<u64> = st.fn_also.get(&eip).map_or(Vec::new(), |v| v.iter().map(|&a| u64::from(a) | u64::from(cpu.rip_hi).wrapping_shl(32)).collect());
+    let also: Vec<u64> = st.fn_also.get(&eip).map_or_default(|v| v.iter().map(|&a| u64::from(a) | u64::from(cpu.rip_hi).wrapping_shl(32)).collect());
     // (an indirect call's hint: its usual target, in this 4GB alias)
     let (hints, hi_half) = (&st.hints, u64::from(cpu.rip_hi).wrapping_shl(32));
     let hint = |a: u64| u32::try_from(a & 0xffff_ffff).ok().and_then(|a| hints.get(&a)).map(|&t| u64::from(t) | hi_half);
@@ -3245,7 +3245,7 @@ pub unsafe extern "C" fn vnhost_jit_step(cpu: u32) -> i32 {
     }
     if jit::PROBES[0].load(Ordering::Relaxed) != 0 && jit::PROBES.iter().any(|p| p.load(Ordering::Relaxed) == (*cpu).eip) {
         let c = &*cpu;
-        let f = |x: u128| (0..4).map(|i| f32::from_bits((x >> (32 * i)) as u32)).collect::<Vec<_>>();
+        let f = |x: u128| Vec::<_>::from_fn(4, |i| f32::from_bits((x >> (32 * i)) as u32));
         // (and the stack's top words: return addresses, arguments)
         let stack: Vec<u32> = (0..12).map(|i| koji::Memory::read32(&mut Linear, c.regs[koji::ESP].wrapping_add(4 * i)).unwrap_or(0)).collect();
         // ([esp] as a C string: a call's buffer)

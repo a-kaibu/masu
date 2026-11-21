@@ -1235,7 +1235,7 @@ fn sound_end_check(b: u32) {
     // (Ok: the end reached now; Err(Some): the clock time to it; Err(None): not running)
     let r = sounds(|m| {
         let s = m.get_mut(&b)?;
-        Some(if s.tl.complete(t) { Ok(()) } else { Err(s.tl.until_end(t)) })
+        Some(s.tl.complete(t).ok_or_else(|| s.tl.until_end(t)))
     });
     match r {
         Some(Ok(())) => {
@@ -2907,7 +2907,7 @@ mod sniff_tests {
         /// ID3 tag larger than the head (cover art), bare MP3s
         #[test]
         fn sound_files_are_seen_from_the_head(frames in 2usize..400, tag in prop_oneof![Just(None), (0usize..300_000).prop_map(Some)], pcm in 0usize..100_000, fill in any::<u8>()) {
-            let mut m = tag.map(id3).unwrap_or_default();
+            let mut m = tag.map_or_default(id3);
             m.extend(mp3(frames, fill));
             prop_assert!(crate::audiofile::open(&m).is_some());
             prop_assert!(maybe_sound(head(&m)));

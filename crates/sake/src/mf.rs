@@ -1504,7 +1504,7 @@ fn load(b: u32) {
     }) else {
         return;
     };
-    let w = src.as_deref().map(source_path).unwrap_or_default();
+    let w = src.as_deref().map_or_default(source_path);
     let movie = if w.is_empty() { None } else { play::Movie::find(&w) };
     let Some(movie) = movie else {
         let there = !w.is_empty() && crate::files::resolve(&w).is_some();

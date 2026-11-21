@@ -89,7 +89,7 @@ pub(super) fn hint(source: &str, hs: &[Hash]) {
 
 /// The trace so far.
 pub fn text() -> String {
-    TRACE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(String::new(), |t| t.text.clone())
+    TRACE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or_default(|t| t.text.clone())
 }
 
 #[cfg(test)]

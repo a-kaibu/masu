@@ -90,7 +90,7 @@ impl Tree {
         }
         match &self.base {
             Some(b) => b.get(p).cloned().unwrap_or_default(),
-            None => std::fs::read(self.root.join(p.as_str())).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default(),
+            None => std::fs::read(self.root.join(p.as_str())).map_or_default(|b| String::from_utf8_lossy(&b).into_owned()),
         }
     }
 

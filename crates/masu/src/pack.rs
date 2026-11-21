@@ -544,7 +544,7 @@ fn add_game(
     };
     let new_cover = match cover {
         Some(src) => {
-            let ext = src.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+            let ext = src.extension().and_then(|e| e.to_str()).map_or_default(str::to_ascii_lowercase);
             if !["png", "jpg", "jpeg", "webp"].contains(&ext.as_str()) {
                 bail!("cover {}: png, jpg or webp", src.display());
             }
@@ -642,7 +642,7 @@ pub fn run(store: &Path, cmd: Cmd) -> Result<()> {
         Cmd::Add { dir, exe, id, title, engine, cover, args, env, mount, meta_id, no_meta, follow, chunk_kib } => {
             let path = dir.canonicalize().with_context(|| dir.display().to_string())?;
             let package = unpack::is_package(&path);
-            let name = if package { path.file_stem() } else { path.file_name() }.map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let name = if package { path.file_stem() } else { path.file_name() }.map_or_default(|n| n.to_string_lossy().into_owned());
             let id = id.unwrap_or_else(|| default_id(&name));
             if !valid_id(&id) {
                 bail!("id {id:?}: use letters, digits, _ and - (--id)");

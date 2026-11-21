@@ -471,7 +471,7 @@ impl Display {
 
     fn pos(&mut self, hwnd: u32, rect: Rect, client: Rect, visible: bool, restack: bool, above: u32) {
         let d = self;
-        let old = d.wins.get(&hwnd).map(|w| if w.visible { w.rect } else { Rect::default() }).unwrap_or_default();
+        let old = d.wins.get(&hwnd).map_or_default(|w| if w.visible { w.rect } else { Rect::default() });
         let win = d.wins.entry(hwnd).or_insert_with(|| Win { rect: Rect::default(), client, visible: false, pixels: Vec::new(), shared: None });
         if win.rect.w() != rect.w() || win.rect.h() != rect.h() {
             win.shared = None;

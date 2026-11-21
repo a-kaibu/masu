@@ -594,7 +594,7 @@ mod tests {
         assert!(info("egs:2").is_none() && info("vndb:v1").is_none() && info("x").is_none());
         assert_eq!(egs_rows_of(&db).unwrap(), egs, "an earlier copy's part, as it was written");
         // the tags left out are ones vndb_info would not show
-        let full = serde_json::json!({"id": "v9", "title": "T", "tags": (0..30).map(|k| serde_json::json!({"name": format!("t{k}"), "rating": (k % 7) as f64 * 0.5, "spoiler": (k % 5 == 0) as u8 as f64, "category": if k % 3 == 0 { "ero" } else { "cont" }})).collect::<Vec<_>>()});
+        let full = serde_json::json!({"id": "v9", "title": "T", "tags": Vec::<_>::from_fn(30, |k| serde_json::json!({"name": format!("t{k}"), "rating": (k % 7) as f64 * 0.5, "spoiler": (k % 5 == 0) as u8 as f64, "category": if k % 3 == 0 { "ero" } else { "cont" }}))});
         let pruned = prune_vndb(full.clone());
         assert_eq!(meta::vndb_info_json(full).unwrap().tags, meta::vndb_info_json(pruned.clone()).unwrap().tags);
         assert!(pruned["tags"].as_array().unwrap().len() <= 10);

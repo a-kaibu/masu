@@ -670,7 +670,7 @@ impl<'a> P<'a> {
                 if !self.flag(NO_MEMBER_TYPE) {
                     pre.push_str(["", "static ", "virtual ", "virtual "][kind as usize]);
                 }
-                let suffix = adjust.map(|a| format!("`adjustor{{{a}}}' ")).unwrap_or_default();
+                let suffix = adjust.map_or_default(|a| format!("`adjustor{{{a}}}' "));
                 Some(pre + &self.function_text(&f, &unq, &name, &suffix))
             }
         }
@@ -1109,7 +1109,7 @@ impl<'a> P<'a> {
                 Ty::Fn { cc, class, .. } => {
                     // (a pointer to function returned: Windows prints no cv-qualifiers of it)
                     let own = if *ret { "" } else { cv_word(*cv) };
-                    let cls = class.as_ref().map(|c| format!(" {c}::")).unwrap_or_default();
+                    let cls = class.as_ref().map_or_default(|c| format!(" {c}::"));
                     let inner = format!("({cc}{cls}{mark}{own}{tail}{decl})");
                     self.render_fn(to, &inner)
                 }

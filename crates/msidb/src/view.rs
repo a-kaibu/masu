@@ -889,7 +889,7 @@ impl View {
                         if mode == MSIMODIFY_MERGE {
                             let t = &db.tables[ti];
                             let same = (0..t.cols.len()).all(|c| !self.cols.iter().any(|&(_, x)| x == c) || db.field(t, &t.rows[ri], c) == row[c]);
-                            return if same { Ok(()) } else { Err(ERROR_FUNCTION_FAILED) };
+                            return same.ok_or(ERROR_FUNCTION_FAILED);
                         }
                         let cols: Vec<usize> = self.cols.iter().map(|&(_, c)| c).collect();
                         for c in cols {
@@ -1308,8 +1308,8 @@ mod tests {
                     }
                     break;
                 }
-                let from = (0..tabs.len()).map(|t| format!("`{}`", name(t))).collect::<Vec<_>>().join(", ");
-                let q = format!("SELECT * FROM {from}{}", cond.as_ref().map_or(String::new(), |e| format!(" WHERE {}", sql(e))));
+                let from = Vec::<_>::from_fn(tabs.len(), |t| format!("`{}`", name(t))).join(", ");
+                let q = format!("SELECT * FROM {from}{}", cond.as_ref().map_or_default(|e| format!(" WHERE {}", sql(e))));
                 let got = texts(&run(&mut db, &q).unwrap());
                 prop_assert_eq!(got, want, "{}", q);
             }

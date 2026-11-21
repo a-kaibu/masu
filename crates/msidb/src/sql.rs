@@ -207,7 +207,7 @@ impl P {
         false
     }
     fn need_kw(&mut self, k: &str) -> R<()> {
-        if self.kw(k) { Ok(()) } else { Err(ERROR_BAD_QUERY_SYNTAX) }
+        self.kw(k).ok_or(ERROR_BAD_QUERY_SYNTAX)
     }
     fn op(&mut self, o: &str) -> bool {
         if let Some(Tok::Op(x)) = self.peek() && *x == o {
@@ -217,7 +217,7 @@ impl P {
         false
     }
     fn need_op(&mut self, o: &str) -> R<()> {
-        if self.op(o) { Ok(()) } else { Err(ERROR_BAD_QUERY_SYNTAX) }
+        self.op(o).ok_or(ERROR_BAD_QUERY_SYNTAX)
     }
     fn name(&mut self) -> R<String> {
         match self.peek().cloned() {

@@ -281,7 +281,7 @@ fn array(s: &str) -> Result<Vec<String>> {
         } else if c == '\\' {
             escaped = true;
         } else if c == '"' {
-            quoted = !quoted;
+            quoted.toggle();
             was_quoted = true;
         } else if c == ',' && !quoted {
             if was_quoted || value != "NULL" {

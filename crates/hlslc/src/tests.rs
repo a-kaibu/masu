@@ -1122,7 +1122,7 @@ fn intrinsics_with_any_arguments_are_no_panic() {
     let loc = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let l2 = loc.clone();
     let prev = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |i| *l2.lock().unwrap() = i.location().map_or(String::new(), |l| format!("{}:{}", l.file(), l.line()))));
+    std::panic::set_hook(Box::new(move |i| *l2.lock().unwrap() = i.location().map_or_default(|l| format!("{}:{}", l.file(), l.line()))));
     let mut panics: std::collections::BTreeMap<String, String> = Default::default();
     let mut one = |body: &str, t: &str| {
         let src = format!("{head}float4 ps(float4 p : SV_Position) : SV_Target {{ float4 r = 0; {body} return r; }}\n");

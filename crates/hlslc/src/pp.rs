@@ -431,7 +431,7 @@ impl Pp<'_> {
                         let t = &mb[k];
                         // #param
                         if t.t == Tok::Punct("#") && let Some(Tok::Ident(p)) = mb.get(k + 1).map(|t| &t.t) && let Some(pi) = params.iter().position(|x| x == p) {
-                            let s = args.get(pi).map_or(String::new(), |a| a.iter().map(text).collect::<Vec<_>>().join(" "));
+                            let s = args.get(pi).map_or_default(|a| a.iter().map(text).collect::<Vec<_>>().join(" "));
                             body.push(Token { t: Tok::Str(s), line: tk.line });
                             k += 2;
                             continue;

@@ -554,7 +554,7 @@ impl XFile {
         Ok(t)
     }
     fn expect(&mut self, t: Tok) -> Result<(), u32> {
-        if self.next()? == t { Ok(()) } else { Err(PARSEERROR) }
+        (self.next()? == t).ok_or(PARSEERROR)
     }
     fn name(&mut self) -> Result<B, u32> {
         match self.next()? {
@@ -839,7 +839,7 @@ impl XFile {
             self.pos += 1;
             any = true;
         }
-        if any { Ok(()) } else { Err(PARSEERROR) }
+        any.ok_or(PARSEERROR)
     }
 }
 

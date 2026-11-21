@@ -123,10 +123,7 @@ pub(super) fn noreturn_handler(tree: &Tree) -> Hits {
             continue;
         };
         for name in *names {
-            let sig = syntax.items.iter().find_map(|i| match i {
-                syn::Item::Fn(g) if g.sig.ident == name => Some(&g.sig),
-                _ => None,
-            });
+            let sig = syntax.items.iter().find_map(|i| if let syn::Item::Fn(g) = i && g.sig.ident == name { Some(&g.sig) } else { None });
             match sig {
                 Some(s) if matches!(&s.output, syn::ReturnType::Type(_, t) if matches!(**t, syn::Type::Never(_))) => {}
                 Some(s) => out.push((f.clone(), crate::syntax::line(s.ident.span()), format!("{name} does not come back: `fn {name}(c: &mut Ctx) -> !`, registered with noreturn!"))),
@@ -141,15 +138,15 @@ struct Wild(Vec<usize>);
 
 /// `unreachable!(..)` / `core::unreachable!` / a block of only that
 fn is_unreachable(e: &syn::Expr) -> bool {
-    match e {
-        syn::Expr::Macro(m) => m.mac.path.segments.last().is_some_and(|s| s.ident == "unreachable"),
-        syn::Expr::Block(b) => match b.block.stmts.as_slice() {
-            [syn::Stmt::Macro(m)] => m.mac.path.segments.last().is_some_and(|s| s.ident == "unreachable"),
-            [syn::Stmt::Expr(e, _)] => is_unreachable(e),
-            _ => false,
-        },
-        _ => false,
+    let named = |m: &syn::Macro| m.path.segments.last().is_some_and(|s| s.ident == "unreachable");
+    if let syn::Expr::Macro(m) = e {
+        return named(&m.mac);
     }
+    let syn::Expr::Block(b) = e else { return false };
+    if let [syn::Stmt::Macro(m)] = b.block.stmts.as_slice() {
+        return named(&m.mac);
+    }
+    matches!(b.block.stmts.as_slice(), [syn::Stmt::Expr(e, _)] if is_unreachable(e))
 }
 
 impl<'a> syn::visit::Visit<'a> for Wild {
@@ -236,6 +233,81 @@ pub(super) fn guest_scratch(tree: &Tree) -> Hits {
         let mut v = Pairs(Vec::new());
         syn::visit::Visit::visit_file(&mut v, &file);
         out.extend(v.0.into_iter().map(|(l, n)| (f.clone(), l, format!("`{n}` is freed by hand in its own block: `let {n}_own = mem::Scratch::new(..); let {n} = {n}_own.get();` frees it on every way out"))));
+    }
+    out
+}
+
+// --- hand-std: the shapes Rust 1.98..1.100 named (2026-11-21) ---------------------------------
+
+static TOGGLE: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(?:^|[^\w.])([\w.]+(?:\[[^\]\n]+\])?)\s*=\s*!\s*([\w.]+(?:\[[^\]\n]+\])?)\s*;"));
+static TRIM: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"(?:^|[^\w.])([\w.]+)\.strip_prefix\([^()]*\)\s*\.unwrap_or\(\s*([\w.]+)\s*\)"));
+static MAP_OR_DEFAULT: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\.map_or\(\s*(?:Default::default\(\)|String::new\(\)|Vec::new\(\))\s*,"));
+static OK_OR: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\bif [^{};\n]+ \{\s*Ok\(\(\)\)\s*\}\s*else\s*\{\s*Err\("));
+static FROM_FN: LazyLock<Option<Regex>> = LazyLock::new(|| rx(r"\(0\.\.[\w.()]*\.len\(\)\)\.map\(\|\w+\|"));
+
+#[cfg(test)]
+pub(super) fn std_regexes() -> [&'static LazyLock<Option<Regex>>; 5] {
+    [&TOGGLE, &TRIM, &MAP_OR_DEFAULT, &OK_OR, &FROM_FN]
+}
+
+/// the byte of the `)` closing the `(` at `open` (None: unbalanced)
+fn closing(code: &str, open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in code.get(open..)?.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(open.saturating_add(i));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// the hand-written shapes of one file's code: (byte, what to write)
+fn hand_std_in(code: &str) -> Vec<(usize, &'static str)> {
+    let mut out = Vec::new();
+    if let Some(r) = TOGGLE.as_ref() {
+        out.extend(r.captures_iter(code).filter(|c| c.get(1).map(|m| m.as_str()) == c.get(2).map(|m| m.as_str())).filter_map(|c| c.get(1)).map(|m| (m.start(), "`x = !x` is `x.toggle()` (Rust 1.100)")));
+    }
+    if let Some(r) = TRIM.as_ref() {
+        out.extend(r.captures_iter(code).filter(|c| c.get(1).map(|m| m.as_str()) == c.get(2).map(|m| m.as_str())).filter_map(|c| c.get(1)).map(|m| (m.start(), "`s.strip_prefix(p).unwrap_or(s)` is `s.trim_prefix(p)` (Rust 1.100)")));
+    }
+    if let Some(r) = MAP_OR_DEFAULT.as_ref() {
+        out.extend(r.find_iter(code).map(|m| (m.start(), "`.map_or(Default::default(), f)` is `.map_or_default(f)` (Rust 1.98)")));
+    }
+    // (`.map(f).unwrap_or_default()`: the map's parentheses balanced by hand, a regex cannot)
+    for (at, _) in code.match_indices(".map(") {
+        let Some(close) = closing(code, at.saturating_add(4)) else { continue };
+        if code.get(close.saturating_add(1)..).is_some_and(|rest| rest.trim_start().starts_with(".unwrap_or_default()")) {
+            out.push((at, "`.map(f).unwrap_or_default()` is `.map_or_default(f)` (Rust 1.98)"));
+        }
+    }
+    if let Some(r) = OK_OR.as_ref() {
+        out.extend(r.find_iter(code).map(|m| (m.start(), "`if c { Ok(()) } else { Err(e) }` is `c.ok_or(e)` / `c.ok_or_else(|| e)` (Rust 1.98)")));
+    }
+    if let Some(r) = FROM_FN.as_ref() {
+        for m in r.find_iter(code) {
+            // (the `(` of the `.map(` the match ends in)
+            let Some(open) = code.get(..m.end()).and_then(|s| s.rfind(".map(")).map(|k| k.saturating_add(4)) else { continue };
+            let Some(close) = closing(code, open) else { continue };
+            if code.get(close.saturating_add(1)..).is_some_and(|rest| rest.trim_start().starts_with(".collect::<Vec<")) {
+                out.push((m.start(), "`(0..v.len()).map(f).collect::<Vec<_>>()` is `Vec::from_fn(v.len(), f)` (Rust 1.100)"));
+            }
+        }
+    }
+    out
+}
+
+pub(super) fn hand_std(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for f in sources(tree) {
+        let code = tree.code(&f, false);
+        out.extend(hand_std_in(&code).into_iter().map(|(at, what)| (f.clone(), crate::code::line_of(&code, at), what.to_owned())));
     }
     out
 }

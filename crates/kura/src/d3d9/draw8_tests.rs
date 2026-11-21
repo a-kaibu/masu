@@ -101,7 +101,7 @@ fn run(seed: u64) {
             unsafe { *(size as *mut u32) = 4 * t.len() as u32 };
             assert_eq!(devc(81, &[h, data, size]), 0);
             assert_eq!(rd(size), 4 * t.len() as u32);
-            assert_eq!((0..t.len()).map(|i| rd(data + 4 * i as u32)).collect::<Vec<_>>(), t);
+            assert_eq!(Vec::<_>::from_fn(t.len(), |i| rd(data + 4 * i as u32)), t);
             h
         })
         .collect();
@@ -189,7 +189,7 @@ fn run(seed: u64) {
                 .iter()
                 .map(|&(s, off, t, _, _)| {
                     let at = (v * stride[s as usize] as i64 + off as i64) as usize;
-                    vbs[s as usize].1.get(at..at + type_bytes(t) as usize).map(|b| b.to_vec()).unwrap_or_default()
+                    vbs[s as usize].1.get(at..at + type_bytes(t) as usize).map_or_default(|b| b.to_vec())
                 })
                 .collect();
             a.sort();

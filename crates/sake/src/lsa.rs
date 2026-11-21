@@ -583,7 +583,7 @@ fn LsaLookupSids(c: &mut Ctx) -> u32 {
             }
             None => {
                 b.u32(o, Use::Unknown as u32);
-                b.ustr(o + p, &s.map(|s| crate::security::sid_to_string(&s)).unwrap_or_default());
+                b.ustr(o + p, &s.map_or_default(|s| crate::security::sid_to_string(&s)));
                 b.u32(o + p + us(), u32::MAX);
             }
         }

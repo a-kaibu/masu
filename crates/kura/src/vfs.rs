@@ -935,7 +935,7 @@ const FETCHED_MAX: usize = 8192;
 
 /// [`FETCHED`] as concatenated hashes.
 pub fn fetched() -> Vec<u8> {
-    FETCHED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or(Vec::new(), |f| f.0.concat())
+    FETCHED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map_or_default(|f| f.0.concat())
 }
 
 fn note_read(h: &Hash) {
@@ -1565,7 +1565,7 @@ fn xp3_members(ino: Ino) -> Vec<predict::Member> {
     if len > predict::INDEX_MAX as u64 {
         return Vec::new();
     }
-    read_bytes(ino, at, len).as_deref().and_then(predict::xp3_index_bytes).map(|i| predict::xp3_index(&i)).unwrap_or_default()
+    read_bytes(ino, at, len).as_deref().and_then(predict::xp3_index_bytes).map_or_default(|i| predict::xp3_index(&i))
 }
 
 /// A BGI .arc's members, from its index (read here, as the game reads it at its start).
@@ -1574,7 +1574,7 @@ fn bgi_members(ino: Ino) -> Vec<predict::Member> {
     if len > predict::INDEX_MAX as u64 {
         return Vec::new();
     }
-    read_bytes(ino, 0, len).map(|h| predict::bgi_index(&h)).unwrap_or_default()
+    read_bytes(ino, 0, len).map_or_default(|h| predict::bgi_index(&h))
 }
 
 /// After a read of `ino` at `off..off + len` (the game's): a script read the first time is
@@ -1642,7 +1642,7 @@ fn predicted(ino: Ino, off: u64, len: u64) -> Vec<Hash> {
     };
     let after = |key: &str| -> Vec<String> {
         let g = PREDICT.lock().unwrap_or_else(|e| e.into_inner());
-        g.as_ref().map_or(Vec::new(), |p| predict::following(&p.table, &p.places, key, FOLLOWING))
+        g.as_ref().map_or_default(|p| predict::following(&p.table, &p.places, key, FOLLOWING))
     };
     let mut lists: Vec<Vec<String>> = Vec::new();
     if let Some(kind) = archive {
@@ -1665,7 +1665,7 @@ fn predicted(ino: Ino, off: u64, len: u64) -> Vec<Hash> {
             let mut g = PREDICT.lock().unwrap_or_else(|e| e.into_inner());
             let p = g.get_or_insert_with(Predict::default);
             // (by where they start: those before the read's end, back to one that ends before it)
-            let ms: Vec<predict::Member> = p.archives.get(&ino).map_or(Vec::new(), |ms| {
+            let ms: Vec<predict::Member> = p.archives.get(&ino).map_or_default(|ms| {
                 let to = ms.partition_point(|m| m.segments[0].0 < off + len.max(1));
                 ms[..to].iter().rev().take(64).filter(|m| m.segments.iter().any(|s| s.0 < off + len.max(1) && off < s.0 + s.1)).cloned().collect()
             });

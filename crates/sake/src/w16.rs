@@ -1296,7 +1296,7 @@ pub fn start(cpu: &mut Cpu, exe: &str, wpath: &str, args: &[String]) -> ! {
     let s16sel = sel_alloc(s16, 0x10000);
     SCR16.with(|s| s.set((s16sel, s16, 0xfff0)));
     crate::w16api::init();
-    *EXE_DIR.lock().unwrap() = wpath.rsplit_once('\\').map_or(String::new(), |(d, _)| format!("{d}\\"));
+    *EXE_DIR.lock().unwrap() = wpath.rsplit_once('\\').map_or_default(|(d, _)| format!("{d}\\"));
 
     let d = kura::fs::read(exe).unwrap_or_default();
     let ne = d.get(0x3c..0x40).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()) as usize);

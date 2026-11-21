@@ -378,7 +378,7 @@ fn install_files(c: &mut Ctx, p: &Arc<Mutex<Package>>) -> u32 {
             .filter(|f| pk.comps.get(&f.comp).is_some_and(|c| c.action == INSTALLSTATE_LOCAL))
             .map(|f| {
                 let comp = pk.comps.get(&f.comp).unwrap();
-                let src = pk.dirs.get(&comp.dir).map(|d| d.source.clone()).unwrap_or_default();
+                let src = pk.dirs.get(&comp.dir).map_or_default(|d| d.source.clone());
                 (f.clone(), pk.file_target(f), src)
             })
             .collect();
@@ -392,7 +392,7 @@ fn install_files(c: &mut Ctx, p: &Arc<Mutex<Package>>) -> u32 {
     for (f, target, src) in files {
         // msidbFileAttributesNoncompressed 0x2000, Compressed 0x4000
         let compressed = if f.attrs & 0x4000 != 0 { true } else if f.attrs & 0x2000 != 0 { false } else { compressed_pkg };
-        let cab = media.iter().find(|m| m.0 >= f.seq).map(|m| m.1.clone()).unwrap_or_default();
+        let cab = media.iter().find(|m| m.0 >= f.seq).map_or_default(|m| m.1.clone());
         if compressed && !cab.is_empty() {
             match by_cab.iter_mut().find(|x| x.0 == cab) {
                 Some(x) => x.1.push((f, target)),
@@ -434,7 +434,7 @@ fn file_done(c: &mut Ctx, p: &Arc<Mutex<Package>>, f: &FileRec, target: &str) {
     let mut r = Record::new(3);
     r.f[1] = Field::Str(f.name.clone());
     r.f[3] = Field::Int(f.size as i32);
-    r.f[2] = Field::Str(target.rsplit_once('\\').map_or(String::new(), |d| d.0.to_string()));
+    r.f[2] = Field::Str(target.rsplit_once('\\').map_or_default(|d| d.0.to_string()));
     send(c, Some(p), INSTALLMESSAGE_ACTIONDATA, &r);
     let mut pr = Record::new(3);
     pr.f[1] = Field::Int(2);
@@ -1160,7 +1160,7 @@ fn process_components(p: &Arc<Mutex<Package>>) -> u32 {
                 put_str(&key, &packed, &path);
             }
             INSTALLSTATE_SOURCE => {
-                let src = pk.dirs.get(&c.dir).map(|d| d.source.clone()).unwrap_or_default();
+                let src = pk.dirs.get(&c.dir).map_or_default(|d| d.source.clone());
                 let root = pk.prop("SourceDir");
                 let rel = src.trim_prefix(root.as_str()).to_string();
                 put_str(&key, &packed, &format!("01:{rel}{}", file.map(|f| f.name.as_str()).unwrap_or("")));
@@ -1417,7 +1417,7 @@ pub fn install_product(c: &mut Ctx, path: &str, cmdline: &str) -> u32 {
 /// '|' (secured at the source / by full path) files; relative paths are the package's
 /// folder's.
 pub fn apply_transforms(db: &crate::msi::Db, package: &str, list: &str) -> u32 {
-    let dir = package.rsplit_once('\\').map_or(String::new(), |d| format!("{}\\", d.0));
+    let dir = package.rsplit_once('\\').map_or_default(|d| format!("{}\\", d.0));
     for t in list.split(';').map(str::trim).filter(|t| !t.is_empty()) {
         let r = apply_transform(db, &dir, t);
         if r != ERROR_SUCCESS {
@@ -1841,7 +1841,7 @@ fn get_file_version(c: &mut Ctx, wide: bool) -> u32 {
         r = crate::msi::out_str(vb, vn, &v, wide);
     }
     if ln != 0 {
-        let l = langs.first().map(|l| l.to_string()).unwrap_or_default();
+        let l = langs.first().map_or_default(|l| l.to_string());
         let r2 = crate::msi::out_str(lb, ln, &l, wide);
         if r == ERROR_SUCCESS {
             r = r2;
@@ -1871,7 +1871,7 @@ fn product_property(c: &mut Ctx, wide: bool) -> u32 {
     }
     let name = arg_str(n, wide);
     let rows = crate::msi_pkg::query(&p.lock().unwrap().db, &format!("SELECT `Value` FROM `Property` WHERE `Property` = '{}'", name.replace('\'', "")));
-    let v = rows.first().map(|r| r.get(1).text()).unwrap_or_default();
+    let v = rows.first().map_or_default(|r| r.get(1).text());
     out_str(buf, pcch, &v, wide)
 }
 fn MsiGetProductPropertyA(c: &mut Ctx) -> u32 {

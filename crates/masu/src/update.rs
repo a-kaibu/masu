@@ -633,7 +633,7 @@ mod tests {
         tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
         // SAFETY: a test: no other thread reads these variables meanwhile
         unsafe { std::env::set_var("MASU_UPDATE_URL", format!("http://{at}/r")) };
-        let rs = tokio::task::spawn_blocking(|| (0..20).map(|_| latest_kept()).collect::<Vec<_>>()).await.unwrap();
+        let rs = tokio::task::spawn_blocking(|| Vec::<_>::from_fn(20, |_| latest_kept())).await.unwrap();
         assert!(rs.iter().all(|r| r.as_deref() == Ok("5.4.3")), "{rs:?}");
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 1);
         // SAFETY: a test: no other thread reads these variables meanwhile

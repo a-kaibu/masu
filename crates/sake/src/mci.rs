@@ -380,7 +380,7 @@ impl Notes {
     }
     /// The play reached its end.
     pub fn end(&mut self) -> Vec<(u32, u32)> {
-        self.pending.take().map(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)]).unwrap_or_default()
+        self.pending.take().map_or_default(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)])
     }
 }
 
@@ -394,7 +394,7 @@ pub fn words(s: &str) -> Option<Vec<String>> {
     for ch in s.chars() {
         match ch {
             '"' => {
-                quoted = !quoted;
+                quoted.toggle();
                 any = true;
             }
             c if c.is_whitespace() && !quoted => {
@@ -1022,7 +1022,7 @@ fn send_command(c: &mut Ctx, id: u32, cmd: Cmd, flags: u32, p: u32, wide: bool) 
             let child = flags & MCI_DGV_OPEN_WS != 0 && r32(style_at) & 0x4000_0000 != 0;
             dev(id, |d| d.hwnd = if child || parent != 0 { parent } else { 0 });
         }
-        post_all(notify.map(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)]).unwrap_or_default(), id);
+        post_all(notify.map_or_default(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)]), id);
         return Ok(());
     }
     if id == MCI_ALL_DEVICE_ID && cmd == Cmd::Close {
@@ -1348,7 +1348,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
         if let Some(h) = after("parent").and_then(|i| w.get(i)).and_then(|s| s.parse::<u32>().ok()) {
             dev(id, |d| d.hwnd = h);
         }
-        post_all(notify.map(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)]).unwrap_or_default(), id);
+        post_all(notify.map_or_default(|w| vec![(w, MCI_NOTIFY_SUCCESSFUL)]), id);
         return Ok(id.0.to_string());
     }
     if verb == "close" && lw[1] == "all" {

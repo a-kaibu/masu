@@ -326,7 +326,7 @@ fn apply(w: &mut World, op: &Op) {
                 }
                 _ => {
                     put_bytes(w.upi, &(0..count).flat_map(|i| (((i * 3 + start) % 8) as u16).to_le_bytes()).collect::<Vec<_>>());
-                    f32s(w.up, &(0..100).map(|i| (i % 11) as f32 - 2.0).collect::<Vec<_>>());
+                    f32s(w.up, &Vec::<_>::from_fn(100, |i| (i % 11) as f32 - 2.0));
                     call(IF_DEVICE, 84, &[dev, prim, 0, 8, n, w.upi, 101, w.up, 28]);
                 }
             }

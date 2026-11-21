@@ -201,7 +201,7 @@ mod tests {
         })
     }
     fn written(l: &Later<File>) -> Vec<u32> {
-        l.peek(|h| h.map(|h| h.value.written.clone()).unwrap_or_default())
+        l.peek(|h| h.map_or_default(|h| h.value.written.clone()))
     }
 
     /// Changes wait for flush, flush_soon, eager or `after`; a look without a change writes

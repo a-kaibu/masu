@@ -3433,7 +3433,7 @@ mod tests {
     /// rect or one off the destination is DDERR_INVALIDPARAMS.
     #[test]
     fn load_goes_level_by_level() {
-        let mips = |w: i32, n: usize| (0..n).map(|i| ((w >> i).max(1), (w >> i).max(1))).collect::<Vec<_>>();
+        let mips = |w: i32, n: usize| Vec::<_>::from_fn(n, |i| ((w >> i).max(1), (w >> i).max(1)));
         let r = |l, t, r, b| Rect { l, t, r, b };
         // (tests 0, 1, 4, 5, 9 of the table)
         assert!(load_plan(&mips(128, 8), &mips(128, 8), Some(r(0, 0, 0, 0)), Some((0, 0))).is_none());

@@ -1523,7 +1523,7 @@ fn exe_mode(args: &[String]) {
             if fails <= 10 {
                 let mut c0 = cpu0.clone();
                 c0.materialize();
-                println!("test {t} from {start:#x}: {}\n    init {:x?} flags {:#x}", d.join("; "), (0..16).map(|i| c0.gpr(koji::Reg64::ALL[i])).collect::<Vec<_>>(), c0.eflags);
+                println!("test {t} from {start:#x}: {}\n    init {:x?} flags {:#x}", d.join("; "), Vec::<_>::from_fn(16, |i| c0.gpr(koji::Reg64::ALL[i])), c0.eflags);
             }
         }
     }
@@ -1625,7 +1625,7 @@ fn main() {
             fails += 1;
             if fails <= 10 {
                 println!("test {t} (rip_hi {rip_hi}): {}", diffs.join("; "));
-                println!("    init: {:x?} flags {:#x}", (0..16).map(|i| cpu0.gpr(koji::Reg64::ALL[i])).collect::<Vec<_>>(), cpu0.eflags);
+                println!("    init: {:x?} flags {:#x}", Vec::<_>::from_fn(16, |i| cpu0.gpr(koji::Reg64::ALL[i])), cpu0.eflags);
                 let mut dec = iced_x86::Decoder::with_ip(64, &code, rip, iced_x86::DecoderOptions::NONE);
                 let mut f = iced_x86::FastFormatter::new();
                 let mut s = String::new();
@@ -1678,7 +1678,7 @@ fn sse_encodes() {
             None => {
                 bad += 1;
                 if bad < 5 {
-                    println!("{:?} ds {} d {:#x} k {:?} {:?}", i.code(), i.memory_displ_size(), i.memory_displacement64(), (0..i.op_count()).map(|k| i.op_kind(k)).collect::<Vec<_>>(), BlockEncoder::encode(64, InstructionBlock::new(&[i], CODE as u64), BlockEncoderOptions::NONE).err());
+                    println!("{:?} ds {} d {:#x} k {:?} {:?}", i.code(), i.memory_displ_size(), i.memory_displacement64(), Vec::<_>::from_fn(i.op_count(), |k| i.op_kind(k)), BlockEncoder::encode(64, InstructionBlock::new(&[i], CODE as u64), BlockEncoderOptions::NONE).err());
                 }
             }
         }

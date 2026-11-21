@@ -410,7 +410,7 @@ mod tests {
     fn part_names_are_never_shared() {
         let dir = Path::new("/x");
         let names: std::collections::HashSet<_> = std::thread::scope(|s| {
-            let hs: Vec<_> = (0..8).map(|_| s.spawn(|| (0..100).map(|_| part_path(dir, "abc.vp9")).collect::<Vec<_>>())).collect();
+            let hs: Vec<_> = (0..8).map(|_| s.spawn(|| Vec::<_>::from_fn(100, |_| part_path(dir, "abc.vp9")))).collect();
             hs.into_iter().flat_map(|h| h.join().unwrap()).collect()
         });
         assert_eq!(names.len(), 800);

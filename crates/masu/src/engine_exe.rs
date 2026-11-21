@@ -230,7 +230,7 @@ mod tests {
         #[test]
         fn engine_model(files in proptest::collection::vec(("(a|b|a/c|)", "(SiglusEngine\\.exe|siglusengine\\.EXE|Gameexe\\.dat|GAMEEXE\\.DAT|x\\.exe)"), 0..10)) {
             let paths: Vec<String> = files.iter().map(|(d, n)| if d.is_empty() { n.clone() } else { format!("{d}/{n}") }).collect();
-            let dir = |p: &str| p.rsplit_once('/').map_or(String::new(), |x| x.0.to_lowercase());
+            let dir = |p: &str| p.rsplit_once('/').map_or_default(|x| x.0.to_lowercase());
             let ok = |p: &String| p.to_lowercase().ends_with("siglusengine.exe") && paths.iter().any(|q| q.to_lowercase().ends_with("gameexe.dat") && dir(q) == dir(p));
             let got = siglus_engine(paths.iter().map(String::as_str));
             match got {

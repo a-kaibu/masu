@@ -395,6 +395,24 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/sake/src/glu.rs", |t| Some(t + "\nfn hand() -> u32 {\n    let p = mem::heap_alloc(8, true);\n    let v = mem::r32(p);\n    mem::heap_free(p);\n    v\n}\n")),
         },
+        Rule::HandStd => Fixture {
+            bad: &[
+                ("crates/sake/src/a.rs", "fn f(s: &mut S) { s.on = !s.on; }\n"),
+                ("crates/sake/src/b.rs", "fn f(name: &str) -> &str { name.strip_prefix(\"\\\\?\\\\\").unwrap_or(name) }\n"),
+                ("crates/kura/src/c.rs", "fn f(o: Option<u32>) -> String { o.map(|v| v.to_string()).unwrap_or_default() }\n"),
+                ("crates/kura/src/d.rs", "fn f(o: Option<&str>) -> String { o.map_or(String::new(), |v| format!(\"{v}\")) }\n"),
+                ("crates/masu/src/e.rs", "fn f(ok: bool) -> Result<(), E> { if ok { Ok(()) } else { Err(E::Bad) } }\n"),
+                ("crates/koji/src/g.rs", "fn f(v: &[u8]) -> Vec<u32> { (0..v.len()).map(|i| u32::from(v[i])).collect::<Vec<u32>>() }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/a.rs", "fn f(s: &mut S) { s.on.toggle(); s.a = !s.b; }\n"),
+                ("crates/sake/src/b.rs", "fn f(name: &str, d: &str) -> &str { name.trim_prefix(\"x\"); name.strip_prefix(\"y\").unwrap_or(d) }\n"),
+                ("crates/kura/src/c.rs", "fn f(o: Option<u32>) -> String { o.map_or_default(|v| v.to_string()) }\nfn g(v: &[Option<u8>]) -> Vec<u8> { v.iter().map(|x| x.unwrap_or_default()).collect() }\n"),
+                ("crates/masu/src/e.rs", "fn f(ok: bool) -> Result<(), E> { ok.ok_or(E::Bad) }\nfn g(ok: bool) -> Result<u8, E> { if ok { Ok(1) } else { Err(E::Bad) } }\n"),
+                ("crates/koji/src/g.rs", "fn f(n: u32) -> Vec<u32> { (0..n).map(|i| i * 2).collect::<Vec<u32>>() }\nfn g(v: &[u8]) -> Vec<u32> { Vec::from_fn(v.len(), |i| u32::from(v[i])) }\n"),
+            ],
+            mutate: ("crates/kome/src/num.rs", |t| Some(t + "\npub fn flip(b: &mut bool) { *b = !*b; }\npub fn d(o: Option<u8>) -> u8 { o.map(|v| v + 1).unwrap_or_default() }\n")),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),
@@ -476,12 +494,15 @@ fn every_regex_compiles() {
     for r in modern::regexes() {
         assert!(r.is_some());
     }
+    for r in modern::std_regexes() {
+        assert!(r.is_some());
+    }
 }
 
 #[test]
 fn the_new_rules_find_each_spelling_alone() {
     // (each bad file on its own: one spelling found does not hide another that is missed)
-    for r in [Rule::GuestScratch, Rule::RustLints, Rule::BinDeadPub, Rule::HandBitWidth, Rule::HandUtf16, Rule::NoReturnHandler, Rule::WildcardUnreachable, Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::DepthGuard, Rule::TypedRegisters] {
+    for r in [Rule::HandStd, Rule::GuestScratch, Rule::RustLints, Rule::BinDeadPub, Rule::HandBitWidth, Rule::HandUtf16, Rule::NoReturnHandler, Rule::WildcardUnreachable, Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::DepthGuard, Rule::TypedRegisters] {
         for one in fixture(r).bad.chunks(1) {
             assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
         }

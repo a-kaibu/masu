@@ -230,7 +230,7 @@ impl Package {
                 let _ = o.db.create_table("_Property", cols, false);
             }
         }
-        let summary = db.lock().unwrap().db.summary.as_deref().map(SummaryInfo::parse).unwrap_or_default();
+        let summary = db.lock().unwrap().db.summary.as_deref().map_or_default(SummaryInfo::parse);
         let mut props = HashMap::new();
         system_props(&mut props);
         for r in query(&db, "SELECT `Property`, `Value` FROM `Property`") {
@@ -240,7 +240,7 @@ impl Package {
         // ("#handle": the database's file)
         let file = if path.starts_with('#') { db.lock().unwrap().path.clone() } else { path.to_string() };
         let full = if file.is_empty() { String::new() } else { crate::files::full_path(&file) };
-        let dir = full.rsplit_once('\\').map_or(String::new(), |d| slash(d.0));
+        let dir = full.rsplit_once('\\').map_or_default(|d| slash(d.0));
         props.insert("DATABASE".into(), path.to_string());
         props.insert("OriginalDatabase".into(), path.to_string());
         if let Some(Prop::Str(code)) = summary.props.get(&msidb::suminfo::PID_REVNUMBER) {
@@ -437,7 +437,7 @@ impl Package {
     pub fn set_target(&mut self, n: &str, path: &str) {
         let path = clean_path(path);
         self.props.insert(n.to_string(), path.clone());
-        let old = self.dirs.get(n).map(|d| d.target.clone()).unwrap_or_default();
+        let old = self.dirs.get(n).map_or_default(|d| d.target.clone());
         if old.is_empty() {
             return;
         }
@@ -452,11 +452,11 @@ impl Package {
     }
 
     pub fn target(&self, dir: &str) -> String {
-        self.dirs.get(dir).map(|d| d.target.clone()).unwrap_or_default()
+        self.dirs.get(dir).map_or_default(|d| d.target.clone())
     }
 
     pub fn file_target(&self, f: &FileRec) -> String {
-        let dir = self.comps.get(&f.comp).map(|c| self.target(&c.dir)).unwrap_or_default();
+        let dir = self.comps.get(&f.comp).map_or_default(|c| self.target(&c.dir));
         format!("{dir}{}", f.name)
     }
 
@@ -687,7 +687,7 @@ impl format::Env for FmtEnv<'_> {
         let c = self.0.comps.get(key)?;
         // (run from source: the source folder)
         if c.action == INSTALLSTATE_SOURCE {
-            return Some(self.0.dirs.get(&c.dir).map(|d| d.source.clone()).unwrap_or_default());
+            return Some(self.0.dirs.get(&c.dir).map_or_default(|d| d.source.clone()));
         }
         Some(self.0.target(&c.dir))
     }

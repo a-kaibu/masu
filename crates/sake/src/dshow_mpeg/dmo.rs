@@ -129,7 +129,7 @@ pub(super) fn downstream(c: &mut Ctx, b: u32, slot: u32) -> u32 {
     if slot == 14 {
         // the end: what the codec still holds (WMV3's last I / P picture behind B ones) first
         if let Some((mut codec, generation)) = dwith(b, |d| (d.codec.take(), d.generation)) {
-            let frames = codec.as_mut().map(|x| x.drain()).unwrap_or_default();
+            let frames = codec.as_mut().map_or_default(|x| x.drain());
             dwith(b, |d| d.codec = codec);
             for f in frames {
                 if let Frame::Picture { time, w, h, bgra } = f && !show(c, b, generation, time, w, h, &bgra) {
@@ -242,7 +242,7 @@ fn receive(c: &mut Ctx, b: u32, sample: u32) -> u32 {
     let data = &mem::bytes(ptr, len);
     let Some((mut codec, generation)) = dwith(b, |d| (d.codec.take(), d.generation)) else { return Hr::Unexpected.code() };
     let t0 = std::time::Instant::now();
-    let frames = codec.as_mut().map(|x| x.decode(&data, if time == u64::MAX { 0 } else { time }, key)).unwrap_or_default();
+    let frames = codec.as_mut().map_or_default(|x| x.decode(&data, if time == u64::MAX { 0 } else { time }, key));
     stats(Stat::Decoded(t0.elapsed()));
     dwith(b, |d| d.codec = codec);
     for f in frames {

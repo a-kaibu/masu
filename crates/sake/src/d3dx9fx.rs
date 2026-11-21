@@ -567,7 +567,7 @@ fn ctab_of(d: &[u8]) -> Vec<Const> {
 
 /// A shader's constant table (its CTAB comment).
 fn ctab(code: &[u8]) -> Vec<Const> {
-    comments(code).into_iter().find(|(f, _)| f == b"CTAB").map(|(_, d)| ctab_of(d)).unwrap_or_default()
+    comments(code).into_iter().find(|(f, _)| f == b"CTAB").map_or_default(|(_, d)| ctab_of(d))
 }
 
 /// A preshader (the PRES comment of an effect's shader): constants the compiler moved out of
@@ -1302,7 +1302,7 @@ fn set_f(c: &mut Ctx, f: Vec<f32>) -> u32 {
 }
 fn get_f(c: &mut Ctx, out: u32, n: usize) -> u32 {
     let h = c.a(1);
-    let r = with(this(c), |e| e.param_of(h).map(|p| (0..n.min(e.n_values(p))).map(|k| (e.f32_at(p, k), e.u32_at(p, k), e.params[p].ty)).collect::<Vec<_>>())).flatten();
+    let r = with(this(c), |e| e.param_of(h).map(|p| Vec::<_>::from_fn(n.min(e.n_values(p)), |k| (e.f32_at(p, k), e.u32_at(p, k), e.params[p].ty)))).flatten();
     let Some(v) = r else { return D3DERR_INVALIDCALL };
     for (k, (f, _, _)) in v.iter().enumerate() {
         w32(out + 4 * k as u32, f.to_bits());
@@ -1835,7 +1835,7 @@ technique T <string Desc = "main";> { pass P0 { ZEnable = false; CullMode = None
         let ts: Vec<_> = (0..8)
             .map(|k| {
                 let d = if k % 2 == 0 { a.clone() } else { b.clone() };
-                std::thread::spawn(move || (0..200).map(|_| shape(&d)).collect::<Vec<_>>())
+                std::thread::spawn(move || Vec::<_>::from_fn(200, |_| shape(&d)))
             })
             .collect();
         for (k, t) in ts.into_iter().enumerate() {

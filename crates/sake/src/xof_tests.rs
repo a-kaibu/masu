@@ -638,7 +638,7 @@ proptest! {
         let names = ["n0", "n1", "n2", "n3", "n4", "none"];
         let mut body = String::new();
         for (n, guid) in &objs {
-            let gs = guid.map_or(String::new(), |g| format!("<00000000-0000-0000-0000-0000000000{g:02X}>"));
+            let gs = guid.map_or_default(|g| format!("<00000000-0000-0000-0000-0000000000{g:02X}>"));
             body += &format!("Header {} {{ {gs} 1; 2; 3; }}\n", names[*n]);
         }
         let mut r = reg(HEADER);

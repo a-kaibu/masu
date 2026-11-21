@@ -176,7 +176,7 @@ fn search_comp(pk: &Package, sig: &Sig) -> Option<String> {
         return Some(if ty == FILENAME { parent_dir(&path) } else { slash(&path) });
     }
     if present {
-        let file = query(&pk.db, &format!("SELECT `FileName` FROM `Signature` WHERE `Signature` = '{}'", q(&sig.name))).first().map(|r| r.get(1).text()).unwrap_or_default();
+        let file = query(&pk.db, &format!("SELECT `FileName` FROM `Signature` WHERE `Signature` = '{}'", q(&sig.name))).first().map_or_default(|r| r.get(1).text());
         let p = format!("{}{file}", slash(&path));
         return (kind(&p) == Some(false)).then_some(p);
     }

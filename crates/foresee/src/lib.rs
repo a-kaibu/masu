@@ -497,7 +497,7 @@ const MAGICS: &[(&str, &[Option<u8>])] = {
 /// Whether a member named `name` helps [`detect_scheme`]: by its first bytes (an image's or a
 /// sound's), or as text (a script).
 pub fn scheme_sample(name: &str) -> bool {
-    let e = name.rsplit_once('.').map_or(String::new(), |x| x.1.to_ascii_lowercase());
+    let e = name.rsplit_once('.').map_or_default(|x| x.1.to_ascii_lowercase());
     MAGICS.iter().any(|m| m.0 == e) || matches!(e.as_str(), "tjs" | "ks" | "txt" | "csv")
 }
 
@@ -523,7 +523,7 @@ pub fn detect_scheme(samples: &[(&str, u32, &[u8])]) -> Scheme {
         if buf.len() < 16 {
             continue;
         }
-        let e = name.rsplit_once('.').map_or(String::new(), |x| x.1.to_ascii_lowercase());
+        let e = name.rsplit_once('.').map_or_default(|x| x.1.to_ascii_lowercase());
         if let Some((_, magic)) = MAGICS.iter().find(|m| m.0 == e) {
             let Some(Some(m0)) = magic.first() else { continue };
             let key = buf[0] ^ m0;

@@ -931,7 +931,7 @@ fn hosts(name: &str) -> Option<Vec<Addr>> {
     let table = match cached {
         Some(t) => t,
         None => {
-            let t = std::sync::Arc::new(std::fs::read(&path).map(|b| hosts_parse(&b)).unwrap_or_default());
+            let t = std::sync::Arc::new(std::fs::read(&path).map_or_default(|b| hosts_parse(&b)));
             *CACHE.lock().unwrap() = Some((stamp, t.clone()));
             t
         }

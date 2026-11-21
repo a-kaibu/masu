@@ -1284,12 +1284,12 @@ fn blit(c: &mut Canvas, dst: (i32, i32, i32, i32), src: Option<Src>, op: u8, pat
     if sw < 0 {
         sx += sw + 1;
         sw = -sw;
-        flip.0 = !flip.0;
+        flip.0.toggle();
     }
     if sh < 0 {
         sy += sh + 1;
         sh = -sh;
-        flip.1 = !flip.1;
+        flip.1.toggle();
     }
     if sw == 0 || sh == 0 {
         return Rect::default();

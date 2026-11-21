@@ -1468,7 +1468,7 @@ fn nt_query_directory_file(c: &mut Ctx) -> u32 {
             scan.as_ref().map_or(vec![u16::from(b'*')], |s| s.0.clone())
         };
         let win = crate::files::host_to_win(&f.path);
-        let all = crate::files::find(&format!("{}\\*", win.trim_end_matches('\\'))).map_or(Vec::new(), |f| f.entries);
+        let all = crate::files::find(&format!("{}\\*", win.trim_end_matches('\\'))).map_or_default(|f| f.entries);
         let mut entries: Vec<_> = all.into_iter().filter(|(n, _)| nt_match(&mask, &n.encode_utf16().collect::<Vec<_>>())).collect();
         // NTFS's order: "." and "..", then the names compared in upper case
         entries.sort_by_cached_key(|(n, _)| (n != ".", n != "..", upcase(n)));

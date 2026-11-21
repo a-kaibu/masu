@@ -682,7 +682,7 @@ fn owner_module(c: &mut Ctx, pid_at: u32) -> u32 {
         // TCPIP_OWNER_MODULE_INFO_BASIC only
         return ERROR_INVALID_PARAMETER;
     }
-    let path = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.clone()).unwrap_or_default();
+    let path = crate::pe::MODULES.read().unwrap().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
     let name = path.rsplit('\\').next().unwrap_or(&path).to_string();
     let w = |s: &str| s.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect::<Vec<u8>>();
     let (nw, pw) = (w(&name), w(&path));

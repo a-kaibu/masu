@@ -6239,7 +6239,7 @@ fn translate_seen<M: Memory>(
     if LAYOUT.load(core::sync::atomic::Ordering::Relaxed) {
         use core::fmt::Write;
         for (k, (a, list)) in blocks.iter().enumerate() {
-            let _ = writeln!(layout, "{k} {a:08x}-{:08x} ctx {} {}", list.last().unwrap().ip32(), ctxs[k], loops.get(&k).map_or(String::new(), |e| alloc::format!("loop ..{e}")));
+            let _ = writeln!(layout, "{k} {a:08x}-{:08x} ctx {} {}", list.last().unwrap().ip32(), ctxs[k], loops.get(&k).map_or_default(|e| alloc::format!("loop ..{e}")));
         }
         for (a, h) in &g.hle {
             let _ = writeln!(layout, "HLE {a:08x} {h:?}");

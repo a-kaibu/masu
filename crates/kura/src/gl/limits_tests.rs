@@ -312,7 +312,7 @@ fn mapped_buffers_live_in_guest_memory() {
             }
             // the live blocks are the mappings, no more and no fewer
             let mut want: Vec<usize> = model.values().map(|m| m.1).filter(|&p| p != 0).collect();
-            let mut got: Vec<usize> = BLOCKS.lock().unwrap().as_ref().map(|b| b.keys().copied().collect()).unwrap_or_default();
+            let mut got: Vec<usize> = BLOCKS.lock().unwrap().as_ref().map_or_default(|b| b.keys().copied().collect());
             want.sort();
             got.sort();
             assert_eq!(got, want, "{at}");

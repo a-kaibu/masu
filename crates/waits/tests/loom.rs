@@ -1328,7 +1328,7 @@ mod later {
             l.flush_soon();
             t.into_iter().for_each(|t| t.join().unwrap());
             l.peek(|h| {
-                let w = h.map(|h| h.value.written.clone()).unwrap_or_default();
+                let w = h.map_or_default(|h| h.value.written.clone());
                 assert!(w.last().copied().unwrap_or(0) >= seen, "{seen} changes before the look, file {w:?}");
                 assert!(w.windows(2).all(|p| p[0] < p[1]), "{w:?}");
             });

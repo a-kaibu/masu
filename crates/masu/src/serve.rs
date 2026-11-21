@@ -526,7 +526,7 @@ async fn optimize(jit: Jit, names: Vec<String>) {
                 let _ = tokio::fs::remove_file(&tmp).await;
                 // (only the first lines: a validation error dumps the whole module)
                 let ran = run.is_ok();
-                let err = run.map(|o| String::from_utf8_lossy(&o.stderr).lines().take(3).collect::<Vec<_>>().join(" | ")).unwrap_or_default();
+                let err = run.map_or_default(|o| String::from_utf8_lossy(&o.stderr).lines().take(3).collect::<Vec<_>>().join(" | "));
                 eprintln!("jit {wasm}: {} failed: {}", opt.display(), err.chars().take(400).collect::<String>());
                 if ran {
                     OPT_FAILED.lock().unwrap_or_else(|e| e.into_inner()).insert(key);
@@ -1391,7 +1391,7 @@ fn dump_threads() {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
     let maps = std::fs::read_to_string("/proc/self/maps").unwrap_or_default();
-    let exe = std::env::current_exe().ok().map(|p| p.display().to_string()).unwrap_or_default();
+    let exe = std::env::current_exe().ok().map_or_default(|p| p.display().to_string());
     eprint!("{}", describe_threads(&maps, &exe, (0..asked.min(NEXT.load(SeqCst)).min(SLOTS)).filter(|&i| LENS[i].load(SeqCst) > 0).map(|i| {
         let tid = TIDS[i].load(SeqCst);
         let name = std::fs::read_to_string(format!("/proc/self/task/{tid}/comm")).unwrap_or_default().trim().to_string();
@@ -1439,7 +1439,7 @@ fn describe_threads(maps: &str, exe: &str, threads: Vec<(i64, String, Vec<usize>
             let _ = match at {
                 Some((file, off)) => {
                     let short = file.rsplit('/').next().unwrap_or(file);
-                    let name = named.get(off).map(|n| format!("  {n}")).unwrap_or_default();
+                    let name = named.get(off).map_or_default(|n| format!("  {n}"));
                     writeln!(out, "  {k:2}: {short}+{off:#x}{name}")
                 }
                 None => writeln!(out, "  {k:2}: {ip:#x}"),

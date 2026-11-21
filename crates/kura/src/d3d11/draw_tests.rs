@@ -226,7 +226,7 @@ fn run(seed: u64, vs: &[u8], ps: &[u8], ten: bool) {
                 .map(|(k, &(s, off, n))| {
                     let v = if k == 3 && inst { instance } else { v };
                     let at = (offset[s as usize] as i64 + v * stride[s as usize] as i64 + off as i64) as usize;
-                    vbs[s as usize].1.get(at..at + n as usize).map(|b| b.to_vec()).unwrap_or_default()
+                    vbs[s as usize].1.get(at..at + n as usize).map_or_default(|b| b.to_vec())
                 })
                 .collect();
             a.sort();

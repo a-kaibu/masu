@@ -147,7 +147,7 @@ pub fn enter_values(def: &ApiDef, args: &[u64], s: Option<&[u8]>, d: Option<&[u8
 /// error after it, `o` the count sake read at the call's count pointer, `d` ReadFile's buffer.
 pub fn leave_values(def: &ApiDef, args: &[u64], ret: u64, err: u32, o: Option<u32>, d: Option<&[u8]>, x86: bool) -> Vec<CapturedValue> {
     let a = |k: usize| ptr(args.get(k).copied().unwrap_or(0), x86);
-    let count = |at: u64| mem_with(&[(at, &o.map(u32::to_le_bytes).unwrap_or_default()[..o.map_or(0, |_| 4)])]);
+    let count = |at: u64| mem_with(&[(at, &o.map_or_default(u32::to_le_bytes)[..o.map_or(0, |_| 4)])]);
     match (def.module, def.function) {
         ("kernel32.dll", "CreateFileW") => capture::create_file_w_leave(ptr(ret, x86), err, a(4) as u32),
         ("kernel32.dll", "ReadFile") => {

@@ -1315,7 +1315,7 @@ fn find_dll_file(dll: &str) -> Option<(String, String)> {
         }
         return crate::files::resolve(&w).filter(|h| !system_dir || !wine_builtin(h)).map(|h| (h, w));
     }
-    let exe_dir = MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.rsplit_once('\\').map_or(String::new(), |x| x.0.to_string()));
+    let exe_dir = MODULES.read().unwrap().iter().find(|m| !m.dll).map(|m| m.path.rsplit_once('\\').map_or_default(|x| x.0.to_string()));
     let mut dirs: Vec<String> = exe_dir.into_iter().collect();
     dirs.extend(DLL_DIRS.lock().unwrap().iter().cloned());
     dirs.push(crate::files::cwd().trim_end_matches('\\').to_string());
@@ -2395,7 +2395,7 @@ mod review_tests {
     #[test]
     fn hle_module_made_once_under_a_race() {
         let _g = crate::test_guest::enter();
-        let bases: Vec<u32> = (0..8).map(|_| std::thread::spawn(|| hle_module("review_race_dll"))).collect::<Vec<_>>().into_iter().map(|t| t.join().unwrap()).collect();
+        let bases: Vec<u32> = Vec::<_>::from_fn(8, |_| std::thread::spawn(|| hle_module("review_race_dll"))).into_iter().map(|t| t.join().unwrap()).collect();
         assert!(bases.iter().all(|&b| b == bases[0] && b != 0), "{bases:x?}");
         assert_eq!(MODULES.read().unwrap().iter().filter(|m| m.name == "review_race_dll.dll").count(), 1);
     }

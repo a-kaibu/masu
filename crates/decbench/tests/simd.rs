@@ -163,7 +163,7 @@ fn mpeg1_bgrx() {
         let (w, h) = (1 + r.below(90) as usize, 1 + r.below(9) as usize);
         let ys = w.next_multiple_of(16) + 16 * r.below(2) as usize;
         let hh = h.next_multiple_of(16);
-        let mut bytes = |n: usize| (0..n).map(|_| r.next() as u8).collect::<Vec<u8>>();
+        let mut bytes = |n: usize| Vec::<u8>::from_fn(n, |_| r.next() as u8);
         let f = mpeg1::Frame { width: w, height: h, y_stride: ys, c_stride: ys / 2, y: bytes(ys * hh), cb: bytes(ys / 2 * hh / 2), cr: bytes(ys / 2 * hh / 2) };
         let stride = w * 4 + 4 * r.below(3) as usize;
         let len = stride * h - if r.below(3) == 0 { r.below((stride * h) as u64 / 2 + 1) as usize } else { 0 };

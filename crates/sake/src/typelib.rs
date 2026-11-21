@@ -240,7 +240,7 @@ pub fn parse(d: &[u8]) -> Option<Lib> {
         }
         let o = name_tab + off as usize;
         let len = *d.get(o + 8).unwrap_or(&0) as usize;
-        d.get(o + 12..o + 12 + len).map(|b| b.iter().map(|&c| c as char).collect()).unwrap_or_default()
+        d.get(o + 12..o + 12 + len).map_or_default(|b| b.iter().map(|&c| c as char).collect())
     };
     let guid = |off: i32| -> [u8; 16] {
         if off < 0 {

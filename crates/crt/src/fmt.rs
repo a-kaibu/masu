@@ -1072,7 +1072,7 @@ mod tests {
                 uses.swap(k, (r % (k as u64 + 1)) as usize);
             }
             let conv = |k: u8, pos: Option<usize>| {
-                let at = pos.map_or(String::new(), |p| format!("{}$", p + 1));
+                let at = pos.map_or_default(|p| format!("{}$", p + 1));
                 match k { 0 => format!("%{at}d"), 1 => format!("%{at}I64x"), 2 => format!("%{at}.3f"), _ => format!("%{at}u") }
             };
             let val = |i: usize| match kinds[i].0 { 0 | 3 => I(4, kinds[i].1 & 0xffff_ffff), 1 => I(8, kinds[i].1), _ => F(kinds[i].2) };

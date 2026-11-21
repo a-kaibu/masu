@@ -127,7 +127,7 @@ fn base<'a>(ix: &'a Index, t: TypeDef<'a>) -> Option<TypeDef<'a>> {
 /// The whole vtable, inherited methods first: (name, x86 stack dwords with `this` and a hidden
 /// result pointer, result: 0 integer, 1 float, 2 a structure through that pointer).
 fn vtable(ix: &Index, l: &Layout, t: TypeDef) -> Vec<(String, u32, u8)> {
-    let mut v = base(ix, t).map(|b| vtable(ix, l, b)).unwrap_or_default();
+    let mut v = base(ix, t).map_or_default(|b| vtable(ix, l, b));
     let own: Vec<&str> = t.methods().map(|m| m.name()).collect();
     for (i, m) in t.methods().enumerate() {
         let sig = m.signature(&[]);

@@ -1812,7 +1812,7 @@ mod mp3_tests {
             let mut last: Option<u8> = None;
             while !st.load(Ordering::Relaxed) {
                 kura::adec::test_page_pass(&mut |b, ch| {
-                    let out = last.map(|k| vec![k as f32 / 256.0; 1152 * ch as usize]).unwrap_or_default();
+                    let out = last.map_or_default(|k| vec![k as f32 / 256.0; 1152 * ch as usize]);
                     last = Some(b[4]);
                     out
                 });

@@ -388,11 +388,7 @@ impl Rsa {
     }
 }
 fn check_len(h: Hash, digest: &[u8]) -> Result<(), u32> {
-    if digest.len() == h.len() {
-        Ok(())
-    } else {
-        Err(NTE_INVALID_PARAMETER)
-    }
+    (digest.len() == h.len()).ok_or(NTE_INVALID_PARAMETER)
 }
 fn pkcs1_sign(h: Option<Hash>, digest: &[u8]) -> Result<Pkcs1v15Sign, u32> {
     Ok(match h {

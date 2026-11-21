@@ -189,7 +189,7 @@ unsafe extern "C" fn glShaderSource(sh: u32, count: i32, strings: *const *const 
     }
 }
 unsafe extern "C" fn glGetShaderSource(sh: u32, max: i32, len: *mut i32, out: *mut c_char) {
-    let s = gl().shaders.get(&sh).map(|x| x.source.clone()).unwrap_or_default();
+    let s = gl().shaders.get(&sh).map_or_default(|x| x.source.clone());
     copy_str(&s, max, len, out)
 }
 extern "C" fn glCompileShader(sh: u32) {
@@ -243,7 +243,7 @@ unsafe fn copy_str(s: &str, max: i32, len: *mut i32, out: *mut c_char) {
     }
 }
 unsafe extern "C" fn glGetShaderInfoLog(sh: u32, max: i32, len: *mut i32, out: *mut c_char) {
-    let s = gl().shaders.get(&sh).map(|x| x.log.clone()).unwrap_or_default();
+    let s = gl().shaders.get(&sh).map_or_default(|x| x.log.clone());
     copy_str(&s, max, len, out)
 }
 /// (a shader attached to a program is only flagged: it goes when no program has it)
@@ -310,7 +310,7 @@ unsafe extern "C" fn glGetAttachedShaders(p: u32, max: i32, count: *mut i32, out
     if let Some(e) = e {
         return fail(e);
     }
-    let v = gl().programs.get(&p).map(|x| x.shaders.clone()).unwrap_or_default();
+    let v = gl().programs.get(&p).map_or_default(|x| x.shaders.clone());
     let n = v.len().min(max.max(0) as usize);
     for (k, s) in v.iter().take(n).enumerate() {
         *out.add(k) = *s;
@@ -388,7 +388,7 @@ unsafe extern "C" fn glGetObjectParameteriv(obj: u32, pname: u32, out: *mut i32)
     }
 }
 unsafe extern "C" fn glGetProgramInfoLog(p: u32, max: i32, len: *mut i32, out: *mut c_char) {
-    let s = gl().programs.get(&p).map(|x| x.log.clone()).unwrap_or_default();
+    let s = gl().programs.get(&p).map_or_default(|x| x.log.clone());
     copy_str(&s, max, len, out)
 }
 unsafe extern "C" fn glGetInfoLog(obj: u32, max: i32, len: *mut i32, out: *mut c_char) {

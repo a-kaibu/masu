@@ -17,7 +17,7 @@ unsafe impl std::alloc::GlobalAlloc for Guard {
     unsafe fn alloc(&self, l: std::alloc::Layout) -> *mut u8 {
         if l.size() > 1 << 30 && GUARD.load(Ordering::Relaxed) {
             use std::io::Write;
-            let _ = writeln!(std::io::stderr(), "ALLOC of {} bytes on\n{}", l.size(), CURRENT.lock().map(|s| s.clone()).unwrap_or_default());
+            let _ = writeln!(std::io::stderr(), "ALLOC of {} bytes on\n{}", l.size(), CURRENT.lock().map_or_default(|s| s.clone()));
             std::process::exit(3);
         }
         unsafe { std::alloc::System.alloc(l) }
@@ -28,7 +28,7 @@ unsafe impl std::alloc::GlobalAlloc for Guard {
     unsafe fn realloc(&self, p: *mut u8, l: std::alloc::Layout, n: usize) -> *mut u8 {
         if n > 1 << 30 && GUARD.load(Ordering::Relaxed) {
             use std::io::Write;
-            let _ = writeln!(std::io::stderr(), "ALLOC of {n} bytes on\n{}", CURRENT.lock().map(|s| s.clone()).unwrap_or_default());
+            let _ = writeln!(std::io::stderr(), "ALLOC of {n} bytes on\n{}", CURRENT.lock().map_or_default(|s| s.clone()));
             std::process::exit(3);
         }
         unsafe { std::alloc::System.realloc(p, l, n) }
@@ -412,7 +412,7 @@ pub fn traces(cases: &[Case], n: usize, seed: u64) -> Vec<String> {
 pub fn regressions(dir: &std::path::Path) -> Vec<String> {
     let msg = Mutex::new(String::new());
     let mut out = Vec::new();
-    let mut files: Vec<_> = std::fs::read_dir(dir).map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+    let mut files: Vec<_> = std::fs::read_dir(dir).map_or_default(|d| d.flatten().map(|e| e.path()).collect());
     files.sort();
     for f in files {
         let t = std::fs::read_to_string(&f).unwrap_or_default();

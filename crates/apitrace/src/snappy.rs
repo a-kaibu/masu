@@ -168,7 +168,7 @@ fn literal(out: &mut Vec<u8>, lit: &[u8]) {
         if n < 60 {
             out.push((n as u8) << 2);
         } else {
-            let bytes = ((n as u64).bit_width() as usize).div_ceil(8);
+            let bytes = (n.bit_width() as usize).div_ceil(8);
             out.push(((59 + bytes) as u8) << 2);
             out.extend_from_slice(&(n as u32).to_le_bytes()[..bytes]);
         }

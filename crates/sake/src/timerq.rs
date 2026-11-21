@@ -251,7 +251,7 @@ fn fire(c: &mut Ctx, t: u32) {
 
 /// A callback of timer `t` returned.
 fn returned(t: u32) {
-    let evs = with(|s| s.timers.get_mut(&t).map(|tm| tm.done()).unwrap_or_default());
+    let evs = with(|s| s.timers.get_mut(&t).map_or_default(|tm| tm.done()));
     set_events(evs);
     CV.notify_all();
     settle(t);
@@ -266,7 +266,7 @@ fn queue_done(s: &mut State, q: u32) -> Vec<u32> {
         Some((true, _)) => {
             // (its handle block goes with it)
             mem::heap_free(q);
-            s.queues.remove(&q).map(|x| x.1).unwrap_or_default()
+            s.queues.remove(&q).map_or_default(|x| x.1)
         }
         _ => Vec::new(),
     }

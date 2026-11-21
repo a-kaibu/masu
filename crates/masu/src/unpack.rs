@@ -231,7 +231,7 @@ pub fn pick_exe(root: &Path, hint: Option<&str>) -> Option<String> {
 }
 
 fn ext(p: &Path) -> String {
-    p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+    p.extension().map_or_default(|e| e.to_string_lossy().to_lowercase())
 }
 
 fn empty(d: &Path) -> bool {

@@ -29,7 +29,7 @@ fn tree(text: &str) -> Vec<File> {
     crate::tree_list::good_lines(text)
         .filter_map(|l| {
             let c = l.chunks()?;
-            let chunks = c.list().iter().map(|c| (c.id.map(|id| id.to_string()).unwrap_or_default(), c.len.get())).collect();
+            let chunks = c.list().iter().map(|c| (c.id.map_or_default(|id| id.to_string()), c.len.get())).collect();
             Some(File { size: c.size(), chunks, path: l.path })
         })
         .collect()

@@ -135,7 +135,7 @@ proptest! {
         let s = Spread { span, packet_size: cs * 3, chunk_size: cs };
         let m = Mux { packet_size: 1500, preroll: 0, streams: two_streams(Some(s)), attributes: vec![], compress_small: false };
         let n = s.packet_size as usize * span as usize;
-        let samples: Vec<_> = (0..objs).map(|k| (sn(1), true, k as u32 * 10, (0..n).map(|i| (i * 7 + k) as u8).collect::<Vec<u8>>())).collect();
+        let samples: Vec<_> = (0..objs).map(|k| (sn(1), true, k as u32 * 10, Vec::<u8>::from_fn(n, |i| (i * 7 + k) as u8))).collect();
         let mut r = Reader::new(m.write(&samples, 100).unwrap()).unwrap();
         for (_, _, _, d) in &samples {
             prop_assert_eq!(&r.next_sample().unwrap().data, d);

@@ -1478,7 +1478,7 @@ pub fn find_resource(ty: u32, id: u32) -> Option<(u32, u32)> {
     let name_at = |o: u16| -> Vec<u8> {
         let p = rt + o as usize;
         let n = d.get(p).copied().unwrap_or(0) as usize;
-        d.get(p + 1..).map_or(Vec::new(), |s| s[..n.min(s.len())].to_vec())
+        d.get(p + 1..).map_or_default(|s| s[..n.min(s.len())].to_vec())
     };
     // (an integer id: with 0x8000_0000, or below 0x10000 as MAKEINTRESOURCE and RT_* are)
     let matches = |v: u16, want: u32| -> bool {

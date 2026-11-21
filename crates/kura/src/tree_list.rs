@@ -492,7 +492,7 @@ mod tests {
         fn writes_as_pack_did(l in line()) {
             let (kind, size, hashes, target) = match &l.kind {
                 Kind::Dir => (0, 0, vec![], ""),
-                Kind::File(c) => (1, c.size(), c.list().iter().map(|c| format!("{}:{}", c.id.map(|i| i.to_string()).unwrap_or_default(), c.len.get())).collect(), ""),
+                Kind::File(c) => (1, c.size(), c.list().iter().map(|c| format!("{}:{}", c.id.map_or_default(|i| i.to_string()), c.len.get())).collect(), ""),
                 Kind::Link(t) => (2, 0, vec![], t.as_str()),
             };
             prop_assert_eq!(l.to_string(), old::pack_line(kind, u32::from(l.mode), l.mtime, &l.path, size, &hashes, target));
@@ -514,7 +514,7 @@ mod tests {
                     prop_assert_eq!(k.0, 'f');
                     prop_assert_eq!(k.5, Some((ids, c.starts().to_vec())));
                     let m = old::masu_treefiles(&text).expect("masu read it");
-                    let hex: Vec<String> = c.list().iter().map(|c| c.id.map(|i| i.to_string()).unwrap_or_default()).collect();
+                    let hex: Vec<String> = c.list().iter().map(|c| c.id.map_or_default(|i| i.to_string())).collect();
                     prop_assert_eq!((m.1, &m.2, &m.3[..]), (c.size(), &hex, c.starts()));
                     if !esc(&new.path).contains("\\\\") {
                         prop_assert_eq!(&m.0, &new.path);

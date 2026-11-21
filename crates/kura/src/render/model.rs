@@ -1778,7 +1778,7 @@ impl Model {
             }
             let cv: Vec<f32> = c.arr("clearValue").iter().map(|x| if let J::Num(n) = x { *n as f32 } else { 0.0 }).collect();
             let color = [cv.first().copied().unwrap_or(0.0), cv.get(1).copied().unwrap_or(0.0), cv.get(2).copied().unwrap_or(0.0), cv.get(3).copied().unwrap_or(0.0)];
-            let format = self.view_of(a).map(|v| self.tex(v.tex).format.clone()).unwrap_or_default();
+            let format = self.view_of(a).map_or_default(|v| self.tex(v.tex).format.clone());
             // resolveTarget: a 1x view of one subresource of a resolvable format, the same as
             // the attachment's and of its size, for a multisampled attachment
             let mut resolve = None;
@@ -2114,8 +2114,7 @@ impl Model {
                             let at = off as i64 + v * stride + aoff as i64;
                             (at >= 0).then(|| bf.data.get(at as usize..at as usize + us(size))).flatten()
                         })
-                        .map(|b| b.to_vec())
-                        .unwrap_or_default();
+                        .map_or_default(|b| b.to_vec());
                     out.push((loc, bytes));
                 }
             }
@@ -3006,8 +3005,8 @@ mod ms_tests {
         let z1 = tex(&mut m, "depth32float", 8, 8, 1, 0x10);
         let (vms, vone, vother, vsmall, vz4, vz1) = (m.view(ms, ""), m.view(one, ""), m.view(other, ""), m.view(small, ""), m.view(z4, ""), m.view(z1, ""));
         let pass = |m: &mut Model, color: u32, resolve: Option<u32>, z: Option<u32>| {
-            let r = resolve.map_or(String::new(), |r| format!(r#","resolveTarget":{r}"#));
-            let d = z.map_or(String::new(), |z| format!(r#","depthStencilAttachment":{{"view":{z},"depthLoadOp":"load","depthStoreOp":"store"}}"#));
+            let r = resolve.map_or_default(|r| format!(r#","resolveTarget":{r}"#));
+            let d = z.map_or_default(|z| format!(r#","depthStencilAttachment":{{"view":{z},"depthLoadOp":"load","depthStoreOp":"store"}}"#));
             m.begin_pass(&format!(r#"{{"colorAttachments":[{{"view":{color},"loadOp":"clear","clearValue":[1,0,0,1],"storeOp":"store"{r}}}]{d}}}"#));
             m.end_pass();
         };

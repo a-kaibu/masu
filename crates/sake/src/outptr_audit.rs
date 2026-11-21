@@ -258,7 +258,7 @@ fn bare(x: &str) -> &str {
         }
         x = y;
     }
-    x.strip_prefix("vec!").unwrap_or(x)
+    x.trim_prefix("vec!")
 }
 
 /// The body of `fn name` in `s` (its braces), the first one.
@@ -299,7 +299,7 @@ fn list_of(files: &[(std::path::PathBuf, String)], s: &str, at: usize, x: &str, 
             out.extend(list_of(files, s, at, &strip_iter(&arg[1..arg.len() - 1]), depth + 1)?);
             rest = r[arg.len() - 1..].trim_start();
             for t in [".into_iter()", ".iter()", ".copied()", ".cloned()", ".collect()"] {
-                rest = rest.strip_prefix(t).unwrap_or(rest).trim_start();
+                rest = rest.trim_prefix(t).trim_start();
             }
             if let Some(r) = rest.strip_prefix(".collect::<") {
                 rest = r.split_once(">()").map_or("", |x| x.1).trim_start();
@@ -529,7 +529,7 @@ fn com_handlers_take_their_methods_arguments() {
                 };
                 let ss = match at {
                     Some(n) => vec![n],
-                    None => slots.get(&(iface.clone(), m.to_string())).and_then(|v| v.first()).map(|&x| vec![x]).unwrap_or_default(),
+                    None => slots.get(&(iface.clone(), m.to_string())).and_then(|v| v.first()).map_or_default(|&x| vec![x]),
                 };
                 for sl in ss {
                     check(p, &iface, sl, h);

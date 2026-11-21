@@ -14,7 +14,7 @@ use std::path::Component;
 fuzz_target!(|data: &[u8]| {
     let _ = evb::depack(data, 1 << 16).map(|v| assert!(v.len() <= 1 << 16));
     let head = &data[..data.len().min(4096)];
-    let mut read = |o: u64, l: usize| Ok(data.get(o as usize..).map(|d| d[..d.len().min(l)].to_vec()).unwrap_or_default());
+    let mut read = |o: u64, l: usize| Ok(data.get(o as usize..).map_or_default(|d| d[..d.len().min(l)].to_vec()));
     // (a box at the start too, as if found in a .enigma1)
     let at = evb::locate(head, &mut read).ok().flatten().unwrap_or(0);
     let mut c = Cursor::new(data);

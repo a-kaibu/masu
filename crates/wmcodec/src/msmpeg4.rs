@@ -645,7 +645,7 @@ impl Decoder {
             self.dc_table_index = r.uz::<1>();
             self.mv_table_index = r.uz::<1>();
             self.inter_intra_pred = false;
-            self.no_rounding = !self.no_rounding;
+            self.no_rounding.toggle();
         }
         self.esc3_level_length = 0;
         self.esc3_run_length = 0;

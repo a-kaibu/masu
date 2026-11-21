@@ -1099,7 +1099,7 @@ fn p_connection_type(c: &mut Ctx) -> u32 {
     if out == 0 {
         return Hr::Pointer.code();
     }
-    let me = pin_of(p).map(|(b, k)| pin(b, k)).unwrap_or_default();
+    let me = pin_of(p).map_or_default(|(b, k)| pin(b, k));
     if me.peer == 0 || me.mt == 0 {
         mem::fill(out, mt_size(), 0);
         return Hr::NotConnected.code();
@@ -1153,7 +1153,7 @@ fn p_accept(c: &mut Ctx) -> u32 {
     if mt == 0 {
         return Hr::Pointer.code();
     }
-    let me = pin_of(p).map(|(b, k)| pin(b, k)).unwrap_or_default();
+    let me = pin_of(p).map_or_default(|(b, k)| pin(b, k));
     if me.mt != 0 && &mem::array::<32>(mt) == &mem::array::<32>(me.mt) { 0 } else { Hr::False.code() }
 }
 

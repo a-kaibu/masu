@@ -400,7 +400,7 @@ fn release_obj(o: u32) -> u32 {
                 with(|w| w.perfs.remove(&o));
             }
             Some(Kind::Loader) => {
-                let cache = with(|w| w.loaders.remove(&o)).map(|l| l.2).unwrap_or_default();
+                let cache = with(|w| w.loaders.remove(&o)).map_or_default(|l| l.2);
                 for (_, seg) in cache {
                     release_obj(seg);
                 }
@@ -699,7 +699,7 @@ fn p_is_playing(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     let keys = with(|w| {
-        w.perfs.get(&this).map_or(Vec::new(), |p| if state != 0 { p.plays.states.iter().filter(|s| s.0 == state).map(|s| s.0).collect() } else { p.plays.of_segment(seg) })
+        w.perfs.get(&this).map_or_default(|p| if state != 0 { p.plays.states.iter().filter(|s| s.0 == state).map(|s| s.0).collect() } else { p.plays.of_segment(seg) })
     });
     if keys.iter().any(|&k| crate::sound::music_playing(k)) {
         0

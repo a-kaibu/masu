@@ -237,7 +237,7 @@ fn GetFontFamilyNameLength(c: &mut Ctx) -> u32 {
 }
 fn GetFontFamilyName(c: &mut Ctx) -> u32 {
     let (p, n) = (c.a(1), c.a(2));
-    let name: Vec<u16> = format_of(c.a(0)).map_or(Vec::new(), |f| f.family.encode_utf16().collect());
+    let name: Vec<u16> = format_of(c.a(0)).map_or_default(|f| f.family.encode_utf16().collect());
     if lo32(name.len()) >= n {
         return 0x8007_007a;
     }

@@ -680,9 +680,9 @@ fn get_summary(c: &mut Ctx, wide: bool) -> u32 {
         (None, p)
     };
     let info = match &db {
-        Some(d) => d.lock().unwrap().db.summary.as_deref().map(SummaryInfo::parse).unwrap_or_default(),
+        Some(d) => d.lock().unwrap().db.summary.as_deref().map_or_default(SummaryInfo::parse),
         None => match open_db(&path, MSIDBOPEN_READONLY, None) {
-            Ok(o) => o.db.summary.as_deref().map(SummaryInfo::parse).unwrap_or_default(),
+            Ok(o) => o.db.summary.as_deref().map_or_default(SummaryInfo::parse),
             Err(ERROR_OPEN_FAILED) => return ERROR_INSTALL_PACKAGE_OPEN_FAILED,
             Err(e) => return e,
         },

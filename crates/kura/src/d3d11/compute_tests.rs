@@ -297,7 +297,7 @@ fn a_uav_read_keeps_its_copy_and_sees_every_change() {
                     let bx = mem(6);
                     put(bx, &[x0, y0, 0, x1, y1, 1]);
                     let p = mem(64);
-                    put(p, &(0..64).map(|_| r.next() as u32).collect::<Vec<_>>());
+                    put(p, &Vec::<_>::from_fn(64, |_| r.next() as u32));
                     d.cc(48, &[texs[k], 0, bx, p, 32, 0]);
                 }
                 1 => {

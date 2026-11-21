@@ -1229,7 +1229,7 @@ mod input_layout_tests {
             for i in 0..all.len() {
                 let mut less = all.clone();
                 less.remove(i);
-                let want = if sig[i].0.starts_with("SV_InstanceID") || sig[i].0 == "SV_VertexID" { Ok(()) } else { Err(E_INVALIDARG) };
+                let want = (sig[i].0.starts_with("SV_InstanceID") || sig[i].0 == "SV_VertexID").ok_or(E_INVALIDARG);
                 assert_eq!(ok(&less, &code), want, "{} excluded", sig[i].0);
             }
         }

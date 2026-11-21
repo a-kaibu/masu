@@ -288,7 +288,7 @@ fn run(seed: u64) {
                 .map(|&(s, off, t, _, _)| {
                     let v = if divider != 0 && s == 1 { (inst / divider) as i64 } else { v };
                     let at = (offset[s as usize] as i64 + v * stride[s as usize] as i64 + off as i64) as usize;
-                    vbs[s as usize].1.get(at..at + type_bytes(t) as usize).map(|b| b.to_vec()).unwrap_or_default()
+                    vbs[s as usize].1.get(at..at + type_bytes(t) as usize).map_or_default(|b| b.to_vec())
                 })
                 .collect();
             a.sort();

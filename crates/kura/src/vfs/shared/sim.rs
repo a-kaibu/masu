@@ -130,8 +130,8 @@ pub fn fuzz(data: &[u8]) {
             let Some(b) = take(3) else { break };
             let n = b[0] % 12;
             batch.push(match k % 7 {
-                0 => { let len = (b[1] % 64) as usize; let d = take(len).map(<[u8]>::to_vec).unwrap_or_default(); Op::Put(n, d) }
-                1 => { let len = (b[2] % 64) as usize; let d = take(len).map(<[u8]>::to_vec).unwrap_or_default(); Op::Write(n, b[1] as u16 * 3, d) }
+                0 => { let len = (b[1] % 64) as usize; let d = take(len).map_or_default(<[u8]>::to_vec); Op::Put(n, d) }
+                1 => { let len = (b[2] % 64) as usize; let d = take(len).map_or_default(<[u8]>::to_vec); Op::Write(n, b[1] as u16 * 3, d) }
                 2 => Op::Size(n, b[1] as u16 * 4 + b[2] as u16 % 4),
                 3 => Op::Open(n),
                 4 => Op::Close(b[1]),

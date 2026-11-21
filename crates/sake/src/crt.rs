@@ -1440,7 +1440,7 @@ fn winmain_cmdline(wide: bool) -> u32 {
     let mut quoted = false;
     while ch(at) != 0 && (quoted || ch(at) > b' ' as u32) {
         if ch(at) == b'"' as u32 {
-            quoted = !quoted;
+            quoted.toggle();
         }
         at += step;
     }

@@ -892,7 +892,7 @@ fn combo_proc_fn(c: &mut Ctx) -> u32 {
 }
 fn combo_paint(c: &mut Ctx, h: u32) {
     let (w, hh, enabled) = with(|s| s.wins.get(&h).map_or((0, 0, true), |w| (w.client.w(), w.client.h(), w.enabled)));
-    let text = combo(h, |cb| cb.items.get(cb.sel.max(0) as usize).filter(|_| cb.sel >= 0).map(|i| i.0.clone()).unwrap_or_default());
+    let text = combo(h, |cb| cb.items.get(cb.sel.max(0) as usize).filter(|_| cb.sel >= 0).map_or_default(|i| i.0.clone()));
     let ps_own = mem::Scratch::new(64 + 16, true);
     let ps = ps_own.get();
     let rc = ps + 64;
@@ -1457,7 +1457,7 @@ fn ctl_click(c: &mut Ctx, h: u32) {
         3 | 6 => set_ctl(h, |t| t.check = clicked_check(style, t.check)),
         9 => {
             // auto radio: this one on, its siblings off
-            let sibs: Vec<u32> = with(|s| s.wins.get(&parent).map(|p| p.children.clone()).unwrap_or_default());
+            let sibs: Vec<u32> = with(|s| s.wins.get(&parent).map_or_default(|p| p.children.clone()));
             for k in sibs {
                 let radio = with(|s| s.wins.get(&k).is_some_and(|w| w.style & 0xf == 9));
                 if radio && k != h {
@@ -2684,7 +2684,7 @@ fn destroy(c: &mut Ctx, h: u32) -> bool {
     if !is_window(h) || h == DESKTOP {
         return false;
     }
-    let children = with(|s| s.wins.get(&h).map(|w| w.children.clone()).unwrap_or_default());
+    let children = with(|s| s.wins.get(&h).map_or_default(|w| w.children.clone()));
     for ch in children {
         destroy(c, ch);
     }
@@ -3398,7 +3398,7 @@ fn GetWindow(c: &mut Ctx) -> u32 {
         };
         let siblings = |h: u32| -> Vec<u32> {
             match s.wins.get(&h) {
-                Some(w) if w.parent != 0 => s.wins.get(&w.parent).map(|p| p.children.clone()).unwrap_or_default(),
+                Some(w) if w.parent != 0 => s.wins.get(&w.parent).map_or_default(|p| p.children.clone()),
                 _ => tops.clone(),
             }
         };
@@ -3484,7 +3484,7 @@ fn EnumThreadWindows(c: &mut Ctx) -> u32 {
 }
 fn EnumChildWindows(c: &mut Ctx) -> u32 {
     let p = c.a(0);
-    let v = with(|s| s.wins.get(&p).map(|w| w.children.clone()).unwrap_or_default());
+    let v = with(|s| s.wins.get(&p).map_or_default(|w| w.children.clone()));
     let (f, lp) = (c.a(1), c.a(2));
     enum_windows(c, v, f, lp)
 }
@@ -4148,7 +4148,7 @@ fn DefDlgProcA(c: &mut Ctx) -> u32 {
     if m == 0x7 {
         // WM_SETFOCUS: on to the control that had it (or the first tab stop)
         let to = with(|s| {
-            let kids = s.wins.get(&h).map(|w| w.children.clone()).unwrap_or_default();
+            let kids = s.wins.get(&h).map_or_default(|w| w.children.clone());
             if kids.contains(&wp) {
                 return wp;
             }

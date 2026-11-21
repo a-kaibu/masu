@@ -417,7 +417,7 @@ fn ae_debug() -> bool {
     let Some(kern::KRef::Sync { id }) = crate::process::share_handle(ev) else { return false };
     let _ = wait(|k| {
         let set = matches!(k.sync_state(id), Some(kern::Sync::Event { set: true, .. }));
-        if set || k.exit_code(dpid).is_some() { Ok(()) } else { Err(PENDING) }
+        (set || k.exit_code(dpid).is_some()).ok_or(PENDING)
     });
     // (the debugger has its own handle to the event: ours is done with)
     obj::close(ev);

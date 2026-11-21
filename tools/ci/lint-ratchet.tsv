@@ -17,7 +17,7 @@ file	crates/apitrace/src/replay.rs	cast_sign_loss	20
 file	crates/apitrace/src/replay.rs	indexing_slicing	19
 file	crates/apitrace/src/replay.rs	string_slice	2
 file	crates/apitrace/src/replay.rs	unwrap_used	1
-file	crates/apitrace/src/snappy.rs	arithmetic_side_effects	30
+file	crates/apitrace/src/snappy.rs	arithmetic_side_effects	29
 file	crates/apitrace/src/snappy.rs	as_conversions	27
 file	crates/apitrace/src/snappy.rs	cast_possible_truncation	15
 file	crates/apitrace/src/snappy.rs	indexing_slicing	15
@@ -28,7 +28,7 @@ file	crates/apitrace/src/trace.rs	cast_possible_wrap	2
 file	crates/apitrace/src/trace.rs	cast_sign_loss	1
 file	crates/apitrace/src/trace.rs	indexing_slicing	3
 file	crates/asf/src/lib.rs	arithmetic_side_effects	69
-file	crates/asf/src/lib.rs	indexing_slicing	19
+file	crates/asf/src/lib.rs	indexing_slicing	16
 file	crates/asf/src/write.rs	arithmetic_side_effects	18
 file	crates/asf/src/write.rs	indexing_slicing	1
 file	crates/crt/src/dec.rs	arithmetic_side_effects	17
@@ -88,7 +88,7 @@ file	crates/foresee/src/lib.rs	as_conversions	58
 file	crates/foresee/src/lib.rs	cast_possible_truncation	29
 file	crates/foresee/src/lib.rs	cast_possible_wrap	5
 file	crates/foresee/src/lib.rs	cast_sign_loss	6
-file	crates/foresee/src/lib.rs	indexing_slicing	30
+file	crates/foresee/src/lib.rs	indexing_slicing	21
 file	crates/foresee/src/lib.rs	wildcard_enum_match_arm	1
 file	crates/glwgsl/src/lib.rs	arithmetic_side_effects	40
 file	crates/glwgsl/src/lib.rs	indexing_slicing	30
@@ -212,9 +212,8 @@ file	crates/koji/src/jit/long/sse.rs	lossy_float_literal	4
 file	crates/koji/src/jit/long/sse.rs	unwrap_used	2
 file	crates/koji/src/jit/long/sse.rs	wildcard_enum_match_arm	20
 file	crates/koji/src/jit/mod.rs	arithmetic_side_effects	289
-file	crates/koji/src/jit/mod.rs	as_conversions	23
-file	crates/koji/src/jit/mod.rs	borrow_as_ptr	1
-file	crates/koji/src/jit/mod.rs	cast_possible_truncation	7
+file	crates/koji/src/jit/mod.rs	as_conversions	22
+file	crates/koji/src/jit/mod.rs	cast_possible_truncation	6
 file	crates/koji/src/jit/mod.rs	cast_possible_wrap	1
 file	crates/koji/src/jit/mod.rs	cast_sign_loss	2
 file	crates/koji/src/jit/mod.rs	fn_to_numeric_cast_any	1
@@ -250,10 +249,9 @@ file	crates/koji/src/jit/structure.rs	indexing_slicing	71
 file	crates/koji/src/jit/structure.rs	unwrap_used	1
 file	crates/koji/src/jit/structure.rs	wildcard_enum_match_arm	1
 file	crates/koji/src/jit/wasm.rs	arithmetic_side_effects	31
-file	crates/koji/src/jit/wasm.rs	as_conversions	3
-file	crates/koji/src/jit/wasm.rs	borrow_as_ptr	1
-file	crates/koji/src/jit/wasm.rs	cast_possible_truncation	2
-file	crates/koji/src/jit/wasm.rs	cast_possible_wrap	2
+file	crates/koji/src/jit/wasm.rs	as_conversions	2
+file	crates/koji/src/jit/wasm.rs	cast_possible_truncation	1
+file	crates/koji/src/jit/wasm.rs	cast_possible_wrap	1
 file	crates/koji/src/jit/wasm.rs	declare_interior_mutable_const	1
 file	crates/koji/src/jit/wasm.rs	expect_used	1
 file	crates/koji/src/jit/wasm.rs	indexing_slicing	10
@@ -315,7 +313,7 @@ file	crates/kura/src/crashlog.rs	cast_possible_truncation	2
 file	crates/kura/src/crashlog.rs	indexing_slicing	2
 file	crates/kura/src/crashlog.rs	let_underscore_must_use	56
 file	crates/kura/src/crashlog.rs	masu-leak	1
-file	crates/kura/src/d3d11/check.rs	arithmetic_side_effects	12
+file	crates/kura/src/d3d11/check.rs	arithmetic_side_effects	11
 file	crates/kura/src/d3d11/check.rs	as_conversions	14
 file	crates/kura/src/d3d11/check.rs	indexing_slicing	9
 file	crates/kura/src/d3d11/d2d.rs	arithmetic_side_effects	24
@@ -343,7 +341,7 @@ file	crates/kura/src/d3d11/format.rs	masu-from_raw_parts	3
 file	crates/kura/src/d3d11/format.rs	ptr_as_ptr	6
 file	crates/kura/src/d3d11/format.rs	unsafe_op_in_unsafe_fn	18
 file	crates/kura/src/d3d11/hazards.rs	indexing_slicing	6
-file	crates/kura/src/d3d11/mod.rs	arithmetic_side_effects	240
+file	crates/kura/src/d3d11/mod.rs	arithmetic_side_effects	239
 file	crates/kura/src/d3d11/mod.rs	as_conversions	3
 file	crates/kura/src/d3d11/mod.rs	borrow_as_ptr	2
 file	crates/kura/src/d3d11/mod.rs	cast_precision_loss	2
@@ -360,7 +358,7 @@ file	crates/kura/src/d3d9/d3d8.rs	as_conversions	1
 file	crates/kura/src/d3d9/d3d8.rs	indexing_slicing	15
 file	crates/kura/src/d3d9/d3d8.rs	missing_safety_doc	1
 file	crates/kura/src/d3d9/d3d8.rs	unsafe_op_in_unsafe_fn	120
-file	crates/kura/src/d3d9/device.rs	arithmetic_side_effects	300
+file	crates/kura/src/d3d9/device.rs	arithmetic_side_effects	297
 file	crates/kura/src/d3d9/device.rs	as_conversions	58
 file	crates/kura/src/d3d9/device.rs	borrow_as_ptr	4
 file	crates/kura/src/d3d9/device.rs	cast_possible_truncation	7
@@ -446,7 +444,7 @@ file	crates/kura/src/gl/glsl.rs	ptr_as_ptr	9
 file	crates/kura/src/gl/glsl.rs	string_slice	2
 file	crates/kura/src/gl/glsl.rs	unsafe_op_in_unsafe_fn	55
 file	crates/kura/src/gl/mod.rs	allow-attr	1
-file	crates/kura/src/gl/mod.rs	arithmetic_side_effects	98
+file	crates/kura/src/gl/mod.rs	arithmetic_side_effects	97
 file	crates/kura/src/gl/mod.rs	as_conversions	111
 file	crates/kura/src/gl/mod.rs	cast_possible_truncation	52
 file	crates/kura/src/gl/mod.rs	cast_possible_wrap	2
@@ -493,12 +491,12 @@ file	crates/kura/src/pages.rs	arithmetic_side_effects	25
 file	crates/kura/src/pages.rs	as_conversions	31
 file	crates/kura/src/pages.rs	cast_possible_truncation	8
 file	crates/kura/src/pages.rs	indexing_slicing	8
-file	crates/kura/src/render/d3d.rs	arithmetic_side_effects	420
+file	crates/kura/src/render/d3d.rs	arithmetic_side_effects	418
 file	crates/kura/src/render/d3d.rs	as_conversions	74
 file	crates/kura/src/render/d3d.rs	cast_possible_truncation	13
 file	crates/kura/src/render/d3d.rs	cast_precision_loss	34
 file	crates/kura/src/render/d3d.rs	cast_sign_loss	7
-file	crates/kura/src/render/d3d.rs	indexing_slicing	420
+file	crates/kura/src/render/d3d.rs	indexing_slicing	418
 file	crates/kura/src/render/d3d.rs	iter_over_hash_type	6
 file	crates/kura/src/render/d3d.rs	masu-from_raw_parts	4
 file	crates/kura/src/render/d3d.rs	multiple_unsafe_ops_per_block	1
@@ -506,7 +504,7 @@ file	crates/kura/src/render/d3d.rs	undocumented_unsafe_blocks	6
 file	crates/kura/src/render/d3d.rs	unwrap_used	1
 file	crates/kura/src/render/d3d.rs	useless_vec	1
 file	crates/kura/src/render/d3d/snap.rs	arithmetic_side_effects	15
-file	crates/kura/src/render/d3d/snap.rs	indexing_slicing	12
+file	crates/kura/src/render/d3d/snap.rs	indexing_slicing	10
 file	crates/kura/src/render/d3d/snap.rs	iter_over_hash_type	1
 file	crates/kura/src/render/gpu.rs	arithmetic_side_effects	4
 file	crates/kura/src/render/gpu.rs	as_conversions	7
@@ -736,7 +734,7 @@ file	crates/masu/src/pack.rs	cast_possible_truncation	9
 file	crates/masu/src/pack.rs	indexing_slicing	2
 file	crates/masu/src/pack.rs	let_underscore_must_use	4
 file	crates/masu/src/pack.rs	map_err_ignore	1
-file	crates/masu/src/pack.rs	masu-wire_tree	5
+file	crates/masu/src/pack.rs	masu-wire_tree	3
 file	crates/masu/src/pack.rs	string_slice	2
 file	crates/masu/src/portable.rs	arithmetic_side_effects	2
 file	crates/masu/src/portable.rs	as_conversions	1
@@ -804,7 +802,7 @@ file	crates/masu/src/unpack.rs	cast_possible_truncation	19
 file	crates/masu/src/unpack.rs	cast_possible_wrap	1
 file	crates/masu/src/unpack.rs	cast_precision_loss	1
 file	crates/masu/src/unpack.rs	cast_sign_loss	1
-file	crates/masu/src/unpack.rs	indexing_slicing	29
+file	crates/masu/src/unpack.rs	indexing_slicing	27
 file	crates/masu/src/unpack.rs	let_underscore_must_use	5
 file	crates/masu/src/unpack.rs	octal_escapes	1
 file	crates/masu/src/unpack.rs	unwrap_in_result	2
@@ -909,7 +907,7 @@ file	crates/sake/src/acm.rs	iter_over_hash_type	1
 file	crates/sake/src/actctx.rs	arithmetic_side_effects	151
 file	crates/sake/src/actctx.rs	as_conversions	105
 file	crates/sake/src/actctx.rs	cast_possible_truncation	62
-file	crates/sake/src/actctx.rs	indexing_slicing	18
+file	crates/sake/src/actctx.rs	indexing_slicing	16
 file	crates/sake/src/actctx.rs	iter_over_hash_type	1
 file	crates/sake/src/actctx.rs	map_err_ignore	5
 file	crates/sake/src/actctx.rs	match_wildcard_for_single_variants	1
@@ -1155,7 +1153,7 @@ file	crates/sake/src/dbg.rs	cast_possible_truncation	14
 file	crates/sake/src/dbg.rs	indexing_slicing	1
 file	crates/sake/src/dbg.rs	let_underscore_must_use	5
 file	crates/sake/src/dbg.rs	unwrap_used	3
-file	crates/sake/src/ddraw.rs	arithmetic_side_effects	156
+file	crates/sake/src/ddraw.rs	arithmetic_side_effects	155
 file	crates/sake/src/ddraw.rs	as_conversions	99
 file	crates/sake/src/ddraw.rs	cast_possible_truncation	22
 file	crates/sake/src/ddraw.rs	cast_possible_wrap	8
@@ -1163,7 +1161,7 @@ file	crates/sake/src/ddraw.rs	cast_sign_loss	36
 file	crates/sake/src/ddraw.rs	indexing_slicing	32
 file	crates/sake/src/ddraw.rs	multiple_unsafe_ops_per_block	4
 file	crates/sake/src/ddraw.rs	undocumented_unsafe_blocks	10
-file	crates/sake/src/dds.rs	arithmetic_side_effects	8
+file	crates/sake/src/dds.rs	arithmetic_side_effects	7
 file	crates/sake/src/dds.rs	as_conversions	7
 file	crates/sake/src/dds.rs	cast_possible_truncation	3
 file	crates/sake/src/dds.rs	indexing_slicing	4
@@ -1368,7 +1366,7 @@ file	crates/sake/src/imageload.rs	unwrap_used	1
 file	crates/sake/src/ini.rs	arithmetic_side_effects	25
 file	crates/sake/src/ini.rs	as_conversions	13
 file	crates/sake/src/ini.rs	cast_possible_truncation	6
-file	crates/sake/src/ini.rs	indexing_slicing	18
+file	crates/sake/src/ini.rs	indexing_slicing	16
 file	crates/sake/src/ini.rs	let_underscore_must_use	2
 file	crates/sake/src/ini.rs	map_err_ignore	1
 file	crates/sake/src/ini.rs	string_slice	1
@@ -1506,7 +1504,7 @@ file	crates/sake/src/misc.rs	cast_possible_truncation	136
 file	crates/sake/src/misc.rs	cast_possible_wrap	12
 file	crates/sake/src/misc.rs	cast_precision_loss	8
 file	crates/sake/src/misc.rs	cast_sign_loss	18
-file	crates/sake/src/misc.rs	indexing_slicing	76
+file	crates/sake/src/misc.rs	indexing_slicing	72
 file	crates/sake/src/misc.rs	iter_over_hash_type	1
 file	crates/sake/src/misc.rs	let_underscore_must_use	2
 file	crates/sake/src/misc.rs	map_err_ignore	1
@@ -1563,7 +1561,7 @@ file	crates/sake/src/msi_install.rs	cast_possible_truncation	16
 file	crates/sake/src/msi_install.rs	cast_possible_wrap	6
 file	crates/sake/src/msi_install.rs	cast_sign_loss	15
 file	crates/sake/src/msi_install.rs	get_unwrap	1
-file	crates/sake/src/msi_install.rs	indexing_slicing	83
+file	crates/sake/src/msi_install.rs	indexing_slicing	81
 file	crates/sake/src/msi_install.rs	iter_over_hash_type	1
 file	crates/sake/src/msi_install.rs	let_underscore_must_use	5
 file	crates/sake/src/msi_install.rs	map_err_ignore	6
@@ -1588,7 +1586,7 @@ file	crates/sake/src/msi_search.rs	arithmetic_side_effects	6
 file	crates/sake/src/msi_search.rs	as_conversions	3
 file	crates/sake/src/msi_search.rs	cast_possible_truncation	1
 file	crates/sake/src/msi_search.rs	cast_sign_loss	2
-file	crates/sake/src/msi_search.rs	indexing_slicing	11
+file	crates/sake/src/msi_search.rs	indexing_slicing	6
 file	crates/sake/src/msi_search.rs	string_slice	4
 file	crates/sake/src/msi_search.rs	unwrap_used	1
 file	crates/sake/src/msi_search.rs	wildcard_enum_match_arm	4
@@ -1782,7 +1780,7 @@ file	crates/sake/src/seh64.rs	unwrap_used	9
 file	crates/sake/src/services.rs	arithmetic_side_effects	22
 file	crates/sake/src/services.rs	as_conversions	9
 file	crates/sake/src/services.rs	cast_possible_truncation	9
-file	crates/sake/src/services.rs	indexing_slicing	9
+file	crates/sake/src/services.rs	indexing_slicing	7
 file	crates/sake/src/services.rs	map_entry	1
 file	crates/sake/src/services.rs	map_err_ignore	2
 file	crates/sake/src/services.rs	unwrap_used	12
@@ -1897,7 +1895,7 @@ file	crates/sake/src/user.rs	cast_possible_truncation	131
 file	crates/sake/src/user.rs	cast_possible_wrap	76
 file	crates/sake/src/user.rs	cast_precision_loss	2
 file	crates/sake/src/user.rs	cast_sign_loss	150
-file	crates/sake/src/user.rs	indexing_slicing	134
+file	crates/sake/src/user.rs	indexing_slicing	132
 file	crates/sake/src/user.rs	iter_over_hash_type	5
 file	crates/sake/src/user.rs	match_wildcard_for_single_variants	1
 file	crates/sake/src/user.rs	ptr_as_ptr	1
@@ -2054,7 +2052,6 @@ file	crates/sake/src/xof.rs	cast_possible_wrap	1
 file	crates/sake/src/xof.rs	cast_sign_loss	2
 file	crates/sake/src/xof.rs	indexing_slicing	36
 file	crates/sake/src/xof.rs	string_slice	2
-file	crates/sake/src/xof.rs	unreachable	1
 file	crates/sake/src/xof.rs	unwrap_in_result	4
 file	crates/sake/src/xof.rs	unwrap_used	4
 file	crates/sake/src/xof.rs	wildcard_enum_match_arm	10
@@ -2070,7 +2067,6 @@ file	crates/shaderconf/src/fflight.rs	arithmetic_side_effects	38
 file	crates/shaderconf/src/fflight.rs	indexing_slicing	50
 file	crates/shaderconf/src/ffstages.rs	arithmetic_side_effects	8
 file	crates/shaderconf/src/ffstages.rs	indexing_slicing	16
-file	crates/shaderconf/src/ffstages.rs	unreachable	1
 file	crates/shaderconf/src/fuzz.rs	arithmetic_side_effects	14
 file	crates/shaderconf/src/fuzz.rs	exit	1
 file	crates/shaderconf/src/fuzz.rs	indexing_slicing	15
@@ -2096,7 +2092,7 @@ file	crates/tls-client/src/lib.rs	cast_possible_truncation	1
 file	crates/tls-client/src/lib.rs	expect_used	1
 file	crates/tls-client/src/lib.rs	indexing_slicing	8
 file	crates/tls-client/src/lib.rs	map_err_ignore	4
-file	crates/vorbis/src/bits.rs	arithmetic_side_effects	10
+file	crates/vorbis/src/bits.rs	arithmetic_side_effects	9
 file	crates/vorbis/src/bits.rs	as_conversions	3
 file	crates/vorbis/src/bits.rs	cast_possible_truncation	2
 file	crates/vorbis/src/codebook.rs	arithmetic_side_effects	31

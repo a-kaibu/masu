@@ -74,7 +74,7 @@ fn parse_signature(c: &[u8], size: usize) -> Vec<SigElement> {
             break;
         };
         let name_off = kome::num::us(name_off);
-        let name = c.get(name_off..).map_or(String::new(), |s| {
+        let name = c.get(name_off..).map_or_default(|s| {
             let e = s.iter().position(|&b| b == 0).unwrap_or(s.len());
             String::from_utf8_lossy(&s[..e]).into_owned()
         });

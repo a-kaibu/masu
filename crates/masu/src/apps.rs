@@ -219,7 +219,7 @@ pub async fn file(State(a): State<Apps>, Path((key, path)): Path<(String, String
         return StatusCode::NOT_FOUND.into_response();
     }
     let (mut parts, body) = req.into_parts();
-    let q = parts.uri.query().map(|q| format!("?{q}")).unwrap_or_default();
+    let q = parts.uri.query().map_or_default(|q| format!("?{q}"));
     let Ok(uri) = format!("/{path}{q}").parse::<Uri>() else { return StatusCode::BAD_REQUEST.into_response() };
     parts.uri = uri;
     // (a fresh request but for the peer: the route's own path parameters must not go along)
