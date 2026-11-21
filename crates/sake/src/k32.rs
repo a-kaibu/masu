@@ -8347,19 +8347,71 @@ fn GetFullPathNameW(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::GetFullPathNameW>();
     full_path_w(c.ctx())
 }
+/// GetLongPathNameW / GetShortPathNameW (longshort.rs): NULL is ERROR_INVALID_PARAMETER; a
+/// path GetFileAttributesW does not find fails with its error; each component that may be the
+/// other kind of name is looked up. The answer fits (count > length): copied with its NUL,
+/// the length; else the length with the NUL.
+fn long_short(src: &[u16], short: bool) -> Option<Vec<u16>> {
+    let s = String::from_utf16_lossy(src);
+    if file_attrs(&s) == u32::MAX {
+        return None;
+    }
+    let lead = |b: u8| crate::text::is_lead(b);
+    let is_short = |x: &[u16]| crate::longshort::is_short_name(x, &crate::text::w2a(x), &lead);
+    let find = |q: &[u16]| {
+        let qs = String::from_utf16_lossy(q);
+        let hit = files::find(&qs).and_then(|f| f.entries.first().map(|(n, _)| n.encode_utf16().collect::<Vec<u16>>()));
+        let hit = hit.or_else(|| is_system_dll_path(&qs).then(|| qs.rsplit(['\\', '/']).next().unwrap_or("").to_ascii_lowercase().encode_utf16().collect()));
+        match hit {
+            Some(long) => Some(crate::longshort::Found { long, short: Vec::new() }),
+            None => {
+                last_error(2);
+                None
+            }
+        }
+    };
+    crate::longshort::convert(src, short, &is_short, &find).ok()
+}
+fn long_short_call(c: &mut Ctx, wide: bool, short: bool) -> u32 {
+    let (src, dst, count) = (c.a(0), c.a(1), c.a(2));
+    if src == 0 {
+        last_error(87);
+        return 0;
+    }
+    let w = if wide { wstr(src) } else { a2w(&cstr(src)) };
+    let Some(r) = long_short(&w, short) else { return 0 };
+    if wide {
+        let n = kome::num::u32_of(r.len());
+        if count > n && dst != 0 {
+            crate::fullpath::put_units(dst, &r);
+            mem::w16(mem::ga(dst).at(n, 2), 0);
+            n
+        } else {
+            n.saturating_add(1)
+        }
+    } else {
+        let a = crate::text::w2a(&r);
+        let n = kome::num::u32_of(a.len());
+        if count > n && dst != 0 {
+            mem::write(dst, &a);
+            mem::w8(mem::ga(dst) + n, 0);
+            n
+        } else {
+            n.saturating_add(1)
+        }
+    }
+}
 fn GetShortPathNameA(c: &mut Ctx) -> u32 {
-    let s = arg_str(c.a(0), false);
-    ret_str(c.a(1), c.a(2), &s, false)
+    long_short_call(c, false, true)
 }
 fn GetShortPathNameW(c: &mut Ctx) -> u32 {
-    let s = arg_str(c.a(0), true);
-    ret_str(c.a(1), c.a(2), &s, true)
+    long_short_call(c, true, true)
 }
 fn GetLongPathNameA(c: &mut Ctx) -> u32 {
-    GetShortPathNameA(c)
+    long_short_call(c, false, false)
 }
 fn GetLongPathNameW(c: &mut Ctx) -> u32 {
-    GetShortPathNameW(c)
+    long_short_call(c, true, false)
 }
 fn cur_dir(c: &mut Ctx, wide: bool) -> u32 {
     let d = files::cwd();

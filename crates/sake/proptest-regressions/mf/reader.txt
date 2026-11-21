@@ -7,3 +7,4 @@
 cc 229431b125d407c06311751ae68e4913c57b59da07a24a458d86295cf0cd2378 # shrinks to which = 2, cut = 410, flips = [(68709, 32)]
 cc a4b9a5a95c34b952591df2ae99a38e73033ff0a76609f0b5e8419acc1023105b # shrinks to n = 17, delays = [15, 0, 9]
 cc d1c97151fe43687e2d4d660c18e9798c0f540fbc6fd8f1dca537476c022133fc # shrinks to n = 24, delays = [19, 2]
+cc 0133126d936ce0cec336736d90cf21700d920ca1ff14c455bcc6cf818fb5d8ae # shrinks to n = 7, delays = [20, 37]
