@@ -50,24 +50,26 @@ pub struct Response {
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
-pub fn default_config() -> Arc<rustls::ClientConfig> {
-    static CONFIG: OnceLock<Arc<rustls::ClientConfig>> = OnceLock::new();
+/// The client configuration: ring, the safe protocol versions, webpki's roots (made once; Err
+/// when the provider has none of those versions).
+pub fn default_config() -> Result<Arc<rustls::ClientConfig>, Error> {
+    static CONFIG: OnceLock<Result<Arc<rustls::ClientConfig>, rustls::Error>> = OnceLock::new();
     CONFIG
         .get_or_init(|| {
             let roots = rustls::RootCertStore {
                 roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
             };
-            Arc::new(
+            Ok(Arc::new(
                 rustls::ClientConfig::builder_with_provider(Arc::new(
                     rustls::crypto::ring::default_provider(),
                 ))
-                .with_safe_default_protocol_versions()
-                .expect("TLS protocol versions")
+                .with_safe_default_protocol_versions()?
                 .with_root_certificates(roots)
                 .with_no_client_auth(),
-            )
+            ))
         })
         .clone()
+        .map_err(Error::Tls)
 }
 fn token(s: &str) -> bool {
     !s.is_empty()

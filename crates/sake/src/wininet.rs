@@ -430,7 +430,7 @@ fn transport(r: &Request) -> Result<Response, u32> {
     };
     let io = crate::tls_socket::Socket::open(&host, connection.session.timeout).map_err(|_| 12029u32)?;
     let response =
-        masu_tls::exchange(io, &request, masu_tls::default_config()).map_err(|error| -> u32 {
+        masu_tls::default_config().and_then(|config| masu_tls::exchange(io, &request, config)).map_err(|error| -> u32 {
             use masu_tls::{
                 Error,
                 rustls::{CertificateError, Error as TlsError},
