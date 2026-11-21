@@ -44,6 +44,7 @@ pub enum Rule {
     ShellSpecialEnv,
     DepthGuard,
     WgslLoadBounds,
+    ClearRounding,
     BooleanArg,
     TypedRegisters,
     NtdllOwnCrt,
@@ -63,7 +64,7 @@ pub enum Rule {
 }
 
 impl Rule {
-    pub const ALL: [Rule; 43] = [
+    pub const ALL: [Rule; 44] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -91,6 +92,7 @@ impl Rule {
         Rule::ShellSpecialEnv,
         Rule::DepthGuard,
         Rule::WgslLoadBounds,
+        Rule::ClearRounding,
         Rule::BooleanArg,
         Rule::TypedRegisters,
         Rule::NtdllOwnCrt,
@@ -139,6 +141,7 @@ impl Rule {
             Rule::ShellSpecialEnv => "shell-special-env",
             Rule::DepthGuard => "depth-guard",
             Rule::WgslLoadBounds => "wgsl-load-bounds",
+            Rule::ClearRounding => "clear-rounding",
             Rule::BooleanArg => "boolean-arg",
             Rule::TypedRegisters => "typed-registers",
             Rule::NtdllOwnCrt => "ntdll-own-crt",
@@ -187,6 +190,7 @@ impl Rule {
             Rule::ShellSpecialEnv => "a workflow's env or a script does not set one of bash's own variables (bench.yml's inputs went through GROUPS: a script's GROUPS=.. is dropped, RANDOM/SECONDS/LINENO are replaced, whether an env value gets in depends on the variable and the bash version): give it a name of its own",
             Rule::DepthGuard => "the depth limits on recursion over game and file input stay (regress::DEPTH_GUARDS; review b00/b04/b07: damaged traces, MSI conditions, shaders, .x files nesting without end blew the stack): keep the const and the check against it; a new limit is added to the list",
             Rule::WgslLoadBounds => "a texel fetch outside its texture is 0 in Direct3D (2026-11-21: ld gave WGSL's texel there): dxwgsl writes textureLoad only as select(zero, textureLoad(..), address in bounds), on one line",
+            Rule::ClearRounding => "Windows clears 16-bit and 11/10-bit float channels toward zero (2026-11-21: kura rounded them to the nearest, winref d3d11clear): kura's clear.rs makes them with f16_rtz / rtz_bits, never format::f16_bits",
             Rule::BooleanArg => "a BOOLEAN parameter is its low byte (2026-11-20, RtlAnsiStringToUnicodeString read c.a(2) != 0): read it with c.boolean(i); win32.rs BOOLEAN_ARGS lists them",
             Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
             Rule::Utf8OneDecoder => "sake decodes UTF-8 by one rule, Windows' (RtlUTF8ToUnicodeN: a wrong second byte is swallowed with its lead into one U+FFFD, not Unicode's maximal subparts; 2026-11-21, MultiByteToWideChar had its own): only rtlstr.rs splits bytes with utf8_chunks; elsewhere call crate::rtlstr::utf8_units",
@@ -236,6 +240,7 @@ impl Rule {
             Rule::ShellSpecialEnv => regress::shell_special_env(tree),
             Rule::DepthGuard => regress::depth_guard(tree),
             Rule::WgslLoadBounds => regress::wgsl_load_bounds(tree),
+            Rule::ClearRounding => regress::clear_rounding(tree),
             Rule::BooleanArg => crate::win32::boolean_arg(tree),
             Rule::TypedRegisters => typed_registers(tree),
             Rule::NtdllOwnCrt => crate::win32::ntdll_own_crt(tree),
