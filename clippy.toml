@@ -3,7 +3,9 @@ allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 # (kura::guest::Ga, named as clippy prints it inside sake: a guest address, whose + and - wrap at
 # 4 GiB as the x86's do, by design)
-arithmetic-side-effects-allowed = ["kura::guest::Ga", "guest::Ga"]
+# (kura::d3d11::tess::N, the tessellator's counts and indices: the reference's C ints, + - *
+# wrap, small by construction)
+arithmetic-side-effects-allowed = ["kura::guest::Ga", "guest::Ga", "kura::d3d11::tess::N", "d3d11::tess::N"]
 # (masu-lint ratchet counts these per file under the masu-* name each reason starts with: unsafe
 # functions named by their type, not by a text search)
 disallowed-methods = [

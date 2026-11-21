@@ -1,0 +1,12 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc df0ea6ee13940ebd9d9ce0b706cc4cd5088d385f2c6736f061394ba21503bda2 # shrinks to out = Point, k = 1, rest = [1, 2, 1]
+cc 433f724d9d51f2c733dd5d1fea5dc3c103e968a786d6fe23bdcf5cd091f661bf # shrinks to p = FractionalOdd, shared = 55.067608, a = [0.05102229, 25.0803, 0.0], b = [46.75212, 43.225067, 0.0], e = 2
+cc 50d424ae65fd0153ddc76dd6997a81d35ced1cc36dbc7828c67154d017d3c48a # shrinks to p = FractionalOdd, density = 52.66914, detail = 1.0000077, lines = false
+cc 74abfdeff206f72ef52361c4323ad76452aade5eaf8ca9fb91f573c6dbd2bd39 # shrinks to p = FractionalOdd, f = 58.807667, g = [22.634657, 1.0000077, 0.0], i = [0.0, 0.0]
+cc d12116f80b68f1e07226e9d7fd50929b57ccec8dcdadc1734b5107d368aa384e # shrinks to p = FractionalOdd, out = Point, e = [57.11484, 1.0000077, 4.90373, 45.840347], i = [0.0, 0.0]
+cc 23dae78b30bad630c724e5c3fd2bd5f35db74a9d1c1669b54c96fb954d4484e8 # shrinks to p = FractionalOdd, out = Point, e = [55.644142, 16.997444, 52.835423], i = 0.0

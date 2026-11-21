@@ -5187,7 +5187,7 @@ mod crt_resolution_tests {
 
     fn same(a: Option<api::Handler>, b: Option<api::Handler>) -> bool {
         match (a, b) {
-            (Some(a), Some(b)) => a as usize == b as usize,
+            (Some(a), Some(b)) => std::ptr::fn_addr_eq(a, b),
             (None, None) => true,
             _ => false,
         }

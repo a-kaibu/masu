@@ -15,6 +15,7 @@ mod deferred;
 pub mod query;
 pub mod check;
 mod expand;
+pub mod tess;
 mod clear;
 pub mod format;
 mod hazards;

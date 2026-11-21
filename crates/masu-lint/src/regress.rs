@@ -405,10 +405,7 @@ impl<'a> syn::visit::Visit<'a> for HandLock {
     fn visit_expr_method_call(&mut self, c: &'a syn::ExprMethodCall) {
         let m = c.method.to_string();
         if c.args.is_empty() && LOCK_METHODS.contains(&m.as_str()) {
-            let named = match &*c.receiver {
-                syn::Expr::Path(p) => p.path.get_ident().is_some_and(|i| self.opened.contains(&i.to_string())),
-                _ => false,
-            };
+            let named = if let syn::Expr::Path(p) = &*c.receiver { p.path.get_ident().is_some_and(|i| self.opened.contains(&i.to_string())) } else { false };
             if named || opens_a_file(&c.receiver) {
                 self.hits.push((m, crate::syntax::line(c.method.span())));
             }

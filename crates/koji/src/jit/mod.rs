@@ -1267,7 +1267,7 @@ impl<'a> Gen<'a> {
     /// was missed when only its start went; review e18bf44).
     fn smc_check(&mut self, e: u32, size: u32) {
         // (the first byte's page, then the last byte's: e + size - 1 worked out where used)
-        for o in [0, size.max(1) - 1] {
+        for o in [0, size.saturating_sub(1)] {
             self.c.get(L_CPU).load32(Off::code_pages());
             self.c.get(e);
             if o > 0 {
