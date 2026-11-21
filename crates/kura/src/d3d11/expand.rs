@@ -58,7 +58,10 @@ pub fn so_desc(osgn: &[dxwgsl::dxbc::SigElement], gs: bool, entries: &[RawEntry]
     }
     let rasterized = match raster {
         NO_RASTERIZED_STREAM => None,
+        // (a vertex shader's has only stream 0: another rasterized stream is accepted, winref
+        // d3d11gs "rasterized stream 1" S_OK, and has nothing in it)
         r if r < 4 && (gs || r == 0) => Some(r),
+        r if r < 4 => None,
         _ => return Err(E_INVALIDARG),
     };
     let mut bytes = [0u32; 4];
@@ -381,32 +384,89 @@ fn strip_prims(t: Topo, r: &[u32], out: &mut Vec<Vec<u32>>) {
             }
         }
         Topo::TriangleStripAdj => {
-            // (2 (m + 2) vertices: m triangles; OpenGL 4.6 table 10.1, 1-based, as (vertex,
-            // adjacent) pairs in the geometry shader's order)
+            // (2 (m + 2) vertices: m triangles, as Direct3D gives them to a geometry shader:
+            // corner, adjacent, corner, adjacent, corner, adjacent, the odd triangles' corners
+            // in the order that keeps the strip's winding; winref d3d11gs "the vertices a
+            // geometry shader is given", strip adjacency of 6, 8 and 10)
             let m = (r.len() / 2).saturating_sub(2);
             for i in 0..m {
                 let p = |o: usize| i.saturating_mul(2).saturating_add(o);
-                let before = p(0).saturating_sub(1);
-                let last = i.saturating_add(1) == m;
-                let (v, a): ([usize; 3], [usize; 3]) = if m == 1 {
-                    ([1, 3, 5], [2, 6, 4])
-                } else if i == 0 {
-                    ([1, 3, 5], [2, 7, 4])
-                } else if last && i % 2 == 1 {
-                    ([p(3), p(1), p(5)], [before, p(4), p(6)])
-                } else if last {
-                    ([p(1), p(3), p(5)], [before, p(6), p(4)])
-                } else if i % 2 == 1 {
-                    ([p(3), p(1), p(5)], [before, p(4), p(7)])
+                let far = if i.saturating_add(1) == m { p(5) } else { p(6) };
+                let k: [usize; 6] = if i % 2 == 0 {
+                    [p(0), if i == 0 { 1 } else { p(0).saturating_sub(2) }, p(2), far, p(4), p(3)]
                 } else {
-                    ([p(1), p(3), p(5)], [before, p(7), p(4)])
+                    [p(0), p(3), p(4), far, p(2), p(0).saturating_sub(2)]
                 };
-                let z = |k: usize| at(k.saturating_sub(1));
-                out.push(vec![z(v[0]), z(a[0]), z(v[1]), z(a[1]), z(v[2]), z(a[2])]);
+                out.push(k.iter().map(|&k| at(k)).collect());
             }
         }
         Topo::Points | Topo::Lines | Topo::Triangles | Topo::LinesAdj | Topo::TrianglesAdj => {}
     }
+}
+
+/// The restart index of the bound index buffer's format (strips are cut at it).
+fn cut_value(st: &State) -> u32 {
+    if st.ib.1 == 42 { u32::MAX } else { 0xffff }
+}
+
+/// Index `k` of a draw from index `start` of the bound index buffer: 0 past its end or without
+/// one (Direct3D 11 reads 0 there: winref d3d11gs "indexed strip" reading past the end).
+fn index_at(d: &D11, st: &State, start: u32, k: u32) -> u32 {
+    let Some(Data::Buffer(b)) = d.objs.get(&st.ib.0).map(|o| &o.data) else { return 0 };
+    let isz: u32 = if st.ib.1 == 42 { 4 } else { 2 };
+    let at = u64::from(st.ib.2).saturating_add(u64::from(start).saturating_add(u64::from(k)).saturating_mul(u64::from(isz)));
+    if at.saturating_add(u64::from(isz)) > u64::from(b.size) {
+        return 0;
+    }
+    let p = b.mem.wrapping_add(lo32(at));
+    if isz == 4 {
+        // SAFETY: inside the buffer's guest memory (checked above)
+        unsafe { rd(p, 0) }
+    } else {
+        // SAFETY: inside the buffer's guest memory (checked above)
+        u32::from(unsafe { *gc::<u16>(p) })
+    }
+}
+
+/// An indexed draw's input assembly per instance (count indices from `start`): its primitives
+/// (a strip cut at the restart index) and the distinct indices of their vertices, the vertex
+/// shader's runs (Direct3D shades each once: winref d3d11gs "indexed 0 1 2 2 1 3" VS 4).
+/// None for a topology the input assembler does not make primitives of here (patch lists).
+pub fn assembled_indexed(d: &mut D11, st: &State, count: u32, start: u32) -> Option<query::Assembled> {
+    let topo = Topo::of(st.topology)?;
+    pull(d, st.ib.0);
+    let prims = assemble(topo, count, |k| topo.strip() && index_at(d, st, start, k) == cut_value(st));
+    let mut seen = std::collections::HashSet::new();
+    for k in prims.iter().flatten() {
+        seen.insert(index_at(d, st, start, *k));
+    }
+    Some(query::Assembled { primitives: u64::try_from(prims.len()).unwrap_or(u64::MAX), shaded: u64::try_from(seen.len()).unwrap_or(u64::MAX) })
+}
+
+/// What the rasterizer takes of a draw of an adjacency topology without a geometry shader: each
+/// primitive's own corners (`Topo::corners`), as a line list (lines with adjacency) or a
+/// triangle list, the vertex numbers of a draw without indices or the index values of one
+/// with them (strips cut at the cut value, indices past the buffer's end 0). None: not an
+/// adjacency topology.
+pub fn adjacency_list(d: &mut D11, st: &State, indexed: bool, count: u32, start: u32) -> Option<(Vec<u32>, bool)> {
+    let topo = Topo::of(st.topology)?;
+    let lines = match topo {
+        Topo::LinesAdj | Topo::LineStripAdj => true,
+        Topo::TrianglesAdj | Topo::TriangleStripAdj => false,
+        Topo::Points | Topo::Lines | Topo::LineStrip | Topo::Triangles | Topo::TriangleStrip => return None,
+    };
+    if indexed {
+        pull(d, st.ib.0);
+    }
+    let corners = rasterized(topo, count, |k| indexed && topo.strip() && index_at(d, st, start, k) == cut_value(st));
+    let list = corners.into_iter().map(|k| if indexed { index_at(d, st, start, k) } else { start.saturating_add(k) }).collect();
+    Some((list, lines))
+}
+
+/// The vertex numbers (0 .. n) of the corners the rasterizer takes of `n` vertices of topology
+/// `t` (`assemble`, `Topo::corners`), primitive after primitive.
+pub fn rasterized(t: Topo, n: u32, cut: impl Fn(u32) -> bool) -> Vec<u32> {
+    assemble(t, n, cut).iter().flat_map(|p| t.corners().iter().map(|&c| p.get(c).copied().unwrap_or(0))).collect()
 }
 
 /// A pass that could not be made: without a geometry shader the draw goes on as it is, with one
@@ -567,24 +627,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
     if ib != 0 {
         pull(d, ib);
     }
-    let cut_value: u32 = if st.ib.1 == 42 { u32::MAX } else { 0xffff };
-    let index = |d: &D11, k: u32| -> Option<u32> {
-        let Some(Data::Buffer(b)) = d.objs.get(&ib).map(|o| &o.data) else { return None };
-        let isz: u32 = if st.ib.1 == 42 { 4 } else { 2 };
-        let at = u64::from(st.ib.2).saturating_add(u64::from(start).saturating_add(u64::from(k)).saturating_mul(u64::from(isz)));
-        if at.saturating_add(u64::from(isz)) > u64::from(b.size) {
-            return None;
-        }
-        let p = b.mem.wrapping_add(lo32(at));
-        if isz == 4 {
-            // SAFETY: inside the buffer's guest memory (checked above)
-            Some(unsafe { rd(p, 0) })
-        } else {
-            // SAFETY: inside the buffer's guest memory (checked above)
-            Some(u32::from(unsafe { *gc::<u16>(p) }))
-        }
-    };
-    let prims = assemble(topo, count, |k| indexed && topo.strip() && index(d, k) == Some(cut_value));
+    let prims = assemble(topo, count, |k| indexed && topo.strip() && index_at(d, st, start, k) == cut_value(st));
     let attrs = attributes(d, st, &vs_code);
     let Some((attrs, vbs)) = attrs else { return After::Draw };
     // the uniform's vertex words

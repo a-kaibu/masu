@@ -1,6 +1,6 @@
 /* Direct3D 11 geometry shaders, stream output and what the pipeline statistics count:
  *  - zero-sized viewports (width, height or both 0): pixels written, samples counted, the
- *    clipper's counts, RSGetViewports;
+ *    clipper's counts, RSGetViewports (a clockwise full-target triangle: not culled);
  *  - PIPELINE_STATISTICS of single triangles placed in clip space (inside, outside, across an
  *    edge, far outside, across the near plane, behind it, a negative w, degenerate, culled),
  *    of indexed draws reusing vertices, strips, lines and points;
@@ -32,7 +32,7 @@ static ID3D11DeviceContext *ctx;
 static const char *SRC =
     "struct V { float4 p : SV_Position; uint id : ID; };\n"
     "V vs_id(uint id : SV_VertexID, uint inst : SV_InstanceID) { V o; o.p = float4(0, 0, 0.5, 1); o.id = id + inst * 100; return o; }\n"
-    "float4 vs_full(uint id : SV_VertexID) : SV_Position { return float4((id & 1) * 4.0 - 1.0, (id >> 1) * 4.0 - 1.0, 0.5, 1); }\n"
+    "float4 vs_full(uint id : SV_VertexID) : SV_Position { return float4((id >> 1) * 4.0 - 1.0, (id & 1) * 4.0 - 1.0, 0.5, 1); }\n"
     "float4 vs_pos(float4 p : POS) : SV_Position { return p; }\n"
     "struct S { float4 p : SV_Position; float4 c : COL; float2 t : TEX; };\n"
     "S vs_so(float4 p : POS, uint id : SV_VertexID) { S o; o.p = p; o.c = float4(id, id * 2, id * 3, id * 4); o.t = float2(id + 0.5, -1.0 * id); return o; }\n"

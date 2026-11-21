@@ -1455,6 +1455,9 @@ fn after_lost(d: &mut D11) {
         return;
     }
     d.lost_seen = g;
+    // (the expanded draws' page buffers and shaders went with it; what stream output wrote
+    // there too: those buffers hold their guest bytes again)
+    d.expand = expand::Gpu::default();
     let mut ids: Vec<u32> = d.objs.keys().copied().collect();
     ids.sort_unstable();
     for id in ids {
@@ -1462,6 +1465,7 @@ fn after_lost(d: &mut D11) {
             Some(Data::Buffer(b)) if b.gpu != 0 => {
                 b.dirty = true;
                 b.stream = false;
+                b.gpu_written = false;
             }
             Some(Data::Texture(t)) if t.gpu != 0 && !t.bits.is_empty() => {
                 let mut subs: Vec<(u32, Vec<u8>)> = t.bits.iter().map(|(&k, v)| (k, v.clone())).collect();
@@ -4437,7 +4441,14 @@ unsafe fn draw(d: &mut D11, st: &State, indexed: bool, count: u32, instances: u3
         Some(Data::Shader(s)) => dxwgsl::expand::gs_decl(&s.code).ok().map(|g| g.instances.max(1)),
         _ => None,
     };
-    query::count_draw(&mut d.stats, st.topology, count, instances, gs_instances, st.shaders[1] != 0 && st.shaders[2] != 0);
+    // (assembled as the input assembler does while a PIPELINE_STATISTICS query is open: its
+    // counts are read only across one)
+    let a = if indexed && !d.expand.open.is_empty() {
+        expand::assembled_indexed(d, st, count, start).unwrap_or_else(|| query::Assembled::of(st.topology, count))
+    } else {
+        query::Assembled::of(st.topology, count)
+    };
+    query::count_draw(&mut d.stats, count, instances, a, gs_instances, st.shaders[1] != 0 && st.shaders[2] != 0);
     // GL_POINTS through ANGLE: its point sprite geometry shader, done as an instance per point
     // (non-indexed, non-instanced point lists; see dxwgsl::translate_point_sprite), not
     // expanded
@@ -4575,15 +4586,31 @@ unsafe fn draw_with(d: &mut D11, st: &State, indexed: bool, count: u32, instance
         _ => 3,
     };
     let r = rs.unwrap_or_else(|| vec![3, 3, 0, 0, 0, 0, 1, 0, 0, 0]);
+    // an adjacency topology without a geometry shader: the primitives' own corners, a list of
+    // its own indices (winref d3d11gs "triangle list adjacency of 6": the triangle of vertices
+    // 0 2 4, culled)
+    let adjacent = if sprite.is_none() && store.is_none() { expand::adjacency_list(d, st, indexed, count, start) } else { None };
+    let topo = match &adjacent {
+        Some((_, true)) => 1,
+        Some((_, false)) => 3,
+        None => topo,
+    };
     // FillMode WIREFRAME (2) of triangles: their edges as a line list of its own indices (#64)
-    let wire = if r.first() == Some(&2) && matches!(topo, 3 | 4) && sprite.is_none() && store.is_none() {
-        if indexed {
-            expand::pull(d, st.ib.0);
+    let wired = r.first() == Some(&2) && matches!(topo, 3 | 4) && sprite.is_none() && store.is_none();
+    // (the draw's own indices: the edges, or the adjacency topology's list)
+    let wire = match adjacent {
+        Some((list, _)) if wired => Some(triangle_edges(&list, false, None)),
+        Some((list, _)) => Some(list),
+        None if wired => {
+            if indexed {
+                expand::pull(d, st.ib.0);
+            }
+            // SAFETY: draw_with's own contract (the index buffer's guest memory is mapped)
+            unsafe { wire_edges(d, st, indexed, count, start, topo == 4) }
         }
-        // SAFETY: draw_with's own contract (the index buffer's guest memory is mapped)
-        unsafe { wire_edges(d, st, indexed, count, start, topo == 4) }
-    } else { None };
-    let topo = if wire.is_some() { 1 } else { topo };
+        None => None,
+    };
+    let topo = if wired && wire.is_some() { 1 } else { topo };
     let strip = if wire.is_none() && indexed && matches!(topo, 2 | 4) { if st.ib.1 == 42 { 2 } else { 1 } } else { 0 };
     let mut key = vec![vs, ps.as_ref().map_or(0, |p| p.0), topo, strip];
     // rasterizer: cull, front ccw, depth bias, slope, clamp

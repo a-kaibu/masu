@@ -298,8 +298,12 @@ impl D3d {
 
     /// The word at `off` of page buffer `id` into byte `at` of `buf` (none: it stays 0).
     fn count_copy(&mut self, id: u32, off: u32, buf: Id, at: u32) {
-        let Some(&(src, size)) = self.buffers.get(&id) else { return };
+        let Some(&(src, size)) = self.buffers.get(&id) else {
+            self.skipped(format!("counter: no buffer {id}"));
+            return;
+        };
         if off % 4 != 0 || u64::from(off) + 4 > u64::from(size) {
+            self.skipped(format!("counter: byte {off} of buffer {id}'s {size}"));
             return;
         }
         if !self.bused.contains(&id) {

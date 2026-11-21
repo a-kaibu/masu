@@ -1,13 +1,45 @@
 use super::*;
 
+/// The clipper's CPrimitives of single triangles (winref d3d11gs "pipeline statistics of
+/// triangles in clip space", Windows' answers).
 #[test]
-fn clip_count_rejects_what_one_plane_has_outside() {
-    let inside = [[-0.5, -0.5, 0.5, 1.0], [-0.5, 0.5, 0.5, 1.0], [0.5, -0.5, 0.5, 1.0]];
-    assert_eq!(clip_count(&inside), 1);
-    let right = [[2.0, -0.5, 0.5, 1.0], [2.0, 0.5, 0.5, 1.0], [3.0, -0.5, 0.5, 1.0]];
-    assert_eq!(clip_count(&right), 0);
-    let behind = [[-0.5, -0.5, -0.5, 1.0], [-0.5, 0.5, -0.5, 1.0], [0.5, -0.5, -0.5, 1.0]];
-    assert_eq!(clip_count(&behind), 0);
+fn clip_count_of_triangles_as_windows() {
+    let t = |a: [f32; 4], b: [f32; 4], c: [f32; 4]| clip_count(&[a, b, c]);
+    let h = 0.5;
+    assert_eq!(t([-h, -h, h, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 1, "inside");
+    assert_eq!(t([-h, -h, h, 1.0], [h, -h, h, 1.0], [-h, h, h, 1.0]), 1, "counterclockwise");
+    assert_eq!(t([2.0, -h, h, 1.0], [2.0, h, h, 1.0], [3.0, -h, h, 1.0]), 0, "outside right");
+    assert_eq!(t([-h, -h, h, 1.0], [-h, h, h, 1.0], [1.5, -h, h, 1.0]), 2, "across the right edge");
+    assert_eq!(t([-2.0, -h, h, 1.0], [-h, 2.0, h, 1.0], [2.0, -2.0, h, 1.0]), 4, "across two edges");
+    assert_eq!(t([-h, -h, h, 1.0], [-h, h, h, 1.0], [100_000.0, -h, h, 1.0]), 2, "far outside the guard band");
+    assert_eq!(t([-h, -h, -h, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 2, "across the near plane");
+    assert_eq!(t([-h, -h, 1.5, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 2, "across the far plane");
+    assert_eq!(t([-h, -h, -h, 1.0], [-h, h, -h, 1.0], [h, -h, -h, 1.0]), 0, "behind the near plane");
+    assert_eq!(t([-h, -h, h, -1.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 2, "one w negative");
+    assert_eq!(t([h, h, -h, -1.0], [h, -h, -h, -1.0], [-h, h, -h, -1.0]), 0, "all w negative");
+    assert_eq!(t([-h, -h, h, 1.0], [-h, -h, h, 1.0], [h, -h, h, 1.0]), 1, "two vertices equal");
+    assert_eq!(t([-h, -h, h, 1.0], [0.0, 0.0, h, 1.0], [h, h, h, 1.0]), 1, "on a line");
+    assert_eq!(t([0.001, 0.001, h, 1.0], [0.001, 0.002, h, 1.0], [0.002, 0.001, h, 1.0]), 1, "smaller than a pixel");
+    assert_eq!(t([-h, -h, h, 0.0], [-h, h, h, 1.0], [h, -h, h, 1.0]), 2, "w zero");
+    // (zero-sized viewports: the full-target triangle, clipped to 3)
+    assert_eq!(t([-1.0, -1.0, h, 1.0], [3.0, -1.0, h, 1.0], [-1.0, 3.0, h, 1.0]), 3, "a full-target triangle");
+}
+
+/// Strips, lines and points of the same draws: the sums Windows answers.
+#[test]
+fn clip_count_of_strips_lines_points_as_windows() {
+    let h = 0.5;
+    let q = [[-h, -h, h, 1.0], [-h, h, h, 1.0], [h, -h, h, 1.0], [h, h, h, 1.0], [2.0, 2.0, h, 1.0], [3.0, 2.0, h, 1.0]];
+    let at = |i: usize| q.get(i).copied().unwrap_or_default();
+    let strip: u32 = [[0, 1, 2], [1, 3, 2], [2, 3, 4], [3, 5, 4]].iter().map(|t| clip_count(&t.map(at))).sum();
+    assert_eq!(strip, 5, "strip of 6 (2 outside)");
+    let lines: u32 = [[0, 1], [2, 3], [4, 5]].iter().map(|l| clip_count(&l.map(at))).sum();
+    assert_eq!(lines, 2, "line list of 6");
+    let lstrip: u32 = (0..5).map(|i| clip_count(&[at(i), at(i + 1)])).sum();
+    assert_eq!(lstrip, 4, "line strip of 6");
+    let points: u32 = (0..6).map(|i| clip_count(&[at(i)])).sum();
+    assert_eq!(points, 4, "point list of 6");
+    assert_eq!(clip_count(&[at(0), at(2), at(4)]), 2, "triangle list adjacency of 6");
 }
 
 #[test]

@@ -981,6 +981,7 @@ pub struct D3d {
     /// compute pipelines and their bind group layouts, by shader and binding kinds (see `dispatch`)
     computes: HashMap<Vec<u32>, (Id, Id)>,
     warned_dispatch: bool,
+    skips: std::collections::HashSet<String>,
     targets2: Option<Vec<u32>>,
     dummies: HashMap<(u32, u32), Id>,
     zero_buf: Id,
@@ -1094,6 +1095,7 @@ impl D3d {
             pipelines2: HashMap::new(),
             computes: HashMap::new(),
             warned_dispatch: false,
+            skips: std::collections::HashSet::new(),
             targets2: None,
             dummies: HashMap::new(),
             zero_buf: 0,
@@ -3966,11 +3968,21 @@ impl D3d {
     /// view-dimension mip format layer layers: what a typed UAV writes), 8 a typed UAV the shader
     /// reads (binding 8 texture view-dimension mip sample-type layer layers: what it held before
     /// the dispatch, a copy, as WebGPU has no read-write storage textures of most formats).
+    /// Says once per reason why a dispatch (or a counter's copy) did not run.
+    pub(super) fn skipped(&mut self, why: String) {
+        if self.skips.insert(why.clone()) {
+            eprintln!("d3d11: not run: {why}");
+        }
+    }
+
     fn dispatch(&mut self, c: &[u32], i: usize) -> usize {
         let (sid, x, y, z, n) = (c[i + 1], c[i + 2], c[i + 3], c[i + 4], us(c[i + 5]));
         let next = i + 6 + n * 8;
         let es = &c[i + 6..next];
-        let Some(&module) = self.shaders.get(&sid) else { return next };
+        let Some(&module) = self.shaders.get(&sid) else {
+            self.skipped(format!("shader {sid} was not made"));
+            return next;
+        };
         if x == 0 || y == 0 || z == 0 {
             return next;
         }
@@ -4047,6 +4059,7 @@ impl D3d {
                 9 if a == DATA => {
                     let n = if cc == 0 { self.data_size.saturating_sub(b) } else { cc };
                     if n == 0 || b % 256 != 0 || n % 4 != 0 || u64::from(b).saturating_add(u64::from(n)) > u64::from(self.data_size) {
+                        self.skipped(format!("binding {binding}: data bytes {b}+{n} of {}", self.data_size));
                         return next;
                     }
                     entries.push((binding, Res::Buffer(self.data_buf, b, n)));
@@ -4055,9 +4068,13 @@ impl D3d {
                     // a storage buffer: bytes from `b`, `cc` of them (0: to its end); none, or
                     // a range outside it: nothing runs (an invalid bind group would take the
                     // command buffer with it)
-                    let Some(&(buf, size)) = self.buffers.get(&a) else { return next };
+                    let Some(&(buf, size)) = self.buffers.get(&a) else {
+                        self.skipped(format!("binding {binding}: no buffer {a}"));
+                        return next;
+                    };
                     let n = if cc == 0 { size.saturating_sub(b) } else { cc };
                     if n == 0 || b % 256 != 0 || n % 4 != 0 || u64::from(b).saturating_add(u64::from(n)) > u64::from(size) {
+                        self.skipped(format!("binding {binding}: bytes {b}+{n} of buffer {a}'s {size}"));
                         return next;
                     }
                     if !self.bused.contains(&a) {

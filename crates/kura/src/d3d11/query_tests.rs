@@ -62,6 +62,8 @@ pub(super) fn device() -> (u32, u32) {
     put(vt, &(1..=256).map(|i| 0x1000 * i).collect::<Vec<_>>());
     call1(INIT, &[vt, 256]);
     attach_page();
+    // (a new page: what the device made on the last test's is gone, as after a lost device)
+    crate::render::set_lost_gen(crate::render::lost_gen().wrapping_add(1));
     let desc = mem(16);
     put(desc, &[64, 64, 60, 1, 28, 0, 0, 1, 0, 0x20, 1, 1, 1, 0, 0]);
     let (sc_out, dev_out, level, ctx_out) = (mem(2), mem(2), mem(2), mem(2));
@@ -262,4 +264,54 @@ fn events_timestamps_and_dispatches() {
         no_model_errors();
         release_all();
     }
+}
+
+/// The input assembler's primitives and the vertex shader's runs of draws without an index
+/// buffer, as Windows counts them (winref d3d11gs "pipeline statistics of indexed draws,
+/// strips, lines and points" and "the vertices a geometry shader is given").
+#[test]
+fn assembled_as_windows() {
+    let a = |t, n| {
+        let a = query::Assembled::of(t, n);
+        (a.primitives, a.shaded)
+    };
+    assert_eq!(a(5, 4), (2, 4), "strip of 4");
+    assert_eq!(a(5, 6), (4, 6), "strip of 6");
+    assert_eq!(a(4, 5), (1, 3), "list of 5 (one left over)");
+    assert_eq!(a(2, 6), (3, 6), "line list of 6");
+    assert_eq!(a(3, 6), (5, 6), "line strip of 6");
+    assert_eq!(a(1, 6), (6, 6), "point list of 6");
+    assert_eq!(a(12, 6), (1, 6), "triangle list adjacency of 6");
+    assert_eq!(a(3, 5), (4, 5), "line strip");
+    assert_eq!(a(10, 8), (2, 8), "line list adjacency");
+    assert_eq!(a(11, 6), (3, 6), "line strip adjacency");
+    assert_eq!(a(13, 10), (3, 10), "triangle strip adjacency");
+    assert_eq!(a(13, 6), (1, 6), "triangle strip adjacency of 6");
+    assert_eq!(a(13, 8), (2, 8), "triangle strip adjacency of 8");
+}
+
+/// End keeps the counter tickets Begin took, for every kind that begins, whether or not the kind
+/// has a ticket of its own (SO_STATISTICS has none: its End took new ones, which the page
+/// answered 0, winref d3d11gs "written 0" where Windows wrote 3).
+#[test]
+fn end_keeps_begin_counter_tickets() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _ = device();
+    let mut kinds = 0;
+    for t in 0..32 {
+        let Some(kind) = query::Kind::of_type(t) else { continue };
+        let mut q = query::Query::new(kind);
+        q.begin(&[0; 11], 1);
+        let begun = q.counts;
+        let words = query::counter_words(kind).len();
+        q.end(&[0; 11]);
+        if words != 0 {
+            kinds += 1;
+            assert_eq!(q.counts, begun, "{kind:?}: End took new counter tickets");
+        }
+        q.forget();
+    }
+    // PIPELINE_STATISTICS, SO_STATISTICS (all, 4 streams), SO_OVERFLOW_PREDICATE (all, 4 streams)
+    assert_eq!(kinds, 11);
+    release_all();
 }

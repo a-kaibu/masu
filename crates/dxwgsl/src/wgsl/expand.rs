@@ -683,16 +683,94 @@ pub fn so_pass(store: &Store, osgn: &[SigElement], decls: &[SoEntry], strides: &
     Ok(Wgsl { code: m, bindings })
 }
 
-/// What Direct3D's clipper makes of one primitive (clip-space positions of its corners): how
-/// many primitives come out (CPrimitives), 0 for one entirely outside one of the planes.
-/// The same rule as [`clip_pass`]'s WGSL (clip_count), for tests and the CPU.
+/// The clip planes in the order the clipper takes them (near, far, left, right, bottom, top):
+/// a clip-space position's distance inside each (inside: >= 0).
+pub const CLIP_PLANES: [fn(&[f32; 4]) -> f32; 6] = [|&[_, _, z, _]| z, |&[_, _, z, w]| w - z, |&[x, _, _, w]| w + x, |&[x, _, _, w]| w - x, |&[_, y, _, w]| w + y, |&[_, y, _, w]| w - y];
+
+/// What Direct3D's clipper makes of one primitive (clip-space positions of its 1, 2 or 3
+/// corners): how many primitives come out (CPrimitives). A triangle is clipped plane by plane
+/// (CLIP_PLANES, Sutherland-Hodgman: a corner on a plane is inside, a crossing adds the
+/// crossing point, so a polygon can hold one point twice) and its polygon of n points counts
+/// n - 2 (a fan); a line counts 1 when a piece of it is left, a point when it is inside every
+/// plane. Culling comes after (a back face still counts), and so do zero-area triangles.
+/// winref d3d11gs "pipeline statistics of triangles in clip space" and "of indexed draws,
+/// strips, lines and points". The same rule as [`clip_pass`]'s WGSL (clip_count).
 pub fn clip_count(p: &[[f32; 4]]) -> u32 {
-    let out = |f: &dyn Fn(&[f32; 4]) -> bool| p.iter().all(f);
-    if out(&|v| v[0] > v[3]) || out(&|v| v[0] < -v[3]) || out(&|v| v[1] > v[3]) || out(&|v| v[1] < -v[3]) || out(&|v| v[2] > v[3]) || out(&|v| v[2] < 0.0) {
-        return 0;
+    let mut poly: Vec<[f32; 4]> = p.to_vec();
+    let closed = p.len() >= 3;
+    for plane in CLIP_PLANES {
+        let mut out = Vec::with_capacity(poly.len().saturating_add(1));
+        let n = poly.len();
+        // (a polygon's edges wrap around; a line's one edge does not)
+        let edges = if closed { n } else { n.saturating_sub(1) };
+        if n == 1 {
+            out.extend(poly.iter().filter(|v| plane(v) >= 0.0));
+        }
+        for k in 0..edges {
+            let (Some(a), Some(b)) = (poly.get(k), poly.get(k.saturating_add(1).checked_rem(n).unwrap_or(0))) else { continue };
+            let (da, db) = (plane(a), plane(b));
+            if da >= 0.0 {
+                out.push(*a);
+            }
+            if (da >= 0.0) != (db >= 0.0) {
+                let t = da / (da - db);
+                out.push(std::array::from_fn(|c| a.get(c).copied().unwrap_or(0.0) + t * (b.get(c).copied().unwrap_or(0.0) - a.get(c).copied().unwrap_or(0.0))));
+            }
+            // (a line's far end, when it is inside)
+            if !closed && db >= 0.0 {
+                out.push(*b);
+            }
+        }
+        poly = out;
+        if poly.is_empty() {
+            return 0;
+        }
     }
-    1
+    match p.len() {
+        0 => 0,
+        1 | 2 => 1,
+        _ => kome::num::u32_of(poly.len().saturating_sub(2)),
+    }
 }
+
+/// clip_count in WGSL: `fn clip_count(p: array<vec4<f32>, 3>, n: u32) -> u32` (n corners).
+const CLIP_COUNT: &str = "fn clip_d(v: vec4<f32>, k: u32) -> f32 {
+    switch k {
+        case 0u: { return v.z; }
+        case 1u: { return v.w - v.z; }
+        case 2u: { return v.w + v.x; }
+        case 3u: { return v.w - v.x; }
+        case 4u: { return v.w + v.y; }
+        default: { return v.w - v.y; }
+    }
+}
+fn clip_count(p: array<vec4<f32>, 3>, n: u32) -> u32 {
+    var poly: array<vec4<f32>, 12>;
+    var next: array<vec4<f32>, 12>;
+    var m = n;
+    for (var c = 0u; c < n; c += 1u) { poly[c] = p[c]; }
+    let closed = n >= 3u;
+    for (var k = 0u; k < 6u; k += 1u) {
+        var o = 0u;
+        if (m == 1u && clip_d(poly[0], k) >= 0.0f) { next[0] = poly[0]; o = 1u; }
+        let edges = select(m - 1u, m, closed);
+        for (var e = 0u; e < edges && m > 1u; e += 1u) {
+            let a = poly[e];
+            let b = poly[(e + 1u) % m];
+            let da = clip_d(a, k);
+            let db = clip_d(b, k);
+            if (da >= 0.0f && o < 12u) { next[o] = a; o += 1u; }
+            if ((da >= 0.0f) != (db >= 0.0f) && o < 12u) { next[o] = a + (b - a) * (da / (da - db)); o += 1u; }
+            if (!closed && db >= 0.0f && o < 12u) { next[o] = b; o += 1u; }
+        }
+        m = o;
+        if (m == 0u) { return 0u; }
+        for (var c = 0u; c < m; c += 1u) { poly[c] = next[c]; }
+    }
+    if (n < 3u) { return 1u; }
+    return m - 2u;
+}
+";
 
 /// Each list primitive of a store through the clipper: counters C_INVOCATIONS (+1 each) and
 /// C_PRIMITIVES (clip_count). `osgn`: the shader's outputs (its SV_Position).
@@ -707,21 +785,22 @@ pub fn clip_pass(store: &Store, osgn: &[SigElement]) -> Result<Wgsl, String> {
     store.decls(&mut m, &mut bindings);
     wln!(m, "@group(0) @binding({B_COUNTERS}) var<storage, read_write> counters: array<atomic<u32>, {}>;", counter::N);
     bindings.push((B_COUNTERS, Binding::StorageBuffer(true)));
+    m.push_str(CLIP_COUNT);
     let corners = store.corners();
     let regs = store.regs();
     let pos = osgn.iter().find(|e| e.stream == stream && e.sysval == 1).map(|e| e.reg);
     wln!(m, "@compute @workgroup_size(64)\nfn main(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {{\n    {ITEM}");
     wln!(m, "    let t = item;\n    let first = list[({}) * {corners}u];\n    if (first == 0xffffffffu) {{ return; }}", store.slot("t"));
-    wln!(m, "    var ax = true; var bx = true; var ay = true; var by = true; var az = true; var bz = true;");
+    m.push_str("    var p: array<vec4<f32>, 3>;\n");
     wln!(m, "    for (var c = 0u; c < {corners}u; c += 1u) {{\n        let e = list[({}) * {corners}u + c];", store.slot("t"));
     match pos {
         Some(r) => {
-            wln!(m, "        let v = bitcast<vec4<f32>>(store[e * {regs}u + {r}u]);");
+            wln!(m, "        p[c] = bitcast<vec4<f32>>(store[e * {regs}u + {r}u]);");
         }
-        None => m.push_str("        let v = vec4<f32>(0.0f);\n"),
+        None => m.push_str("        p[c] = vec4<f32>(0.0f);\n"),
     }
-    m.push_str("        ax = ax && v.x > v.w; bx = bx && v.x < -v.w; ay = ay && v.y > v.w; by = by && v.y < -v.w; az = az && v.z > v.w; bz = bz && v.z < 0.0f;\n    }\n");
-    wln!(m, "    atomicAdd(&counters[{}u], 1u);\n    if (!(ax || bx || ay || by || az || bz)) {{ atomicAdd(&counters[{}u], 1u); }}\n}}", counter::C_INVOCATIONS, counter::C_PRIMITIVES);
+    m.push_str("    }\n");
+    wln!(m, "    atomicAdd(&counters[{}u], 1u);\n    atomicAdd(&counters[{}u], clip_count(p, {corners}u));\n}}", counter::C_INVOCATIONS, counter::C_PRIMITIVES);
     Ok(Wgsl { code: m, bindings })
 }
 

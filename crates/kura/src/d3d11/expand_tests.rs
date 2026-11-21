@@ -71,13 +71,70 @@ proptest! {
     }
 }
 
-/// A triangle strip with adjacency of 4 triangles: OpenGL's table (and so the one Direct3D
-/// draws by), vertex for vertex.
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, ..ProptestConfig::default() })]
+    /// Without a geometry shader an adjacency topology rasterizes what its plain topology does
+    /// of the primitives' own vertices, winding kept: a line list of vertices 1 2 of each 4, a
+    /// line strip of a run's inner vertices, a triangle list of 0 2 4 of each 6, a triangle
+    /// strip of a run's even vertices (winref d3d11gs "triangle list adjacency of 6": the
+    /// triangle 0 2 4, culled as Windows culls it).
+    #[test]
+    fn adjacency_rasterizes_its_own_vertices(cuts in prop::collection::vec(prop::bool::weighted(0.15), 0..48), t in prop::sample::select(vec![Topo::LinesAdj, Topo::LineStripAdj, Topo::TrianglesAdj, Topo::TriangleStripAdj])) {
+        let n = lo32(cuts.len());
+        let strip = matches!(t, Topo::LineStripAdj | Topo::TriangleStripAdj);
+        let cut = |k: u32| strip && cuts[us(k)];
+        let got = rasterized(t, n, cut);
+        let mut want = Vec::new();
+        if strip {
+            let mut runs: Vec<Vec<u32>> = vec![Vec::new()];
+            for k in 0..n {
+                if cut(k) {
+                    runs.push(Vec::new());
+                } else if let Some(r) = runs.last_mut() {
+                    r.push(k);
+                }
+            }
+            for r in runs {
+                match t {
+                    Topo::LineStripAdj if r.len() >= 4 => {
+                        let inner = &r[1..r.len() - 1];
+                        want.extend(rasterized(Topo::LineStrip, lo32(inner.len()), |_| false).into_iter().map(|k| inner[us(k)]));
+                    }
+                    Topo::TriangleStripAdj if r.len() >= 6 => {
+                        // (the last odd vertex of an odd run is no corner)
+                        let even: Vec<u32> = r.iter().step_by(2).copied().take(r.len() / 2).collect();
+                        want.extend(rasterized(Topo::TriangleStrip, lo32(even.len()), |_| false).into_iter().map(|k| even[us(k)]));
+                    }
+                    _ => {}
+                }
+            }
+        } else {
+            let (per, own): (u32, &[u32]) = if t == Topo::LinesAdj { (4, &[1, 2]) } else { (6, &[0, 2, 4]) };
+            for p in 0..n / per {
+                want.extend(own.iter().map(|&c| p * per + c));
+            }
+        }
+        prop_assert_eq!(got, want);
+    }
+}
+
+/// Triangle strips with adjacency as Windows gives them to a geometry shader (winref d3d11gs,
+/// "triangle strip adjacency" of 10, 8 and 6 vertices), vertex for vertex.
 #[test]
 fn triangle_strip_adjacency_table() {
-    let p = assemble(Topo::TriangleStripAdj, 12, |_| false);
-    assert_eq!(p, vec![vec![0, 1, 2, 6, 4, 3], vec![4, 0, 2, 5, 6, 8], vec![4, 2, 6, 10, 8, 7], vec![8, 4, 6, 9, 10, 11]]);
+    assert_eq!(assemble(Topo::TriangleStripAdj, 10, |_| false), vec![vec![0, 1, 2, 6, 4, 3], vec![2, 5, 6, 8, 4, 0], vec![4, 2, 6, 9, 8, 7]]);
+    assert_eq!(assemble(Topo::TriangleStripAdj, 8, |_| false), vec![vec![0, 1, 2, 6, 4, 3], vec![2, 5, 6, 7, 4, 0]]);
     assert_eq!(assemble(Topo::TriangleStripAdj, 6, |_| false), vec![vec![0, 1, 2, 5, 4, 3]]);
+}
+
+/// The other topologies' primitives as d3d11gs's stream output shows them: a triangle
+/// strip's odd triangles (1 3 2), a cut strip, line strips with adjacency.
+#[test]
+fn strips_as_windows_gives_them() {
+    assert_eq!(assemble(Topo::TriangleStrip, 6, |_| false), vec![vec![0, 1, 2], vec![1, 3, 2], vec![2, 3, 4], vec![3, 5, 4]]);
+    assert_eq!(assemble(Topo::TriangleStrip, 9, |k| k == 4), vec![vec![0, 1, 2], vec![1, 3, 2], vec![5, 6, 7], vec![6, 8, 7]]);
+    assert_eq!(assemble(Topo::LineStripAdj, 6, |_| false), vec![vec![0, 1, 2, 3], vec![1, 2, 3, 4], vec![2, 3, 4, 5]]);
+    assert_eq!(assemble(Topo::LinesAdj, 8, |_| false), vec![vec![0, 1, 2, 3], vec![4, 5, 6, 7]]);
 }
 
 fn col(stream: u32) -> dxwgsl::dxbc::SigElement {
@@ -88,7 +145,7 @@ fn entry(stream: u32, name: Option<&str>, start: u32, count: u32, slot: u32) -> 
     RawEntry { stream, name: name.map(String::from), index: 0, start, count, slot }
 }
 
-/// The declarations d3d11gs's "errors" give a vertex shader writing COL (as the probe's).
+/// The declarations d3d11gs's "errors" give a vertex shader writing COL, with Windows' answers.
 #[test]
 fn stream_output_checks() {
     let osgn = [col(0)];
@@ -101,7 +158,7 @@ fn stream_output_checks() {
         ("start + count over 4", entry(0, Some("COL"), 2, 3, 0), 16, 0, Err(bad)),
         ("slot 4", entry(0, Some("COL"), 0, 4, 4), 16, 0, Err(bad)),
         ("stream 1 of a vertex shader", entry(1, Some("COL"), 0, 4, 0), 16, 0, Err(bad)),
-        ("rasterized stream 1", entry(0, Some("COL"), 0, 4, 0), 16, 1, Err(bad)),
+        ("rasterized stream 1", entry(0, Some("COL"), 0, 4, 0), 16, 1, Ok(())),
         ("gap of 0 components", entry(0, None, 0, 0, 0), 16, 0, Err(bad)),
         ("a wider stride", entry(0, Some("COL"), 0, 4, 0), 2048, 0, Ok(())),
     ];
@@ -171,6 +228,7 @@ fn geometry_shader_stream_output_on_the_page() {
     crate::d3d9::gpu::flush();
     crate::d3d9::gpu::pump();
     // the vertex, geometry shader, stream output and clipper passes, the store drawn
+    no_model_errors();
     assert_eq!((calls("dispatch") - dispatches, calls("draw") - draws), (4, 1));
     cc(ctx, 28, &[stats]);
     cc(ctx, 28, &[sos]);
@@ -195,6 +253,53 @@ fn geometry_shader_stream_output_on_the_page() {
     cc(ctx, 38, &[]);
     crate::d3d9::gpu::flush();
     crate::d3d9::gpu::pump();
+    no_model_errors();
+    release_all();
+}
+
+/// Indexed draws' input assembly while PIPELINE_STATISTICS is open: the vertex shader runs once
+/// per distinct index of whole primitives, a strip is cut at 0xffff, indices past the buffer's
+/// end read 0 (winref d3d11gs "pipeline statistics of indexed draws", Windows' answers).
+#[test]
+fn indexed_statistics_as_windows() {
+    let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let (dev, ctx) = device();
+    let o = mem(2);
+    let vs = hlslc::compile(SO_VS, &[], &mut |_, _| None, "main", "vs_4_0", 0).expect("vs");
+    let (p, n) = code(&vs);
+    assert_eq!(dc(dev, 12, &[p, n, 0, o]), 0);
+    cc(ctx, 11, &[made(rd1(o)), 0, 0]);
+    // indices 0 1 2 2 1 3 0 1 2 0 1 2 3 3 3 0 ffff 1 2 3 (R16_UINT, 40 bytes)
+    let idx: [u16; 20] = [0, 1, 2, 2, 1, 3, 0, 1, 2, 0, 1, 2, 3, 3, 3, 0, 0xffff, 1, 2, 3];
+    let words: Vec<u32> = idx.chunks_exact(2).map(|c| u32::from(c[0]) | u32::from(c[1]) << 16).collect();
+    let data = mem(10);
+    put(data, &words);
+    let init = mem(3);
+    put(init, &[data, 0, 0]);
+    let desc = mem(6);
+    put(desc, &[40, 0, 2, 0, 0, 0]);
+    assert_eq!(dc(dev, 3, &[desc, init, o]), 0);
+    let ib = made(rd1(o));
+    cc(ctx, 19, &[ib, 57, 0]);
+    let stats = query(dev, 4);
+    // (topology, count, start, instances) -> IA vertices, IA primitives, VS invocations
+    let cases: [((u32, u32, u32, u32), (u64, u64, u64)); 6] = [
+        ((4, 6, 0, 1), (6, 2, 4)),
+        ((4, 12, 0, 1), (12, 4, 4)),
+        ((4, 3, 12, 1), (3, 1, 1)),
+        ((4, 6, 0, 2), (12, 4, 8)),
+        ((5, 5, 15, 1), (5, 1, 3)),
+        ((5, 6, 18, 1), (6, 4, 3)),
+    ];
+    for ((topo, count, start, inst), want) in cases {
+        cc(ctx, 24, &[topo]);
+        cc(ctx, 27, &[stats]);
+        // DrawIndexedInstanced(count, instances, start, base, first instance)
+        cc(ctx, 20, &[count, inst, start, 0, 0]);
+        cc(ctx, 28, &[stats]);
+        let s = u64s(&wait(ctx, stats, 88));
+        assert_eq!((s[0], s[1], s[2]), want, "topology {topo}, {count} from {start}, {inst} instances");
+    }
     no_model_errors();
     release_all();
 }

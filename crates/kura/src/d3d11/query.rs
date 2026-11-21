@@ -123,14 +123,17 @@ pub fn counter_words(kind: Kind) -> &'static [u32] {
     match kind {
         Kind::PipelineStatistics => &STATS,
         Kind::SoStatistics(Some(s)) | Kind::SoOverflowPredicate(Some(s)) => SO.get(us(s.min(3).saturating_mul(2))..us(s.min(3).saturating_mul(2).saturating_add(2))).unwrap_or(&[]),
-        Kind::SoStatistics(None) | Kind::SoOverflowPredicate(None) => &SO,
+        // (D3D11_QUERY_SO_STATISTICS is stream 0's, as SO_STATISTICS_STREAM0: winref d3d11gs
+        // "two streams"; the overflow predicate is any stream's)
+        Kind::SoStatistics(None) => SO.get(..2).unwrap_or(&[]),
+        Kind::SoOverflowPredicate(None) => &SO,
         Kind::Event | Kind::Occlusion | Kind::Timestamp | Kind::TimestampDisjoint | Kind::OcclusionPredicate => &[],
     }
 }
 
-/// SO_STATISTICS of the counters' values (by `counter_words`): written, needed, the streams' summed.
+/// SO_STATISTICS of the counters' values (by `counter_words`: one stream's): written, needed.
 fn so_counts(v: &[u64]) -> (u64, u64) {
-    v.chunks(2).fold((0, 0), |(w, n), c| (w.wrapping_add(c.first().copied().unwrap_or(0)), n.wrapping_add(c.get(1).copied().unwrap_or(0))))
+    (v.first().copied().unwrap_or(0), v.get(1).copied().unwrap_or(0))
 }
 
 /// SO_OVERFLOW_PREDICATE of the counters' values: a stream needed more than it wrote.
@@ -162,14 +165,51 @@ pub fn primitives(topology: u32, n: u32) -> u64 {
     }
 }
 
-/// What a draw of `n` vertices, `instances` times, adds on the device's side: the input
-/// assembler's vertices and primitives, a vertex shader run per vertex, a geometry shader's
-/// (`gs`: its GS instances) per primitive and instance; with a hull and domain shader (`tess`),
-/// a hull shader run per patch. GSPrimitives, CInvocations and CPrimitives are the page's
-/// counters (expand.rs: the expanded draws a PIPELINE_STATISTICS query makes).
-pub fn count_draw(s: &mut Stats, topology: u32, n: u32, instances: u32, gs: Option<u32>, tess: bool) {
-    let v = u64::from(n).saturating_mul(u64::from(instances));
-    let p = primitives(topology, n).saturating_mul(u64::from(instances));
+/// The vertices of a draw of `n` vertices (no index buffer) that make whole primitives: the
+/// ones the vertex shader runs on (a list's left over vertices, a strip's too few, are not
+/// shaded: winref d3d11gs "list of 5 (one left over)" VS 3).
+pub fn shaded(topology: u32, n: u32) -> u64 {
+    let p = primitives(topology, n);
+    let n = u64::from(n);
+    match topology {
+        1 => n,
+        2 => p.saturating_mul(2),
+        4 => p.saturating_mul(3),
+        10 => p.saturating_mul(4),
+        12 => p.saturating_mul(6),
+        33..=64 => p.saturating_mul(u64::from(topology.saturating_sub(32))),
+        3 | 5 | 11 => if p > 0 { n } else { 0 },
+        // (2 (m + 2) of them: an odd last one makes nothing)
+        13 => if p > 0 { p.saturating_add(2).saturating_mul(2) } else { 0 },
+        _ => 0,
+    }
+}
+
+/// A draw's input assembly per instance: its primitives and the vertex shader's runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Assembled {
+    pub primitives: u64,
+    pub shaded: u64,
+}
+
+impl Assembled {
+    /// Of `n` vertices without an index buffer.
+    pub fn of(topology: u32, n: u32) -> Assembled {
+        Assembled { primitives: primitives(topology, n), shaded: shaded(topology, n) }
+    }
+}
+
+/// What a draw of `n` vertices (or indices), `instances` times, adds on the device's side: the
+/// input assembler's vertices and primitives (`a`: per instance, a strip's cuts left out), the
+/// vertex shader's runs (`a.shaded` per instance: the distinct vertices of whole primitives), a
+/// geometry shader's (`gs`: its GS instances) per primitive and instance; with a hull and
+/// domain shader (`tess`), a hull shader run per patch. GSPrimitives, CInvocations and
+/// CPrimitives are the page's counters (expand.rs: the expanded draws a PIPELINE_STATISTICS
+/// query makes).
+pub fn count_draw(s: &mut Stats, n: u32, instances: u32, a: Assembled, gs: Option<u32>, tess: bool) {
+    let inst = u64::from(instances);
+    let v = u64::from(n).saturating_mul(inst);
+    let p = a.primitives.saturating_mul(inst);
     let add = |s: &mut Stats, i: usize, x: u64| {
         if let Some(c) = s.get_mut(i) {
             *c = c.saturating_add(x);
@@ -177,7 +217,7 @@ pub fn count_draw(s: &mut Stats, topology: u32, n: u32, instances: u32, gs: Opti
     };
     add(s, 0, v);
     add(s, 1, p);
-    add(s, 2, v);
+    add(s, 2, a.shaded.saturating_mul(inst));
     if let Some(k) = gs {
         add(s, 3, p.saturating_mul(u64::from(k)));
     }
@@ -244,11 +284,13 @@ impl Query {
 
     /// ID3D11DeviceContext::End (`now`: the device's counts)
     pub fn end(&mut self, now: &Stats) {
-        let (begun, lost) = match self.state {
-            State::Building { ticket, lost } => (ticket, lost),
-            State::Fresh | State::Issued { .. } => (0, losses()),
+        // (begun: Building, whether or not the kind has a ticket of its own; SO_STATISTICS has
+        // only its counter tickets)
+        let (begun, ticket, lost) = match self.state {
+            State::Building { ticket, lost } => (true, ticket, lost),
+            State::Fresh | State::Issued { .. } => (false, 0, losses()),
         };
-        if begun == 0 {
+        if !begun {
             self.forget();
             // (ended without a begin: tickets the page answers 0)
             self.counts = [0; 8];
@@ -259,9 +301,9 @@ impl Query {
         for &t in self.counts.iter().filter(|&&t| t != 0) {
             gpu::record(|b| b.cmd(&[gpu::COUNT_END, t]));
         }
-        let t = if begun != 0 { begun } else { gpu::query_ticket() };
+        let t = if ticket != 0 { ticket } else { gpu::query_ticket() };
         if self.kind == Kind::PipelineStatistics {
-            let from = if begun != 0 { self.stats } else { *now };
+            let from = if begun { self.stats } else { *now };
             let mut d = *now;
             for (x, f) in d.iter_mut().zip(from) {
                 *x = x.saturating_sub(f);
