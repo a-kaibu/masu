@@ -43,6 +43,8 @@ mod copy_tests;
 #[cfg(test)]
 mod minlod_tests;
 #[cfg(test)]
+mod uav_count_tests;
+#[cfg(test)]
 mod msaa_tests;
 #[cfg(test)]
 mod bits_tests;
@@ -383,7 +385,24 @@ pub enum Data {
     /// a deferred context: its state and the list it records
     Deferred(Box<deferred::Deferred>),
     CmdList(Box<deferred::CmdList>),
+    /// an unordered access view of a buffer
+    BufferUav(BufferUav),
     Other,
+}
+
+/// An unordered access view of a buffer: its range and flags (D3D11_BUFFER_UAV_FLAG RAW 1,
+/// APPEND 2, COUNTER 4) and the hidden counter of an APPEND or COUNTER view.
+pub struct BufferUav {
+    pub buf: u32,
+    pub view: check::BufView,
+    pub counter: u32,
+}
+
+impl BufferUav {
+    /// Whether it has a hidden counter (APPEND or COUNTER).
+    pub fn counted(&self) -> bool {
+        self.view.desc.get(4).is_some_and(|f| f & 6 != 0)
+    }
 }
 
 pub struct Obj {
@@ -793,6 +812,7 @@ impl D11 {
                 self.release(s.device);
             }
             Data::Factory | Data::Adapter(_) | Data::Output | Data::Device | Data::Context | Data::Layout(_) | Data::State(_) | Data::CtxState(_) | Data::Other => {}
+            Data::BufferUav(u) => self.unbind(u.buf),
             Data::Query(q) => {
                 self.expand.open.retain(|&x| x != id);
                 q.forget();
@@ -2690,7 +2710,15 @@ unsafe fn create_view(d: &mut D11, m: u32, res: u32, desc: u32, out: u32) -> u32
         if kind == check::SRV {
             return create_buffer_srv(d, rid, bv, out);
         }
-        // (buffer UAVs and render targets: kept, not drawn with)
+        if kind == check::UAV {
+            // (the view holds its buffer; its counter starts at 0)
+            d.bind(rid);
+            let o = d.new_obj(IF_UAV, Data::BufferUav(BufferUav { buf: rid, view: bv, counter: 0 }));
+            // SAFETY: the caller's out-pointer (create_view's contract)
+            unsafe { wrp(out, 0, o) };
+            return S_OK;
+        }
+        // (buffer render targets: kept, not drawn with)
         let o = d.new_obj([IF_SRV, IF_UAV, IF_RTV, IF_DSV][us(m) - 7], Data::Other);
         wrp(out, 0, o);
         return S_OK;
@@ -2990,6 +3018,22 @@ unsafe fn child_call(d: &mut D11, iface: u32, m: u32, this: u32, a: &dyn Fn(usiz
             }
             S_OK
         }
+        (IF_UAV, 7, Some(Data::BufferUav(u))) => {
+            let r = u.buf;
+            d.add_ref(r);
+            let at = d.addr_of(r);
+            // SAFETY: GetResource's out-pointer
+            unsafe { wrp(a(1), 0, at) };
+            S_OK
+        }
+        (IF_UAV, 8, Some(Data::BufferUav(u))) => {
+            let w = u.view.desc.clone();
+            for (i, x) in w.into_iter().enumerate() {
+                // SAFETY: GetDesc's D3D11_UNORDERED_ACCESS_VIEW_DESC
+                unsafe { wr(a(1), i, x) };
+            }
+            S_OK
+        }
         // states: GetDesc (GetDesc1/2: the newer descriptions); a NULL one: nothing written (the
         // guest's address 0 is the host's memory's start, not a fault)
         (IF_BLEND | IF_DEPTH | IF_RASTER | IF_SAMPLER, 7..=9, _) if a(1) == 0 => 0,
@@ -3050,6 +3094,27 @@ unsafe fn set_slots(d: &mut D11, slots: &mut [u32], start: u32, n: u32, p: u32) 
         let old = slots[s];
         slots[s] = new;
         d.rebind(new, old);
+    }
+}
+
+/// The hidden counters of `n` views (`views`, guest pointers) set from `counts` (UINTs; NULL or
+/// -1: kept), as *SetUnorderedAccessViews take them.
+unsafe fn initial_counts(d: &mut D11, n: u32, views: u32, counts: u32) {
+    if views == 0 || counts == 0 {
+        return;
+    }
+    for i in 0..us(n) {
+        // SAFETY: the caller's array of n views
+        let p = unsafe { rdp(views, i) };
+        // SAFETY: the caller's array of n counts
+        let c = unsafe { rd(counts, i) };
+        let v = d.id_of(p);
+        if c == u32::MAX {
+            continue;
+        }
+        if let Some(Data::BufferUav(u)) = d.objs.get_mut(&v).map(|o| &mut o.data) && u.counted() {
+            u.counter = c;
+        }
     }
 }
 
@@ -3239,6 +3304,8 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
                 set_slots(d, &mut u, 0, 8, 0);
                 set_slots(d, &mut u, a(4), a(5).min(8), a(6));
                 st.uavs[0] = u;
+                // SAFETY: the method's arrays of views and counts
+                unsafe { initial_counts(d, a(5).min(8), a(6), a(7)) };
             }
             let n = if m == 34 && a(1) == 0xffff_ffff { u32::MAX } else { a(1) };
             if n != u32::MAX {
@@ -3355,7 +3422,10 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
         32 | 61 | 65 | 70 => set_slots(d, &mut st.samplers[stage_of(m)], a(1), a(2), a(3)),
         23 | 60 | 64 | 69 => set_one(d, &mut st.shaders[stage_of(m) - 2], a(1)),
         68 => {
+            // CSSetUnorderedAccessViews(start, n, views, initial counts)
             set_slots(d, &mut st.uavs[1], a(1), a(2), a(3));
+            // SAFETY: the method's arrays of views and counts
+            unsafe { initial_counts(d, a(2), a(3), a(4)) };
             hazards::after_outputs(d, st);
         }
         37 => {
@@ -3389,7 +3459,24 @@ unsafe fn context_call2(d: &mut D11, st: &mut State, m: u32, a: &dyn Fn(usize) -
             // SAFETY: clear_view_texels' own contract: a view of this device
             unsafe { clear_view_texels(d, v, vals, &[]) };
         }
-        49 => {}
+        49 => {
+            // CopyStructureCount(buffer, offset, uav): the view's hidden counter, as a UINT at
+            // the offset (a view without one, or a place outside the buffer: nothing written)
+            let (dst, at, v) = (d.id_of(a(1)), a(2), d.id_of(a(3)));
+            let count = match d.objs.get(&v).map(|o| &o.data) {
+                Some(Data::BufferUav(u)) if u.counted() => u.counter,
+                _ => return 0,
+            };
+            expand::pull(d, dst);
+            if let Some(Data::Buffer(b)) = d.objs.get_mut(&dst).map(|o| &mut o.data)
+                && at % 4 == 0
+                && u64::from(at) + 4 <= u64::from(b.size)
+            {
+                // SAFETY: inside the buffer's guest memory (checked above)
+                unsafe { wr(b.mem.wrapping_add(at), 0, count) };
+                b.dirty = true;
+            }
+        }
         // SetResourceMinLOD(resource, MinLOD), GetResourceMinLOD(resource): the float's bits
         55 | 56 => {
             let r = d.id_of(a(1));
