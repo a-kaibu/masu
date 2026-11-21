@@ -11,3 +11,8 @@ description = "GLSL 1.10-1.30 (OpenGL 2.x programs with the compatibility built-
 kome = { path = "../kome" }
 pp-rs = "0.2.1"  # (naga's GLSL preprocessor: run first, so a macro sizing a uniform array is known where the declaration moves to)
 naga = { version = "30", features = ["glsl-in", "wgsl-in", "wgsl-out"] }  # (naga 30's glsl-in needs spv-in or wgsl-in)
+
+[lints.rust]
+# (Rust 1.99: `&x as *const T` / `&mut x as *mut T` makes a reference first, with its aliasing
+# rules: write `&raw const x` / `&raw mut x`, or Box::as_ptr)
+raw_borrows_via_references = "warn"

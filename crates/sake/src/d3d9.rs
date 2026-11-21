@@ -224,10 +224,11 @@ fn extended(id: Method, this: u32) -> bool {
         this
     } else {
         // the device's IDirect3D9 (GetDirect3D), released again
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         let r = d3d_call(DEVICE_QI.sibling(6), &[this, out]);
         let o = mem::rp(out);
-        mem::heap_free(out);
+        drop(out_own);
         if r != 0 || o == 0 {
             return false;
         }
@@ -499,10 +500,11 @@ fn init8() {
 
 fn Direct3DCreate8(_: &mut Ctx) -> u32 {
     init8();
-    let out = mem::heap_alloc(8, true);
+    let out_own = mem::Scratch::new(8, true);
+    let out = out_own.get();
     let r = host_call(kura::d3d9::d3d8::CREATE, &[out]);
     let o = mem::r32(out);
-    mem::heap_free(out);
+    drop(out_own);
     if r != 0 { 0 } else { o }
 }
 /// Validate{Vertex,Pixel}Shader: any code passes; the error text out-pointer is the last argument.
@@ -525,10 +527,11 @@ fn Direct3DCreate9(c: &mut Ctx) -> u32 {
 }
 fn create9(c: &mut Ctx) -> u32 {
     init();
-    let out = mem::heap_alloc(8, true);
+    let out_own = mem::Scratch::new(8, true);
+    let out = out_own.get();
     let r = unsafe { kura::d3d9::vnhost_d3d9_create(c.a(0), out as usize as *mut u32, &CALLS) };
     let o = mem::r32(out);
-    mem::heap_free(out);
+    drop(out_own);
     if r != 0 { 0 } else { o }
 }
 /// Direct3DCreate9Ex(version, out): the Direct3D 9 object, whose vtable has the Ex methods.

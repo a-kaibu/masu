@@ -276,11 +276,12 @@ fn write_desc_mode(p: u32, s: Option<&Surf>, mode: (i32, i32, u16)) {
     }
     // (made as the 32-bit one, then laid out as the 64-bit one)
     let n = if r32(p) == 120 { 108 } else { 124 };
-    let t = mem::heap_alloc(124, true);
+    let t_own = mem::Scratch::new(124, true);
+    let t = t_own.get();
     w32(t, n);
     write_desc_x86(t, s, mode);
     mem::write(p, &desc_to_x64(&mem::bytes(t, n)));
-    mem::heap_free(t);
+    drop(t_own);
 }
 fn write_desc_x86(p: u32, s: Option<&Surf>, mode: (i32, i32, u16)) {
     let size = match r32(p) {
@@ -788,13 +789,14 @@ fn S_EnumAttachedSurfaces(c: &mut Ctx) -> u32 {
     let att = if s.next != 0 && s.caps & CAPS_FRONTBUFFER != 0 { s.next } else { s.mip };
     for att in s.faces.iter().copied().chain(std::iter::once(att)).filter(|&a| a != 0) {
         if let Some(n) = surf(att) {
-            let d = mem::heap_alloc(DESC_MAX, true);
+            let d_own = mem::Scratch::new(DESC_MAX, true);
+            let d = d_own.get();
             w32(d, desc_size(kind != 0));
             write_desc(d, Some(&n));
             with(|st| st.surfs.get_mut(&att).map(|x| x.refs += 1));
             let b = block(att, kind);
             c.call(c.a(2), &[b, d, c.a(1)]);
-            mem::heap_free(d);
+            drop(d_own);
         }
     }
     DD_OK
@@ -1968,7 +1970,7 @@ fn undo_create(c: &mut Ctx, made: &[u32]) -> u32 {
 
 /// The levels of a full mipmap of a w x h top level: halving down to 1x1 (128x32: 8)
 fn mip_levels(w: i32, h: i32) -> u32 {
-    32 - (w.max(h).max(1) as u32).leading_zeros()
+    (w.max(h).max(1) as u32).bit_width()
 }
 
 const MODES: [(i32, i32); 5] = [(640, 480), (800, 600), (1024, 768), (1280, 720), (1280, 960)];
@@ -1976,7 +1978,8 @@ const MODES: [(i32, i32); 5] = [(640, 480), (800, 600), (1024, 768), (1280, 720)
 fn D_EnumDisplayModes(c: &mut Ctx) -> u32 {
     let (filter, ctx, cb) = (c.a(2), c.a(3), c.a(4));
     let size = desc_size(dd_version(c) >= 2);
-    let d = mem::heap_alloc(DESC_MAX, true);
+    let d_own = mem::Scratch::new(DESC_MAX, true);
+    let d = d_own.get();
     'all: for bpp in [8u16, 16, 32] {
         for (w, h) in MODES {
             if filter != 0 && r32(filter + 4) & 0x6 == 0x6 && (r32(filter + 12) as i32 != w || r32(filter + 8) as i32 != h) {
@@ -1989,7 +1992,7 @@ fn D_EnumDisplayModes(c: &mut Ctx) -> u32 {
             }
         }
     }
-    mem::heap_free(d);
+    drop(d_own);
     DD_OK
 }
 
@@ -2009,7 +2012,8 @@ fn D_EnumSurfaces(c: &mut Ctx) -> u32 {
     let mut ids: Vec<u32> = with(|s| s.surfs.iter().filter(|(_, x)| x.dd == obj && x.caps & caps == caps).map(|(&i, _)| i).collect());
     ids.sort_unstable();
     let kind = [0u8, 0, 1, 2][v];
-    let d = mem::heap_alloc(DESC_MAX, true);
+    let d_own = mem::Scratch::new(DESC_MAX, true);
+    let d = d_own.get();
     for id in ids {
         let Some(s) = surf(id) else { continue };
         with(|st| st.surfs.get_mut(&id).map(|x| x.refs += 1));
@@ -2019,7 +2023,7 @@ fn D_EnumSurfaces(c: &mut Ctx) -> u32 {
             break;
         }
     }
-    mem::heap_free(d);
+    drop(d_own);
     DD_OK
 }
 
@@ -2316,7 +2320,8 @@ fn enumerate(c: &mut Ctx, ex: bool) -> u32 {
     if cb == 0 || flags & !7 != 0 {
         return DDERR_INVALIDPARAMS;
     }
-    let d = mem::heap_alloc(64, true);
+    let d_own = mem::Scratch::new(64, true);
+    let d = d_own.get();
     mem::write(d, b"Primary Display Driver\0");
     mem::write(d + 32, b"display\0");
     if ex {
@@ -2324,7 +2329,7 @@ fn enumerate(c: &mut Ctx, ex: bool) -> u32 {
     } else {
         c.call(cb, &[0, d, d + 32, ctx]);
     }
-    mem::heap_free(d);
+    drop(d_own);
     DD_OK
 }
 fn DirectDrawEnumerateA(c: &mut Ctx) -> u32 {

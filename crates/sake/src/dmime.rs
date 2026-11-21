@@ -1562,7 +1562,8 @@ mod tests {
             fn clones_and_states_as_a_model(ops in proptest::collection::vec((0u8..6, any::<prop::sample::Index>()), 0..50)) {
                 let _g = enter();
                 unsafe { std::env::set_var("SAKE_NO_MIXER", "1") };
-                let out = mem::heap_alloc(16, true);
+                let out_own = mem::Scratch::new(16, true);
+                let out = out_own.get();
                 prop_assert_eq!(create_instance(guid(&CLSID_PERFORMANCE), 0, guid(&PERF_IIDS[2]), crate::api::Out::at(out)), Some(0));
                 let perf = mem::r32(out);
                 let orig = segment_of_bytes(&wav(22050, 1, 16, 400));
@@ -1631,7 +1632,7 @@ mod tests {
                 call(release, &[perf]);
                 prop_assert!(kind_of(perf).is_none());
                 prop_assert!(!with(|w| w.perfs.contains_key(&perf)));
-                mem::heap_free(out);
+                drop(out_own);
             }
         }
     }

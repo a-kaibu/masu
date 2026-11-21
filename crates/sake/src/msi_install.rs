@@ -990,7 +990,8 @@ fn run_program(c: &mut Ctx, cmd: &str, wait: bool) -> u32 {
         return ERROR_INSTALL_FAILURE;
     };
     let w: Vec<u8> = cmd.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect();
-    let buf = mem::heap_alloc(w.len() as u32 + 256, true);
+    let buf_own = mem::Scratch::new(w.len() as u32 + 256, true);
+    let buf = buf_own.get();
     mem::write(buf, &w);
     let si = buf + w.len() as u32 + 8 & !7;
     let pi = si + 128;
@@ -1004,7 +1005,7 @@ fn run_program(c: &mut Ctx, cmd: &str, wait: bool) -> u32 {
         c.call(close, &[ht]);
         c.call(close, &[hp]);
     }
-    mem::heap_free(buf);
+    drop(buf_own);
     if ok { ERROR_SUCCESS } else { ERROR_INSTALL_FAILURE }
 }
 
@@ -1056,8 +1057,7 @@ fn get_str(key: &str, name: &str) -> Option<String> {
     Some(match ty {
         4 if d.len() >= 4 => u32::from_le_bytes(d[..4].try_into().unwrap()).to_string(),
         _ => {
-            let u: Vec<u16> = d.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).take_while(|&c| c != 0).collect();
-            String::from_utf16_lossy(&u)
+            kome::le::utf16z_lossy(&d)
         }
     })
 }
@@ -1646,12 +1646,13 @@ fn enum_products(c: &mut Ctx, wide: bool) -> u32 {
     match products().get(i) {
         Some(g) => {
             let mut n = 39u32;
-            let tmp = mem::heap_alloc(4, false);
+            let tmp_own = mem::Scratch::new(4, false);
+            let tmp = tmp_own.get();
             w32(tmp, n);
             out_str(out, tmp, g, wide);
             n = r32(tmp);
             let _ = n;
-            mem::heap_free(tmp);
+            drop(tmp_own);
             ERROR_SUCCESS
         }
         None => ERROR_NO_MORE_ITEMS,
@@ -1675,10 +1676,11 @@ fn enum_related(c: &mut Ctx, wide: bool) -> u32 {
     }
     match related_products(&up).get(i) {
         Some(g) => {
-            let tmp = mem::heap_alloc(4, false);
+            let tmp_own = mem::Scratch::new(4, false);
+            let tmp = tmp_own.get();
             w32(tmp, 39);
             out_str(out, tmp, g, wide);
-            mem::heap_free(tmp);
+            drop(tmp_own);
             ERROR_SUCCESS
         }
         None => ERROR_NO_MORE_ITEMS,

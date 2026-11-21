@@ -2366,7 +2366,7 @@ unsafe fn create_texture(d: &mut D3d, w: u32, h: u32, levels: u32, usage: u32, f
         }
         return D3DERR_INVALIDCALL;
     }
-    let max = 32 - w.max(h).leading_zeros();
+    let max = w.max(h).bit_width();
     let levels = if usage & 0x400 != 0 { 1 } else if levels == 0 { max } else { levels.min(max) };
     let gpu = if pool == POOL_SYSTEMMEM || pool == POOL_SCRATCH { 0 } else { gpu_texture(w, h, levels, f, usage) };
     let tex = Texture { w, h, fmt: f, pool, usage, gpu, levels: Vec::new(), lod: 0, depth: 0, faces: 0 };
@@ -2407,7 +2407,7 @@ unsafe fn create_volume_texture(d: &mut D3d, size: [u32; 3], levels: u32, usage:
         }
         return D3DERR_INVALIDCALL;
     }
-    let max = 32 - w.max(h).max(depth).leading_zeros();
+    let max = w.max(h).max(depth).bit_width();
     let levels = if levels == 0 { max } else { levels.min(max) };
     let gpu = if pool == POOL_SYSTEMMEM || pool == POOL_SCRATCH {
         0
@@ -2456,7 +2456,7 @@ unsafe fn create_cube_texture(d: &mut D3d, edge: u32, levels: u32, usage: u32, f
         }
         return D3DERR_INVALIDCALL;
     }
-    let max = 32 - edge.leading_zeros();
+    let max = edge.bit_width();
     let levels = if usage & 0x400 != 0 { 1 } else if levels == 0 { max } else { levels.min(max) };
     let gpu = if pool == POOL_SYSTEMMEM || pool == POOL_SCRATCH {
         0

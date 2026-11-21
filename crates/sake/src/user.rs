@@ -893,7 +893,8 @@ fn combo_proc_fn(c: &mut Ctx) -> u32 {
 fn combo_paint(c: &mut Ctx, h: u32) {
     let (w, hh, enabled) = with(|s| s.wins.get(&h).map_or((0, 0, true), |w| (w.client.w(), w.client.h(), w.enabled)));
     let text = combo(h, |cb| cb.items.get(cb.sel.max(0) as usize).filter(|_| cb.sel >= 0).map(|i| i.0.clone()).unwrap_or_default());
-    let ps = mem::heap_alloc(64 + 16, true);
+    let ps_own = mem::Scratch::new(64 + 16, true);
+    let ps = ps_own.get();
     let rc = ps + 64;
     let dc = gcall(c, "user32", "BeginPaint", &[h, ps]);
     let font = ctl(h).font;
@@ -915,7 +916,7 @@ fn combo_paint(c: &mut Ctx, h: u32) {
     Rect { l: 4, t: 0, r: w - 20, b: bh }.write(rc);
     crate::gdi::draw_text(dc, &text, rc, 0x4 | 0x20);
     gcall(c, "user32", "EndPaint", &[h, ps]);
-    mem::heap_free(ps);
+    drop(ps_own);
 }
 
 /// The window procedure of a system control class: one per class (a superclass that hands its
@@ -968,7 +969,8 @@ fn ctl_paint(c: &mut Ctx, h: u32, button: bool) {
         return;
     };
     let st = ctl(h);
-    let ps = mem::heap_alloc(64 + 16, true);
+    let ps_own = mem::Scratch::new(64 + 16, true);
+    let ps = ps_own.get();
     let rc = ps + 64;
     let dc = gcall(c, "user32", "BeginPaint", &[h, ps]);
     if st.font != 0 {
@@ -1000,7 +1002,7 @@ fn ctl_paint(c: &mut Ctx, h: u32, button: bool) {
             static_picture(c, dc, style, st.image, w, hh);
         }
         gcall(c, "user32", "EndPaint", &[h, ps]);
-        mem::heap_free(ps);
+        drop(ps_own);
         return;
     }
     let mut tr = full;
@@ -1067,10 +1069,11 @@ fn ctl_paint(c: &mut Ctx, h: u32, button: bool) {
     } else if group {
         // an etched frame from half the text height down, the label over it at 7 pixels in on
         // the parent's background (a pixel wider each side)
-        let tm = mem::heap_alloc(64, true);
+        let tm_own = mem::Scratch::new(64, true);
+        let tm = tm_own.get();
         gcall(c, "gdi32", "GetTextMetricsW", &[dc, tm]);
         let th = r32(tm) as i32;
-        mem::heap_free(tm);
+        drop(tm_own);
         let mut f = Rect { t: th / 2 - 1, ..full };
         draw_edge(dc, &mut f, 6, 0xf | if style & 0x8000 != 0 { 0x4000 } else { 0 });
         if !text.is_empty() {
@@ -1092,7 +1095,7 @@ fn ctl_paint(c: &mut Ctx, h: u32, button: bool) {
     tr.write(rc);
     crate::gdi::draw_text(dc, &text, rc, flags);
     gcall(c, "user32", "EndPaint", &[h, ps]);
-    mem::heap_free(ps);
+    drop(ps_own);
 }
 
 /// A radio button's 13x13 circle as row spans (row, left, right, colour): a dark ring, white
@@ -1138,10 +1141,11 @@ fn static_picture(c: &mut Ctx, dc: u32, style: u32, image: u32, w: i32, hh: i32)
         gcall(c, "user32", "DrawIconEx", &[dc, x as u32, y as u32, image, 0, 0, 0, 0, 0x3 | 0x8]);
         return;
     }
-    let info = mem::heap_alloc(32, true);
+    let info_own = mem::Scratch::new(32, true);
+    let info = info_own.get();
     gcall(c, "gdi32", "GetObjectW", &[image, 24, info]);
     let (bw, bh) = (r32(info + 4) as i32, r32(info + 8) as i32);
-    mem::heap_free(info);
+    drop(info_own);
     let (x, y, dw, dh) = static_bitmap_rect(style, w, hh, bw, bh);
     let mdc = gcall(c, "gdi32", "CreateCompatibleDC", &[dc]);
     let old = gcall(c, "gdi32", "SelectObject", &[mdc, image]);
@@ -1230,16 +1234,18 @@ fn edit_measure(c: &mut Ctx, h: u32, dc: u32) -> (Vec<(usize, usize)>, i32, i32)
         None => text,
     };
     let ranges = crate::gdi::text_line_ranges(dc, &text, tr.w(), flags);
-    let rc = mem::heap_alloc(16, true);
+    let rc_own = mem::Scratch::new(16, true);
+    let rc = rc_own.get();
     Rect { l: 0, t: 0, r: 1000, b: 1000 }.write(rc);
     let mut lh = crate::gdi::draw_text(dc, &[b'A' as u16], rc, 0x20 | 0x400) as i32;
-    mem::heap_free(rc);
+    drop(rc_own);
     if lh <= 0 {
         // (a font with no glyph outlines, sake run without fonts: its metrics' height, else 16)
-        let tm = mem::heap_alloc(64, true);
+        let tm_own = mem::Scratch::new(64, true);
+        let tm = tm_own.get();
         gcall(c, "gdi32", "GetTextMetricsW", &[dc, tm]);
         lh = r32(tm) as i32;
-        mem::heap_free(tm);
+        drop(tm_own);
         if lh <= 0 {
             lh = 16;
         }
@@ -1392,7 +1398,8 @@ fn rich_stream_in(c: &mut Ctx, h: u32, format: u32, es: u32) -> u32 {
         return 0;
     }
     const N: u32 = 4096;
-    let buf = mem::heap_alloc(N + 4, true);
+    let buf_own = mem::Scratch::new(N + 4, true);
+    let buf = buf_own.get();
     let got = buf + N;
     let mut data = Vec::new();
     let mut err = 0;
@@ -1406,12 +1413,12 @@ fn rich_stream_in(c: &mut Ctx, h: u32, format: u32, es: u32) -> u32 {
         }
         data.extend_from_slice(&mem::bytes(buf, n));
     }
-    mem::heap_free(buf);
+    drop(buf_own);
     mem::w32(es + err_at, err);
     let text: Vec<u16> = if format & 2 != 0 {
         crate::rtf::to_text(&data, 0)
     } else if format & 0x10 != 0 {
-        data.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect()
+        kome::le::units16(&data).collect()
     } else {
         crate::text::mb2w(0, &data)
     };
@@ -1766,12 +1773,13 @@ fn control_proc_fn(c: &mut Ctx) -> u32 {
             let old = ctl(h).image;
             set_ctl(h, |t| t.image = img);
             if want == 0 && img != 0 && style & 0x240 == 0 {
-                let info = mem::heap_alloc(32, true);
+                let info_own = mem::Scratch::new(32, true);
+                let info = info_own.get();
                 if gcall(c, "gdi32", "GetObjectW", &[img, 24, info]) != 0 {
                     let (bw, bh) = (r32(info + 4), r32(info + 8));
                     gcall(c, "user32", "SetWindowPos", &[h, 0, 0, 0, bw, bh, 0x2 | 0x4 | 0x10]);
                 }
-                mem::heap_free(info);
+                drop(info_own);
             }
             invalidate(h, None, true);
             old
@@ -3019,12 +3027,13 @@ fn minmax_defaults(p: u32) {
 
 /// WM_GETMINMAXINFO to `h`: its (min, max) tracking sizes.
 fn minmax(c: &mut Ctx, h: u32) -> ((i32, i32), (i32, i32)) {
-    let p = mem::heap_alloc(40, true);
+    let p_own = mem::Scratch::new(40, true);
+    let p = p_own.get();
     minmax_defaults(p);
     send(c, h, 0x24, 0, p);
     let v = |k: u32| r32(p + 4 * k) as i32;
     let r = ((v(6), v(7)), (v(8), v(9)));
-    mem::heap_free(p);
+    drop(p_own);
     r
 }
 
@@ -4001,10 +4010,11 @@ fn def_proc(c: &mut Ctx, proc_wide: bool) -> u32 {
         0xf => {
             // BeginPaint/EndPaint: validates, and erases if asked to
             if with(|s| s.wins.get(&h).is_some_and(|w| w.erase)) {
-                let ps = mem::heap_alloc(64, true);
+                let ps_own = mem::Scratch::new(64, true);
+                let ps = ps_own.get();
                 gcall(c, "user32", "BeginPaint", &[h, ps]);
                 gcall(c, "user32", "EndPaint", &[h, ps]);
-                mem::heap_free(ps);
+                drop(ps_own);
             }
             with(|s| {
                 if let Some(w) = s.wins.get_mut(&h) {
@@ -8390,12 +8400,13 @@ fn dialog_box(c: &mut Ctx, inst: u32, t: u32, owner: u32, proc_: u32, param: u32
 /// callback gets a real dialog window to send BFFM_ messages to.
 pub(crate) fn hidden_dialog(c: &mut Ctx, owner: u32, proc_: u32, param: u32) -> u32 {
     // DLGTEMPLATE: style, extended style, no items, 0,0 200x150, no menu, class or title
-    let t = mem::heap_alloc(32, true);
+    let t_own = mem::Scratch::new(32, true);
+    let t = t_own.get();
     w32(t, 0x80c8_0080);
     w16(t + 14, 200);
     w16(t + 16, 150);
     let r = dialog_box(c, 0, t, owner, proc_, param);
-    mem::heap_free(t);
+    drop(t_own);
     r
 }
 
@@ -8572,11 +8583,12 @@ fn ImmGetDefaultIMEWnd(c: &mut Ctx) -> u32 {
     if tid != me || !with(|s| s.wins.values().any(|w| w.tid == tid && !s.classes[w.class].name.eq_ignore_ascii_case("IME"))) {
         return 0;
     }
-    let strs = mem::heap_alloc(16, true);
+    let strs_own = mem::Scratch::new(16, true);
+    let strs = strs_own.get();
     mem::write(strs, b"IME\0Default IME\0");
     // WS_POPUP | WS_DISABLED, as Windows' is
     let w = gcall(c, "user32", "CreateWindowExA", &[0, strs, strs + 4, 0x8800_0000, 0, 0, 1, 1, 0, 0, 0, 0]);
-    mem::heap_free(strs);
+    drop(strs_own);
     if w != 0 {
         IME_WNDS.lock().unwrap().get_or_insert_with(HashMap::default).insert(tid, w);
     }
@@ -9475,10 +9487,11 @@ mod menu_template_tests {
         Ok(())
     }
     fn load(bytes: &[u8]) -> u32 {
-        let p = mem::heap_alloc(bytes.len() as u32 + 64, true);
+        let p_own = mem::Scratch::new(bytes.len() as u32 + 64, true);
+        let p = p_own.get();
         mem::write(p, bytes);
         let h = menu_from_template(p);
-        mem::heap_free(p);
+        drop(p_own);
         h
     }
 
@@ -9504,14 +9517,15 @@ mod menu_template_tests {
             t.append(&mut b);
             // (texts end inside: a zero word at the end, as any resource's padding)
             t.extend_from_slice(&[0, 0]);
-            let p = mem::heap_alloc(t.len() as u32, true);
+            let p_own = mem::Scratch::new(t.len() as u32, true);
+            let p = p_own.get();
             mem::write(p, &t);
             let end = p + t.len() as u32;
             let h = menu_from_resource((p, t.len() as u32));
             prop_assert!(with(|s| s.menus.contains_key(&h)));
             let at = if ex { menuex_items_at(new_menu(), p + 8, end, 0) } else { menu_items_at(new_menu(), p + 4, end, 0) };
             prop_assert!(at <= end + 2 * 256, "parsing stopped at {at:#x}, the resource ends at {end:#x}");
-            mem::heap_free(p);
+            drop(p_own);
         }
     }
 
@@ -9528,11 +9542,12 @@ mod menu_template_tests {
                 v = vec![Item::Popup(format!("p{}", i % 10), v), Item::Cmd("after".into(), 9)];
             }
             let b = template(&v, ex);
-            let p = mem::heap_alloc(b.len() as u32 + 64, true);
+            let p_own = mem::Scratch::new(b.len() as u32 + 64, true);
+            let p = p_own.get();
             mem::write(p, &b);
             let end = if ex { menuex_items(new_menu(), p + 8) } else { menu_items(new_menu(), p + 4) };
             assert_eq!(end, p + b.len() as u32, "ex {ex}: parsing ends at the template's end");
-            mem::heap_free(p);
+            drop(p_own);
             let h = load(&b);
             let mut cur = h;
             let mut depth = 1;

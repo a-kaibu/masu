@@ -890,7 +890,8 @@ mod eptr_tests {
         fn records_live_while_held(ops in proptest::collection::vec((0u8..5, 0usize..4, 0usize..4), 1..60)) {
             let _g = enter();
             let start = LIVE_RECORDS.load(Relaxed);
-            let vars = mem::heap_alloc(32, true);
+            let vars_own = mem::Scratch::new(32, true);
+            let vars = vars_own.get();
             let v = |i: usize| vars + 8 * i as u32;
             // (model: which record each holds, by a number of the model's; None: empty)
             let mut holds: [Option<u32>; 4] = [None; 4];
@@ -930,7 +931,7 @@ mod eptr_tests {
             for i in 0..4 { call(eptr_destroy, &[v(i)]); }
             prop_assert_eq!(LIVE_RECORDS.load(Relaxed), start);
             prop_assert!(made > 0 || true);
-            mem::heap_free(vars);
+            drop(vars_own);
         }
     }
 
@@ -943,7 +944,8 @@ mod eptr_tests {
         #[test]
         fn thrown_blocks_live_while_held(ops in proptest::collection::vec((0u8..5, 0usize..4, 0usize..3), 1..60)) {
             let _g = enter();
-            let vars = mem::heap_alloc(32, true);
+            let vars_own = mem::Scratch::new(32, true);
+            let vars = vars_own.get();
             let v = |i: usize| vars + 8 * i as u32;
             let objs: Vec<u32> = (0..3).map(|_| crate::msvcp::thrown(mem::heap_alloc(24, true))).collect();
             // (model: the object each var's record holds; whether each catch is done)
@@ -980,7 +982,7 @@ mod eptr_tests {
                 if !done[k] { call(crate::msvcp::thrown_dtor, &[objs[k]]); }
                 prop_assert!(!crate::msvcp::thrown_live(objs[k]));
             }
-            mem::heap_free(vars);
+            drop(vars_own);
         }
     }
 

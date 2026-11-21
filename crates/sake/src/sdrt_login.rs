@@ -95,12 +95,13 @@ pub(super) fn fill(c: &mut Ctx, dlg: u32, inst: u32) {
     ACTIVE_DIALOG.store(dlg, Ordering::Release);
     for (control, words) in [(email, &packet.0[2..2 + en]), (password, &packet.0[2 + EMAIL_MAX..2 + EMAIL_MAX + pn])] {
         let bytes = (words.len() as u32 + 1) * 2;
-        let ptr = mem::heap_alloc(bytes, true);
+        let ptr_own = mem::Scratch::new(bytes, true);
+        let ptr = ptr_own.get();
         if ptr == 0 { return; }
         for (i, &word) in words.iter().enumerate() { w16(ptr + i as u32 * 2, word); }
         as_wide(true, || send(c, control, 0xc, 0, ptr));
         mem::fill(ptr, bytes, 0);
-        mem::heap_free(ptr);
+        drop(ptr_own);
         invalidate(control, None, true);
     }
     // Browser settings own persistence; leave the vendor remember checkbox off.

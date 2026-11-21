@@ -126,12 +126,13 @@ fn begin(c: &mut Ctx) -> u32 {
         if sb != 0 {
             com_call(c, sb, 4, &[]); // Capture: the state of now
         } else {
-            let p = mem::heap_alloc(8, true);
+            let p_own = mem::Scratch::new(8, true);
+            let p = p_own.get();
             // CreateStateBlock(D3DSBT_ALL): it holds the state of now
             if com_call(c, r32(o + DEV), 59, &[1, p]) == 0 {
                 w32(o + SB, r32(p));
             }
-            mem::heap_free(p);
+            drop(p_own);
         }
     }
     0
@@ -148,10 +149,11 @@ fn draw(c: &mut Ctx) -> u32 {
     let (tw, th) = match pending(o, |p| p.sizes.get(&tex).copied()) {
         Some(s) => s,
         None => {
-            let desc = mem::heap_alloc(32, true);
+            let desc_own = mem::Scratch::new(32, true);
+            let desc = desc_own.get();
             com_call(c, tex, 17, &[0, desc]);
             let s = (r32(desc + 24).max(1) as f32, r32(desc + 28).max(1) as f32);
-            mem::heap_free(desc);
+            drop(desc_own);
             pending(o, |p| p.sizes.insert(tex, s));
             s
         }
@@ -221,7 +223,8 @@ fn set_states(c: &mut Ctx, o: u32) {
             com_call(c, d, 69, &[0, s, v]);
         }
     }
-    let m = mem::heap_alloc(64, true);
+    let m_own = mem::Scratch::new(64, true);
+    let m = m_own.get();
     let ident = |m: u32| {
         mem::fill(m, 64, 0);
         for i in 0..4 {
@@ -233,11 +236,12 @@ fn set_states(c: &mut Ctx, o: u32) {
     if flags & OBJECTSPACE == 0 {
         com_call(c, d, 44, &[2, m]); // VIEW
         // GetViewport: X Y Width Height MinZ MaxZ
-        let vp = mem::heap_alloc(24, true);
+        let vp_own = mem::Scratch::new(24, true);
+        let vp = vp_own.get();
         com_call(c, d, 48, &[vp]);
         let (x, y, w, h) = (r32(vp) as f32, r32(vp + 4) as f32, r32(vp + 8) as f32, r32(vp + 12) as f32);
         let (zn, zf) = (rf(vp, 4), rf(vp, 5));
-        mem::heap_free(vp);
+        drop(vp_own);
         // D3DXMatrixOrthoOffCenterLH(x + .5, x + w + .5, y + h + .5, y + .5, zn, zf)
         let (l, r, b, t) = (x + 0.5, x + w + 0.5, y + h + 0.5, y + 0.5);
         let dz = if zf != zn { zf - zn } else { 1.0 };
@@ -248,7 +252,7 @@ fn set_states(c: &mut Ctx, o: u32) {
         }
         com_call(c, d, 44, &[3, m]); // PROJECTION
     }
-    mem::heap_free(m);
+    drop(m_own);
 }
 
 /// The vertices of quads: two triangles a quad, 24-byte vertices (xyz, colour, uv).
@@ -374,10 +378,11 @@ mod review_tests {
         call(h, &a)
     }
     fn sprite(dev: u32) -> u32 {
-        let out = mem::heap_alloc(4, true);
+        let out_own = mem::Scratch::new(4, true);
+        let out = out_own.get();
         assert_eq!(call(D3DXCreateSprite, &[dev, out]), 0);
         let s = r32(out);
-        mem::heap_free(out);
+        drop(out_own);
         s
     }
 

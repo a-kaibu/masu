@@ -973,7 +973,7 @@ fn copy_rtp(from: &Path, to: &Path, rel: &str) -> Result<()> {
 /// folders only): `old`'s other lines as they were, then `new`'s lines that `old` lacks (the
 /// folders above the RTPs once).
 fn merge_rtp(old: &str, new: &str) -> String {
-    let mut out = format!("{}\n", old.lines().next().unwrap_or("vnvm-tree\t2\t0"));
+    let mut out = format!("{}\n", old.lines().next().map_or_else(|| tree_list::Header { avg: 0 }.to_string(), str::to_owned));
     let mut seen = std::collections::HashSet::new();
     for l in tree_list::good_lines(old).filter(|l| !in_rtp_part(&l.path)) {
         out.push_str(&l.to_string());
@@ -1245,7 +1245,7 @@ fn pack_tree(store: &Path, root: &Path, name: &str, follow: bool, chunking: Para
     for (line, text) in done {
         lines[line] = text;
     }
-    let mut out = format!("vnvm-tree\t2\t{}\n", chunking.avg);
+    let mut out = format!("{}\n", tree_list::Header { avg: chunking.avg });
     // (the lines of movies left without a copy stay empty: not listed)
     for l in lines.into_iter().filter(|l| !l.is_empty()) {
         out.push_str(&l);

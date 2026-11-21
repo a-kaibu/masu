@@ -67,28 +67,74 @@ fn arg(a: u32, stage: usize, r: &Regs, current: C, temp: C) -> C {
     v
 }
 
+/// The D3DTEXTUREOPs this suite draws (COLOR_OPS, ALPHA_OPS): a stage's op word is one of
+/// these, so `op` names each formula once and has no arm for another number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TexOp {
+    SelectArg1,
+    SelectArg2,
+    Modulate,
+    Modulate2x,
+    Modulate4x,
+    Add,
+    AddSmooth,
+    BlendDiffuseAlpha,
+    BlendFactorAlpha,
+    BlendCurrentAlpha,
+    ModulateAlphaAddColor,
+    ModulateColorAddAlpha,
+    ModulateInvAlphaAddColor,
+    ModulateInvColorAddAlpha,
+    MultiplyAdd,
+    Lerp,
+}
+
+impl TexOp {
+    /// the op of a D3DTEXTUREOP word, None for one the suite does not draw
+    fn of(o: u32) -> Option<TexOp> {
+        Some(match o {
+            2 => TexOp::SelectArg1,
+            3 => TexOp::SelectArg2,
+            4 => TexOp::Modulate,
+            5 => TexOp::Modulate2x,
+            6 => TexOp::Modulate4x,
+            7 => TexOp::Add,
+            11 => TexOp::AddSmooth,
+            12 => TexOp::BlendDiffuseAlpha,
+            14 => TexOp::BlendFactorAlpha,
+            16 => TexOp::BlendCurrentAlpha,
+            18 => TexOp::ModulateAlphaAddColor,
+            19 => TexOp::ModulateColorAddAlpha,
+            20 => TexOp::ModulateInvAlphaAddColor,
+            21 => TexOp::ModulateInvColorAddAlpha,
+            25 => TexOp::MultiplyAdd,
+            26 => TexOp::Lerp,
+            _ => return None,
+        })
+    }
+}
+
 /// D3DTEXTUREOP o on one channel (k) of a1, a2, a0 (the formulas of the D3D9 docs)
-fn op(o: u32, a1: C, a2: C, a0: C, k: usize, r: &Regs, current: C) -> f64 {
+fn op(o: TexOp, a1: C, a2: C, a0: C, k: usize, r: &Regs, current: C) -> f64 {
     let (x, y, z) = (a1[k], a2[k], a0[k]);
     match o {
-        2 => x,
-        3 => y,
-        4 => x * y,
-        5 => x * y * 2.0,
-        6 => x * y * 4.0,
-        7 => x + y,
-        11 => x + y - x * y,
-        12 => x * r.diffuse[3] + y * (1.0 - r.diffuse[3]),
-        14 => x * r.tfactor[3] + y * (1.0 - r.tfactor[3]),
-        16 => x * current[3] + y * (1.0 - current[3]),
+        TexOp::SelectArg1 => x,
+        TexOp::SelectArg2 => y,
+        TexOp::Modulate => x * y,
+        TexOp::Modulate2x => x * y * 2.0,
+        TexOp::Modulate4x => x * y * 4.0,
+        TexOp::Add => x + y,
+        TexOp::AddSmooth => x + y - x * y,
+        TexOp::BlendDiffuseAlpha => x * r.diffuse[3] + y * (1.0 - r.diffuse[3]),
+        TexOp::BlendFactorAlpha => x * r.tfactor[3] + y * (1.0 - r.tfactor[3]),
+        TexOp::BlendCurrentAlpha => x * current[3] + y * (1.0 - current[3]),
         // (color only: rgb as the docs give them, alpha arg1's)
-        18 => if k == 3 { a1[3] } else { x + a1[3] * y },
-        19 => if k == 3 { a1[3] } else { x * y + a1[3] },
-        20 => if k == 3 { a1[3] } else { (1.0 - a1[3]) * y + x },
-        21 => if k == 3 { a1[3] } else { (1.0 - x) * y + a1[3] },
-        25 => z + x * y,
-        26 => z * x + (1.0 - z) * y,
-        _ => unreachable!(),
+        TexOp::ModulateAlphaAddColor => if k == 3 { a1[3] } else { x + a1[3] * y },
+        TexOp::ModulateColorAddAlpha => if k == 3 { a1[3] } else { x * y + a1[3] },
+        TexOp::ModulateInvAlphaAddColor => if k == 3 { a1[3] } else { (1.0 - a1[3]) * y + x },
+        TexOp::ModulateInvColorAddAlpha => if k == 3 { a1[3] } else { (1.0 - x) * y + a1[3] },
+        TexOp::MultiplyAdd => z + x * y,
+        TexOp::Lerp => z * x + (1.0 - z) * y,
     }
 }
 
@@ -98,8 +144,9 @@ fn reads_texture(o: u32, a1: u32, a2: u32, a0: u32) -> bool {
     (t(a1) && o != 3) || (t(a2) && o != 2) || (t(a0) && (o == 25 || o == 26))
 }
 
-/// The pixel: each stage in turn (none with a texture), saturated, specular added at the end.
-fn reference(stages: &[[u32; 10]], specular: bool, r: &Regs) -> C {
+/// The pixel: each stage in turn (none with a texture), saturated, specular added at the end;
+/// None when a stage's op is not one of TexOp's.
+fn reference(stages: &[[u32; 10]], specular: bool, r: &Regs) -> Option<C> {
     let mut current = r.diffuse;
     let mut temp = [0.0; 4];
     for (st, s) in stages.iter().enumerate() {
@@ -107,6 +154,7 @@ fn reference(stages: &[[u32; 10]], specular: bool, r: &Regs) -> C {
         let (aop, x1, x2, x0) = if reads_texture(s[4], s[5], s[6], s[7]) { (2, 1, 1, 1) } else { (s[4], s[5], s[6], s[7]) };
         let (ca1, ca2, ca0) = (arg(c1, st, r, current, temp), arg(c2, st, r, current, temp), arg(c0, st, r, current, temp));
         let (aa1, aa2, aa0) = (arg(x1, st, r, current, temp), arg(x2, st, r, current, temp), arg(x0, st, r, current, temp));
+        let (cop, aop) = (TexOp::of(cop)?, TexOp::of(aop)?);
         let mut v = [0.0; 4];
         for k in 0..3 {
             v[k] = op(cop, ca1, ca2, ca0, k, r, current).clamp(0.0, 1.0);
@@ -123,7 +171,7 @@ fn reference(stages: &[[u32; 10]], specular: bool, r: &Regs) -> C {
             current[k] += r.specular[k];
         }
     }
-    current.map(|x| x.clamp(0.0, 1.0))
+    Some(current.map(|x| x.clamp(0.0, 1.0)))
 }
 
 fn wgsl(k: &PsKey) -> String {
@@ -162,7 +210,10 @@ pub fn cases(out: &mut Vec<Case>, errors: &mut Vec<String>) {
         let mut pixels = Vec::new();
         for _ in 0..16 {
             let g = Regs { diffuse: r.color(), specular: r.color(), tfactor: r.color(), constant: std::array::from_fn(|_| r.color()) };
-            let want = reference(stages, *specular, &g);
+            let Some(want) = reference(stages, *specular, &g) else {
+                errors.push(format!("ffstages/{si}: a stage's op is none of TexOp's: {stages:?}"));
+                break;
+            };
             let mut regs = vec![[0f32; 4]; n + 2];
             regs[0] = g.tfactor.map(|x| kome::num::to_f32(x));
             for s in 0..8 {
@@ -208,7 +259,7 @@ mod tests {
     #[test]
     fn unbound_stage_passes_current() {
         let s = [[2, 3, 1, 1, 2, 3, 1, 1, 1, 0], [4, 2, 0, 1, 4, 2, 0, 1, 1, 0]];
-        assert_eq!(reference(&s, false, &regs()), [0.5, 0.25, 0.0, 1.0]);
+        assert_eq!(reference(&s, false, &regs()), Some([0.5, 0.25, 0.0, 1.0]));
     }
 
     /// args the op does not read may name the texture: SELECTARG2 of (TEXTURE, TFACTOR)
@@ -219,7 +270,7 @@ mod tests {
         assert!(!reads_texture(7, 3, 0, 2));
         assert!(reads_texture(26, 3, 0, 2) && reads_texture(25, 3, 0, 2) && reads_texture(4, 0x12, 0, 1));
         let s = [[3, 2, 3, 1, 3, 2, 3, 1, 1, 0]];
-        assert_eq!(reference(&s, false, &regs()), [0.5, 0.25, 0.0, 1.0]);
+        assert_eq!(reference(&s, false, &regs()), Some([0.5, 0.25, 0.0, 1.0]));
     }
 
     /// the translator's rule is this one, for every op and args
@@ -234,6 +285,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// every op the cases draw is a TexOp (else reference answers None for it)
+    #[test]
+    fn drawn_ops_are_typed() {
+        for o in COLOR_OPS.iter().chain(&ALPHA_OPS) {
+            assert!(TexOp::of(*o).is_some(), "op {o}");
+        }
+        assert_eq!(TexOp::of(8), None);
     }
 
     #[test]

@@ -172,10 +172,11 @@ fn res_str(c: &mut Ctx, inst: u32, p: u32, wide_: bool) -> Vec<u16> {
         return Vec::new();
     }
     if p < 0x10000 {
-        let buf = mem::heap_alloc(1024, true);
+        let buf_own = mem::Scratch::new(1024, true);
+        let buf = buf_own.get();
         let n = g(c, "user32", "LoadStringW", &[inst, p, buf, 512]);
         let s = (0..n).map(|i| r16(buf + 2 * i)).collect();
-        mem::heap_free(buf);
+        drop(buf_own);
         return s;
     }
     if wide_ {
@@ -468,14 +469,15 @@ fn notify(c: &mut Ctx, sheet_hwnd: u32, page: u32, code: i32, lparam: u32) -> u3
         return 0;
     }
     let ps = mem::ps();
-    let n = mem::heap_alloc(4 * ps, true);
+    let n_own = mem::Scratch::new(4 * ps, true);
+    let n = n_own.get();
     mem::wp(n, sheet_hwnd);
     mem::wp(n + ps, 0);
     w32(n + 2 * ps, code as u32);
     mem::wp(n + 3 * ps, lparam);
     g(c, "user32", "SetWindowLongW", &[page, 0, 0]);
     let r = g(c, "user32", "SendMessageW", &[page, WM_NOTIFY, 0, n]);
-    mem::heap_free(n);
+    drop(n_own);
     r
 }
 
@@ -619,21 +621,23 @@ fn insert_tab(c: &mut Ctx, tab: u32, at: usize, text: &[u16]) {
     let ps = mem::ps();
     let tp = guest_w(text);
     // TCITEMW: mask, state, stateMask, pszText, cchTextMax, iImage, lParam
-    let it = mem::heap_alloc(16 + 4 * ps, true);
+    let it_own = mem::Scratch::new(16 + 4 * ps, true);
+    let it = it_own.get();
     w32(it, 1);
     mem::wp(it + 12, tp);
     g(c, "user32", "SendMessageW", &[tab, 0x133e, at as u32, it]);
-    mem::heap_free(it);
+    drop(it_own);
     mem::heap_free(tp);
 }
 
 fn dlu(c: &mut Ctx, sh: u32, x: i32, y: i32) -> (i32, i32) {
-    let r = mem::heap_alloc(16, true);
+    let r_own = mem::Scratch::new(16, true);
+    let r = r_own.get();
     w32(r + 8, x as u32);
     w32(r + 12, y as u32);
     g(c, "user32", "MapDialogRect", &[sh, r]);
     let v = (r32(r + 8) as i32, r32(r + 12) as i32);
-    mem::heap_free(r);
+    drop(r_own);
     v
 }
 
@@ -708,10 +712,11 @@ fn init_sheet(c: &mut Ctx, sh: u32, key: u32) {
         None
     } else {
         // TCM_ADJUSTRECT(TRUE) on an empty rect: what the tabs and border add
-        let r = mem::heap_alloc(16, true);
+        let r_own = mem::Scratch::new(16, true);
+        let r = r_own.get();
         g(c, "user32", "SendMessageW", &[tab, 0x1328, 1, r]);
         let m = (-(r32(r) as i32), -(r32(r + 4) as i32), r32(r + 8) as i32, r32(r + 12) as i32);
-        mem::heap_free(r);
+        drop(r_own);
         Some(m)
     };
     let button = dlu(c, sh, 50, 14);
@@ -768,7 +773,8 @@ fn init_sheet(c: &mut Ctx, sh: u32, key: u32) {
     // the window around that client area, centred on the parent (or the screen)
     let style = g(c, "user32", "GetWindowLongW", &[sh, (-16i32) as u32]);
     let ex = g(c, "user32", "GetWindowLongW", &[sh, (-20i32) as u32]);
-    let r = mem::heap_alloc(16, true);
+    let r_own = mem::Scratch::new(16, true);
+    let r = r_own.get();
     w32(r + 8, w as u32);
     w32(r + 12, h as u32);
     g(c, "user32", "AdjustWindowRectEx", &[r, style, 0, ex]);
@@ -779,7 +785,7 @@ fn init_sheet(c: &mut Ctx, sh: u32, key: u32) {
     } else {
         (0, 0, g(c, "user32", "GetSystemMetrics", &[0]) as i32, g(c, "user32", "GetSystemMetrics", &[1]) as i32)
     };
-    mem::heap_free(r);
+    drop(r_own);
     g(c, "user32", "SetWindowPos", &[sh, 0, (ox + (ow - ww) / 2).max(0) as u32, (oy + (oh - wh) / 2).max(0) as u32, ww as u32, wh as u32, 0x14]);
     // the start page (and its font for our controls)
     set_cur_sel(c, key, start, 1);
@@ -1182,7 +1188,8 @@ mod tests {
     #[test]
     fn template_captions_are_bounded() {
         let _g = crate::test_guest::enter();
-        let t = mem::heap_alloc(0x30000, true);
+        let t_own = mem::Scratch::new(0x30000, true);
+        let t = t_own.get();
         // DLGTEMPLATE (18 bytes), no menu, no class, the caption "Ab"
         for (i, u) in [0u16, 0, 0x41, 0x62, 0].iter().enumerate() {
             w16(t + 18 + 2 * i as u32, *u);
@@ -1194,7 +1201,7 @@ mod tests {
         }
         let got = template_title(t);
         assert!(got.len() as u32 <= TEXT_MAX);
-        mem::heap_free(t);
+        drop(t_own);
     }
 
     #[test]

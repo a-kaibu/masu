@@ -164,12 +164,13 @@ fn s_copy_to(c: &mut Ctx) -> u32 {
         if mem::x64() { (c.a(0), c.a(1), c.a64(2), c.a(3), c.a(4)) } else { (c.a(0), c.a(1), (c.a(3) as u64) << 32 | c.a(2) as u64, c.a(4), c.a(5)) };
     let (h, size, pos) = (hg(this), size_of(this), r32(this + 12));
     let n = (cb.min(size.saturating_sub(pos) as u64)) as u32;
-    let done = mem::heap_alloc(4, true);
+    let done_own = mem::Scratch::new(4, true);
+    let done = done_own.get();
     // (IStream::Write is the 5th method)
     let f = mem::rp(mem::rp(dst) + 4 * mem::ps());
     let hr = c.call(f, &[dst, crate::k32::global_ptr(h) + pos, n, done]);
     let w = r32(done);
-    mem::heap_free(done);
+    drop(done_own);
     w32(this + 12, pos + n);
     for (p, v) in [(rd, n), (wr, w)] {
         if p != 0 {
@@ -393,8 +394,10 @@ fn OleLoadPicture(c: &mut Ctx) -> u32 {
     out.put(0);
     // the stream's bytes (through its Read, whoever made it)
     let read = mem::rp(mem::rp(stm) + 3 * mem::ps());
-    let buf = mem::heap_alloc(0x10000, false);
-    let got = mem::heap_alloc(4, true);
+    let buf_own = mem::Scratch::new(0x10000, false);
+    let buf = buf_own.get();
+    let got_own = mem::Scratch::new(4, true);
+    let got = got_own.get();
     let mut data = Vec::new();
     loop {
         let want = if size != 0 { (size - data.len() as u32).min(0x10000) } else { 0x10000 };
@@ -411,8 +414,8 @@ fn OleLoadPicture(c: &mut Ctx) -> u32 {
             break;
         }
     }
-    mem::heap_free(buf);
-    mem::heap_free(got);
+    drop(buf_own);
+    drop(got_own);
     let Some((w, h, px)) = decode(&data) else {
         eprintln!("sake: OleLoadPicture: can't decode {} bytes ({:02x?})", data.len(), &data[..data.len().min(4)]);
         return E_FAIL;
@@ -434,10 +437,11 @@ fn OleLoadPictureEx(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::OleLoadPictureEx>();
     // (stream, size, runmode, riid, x, y, flags, out): as OleLoadPicture
     let (stm, size, out) = (c.a::<0>(), c.a::<1>(), c.out::<7>());
-    let tmp = mem::heap_alloc(8, true);
+    let tmp_own = mem::Scratch::new(8, true);
+    let tmp = tmp_own.get();
     let r = gcall(c.ctx(), "oleaut32", "OleLoadPicture", &[stm, size, 0, 0, tmp]);
     out.put(mem::rp(tmp));
-    mem::heap_free(tmp);
+    drop(tmp_own);
     r
 }
 
@@ -548,10 +552,11 @@ mod stream_tests {
     use proptest::prelude::*;
 
     fn create() -> u32 {
-        let out = mem::heap_alloc(4, true);
+        let out_own = mem::Scratch::new(4, true);
+        let out = out_own.get();
         assert_eq!(call(CreateStreamOnHGlobal, &[0, 1, out]), 0);
         let s = r32(out);
-        mem::heap_free(out);
+        drop(out_own);
         s
     }
     fn write(s: u32, data: &[u8]) -> u32 {
@@ -574,10 +579,11 @@ mod stream_tests {
         assert_eq!(call(s_seek, &[s, to, 0, 0, 0]), 0);
     }
     fn clone(s: u32) -> u32 {
-        let out = mem::heap_alloc(4, true);
+        let out_own = mem::Scratch::new(4, true);
+        let out = out_own.get();
         assert_eq!(call(s_clone, &[s, out]), 0);
         let c = r32(out);
-        mem::heap_free(out);
+        drop(out_own);
         c
     }
 

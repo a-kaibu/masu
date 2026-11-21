@@ -240,7 +240,8 @@ impl GuestStream {
             return Vec::new();
         }
         let c = unsafe { &mut *p.cast::<Ctx>() };
-        let buf = mem::heap_alloc(lo32(n) + 8, false);
+        let buf_own = mem::Scratch::new(lo32(n) + 8, false);
+        let buf = buf_own.get();
         // (the guest heap is full: nothing read, not a read into address 0)
         if buf == 0 {
             return Vec::new();
@@ -262,7 +263,7 @@ impl GuestStream {
                 out = mem::bytes(buf, k);
             }
         }
-        mem::heap_free(buf);
+        drop(buf_own);
         out
     }
 }
@@ -785,7 +786,8 @@ fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u
         // IWMReaderAllocatorEx::AllocateForStreamEx / AllocateForOutputEx(num, cb, &buf, flags,
         // time, duration, context)
         let slot = if by_stream { 3 } else { 4 };
-        let pp = mem::heap_alloc(8, true);
+        let pp_own = mem::Scratch::new(8, true);
+        let pp = pp_own.get();
         let hr = if mem::x64() {
             let f = rp(rp(a) + ps() * slot);
             lo32(crate::call64(c.cpu, mem::widen(f), &[mem::widen(a), u64::from(num), lo64(data.len()), u64::from(pp), u64::from(flags), time, dur, 0]))
@@ -793,15 +795,16 @@ fn hand_out(c: &mut Ctx, alloc: (u32, bool, u32), data: &[u8], time: u64, dur: u
             crate::dshow::com(c, a, slot, &[num, lo32(data.len()), pp, flags, lo32(time), lo32(time >> 32), lo32(dur), lo32(dur >> 32), 0])
         };
         let b = rp(pp);
-        mem::heap_free(pp);
+        drop(pp_own);
         if hr & 0x8000_0000 != 0 || b == 0 {
             return if hr & 0x8000_0000 != 0 { hr } else { Hr::OutOfMemory.code() };
         }
         // GetBuffer(&p), SetLength(n)
-        let p = mem::heap_alloc(8, true);
+        let p_own = mem::Scratch::new(8, true);
+        let p = p_own.get();
         crate::dshow::com(c, b, 6, &[p]);
         let dst = rp(p);
-        mem::heap_free(p);
+        drop(p_own);
         if dst != 0 {
             mem::write(dst, data);
         }
@@ -1070,7 +1073,8 @@ fn sr_set_output_props(c: &mut Ctx) -> u32 {
     let ty = match props_type(p) {
         Some(t) => t,
         None => {
-            let n = mem::heap_alloc(4, true);
+            let n_own = mem::Scratch::new(4, true);
+            let n = n_own.get();
             if n == 0 {
                 return Hr::OutOfMemory.code();
             }
@@ -1086,7 +1090,7 @@ fn sr_set_output_props(c: &mut Ctx) -> u32 {
                 if hr == 0 { MediaType::read(buf) } else { None }
             };
             mem::heap_free(buf);
-            mem::heap_free(n);
+            drop(n_own);
             match t {
                 Some(t) => t,
                 None => return Hr::InvalidArg.code(),

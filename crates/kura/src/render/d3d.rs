@@ -1159,7 +1159,7 @@ impl D3d {
             for y in 0..us(r.h) {
                 let src = &r.data[y * us(r.bpr)..y * us(r.bpr) + us(r.row)];
                 if r.halved {
-                    let f: Vec<u8> = src.chunks_exact(2).flat_map(|h| f16_to_f32(u16::from_le_bytes([h[0], h[1]])).to_le_bytes()).collect();
+                    let f: Vec<u8> = kome::le::units16(src).flat_map(|h| f16_to_f32(h).to_le_bytes()).collect();
                     unsafe {
                         std::ptr::copy_nonoverlapping(f.as_ptr(), std::ptr::with_exposed_provenance_mut::<u8>(us(r.dst) + y * us(r.pitch)), f.len());
                     }
@@ -1281,7 +1281,7 @@ impl D3d {
                     // (StretchRect/ColorFill can draw into any renderable color texture)
                     let _ = rt;
                     let u = usage::T_BINDING | usage::T_COPY_DST | usage::T_COPY_SRC | if depth || renderable(fmt) { usage::T_RENDER } else { 0 };
-                    let levels = if depth { 1 } else { levels.max(1).min(32 - w.max(h).max(1).leading_zeros()) };
+                    let levels = if depth { 1 } else { levels.max(1).min(w.max(h).max(1).bit_width()) };
                     let tex = gpu::texture(&format!(r#"{{"size":[{w},{h}],"format":{},"mipLevelCount":{levels},"usage":{u}}}"#, qf(fmt)));
                     if let Some(old) = self.textures.remove(&id) {
                         old.free(self.shown());
@@ -3299,7 +3299,7 @@ impl D3d {
         let renderable = dim == Dim::D2 && draws_to(fmt);
         // (no more levels than the size has)
         let biggest = if dim == Dim::D3 { w.max(h).max(layers) } else { w.max(h) };
-        let levels = mips.max(1).min(32 - biggest.max(1).leading_zeros());
+        let levels = mips.max(1).min(biggest.max(1).bit_width());
         // Multisampled: 4 samples, WebGPU's only count above 1 (for Direct3D's 2, 4, 8 and 16),
         // where WebGPU has it (2D, one level and layer, a format it multisamples, no UAV);
         // else 1 sample, and resolving it is a copy

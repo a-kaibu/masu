@@ -1277,6 +1277,38 @@ pub fn heap_free(p: u32) -> bool {
     true
 }
 
+/// A block of the guest heap that one Rust function owns for the length of a call (an out-
+/// parameter, a string handed to a guest function): heap_free when it is dropped, on every path
+/// out of the function, so an early return no longer leaks it and nothing frees it twice. The
+/// guest sees only its address (`get`); Rust reads and writes it through mem's readers and
+/// writers like any guest memory. A block the guest keeps past the call is not one: heap_alloc.
+///
+/// ```compile_fail
+/// // (one owner: a second free is a use of a moved value)
+/// let s = sake::mem::Scratch::new(8, true);
+/// drop(s);
+/// drop(s);
+/// ```
+#[must_use = "a Scratch dropped at once frees its block before anything uses it"]
+pub struct Scratch(u32);
+
+impl Scratch {
+    /// heap_alloc(size, zero); an allocation that fails is address 0, as heap_alloc's
+    pub fn new(size: u32, zero: bool) -> Scratch {
+        Scratch(heap_alloc(size, zero))
+    }
+    /// the block's guest address (0: the allocation failed)
+    pub fn get(&self) -> u32 {
+        self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        heap_free(self.0);
+    }
+}
+
 /// Whether block `p` can take `size` bytes in place: a small block within its class, or any
 /// block shrinking
 pub fn heap_fits(p: u32, size: u32) -> bool {

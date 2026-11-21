@@ -229,11 +229,12 @@ fn ScriptStringAnalyse(c: &mut Ctx) -> u32 {
     w32(blk + 4, n);
     w32(blk + 8, total as u32);
     // height: the font's line height
-    let tmb = mem::heap_alloc(60, true);
+    let tmb_own = mem::Scratch::new(60, true);
+    let tmb = tmb_own.get();
     let f = crate::export_once!("gdi32", "GetTextMetricsW");
     c.ctx().call(f, &[dc, tmb]);
     w32(blk + 12, r32(tmb));
-    mem::heap_free(tmb);
+    drop(tmb_own);
     w32(blk + 16, advs);
     out.put(blk);
     0

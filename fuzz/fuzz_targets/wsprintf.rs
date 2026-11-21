@@ -5,7 +5,7 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let f: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let f: Vec<u16> = kome::le::units16(data).collect();
     let pct = |v: &[u16]| v.iter().filter(|&&c| c == u16::from(b'%')).count();
     let g = sake::user::wsprintf_format(&f);
     assert!(pct(&g) <= pct(&f));

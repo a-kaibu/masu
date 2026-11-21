@@ -561,11 +561,11 @@ fn low_stack_panic_reports_from_the_system_heap() {
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     on_low_stack(|| {
         let low = Box::new(0u8);
-        assert!((&*low as *const u8 as usize) < 1 << 32, "the bump heap is below 4 GB");
+        assert!(Box::as_ptr(&low).addr() < 1 << 32, "the bump heap is below 4 GB");
         let r = std::panic::catch_unwind(|| panic!("on the low stack"));
         assert!(r.is_err());
         let after = Box::new(0u8);
-        assert!((&*after as *const u8 as usize) >= 1 << 32, "after a panic the system heap");
+        assert!(Box::as_ptr(&after).addr() >= 1 << 32, "after a panic the system heap");
         LOW_HEAP.with(|l| l.set(true));
     });
 }

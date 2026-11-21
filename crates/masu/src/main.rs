@@ -10,6 +10,8 @@
 //! Where things live: see dirs.rs (XDG on Linux; `--store` or config.toml move the store).
 //! `ttc` (hidden) makes sake's font collections. `pack` and `add-game` (hidden) are the two halves of `add`, for trees that are no game
 //! (sake's C:\ with the fonts) and for scripts.
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 
 mod apps;
 mod asar;

@@ -1098,7 +1098,8 @@ mod format_abi_tests {
         let dc = call(crate::gdi::CreateCompatibleDC, &[0]);
         let bmp = call(crate::gdi::CreateBitmap, &[8, 6, 1, 32, 0]);
         call(crate::gdi::SelectObject, &[dc, bmp]);
-        let p = mem::heap_alloc(16, true);
+        let p_own = mem::Scratch::new(16, true);
+        let p = p_own.get();
         assert_eq!(call(GdipCreateFromHDC, &[dc, p]), OK);
         let g = r32(p);
         assert_eq!(call(crate::gdiplus_brush::GdipCreateSolidFill, &[0xff11_2233, p + 4]), OK);
@@ -1113,13 +1114,14 @@ mod format_abi_tests {
         assert_eq!(call(crate::gdiplus_brush::GdipCreateSolidFill, &[0xff00_0000, p + 8]), OK);
         assert_eq!(call(GdipFillRectangleI, &[g, r32(p + 8), 100, 100, 1 << 20, 1 << 20]), OK);
         assert_eq!(call(crate::gdi::GetPixel, &[dc, 7, 5]), 0x33_2211);
-        mem::heap_free(p);
+        drop(p_own);
     }
 
     #[test]
     fn string_format_clone_owns_tabs_and_ranges() {
         let _guard = enter();
-        let p = mem::heap_alloc(128, true);
+        let p_own = mem::Scratch::new(128, true);
+        let p = p_own.get();
         assert_eq!(call(GdipCreateStringFormat, &[0xdeadbeef, 0x419, p]), OK);
         let h = r32(p);
         w32(p + 16, 10.0f32.to_bits());
@@ -1141,13 +1143,14 @@ mod format_abi_tests {
         assert_eq!(call(GdipGetStringFormatMeasurableCharacterRangeCount, &[cloned, p + 8]), OK);
         assert_eq!(r32(p + 8), 1);
         assert_eq!(call(GdipDeleteStringFormat, &[cloned]), OK);
-        mem::heap_free(p);
+        drop(p_own);
     }
 
     #[test]
     fn string_format_abi_validation_preserves_outputs_and_state() {
         let _guard = enter();
-        let p = mem::heap_alloc(128, true);
+        let p_own = mem::Scratch::new(128, true);
+        let p = p_own.get();
         assert_eq!(call(GdipCreateStringFormat, &[0, 0x419, p]), OK);
         let h = r32(p);
         w32(p + 8, 0xaaaa_aaaa);
@@ -1183,13 +1186,14 @@ mod format_abi_tests {
         assert_eq!(call(GdipSetStringFormatAlign, &[h, 3]), INVALID_PARAMETER);
         assert_eq!(call(GdipGetStringFormatAlign, &[h, 0]), INVALID_PARAMETER);
         assert_eq!(call(GdipDeleteStringFormat, &[h]), OK);
-        mem::heap_free(p);
+        drop(p_own);
     }
 
     #[test]
     fn string_format_generic_lifetime_and_clone() {
         let _guard = enter();
-        let p = mem::heap_alloc(32, true);
+        let p_own = mem::Scratch::new(32, true);
+        let p = p_own.get();
         for (get, flags, trimming) in [
             (GdipStringFormatGetGenericDefault as Handler, 0, 1),
             (GdipStringFormatGetGenericTypographic as Handler, 0x6004, 0),
@@ -1213,6 +1217,6 @@ mod format_abi_tests {
             assert_eq!(call(GdipGetStringFormatFlags, &[cloned, p + 8]), INVALID_PARAMETER);
             assert_eq!(call(GdipSetStringFormatFlags, &[h, flags]), OK);
         }
-        mem::heap_free(p);
+        drop(p_own);
     }
 }

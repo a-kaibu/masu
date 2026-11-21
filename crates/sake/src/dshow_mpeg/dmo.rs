@@ -227,12 +227,13 @@ fn receive(c: &mut Ctx, b: u32, sample: u32) -> u32 {
     if dwith(b, |d| d.flushing).unwrap_or(true) {
         return Hr::False.code();
     }
-    let tmp = mem::heap_alloc(16, true);
+    let tmp_own = mem::Scratch::new(16, true);
+    let tmp = tmp_own.get();
     com(c, sample, 3, &[tmp]);
     let ptr = rp(tmp);
     let len = com(c, sample, 11, &[]);
     let time = if com(c, sample, 5, &[tmp, tmp + 8]) == 0 { mem::r64(tmp) } else { u64::MAX };
-    mem::heap_free(tmp);
+    drop(tmp_own);
     let key = com(c, sample, 7, &[]) == 0;
     if ptr == 0 {
         return Hr::Pointer.code();

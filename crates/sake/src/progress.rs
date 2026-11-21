@@ -90,7 +90,8 @@ fn with_bar<R>(h: u32, f: impl FnOnce(&mut Progress) -> R) -> R {
 fn paint(c: &mut Ctx, h: u32) {
     let (style, (w, hh)) = with(|s| s.wins.get(&h).map_or((0, (0, 0)), |w| (w.style, (w.client.w(), w.client.h()))));
     let bar = with_bar(h, |b| *b);
-    let ps = mem::heap_alloc(64, true);
+    let ps_own = mem::Scratch::new(64, true);
+    let ps = ps_own.get();
     let dc = gcall(c, "user32", "BeginPaint", &[h, ps]);
     let color = |cr: u32, sys: u32| if cr == CLR_DEFAULT { crate::gdi::solid_brush(sys_color(sys)) } else { crate::gdi::solid_brush(cr & 0xff_ffff) };
     let full = Rect { l: 0, t: 0, r: w, b: hh };
@@ -126,7 +127,7 @@ fn paint(c: &mut Ctx, h: u32) {
         }
     }
     gcall(c, "user32", "EndPaint", &[h, ps]);
-    mem::heap_free(ps);
+    drop(ps_own);
 }
 
 pub(super) fn proc_fn(c: &mut Ctx) -> u32 {

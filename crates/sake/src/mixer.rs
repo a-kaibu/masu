@@ -803,7 +803,8 @@ mod tests {
     #[test]
     fn controls_a_null_array() {
         let _g = crate::test_guest::enter();
-        let p = mem::heap_alloc(64, true);
+        let p_own = mem::Scratch::new(64, true);
+        let p = p_own.get();
         for wide in [false, true] {
             w32(p, lines_controls_size());
             w32(p + 4, DEST_LINE);
@@ -813,7 +814,7 @@ mod tests {
             let f = if wide { (|c: &mut Ctx| line_controls_api(c, true)) as crate::api::Handler } else { |c: &mut Ctx| line_controls_api(c, false) };
             assert_eq!(crate::test_guest::call(f, &[0, p, 0]), MmErr::InvalParam.code(), "wide {wide}");
         }
-        mem::heap_free(p);
+        drop(p_own);
     }
 
     #[test]

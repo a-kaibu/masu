@@ -1005,7 +1005,7 @@ pub fn section_find(sec: &[u8], key: &Key) -> Option<(u32, u32, u32)> {
                 // name length is not a whole last unit)
                 let at = |k: u32| get32(sec, e.checked_add(k)?);
                 let (no, nl) = (at(4)?, at(8)?);
-                let name: Vec<u16> = sec.get(no as usize..no.checked_add(nl)? as usize)?.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+                let name: Vec<u16> = kome::le::units16(sec.get(no as usize..no.checked_add(nl)? as usize)?).collect();
                 if eq_nocase(&name, s) {
                     return Some((at(12)?, at(16)?, at(20)?));
                 }

@@ -308,6 +308,93 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/sake/src/mf/source.rs", |t| Some(t + "\nfn last(d: &Arc<Data>) -> bool { Arc::strong_count(d) == 1 }\n")),
         },
+        Rule::RustLints => Fixture {
+            bad: &[
+                ("crates/kome/Cargo.toml", "[package]\nname = \"kome\"\n[lints.rust]\nunsafe_code = \"deny\"\n"),
+                ("crates/koji/Cargo.toml", "[package]\nname = \"koji\"\n[lints.rust]\nraw_borrows_via_references = \"allow\"\n# raw_borrows_via_references = \"warn\"\n"),
+            ],
+            good: &[
+                ("crates/kome/Cargo.toml", "[package]\nname = \"kome\"\n[lints.rust]\nraw_borrows_via_references = \"warn\"\n"),
+                ("crates/koji/Cargo.toml", "[package]\n[lints.rust]\nraw_borrows_via_references = \"deny\" # (the JIT's tables)\n"),
+                ("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n"),
+                ("vendor/x/Cargo.toml", "[package]\nname = \"x\"\n"),
+                ("tools/lint-fixtures/ratchet/Cargo.toml", "[package]\nname = \"fixture\"\n"),
+            ],
+            mutate: ("crates/kome/Cargo.toml", |t| Some(t.replace("raw_borrows_via_references = \"warn\"", "raw_borrows_via_references = \"allow\""))),
+        },
+        Rule::BinDeadPub => Fixture {
+            bad: &[
+                ("crates/masu/src/main.rs", "//! masu\nfn main() {}\n"),
+                ("crates/x/src/bin/tool.rs", "#![allow(dead_code_pub_in_binary)]\nfn main() {}\n"),
+                ("tools/y/src/main.rs", "// #![warn(dead_code_pub_in_binary)]\nfn main() {}\n"),
+            ],
+            good: &[
+                ("crates/masu/src/main.rs", "//! masu\n#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]\nfn main() {}\n"),
+                ("crates/x/src/bin/tool.rs", "#![deny(dead_code_pub_in_binary)]\nfn main() {}\n"),
+                ("crates/x/src/lib.rs", "pub fn f() {}\n"),
+                ("crates/x/src/bin/tool/helper.rs", "pub fn g() {}\n"),
+            ],
+            mutate: ("crates/masu/src/main.rs", |t| Some(t.replace("#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]", ""))),
+        },
+        Rule::HandBitWidth => Fixture {
+            bad: &[
+                ("crates/koji/src/round.rs", "fn w(n: u64) -> u32 { 64 - n.leading_zeros() }\n"),
+                ("crates/kura/src/x.rs", "fn w(a: u32, b: u32) -> usize { (32 - (a | b).leading_zeros()) as usize }\n"),
+                ("tools/win32md/src/x.rs", "fn w(v: &[u16]) -> u32 { 16 - v[3].leading_zeros() }\n"),
+            ],
+            good: &[
+                ("crates/koji/src/round.rs", "fn w(n: u64) -> u32 { n.bit_width() }\nfn z(n: u32) -> u32 { n.leading_zeros() }\nfn top(n: u32) -> u32 { 31 - n.leading_zeros() }\n"),
+                ("crates/kura/src/x.rs", "// 32 - x.leading_zeros() was written by hand here\nconst S: &str = \"64 - n.leading_zeros()\";\n"),
+            ],
+            mutate: ("crates/kome/src/num.rs", |t| Some(t + "\npub fn width(v: u32) -> u32 { 32 - v.leading_zeros() }\n")),
+        },
+        Rule::HandUtf16 => Fixture {
+            bad: &[
+                ("crates/sake/src/ini.rs", "fn s(b: &[u8]) -> String { let u: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect(); String::from_utf16_lossy(&u) }\n"),
+                ("crates/asf/src/lib.rs", "fn s(b: &[u8]) -> Vec<u16> {\n    b.chunks_exact(2)\n        .map(|p| u16::from_le_bytes(p.try_into().unwrap_or_default()))\n        .collect()\n}\n"),
+            ],
+            good: &[
+                ("crates/sake/src/ini.rs", "fn s(b: &[u8]) -> String { kome::le::utf16_lossy(b) }\nfn p(b: &[u8]) -> Vec<[u8; 2]> { b.chunks_exact(2).map(|c| [c[0], c[1]]).collect() }\nfn i(b: &[u8]) -> i16 { i16::from_le_bytes([b[0], b[1]]) }\n"),
+                (modern::LE, "pub fn units16(b: &[u8]) -> impl Iterator<Item = u16> + '_ { b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])) }\n"),
+            ],
+            mutate: ("crates/sake/src/ini.rs", |t| Some(t + "\nfn hand(b: &[u8]) -> Vec<u16> { b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect() }\n")),
+        },
+        Rule::NoReturnHandler => Fixture {
+            bad: &[
+                ("crates/sake/src/k32.rs", "fn ExitProcess(c: &mut Ctx) -> u32 { exit_all(c.a(0)); 0 }\nfn FatalAppExitA(c: &mut Ctx) -> ! { exit_all(1) }\nfn ExitThread(c: &mut Ctx) -> ! { t(c) }\nfn _endthreadex(c: &mut Ctx) -> ! { t(c) }\nfn _endthread(c: &mut Ctx) -> ! { t(c) }\nfn FreeLibraryAndExitThread(c: &mut Ctx) -> ! { t(c) }\n"),
+                ("crates/sake/src/crt_io.rs", "fn _assert(c: &mut Ctx) -> ! { a(c) }\nfn _wassert(c: &mut Ctx) -> ! { a(c) }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/k32.rs", "fn ExitProcess(c: &mut Ctx) -> ! { exit_all(c.a(0)) }\nfn FatalAppExitA(c: &mut Ctx) -> ! { exit_all(1) }\nfn ExitThread(c: &mut Ctx) -> ! { t(c) }\nfn _endthreadex(c: &mut Ctx) -> ! { t(c) }\nfn _endthread(c: &mut Ctx) -> ! { t(c) }\nfn FreeLibraryAndExitThread(c: &mut Ctx) -> ! { t(c) }\nfn Sleep(c: &mut Ctx) -> u32 { 0 }\n"),
+            ],
+            mutate: ("crates/sake/src/k32.rs", |t| Some(t.replace("fn ExitProcess(c: &mut Ctx) -> ! {", "fn ExitProcess(c: &mut Ctx) -> u32 {"))),
+        },
+        Rule::WildcardUnreachable => Fixture {
+            bad: &[
+                ("crates/sake/src/xof.rs", "fn f(t: &Ty, s: Option<u8>) -> u8 { match (t, s) { (_, Some(s)) => s, (Ty::Prim(p), _) => *p, _ => unreachable!() } }\n"),
+                ("crates/shaderconf/src/ffstages.rs", "fn op(o: u32) -> f64 { match o { 2 => 1.0, _ => { unreachable!(\"op {o}\") } } }\n"),
+                ("crates/kura/src/x.rs", "fn f(v: u8) -> u8 { match v { 0 => 1, _ => core::unreachable!() } }\n"),
+            ],
+            good: &[
+                ("crates/sake/src/xof.rs", "fn f(b: &Body) -> u8 { match b { Body::Tpl(s) => s.0, Body::Prim(p) => *p } }\nfn g(v: u8) -> u8 { match v { 0 => 1, _ if v > 9 => unreachable!(), _ => 2 } }\n#[cfg(test)]\nmod tests {\n    fn t(v: u8) -> u8 { match v { 0 => 1, _ => unreachable!() } }\n}\n"),
+                ("crates/kura/src/x_tests.rs", "fn t(v: u8) -> u8 { match v { 0 => 1, _ => unreachable!() } }\n"),
+                ("crates/kura/src/y.rs", "fn f(v: Never) -> u8 { match v { Never::A => unreachable!() } }\n// _ => unreachable!()\n"),
+            ],
+            mutate: ("crates/sake/src/xof.rs", |t| Some(t + "\nfn back(t: &Ty) -> u8 { match t { Ty::Prim(_) => 0, _ => unreachable!() } }\n")),
+        },
+        Rule::GuestScratch => Fixture {
+            bad: &[
+                ("crates/sake/src/d3dx9.rs", "fn f(c: &mut Ctx) -> u32 {\n    let pt = mem::heap_alloc(8, true);\n    com_call(c, 1, 2, &[pt]);\n    let v = r32(pt);\n    mem::heap_free(pt);\n    v\n}\n"),
+                ("crates/sake/src/w16api.rs", "fn init() {\n    reg(\"USER.DrawText\", |c| {\n        let r = crate::mem::heap_alloc(16, true);\n        if c.a(0) == 0 {\n            crate::mem::heap_free(r);\n            return 0;\n        }\n        crate::mem::heap_free(r);\n        0\n    });\n}\n"),
+            ],
+            good: &[
+                ("crates/sake/src/d3dx9.rs", "fn f(c: &mut Ctx) -> u32 {\n    let pt_own = mem::Scratch::new(8, true);\n    let pt = pt_own.get();\n    com_call(c, 1, 2, &[pt]);\n    r32(pt)\n}\n"),
+                ("crates/sake/src/w16.rs", "fn alloc(size: u32) -> u32 {\n    let b = crate::mem::heap_alloc(size, true);\n    if sel(b) == 0 {\n        crate::mem::heap_free(b);\n    }\n    b\n}\n"),
+                ("crates/sake/src/mem.rs", "fn t() { let b = heap_alloc(4, true); heap_free(b); }\n"),
+                ("crates/sake/src/x.rs", "#[cfg(test)]\nmod tests {\n    fn t() { let b = mem::heap_alloc(4, true); mem::heap_free(b); }\n}\n"),
+            ],
+            mutate: ("crates/sake/src/glu.rs", |t| Some(t + "\nfn hand() -> u32 {\n    let p = mem::heap_alloc(8, true);\n    let v = mem::r32(p);\n    mem::heap_free(p);\n    v\n}\n")),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),
@@ -386,12 +473,15 @@ fn every_regex_compiles() {
     for r in regress::regexes() {
         assert!(r.is_some());
     }
+    for r in modern::regexes() {
+        assert!(r.is_some());
+    }
 }
 
 #[test]
 fn the_new_rules_find_each_spelling_alone() {
     // (each bad file on its own: one spelling found does not hide another that is missed)
-    for r in [Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::DepthGuard, Rule::TypedRegisters] {
+    for r in [Rule::GuestScratch, Rule::RustLints, Rule::BinDeadPub, Rule::HandBitWidth, Rule::HandUtf16, Rule::NoReturnHandler, Rule::WildcardUnreachable, Rule::SafeRawPointerAbi, Rule::UncheckedJitMode, Rule::OutEscape, Rule::EscapeComment, Rule::ArcTryUnwrap, Rule::ArcCount, Rule::ShellSpecialEnv, Rule::DepthGuard, Rule::TypedRegisters] {
         for one in fixture(r).bad.chunks(1) {
             assert!(!r.check(&Tree::made_up(one)).is_empty(), "{}: finds nothing in {}", r.id(), one[0].0);
         }
@@ -407,6 +497,10 @@ fn the_new_rules_find_each_spelling_alone() {
     assert_eq!(Rule::KomeCopy.check(&Tree::made_up(fixture(Rule::KomeCopy).bad)).len(), 5);
     assert_eq!(Rule::SafeRawPointerAbi.check(&Tree::made_up(fixture(Rule::SafeRawPointerAbi).bad)).len(), 3);
     assert_eq!(Rule::OutEscape.check(&Tree::made_up(fixture(Rule::OutEscape).bad)).len(), 6);
+    // (the ExitProcess that returns u32 and crt_io's missing _amsg_exit; the three wildcard arms)
+    assert_eq!(Rule::NoReturnHandler.check(&Tree::made_up(fixture(Rule::NoReturnHandler).bad)).len(), 2);
+    assert_eq!(Rule::WildcardUnreachable.check(&Tree::made_up(fixture(Rule::WildcardUnreachable).bad)).len(), 3);
+    assert_eq!(Rule::RustLints.check(&Tree::made_up(fixture(Rule::RustLints).bad)).len(), 2);
 }
 
 #[test]

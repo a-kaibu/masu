@@ -212,7 +212,8 @@ fn hfont(c: &mut Ctx) -> u32 {
         out.put(h);
         return 0;
     }
-    let buffer = mem::heap_alloc(92, true);
+    let buffer_own = mem::Scratch::new(92, true);
+    let buffer = buffer_own.get();
     if buffer == 0 {
         return 0x8007000e;
     }
@@ -229,7 +230,7 @@ fn hfont(c: &mut Ctx) -> u32 {
         w16(buffer + 28 + 2 * i as u32, *ch)
     }
     let h = c.ctx().call(crate::export_once!("gdi32", "CreateFontIndirectW"), &[buffer]);
-    mem::heap_free(buffer);
+    drop(buffer_own);
     if h == 0 {
         return 0x8007000e;
     }
@@ -298,7 +299,8 @@ fn metrics(c: &mut Ctx) -> u32 {
     if out == 0 {
         return POINTER;
     }
-    let buffer = mem::heap_alloc(ps(), true);
+    let buffer_own = mem::Scratch::new(ps(), true);
+    let buffer = buffer_own.get();
     if buffer == 0 {
         return 0x8007000e;
     }
@@ -306,7 +308,7 @@ fn metrics(c: &mut Ctx) -> u32 {
     let this = c.a(0);
     let hr = c.call(rp(rp(this) + 19 * ps()), &[this, buffer]);
     let h = rp(buffer);
-    mem::heap_free(buffer);
+    drop(buffer_own);
     if hr != 0 {
         return hr;
     }

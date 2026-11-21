@@ -377,7 +377,7 @@ fn __dllonexit(c: &mut Ctx) -> u32 {
     ATEXIT.lock().unwrap().push(c.a(0));
     c.a(0)
 }
-fn exit(c: &mut Ctx) -> u32 {
+fn exit(c: &mut Ctx) -> ! {
     let code = c.a(0);
     loop {
         let Some(f) = ATEXIT.lock().unwrap().pop() else { break };
@@ -385,10 +385,10 @@ fn exit(c: &mut Ctx) -> u32 {
     }
     unsafe { libc::exit(code as i32) }
 }
-fn _exit(c: &mut Ctx) -> u32 {
+fn _exit(c: &mut Ctx) -> ! {
     unsafe { libc::exit(c.a(0) as i32) }
 }
-fn abort(_: &mut Ctx) -> u32 {
+fn abort(_: &mut Ctx) -> ! {
     eprintln!("sake: abort()");
     unsafe { libc::exit(3) }
 }
@@ -517,7 +517,7 @@ fn _clearfp(c: &mut Ctx) -> u32 {
     }
     s
 }
-fn _purecall(_: &mut Ctx) -> u32 {
+fn _purecall(_: &mut Ctx) -> ! {
     eprintln!("sake: pure virtual call");
     unsafe { libc::exit(3) }
 }
@@ -3468,11 +3468,11 @@ fn _cexit(c: &mut Ctx) -> u32 {
     }
     0
 }
-fn _invalid_parameter_noinfo_noreturn(_: &mut Ctx) -> u32 {
+fn _invalid_parameter_noinfo_noreturn(_: &mut Ctx) -> ! {
     eprintln!("sake: invalid parameter (noreturn)");
     unsafe { libc::exit(0xc0000417u32 as i32) }
 }
-fn terminate(c: &mut Ctx) -> u32 {
+fn terminate(c: &mut Ctx) -> ! {
     let from = if mem::x64() { mem::r64(c.esp) } else { r32(c.esp) as u64 };
     eprintln!("sake: terminate() from {from:#x}");
     unsafe { libc::exit(3) }
@@ -4166,8 +4166,10 @@ pub fn init() {
     ] {
         implement("ucrtbase", name, f);
     }
+    crate::noreturn!("msvcrt"; exit, _exit, abort, _purecall, _invalid_parameter_noinfo_noreturn, terminate);
+    crate::noreturn!("ucrtbase", "__std_terminate", terminate);
     reg!(_set_fmode, _get_initial_narrow_environment, _get_initial_wide_environment, _initialize_onexit_table,
-        _register_onexit_function, _execute_onexit_table, _cexit, _invalid_parameter_noinfo_noreturn, terminate,
+        _register_onexit_function, _execute_onexit_table, _cexit,
         wcsnlen, __std_exception_copy, __std_exception_destroy, __std_type_info_compare, __std_type_info_hash,
         _localtime64, _gmtime64, _localtime32_s, _localtime64_s, _gmtime32_s, _gmtime64_s, _mktime64, _difftime64,
         strftime, wcsftime, _Getdays, _Getmonths, _W_Getdays, _W_Getmonths, _Gettnames);
@@ -4193,7 +4195,6 @@ pub fn init() {
         ("_c_exit", ucrt_zero),
         ("_crt_atexit", atexit),
         ("_seh_filter_dll", _seh_filter_exe),
-        ("__std_terminate", terminate),
         ("__strncnt", strnlen),
         ("localtime", localtime32),
         ("gmtime", gmtime32),
@@ -4268,10 +4269,10 @@ pub fn init() {
         implement("msvcrt", "_EH_prolog", _EH_prolog);
     }
     reg!(_encode_pointer, _encoded_null, _crt_debugger_hook, _configthreadlocale, ___mb_cur_max_l_func);
-    reg!(_initterm, _initterm_e, _onexit, atexit, __dllonexit, exit, _exit, abort, __getmainargs, __set_app_type,
+    reg!(_initterm, _initterm_e, _onexit, atexit, __dllonexit, __getmainargs, __set_app_type,
         __p__fmode, __p__commode, __p___argc, __p___argv, __p___wargv, __p__wcmdln, __p__wenviron, __wgetmainargs,
         __p__environ, __p___initenv, __p__acmdln,
-        __p___mb_cur_max, ___mb_cur_max_func, __pctype_func, _controlfp, _control87, _clearfp, _statusfp, _purecall,
+        __p___mb_cur_max, ___mb_cur_max_func, __pctype_func, _controlfp, _control87, _clearfp, _statusfp,
         _XcptFilter, signal, _lock, _unlock, _errno, __doserrno,
         malloc, calloc, realloc, _recalloc, free, _msize,
         memcpy, memmove, memset, memcmp, memchr, strlen, strcpy, strncpy, strcat, strncat, strcmp, strncmp,
@@ -4628,7 +4629,8 @@ mod eh_prolog_tests {
         crate::test_guest::guest_thread();
         let teb = crate::cur().teb;
         let old = r32(teb);
-        let stack = mem::heap_alloc(64, true);
+        let stack_own = mem::Scratch::new(64, true);
+        let stack = stack_own.get();
         let e = stack + 32;
         w32(e, 0x0040_1054);
         let mut cpu = koji::Cpu::default();
@@ -4646,7 +4648,7 @@ mod eh_prolog_tests {
         assert_eq!(r32(e - 12), old);
         assert_eq!(r32(teb), e - 12);
         w32(teb, old);
-        mem::heap_free(stack);
+        drop(stack_own);
     }
 }
 
@@ -4741,7 +4743,8 @@ mod fread_tests {
         let data: Vec<u8> = (0..5000u32).map(|i| (i * 7 + 3) as u8).collect();
         let (root, w) = file("all", &data);
         let fp = stream(&w, b"rb");
-        let buf = mem::heap_alloc(8192, true);
+        let buf_own = mem::Scratch::new(8192, true);
+        let buf = buf_own.get();
         assert_eq!(fread_to(buf, 1, 0x7fff_ffff, fp), 5000);
         assert_eq!(&mem::bytes(buf, 5000), &data[..]);
         assert_eq!(with_file(fp, |s| s.eof), Some(true));
@@ -4753,7 +4756,7 @@ mod fread_tests {
         assert_eq!(f.read_vec(isize::MAX as usize), Vec::<u8>::new());
         assert_eq!(f.remaining(), 0);
         close(fp);
-        mem::heap_free(buf);
+        drop(buf_own);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -4775,7 +4778,8 @@ mod fread_tests {
                 with_file(fp, |s| s.unget = Some(b));
                 want.push_front(b);
             }
-            let buf = mem::heap_alloc(8 * 4096 + 16, true);
+            let buf_own = mem::Scratch::new(8 * 4096 + 16, true);
+            let buf = buf_own.get();
             for (size, n) in reads {
                 let total = size.saturating_mul(n).min(8 * 4096);
                 let n = total / size;
@@ -4786,7 +4790,7 @@ mod fread_tests {
                 prop_assert_eq!(&mem::bytes(buf, bytes as u32), &expect[..]);
             }
             close(fp);
-            mem::heap_free(buf);
+            drop(buf_own);
             let _ = std::fs::remove_dir_all(&root);
         }
 
@@ -4804,7 +4808,8 @@ mod fread_tests {
             let _g = crate::test_guest::enter();
             let (root, w) = file("getc", &data);
             let fp = stream(&w, if text_mode { b"rt" } else { b"rb" });
-            let buf = mem::heap_alloc(9000, true);
+            let buf_own = mem::Scratch::new(9000, true);
+            let buf = buf_own.get();
             // the model: raw position, ungot byte, where text reading started (ftell's buffers)
             let (mut rp, mut unget, mut chunk): (usize, Option<u8>, Option<u64>) = (0, None, None);
             let mgetc = |rp: &mut usize, unget: &mut Option<u8>, chunk: &mut Option<u64>| -> Option<u8> {
@@ -4871,7 +4876,7 @@ mod fread_tests {
                 }
             }
             close(fp);
-            mem::heap_free(buf);
+            drop(buf_own);
             let _ = std::fs::remove_dir_all(&root);
         }
     }
@@ -4888,7 +4893,8 @@ mod fread_tests {
         }
         let (root, w) = file("fgets", &data);
         let fp = stream(&w, b"rt");
-        let buf = mem::heap_alloc(256, true);
+        let buf_own = mem::Scratch::new(256, true);
+        let buf = buf_own.get();
         let t = std::time::Instant::now();
         for i in 0..40000 {
             assert_eq!(call(super::fgets, &[buf, 256, fp]), buf);
@@ -4898,7 +4904,7 @@ mod fread_tests {
         assert_eq!(with_file(fp, |s| s.eof), Some(true));
         eprintln!("fgets of {} lines: {:?}", 40000, t.elapsed());
         close(fp);
-        mem::heap_free(buf);
+        drop(buf_own);
         let _ = std::fs::remove_dir_all(&root);
     }
 }

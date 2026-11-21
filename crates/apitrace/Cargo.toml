@@ -10,3 +10,8 @@ description = "Reads apitrace's .trace files (Windows D3D calls recorded on real
 [dev-dependencies]
 # (no fork or timeout: the tests also run on wasm32, formal/wasm32.sh)
 proptest = { version = "1", default-features = false, features = ["std"] }
+
+[lints.rust]
+# (Rust 1.99: `&x as *const T` / `&mut x as *mut T` makes a reference first, with its aliasing
+# rules: write `&raw const x` / `&raw mut x`, or Box::as_ptr)
+raw_borrows_via_references = "warn"

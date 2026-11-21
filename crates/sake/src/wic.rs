@@ -363,8 +363,10 @@ pub(crate) fn read_stream(c: &mut Ctx, stm: u32) -> Vec<u8> {
         return v;
     }
     let read = mem::rp(mem::rp(stm) + 3 * mem::ps());
-    let buf = mem::heap_alloc(0x10000, false);
-    let got = mem::heap_alloc(4, true);
+    let buf_own = mem::Scratch::new(0x10000, false);
+    let buf = buf_own.get();
+    let got_own = mem::Scratch::new(4, true);
+    let got = got_own.get();
     let mut data = Vec::new();
     loop {
         mem::w32(got, 0);
@@ -376,8 +378,8 @@ pub(crate) fn read_stream(c: &mut Ctx, stm: u32) -> Vec<u8> {
             break;
         }
     }
-    mem::heap_free(buf);
-    mem::heap_free(got);
+    drop(buf_own);
+    drop(got_own);
     data
 }
 
@@ -428,23 +430,25 @@ fn read_source(c: &mut Ctx, src: u32) -> Option<(Arc<Img>, Fmt)> {
     }
     let vt = mem::rp(src);
     let k = mem::ps();
-    let tmp = mem::heap_alloc(16, true);
+    let tmp_own = mem::Scratch::new(16, true);
+    let tmp = tmp_own.get();
     c.call(mem::rp(vt + 3 * k), &[src, tmp, tmp + 4]);
     let (w, h) = (mem::r32(tmp), mem::r32(tmp + 4));
     c.call(mem::rp(vt + 4 * k), &[src, tmp]);
     let f = fmt_of(read_guid(tmp));
-    mem::heap_free(tmp);
+    drop(tmp_own);
     let f = f?;
     // (the game's GetSize: any numbers)
     image_bytes(w, h)?;
     let stride = f.row_bytes(w).div_ceil(4) * 4;
-    let buf = mem::heap_alloc((stride * h).max(4), false);
+    let buf_own = mem::Scratch::new((stride * h).max(4), false);
+    let buf = buf_own.get();
     if buf == 0 {
         return None;
     }
     let r = c.call(mem::rp(vt + 7 * k), &[src, 0, stride, stride * h, buf]);
     let data = mem::bytes(buf, stride * h);
-    mem::heap_free(buf);
+    drop(buf_own);
     (r == 0).then(|| (Arc::new(decode(f, w, h, stride, &data, &[])), f))
 }
 
@@ -1767,12 +1771,13 @@ mod vtable_tests {
     use crate::test_guest::{call, enter};
 
     fn made(f: crate::api::Handler, args: &[u32]) -> u32 {
-        let o = mem::heap_alloc(8, true);
+        let o_own = mem::Scratch::new(8, true);
+        let o = o_own.get();
         let mut a = args.to_vec();
         a.push(o);
         assert_eq!(call(f, &a), 0);
         let p = mem::rp(o);
-        mem::heap_free(o);
+        drop(o_own);
         p
     }
 
@@ -1958,13 +1963,14 @@ mod tests {
             let pal = if f.indexed() {
                 proptest::prop_assert_eq!(call(f_create_palette, &[0, out]), 0);
                 let pal = mem::rp(out);
-                let colors = mem::heap_alloc(16 * 4, true);
+                let colors_own = mem::Scratch::new(16 * 4, true);
+                let colors = colors_own.get();
                 for i in 0..16 {
                     mem::w32(colors + 4 * i, 0xff00_0000 | i * 0x0f0f0f);
                 }
                 proptest::prop_assert_eq!(call(pal_custom, &[pal, colors, 16]), 0);
                 proptest::prop_assert_eq!(call(bm_set_palette, &[bm, pal]), 0);
-                mem::heap_free(colors);
+                drop(colors_own);
                 pal
             } else {
                 0
@@ -1975,10 +1981,11 @@ mod tests {
                 r
             }).collect();
             let copied = |src: u32| -> Vec<Vec<u8>> {
-                let o = mem::heap_alloc(row * h, true);
+                let o_own = mem::Scratch::new(row * h, true);
+                let o = o_own.get();
                 assert_eq!(call(src_copy, &[src, 0, row, row * h, o]), 0);
                 let v = (0..h).map(|y| { let mut r = mem::bytes(o + y * row, row); pixel_bits(f, w, &mut r); r }).collect();
-                mem::heap_free(o);
+                drop(o_own);
                 v
             };
             proptest::prop_assert_eq!(copied(bm), want.clone(), "{:?} CopyPixels", f);

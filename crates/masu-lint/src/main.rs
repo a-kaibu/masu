@@ -7,6 +7,8 @@
 //!       clippy's type-safety, robustness and masu-* lints per file and unsafe site (src/ratchet.rs)
 //!
 //! `cargo test -p masu-lint` proves each rule and each counted lint fires on its regression.
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 mod arch;
 mod code;
 mod escape;

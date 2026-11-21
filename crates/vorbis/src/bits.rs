@@ -109,7 +109,7 @@ impl<'a> Bits<'a> {
 
 /// The number of bits in `v` (the specification's ilog: 0 for 0).
 pub fn ilog(v: u32) -> u32 {
-    32 - v.leading_zeros()
+    v.bit_width()
 }
 
 #[cfg(test)]

@@ -85,7 +85,8 @@ fn measure(c: &mut Ctx, h: u32, font: u32, texts: &[Option<Vec<u16>>]) -> (i32, 
     let f = if font != 0 { font } else { gcall(c, "gdi32", "GetStockObject", &[13]) };
     let old = gcall(c, "gdi32", "SelectObject", &[dc, f]);
     let len = texts.iter().flatten().map(|t| t.len()).max().unwrap_or(0) as u32;
-    let buf = mem::heap_alloc(64 + 2 * len + 2, true);
+    let buf_own = mem::Scratch::new(64 + 2 * len + 2, true);
+    let buf = buf_own.get();
     gcall(c, "gdi32", "GetTextMetricsW", &[dc, buf]);
     let (tm_h, ave) = (r32(buf) as i32, r32(buf + 20) as i32);
     let widths = texts
@@ -100,7 +101,7 @@ fn measure(c: &mut Ctx, h: u32, font: u32, texts: &[Option<Vec<u16>>]) -> (i32, 
             r32(buf) as i32
         })
         .collect();
-    mem::heap_free(buf);
+    drop(buf_own);
     gcall(c, "gdi32", "SelectObject", &[dc, old]);
     gcall(c, "user32", "ReleaseDC", &[h, dc]);
     (tm_h, ave, widths)
@@ -224,13 +225,14 @@ fn notify(c: &mut Ctx, h: u32, code: i32) -> u32 {
         return 0;
     }
     // NMHDR: hwndFrom, idFrom, code
-    let p = mem::heap_alloc(24, true);
+    let p_own = mem::Scratch::new(24, true);
+    let p = p_own.get();
     let ps = if mem::x64() { 8 } else { 4 };
     mem::wp(p, h);
     mem::wp(p + ps, id);
     w32(p + 2 * ps, code as u32);
     let r = send(c, parent, 0x4e, id, p);
-    mem::heap_free(p);
+    drop(p_own);
     r
 }
 
@@ -337,7 +339,8 @@ fn paint(c: &mut Ctx, h: u32, given_dc: u32) {
     let (style, w, hh) = with(|s| s.wins.get(&h).map_or((0, 0, 0), |w| (w.style, w.client.w(), w.client.h())));
     let lay = layout(c, h);
     let (font, sel, texts, focus) = tab(h, |t| (t.font, t.sel, t.items.iter().map(|i| i.text.clone().unwrap_or_default()).collect::<Vec<_>>(), t.focus));
-    let ps = mem::heap_alloc(64 + 16, true);
+    let ps_own = mem::Scratch::new(64 + 16, true);
+    let ps = ps_own.get();
     let rc = ps + 64;
     let dc = if given_dc != 0 { given_dc } else { gcall(c, "user32", "BeginPaint", &[h, ps]) };
     let f = if font != 0 { font } else { gcall(c, "gdi32", "GetStockObject", &[13]) };
@@ -412,7 +415,7 @@ fn paint(c: &mut Ctx, h: u32, given_dc: u32) {
     if given_dc == 0 {
         gcall(c, "user32", "EndPaint", &[h, ps]);
     }
-    mem::heap_free(ps);
+    drop(ps_own);
 }
 
 fn hit_test(c: &mut Ctx, h: u32, x: i32, y: i32) -> i32 {

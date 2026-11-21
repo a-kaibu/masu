@@ -725,15 +725,17 @@ mod tests {
     #[test]
     fn huge_counts_are_refused() {
         let _g = crate::test_guest::enter();
-        let out = mem::heap_alloc(16, true);
-        let names = mem::heap_alloc(16, true);
+        let out_own = mem::Scratch::new(16, true);
+        let out = out_own.get();
+        let names_own = mem::Scratch::new(16, true);
+        let names = names_own.get();
         for count in [MAX_LOOKUP + 1, 1 << 28, 0x4000_0000, u32::MAX] {
             assert_eq!(crate::test_guest::call(LsaLookupNames2, &[POLICY, 0, count, names, out, out + 8]), STATUS_TOO_MANY_NAMES);
             assert_eq!(crate::test_guest::call(LsaLookupNames, &[POLICY, count, names, out, out + 8]), STATUS_TOO_MANY_NAMES);
             assert_eq!(crate::test_guest::call(LsaLookupSids, &[POLICY, count, names, out, out + 8]), STATUS_TOO_MANY_SIDS);
         }
-        mem::heap_free(out);
-        mem::heap_free(names);
+        drop(out_own);
+        drop(names_own);
     }
 
     proptest! {

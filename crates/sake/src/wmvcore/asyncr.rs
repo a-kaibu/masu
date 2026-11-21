@@ -341,18 +341,20 @@ fn get_alloc_stream(c: &mut Ctx) -> u32 {
 /// A buffer of `data` from IWMReaderCallbackAdvanced::AllocateForStream (slot 7) /
 /// AllocateForOutput (8)(num, size, INSSBuffer **, context); 0 when it gives none.
 fn callback_buffer(c: &mut Ctx, adv: u32, stream: bool, num: u32, data: &[u8], ctx: u32) -> u32 {
-    let pp = mem::heap_alloc(8, true);
+    let pp_own = mem::Scratch::new(8, true);
+    let pp = pp_own.get();
     let hr = crate::dshow::com(c, adv, if stream { 7 } else { 8 }, &[num, lo32(data.len()), pp, ctx]);
     let b = rp(pp);
-    mem::heap_free(pp);
+    drop(pp_own);
     if hr & 0x8000_0000 != 0 || b == 0 {
         return 0;
     }
     // GetBuffer(&p), SetLength(n)
-    let p = mem::heap_alloc(8, true);
+    let p_own = mem::Scratch::new(8, true);
+    let p = p_own.get();
     crate::dshow::com(c, b, 6, &[p]);
     let dst = rp(p);
-    mem::heap_free(p);
+    drop(p_own);
     if dst != 0 {
         mem::write(dst, data);
     }
@@ -387,11 +389,12 @@ pub fn new_reader() -> u32 {
 /// starts the delivery thread.
 fn opened(c: &mut Ctx, b: u32, cb: u32, ctx: u32, hr: u32) {
     crate::dshow::com(c, cb, 1, &[]);
-    let iid = mem::heap_alloc(24, true);
+    let iid_own = mem::Scratch::new(24, true);
+    let iid = iid_own.get();
     mem::write(iid, &IID_CALLBACK_ADVANCED);
     let hr_qi = crate::dshow::com(c, cb, 0, &[iid, iid + 16]);
     let adv = if hr_qi == 0 { rp(iid + 16) } else { 0 };
-    mem::heap_free(iid);
+    drop(iid_own);
     let (old, old_adv, spawn) = asy_wake(b, |a| {
         let old = (std::mem::replace(&mut a.cb, cb), std::mem::replace(&mut a.adv, adv));
         a.ctx = ctx;
@@ -548,9 +551,10 @@ fn thread(c: &mut Ctx) -> u32 {
         match step {
             Step::Status(cb, s, hr, ctx) => {
                 // OnStatus(WMT_STATUS, HRESULT, WMT_ATTR_DATATYPE, BYTE *value, void *context)
-                let v = mem::heap_alloc(8, true);
+                let v_own = mem::Scratch::new(8, true);
+                let v = v_own.get();
                 crate::dshow::com(c, cb, 3, &[s, hr, 0, v, ctx]);
-                mem::heap_free(v);
+                drop(v_own);
             }
             Step::Sample(cb, ctx, (k, time, dur, data, key)) => {
                 let Some(rr) = reader(b) else { continue };
@@ -573,7 +577,8 @@ fn thread(c: &mut Ctx) -> u32 {
                     let own = asy(b, |a| if o.compressed { a.alloc_stream.contains(&num) } else { a.alloc_out.contains(&num) }).unwrap_or(false);
                     (alloc, flags, own.then_some((o.compressed, num)))
                 };
-                let p = mem::heap_alloc(8, true);
+                let p_own = mem::Scratch::new(8, true);
+                let p = p_own.get();
                 let hr = match own {
                     Some((stream, num)) => {
                         let adv = asy(b, |a| a.adv).unwrap_or(0);
@@ -589,7 +594,7 @@ fn thread(c: &mut Ctx) -> u32 {
                     crate::dshow::com(c, cb, 4, &[lo32(k), lo32(time), lo32(time >> 32), lo32(dur), lo32(dur >> 32), flags, buf, ctx]);
                     crate::dshow::com(c, buf, 2, &[]);
                 }
-                mem::heap_free(p);
+                drop(p_own);
             }
             Step::Time(adv, t, ctx) => {
                 // IWMReaderCallbackAdvanced::OnTime(QWORD, void *context)

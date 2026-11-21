@@ -3818,14 +3818,15 @@ mod tests {
     use proptest::prelude::*;
 
     fn tcall_(f: Handler, this: u32, args: &[u32]) -> u32 {
-        let sp = mem::heap_alloc(8 + 4 * args.len() as u32, true);
+        let sp_own = mem::Scratch::new(8 + 4 * args.len() as u32, true);
+        let sp = sp_own.get();
         for (i, &a) in args.iter().enumerate() {
             w32(sp + 4 + 4 * i as u32, a);
         }
         let mut cpu = koji::Cpu::default();
         cpu.regs[koji::ECX] = this;
         let r = f(&mut Ctx { cpu: &mut cpu, esp: sp, edx: None, jumped: false, st0: None, trap: 0, this: None, outs: 0 });
-        mem::heap_free(sp);
+        drop(sp_own);
         r
     }
     /// Units of ASCII / ANSI bytes

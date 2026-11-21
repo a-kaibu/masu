@@ -598,10 +598,11 @@ mod tests {
     }
     /// GetQueuedCompletionStatus(port, 0 ms): Some((bytes, key, overlapped)) or the error
     fn get(port: u32) -> Result<(u32, u32, u32), u32> {
-        let out = mem::heap_alloc(12, true);
+        let out_own = mem::Scratch::new(12, true);
+        let out = out_own.get();
         let ok = call(GetQueuedCompletionStatus, &[port, out, out + 4, out + 8, 0]);
         let r = if ok != 0 { Ok((r32(out), crate::mem::r32(crate::mem::ga(out) + 4), crate::mem::r32(crate::mem::ga(out) + 8))) } else { Err(crate::k32::get_last_error()) };
-        mem::heap_free(out);
+        drop(out_own);
         r
     }
     fn post_(port: u32, bytes: u32, key: u32, ov: u32) -> u32 {

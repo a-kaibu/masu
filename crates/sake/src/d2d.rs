@@ -240,11 +240,12 @@ fn factory() -> u32 {
 /// The swap chain's back buffer (ID3D11Texture2D) as a D2D bitmap.
 fn back_buffer(c: &mut Ctx, sc: u32) -> u32 {
     // IID_ID3D11Texture2D {6f15aaf2-d208-4e89-9ab4-489535d34f9c}
-    let iid = mem::heap_alloc(24, true);
+    let iid_own = mem::Scratch::new(24, true);
+    let iid = iid_own.get();
     mem::write(iid, &[0xf2, 0xaa, 0x15, 0x6f, 0x08, 0xd2, 0x89, 0x4e, 0x9a, 0xb4, 0x48, 0x95, 0x35, 0xd3, 0x4f, 0x9c]);
     c.call(mem::rp(mem::rp(sc) + mem::ps() * 9), &[sc, 0, iid, iid + 16]);
     let tex = r32(iid + 16);
-    mem::heap_free(iid);
+    drop(iid_own);
     let bmp = new_bitmap(tex);
     // (GetBuffer's reference: the bitmap's, released with it)
     if tex != 0 {
@@ -280,7 +281,8 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     }
     // DXGI_SWAP_CHAIN_DESC: w, h, refresh, B8G8R8A8, ..., 1 sample, render target output, 1
     // buffer, the window, windowed, discard
-    let desc = mem::heap_alloc(60 + 16, true);
+    let desc_own = mem::Scratch::new(60 + 16, true);
+    let desc = desc_own.get();
     for (o, v) in [(0, w), (4, h), (16, 87), (28, 1), (36, 0x20), (40, 1), (44, hwnd), (48, 1)] {
         w32(desc + o, v);
     }
@@ -288,15 +290,16 @@ fn CreateHwndRenderTarget(c: &mut Ctx) -> u32 {
     let create = crate::export_once!("d3d11", "D3D11CreateDeviceAndSwapChain");
     let hr = c.ctx().call(create, &[0, 1, 0, 0x20, 0, 0, 7, desc, sc_out, dev_out, 0, ctx_out]);
     let (sc, d3d, imm) = (r32(sc_out), r32(dev_out), r32(ctx_out));
-    mem::heap_free(desc);
+    drop(desc_own);
     if hr != 0 || sc == 0 {
         out.put(0);
         return if hr != 0 { hr } else { 0x8000_4005 };
     }
-    let dev_out = mem::heap_alloc(8, true);
+    let dev_out_own = mem::Scratch::new(8, true);
+    let dev_out = dev_out_own.get();
     new_device(factory, crate::api::Out::at(dev_out));
     let device = mem::rp(dev_out);
-    mem::heap_free(dev_out);
+    drop(dev_out_own);
     let o = com::object(com::iface!(ID2D1HwndRenderTarget), &hwnd_methods(), 8);
     st(|s| {
         s.parents.insert(o, device);
@@ -340,13 +343,14 @@ fn CreateCompatibleRenderTarget(c: &mut Ctx) -> u32 {
     }
     // ID3D11Device::CreateTexture2D(D3D11_TEXTURE2D_DESC: w, h, 1 mip, 1 layer, B8G8R8A8, 1
     // sample, default usage, render target | shader resource)
-    let desc = mem::heap_alloc(44 + 8, true);
+    let desc_own = mem::Scratch::new(44 + 8, true);
+    let desc = desc_own.get();
     for (o, v) in [(0, w), (4, h), (8, 1), (12, 1), (16, 87), (20, 1), (32, 0x28)] {
         w32(desc + o, v);
     }
     c.ctx().call(mem::rp(mem::rp(d3d) + mem::ps() * 5), &[d3d, desc, 0, desc + 44]);
     let tex = r32(desc + 44);
-    mem::heap_free(desc);
+    drop(desc_own);
     if tex == 0 {
         out.put(0);
         return 0x8007_000e;
@@ -550,10 +554,11 @@ fn CreateDeviceContext(c: &mut Ctx) -> u32 {
 fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::D2D1CreateDeviceContext>();
     // (dxgi surface, properties, out): a device and a context targeting the surface
-    let dev_out = mem::heap_alloc(8, true);
+    let dev_out_own = mem::Scratch::new(8, true);
+    let dev_out = dev_out_own.get();
     device_of_new_factory(crate::api::Out::at(dev_out));
     let device = mem::rp(dev_out);
-    mem::heap_free(dev_out);
+    drop(dev_out_own);
     let o = com::object(CONTEXT, &context_methods(), 8);
     let surface = c.a::<0>();
     let bmp = new_bitmap(surface);
@@ -570,10 +575,11 @@ fn D2D1CreateDeviceContext(c: &mut Ctx) -> u32 {
 fn CreateDxgiSurfaceRenderTarget(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::iface::ID2D1Factory7::CreateDxgiSurfaceRenderTarget>();
     // (this, surface, properties, out): a context of a device of this factory
-    let dev_out = mem::heap_alloc(8, true);
+    let dev_out_own = mem::Scratch::new(8, true);
+    let dev_out = dev_out_own.get();
     new_device(c.a::<0>(), crate::api::Out::at(dev_out));
     let device = mem::rp(dev_out);
-    mem::heap_free(dev_out);
+    drop(dev_out_own);
     let o = com::object(CONTEXT, &context_methods(), 8);
     let bmp = new_bitmap(c.a::<1>());
     // (D2D1_RENDER_TARGET_PROPERTIES: dpiX, dpiY after the type and pixel format; 0 is 96)
@@ -2021,7 +2027,8 @@ mod guest_size_tests {
         fn pixel_rows_are_sized_without_wrapping(w in 1u32..20000, h in 0u32..20000, pitch in any::<u32>(), small in any::<bool>()) {
             let _g = crate::test_guest::enter();
             let pitch = if small { pitch % (w * 4 + 64) } else { pitch };
-            let data = mem::heap_alloc(64, true);
+            let data_own = mem::Scratch::new(64, true);
+            let data = data_own.get();
             let len = u64::from(pitch) * (u64::from(h.max(1)) - 1) + u64::from(w) * 4;
             match pixels(data, pitch, w, h) {
                 // (the 64-byte block is not the end of what is readable: the guest memory after it
@@ -2033,7 +2040,7 @@ mod guest_size_tests {
                 }
                 None => prop_assert!(h == 0 || u64::from(pitch) < u64::from(w) * 4 || len > u64::from(u32::MAX) || u64::from(mem::accessible(data, len as u32, false, false)) < len),
             }
-            mem::heap_free(data);
+            drop(data_own);
         }
     }
 }

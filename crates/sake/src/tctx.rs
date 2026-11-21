@@ -89,10 +89,11 @@ fn load(cpu: &mut koji::Cpu, ctx: u32) {
 /// guest's stack pointer, where a thread near the end of its stack has no room (and a write
 /// there lands in whatever is mapped below it)
 fn with_scratch<R>(n: u32, f: impl FnOnce(u32) -> R) -> R {
-    let b = mem::heap_alloc(n * (size(mem::x64()) + 16) + 16, true);
+    let b_own = mem::Scratch::new(n * (size(mem::x64()) + 16) + 16, true);
+    let b = b_own.get();
     assert!(b != 0, "sake: out of guest memory for a thread context");
     let r = f((b + 15) & !15);
-    mem::heap_free(b);
+    drop(b_own);
     r
 }
 
@@ -160,11 +161,12 @@ fn overlay_pending(tid: u32, at: u32) {
     let p = PENDING.lock().unwrap().get_or_insert_with(HashMap::default).get(&tid).cloned();
     if let Some((flags, bytes)) = p {
         let n = size(mem::x64());
-        let tmp = mem::heap_alloc(n + 16, true);
+        let tmp_own = mem::Scratch::new(n + 16, true);
+        let tmp = tmp_own.get();
         let t = (tmp + 15) & !15;
         mem::write(t, &bytes[..bytes.len().min(n as usize)]);
         overlay(at, t, flags);
-        mem::heap_free(tmp);
+        drop(tmp_own);
     }
 }
 
@@ -176,12 +178,13 @@ fn thread_of(h: u32) -> Option<u32> {
 /// process asks), as GetThreadContext of it here sees it
 pub fn context_of(tid: u32) -> Option<Vec<u8>> {
     let mut s = crate::k32::thread_stopped(tid)??;
-    let base = mem::heap_alloc(size(mem::x64()) + 16, true);
+    let base_own = mem::Scratch::new(size(mem::x64()) + 16, true);
+    let base = base_own.get();
     let at = (base + 15) & !15;
     capture(&mut s.cpu, s.api, at);
     overlay_pending(tid, at);
     let v = mem::bytes(at, size(mem::x64()));
-    mem::heap_free(base);
+    drop(base_own);
     Some(v)
 }
 /// crate::xmem's SET_CONTEXT: the parts `flags` names of `bytes` for thread `tid`, as
@@ -400,7 +403,8 @@ mod tests {
         crate::test_guest::guest_thread();
         let tid = crate::cur().tid;
         let mut cpu = koji::Cpu::default();
-        let low = mem::heap_alloc(0x2000, true);
+        let low_own = mem::Scratch::new(0x2000, true);
+        let low = low_own.get();
         mem::fill(low, 0x2000, 0xee);
         cpu.set_gpr(koji::Reg64::Rsp, (low + 0x2000) as u64);
         // a context that sets EAX (CONTEXT_INTEGER) to 0x1234
@@ -411,7 +415,7 @@ mod tests {
         assert!(apply_pending(&mut cpu));
         assert_eq!(cpu.gpr(koji::Reg64::Rax), 0x1234);
         assert!(mem::bytes(low, 0x2000).iter().all(|&b| b == 0xee), "nothing written below ESP");
-        mem::heap_free(low);
+        drop(low_own);
     }
 
     /// The parts never overlap, stay inside the CONTEXT, and all of them leave out only

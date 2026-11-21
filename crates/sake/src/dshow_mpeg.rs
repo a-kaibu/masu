@@ -874,10 +874,11 @@ fn p_connect(c: &mut Ctx) -> u32 {
     if !matches!(kind(b), Some(Kind::VDec | Kind::Vnv | Kind::Dmo)) {
         return Hr::NoAcceptableTypes.code();
     }
-    let dir = mem::heap_alloc(4, true);
+    let dir_own = mem::Scratch::new(4, true);
+    let dir = dir_own.get();
     let r = com(c, recv, 9, &[dir]);
     let d = r32(dir);
-    mem::heap_free(dir);
+    drop(dir_own);
     if r != 0 || d != 0 {
         return Hr::InvalidDirection.code();
     }
@@ -899,11 +900,12 @@ fn p_connect(c: &mut Ctx) -> u32 {
         fwith(b, |f| f.bits = 32);
         return if r == Hr::TypeNotAccepted.code() { Hr::NoAcceptableTypes.code() } else { r };
     }
-    let out = mem::heap_alloc(8 + 16, true);
+    let out_own = mem::Scratch::new(8 + 16, true);
+    let out = out_own.get();
     mem::write(out + 8, &IID_IMEMINPUTPIN);
     let r = com(c, recv, 0, &[out + 8, out]);
     let mem_pin = rp(out);
-    mem::heap_free(out);
+    drop(out_own);
     if r != 0 || mem_pin == 0 {
         com(c, recv, 5, &[]);
         free_mt(mt);
@@ -949,13 +951,15 @@ fn p_receive_connection(c: &mut Ctx) -> u32 {
     if mt != 0 && !is(mt, &MEDIATYPE_STREAM) {
         return Hr::TypeNotAccepted.code();
     }
-    let out = mem::heap_alloc(8, true);
-    let iid = mem::heap_alloc(16, false);
+    let out_own = mem::Scratch::new(8, true);
+    let out = out_own.get();
+    let iid_own = mem::Scratch::new(16, false);
+    let iid = iid_own.get();
     mem::write(iid, &IID_IASYNCREADER);
     let r = com(c, from, 0, &[iid, out]);
     let reader = rp(out);
-    mem::heap_free(out);
-    mem::heap_free(iid);
+    drop(out_own);
+    drop(iid_own);
     if r != 0 || reader == 0 {
         return Hr::NoInterface.code();
     }
@@ -1005,10 +1009,11 @@ impl Dur for mpeg1::Info {
 
 /// The stream's length (IAsyncReader::Length) and its facts, from its first and last bytes.
 fn probe(c: &mut Ctx, reader: u32) -> Option<(u64, mpeg1::Info)> {
-    let lens = mem::heap_alloc(16, true);
+    let lens_own = mem::Scratch::new(16, true);
+    let lens = lens_own.get();
     let r = com(c, reader, 8, &[lens, lens + 8]);
     let len = mem::r64(lens);
-    mem::heap_free(lens);
+    drop(lens_own);
     if r & 0x8000_0000 != 0 || len == 0 {
         return None;
     }
@@ -1018,11 +1023,12 @@ fn probe(c: &mut Ctx, reader: u32) -> Option<(u64, mpeg1::Info)> {
 
 /// `n` bytes at `pos` of the stream (IAsyncReader::SyncRead into a buffer of ours).
 fn read_at(c: &mut Ctx, reader: u32, pos: u64, n: u32) -> Option<Vec<u8>> {
-    let buf = mem::heap_alloc(n.max(1), false);
+    let buf_own = mem::Scratch::new(n.max(1), false);
+    let buf = buf_own.get();
     let args: Vec<u32> = if mem::x64() { vec![lo32(pos), n, buf] } else { vec![lo32(pos), lo32(pos >> 32), n, buf] };
     let r = com(c, reader, 7, &args);
     let v = (r & 0x8000_0000 == 0).then(|| mem::bytes(buf, n));
-    mem::heap_free(buf);
+    drop(buf_own);
     v
 }
 

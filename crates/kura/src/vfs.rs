@@ -543,7 +543,7 @@ impl Fs {
                     Data::File(Content::Lower { size: c.size(), chunks: Arc::new(chunks), starts: Arc::new(c.starts().to_vec()) })
                 }
             };
-            let ino = self.add(data, l.mode.get(), l.mtime);
+            let ino = self.add(data, u32::from(l.mode), l.mtime);
             if let Some(Data::Dir(c)) = self.data_mut(parent) {
                 c.insert(name.to_string(), ino);
             }

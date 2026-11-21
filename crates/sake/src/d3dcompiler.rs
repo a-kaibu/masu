@@ -130,20 +130,21 @@ pub(crate) fn open_include(c: &mut Ctx, inc: u32, base: &str, name: &str, system
     }
     // Open(this, type, name, parent, &data, &bytes); Close(this, data)
     let k = mem::ps();
-    let scratch = mem::heap_alloc(name.len() as u32 + 1 + 2 * k, true);
+    let scratch_own = mem::Scratch::new(name.len() as u32 + 1 + 2 * k, true);
+    let scratch = scratch_own.get();
     mem::write(scratch + 2 * k, name.as_bytes());
     let open = mem::rp(mem::rp(inc));
     let close = mem::rp(mem::rp(inc) + k);
     let hr = c.call(open, &[inc, system as u32, scratch + 2 * k, 0, scratch, scratch + k]);
     if hr & 0x8000_0000 != 0 {
-        mem::heap_free(scratch);
+        drop(scratch_own);
         return None;
     }
     let data = mem::rp(scratch);
     let n = r32(scratch + k);
     let text = String::from_utf8_lossy(&mem::bytes(data, n)).into_owned();
     c.call(close, &[inc, data]);
-    mem::heap_free(scratch);
+    drop(scratch_own);
     Some(text)
 }
 
@@ -478,7 +479,8 @@ mod blob_tests {
     #[test]
     fn create_blob_of_a_size_the_heap_cannot_give_fails() {
         let _g = enter();
-        let out = mem::heap_alloc(4, true);
+        let out_own = mem::Scratch::new(4, true);
+        let out = out_own.get();
         for n in [0xffff_fff0u32, 0x8000_0000] {
             w32(out, 0x1234);
             assert_eq!(call(D3DCreateBlob, &[n, out]), 0x8007_000e, "{n:#x}");
@@ -489,6 +491,6 @@ mod blob_tests {
         assert_eq!(r32(o + 16), 100);
         assert!(mem::array::<100>(r32(o + 12)).iter().all(|&b| b == 0));
         assert_eq!(call(blob_release, &[o]), 0);
-        mem::heap_free(out);
+        drop(out_own);
     }
 }

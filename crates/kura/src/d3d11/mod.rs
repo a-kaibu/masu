@@ -1358,7 +1358,7 @@ fn new_backbuffer(d: &mut D11, w: u32, h: u32, fmt: u32, samples: (u32, u32)) ->
 #[allow(clippy::too_many_arguments)]
 fn new_texture(d: &mut D11, dim: u32, w: u32, h: u32, layers: u32, mips: u32, fmt: u32, usage: u32, bind: u32, cube: bool, samples: u32) -> u32 {
     let page = format::page(fmt, bind).unwrap_or(format::P_BGRA8);
-    let max = 32 - w.max(h).max(1).leading_zeros();
+    let max = w.max(h).max(1).bit_width();
     let mips = if mips == 0 { max } else { mips.min(max) };
     let gpu = page_id();
     let layers = layers.max(1);

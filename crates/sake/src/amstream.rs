@@ -406,12 +406,13 @@ fn mms_get_graph(c: &mut Ctx) -> u32 {
     let mut g = mms(b, |x| x.graph).unwrap_or(0);
     if g == 0 {
         // CLSID_FilterGraph, IID_IGraphBuilder
-        let ids = mem::heap_alloc(32, true);
+        let ids_own = mem::Scratch::new(32, true);
+        let ids = ids_own.get();
         w32(ids, 0xe436_ebb3);
         w32(ids + 4, 0x11ce_524f);
         w32(ids + 16, 0x56a8_68a9);
         g = crate::dshow::create_instance(ids, ids + 16).unwrap_or(0);
-        mem::heap_free(ids);
+        drop(ids_own);
         mms(b, |x| x.graph = g);
     }
     add_ref_guest(c.ctx(), g);
@@ -636,13 +637,14 @@ fn dd_create_sample(c: &mut Ctx) -> u32 {
     out.put(0);
     if surf == 0 {
         let dd = dd_of(s);
-        let desc = mem::heap_alloc(108 + 8, true);
+        let desc_own = mem::Scratch::new(108 + 8, true);
+        let desc = desc_own.get();
         w32(desc, 108);
         write_format(s, desc);
         let slot = desc + 108;
         let hr = com(c.ctx(), dd, 6, &[desc, slot, 0]); // IDirectDraw::CreateSurface
         surf = rp(slot);
-        mem::heap_free(desc);
+        drop(desc_own);
         if hr != 0 || surf == 0 {
             return if hr != 0 { hr } else { Hr::Fail.code() };
         }
@@ -669,13 +671,14 @@ fn dd_allocate(c: &mut Ctx) -> u32 {
     if out.is_null() {
         return Hr::Pointer.code();
     }
-    let tmp = mem::heap_alloc(8, true);
+    let tmp_own = mem::Scratch::new(8, true);
+    let tmp = tmp_own.get();
     let mut args = vec![0, 0, 0, tmp];
     let f = rp(rp(s) + ps() * 13);
     args.insert(0, s);
     let hr = c.ctx().call(f, &args);
     out.put(rp(tmp));
-    mem::heap_free(tmp);
+    drop(tmp_own);
     hr
 }
 /// GetTimePerFrame(STREAM_TIME *)

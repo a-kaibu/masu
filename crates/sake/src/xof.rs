@@ -367,6 +367,12 @@ pub enum Ty {
     Tpl(B),
 }
 
+/// what one element of a member is read as: a Ty whose template name is looked up
+enum Body {
+    Prim(Prim),
+    Tpl(Template),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Dim {
     Fixed(u32),
@@ -760,16 +766,16 @@ impl XFile {
                 return Err(PARSEERROR);
             }
             let off = node.data.len();
-            let sub = match &m.ty {
-                Ty::Tpl(n) => Some(reg.find(n).ok_or(PARSEERROR)?.clone()),
-                Ty::Prim(_) => None,
+            // (a template member's template found once, before its elements)
+            let body = match &m.ty {
+                Ty::Tpl(n) => Body::Tpl(reg.find(n).ok_or(PARSEERROR)?.clone()),
+                Ty::Prim(p) => Body::Prim(*p),
             };
             for _ in 0..count {
                 self.spend()?;
-                match (&m.ty, &sub) {
-                    (_, Some(s)) => self.members(reg, s, node, None, depth + 1)?,
-                    (Ty::Prim(p), _) => self.value(*p, node)?,
-                    _ => unreachable!(),
+                match &body {
+                    Body::Tpl(s) => self.members(reg, s, node, None, depth + 1)?,
+                    Body::Prim(p) => self.value(*p, node)?,
                 }
                 if node.data.len() > MAX_BODY {
                     return Err(PARSEERROR);

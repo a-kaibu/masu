@@ -968,7 +968,8 @@ mod review_tests {
     fn released_reflections_leave_nothing() {
         let _g = enter();
         let code = compiled();
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         let before = OBJS.lock().unwrap().live();
         for _ in 0..20 {
             assert_eq!(reflect(&code, 0, crate::api::Out::at(out)), 0);
@@ -979,7 +980,7 @@ mod review_tests {
             assert_eq!(call(refl_release, &[r]), 0);
             assert_eq!(OBJS.lock().unwrap().live(), before);
         }
-        mem::heap_free(out);
+        drop(out_own);
     }
 
     /// A struct member whose type is the struct itself: no recursion past the depth limit,
@@ -997,7 +998,8 @@ mod review_tests {
         for i in 0..4 {
             code[r + m + 12 * i + 4..r + m + 12 * i + 8].copy_from_slice(&(t as u32).to_le_bytes());
         }
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         let before = OBJS.lock().unwrap().live();
         let t0 = std::time::Instant::now();
         assert_eq!(reflect(&code, 0, crate::api::Out::at(out)), 0);
@@ -1008,12 +1010,14 @@ mod review_tests {
         assert_eq!(call(refl_release, &[refl]), 0);
         assert_eq!(OBJS.lock().unwrap().live(), before);
         // (the freed object's id now names nothing: its methods answer E_FAIL / nothing)
-        let fake = mem::heap_alloc(24, true);
+        let fake_own = mem::Scratch::new(24, true);
+        let fake = fake_own.get();
         w32(fake + 12, 0x00ff_ffff);
-        let desc = mem::heap_alloc(256, true);
+        let desc_own = mem::Scratch::new(256, true);
+        let desc = desc_own.get();
         let _ = call(refl_desc, &[fake, desc]);
-        mem::heap_free(fake);
-        mem::heap_free(desc);
-        mem::heap_free(out);
+        drop(fake_own);
+        drop(desc_own);
+        drop(out_own);
     }
 }

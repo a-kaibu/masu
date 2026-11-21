@@ -2561,7 +2561,8 @@ fn bitmap_from_file(data: &[u8], section: bool) -> Option<u32> {
     }
     let off = u32::from_le_bytes([data[10], data[11], data[12], data[13]]) as usize;
     let dib = &data[14..];
-    let tmp = mem::heap_alloc(dib.len() as u32, false);
+    let tmp_own = mem::Scratch::new(dib.len() as u32, false);
+    let tmp = tmp_own.get();
     mem::write(tmp, dib);
     let made = (|| {
         let info = dib_info(tmp, 0, &default_palette())?;
@@ -2603,7 +2604,7 @@ fn bitmap_from_file(data: &[u8], section: bool) -> Option<u32> {
             own: 2,
         })))
     })();
-    mem::heap_free(tmp);
+    drop(tmp_own);
     made
 }
 
@@ -5346,7 +5347,8 @@ fn face_pitch(fixed: bool, roman: bool) -> u8 {
 /// Calls an EnumFonts-style callback for each face: (LOGFONT, TEXTMETRIC, type, lparam).
 fn enum_fonts(c: &mut Ctx, filter: Option<String>, proc_: u32, lp: u32, wide: bool, ex: bool) -> u32 {
     let lfsize = if wide { 92 } else { 60 };
-    let buf = mem::heap_alloc(1024, true);
+    let buf_own = mem::Scratch::new(1024, true);
+    let buf = buf_own.get();
     let tm = buf + 512;
     let mut ret = 1;
     // (name, lfPitchAndFamily as Windows reports it: games filter on FIXED_PITCH)
@@ -5406,7 +5408,7 @@ fn enum_fonts(c: &mut Ctx, filter: Option<String>, proc_: u32, lp: u32, wide: bo
             break;
         }
     }
-    mem::heap_free(buf);
+    drop(buf_own);
     ret
 }
 fn EnumFontsA(c: &mut Ctx) -> u32 {
@@ -6057,11 +6059,12 @@ mod far_shape_tests {
         assert_eq!(call(RestoreDC, &[dc, 1]), 1);
         assert_eq!(call(SaveDC, &[dc]), 1);
         // a range past every code point, a count past any: refused at once
-        let p = mem::heap_alloc(64, true);
+        let p_own = mem::Scratch::new(64, true);
+        let p = p_own.get();
         assert_eq!(call(GetCharWidth32W, &[dc, 0, u32::MAX, p]), 0);
         assert_eq!(call(GetCharWidth32W, &[dc, 10, 5, p]), 0);
         assert_eq!(call(GetGlyphIndicesW, &[dc, p, MAX_COUNT + 1, p, 0]), 0xffff_ffff);
-        mem::heap_free(p);
+        drop(p_own);
         // DeleteDC of a DC with a region of its own: the region goes too
         let own = call(CreateRectRgn, &[0, 0, 4, 4]);
         with(|t| if let Some(G::Dc(d)) = t.m.get_mut(&dc) { d.rgn = Some(own) });

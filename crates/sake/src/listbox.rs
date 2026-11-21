@@ -93,10 +93,11 @@ fn font_height(c: &mut Ctx, h: u32, font: u32) -> i32 {
     let dc = gcall(c, "user32", "GetDC", &[h]);
     let f = if font != 0 { font } else { gcall(c, "gdi32", "GetStockObject", &[13]) };
     let old = gcall(c, "gdi32", "SelectObject", &[dc, f]);
-    let tm = mem::heap_alloc(64, true);
+    let tm_own = mem::Scratch::new(64, true);
+    let tm = tm_own.get();
     let ok = gcall(c, "gdi32", "GetTextMetricsW", &[dc, tm]) != 0;
     let th = text_height(ok, r32(tm) as i32);
-    mem::heap_free(tm);
+    drop(tm_own);
     gcall(c, "gdi32", "SelectObject", &[dc, old]);
     gcall(c, "user32", "ReleaseDC", &[h, dc]);
     th
@@ -121,7 +122,8 @@ fn measure_item(c: &mut Ctx, h: u32, index: i32, data: u32, height: i32) -> i32 
         return height;
     }
     let ps = mem::ps();
-    let m = mem::heap_alloc(8 + 4 * 4 + ps, true);
+    let m_own = mem::Scratch::new(8 + 4 * 4 + ps, true);
+    let m = m_own.get();
     w32(m, 2);
     w32(m + 4, id);
     w32(m + 8, index as u32);
@@ -130,7 +132,7 @@ fn measure_item(c: &mut Ctx, h: u32, index: i32, data: u32, height: i32) -> i32 
     mem::wp(m + if ps == 8 { 24 } else { 20 }, data);
     send(c, parent, 0x2c, id, m);
     let r = r32(m + 16) as i32;
-    mem::heap_free(m);
+    drop(m_own);
     r
 }
 
@@ -273,7 +275,8 @@ fn delete_item(c: &mut Ctx, h: u32, index: usize, data: u32, gone: Gone) {
         return;
     }
     let ps = mem::ps();
-    let d = mem::heap_alloc(12 + 4 + 2 * ps, true);
+    let d_own = mem::Scratch::new(12 + 4 + 2 * ps, true);
+    let d = d_own.get();
     w32(d, 2);
     w32(d + 4, id);
     w32(d + 8, index as u32);
@@ -281,7 +284,7 @@ fn delete_item(c: &mut Ctx, h: u32, index: usize, data: u32, gone: Gone) {
     mem::wp(d + at, h);
     mem::wp(d + at + ps, data);
     send(c, parent, 0x2d, id, d);
-    mem::heap_free(d);
+    drop(d_own);
 }
 
 fn text_arg(st: u32, lp: u32, wide: bool) -> (Vec<u16>, u32) {
@@ -406,7 +409,8 @@ fn paint(c: &mut Ctx, h: u32) {
     let focused = with(|s| s.focus == h);
     // only the items that show, with their heights (not the whole list, twice, per paint)
     let (shown, sel, caret, font) = list(h, |l| (visible(l, st, ch), l.sel, l.caret, l.font));
-    let ps = mem::heap_alloc(64 + 16, true);
+    let ps_own = mem::Scratch::new(64 + 16, true);
+    let ps = ps_own.get();
     let rc = ps + 64;
     let dc = gcall(c, "user32", "BeginPaint", &[h, ps]);
     if font != 0 {
@@ -426,7 +430,8 @@ fn paint(c: &mut Ctx, h: u32) {
             // DRAWITEMSTRUCT { CtlType, CtlID, itemID, itemAction ODA_DRAWENTIRE, itemState,
             // hwndItem, hDC, rcItem, itemData }
             let pz = mem::ps();
-            let d = mem::heap_alloc(64, true);
+            let d_own = mem::Scratch::new(64, true);
+            let d = d_own.get();
             w32(d, 2);
             w32(d + 4, id);
             w32(d + 8, i as u32);
@@ -439,7 +444,7 @@ fn paint(c: &mut Ctx, h: u32) {
             r.write(d + at + 2 * pz);
             mem::wp(d + at + 2 * pz + 16, item.data);
             send(c, parent, 0x2b, id, d);
-            mem::heap_free(d);
+            drop(d_own);
         } else {
             let (fill, fg) = if selected { (0xd77800, 0xffffff) } else { (0, if enabled { 0 } else { 0x6d6d6d }) };
             if selected {
@@ -464,7 +469,7 @@ fn paint(c: &mut Ctx, h: u32) {
         crate::gdi::fill_rect_brush(dc, Rect { l: 0, t: y, r: w, b: ch }, bg);
     }
     gcall(c, "user32", "EndPaint", &[h, ps]);
-    mem::heap_free(ps);
+    drop(ps_own);
 }
 
 pub(super) fn proc_fn(c: &mut Ctx) -> u32 {

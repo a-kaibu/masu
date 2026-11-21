@@ -112,7 +112,7 @@ mod tests {
         #[test]
         fn values_shape(dir in "[A-Z]:(\\\\[a-zA-Z0-9ぁ-ん　]{1,12}){0,4}") {
             let v = values(&dir);
-            let s = |b: &[u8]| String::from_utf16(&b.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect::<Vec<_>>()).unwrap();
+            let s = |b: &[u8]| String::from_utf16le(kome::le::pieces::<2>(b).as_flattened()).unwrap();
             let inst = s(&v[1].2);
             let data = s(&v[2].2);
             prop_assert!(inst.ends_with('\0') && data.ends_with('\0'));

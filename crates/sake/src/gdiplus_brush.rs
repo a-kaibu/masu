@@ -2224,7 +2224,8 @@ mod issue88 {
     #[test]
     fn line_rect_writes_all_fields_and_rejects_null() {
         let _g = enter();
-        let out = mem::heap_alloc(32, true);
+        let out_own = mem::Scratch::new(32, true);
+        let out = out_own.get();
         let rect = [3.5, -7.0, 11.0, 23.0];
         assert_eq!(rect_brush(rect, 0, u32::MAX, 0.0, false, TILE, crate::api::Out::at(out)), OK);
         let brush = r32(out);
@@ -2235,7 +2236,7 @@ mod issue88 {
         assert_eq!(call(GdipGetLineRect, &[brush, 0]), INVALID_PARAMETER);
         assert_eq!(call(GdipGetLineRect, &[0, out + 4]), INVALID_PARAMETER);
         assert_eq!(call(GdipDeleteBrush, &[brush]), OK);
-        mem::heap_free(out);
+        drop(out_own);
     }
 }
 
@@ -2272,10 +2273,11 @@ mod review_b06_tests {
     #[test]
     fn huge_counts_are_out_of_memory() {
         let _g = crate::test_guest::enter();
-        let p = mem::heap_alloc(64, true);
+        let p_own = mem::Scratch::new(64, true);
+        let p = p_own.get();
         let huge = MAX_COUNT as u32 + 1;
         assert_eq!(crate::test_guest::call(GdipCreatePath2, &[p, p, huge, 0, p + 32]), OUT_OF_MEMORY);
         assert_eq!(crate::test_guest::call(GdipCreatePath2, &[p, p, i32::MAX as u32, 0, p + 32]), OUT_OF_MEMORY);
-        mem::heap_free(p);
+        drop(p_own);
     }
 }

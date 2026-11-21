@@ -743,7 +743,7 @@ impl Model {
             "3d" => w.max(h).max(d),
             _ => w.max(h),
         };
-        if mips == 0 || mips > 32 - max_dim.max(1).leading_zeros() {
+        if mips == 0 || mips > max_dim.max(1).bit_width() {
             self.err(format!("createTexture: {mips} mip levels for {w}x{h}x{d}"));
         }
         if let Some((_, renderable, ..)) = info {

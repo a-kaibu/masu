@@ -19,6 +19,8 @@
 //!   stack dwords (with `this`), its vtable as the metadata has it.
 //! sake writes those with mem::putp/wp; put32/w32 leaves the upper half on x64
 //! (crates/sake/src/outptr_audit.rs).
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 use std::collections::{BTreeMap, HashMap};
 use windows_metadata::reader::*;
 use windows_metadata::*;

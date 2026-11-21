@@ -605,10 +605,11 @@ fn nt_device_io_control_file(c: &mut Ctx) -> u32 {
         return st;
     }
     let (h, event, io, code, inp, inlen, out, outlen) = (c.a(0), c.a(1), c.a(4), c.a(5), c.a(6), c.a(7), c.a(8), c.a(9));
-    let n = mem::heap_alloc(4, true);
+    let n_own = mem::Scratch::new(4, true);
+    let n = n_own.get();
     let ok = k32(c, "DeviceIoControl", &[h, code, inp, inlen, out, outlen, n, 0]);
     let got = r32(n);
-    mem::heap_free(n);
+    drop(n_own);
     let st = if ok != 0 { 0 } else { status() };
     iosb(io, st, got);
     if event != 0 && st < 0xc000_0000 {
@@ -739,10 +740,11 @@ fn nt_read_file(c: &mut Ctx) -> u32 {
         return crate::pipe::nt_read(h, p, crate::pipe::NtIo { iosb: io, event: c.a(1), apc: c.a(2), ctx: c.a(3) }, buf, len);
     }
     seek_to(c, h, off);
-    let n = mem::heap_alloc(4, true);
+    let n_own = mem::Scratch::new(4, true);
+    let n = n_own.get();
     let ok = k32(c, "ReadFile", &[h, buf, len, n, 0]);
     let got = r32(n);
-    mem::heap_free(n);
+    drop(n_own);
     if ok == 0 {
         let st = status();
         iosb(io, st, 0);
@@ -761,10 +763,11 @@ fn nt_write_file(c: &mut Ctx) -> u32 {
         return crate::pipe::nt_write(h, p, crate::pipe::NtIo { iosb: io, event: c.a(1), apc: c.a(2), ctx: c.a(3) }, buf, len);
     }
     seek_to(c, h, off);
-    let n = mem::heap_alloc(4, true);
+    let n_own = mem::Scratch::new(4, true);
+    let n = n_own.get();
     let ok = k32(c, "WriteFile", &[h, buf, len, n, 0]);
     let got = r32(n);
-    mem::heap_free(n);
+    drop(n_own);
     if ok == 0 {
         let st = status();
         iosb(io, st, 0);
@@ -823,10 +826,11 @@ fn nt_query_information_file(c: &mut Ctx) -> u32 {
         return 0xc000_0004; // STATUS_INFO_LENGTH_MISMATCH
     }
     if class == 14 {
-        let p = mem::heap_alloc(8, true);
+        let p_own = mem::Scratch::new(8, true);
+        let p = p_own.get();
         k32(c, "SetFilePointerEx", &[h, 0, 0, p, 1]);
         copy(out, p, 8);
-        mem::heap_free(p);
+        drop(p_own);
         iosb(io, 0, 8);
         return 0;
     }
@@ -890,10 +894,11 @@ fn file_all_information(c: &mut Ctx, h: u32, io: u32, out: u32, len: u32) -> u32
     crate::mem::w32(mem::ga(out) + 60, u32::from(attrs & 0x10 != 0).saturating_mul(0x100));
     mem::heap_free(i);
     mem::fill((mem::ga(out) + 64).get(), 16, 0);
-    let p = mem::heap_alloc(8, true);
+    let p_own = mem::Scratch::new(8, true);
+    let p = p_own.get();
     k32(c, "SetFilePointerEx", &[h, 0, 0, p, 1]);
     copy((mem::ga(out) + 80).get(), p, 8);
-    mem::heap_free(p);
+    drop(p_own);
     mem::fill((mem::ga(out) + 88).get(), 8, 0);
     let (st, n, w) = file_name_info(&crate::files::host_to_win(&f.path), len.saturating_sub(96));
     mem::write((mem::ga(out) + 96).get(), &w);
@@ -926,12 +931,13 @@ fn nt_set_information_file(c: &mut Ctx) -> u32 {
             k32(c, "SetFilePointerEx", &[h, r32(buf), crate::mem::r32(mem::ga(buf) + 4), 0, 0]);
         }
         20 => {
-            let p = mem::heap_alloc(8, true);
+            let p_own = mem::Scratch::new(8, true);
+            let p = p_own.get();
             k32(c, "SetFilePointerEx", &[h, 0, 0, p, 1]);
             k32(c, "SetFilePointerEx", &[h, r32(buf), crate::mem::r32(mem::ga(buf) + 4), 0, 0]);
             k32(c, "SetEndOfFile", &[h]);
             k32(c, "SetFilePointerEx", &[h, r32(p), crate::mem::r32(mem::ga(p) + 4), 0, 0]);
-            mem::heap_free(p);
+            drop(p_own);
         }
         4 => {}
         _ => {

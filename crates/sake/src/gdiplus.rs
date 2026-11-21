@@ -820,9 +820,9 @@ mod decoder_tests {
         u64::from_le_bytes(v)
     }
     fn wstr(b: &[u8], off: usize) -> Option<String> {
-        let w: Vec<u16> = b.get(off..)?.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-        let end = w.iter().position(|&c| c == 0)?;
-        Some(String::from_utf16_lossy(&w[..end]))
+        let p = kome::le::pieces::<2>(b.get(off..)?);
+        let end = p.iter().position(|u| *u == [0, 0])?;
+        Some(String::from_utf16le_lossy(p.get(..end)?.as_flattened()))
     }
 
     /// #162: the size GdipGetImageDecodersSize reports is the bytes GdipGetImageDecoders writes

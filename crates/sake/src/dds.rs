@@ -123,7 +123,7 @@ pub fn parse(data: &[u8]) -> Option<Dds> {
     let fmt = pixel_format(&data[76..108])?;
     let depth = if caps2 & VOLUME != 0 { g(24).max(1) } else { 1 };
     // (a mip count of 0: one level; never more than the chain down to 1x1)
-    let max = 32 - w.max(h).max(depth).leading_zeros();
+    let max = w.max(h).max(depth).bit_width();
     let levels = g(28).clamp(1, max.max(1));
     let faces = if caps2 & CUBEMAP != 0 {
         // (a cube map that names no face, or isn't square: not one)
@@ -281,7 +281,7 @@ mod tests {
                     }
                 }
                 let need = at - 128;
-                prop_assert!(d.levels >= 1 && d.levels <= 32 - d.w.max(d.h).max(d.depth).leading_zeros());
+                prop_assert!(d.levels >= 1 && d.levels <= d.w.max(d.h).max(d.depth).bit_width());
                 // exactly long enough parses, one byte short doesn't
                 prop_assert!(parse(&file(w, h, depth, mips, pf, caps2, need + slack)).is_some());
                 if need > 0 {

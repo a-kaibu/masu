@@ -187,9 +187,7 @@ fn search_comp(pk: &Package, sig: &Sig) -> Option<String> {
 /// "#n", binary as "#x" and hex digits, a multi-string with its NULs.
 fn raw_value(ty: u32, data: &[u8]) -> Option<String> {
     let text = || {
-        let u: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-        let n = u.iter().position(|&c| c == 0).unwrap_or(u.len());
-        String::from_utf16_lossy(&u[..n])
+        kome::le::utf16z_lossy(&data)
     };
     Some(match ty {
         1 => {
@@ -201,8 +199,7 @@ fn raw_value(ty: u32, data: &[u8]) -> Option<String> {
         3 => format!("#x{}", data.iter().map(|b| format!("{b:02X}")).collect::<String>()),
         // (a NUL first, then the strings with their NULs)
         7 => {
-            let u: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-            format!("\0{}", String::from_utf16_lossy(&u))
+            format!("\0{}", kome::le::utf16_lossy(&data))
         }
         _ => return None,
     })

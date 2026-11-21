@@ -532,7 +532,8 @@ fn dbl(v: f64) -> [u32; 2] {
 
 /// glMultMatrixd(m) from a guest copy of `m`
 fn mult(m: &M4) {
-    let p = mem::heap_alloc(128, false);
+    let p_own = mem::Scratch::new(128, false);
+    let p = p_own.get();
     if p == 0 {
         return;
     }
@@ -540,7 +541,7 @@ fn mult(m: &M4) {
         mem::w64(p + 8 * i, v.to_bits());
     }
     call_gl("glMultMatrixd", &[p]);
-    mem::heap_free(p);
+    drop(p_own);
 }
 
 /// Argument at x86 stack slot `slot` (after doubles: 2 slots each) / x64 position `pos`
@@ -636,13 +637,14 @@ const GLU_OUT_OF_MEMORY: u32 = 100902;
 const GL_UNSIGNED_BYTE: u32 = 0x1401;
 
 fn gl_int(pname: u32) -> i32 {
-    let p = mem::heap_alloc(64, true);
+    let p_own = mem::Scratch::new(64, true);
+    let p = p_own.get();
     if p == 0 {
         return 0;
     }
     call_gl("glGetIntegerv", &[pname, p]);
     let v = r32(p).cast_signed();
-    mem::heap_free(p);
+    drop(p_own);
     v
 }
 
@@ -706,7 +708,8 @@ fn build_mipmaps(target: u32, internal: u32, w: u32, h: u32, format: u32, ty: u3
     let (cw, ch) = (nearest_pot(w, max), nearest_pot(h, max));
     let Some(top) = image_bytes(cw, ch, comps, 1) else { return GLU_OUT_OF_MEMORY };
     // (sizes below MAX_IMAGE: they fit 32 bits)
-    let p = mem::heap_alloc(lo32(top.max(4)), false);
+    let p_own = mem::Scratch::new(lo32(top.max(4)), false);
+    let p = p_own.get();
     if p == 0 {
         return GLU_OUT_OF_MEMORY;
     }
@@ -726,7 +729,7 @@ fn build_mipmaps(target: u32, internal: u32, w: u32, h: u32, format: u32, ty: u3
         }
         level += 1;
     });
-    mem::heap_free(p);
+    drop(p_own);
     call_gl("glPixelStorei", &[0x0cf5, lo32(align)]);
     0
 }
@@ -1223,12 +1226,13 @@ mod issue88 {
     #[test]
     fn quadric_fields_are_independent() {
         let _g = enter();
-        let p = crate::mem::heap_alloc(16, true);
+        let p_own = crate::mem::Scratch::new(16, true);
+        let p = p_own.get();
         for (i, v) in [GLU_FILL, 100000 /* GLU_SMOOTH */, 100020 /* GLU_OUTSIDE */, 1].iter().enumerate() {
             crate::mem::w32(p + 4 * i as u32, *v);
         }
         assert_eq!(quad(p), [GLU_FILL, 100000 /* GLU_SMOOTH */, 100020 /* GLU_OUTSIDE */, 1]);
-        crate::mem::heap_free(p);
+        drop(p_own);
     }
 
     /// gluScaleImage / gluBuild*Mipmaps with sizes whose byte counts wrap 32 bits or pass
@@ -1237,7 +1241,8 @@ mod issue88 {
     #[test]
     fn huge_images_are_out_of_memory() {
         let _g = enter();
-        let px = crate::mem::heap_alloc(64, true);
+        let px_own = crate::mem::Scratch::new(64, true);
+        let px = px_own.get();
         for (w, h) in [(0x10000, 0x10000), (0x8000, 0x8000), (20000, 20000), (0x7fff_ffff, 1), (1, 0x7fff_ffff)] {
             let r = crate::test_guest::call(gluScaleImage, &[0x1908, 2, 2, GL_UNSIGNED_BYTE, px, w, h, GL_UNSIGNED_BYTE, px]);
             assert_eq!(r, GLU_OUT_OF_MEMORY, "scale to {w}x{h}");
@@ -1246,7 +1251,7 @@ mod issue88 {
             let r = crate::test_guest::call(gluBuild2DMipmaps, &[0x0de1, 4, w, h, 0x1908, GL_UNSIGNED_BYTE, px]);
             assert_eq!(r, GLU_OUT_OF_MEMORY, "mipmaps of {w}x{h}");
         }
-        crate::mem::heap_free(px);
+        drop(px_own);
     }
 
     /// Garbage slice/stack/loop counts draw at most libGLU's CACHE_SIZE - 1 (MAX_LOOPS loops),

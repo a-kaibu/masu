@@ -247,30 +247,34 @@ fn member(p: u32, name: &str) -> Option<(u32, bool)> {
     if let Some(m) = t(|t| t.members.get(&key).copied()) {
         return m;
     }
-    let s = mem::heap_alloc(2 * name.len() as u32 + 8, true);
+    let s_own = mem::Scratch::new(2 * name.len() as u32 + 8, true);
+    let s = s_own.get();
     for (i, ch) in name.encode_utf16().enumerate() {
         w16(s + 2 * i as u32, ch);
     }
-    let names = mem::heap_alloc(8, true);
+    let names_own = mem::Scratch::new(8, true);
+    let names = names_own.get();
     w32(names, s);
     let id = names + 4;
     // GetIDsOfNames(riid, names, 1, lcid, ids)
     let hr = com(p, 5, &[iid_null(), names, 1, 0x411, id]);
     let r = (hr == S_OK).then(|| r32(id)).map(|id| {
         // a member a property get fails on is a method
-        let dp = mem::heap_alloc(16, true);
-        let res = mem::heap_alloc(16, true);
+        let dp_own = mem::Scratch::new(16, true);
+        let dp = dp_own.get();
+        let res_own = mem::Scratch::new(16, true);
+        let res = res_own.get();
         let hr = com(p, 6, &[id, iid_null(), 0x411, DISPATCH_PROPERTYGET, dp, res, 0, 0]);
         let method = hr != S_OK;
         if !method {
             clear_var(res);
         }
-        mem::heap_free(dp);
-        mem::heap_free(res);
+        drop(dp_own);
+        drop(res_own);
         (id, method)
     });
-    mem::heap_free(s);
-    mem::heap_free(names);
+    drop(s_own);
+    drop(names_own);
     t(|t| t.members.insert(key, r));
     r
 }
@@ -301,7 +305,8 @@ fn host_invoke(p: u32, id: u32, flags: u32, args: &[JsValue], named_put: bool, c
     }
     let engine = current_engine();
     let n = args.len() as u32;
-    let rg = mem::heap_alloc(16 * n.max(1), true);
+    let rg_own = mem::Scratch::new(16 * n.max(1), true);
+    let rg = rg_own.get();
     // reversed, as DISPPARAMS wants them; script objects passed hold a reference for the call
     // only (the host AddRefs one it keeps)
     let mut lent = Vec::new();
@@ -312,7 +317,8 @@ fn host_invoke(p: u32, id: u32, flags: u32, args: &[JsValue], named_put: bool, c
         }
         write_var(rg + 16 * (n - 1 - i as u32), &v);
     }
-    let dp = mem::heap_alloc(16 + 4, true);
+    let dp_own = mem::Scratch::new(16 + 4, true);
+    let dp = dp_own.get();
     w32(dp, rg);
     w32(dp + 8, n);
     if named_put {
@@ -320,8 +326,10 @@ fn host_invoke(p: u32, id: u32, flags: u32, args: &[JsValue], named_put: bool, c
         w32(dp + 4, dp + 16);
         w32(dp + 12, 1);
     }
-    let res = mem::heap_alloc(16, true);
-    let exc = mem::heap_alloc(32, true);
+    let res_own = mem::Scratch::new(16, true);
+    let res = res_own.get();
+    let exc_own = mem::Scratch::new(32, true);
+    let exc = exc_own.get();
     let hr = com(p, 6, &[id, iid_null(), 0x411, flags, dp, res, exc, 0]);
     let v = read_var(res);
     let out = to_js(&v, ctx, engine, true);
@@ -346,10 +354,10 @@ fn host_invoke(p: u32, id: u32, flags: u32, args: &[JsValue], named_put: bool, c
             crate::misc::bstr_free(b);
         }
     }
-    mem::heap_free(rg);
-    mem::heap_free(dp);
-    mem::heap_free(res);
-    mem::heap_free(exc);
+    drop(rg_own);
+    drop(dp_own);
+    drop(res_own);
+    drop(exc_own);
     for b in lent {
         unref_disp(b);
     }
@@ -879,29 +887,32 @@ fn resolve_items(id: u32) {
     }
     let Some(ctx) = engine_ctx(id) else { return };
     for (name, flags) in items {
-        let s = mem::heap_alloc(2 * name.len() as u32 + 2, true);
+        let s_own = mem::Scratch::new(2 * name.len() as u32 + 2, true);
+        let s = s_own.get();
         for (i, &ch) in name.iter().enumerate() {
             w16(s + 2 * i as u32, ch);
         }
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         // GetItemInfo(name, SCRIPTINFO_IUNKNOWN, &unk, NULL)
         let hr = com(site, 4, &[s, 1, out, 0]);
         let unk = r32(out);
-        mem::heap_free(s);
+        drop(s_own);
         if hr != S_OK || unk == 0 {
             // (the host may not have it yet: asked again before the next script runs)
             crate::com::warn_once(&format!("sake: jscript: no object for named item {} yet", String::from_utf16_lossy(&name)));
-            mem::heap_free(out);
+            drop(out_own);
             t(|t| t.engines.get_mut(&id).map(|e| e.items.push((name, flags))));
             continue;
         }
         // its IDispatch {00020400-0000-0000-c000-000000000046}
-        let iid = mem::heap_alloc(16, true);
+        let iid_own = mem::Scratch::new(16, true);
+        let iid = iid_own.get();
         mem::write(iid, &[0, 4, 2, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
         let qi = com(unk, 0, &[iid, out]) == S_OK && r32(out) != 0;
         let disp = if qi { r32(out) } else { unk };
-        mem::heap_free(iid);
-        mem::heap_free(out);
+        drop(iid_own);
+        drop(out_own);
         // (GetItemInfo's IUnknown is ours too: the IDispatch QueryInterface gave is kept,
         // and it is a reference of its own even when it is the same pointer)
         if qi {

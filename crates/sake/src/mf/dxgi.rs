@@ -122,14 +122,15 @@ fn release_(c: &mut Ctx) -> u32 {
 
 /// The texture's device and immediate context (references the caller releases).
 fn device_context(c: &mut Ctx, tex: u32) -> Option<(u32, u32)> {
-    let p = mem::heap_alloc(2 * ps(), true);
+    let p_own = mem::Scratch::new(2 * ps(), true);
+    let p = p_own.get();
     com(c, tex, TEX_GET_DEVICE, &[p]);
     let dev = rp(p);
     if dev != 0 {
         com(c, dev, DEV_IMMEDIATE_CONTEXT, &[p + ps()]);
     }
     let ctx = rp(p + ps());
-    mem::heap_free(p);
+    drop(p_own);
     if dev == 0 || ctx == 0 {
         release(c, dev);
         return None;
@@ -139,10 +140,11 @@ fn device_context(c: &mut Ctx, tex: u32) -> Option<(u32, u32)> {
 
 /// A texture's D3D11_TEXTURE2D_DESC: width, height, mips, array size, format.
 fn desc(c: &mut Ctx, tex: u32) -> [u32; 11] {
-    let p = mem::heap_alloc(44, true);
+    let p_own = mem::Scratch::new(44, true);
+    let p = p_own.get();
     com(c, tex, TEX_GET_DESC, &[p]);
     let d = std::array::from_fn(|i| r32(p + 4 * lo32(i)));
-    mem::heap_free(p);
+    drop(p_own);
     d
 }
 
@@ -150,7 +152,8 @@ fn desc(c: &mut Ctx, tex: u32) -> [u32; 11] {
 /// first rows of `init` (pitch bytes each) in it if given; 0 if the device refuses it.
 fn new_texture(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, usage: u32, bind: u32, cpu: u32, misc: u32, init: Option<(u32, u32)>) -> u32 {
     // (the desc at 0, the D3D11_SUBRESOURCE_DATA at 48, the texture out at 80)
-    let p = mem::heap_alloc(96, true);
+    let p_own = mem::Scratch::new(96, true);
+    let p = p_own.get();
     for (i, v) in [w, h, 1, 1, fmt, 1, 0, usage, bind, cpu, misc].into_iter().enumerate() {
         w32(p + 4 * lo32(i), v);
     }
@@ -163,7 +166,7 @@ fn new_texture(c: &mut Ctx, dev: u32, w: u32, h: u32, fmt: u32, usage: u32, bind
     }
     let hr = com(c, dev, DEV_CREATE_TEXTURE2D, &[p, arg, out]);
     let t = if hr == 0 { rp(out) } else { 0 };
-    mem::heap_free(p);
+    drop(p_own);
     t
 }
 
@@ -181,7 +184,8 @@ fn read_back(c: &mut Ctx, b: u32) -> bool {
     let mut ok = false;
     if staging != 0 {
         com(c, ctx, CTX_COPY_REGION, &[staging, 0, 0, 0, 0, tex, sub, 0]);
-        let m = mem::heap_alloc(2 * ps() + 8, true);
+        let m_own = mem::Scratch::new(2 * ps() + 8, true);
+        let m = m_own.get();
         // D3D11_MAP_READ
         if com(c, ctx, CTX_MAP, &[staging, 0, 1, 0, m]) == 0 {
             let (src, row) = (rp(m), r32(m + ps()));
@@ -191,7 +195,7 @@ fn read_back(c: &mut Ctx, b: u32) -> bool {
             com(c, ctx, CTX_UNMAP, &[staging, 0]);
             ok = true;
         }
-        mem::heap_free(m);
+        drop(m_own);
     }
     release(c, ctx);
     release(c, dev);
@@ -526,10 +530,11 @@ fn MFCreateDXGISurfaceBuffer(c: &mut Ctx) -> u32 {
     if !is(&g, TEX2D.0, TEX2D.1, TEX2D.2) {
         return Hr::InvalidArg.code();
     }
-    let p = mem::heap_alloc(ps(), true);
+    let p_own = mem::Scratch::new(ps(), true);
+    let p = p_own.get();
     let hr = com(c.ctx(), surface, 0, &[iid, p]);
     let tex = rp(p);
-    mem::heap_free(p);
+    drop(p_own);
     if hr != 0 || tex == 0 {
         return if hr != 0 { hr } else { Hr::NoInterface.code() };
     }

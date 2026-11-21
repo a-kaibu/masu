@@ -36,7 +36,7 @@ fuzz_target!(|data: &[u8]| {
         }
         4 => {
             // any text: no panic
-            let s: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let s: Vec<u16> = kome::le::units16(b).collect();
             for fmt in [cryptstr::BASE64HEADER, cryptstr::BASE64, cryptstr::BINARY, cryptstr::BASE64_ANY, cryptstr::ANY, cryptstr::BASE64REQUESTHEADER, cryptstr::BASE64X509CRLHEADER] {
                 let _ = cryptstr::decode(&s, b, fmt);
             }

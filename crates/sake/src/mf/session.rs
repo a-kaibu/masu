@@ -919,11 +919,12 @@ fn MFGetService(c: &mut Ctx) -> u32 {
         return Hr::Pointer.code();
     }
     out.put(0);
-    let g = mem::heap_alloc(16 + ps(), true);
+    let g_own = mem::Scratch::new(16 + ps(), true);
+    let g = g_own.get();
     mem::write(g, &const { of_text("fa993888-4383-415a-a930-dd472a8cf6f7") });
     let hr = com(c.ctx(), o, 0, &[g, g + 16]);
     let gs = rp(g + 16);
-    mem::heap_free(g);
+    drop(g_own);
     if hr != 0 || gs == 0 {
         return Hr::UnsupportedService.code();
     }

@@ -6,6 +6,8 @@
 //! code segment's base not 64K-aligned (linear branch targets).
 //!
 //!   cargo run --release -- [count] [seed]
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 use iced_x86::{BlockEncoder, BlockEncoderOptions, Code, Instruction, InstructionBlock, MemoryOperand, Register};
 use koji::{Cpu, Exit, Fault};
 use std::collections::HashMap;

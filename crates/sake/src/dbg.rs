@@ -970,7 +970,8 @@ mod review_tests {
     fn long_records_stay_in_the_event() {
         let _g = enter();
         for n in [0usize, 80, 81, 200, 5000] {
-            let de = mem::heap_alloc(96 + 64, true);
+            let de_own = mem::Scratch::new(96 + 64, true);
+            let de = de_own.get();
             mem::fill(de + 96, 64, 0xa5);
             let mut e = ev(EXCEPTION, 1, 2);
             e.data = vec![0x5a; n];
@@ -978,7 +979,7 @@ mod review_tests {
             fill(de, &e);
             assert!(mem::array::<64>(de + 96).iter().all(|&b| b == 0xa5), "{n}");
             assert_eq!(r32(de + 12 + 0x50), 1);
-            mem::heap_free(de);
+            drop(de_own);
         }
     }
 
@@ -992,7 +993,8 @@ mod review_tests {
         fn given_handles_close_at_exits(ops in prop::collection::vec((0u8..3, 1u32..6), 1..30)) {
             let _g = enter();
             let pid = 0x7700 + (ops.len() as u32);
-            let de = mem::heap_alloc(96, true);
+            let de_own = mem::Scratch::new(96, true);
+            let de = de_own.get();
             let other = obj::add(Obj::Event { manual: true, set: false });
             fill(de, &ev(CREATE_PROCESS, pid, 1));
             let (ph, mainh) = (r32(de + 12 + 4), r32(de + 12 + 8));
@@ -1035,7 +1037,7 @@ mod review_tests {
             }
             prop_assert!(live(other));
             obj::close(other);
-            mem::heap_free(de);
+            drop(de_own);
         }
     }
 }

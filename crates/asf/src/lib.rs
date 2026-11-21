@@ -197,9 +197,7 @@ impl Header {
     }
 }
 fn utf16(b: &[u8]) -> String {
-    let w: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-    let end = w.iter().position(|&c| c == 0).unwrap_or(w.len());
-    String::from_utf16_lossy(&w[..end])
+    kome::le::utf16z_lossy(b)
 }
 
 /// The objects in `b` (GUID, then its whole length including the 24-byte head): (guid, body).

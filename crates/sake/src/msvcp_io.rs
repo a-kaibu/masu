@@ -731,20 +731,23 @@ fn sungetc<const W: bool>(c: &mut Ctx, sb: u32) -> u32 {
 }
 /// pubseekoff / pubseekpos into a fresh pos_type; its streamoff (_Myoff + _Fpos)
 fn seekoff(c: &mut Ctx, sb: u32, off: i64, way: u32, mode: u32) -> i64 {
-    let r = mem::heap_alloc(24, true);
+    let r_own = mem::Scratch::new(24, true);
+    let r = r_own.get();
     vcall(c, sb, V_SEEKOFF, &[A::P(r), A::Q(off as u64), A::I(way), A::I(mode)]);
     let v = i64_(r).wrapping_add(i64_(r + 8));
-    mem::heap_free(r);
+    drop(r_own);
     v
 }
 fn seekpos(c: &mut Ctx, sb: u32, pos: u32, mode: u32) -> i64 {
-    let r = mem::heap_alloc(24, true);
-    let arg = mem::heap_alloc(24, true);
+    let r_own = mem::Scratch::new(24, true);
+    let r = r_own.get();
+    let arg_own = mem::Scratch::new(24, true);
+    let arg = arg_own.get();
     mem::copy(arg, pos, 24);
     vcall(c, sb, V_SEEKPOS, &[A::P(r), A::V(arg, 24), A::I(mode)]);
     let v = i64_(r).wrapping_add(i64_(r + 8));
-    mem::heap_free(r);
-    mem::heap_free(arg);
+    drop(r_own);
+    drop(arg_own);
     v
 }
 /// The argument index after a pos_type passed by value at `i` (x86: its 6 slots).
@@ -901,10 +904,11 @@ fn sb_assign<const W: bool>(c: &mut Ctx) -> u32 {
     if this != o {
         setp::<W>(this, pbase(o), pptr(o), epptr::<W>(o));
         setg::<W>(this, eback(o), gptr(o), egptr::<W>(o));
-        let tmp = mem::heap_alloc(crate::msvcp::locale_size(), true);
+        let tmp_own = mem::Scratch::new(crate::msvcp::locale_size(), true);
+        let tmp = tmp_own.get();
         pubimbue_at(c, this, tmp, rp(o + PLOCALE()));
         crate::msvcp::delete_locale_value(c, tmp);
-        mem::heap_free(tmp);
+        drop(tmp_own);
     }
     this
 }
@@ -1193,10 +1197,11 @@ fn ios_imbue(c: &mut Ctx) -> u32 {
     base_imbue_at(c, this, ret, loc);
     let sb = rp(this + STRBUF());
     if sb != 0 {
-        let tmp = mem::heap_alloc(crate::msvcp::locale_size(), true);
+        let tmp_own = mem::Scratch::new(crate::msvcp::locale_size(), true);
+        let tmp = tmp_own.get();
         pubimbue_at(c, sb, tmp, loc);
         crate::msvcp::delete_locale_value(c, tmp);
-        mem::heap_free(tmp);
+        drop(tmp_own);
     }
     ret
 }

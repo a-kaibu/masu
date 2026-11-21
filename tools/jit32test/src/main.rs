@@ -8,6 +8,8 @@
 //!
 //!   cargo run --release -- [count] [seed]
 //!   cargo run --release -- testfloat    (Berkeley TestFloat's cases: src/testfloat.rs)
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 use iced_x86::code_asm::*;
 use iced_x86::{BlockEncoder, BlockEncoderOptions, Code, Instruction, InstructionBlock, MemoryOperand, Register};
 use koji::{Cpu, Exit, Fault};

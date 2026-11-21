@@ -2,6 +2,8 @@
 //! DIR (pic.png, pic.jpg, movie.mpg; the Vorbis stream is the vorbis crate's test data), one
 //! line per case: `BENCH <name> <ms per rep>`. Built for wasm32 (with and without SIMD128) and
 //! run under node, as the page's sake.wasm runs in V8.
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 use std::time::Instant;
 
 type Res = Result<(), Box<dyn std::error::Error>>;

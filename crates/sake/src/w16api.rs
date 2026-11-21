@@ -467,23 +467,25 @@ pub fn init() {
         r
     });
     reg("USER.BeginPaint", |c| {
-        let ps = crate::mem::heap_alloc(64, true);
+        let ps_own = crate::mem::Scratch::new(64, true);
+        let ps = ps_own.get();
         let hdc = call32(c.cpu, "user32!BeginPaint", &[c.h(0), ps]);
         let p = c.a(1);
         w16(p, h16(r32(ps)));
         w16(p + 2, r32(ps + 4) as u16);
         rect_out(ps + 8, p + 4);
-        crate::mem::heap_free(ps);
+        drop(ps_own);
         h16(hdc) as u32
     });
     reg("USER.EndPaint", |c| {
-        let ps = crate::mem::heap_alloc(64, true);
+        let ps_own = crate::mem::Scratch::new(64, true);
+        let ps = ps_own.get();
         let p = c.a(1);
         w32(ps, h32(r16(p)));
         w32(ps + 4, r16(p + 2) as u32);
         rect_in(p + 4, ps + 8);
         let r = call32(c.cpu, "user32!EndPaint", &[c.h(0), ps]);
-        crate::mem::heap_free(ps);
+        drop(ps_own);
         r
     });
     reg("USER.SetTimer", |c| {
@@ -592,20 +594,22 @@ pub fn init() {
     });
     reg("USER.GetDesktopWindow", |c| h16(call32(c.cpu, "user32!GetDesktopWindow", &[])) as u32);
     reg("USER.DrawText", |c| {
-        let r = crate::mem::heap_alloc(16, true);
+        let r_own = crate::mem::Scratch::new(16, true);
+        let r = r_own.get();
         rect_in(c.a(3), r);
         let v = call32(c.cpu, "user32!DrawTextA", &[c.h(0), c.a(1), c.s(2) as u32, r, c.w(4) as u32]);
         rect_out(r, c.a(3));
-        crate::mem::heap_free(r);
+        drop(r_own);
         v
     });
     reg("USER.GetUpdateRect", |c| {
-        let r = crate::mem::heap_alloc(16, true);
+        let r_own = crate::mem::Scratch::new(16, true);
+        let r = r_own.get();
         let v = call32(c.cpu, "user32!GetUpdateRect", &[c.h(0), if c.a(1) == 0 { 0 } else { r }, c.w(2) as u32]);
         if c.a(1) != 0 {
             rect_out(r, c.a(1));
         }
-        crate::mem::heap_free(r);
+        drop(r_own);
         v
     });
     reg("USER.SetRect", |c| {
@@ -661,22 +665,25 @@ pub fn init() {
         r
     });
     reg("GDI.GetTextExtent", |c| {
-        let sz = crate::mem::heap_alloc(8, true);
+        let sz_own = crate::mem::Scratch::new(8, true);
+        let sz = sz_own.get();
         call32(c.cpu, "gdi32!GetTextExtentPoint32A", &[c.h(0), c.a(1), c.s(2) as u32, sz]);
         let r = (r32(sz) & 0xffff) | (r32(sz + 4) << 16);
-        crate::mem::heap_free(sz);
+        drop(sz_own);
         r
     });
     reg("GDI.MoveTo", |c| {
-        let pt = crate::mem::heap_alloc(8, true);
+        let pt_own = crate::mem::Scratch::new(8, true);
+        let pt = pt_own.get();
         call32(c.cpu, "gdi32!MoveToEx", &[c.h(0), c.s(1) as u32, c.s(2) as u32, pt]);
         let r = (r32(pt) & 0xffff) | (r32(pt + 4) << 16);
-        crate::mem::heap_free(pt);
+        drop(pt_own);
         r
     });
     reg("GDI.GetObject", |c| get_object(c));
     reg("GDI.CreateFont", |c| {
-        let lf = crate::mem::heap_alloc(60, true);
+        let lf_own = crate::mem::Scratch::new(60, true);
+        let lf = lf_own.get();
         for i in 0..5 {
             w32(lf + 4 * i as u32, c.s(i) as u32);
         }
@@ -688,7 +695,7 @@ pub fn init() {
             crate::mem::put_cstr(lf + 28, 32, &s);
         }
         let r = call32(c.cpu, "gdi32!CreateFontIndirectA", &[lf]);
-        crate::mem::heap_free(lf);
+        drop(lf_own);
         h16(r) as u32
     });
     reg("GDI.CreateBitmap", |c| {
@@ -721,10 +728,11 @@ fn ansi_case(c: &mut C16, up: bool) -> u32 {
 }
 
 fn file_read(c: &mut C16, h: u32, buf: u32, n: u32) -> u32 {
-    let got = crate::mem::heap_alloc(4, true);
+    let got_own = crate::mem::Scratch::new(4, true);
+    let got = got_own.get();
     let ok = call32(c.cpu, "kernel32!ReadFile", &[h, buf, n, got, 0]);
     let r = r32(got);
-    crate::mem::heap_free(got);
+    drop(got_own);
     if ok == 0 { 0xffff_ffff } else { r }
 }
 
@@ -732,10 +740,11 @@ fn file_write(c: &mut C16, h: u32, buf: u32, n: u32) -> u32 {
     if let Some(n) = std_write(h, buf, n) {
         return n;
     }
-    let got = crate::mem::heap_alloc(4, true);
+    let got_own = crate::mem::Scratch::new(4, true);
+    let got = got_own.get();
     let ok = call32(c.cpu, "kernel32!WriteFile", &[h, buf, n, got, 0]);
     let r = r32(got);
-    crate::mem::heap_free(got);
+    drop(got_own);
     if ok == 0 { 0xffff_ffff } else { r }
 }
 
@@ -1309,20 +1318,22 @@ fn msg_out(m: u32, p: u32) {
 }
 
 fn get_message(c: &mut C16) -> u32 {
-    let m = crate::mem::heap_alloc(28, true);
+    let m_own = crate::mem::Scratch::new(28, true);
+    let m = m_own.get();
     let r = call32(c.cpu, "user32!GetMessageA", &[m, c.h(1), c.w(2) as u32, c.w(3) as u32]);
     msg_out(m, c.a(0));
-    crate::mem::heap_free(m);
+    drop(m_own);
     r
 }
 
 fn peek_message(c: &mut C16) -> u32 {
-    let m = crate::mem::heap_alloc(28, true);
+    let m_own = crate::mem::Scratch::new(28, true);
+    let m = m_own.get();
     let r = call32(c.cpu, "user32!PeekMessageA", &[m, c.h(1), c.w(2) as u32, c.w(3) as u32, c.w(4) as u32]);
     if r != 0 {
         msg_out(m, c.a(0));
     }
-    crate::mem::heap_free(m);
+    drop(m_own);
     r
 }
 
@@ -1331,7 +1342,8 @@ static CLASS_MENU: Mutex<Option<HashMap<Vec<u8>, u32>>> = Mutex::new(None);
 
 fn register_class(c: &mut C16) -> u32 {
     let p = c.a(0);
-    let wc = crate::mem::heap_alloc(40, true);
+    let wc_own = crate::mem::Scratch::new(40, true);
+    let wc = wc_own.get();
     w32(wc, r16(p) as u32);
     w32(wc + 4, proc_thunk(r32(p + 2), Kind::Wnd));
     w32(wc + 8, r16(p + 6) as i16 as i32 as u32);
@@ -1351,7 +1363,7 @@ fn register_class(c: &mut C16) -> u32 {
         CLASS_MENU.lock().unwrap().get_or_insert_with(HashMap::default).insert(key, menu);
     }
     let r = call32(c.cpu, "user32!RegisterClassA", &[wc]);
-    crate::mem::heap_free(wc);
+    drop(wc_own);
     r & 0xffff
 }
 
@@ -1378,20 +1390,22 @@ fn create_window(c: &mut C16, ex: bool) -> u32 {
 }
 
 fn text_metrics(c: &mut C16) -> u32 {
-    let tm = crate::mem::heap_alloc(64, true);
+    let tm_own = crate::mem::Scratch::new(64, true);
+    let tm = tm_own.get();
     let r = call32(c.cpu, "gdi32!GetTextMetricsA", &[c.h(0), tm]);
     let p = c.a(1);
     for i in 0..11 {
         w16(p + 2 * i, r32(tm + 4 * i) as u16);
     }
     crate::mem::copy(p + 22, tm + 44, 9);
-    crate::mem::heap_free(tm);
+    drop(tm_own);
     r
 }
 
 fn get_object(c: &mut C16) -> u32 {
     let (h, n, p) = (c.h(0), c.s(1), c.a(2));
-    let b = crate::mem::heap_alloc(128, true);
+    let b_own = crate::mem::Scratch::new(128, true);
+    let b = b_own.get();
     let r = call32(c.cpu, "gdi32!GetObjectA", &[h, 128, b]);
     let r16v = match r {
         // BITMAP
@@ -1440,7 +1454,7 @@ fn get_object(c: &mut C16) -> u32 {
             r
         }
     };
-    crate::mem::heap_free(b);
+    drop(b_own);
     r16v
 }
 
@@ -1507,7 +1521,8 @@ pub fn find_resource(ty: u32, id: u32) -> Option<(u32, u32)> {
 /// not one.
 pub fn bitmap_from_dib(cpu: &mut Cpu, d: u32, len: u32) -> u32 {
     let Some(info) = dib_info(&crate::mem::bytes(d, len)) else { return 0 };
-    let bmi = crate::mem::heap_alloc(info.header.len() as u32, true);
+    let bmi_own = crate::mem::Scratch::new(info.header.len() as u32, true);
+    let bmi = bmi_own.get();
     crate::mem::write(bmi, &info.header);
     let bits = d + info.bits;
     let (w, h) = (info.width, info.height);
@@ -1524,7 +1539,7 @@ pub fn bitmap_from_dib(cpu: &mut Cpu, d: u32, len: u32) -> u32 {
         call32(cpu, "user32!ReleaseDC", &[0, dc]);
         b
     };
-    crate::mem::heap_free(bmi);
+    drop(bmi_own);
     hbm
 }
 
@@ -1745,7 +1760,8 @@ impl C16<'_> {
 /// OPENFILENAME16 -> OPENFILENAMEA, GetOpenFileNameA, back.
 fn open_file_name(c: &mut C16) -> u32 {
     let p = lin(c.a(0));
-    let o = crate::mem::heap_alloc(0x58, true);
+    let o_own = crate::mem::Scratch::new(0x58, true);
+    let o = o_own.get();
     w32(o, 0x4c);
     w32(o + 4, h32(r16(p + 4)));
     w32(o + 12, lin(r32(p + 8)));
@@ -1762,7 +1778,7 @@ fn open_file_name(c: &mut C16) -> u32 {
     let r = call32(c.cpu, "comdlg32!GetOpenFileNameA", &[o]);
     w16(p + 52, r16(o + 56));
     w16(p + 54, r16(o + 58));
-    crate::mem::heap_free(o);
+    drop(o_own);
     r
 }
 
@@ -1933,11 +1949,12 @@ pub fn dos(cpu: &mut Cpu) {
         0x3f | 0x40 => {
             let h = cpu.regs[koji::EBX] & 0xffff;
             let (buf, n) = (ds_dx(cpu), cpu.regs[ECX] & 0xffff);
-            let got = crate::mem::heap_alloc(4, true);
+            let got_own = crate::mem::Scratch::new(4, true);
+            let got = got_own.get();
             let f = if ah == 0x3f { "kernel32!ReadFile" } else { "kernel32!WriteFile" };
             let r = crate::w16::call32(cpu, f, &[h, buf, n, got, 0]);
             let g = r32(got);
-            crate::mem::heap_free(got);
+            drop(got_own);
             if r == 0 {
                 err(cpu, 5);
             } else {
@@ -1996,7 +2013,8 @@ pub fn dos(cpu: &mut Cpu) {
             let mut g = DOS.lock().unwrap();
             let dos = g.get_or_insert_with(|| Dos { dta: 0, finds: HashMap::default() });
             let dta = if dos.dta == 0 { w16::sel_base(task().psp).unwrap().0 + 0x80 } else { dos.dta };
-            let fd = crate::mem::heap_alloc(320, true);
+            let fd_own = crate::mem::Scratch::new(320, true);
+            let fd = fd_own.get();
             let (h, r) = if ah == 0x4e {
                 // (a new search at this DTA ends the one before: its find handle is closed)
                 let old = dos.finds.remove(&dta);
@@ -2026,7 +2044,7 @@ pub fn dos(cpu: &mut Cpu) {
             } else {
                 err(cpu, 0x12);
             }
-            crate::mem::heap_free(fd);
+            drop(fd_own);
         }
         0x2f => {
             let dta = DOS.lock().unwrap().as_ref().map_or(0, |d| d.dta);
@@ -2065,10 +2083,11 @@ pub fn int_other(cpu: &mut Cpu, n: u32) {
 
 /// (year, month, day, weekday) of today (local time).
 pub fn date(cpu: &mut Cpu) -> (u32, u32, u32, u32) {
-    let st = crate::mem::heap_alloc(16, true);
+    let st_own = crate::mem::Scratch::new(16, true);
+    let st = st_own.get();
     call32(cpu, "kernel32!GetLocalTime", &[st]);
     let r = (r16(st) as u32, r16(st + 2) as u32, r16(st + 6) as u32, r16(st + 4) as u32);
-    crate::mem::heap_free(st);
+    drop(st_own);
     r
 }
 

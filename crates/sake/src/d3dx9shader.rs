@@ -497,7 +497,8 @@ fn set(c: &mut Ctx, this: u32, dev: u32, h: u32, vals: Vec<f64>) -> u32 {
     if most == 0 {
         return 0;
     }
-    let p = mem::heap_alloc(most as u32, false);
+    let p_own = mem::Scratch::new(most as u32, false);
+    let p = p_own.get();
     if p == 0 {
         return 0x8007000e;
     }
@@ -511,7 +512,7 @@ fn set(c: &mut Ctx, this: u32, dev: u32, h: u32, vals: Vec<f64>) -> u32 {
         };
         com_call(c, dev, m, &[reg, p, n]);
     }
-    mem::heap_free(p);
+    drop(p_own);
     0
 }
 
@@ -1123,15 +1124,17 @@ mod review_tests {
         let _g = enter();
         // ps_2_0, comment "ABCD" of 2 dwords (fourcc + 1), end
         let words = [0xffff_0200u32, 0x0002_fffe, u32::from_le_bytes(*b"ABCD"), 0x1234_5678, 0xffff];
-        let p = mem::heap_alloc(4 * words.len() as u32, false);
+        let p_own = mem::Scratch::new(4 * words.len() as u32, false);
+        let p = p_own.get();
         for (i, w) in words.iter().enumerate() {
             w32(p + 4 * i as u32, *w);
         }
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         assert_eq!(call(D3DXFindShaderComment, &[p, u32::from_le_bytes(*b"ABCD"), out, out + 4]), 0);
         assert_eq!((r32(out), r32(out + 4)), (p + 12, 4));
         assert_eq!(call(D3DXGetShaderSize, &[p]), 20);
-        mem::heap_free(p);
-        mem::heap_free(out);
+        drop(p_own);
+        drop(out_own);
     }
 }

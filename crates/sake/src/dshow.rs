@@ -762,7 +762,8 @@ fn render_file_mc(c: &mut Ctx) -> u32 {
 /// other renderer.
 fn free_inputs(c: &mut Ctx, b: u32) -> Vec<u32> {
     let filters = with(b, |g| g.filters.iter().copied().filter(|&f| f != g.evr && f != g.renderer).collect::<Vec<_>>()).unwrap_or_default();
-    let tmp = mem::heap_alloc(16, true);
+    let tmp_own = mem::Scratch::new(16, true);
+    let tmp = tmp_own.get();
     let mut found = Vec::new();
     for f in filters {
         if crate::dshow_mpeg::is_filter(f) || evr_with(f, |_| ()).is_some() {
@@ -797,7 +798,7 @@ fn free_inputs(c: &mut Ctx, b: u32) -> Vec<u32> {
         }
         call(c, e, Unknown::Release, &[]);
     }
-    mem::heap_free(tmp);
+    drop(tmp_own);
     found
 }
 
@@ -824,12 +825,13 @@ fn to_renderer(c: &mut Ctx, b: u32) {
     let rate = if rate.0 == 0 || rate.1 == 0 { (30, 1) } else { rate };
     let v = crate::dshow_mpeg::vnv_new(b, video.0.max(1).cast_unsigned(), video.1.max(1).cast_unsigned(), rate);
     let name: Vec<u16> = "WMVideo Decoder DMO".encode_utf16().chain([0]).collect();
-    let n = mem::heap_alloc(2 * u32::try_from(name.len()).unwrap_or(0), false);
+    let n_own = mem::Scratch::new(2 * u32::try_from(name.len()).unwrap_or(0), false);
+    let n = n_own.get();
     for (i, w) in (0u32..).zip(&name) {
         mem::w16(n + 2 * i, *w);
     }
     add_filter_at(c, b, v, n);
-    mem::heap_free(n);
+    drop(n_own);
     // (the graph holds it now)
     call(c, v, Unknown::Release, &[]);
     // IPin::Connect(the game's pin, any type): the first that takes the pictures
@@ -2098,10 +2100,11 @@ fn place_of(e: &Evr, video: (i32, i32), shown: bool) -> Place {
 /// session's: `evr_drop`); IMFVideoDisplayControl is at word 2.
 pub(crate) fn session_evr(hwnd: u32) -> u32 {
     // (IMFGetService's iid's first word: any slot gives the block)
-    let iid = mem::heap_alloc(16, true);
+    let iid_own = mem::Scratch::new(16, true);
+    let iid = iid_own.get();
     w32(iid, 0xfa99_3888);
     let b = evr(iid).map_or(0, |p| p - ps());
-    mem::heap_free(iid);
+    drop(iid_own);
     evr_with(b, |e| e.hwnd = hwnd);
     b
 }
@@ -2935,10 +2938,11 @@ mod wait_tests {
         GRAPHS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(b, Graph::new(0));
     }
     fn get(b: u32, ms: u32) -> (u32, u32, u32) {
-        let out = mem::heap_alloc(12, true);
+        let out_own = mem::Scratch::new(12, true);
+        let out = out_own.get();
         let r = call(get_event, &[ME.of(b), out, out + 4, out + 8, ms]);
         let v = (r, r32(out), r32(out + 4));
-        mem::heap_free(out);
+        drop(out_own);
         v
     }
 
@@ -3010,7 +3014,8 @@ mod wait_tests {
         let _g = enter();
         let b = 0x7eb0_0000;
         graph(b);
-        let pc = mem::heap_alloc(4, true);
+        let pc_own = mem::Scratch::new(4, true);
+        let pc = pc_own.get();
         assert_eq!(call(wait_for_completion, &[ME.of(b), u32::MAX, pc]), Hr::WrongState.code());
         with(b, |g| g.state = State::Running);
         assert_eq!(call(wait_for_completion, &[ME.of(b), 50, pc]), Hr::Abort.code());
@@ -3032,7 +3037,7 @@ mod wait_tests {
         assert_eq!(call(wait_for_completion, &[ME.of(b), u32::MAX, pc]), 0);
         assert!(t.elapsed() < Duration::from_secs(2));
         q.join().unwrap();
-        mem::heap_free(pc);
+        drop(pc_own);
     }
 
     fn iid(first: u32, second: u32) -> u32 {

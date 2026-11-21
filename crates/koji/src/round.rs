@@ -552,14 +552,14 @@ mod tests {
         let Some((n, ex)) = exact else { return };
         let Some((mg, eg)) = bigval(got) else {
             // (infinite: only past f64::MAX)
-            let top = 128 - n.unsigned_abs().leading_zeros() as i32 + ex;
+            let top = n.unsigned_abs().bit_width() as i32 + ex;
             assert!(!got.is_infinite() || top >= 1024, "{op:?} {a:e} {b:e} {rc:?} -> {got:e}");
             return;
         };
         // compare got with exact: got - exact sign
         let cmp = |m: i128, e: i32| -> Option<i32> {
             // (far apart in magnitude: the larger one's sign; tiny results of tiny operands)
-            let top = |v: i128, e: i32| 128 - v.unsigned_abs().leading_zeros() as i32 + e;
+            let top = |v: i128, e: i32| v.unsigned_abs().bit_width() as i32 + e;
             if m != 0 && n != 0 && (top(m, e) - top(n, ex)).abs() > 2 {
                 return Some(if top(m, e) > top(n, ex) { m.signum() as i32 } else { -n.signum() as i32 });
             }

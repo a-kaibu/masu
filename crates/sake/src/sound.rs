@@ -1234,7 +1234,8 @@ fn enumerate(c: &mut Ctx, wide: bool) -> u32 {
     if cb == 0 {
         return Hr::InvalidParam.code();
     }
-    let buf = mem::heap_alloc(16 + 2 * 128 + 2 * 128, true);
+    let buf_own = mem::Scratch::new(16 + 2 * 128 + 2 * 128, true);
+    let buf = buf_own.get();
     let (guid, desc, module) = (buf, buf + 16, buf + 16 + 256);
     for (g, d, m) in ds_devices(!no_sound()) {
         if let Some(g) = g {
@@ -1252,7 +1253,7 @@ fn enumerate(c: &mut Ctx, wide: bool) -> u32 {
             break;
         }
     }
-    mem::heap_free(buf);
+    drop(buf_own);
     0
 }
 /// DSDEVID_DefaultPlayback {DEF00000-9C6D-47ED-AAF1-4DDA8F2B5C03}; DefaultCapture, its voice
@@ -2198,7 +2199,8 @@ mod play_sound_tests {
             let _held = Held;
             let keys = [0x7c_0010u32, 0x7c_0020, 0x7c_0030];
             let fmt = Fmt { rate: RATE, channels: 2, bits: 16, float: false, law: 0 };
-            let data = mem::heap_alloc(400, true);
+            let data_own = mem::Scratch::new(400, true);
+            let data = data_own.get();
             for &k in &keys {
                 with(|d| d.bufs.insert(Key::Ds(k), music_buf(k, data, 400, fmt, 0, 0)));
             }
@@ -2217,7 +2219,7 @@ mod play_sound_tests {
             for &k in &keys {
                 with(|d| { d.bufs.remove(&Key::Ds(k)); d.bufs.remove(&Key::Music(k)); });
             }
-            mem::heap_free(data);
+            drop(data_own);
             prop_assert_eq!(before, after);
         }
     }
@@ -2255,7 +2257,8 @@ mod music_tests {
     fn held_at_what_is_decoded() {
         let _g = enter();
         let n = 4000u32;
-        let data = mem::heap_alloc(n * 2, true);
+        let data_own = mem::Scratch::new(n * 2, true);
+        let data = data_own.get();
         for i in 0..n { w16(data + 2 * i, 16000); }
         let fill = fill_start(data);
         let fmt = Fmt { rate: RATE, channels: 1, bits: 16, float: false, law: 0 };
@@ -2283,7 +2286,7 @@ mod music_tests {
         assert!(!d.bufs[&Key::Music(1)].playing);
         fill_drop(data);
         assert!(!fill.write(n, || panic!("written after the drop")));
-        mem::heap_free(data);
+        drop(data_own);
     }
 
     proptest! {
@@ -2292,7 +2295,8 @@ mod music_tests {
         #[test]
         fn repeats_play_whole_passes(n in 1u32..300, r in 0u32..4, infinite in any::<bool>(), mute in any::<bool>()) {
             let _g = enter();
-            let data = mem::heap_alloc(n * 2, true);
+            let data_own = mem::Scratch::new(n * 2, true);
+            let data = data_own.get();
             for i in 0..n { w16(data + 2 * i, 16000); }
             let fmt = Fmt { rate: RATE, channels: 1, bits: 16, float: false, law: 0 };
             let mut d = dev();
@@ -2303,7 +2307,7 @@ mod music_tests {
             mix(&mut d, &mut out);
             let sounding = out.chunks_exact(2).filter(|f| f[0] != 0.0).count();
             let playing = d.bufs[&Key::Music(1)].playing;
-            mem::heap_free(data);
+            drop(data_own);
             if mute {
                 prop_assert_eq!(sounding, 0);
             } else if infinite {
@@ -2467,13 +2471,15 @@ mod lifetime_tests {
         (b, data)
     }
     fn qi(b: u32, iid: u32) -> u32 {
-        let g = mem::heap_alloc(16, true);
+        let g_own = mem::Scratch::new(16, true);
+        let g = g_own.get();
         w32(g, iid);
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         assert_eq!(call(B_QueryInterface, &[b, g, out]), 0);
         let o = r32(out);
-        mem::heap_free(g);
-        mem::heap_free(out);
+        drop(g_own);
+        drop(out_own);
         o
     }
     fn alive(b: u32) -> bool {
@@ -2639,7 +2645,8 @@ mod review_b09_tests {
         #[test]
         fn looping_position_stays_inside(frames in 1u32..4, freq in 44100u32..400_000, start in 0f64..10.0) {
             let _g = enter();
-            let data = mem::heap_alloc(frames * 2, true);
+            let data_own = mem::Scratch::new(frames * 2, true);
+            let data = data_own.get();
             let mut d = dev();
             let fmt = Fmt { rate: RATE, channels: 1, bits: 16, float: false, law: 0 };
             let mut b = music_buf(1, data, frames * 2, fmt, 0, 0);
@@ -2651,7 +2658,7 @@ mod review_b09_tests {
             let mut out = vec![0f32; 2 * 200];
             mix(&mut d, &mut out);
             prop_assert!(d.bufs[&Key::Music(1)].pos < frames as f64, "pos {}", d.bufs[&Key::Music(1)].pos);
-            mem::heap_free(data);
+            drop(data_own);
         }
     }
 
@@ -2675,19 +2682,21 @@ mod review_b09_tests {
     #[test]
     fn memory_sounds_need_a_riff_header() {
         let _g = enter();
-        let p = mem::heap_alloc(64, true);
+        let p_own = mem::Scratch::new(64, true);
+        let p = p_own.get();
         mem::write(p, b"JUNK\xf0\xff\xff\xff");
         assert_eq!(play_sound(p, 0, SND_MEMORY | SND_ASYNC, false), 0);
         mem::write(p, b"RIFF\xf0\xff\xff\x7fWAVE");
         assert_eq!(play_sound(p, 0, SND_MEMORY | SND_ASYNC, false), 0);
-        mem::heap_free(p);
+        drop(p_own);
     }
 
     /// SetCurrentPosition past the buffer: DSERR_INVALIDPARAM, the position unchanged.
     #[test]
     fn position_past_the_end_is_refused() {
         let _g = enter();
-        let data = mem::heap_alloc(400, true);
+        let data_own = mem::Scratch::new(400, true);
+        let data = data_own.get();
         let fmt = Fmt { rate: RATE, channels: 2, bits: 16, float: false, law: 0 };
         let key = 0x7b_0001;
         with(|d| d.bufs.insert(Key::Ds(key), music_buf(key, data, 400, fmt, 0, 0)));
@@ -2698,7 +2707,7 @@ mod review_b09_tests {
         music_set(key, Some(1e9), None);
         assert_eq!(with(|d| d.bufs[&Key::Ds(key)].pos), 99.0);
         with(|d| d.bufs.remove(&Key::Ds(key)));
-        mem::heap_free(data);
+        drop(data_own);
     }
 }
 

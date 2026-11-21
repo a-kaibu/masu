@@ -445,7 +445,8 @@ fn Q_EnumDevices(c: &mut Ctx) -> u32 {
         }
         p
     });
-    let m = mem::heap_alloc(236, true);
+    let m_own = mem::Scratch::new(236, true);
+    let m = m_own.get();
     for i in 0..DEVICES.len() {
         write_caps(m, i);
         let q = names + 256 * i as u32;
@@ -453,7 +454,7 @@ fn Q_EnumDevices(c: &mut Ctx) -> u32 {
             break;
         }
     }
-    mem::heap_free(m);
+    drop(m_own);
     D3D_OK
 }
 
@@ -593,7 +594,8 @@ fn Q_CreateVertexBuffer(c: &mut Ctx) -> u32 {
 
 fn Q_EnumZBufferFormats(c: &mut Ctx) -> u32 {
     let (cb, ctx) = (c.a(2), c.a(3));
-    let p = mem::heap_alloc(32, true);
+    let p_own = mem::Scratch::new(32, true);
+    let p = p_own.get();
     for (bits, mask) in [(16u32, 0xffffu32), (24, 0xff_ffff), (32, 0xffff_ffff)] {
         mem::fill(p, 32, 0);
         w32(p, 32);
@@ -604,7 +606,7 @@ fn Q_EnumZBufferFormats(c: &mut Ctx) -> u32 {
             break;
         }
     }
-    mem::heap_free(p);
+    drop(p_own);
     D3D_OK
 }
 
@@ -765,14 +767,15 @@ const TEX_FORMATS: [(u32, u32, u32, u32, u32, u32); 6] = [
 
 fn V_EnumTextureFormats(c: &mut Ctx) -> u32 {
     let (cb, ctx) = (c.a(1), c.a(2));
-    let p = mem::heap_alloc(32, true);
+    let p_own = mem::Scratch::new(32, true);
+    let p = p_own.get();
     for (bpp, fl, r, g, b, a) in TEX_FORMATS {
         write_pf(p, bpp as u16, [fl, r, g, b, a]);
         if c.call(cb, &[p, ctx]) == 0 {
             break;
         }
     }
-    mem::heap_free(p);
+    drop(p_own);
     D3D_OK
 }
 fn V_BeginScene(c: &mut Ctx) -> u32 {
@@ -2379,7 +2382,8 @@ fn write_desc3(p: u32, size: u32, dev: usize, empty: bool) {
     if empty {
         return;
     }
-    let d7 = mem::heap_alloc(236, true);
+    let d7_own = mem::Scratch::new(236, true);
+    let d7 = d7_own.get();
     write_caps(d7, dev);
     let mut b = [0u8; 252];
     let put = |b: &mut [u8; 252], at: usize, v: u32| b[at..at + 4].copy_from_slice(&v.to_le_bytes());
@@ -2410,7 +2414,7 @@ fn write_desc3(p: u32, size: u32, dev: usize, empty: bool) {
         put(&mut b, 216 + 4 * k, r32(d7 + 152 + 4 * k as u32));
     }
     b[248..252].copy_from_slice(&mem::array::<4>(d7 + 184));
-    mem::heap_free(d7);
+    drop(d7_own);
     mem::write(p, &b[..size.min(252) as usize]);
 }
 

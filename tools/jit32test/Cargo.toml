@@ -14,5 +14,8 @@ iced-x86 = { version = "1.21", default-features = false, features = ["std", "dec
 wasmtime = { version = "29", default-features = false, features = ["cranelift", "runtime", "threads"] }
 
 [lints.rust]
+# (Rust 1.99: `&x as *const T` / `&mut x as *mut T` makes a reference first, with its aliasing
+# rules: write `&raw const x` / `&raw mut x`, or Box::as_ptr)
+raw_borrows_via_references = "warn"
 # (as in crates/: edition 2024 warns on unsafe operations in an unsafe fn without a block)
 unsafe_op_in_unsafe_fn = "allow"

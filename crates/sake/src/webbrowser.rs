@@ -531,10 +531,11 @@ fn activate(c: &mut Ctx, this: u32, site: u32, parent: u32, rect: u32) -> u32 {
     if site == 0 {
         return E_INVALIDARG;
     }
-    let out = mem::heap_alloc(8, true);
+    let out_own = mem::Scratch::new(8, true);
+    let out = out_own.get();
     let hr = vcall(c, site, 0, &[guest_guid(IID_IOLEINPLACESITE), out]);
     let ips = mem::rp(out);
-    mem::heap_free(out);
+    drop(out_own);
     if hr != 0 || ips == 0 {
         return E_NOINTERFACE;
     }
@@ -546,10 +547,11 @@ fn activate(c: &mut Ctx, this: u32, site: u32, parent: u32, rect: u32) -> u32 {
     vcall(c, ips, 6, &[]); // OnInPlaceActivate
     let mut parent = parent;
     if parent == 0 {
-        let h = mem::heap_alloc(8, true);
+        let h_own = mem::Scratch::new(8, true);
+        let h = h_own.get();
         vcall(c, ips, 3, &[h]); // IOleWindow::GetWindow
         parent = mem::rp(h);
-        mem::heap_free(h);
+        drop(h_own);
     }
     let (l, t, r, b) = if rect != 0 { (r32(rect) as i32, r32(rect + 4) as i32, r32(rect + 8) as i32, r32(rect + 12) as i32) } else { (0, 0, 0, 0) };
     let cls = window_class(c);
@@ -577,13 +579,14 @@ fn deactivate(c: &mut Ctx, this: u32) {
     }
     gcall(c, "user32", "DestroyWindow", &[hwnd]);
     if site != 0 {
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         if vcall(c, site, 0, &[guest_guid(IID_IOLEINPLACESITE), out]) == 0 && mem::rp(out) != 0 {
             let ips = mem::rp(out);
             vcall(c, ips, 11, &[]); // OnInPlaceDeactivate
             vcall(c, ips, 2, &[]);
         }
-        mem::heap_free(out);
+        drop(out_own);
     }
 }
 

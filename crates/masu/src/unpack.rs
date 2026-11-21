@@ -506,8 +506,7 @@ fn installshield(job: &Job, src: &Path, out: &Path) -> Result<bool> {
             }
             let at = pos.checked_add(hl).context("truncated setup")?;
             let nb = rd(at, nl)?;
-            let u: Vec<u16> = nb.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-            let name = String::from_utf16_lossy(&u);
+            let name = kome::le::utf16_lossy(&nb);
             let data = at + nl as u64;
             pos = data.checked_add(len).filter(|&e| e <= size).context("truncated setup")?;
             entries.push((data, len, flags, name.as_bytes().to_vec(), name));

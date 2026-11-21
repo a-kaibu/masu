@@ -2243,7 +2243,8 @@ mod issue88 {
             assert_eq!(conn_fill(0, &conn_rows(tcp, v6, |_| true), tcp, v6, RowKind::Module), 8);
         }}
         crate::ws2::test_bound_udp(|| {
-            let p = mem::heap_alloc(32, false);
+            let p_own = mem::Scratch::new(32, false);
+            let p = p_own.get();
             mem::fill(p, 32, 0xcc);
             assert_eq!(conn_fill(p, &conn_rows(false, false, |_| true), false, false, RowKind::Basic), 28);
             assert_eq!(r32(p), 3);
@@ -2252,7 +2253,7 @@ mod issue88 {
                 assert_eq!(&mem::array::<2>(p + 8 + 8 * i), &(41000u16 + i as u16).to_be_bytes());
             }
             assert_eq!(r32(p + 28), 0xcccccccc);
-            mem::heap_free(p);
+            drop(p_own);
         });
     }
 
@@ -2261,8 +2262,10 @@ mod issue88 {
     #[test]
     fn huge_pair_counts_fail() {
         let _g = crate::test_guest::enter();
-        let out = mem::heap_alloc(16, true);
-        let dst = mem::heap_alloc(28, true);
+        let out_own = mem::Scratch::new(16, true);
+        let out = out_own.get();
+        let dst_own = mem::Scratch::new(28, true);
+        let dst = dst_own.get();
         for n in [0x0400_0000, 0x0800_0000, 0x4000_0000, u32::MAX] {
             assert_eq!(crate::test_guest::call(CreateSortedAddressPairs, &[0, 0, dst, n, 0, out, out + 8]), ERROR_NOT_ENOUGH_MEMORY, "{n:#x}");
             assert_eq!(r32(out), 0);
@@ -2271,8 +2274,8 @@ mod issue88 {
         assert_eq!(crate::test_guest::call(CreateSortedAddressPairs, &[0, 0, dst, 1, 0, out, out + 8]), NO_ERROR);
         assert_eq!(r32(out + 8), 1);
         mem::heap_free(r32(out));
-        mem::heap_free(out);
-        mem::heap_free(dst);
+        drop(out_own);
+        drop(dst_own);
     }
 
     /// A pending NotifyAddrChange whose handle is closed leaves nothing behind (a later

@@ -870,7 +870,8 @@ fn put_rows(src: &[u8], row: u32, rows: u32, bits: u32, pitch: u32) {
 /// file has), as many as both have; levels of the texture the file lacks stay as they are.
 fn dds_fill(c: &mut Ctx, tex: u32, data: &[u8], d: &crate::dds::Dds, cube: bool) {
     let n = com_call(c, tex, 13, &[]).min(d.levels);
-    let lr = mem::heap_alloc(8, true);
+    let lr_own = mem::Scratch::new(8, true);
+    let lr = lr_own.get();
     for face in 0..if cube { 6 } else { 1 } {
         for level in 0..n {
             let Some((at, len)) = d.level_at(face, level) else { continue };
@@ -887,7 +888,7 @@ fn dds_fill(c: &mut Ctx, tex: u32, data: &[u8], d: &crate::dds::Dds, cube: bool)
             }
         }
     }
-    mem::heap_free(lr);
+    drop(lr_own);
 }
 /// A texture from a DDS file: its own size, format and levels (D3DX_DEFAULT / 0 levels; else
 /// as many as asked, up to the file's), in `pool` with `usage`.
@@ -897,10 +898,11 @@ fn texture_from_dds(c: &mut Ctx, dev: u32, data: &[u8], d: &crate::dds::Dds, mip
         return 0x88760b59;
     }
     let levels = if mips == 0 || mips >= 0xffff_fffd { d.levels } else { mips.min(d.levels) };
-    let pt = mem::heap_alloc(8, true);
+    let pt_own = mem::Scratch::new(8, true);
+    let pt = pt_own.get();
     let hr = com_call(c, dev, 23, &[d.w, d.h, levels, usage, d.fmt, pool, pt, 0]);
     let tex = r32(pt);
-    mem::heap_free(pt);
+    drop(pt_own);
     if hr != 0 || tex == 0 {
         return if hr != 0 { hr } else { 0x8876086c };
     }
@@ -974,17 +976,20 @@ fn texture_from(c: &mut Ctx, dev: u32, data: &[u8], a: [u32; 12]) -> u32 {
         v => v,
     };
     color_key(&mut px, key);
-    let pt = mem::heap_alloc(8, true);
+    let pt_own = mem::Scratch::new(8, true);
+    let pt = pt_own.get();
     let hr = com_call(c, dev, 23, &[tw, th, if levels == 0xffff_ffff { 0 } else { levels }, usage, fmt, pool, pt, 0]);
     let tex = r32(pt);
-    mem::heap_free(pt);
+    drop(pt_own);
     if hr != 0 || tex == 0 {
         return if hr != 0 { hr } else { 0x8876086c };
     }
     // every level: the image scaled to it (nearest), packed
     let n = com_call(c, tex, 13, &[]).max(1);
-    let desc = mem::heap_alloc(32, true);
-    let lr = mem::heap_alloc(8, true);
+    let desc_own = mem::Scratch::new(32, true);
+    let desc = desc_own.get();
+    let lr_own = mem::Scratch::new(8, true);
+    let lr = lr_own.get();
     for level in 0..n {
         com_call(c, tex, 17, &[level, desc]);
         let (lw, lh) = (r32(desc + 24), r32(desc + 28));
@@ -995,8 +1000,8 @@ fn texture_from(c: &mut Ctx, dev: u32, data: &[u8], a: [u32; 12]) -> u32 {
         put_scaled(&px, iw, (0, 0, iw, ih), fmt, lw, lh, bits, pitch);
         com_call(c, tex, 20, &[level]);
     }
-    mem::heap_free(desc);
-    mem::heap_free(lr);
+    drop(desc_own);
+    drop(lr_own);
     mem::putp(out, tex);
     0
 }
@@ -1092,8 +1097,10 @@ fn cube_from(c: &mut Ctx, dev: u32, data: &[u8], a: [u32; 11]) -> u32 {
         Err(hr) => return hr,
     };
     let n = com_call(c, cube, 13, &[]).max(1);
-    let lr = mem::heap_alloc(8, true);
-    let desc = mem::heap_alloc(32, true);
+    let lr_own = mem::Scratch::new(8, true);
+    let lr = lr_own.get();
+    let desc_own = mem::Scratch::new(32, true);
+    let desc = desc_own.get();
     for level in 0..n {
         // (the level's size as the cube texture has it: GetLevelDesc)
         w32(desc + 24, (edge >> level).max(1));
@@ -1108,8 +1115,8 @@ fn cube_from(c: &mut Ctx, dev: u32, data: &[u8], a: [u32; 11]) -> u32 {
             com_call(c, cube, 20, &[face, level]);
         }
     }
-    mem::heap_free(desc);
-    mem::heap_free(lr);
+    drop(desc_own);
+    drop(lr_own);
     mem::putp(out, cube);
     0
 }
@@ -1221,24 +1228,26 @@ fn surface_from(c: &mut Ctx, surf: u32, dst: u32, data: &[u8], src: u32, key: u3
         return 0x88760b59;
     };
     write_info(info, iw, ih, ff);
-    let desc = mem::heap_alloc(32, true);
+    let desc_own = mem::Scratch::new(32, true);
+    let desc = desc_own.get();
     com_call(c, surf, 12, &[desc]);
     let (fmt, sw, sh) = (r32(desc), r32(desc + 24), r32(desc + 28));
-    mem::heap_free(desc);
+    drop(desc_own);
     let (sl, st, sr, sb) = rect_or(src, iw, ih);
     let (dl, dt, dr, db) = rect_or(dst, sw, sh);
     if sr <= sl || sb <= st || dr <= dl || db <= dt {
         return 0;
     }
     // (the rectangle locked is the clamped one the loop writes: the locked bits start at its corner)
-    let lr = mem::heap_alloc(8 + 16, true);
+    let lr_own = mem::Scratch::new(8 + 16, true);
+    let lr = lr_own.get();
     let rect = if dst == 0 { 0 } else { lr + 8 };
     for (k, v) in [dl, dt, dr, db].into_iter().enumerate() {
         w32(lr + 8 + 4 * k as u32, v);
     }
     let hr = com_call(c, surf, 13, &[lr, rect, 0]);
     let (pitch, bits) = (r32(lr), r32(lr + 4));
-    mem::heap_free(lr);
+    drop(lr_own);
     if hr != 0 {
         return hr;
     }
@@ -1469,7 +1478,8 @@ fn D3DXLoadSurfaceFromSurface(c: &mut Ctx) -> u32 {
     if dsurf == 0 || ssurf == 0 {
         return 0x8876086c;
     }
-    let scratch = mem::heap_alloc(32 + 32 + 8 + 8, true);
+    let scratch_own = mem::Scratch::new(32 + 32 + 8 + 8, true);
+    let scratch = scratch_own.get();
     let (ddesc, sdesc, dlr, slr) = (scratch, scratch + 32, scratch + 64, scratch + 72);
     com_call(c, dsurf, 12, &[ddesc]);
     com_call(c, ssurf, 12, &[sdesc]);
@@ -1480,22 +1490,23 @@ fn D3DXLoadSurfaceFromSurface(c: &mut Ctx) -> u32 {
     let bpp = |fmt: u32| pack(fmt, [0.0; 4]).map(|p| p.1);
     let (Some(sbpp), Some(dbpp)) = (bpp(sfmt), bpp(dfmt)) else {
         eprintln!("sake: D3DXLoadSurfaceFromSurface: format {sfmt} -> {dfmt} not handled");
-        mem::heap_free(scratch);
+        drop(scratch_own);
         return 0x80004001;
     };
     if sr <= sl || sb <= st || dr <= dl || db <= dt {
-        mem::heap_free(scratch);
+        drop(scratch_own);
         return 0;
     }
     // (the source read whole first: the two may be the same surface)
-    let srect = mem::heap_alloc(16, true);
+    let srect_own = mem::Scratch::new(16, true);
+    let srect = srect_own.get();
     for (k, v) in [sl, st, sr, sb].into_iter().enumerate() {
         w32(srect + 4 * k as u32, v);
     }
     let hr = com_call(c, ssurf, 13, &[slr, srect, 0x10]);
-    mem::heap_free(srect);
+    drop(srect_own);
     if hr != 0 {
-        mem::heap_free(scratch);
+        drop(scratch_own);
         return hr;
     }
     let (sw, sh) = (sr - sl, sb - st);
@@ -1504,14 +1515,14 @@ fn D3DXLoadSurfaceFromSurface(c: &mut Ctx) -> u32 {
     com_call(c, ssurf, 14, &[]);
     let hr = com_call(c, dsurf, 13, &[dlr, dst, 0]);
     if hr != 0 {
-        mem::heap_free(scratch);
+        drop(scratch_own);
         return hr;
     }
     let (dpitch, dbits) = (r32(dlr), r32(dlr + 4));
     let (dw, dh) = (dr - dl, db - dt);
     convert_rows(&px, (sfmt, sbpp, sw, sh), (dfmt, dbpp, dw, dh), key, |y, r| mem::write(dbits.wrapping_add(y.wrapping_mul(dpitch)), r));
     com_call(c, dsurf, 14, &[]);
-    mem::heap_free(scratch);
+    drop(scratch_own);
     0
 }
 
@@ -1547,7 +1558,8 @@ fn D3DXLoadSurfaceFromMemory(c: &mut Ctx) -> u32 {
     if l < 0 || t < 0 || r < l || b < t {
         return 0x8876086c;
     }
-    let scratch = mem::heap_alloc(32 + 8, true);
+    let scratch_own = mem::Scratch::new(32 + 8, true);
+    let scratch = scratch_own.get();
     let (ddesc, dlr) = (scratch, scratch + 32);
     com_call(c, dsurf, 12, &[ddesc]);
     let (dfmt, dw0, dh0) = (r32(ddesc), r32(ddesc + 24), r32(ddesc + 28));
@@ -1555,24 +1567,24 @@ fn D3DXLoadSurfaceFromMemory(c: &mut Ctx) -> u32 {
     let bpp = |fmt: u32| pack(fmt, [0.0; 4]).map(|p| p.1);
     let (Some(sbpp), Some(dbpp)) = (bpp(sfmt), bpp(dfmt)) else {
         eprintln!("sake: D3DXLoadSurfaceFromMemory: format {sfmt} -> {dfmt} not handled");
-        mem::heap_free(scratch);
+        drop(scratch_own);
         return 0x80004001;
     };
     let (sw, sh) = ((r - l) as u32, (b - t) as u32);
     if sw == 0 || sh == 0 || dr <= dl || db <= dt {
-        mem::heap_free(scratch);
+        drop(scratch_own);
         return 0;
     }
     let px = rows_at(bits, pitch, (l as u32, t as u32, r as u32, b as u32), sbpp);
     let hr = com_call(c, dsurf, 13, &[dlr, dst, 0]);
     if hr != 0 {
-        mem::heap_free(scratch);
+        drop(scratch_own);
         return hr;
     }
     let (dpitch, dbits) = (r32(dlr), r32(dlr + 4));
     convert_rows(&px, (sfmt, sbpp, sw, sh), (dfmt, dbpp, dr - dl, db - dt), key, |y, r| mem::write(dbits.wrapping_add(y.wrapping_mul(dpitch)), r));
     com_call(c, dsurf, 14, &[]);
-    mem::heap_free(scratch);
+    drop(scratch_own);
     0
 }
 
@@ -1581,9 +1593,11 @@ fn D3DXLoadSurfaceFromMemory(c: &mut Ctx) -> u32 {
 fn D3DXFillTexture(c: &mut Ctx) -> u32 {
     let (tex, f, data) = (c.a(0), c.a(1), c.a(2));
     let levels = com_call(c, tex, 13, &[]);
-    let scratch = mem::heap_alloc(64, true);
+    let scratch_own = mem::Scratch::new(64, true);
+    let scratch = scratch_own.get();
     let (out, tc, ts, desc, lr) = (scratch, scratch + 16, scratch + 24, scratch + 32, scratch + 32 + 32);
-    let lr_mem = mem::heap_alloc(8, true);
+    let lr_mem_own = mem::Scratch::new(8, true);
+    let lr_mem = lr_mem_own.get();
     for level in 0..levels.max(1) {
         if com_call(c, tex, 17, &[level, desc]) != 0 {
             break;
@@ -1615,8 +1629,8 @@ fn D3DXFillTexture(c: &mut Ctx) -> u32 {
         com_call(c, tex, 20, &[level]);
     }
     let _ = lr;
-    mem::heap_free(lr_mem);
-    mem::heap_free(scratch);
+    drop(lr_mem_own);
+    drop(scratch_own);
     0
 }
 
@@ -1926,7 +1940,8 @@ mod surface_quat_tests {
             let _g = enter();
             let pitch = (l + w) * bpp + pad;
             let size = (pitch * (t + h)).max(1);
-            let p = mem::heap_alloc(size, true);
+            let p_own = mem::Scratch::new(size, true);
+            let p = p_own.get();
             let mut r = seed;
             for i in 0..size {
                 r = r.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
@@ -1938,7 +1953,7 @@ mod surface_quat_tests {
                 let want = mem::bytes(p + (t + y) * pitch + l * bpp, w * bpp);
                 prop_assert_eq!(&px[(y * w * bpp) as usize..((y + 1) * w * bpp) as usize], &want[..]);
             }
-            mem::heap_free(p);
+            drop(p_own);
         }
 
         /// the same size is a copy; scaling picks source texels in order (nearest), never past
@@ -2068,8 +2083,10 @@ mod array_tests {
     #[test]
     fn effect_resource_missing() {
         let _g = enter();
-        let out = mem::heap_alloc(4, true);
-        let name = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(4, true);
+        let out = out_own.get();
+        let name_own = mem::Scratch::new(8, true);
+        let name = name_own.get();
         for (i, b) in b"FX\0".iter().enumerate() { mem::w8(name + i as u32, *b); }
         w32(out, 0x1234);
         // (a module handle nothing is loaded at)
@@ -2077,8 +2094,8 @@ mod array_tests {
         assert_eq!(r32(out), 0x1234);
         assert_eq!(call(D3DXCreateEffectFromResourceExA, &[0x5000_0000, 0x6000_0000, name, 0, 0, 0, 0, 0, out, 0]), 0x8876_0b59);
         assert_eq!(r32(out), 0x1234);
-        mem::heap_free(out);
-        mem::heap_free(name);
+        drop(out_own);
+        drop(name_own);
     }
 }
 
@@ -2168,7 +2185,8 @@ mod lifetime_tests {
     #[test]
     fn matrix_stacks_and_fonts_free_themselves() {
         let _g = enter();
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         assert_eq!(call(D3DXCreateMatrixStack, &[0, out]), 0);
         let s = r32(out);
         assert_eq!(vcall(s, 4), 0); // Push
@@ -2185,18 +2203,19 @@ mod lifetime_tests {
         assert_eq!(vcall(f, 2), 1);
         assert_eq!(vcall(f, 2), 0);
         assert!(!mem::heap_owns(f));
-        mem::heap_free(out);
+        drop(out_own);
     }
 
     #[test]
     fn release_count_stops_at_zero() {
         let _g = enter();
-        let o = mem::heap_alloc(16, true);
+        let o_own = mem::Scratch::new(16, true);
+        let o = o_own.get();
         w32(o + 4, 2);
         assert_eq!(release_count(o), (1, false));
         assert_eq!(release_count(o), (0, true));
         assert_eq!(release_count(o), (0, false));
-        mem::heap_free(o);
+        drop(o_own);
     }
 }
 
@@ -2287,13 +2306,14 @@ mod review_tests {
         let (iw, ih) = (37, 5);
         let px: Vec<u8> = (0..iw * ih * 4).map(|i| (i * 7 + 3) as u8).collect();
         let pitch = iw * 4 + 12;
-        let m = mem::heap_alloc(pitch * ih, true);
+        let m_own = mem::Scratch::new(pitch * ih, true);
+        let m = m_own.get();
         put_scaled(&px, iw, (0, 0, iw, ih), 21, iw, ih, m, pitch);
         for y in 0..ih {
             assert_eq!(&mem::bytes(m + y * pitch, iw * 4), &px[(y * iw * 4) as usize..][..(iw * 4) as usize]);
             assert!(mem::array::<12>(m + y * pitch + iw * 4).iter().all(|&b| b == 0));
         }
-        mem::heap_free(m);
+        drop(m_own);
     }
 
     /// D3DXCreateBuffer: a size the guest heap can't hold is E_OUTOFMEMORY with no buffer (it
@@ -2301,7 +2321,8 @@ mod review_tests {
     #[test]
     fn create_buffer_sizes() {
         let _g = enter();
-        let out = mem::heap_alloc(4, true);
+        let out_own = mem::Scratch::new(4, true);
+        let out = out_own.get();
         w32(out, 0x1234);
         assert_eq!(call(D3DXCreateBuffer, &[0xffff_fff0, out]), 0x8007000e);
         assert_eq!(r32(out), 0);
@@ -2312,7 +2333,7 @@ mod review_tests {
         assert_eq!(release_count(o), (0, true));
         mem::heap_free(r32(o + 8));
         mem::heap_free(o);
-        mem::heap_free(out);
+        drop(out_own);
     }
 
     /// a decode failure is printed once, however often a title retries

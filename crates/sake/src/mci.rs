@@ -1366,7 +1366,8 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
     let Some(id) = device_id(name) else { return Err(McErr::InvalidDeviceName) };
     // the command as the parameter block mciSendCommand takes
     let ps = mem::ps();
-    let p = mem::heap_alloc(64, true);
+    let p_own = mem::Scratch::new(64, true);
+    let p = p_own.get();
     mem::wp(p, cb);
     let mut ret = String::new();
     let r = (|| -> Result<(), McErr> {
@@ -1496,7 +1497,7 @@ fn send_string(c: &mut Ctx, cmd: &str, cb: u32) -> Result<String, McErr> {
         };
         send_command(c, id.0, msg, flags, p, false)
     })();
-    mem::heap_free(p);
+    drop(p_own);
     match r {
         Ok(()) => Ok(ret),
         Err(e) => Err(e),
@@ -1651,10 +1652,11 @@ fn wnd_open(c: &mut Ctx, h: u32, file: &str) -> u32 {
     });
     // the window takes the movie's size (its client area: the frame stays)
     if style & MCIWNDF_NOAUTOSIZEWINDOW == 0 && let Some(size) = dev(id, |d| match d.media { Media::Movie { size, .. } => Some(size), _ => None }).flatten() && let Some(r) = crate::user::client_rect_screen(h) {
-        let wr = mem::heap_alloc(16, true);
+        let wr_own = mem::Scratch::new(16, true);
+        let wr = wr_own.get();
         gcall(c, "user32", "GetWindowRect", &[h, wr]);
         let (fw, fh) = ((r32(wr + 8) as i32 - r32(wr) as i32) - (r.r - r.l), (r32(wr + 12) as i32 - r32(wr + 4) as i32) - (r.b - r.t));
-        mem::heap_free(wr);
+        drop(wr_own);
         // SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE
         gcall(c, "user32", "SetWindowPos", &[h, 0, 0, 0, (size.0 as i32 + fw) as u32, (size.1 as i32 + fh) as u32, 0x2 | 0x4 | 0x10]);
     }
@@ -1788,11 +1790,12 @@ fn mciwnd_proc(c: &mut Ctx) -> u32 {
         }
         // WM_ERASEBKGND: black under the movie
         0x14 => {
-            let rc = mem::heap_alloc(16, true);
+            let rc_own = mem::Scratch::new(16, true);
+            let rc = rc_own.get();
             gcall(c, "user32", "GetClientRect", &[h, rc]);
             let br = gcall(c, "gdi32", "GetStockObject", &[4]);
             gcall(c, "user32", "FillRect", &[wp, rc, br]);
-            mem::heap_free(rc);
+            drop(rc_own);
             1
         }
         // WM_DESTROY: the device closes
@@ -1817,7 +1820,8 @@ fn register_class(c: &mut Ctx) -> u32 {
         };
         let ps = mem::ps();
         // WNDCLASSW { style, lpfnWndProc, cbClsExtra, cbWndExtra, hInstance, hIcon, hCursor, hbrBackground, lpszMenuName, lpszClassName }
-        let wc = mem::heap_alloc(80, true);
+        let wc_own = mem::Scratch::new(80, true);
+        let wc = wc_own.get();
         let name: Vec<u16> = "MCIWndClass\0".encode_utf16().collect();
         let np = mem::heap_alloc(name.len() as u32 * 2, false);
         for (i, ch) in name.iter().enumerate() {
@@ -1835,7 +1839,7 @@ fn register_class(c: &mut Ctx) -> u32 {
         }
         mem::wp(wc + at, np);
         gcall(c, "user32", "RegisterClassW", &[wc]);
-        mem::heap_free(wc);
+        drop(wc_own);
         let _ = DONE.set(());
     }
     1
@@ -1848,7 +1852,8 @@ fn mciwnd_create(c: &mut Ctx, wide: bool) -> u32 {
     // ride in the low word, which the class reads back in WM_CREATE
     let ws = if style & 0xffff_0000 != 0 { style & 0xffff_0000 } else if parent != 0 { 0x5080_0000 } else { 0x10cf_0000 };
     let name: Vec<u16> = "MCIWndClass\0".encode_utf16().collect();
-    let np = mem::heap_alloc(name.len() as u32 * 2, false);
+    let np_own = mem::Scratch::new(name.len() as u32 * 2, false);
+    let np = np_own.get();
     for (i, ch) in name.iter().enumerate() {
         mem::w16(np + 2 * i as u32, *ch);
     }
@@ -1866,7 +1871,7 @@ fn mciwnd_create(c: &mut Ctx, wide: bool) -> u32 {
     // CW_USEDEFAULT for a top-level one
     let (x, y, w, h) = if parent != 0 { (0, 0, 320, 240) } else { (0x8000_0000, 0x8000_0000, 320, 240) };
     let hwnd = gcall(c, "user32", "CreateWindowExW", &[0, np, 0, (ws & 0xffff_0000) | (style & 0xffff), x, y, w, h, parent, 0, inst, fp]);
-    mem::heap_free(np);
+    drop(np_own);
     if fp != 0 {
         mem::heap_free(fp);
     }

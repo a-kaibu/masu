@@ -681,14 +681,15 @@ fn open_added(c: &mut Ctx, i: Slot) -> u32 {
         return d.id;
     }
     let size = OpenDesc::size(mem::ps());
-    let d = mem::heap_alloc(size, true);
+    let d_own = mem::Scratch::new(size, true);
+    let d = d_own.get();
     OpenDesc::CbStruct.set(d, size);
     OpenDesc::FccType.set(d, u32::from_le_bytes(*b"audc"));
     OpenDesc::Version.set(d, 0x0500_0000);
     let id = send(c, i, Msg::Open, 0, d);
-    mem::heap_free(d);
+    drop(d_own);
     if id != 0 {
-        added_set(i, |d| d.id = id);
+        added_set(i, |a| a.id = id);
     }
     id
 }
@@ -780,7 +781,8 @@ fn guest_close(c: &mut Ctx, h: Has) -> Option<u32> {
 fn guest_size(c: &mut Ctx, h: Has, n: u32, out: u32, flags: u32) -> Option<u32> {
     let (drv, inst) = guest(h, |g| (g.drv, g.inst))?;
     // ACMDRVSTREAMSIZE: cbStruct, fdwSize, cbSrcLength, cbDstLength
-    let z = mem::heap_alloc(16, true);
+    let z_own = mem::Scratch::new(16, true);
+    let z = z_own.get();
     w32(z, 16);
     w32(z + 4, flags);
     w32(z + if flags & 0xf == 0 { 8 } else { 12 }, n);
@@ -788,7 +790,7 @@ fn guest_size(c: &mut Ctx, h: Has, n: u32, out: u32, flags: u32) -> Option<u32> 
     if r == 0 {
         put32(out, r32(z + if flags & 0xf == 0 { 12 } else { 8 }));
     }
-    mem::heap_free(z);
+    drop(z_own);
     Some(r)
 }
 fn guest_prepare(c: &mut Ctx, h: Has, hdr: u32, flags: u32) -> Option<u32> {
@@ -866,12 +868,13 @@ fn suggest_added(c: &mut Ctx, i: Slot, src: u32, dst: u32, n: u32, flags: u32) -
         return MMSYSERR_ERROR;
     }
     let size = Suggest::size(mem::ps());
-    let z = mem::heap_alloc(size, true);
+    let z_own = mem::Scratch::new(size, true);
+    let z = z_own.get();
     for (k, v) in [(Suggest::CbStruct, size), (Suggest::Flags, flags), (Suggest::Src, src), (Suggest::SrcLen, wfx_len(src)), (Suggest::Dst, dst), (Suggest::DstLen, n)] {
         k.set(z, v);
     }
     let r = send(c, i, Msg::FormatSuggest, z, 0);
-    mem::heap_free(z);
+    drop(z_own);
     r
 }
 /// Every added driver's slot, the last added first (as Windows tries them)
@@ -980,7 +983,8 @@ fn added_details(c: &mut Ctx, i: Slot, p: u32, wide: bool) -> u32 {
     const STRS: [u32; 5] = [32, 128, 80, 128, 512];
     let head = details_head();
     let full_w = head + 2 * STRS.iter().sum::<u32>();
-    let w = mem::heap_alloc(full_w, true);
+    let w_own = mem::Scratch::new(full_w, true);
+    let w = w_own.get();
     w32(w, full_w);
     let r = send(c, i, Msg::DriverDetails, w, 0);
     if r == 0 {
@@ -1008,7 +1012,7 @@ fn added_details(c: &mut Ctx, i: Slot, p: u32, wide: bool) -> u32 {
         b[..k].copy_from_slice(&want.to_le_bytes()[..k]);
         mem::write(p, &b);
     }
-    mem::heap_free(w);
+    drop(w_own);
     r
 }
 fn acmDriverDetailsA(c: &mut Ctx) -> u32 {

@@ -143,6 +143,9 @@ struct Queue {
     closed: VecDeque<Batch>,
     /// the batch the page is reading (kept until its next poll)
     reading: Option<Batch>,
+    /// a batch the page is done with, emptied, its Vecs' room kept: the next open batch
+    /// (`retire`, `fresh`)
+    spare: Option<Batch>,
     presented: u64,
     shown: u64,
     last_poll: Option<f64>,
@@ -172,6 +175,7 @@ fn queue(g: &mut Option<Queue>) -> &mut Queue {
         open: Batch::default(),
         closed: VecDeque::new(),
         reading: None,
+        spare: None,
         presented: 0,
         shown: 0,
         last_poll: None,
@@ -253,7 +257,10 @@ pub fn run_next(f: impl FnOnce(&[u32], &[u8], &[u8])) -> bool {
         return false;
     };
     f(&b.cmds, &b.data, &b.blob);
-    with(|q| q.done = q.done.max(b.generation + 1));
+    with(|q| {
+        q.done = q.done.max(b.generation + 1);
+        retire(q, b);
+    });
     WAKE.notify_all();
     true
 }
@@ -292,17 +299,49 @@ fn wait_room() {
     }
 }
 
+/// The room a spare batch keeps per Vec: what a frame's batch usually holds, not the blob of a
+/// game loading its images (BLOB_MAX and past it)
+const SPARE_ROOM: usize = 8 << 20;
+
+/// A batch nobody reads any more: emptied and kept as the next open one (one spare), so the
+/// next batch does not grow its commands, data and blob again from nothing. Measured
+/// 2026-11-21 (callgrind, draw_tests' d3d9_draws_read_what_direct3d_reads): growing a new
+/// batch's Vecs was 60% of `draw` (malloc consolidating, realloc copying) when every batch
+/// started empty; with the spare, `draw` took 9.1M instructions instead of 19.7M.
+fn retire(q: &mut Queue, mut b: Batch) {
+    if q.spare.is_some() {
+        return;
+    }
+    b.cmds.clear();
+    b.data.clear();
+    b.blob.clear();
+    b.mems.clear();
+    b.cmds.shrink_to(SPARE_ROOM / 4);
+    b.data.shrink_to(SPARE_ROOM);
+    b.blob.shrink_to(SPARE_ROOM);
+    b.presents = 0;
+    b.generation = 0;
+    q.spare = Some(b);
+}
+
+/// The open batch closed: it is returned, a spare (or a new batch) open in its place.
+fn take_open(q: &mut Queue) -> Batch {
+    let next = q.spare.take().unwrap_or_default();
+    std::mem::replace(&mut q.open, next)
+}
+
 /// Whether it closed the open batch.
 fn close_if_big(q: &mut Queue) -> bool {
     if q.open.blob.len() < BLOB_MAX || q.open.cmds.is_empty() {
         return false;
     }
-    let mut b = std::mem::take(&mut q.open);
+    let mut b = take_open(q);
     b.generation = q.generation;
     q.generation += 1;
     if q.last_poll.is_none() {
         // node: nobody draws
         q.done = q.generation;
+        retire(q, b);
     } else {
         q.closed.push_back(b);
     }
@@ -370,7 +409,7 @@ pub fn flush() {
 fn flush_now() {
     with(|q| {
         if !q.open.cmds.is_empty() {
-            let mut b = std::mem::take(&mut q.open);
+            let mut b = take_open(q);
             b.generation = q.generation;
             q.closed.push_back(b);
             q.generation += 1;
@@ -392,13 +431,15 @@ pub fn present(hwnd: u32) {
         let q = queue(&mut g);
         q.open.presents += 1;
         q.presented += 1;
-        let mut b = std::mem::take(&mut q.open);
+        let mut b = take_open(q);
         b.generation = q.generation;
         q.generation += 1;
         q.closed.push_back(b);
         if q.last_poll.is_none() {
             // node: nobody draws
-            q.closed.clear();
+            while let Some(b) = q.closed.pop_front() {
+                retire(q, b);
+            }
             q.shown = q.presented;
             q.done = q.generation;
             return;
@@ -437,7 +478,7 @@ pub fn wait_done(generation: u64) {
         }
         if q.generation == generation && !q.open.cmds.is_empty() {
             // still open: close it
-            let mut b = std::mem::take(&mut q.open);
+            let mut b = take_open(q);
             b.generation = q.generation;
             q.closed.push_back(b);
             q.generation += 1;
@@ -515,7 +556,11 @@ pub unsafe extern "C" fn vnhost_d3d9_poll(out: *mut [u32; 6]) -> u32 {
     let out = &mut *out;
     let r = with(|q| {
         q.last_poll = Some(now());
-        q.reading = q.closed.pop_front();
+        // (the batch read before: the page is done with it)
+        let next = q.closed.pop_front();
+        if let Some(old) = std::mem::replace(&mut q.reading, next) {
+            retire(q, old);
+        }
         let Some(b) = &q.reading else { return 0 };
         super::stats::batch(b.data.len(), b.blob.len());
         q.shown += u64::from(b.presents);
@@ -814,6 +859,43 @@ mod hidden_tests {
         assert_eq!(got, (0..60).collect::<Vec<u32>>());
         QUEUE_MAX.store(was, SeqCst);
         set_pump(None);
+    }
+
+    /// A batch the page is done with is the next open one, its room kept (retire): a new
+    /// batch growing from nothing was 60% of draw (2026-11-21); a blob past SPARE_ROOM is not
+    /// kept whole.
+    #[test]
+    fn a_done_batch_is_the_next_open_one() {
+        let _g = super::super::trace_tests::SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        set_pump(None);
+        flush_now();
+        with(|q| {
+            q.closed.clear();
+            q.spare = None;
+            q.last_poll = Some(now());
+        });
+        record(|b| {
+            b.cmd(&[0; 1000]);
+            b.data(&[1; 4000], 4);
+        });
+        flush_now();
+        assert!(run_next(|cmds, data, _| assert_eq!((cmds.len(), data.len()), (1000, 4000))));
+        assert!(with(|q| q.spare.as_ref().is_some_and(|b| b.cmds.is_empty() && b.data.is_empty() && b.mems.is_empty() && b.presents == 0)));
+        // (the next batch closed: the spare is open, with the room the done one had)
+        record(|b| b.cmd(&[0]));
+        flush_now();
+        let (cmds, data) = with(|q| (q.open.cmds.capacity(), q.open.data.capacity()));
+        assert!(cmds >= 1000 && data >= 4000, "the open batch is new: {cmds} {data}");
+        assert!(run_next(|cmds, _, _| assert_eq!(cmds.len(), 1)));
+        // (a game loading its images: the blob's room is cut to SPARE_ROOM)
+        record(|b| {
+            b.cmd(&[0]);
+            b.blob(&vec![7; SPARE_ROOM * 2]);
+        });
+        flush_now();
+        assert!(run_next(|_, _, blob| assert_eq!(blob.len(), SPARE_ROOM * 2)));
+        assert!(with(|q| q.spare.as_ref().map_or(0, |b| b.blob.capacity())) <= SPARE_ROOM);
+        with(|q| q.last_poll = None);
     }
 
     /// A page that polls every 30 ms but takes a frame only every 600 ms (a weak GPU two frames

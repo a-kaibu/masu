@@ -1105,8 +1105,10 @@ mod review_tests {
     #[test]
     fn unwind4_self_entries_end() {
         let _g = enter();
-        let map = mem::heap_alloc(64, true); // zero bytes: type 0, previous = itself
-        let func = mem::heap_alloc(8, true);
+        let map_own = mem::Scratch::new(64, true);
+        let map = map_own.get(); // zero bytes: type 0, previous = itself
+        let func_own = mem::Scratch::new(8, true);
+        let func = func_own.get();
         let d = Disp { pc: 0, base: 0, func, target_ip: 0, ctx: 0, data: 0, at: 0 };
         let f = Fh4 { header: 0, unwind_count: 16, unwind_map: map, try_count: 0, try_map: 0, ip_count: 0, ip_map: 0, frame: 0 };
         let mut cpu = koji::Cpu::default();
@@ -1114,7 +1116,7 @@ mod review_tests {
         for level in 0..16 {
             local_unwind4(&mut c, 0, &d, &f, level, -1);
         }
-        mem::heap_free(map);
-        mem::heap_free(func);
+        drop(map_own);
+        drop(func_own);
     }
 }

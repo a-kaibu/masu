@@ -526,7 +526,8 @@ fn FDIDestroy(c: &mut Ctx) -> u32 {
 /// guest heap); short at the end of the file.
 fn guest_read(c: &mut Ctx, f: &Fdi, hf: u32, n: usize, out: &mut Vec<u8>) -> bool {
     const CHUNK: u32 = 0x10000;
-    let buf = mem::heap_alloc(CHUNK, false);
+    let buf_own = mem::Scratch::new(CHUNK, false);
+    let buf = buf_own.get();
     if buf == 0 {
         return false;
     }
@@ -545,7 +546,7 @@ fn guest_read(c: &mut Ctx, f: &Fdi, hf: u32, n: usize, out: &mut Vec<u8>) -> boo
         out.extend_from_slice(&mem::bytes(buf, got));
         left -= got as usize;
     }
-    mem::heap_free(buf);
+    drop(buf_own);
     ok
 }
 
@@ -720,14 +721,15 @@ fn FDICopy(c: &mut Ctx) -> u32 {
         full.extend_from_slice(&mem::cstr(name));
     }
     // (_O_RDONLY | _O_BINARY, _S_IREAD | _S_IWRITE, as Windows opens it)
-    let sbuf = mem::heap_alloc(full.len() as u32 + 1, true);
+    let sbuf_own = mem::Scratch::new(full.len() as u32 + 1, true);
+    let sbuf = sbuf_own.get();
     if sbuf == 0 {
         set_erf(f.erf, FDIERROR_ALLOC_FAIL);
         return 0;
     }
     mem::write(sbuf, &full);
     let hf = c.call(f.open, &[sbuf, 0x8000, 0x180]);
-    mem::heap_free(sbuf);
+    drop(sbuf_own);
     if hf == u32::MAX {
         set_erf(f.erf, FDIERROR_CABINET_NOT_FOUND);
         return 0;
@@ -744,7 +746,8 @@ fn FDICopy(c: &mut Ctx) -> u32 {
     let r = r.and_then(|cb| {
         // the FDINOTIFICATION, its three strings, a write buffer (32 KB) and the read buffer
         // (64 KB) in one block
-        let block = mem::heap_alloc(64 + 3 * 256 + 256 + 0x8000 + RBUF, true);
+        let block_own = mem::Scratch::new(64 + 3 * 256 + 256 + 0x8000 + RBUF, true);
+        let block = block_own.get();
         if block == 0 {
             return Err(FDIERROR_ALLOC_FAIL);
         }
@@ -753,7 +756,7 @@ fn FDICopy(c: &mut Ctx) -> u32 {
         let pos = d.len() as u64;
         let mut g = Guest { c: &mut *c, f, notify, pv, path: path_s, note: block, strs, tables: d.clone(), hf, pos, cb: cb as u64, rbuf };
         let r = stream(&d, &mut g);
-        mem::heap_free(block);
+        drop(block_own);
         r
     });
     if f.close != 0 {

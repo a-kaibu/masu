@@ -2068,7 +2068,7 @@ fn alloc_texture(t: &mut Texture, w: u32, h: u32, base: Base) {
     t.w = w.max(1);
     t.h = h.max(1);
     t.base = base;
-    t.levels = if base == Base::Depth { 1 } else { 32 - t.w.max(t.h).leading_zeros() };
+    t.levels = if base == Base::Depth { 1 } else { t.w.max(t.h).bit_width() };
     t.defined = 0;
     let (gpu_id, levels, fmt) = (t.gpu, t.levels, if base == Base::Depth { P_D24S8 } else { P_RGBA8 });
     gpu::record(|q| {

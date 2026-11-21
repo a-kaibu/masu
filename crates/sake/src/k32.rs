@@ -290,7 +290,7 @@ fn GetCurrentThreadId(_: &mut Ctx) -> u32 {
     crate::cur().tid
 }
 
-fn ExitProcess(c: &mut Ctx) -> u32 {
+fn ExitProcess(c: &mut Ctx) -> ! {
     let code = c.a(0);
     if crate::env_on!("SAKE_TRACE_EXIT") {
         eprintln!("sake: ExitProcess({code}) from {:#x}", r32(c.esp));
@@ -323,7 +323,7 @@ fn TerminateProcess(c: &mut Ctx) -> u32 {
         }
     }
 }
-fn FatalAppExitA(c: &mut Ctx) -> u32 {
+fn FatalAppExitA(c: &mut Ctx) -> ! {
     eprintln!("sake: FatalAppExit: {}", arg_str(c.a(1), false));
     // SAFETY: libc::exit has no precondition (the process ends).
     unsafe { libc::exit(1) }
@@ -407,7 +407,7 @@ pub fn exit_thread(code: u32) -> ! {
     // SAFETY: pthread_exit has no precondition; this thread's records were released above.
     unsafe { libc::pthread_exit(std::ptr::null_mut()) }
 }
-fn ExitThread(c: &mut Ctx) -> u32 {
+fn ExitThread(c: &mut Ctx) -> ! {
     crate::fiber::thread_exit(Some(c.cpu));
     exit_thread(c.a(0))
 }
@@ -476,16 +476,16 @@ fn _beginthread(c: &mut Ctx) -> u32 {
     });
     h
 }
-fn _endthreadex(c: &mut Ctx) -> u32 {
+fn _endthreadex(c: &mut Ctx) -> ! {
     exit_thread(c.a(0))
 }
 fn SetThreadExecutionState(_: &mut Ctx) -> u32 {
     0x8000_0000 // ES_CONTINUOUS
 }
-fn _endthread(_: &mut Ctx) -> u32 {
+fn _endthread(_: &mut Ctx) -> ! {
     exit_thread(0)
 }
-fn FreeLibraryAndExitThread(c: &mut Ctx) -> u32 {
+fn FreeLibraryAndExitThread(c: &mut Ctx) -> ! {
     exit_thread(c.a(1))
 }
 /// GetProcessMemoryInfo(process, PROCESS_MEMORY_COUNTERS(_EX)*, bytes): a modest working set
@@ -1034,7 +1034,8 @@ fn NtResumeProcess(c: &mut Ctx) -> u32 {
 /// STATUS_PARTIAL_COPY for part of it, STATUS_ACCESS_VIOLATION for none
 fn nt_rw_memory(c: &mut Ctx, write: bool) -> u32 {
     let done_at = c.a(4);
-    let tmp = mem::heap_alloc(8, true);
+    let tmp_own = mem::Scratch::new(8, true);
+    let tmp = tmp_own.get();
     // (the count goes to `tmp` until the call returns: argument 4's slot)
     let slot = if mem::x64() { c.esp.saturating_add(40) } else { c.esp.saturating_add(20) };
     let saved = mem::rp(slot);
@@ -1042,7 +1043,7 @@ fn nt_rw_memory(c: &mut Ctx, write: bool) -> u32 {
     let ok = if write { WriteProcessMemory(c) } else { ReadProcessMemory(c) } != 0;
     mem::wp(slot, saved);
     let done = mem::rp(tmp);
-    mem::heap_free(tmp);
+    drop(tmp_own);
     if done_at != 0 {
         mem::putp(done_at, done);
     }
@@ -2735,10 +2736,11 @@ fn output_debug_string(p: u32, wide: bool) {
     if wide {
         let w: Vec<u16> = s.encode_utf16().collect();
         let a = crate::text::w2mb(0, &w);
-        let b = mem::heap_alloc(kome::num::u32_of(a.len()).saturating_add(1), true);
+        let b_own = mem::Scratch::new(kome::num::u32_of(a.len()).saturating_add(1), true);
+        let b = b_own.get();
         mem::write(b, &a);
         crate::dbg::output(b, kome::num::u32_of(a.len()).saturating_add(1));
-        mem::heap_free(b);
+        drop(b_own);
     } else {
         crate::dbg::output(p, kome::num::lo32(mem::cstr(p).len()).saturating_add(1));
     }
@@ -5182,14 +5184,15 @@ fn GetSystemDefaultLCID(_: &mut Ctx) -> u32 {
 /// EnumSystemLocales: the one locale we have, as "%08x".
 fn enum_locales(c: &mut Ctx, wide: bool) -> u32 {
     let s = format!("{:08x}", lcid());
-    let p = mem::heap_alloc(32, true);
+    let p_own = mem::Scratch::new(32, true);
+    let p = p_own.get();
     if wide {
         put_wstr(p, 16, &s.encode_utf16().collect::<Vec<u16>>());
     } else {
         mem::write(p, s.as_bytes());
     }
     c.call(c.a(0), &[p]);
-    mem::heap_free(p);
+    drop(p_own);
     1
 }
 fn EnumSystemLocalesA(c: &mut Ctx) -> u32 {
@@ -5200,10 +5203,11 @@ fn EnumSystemLocalesW(c: &mut Ctx) -> u32 {
 }
 /// EnumSystemLocalesEx(proc(name, flags, lparam), flags, lparam, reserved): ja-JP
 fn EnumSystemLocalesEx(c: &mut Ctx) -> u32 {
-    let p = mem::heap_alloc(16, true);
+    let p_own = mem::Scratch::new(16, true);
+    let p = p_own.get();
     put_wstr(p, 8, &"ja-JP".encode_utf16().collect::<Vec<u16>>());
     c.call(c.a(0), &[p, 2, c.a(2)]);
-    mem::heap_free(p);
+    drop(p_own);
     1
 }
 fn GetUserDefaultLangID(_: &mut Ctx) -> u32 {
@@ -6415,10 +6419,11 @@ fn tz_transition(p: u32, year: i64) -> Option<i64> {
 fn tz_bias_at(z: u32, t: i64, utc: bool) -> i64 {
     let bias = i64::from(r32(z).cast_signed());
     let (std_b, dst_b) = (i64::from(crate::mem::r32(mem::ga(z) + 84).cast_signed()), i64::from(crate::mem::r32(mem::ga(z) + 168).cast_signed()));
-    let st = mem::heap_alloc(16, true);
+    let st_own = mem::Scratch::new(16, true);
+    let st = st_own.get();
     write_systemtime(st, t.div_euclid(10_000_000).saturating_sub(FT_UNIX_SECS), 0);
     let year = i64::from(r16(st));
-    mem::heap_free(st);
+    drop(st_own);
     let (Some(dst_start), Some(std_start)) = (tz_transition(z.saturating_add(152), year), tz_transition(z.saturating_add(68), year)) else {
         return bias.saturating_add(std_b);
     };
@@ -6491,10 +6496,11 @@ fn LocalFileTimeToFileTime(c: &mut Ctx) -> u32 {
 fn FileTimeToDosDateTime(c: &mut Ctx) -> u32 {
     let ft = get64(c.a(0));
     let secs = ft_unix_secs(ft);
-    let tmp = mem::heap_alloc(16, true);
+    let tmp_own = mem::Scratch::new(16, true);
+    let tmp = tmp_own.get();
     write_systemtime(tmp, secs, 0);
     let (y, m, d, h, mi, s) = (r16(tmp), crate::mem::r16(mem::ga(tmp) + 2), crate::mem::r16(mem::ga(tmp) + 6), crate::mem::r16(mem::ga(tmp) + 8), crate::mem::r16(mem::ga(tmp) + 10), crate::mem::r16(mem::ga(tmp) + 12));
-    mem::heap_free(tmp);
+    drop(tmp_own);
     if !(1980..=2107).contains(&y) || ft > kome::num::lo64(i64::MAX) {
         last_error(87);
         return 0;
@@ -9609,8 +9615,7 @@ fn SetFileApisToANSI(_: &mut Ctx) -> u32 {
 pub fn init() {
     implement("msvcrt", "_beginthreadex", _beginthreadex);
     implement("msvcrt", "_beginthread", _beginthread);
-    implement("msvcrt", "_endthreadex", _endthreadex);
-    implement("msvcrt", "_endthread", _endthread);
+    crate::noreturn!("msvcrt"; _endthreadex, _endthread);
     implement("kernel32", "SetThreadExecutionState", SetThreadExecutionState);
     implement("psapi", "GetProcessMemoryInfo", K32GetProcessMemoryInfo);
     for d in ["kernel32", "kernelbase"] {
@@ -9676,12 +9681,13 @@ pub fn init() {
     }
     implement("kernel32", "GetLocaleInfoEx", GetLocaleInfoEx);
     implement("kernel32", "GetSystemDefaultLocaleName", GetUserDefaultLocaleName);
+    crate::noreturn!("kernel32"; ExitProcess, FatalAppExitA, ExitThread, FreeLibraryAndExitThread);
     reg!("kernel32";
         GetCommandLineA, GetCommandLineW, GetEnvironmentStrings, GetEnvironmentStringsA, GetEnvironmentStringsW,
         FreeEnvironmentStringsA, FreeEnvironmentStringsW, GetEnvironmentVariableA, GetEnvironmentVariableW,
         SetEnvironmentVariableA, SetEnvironmentVariableW, ExpandEnvironmentStringsA, ExpandEnvironmentStringsW,
-        GetCurrentProcess, GetCurrentProcessId, GetProcessId, GetCurrentThread, GetCurrentThreadId, GetThreadId, ExitProcess, TerminateProcess,
-        FatalAppExitA, ExitThread, CreateThread, ResumeThread, SuspendThread, GetExitCodeThread, GetExitCodeProcess,
+        GetCurrentProcess, GetCurrentProcessId, GetProcessId, GetCurrentThread, GetCurrentThreadId, GetThreadId, TerminateProcess,
+        CreateThread, ResumeThread, SuspendThread, GetExitCodeThread, GetExitCodeProcess,
         TerminateThread, CreateRemoteThread, CreateRemoteThreadEx, GetThreadPriorityBoost, SetThreadPriorityBoost, GetProcessPriorityBoost, SetProcessPriorityBoost, GetThreadPriority, SetThreadPriority, SetPriorityClass, GetPriorityClass,
         Sleep, SleepEx, SwitchToThread,
         CreateEventA, CreateEventW, CreateEventExW, CreateWaitableTimerA, CreateWaitableTimerW, CreateWaitableTimerExW,
@@ -9848,7 +9854,7 @@ pub fn init() {
         RtlLeaveCriticalSection, InitializeSRWLock, AcquireSRWLockExclusive, AcquireSRWLockShared,
         ReleaseSRWLockExclusive, ReleaseSRWLockShared, TryAcquireSRWLockExclusive, TryAcquireSRWLockShared,
         InitializeConditionVariable, SleepConditionVariableSRW, SleepConditionVariableCS, WakeConditionVariable,
-        WakeAllConditionVariable, InitOnceExecuteOnce, InitOnceInitialize, FreeLibraryAndExitThread,
+        WakeAllConditionVariable, InitOnceExecuteOnce, InitOnceInitialize,
         K32GetProcessMemoryInfo);
     let _ = (EAX, ESP);
 }
@@ -10557,7 +10563,8 @@ mod virtual_ex {
             let _g = enter();
             guest_thread();
             let h = if opened { call(OpenProcess, &[PROCESS_ALL_ACCESS, 0, crate::pid()]) } else { u32::MAX };
-            let buf = mem::heap_alloc(64, true);
+            let buf_own = mem::Scratch::new(64, true);
+            let buf = buf_own.get();
             let size = pages * mem::PAGE;
             let a = call(VirtualAlloc, &[0, size, 0x2000, 1]);
             let b = call(VirtualAllocEx, &[h, 0, size, 0x2000, 1]);
@@ -10603,7 +10610,7 @@ mod virtual_ex {
             prop_assert_eq!(call(VirtualFree, &[a, 0, 0x8000]), 1);
             prop_assert_eq!(call(VirtualFreeEx, &[h, b, 0, 0x8000]), 1);
             if opened { obj::close(h); }
-            mem::heap_free(buf);
+            drop(buf_own);
         }
 
         /// A handle that is no process fails every Ex form with ERROR_INVALID_HANDLE and
@@ -10612,7 +10619,8 @@ mod virtual_ex {
         fn ex_on_no_process_fails(h in prop::sample::select(vec![0u32, 4, 0x1234, 0xfffffffe]), p in 0usize..5) {
             let _g = enter();
             guest_thread();
-            let buf = mem::heap_alloc(64, true);
+            let buf_own = mem::Scratch::new(64, true);
+            let buf = buf_own.get();
             let a = call(VirtualAlloc, &[0, mem::PAGE, 0x3000, 4]);
             let before = state(a, buf);
             for (f, args) in [(crate::api::handler(VirtualAllocEx), vec![h, 0, mem::PAGE, 0x3000, 4]), (VirtualProtectEx, vec![h, a, mem::PAGE, PROTS[p], buf + 40]), (VirtualFreeEx, vec![h, a, 0, 0x8000])] {
@@ -10622,7 +10630,7 @@ mod virtual_ex {
             }
             prop_assert_eq!(state(a, buf), before);
             call(VirtualFree, &[a, 0, 0x8000]);
-            mem::heap_free(buf);
+            drop(buf_own);
         }
     }
 }
@@ -10660,7 +10668,8 @@ mod drive_tests {
         crate::test_guest::guest_thread();
         for (root, ok) in [(&b"D:\\"[..], false), (b"d:", false), (b"C:\\", true), (b"Z:\\", true)] {
             let r = guest_str(root);
-            let label = mem::heap_alloc(64, true);
+            let label_own = mem::Scratch::new(64, true);
+            let label = label_own.get();
             last_error(0);
             let got = crate::test_guest::call(GetVolumeInformationA, &[r, label, 64, 0, 0, 0, 0, 0]);
             assert_eq!(got != 0, ok, "GetVolumeInformation {:?}", std::str::from_utf8(root));
@@ -10671,7 +10680,8 @@ mod drive_tests {
             assert_eq!(got != 0, ok);
             if ok {
                 // (the bytes agree with the clusters, and the free ones are no multiple of 4 GiB)
-                let b = mem::heap_alloc(40, true);
+                let b_own = mem::Scratch::new(40, true);
+                let b = b_own.get();
                 assert_eq!(crate::test_guest::call(GetDiskFreeSpaceExA, &[r, b, b + 8, b + 16]), 1);
                 assert_eq!(crate::test_guest::call(GetDiskFreeSpaceA, &[r, b + 24, b + 28, b + 32, b + 36]), 1);
                 let q = |o: u32| kome::num::lo64(crate::mem::r32(mem::ga(b) + o)) | (kome::num::lo64(r32(b + o + 4))) << 32;
@@ -10680,10 +10690,10 @@ mod drive_tests {
                 assert_eq!(q(16), q(0));
                 assert_eq!(q(8), kome::num::lo64(crate::mem::r32(mem::ga(b) + 36)) * cluster);
                 assert!(kome::num::lo32(q(0)) > 1 << 30 && (kome::num::lo32(q(0))) < 1 << 31, "low part positive and big");
-                mem::heap_free(b);
+                drop(b_own);
             }
             assert_eq!(crate::test_guest::call(GetDriveTypeA, &[r]), if ok { DRIVE_FIXED } else { DRIVE_CDROM });
-            mem::heap_free(label);
+            drop(label_own);
             mem::heap_free(r);
         }
         // (NULL: the current folder's drive)
@@ -11002,7 +11012,8 @@ mod thread_fail_tests {
     fn threads_that_cannot_be_made() {
         let _g = crate::test_guest::enter();
         crate::test_guest::guest_thread();
-        let ptid = mem::heap_alloc(4, true);
+        let ptid_own = mem::Scratch::new(4, true);
+        let ptid = ptid_own.get();
         let handles = || obj::with(|t| t.objs.values().count());
         for case in ["no host thread", "no address space"] {
             let mut held = Vec::new();
@@ -11035,7 +11046,7 @@ mod thread_fail_tests {
                 assert!(mem::release(b));
             }
         }
-        mem::heap_free(ptid);
+        drop(ptid_own);
     }
 }
 
@@ -11051,9 +11062,11 @@ mod review_b07 {
     fn garbage_lengths_fail_with_noaccess() {
         let _g = enter();
         guest_thread();
-        let src = mem::heap_alloc(64, true);
+        let src_own = mem::Scratch::new(64, true);
+        let src = src_own.get();
         mem::write(src, b"abc");
-        let dst = mem::heap_alloc(256, true);
+        let dst_own = mem::Scratch::new(256, true);
+        let dst = dst_own.get();
         // (lengths that run far past the block into memory nobody reserved)
         for n in [0x7fff_ffffu32, 0x4000_0000, 0x1000_0000] {
             last_error(0);
@@ -11074,15 +11087,16 @@ mod review_b07 {
         mem::fill(dst, 256, 0);
         assert_eq!(call(BCryptGenRandom, &[0, dst, 256, 2]), 0);
         assert!(mem::array::<256>(dst).iter().any(|&b| b != 0));
-        mem::heap_free(src);
-        mem::heap_free(dst);
+        drop(src_own);
+        drop(dst_own);
     }
 
     #[test]
     fn pdh_queries_free_their_blocks() {
         let _g = enter();
         guest_thread();
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         assert_eq!(call(PdhOpenQuery, &[0, 0, out]), 0);
         let q = r32(out);
         assert!(mem::heap_owns(q));
@@ -11098,7 +11112,7 @@ mod review_b07 {
         assert!(!mem::heap_owns(q) && ks.iter().all(|&k| !mem::heap_owns(k)));
         assert_eq!(call(PdhCloseQuery, &[q]), 0xc000_0bbc);
         assert_eq!(call(PdhAddCounter, &[q, 0, 0, out]), 0xc000_0bbc);
-        mem::heap_free(out);
+        drop(out_own);
     }
 
     #[test]

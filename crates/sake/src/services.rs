@@ -37,7 +37,7 @@ fn ensure(name: &str) -> Result<(), u32> {
     let image = crate::misc::registry_string(&p, "ImagePath").ok_or(1060u32)?;
     let display = crate::misc::registry_string(&p, "DisplayName").unwrap_or_else(|| name.into());
     let dependencies = crate::misc::registry_value(&p, "DependOnService").filter(|(ty, _)| *ty == 7).map(|(_, b)| {
-        let words: Vec<u16> = b.chunks_exact(2).map(|v| u16::from_le_bytes([v[0],v[1]])).collect();
+        let words: Vec<u16> = kome::le::units16(&b).collect();
         words.split(|v| *v == 0).filter(|v| !v.is_empty()).map(String::from_utf16_lossy).collect::<Vec<_>>()
     }).unwrap_or_default();
     kern::with(|k| {
@@ -273,7 +273,8 @@ fn main_thread(c: &mut Ctx) -> u32 {
     let (name, main, wide) = { let a = ACTIVE.lock().unwrap(); let a = a.as_ref().unwrap(); (a.name.clone(), a.main, a.wide) };
     let Some(s) = kern::with(|k| k.services.get(&name).cloned()).0 else { return 0 };
     let args: Vec<String> = std::iter::once(s.name).chain(s.args).collect();
-    let argv = mem::heap_alloc((args.len() as u32 + 1) * mem::ps(), true);
+    let argv_own = mem::Scratch::new((args.len() as u32 + 1) * mem::ps(), true);
+    let argv = argv_own.get();
     let mut allocated = Vec::new();
     for (i, arg) in args.iter().enumerate() {
         let b = if wide { arg.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect::<Vec<u8>>() }
@@ -282,7 +283,7 @@ fn main_thread(c: &mut Ctx) -> u32 {
         allocated.push(p);
     }
     crate::call(c.cpu, main, &[args.len() as u32, argv]);
-    for p in allocated { mem::heap_free(p); } mem::heap_free(argv);
+    for p in allocated { mem::heap_free(p); } drop(argv_own);
     kern::with(|k| { if let Some(s) = k.services.get_mut(&name) && s.pid == crate::pid() && s.status[1] != 1 { s.exited(crate::pid()); k.changed(); }});
     0
 }

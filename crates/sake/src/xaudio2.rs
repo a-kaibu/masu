@@ -1001,11 +1001,12 @@ const IID_IXAPOPARAMS27: [u8; 16] = [0x01, 0xc0, 0x0b, 0xa9, 0x97, 0xe8, 0x97, 0
 /// QueryInterface(iid) on COM object `o`: the interface (a reference held), or 0
 fn query(c: &mut Ctx, o: u32, iid: &[u8; 16]) -> u32 {
     let k = ps();
-    let m = mem::heap_alloc(16 + k, true);
+    let m_own = mem::Scratch::new(16 + k, true);
+    let m = m_own.get();
     mem::write(m, iid);
     let hr = c.call(rp(rp(o)), &[o, m, m + 16]);
     let r = if hr == 0 { rp(m + 16) } else { 0 };
-    mem::heap_free(m);
+    drop(m_own);
     r
 }
 /// Method `i` of the object's vtable, called with `args` after `this`
@@ -1056,11 +1057,12 @@ fn read_chain(c: &mut Ctx, chain: u32) -> Result<Vec<Fx>, Hr> {
         }
         let builtin = crate::xapo::builtin(x).is_some();
         // XAPO_LOCKFORPROCESS_BUFFER_PARAMETERS { pFormat, MaxFrameCount }, in and out
-        let lp = mem::heap_alloc(2 * k, true);
+        let lp_own = mem::Scratch::new(2 * k, true);
+        let lp = lp_own.get();
         mem::wp(lp, fx_format());
         w32(lp + k, STEP_U32);
         let hr = method(c, x, 8, &[1, lp, 1, lp]);
-        mem::heap_free(lp);
+        drop(lp_own);
         if hr != 0 {
             method(c, x, 2, &[]);
             release_chain(c, v);
@@ -1356,7 +1358,8 @@ mod b11 {
     fn a_source_voice_queues_at_most_64_buffers() {
         let _g = enter();
         let v = new_voice(Kind::Source, FMT, 0, 0);
-        let data = mem::heap_alloc(400, true);
+        let data_own = mem::Scratch::new(400, true);
+        let data = data_own.get();
         let b = xbuf(400, data, 0, 0, 0, 0, 0);
         for _ in 0..MAX_QUEUED {
             assert_eq!(call(S_SubmitSourceBuffer, &[v, b]), 0);
@@ -1365,7 +1368,7 @@ mod b11 {
         assert_eq!(queued(v), MAX_QUEUED);
         assert_eq!(call(V_DestroyVoice, &[v]), 0);
         mem::heap_free(b);
-        mem::heap_free(data);
+        drop(data_own);
     }
 
     #[test]
@@ -1386,7 +1389,8 @@ mod b11 {
     fn huge_lengths_saturate() {
         let _g = enter();
         let v = new_voice(Kind::Source, FMT, 0, 0);
-        let data = mem::heap_alloc(400, true);
+        let data_own = mem::Scratch::new(400, true);
+        let data = data_own.get();
         let b = xbuf(400, data, 10, u32::MAX, 20, u32::MAX - 5, 2);
         assert_eq!(call(S_SubmitSourceBuffer, &[v, b]), 0);
         let (begin, end, lb, le) = with_voice(v, |v| {
@@ -1397,7 +1401,7 @@ mod b11 {
         assert_eq!((begin, end, lb, le), (10, 100, 20, 100));
         assert_eq!(call(V_DestroyVoice, &[v]), 0);
         mem::heap_free(b);
-        mem::heap_free(data);
+        drop(data_own);
     }
 
     #[test]
@@ -1496,13 +1500,14 @@ mod issue88 {
     #[test]
     fn voice_state_writes_packed_fields_without_touching_neighbours() {
         let _g = enter();
-        let p = mem::heap_alloc(24, false);
+        let p_own = mem::Scratch::new(24, false);
+        let p = p_own.get();
         mem::fill(p, 24, 0xcc);
         assert_eq!(call(S_GetState, &[0, p + 4]), 0);
         assert_eq!(mem::r32(p), 0xcccccccc);
         assert_eq!(&mem::array::<16>(p + 4), &[0; 16]);
         assert_eq!(mem::r32(p + 20), 0xcccccccc);
-        mem::heap_free(p);
+        drop(p_own);
     }
 }
 

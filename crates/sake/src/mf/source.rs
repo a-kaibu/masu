@@ -76,10 +76,11 @@ impl Data {
     }
     /// The program's byte stream `bs` (a reference taken): its length now.
     pub fn guest(c: &mut Ctx, bs: u32) -> Option<Data> {
-        let tmp = mem::heap_alloc(8, true);
+        let tmp_own = mem::Scratch::new(8, true);
+        let tmp = tmp_own.get();
         let hr = com(c, bs, 4, &[tmp]);
         let len = mem::r64(tmp);
-        mem::heap_free(tmp);
+        drop(tmp_own);
         if hr & 0x8000_0000 != 0 {
             return None;
         }
@@ -118,8 +119,10 @@ fn guest_read(c: &mut Ctx, bs: u32, off: u64, n: usize) -> Option<Vec<u8>> {
         com(c, bs, 7, &[lo32(off), lo32(off >> 32)]);
     }
     const PIECE: usize = 1 << 20;
-    let b = mem::heap_alloc(lo32(PIECE.min(n.max(1))), false);
-    let got_at = mem::heap_alloc(4, true);
+    let b_own = mem::Scratch::new(lo32(PIECE.min(n.max(1))), false);
+    let b = b_own.get();
+    let got_at_own = mem::Scratch::new(4, true);
+    let got_at = got_at_own.get();
     let mut out = Vec::with_capacity(n);
     while out.len() < n {
         let want = lo32((n - out.len()).min(PIECE));
@@ -131,8 +134,8 @@ fn guest_read(c: &mut Ctx, bs: u32, off: u64, n: usize) -> Option<Vec<u8>> {
         }
         out.extend_from_slice(&mem::bytes(b, got));
     }
-    mem::heap_free(b);
-    mem::heap_free(got_at);
+    drop(b_own);
+    drop(got_at_own);
     (out.len() == n).then_some(out)
 }
 

@@ -1643,14 +1643,14 @@ fn _get_invalid_parameter_handler(_: &mut Ctx) -> u32 {
     0
 }
 /// _assert / _wassert (message, file, line)
-fn assert_fail(c: &mut Ctx, wide: bool) -> u32 {
+fn assert_fail(c: &mut Ctx, wide: bool) -> ! {
     eprintln!("sake: Assertion failed: {}, file {}, line {}", path_arg(c.a(0), wide), path_arg(c.a(1), wide), c.a(2));
     unsafe { libc::exit(3) }
 }
-fn _assert(c: &mut Ctx) -> u32 {
+fn _assert(c: &mut Ctx) -> ! {
     assert_fail(c, false)
 }
-fn _wassert(c: &mut Ctx) -> u32 {
+fn _wassert(c: &mut Ctx) -> ! {
     assert_fail(c, true)
 }
 /// raise(sig): SIGABRT and SIGTERM end the program (no handlers are kept), others do nothing
@@ -1815,7 +1815,7 @@ fn getrandom_bytes(b: &mut [u8]) -> bool {
 fn zero(_: &mut Ctx) -> u32 {
     0
 }
-fn _amsg_exit(c: &mut Ctx) -> u32 {
+fn _amsg_exit(c: &mut Ctx) -> ! {
     eprintln!("sake: _amsg_exit({})", c.a(0));
     unsafe { libc::exit(255) }
 }
@@ -2199,11 +2199,10 @@ pub(super) fn init() {
     for (n, f) in [("_spawnvp", _spawnv as fn(&mut Ctx) -> u32), ("_spawnve", _spawnv), ("_wspawnvp", _wspawnv), ("_wspawnve", _wspawnv)] {
         implement("msvcrt", n, f);
     }
+    crate::noreturn!("msvcrt"; _assert, _wassert, _amsg_exit);
     reg!(
         _set_invalid_parameter_handler,
         _get_invalid_parameter_handler,
-        _assert,
-        _wassert,
         raise,
         strerror_s,
         _wcserror_s,
@@ -2211,7 +2210,6 @@ pub(super) fn init() {
         __sys_nerr,
         perror,
         rand_s,
-        _amsg_exit,
         isblank,
         iswblank,
         __isascii,

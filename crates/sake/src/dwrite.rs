@@ -602,7 +602,8 @@ fn Draw(c: &mut Ctx) -> u32 {
         // DWRITE_GLYPH_RUN, DWRITE_GLYPH_RUN_DESCRIPTION, then the arrays
         let (run_sz, desc_sz) = (4 * ps + 16, 4 * ps + 8);
         let size = run_sz + desc_sz + 2 * n + 4 * n + 8 * n + 2 * nu + 2 * nu + 16 + 32;
-        let p = mem::heap_alloc(size, true);
+        let p_own = mem::Scratch::new(size, true);
+        let p = p_own.get();
         let desc = p + run_sz;
         let idx = (desc + desc_sz + 7) & !7;
         let adv = (idx + 2 * n + 3) & !3;
@@ -643,7 +644,7 @@ fn Draw(c: &mut Ctx) -> u32 {
         // DrawGlyphRun(this, context, baseline x, baseline y, measuring mode, run, description, effect)
         let (bx, by) = (ox + r.x, oy + r.y);
         c.call_f(draw_glyph_run, &[rend, ctx, bx.to_bits(), by.to_bits(), 0, p, desc, 0], &[2, 3]);
-        mem::heap_free(p);
+        drop(p_own);
     }
     0
 }
@@ -1096,7 +1097,8 @@ fn MapCharacters(c: &mut Ctx) -> u32 {
     let (out_len, out_font, out_scale) = (c.a::<9>(), c.out::<10>(), c.a::<11>());
     // the text, from the source's GetTextAtPosition(position, out text, out length)
     let get_text = mem::rp(mem::rp(src) + 3 * mem::ps());
-    let tmp = mem::heap_alloc(16, true);
+    let tmp_own = mem::Scratch::new(16, true);
+    let tmp = tmp_own.get();
     let mut text = Vec::new();
     while lo32(text.len()) < len {
         c.ctx().call(get_text, &[src, pos + lo32(text.len()), tmp, tmp + 8]);
@@ -1106,7 +1108,7 @@ fn MapCharacters(c: &mut Ctx) -> u32 {
         }
         text.extend(wstr(p, Some(n.min(len - lo32(text.len())))));
     }
-    mem::heap_free(tmp);
+    drop(tmp_own);
     let (n, f) = map_chars(&text, find_family(&family), &|i, ch| crate::gdi::sys_face_has(i, ch));
     w32(out_len, if text.is_empty() { len } else { lo32(n) });
     out_font.put(f.map_or(0, |i| font(lo32(i))));
@@ -1449,12 +1451,13 @@ mod vtable_tests {
     use crate::test_guest::{call, enter};
 
     fn made(f: crate::api::Handler, args: &[u32]) -> u32 {
-        let o = mem::heap_alloc(8, true);
+        let o_own = mem::Scratch::new(8, true);
+        let o = o_own.get();
         let mut a = args.to_vec();
         a.push(o);
         assert_eq!(call(f, &a), 0);
         let p = mem::rp(o);
-        mem::heap_free(o);
+        drop(o_own);
         p
     }
 
@@ -1514,14 +1517,15 @@ mod review_b06_tests {
     fn huge_counts_are_invalid_arguments() {
         let _g = crate::test_guest::enter();
         // (a face object whose value is face 0)
-        let face = mem::heap_alloc(8, true);
+        let face_own = mem::Scratch::new(8, true);
+        let face = face_own.get();
         for n in [MAX_COUNT + 1, 0x8000_0000, u32::MAX] {
             assert_eq!(crate::test_guest::call(CreateTextLayout, &[0, 0x10, n, 0, 0, 0, 0]), E_INVALIDARG);
             assert_eq!(crate::test_guest::call(CreateGdiCompatibleTextLayout, &[0, 0x10, n, 0, 0, 0, 0, 0, 0, 0]), E_INVALIDARG);
             assert_eq!(crate::test_guest::call(GetGlyphIndices, &[face, 0x10, n, 0x10]), E_INVALIDARG);
             assert_eq!(crate::test_guest::call(GetGlyphRunOutline, &[face, 0, 0x10, 0, 0, n, 0, 0, 0]), E_INVALIDARG);
         }
-        mem::heap_free(face);
+        drop(face_own);
     }
 
     proptest::proptest! {
@@ -1529,12 +1533,13 @@ mod review_b06_tests {
         #[test]
         fn wstr_with_a_count_reads_that_many(units in proptest::collection::vec(proptest::prelude::any::<u16>(), 0..64)) {
             let _g = crate::test_guest::enter();
-            let p = mem::heap_alloc(2 * units.len() as u32 + 2, true);
+            let p_own = mem::Scratch::new(2 * units.len() as u32 + 2, true);
+            let p = p_own.get();
             for (i, &u) in units.iter().enumerate() {
                 mem::w16(p + 2 * i as u32, u);
             }
             proptest::prop_assert_eq!(wstr(p, Some(units.len() as u32)), units.clone());
-            mem::heap_free(p);
+            drop(p_own);
         }
     }
 }

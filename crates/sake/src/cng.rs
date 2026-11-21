@@ -2330,8 +2330,10 @@ mod review_tests {
     #[test]
     fn bcrypt_handles_are_freed() {
         let _g = enter();
-        let out = mem::heap_alloc(8, true);
-        let name = mem::heap_alloc(16, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
+        let name_own = mem::Scratch::new(16, true);
+        let name = name_own.get();
         mem::write(name, &w("RSA"));
         for _ in 0..3 {
             assert_eq!(call(BCryptOpenAlgorithmProvider, &[out, name, 0, 0]), 0);
@@ -2347,7 +2349,7 @@ mod review_tests {
             assert!(!mem::heap_owns(a));
             assert_eq!(call(BCryptCloseAlgorithmProvider, &[a, 0]), STATUS_INVALID_HANDLE);
         }
-        mem::heap_free(out);
-        mem::heap_free(name);
+        drop(out_own);
+        drop(name_own);
     }
 }

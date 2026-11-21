@@ -1301,7 +1301,8 @@ mod tests {
         // info 0 -> itself; info 1 -> 2 -> 1 (hrefs are index * 100)
         let lib = Lib { name: "L".into(), guid: [0; 16], lcid: 0, version: 0, flags: 0, infos: vec![info(0), info(200), info(100)] };
         let li = r32(add(lib) + 4) as usize;
-        let p = mem::heap_alloc(16, true);
+        let p_own = mem::Scratch::new(16, true);
+        let p = p_own.get();
         for h in [0, 100, 200] {
             let (mut temps, mut bstrs) = (vec![], vec![]);
             assert_eq!(to_arg(li, &Td::User(h), &Var::I4(1), 0, &mut temps, &mut bstrs), Err(DISP_E_TYPEMISMATCH));
@@ -1313,7 +1314,7 @@ mod tests {
                 mem::heap_free(t);
             }
         }
-        mem::heap_free(p);
+        drop(p_own);
     }
 
     /// review b09: a VT_BYREF|VT_VARIANT that points at itself, and a VT_BSTR whose pointer is
@@ -1354,7 +1355,8 @@ mod tests {
         #[test]
         fn bstrs_read_back(text in proptest::collection::vec(any::<u16>(), 0..64), hops in 0u32..DEPTH_MAX) {
             let _g = crate::test_guest::enter();
-            let b = mem::heap_alloc(4 + 2 * text.len() as u32 + 2, true);
+            let b_own = mem::Scratch::new(4 + 2 * text.len() as u32 + 2, true);
+            let b = b_own.get();
             w32(b, 2 * text.len() as u32);
             for (i, &u) in text.iter().enumerate() {
                 w16(b + 4 + 2 * i as u32, u);
@@ -1375,7 +1377,7 @@ mod tests {
             for x in all {
                 mem::heap_free(x);
             }
-            mem::heap_free(b);
+            drop(b_own);
         }
     }
 

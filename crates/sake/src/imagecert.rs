@@ -187,15 +187,16 @@ fn ImageGetDigestStream(c: &mut Ctx) -> u32 {
     for part in parts {
         let n = match &part { Part::Bytes(b) => b.len() as u32, Part::File(_, n) => *n };
         if n == 0 { continue; }
-        let buffer = mem::heap_alloc(n, false);
+        let buffer_own = mem::Scratch::new(n, false);
+        let buffer = buffer_own.get();
         if buffer == 0 { return fail(8); }
         let ok = match &part {
             Part::Bytes(b) => { mem::write(buffer, b); true }
             Part::File(at, n) => with_file(h, |img| img.to_guest(*at, *n, buffer)).unwrap_or(false),
         };
-        if !ok { mem::heap_free(buffer); return fail(5); }
+        if !ok { drop(buffer_own); return fail(5); }
         let ok = c.call(callback, &[handle, buffer, n]);
-        mem::heap_free(buffer);
+        drop(buffer_own);
         if ok == 0 { return 0; }
     }
     1

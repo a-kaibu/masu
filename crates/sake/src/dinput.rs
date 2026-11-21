@@ -261,10 +261,11 @@ pub fn create_instance(clsid: u32) -> Option<u32> {
         0x25e6_09e4 => false,
         _ => return None,
     };
-    let out = mem::heap_alloc(8, true);
+    let out_own = mem::Scratch::new(8, true);
+    let out = out_own.get();
     create_di(crate::api::Out::at(out), v7, None);
     let o = mem::r32(out);
-    mem::heap_free(out);
+    drop(out_own);
     Some(o)
 }
 
@@ -333,7 +334,8 @@ fn EnumDevices(c: &mut Ctx) -> u32 {
     let (ty, cb, refd) = (c.a(1), c.a(2), c.a(3));
     // (a W object's callback takes DIDEVICEINSTANCEW)
     let size = if di_wide(c.a(0)) == Some(true) { 0x44c } else { 0x244 };
-    let buf = mem::heap_alloc(size, true);
+    let buf_own = mem::Scratch::new(size, true);
+    let buf = buf_own.get();
     for kind in [KEYBOARD, MOUSE] {
         let want = match ty & 0xff {
             0 => true,
@@ -349,7 +351,7 @@ fn EnumDevices(c: &mut Ctx) -> u32 {
             break;
         }
     }
-    mem::heap_free(buf);
+    drop(buf_own);
     0
 }
 fn GetDeviceStatus(c: &mut Ctx) -> u32 {
@@ -542,13 +544,15 @@ mod tests {
     use proptest::prelude::*;
 
     fn device(kind: u32) -> u32 {
-        let g = mem::heap_alloc(16, true);
+        let g_own = mem::Scratch::new(16, true);
+        let g = g_own.get();
         w32(g, kind);
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         assert_eq!(call(CreateDevice, &[0, g, out, 0]), 0);
         let o = r32(out);
-        mem::heap_free(g);
-        mem::heap_free(out);
+        drop(g_own);
+        drop(out_own);
         o
     }
 
@@ -570,7 +574,8 @@ mod tests {
         fn device_info_stays_inside_dwsize(size in prop_oneof![Just(0x230u32), Just(0x244), Just(0x438), Just(0x44c), 0u32..0x480], mouse in any::<bool>()) {
             let _g = enter();
             let o = device(if mouse { MOUSE } else { KEYBOARD });
-            let p = mem::heap_alloc(0x480, false);
+            let p_own = mem::Scratch::new(0x480, false);
+            let p = p_own.get();
             mem::fill(p, 0x480, 0xaa);
             w32(p, size);
             let r = call(GetDeviceInfo, &[o, p]);
@@ -590,7 +595,7 @@ mod tests {
                     prop_assert_eq!(&mem::bytes(p + 300, name.len() as u32), name);
                 }
             }
-            mem::heap_free(p);
+            drop(p_own);
             call(dev_release, &[o]);
         }
 
@@ -645,7 +650,8 @@ mod tests {
     fn released_devices_get_no_input() {
         let _g = enter();
         let o = device(MOUSE);
-        let dp = mem::heap_alloc(20, true);
+        let dp_own = mem::Scratch::new(20, true);
+        let dp = dp_own.get();
         for (off, v) in [(0, 20), (4, 16), (16, 8)] {
             w32(dp + off, v);
         }
@@ -655,9 +661,10 @@ mod tests {
         assert_eq!(call(dev_release, &[o]), 0);
         input(4, 0, 0, 120);
         assert!(!devices(|ds| ds.contains_key(&o)));
-        let st = mem::heap_alloc(16, true);
+        let st_own = mem::Scratch::new(16, true);
+        let st = st_own.get();
         assert_eq!(call(GetDeviceState, &[o, 16, st]), 0x8007_001e);
-        mem::heap_free(st);
-        mem::heap_free(dp);
+        drop(st_own);
+        drop(dp_own);
     }
 }

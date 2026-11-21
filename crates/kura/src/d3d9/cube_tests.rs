@@ -272,7 +272,7 @@ proptest! {
         let o = out();
         prop_assert_eq!(call(IF_DEVICE, 25, &[dev, edge, 0, 0, super::format::A8R8G8B8, 1, o, 0]), 0);
         let cube = rd(o);
-        let levels = 32 - edge.leading_zeros();
+        let levels = edge.bit_width();
         prop_assert_eq!(call(IF_CUBE, 13, &[cube]), levels);
         // the model: zeros, as a new texture reads
         let mut want: Vec<Vec<Vec<u32>>> = (0..6).map(|_| (0..levels).map(|l| vec![0; ((edge >> l).max(1).pow(2)) as usize]).collect()).collect();

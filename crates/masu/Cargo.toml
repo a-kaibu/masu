@@ -64,6 +64,9 @@ tokio-tungstenite = "0.29"
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 
 [lints.rust]
+# (Rust 1.99: `&x as *const T` / `&mut x as *mut T` makes a reference first, with its aliasing
+# rules: write `&raw const x` / `&raw mut x`, or Box::as_ptr)
+raw_borrows_via_references = "warn"
 # (unsafe operations in an unsafe fn without an unsafe block: edition 2024 warns; tools/ci/
 # masu-lint ratchet counts them per file instead, so they only go down)
 unsafe_op_in_unsafe_fn = "allow"

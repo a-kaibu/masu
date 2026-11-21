@@ -710,8 +710,7 @@ pub(crate) fn registry_remove_tree(path: &str) -> bool {
 pub(crate) fn registry_string(path: &str, name: &str) -> Option<String> {
     let (ty, bytes) = registry_value(path, name)?;
     if !matches!(ty, 1 | 2) { return None; }
-    let words: Vec<u16> = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).take_while(|&c| c != 0).collect();
-    Some(String::from_utf16_lossy(&words))
+    Some(kome::le::utf16z_lossy(&bytes))
 }
 
 /// Sets a value by key path ("hklm\\software\\x"; data as the W functions store it), creating
@@ -1038,10 +1037,11 @@ fn RegQueryValueA(c: &mut Ctx) -> u32 {
     let (k, sub, d, l) = (c.a(0), c.a(1), c.a(2), c.a(3));
     let mut h = k;
     if sub != 0 && r8(sub) != 0 {
-        let tmp = mem::heap_alloc(8, true);
+        let tmp_own = mem::Scratch::new(8, true);
+        let tmp = tmp_own.get();
         let r = open_key(k, &arg_str(sub, false), false, crate::api::Out::at(tmp));
         h = mem::rp(tmp);
-        mem::heap_free(tmp);
+        drop(tmp_own);
         if r != 0 {
             return r;
         }
@@ -1056,11 +1056,12 @@ fn reg_get_value(c: &mut Ctx, wide: bool) -> u32 {
     let name = if name == 0 { String::new() } else { arg_str(name, wide) };
     let mut h = k;
     if sub != 0 && r8(sub) != 0 {
-        let tmp = mem::heap_alloc(8, true);
+        let tmp_own = mem::Scratch::new(8, true);
+        let tmp = tmp_own.get();
         // (RRF_SUBKEY_WOW6464KEY 0x10000, RRF_SUBKEY_WOW6432KEY 0x20000: KEY_WOW64_64KEY, _32KEY)
         let r = open_key_view(k, &arg_str(sub, wide), false, crate::api::Out::at(tmp), c.a(3) >> 8 & 0x300);
         h = mem::rp(tmp);
-        mem::heap_free(tmp);
+        drop(tmp_own);
         if r != 0 {
             return r;
         }
@@ -1106,8 +1107,7 @@ fn set_value(key: u32, name: &str, ty: u32, data: u32, len: u32, wide: bool) -> 
     }
     if crate::env_on!("SAKE_TRACE_REG") {
         let shown = if is_str(ty) {
-            let u: Vec<u16> = bytes.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
-            format!("{:?}", String::from_utf16_lossy(&u))
+            format!("{:?}", kome::le::utf16_lossy(&bytes))
         } else {
             hex(&bytes)
         };
@@ -1143,10 +1143,11 @@ fn RegSetValueA(c: &mut Ctx) -> u32 {
     let (k, sub, ty, d) = (c.a(0), c.a(1), c.a(2), c.a(3));
     let mut h = k;
     if sub != 0 && r8(sub) != 0 {
-        let tmp = mem::heap_alloc(8, true);
+        let tmp_own = mem::Scratch::new(8, true);
+        let tmp = tmp_own.get();
         let r = open_key(k, &arg_str(sub, false), true, crate::api::Out::at(tmp));
         h = mem::rp(tmp);
-        mem::heap_free(tmp);
+        drop(tmp_own);
         if r != 0 {
             return r;
         }
@@ -1623,12 +1624,13 @@ fn CoSetProxyBlanket(c: &mut Ctx) -> u32 {
     if proxy == 0 {
         return 0x8007_0057; // E_INVALIDARG
     }
-    let iid = mem::heap_alloc(16 + 8, true);
+    let iid_own = mem::Scratch::new(16 + 8, true);
+    let iid = iid_own.get();
     mem::write(iid, &[0x3d, 0x01, 0, 0, 0, 0, 0, 0, 0xc0, 0, 0, 0, 0, 0, 0, 0x46]);
     let out = iid + 16;
     let hr = c.call(mem::rp(mem::rp(proxy)), &[proxy, iid, out]);
     let cs = mem::rp(out);
-    mem::heap_free(iid);
+    drop(iid_own);
     if hr & 0x8000_0000 != 0 {
         return hr;
     }
@@ -2144,10 +2146,11 @@ fn CoMarshalInterface(c: &mut Ctx) -> u32 {
     if stm == 0 || unk == 0 {
         return 0x8007_0057;
     }
-    let out = mem::heap_alloc(16, true);
+    let out_own = mem::Scratch::new(16, true);
+    let out = out_own.get();
     let hr = crate::d3dx9::com_call(c, unk, 0, &[iid, out]);
     if hr != 0 {
-        mem::heap_free(out);
+        drop(out_own);
         return hr;
     }
     let p = mem::rp(out);
@@ -2160,7 +2163,7 @@ fn CoMarshalInterface(c: &mut Ctx) -> u32 {
         crate::d3dx9::com_call(c, p, 2, &[]);
     }
     // (the stream has its copy: the block went with every call before)
-    mem::heap_free(out);
+    drop(out_own);
     hr
 }
 /// The interface pointer CoMarshalInterface wrote to `stm` (it holds a reference), or an error
@@ -2168,10 +2171,11 @@ fn read_marshaled(c: &mut Ctx, stm: u32) -> Result<u32, u32> {
     if stm == 0 {
         return Err(0x8007_0057);
     }
-    let buf = mem::heap_alloc(16, true);
+    let buf_own = mem::Scratch::new(16, true);
+    let buf = buf_own.get();
     let hr = crate::d3dx9::com_call(c, stm, 3, &[buf, 12, buf + 12]);
     let (got, tag, p) = (mem::r32(buf + 12), mem::r32(buf), mem::r32(buf + 4));
-    mem::heap_free(buf);
+    drop(buf_own);
     if hr != 0 || got != 12 || tag != MARSHAL_TAG {
         // (STG_E_READFAULT)
         return Err(if hr != 0 { hr } else { 0x8003_001e });
@@ -2500,7 +2504,8 @@ fn DoDragDrop(c: &mut Ctx) -> u32 {
         return 0x8007_0057;
     }
     // (first the data's formats: Windows enumerates them twice, then asks for each)
-    let e = mem::heap_alloc(8 + 64 * 8, true);
+    let e_own = mem::Scratch::new(8 + 64 * 8, true);
+    let e = e_own.get();
     if method(c, data, 8, &[Arg::P(1), Arg::P(e)]) == 0 && mem::rp(e) != 0 {
         let en = mem::rp(e);
         let mut n = 0;
@@ -2518,11 +2523,12 @@ fn DoDragDrop(c: &mut Ctx) -> u32 {
         }
         method(c, en, 2, &[]);
     }
-    mem::heap_free(e);
+    drop(e_own);
     // (the mouse captured meanwhile, by the window the drag starts over)
     let (x0, y0) = crate::user::cursor_pos();
     let prev = crate::user::capture(crate::user::window_from_point(x0, y0));
-    let ef = mem::heap_alloc(4, true);
+    let ef_own = mem::Scratch::new(4, true);
+    let ef = ef_own.get();
     // (the target entered and what it accepts)
     let mut cur: Option<(u32, u32)> = None;
     let mut accepted = 0;
@@ -2588,7 +2594,7 @@ fn DoDragDrop(c: &mut Ctx) -> u32 {
             }
         }
     };
-    mem::heap_free(ef);
+    drop(ef_own);
     crate::user::capture(prev);
     hr
 }
@@ -3851,10 +3857,11 @@ fn ImageList_Create(_: &mut Ctx) -> u32 {
 /// Reads from an IStream (IStream::Read); whether all `n` bytes came.
 fn stream_read(c: &mut Ctx, stream: u32, buf: u32, n: u32) -> bool {
     let read = mem::rp(mem::rp(stream) + 3 * mem::ps());
-    let got = mem::heap_alloc(4, true);
+    let got_own = mem::Scratch::new(4, true);
+    let got = got_own.get();
     let hr = c.call(read, &[stream, buf, n, got]);
     let k = r32(got);
-    mem::heap_free(got);
+    drop(got_own);
     hr == 0 && k == n
 }
 
@@ -3867,14 +3874,15 @@ fn skip_bitmap(c: &mut Ctx, stream: u32, buf: u32) -> bool {
     let (w, h, bpp) = (r32(bi + 4), (r32(bi + 8) as i32).unsigned_abs(), r16(bi + 14) as u32);
     let Some(mut rest) = bitmap_rest(w, h, bpp) else { return false };
     // (read past in pieces: not one block of what the header claims)
-    let tmp = mem::heap_alloc(0x10000, false);
+    let tmp_own = mem::Scratch::new(0x10000, false);
+    let tmp = tmp_own.get();
     let mut ok = true;
     while ok && rest > 0 {
         let n = rest.min(0x10000);
         ok = stream_read(c, stream, tmp, n);
         rest -= n;
     }
-    mem::heap_free(tmp);
+    drop(tmp_own);
     ok
 }
 /// The palette and pixel bytes after an image list bitmap's headers (w x h at bpp), or None
@@ -3888,12 +3896,13 @@ fn bitmap_rest(w: u32, h: u32, bpp: u32) -> Option<u32> {
 
 fn ImageList_Read(c: &mut Ctx) -> u32 {
     let stream = c.a(0);
-    let buf = mem::heap_alloc(64, true);
+    let buf_own = mem::Scratch::new(64, true);
+    let buf = buf_own.get();
     let ok = stream_read(c, stream, buf, 28) && r16(buf) == 0x4c49 && {
         let flags = r16(buf + 18);
         skip_bitmap(c, stream, buf) && (flags & 1 == 0 || skip_bitmap(c, stream, buf))
     };
-    mem::heap_free(buf);
+    drop(buf_own);
     if ok {
         IMAGELISTS.fetch_add(4, Ordering::Relaxed)
     } else {
@@ -7590,7 +7599,8 @@ mod b08_tests {
         let b = call(SysAllocStringLen, &[src, 2]);
         assert_eq!((r32(b - 4), r16(b), r16(b + 2), r16(b + 4)), (4, 0x41, 0x42, 0));
         // a failed SysReAllocStringLen leaves the old string
-        let pb = mem::heap_alloc(4, true);
+        let pb_own = mem::Scratch::new(4, true);
+        let pb = pb_own.get();
         w32(pb, b);
         assert_eq!(call(SysReAllocStringLen, &[pb, 0, u32::MAX]), 0);
         assert_eq!(r32(pb), b);
@@ -7598,7 +7608,7 @@ mod b08_tests {
         assert_eq!(r32(r32(pb) - 4), 6);
         bstr_free(r32(pb));
         bstr_free(src);
-        mem::heap_free(pb);
+        drop(pb_own);
     }
 
     proptest::proptest! {
@@ -7612,7 +7622,8 @@ mod b08_tests {
             let cells = dims.iter().fold(1u64, |a, &b| a.saturating_mul(b as u64));
             proptest::prop_assume!(cells.saturating_mul(16) <= 64 << 20 || cells > 0x7fff_0000);
             let _g = enter();
-            let sab = mem::heap_alloc(8 * dims.len() as u32, true);
+            let sab_own = mem::Scratch::new(8 * dims.len() as u32, true);
+            let sab = sab_own.get();
             for (i, &n) in dims.iter().enumerate() {
                 w32(sab + 8 * i as u32, n);
             }
@@ -7625,7 +7636,7 @@ mod b08_tests {
             } else {
                 proptest::prop_assert!(cells > 0x7fff_0000 / 16, "a small array refused: {:?}", dims);
             }
-            mem::heap_free(sab);
+            drop(sab_own);
         }
     }
 

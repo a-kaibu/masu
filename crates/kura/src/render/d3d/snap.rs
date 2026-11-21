@@ -249,7 +249,7 @@ impl D3d {
                     let off = lo32(blob.len());
                     let bpr = if halved {
                         // (kept as halves, written as 32-bit floats)
-                        blob.extend(r.data.chunks_exact(2).flat_map(|x| f16_to_f32(u16::from_le_bytes([x[0], x[1]])).to_le_bytes()));
+                        blob.extend(kome::le::units16(&r.data).flat_map(|x| f16_to_f32(x).to_le_bytes()));
                         bpr * 2
                     } else {
                         blob.extend_from_slice(&r.data);

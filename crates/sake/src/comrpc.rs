@@ -25,9 +25,10 @@ pub(crate) fn text(g: &[u8]) -> String {
     <&[u8; 16]>::try_from(g).map_or_else(|_| String::new(), |g| format!("{{{}}}", kome::guid::text(g)))
 }
 fn qi(cpu: &mut koji::Cpu, object: u32, iid: &[u8]) -> Result<u32, u32> {
-    let temp = mem::heap_alloc(16 + ps(), true); mem::write(temp, iid);
+    let temp_own = mem::Scratch::new(16 + ps(), true);
+    let temp = temp_own.get(); mem::write(temp, iid);
     let hr = crate::call(cpu, rp(rp(object)), &[object, temp, temp + 16]);
-    let out = rp(temp + 16); mem::heap_free(temp);
+    let out = rp(temp + 16); drop(temp_own);
     if hr == 0 && out != 0 { Ok(out) } else { Err(if hr == 0 { NOINTERFACE } else { hr }) }
 }
 fn refcall(cpu: &mut koji::Cpu, object: u32, method: u32) -> u32 {
@@ -100,9 +101,10 @@ fn interface(cpu: &mut koji::Cpu, iid: &[u8]) -> Result<Arc<Interface>, u32> {
     let dll = crate::misc::registry_string(&format!("hkcr\\clsid\\{proxy_class}\\inprocserver32"), "").ok_or(NOINTERFACE)?;
     let base = crate::pe::load_library(cpu, &dll);
     let entry = crate::pe::proc_address(base, crate::pe::Import::Name("GetProxyDllInfo")).ok_or(NOTIMPL)?;
-    let out = mem::heap_alloc(2 * ps(), true);
+    let out_own = mem::Scratch::new(2 * ps(), true);
+    let out = out_own.get();
     crate::call(cpu, entry, &[out, out + ps()]);
-    let list = rp(out); mem::heap_free(out);
+    let list = rp(out); drop(out_own);
     if list == 0 { return Err(NOINTERFACE); }
     let all = read_interfaces(list);
     let found = all.iter().find(|i| i.iid == iid).cloned();
@@ -275,9 +277,10 @@ fn serve(cpu: &mut koji::Cpu, call: &Call) -> Reply {
         };
         let factory = FACTORIES.lock().unwrap().as_ref().and_then(|f| f.get(&class.cookie)).copied();
         let Some((factory, _)) = factory else { return Reply { hr: CLASSNOTREG, data: vec![] } };
-        let buffer = mem::heap_alloc(16 + ps(), true); mem::write(buffer, &call.iid);
+        let buffer_own = mem::Scratch::new(16 + ps(), true);
+        let buffer = buffer_own.get(); mem::write(buffer, &call.iid);
         let hr = crate::call(cpu, rp(rp(factory) + 3 * ps()), &[factory, 0, buffer, buffer + 16]);
-        let pointer = rp(buffer + 16); mem::heap_free(buffer);
+        let pointer = rp(buffer + 16); drop(buffer_own);
         if hr != 0 || pointer == 0 { return Reply { hr: if hr == 0 { NOINTERFACE } else { hr }, data: vec![] }; }
         if class.flags & 1 == 0 {
             kern::with(|k| { k.com.classes.remove(&call.class); k.changed(); });
@@ -473,11 +476,12 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
     if out.is_null() || clsid == 0 || iid == 0 { return POINTER; } out.put(0);
     if outer != 0 { return 0x8004_0110; }
     if context & 3 != 0 {
-        let factory_iid = mem::heap_alloc(16 + ps(), true);
+        let factory_iid_own = mem::Scratch::new(16 + ps(), true);
+        let factory_iid = factory_iid_own.get();
         let mut iid_bytes = kome::guid::IID_IUNKNOWN; iid_bytes[0] = 1;
         mem::write(factory_iid, &iid_bytes);
         let hr = get_class(cpu, clsid, factory_iid, crate::api::Out::at(factory_iid + 16), context & 3);
-        let factory = rp(factory_iid + 16); mem::heap_free(factory_iid);
+        let factory = rp(factory_iid + 16); drop(factory_iid_own);
         if hr != CLASSNOTREG {
             if hr != 0 { return hr; }
             if factory == 0 { return NOINTERFACE; }
@@ -489,8 +493,9 @@ pub(crate) fn create(cpu: &mut koji::Cpu, clsid: u32, iid: u32, out: crate::api:
     let target = match class_for(cpu, &class, context) { Ok(c) => c, Err(hr) => return hr };
     if target.pid == crate::pid() {
         let Some((factory, _)) = FACTORIES.lock().unwrap().as_ref().and_then(|f| f.get(&target.cookie)).copied() else { return CLASSNOTREG };
-        let p = mem::heap_alloc(16, true); mem::write(p, &iid);
-        let hr = crate::call(cpu, rp(rp(factory) + 3 * ps()), &crate::api::words![factory, 0, p, out]); mem::heap_free(p); return hr;
+        let p_own = mem::Scratch::new(16, true);
+        let p = p_own.get(); mem::write(p, &iid);
+        let hr = crate::call(cpu, rp(rp(factory) + 3 * ps()), &crate::api::words![factory, 0, p, out]); drop(p_own); return hr;
     }
     // Read the signature before activation so unsupported interfaces do not leak
     // a server reference when the local proxy cannot be constructed.

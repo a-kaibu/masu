@@ -1,6 +1,8 @@
 //! sake-shirusu LOG OUT.trace [--arch x86|x86_64] [--target NAME]
 //!   LOG: sake's stderr or a page's console.log with SAKE_SHIRUSU=1 (crates/sake/src/shirusu.rs)
 //!   prints the calls per API; exit 1 when the log has no calls or does not convert
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
     let mut pos = Vec::new();

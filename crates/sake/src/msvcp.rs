@@ -1031,14 +1031,15 @@ mod thrown_tests {
         assert!(!mem::heap_owns(o), "block freed");
         assert!(!mem::heap_owns(what), "message freed");
         // (the guest's own object: its message only, the block is the guest's)
-        let g = mem::heap_alloc(24, true);
+        let g_own = mem::Scratch::new(24, true);
+        let g = g_own.get();
         let w = static_str("guest");
         wp(g + ps(), w);
         w8(g + 2 * ps(), 1);
         call(thrown_dtor, &[g]);
         assert!(mem::heap_owns(g), "not sake's to free");
         assert_eq!(rp(g + ps()), 0);
-        mem::heap_free(g);
+        drop(g_own);
     }
 
     /// The ThrowInfo of every class sake throws names the destructor that frees the block.

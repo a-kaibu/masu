@@ -535,12 +535,13 @@ mod tests {
         #[test]
         fn uchars_reads_what_it_is_told(units in proptest::collection::vec(1u16.., 0..40), len in -3i64..60) {
             let _g = crate::test_guest::enter();
-            let p = mem::heap_alloc(2 * 64, true);
+            let p_own = mem::Scratch::new(2 * 64, true);
+            let p = p_own.get();
             for (i, &u) in units.iter().enumerate() {
                 mem::w16(p + 2 * i as u32, u);
             }
             let got = uchars(p, len);
-            mem::heap_free(p);
+            drop(p_own);
             match len {
                 ..=-2 => prop_assert!(got.is_none()),
                 -1 => prop_assert_eq!(got.unwrap(), units),

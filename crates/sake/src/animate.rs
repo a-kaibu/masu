@@ -303,7 +303,8 @@ fn open(c: &mut Ctx, h: u32, inst: u32, name: u32, wide: bool) -> u32 {
 
 fn paint(c: &mut Ctx, h: u32) {
     let (style, parent, (w, hh)) = with(|s| s.wins.get(&h).map_or((0, 0, (0, 0)), |w| (w.style, w.parent, (w.client.w(), w.client.h()))));
-    let ps = mem::heap_alloc(64, true);
+    let ps_own = mem::Scratch::new(64, true);
+    let ps = ps_own.get();
     let dc = gcall(c, "user32", "BeginPaint", &[h, ps]);
     // the background: the parent's WM_CTLCOLORSTATIC brush (else the dialog face)
     let mut brush = if parent != 0 { send(c, parent, 0x138, dc, h) } else { 0 };
@@ -319,7 +320,8 @@ fn paint(c: &mut Ctx, h: u32) {
     if let Some((px, fw, fh)) = shown {
         let (x, y) = if style & 1 != 0 { ((w - fw as i32) / 2, (hh - fh as i32) / 2) } else { (0, 0) };
         // a 32-bit top-down DIB of the frame
-        let bmi = mem::heap_alloc(40 + px.len() as u32 * 4, true);
+        let bmi_own = mem::Scratch::new(40 + px.len() as u32 * 4, true);
+        let bmi = bmi_own.get();
         for (k, v) in [40u32, fw, (-(fh as i32)) as u32].iter().enumerate() {
             mem::w32(bmi + 4 * k as u32, *v);
         }
@@ -331,10 +333,10 @@ fn paint(c: &mut Ctx, h: u32) {
             mem::w32(bits + 4 * k as u32, *p);
         }
         gcall(c, "gdi32", "SetDIBitsToDevice", &[dc, x as u32, y as u32, fw, fh, 0, 0, 0, fh, bits, bmi, 0]);
-        mem::heap_free(bmi);
+        drop(bmi_own);
     }
     gcall(c, "user32", "EndPaint", &[h, ps]);
-    mem::heap_free(ps);
+    drop(ps_own);
 }
 
 pub(super) fn proc_fn(c: &mut Ctx) -> u32 {

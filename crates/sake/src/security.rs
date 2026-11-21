@@ -1448,7 +1448,8 @@ mod review_b09_tests {
             let _g = enter();
             guest_thread();
             let room = 512u32;
-            let acl = mem::heap_alloc(room, true);
+            let acl_own = mem::Scratch::new(room, true);
+            let acl = acl_own.get();
             mem::write(acl + 8, &body);
             for o in size as u32..room {
                 w8(acl + o, 0xcd);
@@ -1458,7 +1459,8 @@ mod review_b09_tests {
             w16(acl + 4, count);
             // one ACE of ace_len * 8 bytes
             let len = 8 * ace_len as u32;
-            let list = mem::heap_alloc(len, true);
+            let list_own = mem::Scratch::new(len, true);
+            let list = list_own.get();
             w8(list, 0);
             w16(list + 2, len as u16);
             for i in 4..len {
@@ -1472,8 +1474,8 @@ mod review_b09_tests {
                 prop_assert_eq!(r16(acl + 4), count.wrapping_add(1));
                 prop_assert!(used(acl) <= size as u32 || count == u16::MAX);
             }
-            mem::heap_free(list);
-            mem::heap_free(acl);
+            drop(list_own);
+            drop(acl_own);
         }
     }
 

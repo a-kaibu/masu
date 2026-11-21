@@ -19,5 +19,8 @@ naga = { version = "30", features = ["wgsl-in"] }
 proptest = { version = "1", default-features = false, features = ["std"] }
 
 [lints.rust]
+# (Rust 1.99: `&x as *const T` / `&mut x as *mut T` makes a reference first, with its aliasing
+# rules: write `&raw const x` / `&raw mut x`, or Box::as_ptr)
+raw_borrows_via_references = "warn"
 # (masu_sanitize: tools/ci/sanitize.sh's builds, #242)
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(masu_sanitize)"] }

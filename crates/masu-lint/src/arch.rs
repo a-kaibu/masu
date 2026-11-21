@@ -46,10 +46,17 @@ pub enum Rule {
     BooleanArg,
     TypedRegisters,
     NtdllOwnCrt,
+    RustLints,
+    BinDeadPub,
+    HandBitWidth,
+    HandUtf16,
+    NoReturnHandler,
+    WildcardUnreachable,
+    GuestScratch,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 29] = [
+    pub const ALL: [Rule; 36] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -79,6 +86,13 @@ impl Rule {
         Rule::BooleanArg,
         Rule::TypedRegisters,
         Rule::NtdllOwnCrt,
+        Rule::RustLints,
+        Rule::BinDeadPub,
+        Rule::HandBitWidth,
+        Rule::HandUtf16,
+        Rule::NoReturnHandler,
+        Rule::WildcardUnreachable,
+        Rule::GuestScratch,
     ];
 
     /// the name a site list and a message use
@@ -113,6 +127,13 @@ impl Rule {
             Rule::BooleanArg => "boolean-arg",
             Rule::TypedRegisters => "typed-registers",
             Rule::NtdllOwnCrt => "ntdll-own-crt",
+            Rule::RustLints => "rust-lints",
+            Rule::BinDeadPub => "bin-dead-pub",
+            Rule::HandBitWidth => "hand-bit-width",
+            Rule::HandUtf16 => "hand-utf16",
+            Rule::NoReturnHandler => "noreturn-handler",
+            Rule::WildcardUnreachable => "wildcard-unreachable",
+            Rule::GuestScratch => "guest-scratch",
         }
     }
 
@@ -148,6 +169,13 @@ impl Rule {
             Rule::TypedRegisters => "koji's registers are named, not numbered (2026-11-20, Farcall comparison): Cpu::regs/hi are Gprs indexed by Gpr (EAX..EDI), sreg/sbase Segs indexed by Seg, Cpu::gpr takes a Reg64; write the register's name (koji::EBX, Seg::Ss, Reg64::R8), not Gpr::ALL[3] or values()[3], and give Gprs/Segs no index, conversion or public field that takes a number",
             Rule::NtdllOwnCrt => "ntdll's C runtime is not msvcrt's (ASCII / Latin-1 tables, no base check in _itoa, wrapping atoi; 2026-11-20): each function win32.rs NTDLL_OWN_CRT lists keeps an implement(\"ntdll\", ..) of its own, else find_impl answers with msvcrt's",
             Rule::OutEscape => "a LockWord's or an Object's key() names a lock or one of sake's objects, it is no guest address (review 2026-11-17, 06dc4bf2): it is not the address of mem's readers and writers or of ga()/Ga::from (a value written into memory is fine); take the lock through LockWord::atomic, the object through its table",
+            Rule::RustLints => "every crate's Cargo.toml sets [lints.rust] raw_borrows_via_references (Rust 1.99, 2026-11-21): `&x as *const T` makes a reference first, with its aliasing rules; write `&raw const x` / `&raw mut x`, Box::as_ptr, .addr()",
+            Rule::BinDeadPub => "a binary's root (src/main.rs, src/bin/*.rs) has `#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]` (Rust 1.97, 2026-11-21): a pub item nothing in the binary uses is dead code; the lint works only as a crate attribute, so it is not in Cargo.toml",
+            Rule::HandBitWidth => "`32 - x.leading_zeros()` written by hand is `x.bit_width()` (Rust 1.100, 2026-11-21: 16 copies replaced)",
+            Rule::HandUtf16 => "UTF-16LE bytes are read by kome::le (units16, utf16_lossy, utf16z_lossy over String::from_utf16le_lossy, Rust 1.100), not by chunks_exact(2) and u16::from_le_bytes by hand (2026-11-21: 23 copies replaced)",
+            Rule::NoReturnHandler => "a Windows function that does not come back (modern::NORETURN: ExitProcess, exit, abort, _assert..) is `fn(&mut Ctx) -> !` registered with noreturn! (api::NoReturn checks it; 2026-11-21): a handler that returns a value lets the guest run on past it",
+            Rule::WildcardUnreachable => "no `_ => unreachable!()` arm outside tests (2026-11-21, user rule: exhaustive matches, no `_` catch-alls): take the value that cannot come out by a type (an enum, `!` as a type argument, a const-built table)",
+            Rule::GuestScratch => "a guest block one sake function uses for the length of a call is a mem::Scratch (2026-11-21: 355 hand pairs converted): it is freed on every way out of the function, where a hand-written heap_free at the end leaked it on each early return; a block the guest keeps stays heap_alloc",
         }
     }
 
@@ -182,6 +210,13 @@ impl Rule {
             Rule::BooleanArg => crate::win32::boolean_arg(tree),
             Rule::TypedRegisters => typed_registers(tree),
             Rule::NtdllOwnCrt => crate::win32::ntdll_own_crt(tree),
+            Rule::RustLints => modern::rust_lints(tree),
+            Rule::BinDeadPub => modern::bin_dead_pub(tree),
+            Rule::HandBitWidth => modern::hand_bit_width(tree),
+            Rule::HandUtf16 => modern::hand_utf16(tree),
+            Rule::NoReturnHandler => modern::noreturn_handler(tree),
+            Rule::WildcardUnreachable => modern::wildcard_unreachable(tree),
+            Rule::GuestScratch => modern::guest_scratch(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }
@@ -199,6 +234,8 @@ pub struct Finding {
 mod boundaries;
 #[path = "regress.rs"]
 mod regress;
+#[path = "modern.rs"]
+mod modern;
 
 type Hits = Vec<(Rel, usize, String)>;
 
@@ -471,7 +508,7 @@ fn release_build_only(tree: &Tree) -> Hits {
 }
 
 /// what must stay in place: (file, text, why)
-pub const REQUIRED: [(&str, &str, &str); 9] = [
+pub const REQUIRED: [(&str, &str, &str); 13] = [
     ("crates/kura/src/d3d9/device.rs", "    pub sub: Sub,", "a Direct3D 9 surface names its part of the page texture as a Sub (level and cube face together): a bare level drew every face of a render target cube on layer 0 (2026-11-20)"),
     ("tests/host-tests.sh", "export MASU_OUTS_STRICT=1", "release-build host tests fail on a 32-bit write into a pointer-sized out-parameter (2026-11-16)"),
     ("crates/sake/src/lib.rs", "mod outptr_audit;", "every handler of a function with pointer-sized out-parameters takes its typed Args"),
@@ -480,6 +517,10 @@ pub const REQUIRED: [(&str, &str, &str); 9] = [
     (API, "```compile_fail", "an out-parameter is not a word"),
     (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- arch", "this lint runs on every push, before the build"),
     (".github/workflows/ci.yml", "cargo run -q --release -p masu-lint -- ratchet", "the lint ratchet runs on every push"),
+    (".cargo/config.toml", "global-min-publish-age", "a crate version published less than the cooldown ago is not picked when the lock file changes (Rust 1.100, 2026-11-21): a hijacked release is usually yanked within days"),
+    ("crates/kura/src/d3d9/gpu.rs", "fn retire(q: &mut Queue, mut b: Batch)", "a batch the page is done with is the next open one (2026-11-21: growing every batch from nothing was 60% of draw)"),
+    (MEM, "impl Drop for Scratch", "a Scratch frees its guest block when dropped (2026-11-21)"),
+    (API, "pub type NoReturn = fn(&mut Ctx) -> !;", "noreturn! registers only handlers that do not come back: the type is the check (2026-11-21)"),
     (".github/workflows/ci.yml", "cargo test --workspace --release", "masu-lint's own tests (each rule and each ratchet lint fires on its regression) run on every push"),
 ];
 

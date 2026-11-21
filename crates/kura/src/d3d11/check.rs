@@ -101,7 +101,7 @@ pub struct Tex {
 
 /// Levels of a full chain for these sizes.
 pub fn full_chain(w: u32, h: u32, d: u32) -> u32 {
-    32 - w.max(h).max(d).max(1).leading_zeros()
+    w.max(h).max(d).max(1).bit_width()
 }
 
 /// Whether CreateTexture* takes `t` (`init`: initial data given); its mip count if it does.

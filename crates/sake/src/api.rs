@@ -32,6 +32,25 @@ pub const EXIT_TRAP: u32 = 0xffff_0020;
 pub const SEH64_TRAP: u32 = 0xffff_0030;
 
 pub type Handler = fn(&mut Ctx) -> u32;
+/// A function Windows declares `__declspec(noreturn)` (ExitProcess, ExitThread, abort, exit,
+/// _invalid_parameter_noinfo_noreturn...): the process or the thread ends in it, so its body
+/// cannot go back to the caller, whose code after the call is not there to run (the C compiler
+/// leaves it out). [`noreturn!`](crate::noreturn) registers one.
+pub type NoReturn = fn(&mut Ctx) -> !;
+
+/// `noreturn!("dll"; f, g)` / `noreturn!("dll", "Name", f)`: registers [`NoReturn`] functions (one
+/// that can return does not compile here; masu-lint's noreturn-handler finds a handler that ends
+/// in exit() while still declared `-> u32`)
+#[macro_export]
+macro_rules! noreturn {
+    ($dll:expr; $($f:ident),* $(,)?) => { $( $crate::noreturn!($dll, stringify!($f), $f); )* };
+    ($dll:expr, $name:expr, $f:path) => {
+        $crate::api::implement($dll, $name, |c| {
+            let f: $crate::api::NoReturn = $f;
+            f(c)
+        })
+    };
+}
 /// `f` as a Handler (a fn item coerced: the first of a list of them gives the list its type)
 pub const fn handler(f: Handler) -> Handler {
     f

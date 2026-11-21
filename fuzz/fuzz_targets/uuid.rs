@@ -5,7 +5,7 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let t: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+    let t: Vec<u16> = kome::le::units16(data).collect();
     let model = t.len() == 36
         && t.iter().enumerate().all(|(i, &c)| if matches!(i, 8 | 13 | 18 | 23) { c == u16::from(b'-') } else { c < 0x80 && (c as u8).is_ascii_hexdigit() });
     let got = sake::misc::parse_uuid(&t);

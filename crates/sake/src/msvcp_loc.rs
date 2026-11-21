@@ -890,7 +890,9 @@ fn tp_put_pattern<const W: bool>(c: &mut Ctx) -> u32 {
     let j = after_it(2);
     let (this, ret, it, ios, fill, tm, mut p, end) = (c.a(0), c.a(1), c.byval(2), c.a(j), c.a(j + 1), c.a(j + 2), c.a(j + 3), c.a(j + 4));
     let (e, n) = (es::<W>(), it_size());
-    let mut cur = mem::heap_alloc(n, false);
+    // (the iterator as it moves: each put answers a new one, the one before it freed)
+    let mut cur_own = mem::Scratch::new(n, false);
+    let mut cur = cur_own.get();
     mem::copy(cur, it, n);
     let nar = |v: u16| narrow(v, 0);
     while p < end {
@@ -914,10 +916,10 @@ fn tp_put_pattern<const W: bool>(c: &mut Ctx) -> u32 {
                 modi = spec;
                 spec = nar(ch::<W>(p));
             }
-            let out = mem::heap_alloc(n, false);
-            vcall(c, this, 3, &[A::P(out), A::V(cur, n), A::P(ios), A::I(fill), A::P(tm), A::I(spec as u32), A::I(modi as u32)]);
-            mem::heap_free(cur);
-            cur = out;
+            let out = mem::Scratch::new(n, false);
+            vcall(c, this, 3, &[A::P(out.get()), A::V(cur, n), A::P(ios), A::I(fill), A::P(tm), A::I(spec as u32), A::I(modi as u32)]);
+            cur_own = out;
+            cur = cur_own.get();
             if c.jumped {
                 break;
             }
@@ -925,7 +927,7 @@ fn tp_put_pattern<const W: bool>(c: &mut Ctx) -> u32 {
         p += e;
     }
     mem::copy(ret, cur, n);
-    mem::heap_free(cur);
+    drop(cur_own);
     ret
 }
 

@@ -1390,7 +1390,8 @@ fn connect_by_name(c: &mut Ctx, wide: bool) -> u32 {
         Ok((_, v)) => v,
         Err(e) => return fail(e),
     };
-    let buf = mem::heap_alloc(28, true);
+    let buf_own = mem::Scratch::new(28, true);
+    let buf = buf_own.get();
     let mut r = 10065; // WSAEHOSTUNREACH
     for (a, ..) in &addrs {
         mem::write(buf, &a.bytes());
@@ -1400,7 +1401,7 @@ fn connect_by_name(c: &mut Ctx, wide: bool) -> u32 {
         }
         r = get_last();
     }
-    mem::heap_free(buf);
+    drop(buf_own);
     if r != 0 {
         return fail(r);
     }
@@ -1488,20 +1489,22 @@ fn accept(c: &mut Ctx, wsa: bool) -> u32 {
         };
         // lpCallerId / lpCalleeId: WSABUFs of the two addresses; then the GROUP
         let k = ps();
-        let m = mem::heap_alloc(4 * k + 2 * 28 + 8, true);
+        let m_own = mem::Scratch::new(4 * k + 2 * 28 + 8, true);
+        let m = m_own.get();
         let (bufs, sas, group) = (m, m + 4 * k, m + 4 * k + 56);
         for (i, a) in [&peer, &local].into_iter().enumerate() {
             let sa = sas + 28 * i as u32;
             let len = 28u32;
-            let lp = mem::heap_alloc(4, true);
+            let lp_own = mem::Scratch::new(4, true);
+            let lp = lp_own.get();
             mem::put32(lp, len);
             let _ = write_sa(sa, lp, a);
             mem::put32(bufs + 2 * k * i as u32, r32(lp));
             mem::wp(bufs + 2 * k * i as u32 + k, sa);
-            mem::heap_free(lp);
+            drop(lp_own);
         }
         let v = c.call(cond, &[bufs, 0, 0, 0, bufs + 2 * k, 0, group, data]);
-        mem::heap_free(m);
+        drop(m_own);
         match v {
             0 => {}
             // CF_DEFER: the connection stays queued
@@ -3195,7 +3198,8 @@ fn TransmitFile(c: &mut Ctx) -> u32 {
                 f.seek(std::io::SeekFrom::Start(r32(ov + 2 * k) as u64 | (r32(ov + 2 * k + 4) as u64) << 32));
             }
             let mut left = if n == 0 { u32::MAX } else { n };
-            let tmp = mem::heap_alloc(65536, false);
+            let tmp_own = mem::Scratch::new(65536, false);
+            let tmp = tmp_own.get();
             if tmp == 0 {
                 return Err(WSAENOBUFS);
             }
@@ -3210,7 +3214,7 @@ fn TransmitFile(c: &mut Ctx) -> u32 {
                 }
                 Ok(())
             })();
-            mem::heap_free(tmp);
+            drop(tmp_own);
             r?;
         }
         if tb != 0 {
@@ -3528,11 +3532,12 @@ mod issue88 {
         let _g = enter();
         for tag in [0, 1] {
             let ev = crate::obj::add(crate::obj::Obj::Event { manual: true, set: true });
-            let p = mem::heap_alloc(32, true);
+            let p_own = mem::Scratch::new(32, true);
+            let p = p_own.get();
             mem::wp(p + 16, ev | tag);
             ov_start(p);
             assert!(crate::obj::with(|t| matches!(t.objs.get(&ev), Some((crate::obj::Obj::Event { set: false, .. }, _)))));
-            mem::heap_free(p);
+            drop(p_own);
             assert!(crate::obj::close(ev));
         }
         ov_start(0);

@@ -295,7 +295,8 @@ mod review_b09_tests {
         let _g = enter();
         guest_thread();
         let size = 8 + mem::ps();
-        let p = mem::heap_alloc(size, true);
+        let p_own = mem::Scratch::new(size, true);
+        let p = p_own.get();
         w32(p, 0x0002_0001); // page 1, usage 2
         let t = std::time::Instant::now();
         assert_eq!(call(RegisterRawInputDevices, &[p, u32::MAX, size]), 0);
@@ -306,7 +307,7 @@ mod review_b09_tests {
         w32(p + 4, RIDEV_REMOVE);
         assert_eq!(call(RegisterRawInputDevices, &[p, 1, size]), 1);
         assert!(!REGS.lock().unwrap().iter().any(|r| (r.0, r.1) == (1, 2)));
-        mem::heap_free(p);
+        drop(p_own);
     }
 
     proptest! {
@@ -318,8 +319,10 @@ mod review_b09_tests {
             let _g = enter();
             guest_thread();
             let hs = header_size();
-            let hs_ = mem::heap_alloc(4, true);
-            let buf = mem::heap_alloc(256, true);
+            let hs__own = mem::Scratch::new(4, true);
+            let hs_ = hs__own.get();
+            let buf_own = mem::Scratch::new(256, true);
+            let buf = buf_own.get();
             let hs_list: Vec<u32> = dx.iter().map(|&d| mouse_event(0, 0, d, 0)).collect();
             let kept = hs_list.len().saturating_sub(KEPT);
             for (i, (&h, &d)) in hs_list.iter().zip(&dx).enumerate() {
@@ -332,8 +335,8 @@ mod review_b09_tests {
                     prop_assert_eq!(r32(buf + hs + 12) as i32, d);
                 }
             }
-            mem::heap_free(hs_);
-            mem::heap_free(buf);
+            drop(hs__own);
+            drop(buf_own);
         }
     }
 }

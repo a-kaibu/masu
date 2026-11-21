@@ -625,7 +625,8 @@ fn DM_UnlockDevice(c: &mut Ctx) -> u32 {
         Err(e) => return e,
     };
     if save != 0 && dev != 0 {
-        let out = mem::heap_alloc(ps(), true);
+        let out_own = mem::Scratch::new(ps(), true);
+        let out = out_own.get();
         if com_call(c, dev, 59, &[1, out]) == 0 {
             let sb = rp(out);
             let old = with_mgr(this, |m| {
@@ -638,7 +639,7 @@ fn DM_UnlockDevice(c: &mut Ctx) -> u32 {
                 release(c, o);
             }
         }
-        mem::heap_free(out);
+        drop(out_own);
     }
     0
 }
@@ -1497,20 +1498,22 @@ fn WICConvertBitmapSource(c: &mut Ctx) -> u32 {
         return E_INVALIDARG;
     }
     out.put(0);
-    let cur = mem::heap_alloc(16, true);
+    let cur_own = mem::Scratch::new(16, true);
+    let cur = cur_own.get();
     let hr = call_method(c.ctx(), src, "IWICBitmapSource", "GetPixelFormat", &[cur]);
     let same = hr == 0 && mem::array::<16>(cur) == mem::array::<16>(fmt);
-    mem::heap_free(cur);
+    drop(cur_own);
     if same {
         add_ref(c.ctx(), src);
         out.put(src);
         return 0;
     }
     let factory = crate::wic::factory();
-    let pc = mem::heap_alloc(8, true);
+    let pc_own = mem::Scratch::new(8, true);
+    let pc = pc_own.get();
     let hr = call_method(c.ctx(), factory, "IWICImagingFactory", "CreateFormatConverter", &[pc]);
     let conv = rp(pc);
-    mem::heap_free(pc);
+    drop(pc_own);
     release(c.ctx(), factory);
     if hr != 0 || conv == 0 {
         return if hr != 0 { hr } else { E_FAIL };
@@ -1723,7 +1726,8 @@ mod tests {
     fn service_instances_bound_their_properties() {
         let _g = crate::test_guest::enter();
         crate::test_guest::guest_thread();
-        let name = mem::heap_alloc(16, true);
+        let name_own = mem::Scratch::new(16, true);
+        let name = name_own.get();
         mem::write(name, &[b'a', 0, b'b', 0, 0, 0]);
         let t = std::time::Instant::now();
         for n in [SERVICE_PROPS_MAX + 1, 0x4000_0000, u32::MAX] {
@@ -1732,7 +1736,8 @@ mod tests {
         assert!(t.elapsed().as_secs() < 2);
         let k = ps();
         for n in [0u32, 1, 7] {
-            let arr = mem::heap_alloc(k * n.max(1), true);
+            let arr_own = mem::Scratch::new(k * n.max(1), true);
+            let arr = arr_own.get();
             for i in 0..n {
                 wp(arr + k * i, name);
             }
@@ -1745,9 +1750,9 @@ mod tests {
                 assert_eq!(mem::wstr(kp), w("ab"));
             }
             crate::test_guest::call(service_free, &[o]);
-            mem::heap_free(arr);
+            drop(arr_own);
         }
-        mem::heap_free(name);
+        drop(name_own);
     }
 
     /// Wine's dlls/dnsapi/tests/name.c table (what Windows answers; where it lists an older
@@ -1841,7 +1846,8 @@ mod issue88 {
     #[test]
     fn enumerator_advances_and_reports_partial_fetches() {
         let _g = enter();
-        let p = mem::heap_alloc(128, true);
+        let p_own = mem::Scratch::new(128, true);
+        let p = p_own.get();
         w32(p + ps() + 8, 2);
         mem::write(ed_entry(p, 0), &[0x11; 16]);
         mem::write(ed_entry(p, 1), &[0x22; 16]);
@@ -1853,6 +1859,6 @@ mod issue88 {
         assert_eq!(mem::array::<32>(p + 64)[..], [&[0x11; 16][..], &[0x22; 16][..]].concat());
         assert_eq!(call(ED_Next, &[p, 1, p + 64, 0, p + 120]), S_FALSE);
         assert_eq!(r32(p + 120), 0);
-        mem::heap_free(p);
+        drop(p_own);
     }
 }

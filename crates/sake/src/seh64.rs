@@ -1056,7 +1056,8 @@ mod tests {
     #[test]
     fn self_chained_unwind_info_ends() {
         let _g = crate::test_guest::enter();
-        let base = crate::mem::heap_alloc(0x1000, true);
+        let base_own = crate::mem::Scratch::new(0x1000, true);
+        let base = base_own.get();
         let f = base + 0x100;
         w32(f, 0);
         w32(f + 4, 0x10);
@@ -1068,15 +1069,16 @@ mod tests {
         w32(info + 4, 0);
         w32(info + 8, 0x10);
         w32(info + 12, 0x200);
-        let ctx = crate::mem::heap_alloc(CONTEXT_SIZE, true);
+        let ctx_own = crate::mem::Scratch::new(CONTEXT_SIZE, true);
+        let ctx = ctx_own.get();
         w64(ctx + 0x98, (base + 0x800) as u64);
         w64(base + 0x800, 0x1234_5678);
         let t = std::time::Instant::now();
         let _ = virtual_unwind(0, base, base as u64, f, ctx);
         assert!(t.elapsed().as_secs() < 2);
         assert_eq!(r64(ctx + 0xf8), 0x1234_5678, "the return address popped once");
-        crate::mem::heap_free(ctx);
-        crate::mem::heap_free(base);
+        drop(ctx_own);
+        drop(base_own);
     }
 
     // An SE translator's C++ exception is looked for in the translating frame alone (Windows'

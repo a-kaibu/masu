@@ -515,7 +515,8 @@ mod tests {
     #[test]
     fn huge_widths_are_clamped() {
         let _g = crate::test_guest::enter();
-        let a = mem::heap_alloc(16, true);
+        let a_own = mem::Scratch::new(16, true);
+        let a = a_own.get();
         mem::w32(a, 0x7fff_ffff);
         mem::w32(a + 4, 7);
         let args = Args { base: a };
@@ -527,7 +528,7 @@ mod tests {
             assert!(out.len() >= MAX_FIELD.min(64), "{spec}");
             assert!(t.elapsed() < std::time::Duration::from_secs(2), "{spec}");
         }
-        mem::heap_free(a);
+        drop(a_own);
     }
 
     proptest::proptest! {
@@ -541,7 +542,8 @@ mod tests {
                                        v in proptest::prop_oneof![proptest::prelude::any::<u32>(), 0u32..20, proptest::prelude::Just(0x8000_0000u32)],
                                        star in proptest::prelude::any::<bool>()) {
             let _g = crate::test_guest::enter();
-            let a = mem::heap_alloc(16, true);
+            let a_own = mem::Scratch::new(16, true);
+            let a = a_own.get();
             let mut spec: String = flags.iter().collect();
             let mut slots = vec![];
             if let Some(w) = width {
@@ -557,7 +559,7 @@ mod tests {
             }
             let w: Vec<u16> = spec.encode_utf16().collect();
             let got = String::from_utf16_lossy(&printf_insert(&w, &Args { base: a }, &mut 0, true));
-            mem::heap_free(a);
+            drop(a_own);
             let mut buf = [0u8; 256];
             let fmt = std::ffi::CString::new(format!("%{spec}")).unwrap();
             let n = unsafe {

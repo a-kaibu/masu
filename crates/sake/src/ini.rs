@@ -209,7 +209,7 @@ fn decode(b: &[u8]) -> Ini {
     let mut wide = false;
     let text = if b.starts_with(&[0xff, 0xfe]) {
         wide = true;
-        String::from_utf16_lossy(&b[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<_>>())
+        kome::le::utf16_lossy(&b[2..])
     } else if let Some(u) = b.strip_prefix(&[0xef, 0xbb, 0xbf]) {
         String::from_utf8_lossy(u).into_owned()
     } else {

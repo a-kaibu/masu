@@ -1532,13 +1532,14 @@ fn Begin(c: &mut Ctx) -> u32 {
         w32(out, r.1);
     }
     if flags & 1 == 0 {
-        let p = mem::heap_alloc(8, true);
+        let p_own = mem::Scratch::new(8, true);
+        let p = p_own.get();
         // CreateStateBlock(D3DSBT_ALL)
         if com_call(c, r.0, 59, &[1, p]) == 0 {
             let b = r32(p);
             with(this(c), |e| e.block = b);
         }
-        mem::heap_free(p);
+        drop(p_own);
     }
     0
 }
@@ -1643,9 +1644,11 @@ pub fn create(c: &mut Ctx, device: u32, data: &[u8]) -> Result<u32, String> {
         if o.data.len() < 8 || !matches!(o.ty, PT_VERTEXSHADER | PT_PIXELSHADER) {
             continue;
         }
-        let code = mem::heap_alloc(o.data.len() as u32, false);
+        let code_own = mem::Scratch::new(o.data.len() as u32, false);
+        let code = code_own.get();
         mem::write(code, &o.data);
-        let out = mem::heap_alloc(8, true);
+        let out_own = mem::Scratch::new(8, true);
+        let out = out_own.get();
         let m = if o.ty == PT_VERTEXSHADER { 91 } else { 106 };
         if com_call(c, device, m, &[code, out]) == 0 {
             o.created = r32(out);
@@ -1654,8 +1657,8 @@ pub fn create(c: &mut Ctx, device: u32, data: &[u8]) -> Result<u32, String> {
             }
             ctabs.insert(o.created, ctab(&o.data));
         }
-        mem::heap_free(out);
-        mem::heap_free(code);
+        drop(out_own);
+        drop(code_own);
     }
     let _ = PT_STRING;
     let nh = params.len() + techniques.len() + techniques.iter().map(|t| t.passes.len()).sum::<usize>();
@@ -1757,7 +1760,8 @@ mod lifetime_tests {
         let _g = enter();
         let o = effect();
         let (ht, hp, hb, hpass) = with(o, |e| (e.h_tech(0), e.h_param(e.top[0]), e.hbase, e.h_pass(0, 1))).unwrap();
-        let d = mem::heap_alloc(64, true);
+        let d_own = mem::Scratch::new(64, true);
+        let d = d_own.get();
         let mut seen = Vec::new();
         for _ in 0..50 {
             assert_eq!(call(GetTechniqueDesc, &[o, ht, d]), 0);
@@ -1780,7 +1784,7 @@ mod lifetime_tests {
             assert!(!mem::heap_owns(x));
         }
         // (once too often: nothing)
-        mem::heap_free(d);
+        drop(d_own);
     }
 }
 

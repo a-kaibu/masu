@@ -10,6 +10,8 @@
 //! The references are written from the specs, independent of the translators: the Direct3D 11.3
 //! functional spec (float, integer and conversion rules), the D3D9 instruction reference
 //! (ps_3_0), the HLSL constant packing rules, the GLSL 1.20 spec and std140 for GL.
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 
 // (a u32 count or offset as an index: lossless on every target, wasm32 and 64-bit hosts)
 const _: () = assert!(usize::BITS >= u32::BITS);

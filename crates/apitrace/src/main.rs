@@ -2,6 +2,8 @@
 //! Windows; cut short where the program was killed, unless -strict) as the call stream tests/replay/replay.c plays back (docs/replay.md);
 //! -max: the stream stops at the first call that takes it to that many bytes;
 //! apitrace dump <trace>: its calls
+// (Rust 1.97: a pub item nothing in the binary uses is dead; tests use more of it, so not under test)
+#![cfg_attr(not(test), warn(dead_code_pub_in_binary))]
 fn main() {
     let a: Vec<String> = std::env::args().collect();
     if a.len() == 3 && a[1] == "dump" {

@@ -779,7 +779,8 @@ mod tests {
     fn writes_past_the_limit_fail() {
         let _g = enter();
         let h = file(Vec::new(), true);
-        let src = mem::heap_alloc(16, true);
+        let src_own = mem::Scratch::new(16, true);
+        let src = src_own.get();
         assert_eq!(call(mmioSeek, &[h, 0x7000_0000, 0]), 0x7000_0000);
         // (a 1.8 GB Vec::resize before)
         assert_eq!(call(mmioWrite, &[h, src, 16]), u32::MAX);
@@ -791,7 +792,7 @@ mod tests {
         w32(ck + 16, MMIO_DIRTY);
         assert_eq!(call(mmioAscend, &[h, ck, 0]), 0);
         FILES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::default).remove(&h);
-        mem::heap_free(src);
+        drop(src_own);
         mem::heap_free(ck);
     }
 

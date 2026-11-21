@@ -2378,7 +2378,8 @@ mod review_tests {
     #[test]
     fn loader_entry_strings_are_freed() {
         let _g = crate::test_guest::enter();
-        let at = mem::heap_alloc(16, true);
+        let at_own = mem::Scratch::new(16, true);
+        let at = at_own.get();
         ustr_at(at, "C:\\game\\plugin_review.dll");
         let b = mem::rp(at + 4);
         assert!(mem::heap_owns(b) && mem::heap_size(b) >= 2 * 26);
@@ -2387,7 +2388,7 @@ mod review_tests {
         assert!(!mem::heap_free(b), "the buffer was freed already");
         // (none yet: nothing freed)
         ustr_free(at);
-        mem::heap_free(at);
+        drop(at_own);
     }
 
     /// Two threads asking for one of sake's DLLs at once (every thread start does) get one image.

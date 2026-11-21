@@ -304,7 +304,7 @@ impl Code {
     }
     /// [`MEMCOUNT`]: `MEM_COUNTS[slot] += 1` (balanced: it can go before any instruction).
     fn count_mem(&mut self, store: bool, off: u32) {
-        let at = &MEM_COUNTS[mem_count_slot(store, self.cpu_at, off)] as *const _ as usize as u32 as i32;
+        let at = lo32((&raw const MEM_COUNTS[mem_count_slot(store, self.cpu_at, off)]).expose_provenance()).cast_signed();
         self.b.push(0x41);
         sleb(&mut self.b, i64::from(at));
         self.b.push(0x41);

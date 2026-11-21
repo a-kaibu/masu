@@ -27,9 +27,11 @@ pub const CHUNK_MAX: u64 = 512 << 20;
 /// The first line: `vnvm-tree	2	<average chunk size>`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {
-    pub avg: u32,
+    pub avg: u64,
 }
 
+/// (the tests read a list's first line back with it; the readers take the lines after it: good_lines)
+#[cfg(test)]
 impl Header {
     pub fn parse(line: &str) -> Option<Header> {
         let mut f = line.split('\t');
@@ -187,6 +189,7 @@ pub struct Mode(u32);
 
 impl Mode {
     pub const DIR: Mode = Mode(0o755);
+    #[cfg(test)]
     pub const FILE: Mode = Mode(0o644);
     pub const LINK: Mode = Mode(0o777);
 
@@ -194,9 +197,11 @@ impl Mode {
     pub fn of(m: u32) -> Mode {
         Mode(m & 0o7777)
     }
+}
 
-    pub fn get(self) -> u32 {
-        self.0
+impl From<Mode> for u32 {
+    fn from(m: Mode) -> u32 {
+        m.0
     }
 }
 
@@ -490,7 +495,7 @@ mod tests {
                 Kind::File(c) => (1, c.size(), c.list().iter().map(|c| format!("{}:{}", c.id.map(|i| i.to_string()).unwrap_or_default(), c.len.get())).collect(), ""),
                 Kind::Link(t) => (2, 0, vec![], t.as_str()),
             };
-            prop_assert_eq!(l.to_string(), old::pack_line(kind, l.mode.get(), l.mtime, &l.path, size, &hashes, target));
+            prop_assert_eq!(l.to_string(), old::pack_line(kind, u32::from(l.mode), l.mtime, &l.path, size, &hashes, target));
         }
 
         /// The readers before, on any line pack writes: the same file, chunks and starts; the
@@ -500,7 +505,7 @@ mod tests {
             let text = l.to_string();
             let new = Line::parse(&text).expect("written");
             let k = old::kura_load_tree(&text).expect("kura read it");
-            prop_assert_eq!((k.1, k.2, &k.3), (new.mode.get(), new.mtime, &new.path));
+            prop_assert_eq!((k.1, k.2, &k.3), (u32::from(new.mode), new.mtime, &new.path));
             match &new.kind {
                 Kind::Dir => prop_assert_eq!((k.0, &k.4, &k.5), ('d', &None, &None)),
                 Kind::Link(t) => prop_assert_eq!((k.0, k.4.as_ref()), ('l', Some(t))),

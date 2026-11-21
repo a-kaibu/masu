@@ -6035,7 +6035,7 @@ fn translate_seen<M: Memory>(
     if PROFILE.load(core::sync::atomic::Ordering::Relaxed) && cfg!(target_pointer_width = "32") {
         let counts: &'static mut [u32] = alloc::boxed::Box::leak(alloc::vec![0u32; us(n)].into_boxed_slice());
         for (k, (a, list)) in blocks.iter().enumerate() {
-            let at = &counts[k] as *const u32 as usize as u32;
+            let at = kome::num::lo32((&raw const counts[k]).expose_provenance());
             g.prof.push(at);
             profile.push((*a, at, list.iter().map(profile_key).collect()));
         }

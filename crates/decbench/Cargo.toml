@@ -12,3 +12,8 @@ mpeg1 = { path = "../mpeg1" }
 vorbis = { path = "../vorbis" }
 png = "0.17"
 jpeg-decoder = { version = "0.3", default-features = false, features = ["platform_independent"] }
+
+[lints.rust]
+# (Rust 1.99: `&x as *const T` / `&mut x as *mut T` makes a reference first, with its aliasing
+# rules: write `&raw const x` / `&raw mut x`, or Box::as_ptr)
+raw_borrows_via_references = "warn"

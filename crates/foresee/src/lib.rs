@@ -88,9 +88,8 @@ pub fn xp3_index(index: &[u8]) -> Vec<Member> {
             match t {
                 b"info" if b.len() >= 22 => {
                     let n = u16::from_le_bytes([b[20], b[21]]) as usize;
-                    let units: Vec<u16> = b[22..].chunks_exact(2).take(n).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
-                    if units.len() == n {
-                        name = Some(String::from_utf16_lossy(&units));
+                    if let Some(units) = b.get(22..).and_then(|t| t.get(..n * 2)) {
+                        name = Some(kome::le::utf16_lossy(units));
                     }
                 }
                 b"adlr" => {
@@ -337,7 +336,7 @@ pub fn siglus_strings(scene: &[u8], xor: bool) -> Vec<String> {
         let start = list as usize + o as usize * 2;
         let Some(b) = scene.get(start..start + n as usize * 2) else { continue };
         let key = if xor { 28807u32.wrapping_mul(k as u32) as u16 } else { 0 };
-        out.push(String::from_utf16_lossy(&b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]) ^ key).collect::<Vec<u16>>()));
+        out.push(String::from_utf16_lossy(&kome::le::units16(b).map(|c| c ^ key).collect::<Vec<u16>>()));
     }
     out
 }
@@ -596,7 +595,7 @@ pub fn text(bytes: &[u8]) -> (Vec<u16>, bool) {
     if bytes.len() >= 5 && bytes[0] == 0xfe && bytes[1] == 0xfe && bytes[3] == 0xff && bytes[4] == 0xfe {
         let mode = bytes[2];
         let body = &bytes[5..];
-        let units = |b: &[u8]| b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect::<Vec<u16>>();
+        let units = |b: &[u8]| kome::le::units16(b).collect::<Vec<u16>>();
         return match mode {
             0 => (units(body).into_iter().map(|c| if c >= 0x20 { c ^ (((c & 0xfe) << 8) ^ 1) } else { c }).collect(), true),
             1 => (units(body).into_iter().map(|c| ((c & 0xaaaa) >> 1) | ((c & 0x5555) << 1)).collect(), true),
@@ -609,7 +608,7 @@ pub fn text(bytes: &[u8]) -> (Vec<u16>, bool) {
         };
     }
     if bytes.len() >= 2 && bytes[0] == 0xff && bytes[1] == 0xfe {
-        return (bytes[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect(), true);
+        return (kome::le::units16(&bytes[2..]).collect(), true);
     }
     (bytes.iter().map(|&b| b as u16).collect(), false)
 }

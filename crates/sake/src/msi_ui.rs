@@ -125,10 +125,11 @@ fn set_text(c: &mut Ctx, h: u32, s: &str) {
 
 fn get_text(c: &mut Ctx, h: u32) -> String {
     let n = g(c, "user32", "GetWindowTextLengthW", &[h]);
-    let p = mem::heap_alloc(2 * n + 2, true);
+    let p_own = mem::Scratch::new(2 * n + 2, true);
+    let p = p_own.get();
     g(c, "user32", "GetWindowTextW", &[h, p, n + 1]);
     let s = crate::k32::arg_str(p, true);
-    mem::heap_free(p);
+    drop(p_own);
     s
 }
 
@@ -324,13 +325,14 @@ fn init(c: &mut Ctx, key: u32, hwnd: u32) {
     let title = pkg.lock().unwrap().format(&d.get(6).text());
     set_text(c, hwnd, &title);
     // the size and place: the client area Width x Height, centred by H/VCentering (percent)
-    let rc = mem::heap_alloc(16, true);
+    let rc_own = mem::Scratch::new(16, true);
+    let rc = rc_own.get();
     w32(rc + 8, cw as u32);
     w32(rc + 12, ch as u32);
     let style = g(c, "user32", "GetWindowLongW", &[hwnd, (-16i32) as u32]);
     g(c, "user32", "AdjustWindowRectEx", &[rc, style, 0, 0]);
     let (ww, wh) = (r32(rc + 8) as i32 - r32(rc) as i32, r32(rc + 12) as i32 - r32(rc + 4) as i32);
-    mem::heap_free(rc);
+    drop(rc_own);
     let (sw, sh) = (g(c, "user32", "GetSystemMetrics", &[0]) as i32, g(c, "user32", "GetSystemMetrics", &[1]) as i32);
     let pct = |v: i32| v.clamp(0, 100);
     let (x, y) = ((sw - ww) * pct(d.get(1).int()) / 100, (sh - wh) * pct(d.get(2).int()) / 100);
@@ -663,9 +665,11 @@ fn take_input(c: &mut Ctx, key: u32, i: usize, code: u32) {
 
 fn paint(c: &mut Ctx, key: u32, hwnd: u32) {
     let Some((paints, progress)) = with(key, |d| (d.paints.clone(), d.progress)) else { return };
-    let ps = mem::heap_alloc(64, true);
+    let ps_own = mem::Scratch::new(64, true);
+    let ps = ps_own.get();
     let dc = g(c, "user32", "BeginPaint", &[hwnd, ps]);
-    let rc = mem::heap_alloc(16, true);
+    let rc_own = mem::Scratch::new(16, true);
+    let rc = rc_own.get();
     g(c, "user32", "GetClientRect", &[hwnd, rc]);
     let brush = crate::gdi::solid_brush(0xf0f0f0);
     g(c, "user32", "FillRect", &[dc, rc, brush]);
@@ -681,10 +685,11 @@ fn paint(c: &mut Ctx, key: u32, hwnd: u32) {
             "bitmap" if bm != 0 => {
                 let mdc = g(c, "gdi32", "CreateCompatibleDC", &[dc]);
                 let old = g(c, "gdi32", "SelectObject", &[mdc, bm]);
-                let info = mem::heap_alloc(32, true);
+                let info_own = mem::Scratch::new(32, true);
+                let info = info_own.get();
                 g(c, "gdi32", "GetObjectW", &[bm, 24, info]);
                 let (bw, bh) = (r32(info + 4), r32(info + 8));
-                mem::heap_free(info);
+                drop(info_own);
                 g(c, "gdi32", "SetStretchBltMode", &[dc, 4]);
                 g(c, "gdi32", "StretchBlt", &[dc, r.0 as u32, r.1 as u32, r.2 as u32, r.3 as u32, mdc, 0, 0, bw, bh, 0x00cc_0020]);
                 g(c, "gdi32", "SelectObject", &[mdc, old]);
@@ -704,9 +709,9 @@ fn paint(c: &mut Ctx, key: u32, hwnd: u32) {
             _ => {}
         }
     }
-    mem::heap_free(rc);
+    drop(rc_own);
     g(c, "user32", "EndPaint", &[hwnd, ps]);
-    mem::heap_free(ps);
+    drop(ps_own);
 }
 
 /// The dialogs' procedure.
@@ -859,7 +864,8 @@ pub fn dialog(c: &mut Ctx, p: &Arc<Mutex<Package>>, name: &str) -> u32 {
 
 /// The messages waiting for the modeless dialog (painting, its buttons).
 fn pump(c: &mut Ctx) {
-    let m = mem::heap_alloc(48, true);
+    let m_own = mem::Scratch::new(48, true);
+    let m = m_own.get();
     for _ in 0..64 {
         if g(c, "user32", "PeekMessageW", &[m, 0, 0, 0, 1]) == 0 {
             break;
@@ -867,7 +873,7 @@ fn pump(c: &mut Ctx) {
         g(c, "user32", "TranslateMessage", &[m]);
         g(c, "user32", "DispatchMessageW", &[m]);
     }
-    mem::heap_free(m);
+    drop(m_own);
 }
 
 /// Install messages for the modeless dialog's subscribers (EventMapping): ActionText (an
