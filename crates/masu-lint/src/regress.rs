@@ -405,3 +405,38 @@ pub(super) fn hand_lock(tree: &Tree) -> Hits {
     }
     out
 }
+
+// --- stage-run -------------------------------------------------------------------------------
+
+/// Where kura's Direct3D 11 draws and dispatches read each bound stage's shader (State::shaders:
+/// GS, HS, DS, CS): (file, what its code outside the tests says)
+pub const STAGE_READS: [(&str, &str); 5] = [
+    ("crates/kura/src/d3d11/expand.rs", "st.shaders[0]"),
+    ("crates/kura/src/d3d11/expand_tess.rs", "st.shaders[1]"),
+    ("crates/kura/src/d3d11/expand_tess.rs", "st.shaders[2]"),
+    ("crates/kura/src/d3d11/expand_tess.rs", "patch_points(st.topology)"),
+    ("crates/kura/src/d3d11/mod.rs", "st.shaders[3]"),
+];
+
+/// Each of STAGE_READS missing from its file's code (comments left out, and an inline
+/// #[cfg(test)] module and what follows it): a stage bound and never run.
+pub(super) fn stage_run(tree: &Tree) -> Hits {
+    let mut out = Hits::new();
+    for (file, want) in STAGE_READS {
+        let f = Rel::new(file);
+        let code = tree.code(&f, true);
+        let mut end = code.len();
+        for (at, _) in code.match_indices("#[cfg(test)]") {
+            let rest = code.get(at.saturating_add(12)..).unwrap_or_default().trim_start();
+            let inline = rest.starts_with("mod ") && rest.find('{').is_some_and(|b| rest.find(';').is_none_or(|s| b < s));
+            if inline {
+                end = at;
+                break;
+            }
+        }
+        if !code.get(..end).unwrap_or_default().contains(want) {
+            out.push((f, 1, format!("no `{want}` in the code: the stage it binds is never run")));
+        }
+    }
+    out
+}

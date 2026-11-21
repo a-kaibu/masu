@@ -1181,21 +1181,8 @@ fn d3d9_token_fields_do_not_overflow() {
     let _ = try_compile(src, "ps_3_0");
 }
 
-/// The HLSL of a winref probe (its `SRC` string literal), so that what Windows compiles there
-/// is what sake's D3DCompile compiles here.
 fn probe_hlsl(c: &str) -> String {
-    let start = c.find("static const char *SRC =").expect("SRC");
-    let mut out = String::new();
-    for line in c[start..].lines().skip(1) {
-        let t = line.trim();
-        let Some(body) = t.strip_prefix('"') else { break };
-        let end = body.rfind('"').expect("closing quote");
-        out.push_str(&body[..end].replace("\\n", "\n").replace("\\\"", "\""));
-        if t.ends_with(';') {
-            break;
-        }
-    }
-    out
+    super::probe_source(c)
 }
 
 fn valid(w: &str) {
@@ -1444,4 +1431,46 @@ fn hull_shader_errors() {
     assert!(super::compile(&hs(ok, "return ip[c];"), &[], &mut inc, "hs", "hs_4_0", 0).is_err());
     // (SV_TessFactor outside the patch constants)
     assert!(super::compile("float4 vs(float f : SV_TessFactor) : SV_Position { return f; }", &[], &mut inc, "vs", "vs_5_0", 0).is_err());
+}
+
+#[test]
+fn tessellation_passes_of_the_d3d11tess_probe() {
+    use dxwgsl::expand;
+    let src = probe_hlsl(include_str!("../../../tests/winref/probes/d3d11tess.c"));
+    let vs = compile(&src, "vs", "vs_5_0");
+    let vs_osgn = dxwgsl::signature(&vs, true);
+    let vregs = expand::store_regs(&vs_osgn, 0);
+    for (hs, ds) in [
+        ("hs_tri_int", "ds_tri"),
+        ("hs_tri_odd", "ds_tri"),
+        ("hs_quad_even", "ds_quad"),
+        ("hs_quad_point", "ds_quad"),
+        ("hs_line_int", "ds_line"),
+        ("hs_line_point", "ds_line"),
+        ("hs_tri_max", "ds_tri"),
+        ("hs_tri_one", "ds_tri_one"),
+    ] {
+        let h = compile(&src, hs, "hs_5_0");
+        let d = compile(&src, ds, "ds_5_0");
+        let t = expand::tess_decl(&h).unwrap_or_else(|e| panic!("{hs}: {e}"));
+        assert!(t.hull && t.cp_phase && t.forks == [1] && t.joins.is_empty(), "{hs}: {t:?}");
+        assert_eq!(t.factors.len(), match t.domain { 1 => 2, 2 => 4, _ => 6 }, "{hs}: {t:?}");
+        let dt = expand::tess_decl(&d).unwrap_or_else(|e| panic!("{ds}: {e}"));
+        assert!(!dt.hull && dt.domain == t.domain && dt.in_cps == t.out_cps, "{ds}: {dt:?}");
+        valid(&expand::hs_pass(&h, &vs_osgn, vregs).unwrap_or_else(|e| panic!("{hs}: {e}")).code);
+        let out = expand::HsOut::of(&h).unwrap();
+        valid(&expand::ds_pass(&d, &out).unwrap_or_else(|e| panic!("{ds}: {e}")).code);
+        // (what the domain shader writes is a store as the vertex shader's)
+        let dosgn = dxwgsl::signature(&d, true);
+        let store = expand::Store::Vertex { regs: expand::store_regs(&dosgn, 0), corners: 3 };
+        let decls = [expand::SoEntry { stream: 0, name: Some("L".into()), index: 0, start: 0, count: 4, slot: 0 }, expand::SoEntry { stream: 0, name: Some("B".into()), index: 0, start: 0, count: 4, slot: 0 }];
+        valid(&expand::so_pass(&store, &dosgn, &decls, &[32, 0, 0, 0]).unwrap().code);
+    }
+    // (a hull shader is not a domain shader's, and the other way)
+    let h = compile(&src, "hs_tri_int", "hs_5_0");
+    let d = compile(&src, "ds_tri", "ds_5_0");
+    assert!(expand::hs_pass(&d, &vs_osgn, vregs).is_err());
+    assert!(expand::ds_pass(&h, &expand::HsOut::of(&h).unwrap()).is_err());
+    assert!(expand::HsOut::of(&d).is_err());
+    assert!(expand::tess_decl(&vs).is_err());
 }

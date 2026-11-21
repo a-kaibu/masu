@@ -1938,10 +1938,18 @@ impl<'a> L<'a> {
         let mut all = Vec::new();
         for v in 0..n {
             for &(c, ocp) in &regs {
-                all.push(match c {
-                    C::R(Reg { f: RegF::Input(r), rel }, l) if !ocp => C::R(Reg { f: RegF::Icp(v, r), rel }, l),
-                    C::R(Reg { f: RegF::Output(r), rel }, l) if ocp => C::R(Reg { f: RegF::Ocp(v, r), rel }, l),
-                    c => c,
+                // (an input register of the patch's point v: vicp[v][r]; an output one: vocp[v][r])
+                all.push(if let C::R(Reg { f, rel }, l) = c {
+                    let f = if let (RegF::Input(r), false) = (f, ocp) {
+                        RegF::Icp(v, r)
+                    } else if let (RegF::Output(r), true) = (f, ocp) {
+                        RegF::Ocp(v, r)
+                    } else {
+                        f
+                    };
+                    C::R(Reg { f, rel }, l)
+                } else {
+                    c
                 });
             }
         }

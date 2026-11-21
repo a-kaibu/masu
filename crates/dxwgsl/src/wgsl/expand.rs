@@ -809,6 +809,10 @@ pub fn is_gs(code: &[u8]) -> bool {
     parse(code).is_ok_and(|(_, p)| p.kind == tpf::GEOMETRY)
 }
 
+#[path = "expand_tess.rs"]
+mod tess;
+pub use tess::{ds_pass, hs_cp_regs, hs_pass, tess_decl, HsOut, B_DPTS, B_HCP, B_HPC, DPT};
+
 #[cfg(test)]
 #[path = "expand_tests.rs"]
 mod tests;

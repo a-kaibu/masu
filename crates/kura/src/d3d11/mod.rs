@@ -2387,7 +2387,8 @@ unsafe fn device_call(d: &mut D11, m: u32, this: u32, a: &dyn Fn(usize) -> u32) 
                 }
                 hr
             };
-            if a(1) != 0 && !gs && check::shader(&code, 12, d.level).is_err() {
+            // (stream output of a vertex or domain shader: no geometry shader of its own)
+            if a(1) != 0 && !gs && check::shader(&code, 12, d.level).is_err() && check::shader(&code, 17, d.level).is_err() {
                 return fail(E_INVALIDARG);
             }
             // D3D11_SO_DECLARATION_ENTRY { Stream, SemanticName, SemanticIndex, Start, Count, Slot }

@@ -1124,7 +1124,10 @@ fn program(s: &mut Shader) -> Result<Vec<u32>, String> {
         for i in fork {
             e.ins(&mut w, i)?;
         }
-        w[1] = kome::num::u32_of(w.len());
+        let n = kome::num::u32_of(w.len());
+        if let Some(len) = w.get_mut(1) {
+            *len = n;
+        }
         return Ok(w);
     }
     sys_decls(&mut w, &s.sys_inputs);

@@ -61,10 +61,11 @@ pub enum Rule {
     KaniFeatures,
     UncheckedOutput,
     HandLock,
+    StageRun,
 }
 
 impl Rule {
-    pub const ALL: [Rule; 44] = [
+    pub const ALL: [Rule; 45] = [
         Rule::BuildOutput,
         Rule::HresultCopy,
         Rule::KomeCopy,
@@ -109,6 +110,7 @@ impl Rule {
         Rule::KaniFeatures,
         Rule::UncheckedOutput,
         Rule::HandLock,
+        Rule::StageRun,
     ];
 
     /// the name a site list and a message use
@@ -158,6 +160,7 @@ impl Rule {
             Rule::KaniFeatures => "kani-features",
             Rule::UncheckedOutput => "unchecked-output",
             Rule::HandLock => "hand-lock",
+            Rule::StageRun => "stage-run",
         }
     }
 
@@ -207,6 +210,7 @@ impl Rule {
             Rule::KaniFeatures => "a crate formal/kani.sh compiles (or links) names the Rust 1.100 library features Kani's older nightly has unstable in `#![cfg_attr(kani, feature(..))]` in its lib.rs (2026-11-21: Vec::from_fn stopped every proof; review e18bf44)",
             Rule::UncheckedOutput => "a command's stdout is its answer only when its exit status says it worked: check `.status.success()` (an empty `git ls-files` from a copy without .git was \"no files\"; review e18bf44)",
             Rule::HandLock => "a lock between processes is a lock file opened through masu's lockfile::LockFile: Windows' File::open opens no directory, and the store's writers locked the store directory itself (`masu add` failed on Windows; review e18bf44)",
+            Rule::StageRun => "every shader stage a Direct3D 11 context binds runs where its draws or dispatches do (review e18bf44: hull and domain shaders were made and bound but never run, a patch list drawn as if they were not there): the draw path reads each of State::shaders (regress::STAGE_READS: GS, HS and DS in expand.rs / expand_tess.rs, CS in dispatch) and patch lists go through expand_tess.rs's patch_points",
             Rule::HandStd => "what the standard library names since Rust 1.98..1.100 is not written by hand (2026-11-21: 10 toggles, 3 trim_prefix, 136 map_or_default, 13 ok_or, 19 Vec::from_fn replaced): x.toggle(), s.trim_prefix(p), o.map_or_default(f), c.ok_or(e), Vec::from_fn(v.len(), f)",
         }
     }
@@ -257,6 +261,7 @@ impl Rule {
             Rule::KaniFeatures => regress::kani_features(tree),
             Rule::UncheckedOutput => regress::unchecked_output(tree),
             Rule::HandLock => regress::hand_lock(tree),
+            Rule::StageRun => regress::stage_run(tree),
         };
         hits.into_iter().map(|(file, line, what)| Finding { rule: self, file, line, what }).collect()
     }

@@ -138,8 +138,130 @@ impl GsDecl {
     }
 }
 
+/// A hull shader's phases (hs_decls, hs_control_point_phase, hs_fork_phase, hs_join_phase):
+/// the declarations and instructions after a phase's opcode, up to the next, are that phase's.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Phase {
+    Decls,
+    ControlPoint,
+    Fork,
+    Join,
+}
+
+impl Phase {
+    /// The phase a hull shader's phase opcode starts (None: another opcode).
+    pub fn of(op: Opcode) -> Option<Phase> {
+        [(Opcode::HsDecls, Phase::Decls), (Opcode::HsControlPointPhase, Phase::ControlPoint), (Opcode::HsForkPhase, Phase::Fork), (Opcode::HsJoinPhase, Phase::Join)].into_iter().find(|p| p.0 == op).map(|p| p.1)
+    }
+}
+
+/// A tess factor a hull shader's fork or join phase writes (dcl_output_siv's
+/// D3D11_SB_NAME, 11..22), the tessellator reads and a domain shader may read back.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+pub enum TessFactor {
+    /// finalQuadUeq0EdgeTessFactor .. finalQuadVeq1EdgeTessFactor (SV_TessFactor[0..4])
+    QuadU0,
+    QuadV0,
+    QuadU1,
+    QuadV1,
+    /// finalQuadUInsideTessFactor, finalQuadVInsideTessFactor (SV_InsideTessFactor[0..2])
+    QuadInsideU,
+    QuadInsideV,
+    /// finalTriUeq0EdgeTessFactor .. finalTriWeq0EdgeTessFactor (SV_TessFactor[0..3])
+    TriU0,
+    TriV0,
+    TriW0,
+    /// finalTriInsideTessFactor
+    TriInside,
+    /// finalLineDetailTessFactor, finalLineDensityTessFactor
+    LineDetail,
+    LineDensity,
+}
+
+impl TessFactor {
+    /// Of a declaration's D3D11_SB_NAME (None: not a tess factor).
+    pub fn of(name: u32) -> Option<TessFactor> {
+        Some(match name {
+            11 => TessFactor::QuadU0,
+            12 => TessFactor::QuadV0,
+            13 => TessFactor::QuadU1,
+            14 => TessFactor::QuadV1,
+            15 => TessFactor::QuadInsideU,
+            16 => TessFactor::QuadInsideV,
+            17 => TessFactor::TriU0,
+            18 => TessFactor::TriV0,
+            19 => TessFactor::TriW0,
+            20 => TessFactor::TriInside,
+            21 => TessFactor::LineDetail,
+            22 => TessFactor::LineDensity,
+            _ => return None,
+        })
+    }
+
+    /// The domain (dcl_tessellator_domain: 1 isoline, 2 tri, 3 quad) it is a factor of.
+    pub fn domain(self) -> u32 {
+        match self {
+            TessFactor::LineDetail | TessFactor::LineDensity => 1,
+            TessFactor::TriU0 | TessFactor::TriV0 | TessFactor::TriW0 | TessFactor::TriInside => 2,
+            TessFactor::QuadU0 | TessFactor::QuadV0 | TessFactor::QuadU1 | TessFactor::QuadV1 | TessFactor::QuadInsideU | TessFactor::QuadInsideV => 3,
+        }
+    }
+}
+
+/// Patch constant registers: o0..o31 of a hull shader's fork and join phases, vpc0..vpc31.
+pub const PATCH_CONSTANTS: u32 = 32;
+
+/// A hull or domain shader's declarations.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TessDecl {
+    /// a hull shader (false: a domain shader)
+    pub hull: bool,
+    /// dcl_tessellator_domain (1 isoline, 2 tri, 3 quad)
+    pub domain: u32,
+    /// a hull shader's dcl_tessellator_partitioning (1 integer, 2 pow2, 3 fractional_odd,
+    /// 4 fractional_even) and dcl_tessellator_output_primitive (1 point, 2 line, 3
+    /// triangle_cw, 4 triangle_ccw)
+    pub partitioning: u32,
+    pub output: u32,
+    /// dcl_input_control_point_count (1..32), a hull shader's dcl_output_control_point_count
+    /// (0..32)
+    pub in_cps: u32,
+    pub out_cps: u32,
+    /// dcl_hs_max_tessfactor
+    pub max_tess: Option<f32>,
+    /// the instance counts of the fork phases and of the join phases, in their order
+    pub forks: Vec<u32>,
+    pub joins: Vec<u32>,
+    /// a control point phase (none: the input control points are the output ones)
+    pub cp_phase: bool,
+    /// patch constant registers (mask): a hull shader's fork and join phases' outputs, a
+    /// domain shader's vpc inputs
+    pub pc: BTreeMap<u32, u32>,
+    /// the tess factors among them: register, component
+    pub factors: Vec<(TessFactor, u32, u8)>,
+    /// vicp's and vocp's registers declared (mask)
+    pub icp: BTreeMap<u32, u32>,
+    pub ocp: BTreeMap<u32, u32>,
+}
+
+impl TessDecl {
+    /// The patch constant registers a patch keeps: the highest written + 1 (at least 1).
+    pub fn pc_regs(&self) -> u32 {
+        self.pc.keys().next_back().map_or(1, |r| r.saturating_add(1))
+    }
+
+    /// The control points a hull shader's patch has after it: its output control points (none
+    /// declared: its input ones, passed through).
+    pub fn out_points(&self) -> u32 {
+        if self.out_cps != 0 { self.out_cps } else { self.in_cps }
+    }
+}
+
 struct W {
     pixel: bool,
+    /// a hull or domain shader, and the phase being read (hull shaders)
+    tess: Option<TessDecl>,
+    phase: Phase,
     /// a geometry shader (run as a compute shader: wgsl.rs gs_pass)
     gs: Option<GsDecl>,
     /// the stream the declarations being read are of (dcl_stream)
@@ -207,12 +329,147 @@ pub const BUFFER_RANGES: u32 = 498;
 
 /// The declarations of a program, read into `w`.
 fn declarations(w: &mut W, p: &Program) -> R<()> {
+    let tess = p.kind == tpf::HULL || p.kind == tpf::DOMAIN;
+    if tess {
+        w.tess = Some(TessDecl { hull: p.kind == tpf::HULL, ..TessDecl::default() });
+    }
+    w.phase = Phase::Decls;
+    // (hs_decls seen: there is one)
+    let mut hs_decls = false;
     for i in &p.insts {
         match i.op {
-            Opcode::DclTemps => w.temps = i.extra.first().copied().unwrap_or(0),
+            // (each phase of a hull shader its own temps: as many as the most of them)
+            Opcode::DclTemps => w.temps = w.temps.max(i.extra.first().copied().unwrap_or(0)),
             Opcode::DclIndexableTemp => {
-                if i.extra.len() >= 2 {
-                    w.xs.insert(i.extra[0], i.extra[1]);
+                if let [x, n, ..] = i.extra[..] {
+                    let e = w.xs.entry(x).or_insert(n);
+                    *e = (*e).max(n);
+                }
+            }
+            Opcode::HsDecls | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase => {
+                let Some(t) = w.tess.as_mut().filter(|t| t.hull) else { return Err(format!("hull shader phase {:#x} outside a hull shader", i.code)) };
+                let Some(next) = Phase::of(i.op) else { return Err(format!("opcode {:#x} is no phase", i.code)) };
+                // (in the order hs_decls, the control point phase, fork phases, join phases)
+                let rank = |ph: Phase| match ph {
+                    Phase::Decls => 0,
+                    Phase::ControlPoint => 1,
+                    Phase::Fork => 2,
+                    Phase::Join => 3,
+                };
+                let again = match next {
+                    Phase::Decls => std::mem::replace(&mut hs_decls, true),
+                    Phase::ControlPoint => w.phase == Phase::ControlPoint,
+                    Phase::Fork | Phase::Join => false,
+                };
+                if rank(next) < rank(w.phase) || again {
+                    return Err(format!("hull shader phase {next:?} after {:?}", w.phase));
+                }
+                match next {
+                    Phase::ControlPoint => t.cp_phase = true,
+                    Phase::Fork => t.forks.push(1),
+                    Phase::Join => t.joins.push(1),
+                    Phase::Decls => {}
+                }
+                w.phase = next;
+            }
+            Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount => {
+                let n = i.extra.first().copied().unwrap_or(0);
+                let (want, list) = match (i.op, w.tess.as_mut()) {
+                    (Opcode::DclHsForkPhaseInstanceCount, Some(t)) => (Phase::Fork, &mut t.forks),
+                    (_, Some(t)) => (Phase::Join, &mut t.joins),
+                    (_, None) => return Err("a phase instance count outside a hull shader".into()),
+                };
+                if w.phase != want || n == 0 || n > PATCH_CONSTANTS {
+                    return Err(format!("{want:?} phase instance count {n}"));
+                }
+                if let Some(last) = list.last_mut() {
+                    *last = n;
+                }
+            }
+            Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount | Opcode::DclTessDomain | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive => {
+                let Some(t) = w.tess.as_mut() else { return Err(format!("tessellation declaration {:#x} outside a hull or domain shader", i.code)) };
+                let v = i.ctl & 0x3f;
+                let slot = if i.op == Opcode::DclInputControlPointCount {
+                    &mut t.in_cps
+                } else if i.op == Opcode::DclOutputControlPointCount {
+                    &mut t.out_cps
+                } else if i.op == Opcode::DclTessDomain {
+                    &mut t.domain
+                } else if i.op == Opcode::DclTessPartitioning {
+                    &mut t.partitioning
+                } else {
+                    &mut t.output
+                };
+                *slot = v;
+            }
+            Opcode::DclHsMaxTessFactor => {
+                let Some(t) = w.tess.as_mut().filter(|t| t.hull) else { return Err("dcl_hs_max_tessfactor outside a hull shader".into()) };
+                let f = f32::from_bits(i.extra.first().copied().unwrap_or(0));
+                if !(1.0..=64.0).contains(&f) {
+                    return Err(format!("dcl_hs_max_tessfactor {f}"));
+                }
+                t.max_tess = Some(f);
+            }
+            Opcode::DclInput | Opcode::DclInputSgv | Opcode::DclInputSiv if tess => {
+                let o = i.op(0)?;
+                let reg_of = |k: usize| match o.idx.get(k) {
+                    Some(Index::Imm(r)) => Ok(*r),
+                    _ => Err(format!("a declaration of input type {} without its register", o.ty)),
+                };
+                let mask = u32::from(o.mask());
+                let ph = w.phase;
+                let Some(t) = w.tess.as_mut() else { return Err("no tessellation declarations".into()) };
+                match o.ty {
+                    tpf::INPUT_CONTROL_POINT => *t.icp.entry(reg_of(1)?).or_insert(0) |= mask,
+                    tpf::OUTPUT_CONTROL_POINT if t.hull && matches!(ph, Phase::Fork | Phase::Join) => *t.ocp.entry(reg_of(1)?).or_insert(0) |= mask,
+                    // (a domain shader's patch constants; a join phase's: the fork phases' outputs)
+                    tpf::INPUT_PATCH_CONSTANT if !t.hull || ph == Phase::Join => {
+                        let r = reg_of(0)?;
+                        if !t.hull {
+                            *t.pc.entry(r).or_insert(0) |= mask;
+                            if let Some(f) = TessFactor::of(i.extra.first().copied().unwrap_or(0)).filter(|_| i.op == Opcode::DclInputSiv) {
+                                t.factors.push((f, r, bits(mask).first().copied().unwrap_or(0)));
+                            }
+                        }
+                    }
+                    tpf::OUTPUT_CONTROL_POINT_ID if t.hull && ph == Phase::ControlPoint => {
+                        w.sys_in.insert(o.ty);
+                    }
+                    tpf::INPUT_FORK_INSTANCE_ID if t.hull && ph == Phase::Fork => {
+                        w.sys_in.insert(o.ty);
+                    }
+                    tpf::INPUT_JOIN_INSTANCE_ID if t.hull && ph == Phase::Join => {
+                        w.sys_in.insert(o.ty);
+                    }
+                    tpf::INPUT_DOMAIN_POINT if !t.hull => {
+                        w.sys_in.insert(o.ty);
+                    }
+                    tpf::INPUT_PRIMITIVEID => {
+                        w.sys_in.insert(o.ty);
+                    }
+                    ty => return Err(format!("input register type {ty} in a {} shader's {ph:?} phase", if t.hull { "hull" } else { "domain" })),
+                }
+            }
+            Opcode::DclOutput | Opcode::DclOutputSgv | Opcode::DclOutputSiv if w.tess.as_ref().is_some_and(|t| t.hull) && matches!(w.phase, Phase::Fork | Phase::Join) => {
+                // (the fork and join phases' outputs are the patch constants)
+                let o = i.op(0)?;
+                if o.ty != tpf::OUTPUT || o.reg() >= PATCH_CONSTANTS {
+                    return Err(format!("patch constant output of type {} register {}", o.ty, o.reg()));
+                }
+                let mask = u32::from(o.mask());
+                let name = if i.op == Opcode::DclOutput { 0 } else { i.extra.first().copied().unwrap_or(0) };
+                let Some(t) = w.tess.as_mut() else { return Err("no tessellation declarations".into()) };
+                *t.pc.entry(o.reg()).or_insert(0) |= mask;
+                if let Some(f) = TessFactor::of(name) {
+                    let c = bits(mask);
+                    let [c] = c[..] else { return Err(format!("tess factor {f:?} in {} components", c.len())) };
+                    if f.domain() != t.domain {
+                        return Err(format!("tess factor {f:?} of a domain {} hull shader", t.domain));
+                    }
+                    if t.factors.iter().any(|e| e.0 == f) {
+                        return Err(format!("tess factor {f:?} declared twice"));
+                    }
+                    t.factors.push((f, o.reg(), c));
                 }
             }
             Opcode::DclConstantBuffer => {
@@ -350,6 +607,9 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
                     t => return Err(format!("output register type {t}")),
                 }
             }
+            // (a hull or domain shader's arrays (vicp, vocp, vpc, the patch constants) are
+            // indexed as they are; other stages' inputs and outputs are a variable each)
+            Opcode::DclIndexRange if tess => {}
             Opcode::DclIndexRange => return Err("indexed input/output ranges".into()),
             Opcode::DclThreadGroup if p.kind == tpf::COMPUTE => {
                 let [x, y, z] = i.extra[..] else { return Err("dcl_thread_group without 3 sizes".into()) };
@@ -412,13 +672,12 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
             | Opcode::SampleCLz | Opcode::SampleL | Opcode::SampleD | Opcode::SampleB | Opcode::Sqrt | Opcode::Switch | Opcode::SinCos
             | Opcode::Udiv | Opcode::Ult | Opcode::Uge | Opcode::Umul | Opcode::Umad | Opcode::Umax | Opcode::Umin
             | Opcode::Ushr | Opcode::Utof | Opcode::Xor | Opcode::DclGsOutputPrimitiveTopology | Opcode::DclGsInputPrimitive | Opcode::DclMaxOutputVertexCount | Opcode::DclGlobalFlags
-            | Opcode::Reserved10 | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101 | Opcode::HsDecls
-            | Opcode::HsControlPointPhase | Opcode::HsForkPhase | Opcode::HsJoinPhase | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream | Opcode::InterfaceCall
+            | Opcode::Reserved10 | Opcode::Lod | Opcode::Gather4 | Opcode::SamplePos | Opcode::SampleInfo | Opcode::Reserved101
+            | Opcode::EmitStream | Opcode::CutStream | Opcode::EmitThenCutStream | Opcode::InterfaceCall
             | Opcode::BufInfo | Opcode::DerivRtxCoarse | Opcode::DerivRtxFine | Opcode::DerivRtyCoarse | Opcode::DerivRtyFine | Opcode::Gather4C | Opcode::Gather4Po
             | Opcode::Gather4PoC | Opcode::Rcp | Opcode::F32ToF16 | Opcode::F16ToF32 | Opcode::Uaddc | Opcode::Usubb | Opcode::CountBits
             | Opcode::FirstBitHi | Opcode::FirstBitLo | Opcode::FirstBitShi | Opcode::Ubfe | Opcode::Ibfe | Opcode::Bfi | Opcode::Bfrev
-            | Opcode::Swapc | Opcode::DclStream | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclInputControlPointCount | Opcode::DclOutputControlPointCount
-            | Opcode::DclTessDomain | Opcode::DclTessPartitioning | Opcode::DclTessOutputPrimitive | Opcode::DclHsMaxTessFactor | Opcode::DclHsForkPhaseInstanceCount | Opcode::DclHsJoinPhaseInstanceCount | Opcode::DclThreadGroup
+            | Opcode::Swapc | Opcode::DclStream | Opcode::DclFunctionBody | Opcode::DclFunctionTable | Opcode::DclInterface | Opcode::DclThreadGroup
             | Opcode::LdUavTyped | Opcode::StoreUavTyped | Opcode::LdRaw | Opcode::StoreRaw | Opcode::LdStructured | Opcode::StoreStructured | Opcode::AtomicAnd
             | Opcode::AtomicOr | Opcode::AtomicXor | Opcode::AtomicCmpStore | Opcode::AtomicIadd | Opcode::AtomicImax | Opcode::AtomicImin | Opcode::AtomicUmax
             | Opcode::AtomicUmin | Opcode::ImmAtomicAlloc | Opcode::ImmAtomicConsume | Opcode::ImmAtomicIadd | Opcode::ImmAtomicAnd | Opcode::ImmAtomicOr | Opcode::ImmAtomicXor
@@ -439,6 +698,10 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
             return Err("a geometry shader without dcl_outputtopology".into());
         }
     }
+    if let Some(t) = &w.tess {
+        tess_checks(t)?;
+    }
+    w.phase = Phase::Decls;
     if p.kind == tpf::COMPUTE {
         if w.threads.is_none() {
             return Err("a compute shader without dcl_thread_group".into());
@@ -475,6 +738,46 @@ fn declarations(w: &mut W, p: &Program) -> R<()> {
     Ok(())
 }
 
+/// A hull or domain shader's declarations within Direct3D 11's: a domain, a hull shader's
+/// partitioning and an output primitive its domain makes, 1..32 input control points (0..32
+/// output ones), every tess factor of its domain written by one of its phases.
+fn tess_checks(t: &TessDecl) -> R<()> {
+    if !(1..=3).contains(&t.domain) {
+        return Err(format!("tessellator domain {}", t.domain));
+    }
+    if !(1..=32).contains(&t.in_cps) {
+        return Err(format!("{} input control points", t.in_cps));
+    }
+    if !t.hull {
+        return Ok(());
+    }
+    if !(1..=4).contains(&t.partitioning) {
+        return Err(format!("tessellator partitioning {}", t.partitioning));
+    }
+    // (isolines make points or lines, tris and quads points or triangles)
+    let fits = match t.output {
+        1 => true,
+        2 => t.domain == 1,
+        3 | 4 => t.domain != 1,
+        _ => false,
+    };
+    if !fits {
+        return Err(format!("tessellator output primitive {} of domain {}", t.output, t.domain));
+    }
+    if t.out_cps > 32 || (t.cp_phase && t.out_cps == 0) {
+        return Err(format!("{} output control points", t.out_cps));
+    }
+    let want: &[TessFactor] = match t.domain {
+        1 => &[TessFactor::LineDetail, TessFactor::LineDensity],
+        2 => &[TessFactor::TriU0, TessFactor::TriV0, TessFactor::TriW0, TessFactor::TriInside],
+        _ => &[TessFactor::QuadU0, TessFactor::QuadV0, TessFactor::QuadU1, TessFactor::QuadV1, TessFactor::QuadInsideU, TessFactor::QuadInsideV],
+    };
+    if let Some(f) = want.iter().find(|f| !t.factors.iter().any(|e| e.0 == **f)) {
+        return Err(format!("a hull shader that writes no {f:?}"));
+    }
+    Ok(())
+}
+
 /// Every register an instruction names is declared, and the declarations are within the
 /// Direct3D 11 limits (4096 temps, 32 inputs/outputs, 15 constant buffers of 4096 vectors,
 /// 128 resources, 16 samplers): bytecode that is not is rejected, not translated to WGSL
@@ -494,7 +797,57 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
     if (w.depth_out || w.mask_out) && p.kind != tpf::PIXEL {
         return Err("oDepth or oMask outside a pixel shader".into());
     }
-    fn check(w: &W, o: &Operand) -> R<()> {
+    fn check(w: &W, ph: Phase, o: &Operand) -> R<()> {
+        let rel_ok = |w: &W, o: &Operand| -> R<()> {
+            for i in &o.idx {
+                if let Index::Rel(r, _) = i {
+                    if !matches!(r.ty, tpf::TEMP | tpf::INDEXABLE_TEMP | tpf::IMM32) {
+                        return Err(format!("register of type {} as an index", r.ty));
+                    }
+                    check(w, ph, r)?;
+                }
+            }
+            Ok(())
+        };
+        if let Some(t) = &w.tess {
+            // (vicp[point][register], vocp[point][register], vpc[register], a fork or join
+            // phase's o[register]: arrays, indexed by immediates or registers)
+            let arr = match o.ty {
+                tpf::INPUT_CONTROL_POINT => Some((&t.icp, Some(t.in_cps), "vicp")),
+                tpf::OUTPUT_CONTROL_POINT if t.hull && matches!(ph, Phase::Fork | Phase::Join) => Some((&t.ocp, Some(t.out_cps), "vocp")),
+                tpf::INPUT_PATCH_CONSTANT if !t.hull || ph == Phase::Join => Some((&t.pc, None, "vpc")),
+                tpf::OUTPUT if t.hull && matches!(ph, Phase::Fork | Phase::Join) => Some((&t.pc, None, "o")),
+                _ => None,
+            };
+            if let Some((regs, points, name)) = arr {
+                let want = if points.is_some() { 2 } else { 1 };
+                if o.idx.len() != want {
+                    return Err(format!("{name} with {} indices", o.idx.len()));
+                }
+                if let (Some(n), Some(Index::Imm(k))) = (points, o.idx.first()) && *k >= n {
+                    return Err(format!("{name}[{k}] past the {n} control points"));
+                }
+                match o.idx.last() {
+                    Some(Index::Imm(r)) if !regs.contains_key(r) && (name != "vicp" || !w.isgn.iter().any(|e| e.reg == *r)) => {
+                        return Err(format!("{name}[{r}] is not declared"));
+                    }
+                    Some(Index::Imm(r)) if *r >= PATCH_CONSTANTS => return Err(format!("{name}[{r}] past the 32 registers")),
+                    _ => {}
+                }
+                return rel_ok(w, o);
+            }
+            match o.ty {
+                tpf::OUTPUT_CONTROL_POINT_ID | tpf::INPUT_FORK_INSTANCE_ID | tpf::INPUT_JOIN_INSTANCE_ID | tpf::INPUT_DOMAIN_POINT | tpf::INPUT_PRIMITIVEID => {
+                    if !w.sys_in.contains(&o.ty) {
+                        return Err(format!("input {} is not declared", o.ty));
+                    }
+                    return (o.idx.is_empty()).ok_or_else(|| format!("operand of type {} with {} indices", o.ty, o.idx.len()));
+                }
+                tpf::INPUT | tpf::OUTPUT_CONTROL_POINT | tpf::INPUT_PATCH_CONSTANT => return Err(format!("register type {} in a {} shader's {ph:?} phase", o.ty, if t.hull { "hull" } else { "domain" })),
+                tpf::OUTPUT if t.hull && ph != Phase::ControlPoint => return Err(format!("an output in the hull shader's {ph:?} phase")),
+                _ => {}
+            }
+        }
         if o.sel == tpf::Sel::Mask(0) && !matches!(o.ty, tpf::NULL | tpf::IMM32) {
             return Err("an empty write mask".into());
         }
@@ -526,7 +879,7 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
                         if !matches!(r.ty, tpf::TEMP | tpf::INDEXABLE_TEMP | tpf::IMM32) {
                             return Err(format!("register of type {} as an index", r.ty));
                         }
-                        check(w, r)?;
+                        check(w, ph, r)?;
                     }
                 }
                 return (o.idx.len() == 2).ok_or_else(|| format!("operand of type {} with {} indices", o.ty, o.idx.len()));
@@ -609,15 +962,24 @@ fn check_registers(w: &W, p: &Program) -> R<()> {
                 if !matches!(r.ty, tpf::TEMP | tpf::INDEXABLE_TEMP | tpf::INPUT | tpf::IMM32) {
                     return Err(format!("register of type {} as an index", r.ty));
                 }
-                check(w, r)?;
+                check(w, ph, r)?;
             }
         }
         Ok(())
     }
+    let mut ph = Phase::Decls;
     for i in &p.insts {
+        if let Some(next) = Phase::of(i.op) {
+            ph = next;
+            continue;
+        }
         if tpf::arity(i.op).is_some() {
+            // (a hull shader's instructions are its phases': none among the declarations)
+            if w.tess.as_ref().is_some_and(|t| t.hull) && ph == Phase::Decls {
+                return Err(format!("instruction {:#x} before the hull shader's phases", i.code));
+            }
             for o in &i.ops {
-                check(w, o)?;
+                check(w, ph, o)?;
             }
         }
     }
@@ -688,6 +1050,8 @@ enum Sampling {
 impl W {
     fn new(pixel: bool, isgn: Vec<SigElement>, osgn: Vec<SigElement>) -> W {
         W {
+            tess: None,
+            phase: Phase::Decls,
             gs: None,
             cur_stream_decl: 0,
             gs_outputs: BTreeMap::new(),
@@ -806,6 +1170,25 @@ impl W {
                 format!("gv[min({k}, {}u)][{}]", self.gs.as_ref().map_or(0, |g| g.verts.saturating_sub(1)), imm(1)?)
             }
             tpf::INPUT => format!("v{}", imm(0)?),
+            tpf::INPUT_CONTROL_POINT | tpf::OUTPUT_CONTROL_POINT => {
+                let t = self.tess.as_ref().ok_or("vicp/vocp outside a hull or domain shader")?;
+                let (name, n) = if o.ty == tpf::INPUT_CONTROL_POINT { ("icp", t.in_cps) } else { ("ocp", t.out_cps) };
+                let k = self.index(o.idx.first().ok_or("a control point without its index")?)?;
+                let r = self.index(o.idx.get(1).ok_or("a control point without its register")?)?;
+                format!("{name}[min({k}, {}u)][min({r}, {}u)]", n.saturating_sub(1), PATCH_CONSTANTS - 1)
+            }
+            tpf::INPUT_PATCH_CONSTANT => {
+                let r = self.index(o.idx.first().ok_or("vpc without its register")?)?;
+                format!("pc[min({r}, {}u)]", PATCH_CONSTANTS - 1)
+            }
+            tpf::OUTPUT if self.tess.as_ref().is_some_and(|t| t.hull) && matches!(self.phase, Phase::Fork | Phase::Join) => {
+                let r = self.index(o.idx.first().ok_or("o without its register")?)?;
+                format!("pc[min({r}, {}u)]", PATCH_CONSTANTS - 1)
+            }
+            tpf::OUTPUT_CONTROL_POINT_ID => "vocpid".into(),
+            tpf::INPUT_FORK_INSTANCE_ID => "vfork".into(),
+            tpf::INPUT_JOIN_INSTANCE_ID => "vjoin".into(),
+            tpf::INPUT_DOMAIN_POINT => "vdomain".into(),
             tpf::INPUT_PRIMITIVEID => "vprim".into(),
             tpf::INPUT_GS_INSTANCE_ID => "vgsi".into(),
             tpf::OUTPUT => format!("o{}", imm(0)?),

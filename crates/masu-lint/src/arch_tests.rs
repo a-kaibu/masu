@@ -499,6 +499,19 @@ fn fixture(r: Rule) -> Fixture {
             ],
             mutate: ("crates/masu/src/pack.rs", |t| Some(t.replace("let file = crate::lockfile::LockFile::in_dir(store, STORE_LOCK)?;", "let file = File::open(store)?;"))),
         },
+        Rule::StageRun => Fixture {
+            bad: &[
+                ("crates/kura/src/d3d11/expand.rs", "fn run(st: &State) { let g = st.shaders[0]; }\n"),
+                ("crates/kura/src/d3d11/expand_tess.rs", "// st.shaders[1] st.shaders[2] patch_points(st.topology)\nfn stages() {}\n#[cfg(test)]\nmod tests { fn t(st: &State) { st.shaders[1]; st.shaders[2]; patch_points(st.topology); } }\n"),
+                ("crates/kura/src/d3d11/mod.rs", "fn dispatch(st: &State) { let cs = st.shaders[3]; }\n"),
+            ],
+            good: &[
+                ("crates/kura/src/d3d11/expand.rs", "fn run(st: &State) { let g = st.shaders[0]; }\n"),
+                ("crates/kura/src/d3d11/expand_tess.rs", "fn stages(st: &State) { let (h, d) = (st.shaders[1], st.shaders[2]); let n = patch_points(st.topology); }\n"),
+                ("crates/kura/src/d3d11/mod.rs", "fn dispatch(st: &State) { let cs = st.shaders[3]; }\n"),
+            ],
+            mutate: ("crates/kura/src/d3d11/expand_tess.rs", |t| Some(t.replace("let (hs, ds) = (st.shaders[1], st.shaders[2]);", "let (hs, ds) = (0, 0);"))),
+        },
         Rule::OutEscape => Fixture {
             bad: &[
                 ("crates/sake/src/k32.rs", "fn f(c: &mut Ctx) { mem::w32(c.out::<0>().lock_word().key(), 0); }\n"),

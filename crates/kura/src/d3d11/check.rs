@@ -933,7 +933,13 @@ pub fn shader(code: &[u8], method: u32, level: u32) -> Result<(), u32> {
     } else {
         major == 4 && minor <= 1 && (kind <= 2 || kind == 5) || (major, minor) == (5, 0)
     };
-    if ok {
+    // (a hull or domain shader's declarations as Direct3D 11 takes them: a domain, control
+    // point counts, a hull shader's partitioning, output primitive and every tess factor)
+    let tess_ok = match kind {
+        3 | 4 => dxwgsl::expand::tess_decl(code).is_ok_and(|t| t.hull == (kind == 3)),
+        _ => true,
+    };
+    if ok && tess_ok {
         Ok(())
     } else {
         bad
@@ -1000,9 +1006,20 @@ mod shader_tests {
                 assert_eq!(shader(&dxbc(b"SHDR", ver(kind, 4, 1), false), m, l).is_ok(), fl101, "{m} 4_1 at {l:#x}");
                 assert_eq!(shader(&dxbc(b"SHEX", ver(kind, 5, 0), false), m, l).is_ok(), fl11, "{m} 5_0 at {l:#x}");
             }
-            for (m, kind) in [(16, 3), (17, 4), (18, 5)] {
-                assert_eq!(shader(&dxbc(b"SHEX", ver(kind, 5, 0), false), m, l).is_ok(), fl11);
+            assert_eq!(shader(&dxbc(b"SHEX", ver(5, 5, 0), false), 18, l).is_ok(), fl11);
+            // (a hull or domain shader without its declarations: never)
+            for (m, kind) in [(16, 3), (17, 4)] {
+                assert_eq!(shader(&dxbc(b"SHEX", ver(kind, 5, 0), false), m, l), bad);
             }
+            // (the winref d3d11tess probe's: at 11_0, each as its own stage only)
+            let src = include_str!("../../../../tests/winref/probes/d3d11tess.c");
+            let hlsl = hlslc::probe_source(src);
+            let hs = hlslc::compile(&hlsl, &[], &mut |_, _| None, "hs_tri_int", "hs_5_0", 0).expect("hs");
+            let ds = hlslc::compile(&hlsl, &[], &mut |_, _| None, "ds_tri", "ds_5_0", 0).expect("ds");
+            assert_eq!(shader(&hs, 16, l).is_ok(), fl11);
+            assert_eq!(shader(&ds, 17, l).is_ok(), fl11);
+            assert_eq!(shader(&hs, 17, l), bad);
+            assert_eq!(shader(&ds, 16, l), bad);
             assert_eq!(shader(&dxbc(b"SHDR", ver(5, 4, 0), false), 18, l).is_ok(), fl10);
         }
         // nothing, or a container without a program

@@ -163,6 +163,23 @@ fn finish(shader: sm4::Shader, t: &Target) -> Result<Vec<u8>, String> {
 }
 
 /// HLSL source to a DXBC blob (or shader model 2/3 bytecode).
+/// The HLSL of a winref probe (tests/winref/probes/*.c): its `static const char *SRC =` string
+/// literal's lines joined, `\n` and `\"` unescaped (so that what Windows compiles there is what
+/// tests compile here). Empty without one.
+pub fn probe_source(c: &str) -> String {
+    let mut out = String::new();
+    let Some(start) = c.find("static const char *SRC =") else { return out };
+    for line in c.get(start..).unwrap_or_default().lines().skip(1) {
+        let t = line.trim();
+        let Some((body, _)) = t.strip_prefix('"').and_then(|b| b.rsplit_once('"')) else { break };
+        out.push_str(&body.replace("\\n", "\n").replace("\\\"", "\""));
+        if t.ends_with(';') {
+            break;
+        }
+    }
+    out
+}
+
 pub fn compile(
     src: &str,
     defines: &[(String, String)],

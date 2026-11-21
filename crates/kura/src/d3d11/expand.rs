@@ -23,6 +23,10 @@ use super::*;
 use crate::render::d3d::DATA;
 use dxwgsl::expand::{self as x, Attr, SoEntry, Store};
 use dxwgsl::Binding;
+use tess::Tess;
+
+#[path = "expand_tess.rs"]
+pub mod tess;
 
 /// CreateGeometryShaderWithStreamOutput's declarations: entries, buffer strides (bytes a
 /// vertex, 0 for slots it names none), the rasterized stream (None: NO_RASTERIZED_STREAM).
@@ -107,6 +111,8 @@ enum Key {
     StoreVertex { src: u32, stream: u32, corners: u32, ps: u32 },
     So { gs: u32, vs: u32, stream: u32, corners: u32 },
     Clip { src: u32, stream: u32, corners: u32 },
+    Hull { hs: u32, vs: u32 },
+    Domain { ds: u32, hs: u32 },
 }
 
 /// A page shader and what it binds.
@@ -123,8 +129,9 @@ pub struct Gpu {
     free: Vec<u32>,
     /// 256 bytes of zeros (a binding nothing is bound to)
     zero: u32,
-    /// vout, gout, glist, gcount: (page buffer, bytes), made bigger when a draw needs it
-    scratch: [(u32, u32); 4],
+    /// vout, gout, glist, gcount, hcp, hpc, dout, dlist: (page buffer, bytes), made bigger
+    /// when a draw needs it
+    scratch: [(u32, u32); 8],
     shaders: HashMap<Key, Option<PageShader>>,
     /// PIPELINE_STATISTICS queries open (their ids): draws count the clipper's work
     pub open: Vec<u32>,
@@ -134,6 +141,12 @@ const VOUT: usize = 0;
 const GOUT: usize = 1;
 const GLIST: usize = 2;
 const GCOUNT: usize = 3;
+/// a hull shader pass's output control points and patch constants, the domain shader pass's
+/// outputs, the tessellator's primitives (a store draw's list)
+const HCP: usize = 4;
+const HPC: usize = 5;
+const DOUT: usize = 6;
+const DLIST: usize = 7;
 
 /// The page buffer of the counters and the fill table (made, zeros, the first time).
 pub fn counters(d: &mut D11) -> u32 {
@@ -277,6 +290,8 @@ pub fn forget_shader(d: &mut D11, id: u32) -> Vec<u32> {
             Key::Geometry { gs, vs } | Key::So { gs, vs, .. } => *gs == id || *vs == id,
             Key::StoreVertex { src, ps, .. } => *src == id || *ps == id,
             Key::Clip { src, .. } => *src == id,
+            Key::Hull { hs, vs } => *hs == id || *vs == id,
+            Key::Domain { ds, hs } => *ds == id || *hs == id,
         };
         if of && let Some((m, _)) = v {
             gone.push(*m);
@@ -615,10 +630,23 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
         _ => (None, None),
     };
     let stats = !d.expand.open.is_empty();
-    if gs_code.is_none() && so.is_none() && !stats {
+    let ts = match tess::stages(d, st) {
+        Tess::Nothing => return After::Done,
+        Tess::Off => None,
+        Tess::On(s) => Some(s),
+    };
+    if gs_code.is_none() && so.is_none() && !stats && ts.is_none() {
         return After::Draw;
     }
-    let Some(topo) = Topo::of(st.topology) else { return After::Draw };
+    // (tessellating: the tessellator's primitives, after the hull and domain shader passes)
+    let topo = match &ts {
+        Some(s) => tess::topo(s.output),
+        None => match Topo::of(st.topology) {
+            Some(t) => t,
+            None => return After::Draw,
+        },
+    };
+    let stored = gs_code.is_some() || ts.is_some();
     let Some(vs_code) = code_of(d, st.vs).map(<[u8]>::to_vec) else { return After::Draw };
     let vs_osgn = dxwgsl::signature(&vs_code, true);
     let vregs = x::store_regs(&vs_osgn, 0);
@@ -627,7 +655,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
     if ib != 0 {
         pull(d, ib);
     }
-    let prims = assemble(topo, count, |k| indexed && topo.strip() && index_at(d, st, start, k) == cut_value(st));
+    let prims = if ts.is_some() { Vec::new() } else { assemble(topo, count, |k| indexed && topo.strip() && index_at(d, st, start, k) == cut_value(st)) };
     let attrs = attributes(d, st, &vs_code);
     let Some((attrs, vbs)) = attrs else { return After::Draw };
     // the uniform's vertex words
@@ -648,7 +676,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
     }
     if vbs.slots.len() > 8 {
         eprintln!("d3d11: expanded draw: {} input slots (the vertex pass reads 8)", vbs.slots.len());
-        return failed(gs_code.is_some());
+        return failed(stored);
     }
     for (k, &(_, stride, off, size)) in vbs.slots.iter().enumerate() {
         put(&mut xw, x::xd::VB_OFFSET, k, off);
@@ -659,7 +687,7 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
     put(&mut xw, x::xd::ITEMS, 0, items);
     // 1. the vertex pass
     let vs_obj = st.vs;
-    let Some(vsh) = shader(d, Key::Vertex { vs: vs_obj, attrs: attrs.clone() }, |_| x::vertex_pass(&vs_code, &attrs)) else { return failed(gs_code.is_some()) };
+    let Some(vsh) = shader(d, Key::Vertex { vs: vs_obj, attrs: attrs.clone() }, |_| x::vertex_pass(&vs_code, &attrs)) else { return failed(stored) };
     let vout = scratch(d, VOUT, items.saturating_mul(vregs).saturating_mul(16));
     let mut over = vec![xd(&xw), store(x::B_VOUT, vout, true)];
     for (k, &buf) in (0u32..).zip(&vbs.bufs) {
@@ -670,6 +698,17 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
     let ibg = if ib != 0 { buffer_gpu(d, ib) } else { zero(d) };
     over.push(store(x::B_IB, ibg, false));
     pass(d, st, 0, &vsh, &over, Some(items));
+    // tessellation: the hull shader pass, the tessellator, the domain shader pass; what the
+    // domain shader makes is the draw's vertices from here on (one "instance" of them)
+    let (vout, vs_osgn, vregs, vs_obj, count, instances, prims, ids) = match &ts {
+        None => (vout, vs_osgn, vregs, vs_obj, count, instances, prims, None),
+        Some(s) => {
+            let Some(t) = tessellate(d, st, s, &xw, vout, &vs_osgn, vregs, count, instances) else { return After::Done };
+            let ds_osgn = dxwgsl::signature(&s.ds_code, true);
+            let dregs = x::store_regs(&ds_osgn, 0);
+            (t.0, ds_osgn, dregs, s.ds, t.1.count(), 1, t.1.prims, Some(t.1.ids))
+        }
+    };
     // the primitives of every instance: their vertex items
     let per_inst = lo32(prims.len());
     let nprims = per_inst.saturating_mul(instances);
@@ -693,7 +732,8 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
         for i in 0..instances {
             for (id, p) in (0u32..).zip(&prims) {
                 list.extend(p.iter().map(|&k| i.saturating_mul(count).saturating_add(k)));
-                list.push(id);
+                // (after tessellation: the patch's SV_PrimitiveID)
+                list.push(ids.as_ref().and_then(|v| v.get(us(id))).copied().unwrap_or(id));
             }
         }
         let gregs = x::gs_regs(gs);
@@ -815,7 +855,30 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
     // 5. drawn
     match (&gs_decl, raster) {
         (_, None) => After::Done,
-        (None, Some(_)) => After::Draw,
+        (None, Some(_)) if ts.is_none() => After::Draw,
+        (None, Some(r)) => {
+            // (the domain shader's vertices, the tessellator's primitives: a store's draw)
+            let (stv, osgn, slots) = store_of(r);
+            let corners = stv.corners();
+            let ps_obj = st.ps;
+            let ps_code = code_of(d, ps_obj).map(<[u8]>::to_vec);
+            let Some(vsh) = shader(d, Key::StoreVertex { src, stream: r, corners, ps: ps_obj }, move |_| x::store_vertex(&stv, &osgn, ps_code.as_deref())) else { return After::Done };
+            let bytes = vlist.len().saturating_mul(4);
+            let dlist = scratch(d, DLIST, lo32(bytes));
+            gpu::record(|q| {
+                let off = q.blob(&vlist.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>());
+                q.cmd(&[gpu::WRITE_BUFFER, dlist, 0, off, lo32(bytes)]);
+            });
+            let topo = match corners {
+                1 => 0,
+                2 => 1,
+                _ => 3,
+            };
+            let sd = StoreDraw { vs: vsh, over: vec![store_entry(x::B_VOUT, vout, false), store_entry(x::B_PRIMS, dlist, false)], topo, count: slots.saturating_mul(corners) };
+            // SAFETY: run's own contract (a store draw reads no guest memory of its own)
+            unsafe { draw_with(d, st, false, sd.count, 1, 0, 0, 0, None, Some(&sd)) };
+            After::Done
+        }
         (Some((decl, ..)), Some(r)) => {
             let (stv, osgn, slots) = store_of(r);
             let corners = stv.corners();
@@ -835,6 +898,81 @@ pub unsafe fn run(d: &mut D11, st: &State, indexed: bool, count: u32, instances:
             After::Done
         }
     }
+}
+
+/// The hull shader pass over the draw's patches (the vertex pass's `vout`), the tessellator
+/// over their patch constants (read back), the domain shader pass over its points: the domain
+/// shader's outputs (a page buffer as vout) and the points. None: nothing to draw (no whole
+/// patch, every one culled, a pass that could not be made).
+#[allow(clippy::too_many_arguments)]
+fn tessellate(d: &mut D11, st: &State, s: &tess::Stages, xw: &[u32; 48], vout: u32, vs_osgn: &[dxwgsl::dxbc::SigElement], vregs: u32, count: u32, instances: u32) -> Option<(u32, tess::Points)> {
+    let per_inst = count.checked_div(s.decl.in_cps).unwrap_or(0);
+    let patches = per_inst.saturating_mul(instances);
+    if patches == 0 {
+        return None;
+    }
+    let out = match x::HsOut::of(&s.hs_code) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("d3d11: hull shader: {e}");
+            return None;
+        }
+    };
+    let (hs_obj, ds_obj) = (s.hs, s.ds);
+    let hsh = {
+        let code = s.hs_code.clone();
+        let vo = vs_osgn.to_vec();
+        shader(d, Key::Hull { hs: hs_obj, vs: st.vs }, move |_| x::hs_pass(&code, &vo, vregs))?
+    };
+    let hcp = scratch(d, HCP, patches.saturating_mul(out.cps).saturating_mul(out.cp_regs).saturating_mul(16));
+    let pc_words = patches.saturating_mul(out.pc_regs).saturating_mul(4);
+    let hpc = scratch(d, HPC, pc_words.saturating_mul(4));
+    let mut hx = *xw;
+    put(&mut hx, x::xd::ITEMS, 0, patches);
+    pass(d, st, 3, &hsh, &[xd(&hx), store(x::B_VOUT, vout, false), store(x::B_HCP, hcp, true), store(x::B_HPC, hpc, true)], Some(patches));
+    // the patch constants, read back for the tessellator
+    let words = read_back(d, hpc, pc_words)?;
+    #[cfg(test)]
+    let words = tess::MODEL_PATCH_CONSTANTS.with(|m| m.borrow_mut().take()).unwrap_or(words);
+    let regs: Vec<[u32; 4]> = words.chunks_exact(4).map(|c| <[u32; 4]>::try_from(c).unwrap_or([0; 4])).collect();
+    let pcr = us(out.pc_regs);
+    let pts = tess::points(s, patches, per_inst, |k| regs.iter().skip(us(k).saturating_mul(pcr)).take(pcr).copied().collect());
+    // DSInvocations: a domain shader run per point
+    if let Some(c) = d.stats.get_mut(9) {
+        *c = c.saturating_add(u64::from(pts.count()));
+    }
+    let n = pts.count();
+    if n == 0 {
+        return None;
+    }
+    let dsh = {
+        let code = s.ds_code.clone();
+        let o = out.clone();
+        shader(d, Key::Domain { ds: ds_obj, hs: hs_obj }, move |_| x::ds_pass(&code, &o))?
+    };
+    let dregs = x::store_regs(&dxwgsl::signature(&s.ds_code, true), 0);
+    let dout = scratch(d, DOUT, n.saturating_mul(dregs).saturating_mul(16));
+    let mut dx = *xw;
+    put(&mut dx, x::xd::ITEMS, 0, n);
+    pass(d, st, 4, &dsh, &[xd(&dx), store(x::B_HCP, hcp, false), store(x::B_HPC, hpc, false), data_store(x::B_DPTS, &pts.dpts), store(x::B_VOUT, dout, true)], Some(n));
+    Some((dout, pts))
+}
+
+/// `words` words of page buffer `buf` from its start, waited for (None: the page gave up).
+fn read_back(d: &mut D11, buf: u32, words: u32) -> Option<Vec<u32>> {
+    let bytes = words.saturating_mul(4);
+    let dst = d.guest_alloc(bytes);
+    if dst == 0 {
+        return None;
+    }
+    d.next_gpu = d.next_gpu.wrapping_add(1);
+    let req = 0x4000_0000 | d.next_gpu;
+    gpu::record(|q| q.cmd(&[gpu::READ_BUFFER, req, buf, 0, bytes, dst]));
+    // SAFETY: word i of the `bytes` just allocated, written by the page once the readback is
+    // done
+    let v = gpu::wait_readback(req).then(|| (0..us(words)).map(|i| unsafe { rd(dst, i) }).collect());
+    d.guest_free(dst);
+    v
 }
 
 /// A draw from a store: its vertex shader, the stores it reads, the page topology (0 points, 1
