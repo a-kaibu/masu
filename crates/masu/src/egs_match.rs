@@ -6,7 +6,6 @@
 //!
 //! No network here: meta.rs fetches the list, library.rs keeps it.
 
-use std::sync::LazyLock;
 use unicode_normalization::UnicodeNormalization;
 
 /// A score over this names the game.
@@ -15,9 +14,7 @@ pub const THRESHOLD: f32 = 0.8;
 const PARTIAL_MIN: usize = 5;
 
 /// Edition and download words that package and folder names carry and database names do not.
-static EDITION: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"(?i)((ダウンロード|web|ウェブ|パッケージ|dl)\s*)?(体験|お試し読み|お試し|プレイアブル)\s*版|(ダウンロード|web|ウェブ|パッケージ|dl|通常|初回限定|限定|特装|豪華|廉価)\s*版|を起動|trial(\s*version|\s*edition)?|\bdemo\b|taiken|(^|[^a-z])ver\.?\s*[0-9][0-9.]*|\bv[0-9]+(\.[0-9]+)+|\s[0-9]+(\.[0-9]+)+\s*$|[-－‐_\s]+(web|dl)\s*$").unwrap()
-});
+static EDITION: lazy_regex::Lazy<regex::Regex> = lazy_regex::lazy_regex!(r"(?i)((ダウンロード|web|ウェブ|パッケージ|dl)\s*)?(体験|お試し読み|お試し|プレイアブル)\s*版|(ダウンロード|web|ウェブ|パッケージ|dl|通常|初回限定|限定|特装|豪華|廉価)\s*版|を起動|trial(\s*version|\s*edition)?|\bdemo\b|taiken|(^|[^a-z])ver\.?\s*[0-9][0-9.]*|\bv[0-9]+(\.[0-9]+)+|\s[0-9]+(\.[0-9]+)+\s*$|[-－‐_\s]+(web|dl)\s*$");
 
 /// Width and case folded (NFKC), edition words out, then only letters and digits (and ー, which
 /// is part of words) left: "セレクトオブリージュ DL版" and "セレクトオブリージュ" are the same.

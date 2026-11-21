@@ -192,6 +192,9 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
         }
     }
     let mut all = Vec::new();
+    // (each title's developers, tags and links, gathered by the queries below and put in its
+    // object's places at the end)
+    let mut lists: Vec<Lists> = Vec::new();
     let mut at = HashMap::new();
     let mut stmt = c.prepare("SELECT v.id,t.title,t.latin,v.c_votecount,v.c_rating,v.description,i.id,i.c_sexual_avg,i.c_violence_avg FROM vn v JOIN vn_titles t ON t.id=v.id AND t.lang=v.olang LEFT JOIN images i ON i.id=v.c_image WHERE v.olang='ja' ORDER BY CAST(substr(v.id,2) AS INTEGER)")?;
     let mut r = stmt.query([])?;
@@ -209,6 +212,7 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
         all.push(json!({"id":id,"alttitle":if original == title {None} else {Some(original)},"title":title,
             "votecount":r.get::<_,i64>(3)?,"rating":r.get::<_,Option<f64>>(4)?.map(|n|n / 10.),
             "description":r.get::<_,Option<String>>(5)?.filter(|s| !s.is_empty()),"image":image,"released":null,"developers":[],"tags":[],"extlinks":[]}));
+        lists.push(Lists::default());
     }
     let expected: i64 = c.query_row("SELECT count(*) FROM vn WHERE olang='ja'", [], |r| r.get(0))?;
     if all.len() as i64 != expected {
@@ -226,7 +230,7 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
         let (id, original, latin) = r?;
         if let Some(&i) = at.get(&id) {
             let name = latin.unwrap_or_else(|| original.clone());
-            all[i]["developers"].as_array_mut().unwrap().push(json!({"name":name,"original":if name==original {None} else {Some(original)}}));
+            lists[i].developers.push(json!({"name":name,"original":if name==original {None} else {Some(original)}}));
         }
     }
     // VNDB API's direct votes, not inherited tags. Preserve PostgreSQL real rounding.
@@ -239,7 +243,7 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
         let count: i64 = r.get(9)?;
         let spoiler = if count == 0 { r.get::<_, i64>(4)? == 0 } else { r.get::<_, i64>(8)? * 5 <= count * 2 };
         if spoiler && rating >= 2. {
-            all[i]["tags"].as_array_mut().unwrap().push(json!({"name":r.get::<_,String>(2)?,"category":r.get::<_,String>(3)?,"rating":rating,"spoiler":0}));
+            lists[i].tags.push(json!({"name":r.get::<_,String>(2)?,"category":r.get::<_,String>(3)?,"rating":rating,"spoiler":0}));
         }
     }
     let mut wiki = HashMap::new();
@@ -253,7 +257,7 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
     )? {
         let id = col(&row, "id");
         let Some(&i) = at.get(id) else { continue };
-        let links = all[i]["extlinks"].as_array_mut().unwrap();
+        let links = &mut lists[i].extlinks;
         let value = col(&row, "value");
         if col(&row, "site") == "renai" {
             link(links, "Renai.us", format!("https://renai.us/game/{value}"));
@@ -261,7 +265,24 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
             wikilinks(links, value, wiki.get(value))?;
         }
     }
-    Ok(all.into_iter().map(prune_vndb).collect())
+    Ok(all
+        .into_iter()
+        .zip(lists)
+        .map(|(mut v, l)| {
+            v["developers"] = Value::Array(l.developers);
+            v["tags"] = Value::Array(l.tags);
+            v["extlinks"] = Value::Array(l.extlinks);
+            prune_vndb(v)
+        })
+        .collect())
+}
+
+/// A title's lists the mirror fills after its own row.
+#[derive(Default)]
+struct Lists {
+    developers: Vec<Value>,
+    tags: Vec<Value>,
+    extlinks: Vec<Value>,
 }
 fn link(out: &mut Vec<Value>, label: &str, url: String) {
     out.push(json!({"label":label,"url":url}));

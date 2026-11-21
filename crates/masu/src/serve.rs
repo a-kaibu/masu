@@ -927,10 +927,7 @@ async fn list_logs(dir: &std::path::Path) -> Vec<(String, u64, u64)> {
 
 async fn log_list(State(dir): State<Arc<PathBuf>>) -> Response {
     let list: Vec<serde_json::Value> = list_logs(&dir).await.into_iter().map(|(name, size, time)| serde_json::json!({ "name": name, "size": size, "time": time })).collect();
-    Response::builder()
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(axum::body::Body::from(serde_json::Value::Array(list).to_string()))
-        .unwrap()
+    ([(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))], serde_json::Value::Array(list).to_string()).into_response()
 }
 
 /// What a pre-run needs, and the lock that keeps them one at a time.
@@ -1101,10 +1098,7 @@ async fn games(State(p): State<Arc<Prerun>>) -> Response {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     body.push(']');
-    Response::builder()
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(body.into())
-        .unwrap()
+    ([(header::CONTENT_TYPE, HeaderValue::from_static("application/json"))], body).into_response()
 }
 
 async fn headers(mut req: Request<axum::body::Body>, next: Next) -> Response {

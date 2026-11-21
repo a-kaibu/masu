@@ -146,10 +146,10 @@ fn col<'a>(row: &'a [(String, String)], name: &str) -> &'a str {
 
 /// The first HTML table; its first row holds the column names.
 fn parse_table(page: &str) -> Vec<Vec<(String, String)>> {
-    static TABLE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<table[^>]*>(.*?)</table>").unwrap());
-    static ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<tr[^>]*>(.*?)</tr>").unwrap());
-    static CELL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?is)<t[hd][^>]*>(.*?)</t[hd]>").unwrap());
-    static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?s)<[^>]*>").unwrap());
+    static TABLE: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"(?is)<table[^>]*>(.*?)</table>");
+    static ROW: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"(?is)<tr[^>]*>(.*?)</tr>");
+    static CELL: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"(?is)<t[hd][^>]*>(.*?)</t[hd]>");
+    static TAG: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"(?s)<[^>]*>");
     let Some(t) = TABLE.captures(page) else { return vec![] };
     let mut cols = vec![];
     let mut out = vec![];
@@ -169,7 +169,7 @@ fn unescape(s: &str) -> String {
     if !s.contains('&') {
         return s.to_string();
     }
-    static ENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"&(#x[0-9a-fA-F]+|#[0-9]+|[a-z]+);").unwrap());
+    static ENT: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"&(#x[0-9a-fA-F]+|#[0-9]+|[a-z]+);");
     ENT.replace_all(s, |c: &regex::Captures| {
         let e = &c[1];
         let ch = if let Some(h) = e.strip_prefix("#x") {
@@ -330,8 +330,7 @@ pub fn egs_info(r: &[(String, String)], more: &[Row]) -> Result<Info> {
     }
     push_unique(&mut in_.tags, col(r, "genre"));
     // POV tags (voted by users) and the series
-    static POV_SUFFIX: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(仕立てのゲーム|系のゲーム|系ゲーム|なゲーム|のゲーム|な作品|ゲーム|ゲー)$").unwrap());
+    static POV_SUFFIX: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"(仕立てのゲーム|系のゲーム|系ゲーム|なゲーム|のゲーム|な作品|ゲーム|ゲー)$");
     {
         for m in more {
             match col(m, "src") {
@@ -468,7 +467,7 @@ pub fn vndb_info_json(v: serde_json::Value) -> Result<Info> {
 }
 
 fn vndb_info(vn: VndbVn) -> Info {
-    static BBCODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[/?[a-z]+(=[^\]]+)?\]").unwrap());
+    static BBCODE: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"\[/?[a-z]+(=[^\]]+)?\]");
     let mut in_ = Info {
         source: "vndb".into(),
         vndb_id: Some(vn.id.clone()),
@@ -499,9 +498,7 @@ fn vndb_info(vn: VndbVn) -> Info {
 // ---- matching
 
 /// Edition words that distribution titles carry but database titles do not.
-static TRIAL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)((ダウンロード|web|ウェブ)\s*)?(体験|お試し読み|お試し|プレイアブル)\s*版|(ダウンロード|web|ウェブ)\s*版|trial(\s*version|\s*edition)?|demo|taiken|ver\.?\s*[0-9.]+|[-－‐]?\s*(web|dl)\s*$").unwrap()
-});
+static TRIAL: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"(?i)((ダウンロード|web|ウェブ)\s*)?(体験|お試し読み|お試し|プレイアブル)\s*版|(ダウンロード|web|ウェブ)\s*版|trial(\s*version|\s*edition)?|demo|taiken|ver\.?\s*[0-9.]+|[-－‐]?\s*(web|dl)\s*$");
 
 /// Full-width ASCII to half-width, half-width kana to full-width.
 fn fold(s: &str) -> String {
@@ -519,7 +516,7 @@ pub fn search_key(title: &str) -> String {
 /// The keyword to try first and, when the title has symbols whose spelling differs between
 /// databases (～ vs ~ ...), its longest symbol-free part as a retry.
 pub fn search_keys(title: &str) -> Vec<String> {
-    static SEG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\s~〜～・:：!！?？()（）\[\]【】「」『』]+").unwrap());
+    static SEG: lazy_regex::Lazy<Regex> = lazy_regex::lazy_regex!(r"[\s~〜～・:：!！?？()（）\[\]【】「」『』]+");
     let k = search_key(title);
     let longest = SEG.split(&k).max_by_key(|p| p.chars().count()).unwrap_or("").to_string();
     let mut keys = vec![k.clone()];
@@ -567,10 +564,10 @@ pub fn best<'a>(title: &str, cands: &'a [Candidate]) -> Option<&'a Candidate> {
 /// store: gamedb.rs) when they have it.
 pub fn lookup(title: &str, id: Option<&str>, gamedb: Option<&std::path::Path>) -> Result<Info> {
     let local = id.zip(gamedb).and_then(|(id, p)| crate::gamedb::info(p, id));
-    let mut in_ = match id {
+    let mut in_ = match (id, local) {
         // (the game database's copy first: ErogameScape refuses many hosts)
-        Some(_) if local.is_some() => local.unwrap(),
-        Some(id) => {
+        (Some(_), Some(local)) => local,
+        (Some(id), None) => {
             if let Some(n) = id.strip_prefix("egs:") {
                 egs_get(n.parse().map_err(|_| anyhow!("bad id {id:?}"))?)?
             } else if let Some(v) = id.strip_prefix("vndb:") {
@@ -579,7 +576,7 @@ pub fn lookup(title: &str, id: Option<&str>, gamedb: Option<&std::path::Path>) -
                 bail!("bad id {id:?} (egs:<n> or vndb:v<n>)")
             }
         }
-        None => find(title)?,
+        (None, _) => find(title)?,
     };
     in_.fetched = now_rfc3339();
     Ok(in_)

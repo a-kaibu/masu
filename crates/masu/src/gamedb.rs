@@ -336,8 +336,7 @@ impl Registry {
     }
 
     fn auth(&self, challenge: &str, url: &str) -> Result<String> {
-        let f: HashMap<String, String> = regex::Regex::new(r#"(\w+)="([^"]*)""#)
-            .unwrap()
+        let f: HashMap<String, String> = lazy_regex::regex!(r#"(\w+)="([^"]*)""#)
             .captures_iter(challenge)
             .map(|c| (c[1].to_string(), c[2].to_string()))
             .collect();
@@ -527,7 +526,7 @@ mod tests {
         if sql.contains("max(id)") {
             return Ok(vec![row(&[("max", "5200")])]);
         }
-        let from: u32 = regex::Regex::new(r">= (\d+)").unwrap().captures(sql).unwrap()[1].parse().unwrap();
+        let from: u32 = lazy_regex::regex!(r">= (\d+)").captures(sql).unwrap()[1].parse().unwrap();
         Ok(if sql.contains("FROM gamelist g") {
             [(1u32, "サクラノ詩 -櫻の森の上を舞う-", "PC", "5000"), (5100, "アネモイ", "PC", "512"), (5101, "アネモイ (PS5)", "PS5", "3")]
                 .into_iter()
