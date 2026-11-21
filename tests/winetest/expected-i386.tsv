@@ -155,7 +155,7 @@ kernel32:loader	crash	3654	0
 kernel32:locale	timeout	725798	0
 kernel32:mailslot	fail	84	126
 kernel32:module	fail	376	656
-kernel32:path	fail	89	202645
+kernel32:path	fail	69	202645
 kernel32:pipe	crash	86	0
 kernel32:power	fail	2	3
 kernel32:process	timeout	7	111

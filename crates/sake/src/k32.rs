@@ -8814,9 +8814,54 @@ fn search_path(c: &mut Ctx, wide: bool) -> u32 {
 fn search_dirs() -> Vec<String> {
     let exe = crate::pe::MODULES.r().iter().find(|m| !m.dll).map_or_default(|m| m.path.clone());
     let exe_dir = exe.rsplit_once('\\').map_or_default(|(d, _)| d.to_string());
-    let mut v = vec![exe_dir, files::cwd(), "C:\\windows\\system32".into(), "C:\\windows".into()];
+    let safe = SEARCH_PATH_MODE.load(Ordering::Relaxed) & 1 != 0;
+    let mut v = vec![exe_dir];
+    if !safe {
+        v.push(files::cwd());
+    }
+    v.extend(["C:\\windows\\system32".into(), "C:\\windows\\system".into(), "C:\\windows".into()]);
+    if safe {
+        v.push(files::cwd());
+    }
     v.extend(env_get("PATH").unwrap_or_default().split(';').filter(|d| !d.is_empty()).map(String::from));
     v
+}
+/// RtlpSearchPathMode (0: the current directory before the system ones)
+static SEARCH_PATH_MODE: AtomicU32 = AtomicU32::new(0);
+/// SetSearchPathMode(flags) = RtlSetSearchPathMode: ENABLE (1) xor DISABLE (0x10000), PERMANENT
+/// (0x8000) only with ENABLE, nothing else (STATUS_INVALID_PARAMETER); a permanent mode stays
+/// (STATUS_ACCESS_DENIED)
+pub fn set_search_path_mode(flags: u32) -> u32 {
+    let ok = flags & 0xfffe_7ffe == 0 && if flags & 1 != 0 { flags & 0x1_0000 == 0 } else { flags & 0x1_8000 == 0x1_0000 };
+    if !ok {
+        return 0xc000_000d;
+    }
+    let cur = SEARCH_PATH_MODE.load(Ordering::Relaxed);
+    if cur & 0x8000 != 0 && flags & 0x8000 == 0 {
+        return 0xc000_0022;
+    }
+    SEARCH_PATH_MODE.store(flags, Ordering::Relaxed);
+    0
+}
+fn SetSearchPathMode(c: &mut Ctx) -> u32 {
+    match set_search_path_mode(c.a(0)) {
+        0 => 1,
+        st => {
+            last_error(crate::nt::dos_error(st));
+            0
+        }
+    }
+}
+/// NeedCurrentDirectoryForExePath(name): a name with a '\', or no
+/// NoDefaultCurrentDirectoryInExePath variable at all (BasepIsCurDirAllowedForPlainExeNames)
+fn need_cur_dir(name: &[u16]) -> u32 {
+    u32::from(name.contains(&0x5c) || env_get("NoDefaultCurrentDirectoryInExePath").is_none())
+}
+fn NeedCurrentDirectoryForExePathW(c: &mut Ctx) -> u32 {
+    need_cur_dir(&wstr(c.a(0)))
+}
+fn NeedCurrentDirectoryForExePathA(c: &mut Ctx) -> u32 {
+    need_cur_dir(&a2w(&cstr(c.a(0))))
 }
 fn SearchPathA(c: &mut Ctx) -> u32 {
     let c = &mut c.args::<crate::api::outs::SearchPathA>();
@@ -10008,6 +10053,10 @@ pub fn init() {
     implement("ntdll", "RtlInitString", RtlInitAnsiString);
     // (the OEM code page is the ANSI one here: GetOEMCP)
     implement("ntdll", "RtlOemStringToUnicodeString", RtlAnsiStringToUnicodeString);
+    implement("ntdll", "RtlSetSearchPathMode", |c: &mut Ctx| set_search_path_mode(c.a(0)));
+    implement("kernel32", "SetSearchPathMode", SetSearchPathMode);
+    implement("kernel32", "NeedCurrentDirectoryForExePathW", NeedCurrentDirectoryForExePathW);
+    implement("kernel32", "NeedCurrentDirectoryForExePathA", NeedCurrentDirectoryForExePathA);
     implement("ntdll", "RtlFreeAnsiString", RtlFreeUnicodeString);
     implement("ntdll", "ZwProtectVirtualMemory", NtProtectVirtualMemory);
     implement("ntdll", "RtlInterlockedPushEntrySList", InterlockedPushEntrySList);
@@ -11280,3 +11329,7 @@ mod review_b07 {
 #[cfg(test)]
 #[path = "k32_calendar_tests.rs"]
 mod calendar_tests;
+
+#[cfg(test)]
+#[path = "k32_search_tests.rs"]
+mod search_tests;
