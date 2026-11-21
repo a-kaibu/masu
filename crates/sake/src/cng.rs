@@ -242,7 +242,7 @@ impl Rsa {
         if kind != want && !(any_private && kind != Blob::Public) {
             return Err(NTE_INVALID_PARAMETER);
         }
-        let (bits, ne, nm, p1, p2) = (kome::le::u32::<4, 24>(h), kome::le::u32::<8, 24>(h) as usize, kome::le::u32::<12, 24>(h) as usize, kome::le::u32::<16, 24>(h) as usize, kome::le::u32::<20, 24>(h) as usize);
+        let (bits, ne, nm, p1, p2) = (kome::le::u32::<4, 24>(h), kome::num::us(kome::le::u32::<8, 24>(h)), kome::num::us(kome::le::u32::<12, 24>(h)), kome::num::us(kome::le::u32::<16, 24>(h)), kome::num::us(kome::le::u32::<20, 24>(h)));
         if ne == 0 || ne > 8 || nm == 0 || b.len() as u64 != blob_need(kind, ne as u32, nm as u32, p1 as u32, p2 as u32) || (kind != Blob::Public && (p1 == 0 || p2 == 0)) {
             return Err(NTE_BAD_DATA);
         }

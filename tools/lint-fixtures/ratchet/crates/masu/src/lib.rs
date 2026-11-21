@@ -285,3 +285,10 @@ silenced_in_macro!();
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn allows_only_an_untracked_lint() {}
 
+
+// (test code clippy does not take for test code, cfg(all(test, ..)): the --all-targets run
+// counts it, the product code (--lib --bins) has none of it: NEVER does not name it)
+#[cfg(all(test, not(miri)))]
+pub fn test_only(o: Option<u32>) -> u32 {
+    o.unwrap() //~ unwrap_used
+}

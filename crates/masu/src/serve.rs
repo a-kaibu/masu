@@ -1492,8 +1492,13 @@ async fn sync_bucket(storage: crate::storage::Storage, store: PathBuf, push_stor
     }
 }
 
-#[tokio::main]
-async fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyhow::Result<()> {
+// (the runtime built here, not by #[tokio::main], whose expansion expects: a runtime that does
+// not build is this command's error)
+fn serve(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyhow::Result<()> {
+    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(serve_on(dirs, store, args))
+}
+
+async fn serve_on(dirs: &crate::dirs::Dirs, store: PathBuf, args: Resolved) -> anyhow::Result<()> {
     // (before anything can replace it: /api/update)
     let exe = std::env::current_exe()?;
     // (games come only from a bucket: the page fetches their chunks from it itself, never

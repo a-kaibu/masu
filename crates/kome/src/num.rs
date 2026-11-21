@@ -297,8 +297,8 @@ pub fn sci(f: f64, frac: usize) -> (String, i32) {
     let s = format!("{f:.frac$e}");
     let Some((m, e)) = s.split_once('e') else { return (s, 0) };
     let (neg, digits) = e.strip_prefix('-').map_or((false, e), |d| (true, d));
-    let x = digits.bytes().filter(u8::is_ascii_digit).fold(0i32, |x, d| x.saturating_mul(10).saturating_add(i32::from(d - b'0')));
-    (m.to_string(), if neg { -x } else { x })
+    let x = digits.bytes().filter(u8::is_ascii_digit).fold(0i32, |x, d| x.saturating_mul(10).saturating_add(i32::from(d.wrapping_sub(b'0'))));
+    (m.to_string(), if neg { x.saturating_neg() } else { x })
 }
 
 #[cfg(test)]

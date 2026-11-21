@@ -25,6 +25,7 @@ clippy.toml path stops resolving, a regex stops matching) fails there instead of
 | invariant (where it was set) | check |
 | --- | --- |
 | no `as`, no `_` on enums, no unwrap/expect (2026-11-14 type-safety policy) | ratchet LINTS |
+| no unwrap/expect at all in product code (what `--lib --bins` builds; tests and examples may), with no baseline and no `--raise`: `?` and a typed error, or a type that cannot fail (2026-11-21) | ratchet NEVER |
 | unsafe kinds only where they already are, site by site (review 2026-11-15) | ratchet PINNED + lint-ratchet-sites.tsv |
 | set_len / from_raw_parts / transmute / zeroed only where listed | clippy.toml disallowed-methods -> masu-* |
 | each clippy.toml disallowed path's reason starts with its masu-* name (what the ratchet counts it as) | arch `disallowed-named` |

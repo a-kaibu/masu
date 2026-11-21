@@ -78,19 +78,26 @@ fn cs_wake(c: &mut crate::api::Ctx) -> u32 {
 /// The address of symbol `name` in `syms` (a build's SYMS), at compile time.
 const fn find(mut syms: &[(&str, u32)], name: &str) -> Option<u32> {
     while let [(n, a), rest @ ..] = syms {
-        if n.len() == name.len() {
-            let (x, y) = (n.as_bytes(), name.as_bytes());
-            let mut i = 0;
-            while i < x.len() && x[i] == y[i] {
-                i += 1;
-            }
-            if i == x.len() {
-                return Some(*a);
-            }
+        if same(n.as_bytes(), name.as_bytes()) {
+            return Some(*a);
         }
         syms = rest;
     }
     None
+}
+
+/// `x == y` in a const fn (byte by byte, as slice patterns)
+const fn same(mut x: &[u8], mut y: &[u8]) -> bool {
+    loop {
+        match (x, y) {
+            ([a, xs @ ..], [b, ys @ ..]) if *a == *b => {
+                x = xs;
+                y = ys;
+            }
+            ([], []) => return true,
+            _ => return false,
+        }
+    }
 }
 
 /// The host slot `name` of guest build `code` / `code64`: a symbol the build lacks is a build

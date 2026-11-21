@@ -228,9 +228,9 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
     let mut stmt = c.prepare("SELECT DISTINCT rv.vid,p.id,p.name,p.latin FROM releases_vn rv JOIN releases r ON r.id=rv.id JOIN releases_producers rp ON rp.id=r.id JOIN producers p ON p.id=rp.pid WHERE r.official=1 AND rp.developer=1 ORDER BY CAST(substr(p.id,2) AS INTEGER)")?;
     for r in stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(2)?, r.get::<_, Option<String>>(3)?)))? {
         let (id, original, latin) = r?;
-        if let Some(&i) = at.get(&id) {
+        if let Some(l) = at.get(&id).and_then(|&i| lists.get_mut(i)) {
             let name = latin.unwrap_or_else(|| original.clone());
-            lists[i].developers.push(json!({"name":name,"original":if name==original {None} else {Some(original)}}));
+            l.developers.push(json!({"name":name,"original":if name==original {None} else {Some(original)}}));
         }
     }
     // VNDB API's direct votes, not inherited tags. Preserve PostgreSQL real rounding.
@@ -238,12 +238,12 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
     let mut r = stmt.query([])?;
     while let Some(r) = r.next()? {
         let id: String = r.get(0)?;
-        let Some(&i) = at.get(&id) else { continue };
+        let Some(l) = at.get(&id).and_then(|&i| lists.get_mut(i)) else { continue };
         let rating = (r.get::<_, f64>(5)? * r.get::<_, f64>(6)? / r.get::<_, f64>(7)?) as f32 as f64;
         let count: i64 = r.get(9)?;
         let spoiler = if count == 0 { r.get::<_, i64>(4)? == 0 } else { r.get::<_, i64>(8)? * 5 <= count * 2 };
         if spoiler && rating >= 2. {
-            lists[i].tags.push(json!({"name":r.get::<_,String>(2)?,"category":r.get::<_,String>(3)?,"rating":rating,"spoiler":0}));
+            l.tags.push(json!({"name":r.get::<_,String>(2)?,"category":r.get::<_,String>(3)?,"rating":rating,"spoiler":0}));
         }
     }
     let mut wiki = HashMap::new();
@@ -256,8 +256,8 @@ fn vndb(c: &Connection) -> Result<Vec<Value>> {
         "SELECT ve.id,e.site,e.value FROM vn_extlinks ve JOIN extlinks e ON e.id=ve.link WHERE e.site IN ('wikidata','renai') ORDER BY CASE e.site WHEN 'wikidata' THEN 0 ELSE 1 END,ve.link",
     )? {
         let id = col(&row, "id");
-        let Some(&i) = at.get(id) else { continue };
-        let links = &mut lists[i].extlinks;
+        let Some(l) = at.get(id).and_then(|&i| lists.get_mut(i)) else { continue };
+        let links = &mut l.extlinks;
         let value = col(&row, "value");
         if col(&row, "site") == "renai" {
             link(links, "Renai.us", format!("https://renai.us/game/{value}"));
