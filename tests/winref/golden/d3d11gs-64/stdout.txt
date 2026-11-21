@@ -1,0 +1,204 @@
+zero-sized viewports, a full-target triangle
+  0 0 0 64 (back: 1, 0 0 0 64): pixels 0 samples 0 C 1 3 PS 0
+  0 0 64 0 (back: 1, 0 0 64 0): pixels 0 samples 0 C 1 3 PS 0
+  0 0 0 0 (back: 1, 0 0 0 0): pixels 0 samples 0 C 1 3 PS 0
+  10 10 0 20 (back: 1, 10 10 0 20): pixels 0 samples 0 C 1 3 PS 0
+  10 10 20 0 (back: 1, 10 10 20 0): pixels 0 samples 0 C 1 3 PS 0
+  0 0 0.25 64 (back: 1, 0 0 0.25 64): pixels 0 samples 0 C 1 3 PS 0
+  0 0 64 64 (back: 1, 0 0 64 64): pixels 0 samples 0 C 1 3 PS 0
+pipeline statistics of triangles in clip space (viewport 64x64, CULL_BACK)
+  inside: IA 3 1 VS 3 GS 0 0 C 1 1 PS 544
+  inside, counterclockwise: IA 3 1 VS 3 GS 0 0 C 1 1 PS 0
+  outside right: IA 3 1 VS 3 GS 0 0 C 1 0 PS 0
+  across the right edge: IA 3 1 VS 3 GS 0 0 C 1 2 PS 1072
+  across two edges: IA 3 1 VS 3 GS 0 0 C 1 4 PS 3772
+  far outside the guard band: IA 3 1 VS 3 GS 0 0 C 1 2 PS 1600
+  across the near plane: IA 3 1 VS 3 GS 0 0 C 1 2 PS 496
+  across the far plane: IA 3 1 VS 3 GS 0 0 C 1 2 PS 496
+  behind the near plane: IA 3 1 VS 3 GS 0 0 C 1 0 PS 0
+  one w negative: IA 3 1 VS 3 GS 0 0 C 1 2 PS 784
+  all w negative: IA 3 1 VS 3 GS 0 0 C 1 0 PS 0
+  two vertices equal: IA 3 1 VS 3 GS 0 0 C 1 1 PS 0
+  on a line: IA 3 1 VS 3 GS 0 0 C 1 1 PS 0
+  smaller than a pixel: IA 3 1 VS 3 GS 0 0 C 1 1 PS 0
+  w zero: IA 3 1 VS 3 GS 0 0 C 1 2 PS 1184
+pipeline statistics of indexed draws, strips, lines and points
+  indexed 0 1 2 2 1 3: IA 6 2 VS 4 GS 0 0 C 2 2 PS 1088
+  indexed 0 1 2 2 1 3 0 1 2 0 1 2: IA 12 4 VS 4 GS 0 0 C 4 4 PS 2176
+  indexed 3 3 3 (degenerate): IA 3 1 VS 1 GS 0 0 C 1 1 PS 0
+  indexed twice instanced: IA 12 4 VS 8 GS 0 0 C 4 4 PS 2176
+  indexed strip 0 0xffff 1 2 3: IA 5 1 VS 3 GS 0 0 C 1 1 PS 0
+  indexed strip 1 2 3 0 1 2: IA 6 4 VS 3 GS 0 0 C 4 4 PS 0
+  strip of 4: IA 4 2 VS 4 GS 0 0 C 2 2 PS 1088
+  strip of 6 (2 outside): IA 6 4 VS 6 GS 0 0 C 4 5 PS 1612
+  list of 5 (one left over): IA 5 1 VS 3 GS 0 0 C 1 1 PS 544
+  line list of 6: IA 6 3 VS 6 GS 0 0 C 3 2 PS 228
+  line strip of 6: IA 6 5 VS 6 GS 0 0 C 5 4 PS 438
+  point list of 6: IA 6 6 VS 6 GS 0 0 C 6 4 PS 16
+  triangle list adjacency of 6: IA 6 1 VS 6 GS 0 0 C 1 2 PS 0
+the vertices a geometry shader is given (v[i].id, SV_PrimitiveID by stream output)
+  points: IA 3 3 VS 3 GS 3 3 C 0 0 PS 0
+  written 3 needed 3
+  buffer: 0 0 0 0
+   1 0 0 1
+   2 0 0 2
+  line list: IA 6 3 VS 6 GS 3 3 C 0 0 PS 0
+  written 3 needed 3
+  buffer: 0 1 0 0
+   2 3 0 1
+   4 5 0 2
+  line strip: IA 5 4 VS 5 GS 4 4 C 0 0 PS 0
+  written 4 needed 4
+  buffer: 0 1 0 0
+   1 2 0 1
+   2 3 0 2
+   3 4 0 3
+  triangle list: IA 6 2 VS 6 GS 2 2 C 0 0 PS 0
+  written 2 needed 2
+  buffer: 0 1 2 0
+   3 4 5 1
+  triangle strip: IA 6 4 VS 6 GS 4 4 C 0 0 PS 0
+  written 4 needed 4
+  buffer: 0 1 2 0
+   1 3 2 1
+   2 3 4 2
+   3 5 4 3
+  triangle strip, 2 instances: IA 8 4 VS 8 GS 4 4 C 0 0 PS 0
+  written 4 needed 4
+  buffer: 0 1 2 0
+   1 3 2 1
+   64 65 66 0
+   65 67 66 1
+  indexed strip 0 1 2 3 cut 4 5 6 7: IA 9 4 VS 8 GS 4 4 C 0 0 PS 0
+  written 4 needed 4
+  buffer: 0 1 2 0
+   1 3 2 1
+   4 5 6 2
+   5 7 6 3
+  line list adjacency: IA 8 2 VS 8 GS 2 4 C 0 0 PS 0
+  written 4 needed 4
+  buffer: 0 1 2 3
+   0 0 0 0
+   4 5 6 7
+   1 0 0 0
+  line strip adjacency: IA 6 3 VS 6 GS 3 6 C 0 0 PS 0
+  written 6 needed 6
+  buffer: 0 1 2 3
+   0 0 0 0
+   1 2 3 4
+   1 0 0 0
+   2 3 4 5
+   2 0 0 0
+  triangle list adjacency: IA 12 2 VS 12 GS 2 4 C 0 0 PS 0
+  written 4 needed 4
+  buffer: 0 1 2 3
+   4 5 0 0
+   6 7 8 9
+   a b 1 0
+  triangle strip adjacency: IA 10 3 VS 10 GS 3 6 C 0 0 PS 0
+  written 6 needed 6
+  buffer: 0 1 2 6
+   4 3 0 0
+   2 5 6 8
+   4 0 1 0
+   4 2 6 9
+   8 7 2 0
+  triangle strip adjacency of 6: IA 6 1 VS 6 GS 1 2 C 0 0 PS 0
+  written 2 needed 2
+  buffer: 0 1 2 5
+   4 3 0 0
+  triangle strip adjacency of 8: IA 8 2 VS 8 GS 2 4 C 0 0 PS 0
+  written 4 needed 4
+  buffer: 0 1 2 6
+   4 3 0 0
+   2 5 6 7
+   4 0 1 0
+  GS instances 3: IA 6 2 VS 6 GS 6 6 C 0 0 PS 0
+  written 6 needed 6
+  buffer: 0 1 0 0
+   0 1 1 0
+   0 1 2 0
+   3 4 0 1
+   3 4 1 1
+   3 4 2 1
+strips a geometry shader appends, as stream output writes them
+  triangle strip 0..4 cut 10..12: IA 2 2 VS 2 GS 2 8 C 0 0 PS 0
+  written 8 needed 8
+  buffer: 0 1 2 1 3 2 2 3 4 a
+   b c 0 1 2 1 3 2 2 3
+   4 a b c cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+   cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  line strip 0..2 cut 9 cut 20 21: IA 2 2 VS 2 GS 2 6 C 0 0 PS 0
+  written 6 needed 6
+  buffer: 0 1 1 2 14 15 0 1 1 2
+   14 15 cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+   cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+   cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  two vertices of a triangle strip: IA 2 2 VS 2 GS 2 0 C 0 0 PS 0
+  written 0 needed 0
+  buffer: cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+   cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+   cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+   cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+a rasterized strip of a geometry shader (flat K per vertex: 1 red 2 green 3 blue 4 white)
+  cull none: IA 1 1 VS 1 GS 1 2 C 2 2 PS 80
+image strip-cull-none 8 8 0
+  cull back: IA 1 1 VS 1 GS 1 2 C 2 2 PS 80
+image strip-cull-back 8 8 0
+  cull front: IA 1 1 VS 1 GS 1 2 C 2 2 PS 0
+image strip-cull-front 8 8 0
+stream output of a vertex shader
+  CreateGeometryShaderWithStreamOutput(vertex shader, SV_Position) 0
+  3 triangles into room for 2: IA 9 3 VS 9 GS 0 0 C 3 3 PS 1632
+  written 2 needed 3 overflow 1 samples 1488 pixels 1488
+  buffer: bf800000 bf800000 3f000000 3f800000
+   bf800000 0 3f000000 3f800000
+   0 bf800000 3f000000 3f800000
+   0 0 3f000000 3f800000
+   0 3f800000 3f000000 3f800000
+   3f800000 0 3f000000 3f800000
+  SOGetTargets: 1 0 0 0
+  draws of 3 at 0, then -1 (append) twice: bf800000 bf800000 3f000000 3f800000
+   bf800000 0 3f000000 3f800000
+   0 bf800000 3f000000 3f800000
+   0 0 3f000000 3f800000
+   0 3f800000 3f000000 3f800000
+   3f800000 0 3f000000 3f800000
+   bf800000 0 3f000000 3f800000
+   bf800000 3f800000 3f000000 3f800000
+   0 0 3f000000 3f800000
+   cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  then offset 16: bf800000 bf800000 3f000000 3f800000
+   bf800000 0 3f000000 3f800000
+   bf800000 3f800000 3f000000 3f800000
+   0 0 3f000000 3f800000
+   0 3f800000 3f000000 3f800000
+  DrawAuto after 6 + 3 vertices: IA 9 3 VS 9 GS 0 0 C 3 3 PS 1632
+  samples 1488 pixels 1488
+  DrawAuto with the vertex buffer at offset 32: IA 7 2 VS 6 GS 0 0 C 2 2 PS 1088
+  gaps / two slots: 0
+  NO_RASTERIZED_STREAM samples 0
+  slot 0 (stride 24): 0 0 cdcdcdcd cdcdcdcd 3f000000 cdcdcdcd
+   40000000 40400000 cdcdcdcd cdcdcdcd 3fc00000 cdcdcdcd
+   40800000 40c00000 cdcdcdcd cdcdcdcd 40200000 cdcdcdcd
+  slot 1 (stride 16, offset 4): cdcdcdcd 80000000 bf800000 bf800000
+   cdcdcdcd bf800000 bf800000 0
+   cdcdcdcd c0000000 0 bf800000
+   cdcdcdcd cdcdcdcd
+  unknown semantic: 0x80070057
+  stride too small: 0x80070057
+  stride not a multiple of 4: 0x80070057
+  start + count over 4: 0x80070057
+  slot 4: 0x80070057
+  stream 1 of a vertex shader: 0x80070057
+  rasterized stream 1: 0
+  gap of 0 components: 0x80070057
+  a wider stride: 0
+  no bytecode: 0x80070057 0
+  NULL out: 0x1
+  no entries: 0x80070057
+two streams of a geometry shader
+  create 0
+  stream 0 3 3 stream 1 6 6 all 3 3
+  stream 0: 0 1 2 cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd cdcdcdcd
+  stream 1: 32 32 33 33 34 34 cdcdcdcd cdcdcdcd

@@ -1,0 +1,34 @@
+GetGPUThreadPriority 0 0
+SetGPUThreadPriority -8 0x80070057 get 0 0
+SetGPUThreadPriority -7 0 get 0 -7
+SetGPUThreadPriority -6 0 get 0 -6
+SetGPUThreadPriority -5 0 get 0 -5
+SetGPUThreadPriority -4 0 get 0 -4
+SetGPUThreadPriority -3 0 get 0 -3
+SetGPUThreadPriority -2 0 get 0 -2
+SetGPUThreadPriority -1 0 get 0 -1
+SetGPUThreadPriority 0 0 get 0 0
+SetGPUThreadPriority 1 0 get 0 1
+SetGPUThreadPriority 2 0 get 0 2
+SetGPUThreadPriority 3 0 get 0 3
+SetGPUThreadPriority 4 0 get 0 4
+SetGPUThreadPriority 5 0 get 0 5
+SetGPUThreadPriority 6 0 get 0 6
+SetGPUThreadPriority 7 0 get 0 7
+SetGPUThreadPriority 8 0x80070057 get 0 7
+GetMaximumFrameLatency 0 3
+SetMaximumFrameLatency 1 0 get 0 1
+SetMaximumFrameLatency 0 0 get 0 0
+SetMaximumFrameLatency 16 0 get 0 16
+SetMaximumFrameLatency 20 0 get 0 20
+SetMaximumFrameLatency 21 0 get 0 21
+SetMaximumFrameLatency 30 0 get 0 30
+SetMaximumFrameLatency 31 0x8876086c get 0 30
+SetMaximumFrameLatency 4294967295 0x8876086c get 0 30
+SetMaximumFrameLatency 2 0 get 0 2
+WaitForVBlank 0 0
+WaitForVBlank 0 0
+WaitForVBlank 0 0
+WaitForVBlank 1 0x8876086c
+CheckResourceResidency 3 0x8876086c
+CheckResourceResidency 0 0x8876086c

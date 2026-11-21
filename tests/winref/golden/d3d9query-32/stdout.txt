@@ -1,0 +1,34 @@
+CreateQuery types 0..39 (NULL out, out)
+  8: 0 0
+  9: 0 0
+  10: 0 0
+  11: 0 0
+  12: 0 0
+  19: 0 0
+never issued: GetDataSize, GetData of sizes 0..12 (bytes written of 16 0xff)
+  8: size 4 type 8 NULL/0 0: 0:0/0/0 1:0/1/0 2:0/2/0 3:0/3/0 4:0/4/0 5:0/4/1 6:0/4/2 7:0/4/3 8:0/4/4 9:0/4/5 10:0/4/6 11:0/4/7 12:0/4/8
+    Issue 0 0 1 0 2 0 3 0
+  9: size 4 type 9 NULL/0 0: 0:0/0/0 1:0/1/0 2:0/2/0 3:0/3/0 4:0/4/0 5:0/4/1 6:0/4/2 7:0/4/3 8:0/4/4 9:0/4/5 10:0/4/6 11:0/4/7 12:0/4/8
+    Issue 0 0 1 0 2 0 3 0
+  10: size 8 type 10 NULL/0 0: 0:0/0/0 1:0/1/0 2:0/2/0 3:0/3/0 4:0/4/0 5:0/5/0 6:0/6/0 7:0/7/0 8:0/8/0 9:0/8/1 10:0/8/2 11:0/8/3 12:0/8/4
+    Issue 0 0 1 0 2 0 3 0
+  11: size 4 type 11 NULL/0 0: 0:0/0/0 1:0/1/0 2:0/2/0 3:0/3/0 4:0/4/0 5:0/4/1 6:0/4/2 7:0/4/3 8:0/4/4 9:0/4/5 10:0/4/6 11:0/4/7 12:0/4/8
+    Issue 0 0 1 0 2 0 3 0
+  12: size 8 type 12 NULL/0 0: 0:0/0/0 1:0/1/0 2:0/2/0 3:0/3/0 4:0/4/0 5:0/5/0 6:0/6/0 7:0/7/0 8:0/8/0 9:0/8/1 10:0/8/2 11:0/8/3 12:0/8/4
+    Issue 0 0 1 0 2 0 3 0
+occlusion (count, low word, and the high dword of an 8-byte read)
+  10x10: 0 100 0 (high 00000000)
+  10x10 + 3x7 + 4x4 inside of 10x10: 0 137 0 (high 00000000)
+  END without BEGIN: 0 0 0 (high 00000000)
+  building: 0x1
+  BEGIN twice (4x2 after the second): 0 8 0 (high 00000000)
+  two open: first (10x10 + 3x3): 0 109 0 (high 00000000)
+  two open: second (3x3 + 5x1): 0 14 0 (high 00000000)
+  a 16x16 Clear and a 2x2 quad: 0 4 0 (high 00000000)
+  32x32 behind a 16x32 nearer half: 0 512 0 (high 00000000)
+  2 bytes: 0 00 02 ff ff
+  0 bytes: 0 ff
+event, timestamps
+  event: 0 1
+  frequency: 0 nonzero 1
+  timestamps: 0 0 later 1; disjoint 0 0

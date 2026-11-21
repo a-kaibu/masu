@@ -1,35 +1,54 @@
 image r2057 1280 720 2
+draw 2288 IDirect3DDevice9Ex::DrawPrimitive
+image d2288 1280 720 2
+draw 2328 IDirect3DDevice9Ex::DrawPrimitive
+image d2328 1280 720 2
+draw 2366 IDirect3DDevice9Ex::DrawPrimitive
+image d2366 1280 720 2
+draw 2396 IDirect3DDevice9Ex::DrawPrimitive
+image d2396 1280 720 2
+draw 2439 IDirect3DDevice9Ex::DrawPrimitive
+image d2439 1280 720 2
+draw 2455 IDirect3DDevice9Ex::DrawPrimitive
+image d2455 1280 720 2
+draw 2498 IDirect3DDevice9Ex::DrawPrimitive
+image d2498 1280 720 2
+draw 2514 IDirect3DDevice9Ex::DrawPrimitive
+image d2514 1280 720 2
+draw 2557 IDirect3DDevice9Ex::DrawPrimitive
+image d2557 1280 720 2
+draw 2573 IDirect3DDevice9Ex::DrawPrimitive
+image d2573 1280 720 2
+draw 2616 IDirect3DDevice9Ex::DrawPrimitive
+image d2616 1280 720 2
+draw 2632 IDirect3DDevice9Ex::DrawPrimitive
+image d2632 1280 720 2
+draw 2675 IDirect3DDevice9Ex::DrawPrimitive
+image d2675 1280 720 2
+draw 2691 IDirect3DDevice9Ex::DrawPrimitive
+image d2691 1280 720 2
+draw 2734 IDirect3DDevice9Ex::DrawPrimitive
+image d2734 1280 720 2
+draw 2750 IDirect3DDevice9Ex::DrawPrimitive
+image d2750 1280 720 2
+draw 2793 IDirect3DDevice9Ex::DrawPrimitive
+image d2793 1280 720 2
+draw 2809 IDirect3DDevice9Ex::DrawPrimitive
+image d2809 1280 720 2
+draw 2852 IDirect3DDevice9Ex::DrawPrimitive
+image d2852 1280 720 2
+draw 2868 IDirect3DDevice9Ex::DrawPrimitive
+image d2868 1280 720 2
+draw 2911 IDirect3DDevice9Ex::DrawPrimitive
+image d2911 1280 720 2
+draw 2927 IDirect3DDevice9Ex::DrawPrimitive
+image d2927 1280 720 2
+draw 2965 IDirect3DDevice9Ex::DrawPrimitive
+image d2965 1280 720 2
+image r2972 1280 720 2
+draw 3006 IDirect3DDevice9Ex::DrawPrimitive
+image d3006 1280 720 2
+draw 3135 IDirect3DDevice9Ex::DrawPrimitive
+image d3135 1280 720 2
 image f0 1280 720 2
-image r50561 1280 720 2
-image f56 1280 720 2
-image r96817 1280 720 2
-image f112 1280 720 2
-image r142525 1280 720 2
-image f168 1280 720 2
-image r190383 1280 720 2
-image f224 1280 720 2
-image r236639 1280 720 2
-image f280 1280 720 2
-image r282587 1280 720 2
-image f336 1280 720 2
-image r325230 1280 720 2
-image f392 1280 720 2
-image r366390 1280 720 2
-image f448 1280 720 2
-image r406257 1280 720 2
-image f504 1280 720 2
-image r454196 1280 720 2
-image f560 1280 720 2
-image r506948 1280 720 2
-image f616 1280 720 2
-image r562303 1280 720 2
-image f672 1280 720 2
-image r615023 1280 720 2
-image f728 1280 720 2
-image r671879 1280 720 2
-image f784 1280 720 2
-image r730452 1280 720 2
-image f840 1280 720 2
-image r786642 1280 720 2
-image f896 1280 720 2
 calls 1872544 frames 2098

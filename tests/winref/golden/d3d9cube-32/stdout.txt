@@ -1,0 +1,42 @@
+A8R8G8B8 usage 0 check 1 create 0 made desc 21/1/0/0 usage 0x1 check 1 create 0 made desc 21/1/0x1/0 usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+X8R8G8B8 usage 0 check 1 create 0 made desc 22/1/0/0 usage 0x1 check 1 create 0 made desc 22/1/0x1/0 usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+R5G6B5 usage 0 check 1 create 0 made desc 23/1/0/0 usage 0x1 check 1 create 0 made desc 23/1/0x1/0 usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+X8B8G8R8 usage 0 check 0 create 0x8876086c null usage 0x1 check 0 create 0x8876086c null usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+A16B16G16R16F usage 0 check 1 create 0 made desc 113/1/0/0 usage 0x1 check 1 create 0 made desc 113/1/0x1/0 usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+R32F usage 0 check 1 create 0 made desc 114/1/0/0 usage 0x1 check 1 create 0 made desc 114/1/0x1/0 usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+DXT1 usage 0 check 1 create 0 made desc 827611204/1/0/0 usage 0x1 check 0 create 0x8876086c null usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+D16 usage 0 check 0 create 0x8876086c null usage 0x1 check 0 create 0x8876086c null usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+D24S8 usage 0 check 0 create 0x8876086c null usage 0x1 check 0 create 0x8876086c null usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+D24X8 usage 0 check 0 create 0x8876086c null usage 0x1 check 0 create 0x8876086c null usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+D32 usage 0 check 0 create 0x8876086c null usage 0x1 check 0 create 0x8876086c null usage 0x2 check 0 create 0x8876086c null managed rendertarget 0x8876086c
+render target cube 0 levels 2
+face 0 level 0 SetRenderTarget 0 viewport 8x8 Clear 0
+face 1 level 0 SetRenderTarget 0 viewport 8x8 Clear 0
+face 2 level 0 SetRenderTarget 0 viewport 8x8 Clear 0
+face 3 level 0 SetRenderTarget 0 viewport 8x8 Clear 0
+face 4 level 0 SetRenderTarget 0 viewport 8x8 Clear 0
+face 5 level 0 SetRenderTarget 0 viewport 8x8 Clear 0
+face 0 level 1 SetRenderTarget 0 viewport 4x4 Clear 0
+face 1 level 1 SetRenderTarget 0 viewport 4x4 Clear 0
+face 2 level 1 SetRenderTarget 0 viewport 4x4 Clear 0
+face 3 level 1 SetRenderTarget 0 viewport 4x4 Clear 0
+face 4 level 1 SetRenderTarget 0 viewport 4x4 Clear 0
+face 5 level 1 SetRenderTarget 0 viewport 4x4 Clear 0
+  face 0 level 0 GetRenderTargetData 0 ff00ff00 ff800000 ff00ff00 ff800000
+  face 1 level 0 GetRenderTargetData 0 ff00ff20 ff008000 ff00ff20 ff008000
+  face 2 level 0 GetRenderTargetData 0 ff00ff40 ff000080 ff00ff40 ff000080
+  face 3 level 0 GetRenderTargetData 0 ff00ff60 ff808000 ff00ff60 ff808000
+  face 4 level 0 GetRenderTargetData 0 ff00ff80 ff008080 ff00ff80 ff008080
+  face 5 level 0 GetRenderTargetData 0 ff00ffa0 ff800080 ff00ffa0 ff800080
+  face 0 level 1 GetRenderTargetData 0 ff00ff10 ff800010 ff00ff10 ff800010
+  face 1 level 1 GetRenderTargetData 0 ff00ff30 ff008010 ff00ff30 ff008010
+  face 2 level 1 GetRenderTargetData 0 ff00ff50 ff000090 ff00ff50 ff000090
+  face 3 level 1 GetRenderTargetData 0 ff00ff70 ff808010 ff00ff70 ff808010
+  face 4 level 1 GetRenderTargetData 0 ff00ff90 ff008090 ff00ff90 ff008090
+  face 5 level 1 GetRenderTargetData 0 ff00ffb0 ff800090 ff00ffb0 ff800090
+ColorFill 0
+StretchRect 0
+  face 2 level 0 GetRenderTargetData 0x88760868
+  face 5 level 0 GetRenderTargetData 0x88760868
+sampled bad0bad0 bad0bad0 bad0bad0 bad0bad0 bad0bad0 bad0bad0
+depth cube 0x8876086c

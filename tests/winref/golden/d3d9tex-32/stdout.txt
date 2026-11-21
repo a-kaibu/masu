@@ -1,0 +1,49 @@
+priority and LOD of each pool (texture: Get, Set(1), Get, Set(2); surface: Get, Set(1), Get; SetLOD(1), SetLOD(5), GetLOD)
+  DEFAULT CreateTexture 0 texture 0 0 0 0 surface 0 0 0 lod 0 0 0 vb 0 0 0 0
+  MANAGED CreateTexture 0 texture 0 0 1 1 surface 0 0 0 lod 0 1 2 vb 0 0 0 3
+  SYSTEMMEM CreateTexture 0 texture 0 0 0 0 surface 0 0 0 lod 0 0 0 vb 0 0 0 0
+  SCRATCH CreateTexture 0 texture 0 0 0 0 surface 0 0 0 lod 0 0 0 vb 0x8876086c
+CheckDeviceFormat D3DUSAGE_AUTOGENMIPMAP (texture; dynamic too)
+  A8R8G8B8 0 0 cube 0
+  X8R8G8B8 0x876086f 0x876086f cube 0x876086f
+  R5G6B5 0x876086f 0x876086f cube 0x876086f
+  A8 0 0 cube 0
+  L8 0 0 cube 0
+  A8L8 0 0 cube 0
+  V8U8 0x876086f 0x876086f cube 0x876086f
+  DXT1 0x876086f 0x876086f cube 0x876086f
+  A16B16G16R16F 0 0 cube 0
+  R32F 0 0 cube 0
+  D16 0x8876086a 0x8876086a cube 0x8876086a
+CreateTexture D3DUSAGE_AUTOGENMIPMAP (levels, pool): hr, GetLevelCount, filter Get / Set(NONE) / Set(POINT) / Get
+  levels 0 pool DEFAULT format 21: 0 levels 1 filter 2 0x8876086c 0 1
+  levels 1 pool DEFAULT format 21: 0 levels 1 filter 2 0x8876086c 0 1
+  levels 2 pool DEFAULT format 21: 0x8876086c
+  levels 3 pool DEFAULT format 21: 0x8876086c
+  levels 0 pool MANAGED format 21: 0 levels 1 filter 2 0x8876086c 0 1
+  levels 0 pool SYSTEMMEM format 21: 0x8876086c
+  levels 0 pool SCRATCH format 21: 0x8876086c
+  levels 0 pool MANAGED format 827611204: 0 levels 1 filter 2 0x8876086c 0 1
+  levels 0 pool DEFAULT format 80: 0x8876086c
+  no AUTOGENMIPMAP: filter 2 Set(POINT) 0 then 1
+  CreateVolumeTexture AUTOGENMIPMAP 0x8876086c
+  CreateCubeTexture AUTOGENMIPMAP 0 levels 1
+the levels AUTOGENMIPMAP makes (4x4 managed, quadrants red green blue white), drawn from MAXMIPLEVEL 0, 1, 2
+  filter 1 MAXMIPLEVEL 0 ff0000 00ff00 0000ff ffffff
+  filter 1 MAXMIPLEVEL 1 ff0000 00ff00 0000ff ffffff
+  filter 1 MAXMIPLEVEL 2 ffffff ffffff ffffff ffffff
+  filter 1 after a relock, MAXMIPLEVEL 2 808000 808000 808000 808000
+  filter 1 after GenerateMipSubLevels, MAXMIPLEVEL 1 808000 808000 808000 808000
+  filter 2 MAXMIPLEVEL 0 ff0000 00ff00 0000ff ffffff
+  filter 2 MAXMIPLEVEL 1 ff0000 00ff00 0000ff ffffff
+  filter 2 MAXMIPLEVEL 2 808080 808080 808080 808080
+  filter 2 after a relock, MAXMIPLEVEL 2 808000 808000 808000 808000
+  filter 2 after GenerateMipSubLevels, MAXMIPLEVEL 1 808000 808000 808000 808000
+dirty regions: system memory 4x4 -> default 4x4 by UpdateTexture, drawn
+  UpdateTexture 0
+  first update (all dirty) ff0000 00ff00 0000ff ffffff
+  after a NO_DIRTY_UPDATE lock ff0000 00ff00 0000ff ffffff
+  AddDirtyRect 0
+  after AddDirtyRect(top left) 00ffff 00ff00 0000ff ffffff
+  after a lock of the top left ffff00 00ff00 0000ff ffffff
+  after AddDirtyRect(NULL) ffff00 00ffff 00ffff ff00ff
